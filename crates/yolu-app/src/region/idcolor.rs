@@ -22,7 +22,7 @@ use yolu_core::SelectionMask;
 
 use super::tools::{read_only_message, Hover, Where};
 use crate::lang::Lang;
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
@@ -186,9 +186,7 @@ impl AppState {
     pub fn id_color_edit(&mut self, op: IdColorOp) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Bake, crate::lang::refusals::during_stroke(lang));
             return;
         }
         let next = match &op {
@@ -199,23 +197,27 @@ impl AppState {
                 let parts = match self.id_parts(true) {
                     Some(Ok(p)) => p,
                     Some(Err(m)) => {
-                        self.message = m;
+                        self.refuse(Source::Bake, m);
                         return;
                     }
                     None => return,
                 };
                 let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
                 if *part >= count {
-                    self.message = lang.pick("その部品はありません", "No such part").into();
+                    self.refuse(
+                        Source::Bake,
+                        lang.pick("その部品はありません", "No such part"),
+                    );
                     return;
                 }
                 if !colors.colors().is_empty() && colors.binding() != parts.binding {
-                    self.message = lang
-                        .pick(
+                    self.refuse(
+                        Source::Bake,
+                        lang.pick(
                             "手動の ID の色は別のモデルのものです",
                             "These manual ID colors belong to another model",
-                        )
-                        .into();
+                        ),
+                    );
                     return;
                 }
                 if rgb.is_some_and(|c| c > 0xffffff) {
@@ -224,7 +226,13 @@ impl AppState {
                 match colors.with_color(&parts.binding, *part, *rgb) {
                     Ok(c) => c,
                     Err(e) => {
-                        self.message = e.to_string();
+                        self.fail(
+                            Source::Bake,
+                            lang.with_reason(
+                                lang.pick("ID の色を変えられません", "Cannot change the ID color"),
+                                lang.mesh_map_error(&e),
+                            ),
+                        );
                         return;
                     }
                 }
@@ -234,11 +242,16 @@ impl AppState {
             Ok(()) => {
                 self.modified = true;
                 self.region.hover = None;
-                self.message = lang
-                    .pick("手動の ID の色を変えました。", "Manual ID colors changed.")
-                    .into();
+                self.info(
+                    Source::Bake,
+                    lang.pick("手動の ID の色を変えました。", "Manual ID colors changed."),
+                );
             }
-            Err(e) => self.message = refusal_text(lang, &e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Bake,
+                lang.core_error(&e),
+            ),
         }
     }
 }
@@ -262,13 +275,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             };
             if hit.material != material {
                 let name = model.material_name(hit.material as usize, lang);
-                return Err(format!(
-                    "{}: {name}",
-                    lang.pick(
-                        "ほかのテクスチャセットの面です",
-                        "Another texture set's face"
-                    )
-                ));
+                return Err(super::tools::other_set_face(lang, &name));
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
                 Ok(Some(rgb)) => Ok(rgb),
@@ -296,20 +303,20 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
     // 読むだけのセットは選択範囲も変えない（変えても、Undo が読むだけのセットで断られて戻せない）
     if let Some(message) = read_only_message(app) {
-        app.message = message;
+        app.refuse(Source::Selection, message);
         return;
     }
     let map = match app.usable_id_map_waiting() {
         Ok(m) => m,
         Err(reason) => {
-            app.message = reason;
+            app.refuse(Source::Selection, reason);
             return;
         }
     };
     let rgb = match color_under(app, w, at, &map) {
         Ok(c) => c,
         Err(reason) => {
-            app.message = reason;
+            app.refuse(Source::Selection, reason);
             return;
         }
     };
@@ -323,27 +330,38 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {
-            app.message = refusal_text(lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Selection,
+                lang.core_error(&e),
+            );
             return;
         }
     };
     if let Err(e) = app.doc.combine_selection(&mask, mode) {
-        app.message = refusal_text(lang, &e);
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Selection,
+            lang.core_error(&e),
+        );
         return;
     }
     app.modified = true;
-    app.message = if app.doc.selection().is_none() {
-        lang.pick("何も選択されていません。", "Nothing selected.")
-            .into()
-    } else {
-        format!(
-            "{} {} ± {} ({})",
-            lang.pick("ID の色", "ID color"),
-            hex(rgb),
-            tolerance,
-            combine_name(lang, mode)
-        )
-    };
+    app.info(
+        Source::Selection,
+        if app.doc.selection().is_none() {
+            lang.pick("何も選択されていません。", "Nothing selected.")
+                .into()
+        } else {
+            format!(
+                "{} {} ± {} ({})",
+                lang.pick("ID の色", "ID color"),
+                hex(rgb),
+                tolerance,
+                combine_name(lang, mode)
+            )
+        },
+    );
 }
 
 /// ID の色で選択の強調: ポインタの下の色のマップの部分を含む今のセットの三角形（三角形の中心の UV のテクセルが許し幅の中のもの）。

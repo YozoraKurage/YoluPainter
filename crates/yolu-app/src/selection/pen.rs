@@ -18,6 +18,7 @@ use super::{SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CoreError, Document, SelectionCombine, SelectionMask, TileCoord};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, BrushState, StrokeSource, Tool};
 
 /// 1 ストロークが使ってよい作業の場所（被覆・見た目の 2 つの札・クイックマスクの合成結果のぶんも数えて、持つ量の 3 倍で見る）。
@@ -376,7 +377,7 @@ pub fn begin(app: &mut AppState, source: StrokeSource, erase: bool, quick: bool)
             true
         }
         Err(e) => {
-            app.message = e.text(app.lang).into();
+            app.fail(Source::Selection, e.text(app.lang));
             false
         }
     }
@@ -397,7 +398,7 @@ pub fn add_point(app: &mut AppState, view: &CanvasView, pos: Pos2, pressure: f32
             if quick {
                 app.canvas.stroke = None;
             }
-            app.message = e.text(app.lang).into();
+            app.fail(Source::Selection, e.text(app.lang));
             false
         }
     }
@@ -410,10 +411,11 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
     };
     app.sel.drag = None;
     if cancel {
-        app.message = app
-            .lang
-            .pick("ストロークを取り消しました。", "Stroke cancelled.")
-            .into();
+        app.info(
+            Source::Selection,
+            app.lang
+                .pick("ストロークを取り消しました。", "Stroke cancelled."),
+        );
         return true;
     }
     match active.stroke.finish() {
@@ -425,7 +427,7 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
                 })));
             }
         }
-        Err(e) => app.message = e.text(app.lang).into(),
+        Err(e) => app.fail(Source::Selection, e.text(app.lang)),
     }
     true
 }
@@ -437,7 +439,7 @@ pub fn sync(app: &mut AppState) {
             app.sel.pen = None;
             app.sel.drag = None;
             app.canvas.stroke = None;
-            app.message = e.text(app.lang).into();
+            app.fail(Source::Selection, e.text(app.lang));
         }
     }
 }

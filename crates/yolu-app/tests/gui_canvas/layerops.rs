@@ -205,7 +205,10 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(s.doc.layers().len(), 3);
         assert_eq!(
             s.message,
-            lang.pick("結合できない: 下に層が無い", "Cannot merge: No layer below"),
+            lang.pick(
+                "結合できません（下に層が無い）。",
+                "Cannot merge (No layer below)."
+            ),
         );
         // 隠した層は結合しない
         s.apply(Action::ToggleVisible(b));
@@ -216,8 +219,8 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できない: 非表示の層がある",
-                "Cannot merge: A layer is hidden"
+                "結合できません（非表示の層がある）。",
+                "Cannot merge (A layer is hidden)."
             ),
         );
         // グループは、中が空なら結合しない
@@ -227,8 +230,8 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できない: グループが空",
-                "Cannot merge: The group is empty"
+                "結合できません（グループが空）。",
+                "Cannot merge (The group is empty)."
             ),
             "{lang:?}"
         );
@@ -243,8 +246,8 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できない: 表示している層が無い",
-                "Cannot merge: No visible layers"
+                "結合できません（表示している層が無い）。",
+                "Cannot merge (No visible layers)."
             ),
             "{lang:?}"
         );
@@ -566,8 +569,8 @@ fn headless_a_locked_layer_refuses_with_the_existing_short_reason_and_nothing_ch
             assert_eq!(
                 s.message,
                 lang.pick(
-                    "レイヤーがロックされています: 位置",
-                    "The layer is locked: Position"
+                    "レイヤーの「位置」がロックされています",
+                    "The layer has \"Position\" locked"
                 ),
                 "{x:?}"
             );
@@ -614,8 +617,8 @@ fn headless_a_group_lock_is_named_as_the_parents_in_both_languages() {
         assert_eq!(
             s.message,
             lang.pick(
-                "親グループがロックされています: すべて",
-                "A parent group is locked: All"
+                "親グループの「すべて」がロックされています",
+                "A parent group has \"All\" locked"
             )
         );
         // 結合も同じ言い方で断る
@@ -623,7 +626,7 @@ fn headless_a_group_lock_is_named_as_the_parents_in_both_languages() {
         assert_eq!(s.doc.revision(), revision);
         assert!(
             s.message
-                .contains(lang.pick("親グループがロックされています", "A parent group is locked")),
+                .contains(lang.pick("親グループの", "A parent group has")),
             "{}",
             s.message
         );
@@ -668,9 +671,9 @@ fn headless_every_kind_of_lock_is_named_the_same_way_in_a_refusal_and_in_the_loc
             assert_eq!(s.doc.revision(), revision, "{flag:?}");
             assert_eq!(
                 s.message,
-                format!(
-                    "{}: {name}",
-                    lang.pick("レイヤーがロックされています", "The layer is locked")
+                lang.pick(
+                    format!("レイヤーの「{name}」がロックされています"),
+                    format!("The layer has \"{name}\" locked"),
                 ),
                 "{flag:?} {lang:?}"
             );
@@ -680,19 +683,23 @@ fn headless_every_kind_of_lock_is_named_the_same_way_in_a_refusal_and_in_the_loc
                 holder: b,
                 lock: flag,
             };
-            assert!(
-                yolu_app::matpaint::refusal_text(lang, &error).ends_with(name),
-                "{flag:?}"
-            );
+            assert!(lang.core_error(&error).contains(name), "{flag:?}");
         }
         // 表の順（透明部分・画素・位置・すべて）と、個別の複数は「、」・「, 」でつなぐ
         assert_eq!(
             LOCK_FLAGS.map(|f| lock_name(lang, f)),
             cases.map(|(_, ja, en)| lang.pick(ja, en))
         );
-        assert_eq!(
-            yolu_app::matpaint::lock_names(lang, LayerLocks::PIXELS | LayerLocks::POSITION),
-            lang.pick("画素、位置", "Image pixels, Position")
+        let both = yolu_core::CoreError::LayerLocked {
+            layer: LayerId(1),
+            holder: LayerId(1),
+            lock: LayerLocks::PIXELS | LayerLocks::POSITION,
+        };
+        assert!(
+            lang.core_error(&both)
+                .contains(lang.pick("「画素、位置」", "\"Image pixels, Position\"")),
+            "{}",
+            lang.core_error(&both)
         );
     }
 }
@@ -873,8 +880,8 @@ fn headless_transform_messages_for_nothing_to_move_a_numeric_transform_and_the_b
         assert_eq!(
             s.message,
             lang.pick(
-                "ストロークの予算を超える（取り消した）",
-                "Stroke budget exceeded (cancelled)"
+                "1 回の操作のメモリの予算を超えます（取り消しました）",
+                "Over the memory budget of one operation (cancelled)"
             )
         );
         assert_eq!(s.message.is_ascii(), lang == Lang::En);
@@ -1726,7 +1733,7 @@ fn ctrl_e_and_ctrl_shift_e_and_ctrl_j_and_ctrl_g_run_the_layer_operations() {
         3,
         "グループでなければ、まとめもしない"
     );
-    assert_eq!(h.state().state.message, "できない: グループではない");
+    assert_eq!(h.state().state.message, "グループではない。");
     // V は移動・変形の道具
     undo(&mut h.state_mut().state);
     undo(&mut h.state_mut().state);

@@ -906,18 +906,30 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     let mut s = state(&dir);
     scan(&mut s);
     for (rel, expect) in [
-        ("broken.ylsmart", "できません: broken: "),
-        ("Images/cut.png", "できません: cut: PNG として読めません"),
-        ("missing.ylsmart", "できません: missing: "),
+        (
+            "broken.ylsmart",
+            "「broken」をライブラリから取り込めません（",
+        ),
+        (
+            "Images/cut.png",
+            "「cut」をライブラリから取り込めません（PNG として読めません）。",
+        ),
+        (
+            "missing.ylsmart",
+            "「missing」をライブラリから取り込めません（",
+        ),
         (
             "../outside.ylsmart",
-            "できません: outside: 名前が使えません",
+            "「outside」をライブラリから取り込めません（名前に使えない文字があります）。",
         ),
-        ("Images/..\\x.png", "できません: .."),
+        (
+            "Images/..\\x.png",
+            "をライブラリから取り込めません（名前に使えない文字があります）。",
+        ),
     ] {
         s.message.clear();
         use_file(&mut s, rel);
-        assert!(s.message.starts_with(expect), "{rel}: {}", s.message);
+        assert!(s.message.contains(expect), "{rel}: {}", s.message);
         assert!(s.shelf.resources().is_empty(), "{rel}");
         assert!(!s.modified && !s.shelf.changed, "{rel}");
     }
@@ -925,7 +937,8 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     s.library.limits.read = sample_png().len() as u64 - 1;
     use_file(&mut s, "Images/big.png");
     assert!(
-        s.message.starts_with("できません: big: 大きすぎます"),
+        s.message
+            .starts_with("「big」をライブラリから取り込めません（大きすぎます）"),
         "{}",
         s.message
     );
@@ -933,7 +946,10 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     // 英語の画面では英語の理由
     s.lang = Lang::En;
     use_file(&mut s, "Images/cut.png");
-    assert_eq!(s.message, "Cannot: cut: Not a readable PNG");
+    assert_eq!(
+        s.message,
+        "Cannot import \"cut\" from the library (Not a readable PNG)."
+    );
 }
 
 #[test]
@@ -1223,30 +1239,43 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
     // まとめて: 入れた分・すでにあった分・断った理由が 1 つの知らせに
     add_files(&mut s, vec![good_png, good_smart, junk, cut, text]);
     let message = s.message.clone();
-    assert!(message.starts_with("できません: "), "{message}");
+    assert!(
+        message.starts_with("「junk.ylsmart」をライブラリに入れられません（"),
+        "{message}"
+    );
     for expect in [
-        "junk.ylsmart: ",
-        "cut.png: PNG として読めません",
-        "notes.txt: PNG と .ylsmart だけです",
+        "「cut.png」をライブラリに入れられません（PNG として読めません）。",
+        "「notes.txt」をライブラリに入れられません（PNG と .ylsmart だけです）。",
     ] {
         assert!(message.contains(expect), "{expect}: {message}");
     }
     assert!(
-        message.contains("ライブラリに入れました: 1 件"),
+        message.contains("1 件をライブラリに入れました。"),
         "{message}"
     );
-    assert!(message.contains("すでにあった: 1 件"), "{message}");
+    assert!(
+        message.contains("1 件はすでにライブラリにありました。"),
+        "{message}"
+    );
     assert_eq!(dir.files(), ["Images/pic.png", "Smart/試験素材.ylsmart"]);
     // 大きさの上限（1 バイト足りない）
     s.library.limits.read = sample_png().len() as u64 - 1;
     let big = make("big.png", &sample_png());
     add_files(&mut s, vec![big]);
-    assert!(s.message.contains("big.png: 大きすぎます"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("「big.png」をライブラリに入れられません（大きすぎます）"),
+        "{}",
+        s.message
+    );
     // 英語
     s.lang = Lang::En;
     let cut = outside.join("cut.png");
     add_files(&mut s, vec![cut]);
-    assert_eq!(s.message, "Cannot: cut.png: Not a readable PNG");
+    assert_eq!(
+        s.message,
+        "Cannot add \"cut.png\" to the library (Not a readable PNG)."
+    );
 }
 
 #[test]
@@ -1303,7 +1332,11 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
         "Smart",
     ] {
         s.apply(Action::Shelf(ShelfOp::LibraryRemove(rel.into())));
-        assert!(s.message.starts_with("できません"), "{rel}: {}", s.message);
+        assert!(
+            s.message.contains("をライブラリから消せません（"),
+            "{rel}: {}",
+            s.message
+        );
     }
     assert!(victim.exists());
     assert_eq!(dir.files(), ["Smart/mask.ylsmart"]);
@@ -1349,9 +1382,12 @@ fn headless_a_library_file_is_placed_without_going_through_the_shelf_in_one_undo
     let layers = s.doc.layers().len();
     for (rel, expect) in [
         ("Brushes/brush.ylbrush", "ブラシ"),
-        ("broken.ylsmart", "broken: "),
-        ("missing.png", "missing: "),
-        ("../x.png", "x: 名前が使えません"),
+        ("broken.ylsmart", "「broken」を置けません（"),
+        ("missing.png", "「missing」を置けません（"),
+        (
+            "../x.png",
+            "「x」を置けません（名前に使えない文字があります）",
+        ),
     ] {
         s.message.clear();
         place(&mut s, rel);
@@ -1523,7 +1559,9 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
     for lang in Lang::ALL {
         let texts: Vec<String> = markers
             .iter()
-            .map(|m| library::reason(lang, &yolu_io::Error::InvalidData((*m).into())))
+            .map(|m| {
+                yolu_app::lang::library_io_error(lang, &yolu_io::Error::InvalidData((*m).into()))
+            })
             .collect();
         for (i, a) in texts.iter().enumerate() {
             assert!(!a.is_empty(), "{lang:?} {}", markers[i]);
@@ -1536,7 +1574,10 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
     }
     // 棚の断り（予算・個数）は、棚の言い方のまま
     let budget = yolu_io::Error::Budget(yolu_io::shelf::REFUSAL_MEMORY_BUDGET.into());
-    assert_eq!(library::reason(Lang::Ja, &budget), "棚の予算を超えます");
+    assert_eq!(
+        yolu_app::lang::library_io_error(Lang::Ja, &budget),
+        "棚の予算を超えます"
+    );
 }
 
 // ───────── 棚（プロジェクト）のサムネイルも別のスレッドで ─────────

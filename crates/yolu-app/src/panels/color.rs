@@ -7,6 +7,7 @@ use egui::{
     WidgetInfo, WidgetType,
 };
 
+use crate::notice::Source;
 use crate::state::{hsv_to_rgb, parse_hex, to_hex, Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
@@ -414,10 +415,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             app.color
                 .set_main([rgb[0], rgb[1], rgb[2], app.color.main[3]]);
         } else {
-            app.message = format!(
-                "{}: {typed}",
-                app.lang
-                    .pick("16 進の色として読めません", "Invalid hex color")
+            let typed = app.lang.quote(&typed);
+            app.fail(
+                Source::Color,
+                app.lang.pick(
+                    format!("{typed}は 16 進の色として読めません。"),
+                    format!("{typed} is not a valid hex color."),
+                ),
             );
         }
     }

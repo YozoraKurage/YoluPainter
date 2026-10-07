@@ -15,8 +15,9 @@ use std::sync::Arc;
 
 use yolu_core::skin::{BonePathError, Rig};
 
-use self::store::{PresetEntry, Presets, StoreError};
+use self::store::{PresetEntry, Presets};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 use crate::view3d::model::ViewError;
 
@@ -223,7 +224,7 @@ fn refresh(app: &mut AppState) -> Refresh {
 fn change(app: &mut AppState, f: impl FnOnce(&mut HideState)) -> bool {
     let lang = app.lang;
     if app.is_stroking() {
-        app.message = lang.view_error(&ViewError::Stroking);
+        app.refuse(Source::Pose, lang.view_error(&ViewError::Stroking));
         return false;
     }
     let Some(s) = app.view3d.pose.session.as_mut() else {
@@ -237,12 +238,13 @@ fn change(app: &mut AppState, f: impl FnOnce(&mut HideState)) -> bool {
             if let Some(s) = app.view3d.pose.session.as_mut() {
                 s.hide = before;
             }
-            app.message = lang
-                .pick(
+            app.refuse(
+                Source::Pose,
+                lang.pick(
                     "すべての面が隠れるため隠せません",
                     "Cannot hide every surface",
-                )
-                .into();
+                ),
+            );
             false
         }
     }
@@ -276,9 +278,10 @@ pub fn hide_bone(app: &mut AppState, bone: usize) {
         mask_for(&s.rig, std::slice::from_ref(&entry)).is_none_or(|m| m.hidden_count() == 0)
     });
     if alone_hides_nothing {
-        app.message = lang
-            .pick("隠れる面がありません", "No surfaces to hide")
-            .into();
+        app.warn(
+            Source::Pose,
+            lang.pick("隠れる面がありません", "No surfaces to hide"),
+        );
     }
 }
 
@@ -358,26 +361,24 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
         Ok(id) => {
             if !unsaved.is_empty() {
                 let names = unsaved.join(lang.pick("・", ", "));
-                app.message = lang.pick(
-                    format!("同じ名前のボーンがあり、保存できない項目: {names}"),
-                    format!("Not saved (same-named bones): {names}"),
+                app.warn(
+                    Source::Pose,
+                    lang.with_reason(
+                        lang.pick(
+                            "同じ名前のボーンがあるので、保存できない項目があります",
+                            "Some items are not saved because bones share a name",
+                        ),
+                        names,
+                    ),
                 );
             }
             Some(id)
         }
         Err(e) => {
-            app.message = describe_save_error(lang, &e);
+            app.fail(Source::Pose, crate::lang::hide_preset_save_error(lang, &e));
             None
         }
     }
-}
-
-fn describe_save_error(lang: Lang, e: &StoreError) -> String {
-    format!(
-        "{}: {}",
-        lang.pick("隠し方を保存できません", "Cannot save the hide set"),
-        e.describe(lang)
-    )
 }
 
 /// プリセットを消す（入れていたら外す）。描いている最中は断り、ファイルにも一覧にも触らない。入れていたプリセットは、外せると
@@ -385,7 +386,7 @@ fn describe_save_error(lang: Lang, e: &StoreError) -> String {
 pub fn delete_preset(app: &mut AppState, id: u32) {
     let lang = app.lang;
     if app.is_stroking() {
-        app.message = lang.view_error(&ViewError::Stroking);
+        app.refuse(Source::Pose, lang.view_error(&ViewError::Stroking));
         return;
     }
     let used = app
@@ -398,10 +399,12 @@ pub fn delete_preset(app: &mut AppState, id: u32) {
         return;
     }
     if let Err(e) = app.view3d.pose.hide_presets.remove(id) {
-        app.message = format!(
-            "{}: {}",
-            lang.pick("隠し方を消せません", "Cannot delete the hide set"),
-            e.describe(lang)
+        app.fail(
+            Source::Pose,
+            lang.with_reason(
+                lang.pick("隠し方を消せません", "Cannot delete the hide set"),
+                e.describe(lang),
+            ),
         );
     }
 }

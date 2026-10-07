@@ -15,6 +15,7 @@ use yolu_core::{
 };
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 use liltoon::RenderMode;
 
@@ -649,10 +650,10 @@ impl AppState {
     /// 見た目の設定の操作を当てる（`Action::Look`）。
     pub fn look_apply(&mut self, op: LookOp) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Material,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         if let LookOp::PaintSlot(slot) = op {
@@ -665,7 +666,11 @@ impl AppState {
                     }
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -676,7 +681,11 @@ impl AppState {
                     self.modified = true;
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -685,12 +694,19 @@ impl AppState {
             match apply_template(&mut self.doc, lang) {
                 Ok(made) => {
                     self.modified = true;
-                    self.message = lang.pick(
-                        format!("lilToon のひな形を当てました（チャンネル {made}）。"),
-                        format!("Applied the lilToon template ({made} channels)."),
+                    self.info(
+                        Source::Material,
+                        lang.pick(
+                            format!("lilToon のひな形を当てました（チャンネル {made}）。"),
+                            format!("Applied the lilToon template ({made} channels)."),
+                        ),
                     );
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -790,7 +806,11 @@ impl AppState {
                     self.modified = true;
                 }
             }
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Material,
+                self.lang.core_error(&e),
+            ),
         }
     }
 }

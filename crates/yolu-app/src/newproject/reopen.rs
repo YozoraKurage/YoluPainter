@@ -27,8 +27,9 @@ pub struct Reopen {
     stage: Stage,
     /// 始めたときのプロジェクトの世代（変わったら結果を捨てる）。
     generation: u64,
-    /// 開いたときの知らせ（読み終えたら、その後ろにモデルの知らせを足す）。
+    /// 開いたときの知らせ（読み終えたら、その後ろにモデルの知らせを足す）とその種類。
     base: String,
+    base_kind: crate::notice::Kind,
 }
 
 /// 読み直しの段階。
@@ -150,7 +151,13 @@ pub fn resolve_model_path(stored: &str, ylp: &Path) -> PathBuf {
 
 /// .ylp を開いたとき（`open_into` の終わり）: 参照があれば、モデルを読み始める。見つからない・読めない理由は、読み終えたときの知らせに
 /// 出す（ここで返すのは、ファイルに触らずに分かる理由だけ）。
-pub fn start(app: &mut AppState, ylp: &Path, stored: &str, base: &str) -> Option<String> {
+pub fn start(
+    app: &mut AppState,
+    ylp: &Path,
+    stored: &str,
+    base: &str,
+    base_kind: crate::notice::Kind,
+) -> Option<String> {
     let lang = app.lang;
     if is_network_path(stored) {
         // ネットワークのパスは、書かれたままを参照として残すだけで触らない（`resolve_model_path` で解くと、Windows では先頭の
@@ -159,12 +166,12 @@ pub fn start(app: &mut AppState, ylp: &Path, stored: &str, base: &str) -> Option
         app.np.model_file = Some(path.clone());
         return Some(lang.pick(
             format!(
-                "ネットワーク上のモデルは自動では読みません: {}。",
-                file_name(&path)
+                "ネットワーク上のモデル{}は自動では読みません。",
+                lang.quote(&file_name(&path))
             ),
             format!(
-                "Not reading the model on the network automatically: {}.",
-                file_name(&path)
+                "The model {} on the network is not read automatically.",
+                lang.quote(&file_name(&path))
             ),
         ));
     }
@@ -185,6 +192,7 @@ pub fn start(app: &mut AppState, ylp: &Path, stored: &str, base: &str) -> Option
         stage: Stage::Checking(rx),
         generation: app.np.generation,
         base: base.to_owned(),
+        base_kind,
     });
     None
 }
@@ -225,10 +233,14 @@ pub(super) fn poll(app: &mut AppState) {
             }
         },
     };
-    let note = match result {
-        None => lang.pick(
-            format!("モデルが見つかりません: {name}。"),
-            format!("Model not found: {name}."),
+    use crate::notice::Kind;
+    let (note_kind, note) = match result {
+        None => (
+            Kind::Warning,
+            lang.pick(
+                format!("モデル{}が見つかりません。", lang.quote(&name)),
+                format!("The model {} was not found.", lang.quote(&name)),
+            ),
         ),
         Some(Ok(prepared)) => {
             pose::install_prepared(&mut app.view3d, prepared);
@@ -237,7 +249,9 @@ pub(super) fn poll(app: &mut AppState) {
             }
             let report = app.bind_model_only();
             let mut text = lang.pick(format!("モデル: {name}。"), format!("Model: {name}."));
+            let mut kind = Kind::Info;
             if !report.unmatched.is_empty() {
+                kind = Kind::Warning;
                 text += &lang.pick(
                     format!(" モデルに無いセット {}。", report.unmatched.len()),
                     format!(" Not in the model: {}.", report.unmatched.len()),
@@ -245,17 +259,32 @@ pub(super) fn poll(app: &mut AppState) {
             }
             // ファイルのポーズ（pose.json）を戻す（合わない項目は飛ばして理由をポーズの欄に残す。取り消しの段にも変更の印にもしない）
             if let Some(note) = crate::view3d::pose::stored::restore_from_project(app) {
+                kind = Kind::Warning;
                 text += &format!(" {note}");
             }
-            text
+            (kind, text)
         }
-        Some(Err(e)) => format!("{name}: {}", lang.view_error(&e)),
+        Some(Err(e)) => (
+            Kind::Error,
+            lang.with_reason(
+                lang.pick(
+                    format!("モデル{}を読み込めません", lang.quote(&name)),
+                    format!("Cannot load the model {}", lang.quote(&name)),
+                ),
+                lang.view_error(&e),
+            ),
+        ),
     };
-    app.message = if reopen.base.is_empty() {
+    let text = if reopen.base.is_empty() {
         note
     } else {
         format!("{} {note}", reopen.base)
     };
+    app.notify(
+        reopen.base_kind.worse(note_kind),
+        crate::notice::Source::Open,
+        text,
+    );
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::layerops::Xform;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 2 つ目（ステンシル・マテリアル/マスク・レイヤー）。
@@ -846,20 +847,26 @@ impl AppState {
     /// 描いている間・読むだけのセットでは何もしない（`Action::apply` が先に断る）。
     pub fn m2_edit(&mut self, edit: Edit) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Layer,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
         match self.m2_apply(edit) {
             Ok(()) => {}
             // ロックで断られたときは、どのロックか（と、親のグループのロックか）を言う短い文（ブラシ・バケツと同じ）
-            Err(e @ CoreError::LayerLocked { .. }) => {
-                self.message = crate::matpaint::refusal_text(self.lang, &e)
-            }
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e @ CoreError::LayerLocked { .. }) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Layer,
+                self.lang.core_error(&e),
+            ),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Layer,
+                self.lang.core_error(&e),
+            ),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -1024,24 +1031,29 @@ impl AppState {
                 self.doc.set_normal_settings(settings, coalesce)?;
                 let lang = self.lang;
                 if settings.derive_from_height() != old.derive_from_height() {
-                    self.message = if settings.derive_from_height() {
-                        lang.pick("ハイト → ノーマルをオンにしました。", "Height → Normal on.")
-                    } else {
-                        lang.pick(
-                            "ハイト → ノーマルをオフにしました。",
-                            "Height → Normal off.",
-                        )
-                    }
-                    .into();
+                    self.info(
+                        Source::Channel,
+                        if settings.derive_from_height() {
+                            lang.pick("ハイト → ノーマルをオンにしました。", "Height → Normal on.")
+                        } else {
+                            lang.pick(
+                                "ハイト → ノーマルをオフにしました。",
+                                "Height → Normal off.",
+                            )
+                        },
+                    );
                 } else if settings.file_direction() != old.file_direction() {
-                    self.message = lang.pick(
-                        format!(
-                            "ノーマルのファイル: {}",
-                            direction_name(settings.file_direction())
-                        ),
-                        format!(
-                            "Normal files: {}",
-                            direction_name(settings.file_direction())
+                    self.info(
+                        Source::Channel,
+                        lang.pick(
+                            format!(
+                                "ノーマルのファイル: {}",
+                                direction_name(settings.file_direction())
+                            ),
+                            format!(
+                                "Normal files: {}",
+                                direction_name(settings.file_direction())
+                            ),
                         ),
                     );
                 }
@@ -1063,10 +1075,17 @@ impl AppState {
         }
         match self.doc.cancel_coalescing() {
             Ok(true) => {
-                self.message = self.lang.pick("取り消しました。", "Cancelled.").into();
+                self.info(
+                    Source::Layer,
+                    self.lang.pick("取り消しました。", "Cancelled."),
+                );
             }
             Ok(false) => {}
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Layer,
+                self.lang.core_error(&e),
+            ),
         }
     }
 
@@ -1074,10 +1093,7 @@ impl AppState {
     pub fn m2_ui(&mut self, op: UiOp) {
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {
-            s.message = s
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into()
+            s.refuse(Source::Layer, crate::lang::refusals::during_stroke(s.lang))
         };
         match op {
             UiOp::PaintChannel(channel) => {
@@ -1340,14 +1356,10 @@ impl AppState {
             return None;
         }
         if layer.kind() != LayerKind::Raster {
-            return Some(
-                lang.pick(
-                    "このレイヤーには描けません: ",
-                    "Cannot paint on this layer: ",
-                )
-                .to_owned()
-                    + layer_kind_label(lang, layer.kind()),
-            );
+            return Some(lang.with_reason(
+                lang.pick("このレイヤーには描けません", "Cannot paint on this layer"),
+                layer_kind_label(lang, layer.kind()),
+            ));
         }
         let channel = self.m2.paint_channel;
         // マテリアルで塗るなら、無効のチャンネルは core が有効にする
@@ -1355,13 +1367,13 @@ impl AppState {
             && layer.surface(channel).is_some()
             && !layer.is_channel_enabled(channel)
         {
-            return Some(format!(
-                "{}: {}",
-                lang.pick(
-                    "このレイヤーはチャンネルが無効です",
-                    "Channel is off on this layer"
+            let channel = channel_name(lang, &self.doc, channel);
+            return Some(lang.pick(
+                format!(
+                    "このレイヤーは{}チャンネルが無効です。",
+                    lang.quote(&channel)
                 ),
-                channel_name(lang, &self.doc, channel)
+                format!("The {channel} channel is off on this layer."),
             ));
         }
         None

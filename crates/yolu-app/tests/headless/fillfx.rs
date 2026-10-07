@@ -1660,7 +1660,7 @@ fn headless_an_image_over_the_core_budget_or_a_layer_that_is_not_a_fill_is_refus
         },
     );
     assert!(
-        s.message.contains("作業のメモリを超えます"),
+        s.message.contains("作業のメモリの上限を超えます"),
         "{}",
         s.message
     );
@@ -1681,7 +1681,7 @@ fn headless_an_image_over_the_core_budget_or_a_layer_that_is_not_a_fill_is_refus
         },
     );
     assert!(
-        s.message.contains("Over the working memory"),
+        s.message.contains("Working memory budget exceeded"),
         "{}",
         s.message
     );
@@ -2513,12 +2513,12 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
     s.apply(Action::Shelf(ShelfOp::AskRemove(rid.clone())));
     assert!(s.dialog_request.is_none() && s.shelf.pending_remove.is_none());
     assert!(
-        s.message.contains("使われています") && s.message.contains(&names[0]),
+        s.message.contains("レイヤーが使っている") && s.message.contains(&names[0]),
         "{}",
         s.message
     );
     s.apply(Action::Shelf(ShelfOp::Remove(rid.clone())));
-    assert!(s.message.contains("使われています"), "{}", s.message);
+    assert!(s.message.contains("レイヤーが使っている"), "{}", s.message);
     assert!(s.shelf.get(&rid).is_some(), "棚から消えない");
     assert!(!s.modified, "何も変えない");
     assert_eq!(s.doc.undo_count(), steps);
@@ -2530,7 +2530,11 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
     assert_eq!(composite(&s.doc), shown, "層は画像を見せ続ける");
     s.lang = Lang::En;
     s.apply(Action::Shelf(ShelfOp::Remove(rid.clone())));
-    assert!(s.message.contains("Used by a layer"), "{}", s.message);
+    assert!(
+        s.message.contains("because a layer uses it"),
+        "{}",
+        s.message
+    );
     s.lang = Lang::Ja;
     // 1 つの層が外しても、もう 1 つが読んでいる間は消せない
     fill(

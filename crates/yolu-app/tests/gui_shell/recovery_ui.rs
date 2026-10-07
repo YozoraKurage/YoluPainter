@@ -659,7 +659,7 @@ fn failed_writes_are_shown_in_the_status_band_and_painting_goes_on() {
     }
     assert_eq!(
         h.state().state.message,
-        "復旧用の書き置きに失敗: ディスクの空きがありません"
+        "復旧用の書き置きに失敗しました（ディスクの空きがありません）。"
     );
 }
 
@@ -668,11 +668,11 @@ fn an_unreadable_recovery_setting_is_reported_in_the_status_band_when_the_app_st
     for (lang, expected) in [
         (
             Lang::Ja,
-            "復旧の設定を読めません: ファイルのデータが不正です。世代は整理しません",
+            "復旧の設定を読めないので、世代は整理しません（ファイルのデータが不正です）",
         ),
         (
             Lang::En,
-            "Cannot read the recovery settings: Invalid file data. Generations are not trimmed",
+            "Generations are not trimmed because the recovery settings cannot be read (Invalid file data)",
         ),
     ] {
         let dir = TempDir::new("conf-band");

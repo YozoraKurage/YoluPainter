@@ -14,6 +14,7 @@ use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
 use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
 use crate::m2_menu::Popup;
+use crate::notice::Source;
 use crate::panels::effect_rows;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
@@ -1146,7 +1147,11 @@ fn layer_row(
             let next = next.trim().to_owned();
             if !next.is_empty() {
                 if let Err(e) = app.doc.set_layer_name(id, &next) {
-                    app.message = app.lang.core_error(&e);
+                    app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Layer,
+                        app.lang.core_error(&e),
+                    );
                 }
                 app.modified = true;
             }

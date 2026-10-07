@@ -1,6 +1,8 @@
 //! 現在のテクスチャセットの履歴。位置は保持された最古の段の直前を 0 とする。
 
-use crate::{engine::HistoryKind, lang::Lang, state::AppState};
+use crate::lang::{refusals, Lang};
+use crate::notice::{Kind, Source};
+use crate::{engine::HistoryKind, state::AppState};
 
 pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
     match kind {
@@ -33,15 +35,12 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
 /// ポーズや未確定の多角形の Undo と区別して、文書の保持された位置へ移動する。
 pub fn go_to(app: &mut AppState, target: usize) {
     if app.is_stroking() {
-        app.message = app.lang.pick("描画中", "Drawing in progress").into();
+        app.refuse(Source::Edit, refusals::during_stroke(app.lang));
         return;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセット", "Read-only texture set")
-        );
+        let text = refusals::read_only_set(app.lang, reason);
+        app.refuse(Source::Edit, text);
         return;
     }
     if target > app.doc.undo_count() + app.doc.redo_count() {
@@ -57,7 +56,7 @@ pub fn go_to(app: &mut AppState, target: usize) {
             Ok(true) => app.modified = true,
             Ok(false) => break,
             Err(e) => {
-                app.message = app.lang.core_error(&e);
+                app.notify(Kind::of_core(&e), Source::Edit, app.lang.core_error(&e));
                 break;
             }
         }

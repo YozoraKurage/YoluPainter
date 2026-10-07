@@ -1051,7 +1051,7 @@ fn buttons_that_cannot_work_say_why_and_do_nothing() {
         .apply(Action::M2(yolu_app::m2::Edit::GroupSelected));
     h.run();
     let steps = st(&h).doc.undo_count();
-    let reason = "このレイヤーには描けません: グループ";
+    let reason = "このレイヤーには描けません（グループ）。";
     let fill = format!("{FILL}（{reason}）");
     assert!(
         h.get_by_label(&fill).accesskit_node().is_disabled(),

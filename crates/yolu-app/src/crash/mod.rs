@@ -44,6 +44,8 @@ struct Context {
     actions: VecDeque<(&'static str, u32)>,
     /// 最後に見た画面の文（生のまま。毎フレーム比べるので、伏せ字より先に比べる）。
     last_message: String,
+    /// 最後に書いた知らせ（種類・出どころ・生の文。同じ知らせが続いたら 1 行だけ書く）。
+    last_notice: String,
     /// 直前に記録した panic の見出しと時刻。
     last_panic: Option<(String, Instant)>,
 }
@@ -373,6 +375,25 @@ impl Recorder {
             self.write_line(&one_line(problem));
         }
     }
+    /// 注意・失敗の知らせを 1 行書く（`notice` の `notify` が呼ぶ）。種類と出どころの名前（言語によらない）に、文のうち失敗の文として
+    /// 覚えた部分（名前の付かない理由）だけを添える。覚えた部分が無い文は、種類と出どころだけ（名前やパスを書かない決まりのまま）。
+    /// 同じ知らせが続いたら、2 つ目からは書かない。
+    pub fn notice(&self, kind: &str, source: &str, text: &str) {
+        {
+            let Ok(mut context) = self.context.try_lock() else {
+                return;
+            };
+            let key = format!("{kind}\u{1f}{source}\u{1f}{text}");
+            if context.last_notice == key {
+                return;
+            }
+            context.last_notice = key;
+        }
+        match self.problem_in(text) {
+            Some(problem) => self.write_line(&format!("{kind} {source}: {}", one_line(problem))),
+            None => self.write_line(&format!("{kind} {source}")),
+        }
+    }
     fn write_line(&self, text: &str) {
         let text = bounded(self.redactor.redact(text));
         let Ok(_writing) = self.writes.try_lock() else {
@@ -500,6 +521,12 @@ pub fn action(name: &'static str) {
 pub fn message(text: &str) {
     if let Some(r) = LOGGER.get() {
         r.message(text);
+    }
+}
+/// 注意・失敗の知らせを普段のログへ 1 行書く（`Recorder::notice`）。
+pub fn notice(kind: &str, source: &str, text: &str) {
+    if let Some(r) = LOGGER.get() {
+        r.notice(kind, source, text);
     }
 }
 /// 普段のログへ診断の 1 行を書く（伏せ字にして、同じ回転のログへ。失敗の文として覚える必要のない、起きたことの記録）。

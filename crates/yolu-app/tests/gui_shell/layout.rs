@@ -630,13 +630,51 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
             "channels",
             "history",
             "color_sets",
-            "navigator"
+            "navigator",
+            "log"
         ]
     );
     // ドックに出るタブは、全部 ALL にある
     for (_, tab) in default_dock().iter_all_tabs() {
         assert!(Tab::ALL.contains(tab));
     }
+}
+
+/// 前の版が保存した並び（ログのタブが無い）を読んでも、並び全部は捨てない: ログのタブだけを、既定の並びと同じくレイヤーと同じ組の後ろへ
+/// 足す（前へは出さない）。レイヤーを浮かせた並びなら、その窓の組へ。
+#[test]
+fn headless_a_saved_layout_without_the_log_tab_keeps_its_arrangement_and_gains_the_log_tab() {
+    let without_log = |mut dock: DockState<Tab>| {
+        let log = dock.find_tab(&Tab::Log).expect("既定の並びにはある");
+        dock.remove_tab(log);
+        assert!(dock.find_tab(&Tab::Log).is_none());
+        dock
+    };
+    // レイヤーを浮かせた、前の版の並び
+    let mut old = without_log(default_dock());
+    let layers = old.find_tab(&Tab::Layers).unwrap();
+    old.detach_tab(
+        layers,
+        Rect::from_min_size(pos2(40.0, 100.0), vec2(300.0, 220.0)),
+    );
+    assert_eq!(layout::validate(&old), Ok(()), "ログが無くても使える並び");
+    let loaded = layout::parse(&layout::render(&old, None));
+    assert_eq!(loaded.problems, Vec::<String>::new(), "並びを捨てない");
+    let dock = loaded.dock.expect("読めた");
+    let layers = dock.find_tab(&Tab::Layers).unwrap();
+    let log = dock.find_tab(&Tab::Log).expect("ログのタブが足された");
+    assert_eq!(
+        (layers.surface, layers.node_path()),
+        (log.surface, log.node_path()),
+        "レイヤーと同じ組"
+    );
+    assert_eq!(log.tab.0, layers.tab.0 + 1, "レイヤーの後ろ");
+    // ほかは前の並びのまま。レイヤーの組は後ろにログが付くだけで、前のタブ（active）は変わらない
+    let actual: Vec<String> = shape(&dock)
+        .into_iter()
+        .map(|line| line.replace(", \"log\"", ""))
+        .collect();
+    assert_eq!(actual, shape(&old));
 }
 
 // ───────── アプリ ─────────

@@ -36,6 +36,7 @@ use yolu_io::export::{
 
 use crate::bake::Occlusion;
 use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
+use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
 use crate::windows::CloseJob;
 
@@ -235,17 +236,20 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
     match note {
         Note::NoModel => lang
             .pick(
-                "塗り広げなし: 3D ビューにモデルが無く UV が分かりません",
-                "No padding: no model in the 3D view, so the UVs are unknown",
+                "3D ビューにモデルが無く UV が分からないので、塗り広げていません",
+                "Not padded because the 3D view has no model, so the UVs are unknown",
             )
             .into(),
         Note::NoUv(set) => lang.pick(
-            format!("「{set}」は塗り広げなし: マテリアルの UV の三角形がありません"),
-            format!("No padding for \"{set}\": no UV triangle of its material"),
+            format!("「{set}」はマテリアルの UV の三角形が無いので、塗り広げていません"),
+            format!("\"{set}\" is not padded because its material has no UV triangles"),
         ),
-        Note::StaleOcclusion(set, why) => lang.pick(
-            format!("「{set}」の AO は古いので使いません: {why}"),
-            format!("The AO of \"{set}\" is stale and is not used: {why}"),
+        Note::StaleOcclusion(set, why) => lang.with_reason(
+            lang.pick(
+                format!("「{set}」の AO は古いので使いません"),
+                format!("The AO of \"{set}\" is stale and is not used"),
+            ),
+            why,
         ),
         Note::WhiteOcclusion => lang
             .pick(
@@ -262,15 +266,18 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
                 .first()
                 .map(|e| lang.inactive_effect(e))
                 .unwrap_or_default();
-            lang.pick(
-                format!(
-                    "「{set}」の効いていない効果 {} 件は書き出しに入っていません: {first}",
-                    effects.len()
+            lang.with_reason(
+                lang.pick(
+                    format!(
+                        "「{set}」の効いていない効果 {} 件は書き出しに入っていません",
+                        effects.len()
+                    ),
+                    format!(
+                        "{} inactive effect(s) of \"{set}\" are not in the exported images",
+                        effects.len()
+                    ),
                 ),
-                format!(
-                    "{} inactive effect(s) of \"{set}\" are not in the exported images: {first}",
-                    effects.len()
-                ),
+                first,
             )
         }
     }
@@ -445,9 +452,9 @@ impl AppState {
                 (d.width(), d.height())
             };
             let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
-                lang.pick(
-                    format!("文書を写せません: {}", lang.core_error(&e)),
-                    format!("Cannot copy the document: {}", lang.core_error(&e)),
+                lang.with_reason(
+                    lang.pick("文書を写せません", "Cannot copy the document"),
+                    lang.core_error(&e),
                 )
             })?;
             let name = self.sets.get(index).expect("範囲内").name.clone();
@@ -550,11 +557,11 @@ impl AppState {
         if planned.is_empty() {
             return Err(lang.pick(
                 format!(
-                    "書き出すものがありません: どのレイヤーも「{}」が読むチャンネルを使っていません",
+                    "どのレイヤーも「{}」が読むチャンネルを使っていないので、書き出すものがありません",
                     template.name
                 ),
                 format!(
-                    "Nothing to export for \"{}\": no layer uses a channel it reads",
+                    "Nothing to export for \"{}\" because no layer uses a channel it reads",
                     template.name
                 ),
             ));
@@ -603,15 +610,13 @@ impl AppState {
 
     /// 同じファイルになる名前があるときの断りの文。
     fn clash_message(&self, clash: &[String]) -> String {
-        self.lang.pick(
-            format!(
-                "書き出しませんでした: 同じファイルになる画像があります: {}",
-                clash.join("、")
+        let lang = self.lang;
+        lang.with_reason(
+            lang.pick(
+                "同じファイルになる画像があるので、書き出しませんでした",
+                "Nothing was exported because these images would write the same file",
             ),
-            format!(
-                "Nothing was exported: these images would write the same file: {}",
-                clash.join(", ")
-            ),
+            clash.join(lang.pick("、", ", ")),
         )
     }
 
@@ -626,10 +631,7 @@ impl AppState {
             Which::All { .. } => self.exportable_sets(&mut notes),
             Which::One { set, .. } => {
                 if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
-                    return Err(format!(
-                        "{}: {reason}",
-                        lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
-                    ));
+                    return Err(crate::lang::refusals::read_only_set(lang, &reason));
                 }
                 vec![*set]
             }
@@ -666,8 +668,8 @@ impl AppState {
         if wanted.is_empty() {
             return Err(lang
                 .pick(
-                    "書き出すものがありません: どのレイヤーもチャンネルを使っていません",
-                    "Nothing to export: no layer uses any channel",
+                    "どのレイヤーもチャンネルを使っていないので、書き出すものがありません",
+                    "Nothing to export because no layer uses any channel",
                 )
                 .into());
         }
@@ -707,15 +709,16 @@ impl AppState {
         match action {
             ExportAction::Template(id) => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 if ExportTemplate::built_in_by_id(&id).is_none() {
-                    self.message = lang.pick(
-                        format!("書き出しのテンプレート「{id}」はありません。"),
-                        format!("No export template \"{id}\"."),
+                    self.refuse(
+                        Source::Export,
+                        lang.pick(
+                            format!("書き出しのテンプレート「{id}」はありません。"),
+                            format!("No export template \"{id}\"."),
+                        ),
                     );
                     return;
                 }
@@ -734,9 +737,7 @@ impl AppState {
             }
             ExportAction::ChannelDialog => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::ExportChannel);
@@ -745,9 +746,7 @@ impl AppState {
             ExportAction::ChannelNamed(path) => self.confirm_channel_png(path),
             ExportAction::ChannelsDialog => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::ExportChannelsFolder);
@@ -755,20 +754,22 @@ impl AppState {
             ExportAction::ChannelsTo(dir) => self.start_export(&What::Channels, &dir, false),
             ExportAction::CancelConfirm => {
                 if self.export.confirm.take().is_some() {
-                    self.message = lang
-                        .pick(
+                    self.info(
+                        Source::Export,
+                        lang.pick(
                             "書き出しをやめました（何も書いていません）。",
                             "Export canceled (nothing was written).",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             ExportAction::Cancel => {
                 if let Some(job) = &self.export.job {
                     job.worker.cancel();
-                    self.message = lang
-                        .pick("書き出しを取り消しています…", "Canceling the export…")
-                        .into();
+                    self.info(
+                        Source::Export,
+                        lang.pick("書き出しを取り消しています…", "Canceling the export…"),
+                    );
                 }
             }
             ExportAction::DismissReport => self.export.report = None,
@@ -784,15 +785,14 @@ impl AppState {
     fn export_ready(&mut self) -> bool {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
             return false;
         }
         if self.export.job.is_some() {
-            self.message = lang
-                .pick("書き出し中です。", "An export is running.")
-                .into();
+            self.refuse(
+                Source::Export,
+                lang.pick("書き出し中です。", "An export is running."),
+            );
             return false;
         }
         true
@@ -809,9 +809,12 @@ impl AppState {
             What::Template(id) => match ExportTemplate::built_in_by_id(id) {
                 Some(template) => self.plan_export(&template, &stem),
                 None => {
-                    self.message = lang.pick(
-                        format!("書き出しのテンプレート「{id}」はありません。"),
-                        format!("No export template \"{id}\"."),
+                    self.refuse(
+                        Source::Export,
+                        lang.pick(
+                            format!("書き出しのテンプレート「{id}」はありません。"),
+                            format!("No export template \"{id}\"."),
+                        ),
                     );
                     return;
                 }
@@ -826,7 +829,7 @@ impl AppState {
         let plan = match planned {
             Ok(p) => p,
             Err(e) => {
-                self.message = e;
+                self.refuse(Source::Export, e);
                 return;
             }
         };
@@ -842,12 +845,15 @@ impl AppState {
                         .collect(),
                     total: plan.files.len(),
                 });
-                self.message = lang.pick(
-                    format!(
-                        "もうあるファイル {} 個を置き換えるか確かめます。",
-                        existing.len()
+                self.info(
+                    Source::Export,
+                    lang.pick(
+                        format!(
+                            "もうあるファイル {} 個を置き換えるか確かめます。",
+                            existing.len()
+                        ),
+                        format!("Confirm replacing {} existing file(s).", existing.len()),
                     ),
-                    format!("Confirm replacing {} existing file(s).", existing.len()),
                 );
                 return;
             }
@@ -887,12 +893,13 @@ impl AppState {
             existing: vec![name],
             total: 1,
         });
-        self.message = lang
-            .pick(
+        self.info(
+            Source::Export,
+            lang.pick(
                 "もうあるファイル 1 個を置き換えるか確かめます。",
                 "Confirm replacing 1 existing file.",
-            )
-            .into();
+            ),
+        );
     }
 
     /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶ窓が置き換えてよいと確かめているので、もうあれば置き換える）。
@@ -902,9 +909,10 @@ impl AppState {
             return;
         }
         let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            self.message = lang
-                .pick("書き出す先のファイルがありません。", "No file to write to.")
-                .into();
+            self.refuse(
+                Source::Export,
+                lang.pick("書き出す先のファイルがありません。", "No file to write to."),
+            );
             return;
         };
         let dir = match path.parent() {
@@ -920,7 +928,7 @@ impl AppState {
         }) {
             Ok(p) => p,
             Err(e) => {
-                self.message = e;
+                self.refuse(Source::Export, e);
                 return;
             }
         };
@@ -971,21 +979,30 @@ impl AppState {
         }) {
             Ok(w) => w,
             Err(e) => {
-                self.message = format!("{e}");
+                self.fail(
+                    Source::Export,
+                    lang.with_reason(
+                        lang.pick("書き出せません", "Cannot export"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
-        self.message = if total == 1 {
-            lang.pick(
-                format!("書き出し中: {label}…"),
-                format!("Exporting: {label}…"),
-            )
-        } else {
-            lang.pick(
-                format!("書き出し中: {label}（{total} 枚）…"),
-                format!("Exporting: {label} ({total} images)…"),
-            )
-        };
+        self.info(
+            Source::Export,
+            if total == 1 {
+                lang.pick(
+                    format!("書き出し中: {label}…"),
+                    format!("Exporting: {label}…"),
+                )
+            } else {
+                lang.pick(
+                    format!("書き出し中: {label}（{total} 枚）…"),
+                    format!("Exporting: {label} ({total} images)…"),
+                )
+            },
+        );
         self.export.job = Some(Job {
             template: label,
             targets,
@@ -1056,7 +1073,12 @@ impl AppState {
                 for n in &job.notes {
                     text += &format!(" {}。", note_text(lang, n));
                 }
-                self.message = text;
+                // 書けたが、注意（書き出しの但し書き）があれば気をつけること
+                if job.notes.is_empty() {
+                    self.info(Source::Export, text);
+                } else {
+                    self.warn(Source::Export, text);
+                }
                 if job.report {
                     self.export.report = Some(Report {
                         template: job.template,
@@ -1067,17 +1089,18 @@ impl AppState {
                 }
             }
             Err(ExportError::Cancelled) => {
-                self.message = lang
-                    .pick(
+                self.info(
+                    Source::Export,
+                    lang.pick(
                         "書き出しを取り消しました（元のファイルは変えていません）。",
                         "Export canceled (no file was changed).",
-                    )
-                    .into();
+                    ),
+                );
             }
             Err(e) => {
-                self.message = lang.pick(
-                    format!("書き出せません: {e}"),
-                    format!("Cannot export: {e}"),
+                self.fail(
+                    Source::Export,
+                    lang.with_reason(lang.pick("書き出せません", "Cannot export"), e.to_string()),
                 );
             }
         }

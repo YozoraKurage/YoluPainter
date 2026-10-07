@@ -7,6 +7,7 @@ use super::{arrow_to_canvas, collapses, handle_points, handles_usable, hit, Boun
 use crate::canvas::view::CanvasView;
 use crate::layerops::Xform;
 use crate::m2::Edit;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 impl AppState {
@@ -48,29 +49,30 @@ pub fn press(
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            Source::Transform,
+            crate::lang::refusals::read_only_set(app.lang, &reason),
         );
         return;
     }
     let Some(bounds) = super::advanced::interaction_bounds(app) else {
-        app.message = if app.transform_targets().is_empty() {
-            app.lang.pick(
-                "動かす画素のあるレイヤーがありません。",
-                "No layer with pixels to move.",
-            )
-        } else if app.doc.selection().is_some() {
-            app.lang.pick(
-                "選択範囲の中に動かす画素がありません。",
-                "No pixels to move inside the selection.",
-            )
-        } else {
-            app.lang
-                .pick("動かす画素がありません。", "No pixels to move.")
-        }
-        .into();
+        app.refuse(
+            Source::Transform,
+            if app.transform_targets().is_empty() {
+                app.lang.pick(
+                    "動かす画素のあるレイヤーがありません。",
+                    "No layer with pixels to move.",
+                )
+            } else if app.doc.selection().is_some() {
+                app.lang.pick(
+                    "選択範囲の中に動かす画素がありません。",
+                    "No pixels to move inside the selection.",
+                )
+            } else {
+                app.lang
+                    .pick("動かす画素がありません。", "No pixels to move.")
+            },
+        );
         return;
     };
     super::advanced::press(app, view, pos, bounds, modifiers);
@@ -139,13 +141,13 @@ pub fn commit(app: &mut AppState) {
                 return;
             }
             if collapses(&t) {
-                app.message = app
-                    .lang
-                    .pick(
+                app.refuse(
+                    Source::Transform,
+                    app.lang.pick(
                         "潰れてしまうので変形しません。",
                         "That would collapse the layer.",
-                    )
-                    .into();
+                    ),
+                );
                 return;
             }
             Xform::Affine(t)
@@ -159,10 +161,10 @@ pub fn cancel(app: &mut AppState) -> bool {
     app.transform.advanced.draft = None;
     let any = app.transform.drag.take().is_some();
     if any {
-        app.message = app
-            .lang
-            .pick("変形をやめました。", "Transform cancelled.")
-            .into();
+        app.info(
+            Source::Transform,
+            app.lang.pick("変形をやめました。", "Transform cancelled."),
+        );
     }
     any
 }

@@ -14,6 +14,7 @@ use crate::engine::{Channel, CoreError, LayerId, LayerKind};
 use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::m2;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// 複数選択の集合と、次の Shift クリックの起点。
@@ -313,10 +314,13 @@ impl AppState {
             format!("Merged into {name}"),
         );
         let notes = merge_notes_text(lang, report.notes);
-        if !notes.is_empty() {
+        if notes.is_empty() {
+            self.info(Source::Layer, text);
+        } else {
+            // 結合したが、但し書き（落ちた・変わった物）があれば気をつけること
             text = format!("{text} — {notes}");
+            self.warn(Source::Layer, text);
         }
-        self.message = text;
     }
 
     /// 確かめの窓の「結合する」: 見た目が変わるのを承知で、同じ結合を行う。
@@ -330,10 +334,10 @@ impl AppState {
     /// 確かめの窓の「やめる」。
     pub(crate) fn cancel_merge(&mut self) {
         if self.layer_ops.merge_confirm.take().is_some() {
-            self.message = self
-                .lang
-                .pick("結合をやめました。", "Merge cancelled.")
-                .into();
+            self.info(
+                Source::Layer,
+                self.lang.pick("結合をやめました。", "Merge cancelled."),
+            );
         }
     }
 
@@ -389,13 +393,13 @@ impl AppState {
             .map(|id| m2::subtree_len(&self.doc, *id))
             .sum();
         if removed >= self.doc.layers().len() {
-            self.message = self
-                .lang
-                .pick(
+            self.refuse(
+                Source::Layer,
+                self.lang.pick(
                     "最後のレイヤーは消せません。",
                     "Cannot delete the last layer.",
-                )
-                .into();
+                ),
+            );
             return Ok(());
         }
         // 消した塊のすぐ下の層を選ぶ（一番下の塊の始めの 1 つ下）
@@ -450,14 +454,17 @@ impl AppState {
             }
             names.join(lang.pick("、", ", "))
         };
-        self.message = if on {
-            lang.pick(format!("ロックしました: {what}"), format!("Locked: {what}"))
-        } else {
-            lang.pick(
-                format!("ロックを外しました: {what}"),
-                format!("Unlocked: {what}"),
-            )
-        };
+        self.info(
+            Source::Layer,
+            if on {
+                lang.pick(format!("ロックしました: {what}"), format!("Locked: {what}"))
+            } else {
+                lang.pick(
+                    format!("ロックを外しました: {what}"),
+                    format!("Unlocked: {what}"),
+                )
+            },
+        );
         Ok(())
     }
 
@@ -508,24 +515,27 @@ impl AppState {
         let lang = self.lang;
         let targets = self.transform_targets();
         if targets.is_empty() {
-            self.message = lang
-                .pick(
+            self.refuse(
+                Source::Transform,
+                lang.pick(
                     "動かす画素のあるレイヤーがありません。",
                     "No layer with pixels to move.",
-                )
-                .into();
+                ),
+            );
             return Ok(false);
         }
         let Some(bounds) = self.transform_bounds() else {
-            self.message = if self.doc.selection().is_some() {
-                lang.pick(
-                    "選択範囲の中に動かす画素がありません。",
-                    "No pixels to move inside the selection.",
-                )
-            } else {
-                lang.pick("動かす画素がありません。", "No pixels to move.")
-            }
-            .into();
+            self.refuse(
+                Source::Transform,
+                if self.doc.selection().is_some() {
+                    lang.pick(
+                        "選択範囲の中に動かす画素がありません。",
+                        "No pixels to move inside the selection.",
+                    )
+                } else {
+                    lang.pick("動かす画素がありません。", "No pixels to move.")
+                },
+            );
             return Ok(false);
         };
         let (cx, cy) = (
@@ -584,9 +594,10 @@ impl AppState {
                 sy,
             } => {
                 if sx == 0.0 || sy == 0.0 {
-                    self.message = lang
-                        .pick("拡大率は 0 にできません。", "Scale must not be 0%.")
-                        .into();
+                    self.refuse(
+                        Source::Transform,
+                        lang.pick("拡大率は 0 にできません。", "Scale must not be 0%."),
+                    );
                     return Ok(false);
                 }
                 (
@@ -602,11 +613,14 @@ impl AppState {
             ),
         };
         let changed = self.doc.transform_layers(&targets, transform, resampling)?;
-        self.message = if changed {
-            done.into()
-        } else {
-            lang.pick("変わりませんでした。", "Nothing changed.").into()
-        };
+        self.info(
+            Source::Transform,
+            if changed {
+                done
+            } else {
+                lang.pick("変わりませんでした。", "Nothing changed.")
+            },
+        );
         Ok(changed)
     }
 }

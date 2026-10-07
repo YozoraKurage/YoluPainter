@@ -424,7 +424,7 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
     })));
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.message, "Recovery checkpoint failed: Disk full");
+    assert_eq!(s.message, "Recovery checkpoint failed (Disk full).");
     let dir = TempDir::new("failure-ja");
     let mut s = session(&dir.root());
     s.recovery.set_fault(Some(fault(|at| {
@@ -437,7 +437,7 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
     write_after(&mut s, Instant::now());
     assert_eq!(
         s.message,
-        "復旧用の書き置きに失敗: ディスクの空きがありません"
+        "復旧用の書き置きに失敗しました（ディスクの空きがありません）。"
     );
 }
 
@@ -1237,7 +1237,10 @@ fn headless_a_panic_while_writing_is_a_failure_not_a_stuck_writer() {
     })));
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now()); // 待ちが固まらない
-    assert_eq!(s.message, "復旧用の書き置きに失敗: 書き込みの内部の失敗");
+    assert_eq!(
+        s.message,
+        "復旧用の書き置きに失敗しました（書き込みの内部の失敗）。"
+    );
     assert!(s.recovery.is_idle());
     let t = write_after(&mut s, t + Duration::from_secs(100));
     let _ = t;
@@ -1377,9 +1380,12 @@ fn headless_a_write_over_the_budget_gives_a_short_reason_keeps_the_last_generati
     for (lang, expected) in [
         (
             Lang::Ja,
-            "復旧用の書き置きに失敗: 書き置きが作業の予算を超えています",
+            "復旧用の書き置きに失敗しました（書き置きが作業の予算を超えています）。",
         ),
-        (Lang::En, "Recovery checkpoint failed: Size limit exceeded"),
+        (
+            Lang::En,
+            "Recovery checkpoint failed (Size limit exceeded).",
+        ),
     ] {
         let dir = TempDir::new("budget");
         let mut s = session_with(&dir.root(), settings(15, 3, 0), lang);
@@ -1403,8 +1409,8 @@ fn headless_a_write_over_the_budget_gives_a_short_reason_keeps_the_last_generati
             (
                 (8, 1 << 30),
                 lang.pick(
-                    "復旧用の書き置きに失敗: エントリの予算を超えています",
-                    "Recovery checkpoint failed: Size limit exceeded",
+                    "復旧用の書き置きに失敗しました（エントリの予算を超えています）。",
+                    "Recovery checkpoint failed (Size limit exceeded).",
                 ),
             ),
         ] {
@@ -1481,8 +1487,8 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
         assert_eq!(
             reason,
             lang.pick(
-                "復旧の設定を読めません: ファイルのデータが不正です。世代は整理しません",
-                "Cannot read the recovery settings: Invalid file data. Generations are not trimmed"
+                "復旧の設定を読めないので、世代は整理しません（ファイルのデータが不正です）",
+                "Generations are not trimmed because the recovery settings cannot be read (Invalid file data)"
             ),
         );
         // 既定の間隔で動く。利用者が選んだ数（20）を知らないので、既定の数（3）に整理して世代を消さない
@@ -1611,12 +1617,12 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     );
     let text = Lang::Ja.recovery_settings_problem(&problems[0]);
     assert!(
-        text.starts_with("前回の復旧の印を片付けられません: "),
+        text.starts_with("前回の復旧の印を片付けられません（"),
         "{text}"
     );
     let en = Lang::En.recovery_settings_problem(&problems[0]);
     assert!(
-        en.starts_with("Cannot settle the previous recovery marker: ") && en.is_ascii(),
+        en.starts_with("Cannot settle the previous recovery marker (") && en.is_ascii(),
         "{en}"
     );
     // 世代を見せない方へは倒さない: 窓が出て、世代を開ける
@@ -1875,8 +1881,8 @@ fn headless_a_nearly_full_disk_skips_the_checkpoint_with_a_short_reason_and_it_r
         assert_eq!(
             s.message,
             lang.pick(
-                "復旧用の書き置きを見送りました: ディスクの空きが少ない",
-                "Recovery checkpoint skipped: Low disk space"
+                "復旧用の書き置きを見送りました（ディスクの空きが少ない）。",
+                "Recovery checkpoint skipped (Low disk space)."
             )
         );
         assert!(
@@ -1963,7 +1969,7 @@ fn headless_a_checkpoint_refused_for_low_space_does_nothing_but_look_at_the_free
         paint(&mut s, 20.0 + 5.0 * round as f64);
         t = write_after(&mut s, t + Duration::from_secs(100));
         assert_eq!(
-            s.message, "復旧用の書き置きを見送りました: ディスクの空きが少ない",
+            s.message, "復旧用の書き置きを見送りました（ディスクの空きが少ない）。",
             "{round}: 外で変わったという失敗ではなく、空きの断り"
         );
         assert_eq!(

@@ -233,7 +233,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
             assert!(
                 state
                     .message
-                    .starts_with(lang.pick("開けません", "Cannot open")),
+                    .contains(lang.pick("を開けません", "Cannot open")),
                 "{}",
                 state.message
             );
@@ -252,7 +252,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
         assert!(
             state
                 .message
-                .starts_with(lang.pick("保存できません", "Cannot save")),
+                .contains(lang.pick("保存できません", "Cannot save")),
             "{}",
             state.message
         );

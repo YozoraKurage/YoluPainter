@@ -119,6 +119,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "window_minimize",
     "window_maximize",
     "window_restore",
+    "error_circle",
+    "document_copy",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];

@@ -17,6 +17,7 @@ use super::{combine_of, pen, quick, shape, SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -61,10 +62,9 @@ pub fn press(
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            Source::Selection,
+            crate::lang::refusals::read_only_set(app.lang, &reason),
         );
         return;
     }
@@ -130,10 +130,11 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
         return;
     }
     if points.len() < 3 {
-        app.message = app
-            .lang
-            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points.")
-            .into();
+        app.refuse(
+            Source::Selection,
+            app.lang
+                .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+        );
         return;
     }
     let mode = combine_of(app.sel.combine, modifiers);
@@ -309,10 +310,11 @@ pub fn note_pen(app: &mut AppState, pointer_id: u32, pressure: f32, eraser_end: 
 pub fn cancel(app: &mut AppState) -> bool {
     let any = app.sel.cancel_drafts();
     if any {
-        app.message = app
-            .lang
-            .pick("選択の途中をやめました。", "Selection cancelled.")
-            .into();
+        app.info(
+            Source::Selection,
+            app.lang
+                .pick("選択の途中をやめました。", "Selection cancelled."),
+        );
     }
     any
 }

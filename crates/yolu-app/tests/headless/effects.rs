@@ -281,8 +281,8 @@ fn locks_refuse_effect_edits_with_a_reason_in_both_languages_and_change_nothing(
         assert_eq!(
             s.message,
             lang.pick(
-                "層または親グループがロックされている",
-                "Layer or parent group is locked"
+                "レイヤーの「すべて」がロックされています",
+                "The layer has \"All\" locked"
             ),
             "{lang:?}"
         );
@@ -646,7 +646,7 @@ fn a_generator_says_which_map_is_missing_until_the_maps_are_baked_and_then_works
     );
     assert_eq!(Lang::En.inactive_reason(&why), "No Curvature map");
     assert!(
-        s.message.contains("効果なし"),
+        s.message.contains("効果がありません"),
         "足したときの知らせに理由を添える: {}",
         s.message
     );

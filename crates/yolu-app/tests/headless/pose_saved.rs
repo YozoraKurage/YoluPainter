@@ -561,10 +561,10 @@ fn headless_the_pose_note_names_what_could_not_be_saved() {
     assert_eq!(stored::unsaved_note(lang, &[]), "");
     assert_eq!(
         stored::unsaved_note(lang, &["右腕".into(), "Face/Smile".into()]),
-        " ポーズに保存できない項目: 右腕・Face/Smile。"
+        " ポーズに保存できない項目があります（右腕・Face/Smile）。"
     );
     assert_eq!(
         stored::unsaved_note(Lang::En, &["a".into(), "b".into()]),
-        " Not saved in the pose: a, b."
+        " Some items are not saved in the pose (a, b)."
     );
 }

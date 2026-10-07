@@ -154,11 +154,14 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
     }
 }
 
-/// エラー（断り・失敗）の知らせは、普通の知らせより長く出て、押せば消える。
+/// エラー（断り・失敗）の知らせは、普通の知らせより長く出て、押せば消える。長さは種類で決まる（文の言い回しでは決めない）。
 #[test]
 fn an_error_toast_stays_longer_and_pressing_it_dismisses_it() {
+    use yolu_app::notice::Source;
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.message = "開けません: 試験のファイル".into();
+    h.state_mut()
+        .state
+        .fail(Source::Open, "開けません: 試験のファイル");
     h.run();
     assert!(text_rect(&h, "開けません: 試験のファイル").is_some());
     // 普通の知らせが消える秒数のあとも、エラーは残る
@@ -181,14 +184,16 @@ fn an_error_toast_stays_longer_and_pressing_it_dismisses_it() {
     // 書き直されない（操作が文を書かない）あいだは、出し直さない。別の文になれば出る
     h.run();
     assert!(text_rect(&h, "開けません: 試験のファイル").is_none());
-    h.state_mut().state.message = "保存しました。".into();
+    h.state_mut().state.info(Source::Save, "保存しました。");
     h.run();
     assert!(text_rect(&h, "保存しました。").is_some());
     // エラーでも、時間が来れば消える（ポインタを乗せていると延びるので、離しておく）
     h.event(egui::Event::PointerGone);
-    h.state_mut().state.message = "Cannot save the settings.".into();
+    h.state_mut()
+        .state
+        .fail(Source::Settings, "Cannot save the settings.");
     h.run();
-    for _ in 0..(((toast::ERROR_SECONDS + 1.0) * 60.0) as usize) {
+    for _ in 0..(((toast::LONG_SECONDS + 1.0) * 60.0) as usize) {
         h.step();
     }
     assert!(text_rect(&h, "Cannot save the settings.").is_none());
@@ -204,7 +209,7 @@ fn the_same_sentence_written_by_a_repeated_operation_shows_again() {
     h.event(egui::Event::PointerGone);
     h.state_mut().apply(Action::OpenProject(missing.clone()));
     let text = h.state().state.message.clone();
-    assert!(text.starts_with("開けません: "), "{text}");
+    assert!(text.contains("を開けません（"), "{text}");
     h.run();
     assert!(text_rect(&h, &text).is_some(), "最初の 1 回");
 
@@ -223,7 +228,7 @@ fn the_same_sentence_written_by_a_repeated_operation_shows_again() {
     );
 
     // 時間切れのあとに、同じ文がもう一度書かれる（message は書き換わらず残ったまま）
-    for _ in 0..(((toast::ERROR_SECONDS + 1.0) * 60.0) as usize) {
+    for _ in 0..(((toast::LONG_SECONDS + 1.0) * 60.0) as usize) {
         h.step();
     }
     assert!(text_rect(&h, &text).is_none(), "時間切れで消える");
@@ -269,9 +274,10 @@ fn a_sentence_written_inside_a_frame_shows_again_when_it_repeats() {
     };
     drop(&mut h);
     let text = h.state().state.message.clone();
-    assert!(
-        text.contains("開きません"),
-        "描いている間は開かない: {text}"
+    assert_eq!(
+        text,
+        yolu_app::lang::refusals::during_stroke(Lang::Ja),
+        "描いている間は開かない（断りの文は 1 つ）"
     );
     assert!(text_rect(&h, &text).is_some(), "最初の 1 回");
     let at = h.get_by_label(&text).rect().center();
@@ -576,14 +582,17 @@ fn the_status_bar_with_the_build_the_memory_and_a_toast_looks_right() {
             history: 64 * 1024 * 1024,
             sampled_at: Some(1.0e9),
         };
-        h.state_mut().state.message = lang
-            .pick("新しいプロジェクトを作りました。", "Created a new project.")
-            .into();
+        h.state_mut().state.info(
+            yolu_app::notice::Source::Project,
+            lang.pick("新しいプロジェクトを作りました。", "Created a new project."),
+        );
         h.run();
         bottom_shot(&mut h, &format!("status_bar_toast{suffix}"));
-        h.state_mut().state.message = lang
-            .pick("開けません: 試験のファイル", "Cannot open: sample file")
-            .into();
+        // 失敗の知らせ（左の帯が赤）
+        h.state_mut().state.fail(
+            yolu_app::notice::Source::Open,
+            lang.pick("開けません: 試験のファイル", "Cannot open: sample file"),
+        );
         h.run();
         bottom_shot(&mut h, &format!("status_bar_toast_error{suffix}"));
     }

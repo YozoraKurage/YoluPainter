@@ -26,6 +26,7 @@ use yolu_ops::reply::Reply;
 use yolu_ops::Command;
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::ops_host::{AppHost, StartedSave};
 use crate::state::AppState;
 
@@ -93,9 +94,12 @@ impl OpsView {
                 format!("外からの操作を受けています（つながり {n}・{url}）"),
                 format!("Accepting external commands ({n} connected, {url})"),
             ),
-            OpsStatus::Failed(reason) => lang.pick(
-                format!("外からの操作を受けられません: {reason}"),
-                format!("Cannot accept external commands: {reason}"),
+            OpsStatus::Failed(reason) => lang.with_reason(
+                lang.pick(
+                    "外からの操作を受けられません",
+                    "Cannot accept external commands",
+                ),
+                reason,
             ),
         }
     }
@@ -364,11 +368,12 @@ impl McpServer {
     }
 
     fn fail(&mut self, reason: String, state: &mut AppState) {
-        state.message = OpsView {
+        let text = OpsView {
             status: OpsStatus::Failed(reason.clone()),
             port: 0,
         }
         .tooltip(state.lang);
+        state.fail(Source::Ops, text);
         self.failure = Some(reason);
     }
 
@@ -424,7 +429,9 @@ impl McpServer {
                 listening.seen_refusals[index] = count;
                 if self.last_refusal != Some(kind) {
                     self.last_refusal = Some(kind);
-                    state.message = refusal_text(state.lang, kind);
+                    // 断りはログに残さない（短く知らせるだけ）
+                    let text = refusal_text(state.lang, kind);
+                    state.refuse(Source::Ops, text);
                 }
             }
         }
@@ -529,9 +536,12 @@ fn announce(state: &mut AppState, command: &str) {
         Lang::Ja => yolu_ops::Lang::Ja,
         Lang::En => yolu_ops::Lang::En,
     });
-    state.message = lang.pick(
-        format!("外からの操作: {title}"),
-        format!("External command: {title}"),
+    state.info(
+        Source::Ops,
+        lang.pick(
+            format!("外からの操作: {title}"),
+            format!("External command: {title}"),
+        ),
     );
 }
 

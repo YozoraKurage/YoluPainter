@@ -17,6 +17,7 @@ use crate::engine::Document;
 use crate::lang::Lang;
 use crate::library::{self, Source};
 use crate::m2::{DropTarget, Row};
+use crate::notice::Source as NoticeSource;
 use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
@@ -1626,10 +1627,12 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         DialogRequest::LibraryReveal => {
             if let Some(root) = state.library_root() {
                 if let Err(e) = library::ops::open_folder(&root) {
-                    state.message = format!(
-                        "{}: {}",
-                        lang.pick("フォルダを開けません", "Cannot open the folder"),
-                        lang.file_error(&e)
+                    state.fail(
+                        NoticeSource::Library,
+                        lang.with_reason(
+                            lang.pick("フォルダを開けません", "Cannot open the folder"),
+                            lang.file_error(&e),
+                        ),
                     );
                 }
             }

@@ -47,8 +47,8 @@ pub struct Params<'a> {
     pub sets: &'a mut RampSets,
     /// 画面の色を取るスポイトの状態（グラデーションマップの色の分岐点のスポイトが使う）。
     pub eyedrop: &'a mut EyedropState,
-    /// 状態の帯の知らせ（グラデーションセットの保存の失敗など）。
-    pub message: &'a mut String,
+    /// グラデーションセットの保存の失敗の文（呼んだ側が `AppState::fail` で知らせる）。
+    pub failure: &'a mut Option<String>,
 }
 
 /// 6 種の欄の全部。
@@ -158,7 +158,7 @@ fn gradient_map_rows(
         },
         sets: &mut *p.sets,
         eyedrop: &mut *p.eyedrop,
-        message: &mut *p.message,
+        failure: &mut *p.failure,
     };
     if let Some(change) = ramp_rows::rows(ui, rows, &mut params, map.ramp()) {
         result = Some(Change {

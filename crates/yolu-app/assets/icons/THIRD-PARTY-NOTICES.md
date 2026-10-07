@@ -32,7 +32,9 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `data_scatter` | fluent | `data_scatter` | regular |
 | `delete` | fluent | `delete` | regular |
 | `deselect` | fluent | `select_all_off` | regular |
+| `document_copy` | fluent | `document_copy` | regular |
 | `edit` | fluent | `edit` | regular |
+| `error_circle` | fluent | `error_circle` | regular |
 | `expand_less` | fluent | `chevron_up` | regular |
 | `expand_more` | fluent | `chevron_down` | regular |
 | `flip` | fluent | `flip_horizontal` | regular |
@@ -128,6 +130,8 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `local_fire_department` is copied unchanged from the Unity package: Fluent UI `fire` regular (MIT). It marks the Bake Mesh Maps button.
 
 `window_minimize`・`window_maximize`・`window_restore` are the standalone app's window buttons on Windows (Fluent regular; the close button is the existing `close`). They were rendered white at 48 px by the same procedure as the rest.
+
+`error_circle` (the error mark of the Log panel and its Errors Only toggle) and `document_copy` (its Copy All button) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

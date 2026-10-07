@@ -11,6 +11,7 @@
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
+use crate::notice::Source;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
 use crate::ui::scroll::Scroll;
@@ -388,7 +389,7 @@ fn set_row(
         let out = w::text_field(ui, name_rect, ("set.rename", uid), &name, None, first);
         if let Some(next) = out.committed {
             if let Err(e) = app.rename_set(uid, &next) {
-                app.message = e;
+                app.refuse(Source::TextureSet, e);
             }
         }
         if !first && !out.focused {

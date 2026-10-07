@@ -3,6 +3,7 @@ use super::{
     color::{self, Reference, Request},
     tools::paint_gate,
 };
+use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
     jobs::{Polled, Worker},
@@ -99,21 +100,27 @@ fn apply(
                     app.color.remember();
                 }
             }
-            app.message = if changed {
-                app.lang.pick("塗りました。", "Filled.")
+            if changed {
+                app.info(Source::Fill, app.lang.pick("塗りました。", "Filled."));
             } else {
-                app.lang
-                    .pick("そこには塗るものがありません。", "Nothing to fill there.")
+                app.refuse(
+                    Source::Fill,
+                    app.lang
+                        .pick("そこには塗るものがありません。", "Nothing to fill there."),
+                );
             }
-            .into();
         }
-        Err(e) => app.message = crate::matpaint::refusal_text(app.lang, &e),
+        Err(e) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Fill,
+            app.lang.core_error(&e),
+        ),
     }
 }
 
 fn refuse_busy(app: &mut AppState) -> bool {
     if app.region.job.is_some() || app.region.leftover_drag.is_some() {
-        app.message = app.lang.pick("塗りつぶし中", "Filling").into();
+        app.refuse(Source::Fill, app.lang.pick("塗りつぶし中", "Filling"));
         true
     } else {
         false
@@ -127,7 +134,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     let layer = match paint_gate(app) {
         Ok(id) => id,
         Err(e) => {
-            app.message = e;
+            app.refuse(Source::Fill, e);
             return;
         }
     };
@@ -136,10 +143,11 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     if req.options.reference == Reference::Marked
         && !req.marked.iter().any(|id| app.doc.layer(*id).is_some())
     {
-        app.message = app
-            .lang
-            .pick("参照レイヤーがありません", "No reference layers")
-            .into();
+        app.refuse(
+            Source::Fill,
+            app.lang
+                .pick("参照レイヤーがありません", "No reference layers"),
+        );
         return;
     }
     if app.doc.width() as u64 * app.doc.height() as u64
@@ -152,7 +160,11 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     let snapshot = match app.doc.capture_snapshot() {
         Ok(d) => d,
         Err(e) => {
-            app.message = app.lang.core_error(&e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Fill,
+                app.lang.core_error(&e),
+            );
             return;
         }
     };
@@ -160,10 +172,11 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         let _ = tx.send(color::compute(&snapshot, &req, cancel.flag()));
     });
     let Ok(worker) = spawn else {
-        app.message = app
-            .lang
-            .pick("処理を開始できません", "Cannot start operation")
-            .into();
+        app.fail(
+            Source::Fill,
+            app.lang
+                .pick("塗りつぶしを始められません。", "Cannot start the fill."),
+        );
         return;
     };
     app.region.job = Some(Job {
@@ -173,7 +186,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         layer,
         style,
     });
-    app.message = app.lang.pick("塗りつぶし中", "Filling").into();
+    app.info(Source::Fill, app.lang.pick("塗りつぶし中", "Filling"));
 }
 
 pub fn poll(app: &mut AppState, ctx: &Context) {
@@ -184,10 +197,11 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         // この Esc は仕事の取消に使った（キャンバスが同じ Esc で選択範囲を解除しない）
         crate::ui::window::note_escape_taken(ctx);
         app.region.job = None;
-        app.message = app
-            .lang
-            .pick("塗りつぶしを取り消しました。", "Fill cancelled.")
-            .into();
+        app.info(
+            Source::Fill,
+            app.lang
+                .pick("塗りつぶしを取り消しました。", "Fill cancelled."),
+        );
         return;
     }
     let job = app.region.job.as_ref().unwrap();
@@ -202,20 +216,19 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
             let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
             match paint_gate(app) {
                 Ok(now) if now == layer => apply(app, layer, style, result),
-                _ => {
-                    app.message = app
-                        .lang
-                        .pick("塗りつぶしを取り消しました。", "Fill cancelled.")
-                        .into()
-                }
+                _ => app.warn(
+                    Source::Fill,
+                    app.lang
+                        .pick("塗りつぶしを取り消しました。", "Fill cancelled."),
+                ),
             }
         }
         Polled::Lost => {
             app.region.job = None;
-            app.message = app
-                .lang
-                .pick("塗りつぶしに失敗しました", "Fill failed")
-                .into();
+            app.fail(
+                Source::Fill,
+                app.lang.pick("塗りつぶしに失敗しました", "Fill failed"),
+            );
         }
         Polled::Empty => ctx.request_repaint_after(std::time::Duration::from_millis(16)),
     }
@@ -226,7 +239,7 @@ pub fn begin(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
         return false;
     }
     if let Err(e) = paint_gate(app) {
-        app.message = e;
+        app.refuse(Source::Fill, e);
         return false;
     }
     let p = view.to_canvas(at);
@@ -249,10 +262,11 @@ pub fn drag(app: &mut AppState, view: &CanvasView, at: Pos2) {
         if drag.points.len() >= 4096 {
             app.region.leftover_drag = None;
             app.canvas.stroke = None;
-            app.message = app
-                .lang
-                .pick("ストロークが長すぎます", "Stroke is too long")
-                .into();
+            app.refuse(
+                Source::Fill,
+                app.lang
+                    .pick("ストロークが長すぎます", "Stroke is too long"),
+            );
         } else {
             drag.points.push(p);
         }

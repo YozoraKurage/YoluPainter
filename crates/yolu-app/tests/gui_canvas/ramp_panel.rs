@@ -34,7 +34,7 @@ struct Panel {
     sub: [f32; 4],
     sets: RampSets,
     eyedrop: EyedropState,
-    message: String,
+    failure: Option<String>,
     changes: Vec<Change>,
     height: f32,
     width: f32,
@@ -72,7 +72,7 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         features: p.features,
         sets: &mut p.sets,
         eyedrop: &mut p.eyedrop,
-        message: &mut p.message,
+        failure: &mut p.failure,
     };
     if let Some(change) = ramp_rows::rows(ui, &mut rows, &mut params, &p.ramp) {
         p.ramp = change.ramp.clone();
@@ -142,7 +142,7 @@ fn panel_with(ramp: Ramp, features: Features, lang: Lang, height: f32) -> Harnes
                 sub: [0.1, 0.2, 0.9, 1.0],
                 sets: RampSets::default(),
                 eyedrop: EyedropState::default(),
-                message: String::new(),
+                failure: None,
                 changes: Vec::new(),
                 height,
                 width: WIDTH,
@@ -484,7 +484,7 @@ fn adding_renaming_and_removing_your_own_gradients_are_kept_in_the_settings_fold
 }
 
 #[test]
-fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
+fn the_user_set_is_limited_and_the_reason_goes_to_the_failure_notice() {
     let dir = temp("limit");
     let mut h = panel(three());
     h.state_mut().sets.attach(dir.clone());
@@ -518,10 +518,12 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     assert!(
         stuck
             .state()
-            .message
+            .failure
+            .as_deref()
+            .unwrap_or_default()
             .starts_with("グラデーションを保存できません"),
-        "{}",
-        stuck.state().message
+        "{:?}",
+        stuck.state().failure
     );
     // 起動のとき読めなかったファイルがある（上書きしない）: 同じく足さず、理由を出す（再起動で黙って消えない）
     let kept = temp("kept");
@@ -536,11 +538,12 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     assert!(
         unreadable
             .state()
-            .message
-            .starts_with("グラデーションを保存できません")
-            && unreadable.state().message.contains("新しい形式です（9）"),
-        "{}",
-        unreadable.state().message
+            .failure
+            .as_deref()
+            .is_some_and(|f| f.contains("グラデーションを保存できません")
+                && f.contains("新しい形式です（9）")),
+        "{:?}",
+        unreadable.state().failure
     );
     assert_eq!(
         std::fs::read_to_string(&newer).unwrap(),
@@ -553,9 +556,12 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     en.run();
     click_label(&mut en, "Add the current gradient to your set");
     assert!(
-        en.state().message.starts_with("Cannot save the gradients"),
-        "{}",
-        en.state().message
+        en.state()
+            .failure
+            .as_deref()
+            .is_some_and(|f| f.starts_with("Cannot save the gradients")),
+        "{:?}",
+        en.state().failure
     );
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(blocked);

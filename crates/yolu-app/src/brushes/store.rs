@@ -98,24 +98,26 @@ impl StoreError {
                 format!("{line} 行目が読めません"),
                 format!("Cannot read line {line}"),
             ),
-            StoreError::UnknownKey(k) => {
-                lang.pick(format!("知らない項目: {k}"), format!("Unknown item: {k}"))
-            }
+            StoreError::UnknownKey(k) => lang.pick(
+                format!("知らない項目「{k}」があります"),
+                format!("Unknown item \"{k}\""),
+            ),
             StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目が重なっています: {k}"),
-                format!("Repeated item: {k}"),
+                format!("項目「{k}」が重なっています"),
+                format!("Repeated item \"{k}\""),
             ),
             StoreError::BadValue(k) => lang.pick(
-                format!("値が読めません: {k}"),
-                format!("Invalid value: {k}"),
+                format!("項目「{k}」の値が読めません"),
+                format!("Invalid value of \"{k}\""),
             ),
-            StoreError::UnknownTip(n) => {
-                lang.pick(format!("知らない画像: {n}"), format!("Unknown image: {n}"))
-            }
+            StoreError::UnknownTip(n) => lang.pick(
+                format!("知らない画像「{n}」があります"),
+                format!("Unknown image \"{n}\""),
+            ),
             StoreError::Invalid(e) => lang.core_error(e),
             StoreError::BadImage(short) => lang.pick(
-                format!("画像を読めません: {short}"),
-                format!("Cannot read the image: {short}"),
+                format!("画像「{short}」を読めません"),
+                format!("Cannot read the image \"{short}\""),
             ),
             StoreError::Mismatch => lang
                 .pick(

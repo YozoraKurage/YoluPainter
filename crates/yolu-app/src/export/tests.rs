@@ -209,12 +209,12 @@ fn padding_off_leaves_the_outside_of_the_uvs_empty_and_no_model_says_so() {
     s.wait_export();
     let report = s.export.report.as_ref().unwrap();
     assert_eq!(report.notes, [Note::NoModel]);
-    assert!(s.message.contains("塗り広げなし"), "{}", s.message);
+    assert!(s.message.contains("塗り広げていません"), "{}", s.message);
     let skin = load_png(&dir.0.join("Texture_Skin_Albedo.png"));
     assert_eq!(px(&skin, 60, 30)[3], 0);
     // 英語
     s.lang = crate::lang::Lang::En;
-    assert!(note_text(s.lang, &Note::NoModel).starts_with("No padding"));
+    assert!(note_text(s.lang, &Note::NoModel).starts_with("Not padded"));
 }
 
 #[test]
@@ -899,7 +899,7 @@ fn a_channel_png_pads_outside_the_uvs_like_the_templates_do() {
     s.export.padding = -1;
     export_channel(&mut s, &dir.0.join("nomodel.png"));
     s.wait_export();
-    assert!(s.message.contains("塗り広げなし"), "{}", s.message);
+    assert!(s.message.contains("塗り広げていません"), "{}", s.message);
 }
 
 #[test]
@@ -912,13 +912,13 @@ fn a_read_only_set_and_a_missing_file_name_are_refused_with_a_reason() {
     assert!(!s.export.is_exporting());
     assert_eq!(
         s.message,
-        "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります"
+        "このテクスチャセットは読むだけです（フィルターのあるレイヤーがあります）。"
     );
     assert!(dir.files().is_empty());
     s.lang = crate::lang::Lang::En;
     export_channel(&mut s, &dir.0.join("x.png"));
     assert!(
-        s.message.starts_with("Read-only texture set"),
+        s.message.starts_with("This texture set is read-only"),
         "{}",
         s.message
     );

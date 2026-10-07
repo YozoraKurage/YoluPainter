@@ -298,7 +298,7 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
     click(&mut h, at);
     // 見える 2 面（手前と右）だけ。後ろと左は見えないので、知らせて飛ばす
     assert_eq!(painted_islands(&h), [(0, 0), (0, 1)].into_iter().collect());
-    assert_eq!(message(&h), "対称: 見えない写しは飛ばしました");
+    assert_eq!(message(&h), "見えない対称の写しは飛ばしました");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     h.state_mut().state.sel.symmetry.surface.ignore_visibility = true;

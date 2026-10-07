@@ -441,7 +441,7 @@ fn a_failed_save_gives_its_reason_and_goes_back_to_the_question() {
         assert!(s.modified, "失敗した保存は、保存の前の「変更あり」を戻す");
         if seen.get() == 0 {
             assert!(
-                s.message.starts_with("保存できません"),
+                s.message.contains("保存できません"),
                 "理由を出してから聞く: {}",
                 s.message
             );

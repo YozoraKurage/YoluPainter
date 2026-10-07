@@ -96,10 +96,10 @@ fn refusals_come_in_the_order_the_window_shows_them() {
     let layer = s.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
     let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
-    assert_eq!(lang_ja(&mut s), "描いている間はできません");
+    assert_eq!(lang_ja(&mut s), "描いている間はできません。");
     s.apply(bake(BakeAction::Start));
     assert!(!s.bake.is_baking(), "描いている間は始めない");
-    assert_eq!(s.message, "描いている間はできません");
+    assert_eq!(s.message, "描いている間はできません。");
     s.doc.end_stroke(stroke).unwrap();
     assert_eq!(s.bake_refusal(), None);
     // 英語
@@ -584,7 +584,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     t.apply(bake(BakeAction::Start));
     t.wait_bake();
     assert!(
-        t.message.starts_with("Mesh maps were not baked"),
+        t.message.starts_with("Cannot bake the mesh maps"),
         "{}",
         t.message
     );
@@ -846,7 +846,7 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     s.lang = Lang::En;
     assert_eq!(
         status(&s, MeshMapKind::Id).as_deref(),
-        Some("Last bake: one part, one ID color")
+        Some("The last bake had one part, so the ID is one color")
     );
     // 2 枚の板（同じマテリアルでも別のスロット）: 高ポリが無くても板ごとに別の色。1 色とは言わない
     let mut t = AppState::new(64, 64);
@@ -1296,4 +1296,128 @@ fn where_it_baked_reads_in_both_languages_without_mixing_them() {
             );
         }
     }
+}
+
+/// 焼けたが気をつけること（UV の面積が 0 の三角形・縮退・UV の重なり）は 1 つの文で、数を書かない。無ければ None。
+#[test]
+fn the_uv_warning_has_no_numbers_and_is_absent_for_a_clean_bake() {
+    use yolu_core::mesh_maps::MeshBakeReport;
+    let clean = MeshBakeReport::default();
+    for lang in Lang::ALL {
+        assert_eq!(super::uv_warning(lang, &clean), None);
+        let report = MeshBakeReport {
+            zero_uv_area_triangles: 12,
+            degenerate_triangles: 3,
+            overlap_texels: 4567,
+            ..MeshBakeReport::default()
+        };
+        let text = super::uv_warning(lang, &report).expect("注意");
+        for count in ["12", "3", "4567"] {
+            assert!(!text.contains(count), "数を書かない: {text}");
+        }
+        assert_eq!(
+            text.matches(lang.pick("。", ".")).count(),
+            3,
+            "3 つの文: {text}"
+        );
+    }
+    let only_overlap = MeshBakeReport {
+        overlap_texels: 1,
+        ..MeshBakeReport::default()
+    };
+    assert_eq!(
+        super::uv_warning(Lang::Ja, &only_overlap).unwrap(),
+        "UV が重なる所があり、重なったテクセルにはどちらか一方の面だけが焼かれます。"
+    );
+}
+
+/// 2 枚の板のうち `flat` 番目に、UV の面積が 0 で形のある三角形を足したモデル。
+fn two_quads_with_flat_uv(flat: &[usize]) -> Model {
+    let mut model = two_quads(1, 0.0);
+    for &mesh in flat {
+        let mesh = &mut model.meshes[mesh];
+        let first = mesh.positions.len() as u32;
+        let u = mesh.uv0[0][0] + 0.1;
+        mesh.positions
+            .extend([[0.1, 0.1, 0.5], [0.3, 0.1, 0.5], [0.1, 0.3, 0.5]]);
+        mesh.uv0.extend([[u, 0.5]; 3]);
+        mesh.submeshes[0]
+            .indices
+            .extend([first, first + 1, first + 2]);
+    }
+    model
+}
+
+/// 2 つのセットを焼いたあとの状態（`flat` の板に UV の面積が 0 の三角形がある）。
+fn baked_two_sets(flat: &[usize]) -> AppState {
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let (_, shape) = s.receive_link_model(&two_quads_with_flat_uv(flat));
+    assert_eq!(shape, Ok(()));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(kinds(&s, 0).len(), 3);
+    assert_eq!(kinds(&s, 1).len(), 3);
+    s
+}
+
+/// 複数のセットのまとめの知らせは、どれかのセットに UV の注意があれば注意のまま、その文も添える（最後のセットが無事でも、
+/// 最初のセットの注意をまとめの済んだ知らせで上書きして消さない。トーストと窓の下の帯の両方）。同じ注意は 1 回だけ。
+#[test]
+fn the_summary_of_several_sets_keeps_the_uv_warning_of_any_set() {
+    use crate::notice::Kind;
+    let warning = "UV の面積が 0 の三角形があり、その面は焼けません。";
+    for (flat, count) in [(vec![0], 1), (vec![1], 1), (vec![0, 1], 1), (vec![], 0)] {
+        let s = baked_two_sets(&flat);
+        assert!(
+            s.message
+                .starts_with("2 個のテクスチャセットのメッシュマップを焼きました。"),
+            "{flat:?}: {}",
+            s.message
+        );
+        assert_eq!(
+            s.message.matches(warning).count(),
+            count,
+            "{flat:?}: {}",
+            s.message
+        );
+        let expected = if flat.is_empty() {
+            Kind::Info
+        } else {
+            Kind::Warning
+        };
+        assert_eq!(s.message_kind(), expected, "{flat:?}: {}", s.message);
+        let (outcome, ok) = s.bake.outcome.clone().expect("窓の下の結果");
+        assert_eq!((outcome.as_str(), ok), (s.message.as_str(), true));
+        // ログの窓には、セットごとの注意とまとめの注意（種類は注意）が入る
+        let logged = s
+            .notice_log
+            .entries()
+            .filter(|e| e.notice.text.contains(warning))
+            .count();
+        assert_eq!(
+            logged,
+            flat.len() + usize::from(!flat.is_empty()),
+            "{flat:?}"
+        );
+    }
+}
+
+/// 次に焼くときは、前の並びの注意を引き継がない。
+#[test]
+fn the_uv_warning_of_the_previous_bake_is_not_carried_to_the_next() {
+    let warning = "UV の面積が 0 の三角形があり、その面は焼けません。";
+    let mut s = baked_two_sets(&[0]);
+    assert!(s.message.contains(warning), "{}", s.message);
+    let (_, shape) = s.receive_link_model(&two_quads_with_flat_uv(&[]));
+    assert_eq!(shape, Ok(()));
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(
+        s.message.starts_with("2 個のテクスチャセット"),
+        "{}",
+        s.message
+    );
+    assert!(!s.message.contains(warning), "{}", s.message);
 }

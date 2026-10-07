@@ -17,6 +17,7 @@ pub mod grunge_picker;
 pub mod history;
 pub mod layer_props;
 pub mod layers;
+pub mod log;
 pub mod material;
 pub mod path_props;
 pub mod pose;

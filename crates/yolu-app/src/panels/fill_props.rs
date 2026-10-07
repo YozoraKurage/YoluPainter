@@ -1300,6 +1300,7 @@ fn ramp_rows(
         "fill-gradient",
         id.0 ^ (channel.index() as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15),
     );
+    let mut failure = None;
     let mut params = super::ramp_rows::Params {
         key,
         enabled,
@@ -1313,9 +1314,13 @@ fn ramp_rows(
         },
         sets: &mut app.ramp_sets,
         eyedrop: &mut app.eyedrop,
-        message: &mut app.message,
+        failure: &mut failure,
     };
-    super::ramp_rows::rows(ui, rows, &mut params, ramp).map(|c| (c.ramp, c.discrete))
+    let change = super::ramp_rows::rows(ui, rows, &mut params, ramp).map(|c| (c.ramp, c.discrete));
+    if let Some(text) = failure {
+        app.fail(crate::notice::Source::Gradient, text);
+    }
+    change
 }
 
 // ───────── ポップアップ ─────────

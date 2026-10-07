@@ -26,6 +26,7 @@ use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 use crate::gpu_memory::{self, GpuMemory};
 use crate::lang::Lang;
 use crate::m2::UiOp;
+use crate::notice::Source;
 use crate::settings::{
     system_memory_mib, Budget, BudgetKind, Compositing, DiskLimit, Settings, EXPORT_PADDINGS,
     MAX_CPU_THREADS, MAX_MIN_UNDO_STEPS,
@@ -254,12 +255,13 @@ impl AppState {
                     if yolu_mcp::valid_port(port) {
                         self.prefs.settings.external_ops_port = port;
                     } else {
-                        self.message = lang
-                            .pick(
-                                "ポート番号は 1024〜65535 です",
-                                "The port is a number from 1024 to 65535",
-                            )
-                            .into();
+                        self.refuse(
+                            Source::Settings,
+                            lang.pick(
+                                "ポート番号は 1024〜65535 です。",
+                                "The port is a number from 1024 to 65535.",
+                            ),
+                        );
                     }
                 }
                 Pref::ExportPadding(v) => {
@@ -301,12 +303,13 @@ impl AppState {
                 Pref::ZoomCenter(center) => self.prefs.settings.navigation.zoom = center,
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.message = lang
-                            .pick(
+                        self.refuse(
+                            Source::Settings,
+                            lang.pick(
                                 "棚の場所は絶対パスで指定します。",
                                 "The library folder must be an absolute path.",
-                            )
-                            .into();
+                            ),
+                        );
                     }
                     folder => self.prefs.settings.library_folder = folder,
                 },
@@ -326,12 +329,13 @@ impl AppState {
                 }
                 Pref::DiskCacheFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.message = lang
-                            .pick(
+                        self.refuse(
+                            Source::Settings,
+                            lang.pick(
                                 "キャッシュの場所は絶対パスで指定します。",
                                 "The cache folder must be an absolute path.",
-                            )
-                            .into();
+                            ),
+                        );
                     }
                     folder => {
                         self.prefs.settings.disk_cache_folder = folder;
@@ -400,7 +404,7 @@ impl AppState {
             let quoted: Vec<String> = v.iter().map(|n| format!("\"{n}\"")).collect();
             quoted.join(", ")
         };
-        let (mut ja_why, mut en_why) = (Vec::new(), Vec::new());
+        let (mut ja_why, mut en_why): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
         if names.len() > unsaved.len() {
             ja_why.push("最後に保存した後の編集は保存できません".to_owned());
             en_why.push("Edits since the last save cannot be saved".to_owned());
@@ -415,18 +419,20 @@ impl AppState {
                 en(&unsaved)
             ));
         }
-        self.message = lang.pick(
-            format!(
-                "テクスチャセット{}を読むだけにしました: {reason}。{}",
-                ja(&names),
-                ja_why.join("。")
+        // 「何を（なぜ）」の 1 文のあとに、保存で失うものを文で続ける
+        let mut text = lang.with_reason(
+            lang.pick(
+                format!("テクスチャセット{}を読むだけにしました", ja(&names)),
+                format!("Texture set {} is now read-only", en(&names)),
             ),
-            format!(
-                "Texture set {} is now read-only: {reason}. {}",
-                en(&names),
-                en_why.join(". ")
-            ),
+            reason,
         );
+        for why in lang.pick(ja_why, en_why) {
+            text += lang.pick("", " ");
+            text += &why;
+            text += lang.pick("。", ".");
+        }
+        self.fail(Source::TextureSet, text);
     }
 
     /// 選んだ予算を今のセットの文書に入れる（全体の予算から、ほかのセットが使っている量を引く）。入れる値が今と同じなら何もしない
@@ -479,12 +485,12 @@ impl AppState {
         } else if self.prefs.over != Some((id, source)) {
             self.prefs.over = Some((id, source));
             let lang = self.lang;
-            self.message = lang
+            self.refuse(Source::Settings, lang
                 .pick(
                     "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。",
                     "The layer memory is already over the budget; nothing can be added until it is raised.",
                 )
-                .into();
+                );
         }
     }
 

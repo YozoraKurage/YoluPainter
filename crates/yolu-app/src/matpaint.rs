@@ -8,8 +8,8 @@
 
 use yolu_core::material::ChannelPaint;
 
-use crate::engine::{Channel, CoreError, Rgba8};
-use crate::lang::Lang;
+use crate::engine::{Channel, Rgba8};
+use crate::notice::Source;
 use crate::state::{to_byte, AppState, Rgba};
 
 /// 組に選べるチャンネル（標準の 6 つ。番号の順）。
@@ -165,52 +165,6 @@ pub fn single_value(color: Rgba) -> Rgba8 {
     Rgba8::new(b(color[0]), b(color[1]), b(color[2]), b(color[3]))
 }
 
-/// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
-/// レイヤーの欄の錠の印・プロパティ・ロックの付け外しの状態の文と、断りの文が同じ言い方になる。
-pub fn lock_names(lang: Lang, lock: yolu_core::LayerLocks) -> String {
-    use yolu_core::LayerLocks as L;
-    if lock.contains(L::ALL) {
-        return crate::layerops::lock_name(lang, L::ALL).into();
-    }
-    crate::layerops::lock_names(lang, lock).join(lang.pick("、", ", "))
-}
-
-/// 断られた理由の短い文（core のエラーを、画面の言語で名前と理由だけにする）。
-pub fn refusal_text(lang: Lang, error: &CoreError) -> String {
-    match error {
-        CoreError::LayerLocked {
-            layer,
-            holder,
-            lock,
-        } => format!(
-            "{}: {}",
-            if layer == holder {
-                lang.pick("レイヤーがロックされています", "The layer is locked")
-            } else {
-                lang.pick("親グループがロックされています", "A parent group is locked")
-            },
-            lock_names(lang, *lock)
-        ),
-        CoreError::Cancelled => lang.pick("取り消しました", "Cancelled").to_owned(),
-        CoreError::StrokeActive | CoreError::NoActiveStroke => lang
-            .pick("描いている間はできません", "Not while drawing")
-            .to_owned(),
-        CoreError::LayerNotFound => lang
-            .pick("レイヤーがありません", "No such layer")
-            .to_owned(),
-        CoreError::ChannelNotFound => lang
-            .pick("チャンネルがありません", "No such channel")
-            .to_owned(),
-        CoreError::SourceBudgetExceeded | CoreError::StrokeBudgetExceeded => lang
-            .pick("メモリの予算を超えます", "Over the memory budget")
-            .to_owned(),
-        CoreError::WorkingBudgetExceeded => lang
-            .pick("作業のメモリを超えます", "Over the working memory")
-            .to_owned(),
-        other => lang.core_error(other),
-    }
-}
-
 impl AppState {
     /// 次に塗る（バケツ・ポリゴン塗りつぶし）チャンネルとその値。マテリアルがオフなら描くチャンネル 1 つを描画色で。
     pub fn paint_channels(&self) -> Vec<ChannelPaint> {
@@ -236,9 +190,7 @@ impl AppState {
     pub fn mat_apply(&mut self, action: MatAction) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Material, crate::lang::refusals::during_stroke(lang));
             return;
         }
         match action {
@@ -248,12 +200,13 @@ impl AppState {
             }
             MatAction::Channel(channel, on) => {
                 if !self.mat.set_channel(channel, on) {
-                    self.message = lang
-                        .pick(
+                    self.refuse(
+                        Source::Material,
+                        lang.pick(
                             "マテリアルは 1 つ以上のチャンネルを塗ります",
                             "A material paints at least one channel",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             MatAction::NormalFlat => self.mat.normal = [0.0; 2],

@@ -139,14 +139,10 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         Ok(Some(p)) => p,
         Ok(None) => return None,
         Err(e) => {
-            return Some(format!(
-                "{}: {}",
-                lang.pick(
-                    "ポーズを読めません（ファイルには残っています）",
-                    "Cannot read the pose (kept in the file)"
-                ),
-                lang.io_error(&e)
-            ))
+            return Some(lang.kept_in_file(lang.with_reason(
+                lang.pick("ポーズを読めません", "Cannot read the pose"),
+                lang.io_error(&e),
+            )))
         }
     };
     let session = app.view3d.pose.session.as_ref()?;
@@ -163,10 +159,9 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         s.preset_notes = built.skipped;
     }
     Some(match result {
-        Err(e) => format!(
-            "{}: {}",
+        Err(e) => lang.with_reason(
             lang.pick("ポーズを戻せません", "Cannot restore the pose"),
-            lang.view_error(&e)
+            lang.view_error(&e),
         ),
         Ok(()) if nothing_fits => lang.pick(
             "ファイルのポーズに合うボーンがありません。".to_owned(),
@@ -215,9 +210,15 @@ pub fn unsaved_note(lang: Lang, unsaved: &[String]) -> String {
         return String::new();
     }
     let names = unsaved.join(lang.pick("・", ", "));
-    lang.pick(
-        format!(" ポーズに保存できない項目: {names}。"),
-        format!(" Not saved in the pose: {names}."),
+    format!(
+        " {}",
+        lang.with_reason(
+            lang.pick(
+                "ポーズに保存できない項目があります",
+                "Some items are not saved in the pose",
+            ),
+            names,
+        )
     )
 }
 
@@ -239,10 +240,9 @@ pub fn write_into(
         Ok(_) => {}
     }
     let written = project.with_pose(next.as_ref()).map_err(|e| {
-        format!(
-            "{}: {}",
+        lang.with_reason(
             lang.pick("ポーズを書けません", "Cannot write the pose"),
-            lang.io_error(&e)
+            lang.io_error(&e),
         )
     })?;
     Ok((written, overwritten))

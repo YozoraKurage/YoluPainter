@@ -304,8 +304,8 @@ fn headless_files_that_cannot_be_read_say_why_in_both_languages_and_add_nothing(
     for (path, ja, en) in [
         (
             &garbage,
-            "取り込めません: broken.gbr — ",
-            "Cannot import: broken.gbr — ",
+            "「broken.gbr」を取り込めません（",
+            "Cannot import \"broken.gbr\" (",
         ),
         (
             &kpp,
@@ -344,7 +344,7 @@ fn headless_files_that_cannot_be_read_say_why_in_both_languages_and_add_nothing(
     import(&mut s, &[garbage.clone(), good]);
     assert_eq!(imported(&s).len(), 1);
     assert!(
-        s.message.contains("broken.gbr は読めません"),
+        s.message.contains("「broken.gbr」は読めません（"),
         "{}",
         s.message
     );

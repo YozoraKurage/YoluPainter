@@ -292,7 +292,6 @@ fn headless_material_actions_set_the_values_and_refuse_while_drawing() {
 #[test]
 fn headless_refusals_are_short_reasons_in_both_languages() {
     use yolu_app::engine::CoreError;
-    use yolu_app::matpaint::refusal_text;
     for lang in Lang::ALL {
         for e in [
             CoreError::StrokeActive,
@@ -301,19 +300,20 @@ fn headless_refusals_are_short_reasons_in_both_languages() {
             CoreError::SourceBudgetExceeded,
             CoreError::WorkingBudgetExceeded,
         ] {
-            let text = refusal_text(lang, &e);
+            let text = lang.core_error(&e);
             assert!(
                 !text.is_empty() && text.chars().count() < 40,
                 "{lang:?} {e:?}: {text}"
             );
         }
     }
+    // 同じ誤りは、どの操作でも同じ文（英語は「Layer not found」の 1 つ）
     assert_eq!(
-        refusal_text(Lang::En, &CoreError::LayerNotFound),
-        "No such layer"
+        Lang::En.core_error(&CoreError::LayerNotFound),
+        "Layer not found"
     );
     assert_eq!(
-        refusal_text(Lang::Ja, &CoreError::LayerNotFound),
+        Lang::Ja.core_error(&CoreError::LayerNotFound),
         "レイヤーがありません"
     );
 }
@@ -705,11 +705,11 @@ fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(s.doc.undo_count(), undo);
     assert!(!painted(&s, TRI0));
-    assert_eq!(s.message, "レイヤーがロックされています: 画素");
+    assert_eq!(s.message, "レイヤーの「画素」がロックされています");
     // ポリゴン塗りつぶし（始められない）
     s.message.clear();
     assert!(!begin_polygon(&mut s, Where::Canvas(&view), at));
-    assert_eq!(s.message, "レイヤーがロックされています: 画素");
+    assert_eq!(s.message, "レイヤーの「画素」がロックされています");
     assert!(!s.is_stroking());
     // ブラシ
     assert!(s.begin_paint_stroke(id, false).is_err());
@@ -720,22 +720,18 @@ fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
     // 英語
     s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer is locked: Image pixels");
+    assert_eq!(s.message, "The layer has \"Image pixels\" locked");
     // すべてのロック・親グループのロック
     s.doc.set_layer_locks(id, LayerLocks::ALL).unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer is locked: All");
+    assert_eq!(s.message, "The layer has \"All\" locked");
     s.doc.set_layer_locks(id, LayerLocks::NONE).unwrap();
     let group = s.doc.group_layers(&[id], "g").unwrap();
     s.doc
         .set_layer_locks(group, LayerLocks::PIXELS | LayerLocks::POSITION)
         .unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert!(
-        s.message.starts_with("A parent group is locked"),
-        "{}",
-        s.message
-    );
+    assert!(s.message.starts_with("A parent group has"), "{}", s.message);
     assert!(s.message.contains("Image pixels"), "{}", s.message);
     // ロックを外せば塗れる
     s.doc.set_layer_locks(group, LayerLocks::NONE).unwrap();
@@ -813,7 +809,7 @@ fn headless_a_read_only_set_refuses_the_bucket_the_polygon_fill_and_the_id_selec
     let w = Where::Canvas(&view);
     let at = at_uv(&s, rect, TRI0);
     let undo = s.doc.undo_count();
-    let reason = "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります";
+    let reason = "このテクスチャセットは読むだけです（フィルターのあるレイヤーがあります）。";
     // バケツ
     bucket(&mut s, w, at);
     assert_eq!(s.message, reason);
@@ -834,7 +830,7 @@ fn headless_a_read_only_set_refuses_the_bucket_the_polygon_fill_and_the_id_selec
     s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     s.sets.get_mut(uid_index).unwrap().read_only = Some("has filters".into());
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, "Read-only texture set: has filters");
+    assert_eq!(s.message, "This texture set is read-only (has filters).");
     // 読むだけでなくなれば選べる
     s.sets.get_mut(uid_index).unwrap().read_only = None;
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
@@ -885,7 +881,10 @@ fn headless_polygon_fill_over_the_budget_is_refused_and_leaves_the_document_as_i
     s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     s.doc.set_stroke_budget_bytes(1).unwrap();
     assert!(!begin_polygon(&mut s, w, a));
-    assert_eq!(s.message, "Over the memory budget");
+    assert_eq!(
+        s.message,
+        "Over the memory budget of one operation (cancelled)"
+    );
 }
 
 #[test]
@@ -896,7 +895,7 @@ fn headless_bucket_over_the_budget_is_refused_and_leaves_the_document_as_it_was(
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "メモリの予算を超えます");
+    assert_eq!(s.message, "レイヤーのメモリの予算を超えます");
     assert_eq!(s.doc.undo_count(), 0);
     assert!(!painted(&s, TRI0) && !painted(&s, TRI4), "文書は元のまま");
     assert!(!s.modified);
@@ -2221,7 +2220,10 @@ fn a_locked_layer_says_why_the_brush_cannot_start() {
     drag(&mut h, &[offset(c, -40.0, 0.0), offset(c, 40.0, 0.0)]);
     let s = &h.state().state;
     assert_eq!(s.doc.undo_count(), before, "何も描いていない");
-    assert_eq!(s.message, "描けません: レイヤーがロックされています: 画素");
+    assert_eq!(
+        s.message,
+        "描けません（レイヤーの「画素」がロックされています）。"
+    );
     h.snapshot("region_locked_refusal");
 }
 

@@ -277,11 +277,36 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
     {
         let s = &mut h.state_mut().state;
         s.message = "試験".into();
-        s.bake.outcome = Some(("テクスチャセット 1: 試験".into(), true));
+        s.bake.outcome = Some((
+            "「テクスチャセット 1」のメッシュマップ 5 枚を焼きました。".into(),
+            true,
+        ));
         s.bake.window.as_mut().unwrap().page = Page::Map(MeshMapKind::AmbientOcclusion);
     }
     h.run();
     shot(&mut h, "bake", "bake_window_baked");
+    // 共通の設定の頁の「最後のベイク」は、焼いた場所と注意の行だけ（時間・レイ・テクセル・三角形の数は出さない）
+    h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Common;
+    h.run();
+    for dev in ["テクセル 焼いた", "三角形 焼いた", "（準備 "] {
+        assert!(
+            h.query_by_label_contains(dev).is_none(),
+            "開発用の数の行「{dev}」を出さない"
+        );
+    }
+    assert!(
+        !h.query_all_by_label_contains("レイ ").any(|n| {
+            n.accesskit_node()
+                .label()
+                .and_then(|l| l.strip_prefix("レイ ").map(str::to_owned))
+                .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+        }),
+        "レイの数の行を出さない"
+    );
+    shot(&mut h, "bake", "bake_window_last_bake");
+    h.state_mut().state.bake.window.as_mut().unwrap().page =
+        Page::Map(MeshMapKind::AmbientOcclusion);
+    h.run();
     // 窓の目で別のマップを見る
     h.get_by_label("アンビエントオクルージョンをキャンバスに出す")
         .click();

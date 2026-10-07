@@ -26,6 +26,7 @@ use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
+use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
 use crate::windows::CloseJob;
 
@@ -274,9 +275,10 @@ impl AppState {
         let lang = self.lang;
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {
-            s.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into()
+            s.refuse(
+                Source::Distribute,
+                crate::lang::refusals::during_stroke(lang),
+            )
         };
         match action {
             DistributeAction::Start => {
@@ -337,24 +339,26 @@ impl AppState {
             }
             DistributeAction::CancelReplace => {
                 if self.distribute.replace.take().is_some() {
-                    self.message = lang
-                        .pick(
+                    self.info(
+                        Source::Distribute,
+                        lang.pick(
                             "配布用の保存をやめました。",
                             "Save for distribution canceled.",
-                        )
-                        .into();
+                        ),
+                    );
                     self.settle_distribute_window();
                 }
             }
             DistributeAction::CancelJob => {
                 if let Some(job) = &self.distribute.job {
                     job.worker.cancel();
-                    self.message = lang
-                        .pick(
+                    self.info(
+                        Source::Distribute,
+                        lang.pick(
                             "配布用の保存を取り消しています…",
                             "Canceling the save for distribution…",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
         }
@@ -384,26 +388,32 @@ impl AppState {
             return;
         }
         if self.psd.is_busy() || self.psd.import_check.is_some() {
-            self.message = lang
-                .pick("PSD を処理中です。", "A PSD job is running.")
-                .into();
+            self.refuse(
+                Source::Distribute,
+                lang.pick("PSD を処理中です。", "A PSD job is running."),
+            );
             return;
         }
         // 保存の間は、開いた .ylp のハンドルから読む写しを作らない（保存が置換のためにそのハンドルを手放すことがある）
         if self.is_saving() {
-            self.message = format!(
-                "{}: {}",
-                lang.pick("配布用に保存できません", "Cannot save for distribution"),
-                crate::project::busy_reason(lang)
+            self.refuse(
+                Source::Distribute,
+                lang.with_reason(
+                    lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                    crate::lang::refusals::saving(lang),
+                ),
             );
             return;
         }
         let capture = match capture(self) {
             Ok(c) => c,
             Err(text) => {
-                self.message = format!(
-                    "{}: {text}",
-                    lang.pick("配布用に保存できません", "Cannot save for distribution")
+                self.fail(
+                    Source::Distribute,
+                    lang.with_reason(
+                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                        text,
+                    ),
                 );
                 return;
             }
@@ -423,16 +433,26 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Distribute,
+                    lang.with_reason(
+                        lang.pick(
+                            "配布用の写しを準備できません",
+                            "Cannot prepare the copy for distribution",
+                        ),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
-        self.message = lang
-            .pick(
+        self.info(
+            Source::Distribute,
+            lang.pick(
                 "配布用の写しを準備中…",
                 "Preparing the copy for distribution…",
-            )
-            .into();
+            ),
+        );
         self.distribute.job = Some(Job {
             kind: Kind::Prepare,
             file: self.project_name.clone(),
@@ -451,12 +471,13 @@ impl AppState {
             .as_ref()
             .is_some_and(|p| p.is_file() && same_file(p.path(), &path))
         {
-            self.message = lang
-                .pick(
+            self.refuse(
+                Source::Distribute,
+                lang.pick(
                     "開いているファイルには書けません",
                     "Cannot write over the open file",
-                )
-                .into();
+                ),
+            );
             // 窓なしの流れなら閉じ、窓があれば除く物の窓に戻る（選び直せる）
             self.settle_distribute_window();
             return;
@@ -495,16 +516,25 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Distribute,
+                    lang.with_reason(
+                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 // 出さないと決めた窓を戻す（窓なしの流れなら閉じる）。仕事が無いまま、窓も出ない状態にしない
                 self.settle_distribute_window();
                 return;
             }
         };
         let file = file_name(&path);
-        self.message = lang.pick(
-            format!("配布用に保存中: {file}"),
-            format!("Saving for distribution: {file}"),
+        self.info(
+            Source::Distribute,
+            lang.pick(
+                format!("配布用に保存中: {file}"),
+                format!("Saving for distribution: {file}"),
+            ),
         );
         self.distribute.job = Some(Job {
             kind: Kind::Write,
@@ -536,7 +566,7 @@ impl AppState {
                     self.distribute.window_scroll = 0.0;
                 }
                 self.distribute.window = Some(window);
-                self.message.clear();
+                self.clear_message();
             }
             (Ok(Output::Written(path)), Kind::Write) => {
                 let left_out = self
@@ -545,14 +575,18 @@ impl AppState {
                     .take()
                     .map(|w| w.prepared.left_out.clone())
                     .unwrap_or_default();
-                self.message = lang.pick(
+                let mut text = lang.pick(
                     format!("配布用に保存しました: {}", path.display()),
                     format!("Saved for distribution: {}", path.display()),
                 );
-                if !left_out.is_empty() {
-                    // パスのあとで文を区切ってから続ける（保存の知らせと同じ形。パスに空白があっても、どこまでがパスか読み分けられる）
-                    self.message += lang.pick("。 ", ". ");
-                    self.message += &crate::project::capture::left_out_note(lang, &left_out);
+                if left_out.is_empty() {
+                    self.info(Source::Distribute, text);
+                } else {
+                    // パスのあとで文を区切ってから続ける（保存の知らせと同じ形。パスに空白があっても、どこまでがパスか読み分けられる）。
+                    // 入れなかったセットがあるので注意としてログにも残す
+                    text += lang.pick("。 ", ". ");
+                    text += &crate::project::capture::left_out_note(lang, &left_out);
+                    self.warn(Source::Distribute, text);
                 }
             }
             (Err(failure), kind) => {
@@ -561,24 +595,29 @@ impl AppState {
                 if writing {
                     self.settle_distribute_window();
                 }
-                self.message = match failure {
-                    Failure::Canceled => lang
-                        .pick(
+                match failure {
+                    Failure::Canceled => self.info(
+                        Source::Distribute,
+                        lang.pick(
                             "配布用の保存を取り消しました。",
                             "Save for distribution canceled.",
-                        )
-                        .into(),
-                    Failure::Stopped => lang
-                        .pick(
-                            "配布用に保存できません: 処理が止まりました",
-                            "Cannot save for distribution: the job stopped",
-                        )
-                        .into(),
-                    Failure::Message(text) => format!(
-                        "{}: {text}",
-                        lang.pick("配布用に保存できません", "Cannot save for distribution")
+                        ),
                     ),
-                };
+                    Failure::Stopped => self.fail(
+                        Source::Distribute,
+                        lang.pick(
+                            "配布用に保存できません（処理が止まりました）。",
+                            "Cannot save for distribution (the job stopped).",
+                        ),
+                    ),
+                    Failure::Message(text) => self.fail(
+                        Source::Distribute,
+                        lang.with_reason(
+                            lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                            text,
+                        ),
+                    ),
+                }
             }
             _ => {}
         }
@@ -610,10 +649,6 @@ fn capture(state: &AppState) -> Result<crate::project::capture::Capture, String>
     crate::project::capture::capture(state, anchor)
 }
 
-fn io_failure(lang: Lang, e: &yolu_io::Error) -> Failure {
-    Failure::Message(lang.io_error(e))
-}
-
 /// 材料から、今の状態の完全な写しの `Project`（保存が書くのと同じ形。除く前）を組む（別のスレッドで動かす）。
 fn build(
     capture: &crate::project::capture::Capture,
@@ -641,7 +676,7 @@ fn write(
     lang: Lang,
     cancel: &AtomicBool,
 ) -> Result<PathBuf, Failure> {
-    let io = |e: yolu_io::Error| io_failure(lang, &e);
+    let io = |e: yolu_io::Error| Failure::Message(lang.io_error(&e));
     let repointed;
     let source: &Project = match (&prepared.model, remove.contains(&Removal::ModelReference)) {
         (Some(model), false) => {
@@ -663,13 +698,12 @@ fn write(
         // 置き換える先は .ylp として読めることだけを確かめる（予算では断らない）
         SaveTarget::open_within(dest, &yolu_io::Limits::unbounded())
             .map_err(|e| {
-                Failure::Message(format!(
-                    "{}: {}",
+                Failure::Message(lang.with_reason(
                     lang.pick(
                         "置き換える先を .ylp として読めません",
-                        "The file to replace is not a readable .ylp"
+                        "The file to replace is not a readable .ylp",
                     ),
-                    lang.io_error(&e)
+                    lang.io_error(&e),
                 ))
             })?
             .1

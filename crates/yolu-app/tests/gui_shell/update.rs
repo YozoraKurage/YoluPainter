@@ -474,12 +474,15 @@ fn headless_failures_are_told_by_kind_in_both_languages() {
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
-    assert_eq!(state.message, "更新を確かめられません: 通信できません");
+    assert_eq!(state.message, "更新を確かめられません（通信できません）。");
     assert!(state.update.offer().is_none());
     state.lang = Lang::En;
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
-    assert_eq!(state.message, "Cannot check for updates: connection failed");
+    assert_eq!(
+        state.message,
+        "Cannot check for updates (connection failed)."
+    );
     // 取れたが、署名が合わない（別の鍵で署名した更新情報）
     rig.server.fail_metadata.store(false, Ordering::Relaxed);
     let v = Version::parse("0.2.0").unwrap();
@@ -504,7 +507,7 @@ fn headless_failures_are_told_by_kind_in_both_languages() {
     settle(&mut state);
     assert_eq!(
         state.message,
-        "Cannot check for updates: verification failed"
+        "Cannot check for updates (verification failed)."
     );
     assert!(state.update.offer().is_none());
 }
@@ -765,7 +768,7 @@ fn headless_an_unusable_beta_place_never_stops_the_stable_update() {
     let (mut state, rig) = setup(Some(signed_metadata("0.1.0-rc.1", INSTALLER)));
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
     check_now(&mut state);
-    assert_eq!(state.message, "更新を確かめられません: 通信できません");
+    assert_eq!(state.message, "更新を確かめられません（通信できません）。");
     assert!(state.update.offer().is_none());
 }
 
@@ -895,7 +898,7 @@ fn headless_a_check_cut_short_by_the_beta_setting_still_offers_a_newer_stable() 
     rig2.server.hold_beta.store(false, Ordering::Relaxed);
     settle(&mut next);
     assert!(next.update.offer().is_none());
-    assert_eq!(next.message, "更新を確かめられません: 通信できません");
+    assert_eq!(next.message, "更新を確かめられません（通信できません）。");
 }
 
 #[test]
@@ -908,18 +911,21 @@ fn headless_the_failure_reason_comes_from_stable_not_from_the_beta_place() {
     // stable の更新情報が壊れている（署名・形式）: 検証を通らない
     *rig.server.metadata.lock().unwrap() = b"not an update file".to_vec();
     check_now(&mut state);
-    assert_eq!(state.message, "更新を確かめられません: 検証を通りません");
+    assert_eq!(
+        state.message,
+        "更新を確かめられません（検証を通りません）。"
+    );
     state.lang = Lang::En;
     check_now(&mut state);
     assert_eq!(
         state.message,
-        "Cannot check for updates: verification failed"
+        "Cannot check for updates (verification failed)."
     );
     // stable が引けない: 通信できない
     state.lang = Lang::Ja;
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
     check_now(&mut state);
-    assert_eq!(state.message, "更新を確かめられません: 通信できません");
+    assert_eq!(state.message, "更新を確かめられません（通信できません）。");
     assert!(state.update.offer().is_none());
 }
 
@@ -1041,7 +1047,7 @@ fn headless_a_corrupt_or_cut_download_is_rejected_and_leaves_nothing_to_run() {
     settle(&mut state);
     assert_eq!(
         state.message,
-        "更新をダウンロードできません: 検証を通りません"
+        "更新をダウンロードできません（検証を通りません）。"
     );
     assert!(rig.staging.files().is_empty());
     assert!(state.update.ready().is_none() && !state.update.is_ready_open());
@@ -1052,7 +1058,7 @@ fn headless_a_corrupt_or_cut_download_is_rejected_and_leaves_nothing_to_run() {
     settle(&mut state);
     assert_eq!(
         state.message,
-        "更新をダウンロードできません: 通信できません"
+        "更新をダウンロードできません（通信できません）。"
     );
     assert!(rig.staging.files().is_empty());
     assert!(rig.launched().is_empty() && !state.quit);
@@ -1076,14 +1082,14 @@ fn headless_metadata_without_this_systems_download_says_so_and_a_broken_one_stil
     assert!(state.update.offer().is_none());
     assert_eq!(
         state.message,
-        "更新を確かめられません: この環境向けの配布物がありません"
+        "更新を確かめられません（この環境向けの配布物がありません）。"
     );
     state.lang = Lang::En;
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
     assert_eq!(
         state.message,
-        "Cannot check for updates: no download for this system"
+        "Cannot check for updates (no download for this system)."
     );
     // 署名の合わない（本文を書き換えた）更新情報は、今までどおり検証の失敗
     let mut envelope: Envelope =
@@ -1094,13 +1100,16 @@ fn headless_metadata_without_this_systems_download_says_so_and_a_broken_one_stil
     settle(&mut state);
     assert_eq!(
         state.message,
-        "Cannot check for updates: verification failed"
+        "Cannot check for updates (verification failed)."
     );
     // 通信の失敗は、通信できないまま
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
-    assert_eq!(state.message, "Cannot check for updates: connection failed");
+    assert_eq!(
+        state.message,
+        "Cannot check for updates (connection failed)."
+    );
 }
 
 #[test]
@@ -1301,7 +1310,7 @@ fn headless_a_failed_save_keeps_its_reason_and_stops_the_update() {
     for attempt in 0..2 {
         apply(&mut state, UpdateAction::Run { save: true });
         assert!(
-            state.message.starts_with("保存できません: ") && state.message.contains("a.ylp"),
+            state.message.contains("に保存できません（") && state.message.contains("a.ylp"),
             "{attempt}: {}",
             state.message
         );
@@ -1309,7 +1318,7 @@ fn headless_a_failed_save_keeps_its_reason_and_stops_the_update() {
         assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
         state.update_finish_save();
         assert!(
-            state.message.starts_with("保存できません: "),
+            state.message.contains("に保存できません（"),
             "{}",
             state.message
         );
@@ -1359,7 +1368,7 @@ fn headless_save_and_update_waits_for_a_background_save() {
         state.update_finish_save();
         if fails {
             assert!(
-                state.message.starts_with("保存できません: "),
+                state.message.contains("に保存できません（"),
                 "{}",
                 state.message
             );

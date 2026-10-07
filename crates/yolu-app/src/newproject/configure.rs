@@ -6,8 +6,8 @@
 //! 変えたセットは履歴を消す（元へ戻せない）。
 
 use super::{
-    groups_of, limit_error, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow,
-    Prep, SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
+    groups_of, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
+    SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, Document, PreparedResize};
 use crate::lang::Lang;
@@ -174,7 +174,7 @@ fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> Se
 pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     if win.drafts.len() >= MAX_SETS {
-        win.error = Some(limit_error(app.lang));
+        win.error = Some(crate::lang::refusals::set_limit(app.lang));
         return;
     }
     let groups = win.groups(app);
@@ -193,7 +193,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
         if win.drafts.iter().all(|d| d.material != Some(g.index)) {
             if win.drafts.len() >= MAX_SETS {
                 // 上限で足せなかったマテリアルがある
-                win.error = Some(limit_error(app.lang));
+                win.error = Some(crate::lang::refusals::set_limit(app.lang));
                 break;
             }
             let draft = new_draft(app, win, Some(g));
@@ -216,9 +216,7 @@ pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
 pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     let lang = app.lang;
     if app.is_stroking() {
-        return Err(lang
-            .pick("描いている間はできません", "Not while drawing")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     let drafts = &win.drafts;
     if drafts.is_empty() {
@@ -230,7 +228,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             .into());
     }
     if drafts.len() > MAX_SETS {
-        return Err(limit_error(lang));
+        return Err(crate::lang::refusals::set_limit(lang));
     }
     if win.model.is_some() && !matches!(win.prep, Prep::Ready { .. }) {
         return Err(lang
@@ -265,7 +263,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
         let standard = d.size.0 == d.size.1 && RESOLUTIONS.contains(&d.size.0);
         if d.uid.is_none() && !standard {
-            return Err(size_error(lang));
+            return Err(crate::lang::refusals::set_size(lang));
         }
         if d.resizes() {
             if d.read_only {
@@ -275,7 +273,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 ));
             }
             if !standard {
-                return Err(size_error(lang));
+                return Err(crate::lang::refusals::set_size(lang));
             }
         }
     }
@@ -429,23 +427,14 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     })
 }
 
-fn size_error(lang: Lang) -> String {
-    lang.pick(
-        format!(
-            "セットの大きさは {} のどれかです",
-            RESOLUTIONS.map(|r| r.to_string()).join("・")
-        ),
-        format!(
-            "A texture set's size is one of {}",
-            RESOLUTIONS.map(|r| r.to_string()).join(", ")
-        ),
-    )
-}
-
 // ───────── 適用 ─────────
 
 /// 計画どおりに適用する。断るときは何も変えず、理由を返す。うまくいけば知らせの文を返す。
-pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, String> {
+/// 当てた結果の知らせ（種類と文。消えた覚えた選択範囲・モデルに無いセット・戻せなかったポーズの項目があれば注意）。
+pub(super) fn apply(
+    app: &mut AppState,
+    win: &mut NpWindow,
+) -> Result<(crate::notice::Kind, String), String> {
     let lang = app.lang;
     let plan = plan(app, win)?;
     // ── 失敗しうる所（まだ何も変えない）──
@@ -599,6 +588,7 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     if let Some(name) = model_note {
         text += &lang.pick(format!(" モデル: {name}。"), format!(" Model: {name}."));
     }
+    let pose_noted = pose_note.is_some();
     if let Some(note) = pose_note {
         text += &format!(" {note}");
     }
@@ -622,24 +612,31 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
                 .collect::<Vec<_>>()
                 .join(sep)
         };
-        text += &lang.pick(
-            format!(
-                " 縮小で消えた覚えた選択範囲: {}。",
-                list("・", &|n| format!("{n} 件"))
+        text += " ";
+        text += &lang.with_reason(
+            lang.pick(
+                "縮小で消えた覚えた選択範囲があります",
+                "Some remembered selections were lost to the shrink",
             ),
-            format!(
-                " Remembered selections lost to the shrink: {}.",
-                list(", ", &|n| n.to_string())
+            lang.pick(
+                list("・", &|n| format!("{n} 件")),
+                list(", ", &|n| n.to_string()),
             ),
         );
     }
-    if app.model.is_some() && missing > 0 {
+    let not_in_model = app.model.is_some() && missing > 0;
+    if not_in_model {
         text += &lang.pick(
             format!(" モデルに無いセット {missing}。"),
             format!(" Not in the model: {missing}."),
         );
     }
-    Ok(text)
+    let kind = if dropped.is_empty() && !not_in_model && !pose_noted {
+        crate::notice::Kind::Info
+    } else {
+        crate::notice::Kind::Warning
+    };
+    Ok((kind, text))
 }
 
 /// 大きさを変えたセット（`resample` の結果）。
@@ -671,7 +668,13 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
                     .get(index)
                     .map(|s| s.name.clone())
                     .unwrap_or_default();
-                return Err(format!("{name}: {}", lang.core_error(&e)));
+                return Err(lang.with_reason(
+                    lang.pick(
+                        format!("テクスチャセット{}を変えられません", lang.quote(&name)),
+                        format!("Cannot change texture set {}", lang.quote(&name)),
+                    ),
+                    lang.core_error(&e),
+                ));
             }
         }
     }

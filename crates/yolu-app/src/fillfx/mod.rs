@@ -25,7 +25,7 @@ use yolu_core::{
 };
 
 use crate::lang::Lang;
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
 use crate::state::{AppState, DialogRequest};
 use crate::view3d::shape_gizmo::{Handle, Mode};
 
@@ -139,21 +139,24 @@ impl Lang {
     /// 塗りつぶしの投影の値の断り（core の `FillError`）。
     pub fn fill_error(self, e: &FillError) -> String {
         match e {
-            FillError::Invalid(what) => self.pick(
-                format!("投影の値が使えません: {what}"),
-                format!(
-                    "Invalid projection: {}",
+            FillError::Invalid(what) => self.with_reason(
+                self.pick("投影の値が使えません", "Invalid projection"),
+                self.pick(
+                    (*what).to_owned(),
                     match *what {
-                        "投影に有限でない値" | "箱に有限でない値" =>
-                            "not a finite number",
+                        "投影に有限でない値" | "箱に有限でない値" => {
+                            "not a finite number"
+                        }
                         "繰り返しは 0.001..10000" => "tiling must be 0.001 to 10000",
                         "オフセット・回転の範囲" => "offset or rotation out of range",
                         "混ぜ幅・減衰の範囲" => "blend or falloff out of range",
                         "減衰はデカールだけ" => "falloff is for decals only",
-                        "箱の位置・回転・大きさの範囲" =>
-                            "box position, rotation or size out of range",
+                        "箱の位置・回転・大きさの範囲" => {
+                            "box position, rotation or size out of range"
+                        }
                         _ => "out of range",
                     }
+                    .to_owned(),
                 ),
             ),
             other => self.pick(other.to_string(), "The projection cannot be used".into()),
@@ -192,7 +195,8 @@ impl AppState {
     }
 
     fn fill_refusal(&mut self, e: &yolu_core::CoreError) {
-        self.message = refusal_text(self.lang, e);
+        let text = self.lang.core_error(e);
+        self.notify(crate::notice::Kind::of_core(e), Source::FillLayer, text);
     }
 
     /// 塗りつぶしの層の id（塗りつぶしでなければ理由を出して `None`）。
@@ -200,10 +204,11 @@ impl AppState {
         match self.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
             _ => {
-                self.message = self
-                    .lang
-                    .pick("塗りつぶしのレイヤーではありません", "Not a fill layer")
-                    .into();
+                self.refuse(
+                    Source::FillLayer,
+                    self.lang
+                        .pick("塗りつぶしのレイヤーではありません", "Not a fill layer"),
+                );
                 None
             }
         }
@@ -213,9 +218,10 @@ impl AppState {
     pub fn fill_apply(&mut self, op: FillOp) {
         let lang = self.lang;
         if op.edits_document() && self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let revision = self.doc.revision();
@@ -230,14 +236,15 @@ impl AppState {
                 };
                 if let Some(image) = image {
                     if let Err(why) = self.use_shelf_image(&inputs::resource_id(image)) {
-                        self.message = why;
+                        self.fail(Source::FillLayer, why);
                         return;
                     }
                 }
                 self.doc.end_coalescing();
                 match self.doc.set_fill_image(layer, channel, image) {
                     Ok(()) => {
-                        self.message =
+                        self.info(
+                            Source::FillLayer,
                             match image.and_then(|i| self.shelf.get(&inputs::resource_id(i))) {
                                 Some(r) => format!(
                                     "{}: {}",
@@ -245,7 +252,8 @@ impl AppState {
                                     r.name
                                 ),
                                 None => lang.pick("画像を外しました", "Image removed").into(),
-                            };
+                            },
+                        );
                     }
                     Err(e) => {
                         // 画像は先に復号して文書へ渡してある（core はそれを見てから断る）。差さなかった画像は手放す
@@ -266,7 +274,7 @@ impl AppState {
                 };
                 let projection = *projection;
                 if let Err(e) = projection.validate() {
-                    self.message = lang.fill_error(&e);
+                    self.fail(Source::FillLayer, lang.fill_error(&e));
                     return;
                 }
                 if let Err(e) = self.doc.set_fill_projection(layer, projection, coalesce) {
@@ -296,7 +304,10 @@ impl AppState {
                         }
                     }
                     None => {
-                        self.message = lang.pick("モデルがありません", "No model").into();
+                        self.refuse(
+                            Source::FillLayer,
+                            lang.pick("モデルがありません", "No model"),
+                        );
                     }
                 }
             }
@@ -351,9 +362,10 @@ impl AppState {
             }
             FillOp::ImageColorSpace { image, space } => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::FillLayer,
+                        crate::lang::refusals::during_stroke(lang),
+                    );
                     return;
                 }
                 // 読み方は棚の索引に書くので、取り込みと同じく保存中は断る
@@ -372,12 +384,12 @@ impl AppState {
                         // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
                         if self.fx.inputs.has_decoded_image(image) {
                             if let Err(why) = self.use_shelf_image(&id) {
-                                self.message = why;
+                                self.fail(Source::FillLayer, why);
                             }
                         }
                     }
                     Ok(false) => {}
-                    Err(why) => self.message = why,
+                    Err(why) => self.fail(Source::FillLayer, why),
                 }
             }
             FillOp::ImportImageDialog => {
@@ -552,29 +564,33 @@ impl AppState {
     fn place_decal(&mut self, image: ImageId, at: Pos2, rect: Rect) {
         let lang = self.lang;
         let Some((model, material)) = self.region_model() else {
-            self.message = self.region_missing_reason();
+            self.refuse(Source::FillLayer, self.region_missing_reason());
             return;
         };
         let view = self.view3d.camera.view(rect.width(), rect.height());
         let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
         let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
-            self.message = lang
-                .pick("モデルの上ではありません", "Not on the model")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                lang.pick("モデルの上ではありません", "Not on the model"),
+            );
             return;
         };
         if hit.material != material {
             let name = model.material_name(hit.material as usize, lang);
-            self.message = lang.pick(
-                format!("ほかのテクスチャセット（{name}）の面です。"),
-                format!("Surface of another texture set ({name})."),
+            self.refuse(
+                Source::FillLayer,
+                lang.pick(
+                    format!("ほかのテクスチャセット（{name}）の面です。"),
+                    format!("Surface of another texture set ({name})."),
+                ),
             );
             return;
         }
         let (name, size) = match self.take_shelf_image(image) {
             Ok(taken) => taken,
             Err(why) => {
-                self.message = why;
+                self.fail(Source::FillLayer, why);
                 return;
             }
         };
@@ -601,16 +617,29 @@ impl AppState {
                 self.set_edit_mask(false);
                 self.fillfx.handles_hidden = false;
                 self.fillfx.edit_gradient = None;
-                self.message = match self.decal_problem(id) {
-                    None => format!(
-                        "{}: {name}",
-                        lang.pick("デカールを置きました", "Decal placed")
+                match self.decal_problem(id) {
+                    None => self.info(
+                        Source::FillLayer,
+                        format!(
+                            "{}: {name}",
+                            lang.pick("デカールを置きました", "Decal placed")
+                        ),
                     ),
-                    Some(why) => lang.pick(
-                        format!("デカールを置きました。まだ出ません: {name}（{why}）"),
-                        format!("Decal placed, not shown yet: {name} ({why})"),
+                    // 置いたが、まだ出ない（理由つき）: 気をつけること
+                    Some(why) => self.warn(
+                        Source::FillLayer,
+                        lang.pick(
+                            format!(
+                                "デカールを置きました。{}はまだ出ません（{why}）。",
+                                lang.quote(&name)
+                            ),
+                            format!(
+                                "Decal placed. {} is not shown yet ({why}).",
+                                lang.quote(&name)
+                            ),
+                        ),
                     ),
-                };
+                }
             }
             Err(e) => {
                 self.release_shelf_image(image);
@@ -631,7 +660,10 @@ impl AppState {
         let (mut rgba, w, h) = match read_png(path, lang) {
             Ok(read) => read,
             Err(why) => {
-                self.message = format!("{name}: {why}");
+                self.fail(
+                    Source::FillLayer,
+                    lang.with_reason(cannot_add_image(lang, &name), why),
+                );
                 return;
             }
         };
@@ -645,18 +677,33 @@ impl AppState {
                 if added {
                     self.modified = true;
                 }
-                self.message = format!(
-                    "{}: {name}",
-                    if added {
-                        lang.pick("棚に画像を取り込みました", "Image added to the shelf")
-                    } else {
-                        lang.pick("すでに棚にあります", "Already on the shelf")
-                    }
+                self.info(
+                    Source::FillLayer,
+                    format!(
+                        "{}: {name}",
+                        if added {
+                            lang.pick("棚に画像を取り込みました", "Image added to the shelf")
+                        } else {
+                            lang.pick("すでに棚にあります", "Already on the shelf")
+                        }
+                    ),
                 );
             }
-            Err(why) => self.message = format!("{name}: {why}"),
+            Err(why) => self.fail(
+                Source::FillLayer,
+                lang.with_reason(cannot_add_image(lang, &name), why),
+            ),
         }
     }
+}
+
+/// 「「名前」を棚に取り込めません」（理由は `Lang::with_reason` で添える）。
+fn cannot_add_image(lang: Lang, name: &str) -> String {
+    let name = lang.quote(name);
+    lang.pick(
+        format!("{name}を棚に取り込めません"),
+        format!("Cannot import {name}"),
+    )
 }
 
 /// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。

@@ -183,9 +183,10 @@ fn several_dropped_psds_import_only_the_first_and_say_why() {
             message.contains(lang.pick("ほか 2 件は取り込みません", "2 more not imported")),
             "{lang:?}: 理由と件数: {message}"
         );
-        assert!(
-            !yolu_app::toast::is_error(&message),
-            "{lang:?}: 取り込めたのに断りの文として出さない: {message}"
+        assert_eq!(
+            st(&h).message_kind(),
+            yolu_app::notice::Kind::Warning,
+            "{lang:?}: 取り込めたのに断り・失敗として出さない（一部を取り込まなかった注意）: {message}"
         );
         assert_eq!(st(&h).sets.len(), 2, "{lang:?}: 1 つだけ入る");
         assert_eq!(st(&h).sets.current().name, "a");
@@ -290,10 +291,6 @@ fn a_ylp_dropped_with_a_psd_is_still_opened_instead_and_the_psd_is_left_alone() 
     // .ylp が先（開けなくても、PSD は取り込まない）
     assert!(!st(&h).psd.is_busy());
     assert_eq!(st(&h).sets.len(), 1);
-    assert!(
-        st(&h).message.starts_with("開けません"),
-        "{}",
-        st(&h).message
-    );
+    assert!(st(&h).message.contains("開けません"), "{}", st(&h).message);
     std::fs::remove_dir_all(dir).unwrap();
 }

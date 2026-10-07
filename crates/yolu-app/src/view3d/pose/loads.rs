@@ -372,7 +372,13 @@ mod tests {
         let path = dir.fbx("甲");
         let held = Held::new(&path);
         let mut app = AppState::new(64, 64);
-        let note = crate::newproject::reopen::start(&mut app, &dir.0.join("p.ylp"), "甲.fbx", "");
+        let note = crate::newproject::reopen::start(
+            &mut app,
+            &dir.0.join("p.ylp"),
+            "甲.fbx",
+            "",
+            crate::notice::Kind::Info,
+        );
         assert!(note.is_none());
         // ファイルの確かめのあと、読み始める
         wait_until("読み始める", || {

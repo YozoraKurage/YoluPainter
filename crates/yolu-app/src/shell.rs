@@ -106,7 +106,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     let l = app.lang;
     // 保存のために押せない項目は、理由をツールチップに出す
     let why = |entry: Entry<Action>| match app.is_saving() {
-        true => entry.tooltip(crate::project::busy_reason(l)),
+        true => entry.tooltip(crate::lang::refusals::saving(l)),
         false => entry,
     };
     match index {

@@ -43,11 +43,14 @@ pub enum Tab {
     History,
     ColorSets,
     Navigator,
+    /// 起動してからの注意と失敗の知らせ（既定の並びではレイヤーと同じ組の後ろ。プロパティ・ヒストリーの組に 3 つ並べると、いちばん小さい窓で
+    /// 英語の名前が欠ける。古い並びに無ければ、読んだときにレイヤーの組へ足す）。
+    Log,
 }
 
 impl Tab {
     /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
-    pub const ALL: [Tab; 13] = [
+    pub const ALL: [Tab; 14] = [
         Tab::SubTools,
         Tab::Assets,
         Tab::Color,
@@ -61,6 +64,7 @@ impl Tab {
         Tab::History,
         Tab::ColorSets,
         Tab::Navigator,
+        Tab::Log,
     ];
 
     /// 保存する名前（並びのファイル `layout.json` に書く。Rust の名前を変えても変わらないよう、ここで決める。足すのは良いが、
@@ -80,6 +84,7 @@ impl Tab {
             Tab::History => "history",
             Tab::ColorSets => "color_sets",
             Tab::Navigator => "navigator",
+            Tab::Log => "log",
         }
     }
 
@@ -108,6 +113,7 @@ impl Tab {
             Tab::Channels => lang.pick("チャンネル", "Channels"),
             Tab::History => lang.pick("ヒストリー", "History"),
             Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
+            Tab::Log => lang.pick("ログ", "Log"),
         }
     }
 }
@@ -141,7 +147,7 @@ pub fn default_dock() -> DockState<Tab> {
     // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小の窓で名前が欠ける）
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
     surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
-    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
+    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
     surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
     dock
 }
@@ -237,6 +243,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Assets => assets::show(ui, self.app),
             Tab::SubTools => crate::panels::subtools::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
+            Tab::Log => crate::panels::log::show(ui, self.app),
         }
     }
 
@@ -396,9 +403,8 @@ impl YoluApp {
             self.link.force();
         }
         // 起動時の知らせを受け付けの文で上書きしない。状態は右端の印とツールチップに出す。
-        let message = self.state.message.clone();
-        self.link.poll(&mut self.state);
-        self.state.message = message;
+        let link = &mut self.link;
+        self.state.keep_notice(|state| link.poll(state));
         self.state.link = self.link.view(&self.state);
     }
 
@@ -414,11 +420,14 @@ impl YoluApp {
             Ok(problems) => problems.first().map(|p| lang.recovery_settings_problem(p)),
             Err(e) => Some(lang.recovery_unavailable(&e)),
         };
+        // 起動時の知らせ（あれば）に添える: 復旧を使えない・設定を読めない（気をつけること）
         if let Some(note) = note {
-            if !self.state.message.is_empty() {
-                self.state.message.push(' ');
-            }
-            self.state.message.push_str(&note);
+            self.state.amend(
+                crate::notice::Kind::Warning,
+                crate::notice::Source::Recovery,
+                " ",
+                &note,
+            );
         }
     }
 
@@ -479,8 +488,21 @@ impl YoluApp {
                 format!("Cannot read the gradient sets. {}", e.describe(lang)),
             )
         }));
-        if !notices.is_empty() {
-            app.state.message = notices.join(" ");
+        // カラーセット（読めなかった物は、起動時の知らせに「 / 」で添える）
+        let colorsets = settings
+            .as_deref()
+            .and_then(|p| p.parent())
+            .and_then(|dir| crate::colorsets::attach(&mut app.state, dir.join("colorsets")));
+        // 起動時に読めなかった設定・ブラシ・サブツール・グラデーションセット・カラーセット（既定で始めた）: 気をつけること
+        let mut startup = notices.join(" ");
+        if let Some(colorsets) = colorsets {
+            if !startup.is_empty() {
+                startup.push_str(" / ");
+            }
+            startup.push_str(&colorsets);
+        }
+        if !startup.is_empty() {
+            app.state.warn(crate::notice::Source::Settings, startup);
         }
         // 「起動時に更新を確かめる」の選択は、言語の設定と同じフォルダの別のファイル
         if let Some(path) = settings
@@ -494,9 +516,7 @@ impl YoluApp {
         if loaded.compositing != crate::settings::Compositing::Auto {
             app.display.set_backend(canvas_backend(loaded.compositing));
         }
-        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
-            crate::colorsets::attach(&mut app.state, dir.join("colorsets"));
-        }
+
         // ドックの並びと窓の大きさ・位置は、設定のフォルダの layout.json から戻す（読めない・古い・知らないタブは捨てて既定の並び。
         // 理由は診断のログだけ）
         if let Some(path) = settings.as_deref().and_then(crate::layout::path_for) {
@@ -583,10 +603,11 @@ impl YoluApp {
         }
         *saved = now.clone();
         if crate::settings::save(path, &now).is_err() {
-            self.state.message = now
-                .lang
-                .pick("設定を保存できません。", "Cannot save the settings.")
-                .into();
+            self.state.fail(
+                crate::notice::Source::Settings,
+                now.lang
+                    .pick("設定を保存できません。", "Cannot save the settings."),
+            );
         }
     }
 
@@ -1117,11 +1138,10 @@ impl YoluApp {
             .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")));
         if let Some(path) = project {
             if self.state.is_stroking() {
-                self.state.message = self
-                    .state
-                    .lang
-                    .pick("描いている間は開きません。", "Cannot open during a stroke.")
-                    .into();
+                self.state.refuse(
+                    crate::notice::Source::Open,
+                    crate::lang::refusals::during_stroke(self.state.lang),
+                );
             } else if self.confirm_discard() {
                 self.state.apply(Action::OpenProject(path.clone()));
             }
@@ -1174,17 +1194,21 @@ impl YoluApp {
         }
         let more = std::mem::take(&mut self.psd_drop_more);
         let lang = self.state.lang;
-        let message = &mut self.state.message;
+        let message = &self.state.message;
         let joint = lang.pick(
             if message.ends_with('。') { "" } else { "。" },
             if message.ends_with('.') { " " } else { ". " },
         );
-        *message += &format!(
-            "{joint}{}",
-            lang.pick(
-                format!("ほか {more} 件は取り込みません（PSD は 1 つずつ）。"),
-                format!("{more} more not imported (one PSD at a time)."),
-            )
+        // 取り込みの知らせに添える（取り込まなかった物がある: 気をつけること）
+        let extra = lang.pick(
+            format!("ほか {more} 件は取り込みません（PSD は 1 つずつ）。"),
+            format!("{more} more not imported (one PSD at a time)."),
+        );
+        self.state.amend(
+            crate::notice::Kind::Warning,
+            crate::notice::Source::Psd,
+            joint,
+            &extra,
         );
     }
 
@@ -1417,7 +1441,7 @@ impl YoluApp {
 
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
     fn finish_message(&mut self, ctx: &egui::Context) {
-        crate::crash::message(&self.state.message);
+        self.state.record_message();
         if self.state.toast.is_pending() {
             ctx.request_repaint();
         }
@@ -1930,7 +1954,7 @@ impl YoluApp {
         // 見えない窓でも、受けた要求は実行する（保存の結果を受けた後に）
         self.tick_ops(ctx);
         self.state.message_end(prior);
-        crate::crash::message(&self.state.message);
+        self.state.record_message();
     }
 }
 
@@ -2132,7 +2156,7 @@ mod tests {
             let app = startup_app(&[&bad]);
             assert!(app.state.project.is_none(), "{}", bad.display());
             assert!(
-                app.state.message.starts_with("開けません: "),
+                app.state.message.contains("を開けません（"),
                 "{}: {}",
                 bad.display(),
                 app.state.message

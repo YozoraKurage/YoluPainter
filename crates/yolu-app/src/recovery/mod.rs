@@ -42,6 +42,7 @@ pub use text::recovered_name;
 pub(crate) use writer::Waiter;
 
 use crate::jobs::JobSpec;
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 
 /// 復旧の失敗。画面は種類から短い理由を作る（`Lang::recovery_error`）。
@@ -537,13 +538,13 @@ impl AppState {
                     landed = true;
                     if self.recovery.failed {
                         self.recovery.failed = false;
-                        self.message = self.lang.recovery_working_again().into();
+                        self.info(Source::Recovery, self.lang.recovery_working_again());
                     }
                 }
                 Err(error) => {
                     a.submitted = None;
                     self.recovery.failed = true;
-                    self.message = self.lang.recovery_failed(&error);
+                    self.fail(Source::Recovery, self.lang.recovery_failed(&error));
                 }
             }
         }
@@ -678,10 +679,10 @@ impl AppState {
                     return;
                 }
                 if self.is_stroking() {
-                    self.message = self
-                        .lang
-                        .pick("描いている間は開きません。", "Cannot open during a stroke.")
-                        .into();
+                    self.refuse(
+                        Source::Recovery,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                     return;
                 }
                 let request = OpenRequest {
@@ -759,13 +760,13 @@ impl AppState {
             None => !self.recovery.settings_unreadable,
         };
         if !saved {
-            self.message = self
-                .lang
-                .pick(
+            self.fail(
+                Source::Recovery,
+                self.lang.pick(
                     "復旧の設定を保存できません。",
                     "Cannot save the recovery settings.",
-                )
-                .into();
+                ),
+            );
         }
     }
 
@@ -778,10 +779,13 @@ impl AppState {
             return;
         }
         if self.is_saving() {
-            self.message = format!(
-                "{}: {}",
-                self.lang.pick("開けません", "Cannot open"),
-                crate::project::busy_reason(self.lang)
+            self.refuse(
+                Source::Recovery,
+                self.lang.with_reason(
+                    self.lang
+                        .pick("復旧を開けません", "Cannot open the recovery"),
+                    crate::lang::refusals::saving(self.lang),
+                ),
             );
             return;
         }
@@ -795,7 +799,7 @@ impl AppState {
                 self.recovery.window = None;
             }
             Err(error) => {
-                self.message = self.lang.recovery_cannot_open(&error);
+                self.fail(Source::Recovery, self.lang.recovery_cannot_open(&error));
                 if let Some(w) = self.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
@@ -830,7 +834,7 @@ impl AppState {
             }
             Ok(()) => {}
             Err(error) => {
-                self.message = self.lang.recovery_error(&error);
+                self.fail(Source::Recovery, self.lang.recovery_error(&error));
                 if let Some(w) = self.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }

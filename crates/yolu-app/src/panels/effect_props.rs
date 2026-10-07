@@ -376,6 +376,7 @@ fn filter_body(
         }
         EffectSettings::Filter(_) => {
             if let Some(value) = effect.settings().color_adjust() {
+                let mut failure = None;
                 let mut params = super::color_adjust::Params {
                     key: ("effect", id.0),
                     enabled,
@@ -386,11 +387,14 @@ fn filter_body(
                     histogram: None,
                     sets: &mut app.ramp_sets,
                     eyedrop: &mut app.eyedrop,
-                    message: &mut app.message,
+                    failure: &mut failure,
                 };
                 if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(EffectSettings::from_color_adjust(change.value));
+                }
+                if let Some(text) = failure {
+                    app.fail(crate::notice::Source::Gradient, text);
                 }
             }
         }

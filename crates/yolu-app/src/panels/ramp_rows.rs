@@ -51,8 +51,8 @@ pub struct Params<'a> {
     pub features: Features,
     pub sets: &'a mut RampSets,
     pub eyedrop: &'a mut EyedropState,
-    /// 状態の帯の知らせ（保存の失敗など）。
-    pub message: &'a mut String,
+    /// グラデーションセットの保存の失敗の文（呼んだ側が `AppState::fail` で知らせる。部品は `AppState` を借りない）。
+    pub failure: &'a mut Option<String>,
 }
 
 /// 決まった変更。
@@ -511,7 +511,7 @@ fn sets_rows(
                 p.sets.show_group(RampSets::user_group());
                 p.sets.selected = Some(index);
             }
-            Err(e) => *p.message = e.describe(lang),
+            Err(e) => *p.failure = Some(e.describe(lang)),
         }
     }
     let (renaming_id, renaming) = remembered(ui, p, "renaming", false);
@@ -545,7 +545,7 @@ fn sets_rows(
         if let Some(index) = user_selected {
             match p.sets.remove(index) {
                 Ok(()) => p.sets.selected = None,
-                Err(e) => *p.message = e.describe(lang),
+                Err(e) => *p.failure = Some(e.describe(lang)),
             }
             renaming = false;
         }
@@ -565,7 +565,7 @@ fn sets_rows(
             );
             if let Some(name) = out.committed {
                 if let Err(e) = p.sets.rename(index, &name) {
-                    *p.message = e.describe(lang);
+                    *p.failure = Some(e.describe(lang));
                 }
                 renaming = false;
             } else if started && !out.focused {

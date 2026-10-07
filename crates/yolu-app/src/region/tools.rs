@@ -12,7 +12,8 @@ use yolu_core::{CoreError, Document, LayerId, SelectionMask, TriangleFill};
 
 use super::kind_name;
 use crate::canvas::view::CanvasView;
-use crate::matpaint::refusal_text;
+use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{AppState, StrokeSource, Tool};
 
 /// ポインタを置いた画面（座標の変換が違う）。
@@ -133,13 +134,8 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
 
 /// 読むだけのテクスチャセットなら、その短い理由（文書を変える道具の入口で断る文。ステータスバーへ）。
 pub(super) fn read_only_message(app: &AppState) -> Option<String> {
-    app.read_only_reason().map(|reason| {
-        format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
-        )
-    })
+    app.read_only_reason()
+        .map(|reason| crate::lang::refusals::read_only_set(app.lang, reason))
 }
 
 /// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗る層。
@@ -183,17 +179,20 @@ fn fill_with(app: &mut AppState, layer: LayerId, mask: &SelectionMask) -> Result
 }
 
 fn needs_model(app: &mut AppState) {
-    app.message = app.region_missing_reason();
+    app.refuse(Source::Fill, app.region_missing_reason());
 }
 
 fn other_set(app: &mut AppState, name: &str) {
-    app.message = format!(
-        "{}: {name}",
-        app.lang.pick(
-            "ほかのテクスチャセットの面です",
-            "Another texture set's face"
-        )
-    );
+    app.refuse(Source::Fill, other_set_face(app.lang, name));
+}
+
+/// ポインタの下の面がほかのテクスチャセット（`name`）のものだという断り。
+pub(crate) fn other_set_face(lang: Lang, name: &str) -> String {
+    let name = lang.quote(name);
+    lang.pick(
+        format!("ほかのテクスチャセット{name}の面です。"),
+        format!("This face belongs to another texture set, {name}."),
+    )
 }
 
 // ───────── バケツ ─────────
@@ -204,15 +203,19 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let layer = match paint_gate(app) {
         Ok(l) => l,
         Err(m) => {
-            app.message = m;
+            app.refuse(Source::Fill, m);
             return;
         }
     };
     let (mask, what) = if app.region.by_color {
         let Where::Canvas(view) = w else {
-            app.message = lang
-                .pick("近い色は 2D のみ", "Similar colors: 2D only")
-                .into();
+            app.refuse(
+                Source::Fill,
+                lang.pick(
+                    "近い色は 2D のキャンバスでだけ使えます。",
+                    "Similar colors work only on the 2D canvas.",
+                ),
+            );
             return;
         };
         let (x, y) = view.to_canvas(at);
@@ -229,12 +232,13 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             Under::Triangle(t) => t,
             Under::OtherSet(name) => return other_set(app, &name),
             Under::Nothing => {
-                app.message = lang
-                    .pick(
+                app.refuse(
+                    Source::Fill,
+                    lang.pick(
                         "ポインタの下にこのテクスチャセットの三角形がありません",
                         "No triangle of this texture set under the pointer",
-                    )
-                    .into();
+                    ),
+                );
                 return;
             }
         };
@@ -262,7 +266,11 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let mask = match mask {
         Ok(m) => m,
         Err(e) => {
-            app.message = refusal_text(lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Fill,
+                lang.core_error(&e),
+            );
             return;
         }
     };
@@ -273,21 +281,27 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             if !erase && !app.m2.edit_mask {
                 app.color.remember();
             }
-            app.message = format!(
-                "{what}{}",
-                if erase {
-                    lang.pick("を消しました。", " erased.")
-                } else {
-                    lang.pick("を塗りました。", " filled.")
-                }
+            app.info(
+                Source::Fill,
+                format!(
+                    "{what}{}",
+                    if erase {
+                        lang.pick("を消しました。", " erased.")
+                    } else {
+                        lang.pick("を塗りました。", " filled.")
+                    }
+                ),
             );
         }
-        Ok(false) => {
-            app.message = lang
-                .pick("そこには塗るものがありません。", "Nothing to fill there.")
-                .into()
-        }
-        Err(e) => app.message = refusal_text(lang, &e),
+        Ok(false) => app.refuse(
+            Source::Fill,
+            lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
+        ),
+        Err(e) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Fill,
+            lang.core_error(&e),
+        ),
     }
 }
 
@@ -314,7 +328,7 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     let layer = match paint_gate(app) {
         Ok(l) => l,
         Err(m) => {
-            app.message = m;
+            app.refuse(Source::Fill, m);
             return false;
         }
     };
@@ -334,7 +348,11 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     let fill = match fill {
         Ok(f) => f,
         Err(e) => {
-            app.message = refusal_text(lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Fill,
+                lang.core_error(&e),
+            );
             return false;
         }
     };
@@ -374,7 +392,11 @@ fn add_region_at(app: &mut AppState, w: Where, at: Pos2) {
         app.region.drag = None;
         app.canvas.stroke = None;
         app.view3d.stroke_ended();
-        app.message = refusal_text(app.lang, &e);
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Fill,
+            app.lang.core_error(&e),
+        );
     }
 }
 
@@ -411,16 +433,17 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     let what = kind_name(lang, app.region.kind);
     if cancel {
         drag.fill.cancel(&mut app.doc);
-        app.message = lang
-            .pick("ストロークを取り消しました。", "Stroke cancelled.")
-            .into();
+        app.info(
+            Source::Fill,
+            lang.pick("ストロークを取り消しました。", "Stroke cancelled."),
+        );
         return true;
     }
     match drag.fill.commit(&mut app.doc) {
         Ok(result) => {
-            app.message = if result.changed {
+            if result.changed {
                 app.modified = true;
-                if drag.erase {
+                let text = if drag.erase {
                     format!(
                         "{what} × {regions} {}",
                         lang.pick("を消しました。", "erased.")
@@ -430,19 +453,28 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
                         "{what} × {regions} {}",
                         lang.pick("を塗りました。", "filled.")
                     )
-                }
+                };
+                app.info(Source::Fill, text);
             } else if regions == 0 {
-                lang.pick(
-                    "ポインタの下にこのテクスチャセットの三角形がありません。",
-                    "No triangle of this texture set under the pointer.",
-                )
-                .into()
+                app.refuse(
+                    Source::Fill,
+                    lang.pick(
+                        "ポインタの下にこのテクスチャセットの三角形がありません。",
+                        "No triangle of this texture set under the pointer.",
+                    ),
+                );
             } else {
-                lang.pick("そこには塗るものがありません。", "Nothing to fill there.")
-                    .into()
-            };
+                app.refuse(
+                    Source::Fill,
+                    lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
+                );
+            }
         }
-        Err(e) => app.message = refusal_text(lang, &e),
+        Err(e) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Fill,
+            lang.core_error(&e),
+        ),
     }
     true
 }

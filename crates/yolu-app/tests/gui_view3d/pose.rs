@@ -367,10 +367,7 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
         PoseAction::LoadFigure,
     ] {
         h.state_mut().apply(Action::Pose(a));
-        assert_eq!(
-            h.state().state.message,
-            "描いている間はポーズを変えられません。"
-        );
+        assert_eq!(h.state().state.message, "描いている間はできません。");
     }
     let p = h
         .state()

@@ -10,6 +10,7 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::m2::{self, AdjustmentKind, Edit, UiOp};
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
@@ -426,6 +427,7 @@ fn adjustment_section(
                 let histogram = (a.kind() == AdjustmentType::ToneCurve)
                     .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
                     .flatten();
+                let mut failure = None;
                 let mut params = super::color_adjust::Params {
                     key: ("adjustment", id.0),
                     enabled,
@@ -436,11 +438,14 @@ fn adjustment_section(
                     histogram: histogram.as_deref(),
                     sets: &mut app.ramp_sets,
                     eyedrop: &mut app.eyedrop,
-                    message: &mut app.message,
+                    failure: &mut failure,
                 };
                 if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(Ok(change.value.into_settings()));
+                }
+                if let Some(text) = failure {
+                    app.fail(crate::notice::Source::Gradient, text);
                 }
             }
         }
@@ -605,7 +610,11 @@ fn adjustment_section(
                 app.m2_end_drag();
             }
         }
-        Some(Err(e)) => app.message = app.lang.core_error(&e),
+        Some(Err(e)) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Layer,
+            app.lang.core_error(&e),
+        ),
         _ => {}
     }
 }

@@ -8,6 +8,31 @@ use yolu_core::skin::RigError;
 use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
 use yolu_model::ModelError;
 
+use crate::library::{REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
+use crate::shelf::Block;
+use crate::update::Failure as UpdateFailure;
+use crate::view3d::pose::hide::store::StoreError as HideStoreError;
+use crate::view3d::pose::presets::store::StoreError as PoseStoreError;
+use yolu_core::paths::{self, RebindError};
+use yolu_io::brushes::BrushImportError;
+use yolu_io::library as files;
+use yolu_io::psd::CopyRefusal;
+use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
+use yolu_io::smart::{
+    REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_ADJUSTMENTS, REFUSAL_RUST_GENERATORS,
+    REFUSAL_USER_CHANNELS,
+};
+
+/// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
+/// レイヤーの欄の錠の印・プロパティ・ロックの付け外しの状態の文と、断りの文が同じ言い方になる。
+fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
+    use yolu_core::LayerLocks as L;
+    if lock.contains(L::ALL) {
+        return crate::layerops::lock_name(lang, L::ALL).into();
+    }
+    crate::layerops::lock_names(lang, lock).join(lang.pick("、", ", "))
+}
+
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
 pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
     if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
@@ -29,33 +54,112 @@ impl Lang {
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
     }
+    /// core の誤りの文。同じ誤りはどの操作でも同じ文にする（前は、塗る道具・棚・覚えた選択範囲がそれぞれ別の文を持っていた）。
+    /// 下の個別の文の無い誤りは、日本語は core の文、英語は種類ごとの短い文。
     fn core_error_text(self, error: &CoreError) -> String {
-        if self == Self::Ja {
-            return error.to_string();
-        }
         match error {
-            CoreError::MergeRefused(reason) => format!("Cannot merge: {}", merge_refusal(*reason)),
-            CoreError::MergeAppearance(report) => format!(
-                "Merge changes the appearance beyond the tolerance ({})",
-                report.max_visible_difference
-            ),
-            CoreError::Cancelled => "Cancelled".into(),
-            CoreError::LayerLocked { .. } => "Layer or parent group is locked".into(),
-            CoreError::InactiveEffect { reason, .. } => {
-                format!(
-                    "Cannot bake an inactive effect: {}",
-                    self.inactive_reason(reason)
-                )
+            CoreError::LayerLocked {
+                layer,
+                holder,
+                lock,
+            } => {
+                let locks = self.quote(&lock_list(self, *lock));
+                match (self, layer == holder) {
+                    (Lang::Ja, true) => format!("レイヤーの{locks}がロックされています"),
+                    (Lang::Ja, false) => format!("親グループの{locks}がロックされています"),
+                    (Lang::En, true) => format!("The layer has {locks} locked"),
+                    (Lang::En, false) => format!("A parent group has {locks} locked"),
+                }
             }
-            CoreError::InvalidArgument(what) => format!("Invalid value: {}", core_reason(what)),
-            CoreError::Unsupported(what) => format!("Unsupported: {}", core_reason(what)),
-            CoreError::LayerNotFound => "Layer not found".into(),
-            CoreError::ChannelNotFound => "Channel not found".into(),
-            CoreError::StrokeActive => "Stroke in progress".into(),
-            CoreError::NoActiveStroke => "Stroke already ended".into(),
-            CoreError::SourceBudgetExceeded => "Pixel budget exceeded (cancelled)".into(),
-            CoreError::StrokeBudgetExceeded => "Stroke budget exceeded (cancelled)".into(),
-            CoreError::WorkingBudgetExceeded => "Working memory budget exceeded".into(),
+            CoreError::Cancelled => self.pick("取り消しました", "Cancelled").into(),
+            CoreError::StrokeActive => super::refusals::during_stroke(self).into(),
+            CoreError::NoActiveStroke => self
+                .pick("ストロークは終わっています", "Stroke already ended")
+                .into(),
+            CoreError::LayerNotFound | CoreError::InvalidArgument("保存する層がありません") => {
+                self.pick("レイヤーがありません", "Layer not found").into()
+            }
+            CoreError::ChannelNotFound => self
+                .pick("チャンネルがありません", "Channel not found")
+                .into(),
+            // 予算は設定の窓の名前（レイヤーのメモリ・1 回の操作）で言う
+            CoreError::SourceBudgetExceeded => self
+                .pick(
+                    "レイヤーのメモリの予算を超えます",
+                    "Over the Layer memory budget",
+                )
+                .into(),
+            CoreError::StrokeBudgetExceeded => self
+                .pick(
+                    "1 回の操作のメモリの予算を超えます（取り消しました）",
+                    "Over the memory budget of one operation (cancelled)",
+                )
+                .into(),
+            CoreError::WorkingBudgetExceeded => self
+                .pick(
+                    "作業のメモリの上限を超えます",
+                    "Working memory budget exceeded",
+                )
+                .into(),
+            CoreError::Unsupported("ユーザーチャンネルの対応が一致しません") => {
+                self.pick("チャンネルが合いません", "Channels do not match")
+                    .into()
+            }
+            CoreError::InvalidArgument("層は2048個までです") => {
+                self.pick("層が多すぎます", "Too many layers").into()
+            }
+            CoreError::InvalidArgument("保存するマスクがありません") => {
+                self.pick("マスクがありません", "No mask").into()
+            }
+            CoreError::InvalidArgument("スマート素材の名前") => {
+                self.pick("名前が使えません", "Name not allowed").into()
+            }
+            CoreError::InvalidArgument("配置先がグループではありません") => self
+                .pick("置き先がグループではありません", "Target is not a group")
+                .into(),
+            CoreError::InvalidArgument("選択範囲の名前が長すぎる") => self.pick(
+                format!(
+                    "名前が長すぎます（{} 文字まで）。",
+                    yolu_core::MAX_SAVED_NAME_CHARS
+                ),
+                format!(
+                    "The name is too long (up to {} characters).",
+                    yolu_core::MAX_SAVED_NAME_CHARS
+                ),
+            ),
+            CoreError::InvalidArgument("同じ名前の選択範囲がある") => self
+                .pick(
+                    "同じ名前の選択範囲があります。",
+                    "A saved selection with that name exists.",
+                )
+                .into(),
+            // core の文（「できない: 〜」のようにコロンでつないだ形）は、何が（なぜ）の 1 つの文に組み直す
+            CoreError::MergeRefused(reason) => self.with_reason(
+                self.pick("結合できません", "Cannot merge"),
+                self.pick(reason.to_string(), merge_refusal(*reason).to_owned()),
+            ),
+            CoreError::MergeAppearance(report) => self.with_reason(
+                self.pick(
+                    "結合で見た目が許容差を超えて変わります",
+                    "Merge changes the appearance beyond the tolerance",
+                ),
+                report.max_visible_difference.to_string(),
+            ),
+            CoreError::InactiveEffect { reason, .. } => self.with_reason(
+                self.pick(
+                    "効いていない効果は焼き込めません",
+                    "Cannot bake an inactive effect",
+                ),
+                self.inactive_reason(reason),
+            ),
+            CoreError::InvalidArgument(what) => self.with_reason(
+                self.pick("値が範囲外です", "Invalid value"),
+                self.pick(*what, core_reason(what)),
+            ),
+            CoreError::Unsupported(what) => {
+                self.with_reason(self.pick(*what, core_reason(what)), "")
+            }
+            _ if self == Self::Ja => error.to_string(),
             CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
             CoreError::BatchActive => "Not allowed inside a batch of edits".into(),
             CoreError::TileUnreadable => "Cannot read a tile back from the disk cache".into(),
@@ -138,11 +242,11 @@ impl Lang {
                 version,
             } => self.pick(
                 format!(
-                    "未対応の .ylp 形式: {format}（{app} {version} で保存。上限 {}）",
+                    "未対応の .ylp の形式 {format} です（{app} {version} で保存。上限 {}）",
                     yolu_io::MAX_FORMAT
                 ),
                 format!(
-                    "Unsupported .ylp format: {format} (saved by {app} {version}; maximum {})",
+                    "The .ylp format {format} is not supported (saved by {app} {version}; maximum {})",
                     yolu_io::MAX_FORMAT
                 ),
             ),
@@ -177,6 +281,33 @@ impl Lang {
             ),
             None => reason.into(),
         }
+    }
+
+    /// メッシュマップの誤りの文（core は日本語の文だけを持つので、英語は知っている理由の英語か、一般の文）。
+    pub fn mesh_map_error(self, error: &yolu_core::mesh_maps::MeshMapError) -> String {
+        crate::crash::problem(self.pick(error.0.clone(), core_reason(&error.0).to_owned()))
+    }
+
+    /// 別のスレッドを起こせなかった理由（OS の英語の文をそのまま出さず、種類で言い分けて、OS のエラー番号を添える）。
+    /// 何ができなかったかは呼ぶ側が `with_reason` の「何が」で言う。
+    pub fn thread_error(self, error: &std::io::Error) -> String {
+        use std::io::ErrorKind::*;
+        let reason = match error.kind() {
+            WouldBlock | OutOfMemory => {
+                self.pick("システムの資源が足りません", "Not enough system resources")
+            }
+            _ => self.pick(
+                "システムが処理の開始を断りました",
+                "The system refused to start the task",
+            ),
+        };
+        crate::crash::problem(match error.raw_os_error() {
+            Some(code) => self.pick(
+                format!("{reason}（OS エラー {code}）"),
+                format!("{reason} (OS error {code})"),
+            ),
+            None => reason.into(),
+        })
     }
 
     /// ステンシルの画像を読めない理由（core の断り・ファイルの失敗は他の窓と同じ文を通す）。
@@ -274,28 +405,37 @@ impl Lang {
         }
     }
 
-    /// 効かない効果 1 件の 1 行（日本語は core の文、英語は層の名前・種類・理由）。
+    /// 効かない効果 1 件の 1 文（層の名前・種類が効いていないことと、その理由）。
     pub fn inactive_effect(self, effect: &InactiveEffect) -> String {
-        if self == Self::Ja {
-            return effect.to_string();
-        }
-        let what = match effect.target {
-            InactiveTarget::Generator { mask, kind } => {
-                format!(
-                    "{}{}",
-                    generator_kind_name(kind),
-                    if mask { " (mask)" } else { "" }
-                )
+        let name = self.quote(&effect.layer_name);
+        let what = match (self, effect.target) {
+            (Lang::Ja, InactiveTarget::Generator { mask, kind }) => format!(
+                "{name}{}の {} は効いていません",
+                if mask { "（マスク）" } else { "" },
+                yolu_core::effects::generator_kind_name(kind)
+            ),
+            (Lang::Ja, InactiveTarget::FillGradient(c)) => {
+                format!("{name}（{c:?}）のグラデーションは値を見せています")
             }
-            InactiveTarget::FillGradient(c) => format!("gradient ({c:?})"),
-            InactiveTarget::Decal => "decal".into(),
-            InactiveTarget::FillImage(c) => format!("image ({c:?})"),
+            (Lang::Ja, InactiveTarget::Decal) => format!("{name}のデカールは出ていません"),
+            (Lang::Ja, InactiveTarget::FillImage(c)) => {
+                format!("{name}（{c:?}）は画像を投影していません")
+            }
+            (Lang::En, target) => {
+                let what = match target {
+                    InactiveTarget::Generator { mask, kind } => format!(
+                        "{}{}",
+                        generator_kind_name(kind),
+                        if mask { " (mask)" } else { "" }
+                    ),
+                    InactiveTarget::FillGradient(c) => format!("gradient ({c:?})"),
+                    InactiveTarget::Decal => "decal".into(),
+                    InactiveTarget::FillImage(c) => format!("image ({c:?})"),
+                };
+                format!("{name} {what} has no effect")
+            }
         };
-        format!(
-            "\"{}\" {what}: {}",
-            effect.layer_name,
-            self.inactive_reason(&effect.reason)
-        )
+        self.with_reason(what, self.inactive_reason(&effect.reason))
     }
 
     /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件の 1 行（日本語は core の文、英語は層の名前・種類・理由）。
@@ -322,16 +462,17 @@ impl Lang {
             .first()
             .map(|e| self.inactive_effect(e))
             .unwrap_or_default();
-        match self {
+        let what = match self {
             Self::Ja => format!(
-                " 「{set}」の効いていない効果 {} 件は合成の PNG に入っていません: {first}。",
+                "「{set}」の効いていない効果 {} 件は合成の PNG に入っていません",
                 effects.len()
             ),
             Self::En => format!(
-                " {} inactive effect(s) in \"{set}\" are not in the composite PNG: {first}.",
+                "{} inactive effect(s) in \"{set}\" are not in the composite PNG",
                 effects.len()
             ),
-        }
+        };
+        format!(" {}", self.with_reason(what, first))
     }
 
     /// 文書を core へ変換できない項目の一覧の文（初めの 3 つと数）。項目のキーは英数字なので、英語の窓にもそのまま出す。
@@ -420,6 +561,13 @@ fn core_reason(reason: &str) -> &str {
 
 fn known_core_reason(reason: &str) -> Option<&'static str> {
     Some(match reason {
+        "手動ID色の数・番号・色が範囲外です" => "Manual ID colors are out of range",
+        "手動ID色のモデル指紋が不正です" => {
+            "The model fingerprint of the manual ID colors is invalid"
+        }
+        "手動ID色が別のモデルに属しています" => {
+            "The manual ID colors belong to another model"
+        }
         "マスクへのストロークはチャンネルの合成を読めない" => {
             "A mask stroke cannot read the channel composite"
         }
@@ -886,16 +1034,16 @@ impl Lang {
         use yolu_core::geometry::MirrorOutcome::*;
         match outcome {
             NoSurface => self.pick(
-                "対称: 近くに面が無い写しは飛ばしました",
-                "Symmetry: copies with no surface nearby were skipped",
+                "近くに面が無い対称の写しは飛ばしました",
+                "Symmetry copies with no surface nearby were skipped",
             ),
             OtherSlot => self.pick(
-                "対称: 別のテクスチャセットの写しは飛ばしました",
-                "Symmetry: copies on another texture set were skipped",
+                "別のテクスチャセットにある対称の写しは飛ばしました",
+                "Symmetry copies on another texture set were skipped",
             ),
             Hidden => self.pick(
-                "対称: 見えない写しは飛ばしました",
-                "Symmetry: copies that cannot be seen were skipped",
+                "見えない対称の写しは飛ばしました",
+                "Symmetry copies that cannot be seen were skipped",
             ),
             Painted | OnPlane => "",
         }
@@ -903,7 +1051,7 @@ impl Lang {
     /// 指先が、つながらない面で拾い直したときの状態。
     pub fn smudge_lost(self) -> &'static str {
         self.pick(
-            "指先: つながらない面で拾い直しました",
+            "指先はつながらない面で拾い直しました",
             "Smudge picked up again on a disconnected surface",
         )
     }
@@ -1001,11 +1149,15 @@ impl Lang {
         crate::crash::problem(self.view_error_text(error))
     }
     fn view_error_text(self, error: &ViewError) -> String {
+        // モデルの読み込みの誤りは、日本語も「何が（なぜ）」の 1 文に組み直した形で
+        if let ViewError::Model(e) = error {
+            return self.model_error_text(e);
+        }
         if self == Self::Ja {
             return error.to_string();
         }
         match error {
-            ViewError::Stroking => "Cannot change the pose during a stroke.".into(),
+            ViewError::Stroking => super::refusals::during_stroke(self).into(),
             ViewError::NoPoseModel => "No model to pose".into(),
             ViewError::NoPoseEdit => "Pose edit not started".into(),
             ViewError::NoLinkModel => "Pose received before model".into(),
@@ -1091,17 +1243,20 @@ impl Lang {
         }
     }
     fn model_error_text(self, error: &ModelError) -> String {
-        if self == Self::Ja {
-            return error.to_string();
-        }
         match error {
-            ModelError::Io(e) => format!("Cannot read the file: {e}"),
+            // 「〜できません: 理由」のコロンでつないだ形にしない
+            ModelError::Io(e) => {
+                self.with_reason(self.pick("ファイルを読めません", "Cannot read the file"), e)
+            }
+            ModelError::Parse(e) => {
+                self.with_reason(self.pick("FBX として読めません", "Invalid FBX"), e)
+            }
+            _ if self == Self::Ja => error.to_string(),
             ModelError::FileTooLarge { bytes, limit } => format!(
                 "File too large ({:.1} MiB, maximum {:.0} MiB)",
                 *bytes as f64 / 1048576.0,
                 *limit as f64 / 1048576.0
             ),
-            ModelError::Parse(e) => format!("Invalid FBX: {e}"),
             ModelError::NoMesh => "No triangle mesh".into(),
             ModelError::Cancelled => "Cancelled".into(),
             ModelError::Rig(e) => self.rig_error(e),
@@ -1130,9 +1285,323 @@ fn rig_what(what: &str) -> &str {
     }
 }
 
+/// yolu-io の断りの短い理由（読み込み・棚の予算・保存）。
+pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
+    if let Some(text) = library_known_error(lang, e) {
+        return text;
+    }
+    let m = e.to_string();
+    if m.contains(REFUSAL_RESOURCE_COUNT) {
+        crate::lang::refusals::shelf_full(lang).into()
+    } else if m.contains(REFUSAL_IMAGES) {
+        Block::Images.reason(lang)
+    } else if m.contains(REFUSAL_GENERATORS) {
+        Block::Generators.reason(lang)
+    } else if m.contains(REFUSAL_MEMORY_BUDGET) {
+        lang.pick("棚の予算を超えます", "Over the shelf budget")
+            .into()
+    } else if m.contains(REFUSAL_ARCHIVE_BUDGET) {
+        lang.pick(
+            "ファイルの大きさの上限を超えます",
+            "Over the file size limit",
+        )
+        .into()
+    } else if m.contains(REFUSAL_USER_CHANNELS) {
+        lang.pick("ユーザーチャンネルを使っています", "It uses user channels")
+            .into()
+    } else if m.contains(REFUSAL_RUST_GENERATORS) {
+        lang.pick("ノイズ・グランジを使っています", "It uses Noise and Grunge")
+            .into()
+    } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
+        lang.pick("色調補正を使っています", "It uses colour adjustments")
+            .into()
+    } else {
+        lang.io_error(e)
+    }
+}
+
+/// ライブラリのフォルダ・画像の断りの短い文（そうでない断りは None）。
+pub fn library_known_error(lang: Lang, e: &yolu_io::Error) -> Option<String> {
+    let m = e.to_string();
+    let has = |text: &str| m.contains(text);
+    let short = if has(files::REFUSAL_ROOT_LINK) {
+        lang.pick(
+            "ライブラリの場所がリンクです",
+            "The library folder is a link",
+        )
+    } else if has(files::REFUSAL_ROOT_NOT_FOLDER) {
+        lang.pick(
+            "ライブラリの場所がフォルダではありません",
+            "The library location is not a folder",
+        )
+    } else if has(files::REFUSAL_LINK) {
+        lang.pick("リンクはたどりません", "Links are not followed")
+    } else if has(files::REFUSAL_PATH) {
+        lang.pick(
+            "名前に使えない文字があります",
+            "The name has disallowed characters",
+        )
+    } else if has(files::REFUSAL_NOT_FILE) {
+        lang.pick("ファイルではありません", "Not a file")
+    } else if has(files::REFUSAL_TOO_LARGE) {
+        lang.pick("大きすぎます", "Too large")
+    } else if has(files::REFUSAL_EMPTY) {
+        lang.pick("空のファイルです", "Empty file")
+    } else if has(files::REFUSAL_NO_NAME) {
+        lang.pick("名前を決められません", "Cannot choose a name")
+    } else if has(REFUSAL_UNSUPPORTED) {
+        lang.pick("PNG と .ylsmart だけです", "PNG and .ylsmart only")
+    } else if has(REFUSAL_PNG_SIZE) {
+        lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
+    } else if has(REFUSAL_PNG) {
+        lang.pick(REFUSAL_PNG, "Not a readable PNG")
+    } else {
+        return None;
+    };
+    Some(short.to_owned())
+}
+
+/// 断りの理由の短い文（ライブラリのフォルダの断り・画像の断りは言語ごとに、ほかは棚の言い方）。
+pub fn library_io_error(lang: Lang, e: &yolu_io::Error) -> String {
+    library_known_error(lang, e).unwrap_or_else(|| shelf_io_error(lang, e))
+}
+
+/// 取り込めない理由の文（言語ごと）。
+pub fn brush_import_error(lang: Lang, error: &BrushImportError) -> String {
+    match error {
+        BrushImportError::Io(e) => lang.file_error(e),
+        other => lang.pick(other.to_string(), other.english()),
+    }
+}
+
+/// パスの評価の失敗の文。
+pub fn path_error(lang: Lang, error: &paths::Error) -> String {
+    use paths::Error;
+    match error {
+        // 点の検査の理由は、そのまま短い理由（「値が範囲外です（…）」で包まない）
+        Error::Invalid(why) => crate::crash::problem(lang.pick(*why, core_reason(why))).into(),
+        Error::ModelMismatch => lang
+            .pick(
+                "モデルが、パスを描いたときと違います",
+                "The model differs from the one the path was drawn on",
+            )
+            .into(),
+        Error::MissingTriangle => lang
+            .pick(
+                "パスが指す三角形がモデルにありません",
+                "The path refers to a triangle the model does not have",
+            )
+            .into(),
+        Error::TooManySamples => lang
+            .pick(
+                "ブラシの間隔に対してパスが長すぎます",
+                "The path is too long for the brush spacing",
+            )
+            .into(),
+        Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
+        Error::Core(e) => lang.core_error(e),
+        Error::Dab(d) => lang.path_dab_refusal(*d).into(),
+    }
+}
+
+/// 付け直せなかった理由の文（画面の言語で）。
+pub fn rebind_error(lang: Lang, error: RebindError) -> String {
+    match error {
+        RebindError::OtherModel => lang
+            .pick("別のモデルで描かれたパスです", "The path was drawn on another model")
+            .into(),
+        RebindError::NoMaterial => lang
+            .pick("マテリアルが新しいモデルにありません", "Its material is not in the new model")
+            .into(),
+        RebindError::MissingTriangle { point } => lang.pick(
+            format!("点 {} はモデルに無い三角形を指しています", point + 1),
+            format!("Point {} refers to a triangle the model does not have", point + 1),
+        ),
+        RebindError::SearchBudget { point } => lang.pick(
+            format!("点 {} を新しいメッシュで探すのに時間がかかりすぎました", point + 1),
+            format!("Finding point {} on the new mesh took too long", point + 1),
+        ),
+        RebindError::NoSurface { point, tolerance } => lang.pick(
+            format!("点 {} の近く（{tolerance:.4} 以内）に、同じマテリアルの面が新しいメッシュにありません", point + 1),
+            format!("Point {} has no surface of its material within {tolerance:.4} on the new mesh", point + 1),
+        ),
+    }
+}
+
+/// 取り込めない理由（画面の言語。層の名前は利用者の名前なのでそのまま）。
+pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
+    match why {
+        CopyRefusal::Malformed(text) => lang.pick(
+            text.clone(),
+            "Not a readable PSD (damaged or unsupported)".into(),
+        ),
+        CopyRefusal::LargeDocument => lang.pick(
+            "PSB（大きな文書）は取り込めません".into(),
+            "PSB (large document) files cannot be imported".into(),
+        ),
+        CopyRefusal::ColorFormat { depth, mode } => {
+            let name = crate::psd_import::color_mode_name(lang, *mode);
+            lang.pick(
+                format!("RGB 8 bit 以外は取り込めません（{name}・{depth} bit）"),
+                format!("Only RGB 8-bit PSDs can be imported ({name}, {depth}-bit)"),
+            )
+        }
+        CopyRefusal::NoLayers => lang.pick(
+            "レイヤーがありません（統合画像だけの PSD）".into(),
+            "No layers (a flattened image only)".into(),
+        ),
+        CopyRefusal::TooManyLayers { count, limit } => lang.pick(
+            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
+            format!("Too many layers ({count}; limit {limit})"),
+        ),
+        CopyRefusal::CanvasTooLarge { width, height } => lang.pick(
+            format!("キャンバスが大きすぎます（{width}×{height}）"),
+            format!("Canvas too large ({width}×{height})"),
+        ),
+        CopyRefusal::LayerTooLarge { layer } => lang.pick(
+            format!("「{layer}」の画素が大きすぎます"),
+            format!("\"{layer}\" has too many pixels"),
+        ),
+        CopyRefusal::BudgetExceeded { layer } => lang.pick(
+            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
+            format!("Layer memory budget exceeded at \"{layer}\""),
+        ),
+        CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
+            format!("「{layer}」の付加情報が大きすぎます"),
+            format!("\"{layer}\" has too much extra data"),
+        ),
+        CopyRefusal::EdgeOverLimit {
+            width,
+            height,
+            limit,
+        } => lang.pick(
+            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
+            format!("Canvas too large ({width}×{height}; limit {limit})"),
+        ),
+        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
+            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
+            format!("Too many layers ({count}; limit {limit})"),
+        ),
+        CopyRefusal::NestingTooDeep { limit } => lang.pick(
+            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
+            format!("Groups are nested too deeply (limit {limit})"),
+        ),
+    }
+}
+
+/// 理由のツールチップ（予算で断ったものは、設定で上げられること）。
+pub fn psd_copy_refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
+    why.raised_by_budget().then(|| {
+        lang.pick(
+            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
+            "The limit follows Layer memory in Settings. Raising it may let this import",
+        )
+        .into()
+    })
+}
+
+/// 更新の失敗の「何が」（`what` は "check" か "download"）。
+fn update_head(lang: Lang, what: &str) -> &'static str {
+    match what {
+        "check" => lang.pick("更新を確かめられません", "Cannot check for updates"),
+        _ => lang.pick("更新をダウンロードできません", "Cannot download the update"),
+    }
+}
+
+/// 更新の仕事のスレッドを起こせなかった文。
+pub(crate) fn update_start_failure(lang: Lang, what: &str, error: &std::io::Error) -> String {
+    lang.with_reason(update_head(lang, what), lang.thread_error(error))
+}
+
+pub(crate) fn update_failure(lang: Lang, what: &'static str, failure: UpdateFailure) -> String {
+    let head = update_head(lang, what);
+    let reason = match failure {
+        UpdateFailure::Network => lang.pick("通信できません", "connection failed"),
+        UpdateFailure::Verify => lang.pick("検証を通りません", "verification failed"),
+        UpdateFailure::NoAsset => lang.pick(
+            "この環境向けの配布物がありません",
+            "no download for this system",
+        ),
+        UpdateFailure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
+        UpdateFailure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
+        UpdateFailure::Canceled => {
+            return lang
+                .pick("ダウンロードを取り消しました。", "Download canceled.")
+                .into()
+        }
+    };
+    lang.with_reason(head, reason)
+}
+
+/// 効果 1 件の理由。画像は、棚の画像を復号できなかったならその理由（壊れている・予算を超える）を言い、そうでなく棚に無いなら
+/// 設定の不備ではなく画像が無いことを言う。`failure` は、その画像を復号できなかった理由。
+pub(crate) fn inactive_effect_reason(
+    lang: Lang,
+    effect: &InactiveEffect,
+    failure: Option<&str>,
+) -> String {
+    if let (InactiveTarget::FillImage(_), InactiveReason::Rejected(why)) =
+        (&effect.target, &effect.reason)
+    {
+        if let Some(why) = failure {
+            return lang.pick(
+                format!("画像を読めません（{why}）"),
+                format!("Cannot read the image ({why})"),
+            );
+        }
+        if why.contains("その画像が無い") {
+            return lang
+                .pick(
+                    "プロジェクトに画像が無い",
+                    "The image is not in the project",
+                )
+                .into();
+        }
+    }
+    lang.inactive_reason(&effect.reason)
+}
+
+pub(crate) fn hide_preset_save_error(lang: Lang, e: &HideStoreError) -> String {
+    lang.with_reason(
+        lang.pick("隠し方を保存できません", "Cannot save the hide set"),
+        e.describe(lang),
+    )
+}
+
+pub(crate) fn pose_preset_save_error(lang: Lang, e: &PoseStoreError) -> String {
+    lang.with_reason(
+        lang.pick("ポーズを保存できません", "Cannot save the pose"),
+        e.describe(lang),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 処理を始められなかった理由は、OS の英語の文をそのまま出さず、どちらの言語でも言う（OS のエラー番号は手掛かりとして添える）。
+    #[test]
+    fn a_failed_start_is_told_in_both_languages_without_the_os_text() {
+        use std::io::{Error, ErrorKind};
+        let busy = Error::from_raw_os_error(11);
+        let (ja, en) = (Lang::Ja.thread_error(&busy), Lang::En.thread_error(&busy));
+        assert_eq!(ja, "システムの資源が足りません（OS エラー 11）");
+        assert_eq!(en, "Not enough system resources (OS error 11)");
+        let other = Error::from(ErrorKind::InvalidInput);
+        assert_eq!(
+            Lang::En.thread_error(&other),
+            "The system refused to start the task"
+        );
+        assert!(!Lang::Ja.thread_error(&other).is_ascii());
+        for text in [&ja, &en] {
+            assert!(!text.contains("temporarily"), "{text}");
+        }
+        // 「何が」と合わせて 1 つの文
+        assert_eq!(
+            Lang::En.with_reason("Cannot export", &en),
+            "Cannot export (Not enough system resources (OS error 11))."
+        );
+    }
+
     /// 開いた .ylp の古い版の写し（保存が置き換えるために手放した）を読もうとした理由は、どちらの言語でも言う。
     #[test]
     fn a_released_open_file_is_told_in_both_languages() {
@@ -1177,7 +1646,21 @@ mod tests {
         })));
         let english: Vec<String> = errors.iter().map(|e| Lang::En.core_error(e)).collect();
         for (i, (error, en)) in errors.iter().zip(&english).enumerate() {
-            assert_eq!(Lang::Ja.core_error(error), error.to_string());
+            // 取り消しとロックは、両方の言語で決めた文（ロックはどのロックか・親のグループか）。結合の断りは「何が（なぜ）」の
+            // 1 文に組み直す（core の「結合できない: 理由」のコロンでつないだ形にしない）。ほかは core の文
+            match error {
+                CoreError::Cancelled | CoreError::LayerLocked { .. } => {}
+                CoreError::MergeRefused(reason) => assert_eq!(
+                    Lang::Ja.core_error(error),
+                    format!("結合できません（{reason}）。")
+                ),
+                CoreError::MergeAppearance(_) => assert_eq!(
+                    Lang::Ja.core_error(error),
+                    "結合で見た目が許容差を超えて変わります（7）。"
+                ),
+                _ => assert_eq!(Lang::Ja.core_error(error), error.to_string()),
+            }
+            assert!(!Lang::Ja.core_error(error).contains(": "), "{error:?}");
             assert!(en.is_ascii() && !en.is_empty(), "{en}");
             assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
         }
@@ -1220,10 +1703,13 @@ mod tests {
             mask: false,
             reason: Box::new(reasons[0].clone()),
         };
-        assert_eq!(Lang::Ja.core_error(&refused), refused.to_string());
+        assert_eq!(
+            Lang::Ja.core_error(&refused),
+            "効いていない効果は焼き込めません（Thickness のマップがありません）。"
+        );
         assert_eq!(
             Lang::En.core_error(&refused),
-            "Cannot bake an inactive effect: No Thickness map"
+            "Cannot bake an inactive effect (No Thickness map)."
         );
         // 1 行の文: 層の名前は利用者の文字列なのでそのまま、種類と理由は英語
         let effects = [
@@ -1269,15 +1755,26 @@ mod tests {
             .map(|e| Lang::En.inactive_effect(e))
             .collect();
         for (i, (effect, line)) in effects.iter().zip(&lines).enumerate() {
-            assert_eq!(Lang::Ja.inactive_effect(effect), effect.to_string());
+            // 1 つの文（「〜: 〜」のコロンでつながない）
+            let ja = Lang::Ja.inactive_effect(effect);
+            assert!(
+                ja.contains(&effect.layer_name) && !ja.contains(": ") && !line.contains(": "),
+                "{ja} / {line}"
+            );
             assert!(
                 line.is_ascii() && line.contains(&effect.layer_name),
                 "{line}"
             );
             assert!(lines[i + 1..].iter().all(|other| other != line), "{line}");
         }
-        assert_eq!(lines[0], "\"Top\" Edge wear: No Thickness map");
-        assert_eq!(lines[1], "\"Top\" Anchor (mask): No anchor chosen");
+        assert_eq!(
+            lines[0],
+            "\"Top\" Edge wear has no effect (No Thickness map)."
+        );
+        assert_eq!(
+            lines[1],
+            "\"Top\" Anchor (mask) has no effect (No anchor chosen)."
+        );
         assert!(
             lines[2].contains("gradient (Color)")
                 && lines[3].contains("decal")
@@ -1289,15 +1786,15 @@ mod tests {
             ja.contains("「Skin」")
                 && ja.contains("5 件")
                 && ja.contains("合成の PNG に入っていません")
-                && ja.contains(&effects[0].to_string()),
+                && ja.contains(Lang::Ja.inactive_effect(&effects[0]).trim_end_matches('。')),
             "{ja}"
         );
         let en = Lang::En.inactive_effects_not_in_composite("Skin", &effects);
         assert_eq!(
             en,
             format!(
-                " 5 inactive effect(s) in \"Skin\" are not in the composite PNG: {}.",
-                lines[0]
+                " 5 inactive effect(s) in \"Skin\" are not in the composite PNG ({}).",
+                lines[0].trim_end_matches('.')
             )
         );
     }
@@ -1364,13 +1861,38 @@ mod tests {
             CoreError::WorkingBudgetExceeded,
             CoreError::Unsupported("塗りつぶしの層には描けない"),
         ] {
-            assert_eq!(Lang::Ja.core_error(&error), error.to_string());
+            assert!(!Lang::Ja.core_error(&error).is_empty());
             assert!(Lang::En.core_error(&error).is_ascii());
         }
-        let error = CoreError::Unsupported("塗りつぶしの層には描けない");
+        // 同じ誤りは、どの操作でも同じ文（塗る道具・棚・覚えた選択範囲の別の表は無くした）
         assert_eq!(
-            Lang::En.core_error(&error),
-            "Unsupported: Cannot paint a fill layer"
+            Lang::Ja.core_error(&CoreError::LayerNotFound),
+            "レイヤーがありません"
+        );
+        assert_eq!(
+            Lang::En.core_error(&CoreError::LayerNotFound),
+            "Layer not found"
+        );
+        for lang in Lang::ALL {
+            assert_eq!(
+                lang.core_error(&CoreError::StrokeActive),
+                super::super::refusals::during_stroke(lang)
+            );
+        }
+        // できない操作は、core の理由の文をそのまま 1 文に（「できない: 理由」のコロンでつないだ形にしない）
+        assert_eq!(
+            Lang::Ja.core_error(&CoreError::Unsupported("塗りつぶしの層には描けない")),
+            "塗りつぶしの層には描けない。"
+        );
+        let error = CoreError::Unsupported("塗りつぶしの層には描けない");
+        assert_eq!(Lang::En.core_error(&error), "Cannot paint a fill layer.");
+        assert_eq!(
+            Lang::Ja.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            "値が範囲外です（絵の具の量（0〜1））。"
+        );
+        assert_eq!(
+            Lang::En.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            "Invalid value (Paint amount (0–1))."
         );
     }
     #[test]
@@ -1390,7 +1912,10 @@ mod tests {
         .collect();
         let english: Vec<String> = errors.iter().map(|e| Lang::En.core_error(e)).collect();
         for (i, (error, en)) in errors.iter().zip(&english).enumerate() {
-            assert_eq!(Lang::Ja.core_error(error), error.to_string());
+            // 取り消しとロックは、両方の言語で決めた文（ロックはどのロックか・親のグループか）。ほかは core の文
+            if !matches!(error, CoreError::Cancelled | CoreError::LayerLocked { .. }) {
+                assert_eq!(Lang::Ja.core_error(error), error.to_string());
+            }
             assert!(en.is_ascii() && !en.is_empty(), "{en}");
             assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
             // 画面に出す理由に、開発用の数（バイト・MiB）は入れない
@@ -1501,7 +2026,14 @@ mod tests {
         }
         for e in &errors {
             let (ja, en) = (Lang::Ja.view_error(e), Lang::En.view_error(e));
-            assert_eq!(ja, e.to_string());
+            // 読めない FBX・読めないファイルは「何が（なぜ）」の 1 文に組み直す。ほかは core・モデルの文のまま
+            match e {
+                ViewError::Model(m @ (ModelError::Io(_) | ModelError::Parse(_))) => {
+                    assert!(!ja.contains(": ") && ja.ends_with("）。"), "{ja}");
+                    assert_ne!(ja, m.to_string());
+                }
+                _ => assert_eq!(ja, e.to_string()),
+            }
             assert!(en.is_ascii() && !en.is_empty(), "{en}");
             assert_ne!(ja, en);
         }
@@ -1627,11 +2159,7 @@ mod tests {
             );
             assert_users_words(&mut seen, &format!("{refusal:?}"), ja, en);
             for (lang, text) in [(Lang::Ja, ja), (Lang::En, en)] {
-                assert_eq!(
-                    crate::pathtool::path_error_text(lang, &Error::Dab(refusal)),
-                    text,
-                    "{refusal:?}"
-                );
+                assert_eq!(path_error(lang, &Error::Dab(refusal)), text, "{refusal:?}");
             }
             for part in ["一部", "所があります", "Some parts"] {
                 assert!(

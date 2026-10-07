@@ -33,6 +33,7 @@ use yolu_core::{
 };
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// Generator が読む種類から、焼いたマップの種類へ。
@@ -271,30 +272,6 @@ pub fn fill_image_of(doc: &Document, effect: &InactiveEffect) -> Option<ImageId>
         .map(|(_, id)| id)
 }
 
-/// 効果 1 件の理由。画像は、棚の画像を復号できなかったならその理由（壊れている・予算を超える）を言い、そうでなく棚に無いなら
-/// 設定の不備ではなく画像が無いことを言う。`failure` は、その画像を復号できなかった理由。
-fn reason(lang: Lang, effect: &InactiveEffect, failure: Option<&str>) -> String {
-    if let (InactiveTarget::FillImage(_), InactiveReason::Rejected(why)) =
-        (&effect.target, &effect.reason)
-    {
-        if let Some(why) = failure {
-            return lang.pick(
-                format!("画像を読めません（{why}）"),
-                format!("Cannot read the image ({why})"),
-            );
-        }
-        if why.contains("その画像が無い") {
-            return lang
-                .pick(
-                    "プロジェクトに画像が無い",
-                    "The image is not in the project",
-                )
-                .into();
-        }
-    }
-    lang.inactive_reason(&effect.reason)
-}
-
 /// 読むだけにする理由の文（初めの 3 件と数。足りない入力を言う）。`image_failure` は、効いていない画像の行の画像を
 /// 復号できなかった理由（無ければ None）。
 pub fn missing_text(
@@ -311,7 +288,7 @@ pub fn missing_text(
                 "「{}」{}: {}",
                 e.layer_name,
                 what(lang, e, channel_name),
-                reason(lang, e, image_failure(e).as_deref())
+                crate::lang::inactive_effect_reason(lang, e, image_failure(e).as_deref())
             )
         })
         .collect();
@@ -640,7 +617,11 @@ impl AppState {
                     self.fx.inputs.keys.insert(uid, key);
                     self.fx.inputs.passed += 1;
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Effect,
+                    self.lang.core_error(&e),
+                ),
             }
         }
     }
@@ -672,9 +653,15 @@ impl AppState {
             Ok(doc) => doc,
             Err(reason) => {
                 let name = set.name.clone();
-                self.message = self.lang.pick(
-                    format!("テクスチャセット「{name}」を編集できません: {reason}"),
-                    format!("Cannot edit texture set \"{name}\": {reason}"),
+                self.fail(
+                    Source::TextureSet,
+                    self.lang.with_reason(
+                        self.lang.pick(
+                            format!("テクスチャセット「{name}」を編集できません"),
+                            format!("Cannot edit texture set \"{name}\""),
+                        ),
+                        &reason,
+                    ),
                 );
                 if let Some(set) = self.sets.get_mut(index) {
                     set.read_only = Some(reason);
@@ -705,20 +692,20 @@ impl AppState {
             set.saved = saved;
         }
         let name = self.sets.get(index).map_or("", |s| s.name.as_str());
-        self.message = self.lang.pick(
+        let mut text = self.lang.pick(
             format!("入力がそろったので、テクスチャセット「{name}」を編集できます。"),
             format!("Texture set \"{name}\" is editable now that its inputs are in place."),
         );
-        // 選択範囲を戻せなかったら、開いたときと同じく理由を言う（選択なしで開く）
-        if let Err(e) = restored {
-            self.message += &format!(" {e}");
+        // 選択範囲・見た目・覚えた選択範囲を戻せなかったら、開いたときと同じく理由を言う（気をつけること）
+        let mut kind = crate::notice::Kind::Info;
+        for e in [restored.err(), look_restored.err(), saved_restored.err()]
+            .into_iter()
+            .flatten()
+        {
+            text += &format!(" {e}");
+            kind = crate::notice::Kind::Warning;
         }
-        if let Err(e) = look_restored {
-            self.message += &format!(" {e}");
-        }
-        if let Err(e) = saved_restored {
-            self.message += &format!(" {e}");
-        }
+        self.notify(kind, Source::TextureSet, text);
         true
     }
 
@@ -908,10 +895,7 @@ mod tests {
             .to_owned();
         assert!(!a.unlock_set(0, None, false, bytes - 1));
         let reason = a.read_only_reason().expect("読むだけのまま").to_owned();
-        assert!(
-            reason.starts_with("編集用に開けません") && reason.contains("予算"),
-            "{reason}"
-        );
+        assert!(reason.contains("予算"), "{reason}");
         assert!(
             open_reason.starts_with(&reason),
             "開くときと同じ断りの文: {open_reason}"

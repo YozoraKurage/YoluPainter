@@ -627,8 +627,8 @@ fn a_shrink_that_removes_remembered_selections_says_so_in_the_result_in_both_lan
         );
         // 戻せないので、外れたことと数を、結果の文で言う
         let want = lang.pick(
-            format!("縮小で消えた覚えた選択範囲: {set_name} 1 件"),
-            format!("Remembered selections lost to the shrink: {set_name} 1"),
+            format!("縮小で消えた覚えた選択範囲があります（{set_name} 1 件）。"),
+            format!("Some remembered selections were lost to the shrink ({set_name} 1)."),
         );
         assert!(s.message.contains(&want), "{lang:?}: {}", s.message);
         assert_eq!(
@@ -717,7 +717,7 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     np(&mut s, NpAction::ConfirmApply);
     let win = s.np.window.as_ref().expect("断られたら窓は残る");
     let error = win.error.clone().expect("理由");
-    assert!(error.starts_with("Hair"), "{error}");
+    assert!(error.contains("「Hair」"), "{error}");
     assert_eq!(
         size_of(&s, 0),
         (1024, 1024),
@@ -1750,11 +1750,7 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp.clone()));
     wait_reopen(&mut t);
-    assert!(
-        t.message.contains("モデルが見つかりません"),
-        "{}",
-        t.message
-    );
+    assert!(t.message.contains("が見つかりません"), "{}", t.message);
     assert!(t.view3d.pose.session.is_none());
     // 構成の窓で動かした先のモデルを選び直すと、ファイルのポーズが戻り、そのことが結果の文に出る
     configure_model(&mut t, Some(&moved.join("c.fbx")));
@@ -1865,7 +1861,7 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     assert!(t.np.reopening.is_some() && t.model.is_none());
     wait_reopen(&mut t);
     assert!(
-        t.message.contains("モデルが見つかりません: c.fbx"),
+        t.message.contains("モデル「c.fbx」が見つかりません。"),
         "{}",
         t.message
     );
@@ -1903,7 +1899,7 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     f.apply(Action::OpenProject(dir.join("p.ylp")));
     wait_reopen(&mut f);
     assert!(
-        f.message.contains("Model not found: c.fbx"),
+        f.message.contains("The model \"c.fbx\" was not found."),
         "{}",
         f.message
     );
@@ -1932,11 +1928,11 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
     for (lang, text) in [
         (
             Lang::Ja,
-            "ネットワーク上のモデルは自動では読みません: c.fbx",
+            "ネットワーク上のモデル「c.fbx」は自動では読みません。",
         ),
         (
             Lang::En,
-            "Not reading the model on the network automatically: c.fbx",
+            "The model \"c.fbx\" on the network is not read automatically.",
         ),
     ] {
         let mut t = S::new_in(64, 64, lang);
@@ -2056,7 +2052,8 @@ fn a_broken_model_file_is_told_when_the_project_opens_and_the_sets_stay() {
     t.apply(Action::OpenProject(ylp));
     wait_reopen(&mut t);
     assert!(
-        t.message.starts_with("開きました") && t.message.contains("c.fbx:"),
+        t.message.starts_with("開きました")
+            && t.message.contains("モデル「c.fbx」を読み込めません（"),
         "{}",
         t.message
     );

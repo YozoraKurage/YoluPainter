@@ -260,7 +260,7 @@ fn draw_list(
                     t::LABEL.with_color(t::WARNING),
                     Align::Left,
                 );
-                let reason = crate::brushes::import::describe_error(lang, error);
+                let reason = crate::lang::brush_import_error(lang, error);
                 let response = child.interact(r, window_id.with(("row", i)), Sense::hover());
                 response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &title));
                 let _ = response.on_hover_text(format!("{hint}\n{reason}"));

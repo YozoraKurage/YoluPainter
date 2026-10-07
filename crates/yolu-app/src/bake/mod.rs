@@ -35,12 +35,14 @@ pub use maps::MeshMapSet;
 pub use overlay::{MeshMapView, Overlay};
 use yolu_core::export::occlusion_byte;
 use yolu_core::mesh_maps::{
-    material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeResult, MeshBakeSettings,
-    MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind, MeshMapState,
+    material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeReport, MeshBakeResult,
+    MeshBakeSettings, MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind,
+    MeshMapState,
 };
 
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::view3d::model::ViewModel;
 use crate::windows::CloseJob;
@@ -136,6 +138,8 @@ pub struct BakeState {
     pub overlay: Overlay,
     /// 最後のベイクの結果の一文と、成功か（窓の下に出す）。
     pub outcome: Option<(String, bool)>,
+    /// 今の並びでここまでに焼いたセットの UV の注意（`uv_warning`。同じ文は 1 つ）。複数のセットの最後のまとめの知らせに添える。
+    uv_notes: Vec<String>,
     /// 焼く場所（既定は自動）。
     pub backend: BakeBackend,
     /// GPU のデバイスとシェーダー（焼くたびに作り直さない。別のスレッドから共有する）。
@@ -306,6 +310,31 @@ fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
 }
 
 // ───────── 名前 ─────────
+
+/// 焼けたが気をつけること（UV の面積が 0 の三角形・縮退した三角形・UV が重なるテクセル）を 1 つの文にする。数は書かない
+/// （数は記録 `MeshBakeReport` に残り、試験と計測が読む）。無ければ None。
+pub fn uv_warning(lang: Lang, report: &MeshBakeReport) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    if report.zero_uv_area_triangles > 0 {
+        parts.push(lang.pick(
+            "UV の面積が 0 の三角形があり、その面は焼けません。",
+            "Some triangles have no UV area; those faces are not baked.",
+        ));
+    }
+    if report.degenerate_triangles > 0 {
+        parts.push(lang.pick(
+            "縮退した三角形があり、その面は焼けません。",
+            "Some triangles are degenerate; those faces are not baked.",
+        ));
+    }
+    if report.overlap_texels > 0 {
+        parts.push(lang.pick(
+            "UV が重なる所があり、重なったテクセルにはどちらか一方の面だけが焼かれます。",
+            "Some UVs overlap; an overlapping texel takes only one of the faces.",
+        ));
+    }
+    (!parts.is_empty()).then(|| crate::crash::problem(parts.join(" ")))
+}
 
 pub fn kind_label(lang: Lang, kind: MeshMapKind) -> &'static str {
     match kind {
@@ -785,10 +814,7 @@ impl AppState {
     fn refusal(&mut self, wait: bool) -> Option<String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Some(
-                lang.pick("描いている間はできません", "Not while drawing")
-                    .into(),
-            );
+            return Some(crate::lang::refusals::during_stroke(lang).into());
         }
         if self.bake.job.is_some() {
             return Some(lang.pick("ベイク中です", "Already baking").into());
@@ -831,10 +857,7 @@ impl AppState {
             self.bake_input_nowait()
         };
         match input {
-            Some(Err(e)) => Some(lang.pick(
-                format!("ベイクできません: {e}"),
-                format!("Cannot bake: {e}"),
-            )),
+            Some(Err(e)) => Some(lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), e)),
             Some(Ok(_)) | None => None,
         }
     }
@@ -929,12 +952,13 @@ impl AppState {
                 } else if maps.len() > 1 {
                     maps.retain(|k| *k != kind);
                 } else {
-                    self.message = lang
-                        .pick(
+                    self.refuse(
+                        Source::Bake,
+                        lang.pick(
                             "マップを 1 つは残します。",
                             "At least one map stays checked.",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             BakeAction::Set(uid, on) => {
@@ -945,12 +969,13 @@ impl AppState {
                     let last = checked.len() == 1
                         && self.sets.get(checked[0]).is_some_and(|s| s.uid == uid);
                     if last {
-                        self.message = lang
-                            .pick(
+                        self.refuse(
+                            Source::Bake,
+                            lang.pick(
                                 "テクスチャセットを 1 つは残します。",
                                 "At least one texture set stays checked.",
-                            )
-                            .into();
+                            ),
+                        );
                     } else {
                         self.bake.skipped.insert(uid);
                     }
@@ -978,7 +1003,7 @@ impl AppState {
 
     fn start_bake(&mut self) {
         if let Some(reason) = self.bake_refusal() {
-            self.message = reason.clone();
+            self.refuse(Source::Bake, reason.clone());
             self.bake.outcome = Some((reason, false));
             return;
         }
@@ -991,6 +1016,7 @@ impl AppState {
         self.bake.finished = 0;
         self.bake.queue = queue;
         self.bake.outcome = None;
+        self.bake.uv_notes.clear();
         self.start_next_bake();
     }
 
@@ -1004,19 +1030,18 @@ impl AppState {
             };
             match self.prepare_bake(index) {
                 Ok(job) => {
-                    self.message = lang
-                        .pick("メッシュマップをベイク中…", "Baking mesh maps…")
-                        .into();
+                    self.info(
+                        Source::Bake,
+                        lang.pick("メッシュマップをベイク中…", "Baking mesh maps…"),
+                    );
                     self.bake.job = Some(job);
                     return true;
                 }
                 Err(reason) => {
                     self.bake.queue.clear();
                     self.bake_ended(
-                        lang.pick(
-                            format!("ベイクできません: {reason}"),
-                            format!("Cannot bake: {reason}"),
-                        ),
+                        crate::notice::Kind::Error,
+                        lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), reason),
                         false,
                     );
                     return false;
@@ -1096,12 +1121,13 @@ impl AppState {
         if let Some(job) = &self.bake.job {
             self.bake.queue.clear();
             job.worker.cancel();
-            self.message = lang
-                .pick(
+            self.info(
+                Source::Bake,
+                lang.pick(
                     "メッシュマップのベイクを取り消しています…",
                     "Canceling the mesh-map bake…",
-                )
-                .into();
+                ),
+            );
         }
     }
 
@@ -1147,9 +1173,13 @@ impl AppState {
             Err(e) => {
                 self.bake.queue.clear();
                 return self.bake_ended(
-                    lang.pick(
-                        format!("メッシュマップをベイクできません: {e}"),
-                        format!("Mesh maps were not baked: {e}"),
+                    crate::notice::Kind::Error,
+                    lang.with_reason(
+                        lang.pick(
+                            "メッシュマップをベイクできません",
+                            "Cannot bake the mesh maps",
+                        ),
+                        e,
                     ),
                     false,
                 );
@@ -1158,24 +1188,32 @@ impl AppState {
         match result.status {
             MeshBakeStatus::Canceled | MeshBakeStatus::TimedOut => {
                 self.bake.queue.clear();
-                let text = if result.status == MeshBakeStatus::TimedOut {
-                    lang.pick(
-                        "ベイクが時間切れになりました（前のマップはそのまま）",
-                        "The bake hit its time limit; the previous maps are unchanged",
+                // 時間切れは失敗、取り消しは利用者の操作の結果（済んだ知らせ）
+                let (kind, text) = if result.status == MeshBakeStatus::TimedOut {
+                    (
+                        crate::notice::Kind::Error,
+                        lang.pick(
+                            "ベイクが時間切れになりました（前のマップはそのまま）",
+                            "The bake hit its time limit; the previous maps are unchanged",
+                        ),
                     )
                 } else {
-                    lang.pick(
-                        "ベイクを取り消しました（前のマップはそのまま）",
-                        "The bake was canceled; the previous maps are unchanged",
+                    (
+                        crate::notice::Kind::Info,
+                        lang.pick(
+                            "ベイクを取り消しました（前のマップはそのまま）",
+                            "The bake was canceled; the previous maps are unchanged",
+                        ),
                     )
                 };
-                return self.bake_ended(text.into(), false);
+                return self.bake_ended(kind, text.into(), false);
             }
             MeshBakeStatus::Completed => {}
         }
         if let Some(what) = self.bake_changed(&job) {
             self.bake.queue.clear();
             return self.bake_ended(
+                crate::notice::Kind::Warning,
                 lang.pick(
                     format!("{what}が変わったので、焼いた結果を捨てました（前のマップはそのまま）"),
                     format!("Discarded the bake because {what} changed; the previous maps are unchanged"),
@@ -1206,48 +1244,57 @@ impl AppState {
         let place = run_line(lang, &run).text;
         let mut text = lang.pick(
             format!(
-                "{}: {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
-                job.name,
+                "{}の {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
+                lang.quote(&job.name),
                 job.settings.width,
                 job.settings.height,
                 slot_list(&job.slots)
             ),
             format!(
-                "{}: baked {count} map(s) at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
-                job.name,
+                "Baked {count} map(s) of {} at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
+                lang.quote(&job.name),
                 job.settings.width,
                 job.settings.height,
                 slot_list(&job.slots)
             ),
         );
-        if result.report.overlap_texels > 0 {
-            text += &lang.pick(
-                format!(" UV が重なるテクセル {} 個。", result.report.overlap_texels),
-                format!(
-                    " {} texels have overlapping UVs.",
-                    result.report.overlap_texels
-                ),
-            );
-        }
-        self.bake_ended(text, true);
+        // 焼けたが、UV の面積が 0 の三角形・縮退した三角形・UV が重なるテクセルがあれば、1 つの注意にする（数は書かない。数は記録に残る）
+        let kind = match uv_warning(lang, &result.report) {
+            Some(warning) => {
+                text.push(' ');
+                text += &warning;
+                if !self.bake.uv_notes.contains(&warning) {
+                    self.bake.uv_notes.push(warning);
+                }
+                crate::notice::Kind::Warning
+            }
+            None => crate::notice::Kind::Info,
+        };
+        self.bake_ended(kind, text, true);
         if !self.bake.queue.is_empty() {
             // 次のセット（始められなかった理由は `start_next_bake` が知らせる）
             self.start_next_bake();
         } else if self.bake.total > 1 {
-            let text = lang.pick(
+            let mut text = lang.pick(
                 format!(
                     "{} 個のテクスチャセットのメッシュマップを焼きました。",
                     self.bake.total
                 ),
                 format!("Baked the mesh maps of {} texture sets.", self.bake.total),
             );
-            self.message = text.clone();
-            self.bake.outcome = Some((text, true));
+            // どれかのセットに UV の注意があれば、まとめも注意（種類は重いほう）。まとめで、そのセットの注意の文を上書きして消さない
+            let mut kind = crate::notice::Kind::Info;
+            for warning in &self.bake.uv_notes {
+                text.push(' ');
+                text += warning;
+                kind = kind.worse(crate::notice::Kind::Warning);
+            }
+            self.bake_ended(kind, text, true);
         }
     }
 
-    fn bake_ended(&mut self, text: String, ok: bool) {
-        self.message = text.clone();
+    fn bake_ended(&mut self, kind: crate::notice::Kind, text: String, ok: bool) {
+        self.notify(kind, Source::Bake, text.clone());
         self.bake.outcome = Some((text, ok));
     }
 

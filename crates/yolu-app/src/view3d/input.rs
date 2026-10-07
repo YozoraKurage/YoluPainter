@@ -21,6 +21,7 @@ use yolu_core::glam::{Vec2, Vec3};
 use super::{gizmo, Nav};
 use crate::engine::BrushEffect;
 use crate::gesture::{self, ZoomDrag};
+use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
 use crate::state::{AppState, StrokeSource};
 use crate::tools::input::Surface;
@@ -61,19 +62,20 @@ fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
     match pick(&model.geometry, &view, local(rect, at)) {
         Some(hit) if hit.material == app.view3d.material => {
             app.view3d.clone.set_source(hit);
-            app.message = app
-                .lang
-                .pick("クローンの元を決めました。", "Clone source set.")
-                .into();
+            app.info(
+                Source::View3d,
+                app.lang
+                    .pick("クローンの元を決めました。", "Clone source set."),
+            );
         }
         _ => {
-            app.message = app
-                .lang
-                .pick(
+            app.refuse(
+                Source::View3d,
+                app.lang.pick(
                     "今のテクスチャセットの面ではありません。",
                     "Not a surface of the active texture set.",
-                )
-                .into();
+                ),
+            );
         }
     }
 }
@@ -109,13 +111,13 @@ fn begin(
         }
         // 選択・移動と変形・図形・グラデーションなどは 2D のキャンバスだけで使う（3D ビューで描き始めない）
         Surface::Unsupported => {
-            app.message = app
-                .lang
-                .pick(
+            app.refuse(
+                Source::View3d,
+                app.lang.pick(
                     "この道具は 2D のキャンバスで使います",
                     "This tool works on the 2D canvas",
-                )
-                .into();
+                ),
+            );
             return;
         }
         Surface::Paint => {}
@@ -127,38 +129,37 @@ fn begin(
     let p = local(rect, at);
     let material = app.view3d.material;
     if material < 0 {
-        app.message = app.region_missing_reason();
+        app.refuse(Source::View3d, app.region_missing_reason());
         return;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang.pick(
-                "読むだけのテクスチャセットには描けません",
-                "Cannot paint on a read-only texture set"
-            )
-        );
+        let text = crate::lang::refusals::read_only_set(app.lang, reason);
+        app.refuse(Source::View3d, text);
         return;
     }
     if let Some(hit) = pick(&model.geometry, &view, p) {
         if hit.material != material {
             let name = model.material_name(hit.material as usize, app.lang);
-            app.message = app.lang.pick(
-                format!("ほかのテクスチャセット（{name}）の面です。"),
-                format!("Surface of another texture set ({name})."),
+            app.refuse(
+                Source::View3d,
+                app.lang.pick(
+                    format!("ほかのテクスチャセット（{name}）の面です。"),
+                    format!("Surface of another texture set ({name})."),
+                ),
             );
             return;
         }
     }
     let Some(layer) = app.selected_layer else {
-        app.message = app
-            .lang
-            .pick("描くレイヤーがありません。", "No layer to paint on.")
-            .into();
+        app.refuse(
+            Source::View3d,
+            app.lang
+                .pick("描くレイヤーがありません。", "No layer to paint on."),
+        );
         return;
     };
     if let Some(reason) = app.paint_blocker() {
-        app.message = reason;
+        app.refuse(Source::View3d, reason);
         return;
     }
     let settings = app.stroke_settings(eraser);
@@ -176,10 +177,10 @@ fn begin(
                     destination: app.view3d.clone.destination_for(&model.geometry),
                 }),
                 None => {
-                    app.message = app
-                        .lang
-                        .pick("クローンの元がありません", "No clone source")
-                        .into();
+                    app.refuse(
+                        Source::View3d,
+                        app.lang.pick("クローンの元がありません", "No clone source"),
+                    );
                     return;
                 }
             },
@@ -188,13 +189,13 @@ fn begin(
     // 3D の対称。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
     let symmetry = app.sel.symmetry.surface.setup();
     if symmetry.is_some() && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_)) {
-        app.message = app
-            .lang
-            .pick(
+        app.refuse(
+            Source::View3d,
+            app.lang.pick(
                 "指先・クローンでは対称を使えません",
                 "Smudge and clone do not work with symmetry",
-            )
-            .into();
+            ),
+        );
         return;
     }
     // ステンシル: 置き場とカメラはストロークの始めに決める（面のテクセルの点を画面へ写して、そこの画像を読む）
@@ -202,10 +203,13 @@ fn begin(
         Ok(Some((brush, surface))) => (Some(brush), Some(surface)),
         Ok(None) => (None, None),
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                app.lang.pick("描けません", "Cannot paint"),
-                app.lang.core_error(&e)
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::View3d,
+                app.lang.with_reason(
+                    app.lang.pick("描けません", "Cannot paint"),
+                    app.lang.core_error(&e),
+                ),
             );
             return;
         }
@@ -215,10 +219,13 @@ fn begin(
     let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                app.lang.pick("描けません", "Cannot paint"),
-                app.lang.core_error(&e)
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::View3d,
+                app.lang.with_reason(
+                    app.lang.pick("描けません", "Cannot paint"),
+                    app.lang.core_error(&e),
+                ),
             );
             return;
         }
@@ -254,7 +261,7 @@ fn begin(
         }
         Err(e) => {
             app.doc.cancel_stroke(stroke);
-            app.message = app.lang.surface_error(&e);
+            app.fail(Source::View3d, app.lang.surface_error(&e));
         }
     }
 }
@@ -262,7 +269,7 @@ fn begin(
 /// 対称の写しが塗られなかった理由を知らせる（全部塗れていれば何もしない）。
 fn note_symmetry(app: &mut AppState, s: &SurfaceStroke) {
     if let Some(outcome) = s.symmetry_note() {
-        app.message = app.lang.mirror_note(outcome).into();
+        app.warn(Source::View3d, app.lang.mirror_note(outcome));
     }
 }
 
@@ -285,7 +292,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
         Ok(()) => {
             app.view3d.input.stroke_points += 1;
             if let Some(outcome) = surface.symmetry_note() {
-                app.message = app.lang.mirror_note(outcome).into();
+                app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
         }
         Err(e) => {
@@ -294,7 +301,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
                 app.doc.cancel_stroke(stroke);
             }
             app.view3d.stroke_ended();
-            app.message = app.lang.surface_error(&e);
+            app.fail(Source::View3d, app.lang.surface_error(&e));
         }
     }
 }
@@ -316,10 +323,11 @@ pub fn finish(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.doc.cancel_stroke(stroke);
-        app.message = app
-            .lang
-            .pick("ストロークを取り消しました。", "Stroke cancelled.")
-            .into();
+        app.info(
+            Source::View3d,
+            app.lang
+                .pick("ストロークを取り消しました。", "Stroke cancelled."),
+        );
     } else {
         let mut surface = surface;
         let last = surface
@@ -328,16 +336,16 @@ pub fn finish(app: &mut AppState, cancel: bool) {
         match last {
             Some(Err(e)) => {
                 app.doc.cancel_stroke(stroke);
-                app.message = app.lang.surface_error(&e);
+                app.fail(Source::View3d, app.lang.surface_error(&e));
             }
             _ => {
                 if let Some(note) = surface.as_ref().and_then(|s| s.note) {
-                    app.message = app.lang.dab_refusal(note).into();
+                    app.warn(Source::View3d, app.lang.dab_refusal(note));
                 }
                 if let Some(s) = surface.as_ref() {
                     note_symmetry(app, s);
                     if s.stats.lost > 0 {
-                        app.message = app.lang.smudge_lost().into();
+                        app.warn(Source::View3d, app.lang.smudge_lost());
                     }
                 }
                 // 揃えるクローンは、変わったストロークの先の基準を次のストロークへ渡す
@@ -348,7 +356,11 @@ pub fn finish(app: &mut AppState, cancel: bool) {
                             app.view3d.clone.destination = Some(d);
                         }
                     }
-                    Err(e) => app.message = app.lang.core_error(&e),
+                    Err(e) => app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::View3d,
+                        app.lang.core_error(&e),
+                    ),
                 }
             }
         }

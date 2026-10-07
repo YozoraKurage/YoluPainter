@@ -211,7 +211,7 @@ fn headless_a_read_only_set_and_drawing_refuse_the_change_with_a_reason() {
     assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
     assert_eq!(
         s.message,
-        "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります"
+        "このテクスチャセットは読むだけです（フィルターのあるレイヤーがあります）。"
     );
     s.sets.get_mut(index).unwrap().read_only = None;
     let layer = s.selected_layer.unwrap();

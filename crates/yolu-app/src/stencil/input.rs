@@ -8,6 +8,7 @@ use egui::{Event, Key, PointerButton, Pos2, Rect};
 
 use super::frame::{MAX_SIZE, MIN_SIZE, ROTATE_STEP};
 use crate::canvas::view::normalize_angle;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// 回す角度を測らない、ステンシルの中心からの距離（画面の点）。
@@ -231,10 +232,11 @@ pub fn handle_event(
         _ => return false,
     };
     if app.stencil.image.is_none() {
-        app.message = app
-            .lang
-            .pick("ステンシルの画像がありません。", "No stencil image.")
-            .into();
+        app.refuse(
+            Source::Stencil,
+            app.lang
+                .pick("ステンシルの画像がありません。", "No stencil image."),
+        );
         return true;
     }
     app.stencil.begin_drag(kind, *button, rect, *pos);

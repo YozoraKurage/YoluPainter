@@ -10,6 +10,7 @@ use eframe::egui_wgpu::RenderState;
 
 use super::YoluApp;
 use crate::gpu_watch::{self, GpuWatch, Lost, Saved};
+use crate::notice::Source;
 
 /// 書き置きを急いで取るときと、終わるときに書き込み中の分を待つとき、待つ長さ（遅いディスクで、終わる前に固まらないように）。
 pub(super) const RECOVERY_WAIT: Duration = Duration::from_secs(10);
@@ -75,7 +76,8 @@ impl YoluApp {
         self.renderer3d = None;
         self.gpu_device = None;
         let lang = self.state.lang;
-        self.state.message = gpu_watch::lost_text(lang, saved);
+        self.state
+            .fail(Source::Display, gpu_watch::lost_text(lang, saved));
         let adapter = self
             .gpu_watch
             .as_ref()

@@ -535,7 +535,11 @@ fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
     t.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(channel)));
     click2d(&mut t, 30.0, 30.0);
     assert_eq!(t.doc.layers().len(), 1, "{}", t.message);
-    assert!(t.message.starts_with("Invalid value"), "{}", t.message);
+    assert!(
+        t.message.starts_with("Unsupported value or operation"),
+        "{}",
+        t.message
+    );
 }
 
 #[test]
@@ -1529,11 +1533,13 @@ fn headless_the_tool_is_in_the_strip_with_a_key_and_both_languages() {
             yolu_app::pathtool::edit::Refusal::NoPoint,
             yolu_app::pathtool::edit::Refusal::OtherKind,
         ] {
-            assert!(!pathtool::refusal_text(lang, refusal).is_empty());
+            assert!(!yolu_app::lang::refusals::path_edit(lang, refusal).is_empty());
         }
     }
-    let ja = pathtool::refusal_text(Lang::Ja, yolu_app::pathtool::edit::Refusal::NeedThree);
-    let en = pathtool::refusal_text(Lang::En, yolu_app::pathtool::edit::Refusal::NeedThree);
+    let ja =
+        yolu_app::lang::refusals::path_edit(Lang::Ja, yolu_app::pathtool::edit::Refusal::NeedThree);
+    let en =
+        yolu_app::lang::refusals::path_edit(Lang::En, yolu_app::pathtool::edit::Refusal::NeedThree);
     assert!(ja != en && en.is_ascii());
     // 状態の短い文（2D・3D・点の数・チャンネル）
     let mut t = state(128);
@@ -1756,8 +1762,8 @@ fn headless_every_evaluation_failure_has_a_short_reason_in_both_languages() {
     ];
     for error in &errors {
         let (ja, en) = (
-            pathtool::path_error_text(Lang::Ja, error),
-            pathtool::path_error_text(Lang::En, error),
+            yolu_app::lang::path_error(Lang::Ja, error),
+            yolu_app::lang::path_error(Lang::En, error),
         );
         assert!(
             has_japanese(&ja) && ja.chars().count() <= 40,
@@ -1770,7 +1776,7 @@ fn headless_every_evaluation_failure_has_a_short_reason_in_both_languages() {
         assert!(!ja.ends_with('。') && !en.ends_with('.'), "{error:?}");
     }
     // 文の中身も確かめる（種類ごとに別の理由）
-    let text = |e: core_paths::Error| pathtool::path_error_text(Lang::En, &e);
+    let text = |e: core_paths::Error| yolu_app::lang::path_error(Lang::En, &e);
     assert!(text(core_paths::Error::ModelMismatch).contains("model"));
     assert!(text(core_paths::Error::MissingTriangle).contains("triangle"));
     assert!(text(core_paths::Error::TooManySamples).contains("too long"));
@@ -1966,8 +1972,18 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
 #[test]
 fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_reason() {
     for (lang, redrawn, rasterized, because) in [
-        (Lang::Ja, "描き直し", "画素にし", "（パス 1: 点 1"),
-        (Lang::En, "redrawn", "rasterized", "(Path 1: Point 1"),
+        (
+            Lang::Ja,
+            "描き直し",
+            "画素にし",
+            "レイヤー「パス 1」のパスは描き直せません（点 1",
+        ),
+        (
+            Lang::En,
+            "redrawn",
+            "rasterized",
+            "Cannot redraw the path of layer \"Path 1\" (Point 1",
+        ),
     ] {
         // 付け直せないモデル（板から遠く離れたメッシュ）に入れ替わる: 画素にし、層の名前と最初の理由を知らせる
         let (mut s, rect) = state3d(two_material_plate());

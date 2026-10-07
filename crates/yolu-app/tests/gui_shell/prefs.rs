@@ -1283,7 +1283,7 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     key(&h, egui::Key::Enter, egui::Modifiers::NONE);
     h.run();
     assert_eq!(h.state().state.settings().external_ops_port, moved);
-    assert_eq!(h.state().state.message, "ポート番号は 1024〜65535 です");
+    assert_eq!(h.state().state.message, "ポート番号は 1024〜65535 です。");
     // 切る: 待ち受けをやめ、丸も消える
     h.get_by_label("外からの操作を受ける").click();
     h.run();

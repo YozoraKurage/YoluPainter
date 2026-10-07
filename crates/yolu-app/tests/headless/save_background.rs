@@ -427,19 +427,19 @@ fn a_second_save_open_new_and_distribution_are_refused_while_saving() {
     let busy = "保存の途中です";
     s.apply(Action::SaveProject);
     assert!(
-        s.message.starts_with("保存できません") && s.message.contains(busy),
+        s.message.contains("保存できません") && s.message.contains(busy),
         "{}",
         s.message
     );
     s.apply(Action::SaveProjectAs(other.clone()));
     assert!(
-        s.message.starts_with("保存できません") && s.message.contains(busy),
+        s.message.contains("保存できません") && s.message.contains(busy),
         "{}",
         s.message
     );
     s.apply(Action::OpenProject(dir.file("開く先.ylp")));
     assert!(
-        s.message.starts_with("開けません") && s.message.contains(busy),
+        s.message.contains("開けません") && s.message.contains(busy),
         "{}",
         s.message
     );
@@ -585,7 +585,7 @@ fn a_failed_save_restores_the_modified_mark_it_found() {
             s.modified = modified;
             s.shelf.changed = modified;
             save_and_settle(&mut s, Action::SaveProjectAs(target.clone()));
-            assert!(s.message.starts_with("保存できません"), "{}", s.message);
+            assert!(s.message.contains("保存できません"), "{}", s.message);
             assert_eq!(
                 (s.modified, s.shelf.changed),
                 (modified, modified),

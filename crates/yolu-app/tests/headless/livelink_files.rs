@@ -905,7 +905,9 @@ fn headless_saving_names_the_bones_that_cannot_be_kept() {
         h.state.message
     );
     assert!(
-        h.state.message.contains("保存できない項目: single"),
+        h.state
+            .message
+            .contains("保存できない項目があります（single）"),
         "{}",
         h.state.message
     );

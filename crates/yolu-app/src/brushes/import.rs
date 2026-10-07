@@ -20,6 +20,7 @@ use super::{
 };
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
 use crate::windows::CloseJob;
 
@@ -237,14 +238,6 @@ fn run(mut work: Work, cancel: &AtomicBool, tx: &Sender<Msg>) {
     let _ = tx.send(Msg::Finished);
 }
 
-/// 取り込めない理由の文（言語ごと）。
-pub fn describe_error(lang: Lang, error: &BrushImportError) -> String {
-    match error {
-        BrushImportError::Io(e) => lang.file_error(e),
-        other => lang.pick(other.to_string(), other.english()),
-    }
-}
-
 impl ImportState {
     /// 仕事が走っているか。
     pub fn is_busy(&self) -> bool {
@@ -315,9 +308,12 @@ impl AppState {
         }
         let user_count = self.brushes.lib.user_count();
         if user_count >= super::MAX_USER_BRUSHES {
-            self.message = lang.pick(
-                format!("ブラシは {} 個までです。", super::MAX_USER_BRUSHES),
-                format!("At most {} brushes.", super::MAX_USER_BRUSHES),
+            self.refuse(
+                Source::Brush,
+                lang.pick(
+                    format!("ブラシは {} 個までです。", super::MAX_USER_BRUSHES),
+                    format!("At most {} brushes.", super::MAX_USER_BRUSHES),
+                ),
             );
             return;
         }
@@ -347,14 +343,23 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Brush,
+                    lang.with_reason(
+                        lang.pick("ブラシを取り込めません", "Cannot import the brushes"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
         let first = paths.first().map(|p| file_name(p)).unwrap_or_default();
-        self.message = lang.pick(
-            format!("ブラシを取り込み中: {first}"),
-            format!("Importing brushes: {first}"),
+        self.info(
+            Source::Brush,
+            lang.pick(
+                format!("ブラシを取り込み中: {first}"),
+                format!("Importing brushes: {first}"),
+            ),
         );
         self.brushes.import.job = Some(Job {
             worker,
@@ -372,9 +377,10 @@ impl AppState {
         if let Some(job) = &mut self.brushes.import.job {
             job.worker.cancel();
             job.canceling = true;
-            self.message = lang
-                .pick("取り込みを取り消しています…", "Canceling the import…")
-                .into();
+            self.info(
+                Source::Brush,
+                lang.pick("取り込みを取り消しています…", "Canceling the import…"),
+            );
         }
     }
 
@@ -458,9 +464,9 @@ impl AppState {
         let report = job.report;
         let mut order_error = None;
         if report.imported > 0 {
-            if !self.brush_persist_order() {
-                // 知らせは下で組み直すので、並びを保存できなかった理由は今の知らせから取っておく
-                order_error = Some(std::mem::take(&mut self.message));
+            // 並びを保存できなかった理由は、取り込みの知らせに添えて 1 回だけ知らせる
+            if let Err(text) = self.brush_save_order() {
+                order_error = Some(text);
             }
             if let Some(first) = report.first {
                 if !self.is_stroking() {
@@ -469,10 +475,12 @@ impl AppState {
             }
         }
         let mut text = Self::brush_import_message(lang, &report, job.canceling);
+        let mut kind = import_kind(&report);
         if let Some(order) = order_error.filter(|o| !o.is_empty()) {
             text.push_str(&lang.pick(format!("。{order}"), format!(". {order}")));
+            kind = kind.worse(crate::notice::Kind::Warning);
         }
-        self.message = text;
+        self.notify(kind, Source::Brush, text);
     }
 
     /// 取り込みが終わったとき、取り込んだ最初のブラシに替える。道具は、描く道具（ブラシ・消しゴム）のときだけ従来どおりブラシに
@@ -488,27 +496,30 @@ impl AppState {
     }
 
     fn brush_import_message(lang: Lang, r: &Report, canceled: bool) -> String {
-        let reason = |e: &BrushImportError| describe_error(lang, e);
+        let reason = |e: &BrushImportError| crate::lang::brush_import_error(lang, e);
         // 1 つのファイルが読めなかっただけなら、その理由
         if r.imported == 0 && r.save_error.is_none() {
             if let Some((file, error)) = r.failed.first() {
+                let file = lang.quote(file);
                 if r.failed.len() == 1 {
-                    return lang.pick(
-                        format!("取り込めません: {file} — {}", reason(error)),
-                        format!("Cannot import: {file} — {}", reason(error)),
+                    return lang.with_reason(
+                        lang.pick(
+                            format!("{file}を取り込めません"),
+                            format!("Cannot import {file}"),
+                        ),
+                        reason(error),
                     );
                 }
+                let unreadable = lang.with_reason(
+                    lang.pick(format!("{file}は読めません"), format!("Cannot read {file}")),
+                    reason(error),
+                );
                 return lang.pick(
                     format!(
-                        "{} 個のファイルを取り込めません。{file} — {}",
-                        r.failed.len(),
-                        reason(error)
+                        "{} 個のファイルを取り込めません。{unreadable}",
+                        r.failed.len()
                     ),
-                    format!(
-                        "Cannot import {} files. {file} — {}",
-                        r.failed.len(),
-                        reason(error)
-                    ),
+                    format!("Cannot import {} files. {unreadable}", r.failed.len()),
                 );
             }
         }
@@ -520,9 +531,9 @@ impl AppState {
         }
         let mut text = if r.files <= 1 {
             lang.pick(
-                format!("ブラシを {n} 個取り込みました: {}", r.last_file),
+                format!("ブラシを {n} 個取り込みました（{}）", r.last_file),
                 format!(
-                    "Imported {n} brush{}: {}",
+                    "Imported {n} brush{} ({})",
                     if n == 1 { "" } else { "es" },
                     r.last_file
                 ),
@@ -557,10 +568,15 @@ impl AppState {
             ));
         }
         if let Some((file, error)) = r.failed.first() {
-            text.push_str(&lang.pick(
-                format!("。{file} は読めません — {}", reason(error)),
-                format!(". Cannot read {file} — {}", reason(error)),
-            ));
+            let unreadable = lang.with_reason(
+                lang.pick(
+                    format!("{}は読めません", lang.quote(file)),
+                    format!("Cannot read {}", lang.quote(file)),
+                ),
+                reason(error),
+            );
+            text.push_str(lang.pick("。", ". "));
+            text.push_str(unreadable.trim_end_matches(['。', '.']));
         }
         if r.capped {
             text.push_str(&lang.pick(
@@ -569,12 +585,29 @@ impl AppState {
             ));
         }
         if let Some(e) = &r.save_error {
-            text.push_str(&lang.pick(
-                format!("。保存できません: {}", e.describe(lang)),
-                format!(". Cannot save: {}", e.describe(lang)),
-            ));
+            let unsaved = lang.with_reason(
+                lang.pick("ブラシを保存できません", "Cannot save the brushes"),
+                e.describe(lang),
+            );
+            text.push_str(lang.pick("。", ". "));
+            text.push_str(unsaved.trim_end_matches(['。', '.']));
         }
         text
+    }
+}
+
+/// 取り込みの知らせの種類: 1 つも入らなかった失敗（読めない・止まった・保存できない）は失敗、入ったが読めない・止まった・上限・
+/// 保存できない物があれば注意、ほか（取り消しを含む）は済んだ知らせ。
+fn import_kind(r: &Report) -> crate::notice::Kind {
+    use crate::notice::Kind;
+    let problems =
+        r.stopped || r.skipped > 0 || !r.failed.is_empty() || r.capped || r.save_error.is_some();
+    if r.imported == 0 && problems {
+        Kind::Error
+    } else if problems {
+        Kind::Warning
+    } else {
+        Kind::Info
     }
 }
 

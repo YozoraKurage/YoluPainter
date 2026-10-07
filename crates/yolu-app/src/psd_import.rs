@@ -3,7 +3,7 @@
 //! 説明はツールチップに置く。
 
 use egui::Vec2;
-use yolu_io::psd::{CopyRefusal, ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked};
+use yolu_io::psd::{ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked};
 
 use crate::lang::Lang;
 use crate::psd::PsdAction;
@@ -419,7 +419,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
 
 // ───────── 取り込めない理由 ─────────
 
-fn color_mode_name(lang: Lang, mode: u16) -> String {
+pub(crate) fn color_mode_name(lang: Lang, mode: u16) -> String {
     match mode {
         0 => lang.pick("ビットマップ", "Bitmap").into(),
         1 => lang.pick("グレースケール", "Grayscale").into(),
@@ -433,81 +433,10 @@ fn color_mode_name(lang: Lang, mode: u16) -> String {
     }
 }
 
-/// 取り込めない理由（画面の言語。層の名前は利用者の名前なのでそのまま）。
-pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
-    match why {
-        CopyRefusal::Malformed(text) => lang.pick(
-            text.clone(),
-            "Not a readable PSD (damaged or unsupported)".into(),
-        ),
-        CopyRefusal::LargeDocument => lang.pick(
-            "PSB（大きな文書）は取り込めません".into(),
-            "PSB (large document) files cannot be imported".into(),
-        ),
-        CopyRefusal::ColorFormat { depth, mode } => {
-            let name = color_mode_name(lang, *mode);
-            lang.pick(
-                format!("RGB 8 bit 以外は取り込めません（{name}・{depth} bit）"),
-                format!("Only RGB 8-bit PSDs can be imported ({name}, {depth}-bit)"),
-            )
-        }
-        CopyRefusal::NoLayers => lang.pick(
-            "レイヤーがありません（統合画像だけの PSD）".into(),
-            "No layers (a flattened image only)".into(),
-        ),
-        CopyRefusal::TooManyLayers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
-        ),
-        CopyRefusal::CanvasTooLarge { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
-        ),
-        CopyRefusal::LayerTooLarge { layer } => lang.pick(
-            format!("「{layer}」の画素が大きすぎます"),
-            format!("\"{layer}\" has too many pixels"),
-        ),
-        CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
-        CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
-            format!("「{layer}」の付加情報が大きすぎます"),
-            format!("\"{layer}\" has too much extra data"),
-        ),
-        CopyRefusal::EdgeOverLimit {
-            width,
-            height,
-            limit,
-        } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
-            format!("Canvas too large ({width}×{height}; limit {limit})"),
-        ),
-        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
-        ),
-        CopyRefusal::NestingTooDeep { limit } => lang.pick(
-            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
-            format!("Groups are nested too deeply (limit {limit})"),
-        ),
-    }
-}
-
-/// 理由のツールチップ（予算で断ったものは、設定で上げられること）。
-pub fn refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
-    why.raised_by_budget().then(|| {
-        lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this import",
-        )
-        .into()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yolu_io::psd::CopyRefusal;
 
     fn has_japanese(text: &str) -> bool {
         text.chars()
@@ -756,20 +685,20 @@ mod tests {
             CopyRefusal::NestingTooDeep { limit: 64 },
         ];
         for why in &reasons {
-            let en = refusal_text(Lang::En, why);
+            let en = crate::lang::psd_copy_refusal(Lang::En, why);
             assert!(!has_japanese(&en), "{en}");
-            assert!(has_japanese(&refusal_text(Lang::Ja, why)));
+            assert!(has_japanese(&crate::lang::psd_copy_refusal(Lang::Ja, why)));
             assert_eq!(
-                refusal_tooltip(Lang::En, why).is_some(),
+                crate::lang::psd_copy_refusal_tooltip(Lang::En, why).is_some(),
                 why.raised_by_budget(),
                 "{why:?}"
             );
-            if let Some(h) = refusal_tooltip(Lang::En, why) {
+            if let Some(h) = crate::lang::psd_copy_refusal_tooltip(Lang::En, why) {
                 assert!(!has_japanese(&h) && h.contains("Layer memory"));
             }
         }
         // 利用者の名前（層の名前）だけは、英語の画面でもそのまま
-        assert!(refusal_text(
+        assert!(crate::lang::psd_copy_refusal(
             Lang::En,
             &CopyRefusal::BudgetExceeded {
                 layer: "下".into()

@@ -33,6 +33,7 @@ use yolu_io::psd::{
 
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::notice::{Kind as NoticeKind, Source};
 use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
 use crate::state::{Action, AppState, DialogRequest};
@@ -184,19 +185,22 @@ impl Failure {
                 .into(),
             Self::File(e) => lang.file_error(e),
             Self::Export(e) => lang.io_error(e),
-            Self::Unreadable(e) => lang.pick(
-                format!("書く PSD を読み戻せません: {}", lang.io_error(e)),
-                format!("Cannot read back the PSD to write: {}", lang.io_error(e)),
+            Self::Unreadable(e) => lang.with_reason(
+                lang.pick(
+                    "書く PSD を読み戻せません",
+                    "Cannot read back the PSD to write",
+                ),
+                lang.io_error(e),
             ),
             Self::Overrun(over) => overrun_text(lang, over),
             Self::PartlyReplaced { done, cause } => {
                 let cause = lang.file_error(cause);
                 lang.pick(
                     format!(
-                        "置き換えの途中で失敗しました（先の {done} 個は置き換わっています）: {cause}"
+                        "置き換えの途中で失敗しました（{cause}）。先の {done} 個は置き換わっています。"
                     ),
                     format!(
-                        "Failed partway through replacing ({done} earlier file(s) already replaced): {cause}"
+                        "Failed partway through replacing ({cause}). {done} earlier file(s) already replaced."
                     ),
                 )
             }
@@ -559,11 +563,8 @@ impl AppState {
     pub fn psd_apply(&mut self, action: PsdAction) {
         let lang = self.lang;
         let stroking = self.is_stroking();
-        let refuse = |s: &mut AppState| {
-            s.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into()
-        };
+        let refuse =
+            |s: &mut AppState| s.refuse(Source::Psd, crate::lang::refusals::during_stroke(lang));
         match action {
             PsdAction::ImportDialog(target) => {
                 if stroking {
@@ -571,9 +572,9 @@ impl AppState {
                 }
                 if target == PsdTarget::CurrentSet {
                     if let Some(reason) = self.read_only_reason() {
-                        self.message = format!(
-                            "{}: {reason}",
-                            lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+                        self.refuse(
+                            Source::Psd,
+                            crate::lang::refusals::read_only_set(lang, reason),
                         );
                         return;
                     }
@@ -591,9 +592,9 @@ impl AppState {
                     return refuse(self);
                 }
                 if let Some(reason) = self.read_only_reason() {
-                    self.message = format!(
-                        "{}: {reason}",
-                        lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    self.refuse(
+                        Source::Psd,
+                        crate::lang::refusals::read_only_set(lang, reason),
                     );
                     return;
                 }
@@ -644,9 +645,10 @@ impl AppState {
             PsdAction::CancelImport => {
                 if self.psd.import_check.take().is_some() {
                     self.psd.imported.pop();
-                    self.message = lang
-                        .pick("PSD の取り込みをやめました。", "PSD import canceled.")
-                        .into();
+                    self.info(
+                        Source::Psd,
+                        lang.pick("PSD の取り込みをやめました。", "PSD import canceled."),
+                    );
                 }
             }
             PsdAction::ConfirmReplace => {
@@ -656,9 +658,10 @@ impl AppState {
             }
             PsdAction::CancelConfirm => {
                 if self.psd.confirm.take().is_some() {
-                    self.message = lang
-                        .pick("PSD の書き出しをやめました。", "PSD export canceled.")
-                        .into();
+                    self.info(
+                        Source::Psd,
+                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
+                    );
                 }
             }
             PsdAction::ConfirmWrite => {
@@ -668,17 +671,19 @@ impl AppState {
             }
             PsdAction::CancelWrite => {
                 if self.psd.notes_confirm.take().is_some() {
-                    self.message = lang
-                        .pick("PSD の書き出しをやめました。", "PSD export canceled.")
-                        .into();
+                    self.info(
+                        Source::Psd,
+                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
+                    );
                 }
             }
             PsdAction::Cancel => {
                 if let Some(job) = &self.psd.job {
                     job.worker.cancel();
-                    self.message = lang
-                        .pick("PSD の処理を取り消しています…", "Canceling the PSD job…")
-                        .into();
+                    self.info(
+                        Source::Psd,
+                        lang.pick("PSD の処理を取り消しています…", "Canceling the PSD job…"),
+                    );
                 }
             }
             PsdAction::DismissReport => self.psd.report = None,
@@ -688,23 +693,24 @@ impl AppState {
     fn start_psd_import(&mut self, path: &Path, target: PsdTarget) {
         let lang = self.lang;
         if self.psd.job.is_some() || self.psd.import_check.is_some() {
-            self.message = lang
-                .pick("PSD を処理中です。", "A PSD job is running.")
-                .into();
+            self.refuse(
+                Source::Psd,
+                lang.pick("PSD を処理中です。", "A PSD job is running."),
+            );
             return;
         }
         if target == PsdTarget::CurrentSet {
             if let Some(reason) = self.read_only_reason() {
-                self.message = format!(
-                    "{}: {reason}",
-                    lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+                self.refuse(
+                    Source::Psd,
+                    crate::lang::refusals::read_only_set(lang, reason),
                 );
                 return;
             }
         }
         // 新しいセットとして足す PSD は、セットの数の上限に当たっているなら、読み始める前に断る
         if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
-            self.message = crate::newproject::limit_error(lang);
+            self.refuse(Source::Psd, crate::lang::refusals::set_limit(lang));
             return;
         }
         let path_owned = path.to_path_buf();
@@ -724,14 +730,23 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Psd,
+                    lang.with_reason(
+                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
         let file = file_name(path);
-        self.message = lang.pick(
-            format!("PSD を読み込み中: {file}"),
-            format!("Reading PSD: {file}"),
+        self.info(
+            Source::Psd,
+            lang.pick(
+                format!("PSD を読み込み中: {file}"),
+                format!("Reading PSD: {file}"),
+            ),
         );
         let guard = (target == PsdTarget::CurrentSet)
             .then(|| (self.sets.current().uid, self.doc.id(), self.doc.revision()));
@@ -746,19 +761,20 @@ impl AppState {
     }
 
     /// 書き出せない理由を窓（結果の窓）に並べ、何も書かない。
-    fn refuse_psd_export(&mut self, file: &str, why: Vec<String>) {
+    /// `kind` は知らせの種類（読むだけのセットは断り、名前の重なり・予算・書けない場所は失敗）。
+    fn refuse_psd_export(&mut self, kind: NoticeKind, file: &str, why: Vec<String>) {
         let lines = why.into_iter().map(|text| Line::new(true, text)).collect();
-        self.refuse_psd_export_lines(file, lines)
+        self.refuse_psd_export_lines(kind, file, lines)
     }
 
     /// `refuse_psd_export` の、行にツールチップ（設定で上げられること）が付くもの。
-    fn refuse_psd_export_lines(&mut self, file: &str, lines: Vec<Line>) {
+    fn refuse_psd_export_lines(&mut self, kind: NoticeKind, file: &str, lines: Vec<Line>) {
         let lang = self.lang;
-        self.message = format!(
-            "{}: {}",
+        let text = lang.with_reason(
             lang.pick("PSD に書き出せません", "Cannot export PSD"),
-            lines.first().map(|l| l.text.clone()).unwrap_or_default()
+            lines.first().map(|l| l.text.clone()).unwrap_or_default(),
         );
+        self.notify(kind, Source::Psd, text);
         self.psd.report = Some(Report {
             importing: false,
             file: file.to_owned(),
@@ -776,18 +792,16 @@ impl AppState {
     fn start_psd_export(&mut self, path: &Path, confirmed: bool) {
         let lang = self.lang;
         if self.psd.job.is_some() {
-            self.message = lang
-                .pick("PSD を処理中です。", "A PSD job is running.")
-                .into();
+            self.refuse(
+                Source::Psd,
+                lang.pick("PSD を処理中です。", "A PSD job is running."),
+            );
             return;
         }
         let file = file_name(path);
         if let Some(reason) = self.read_only_reason() {
-            let why = vec![lang.pick(
-                format!("読むだけのテクスチャセットです: {reason}"),
-                format!("Read-only texture set: {reason}"),
-            )];
-            return self.refuse_psd_export(&file, why);
+            let why = vec![crate::lang::refusals::read_only_set(lang, reason)];
+            return self.refuse_psd_export(NoticeKind::Refusal, &file, why);
         }
         let channels = export_channels(&self.doc, &self.psd.export);
         let mode = self.psd.export.mode;
@@ -795,10 +809,10 @@ impl AppState {
             Ok(t) => t,
             Err(name) => {
                 let why = vec![lang.pick(
-                    format!("チャンネルのファイル名が重なります: {name}"),
-                    format!("Channel file names clash: {name}"),
+                    format!("チャンネルのファイル名{}が重なります", lang.quote(&name)),
+                    format!("The channel file name {} clashes", lang.quote(&name)),
                 )];
-                return self.refuse_psd_export(&file, why);
+                return self.refuse_psd_export(NoticeKind::Error, &file, why);
             }
         };
         // 文書そのものが書き出せるか（画布・層の数の予算。設定の「レイヤーのメモリ」から決まる）を、何も作らずに断る
@@ -815,7 +829,7 @@ impl AppState {
                     text: failure.text(lang, false),
                     tooltip: failure.tooltip(lang),
                 };
-                return self.refuse_psd_export_lines(&file, vec![line]);
+                return self.refuse_psd_export_lines(NoticeKind::Error, &file, vec![line]);
             }
         }
         // 置き換えるファイル: 取り込んだ PSD と、複数のチャンネルで書き分けた名前のうちもうあるもの（選ぶ窓が確かめたのは選んだ名前だけ）
@@ -844,7 +858,9 @@ impl AppState {
         // 文書の写し（履歴の無い、タイルを共有する写し。文書は変えず、描き続けてよい）
         let snapshot = match self.doc.capture_snapshot() {
             Ok(d) => Arc::new(d),
-            Err(e) => return self.refuse_psd_export(&file, vec![lang.core_error(&e)]),
+            Err(e) => {
+                return self.refuse_psd_export(NoticeKind::Error, &file, vec![lang.core_error(&e)])
+            }
         };
         self.psd.notes_confirm = None;
         let park = std::mem::take(&mut self.psd.park_next);
@@ -869,13 +885,22 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Psd,
+                    lang.with_reason(
+                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
-        self.message = lang.pick(
-            format!("PSD に書き出し中: {file}"),
-            format!("Writing PSD: {file}"),
+        self.info(
+            Source::Psd,
+            lang.pick(
+                format!("PSD に書き出し中: {file}"),
+                format!("Writing PSD: {file}"),
+            ),
         );
         self.psd.job = Some(Job {
             kind: Kind::Export,
@@ -903,13 +928,22 @@ impl AppState {
         let worker = match spawned {
             Ok(w) => w,
             Err(e) => {
-                self.message = e.to_string();
+                self.fail(
+                    Source::Psd,
+                    lang.with_reason(
+                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
+                        lang.thread_error(&e),
+                    ),
+                );
                 return;
             }
         };
-        self.message = lang.pick(
-            format!("PSD に書き出し中: {file}"),
-            format!("Writing PSD: {file}"),
+        self.info(
+            Source::Psd,
+            lang.pick(
+                format!("PSD に書き出し中: {file}"),
+                format!("Writing PSD: {file}"),
+            ),
         );
         self.psd.job = Some(Job {
             kind: Kind::Export,
@@ -935,7 +969,7 @@ impl AppState {
             .collect();
         if !why.is_empty() {
             let file = run.file.clone();
-            return self.refuse_psd_export(&file, why);
+            return self.refuse_psd_export(NoticeKind::Error, &file, why);
         }
         if run.plans.iter().all(|p| p.notes.is_empty()) {
             self.start_psd_write(run);
@@ -966,32 +1000,23 @@ impl AppState {
                 }
                 let canceled = matches!(e, Failure::Canceled);
                 let text = e.text(lang, importing);
-                self.message = if canceled {
-                    text.clone()
+                if canceled {
+                    self.info(Source::Psd, text);
+                } else if importing {
+                    let message = lang.with_reason(
+                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
+                        text,
+                    );
+                    self.fail(Source::Psd, message);
                 } else {
-                    lang.pick(
-                        format!(
-                            "PSD を{}できません: {text}",
-                            if importing {
-                                "読み込み"
-                            } else {
-                                "書き出し"
-                            }
-                        ),
-                        format!(
-                            "Cannot {} the PSD: {text}",
-                            if importing { "read" } else { "write" }
-                        ),
-                    )
-                };
-                // 書き出せなかった理由（予算の超過・書けない場所など）は結果の窓にも出す。取消は利用者の操作なので出さない
-                if !importing && !canceled {
+                    // 書き出せなかった理由（予算の超過・書けない場所など）は結果の窓にも出す（知らせは `refuse_psd_export_lines` の 1 回）。
+                    // 取消は利用者の操作なので出さない
                     let line = Line {
                         warning: true,
                         text,
                         tooltip: e.tooltip(lang),
                     };
-                    self.refuse_psd_export_lines(&job.file, vec![line]);
+                    self.refuse_psd_export_lines(NoticeKind::Error, &job.file, vec![line]);
                 }
                 return;
             }
@@ -999,10 +1024,13 @@ impl AppState {
         match (output, job.kind) {
             (Output::Refused(why), _) => {
                 self.psd.imported.pop();
-                let reason = crate::psd_import::refusal_text(lang, &why);
-                self.message = lang.pick(
-                    format!("PSD を読み込めません: {reason}"),
-                    format!("Cannot import the PSD: {reason}"),
+                let reason = crate::lang::psd_copy_refusal(lang, &why);
+                self.fail(
+                    Source::Psd,
+                    lang.with_reason(
+                        lang.pick("PSD を読み込めません", "Cannot import the PSD"),
+                        &reason,
+                    ),
                 );
                 self.psd.report = Some(Report {
                     importing: true,
@@ -1017,7 +1045,7 @@ impl AppState {
                     lines: vec![Line {
                         warning: true,
                         text: reason,
-                        tooltip: crate::psd_import::refusal_tooltip(lang, &why),
+                        tooltip: crate::lang::psd_copy_refusal_tooltip(lang, &why),
                     }],
                 });
             }
@@ -1030,9 +1058,12 @@ impl AppState {
                     self.install_checked(*doc, &job.file, target, job.guard);
                 } else {
                     // 無視・落とす・変わるものがある: 利用者が確かめるまで、何も入れない
-                    self.message = lang.pick(
-                        format!("PSD を読みました: {}（取り込みの確かめ待ち）", job.file),
-                        format!("Read {} (waiting for the import check)", job.file),
+                    self.info(
+                        Source::Psd,
+                        lang.pick(
+                            format!("PSD を読みました: {}（取り込みの確かめ待ち）", job.file),
+                            format!("Read {} (waiting for the import check)", job.file),
+                        ),
                     );
                     self.psd.import_check = Some(crate::psd_import::ImportCheck {
                         doc,
@@ -1045,27 +1076,30 @@ impl AppState {
             }
             (Output::Planned(run), Kind::Export) => self.finish_psd_plan(*run),
             (Output::Exported { files }, Kind::Export) => {
-                self.message = match files.as_slice() {
-                    [(path, bytes)] => lang.pick(
-                        format!(
-                            "PSD に書き出しました: {}（{} バイト）。",
-                            path.display(),
-                            bytes
+                self.info(
+                    Source::Psd,
+                    match files.as_slice() {
+                        [(path, bytes)] => lang.pick(
+                            format!(
+                                "PSD に書き出しました: {}（{} バイト）。",
+                                path.display(),
+                                bytes
+                            ),
+                            format!("Wrote PSD: {} ({} bytes).", path.display(), bytes),
                         ),
-                        format!("Wrote PSD: {} ({} bytes).", path.display(), bytes),
-                    ),
-                    many => {
-                        let dir = many[0]
-                            .0
-                            .parent()
-                            .map(|d| d.display().to_string())
-                            .unwrap_or_default();
-                        lang.pick(
-                            format!("PSD を {} 個書き出しました: {dir}", many.len()),
-                            format!("Wrote {} PSDs: {dir}", many.len()),
-                        )
-                    }
-                };
+                        many => {
+                            let dir = many[0]
+                                .0
+                                .parent()
+                                .map(|d| d.display().to_string())
+                                .unwrap_or_default();
+                            lang.pick(
+                                format!("PSD を {} 個書き出しました: {dir}", many.len()),
+                                format!("Wrote {} PSDs: {dir}", many.len()),
+                            )
+                        }
+                    },
+                );
             }
             _ => {}
         }
@@ -1084,9 +1118,12 @@ impl AppState {
         if let Some((uid, id, revision)) = guard {
             if self.is_stroking() {
                 self.psd.imported.pop();
-                self.message = lang.pick(
-                    format!("描いている間に読み終わったので、{file} は入れませんでした。"),
-                    format!("{file} finished reading while drawing, so it was not imported."),
+                self.warn(
+                    Source::Psd,
+                    lang.pick(
+                        format!("描いている間に読み終わったので、{file} は入れませんでした。"),
+                        format!("{file} finished reading while drawing, so it was not imported."),
+                    ),
                 );
                 return;
             }
@@ -1095,9 +1132,14 @@ impl AppState {
                 || self.doc.revision() != revision
             {
                 self.psd.imported.pop();
-                self.message = lang.pick(
-                    format!("読み込んでいる間に文書が変わったので、{file} は入れませんでした。"),
-                    format!("The document changed while reading, so {file} was not imported."),
+                self.warn(
+                    Source::Psd,
+                    lang.pick(
+                        format!(
+                            "読み込んでいる間に文書が変わったので、{file} は入れませんでした。"
+                        ),
+                        format!("The document changed while reading, so {file} was not imported."),
+                    ),
                 );
                 return;
             }
@@ -1105,22 +1147,26 @@ impl AppState {
         // 読んでいる間にセットが増えて上限に当たったら、入れない（読み始める前の確かめと同じ理由）
         if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
             self.psd.imported.pop();
-            self.message = crate::newproject::limit_error(lang);
+            self.warn(Source::Psd, crate::lang::refusals::set_limit(lang));
             return;
         }
         let layers = doc.layers().len();
         let switched = self.install_psd(doc, target, file);
-        self.message = lang.pick(
+        let mut text = lang.pick(
             format!(
-                "PSD を読み込みました: {file}（レイヤー {layers}）。PSD 自体は書き換えません。"
+                "PSD を読み込みました（{file}・レイヤー {layers}）。PSD 自体は書き換えません。"
             ),
             format!("Imported {file} ({layers} layers). The PSD itself is never rewritten."),
         );
-        if !switched {
-            self.message += lang.pick(
+        if switched {
+            self.info(Source::Psd, text);
+        } else {
+            // 入れたが、描いている間なので足したセットへは切り替えていない（気をつけること）
+            text += lang.pick(
                 " 描いている間なので、切り替えていません。",
                 " Not switched to it while drawing.",
             );
+            self.warn(Source::Psd, text);
         }
     }
 
@@ -1296,8 +1342,14 @@ fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
             Failure::message("ファイル名がありません", "The file has no name")
         }
         W::NotAFile => Failure::message(
-            format!("通常のファイルではありません: {}", path.display()),
-            format!("Not a regular file: {}", path.display()),
+            format!(
+                "{}は通常のファイルではありません",
+                Lang::Ja.quote(&path.display().to_string())
+            ),
+            format!(
+                "{} is not a regular file",
+                Lang::En.quote(&path.display().to_string())
+            ),
         ),
         W::CreateTemp { source, .. } | W::Sync { source, .. } | W::Rewind { source, .. } => {
             Failure::File(source)
@@ -1728,7 +1780,7 @@ mod tests {
         s.wait_psd();
         assert_eq!(
             s.message,
-            "Cannot import the PSD: Only RGB 8-bit PSDs can be imported (RGB, 16-bit)"
+            "Cannot import the PSD (Only RGB 8-bit PSDs can be imported (RGB, 16-bit))."
         );
         // 読めないファイル
         s.apply(Action::Psd(PsdAction::Import {
@@ -2220,7 +2272,7 @@ mod tests {
             "{err:?}"
         );
         assert!(
-            err.text(Lang::En, false).contains("Not a regular file"),
+            err.text(Lang::En, false).contains("is not a regular file"),
             "{err:?}"
         );
         // 先のフォルダが無ければ書けず、元のファイルは変わらない

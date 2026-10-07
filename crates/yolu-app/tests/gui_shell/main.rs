@@ -19,6 +19,7 @@ mod layout;
 mod library;
 mod limits;
 mod link_entrance;
+mod log_panel;
 mod m2;
 mod menus;
 mod navigator;

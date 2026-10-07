@@ -15,7 +15,7 @@ use yolu_core::{Channel, ChannelKind, ImageId, LayerKind};
 use crate::fillfx::{default_fallback, inputs, placement, FillOp};
 use crate::fx::names;
 use crate::m2::{AdjustmentKind, Edit};
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
 use crate::ui::menu::Entry;
 
@@ -157,10 +157,10 @@ impl AppState {
             Op::FillImageFile { path, mode } => {
                 // 描いている間は、棚へも取り込まない（断るなら何も変えない）
                 if self.is_stroking() {
-                    self.message = self
-                        .lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::FillLayer,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                     return;
                 }
                 // 取り込みは「画像を差す」欄のファイル取り込みと同じ道（棚を変える操作は、保存の最中は断る）。成功すると棚の選択が
@@ -213,7 +213,11 @@ impl AppState {
                 Some(id)
             }
             Err(e) => {
-                self.message = refusal_text(self.lang, &e);
+                self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::FillLayer,
+                    self.lang.core_error(&e),
+                );
                 None
             }
         }
@@ -223,15 +227,16 @@ impl AppState {
     fn new_image_fill(&mut self, image: ImageId, mode: ProjectionMode) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let (name, size) = match self.take_shelf_image(image) {
             Ok(taken) => taken,
             Err(why) => {
-                self.message = why;
+                self.fail(Source::FillLayer, why);
                 return;
             }
         };
@@ -254,23 +259,39 @@ impl AppState {
                 if mode != ProjectionMode::Uv {
                     self.fillfx.handles_hidden = false;
                 }
-                self.message = if mode == ProjectionMode::Decal {
+                if mode == ProjectionMode::Decal {
                     match self.decal_problem(id) {
-                        None => format!(
-                            "{}: {name}",
-                            lang.pick("デカールを置きました", "Decal placed")
+                        None => self.info(
+                            Source::FillLayer,
+                            format!(
+                                "{}: {name}",
+                                lang.pick("デカールを置きました", "Decal placed")
+                            ),
                         ),
-                        Some(why) => lang.pick(
-                            format!("デカールを置きました。まだ出ません: {name}（{why}）"),
-                            format!("Decal placed, not shown yet: {name} ({why})"),
+                        // 置いたが、まだ出ない（理由つき）: 気をつけること
+                        Some(why) => self.warn(
+                            Source::FillLayer,
+                            lang.pick(
+                                format!(
+                                    "デカールを置きました。{}はまだ出ません（{why}）。",
+                                    lang.quote(&name)
+                                ),
+                                format!(
+                                    "Decal placed. {} is not shown yet ({why}).",
+                                    lang.quote(&name)
+                                ),
+                            ),
                         ),
                     }
                 } else {
-                    format!(
-                        "{}: {name}",
-                        lang.pick("画像の塗りつぶしを追加しました", "Image fill added")
-                    )
-                };
+                    self.info(
+                        Source::FillLayer,
+                        format!(
+                            "{}: {name}",
+                            lang.pick("画像の塗りつぶしを追加しました", "Image fill added")
+                        ),
+                    );
+                }
             }
             // 作れなかった画像は手放す（どの層も指さない画像を、予算に残さない）
             None => self.release_shelf_image(image),
@@ -281,9 +302,10 @@ impl AppState {
     fn new_gradient_fill(&mut self, shape: Shape) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let name = self.new_layer_name(LayerKind::Fill);
@@ -296,12 +318,15 @@ impl AppState {
             let channel = self.m2.paint_channel;
             self.fillfx.edit_gradient = Some((id, channel));
             self.fillfx.handles_hidden = false;
-            self.message = format!(
-                "{}: {name}",
-                lang.pick(
-                    "グラデーションデカールを追加しました",
-                    "Gradient decal added"
-                )
+            self.info(
+                Source::FillLayer,
+                format!(
+                    "{}: {name}",
+                    lang.pick(
+                        "グラデーションデカールを追加しました",
+                        "Gradient decal added"
+                    )
+                ),
             );
         }
     }

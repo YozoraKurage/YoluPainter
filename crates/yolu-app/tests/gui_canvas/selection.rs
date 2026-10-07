@@ -1349,7 +1349,7 @@ fn headless_refused_edits_change_nothing_and_say_why() {
     );
     assert_eq!(s.doc.selection(), selection.as_ref());
     assert_eq!(s.doc.undo_count(), steps);
-    let budget = CoreError::WorkingBudgetExceeded.to_string();
+    let budget = s.lang.core_error(&CoreError::WorkingBudgetExceeded);
     assert!(s.message.contains(&budget), "{}", s.message);
     // 型の拒否: 点が多すぎる多角形・有限でない楕円・画布の外の種
     let mut s = doc_state(64);

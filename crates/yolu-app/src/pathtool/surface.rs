@@ -15,6 +15,7 @@ use super::canvas::{draw_curve, draw_insert_ring, draw_marker, MarkerStyle};
 use super::curve::{nearest_point, nearest_segment, sample_screen, P3};
 use super::edit::{self, Place, PointOp};
 use super::{Hover, PathAction, PenDown, PointDrag, PointRef, SurfaceCtx, GRAB_RADIUS};
+use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
 use crate::view3d::input::camera_view;
 
@@ -253,19 +254,19 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
     let ctx = match app.path_surface_ctx() {
         Ok(c) => c,
         Err(m) => {
-            app.message = m;
+            app.refuse(Source::Path, m);
             return;
         }
     };
     if let Some(LayerPath::Surface(path)) = &existing {
         if path.model_fingerprint != *ctx.fingerprint {
-            app.message = app
-                .lang
-                .pick(
+            app.refuse(
+                Source::Path,
+                app.lang.pick(
                     "別のモデルで描かれたパスです",
                     "The path was drawn on another model",
-                )
-                .into();
+                ),
+            );
             return;
         }
         let s = scene(app, rect, path, &ctx.model.geometry, None);
@@ -293,7 +294,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
                     Ok(place) => {
                         app.path_apply(PathAction::Point(PointOp::Insert { segment, place }))
                     }
-                    Err(m) => app.message = m,
+                    Err(m) => app.refuse(Source::Path, m),
                 }
                 return;
             }
@@ -302,7 +303,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
     }
     match pick_place(app, rect, at, &ctx) {
         Ok(place) => app.path_apply(PathAction::Point(PointOp::Add(place))),
-        Err(m) => app.message = m,
+        Err(m) => app.refuse(Source::Path, m),
     }
 }
 

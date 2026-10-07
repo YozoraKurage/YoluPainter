@@ -591,7 +591,7 @@ fn headless_the_open_file_is_never_written_and_an_existing_file_is_replaced_only
     s.wait_distribute();
     assert!(
         s.message
-            .starts_with("配布用に保存できません: 置き換える先を .ylp として読めません"),
+            .starts_with("配布用に保存できません（置き換える先を .ylp として読めません（"),
         "{}",
         s.message
     );
@@ -1011,14 +1011,14 @@ fn headless_a_read_only_set_without_its_original_document_is_left_out_of_the_cop
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "Cannot save for distribution: No texture set can be saved: \"Paintable\", \"Preview\" cannot be read and have never been saved"
+        "Cannot save for distribution (\"Paintable\", \"Preview\" cannot be read and have never been saved)."
     );
     assert!(!s.distribute.is_open() && !s.distribute.is_busy());
     s.lang = Lang::Ja;
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "配布用に保存できません: 保存できるテクスチャセットがありません: 「Paintable」「Preview」は保存したことが無く、読めません"
+        "配布用に保存できません（「Paintable」「Preview」は保存したことが無く、読めません）。"
     );
     assert!(!s.distribute.is_open());
 }

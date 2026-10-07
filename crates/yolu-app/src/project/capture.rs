@@ -71,9 +71,7 @@ pub(crate) struct Capture {
 pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, String> {
     let lang = state.lang;
     if state.is_stroking() {
-        return Err(lang
-            .pick("描いている間は保存しません", "Cannot save during a stroke")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     let base = state.project.as_ref().map(|p| p.project_shared());
     let mut sets = Vec::with_capacity(state.sets.len());
@@ -97,13 +95,12 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             None
         } else {
             let what = |e: &yolu_core::CoreError| {
-                format!(
-                    "{}: {}",
+                lang.with_reason(
                     lang.pick(
                         format!("セット「{}」の文書の写しを取れません", set.name),
-                        format!("Cannot copy texture set “{}”", set.name)
+                        format!("Cannot copy texture set “{}”", set.name),
                     ),
-                    lang.core_error(e)
+                    lang.core_error(e),
                 )
             };
             Some(Arc::new(doc.capture_snapshot().map_err(|e| what(&e))?))
@@ -129,8 +126,8 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             let quoted = quoted_names(lang, &left_out);
             let have = if left_out.len() == 1 { "has" } else { "have" };
             return Err(lang.pick(
-                format!("保存できるテクスチャセットがありません: {quoted}は保存したことが無く、読めません"),
-                format!("No texture set can be saved: {quoted} cannot be read and {have} never been saved"),
+                format!("{quoted}は保存したことが無く、読めません"),
+                format!("{quoted} cannot be read and {have} never been saved"),
             ));
         }
     };
@@ -362,9 +359,12 @@ pub(crate) fn build(
     for (id, name, maps) in &capture.maps {
         for map in maps {
             project = project.with_mesh_map(id, map).map_err(|e| {
-                BuildError::Message(lang.pick(
-                    format!("セット「{name}」のメッシュマップ: {}", lang.io_error(&e)),
-                    format!("Mesh maps of set \"{name}\": {}", lang.io_error(&e)),
+                BuildError::Message(lang.with_reason(
+                    lang.pick(
+                        format!("セット「{name}」のメッシュマップを書けません"),
+                        format!("Cannot write the mesh maps of set \"{name}\""),
+                    ),
+                    lang.io_error(&e),
                 ))
             })?;
         }
@@ -372,10 +372,9 @@ pub(crate) fn build(
     // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
     if let Some(shelf) = &capture.shelf {
         project = project.with_shelf(shelf, writer).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
+            BuildError::Message(lang.with_reason(
                 lang.pick("棚を書けません", "Cannot write the shelf"),
-                lang.io_error(&e)
+                lang.io_error(&e),
             ))
         })?;
     }
@@ -436,26 +435,24 @@ fn compose_sets(
             .as_ref()
             .expect("読むだけのセットは作り直さない");
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
+            BuildError::Message(lang.with_reason(
                 lang.pick(
                     format!("セット「{}」の文書を作れません", set.name),
-                    format!("Cannot convert texture set “{}” to a document", set.name)
+                    format!("Cannot convert texture set “{}” to a document", set.name),
                 ),
-                lang.io_error(&e)
+                lang.io_error(&e),
             ))
         })?;
         let pngs = composite_pngs(doc).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
+            BuildError::Message(lang.with_reason(
                 lang.pick(
                     format!("セット「{}」の合成の PNG を作れません", set.name),
                     format!(
                         "Cannot build the composite PNG of texture set “{}”",
                         set.name
-                    )
+                    ),
                 ),
-                lang.io_error(&e)
+                lang.io_error(&e),
             ))
         })?;
         Ok((native, pngs))

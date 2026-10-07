@@ -44,6 +44,7 @@ pub fn cursor_icon(st: &StencilState) -> Option<egui::CursorIcon> {
     })
 }
 
+use crate::notice::Source;
 use crate::state::{AppState, DialogRequest};
 
 /// 重ね表示の元の画像の長い辺（塗る値は元の画像から読む。表示だけ縮める）。
@@ -438,9 +439,7 @@ impl AppState {
     pub fn stencil_op(&mut self, op: StencilOp) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Stencil, crate::lang::refusals::during_stroke(lang));
             return;
         }
         match op {
@@ -456,9 +455,10 @@ impl AppState {
                 self.stencil.overlay = None;
                 self.stencil.thumb = None;
                 self.stencil.drag = None;
-                self.message = lang
-                    .pick("ステンシルを外しました。", "The stencil was removed.")
-                    .into();
+                self.info(
+                    Source::Stencil,
+                    lang.pick("ステンシルを外しました。", "The stencil was removed."),
+                );
             }
             StencilOp::Mode(mode) => self.stencil.mode = mode,
             StencilOp::Tiling(tiling) => self.stencil.tiling = tiling,
@@ -484,14 +484,22 @@ impl AppState {
         match result {
             Ok(()) => {
                 self.stencil.remember(&name, path);
-                self.message = format!("{}: {name}", lang.pick("ステンシル", "Stencil"));
+                self.info(
+                    Source::Stencil,
+                    format!("{}: {name}", lang.pick("ステンシル", "Stencil")),
+                );
             }
             Err(e) => {
                 self.stencil.recent.retain(|r| r.path != path);
-                self.message = format!(
-                    "{}: {name}: {}",
-                    lang.pick("ステンシルを読めません", "Cannot load the stencil"),
-                    lang.stencil_error(&e)
+                self.fail(
+                    Source::Stencil,
+                    lang.with_reason(
+                        lang.pick(
+                            format!("ステンシル{}を読めません", lang.quote(&name)),
+                            format!("Cannot load the stencil {}", lang.quote(&name)),
+                        ),
+                        lang.stencil_error(&e),
+                    ),
                 );
             }
         }

@@ -24,6 +24,7 @@ use yolu_core::{
 pub use names::FilterKind;
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// 選んでいる行（層の行の下の子の行）。
@@ -215,17 +216,21 @@ impl AppState {
     /// 効果の操作を当てる（描いている間の文書の変更は断る。断られたら何も変えず、理由を状態の帯へ）。
     pub fn fx_apply(&mut self, op: FxOp) {
         if (op.edits_document() || op.changes_tool()) && self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Effect,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
         match self.fx_run(op) {
-            Ok(Some(text)) => self.message = text,
+            Ok(Some(text)) => self.info(Source::Effect, text),
             Ok(None) => {}
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Effect,
+                self.lang.core_error(&e),
+            ),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -292,9 +297,9 @@ impl AppState {
                 if let Ok(Some(why)) = self.doc.generator_inactive(layer, id) {
                     text += &format!(
                         " {}",
-                        lang.pick(
-                            format!("効果なし: {}", lang.inactive_reason(&why)),
-                            format!("No effect: {}", lang.inactive_reason(&why)),
+                        lang.with_reason(
+                            lang.pick("効果がありません", "It has no effect"),
+                            lang.inactive_reason(&why),
                         )
                     );
                 }
@@ -468,26 +473,30 @@ impl AppState {
             next.id_colors.retain(|c| *c != rgb);
         } else if !next.id_colors.contains(&rgb) {
             if next.id_colors.len() >= 32 {
-                self.message = lang
-                    .pick("ID の色は 32 個までです。", "At most 32 ID colors.")
-                    .into();
+                self.refuse(
+                    Source::Effect,
+                    lang.pick("ID の色は 32 個までです。", "At most 32 ID colors."),
+                );
                 return true;
             }
             next.id_colors.push(rgb);
         }
         if next == g {
             // 足す色がもう入っている・外す色が入っていない
-            self.message = if remove {
-                lang.pick(
-                    format!("ID の色 {hex} は入っていません。"),
-                    format!("{hex} is not in the ID colors."),
-                )
-            } else {
-                lang.pick(
-                    format!("ID の色 {hex} は入っています。"),
-                    format!("{hex} is already in the ID colors."),
-                )
-            };
+            self.refuse(
+                Source::Effect,
+                if remove {
+                    lang.pick(
+                        format!("ID の色 {hex} は入っていません。"),
+                        format!("{hex} is not in the ID colors."),
+                    )
+                } else {
+                    lang.pick(
+                        format!("ID の色 {hex} は入っています。"),
+                        format!("{hex} is already in the ID colors."),
+                    )
+                },
+            );
         } else {
             let revision = self.doc.revision();
             match self
@@ -495,19 +504,26 @@ impl AppState {
                 .set_filter_settings(layer, id, EffectSettings::generator(next), false)
             {
                 Ok(()) => {
-                    self.message = if remove {
-                        lang.pick(
-                            format!("ID の色から {hex} を外しました。"),
-                            format!("Took {hex} out of the ID colors."),
-                        )
-                    } else {
-                        lang.pick(
-                            format!("ID の色に {hex} を追加しました。"),
-                            format!("Added {hex} to the ID colors."),
-                        )
-                    };
+                    self.info(
+                        Source::Effect,
+                        if remove {
+                            lang.pick(
+                                format!("ID の色から {hex} を外しました。"),
+                                format!("Took {hex} out of the ID colors."),
+                            )
+                        } else {
+                            lang.pick(
+                                format!("ID の色に {hex} を追加しました。"),
+                                format!("Added {hex} to the ID colors."),
+                            )
+                        },
+                    );
                 }
-                Err(e) => self.message = lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Effect,
+                    lang.core_error(&e),
+                ),
             }
             if self.doc.revision() != revision {
                 self.modified = true;
@@ -569,21 +585,21 @@ impl AppState {
                 ),
                 AnchorIssueKind::NotChosen => "",
             };
-            let note = lang.pick(
-                format!(
-                    "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました: {reason}",
-                    fresh.len()
+            let note = lang.with_reason(
+                lang.pick(
+                    format!(
+                        "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました",
+                        fresh.len()
+                    ),
+                    format!(
+                        "{} anchor generator(s) now pass their input through",
+                        fresh.len()
+                    ),
                 ),
-                format!(
-                    "{} anchor generator(s) now pass their input through: {reason}",
-                    fresh.len()
-                ),
+                reason,
             );
-            self.message = if self.message.is_empty() {
-                note
-            } else {
-                format!("{} {note}", self.message)
-            };
+            // 直前の知らせ（あれば）に、アンカーの但し書きを添える（気をつけること）
+            self.amend(crate::notice::Kind::Warning, Source::Effect, " ", &note);
         }
         let known: HashSet<FilterId> = issues.iter().map(|i| i.filter).collect();
         self.fx.issues = AnchorIssuesSeen {

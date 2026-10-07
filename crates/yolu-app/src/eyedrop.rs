@@ -22,6 +22,7 @@ use crate::engine::{Channel, CoreError, Document, LayerId, LayerKind, Rgba8};
 use crate::lang::Lang;
 use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
+use crate::notice::Source;
 use crate::panels::properties::toggle_row;
 use crate::state::{AppState, Tool};
 use crate::ui::theme as t;
@@ -73,21 +74,23 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
     let Some(hit) = pick(&model.geometry, &view, p) else {
-        app.message = lang
-            .pick(
+        app.refuse(
+            Source::Eyedropper,
+            lang.pick(
                 "ポインタの下にモデルがありません",
                 "Nothing of the model under the pointer",
-            )
-            .into();
+            ),
+        );
         return false;
     };
     let Some(set) = (0..app.sets.len()).find(|&i| app.set_material(i) == Some(hit.material)) else {
-        app.message = lang
-            .pick(
+        app.refuse(
+            Source::Eyedropper,
+            lang.pick(
                 "この面にはテクスチャセットがありません",
                 "No texture set for this surface",
-            )
-            .into();
+            ),
+        );
         return false;
     };
     let (w, h) = {
@@ -95,12 +98,13 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         (doc.width(), doc.height())
     };
     let Some((x, y)) = texel_of(hit.uv, w, h) else {
-        app.message = lang
-            .pick(
+        app.refuse(
+            Source::Eyedropper,
+            lang.pick(
                 "この面の UV はテクスチャの外です",
                 "This surface's UV is outside the texture",
-            )
-            .into();
+            ),
+        );
         return false;
     };
     pick_texel(app, set, x, y)
@@ -153,19 +157,24 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
                 Ok(None) => {}
                 // 読めなかった: 理由を出して、何も変えない
                 Err(e) => {
-                    app.message = lang.core_error(&e);
+                    app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Eyedropper,
+                        lang.core_error(&e),
+                    );
                     return false;
                 }
             }
         }
     }
     if read.is_empty() {
-        app.message = lang
-            .pick(
+        app.refuse(
+            Source::Eyedropper,
+            lang.pick(
                 "そこには何もありません（透明）。",
                 "Nothing to pick there (transparent).",
-            )
-            .into();
+            ),
+        );
         return false;
     }
     if material {
@@ -181,17 +190,23 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
             names.push(channel_name(lang, &app.doc, *channel));
         }
         let joined = names.join(lang.pick("・", ", "));
-        app.message = format!("{} {joined}", lang.pick("取得:", "Picked"));
+        app.info(
+            Source::Eyedropper,
+            format!("{} {joined}", lang.pick("取得:", "Picked")),
+        );
     } else {
         let px = read[0].1;
         let v = |b: u8| b as f32 / 255.0;
         app.color.set_main([v(px.r), v(px.g), v(px.b), 1.0]);
-        app.message = format!(
-            "{} R {} G {} B {}",
-            lang.pick("取得:", "Picked"),
-            px.r,
-            px.g,
-            px.b
+        app.info(
+            Source::Eyedropper,
+            format!(
+                "{} R {} G {} B {}",
+                lang.pick("取得:", "Picked"),
+                px.r,
+                px.g,
+                px.b
+            ),
         );
     }
     true

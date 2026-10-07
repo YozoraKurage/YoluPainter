@@ -12,6 +12,7 @@ use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
 use crate::m2::{Edit, LayerDrag, M2State, UiOp};
 use crate::model::SceneModel;
+use crate::notice::Source;
 use crate::project::ProjectFile;
 use crate::sets::TextureSets;
 use crate::shelf::{ShelfOp, ShelfState};
@@ -694,7 +695,14 @@ pub struct AppState {
     pub colorsets: crate::colorsets::ColorSets,
     pub view: ViewState,
     /// 直前の操作の結果と理由（短い文）。状態の帯には出さず、小さな知らせ（`toast`）として短く出して消える。試験が読む。
+    /// 書くのは `notice` の `notify`（`info`・`refuse`・`warn`・`fail`）だけ。
     pub message: String,
+    /// 最後の知らせ（種類・出どころ。トーストが種類を読む）。
+    pub last_notice: Option<crate::notice::Notice>,
+    /// 起動してからの注意と失敗（ログの窓が読む）。
+    pub notice_log: crate::notice::NoticeLog,
+    /// ログの窓の画面の状態（絞り・選んだ行）。
+    pub log_view: crate::panels::log::LogView,
     /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
     pub toast: crate::toast::Toast,
     /// 状態の帯の右端の版・ビルドと使っているメモリ。
@@ -917,6 +925,9 @@ impl AppState {
             colorsets: crate::colorsets::ColorSets::default(),
             view: ViewState::default(),
             message: String::new(),
+            last_notice: None,
+            notice_log: Default::default(),
+            log_view: Default::default(),
             toast: crate::toast::Toast::default(),
             usage: crate::usage::Usage::default(),
             ui: UiTemp::default(),
@@ -970,12 +981,15 @@ impl AppState {
         }
     }
 
-    /// 保存の間なら、`what`（断る操作の言い方）と理由（`busy_reason`）を `message` に書いて true。選ぶ窓を開く前の操作が使う。
+    /// 保存の間なら、`what`（断る操作の言い方）と理由（`refusals::saving`）を `message` に書いて true。選ぶ窓を開く前の操作が使う。
     fn refuse_while_saving(&mut self, what: &str) -> bool {
         if !self.is_saving() {
             return false;
         }
-        self.message = format!("{what}: {}", crate::project::busy_reason(self.lang));
+        let text = self
+            .lang
+            .with_reason(what, crate::lang::refusals::saving(self.lang));
+        self.refuse(Source::Save, text);
         true
     }
 
@@ -1073,22 +1087,6 @@ impl AppState {
             .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
-    /// `message` を書く操作の入口。前の文を預かって `message` を空にする（出口で、書かれたかを前と同じ文でも見分けて、知らせにする）。
-    /// 操作の中では、前の操作の文は見えない。
-    pub fn message_begin(&mut self) -> String {
-        self.toast.begin(&mut self.message)
-    }
-
-    /// `message_begin` の出口。書かれていれば新しい知らせとして出し、書かれていなければ前の文を戻す。
-    pub fn message_end(&mut self, prior: String) {
-        self.toast.end(&mut self.message, prior);
-    }
-
-    /// `message` を明示して空にする（操作の中では、空のまま終わっても前の文を戻さない。保存の結果が書かれたかを見分ける所が使う）。
-    pub fn clear_message(&mut self) {
-        self.toast.clear(&mut self.message);
-    }
-
     /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
         let prior = self.message_begin();
@@ -1099,23 +1097,15 @@ impl AppState {
     fn apply_action(&mut self, action: Action) {
         crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
-        let refuse = |s: &mut AppState| {
-            s.message = crate::crash::problem(
-                s.lang
-                    .pick("描いている間はできません。", "Not while drawing."),
-            )
-            .into()
-        };
+        let refuse =
+            |s: &mut AppState| s.refuse(Source::Edit, crate::lang::refusals::during_stroke(s.lang));
         // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
         let pose_undo =
             matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
         if action.edits_document() && !stroking && !pose_undo {
             if let Some(reason) = self.read_only_reason() {
-                self.message = format!(
-                    "{}: {reason}",
-                    self.lang
-                        .pick("読むだけのテクスチャセットです", "Read-only texture set")
-                );
+                let text = crate::lang::refusals::read_only_set(self.lang, reason);
+                self.refuse(Source::Edit, text);
                 return;
             }
         }
@@ -1158,11 +1148,15 @@ impl AppState {
                 }
                 match self.doc.undo() {
                     Ok(true) => {
-                        self.message = self.lang.pick("取り消しました。", "Undone.").into();
+                        self.info(Source::Edit, self.lang.pick("取り消しました。", "Undone."));
                         self.modified = true;
                     }
                     Ok(false) => {}
-                    Err(e) => self.message = self.lang.core_error(&e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Edit,
+                        self.lang.core_error(&e),
+                    ),
                 }
                 self.ensure_selection();
             }
@@ -1175,11 +1169,15 @@ impl AppState {
                 }
                 match self.doc.redo() {
                     Ok(true) => {
-                        self.message = self.lang.pick("やり直しました。", "Redone.").into();
+                        self.info(Source::Edit, self.lang.pick("やり直しました。", "Redone."));
                         self.modified = true;
                     }
                     Ok(false) => {}
-                    Err(e) => self.message = self.lang.core_error(&e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Edit,
+                        self.lang.core_error(&e),
+                    ),
                 }
                 self.ensure_selection();
             }
@@ -1200,7 +1198,11 @@ impl AppState {
                 if self.has_multiple_layers_selected() {
                     let revision = self.doc.revision();
                     if let Err(e) = self.delete_selected_layers() {
-                        self.message = self.lang.core_error(&e);
+                        self.notify(
+                            crate::notice::Kind::of_core(&e),
+                            Source::Layer,
+                            self.lang.core_error(&e),
+                        );
                     }
                     if self.doc.revision() != revision {
                         self.modified = true;
@@ -1212,13 +1214,13 @@ impl AppState {
                     // グループは中身ごと消える。何も残らなくなる削除は断る
                     let size = crate::m2::subtree_len(&self.doc, id);
                     if self.doc.layers().len() <= size {
-                        self.message = self
-                            .lang
-                            .pick(
+                        self.refuse(
+                            Source::Layer,
+                            self.lang.pick(
                                 "最後のレイヤーは消せません。",
                                 "Cannot delete the last layer.",
-                            )
-                            .into();
+                            ),
+                        );
                         return;
                     }
                     let start = self
@@ -1233,7 +1235,11 @@ impl AppState {
                             self.set_edit_mask(false);
                             self.modified = true;
                         }
-                        Err(e) => self.message = self.lang.core_error(&e),
+                        Err(e) => self.notify(
+                            crate::notice::Kind::of_core(&e),
+                            Source::Layer,
+                            self.lang.core_error(&e),
+                        ),
                     }
                 }
             }
@@ -1277,7 +1283,11 @@ impl AppState {
                     return refuse(self);
                 }
                 if let Err(e) = self.doc.set_layer_blend_mode(id, mode) {
-                    self.message = self.lang.core_error(&e);
+                    self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Layer,
+                        self.lang.core_error(&e),
+                    );
                     return;
                 }
                 self.modified = true;
@@ -1298,13 +1308,10 @@ impl AppState {
             | Action::ResetRotation
             | Action::FlipView => {
                 if stroking || self.canvas.rotating.is_some() {
-                    self.message = self
-                        .lang
-                        .pick(
-                            "描いている間・ドラッグの間は回せません。",
-                            "Cannot rotate during a stroke or drag.",
-                        )
-                        .into();
+                    self.refuse(
+                        Source::Canvas,
+                        crate::lang::refusals::during_stroke_or_drag(self.lang),
+                    );
                     return;
                 }
                 match action {
@@ -1332,13 +1339,13 @@ impl AppState {
                 self.view3d.load_demo();
                 // 試しの立方体はファイルのモデルではない（プロジェクトのモデルの参照は外す）
                 self.np.model_file = None;
-                self.message = self
-                    .lang
-                    .pick(
+                self.info(
+                    Source::View3d,
+                    self.lang.pick(
                         "3D ビューに試しの立方体を読みました。",
                         "Test cube loaded in the 3D View.",
-                    )
-                    .into();
+                    ),
+                );
             }
             Action::FrameModel => {
                 if stroking {
@@ -1349,25 +1356,24 @@ impl AppState {
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::View3d(op) => self.view3d.display.apply(op),
             Action::About => {
-                self.message = crate::usage::about_text(self.lang, env!("CARGO_PKG_VERSION"));
+                self.info(
+                    Source::Edit,
+                    crate::usage::about_text(self.lang, env!("CARGO_PKG_VERSION")),
+                );
             }
             Action::SelectSet(uid) => {
                 if let Some(i) = self.sets.index_of(uid) {
                     if let Err(e) = self.switch_set(i) {
-                        self.message = e;
+                        self.refuse(Source::TextureSet, e);
                     }
                 }
             }
             Action::ToggleSetVisible(uid) => self.toggle_set_visible(uid),
             Action::StartRenameSet(uid) => match self.sets.by_uid(uid) {
                 Some(set) if set.read_only.is_some() => {
-                    self.message = self
-                        .lang
-                        .pick(
-                            "読むだけのテクスチャセットです。",
-                            "This texture set is read-only.",
-                        )
-                        .into()
+                    let reason = set.read_only.as_deref().unwrap_or_default();
+                    let text = crate::lang::refusals::read_only_set(self.lang, reason);
+                    self.refuse(Source::TextureSet, text);
                 }
                 Some(_) => {
                     self.ui.renaming_set = Some(uid);
@@ -1405,7 +1411,10 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(self.lang.pick("開けません", "Cannot open")) {
+                if self.refuse_while_saving(
+                    self.lang
+                        .pick("プロジェクトを開けません", "Cannot open a project"),
+                ) {
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::Open)
@@ -1414,8 +1423,10 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save"))
-                {
+                if self.refuse_while_saving(
+                    self.lang
+                        .pick("プロジェクトを保存できません", "Cannot save the project"),
+                ) {
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::SaveAs)
@@ -1431,8 +1442,10 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、保存先を選ぶ窓（まだファイルが無いプロジェクト）も開かずに断る
-                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save"))
-                {
+                if self.refuse_while_saving(
+                    self.lang
+                        .pick("プロジェクトを保存できません", "Cannot save the project"),
+                ) {
                     return;
                 }
                 match self

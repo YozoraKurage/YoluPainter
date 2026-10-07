@@ -8,7 +8,8 @@
 use egui::{pos2, vec2, Id, Key, Rect, Vec2};
 
 use super::{combine_name, SelAction, SelEdit};
-use crate::engine::{CoreError, SelectionCombine, SelectionMask};
+use crate::engine::{SelectionCombine, SelectionMask};
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -127,7 +128,10 @@ impl AppState {
                     return;
                 }
                 let Some(mask) = self.doc.selection().cloned() else {
-                    self.message = lang.pick("選択範囲がありません。", "No selection.").into();
+                    self.refuse(
+                        Source::Selection,
+                        lang.pick("選択範囲がありません。", "No selection."),
+                    );
                     return;
                 };
                 let name = name.trim().to_owned();
@@ -138,32 +142,41 @@ impl AppState {
                 };
                 let existing = self.saved_selections().iter().position(|s| s.name == name);
                 if existing.is_none() && self.saved_selections().len() >= MAX_SAVED {
-                    self.message = lang
-                        .pick("覚えられる数の上限です。", "Too many saved selections.")
-                        .into();
+                    self.refuse(
+                        Source::Selection,
+                        lang.pick("覚えられる数の上限です。", "Too many saved selections."),
+                    );
                     return;
                 }
                 if self.saved_bytes_without(existing) + mask.allocated_bytes()
                     > self.sel.saved_budget
                 {
-                    self.message = lang
-                        .pick(
+                    self.refuse(
+                        Source::Selection,
+                        lang.pick(
                             "覚えた選択範囲が大きすぎます。",
                             "The saved selections are too large.",
-                        )
-                        .into();
+                        ),
+                    );
                     return;
                 }
                 let revision = self.doc.revision();
                 match self.doc.save_selection(&name) {
                     Ok(_) => {
-                        self.message = format!(
-                            "{}: {name}",
-                            lang.pick("選択範囲を覚えました", "Remembered")
+                        self.info(
+                            Source::Selection,
+                            format!(
+                                "{}: {name}",
+                                lang.pick("選択範囲を覚えました", "Remembered")
+                            ),
                         );
                         self.modified |= self.doc.revision() != revision;
                     }
-                    Err(e) => self.message = self.saved_error(&e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Selection,
+                        self.lang.core_error(&e),
+                    ),
                 }
                 let next = self.default_saved_name();
                 if let Some(win) = self.sel.saved_window.as_mut() {
@@ -179,7 +192,10 @@ impl AppState {
                 };
                 match self.doc.delete_saved_selection(index) {
                     Ok(()) => {
-                        self.message = format!("{}: {gone}", lang.pick("削除", "Removed"));
+                        self.info(
+                            Source::Selection,
+                            format!("{}: {gone}", lang.pick("削除", "Removed")),
+                        );
                         self.modified = true;
                         if let Some(win) = self.sel.saved_window.as_mut() {
                             // 消した行より後ろの名前の変更は、番号が 1 つずれる
@@ -190,7 +206,11 @@ impl AppState {
                             }
                         }
                     }
-                    Err(e) => self.message = self.saved_error(&e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Selection,
+                        self.lang.core_error(&e),
+                    ),
                 }
             }
             SavedOp::Rename { index, name } => {
@@ -207,11 +227,17 @@ impl AppState {
                 }
                 match self.doc.rename_saved_selection(index, &name) {
                     Ok(()) => {
-                        self.message =
-                            format!("{}: {name}", lang.pick("名前を変えました", "Renamed"));
+                        self.info(
+                            Source::Selection,
+                            format!("{}: {name}", lang.pick("名前を変えました", "Renamed")),
+                        );
                         self.modified = true;
                     }
-                    Err(e) => self.message = self.saved_error(&e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Selection,
+                        self.lang.core_error(&e),
+                    ),
                 }
             }
         }
@@ -220,37 +246,13 @@ impl AppState {
     /// 描いている間はできない（知らせて true）。
     fn refuse_while_stroking(&mut self) -> bool {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return true;
         }
         false
-    }
-
-    /// 残す・名前を変える・消すが断られた理由（名前の決まり・重なり・上限）。
-    fn saved_error(&self, e: &CoreError) -> String {
-        let lang = self.lang;
-        match e {
-            CoreError::InvalidArgument("選択範囲の名前が長すぎる") => lang.pick(
-                format!(
-                    "名前が長すぎます（{} 文字まで）。",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
-                format!(
-                    "The name is too long (up to {} characters).",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
-            ),
-            CoreError::InvalidArgument("同じ名前の選択範囲がある") => lang
-                .pick(
-                    "同じ名前の選択範囲があります。",
-                    "A saved selection with that name exists.",
-                )
-                .into(),
-            other => lang.core_error(other),
-        }
     }
 
     /// 残した選択範囲のバイト数の合計（プロジェクト全体）から、今のセットの `skip` 番目（入れ替える選択範囲）を除いたもの。

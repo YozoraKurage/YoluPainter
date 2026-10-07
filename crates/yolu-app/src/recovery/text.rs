@@ -52,19 +52,20 @@ impl Lang {
     /// 書き置きに失敗したときの状態の帯の文。空きが少なくて書かなかったときは、失敗ではなく見送り。
     pub fn recovery_failed(self, error: &RecoveryError) -> String {
         if matches!(error, RecoveryError::Store(StoreError::LowSpace(_))) {
-            return format!(
-                "{}: {}",
+            return self.with_reason(
                 self.pick(
                     "復旧用の書き置きを見送りました",
-                    "Recovery checkpoint skipped"
+                    "Recovery checkpoint skipped",
                 ),
-                self.recovery_error(error)
+                self.recovery_error(error),
             );
         }
-        format!(
-            "{}: {}",
-            self.pick("復旧用の書き置きに失敗", "Recovery checkpoint failed"),
-            self.recovery_error(error)
+        self.with_reason(
+            self.pick(
+                "復旧用の書き置きに失敗しました",
+                "Recovery checkpoint failed",
+            ),
+            self.recovery_error(error),
         )
     }
 
@@ -76,10 +77,9 @@ impl Lang {
     }
 
     pub fn recovery_cannot_open(self, error: &RecoveryError) -> String {
-        format!(
-            "{}: {}",
+        self.with_reason(
             self.pick("復旧を開けません", "Cannot open the recovery"),
-            self.recovery_error(error)
+            self.recovery_error(error),
         )
     }
 
@@ -104,27 +104,29 @@ impl Lang {
             Problem::Unreadable(reason) => {
                 let reason = self.file_error(&reason.to_error());
                 self.pick(
-                    format!("復旧の設定を読めません: {reason}。世代は整理しません"),
+                    format!("復旧の設定を読めないので、世代は整理しません（{reason}）"),
                     format!(
-                        "Cannot read the recovery settings: {reason}. Generations are not trimmed"
+                        "Generations are not trimmed because the recovery settings cannot be read ({reason})"
                     ),
                 )
             }
             Problem::PreviousRun(reason) => {
                 let reason = self.file_error(&reason.to_error());
-                self.pick(
-                    format!("前回の復旧の印を片付けられません: {reason}"),
-                    format!("Cannot settle the previous recovery marker: {reason}"),
+                self.with_reason(
+                    self.pick(
+                        "前回の復旧の印を片付けられません",
+                        "Cannot settle the previous recovery marker",
+                    ),
+                    reason,
                 )
             }
         }
     }
 
     pub fn recovery_unavailable(self, error: &RecoveryError) -> String {
-        format!(
-            "{}: {}",
+        self.with_reason(
             self.pick("復旧を使えません", "Recovery is unavailable"),
-            self.recovery_error(error)
+            self.recovery_error(error),
         )
     }
 

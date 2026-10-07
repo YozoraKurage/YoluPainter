@@ -13,7 +13,7 @@ use yolu_core::generator::Kind as GeneratorKind;
 use yolu_core::glam::Vec2;
 use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind};
 
-use crate::matpaint::refusal_text;
+use crate::notice::Source as NoticeSource;
 use crate::state::AppState;
 use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
 
@@ -166,10 +166,9 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
         return false;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            NoticeSource::FillLayer,
+            crate::lang::refusals::read_only_set(app.lang, reason),
         );
         return true; // ハンドルを押したので、下のツールで描き始めない
     }
@@ -224,7 +223,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             let mut p = *l.projection();
             p.placement = next.into_placement();
             if let Err(e) = p.validate() {
-                app.message = app.lang.fill_error(&e);
+                app.fail(NoticeSource::FillLayer, app.lang.fill_error(&e));
                 return;
             }
             app.doc.set_fill_projection(layer, p, true)
@@ -240,10 +239,11 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             };
             g.volume = next.into_volume(&g.volume);
             if g.validate().is_err() {
-                app.message = app
-                    .lang
-                    .pick("形の値が範囲外です", "The shape is out of range")
-                    .into();
+                app.fail(
+                    NoticeSource::FillLayer,
+                    app.lang
+                        .pick("形の値が範囲外です", "The shape is out of range"),
+                );
                 return;
             }
             app.doc.set_fill_gradient(layer, ch, Some(g), true)
@@ -258,10 +258,11 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             };
             g.volume = next.into_volume(&g.volume);
             if g.validate().is_err() {
-                app.message = app
-                    .lang
-                    .pick("形の値が範囲外です", "The shape is out of range")
-                    .into();
+                app.fail(
+                    NoticeSource::FillLayer,
+                    app.lang
+                        .pick("形の値が範囲外です", "The shape is out of range"),
+                );
                 return;
             }
             app.doc
@@ -275,7 +276,11 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             }
         }
         Err(e) => {
-            app.message = refusal_text(app.lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                NoticeSource::FillLayer,
+                app.lang.core_error(&e),
+            );
             release(app, false);
         }
     }
@@ -295,14 +300,19 @@ pub fn release(app: &mut AppState, commit: bool) {
     }
     match app.doc.cancel_coalescing() {
         Ok(true) => {
-            app.message = app
-                .lang
-                .pick("形の操作をやめました", "Shape edit cancelled")
-                .into();
+            app.info(
+                NoticeSource::FillLayer,
+                app.lang
+                    .pick("形の操作をやめました", "Shape edit cancelled"),
+            );
         }
         Ok(false) => {}
         Err(e) => {
-            app.message = app.lang.core_error(&e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                NoticeSource::FillLayer,
+                app.lang.core_error(&e),
+            );
             app.doc.end_coalescing();
         }
     }

@@ -375,7 +375,7 @@ fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
             opened.modified = true;
             opened.apply(Action::SaveProject);
             assert!(
-                opened.message.starts_with(prefix),
+                opened.message.contains(prefix),
                 "{lang:?}: {}",
                 opened.message
             );
@@ -395,7 +395,7 @@ fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
             std::fs::remove_file(&path).unwrap();
             opened.apply(Action::SaveProject);
             assert!(
-                opened.message.starts_with(prefix),
+                opened.message.contains(prefix),
                 "{lang:?}: {}",
                 opened.message
             );
@@ -758,7 +758,7 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
         assert!(s.distribute.is_open());
         s.modified = true;
         s.apply(Action::SaveProject);
-        assert!(s.message.starts_with("保存できません"), "{}", s.message);
+        assert!(s.message.contains("保存できません"), "{}", s.message);
         assert!(s.message.contains("配布用に保存の途中"), "{}", s.message);
         s.apply(Action::Distribute(DistributeAction::CancelWindow));
         s.dialog_request = None;

@@ -6,6 +6,7 @@ use egui::{Color32, Painter, Pos2, Shape, Stroke};
 
 use super::{GradientDrag, GradientOp};
 use crate::canvas::view::CanvasView;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 押した（ペン・マウス）。
@@ -14,10 +15,9 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            Source::Gradient,
+            crate::lang::refusals::read_only_set(app.lang, &reason),
         );
         return;
     }
@@ -87,10 +87,11 @@ pub fn pen_sample(
 pub fn cancel(app: &mut AppState) -> bool {
     let any = app.gradient_cancel_drag();
     if any {
-        app.message = app
-            .lang
-            .pick("グラデーションをやめました。", "Gradient cancelled.")
-            .into();
+        app.info(
+            Source::Gradient,
+            app.lang
+                .pick("グラデーションをやめました。", "Gradient cancelled."),
+        );
     }
     any
 }

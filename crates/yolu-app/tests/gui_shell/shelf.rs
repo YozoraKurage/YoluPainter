@@ -342,7 +342,7 @@ fn headless_what_cannot_be_saved_or_placed_changes_nothing_and_says_why() {
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     assert!(s.shelf.resources().is_empty());
     assert!(
-        s.message.contains("ユーザーチャンネルは保存できません"),
+        s.message.contains("ユーザーチャンネルを使っています"),
         "{}",
         s.message
     );
@@ -376,7 +376,11 @@ fn headless_a_placement_over_the_pixel_budget_is_refused_whole() {
     let before = fingerprint(&s);
     place(&mut s, &id);
     assert_eq!(fingerprint(&s), before);
-    assert!(s.message.contains("画素の予算を超えます"), "{}", s.message);
+    assert!(
+        s.message.contains("レイヤーのメモリの予算を超えます"),
+        "{}",
+        s.message
+    );
 }
 
 #[test]
@@ -603,14 +607,14 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
         id: image,
         path: dir.join("x.ylsmart"),
     }));
-    assert!(s.message.contains("スマート素材だけ"), "{}", s.message);
+    assert!(s.message.contains("スマート素材ではない"), "{}", s.message);
     assert!(!dir.join("x.ylsmart").exists());
     // 書き出し先に書けない（フォルダが無い）: 断る
     s.apply(Action::Shelf(ShelfOp::ExportFile {
         id: ids(&s, "smartMask").pop().unwrap(),
         path: dir.join("no-such-folder").join("m.ylsmart"),
     }));
-    assert!(s.message.contains("できません"), "{}", s.message);
+    assert!(s.message.contains("に書き出せません（"), "{}", s.message);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -820,7 +824,9 @@ fn headless_an_unreadable_shelf_is_not_modified_and_the_files_resources_stay() {
     again.apply(Action::Shelf(ShelfOp::SaveMaterial(layer)));
     assert!(again.shelf.resources().is_empty());
     assert!(
-        again.message.contains("棚を読めません"),
+        again
+            .message
+            .contains("棚を読めなかったので、棚を変えられません"),
         "{}",
         again.message
     );
@@ -946,8 +952,7 @@ fn headless_cancelling_a_save_keeps_it_off_the_shelf_and_a_refusal_arrives_later
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), 1);
     assert!(
-        s.message.contains("レイヤー 1")
-            && s.message.contains("ユーザーチャンネルは保存できません"),
+        s.message.contains("レイヤー 1") && s.message.contains("ユーザーチャンネルを使っています"),
         "{}",
         s.message
     );
@@ -1125,9 +1130,9 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     ])));
     assert_eq!(s.shelf.resources().len(), 2, "{}", s.message);
     assert!(
-        s.message.starts_with("できません: bad.ylsmart")
-            && s.message.contains("スマート素材として読めません")
-            && s.message.contains("棚に入れました: 2 件"),
+        s.message
+            .starts_with("「bad.ylsmart」はスマート素材として読めません（")
+            && s.message.contains("2 件を棚に入れました。"),
         "{}",
         s.message
     );
@@ -1141,10 +1146,10 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert_eq!(s.shelf.resources().len(), 3, "{}", s.message);
     // 3 つのうち raster はすでにあり、multi だけが新しく入る（すでにあった分を「入れました」と数えない）
     assert!(
-        s.message.starts_with("Cannot: bad.ylsmart")
-            && s.message.contains("Not a readable smart asset")
+        s.message
+            .starts_with("\"bad.ylsmart\" is not a readable smart asset (")
             && s.message
-                .ends_with("Added to the shelf: 1 · Already there: 1"),
+                .ends_with("Added 1 to the shelf. 1 was already on the shelf."),
         "{}",
         s.message
     );
@@ -1156,9 +1161,10 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         good("multi.ylsmart"),
     ])));
     assert!(
-        s.message.starts_with("できません: bad.ylsmart")
-            && s.message.ends_with("すでに棚にあった: 2 件")
-            && !s.message.contains("棚に入れました"),
+        s.message
+            .starts_with("「bad.ylsmart」はスマート素材として読めません（")
+            && s.message.ends_with("2 件はすでに棚にありました。")
+            && !s.message.contains("を棚に入れました"),
         "{}",
         s.message
     );
@@ -1170,7 +1176,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message.contains("bad.ylsmart")
             && s.message.contains("none.ylsmart")
-            && !s.message.contains("棚に入れました"),
+            && !s.message.contains("を棚に入れました"),
         "{}",
         s.message
     );
@@ -1180,7 +1186,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         good("images.ylsmart"),
     ])));
     assert_eq!(
-        s.message, "棚に入れました: 1 件 · すでに棚にあった: 1 件",
+        s.message, "1 件を棚に入れました。1 件はすでに棚にありました。",
         "{}",
         s.message
     );
@@ -1193,7 +1199,12 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     s.apply(Action::Shelf(ShelfOp::ImportFiles(vec![good(
         "raster.ylsmart",
     )])));
-    assert!(s.message.contains("棚を読めません"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("棚を読めなかったので、棚を変えられません"),
+        "{}",
+        s.message
+    );
     assert!(s.shelf.resources().is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1398,7 +1409,6 @@ fn headless_an_image_over_the_thumbnail_pixel_limit_shows_an_icon_and_can_still_
 #[test]
 fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
     use yolu_app::engine::CoreError;
-    use yolu_app::shelf::core_reason;
     use yolu_core::smart::SmartPlacement;
     // 本物の core の呼び出しから断りを取る（core の文言が変わると、ここが落ちる）
     let (mut s, base) = painted(8);
@@ -1430,8 +1440,8 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
         s.doc
             .place_smart_material(&material, &SmartPlacement::default())
             .unwrap_err(),
-        "画素の予算を超えます",
-        "Over the pixel budget",
+        "レイヤーのメモリの予算を超えます",
+        "Over the Layer memory budget",
     ));
     // 層は 2048 まで
     let mut full = Document::new(8, 8).unwrap();
@@ -1453,14 +1463,14 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
     cases.push((
         s.doc.capture_smart_material(&[], "x").unwrap_err(),
         "レイヤーがありません",
-        "No layer",
+        "Layer not found",
     ));
     cases.push((
         s.doc
             .capture_smart_material(&[LayerId(0xdead)], "x")
             .unwrap_err(),
         "レイヤーがありません",
-        "No layer",
+        "Layer not found",
     ));
     cases.push((
         s.doc.capture_smart_material(&[base], "  ").unwrap_err(),
@@ -1481,16 +1491,17 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
         "置き先がグループではありません",
         "Target is not a group",
     ));
+    // 棚の断りも、ほかの操作と同じ core の誤りの文（`Lang::core_error`。同じ誤りは 1 つの文）
     for (error, ja, en) in &cases {
-        assert_eq!(core_reason(Lang::Ja, error), *ja, "{error:?}");
-        assert_eq!(core_reason(Lang::En, error), *en, "{error:?}");
-        assert_ne!(core_reason(Lang::Ja, error), error.to_string(), "{error:?}");
+        assert_eq!(Lang::Ja.core_error(error), *ja, "{error:?}");
+        assert_eq!(Lang::En.core_error(error), *en, "{error:?}");
+        assert_ne!(Lang::Ja.core_error(error), error.to_string(), "{error:?}");
     }
     assert_eq!(cases.len(), 8);
-    // 知らない断りは core の文のまま
+    // 個別の文の無い断りは core の文のまま
     assert_eq!(
-        core_reason(Lang::Ja, &CoreError::Cancelled),
-        CoreError::Cancelled.to_string()
+        Lang::Ja.core_error(&CoreError::BatchActive),
+        CoreError::BatchActive.to_string()
     );
 }
 
@@ -1498,7 +1509,7 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
 /// 本物の呼び出しから断りを取る確かめは次の試験（アーカイブの大きさの上限だけは、本物を作ると棚が 768 MiB を超えるので、この表だけ）。
 #[test]
 fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_languages() {
-    use yolu_app::shelf::io_reason;
+    use yolu_app::lang::shelf_io_error as io_reason;
     use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
     use yolu_io::smart::{
         REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
@@ -1523,13 +1534,13 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
         (REFUSAL_RESOURCE_COUNT, "棚がいっぱいです", "Shelf is full"),
         (
             REFUSAL_USER_CHANNELS,
-            "ユーザーチャンネルは保存できません",
-            "User channels cannot be saved",
+            "ユーザーチャンネルを使っています",
+            "It uses user channels",
         ),
         (
             REFUSAL_RUST_GENERATORS,
-            "ノイズ・グランジは保存できません",
-            "Noise and Grunge cannot be saved",
+            "ノイズ・グランジを使っています",
+            "It uses Noise and Grunge",
         ),
     ];
     for (message, ja, en) in cases {
@@ -1560,7 +1571,7 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
 /// ユーザーチャンネル・層のロック。
 #[test]
 fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
-    use yolu_app::shelf::io_reason;
+    use yolu_app::lang::shelf_io_error as io_reason;
     use yolu_io::shelf::ResourceKind;
     use yolu_io::smart::SmartFile;
     let raster = std::fs::read(fixtures().join("raster.ylsmart")).unwrap();
@@ -1614,9 +1625,9 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     let error = SmartFile::from_core(&material, &yolu_app::project::writer()).unwrap_err();
     assert_eq!(
         io_reason(Lang::Ja, &error),
-        "ユーザーチャンネルは保存できません"
+        "ユーザーチャンネルを使っています"
     );
-    assert_eq!(io_reason(Lang::En, &error), "User channels cannot be saved");
+    assert_eq!(io_reason(Lang::En, &error), "It uses user channels");
     // 層のロックを持つ層は保存できる（ロックも一緒に書く）
     s.doc.remove_channel(channel).unwrap();
     s.doc
@@ -1635,8 +1646,11 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
 #[test]
 fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both_languages() {
     for (lang, want) in [
-        (Lang::Ja, "できません: ノイズ・グランジは保存できません"),
-        (Lang::En, "Cannot: Noise and Grunge cannot be saved"),
+        (
+            Lang::Ja,
+            "を棚に保存できません（ノイズ・グランジを使っています）。",
+        ),
+        (Lang::En, " to the shelf (It uses Noise and Grunge)."),
     ] {
         for id in ["builtin:rusty-iron", "builtin:wood"] {
             let mut s = AppState::new(64, 64);
@@ -1651,7 +1665,12 @@ fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both
             s.modified = false;
             let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
             s.apply(Action::Shelf(ShelfOp::SaveMaterial(group)));
-            assert_eq!(s.message, want, "{id}");
+            assert!(
+                s.message.ends_with(want)
+                    && s.message.starts_with(lang.pick("「", "Cannot save \"")),
+                "{id}: {}",
+                s.message
+            );
             assert!(s.shelf.resources().is_empty() && !s.shelf.changed, "{id}");
             assert!(!s.modified && s.shelf.saving_name().is_none(), "{id}");
             assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
@@ -1772,9 +1791,9 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
         )));
         assert!(
             s.message.starts_with(if lang == Lang::Ja {
-                "できません"
+                "「mask.ylsmart」を棚に読み込めません"
             } else {
-                "Cannot"
+                "Cannot import \"mask.ylsmart\" into the shelf"
             }) && s.message.contains(want),
             "{}",
             s.message
@@ -3070,7 +3089,7 @@ mod ui {
         assert_eq!(st(&h).shelf.resources().len(), 2, "{}", st(&h).message);
         let message = &st(&h).message;
         assert!(
-            message.contains("bad.ylsmart") && message.contains("棚に入れました: 2 件"),
+            message.contains("bad.ylsmart") && message.contains("2 件を棚に入れました。"),
             "{message}"
         );
         let _ = std::fs::remove_dir_all(dir);

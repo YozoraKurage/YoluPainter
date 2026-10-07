@@ -10,8 +10,8 @@ use egui::{pos2, vec2, Id, Key, Rect, Sense, Ui, UiBuilder, Vec2};
 
 use super::configure::{resampling_name, unused_groups, ConfirmKind, Plan};
 use super::{
-    limit_error, size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template,
-    MAX_SETS, RESOLUTIONS,
+    size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template, MAX_SETS,
+    RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, NormalYDirection};
 use crate::lang::Lang;
@@ -845,7 +845,7 @@ fn draw_materials(
                 lang.pick("1 つは残します", "At least one stays checked")
             )
         } else if full {
-            format!("{}\n{detail}", limit_error(lang))
+            format!("{}\n{detail}", crate::lang::refusals::set_limit(lang))
         } else {
             detail
         };

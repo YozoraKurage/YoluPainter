@@ -778,50 +778,43 @@ fn draw_page(
                 let r = row(18.0, 2.0, &mut y);
                 place_line(&mut child, &p, r, "bake.backend.probe", line);
             }
-            y += 6.0;
-            let r = row(16.0, 4.0, &mut y);
-            w::text(
-                &p,
-                r,
-                lang.pick("最後のベイク", "Last Bake"),
-                t::HEADER.with_color(t::TEXT_DIM),
-                Align::Left,
-            );
+            // 最後のベイク: 焼いた場所と、記録の注意の行だけ（時間・レイ・テクセル・三角形の数は記録 `MeshBakeReport` に残し、画面には
+            // 出さない）。焼いていなければ見出しごと出さない（空の欄に文も見出しも置かない）
+            let notes = report
+                .map(|rep| report_lines(lang, rep))
+                .unwrap_or_default();
+            if place.last.is_some() || !notes.is_empty() {
+                y += 6.0;
+                let r = row(16.0, 4.0, &mut y);
+                w::text(
+                    &p,
+                    r,
+                    lang.pick("最後のベイク", "Last Bake"),
+                    t::HEADER.with_color(t::TEXT_DIM),
+                    Align::Left,
+                );
+            }
             if let Some(line) = &place.last {
                 let r = row(18.0, 2.0, &mut y);
                 place_line(&mut child, &p, r, "bake.backend.last", line);
             }
-            match report {
-                None => {
-                    let r = row(18.0, 2.0, &mut y);
-                    w::text(
-                        &p,
-                        r,
-                        lang.pick("まだ焼いていません", "Not baked yet"),
-                        t::LABEL_DIM,
-                        Align::Left,
-                    );
-                }
-                Some(rep) => {
-                    for (text, warn) in report_lines(lang, rep) {
-                        let r = row(18.0, 2.0, &mut y);
-                        let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
-                        w::text(
-                            &p,
-                            r,
-                            &shown,
-                            t::LABEL_DIM.with_color(if warn { t::WARNING } else { t::TEXT_DIM }),
-                            Align::Left,
-                        );
-                        let tip = ui.interact(
-                            r,
-                            Id::new(("bake.report", text.clone())),
-                            egui::Sense::hover(),
-                        );
-                        if shown != text {
-                            tip.on_hover_text(text);
-                        }
-                    }
+            for (text, warn) in notes {
+                let r = row(18.0, 2.0, &mut y);
+                let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
+                w::text(
+                    &p,
+                    r,
+                    &shown,
+                    t::LABEL_DIM.with_color(if warn { t::WARNING } else { t::TEXT_DIM }),
+                    Align::Left,
+                );
+                let tip = ui.interact(
+                    r,
+                    Id::new(("bake.report", text.clone())),
+                    egui::Sense::hover(),
+                );
+                if shown != text {
+                    tip.on_hover_text(text);
                 }
             }
         }
@@ -843,9 +836,9 @@ fn draw_page(
             let r = row(18.0, 2.0, &mut y);
             w::text(&p, r, &state_text, t::LABEL_DIM, Align::Left);
             if let Some(m) = m.filter(|m| !m.reasons.is_empty()) {
-                let text = lang.pick(
-                    format!("古いので使いません: {}", m.reasons),
-                    format!("Stale and not used: {}", m.reasons),
+                let text = lang.with_reason(
+                    lang.pick("古いので使いません", "Stale and not used"),
+                    &m.reasons,
                 );
                 let r = row(18.0, 2.0, &mut y);
                 let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
@@ -951,8 +944,8 @@ fn draw_page(
                     &p,
                     r,
                     lang.pick(
-                        "高ポリなし: このマップは一様",
-                        "No high poly: this map is uniform",
+                        "高ポリが無いので、このマップは一様です",
+                        "No high poly, so this map is uniform",
                     ),
                     t::LABEL_DIM.with_color(t::WARNING),
                     Align::Left,
@@ -1135,8 +1128,8 @@ fn draw_footer(
 pub fn id_status(lang: Lang, kind: MeshMapKind, report: Option<&MeshBakeReport>) -> Option<String> {
     (kind == MeshMapKind::Id && report.is_some_and(|r| r.id_parts == 1)).then(|| {
         lang.pick(
-            "最後のベイク: 部品が 1 つ・ID は 1 色",
-            "Last bake: one part, one ID color",
+            "最後のベイクは部品が 1 つなので、ID は 1 色です",
+            "The last bake had one part, so the ID is one color",
         )
         .to_owned()
     })
@@ -1164,68 +1157,26 @@ fn place_line(ui: &mut Ui, p: &egui::Painter, r: Rect, id: &str, line: &PlaceLin
     }
 }
 
-/// 最後のベイクの記録の行（文と、注意か）。
+/// 最後のベイクの記録の行（文と、注意か）。注意（`MeshBakeNote`）だけ。時間の内訳・レイ・テクセル・三角形の数は開発用の数なので
+/// 画面に出さない（記録 `MeshBakeReport` には残り、試験と計測が読む）。
 pub fn report_lines(lang: Lang, r: &MeshBakeReport) -> Vec<(String, bool)> {
-    let n = |v: u64| v.to_string();
-    let mut lines = vec![
-        (
-            lang.pick(
-                format!(
-                    "時間 {:.2} 秒（準備 {:.2} · 塗り {:.2} · 余白 {:.2}）",
-                    r.total_seconds, r.prepare_seconds, r.raster_seconds, r.padding_seconds
-                ),
-                format!(
-                    "Time {:.2} s (prepare {:.2} · raster {:.2} · padding {:.2})",
-                    r.total_seconds, r.prepare_seconds, r.raster_seconds, r.padding_seconds
-                ),
-            ),
-            false,
-        ),
-        (
-            lang.pick(format!("レイ {}", n(r.rays)), format!("Rays {}", n(r.rays))),
-            false,
-        ),
-        (
-            lang.pick(
-                format!(
-                    "テクセル 焼いた {} · 余白 {} · 空 {}",
-                    n(r.covered_texels + r.overlap_texels),
-                    n(r.padded_texels),
-                    n(r.empty_texels)
-                ),
-                format!(
-                    "Texels baked {} · padding {} · empty {}",
-                    n(r.covered_texels + r.overlap_texels),
-                    n(r.padded_texels),
-                    n(r.empty_texels)
-                ),
-            ),
-            false,
-        ),
-        (
-            lang.pick(
-                format!(
-                    "三角形 焼いた {} · UV 面積 0 が {} · 縮退 {}",
-                    r.receiving_triangles, r.zero_uv_area_triangles, r.degenerate_triangles
-                ),
-                format!(
-                    "Triangles baked {} · {} without UV area · {} degenerate",
-                    r.receiving_triangles, r.zero_uv_area_triangles, r.degenerate_triangles
-                ),
-            ),
-            false,
-        ),
-    ];
-    for note in &r.notes {
-        lines.push((note_text(lang, note), true));
-    }
-    lines
+    r.notes
+        .iter()
+        .map(|note| (note_text(lang, note), true))
+        .collect()
 }
 
 /// 記録の注意の文（日本語は core の文、英語は短い文）。
 pub fn note_text(lang: Lang, note: &MeshBakeNote) -> String {
     if lang == Lang::Ja {
-        return note.to_string();
+        // 法線の由来・ID の分け方の名前（方式の名前）は画面に出さない（記録の `MeshBakeNote` には残る）
+        return match note {
+            MeshBakeNote::ReconstructedNormals(_) => {
+                "頂点法線は形から作り直しました。編集した法線は再現しません".into()
+            }
+            MeshBakeNote::IdParts { parts, .. } => format!("IDの部品 {parts}"),
+            _ => note.to_string(),
+        };
     }
     match note {
         MeshBakeNote::OverlappingTexels(n) => {
@@ -1235,8 +1186,8 @@ pub fn note_text(lang: Lang, note: &MeshBakeNote) -> String {
             format!("{n} triangles have no UV area (not baked, still occlude)")
         }
         MeshBakeNote::FaceNormals => "No vertex normals (face normals are used)".into(),
-        MeshBakeNote::ReconstructedNormals(source) => {
-            format!("Vertex normals rebuilt from the shape ({source}); edited normals are not reproduced")
+        MeshBakeNote::ReconstructedNormals(_) => {
+            "Vertex normals were rebuilt from the shape. Edited normals are not reproduced".into()
         }
         MeshBakeNote::TangentFallback(n) => {
             format!("{n} triangles without tangents (made from the UVs)")

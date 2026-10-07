@@ -8,7 +8,8 @@ use yolu_io::library as files;
 use super::cache::Cache;
 use super::image as png;
 use super::service::Cancel;
-use super::{reason, LibInfo};
+use super::LibInfo;
+use crate::lang::library_io_error as reason;
 use crate::lang::Lang;
 use crate::shelf::{
     from_cached, image_picture, inspect_smart_kind, remembered, to_cached, Block, Inspected,

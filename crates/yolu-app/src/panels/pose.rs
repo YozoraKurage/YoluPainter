@@ -663,12 +663,20 @@ fn set_weight(app: &mut AppState, m: usize, k: usize, value: f32, active: bool, 
     if changed {
         if !s.is_editing() {
             if let Err(e) = pose::begin_edit(&mut app.view3d) {
-                app.message = app.lang.view_error(&e);
+                app.notify(
+                    e.notice_kind(),
+                    crate::notice::Source::Pose,
+                    app.lang.view_error(&e),
+                );
                 return;
             }
         }
         if let Err(e) = pose::edit(&mut app.view3d, next) {
-            app.message = app.lang.view_error(&e);
+            app.notify(
+                e.notice_kind(),
+                crate::notice::Source::Pose,
+                app.lang.view_error(&e),
+            );
         }
     }
     if released || !active {

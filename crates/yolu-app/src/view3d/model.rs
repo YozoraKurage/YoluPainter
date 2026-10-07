@@ -46,10 +46,28 @@ pub enum ViewError {
     Model(ModelError),
 }
 
+impl ViewError {
+    /// 知らせの種類: 今の状態で受けない物（描いている間・モデルが無い・操作が始まっていない）は断り、取り消しは済んだ知らせ、ほかは失敗。
+    pub fn notice_kind(&self) -> crate::notice::Kind {
+        use crate::notice::Kind;
+        match self {
+            Self::Stroking
+            | Self::NoPoseModel
+            | Self::NoPoseEdit
+            | Self::NoLinkModel
+            | Self::NoPoseBase => Kind::Refusal,
+            Self::Cancelled => Kind::Info,
+            _ => Kind::Error,
+        }
+    }
+}
+
 impl std::fmt::Display for ViewError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Stroking => f.write_str("描いている間はポーズを変えられません。"),
+            Self::Stroking => {
+                f.write_str(crate::lang::refusals::during_stroke(crate::lang::Lang::Ja))
+            }
             Self::NoPoseModel => f.write_str("ポーズを付けるモデルがありません"),
             Self::NoPoseEdit => f.write_str("ポーズの操作が始まっていません"),
             Self::NoLinkModel => f.write_str("モデルを受ける前のポーズは使えません"),

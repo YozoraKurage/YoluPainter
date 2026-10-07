@@ -273,7 +273,8 @@ impl AppState {
     /// 今のポーズのセッション（FBX・試しの人形）のモデルにテクスチャセットを結び付け、セットの無いマテリアルにはセットを作る
     /// （Live Link と同じ照合）。今のセットが付かなかったときは、付いたセットの先頭へ替える（描き始められるように）。
     /// セッションが無ければ何もしない。知らせの文（作ったセット・モデルに無いセット）を返す。
-    pub fn bind_rig_model(&mut self) -> Option<String> {
+    /// 知らせに添える但し書きと、その種類（新しいセットだけなら済んだ知らせ、モデルに無いセット・上限は注意）。
+    pub fn bind_rig_model(&mut self) -> Option<(crate::notice::Kind, String)> {
         let rig = self.view3d.pose.session.as_ref()?.rig.clone();
         self.model = Some(SceneModel::from_rig(&rig));
         let report = self.bind_model();
@@ -296,9 +297,12 @@ impl AppState {
             if !note.is_empty() {
                 note.push(' ');
             }
-            note += &lang.pick(
-                format!("モデルに無いセット: {names}。"),
-                format!("Sets not in the model: {names}."),
+            note += &lang.with_reason(
+                lang.pick(
+                    "モデルに無いテクスチャセットがあります",
+                    "Some texture sets are not in the model",
+                ),
+                names,
             );
         }
         if let Some(limit) = report.limit_text(lang) {
@@ -307,7 +311,12 @@ impl AppState {
             }
             note += &limit;
         }
-        (!note.is_empty()).then_some(note)
+        let kind = if report.unmatched.is_empty() && report.limit_text(lang).is_none() {
+            crate::notice::Kind::Info
+        } else {
+            crate::notice::Kind::Warning
+        };
+        (!note.is_empty()).then_some((kind, note))
     }
 
     /// ポーズを付けられるモデル・Live Link の相手の記録が、今のセッションのものでなくなっていたら（別のモデルに替わった）外す

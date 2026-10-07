@@ -9,6 +9,7 @@ use super::curve::{nearest_point, nearest_segment, sample_screen, P3};
 use super::edit::{self, Place, PointOp};
 use super::{Hover, PathAction, PenDown, PointDrag, PointRef, GRAB_RADIUS, PATH_COLOR};
 use crate::canvas::view::CanvasView;
+use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
 use yolu_core::paths::CanvasPath;
 use yolu_core::LayerPath;
@@ -101,10 +102,10 @@ fn inside(app: &AppState, x: f64, y: f64) -> bool {
 }
 
 fn outside(app: &mut AppState) {
-    app.message = app
-        .lang
-        .pick("キャンバスの外です", "Outside the canvas")
-        .into();
+    app.refuse(
+        Source::Path,
+        app.lang.pick("キャンバスの外です", "Outside the canvas"),
+    );
 }
 
 /// 動いた。

@@ -38,6 +38,7 @@ use super::model::{ViewError, ViewModel};
 use super::View3dState;
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::notice::{Kind, Source};
 use crate::state::{AppState, DialogRequest};
 
 /// 取り消しの並びの長さ（1 つはポーズの写し。骨 500・BlendShape 200 で約 20 KiB）。
@@ -571,6 +572,18 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
     });
 }
 
+/// 「「名前」を読み込めません（理由）。」（ポーズのモデルの読み込みの失敗）。
+fn cannot_load(lang: Lang, name: &str, error: &ViewError) -> String {
+    let name = lang.quote(name);
+    lang.with_reason(
+        lang.pick(
+            format!("{name}を読み込めません"),
+            format!("Cannot load {name}"),
+        ),
+        lang.view_error(error),
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) {
     if let Some(loading) = &mut view3d.pose.loading {
@@ -585,14 +598,15 @@ pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) 
     poll(view3d)
 }
 
-/// `poll_in`の、日本語のもの（試験・言語を持たない呼び出し）。
+/// `poll_in`の、日本語のもの（試験・言語を持たない呼び出し）。知らせの種類は捨てる。
 pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
-    poll_in(view3d, Lang::Ja)
+    let (message, installed) = poll_in(view3d, Lang::Ja);
+    (message.map(|(_, text)| text), installed)
 }
 
-/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文（言語に合わせる）と、
-/// モデルを入れたかを返す。
-pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
+/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文（言語に合わせる）とその種類
+/// （読めた: 済んだ知らせ、読めなかった所がある: 注意、読めない・止まった: 失敗、取り消した: 済んだ知らせ）と、モデルを入れたかを返す。
+pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>, bool) {
     let mut message = None;
     let mut installed = false;
     if let Some(loading) = &view3d.pose.loading {
@@ -607,25 +621,41 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
                     installed = true;
                     // 名前と、読めなかった所があるか（件数は状態）。三角形・骨の数や読んだ時間は出さない
                     message = Some(if warnings > 0 {
-                        lang.pick(
-                            format!("{name}を読み込みました（知らせ {warnings} 件）"),
-                            format!("Loaded {name} ({warnings} notices)"),
+                        (
+                            Kind::Warning,
+                            lang.pick(
+                                format!("{name}を読み込みました（知らせ {warnings} 件）"),
+                                format!("Loaded {name} ({warnings} notices)"),
+                            ),
                         )
                     } else {
-                        lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}"))
+                        (
+                            Kind::Info,
+                            lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}")),
+                        )
                     });
                 }
             }
             Polled::Message(Err(e)) => {
-                message = Some(format!("{}: {}", loading.name, lang.view_error(&e)));
+                let name = lang.quote(&loading.name);
+                message = Some(if matches!(e, ViewError::Cancelled) {
+                    (
+                        Kind::Info,
+                        lang.pick(
+                            format!("{name}の読み込みを取り消しました。"),
+                            format!("Loading {name} was canceled."),
+                        ),
+                    )
+                } else {
+                    (Kind::Error, cannot_load(lang, &loading.name, &e))
+                });
                 view3d.pose.loading = None;
             }
             Polled::Empty => {}
             Polled::Lost => {
-                message = Some(format!(
-                    "{}: {}",
-                    loading.name,
-                    lang.view_error(&ViewError::LoadStopped)
+                message = Some((
+                    Kind::Error,
+                    cannot_load(lang, &loading.name, &ViewError::LoadStopped),
                 ));
                 view3d.pose.loading = None;
             }
@@ -823,15 +853,18 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         // 読み込みの結果は 3D ビューに入れていない。取り消すと、途中の物を捨てて今のモデルは前のまま
         if let Some(name) = app.view3d.pose.loading_name().map(str::to_owned) {
             app.view3d.pose.cancel_loading();
-            app.message = app.lang.pick(
-                format!("{name}の読み込みを取り消しました。"),
-                format!("Cancelled loading {name}."),
+            app.info(
+                Source::Pose,
+                app.lang.pick(
+                    format!("{name}の読み込みを取り消しました。"),
+                    format!("Cancelled loading {name}."),
+                ),
             );
         }
         return;
     }
     if app.is_stroking() {
-        app.message = app.lang.view_error(&ViewError::Stroking);
+        app.refuse(Source::Pose, app.lang.view_error(&ViewError::Stroking));
         return;
     }
     let result = match action {
@@ -847,13 +880,16 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.np.model_file = None;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
-                app.message = app.lang.pick(
+                let mut text = app.lang.pick(
                     format!("{}を読み込みました", s.rig.name()),
                     format!("Loaded {}", s.rig.name()),
                 );
-                if let Some(note) = note {
-                    app.message += &format!(" {note}");
+                let mut kind = Kind::Info;
+                if let Some((note_kind, note)) = note {
+                    text += &format!(" {note}");
+                    kind = note_kind;
                 }
+                app.notify(kind, Source::Pose, text);
             }
         }),
         PoseAction::ToggleMode => {
@@ -868,23 +904,24 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app
-                    .lang
-                    .pick("ポーズを取り消しました。", "Pose undone.")
-                    .into();
+                app.info(
+                    Source::Pose,
+                    app.lang.pick("ポーズを取り消しました。", "Pose undone."),
+                );
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app
-                    .lang
-                    .pick("ポーズをやり直しました。", "Pose redone.")
-                    .into();
+                app.info(
+                    Source::Pose,
+                    app.lang.pick("ポーズをやり直しました。", "Pose redone."),
+                );
             }
         }),
     };
     if let Err(e) = result {
-        app.message = app.lang.view_error(&e);
+        let text = app.lang.view_error(&e);
+        app.notify(e.notice_kind(), Source::Pose, text);
     }
 }
 
@@ -942,11 +979,15 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     } else {
         None
     };
-    if let Some(mut m) = message {
-        if let Some(note) = note {
+    if let Some((mut kind, mut m)) = message {
+        if let Some((note_kind, note)) = note {
             m += &format!(" {note}");
+            // 結び付けの但し書き（モデルに無いセット・上限）は、済んだ知らせを注意にする
+            if kind == Kind::Info {
+                kind = note_kind;
+            }
         }
-        app.message = m;
+        app.notify(kind, Source::Pose, m);
     }
     if app.view3d.pose.is_loading() {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -1220,7 +1261,9 @@ mod tests {
         open_fbx(&mut app.view3d, &bad);
         let (message, installed) = wait(&mut app);
         assert!(!installed);
-        assert!(message.unwrap().starts_with("壊れた.fbx: "));
+        assert!(message
+            .unwrap()
+            .starts_with("「壊れた.fbx」を読み込めません（"));
         assert!(app.view3d.pose.session.is_some());
         // 大きすぎる
         let limits = ModelLimits {

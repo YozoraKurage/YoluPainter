@@ -26,6 +26,7 @@ use super::capture::{
 use super::{backup_text, reopen_note, same_file, ProjectFile};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// 保存の段の数（合成・組み立て、数える、書く、確かめる、置き換える）。
@@ -120,6 +121,9 @@ struct Done {
     /// 書いたファイルを指すプロジェクト（次の保存・書き置きの元）。
     project: Arc<Project>,
     text: String,
+    /// 保存できたが気をつけること（読めなかった物の上書き・保存しなかったポーズの項目・効いていない効果・開き直しの予算・
+    /// 消せなかった古い退避）を文に添えたか。
+    caveat: bool,
     /// 置き換えで残した前の版。
     backup: Option<PathBuf>,
 }
@@ -173,11 +177,6 @@ impl SaveState {
         self.hold = Some(flag.clone());
         SaveHold(flag)
     }
-}
-
-/// 保存を断る・待たせる理由（保存の途中に、ほかの保存・開く・新規・配布用に保存・更新の入れ替えが来たとき）。
-pub fn busy_reason(lang: Lang) -> &'static str {
-    lang.pick("保存の途中です", "A save is in progress")
 }
 
 /// 保存（札。取り消せない）。終わる頼みを保存が終わるまで待たせている間は、キーの割り当てを止める。保存は閉じる前の確かめにも、
@@ -256,11 +255,8 @@ fn stopped(lang: Lang) -> Finished {
 /// 保存の頼み（ファイルのメニュー・Ctrl+S・別名で保存・保存して更新）。断る・失敗するときは、何も変えずに理由を出す。
 pub fn save_from(state: &mut AppState, path: &Path) {
     if let Err(e) = start(state, path, false) {
-        state.message = format!(
-            "{}: {}: {e}",
-            state.lang.pick("保存できません", "Cannot save"),
-            path.display()
-        );
+        let lang = state.lang;
+        state.refuse(Source::Save, lang.with_reason(cannot_save(lang, path), e));
     }
 }
 
@@ -275,12 +271,10 @@ pub fn save_for_ops(state: &mut AppState, path: &Path) -> Result<(), String> {
 fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> {
     let lang = state.lang;
     if state.is_stroking() {
-        return Err(lang
-            .pick("描いている間は保存しません", "Cannot save during a stroke")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     if state.save.job.is_some() {
-        return Err(busy_reason(lang).into());
+        return Err(crate::lang::refusals::saving(lang).into());
     }
     // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
     // そのファイルを置き換えても、ハンドルは置き換える前のファイルを読み続ける。しかし、置換の規則が POSIX でないファイルシステム
@@ -424,13 +418,12 @@ fn work(request: Request) -> Finished {
                 SaveTarget::open_within(&path, &yolu_io::Limits::unbounded())
                     .map(|(_, t)| t)
                     .map_err(|e| {
-                        format!(
-                            "{}: {}",
+                        lang.with_reason(
                             lang.pick(
                                 "上書きする先を .ylp として読めません",
-                                "Invalid overwrite target"
+                                "Invalid overwrite target",
                             ),
-                            lang.io_error(&e)
+                            lang.io_error(&e),
                         )
                     })
             } else {
@@ -492,12 +485,13 @@ fn work(request: Request) -> Finished {
                     .map(|s| s.name.as_str())
             })
             .collect();
-        text += &lang.pick(
-            format!(
-                " 読めなかった見た目の設定を上書きしました: {}。",
-                names.join("、")
+        text += " ";
+        text += &lang.with_reason(
+            lang.pick(
+                "読めなかった見た目の設定を上書きしました",
+                "Overwrote unreadable look settings",
             ),
-            format!(" Overwrote unreadable look settings: {}.", names.join(", ")),
+            names.join(lang.pick("、", ", ")),
         );
     }
     // 開くときに読めなかった、名前を付けて残した選択範囲の項目を、変えた並びで置き換えたセット
@@ -513,15 +507,13 @@ fn work(request: Request) -> Finished {
                     .map(|s| s.name.as_str())
             })
             .collect();
-        text += &lang.pick(
-            format!(
-                " 読めなかった覚えた選択範囲の項目を置き換えました: {}。",
-                names.join("、")
+        text += " ";
+        text += &lang.with_reason(
+            lang.pick(
+                "読めなかった覚えた選択範囲の項目を置き換えました",
+                "Replaced unreadable remembered selections",
             ),
-            format!(
-                " Replaced unreadable remembered selections: {}.",
-                names.join(", ")
-            ),
+            names.join(lang.pick("、", ", ")),
         );
     }
     if built.pose_overwritten {
@@ -530,7 +522,16 @@ fn work(request: Request) -> Finished {
             " Replaced the unreadable pose with the current pose.".to_owned(),
         );
     }
-    text += &crate::view3d::pose::stored::unsaved_note(lang, &capture.pose_unsaved);
+    let unsaved = crate::view3d::pose::stored::unsaved_note(lang, &capture.pose_unsaved);
+    let caveat = !capture.left_out.is_empty()
+        || !built.looks_overwritten.is_empty()
+        || !built.saved_overwritten.is_empty()
+        || built.pose_overwritten
+        || !unsaved.is_empty()
+        || !built.inactive_effects.is_empty()
+        || reopen.is_some()
+        || !report.prune_failures.is_empty();
+    text += &unsaved;
     text += &built.inactive_effects;
     if let Some(note) = reopen {
         text += &note;
@@ -540,6 +541,7 @@ fn work(request: Request) -> Finished {
         result: Ok(Done {
             project: saved,
             text,
+            caveat,
             backup: report.backup.clone(),
         }),
         target: Some(target),
@@ -601,11 +603,15 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
             state.rewritten_sets = job.written.len();
             // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
-            // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうる）
+            // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうるので、注意としてログにも残す）
             if !job.left_out.is_empty() {
                 state.modified = true;
             }
-            state.message = done.text;
+            if done.caveat {
+                state.warn(Source::Save, done.text);
+            } else {
+                state.info(Source::Save, done.text);
+            }
             if job.report {
                 state.save.outcome = Some(SaveOutcome {
                     path: job.path.clone(),
@@ -634,9 +640,18 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
             result: Err(text.clone()),
         });
     }
-    state.message = format!(
-        "{}: {}: {text}",
-        state.lang.pick("保存できません", "Cannot save"),
-        job.path.display()
+    let lang = state.lang;
+    state.fail(
+        Source::Save,
+        lang.with_reason(cannot_save(lang, &job.path), text),
     );
+}
+
+/// 「「ファイル」に保存できません」（理由は `Lang::with_reason` で添える）。
+fn cannot_save(lang: Lang, path: &Path) -> String {
+    let file = lang.quote(&path.display().to_string());
+    lang.pick(
+        format!("{file}に保存できません"),
+        format!("Cannot save to {file}"),
+    )
 }

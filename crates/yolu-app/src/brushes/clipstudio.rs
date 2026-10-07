@@ -14,6 +14,7 @@ use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
 use crate::jobs::{JobSpec, Polled, Worker};
+use crate::notice::Source as NoticeSource;
 use crate::state::{AppState, DialogRequest};
 
 /// 一覧の 1 行の中身（見本まで読めたか）。
@@ -197,7 +198,19 @@ impl AppState {
         });
         match spawned {
             Ok(worker) => csp.job = Some(worker.cancel_on_drop()),
-            Err(e) => self.message = e.to_string(),
+            Err(e) => {
+                let lang = self.lang;
+                self.fail(
+                    NoticeSource::Brush,
+                    lang.with_reason(
+                        lang.pick(
+                            "CLIP STUDIO のブラシを探せません",
+                            "Cannot search for the CLIP STUDIO brushes",
+                        ),
+                        lang.thread_error(&e),
+                    ),
+                );
+            }
         }
     }
 

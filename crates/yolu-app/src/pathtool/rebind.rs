@@ -10,36 +10,10 @@
 //! （レイヤー名つき）を出す。
 
 use yolu_core::geometry::SurfaceGeometry;
-use yolu_core::paths::{
-    fingerprint, rebind_surface_path, render_surface, Options, RebindError, SurfacePath,
-};
+use yolu_core::paths::{fingerprint, rebind_surface_path, render_surface, Options, SurfacePath};
 use yolu_core::{Document, LayerId, LayerLocks, LayerPath};
 
 use crate::lang::Lang;
-
-/// 付け直せなかった理由の文（画面の言語で）。
-pub fn rebind_error_text(lang: Lang, error: RebindError) -> String {
-    match error {
-        RebindError::OtherModel => lang
-            .pick("別のモデルで描かれたパスです", "The path was drawn on another model")
-            .into(),
-        RebindError::NoMaterial => lang
-            .pick("マテリアルが新しいモデルにありません", "Its material is not in the new model")
-            .into(),
-        RebindError::MissingTriangle { point } => lang.pick(
-            format!("点 {} はモデルに無い三角形を指しています", point + 1),
-            format!("Point {} refers to a triangle the model does not have", point + 1),
-        ),
-        RebindError::SearchBudget { point } => lang.pick(
-            format!("点 {} を新しいメッシュで探すのに時間がかかりすぎました", point + 1),
-            format!("Finding point {} on the new mesh took too long", point + 1),
-        ),
-        RebindError::NoSurface { point, tolerance } => lang.pick(
-            format!("点 {} の近く（{tolerance:.4} 以内）に、同じマテリアルの面が新しいメッシュにありません", point + 1),
-            format!("Point {} has no surface of its material within {tolerance:.4} on the new mesh", point + 1),
-        ),
-    }
-}
 
 /// 1 つのパスの付け直しの結果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,8 +111,8 @@ fn redraw_one(
     material: i32,
     lang: Lang,
 ) -> Result<Option<String>, String> {
-    let rebound =
-        rebind_surface_path(path, old, new, material).map_err(|e| rebind_error_text(lang, e))?;
+    let rebound = rebind_surface_path(path, old, new, material)
+        .map_err(|e| crate::lang::rebind_error(lang, e))?;
     let options = Options {
         width: doc.width(),
         height: doc.height(),
@@ -148,10 +122,10 @@ fn redraw_one(
         ..Options::default()
     };
     let rendered =
-        render_surface(&rebound, new, &options).map_err(|e| super::path_error_text(lang, &e))?;
+        render_surface(&rebound, new, &options).map_err(|e| crate::lang::path_error(lang, &e))?;
     let gaps = rendered.gaps;
     doc.set_path(layer, LayerPath::Surface(rebound), rendered.channels)
-        .map_err(|e| crate::matpaint::refusal_text(lang, &e))?;
+        .map_err(|e| lang.core_error(&e))?;
     Ok((gaps > 0).then(|| {
         lang.pick(
             format!("{gaps} 個の標本は新しい面に投影できませんでした"),

@@ -25,8 +25,9 @@ use yolu_core::paths::{
 };
 use yolu_core::{CoreError, LayerId, LayerPath};
 
-use self::edit::{Place, PointOp, Refusal};
+use self::edit::{Place, PointOp};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
 use crate::view3d::model::ViewModel;
 
@@ -160,63 +161,6 @@ fn random_id() -> u128 {
     b.write_u64(!n);
     b.write_u8(0x50);
     ((a.finish() as u128) << 64) | b.finish() as u128
-}
-
-/// 点の操作を断る理由の文。
-pub fn refusal_text(lang: Lang, refusal: Refusal) -> String {
-    match refusal {
-        Refusal::TooMany => lang
-            .pick(
-                "パスの点は 4096 個までです",
-                "A path has at most 4096 points",
-            )
-            .into(),
-        Refusal::NeedThree => lang
-            .pick(
-                "閉じるには 3 点以上が要ります",
-                "Closing needs at least 3 points",
-            )
-            .into(),
-        Refusal::AlreadyClosed => lang.pick("もう閉じています", "Already closed").into(),
-        Refusal::NotClosed => lang.pick("閉じていません", "Not closed").into(),
-        Refusal::NoPoint => lang.pick("その点がありません", "No such point").into(),
-        Refusal::OtherKind => lang
-            .pick(
-                "このレイヤーのパスは 2D と 3D が違います",
-                "This layer's path is of the other kind (2D or 3D)",
-            )
-            .into(),
-        Refusal::Invalid(why) => lang.core_error(&CoreError::InvalidArgument(why)),
-    }
-}
-
-/// パスの評価の失敗の文。
-pub fn path_error_text(lang: Lang, error: &paths::Error) -> String {
-    use paths::Error;
-    match error {
-        Error::Invalid(why) => lang.core_error(&CoreError::InvalidArgument(why)),
-        Error::ModelMismatch => lang
-            .pick(
-                "モデルが、パスを描いたときと違います",
-                "The model differs from the one the path was drawn on",
-            )
-            .into(),
-        Error::MissingTriangle => lang
-            .pick(
-                "パスが指す三角形がモデルにありません",
-                "The path refers to a triangle the model does not have",
-            )
-            .into(),
-        Error::TooManySamples => lang
-            .pick(
-                "ブラシの間隔に対してパスが長すぎます",
-                "The path is too long for the brush spacing",
-            )
-            .into(),
-        Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
-        Error::Core(e) => crate::matpaint::refusal_text(lang, e),
-        Error::Dab(d) => lang.path_dab_refusal(*d).into(),
-    }
 }
 
 /// パスを持つ層の名前。
@@ -379,61 +323,63 @@ impl AppState {
         };
         edit::apply(&empty, &PointOp::Add(place))
             .map(|(p, _)| p)
-            .map_err(|r| refusal_text(self.lang, r))
+            .map_err(|r| crate::lang::refusals::path_edit(self.lang, r))
     }
 
     /// 編集する前の確かめ: 描ける状態か、選んでいる層とそのパス。`surface` は編集するのが 3D のパスか（None なら、あるパスのまま）。
     fn path_target(&mut self, surface: Option<bool>) -> Option<(LayerId, Option<LayerPath>)> {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Path, crate::lang::refusals::during_stroke(lang));
             return None;
         }
         if let Some(reason) = self.read_only_reason().map(str::to_owned) {
-            self.message = format!(
-                "{}: {reason}",
-                lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+            self.refuse(
+                Source::Path,
+                crate::lang::refusals::read_only_set(lang, &reason),
             );
             return None;
         }
         if self.m2.edit_mask {
-            self.message = lang
-                .pick(
+            self.refuse(
+                Source::Path,
+                lang.pick(
                     "パスはマスクに描けません",
                     "A path cannot be drawn on a mask",
-                )
-                .into();
+                ),
+            );
             return None;
         }
         let Some(layer) = self
             .selected_layer
             .filter(|id| self.doc.layer(*id).is_some())
         else {
-            self.message = lang
-                .pick("描くレイヤーがありません。", "No layer to paint on.")
-                .into();
+            self.refuse(
+                Source::Path,
+                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
+            );
             return None;
         };
         let existing = self.doc.layer(layer).and_then(|l| l.path().cloned());
         match (&existing, surface) {
             (Some(LayerPath::Surface(_)), Some(false)) => {
-                self.message = lang
-                    .pick(
+                self.refuse(
+                    Source::Path,
+                    lang.pick(
                         "このレイヤーにはモデルの上のパスがあります",
                         "This layer has a path on the model",
-                    )
-                    .into();
+                    ),
+                );
                 None
             }
             (Some(LayerPath::Canvas(_)), Some(true)) => {
-                self.message = lang
-                    .pick(
+                self.refuse(
+                    Source::Path,
+                    lang.pick(
                         "このレイヤーにはキャンバスのパスがあります",
                         "This layer has a canvas path",
-                    )
-                    .into();
+                    ),
+                );
                 None
             }
             _ => Some((layer, existing)),
@@ -448,7 +394,7 @@ impl AppState {
         path: &LayerPath,
     ) -> Result<(LayerId, usize), String> {
         let lang = self.lang;
-        let core = |e: CoreError| crate::matpaint::refusal_text(lang, &e);
+        let core = |e: CoreError| lang.core_error(&e);
         let options = self.path_options();
         let surface_ctx = |s: &SurfacePath, app: &AppState| -> Result<SurfaceCtx, String> {
             let ctx = app.path_surface_ctx()?;
@@ -470,7 +416,7 @@ impl AppState {
             (Some(l), LayerPath::Surface(s)) => {
                 let ctx = surface_ctx(s, self)?;
                 let rendered = render_surface(s, &ctx.model.geometry, &options)
-                    .map_err(|e| path_error_text(lang, &e))?;
+                    .map_err(|e| crate::lang::path_error(lang, &e))?;
                 let gaps = rendered.gaps;
                 self.doc
                     .set_path(l, path.clone(), rendered.channels)
@@ -480,14 +426,14 @@ impl AppState {
             (None, p) => {
                 let (channels, gaps) = match p {
                     LayerPath::Canvas(c) => {
-                        let r =
-                            render_canvas(c, &options).map_err(|e| path_error_text(lang, &e))?;
+                        let r = render_canvas(c, &options)
+                            .map_err(|e| crate::lang::path_error(lang, &e))?;
                         (r.channels, 0)
                     }
                     LayerPath::Surface(s) => {
                         let ctx = surface_ctx(s, self)?;
                         let r = render_surface(s, &ctx.model.geometry, &options)
-                            .map_err(|e| path_error_text(lang, &e))?;
+                            .map_err(|e| crate::lang::path_error(lang, &e))?;
                         let gaps = r.gaps;
                         (r.channels, gaps)
                     }
@@ -532,15 +478,18 @@ impl AppState {
                 });
                 self.modified = true;
                 if gaps > 0 {
-                    self.message = lang.pick(
-                        format!("{gaps} 個の標本が面から外れて、描いていません"),
-                        format!("{gaps} sample(s) were off the surface and skipped"),
+                    self.warn(
+                        Source::Path,
+                        lang.pick(
+                            format!("{gaps} 個の標本が面から外れて、描いていません"),
+                            format!("{gaps} sample(s) were off the surface and skipped"),
+                        ),
                     );
                 }
                 true
             }
             Err(m) => {
-                self.message = m;
+                self.fail(Source::Path, m);
                 false
             }
         }
@@ -566,10 +515,11 @@ impl AppState {
         self.path.pending = None;
         let any = if self.path.drag.take().is_some() {
             self.path.pen_down = None;
-            self.message = self
-                .lang
-                .pick("点の移動をやめました。", "Point move cancelled.")
-                .into();
+            self.info(
+                Source::Path,
+                self.lang
+                    .pick("点の移動をやめました。", "Point move cancelled."),
+            );
             true
         } else {
             self.path.selected.take().is_some()
@@ -641,7 +591,7 @@ impl AppState {
                     LayerPath::Surface(_) => match self.path_surface_ctx() {
                         Ok(c) => Some(c),
                         Err(m) => {
-                            self.message = m;
+                            self.refuse(Source::Path, m);
                             return;
                         }
                     },
@@ -663,15 +613,13 @@ impl AppState {
             }
             PathAction::Rasterize(id) => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Path, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 if let Some(reason) = self.read_only_reason().map(str::to_owned) {
-                    self.message = format!(
-                        "{}: {reason}",
-                        lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    self.refuse(
+                        Source::Path,
+                        crate::lang::refusals::read_only_set(lang, &reason),
                     );
                     return;
                 }
@@ -682,9 +630,16 @@ impl AppState {
                     Ok(()) => {
                         self.path.selected = None;
                         self.modified = true;
-                        self.message = lang.pick("ラスタライズしました。", "Rasterized.").into();
+                        self.info(
+                            Source::Path,
+                            lang.pick("ラスタライズしました。", "Rasterized."),
+                        );
                     }
-                    Err(e) => self.message = crate::matpaint::refusal_text(lang, &e),
+                    Err(e) => self.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Path,
+                        lang.core_error(&e),
+                    ),
                 }
             }
         }
@@ -705,7 +660,7 @@ impl AppState {
             Some(path) => match edit::apply(&path, &op) {
                 Ok((next, select)) => (next, select, Some(layer)),
                 Err(r) => {
-                    self.message = refusal_text(lang, r);
+                    self.refuse(Source::Path, crate::lang::refusals::path_edit(lang, r));
                     return;
                 }
             },
@@ -713,7 +668,7 @@ impl AppState {
                 PointOp::Add(place) => match self.path_new(place) {
                     Ok(p) => (p, Some(0), None),
                     Err(m) => {
-                        self.message = m;
+                        self.refuse(Source::Path, m);
                         return;
                     }
                 },
@@ -760,7 +715,7 @@ impl AppState {
                             d / 2.0 * unit as f64
                         }
                         Err(m) => {
-                            self.message = m;
+                            self.refuse(Source::Path, m);
                             return;
                         }
                     },
@@ -805,12 +760,13 @@ impl AppState {
             if self.path.pen_down.is_some_and(|p| p.surface) {
                 self.path.pen_down = None;
             }
-            self.message = lang
-                .pick(
+            self.warn(
+                Source::Path,
+                lang.pick(
                     "モデルが替わったので、点の移動をやめました。",
                     "The model changed, so the point move was cancelled.",
-                )
-                .into();
+                ),
+            );
         }
         let mut all = Vec::new();
         for i in 0..self.sets.len() {
@@ -844,7 +800,13 @@ impl AppState {
         }
         if !all.is_empty() {
             self.modified = true;
-            self.message = rebind_message(lang, &all);
+            // 全部を描き直せたなら済んだ知らせ。画素にした・残したパスがあれば気をつけること
+            let text = rebind_message(lang, &all);
+            if all.iter().all(|r| r.outcome == rebind::Outcome::Redrawn) {
+                self.info(Source::Path, text);
+            } else {
+                self.warn(Source::Path, text);
+            }
         }
         all
     }
@@ -873,17 +835,22 @@ fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
         ));
     }
     let mut text = lang.pick(
-        format!("モデルの差し替え: パス {}ました", parts.join("、")),
-        format!("Model replaced: {}", parts.join(", ")),
+        format!("モデルを差し替えて、パス {}ました。", parts.join("、")),
+        format!("After the model change, {}.", parts.join(", ")),
     );
     let first = reports
         .iter()
         .find(|r| r.outcome != rebind::Outcome::Redrawn && r.reason.is_some())
         .or_else(|| reports.iter().find(|r| r.reason.is_some()));
     if let Some((name, reason)) = first.and_then(|r| Some((&r.name, r.reason.as_deref()?))) {
-        text.push_str(&lang.pick(
-            format!("（{name}: {reason}）"),
-            format!(" ({name}: {reason})"),
+        let name = lang.quote(name);
+        text.push_str(lang.pick("", " "));
+        text.push_str(&lang.with_reason(
+            lang.pick(
+                format!("レイヤー{name}のパスは描き直せません"),
+                format!("Cannot redraw the path of layer {name}"),
+            ),
+            reason,
         ));
     }
     text

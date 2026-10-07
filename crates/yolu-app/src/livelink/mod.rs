@@ -461,7 +461,12 @@ impl LiveLink {
     }
 
     fn notify(&mut self, level: NoticeLevel, text: String, state: &mut AppState) {
-        state.message = text.clone();
+        let kind = match level {
+            NoticeLevel::Info => crate::notice::Kind::Info,
+            NoticeLevel::Warning => crate::notice::Kind::Warning,
+            NoticeLevel::Error => crate::notice::Kind::Error,
+        };
+        state.notify(kind, crate::notice::Source::LiveLink, text.clone());
         self.notice = Some((level, text));
     }
 

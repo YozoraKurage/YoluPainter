@@ -750,7 +750,12 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         s.sets.get(1).unwrap().read_only.is_none(),
         "Trim は core が持つ中身だけ"
     );
-    assert!(s.message.contains("読むだけのセット 1"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("読むだけで開いたテクスチャセットがあります"),
+        "{}",
+        s.message
+    );
     // 描けない
     let c = canvas_rect(&h).center();
     let was = canvas_pixel(&h, c);
@@ -818,7 +823,11 @@ fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_edi
         s.sets.get(1).unwrap().read_only.is_none(),
         "フィルターだけの文書は評価されるので編集できる"
     );
-    assert!(s.message.contains("読むだけのセット 1"), "{}", s.message);
+    assert!(
+        s.message.contains("読むだけのテクスチャセットがあります"),
+        "{}",
+        s.message
+    );
     // 読むだけのセットは保存しても元の正本のまま、編集できるセットは書き直して効果を合成の PNG に入れる
     let original = read_project(&path);
     h.state_mut().state.apply(Action::SaveProject);
@@ -1063,7 +1072,7 @@ fn saving_never_clobbers_what_it_cannot_read_or_what_changed_outside() {
         .state
         .apply(Action::SaveProjectAs(other.clone()));
     assert!(
-        h.state().state.message.starts_with("保存できません"),
+        h.state().state.message.contains("保存できません"),
         "{}",
         h.state().state.message
     );
@@ -1077,7 +1086,7 @@ fn saving_never_clobbers_what_it_cannot_read_or_what_changed_outside() {
     std::fs::write(&path, &outside).unwrap();
     h.state_mut().state.apply(Action::SaveProject);
     assert!(
-        h.state().state.message.starts_with("保存できません"),
+        h.state().state.message.contains("保存できません"),
         "{}",
         h.state().state.message
     );
@@ -1153,7 +1162,7 @@ fn a_broken_file_changes_nothing_and_says_why() {
     assert_eq!(s.doc.id(), doc);
     assert_eq!(s.sets.len(), 1);
     assert!(s.project.is_none());
-    assert!(s.message.starts_with("開けません"), "{}", s.message);
+    assert!(s.message.contains("開けません"), "{}", s.message);
 }
 
 #[test]
@@ -1331,7 +1340,7 @@ fn a_name_without_ylp_is_refused_and_a_missing_folder_is_created() {
     for bad in ["noext", "pic.png", "doc.ylp.bak", "doc.ylp~"] {
         s.apply(Action::SaveProjectAs(dir.0.join("sub").join(bad)));
         assert!(
-            s.message.starts_with("保存できません") && s.message.contains(".ylp"),
+            s.message.contains("保存できません") && s.message.contains(".ylp"),
             "{bad}: {}",
             s.message
         );
@@ -1344,7 +1353,7 @@ fn a_name_without_ylp_is_refused_and_a_missing_folder_is_created() {
     s.set_language(yolu_app::lang::Lang::En);
     s.apply(Action::SaveProjectAs(dir.0.join("noext")));
     assert!(
-        s.message.ends_with("The file name must end with .ylp"),
+        s.message.ends_with("(The file name must end with .ylp)."),
         "{}",
         s.message
     );

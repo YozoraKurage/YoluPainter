@@ -32,15 +32,17 @@ fn chosen_groups(
 }
 
 /// 窓の値で新しいプロジェクトを作る。断るときは何も変えず、理由を返す。
-pub(super) fn create_from_window(app: &mut AppState, win: &mut NpWindow) -> Result<String, String> {
+/// 作った結果の知らせ（種類と文。続けてベイクを始めたなら、その知らせを後ろに添え、種類も重いほう）。
+pub(super) fn create_from_window(
+    app: &mut AppState,
+    win: &mut NpWindow,
+) -> Result<(crate::notice::Kind, String), String> {
     let lang = app.lang;
     if app.is_stroking() {
-        return Err(lang
-            .pick("描いている間はできません", "Not while drawing")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     if app.is_saving() {
-        return Err(crate::project::busy_reason(lang).into());
+        return Err(crate::lang::refusals::saving(lang).into());
     }
     if !win.is_ready() {
         return Err(lang
@@ -103,7 +105,7 @@ fn install(
     sets_count: usize,
     over_limit: usize,
     bake: bool,
-) -> String {
+) -> (crate::notice::Kind, String) {
     let lang = app.lang;
     app.np_project_replaced();
     app.doc.end_coalescing();
@@ -164,12 +166,13 @@ fn install(
             format!("New project for {name} with {sets_count} texture sets{over}."),
         ),
     };
-    app.message = created.clone();
     if bake && has_model {
+        app.info(crate::notice::Source::Project, created.clone());
         app.apply(Action::Bake(BakeAction::Start));
         if app.message != created {
-            app.message = format!("{created} {}", app.message);
+            let kind = app.message_kind().worse(crate::notice::Kind::Info);
+            return (kind, format!("{created} {}", app.message));
         }
     }
-    app.message.clone()
+    (crate::notice::Kind::Info, created)
 }

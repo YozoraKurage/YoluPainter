@@ -307,7 +307,7 @@ fn strip_test_items(text: &str) -> String {
 }
 
 /// 試験を除いたソース（ファイル名が tests.rs で終わるファイルと、`#[cfg(test)]` を付けた項目を除く）。
-fn production_sources() -> Vec<(String, String)> {
+pub(crate) fn production_sources() -> Vec<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     source_files(&root, &mut files);
@@ -799,12 +799,24 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         ("panels/view3d.rs", "corner"),
     ];
     let literals = collect_literals();
+    let sources = production_sources();
     for (file, function) in CHROME {
+        // 表の関数はソースにある（名前を変えたら表も直す。見つからないまま通すと、黙って確かめが外れる）
+        let source = sources
+            .iter()
+            .find(|(f, _)| f == file)
+            .unwrap_or_else(|| panic!("{file} が無い（CHROME の表を直す）"));
+        assert!(
+            [format!("fn {function}("), format!("fn {function}<")]
+                .iter()
+                .any(|head| source.1.contains(head.as_str())),
+            "{file} に関数 {function} が無い（CHROME の表を直す）"
+        );
         let inside: Vec<&Literal> = literals
             .iter()
             .filter(|l| l.file == file && l.function.as_deref() == Some(function))
             .collect();
-        // 3D の隅と状態の帯は固定の文字を持たないことがあるので、見つからないのは許すが、見つかったものは開発用の言葉を含まない
+        // 3D の隅と状態の帯は固定の文字を持たないことがある（関数はあるが文字が無いのは許す）。見つかったものは開発用の言葉を含まない
         for l in inside {
             for word in DEVELOPER_WORDS {
                 assert!(
@@ -845,8 +857,10 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         );
     }
     // 画面の文字（ツールチップ以外）のうち、メモリの量・タイルの数・合成の方式は、理由として断る文にだけある（原文を確かめて足す）
-    const REASONS: [&str; 5] = [
+    const REASONS: [&str; 6] = [
         "ファイルが {} MiB を超えています",
+        // FBX を読まない理由（ファイルの大きさと上限。yolu-model の日本語の文の英語）
+        "File too large ({:.1} MiB, maximum {:.0} MiB)",
         "タイルの大きさ {} は共有メモリで使えません（16〜1024 の 2 の冪）",
         "Invalid shared tile size {} (power of two, 16–1024)",
         "3D を描けません（GPU なし）",
@@ -857,12 +871,6 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
     let leaks: Vec<String> = literals
         .iter()
         .filter(|l| !l.tooltip && is_screen_text(&l.text))
-        .filter(|l| {
-            !l.file.starts_with("lang/")
-                && !l.file.starts_with("bake/")
-                && !l.file.starts_with("export/")
-                && !l.file.starts_with("view3d/")
-        })
         .filter(|l| {
             [
                 "MiB",

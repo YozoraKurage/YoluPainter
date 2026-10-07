@@ -172,7 +172,10 @@ pub fn parse(text: &str) -> Loaded {
         Ok(mut dock) => {
             forget_focus(&mut dock);
             match validate(&dock) {
-                Ok(()) => out.dock = Some(dock),
+                Ok(()) => {
+                    add_missing_tabs(&mut dock);
+                    out.dock = Some(dock);
+                }
                 Err(reason) => out.problems.push(format!(
                     "ドックの並びを使えません（{reason}）。既定の並びで始めます。"
                 )),
@@ -202,12 +205,30 @@ fn forget_focus(dock: &mut DockState<Tab>) {
     }
 }
 
+/// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログは後の版で足したタブで、それより前の版が保存した
+/// 並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。
+pub const OPTIONAL_TABS: [Tab; 2] = [Tab::Pose, Tab::Log];
+
+/// 後の版で足したタブが、読んだ並びに無ければ足す: ログは既定の並びと同じく、レイヤーと同じ組の後ろ（レイヤーが無ければ最初の組。
+/// 前へは出さない）。
+pub fn add_missing_tabs(dock: &mut DockState<Tab>) {
+    if dock.find_tab(&Tab::Log).is_some() {
+        return;
+    }
+    let target = dock.find_tab(&Tab::Layers).map(|p| p.node_path());
+    match target.and_then(|path| dock.leaf_mut(path).ok()) {
+        Some(leaf) => leaf.tabs.push(Tab::Log),
+        None => dock.push_to_first_leaf(Tab::Log),
+    }
+}
+
 /// 読んだドックが使えるか。egui_dock は読んだ値をそのまま添字で引くので、描く前に次を確かめる（外れていれば理由。外れたまま渡すと、
 /// 起動のたびに落ちて、並びのファイルを手で消すまで起動できなくなる）。
 /// - 面: 先頭が主の面で、それ以外に主の面が無い。浮かせた窓の面は、組を 1 つ以上持ち、窓の位置と大きさが有限で範囲の中。
 /// - 木: 分けた所の両側が木の中にあり、根からつながらない節が無い（見えないタブができる）。分け方は有限で 0 と 1 の間。
 /// - 組: 空でなく、前のタブの番号がタブの数の中。浮かせた窓の木のフォーカスは、木の中の組（読むときは `forget_focus` で外してある）。
-/// - タブ: どのタブも 1 つずつ（ポーズだけは、無くてよい。モデルを読むと足される）。足りない・重なるなら理由。
+/// - タブ: どのタブも 1 つずつ（ポーズとログは、無くてよい。ポーズはモデルを読むと足され、ログは読んだときに `add_missing_tabs` が足す）。
+///   足りない・重なるなら理由。
 pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
     use egui_dock::Surface;
     if !matches!(dock.iter_surfaces().next(), Some(Surface::Main(_))) {
@@ -261,7 +282,7 @@ pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
     }
     for tab in Tab::ALL {
         let n = count.get(&tab).copied().unwrap_or(0);
-        let optional = tab == Tab::Pose;
+        let optional = OPTIONAL_TABS.contains(&tab);
         if n > 1 {
             return Err(format!("タブ {} が {n} つある", tab.key()));
         }

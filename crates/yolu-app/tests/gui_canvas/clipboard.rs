@@ -461,7 +461,7 @@ fn headless_refusals_say_why_in_both_languages_and_change_nothing() {
     s.lang = Lang::En;
     s.doc.set_layer_locks(id, LayerLocks::PIXELS).unwrap();
     run(&mut s, ClipAction::Cut);
-    assert_eq!(s.message, "Layer or parent group is locked");
+    assert_eq!(s.message, "The layer has \"Image pixels\" locked");
     s.doc.set_layer_locks(id, LayerLocks::NONE).unwrap();
     // 写す範囲が上限を超える（バイトや MiB は文に出さない）
     s.doc.clear_history().unwrap();

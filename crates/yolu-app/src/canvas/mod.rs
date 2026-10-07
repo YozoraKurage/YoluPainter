@@ -17,6 +17,7 @@ use self::display::CanvasDisplay;
 use self::view::{angle_label, CanvasView};
 use crate::engine::{BrushSample, Tilt};
 use crate::gesture;
+use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
 use crate::state::{AppState, ShiftHold, StrokeSource};
 use crate::tools::input::{CanvasKind, InputCtx};
@@ -287,13 +288,8 @@ fn begin_stroke(
     guided: bool,
 ) -> bool {
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang.pick(
-                "読むだけのテクスチャセットには描けません",
-                "Cannot paint on a read-only texture set"
-            )
-        );
+        let text = crate::lang::refusals::read_only_set(app.lang, reason);
+        app.refuse(Source::Canvas, text);
         return false;
     }
     // クイックマスクが入っていれば、ブラシ・消しゴムは選択ペン・選択消しとして働く
@@ -301,14 +297,15 @@ fn begin_stroke(
         return began;
     }
     let Some(layer) = app.selected_layer else {
-        app.message = app
-            .lang
-            .pick("描くレイヤーがありません。", "No layer to paint on.")
-            .into();
+        app.refuse(
+            Source::Canvas,
+            app.lang
+                .pick("描くレイヤーがありません。", "No layer to paint on."),
+        );
         return false;
     };
     if let Some(reason) = app.paint_blocker() {
-        app.message = reason;
+        app.refuse(Source::Canvas, reason);
         return false;
     }
     let settings = app.stroke_settings(eraser);
@@ -316,10 +313,13 @@ fn begin_stroke(
     let stencil = match app.canvas_stencil(rect) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                app.lang.pick("描けません", "Cannot paint"),
-                app.lang.core_error(&e)
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Canvas,
+                app.lang.with_reason(
+                    app.lang.pick("描けません", "Cannot paint"),
+                    app.lang.core_error(&e),
+                ),
             );
             return false;
         }
@@ -345,10 +345,13 @@ fn begin_stroke(
             true
         }
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                app.lang.pick("描けません", "Cannot paint"),
-                crate::matpaint::refusal_text(app.lang, &e)
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Canvas,
+                app.lang.with_reason(
+                    app.lang.pick("描けません", "Cannot paint"),
+                    app.lang.core_error(&e),
+                ),
             );
             false
         }
@@ -435,7 +438,11 @@ fn add_point(
             // core は失敗したストロークを取り消してから返す（予算を超えたなど）。札を手放して知らせる
             app.stroke = None;
             app.canvas.stroke = None;
-            app.message = app.lang.core_error(&e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Canvas,
+                app.lang.core_error(&e),
+            );
         }
     }
 }
@@ -459,12 +466,17 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.doc.cancel_stroke(stroke);
-        app.message = app
-            .lang
-            .pick("ストロークを取り消しました。", "Stroke cancelled.")
-            .into();
+        app.info(
+            Source::Canvas,
+            app.lang
+                .pick("ストロークを取り消しました。", "Stroke cancelled."),
+        );
     } else if let Err(e) = app.doc.end_stroke(stroke) {
-        app.message = app.lang.core_error(&e);
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Canvas,
+            app.lang.core_error(&e),
+        );
     } else if endpoint.is_some() {
         app.canvas.previous_end = endpoint;
     }

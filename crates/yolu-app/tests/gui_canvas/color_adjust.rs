@@ -36,7 +36,7 @@ struct Panel {
     height: f32,
     sets: RampSets,
     eyedrop: EyedropState,
-    message: String,
+    failure: Option<String>,
 }
 
 fn draw(ui: &mut Ui, p: &mut Panel) {
@@ -62,7 +62,7 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         histogram: p.histogram.as_ref(),
         sets: &mut p.sets,
         eyedrop: &mut p.eyedrop,
-        message: &mut p.message,
+        failure: &mut p.failure,
     };
     if let Some(change) = color_adjust::rows(ui, &mut rows, &mut params, &p.value) {
         p.value = change.value.clone();
@@ -90,7 +90,7 @@ fn panel(value: ColorAdjust, lang: Lang) -> Harness<'static, Panel> {
                 height,
                 sets: RampSets::default(),
                 eyedrop: EyedropState::default(),
-                message: String::new(),
+                failure: None,
             },
         );
     h.run();

@@ -34,6 +34,7 @@ use crate::engine::{
     DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 pub use self::symmetry::SymmetryState;
@@ -521,16 +522,16 @@ impl AppState {
     /// 選択範囲を変える（描いている間と読むだけのセットは `Action::apply` が先に断る）。断られたら何も変えず、理由をステータスバーへ。
     pub fn sel_edit(&mut self, edit: SelEdit) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
         match self.sel_apply(edit) {
-            Ok(text) => self.message = text,
-            Err(e) => self.message = e,
+            Ok(text) => self.info(Source::Selection, text),
+            Err(e) => self.refuse(Source::Selection, e),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -748,20 +749,19 @@ impl AppState {
             SelUiOp::Combine(mode) => self.sel.combine = mode,
             SelUiOp::OpenAmount(kind) => {
                 if self.is_stroking() {
-                    self.message = self
-                        .lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::Selection,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                 } else if self.doc.selection().is_none() {
-                    self.message = self
-                        .lang
-                        .pick("選択範囲がありません。", "No selection.")
-                        .into();
+                    self.refuse(
+                        Source::Selection,
+                        self.lang.pick("選択範囲がありません。", "No selection."),
+                    );
                 } else if let Some(reason) = self.read_only_reason() {
-                    self.message = format!(
-                        "{}: {reason}",
-                        self.lang
-                            .pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    self.refuse(
+                        Source::Selection,
+                        crate::lang::refusals::read_only_set(self.lang, reason),
                     );
                 } else {
                     self.sel.dialog = Some(AmountDialog {
@@ -793,10 +793,10 @@ impl AppState {
     /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
     pub fn sel_symmetry(&mut self, op: SymOp) {
         if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_) | SymOp::ShowPlane3d(_)) {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         // 境界の中央は、モデルの今の形から（モデルが無ければ何もしない）

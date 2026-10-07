@@ -20,6 +20,7 @@ use yolu_core::geometry::SurfaceRegionKind;
 
 use self::index::{RegionIndex, UvGrid};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 
 pub use self::idcolor::IdColorOp;
@@ -120,10 +121,10 @@ impl AppState {
     /// 範囲の道具の操作を当てる（描いている間は断る）。
     pub fn region_apply(&mut self, action: RegionAction) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Fill,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let r = &mut self.region;

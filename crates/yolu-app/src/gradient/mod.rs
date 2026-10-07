@@ -11,8 +11,9 @@ use yolu_core::glam::DVec2;
 use yolu_core::material::{ChannelPaint, GradientSettings, GradientShape};
 use yolu_core::{LayerKind, Rgba8};
 
+use crate::matpaint::single_value;
 use crate::matpaint::MaterialPaint;
-use crate::matpaint::{refusal_text, single_value};
+use crate::notice::Source;
 use crate::state::{to_byte, AppState, Rgba, StrokeSource};
 
 /// 終点の色。
@@ -126,12 +127,13 @@ impl AppState {
                     color: self.color.main,
                 });
                 self.gradient.between = true;
-                self.message = lang
-                    .pick(
+                self.info(
+                    Source::Gradient,
+                    lang.pick(
                         "現在のマテリアルを終点にしました",
                         "The current material is the end",
-                    )
-                    .into();
+                    ),
+                );
             }
             GradientOp::Apply { start, end } => self.gradient_paint(start, end),
         }
@@ -141,29 +143,29 @@ impl AppState {
     fn gradient_paint(&mut self, a: (f64, f64), b: (f64, f64)) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Gradient, crate::lang::refusals::during_stroke(lang));
             return;
         }
         if (a.0 - b.0).hypot(a.1 - b.1) < Self::GRADIENT_CLICK {
             return;
         }
         let Some(id) = self.selected_layer else {
-            self.message = lang
-                .pick("描くレイヤーがありません。", "No layer to paint on.")
-                .into();
+            self.refuse(
+                Source::Gradient,
+                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
+            );
             return;
         };
         let masked = self.m2.edit_mask;
         let kind = self.doc.layer(id).map(|l| l.kind());
         if !masked && kind != Some(LayerKind::Raster) {
-            self.message = lang
-                .pick(
+            self.refuse(
+                Source::Gradient,
+                lang.pick(
                     "ペイントレイヤーかマスクだけにグラデーションを塗れます",
                     "Only a paint layer or a mask takes a gradient",
-                )
-                .into();
+                ),
+            );
             return;
         }
         let (from, to) = self.gradient_ends();
@@ -210,17 +212,19 @@ impl AppState {
             )
         };
         match result {
-            Ok(true) => {
-                self.message = lang
-                    .pick("グラデーションを塗りました", "Gradient applied")
-                    .into()
-            }
-            Ok(false) => {
-                self.message = lang
-                    .pick("塗る所がありません", "Nothing to paint there")
-                    .into()
-            }
-            Err(e) => self.message = refusal_text(lang, &e),
+            Ok(true) => self.info(
+                Source::Gradient,
+                lang.pick("グラデーションを塗りました", "Gradient applied"),
+            ),
+            Ok(false) => self.refuse(
+                Source::Gradient,
+                lang.pick("塗る所がありません", "Nothing to paint there"),
+            ),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Gradient,
+                lang.core_error(&e),
+            ),
         }
         if self.doc.revision() != revision {
             self.modified = true;

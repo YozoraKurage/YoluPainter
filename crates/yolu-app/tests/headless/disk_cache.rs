@@ -246,7 +246,9 @@ fn an_unreadable_cache_makes_the_set_read_only_and_saving_keeps_what_was_opened(
     fresh.wait_save();
     assert!(!other.exists(), "{}", fresh.message);
     assert!(
-        fresh.message.contains("No texture set can be saved"),
+        fresh
+            .message
+            .contains("cannot be read and has never been saved"),
         "{}",
         fresh.message
     );
@@ -457,9 +459,10 @@ fn when_no_set_can_be_written_the_save_is_refused_and_no_checkpoint_is_made_unti
     s.wait_save();
     assert!(!path.exists(), "{}", s.message);
     assert!(
-        s.message.contains("保存できるテクスチャセットがありません")
-            && s.message
-                .contains(&format!("「{}」「{}」", names.0, names.1)),
+        s.message.contains(&format!(
+            "（「{}」「{}」は保存したことが無く、読めません）",
+            names.0, names.1
+        )),
         "{}",
         s.message
     );

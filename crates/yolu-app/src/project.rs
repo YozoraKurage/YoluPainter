@@ -26,8 +26,7 @@ use yolu_io::{Project, SaveTarget, SetDocument, WriterInfo};
 pub(crate) mod capture;
 pub(crate) mod save;
 pub use save::{
-    busy_reason, save_for_ops, save_from, SaveHold, SaveOutcome, SaveProgress, SaveState,
-    SavedFacts,
+    save_for_ops, save_from, SaveHold, SaveOutcome, SaveProgress, SaveState, SavedFacts,
 };
 
 /// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
@@ -35,6 +34,7 @@ const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
 use crate::engine::{Channel, Document, TileCoord};
 use crate::lang::Lang;
+use crate::notice::{Kind as NoticeKind, Source};
 use crate::sets::TextureSets;
 use crate::shelf::ShelfState;
 use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
@@ -110,13 +110,10 @@ pub(crate) fn to_core(
     }
     // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）は開いたあとに文書へ渡す（`fx::inputs`）。入力がそろわない効果を持つセットは、
     // そのとき読むだけにして足りない入力を言う（`AppState::lock_sets_missing_inputs`）。入力がそろえば編集できる
-    native.to_core_within(Some(source_budget)).map_err(|e| {
-        format!(
-            "{}: {}",
-            lang.pick("編集用に開けません", "Cannot open for editing"),
-            lang.io_error(&e)
-        )
-    })
+    // 理由だけを返す（呼ぶ側が「読むだけです」「編集できません」と何がを言う）
+    native
+        .to_core_within(Some(source_budget))
+        .map_err(|e| lang.io_error(&e))
 }
 
 /// `to_core` の、途中の panic を受け止める形。止まったセットは理由の文にして続ける（ほかのセットは開く）。受け止めた panic は
@@ -240,11 +237,10 @@ pub fn open_into(state: &mut AppState, path: &Path) {
 /// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
     if state.is_saving() {
-        state.message = format!(
-            "{}: {}: {}",
-            state.lang.pick("開けません", "Cannot open"),
-            path.display(),
-            busy_reason(state.lang)
+        let lang = state.lang;
+        state.refuse(
+            Source::Open,
+            lang.with_reason(cannot_open(lang, path), crate::lang::refusals::saving(lang)),
         );
         return;
     }
@@ -253,11 +249,10 @@ pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
     let (project, target) = match SaveTarget::open_within(path, &limits) {
         Ok(x) => x,
         Err(e) => {
-            state.message = format!(
-                "{}: {}: {}",
-                state.lang.pick("開けません", "Cannot open"),
-                path.display(),
-                state.lang.io_error(&e)
+            let lang = state.lang;
+            state.fail(
+                Source::Open,
+                lang.with_reason(cannot_open(lang, path), lang.io_error(&e)),
             );
             return;
         }
@@ -265,14 +260,24 @@ pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
     open_project(state, project, Some((path.to_path_buf(), target)), budget);
 }
 
+/// 「「ファイル」を開けません」（理由は `Lang::with_reason` で添える）。
+fn cannot_open(lang: Lang, path: &Path) -> String {
+    let file = lang.quote(&path.display().to_string());
+    lang.pick(format!("{file}を開けません"), format!("Cannot open {file}"))
+}
+
 /// 復旧の世代から読んだプロジェクトで今の状態を置き換える。保存していない「名称未設定（復旧）」として開き、元の .ylp には
 /// つながない（保存先は利用者が選ぶ）。どのセットも、次の保存で正本と合成の PNG を書き直す。
 pub fn open_recovered(state: &mut AppState, project: Project) {
     if state.is_saving() {
-        state.message = format!(
-            "{}: {}",
-            state.lang.pick("開けません", "Cannot open"),
-            busy_reason(state.lang)
+        state.refuse(
+            Source::Recovery,
+            state.lang.with_reason(
+                state
+                    .lang
+                    .pick("復旧を開けません", "Cannot open the recovery"),
+                crate::lang::refusals::saving(state.lang),
+            ),
         );
         return;
     }
@@ -313,13 +318,13 @@ fn open_project(
                 if let Err(e) =
                     crate::selection::io::restore_into(&mut doc, set.selection.as_ref(), state.lang)
                 {
-                    selection_issues.push(format!("{}: {e}", set.name));
+                    selection_issues.push(lang.in_set(&set.name, &e));
                 }
                 // 見た目の設定（look.json）。読めなければ標準で開いて理由を言う（ファイルには残る）
                 if let Err(e) =
                     crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang)
                 {
-                    selection_issues.push(format!("{}: {e}", set.name));
+                    selection_issues.push(lang.in_set(&set.name, &e));
                 }
                 // 名前を付けて残した選択範囲（selections.json）。読めない項目は飛ばして理由を言う（ファイルには残る）
                 let saved = project
@@ -328,7 +333,7 @@ fn open_project(
                 if let Err(e) = saved.and_then(|read| {
                     crate::selection::io::restore_saved_into(&mut doc, read, state.lang)
                 }) {
-                    selection_issues.push(format!("{}: {e}", set.name));
+                    selection_issues.push(lang.in_set(&set.name, &e));
                 }
                 parts.push((
                     set.id.clone(),
@@ -348,7 +353,7 @@ fn open_project(
                 let look =
                     crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang).err();
                 if let Some(e) = &look {
-                    selection_issues.push(format!("{}: {e}", set.name));
+                    selection_issues.push(lang.in_set(&set.name, e));
                 }
                 let reason = match note {
                     Some(n) => format!("{reason}。{n}"),
@@ -397,7 +402,17 @@ fn open_project(
                     }
                 }
                 Ok(None) => {}
-                Err(e) => map_problems.push(format!("{} {}: {e}", set.name, kind.name())),
+                Err(e) => map_problems.push(lang.with_reason(
+                    lang.pick(
+                        format!("{}の {} を読めません", lang.quote(&set.name), kind.name()),
+                        format!(
+                            "Cannot read the {} of {}",
+                            kind.name(),
+                            lang.quote(&set.name)
+                        ),
+                    ),
+                    lang.io_error(&e),
+                )),
             }
         }
         if !loaded_kinds.is_empty() {
@@ -442,17 +457,13 @@ fn open_project(
         }
     };
     if !read_only.is_empty() {
-        text += &state.lang.pick(
-            format!(
-                " 読むだけのセット {}: {}。",
-                read_only.len(),
-                read_only.join("・")
+        text += " ";
+        text += &state.lang.with_reason(
+            state.lang.pick(
+                "読むだけで開いたテクスチャセットがあります",
+                "Some texture sets opened read-only",
             ),
-            format!(
-                " Read-only texture sets ({}): {}.",
-                read_only.len(),
-                read_only.join(", ")
-            ),
+            read_only.join(state.lang.pick("・", ", ")),
         );
     }
     if !selection_issues.is_empty() {
@@ -468,10 +479,12 @@ fn open_project(
         );
     }
     if !map_problems.is_empty() {
-        text += &format!(
-            " 読めないメッシュマップ {}（ファイルには残っています）: {}。",
-            map_problems.len(),
-            map_problems.join("、")
+        let lang = state.lang;
+        text += " ";
+        text += &map_problems.join(lang.pick("", " "));
+        text += lang.pick(
+            "メッシュマップはファイルには残っています。",
+            " The mesh maps are kept in the file.",
         );
     }
     // io の知らせのうち、セットごとの変換の理由は上で言ったので除く
@@ -489,7 +502,17 @@ fn open_project(
     }
     let view_model = project.view_model();
     let livelink = project.livelink();
-    state.message = text;
+    // 開けたが気をつけること（読むだけのセット・選択範囲・棚・メッシュマップ・io の知らせ）があれば注意
+    let mut kind = if read_only.is_empty()
+        && selection_issues.is_empty()
+        && state.shelf.unavailable.is_none()
+        && map_problems.is_empty()
+        && notes.is_empty()
+    {
+        NoticeKind::Info
+    } else {
+        NoticeKind::Warning
+    };
     let (path, target) = match file {
         Some((path, target)) => (path, Some(target)),
         None => (PathBuf::new(), None),
@@ -503,22 +526,18 @@ fn open_project(
     // 効果の入力（焼いたマップ・モデル・棚の画像）を渡し、入力がそろわない効果を持つセットは読むだけにする
     let waiting = state.lock_sets_missing_inputs();
     if !waiting.is_empty() {
-        state.message += &state.lang.pick(
-            format!(
-                " 効果の入力がそろわない読むだけのセット {}: {}。",
-                waiting.len(),
-                waiting.join("・")
+        kind = NoticeKind::Warning;
+        text += " ";
+        text += &state.lang.with_reason(
+            state.lang.pick(
+                "効果の入力がそろわないので、読むだけのテクスチャセットがあります",
+                "Some texture sets are read-only because their effect inputs are missing",
             ),
-            format!(
-                " Read-only texture sets with missing effect inputs ({}): {}.",
-                waiting.len(),
-                waiting.join(", ")
-            ),
+            waiting.join(state.lang.pick("・", ", ")),
         );
     }
     // モデルのファイルの参照（view.json）があれば、別のスレッドで読み直す（読み終えたら結び付ける）。参照は .ylp からの相対の
     // パスなので、ファイルの無いプロジェクト（復旧した世代）では読み直さない（保存し直した後に開けば読む）
-    let base = state.message.clone();
     // Live Link の相手の文書（livelink.json）なら、Unity なしで同じモデルとポーズに開き直す（モデルのファイルの参照は残すだけ）
     let link_note = match livelink.map(|b| b.map(|b| crate::livelink::store::restore(&b))) {
         Ok(Some(Ok(request))) => {
@@ -532,7 +551,8 @@ fn open_project(
         Ok(None) => None,
     };
     if let Some(note) = link_note {
-        state.message += &format!(" {note}");
+        text += &format!(" {note}");
+        kind = NoticeKind::Warning;
     }
     let note = match view_model {
         Ok(Some(stored)) if state.link_reopen.is_some() => {
@@ -542,7 +562,9 @@ fn open_project(
             None
         }
         Ok(Some(_)) if file_path.as_os_str().is_empty() => None,
-        Ok(Some(stored)) => crate::newproject::reopen::start(state, &file_path, &stored, &base),
+        Ok(Some(stored)) => {
+            crate::newproject::reopen::start(state, &file_path, &stored, &text, kind)
+        }
         Ok(None) => None,
         Err(e) => Some(state.lang.pick(
             format!("モデルの参照を読めません（{}）。", state.lang.io_error(&e)),
@@ -552,9 +574,12 @@ fn open_project(
             ),
         )),
     };
+    // モデルの参照の但し書き（読めない参照・ネットワーク上のモデル）は気をつけること
     if let Some(note) = note {
-        state.message += &format!(" {note}");
+        text += &format!(" {note}");
+        kind = NoticeKind::Warning;
     }
+    state.notify(kind, Source::Open, text);
 }
 
 /// 開いたときの知らせのうち、棚を読めなかった分（読めた棚には None。先頭に空白を置いて、知らせの文へ続ける）。
@@ -570,13 +595,15 @@ pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
 /// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶ窓は `newproject`。
 pub fn new_into(state: &mut AppState) {
     if state.is_saving() {
-        state.message = format!(
-            "{}: {}",
-            state.lang.pick(
-                "新しいプロジェクトを作れません",
-                "Cannot create a new project"
+        state.refuse(
+            Source::Project,
+            state.lang.with_reason(
+                state.lang.pick(
+                    "新しいプロジェクトを作れません",
+                    "Cannot create a new project",
+                ),
+                crate::lang::refusals::saving(state.lang),
             ),
-            busy_reason(state.lang)
         );
         return;
     }
@@ -589,10 +616,12 @@ pub fn new_into(state: &mut AppState) {
     state.project = None;
     state.project_name = state.lang.pick("名称未設定", "Untitled").into();
     state.modified = false;
-    state.message = state
-        .lang
-        .pick("新しいプロジェクトを作りました。", "New project created.")
-        .into();
+    state.info(
+        Source::Project,
+        state
+            .lang
+            .pick("新しいプロジェクトを作りました。", "New project created."),
+    );
 }
 
 /// 開いた・保存した時のプロジェクト（`base`）から、文書を別の物に替えたセットの ID（セットの今の文書の ID が、`base` の同じセットの正本の
@@ -845,10 +874,7 @@ mod tests {
         )
         .err()
         .expect("断る");
-        assert!(
-            ja.starts_with("編集用に開けません") && ja.contains("予算"),
-            "{ja}"
-        );
+        assert!(ja.contains("予算"), "{ja}");
         let en = to_core(
             &yolu_io::SetDocument::in_memory(native.clone()),
             Lang::En,
@@ -856,10 +882,7 @@ mod tests {
         )
         .err()
         .expect("断る");
-        assert_eq!(
-            en,
-            "Cannot open for editing: Size, count or memory limit exceeded"
-        );
+        assert_eq!(en, "Size, count or memory limit exceeded");
         // 開く: 予算に収まれば編集できるセット、収まらなければ読むだけのセット（理由つき）。どちらも元のファイルは変えない
         let mut opened = AppState::new(64, 64);
         open_within(&mut opened, &path, bytes);
@@ -875,7 +898,7 @@ mod tests {
             refused.read_only_reason()
         );
         assert!(
-            refused.message.contains("読むだけのセット"),
+            refused.message.contains("読むだけで開いたテクスチャセット"),
             "{}",
             refused.message
         );

@@ -15,6 +15,7 @@ use yolu_protocol::{channel, MaterialInfo, MaterialKey as LinkKey};
 
 use crate::canvas::view::ViewState;
 use crate::engine::{Document, LayerId};
+use crate::notice::Source;
 use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
 
 pub use yolu_io::{MaterialAsset, MaterialRef};
@@ -611,13 +612,7 @@ impl AppState {
             return Ok(());
         }
         if self.is_stroking() {
-            return Err(self
-                .lang
-                .pick(
-                    "描いている間はテクスチャセットを替えません。",
-                    "Cannot switch texture sets during a stroke.",
-                )
-                .into());
+            return Err(crate::lang::refusals::during_stroke(self.lang).into());
         }
         self.doc.end_coalescing();
         let incoming = self.sets.list[index]
@@ -827,11 +822,7 @@ impl AppState {
                 .into());
         };
         if let Some(reason) = &self.sets.list[i].read_only {
-            return Err(format!(
-                "{}: {reason}",
-                self.lang
-                    .pick("読むだけのテクスチャセットです", "Read-only texture set")
-            ));
+            return Err(crate::lang::refusals::read_only_set(self.lang, reason));
         }
         if name.is_empty()
             || name.chars().any(|c| c.is_control())
@@ -872,9 +863,7 @@ impl AppState {
     pub fn add_texture_set(&mut self) -> Result<u32, String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Err(lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into());
+            return Err(crate::lang::refusals::during_stroke(lang).into());
         }
         if self.sets.len() >= crate::newproject::MAX_SETS {
             return Err(lang.pick(
@@ -929,9 +918,12 @@ impl AppState {
         }
         self.modified = true;
         self.switch_set(uid_index)?;
-        self.message = lang.pick(
-            format!("テクスチャセット {name} を追加しました。"),
-            format!("Added the texture set {name}."),
+        self.info(
+            Source::TextureSet,
+            lang.pick(
+                format!("テクスチャセット {name} を追加しました。"),
+                format!("Added the texture set {name}."),
+            ),
         );
         Ok(uid)
     }
@@ -960,9 +952,7 @@ impl AppState {
     pub fn remove_sets(&mut self, uids: &[u32]) -> Result<Vec<String>, String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Err(lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into());
+            return Err(crate::lang::refusals::during_stroke(lang).into());
         }
         let mut gone: Vec<u32> = uids
             .iter()

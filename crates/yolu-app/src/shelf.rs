@@ -31,14 +31,8 @@ use std::sync::Arc;
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use yolu_core::smart::{SmartKind, SmartMaterial, SmartPlacement};
 use yolu_core::smart_library;
-use yolu_io::shelf::{
-    ResourceKind, Shelf, MAX_RESOURCES, REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET,
-    REFUSAL_RESOURCE_COUNT,
-};
-use yolu_io::smart::{
-    SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_ADJUSTMENTS,
-    REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
-};
+use yolu_io::shelf::{ResourceKind, Shelf, MAX_RESOURCES};
+use yolu_io::smart::{SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES};
 use yolu_io::{NativeValue, Project, Resource};
 
 use crate::engine::{Channel, CoreError, Document, LayerId};
@@ -46,6 +40,7 @@ use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
+use crate::notice::{Kind as NoticeKind, Source};
 use crate::state::{AppState, DialogRequest};
 use crate::windows::CloseJob;
 
@@ -182,11 +177,11 @@ impl Block {
                 .pick("ジェネレーター付きは置けません", "Has pinned generators")
                 .into(),
             Block::Unsupported(e) => e.reason(lang).to_owned(),
-            Block::Unreadable(e) => format!(
-                "{}: {}",
-                lang.pick("読めません", "Unreadable"),
-                e.reason(lang)
-            ),
+            // 項目の状態の行にも出すので、句点は付けない（「読めません（理由）」）
+            Block::Unreadable(e) => lang
+                .with_reason(lang.pick("読めません", "Unreadable"), e.reason(lang))
+                .trim_end_matches(['。', '.'])
+                .to_owned(),
         }
     }
 }
@@ -869,7 +864,7 @@ impl ShelfState {
         let id = self
             .shelf
             .add_image_without_origin(&new_resource_id(), name, rgba, width, height, "srgb")
-            .map_err(|e| io_reason(lang, &e))?;
+            .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
         if self.shelf.resources().len() > before {
             self.changed = true;
         }
@@ -890,7 +885,7 @@ impl ShelfState {
         let changed = self
             .shelf
             .set_image_color_space(id, space)
-            .map_err(|e| io_reason(lang, &e))?;
+            .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
         if changed {
             self.changed = true;
         }
@@ -1124,10 +1119,9 @@ impl ShelfState {
         project
             .with_shelf(&self.shelf, crate::project::writer())
             .map_err(|e| {
-                format!(
-                    "{}: {}",
+                lang.with_reason(
                     lang.pick("棚を書けません", "Cannot write the shelf"),
-                    lang.io_error(&e)
+                    lang.io_error(&e),
                 )
             })
     }
@@ -1560,23 +1554,22 @@ pub(crate) fn image_as_material(
     if note.is_some() {
         return Err(unreadable());
     }
-    let id = doc
-        .layers()
-        .first()
-        .map(|l| l.id())
-        .ok_or_else(|| lang.pick("レイヤーがありません", "No layer").to_owned())?;
+    let id = doc.layers().first().map(|l| l.id()).ok_or_else(|| {
+        lang.pick("レイヤーがありません", "Layer not found")
+            .to_owned()
+    })?;
     doc.set_layer_name(id, name)
-        .map_err(|e| core_reason(lang, &e))?;
+        .map_err(|e| lang.core_error(&e))?;
     doc.capture_smart_material(&[id], name)
-        .map_err(|e| core_reason(lang, &e))
+        .map_err(|e| lang.core_error(&e))
 }
 
 /// .ylsmart のバイト列を、置ける core の素材にする。読めた素材を置けないときは、項目に出す理由と同じ言い方で断る。
 pub(crate) fn smart_material_from(lang: Lang, bytes: &[u8]) -> Result<SmartMaterial, String> {
     match SmartFile::read(bytes) {
-        Err(e) => Err(io_reason(lang, &e)),
+        Err(e) => Err(crate::lang::shelf_io_error(lang, &e)),
         Ok(file) => file.to_core().map_err(|e| match smart_block(&file, &e) {
-            Block::Unreadable(_) => io_reason(lang, &e),
+            Block::Unreadable(_) => crate::lang::shelf_io_error(lang, &e),
             block => block.reason(lang),
         }),
     }
@@ -1586,83 +1579,6 @@ pub(crate) fn smart_material_from(lang: Lang, bytes: &[u8]) -> Result<SmartMater
 fn new_resource_id() -> String {
     let doc = Document::new(1, 1).expect("1×1 の文書");
     crate::sets::guid_string(doc.id())
-}
-
-/// core の断りの短い理由。
-pub fn core_reason(lang: Lang, e: &CoreError) -> String {
-    match e {
-        CoreError::Unsupported("ユーザーチャンネルの対応が一致しません") => lang
-            .pick("チャンネルが合いません", "Channels do not match")
-            .into(),
-        CoreError::SourceBudgetExceeded => lang
-            .pick("画素の予算を超えます", "Over the pixel budget")
-            .into(),
-        CoreError::InvalidArgument("層は2048個までです") => {
-            lang.pick("層が多すぎます", "Too many layers").into()
-        }
-        CoreError::InvalidArgument("保存するマスクがありません") => {
-            lang.pick("マスクがありません", "No mask").into()
-        }
-        CoreError::InvalidArgument("保存する層がありません") | CoreError::LayerNotFound => {
-            lang.pick("レイヤーがありません", "No layer").into()
-        }
-        CoreError::InvalidArgument("スマート素材の名前") => {
-            lang.pick("名前が使えません", "Name not allowed").into()
-        }
-        CoreError::InvalidArgument("配置先がグループではありません") => lang
-            .pick("置き先がグループではありません", "Target is not a group")
-            .into(),
-        other => lang.core_error(other),
-    }
-}
-
-/// 棚の個数が上限（`MAX_RESOURCES`）に達しているときの短い理由。
-fn shelf_full_reason(lang: Lang) -> &'static str {
-    lang.pick("棚がいっぱいです", "Shelf is full")
-}
-
-/// yolu-io の断りの短い理由（読み込み・棚の予算・保存）。
-pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
-    if let Some(text) = crate::library::known_reason(lang, e) {
-        return text;
-    }
-    let m = e.to_string();
-    if m.contains(REFUSAL_RESOURCE_COUNT) {
-        shelf_full_reason(lang).into()
-    } else if m.contains(REFUSAL_IMAGES) {
-        Block::Images.reason(lang)
-    } else if m.contains(REFUSAL_GENERATORS) {
-        Block::Generators.reason(lang)
-    } else if m.contains(REFUSAL_MEMORY_BUDGET) {
-        lang.pick("棚の予算を超えます", "Over the shelf budget")
-            .into()
-    } else if m.contains(REFUSAL_ARCHIVE_BUDGET) {
-        lang.pick(
-            "ファイルの大きさの上限を超えます",
-            "Over the file size limit",
-        )
-        .into()
-    } else if m.contains(REFUSAL_USER_CHANNELS) {
-        lang.pick(
-            "ユーザーチャンネルは保存できません",
-            "User channels cannot be saved",
-        )
-        .into()
-    } else if m.contains(REFUSAL_RUST_GENERATORS) {
-        lang.pick(
-            "ノイズ・グランジは保存できません",
-            "Noise and Grunge cannot be saved",
-        )
-        .into()
-    } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
-        lang.pick(
-            "色調補正は保存できません",
-            "Colour adjustments cannot be saved",
-        )
-        .into()
-    } else {
-        lang.io_error(e)
-    }
 }
 
 /// 素材の保存・ライブラリからの取り込み（閉じる前の確かめ・止める。やめた保存のスレッドも、終わるまで待つ）。
@@ -1680,10 +1596,13 @@ impl AppState {
     /// ライブラリのフォルダへの書き込みをやめる（スレッドは次の区切りまで走る）。
     pub(crate) fn cancel_library_write(&mut self) {
         if let Some(w) = self.library.write.take() {
-            self.message = format!(
-                "{}: {}",
-                self.lang.pick("書き込みをやめました", "Cancelled writing"),
-                w.name
+            self.info(
+                Source::Assets,
+                format!(
+                    "{}: {}",
+                    self.lang.pick("書き込みをやめました", "Cancelled writing"),
+                    w.name
+                ),
             );
         }
     }
@@ -1691,15 +1610,18 @@ impl AppState {
     /// 素材の保存・ライブラリからの取り込みをやめる（スレッドは次の区切りまで走る）。
     pub(crate) fn cancel_shelf_save(&mut self) {
         if let Some(p) = self.shelf.saving.take() {
-            self.message = format!(
-                "{}: {}",
-                if p.from_library {
-                    self.lang
-                        .pick("取り込みをやめました", "Cancelled importing")
-                } else {
-                    self.lang.pick("保存をやめました", "Cancelled saving")
-                },
-                p.name
+            self.info(
+                Source::Assets,
+                format!(
+                    "{}: {}",
+                    if p.from_library {
+                        self.lang
+                            .pick("取り込みをやめました", "Cancelled importing")
+                    } else {
+                        self.lang.pick("保存をやめました", "Cancelled saving")
+                    },
+                    p.name
+                ),
             );
         }
     }
@@ -1713,10 +1635,10 @@ impl AppState {
             return;
         }
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Assets,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         self.shelf.use_language(self.lang);
@@ -1736,7 +1658,7 @@ impl AppState {
                         "Built-in items cannot be exported",
                     ),
                 };
-                return self.shelf_refusal(reason.into());
+                return self.refuse(Source::Assets, self.lang.with_reason(reason, ""));
             }
         }
         match op {
@@ -1753,7 +1675,7 @@ impl AppState {
                 if self.shelf.get(&id).is_some() && !self.shelf_refuse_while_saving() {
                     // 使われている画像は、確かめの窓を出す前に断る（確かめても消せない）
                     if let Some(why) = self.shelf_image_in_use(&id) {
-                        self.shelf_refusal(why);
+                        self.refuse(Source::Assets, why);
                     } else {
                         self.shelf.pending_remove = Some(id);
                         self.dialog_request = Some(DialogRequest::ShelfRemove);
@@ -1797,8 +1719,17 @@ impl AppState {
         }
     }
 
-    pub(crate) fn shelf_refusal(&mut self, reason: String) {
-        self.message = format!("{}: {reason}", self.lang.pick("できません", "Cannot"));
+    /// 棚とライブラリの断りと失敗を、何が（`attempt` と名前）できないかと、その理由の 1 つの文で知らせる（`kind` は断りか失敗か）。
+    pub(crate) fn cannot(
+        &mut self,
+        kind: NoticeKind,
+        source: Source,
+        attempt: Attempt,
+        name: Option<&str>,
+        reason: &str,
+    ) {
+        let text = self.lang.with_reason(attempt.what(self.lang, name), reason);
+        self.notify(kind, source, text);
     }
 
     /// 別のスレッドの保存が棚の写しへ足している間は、棚を変える操作（消す・読み込む）を断る（保存の結果は足した後の棚に
@@ -1808,7 +1739,13 @@ impl AppState {
             return false;
         }
         let reason = self.lang.pick("保存中です", "Already saving");
-        self.shelf_refusal(reason.into());
+        self.cannot(
+            NoticeKind::Refusal,
+            Source::Assets,
+            Attempt::ShelfChange,
+            None,
+            reason,
+        );
         true
     }
 
@@ -1816,11 +1753,17 @@ impl AppState {
     pub(crate) fn shelf_writable(&mut self) -> bool {
         match self.shelf.unavailable.clone() {
             Some(e) => {
-                self.shelf_refusal(format!(
-                    "{}: {}",
-                    self.lang.pick("棚を読めません", "Shelf unreadable"),
-                    e.reason(self.lang)
-                ));
+                let lang = self.lang;
+                self.fail(
+                    Source::Assets,
+                    lang.with_reason(
+                        lang.pick(
+                            "棚を読めなかったので、棚を変えられません",
+                            "Cannot change the shelf because it could not be read",
+                        ),
+                        e.reason(lang),
+                    ),
+                );
                 false
             }
             None => true,
@@ -1830,11 +1773,8 @@ impl AppState {
     fn shelf_save(&mut self, id: LayerId, mask: bool) {
         let lang = self.lang;
         if let Some(reason) = self.read_only_reason() {
-            let text = format!(
-                "{}: {reason}",
-                lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
-            );
-            self.message = text;
+            let text = crate::lang::refusals::read_only_set(lang, reason);
+            self.refuse(Source::Assets, text);
             return;
         }
         if !self.shelf_writable() {
@@ -1842,14 +1782,32 @@ impl AppState {
         }
         // 書き出しが走っている間は、捕まえる写し（大きな素材では数百 MiB）を作る前に断る
         if let Some(reason) = self.shelf.busy_reason(lang) {
-            return self.shelf_refusal(reason.into());
+            return self.cannot(
+                NoticeKind::Refusal,
+                Source::Assets,
+                Attempt::ShelfSave,
+                None,
+                reason,
+            );
         }
         // 捕まえるたびに別の素材になる（同じ中身が既にあって足りることは無い）ので、いっぱいの棚には写しを作る前に断る
         if self.shelf.shelf.resources().len() >= MAX_RESOURCES {
-            return self.shelf_refusal(shelf_full_reason(lang).into());
+            return self.cannot(
+                NoticeKind::Refusal,
+                Source::Assets,
+                Attempt::ShelfSave,
+                None,
+                crate::lang::refusals::shelf_full(lang),
+            );
         }
         let Some(layer_name) = self.doc.layer(id).map(|l| l.name().to_owned()) else {
-            return self.shelf_refusal(lang.pick("レイヤーがありません", "No layer").into());
+            return self.cannot(
+                NoticeKind::Refusal,
+                Source::Assets,
+                Attempt::ShelfSave,
+                None,
+                lang.pick("レイヤーがありません", "Layer not found"),
+            );
         };
         let name = if mask {
             format!("{layer_name}{}", lang.pick(" のマスク", " mask"))
@@ -1863,7 +1821,15 @@ impl AppState {
         };
         let material = match captured {
             Ok(m) => m,
-            Err(e) => return self.shelf_refusal(core_reason(lang, &e)),
+            Err(e) => {
+                return self.cannot(
+                    NoticeKind::of_core(&e),
+                    Source::Assets,
+                    Attempt::ShelfSave,
+                    Some(&name),
+                    &lang.core_error(&e),
+                )
+            }
         };
         let kind = if mask {
             ItemKind::SmartMask
@@ -1902,7 +1868,10 @@ impl AppState {
                     ctx.request_repaint();
                 }
             });
-            self.message = format!("{}: {name}", lang.pick("保存中", "Saving"));
+            self.info(
+                Source::Assets,
+                format!("{}: {name}", lang.pick("保存中", "Saving")),
+            );
             self.shelf.saving = Some(PendingSave {
                 name,
                 kind,
@@ -1914,7 +1883,13 @@ impl AppState {
         }
         match encode_material(&material, None) {
             Ok(done) => self.shelf_keep(&name, kind, done),
-            Err(e) => self.shelf_refusal(io_reason(lang, &e)),
+            Err(e) => self.cannot(
+                NoticeKind::Error,
+                Source::Assets,
+                Attempt::ShelfSave,
+                Some(&name),
+                &crate::lang::shelf_io_error(lang, &e),
+            ),
         }
     }
 
@@ -1922,25 +1897,34 @@ impl AppState {
     fn shelf_keep(&mut self, name: &str, kind: ItemKind, done: Encoded) {
         match self.shelf_keep_quiet(name, kind, done) {
             Ok(kept) => self.shelf_keep_message(name, kept),
-            Err(reason) => self.shelf_refusal(reason),
+            Err(reason) => self.cannot(
+                NoticeKind::Error,
+                Source::Assets,
+                Attempt::ShelfSave,
+                Some(name),
+                &reason,
+            ),
         }
     }
 
     fn shelf_keep_message(&mut self, name: &str, kept: Kept) {
         let lang = self.lang;
-        self.message = match kept {
-            Kept::Added => format!(
-                "{}: {name}",
-                lang.pick("棚に入れました", "Added to the shelf")
-            ),
-            Kept::Existing => format!(
-                "{}: {name}",
-                lang.pick("すでに棚にあります", "Already on the shelf")
-            ),
-        };
+        self.info(
+            Source::Assets,
+            match kept {
+                Kept::Added => format!(
+                    "{}: {name}",
+                    lang.pick("棚に入れました", "Added to the shelf")
+                ),
+                Kept::Existing => format!(
+                    "{}: {name}",
+                    lang.pick("すでに棚にあります", "Already on the shelf")
+                ),
+            },
+        );
     }
 
-    /// `shelf_keep` の知らせを出さない形（まとめて読み込むときに、知らせを 1 つにまとめるため）。断りは「名前: 理由」。
+    /// `shelf_keep` の知らせを出さない形（まとめて読み込むときに、知らせを 1 つにまとめるため）。断りは理由だけ（名前は呼ぶ側が添える）。
     /// 棚の検証はこのスレッドで行う（読み込みは同期。大きな棚では長い）。
     fn shelf_keep_quiet(
         &mut self,
@@ -1950,7 +1934,7 @@ impl AppState {
     ) -> Result<Kept, String> {
         let lang = self.lang;
         let staged = stage(self.shelf.shelf.clone(), name, kind, done)
-            .map_err(|e| format!("{name}: {}", io_reason(lang, &e)))?;
+            .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
         Ok(self.shelf_adopt(name, kind, staged))
     }
 
@@ -1999,7 +1983,7 @@ impl AppState {
         };
         // スレッドが結果を渡さずに終わった（パニック）ときも、断りとして出す
         let result = match pending.rx.try_recv() {
-            Ok(r) => Some(r.map_err(|e| io_reason(lang, &e))),
+            Ok(r) => Some(r.map_err(|e| crate::lang::shelf_io_error(lang, &e))),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(lang
                 .pick("書き出しが途中で止まりました", "The write stopped midway")
@@ -2012,27 +1996,40 @@ impl AppState {
                     let rounded = staged.rounded;
                     let kept = self.shelf_adopt_quiet(staged);
                     let name = &pending.name;
-                    self.message = match kept {
-                        Kept::Added => format!(
-                            "{}: {name}{}",
-                            lang.pick("プロジェクトに取り込みました", "Added to the project"),
-                            if rounded {
-                                format!(" · {}", crate::library::rounded_note(lang))
-                            } else {
-                                String::new()
-                            }
-                        ),
-                        Kept::Existing => format!(
-                            "{}: {name}",
-                            lang.pick("すでにプロジェクトにあります", "Already in the project")
-                        ),
-                    };
+                    self.info(
+                        Source::Assets,
+                        match kept {
+                            Kept::Added => format!(
+                                "{}: {name}{}",
+                                lang.pick("プロジェクトに取り込みました", "Added to the project"),
+                                if rounded {
+                                    format!(" · {}", crate::library::rounded_note(lang))
+                                } else {
+                                    String::new()
+                                }
+                            ),
+                            Kept::Existing => format!(
+                                "{}: {name}",
+                                lang.pick("すでにプロジェクトにあります", "Already in the project")
+                            ),
+                        },
+                    );
                 }
                 Ok(staged) => {
                     let kept = self.shelf_adopt(&pending.name, pending.kind, staged);
                     self.shelf_keep_message(&pending.name, kept);
                 }
-                Err(reason) => self.shelf_refusal(format!("{}: {reason}", pending.name)),
+                Err(reason) => self.cannot(
+                    NoticeKind::Error,
+                    Source::Assets,
+                    if pending.from_library {
+                        Attempt::LibraryUse
+                    } else {
+                        Attempt::ShelfSave
+                    },
+                    Some(&pending.name),
+                    &reason,
+                ),
             }
         }
     }
@@ -2074,7 +2071,7 @@ impl AppState {
         );
         if !kind.is_some_and(|k| k.is_smart() || k == ItemKind::Image) {
             let block = Block::Kind(kind.unwrap_or(ItemKind::Brush));
-            return self.shelf_refusal(block.reason(lang));
+            return self.refuse(Source::Assets, lang.with_reason(block.reason(lang), ""));
         }
         let builtin = is_builtin(id);
         let bytes = if builtin {
@@ -2101,7 +2098,15 @@ impl AppState {
         };
         let material = match made {
             Ok(m) => m,
-            Err(reason) => return self.shelf_refusal(reason),
+            Err(reason) => {
+                return self.cannot(
+                    NoticeKind::Error,
+                    Source::Assets,
+                    Attempt::Place,
+                    Some(&name),
+                    &reason,
+                )
+            }
         };
         self.place_material(&name, material, target, builtin);
     }
@@ -2122,9 +2127,12 @@ impl AppState {
                 _ => self.selected_layer,
             };
             let Some(layer) = layer.filter(|l| self.doc.layer(*l).is_some()) else {
-                return self.shelf_refusal(
-                    lang.pick("選んだレイヤーがありません", "No layer selected")
-                        .into(),
+                return self.cannot(
+                    NoticeKind::Refusal,
+                    Source::Assets,
+                    Attempt::Place,
+                    Some(name),
+                    lang.pick("選んだレイヤーがありません", "No layer selected"),
                 );
             };
             let had_mask = self.doc.layer(layer).is_some_and(|l| l.mask().is_some());
@@ -2142,9 +2150,15 @@ impl AppState {
                         }
                     );
                     text += &resized_note(lang, &material, result.resampled);
-                    self.message = text;
+                    self.info(Source::Assets, text);
                 }
-                Err(e) => self.shelf_refusal(core_reason(lang, &e)),
+                Err(e) => self.cannot(
+                    NoticeKind::of_core(&e),
+                    Source::Assets,
+                    Attempt::Place,
+                    Some(name),
+                    &lang.core_error(&e),
+                ),
             }
             self.ensure_selection();
             return;
@@ -2175,9 +2189,15 @@ impl AppState {
                 // 同梱の素材は大きさに依らない（画素が無い）ので、変えたとは言わない
                 text += &resized_note(lang, &material, result.resampled && !builtin);
                 text += "）";
-                self.message = text;
+                self.info(Source::Assets, text);
             }
-            Err(e) => self.shelf_refusal(core_reason(lang, &e)),
+            Err(e) => self.cannot(
+                NoticeKind::of_core(&e),
+                Source::Assets,
+                Attempt::Place,
+                Some(name),
+                &lang.core_error(&e),
+            ),
         }
         self.ensure_selection();
     }
@@ -2208,20 +2228,19 @@ impl AppState {
         if users.is_empty() && !self.shelf.used_by(project, id) {
             return None;
         }
-        let mut text = format!(
-            "{}: {}",
-            res.name,
-            lang.pick("レイヤーから使われています", "Used by a layer")
+        let what = lang.pick(
+            format!(
+                "{}はレイヤーが使っているので、棚から消せません",
+                lang.quote(&res.name)
+            ),
+            format!(
+                "Cannot remove {} from the shelf because a layer uses it",
+                lang.quote(&res.name)
+            ),
         );
-        if !users.is_empty() {
-            let list = users.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
-            let more = if users.len() > 3 { " …" } else { "" };
-            text += &match lang {
-                Lang::Ja => format!("（{list}{more}）"),
-                Lang::En => format!(" ({list}{more})"),
-            };
-        }
-        Some(text)
+        let list = users.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+        let more = if users.len() > 3 { " …" } else { "" };
+        Some(lang.with_reason(&what, format!("{list}{more}")))
     }
 
     fn shelf_remove(&mut self, id: &str) {
@@ -2234,7 +2253,7 @@ impl AppState {
         };
         let name = res.name.clone();
         if let Some(why) = self.shelf_image_in_use(id) {
-            return self.shelf_refusal(why);
+            return self.refuse(Source::Assets, why);
         }
         match self.shelf.shelf.remove(id) {
             Ok(true) => {
@@ -2244,13 +2263,22 @@ impl AppState {
                 }
                 self.shelf.changed = true;
                 self.modified = true;
-                self.message = format!(
-                    "{}: {name}",
-                    lang.pick("棚から消しました", "Removed from the shelf")
+                self.info(
+                    Source::Assets,
+                    format!(
+                        "{}: {name}",
+                        lang.pick("棚から消しました", "Removed from the shelf")
+                    ),
                 );
             }
             Ok(false) => {}
-            Err(e) => self.shelf_refusal(io_reason(lang, &e)),
+            Err(e) => self.cannot(
+                NoticeKind::Error,
+                Source::Assets,
+                Attempt::ShelfRemove,
+                Some(&name),
+                &crate::lang::shelf_io_error(lang, &e),
+            ),
         }
         if self.shelf.pending_remove.as_deref() == Some(id) {
             self.shelf.pending_remove = None;
@@ -2269,7 +2297,7 @@ impl AppState {
             match self.shelf_import_one(path) {
                 Ok((name, Kept::Added)) => added.push(name),
                 Ok((name, Kept::Existing)) => existing.push(name),
-                Err(reason) => refused.push(reason),
+                Err(refusal) => refused.push(refusal),
             }
         }
         let (new, old) = (added.len(), existing.len());
@@ -2286,23 +2314,23 @@ impl AppState {
                 _ => kept_note(lang, new, old),
             };
             if new + old > 0 {
-                self.message = text;
+                self.info(Source::Assets, text);
             }
             return;
         }
         // 断りがあっても、入れた分とすでにあった分は別に数える（すでにあったものを「入れました」と言わない）
-        let mut text = format!(
-            "{}: {}",
-            lang.pick("できません", "Cannot"),
-            refused.join(" / ")
-        );
+        let mut text = refused.join(lang.pick("", " "));
         if new + old > 0 {
-            text += &format!(" · {}", kept_note(lang, new, old));
+            // 一部は入った（入れた分・すでにあった分）: 気をつけること。全部断ったなら失敗
+            text += lang.pick("", " ");
+            text += &kept_note(lang, new, old);
+            self.warn(Source::Assets, text);
+        } else {
+            self.fail(Source::Assets, text);
         }
-        self.message = text;
     }
 
-    /// 1 つの .ylsmart を棚へ。入れた名前と、新しく入ったか。断りは「ファイル名: 理由」。
+    /// 1 つの .ylsmart を棚へ。入れた名前と、新しく入ったか。断りは、ファイル名と理由を言う 1 つの文。
     fn shelf_import_one(&mut self, path: &std::path::Path) -> Result<(String, Kept), String> {
         let lang = self.lang;
         let shown = path
@@ -2311,29 +2339,41 @@ impl AppState {
             .unwrap_or_default();
         match std::fs::metadata(path) {
             Ok(m) if m.len() > self.shelf.import_limit => {
-                return Err(format!(
-                    "{shown}: {}",
-                    lang.pick("大きすぎます", "Too large")
+                return Err(refused(
+                    lang,
+                    &shown,
+                    lang.pick("大きすぎます", "Too large"),
                 ));
             }
             Ok(_) => {}
-            Err(e) => return Err(format!("{shown}: {}", lang.file_error(&e))),
+            Err(e) => return Err(refused(lang, &shown, &lang.file_error(&e))),
         }
-        let bytes = std::fs::read(path).map_err(|e| format!("{shown}: {}", lang.file_error(&e)))?;
-        let file = SmartFile::read(&bytes).map_err(|e| {
-            format!(
-                "{shown}: {} ({})",
-                lang.pick("スマート素材として読めません", "Not a readable smart asset"),
-                lang.io_error(&e)
-            )
-        })?;
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) => return Err(refused(lang, &shown, &lang.file_error(&e))),
+        };
+        let file = match SmartFile::read(&bytes) {
+            Ok(file) => file,
+            Err(e) => {
+                let file = lang.quote(&shown);
+                return Err(lang.with_reason(
+                    lang.pick(
+                        format!("{file}はスマート素材として読めません"),
+                        format!("{file} is not a readable smart asset"),
+                    ),
+                    lang.io_error(&e),
+                ));
+            }
+        };
         let kind = if file.kind() == SmartKind::Mask {
             ItemKind::SmartMask
         } else {
             ItemKind::SmartMaterial
         };
         let name = file.info()["name"].as_str().unwrap_or(&shown).to_owned();
-        let kept = self.shelf_keep_quiet(&name, kind, Encoded { bytes, info: None })?;
+        let kept = self
+            .shelf_keep_quiet(&name, kind, Encoded { bytes, info: None })
+            .map_err(|why| refused(lang, &shown, &why))?;
         Ok((name, kept))
     }
 
@@ -2344,13 +2384,19 @@ impl AppState {
         };
         let name = res.name.clone();
         if !ItemKind::of(&res.kind).is_some_and(ItemKind::is_smart) {
-            return self.shelf_refusal(format!(
-                "{name}: {}",
+            return self.refuse(
+                Source::Assets,
                 lang.pick(
-                    "書き出せるのはスマート素材だけです",
-                    "Only smart assets can be exported"
-                )
-            ));
+                    format!(
+                        "{}はスマート素材ではないので、書き出せません。",
+                        lang.quote(&name)
+                    ),
+                    format!(
+                        "{} is not a smart asset, so it cannot be exported.",
+                        lang.quote(&name)
+                    ),
+                ),
+            );
         }
         let Some(bytes) = self.shelf.shelf.content_bytes(id) else {
             return;
@@ -2358,15 +2404,26 @@ impl AppState {
         // 置き換えは 1 回（一時ファイルへ書いて同期し、名前を付け替える。途中で失敗しても元のファイルは変わらない）
         let result = yolu_io::atomic::replace_bytes(path, bytes);
         match result {
-            Ok(()) => {
-                self.message = format!(
+            Ok(()) => self.info(
+                Source::Assets,
+                format!(
                     "{}: {}",
                     lang.pick("書き出しました", "Exported"),
                     path.display()
-                )
-            }
+                ),
+            ),
             Err(e) => {
-                self.shelf_refusal(format!("{}: {}", path.display(), lang.file_error(&e)));
+                let target = lang.quote(&path.display().to_string());
+                self.fail(
+                    Source::Assets,
+                    lang.with_reason(
+                        lang.pick(
+                            format!("{target}に書き出せません"),
+                            format!("Cannot export to {target}"),
+                        ),
+                        lang.file_error(&e),
+                    ),
+                );
             }
         }
     }
@@ -2374,26 +2431,104 @@ impl AppState {
 
 /// 読み込みの結果の件数（入れた分とすでにあった分。0 の分は出さない）。
 fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
-    let count = |n: usize| match lang {
-        Lang::Ja => format!("{n} 件"),
-        Lang::En => n.to_string(),
-    };
     let mut parts = Vec::new();
     if added > 0 {
-        parts.push(format!(
-            "{}: {}",
-            lang.pick("棚に入れました", "Added to the shelf"),
-            count(added)
+        parts.push(lang.pick(
+            format!("{added} 件を棚に入れました。"),
+            format!("Added {added} to the shelf."),
         ));
     }
     if existing > 0 {
-        parts.push(format!(
-            "{}: {}",
-            lang.pick("すでに棚にあった", "Already there"),
-            count(existing)
+        parts.push(lang.pick(
+            format!("{existing} 件はすでに棚にありました。"),
+            format!(
+                "{existing} {} already on the shelf.",
+                if existing == 1 { "was" } else { "were" }
+            ),
         ));
     }
-    parts.join(" · ")
+    parts.join(lang.pick("", " "))
+}
+
+/// 棚へ読み込めなかったファイルの 1 文（「「名前」を棚に読み込めません（理由）。」）。
+fn refused(lang: Lang, file: &str, why: &str) -> String {
+    lang.with_reason(Attempt::ShelfImport.what(lang, Some(file)), why)
+}
+
+/// 棚とライブラリの断り・失敗の文の「何が」（何をしようとしてできなかったか）。名前があれば「「名前」を〜できません」の形。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Attempt {
+    /// 層を棚へ保存する（スマートマテリアル・スマートマスク）。
+    ShelfSave,
+    /// 外の .ylsmart を棚へ読み込む。
+    ShelfImport,
+    /// 棚を変える（保存の途中・棚を読めなかったとき）。
+    ShelfChange,
+    /// 棚から消す。
+    ShelfRemove,
+    /// 棚・ライブラリの素材を文書へ置く。
+    Place,
+    /// ライブラリのファイルをプロジェクトの棚へ取り込む。
+    LibraryUse,
+    /// ライブラリへ入れる（棚の素材・外のファイル）。
+    LibraryAdd,
+    /// ライブラリから消す。
+    LibraryRemove,
+}
+
+impl Attempt {
+    /// 「〜できません」の文（句点なし）。
+    pub(crate) fn what(self, lang: Lang, name: Option<&str>) -> String {
+        let Some(name) = name else {
+            return lang
+                .pick(
+                    match self {
+                        Attempt::ShelfSave => "棚に保存できません",
+                        Attempt::ShelfImport => "棚に読み込めません",
+                        Attempt::ShelfChange => "棚を変えられません",
+                        Attempt::ShelfRemove => "棚から消せません",
+                        Attempt::Place => "素材を置けません",
+                        Attempt::LibraryUse => "ライブラリから取り込めません",
+                        Attempt::LibraryAdd => "ライブラリに入れられません",
+                        Attempt::LibraryRemove => "ライブラリから消せません",
+                    },
+                    match self {
+                        Attempt::ShelfSave => "Cannot save to the shelf",
+                        Attempt::ShelfImport => "Cannot import into the shelf",
+                        Attempt::ShelfChange => "Cannot change the shelf",
+                        Attempt::ShelfRemove => "Cannot remove from the shelf",
+                        Attempt::Place => "Cannot place the asset",
+                        Attempt::LibraryUse => "Cannot import from the library",
+                        Attempt::LibraryAdd => "Cannot add to the library",
+                        Attempt::LibraryRemove => "Cannot remove from the library",
+                    },
+                )
+                .to_owned();
+        };
+        let q = lang.quote(name);
+        match lang {
+            Lang::Ja => match self {
+                Attempt::ShelfSave => format!("{q}を棚に保存できません"),
+                Attempt::ShelfImport => format!("{q}を棚に読み込めません"),
+                Attempt::ShelfChange => "棚を変えられません".to_owned(),
+                Attempt::ShelfRemove => format!("{q}を棚から消せません"),
+                Attempt::Place => format!("{q}を置けません"),
+                Attempt::LibraryUse => format!("{q}をライブラリから取り込めません"),
+                Attempt::LibraryAdd => format!("{q}をライブラリに入れられません"),
+                Attempt::LibraryRemove => format!("{q}をライブラリから消せません"),
+            },
+            Lang::En => match self {
+                Attempt::ShelfSave => format!("Cannot save {q} to the shelf"),
+                Attempt::ShelfImport => format!("Cannot import {q} into the shelf"),
+                Attempt::ShelfChange => "Cannot change the shelf".to_owned(),
+                Attempt::ShelfRemove => format!("Cannot remove {q} from the shelf"),
+                Attempt::Place => format!("Cannot place {q}"),
+                Attempt::LibraryUse => format!("Cannot import {q} from the library"),
+                Attempt::LibraryAdd => format!("Cannot add {q} to the library"),
+                Attempt::LibraryRemove => format!("Cannot remove {q} from the library"),
+            },
+        }
+    }
 }
 
 /// 大きさが違って拡大縮小したときの知らせ（括弧の中に足す）。

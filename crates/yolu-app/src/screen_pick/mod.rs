@@ -1,6 +1,7 @@
 //! デスクトップの静止画から色を取る。画像はセッション内だけで所有し、保存・送信しない。
 //! Windows は GDI の SDR 出力を sRGB 8 bit として扱う（HDR/ICC の測色は保証しない）。
 
+use crate::notice::Source;
 use crate::{
     engine::ChannelKind,
     lang::Lang,
@@ -83,7 +84,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
 
 pub fn request(app: &mut AppState, mode: Mode) {
     if !cfg!(windows) {
-        app.message = Failure::Unsupported.text(app.lang).into();
+        app.refuse(Source::Eyedropper, Failure::Unsupported.text(app.lang));
     } else if !app.is_stroking() {
         app.eyedrop.screen_request = Some(mode);
     }
@@ -155,7 +156,7 @@ pub fn frame(app: &mut AppState, frame: &eframe::Frame) {
         Ok(None) => app.eyedrop.ramp_stop_pending = false,
         Err(error) => {
             app.eyedrop.ramp_stop_pending = false;
-            app.message = error.text(app.lang).into();
+            app.fail(Source::Eyedropper, error.text(app.lang));
         }
     }
 }

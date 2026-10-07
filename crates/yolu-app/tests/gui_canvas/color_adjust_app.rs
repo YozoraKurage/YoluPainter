@@ -516,11 +516,11 @@ fn saving_a_smart_material_with_a_colour_adjustment_is_refused_with_a_short_reas
     };
     let err = SmartFile::from_core(&material, &writer).unwrap_err();
     assert_eq!(
-        yolu_app::shelf::io_reason(Lang::Ja, &err),
-        "色調補正は保存できません"
+        yolu_app::lang::shelf_io_error(Lang::Ja, &err),
+        "色調補正を使っています"
     );
-    let en = yolu_app::shelf::io_reason(Lang::En, &err);
-    assert_eq!(en, "Colour adjustments cannot be saved");
+    let en = yolu_app::lang::shelf_io_error(Lang::En, &err);
+    assert_eq!(en, "It uses colour adjustments");
     assert!(!has_japanese(&en));
 }
 

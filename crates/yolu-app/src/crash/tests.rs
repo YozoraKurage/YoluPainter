@@ -226,6 +226,26 @@ fn child_crash() {
         message(&state.message);
         panic!("app panic");
     }
+    if mode == "notices" {
+        // 知らせの口の配線。注意と失敗は種類と出どころ（と覚えた理由）、断りは印を付けた文だけを書き、済んだ知らせと名前は書かない。
+        use crate::notice::Source;
+        let mut state = crate::state::AppState::new_in(32, 32, Lang::En);
+        state.refuse(Source::Edit, crate::lang::refusals::during_stroke(Lang::En));
+        state.info(Source::Save, "Saved SecretProjectName.");
+        state.refuse(
+            Source::Layer,
+            "SecretLayerName is not a layer you can edit.",
+        );
+        state.warn(Source::Bake, "SecretSetName: baked with notes.");
+        state.fail(
+            Source::Save,
+            format!(
+                "SecretProjectName: {}",
+                Lang::En.core_error(&yolu_core::CoreError::LayerNotFound)
+            ),
+        );
+        panic!("notices panic");
+    }
     #[cfg(target_os = "linux")]
     if mode == "overflow" {
         #[allow(unconditional_recursion)]
@@ -572,6 +592,25 @@ fn apply_records_only_action_names_and_failure_reasons_without_names() {
     assert!(!session.contains("SecretLayerName"), "{session}");
 }
 
+/// 知らせの口を通った文の診断の記録: 注意と失敗は種類と出どころ、断りは失敗・断りの文として印を付けた文だけ。
+/// 済んだ知らせと、印の無い文（名前や理由の分からない文）は書かない。
+#[test]
+fn notify_records_refusals_marked_as_problems_and_never_names() {
+    let dir = run_child("notices");
+    let session = session_text(&dir.0);
+    let lines: Vec<&str> = session.lines().collect();
+    assert_eq!(lines.len(), 3, "{session}");
+    assert!(lines[0].ends_with(" Not while drawing."), "{session}");
+    assert!(lines[1].ends_with(" Warning bake"), "{session}");
+    assert!(
+        lines[2].ends_with(" Error save: Layer not found"),
+        "{session}"
+    );
+    for private in ["Secret", "Saved", "baked", "not a layer"] {
+        assert!(!session.contains(private), "{private}: {session}");
+    }
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn stack_overflow_is_recorded_and_still_reported_by_the_runtime() {
@@ -597,6 +636,26 @@ fn ordinary_log_keeps_failures_only_and_never_names_or_paths() {
     assert_eq!(text.lines().count(), 2, "{text}");
     assert!(text.contains("Access denied"));
     for private in ["Saved", "Picked", "Private", "SomeoneElse", "private.psd"] {
+        assert!(!text.contains(private), "{private}: {text}");
+    }
+}
+
+/// 注意と失敗の知らせは、種類と出どころの名前（言語によらない）と、失敗の文として覚えた部分（名前の付かない理由）だけを書く。
+/// 覚えた部分が無い文は、種類と出どころだけ（制作物の名前・パスを書かない決まりのまま）。同じ知らせが続いたら 1 行。
+#[test]
+fn notices_write_the_kind_the_source_and_only_the_known_reason() {
+    let dir = Temp::new();
+    let r = Recorder::new(dir.0.clone());
+    r.note_problem("Access denied");
+    r.notice("Error", "save", "My Private Painting: Access denied");
+    r.notice("Error", "save", "My Private Painting: Access denied");
+    r.notice("Warning", "bake", "Secret Set: baked 3 maps");
+    let text = session_text(&dir.0);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].ends_with(" Error save: Access denied"), "{text}");
+    assert!(lines[1].ends_with(" Warning bake"), "{text}");
+    for private in ["Private", "Secret", "baked"] {
         assert!(!text.contains(private), "{private}: {text}");
     }
 }

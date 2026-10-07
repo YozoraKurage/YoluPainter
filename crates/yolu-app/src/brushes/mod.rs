@@ -793,10 +793,10 @@ impl AppState {
     }
 
     fn brush_refuse(&mut self) {
-        self.message = self
-            .lang
-            .pick("描いている間はできません。", "Not while drawing.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            crate::lang::refusals::during_stroke(self.lang),
+        );
     }
 
     /// 取り込みの仕事が走っている間は、ブラシの数・名前・画像を変える操作（追加・複製・削除・登録）を断る。取り込みは始めに取った
@@ -806,15 +806,17 @@ impl AppState {
         if !self.brushes.import.is_busy() {
             return false;
         }
-        self.message = self
-            .lang
-            .pick("ブラシを取り込み中です。", "Importing brushes.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            self.lang
+                .pick("ブラシを取り込み中です。", "Importing brushes."),
+        );
         true
     }
 
-    fn brush_notice(&mut self, ja: String, en: String) {
-        self.message = self.lang.pick(ja, en);
+    fn brush_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
+        let text = self.lang.pick(ja, en);
+        self.notify(kind, crate::notice::Source::Brush, text);
     }
 
     /// 設定のフォルダのブラシを読んで一覧に入れる（起動のとき 1 回）。読めなかったファイルは読み飛ばし、理由を残す。
@@ -839,12 +841,16 @@ impl AppState {
         let problems = &self.brushes.problems;
         let first = problems.first()?;
         let lang = self.lang;
-        let one = format!("{}: {}", first.file, first.describe(lang));
-        Some(if problems.len() == 1 {
+        let file = lang.quote(&first.file);
+        let one = lang.with_reason(
             lang.pick(
-                format!("ブラシを読めません。{one}"),
-                format!("Cannot read a brush. {one}"),
-            )
+                format!("ブラシのファイル{file}を読めません"),
+                format!("Cannot read the brush file {file}"),
+            ),
+            first.describe(lang),
+        );
+        Some(if problems.len() == 1 {
+            one
         } else {
             lang.pick(
                 format!("ブラシを {} 件読めません。{one}", problems.len()),
@@ -876,8 +882,9 @@ impl AppState {
             Err(e) => {
                 let reason = e.describe(self.lang);
                 self.brush_notice(
-                    format!("ブラシを保存できません: {reason}"),
-                    format!("Cannot save the brush: {reason}"),
+                    crate::notice::Kind::Error,
+                    Lang::Ja.with_reason("ブラシを保存できません", &reason),
+                    Lang::En.with_reason("Cannot save the brush", &reason),
                 );
                 false
             }
@@ -885,22 +892,32 @@ impl AppState {
     }
 
     fn brush_persist_order(&mut self) -> bool {
-        let tokens: Vec<String> = self.brushes.lib.order().iter().map(|k| k.token()).collect();
-        let result = match &self.brushes.store {
-            Some(store) => store.save_order(&tokens),
-            None => return true,
-        };
-        match result {
+        match self.brush_save_order() {
             Ok(()) => true,
-            Err(e) => {
-                let reason = e.describe(self.lang);
-                self.brush_notice(
-                    format!("ブラシの並びを保存できません: {reason}"),
-                    format!("Cannot save the brush order: {reason}"),
-                );
+            Err(text) => {
+                self.fail(crate::notice::Source::Brush, text);
                 false
             }
         }
+    }
+
+    /// 並びを書く（知らせない）。書けなければ理由の文（取り込みの終わりは、取り込みの知らせに添えて 1 回だけ知らせる）。
+    pub(crate) fn brush_save_order(&mut self) -> Result<(), String> {
+        let tokens: Vec<String> = self.brushes.lib.order().iter().map(|k| k.token()).collect();
+        let result = match &self.brushes.store {
+            Some(store) => store.save_order(&tokens),
+            None => return Ok(()),
+        };
+        result.map_err(|e| {
+            let reason = e.describe(self.lang);
+            self.lang.with_reason(
+                self.lang.pick(
+                    "ブラシの並びを保存できません",
+                    "Cannot save the brush order",
+                ),
+                reason,
+            )
+        })
     }
 
     /// 道具をブラシか消しゴムへ替えるときの、ブラシの切り替え（道具ごとに最後のブラシへ。今のブラシがもう同じ道具のものなら
@@ -998,6 +1015,7 @@ impl AppState {
         }
         if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
             return self.brush_notice(
+                crate::notice::Kind::Refusal,
                 format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
                 format!("At most {MAX_USER_BRUSHES} brushes."),
             );
@@ -1026,6 +1044,7 @@ impl AppState {
         // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
         let Some(id) = lib.take_id(|id| store.is_some_and(|s| s.is_taken(id))) else {
             return self.brush_notice(
+                crate::notice::Kind::Refusal,
                 "ブラシの番号を使い切りました。".into(),
                 "Out of brush numbers.".into(),
             );
@@ -1064,6 +1083,7 @@ impl AppState {
         self.brush_follow_tool(source.group);
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.brush_notice(
+            crate::notice::Kind::Info,
             format!("ブラシを追加しました: {name}"),
             format!("Brush added: {name}"),
         );
@@ -1102,6 +1122,7 @@ impl AppState {
                 };
                 if !key.is_user() {
                     return self.brush_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのブラシは消せません。".into(),
                         "Built-in brushes cannot be deleted.".into(),
                     );
@@ -1123,8 +1144,9 @@ impl AppState {
                         if let Err(e) = store.delete_brush(id) {
                             let reason = e.describe(lang);
                             return self.brush_notice(
-                                format!("ブラシを消せません: {reason}"),
-                                format!("Cannot delete the brush: {reason}"),
+                                crate::notice::Kind::Error,
+                                Lang::Ja.with_reason("ブラシを消せません", &reason),
+                                Lang::En.with_reason("Cannot delete the brush", &reason),
                             );
                         }
                     }
@@ -1150,6 +1172,7 @@ impl AppState {
                 }
                 let name = entry.name;
                 self.brush_notice(
+                    crate::notice::Kind::Info,
                     format!("ブラシを削除しました: {name}"),
                     format!("Brush deleted: {name}"),
                 );
@@ -1161,6 +1184,7 @@ impl AppState {
                 }
                 if !key.is_user() {
                     return self.brush_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのブラシは名前を変えられません。".into(),
                         "Built-in brushes cannot be renamed.".into(),
                     );

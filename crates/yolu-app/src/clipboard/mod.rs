@@ -15,6 +15,7 @@ pub mod keys;
 pub mod os;
 
 use crate::engine::{Channel, LayerKind, PixelClipboard};
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 use os::{ClipImage, NoClipboard, OsClipboard, OsClipboardError, SystemClipboard};
@@ -135,10 +136,10 @@ impl AppState {
     /// 操作を当てる（`Action::Clip`。読むだけのセットは `Action::apply` が先に断る）。断られたら何も変えず、理由をステータスバーへ。
     pub fn clip_action(&mut self, action: ClipAction) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Clipboard,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
@@ -148,9 +149,11 @@ impl AppState {
             ClipAction::CopyMerged => self.clip_copy_merged(),
             ClipAction::Paste => self.clip_paste(),
         };
-        self.message = match result {
-            Ok(text) | Err(text) => text,
-        };
+        // 断られた理由（選んでいない・写した物が無い・ロック）は断り
+        match result {
+            Ok(text) => self.info(Source::Clipboard, text),
+            Err(text) => self.refuse(Source::Clipboard, text),
+        }
         if self.doc.revision() != revision {
             self.modified = true;
         }
@@ -161,12 +164,15 @@ impl AppState {
         if let Some(error) = self.clip.os.take_error() {
             self.clip.write_failed();
             let text = error.text(self.lang);
-            self.message = format!(
-                "{}: {text}",
-                self.lang.pick(
-                    "画像を OS へコピーできません",
-                    "Cannot copy the image to the OS"
-                )
+            self.fail(
+                Source::Clipboard,
+                self.lang.with_reason(
+                    self.lang.pick(
+                        "画像を OS へコピーできません",
+                        "Cannot copy the image to the OS",
+                    ),
+                    text,
+                ),
             );
         }
     }

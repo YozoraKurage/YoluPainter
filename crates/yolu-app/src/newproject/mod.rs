@@ -29,6 +29,7 @@ use crate::engine::{CanvasResampling, Channel, Document, NormalSettings, NormalY
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::model::SceneModel;
+use crate::notice::Source;
 use crate::sets::{match_materials, material_from_link, name_for, MaterialRef};
 use crate::state::{AppState, DialogRequest};
 use crate::view3d::pose::{self, PrepareJob, PreparedModel};
@@ -168,14 +169,6 @@ pub fn match_keys(keys: &[&MaterialRef], groups: &[Group], slots: &[u32]) -> Vec
 /// 選び直していないときにテクスチャセットにするマテリアルの組（先頭から上限まで）。
 fn default_chosen(count: usize) -> Vec<usize> {
     (0..count.min(MAX_SETS)).collect()
-}
-
-/// テクスチャセットの数が上限に当たったときの理由（窓の下の帯・ツールチップ）。
-pub(crate) fn limit_error(lang: Lang) -> String {
-    lang.pick(
-        format!("1 つのプロジェクトのテクスチャセットは {MAX_SETS} までです"),
-        format!("A project has at most {MAX_SETS} texture sets"),
-    )
 }
 
 /// 窓で編むテクスチャセット 1 つ（`uid` が None なら足すセット）。
@@ -528,9 +521,7 @@ impl AppState {
         let lang = self.lang;
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {
-            s.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into()
+            s.refuse(Source::Project, crate::lang::refusals::during_stroke(lang))
         };
         match action {
             NpAction::OpenNew => {
@@ -555,30 +546,32 @@ impl AppState {
             NpAction::ChooseDialog => self.dialog_request = Some(DialogRequest::ProjectModel),
             NpAction::CancelReopen => {
                 if self.np.reopening.take().is_some() {
-                    self.message = lang
-                        .pick(
+                    self.info(
+                        Source::Project,
+                        lang.pick(
                             "モデルの読み込みを取り消しました。",
                             "Model loading canceled.",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             NpAction::AddSet => {
                 if let Err(e) = self.add_texture_set() {
-                    self.message = e;
+                    self.refuse(Source::Project, e);
                 }
             }
             NpAction::RemoveSets(uids) => self.np_ask_remove(uids),
             NpAction::ConfirmRemove => {
                 if let Some(uids) = self.np.remove_confirm.take() {
                     match self.remove_sets(&uids) {
-                        Ok(names) => {
-                            self.message = lang.pick(
+                        Ok(names) => self.info(
+                            Source::Project,
+                            lang.pick(
                                 format!("テクスチャセットを消しました: {}。", names.join("・")),
                                 format!("Removed texture sets: {}.", names.join(", ")),
-                            )
-                        }
-                        Err(e) => self.message = e,
+                            ),
+                        ),
+                        Err(e) => self.refuse(Source::Project, e),
                     }
                 }
             }
@@ -664,7 +657,7 @@ impl AppState {
                 if on {
                     if !chosen.contains(&group) && group < count {
                         if chosen.len() >= MAX_SETS {
-                            win.error = Some(limit_error(self.lang));
+                            win.error = Some(crate::lang::refusals::set_limit(self.lang));
                             return true;
                         }
                         chosen.push(group);
@@ -725,8 +718,8 @@ impl AppState {
             create::create_from_window(self, win)
         };
         match result {
-            Ok(message) => {
-                self.message = message;
+            Ok((kind, message)) => {
+                self.notify(kind, Source::Project, message);
                 false
             }
             Err(e) => {
@@ -825,13 +818,13 @@ impl AppState {
                     .eq(self.sets.iter().map(|s| s.uid))
         }) {
             self.np.window = None;
-            self.message = self
-                .lang
-                .pick(
+            self.warn(
+                Source::Project,
+                self.lang.pick(
                     "プロジェクトが変わったので、プロジェクト設定を閉じました。",
                     "The project changed; Project Configuration was closed.",
-                )
-                .into();
+                ),
+            );
         }
         if let Some(mut win) = self.np.window.take() {
             if let Prep::Loading { path, job } = &win.prep {
@@ -874,18 +867,17 @@ impl AppState {
             return;
         }
         if uids.len() >= self.sets.len() {
-            self.message = lang
-                .pick(
+            self.refuse(
+                Source::Project,
+                lang.pick(
                     "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
                     "A project keeps at least one texture set.",
-                )
-                .into();
+                ),
+            );
             return;
         }
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Project, crate::lang::refusals::during_stroke(lang));
             return;
         }
         self.np.remove_confirm = Some(uids);

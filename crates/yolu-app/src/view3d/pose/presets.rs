@@ -17,8 +17,9 @@ pub mod store;
 use yolu_core::glam::{Quat, Vec3};
 use yolu_core::skin::{BonePathError, BoneTransform, Pose, Rig};
 
-use self::store::{PoseEntry, StoreError};
+use self::store::PoseEntry;
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 use crate::view3d::model::ViewError;
 
@@ -273,14 +274,6 @@ pub fn build_pose(
     }
 }
 
-fn save_error(lang: Lang, e: &StoreError) -> String {
-    format!(
-        "{}: {}",
-        lang.pick("ポーズを保存できません", "Cannot save the pose"),
-        e.describe(lang)
-    )
-}
-
 /// ポーズを変えている最中（ギズモのドラッグ・欄のドラッグ）か。
 fn is_editing(app: &AppState) -> bool {
     app.view3d.pose.drag.is_some()
@@ -310,15 +303,21 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
         Ok(id) => {
             if !unsaved.is_empty() {
                 let names = unsaved.join(lang.pick("・", ", "));
-                app.message = lang.pick(
-                    format!("同じ名前のボーンがあり、保存できないボーン: {names}"),
-                    format!("Not saved (same-named bones): {names}"),
+                app.warn(
+                    Source::Pose,
+                    lang.with_reason(
+                        lang.pick(
+                            "同じ名前のボーンがあるので、保存できないボーンがあります",
+                            "Some bones are not saved because bones share a name",
+                        ),
+                        names,
+                    ),
                 );
             }
             Some(id)
         }
         Err(e) => {
-            app.message = save_error(lang, &e);
+            app.fail(Source::Pose, crate::lang::pose_preset_save_error(lang, &e));
             None
         }
     }
@@ -343,21 +342,29 @@ pub fn overwrite_preset(app: &mut AppState, id: u32) -> bool {
                 .get(id)
                 .map(|p| p.name.clone())
                 .unwrap_or_default();
-            app.message = lang.pick(
+            let mut text = lang.pick(
                 format!("ポーズ {name} を今のポーズで上書きしました"),
                 format!("Overwrote pose {name} with the current pose"),
             );
-            if !unsaved.is_empty() {
+            if unsaved.is_empty() {
+                app.info(Source::Pose, text);
+            } else {
+                // 上書きしたが、保存できないボーンがある: 気をつけること
                 let names = unsaved.join(lang.pick("・", ", "));
-                app.message += &lang.pick(
-                    format!("（保存できないボーン: {names}）"),
-                    format!(" (not saved: {names})"),
+                text += lang.pick("。", ". ");
+                text += &lang.with_reason(
+                    lang.pick(
+                        "同じ名前のボーンがあるので、保存できないボーンがあります",
+                        "Some bones are not saved because bones share a name",
+                    ),
+                    names,
                 );
+                app.warn(Source::Pose, text);
             }
             true
         }
         Err(e) => {
-            app.message = save_error(lang, &e);
+            app.fail(Source::Pose, crate::lang::pose_preset_save_error(lang, &e));
             false
         }
     }
@@ -369,10 +376,12 @@ pub fn rename_preset(app: &mut AppState, id: u32, name: &str) -> bool {
     match app.view3d.pose.pose_presets.rename(id, name) {
         Ok(_) => true,
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                lang.pick("名前を変えられません", "Cannot rename the pose"),
-                e.describe(lang)
+            app.fail(
+                Source::Pose,
+                lang.with_reason(
+                    lang.pick("名前を変えられません", "Cannot rename the pose"),
+                    e.describe(lang),
+                ),
             );
             false
         }
@@ -390,10 +399,12 @@ pub fn delete_preset(app: &mut AppState, id: u32) -> bool {
             true
         }
         Err(e) => {
-            app.message = format!(
-                "{}: {}",
-                lang.pick("ポーズを消せません", "Cannot delete the pose"),
-                e.describe(lang)
+            app.fail(
+                Source::Pose,
+                lang.with_reason(
+                    lang.pick("ポーズを消せません", "Cannot delete the pose"),
+                    e.describe(lang),
+                ),
             );
             false
         }
@@ -405,7 +416,7 @@ pub fn delete_preset(app: &mut AppState, id: u32) -> bool {
 pub fn apply_preset(app: &mut AppState, id: u32, mirror: bool) -> bool {
     let lang = app.lang;
     if app.is_stroking() {
-        app.message = lang.view_error(&ViewError::Stroking);
+        app.refuse(Source::Pose, lang.view_error(&ViewError::Stroking));
         return false;
     }
     if is_editing(app) {
@@ -443,21 +454,30 @@ pub fn apply_preset(app: &mut AppState, id: u32, mirror: bool) -> bool {
     }
     match result {
         Ok(()) if nothing_fits => {
-            app.message = lang.pick(
-                format!("ポーズ {name} に合うボーンがありません{tail}"),
-                format!("No bone fits pose {name}{tail}"),
+            app.refuse(
+                Source::Pose,
+                lang.pick(
+                    format!("ポーズ {name} に合うボーンがありません{tail}"),
+                    format!("No bone fits pose {name}{tail}"),
+                ),
             );
             false
         }
         Ok(()) => {
-            app.message = lang.pick(
+            // 飛ばしたボーンがあれば気をつけること
+            let text = lang.pick(
                 format!("ポーズ {name} を当てました{tail}"),
                 format!("Applied pose {name}{tail}"),
             );
+            if skipped > 0 {
+                app.warn(Source::Pose, text);
+            } else {
+                app.info(Source::Pose, text);
+            }
             true
         }
         Err(e) => {
-            app.message = lang.view_error(&e);
+            app.notify(e.notice_kind(), Source::Pose, lang.view_error(&e));
             false
         }
     }

@@ -395,15 +395,16 @@ impl AppState {
         self.subtools.ui.reveal = true;
     }
 
-    fn subtool_notice(&mut self, ja: String, en: String) {
-        self.message = self.lang.pick(ja, en);
+    fn subtool_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
+        let text = self.lang.pick(ja, en);
+        self.notify(kind, crate::notice::Source::Brush, text);
     }
 
     fn subtool_refuse(&mut self) {
-        self.message = self
-            .lang
-            .pick("描いている間はできません。", "Not while drawing.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            crate::lang::refusals::during_stroke(self.lang),
+        );
     }
 
     /// 道具のファイルを読めなかったとき、書くと読めなかったファイル（新しい版かもしれない）を壊すので、増やす・変える操作を断る。断ったなら true。
@@ -417,10 +418,16 @@ impl AppState {
         else {
             return false;
         };
-        let text = format!("{}: {}", problem.file, problem.describe(lang));
-        self.message = lang.pick(
-            format!("サブツールのファイルを読めないため、保存できません。{text}"),
-            format!("Cannot save sub tools because the file could not be read. {text}"),
+        let file = lang.quote(&problem.file);
+        self.fail(
+            crate::notice::Source::Brush,
+            lang.with_reason(
+                lang.pick(
+                    format!("サブツールのファイル{file}を読めないため、保存できません"),
+                    format!("Cannot save sub tools because the file {file} could not be read"),
+                ),
+                problem.describe(lang),
+            ),
         );
         true
     }
@@ -438,8 +445,9 @@ impl AppState {
             Err(e) => {
                 let reason = e.describe(self.lang);
                 self.subtool_notice(
-                    format!("サブツールを保存できません: {reason}"),
-                    format!("Cannot save the sub tools: {reason}"),
+                    crate::notice::Kind::Error,
+                    Lang::Ja.with_reason("サブツールを保存できません", &reason),
+                    Lang::En.with_reason("Cannot save the sub tools", &reason),
                 );
                 false
             }
@@ -466,12 +474,16 @@ impl AppState {
         let problems = &self.subtools.problems;
         let first = problems.first()?;
         let lang = self.lang;
-        let one = format!("{}: {}", first.file, first.describe(lang));
-        Some(if problems.len() == 1 {
+        let file = lang.quote(&first.file);
+        let one = lang.with_reason(
             lang.pick(
-                format!("サブツールを読めません。{one}"),
-                format!("Cannot read a sub tool file. {one}"),
-            )
+                format!("サブツールのファイル{file}を読めません"),
+                format!("Cannot read the sub tool file {file}"),
+            ),
+            first.describe(lang),
+        );
+        Some(if problems.len() == 1 {
+            one
         } else {
             lang.pick(
                 format!(
@@ -498,6 +510,7 @@ impl AppState {
         };
         if list.user_count() >= MAX_USER_PRESETS {
             return self.subtool_notice(
+                crate::notice::Kind::Refusal,
                 format!("サブツールは {MAX_USER_PRESETS} 個までです。"),
                 format!("At most {MAX_USER_PRESETS} sub tools."),
             );
@@ -550,6 +563,7 @@ impl AppState {
         self.subtools.ui.reveal = true;
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.subtool_notice(
+            crate::notice::Kind::Info,
             format!("サブツールを追加しました: {name}"),
             format!("Sub tool added: {name}"),
         );
@@ -597,6 +611,7 @@ impl AppState {
                 };
                 if !key.is_user() {
                     return self.subtool_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのサブツールは消せません。".into(),
                         "Built-in sub tools cannot be deleted.".into(),
                     );
@@ -632,6 +647,7 @@ impl AppState {
                 }
                 self.subtools.ui.reveal = true;
                 self.subtool_notice(
+                    crate::notice::Kind::Info,
                     format!("サブツールを削除しました: {name}"),
                     format!("Sub tool deleted: {name}"),
                 );
@@ -643,6 +659,7 @@ impl AppState {
                 }
                 if !key.is_user() {
                     return self.subtool_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのサブツールは名前を変えられません。".into(),
                         "Built-in sub tools cannot be renamed.".into(),
                     );

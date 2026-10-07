@@ -27,7 +27,7 @@ impl AppState {
             let channels = self.paint_channels();
             self.doc.fill_material(layer, &channels, 1.0, None, erase)
         };
-        let changed = result.map_err(|e| crate::matpaint::refusal_text(lang, &e))?;
+        let changed = result.map_err(|e| lang.core_error(&e))?;
         let (done, same) = if erase {
             (
                 lang.pick("選択範囲を消去しました。", "Erased the selection."),

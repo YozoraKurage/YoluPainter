@@ -23,17 +23,15 @@ pub fn restore_into(
         return Ok(());
     };
     let mask = selection.to_core().map_err(|e| {
-        format!(
-            "{}: {}",
+        lang.with_reason(
             lang.pick("選択範囲を読めません", "Cannot read the selection"),
-            lang.io_error(&e)
+            lang.io_error(&e),
         )
     })?;
     doc.restore_selection(Some(mask)).map_err(|e| {
-        format!(
-            "{}: {}",
+        lang.with_reason(
             lang.pick("選択範囲を戻せません", "Cannot restore the selection"),
-            lang.core_error(&e)
+            lang.core_error(&e),
         )
     })
 }
@@ -47,13 +45,12 @@ pub fn write_into(
 ) -> Result<Project, String> {
     for (id, mask) in selections {
         let next = mask.map(Selection::from_core).transpose().map_err(|e| {
-            format!(
-                "{}: {}",
+            lang.with_reason(
                 lang.pick(
                     "選択範囲を文書にできません",
-                    "Cannot turn the selection into the document"
+                    "Cannot turn the selection into the document",
                 ),
-                lang.io_error(&e)
+                lang.io_error(&e),
             )
         })?;
         let stored = project
@@ -65,10 +62,9 @@ pub fn write_into(
             continue;
         }
         project = project.with_selection(id, next.as_ref()).map_err(|e| {
-            format!(
-                "{}: {}",
+            lang.with_reason(
                 lang.pick("選択範囲を書けません", "Cannot write the selection"),
-                lang.io_error(&e)
+                lang.io_error(&e),
             )
         })?;
     }
@@ -95,13 +91,12 @@ pub fn without_stale(
             });
         if stale {
             project = project.with_selection(id, None).map_err(|e| {
-                format!(
-                    "{}: {}",
+                lang.with_reason(
                     lang.pick(
                         "古い選択範囲を外せません",
-                        "Cannot drop the outdated selection"
+                        "Cannot drop the outdated selection",
                     ),
-                    lang.io_error(&e)
+                    lang.io_error(&e),
                 )
             })?;
         }
@@ -151,13 +146,12 @@ pub fn restore_saved_into(
         }
     }
     let restored = doc.restore_saved_selections(list).map_err(|e| {
-        format!(
-            "{}: {}",
+        lang.with_reason(
             lang.pick(
                 "覚えた選択範囲を戻せません",
-                "Cannot restore the remembered selections"
+                "Cannot restore the remembered selections",
             ),
-            lang.core_error(&e)
+            lang.core_error(&e),
         )
     });
     // 文書へ戻せなかった並びは何も戻さない。読めなかった項目は ファイルに残っていることと一緒に言う
@@ -166,18 +160,13 @@ pub fn restore_saved_into(
         return Ok(());
     }
     let list: Vec<String> = skipped.iter().map(|s| skip_text(lang, s)).collect();
-    Err(lang.pick(
-        format!(
-            "読めない覚えた選択範囲 {}（ファイルには残っています）: {}",
-            skipped.len(),
-            list.join("、")
+    Err(lang.kept_in_file(lang.with_reason(
+        lang.pick(
+            "読めない覚えた選択範囲があります",
+            "Some remembered selections cannot be read",
         ),
-        format!(
-            "Unreadable remembered selections: {} (kept in the file): {}",
-            skipped.len(),
-            list.join(", ")
-        ),
-    ))
+        list.join(lang.pick("、", ", ")),
+    )))
 }
 
 /// 文書の大きさを変えるセットの ID（`sizes` はセットの ID と、新しい文書の幅・高さ・タイルの大きさ）。プロジェクトの同じ ID のセットの
@@ -210,7 +199,7 @@ pub fn write_saved_into(
     resized: &[String],
     lang: Lang,
 ) -> Result<(Project, Vec<String>), String> {
-    let fail = |what: &str, why: String| format!("{what}: {why}");
+    let fail = |what: &str, why: String| lang.with_reason(what, why);
     let mut overwritten = Vec::new();
     for (id, list) in lists {
         let stored = project.saved_selections(id).map_err(|e| {

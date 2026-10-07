@@ -119,49 +119,6 @@ impl Source {
     }
 }
 
-/// ライブラリのフォルダ・画像の断りの短い文（そうでない断りは None）。
-pub fn known_reason(lang: Lang, e: &yolu_io::Error) -> Option<String> {
-    let m = e.to_string();
-    let has = |text: &str| m.contains(text);
-    let short = if has(files::REFUSAL_ROOT_LINK) {
-        lang.pick(
-            "ライブラリの場所がリンクです",
-            "The library folder is a link",
-        )
-    } else if has(files::REFUSAL_ROOT_NOT_FOLDER) {
-        lang.pick(
-            "ライブラリの場所がフォルダではありません",
-            "The library location is not a folder",
-        )
-    } else if has(files::REFUSAL_LINK) {
-        lang.pick("リンクはたどりません", "Links are not followed")
-    } else if has(files::REFUSAL_PATH) {
-        lang.pick("名前が使えません", "Name not allowed")
-    } else if has(files::REFUSAL_NOT_FILE) {
-        lang.pick("ファイルではありません", "Not a file")
-    } else if has(files::REFUSAL_TOO_LARGE) {
-        lang.pick("大きすぎます", "Too large")
-    } else if has(files::REFUSAL_EMPTY) {
-        lang.pick("空のファイルです", "Empty file")
-    } else if has(files::REFUSAL_NO_NAME) {
-        lang.pick("名前を決められません", "Cannot choose a name")
-    } else if has(REFUSAL_UNSUPPORTED) {
-        lang.pick("PNG と .ylsmart だけです", "PNG and .ylsmart only")
-    } else if has(REFUSAL_PNG_SIZE) {
-        lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
-    } else if has(REFUSAL_PNG) {
-        lang.pick(REFUSAL_PNG, "Not a readable PNG")
-    } else {
-        return None;
-    };
-    Some(short.to_owned())
-}
-
-/// 断りの理由の短い文（ライブラリのフォルダの断り・画像の断りは言語ごとに、ほかは棚の言い方）。
-pub fn reason(lang: Lang, e: &yolu_io::Error) -> String {
-    known_reason(lang, e).unwrap_or_else(|| crate::shelf::io_reason(lang, e))
-}
-
 /// ファイルの状態（長さと更新時刻）。変わったら、情報を作り直す。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
@@ -472,8 +429,12 @@ impl LibraryState {
         let spawned = std::thread::Builder::new()
             .name("yolu-library-list".into())
             .spawn(move || {
-                let result = files::list(&root, Some(&flag))
-                    .map_err(|e| Unreadable::pair(&reason(Lang::Ja, &e), &reason(Lang::En, &e)));
+                let result = files::list(&root, Some(&flag)).map_err(|e| {
+                    Unreadable::pair(
+                        &crate::lang::library_io_error(Lang::Ja, &e),
+                        &crate::lang::library_io_error(Lang::En, &e),
+                    )
+                });
                 let _ = tx.send(result);
                 if let Some(ctx) = repaint {
                     ctx.request_repaint();
