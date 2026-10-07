@@ -12,11 +12,13 @@
 mod deform;
 mod demo;
 mod influence;
+mod merge;
 #[cfg(test)]
 mod tests;
 
 pub use demo::{demo_figure, FigureDetail};
 pub use influence::BonePathError;
+pub use merge::{merge, MergePart, Merged, MeshPick, PartRange};
 
 use glam::{Mat3, Mat4, Quat, Vec3};
 
@@ -153,6 +155,8 @@ pub struct RigMesh {
     pub mesh: ModelMesh,
     pub skin: Skin,
     pub blend_shapes: Vec<BlendShape>,
+    /// メッシュの付いた骨（FBX のメッシュのノード。分からなければ None）。
+    pub node: Option<u32>,
 }
 
 /// 読み込める大きさの上限（壊れた・大きすぎるファイルで止まらないように。どれかを超えたら作らない）。
@@ -303,7 +307,7 @@ impl Rig {
             }
             if !b.rest.is_finite() {
                 return Err(RigError::NonFinite {
-                    what: "ボーンの変換"
+                    what: "ボーンの変換",
                 });
             }
         }
@@ -320,6 +324,9 @@ impl Rig {
                 return Err(RigError::NonFinite {
                     what: "メッシュの位置・法線・UV",
                 });
+            }
+            if m.node.is_some_and(|b| b as usize >= bones.len()) {
+                return Err(RigError::BadMesh { mesh: mi });
             }
             validate_skin(mi, &mut m.skin, n, bones.len(), budget)?;
             for j in &m.skin.joints {

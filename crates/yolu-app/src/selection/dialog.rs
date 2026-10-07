@@ -1,5 +1,5 @@
-//! 量を聞く小さな窓（拡張・縮小・境界線・ぼかしの半径と、画布の縁を固定するか）。モーダルで、見出しをドラッグして動かせる
-//! （窓の骨組みはほかの浮いた窓と同じ `ui::window`）。Enter で適用・Esc で取り消し（文字を打っている間は、その欄に任せる）。
+//! 量を聞く小さなウィンドウ（拡張・縮小・境界線・ぼかしの半径と、キャンバスの縁を固定するか）。モーダルで、見出しをドラッグして動かせる
+//! （ウィンドウの骨組みはほかの浮いたウィンドウと同じ `ui::window`）。Enter で適用・Esc で取り消し（文字を打っている間は、その欄に任せる）。
 //! 適用は `Action::Sel`（1 回の Undo）を通す。
 
 use egui::{pos2, vec2, Id, Key, Rect};
@@ -17,12 +17,12 @@ fn window_id() -> Id {
     Id::new("yolu.sel-amount")
 }
 
-/// 最後に描いた窓の矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
+/// 最後に描いたウィンドウの矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
 pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, window_id())
 }
 
-/// 開いていれば窓を描き、押されたものを `Action` として当てる。
+/// 開いていればウィンドウを描き、押されたものを `Action` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     super::saved::show_window(ctx, app);
     let Some(mut dialog) = app.sel.dialog else {

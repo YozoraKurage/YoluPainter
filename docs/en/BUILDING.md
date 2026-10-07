@@ -28,7 +28,7 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
-There is no dedicated pen input handling equivalent to Windows Ink. Mouse operation is the baseline; pressure input depends on the OS and input device. The current Unity bridge build tool does not generate a Mac library.
+There is no dedicated pen input handling equivalent to Windows Ink. Mouse operation is the baseline; pressure input depends on the OS and input device.
 
 ## Linux (experimental)
 

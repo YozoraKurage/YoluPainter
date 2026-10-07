@@ -1,9 +1,11 @@
-//! 読み込んだモデルの記録（Live Link で Unity から受けたものと、ポーズを付けられるモデル（FBX・試しの人形））と、受け取りの口。
+//! 読み込んだモデルの記録（Live Link の相手（Unity のシーンのオブジェクト。FBX を並べたポーズを付けられるモデル）、形ごと渡された
+//! メッシュのモデル、ポーズを付けられるモデル（FBX・試しの人形））と、受け取りの口。
 //!
 //! モデルの形（位置・法線・UV・三角形）は 3D ビュー（`view3d`。ストロークの最中は入れ替えない・ポーズを当てる）だけが持つ。ここに
-//! 置くのは、テクスチャセットの結び付けと Live Link に要る記録（出どころ・世代・マテリアルの鍵とシェーダーと流し込み先・スロットごとの
-//! マテリアル）だけ。Live Link（`livelink`）も、外からの口（`YoluApp::load_live_link_model`・`apply_live_link_pose`）も、
-//! `AppState::receive_link_model`・`receive_link_pose`・`close_link_model` を通る。
+//! 置くのは、テクスチャセットの結び付けに要る記録（出どころ・マテリアルの鍵とシェーダーと流し込み先・スロットごとのマテリアル）だけ。
+//! 形ごと渡されたメッシュのモデル（試験・外からの口 `YoluApp::load_live_link_model`・`apply_live_link_pose`）は
+//! `AppState::receive_link_model`・`receive_link_pose`・`close_link_model` を通る。Live Link の相手（`livelink`）は、FBX を並べた
+//! `Rig` をポーズのセッションに入れ、記録はマテリアルの鍵（Unity のマテリアルのアセット）で作る（`SceneModel::from_live_link`）。
 //!
 //! 3D ビューで描くのは今のテクスチャセットのマテリアルの面だけで、目を閉じたセットのマテリアルの面は 3D から除く
 //! （`AppState::sync_view3d`）。試しの立方体（記録の無いモデル）には、今のセットの文書を貼る。
@@ -24,12 +26,24 @@ use crate::state::AppState;
 use crate::view3d::model::ViewError;
 
 /// モデルの出どころ。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelSource {
-    /// Live Link のつながり（番号。0 はつながりの外から読んだもの）。
-    LiveLink { session: u64 },
+    /// 形ごと渡された、Unity のシーンのモデルと同じ形のメッシュ（焼いた形。試験・外からの口）。
+    Mesh,
+    /// Live Link の相手（`key` は Unity のシーンのオブジェクトの身元、`rig` はポーズのセッションの `Arc<Rig>` の同一性）。
+    LiveLink { key: String, rig: usize },
     /// ポーズを付けられるモデル（FBX・試しの人形）。`rig` は `Arc<Rig>` の同一性（`SceneModel::rig_id`）。
     Rig { rig: usize },
+}
+
+impl ModelSource {
+    /// ポーズのセッションの `Rig` の同一性（形ごと渡されたメッシュは None）。
+    pub fn rig(&self) -> Option<usize> {
+        match self {
+            ModelSource::Mesh => None,
+            ModelSource::LiveLink { rig, .. } | ModelSource::Rig { rig } => Some(*rig),
+        }
+    }
 }
 
 /// 読み込んだモデルの記録。
@@ -37,27 +51,27 @@ pub enum ModelSource {
 pub struct SceneModel {
     pub source: ModelSource,
     pub name: String,
-    /// 送り手の世代（Pose・Materials・ModelClosed はこの番号で同じモデルを指す）。
+    /// 送り手の世代（形ごと渡されたメッシュのモデルの Pose・Materials・ModelClosed はこの番号で同じモデルを指す。ほかは 0）。
     pub generation: u32,
     pub materials: Vec<MaterialInfo>,
     /// スロット（メッシュ × サブメッシュを並びの順に平らにしたもの）ごとのマテリアルの番号。Unity 版の `{"slot": n}` の鍵を読み替える。
     pub slots: Vec<u32>,
     pub meshes: usize,
-    /// マテリアルごとの、それを使うメッシュの名前（メッシュの並びの順。同じ名前は 1 回）。新規プロジェクト・プロジェクトの構成の窓が
+    /// マテリアルごとの、それを使うメッシュの名前（メッシュの並びの順。同じ名前は 1 回）。新規プロジェクト・プロジェクトの構成のウィンドウが
     /// マテリアルの一覧に添える。
     pub material_meshes: Vec<Vec<String>>,
     pub vertices: usize,
     pub triangles: usize,
     /// モデルを受け直すたびに増える（プロセスの中で一意）。
     pub revision: u64,
-    /// 出どころとつながっている（Live Link が切れたら false。3D の形と結び付けは最後のまま残す）。
+    /// Unity のシーンの相手のモデルか（Live Link の相手・形ごと渡されたメッシュ。ポーズを付けられるモデルは false）。
     pub live: bool,
 }
 
 static REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// FBX でマテリアルの無い面につく名前（yolu-model が付ける）。未割り当ての鍵にする。
-const NO_MATERIAL: &str = "マテリアルなし";
+pub const NO_MATERIAL: &str = "マテリアルなし";
 
 /// 鍵に入れるマテリアルの名前（制御文字を除き、256 文字（UTF-16）まで。.ylp が受ける形で、Unity 版の `KeyName` と同じ）。照合も同じ形で比べる。
 pub fn key_name(name: &str) -> String {
@@ -72,10 +86,10 @@ pub fn key_name(name: &str) -> String {
 }
 
 impl SceneModel {
-    /// Live Link で受けたモデルから作る。
-    pub fn from_link(model: &Model, session: u64) -> SceneModel {
+    /// 形ごと渡されたメッシュのモデルから作る。
+    pub fn from_link(model: &Model) -> SceneModel {
         SceneModel {
-            source: ModelSource::LiveLink { session },
+            source: ModelSource::Mesh,
             name: model.name.clone(),
             generation: model.generation,
             materials: model.materials.clone(),
@@ -122,7 +136,7 @@ impl SceneModel {
     }
 
     /// `from_rig` の、モデルの同一性（`rig_id`）を呼び手が決めるもの。まだ 3D ビューに入れていないモデル（`Arc` にする前）の
-    /// マテリアルの組を窓が読むとき、同一性は要らないので 0 を渡す。
+    /// マテリアルの組をウィンドウが読むとき、同一性は要らないので 0 を渡す。
     pub fn from_rig_as(rig: &Rig, id: usize) -> SceneModel {
         SceneModel {
             source: ModelSource::Rig { rig: id },
@@ -172,9 +186,62 @@ impl SceneModel {
         }
     }
 
-    /// Live Link で受けたモデルか。
+    /// Live Link の相手（FBX を並べたモデル）から作る。マテリアルは Unity のマテリアル（`materials` の並びがサブメッシュの番号）、
+    /// スロットはメッシュ × サブメッシュの並びの順。`name` は相手の名前。
+    pub fn from_live_link(
+        rig: &Arc<Rig>,
+        key: &str,
+        name: &str,
+        materials: Vec<MaterialInfo>,
+    ) -> SceneModel {
+        let mut record = SceneModel::from_rig(rig);
+        record.source = ModelSource::LiveLink {
+            key: key.to_owned(),
+            rig: Self::rig_id(rig),
+        };
+        record.name = name.to_owned();
+        record.material_meshes = {
+            let mut names = vec![Vec::new(); materials.len()];
+            for mesh in rig.meshes() {
+                for sub in &mesh.mesh.submeshes {
+                    if let Some(list) = names.get_mut(sub.material.max(0) as usize) {
+                        if !list.contains(&mesh.mesh.name) {
+                            list.push(mesh.mesh.name.clone());
+                        }
+                    }
+                }
+            }
+            names
+        };
+        record.materials = materials;
+        record.live = true;
+        record
+    }
+
+    /// Unity のシーンの相手のモデルか（Live Link の相手か、形ごと渡されたメッシュ）。
     pub fn is_link(&self) -> bool {
+        matches!(
+            self.source,
+            ModelSource::LiveLink { .. } | ModelSource::Mesh
+        )
+    }
+
+    /// Live Link の相手（FBX を並べたモデル）か。
+    pub fn is_live_link(&self) -> bool {
         matches!(self.source, ModelSource::LiveLink { .. })
+    }
+
+    /// 形ごと渡されたメッシュのモデルか（3D ビューの形は `link_generation` の世代で指す）。
+    pub fn is_mesh(&self) -> bool {
+        self.source == ModelSource::Mesh
+    }
+
+    /// Live Link の相手の身元（相手のモデルでなければ None）。
+    pub fn link_key(&self) -> Option<&str> {
+        match &self.source {
+            ModelSource::LiveLink { key, .. } => Some(key),
+            _ => None,
+        }
     }
 
     /// マテリアルの情報（シェーダー・テクスチャのプロパティ・流し込み先）を置き換える。数が違えば断る。鍵が変わったかを返す。
@@ -206,7 +273,8 @@ impl AppState {
     /// 今のポーズのセッション（FBX・試しの人形）のモデルにテクスチャセットを結び付け、セットの無いマテリアルにはセットを作る
     /// （Live Link と同じ照合）。今のセットが付かなかったときは、付いたセットの先頭へ替える（描き始められるように）。
     /// セッションが無ければ何もしない。知らせの文（作ったセット・モデルに無いセット）を返す。
-    pub fn bind_rig_model(&mut self) -> Option<String> {
+    /// 知らせに添える但し書きと、その種類（新しいセットだけなら済んだ知らせ、モデルに無いセット・上限は注意）。
+    pub fn bind_rig_model(&mut self) -> Option<(crate::notice::Kind, String)> {
         let rig = self.view3d.pose.session.as_ref()?.rig.clone();
         self.model = Some(SceneModel::from_rig(&rig));
         let report = self.bind_model();
@@ -229,9 +297,12 @@ impl AppState {
             if !note.is_empty() {
                 note.push(' ');
             }
-            note += &lang.pick(
-                format!("モデルに無いセット: {names}。"),
-                format!("Sets not in the model: {names}."),
+            note += &lang.with_reason(
+                lang.pick(
+                    "モデルに無いテクスチャセットがあります",
+                    "Some texture sets are not in the model",
+                ),
+                names,
             );
         }
         if let Some(limit) = report.limit_text(lang) {
@@ -240,20 +311,22 @@ impl AppState {
             }
             note += &limit;
         }
-        (!note.is_empty()).then_some(note)
+        let kind = if report.unmatched.is_empty() && report.limit_text(lang).is_none() {
+            crate::notice::Kind::Info
+        } else {
+            crate::notice::Kind::Warning
+        };
+        (!note.is_empty()).then_some((kind, note))
     }
 
-    /// ポーズを付けられるモデルの記録が、今のセッションのものでなくなっていたら（別のモデルに替わった）外す
-    /// （記録と結び付けを解く。セットは残す）。Live Link の記録には触らない。
+    /// ポーズを付けられるモデル・Live Link の相手の記録が、今のセッションのものでなくなっていたら（別のモデルに替わった）外す
+    /// （記録と結び付けを解く。セットは残す）。形ごと渡されたメッシュの記録には触らない。
     pub fn sync_rig_model(&mut self) {
-        let stale = match (&self.model, self.view3d.pose.session.as_ref()) {
-            (
-                Some(SceneModel {
-                    source: ModelSource::Rig { rig },
-                    ..
-                }),
-                session,
-            ) => session.is_none_or(|s| *rig != SceneModel::rig_id(&s.rig)),
+        let stale = match (
+            self.model.as_ref().and_then(|m| m.source.rig()),
+            self.view3d.pose.session.as_ref(),
+        ) {
+            (Some(rig), session) => session.is_none_or(|s| rig != SceneModel::rig_id(&s.rig)),
             _ => false,
         };
         if stale {
@@ -265,13 +338,9 @@ impl AppState {
     /// Live Link で受けたモデルを読む: 記録を置き換えてテクスチャセットを結び付け（`bind_model`）、3D ビューに形を読む（描いている
     /// 最中なら、3D の形はストロークが終わってから入れ替わる）。返すのは結び付けの結果と、3D に読めたか（三角形が無い・添字が
     /// 範囲の外なら理由。記録と結び付けはそのまま使う）。
-    pub fn receive_link_model(
-        &mut self,
-        model: &Model,
-        session: u64,
-    ) -> (BindReport, Result<(), ViewError>) {
+    pub fn receive_link_model(&mut self, model: &Model) -> (BindReport, Result<(), ViewError>) {
         let shape = self.view3d.load_live_link(model);
-        self.model = Some(SceneModel::from_link(model, session));
+        self.model = Some(SceneModel::from_link(model));
         let report = self.bind_model();
         (report, shape)
     }
@@ -280,7 +349,7 @@ impl AppState {
     /// 世代が違う・メッシュや頂点の数が合わないものは、何も変えずに断る。
     pub fn receive_link_pose(&mut self, pose: &Pose) -> Result<(), ViewError> {
         match &self.model {
-            Some(m) if m.is_link() && m.generation == pose.generation => {}
+            Some(m) if m.is_mesh() && m.generation == pose.generation => {}
             Some(m) => {
                 return Err(ViewError::PoseGeneration {
                     pose: pose.generation,
@@ -297,7 +366,7 @@ impl AppState {
         if !self
             .model
             .as_ref()
-            .is_some_and(|m| m.is_link() && m.generation == generation)
+            .is_some_and(|m| m.is_mesh() && m.generation == generation)
         {
             return false;
         }
@@ -327,22 +396,21 @@ impl AppState {
             )
         };
         let (material, hidden) = match self.view3d.link_generation() {
-            None => match (&self.model, self.view3d.pose.session.as_ref()) {
-                // ポーズを付けられるモデル（記録が今のセッションのもの）
-                (
-                    Some(SceneModel {
-                        source: ModelSource::Rig { rig },
-                        ..
-                    }),
-                    Some(session),
-                ) if *rig == SceneModel::rig_id(&session.rig) => bound(self),
+            None => match (
+                self.model.as_ref().and_then(|m| m.source.rig()),
+                self.view3d.pose.session.as_ref(),
+            ) {
+                // ポーズを付けられるモデル・Live Link の相手（記録が今のセッションのもの）
+                (Some(rig), Some(session)) if rig == SceneModel::rig_id(&session.rig) => {
+                    bound(self)
+                }
                 _ => (0, Vec::new()),
             },
             Some(g)
                 if self
                     .model
                     .as_ref()
-                    .is_some_and(|m| m.is_link() && m.generation == g) =>
+                    .is_some_and(|m| m.is_mesh() && m.generation == g) =>
             {
                 bound(self)
             }
@@ -427,17 +495,17 @@ mod tests {
 
     #[test]
     fn the_record_keeps_slots_and_counts_but_not_the_shape() {
-        let m = SceneModel::from_link(&model(3), 1);
+        let m = SceneModel::from_link(&model(3));
         assert_eq!(m.slots, [1, 0, 1, 0]);
         assert_eq!((m.meshes, m.vertices, m.triangles), (2, 8, 4));
-        let n = SceneModel::from_link(&model(3), 1);
+        let n = SceneModel::from_link(&model(3));
         assert!(n.revision > m.revision, "受け直すたびに新しい版");
     }
 
     #[test]
     fn receiving_binds_sets_and_loads_the_3d_shape() {
         let mut s = AppState::new(64, 64);
-        let (report, shape) = s.receive_link_model(&model(1), 0);
+        let (report, shape) = s.receive_link_model(&model(1));
         assert_eq!(shape, Ok(()));
         assert_eq!(
             report.matched, 1,
@@ -473,7 +541,7 @@ mod tests {
             meshes: vec![],
         };
         assert!(s.receive_link_pose(&early).is_err());
-        let _ = s.receive_link_model(&model(2), 0);
+        let _ = s.receive_link_model(&model(2));
         let before = s.view3d.model.clone().unwrap();
         let wrong_count = Pose {
             generation: 2,
@@ -646,7 +714,7 @@ mod tests {
         assert!(s.sets.iter().all(|x| x.bound.is_none()));
         assert_eq!(s.view3d.material, 0, "立方体は今のセットの文書を貼る");
         // Live Link の記録には触らない
-        let _ = s.receive_link_model(&model(5), 0);
+        let _ = s.receive_link_model(&model(5));
         s.sync_rig_model();
         assert!(s.model.as_ref().is_some_and(|m| m.is_link()));
     }

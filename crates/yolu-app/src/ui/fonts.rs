@@ -11,9 +11,9 @@ use egui::{FontData, FontDefinitions, FontFamily};
 use super::theme::BOLD;
 
 /// 普通の太さ。
-const REGULAR: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Regular.ttf");
+pub(crate) const REGULAR: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Regular.ttf");
 /// 太字。
-const BOLD_FACE: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Bold.ttf");
+pub(crate) const BOLD_FACE: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Bold.ttf");
 
 /// 同梱した書体の名前（`FontDefinitions::font_data` の鍵）。
 pub const REGULAR_NAME: &str = "biz-udpgothic-regular";

@@ -1,7 +1,7 @@
 //! 書き出しの速さの計測（tools/csharp-golden/run.sh export-bench の C# と同じ中身）。
 //!   cargo run --release -p yolu-core --example export_bench [回数]
-//! 4096² で、全チャンネルに全タイル乱数の層を 1 つずつ持つ文書（Height → Normal 有効）の各テンプレートの画像の Build と、乱数の三角形
-//! 20000 個の覆い、塗り広げ（16 テクセル・全部）、大きな島（2 三角形）の覆いと外の塗り広げ。`RAYON_NUM_THREADS=1` で 1 スレッドの時間。
+//! 4096² で、全チャンネルに全タイル乱数のレイヤーを 1 つずつ持つ文書（Height → Normal 有効）の各テンプレートの画像の Build と、乱数の三角形
+//! 20000 個の覆い、塗り広げ（16 テクセル・全部）、大きなアイランド（2 三角形）の覆いと外の塗り広げ。`RAYON_NUM_THREADS=1` で 1 スレッドの時間。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::time::Instant;
@@ -112,7 +112,7 @@ fn main() {
     )
     .unwrap();
     doc.clear_history().unwrap();
-    println!("Build 4096²（全チャンネルが全タイル乱数の 1 層、Height → Normal 有効）:");
+    println!("Build 4096²（全チャンネルが全タイル乱数の 1 レイヤー、Height → Normal 有効）:");
     for template in ExportTemplate::built_in() {
         for image in &template.images {
             let ao_only = image.kind() == ExportImageKind::Packed
@@ -174,7 +174,7 @@ fn main() {
                 .unwrap())
         );
     }
-    // 大きな島（画像の 7 割を覆う 2 つの三角形）での覆い
+    // 大きなアイランド（画像の 7 割を覆う 2 つの三角形）での覆い
     let island = [
         [
             DVec2::new(200.0, 200.0),
@@ -188,12 +188,12 @@ fn main() {
         ],
     ];
     println!(
-        "覆い 4096²（大きな島 2 三角形）: {}",
+        "覆い 4096²（大きなアイランド 2 三角形）: {}",
         time(runs, || coverage(s, s, island.iter().copied()).unwrap())
     );
     let keep_island = coverage(s, s, island.iter().copied()).unwrap();
     println!(
-        "塗り広げ 4096² 全部（大きな島の外を埋める）: {}",
+        "塗り広げ 4096² 全部（大きなアイランドの外を埋める）: {}",
         time(runs, || dilate(
             &pixels,
             s,

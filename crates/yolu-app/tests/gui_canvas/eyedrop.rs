@@ -1,4 +1,4 @@
-//! スポイト（I と、2D のブラシ中の Alt）: 2D・3D・層だけ・全体・描くチャンネル・マテリアルで塗るの 6 チャンネル、断り、キー・ボタン・
+//! スポイト（I と、2D のブラシ中の Alt）: 2D・3D・レイヤーだけ・全体・描くチャンネル・マテリアルで塗るの 6 チャンネル、断り、キー・ボタン・
 //! オプションバー、日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -21,7 +21,7 @@ fn rect() -> Rect {
     Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0))
 }
 
-/// 画面を使わない 2D の状態（文書は 64 × 64、スポイトの道具）。
+/// 画面を使わない 2D の状態（文書は 64 × 64、スポイトのツール）。
 fn state() -> AppState {
     let mut s = AppState::new(64, 64);
     s.tool = Tool::Eyedropper;
@@ -65,23 +65,23 @@ fn headless_picks_the_selected_layer_or_the_whole_composite() {
     put(&mut s, bottom, Channel::Color, 10, 10, [200, 0, 0, 255]);
     put(&mut s, top, Channel::Color, 10, 10, [0, 0, 200, 128]);
     let (revision, modified) = (s.doc.revision(), s.modified);
-    // 選んでいる層（上）だけ。アルファは描画色に持ち込まない
+    // 選んでいるレイヤー（上）だけ。アルファは描画色に持ち込まない
     assert!(pick2d(&mut s, 10, 10), "{}", s.message);
     assert_eq!(main_rgb(&s), [0, 0, 200]);
     assert_eq!(s.color.main[3], 1.0);
     assert_eq!(s.message, "取得: R 0 G 0 B 200");
-    // 下の層を選べば下の色
+    // 下のレイヤーを選べば下の色
     s.selected_layer = Some(bottom);
     assert!(pick2d(&mut s, 10, 10));
     assert_eq!(main_rgb(&s), [200, 0, 0]);
-    // 全レイヤーなら合成（下の層を選んでいても）
+    // 全レイヤーなら合成（下のレイヤーを選んでいても）
     s.eyedrop.all_layers = true;
     assert!(pick2d(&mut s, 10, 10));
     let composite = s.doc.composite_pixel(Channel::Color, 10, 10).unwrap();
     assert_eq!(main_rgb(&s), [composite.r, composite.g, composite.b]);
-    assert_ne!(main_rgb(&s), [200, 0, 0], "上の層が混ざっている");
+    assert_ne!(main_rgb(&s), [200, 0, 0], "上のレイヤーが混ざっている");
     assert_ne!(main_rgb(&s), [0, 0, 200]);
-    // グループを選んでいれば、層だけにしていても合成
+    // グループを選んでいれば、レイヤーだけにしていても合成
     s.eyedrop.all_layers = false;
     assert_eq!(s.doc.revision(), revision, "取るだけで文書は変わらない");
     assert_eq!(s.modified, modified);
@@ -183,23 +183,43 @@ fn headless_material_mode_reads_all_six_channels_and_keeps_what_it_cannot_read()
     assert_eq!(s.mat.metallic, 0.25, "透明なチャンネルの値は変えない");
     assert_eq!(s.mat.channels, set_before, "塗るチャンネルの組は変えない");
     assert!(s.mat.enabled);
-    assert_eq!(s.message, "取得: カラー・ラフネス・ハイト・ノーマル・エミッション");
+    assert_eq!(
+        s.message,
+        "取得: カラー・ラフネス・ハイト・ノーマル・エミッション"
+    );
     s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
     assert!(pick2d(&mut s, 12, 34));
-    assert_eq!(s.message, "Picked Color, Roughness, Height, Normal, Emission");
+    assert_eq!(
+        s.message,
+        "Picked Color, Roughness, Height, Normal, Emission"
+    );
     // 1 つも読めない所は何も変えない
     let (mat, color) = (s.mat.clone(), s.color.clone());
     assert!(!pick2d(&mut s, 50, 50));
     assert_eq!((s.mat.clone(), s.color.clone()), (mat, color));
-    // 層だけ・全体: 層だけのとき別の層の値は読まない
+    // レイヤーだけ・全体: レイヤーだけのとき別のレイヤーの値は読まない
     let other = {
         s.apply(Action::NewLayer);
         s.selected_layer.unwrap()
     };
-    put(&mut s, other, Channel::Roughness, 12, 34, [250, 250, 250, 255]);
+    put(
+        &mut s,
+        other,
+        Channel::Roughness,
+        12,
+        34,
+        [250, 250, 250, 255],
+    );
     assert!(pick2d(&mut s, 12, 34));
-    assert!((s.mat.roughness - byte(250)).abs() < 1e-6, "選んだ層の値");
-    assert_eq!(main_rgb(&s), [10, 20, 30], "選んだ層に Color は無いので変えない");
+    assert!(
+        (s.mat.roughness - byte(250)).abs() < 1e-6,
+        "選んだレイヤーの値"
+    );
+    assert_eq!(
+        main_rgb(&s),
+        [10, 20, 30],
+        "選んだレイヤーに Color は無いので変えない"
+    );
 }
 
 #[test]
@@ -213,8 +233,15 @@ fn headless_material_mode_is_ignored_while_painting_the_mask() {
     assert!(s.m2.edit_mask);
     let rough = s.mat.roughness;
     assert!(pick2d(&mut s, 8, 8));
-    assert_eq!(main_rgb(&s), [50, 60, 70], "描くチャンネル（Color）を描画色に");
-    assert_eq!(s.mat.roughness, rough, "マスクに描くあいだはマテリアルの値を変えない");
+    assert_eq!(
+        main_rgb(&s),
+        [50, 60, 70],
+        "描くチャンネル（Color）を描画色に"
+    );
+    assert_eq!(
+        s.mat.roughness, rough,
+        "マスクに描くあいだはマテリアルの値を変えない"
+    );
 }
 
 #[test]
@@ -290,7 +317,7 @@ fn headless_3d_reads_the_texel_under_the_surface_uv() {
     assert!(pick_surface(&mut s, rect(), at), "{}", s.message);
     assert_eq!(main_rgb(&s), [10, 200, 30]);
     assert_eq!(s.message, "取得: R 10 G 200 B 30");
-    // 層だけ・全体は 2D と同じ
+    // レイヤーだけ・全体は 2D と同じ
     let top = {
         s.apply(Action::NewLayer);
         s.selected_layer.unwrap()
@@ -303,15 +330,27 @@ fn headless_3d_reads_the_texel_under_the_surface_uv() {
     assert_eq!(main_rgb(&s), [10, 200, 30]);
     s.eyedrop.all_layers = true;
     assert!(pick_surface(&mut s, rect(), at));
-    assert_eq!(main_rgb(&s), [0, 0, 255], "上の不透明な層が合成の結果");
+    assert_eq!(
+        main_rgb(&s),
+        [0, 0, 255],
+        "上の不透明なレイヤーが合成の結果"
+    );
     // モデルの外・板の外
     s.message.clear();
     let before = s.color.clone();
-    assert!(!pick_surface(&mut s, rect(), pos2(rect().left() + 2.0, rect().top() + 2.0)));
+    assert!(!pick_surface(
+        &mut s,
+        rect(),
+        pos2(rect().left() + 2.0, rect().top() + 2.0)
+    ));
     assert_eq!(s.message, "ポインタの下にモデルがありません");
     assert_eq!(s.color, before);
     s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
-    assert!(!pick_surface(&mut s, rect(), pos2(rect().left() + 2.0, rect().top() + 2.0)));
+    assert!(!pick_surface(
+        &mut s,
+        rect(),
+        pos2(rect().left() + 2.0, rect().top() + 2.0)
+    ));
     assert_eq!(s.message, "Nothing of the model under the pointer");
     // 透明な所
     let empty = at_model(&s, Vec3::new(0.2, 0.8, 0.0));
@@ -338,12 +377,30 @@ fn headless_3d_reads_the_first_and_last_row_and_column_at_the_uv_edges() {
     // UV が 0〜1 いっぱいの板: 端のすぐ内側の点が、最初・最後の列と行のテクセルを読む
     let mut s = plate_state_of(128, plate_with_uv(0.0, 1.0));
     let id = s.selected_layer.unwrap();
-    for (x, y, rgb) in [(0, 64, [1, 0, 0]), (127, 64, [2, 0, 0]), (64, 0, [3, 0, 0]), (64, 127, [4, 0, 0]), (0, 0, [5, 0, 0]), (127, 127, [6, 0, 0])] {
-        put(&mut s, id, Channel::Color, x, y, [rgb[0], rgb[1], rgb[2], 255]);
+    for (x, y, rgb) in [
+        (0, 64, [1, 0, 0]),
+        (127, 64, [2, 0, 0]),
+        (64, 0, [3, 0, 0]),
+        (64, 127, [4, 0, 0]),
+        (0, 0, [5, 0, 0]),
+        (127, 127, [6, 0, 0]),
+    ] {
+        put(
+            &mut s,
+            id,
+            Channel::Color,
+            x,
+            y,
+            [rgb[0], rgb[1], rgb[2], 255],
+        );
     }
     for (at, want, what) in [
         (Vec3::new(0.0005, 0.5, 0.0), 1, "左端の列"),
-        (Vec3::new(0.9995, 0.5, 0.0), 2, "右端の列（u が 1 に近くても幅の外へ出ない）"),
+        (
+            Vec3::new(0.9995, 0.5, 0.0),
+            2,
+            "右端の列（u が 1 に近くても幅の外へ出ない）",
+        ),
         (Vec3::new(0.5, 0.0005, 0.0), 3, "最初の行"),
         (Vec3::new(0.5, 0.9995, 0.0), 4, "最後の行"),
         (Vec3::new(0.0005, 0.0005, 0.0), 5, "左上の隅"),
@@ -367,7 +424,10 @@ fn headless_3d_refuses_a_surface_whose_uv_is_outside_the_texture() {
     // u = v = 0.5 + 0.1 = 0.6 → テクセル (76, 76) の近く。画素は (70, 70) なので透明
     let inside = at_model(&s, Vec3::new(0.1, 0.1, 0.0));
     assert!(!pick_surface(&mut s, rect(), inside));
-    assert_eq!(s.message, "そこには何もありません（透明）。", "範囲の中なら読む");
+    assert_eq!(
+        s.message, "そこには何もありません（透明）。",
+        "範囲の中なら読む"
+    );
     // u = 0.5 + 0.8 = 1.3: 1 を超える
     let outside = at_model(&s, Vec3::new(0.8, 0.2, 0.0));
     assert!(!pick_surface(&mut s, rect(), outside));
@@ -385,11 +445,20 @@ fn headless_3d_refuses_a_surface_whose_uv_is_outside_the_texture() {
 
 /// 2 つのマテリアル（0 に部品 A、1 に離れた部品 B と C）の Live Link のモデル。
 fn two_materials_link_model() -> yolu_protocol::Model {
-    use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, Model, Submesh as LinkSubmesh, TextureProperty};
+    use yolu_protocol::{
+        MaterialInfo, MaterialKey, MeshData, Model, Submesh as LinkSubmesh, TextureProperty,
+    };
     let material = |name: &str| MaterialInfo {
-        key: MaterialKey::Material { name: name.into(), asset: None },
+        key: MaterialKey::Material {
+            name: name.into(),
+            asset: None,
+        },
         shader: "Standard".into(),
-        textures: vec![TextureProperty { name: "_MainTex".into(), width: 64, height: 64 }],
+        textures: vec![TextureProperty {
+            name: "_MainTex".into(),
+            width: 64,
+            height: 64,
+        }],
         routes: vec![],
     };
     let mesh = |name: &str, x: f32, material: u32| MeshData {
@@ -399,7 +468,10 @@ fn two_materials_link_model() -> yolu_protocol::Model {
         positions: vec![[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0], [x, 1.0, 0.0]],
         normals: vec![],
         uv0: vec![[0.1, 0.1], [0.4, 0.1], [0.1, 0.4]],
-        submeshes: vec![LinkSubmesh { material, indices: vec![0, 2, 1] }],
+        submeshes: vec![LinkSubmesh {
+            material,
+            indices: vec![0, 2, 1],
+        }],
     };
     Model {
         generation: 1,
@@ -412,7 +484,7 @@ fn two_materials_link_model() -> yolu_protocol::Model {
 #[test]
 fn headless_3d_reads_the_composite_of_another_texture_set_without_switching() {
     let mut s = AppState::new(64, 64);
-    let (_, shape) = s.receive_link_model(&two_materials_link_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_materials_link_model());
     shape.expect("3D に読める");
     s.tool = Tool::Eyedropper;
     // 全体を表示してから向きを決める（frame_model は既定の向き＝モデルの前の +Z 側へ戻す。試しの三角形は -Z 側が表なので、正面から見る）
@@ -426,7 +498,10 @@ fn headless_3d_reads_the_composite_of_another_texture_set_without_switching() {
     let layer = s.set_doc(other).layers()[0].id();
     let (w, h) = (s.set_doc(other).width(), s.set_doc(other).height());
     assert_ne!(w, s.doc.width());
-    let (x, y) = ((0.2 * w as f32).floor() as u32, (0.2 * h as f32).floor() as u32);
+    let (x, y) = (
+        (0.2 * w as f32).floor() as u32,
+        (0.2 * h as f32).floor() as u32,
+    );
     s.set_doc_mut(other)
         .set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(90, 80, 70, 255))
         .unwrap();
@@ -489,7 +564,9 @@ fn the_eyedropper_has_a_button_a_key_and_a_menu_entry() {
     let _ = popup_item(&h, "スポイト");
     click(&mut h, at);
     // 英語
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     let _ = h.get_by_label("Eyedropper (I)");
     // Ctrl+Shift+I の選択範囲の反転は、I のスポイトに取られない
@@ -516,7 +593,12 @@ fn clicking_with_the_eyedropper_picks_and_the_option_bar_chooses_the_layer_or_al
     h.run();
     let at = screen_of(&h, 40, 40);
     click(&mut h, at);
-    assert_eq!(main_rgb(&h.state().state), [200, 0, 0], "{}", h.state().state.message);
+    assert_eq!(
+        main_rgb(&h.state().state),
+        [200, 0, 0],
+        "{}",
+        h.state().state.message
+    );
     assert!(!h.state().state.is_stroking());
     assert_eq!(h.state().state.modified, modified);
     // オプションバーの「全レイヤーを対象」（ツールプロパティにも同じ値が出る）
@@ -529,7 +611,9 @@ fn clicking_with_the_eyedropper_picks_and_the_option_bar_chooses_the_layer_or_al
     assert_eq!(h.state().state.selected_layer, Some(bottom));
     let _ = top;
     // 英語の名前
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     let _ = bar_rect(&h, "Sample All Layers");
     let _ = dock_rect(&h, "Sample All Layers");
@@ -556,7 +640,7 @@ fn alt_with_a_paint_tool_picks_instead_of_painting_in_2d() {
     h.run();
     let s = &h.state().state;
     assert_eq!(main_rgb(s), [30, 90, 150], "{}", s.message);
-    assert_eq!(s.tool, Tool::Brush, "道具は替わらない");
+    assert_eq!(s.tool, Tool::Brush, "ツールは替わらない");
     assert_eq!(s.doc.revision(), revision);
     assert!(!s.modified);
     assert!(!s.is_stroking());
@@ -578,7 +662,7 @@ fn alt_with_a_paint_tool_picks_instead_of_painting_in_2d() {
         assert_eq!(main_rgb(s), [30, 90, 150], "{tool:?}");
         assert_eq!(s.doc.revision(), revision, "{tool:?} は描かない");
     }
-    // 選択の道具では、Alt は引く（スポイトにしない）
+    // 選択のツールでは、Alt は引く（スポイトにしない）
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     h.state_mut().state.apply(Action::SelectTool(Tool::Lasso));
     h.run();
@@ -602,19 +686,30 @@ fn headless_the_selected_layer_is_read_through_its_effects() {
             FilterSpec::new(EffectSettings::invert()).channels(&[Channel::Color]),
         )
         .unwrap();
-    // 層の画素そのものは (10, 20, 30)。層だけで取るのは、反転を通した出力（表示と同じ）
-    assert_eq!(s.doc.layer(id).unwrap().pixel(Channel::Color, 7, 7).unwrap(), Rgba8::new(10, 20, 30, 255));
+    // レイヤーの画素そのものは (10, 20, 30)。レイヤーだけで取るのは、反転を通した出力（表示と同じ）
+    assert_eq!(
+        s.doc
+            .layer(id)
+            .unwrap()
+            .pixel(Channel::Color, 7, 7)
+            .unwrap(),
+        Rgba8::new(10, 20, 30, 255)
+    );
     assert!(pick2d(&mut s, 7, 7), "{}", s.message);
     assert_eq!(main_rgb(&s), [245, 235, 225]);
     let composite = s.doc.composite_pixel(Channel::Color, 7, 7).unwrap();
-    assert_eq!([composite.r, composite.g, composite.b], [245, 235, 225], "全レイヤーでも同じ");
+    assert_eq!(
+        [composite.r, composite.g, composite.b],
+        [245, 235, 225],
+        "全レイヤーでも同じ"
+    );
     s.eyedrop.all_layers = true;
     s.color.set_main([0.0, 0.0, 0.0, 1.0]);
     assert!(pick2d(&mut s, 7, 7));
     assert_eq!(main_rgb(&s), [245, 235, 225]);
 }
 
-// ───────── ペンの押しっぱなし（押した瞬間に終わる道具。滑らせた先を取り直さない） ─────────
+// ───────── ペンの押しっぱなし（押した瞬間に終わるツール。滑らせた先を取り直さない） ─────────
 
 fn pen_sample(at: Pos2, contact: bool) -> yolu_app::pen::PenSample {
     yolu_app::pen::PenSample {
@@ -669,7 +764,11 @@ fn three_colors_app(tool: Tool) -> (Harness<'static, YoluApp>, [Pos2; 3]) {
         s.apply(Action::SelectTool(tool));
     }
     h.run();
-    let points = [screen_of(&h, 30, 64), screen_of(&h, 64, 64), screen_of(&h, 98, 64)];
+    let points = [
+        screen_of(&h, 30, 64),
+        screen_of(&h, 64, 64),
+        screen_of(&h, 98, 64),
+    ];
     (h, points)
 }
 
@@ -677,8 +776,16 @@ fn three_colors_app(tool: Tool) -> (Harness<'static, YoluApp>, [Pos2; 3]) {
 fn a_pen_held_on_the_eyedropper_picks_once_in_the_canvas_even_when_it_slides_over_other_colors() {
     let (mut h, [a, b, c]) = three_colors_app(Tool::Eyedropper);
     // 押したまま 4 点（同じ所・別の色・別の色）。別のフレームで
-    pen_frames(&mut h, &[(a, true), (a, true), (b, true), (c, true), (c, false)]);
-    assert_eq!(main_rgb(&h.state().state), RED, "最初に押した所の色のまま: {}", h.state().state.message);
+    pen_frames(
+        &mut h,
+        &[(a, true), (a, true), (b, true), (c, true), (c, false)],
+    );
+    assert_eq!(
+        main_rgb(&h.state().state),
+        RED,
+        "最初に押した所の色のまま: {}",
+        h.state().state.message
+    );
     assert!(!h.state().state.is_stroking());
     // 1 フレームにまとめて来ても同じ
     h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
@@ -697,16 +804,26 @@ fn a_pen_held_with_alt_on_a_paint_tool_picks_once_instead_of_following_the_slide
     // Alt を押したまま、ペンを赤から緑・青へ滑らせる
     h.event(Event::ModifiersChanged(Modifiers::ALT));
     h.step();
-    pen_frames(&mut h, &[(a, true), (a, true), (b, true), (c, true), (c, false)]);
+    pen_frames(
+        &mut h,
+        &[(a, true), (a, true), (b, true), (c, true), (c, false)],
+    );
     let s = &h.state().state;
     assert_eq!(main_rgb(s), RED, "最初に押した所の色のまま: {}", s.message);
-    assert_eq!(s.tool, Tool::Brush, "道具は替わらない");
+    assert_eq!(s.tool, Tool::Brush, "ツールは替わらない");
     assert_eq!(s.doc.revision(), revision, "描かない");
     assert!(!s.is_stroking());
     // Alt を離してペンで押せば、ふつうに描く
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
-    pen_frames(&mut h, &[(b, true), (offset(b, 20.0, 0.0), true), (offset(b, 20.0, 0.0), false)]);
+    pen_frames(
+        &mut h,
+        &[
+            (b, true),
+            (offset(b, 20.0, 0.0), true),
+            (offset(b, 20.0, 0.0), false),
+        ],
+    );
     let s = &h.state().state;
     assert_eq!(main_rgb(s), RED, "描いても色は取らない");
     assert!(s.modified, "Alt なしのペンは描く");
@@ -753,10 +870,23 @@ fn a_pen_held_on_the_eyedropper_picks_once_in_the_3d_view_even_when_it_slides_ov
     let (mut h, [a, b, c]) = three_colors_3d_app();
     // まず 1 回押して、3D の点が板の色を読めることを確かめる
     pen_frames(&mut h, &[(b, true), (b, false)]);
-    assert_eq!(main_rgb(&h.state().state), GREEN, "{}", h.state().state.message);
+    assert_eq!(
+        main_rgb(&h.state().state),
+        GREEN,
+        "{}",
+        h.state().state.message
+    );
     h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
-    pen_frames(&mut h, &[(a, true), (a, true), (b, true), (c, true), (c, false)]);
-    assert_eq!(main_rgb(&h.state().state), RED, "最初に押した所の色のまま: {}", h.state().state.message);
+    pen_frames(
+        &mut h,
+        &[(a, true), (a, true), (b, true), (c, true), (c, false)],
+    );
+    assert_eq!(
+        main_rgb(&h.state().state),
+        RED,
+        "最初に押した所の色のまま: {}",
+        h.state().state.message
+    );
     h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
     pen_one_frame(&mut h, &[(c, true), (a, true), (b, true), (b, false)]);
     assert_eq!(main_rgb(&h.state().state), BLUE);

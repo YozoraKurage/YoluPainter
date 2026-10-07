@@ -1,15 +1,15 @@
-//! 文書の層を、GPU の合成が読む平らな命令の並び（層ごとの設定と、GPU に上げる面の番号）に直す。
-//! `yolu-core` の CPU の合成（`composite.rs` の計画）と同じ規則で、描く層・落とす層・クリッピングの組・グループの入れ子を決める。
+//! 文書のレイヤーを、GPU の合成が読む平らな命令の並び（レイヤーごとの設定と、GPU に上げる面の番号）に直す。
+//! `yolu-core` の CPU の合成（`composite.rs` の計画）と同じ規則で、描くレイヤー・落とすレイヤー・クリッピングの組・グループの入れ子を決める。
 //!
-//! 命令の並びは、画素ごとに先頭から 1 回だけ流す（再帰しない）。タイルごとには、そのタイルに画素の無い層の命令を落とした列
+//! 命令の並びは、画素ごとに先頭から 1 回だけ流す（再帰しない）。タイルごとには、そのタイルに画素の無いレイヤーの命令を落とした列
 //! （[`Plan::tile_program`]）を流す。結果と、クリッピングの下地（組の値）の 2 つのレジスタと、小さな退避の積み（[`STACK_SLOTS`] 語）を持つ:
-//! - `LAYER`: 層 1 枚（クリッピングの組を持たない）を結果へ重ねる。
-//! - `LOAD`・`CLIP`・`BLEND`: 下地を組の値へ読み、クリッピングの層を組へ重ね、組を結果へ重ねる。
+//! - `LAYER`: レイヤー 1 枚（クリッピングの組を持たない）を結果へ重ねる。
+//! - `LOAD`・`CLIP`・`BLEND`: 下地を組の値へ読み、クリッピングのレイヤーを組へ重ね、組を結果へ重ねる。
 //! - `PUSH_ISO`・`POP_BASE`・`POP_CLIP`: 独立して合成するグループ（中身を透明から合成する）。結果と組の値を退避して中身を流し、戻ったとき
-//!   下地の値（`POP_BASE`）、またはクリッピングされた層の値（`POP_CLIP`）にする。
+//!   下地の値（`POP_BASE`）、またはクリッピングされたレイヤーの値（`POP_CLIP`）にする。
 //! - `PUSH_PASS`・`POP_PASS`: 不透明度が 1 でない・マスクが効く通過のグループ。中身を下の結果の上へ流し、下とフェードする。
 //!   不透明度 1・マスクが効かない通過のグループは、中身をそのまま下へ重ねるのと同じなので、平らにして命令を足さない。
-//! - `ADJUST`・`CLIP_ADJUST`: 調整の層（結果、またはクリッピングの組の値を読んで変える）。
+//! - `ADJUST`・`CLIP_ADJUST`: 調整レイヤー（結果、またはクリッピングの組の値を読んで変える）。
 //!
 //! 作れない文書（文書にないチャンネル・退避の積みに収まらない深さのグループ）は [`Unsupported`] で断る。断ったあとの CPU の合成は
 //! 呼び手の仕事で、ここは何も変えない。
@@ -173,7 +173,7 @@ impl fmt::Display for Unsupported {
 }
 impl std::error::Error for Unsupported {}
 
-/// この文書・チャンネルを GPU で合成できるか。層の並びだけを見る軽い確認（画素には触れない）。
+/// この文書・チャンネルを GPU で合成できるか。レイヤーの並びだけを見る軽い確認（画素には触れない）。
 pub fn supports(doc: &Document, channel: Channel) -> Result<(), Unsupported> {
     Plan::build(doc, channel, false).map(|_| ())
 }
@@ -207,12 +207,12 @@ impl Plan {
         self.entries.clone()
     }
 
-    /// 1 つのタイルが流す命令の番号を `out` へ足す（命令の並びから、そのタイルに画素の無い層を落としたもの）。`present(面の番号)` は、
-    /// そのタイルにその面（層・マスク）の画素があるか。
+    /// 1 つのタイルが流す命令の番号を `out` へ足す（命令の並びから、そのタイルに画素の無いレイヤーを落としたもの）。`present(面の番号)` は、
+    /// そのタイルにその面（レイヤー・マスク）の画素があるか。
     ///
-    /// 画素の無い層は何も変えないので、その命令を落としても結果は同じ: 下地が無ければクリッピングの組ごと、中身に描く層が 1 つも無い
+    /// 画素の無いレイヤーは何も変えないので、その命令を落としても結果は同じ: 下地が無ければクリッピングの組ごと、中身に描くレイヤーが 1 つも無い
     /// 独立のグループはグループごと、何も描いていない所への調整は落とす（透明な画素への調整は何も変えない）。通過のグループは、中身が
-    /// 何も変えないなら下とフェードしても下のまま。多くの層が疎に描かれた文書で、タイルごとの命令を描いた層の数ほどに減らす。
+    /// 何も変えないなら下とフェードしても下のまま。多くのレイヤーが疎に描かれた文書で、タイルごとの命令を描いたレイヤーの数ほどに減らす。
     pub(crate) fn tile_program(&self, present: &dyn Fn(u32) -> bool, out: &mut Vec<u32>) {
         let mut culler = Culler {
             ops: &self.entries,
@@ -362,7 +362,7 @@ impl Culler<'_> {
         drawn
     }
 
-    /// `PUSH_ISO 列 POP_BASE 組の項* BLEND`。中身に描く層が 1 つも無ければグループごと落とす。何かを描いたかを返す。
+    /// `PUSH_ISO 列 POP_BASE 組の項* BLEND`。中身に描くレイヤーが 1 つも無ければグループごと落とす。何かを描いたかを返す。
     fn isolated(&mut self, out: &mut Vec<u32>) -> bool {
         let push = self.at;
         self.at += 1;
@@ -384,7 +384,7 @@ impl Culler<'_> {
         drawn
     }
 
-    /// 組の項（クリッピングの層・調整・グループ）を BLEND まで読む。`base` は組の下地が描かれているか（無ければ全部落とす）。
+    /// 組の項（クリッピングのレイヤー・調整・グループ）を BLEND まで読む。`base` は組の下地が描かれているか（無ければ全部落とす）。
     fn clips(&mut self, out: &mut Vec<u32>, base: bool) {
         while let Some(op) = self.ops.get(self.at) {
             match op.kind {
@@ -444,7 +444,7 @@ struct Builder<'a> {
 }
 
 impl Builder<'_> {
-    /// その層がこのチャンネルで何かを出せるか（CPU の `Stack::active`）。グループは対象外。
+    /// そのレイヤーがこのチャンネルで何かを出せるか（CPU の `Stack::active`）。グループは対象外。
     fn active(&self, l: &Layer) -> bool {
         let content = match l.kind() {
             LayerKind::Raster => l.surface(self.channel).is_some(),
@@ -458,8 +458,8 @@ impl Builder<'_> {
             && content
     }
 
-    /// 1 つの段（親の子）の命令を、下から上の順に。CPU の `plan_level` と同じ規則で、兄弟の中で一番下でなくクリッピングの印のある層は
-    /// すぐ下の下地の組に入る（下地が落ちれば一緒に落ちる）。調整の層は下地にならない（その上のクリッピングは描かない）。
+    /// 1 つの段（親の子）の命令を、下から上の順に。CPU の `plan_level` と同じ規則で、兄弟の中で一番下でなくクリッピングの印のあるレイヤーは
+    /// すぐ下の下地の組に入る（下地が落ちれば一緒に落ちる）。調整レイヤーは下地にならない（その上のクリッピングは描かない）。
     fn level(&mut self, parent: Option<LayerId>) -> Result<Vec<LayerData>, Unsupported> {
         let layers = self.layers;
         let mut out = Vec::new();
@@ -468,7 +468,7 @@ impl Builder<'_> {
         };
         let mut k = 0;
         while k < siblings.len() {
-            // 一番下の兄弟は印があっても下地。そのあとに続く印のある層が、この下地の組に入る。
+            // 一番下の兄弟は印があっても下地。そのあとに続く印のあるレイヤーが、この下地の組に入る。
             let mut end = k + 1;
             while end < siblings.len() && layers[siblings[end]].clipping() {
                 end += 1;
@@ -484,15 +484,15 @@ impl Builder<'_> {
                     }
                     let inner = self.level(Some(l.id()))?;
                     if inner.is_empty() {
-                        continue; // 中身の無いグループは落ちる（クリッピングの層も一緒に）
+                        continue; // 中身の無いグループは落ちる（クリッピングのレイヤーも一緒に）
                     }
                     let clip_ops = self.clip_instructions(clips)?;
                     let data = self.data(base);
                     if l.blend_mode_in(self.channel) == BlendMode::PassThrough
                         && clip_ops.is_empty()
                     {
-                        // 不透明度 1・マスクが効かない通過は、中身をそのまま下へ重ねるのと同じ。クリッピングの組に入るのは描かれる層だけ
-                        // （core の `plan_level` は `make_entry` が None の層を `clips` に入れない）なので、見えない・不透明度 0 の層が
+                        // 不透明度 1・マスクが効かない通過は、中身をそのまま下へ重ねるのと同じ。クリッピングの組に入るのは描かれるレイヤーだけ
+                        // （core の `plan_level` は `make_entry` が None のレイヤーを `clips` に入れない）なので、見えない・不透明度 0 のレイヤーが
                         // 上に並んでいるだけでは、組を持たない通過のままにする。
                         if l.opacity_in(self.channel) == 1.0
                             && l.mask().is_none_or(|m| m.is_neutral())
@@ -518,7 +518,7 @@ impl Builder<'_> {
                 }
                 LayerKind::Raster | LayerKind::Fill => {
                     if !self.active(l) {
-                        continue; // 下地が落ちれば、クリッピングの層も一緒に落ちる
+                        continue; // 下地が落ちれば、クリッピングのレイヤーも一緒に落ちる
                     }
                     let data = self.data(base);
                     let clip_ops = self.clip_instructions(clips)?;
@@ -535,7 +535,7 @@ impl Builder<'_> {
         Ok(out)
     }
 
-    /// 下地の組に入るクリッピングの層の命令（描かれる層だけ。隠す・不透明度 0・中身が無い層は入れない）。
+    /// 下地の組に入るクリッピングのレイヤーの命令（描かれるレイヤーだけ。隠す・不透明度 0・中身が無いレイヤーは入れない）。
     fn clip_instructions(&mut self, clips: &[usize]) -> Result<Vec<LayerData>, Unsupported> {
         let layers = self.layers;
         let mut out = Vec::new();
@@ -572,7 +572,7 @@ impl Builder<'_> {
         Ok(out)
     }
 
-    /// 層の設定（不透明度・合成モード・面の番号・マスク）。面は上げる並びへ足す。PassThrough は Normal として重ねる
+    /// レイヤーの設定（不透明度・合成モード・面の番号・マスク）。面は上げる並びへ足す。PassThrough は Normal として重ねる
     /// （通過のグループがフェードするときは、モードを読まない）。
     fn data(&mut self, index: usize) -> LayerData {
         let l = &self.layers[index];
@@ -617,13 +617,13 @@ impl Builder<'_> {
         data
     }
 
-    /// 調整の層の命令。式の種類は `slot`、値・表の語の番号は `fill` に置く（調整の命令は面も塗りつぶしの色も持たない）。
+    /// 調整レイヤーの命令。式の種類は `slot`、値・表の語の番号は `fill` に置く（調整の命令は面も塗りつぶしの色も持たない）。
     fn adjustment(&mut self, index: usize, kind: u32) -> LayerData {
         let mut data = self.data(index);
         data.kind = kind;
         let settings = self.layers[index]
             .adjustment()
-            .expect("描く調整の層は設定を持つ");
+            .expect("描く調整レイヤーは設定を持つ");
         let (adj, block) = self.encode_adjustment(settings);
         data.slot = adj;
         data.fill = self.table_words as u32;
@@ -702,9 +702,7 @@ impl Builder<'_> {
                 )
             }
             AdjustmentType::ColorBalance => {
-                let b = a
-                    .color_balance_value()
-                    .expect("カラーバランスは値を持つ");
+                let b = a.color_balance_value().expect("カラーバランスは値を持つ");
                 let mut v = [0f32; 11];
                 for (r, range) in [
                     BalanceRange::Shadows,
@@ -833,8 +831,13 @@ mod tests {
 
     fn paint_tile(d: &mut Document, layer: LayerId, coord: TileCoord) {
         let ts = d.tile_size();
-        d.set_pixel(layer, coord.x * ts + 1, coord.y * ts + 1, Rgba8::new(9, 8, 7, 255))
-            .unwrap();
+        d.set_pixel(
+            layer,
+            coord.x * ts + 1,
+            coord.y * ts + 1,
+            Rgba8::new(9, 8, 7, 255),
+        )
+        .unwrap();
     }
 
     fn doc() -> Document {
@@ -855,7 +858,10 @@ mod tests {
                     };
                     let source = shader_source(variant);
                     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| {
-                        panic!("{variant:?}: WGSL を読めない: {}", e.emit_to_string(&source))
+                        panic!(
+                            "{variant:?}: WGSL を読めない: {}",
+                            e.emit_to_string(&source)
+                        )
                     });
                     naga::valid::Validator::new(
                         naga::valid::ValidationFlags::all(),
@@ -863,7 +869,10 @@ mod tests {
                     )
                     .validate(&module)
                     .unwrap_or_else(|e| {
-                        panic!("{variant:?}: WGSL の検証に失敗: {}", e.emit_to_string(&source))
+                        panic!(
+                            "{variant:?}: WGSL の検証に失敗: {}",
+                            e.emit_to_string(&source)
+                        )
                     });
                     // 命令の構造体は Rust の LayerData と同じ並び（8 語・32 バイト）
                     let layer = module
@@ -876,7 +885,8 @@ mod tests {
                         panic!("Layer は構造体");
                     };
                     assert_eq!(*span as usize, std::mem::size_of::<LayerData>());
-                    let names: Vec<_> = members.iter().map(|m| m.name.as_deref().unwrap()).collect();
+                    let names: Vec<_> =
+                        members.iter().map(|m| m.name.as_deref().unwrap()).collect();
                     assert_eq!(
                         names,
                         [
@@ -910,10 +920,16 @@ mod tests {
         paint_tile(&mut d, c, TileCoord::new(1, 0));
         let plan = Plan::build(&d, Channel::Color, false).unwrap();
         assert_eq!(plan.entries.len(), 3);
-        assert_eq!(kinds(&plan, &d, TileCoord::new(0, 0)), [op::LAYER, op::LAYER]);
-        assert_eq!(kinds(&plan, &d, TileCoord::new(1, 0)), [op::LAYER, op::LAYER]);
+        assert_eq!(
+            kinds(&plan, &d, TileCoord::new(0, 0)),
+            [op::LAYER, op::LAYER]
+        );
+        assert_eq!(
+            kinds(&plan, &d, TileCoord::new(1, 0)),
+            [op::LAYER, op::LAYER]
+        );
         assert_eq!(kinds(&plan, &d, TileCoord::new(1, 1)), Vec::<u32>::new());
-        // 無いタイルの層だけを落とす: 順序は保つ
+        // 無いタイルのレイヤーだけを落とす: 順序は保つ
         let mut out = Vec::new();
         plan.tile_program(&|slot| plan.slots[slot as usize].layer != 1, &mut out);
         assert_eq!(out, [0, 2]);
@@ -935,7 +951,7 @@ mod tests {
         let plan = Plan::build(&d, Channel::Color, false).unwrap();
         // (0,0): 下地が無いので組ごと落ち、中身の無い独立のグループも落ちる
         assert_eq!(kinds(&plan, &d, TileCoord::new(0, 0)), Vec::<u32>::new());
-        // (1,0): 下地とクリッピングの層の組と、独立のグループ
+        // (1,0): 下地とクリッピングのレイヤーの組と、独立のグループ
         assert_eq!(
             kinds(&plan, &d, TileCoord::new(1, 0)),
             [
@@ -964,7 +980,8 @@ mod tests {
             .add_adjustment_layer("中の反転", AdjustmentSettings::invert(), None, None)
             .unwrap();
         let pass = d.group_layers(&[inner_adj], "通過").unwrap();
-        d.set_layer_blend_mode(pass, BlendMode::PassThrough).unwrap();
+        d.set_layer_blend_mode(pass, BlendMode::PassThrough)
+            .unwrap();
         d.set_layer_opacity(pass, 0.5, false).unwrap();
         let _ = adj;
         let plan = Plan::build(&d, Channel::Color, false).unwrap();

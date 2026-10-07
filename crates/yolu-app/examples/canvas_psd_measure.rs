@@ -1,15 +1,13 @@
 //! PSD を開いたときのキャンバスの表示の合成を、CPU と GPU の常駐の合成で比べる計測（アプリの表示の道と同じ手順）。
 //!   cargo run --release -p yolu-app --example canvas_psd_measure -- <PSD のパス> [予算の MiB（既定 512）]
 //!
-//! 出すもの: 文書の形（大きさ・層の種類の数・調整の種類・効果の有無）、GPU で合成できるか（できなければ理由）、全部を常駐させるのに要る量、
-//! 全面の合成の時間（CPU は評価のキャッシュが空の初回と、あるあとの 2 回。GPU は初回）、層の操作（不透明度・1 タイルの描き込み）のあとの
+//! 出すもの: 文書の形（大きさ・レイヤーの種類の数・調整の種類・効果の有無）、GPU で合成できるか（できなければ理由）、全部を常駐させるのに要る量、
+//! 全面の合成の時間（CPU は評価のキャッシュが空の初回と、あるあとの 2 回。GPU は初回）、レイヤーの操作（不透明度・1 タイルの描き込み）のあとの
 //! 表示の更新の時間（CPU は `changed_tiles` を合成し直して乗算済みへ変換して転送、GPU は `ResidentCompositor::update`）、CPU との画素の差。
 //! アダプター名・バックエンドを併せて出す。ソフトウェアの GPU（llvmpipe・lavapipe）と実 GPU を混同しないこと。
 use eframe::egui_wgpu::wgpu;
 use std::time::Instant;
-use yolu_core::{
-    AdjustmentType, Channel, Document, LayerId, LayerKind, RowOrder, TileCoord,
-};
+use yolu_core::{AdjustmentType, Channel, Document, LayerId, LayerKind, RowOrder, TileCoord};
 use yolu_gpu::{
     resident_requirements, supports, GpuPainter, Options, ResidentCompositor, ResidentOptions,
 };
@@ -165,7 +163,7 @@ fn describe(doc: &Document) {
         }
     }
     println!(
-        "画布 {}×{}（タイル {}²）、層 {}: ラスター {raster}・塗りつぶし {fill}・グループ {group}（独立 {isolated}）・調整 {adjustment}・マスク {masks}・クリッピング {clipping}・効果のある層 {effects}、Color の描いたタイル {tiles}",
+        "キャンバス {}×{}（タイル {}²）、レイヤー {}: ラスター {raster}・塗りつぶし {fill}・グループ {group}（独立 {isolated}）・調整 {adjustment}・マスク {masks}・クリッピング {clipping}・効果のあるレイヤー {effects}、Color の描いたタイル {tiles}",
         doc.width(),
         doc.height(),
         doc.tile_size(),
@@ -173,12 +171,17 @@ fn describe(doc: &Document) {
     );
     let names: Vec<String> = kinds
         .iter()
-        .map(|(k, n)| format!("{:?}×{n}", AdjustmentType::from_index(i64::from(*k)).unwrap()))
+        .map(|(k, n)| {
+            format!(
+                "{:?}×{n}",
+                AdjustmentType::from_index(i64::from(*k)).unwrap()
+            )
+        })
         .collect();
     println!("調整の種類: {}", names.join("・"));
 }
 
-/// 描いたタイルの多い順に、(層, そのタイルの数)。ラスターで Color の面を持つもの。
+/// 描いたタイルの多い順に、(レイヤー, そのタイルの数)。ラスターで Color の面を持つもの。
 fn biggest_layers(doc: &Document) -> Vec<(LayerId, usize)> {
     let mut all: Vec<(LayerId, usize)> = doc
         .layers()
@@ -231,20 +234,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let doc = imported.document;
     println!("取り込み {:.0} ms", ms(t));
     let mut doc = doc;
-    // 環境変数 EXTRA（カンマ区切り）で、開いた文書に機能を足して測る: adjust = 一番上に色相/彩度の調整の層と、描いたタイルの
-    // 多い層へクリッピングしたレベル補正、blur = 描いたタイルの多い層にぼかし（半径 8）のフィルター
+    // 環境変数 EXTRA（カンマ区切り）で、開いた文書に機能を足して測る: adjust = 一番上に色相/彩度の調整レイヤーと、描いたタイルの
+    // 多いレイヤーへクリッピングしたレベル補正、blur = 描いたタイルの多いレイヤーにぼかし（半径 8）のフィルター
     if let Ok(extra) = std::env::var("EXTRA") {
         let biggest = biggest_layers(&doc).first().map(|(id, _)| *id);
         for item in extra.split(',').map(str::trim) {
             match (item, biggest) {
                 ("adjust", Some(target)) => {
-                    let top = doc
-                        .add_adjustment_layer(
-                            "色相",
-                            yolu_core::AdjustmentSettings::hue_saturation(40.0, 0.2, 0.0)?,
-                            None,
-                            None,
-                        )?;
+                    let top = doc.add_adjustment_layer(
+                        "色相",
+                        yolu_core::AdjustmentSettings::hue_saturation(40.0, 0.2, 0.0)?,
+                        None,
+                        None,
+                    )?;
                     let _ = top;
                     let clipped = doc.add_adjustment_layer(
                         "レベル",
@@ -354,9 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let compare = |gpu: &mut ResidentCompositor, doc: &Document, what: &str| {
         let expected = {
-            let mut v = doc
-                .composite_channel(Channel::Color, doc.bounds())
-                .unwrap();
+            let mut v = doc.composite_channel(Channel::Color, doc.bounds()).unwrap();
             premultiply(&mut v);
             v
         };
@@ -367,10 +367,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     compare(&mut gpu, &doc, "初回の表示");
 
-    // 層の操作: 描いたタイルの最も多い層の不透明度と、1 タイルの描き込み
+    // レイヤーの操作: 描いたタイルの最も多いレイヤーの不透明度と、1 タイルの描き込み
     let layers = biggest_layers(&doc);
     if layers.is_empty() {
-        println!("描いたラスターの層が無いので層の操作は省略");
+        println!("描いたラスターレイヤーが無いのでレイヤーの操作は省略");
         return Ok(());
     }
     let (target, tiles) = layers[0];
@@ -392,14 +392,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         compare(&mut gpu, doc, &format!("  {name} のあと"));
     };
-    println!("操作する層: タイルの多い層（{tiles} タイル）");
-    stamp("不透明度 0.5（タイルの多い層）", &mut doc, &|d| {
-        d.set_layer_opacity(target, 0.5, false).unwrap()
-    });
+    println!("操作するレイヤー: タイルの多いレイヤー（{tiles} タイル）");
+    stamp(
+        "不透明度 0.5（タイルの多いレイヤー）",
+        &mut doc,
+        &|d| d.set_layer_opacity(target, 0.5, false).unwrap(),
+    );
     stamp("不透明度を戻す", &mut doc, &|d| {
         d.set_layer_opacity(target, 1.0, false).unwrap()
     });
-    stamp("非表示（中ほどの層）", &mut doc, &|d| {
+    stamp("非表示（中ほどのレイヤー）", &mut doc, &|d| {
         d.set_layer_visible(median, false).unwrap()
     });
     stamp("表示に戻す", &mut doc, &|d| {

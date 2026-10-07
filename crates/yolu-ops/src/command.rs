@@ -1,7 +1,7 @@
 //! 命令（`Command`）と、その引数の型。JSON は `{"command": "layer.set", "args": {...}}`（命令の名前と引数）。
 //!
 //! - 引数の知らない欄は断る（`deny_unknown_fields`。綴りの間違いを黙って無視しない）。省ける欄は `Option` か既定値。
-//! - セットは ID か名前で指す（`set`。省くと今のセット）。層は ID か名前（`layer`。名前が複数に当たれば断る）。チャンネルは名前（`Color` など。
+//! - セットは ID か名前で指す（`set`。省くと今のセット）。レイヤーは ID か名前（`layer`。名前が複数に当たれば断る）。チャンネルは名前（`Color` など。
 //!   大文字小文字は問わない）かチャンネルの番号。
 //! - 壊す操作（削除・上書き保存・PSD の書き戻し）は `confirm: true` が無ければ断る（[`crate::meta::Danger`]）。
 //! - 欄の説明は英語（スキーマの `description` になり、MCP のクライアントの AI が読む）。
@@ -74,6 +74,8 @@ pub enum Command {
     Save(SaveArgs),
     #[serde(rename = "save_as")]
     SaveAs(SaveAsArgs),
+    #[serde(rename = "action.run")]
+    ActionRun(ActionRunArgs),
 }
 
 impl Command {
@@ -105,6 +107,7 @@ impl Command {
             Command::ExportPsd(_) => "export.psd",
             Command::Save(_) => "save",
             Command::SaveAs(_) => "save_as",
+            Command::ActionRun(_) => "action.run",
         }
     }
 
@@ -135,6 +138,8 @@ impl Command {
             | Command::EffectListKinds(_)
             | Command::Save(_)
             | Command::SaveAs(_) => None,
+            // 列の中の命令の `set`（全部同じか省く）。列を当てる所が確かめる
+            Command::ActionRun(_) => None,
         }
     }
 
@@ -228,7 +233,7 @@ pub struct PreviewArgs {
     pub max_edge: Option<u32>,
 }
 
-// ───────── 層 ─────────
+// ───────── レイヤー ─────────
 
 /// Kind of a new layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -242,6 +247,8 @@ pub enum NewLayerKind {
     Group,
     /// An adjustment layer (give `adjustment`).
     Adjustment,
+    /// A text layer whose Color pixels are drawn from editable text (give `text`).
+    Text,
 }
 
 /// An effect kind with parameter values (see effect.list_kinds). Omitted parameters take their defaults.
@@ -275,6 +282,66 @@ pub struct LayerAddArgs {
     /// For an adjustment layer: channels it applies to. Default: every channel the adjustment can be used on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channels: Vec<String>,
+    /// For a text layer: the text values. Omitted values take their defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextSpec>,
+}
+
+/// Horizontal alignment of text lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlignName {
+    Left,
+    Center,
+    Right,
+}
+
+/// Values of a text layer. In layer.add omitted values take their defaults; in layer.set they stay as they are.
+/// Coordinates are document pixels with the origin at the bottom left and y going up.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextSpec {
+    /// The text. Lines are separated by "\n". Up to 4096 bytes of UTF-8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// A font bundled with the app: "biz-udpgothic" (default) or "biz-udpgothic-bold" (drawn only by the running app), or an installed
+    /// font by PostScript name or family name (a family name picks its upright style closest to regular). Not together with `font_file`.
+    /// Without `font` and `font_file`, layer.set finds the layer's own font again; when only a font with other contents is found, the text
+    /// is redrawn with it and the reply's `notes` say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Path of a font file (.ttf, .otf, .ttc). The .ylp keeps only the path, the file's SHA-256 and the font's names, not the font itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_file: Option<String>,
+    /// Font number inside a collection (.ttc). Default 0. Only with `font_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_index: Option<u32>,
+    /// Size in pixels (one em), 1..=4096. Default 48.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    /// "#rrggbb" or "#rrggbbaa"; alpha is the text opacity. Default black.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Line advance as a multiple of the size, 0.1..=10. Default 1.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
+    /// Extra advance after each character as a multiple of the size, -1..=10. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<f64>,
+    /// Default left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<TextAlignName>,
+    /// The anchor point: the top of the first line. Lines go down from it. Default: the top-left corner of the canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    /// Rotation around the anchor point in degrees, counterclockwise, -360..=360. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    /// Wrap width in pixels to the right of the anchor point; 0 does not wrap. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_width: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -355,6 +422,43 @@ pub struct LayerSetArgs {
     /// Adjustment layer: new values. With the same kind, the listed values are changed and the others stay; with another kind it is rebuilt from defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjustment: Option<EffectSpec>,
+    /// Fill layer point gradients: channel name -> gradient (replaces the whole gradient of that channel, and its image or shape gradient), or null to remove it. Not on Normal.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub points: BTreeMap<String, Option<PointGradientSpec>>,
+    /// Text layer: new text values. The listed values are changed and the layer is redrawn; the others stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextSpec>,
+}
+
+/// A point gradient on a fill layer channel: a colour at each point, blended smoothly between them (weight 1 / (d² + s²), s = spread × the
+/// model's bounding-box diagonal in model space, or × 1 in UV space).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointGradientSpec {
+    /// "model" (positions on the model's surface, from the baked position map; continuous across UV seams) or "uv".
+    pub space: PointSpaceName,
+    /// 0..=1. How flat the colour is around each point and how much distant points mix in. Default 0.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread: Option<f64>,
+    /// 1 to 64 points.
+    pub points: Vec<PointSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PointSpaceName {
+    Model,
+    Uv,
+}
+
+/// One point of a point gradient.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointSpec {
+    /// Model space: [x, y, z] from the model root in scene units. UV space: [u, v].
+    pub position: Vec<f64>,
+    /// "#rrggbb" or "#rrggbbaa" (alpha is the point's opacity). On a scalar channel use a gray.
+    pub color: String,
 }
 
 // ───────── マスク ─────────
@@ -594,4 +698,16 @@ pub struct SaveAsArgs {
     /// Required when the file already exists (it must be a valid .ylp; the previous version is kept in the backups folder).
     #[serde(default, skip_serializing_if = "is_false")]
     pub confirm: bool,
+}
+
+// ───────── アクション ─────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRunArgs {
+    /// Commands applied in order as one undo step, each written as {"command": "layer.add", "args": {...}} with the arguments of that command.
+    /// Only commands that change layers, masks and effects, at most 1000, all on one texture set (`set` omitted everywhere or the same).
+    /// Layer and effect fields also take "$selected" (the layer selected when the run starts) and "$created:<n>" (the n-th layer or effect this run created, from 1).
+    #[schemars(schema_with = "crate::action::commands_schema")]
+    pub commands: Vec<serde_json::Value>,
 }

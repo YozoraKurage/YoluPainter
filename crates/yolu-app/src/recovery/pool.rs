@@ -119,11 +119,7 @@ pub(crate) fn pools(root: &Path) -> Vec<PathBuf> {
     };
     let mut dirs: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(is_pool_name)
-        })
+        .filter(|e| e.file_name().to_str().is_some_and(is_pool_name))
         .map(|e| e.path())
         .filter(|p| {
             is_real_dir(p)
@@ -139,7 +135,10 @@ pub(crate) fn pools(root: &Path) -> Vec<PathBuf> {
 /// 根の直下の、プールの名前のフォルダか（UI から来たパスが根の外へ出ないことの確かめ）。
 pub(crate) fn check_pool(root: &Path, pool: &Path) -> Result<(), RecoveryError> {
     let ok = pool.parent() == Some(root)
-        && pool.file_name().and_then(|n| n.to_str()).is_some_and(is_pool_name)
+        && pool
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(is_pool_name)
         && is_real_dir(pool);
     if ok {
         Ok(())
@@ -191,7 +190,11 @@ fn resolve_crashed(pool: &Path) -> io::Result<bool> {
         .create(true)
         .truncate(true)
         .open(pool.join(CRASHED))?;
-    marker.write_all(if dirty { b"state=dirty\n" } else { b"state=clean\n" })?;
+    marker.write_all(if dirty {
+        b"state=dirty\n"
+    } else {
+        b"state=clean\n"
+    })?;
     marker.sync_all()?;
     drop(marker);
     fs::remove_file(&lock)?;
@@ -220,7 +223,11 @@ fn settle(pool: &Path) -> Settled {
 /// 前の実行の後片付けをして、この実行のプールを作る。落ちた実行のプール（印が残っている）は `crashed` に替え、保存して
 /// いない作業の世代があるものを返す。閉じたプールは `keep` の数に整理する（`None` は整理しない: 利用者が選んだ数が分からない
 /// とき）。続けて、ディスクの上限（`limits`。`None` は整理しない: 利用者が選んだ量が分からないとき）を超えていれば古い世代から消す。
-pub fn start(root: &Path, keep: Option<usize>, limits: Option<&Limits>) -> Result<Started, RecoveryError> {
+pub fn start(
+    root: &Path,
+    keep: Option<usize>,
+    limits: Option<&Limits>,
+) -> Result<Started, RecoveryError> {
     fs::create_dir_all(root)?;
     let mut crashed = Vec::new();
     let mut skipped: Option<io::Error> = None;
@@ -300,7 +307,11 @@ impl Session {
         };
         lock.set_len(0)?;
         lock.seek(io::SeekFrom::Start(0))?;
-        lock.write_all(if dirty { b"state=dirty\n" } else { b"state=clean\n" })?;
+        lock.write_all(if dirty {
+            b"state=dirty\n"
+        } else {
+            b"state=clean\n"
+        })?;
         lock.flush()?;
         self.dirty = dirty;
         Ok(())
@@ -352,7 +363,10 @@ pub fn sweep(root: &Path, keep: usize, own: Option<&Path>) -> Result<(), Recover
         }
     }
     for pool in touched {
-        if GenerationStore::new(&pool).list().is_ok_and(|g| g.is_empty()) {
+        if GenerationStore::new(&pool)
+            .list()
+            .is_ok_and(|g| g.is_empty())
+        {
             let _ = fs::remove_dir_all(&pool);
         }
     }
@@ -401,7 +415,7 @@ pub fn list(root: &Path, own: Option<&Path>) -> Vec<Row> {
 
 /// 世代を開く用に読む（全エントリを確かめる。上限は設定の「レイヤーのメモリ」の予算から）。一覧用の情報は外す。メモリに読まなかった
 /// エントリ（正本・PSD の原本などの大きなもの）は、置き場の世代の外（この実行の [`Held`]）へ置き直してから読む: 開いたあとで、その世代が
-/// 整理・破棄されても（復旧の窓の「破棄」・保持数・ディスクの上限・ほかのウィンドウの整理）、読むだけのセット（core で扱えない中身・
+/// 整理・破棄されても（復旧のウィンドウの「破棄」・保持数・ディスクの上限・ほかのウィンドウの整理）、読むだけのセット（core で扱えない中身・
 /// 予算超過・効果の入力がそろわない）の正本と、描いていないセットのエントリを保存できるように。置き直しはハードリンクで、できなければ
 /// 流して写す（メモリに全部を持たない）。置き直せなければ、開かずに理由を返す（後で保存できなくなる開き方をしない）。
 pub fn load(
@@ -412,7 +426,9 @@ pub fn load(
     own: &Path,
 ) -> Result<(Project, RecoveryInfo), RecoveryError> {
     check_pool(root, pool)?;
-    let generation = GenerationStore::new(pool).with_limits(limits).load_generation(id)?;
+    let generation = GenerationStore::new(pool)
+        .with_limits(limits)
+        .load_generation(id)?;
     let mut files = generation.files;
     if files.values().any(|b| b.in_memory().is_none()) {
         let held = Held::create(own)?;
@@ -460,7 +476,10 @@ impl Drop for Held {
 
 /// この実行のプール（`own`）の、置き直した中身の置き場。
 pub(crate) fn held_root(own: &Path) -> PathBuf {
-    let name = own.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = own
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     own.with_file_name(format!("{name}{HELD_SUFFIX}"))
 }
 
@@ -507,7 +526,11 @@ mod tests {
     use super::*;
 
     fn temp(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("yolu-pool-{tag}-{}-{}", std::process::id(), unique()));
+        let dir = std::env::temp_dir().join(format!(
+            "yolu-pool-{tag}-{}-{}",
+            std::process::id(),
+            unique()
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -530,7 +553,10 @@ mod tests {
             Settled::Failed(e) => assert_ne!(e.kind(), io::ErrorKind::NotFound),
             other => panic!("失敗のはず: {other:?}"),
         }
-        assert!(blocked.join(LOCK).exists(), "片付けられなかった印は残る（次の起動がやり直す）");
+        assert!(
+            blocked.join(LOCK).exists(),
+            "片付けられなかった印は残る（次の起動がやり直す）"
+        );
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(blocked);
     }

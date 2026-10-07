@@ -1,4 +1,4 @@
-//! 窓の全体の振る舞いと見た目（egui_kittest。描画は wgpu のソフトの描画）。
+//! ウィンドウの全体の振る舞いと見た目（egui_kittest。描画は wgpu のソフトの描画）。
 use crate::common;
 
 use common::*;
@@ -179,7 +179,7 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
             offset(c.center(), 60.0, 40.0),
         ],
     );
-    // 回転した頁のテクスチャの補間は、GPU のドライバの層で数画素ゆれる（同じ木で 0〜13 画素）。それ以外の差は落とす
+    // 回転した頁のテクスチャの補間は、GPU のドライバのレイヤーで数画素ゆれる（同じ木で 0〜13 画素）。それ以外の差は落とす
     h.snapshot_options(
         "canvas_rotated_flipped",
         &egui_kittest::SnapshotOptions::new().max_failed_pixels(32),
@@ -363,13 +363,13 @@ fn layer_rename_by_double_click() {
         h.step();
     }
     h.run();
-    assert!(h.state().state.renaming.is_some());
+    assert!(h.state().state.ui.renaming.is_some());
     key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("背景".into()));
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
     assert_eq!(h.state().state.doc.layers()[0].name(), "背景");
-    assert!(h.state().state.renaming.is_none());
+    assert!(h.state().state.ui.renaming.is_none());
 }
 
 #[test]
@@ -467,16 +467,16 @@ fn properties_tabs_and_pen_toggles() {
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
-    // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細の窓の「形状」）
-    assert_eq!(h.state().state.property_tab, 0);
+    // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細のウィンドウの「形状」）
+    assert_eq!(h.state().state.ui.property_tab, 0);
     assert!(h.query_all_by_label("アルファ").next().is_none());
     h.get_by_label("マテリアル").click();
     h.run();
-    assert_eq!(h.state().state.property_tab, 1);
+    assert_eq!(h.state().state.ui.property_tab, 1);
     h.snapshot("properties_material_tab");
     h.get_by_label("ステンシル").click();
     h.run();
-    assert_eq!(h.state().state.property_tab, 0);
+    assert_eq!(h.state().state.ui.property_tab, 0);
     h.snapshot("properties_stencil_tab");
 }
 
@@ -561,7 +561,7 @@ fn view3d_host_hears_when_the_tab_floats_in_a_window() {
     let host = RecordingHost::default();
     let events = host.events.clone();
     h.state_mut().set_view3d_host(Box::new(host));
-    // 3D ビューのタブをドックから外して浮いた窓へ（ドラッグで外したのと同じ形）
+    // 3D ビューのタブをドックから外して浮いたウィンドウへ（ドラッグで外したのと同じ形）
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&yolu_app::Tab::View3d).expect("3D tab");
@@ -584,21 +584,19 @@ fn view3d_host_hears_when_the_tab_floats_in_a_window() {
             }
         })
         .expect("placed");
-    assert!(placed.floating, "浮いた窓の中");
+    assert!(placed.floating, "浮いたウィンドウの中");
     assert!(
         placed.rect_px[2] > 100 && placed.rect_px[2] < 400,
         "{:?}",
         placed.rect_px
     );
-    // 窓を動かすと置き場所が変わったと知らせる
+    // ウィンドウを動かすと置き場所が変わったと知らせる（浮かせたウィンドウは別ウィンドウになる。試験のウィンドウでは、別ウィンドウは記録の位置に描く）
     let before = placed.rect_px;
     {
-        let dock = &mut h.state_mut().dock;
-        let path = dock.find_tab(&yolu_app::Tab::View3d).unwrap();
-        let rect = egui::Rect::from_min_size(pos2(500.0, 260.0), vec2(360.0, 280.0));
-        dock.get_window_state_mut(path.surface)
-            .unwrap()
-            .set_position(rect.min);
+        let detached = &mut h.state_mut().detached;
+        assert!(detached.contains(yolu_app::Tab::View3d));
+        let record = detached.windows[0].record.as_mut().expect("置き場所");
+        record.position = [500.0, 260.0];
     }
     h.run();
     let moved = events

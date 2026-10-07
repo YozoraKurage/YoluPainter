@@ -1,11 +1,15 @@
 //! 手続き型の Generator（ノイズ・グランジ）の設定と評価の計画。Rust 版だけの種類（`Kind::Noise`・`Kind::Grunge`。C# の番号と重ならない
 //! 64 から）で、マップを読まずに位置から値を作る。
 //!
-//! - 位置（メッシュマップの Position）で 3D のまま評価すると、UV の島の継ぎ目で模様がずれない。2D の模様（布目・指紋）は
-//!   トライプラナー（面の向きで 3 方向の平面の模様を混ぜる。塗りつぶしの層の投影と同じ重み）で評価する。
+//! - 位置（メッシュマップの Position）で 3D のまま評価すると、UV アイランドの継ぎ目で模様がずれない。2D の模様（布目・指紋）は
+//!   トライプラナー（面の向きで 3 方向の平面の模様を混ぜる。塗りつぶしレイヤーの投影と同じ重み）で評価する。
 //! - 位置のマップが使えない（無い・古い・大きさが違う・ピンと違う・境界箱が 0）ときは入力のまま通さず、UV 空間に落とす。
 //!   UV では x・y の格子を周期で巻くので、テクスチャの端で継ぎ目が出ない（回転は効かない）。理由は [`super::BoundGenerator::fallback`]。
 //! - 式は + − × ÷ sqrt floor と整数だけ（libm を使わない）。同じ設定・シード・マップなら、スレッド数・領域の切り方に依らず同じバイト。
+#[cfg(target_arch = "x86_64")]
+use super::noisefn::{
+    perlin3_lanes, value3_lanes, worley3_lanes, worley_distances_lanes, CellsLanes,
+};
 use super::{
     grunge,
     noisefn::{
@@ -15,11 +19,9 @@ use super::{
     unit, Error, Inactive, Kind, Map, MapKind, MapState,
 };
 #[cfg(target_arch = "x86_64")]
-use super::noisefn::{
-    perlin3_lanes, value3_lanes, worley3_lanes, worley_distances_lanes, CellsLanes,
-};
-#[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
+#[cfg(target_arch = "x86_64")]
+use crate::math::simd::{Avx2, Sse41};
 
 /// 評価する空間。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,7 +319,7 @@ pub(super) enum Mode {
     Uv,
 }
 
-/// 層（基底とオクターブの重ね）の指定。`freq` は基本の模様の大きさに対する周波数の倍率（軸ごと）、`slot` は層ごとに違う乱数の区別。
+/// レイヤー（基底とオクターブの重ね）の指定。`freq` は基本の模様の大きさに対する周波数の倍率（軸ごと）、`slot` はレイヤーごとに違う乱数の区別。
 #[derive(Clone, Copy)]
 pub(super) struct Layer {
     pub basis: NoiseBasis,
@@ -359,7 +361,7 @@ const F2_SPREAD: f64 = 0.7;
 const F21_SPREAD: f64 = 1.5;
 
 /// 1 回の基底の評価の座標の写し方・周期・乱数と、直前の格子を覚える場所の番号（`CellSet` の中の添字）。
-/// 層のオクターブごと・セルの枠ごとに、束縛のときに 1 回だけ作る（画素ごとには変わらない値）。
+/// レイヤーのオクターブごと・セルの枠ごとに、束縛のときに 1 回だけ作る（画素ごとには変わらない値）。
 #[derive(Clone, Copy)]
 pub(super) struct OctavePlan {
     seed: u32,
@@ -412,7 +414,7 @@ impl OctavePlan {
         }
     }
 }
-/// 層の計画（オクターブごとの `OctavePlan` と、重みの並び・その合計）。
+/// レイヤーの計画（オクターブごとの `OctavePlan` と、重みの並び・その合計）。
 pub(super) struct LayerPlan {
     basis: NoiseBasis,
     cell: CellOutput,
@@ -445,7 +447,7 @@ pub(super) struct Plan {
     layers: Vec<LayerPlan>,
     cells: Vec<OctavePlan>,
     segments: Vec<(OctavePlan, grunge::SegSpec)>,
-    /// にじみの 3 層の最初の番号（にじみが無ければ使わない）。
+    /// にじみの 3 レイヤーの最初の番号（にじみが無ければ使わない）。
     warp: usize,
     slots: Slots,
     /// 計画ごとに違う番号（格子の覚えが、別の計画の乱数で引いた値を使い回さないための印）。
@@ -546,7 +548,7 @@ impl Plan {
         Ok(plan)
     }
 
-    /// 種類・プリセットが使う層・セルの枠・線分の枠の計画を作る（画素ごとには変わらない乱数・座標の写し方を先に出す）。
+    /// 種類・プリセットが使うレイヤー・セルの枠・線分の枠の計画を作る（画素ごとには変わらない乱数・座標の写し方を先に出す）。
     fn prepare(&mut self) {
         let p = self.p;
         if self.kind == Kind::Noise {
@@ -624,7 +626,7 @@ impl Plan {
             total,
         });
     }
-    /// 周波数 `freq`・層の区別 `slot`・オクターブ `octave` の格子の座標の写し方と乱数。
+    /// 周波数 `freq`・レイヤーの区別 `slot`・オクターブ `octave` の格子の座標の写し方と乱数。
     fn octave(&self, freq: [f64; 3], slot: u32, octave: u32, cache_slot: usize) -> OctavePlan {
         use super::noisefn::{hash, unit24};
         let seed = hash(
@@ -748,7 +750,7 @@ impl Plan {
     /// 三角面の向きが定まらない画素（`value` が `None` を返す画素）が 1 つでもあれば `None`（呼び手が 1 画素ずつ引く）。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn value_lanes<V: Lanes>(
+    pub(super) unsafe fn value_lanes<V: GenLanes>(
         &self,
         x: u32,
         y: u32,
@@ -762,11 +764,13 @@ impl Plan {
                 let (w, c) = (size.0 as f64, self.counts[0] as f64);
                 let bx = V::from_fn(|k| ((x + k as u32) as f64 + 0.5) / w * c);
                 let by = V::splat((y as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64);
-                self.recipe_lanes::<V>([bx, by, V::splat(0.)], &mut scratch.sets[0])
+                V::recipe(self, [bx, by, V::splat(0.)], &mut scratch.sets[0])
             }
-            Mode::Space3 => {
-                self.recipe_lanes::<V>(self.rotated_lanes::<V>(position), &mut scratch.sets[0])
-            }
+            Mode::Space3 => V::recipe(
+                self,
+                self.rotated_lanes::<V>(position),
+                &mut scratch.sets[0],
+            ),
             Mode::Triplanar => {
                 let r = self.rotated_lanes::<V>(position);
                 let (zero, one, two) = (V::splat(0.), V::splat(1.), V::splat(2.));
@@ -815,7 +819,8 @@ impl Plan {
                         1 => (V::select(positive, rx, V::neg(rx)), rz),
                         _ => (V::select(positive, V::neg(rx), rx), ry),
                     };
-                    let value = self.recipe_lanes::<V>(
+                    let value = V::recipe(
+                        self,
                         [s, t, V::splat(17. * axis as f64)],
                         &mut scratch.sets[axis],
                     );
@@ -852,7 +857,7 @@ impl Plan {
 
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    unsafe fn recipe_lanes<V: Lanes>(&self, b: [V::F; 3], set: &mut CellSet) -> V::F {
+    pub(super) unsafe fn recipe_body<V: GenLanes>(&self, b: [V::F; 3], set: &mut CellSet) -> V::F {
         let mut cx = Ctx { plan: self, set };
         let b = cx.warp_lanes::<V>(b);
         match self.kind {
@@ -911,14 +916,71 @@ impl Plan {
 const WARP_SLOT: u32 = 40;
 static NEXT_PLAN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// にじみのずらし量 `(層の値 - 0.5) * a`。
+/// にじみのずらし量 `(レイヤーの値 - 0.5) * a`。
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn shift_lanes<V: Lanes>(layer: V::F, a: V::F) -> V::F {
     V::mul(V::sub(layer, V::splat(0.5)), a)
 }
 
-/// 1 組の格子の覚え（基底ごとに、層のオクターブ・セルの枠の数だけ）。
+/// Generator の重い式（ノイズのレイヤー・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1）ごとの入口。
+///
+/// 式の本体（`*_body`）は `#[inline(always)]` のレーンの式で、呼んだ所に丸ごと展開される。ノイズのレイヤーは 1 つの値の式の中で何十回も
+/// 呼ばれ（にじみ・種類・グランジの各模様）、その全部を 1 つの関数に展開すると、LLVM の最適化が 1 関数で数十秒かかっていた。
+/// ここで道ごとに `#[target_feature]` 付きの展開しない関数を 1 つずつ置き、呼び出しの側は関数の呼び出しになる（式も演算の順も
+/// 変わらないので、値は同じ bit）。呼び出しは 1 回で N 画素ぶん（AVX2 は 4、SSE4.1 は 2）。
+#[cfg(target_arch = "x86_64")]
+pub(super) trait GenLanes: Lanes {
+    unsafe fn layer(cx: &mut Ctx<'_>, b: [Self::F; 3], index: usize) -> Self::F;
+    unsafe fn recipe(plan: &Plan, b: [Self::F; 3], set: &mut CellSet) -> Self::F;
+    /// グランジの模様（模様ごとに 1 つの展開しない関数）。
+    unsafe fn grunge(cx: &mut Ctx<'_>, b: [Self::F; 3], preset: GrungePreset) -> Self::F;
+}
+
+/// `GenLanes` を道の型に実装する（入口の関数は、その道の命令を有効にした展開しない関数）。
+#[cfg(target_arch = "x86_64")]
+macro_rules! gen_lanes {
+    ($ty:ident, $feature:literal, $m:ident) => {
+        impl GenLanes for $ty {
+            #[inline(always)]
+            unsafe fn grunge(cx: &mut Ctx<'_>, b: [Self::F; 3], preset: GrungePreset) -> Self::F {
+                grunge::$m::dispatch(cx, b, preset)
+            }
+            #[inline(always)]
+            unsafe fn layer(cx: &mut Ctx<'_>, b: [Self::F; 3], index: usize) -> Self::F {
+                #[target_feature(enable = $feature)]
+                #[inline(never)]
+                unsafe fn entry(
+                    cx: &mut Ctx<'_>,
+                    b: [<$ty as Lanes>::F; 3],
+                    index: usize,
+                ) -> <$ty as Lanes>::F {
+                    cx.layer_body::<$ty>(b, index)
+                }
+                entry(cx, b, index)
+            }
+            #[inline(always)]
+            unsafe fn recipe(plan: &Plan, b: [Self::F; 3], set: &mut CellSet) -> Self::F {
+                #[target_feature(enable = $feature)]
+                #[inline(never)]
+                unsafe fn entry(
+                    plan: &Plan,
+                    b: [<$ty as Lanes>::F; 3],
+                    set: &mut CellSet,
+                ) -> <$ty as Lanes>::F {
+                    plan.recipe_body::<$ty>(b, set)
+                }
+                entry(plan, b, set)
+            }
+        }
+    };
+}
+#[cfg(target_arch = "x86_64")]
+gen_lanes!(Avx2, "avx2,fma", avx2);
+#[cfg(target_arch = "x86_64")]
+gen_lanes!(Sse41, "sse4.1", sse41);
+
+/// 1 組の格子の覚え（基底ごとに、レイヤーのオクターブ・セルの枠の数だけ）。
 pub(super) struct CellSet {
     value: Vec<ValueCell>,
     perlin: Vec<PerlinCell>,
@@ -944,7 +1006,7 @@ pub(super) struct Ctx<'a> {
     set: &'a mut CellSet,
 }
 impl Ctx<'_> {
-    /// 層（オクターブの重ね）の値。0..1。
+    /// レイヤー（オクターブの重ね）の値。0..1。
     pub fn layer(&mut self, b: [f64; 3], index: usize) -> f64 {
         let plan = self.plan;
         let layer = &plan.layers[index];
@@ -998,7 +1060,7 @@ impl Ctx<'_> {
     /// `layer` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn layer_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+    pub(super) unsafe fn layer_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let layer = &plan.layers[index];
         let uv = plan.mode == Mode::Uv;
@@ -1007,7 +1069,9 @@ impl Ctx<'_> {
             let oc = &layer.octaves[o];
             let q = oc.point_lanes::<V>(b, uv);
             let n = match layer.basis {
-                NoiseBasis::Value => value3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.value[oc.slot]),
+                NoiseBasis::Value => {
+                    value3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.value[oc.slot])
+                }
                 NoiseBasis::Perlin => {
                     perlin3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.perlin[oc.slot])
                 }
@@ -1045,7 +1109,7 @@ impl Ctx<'_> {
     /// `cells` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn cells_lanes<V: Lanes>(
+    pub(super) unsafe fn cells_body<V: Lanes>(
         &mut self,
         b: [V::F; 3],
         index: usize,
@@ -1060,7 +1124,11 @@ impl Ctx<'_> {
     /// セルの枠 `index` の最寄りと 2 番目の距離だけ（`cells_lanes` の `f1`・`f2` と同じ値。ID・点が要らない呼び手用）。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn distances_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> (V::F, V::F) {
+    pub(super) unsafe fn distances_body<V: Lanes>(
+        &mut self,
+        b: [V::F; 3],
+        index: usize,
+    ) -> (V::F, V::F) {
         let plan = self.plan;
         let oc = &plan.cells[index];
         let q = oc.point_lanes::<V>(b, plan.mode == Mode::Uv);
@@ -1070,17 +1138,24 @@ impl Ctx<'_> {
     /// `segments` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn segments_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+    pub(super) unsafe fn segments_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let (oc, spec) = &plan.segments[index];
         let q = oc.point_lanes::<V>(b, plan.mode == Mode::Uv);
         grunge::segments_lanes::<V>(q, oc.seed, oc.per, spec, &mut self.set.segments[oc.slot])
     }
 
+    /// `layer` の N 画素ぶん。道ごとの入口（[`GenLanes::layer`]）を呼び、ノイズの式の展開はそこで止まる。
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    pub unsafe fn layer_lanes<V: GenLanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+        V::layer(self, b, index)
+    }
+
     /// `warp` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    unsafe fn warp_lanes<V: Lanes>(&mut self, b: [V::F; 3]) -> [V::F; 3] {
+    unsafe fn warp_lanes<V: GenLanes>(&mut self, b: [V::F; 3]) -> [V::F; 3] {
         let amount = self.plan.p.bleed;
         if amount <= 0. {
             return b;
@@ -1253,8 +1328,14 @@ mod tests {
                         let t = i as f64;
                         // 3 つの区間: ゆっくり進む（同じ格子が続く）・速く進む（毎画素ちがう格子）・向きが回って重みが入れ替わる
                         let (pos, n) = match i / 100 {
-                            0 => ([10000. + 9. * t, 20000. + 3. * t, 30000. + t], [0.2, 0.9, 0.3]),
-                            1 => ([5000. + 631. * t, 40000. - 377. * t, 700. * t], [0.9, 0.1, 0.2]),
+                            0 => (
+                                [10000. + 9. * t, 20000. + 3. * t, 30000. + t],
+                                [0.2, 0.9, 0.3],
+                            ),
+                            1 => (
+                                [5000. + 631. * t, 40000. - 377. * t, 700. * t],
+                                [0.9, 0.1, 0.2],
+                            ),
                             _ => (
                                 [30000. + t, 31000. + 2. * t, 32000. + 3. * t],
                                 [(t * 0.07).cos(), (t * 0.05).sin(), 0.3 + (t * 0.03).sin()],
@@ -1286,7 +1367,7 @@ mod tests {
     fn lane_values_equal_single_pixel_values_on_every_simd_level() {
         const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         #[inline(never)]
-        unsafe fn value_lanes<V: Lanes>(
+        unsafe fn value_lanes<V: GenLanes>(
             plan: &Plan,
             x: u32,
             y: u32,
@@ -1297,7 +1378,7 @@ mod tests {
             plan.value_lanes::<V>(x, y, (16, 16), position, normal, scratch)
         }
         #[allow(clippy::needless_range_loop)]
-        unsafe fn check<V: Lanes>() {
+        unsafe fn check<V: GenLanes>() {
             let data = [0u16; 16 * 16 * 3];
             let cover = [1u8; 16 * 16];
             let map = |kind| Map {
@@ -1361,11 +1442,7 @@ mod tests {
                             let x = i % 8 * 2;
                             let y = i / 8 % 16;
                             let lanes = |a: &[[f64; 4]; 3]| {
-                                [
-                                    V::load_f64(&a[0]),
-                                    V::load_f64(&a[1]),
-                                    V::load_f64(&a[2]),
-                                ]
+                                [V::load_f64(&a[0]), V::load_f64(&a[1]), V::load_f64(&a[2])]
                             };
                             let got = value_lanes::<V>(
                                 &plan,

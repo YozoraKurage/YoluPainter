@@ -2,7 +2,7 @@
 use super::operations::Dirty;
 use super::{Document, LayerLocks, Target};
 use crate::math::to_byte;
-use crate::surface::{Growth, Tile};
+use crate::surface::{Growth, PixelReader, Tile};
 use crate::{CoreError, LayerId, LayerKind, Rgba8, SelectionMask, Surface, TileCoord};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
@@ -111,15 +111,13 @@ pub enum Resampling {
     Nearest,
 }
 
-pub(super) fn read(source: &Surface, x: i64, y: i64) -> Rgba8 {
-    if x < 0 || y < 0 || x >= source.width() as i64 || y >= source.height() as i64 {
-        Rgba8::TRANSPARENT
-    } else {
-        source.pixel(x as u32, y as u32).expect("範囲内")
-    }
+/// 画素（キャンバスの外は透明）。ディスクから読めない画素は透明で、読み手が誤りを覚える（`PixelReader::finish`）。
+#[inline]
+pub(super) fn read(source: &mut PixelReader<'_>, x: i64, y: i64) -> Rgba8 {
+    source.pixel(x, y)
 }
 pub(super) fn sample(
-    source: &Surface,
+    source: &mut PixelReader<'_>,
     lifted: Option<&SelectionMask>,
     method: Resampling,
     sx: f64,
@@ -130,8 +128,8 @@ pub(super) fn sample(
         || !sy.is_finite()
         || sx < -1.
         || sy < -1.
-        || sx > source.width() as f64 + 1.
-        || sy > source.height() as f64 + 1.
+        || sx > source.surface().width() as f64 + 1.
+        || sy > source.surface().height() as f64 + 1.
     {
         return Rgba8::TRANSPARENT;
     }
@@ -270,7 +268,7 @@ impl Document {
     ) -> Result<bool, CoreError> {
         self.transform_targets(&[id], transform, method, include_mask, None, &mut || false)
     }
-    /// 選んだグループ内のラスター層もまとめて変形する。
+    /// 選んだグループ内のラスターレイヤーもまとめて変形する。
     pub fn transform_layers(
         &mut self,
         ids: &[LayerId],
@@ -333,12 +331,12 @@ impl Document {
         self.ensure_no_stroke()?;
         transform.validate()?;
         if ids.is_empty() {
-            return Err(CoreError::Unsupported("動かすラスター層が無い"));
+            return Err(CoreError::Unsupported("動かすラスターレイヤーが無い"));
         }
         for &id in ids {
             let index = self.index_of(id)?;
             self.ensure_raster(index)?;
-            // パスで描かれた層を動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
+            // パスで描かれたレイヤーを動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
             self.refuse_path_layer(index)?;
         }
         if transform == Affine2D::IDENTITY {
@@ -400,6 +398,7 @@ impl Document {
                         .map(|&coord| {
                             let ts = source.tile_size();
                             let mut bytes = vec![0; source.tile_bytes()];
+                            let mut reader = PixelReader::new(source);
                             for y in 0..ts.min(source.height() - coord.y * ts) {
                                 for x in 0..ts.min(source.width() - coord.x * ts) {
                                     let (sx, sy) = inverse.apply(
@@ -408,7 +407,7 @@ impl Document {
                                     );
                                     let px = coord.x * ts + x;
                                     let py = coord.y * ts + y;
-                                    let original = read(source, px as i64, py as i64);
+                                    let original = read(&mut reader, px as i64, py as i64);
                                     let here =
                                         selected_amount(effective.as_ref(), px as i64, py as i64);
                                     let remaining = if here == 0 {
@@ -426,7 +425,8 @@ impl Document {
                                             ),
                                         )
                                     };
-                                    let moved = sample(source, effective.as_ref(), method, sx, sy);
+                                    let moved =
+                                        sample(&mut reader, effective.as_ref(), method, sx, sy);
                                     let p = if moved.a == 0 {
                                         if here == 255 {
                                             moved
@@ -447,9 +447,12 @@ impl Document {
                                     bytes[at..at + 4].copy_from_slice(&p.to_array());
                                 }
                             }
-                            (coord, Tile::from_bytes(&bytes))
+                            reader.finish()?;
+                            Ok((coord, Tile::from_vec(bytes)))
                         })
-                        .collect();
+                        .collect::<Vec<Result<_, CoreError>>>()
+                        .into_iter()
+                        .collect::<Result<Vec<_>, CoreError>>()?;
                     for (coord, after) in rendered {
                         let before = source.tile(coord);
                         if Tile::same(before, after.as_ref()) {
@@ -487,6 +490,7 @@ impl Document {
             if region.is_none() {
                 if let Some(selection) = &self.selection {
                     let source = selection_surface(selection);
+                    let mut reader = PixelReader::new(&source);
                     let mut tiles = Vec::new();
                     for coord in targets(&source, None, transform) {
                         if cancelled() {
@@ -501,13 +505,14 @@ impl Document {
                                     (coord.y * ts + y) as f64 + 0.5,
                                 );
                                 bytes[(y * ts + x) as usize] =
-                                    sample(&source, None, method, sx, sy).a;
+                                    sample(&mut reader, None, method, sx, sy).a;
                             }
                         }
                         if bytes.iter().any(|&a| a != 0) {
                             tiles.push((coord, bytes));
                         }
                     }
+                    reader.finish()?;
                     let moved = SelectionMask::from_amount_tiles(
                         self.width,
                         self.height,

@@ -166,9 +166,12 @@ pub struct PopupState {
     subs: Vec<Sub>,
     /// キーを受ける段（0 が根、n は `subs[n - 1]`）。
     focus: usize,
+    /// 開いたウィンドウ（メインウィンドウか、外へ出したウィンドウの viewport）。そのウィンドウのパスだけが描く。
+    pub viewport: egui::ViewportId,
 }
 
 impl PopupState {
+    /// `ctx` の今のウィンドウ（パスを回している viewport）に開く。
     pub fn new(ctx: &egui::Context, anchor: Rect) -> PopupState {
         PopupState {
             anchor,
@@ -179,6 +182,7 @@ impl PopupState {
             opened_frame: ctx.cumulative_frame_nr(),
             subs: Vec::new(),
             focus: 0,
+            viewport: ctx.viewport_id(),
         }
     }
     pub fn with_min_width(mut self, width: f32) -> Self {
@@ -881,7 +885,11 @@ pub fn menu_bar_marked(
         }
         w::text(&p, item, title, t::LABEL, Align::Center);
         if marked == Some(i) {
-            p.circle_filled(pos2(item.right() - 6.0, item.center().y - 6.0), 3.0, t::ACCENT);
+            p.circle_filled(
+                pos2(item.right() - 6.0, item.center().y - 6.0),
+                3.0,
+                t::ACCENT,
+            );
         }
         out.rects.push(item);
         x += width;

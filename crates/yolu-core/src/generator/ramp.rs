@@ -3,7 +3,9 @@
 //! 版 24 まではここまで。グラデーションマップ用に、色の混ぜ方（`MixMode`・輝度の補正）と、色の分岐点の区間ごとの混合率曲線を足した
 //! （どれも既定は「なし」で、`Ramp::new` で作ったランプは昔どおりの評価になる）。評価の順は、入力 → 値のカーブ（ランプの位置）→
 //! 区間を探す → 区間の重み（混合率曲線があればそれ、無ければ中点）→ 混色モードで色を混ぜる。
-use super::mixing::{mix, LuminanceCorrection, MixMode};
+use super::mixing::{mix, LuminanceCorrection, MixMode, StopColor};
+#[cfg(target_arch = "x86_64")]
+use super::mixing::{mix_lanes, MixLanes, StopLanes};
 use super::{unit, Error};
 use crate::curve::{Curve, CurvePoint};
 #[cfg(target_arch = "x86_64")]
@@ -36,6 +38,8 @@ pub struct Ramp {
     correction: LuminanceCorrection,
     /// 色の分岐点 k と k + 1 の間の混合率曲線。空なら全部「なし」、あれば数は色の分岐点の数 − 1（全部なしのときは空に正規化する）。
     segments: Vec<Option<Curve>>,
+    /// `colors` と同じ並びの、混色の式が読む形（線形の光・Oklab・彩度）。`colors` から決まる写しで、`new` だけが作る。
+    stops: Vec<StopColor>,
 }
 impl Ramp {
     /// 履歴に積む大きさ（C# の `GradientRamp.ByteSize`: 64 + 色・不透明度・カーブの点の数 × 24。混合率曲線があれば、その点の数 × 24 と 16 を足す）。
@@ -121,6 +125,7 @@ impl Ramp {
         for s in &mut colors {
             s.color.a = 255;
         }
+        let stops = colors.iter().map(|s| StopColor::new(s.color)).collect();
         Ok(Self {
             colors,
             opacities,
@@ -128,6 +133,7 @@ impl Ramp {
             mix: MixMode::Standard,
             correction: LuminanceCorrection::default(),
             segments: Vec::new(),
+            stops,
         })
     }
     /// 値のカーブだけを差し替えた新しいランプ（カーブは検査済みなので失敗しない）。混色・混合率曲線は残す。
@@ -299,7 +305,13 @@ impl Ramp {
             None => weight(x, c0.position, c1.position, c0.midpoint),
         };
         let u = weight(x, a0.position, a1.position, a0.midpoint);
-        let [mut r, mut g, mut b] = mix(c0.color, c1.color, t, self.mix, self.correction);
+        let [mut r, mut g, mut b] = mix(
+            &self.stops[c - 1],
+            &self.stops[c],
+            t,
+            self.mix,
+            self.correction,
+        );
         if scalar {
             r = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             g = r;
@@ -334,33 +346,20 @@ unsafe fn byte_lanes<V: Lanes>(v: V::F) -> V::F {
     )
 }
 impl Ramp {
-    /// `evaluate_unchecked` の N 画素ぶん（結果は R・G・B・A のレーン。0〜255 の整数の値）。値のカーブ・区間の重み・色の補間・不透明度は
-    /// 1 画素の式と同じ演算を同じ順に並べたもので、バイトは同じ。通常（`Standard`）の混色で混合率曲線の無いランプだけをレーンで計算し、
-    /// 知覚的・リニアの混色（`powf`・`cbrt` を使う）や混合率曲線があるランプは 1 画素ずつ。
+    /// `evaluate_unchecked` の N 画素ぶん（結果は R・G・B・A のレーン。0〜255 の整数の値）。値のカーブ・区間の重み・色の混ぜ（通常・リニア・
+    /// 知覚的）・不透明度は 1 画素の式と同じ演算を同じ順に並べたもので、バイトは同じ。区間の混合率曲線は、N 画素が同じ区間ならその曲線の
+    /// レーンの式で、違う区間にまたがる組は 1 画素ずつの曲線の式で重みを出す（どちらも曲線の 1 画素の式と同じ値）。
     ///
     /// # Safety
     /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub(super) unsafe fn evaluate_lanes<V: Lanes>(&self, input: V::F, scalar: bool) -> [V::F; 4] {
+    pub(super) unsafe fn evaluate_lanes<V: MixLanes>(
+        &self,
+        input: V::F,
+        scalar: bool,
+    ) -> [V::F; 4] {
         let x = self.curve.value_lanes::<V>(input);
-        if self.mix != MixMode::Standard || !self.segments.is_empty() {
-            let mut at = [0.; 4];
-            V::store_f64(&mut at, x);
-            let mut out = [[0.; 4]; 4];
-            for k in 0..V::N {
-                let c = self.sample_unchecked(at[k], scalar).to_array();
-                for (ch, lane) in out.iter_mut().enumerate() {
-                    lane[k] = f64::from(c[ch]);
-                }
-            }
-            return [
-                V::load_f64(&out[0]),
-                V::load_f64(&out[1]),
-                V::load_f64(&out[2]),
-                V::load_f64(&out[3]),
-            ];
-        }
         // 区間の番号: 位置が x より小さい分岐点の数 + 1（`sample_unchecked` の `while` と同じ）
         let (mut ci, mut ai) = (V::splat(1.), V::splat(1.));
         let (one, zero) = (V::splat(1.), V::splat(0.));
@@ -378,35 +377,24 @@ impl Ramp {
         let c1 = |l: usize| &colors[cs[l] as usize];
         let a0 = |l: usize| &opacities[as_[l] as usize - 1];
         let a1 = |l: usize| &opacities[as_[l] as usize];
-        let t = weight_lanes::<V>(
-            x,
+        let (p0, p1) = (
             V::from_fn(|l| c0(l).position),
             V::from_fn(|l| c1(l).position),
-            V::from_fn(|l| c0(l).midpoint),
         );
+        let mut t = weight_lanes::<V>(x, p0, p1, V::from_fn(|l| c0(l).midpoint));
+        if !self.segments.is_empty() {
+            t = self.segment_weight_lanes::<V>(x, p0, p1, t, &cs);
+        }
         let u = weight_lanes::<V>(
             x,
             V::from_fn(|l| a0(l).position),
             V::from_fn(|l| a1(l).position),
             V::from_fn(|l| a0(l).midpoint),
         );
-        let mut rgb = [zero; 3];
-        for (ch, out) in rgb.iter_mut().enumerate() {
-            let pick = |c: &ColorStop| {
-                f64::from(match ch {
-                    0 => c.color.r,
-                    1 => c.color.g,
-                    _ => c.color.b,
-                })
-            };
-            let (ca, cb) = (V::from_fn(|l| pick(c0(l))), V::from_fn(|l| pick(c1(l))));
-            // 両端（t ≤ 0・t ≥ 1）は端の色そのもの
-            *out = V::select(
-                V::le(t, zero),
-                ca,
-                V::select(V::ge(t, one), cb, V::add(ca, V::mul(V::sub(cb, ca), t))),
-            );
-        }
+        let stops = &self.stops;
+        let from = StopLanes::<V>::gather(|l| &stops[cs[l] as usize - 1]);
+        let to = StopLanes::<V>::gather(|l| &stops[cs[l] as usize]);
+        let mut rgb = mix_lanes::<V>(&from, &to, t, self.mix, self.correction);
         if scalar {
             let luma = V::add(
                 V::add(
@@ -417,16 +405,55 @@ impl Ramp {
             );
             rgb = [luma; 3];
         }
-        let (o0, o1) = (
-            V::from_fn(|l| a0(l).opacity),
-            V::from_fn(|l| a1(l).opacity),
-        );
+        let (o0, o1) = (V::from_fn(|l| a0(l).opacity), V::from_fn(|l| a1(l).opacity));
         [
             byte_lanes::<V>(rgb[0]),
             byte_lanes::<V>(rgb[1]),
             byte_lanes::<V>(rgb[2]),
             simd::to_byte::<V>(V::add(o0, V::mul(V::sub(o1, o0), u))),
         ]
+    }
+
+    /// 混合率曲線のある区間のレーンの重みを、曲線の値に差し替える（`sample_unchecked` の `segment_curve` の分岐と同じ値）。`cs` はレーンごとの
+    /// 区間の番号 + 1、`midpoint` は中点の重み（曲線の無い区間のレーンはこれのまま）。
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn segment_weight_lanes<V: Lanes>(
+        &self,
+        x: V::F,
+        p0: V::F,
+        p1: V::F,
+        midpoint: V::F,
+        cs: &[f64; 4],
+    ) -> V::F {
+        let same = cs[..V::N].iter().all(|c| *c == cs[0]);
+        if same {
+            return match self.segment_curve(cs[0] as usize - 1) {
+                Some(curve) => curve
+                    .value_lanes::<V>(simd::clamp01::<V>(V::div(V::sub(x, p0), V::sub(p1, p0)))),
+                None => midpoint,
+            };
+        }
+        let mut xs = [0.; 4];
+        V::store_f64(&mut xs, x);
+        let colors = &self.colors;
+        let curved = V::from_fn(|l| {
+            if self.segment_curve(cs[l] as usize - 1).is_some() {
+                1.
+            } else {
+                0.
+            }
+        });
+        let value = V::from_fn(|l| {
+            let k = cs[l] as usize - 1;
+            match self.segment_curve(k) {
+                Some(curve) => curve.value_unchecked(clamp01(
+                    (xs[l] - colors[k].position) / (colors[k + 1].position - colors[k].position),
+                )),
+                None => 0.,
+            }
+        });
+        V::select(V::eq(curved, V::splat(1.)), value, midpoint)
     }
 }
 
@@ -508,7 +535,9 @@ mod tests {
     /// `n` 個の、間隔が 0.0001 以上で 0..1 の位置（端を含むことがある）。
     fn positions(rng: &mut Rng, n: usize) -> Vec<f64> {
         loop {
-            let mut v: Vec<f64> = (0..n).map(|_| (rng.unit() * 1000.).round() / 1000.).collect();
+            let mut v: Vec<f64> = (0..n)
+                .map(|_| (rng.unit() * 1000.).round() / 1000.)
+                .collect();
             if rng.below(2) == 0 {
                 v[0] = 0.;
                 v[n - 1] = 1.;
@@ -539,7 +568,10 @@ mod tests {
             })
             .collect();
         let curve = (rng.below(2) == 0).then(|| {
-            let mut points = vec![CurvePoint { x: 0., y: rng.unit() }];
+            let mut points = vec![CurvePoint {
+                x: 0.,
+                y: rng.unit(),
+            }];
             let mut x = 0.;
             while x + 0.05 < 0.9 && points.len() < 6 {
                 x += 0.05 + 0.2 * rng.unit();
@@ -547,7 +579,10 @@ mod tests {
                     points.push(CurvePoint { x, y: rng.unit() });
                 }
             }
-            points.push(CurvePoint { x: 1., y: rng.unit() });
+            points.push(CurvePoint {
+                x: 1.,
+                y: rng.unit(),
+            });
             points
         });
         let mut ramp = Ramp::new(colors, opacities, curve).unwrap();
@@ -565,7 +600,7 @@ mod tests {
     #[test]
     fn lane_ramps_equal_the_scalar_evaluation_on_every_simd_level() {
         #[allow(clippy::needless_range_loop)]
-        unsafe fn check<V: Lanes>() {
+        unsafe fn check<V: MixLanes>() {
             let mut rng = Rng(0x5eed);
             let mut checked = 0;
             for round in 0..120 {
@@ -606,6 +641,85 @@ mod tests {
                 }
             }
             assert!(checked > 20_000, "{checked}");
+        }
+        crate::math::simd::on_each_level!(check);
+    }
+
+    /// 端の色の組（同じ色どうし・黒と白・0 と 255 の成分・補色）と透明な不透明度の分岐点で、混色 3 種 × 輝度の補正 5 段階 × 混合率曲線の
+    /// 有無のレーンの結果が 1 画素の式とバイトまで同じ。入力は両端・分岐点ちょうど・範囲の外と、区間をまたぐ組を含む密な掃引。
+    #[test]
+    fn lane_mixing_equals_the_scalar_mixing_at_the_edges() {
+        #[allow(clippy::needless_range_loop)]
+        unsafe fn check<V: MixLanes>() {
+            let pairs = [
+                ([90, 90, 90], [90, 90, 90]),
+                ([200, 10, 60], [200, 10, 60]),
+                ([0, 0, 0], [255, 255, 255]),
+                ([255, 0, 255], [0, 255, 0]),
+                ([20, 40, 220], [250, 230, 30]),
+                ([0, 0, 1], [1, 0, 0]),
+            ];
+            let mut checked = 0;
+            for (first, last) in pairs {
+                let stop = |position, rgb: [u8; 3]| ColorStop {
+                    position,
+                    color: Rgba8::new(rgb[0], rgb[1], rgb[2], 255),
+                    midpoint: 0.37,
+                };
+                let opacity = |position, opacity| OpacityStop {
+                    position,
+                    opacity,
+                    midpoint: 0.5,
+                };
+                let base = Ramp::new(
+                    vec![stop(0.0, first), stop(0.5, [128, 64, 32]), stop(1.0, last)],
+                    vec![opacity(0.0, 0.0), opacity(0.6, 1.0), opacity(1.0, 0.0)],
+                    None,
+                )
+                .unwrap();
+                for mode in MixMode::ALL {
+                    for correction in LuminanceCorrection::ALL {
+                        for curved in [false, true] {
+                            let mut ramp = base.with_mixing(mode, correction);
+                            if curved {
+                                ramp = ramp
+                                    .with_segment_curve(1, Some(Ramp::curve_from_midpoint(0.8)))
+                                    .unwrap();
+                            }
+                            let mut inputs = vec![-0.5, 0.0, 1.0, 1.5, 0.5, 0.6];
+                            inputs.extend([0.5 - 1e-12, 0.5 + 1e-12, 1e-300, 1.0 - 1e-16]);
+                            inputs.extend((0..=257).map(|k| f64::from(k) / 257.0));
+                            for chunk in inputs.chunks(V::N) {
+                                if chunk.len() < V::N {
+                                    continue;
+                                }
+                                for scalar in [false, true] {
+                                    let lanes =
+                                        ramp.evaluate_lanes::<V>(V::load_f64(chunk), scalar);
+                                    let mut got = [[0.; 4]; 4];
+                                    for (ch, lane) in lanes.into_iter().enumerate() {
+                                        V::store_f64(&mut got[ch], lane);
+                                    }
+                                    for k in 0..V::N {
+                                        let want =
+                                            ramp.evaluate_unchecked(chunk[k], scalar).to_array();
+                                        for ch in 0..4 {
+                                            assert_eq!(
+                                                got[ch][k],
+                                                f64::from(want[ch]),
+                                                "{first:?}→{last:?} {mode:?} {correction:?} 曲線 {curved} 入力 {} チャンネル {ch}",
+                                                chunk[k]
+                                            );
+                                        }
+                                        checked += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(checked > 40_000, "{checked}");
         }
         crate::math::simd::on_each_level!(check);
     }

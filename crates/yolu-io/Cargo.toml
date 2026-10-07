@@ -19,5 +19,7 @@ serde_json = "1"
 png = "0.18"
 # CLIP STUDIO のブラシ（.sut）は SQLite。読み取り専用・メモリ上で開く（bundled の SQLite はパブリックドメイン、rusqlite は MIT）
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "serialize", "limits", "hooks"] }
+# OS に入っているフォントの一覧（テキストレイヤーのフォントを選ぶ・探す）。fontconfig の設定は読まない（fontconfig-parser と roxmltree を足さない）
+fontdb = { version = "0.24", default-features = false, features = ["std", "fs", "memmap"] }   # MIT
 yolu-core.workspace = true
 yolu-brush-sets.workspace = true

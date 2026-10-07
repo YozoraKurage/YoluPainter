@@ -1,7 +1,7 @@
 name: CI
 
-# main は CI 必須の PR からしか変わらない（ruleset）。main への push では組み直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
-# 配る物は main 向けの PR の CI（下の dist）が組み、配布（release.yml）はその成果物を受け取る。
+# main は CI 必須の PR からしか変わらない（ruleset）。main への push ではビルドし直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
+# 配る物は main 向けの PR の CI（下の dist）がビルドし、配布（release.yml）はその成果物を受け取る。
 on:
   pull_request:
   workflow_dispatch:
@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 組み直しが長い（アプリの試験の実行形式は 9 本。結合試験は 4 本の束と直下の 3 本）ので、画面の試験は別のジョブに分けて並べて回す。
+  # ビルドし直しが長い（アプリの試験の実行形式は 9 本。結合試験は 4 本の束と直下の 3 本）ので、画面の試験は別のジョブに分けて並べて回す。
   #
   # runs-on は ubuntu-latest にしない。収録済みの正解は glibc と Mesa の版に結びつく（描画しないクレートの golden は glibc の tan・atan・
   # atan2 とビット一致、画面の正解は Mesa の lavapipe）。ubuntu-latest は 2026-10-19 から Ubuntu 26 に移るので、glibc・Mesa を測り直して
@@ -34,10 +34,10 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
@@ -49,15 +49,17 @@ jobs:
             xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
-      - name: 配る物の道具の試験（tools/dist.py・tools/check-workflows.py）
+      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）と画面の試験を並べるツールの試験
         if: ${{ !cancelled() }}
         run: |
           python3 tools/test-dist.py
-          python3 tools/test-gen-livelink-native.py
+          python3 tools/test-render-tests.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # cargo fmt --check は既存の整形差分を解消してから追加する。
+      - name: 整形（cargo fmt の確かめ）
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
 
   linux-render:
     name: Linux の画面の試験（ソフトウェアの Vulkan）
@@ -74,7 +76,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
@@ -84,16 +86,21 @@ jobs:
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
-      - name: 描画する試験（1 本ずつ）
+      # 試験の実行ファイルごとの別のプロセスを 3 列に並べて回す（列の中は順に、プロセスの中は 1 本ずつ。並べ方は tools/render-tests.py の頭）。
+      # ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、プロセスの中は前と同じく 1 本ずつにしている。
+      # 回す間は全体で 20 分（--time-limit）で区切る。止まった試験はスクリプトが殺し、その名前をジョブのログに出す（ジョブの 45 分で切られると残らない）。
+      - name: 描画する試験（束ごとのプロセスを並べ、プロセスの中は 1 本ずつ）
         env:
           # 収録済みの画面の正解は、手元の既定（wgpu の Vulkan と Mesa の lavapipe）で撮ったもの。GL の llvmpipe は
           # コンピュートが足りず（GPU 合成の試験が省略になる）、環境の反射の絵も違うので使わない。
           WGPU_BACKEND: vulkan
+          # アダプターを取れないとき、GPU の試験を飛ばして通った扱いにせず、落とす
+          YOLUPAINTER_REQUIRE_GPU: "1"
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a cargo test -p yolu-gpu -p yolu-app --locked --no-fail-fast -- --nocapture --test-threads=1
+          xvfb-run -a python3 tools/render-tests.py --log-dir "$RUNNER_TEMP/render-logs"
       - name: 画面の正解との差の画像を残す
         if: failure()
         shell: bash
@@ -121,7 +128,7 @@ jobs:
   windows:
     name: Windows のビルドと画面なし試験
     runs-on: windows-latest
-    # キャッシュの無い回は、組みだけで 40 分を超える（0.4.0 で yolu-cli・rmcp と試験の実行ファイルが増えた）。一度通ってキャッシュが残れば短くなる
+    # キャッシュの無い回は、ビルドだけで 40 分を超える（0.4.0 で yolu-cli・rmcp と試験の実行ファイルが増えた）。一度通ってキャッシュが残れば短くなる
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -133,20 +140,17 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: アプリのビルド
         run: cargo build -p yolu-app -p yolu-cli --locked
       - name: 描画を使わないクレートの試験
         if: ${{ !cancelled() }}
-        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-ops -p yolu-cli -- --test-threads=1
       - name: アプリの単体試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
       # 結合試験は束（tests/<束>/main.rs）の中にあり、試験の名前は `<ファイル名>::<試験名>`。画面なしの試験は名前が `headless_` で始まる
-      - name: Live Link の統合試験（画面なし）
-        if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test gui_shell --locked -- livelink::headless_ --test-threads=1
       - name: 自動更新の統合試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test gui_shell --locked -- update::headless_ --test-threads=1
@@ -156,14 +160,14 @@ jobs:
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ --test-threads=1
-      - name: Live Link の頼みと .ylp の選択範囲・ポーズの試験（画面なし。名前付きパイプ・ファイルの置換）
+      - name: Live Link のファイルの受け渡しと .ylp の選択範囲・ポーズの試験（画面なし。自分だけのフォルダ・ファイルの置換）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test headless --locked -- livelink_request::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
+        run: cargo test -p yolu-app --test headless --locked -- livelink_files::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
-  # 配る物の組み。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
-  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、組み直さず受け取る。
+  # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
+  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
   dist-plan:
-    name: 配る物の組みの計画
+    name: 配る物のビルドの計画
     if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -178,7 +182,7 @@ jobs:
         run: python3 tools/dist.py plan
 
   dist:
-    name: 配る物の組み
+    name: 配る物のビルド
     needs: dist-plan
     uses: ./.github/workflows/dist-build.yml
     with:

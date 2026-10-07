@@ -1,11 +1,11 @@
-//! 主の wgpu の装置（eframe が 1 つだけ作る。窓の描画・キャンバスの GPU の表示・3D ビューが使う）の見張り。
+//! 主の wgpu の装置（eframe が 1 つだけ作る。ウィンドウの描画・キャンバスの GPU の表示・3D ビューが使う）の見張り。
 //!
-//! wgpu の既定は 2 つとも黙って困る形: 装置を失っても何も知らせず（以後の描画が黙って失敗し、窓が描き換わらなくなる）、受け手の無い
+//! wgpu の既定は 2 つとも黙って困る形: 装置を失っても何も知らせず（以後の描画が黙って失敗し、ウィンドウが描き換わらなくなる）、受け手の無い
 //! 誤り（検証・メモリ不足）は panic でアプリごと落とす。ここで両方の受け口を付け、どちらも画面のスレッドが次のフレームで読む。
 //!
 //! - 装置を失ったとき: `YoluApp` が、描いていた絵（core の文書）には触らずに復旧の書き置きを急いで取り、GPU の道（キャンバス・3D ビュー）を
-//!   手放して、理由を出し、終わる。eframe は装置を作り直せない（装置は窓を初めて作るときに 1 度だけ作られ、`RenderState` に固定される。
-//!   作り直せるのは面だけ）ので、窓そのものが描けなくなる。続けられないので、復旧用に保存したあと、次の起動へ任せる。
+//!   手放して、理由を出し、終わる。eframe は装置を作り直せない（装置はウィンドウを初めて作るときに 1 度だけ作られ、`RenderState` に固定される。
+//!   作り直せるのは面だけ）ので、ウィンドウそのものが描けなくなる。続けられないので、復旧用に保存したあと、次の起動へ任せる。
 //! - 受け手の無い誤り: 落とさず、普段のログへ 1 行（同じ文は 1 度）。
 //!
 //! 保証の射程: 失ったことをすぐ知ることは保証しない。受け口が呼ばれるのは、wgpu が失ったと気づいたあと（次の提出・poll）で、その間の描画は
@@ -57,7 +57,7 @@ struct Inner {
 pub struct GpuWatch(Arc<Mutex<Inner>>);
 
 impl GpuWatch {
-    /// `device` に受け口を付ける。何かあれば `ctx` へ描き直しを頼む（窓が隠れていても、次の `logic` で読む）。
+    /// `device` に受け口を付ける。何かあれば `ctx` へ描き直しを頼む（ウィンドウが隠れていても、次の `logic` で読む）。
     pub fn attach(device: &wgpu::Device, ctx: &egui::Context) -> GpuWatch {
         let watch = GpuWatch::default();
         let (on_lost, lost_ctx) = (watch.clone(), ctx.clone());
@@ -109,7 +109,11 @@ impl GpuWatch {
     /// 溜まった知らせを取り出す（失った知らせは 1 度だけ）。
     pub fn take(&self) -> Events {
         let mut inner = self.inner();
-        let lost = if inner.announced { None } else { inner.lost.clone() };
+        let lost = if inner.announced {
+            None
+        } else {
+            inner.lost.clone()
+        };
         inner.announced |= lost.is_some();
         Events {
             lost,
@@ -146,21 +150,27 @@ pub enum Saved {
     No,
 }
 
-/// 装置を失ったときの理由の文（画面と、終わる前の窓に出す。名前・状態・短い理由だけ）。
+/// 装置を失ったときの理由の文（画面と、終わる前のウィンドウに出す。名前・状態・短い理由だけ）。
 pub fn lost_text(lang: Lang, saved: Saved) -> String {
     let head = lang.pick(
         "GPU の装置が失われたため、続けられません。",
         "The GPU device was lost, so YoluPainter cannot continue.",
     );
     let tail = match saved {
-        Saved::Yes => lang.pick("描いていた絵は復旧用に保存しました。", " Your work was saved for recovery."),
+        Saved::Yes => lang.pick(
+            "描いていた絵は復旧用に保存しました。",
+            " Your work was saved for recovery.",
+        ),
         Saved::NothingToSave => "",
-        Saved::No => lang.pick("復旧用に保存できませんでした。", " Could not save for recovery."),
+        Saved::No => lang.pick(
+            "復旧用に保存できませんでした。",
+            " Could not save for recovery.",
+        ),
     };
     format!("{head}{tail}")
 }
 
-/// 窓に出す文（`lost_text` に、このあと終わることを足す。ボタンの文言を替えられない OS でも、OK が何をするかが分かる）。
+/// ウィンドウに出す文（`lost_text` に、このあと終わることを足す。ボタンの文言を替えられない OS でも、OK が何をするかが分かる）。
 pub fn lost_dialog_text(lang: Lang, saved: Saved) -> String {
     format!(
         "{}\n{}",
@@ -190,7 +200,13 @@ mod tests {
         watch.inject_loss("Destroyed", "after the first");
         assert!(watch.is_lost());
         let first = watch.take();
-        assert_eq!(first.lost, Some(Lost { reason: "Unknown".into(), message: "driver reset".into() }));
+        assert_eq!(
+            first.lost,
+            Some(Lost {
+                reason: "Unknown".into(),
+                message: "driver reset".into()
+            })
+        );
         assert_eq!(watch.take().lost, None, "知らせは 1 度だけ");
         assert!(watch.is_lost(), "失ったことは残る");
     }
@@ -202,7 +218,10 @@ mod tests {
             watch.inject_error("validation: same");
         }
         assert_eq!(watch.take().errors, vec!["validation: same".to_owned()]);
-        assert!(watch.take().errors.is_empty(), "同じ文は、取り出したあとも数えない");
+        assert!(
+            watch.take().errors.is_empty(),
+            "同じ文は、取り出したあとも数えない"
+        );
         for i in 0..1000 {
             watch.inject_error(&format!("error {i}"));
         }
@@ -220,9 +239,15 @@ mod tests {
         for lang in [Lang::Ja, Lang::En] {
             for saved in [Saved::Yes, Saved::NothingToSave, Saved::No] {
                 let text = lost_text(lang, saved);
-                assert!(text.starts_with(lang.pick("GPU の装置が失われた", "The GPU device was lost")), "{text}");
+                assert!(
+                    text.starts_with(lang.pick("GPU の装置が失われた", "The GPU device was lost")),
+                    "{text}"
+                );
                 let dialog = lost_dialog_text(lang, saved);
-                assert!(dialog.starts_with(&text) && dialog.lines().count() == 2, "{dialog}");
+                assert!(
+                    dialog.starts_with(&text) && dialog.lines().count() == 2,
+                    "{dialog}"
+                );
                 if lang == Lang::En {
                     assert!(text.is_ascii(), "{text}");
                 }

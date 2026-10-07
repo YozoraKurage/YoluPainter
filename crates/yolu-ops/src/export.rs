@@ -6,8 +6,7 @@
 //! - 文書は変えない。効いていない効果（マップ・モデルの入力が無い Generator など）は、書き出しに入らないことを `notes` に書く。
 //! - 塗り広げ（パディング）・焼いた AO は、モデルから作るもので、画面なしでは渡せないので使わない。
 
-use std::fs::{self, OpenOptions};
-use std::io::Seek;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -17,7 +16,7 @@ use yolu_io::export::{
     existing_files, file_name, plan_template, sanitize, write_images, write_template, ExportFile,
     Overwrite, PlanSet, SetExport, WriteOptions,
 };
-use yolu_io::psd::{self, Compression, ExportControl, ExportOptions, NoteAction};
+use yolu_io::psd::{self, ExportControl, ExportOptions, NoteAction};
 
 use crate::command::{ExportChannelsArgs, ExportPsdArgs, ExportTexturesArgs, PsdMode};
 use crate::doc_ops::inactive_texts;
@@ -64,7 +63,11 @@ fn overwrite_for(existing: &[PathBuf], confirm: bool) -> Result<Overwrite, OpErr
     }
 }
 
-fn exported(written: Vec<yolu_io::export::WrittenImage>, skipped: Vec<String>, doc: &Document) -> Reply {
+fn exported(
+    written: Vec<yolu_io::export::WrittenImage>,
+    skipped: Vec<String>,
+    doc: &Document,
+) -> Reply {
     Reply::Exported(Exported {
         files: written
             .into_iter()
@@ -82,12 +85,20 @@ fn exported(written: Vec<yolu_io::export::WrittenImage>, skipped: Vec<String>, d
 
 // ───────── チャンネルの PNG ─────────
 
-fn channels(view: &SetView<'_>, policy: &PathPolicy, args: &ExportChannelsArgs) -> Result<Reply, OpError> {
+fn channels(
+    view: &SetView<'_>,
+    policy: &PathPolicy,
+    args: &ExportChannelsArgs,
+) -> Result<Reply, OpError> {
     let doc = view.editable_doc()?;
     let dir = policy.resolve(&args.dir)?;
     let mut list: Vec<Channel> = Vec::new();
     if args.channels.is_empty() {
-        list.extend(doc.channels().into_iter().filter(|c| yolu_core::export::uses(doc, *c)));
+        list.extend(
+            doc.channels()
+                .into_iter()
+                .filter(|c| yolu_core::export::uses(doc, *c)),
+        );
         if list.is_empty() {
             list.push(Channel::Color);
         }
@@ -104,7 +115,11 @@ fn channels(view: &SetView<'_>, policy: &PathPolicy, args: &ExportChannelsArgs) 
         .iter()
         .map(|c| {
             let suffix = sanitize(&channel_name(doc, *c));
-            let suffix = if suffix.is_empty() || suffix.starts_with('.') { format!("Channel{}", c.index()) } else { suffix };
+            let suffix = if suffix.is_empty() || suffix.starts_with('.') {
+                format!("Channel{}", c.index())
+            } else {
+                suffix
+            };
             let kind = match doc.channel_info(*c).map(|i| i.kind) {
                 Some(ChannelKind::Normal) => ExportImageKind::Normal,
                 _ => ExportImageKind::BaseColor,
@@ -124,16 +139,26 @@ fn channels(view: &SetView<'_>, policy: &PathPolicy, args: &ExportChannelsArgs) 
     let existing = existing_files(&dir, files.iter().map(|f| f.name.as_str()));
     let overwrite = overwrite_for(&existing, args.confirm)?;
     let budget = doc.stroke_budget_bytes();
-    let written = write_images(&dir, &files, &WriteOptions { overwrite, cancel: None }, |i| {
-        yolu_core::export::channel_image(doc, list[i], budget).map_err(Into::into)
-    })
+    let written = write_images(
+        &dir,
+        &files,
+        &WriteOptions {
+            overwrite,
+            cancel: None,
+        },
+        |i| yolu_core::export::channel_image(doc, list[i], budget).map_err(Into::into),
+    )
     .map_err(|e| OpError::from_export(&e))?;
     Ok(exported(written, Vec::new(), doc))
 }
 
 // ───────── テンプレートの PNG ─────────
 
-fn textures(view: &SetView<'_>, policy: &PathPolicy, args: &ExportTexturesArgs) -> Result<Reply, OpError> {
+fn textures(
+    view: &SetView<'_>,
+    policy: &PathPolicy,
+    args: &ExportTexturesArgs,
+) -> Result<Reply, OpError> {
     let doc = view.editable_doc()?;
     let dir = policy.resolve(&args.dir)?;
     let id = args.template.as_deref().unwrap_or("unity-standard");
@@ -143,7 +168,11 @@ fn textures(view: &SetView<'_>, policy: &PathPolicy, args: &ExportTexturesArgs) 
         }))
     })?;
     let stem = stem_of(view, &args.name);
-    let set = PlanSet { name: set_label(view), document: doc, has_occlusion: false };
+    let set = PlanSet {
+        name: set_label(view),
+        document: doc,
+        has_occlusion: false,
+    };
     let planned = plan_template(&stem, &[set], &template).map_err(|e| OpError::from_export(&e))?;
     let existing = existing_files(&dir, planned.iter().map(|p| p.file_name.as_str()));
     let overwrite = overwrite_for(&existing, args.confirm)?;
@@ -158,7 +187,10 @@ fn textures(view: &SetView<'_>, policy: &PathPolicy, args: &ExportTexturesArgs) 
             padding: None,
             max_working_bytes: doc.stroke_budget_bytes(),
         },
-        &WriteOptions { overwrite, cancel: None },
+        &WriteOptions {
+            overwrite,
+            cancel: None,
+        },
     )
     .map_err(|e| OpError::from_export(&e))?;
     Ok(exported(report.written, report.skipped, doc))
@@ -169,44 +201,52 @@ fn textures(view: &SetView<'_>, policy: &PathPolicy, args: &ExportTexturesArgs) 
 fn note_text(note: &psd::ExportNote) -> Text {
     let name = &note.layer;
     let en = match &note.action {
-        NoteAction::BakedFilters(_) => format!("Layer \"{name}\": its filters were baked into the pixels"),
-        NoteAction::BakedFill(_) => format!("Layer \"{name}\": its image, projection, decal or gradient was baked into the pixels"),
-        NoteAction::BakedTranslucentFill => format!("Layer \"{name}\": a translucent fill was baked into the pixels"),
-        NoteAction::BakedPath => format!("Layer \"{name}\": a path layer was written as pixels; the path itself is not kept"),
-        NoteAction::BakedMaskFilters(_) => format!("Layer \"{name}\": the mask filters were baked into the mask"),
-        NoteAction::BakedInvertedMask => format!("Layer \"{name}\": an inverted mask was baked into the mask"),
-        NoteAction::BakedClippedGroup => format!("Group \"{name}\": a clipped group became one raster layer"),
-        NoteAction::DroppedClippingMark => format!("Group \"{name}\": a clipping mark that had no effect was dropped"),
-        NoteAction::DroppedFilters(_) => format!("Layer \"{name}\": inactive filters were dropped (the pixels do not change)"),
-        NoteAction::DroppedMaskFilters(_) => format!("Layer \"{name}\": inactive mask filters were dropped"),
+        NoteAction::BakedFilters(_) => {
+            format!("Layer \"{name}\": its filters were baked into the pixels")
+        }
+        NoteAction::BakedFill(_) => format!(
+            "Layer \"{name}\": its image, projection, decal or gradient was baked into the pixels"
+        ),
+        NoteAction::BakedTranslucentFill => {
+            format!("Layer \"{name}\": a translucent fill was baked into the pixels")
+        }
+        NoteAction::BakedPath => format!(
+            "Layer \"{name}\": a path layer was written as pixels; the path itself is not kept"
+        ),
+        NoteAction::BakedMaskFilters(_) => {
+            format!("Layer \"{name}\": the mask filters were baked into the mask")
+        }
+        NoteAction::BakedInvertedMask => {
+            format!("Layer \"{name}\": an inverted mask was baked into the mask")
+        }
+        NoteAction::BakedClippedGroup => {
+            format!("Group \"{name}\": a clipped group became one raster layer")
+        }
+        NoteAction::DroppedClippingMark => {
+            format!("Group \"{name}\": a clipping mark that had no effect was dropped")
+        }
+        NoteAction::DroppedFilters(_) => {
+            format!("Layer \"{name}\": inactive filters were dropped (the pixels do not change)")
+        }
+        NoteAction::DroppedMaskFilters(_) => {
+            format!("Layer \"{name}\": inactive mask filters were dropped")
+        }
         NoteAction::DroppedAnchor => format!("Layer \"{name}\": its anchor was dropped"),
         NoteAction::DroppedMaskAnchor => format!("Layer \"{name}\": its mask anchor was dropped"),
-        NoteAction::NormalBlend => format!("Channel \"{name}\": normal layers overlap as colors in a PSD"),
+        NoteAction::NormalBlend => {
+            format!("Channel \"{name}\": normal layers overlap as colors in a PSD")
+        }
         NoteAction::Rounded { max_diff, .. } => {
             format!("Layer \"{name}\": an adjustment was rounded to PSD steps (largest composite difference {max_diff})")
         }
         NoteAction::ExpandedGradientCurve { max_diff, .. } => {
             format!("Layer \"{name}\": a gradient was expanded to stops (approximation; largest composite difference {max_diff})")
         }
+        NoteAction::BakedText => format!(
+            "Layer \"{name}\": a text layer was written as pixels; the text itself is not kept"
+        ),
     };
     Text::new(note.message(), en)
-}
-
-/// 一時ファイルの持ち主（置き換える前に失敗・panic で手放すと消す）。
-struct Temp(Option<PathBuf>);
-
-impl Temp {
-    fn path(&self) -> &Path {
-        self.0.as_deref().expect("手放していない一時ファイル")
-    }
-}
-
-impl Drop for Temp {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = fs::remove_file(path);
-        }
-    }
 }
 
 fn io_error(what: &str, path: &Path, e: &std::io::Error) -> OpError {
@@ -217,12 +257,16 @@ fn io_error(what: &str, path: &Path, e: &std::io::Error) -> OpError {
     )
 }
 
-fn psd_file(view: &SetView<'_>, policy: &PathPolicy, args: &ExportPsdArgs) -> Result<Reply, OpError> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
+fn psd_file(
+    view: &SetView<'_>,
+    policy: &PathPolicy,
+    args: &ExportPsdArgs,
+) -> Result<Reply, OpError> {
     let doc = view.editable_doc()?;
     let path = policy.resolve(&args.path)?;
-    let is_psd = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("psd"));
+    let is_psd = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("psd"));
     if !is_psd {
         return Err(OpError::new(
             ErrorCode::PathRefused,
@@ -251,7 +295,11 @@ fn psd_file(view: &SetView<'_>, policy: &PathPolicy, args: &ExportPsdArgs) -> Re
     if replaced && !args.confirm {
         return Err(confirm_files(std::slice::from_ref(&path)));
     }
-    let ctl = ExportControl { cancel: None, source_budget: Some(view.source_budget), max_file_bytes: None };
+    let ctl = ExportControl {
+        cancel: None,
+        source_budget: Some(view.source_budget),
+        max_file_bytes: None,
+    };
     let mode = match args.mode {
         PsdMode::Bake => psd::ExportMode::Bake,
         PsdMode::Flat => psd::ExportMode::Flat,
@@ -262,57 +310,51 @@ fn psd_file(view: &SetView<'_>, policy: &PathPolicy, args: &ExportPsdArgs) -> Re
         let issues: Vec<String> = plan.blockers.iter().map(|b| b.message()).collect();
         return Err(OpError::new(
             ErrorCode::Unsupported,
-            format!("PSD に書けない層があります: {}", issues.join(" / ")),
-            format!("{} layer(s) cannot be written to a PSD without losing information", issues.len()),
+            format!("PSD に書けないレイヤーがあります: {}", issues.join(" / ")),
+            format!(
+                "{} layer(s) cannot be written to a PSD without losing information",
+                issues.len()
+            ),
         )
         .with_data(json!({"issues": issues})));
     }
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| io_error("フォルダを作れません", dir, &e))?;
-    let temp_path = dir.join(format!(".yolu-export-{}-{}.pending~", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .read(true)
-        .write(true)
-        .open(&temp_path)
-        .map_err(|e| io_error("一時ファイルを作れません", &temp_path, &e))?;
-    let temp = Temp(Some(temp_path));
-    let written = plan
-        .write_psd(doc, &ctl, &mut file, Compression::Rle)
-        .map_err(|e| OpError::from_io(&yolu_io::Error::from(e)))?;
-    file.sync_all().map_err(|e| io_error("書き出しを確定できません", temp.path(), &e))?;
-    // 読み戻して確かめる（読めない・書いたものと違う PSD は置き換えない）
-    file.rewind().map_err(|e| io_error("読み戻せません", temp.path(), &e))?;
-    let verified = psd::verify_stream(&mut std::io::BufReader::new(&file), None)
-        .map_err(|e| OpError::from_io(&e))?;
-    let mismatch = || {
-        OpError::new(
+    // 一時ファイルへ書いて同期し、読み戻して確かめてから確定する（読めない・書いたものと違う PSD は置き換えない）。新しいファイルは
+    // 「あれば失敗」の hard_link（確かめたあとに、別のファイルができていても上書きしない）
+    let how = if replaced {
+        psd::Commit::Replace
+    } else {
+        psd::Commit::CreateNew
+    };
+    psd::write_verified(&path, &plan, doc, &ctl, how).map_err(|e| match e {
+        psd::WriteError::NotAFile => OpError::new(
+            ErrorCode::PathRefused,
+            "行き先が通常のファイルではありません",
+            "The destination is not a regular file",
+        )
+        .with_data(json!({"path": path.display().to_string()})),
+        psd::WriteError::CreateTemp { temp, source } => {
+            io_error("一時ファイルを作れません", &temp, &source)
+        }
+        psd::WriteError::Write(e) => OpError::from_io(&yolu_io::Error::from(e)),
+        psd::WriteError::Sync { temp, source } => {
+            io_error("書き出しを確定できません", &temp, &source)
+        }
+        psd::WriteError::Rewind { temp, source } => io_error("読み戻せません", &temp, &source),
+        psd::WriteError::ReadBack(e) | psd::WriteError::Compare(e) => OpError::from_io(&e),
+        psd::WriteError::Mismatch => OpError::new(
             ErrorCode::Io,
             "書いた PSD の読み戻しが一致しません（置き換えていません）",
             "The written PSD did not read back identically; nothing was replaced",
-        )
-    };
-    if verified.bytes != written.bytes || verified.layers != written.layers {
-        return Err(mismatch());
-    }
-    file.rewind().map_err(|e| io_error("読み戻せません", temp.path(), &e))?;
-    if !written.checksum.matches(&mut file, None).map_err(|e| OpError::from_io(&e))? {
-        return Err(mismatch());
-    }
-    drop(file);
-    // 置き換える。新しいファイルは「あれば失敗」の hard_link（確かめたあとに、別のファイルができていても上書きしない）
-    if replaced {
-        fs::rename(temp.path(), &path).map_err(|e| io_error("置き換えられません", &path, &e))?;
-    } else {
-        match fs::hard_link(temp.path(), &path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(confirm_files(std::slice::from_ref(&path)))
-            }
-            Err(e) => return Err(io_error("書けません", &path, &e)),
-        }
-    }
-    // rename で一時ファイルは無くなっている。hard_link のときは、ここで Temp が消す
+        ),
+        psd::WriteError::Commit(e) if replaced => io_error("置き換えられません", &path, &e),
+        psd::WriteError::Commit(e) => io_error("書けません", &path, &e),
+        psd::WriteError::Exists => confirm_files(std::slice::from_ref(&path)),
+    })?;
     let mut notes: Vec<Text> = plan.notes.iter().map(note_text).collect();
     notes.extend(inactive_texts(doc));
     Ok(Reply::Exported(Exported {

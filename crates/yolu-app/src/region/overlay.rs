@@ -40,11 +40,14 @@ pub fn paint_canvas(
     view: &CanvasView,
     pointer: Option<egui::Pos2>,
 ) {
-    if !app.tool.is_region() {
-        app.region.hover = None;
-        return;
+    // ベイクのウィンドウでアイランドを選んでいる・アイランドのメニューを開いている間は、ツールによらず、そのアイランドを同じ形で強調する
+    if !crate::bake::overlap::update_hover(app, Where::Canvas(view), pointer) {
+        if !app.tool.is_region() {
+            app.region.hover = None;
+            return;
+        }
+        update_hover(app, Where::Canvas(view), pointer);
     }
-    update_hover(app, Where::Canvas(view), pointer);
     let Some(h) = app.region.hover.as_ref().filter(|h| !h.on_surface) else {
         return;
     };
@@ -65,11 +68,12 @@ pub fn paint_canvas(
     let color = color_of(h.erase);
     let shadow = Stroke::new(2.5, Color32::from_black_alpha(170));
     let line = Stroke::new(1.6, color);
-    painter.extend(
-        points
-            .iter()
-            .map(|p| Shape::line_segment([p[0] + egui::vec2(1.0, 1.0), p[1] + egui::vec2(1.0, 1.0)], shadow)),
-    );
+    painter.extend(points.iter().map(|p| {
+        Shape::line_segment(
+            [p[0] + egui::vec2(1.0, 1.0), p[1] + egui::vec2(1.0, 1.0)],
+            shadow,
+        )
+    }));
     painter.extend(points.iter().map(|p| Shape::line_segment(*p, line)));
 }
 
@@ -90,7 +94,9 @@ fn visible(hover: &super::tools::Hover, view: &CameraView) -> Arc<Vec<u32>> {
             let distance = (centre - camera).length();
             let ray = Ray::new(camera, centre - camera);
             if let Some(hit) = geometry.raycast(ray, true, f32::INFINITY) {
-                if hit.triangle != i && hit.distance < distance - distance * 1e-3 - geometry.visibility_epsilon() {
+                if hit.triangle != i
+                    && hit.distance < distance - distance * 1e-3 - geometry.visibility_epsilon()
+                {
                     continue; // 手前の面に隠れている
                 }
             }
@@ -108,13 +114,17 @@ pub fn paint_surface(
     pointer: Option<egui::Pos2>,
 ) {
     let busy = app.view3d.input.nav.is_some() || app.view3d.pose.mode;
-    if !app.tool.is_region() || busy {
+    let picking = crate::bake::overlap::highlighting(app);
+    if (!app.tool.is_region() && !picking) || busy {
         if app.region.hover.as_ref().is_some_and(|h| h.on_surface) {
             app.region.hover = None;
         }
         return;
     }
-    update_hover(app, Where::Surface(rect), pointer);
+    // ベイクのウィンドウでアイランドを選んでいる・アイランドのメニューを開いている間は、ツールによらず、そのアイランドを同じ形で強調する
+    if !crate::bake::overlap::update_hover(app, Where::Surface(rect), pointer) {
+        update_hover(app, Where::Surface(rect), pointer);
+    }
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let Some(h) = app.region.hover.as_mut().filter(|h| h.on_surface) else {
         return;

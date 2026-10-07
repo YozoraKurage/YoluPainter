@@ -1,20 +1,20 @@
-//! 取り込みの窓の「CLIP STUDIO から」: CLIP STUDIO PAINT のサブツールのフォルダを探して `.sut` を一覧にし（名前と筆先の見本）、
+//! 取り込みのウィンドウの「CLIP STUDIO から」: CLIP STUDIO PAINT のサブツールのフォルダを探して `.sut` を一覧にし（名前と筆先の見本）、
 //! 選んだものだけを、ふつうの `.sut` の取り込み（`BrushAction::Import`）と同じ道で取り込む。
 //!
 //! 探す・中身を覗く仕事は別のスレッド（`yolu_io::brushes::clipstudio`。**読むだけ**で、CLIP STUDIO のフォルダへ何も書かず、
-//! ロックもしない）。窓を閉じる・探し直す・フォルダを替えると、走っている仕事は取り消す。フォルダの場所の見つけ方と、読んでいる間の
+//! ロックもしない）。ウィンドウを閉じる・探し直す・フォルダを替えると、走っている仕事は取り消す。フォルダの場所の見つけ方と、読んでいる間の
 //! 書き込みへの備えは `yolu_io::brushes::clipstudio` と docs/BRUSH_IMPORT.md を参照。
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
-use std::sync::Arc;
 
 use egui::Vec2;
 use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
+use crate::jobs::{JobSpec, Polled, Worker};
+use crate::notice::Source as NoticeSource;
 use crate::state::{AppState, DialogRequest};
 
 /// 一覧の 1 行の中身（見本まで読めたか）。
@@ -35,7 +35,7 @@ pub struct Row {
     pub size: u64,
     pub state: RowState,
     pub selected: bool,
-    /// 筆先の見本の絵（描くときに作る。窓を閉じると捨てる）。
+    /// 筆先の見本の絵（描くときに作る。ウィンドウを閉じると捨てる）。
     pub texture: Option<egui::TextureHandle>,
 }
 
@@ -51,14 +51,6 @@ pub struct Listing {
 }
 
 impl Listing {
-    /// 見本まで読み終えた行の数。
-    pub fn peeked(&self) -> usize {
-        self.rows
-            .iter()
-            .filter(|r| !matches!(r.state, RowState::Pending))
-            .count()
-    }
-
     /// 取り込める（読めた）行の数。
     pub fn ready(&self) -> usize {
         self.rows
@@ -89,28 +81,18 @@ enum Msg {
     Done,
 }
 
-struct Job {
-    rx: Receiver<Msg>,
-    cancel: Arc<AtomicBool>,
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-/// 「CLIP STUDIO から」の窓の状態。
+/// 「CLIP STUDIO から」のウィンドウの状態。
 #[derive(Default)]
 pub struct CspState {
     pub open: bool,
-    /// 窓の位置（見出しのドラッグでずれた量）と、一覧のずらした量。
+    /// ウィンドウの位置（見出しのドラッグでずれた量）と、一覧のずらした量。
     pub offset: Vec2,
     pub scroll: f32,
     /// 手で選んだフォルダ（None は既定の場所）。
     pub folder: Option<PathBuf>,
     pub listing: Option<Listing>,
-    job: Option<Job>,
+    /// 走っている探す仕事（受け口を捨てると取り消す）。
+    job: Option<Worker<Msg>>,
     /// 探し始めのフォルダ（相対の表示を作る）。
     base: Vec<PathBuf>,
     /// 試験用: 既定の場所の代わりに使う環境の手がかり（実機の環境変数ではなく、試験用の一時フォルダを探す）。
@@ -132,6 +114,13 @@ impl CspState {
         self.job = None;
     }
 }
+
+/// 「CLIP STUDIO から」の探す仕事（描き直すだけ。読むだけなので止めない）。ウィンドウはキーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    modal: Some(|app| app.brushes.csp.open),
+    ..JobSpec::new("brushes.csp", |app| app.brushes.csp.is_busy())
+};
 
 fn shown_path(base: &[PathBuf], path: &std::path::Path) -> String {
     let relative = base
@@ -169,14 +158,14 @@ fn run(source: Source, cancel: &AtomicBool, tx: &std::sync::mpsc::Sender<Msg>, p
 }
 
 impl AppState {
-    /// 窓を開いて、既定の場所を探す。
+    /// ウィンドウを開いて、既定の場所を探す。
     pub(super) fn brush_csp_open(&mut self) {
         self.brushes.csp.open = true;
         self.brushes.csp.folder = None;
         self.brush_csp_scan();
     }
 
-    /// 窓を閉じる（走っている仕事は取り消し、一覧は捨てる）。
+    /// ウィンドウを閉じる（走っている仕事は取り消し、一覧は捨てる）。
     pub(super) fn brush_csp_close(&mut self) {
         let csp = &mut self.brushes.csp;
         csp.open = false;
@@ -204,15 +193,24 @@ impl AppState {
         };
         csp.listing = None;
         let park = std::mem::take(&mut csp.park_next);
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-brush-csp".into())
-            .spawn(move || run(source, &flag, &tx, park));
+        let spawned = Worker::spawn("yolu-brush-csp", move |tx, cancel| {
+            run(source, cancel.flag(), &tx, park)
+        });
         match spawned {
-            Ok(_) => csp.job = Some(Job { rx, cancel }),
-            Err(e) => self.message = e.to_string(),
+            Ok(worker) => csp.job = Some(worker.cancel_on_drop()),
+            Err(e) => {
+                let lang = self.lang;
+                self.fail(
+                    NoticeSource::Brush,
+                    lang.with_reason(
+                        lang.pick(
+                            "CLIP STUDIO のブラシを探せません",
+                            "Cannot search for the CLIP STUDIO brushes",
+                        ),
+                        lang.thread_error(&e),
+                    ),
+                );
+            }
         }
     }
 
@@ -223,10 +221,10 @@ impl AppState {
             let Some(job) = &csp.job else {
                 return;
             };
-            let msg = match job.rx.try_recv() {
-                Ok(m) => m,
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => Msg::Done,
+            let msg = match job.poll() {
+                Polled::Message(m) => m,
+                Polled::Empty => return,
+                Polled::Lost => Msg::Done,
             };
             match msg {
                 Msg::Scan(scan) => {
@@ -250,11 +248,7 @@ impl AppState {
                     });
                 }
                 Msg::Peeked(i, result) => {
-                    if let Some(row) = csp
-                        .listing
-                        .as_mut()
-                        .and_then(|l| l.rows.get_mut(i))
-                    {
+                    if let Some(row) = csp.listing.as_mut().and_then(|l| l.rows.get_mut(i)) {
                         row.state = match result {
                             Ok(peek) => RowState::Ready(peek),
                             Err(e) => RowState::Failed(e),
@@ -293,7 +287,7 @@ impl AppState {
         }
     }
 
-    /// 選んだ行だけを取り込み、窓を閉じる（取り込みは裏で進み、結果は状態の帯に出る）。何も選んでいなければ何もしない。
+    /// 選んだ行だけを取り込み、ウィンドウを閉じる（取り込みは裏で進み、結果は状態の帯に出る）。何も選んでいなければ何もしない。
     pub(super) fn brush_csp_import(&mut self) {
         let paths: Vec<PathBuf> = self
             .brushes
@@ -319,7 +313,7 @@ impl AppState {
         self.brush_import_start(paths);
     }
 
-    /// フォルダを手で選ぶ窓を頼む。
+    /// フォルダを手で選ぶウィンドウを頼む。
     pub(super) fn brush_csp_pick_folder(&mut self) {
         self.dialog_request = Some(DialogRequest::ClipStudioFolder);
     }

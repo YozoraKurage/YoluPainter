@@ -1,4 +1,4 @@
-//! 新規プロジェクト・プロジェクトの構成の窓（Unity 版の `NewProjectWindow` と同じ 1 つの窓）と、テクスチャセットを消す確かめの窓を描く。
+//! 新規プロジェクト・プロジェクトの構成のウィンドウ（Unity 版の `NewProjectWindow` と同じ 1 つのウィンドウ）と、テクスチャセットを消す確認のウィンドウを描く。
 //! 値は `AppState::np.window` そのもので、部品は `NpAction` を返し、描いたあとにまとめて当てる（描く途中で状態を借りない）。
 //!
 //! 文言は名前・状態・短い理由だけ。使い方の説明・空の欄の案内は置かず、説明はツールチップ。モデルの 3D の見本はまだ無い
@@ -10,8 +10,8 @@ use egui::{pos2, vec2, Id, Key, Rect, Sense, Ui, UiBuilder, Vec2};
 
 use super::configure::{resampling_name, unused_groups, ConfirmKind, Plan};
 use super::{
-    limit_error, size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template,
-    MAX_SETS, RESOLUTIONS,
+    size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template, MAX_SETS,
+    RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, NormalYDirection};
 use crate::lang::Lang;
@@ -36,12 +36,12 @@ fn main_id() -> Id {
     Id::new("yolu.newproject")
 }
 
-/// 最後に描いた窓の矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
+/// 最後に描いたウィンドウの矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
 pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, main_id())
 }
 
-/// 窓が見せるもの（描く前に集める。描く途中で状態を借りない）。
+/// ウィンドウが見せるもの（描く前に集める。描く途中で状態を借りない）。
 struct View {
     lang: Lang,
     groups: Vec<Group>,
@@ -66,12 +66,14 @@ fn view(app: &AppState, win: &NpWindow) -> View {
     let groups = win.groups(app);
     // 選んでいない・今のモデルが無いときは None（欄は空のまま。説明はツールチップ）。名前は表示の文字で判定しない
     let file_name = |path: &Path| {
-        path.file_name()
-            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        )
     };
     let (model_name, model_tip) = match (&win.prep, win.model_path()) {
         (_, Some(path)) => (Some(file_name(path)), path.display().to_string()),
-        // 今のモデルのファイルがあれば、そのファイル名（新規の窓と同じ見え方）。なければ今のモデル（構成）・Live Link のモデル（新規）の名前
+        // 今のモデルのファイルがあれば、そのファイル名（新規のウィンドウと同じ見え方）。なければ今のモデル（構成）・Live Link のモデル（新規）の名前
         _ => match (win.app_model(app), &app.np.model_file) {
             (_, Some(file)) if win.configure => (Some(file_name(file)), file.display().to_string()),
             (Some(m), _) => (Some(m.name.clone()), String::new()),
@@ -136,7 +138,7 @@ fn list_rows(win: &NpWindow, v: &View) -> usize {
     }
 }
 
-/// 窓の高さ（描く順と同じ積み上げ）。
+/// ウィンドウの高さ（描く順と同じ積み上げ）。
 fn height(win: &NpWindow, v: &View) -> f32 {
     let mut h = window::HEADER_HEIGHT + PAD;
     if !win.configure {
@@ -162,7 +164,7 @@ fn height(win: &NpWindow, v: &View) -> f32 {
     h + 4.0 + FOOT
 }
 
-/// 毎フレーム: 窓を描き、押されたものを `Action` として当てる。
+/// 毎フレーム: ウィンドウを描き、押されたものを `Action` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     remove_confirm(ctx, app);
     let Some(mut win) = app.np.window.take() else {
@@ -171,7 +173,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let v = view(app, &win);
     let lang = v.lang;
     let configure = win.configure;
-    // 文字を打っている間のキーは、その欄に任せる。確かめの一覧が出ているときは、その窓の取消・決定
+    // 文字を打っている間のキーは、その欄に任せる。確かめの一覧が出ているときは、そのウィンドウの取消・決定
     let keys_free = !ctx.egui_wants_keyboard_input() && win.dropdown.is_none();
     let (enter, esc) = if keys_free {
         ctx.input_mut(|i| {
@@ -547,7 +549,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
                 id.with("add-unused"),
                 "add",
                 lang.pick(
-                    "セットの無いマテリアルに、空のテクスチャセットを足す",
+                    "セットの無いマテリアルに、空のテクスチャセットを追加",
                     "Add an empty texture set for each material without one",
                 ),
                 false,
@@ -766,13 +768,13 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
         actions.push(NpAction::Submit);
     }
 
-    // 確かめ（窓の上に重ねる。下の部品へは通さない）
+    // 確かめ（ウィンドウの上に重ねる。下の部品へは通さない）
     if let Some(plan) = win.confirm.clone() {
         draw_confirm(ui, frame, &plan, lang, actions);
     }
 }
 
-/// 窓の中の、スクロールする一覧の枠（`area` の中にだけ描く）。返すのは、一覧の中に描く Ui と、スクロールの寸法（描き終えたあとの
+/// ウィンドウの中の、スクロールする一覧の枠（`area` の中にだけ描く）。返すのは、一覧の中に描く Ui と、スクロールの寸法（描き終えたあとの
 /// `Scroll::end` がつまみを出す）。
 fn list_frame(ui: &mut Ui, area: Rect, scroll: &mut f32, content: f32) -> (Ui, Scroll) {
     let bar = Scroll::begin(ui, area, content, scroll);
@@ -843,7 +845,7 @@ fn draw_materials(
                 lang.pick("1 つは残します", "At least one stays checked")
             )
         } else if full {
-            format!("{}\n{detail}", limit_error(lang))
+            format!("{}\n{detail}", crate::lang::refusals::set_limit(lang))
         } else {
             detail
         };
@@ -948,7 +950,7 @@ fn draw_drafts(
                 id.with(("name", i)),
                 &d.name,
                 Some(if d.uid.is_none() {
-                    lang.pick("足す空のテクスチャセット", "A new, empty texture set")
+                    lang.pick("追加する空のテクスチャセット", "A new, empty texture set")
                 } else {
                     lang.pick("テクスチャセットの名前", "Texture set name")
                 }),
@@ -966,7 +968,7 @@ fn draw_drafts(
         );
         let size_tip = if d.uid.is_none() {
             lang.pick(
-                "足すテクスチャセットの大きさ",
+                "追加するテクスチャセットの大きさ",
                 "Size of the new texture set",
             )
             .to_owned()
@@ -1070,11 +1072,11 @@ fn draw_drafts(
         ui,
         add,
         id.with("add"),
-        lang.pick("テクスチャセットを足す", "Add Texture Set"),
+        lang.pick("テクスチャセットを追加", "Add Texture Set"),
         false,
         can_add && !locked,
         Some(lang.pick(
-            "マテリアルの無いセットも足せる、空のテクスチャセット（開いているセットと同じ大きさ・チャンネル）",
+            "マテリアルの無いセットも追加できる、空のテクスチャセット（開いているセットと同じ大きさ・チャンネル）",
             "An empty texture set, for a material without one or none yet (same size and channels as the open one)",
         )),
         Some("add"),
@@ -1221,12 +1223,12 @@ fn confirm_title(lang: Lang, plan: &Plan, reload: bool) -> &'static str {
     }
 }
 
-/// 適用の前の確かめ: 窓の上に重ねる一覧（消す・大きさ・モデル）。取り消せない理由は 1 行の警告だけ。
+/// 適用の前の確かめ: ウィンドウの上に重ねる一覧（消す・大きさ・モデル）。取り消せない理由は 1 行の警告だけ。
 fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &mut Vec<NpAction>) {
     let id = main_id().with("confirm");
     let p = ui.painter().clone();
     let rect = frame.rect;
-    // 下の部品へ通さない（同じ層で後から足した部品が上になる）
+    // 下の部品へ通さない（同じレイヤーで後から足した部品が上になる）
     ui.interact(rect, id.with("blocker"), Sense::click_and_drag());
     w::rounded(&p, rect, egui::Color32::from_black_alpha(150), 6.0);
     let shown = plan.rows.len().min(CARD_ROWS);
@@ -1355,7 +1357,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
     }
 }
 
-/// テクスチャセットのパネルで「消す」を押したときの確かめの窓（モーダル）。
+/// テクスチャセットのパネルで「消す」を押したときの確認のウィンドウ（モーダル）。
 fn remove_confirm(ctx: &egui::Context, app: &mut AppState) {
     let Some(uids) = app.np.remove_confirm.clone() else {
         return;

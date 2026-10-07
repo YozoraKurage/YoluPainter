@@ -114,8 +114,11 @@ pub fn rebind_surface_path(
                 point: i,
                 tolerance,
             })?;
+        // 接線（取っ手はモデルの空間の向き）はそのまま持っていく
         points.push(
-            point_of(&hit, p.pressure).map_err(|_| RebindError::MissingTriangle { point: i })?,
+            point_of(&hit, p.pressure)
+                .map_err(|_| RebindError::MissingTriangle { point: i })?
+                .with_tangent(p.tangent),
         );
     }
     Ok(SurfacePath {
@@ -125,5 +128,6 @@ pub fn rebind_surface_path(
         points,
         model_fingerprint: fingerprint(to),
         material: path.material.clone(),
+        style: path.style.clone(),
     })
 }

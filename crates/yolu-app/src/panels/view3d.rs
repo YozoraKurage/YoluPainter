@@ -1,10 +1,10 @@
-//! 3D ビューのタブ: 自前の wgpu の 3D（`crate::view3d`。モデル・カメラ・面に描く）と、後で差し込む外の窓（埋め込んだ Unity の
-//! プレイヤー（UaaL）。Windows では子の窓の HWND をこのタブの矩形に合わせて動かす）への知らせ。
+//! 3D ビューのタブ: 自前の wgpu の 3D（`crate::view3d`。モデル・カメラ・面に描く）と、後で差し込む別ウィンドウ（埋め込んだ Unity の
+//! プレイヤー（UaaL）。Windows では子ウィンドウの HWND をこのタブの矩形に合わせて動かす）への知らせ。
 //!
-//! 外の窓へ知らせる口: `View3dHost` を渡すと、タブの中身の矩形（物理の画素、ネイティブの窓のクライアント領域の左上が原点）が
-//! 決まった・変わったとき（`Placed`）、隠れたとき（別のタブの裏・閉じた。`Hidden`）、別の窓に出したとき（`Placed` の viewport・
-//! floating が変わる）、メニューが重なった・外れたとき（`Covered`。子の窓は egui の絵より上に出るので、重なるあいだは隠すなど）に
-//! 呼ばれる。入力は Rust の側で受け、タブの中のポインタ・ボタン・ホイールを `Input` で渡す（子の窓には入力を持たせない前提）。
+//! 別ウィンドウへ知らせる口: `View3dHost` を渡すと、タブの中身の矩形（物理の画素、ネイティブのウィンドウのクライアント領域の左上が原点）が
+//! 決まった・変わったとき（`Placed`）、隠れたとき（別のタブの裏・閉じた。`Hidden`）、別のウィンドウに出したとき（`Placed` の viewport・
+//! floating が変わる）、メニューが重なった・外れたとき（`Covered`。子ウィンドウは egui の絵より上に出るので、重なるあいだは隠すなど）に
+//! 呼ばれる。入力は Rust の側で受け、タブの中のポインタ・ボタン・ホイールを `Input` で渡す（子ウィンドウには入力を持たせない前提）。
 
 use std::sync::{Arc, Mutex};
 
@@ -28,7 +28,7 @@ pub struct Placement {
     /// x・y・幅・高さ（物理の画素）。
     pub rect_px: [i32; 4],
     pub pixels_per_point: f32,
-    /// ドックから外して浮かせた窓の中か。
+    /// ドックから外して浮かせたウィンドウの中か。
     pub floating: bool,
 }
 
@@ -51,7 +51,7 @@ pub enum View3dEvent {
     Input(View3dInput),
 }
 
-/// 3D ビューの中身を描く外の窓（Unity のプレイヤーなど）が受ける口。
+/// 3D ビューの中身を描く別ウィンドウ（Unity のプレイヤーなど）が受ける口。
 pub trait View3dHost {
     fn on_event(&mut self, event: &View3dEvent);
 }
@@ -199,13 +199,14 @@ impl View3dSlot {
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
         }
-        // 塗りつぶしの層の置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
+        // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;
         if drawn && !app.view3d.pose.mode {
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
             crate::fillfx::gizmo::draw(ui, app, content, pointer);
+            crate::fillfx::points::draw(ui, app, content, pointer);
             gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
             crate::fillfx::decal_drop(ui, app, content);
         }
@@ -232,7 +233,7 @@ impl View3dSlot {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
         } else if app.tool.def().surface == Surface::Path {
-            // パスの道具: 選んでいる層のパスの線と点を重ねる（ブラシの円は出さない）
+            // パスのツール: 選んでいるレイヤーのパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
@@ -245,7 +246,7 @@ impl View3dSlot {
                 });
             }
         } else if app.tool.def().surface == Surface::Region {
-            // 範囲の道具: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
+            // 範囲のツール: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
@@ -330,7 +331,13 @@ impl View3dSlot {
     /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない。文字なし、名前と理由はツールチップ）: 3D の絵が元より縮んでいる印
     /// （押せない。`reduced` は縮めた段と、メモリの予算で決まったか）、3D の表示の切り替え（押すとメニュー）、光と環境の設定、モデル全体が
     /// 見える位置へ戻す。返すのは設定のアイコンの矩形（設定のパネルを下に置く）。
-    fn corner(&self, ui: &mut Ui, app: &mut AppState, view: Rect, reduced: Option<(u32, Option<bool>)>) -> Corner {
+    fn corner(
+        &self,
+        ui: &mut Ui,
+        app: &mut AppState,
+        view: Rect,
+        reduced: Option<(u32, Option<bool>)>,
+    ) -> Corner {
         if app.view3d.model.is_none() {
             return Corner::default();
         }
@@ -343,9 +350,13 @@ impl View3dSlot {
         let mut items = Vec::new();
         if let Some((level, by_budget)) = reduced {
             items.push(
-                w::CornerIcon::new("reduced", "warning", reduced_tooltip(lang, level, by_budget))
-                    .indicator()
-                    .color(t::WARNING),
+                w::CornerIcon::new(
+                    "reduced",
+                    "warning",
+                    reduced_tooltip(lang, level, by_budget),
+                )
+                .indicator()
+                .color(t::WARNING),
             );
         }
         items.push(
@@ -360,7 +371,10 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "settings",
                 "light_mode",
-                lang.pick("光・環境・トーンマッピング", "Light, environment, tone mapping"),
+                lang.pick(
+                    "光・環境・トーンマッピング",
+                    "Light, environment, tone mapping",
+                ),
             )
             .selected(app.view3d.display.settings_open),
         );
@@ -368,7 +382,10 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "frame",
                 "target",
-                lang.pick("モデル全体が見える位置へ戻す", "Fit the whole model in view"),
+                lang.pick(
+                    "モデル全体が見える位置へ戻す",
+                    "Fit the whole model in view",
+                ),
             )
             .enabled(!app.is_stroking()),
         );
@@ -383,7 +400,10 @@ impl View3dSlot {
                         kind: PopupKind::View3dShading,
                         state: PopupState::new(
                             &ctx,
-                            Rect::from_min_size(pos2(b.left(), b.bottom() + 2.0), vec2(b.width(), 0.0)),
+                            Rect::from_min_size(
+                                pos2(b.left(), b.bottom() + 2.0),
+                                vec2(b.width(), 0.0),
+                            ),
                         ),
                     });
                 }
@@ -472,7 +492,8 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         return None;
     }
     ui.input(|i| {
-        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN)).then_some(i.modifiers.alt)
+        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN))
+            .then_some(i.modifiers.alt)
     })
 }
 
@@ -579,20 +600,40 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             };
             if tab == SettingsTab::Quality {
                 // アンチエイリアス: 機材が使える数だけ押せる（使えない数は理由をツールチップに）
-                heading(&mut rows, &p, lang.pick("アンチエイリアス", "Anti-aliasing"));
+                heading(
+                    &mut rows,
+                    &p,
+                    lang.pick("アンチエイリアス", "Anti-aliasing"),
+                );
                 let r = rows.row(24.0, 4.0);
                 let supported = d.supported_sample_counts();
                 let shown = d.shown_samples();
                 for (n, cell) in display::SAMPLE_CHOICES.iter().zip(Rows::split(r, 4, 4.0)) {
                     let usable = supported.contains(n);
-                    let label = if *n == 1 { lang.pick("切", "Off").to_owned() } else { format!("{n}×") };
+                    let label = if *n == 1 {
+                        lang.pick("切", "Off").to_owned()
+                    } else {
+                        format!("{n}×")
+                    };
                     let tip = if usable {
-                        lang.pick("縁のぎざぎざをなめらかにする（MSAA）", "Smooths jagged edges (MSAA)")
+                        lang.pick(
+                            "縁のぎざぎざをなめらかにする（MSAA）",
+                            "Smooths jagged edges (MSAA)",
+                        )
                     } else {
                         lang.pick("この機材は対応していません", "Not supported on this device")
                     };
-                    if w::button(ui, cell, ("view3d.set.aa", *n), &label, shown == *n, usable, Some(tip), None)
-                        .clicked()
+                    if w::button(
+                        ui,
+                        cell,
+                        ("view3d.set.aa", *n),
+                        &label,
+                        shown == *n,
+                        usable,
+                        Some(tip),
+                        None,
+                    )
+                    .clicked()
                     {
                         app.apply(Action::View3d(Op::Antialias(*n)));
                     }

@@ -42,7 +42,9 @@ fn a_thread_that_already_holds_the_gpu_can_ask_again_for_a_second_device() {
         gpu_lease::lease();
         gpu_lease::lease();
     });
-    thread.join().expect("2 回目からは待たない（自分を待って止まらない）");
+    thread
+        .join()
+        .expect("2 回目からは待たない（自分を待って止まらない）");
 }
 
 #[test]

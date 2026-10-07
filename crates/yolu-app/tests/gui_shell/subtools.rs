@@ -1,4 +1,4 @@
-//! 左のドックの「サブツール」（今の道具のサブツールの一覧・ツールプロパティ・ブラシサイズを 1 か所に）と、それに合わせたオプションバー・右のプロパティ
+//! 左のドックの「サブツール」（今のツールのサブツールの一覧・ツールプロパティ・ブラシサイズを 1 か所に）と、それに合わせたオプションバー・右のプロパティ
 //! （egui_kittest）。サブツールのプリセットの状態の操作（画面を描かない）は `src/subtool` の単体試験、ブラシの一覧の操作は `brush_list.rs`・`brushes.rs`。
 //! 見た目の試験は、パネルの中だけを撮る（ほかのパネルの変更で壊れない）。
 use crate::common;
@@ -43,7 +43,7 @@ fn panel(h: &H) -> Rect {
     )
 }
 
-/// 窓のどこかに出ている、この名前の部品の数。
+/// ウィンドウのどこかに出ている、この名前の部品の数。
 fn count(h: &H, label: &str) -> usize {
     h.query_all_by_label(label).count()
 }
@@ -156,7 +156,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
                     );
                 }
                 SubTools::Presets => {
-                    let list = st(&h).subtool_list(tool).expect("プリセットの道具");
+                    let list = st(&h).subtool_list(tool).expect("プリセットのツール");
                     let current = list.current();
                     for b in fields::builtins(tool) {
                         let name = lang.pick(b.ja, b.en);
@@ -371,10 +371,11 @@ fn pressing_the_current_row_again_or_double_clicking_it_keeps_the_settings_chang
 }
 
 #[test]
-fn a_long_list_scrolls_to_the_added_row_the_next_row_after_a_delete_and_the_current_row_after_switching_tools() {
+fn a_long_list_scrolls_to_the_added_row_the_next_row_after_a_delete_and_the_current_row_after_switching_tools(
+) {
     let mut h = app(1280.0, 900.0, 128);
     pick(&mut h, Tool::Fill);
-    // 組み込み 5 つに自分のを 4 つ足すと 9 行で、一覧の窓（8 行）に入りきらない。足した行は見えるところまで送る
+    // 組み込み 5 つに自分のを 4 つ足すと 9 行で、一覧のウィンドウ（8 行）に入りきらない。足した行は見えるところまで送る
     for name in ["プリセット", "プリセット 2", "プリセット 3", "プリセット 4"] {
         // 一覧が伸びると下の帯が動くので、押すたびに探す
         let add = dock_rect(&h, "今の設定を新しいサブツールに");
@@ -382,12 +383,12 @@ fn a_long_list_scrolls_to_the_added_row_the_next_row_after_a_delete_and_the_curr
         h.run();
         assert!(
             row(&h, name).height() > 20.0,
-            "{name} の行が窓に見えている: {:?}",
+            "{name} の行がウィンドウに見えている: {:?}",
             in_panel(&h, name)
         );
         assert!(row_selected(&h, name));
     }
-    // 道具を替えて戻ると、今の行（足した最後の行）が見える
+    // ツールを替えて戻ると、今の行（足した最後の行）が見える
     pick(&mut h, Tool::Gradient);
     pick(&mut h, Tool::Fill);
     assert!(row(&h, "プリセット 4").height() > 20.0);
@@ -571,7 +572,7 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
         .apply(Action::SubTool(SubToolAction::Add(Tool::Ruler)));
     let key = first.state.subtool_list(Tool::Ruler).unwrap().current();
     assert!(dir.join("subtools").join("ruler.ylsubtool").is_file());
-    // 別の起動で読み戻す（読んだあと、道具を選ぶと同じ設定）
+    // 別の起動で読み戻す（読んだあと、ツールを選ぶと同じ設定）
     let mut again =
         YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
     assert!(again
@@ -588,7 +589,7 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
         again.state.drafting.ruler_kind,
         yolu_app::drafting::RulerKind::Concentric
     );
-    // 壊れたファイルは、起動の知らせに出る（ほかの道具の保存は読む）
+    // 壊れたファイルは、起動の知らせに出る（ほかのツールの保存は読む）
     std::fs::write(dir.join("subtools").join("gradient.ylsubtool"), "x").unwrap();
     let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
     assert!(
@@ -687,7 +688,7 @@ fn the_brush_size_section_is_only_for_tools_with_a_size() {
 #[test]
 fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_properties() {
     let mut h = app(1600.0, 1000.0, 128);
-    // 右のプロパティ（ステンシル・マテリアル・レイヤーのタブ）の中身は、道具によらない
+    // 右のプロパティ（ステンシル・マテリアル・レイヤーのタブ）の中身は、ツールによらない
     let right = |r: Rect| r.left() > 1300.0 && r.top() > 560.0;
     let fingerprint = |h: &H| -> Vec<String> {
         let mut found: Vec<(i32, i32, String)> = h
@@ -712,10 +713,10 @@ fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_prop
         assert_eq!(
             fingerprint(&h),
             base,
-            "{tool:?}: 右のプロパティは層で決まる（道具では替わらない）"
+            "{tool:?}: 右のプロパティはレイヤーで決まる（ツールでは替わらない）"
         );
     }
-    // 塗りつぶしのレイヤーを選ぶと、右はレイヤーの欄になる（道具は関係なく同じ）。ツールプロパティは道具のまま
+    // 塗りつぶしのレイヤーを選ぶと、右はレイヤーの欄になる（ツールは関係なく同じ）。ツールプロパティはツールのまま
     pick(&mut h, Tool::Fill);
     h.state_mut()
         .state
@@ -733,7 +734,7 @@ fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_prop
     assert_eq!(fingerprint(&h), on_fill_layer);
 }
 
-// ───────── 狭い窓・日英・説明文 ─────────
+// ───────── 狭いウィンドウ・日英・説明文 ─────────
 
 /// 描いた文字を全部集める（クリップの中に収まっているかも見る）。
 fn drawn(h: &H) -> (Vec<String>, Vec<String>) {
@@ -814,7 +815,7 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
             yolu_app::ui::widgets::record_truncations(false);
             let (texts, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{what}: 切れた文字 {clipped:#?}");
-            // 道具の名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前だけ
+            // ツールの名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前だけ
             for t in &truncated {
                 assert!(
                     t == "Watercolor Edge"
@@ -862,7 +863,7 @@ fn nothing_in_the_panel_is_clipped_with_the_modify_selection_and_path_blocks_ope
     }
 }
 
-// ───────── キー・道具を替える ─────────
+// ───────── キー・ツールを替える ─────────
 
 #[test]
 fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_stays() {
@@ -880,7 +881,7 @@ fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_sta
         row_selected(&h, "メッシュの塊"),
         "バケツへ戻ると、バケツの選び"
     );
-    // 消しゴム: E、ブラシへ戻ると描く道具の最後のブラシ
+    // 消しゴム: E、ブラシへ戻ると描くツールの最後のブラシ
     key(&h, Key::E, Modifiers::NONE);
     h.run();
     assert!(!in_panel(&h, "ソフト消しゴム").is_empty());

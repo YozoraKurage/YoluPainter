@@ -1,8 +1,8 @@
 //! キーとマウスの割り当ての宣言の表。キーボードの割り当て（`bindings`）・マウスと修飾キーの組み合わせ（`GESTURES`）・押している間だけ効くキーや
 //! ビューの中のキー（`CONTEXT_KEYS`）を、ここだけに書く。キーの処理（`shell::handle_shortcuts`・3D ビューの回す・パン・ステンシルの移動など）と
-//! ショートカットの一覧の窓（`shortcuts`）は、この表を読む。実装の入力判定のソースを文字で読んで一覧を作る方式（ビルドスクリプト）はやめた:
+//! ショートカットの一覧のウィンドウ（`shortcuts`）は、この表を読む。実装の入力判定のソースを文字で読んで一覧を作る方式（ビルドスクリプト）はやめた:
 //! 表が実装の一次の資料なので、一覧と実際の入力が食い違わない（食い違いは試験が、表のすべての割り当てを実際の入力へ流して確かめる）。
-//! 道具のキーは道具の表（`tools`）の `key` から作る。キーを利用者が替える設定は、この表の上に作る（`bindings` を差し替える）。
+//! ツールのキーはツールの表（`tools`）の `key` から作る。キーを利用者が替える設定は、この表の上に作る（`bindings` を差し替える）。
 //!
 //! 順序の決まり: `consume_key` は、書いていない Shift・Alt を気にしない（Shift 付きも修飾なしに当たる）ので、同じキーの割り当ては、修飾の多いほうを
 //! 先に判定する。`bindings()` は一覧に出す順、`dispatch` は判定の順（修飾の多いものが先。同じなら表の順）。
@@ -27,10 +27,12 @@ pub enum When {
     Always,
     /// 選択範囲があるとき。
     HasSelection,
-    /// この道具を選んでいるとき。
+    /// このツールを選んでいるとき。
     Tool(Tool),
     /// Windows のとき（画面から色を取る）。
     Windows,
+    /// 点のグラデーションの点を編集していて、点を選んでいるとき。
+    PointSelected,
 }
 
 impl When {
@@ -40,6 +42,9 @@ impl When {
             When::HasSelection => app.doc.selection().is_some(),
             When::Tool(tool) => app.tool == tool,
             When::Windows => cfg!(windows) && !app.is_stroking(),
+            When::PointSelected => {
+                crate::fillfx::points::target(app).is_some() && app.fillfx.point_selected.is_some()
+            }
         }
     }
 }
@@ -75,7 +80,7 @@ fn sel_edit(edit: SelEdit) -> Action {
     Action::Sel(SelAction::Edit(edit))
 }
 
-/// 道具のキーの文字（「B」「Shift+G」「4」。道具の表の `key`）から、修飾とキーを読む。キーが空・読めなければ None。
+/// ツールのキーの文字（「B」「Shift+G」「4」。ツールの表の `key`）から、修飾とキーを読む。キーが空・読めなければ None。
 pub fn parse_tool_key(text: &str) -> Option<(Modifiers, Key)> {
     let mut modifiers = Modifiers::NONE;
     let mut rest = text;
@@ -117,6 +122,20 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd_shift, Key::Z, Action::Redo),
         kb(cmd, Key::A, sel_edit(SelEdit::All)),
         kb(cmd, Key::D, sel_edit(SelEdit::Clear)),
+        // 点のグラデーション: 選んでいる点を消す。選択範囲の消去・パスの点の削除と同じキーなので、それらより前に置く（修飾の数が同じ割り当ては
+        // 表の順に判定され、先に当たったものがキーを取る。点を選んでいる間は、Delete・Backspace の相手は点）
+        kb_when(
+            none,
+            Key::Delete,
+            When::PointSelected,
+            Action::Fill(crate::fillfx::FillOp::DeletePoint),
+        ),
+        kb_when(
+            none,
+            Key::Backspace,
+            When::PointSelected,
+            Action::Fill(crate::fillfx::FillOp::DeletePoint),
+        ),
         // 選択範囲があるときだけ: 消去（Delete）
         kb_when(
             none,
@@ -140,7 +159,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd, Key::Comma, Action::Prefs(PrefsAction::Open)),
         kb(shift, Key::R, Action::ResetRotation),
     ];
-    // 道具のキー（道具の表のとおり。ツールの帯の並び）
+    // ツールのキー（ツールの表のとおり。ツールの帯の並び）
     for tool in Tool::ALL {
         if let Some((modifiers, key)) = parse_tool_key(tool.key()) {
             v.push(kb(modifiers, key, Action::SelectTool(tool)));
@@ -152,7 +171,7 @@ pub fn bindings() -> Vec<KeyBinding> {
             Key::Q,
             Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
         ),
-        // パスの道具: 選んでいる点（無ければ最後の点）を消す
+        // パスのツール: 選んでいる点（無ければ最後の点）を消す
         kb_when(
             none,
             Key::Delete,
@@ -164,6 +183,13 @@ pub fn bindings() -> Vec<KeyBinding> {
             Key::Backspace,
             When::Tool(Tool::Path),
             Action::Path(PathAction::DeleteSelected),
+        ),
+        // パスのツール: パスの編集を抜ける（次の点は新しいパスを始める）
+        kb_when(
+            none,
+            Key::Enter,
+            When::Tool(Tool::Path),
+            Action::Path(PathAction::SelectPath(None)),
         ),
         kb(
             none,
@@ -252,7 +278,7 @@ pub fn dispatch(i: &mut InputState, app: &AppState) -> Vec<Action> {
     actions
 }
 
-/// 移動・変形の道具の矢印キー（画面の向きの 1 画素。Shift で 10）。
+/// 移動・変形のツールの矢印キー（画面の向きの 1 画素。Shift で 10）。
 pub const MOVE_KEYS: [(Key, (f64, f64)); 4] = [
     (Key::ArrowLeft, (-1.0, 0.0)),
     (Key::ArrowRight, (1.0, 0.0)),
@@ -270,7 +296,7 @@ pub const VIEW_ROTATE: Key = Key::R;
 /// パン（押しながら左ドラッグ。Ctrl を足すと拡縮）のキー。2D のキャンバスと 3D ビューで同じ。
 pub const VIEW_PAN: Key = Key::Space;
 /// ステンシルの置き場を動かすキー（押しながらドラッグ）。
-pub const STENCIL_MOVE: Key = Key::T;
+pub const STENCIL_MOVE: Key = Key::Y;
 /// ステンシルを使わないあいだ押すキー。
 pub const STENCIL_BYPASS: Key = Key::N;
 /// 3D ビューで選んだセットを収めるキー（3D の上で、修飾なし）。
@@ -292,7 +318,7 @@ impl ContextKey {
     }
 }
 
-/// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの T）は、`GESTURES` の側に出る。
+/// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの Y）は、`GESTURES` の側に出る。
 pub const CONTEXT_KEYS: [ContextKey; 9] = [
     ContextKey {
         scope: "canvas",
@@ -370,7 +396,7 @@ pub enum Operation {
     Zoom,
     /// 2D キャンバスの表示を回す。
     Rotate,
-    /// 描く道具で色を取る（Alt）。
+    /// 描くツールで色を取る（Alt）。
     Pick,
     SelectionAdd,
     SelectionSubtract,
@@ -390,7 +416,7 @@ impl Operation {
             Self::Zoom => lang.pick("ズーム", "Zoom"),
             Self::Rotate => lang.pick("回転", "Rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
-            Self::SelectionAdd => lang.pick("選択範囲に足す", "Add to Selection"),
+            Self::SelectionAdd => lang.pick("選択範囲に追加", "Add to Selection"),
             Self::SelectionSubtract => lang.pick("選択範囲から引く", "Subtract from Selection"),
             Self::SelectionIntersect => lang.pick("選択範囲と重ねる", "Intersect with Selection"),
             Self::MoveStencil => lang.pick("ステンシルの移動", "Move Stencil"),
@@ -408,7 +434,7 @@ impl Operation {
 /// `held` はあるとき押しているキー。
 #[derive(Clone, Copy, Debug)]
 pub struct Gesture {
-    /// 一覧のまとまり（選択範囲の道具の組み合わせ方は「selection」で、一覧では 2D ビューに並ぶ）。
+    /// 一覧のまとまり（選択範囲のツールの組み合わせ方は「selection」で、一覧では 2D ビューに並ぶ）。
     pub scope: &'static str,
     pub held: Option<Key>,
     pub button: PointerButton,
@@ -443,7 +469,7 @@ use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
 pub const GESTURES: [Gesture; 19] = [
-    // 2D キャンバス: 中ボタンのパンと、Shift で回転。左ボタンの Alt は描く道具のスポイト
+    // 2D キャンバス: 中ボタンのパンと、Shift で回転。左ボタンの Alt は描くツールのスポイト
     gesture_of(
         "canvas",
         None,
@@ -465,7 +491,7 @@ pub const GESTURES: [Gesture; 19] = [
         (true, false, false),
         Operation::Pick,
     ),
-    // 選択範囲の道具の作り方: Shift で足す・Ctrl で引く・両方で重ねる
+    // 選択範囲のツールの作り方: Shift で足す・Ctrl で引く・両方で重ねる
     gesture_of(
         "selection",
         None,
@@ -531,7 +557,7 @@ pub const GESTURES: [Gesture; 19] = [
         (true, false, false),
         Operation::Orbit,
     ),
-    // ステンシル（T を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
+    // ステンシル（Y を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
     gesture_of(
         "stencil",
         Some(STENCIL_MOVE),
@@ -600,7 +626,7 @@ pub fn gesture(scope: &str, button: PointerButton, m: &Modifiers, held: bool) ->
         .map(|g| g.operation)
 }
 
-/// 描く道具の左ボタンが、この修飾でスポイトになるか（2D だけ）。
+/// 描くツールの左ボタンが、この修飾でスポイトになるか（2D だけ）。
 pub fn picks(m: &Modifiers) -> bool {
     gesture("canvas", Primary, m, false) == Some(Operation::Pick)
 }

@@ -113,7 +113,7 @@ fn reference_document(doc: &Document, marked: &HashSet<LayerId>) -> Result<Docum
             pending.push((parent, false));
         }
         if layer.clipping() {
-            // 合成器と同じく、同じ親の下へ辿って最初の非クリッピング層
+            // 合成器と同じく、同じ親の下へ辿って最初の非クリッピングレイヤー
             // （全てクリッピングなら先頭の兄弟）を下地にする。
             let at = doc.layer_index(id).ok_or(CoreError::LayerNotFound)?;
             let mut base = None;

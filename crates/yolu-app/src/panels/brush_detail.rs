@@ -1,6 +1,6 @@
-//! ブラシの詳細の窓（クリスタのサブツール詳細に当たる）: 左にカテゴリの一覧、右にそのカテゴリの欄、上に今の設定の見本のストローク。
-//! 浮いた窓で、見出しのドラッグで動かせる。モーダルではないので、開いたまま（窓の外で）描ける。開くのはツールプロパティの調整の
-//! ボタン、閉じるのは窓の閉じるボタンかもう一度そのボタン。欄は `brush_props` のカテゴリごとの関数で、ブラシの設定をその場で変える。
+//! ブラシの詳細のウィンドウ（クリスタのサブツール詳細に当たる）: 左にカテゴリの一覧、右にそのカテゴリの欄、上に今の設定の見本のストローク。
+//! 浮いたウィンドウで、見出しのドラッグで動かせる。モーダルではないので、開いたまま（ウィンドウの外で）描ける。開くのはツールプロパティの調整の
+//! ボタン、閉じるのはウィンドウの閉じるボタンかもう一度そのボタン。欄は `brush_props` のカテゴリごとの関数で、ブラシの設定をその場で変える。
 
 use egui::{pos2, vec2, Color32, Id, Rect, Sense, Ui, Vec2, WidgetInfo, WidgetType};
 
@@ -21,7 +21,7 @@ const CATEGORY_HEIGHT: f32 = 30.0;
 const SAMPLE_HEIGHT: f32 = 62.0;
 const TITLE_HEIGHT: f32 = 26.0;
 
-/// 窓の名前（`windows::window_rect` と同じ形の Id。試験が窓の矩形を引く）。
+/// ウィンドウの名前（`windows::window_rect` と同じ形の Id。試験がウィンドウの矩形を引く）。
 pub fn id() -> Id {
     Id::new(("yolu.window", "brush-detail"))
 }
@@ -94,7 +94,14 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     );
     let eraser = is_eraser(app);
     let live = live_brush(app);
-    paint_sample(ui, app, sample, &live, SampleSpec::detail(eraser));
+    paint_sample(
+        ui,
+        app,
+        sample,
+        &live,
+        SampleSpec::detail(eraser),
+        egui::Id::new("brush.sample.detail"),
+    );
     // カテゴリの名前と既定に戻す
     let title = Rect::from_min_size(
         pos2(pane.left() + 10.0, sample.bottom() + 6.0),
@@ -154,7 +161,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     bar.end(ui, "brush_detail.scroll", &mut app.brushes.ui.detail.scroll);
 }
 
-/// 窓を描く（開いていなければ何もしない）。
+/// ウィンドウを描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.ui.detail.open {
         return;

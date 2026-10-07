@@ -1,14 +1,14 @@
-//! 画面の並びの保存: ドックの並び（タブの組・分け方・大きさ・どのタブが前か・浮かせた窓）と、窓の大きさ・位置・最大化を、設定のフォルダの
+//! 画面の並びの保存: ドックの並び（タブの組・分け方・大きさ・どのタブが前か・浮かせたウィンドウ）と、ウィンドウの大きさ・位置・最大化を、設定のフォルダの
 //! `layout.json` へ書き、次の起動で戻す。ドックは egui_dock が持つ serde の形（`DockState` をそのまま）、タブは安定した名前（`Tab::key`）で
 //! 書く。書くのは、並びが変わったとき（1 秒おき・ドラッグの最中でない）と終わるとき。書き方は一時ファイルから置き換える 1 回の操作。
-//! 浮かせた窓の位置と大きさは、egui が覚えている窓の矩形を保存のときに入れ（egui_dock は自分では更新しない）、読み戻すと、egui_dock が
-//! 最初に描くときの位置と大きさとして使う。
+//! 外へ出したウィンドウ（`detach`）は `detached` に、ウィンドウごとの中のドック・外枠の位置と内側の大きさ・戻る先のタブを書く（無ければ書かない。別ウィンドウの
+//! 無いファイルは前の版と同じ中身）。前の版の、アプリの中の浮いたウィンドウ（egui_dock のウィンドウの面）は、読んだあとアプリが別ウィンドウへ替える。
 //!
 //! 読めない・古い版・知らないタブ・タブが足りない／重なる・大きすぎる・egui_dock が添字で引いて落ちる値（前のタブの番号・木の子・空の組・
-//! 分け方・窓の位置）のどれでも、そのファイルのドックは捨てて既定の並び（`app::default_dock`）で始める（理由は診断のログだけで、画面には
-//! 出さない）。窓の大きさ・位置は、ドックとは別に確かめる（ドックを捨てても窓は戻す）。
+//! 分け方・ウィンドウの位置）のどれでも、そのファイルのドックは捨てて既定の並び（`app::default_dock`）で始める（理由は診断のログだけで、画面には
+//! 出さない）。ウィンドウの大きさ・位置は、ドックとは別に確かめる（ドックを捨ててもウィンドウは戻す）。
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use egui_dock::DockState;
@@ -22,11 +22,11 @@ pub const FILE_NAME: &str = "layout.json";
 pub const FORMAT: u64 = 1;
 /// 読む大きさの上限（これを超えるファイルは壊れているとして読まない）。
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
-/// 窓の最小の内側の大きさ（点。`main` の最小の大きさと同じ）。
+/// ウィンドウの最小の内側の大きさ（点。`main` の最小の大きさと同じ）。
 pub const MIN_SIZE: [f32; 2] = [960.0, 640.0];
-/// 窓の大きさの上限（点。これより大きい値は壊れた値）。
+/// ウィンドウの大きさの上限（点。これより大きい値は壊れた値）。
 const MAX_SIZE: f32 = 16384.0;
-/// 窓の位置の範囲（点。これより外は壊れた値）。
+/// ウィンドウの位置の範囲（点。これより外は壊れた値）。
 const MAX_POSITION: f32 = 32000.0;
 
 /// 設定のフォルダの `layout.json`（設定のフォルダが分からなければ None）。
@@ -39,9 +39,9 @@ pub fn path_for(settings: &Path) -> Option<PathBuf> {
     Some(settings.parent()?.join(FILE_NAME))
 }
 
-/// 窓の大きさと位置（最大化していない状態のもの）と、最大化していたか。
+/// ウィンドウの大きさと位置（最大化していない状態のもの）と、最大化していたか。
 ///
-/// 位置と大きさは点で、点 = 画素 / `pixels_per_point`（書いたときに窓がいた画面の拡大率。アプリは egui の拡大を使わないので OS の論理の点と
+/// 位置と大きさは点で、点 = 画素 / `pixels_per_point`（書いたときにウィンドウがいた画面の拡大率。アプリは egui の拡大を使わないので OS の論理の点と
 /// 同じ）。画素 = 点 × `pixels_per_point` は仮想スクリーンの物理画素で、拡大率の違う画面をまたぐときは、点の座標を別の画面の拡大率で
 /// 読み替えない（`windowpos::plan` が画素に直してから、今の画面と突き合わせる）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,7 +50,7 @@ pub struct WindowRecord {
     pub position: [f32; 2],
     /// 内側の大きさ（点）。
     pub size: [f32; 2],
-    /// 書いたときの 1 点あたりの画素（窓がいた画面の拡大率）。
+    /// 書いたときの 1 点あたりの画素（ウィンドウがいた画面の拡大率）。
     pub pixels_per_point: f32,
     pub maximized: bool,
 }
@@ -58,7 +58,12 @@ pub struct WindowRecord {
 impl WindowRecord {
     /// 値が正しいか（有限・範囲の中）。大きさは最小の大きさまで引き上げる。正しくなければ None。
     pub fn sanitized(self) -> Option<WindowRecord> {
-        let finite = self.position.iter().chain(&self.size).chain([&self.pixels_per_point]).all(|v| v.is_finite());
+        let finite = self
+            .position
+            .iter()
+            .chain(&self.size)
+            .chain([&self.pixels_per_point])
+            .all(|v| v.is_finite());
         let range = self.position.iter().all(|v| v.abs() <= MAX_POSITION)
             && self.size.iter().all(|v| (1.0..=MAX_SIZE).contains(v))
             && (0.25..=8.0).contains(&self.pixels_per_point);
@@ -83,7 +88,10 @@ impl WindowRecord {
             position: [number("x")?, number("y")?],
             size: [number("width")?, number("height")?],
             pixels_per_point: number("pixels_per_point")?,
-            maximized: value.get("maximized").and_then(Value::as_bool).unwrap_or(false),
+            maximized: value
+                .get("maximized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
         .sanitized()
     }
@@ -94,36 +102,112 @@ impl WindowRecord {
 pub struct Loaded {
     /// 読めて、正しいドックの並び（無ければ既定の並び）。
     pub dock: Option<DockState<Tab>>,
-    /// 読めた窓の大きさと位置。
+    /// 読めたウィンドウの大きさと位置。
     pub window: Option<WindowRecord>,
+    /// 外へ出したウィンドウ（ドックの並びが使えるときだけ）。
+    pub detached: Vec<DetachedRecord>,
     /// 捨てた理由（診断のログに書く文。画面には出さない）。
     pub problems: Vec<String>,
+}
+
+/// 外へ出したウィンドウの位置と大きさ。外枠の左上と内側の大きさは点で、点 = 画素 / `pixels_per_point`（書いたときにウィンドウがいた画面の拡大率。
+/// メインウィンドウの `WindowRecord` と同じ決め方）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloatRecord {
+    /// 外枠の左上（点）。
+    pub position: [f32; 2],
+    /// 内側の大きさ（点）。
+    pub size: [f32; 2],
+    /// 書いたときの 1 点あたりの画素。
+    pub pixels_per_point: f32,
+}
+
+impl FloatRecord {
+    /// 値が正しいか（有限・範囲の中）。大きさは別ウィンドウの最小の大きさまで引き上げる。正しくなければ None。
+    pub fn sanitized(self) -> Option<FloatRecord> {
+        let finite = self
+            .position
+            .iter()
+            .chain(&self.size)
+            .chain([&self.pixels_per_point])
+            .all(|v| v.is_finite());
+        let range = self.position.iter().all(|v| v.abs() <= MAX_POSITION)
+            && self.size.iter().all(|v| (1.0..=MAX_SIZE).contains(v))
+            && (0.25..=8.0).contains(&self.pixels_per_point);
+        let min = crate::detach::MIN_SIZE;
+        (finite && range).then_some(FloatRecord {
+            size: [self.size[0].max(min[0]), self.size[1].max(min[1])],
+            ..self
+        })
+    }
+
+    fn to_json(self) -> Value {
+        json!({
+            "x": self.position[0], "y": self.position[1],
+            "width": self.size[0], "height": self.size[1],
+            "pixels_per_point": self.pixels_per_point,
+        })
+    }
+
+    fn from_json(value: &Value) -> Option<FloatRecord> {
+        let number = |key: &str| value.get(key)?.as_f64().map(|v| v as f32);
+        FloatRecord {
+            position: [number("x")?, number("y")?],
+            size: [number("width")?, number("height")?],
+            pixels_per_point: number("pixels_per_point")?,
+        }
+        .sanitized()
+    }
+}
+
+/// 外へ出したウィンドウ 1 つの記録。
+#[derive(Clone, Debug)]
+pub struct DetachedRecord {
+    /// 中のドック（主の面だけ）。
+    pub dock: DockState<Tab>,
+    /// 外枠の位置と内側の大きさ（無い・正しくなければ None: メインウィンドウの上の既定の場所に開く）。
+    pub window: Option<FloatRecord>,
+    /// 戻る先（ウィンドウを閉じたとき、中のタブを入れる組のタブ）。
+    pub home: Vec<Tab>,
 }
 
 /// ファイルを読む。無いときは何も無い結果（理由も無い）。読めないものは理由つきで捨てる。
 pub fn load(path: &Path) -> Loaded {
     let text = match std::fs::metadata(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Loaded::default(),
-        Err(e) => return problem(format!("画面の並びのファイルを調べられません（{e}）。既定の並びで始めます。")),
+        Err(e) => {
+            return problem(format!(
+                "画面の並びのファイルを調べられません（{e}）。既定の並びで始めます。"
+            ))
+        }
         Ok(meta) if meta.len() > MAX_FILE_BYTES => {
             return problem("画面の並びのファイルが大きすぎます。既定の並びで始めます。".into());
         }
         Ok(_) => match std::fs::read_to_string(path) {
             Ok(text) => text,
-            Err(e) => return problem(format!("画面の並びのファイルを読めません（{e}）。既定の並びで始めます。")),
+            Err(e) => {
+                return problem(format!(
+                    "画面の並びのファイルを読めません（{e}）。既定の並びで始めます。"
+                ))
+            }
         },
     };
     parse(&text)
 }
 
 fn problem(text: String) -> Loaded {
-    Loaded { problems: vec![text], ..Loaded::default() }
+    Loaded {
+        problems: vec![text],
+        ..Loaded::default()
+    }
 }
 
 /// ファイルの中身を読む。
 pub fn parse(text: &str) -> Loaded {
     let Ok(root) = serde_json::from_str::<Value>(text) else {
-        return problem("画面の並びのファイルが JSON として読めません。既定の並びで始めます。".into());
+        return problem(
+            "画面の並びのファイルが JSON として読めません。既定の並びで始めます。".into(),
+        );
     };
     let mut out = Loaded::default();
     let Some(format) = root.get("format").and_then(Value::as_u64) else {
@@ -132,29 +216,105 @@ pub fn parse(text: &str) -> Loaded {
     if format != FORMAT {
         return problem(format!("画面の並びのファイルの版 {format} は読めません（この版は {FORMAT}）。既定の並びで始めます。"));
     }
-    // 窓の大きさと位置は、ドックとは別に確かめる（ドックを捨てても窓は戻す）
+    // ウィンドウの大きさと位置は、ドックとは別に確かめる（ドックを捨ててもウィンドウは戻す）
     match root.get("window") {
         None | Some(Value::Null) => {}
         Some(value) => match WindowRecord::from_json(value) {
             Some(window) => out.window = Some(window),
-            None => out.problems.push("窓の大きさと位置の値が正しくありません。窓は既定の大きさで始めます。".into()),
+            None => out.problems.push(
+                "ウィンドウの大きさと位置の値が正しくありません。ウィンドウは既定の大きさで始めます。".into(),
+            ),
         },
     }
     let Some(dock) = root.get("dock") else {
-        out.problems.push("画面の並びのファイルにドックの並びがありません。既定の並びで始めます。".into());
+        out.problems
+            .push("画面の並びのファイルにドックの並びがありません。既定の並びで始めます。".into());
         return out;
     };
-    match serde_json::from_value::<DockState<Tab>>(dock.clone()) {
-        Ok(mut dock) => {
-            forget_focus(&mut dock);
-            match validate(&dock) {
-                Ok(()) => out.dock = Some(dock),
-                Err(reason) => out.problems.push(format!("ドックの並びを使えません（{reason}）。既定の並びで始めます。")),
-            }
+    let mut dock = match serde_json::from_value::<DockState<Tab>>(dock.clone()) {
+        Ok(dock) => dock,
+        Err(e) => {
+            out.problems.push(format!(
+                "ドックの並びを読めません（{e}）。既定の並びで始めます。"
+            ));
+            return out;
         }
-        Err(e) => out.problems.push(format!("ドックの並びを読めません（{e}）。既定の並びで始めます。")),
+    };
+    forget_focus(&mut dock);
+    // 外へ出したウィンドウ（無ければ空。中のドックが読めない・使えないなら、主のドックと一緒に捨てる）
+    let mut detached = match parse_detached(root.get("detached"), &mut out.problems) {
+        Ok(detached) => detached,
+        Err(reason) => {
+            out.problems.push(format!(
+                "別ウィンドウの並びを使えません（{reason}）。既定の並びで始めます。"
+            ));
+            return out;
+        }
+    };
+    let docks: Vec<&DockState<Tab>> = detached.iter().map(|d| &d.dock).collect();
+    match validate_all(&dock, &docks) {
+        Ok(()) => {
+            if !detached
+                .iter()
+                .any(|d| d.dock.find_tab(&Tab::Log).is_some())
+            {
+                add_missing_tabs(&mut dock);
+            }
+            for d in &mut detached {
+                forget_focus(&mut d.dock);
+            }
+            out.dock = Some(dock);
+            out.detached = detached;
+        }
+        Err(reason) => out.problems.push(format!(
+            "ドックの並びを使えません（{reason}）。既定の並びで始めます。"
+        )),
     }
     out
+}
+
+/// `detached` の値（無ければ空）。ウィンドウの位置の値だけが壊れていれば、そのウィンドウは位置なし（理由を `problems` へ）。中のドックが読めなければ Err。
+fn parse_detached(
+    value: Option<&Value>,
+    problems: &mut Vec<String>,
+) -> Result<Vec<DetachedRecord>, String> {
+    let items = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(items)) => items,
+        Some(_) => return Err("配列でない".into()),
+    };
+    let mut out = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let dock = item
+            .get("dock")
+            .ok_or_else(|| format!("別ウィンドウ {i} にドックが無い"))?;
+        let dock = serde_json::from_value::<DockState<Tab>>(dock.clone())
+            .map_err(|e| format!("別ウィンドウ {i} のドックを読めない（{e}）"))?;
+        let window = match item.get("window") {
+            None | Some(Value::Null) => None,
+            Some(v) => {
+                let record = FloatRecord::from_json(v);
+                if record.is_none() {
+                    problems.push(format!(
+                        "別ウィンドウ {i} の位置と大きさの値が正しくありません。メインウィンドウの上に開きます。"
+                    ));
+                }
+                record
+            }
+        };
+        let home = item
+            .get("home")
+            .and_then(Value::as_array)
+            .map(|keys| {
+                keys.iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(Tab::from_key)
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(DetachedRecord { dock, window, home });
+    }
+    Ok(out)
 }
 
 /// 読んだドックの「フォーカスしている面・組」を外す。ファイルの値のままだと、無い面や組を指していても確かめられず（面のほうは読み口が無い）、
@@ -174,13 +334,77 @@ fn forget_focus(dock: &mut DockState<Tab>) {
     }
 }
 
+/// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログは後の版で足したタブで、それより前の版が保存した
+/// 並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションは既定の並びに無く、開いたときだけある。
+pub const OPTIONAL_TABS: [Tab; 3] = [Tab::Pose, Tab::Log, Tab::Actions];
+
+/// 後の版で足したタブが、読んだ並びに無ければ足す: ログは既定の並びと同じく、レイヤーと同じ組の後ろ（レイヤーが無ければ最初の組。
+/// 前へは出さない）。
+pub fn add_missing_tabs(dock: &mut DockState<Tab>) {
+    if dock.find_tab(&Tab::Log).is_some() {
+        return;
+    }
+    push_beside_layers(dock, Tab::Log);
+}
+
+/// タブを、レイヤーと同じ組の後ろへ入れる（レイヤーが無ければ最初の組）。
+fn push_beside_layers(dock: &mut DockState<Tab>, tab: Tab) {
+    let target = dock.find_tab(&Tab::Layers).map(|p| p.node_path());
+    match target.and_then(|path| dock.leaf_mut(path).ok()) {
+        Some(leaf) => leaf.tabs.push(tab),
+        None => dock.push_to_first_leaf(tab),
+    }
+}
+
 /// 読んだドックが使えるか。egui_dock は読んだ値をそのまま添字で引くので、描く前に次を確かめる（外れていれば理由。外れたまま渡すと、
 /// 起動のたびに落ちて、並びのファイルを手で消すまで起動できなくなる）。
-/// - 面: 先頭が主の面で、それ以外に主の面が無い。浮かせた窓の面は、組を 1 つ以上持ち、窓の位置と大きさが有限で範囲の中。
+/// - 面: 先頭が主の面で、それ以外に主の面が無い。浮かせたウィンドウの面は、組を 1 つ以上持ち、ウィンドウの位置と大きさが有限で範囲の中。
 /// - 木: 分けた所の両側が木の中にあり、根からつながらない節が無い（見えないタブができる）。分け方は有限で 0 と 1 の間。
-/// - 組: 空でなく、前のタブの番号がタブの数の中。浮かせた窓の木のフォーカスは、木の中の組（読むときは `forget_focus` で外してある）。
-/// - タブ: どのタブも 1 つずつ（ポーズだけは、無くてよい。モデルを読むと足される）。足りない・重なるなら理由。
+/// - 組: 空でなく、前のタブの番号がタブの数の中。浮かせたウィンドウの木のフォーカスは、木の中の組（読むときは `forget_focus` で外してある）。
+/// - タブ: どのタブも 1 つずつ（ポーズ・ログ・アクションは、無くてよい。ポーズはモデルを読むと足され、ログは読んだときに
+///   `add_missing_tabs` が足し、アクションは開いたときだけある）。
+///   足りない・重なるなら理由。
 pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
+    validate_all(dock, &[])
+}
+
+/// 主のドックと外へ出したウィンドウのドックを合わせて確かめる（`validate` の項目に加えて: 別ウィンドウのドックは主の面だけで、タブが 1 つ以上ある。
+/// タブの重なり・不足は、主のドックと別ウィンドウを合わせて数える）。
+pub fn validate_all(dock: &DockState<Tab>, detached: &[&DockState<Tab>]) -> Result<(), String> {
+    validate_structure(dock)?;
+    for (i, inner) in detached.iter().enumerate() {
+        validate_structure(inner).map_err(|e| format!("別ウィンドウ {i}: {e}"))?;
+        if inner
+            .iter_surfaces()
+            .any(|s| matches!(s, egui_dock::Surface::Window(..)))
+        {
+            return Err(format!("別ウィンドウ {i} に浮いたウィンドウがある"));
+        }
+        if inner.main_surface().num_tabs() == 0 {
+            return Err(format!("別ウィンドウ {i} にタブが無い"));
+        }
+    }
+    let mut count = std::collections::HashMap::new();
+    for d in std::iter::once(dock).chain(detached.iter().copied()) {
+        for (_, tab) in d.iter_all_tabs() {
+            *count.entry(*tab).or_insert(0usize) += 1;
+        }
+    }
+    for tab in Tab::ALL {
+        let n = count.get(&tab).copied().unwrap_or(0);
+        let optional = OPTIONAL_TABS.contains(&tab);
+        if n > 1 {
+            return Err(format!("タブ {} が {n} つある", tab.key()));
+        }
+        if n == 0 && !optional {
+            return Err(format!("タブ {} が無い", tab.key()));
+        }
+    }
+    Ok(())
+}
+
+/// ドック 1 つの形（面・木・組・浮いたウィンドウの値）。
+fn validate_structure(dock: &DockState<Tab>) -> Result<(), String> {
     use egui_dock::Surface;
     if !matches!(dock.iter_surfaces().next(), Some(Surface::Main(_))) {
         return Err("先頭の面が主の面でない".into());
@@ -196,39 +420,38 @@ pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
             }
             Surface::Window(tree, state) => {
                 validate_tree(tree)?;
-                // 浮かせた窓の木のフォーカスは、描くときに組として引く（メインの木は、組を全部浮かせたあとに、もう無い組を指したままでよい）
+                // 浮かせたウィンドウの木のフォーカスは、描くときに組として引く（メインの木は、組を全部浮かせたあとに、もう無い組を指したままでよい）
                 if let Some(focus) = tree.focused_leaf() {
                     if !tree.iter().nth(focus.0).is_some_and(|node| node.is_leaf()) {
-                        return Err(format!("浮かせた窓 {} のフォーカスが組を指していない", index.0));
+                        return Err(format!(
+                            "浮かせたウィンドウ {} のフォーカスが組を指していない",
+                            index.0
+                        ));
                     }
                 }
                 if !tree.iter().any(|node| node.is_leaf()) {
-                    return Err(format!("浮かせた窓 {} に組が無い", index.0));
+                    return Err(format!("浮かせたウィンドウ {} に組が無い", index.0));
                 }
-                // 窓の状態の値（最初に描くときの位置と大きさ）。中身は読み口が無いので、書き出した形で確かめる
+                // ウィンドウの状態の値（最初に描くときの位置と大きさ）。中身は読み口が無いので、書き出した形で確かめる
                 let value = serde_json::to_value(state).unwrap_or(Value::Null);
                 let position = (-f64::from(MAX_POSITION), f64::from(MAX_POSITION));
                 let size = (1.0, f64::from(MAX_SIZE));
-                for (key, (low, high)) in [("screen_rect", position), ("next_position", position), ("next_size", size)] {
-                    if !value.get(key).is_none_or(|v| v.is_null() || bounded(v, low, high)) {
-                        return Err(format!("浮かせた窓 {} の {key} が範囲の外", index.0));
+                for (key, (low, high)) in [
+                    ("screen_rect", position),
+                    ("next_position", position),
+                    ("next_size", size),
+                ] {
+                    if !value
+                        .get(key)
+                        .is_none_or(|v| v.is_null() || bounded(v, low, high))
+                    {
+                        return Err(format!(
+                            "浮かせたウィンドウ {} の {key} が範囲の外",
+                            index.0
+                        ));
                     }
                 }
             }
-        }
-    }
-    let mut count = std::collections::HashMap::new();
-    for (_, tab) in dock.iter_all_tabs() {
-        *count.entry(*tab).or_insert(0usize) += 1;
-    }
-    for tab in Tab::ALL {
-        let n = count.get(&tab).copied().unwrap_or(0);
-        let optional = tab == Tab::Pose;
-        if n > 1 {
-            return Err(format!("タブ {} が {n} つある", tab.key()));
-        }
-        if n == 0 && !optional {
-            return Err(format!("タブ {} が無い", tab.key()));
         }
     }
     Ok(())
@@ -249,7 +472,11 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
     use egui_dock::Node;
     let nodes: Vec<&Node<Tab>> = tree.iter().collect();
     let mut reachable = vec![false; nodes.len()];
-    let mut pending = if nodes.is_empty() { Vec::new() } else { vec![0usize] };
+    let mut pending = if nodes.is_empty() {
+        Vec::new()
+    } else {
+        vec![0usize]
+    };
     while let Some(i) = pending.pop() {
         reachable[i] = true;
         match nodes[i] {
@@ -259,7 +486,11 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
                     return Err("タブの無い組がある".into());
                 }
                 if leaf.active.0 >= leaf.tabs.len() {
-                    return Err(format!("前のタブの番号 {} がタブの数 {} の外", leaf.active.0, leaf.tabs.len()));
+                    return Err(format!(
+                        "前のタブの番号 {} がタブの数 {} の外",
+                        leaf.active.0,
+                        leaf.tabs.len()
+                    ));
                 }
                 if !leaf.scroll.is_finite() {
                     return Err("タブの帯のスクロールが有限でない".into());
@@ -281,24 +512,29 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
             }
         }
     }
-    if nodes.iter().zip(&reachable).any(|(node, seen)| !seen && !matches!(node, Node::Empty)) {
+    if nodes
+        .iter()
+        .zip(&reachable)
+        .any(|(node, seen)| !seen && !matches!(node, Node::Empty))
+    {
         return Err("根からつながらない節がある".into());
     }
     Ok(())
 }
 
-/// 浮かせた窓の、今の位置と大きさ（面の番号つき。egui が覚えている窓の矩形）。egui_dock 0.21 は窓の矩形を自分では更新しないので、
+/// 浮かせたウィンドウの、今の位置と大きさ（面の番号つき。egui が覚えているウィンドウの矩形）。egui_dock 0.21 はウィンドウの矩形を自分では更新しないので、
 /// 保存のときにここから渡し、読み戻すときは egui_dock が「最初に描くときの位置と大きさ」として使う。
 pub type FloatRect = (egui_dock::SurfaceIndex, egui::Rect);
 
-/// 保存用の写し（各部品の矩形は、フレームごとに計算し直す値なので 0 にそろえる。窓の大きさを変えても中身が変わらず、無限大の値（まだ
-/// 描いていない部品の矩形）を JSON に書かずに済む）。浮かせた窓は、位置と大きさを「最初に描くときの値」として入れる。
+/// 保存用の写し（各部品の矩形は、フレームごとに計算し直す値なので 0 にそろえる。ウィンドウの大きさを変えても中身が変わらず、無限大の値（まだ
+/// 描いていない部品の矩形）を JSON に書かずに済む）。浮かせたウィンドウは、位置と大きさを「最初に描くときの値」として入れる。
 fn normalized(dock: &DockState<Tab>, floats: &[FloatRect]) -> DockState<Tab> {
     use egui::Rect;
     use egui_dock::Node;
     let mut copy = dock.clone();
     for (surface, rect) in floats {
-        if rect.min.is_finite() && rect.max.is_finite() && rect.width() > 0.0 && rect.height() > 0.0 {
+        if rect.min.is_finite() && rect.max.is_finite() && rect.width() > 0.0 && rect.height() > 0.0
+        {
             // （`get_window_state_mut` は範囲の外の番号で落ちるので、面を取ってから見る）
             if let Some(egui_dock::Surface::Window(_, state)) = copy.get_surface_mut(*surface) {
                 state.set_position(rect.min).set_size(rect.size());
@@ -319,40 +555,62 @@ fn normalized(dock: &DockState<Tab>, floats: &[FloatRect]) -> DockState<Tab> {
     copy
 }
 
-/// ファイルの中身を作る（浮かせた窓の位置と大きさは入れない形。`render_with` が入れる）。
+/// ファイルの中身を作る（浮かせたウィンドウの位置と大きさは入れない形。`render_with` が入れる）。
 pub fn render(dock: &DockState<Tab>, window: Option<&WindowRecord>) -> String {
     render_with(dock, window, &[])
 }
 
-/// ファイルの中身を作る。`floats` は浮かせた窓の今の位置と大きさ。
-pub fn render_with(dock: &DockState<Tab>, window: Option<&WindowRecord>, floats: &[FloatRect]) -> String {
+/// ファイルの中身を作る。`floats` は浮かせたウィンドウの今の位置と大きさ。
+pub fn render_with(
+    dock: &DockState<Tab>,
+    window: Option<&WindowRecord>,
+    floats: &[FloatRect],
+) -> String {
+    render_all(dock, window, floats, &[])
+}
+
+/// ファイルの中身を作る（外へ出したウィンドウつき。別ウィンドウが無ければ `detached` は書かない）。
+pub fn render_all(
+    dock: &DockState<Tab>,
+    window: Option<&WindowRecord>,
+    floats: &[FloatRect],
+    detached: &[DetachedRecord],
+) -> String {
     let dock = serde_json::to_value(normalized(dock, floats)).unwrap_or(Value::Null);
     let mut root = json!({ "format": FORMAT, "dock": dock });
     if let Some(window) = window {
         root["window"] = window.to_json();
+    }
+    if !detached.is_empty() {
+        root["detached"] = Value::Array(
+            detached
+                .iter()
+                .map(|d| {
+                    let mut item = json!({
+                        "dock": serde_json::to_value(normalized(&d.dock, &[])).unwrap_or(Value::Null),
+                        "home": d.home.iter().map(|t| t.key()).collect::<Vec<_>>(),
+                    });
+                    if let Some(w) = d.window.and_then(FloatRecord::sanitized) {
+                        item["window"] = w.to_json();
+                    }
+                    item
+                })
+                .collect(),
+        );
     }
     serde_json::to_string_pretty(&root).unwrap_or_default()
 }
 
 /// 書く（一時ファイルへ書いて同期し、最後の 1 回の置き換えで確定する。途中で止まっても前のファイルは壊れない）。
 pub fn save(path: &Path, text: &str) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "layout directory missing"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "layout directory missing"))?;
     std::fs::create_dir_all(parent)?;
-    let pending = path.with_extension(format!("json.{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&pending)?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    yolu_io::atomic::replace_bytes(path, text.as_bytes())
 }
 
-/// 起動のときに窓へ戻す大きさと位置（設定のファイルから。無い・正しくないなら None）。置き場所は `windowpos::startup` が、画面ごとの
+/// 起動のときにウィンドウへ戻す大きさと位置（設定のファイルから。無い・正しくないなら None）。置き場所は `windowpos::startup` が、画面ごとの
 /// 拡大率・作業領域と突き合わせて決める（画面を列挙できない OS だけ、位置が今の画面に見えているかを `is_visible_on_a_monitor` で
 /// 確かめてから、記録をそのまま使う）。
 pub fn saved_window() -> Option<WindowRecord> {
@@ -364,7 +622,7 @@ pub fn saved_window_at(path: &Path) -> Option<WindowRecord> {
     load(path).window
 }
 
-/// 窓の位置（外枠の左上・点）が、今つながっている画面のどれかに見えているか。外枠の上の帯（つかんで動かす所）の真ん中が画面の中に
+/// ウィンドウの位置（外枠の左上・点）が、今つながっている画面のどれかに見えているか。外枠の上の帯（つかんで動かす所）の真ん中が画面の中に
 /// あれば見えているとする。確かめられない OS（Windows 以外）は常に true。
 pub fn is_visible_on_a_monitor(window: &WindowRecord) -> bool {
     platform::title_bar_on_a_monitor(window)

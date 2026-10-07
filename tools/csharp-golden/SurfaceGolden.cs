@@ -3,7 +3,7 @@
 // 使い、ネイティブの Bounds.SqrDistance だけを、その C++ の式を写した NativeBounds.SqrDistance に原文の呼び出しごと置き換えて組む（run.sh）。
 //   golden <surface/cases.txt> <出力のフォルダ>   台本の事例を走らせ、index.txt を書く
 //   bench [回数]                                  7 万三角形の球で、組み立て・レイ 1 本・ダブの時間を測る（Mono）
-// 形の作り方・乱数・台本の読み方・出力の書き方は crates/yolu-core/tests/surface_golden.rs と揃えてある（片方を変えたら両方を変える）。
+// 形の作り方・乱数・台本の読み方・出力の書き方は crates/yolu-core/tests/reference/surface_golden.rs と揃えてある（片方を変えたら両方を変える）。
 using System;
 using System.Collections;
 using System.Collections.Generic;

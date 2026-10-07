@@ -23,7 +23,7 @@
 //! 実際に Unity 版に読ませた結果は `tests/fixtures/rust-generation.unity.txt`。
 //!
 //! 保証の射程: 確定の前に世代の中身を読み直してハッシュを確かめ、確定の直前にも `current` が期待した世代のままか確かめる。
-//! ファイルは `sync_all` で書き出す。ディレクトリの fsync と電源断の耐久性は OS に依り、約束しない。ロックはこの道具どうしの
+//! ファイルは `sync_all` で書き出す。ディレクトリの fsync と電源断の耐久性は OS に依り、約束しない。ロックはこのツールどうしの
 //! 排他で、ロックしない外部の書き手はハッシュで見つける（止めない）。
 
 use std::collections::{BTreeSet, HashSet};
@@ -207,7 +207,7 @@ pub struct GenerationStore {
     budget: Option<(u64, u64)>,
     /// 読み書きの量の上限（設定の予算から。`None` は形の上限だけ）。
     limits: Option<Limits>,
-    /// この道具が流して確かめた共有の中身と、そのときの長さ・更新時刻（同じなら、次の確定でハッシュを数え直さない。複製の間で共有）。
+    /// このツールが流して確かめた共有の中身と、そのときの長さ・更新時刻（同じなら、次の確定でハッシュを数え直さない。複製の間で共有）。
     good: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, (u64, SystemTime)>>>,
     /// 書く前の空きの確かめ。`None` は確かめない。
     space: Option<SpaceGuard>,
@@ -248,7 +248,7 @@ impl GenerationStore {
             good: Arc::default(),
         }
     }
-    /// この道具が確かめた後、長さと更新時刻の変わっていない共有の中身か（ハッシュを数え直さない。保証の射程: 更新時刻を変えずに
+    /// このツールが確かめた後、長さと更新時刻の変わっていない共有の中身か（ハッシュを数え直さない。保証の射程: 更新時刻を変えずに
     /// 同じ長さで書き換える外の書き手は、ここでは見つけない。開くとき（`load`）はいつも全部を数える）。
     fn known_good(&self, path: &Path, len: u64) -> bool {
         let Ok(meta) = fs::symlink_metadata(path) else {
@@ -424,7 +424,10 @@ impl GenerationStore {
         if manifest.shared {
             self.content_path(&entry.hash)
         } else {
-            entry.name.split('/').fold(dir.to_path_buf(), |p, c| p.join(c))
+            entry
+                .name
+                .split('/')
+                .fold(dir.to_path_buf(), |p, c| p.join(c))
         }
     }
 
@@ -445,9 +448,7 @@ impl GenerationStore {
             return Ok(None);
         };
         if entry.len > max {
-            return Err(StoreError::Budget(
-                "復旧の情報が予算を超えています".into(),
-            ));
+            return Err(StoreError::Budget("復旧の情報が予算を超えています".into()));
         }
         let dir = self.generations_dir().join(&id);
         let path = self.entry_path(&dir, &manifest, entry);
@@ -509,7 +510,8 @@ impl GenerationStore {
         fs::create_dir_all(&staging)?;
         fs::create_dir_all(&generations)?;
         let mut renamed = false;
-        let result = self.write_generation(files, options, &id, &staging, &generations, &mut renamed);
+        let result =
+            self.write_generation(files, options, &id, &staging, &generations, &mut renamed);
         if result.is_err() && !renamed {
             // 確定していない作りかけだけを片付ける（前の世代・current には触れない）。残すと、整理が共有の中身を消せなくなる。
             let _ = fs::remove_dir_all(&staging);
@@ -564,7 +566,7 @@ impl GenerationStore {
                     Ok(_) => {
                         let changed = || {
                             StoreError::Corrupt(
-                                "共有の中身が、この道具の外で変わっています".into(),
+                                "共有の中身が、このツールの外で変わっています".into(),
                             )
                         };
                         if fs::symlink_metadata(&path)?.len() != data.len() {
@@ -588,7 +590,9 @@ impl GenerationStore {
                     Err(e) => return Err(e.into()),
                 }
             } else {
-                let path = name.split('/').fold(staging.to_path_buf(), |p, c| p.join(c));
+                let path = name
+                    .split('/')
+                    .fold(staging.to_path_buf(), |p, c| p.join(c));
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
@@ -891,7 +895,7 @@ impl GenerationStore {
         Ok(())
     }
 
-    /// 落ちた書き込みの残りを片付ける。`.save.lock` を取れたとき（この置き場へ書いている道具が今は無いとき）だけ、世代にならなかった
+    /// 落ちた書き込みの残りを片付ける。`.save.lock` を取れたとき（この置き場へ書いているツールが今は無いとき）だけ、世代にならなかった
     /// `.staging-*` フォルダ（作りかけの世代。`<札>.pending` を含む）を消し、そのあと、どの世代も使わない共有の中身を消す。
     /// 書き込みは確定の間ずっとロックを持つので、ロックが取れて残っている `.staging-*` は、落ちた・パニックした書き込みの残り。
     /// 世代（`current`・`previous` が指すものを含む）には触れない。ロックを持たれていれば `Busy`。返すのは減ったバイト数。
@@ -1140,9 +1144,7 @@ fn validate_name(name: &str) -> R<()> {
     Ok(())
 }
 fn validate_generation(id: &str) -> R<()> {
-    if id.is_empty()
-        || id.len() > 80
-        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    if id.is_empty() || id.len() > 80 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
     {
         return corrupt("不正な世代の名前です");
     }
@@ -1155,7 +1157,9 @@ fn read_bounded(path: &Path, max: u64) -> R<Vec<u8>> {
         return corrupt("通常のファイルではありません");
     }
     if meta.len() > max {
-        return Err(StoreError::Budget("ファイルが許す大きさを超えています".into()));
+        return Err(StoreError::Budget(
+            "ファイルが許す大きさを超えています".into(),
+        ));
     }
     let mut buf = Vec::with_capacity(meta.len() as usize);
     File::open(path)?.take(max + 1).read_to_end(&mut buf)?;
@@ -1260,7 +1264,12 @@ pub fn utc_stamp(ms: u64) -> String {
 pub fn generation_time_ms(id: &str) -> Option<u64> {
     let stamp = id.split('-').next()?;
     let b = stamp.as_bytes();
-    if b.len() != 18 || b[8] != b'T' || !b.iter().enumerate().all(|(i, c)| i == 8 || c.is_ascii_digit())
+    if b.len() != 18
+        || b[8] != b'T'
+        || !b
+            .iter()
+            .enumerate()
+            .all(|(i, c)| i == 8 || c.is_ascii_digit())
     {
         return None;
     }
@@ -1333,7 +1342,13 @@ impl RecoveryInfo {
         }
         let value: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|_| StoreError::Corrupt("復旧の情報を読めません".into()))?;
-        let text = |key: &str| value.get(key).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned()
+        };
         if !value.is_object() {
             return corrupt("復旧の情報を読めません");
         }
@@ -1341,7 +1356,10 @@ impl RecoveryInfo {
             title: text("title"),
             project_path: text("projectPath"),
             project_token: text("projectToken"),
-            unchanged: value.get("unchanged").and_then(|v| v.as_bool()).unwrap_or(false),
+            unchanged: value
+                .get("unchanged")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             sets: value.get("sets").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
         })
     }

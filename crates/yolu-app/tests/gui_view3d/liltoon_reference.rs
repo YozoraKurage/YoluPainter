@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use common::*;
 use egui_kittest::Harness;
 use yolu_app::state::Action;
-use yolu_app::view3d::display::{EnvKind, Op};
+use yolu_app::view3d::display::{Display, EnvKind, Op};
 use yolu_app::view3d::environment::{self, SkyColors, Source};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
@@ -27,7 +27,9 @@ use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
 use yolu_core::glam::{Quat, Vec2, Vec3};
 use yolu_core::look::{LookKind, LookValue, MaterialLook, TextureSource};
 use yolu_core::skin::{demo_figure, FigureDetail};
-use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, Document, ImageColorSpace, ImageInput, Rgba8};
+use yolu_core::{
+    Channel, ChannelInfo, ChannelKind, ColorSpace, Document, ImageColorSpace, ImageInput, Rgba8,
+};
 
 const WIDTH: f32 = 1000.0;
 const HEIGHT: f32 = 760.0;
@@ -43,7 +45,7 @@ struct Scene {
     name: &'static str,
     meshes: Vec<ModelMesh>,
     camera: OrbitCamera,
-    /// 文書を作る（層・チャンネル）。
+    /// 文書を作る（レイヤー・チャンネル）。
     paint: fn(&mut Document),
     look: fn(&Document) -> MaterialLook,
     /// Unity に渡すテクスチャ（スロット名 → 中身）。
@@ -58,9 +60,9 @@ struct Texture {
     srgb: bool,
 }
 
-/// 環境を一様にする場面（環境光の反射の比べ）。
+/// 環境を一様にする場面（環境光の反射の比べと Standard。Standard は Unity の場面の既定の反射を同じ一様な色にする）。
 fn uniform_env(name: &str) -> bool {
-    name == "reflection_env"
+    name == "reflection_env" || name == "light_standard"
 }
 
 /// 一様な環境の色（3D ビューの環境「なし」の環境光: 環境光の色 × 0.4 をリニアへ。場面では環境光の色を白にする）。
@@ -83,8 +85,12 @@ fn camera(distance: f32, target: Vec3) -> OrbitCamera {
 }
 
 fn fill(doc: &mut Document, c: [u8; 4]) {
-    doc.add_fill_layer("色", &[(Channel::Color, Rgba8::new(c[0], c[1], c[2], c[3]))], None)
-        .unwrap();
+    doc.add_fill_layer(
+        "色",
+        &[(Channel::Color, Rgba8::new(c[0], c[1], c[2], c[3]))],
+        None,
+    )
+    .unwrap();
 }
 
 fn lil(shader: &str) -> MaterialLook {
@@ -127,7 +133,11 @@ fn user_texture(doc: &Document, channel: Channel) -> Texture {
     for p in raw.as_chunks::<4>().0 {
         let a = p[3] as u32;
         for k in 0..4 {
-            let premult = if k == 3 { a } else { (p[k] as u32 * a + 127) / 255 };
+            let premult = if k == 3 {
+                a
+            } else {
+                (p[k] as u32 * a + 127) / 255
+            };
             let v = premult + (d[k] as u32 * (255 - a) + 127) / 255;
             rgba.push(v.min(255) as u8);
         }
@@ -170,7 +180,13 @@ fn matcap_image() -> (u32, Vec<u8>) {
     (n, out)
 }
 
-fn stripes_channel(doc: &mut Document, name: &str, kind: ChannelKind, default: Rgba8, value: Rgba8) -> Channel {
+fn stripes_channel(
+    doc: &mut Document,
+    name: &str,
+    kind: ChannelKind,
+    default: Rgba8,
+    value: Rgba8,
+) -> Channel {
     let channel = doc
         .add_channel(ChannelInfo {
             name: name.into(),
@@ -210,7 +226,8 @@ fn gradient_channels(doc: &mut Document) -> (Channel, Channel) {
                 if flip {
                     v = 255 - v;
                 }
-                doc.set_channel_pixel(layer, c, x, y, Rgba8::new(v, v, v, 255)).unwrap();
+                doc.set_channel_pixel(layer, c, x, y, Rgba8::new(v, v, v, 255))
+                    .unwrap();
             }
         }
         c
@@ -219,7 +236,10 @@ fn gradient_channels(doc: &mut Document) -> (Channel, Channel) {
 }
 
 fn user_channels(doc: &Document) -> Vec<Channel> {
-    doc.channels().into_iter().filter(|c| !c.is_standard()).collect()
+    doc.channels()
+        .into_iter()
+        .filter(|c| !c.is_standard())
+        .collect()
 }
 
 /// Unity のノーマルマップの取り込み（DXT5nm: A に X、G に Y、R は 1）と同じ並びに詰めた法線の出力。
@@ -239,7 +259,9 @@ fn normal_texture(doc: &Document) -> Texture {
 
 /// Emission の書き出し（値 × アルファ、不透明。sRGB）。
 fn emission_texture(doc: &Document) -> Texture {
-    let raw = doc.composite_channel(Channel::Emission, doc.bounds()).unwrap();
+    let raw = doc
+        .composite_channel(Channel::Emission, doc.bounds())
+        .unwrap();
     let mut rgba = Vec::with_capacity(raw.len());
     for p in raw.as_chunks::<4>().0 {
         let a = p[3] as u32;
@@ -286,7 +308,11 @@ fn pattern_color_channel(doc: &mut Document, name: &str) -> Channel {
             let (u, v) = ((x as f32 + 0.5) / w, (y as f32 + 0.5) / h);
             let r = ((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt();
             if r < 0.35 {
-                let c = if (x / 12) % 2 == 0 { Rgba8::new(240, 60, 90, 255) } else { Rgba8::new(60, 200, 240, 220) };
+                let c = if (x / 12) % 2 == 0 {
+                    Rgba8::new(240, 60, 90, 255)
+                } else {
+                    Rgba8::new(60, 200, 240, 220)
+                };
                 doc.set_channel_pixel(layer, channel, x, y, c).unwrap();
             }
         }
@@ -312,7 +338,13 @@ fn split_color_channel(doc: &mut Document, name: &str) -> Channel {
             let (u, v) = ((x as f32 + 0.5) / w, (y as f32 + 0.5) / h);
             let r = ((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt();
             if r < 0.4 {
-                let c = if u < 0.5 { Rgba8::new(240, 60, 90, 255) } else if v < 0.5 { Rgba8::new(60, 200, 240, 255) } else { Rgba8::new(250, 220, 60, 255) };
+                let c = if u < 0.5 {
+                    Rgba8::new(240, 60, 90, 255)
+                } else if v < 0.5 {
+                    Rgba8::new(60, 200, 240, 255)
+                } else {
+                    Rgba8::new(250, 220, 60, 255)
+                };
                 doc.set_channel_pixel(layer, channel, x, y, c).unwrap();
             }
         }
@@ -324,8 +356,13 @@ fn stripes_color_standard(doc: &mut Document) {
     let layer = doc.add_layer("縞の色").unwrap();
     for y in 0..doc.height() {
         for x in 0..doc.width() {
-            let c = if (x / 16 + y / 16) % 2 == 0 { Rgba8::new(230, 120, 70, 255) } else { Rgba8::new(80, 150, 220, 255) };
-            doc.set_channel_pixel(layer, Channel::Color, x, y, c).unwrap();
+            let c = if (x / 16 + y / 16) % 2 == 0 {
+                Rgba8::new(230, 120, 70, 255)
+            } else {
+                Rgba8::new(80, 150, 220, 255)
+            };
+            doc.set_channel_pixel(layer, Channel::Color, x, y, c)
+                .unwrap();
         }
     }
 }
@@ -382,7 +419,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [230, 200, 190, 255]);
-                stripes_channel(d, "影の強さ", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(40, 40, 40, 255));
+                stripes_channel(
+                    d,
+                    "影の強さ",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(40, 40, 40, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -426,7 +469,9 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_UseMatCap", 1.0);
                 l.textures.insert(
                     "_MatCapTex".into(),
-                    TextureSource::Image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001)),
+                    TextureSource::Image(yolu_core::ImageId(
+                        0xA11C_A900_0000_0000_0000_0000_0000_0001,
+                    )),
                 );
                 set(&mut l, "_MatCapBlend", 0.8);
                 l
@@ -465,7 +510,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [90, 90, 110, 255]);
-                stripes_channel(d, "発光のマスク", ChannelKind::Scalar, Rgba8::new(0, 0, 0, 255), Rgba8::new(255, 255, 255, 255));
+                stripes_channel(
+                    d,
+                    "発光のマスク",
+                    ChannelKind::Scalar,
+                    Rgba8::new(0, 0, 0, 255),
+                    Rgba8::new(255, 255, 255, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -514,7 +565,14 @@ fn scenes() -> Vec<Scene> {
                 for y in 0..d.height() {
                     for x in 0..d.width() {
                         let a = (x * 255 / (d.width() - 1)) as u8;
-                        d.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(200, 120, 60, a)).unwrap();
+                        d.set_channel_pixel(
+                            layer,
+                            Channel::Color,
+                            x,
+                            y,
+                            Rgba8::new(200, 120, 60, a),
+                        )
+                        .unwrap();
                     }
                 }
             },
@@ -534,7 +592,14 @@ fn scenes() -> Vec<Scene> {
                 for y in 0..d.height() {
                     for x in 0..d.width() {
                         let a = (x * 255 / (d.width() - 1)) as u8;
-                        d.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(80, 160, 230, a)).unwrap();
+                        d.set_channel_pixel(
+                            layer,
+                            Channel::Color,
+                            x,
+                            y,
+                            Rgba8::new(80, 160, 230, a),
+                        )
+                        .unwrap();
                     }
                 }
             },
@@ -598,8 +663,10 @@ fn scenes() -> Vec<Scene> {
             look: |_| {
                 let mut l = lil("lilToon");
                 set(&mut l, "_UseShadow", 1.0);
-                l.properties
-                    .insert("_MainTexHSVG".into(), LookValue::Vector([0.15, 1.4, 0.85, 1.3]));
+                l.properties.insert(
+                    "_MainTexHSVG".into(),
+                    LookValue::Vector([0.15, 1.4, 0.85, 1.3]),
+                );
                 l
             },
             textures: main_texture,
@@ -620,8 +687,14 @@ fn scenes() -> Vec<Scene> {
                 l.textures.insert(
                     "_ShadowStrengthMask".into(),
                     TextureSource::Packed([
-                        yolu_core::look::PlaneSource::Channel { channel: c[0], component: 0 },
-                        yolu_core::look::PlaneSource::Channel { channel: c[1], component: 0 },
+                        yolu_core::look::PlaneSource::Channel {
+                            channel: c[0],
+                            component: 0,
+                        },
+                        yolu_core::look::PlaneSource::Channel {
+                            channel: c[1],
+                            component: 0,
+                        },
                         yolu_core::look::PlaneSource::Zero,
                         yolu_core::look::PlaneSource::One,
                     ]),
@@ -634,7 +707,13 @@ fn scenes() -> Vec<Scene> {
                 let r = user_texture(d, c[0]);
                 let g = user_texture(d, c[1]);
                 let mut rgba = Vec::with_capacity(r.rgba.len());
-                for (a, b) in r.rgba.as_chunks::<4>().0.iter().zip(g.rgba.as_chunks::<4>().0) {
+                for (a, b) in r
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(g.rgba.as_chunks::<4>().0)
+                {
                     rgba.extend_from_slice(&[a[0], b[0], 0, 255]);
                 }
                 t.push((
@@ -655,7 +734,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [230, 200, 190, 255]);
-                stripes_channel(d, "AO", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(80, 80, 80, 255));
+                stripes_channel(
+                    d,
+                    "AO",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(80, 80, 80, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -663,8 +748,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_ShadowMaskType", 1.0);
                 set(&mut l, "_ShadowStrength", 0.8);
                 set(&mut l, "_ShadowPostAO", 1.0);
-                l.properties
-                    .insert("_ShadowAOShift".into(), LookValue::Vector([1.2, -0.1, 1.0, 0.0]));
+                l.properties.insert(
+                    "_ShadowAOShift".into(),
+                    LookValue::Vector([1.2, -0.1, 1.0, 0.0]),
+                );
                 let c = user_channels(d);
                 l.textures
                     .insert("_ShadowBorderMask".into(), TextureSource::Channel(c[0]));
@@ -690,8 +777,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_UseShadow", 1.0);
                 set(&mut l, "_UseEmission", 1.0);
                 set(&mut l, "_EmissionMap_UVMode", 4.0);
-                l.textures
-                    .insert("_EmissionMap".into(), TextureSource::Channel(Channel::Emission));
+                l.textures.insert(
+                    "_EmissionMap".into(),
+                    TextureSource::Channel(Channel::Emission),
+                );
                 set(&mut l, "_UseEmission2nd", 1.0);
                 color(&mut l, "_Emission2ndColor", [0.2, 0.4, 1.0, 1.0]);
                 set(&mut l, "_Emission2ndBlendMode", 0.0);
@@ -717,7 +806,13 @@ fn scenes() -> Vec<Scene> {
             },
             paint: |d| {
                 fill(d, [190, 190, 200, 255]);
-                stripes_channel(d, "マットキャップのマスク", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(0, 0, 0, 255));
+                stripes_channel(
+                    d,
+                    "マットキャップのマスク",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(0, 0, 0, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -725,7 +820,9 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_UseMatCap2nd", 1.0);
                 l.textures.insert(
                     "_MatCap2ndTex".into(),
-                    TextureSource::Image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001)),
+                    TextureSource::Image(yolu_core::ImageId(
+                        0xA11C_A900_0000_0000_0000_0000_0000_0001,
+                    )),
                 );
                 set(&mut l, "_MatCap2ndBlendMode", 3.0);
                 set(&mut l, "_MatCap2ndZRotCancel", 0.0);
@@ -759,7 +856,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [230, 200, 190, 255]);
-                stripes_channel(d, "輪郭線の太さ", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(0, 0, 0, 255));
+                stripes_channel(
+                    d,
+                    "輪郭線の太さ",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(0, 0, 0, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("Hidden/lilToonOutline");
@@ -767,8 +870,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_OutlineWidth", 2.0);
                 set(&mut l, "_OutlineFixWidth", 0.0);
                 color(&mut l, "_OutlineColor", [0.9, 0.2, 0.3, 1.0]);
-                l.properties
-                    .insert("_OutlineTexHSVG".into(), LookValue::Vector([0.0, 1.0, 1.0, 1.0]));
+                l.properties.insert(
+                    "_OutlineTexHSVG".into(),
+                    LookValue::Vector([0.0, 1.0, 1.0, 1.0]),
+                );
                 let c = user_channels(d);
                 l.textures
                     .insert("_OutlineWidthMask".into(), TextureSource::Channel(c[0]));
@@ -787,7 +892,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [230, 200, 190, 255]);
-                stripes_channel(d, "リムシェードのマスク", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(70, 70, 70, 255));
+                stripes_channel(
+                    d,
+                    "リムシェードのマスク",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(70, 70, 70, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -797,8 +908,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_RimShadeBorder", 0.4);
                 set(&mut l, "_RimShadeBlur", 0.6);
                 set(&mut l, "_RimShadeFresnelPower", 2.0);
-                l.textures
-                    .insert("_RimShadeMask".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_RimShadeMask".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_RimShadeMask", 0)]),
@@ -834,7 +947,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [150, 160, 210, 255]);
-                stripes_channel(d, "滑らかさ", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(150, 150, 150, 255));
+                stripes_channel(
+                    d,
+                    "滑らかさ",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(150, 150, 150, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -844,8 +963,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_Metallic", 0.2);
                 set(&mut l, "_SpecularBorder", 0.6);
                 set(&mut l, "_SpecularBlur", 0.1);
-                l.textures
-                    .insert("_SmoothnessTex".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_SmoothnessTex".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_SmoothnessTex", 0)]),
@@ -862,7 +983,13 @@ fn scenes() -> Vec<Scene> {
             },
             paint: |d| {
                 fill(d, [200, 170, 120, 255]);
-                stripes_channel(d, "金属度", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(60, 60, 60, 255));
+                stripes_channel(
+                    d,
+                    "金属度",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(60, 60, 60, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -872,8 +999,10 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_Smoothness", 0.75);
                 set(&mut l, "_Metallic", 0.6);
                 color(&mut l, "_ReflectionColor", [1.0, 0.85, 0.7, 1.0]);
-                l.textures
-                    .insert("_MetallicGlossMap".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_MetallicGlossMap".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_MetallicGlossMap", 0)]),
@@ -895,8 +1024,10 @@ fn scenes() -> Vec<Scene> {
                 vector(&mut l, "_Main2ndTex_ST", [5.0, 5.0, -1.0 / 3.0, -0.75]);
                 set(&mut l, "_Main2ndTexAngle", 0.5);
                 set(&mut l, "_Main2ndEnableLighting", 0.7);
-                l.textures
-                    .insert("_Main2ndTex".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_Main2ndTex".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_Main2ndTex", 0)]),
@@ -907,7 +1038,13 @@ fn scenes() -> Vec<Scene> {
             camera: camera(3.0, Vec3::ZERO),
             paint: |d| {
                 fill(d, [200, 190, 220, 255]);
-                stripes_channel(d, "3rd のマスク", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(0, 0, 0, 255));
+                stripes_channel(
+                    d,
+                    "3rd のマスク",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(0, 0, 0, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -917,8 +1054,10 @@ fn scenes() -> Vec<Scene> {
                 color(&mut l, "_Color3rd", [0.4, 0.8, 1.0, 0.7]);
                 set(&mut l, "_Main3rdTexBlendMode", 1.0);
                 set(&mut l, "_Main3rdEnableLighting", 0.3);
-                l.textures
-                    .insert("_Main3rdBlendMask".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_Main3rdBlendMask".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_Main3rdBlendMask", 0)]),
@@ -930,7 +1069,13 @@ fn scenes() -> Vec<Scene> {
             paint: |d| {
                 fill(d, [210, 210, 220, 255]);
                 stripes_standard(d, Channel::Normal, Rgba8::new(60, 128, 215, 255));
-                stripes_channel(d, "2nd のマスク", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(128, 128, 128, 255));
+                stripes_channel(
+                    d,
+                    "2nd のマスク",
+                    ChannelKind::Scalar,
+                    Rgba8::new(255, 255, 255, 255),
+                    Rgba8::new(128, 128, 128, 255),
+                );
             },
             look: |d| {
                 let mut l = lil("lilToon");
@@ -938,10 +1083,14 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_UseBump2ndMap", 1.0);
                 set(&mut l, "_Bump2ndScale", 1.2);
                 vector(&mut l, "_Bump2ndMap_ST", [2.0, 1.0, 0.0, 0.0]);
-                l.textures
-                    .insert("_Bump2ndMap".into(), TextureSource::Channel(Channel::Normal));
-                l.textures
-                    .insert("_Bump2ndScaleMask".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_Bump2ndMap".into(),
+                    TextureSource::Channel(Channel::Normal),
+                );
+                l.textures.insert(
+                    "_Bump2ndScaleMask".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| {
@@ -1024,8 +1173,10 @@ fn scenes() -> Vec<Scene> {
                 color(&mut l, "_OutlineLitColor", [1.0, 0.9, 0.3, 1.0]);
                 set(&mut l, "_OutlineLitScale", 4.0);
                 set(&mut l, "_OutlineLitOffset", -2.0);
-                l.textures
-                    .insert("_OutlineTex".into(), TextureSource::Channel(user_channels(d)[0]));
+                l.textures.insert(
+                    "_OutlineTex".into(),
+                    TextureSource::Channel(user_channels(d)[0]),
+                );
                 l
             },
             textures: |d| with_user(d, &[("_OutlineTex", 0)]),
@@ -1125,13 +1276,17 @@ fn scenes() -> Vec<Scene> {
                 set(&mut l, "_UseMatCap", 1.0);
                 l.textures.insert(
                     "_MatCapTex".into(),
-                    TextureSource::Image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001)),
+                    TextureSource::Image(yolu_core::ImageId(
+                        0xA11C_A900_0000_0000_0000_0000_0000_0001,
+                    )),
                 );
                 set(&mut l, "_MatCapBlend", 0.8);
                 set(&mut l, "_MatCapCustomNormal", 1.0);
                 set(&mut l, "_MatCapBumpScale", 1.5);
-                l.textures
-                    .insert("_MatCapBumpMap".into(), TextureSource::Channel(Channel::Normal));
+                l.textures.insert(
+                    "_MatCapBumpMap".into(),
+                    TextureSource::Channel(Channel::Normal),
+                );
                 l
             },
             textures: |d| {
@@ -1161,7 +1316,8 @@ fn scenes() -> Vec<Scene> {
                 let mut l = lil("lilToon");
                 set(&mut l, "_UseShadow", 1.0);
                 set(&mut l, "_UseMatCap", 1.0);
-                l.textures.insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
+                l.textures
+                    .insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
                 set(&mut l, "_MatCapBlend", 1.0);
                 color(&mut l, "_MatCapColor", [2.119, 1.895, 1.789, 1.0]);
                 l
@@ -1173,11 +1329,62 @@ fn scenes() -> Vec<Scene> {
         bright_backlight_scene("bright_backlight_front"),
         bright_backlight_scene("bright_backlight_side"),
         bright_backlight_scene("bright_backlight_back"),
+        // 光の強さ（`scene_intensity`）: 3D ビューの強さ 1 と、Unity のディレクショナルライト（白・強さ 1）。3D ビューの既定の光の向きで、
+        // 白いテクスチャの lilToon（既定の値・影あり）と Standard（一様な環境）を
+        Scene {
+            name: "light_default",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| lil("lilToon"),
+            textures: main_texture,
+        },
+        Scene {
+            name: "light_shadow",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "light_standard",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| MaterialLook::default(),
+            textures: main_texture,
+        },
     ]
 }
 
+/// 光の強さの場面のカメラ: 光の来る向きから横へ 60° 回った所から（光の真正面の点と、光の届かない側の両方が見える）。
+fn light_camera() -> OrbitCamera {
+    OrbitCamera {
+        target: Vec3::ZERO,
+        yaw: -143.0,
+        pitch: 0.0,
+        distance: 3.0,
+        model_radius: 1.0,
+    }
+}
+
+/// 場面の光の強さ（3D ビューと Unity のディレクショナルライトで同じ値）。光の強さの場面のほかは 0.769（前に撮った Unity の絵の強さ）。
+fn scene_intensity(name: &str) -> f32 {
+    if name.starts_with("light_") {
+        1.0
+    } else {
+        0.769
+    }
+}
+
 /// 髪の場面のマットキャップの絵（自作の画像の番号）。
-const BAND_MATCAP: yolu_core::ImageId = yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0002);
+const BAND_MATCAP: yolu_core::ImageId =
+    yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0002);
 
 /// 髪の場面（光の向きは名前で `scene_light` が決める）。
 fn bright_backlight_scene(name: &'static str) -> Scene {
@@ -1202,7 +1409,8 @@ fn bright_backlight_scene(name: &'static str) -> Scene {
             set(&mut l, "_UseRim", 1.0);
             color(&mut l, "_RimColor", [0.749, 0.749, 0.749, 1.0]);
             set(&mut l, "_UseMatCap", 1.0);
-            l.textures.insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
+            l.textures
+                .insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
             set(&mut l, "_MatCapBlend", 1.0);
             color(&mut l, "_MatCapColor", [2.119, 1.895, 1.789, 1.0]);
             set(&mut l, "_UseReflection", 0.0);
@@ -1246,12 +1454,16 @@ fn band_matcap_image() -> (u32, Vec<u8>) {
     (n, out)
 }
 
-/// 場面の光（来る向きの yaw・pitch、度）。髪の場面はカメラ（−Z から +Z を見る）に対して前・横・後ろ。
+/// 場面の光（来る向きの yaw・pitch、度）。髪の場面はカメラ（−Z から +Z を見る）に対して前・横・後ろ。光の強さの場面は 3D ビューの既定の向き。
 fn scene_light(name: &str) -> (f32, f32) {
     match name {
         "bright_backlight_front" => (-150.0, 30.0),
         "bright_backlight_side" => (-90.0, 20.0),
         "bright_backlight_back" => (15.0, 25.0),
+        n if n.starts_with("light_") => {
+            let d = Display::default();
+            (d.light_yaw, d.light_pitch)
+        }
         _ => LIGHT,
     }
 }
@@ -1261,7 +1473,10 @@ fn scene_image(name: &str) -> Option<(yolu_core::ImageId, (u32, Vec<u8>))> {
     if name.starts_with("bright_backlight") || name == "matcap_hdr" {
         Some((BAND_MATCAP, band_matcap_image()))
     } else if name.starts_with("matcap") {
-        Some((yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001), matcap_image()))
+        Some((
+            yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001),
+            matcap_image(),
+        ))
     } else {
         None
     }
@@ -1369,7 +1584,12 @@ fn write_mesh(path: &Path, meshes: &[ModelMesh]) {
         for (i, p) in m.positions.iter().enumerate() {
             let n = normals[i];
             let uv = m.uvs.get(i).copied().unwrap_or_default();
-            writeln!(s, "v {} {} {} {} {} {} {} {}", p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y).unwrap();
+            writeln!(
+                s,
+                "v {} {} {} {} {} {} {} {}",
+                p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y
+            )
+            .unwrap();
         }
         for sub in &m.submeshes {
             writeln!(s, "sub {}", sub.indices.len()).unwrap();
@@ -1386,9 +1606,12 @@ fn camera_rotation(c: &OrbitCamera) -> Quat {
     c.rotation()
 }
 
-/// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだ窓も）。`view` を渡すと、3D の表示域がその大きさに
-/// なるように窓の大きさを合わせる（Unity の絵と同じ投影にする。窓の中の欄の幅が変わっても同じ場面になるように）。
-fn render(scene: &Scene, view: Option<(u32, u32)>) -> (Harness<'static, YoluApp>, image::RgbaImage) {
+/// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだウィンドウも）。`view` を渡すと、3D の表示域がその大きさに
+/// なるようにウィンドウの大きさを合わせる（Unity の絵と同じ投影にする。ウィンドウの中の欄の幅が変わっても同じ場面になるように）。
+fn render(
+    scene: &Scene,
+    view: Option<(u32, u32)>,
+) -> (Harness<'static, YoluApp>, image::RgbaImage) {
     render_as(scene, view, &|doc| {
         let look = (scene.look)(doc);
         doc.set_look(look, false).unwrap();
@@ -1405,7 +1628,10 @@ fn render_as(
     if let Some((w, hgt)) = view {
         for _ in 0..4 {
             let rect = h.state().view3d_rect().expect("3D のタブ");
-            let (dw, dh) = (w as f32 - rect.width().round(), hgt as f32 - rect.height().round());
+            let (dw, dh) = (
+                w as f32 - rect.width().round(),
+                hgt as f32 - rect.height().round(),
+            );
             if dw == 0.0 && dh == 0.0 {
                 break;
             }
@@ -1418,7 +1644,13 @@ fn render_as(
         let state = &mut h.state_mut().state;
         let revision = state.view3d.next_revision();
         state.view3d.material = 0;
-        let model = ViewModel::new("場面", scene.meshes.clone(), vec![Some("場面".to_string())], revision).unwrap();
+        let model = ViewModel::new(
+            "場面",
+            scene.meshes.clone(),
+            vec![Some("場面".to_string())],
+            revision,
+        )
+        .unwrap();
         model.tangents();
         state.view3d.set_model(model);
         state.view3d.camera = scene.camera;
@@ -1427,6 +1659,10 @@ fn render_as(
     let light = scene_light(scene.name);
     h.state_mut().apply(Action::View3d(Op::LightYaw(light.0)));
     h.state_mut().apply(Action::View3d(Op::LightPitch(light.1)));
+    h.state_mut()
+        .apply(Action::View3d(Op::LightIntensity(scene_intensity(
+            scene.name,
+        ))));
     // Unity の参照の絵は多サンプルなし。縁の比べ（片方だけの画素・平均）が多サンプルでずれないよう、この比べは 1× で描く
     h.state_mut().apply(Action::View3d(Op::Antialias(1)));
     if uniform_env(scene.name) {
@@ -1473,12 +1709,16 @@ fn export_and_render() {
         .ok()
         .map(|v| v.split(',').map(str::to_owned).collect());
     for scene in scenes() {
-        if only.as_ref().is_some_and(|o| !o.iter().any(|n| n == scene.name)) {
+        if only
+            .as_ref()
+            .is_some_and(|o| !o.iter().any(|n| n == scene.name))
+        {
             continue;
         }
         let (h, crop) = render(&scene, None);
         let (w, hgt) = crop.dimensions();
-        crop.save(dir.join(format!("ours_{}.png", scene.name))).unwrap();
+        crop.save(dir.join(format!("ours_{}.png", scene.name)))
+            .unwrap();
         // Unity の場面の記述
         let display = h.state().state.view3d.display;
         let to_light = display.light_direction();
@@ -1487,14 +1727,28 @@ fn export_and_render() {
         let pos = cam.position();
         writeln!(desc, "scene {}", scene.name).unwrap();
         writeln!(desc, "size {w} {hgt}").unwrap();
-        writeln!(desc, "camera {} {} {} {} {} {} {} 30", pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w).unwrap();
-        writeln!(desc, "light {} {} {} 0.769", to_light.x, to_light.y, to_light.z).unwrap();
+        writeln!(
+            desc,
+            "camera {} {} {} {} {} {} {} 30",
+            pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w
+        )
+        .unwrap();
+        writeln!(
+            desc,
+            "light {} {} {} {}",
+            to_light.x, to_light.y, to_light.z, display.light_intensity
+        )
+        .unwrap();
         let mut coefficients = sky.sh;
         if uniform_env(scene.name) {
             coefficients = [Vec3::ZERO; 9];
             coefficients[0] = Vec3::splat(uniform_env_color());
         }
-        let sh: Vec<String> = coefficients.iter().flat_map(|c| [c.x, c.y, c.z]).map(|v| v.to_string()).collect();
+        let sh: Vec<String> = coefficients
+            .iter()
+            .flat_map(|c| [c.x, c.y, c.z])
+            .map(|v| v.to_string())
+            .collect();
         writeln!(desc, "sh {}", sh.join(" ")).unwrap();
         writeln!(desc, "background 0.12 0.13 0.15").unwrap();
         let mesh_file = format!("{}.mesh.txt", scene.name);
@@ -1502,26 +1756,50 @@ fn export_and_render() {
         writeln!(desc, "mesh {mesh_file}").unwrap();
         let doc = &h.state().state.doc;
         let look = doc.look().clone();
-        writeln!(desc, "shader {}", look.shader_name()).unwrap();
+        let standard = look.kind == LookKind::Standard;
+        if standard {
+            // 3D ビューの標準は Unity の Standard（色は塗った絵だけ、金属 0、滑らかさは使っていない Roughness の既定 128 の 1 − 値）
+            writeln!(desc, "shader Standard").unwrap();
+            writeln!(desc, "color _Color 1 1 1 1").unwrap();
+            writeln!(desc, "float _Metallic 0").unwrap();
+            writeln!(desc, "float _Glossiness {}", 1.0 - 128.0 / 255.0).unwrap();
+        } else {
+            writeln!(desc, "shader {}", look.shader_name()).unwrap();
+        }
         for (name, value) in &look.properties {
             match value {
                 LookValue::Float(v) => writeln!(desc, "float {name} {v}").unwrap(),
                 LookValue::Int(v) => writeln!(desc, "float {name} {v}").unwrap(),
-                LookValue::Color(c) => writeln!(desc, "color {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap(),
-                LookValue::Vector(c) => writeln!(desc, "vector {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap(),
+                LookValue::Color(c) => {
+                    writeln!(desc, "color {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap()
+                }
+                LookValue::Vector(c) => {
+                    writeln!(desc, "vector {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap()
+                }
             }
         }
         for (slot, tex) in (scene.textures)(doc) {
             let file = format!("{}_{slot}.rgba", scene.name);
             std::fs::write(dir.join(&file), &tex.rgba).unwrap();
-            writeln!(desc, "texture {slot} {file} {} {} {}", tex.width, tex.height, u8::from(tex.srgb)).unwrap();
+            writeln!(
+                desc,
+                "texture {slot} {file} {} {} {}",
+                tex.width,
+                tex.height,
+                u8::from(tex.srgb)
+            )
+            .unwrap();
         }
         // テクスチャを割り当てずに既定のテクスチャで読む機能（異方性反射の接線のマップ: Unity の既定の bump で、接線が斜めになる）
         if yolu_app::look::liltoon::on(&look, "_UseAnisotropy") {
             writeln!(desc, "feature AnisotropyTangentMap").unwrap();
         }
         // 一様な環境: Unity はマテリアルのキューブマップの差し替えで、3D ビューの環境「なし」と同じ色を映す
-        if uniform_env(scene.name) {
+        if uniform_env(scene.name) && standard {
+            // Standard は場面の既定の反射（反射プローブを使わない物が映す空）を、同じ一様な色のキューブマップにする
+            let c = uniform_env_color();
+            writeln!(desc, "reflection {c} {c} {c}").unwrap();
+        } else if uniform_env(scene.name) {
             let c = uniform_env_color();
             writeln!(desc, "cube _ReflectionCubeTex {c} {c} {c}").unwrap();
             writeln!(desc, "float _ReflectionCubeOverride 1").unwrap();
@@ -1536,7 +1814,11 @@ fn export_and_render() {
 }
 
 /// 2 枚の絵の差（両方で物の画素だけ。背景の色から 3 より離れた画素を物とみなす）。
-fn diff(ours: &image::RgbaImage, unity: &image::RgbaImage, background: [u8; 3]) -> Option<(f64, f64, u8, usize, usize)> {
+fn diff(
+    ours: &image::RgbaImage,
+    unity: &image::RgbaImage,
+    background: [u8; 3],
+) -> Option<(f64, f64, u8, usize, usize)> {
     if ours.dimensions() != unity.dimensions() {
         return None;
     }
@@ -1598,67 +1880,74 @@ fn compare() {
                 }
                 o.0[3] = 255;
             }
-            d.save(dir.join(format!("diff_{}.png", scene.name))).unwrap();
+            d.save(dir.join(format!("diff_{}.png", scene.name)))
+                .unwrap();
         }
     }
 }
 
-/// Live Link が送る値（`tools/liltoon-reference.cs` が Unity のパッケージの `LiveLinkMaterialValues` で読んで書いた `link_<名前>.txt`
-/// と絵）から、スタンドアロンが受けたときと同じ受けた見た目（`look::link::received_look`）を作る。lilToon と判定されなければ None。
+/// Live Link が送る値（`tools/liltoon-reference.cs` が Unity のパッケージで読んで書いた `link_<名前>.txt` と絵）から、スタンドアロンが
+/// 頼みを受けたときと同じ受けた見た目（`look::link::received_look`）を作る。lilToon と判定されなければ None。
 fn link_received(dir: &Path, name: &str) -> Option<yolu_core::look::ReceivedLook> {
-    use yolu_protocol::{ChannelRoute, MaterialValues, PropertyEntry, PropertyValue, SlotState, SlotTexture, ValuesKind};
+    use yolu_protocol::files::{Material, TextureRef};
     let text = std::fs::read_to_string(dir.join(format!("link_{name}.txt"))).ok()?;
-    let mut values = MaterialValues {
-        generation: 1,
-        material: 0,
-        kind: ValuesKind::LilToon,
-        shader: String::new(),
-        source: String::new(),
-        properties: Vec::new(),
-        keywords: Vec::new(),
-        slots: Vec::new(),
+    let mut material = Material {
+        key: String::new(),
+        name: name.to_owned(),
+        shader: Default::default(),
+        values: Default::default(),
+        textures: Vec::new(),
     };
-    let mut routes = Vec::new();
     let mut images = std::collections::BTreeMap::new();
+    let mut missing = std::collections::BTreeMap::new();
+    let slot = |property: &str| TextureRef {
+        property: property.to_owned(),
+        path: None,
+        guid: String::new(),
+        srgb: true,
+        normal_map: false,
+        scale: [1.0, 1.0],
+        offset: [0.0, 0.0],
+    };
     for line in text.lines() {
         let p: Vec<&str> = line.split(' ').collect();
         let f = |i: usize| p[i].parse::<f32>().unwrap();
         match p[0] {
             "none" => return None,
-            "shader" => values.shader = line["shader ".len()..].to_owned(),
-            "source" => values.source = line["source ".len()..].to_owned(),
-            "route" => routes.push(ChannelRoute {
-                channel: p[1].parse().unwrap(),
-                property: p[2].to_owned(),
-            }),
+            "shader" => {
+                material.shader.name = line["shader ".len()..].to_owned();
+                // 値を書くのは Unity の側で lilToon と確かめたマテリアルだけ（確かめられなければ none）
+                material.shader.package = yolu_app::look::link::LILTOON_PACKAGE.to_owned();
+            }
             "prop" => {
                 let v = [f(3), f(4), f(5), f(6)];
-                let value = match p[1] {
-                    "0" => PropertyValue::Float(v[0]),
-                    "1" => PropertyValue::Int(v[0] as i32),
-                    "2" => PropertyValue::Color(v),
-                    _ => PropertyValue::Vector(v),
-                };
-                values.properties.push(PropertyEntry {
-                    name: p[2].to_owned(),
-                    value,
-                });
+                let name = p[2].to_owned();
+                let values = &mut material.values;
+                match p[1] {
+                    "0" => {
+                        values.floats.insert(name, v[0]);
+                    }
+                    "1" => {
+                        values.ints.insert(name, v[0] as i32);
+                    }
+                    "2" => {
+                        values.colors.insert(name, v);
+                    }
+                    _ => {
+                        values.vectors.insert(name, v);
+                    }
+                }
             }
-            "keyword" => values.keywords.push(p[1].to_owned()),
-            "slot" if p.len() == 3 => values.slots.push(SlotTexture {
-                name: p[1].to_owned(),
-                state: if p[2] == "empty" { SlotState::Empty } else { SlotState::Unreadable },
-                width: 0,
-                height: 0,
-            }),
+            "keyword" => material.shader.keywords.push(p[1].to_owned()),
+            "slot" if p.len() == 3 => {
+                material.textures.push(slot(p[1]));
+                if p[2] != "empty" {
+                    missing.insert(p[1].to_owned(), yolu_core::look::MissingImage::Unreadable);
+                }
+            }
             "slot" => {
                 let (w, h) = (p[2].parse().unwrap(), p[3].parse().unwrap());
-                values.slots.push(SlotTexture {
-                    name: p[1].to_owned(),
-                    state: SlotState::Follows,
-                    width: w,
-                    height: h,
-                });
+                material.textures.push(slot(p[1]));
                 let pixels = std::fs::read(dir.join(p[5])).unwrap();
                 images.insert(
                     p[1].to_owned(),
@@ -1673,12 +1962,7 @@ fn link_received(dir: &Path, name: &str) -> Option<yolu_core::look::ReceivedLook
             _ => {}
         }
     }
-    Some(yolu_app::look::link::received_look(
-        &values,
-        &routes,
-        &images,
-        &Default::default(),
-    ))
+    yolu_app::look::link::received_look(&material, &images, &missing)
 }
 
 #[test]
@@ -1705,7 +1989,8 @@ fn compare_through_live_link() {
         let (_h, ours) = render_as(&scene, Some(unity.dimensions()), &|doc| {
             doc.set_received_look(Some(received.clone())).unwrap();
         });
-        ours.save(dir.join(format!("link_{}.png", scene.name))).unwrap();
+        ours.save(dir.join(format!("link_{}.png", scene.name)))
+            .unwrap();
         match diff(&ours, &unity, background) {
             Some((mean, p95, max, n, only)) => println!(
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} | {images} |",
@@ -1782,6 +2067,9 @@ const BOUNDS: &[(&str, f64, f64, f64, usize)] = &[
     ("bright_backlight_front", 0.5, 1.1, 2.0, 2_600),
     ("bright_backlight_side", 0.5, 1.1, 2.0, 2_600),
     ("bright_backlight_back", 0.5, 0.9, 2.0, 2_600),
+    ("light_default", 0.3, 0.3, 1.0, 2_600),
+    ("light_shadow", 0.4, 0.4, 1.0, 2_600),
+    ("light_standard", 0.4, 0.4, 1.0, 2_600),
 ];
 /// GL（ガンマの値のまま重ねる）の `transparent` の上限。llvmpipe と実 GPU の GL で同じ値（平均 28.16〜28.19・95 % 42・片方だけ 5,623）。
 /// 片方だけの画素は、Rust 版のビューの隅のボタン（2,207）と、アルファが 0 に近い薄い縁の帯（llvmpipe の GL で 3,416 = 7 列 × 488 行）: ガンマで重ねると
@@ -1805,12 +2093,27 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
             println!("{adapter}");
         }
         let (mean, p95, max, n, only) = diff(&ours, &unity, background).unwrap_or_else(|| {
-            panic!("{}: 大きさが違う（{:?} と Unity の {:?}）", scene.name, ours.dimensions(), unity.dimensions())
+            panic!(
+                "{}: 大きさが違う（{:?} と Unity の {:?}）",
+                scene.name,
+                ours.dimensions(),
+                unity.dimensions()
+            )
         });
-        let (_, gpu_mean, software_mean, bp, bo) = *BOUNDS.iter().find(|b| b.0 == scene.name).expect("上限がある");
+        let (_, gpu_mean, software_mean, bp, bo) = *BOUNDS
+            .iter()
+            .find(|b| b.0 == scene.name)
+            .expect("上限がある");
         let bm = if software { software_mean } else { gpu_mean };
-        let (bm, bp, bo) = if scene.name == "transparent" && !linear { TRANSPARENT_GAMMA } else { (bm, bp, bo) };
-        println!("| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |", scene.name);
+        let (bm, bp, bo) = if scene.name == "transparent" && !linear {
+            TRANSPARENT_GAMMA
+        } else {
+            (bm, bp, bo)
+        };
+        println!(
+            "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |",
+            scene.name
+        );
         if mean > bm || p95 > bp || only > bo {
             failures.push(format!(
                 "{}: 平均 {mean:.2}（上限 {bm}）・95 % {p95}（上限 {bp}）・片方だけ {only}（上限 {bo}）",
@@ -1818,5 +2121,42 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
             ));
         }
     }
-    assert!(failures.is_empty(), "Unity の lilToon との差が上限を超えた: {failures:#?}");
+    assert!(
+        failures.is_empty(),
+        "Unity の lilToon との差が上限を超えた: {failures:#?}"
+    );
+}
+
+/// 光の強さの場面の見る点（3D の表示域の画素。光の真正面の側・光と影の間・光の届かない側）と、Unity の絵との許す差（0〜255）。
+/// 測った差は lavapipe（Vulkan）・llvmpipe の GL・コンテナの実 GPU の GL（Mesa d3d12）の 3 つとも 0（2026-10-07）。上限 2 は、測っていない
+/// 機材（Windows の D3D12・macOS の Metal）の補間の違いへの余裕。
+const LIGHT_PROBES: [(u32, u32); 4] = [(380, 230), (300, 200), (200, 300), (150, 420)];
+const LIGHT_PROBE_TOLERANCE: u8 = 2;
+
+/// 3D ビューの光の強さ 1 が、Unity のディレクショナルライト（白・強さ 1）と同じ明るさ: 白いテクスチャの lilToon（既定の値）は明るい側が
+/// 白（FF）になり、影ありの lilToon の明るい側・影の側と、Standard の光の正面から影の側までの見る点が Unity の絵と合う。
+#[test]
+fn light_of_strength_one_matches_a_unity_directional_light() {
+    let scenes = scenes();
+    for name in ["light_default", "light_shadow", "light_standard"] {
+        let scene = scenes.iter().find(|s| s.name == name).expect("場面");
+        let unity = unity_image(name);
+        let (_h, ours) = render(scene, Some(unity.dimensions()));
+        let at = |img: &image::RgbaImage, (x, y): (u32, u32)| -> [u8; 3] {
+            let p = img.get_pixel(x, y).0;
+            [p[0], p[1], p[2]]
+        };
+        for probe in LIGHT_PROBES {
+            let (a, b) = (at(&ours, probe), at(&unity, probe));
+            println!("{name} {probe:?}: 3D ビュー {a:?}・Unity {b:?}");
+            assert!(
+                (0..3).all(|k| a[k].abs_diff(b[k]) <= LIGHT_PROBE_TOLERANCE),
+                "{name} の {probe:?}: 3D ビュー {a:?}・Unity {b:?}（許す差 {LIGHT_PROBE_TOLERANCE}）"
+            );
+        }
+        // 光の真正面の側は、白いテクスチャがそのまま白
+        if name != "light_standard" {
+            assert_eq!(at(&ours, LIGHT_PROBES[0]), [255; 3], "{name} の明るい側");
+        }
+    }
 }

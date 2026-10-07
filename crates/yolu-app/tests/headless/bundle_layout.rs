@@ -24,7 +24,9 @@ fn declared_modules(main: &str) -> BTreeSet<String> {
     main.lines()
         .filter_map(|line| {
             let line = line.trim();
-            let rest = line.strip_prefix("pub mod ").or_else(|| line.strip_prefix("mod "))?;
+            let rest = line
+                .strip_prefix("pub mod ")
+                .or_else(|| line.strip_prefix("mod "))?;
             Some(rest.strip_suffix(';')?.trim().to_string())
         })
         .collect()
@@ -34,7 +36,10 @@ fn declared_modules(main: &str) -> BTreeSet<String> {
 fn the_bundles_are_found() {
     let bundles = bundles();
     for expected in ["headless", "gui_canvas", "gui_shell", "gui_view3d"] {
-        assert!(bundles.iter().any(|b| b == expected), "束が見つからない: {expected}（見つかった: {bundles:?}）");
+        assert!(
+            bundles.iter().any(|b| b == expected),
+            "束が見つからない: {expected}（見つかった: {bundles:?}）"
+        );
     }
 }
 
@@ -61,7 +66,9 @@ fn every_file_in_a_bundle_is_declared_in_its_main_rs_and_every_declared_module_h
         for gone in declared.difference(&files) {
             // `common` など束の外の部品は `#[path]` で指す
             if gone != "common" {
-                problems.push(format!("{bundle}/main.rs: `mod {gone};` のファイルが {bundle}/ に無い"));
+                problems.push(format!(
+                    "{bundle}/main.rs: `mod {gone};` のファイルが {bundle}/ に無い"
+                ));
             }
         }
     }

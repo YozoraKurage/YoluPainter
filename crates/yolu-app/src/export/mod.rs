@@ -18,10 +18,8 @@
 //!   `<名前>[_<セット名>]_<チャンネル>.png`（チャンネルは言語によらず英語の綴り）。書く手順・余白・取消はテンプレートと同じ道を通す。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use egui::Vec2;
 use yolu_core::export::{
@@ -37,37 +35,40 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
-use crate::state::{AppState, DialogRequest};
+use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
+use crate::notice::Source;
+use crate::state::{Action, AppState, DialogRequest};
+use crate::windows::CloseJob;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportAction {
-    /// テンプレート（ID）で書き出す。書き出す先のフォルダを選ぶ窓を頼む。
+    /// テンプレート（ID）で書き出す。書き出す先のフォルダを選ぶウィンドウを頼む。
     Template(String),
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確かめの窓を出す。
+    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     TemplateTo { id: String, dir: PathBuf },
-    /// 確かめの窓の「置き換える」。
+    /// 確認のウィンドウの「置き換える」。
     ConfirmReplace,
-    /// 確かめの窓の「やめる」。
+    /// 確認のウィンドウの「やめる」。
     CancelConfirm,
     /// 書いている最中の取消（元のファイルは変えない）。
     Cancel,
-    /// 結果の窓を閉じる。
+    /// 結果のウィンドウを閉じる。
     DismissReport,
-    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶ窓を頼む。
+    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶウィンドウを頼む。
     ChannelDialog,
-    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶ窓が置き換えてよいと確かめている）。
+    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶウィンドウが置き換えてよいと確かめている）。
     ChannelTo(PathBuf),
-    /// 書き出す先のファイルに、選ぶ窓が確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
-    /// 確かめの窓を出す。
+    /// 書き出す先のファイルに、選ぶウィンドウが確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
+    /// 確認のウィンドウを出す。
     ChannelNamed(PathBuf),
-    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶ窓を頼む。
+    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶウィンドウを頼む。
     ChannelsDialog,
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確かめの窓を出す。
+    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     ChannelsTo(PathBuf),
 }
 
-/// 何を書き出すか（確かめの窓の「置き換える」が、同じものをもう一度計画するのに使う）。
+/// 何を書き出すか（確認のウィンドウの「置き換える」が、同じものをもう一度計画するのに使う）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum What {
     /// テンプレート（ID）の画像。
@@ -118,14 +119,15 @@ pub struct Report {
 struct Job {
     /// 画面に出す名前（テンプレートの名前・「チャンネル」）。
     template: String,
+    /// 書く画像ごとの（ファイルの名前・セットの uid・lilToon のプロパティ）。Live Link の `exported` の返事にする。
+    targets: Vec<(String, u32, Option<String>)>,
     dir: PathBuf,
-    /// 結果の窓を出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
+    /// 結果のウィンドウを出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
     report: bool,
     total: usize,
     done: Arc<AtomicUsize>,
-    cancel: Arc<AtomicBool>,
     notes: Vec<Note>,
-    rx: Receiver<Result<Vec<WrittenImage>, ExportError>>,
+    worker: Worker<Result<Vec<WrittenImage>, ExportError>>,
 }
 
 /// 書き出しの状態。
@@ -137,9 +139,30 @@ pub struct ExportState {
     pub confirm_offset: Vec2,
     pub report_offset: Vec2,
     job: Option<Job>,
+    /// 終わった書き出しの、書いた画像（ファイル・セットの uid・lilToon のプロパティ）。Live Link が受ける（`take_finished`）。
+    finished: Option<Vec<(WrittenImage, u32, Option<String>)>>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
     pub park_next: bool,
+}
+
+impl ExportState {
+    /// 終わった書き出しの、書いた画像を受け取る（Live Link の返事）。
+    pub fn take_finished(&mut self) -> Option<Vec<(WrittenImage, u32, Option<String>)>> {
+        self.finished.take()
+    }
+}
+
+/// lilToon のテンプレートの画像（接尾辞）が入るマテリアルのプロパティ（Unity 版の `LilToonVerified` の対応と同じ）。
+pub fn liltoon_property(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "Main" => Some("_MainTex"),
+        "Normal" => Some("_BumpMap"),
+        "Smoothness" => Some("_SmoothnessTex"),
+        "Metallic" => Some("_MetallicGlossMap"),
+        "Emission" => Some("_EmissionMap"),
+        _ => None,
+    }
 }
 
 impl Default for ExportState {
@@ -151,6 +174,7 @@ impl Default for ExportState {
             confirm_offset: Vec2::ZERO,
             report_offset: Vec2::ZERO,
             job: None,
+            finished: None,
             park_next: false,
         }
     }
@@ -177,27 +201,55 @@ impl ExportState {
             template: job.template.clone(),
             index: (job.done.load(Ordering::Relaxed) + 1).min(job.total),
             total: job.total,
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
+
+/// 書き出し（札・閉じる前の確かめ・止める）。書き出しの確認のウィンドウは、キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.export.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {} {}/{}",
+                lang.pick("書き出し", "Exporting"),
+                p.template,
+                p.index,
+                p.total
+            ),
+            fraction: Some((p.index.saturating_sub(1)) as f32 / p.total.max(1) as f32),
+            cancel: Some(Action::Export(ExportAction::Cancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| app.export.is_exporting().then_some(CloseJob::Export)),
+    cancel: Some(|app| app.apply(Action::Export(ExportAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_export),
+    modal: Some(|app| app.export.confirm.is_some()),
+    ..JobSpec::new("export", |app| app.export.is_exporting())
+};
 
 /// 注意の文。
 pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
     match note {
         Note::NoModel => lang
             .pick(
-                "塗り広げなし: 3D ビューにモデルが無く UV が分かりません",
-                "No padding: no model in the 3D view, so the UVs are unknown",
+                "3D ビューにモデルが無く UV が分からないので、塗り広げていません",
+                "Not padded because the 3D view has no model, so the UVs are unknown",
             )
             .into(),
         Note::NoUv(set) => lang.pick(
-            format!("「{set}」は塗り広げなし: マテリアルの UV の三角形がありません"),
-            format!("No padding for \"{set}\": no UV triangle of its material"),
+            format!("「{set}」はマテリアルの UV の三角形が無いので、塗り広げていません"),
+            format!("\"{set}\" is not padded because its material has no UV triangles"),
         ),
-        Note::StaleOcclusion(set, why) => lang.pick(
-            format!("「{set}」の AO は古いので使いません: {why}"),
-            format!("The AO of \"{set}\" is stale and is not used: {why}"),
+        Note::StaleOcclusion(set, why) => lang.with_reason(
+            lang.pick(
+                format!("「{set}」の AO は古いので使いません"),
+                format!("The AO of \"{set}\" is stale and is not used"),
+            ),
+            why,
         ),
         Note::WhiteOcclusion => lang
             .pick(
@@ -210,10 +262,22 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
             format!("Read-only set \"{set}\" was not exported"),
         ),
         Note::InactiveEffects(set, effects) => {
-            let first = effects.first().map(|e| lang.inactive_effect(e)).unwrap_or_default();
-            lang.pick(
-                format!("「{set}」の効いていない効果 {} 件は書き出しに入っていません: {first}", effects.len()),
-                format!("{} inactive effect(s) of \"{set}\" are not in the exported images: {first}", effects.len()),
+            let first = effects
+                .first()
+                .map(|e| lang.inactive_effect(e))
+                .unwrap_or_default();
+            lang.with_reason(
+                lang.pick(
+                    format!(
+                        "「{set}」の効いていない効果 {} 件は書き出しに入っていません",
+                        effects.len()
+                    ),
+                    format!(
+                        "{} inactive effect(s) of \"{set}\" are not in the exported images",
+                        effects.len()
+                    ),
+                ),
+                first,
             )
         }
     }
@@ -221,6 +285,8 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
 
 /// 1 セットぶんの書き出しの入力（始めるときに写す）。
 struct SetInput {
+    /// セット（uid。Live Link の返事が、書いた画像をマテリアルに結ぶ）。
+    uid: u32,
     /// 文書の写し（`capture_snapshot`。タイルは元と共有し、効果の入力・見た目の設定も持つ）。
     doc: Document,
     occlusion: Option<Vec<u8>>,
@@ -295,8 +361,8 @@ pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
     }
 }
 
-/// 選ぶ窓が返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（窓の種類で付かない環境がある）。足した名前は
-/// 窓が確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（窓が確かめた名前）。
+/// 選ぶウィンドウが返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（ウィンドウの種類で付かない環境がある）。足した名前は
+/// ウィンドウが確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（ウィンドウが確かめた名前）。
 pub fn channel_action(chosen: PathBuf) -> ExportAction {
     if chosen.extension().is_none() {
         ExportAction::ChannelNamed(chosen.with_extension("png"))
@@ -305,7 +371,7 @@ pub fn channel_action(chosen: PathBuf) -> ExportAction {
     }
 }
 
-/// 描くチャンネルの PNG の、書き出す先を選ぶ窓に出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
+/// 描くチャンネルの PNG の、書き出す先を選ぶウィンドウに出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
 pub fn default_channel_file_name(state: &AppState) -> String {
     let doc = &state.doc;
     let image = channel_image_spec(doc, state.m2.paint_channel);
@@ -386,9 +452,9 @@ impl AppState {
                 (d.width(), d.height())
             };
             let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
-                lang.pick(
-                    format!("文書を写せません: {}", lang.core_error(&e)),
-                    format!("Cannot copy the document: {}", lang.core_error(&e)),
+                lang.with_reason(
+                    lang.pick("文書を写せません", "Cannot copy the document"),
+                    lang.core_error(&e),
                 )
             })?;
             let name = self.sets.get(index).expect("範囲内").name.clone();
@@ -421,6 +487,7 @@ impl AppState {
                 }
             };
             sets.push(SetInput {
+                uid: self.sets.get(index).expect("範囲内").uid,
                 doc: snapshot,
                 occlusion: occlusions[p].clone(),
                 uv,
@@ -490,11 +557,11 @@ impl AppState {
         if planned.is_empty() {
             return Err(lang.pick(
                 format!(
-                    "書き出すものがありません: どのレイヤーも「{}」が読むチャンネルを使っていません",
+                    "どのレイヤーも「{}」が読むチャンネルを使っていないので、書き出すものがありません",
                     template.name
                 ),
                 format!(
-                    "Nothing to export for \"{}\": no layer uses a channel it reads",
+                    "Nothing to export for \"{}\" because no layer uses a channel it reads",
                     template.name
                 ),
             ));
@@ -543,15 +610,13 @@ impl AppState {
 
     /// 同じファイルになる名前があるときの断りの文。
     fn clash_message(&self, clash: &[String]) -> String {
-        self.lang.pick(
-            format!(
-                "書き出しませんでした: 同じファイルになる画像があります: {}",
-                clash.join("、")
+        let lang = self.lang;
+        lang.with_reason(
+            lang.pick(
+                "同じファイルになる画像があるので、書き出しませんでした",
+                "Nothing was exported because these images would write the same file",
             ),
-            format!(
-                "Nothing was exported: these images would write the same file: {}",
-                clash.join(", ")
-            ),
+            clash.join(lang.pick("、", ", ")),
         )
     }
 
@@ -566,10 +631,7 @@ impl AppState {
             Which::All { .. } => self.exportable_sets(&mut notes),
             Which::One { set, .. } => {
                 if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
-                    return Err(format!(
-                        "{}: {reason}",
-                        lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
-                    ));
+                    return Err(crate::lang::refusals::read_only_set(lang, &reason));
                 }
                 vec![*set]
             }
@@ -606,8 +668,8 @@ impl AppState {
         if wanted.is_empty() {
             return Err(lang
                 .pick(
-                    "書き出すものがありません: どのレイヤーもチャンネルを使っていません",
-                    "Nothing to export: no layer uses any channel",
+                    "どのレイヤーもチャンネルを使っていないので、書き出すものがありません",
+                    "Nothing to export because no layer uses any channel",
                 )
                 .into());
         }
@@ -647,15 +709,16 @@ impl AppState {
         match action {
             ExportAction::Template(id) => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 if ExportTemplate::built_in_by_id(&id).is_none() {
-                    self.message = lang.pick(
-                        format!("書き出しのテンプレート「{id}」はありません。"),
-                        format!("No export template \"{id}\"."),
+                    self.refuse(
+                        Source::Export,
+                        lang.pick(
+                            format!("書き出しのテンプレート「{id}」はありません。"),
+                            format!("No export template \"{id}\"."),
+                        ),
                     );
                     return;
                 }
@@ -674,9 +737,7 @@ impl AppState {
             }
             ExportAction::ChannelDialog => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::ExportChannel);
@@ -685,9 +746,7 @@ impl AppState {
             ExportAction::ChannelNamed(path) => self.confirm_channel_png(path),
             ExportAction::ChannelsDialog => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::ExportChannelsFolder);
@@ -695,20 +754,22 @@ impl AppState {
             ExportAction::ChannelsTo(dir) => self.start_export(&What::Channels, &dir, false),
             ExportAction::CancelConfirm => {
                 if self.export.confirm.take().is_some() {
-                    self.message = lang
-                        .pick(
+                    self.info(
+                        Source::Export,
+                        lang.pick(
                             "書き出しをやめました（何も書いていません）。",
                             "Export canceled (nothing was written).",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             ExportAction::Cancel => {
                 if let Some(job) = &self.export.job {
-                    job.cancel.store(true, Ordering::Relaxed);
-                    self.message = lang
-                        .pick("書き出しを取り消しています…", "Canceling the export…")
-                        .into();
+                    job.worker.cancel();
+                    self.info(
+                        Source::Export,
+                        lang.pick("書き出しを取り消しています…", "Canceling the export…"),
+                    );
                 }
             }
             ExportAction::DismissReport => self.export.report = None,
@@ -724,21 +785,20 @@ impl AppState {
     fn export_ready(&mut self) -> bool {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
             return false;
         }
         if self.export.job.is_some() {
-            self.message = lang
-                .pick("書き出し中です。", "An export is running.")
-                .into();
+            self.refuse(
+                Source::Export,
+                lang.pick("書き出し中です。", "An export is running."),
+            );
             return false;
         }
         true
     }
 
-    /// テンプレートか全チャンネルの画像を `dir` へ書き出す。もうあるファイルがあれば（`replace` でなければ）、確かめの窓を出す。
+    /// テンプレートか全チャンネルの画像を `dir` へ書き出す。もうあるファイルがあれば（`replace` でなければ）、確認のウィンドウを出す。
     fn start_export(&mut self, what: &What, dir: &Path, replace: bool) {
         let lang = self.lang;
         if !self.export_ready() {
@@ -749,15 +809,18 @@ impl AppState {
             What::Template(id) => match ExportTemplate::built_in_by_id(id) {
                 Some(template) => self.plan_export(&template, &stem),
                 None => {
-                    self.message = lang.pick(
-                        format!("書き出しのテンプレート「{id}」はありません。"),
-                        format!("No export template \"{id}\"."),
+                    self.refuse(
+                        Source::Export,
+                        lang.pick(
+                            format!("書き出しのテンプレート「{id}」はありません。"),
+                            format!("No export template \"{id}\"."),
+                        ),
                     );
                     return;
                 }
             },
             What::Channels => self.plan_channels(Which::All { stem: &stem }),
-            // 1 枚のファイルは確かめの窓の「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
+            // 1 枚のファイルは確認のウィンドウの「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
             What::ChannelFile(path) => {
                 self.start_channel_png(path);
                 return;
@@ -766,7 +829,7 @@ impl AppState {
         let plan = match planned {
             Ok(p) => p,
             Err(e) => {
-                self.message = e;
+                self.refuse(Source::Export, e);
                 return;
             }
         };
@@ -782,12 +845,15 @@ impl AppState {
                         .collect(),
                     total: plan.files.len(),
                 });
-                self.message = lang.pick(
-                    format!(
-                        "もうあるファイル {} 個を置き換えるか確かめます。",
-                        existing.len()
+                self.info(
+                    Source::Export,
+                    lang.pick(
+                        format!(
+                            "もうあるファイル {} 個を置き換えるか確かめます。",
+                            existing.len()
+                        ),
+                        format!("Confirm replacing {} existing file(s).", existing.len()),
                     ),
-                    format!("Confirm replacing {} existing file(s).", existing.len()),
                 );
                 return;
             }
@@ -803,7 +869,7 @@ impl AppState {
         self.launch(plan, dir, replace, label, true);
     }
 
-    /// 拡張子を足した名前の PNG: もうあれば、置き換える前に確かめる（選ぶ窓は、足す前の名前しか確かめていない）。無ければそのまま書く。
+    /// 拡張子を足した名前の PNG: もうあれば、置き換える前に確かめる（選ぶウィンドウは、足す前の名前しか確かめていない）。無ければそのまま書く。
     fn confirm_channel_png(&mut self, path: PathBuf) {
         let lang = self.lang;
         if !self.export_ready() {
@@ -827,23 +893,26 @@ impl AppState {
             existing: vec![name],
             total: 1,
         });
-        self.message = lang.pick(
-            "もうあるファイル 1 個を置き換えるか確かめます。",
-            "Confirm replacing 1 existing file.",
-        )
-        .into();
+        self.info(
+            Source::Export,
+            lang.pick(
+                "もうあるファイル 1 個を置き換えるか確かめます。",
+                "Confirm replacing 1 existing file.",
+            ),
+        );
     }
 
-    /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶ窓が置き換えてよいと確かめているので、もうあれば置き換える）。
+    /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶウィンドウが置き換えてよいと確かめているので、もうあれば置き換える）。
     fn start_channel_png(&mut self, path: &Path) {
         let lang = self.lang;
         if !self.export_ready() {
             return;
         }
         let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            self.message = lang
-                .pick("書き出す先のファイルがありません。", "No file to write to.")
-                .into();
+            self.refuse(
+                Source::Export,
+                lang.pick("書き出す先のファイルがありません。", "No file to write to."),
+            );
             return;
         };
         let dir = match path.parent() {
@@ -859,21 +928,37 @@ impl AppState {
         }) {
             Ok(p) => p,
             Err(e) => {
-                self.message = e;
+                self.refuse(Source::Export, e);
                 return;
             }
         };
         self.launch(plan, &dir, true, file_name, false);
     }
 
-    /// 計画を別のスレッドで書き始める（`label` は状態の帯・結果に出す名前。`report` なら終わりに結果の窓を出す）。
+    /// 計画を別のスレッドで書き始める（`label` は状態の帯・結果に出す名前。`report` なら終わりに結果のウィンドウを出す）。
     fn launch(&mut self, plan: Plan, dir: &Path, replace: bool, label: String, report: bool) {
         let lang = self.lang;
         let reach = Reach::from_setting(self.export.padding).unwrap_or(Reach::Fill);
         let total = plan.files.len();
+        let liltoon = plan.template.id == "liltoon";
+        let targets: Vec<(String, u32, Option<String>)> = plan
+            .files
+            .iter()
+            .map(|f| {
+                let property = match f.look_slot {
+                    Some(slot) => Some(slot.to_owned()),
+                    None if liltoon && f.channel.is_none() => plan
+                        .template
+                        .images
+                        .get(f.image)
+                        .and_then(|i| liltoon_property(i.suffix()))
+                        .map(str::to_owned),
+                    None => None,
+                };
+                (f.name.clone(), plan.sets[f.set].uid, property)
+            })
+            .collect();
         let done = Arc::new(AtomicUsize::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
         let input = WorkerInput {
             dir: dir.to_path_buf(),
             template: plan.template,
@@ -886,39 +971,47 @@ impl AppState {
             },
             reach,
             done: done.clone(),
-            cancel: cancel.clone(),
             park: std::mem::take(&mut self.export.park_next),
             working_bytes: self.export_working_bytes(),
         };
-        let spawned = std::thread::Builder::new()
-            .name("yolu-export".into())
-            .spawn(move || {
-                let _ = tx.send(run(input));
-            });
-        if let Err(e) = spawned {
-            self.message = format!("{e}");
-            return;
-        }
-        self.message = if total == 1 {
-            lang.pick(
-                format!("書き出し中: {label}…"),
-                format!("Exporting: {label}…"),
-            )
-        } else {
-            lang.pick(
-                format!("書き出し中: {label}（{total} 枚）…"),
-                format!("Exporting: {label} ({total} images)…"),
-            )
+        let worker = match Worker::spawn("yolu-export", move |tx, cancel| {
+            let _ = tx.send(run(input, &cancel));
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                self.fail(
+                    Source::Export,
+                    lang.with_reason(
+                        lang.pick("書き出せません", "Cannot export"),
+                        lang.thread_error(&e),
+                    ),
+                );
+                return;
+            }
         };
+        self.info(
+            Source::Export,
+            if total == 1 {
+                lang.pick(
+                    format!("書き出し中: {label}…"),
+                    format!("Exporting: {label}…"),
+                )
+            } else {
+                lang.pick(
+                    format!("書き出し中: {label}（{total} 枚）…"),
+                    format!("Exporting: {label} ({total} images)…"),
+                )
+            },
+        );
         self.export.job = Some(Job {
             template: label,
+            targets,
             dir: dir.to_path_buf(),
             report,
             total,
             done,
-            cancel,
             notes: plan.notes,
-            rx,
+            worker,
         });
     }
 
@@ -928,10 +1021,10 @@ impl AppState {
         let Some(job) = &self.export.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(ExportError::Io(
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(ExportError::Io(
                 lang.pick("書き出しが止まりました", "The export stopped")
                     .into(),
             )),
@@ -939,6 +1032,18 @@ impl AppState {
         let job = self.export.job.take().expect("上で見た");
         match result {
             Ok(images) => {
+                self.export.finished = Some(
+                    images
+                        .iter()
+                        .filter_map(|i| {
+                            let (_, uid, property) = job
+                                .targets
+                                .iter()
+                                .find(|(name, _, _)| *name == i.file_name)?;
+                            Some((i.clone(), *uid, property.clone()))
+                        })
+                        .collect(),
+                );
                 let mut text = if job.report {
                     lang.pick(
                         format!(
@@ -968,7 +1073,12 @@ impl AppState {
                 for n in &job.notes {
                     text += &format!(" {}。", note_text(lang, n));
                 }
-                self.message = text;
+                // 書けたが、注意（書き出しの但し書き）があれば気をつけること
+                if job.notes.is_empty() {
+                    self.info(Source::Export, text);
+                } else {
+                    self.warn(Source::Export, text);
+                }
                 if job.report {
                     self.export.report = Some(Report {
                         template: job.template,
@@ -979,17 +1089,18 @@ impl AppState {
                 }
             }
             Err(ExportError::Cancelled) => {
-                self.message = lang
-                    .pick(
+                self.info(
+                    Source::Export,
+                    lang.pick(
                         "書き出しを取り消しました（元のファイルは変えていません）。",
                         "Export canceled (no file was changed).",
-                    )
-                    .into();
+                    ),
+                );
             }
             Err(e) => {
-                self.message = lang.pick(
-                    format!("書き出せません: {e}"),
-                    format!("Cannot export: {e}"),
+                self.fail(
+                    Source::Export,
+                    lang.with_reason(lang.pick("書き出せません", "Cannot export"), e.to_string()),
                 );
             }
         }
@@ -998,18 +1109,12 @@ impl AppState {
     /// 試験用: 書き出しが終わるまで待って受ける（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_export(&mut self) {
-        let start = Instant::now();
-        while self.export.job.is_some() {
-            self.poll_export();
-            if self.export.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "書き出しが終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "書き出しが終わらない（ハング検出上限）",
+            |s| s.export.job.is_some(),
+            Self::poll_export,
+        );
     }
 }
 
@@ -1021,14 +1126,13 @@ struct WorkerInput {
     overwrite: Overwrite,
     reach: Reach,
     done: Arc<AtomicUsize>,
-    cancel: Arc<AtomicBool>,
     park: bool,
     /// 画像を作る作業と塗り広げの作業のメモリの上限（設定の「1 回の操作」。Unity 版が塗り広げに渡す StrokeBudgetBytes と同じ）。
     working_bytes: u64,
 }
 
 /// 別のスレッドの本体: 写した文書から塗り広げの覆いを作り、全部の画像を 1 回の `write_images` で書く。
-fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
+fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportError> {
     let WorkerInput {
         dir,
         template,
@@ -1037,12 +1141,12 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         overwrite,
         reach,
         done,
-        cancel,
         park,
         working_bytes,
     } = input;
+    let cancel = cancel.flag();
     if park {
-        crate::windows::park_until_canceled(&cancel);
+        crate::windows::park_until_canceled(cancel);
     }
     let docs: Vec<&Document> = sets.iter().map(|s| &s.doc).collect();
     let mut coverage: Vec<Option<Vec<bool>>> = Vec::with_capacity(sets.len());
@@ -1070,7 +1174,7 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         .collect();
     let options = WriteOptions {
         overwrite,
-        cancel: Some(&cancel),
+        cancel: Some(cancel),
     };
     write_images(&dir, &export_files, &options, |i| {
         done.store(i, Ordering::Relaxed);
@@ -1095,7 +1199,7 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
                 keep,
                 reach,
                 working_bytes,
-                Some(&cancel),
+                Some(cancel),
             )?),
             None => Ok(pixels),
         }

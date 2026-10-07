@@ -1,5 +1,6 @@
 //! Unity 版 .ylp の検証、損失のない正本の読み書き、メモリ上の旧形式移行。
 mod archive;
+pub mod atomic;
 mod bigdoc;
 pub use bigdoc::{DocumentSource, SetDocument};
 pub mod brushes;
@@ -8,37 +9,41 @@ mod core_bridge;
 pub use core_bridge::{MAX_DOCUMENT_EDGE, MAX_DOCUMENT_LAYERS};
 mod distribution;
 pub mod export;
+pub mod fonts;
 mod generation;
 pub mod library;
+pub mod livelink;
 pub mod look;
 mod native;
 mod package;
-mod project;
 pub mod pose;
+mod project;
 pub mod saved_selections;
 mod selection;
 pub mod shelf;
 pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
-pub use package::{
-    Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
-    OVER_LAYER_PIXELS_DOCUMENT, OVER_LAYER_PIXELS_TOTAL, SOURCE_RELEASED,
-};
-pub use native::{
-    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
-    PROCEDURAL_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
-};
 pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
-pub use project::{
-    entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet,
-    WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES, ROOT_ENTRIES,
-    SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
-};
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
     GenerationFootprint, GenerationInfo, GenerationStore, LowSpace, RecoveryInfo, SpaceGuard,
     StoreError, INFO_LIMIT, INFO_NAME,
+};
+pub use native::{
+    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, BAKE_PRIORITY_VERSION,
+    EFFECTS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
+    PROCEDURAL_VERSION, SEAMS_VERSION, SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
+};
+pub use package::{
+    Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
+    OVER_LAYER_PIXELS_DOCUMENT, OVER_LAYER_PIXELS_TOTAL, SOURCE_RELEASED,
+};
+pub use project::{
+    entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec,
+    TextureSet, WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES,
+    ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
@@ -51,7 +56,7 @@ pub use store::{
 #[derive(Debug)]
 pub enum Error {
     InvalidData(String),
-    /// 予算・上限を超えた（アーカイブ・展開・JSON・画素・層数・名前の長さなど）。壊れたファイルとは別に言い分けるための種類。
+    /// 予算・上限を超えた（アーカイブ・展開・JSON・画素・レイヤー数・名前の長さなど）。壊れたファイルとは別に言い分けるための種類。
     Budget(String),
     /// まだ正本に書けない中身。黙って落とさず、書けるまで保存を断る。
     Unwritable(Unwritable),
@@ -69,15 +74,12 @@ pub enum Error {
 /// まだ .ylp の正本に書けない中身（書けるようになるまで、保存を断る）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unwritable {
-    /// 手動の ID の色（正本の版 19）。
-    ManualIdColors,
     /// 塗りつぶしのグラデーションのランプの混色・混合率曲線（Unity 版と共有の並びに形が無い）。
     GeneratorRampMixing,
 }
 impl fmt::Display for Unwritable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::ManualIdColors => "手動の ID の色はまだ .ylp に書けません",
             Self::GeneratorRampMixing => {
                 "塗りつぶしのグラデーションのランプの混色は .ylp に書けません"
             }
@@ -127,10 +129,14 @@ impl std::error::Error for Error {
     }
 }
 impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self { Self::Io(e) }
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 impl From<serde_json::Error> for Error {
-    fn from(e: serde_json::Error) -> Self { Self::Json(e) }
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
 }
 pub type Result<T> = std::result::Result<T, Error>;
 pub(crate) fn check(ok: bool, why: impl Into<String>) -> Result<()> {

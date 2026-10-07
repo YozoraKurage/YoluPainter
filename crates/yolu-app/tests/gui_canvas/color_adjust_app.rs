@@ -33,7 +33,10 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
 
 fn new_adjustment(h: &mut Harness<'_, YoluApp>, kind: AdjustmentKind) -> LayerId {
     apply(h, Action::M2(Edit::NewAdjustment(kind)));
-    h.state().state.selected_layer.expect("足した層を選ぶ")
+    h.state()
+        .state
+        .selected_layer
+        .expect("足したレイヤーを選ぶ")
 }
 
 fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
@@ -44,7 +47,7 @@ fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
         .unwrap()
         .adjustment()
         .and_then(|a| a.color_adjust())
-        .expect("色調補正の層")
+        .expect("色調補正のレイヤー")
 }
 
 fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
@@ -140,7 +143,7 @@ fn a_threshold_slider_drag_in_the_panel_is_one_undo_step_and_undo_restores_it() 
 
 #[test]
 fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
-    // 高い窓（カラーバランスの欄の下の行まで、ドックの内側に収める）
+    // 高いウィンドウ（カラーバランスの欄の下の行まで、ドックの内側に収める）
     let mut h = app(1280.0, 1300.0, 64);
     let id = new_adjustment(&mut h, AdjustmentKind::BrightnessContrast);
     let steps = undo_count(&h);
@@ -178,7 +181,7 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
     assert_eq!(undo_count(&h), steps + 2, "スライダーと切り替えは別の Undo");
 }
 
-/// 右の列を、その名前の部品が見える所（窓の中ほど）まで送る（欄は縦に長く、窓の外にはみ出す）。
+/// 右の列を、その名前の部品が見える所（ウィンドウの中ほど）まで送る（欄は縦に長く、ウィンドウの外にはみ出す）。
 fn scroll_panel_to(h: &mut Harness<'_, YoluApp>, label: &str) {
     let r = rect_of(h, label, |r| r.left() > 1000.0);
     let scroll = h.state().state.m2.props_scroll + (r.top() - 900.0);
@@ -223,7 +226,7 @@ fn the_gradient_map_panel_applies_a_preset_flips_and_undoes() {
 #[test]
 fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_what_lies_below() {
     let mut h = app(1280.0, 1000.0, 64);
-    // 下に絵のある調整の層（分布が出る）
+    // 下に絵のある調整レイヤー（分布が出る）
     apply(&mut h, Action::NewLayer);
     let paint = h.state().state.selected_layer.unwrap();
     for y in 0..64 {
@@ -266,7 +269,7 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
         panic!()
     };
     assert!(v.is_identity());
-    // 層の下の分布は、文書の合成の下半分（調整の層より下）から求め、文書が変わるまで同じ
+    // レイヤーの下の分布は、文書の合成の下半分（調整レイヤーより下）から求め、文書が変わるまで同じ
     let doc = &h.state().state.doc;
     let hist = yolu_app::panels::color_adjust::Histogram::below(doc, id, Channel::Color).unwrap();
     assert!(
@@ -335,7 +338,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
                 _ => AdjustmentType::Posterize,
             }
         );
-        // 段を選ぶと欄が出る（調整の層と同じ欄）
+        // 段を選ぶと欄が出る（調整レイヤーと同じ欄）
         apply(&mut h, Action::Fx(FxOp::SelectFilter { layer, id }));
         let probe = match kind {
             FilterKind::GradientMap => "逆向き",
@@ -395,11 +398,17 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     // (ラベル, 押せるか, 理由)。理由はラベルに続けず、ツールチップに置く
     let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool, Option<String>) {
         let lang = h.state().state.lang;
-        let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
+        let entries =
+            yolu_app::fx::menu::add_filter_entries(&h.state().state, FilterTarget::Content);
         yolu_app::ui::menu::leaves(&entries)
             .into_iter()
             .find_map(|e| match e {
-                Entry::Item { label, enabled, tooltip, .. } if label.starts_with(kind.name(lang)) => {
+                Entry::Item {
+                    label,
+                    enabled,
+                    tooltip,
+                    ..
+                } if label.starts_with(kind.name(lang)) => {
                     Some((label.clone(), *enabled, tooltip.clone()))
                 }
                 _ => None,
@@ -424,7 +433,10 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     h.state_mut().state.m2.paint_channel = Channel::Normal;
     for kind in FILTER_SIX {
         let (label, enabled, reason) = label_of(&h, kind);
-        assert!(!enabled && reason.is_some() && !label.contains(" — "), "{kind:?} {label}");
+        assert!(
+            !enabled && reason.is_some() && !label.contains(" — "),
+            "{kind:?} {label}"
+        );
     }
     // 英語の画面でも、理由は一般の文（「Unsupported value or operation」）に落ちず、日本語も混ざらない
     h.state_mut().state.set_language(Lang::En);
@@ -432,7 +444,10 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     for kind in FILTER_SIX {
         let (label, _, reason) = label_of(&h, kind);
         let reason = reason.expect(&label);
-        assert!(!has_japanese(&label) && !has_japanese(&reason), "{kind:?} {label} {reason}");
+        assert!(
+            !has_japanese(&label) && !has_japanese(&reason),
+            "{kind:?} {label} {reason}"
+        );
         assert!(
             !reason.contains("Unsupported value or operation"),
             "{kind:?} 法線: {label} {reason}"
@@ -443,7 +458,9 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
         let (label, enabled, reason) = label_of(&h, kind);
         assert!(!enabled, "{label}");
         assert!(
-            reason.as_deref().is_some_and(|r| r.contains("apply only to color channels")),
+            reason
+                .as_deref()
+                .is_some_and(|r| r.contains("apply only to color channels")),
             "{kind:?} {label} {reason:?}"
         );
     }
@@ -503,11 +520,11 @@ fn saving_a_smart_material_with_a_colour_adjustment_is_refused_with_a_short_reas
     };
     let err = SmartFile::from_core(&material, &writer).unwrap_err();
     assert_eq!(
-        yolu_app::shelf::io_reason(Lang::Ja, &err),
-        "色調補正は保存できません"
+        yolu_app::lang::shelf_io_error(Lang::Ja, &err),
+        "色調補正を使っています"
     );
-    let en = yolu_app::shelf::io_reason(Lang::En, &err);
-    assert_eq!(en, "Colour adjustments cannot be saved");
+    let en = yolu_app::lang::shelf_io_error(Lang::En, &err);
+    assert_eq!(en, "It uses colour adjustments");
     assert!(!has_japanese(&en));
 }
 
@@ -541,7 +558,9 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
     crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("mixing.ylp");
-    h.state_mut().state.apply(Action::SaveProjectAs(path.clone()));
+    h.state_mut()
+        .state
+        .apply(Action::SaveProjectAs(path.clone()));
     assert!(
         h.state().state.message.starts_with("保存しました"),
         "{}",
@@ -549,13 +568,17 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
     );
     let mut opened = yolu_app::state::AppState::new(8, 8);
     opened.apply(Action::OpenProject(path));
-    assert!(opened.message.starts_with("開きました"), "{}", opened.message);
+    assert!(
+        opened.message.starts_with("開きました"),
+        "{}",
+        opened.message
+    );
     let again = opened
         .doc
         .layers()
         .iter()
         .find_map(|l| l.adjustment().and_then(|a| a.color_adjust()))
-        .expect("調整の層");
+        .expect("調整レイヤー");
     assert_eq!(again, mixed);
     let _ = std::fs::remove_dir_all(dir);
     // 1 つずつ Undo で戻り、Redo で進む
@@ -577,12 +600,13 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
     let first = value_of(&h, id);
     let steps = undo_count(&h);
     // 色の見本を押して色の選びを開き、四角の中で何度か動かす（1 回のドラッグ）
-    scroll_panel_to(&mut h, "分岐点の色（押すと色の選びを開く）");
-    let swatch = rect_of(&h, "分岐点の色（押すと色の選びを開く）", |r| r.left() > 1000.0);
+    scroll_panel_to(&mut h, "分岐点の色");
+    let swatch = rect_of(&h, "分岐点の色", |r| r.left() > 1000.0);
     click(&mut h, swatch.center());
-    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
-    let window = yolu_app::panels::color_popup::rect(&h.ctx, popup).expect("色の選びが開く");
-    let wheel = yolu_app::panels::color_popup::wheel_of(window);
+    let target = yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0);
+    assert!(yolu_app::panels::color_window::is_target(&h.ctx, target));
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウが開く");
+    let wheel = yolu_app::panels::color_window::wheel_of(window);
     let sq = yolu_app::panels::color::wheel_square(wheel);
     drag(
         &mut h,
@@ -593,7 +617,11 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
         ],
     );
     assert_ne!(value_of(&h, id), first, "その場で色が変わる");
-    assert_eq!(undo_count(&h), steps + 1, "ドラッグは離すまで 1 回の取り消し");
+    assert_eq!(
+        undo_count(&h),
+        steps + 1,
+        "ドラッグは離すまで 1 回の取り消し"
+    );
     // Esc で最初の色へ戻る（戻す変更も 1 回の取り消しとして積む。Undo で選んだ色へ、もう 1 回で最初の色へ）
     h.key_press(egui::Key::Escape);
     h.run();

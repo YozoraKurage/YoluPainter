@@ -1,9 +1,9 @@
-//! テクスチャセットの見た目の設定（`MaterialLook`）を GPU へ渡す: lilToon の値の一様バッファ（`shaders/liltoon.wgsl` の `Lil`）、
+//! テクスチャセットの見た目の設定（`MaterialLook`）を GPU へ渡す: lilToon の値の一様バッファ（`shaders/liltoon/bindings.wgsl` の `Lil`）、
 //! スロットが読むユーザーチャンネルの配列（`user_layers`）、マットキャップの絵（プロジェクトの画像）。セットごとに 1 つ持ち、
 //! 値が変わったときだけ書き直す。
 //!
 //! 値の約束（lilToon と Unity のリニアの色空間と同じ）: 色のプロパティは sRGB からリニアへ（Unity がマテリアルの色をシェーダーへ渡すときと
-//! 同じ）、数とベクトルはそのまま。スロットの元は、標準のチャンネルは 3D ビューの絵（`paint`）、ユーザーチャンネルは配列の層、画像は
+//! 同じ）、数とベクトルはそのまま。スロットの元は、標準のチャンネルは 3D ビューの絵（`paint`）、ユーザーチャンネルは配列のレイヤー、画像は
 //! 束ねの 9・10。色空間が sRGB の元を 1 つだけ読むスロットは、読んだ RGB をリニアへ直す（Unity が sRGB のテクスチャを読むときと同じ）。
 //! 成分ごとの詰め合わせはリニアのまま（書き出しの詰めた画像はリニアで取り込む）。
 
@@ -34,7 +34,7 @@ const IMAGE_SOURCES: [i32; 2] = [32, 33];
 /// Unity から受けた絵の配列の元の番号の始まり（40〜55）。
 const RECEIVED_SOURCE: i32 = 40;
 
-/// lilToon のパイプラインの定数（`shaders/liltoon.wgsl` の `LIL_FEATURES`・`LIL_SINGLE*`・`LIL_LOOP*`）: 使う機能のビットと、スロットの
+/// lilToon のパイプラインの定数（`shaders/liltoon/pipeline.wgsl` の `LIL_FEATURES`・`LIL_SINGLE*`・`LIL_LOOP*`）: 使う機能のビットと、スロットの
 /// 読み方（1 つの元をそのまま・成分ごと）のビット。ソフトの描画（llvmpipe）でだけパイプラインに入れ、使わない機能とスロットの読み方を
 /// 作らない（一様な分岐の先も全部実行するので）。実機は全部入り（[`LilSpec::ALL`]）の 1 本。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,7 +63,7 @@ impl LilSpec {
     }
 }
 
-/// `shaders/liltoon.wgsl` の機能のビット（`F_*`）。
+/// `shaders/liltoon/pipeline.wgsl` の機能のビット（`F_*`）。
 pub mod feature {
     pub const SHADOW: u32 = 0;
     pub const BUMP: u32 = 1;
@@ -115,10 +115,14 @@ pub fn features_of(look: &MaterialLook) -> u32 {
     set(EMISSION, on("_UseEmission"));
     set(EMISSION2, on("_UseEmission2nd"));
     set(ANISO, on("_UseAnisotropy"));
-    set(DISTANCE_FADE, liltoon::value(look, "_DistanceFade")[2] != 0.0);
+    set(
+        DISTANCE_FADE,
+        liltoon::value(look, "_DistanceFade")[2] != 0.0,
+    );
     set(
         BACKFACE,
-        liltoon::number(look, "_Cull").round() <= 1.0 && liltoon::value(look, "_BackfaceColor")[3] != 0.0,
+        liltoon::number(look, "_Cull").round() <= 1.0
+            && liltoon::value(look, "_BackfaceColor")[3] != 0.0,
     );
     bits
 }
@@ -191,11 +195,13 @@ pub fn wanted_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     all
 }
 
-/// スロットが読むユーザーチャンネルのうち、配列の層の上限（[`MAX_LAYERS`]）を超えて持たないもの（17 個目から。そのスロットは
+/// スロットが読むユーザーチャンネルのうち、配列のレイヤーの上限（[`MAX_LAYERS`]）を超えて持たないもの（17 個目から。そのスロットは
 /// 割り当てのない既定で描く。欄が理由を出す）。
 pub fn dropped_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     let all = all_users(doc, look);
-    all.get(MAX_LAYERS..).map(<[Channel]>::to_vec).unwrap_or_default()
+    all.get(MAX_LAYERS..)
+        .map(<[Channel]>::to_vec)
+        .unwrap_or_default()
 }
 
 fn all_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
@@ -226,18 +232,19 @@ pub fn yields_to_received(doc: &Document, source: Option<&TextureSource>) -> boo
 /// 受けた見た目があり、このスロットが Unity の流し込み先でない（Unity が元のテクスチャのまま見せる）か。流し込み先は、受けた見た目が
 /// スタンドアロンの出すチャンネル（今は Color）を自分で割り当てているスロットで、Unity はそこだけ描いた絵で見せる。
 pub fn follows_unity_texture(doc: &Document, slot: &str) -> bool {
-    doc.received_look().is_some_and(|r| !r.look.textures.contains_key(slot))
+    doc.received_look()
+        .is_some_and(|r| !r.look.textures.contains_key(slot))
 }
 
 /// スロットの割り当てが、Unity の元のテクスチャに譲るものか: 受けた見た目があり、流し込み先でないスロットが、使っていない標準のチャンネルを
 /// 読むとき。Unity はそのスロットを元のテクスチャで、空なら既定のテクスチャで読むので、受けた絵が来ない間（空と知らせた・読めない・
-/// まだ届かない・層の上限を超えた）も、使っていないチャンネルの値（発光なら黒）ではなく、スロットの既定のテクスチャで描く。
+/// まだ届かない・レイヤーの上限を超えた）も、使っていないチャンネルの値（発光なら黒）ではなく、スロットの既定のテクスチャで描く。
 pub fn yields_to_unity_texture(doc: &Document, slot: &str, source: Option<&TextureSource>) -> bool {
     yields_to_received(doc, source) && follows_unity_texture(doc, slot)
 }
 
 /// 描く見た目で割り当てていない（か、受けた絵に譲る割り当ての）スロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。
-/// 層の上限を超えたものも含む）。
+/// レイヤーの上限を超えたものも含む）。
 pub fn received_images(
     doc: &Document,
     look: &MaterialLook,
@@ -254,7 +261,12 @@ pub fn received_images(
             let source = look.textures.get(s.name);
             source.is_none() || yields_to_received(doc, source)
         })
-        .filter_map(|s| received.images.get(s.name).map(|i| (s.name.to_owned(), i.clone())))
+        .filter_map(|s| {
+            received
+                .images
+                .get(s.name)
+                .map(|i| (s.name.to_owned(), i.clone()))
+        })
         .collect()
 }
 
@@ -268,7 +280,7 @@ pub fn received_layered(
     all
 }
 
-/// Unity から受けた絵のあるスロットのうち、配列の層の上限（[`MAX_RECEIVED_LAYERS`]）を超えて持たないもの（17 枚目から。そのスロットは
+/// Unity から受けた絵のあるスロットのうち、配列のレイヤーの上限（[`MAX_RECEIVED_LAYERS`]）を超えて持たないもの（17 枚目から。そのスロットは
 /// 割り当てのない既定で描く。欄が理由を出す）。
 pub fn dropped_received(doc: &Document, look: &MaterialLook) -> Vec<String> {
     received_images(doc, look)
@@ -288,7 +300,14 @@ pub fn planned_received_bytes(doc: &Document, limit: u32, budget: u64) -> u64 {
 /// 全体の予算の計画に使う（[`super::user_layers::plan`]）。
 pub fn planned_user_bytes(doc: &Document, paint_shift: u32, limit: u32, budget: u64) -> u64 {
     let count = wanted_users(doc, doc.drawn_look()).len();
-    super::user_layers::plan([doc.width(), doc.height()], count, paint_shift, limit, budget).1
+    super::user_layers::plan(
+        [doc.width(), doc.height()],
+        count,
+        paint_shift,
+        limit,
+        budget,
+    )
+    .1
 }
 
 /// 色のプロパティをリニアへ（Unity と同じ `GammaToLinearSpace`。1 を超える色は pow 2.2）。
@@ -311,7 +330,7 @@ fn paint_source(channel: Channel) -> Option<i32> {
     PaintSlot::of(channel).map(|s| s.index() as i32)
 }
 
-/// lilToon の値の一様バッファの中身（f32 の並び。整数の並びはビットのまま）。`users` は配列の層の並び、`images` は画像の元の
+/// lilToon の値の一様バッファの中身（f32 の並び。整数の並びはビットのまま）。`users` は配列のレイヤーの並び、`images` は画像の元の
 /// 色空間（スロット `_MatCapTex`・`_MatCap2ndTex` の順。持っていなければ None）。
 pub fn params(
     doc: &Document,
@@ -322,7 +341,7 @@ pub fn params(
     params_with(doc, look, users, images, &[])
 }
 
-/// `params` に、Unity から受けた絵（`received`: スロットの名前・配列の層・sRGB か）を足したもの。受けた絵は、割り当てていない
+/// `params` に、Unity から受けた絵（`received`: スロットの名前・配列のレイヤー・sRGB か）を足したもの。受けた絵は、割り当てていない
 /// スロットだけが読む（割り当てたチャンネル・画像が勝つ）。
 pub fn params_with(
     doc: &Document,
@@ -375,8 +394,18 @@ pub fn params_with(
     ];
     p[6] = v("_LightDirectionOverride");
     p[7] = color("_BackfaceColor");
-    p[8] = [x("_AlphaMaskMode"), x("_AlphaMaskScale"), x("_AlphaMaskValue"), 0.0];
-    p[9] = [x("_UseShadow"), x("_ShadowStrength"), x("_ShadowMaskType"), x("_ShadowPostAO")];
+    p[8] = [
+        x("_AlphaMaskMode"),
+        x("_AlphaMaskScale"),
+        x("_AlphaMaskValue"),
+        0.0,
+    ];
+    p[9] = [
+        x("_UseShadow"),
+        x("_ShadowStrength"),
+        x("_ShadowMaskType"),
+        x("_ShadowPostAO"),
+    ];
     p[10] = [
         x("_ShadowStrengthMaskLOD"),
         x("_ShadowBorderMaskLOD"),
@@ -445,17 +474,32 @@ pub fn params_with(
             x(&format!("{m}ApplyTransparency")),
         ];
     }
-    p[45] = [x("_UseRim"), x("_RimBlendMode"), x("_RimMainStrength"), x("_RimNormalStrength")];
+    p[45] = [
+        x("_UseRim"),
+        x("_RimBlendMode"),
+        x("_RimMainStrength"),
+        x("_RimNormalStrength"),
+    ];
     p[46] = color("_RimColor");
     p[47] = v("_RimColorTex_ST");
-    p[48] = [x("_RimBorder"), x("_RimBlur"), x("_RimFresnelPower"), x("_RimEnableLighting")];
+    p[48] = [
+        x("_RimBorder"),
+        x("_RimBlur"),
+        x("_RimFresnelPower"),
+        x("_RimEnableLighting"),
+    ];
     p[49] = [
         x("_RimShadowMask"),
         x("_RimBackfaceMask"),
         x("_RimApplyTransparency"),
         x("_RimDirStrength"),
     ];
-    p[50] = [x("_RimDirRange"), x("_RimIndirRange"), x("_RimIndirBorder"), x("_RimIndirBlur")];
+    p[50] = [
+        x("_RimDirRange"),
+        x("_RimIndirRange"),
+        x("_RimIndirBorder"),
+        x("_RimIndirBlur"),
+    ];
     p[51] = color("_RimIndirColor");
     p[52] = [
         f32::from(info.outline),
@@ -473,12 +517,26 @@ pub fn params_with(
         x("_OutlineLitApplyTex"),
         x("_OutlineLitShadowReceive"),
     ];
-    p[58] = [x("_OutlineZBias"), x("_OutlineDeleteMesh"), v("_OutlineTex_ScrollRotate")[2], 0.0];
+    p[58] = [
+        x("_OutlineZBias"),
+        x("_OutlineDeleteMesh"),
+        v("_OutlineTex_ScrollRotate")[2],
+        0.0,
+    ];
     p[59] = [1.0, f32::from(info.exact), 0.0, 0.0];
-    p[60] = [v("_MainTex_ScrollRotate")[2], x("_ShiftBackfaceUV"), 0.0, 0.0];
-    // メインカラー 2nd・3rd（liltoon.wgsl の L_*）
+    p[60] = [
+        v("_MainTex_ScrollRotate")[2],
+        x("_ShiftBackfaceUV"),
+        0.0,
+        0.0,
+    ];
+    // メインカラー 2nd・3rd（`shaders/liltoon/params.wgsl` の L_*）
     for (base, l, n) in [(61, "Main2nd", "2nd"), (70, "Main3rd", "3rd")] {
-        let uv_mode = if x(&format!("_{l}Tex_UVMode")).round() == 4.0 { 4.0 } else { 0.0 };
+        let uv_mode = if x(&format!("_{l}Tex_UVMode")).round() == 4.0 {
+            4.0
+        } else {
+            0.0
+        };
         p[base] = [
             x(&format!("_Use{l}Tex")),
             x(&format!("_{l}EnableLighting")),
@@ -536,7 +594,12 @@ pub fn params_with(
     p[88] = v("_BacklightColorTex_ST");
     // [Gamma] の数（金属度・反射率）は、Unity と同じく sRGB → リニア（GammaToLinearSpace）
     let gamma = |name: &str| brdf::unity_gamma_to_linear(x(name));
-    p[89] = [x("_UseReflection"), x("_Smoothness"), gamma("_Metallic"), gamma("_Reflectance")];
+    p[89] = [
+        x("_UseReflection"),
+        x("_Smoothness"),
+        gamma("_Metallic"),
+        gamma("_Reflectance"),
+    ];
     p[90] = color("_ReflectionColor");
     p[91] = [
         x("_ApplySpecular"),
@@ -603,7 +666,12 @@ pub fn params_with(
     p[112] = color("_DistanceFadeColor");
     p[113] = v("_DistanceFade");
     p[114] = color("_DistanceFadeRimColor");
-    p[115] = [x("_DistanceFadeMode"), x("_DistanceFadeRimFresnelPower"), 0.0, 0.0];
+    p[115] = [
+        x("_DistanceFadeMode"),
+        x("_DistanceFadeRimFresnelPower"),
+        0.0,
+        0.0,
+    ];
     p[116] = [
         x("_MatCapCustomNormal"),
         x("_MatCapBumpScale"),
@@ -640,7 +708,8 @@ pub fn params_with(
         // （Unity は空のテクスチャを既定で読む）。流し込み先と、受けた見た目の無いセットは割り当てのチャンネルを読む
         let assigned = look.textures.get(slot.name).filter(|s| {
             !(yields_to_received(doc, Some(s))
-                && (received.iter().any(|r| r.0 == slot.name) || follows_unity_texture(doc, slot.name)))
+                && (received.iter().any(|r| r.0 == slot.name)
+                    || follows_unity_texture(doc, slot.name)))
         });
         let Some(source) = assigned else {
             if let Some((_, layer, srgb)) = received.iter().find(|r| r.0 == slot.name) {
@@ -672,7 +741,9 @@ pub fn params_with(
                         PlaneSource::Zero => -2,
                         PlaneSource::One => -3,
                         PlaneSource::Channel { channel, component } => {
-                            match user_source(*channel).filter(|_| doc.channel_info(*channel).is_some()) {
+                            match user_source(*channel)
+                                .filter(|_| doc.channel_info(*channel).is_some())
+                            {
                                 Some(s) => s * 4 + i32::from(*component),
                                 None => -1,
                             }
@@ -864,9 +935,9 @@ pub struct LookGpu {
     pub draw: SetDraw,
     /// 法線マップを使う（lilToon のノーマルマップが入）。接線を作るかの決めに使う。
     pub wants_tangents: bool,
-    /// 最後に値を作ったときの鍵（文書・版・見た目の設定の入れ物・層の並び・画像の色空間）。同じなら値を作り直さない。
+    /// 最後に値を作ったときの鍵（文書・版・見た目の設定の入れ物・レイヤーの並び・画像の色空間）。同じなら値を作り直さない。
     params_key: Option<ParamsKey>,
-    /// 値（`params`）を作った回数（試験・計測用。同じ道具の兄弟の持ち物（ほかのセット）と共有する）。
+    /// 値（`params`）を作った回数（試験・計測用。同じツールの兄弟の持ち物（ほかのセット）と共有する）。
     builds: Arc<AtomicU64>,
 }
 
@@ -876,7 +947,7 @@ struct ParamsKey {
     revision: u64,
     /// 描く見た目の番号（利用者の設定・受けた見た目のどちらが変わっても進む）。
     look_serial: u64,
-    /// 受けた絵の層の並び（スロットの名前と sRGB か）。
+    /// 受けた絵のレイヤーの並び（スロットの名前と sRGB か）。
     received: Vec<(String, bool)>,
     /// 見た目の設定の入れ物の番地（文書は設定を替えるたびに新しい入れ物にする。番地の使い回しは版で分ける）。
     look: usize,
@@ -915,7 +986,7 @@ impl LookGpu {
         }
     }
 
-    /// 同じ道具の、まっさらな別の持ち物（ほかのセット用）。
+    /// 同じツールの、まっさらな別の持ち物（ほかのセット用）。
     pub fn sibling(&self, device: &wgpu::Device) -> LookGpu {
         let mut look = LookGpu::with_users(device, self.users.sibling(), self.received.sibling());
         look.builds = self.builds.clone();
@@ -929,8 +1000,7 @@ impl LookGpu {
 
     /// 描き直しの鍵。
     pub fn key(&self) -> u64 {
-        self.version
-            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        self.version.wrapping_mul(0x9e37_79b9_7f4a_7c15)
             ^ self.users.version().rotate_left(17)
             ^ self.image_version.rotate_left(33)
     }
@@ -1009,19 +1079,22 @@ impl LookGpu {
             || decal_sides("Main2nd")
             || decal_sides("Main3rd");
         let users = wanted_users(doc, look);
-        self.users.sync(doc, &users, paint.level(), limit, budget, encoder);
+        self.users
+            .sync(doc, &users, paint.level(), limit, budget, encoder);
         // マットキャップの絵（プロジェクトの画像。文書の効果の入力にある画像を使う）
         let mut spaces: [Option<ImageColorSpace>; 2] = [None, None];
         for (which, name) in ["_MatCapTex", "_MatCap2ndTex"].iter().enumerate() {
             let wanted = match look.textures.get(*name) {
-                Some(TextureSource::Image(id)) if self.draw.lil => doc.effect_inputs().image(*id).map(|i| (*id, i)),
+                Some(TextureSource::Image(id)) if self.draw.lil => {
+                    doc.effect_inputs().image(*id).map(|i| (*id, i))
+                }
                 _ => None,
             };
             match wanted {
                 Some((id, input)) => {
-                    let same = self.images[which]
-                        .as_ref()
-                        .is_some_and(|h| h.id == id && h.hash == input.hash && h.space == input.color_space);
+                    let same = self.images[which].as_ref().is_some_and(|h| {
+                        h.id == id && h.hash == input.hash && h.space == input.color_space
+                    });
                     if !same {
                         let srgb = input.color_space != ImageColorSpace::Linear;
                         self.images[which] = paint
@@ -1043,7 +1116,7 @@ impl LookGpu {
             }
             spaces[which] = self.images[which].as_ref().map(|h| h.space);
         }
-        // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、層の上限まで）
+        // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、レイヤーの上限まで）
         let wanted = received_layered(doc, look);
         if self.received.sync(&wanted, limit, received_budget) {
             self.image_version += 1;
@@ -1141,12 +1214,18 @@ mod tests {
         // （1 以上は pow 2.2）。Unity 2022.3 で測った値: 16.948 → 505.9、2.119 → 5.218。[HDR] の発光の色はそのまま
         let doc = Document::new(8, 8).unwrap();
         let mut look = lil();
-        look.properties
-            .insert("_BacklightColor".into(), LookValue::Color([16.948, 2.119, 0.5, 1.0]));
-        look.properties
-            .insert("_MatCapColor".into(), LookValue::Color([2.119, 1.895, 1.789, 1.0]));
-        look.properties
-            .insert("_EmissionColor".into(), LookValue::Color([2.5, 0.5, 16.948, 1.0]));
+        look.properties.insert(
+            "_BacklightColor".into(),
+            LookValue::Color([16.948, 2.119, 0.5, 1.0]),
+        );
+        look.properties.insert(
+            "_MatCapColor".into(),
+            LookValue::Color([2.119, 1.895, 1.789, 1.0]),
+        );
+        look.properties.insert(
+            "_EmissionColor".into(),
+            LookValue::Color([2.5, 0.5, 16.948, 1.0]),
+        );
         let v = params(&doc, &look, &[], [None, None]);
         let at = |i: usize| &v[i * 4..i * 4 + 4];
         // P_BACKLIGHT_COLOR は 85 番、P_MATCAP_COLOR は 34 番、P_EMISSION_COLOR は 22 番
@@ -1207,12 +1286,12 @@ mod tests {
         // _MainTex: Color（絵の束ね 0）を全部。sRGB の形式のテクスチャで GPU がリニアにして読むので、シェーダーでは直さない
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
         assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
-        // スカラーのユーザーチャンネル（層 0 = 元 6）は値を RGB に
+        // スカラーのユーザーチャンネル（レイヤー 0 = 元 6）は値を RGB に
         assert_eq!(slot_src(&v, 4), [24, 24, 24, -3]);
-        // 色のユーザーチャンネル（層 1 = 元 7）は全部、sRGB
+        // 色のユーザーチャンネル（レイヤー 1 = 元 7）は全部、sRGB
         assert_eq!(slot_src(&v, 7), [28, 29, 30, 31]);
         assert_eq!(slot_flags(&v, 7)[0], 1.0);
-        // 詰め合わせ: R ← 層 0 の R、G ← 1、B ← 0、A ← Roughness（絵の束ね 2）の R
+        // 詰め合わせ: R ← レイヤー 0 の R、G ← 1、B ← 0、A ← Roughness（絵の束ね 2）の R
         assert_eq!(slot_src(&v, 5), [24, -3, -2, 8]);
         // 割り当てていないスロットは既定（_ShadowColorTex 2nd は黒）
         assert_eq!(slot_src(&v, 8), [-1; 4]);
@@ -1251,8 +1330,10 @@ mod tests {
             ..Default::default()
         };
         for slot in &SLOTS[1..] {
-            r.images
-                .insert(slot.name.into(), received_image(matches!(slot.usage, SlotUse::Color | SlotUse::Image)));
+            r.images.insert(
+                slot.name.into(),
+                received_image(matches!(slot.usage, SlotUse::Color | SlotUse::Image)),
+            );
         }
         doc.set_received_look(Some(r)).unwrap();
     }
@@ -1263,10 +1344,14 @@ mod tests {
         received_everywhere(&mut doc);
         let drawn = doc.drawn_look().clone();
         let all = received_images(&doc, &drawn);
-        assert_eq!(all.len(), SLOTS.len() - 1, "流し込み先（_MainTex）は受けた絵を読まない");
+        assert_eq!(
+            all.len(),
+            SLOTS.len() - 1,
+            "流し込み先（_MainTex）は受けた絵を読まない"
+        );
         let layered = received_layered(&doc, &drawn);
         assert_eq!(layered.len(), MAX_RECEIVED_LAYERS);
-        // スロットの並びで先の 16 枚が層、17 枚目からは持たない
+        // スロットの並びで先の 16 枚がレイヤー、17 枚目からは持たない
         assert_eq!(
             dropped_received(&doc, &drawn),
             SLOTS[1 + MAX_RECEIVED_LAYERS..]
@@ -1274,7 +1359,7 @@ mod tests {
                 .map(|s| s.name.to_owned())
                 .collect::<Vec<_>>()
         );
-        // LookGpu と同じく、層の番号は並びの順
+        // LookGpu と同じく、レイヤーの番号は並びの順
         let layers: Vec<(&str, usize, bool)> = layered
             .iter()
             .enumerate()
@@ -1284,16 +1369,16 @@ mod tests {
         // 流し込み先は 3D ビューの絵（Color。GPU がリニアにして読む）
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
         assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
-        // 色調補正マスク（層 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
+        // 色調補正マスク（レイヤー 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
         assert_eq!(slot_src(&v, 1), [160, 161, 162, 163]);
         assert_eq!(slot_flags(&v, 1), [0.0, 1.0, 40.0, 0.0]);
-        // ノーマルマップ（層 2 = 元 42）: シェーダーは元が 40 以上なら X を A × R で読む
+        // ノーマルマップ（レイヤー 2 = 元 42）: シェーダーは元が 40 以上なら X を A × R で読む
         assert_eq!(slot_flags(&v, 3), [0.0, 1.0, 42.0, 0.0]);
-        // 影色（層 6 = 元 46）は sRGB
+        // 影色（レイヤー 6 = 元 46）は sRGB
         assert_eq!(slot_flags(&v, 7), [1.0, 1.0, 46.0, 0.0]);
-        // マットキャップの絵のスロットも受けた絵で描く（層 13 = 元 53）
+        // マットキャップの絵のスロットも受けた絵で描く（レイヤー 13 = 元 53）
         assert_eq!(slot_flags(&v, 14), [1.0, 1.0, 53.0, 0.0]);
-        // 16 枚目（マットキャップ 2nd、層 15 = 元 55）まで
+        // 16 枚目（マットキャップ 2nd、レイヤー 15 = 元 55）まで
         assert_eq!(slot_flags(&v, 16), [1.0, 1.0, 55.0, 0.0]);
         // 17 枚目からは割り当てのない既定
         for (i, slot) in SLOTS.iter().enumerate().skip(1 + MAX_RECEIVED_LAYERS) {
@@ -1309,14 +1394,18 @@ mod tests {
         // 使っている Color（レイヤーがある）を、利用者が影色に割り当てる（受けた絵より勝つ）
         doc.add_layer("a").unwrap();
         let mut mine = lil();
-        mine.textures
-            .insert("_ShadowColorTex".into(), TextureSource::Channel(Channel::Color));
+        mine.textures.insert(
+            "_ShadowColorTex".into(),
+            TextureSource::Channel(Channel::Color),
+        );
         doc.set_look(mine, false).unwrap();
         let drawn = doc.drawn_look().clone();
         let layered = received_layered(&doc, &drawn);
         assert!(layered.iter().all(|(slot, _)| slot != "_ShadowColorTex"));
-        // 影色が抜けた分、17 枚目（マットキャップ 2nd のマスク）が層に入る
-        assert!(layered.iter().any(|(slot, _)| slot == "_MatCap2ndBlendMask"));
+        // 影色が抜けた分、17 枚目（マットキャップ 2nd のマスク）がレイヤーに入る
+        assert!(layered
+            .iter()
+            .any(|(slot, _)| slot == "_MatCap2ndBlendMask"));
         assert!(!dropped_received(&doc, &drawn).contains(&"_MatCap2ndBlendMask".to_owned()));
         let layers: Vec<(&str, usize, bool)> = layered
             .iter()
@@ -1345,17 +1434,36 @@ mod tests {
         crate::look::default_textures(&mut mine);
         doc.set_look(mine, false).unwrap();
         let drawn = doc.drawn_look().clone();
-        let received: Vec<String> = received_images(&doc, &drawn).into_iter().map(|(s, _)| s).collect();
-        assert!(received.iter().any(|s| s == "_BumpMap"), "Normal は使っていない: {received:?}");
+        let received: Vec<String> = received_images(&doc, &drawn)
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+        assert!(
+            received.iter().any(|s| s == "_BumpMap"),
+            "Normal は使っていない: {received:?}"
+        );
         assert!(received.iter().any(|s| s == "_EmissionMap"));
-        assert!(!received.iter().any(|s| s == "_MainTex"), "Color はレイヤーが使う");
+        assert!(
+            !received.iter().any(|s| s == "_MainTex"),
+            "Color はレイヤーが使う"
+        );
         // Normal を使い始めると、割り当てたチャンネルで描く
-        doc.set_channel_enabled(layer, Channel::Normal, true).unwrap();
+        doc.set_channel_enabled(layer, Channel::Normal, true)
+            .unwrap();
         let drawn = doc.drawn_look().clone();
-        let received: Vec<String> = received_images(&doc, &drawn).into_iter().map(|(s, _)| s).collect();
+        let received: Vec<String> = received_images(&doc, &drawn)
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
         assert!(!received.iter().any(|s| s == "_BumpMap"));
-        assert!(yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Emission))));
-        assert!(!yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Normal))));
+        assert!(yields_to_received(
+            &doc,
+            Some(&TextureSource::Channel(Channel::Emission))
+        ));
+        assert!(!yields_to_received(
+            &doc,
+            Some(&TextureSource::Channel(Channel::Normal))
+        ));
     }
 
     #[test]
@@ -1363,7 +1471,10 @@ mod tests {
         // Unity が発光・ノーマルマップのテクスチャを空と知らせた（絵も理由も来ない）セット。新しいセットの既定の割り当て（発光 → Emission・
         // ノーマルマップ → Normal）はどのレイヤーも使っていないので、使っていないチャンネルの値（発光なら黒）ではなく、Unity と同じに
         // スロットの既定のテクスチャで読む
-        let (emission, bump) = (liltoon::slot_index("_EmissionMap").unwrap(), liltoon::slot_index("_BumpMap").unwrap());
+        let (emission, bump) = (
+            liltoon::slot_index("_EmissionMap").unwrap(),
+            liltoon::slot_index("_BumpMap").unwrap(),
+        );
         let mut sink = lil();
         sink.textures
             .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
@@ -1377,30 +1488,55 @@ mod tests {
         doc.set_look(mine, false).unwrap();
         // 受けた見た目が無いとき（Live Link でつないでいない）は今までどおり、割り当てたチャンネルを読む
         let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
-        assert_eq!(slot_src(&v, emission)[0] / 4, paint_source(Channel::Emission).unwrap());
-        assert_eq!(slot_src(&v, bump)[0] / 4, paint_source(Channel::Normal).unwrap());
+        assert_eq!(
+            slot_src(&v, emission)[0] / 4,
+            paint_source(Channel::Emission).unwrap()
+        );
+        assert_eq!(
+            slot_src(&v, bump)[0] / 4,
+            paint_source(Channel::Normal).unwrap()
+        );
         doc.set_received_look(Some(received)).unwrap();
         let drawn = doc.drawn_look().clone();
-        assert!(yields_to_unity_texture(&doc, "_EmissionMap", drawn.textures.get("_EmissionMap")));
+        assert!(yields_to_unity_texture(
+            &doc,
+            "_EmissionMap",
+            drawn.textures.get("_EmissionMap")
+        ));
         assert!(received_images(&doc, &drawn).is_empty(), "来る絵は無い");
         let v = params_with(&doc, &drawn, &[], [None, None], &[]);
         for i in [emission, bump] {
-            assert_eq!(slot_src(&v, i), [-1; 4], "{}: 既定のテクスチャ", SLOTS[i].name);
+            assert_eq!(
+                slot_src(&v, i),
+                [-1; 4],
+                "{}: 既定のテクスチャ",
+                SLOTS[i].name
+            );
             assert_eq!(slot_flags(&v, i), [0.0; 4], "{}", SLOTS[i].name);
         }
         // 流し込み先（受けた見た目が Color を割り当てる _MainTex）は、Color を使うレイヤーが無くても描いた絵（3D ビューの Color）で読む
-        assert!(!yields_to_unity_texture(&doc, "_MainTex", drawn.textures.get("_MainTex")));
+        assert!(!yields_to_unity_texture(
+            &doc,
+            "_MainTex",
+            drawn.textures.get("_MainTex")
+        ));
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
         assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
         // Normal を使い始めると、割り当てたチャンネルで描く（Emission は使っていないまま既定）
         let layer = doc.add_layer("a").unwrap();
-        doc.set_channel_enabled(layer, Channel::Normal, true).unwrap();
+        doc.set_channel_enabled(layer, Channel::Normal, true)
+            .unwrap();
         let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
-        assert_eq!(slot_src(&v, bump)[0] / 4, paint_source(Channel::Normal).unwrap());
+        assert_eq!(
+            slot_src(&v, bump)[0] / 4,
+            paint_source(Channel::Normal).unwrap()
+        );
         assert_eq!(slot_src(&v, emission), [-1; 4]);
         // 受けた絵が来れば、その絵が勝つ（既定ではなく）
         let mut received = doc.received_look().unwrap().clone();
-        received.images.insert("_EmissionMap".into(), received_image(true));
+        received
+            .images
+            .insert("_EmissionMap".into(), received_image(true));
         doc.set_received_look(Some(received)).unwrap();
         let drawn = doc.drawn_look().clone();
         let layered = received_layered(&doc, &drawn);
@@ -1410,11 +1546,17 @@ mod tests {
             .map(|(k, (slot, image))| (slot.as_str(), k, image.srgb))
             .collect();
         let v = params_with(&doc, &drawn, &[], [None, None], &layers);
-        assert_eq!(slot_flags(&v, emission), [1.0, 1.0, RECEIVED_SOURCE as f32, 0.0]);
+        assert_eq!(
+            slot_flags(&v, emission),
+            [1.0, 1.0, RECEIVED_SOURCE as f32, 0.0]
+        );
         // 読めない・まだ届かない理由（missing）が付いたスロットも、絵が来ない間は既定で描く
         let mut pending = doc.received_look().unwrap().clone();
         pending.images.clear();
-        pending.missing.insert("_EmissionMap".into(), yolu_core::look::MissingImage::Pending);
+        pending.missing.insert(
+            "_EmissionMap".into(),
+            yolu_core::look::MissingImage::Unreadable,
+        );
         doc.set_received_look(Some(pending)).unwrap();
         let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
         assert_eq!(slot_src(&v, emission), [-1; 4]);
@@ -1423,54 +1565,90 @@ mod tests {
     #[test]
     fn rotating_the_sh_matches_reading_the_source_direction() {
         use yolu_core::glam::Vec3;
-        let sh: [Vec3; 9] = std::array::from_fn(|i| Vec3::new(0.3 + i as f32 * 0.1, -0.2 + i as f32 * 0.05, 0.1 * (i as f32).sin()));
+        let sh: [Vec3; 9] = std::array::from_fn(|i| {
+            Vec3::new(
+                0.3 + i as f32 * 0.1,
+                -0.2 + i as f32 * 0.05,
+                0.1 * (i as f32).sin(),
+            )
+        });
         let theta = 0.7f32;
         let rotated = rotate_sh_y(&sh, theta);
         let (s, c) = theta.sin_cos();
-        let eval = |k: &[Vec3; 9], d: Vec3| -> Vec3 { k.iter().zip(sh_basis(d)).map(|(a, b)| *a * b).sum() };
+        let eval = |k: &[Vec3; 9], d: Vec3| -> Vec3 {
+            k.iter().zip(sh_basis(d)).map(|(a, b)| *a * b).sum()
+        };
         for i in 0..40 {
             let a = i as f32 * 0.37;
-            let d = Vec3::new(a.sin() * (a * 1.7).cos(), (a * 0.9).cos(), a.cos() * (a * 1.3).sin()).normalize();
+            let d = Vec3::new(
+                a.sin() * (a * 1.7).cos(),
+                (a * 0.9).cos(),
+                a.cos() * (a * 1.3).sin(),
+            )
+            .normalize();
             let source = Vec3::new(d.x * c - d.z * s, d.y, d.x * s + d.z * c);
-            assert!((eval(&rotated, d) - eval(&sh, source)).length() < 1e-4, "{d:?}");
+            assert!(
+                (eval(&rotated, d) - eval(&sh, source)).length() < 1e-4,
+                "{d:?}"
+            );
         }
         // Unity の形で読んでも同じ値（ShadeSH9 の L0 + L1 + L2）
         let u = unity_sh(&rotated);
         let d = Vec3::new(0.3, 0.8, -0.52).normalize();
         let vb = [d.x * d.y, d.y * d.z, d.z * d.z, d.z * d.x];
         let shade = |k: usize| -> f32 {
-            u[k][0] * d.x + u[k][1] * d.y + u[k][2] * d.z + u[k][3]
+            u[k][0] * d.x
+                + u[k][1] * d.y
+                + u[k][2] * d.z
+                + u[k][3]
                 + (0..4).map(|j| u[3 + k][j] * vb[j]).sum::<f32>()
                 + u[6][k] * (d.x * d.x - d.y * d.y)
         };
         let expect = eval(&rotated, d);
-        assert!((shade(0) - expect.x).abs() < 1e-5 && (shade(1) - expect.y).abs() < 1e-5 && (shade(2) - expect.z).abs() < 1e-5);
+        assert!(
+            (shade(0) - expect.x).abs() < 1e-5
+                && (shade(1) - expect.y).abs() < 1e-5
+                && (shade(2) - expect.z).abs() < 1e-5
+        );
     }
 
     #[test]
     fn the_standard_look_needs_nothing() {
         let doc = Document::new(8, 8).unwrap();
         let mut look = MaterialLook::default();
-        look.textures
-            .insert("_ShadowStrengthMask".into(), TextureSource::Channel(Channel::from_index(9).unwrap()));
+        look.textures.insert(
+            "_ShadowStrengthMask".into(),
+            TextureSource::Channel(Channel::from_index(9).unwrap()),
+        );
         assert!(wanted_users(&doc, &look).is_empty());
         assert_eq!(SetDraw::of(&look), SetDraw::STANDARD);
         let mut l = lil();
         l.shader = "Hidden/lilToonTransparentOutline".into();
         l.properties.insert("_Cull".into(), LookValue::Float(0.0));
         let d = SetDraw::of(&l);
-        assert_eq!((d.lil, d.mode, d.outline, d.cull), (true, RenderMode::Transparent, true, 0));
+        assert_eq!(
+            (d.lil, d.mode, d.outline, d.cull),
+            (true, RenderMode::Transparent, true, 0)
+        );
     }
 
     #[test]
     fn every_template_mask_fits_the_layers() {
-        // 全部の機能を入にしてひな形を当てると、マスクのチャンネルが 9 つ（影の SDF なら 10）。どれも GPU の層に入る
+        // 全部の機能を入にしてひな形を当てると、マスクのチャンネルが 9 つ（影の SDF なら 10）。どれも GPU のレイヤーに入る
         let mut doc = Document::new(8, 8).unwrap();
         let mut look = lil();
-        for t in ["_UseShadow", "_UseRim", "_UseMatCap", "_UseMatCap2nd", "_UseEmission", "_UseEmission2nd"] {
+        for t in [
+            "_UseShadow",
+            "_UseRim",
+            "_UseMatCap",
+            "_UseMatCap2nd",
+            "_UseEmission",
+            "_UseEmission2nd",
+        ] {
             look.properties.insert(t.into(), LookValue::Float(1.0));
         }
-        look.properties.insert("_ShadowMaskType".into(), LookValue::Float(2.0));
+        look.properties
+            .insert("_ShadowMaskType".into(), LookValue::Float(2.0));
         look.shader = "lilToonOutline".into();
         doc.set_look(look, false).unwrap();
         let made = crate::look::apply_template(&mut doc, crate::lang::Lang::Ja).unwrap();
@@ -1495,26 +1673,36 @@ mod tests {
             })
             .collect();
         let mut look = lil();
-        for (k, slot) in ["_ShadowStrengthMask", "_ShadowBorderMask", "_ShadowBlurMask", "_ShadowColorTex"]
-            .iter()
-            .enumerate()
+        for (k, slot) in [
+            "_ShadowStrengthMask",
+            "_ShadowBorderMask",
+            "_ShadowBlurMask",
+            "_ShadowColorTex",
+        ]
+        .iter()
+        .enumerate()
         {
             let planes = [0, 1, 2, 3].map(|j| PlaneSource::Channel {
                 channel: channels[k * 4 + j],
                 component: 0,
             });
-            look.textures.insert((*slot).into(), TextureSource::Packed(planes));
+            look.textures
+                .insert((*slot).into(), TextureSource::Packed(planes));
         }
-        look.textures
-            .insert("_Shadow2ndColorTex".into(), TextureSource::Channel(channels[16]));
-        look.textures
-            .insert("_Shadow3rdColorTex".into(), TextureSource::Channel(channels[17]));
+        look.textures.insert(
+            "_Shadow2ndColorTex".into(),
+            TextureSource::Channel(channels[16]),
+        );
+        look.textures.insert(
+            "_Shadow3rdColorTex".into(),
+            TextureSource::Channel(channels[17]),
+        );
         let users = wanted_users(&doc, &look);
         assert_eq!(users, channels[..16].to_vec());
         assert_eq!(dropped_users(&doc, &look), channels[16..].to_vec());
-        // 層に無いチャンネルのスロットは、割り当てのない既定で描く
+        // レイヤーに無いチャンネルのスロットは、割り当てのない既定で描く
         let v = params(&doc, &look, &users, [None, None]);
-        // 詰め合わせの成分の元は（層の元の番号 × 4 + 成分）。層 12〜15 = 元 18〜21
+        // 詰め合わせの成分の元は（レイヤーの元の番号 × 4 + 成分）。レイヤー 12〜15 = 元 18〜21
         assert_eq!(slot_src(&v, 7), [18 * 4, 19 * 4, 20 * 4, 21 * 4]);
         assert_eq!(slot_src(&v, 8), [-1; 4]);
         assert_eq!(slot_src(&v, 9), [-1; 4]);

@@ -1,4 +1,4 @@
-//! 選択範囲の作り方（CLIP STUDIO の「作成方法」に当たるもの）: 作成方法のアイコンの組と修飾キーの一時表示・選択の道具の設定
+//! 選択範囲の作り方（CLIP STUDIO の「作成方法」に当たるもの）: 作成方法のアイコンの組と修飾キーの一時表示・選択のツールの設定
 //! （アンチエイリアス・縦横比・中心から・角の丸め）・選択ペンと選択消し・境界をぼかす・保存と読み込み・クイックマスク。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
@@ -24,7 +24,7 @@ use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
 fn st(h: &H) -> &AppState {
     &h.state().state
@@ -53,7 +53,7 @@ fn at(h: &H, dx: f32, dy: f32) -> Pos2 {
     offset(canvas_rect(h).center(), dx, dy)
 }
 
-/// 画面の点を画布の座標へ。
+/// 画面の点をキャンバスの座標へ。
 fn to_canvas(h: &H, p: Pos2) -> (f64, f64) {
     let s = st(h);
     s.view
@@ -138,7 +138,7 @@ fn click_bar(h: &mut H, label: &str) {
 }
 
 const NEW: &str = "新規選択: 新しい形で置き換える";
-const ADD: &str = "追加選択: 選択範囲に足す（Shift）";
+const ADD: &str = "追加選択: 選択範囲に追加（Shift）";
 const SUB: &str = "一部削除: 選択範囲から引く（Ctrl）";
 const ISECT: &str = "選択中を選択: 重なる所だけ残す（Shift + Ctrl）";
 
@@ -278,7 +278,7 @@ fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_th
 fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectPen);
-    let pen = "選択ペン: 選択範囲に足す（Shift）";
+    let pen = "選択ペン: 選択範囲に追加（Shift）";
     let eraser = "選択消し: 選択範囲から消す（Ctrl）";
     assert!(h.query_all_by_label(NEW).next().is_none());
     assert!(lit(&h, pen) && !lit(&h, eraser));
@@ -297,7 +297,7 @@ fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes
     assert!(lit(&h, eraser));
 }
 
-// ───────── 選択の道具の設定 ─────────
+// ───────── 選択のツールの設定 ─────────
 
 #[test]
 fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
@@ -1067,7 +1067,11 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
         .resize_image(32, 32, yolu_app::engine::CanvasResampling::Nearest)
         .unwrap();
     let saved = s.saved_selections()[0].clone();
-    assert_eq!((saved.mask.width(), saved.mask.height()), (32, 32), "文書の大きさに合わせて作り直す");
+    assert_eq!(
+        (saved.mask.width(), saved.mask.height()),
+        (32, 32),
+        "文書の大きさに合わせて作り直す"
+    );
     // 呼び出せる（大きさが合う）
     s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     recall(&mut s, 0, SelectionCombine::Replace);
@@ -1076,7 +1080,10 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
     s.doc.undo().unwrap();
     s.doc.undo().unwrap();
     s.doc.undo().unwrap();
-    assert_eq!((s.doc.width(), s.saved_selections()[0].mask.width()), (64, 64));
+    assert_eq!(
+        (s.doc.width(), s.saved_selections()[0].mask.width()),
+        (64, 64)
+    );
     // 範囲外の番号は断る
     let steps = s.doc.undo_count();
     recall(&mut s, 5, SelectionCombine::Replace);
@@ -1099,7 +1106,11 @@ fn headless_saved_selections_belong_to_the_texture_set_and_each_save_is_one_undo
     let revision = s.doc.revision();
     s.modified = false;
     save(&mut s, "A");
-    assert_eq!(s.doc.undo_count(), steps + 1, "覚えるのは文書の 1 回の取り消し");
+    assert_eq!(
+        s.doc.undo_count(),
+        steps + 1,
+        "覚えるのは文書の 1 回の取り消し"
+    );
     assert!(s.doc.revision() > revision);
     assert!(s.modified, "保存が要る変更として数える");
     // 描いている間は覚えない
@@ -1177,7 +1188,10 @@ fn headless_renaming_deleting_and_saving_each_undo_and_redo_and_refuse_what_they
     run(&mut s, rect(SelectionCombine::Replace, 30, 30, 50, 50));
     save(&mut s, "B");
     let rename = |s: &mut AppState, index: usize, name: &str| {
-        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index, name: name.into() })));
+        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+            index,
+            name: name.into(),
+        })));
     };
     // 名前を変える: 1 回の取り消し（前後の空白は除く）
     let steps = s.doc.undo_count();
@@ -1232,11 +1246,14 @@ fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
     s.sets.get_mut(index).unwrap().read_only = Some("試験".into());
     let steps = s.doc.undo_count();
     save(&mut s, "B");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "z".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        index: 0,
+        name: "z".into(),
+    })));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert_eq!(saved_names(&s), ["A"]);
     assert_eq!(s.doc.undo_count(), steps);
-    // 窓を開く・閉じるは、読むだけのセットでもできる
+    // ウィンドウを開く・閉じるは、読むだけのセットでもできる
     s.apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
     assert!(s.sel.saved_window.is_some());
 }
@@ -1280,7 +1297,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     let item = popup_item(&h, "覚えた選択範囲…").center();
     click(&mut h, item);
     assert!(st(&h).sel.saved_window.is_some());
-    // 窓はキャンバスの真ん中を覆うので、下へ寄せる
+    // ウィンドウはキャンバスの真ん中を覆うので、下へ寄せる
     h.state_mut()
         .state
         .sel
@@ -1324,16 +1341,30 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     h.run();
     assert_eq!(st(&h).saved_selections()[0].name, "前髪");
     assert_eq!(steps(&h), before + 1);
-    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "決めたら元の表示へ");
-    assert!(h.query_by_label("名前を変える: 前髪").is_some(), "ボタンの名前も新しい名前");
+    assert_eq!(
+        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        None,
+        "決めたら元の表示へ"
+    );
+    assert!(
+        h.query_by_label("名前を変える: 前髪").is_some(),
+        "ボタンの名前も新しい名前"
+    );
     // やめる: 欄を開いて何も打たずに Esc で、名前も段も変わらない
     h.get_by_label("名前を変える: 前髪").click();
     h.run();
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     h.run();
-    assert!(st(&h).sel.saved_window.is_some(), "名前の欄の Esc では、窓は閉じない");
-    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "欄はやめて元の表示へ");
+    assert!(
+        st(&h).sel.saved_window.is_some(),
+        "名前の欄の Esc では、ウィンドウは閉じない"
+    );
+    assert_eq!(
+        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        None,
+        "欄はやめて元の表示へ"
+    );
     assert_eq!(st(&h).saved_selections()[0].name, "前髪");
     assert_eq!(steps(&h), before + 1);
     // 閉じる
@@ -1367,9 +1398,12 @@ fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
         move_to(&h, egui::pos2(2.0, 2.0));
         h.run();
         h.get_by_label(&format!("{}: Alpha", lang.pick("共通", "Intersect")));
-        let w = yolu_app::selection::saved::last_rect(&h.ctx).expect("窓が開いている");
+        let w = yolu_app::selection::saved::last_rect(&h.ctx).expect("ウィンドウが開いている");
         assert!(w.width() > 100.0);
-        assert_plain("窓の見出し", yolu_app::selection::saved::window_title(lang));
+        assert_plain(
+            "ウィンドウの見出し",
+            yolu_app::selection::saved::window_title(lang),
+        );
     }
 }
 
@@ -1584,7 +1618,10 @@ fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     let label = "クイックマスク（Shift+Q）";
-    assert!(h.query_all_by_label(label).count() == 1, "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）");
+    assert!(
+        h.query_all_by_label(label).count() == 1,
+        "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）"
+    );
     assert!(!lit(&h, label));
     let at = dock_rect(&h, label).center();
     click(&mut h, at);
@@ -1593,7 +1630,7 @@ fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
     assert!(!st(&h).sel.quick && !lit(&h, label));
 }
 
-// ───────── 道具の帯とキー・スナップショット ─────────
+// ───────── ツールの帯とキー・スナップショット ─────────
 
 #[test]
 fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() {
@@ -1610,7 +1647,7 @@ fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() 
     let at = all.iter().position(|t| *t == Tool::SelectPen).unwrap();
     assert_eq!(all[at - 1], Tool::IdSelect);
     assert_eq!(all[at + 1], Tool::Move);
-    // ペンが触れるのは「描く道具」ではない
+    // ペンが触れるのは「描くツール」ではない
     assert!(!Tool::SelectPen.paints());
     assert_ne!(
         Tool::SelectPen.name_in(Lang::Ja),
@@ -1667,7 +1704,7 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
-    // 覚えた選択範囲の窓
+    // 覚えた選択範囲のウィンドウ
     save(&mut h.state_mut().state, "選択範囲 1");
     save(&mut h.state_mut().state, "顔まわり");
     h.state_mut()
@@ -1823,10 +1860,10 @@ fn switching_the_tool_during_a_selection_pen_stroke_drops_it_and_releasing_selec
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
         st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none(),
-        "道具を替えたら捨てる"
+        "ツールを替えたら捨てる"
     );
     let_go(&mut h, line[2]);
-    assert_nothing_left(&h, "道具の切り替え");
+    assert_nothing_left(&h, "ツールの切り替え");
     for p in line {
         assert_eq!(canvas_pixel(&h, p)[3], 0, "レイヤーにも描かない");
     }
@@ -1873,11 +1910,11 @@ fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_too
     h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
     assert_eq!(st(&h).tool, Tool::Brush);
     assert!(st(&h).sel.pen.is_some(), "ストロークは続く");
-    // 選択の道具へは替わるが、始めたストロークは離しで終わる（取り残さない）
+    // 選択のツールへは替わるが、始めたストロークは離しで終わる（取り残さない）
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
         st(&h).sel.pen.is_some(),
-        "クイックマスクのストロークは道具では捨てない"
+        "クイックマスクのストロークはツールでは捨てない"
     );
     let_go(&mut h, line[2]);
     assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
@@ -1921,7 +1958,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     // 選択範囲は描いた側だけで、映した側には付かない
     assert_eq!(amount_at(&h, at(&h, -80.0, 0.0)), 255);
     assert_eq!(amount_at(&h, at(&h, 80.0, 0.0)), 0, "映さない");
-    // 選択ペンの道具も対称を使わない。ブラシに戻れば軸が戻る
+    // 選択ペンのツールも対称を使わない。ブラシに戻れば軸が戻る
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));

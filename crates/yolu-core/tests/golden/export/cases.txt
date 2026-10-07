@@ -1,10 +1,10 @@
 # YoluPainter-rs の書き出し（テンプレートとパディング）の yolu-core と Unity 版の C# の Core を照らし合わせる事例
-# （両方がこの台本を読む。tests/export_golden.rs と tools/csharp-golden/ExportGolden.cs）。1 行 1 命令、# から行末はコメント。
+# （両方がこの台本を読む。tests/reference/export_golden.rs と tools/csharp-golden/ExportGolden.cs）。1 行 1 命令、# から行末はコメント。
 # 文書（Golden の台本の部分集合）:
 #   case 名前 / canvas 幅 高さ タイル
-#   layer 名前 モード 不透明度 中身 [hidden] [clip]     Color の層を一番上へ（中身: empty | random:種 | sparse:種 | solid:R,G,B,A）
-#   paint 層 チャンネル 中身                            チャンネルを有効にして埋める（層は番号か @名前）
-#   chenable 層 チャンネル 0|1  /  group 名前 モード 不透明度 [印]
+#   layer 名前 モード 不透明度 中身 [hidden] [clip]     Color のレイヤーを一番上へ（中身: empty | random:種 | sparse:種 | solid:R,G,B,A）
+#   paint レイヤー チャンネル 中身                            チャンネルを有効にして埋める（レイヤーは番号か @名前）
+#   chenable レイヤー チャンネル 0|1  /  group 名前 モード 不透明度 [印]
 #   fill 名前 モード 不透明度 チャンネル=R,G,B,A… [印]  /  adjust 名前 モード 不透明度 invert|levels:…|hsl:… [only=チャンネル,…] [印]
 #   normal 作る(0|1) 強さ clamp|wrap gl|dx              文書の Normal の出力の設定
 #   occlusion none | random:種 | flat:値                焼いた AO（1 テクセル 1 バイト）

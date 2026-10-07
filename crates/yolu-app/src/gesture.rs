@@ -22,7 +22,7 @@ pub fn zoom_chord(m: &Modifiers, space: bool) -> bool {
 /// この押しを egui が別の部品（ドックの見出し・分け目・ビューの上に重ねたアイコンなど）の押しとして受けているか。`response` は
 /// ビューの入力の応答。egui が何の押しも受けていなければ（ペンの代わりのポインタが無いときなど）偽で、ビューのものとして扱う。
 pub fn foreign_press(ctx: &egui::Context, response: &Response) -> bool {
-    // 窓の縁の押し（大きさを変える）は、縁がビューの端に重なっていても、ビューのものではない
+    // ウィンドウの縁の押し（大きさを変える）は、縁がビューの端に重なっていても、ビューのものではない
     crate::titlebar::edge_press_held(ctx)
         || (ctx.egui_is_using_pointer() && !response.is_pointer_button_down_on())
 }

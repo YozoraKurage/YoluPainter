@@ -101,7 +101,7 @@ fn high_point(t: u32, u: f32, v: f32) -> Surf {
     return Surf(p, g, n);
 }
 
-// ───────── UV のラスタ（core の Raster::row と同じ: 番号の小さい三角形が所有し、両方が内側なら重なり） ─────────
+// ───────── UV のラスタ（core の Raster::row と同じ: 受け手の並びで先の三角形が所有し、両方が内側なら重なり） ─────────
 struct Owner { r: i32, u: f32, v: f32, overlap: bool }
 fn raster_sample(x: u32, y: u32, i: u32, j: u32) -> Owner {
     let n = f32(P.aa);

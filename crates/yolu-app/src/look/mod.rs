@@ -10,9 +10,12 @@ pub mod link;
 pub mod panel;
 
 use yolu_core::look::{LookKind, LookValue, MaterialLook, PlaneSource, TextureSource};
-use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, ImageId, Rgba8};
+use yolu_core::{
+    Channel, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, ImageId, Rgba8,
+};
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 use liltoon::RenderMode;
 
@@ -111,7 +114,10 @@ pub enum LookOp {
     PaintSlot(&'static str),
     /// スロットの読むチャンネルを新しいユーザーチャンネルにする（割り当てがあっても新しく作る）。`plane` が None ならスロットの
     /// 割り当て全体を、Some なら成分ごとの詰め合わせのその成分（0〜3）だけを割り当てる。作ったチャンネルを描くチャンネルにする。
-    NewChannel { slot: &'static str, plane: Option<u8> },
+    NewChannel {
+        slot: &'static str,
+        plane: Option<u8>,
+    },
 }
 
 impl LookOp {
@@ -196,7 +202,12 @@ struct TemplateMask {
 const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
 const CLEAR: Rgba8 = Rgba8::new(0, 0, 0, 0);
 
-const fn mask(toggle: &'static str, slot: &'static str, ja: &'static str, en: &'static str) -> TemplateMask {
+const fn mask(
+    toggle: &'static str,
+    slot: &'static str,
+    ja: &'static str,
+    en: &'static str,
+) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
@@ -208,7 +219,12 @@ const fn mask(toggle: &'static str, slot: &'static str, ja: &'static str, en: &'
     }
 }
 
-const fn layer(toggle: &'static str, slot: &'static str, ja: &'static str, en: &'static str) -> TemplateMask {
+const fn layer(
+    toggle: &'static str,
+    slot: &'static str,
+    ja: &'static str,
+    en: &'static str,
+) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
@@ -220,25 +236,95 @@ const fn layer(toggle: &'static str, slot: &'static str, ja: &'static str, en: &
     }
 }
 
-/// ひな形が作るチャンネル（インスペクターの節の並び）。色の層（影色・メインカラー 2nd・3rd）は何も描いていない所を透明にして、
+/// ひな形が作るチャンネル（インスペクターの節の並び）。色のレイヤー（影色・メインカラー 2nd・3rd）は何も描いていない所を透明にして、
 /// 描いた所だけが効くようにする（影色のテクスチャは A でメインカラーと混ぜる。2nd・3rd は A で重ねる）。
 const TEMPLATE: &[TemplateMask] = &[
-    layer("_UseMain2ndTex", "_Main2ndTex", "メインカラー2nd", "Main Color 2nd"),
-    layer("_UseMain3rdTex", "_Main3rdTex", "メインカラー3rd", "Main Color 3rd"),
-    mask("_UseShadow", "_ShadowStrengthMask", "影の強度", "Shadow Strength"),
+    layer(
+        "_UseMain2ndTex",
+        "_Main2ndTex",
+        "メインカラー2nd",
+        "Main Color 2nd",
+    ),
+    layer(
+        "_UseMain3rdTex",
+        "_Main3rdTex",
+        "メインカラー3rd",
+        "Main Color 3rd",
+    ),
+    mask(
+        "_UseShadow",
+        "_ShadowStrengthMask",
+        "影の強度",
+        "Shadow Strength",
+    ),
     layer("_UseShadow", "_ShadowColorTex", "影色", "Shadow Color"),
     mask("_UseShadow", "_ShadowBorderMask", "AO", "AO"),
-    mask("_UseRimShade", "_RimShadeMask", "リムシェードのマスク", "RimShade Mask"),
-    mask("_UseEmission", "_EmissionBlendMask", "発光のマスク", "Emission Mask"),
-    mask("_UseEmission2nd", "_Emission2ndBlendMask", "発光2nd のマスク", "Emission 2nd Mask"),
-    mask("_UseAnisotropy", "_AnisotropyScaleMask", "異方性反射のマスク", "Anisotropy Mask"),
-    mask("_UseBacklight", "_BacklightColorTex", "逆光ライトのマスク", "Backlight Mask"),
-    mask("_UseReflection", "_ReflectionColorTex", "光沢のマスク", "Reflection Mask"),
-    mask("_UseMatCap", "_MatCapBlendMask", "マットキャップのマスク", "MatCap Mask"),
-    mask("_UseMatCap2nd", "_MatCap2ndBlendMask", "マットキャップ2nd のマスク", "MatCap 2nd Mask"),
-    mask("_UseRim", "_RimColorTex", "リムライトのマスク", "Rim Light Mask"),
-    mask("_UseGlitter", "_GlitterColorTex", "ラメのマスク", "Glitter Mask"),
-    mask("outline", "_OutlineWidthMask", "輪郭線の太さ", "Outline Width"),
+    mask(
+        "_UseRimShade",
+        "_RimShadeMask",
+        "リムシェードのマスク",
+        "RimShade Mask",
+    ),
+    mask(
+        "_UseEmission",
+        "_EmissionBlendMask",
+        "発光のマスク",
+        "Emission Mask",
+    ),
+    mask(
+        "_UseEmission2nd",
+        "_Emission2ndBlendMask",
+        "発光2nd のマスク",
+        "Emission 2nd Mask",
+    ),
+    mask(
+        "_UseAnisotropy",
+        "_AnisotropyScaleMask",
+        "異方性反射のマスク",
+        "Anisotropy Mask",
+    ),
+    mask(
+        "_UseBacklight",
+        "_BacklightColorTex",
+        "逆光ライトのマスク",
+        "Backlight Mask",
+    ),
+    mask(
+        "_UseReflection",
+        "_ReflectionColorTex",
+        "光沢のマスク",
+        "Reflection Mask",
+    ),
+    mask(
+        "_UseMatCap",
+        "_MatCapBlendMask",
+        "マットキャップのマスク",
+        "MatCap Mask",
+    ),
+    mask(
+        "_UseMatCap2nd",
+        "_MatCap2ndBlendMask",
+        "マットキャップ2nd のマスク",
+        "MatCap 2nd Mask",
+    ),
+    mask(
+        "_UseRim",
+        "_RimColorTex",
+        "リムライトのマスク",
+        "Rim Light Mask",
+    ),
+    mask(
+        "_UseGlitter",
+        "_GlitterColorTex",
+        "ラメのマスク",
+        "Glitter Mask",
+    ),
+    mask(
+        "outline",
+        "_OutlineWidthMask",
+        "輪郭線の太さ",
+        "Outline Width",
+    ),
 ];
 
 /// ひな形の機能の入切（"outline" は輪郭線のシェーダー）。
@@ -277,7 +363,11 @@ pub fn paint_channel_spec(slot: &liltoon::Slot, lang: Lang) -> Option<ChannelInf
             name,
             kind: ChannelKind::Scalar,
             color_space: ColorSpace::Linear,
-            default: if white { WHITE } else { Rgba8::new(0, 0, 0, 255) },
+            default: if white {
+                WHITE
+            } else {
+                Rgba8::new(0, 0, 0, 255)
+            },
         }),
         liltoon::SlotUse::Color => Some(ChannelInfo {
             name,
@@ -323,7 +413,10 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
             Some(c) => c,
             None => {
                 let name = free_name(d, &spec.name);
-                let c = d.add_channel(ChannelInfo { name, ..spec.clone() })?;
+                let c = d.add_channel(ChannelInfo {
+                    name,
+                    ..spec.clone()
+                })?;
                 look.textures.insert(slot.into(), TextureSource::Channel(c));
                 c
             }
@@ -353,7 +446,12 @@ fn ensure_liltoon(d: &Document, look: &mut MaterialLook) {
 ///   何も描いていない所は、置き換える成分が 0・1 ならその値、チャンネルならスロットの既定のその成分）。詰め合わせでないスロットは断る。
 ///
 /// 3D ビューが持つユーザーチャンネルの上限（16）は作る側では見ない（超えた分は、欄が「描かない」の印を出す）。作ったチャンネルを返す。
-pub fn new_slot_channel(doc: &mut Document, slot: &str, plane: Option<u8>, lang: Lang) -> Result<Channel, CoreError> {
+pub fn new_slot_channel(
+    doc: &mut Document,
+    slot: &str,
+    plane: Option<u8>,
+    lang: Lang,
+) -> Result<Channel, CoreError> {
     let Some(info) = liltoon::slot(slot) else {
         return Err(CoreError::InvalidArgument("知らないスロット"));
     };
@@ -365,7 +463,9 @@ pub fn new_slot_channel(doc: &mut Document, slot: &str, plane: Option<u8>, lang:
         },
     };
     let spec = match (plane, planes) {
-        (None, _) => paint_channel_spec(info, lang).ok_or(CoreError::InvalidArgument("描けないスロット"))?,
+        (None, _) => {
+            paint_channel_spec(info, lang).ok_or(CoreError::InvalidArgument("描けないスロット"))?
+        }
         (Some(k), Some(planes)) if k < 4 => {
             // 何も描いていない所は、置き換える成分が定数ならその値（見た目を変えない）、チャンネルならスロットの既定のその成分
             let white = match planes[k as usize] {
@@ -373,12 +473,17 @@ pub fn new_slot_channel(doc: &mut Document, slot: &str, plane: Option<u8>, lang:
                 PlaneSource::One => true,
                 PlaneSource::Channel { .. } => info.default.rgba()[k as usize] > 0.5,
             };
-            let base = paint_channel_spec(info, lang).map_or_else(|| info.label(lang).to_owned(), |spec| spec.name);
+            let base = paint_channel_spec(info, lang)
+                .map_or_else(|| info.label(lang).to_owned(), |spec| spec.name);
             ChannelInfo {
                 name: format!("{base} {}", ["R", "G", "B", "A"][k as usize]),
                 kind: ChannelKind::Scalar,
                 color_space: ColorSpace::Linear,
-                default: if white { WHITE } else { Rgba8::new(0, 0, 0, 255) },
+                default: if white {
+                    WHITE
+                } else {
+                    Rgba8::new(0, 0, 0, 255)
+                },
             }
         }
         _ => return Err(CoreError::InvalidArgument("成分は 0〜3")),
@@ -387,10 +492,16 @@ pub fn new_slot_channel(doc: &mut Document, slot: &str, plane: Option<u8>, lang:
         let mut look = d.look().clone();
         ensure_liltoon(d, &mut look);
         let name = free_name(d, &spec.name);
-        let channel = d.add_channel(ChannelInfo { name, ..spec.clone() })?;
+        let channel = d.add_channel(ChannelInfo {
+            name,
+            ..spec.clone()
+        })?;
         let source = match (plane, planes) {
             (Some(k), Some(mut p)) => {
-                p[k as usize] = PlaneSource::Channel { channel, component: 0 };
+                p[k as usize] = PlaneSource::Channel {
+                    channel,
+                    component: 0,
+                };
                 TextureSource::Packed(p)
             }
             _ => TextureSource::Channel(channel),
@@ -409,8 +520,22 @@ pub fn slots_reading(doc: &Document, channel: Channel) -> Vec<&'static liltoon::
     }
     liltoon::SLOTS
         .iter()
-        .filter(|s| look.textures.get(s.name).is_some_and(|t| t.channels().contains(&channel)))
+        .filter(|s| {
+            look.textures
+                .get(s.name)
+                .is_some_and(|t| t.channels().contains(&channel))
+        })
         .collect()
+}
+
+/// チャンネルを読む lilToon のスロットの節（いくつもの節のスロットが読むなら、インスペクターで前の節）。見た目が lilToon でない・
+/// どのスロットも読まなければ None。チャンネルの欄のまとまりに使う。
+pub fn channel_section(doc: &Document, channel: Channel) -> Option<Section> {
+    let reading = slots_reading(doc, channel);
+    liltoon::SLOT_SECTIONS
+        .iter()
+        .find(|(_, slots)| reading.iter().any(|s| slots.contains(&s.name)))
+        .map(|(section, _)| *section)
 }
 
 /// 名前が文書のチャンネルと重ならないように（重なれば「 2」「 3」…）。
@@ -450,20 +575,22 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
         if !outline && !TEMPLATE_TOGGLES.iter().any(|t| liltoon::on(&drawn, t)) {
             look.properties
                 .insert("_UseShadow".into(), LookValue::Float(1.0));
-            on_now.properties
+            on_now
+                .properties
                 .insert("_UseShadow".into(), LookValue::Float(1.0));
         }
         let mut made = 0usize;
-        let mut add = |d: &mut Document, name: &str, kind: ChannelKind, space: ColorSpace, default: Rgba8| {
-            let name = free_name(d, name);
-            made += 1;
-            d.add_channel(ChannelInfo {
-                name,
-                kind,
-                color_space: space,
-                default,
-            })
-        };
+        let mut add =
+            |d: &mut Document, name: &str, kind: ChannelKind, space: ColorSpace, default: Rgba8| {
+                let name = free_name(d, name);
+                made += 1;
+                d.add_channel(ChannelInfo {
+                    name,
+                    kind,
+                    color_space: space,
+                    default,
+                })
+            };
         for mask in TEMPLATE {
             let on = if mask.toggle == "outline" {
                 outline
@@ -473,7 +600,11 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             let has_image = d
                 .received_look()
                 .is_some_and(|r| r.images.contains_key(mask.slot));
-            if !on || look.textures.contains_key(mask.slot) || drawn.textures.contains_key(mask.slot) || has_image {
+            if !on
+                || look.textures.contains_key(mask.slot)
+                || drawn.textures.contains_key(mask.slot)
+                || has_image
+            {
                 continue;
             }
             if mask.slot == "_ShadowStrengthMask"
@@ -510,7 +641,13 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
                 );
                 continue;
             }
-            let channel = add(d, lang.pick(mask.ja, mask.en), mask.kind, mask.space, mask.default)?;
+            let channel = add(
+                d,
+                lang.pick(mask.ja, mask.en),
+                mask.kind,
+                mask.space,
+                mask.default,
+            )?;
             look.textures
                 .insert(mask.slot.into(), TextureSource::Channel(channel));
         }
@@ -523,10 +660,10 @@ impl AppState {
     /// 見た目の設定の操作を当てる（`Action::Look`）。
     pub fn look_apply(&mut self, op: LookOp) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Material,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         if let LookOp::PaintSlot(slot) = op {
@@ -539,7 +676,11 @@ impl AppState {
                     }
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -550,7 +691,11 @@ impl AppState {
                     self.modified = true;
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -559,12 +704,19 @@ impl AppState {
             match apply_template(&mut self.doc, lang) {
                 Ok(made) => {
                     self.modified = true;
-                    self.message = lang.pick(
-                        format!("lilToon のひな形を当てました（チャンネル {made}）。"),
-                        format!("Applied the lilToon template ({made} channels)."),
+                    self.info(
+                        Source::Material,
+                        lang.pick(
+                            format!("lilToon のひな形を当てました（チャンネル {made}）。"),
+                            format!("Applied the lilToon template ({made} channels)."),
+                        ),
                     );
                 }
-                Err(e) => self.message = self.lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Material,
+                    self.lang.core_error(&e),
+                ),
             }
             return;
         }
@@ -653,7 +805,9 @@ impl AppState {
                     look.properties.insert(name.into(), LookValue::Float(value));
                 }
             }
-            LookOp::Template | LookOp::PaintSlot(_) | LookOp::NewChannel { .. } => unreachable!("上で扱った"),
+            LookOp::Template | LookOp::PaintSlot(_) | LookOp::NewChannel { .. } => {
+                unreachable!("上で扱った")
+            }
         }
         let before = self.doc.revision();
         match self.doc.set_look(look, coalesce) {
@@ -662,7 +816,11 @@ impl AppState {
                     self.modified = true;
                 }
             }
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Material,
+                self.lang.core_error(&e),
+            ),
         }
     }
 }
@@ -679,16 +837,24 @@ mod tests {
             shader: "Hidden/lilToonOutline".into(),
             ..MaterialLook::default()
         };
-        look.properties.insert("_UseRim".into(), LookValue::Float(1.0));
+        look.properties
+            .insert("_UseRim".into(), LookValue::Float(1.0));
         doc.set_look(look, false).unwrap();
         let steps = doc.undo_count();
         let made = apply_template(&mut doc, Lang::Ja).unwrap();
         assert_eq!(made, 2, "リムと輪郭線");
         assert_eq!(doc.undo_count(), steps + 1);
         let look = doc.look();
-        assert!(matches!(look.textures["_RimColorTex"], TextureSource::Channel(c) if !c.is_standard()));
-        assert!(matches!(look.textures["_OutlineWidthMask"], TextureSource::Channel(c) if !c.is_standard()));
-        assert_eq!(look.textures["_MainTex"], TextureSource::Channel(Channel::Color));
+        assert!(
+            matches!(look.textures["_RimColorTex"], TextureSource::Channel(c) if !c.is_standard())
+        );
+        assert!(
+            matches!(look.textures["_OutlineWidthMask"], TextureSource::Channel(c) if !c.is_standard())
+        );
+        assert_eq!(
+            look.textures["_MainTex"],
+            TextureSource::Channel(Channel::Color)
+        );
         // もう一度当てても、割り当て済みのスロットには作らない
         assert_eq!(apply_template(&mut doc, Lang::Ja).unwrap(), 0);
         doc.undo().unwrap();
@@ -700,7 +866,11 @@ mod tests {
     #[test]
     fn the_template_turns_on_the_shadow_when_nothing_is_on_and_packs_sdf() {
         let mut doc = Document::new(32, 32).unwrap();
-        assert_eq!(apply_template(&mut doc, Lang::En).unwrap(), 3, "影の強度・影色・AO");
+        assert_eq!(
+            apply_template(&mut doc, Lang::En).unwrap(),
+            3,
+            "影の強度・影色・AO"
+        );
         assert!(liltoon::on(doc.look(), "_UseShadow"));
         let mut doc = Document::new(32, 32).unwrap();
         let mut look = MaterialLook {

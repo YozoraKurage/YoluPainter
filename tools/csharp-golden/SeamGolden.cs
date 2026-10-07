@@ -1,5 +1,5 @@
-// 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）と層のロック・層の操作のつなぎ目を、実 C# の PaintDocument に通す。
-// Rust 側 crates/yolu-core/tests/seam_golden.rs と同じ台本・同じ人工の文書・同じ書き出しの並び。事例ごとに SHA-256 を 1 行（名前 ハッシュ）。
+// 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）とレイヤーのロック・レイヤーの操作のつなぎ目を、実 C# の PaintDocument に通す。
+// Rust 側 crates/yolu-core/tests/reference/seam_golden.rs と同じ台本・同じ人工の文書・同じ書き出しの並び。事例ごとに SHA-256 を 1 行（名前 ハッシュ）。
 //   golden             全事例の「名前 ハッシュ」を標準出力へ
 //   dump <名前> <出力>   1 事例の生のバイト列（Rust 側の SEAM_DUMP_DIR と cmp で比べて、食い違いの場所を探す）
 // 人工の画素・画像・パスだけ（ユーザーのデータは使わない）。メッシュマップは渡さない（Generator の Anchor は使える。形のグラデーションなど
@@ -155,7 +155,7 @@ static class SeamGolden
         b.Write((int)r.Method); b.Write((int)r.Notes); b.Write(r.ComparedPixels); b.Write(r.ChangedPixels); b.Write(r.MaxDifference); b.Write(r.MaxVisibleDifference);
         foreach (var c in All) b.Write(r.ChangedByChannel.TryGetValue(c, out var n) ? n : 0L);
     }
-    /// 結果の型: 0 成功、1 ロックで断られた（層・持ち主・ロック）、2 そのほか（理由の名前）。
+    /// 結果の型: 0 成功、1 ロックで断られた（レイヤー・持ち主・ロック）、2 そのほか（理由の名前）。
     static readonly bool Trace = Environment.GetEnvironmentVariable("SEAM_TRACE") == "1";
     static void Note(string what) { if (Trace) Console.Error.WriteLine("  " + what); }
     static bool Outcome(BinaryWriter o, PaintDocument d, Action act)
@@ -198,7 +198,7 @@ static class SeamGolden
         E("mask_add_filter", r => r.Top, r => r.D.AddFilter(r.Top, FilterTarget.Mask, FilterSettings.Invert())),
         E("mask_set_filter_strength", r => r.Top, r => r.D.SetFilterStrength(r.Top, r.MaskBlur, .4, false)),
         E("add_anchor", r => r.Mid, r => r.D.AddAnchor(r.Mid, AnchorPlacement.Layer)),
-        // 名前は渡す（名前を省くときの既定は、C# が「層名 (mask)」、Rust は日本語の画面に合わせて「層名（マスク）」）
+        // 名前は渡す（名前を省くときの既定は、C# が「レイヤー名 (mask)」、Rust は日本語の画面に合わせて「レイヤー名（マスク）」）
         E("add_anchor_mask", r => r.Top, r => r.D.AddAnchor(r.Top, AnchorPlacement.Mask, "上のマスク")),
         E("remove_anchor", r => r.Base, r => r.D.RemoveAnchor(r.Anchor)),
         E("rename_anchor", r => r.Base, r => r.D.RenameAnchor(r.Anchor, "別の名前")),
@@ -234,7 +234,7 @@ static class SeamGolden
         return Finish(m, w);
     }
 
-    // ───────── 手の書き込み × ロック × パスの層 ─────────
+    // ───────── 手の書き込み × ロック × パスレイヤー ─────────
 
     static BrushSettings Hard() => new BrushSettings { Radius = 3, Hardness = 1 };
     static ChannelPaint[] Two() => new[] { new ChannelPaint(PaintChannel.Color, new Rgba32(10, 200, 30, 255)), new ChannelPaint(PaintChannel.Emission, new Rgba32(90, 90, 90, 255)) };
@@ -293,7 +293,7 @@ static class SeamGolden
         return Finish(m, w);
     }
 
-    // ───────── 層の操作と効果 ─────────
+    // ───────── レイヤーの操作と効果 ─────────
 
     static Affine2D Rotation() => Affine2D.FromParts(20, 14, 1, 0, 17, 1.2, .8);
     static (Guid lower, Guid upper) Pair(PaintDocument d)
@@ -413,7 +413,7 @@ static class SeamGolden
         yield return ("channel-off-path-material-base", () => OpNoReport(() => { var r = MakeRig(); r.D.SetCanvasPath(r.PathLayer, PathPoints(0).WithMaterial(Two())); return (r.D, () => r.D.SetChannelEnabled(r.PathLayer, PaintChannel.Color, false)); }));
         yield return ("channel-off-path-material-other", () => OpNoReport(() => { var r = MakeRig(); r.D.SetCanvasPath(r.PathLayer, PathPoints(0).WithMaterial(Two())); return (r.D, () => r.D.SetChannelEnabled(r.PathLayer, PaintChannel.Emission, false)); }));
 
-        // 並べ替え・表示・不透明度・クリッピング・選択範囲の変形（効果を持つ層・Anchor を読む層との組み合わせ）
+        // 並べ替え・表示・不透明度・クリッピング・選択範囲の変形（効果を持つレイヤー・Anchor を読むレイヤーとの組み合わせ）
         yield return ("move-reader-below", () => OpNoReport(() => { var r = MakeRig(); return (r.D, () => r.D.MoveLayers(new[] { r.Mid }, Guid.Empty, 0)); }));
         yield return ("move-reader-into-group", () => OpNoReport(() => { var r = MakeRig(); var g = r.D.GroupLayers(new[] { r.Top }, "組").Id; return (r.D, () => r.D.MoveLayers(new[] { r.Mid }, g, 0)); }));
         yield return ("step-base-up", () => OpNoReport(() => { var r = MakeRig(); return (r.D, () => r.D.StepLayers(new[] { r.Base }, true)); }));
@@ -482,7 +482,7 @@ static class SeamGolden
         }));
         yield return ("merge-visible-rig", () => Op(() => { var r = MakeRig(); return (r.D, () => r.D.MergeVisible("merged", null, 255)); }));
         // 土台の Anchor を読む段は外しておく（結合で土台の Anchor が無くなると読む段は入力のまま通すようになり、見た目が変わる。C# の結合の
-        // 報告は、その変化を数えそこなう: 派生の Anchor のキャッシュが古い。Rust は数える。crates/yolu-core/tests/seam_ops.rs で確かめる）
+        // 報告は、その変化を数えそこなう: 派生の Anchor のキャッシュが古い。Rust は数える。crates/yolu-core/tests/effects/seam_ops.rs で確かめる）
         yield return ("merge-down-path-onto-base", () => Op(() => { var r = MakeRig(); var d = r.D; d.RemoveFilter(r.Mid, r.Reader); d.MoveLayer(r.PathLayer, 1); return (d, () => d.MergeDown(r.PathLayer, 255)); }));
         yield return ("merge-group-path", () => Op(() =>
         {
@@ -507,8 +507,8 @@ static class SeamGolden
             d.AddFilter(lower, FilterTarget.Content, FilterSettings.FromGenerator(AnchorGenerator()), new[] { PaintChannel.Height });
             return (d, () => d.MergeDown(upper, 255));
         }));
-        // 下の層の下に見える層を置いて、分離の結合にしない（マスクが効果ごと結果に残る結合）。分離の結合は下のマスクのフィルターも焼くが、
-        // C# はそのマスクの効いていない Generator を見ずに黙って落とす。Rust は意図して断る（crates/yolu-core/tests/seam_ops.rs で確かめる）
+        // 下のレイヤーの下に見えるレイヤーを置いて、分離の結合にしない（マスクが効果ごと結果に残る結合）。分離の結合は下のマスクのフィルターも焼くが、
+        // C# はそのマスクの効いていない Generator を見ずに黙って落とす。Rust は意図して断る（crates/yolu-core/tests/effects/seam_ops.rs で確かめる）
         yield return ("merge-inactive-lower-mask", () => Op(() =>
         {
             var d = NewDoc(); var (lower, upper) = Pair(d);

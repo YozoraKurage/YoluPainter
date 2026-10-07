@@ -183,12 +183,14 @@ fn child_crash() {
     if mode == "writer" {
         // 復旧の書き手の panic は、書き手が受け止めて動き続ける（落ちではない）。実際の書き手で起こす。
         let mut state = crate::state::AppState::new_in(64, 64, Lang::En);
-        state.recovery.set_fault(Some(std::sync::Arc::new(|stage: &str| {
-            if stage == "snapshot" {
-                panic!("writer panic");
-            }
-            Ok(())
-        })));
+        state
+            .recovery
+            .set_fault(Some(std::sync::Arc::new(|stage: &str| {
+                if stage == "snapshot" {
+                    panic!("writer panic");
+                }
+                Ok(())
+            })));
         let root = std::env::temp_dir().join(format!("yolu-crash-writer-{}", stamp()));
         state
             .recovery
@@ -207,7 +209,7 @@ fn child_crash() {
         panic!("final panic");
     }
     if mode == "app" {
-        // AppState::apply の配線。層の名前は記録に入らず、操作の種類名と失敗の文（名前を除いた理由）だけが入る。
+        // AppState::apply の配線。レイヤーの名前は記録に入らず、操作の種類名と失敗の文（名前を除いた理由）だけが入る。
         let mut state = crate::state::AppState::new_in(32, 32, Lang::En);
         let id = state.selected_layer.unwrap();
         state.doc.set_layer_name(id, "SecretLayerName").unwrap();
@@ -223,6 +225,26 @@ fn child_crash() {
         state.message = format!("SecretLayerName: {why}");
         message(&state.message);
         panic!("app panic");
+    }
+    if mode == "notices" {
+        // 知らせの口の配線。注意と失敗は種類と出どころ（と覚えた理由）、断りは印を付けた文だけを書き、済んだ知らせと名前は書かない。
+        use crate::notice::Source;
+        let mut state = crate::state::AppState::new_in(32, 32, Lang::En);
+        state.refuse(Source::Edit, crate::lang::refusals::during_stroke(Lang::En));
+        state.info(Source::Save, "Saved SecretProjectName.");
+        state.refuse(
+            Source::Layer,
+            "SecretLayerName is not a layer you can edit.",
+        );
+        state.warn(Source::Bake, "SecretSetName: baked with notes.");
+        state.fail(
+            Source::Save,
+            format!(
+                "SecretProjectName: {}",
+                Lang::En.core_error(&yolu_core::CoreError::LayerNotFound)
+            ),
+        );
+        panic!("notices panic");
     }
     #[cfg(target_os = "linux")]
     if mode == "overflow" {
@@ -284,7 +306,10 @@ fn the_image_base_precedes_the_code_of_this_executable() {
     let base = super::image_base();
     if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         let base = base.expect("基底が分かる OS");
-        assert!(here > base && here - base < (1 << 31), "{here:#x} {base:#x}");
+        assert!(
+            here > base && here - base < (1 << 31),
+            "{here:#x} {base:#x}"
+        );
     } else {
         assert!(base.is_none());
     }
@@ -305,7 +330,11 @@ fn real_panic_hook_records_backtrace_and_redacts_payload() {
         .skip(1)
         .filter(|line| frame_address(line).is_some())
         .collect();
-    assert!(frames.len() >= 3, "番地つきのフレームが無い: {}", report.text);
+    assert!(
+        frames.len() >= 3,
+        "番地つきのフレームが無い: {}",
+        report.text
+    );
     if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         let base = report
             .text
@@ -549,16 +578,37 @@ fn apply_records_only_action_names_and_failure_reasons_without_names() {
     let report = window::Report::load(dir.0.clone());
     assert!(report.text.contains("app panic"), "{}", report.text);
     assert!(
-        report.text.contains("ZoomIn x40, StartRename, NewLayer, Undo"),
+        report
+            .text
+            .contains("ZoomIn x40, StartRename, NewLayer, Undo"),
         "{}",
         report.text
     );
     assert!(!report.text.contains("SecretLayerName"), "{}", report.text);
-    // 普段のログは、失敗の文の理由だけ（成功の知らせと、前に付いた層の名前は書かない）
+    // 普段のログは、失敗の文の理由だけ（成功の知らせと、前に付いたレイヤーの名前は書かない）
     let session = session_text(&dir.0);
     assert!(session.contains("Layer not found"), "{session}");
     assert!(!session.contains("Saved."), "{session}");
     assert!(!session.contains("SecretLayerName"), "{session}");
+}
+
+/// 知らせの口を通った文の診断の記録: 注意と失敗は種類と出どころ、断りは失敗・断りの文として印を付けた文だけ。
+/// 済んだ知らせと、印の無い文（名前や理由の分からない文）は書かない。
+#[test]
+fn notify_records_refusals_marked_as_problems_and_never_names() {
+    let dir = run_child("notices");
+    let session = session_text(&dir.0);
+    let lines: Vec<&str> = session.lines().collect();
+    assert_eq!(lines.len(), 3, "{session}");
+    assert!(lines[0].ends_with(" Not while drawing."), "{session}");
+    assert!(lines[1].ends_with(" Warning bake"), "{session}");
+    assert!(
+        lines[2].ends_with(" Error save: Layer not found"),
+        "{session}"
+    );
+    for private in ["Secret", "Saved", "baked", "not a layer"] {
+        assert!(!session.contains(private), "{private}: {session}");
+    }
 }
 
 #[test]
@@ -590,6 +640,26 @@ fn ordinary_log_keeps_failures_only_and_never_names_or_paths() {
     }
 }
 
+/// 注意と失敗の知らせは、種類と出どころの名前（言語によらない）と、失敗の文として覚えた部分（名前の付かない理由）だけを書く。
+/// 覚えた部分が無い文は、種類と出どころだけ（制作物の名前・パスを書かない決まりのまま）。同じ知らせが続いたら 1 行。
+#[test]
+fn notices_write_the_kind_the_source_and_only_the_known_reason() {
+    let dir = Temp::new();
+    let r = Recorder::new(dir.0.clone());
+    r.note_problem("Access denied");
+    r.notice("Error", "save", "My Private Painting: Access denied");
+    r.notice("Error", "save", "My Private Painting: Access denied");
+    r.notice("Warning", "bake", "Secret Set: baked 3 maps");
+    let text = session_text(&dir.0);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].ends_with(" Error save: Access denied"), "{text}");
+    assert!(lines[1].ends_with(" Warning bake"), "{text}");
+    for private in ["Private", "Secret", "baked"] {
+        assert!(!text.contains(private), "{private}: {text}");
+    }
+}
+
 #[test]
 fn ordinary_log_compares_the_raw_message_first_and_forgets_old_problems() {
     let dir = Temp::new();
@@ -613,7 +683,11 @@ fn ordinary_log_compares_the_raw_message_first_and_forgets_old_problems() {
 fn empty_files_do_not_use_up_the_crash_quota() {
     let dir = Temp::new();
     for i in 0..30 {
-        fs::write(dir.0.join(format!("crash-record{i:02}.log")), "Kind: test\n").unwrap();
+        fs::write(
+            dir.0.join(format!("crash-record{i:02}.log")),
+            "Kind: test\n",
+        )
+        .unwrap();
     }
     for i in 0..10 {
         fs::write(dir.0.join(format!("crash-empty{i:02}.log")), "").unwrap();

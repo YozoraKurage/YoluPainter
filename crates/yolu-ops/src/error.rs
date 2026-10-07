@@ -23,7 +23,7 @@ pub enum ErrorCode {
     UnsupportedVersion,
     /// 開いている文書が無い。
     NoDocument,
-    /// セット・層・効果・チャンネル・効果の種類が無い。
+    /// セット・レイヤー・効果・チャンネル・効果の種類が無い。
     NotFound,
     /// 名前が複数に当たる（IDで指定する）。
     Ambiguous,
@@ -31,7 +31,7 @@ pub enum ErrorCode {
     InvalidValue,
     /// 読むだけのセット（編集できない中身がある）。
     ReadOnly,
-    /// その層・チャンネル・種類にはできない操作、この版では扱わないもの。
+    /// そのレイヤー・チャンネル・種類にはできない操作、この版では扱わないもの。
     Unsupported,
     /// 壊す操作に `confirm: true` が無い。
     ConfirmRequired,
@@ -75,7 +75,11 @@ impl std::error::Error for OpError {}
 
 impl OpError {
     pub fn new(code: ErrorCode, ja: impl Into<String>, en: impl Into<String>) -> Self {
-        OpError { code, message: Text::new(ja, en), data: None }
+        OpError {
+            code,
+            message: Text::new(ja, en),
+            data: None,
+        }
     }
     pub fn with_data(mut self, data: Value) -> Self {
         self.data = Some(data);
@@ -124,8 +128,12 @@ impl OpError {
     }
     /// 保存先の名前が .ylp で終わらない。
     pub fn ylp_name_required(path: &str) -> Self {
-        Self::new(ErrorCode::PathRefused, "保存先の名前は .ylp で終わります", "The file name must end with .ylp")
-            .with_data(json!({"path": path}))
+        Self::new(
+            ErrorCode::PathRefused,
+            "保存先の名前は .ylp で終わります",
+            "The file name must end with .ylp",
+        )
+        .with_data(json!({"path": path}))
     }
     /// まだファイルになっていない文書の上書き保存（保存先を `save_as` で言う）。
     pub fn no_file_to_save() -> Self {
@@ -144,12 +152,14 @@ impl OpError {
                 (ErrorCode::Refused, "Cannot merge these layers".into())
             }
             CoreError::Cancelled => (ErrorCode::Cancelled, "Cancelled".into()),
-            CoreError::LayerLocked { .. } => {
-                (ErrorCode::Refused, "The layer or a parent group is locked".into())
-            }
-            CoreError::InactiveEffect { .. } => {
-                (ErrorCode::Refused, "An inactive effect cannot be baked".into())
-            }
+            CoreError::LayerLocked { .. } => (
+                ErrorCode::Refused,
+                "The layer or a parent group is locked".into(),
+            ),
+            CoreError::InactiveEffect { .. } => (
+                ErrorCode::Refused,
+                "An inactive effect cannot be baked".into(),
+            ),
             CoreError::InvalidArgument(what) => (
                 ErrorCode::InvalidValue,
                 if what.is_ascii() {
@@ -163,9 +173,14 @@ impl OpError {
             CoreError::StrokeActive | CoreError::NoActiveStroke => {
                 (ErrorCode::Busy, "A stroke is in progress".into())
             }
-            CoreError::BatchActive => {
-                (ErrorCode::Busy, "Not allowed inside a batch of edits".into())
-            }
+            CoreError::BatchActive => (
+                ErrorCode::Busy,
+                "Not allowed inside a batch of edits".into(),
+            ),
+            CoreError::TileUnreadable => (
+                ErrorCode::Io,
+                "A tile could not be read back from the disk cache".into(),
+            ),
             CoreError::Unsupported(what) => (
                 ErrorCode::Unsupported,
                 if what.is_ascii() {
@@ -174,18 +189,27 @@ impl OpError {
                     "This operation is not supported here".into()
                 },
             ),
-            CoreError::SourceBudgetExceeded => {
-                (ErrorCode::Budget, "The pixel budget would be exceeded".into())
+            CoreError::SourceBudgetExceeded => (
+                ErrorCode::Budget,
+                "The pixel budget would be exceeded".into(),
+            ),
+            CoreError::StrokeBudgetExceeded => (
+                ErrorCode::Budget,
+                "The stroke budget would be exceeded".into(),
+            ),
+            CoreError::WorkingBudgetExceeded => (
+                ErrorCode::Budget,
+                "The working memory limit would be exceeded".into(),
+            ),
+            CoreError::Clipboard(_) => {
+                (ErrorCode::Refused, "The pixel operation was refused".into())
             }
-            CoreError::StrokeBudgetExceeded => {
-                (ErrorCode::Budget, "The stroke budget would be exceeded".into())
-            }
-            CoreError::WorkingBudgetExceeded => {
-                (ErrorCode::Budget, "The working memory limit would be exceeded".into())
-            }
-            CoreError::Clipboard(_) => (ErrorCode::Refused, "The pixel operation was refused".into()),
         };
-        OpError { code, message: Text::new(ja, en), data: Some(detail) }
+        OpError {
+            code,
+            message: Text::new(ja, en),
+            data: Some(detail),
+        }
     }
     /// 効果の値の欄の失敗（効果の種類の表）。
     pub fn from_param(e: &ParamError) -> Self {
@@ -330,9 +354,15 @@ impl OpError {
             E::WorkingBudgetExceeded { needed, allowed } => Self::new(
                 ErrorCode::Budget,
                 ja,
-                format!("The export needs {needed} bytes of working memory; the limit is {allowed}"),
+                format!(
+                    "The export needs {needed} bytes of working memory; the limit is {allowed}"
+                ),
             ),
-            E::InvalidArgument(_) => Self::new(ErrorCode::InvalidValue, ja, "An export value is out of range"),
+            E::InvalidArgument(_) => Self::new(
+                ErrorCode::InvalidValue,
+                ja,
+                "An export value is out of range",
+            ),
         }
     }
 }

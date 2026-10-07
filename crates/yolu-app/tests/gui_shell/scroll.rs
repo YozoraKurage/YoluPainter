@@ -1,6 +1,6 @@
 //! 縦のスクロールの共通の部品（`ui::scroll`）: ホイール・つまみを掴んで動かす・溝を押して移る・ペン（winit が egui のポインタと Touch に
 //! 変えた入力）で同じことができる、つまみの太さと掴める幅がカラーセットの欄（egui の `ScrollArea`・`ScrollStyle::thin`）と同じ、
-//! 中身が収まるときはつまみを出さない。部品だけを置いた窓と、本物の窓（レイヤーの欄・一覧の窓）で確かめる。
+//! 中身が収まるときはつまみを出さない。部品だけを置いたウィンドウと、本物のウィンドウ（レイヤーの欄・一覧のウィンドウ）で確かめる。
 use crate::common;
 
 use egui::epaint::Shape;
@@ -10,7 +10,7 @@ use egui_kittest::Harness;
 use yolu_app::ui::scroll::{Scroll, BAR_WIDTH, HANDLE_MIN, THIN_WIDTH};
 use yolu_app::YoluApp;
 
-/// つまみだけを置いた窓。
+/// つまみだけを置いたウィンドウ。
 struct Pane {
     ready: bool,
     offset: f32,
@@ -29,8 +29,10 @@ fn draw(ui: &mut egui::Ui, p: &mut Pane) {
     }
     p.view = Rect::from_min_size(ui.max_rect().min + vec2(20.0, 20.0), vec2(200.0, 120.0));
     // パネルの地（絵で、アプリの中と同じ背景に見えるように）
-    ui.painter().rect_filled(ui.max_rect(), 0.0, yolu_app::ui::theme::PANEL_BG);
-    ui.painter().rect_filled(p.view, 0.0, yolu_app::ui::theme::CONTROL_BG);
+    ui.painter()
+        .rect_filled(ui.max_rect(), 0.0, yolu_app::ui::theme::PANEL_BG);
+    ui.painter()
+        .rect_filled(p.view, 0.0, yolu_app::ui::theme::CONTROL_BG);
     let bar = Scroll::begin(ui, p.view, p.content, &mut p.offset);
     p.dragging = bar.end(ui, "pane", &mut p.offset);
 }
@@ -161,7 +163,10 @@ fn the_numbers_are_the_color_sets_egui_scroll_area() {
     let ctx = egui::Context::default();
     YoluApp::setup(&ctx);
     assert_eq!(ctx.global_style().spacing.scroll.bar_width, thin.bar_width);
-    assert_eq!(ctx.global_style().spacing.scroll.floating_width, thin.floating_width);
+    assert_eq!(
+        ctx.global_style().spacing.scroll.floating_width,
+        thin.floating_width
+    );
 }
 
 #[test]
@@ -177,7 +182,11 @@ fn the_wheel_scrolls_inside_the_view_and_stops_at_both_ends() {
         phase: TouchPhase::Move,
     });
     h.run();
-    assert!((h.state().offset - 50.0).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - 50.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 上へ戻しすぎても 0 より小さくならない・下へ送りすぎてもずらせる量を超えない
     h.event(Event::MouseWheel {
         unit: MouseWheelUnit::Point,
@@ -216,13 +225,25 @@ fn dragging_the_handle_with_the_mouse_moves_the_content_by_the_ratio() {
     assert_eq!(length, 40.0);
     // つまみの真ん中から 20 画素下へ: 1 画素で 3（ずらせる量 240 ÷ つまみが動ける幅 80）
     let from = on_bar(&h, 20.0);
-    mouse_drag(&mut h, from, &[from + vec2(0.0, 10.0), from + vec2(0.0, 20.0)]);
-    assert!((h.state().offset - 60.0).abs() < 0.5, "{}", h.state().offset);
+    mouse_drag(
+        &mut h,
+        from,
+        &[from + vec2(0.0, 10.0), from + vec2(0.0, 20.0)],
+    );
+    assert!(
+        (h.state().offset - 60.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 離したあとは動かない。もう一度、つまみの上端近くを掴むと、掴んだ位置を保って動く（つまみがポインタの下へ跳ばない）
     let before = h.state().offset;
     let grab = on_bar(&h, handle(&h).top() - h.state().view.top() + 5.0);
     mouse_drag(&mut h, grab, &[grab + vec2(0.0, 8.0)]);
-    assert!((h.state().offset - (before + 24.0)).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - (before + 24.0)).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 範囲を越えて引いても端で止まる
     let grab = on_bar(&h, handle(&h).top() - h.state().view.top() + 5.0);
     mouse_drag(&mut h, grab, &[grab + vec2(0.0, 500.0)]);
@@ -240,12 +261,20 @@ fn pressing_the_groove_moves_the_handle_under_the_pointer_and_dragging_continues
     press(&h, at);
     h.step();
     h.step();
-    assert!((h.state().offset - 120.0).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - 120.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 押したまま動かすと、つまみがついてくる
     h.event(Event::PointerMoved(at + vec2(0.0, 10.0)));
     h.step();
     h.step();
-    assert!((h.state().offset - 150.0).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - 150.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     release(&h, at + vec2(0.0, 10.0));
     h.step();
     h.run();
@@ -266,14 +295,26 @@ fn a_pen_touch_grabs_the_handle_and_the_groove_like_the_mouse() {
     let mut h = pane(CONTENT);
     // つまみを掴んで動かす（マウスと同じ結果）
     let from = on_bar(&h, 20.0);
-    pen_drag(&mut h, from, &[from + vec2(0.0, 10.0), from + vec2(0.0, 20.0)]);
-    assert!((h.state().offset - 60.0).abs() < 0.5, "{}", h.state().offset);
+    pen_drag(
+        &mut h,
+        from,
+        &[from + vec2(0.0, 10.0), from + vec2(0.0, 20.0)],
+    );
+    assert!(
+        (h.state().offset - 60.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 溝に触れる: つまみが触れた所へ移り、そのまま動かせる
     h.state_mut().offset = 0.0;
     h.run();
     let at = on_bar(&h, 60.0);
     pen_drag(&mut h, at, &[at + vec2(0.0, 10.0)]);
-    assert!((h.state().offset - 150.0).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - 150.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
     // 触れて離しただけ（動かさない）でも、溝なら移る
     h.state_mut().offset = 0.0;
     h.run();
@@ -299,7 +340,11 @@ fn the_handle_is_thin_at_rest_and_widens_when_the_pointer_comes_like_the_color_s
     let view = h.state().view;
     let edge = pos2(view.right() - BAR_WIDTH + 1.0, view.top() + 20.0);
     mouse_drag(&mut h, edge, &[edge + vec2(0.0, 10.0)]);
-    assert!((h.state().offset - 30.0).abs() < 0.5, "{}", h.state().offset);
+    assert!(
+        (h.state().offset - 30.0).abs() < 0.5,
+        "{}",
+        h.state().offset
+    );
 }
 
 #[test]
@@ -337,7 +382,7 @@ fn the_scroll_bar_has_its_own_node_for_screen_readers() {
     assert_eq!(node.rect().height(), view.height());
 }
 
-// ───────── 本物の窓 ─────────
+// ───────── 本物のウィンドウ ─────────
 
 #[test]
 fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
@@ -357,7 +402,7 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
         .iter()
         .find(|r| r.left() > 900.0)
         .unwrap_or_else(|| panic!("{bars:?}"));
-    assert_eq!(h.state().state.layer_scroll, 0.0);
+    assert_eq!(h.state().state.ui.layer_scroll, 0.0);
     let from = pos2(bar.center().x, bar.top() + 6.0);
     let touch = |phase, pos| Event::Touch {
         device_id: egui::TouchDeviceId(1),
@@ -390,9 +435,9 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
     h.event(Event::PointerGone);
     h.run();
     assert!(
-        h.state().state.layer_scroll > 20.0,
+        h.state().state.ui.layer_scroll > 20.0,
         "ペンでつまみを引いたぶん一覧が動く: {}",
-        h.state().state.layer_scroll
+        h.state().state.ui.layer_scroll
     );
 }
 
@@ -412,8 +457,14 @@ fn a_list_window_keeps_its_scroll_between_frames_even_when_the_caller_passes_zer
             modal: false,
             width: 420.0,
             summary: None,
-            rows: (0..rows).map(|i| Row::text(format!("row {i}"), false)).collect(),
-            buttons: vec![Button { label: "OK".into(), primary: true, tooltip: None }],
+            rows: (0..rows)
+                .map(|i| Row::text(format!("row {i}"), false))
+                .collect(),
+            buttons: vec![Button {
+                label: "OK".into(),
+                primary: true,
+                tooltip: None,
+            }],
             close_label: "Close".into(),
         }
     }
@@ -424,41 +475,68 @@ fn a_list_window_keeps_its_scroll_between_frames_even_when_the_caller_passes_zer
             ui.ctx().request_repaint();
             return;
         }
-        // 呼ぶ側が毎フレーム 0 を渡す（確認・報告の窓の呼び方）
+        // 呼ぶ側が毎フレーム 0 を渡す（確認・報告のウィンドウの呼び方）
         let mut scroll = 0.0;
-        let _ = show_list(&ui.ctx().clone(), &spec(host.rows), &mut host.offset, &mut scroll);
+        let _ = show_list(
+            &ui.ctx().clone(),
+            &spec(host.rows),
+            &mut host.offset,
+            &mut scroll,
+        );
     }
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(600.0, 700.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(60)
-        .build_ui_state(draw_host, Host { ready: false, offset: egui::Vec2::ZERO, rows: 30 });
+        .build_ui_state(
+            draw_host,
+            Host {
+                ready: false,
+                offset: egui::Vec2::ZERO,
+                rows: 30,
+            },
+        );
     h.run();
     let bar = h.get_by_role(egui::accesskit::Role::ScrollBar).rect();
     let first = text_top(&h, "row 0").expect("先頭の行が見える");
-    // つまみを引いて、窓が次のフレームも同じ位置を保つ（ずらした量が毎回 0 に戻らない）
+    // つまみを引いて、ウィンドウが次のフレームも同じ位置を保つ（ずらした量が毎回 0 に戻らない）
     let from = pos2(bar.center().x, bar.top() + 5.0);
     h.event(Event::PointerMoved(from));
-    h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
     h.step();
     for dy in [10.0, 20.0, 30.0] {
         h.event(Event::PointerMoved(from + vec2(0.0, dy)));
         h.step();
     }
-    h.event(Event::PointerButton { pos: from + vec2(0.0, 30.0), button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.event(Event::PointerButton {
+        pos: from + vec2(0.0, 30.0),
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
     h.run();
     h.run();
     let moved = text_top(&h, "row 0");
     assert!(
         moved.is_none_or(|y| y < first - 20.0),
-        "窓の一覧がつまみで動き、離したあとも戻らない: {first} → {moved:?}"
+        "ウィンドウの一覧がつまみで動き、離したあとも戻らない: {first} → {moved:?}"
     );
     // ホイールでも動く（一覧の上にポインタを置いて、上へ戻す）
     let view = h.get_by_role(egui::accesskit::Role::ScrollBar).rect();
     h.event(Event::PointerMoved(view.center() - vec2(60.0, 0.0)));
     h.step();
-    h.event(Event::MouseWheel { unit: MouseWheelUnit::Point, delta: vec2(0.0, 1000.0), modifiers: Modifiers::NONE, phase: TouchPhase::Move });
+    h.event(Event::MouseWheel {
+        unit: MouseWheelUnit::Point,
+        delta: vec2(0.0, 1000.0),
+        modifiers: Modifiers::NONE,
+        phase: TouchPhase::Move,
+    });
     h.run();
     h.run();
     assert_eq!(text_top(&h, "row 0"), Some(first), "ホイールで先頭まで戻る");

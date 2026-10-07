@@ -406,7 +406,7 @@ class Find(Scratch):
         self.assertEqual(decision.run_id, 2)
 
     def test_a_missing_target_in_ci_means_rebuild(self):
-        # Linux を足した配布で、CI は Windows だけ組んでいる。
+        # Linux を足した配布で、CI は Windows だけビルドしている。
         gh = self.good()
         decision = self.promoted(gh, targets=(WINDOWS, LINUX))
         self.assertFalse(decision.promote)
@@ -426,7 +426,7 @@ class Find(Scratch):
         self.assertTrue(any('digest' in reason for reason in decision.reasons))
 
     def test_an_artifact_without_a_recorded_digest_is_not_promoted(self):
-        # digest が無い（キーごと無い・null・空）成果物は確かめようが無いので受け取らない。次の実行があればそちら、無ければ組み直す。
+        # digest が無い（キーごと無い・null・空）成果物は確かめようが無いので受け取らない。次の実行があればそちら、無ければビルドし直す。
         for missing in ('absent', None, ''):
             with self.subTest(missing):
                 gh = self.good(run_id=100)
@@ -625,6 +625,10 @@ class Workflows(unittest.TestCase):
             'dist-build not called': ('ci.yml', yaml_edit(not_called), '呼んでいません'),
             'condition lost': ('ci.yml', yaml_edit(lose_condition), 'github.base_ref'),
             'broken yaml': ('release.yml', lambda t: t + '\n  bad: [\n', 'YAML を読めません'),
+            # 状態の関数の無い下書きの条件は、成果物を受け取って build が skipped の回に下書きまで飛ばす
+            'draft skipped with build': ('release.yml', lambda t: t.replace(
+                "if: ${{ !cancelled() && !inputs.dry-run && needs.metadata.result == 'success' }}",
+                'if: ${{ !inputs.dry-run }}'), "draft の条件に !cancelled()"),
         }
         for name, (file, edit, text) in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as d:

@@ -1,4 +1,4 @@
-//! ブラシの欄。詳細の窓（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧・入り抜きとペン・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
+//! ブラシの欄。詳細のウィンドウ（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧・入り抜きとペン・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
 //! 効果・対称）ごとにここの欄を出す。筆先の形（画像・硬さ・真円率・角度・反転・組み込みの一覧）は「形状」の欄。
 //! 値は全部入りのブラシ（`AppState::m2.brush`）と基本の値（`AppState::brush`）を直に変え、ストロークを始めたときに写して固定する
 //! （途中で変えても、そのストロークには効かない）。3D のビューが出ているあいだ面のダブが使わない欄は、注記を出さずに無効にして、
@@ -10,15 +10,14 @@ use egui::{
     pos2, vec2, Color32, ColorImage, Id, Rect, Sense, TextureHandle, TextureId, TextureOptions, Ui,
 };
 
-use super::properties::{
-    choice_row, group_label, open_popup, percent_row, slider_row, toggle_row,
-};
+use super::properties::{choice_row, group_label, open_popup, percent_row, slider_row, toggle_row};
 
 /// まとまりの小見出し（前の行との間を少し空ける）。
 fn group(ui: &mut Ui, rows: &mut Rows, text: &str) {
     rows.space(5.0);
     group_label(ui, rows, text);
 }
+use super::tip_library;
 use crate::brushes::Category;
 use crate::engine::{
     BrushEffect, ColorDynamics, ColorMix, Controls, DVec2, Jitter, MixGround, MixMode,
@@ -26,7 +25,6 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
-use super::tip_library;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, BrushState, Tool};
 use crate::ui::curve;
@@ -42,10 +40,10 @@ fn decimals(places: u8) -> NumberFormat<'static> {
     }
 }
 
-/// 3D のビューが出ているあいだ、面のダブが使わない設定を無効にする理由（使える間は None）。
+/// 描ける先が 3D の面だけのあいだ（キャンバスのタブが出ていない）、面のダブが使わない設定を無効にする理由（使える間は None）。
+/// ドックを分けてキャンバスも出ていれば 2D に描けて効くので None（`AppState::paints_only_in_3d`）。
 fn off_in_3d(app: &AppState, lang: Lang) -> Option<&'static str> {
-    app.view3d
-        .paintable_on_screen()
+    app.paints_only_in_3d()
         .then(|| lang.pick("3D では効きません", "No effect in 3D"))
 }
 
@@ -102,7 +100,7 @@ fn toggle_pair(
     ((a != left.2).then_some(a), b)
 }
 
-/// カテゴリの欄を縦に積む（見出しはここに無い。窓が出す）。
+/// カテゴリの欄を縦に積む（見出しはここに無い。ウィンドウが出す）。
 pub fn category_body(
     ui: &mut Ui,
     app: &mut AppState,
@@ -381,12 +379,14 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         (0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32),
         NumberFormat::int(" px"),
         Some(lang.pick(
-            "UV の島の縁から外へ塗る幅。継ぎ目に線が出ないように",
+            "UV アイランドの縁から外へ塗る幅。継ぎ目に線が出ないように",
             "Paints this far outside the edges of UV islands so seams do not show",
         )),
         free,
     ) {
-        p.seam_bleed = v.round().clamp(0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32) as u32;
+        p.seam_bleed = v
+            .round()
+            .clamp(0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32) as u32;
     }
     app.view3d.projection_dragging = dragging;
 }
@@ -496,7 +496,14 @@ impl PressureItem {
 
 /// 筆圧の曲線の行（`ui::curve::curve_editor`）。点を足す・動かす・消す操作が決まったとき（ドラッグは離したとき）だけ、新しい曲線を返す。
 /// 最小値はスライダーが持つので、枠が描くのは曲線そのもの。
-fn pressure_curve_row(ui: &mut Ui, rows: &mut Rows, id: &str, curve: &Curve, tooltip: &str, enabled: bool) -> Option<Curve> {
+fn pressure_curve_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    curve: &Curve,
+    tooltip: &str,
+    enabled: bool,
+) -> Option<Curve> {
     let rect = rows.row(curve::HEIGHT, 6.0);
     curve::curve_editor(ui, rect, id.to_owned(), curve, tooltip, enabled)
 }
@@ -550,7 +557,7 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         }
         let curve_tip = if used {
             lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
                 "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
             )
         } else {
@@ -1215,7 +1222,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
 
 // ───────── 色の混ぜ ─────────
 
-/// 色の混ぜが、今の道具・ブラシ・描く先では効かない理由（効くなら None）。
+/// 色の混ぜが、今のツール・ブラシ・描く先では効かない理由（効くなら None）。
 fn mix_unavailable(app: &AppState, lang: Lang) -> Option<&'static str> {
     if app.tool == Tool::Eraser {
         return Some(lang.pick("消しゴムでは効きません", "No effect with the eraser"));
@@ -1404,7 +1411,14 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         let key = item.key();
         let response = item.response(&mut app.m2.brush.mix).clone();
         let on = item.on(&app.m2.brush.mix);
-        group(ui, rows, &lang.pick(format!("{}（筆圧）", item.name(lang)), format!("{} (pressure)", item.name(lang))));
+        group(
+            ui,
+            rows,
+            &lang.pick(
+                format!("{}（筆圧）", item.name(lang)),
+                format!("{} (pressure)", item.name(lang)),
+            ),
+        );
         if let Some(v) = toggle_row(
             ui,
             rows,
@@ -1423,7 +1437,8 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             item.set_on(&mut app.m2.brush.mix, v);
         }
         let used = active && on;
-        let pressure_off = off_reason.unwrap_or_else(|| lang.pick("筆圧を使っていません", "Pen pressure is not used"));
+        let pressure_off = off_reason
+            .unwrap_or_else(|| lang.pick("筆圧を使っていません", "Pen pressure is not used"));
         if let Some(v) = percent_row(
             ui,
             rows,
@@ -1447,7 +1462,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         }
         let curve_tip = if used {
             lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
                 "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
             )
         } else {

@@ -75,7 +75,10 @@ impl ZoomCenter {
     /// ツールチップ。
     pub fn tip(self, lang: Lang) -> &'static str {
         match self {
-            Self::View => lang.pick("画面の中心を保ってズームします。", "Zoom keeping the view center."),
+            Self::View => lang.pick(
+                "画面の中心を保ってズームします。",
+                "Zoom keeping the view center.",
+            ),
             Self::Pointer => lang.pick(
                 "面が無ければポインタの向きへ寄ります。",
                 "Empty space zooms along the pointer direction.",
@@ -299,7 +302,7 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     if foreign
         || ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
-        || app.popup_was_open
+        || app.ui.popup_was_open
         || app.view3d.display.settings_open
         || app.dock_grabbed()
         || app.sel.dialog.is_some()

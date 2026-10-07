@@ -300,23 +300,20 @@ pub fn columns(width: f32) -> usize {
     ((width + 4.0) / 28.0).floor().max(1.0) as usize
 }
 
-pub fn attach(app: &mut crate::state::AppState, directory: std::path::PathBuf) {
+/// 設定のフォルダのカラーセットを読む。読めなかった物があれば、その理由の文（起動時の知らせに添える）。
+pub fn attach(app: &mut crate::state::AppState, directory: std::path::PathBuf) -> Option<String> {
     let problems = app.colorsets.attach(directory, &mut app.color.recent);
-    if !problems.is_empty() {
-        if !app.message.is_empty() {
-            app.message.push_str(" / ");
-        }
-        app.message.push_str(
-            &problems
-                .iter()
-                .map(|p| p.message(app.lang))
-                .collect::<Vec<_>>()
-                .join(" / "),
-        );
-    }
+    (!problems.is_empty()).then(|| {
+        problems
+            .iter()
+            .map(|p| p.message(app.lang))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    })
 }
 pub fn persist(app: &mut crate::state::AppState) {
     if let Err(e) = app.colorsets.persist_state(&app.color.recent) {
-        app.message = e.message(app.lang);
+        let text = e.message(app.lang);
+        app.fail(crate::notice::Source::Color, text);
     }
 }

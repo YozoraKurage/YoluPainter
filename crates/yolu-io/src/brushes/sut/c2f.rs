@@ -885,7 +885,7 @@ pub(super) fn read(data: &[u8], work: &Work) -> Result<Plane> {
     Err(Refusal::Empty)
 }
 
-/// 試験用の C2F の組み立て（統合試験 `tests/brush_import_sut_layer.rs` と同じもの）。
+/// 試験用の C2F の組み立て（統合試験 `tests/brushes/brush_import_sut_layer.rs` と同じもの）。
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../tests/brush_files/c2f.rs"]

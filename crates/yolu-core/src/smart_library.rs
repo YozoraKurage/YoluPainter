@@ -1,17 +1,17 @@
-//! 同梱のスマートマテリアル。塗りつぶしの層（チャンネルごとの値）と、そのマスクのノイズ・グランジの Generator だけで組む
-//! （外の画像を使わない。画素の層も持たない）ので、許諾の問題が無く、どの大きさのテクスチャにも置ける。置くと文書へ層の組として写り、
-//! その後は普通の層と同じように直せる。
+//! 同梱のスマートマテリアル。塗りつぶしレイヤー（チャンネルごとの値）と、そのマスクのノイズ・グランジの Generator だけで組む
+//! （外の画像を使わない。画素のレイヤーも持たない）ので、許諾の問題が無く、どの大きさのテクスチャにも置ける。置くと文書へレイヤーの組として写り、
+//! その後は普通のレイヤーと同じように直せる。
 //!
 //! ここにはマップ（焼き）が要る Generator（エッジの摩耗・汚れ）を入れない。入れた文書は、焼く前に開くと入力が足りない効果として
 //! 読むだけになるので、同梱の素材はモデルが無くても・焼く前でも同じ見た目で、いつも編集できる。位置のマップが使えるときは、
-//! ノイズ・グランジは位置から 3D で評価され（UV の島の継ぎ目で模様がずれない）、使えないときは UV に落ちる。
+//! ノイズ・グランジは位置から 3D で評価され（UV アイランドの継ぎ目で模様がずれない）、使えないときは UV に落ちる。
 //!
 //! 絵の良し悪しは人が決める: ここの値（色・粗さ・模様の大きさ）は出発点で、サムネイルを見て直す。
 use crate::generator::{Blend, GrungePreset, Kind, NoiseBasis, Settings};
 use crate::smart::SmartMaterial;
 use crate::{Channel, CoreError, Document, EffectSettings, FilterSpec, FilterTarget, Rgba8};
 
-/// 素材の文書の 1 辺（画素）。層に画素が無い（値とマスクの Generator だけ）ので、置く先の大きさに依らない。
+/// 素材の文書の 1 辺（画素）。レイヤーに画素が無い（値とマスクの Generator だけ）ので、置く先の大きさに依らない。
 pub const SIZE: u32 = 128;
 
 /// 同梱の素材 1 つ。
@@ -31,7 +31,7 @@ impl Entry {
             self.en
         }
     }
-    /// 素材を組む。`name` は置いたときのグループの名前、`japanese` は層の名前の言語。
+    /// 素材を組む。`name` は置いたときのグループの名前、`japanese` はレイヤーの名前の言語。
     pub fn build(&self, name: &str, japanese: bool) -> Result<SmartMaterial, CoreError> {
         let mut doc = Document::with_tile_size(SIZE, SIZE, 64)?;
         let mut ids = Vec::new();
@@ -82,7 +82,7 @@ struct Part {
     metal: u8,
     height: u8,
     opacity: f64,
-    /// マスクの Generator の段（下から）。空なら全面に出る土台の層。
+    /// マスクの Generator の段（下から）。空なら全面に出る土台のレイヤー。
     mask: Vec<Settings>,
 }
 impl Part {
@@ -426,7 +426,7 @@ mod tests {
                 assert_eq!(m.name(), e.name(ja));
                 assert!(m.layers().len() >= 2, "{}", e.id);
                 assert_eq!((m.width(), m.height()), (SIZE, SIZE));
-                // 画素の層を持たない（値とマスクの Generator だけ）
+                // 画素のレイヤーを持たない（値とマスクの Generator だけ）
                 assert_eq!(m.pixel_bytes(), 0, "{}: 画素が入っている", e.id);
             }
         }

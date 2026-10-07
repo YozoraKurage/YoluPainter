@@ -7,11 +7,12 @@ pub use yolu_core::glam::DVec2;
 pub use yolu_core::selection::{DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS};
 pub use yolu_core::DEFAULT_SOURCE_BUDGET_BYTES;
 pub use yolu_core::{
-    AdjustmentSettings, AdjustmentType, BalanceRange, BlendMode, BrightnessContrast, Brush, BrushEffect, BrushPreset, BrushSample,
-    BrushSettings, BrushTip, CanvasResampling, CanvasSymmetry, Channel, ChannelBlend, ChannelInfo,
-    ChannelKind, ClipboardRefusal, ClipboardSource, ColorAdjust, ColorBalance, ColorDynamics, CompositedTile,
-    ColorSpace, Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode,
-    Jitter, Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
+    AdjustmentSettings, AdjustmentType, BalanceRange, BlendMode, BrightnessContrast, Brush,
+    BrushEffect, BrushPreset, BrushSample, BrushSettings, BrushTip, CanvasResampling,
+    CanvasSymmetry, Channel, ChannelBlend, ChannelInfo, ChannelKind, ClipboardRefusal,
+    ClipboardSource, ColorAdjust, ColorBalance, ColorDynamics, ColorSpace, CompositedTile,
+    Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode, Jitter,
+    Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
     Posterize, PreparedResize, PressureResponse, PressureResponses, Rect, Rgba8, RowOrder,
     SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, Threshold,
     TileCoord, TipShape, ToneChannel, ToneCurves,
@@ -32,14 +33,14 @@ impl Tilt {
     }
 }
 
-/// 合成の 1 画素（straight RGBA8。画布の外は透明）。
+/// 合成の 1 画素（straight RGBA8。キャンバスの外は透明）。
 pub fn composite_pixel(doc: &Document, x: u32, y: u32) -> [u8; 4] {
     doc.composite_pixel(Channel::Color, x, y)
         .map(|p| [p.r, p.g, p.b, p.a])
         .unwrap_or([0; 4])
 }
 
-/// 層の Color の 1 画素（straight RGBA8。無ければ透明）。サムネイル用。
+/// レイヤーの Color の 1 画素（straight RGBA8。無ければ透明）。サムネイル用。
 pub fn layer_pixel(layer: &Layer, x: u32, y: u32) -> [u8; 4] {
     layer
         .surface(Channel::Color)
@@ -48,7 +49,7 @@ pub fn layer_pixel(layer: &Layer, x: u32, y: u32) -> [u8; 4] {
         .unwrap_or([0; 4])
 }
 
-/// 層が Color の画素を持つか。
+/// レイヤーが Color の画素を持つか。
 pub fn layer_has_pixels(layer: &Layer) -> bool {
     layer
         .surface(Channel::Color)

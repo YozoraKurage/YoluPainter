@@ -1,5 +1,5 @@
 //! 選択範囲と 2D の対称の操作（egui_kittest）。どれも「操作 → 文書が変わる → Undo で戻る」。ツールの帯・オプションバー・メニュー・
-//! プロパティの欄・量を聞く窓・キャンバスの入力・対称のブラシ・.ylp の保存と読み込み。
+//! プロパティの欄・量を聞くウィンドウ・キャンバスの入力・対称のブラシ・.ylp の保存と読み込み。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -20,7 +20,7 @@ use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
 fn st(h: &H) -> &AppState {
     &h.state().state
@@ -124,7 +124,7 @@ fn wait(h: &mut H) {
     }
 }
 
-/// 色の矩形を層の Color へ入れる（画布の座標。タイルごとに読み込む）。
+/// 色の矩形をレイヤーの Color へ入れる（キャンバスの座標。タイルごとに読み込む）。
 fn paint_rect(s: &mut AppState, x0: u32, y0: u32, x1: u32, y1: u32, rgba: [u8; 4]) {
     let id = s.selected_layer.unwrap();
     let ts = s.doc.tile_size();
@@ -386,7 +386,7 @@ fn polygon_backspace_escape_tool_switch_and_focus_loss_drop_the_draft() {
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(st(&h).sel.polygon.is_empty() && st(&h).doc.selection().is_none());
-    // 道具を替えたら捨てる
+    // ツールを替えたら捨てる
     click_by(&mut h, 10.0, 10.0);
     assert_eq!(st(&h).sel.polygon.len(), 1);
     pick_tool(&mut h, Tool::SelectRect);
@@ -482,7 +482,7 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    let button = bar_rect(&h, "追加選択: 選択範囲に足す（Shift）").center();
+    let button = bar_rect(&h, "追加選択: 選択範囲に追加（Shift）").center();
     click(&mut h, button);
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));
@@ -552,7 +552,7 @@ fn tool_properties_select_all_deselect_and_invert_buttons() {
     assert!(st(&h).doc.selection().is_none());
 }
 
-// ───────── メニュー・キー・量を聞く窓 ─────────
+// ───────── メニュー・キー・量を聞くウィンドウ ─────────
 
 #[test]
 fn select_menu_items_and_keys_run_their_edits() {
@@ -586,7 +586,7 @@ fn select_menu_items_and_keys_run_their_edits() {
     );
     undo(&mut h);
     assert!(st(&h).doc.selection().is_some());
-    // 道具の項目
+    // ツールの項目
     let title = menu_title(&h, "選択範囲").center();
     click(&mut h, title);
     let item = popup_item(&h, "多角形選択").center();
@@ -612,7 +612,7 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
     };
     open(&mut h, "拡張…");
     assert!(st(&h).sel.dialog.is_some());
-    // 窓の外のキーは効かない（モーダル）
+    // ウィンドウの外のキーは効かない（モーダル）
     key(&h, Key::W, Modifiers::NONE);
     h.run();
     assert_eq!(st(&h).tool, Tool::SelectRect);
@@ -658,7 +658,7 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
 
 #[test]
 fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
-    // ツールプロパティの下のほう（選択範囲を変更）まで見える高さの窓
+    // ツールプロパティの下のほう（選択範囲を変更）まで見える高さのウィンドウ
     let mut h = app(1280.0, 1100.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-40.0, -30.0), (40.0, 30.0));
@@ -669,7 +669,10 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
         ("拡張", original.grow(6, budget).unwrap()),
         ("縮小", original.shrink(6, false, budget).unwrap()),
         ("境界線", original.border(6, false, budget).unwrap()),
-        ("境界をぼかす", original.feather(6.0, false, budget).unwrap()),
+        (
+            "境界をぼかす",
+            original.feather(6.0, false, budget).unwrap(),
+        ),
         ("境界をくっきり", original.sharpen()),
     ] {
         let at = rect_of(&h, label, |r| r.left() < 340.0 && r.top() > 62.0).center();
@@ -752,7 +755,7 @@ fn selection_tools_do_not_paint_on_the_canvas_or_the_cube() {
     assert_eq!(
         alpha_at(&h, offset(c, 20.0, 20.0)),
         0,
-        "選択の道具は描かない"
+        "選択のツールは描かない"
     );
     // 3D のビューでも描き始めない（面に描くのはブラシ・消しゴムだけ）
     h.state_mut().state.view3d.load_demo();
@@ -762,7 +765,7 @@ fn selection_tools_do_not_paint_on_the_canvas_or_the_cube() {
     let before = steps(&h);
     let a = rect.center();
     drag(&mut h, &[a, offset(a, 30.0, 10.0), offset(a, 60.0, 20.0)]);
-    assert_eq!(steps(&h), before, "3D では選択の道具で描かない");
+    assert_eq!(steps(&h), before, "3D では選択のツールで描かない");
     assert!(!st(&h).doc.has_active_stroke());
     assert!(!st(&h).message.is_empty());
     key(&h, Key::D, Modifiers::COMMAND);
@@ -811,7 +814,7 @@ fn a_selection_tool_pen_presses_drags_and_releases_like_the_mouse() {
 }
 
 #[test]
-fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
+fn holding_y_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     use yolu_app::stencil::StencilOp;
     let dir = temp_dir("stencil-t");
     let mut h = app(1280.0, 800.0, 256);
@@ -822,19 +825,19 @@ fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     assert!(st(&h).stencil.image.is_some(), "{}", st(&h).message);
     pick_tool(&mut h, Tool::SelectRect);
     h.event(Event::Key {
-        key: Key::T,
+        key: Key::Y,
         physical_key: None,
         pressed: true,
         repeat: false,
         modifiers: Modifiers::NONE,
     });
     h.step();
-    // マウス: T を押したままのドラッグはステンシルを動かし、選択の形は始まらない
+    // マウス: Y を押したままのドラッグはステンシルを動かし、選択の形は始まらない
     let path = [at(&h, -60.0, -40.0), at(&h, 0.0, 0.0), at(&h, 60.0, 40.0)];
     drag(&mut h, &path);
     assert!(
         st(&h).doc.selection().is_none(),
-        "T を押したままのドラッグで選択ができた"
+        "Y を押したままのドラッグで選択ができた"
     );
     assert!(st(&h).sel.drag.is_none());
     // ペン: 触れても選択の形は始まらない
@@ -849,7 +852,7 @@ fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     h.run();
     assert!(
         st(&h).doc.selection().is_none(),
-        "T を押したままのペンで選択ができた"
+        "Y を押したままのペンで選択ができた"
     );
     assert!(st(&h).sel.pen_down.is_none() && st(&h).sel.drag.is_none());
     assert_eq!(steps(&h), 0);
@@ -866,7 +869,7 @@ fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_
         h.step();
     }
     assert_eq!(st(&h).canvas.stroke, Some(StrokeSource::Pen(3)));
-    // ペンを付けたまま M（長方形選択）。描いている間も道具は替えられる
+    // ペンを付けたまま M（長方形選択）。描いている間もツールは替えられる
     key(&h, Key::M, Modifiers::NONE);
     h.step();
     assert_eq!(st(&h).tool, Tool::SelectRect);
@@ -885,7 +888,7 @@ fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_
     assert_eq!(steps(&h), 1, "描いた分は 1 回の Undo");
     assert!(s.doc.selection().is_none());
     assert!(s.sel.drag.is_none() && s.sel.pen_down.is_none());
-    // 続けて、選択の道具でペンの選択ができる
+    // 続けて、選択のツールでペンの選択ができる
     for (p, contact) in [
         (at(&h, -40.0, -40.0), true),
         (at(&h, 40.0, 40.0), true),
@@ -900,7 +903,7 @@ fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_
     assert!(st(&h).doc.selection().is_none(), "選択の Undo");
     undo(&mut h);
     assert_eq!(steps(&h), 0, "描いた分の Undo");
-    // マウスのストロークは、最中に道具を替えても従来どおり離して終わる
+    // マウスのストロークは、最中にツールを替えても従来どおり離して終わる
     pick_tool(&mut h, Tool::Brush);
     let a = at(&h, -50.0, -50.0);
     h.event(Event::PointerMoved(a));
@@ -1346,9 +1349,9 @@ fn headless_refused_edits_change_nothing_and_say_why() {
     );
     assert_eq!(s.doc.selection(), selection.as_ref());
     assert_eq!(s.doc.undo_count(), steps);
-    let budget = CoreError::WorkingBudgetExceeded.to_string();
+    let budget = s.lang.core_error(&CoreError::WorkingBudgetExceeded);
     assert!(s.message.contains(&budget), "{}", s.message);
-    // 型の拒否: 点が多すぎる多角形・有限でない楕円・画布の外の種
+    // 型の拒否: 点が多すぎる多角形・有限でない楕円・キャンバスの外の種
     let mut s = doc_state(64);
     for e in [
         SelEdit::Polygon {
@@ -1396,7 +1399,7 @@ fn headless_refused_edits_change_nothing_and_say_why() {
 /// 拒否の文は画面の言語で出る（英語の画面に日本語の文を出さない）。文書・選択範囲・Undo の段は変わらない。
 #[test]
 fn headless_refusals_are_told_in_the_language_and_change_nothing() {
-    // 型の拒否: 点が多すぎる多角形・有限でない楕円・画布の外の種（既存の選択範囲があっても残る）
+    // 型の拒否: 点が多すぎる多角形・有限でない楕円・キャンバスの外の種（既存の選択範囲があっても残る）
     let refusals = [
         (
             SelEdit::Polygon {
@@ -1565,7 +1568,7 @@ fn headless_edge_lock_keeps_the_selection_at_the_canvas_edge_when_shrinking() {
     assert_eq!(
         s.doc.selection().unwrap().amount(0, 32),
         0,
-        "縮むと画布の端が外れる"
+        "縮むとキャンバスの端が外れる"
     );
     assert_eq!(s.doc.selection().unwrap().amount(32, 32), 255);
     s.apply(Action::Undo);
@@ -1573,7 +1576,7 @@ fn headless_edge_lock_keeps_the_selection_at_the_canvas_edge_when_shrinking() {
     assert_eq!(
         s.doc.selection().unwrap().amount(0, 32),
         255,
-        "端を固定すると画布の端は縮まない"
+        "端を固定するとキャンバスの端は縮まない"
     );
     assert_eq!(s.doc.undo_count(), 1, "全面のままなので段を積まない");
 }
@@ -1590,7 +1593,7 @@ fn headless_wand_reads_the_selected_layer_or_the_composite() {
         y: 10,
         mode: SelectionCombine::Replace,
     };
-    // 選んでいる上の層（右下だけ青）: 左下は透明の画素なので、透明が選ばれる（青はつながらない別の色）
+    // 選んでいる上のレイヤー（右下だけ青）: 左下は透明の画素なので、透明が選ばれる（青はつながらない別の色）
     run(&mut s, wand(10));
     assert_eq!(s.doc.selection().unwrap().amount(10, 10), 255);
     assert_eq!(s.doc.selection().unwrap().amount(200, 10), 0);
@@ -1944,7 +1947,7 @@ fn headless_each_set_keeps_its_own_selection_and_its_own_undo_history() {
     assert_eq!(again.doc.selection(), Some(&edited_b));
     again.switch_set(0).unwrap();
     assert_eq!(again.doc.selection(), Some(&sel_a));
-    // セットを替えると、途中の形も量を聞く窓も捨てる
+    // セットを替えると、途中の形も量を聞くウィンドウも捨てる
     open_drafts(&mut again);
     again.switch_set(1).unwrap();
     assert!(again.sel.polygon.is_empty() && again.sel.polygon_hover.is_none());
@@ -1989,11 +1992,11 @@ fn headless_importing_a_psd_into_the_current_set_drops_the_drafts_of_the_old_doc
         path: path.clone(),
         target: PsdTarget::CurrentSet,
     }));
-    // 読んでいる間（別のスレッド）に、新しい点を打つ・窓を開くのは続けられる。読み終わるときに、前の文書の途中は捨てる
+    // 読んでいる間（別のスレッド）に、新しい点を打つ・ウィンドウを開くのは続けられる。読み終わるときに、前の文書の途中は捨てる
     s.wait_psd();
     assert_eq!(s.doc.width(), 64, "{}", s.message);
     assert!(s.sel.polygon.is_empty() && s.sel.polygon_hover.is_none());
-    assert!(s.sel.dialog.is_none(), "前の文書の座標の窓が残った");
+    assert!(s.sel.dialog.is_none(), "前の文書の座標のウィンドウが残った");
     assert!(s.sel.drag.is_none() && s.sel.pen_down.is_none());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2132,7 +2135,7 @@ fn headless_every_selection_label_exists_in_both_languages() {
     let (ja, en) = (labels(Lang::Ja), labels(Lang::En));
     assert_eq!(ja.len(), en.len());
     assert!(ja.iter().zip(&en).all(|(a, b)| a != b), "{ja:?} {en:?}");
-    // 道具の ID・キーは重ならない
+    // ツールの ID・キーは重ならない
     let mut ids: Vec<&str> = Tool::ALL.iter().map(|t| t.id()).collect();
     ids.sort_unstable();
     ids.dedup();

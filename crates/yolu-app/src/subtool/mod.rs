@@ -1,11 +1,11 @@
-//! サブツール: 道具ごとの設定の組のプリセットの一覧（クリスタのサブツールに当たる）。ブラシと消しゴムの一覧は `brushes`（.ylbrush）、
-//! 選択の道具は同じ並びの道具そのもの（`tools::SubTools::Tools`）で、ここはバケツ・ポリゴン塗りつぶし・グラデーション・図形・定規・スポイト・
+//! サブツール: ツールごとの設定の組のプリセットの一覧（クリスタのサブツールに当たる）。ブラシと消しゴムの一覧は `brushes`（.ylbrush）、
+//! 選択のツールは同じ並びのツールそのもの（`tools::SubTools::Tools`）で、ここはバケツ・ポリゴン塗りつぶし・グラデーション・図形・定規・スポイト・
 //! 移動・ゆがみの設定の組を扱う。
 //!
 //! 設定の欄は宣言の表（`fields`: 名前・種類・既定・読む関数・書く関数）で、プリセットの値はその欄の並びの `Vec<Value>`。組み込みは
-//! 「既定から変える欄」だけを持ち、利用者のプリセットは設定のフォルダに道具ごと 1 ファイル（`store`）。一覧の 1 つ（`Entry`）は
-//! 基準の設定（`baseline`）と、変えたままの設定（`edited`）を持つ（ブラシの一覧と同じ流儀）。今の設定は、これまでどおり各道具の状態
-//! （`AppState::region` など）が持ち、道具を離れるとき今の設定を一覧の側へ書き戻し（`subtool_leave`）、入るとき今のサブツールの設定を
+//! 「既定から変える欄」だけを持ち、利用者のプリセットは設定のフォルダにツールごと 1 ファイル（`store`）。一覧の 1 つ（`Entry`）は
+//! 基準の設定（`baseline`）と、変えたままの設定（`edited`）を持つ（ブラシの一覧と同じ流儀）。今の設定は、これまでどおり各ツールの状態
+//! （`AppState::region` など）が持ち、ツールを離れるとき今の設定を一覧の側へ書き戻し（`subtool_leave`）、入るとき今のサブツールの設定を
 //! 今の設定へ写す（`subtool_enter`）。サブツールを替える操作は、押した行の設定を今の設定へ写す。
 //! サブツールの設定は文書ではない（Undo に入れない）。ストロークの最中は、サブツールを替える・足す・消す操作を断る。
 
@@ -102,7 +102,7 @@ impl Entry {
     }
 }
 
-/// 道具の欄の既定の値。
+/// ツールの欄の既定の値。
 pub fn defaults(tool: Tool) -> Values {
     fields::fields(tool)
         .iter()
@@ -122,7 +122,7 @@ fn builtin_values(tool: Tool, builtin: &Builtin) -> Values {
     values
 }
 
-/// 道具ごとのプリセットの一覧。
+/// ツールごとのプリセットの一覧。
 pub struct PresetList {
     tool: Tool,
     entries: Vec<Entry>,
@@ -208,11 +208,11 @@ impl PresetList {
 
     /// 今のサブツールの設定が基準と違うか（`live` は今の設定）。ほかのサブツールは覚えている変更で見る。
     pub fn is_modified(&self, key: Key, live: &Values) -> bool {
-        match self.entry(key) {
-            Some(e) if key == self.current => *live != e.baseline,
-            Some(e) => e.edited.is_some(),
-            None => false,
-        }
+        crate::userfiles::is_modified(
+            self.entry(key).map(|e| (&e.baseline, e.edited.is_some())),
+            key == self.current,
+            live,
+        )
     }
 
     /// 保存する利用者のプリセット（基準の設定。番号の順）。
@@ -235,18 +235,11 @@ impl PresetList {
     }
 
     fn unused_name(&self, base: &str) -> String {
-        let taken = |name: &str| {
+        crate::userfiles::unused_name(base, |name| {
             self.entries
                 .iter()
                 .any(|e| e.key.is_user() && e.name == name)
-        };
-        if !taken(base) {
-            return base.to_owned();
-        }
-        (2..)
-            .map(|n| format!("{base} {n}"))
-            .find(|name| !taken(name))
-            .expect("名前は尽きない")
+        })
     }
 }
 
@@ -263,9 +256,9 @@ pub struct SubToolUi {
     pub context: Option<(Tool, Key)>,
     /// 次に一覧を描くとき、今のサブツールの行が見えるところまでスクロールする。
     pub reveal: bool,
-    /// 前のフレームに描いたパネルの右端（ブラシの詳細の窓を、その右に置く）。描いていなければ 0。
+    /// 前のフレームに描いたパネルの右端（ブラシの詳細のウィンドウを、その右に置く）。描いていなければ 0。
     pub panel_right: f32,
-    /// ツールプロパティの欄の、前のフレームの中身の高さ（道具ごと。道具を替えた最初のフレームから、その道具の高さで組み立てる）。
+    /// ツールプロパティの欄の、前のフレームの中身の高さ（ツールごと。ツールを替えた最初のフレームから、そのツールの高さで組み立てる）。
     pub props_content: [f32; Tool::ALL.len()],
 }
 
@@ -311,7 +304,7 @@ pub enum SubToolAction {
 }
 
 impl AppState {
-    /// 道具のプリセットの一覧（プリセットの道具でなければ None）。
+    /// ツールのプリセットの一覧（プリセットのツールでなければ None）。
     pub fn subtool_list(&self, tool: Tool) -> Option<&PresetList> {
         self.subtools.lists.iter().find(|l| l.tool == tool)
     }
@@ -320,7 +313,7 @@ impl AppState {
         self.subtools.lists.iter_mut().find(|l| l.tool == tool)
     }
 
-    /// 今の設定（道具の欄の値）。
+    /// 今の設定（ツールの欄の値）。
     pub fn subtool_capture(&self, tool: Tool) -> Values {
         fields::fields(tool).iter().map(|f| (f.get)(self)).collect()
     }
@@ -383,12 +376,12 @@ impl AppState {
         }
     }
 
-    /// 道具を離れる（今の設定を覚える）。
+    /// ツールを離れる（今の設定を覚える）。
     pub(crate) fn subtool_leave(&mut self, tool: Tool) {
         self.subtool_sync(tool);
     }
 
-    /// 道具に入る（その道具の今のサブツールの設定を今の設定にする）。
+    /// ツールに入る（そのツールの今のサブツールの設定を今の設定にする）。
     pub(crate) fn subtool_enter(&mut self, tool: Tool) {
         let Some(values) = self
             .subtool_list(tool)
@@ -398,22 +391,23 @@ impl AppState {
             return;
         };
         self.subtool_apply(tool, &values);
-        // 一覧は道具ごとにスクロールの位置を持たないので、入った道具の今の行が見えるところまで送る
+        // 一覧はツールごとにスクロールの位置を持たないので、入ったツールの今の行が見えるところまで送る
         self.subtools.ui.reveal = true;
     }
 
-    fn subtool_notice(&mut self, ja: String, en: String) {
-        self.message = self.lang.pick(ja, en);
+    fn subtool_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
+        let text = self.lang.pick(ja, en);
+        self.notify(kind, crate::notice::Source::Brush, text);
     }
 
     fn subtool_refuse(&mut self) {
-        self.message = self
-            .lang
-            .pick("描いている間はできません。", "Not while drawing.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            crate::lang::refusals::during_stroke(self.lang),
+        );
     }
 
-    /// 道具のファイルを読めなかったとき、書くと読めなかったファイル（新しい版かもしれない）を壊すので、増やす・変える操作を断る。断ったなら true。
+    /// ツールのファイルを読めなかったとき、書くと読めなかったファイル（新しい版かもしれない）を壊すので、増やす・変える操作を断る。断ったなら true。
     fn subtool_refuse_blocked(&mut self, tool: Tool) -> bool {
         let lang = self.lang;
         let Some(problem) = self
@@ -424,10 +418,16 @@ impl AppState {
         else {
             return false;
         };
-        let text = format!("{}: {}", problem.file, problem.describe(lang));
-        self.message = lang.pick(
-            format!("サブツールのファイルを読めないため、保存できません。{text}"),
-            format!("Cannot save sub tools because the file could not be read. {text}"),
+        let file = lang.quote(&problem.file);
+        self.fail(
+            crate::notice::Source::Brush,
+            lang.with_reason(
+                lang.pick(
+                    format!("サブツールのファイル{file}を読めないため、保存できません"),
+                    format!("Cannot save sub tools because the file {file} could not be read"),
+                ),
+                problem.describe(lang),
+            ),
         );
         true
     }
@@ -445,8 +445,9 @@ impl AppState {
             Err(e) => {
                 let reason = e.describe(self.lang);
                 self.subtool_notice(
-                    format!("サブツールを保存できません: {reason}"),
-                    format!("Cannot save the sub tools: {reason}"),
+                    crate::notice::Kind::Error,
+                    Lang::Ja.with_reason("サブツールを保存できません", &reason),
+                    Lang::En.with_reason("Cannot save the sub tools", &reason),
                 );
                 false
             }
@@ -463,7 +464,7 @@ impl AppState {
         }
         self.subtools.store = Some(SubToolStore::new(dir));
         self.subtools.problems = report.problems;
-        // 今の道具の一覧が読み直されたので、今の設定を新しい一覧の今のサブツールに合わせる
+        // 今のツールの一覧が読み直されたので、今の設定を新しい一覧の今のサブツールに合わせる
         let tool = self.tool;
         self.subtool_enter(tool);
     }
@@ -473,12 +474,16 @@ impl AppState {
         let problems = &self.subtools.problems;
         let first = problems.first()?;
         let lang = self.lang;
-        let one = format!("{}: {}", first.file, first.describe(lang));
-        Some(if problems.len() == 1 {
+        let file = lang.quote(&first.file);
+        let one = lang.with_reason(
             lang.pick(
-                format!("サブツールを読めません。{one}"),
-                format!("Cannot read a sub tool file. {one}"),
-            )
+                format!("サブツールのファイル{file}を読めません"),
+                format!("Cannot read the sub tool file {file}"),
+            ),
+            first.describe(lang),
+        );
+        Some(if problems.len() == 1 {
+            one
         } else {
             lang.pick(
                 format!(
@@ -505,6 +510,7 @@ impl AppState {
         };
         if list.user_count() >= MAX_USER_PRESETS {
             return self.subtool_notice(
+                crate::notice::Kind::Refusal,
                 format!("サブツールは {MAX_USER_PRESETS} 個までです。"),
                 format!("At most {MAX_USER_PRESETS} sub tools."),
             );
@@ -557,6 +563,7 @@ impl AppState {
         self.subtools.ui.reveal = true;
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.subtool_notice(
+            crate::notice::Kind::Info,
             format!("サブツールを追加しました: {name}"),
             format!("Sub tool added: {name}"),
         );
@@ -604,6 +611,7 @@ impl AppState {
                 };
                 if !key.is_user() {
                     return self.subtool_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのサブツールは消せません。".into(),
                         "Built-in sub tools cannot be deleted.".into(),
                     );
@@ -639,6 +647,7 @@ impl AppState {
                 }
                 self.subtools.ui.reveal = true;
                 self.subtool_notice(
+                    crate::notice::Kind::Info,
                     format!("サブツールを削除しました: {name}"),
                     format!("Sub tool deleted: {name}"),
                 );
@@ -650,6 +659,7 @@ impl AppState {
                 }
                 if !key.is_user() {
                     return self.subtool_notice(
+                        crate::notice::Kind::Refusal,
                         "組み込みのサブツールは名前を変えられません。".into(),
                         "Built-in sub tools cannot be renamed.".into(),
                     );
@@ -845,12 +855,16 @@ mod tests {
         assert!(app.subtool_is_modified(Tool::Fill, user));
         // 元に戻すのは専用の操作だけ
         app.apply(Action::SubTool(SubToolAction::Revert(Tool::Fill, user)));
-        assert_eq!(app.region.tolerance, 90, "登録した設定（追加したときの設定）");
+        assert_eq!(
+            app.region.tolerance, 90,
+            "登録した設定（追加したときの設定）"
+        );
         assert!(!app.subtool_is_modified(Tool::Fill, user));
     }
 
     #[test]
-    fn the_mark_stays_on_the_row_pressed_even_when_its_changed_settings_equal_another_rows_original() {
+    fn the_mark_stays_on_the_row_pressed_even_when_its_changed_settings_equal_another_rows_original(
+    ) {
         use crate::state::Action;
         let mut app = AppState::new(32, 32);
         app.apply(Action::SelectTool(Tool::Fill));
@@ -880,15 +894,14 @@ mod tests {
         let mut app = AppState::new(32, 32);
         app.apply(Action::SelectTool(Tool::Fill));
         app.region.tolerance = 90;
-        // ブラシの選び（詳細の窓の組み込みの一覧など）は、道具をブラシ・消しゴムへ替える。道具の切り替えの口を通らない道でも設定は残る
+        // ブラシの選び（詳細のウィンドウの組み込みの一覧など）は、ツールをブラシ・消しゴムへ替える。ツールの切り替えの口を通らない道でも設定は残る
         app.apply(Action::M2Ui(crate::m2::UiOp::Preset(0)));
         assert!(app.tool.paints(), "{:?}", app.tool);
         app.apply(Action::SelectTool(Tool::Fill));
         assert_eq!(app.region.tolerance, 90, "戻ると変えたままの設定");
-        assert!(app.subtool_is_modified(
-            Tool::Fill,
-            app.subtool_list(Tool::Fill).unwrap().current()
-        ));
+        assert!(
+            app.subtool_is_modified(Tool::Fill, app.subtool_list(Tool::Fill).unwrap().current())
+        );
     }
 
     #[test]
@@ -1114,7 +1127,7 @@ mod tests {
             "yolupainter-subtools 9\ntool=gradient\n",
             "触らない"
         );
-        // ほかの道具は使える
+        // ほかのツールは使える
         app.apply(crate::state::Action::SelectTool(Tool::Shape));
         app.apply(crate::state::Action::SubTool(SubToolAction::Add(
             Tool::Shape,

@@ -536,7 +536,7 @@ unsafe fn box_blur_lanes<V: Lanes>(
     let mut dst = zeros::<u16>(area(b) * 4)?;
     let rcp = V::splat(1.0 / (f64::from(2 * r) + 1.0));
     let bias = V::splat(f64::from(r) + 0.5);
-    // 窓の出入りの画素の位置（端でクランプ済み）は行によらないので先に表にする
+    // ウィンドウの出入りの画素の位置（端でクランプ済み）は行によらないので先に表にする
     let init: Vec<usize> = (-i64::from(r)..=i64::from(r))
         .map(|d| (edge(i64::from(b.x) + d, w) - a.x) as usize)
         .collect();

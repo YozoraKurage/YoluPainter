@@ -92,7 +92,13 @@ impl Default for PostFx {
 
 /// 機材が対応する数（`supported`。昇順）のうち、選んだ数 `want` 以下でいちばん大きいもの（無ければ 1）。
 pub fn clamp_samples(want: u32, supported: &[u32]) -> u32 {
-    supported.iter().copied().filter(|n| *n <= want).max().unwrap_or(1).max(1)
+    supported
+        .iter()
+        .copied()
+        .filter(|n| *n <= want)
+        .max()
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// 設定のパネルの 3 つの面。
@@ -108,7 +114,11 @@ pub enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub const ALL: [SettingsTab; 3] = [SettingsTab::Display, SettingsTab::Quality, SettingsTab::Navigation];
+    pub const ALL: [SettingsTab; 3] = [
+        SettingsTab::Display,
+        SettingsTab::Quality,
+        SettingsTab::Navigation,
+    ];
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
@@ -227,6 +237,14 @@ impl Display {
         Vec3::new(y.sin() * p.cos(), p.sin(), y.cos() * p.cos())
     }
 
+    /// マテリアル表示の主な光（リニアの放射輝度）。Unity のビルトインのレンダーパイプラインのディレクショナルライトの `_LightColor0` と
+    /// 同じ値: 色 × 強さを、ライトの強さをリニアで掛けない既定の設定（`GraphicsSettings.lightsUseLinearIntensity` が偽）どおり
+    /// GammaToLinearSpace でリニアへ（1 を超える値は pow 2.2）。白・強さ 1 で 1 になり、Unity の場面の白・強さ 1 のライトと同じ明るさ。
+    pub fn direct_light(&self) -> [f32; 3] {
+        self.light_color
+            .map(|c| super::brdf::unity_gamma_to_linear(c * self.light_intensity))
+    }
+
     /// 光なしの表示か（チャンネルだけ・メッシュマップだけ。光・環境・影・トーンマッピングを使わない）。
     pub fn is_unlit(&self) -> bool {
         matches!(self.shading, Shading::Channel(_) | Shading::MeshMap(_))
@@ -318,14 +336,20 @@ impl Display {
             Op::LightIntensity(v) => self.light_intensity = finite(v, 0.0, 4.0, 1.0),
             // 選べる数でなければ、それ以下でいちばん大きい選べる数（0 は 1 = 切）
             Op::Antialias(n) => {
-                self.post.antialias = SAMPLE_CHOICES.into_iter().filter(|c| *c <= n).max().unwrap_or(1);
+                self.post.antialias = SAMPLE_CHOICES
+                    .into_iter()
+                    .filter(|c| *c <= n)
+                    .max()
+                    .unwrap_or(1);
             }
             Op::Bloom(b) => self.post.bloom = b,
             Op::BloomStrength(v) => {
-                self.post.bloom_strength = finite(v, 0.0, BLOOM_STRENGTH_MAX, DEFAULT_BLOOM_STRENGTH)
+                self.post.bloom_strength =
+                    finite(v, 0.0, BLOOM_STRENGTH_MAX, DEFAULT_BLOOM_STRENGTH)
             }
             Op::BloomThreshold(v) => {
-                self.post.bloom_threshold = finite(v, 0.0, BLOOM_THRESHOLD_MAX, DEFAULT_BLOOM_THRESHOLD)
+                self.post.bloom_threshold =
+                    finite(v, 0.0, BLOOM_THRESHOLD_MAX, DEFAULT_BLOOM_THRESHOLD)
             }
             Op::ResetLighting => {
                 let d = Display::default();
@@ -520,8 +544,17 @@ pub fn settings_tabs(
     );
     for center in OrbitCenter::ALL {
         let r = rows.row(26.0, 4.0);
-        if w::button(ui, r, ("view3d.orbit", center as u8), center.label(lang),
-            app.prefs.settings.navigation.orbit == center, true, Some(center.tip(lang)), None).clicked()
+        if w::button(
+            ui,
+            r,
+            ("view3d.orbit", center as u8),
+            center.label(lang),
+            app.prefs.settings.navigation.orbit == center,
+            true,
+            Some(center.tip(lang)),
+            None,
+        )
+        .clicked()
         {
             app.prefs.settings.navigation.orbit = center;
         }
@@ -585,12 +618,20 @@ mod tests {
         // 前（+Z）の斜め上: Unity 版の既定の向きを Z で折り返した向き
         let mirrored = Vec3::new(-0.3, 0.65, 0.7).normalize();
         assert!((to_light - mirrored).length() < 1e-5, "{to_light:?}");
-        assert!(to_light.z > 0.5 && to_light.y > 0.5, "前と上から: {to_light:?}");
+        assert!(
+            to_light.z > 0.5 && to_light.y > 0.5,
+            "前と上から: {to_light:?}"
+        );
         // 高さと横へのずれは、前の既定（背中側の斜め上）と同じ
         let old = Vec3::new(-0.3, 0.65, -0.7).normalize();
         assert!((to_light.y - old.y).abs() < 1e-6 && (to_light.x - old.x).abs() < 1e-6);
         // 度の値: 方位 −23°・高さ 40.5° 前後
-        assert!((d.light_yaw + 23.2).abs() < 0.2 && (d.light_pitch - 40.5).abs() < 0.2, "{} {}", d.light_yaw, d.light_pitch);
+        assert!(
+            (d.light_yaw + 23.2).abs() < 0.2 && (d.light_pitch - 40.5).abs() < 0.2,
+            "{} {}",
+            d.light_yaw,
+            d.light_pitch
+        );
     }
 
     #[test]
@@ -618,12 +659,21 @@ mod tests {
     fn bloom_needs_a_lit_view_and_a_strength_and_joins_the_hdr_path() {
         let mut d = Display::default();
         d.apply(Op::Bloom(true));
-        assert!(d.uses_bloom() && d.uses_hdr_path() && !d.uses_tone_map(), "ブルームだけでも HDR の道を通る");
+        assert!(
+            d.uses_bloom() && d.uses_hdr_path() && !d.uses_tone_map(),
+            "ブルームだけでも HDR の道を通る"
+        );
         d.apply(Op::BloomStrength(0.0));
-        assert!(!d.uses_bloom() && !d.uses_hdr_path(), "強さ 0 は何も足さない");
+        assert!(
+            !d.uses_bloom() && !d.uses_hdr_path(),
+            "強さ 0 は何も足さない"
+        );
         d.apply(Op::BloomStrength(1.0));
         d.apply(Op::Shading(Shading::Channel(Channel::Emission)));
-        assert!(!d.uses_bloom(), "チャンネルだけの表示は光なし: ブルームを足さない");
+        assert!(
+            !d.uses_bloom(),
+            "チャンネルだけの表示は光なし: ブルームを足さない"
+        );
         d.apply(Op::Shading(Shading::MeshMap(MeshMapKind::ALL[0])));
         assert!(!d.uses_bloom());
         d.apply(Op::Shading(Shading::Neutral));
@@ -633,7 +683,18 @@ mod tests {
     #[test]
     fn antialias_takes_only_the_listed_counts_and_clamps_to_the_device() {
         let mut d = Display::default();
-        for (given, want) in [(1, 1), (2, 2), (4, 4), (8, 8), (0, 1), (3, 2), (5, 4), (7, 4), (16, 8), (u32::MAX, 8)] {
+        for (given, want) in [
+            (1, 1),
+            (2, 2),
+            (4, 4),
+            (8, 8),
+            (0, 1),
+            (3, 2),
+            (5, 4),
+            (7, 4),
+            (16, 8),
+            (u32::MAX, 8),
+        ] {
             d.apply(Op::Antialias(given));
             assert_eq!(d.post.antialias, want, "{given}");
         }
@@ -706,7 +767,12 @@ mod tests {
         d.apply(Op::EnvRotation(30.0));
         assert_ne!(d.key_bits(), key);
         // 仕上げの 4 つの値も絵を変える
-        for op in [Op::Antialias(2), Op::Bloom(true), Op::BloomStrength(1.5), Op::BloomThreshold(2.0)] {
+        for op in [
+            Op::Antialias(2),
+            Op::Bloom(true),
+            Op::BloomStrength(1.5),
+            Op::BloomThreshold(2.0),
+        ] {
             let mut e = Display::default();
             e.apply(op);
             assert_ne!(e.key_bits(), key, "{op:?}");
@@ -727,8 +793,14 @@ mod tests {
         d.apply(Op::BloomThreshold(2.5));
         d.apply(Op::Antialias(2));
         d.apply(Op::ResetLighting);
-        assert!(!d.post.bloom && d.post.bloom_threshold == DEFAULT_BLOOM_THRESHOLD, "ブルームは見た目なので戻る");
-        assert_eq!(d.post.antialias, 2, "アンチエイリアスは画質の選びなので戻さない");
+        assert!(
+            !d.post.bloom && d.post.bloom_threshold == DEFAULT_BLOOM_THRESHOLD,
+            "ブルームは見た目なので戻る"
+        );
+        assert_eq!(
+            d.post.antialias, 2,
+            "アンチエイリアスは画質の選びなので戻さない"
+        );
         assert_eq!(d.shading, Shading::Neutral);
         assert_eq!(d.env, EnvKind::Sky);
         assert_eq!(d.tone_map, Curve::None);

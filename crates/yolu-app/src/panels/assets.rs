@@ -1,8 +1,8 @@
 //! アセットのパネル（Substance のシェルフ）: 置き場（このプロジェクトの棚・個人のライブラリ）を切り替えて、素材（画像・ブラシ・マテリアル・
 //! スマートマテリアル・スマートマスク）をサムネイルの格子で並べる。上に置き場の切り替え、種類の絞り込み（すべて・5 種類のアイコン）と
-//! ファイルの読み込み、名前の検索、選んだ層の保存（層・マスク。棚のとき）、下に選んだ素材の状態（置けないときは短い理由）と操作
+//! ファイルの読み込み、名前の検索、選んだレイヤーの保存（レイヤー・マスク。棚のとき）、下に選んだ素材の状態（置けないときは短い理由）と操作
 //! （置く・書き出す・ライブラリへ入れる・プロジェクトで使う・消す）。格子の素材はダブルクリック・右クリック・ドラッグでレイヤーの
-//! パネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行の層のマスク）。
+//! パネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行のレイヤーのマスク）。
 //! サムネイルと項目の情報は別のスレッドで作り（見えている項目だけ頼み、できた分から出す）、描いている間も画面を止めない。
 //! 画面には名前と状態と短い理由だけを出し、説明はツールチップに置く。
 
@@ -17,6 +17,7 @@ use crate::engine::Document;
 use crate::lang::Lang;
 use crate::library::{self, Source};
 use crate::m2::{DropTarget, Row};
+use crate::notice::Source as NoticeSource;
 use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
@@ -206,7 +207,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 "shelf.library.add",
                 "add",
                 lang.pick(
-                    "ライブラリへファイルを足す…（PNG・.ylsmart）",
+                    "ライブラリへファイルを追加…（PNG・.ylsmart）",
                     "Add files to the library… (PNG, .ylsmart)",
                 ),
                 false,
@@ -230,8 +231,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ) {
         app.shelf.scroll = 0.0;
     }
-    // 別のスレッドで走っている仕事（層の保存・ライブラリのファイルの取り込み・ライブラリへの書き込み）の名前と「やめる」。
-    // 走っていないときは、棚では選んだ層の保存
+    // 別のスレッドで走っている仕事（レイヤーの保存・ライブラリのファイルの取り込み・ライブラリへの書き込み）の名前と「やめる」。
+    // 走っていないときは、棚では選んだレイヤーの保存
     let pending = pending_label(app);
     if pending.is_some() || source == Source::Project {
         let row = rows.row(24.0, 6.0);
@@ -286,7 +287,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ghost(&ctx);
 }
 
-/// 選んだ層の保存のボタン（層・マスク）。
+/// 選んだレイヤーの保存のボタン（レイヤー・マスク）。
 fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
     let lang = app.lang;
     let halves = w::Rows::split(row, 2, 6.0);
@@ -298,12 +299,12 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         ui,
         halves[0],
         "shelf.save.material",
-        lang.pick("層を保存", "Save Layer"),
+        lang.pick("レイヤーを保存", "Save Layer"),
         false,
         can_save,
         Some(lang.pick(
-            "選んでいるレイヤー（グループなら中身ごと）をスマートマテリアルとして棚に入れる",
-            "Put the selected layer (with its contents, for a group) on the shelf as a smart material",
+            "選んでいるレイヤー（グループなら中身ごと）をスマートマテリアルとしてアセットに入れる",
+            "Put the selected layer (with its contents, for a group) into the project's assets as a smart material",
         )),
         None,
     )
@@ -321,8 +322,8 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         false,
         can_save && layer.is_some_and(|(_, has_mask)| has_mask),
         Some(lang.pick(
-            "選んでいるレイヤーのマスクをスマートマスクとして棚に入れる",
-            "Put the selected layer's mask on the shelf as a smart mask",
+            "選んでいるレイヤーのマスクをスマートマスクとしてアセットに入れる",
+            "Put the selected layer's mask into the project's assets as a smart mask",
         )),
         None,
     )
@@ -567,7 +568,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
                 .shelf
                 .unavailable
                 .clone()
-                .map(|r| (lang.pick("棚を読めません", "Shelf unreadable"), r)),
+                .map(|r| (lang.pick("アセットを読めません", "Assets unreadable"), r)),
             Source::Library => app
                 .library
                 .problem()
@@ -656,8 +657,8 @@ fn primary_action(card: &Card) -> Option<Action> {
     if let Some(key) = card.brush {
         return Some(Action::Brush(BrushAction::Select(key)));
     }
-    if card.library && matches!(card.kind, ItemKind::Brush | ItemKind::Material) {
-        // ブラシ・マテリアルのファイルは、まだ置けない種類。プロジェクトの棚へ入れる
+    if card.library && card.kind == ItemKind::Brush {
+        // ブラシのファイルは、まだ置けない種類。プロジェクトの棚へ入れる
         let rel = library::rel_of(&card.id)?;
         return Some(Action::Shelf(ShelfOp::UseFromLibrary(rel.to_owned())));
     }
@@ -701,7 +702,8 @@ fn card_cell(
         if let Some(brush) = app.brushes.lib.entry(key).map(|e| e.baseline.clone()) {
             let old = ui.clip_rect();
             ui.set_clip_rect(old.intersect(grid));
-            super::brushes::paint_sample(ui, app, thumb, &brush, spec);
+            let place = egui::Id::new(("brush.sample.asset", key));
+            super::brushes::paint_sample(ui, app, thumb, &brush, spec, place);
             ui.set_clip_rect(old);
         }
     } else {
@@ -741,7 +743,10 @@ fn card_cell(
     }
     if card.builtin {
         // 組み込みの印（左上。消せない・書き出せない元）
-        let badge = Rect::from_min_size(pos2(thumb.left() + 2.0, thumb.top() + 2.0), vec2(14.0, 14.0));
+        let badge = Rect::from_min_size(
+            pos2(thumb.left() + 2.0, thumb.top() + 2.0),
+            vec2(14.0, 14.0),
+        );
         w::rounded(painter, badge, t::PANEL_BG, 7.0);
         w::icon(painter, badge, "lock", t::TEXT_DIM, 11.0);
     }
@@ -925,7 +930,8 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "save",
         lang.pick("書き出す…（.ylsmart）", "Export… (.ylsmart)"),
         false,
-        id.as_deref().is_some_and(|i| !shelf::is_builtin(i)) && kind.is_some_and(ItemKind::is_smart),
+        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+            && kind.is_some_and(ItemKind::is_smart),
         16.0,
     )
     .clicked()
@@ -966,8 +972,8 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "shelf.remove",
         "delete",
         lang.pick(
-            "棚から消す（置いた層はそのまま）",
-            "Remove from the shelf (placed layers stay)",
+            "アセットから消す（置いたレイヤーはそのまま）",
+            "Remove from the project's assets (placed layers stay)",
         ),
         false,
         id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
@@ -1029,8 +1035,8 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let free = !app.is_stroking();
     let mask = kind == Some(ItemKind::SmartMask);
     let file_kind = rel.is_some().then_some(kind).flatten();
-    // 主の操作: 置く（画像・スマート素材）・使う（ブラシ・マテリアルのファイルは棚へ入れる。利用者のブラシは今のブラシにする）
-    let uses = matches!(kind, Some(ItemKind::Brush | ItemKind::Material));
+    // 主の操作: 置く（画像・スマート素材・マテリアル）・使う（ブラシのファイルは棚へ入れる。利用者のブラシは今のブラシにする）
+    let uses = kind == Some(ItemKind::Brush);
     let (label, tip, enabled, action) = match (&rel, brush_key, kind) {
         (_, Some(key), _) if rel.is_none() => (
             lang.pick("使う", "Use"),
@@ -1045,8 +1051,8 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         (Some(rel), _, _) if uses => (
             lang.pick("使う", "Use"),
             lang.pick(
-                "写しをプロジェクトの棚へ入れる（まだ置けない種類）",
-                "Copy it into the project's shelf (cannot be placed yet)",
+                "写しをプロジェクトのアセットへ入れる（まだ置けない種類）",
+                "Copy it into the project's assets (cannot be placed yet)",
             )
             .to_owned(),
             free && app.shelf.unavailable.is_none()
@@ -1158,7 +1164,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "shelf.library.remove",
         "delete",
         lang.pick(
-            "ライブラリから消す（プロジェクトの写しと置いた層はそのまま）",
+            "ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）",
             "Remove from the library (project copies and placed layers stay)",
         ),
         false,
@@ -1263,7 +1269,7 @@ pub fn gap_or_group(rows: &[Row], position: f32) -> DropTarget {
     }
 }
 
-/// 落とす先の置き場所（親のグループと、その子の中の位置）。線は、その下の行の層のすぐ上（同じグループの中）。一番下の線は最上位の
+/// 落とす先の置き場所（親のグループと、その子の中の位置）。線は、その下の行のレイヤーのすぐ上（同じグループの中）。一番下の線は最上位の
 /// 一番下。グループの枠はその中の一番上。
 pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceTarget {
     match target {
@@ -1291,9 +1297,15 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
     }
 }
 
-/// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアルは行の間・グループの中、
-/// スマートマスクは行の層のマスク、それ以外は断る理由をステータスバーへ）。
-pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
+/// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアル・マテリアル・画像は行の間・
+/// グループの中、スマートマスクは行のレイヤーのマスク、それ以外は断る理由をステータスバーへ）。
+pub fn layer_list_drop(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &crate::panels::effect_rows::Layout,
+) {
     let ctx = ui.ctx();
     let Some(drag) = DragAndDrop::payload::<ShelfDrag>(ctx) else {
         return;
@@ -1302,9 +1314,8 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
         return;
     };
     let released = ui.input(|i| i.pointer.any_released());
-    // 一覧の行の高さは層と効果で違うので、行の数え方は効果の行の配置から（層の行の単位に直す）
-    let layout = crate::panels::effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
-    let at = p.y - list.top() + app.layer_scroll;
+    // 一覧の行の高さはレイヤーと効果で違うので、行の数え方は一覧を描いた効果の行の配置から（レイヤーの行の単位に直す）
+    let at = p.y - list.top() + app.ui.layer_scroll;
     let position = layout.position_at(at);
     let painter = ui.painter_at(list);
     let frame = |y: f32| {
@@ -1317,17 +1328,17 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
         ItemKind::SmartMask => {
             let index = layout.row_at(at).unwrap_or(rows.len());
             rows.get(index).map(|row| {
-                let y = list.top() + layout.layer_y(index) - app.layer_scroll;
+                let y = list.top() + layout.layer_y(index) - app.ui.layer_scroll;
                 w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                 PlaceTarget::Mask(row.id)
             })
         }
-        // 画像は 1 枚のペイントの層として、スマートマテリアルと同じ所へ置く
-        ItemKind::SmartMaterial | ItemKind::Image => {
+        // 画像は 1 枚のペイントのレイヤー、マテリアルは塗りつぶしレイヤーとして、スマートマテリアルと同じ所へ置く
+        ItemKind::SmartMaterial | ItemKind::Material | ItemKind::Image => {
             let target = gap_or_group(rows, position);
             match target {
                 DropTarget::Gap(gap) => {
-                    let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
+                    let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
                     painter.rect_filled(
                         Rect::from_min_size(
                             pos2(list.left() + 4.0, y - 1.0),
@@ -1339,7 +1350,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
                 }
                 DropTarget::Into(group) => {
                     if let Some(i) = rows.iter().position(|r| r.id == group) {
-                        let y = list.top() + layout.layer_y(i) - app.layer_scroll;
+                        let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
                         w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                     }
                 }
@@ -1360,7 +1371,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
     }
 }
 
-// ───────── メニュー・ファイルの窓 ─────────
+// ───────── メニュー・ファイルのウィンドウ ─────────
 
 /// 棚の素材の右クリックのメニュー（選んでいる素材）。
 pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
@@ -1405,7 +1416,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
                 && !matches!(app.shelf.block_of(&id), Some(shelf::Block::Unreadable(_))),
         ),
         Entry::item(
-            lang.pick("棚から消す…", "Remove from the shelf…"),
+            lang.pick("アセットから消す…", "Remove from the project's assets…"),
             Action::Shelf(ShelfOp::AskRemove(id)),
         )
         .enabled(free && app.shelf.unavailable.is_none() && !builtin),
@@ -1441,7 +1452,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .info(&rel)
         .and_then(|i| i.inspected.block.clone());
     let unreadable = matches!(block, Some(shelf::Block::Unreadable(_)));
-    let uses = matches!(kind, ItemKind::Brush | ItemKind::Material);
+    let uses = kind == ItemKind::Brush;
     let mut items = Vec::new();
     if uses {
         items.push(
@@ -1489,7 +1500,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     items
 }
 
-/// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、窓に落としたファイルを入れる
+/// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、ウィンドウに落としたファイルを入れる
 /// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
 /// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
 pub fn frame(ctx: &egui::Context, state: &mut AppState) {
@@ -1504,7 +1515,7 @@ pub fn frame(ctx: &egui::Context, state: &mut AppState) {
     import_dropped(ctx, state, grid);
 }
 
-fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
+pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
     let over_grid = state.library.source == Source::Library
         && grid
             .zip(ctx.input(|i| i.pointer.latest_pos()))
@@ -1552,15 +1563,15 @@ fn file_stem(name: &str) -> String {
     }
 }
 
-/// 棚のファイルの窓・確かめの窓（窓を開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
+/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
 pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {
         DialogRequest::ShelfImport => {
             if let Some(paths) = crate::dialog::file()
                 .set_title(lang.pick(
-                    "スマート素材を棚へ読み込む",
-                    "Import smart assets to the shelf",
+                    "スマート素材をアセットへ読み込む",
+                    "Import smart assets into the project",
                 ))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .pick_files()
@@ -1586,7 +1597,10 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         }
         DialogRequest::LibraryAdd => {
             if let Some(paths) = crate::dialog::file()
-                .set_title(lang.pick("ライブラリへ足すファイル", "Files to add to the library"))
+                .set_title(lang.pick(
+                    "ライブラリへ追加するファイル",
+                    "Files to add to the library",
+                ))
                 .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
                 .pick_files()
             {
@@ -1602,7 +1616,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 .set_title("YoluPainter")
                 .set_description(match lang {
                     Lang::Ja => format!(
-                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いた層は残ります）"
+                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いたレイヤーは残ります）"
                     ),
                     Lang::En => format!(
                         "Remove \"{name}\" from the library folder? (Copies inside projects and placed layers stay.)"
@@ -1619,10 +1633,12 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         DialogRequest::LibraryReveal => {
             if let Some(root) = state.library_root() {
                 if let Err(e) = library::ops::open_folder(&root) {
-                    state.message = format!(
-                        "{}: {}",
-                        lang.pick("フォルダを開けません", "Cannot open the folder"),
-                        lang.file_error(&e)
+                    state.fail(
+                        NoticeSource::Library,
+                        lang.with_reason(
+                            lang.pick("フォルダを開けません", "Cannot open the folder"),
+                            lang.file_error(&e),
+                        ),
                     );
                 }
             }
@@ -1637,8 +1653,8 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let yes = crate::dialog::message()
                 .set_title("YoluPainter")
                 .set_description(match lang {
-                    Lang::Ja => format!("「{name}」を棚から消しますか？"),
-                    Lang::En => format!("Remove \"{name}\" from the shelf?"),
+                    Lang::Ja => format!("「{name}」をアセットから消しますか？"),
+                    Lang::En => format!("Remove \"{name}\" from the project's assets?"),
                 })
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .set_level(rfd::MessageLevel::Warning)

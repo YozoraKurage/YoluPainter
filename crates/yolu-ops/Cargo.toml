@@ -4,12 +4,11 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "外から文書を操作する命令（読む・見本・層と効果と値の編集・書き出し・保存）の型と、画面なしで .ylp を操作するホスト。"
+description = "外から文書を操作する命令（読む・見本・レイヤーと効果と値の編集・書き出し・保存）の型と、画面なしで .ylp を操作するホスト。"
 
 [dependencies]
 yolu-core.workspace = true
 yolu-io.workspace = true
-yolu-protocol.workspace = true   # 起動中のアプリへの通信の枠（`link`）が、手元の経路の枠と名前の決まりを使う
 serde = { version = "1", features = ["derive"] }   # MIT OR Apache-2.0（命令・返事・誤りの JSON）
 serde_json = "1"   # MIT OR Apache-2.0（yolu-io が既に使っている）
 schemars = "1.2"   # MIT（命令・返事・誤りの JSON Schema。型から作る）

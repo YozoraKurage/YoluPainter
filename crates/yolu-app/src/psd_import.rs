@@ -1,18 +1,16 @@
-//! PSD の取り込みの確かめの窓（無視・落とす・変わるものを、層の名前と機能の名前で並べる）と、取り込めない理由の文。
-//! 何を取り込み、何を持たないかの判断は `yolu_io::psd::import_copy`（ここは文にするだけ）。窓には名前・状態・短い理由だけを書き、
+//! PSD の取り込みの確認のウィンドウ（無視・落とす・変わるものを、レイヤーの名前と機能の名前で並べる）と、取り込めない理由の文。
+//! 何を取り込み、何を持たないかの判断は `yolu_io::psd::import_copy`（ここは文にするだけ）。ウィンドウには名前・状態・短い理由だけを書き、
 //! 説明はツールチップに置く。
 
 use egui::Vec2;
-use yolu_io::psd::{
-    CopyRefusal, ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked,
-};
+use yolu_io::psd::{ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked};
 
 use crate::lang::Lang;
 use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
 use crate::windows::{show_list_with, Button, ListSpec, Reply, Row};
 
-/// 窓の名前（`windows::window_rect` で矩形を引く名前）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く名前）。
 pub const CHECK: &str = "psd-import";
 
 /// 取り込みの確かめの待ち（読んだ文書と、その知らせ）。
@@ -35,7 +33,7 @@ impl ImportCheck {
     }
 }
 
-/// 窓の位置（`PsdState` が持つ）。
+/// ウィンドウの位置（`PsdState` が持つ）。
 #[derive(Default)]
 pub struct CheckWindow {
     pub offset: Vec2,
@@ -49,7 +47,7 @@ fn rank(action: ImportAction) -> u8 {
     }
 }
 
-/// 窓に並べる順（落とす・変わる・無視。同じ扱いの中は取り込みの順）。
+/// ウィンドウに並べる順（落とす・変わる・無視。同じ扱いの中は取り込みの順）。
 pub fn sorted(notes: &[ImportNote]) -> Vec<&ImportNote> {
     let mut out: Vec<&ImportNote> = notes.iter().collect();
     out.sort_by_key(|n| rank(n.action));
@@ -73,7 +71,7 @@ fn summary(lang: Lang, notes: &[ImportNote]) -> String {
     parts.join(" · ")
 }
 
-/// 毎フレーム、取り込みの確かめの窓を描き、押された操作を当てる。
+/// 毎フレーム、取り込みの確認のウィンドウを描き、押された操作を当てる。
 pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
     let Some(check) = app.psd.import_check.as_ref() else {
         return;
@@ -148,7 +146,7 @@ pub fn action_text(lang: Lang, action: ImportAction) -> &'static str {
     }
 }
 
-/// 当たった層の名前（初めの 3 枚と残りの数）。文書の機能は空。
+/// 当たったレイヤーの名前（初めの 3 枚と残りの数）。文書の機能は空。
 fn layers_text(lang: Lang, note: &ImportNote) -> String {
     const SHOWN: usize = 3;
     if note.layers.is_empty() {
@@ -164,7 +162,10 @@ fn layers_text(lang: Lang, note: &ImportNote) -> String {
         .join(sep);
     let rest = note.count.saturating_sub(SHOWN.min(note.layers.len()));
     if rest > 0 {
-        text += &lang.pick(format!(" ほか {rest} 層"), format!(" and {rest} more"));
+        text += &lang.pick(
+            format!(" ほか {rest} レイヤー"),
+            format!(" and {rest} more"),
+        );
     }
     text
 }
@@ -203,7 +204,9 @@ fn adjustment_name(lang: Lang, key: &str) -> String {
         "brit" | "CgEd" => K::BrightnessContrast.name(lang).into(),
         "thrs" => K::Threshold.name(lang).into(),
         "post" => K::Posterize.name(lang).into(),
-        "hue " => lang.pick("色相・彩度（旧式）", "Hue/saturation (legacy)").into(),
+        "hue " => lang
+            .pick("色相・彩度（旧式）", "Hue/saturation (legacy)")
+            .into(),
         "selc" => lang.pick("特定色域の選択", "Selective color").into(),
         "mixr" => lang.pick("チャンネルミキサー", "Channel mixer").into(),
         "phfl" => lang.pick("フォトフィルター", "Photo filter").into(),
@@ -219,7 +222,9 @@ fn adjustment_name(lang: Lang, key: &str) -> String {
 fn blend_name(lang: Lang, key: &str) -> String {
     match key {
         "diss" => lang.pick("ディゾルブ", "Dissolve").into(),
-        "pass" => lang.pick("通過（グループ以外）", "Pass through (non-group)").into(),
+        "pass" => lang
+            .pick("通過（グループ以外）", "Pass through (non-group)")
+            .into(),
         _ => lang.pick("その他", "Other").into(),
     }
 }
@@ -242,7 +247,10 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             format!("文書のタグ {} 件", note.count),
             format!("Document tags: {}", note.count),
         ),
-        F::ExtraChannel => plain("統合画像の追加チャンネル", "Extra channel in the merged image"),
+        F::ExtraChannel => plain(
+            "統合画像の追加チャンネル",
+            "Extra channel in the merged image",
+        ),
         F::LayerInfoTail => plain("レイヤー情報の余り", "Trailing layer data"),
         F::CompositeDiffers {
             max_diff,
@@ -281,13 +289,10 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
         F::BlendIf => plain("ブレンド条件", "Blend If"),
         F::FillOpacity => plain("塗りの不透明度", "Fill opacity"),
         F::ClippedBlend => plain(
-            "クリップした層のグループ合成",
+            "クリップしたレイヤーのグループ合成",
             "Blend clipped layers as group",
         ),
-        F::InteriorBlend => plain(
-            "内部効果のグループ合成",
-            "Blend interior effects as group",
-        ),
+        F::InteriorBlend => plain("内部効果のグループ合成", "Blend interior effects as group"),
         F::Knockout => plain("ノックアウト", "Knockout"),
         F::TransparencyShapes => plain("透明部分が形を決める設定", "Transparency shapes layer"),
         F::ChannelRestrictions => plain("チャンネルの合成制限", "Channel restrictions"),
@@ -332,27 +337,27 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
     use ImportFeature as F;
     Some(match note.feature {
         F::LayerEffects => lang.pick(
-            "レイヤー効果（ドロップシャドウなど）は評価しません。層の画素のまま取り込むので、合成が PSD の統合画像と変わります",
+            "レイヤー効果（ドロップシャドウなど）は評価しません。レイヤーの画素のまま取り込むので、合成が PSD の統合画像と変わります",
             "Layer effects (drop shadow and so on) are not evaluated. The layer pixels are imported as they are, so the composite differs from the PSD's merged image",
         ),
         F::SmartObject => lang.pick(
-            "スマートオブジェクトの元のデータは持ちません。層の画素のまま取り込みます",
+            "スマートオブジェクトの元のデータは持ちません。レイヤーの画素のまま取り込みます",
             "The smart object's source data is not kept. The layer pixels are imported as they are",
         ),
         F::TextLayer => lang.pick(
-            "文字のデータは持ちません。層の画素のまま取り込みます",
+            "文字のデータは持ちません。レイヤーの画素のまま取り込みます",
             "The text data is not kept. The layer pixels are imported as they are",
         ),
         F::VectorMask => lang.pick(
-            "ベクターマスクは評価しません。層の画素のまま取り込むので、合成が変わります",
+            "ベクターマスクは評価しません。レイヤーの画素のまま取り込むので、合成が変わります",
             "Vector masks are not evaluated. The layer pixels are imported as they are, so the composite changes",
         ),
         F::FillSettings => lang.pick(
-            "グラデーション・パターンの塗りつぶしの設定は持ちません。層の画素のまま取り込みます",
+            "グラデーション・パターンの塗りつぶしの設定は持ちません。レイヤーの画素のまま取り込みます",
             "Gradient and pattern fill settings are not kept. The layer pixels are imported as they are",
         ),
         F::UnsupportedAdjustment => lang.pick(
-            "この調整レイヤーは取り込めません。画素を持たないので、層ごと落とします",
+            "この調整レイヤーは取り込めません。画素を持たないので、レイヤーごと落とします",
             "This adjustment layer cannot be imported. It has no pixels, so the whole layer is dropped",
         ),
         F::BlendMode => lang.pick(
@@ -364,7 +369,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "Blend If is not evaluated. The composite changes",
         ),
         F::FillOpacity => lang.pick(
-            "塗りの不透明度は、層の不透明度に掛けます。合成モードによっては Photoshop と少し変わります",
+            "塗りの不透明度は、レイヤーの不透明度に掛けます。合成モードによっては Photoshop と少し変わります",
             "Fill opacity is multiplied into the layer opacity. With some blend modes it differs slightly from Photoshop",
         ),
         F::ClippedBlend | F::InteriorBlend | F::Knockout | F::ChannelRestrictions => lang.pick(
@@ -388,7 +393,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "Pixels outside the canvas cannot be kept and are cut off",
         ),
         F::LayerIds => lang.pick(
-            "層 ID が無い・重複している層には新しい ID を振ります。名前では対応付けません",
+            "レイヤー ID が無い・重複しているレイヤーには新しい ID を振ります。名前では対応付けません",
             "Layers with a missing or duplicate ID get a new ID. Nothing is matched by name",
         ),
         F::ColorProfile => lang.pick(
@@ -408,7 +413,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "The composite was not compared with the merged image, so it is unverified",
         ),
         F::MissingChannels => lang.pick(
-            "RGB のチャンネルが揃わない層は取り込めないので、層ごと落とします",
+            "RGB のチャンネルが揃わないレイヤーは取り込めないので、レイヤーごと落とします",
             "A layer without all RGB channels cannot be imported and is dropped",
         ),
         _ => return None,
@@ -417,7 +422,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
 
 // ───────── 取り込めない理由 ─────────
 
-fn color_mode_name(lang: Lang, mode: u16) -> String {
+pub(crate) fn color_mode_name(lang: Lang, mode: u16) -> String {
     match mode {
         0 => lang.pick("ビットマップ", "Bitmap").into(),
         1 => lang.pick("グレースケール", "Grayscale").into(),
@@ -431,77 +436,10 @@ fn color_mode_name(lang: Lang, mode: u16) -> String {
     }
 }
 
-/// 取り込めない理由（画面の言語。層の名前は利用者の名前なのでそのまま）。
-pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
-    match why {
-        CopyRefusal::Malformed(text) => lang.pick(
-            text.clone(),
-            "Not a readable PSD (damaged or unsupported)".into(),
-        ),
-        CopyRefusal::LargeDocument => lang.pick(
-            "PSB（大きな文書）は取り込めません".into(),
-            "PSB (large document) files cannot be imported".into(),
-        ),
-        CopyRefusal::ColorFormat { depth, mode } => {
-            let name = color_mode_name(lang, *mode);
-            lang.pick(
-                format!("RGB 8 bit 以外は取り込めません（{name}・{depth} bit）"),
-                format!("Only RGB 8-bit PSDs can be imported ({name}, {depth}-bit)"),
-            )
-        }
-        CopyRefusal::NoLayers => lang.pick(
-            "レイヤーがありません（統合画像だけの PSD）".into(),
-            "No layers (a flattened image only)".into(),
-        ),
-        CopyRefusal::TooManyLayers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
-        ),
-        CopyRefusal::CanvasTooLarge { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
-        ),
-        CopyRefusal::LayerTooLarge { layer } => lang.pick(
-            format!("「{layer}」の画素が大きすぎます"),
-            format!("\"{layer}\" has too many pixels"),
-        ),
-        CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
-        CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
-            format!("「{layer}」の付加情報が大きすぎます"),
-            format!("\"{layer}\" has too much extra data"),
-        ),
-        CopyRefusal::EdgeOverLimit { width, height, limit } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
-            format!("Canvas too large ({width}×{height}; limit {limit})"),
-        ),
-        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
-        ),
-        CopyRefusal::NestingTooDeep { limit } => lang.pick(
-            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
-            format!("Groups are nested too deeply (limit {limit})"),
-        ),
-    }
-}
-
-/// 理由のツールチップ（予算で断ったものは、設定で上げられること）。
-pub fn refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
-    why.raised_by_budget().then(|| {
-        lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this import",
-        )
-        .into()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yolu_io::psd::CopyRefusal;
 
     fn has_japanese(text: &str) -> bool {
         text.chars()
@@ -583,14 +521,22 @@ mod tests {
             assert!(has_japanese(&ja), "{ja}");
             assert!(!has_japanese(&en), "{:?}: {en}", note.feature);
             for raw in ["selc", "levl", "brit", "zzzz"] {
-                assert!(!ja.contains(raw) && !en.contains(raw), "{:?}: {ja} / {en}", note.feature);
+                assert!(
+                    !ja.contains(raw) && !en.contains(raw),
+                    "{:?}: {ja} / {en}",
+                    note.feature
+                );
             }
             if let Some(tip) = feature_tooltip(Lang::En, &note) {
                 assert!(!has_japanese(tip), "{tip}");
                 assert!(has_japanese(feature_tooltip(Lang::Ja, &note).unwrap()));
             }
         }
-        for action in [ImportAction::Ignored, ImportAction::Dropped, ImportAction::Changed] {
+        for action in [
+            ImportAction::Ignored,
+            ImportAction::Dropped,
+            ImportAction::Changed,
+        ] {
             assert!(!has_japanese(action_text(Lang::En, action)));
             assert!(has_japanese(action_text(Lang::Ja, action)));
         }
@@ -607,7 +553,7 @@ mod tests {
         let note = |keys: &[[u8; 4]]| ImportNote {
             feature: ImportFeature::UnsupportedAdjustment,
             action: ImportAction::Dropped,
-            layers: vec!["層".into()],
+            layers: vec!["レイヤー".into()],
             count: 1,
             details: keys.iter().map(|k| ImportDetail::Key(*k)).collect(),
         };
@@ -616,8 +562,14 @@ mod tests {
             let n = note(&[k]);
             let (ja, en) = (feature_text(Lang::Ja, &n), feature_text(Lang::En, &n));
             let key = String::from_utf8_lossy(&k).to_string();
-            assert!(!ja.contains(key.trim()) && !en.contains(key.trim()), "{key}: {ja} / {en}");
-            assert!(has_japanese(&ja) && !has_japanese(&en), "{key}: {ja} / {en}");
+            assert!(
+                !ja.contains(key.trim()) && !en.contains(key.trim()),
+                "{key}: {ja} / {en}"
+            );
+            assert!(
+                has_japanese(&ja) && !has_japanese(&en),
+                "{key}: {ja} / {en}"
+            );
             assert!(
                 !ja.contains("その他") && !en.contains("Other"),
                 "{key} が「その他」になっている: {ja} / {en}"
@@ -636,7 +588,10 @@ mod tests {
         // 知らないキーは、4 文字のままでなく「その他」
         let n = note(&[*b"zzzz", *b"yyyy"]);
         assert_eq!(feature_text(Lang::Ja, &n), "調整レイヤー: その他の調整");
-        assert_eq!(feature_text(Lang::En, &n), "Adjustment layer: Other adjustments");
+        assert_eq!(
+            feature_text(Lang::En, &n),
+            "Adjustment layer: Other adjustments"
+        );
     }
 
     #[test]
@@ -645,7 +600,7 @@ mod tests {
         let with = |feature, details: Vec<ImportDetail>| ImportNote {
             feature,
             action: ImportAction::Changed,
-            layers: vec!["層".into()],
+            layers: vec!["レイヤー".into()],
             count: 3,
             details,
         };
@@ -675,7 +630,7 @@ mod tests {
         let mut n = every_feature().remove(0);
         n.layers = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         n.count = 9;
-        assert_eq!(layers_text(Lang::Ja, &n), "a、b、c ほか 6 層");
+        assert_eq!(layers_text(Lang::Ja, &n), "a、b、c ほか 6 レイヤー");
         assert_eq!(layers_text(Lang::En, &n), "a, b, c and 6 more");
         n.layers.clear();
         assert_eq!(layers_text(Lang::En, &n), "");
@@ -710,30 +665,49 @@ mod tests {
             CopyRefusal::ColorFormat { depth: 16, mode: 3 },
             CopyRefusal::ColorFormat { depth: 8, mode: 4 },
             CopyRefusal::NoLayers,
-            CopyRefusal::TooManyLayers { count: 300, limit: 256 },
-            CopyRefusal::CanvasTooLarge { width: 9000, height: 9000 },
+            CopyRefusal::TooManyLayers {
+                count: 300,
+                limit: 256,
+            },
+            CopyRefusal::CanvasTooLarge {
+                width: 9000,
+                height: 9000,
+            },
             CopyRefusal::LayerTooLarge { layer: "L".into() },
             CopyRefusal::BudgetExceeded { layer: "L".into() },
             CopyRefusal::LayerDataTooLarge { layer: "L".into() },
-            CopyRefusal::EdgeOverLimit { width: 9000, height: 9000, limit: 8192 },
-            CopyRefusal::LayerCountOverLimit { count: 2100, limit: 2048 },
+            CopyRefusal::EdgeOverLimit {
+                width: 9000,
+                height: 9000,
+                limit: 8192,
+            },
+            CopyRefusal::LayerCountOverLimit {
+                count: 2100,
+                limit: 2048,
+            },
             CopyRefusal::NestingTooDeep { limit: 64 },
         ];
         for why in &reasons {
-            let en = refusal_text(Lang::En, why);
+            let en = crate::lang::psd_copy_refusal(Lang::En, why);
             assert!(!has_japanese(&en), "{en}");
-            assert!(has_japanese(&refusal_text(Lang::Ja, why)));
+            assert!(has_japanese(&crate::lang::psd_copy_refusal(Lang::Ja, why)));
             assert_eq!(
-                refusal_tooltip(Lang::En, why).is_some(),
+                crate::lang::psd_copy_refusal_tooltip(Lang::En, why).is_some(),
                 why.raised_by_budget(),
                 "{why:?}"
             );
-            if let Some(h) = refusal_tooltip(Lang::En, why) {
+            if let Some(h) = crate::lang::psd_copy_refusal_tooltip(Lang::En, why) {
                 assert!(!has_japanese(&h) && h.contains("Layer memory"));
             }
         }
-        // 利用者の名前（層の名前）だけは、英語の画面でもそのまま
-        assert!(refusal_text(Lang::En, &CopyRefusal::BudgetExceeded { layer: "下".into() }).contains('下'));
+        // 利用者の名前（レイヤーの名前）だけは、英語の画面でもそのまま
+        assert!(crate::lang::psd_copy_refusal(
+            Lang::En,
+            &CopyRefusal::BudgetExceeded {
+                layer: "下".into()
+            }
+        )
+        .contains('下'));
     }
 
     #[test]

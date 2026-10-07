@@ -123,7 +123,11 @@ pub fn look_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     shadow(ui, app, rows, free);
     rim_shade(ui, app, rows, free);
     emission(ui, app, rows, free);
-    group(ui, rows, lang.pick("ノーマルマップ・光沢設定", "Normal Map & Reflection"));
+    group(
+        ui,
+        rows,
+        lang.pick("ノーマルマップ・光沢設定", "Normal Map & Reflection"),
+    );
     normal_map(ui, app, rows, free);
     backlight(ui, app, rows, free);
     reflection(ui, app, rows, free);
@@ -158,7 +162,8 @@ fn received_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         + usize::from(!mine.keywords.is_empty())
         + usize::from(mine.kind_chosen);
     let mut tip = vec![if received.source.is_empty() {
-        lang.pick("Unity のマテリアルの値", "Values of the Unity material").to_owned()
+        lang.pick("Unity のマテリアルの値", "Values of the Unity material")
+            .to_owned()
     } else {
         received.source.clone()
     }];
@@ -192,8 +197,14 @@ fn received_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         t::LABEL.with_color(if live { t::TEXT } else { t::TEXT_DIM }),
         w::Align::Left,
     );
-    let response = ui.interact(row, ui.make_persistent_id("look.received"), egui::Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{name}: {state}")));
+    let response = ui.interact(
+        row,
+        ui.make_persistent_id("look.received"),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{name}: {state}"))
+    });
     response.on_hover_text(tip);
     let b = rows.row(24.0, 4.0);
     if w::button(
@@ -219,18 +230,27 @@ fn received_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 fn missing_short(lang: Lang, why: yolu_core::look::MissingImage) -> &'static str {
     use yolu_core::look::MissingImage;
     match why {
-        MissingImage::Pending => lang.pick("Unity（届いていない）", "Unity (not here yet)"),
-        MissingImage::OverBudget => lang.pick("Unity（送らない）", "Unity (not sent)"),
+        MissingImage::OverBudget => lang.pick("Unity（予算を超える）", "Unity (over budget)"),
         MissingImage::Unreadable => lang.pick("Unity（読めない）", "Unity (unreadable)"),
+        MissingImage::NotAFile => lang.pick("Unity（ファイルなし）", "Unity (no file)"),
     }
 }
 
 fn missing_text(lang: Lang, why: yolu_core::look::MissingImage) -> &'static str {
     use yolu_core::look::MissingImage;
     match why {
-        MissingImage::Pending => lang.pick("Unity のテクスチャ（届いていない）", "Unity texture (not here yet)"),
-        MissingImage::OverBudget => lang.pick("Unity のテクスチャ（予算を超えたので送らない）", "Unity texture (over the budget, not sent)"),
-        MissingImage::Unreadable => lang.pick("Unity のテクスチャ（読めない）", "Unity texture (unreadable)"),
+        MissingImage::OverBudget => lang.pick(
+            "Unity のテクスチャ（受けたテクスチャの予算を超えるので読まない）",
+            "Unity texture (over the budget for received textures, not read)",
+        ),
+        MissingImage::Unreadable => lang.pick(
+            "Unity のテクスチャ（ファイルを読めない）",
+            "Unity texture (the file cannot be read)",
+        ),
+        MissingImage::NotAFile => lang.pick(
+            "Unity のテクスチャ（Unity の中にしかなく、ファイルが無い）",
+            "Unity texture (only inside Unity, no file)",
+        ),
     }
 }
 
@@ -246,8 +266,16 @@ fn overridden(app: &AppState, name: &str) -> Option<String> {
             LookValue::Float(x) => format!("{x:.3}"),
             LookValue::Int(x) => x.to_string(),
             LookValue::Color(c) => {
-                let c = if liltoon::is_linear_color(name) { to_gamma(c) } else { c };
-                format!("{} · {:.2}", crate::state::to_hex([c[0], c[1], c[2], 1.0]), c[3])
+                let c = if liltoon::is_linear_color(name) {
+                    to_gamma(c)
+                } else {
+                    c
+                };
+                format!(
+                    "{} · {:.2}",
+                    crate::state::to_hex([c[0], c[1], c[2], 1.0]),
+                    c[3]
+                )
             }
             LookValue::Vector(c) => format!("({:.3}, {:.3}, {:.3}, {:.3})", c[0], c[1], c[2], c[3]),
         },
@@ -270,13 +298,38 @@ pub fn kind_label(lang: Lang, kind: LookKind) -> String {
     }
 }
 
-fn choice(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, value: &str, tooltip: &str, enabled: bool) -> Option<Rect> {
+fn choice(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: &str,
+    tooltip: &str,
+    enabled: bool,
+) -> Option<Rect> {
     let r = rows.row(t::ROW_HEIGHT, 4.0);
-    let (response, b) = w::dropdown(ui, r, id, Some(label), value, Some(tooltip), enabled, LABEL_W);
+    let (response, b) = w::dropdown(
+        ui,
+        r,
+        id,
+        Some(label),
+        value,
+        Some(tooltip),
+        enabled,
+        LABEL_W,
+    );
     response.clicked().then_some(b)
 }
 
-fn sub(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, key: &'static str, ja: &str, en: &str, section: Section) -> bool {
+fn sub(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    key: &'static str,
+    ja: &str,
+    en: &str,
+    section: Section,
+) -> bool {
     let lang = app.lang;
     let (open, reset) = subsection(
         ui,
@@ -300,7 +353,13 @@ fn inner(rows: &mut Rows, f: impl FnOnce(&mut Rows)) {
 }
 
 /// 機能の入切（その機能の頭の行）。入なら true。
-fn feature(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, free: bool) -> bool {
+fn feature(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    free: bool,
+) -> bool {
     toggle_prop(ui, app, rows, name, free);
     liltoon::on(app.doc.drawn_look(), name)
 }
@@ -368,12 +427,27 @@ fn float_row_in(
 }
 
 /// 範囲を逆に見せる行（lilToon の `InvBorderGUI`: 欄の値は 1 − 値。リムライト・逆光ライトの範囲）。
-fn inv_border_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
+fn inv_border_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    enabled: bool,
+) {
     let raw = liltoon::number(app.doc.drawn_look(), name);
     let (label, tip) = marked(app, name, app.lang.pick("範囲", "Border"));
-    let spec = SliderSpec::new(&label, 0.0, 1.0, NumberFormat { decimals: 2, trim: false, suffix: "" })
-        .tooltip(&tip)
-        .enabled(enabled);
+    let spec = SliderSpec::new(
+        &label,
+        0.0,
+        1.0,
+        NumberFormat {
+            decimals: 2,
+            trim: false,
+            suffix: "",
+        },
+    )
+    .tooltip(&tip)
+    .enabled(enabled);
     let out = w::slider(ui, rows.slider_row(), ("look.inv", name), 1.0 - raw, &spec);
     if out.changed {
         app.apply(look_action(LookOp::Value {
@@ -384,13 +458,27 @@ fn inv_border_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'stat
     }
 }
 
-fn toggle_prop(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
+fn toggle_prop(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    enabled: bool,
+) {
     let Some(prop) = liltoon::prop(name) else {
         return;
     };
     let on = liltoon::on(app.doc.drawn_look(), name);
     let (label, tip) = marked(app, name, prop.label(app.lang));
-    if let Some(next) = toggle_row(ui, rows, &format!("look.t.{name}"), &label, on, Some(&tip), enabled) {
+    if let Some(next) = toggle_row(
+        ui,
+        rows,
+        &format!("look.t.{name}"),
+        &label,
+        on,
+        Some(&tip),
+        enabled,
+    ) {
         app.apply(look_action(LookOp::Value {
             name,
             value: LookValue::Float(f32::from(next)),
@@ -399,7 +487,13 @@ fn toggle_prop(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static 
     }
 }
 
-fn choice_prop(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
+fn choice_prop(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    enabled: bool,
+) {
     let Some(prop) = liltoon::prop(name) else {
         return;
     };
@@ -408,14 +502,31 @@ fn choice_prop(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static 
     };
     let lang = app.lang;
     let at = liltoon::number(app.doc.drawn_look(), name).round().max(0.0) as usize;
-    let mut value = options.get(at).map_or("?", |o| lang.pick(o.0, o.1)).to_owned();
+    let mut value = options
+        .get(at)
+        .map_or("?", |o| lang.pick(o.0, o.1))
+        .to_owned();
     let (label, mut tip) = marked(app, name, prop.label(lang));
     if !choice_drawn(name, at) {
         value = format!("{value}{}", lang.pick("（描かない）", " (not drawn)"));
         tip += &format!("\n{}", not_drawn_reason(lang, name));
     }
-    if let Some(r) = choice(ui, rows, &format!("look.c.{name}"), &label, &value, &tip, enabled) {
-        open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Prop(name)), r, r.width());
+    if let Some(r) = choice(
+        ui,
+        rows,
+        &format!("look.c.{name}"),
+        &label,
+        &value,
+        &tip,
+        enabled,
+    ) {
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Prop(name)),
+            r,
+            r.width(),
+        );
     }
 }
 
@@ -437,7 +548,7 @@ fn to_linear(c: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// 色の行（見本を押すと描画色、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
+/// 色の行（見本を押すと色のウィンドウ、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
 /// リニアなので、見本と 16 進はガンマに直して見せ、明るさ（1 を超える倍率）の行も出す。`label` は名前の差し替え（無ければ表の名前）。
 fn color_row(
     ui: &mut Ui,
@@ -454,23 +565,39 @@ fn color_row(
     let lang = app.lang;
     let raw = liltoon::value(app.doc.drawn_look(), name);
     let linear = liltoon::is_linear_color(name);
-    let intensity = if linear { raw[0].max(raw[1]).max(raw[2]).max(1.0) } else { 1.0 };
-    let unit = [raw[0] / intensity, raw[1] / intensity, raw[2] / intensity, raw[3]];
+    let intensity = if linear {
+        raw[0].max(raw[1]).max(raw[2]).max(1.0)
+    } else {
+        1.0
+    };
+    let unit = [
+        raw[0] / intensity,
+        raw[1] / intensity,
+        raw[2] / intensity,
+        raw[3],
+    ];
     let shown = if linear { to_gamma(unit) } else { unit };
     let row = rows.row(t::ROW_HEIGHT, 2.0);
-    let (label, unity) = marked(app, name, label.unwrap_or(prop.label(lang)));
+    let title = label.unwrap_or(prop.label(lang)).to_owned();
+    let (label, unity) = marked(app, name, &title);
     let label_rect = Rect::from_min_size(row.min, vec2(LABEL_W, row.height()));
     w::text(
         ui.painter(),
         label_rect,
         &label,
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(w::label_color(ui, ("look.color.text", name), enabled)),
         w::Align::Left,
     );
-    ui.interact(label_rect, ui.make_persistent_id(("look.color.label", name)), egui::Sense::hover())
-        .on_hover_text(unity);
-    let swatch = Rect::from_min_size(pos2(row.left() + LABEL_W, row.top() + 1.0), vec2(36.0, row.height() - 2.0));
-    let tip = lang.pick(format!("{name}（押すと描画色）"), format!("{name} (click to take the paint color)"));
+    ui.interact(
+        label_rect,
+        ui.make_persistent_id(("look.color.label", name)),
+        egui::Sense::hover(),
+    )
+    .on_hover_text(unity);
+    let swatch = Rect::from_min_size(
+        pos2(row.left() + LABEL_W, row.top() + 1.0),
+        vec2(36.0, row.height() - 2.0),
+    );
     let set = |app: &mut AppState, gamma: [f32; 3], drag: bool| {
         let mut c = [gamma[0], gamma[1], gamma[2], raw[3]];
         if linear {
@@ -483,25 +610,69 @@ fn color_row(
             drag,
         }));
     };
-    if w::color_swatch(ui, swatch, ("look.swatch", name), [shown[0], shown[1], shown[2], 1.0], &tip, enabled).clicked() && enabled {
-        let m = app.color.main;
-        set(app, [m[0], m[1], m[2]], false);
+    // 押すと色のウィンドウ（相手は文書とプロパティごと）。ウィンドウの変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+    let current = crate::panels::color_window::Pick::from_floats(shown, false);
+    if let Some(u) = crate::panels::color_window::field(
+        ui,
+        swatch,
+        egui::Id::new(("look.color", app.doc.id(), name)),
+        &title,
+        current,
+        name,
+        enabled,
+    ) {
+        if u.pick != current {
+            set(app, u.pick.rgb_floats(), u.dragging);
+        }
+        if u.done {
+            app.m2_end_drag();
+        }
     }
-    let hex_rect = Rect::from_min_max(pos2(swatch.right() + 4.0, row.top() + 1.0), pos2(row.right(), row.bottom() - 1.0));
-    if hex_rect.width() > 40.0 && enabled {
+    let hex_rect = Rect::from_min_max(
+        pos2(swatch.right() + 4.0, row.top() + 1.0),
+        pos2(row.right(), row.bottom() - 1.0),
+    );
+    // 押せない間は出さない。描いている間は、描き始める前に出ていたものを出したまま（押せない入れ物に入れて、打てなくする）
+    let hex_shown = w::look_enabled(ui, ui.make_persistent_id(("look.hex.shown", name)), enabled);
+    if hex_rect.width() > 40.0 && hex_shown {
         let current = crate::state::to_hex([shown[0], shown[1], shown[2], 1.0]);
-        let out = w::text_field(ui, hex_rect, ("look.hex", name), &current, Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")), false);
-        if let Some(text) = out.committed {
+        let out = w::enabled_scope(ui, ("look.hex.scope", name), enabled, |ui| {
+            w::text_field(
+                ui,
+                hex_rect,
+                ("look.hex", name),
+                &current,
+                Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")),
+                false,
+            )
+        })
+        .inner;
+        if let Some(text) = out.committed.filter(|_| enabled) {
             if let Some(rgb) = crate::state::parse_hex(&text) {
                 set(app, rgb, false);
             }
         }
     }
     if linear {
-        let spec = SliderSpec::new(lang.pick("明るさ", "Intensity"), 0.0, 8.0, NumberFormat { decimals: 2, trim: false, suffix: "" })
-            .tooltip(name)
-            .enabled(enabled);
-        let out = w::slider(ui, rows.slider_row(), ("look.intensity", name), intensity, &spec);
+        let spec = SliderSpec::new(
+            lang.pick("明るさ", "Intensity"),
+            0.0,
+            8.0,
+            NumberFormat {
+                decimals: 2,
+                trim: false,
+                suffix: "",
+            },
+        )
+        .tooltip(name)
+        .enabled(enabled);
+        let out = w::slider(
+            ui,
+            rows.slider_row(),
+            ("look.intensity", name),
+            intensity,
+            &spec,
+        );
         if out.changed {
             let k = out.value.max(0.0) / intensity;
             app.apply(look_action(LookOp::Value {
@@ -512,9 +683,18 @@ fn color_row(
         }
     }
     if let Some((ja, en)) = alpha {
-        let spec = SliderSpec::new(lang.pick(ja, en), 0.0, 1.0, NumberFormat { decimals: 2, trim: false, suffix: "" })
-            .tooltip(name)
-            .enabled(enabled);
+        let spec = SliderSpec::new(
+            lang.pick(ja, en),
+            0.0,
+            1.0,
+            NumberFormat {
+                decimals: 2,
+                trim: false,
+                suffix: "",
+            },
+        )
+        .tooltip(name)
+        .enabled(enabled);
         let out = w::slider(ui, rows.slider_row(), ("look.alpha", name), raw[3], &spec);
         if out.changed {
             app.apply(look_action(LookOp::Value {
@@ -543,10 +723,25 @@ fn vector_part(
 ) {
     let v = liltoon::value(app.doc.drawn_look(), name);
     let (label, tip) = marked(app, name, label);
-    let spec = SliderSpec::new(&label, range.0, range.1, NumberFormat { decimals: 2, trim: false, suffix: "" })
-        .tooltip(&tip)
-        .enabled(enabled);
-    let out = w::slider(ui, rows.slider_row(), ("look.v", name, index), v[index], &spec);
+    let spec = SliderSpec::new(
+        &label,
+        range.0,
+        range.1,
+        NumberFormat {
+            decimals: 2,
+            trim: false,
+            suffix: "",
+        },
+    )
+    .tooltip(&tip)
+    .enabled(enabled);
+    let out = w::slider(
+        ui,
+        rows.slider_row(),
+        ("look.v", name, index),
+        v[index],
+        &spec,
+    );
     if out.changed {
         let mut next = v;
         next[index] = out.value;
@@ -559,10 +754,26 @@ fn vector_part(
 }
 
 /// ベクトルの成分の入切（`[lilFFFB]` の 4 つ目・`[lilVec3B]` の w）。
-fn vector_toggle(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, index: usize, label: &str, enabled: bool) {
+fn vector_toggle(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    index: usize,
+    label: &str,
+    enabled: bool,
+) {
     let v = liltoon::value(app.doc.drawn_look(), name);
     let (label, tip) = marked(app, name, label);
-    if let Some(next) = toggle_row(ui, rows, &format!("look.vt.{name}.{index}"), &label, v[index] != 0.0, Some(&tip), enabled) {
+    if let Some(next) = toggle_row(
+        ui,
+        rows,
+        &format!("look.vt.{name}.{index}"),
+        &label,
+        v[index] != 0.0,
+        Some(&tip),
+        enabled,
+    ) {
         let mut out = v;
         out[index] = f32::from(next);
         app.apply(look_action(LookOp::Value {
@@ -576,14 +787,56 @@ fn vector_toggle(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'stati
 /// HSV / ガンマの 4 つの行（`[lilHSVG]`）。
 fn hsvg(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
     let lang = app.lang;
-    vector_part(ui, app, rows, name, 0, lang.pick("色相", "Hue"), (-0.5, 0.5), enabled);
-    vector_part(ui, app, rows, name, 1, lang.pick("彩度", "Saturation"), (0.0, 2.0), enabled);
-    vector_part(ui, app, rows, name, 2, lang.pick("明度", "Value"), (0.0, 2.0), enabled);
-    vector_part(ui, app, rows, name, 3, lang.pick("ガンマ", "Gamma"), (0.01, 2.0), enabled);
+    vector_part(
+        ui,
+        app,
+        rows,
+        name,
+        0,
+        lang.pick("色相", "Hue"),
+        (-0.5, 0.5),
+        enabled,
+    );
+    vector_part(
+        ui,
+        app,
+        rows,
+        name,
+        1,
+        lang.pick("彩度", "Saturation"),
+        (0.0, 2.0),
+        enabled,
+    );
+    vector_part(
+        ui,
+        app,
+        rows,
+        name,
+        2,
+        lang.pick("明度", "Value"),
+        (0.0, 2.0),
+        enabled,
+    );
+    vector_part(
+        ui,
+        app,
+        rows,
+        name,
+        3,
+        lang.pick("ガンマ", "Gamma"),
+        (0.01, 2.0),
+        enabled,
+    );
 }
 
 /// タイリングとオフセット（Unity の `TextureScaleOffsetProperty`。`<名前>_ST`）。
-fn tiling_offset(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
+fn tiling_offset(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    enabled: bool,
+) {
     vector_part(ui, app, rows, name, 0, "Tiling X", (-10.0, 10.0), enabled);
     vector_part(ui, app, rows, name, 1, "Tiling Y", (-10.0, 10.0), enabled);
     vector_part(ui, app, rows, name, 2, "Offset X", (-1.0, 1.0), enabled);
@@ -591,13 +844,34 @@ fn tiling_offset(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'stati
 }
 
 /// 角度（`_ScrollRotate` の z。ラジアンを度で見せる。スクロール・回転の速さは時間で動く値なので出さない）。
-fn scroll_angle(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, enabled: bool) {
+fn scroll_angle(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    enabled: bool,
+) {
     let v = liltoon::value(app.doc.drawn_look(), name);
     let (label, tip) = marked(app, name, app.lang.pick("角度", "Angle"));
-    let spec = SliderSpec::new(&label, -180.0, 180.0, NumberFormat { decimals: 1, trim: false, suffix: "°" })
-        .tooltip(&tip)
-        .enabled(enabled);
-    let out = w::slider(ui, rows.slider_row(), ("look.angle", name), v[2].to_degrees(), &spec);
+    let spec = SliderSpec::new(
+        &label,
+        -180.0,
+        180.0,
+        NumberFormat {
+            decimals: 1,
+            trim: false,
+            suffix: "°",
+        },
+    )
+    .tooltip(&tip)
+    .enabled(enabled);
+    let out = w::slider(
+        ui,
+        rows.slider_row(),
+        ("look.angle", name),
+        v[2].to_degrees(),
+        &spec,
+    );
     if out.changed {
         let mut next = v;
         next[2] = out.value.to_radians();
@@ -624,10 +898,25 @@ fn remap_rows(
     let (min, max) = fields::remap_shown(scale, offset);
     let mut out = None;
     for (which, label, value) in [(0, labels.0, min), (1, labels.1, max)] {
-        let spec = SliderSpec::new(label, -0.01, 1.01, NumberFormat { decimals: 2, trim: false, suffix: "" })
-            .tooltip(tip)
-            .enabled(enabled);
-        let o = w::slider(ui, rows.slider_row(), ("look.remap", id.0, id.1, which), value, &spec);
+        let spec = SliderSpec::new(
+            label,
+            -0.01,
+            1.01,
+            NumberFormat {
+                decimals: 2,
+                trim: false,
+                suffix: "",
+            },
+        )
+        .tooltip(tip)
+        .enabled(enabled);
+        let o = w::slider(
+            ui,
+            rows.slider_row(),
+            ("look.remap", id.0, id.1, which),
+            value,
+            &spec,
+        );
         if o.changed {
             let (mut lo, mut hi) = (min, max);
             if which == 0 {
@@ -643,12 +932,32 @@ fn remap_rows(
 
 /// AO の範囲（lilToon の 1st Min・Max のように、スケールとオフセットを最小・最大で見せる）。
 fn ao_range(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
-    for (k, (min_label, max_label)) in [("1st Min", "1st Max"), ("2nd Min", "2nd Max"), ("3rd Min", "3rd Max")].iter().enumerate() {
-        let (name, i) = if k < 2 { ("_ShadowAOShift", k * 2) } else { ("_ShadowAOShift2", 0) };
+    for (k, (min_label, max_label)) in [
+        ("1st Min", "1st Max"),
+        ("2nd Min", "2nd Max"),
+        ("3rd Min", "3rd Max"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (name, i) = if k < 2 {
+            ("_ShadowAOShift", k * 2)
+        } else {
+            ("_ShadowAOShift2", 0)
+        };
         let v = liltoon::value(app.doc.drawn_look(), name);
         let (min_label, tip) = marked(app, name, min_label);
         let (max_label, _) = marked(app, name, max_label);
-        if let Some((lo, hi)) = remap_rows(ui, rows, ("ao", k), (&min_label, &max_label), &tip, v[i], v[i + 1], enabled) {
+        if let Some((lo, hi)) = remap_rows(
+            ui,
+            rows,
+            ("ao", k),
+            (&min_label, &max_label),
+            &tip,
+            v[i],
+            v[i + 1],
+            enabled,
+        ) {
             let (s, o) = fields::remap_values(lo, hi);
             let mut next = v;
             next[i] = s;
@@ -686,9 +995,10 @@ fn source_name(app: &AppState, slot: &liltoon::Slot, source: Option<&TextureSour
         Some(TextureSource::Packed(_)) => lang.pick("成分ごと", "Per Component").into(),
         Some(TextureSource::Image(id)) => {
             let rid = crate::fx::inputs::resource_id(*id);
-            app.shelf
-                .get(&rid)
-                .map_or_else(|| lang.pick("（無い画像）", "(missing image)").to_owned(), |r| r.name.clone())
+            app.shelf.get(&rid).map_or_else(
+                || lang.pick("（無い画像）", "(missing image)").to_owned(),
+                |r| r.name.clone(),
+            )
         }
     }
 }
@@ -699,7 +1009,11 @@ fn plane_name(app: &AppState, p: PlaneSource) -> String {
         PlaneSource::One => "1".into(),
         PlaneSource::Channel { channel, component } => {
             let name = channel_name(app.lang, &app.doc, channel);
-            if app.doc.channel_info(channel).is_some_and(|i| i.kind == ChannelKind::Scalar) {
+            if app
+                .doc
+                .channel_info(channel)
+                .is_some_and(|i| i.kind == ChannelKind::Scalar)
+            {
                 name
             } else {
                 format!("{name} {}", ["R", "G", "B", "A"][component.min(3) as usize])
@@ -708,7 +1022,7 @@ fn plane_name(app: &AppState, p: PlaneSource) -> String {
     }
 }
 
-/// スロットが読むユーザーチャンネルが、3D ビューの配列の層の上限（16）を超えて描かれないか（17 個目から）。
+/// スロットが読むユーザーチャンネルが、3D ビューの配列のレイヤーの上限（16）を超えて描かれないか（17 個目から）。
 pub fn slot_over_layer_limit(doc: &yolu_core::Document, name: &str) -> bool {
     let look = doc.drawn_look();
     let Some(source) = look.textures.get(name) else {
@@ -718,7 +1032,7 @@ pub fn slot_over_layer_limit(doc: &yolu_core::Document, name: &str) -> bool {
     !dropped.is_empty() && source.channels().iter().any(|c| dropped.contains(c))
 }
 
-/// スロットの Unity から受けた絵が、3D ビューの受けた絵の配列の層の上限（16）を超えて描かれないか（スロットの並びで 17 枚目から）。
+/// スロットの Unity から受けた絵が、3D ビューの受けた絵の配列のレイヤーの上限（16）を超えて描かれないか（スロットの並びで 17 枚目から）。
 pub fn slot_over_received_limit(doc: &yolu_core::Document, name: &str) -> bool {
     let look = doc.drawn_look();
     let source = look.textures.get(name);
@@ -737,7 +1051,14 @@ pub fn painting_slot(app: &AppState, name: &str) -> bool {
 
 /// スロットの行: 名前（`label`。無ければスロットの名前）・割り当て（押すと選ぶ）・右に描く口のボタン（筆。マットキャップの絵の
 /// スロットには無い）。成分ごとの詰め合わせは、その下に成分ごとの行。
-fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str, label: Option<&str>, enabled: bool) {
+fn slot_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    name: &'static str,
+    label: Option<&str>,
+    enabled: bool,
+) {
     let Some(index) = liltoon::slot_index(name) else {
         return;
     };
@@ -746,8 +1067,14 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
     let source = app.doc.drawn_look().textures.get(name).copied();
     let mut value = source_name(app, &slot, source.as_ref());
     let mut tip = lang.pick(
-        format!("{name}: 読むチャンネル（成分ごとに選ぶこともできる）。割り当てないと {} のテクスチャ", default_name(lang, slot.default)),
-        format!("{name}: the channel it reads (or one per component). Unassigned reads a {} texture", default_name(lang, slot.default)),
+        format!(
+            "{name}: 読むチャンネル（成分ごとに選ぶこともできる）。割り当てないと {} のテクスチャ",
+            default_name(lang, slot.default)
+        ),
+        format!(
+            "{name}: the channel it reads (or one per component). Unassigned reads a {} texture",
+            default_name(lang, slot.default)
+        ),
     );
     let yields = crate::view3d::look_gpu::yields_to_unity_texture(&app.doc, name, source.as_ref());
     if source.is_none() || yields {
@@ -763,8 +1090,14 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
             } else if yields {
                 value = default_name(lang, slot.default).into();
                 tip += &lang.pick(
-                    format!("\nUnity ではテクスチャが空（{}で描く）", default_name(lang, slot.default)),
-                    format!("\nThe texture is empty in Unity (drawn {})", default_name(lang, slot.default).to_lowercase()),
+                    format!(
+                        "\nUnity ではテクスチャが空（{}で描く）",
+                        default_name(lang, slot.default)
+                    ),
+                    format!(
+                        "\nThe texture is empty in Unity (drawn {})",
+                        default_name(lang, slot.default).to_lowercase()
+                    ),
                 );
             }
         }
@@ -781,8 +1114,14 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
         // 3D ビューが持つ Unity のテクスチャも 16 枚まで（スロットの並びで先のものから）。超えた分は割り当てのない既定で描く
         value = format!("{value}{}", lang.pick("（描かない）", " (not drawn)"));
         tip += &lang.pick(
-            format!("\n3D ビューで描かない: Unity のテクスチャは 16 枚まで（{}で描く）", default_name(lang, slot.default)),
-            format!("\nNot drawn in the 3D View: up to 16 Unity textures (drawn {})", default_name(lang, slot.default).to_lowercase()),
+            format!(
+                "\n3D ビューで描かない: Unity のテクスチャは 16 枚まで（{}で描く）",
+                default_name(lang, slot.default)
+            ),
+            format!(
+                "\nNot drawn in the 3D View: up to 16 Unity textures (drawn {})",
+                default_name(lang, slot.default).to_lowercase()
+            ),
         );
     }
     let row = rows.row(t::ROW_HEIGHT, 4.0);
@@ -803,11 +1142,20 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
         LABEL_W,
     );
     if response.clicked() {
-        open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Slot(index)), b, b.width().max(180.0));
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Slot(index)),
+            b,
+            b.width().max(180.0),
+        );
     }
     if paintable {
         let painting = painting_slot(app, name);
-        let button = Rect::from_min_size(pos2(row.right() - PAINT_W, row.top()), vec2(PAINT_W, row.height()));
+        let button = Rect::from_min_size(
+            pos2(row.right() - PAINT_W, row.top()),
+            vec2(PAINT_W, row.height()),
+        );
         let what = slot.label(lang);
         let tip = if super::slot_channel(&app.doc, name).is_some() {
             lang.pick(format!("{what}を描く"), format!("Paint {what}"))
@@ -817,7 +1165,18 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
                 format!("Paint {what} (creates and assigns a channel to paint)"),
             )
         };
-        if w::icon_button(ui, button, ("look.paint", name), "paint_brush", &tip, painting, enabled, 14.0).clicked() {
+        if w::icon_button(
+            ui,
+            button,
+            ("look.paint", name),
+            "paint_brush",
+            &tip,
+            painting,
+            enabled,
+            14.0,
+        )
+        .clicked()
+        {
             app.apply(look_action(LookOp::PaintSlot(name)));
         }
     }
@@ -827,9 +1186,24 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
             let value = plane_name(app, *plane);
             let r = rows.row(t::ROW_HEIGHT, 2.0);
             let r = Rect::from_min_max(pos2(r.left() + 14.0, r.top()), r.max);
-            let (response, b) = w::dropdown(ui, r, ("look.plane", name, k), Some(label), &value, Some(name), enabled, LABEL_W - 14.0);
+            let (response, b) = w::dropdown(
+                ui,
+                r,
+                ("look.plane", name, k),
+                Some(label),
+                &value,
+                Some(name),
+                enabled,
+                LABEL_W - 14.0,
+            );
             if response.clicked() {
-                open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Plane(index, k as u8)), b, b.width().max(180.0));
+                open_popup(
+                    app,
+                    &ui.ctx().clone(),
+                    Popup::Look(LookChoice::Plane(index, k as u8)),
+                    b,
+                    b.width().max(180.0),
+                );
             }
         }
     }
@@ -848,7 +1222,9 @@ fn texture_color(
     enabled: bool,
 ) {
     slot_row(ui, app, rows, slot, Some(label), enabled);
-    inner(rows, |rows| color_row(ui, app, rows, color, None, alpha, enabled));
+    inner(rows, |rows| {
+        color_row(ui, app, rows, color, None, alpha, enabled)
+    });
 }
 
 // ───────── 節 ─────────
@@ -863,16 +1239,30 @@ fn rendering_mode(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
         mode = format!("{mode}（{}）", look.shader_name());
     }
     let mut tip = if info.exact {
-        lang.pick("_TransparentMode（Unity ではシェーダーの名前）", "_TransparentMode (the shader name in Unity)").to_owned()
+        lang.pick(
+            "_TransparentMode（Unity ではシェーダーの名前）",
+            "_TransparentMode (the shader name in Unity)",
+        )
+        .to_owned()
     } else {
         lang.pick(
-            format!("{}: この版の機能は描かない（近い描き方で描く）", look.shader_name()),
-            format!("{}: this variant's own features are not drawn (closest look)", look.shader_name()),
+            format!(
+                "{}: この版の機能は描かない（近い描き方で描く）",
+                look.shader_name()
+            ),
+            format!(
+                "{}: this variant's own features are not drawn (closest look)",
+                look.shader_name()
+            ),
         )
     };
     let mut label = lang.pick("描画モード", "Rendering Mode").to_owned();
     // 欄で描画モードを変えている（シェーダーの名前が利用者の設定にある）なら、ほかの項目と同じく印と Unity の値
-    if let Some(received) = app.doc.received_look().filter(|_| !app.doc.look().shader.is_empty()) {
+    if let Some(received) = app
+        .doc
+        .received_look()
+        .filter(|_| !app.doc.look().shader.is_empty())
+    {
         let unity = liltoon::shader_info(&received.look);
         if unity.mode != info.mode {
             label += " •";
@@ -881,12 +1271,26 @@ fn rendering_mode(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
     }
     rows.indent = t::SECTION_INDENT;
     if let Some(r) = choice(ui, rows, "look.mode", &label, &mode, &tip, free) {
-        open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Mode), r, r.width());
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Mode),
+            r,
+            r.width(),
+        );
     }
 }
 
 fn base(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.base", "基本設定", "Base Setting", Section::Base) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.base",
+        "基本設定",
+        "Base Setting",
+        Section::Base,
+    ) {
         return;
     }
     let look = app.doc.drawn_look().clone();
@@ -906,12 +1310,25 @@ fn base(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.lighting", "ライティング・明るさ設定", "Lighting", Section::Lighting) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.lighting",
+        "ライティング・明るさ設定",
+        "Lighting",
+        Section::Lighting,
+    ) {
         return;
     }
     let lang = app.lang;
     group_label(ui, rows, lang.pick("基本設定", "Base Setting"));
-    for name in ["_LightMinLimit", "_LightMaxLimit", "_MonochromeLighting", "_ShadowEnvStrength"] {
+    for name in [
+        "_LightMinLimit",
+        "_LightMaxLimit",
+        "_MonochromeLighting",
+        "_ShadowEnvStrength",
+    ] {
         float_row_in(ui, app, rows, "lighting", name, None, free);
     }
     // プリセットを適用（lilToon の `ApplyLightingPreset`）
@@ -920,15 +1337,35 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL_W, row.height())),
         lang.pick("プリセットを適用", "Apply Preset"),
-        t::LABEL.with_color(if free { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(w::label_color(ui, "look.preset.label", free)),
         w::Align::Left,
     );
-    let buttons = Rows::split(Rect::from_min_max(pos2(row.left() + LABEL_W, row.top()), row.max), 2, 4.0);
+    let buttons = Rows::split(
+        Rect::from_min_max(pos2(row.left() + LABEL_W, row.top()), row.max),
+        2,
+        4.0,
+    );
     for (b, preset, ja, en) in [
         (buttons[0], LightingPreset::Default, "通常", "Default"),
-        (buttons[1], LightingPreset::SemiMonochrome, "半モノクロ", "Semi-monochrome"),
+        (
+            buttons[1],
+            LightingPreset::SemiMonochrome,
+            "半モノクロ",
+            "Semi-monochrome",
+        ),
     ] {
-        if w::button(ui, b, ("look.preset", ja), lang.pick(ja, en), false, free, None, None).clicked() {
+        if w::button(
+            ui,
+            b,
+            ("look.preset", ja),
+            lang.pick(ja, en),
+            false,
+            free,
+            None,
+            None,
+        )
+        .clicked()
+        {
             app.apply(look_action(LookOp::LightingPreset(preset)));
         }
     }
@@ -936,7 +1373,16 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     float_row(ui, app, rows, "_AsUnlit", free);
     let label = lang.pick("ライト方向のオーバーライド", "Light Direction Override");
     for (k, axis) in ["X", "Y", "Z"].iter().enumerate() {
-        vector_part(ui, app, rows, "_LightDirectionOverride", k, &format!("{label} {axis}"), (-1.0, 1.0), free);
+        vector_part(
+            ui,
+            app,
+            rows,
+            "_LightDirectionOverride",
+            k,
+            &format!("{label} {axis}"),
+            (-1.0, 1.0),
+            free,
+        );
     }
     inner(rows, |rows| {
         vector_toggle(
@@ -952,7 +1398,15 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn uv(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.uv", "UV設定", "UV Setting", Section::Uv) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.uv",
+        "UV設定",
+        "UV Setting",
+        Section::Uv,
+    ) {
         return;
     }
     tiling_offset(ui, app, rows, "_MainTex_ST", free);
@@ -961,7 +1415,15 @@ fn uv(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn main_color(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.main", "メインカラー / 透過設定", "Main Color / Alpha", Section::Main) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.main",
+        "メインカラー / 透過設定",
+        "Main Color / Alpha",
+        Section::Main,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -982,9 +1444,19 @@ fn main_color(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     };
     texture_color(ui, app, rows, "_MainTex", main_label, "_Color", ALPHA, free);
     group_label(ui, rows, lang.pick("色調補正", "Color Adjust"));
-    slot_row(ui, app, rows, "_MainColorAdjustMask", Some(lang.pick("マスク", "Mask")), free);
+    slot_row(
+        ui,
+        app,
+        rows,
+        "_MainColorAdjustMask",
+        Some(lang.pick("マスク", "Mask")),
+        free,
+    );
     hsvg(ui, app, rows, "_MainTexHSVG", free);
-    for (prefix, toggle) in [("_Main2nd", "_UseMain2ndTex"), ("_Main3rd", "_UseMain3rdTex")] {
+    for (prefix, toggle) in [
+        ("_Main2nd", "_UseMain2ndTex"),
+        ("_Main3rd", "_UseMain3rdTex"),
+    ] {
         rows.space(2.0);
         if feature(ui, app, rows, toggle, free) {
             inner(rows, |rows| layer(ui, app, rows, prefix, free));
@@ -1015,20 +1487,64 @@ fn layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static str,
         free,
     );
     inner(rows, |rows| {
-        toggle_prop(ui, app, rows, pick("_Main2ndTexIsMSDF", "_Main3rdTexIsMSDF"), free);
-        choice_prop(ui, app, rows, pick("_Main2ndTex_Cull", "_Main3rdTex_Cull"), free);
+        toggle_prop(
+            ui,
+            app,
+            rows,
+            pick("_Main2ndTexIsMSDF", "_Main3rdTexIsMSDF"),
+            free,
+        );
+        choice_prop(
+            ui,
+            app,
+            rows,
+            pick("_Main2ndTex_Cull", "_Main3rdTex_Cull"),
+            free,
+        );
     });
-    float_row(ui, app, rows, pick("_Main2ndEnableLighting", "_Main3rdEnableLighting"), free);
-    choice_prop(ui, app, rows, pick("_Main2ndTexBlendMode", "_Main3rdTexBlendMode"), free);
-    choice_prop(ui, app, rows, pick("_Main2ndTexAlphaMode", "_Main3rdTexAlphaMode"), free);
+    float_row(
+        ui,
+        app,
+        rows,
+        pick("_Main2ndEnableLighting", "_Main3rdEnableLighting"),
+        free,
+    );
+    choice_prop(
+        ui,
+        app,
+        rows,
+        pick("_Main2ndTexBlendMode", "_Main3rdTexBlendMode"),
+        free,
+    );
+    choice_prop(
+        ui,
+        app,
+        rows,
+        pick("_Main2ndTexAlphaMode", "_Main3rdTexAlphaMode"),
+        free,
+    );
     rows.space(2.0);
-    choice_prop(ui, app, rows, pick("_Main2ndTex_UVMode", "_Main3rdTex_UVMode"), free);
+    choice_prop(
+        ui,
+        app,
+        rows,
+        pick("_Main2ndTex_UVMode", "_Main3rdTex_UVMode"),
+        free,
+    );
     let decal = pick("_Main2ndTexIsDecal", "_Main3rdTexIsDecal");
     // 切にするとミラー・複製のフラグも 0 に（lilToon の `UV4Decal` と同じ。`fields::decal_op`）
     if let Some(prop) = liltoon::prop(decal) {
         let on = liltoon::on(app.doc.drawn_look(), decal);
         let (label, tip) = marked(app, decal, prop.label(app.lang));
-        if let Some(next) = toggle_row(ui, rows, &format!("look.t.{decal}"), &label, on, Some(&tip), free) {
+        if let Some(next) = toggle_row(
+            ui,
+            rows,
+            &format!("look.t.{decal}"),
+            &label,
+            on,
+            Some(&tip),
+            free,
+        ) {
             app.apply(look_action(fields::decal_op(prefix, next)));
         }
     }
@@ -1038,7 +1554,13 @@ fn layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static str,
     } else {
         tiling_offset(ui, app, rows, st, free);
     }
-    float_row(ui, app, rows, pick("_Main2ndTexAngle", "_Main3rdTexAngle"), free);
+    float_row(
+        ui,
+        app,
+        rows,
+        pick("_Main2ndTexAngle", "_Main3rdTexAngle"),
+        free,
+    );
     rows.space(2.0);
     slot_row(
         ui,
@@ -1051,14 +1573,48 @@ fn layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static str,
     group_label(ui, rows, lang.pick("距離フェード", "Distance Fade"));
     let fade = pick("_Main2ndDistanceFade", "_Main3rdDistanceFade");
     inner(rows, |rows| {
-        vector_part(ui, app, rows, fade, 0, lang.pick("開始距離", "Start Distance"), (0.0, 10.0), free);
-        vector_part(ui, app, rows, fade, 1, lang.pick("終了距離", "End Distance"), (0.0, 10.0), free);
-        vector_part(ui, app, rows, fade, 2, lang.pick("強度", "Strength"), (0.0, 1.0), free);
+        vector_part(
+            ui,
+            app,
+            rows,
+            fade,
+            0,
+            lang.pick("開始距離", "Start Distance"),
+            (0.0, 10.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            fade,
+            1,
+            lang.pick("終了距離", "End Distance"),
+            (0.0, 10.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            fade,
+            2,
+            lang.pick("強度", "Strength"),
+            (0.0, 1.0),
+            free,
+        );
     });
 }
 
 /// デカールの置き方（lilToon の `UV4Decal`: ミラーモード・複製モードと、タイリング・オフセットを位置と大きさで見せる行）。
-fn decal_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static str, st: &'static str, free: bool) {
+fn decal_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    prefix: &'static str,
+    st: &'static str,
+    free: bool,
+) {
     let lang = app.lang;
     let look = app.doc.drawn_look().clone();
     let p = |s: &str| format!("{prefix}Tex{s}");
@@ -1071,10 +1627,21 @@ fn decal_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static
         &format!("look.mirror.{prefix}"),
         lang.pick("ミラーモード", "Mirror Mode"),
         MIRROR[mirror].pick(lang),
-        &format!("{}, {}, {}", p("IsLeftOnly"), p("IsRightOnly"), p("ShouldFlipMirror")),
+        &format!(
+            "{}, {}, {}",
+            p("IsLeftOnly"),
+            p("IsRightOnly"),
+            p("ShouldFlipMirror")
+        ),
         free,
     ) {
-        open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Mirror(prefix)), r, r.width());
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Mirror(prefix)),
+            r,
+            r.width(),
+        );
     }
     if let Some(r) = choice(
         ui,
@@ -1085,7 +1652,13 @@ fn decal_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static
         &format!("{}, {}", p("ShouldCopy"), p("ShouldFlipCopy")),
         free,
     ) {
-        open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::Copy(prefix)), r, r.width());
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Copy(prefix)),
+            r,
+            r.width(),
+        );
     }
     // scale & offset → 大きさと位置（lilToon の欄と同じ換算）
     let mut next = fields::decal_shown(liltoon::value(&look, st), copy > 0);
@@ -1097,9 +1670,18 @@ fn decal_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, prefix: &'static
         (3, ("Y軸サイズ", "Scale Y"), -1.0),
     ] {
         let (label, tip) = marked(app, st, lang.pick(ja, en));
-        let spec = SliderSpec::new(&label, lo, 1.0, NumberFormat { decimals: 3, trim: false, suffix: "" })
-            .tooltip(&tip)
-            .enabled(free);
+        let spec = SliderSpec::new(
+            &label,
+            lo,
+            1.0,
+            NumberFormat {
+                decimals: 3,
+                trim: false,
+                suffix: "",
+            },
+        )
+        .tooltip(&tip)
+        .enabled(free);
         let out = w::slider(ui, rows.slider_row(), ("look.decal", st, k), next[k], &spec);
         if out.changed {
             changed = true;
@@ -1128,30 +1710,72 @@ const MIRROR: [Name; 5] = [
     Name("右のみ", "Right Only"),
     Name("右のみ・反転", "Flip Right Only"),
 ];
-const COPY: [Name; 3] = [Name("通常", "Normal"), Name("左右対称", "Symmetry"), Name("反転", "Flip")];
-const SPECULAR: [Name; 3] = [Name("無効", "None"), Name("リアル", "Realistic"), Name("トゥーン", "Toon")];
+const COPY: [Name; 3] = [
+    Name("通常", "Normal"),
+    Name("左右対称", "Symmetry"),
+    Name("反転", "Flip"),
+];
+const SPECULAR: [Name; 3] = [
+    Name("無効", "None"),
+    Name("リアル", "Realistic"),
+    Name("トゥーン", "Toon"),
+];
 
 /// アルファマスクの中身（lilToon の欄: マスク・反転・透明度・Cutoff。スケールとオフセットはこの 2 つから決まる）。
 fn alpha_mask(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     let lang = app.lang;
-    slot_row(ui, app, rows, "_AlphaMask", Some(lang.pick("アルファマスク", "Alpha Mask")), free);
+    slot_row(
+        ui,
+        app,
+        rows,
+        "_AlphaMask",
+        Some(lang.pick("アルファマスク", "Alpha Mask")),
+        free,
+    );
     let look = app.doc.drawn_look().clone();
     let (invert, transparency) = fields::alpha_mask_shown(
         liltoon::number(&look, "_AlphaMaskScale"),
         liltoon::number(&look, "_AlphaMaskValue"),
     );
     let set = |app: &mut AppState, invert: bool, transparency: f32, drag: bool| {
-        app.apply(look_action(fields::alpha_mask_op(invert, transparency, drag)));
+        app.apply(look_action(fields::alpha_mask_op(
+            invert,
+            transparency,
+            drag,
+        )));
     };
     let (label, tip) = marked(app, "_AlphaMaskScale", "Invert");
-    if let Some(next) = toggle_row(ui, rows, "look.alphamask.invert", &label, invert, Some(&tip), free) {
+    if let Some(next) = toggle_row(
+        ui,
+        rows,
+        "look.alphamask.invert",
+        &label,
+        invert,
+        Some(&tip),
+        free,
+    ) {
         set(app, next, transparency, false);
     }
     let (label, tip) = marked(app, "_AlphaMaskValue", "Transparency");
-    let spec = SliderSpec::new(&label, -1.0, 1.0, NumberFormat { decimals: 2, trim: false, suffix: "" })
-        .tooltip(&tip)
-        .enabled(free);
-    let out = w::slider(ui, rows.slider_row(), "look.alphamask.transparency", transparency, &spec);
+    let spec = SliderSpec::new(
+        &label,
+        -1.0,
+        1.0,
+        NumberFormat {
+            decimals: 2,
+            trim: false,
+            suffix: "",
+        },
+    )
+    .tooltip(&tip)
+    .enabled(free);
+    let out = w::slider(
+        ui,
+        rows.slider_row(),
+        "look.alphamask.transparency",
+        transparency,
+        &spec,
+    );
     if out.changed {
         set(app, invert, out.value, true);
     }
@@ -1159,7 +1783,15 @@ fn alpha_mask(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.shadow", "影設定", "Shadow", Section::Shadow) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.shadow",
+        "影設定",
+        "Shadow",
+        Section::Shadow,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1170,7 +1802,14 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         choice_prop(ui, app, rows, "_ShadowMaskType", free);
         let mask_type = liltoon::number(app.doc.drawn_look(), "_ShadowMaskType").round();
         if mask_type == 1.0 {
-            slot_row(ui, app, rows, "_ShadowStrengthMask", Some(lang.pick("マスク", "Mask")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                "_ShadowStrengthMask",
+                Some(lang.pick("マスク", "Mask")),
+                free,
+            );
             inner(rows, |rows| {
                 float_row(ui, app, rows, "_ShadowStrengthMaskLOD", free);
                 float_row(ui, app, rows, "_ShadowFlatBorder", free);
@@ -1181,11 +1820,26 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             slot_row(ui, app, rows, "_ShadowStrengthMask", Some("SDF"), free);
             inner(rows, |rows| {
                 float_row(ui, app, rows, "_ShadowStrengthMaskLOD", free);
-                float_row_in(ui, app, rows, "", "_ShadowFlatBlur", Some("Blend Y Direction"), free);
+                float_row_in(
+                    ui,
+                    app,
+                    rows,
+                    "",
+                    "_ShadowFlatBlur",
+                    Some("Blend Y Direction"),
+                    free,
+                );
             });
             float_row(ui, app, rows, "_ShadowStrength", free);
         } else {
-            slot_row(ui, app, rows, "_ShadowStrengthMask", Some(lang.pick("マスクと強度", "Mask & Strength")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                "_ShadowStrengthMask",
+                Some(lang.pick("マスクと強度", "Mask & Strength")),
+                free,
+            );
             inner(rows, |rows| {
                 float_row(ui, app, rows, "_ShadowStrength", free);
                 float_row(ui, app, rows, "_ShadowStrengthMaskLOD", free);
@@ -1197,17 +1851,32 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             (
                 "_ShadowColorTex",
                 "_ShadowColor",
-                ["_ShadowBorder", "_ShadowBlur", "_ShadowNormalStrength", "_ShadowReceive"],
+                [
+                    "_ShadowBorder",
+                    "_ShadowBlur",
+                    "_ShadowNormalStrength",
+                    "_ShadowReceive",
+                ],
             ),
             (
                 "_Shadow2ndColorTex",
                 "_Shadow2ndColor",
-                ["_Shadow2ndBorder", "_Shadow2ndBlur", "_Shadow2ndNormalStrength", "_Shadow2ndReceive"],
+                [
+                    "_Shadow2ndBorder",
+                    "_Shadow2ndBlur",
+                    "_Shadow2ndNormalStrength",
+                    "_Shadow2ndReceive",
+                ],
             ),
             (
                 "_Shadow3rdColorTex",
                 "_Shadow3rdColor",
-                ["_Shadow3rdBorder", "_Shadow3rdBlur", "_Shadow3rdNormalStrength", "_Shadow3rdReceive"],
+                [
+                    "_Shadow3rdBorder",
+                    "_Shadow3rdBlur",
+                    "_Shadow3rdNormalStrength",
+                    "_Shadow3rdReceive",
+                ],
             ),
         ]
         .into_iter()
@@ -1219,7 +1888,15 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             inner(rows, |rows| {
                 // 1 影の色の A は使わない（lilToon の欄も出さない）。2 影・3 影は A が強さ
                 let alpha = if k > 0 { ALPHA } else { None };
-                color_row(ui, app, rows, color, Some(lang.pick("色", "Color")), alpha, free);
+                color_row(
+                    ui,
+                    app,
+                    rows,
+                    color,
+                    Some(lang.pick("色", "Color")),
+                    alpha,
+                    free,
+                );
                 if k == 0 || liltoon::value(app.doc.drawn_look(), color)[3] > 0.0 {
                     for name in names {
                         float_row(ui, app, rows, name, free);
@@ -1235,7 +1912,9 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         float_row_in(ui, app, rows, "shadow", "_ShadowEnvStrength", None, free);
         rows.space(2.0);
         slot_row(ui, app, rows, "_ShadowBlurMask", None, free);
-        inner(rows, |rows| float_row(ui, app, rows, "_ShadowBlurMaskLOD", free));
+        inner(rows, |rows| {
+            float_row(ui, app, rows, "_ShadowBlurMaskLOD", free)
+        });
         rows.space(2.0);
         slot_row(ui, app, rows, "_ShadowBorderMask", None, free);
         inner(rows, |rows| {
@@ -1247,7 +1926,15 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn rim_shade(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.rimshade", "リムシェード", "RimShade", Section::RimShade) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.rimshade",
+        "リムシェード",
+        "RimShade",
+        Section::RimShade,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1255,15 +1942,37 @@ fn rim_shade(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         return;
     }
     inner(rows, |rows| {
-        texture_color(ui, app, rows, "_RimShadeMask", lang.pick("色 / マスク", "Color / Mask"), "_RimShadeColor", ALPHA, free);
-        for name in ["_RimShadeNormalStrength", "_RimShadeBorder", "_RimShadeBlur", "_RimShadeFresnelPower"] {
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_RimShadeMask",
+            lang.pick("色 / マスク", "Color / Mask"),
+            "_RimShadeColor",
+            ALPHA,
+            free,
+        );
+        for name in [
+            "_RimShadeNormalStrength",
+            "_RimShadeBorder",
+            "_RimShadeBlur",
+            "_RimShadeFresnelPower",
+        ] {
             float_row(ui, app, rows, name, free);
         }
     });
 }
 
 fn emission(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.emission", "発光設定", "Emission", Section::Emission) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.emission",
+        "発光設定",
+        "Emission",
+        Section::Emission,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1299,11 +2008,27 @@ fn emission(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             continue;
         }
         inner(rows, |rows| {
-            texture_color(ui, app, rows, names[1], lang.pick("色 / マスク", "Color / Mask"), names[2], ALPHA, free);
+            texture_color(
+                ui,
+                app,
+                rows,
+                names[1],
+                lang.pick("色 / マスク", "Color / Mask"),
+                names[2],
+                ALPHA,
+                free,
+            );
             inner(rows, |rows| choice_prop(ui, app, rows, names[3], free));
             float_row(ui, app, rows, names[4], free);
             rows.space(2.0);
-            slot_row(ui, app, rows, names[5], Some(lang.pick("マスク", "Mask")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                names[5],
+                Some(lang.pick("マスク", "Mask")),
+                free,
+            );
             inner(rows, |rows| float_row(ui, app, rows, names[6], free));
             choice_prop(ui, app, rows, names[7], free);
             float_row(ui, app, rows, names[8], free);
@@ -1312,7 +2037,15 @@ fn emission(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn normal_map(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.normal", "ノーマルマップ設定", "Normal Map", Section::Normal) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.normal",
+        "ノーマルマップ設定",
+        "Normal Map",
+        Section::Normal,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1329,14 +2062,28 @@ fn normal_map(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             slot_row(ui, app, rows, "_Bump2ndMap", Some(normal), free);
             float_row(ui, app, rows, "_Bump2ndScale", free);
             choice_prop(ui, app, rows, "_Bump2ndMap_UVMode", free);
-            slot_row(ui, app, rows, "_Bump2ndScaleMask", Some(lang.pick("マスクと強度", "Mask & Strength")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                "_Bump2ndScaleMask",
+                Some(lang.pick("マスクと強度", "Mask & Strength")),
+                free,
+            );
         });
     }
     rows.space(2.0);
     if feature(ui, app, rows, "_UseAnisotropy", free) {
         inner(rows, |rows| {
             slot_row(ui, app, rows, "_AnisotropyTangentMap", Some(normal), free);
-            slot_row(ui, app, rows, "_AnisotropyScaleMask", Some(lang.pick("マスクと強度", "Mask & Strength")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                "_AnisotropyScaleMask",
+                Some(lang.pick("マスクと強度", "Mask & Strength")),
+                free,
+            );
             float_row(ui, app, rows, "_AnisotropyScale", free);
             group_label(ui, rows, lang.pick("適用先", "Apply to"));
             toggle_prop(ui, app, rows, "_Anisotropy2Reflection", free);
@@ -1362,7 +2109,14 @@ fn normal_map(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
                     ] {
                         float_row(ui, app, rows, name, free);
                     }
-                    slot_row(ui, app, rows, "_AnisotropyShiftNoiseMask", Some(lang.pick("ノイズ", "Noise")), free);
+                    slot_row(
+                        ui,
+                        app,
+                        rows,
+                        "_AnisotropyShiftNoiseMask",
+                        Some(lang.pick("ノイズ", "Noise")),
+                        free,
+                    );
                 });
             }
             toggle_prop(ui, app, rows, "_Anisotropy2MatCap", free);
@@ -1372,7 +2126,15 @@ fn normal_map(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn backlight(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.backlight", "逆光ライト", "Backlight", Section::Backlight) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.backlight",
+        "逆光ライト",
+        "Backlight",
+        Section::Backlight,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1380,7 +2142,16 @@ fn backlight(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         return;
     }
     inner(rows, |rows| {
-        texture_color(ui, app, rows, "_BacklightColorTex", lang.pick("色 / マスク", "Color / Mask"), "_BacklightColor", ALPHA, free);
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_BacklightColorTex",
+            lang.pick("色 / マスク", "Color / Mask"),
+            "_BacklightColor",
+            ALPHA,
+            free,
+        );
         inner(rows, |rows| {
             float_row(ui, app, rows, "_BacklightMainStrength", free);
             toggle_prop(ui, app, rows, "_BacklightReceiveShadow", free);
@@ -1389,14 +2160,26 @@ fn backlight(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         rows.space(2.0);
         float_row(ui, app, rows, "_BacklightNormalStrength", free);
         inv_border_row(ui, app, rows, "_BacklightBorder", free);
-        for name in ["_BacklightBlur", "_BacklightDirectivity", "_BacklightViewStrength"] {
+        for name in [
+            "_BacklightBlur",
+            "_BacklightDirectivity",
+            "_BacklightViewStrength",
+        ] {
             float_row(ui, app, rows, name, free);
         }
     });
 }
 
 fn reflection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.reflection", "光沢設定", "Reflections", Section::Reflection) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.reflection",
+        "光沢設定",
+        "Reflections",
+        Section::Reflection,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1404,23 +2187,67 @@ fn reflection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         return;
     }
     inner(rows, |rows| {
-        slot_row(ui, app, rows, "_SmoothnessTex", Some(lang.pick("滑らかさ", "Smoothness")), free);
+        slot_row(
+            ui,
+            app,
+            rows,
+            "_SmoothnessTex",
+            Some(lang.pick("滑らかさ", "Smoothness")),
+            free,
+        );
         inner(rows, |rows| {
             float_row(ui, app, rows, "_Smoothness", free);
             float_row(ui, app, rows, "_GSAAStrength", free);
         });
         rows.space(2.0);
-        slot_row(ui, app, rows, "_MetallicGlossMap", Some(lang.pick("金属度", "Metallic")), free);
+        slot_row(
+            ui,
+            app,
+            rows,
+            "_MetallicGlossMap",
+            Some(lang.pick("金属度", "Metallic")),
+            free,
+        );
         inner(rows, |rows| float_row(ui, app, rows, "_Metallic", free));
         rows.space(2.0);
-        texture_color(ui, app, rows, "_ReflectionColorTex", lang.pick("色 / マスク", "Color / Mask"), "_ReflectionColor", ALPHA, free);
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_ReflectionColorTex",
+            lang.pick("色 / マスク", "Color / Mask"),
+            "_ReflectionColor",
+            ALPHA,
+            free,
+        );
         inner(rows, |rows| float_row(ui, app, rows, "_Reflectance", free));
         rows.space(2.0);
         let look = app.doc.drawn_look().clone();
-        let mode = specular_mode(liltoon::on(&look, "_ApplySpecular"), liltoon::on(&look, "_SpecularToon"));
-        let (label, _) = marked(app, "_ApplySpecular", lang.pick("光沢のタイプ", "Specular Mode"));
-        if let Some(r) = choice(ui, rows, "look.specular", &label, SPECULAR[mode].pick(lang), "_ApplySpecular, _SpecularToon", free) {
-            open_popup(app, &ui.ctx().clone(), Popup::Look(LookChoice::SpecularMode), r, r.width());
+        let mode = specular_mode(
+            liltoon::on(&look, "_ApplySpecular"),
+            liltoon::on(&look, "_SpecularToon"),
+        );
+        let (label, _) = marked(
+            app,
+            "_ApplySpecular",
+            lang.pick("光沢のタイプ", "Specular Mode"),
+        );
+        if let Some(r) = choice(
+            ui,
+            rows,
+            "look.specular",
+            &label,
+            SPECULAR[mode].pick(lang),
+            "_ApplySpecular, _SpecularToon",
+            free,
+        ) {
+            open_popup(
+                app,
+                &ui.ctx().clone(),
+                Popup::Look(LookChoice::SpecularMode),
+                r,
+                r.width(),
+            );
         }
         if mode > 0 {
             inner(rows, |rows| {
@@ -1433,7 +2260,9 @@ fn reflection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         }
         toggle_prop(ui, app, rows, "_ApplyReflection", free);
         if liltoon::on(app.doc.drawn_look(), "_ApplyReflection") {
-            inner(rows, |rows| float_row(ui, app, rows, "_ReflectionNormalStrength", free));
+            inner(rows, |rows| {
+                float_row(ui, app, rows, "_ReflectionNormalStrength", free)
+            });
         }
         if liltoon::shader_info(app.doc.drawn_look()).mode == RenderMode::Transparent {
             toggle_prop(ui, app, rows, "_ReflectionApplyTransparency", free);
@@ -1508,7 +2337,15 @@ const MATCAPS: [MatCapNames; 2] = [
 ];
 
 fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.matcap", "マットキャップ設定", "MatCap", Section::MatCap) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.matcap",
+        "マットキャップ設定",
+        "MatCap",
+        Section::MatCap,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1521,7 +2358,16 @@ fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             continue;
         }
         inner(rows, |rows| {
-            texture_color(ui, app, rows, m.tex, lang.pick("マットキャップ", "MatCap"), m.color, ALPHA, free);
+            texture_color(
+                ui,
+                app,
+                rows,
+                m.tex,
+                lang.pick("マットキャップ", "MatCap"),
+                m.color,
+                ALPHA,
+                free,
+            );
             inner(rows, |rows| {
                 toggle_prop(ui, app, rows, m.zrot, free);
                 toggle_prop(ui, app, rows, m.perspective, free);
@@ -1529,7 +2375,14 @@ fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             float_row(ui, app, rows, m.main, free);
             float_row(ui, app, rows, m.normal, free);
             rows.space(2.0);
-            slot_row(ui, app, rows, m.mask, Some(lang.pick("マスク", "Mask")), free);
+            slot_row(
+                ui,
+                app,
+                rows,
+                m.mask,
+                Some(lang.pick("マスク", "Mask")),
+                free,
+            );
             inner(rows, |rows| float_row(ui, app, rows, m.blend, free));
             float_row(ui, app, rows, m.lighting, free);
             float_row(ui, app, rows, m.shadow, free);
@@ -1543,7 +2396,14 @@ fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             toggle_prop(ui, app, rows, m.custom, free);
             if liltoon::on(app.doc.drawn_look(), m.custom) {
                 inner(rows, |rows| {
-                    slot_row(ui, app, rows, m.bump, Some(lang.pick("ノーマルマップ", "Normal Map")), free);
+                    slot_row(
+                        ui,
+                        app,
+                        rows,
+                        m.bump,
+                        Some(lang.pick("ノーマルマップ", "Normal Map")),
+                        free,
+                    );
                     float_row(ui, app, rows, m.bump_scale, free);
                 });
             }
@@ -1552,7 +2412,15 @@ fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn rim(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.rim", "リムライト設定", "Rim Light", Section::Rim) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.rim",
+        "リムライト設定",
+        "Rim Light",
+        Section::Rim,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1560,7 +2428,16 @@ fn rim(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         return;
     }
     inner(rows, |rows| {
-        texture_color(ui, app, rows, "_RimColorTex", lang.pick("色 / マスク", "Color / Mask"), "_RimColor", ALPHA, free);
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_RimColorTex",
+            lang.pick("色 / マスク", "Color / Mask"),
+            "_RimColor",
+            ALPHA,
+            free,
+        );
         for name in ["_RimMainStrength", "_RimEnableLighting", "_RimShadowMask"] {
             float_row(ui, app, rows, name, free);
         }
@@ -1592,7 +2469,15 @@ fn rim(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn glitter(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.glitter", "ラメ設定", "Glitter", Section::Glitter) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.glitter",
+        "ラメ設定",
+        "Glitter",
+        Section::Glitter,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1601,10 +2486,23 @@ fn glitter(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     }
     inner(rows, |rows| {
         choice_prop(ui, app, rows, "_GlitterUVMode", free);
-        texture_color(ui, app, rows, "_GlitterColorTex", lang.pick("色 / マスク", "Color / Mask"), "_GlitterColor", ALPHA, free);
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_GlitterColorTex",
+            lang.pick("色 / マスク", "Color / Mask"),
+            "_GlitterColor",
+            ALPHA,
+            free,
+        );
         inner(rows, |rows| {
             choice_prop(ui, app, rows, "_GlitterColorTex_UVMode", free);
-            for name in ["_GlitterMainStrength", "_GlitterEnableLighting", "_GlitterShadowMask"] {
+            for name in [
+                "_GlitterMainStrength",
+                "_GlitterEnableLighting",
+                "_GlitterShadowMask",
+            ] {
                 float_row(ui, app, rows, name, free);
             }
             toggle_prop(ui, app, rows, "_GlitterBackfaceMask", free);
@@ -1615,10 +2513,46 @@ fn glitter(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         rows.space(2.0);
         glitter_params(ui, app, rows, free);
         let p2 = "_GlitterParams2";
-        vector_part(ui, app, rows, p2, 0, lang.pick("点滅の速度", "Blink Speed"), (0.0, 10.0), free);
-        vector_part(ui, app, rows, p2, 1, lang.pick("角度制限", "Angle limit"), (0.0, 1.0), free);
-        vector_part(ui, app, rows, p2, 2, lang.pick("ライト方向の影響度", "Light direction strength"), (0.0, 1.0), free);
-        vector_part(ui, app, rows, p2, 3, lang.pick("ランダムカラー", "Color Randomness"), (0.0, 1.0), free);
+        vector_part(
+            ui,
+            app,
+            rows,
+            p2,
+            0,
+            lang.pick("点滅の速度", "Blink Speed"),
+            (0.0, 10.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            p2,
+            1,
+            lang.pick("角度制限", "Angle limit"),
+            (0.0, 1.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            p2,
+            2,
+            lang.pick("ライト方向の影響度", "Light direction strength"),
+            (0.0, 1.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            p2,
+            3,
+            lang.pick("ランダムカラー", "Color Randomness"),
+            (0.0, 1.0),
+            free,
+        );
         float_row(ui, app, rows, "_GlitterNormalStrength", free);
         float_row(ui, app, rows, "_GlitterPostContrast", free);
     });
@@ -1643,9 +2577,18 @@ fn glitter_params(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
     ];
     for (k, (ja, en, lo, hi)) in specs.into_iter().enumerate() {
         let (label, tip) = marked(app, "_GlitterParams1", lang.pick(ja, en));
-        let spec = SliderSpec::new(&label, lo, hi, NumberFormat { decimals: 3, trim: false, suffix: "" })
-            .tooltip(&tip)
-            .enabled(free);
+        let spec = SliderSpec::new(
+            &label,
+            lo,
+            hi,
+            NumberFormat {
+                decimals: 3,
+                trim: false,
+                suffix: "",
+            },
+        )
+        .tooltip(&tip)
+        .enabled(free);
         let out = w::slider(ui, rows.slider_row(), ("look.glitter", k), next[k], &spec);
         if out.changed {
             changed = true;
@@ -1661,7 +2604,15 @@ fn glitter_params(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
 }
 
 fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.outline", "輪郭線設定", "Outline", Section::Outline) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.outline",
+        "輪郭線設定",
+        "Outline",
+        Section::Outline,
+    ) {
         return;
     }
     let lang = app.lang;
@@ -1669,14 +2620,33 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     let info = liltoon::shader_info(app.doc.drawn_look());
     let mut label = lang.pick("輪郭線", "Outline").to_owned();
     let mut tip = "lilToonOutline".to_owned();
-    if let Some(received) = app.doc.received_look().filter(|_| !app.doc.look().shader.is_empty()) {
+    if let Some(received) = app
+        .doc
+        .received_look()
+        .filter(|_| !app.doc.look().shader.is_empty())
+    {
         let unity = liltoon::shader_info(&received.look);
         if unity.outline != info.outline {
             label += " •";
-            tip += &format!("\nUnity: {}", if unity.outline { lang.pick("入", "On") } else { lang.pick("切", "Off") });
+            tip += &format!(
+                "\nUnity: {}",
+                if unity.outline {
+                    lang.pick("入", "On")
+                } else {
+                    lang.pick("切", "Off")
+                }
+            );
         }
     }
-    if let Some(next) = toggle_row(ui, rows, "look.outline", &label, info.outline, Some(tip.as_str()), free) {
+    if let Some(next) = toggle_row(
+        ui,
+        rows,
+        "look.outline",
+        &label,
+        info.outline,
+        Some(tip.as_str()),
+        free,
+    ) {
         app.apply(look_action(LookOp::Outline(next)));
     }
     if !info.outline {
@@ -1688,7 +2658,16 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         } else {
             lang.pick("色 / 透明度", "Color / Alpha")
         };
-        texture_color(ui, app, rows, "_OutlineTex", label, "_OutlineColor", ALPHA, free);
+        texture_color(
+            ui,
+            app,
+            rows,
+            "_OutlineTex",
+            label,
+            "_OutlineColor",
+            ALPHA,
+            free,
+        );
         inner(rows, |rows| hsvg(ui, app, rows, "_OutlineTexHSVG", free));
         rows.space(2.0);
         group_label(ui, rows, lang.pick("ハイライト", "Highlight"));
@@ -1701,7 +2680,16 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
                 let offset = liltoon::number(&look, "_OutlineLitOffset");
                 let (min_label, tip) = marked(app, "_OutlineLitScale", "Min");
                 let (max_label, _) = marked(app, "_OutlineLitScale", "Max");
-                if let Some((lo, hi)) = remap_rows(ui, rows, ("outline", 0), (&min_label, &max_label), &tip, scale, offset, free) {
+                if let Some((lo, hi)) = remap_rows(
+                    ui,
+                    rows,
+                    ("outline", 0),
+                    (&min_label, &max_label),
+                    &tip,
+                    scale,
+                    offset,
+                    free,
+                ) {
                     app.apply(look_action(fields::outline_lit_op(lo, hi, true)));
                 }
                 toggle_prop(ui, app, rows, "_OutlineLitShadowReceive", free);
@@ -1710,7 +2698,14 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         rows.space(2.0);
         float_row(ui, app, rows, "_OutlineEnableLighting", free);
         rows.space(2.0);
-        slot_row(ui, app, rows, "_OutlineWidthMask", Some(lang.pick("マスクと太さ", "Mask & Width")), free);
+        slot_row(
+            ui,
+            app,
+            rows,
+            "_OutlineWidthMask",
+            Some(lang.pick("マスクと太さ", "Mask & Width")),
+            free,
+        );
         inner(rows, |rows| {
             float_row_in(ui, app, rows, "", "_OutlineWidth", Some("Width"), free);
             float_row(ui, app, rows, "_OutlineFixWidth", free);
@@ -1722,17 +2717,60 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 }
 
 fn distance_fade(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
-    if !sub(ui, app, rows, "look.distancefade", "距離フェード", "Distance Fade", Section::DistanceFade) {
+    if !sub(
+        ui,
+        app,
+        rows,
+        "look.distancefade",
+        "距離フェード",
+        "Distance Fade",
+        Section::DistanceFade,
+    ) {
         return;
     }
     let lang = app.lang;
     color_row(ui, app, rows, "_DistanceFadeColor", None, ALPHA, free);
     inner(rows, |rows| {
         let name = "_DistanceFade";
-        vector_part(ui, app, rows, name, 0, lang.pick("開始距離", "Start Distance"), (0.0, 10.0), free);
-        vector_part(ui, app, rows, name, 1, lang.pick("終了距離", "End Distance"), (0.0, 10.0), free);
-        vector_part(ui, app, rows, name, 2, lang.pick("強度", "Strength"), (0.0, 1.0), free);
-        vector_toggle(ui, app, rows, name, 3, lang.pick("裏面を影にする", "Backface Force Shadow"), free);
+        vector_part(
+            ui,
+            app,
+            rows,
+            name,
+            0,
+            lang.pick("開始距離", "Start Distance"),
+            (0.0, 10.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            name,
+            1,
+            lang.pick("終了距離", "End Distance"),
+            (0.0, 10.0),
+            free,
+        );
+        vector_part(
+            ui,
+            app,
+            rows,
+            name,
+            2,
+            lang.pick("強度", "Strength"),
+            (0.0, 1.0),
+            free,
+        );
+        vector_toggle(
+            ui,
+            app,
+            rows,
+            name,
+            3,
+            lang.pick("裏面を影にする", "Backface Force Shadow"),
+            free,
+        );
         choice_prop(ui, app, rows, "_DistanceFadeMode", free);
     });
     rows.space(2.0);
@@ -1805,7 +2843,10 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
         LookChoice::Slot(index) => slot_entries(app, index, free),
         LookChoice::Plane(index, k) => plane_entries(app, index, k, free),
         LookChoice::SpecularMode => {
-            let current = specular_mode(liltoon::on(look, "_ApplySpecular"), liltoon::on(look, "_SpecularToon"));
+            let current = specular_mode(
+                liltoon::on(look, "_ApplySpecular"),
+                liltoon::on(look, "_SpecularToon"),
+            );
             SPECULAR
                 .iter()
                 .enumerate()
@@ -1817,8 +2858,16 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
                 .collect()
         }
         LookChoice::Mirror(prefix) => {
-            let (left, right, flip) = (named(prefix, "IsLeftOnly"), named(prefix, "IsRightOnly"), named(prefix, "ShouldFlipMirror"));
-            let current = mirror_mode(liltoon::on(look, left), liltoon::on(look, right), liltoon::on(look, flip));
+            let (left, right, flip) = (
+                named(prefix, "IsLeftOnly"),
+                named(prefix, "IsRightOnly"),
+                named(prefix, "ShouldFlipMirror"),
+            );
+            let current = mirror_mode(
+                liltoon::on(look, left),
+                liltoon::on(look, right),
+                liltoon::on(look, flip),
+            );
             MIRROR
                 .iter()
                 .enumerate()
@@ -1859,9 +2908,15 @@ fn choice_drawn(name: &str, value: usize) -> bool {
 /// 描かない値の理由（ツールチップ）。
 fn not_drawn_reason(lang: Lang, name: &str) -> &'static str {
     if name.ends_with("UVMode") {
-        lang.pick("描かない（モデルの UV は UV0 だけ。UV0 で読む）", "Not drawn (the model has UV0 only; reads UV0)")
+        lang.pick(
+            "描かない（モデルの UV は UV0 だけ。UV0 で読む）",
+            "Not drawn (the model has UV0 only; reads UV0)",
+        )
     } else if name == "_OutlineVertexR2Width" {
-        lang.pick("描かない（モデルの頂点カラーを持たない）", "Not drawn (the model has no vertex colors)")
+        lang.pick(
+            "描かない（モデルの頂点カラーを持たない）",
+            "Not drawn (the model has no vertex colors)",
+        )
     } else {
         lang.pick("描かない（値は持つ）", "Not drawn (the value is kept)")
     }
@@ -1891,21 +2946,35 @@ fn slot_entries(app: &AppState, index: usize, free: bool) -> Vec<Entry<Action>> 
     v.push(Entry::Separator);
     for c in app.doc.channels() {
         v.push(
-            Entry::item(channel_name(lang, &app.doc, c), set(Some(TextureSource::Channel(c))))
-                .radio(current == Some(TextureSource::Channel(c)))
-                .enabled(free),
+            Entry::item(
+                channel_name(lang, &app.doc, c),
+                set(Some(TextureSource::Channel(c))),
+            )
+            .radio(current == Some(TextureSource::Channel(c)))
+            .enabled(free),
         );
     }
     // チャンネルの選択肢の最後: スロットの名前で新しいチャンネルを作って割り当てる（マットキャップの絵のスロットは描くものではない）
     if let Some(spec) = super::paint_channel_spec(&slot, lang) {
         let made = super::free_name(&app.doc, &spec.name);
-        v.push(new_channel_entry(lang, &made, LookOp::NewChannel { slot: name, plane: None }, free));
+        v.push(new_channel_entry(
+            lang,
+            &made,
+            LookOp::NewChannel {
+                slot: name,
+                plane: None,
+            },
+            free,
+        ));
     }
     v.push(Entry::Separator);
     let packed = match current {
         Some(TextureSource::Packed(p)) => p,
         Some(TextureSource::Channel(c)) => {
-            let scalar = app.doc.channel_info(c).is_some_and(|i| i.kind == ChannelKind::Scalar);
+            let scalar = app
+                .doc
+                .channel_info(c)
+                .is_some_and(|i| i.kind == ChannelKind::Scalar);
             std::array::from_fn(|k| {
                 if scalar && k == 3 {
                     PlaneSource::One
@@ -1919,16 +2988,30 @@ fn slot_entries(app: &AppState, index: usize, free: bool) -> Vec<Entry<Action>> 
         }
         _ => {
             let d = slot.default.rgba();
-            std::array::from_fn(|k| if d[k] > 0.5 { PlaneSource::One } else { PlaneSource::Zero })
+            std::array::from_fn(|k| {
+                if d[k] > 0.5 {
+                    PlaneSource::One
+                } else {
+                    PlaneSource::Zero
+                }
+            })
         }
     };
     v.push(
-        Entry::item(lang.pick("成分ごと", "Per Component"), set(Some(TextureSource::Packed(packed))))
-            .radio(matches!(current, Some(TextureSource::Packed(_))))
-            .enabled(free),
+        Entry::item(
+            lang.pick("成分ごと", "Per Component"),
+            set(Some(TextureSource::Packed(packed))),
+        )
+        .radio(matches!(current, Some(TextureSource::Packed(_))))
+        .enabled(free),
     );
     if slot.usage == SlotUse::Image {
-        let images: Vec<_> = app.shelf.resources().iter().filter(|r| r.kind == "image").collect();
+        let images: Vec<_> = app
+            .shelf
+            .resources()
+            .iter()
+            .filter(|r| r.kind == "image")
+            .collect();
         if !images.is_empty() {
             v.push(Entry::Separator);
         }
@@ -1949,7 +3032,8 @@ fn slot_entries(app: &AppState, index: usize, free: bool) -> Vec<Entry<Action>> 
 fn plane_entries(app: &AppState, index: usize, k: u8, free: bool) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let slot = SLOTS[index];
-    let Some(TextureSource::Packed(planes)) = app.doc.drawn_look().textures.get(slot.name).copied() else {
+    let Some(TextureSource::Packed(planes)) = app.doc.drawn_look().textures.get(slot.name).copied()
+    else {
         return Vec::new();
     };
     let set = |p: PlaneSource| {
@@ -1962,35 +3046,64 @@ fn plane_entries(app: &AppState, index: usize, k: u8, free: bool) -> Vec<Entry<A
     };
     let current = planes[k as usize];
     let mut v = vec![
-        Entry::item("0", set(PlaneSource::Zero)).radio(current == PlaneSource::Zero).enabled(free),
-        Entry::item("1", set(PlaneSource::One)).radio(current == PlaneSource::One).enabled(free),
+        Entry::item("0", set(PlaneSource::Zero))
+            .radio(current == PlaneSource::Zero)
+            .enabled(free),
+        Entry::item("1", set(PlaneSource::One))
+            .radio(current == PlaneSource::One)
+            .enabled(free),
         Entry::Separator,
     ];
     for c in app.doc.channels() {
-        let scalar = app.doc.channel_info(c).is_some_and(|i| i.kind == ChannelKind::Scalar);
+        let scalar = app
+            .doc
+            .channel_info(c)
+            .is_some_and(|i| i.kind == ChannelKind::Scalar);
         let components: &[u8] = if scalar { &[0] } else { &[0, 1, 2, 3] };
         for &component in components {
-            let p = PlaneSource::Channel { channel: c, component };
+            let p = PlaneSource::Channel {
+                channel: c,
+                component,
+            };
             let name = channel_name(lang, &app.doc, c);
-            let label = if scalar { name } else { format!("{name} {}", ["R", "G", "B", "A"][component as usize]) };
+            let label = if scalar {
+                name
+            } else {
+                format!("{name} {}", ["R", "G", "B", "A"][component as usize])
+            };
             v.push(Entry::item(label, set(p)).radio(current == p).enabled(free));
         }
     }
     // 最後: この成分だけの新しいスカラーのチャンネル（名前は描く口と同じ名前に成分の文字）
     if k < 4 {
-        let base = super::paint_channel_spec(&slot, lang).map_or_else(|| slot.label(lang).to_owned(), |spec| spec.name);
-        let made = super::free_name(&app.doc, &format!("{base} {}", ["R", "G", "B", "A"][k as usize]));
-        v.push(new_channel_entry(lang, &made, LookOp::NewChannel { slot: slot.name, plane: Some(k) }, free));
+        let base = super::paint_channel_spec(&slot, lang)
+            .map_or_else(|| slot.label(lang).to_owned(), |spec| spec.name);
+        let made = super::free_name(
+            &app.doc,
+            &format!("{base} {}", ["R", "G", "B", "A"][k as usize]),
+        );
+        v.push(new_channel_entry(
+            lang,
+            &made,
+            LookOp::NewChannel {
+                slot: slot.name,
+                plane: Some(k),
+            },
+            free,
+        ));
     }
     v
 }
 
 /// 「新しいチャンネル」の項目（押すと `made` の名前でチャンネルを作って割り当て、描くチャンネルにする。何が起きるかはツールチップ）。
 fn new_channel_entry(lang: Lang, made: &str, op: LookOp, free: bool) -> Entry<Action> {
-    Entry::item(lang.pick("新しいチャンネル", "New Channel"), look_action(op))
-        .enabled(free)
-        .tooltip(lang.pick(
-            format!("「{made}」を作って割り当てる（描くチャンネルにもなる）"),
-            format!("Creates and assigns \"{made}\", and makes it the channel to paint"),
-        ))
+    Entry::item(
+        lang.pick("新しいチャンネル", "New Channel"),
+        look_action(op),
+    )
+    .enabled(free)
+    .tooltip(lang.pick(
+        format!("「{made}」を作って割り当てる（描くチャンネルにもなる）"),
+        format!("Creates and assigns \"{made}\", and makes it the channel to paint"),
+    ))
 }

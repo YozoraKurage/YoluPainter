@@ -518,15 +518,27 @@ pub enum Unrepresented {
     /// 色つきの筆はアルファだけを筆先にした（描画色で塗る）。
     ColorTipAsMask,
     /// セルの選び方（筆圧・角度・速さ・傾き）は無く、ランダムにした。
-    HoseSelection { mode: String },
+    HoseSelection {
+        mode: String,
+    },
     /// 多次元のホースを 1 列のセルにした。
-    HoseDimensions { dim: String },
+    HoseDimensions {
+        dim: String,
+    },
     /// 宣言したセル数よりファイルのセルが少なく、あるだけで使った。
-    HoseShort { declared: u32, present: u32 },
+    HoseShort {
+        declared: u32,
+        present: u32,
+    },
     /// ブラシの後ろにデータが残っていた（古い .gpb の色つき模様は未対応）。
-    GbrTrailingData { bytes: usize },
+    GbrTrailingData {
+        bytes: usize,
+    },
     /// 円以外・スパイクの形を筆先の画像に描いた（縁が GIMP と少し違う）。
-    VbrShapeRendered { shape: VbrShape, spikes: u32 },
+    VbrShapeRendered {
+        shape: VbrShape,
+        spikes: u32,
+    },
 
     // Photoshop
     /// 16 bit の筆先を 8 bit に落とした。
@@ -551,7 +563,10 @@ pub enum Unrepresented {
     /// 描画色/背景色のコントロールは無く、ランダムに混ぜるだけ。
     ForegroundBackgroundControl(ControlKind),
     /// フェードの長さが範囲外で、外した。
-    FadeRange { setting: Setting, steps: f64 },
+    FadeRange {
+        setting: Setting,
+        steps: f64,
+    },
     /// 1 軸だけの散布は無く、両方の軸へ散る。
     ScatterOneAxis,
     /// 数のゆらぎは無い。

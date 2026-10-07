@@ -1,8 +1,8 @@
-//! ブラシの一覧（クリスタのサブツールに当たる）と、道具ごとに最後に使ったブラシの覚え。
+//! ブラシの一覧（クリスタのサブツールに当たる）と、ツールごとに最後に使ったブラシの覚え。
 //!
 //! 一覧の 1 つ（`Entry`）は名前・グループ・設定の元（`baseline`）と、変えたままの設定（`edited`）を持つ。組み込みは消せない元で、
 //! 利用者のブラシは設定のフォルダに 1 つ 1 ファイルで保存する（`store`）。今のブラシの設定は、これまでどおり `AppState::brush` と
-//! `AppState::m2.brush`（スライダーやオプションバーがその場で変える）が持ち、一覧はそれとの差だけを見る: 別のブラシへ替える・道具を
+//! `AppState::m2.brush`（スライダーやオプションバーがその場で変える）が持ち、一覧はそれとの差だけを見る: 別のブラシへ替える・ツールを
 //! 替えるときに今の設定を一覧の側へ書き戻し（`brush_sync`）、替えた先の設定を今の設定へ写す（`brush_load`）。
 //! 手ぶれ補正と入り抜き（`assist`）・対称・ステンシル・背景色・乱数の種は描き手の設定なので、ブラシには入れない（替えても残る）。
 //! ブラシの設定は文書ではない（Undo に入れない）。ストロークの最中は、ブラシを替える操作を断る。
@@ -26,6 +26,7 @@ use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMi
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
+use crate::toolset::{GroupId, SlotId};
 
 pub use gaps::Gap;
 use yolu_io::brushes::SutMapped;
@@ -126,7 +127,7 @@ impl Group {
         }
     }
 
-    /// 消しゴムの道具（E）で使うグループ。
+    /// 消しゴムのツール（E）で使うグループ。
     pub fn is_eraser(self) -> bool {
         self == Group::Eraser
     }
@@ -337,27 +338,37 @@ impl IdSource {
     }
 }
 
-/// 一覧の全体（並びは全グループをまたぐ 1 本の列。画面は今のグループのものだけを、この並びで出す）。
+/// 一覧の全体（組み込みの全部と、読んだ利用者のブラシのファイルの全部）。並び（どのツールのどのグループに、どの順で出すか）はツールの並び
+/// （`toolset`）が持ち、ここは中身と今のブラシだけ。並びから外したブラシのファイルもここに残る（「＋」のウィンドウから戻せる）。
 pub struct BrushLibrary {
     entries: Vec<Entry>,
     current: BrushKey,
-    /// 道具ごとの一覧で選んでいるブラシ（[ブラシの一覧, 消しゴムの一覧]。道具を替えると、その道具の一覧の選びへ戻る）。
-    last: [BrushKey; 2],
     /// 次に付ける利用者のブラシの番号。
     ids: IdSource,
 }
 
-/// ドラッグの落とす先。
+/// ドラッグの落とす先（グループの中）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DropAt {
-    /// このブラシの前（同じグループの中）。
+    /// このブラシの前。
     Before(BrushKey),
     /// グループの一番後ろ。
     End,
 }
 
+impl DropAt {
+    /// 並びの操作に渡す「この前」（一番後ろなら None）。
+    pub fn before(self) -> Option<BrushKey> {
+        match self {
+            DropAt::Before(key) => Some(key),
+            DropAt::End => None,
+        }
+    }
+}
+
 impl BrushLibrary {
-    /// 組み込みと、読んだ利用者のブラシ。`order` に載っているものを先頭からその順に、載っていないものを元の並びで後ろに。
+    /// 組み込みと、読んだ利用者のブラシ。`order` に載っているものを先頭からその順に、載っていないものを元の並びで後ろに（ツールの並びの
+    /// ファイルが無いとき、今までの並び `order.conf` から最初の並びを作るのに使う）。
     pub fn new(users: Vec<UserBrush>, order: &[BrushKey]) -> BrushLibrary {
         let mut entries: Vec<Entry> = builtin::all()
             .iter()
@@ -393,11 +404,9 @@ impl BrushLibrary {
             }
         }
         ordered.extend(entries);
-        let standard = BrushKey::Builtin(builtin::STANDARD);
         BrushLibrary {
             entries: ordered,
-            current: standard,
-            last: [standard, BrushKey::Builtin(builtin::STANDARD_ERASER)],
+            current: BrushKey::Builtin(builtin::STANDARD),
             ids,
         }
     }
@@ -417,6 +426,7 @@ impl BrushLibrary {
         self.ids.take(taken)
     }
 
+    /// 全部のブラシ（並びとは関係ない順。組み込みが先で、利用者のブラシは読んだ・作った順）。
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
@@ -434,76 +444,25 @@ impl BrushLibrary {
         self.current
     }
 
-    /// 今のグループのブラシ（一覧の並び）。
-    pub fn in_group(&self, group: Group) -> Vec<&Entry> {
-        self.entries.iter().filter(|e| e.group == group).collect()
-    }
-
-    /// 道具（消しゴムか）で最後に使ったブラシ。
-    pub fn last_for(&self, eraser: bool) -> BrushKey {
-        self.last[eraser as usize]
-    }
-
-    /// 全体の並び（保存する）。
-    pub fn order(&self) -> Vec<BrushKey> {
-        self.entries.iter().map(|e| e.key).collect()
-    }
-
     pub fn user_count(&self) -> usize {
         self.entries.iter().filter(|e| e.key.is_user()).count()
     }
 
     /// 今のブラシの設定が元と違うか（`live` は今の設定）。ほかのブラシは覚えている変更で見る。
     pub fn is_modified(&self, key: BrushKey, live: &Brush) -> bool {
-        match self.entry(key) {
-            Some(e) if key == self.current => *live != e.baseline,
-            Some(e) => e.edited.is_some(),
-            None => false,
-        }
-    }
-
-    /// `key` を `at` へ動かす（同じグループの中だけ。動かしたら true）。
-    pub fn move_entry(&mut self, key: BrushKey, at: DropAt) -> bool {
-        let Some(from) = self.entries.iter().position(|e| e.key == key) else {
-            return false;
-        };
-        let group = self.entries[from].group;
-        if let DropAt::Before(target) = at {
-            if target == key || self.entry(target).map(|e| e.group) != Some(group) {
-                return false;
-            }
-        }
-        let before = self.order();
-        let entry = self.entries.remove(from);
-        let to = match at {
-            DropAt::Before(target) => self
-                .entries
-                .iter()
-                .position(|e| e.key == target)
-                .unwrap_or(0),
-            DropAt::End => self
-                .entries
-                .iter()
-                .rposition(|e| e.group == group)
-                .map_or(self.entries.len(), |i| i + 1),
-        };
-        self.entries.insert(to, entry);
-        self.order() != before
+        crate::userfiles::is_modified(
+            self.entry(key).map(|e| (&e.baseline, e.edited.is_some())),
+            key == self.current,
+            live,
+        )
     }
 
     fn unused_name(&self, base: &str) -> String {
-        let taken = |name: &str| {
+        crate::userfiles::unused_name(base, |name| {
             self.entries
                 .iter()
                 .any(|e| e.key.is_user() && e.name == name)
-        };
-        if !taken(base) {
-            return base.to_owned();
-        }
-        (2..)
-            .map(|n| format!("{base} {n}"))
-            .find(|name| !taken(name))
-            .expect("名前は尽きない")
+        })
     }
 }
 
@@ -518,7 +477,7 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
+/// 詳細のウィンドウのカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     Shape,
@@ -585,7 +544,7 @@ impl Category {
     }
 }
 
-/// ブラシの詳細の窓の状態（開いているか・カテゴリ・位置・スクロール）。
+/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・位置・スクロール）。
 pub struct DetailWindow {
     pub open: bool,
     pub category: Category,
@@ -610,17 +569,8 @@ impl Default for DetailWindow {
     }
 }
 
-/// 一覧の行のドラッグ（動かしているブラシと、今の落とす先）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BrushDrag {
-    pub key: BrushKey,
-    pub target: Option<DropAt>,
-}
-
 /// ブラシの画面だけの状態。
 pub struct BrushUi {
-    /// 一覧に出しているグループ。
-    pub group: Group,
     pub list_scroll: f32,
     pub list_content: f32,
     /// 次に一覧を描くとき、今のブラシの行が見えるところまでスクロールする（ブラシが替わったとき）。
@@ -631,7 +581,6 @@ pub struct BrushUi {
     /// 名前を変えているブラシと、入力欄がフォーカスを取った後か。
     pub renaming: Option<BrushKey>,
     pub rename_started: bool,
-    pub drag: Option<BrushDrag>,
     /// 右クリックのメニューの対象。
     pub context: Option<BrushKey>,
     pub detail: DetailWindow,
@@ -642,7 +591,6 @@ pub struct BrushUi {
 impl Default for BrushUi {
     fn default() -> Self {
         BrushUi {
-            group: Group::Pen,
             list_scroll: 0.0,
             list_content: 0.0,
             reveal: false,
@@ -650,7 +598,6 @@ impl Default for BrushUi {
             panel_content: 0.0,
             renaming: None,
             rename_started: false,
-            drag: None,
             context: None,
             detail: DetailWindow::default(),
             list_rect: None,
@@ -664,13 +611,17 @@ pub struct BrushesState {
     pub store: Option<store::BrushStore>,
     /// 起動のとき読めなかったブラシのファイル。
     pub problems: Vec<store::Problem>,
+    /// 起動のときフォルダにあった利用者のブラシのファイルの番号の最大（読めなかった物も。ツールの並びのファイルに書く）。
+    pub loaded_through: u32,
+    /// 起動のとき、フォルダにあるのに読み込まなかった利用者のブラシのファイルの番号（ツールの並びが、その札を消さずに覚える）。
+    pub unloaded: std::collections::HashSet<u32>,
     pub ui: BrushUi,
     pub samples: sample::SampleCache,
     /// ファイルの取り込み（裏のスレッドの仕事）。
     pub import: import::ImportState,
-    /// 詳細の窓の筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
+    /// 詳細のウィンドウの筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
     pub krita: krita::KritaTips,
-    /// 取り込みの窓の「CLIP STUDIO から」。
+    /// 取り込みのウィンドウの「CLIP STUDIO から」。
     pub csp: clipstudio::CspState,
     /// 入り抜き・手ぶれ補正を持つブラシを選んでいる間、そのブラシへ替える前の描き手の設定を覚えておく場所（持たないブラシへ替えたら戻す）。
     pub drawer_assist: Option<StrokeAssist>,
@@ -682,6 +633,8 @@ impl Default for BrushesState {
             lib: BrushLibrary::new(Vec::new(), &[]),
             store: None,
             problems: Vec::new(),
+            loaded_through: 0,
+            unloaded: std::collections::HashSet::new(),
             ui: BrushUi::default(),
             samples: sample::SampleCache::default(),
             import: import::ImportState::default(),
@@ -695,33 +648,49 @@ impl Default for BrushesState {
 /// 一覧の操作（メニュー・ボタン・右クリックから）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum BrushAction {
-    /// このブラシに替える（道具も、そのブラシの道具になる）。
+    /// このブラシに替える（ツールも、そのブラシのあるツールになる）。並びに無いブラシ（ライブラリから）は、今のグループの後ろへ置いてから。
     Select(BrushKey),
-    /// 今の設定を新しいブラシとして、今のブラシのグループの一番後ろへ足す。
+    /// 今の設定を新しいブラシとして、今のグループの一番後ろへ足す。
     Add,
-    /// このブラシ（今のブラシなら今の設定）を、すぐ後ろへ複製する。
+    /// このブラシ（今のブラシなら今の設定）の写しを、すぐ後ろへ作る。
     Duplicate(BrushKey),
+    /// 並びから外す（利用者のブラシのファイルは消さない。「＋」のウィンドウから戻せる）。
     Delete(BrushKey),
     StartRename(BrushKey),
+    /// 名前を変える（組み込みは、その場でファイルの写しに替えてから）。
     Rename(BrushKey, String),
+    /// 同じグループの中で動かす。
     Move {
         key: BrushKey,
         at: DropAt,
     },
+    /// グループ `group` の `at` へ動かす（別のグループ・別のツールへも）。`copy` なら写しを置く（元は動かない）。
+    Place {
+        key: BrushKey,
+        group: crate::toolset::GroupId,
+        at: DropAt,
+        copy: bool,
+    },
+    /// 「＋」のウィンドウで選んだ物を、今のグループの後ろへ置く（並びにある物は写しを作る）。
+    AddFrom(Vec<crate::toolset::catalog::CatalogItem>),
+    /// 利用者のブラシのファイルを消す前に確かめる（ウィンドウの頼み）。
+    DeleteFileDialog(BrushKey),
+    /// 利用者のブラシのファイルを消す（並びからも外す）。
+    DeleteFile(BrushKey),
     /// 元の設定へ戻す。
     Revert(BrushKey),
-    /// 今の設定を、そのブラシの元として登録する（利用者のブラシだけ）。
+    /// 今の設定を、そのブラシの元として登録する（組み込みは、その場でファイルの写しに替えてから）。
     Register(BrushKey),
-    /// 取り込むファイルを選ぶ窓を開く。
+    /// 取り込むファイルを選ぶウィンドウを開く。
     ImportDialog,
     /// これらのファイルのブラシを取り込む（裏のスレッドで読んで置く）。
     Import(Vec<PathBuf>),
     /// 取り込みをやめる（置いた分は残る）。
     ImportCancel,
-    /// 「CLIP STUDIO から」の窓を開く（CLIP STUDIO のサブツールのフォルダを探す。読むだけ）。
+    /// 「CLIP STUDIO から」のウィンドウを開く（CLIP STUDIO のサブツールのフォルダを探す。読むだけ）。
     ClipStudioOpen,
     ClipStudioClose,
-    /// フォルダを手で選ぶ窓を頼む。
+    /// フォルダを手で選ぶウィンドウを頼む。
     ClipStudioPickFolder,
     /// 手で選んだフォルダを探す。
     ClipStudioFolder(PathBuf),
@@ -733,6 +702,16 @@ pub enum BrushAction {
     ClipStudioSelectAll(bool),
     /// 選んだ行を取り込む。
     ClipStudioImport,
+}
+
+/// 新しい利用者のブラシの中身。
+pub(crate) struct NewBrush {
+    pub name: String,
+    /// 元のグループ（ファイルの `group=`。最初の並びに戻すときの置き場）。
+    pub group: Group,
+    pub baseline: Brush,
+    pub import: Option<ImportMeta>,
+    pub assist: Option<StrokeAssist>,
 }
 
 impl AppState {
@@ -800,31 +779,34 @@ impl AppState {
     }
 
     fn brush_refuse(&mut self) {
-        self.message = self
-            .lang
-            .pick("描いている間はできません。", "Not while drawing.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            crate::lang::refusals::during_stroke(self.lang),
+        );
     }
 
-    /// 取り込みの仕事が走っている間は、ブラシの数・名前・画像を変える操作（追加・複製・削除・登録）を断る。取り込みは始めに取った
-    /// 空きの数と名前で置き、置く画像をほかのブラシが指しているかどうかで画像の掃除が決まるので、同じときに変えると、数の上限を
+    /// 取り込みの仕事が走っている間は、ブラシの数・名前・画像・並びを変える操作（追加・複製・削除・登録・並べ替え）を断る。取り込みは
+    /// 始めに取った空きの数と名前で置き、置く画像をほかのブラシが指しているかどうかで画像の掃除が決まるので、同じときに変えると、数の上限を
     /// 超えたり、置いたブラシが指す画像を消したりする。断ったなら true。
-    fn brush_refuse_while_importing(&mut self) -> bool {
+    pub(crate) fn brush_refuse_while_importing(&mut self) -> bool {
         if !self.brushes.import.is_busy() {
             return false;
         }
-        self.message = self
-            .lang
-            .pick("ブラシを取り込み中です。", "Importing brushes.")
-            .into();
+        self.refuse(
+            crate::notice::Source::Brush,
+            self.lang
+                .pick("ブラシを取り込み中です。", "Importing brushes."),
+        );
         true
     }
 
-    fn brush_notice(&mut self, ja: String, en: String) {
-        self.message = self.lang.pick(ja, en);
+    fn brush_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
+        let text = self.lang.pick(ja, en);
+        self.notify(kind, crate::notice::Source::Brush, text);
     }
 
-    /// 設定のフォルダのブラシを読んで一覧に入れる（起動のとき 1 回）。読めなかったファイルは読み飛ばし、理由を残す。
+    /// 設定のフォルダのブラシを読んで一覧に入れる（起動のとき 1 回）。読めなかったファイルは読み飛ばし、理由を残す。続けて、並び（どのツールの
+    /// どのグループに出すか）を隣の `tools.json` から読む（`attach_toolset`。無ければ、ここで読んだ `order.conf` の順から作る）。
     pub fn attach_brush_store(&mut self, dir: PathBuf) {
         let report = store::load_all(&dir);
         let order: Vec<BrushKey> = report
@@ -836,8 +818,22 @@ impl AppState {
         if let Some(id) = report.max_file_id {
             self.brushes.lib.reserve_ids_through(id);
         }
-        self.brushes.store = Some(store::BrushStore::new(dir));
+        self.brushes.loaded_through = report.max_file_id.unwrap_or(0);
+        self.brushes.unloaded = report.unloaded.iter().copied().collect();
+        self.brushes.store = Some(store::BrushStore::new(dir.clone()));
         self.brushes.problems = report.problems;
+        // ツールの並びは、ブラシのフォルダの隣（設定のフォルダの直下）の tools.json
+        match dir.parent() {
+            Some(parent) => {
+                self.attach_toolset(parent.join(crate::toolset::file::FILE_NAME));
+            }
+            None => {
+                self.toolset.set = crate::toolset::ToolSet::initial(
+                    self.brushes.lib.entries().iter().map(|e| (e.key, e.group)),
+                );
+                self.toolset_follow_current();
+            }
+        }
         self.brush_sync();
     }
 
@@ -846,12 +842,16 @@ impl AppState {
         let problems = &self.brushes.problems;
         let first = problems.first()?;
         let lang = self.lang;
-        let one = format!("{}: {}", first.file, first.describe(lang));
-        Some(if problems.len() == 1 {
+        let file = lang.quote(&first.file);
+        let one = lang.with_reason(
             lang.pick(
-                format!("ブラシを読めません。{one}"),
-                format!("Cannot read a brush. {one}"),
-            )
+                format!("ブラシのファイル{file}を読めません"),
+                format!("Cannot read the brush file {file}"),
+            ),
+            first.describe(lang),
+        );
+        Some(if problems.len() == 1 {
+            one
         } else {
             lang.pick(
                 format!("ブラシを {} 件読めません。{one}", problems.len()),
@@ -883,70 +883,50 @@ impl AppState {
             Err(e) => {
                 let reason = e.describe(self.lang);
                 self.brush_notice(
-                    format!("ブラシを保存できません: {reason}"),
-                    format!("Cannot save the brush: {reason}"),
+                    crate::notice::Kind::Error,
+                    Lang::Ja.with_reason("ブラシを保存できません", &reason),
+                    Lang::En.with_reason("Cannot save the brush", &reason),
                 );
                 false
             }
         }
     }
 
-    fn brush_persist_order(&mut self) -> bool {
-        let tokens: Vec<String> = self.brushes.lib.order().iter().map(|k| k.token()).collect();
-        let result = match &self.brushes.store {
-            Some(store) => store.save_order(&tokens),
-            None => return true,
-        };
-        match result {
-            Ok(()) => true,
-            Err(e) => {
-                let reason = e.describe(self.lang);
-                self.brush_notice(
-                    format!("ブラシの並びを保存できません: {reason}"),
-                    format!("Cannot save the brush order: {reason}"),
-                );
-                false
-            }
-        }
-    }
-
-    /// 道具をブラシか消しゴムへ替えるときの、ブラシの切り替え（道具ごとに最後のブラシへ。今のブラシがもう同じ道具のものなら
-    /// そのまま）。ストロークの最中に道具が替わるなら false（断って、何も変えない）。
-    pub fn brush_for_tool(&mut self, tool: Tool) -> bool {
+    /// ツールをブラシか消しゴムのツールへ替えるときの、ブラシの切り替え（そのツールの最後のブラシへ。今のブラシがもうそのツールのものなら
+    /// そのまま。ブラシの無いツールなら今のブラシのまま）。ストロークの最中にブラシが替わるなら false（断って、何も変えない）。
+    pub(crate) fn brush_for_slot(&mut self, tool: Tool, slot: Option<SlotId>) -> bool {
         if !tool.paints() {
             return true;
         }
-        let eraser = tool.erases();
-        let current_eraser = self
-            .brushes
-            .lib
-            .entry(self.brushes.lib.current)
-            .is_some_and(|e| e.group.is_eraser());
-        if current_eraser == eraser {
+        let Some(slot) = slot else {
+            return true;
+        };
+        let set = &self.toolset.set;
+        if set.slot_of(self.brushes.lib.current) == Some(slot) {
             return true;
         }
+        let Some(key) = set.pick_for(slot) else {
+            return true;
+        };
         if self.is_stroking() {
             self.brush_refuse();
             return false;
         }
         self.brush_sync();
-        let key = self.brushes.lib.last_for(eraser);
         self.brush_activate(key);
         true
     }
 
-    /// `key` の設定を今の設定にして、今のブラシ・道具ごとの覚え・出すグループを替える（道具は替えない）。
+    /// `key` の設定を今の設定にして、今のブラシ・ツールごとの覚え・出すグループを替える（ツールは替えない）。
     fn brush_activate(&mut self, key: BrushKey) {
         let Some(entry) = self.brushes.lib.entry(key) else {
             return;
         };
-        let (group, brush, carried) = (entry.group, entry.effective().clone(), entry.assist);
+        let (brush, carried) = (entry.effective().clone(), entry.assist);
         self.brush_load(&brush);
         self.brush_apply_carried_assist(carried);
-        let lib = &mut self.brushes.lib;
-        lib.current = key;
-        lib.last[group.is_eraser() as usize] = key;
-        self.brushes.ui.group = group;
+        self.brushes.lib.current = key;
+        self.toolset.set.note_used(key);
         self.brushes.ui.reveal = true;
         self.m2.preset = m2::presets()
             .iter()
@@ -978,106 +958,505 @@ impl AppState {
         }
     }
 
-    /// ブラシに合わせて道具を替える（消しゴムのグループなら消しゴム、それ以外は描く道具）。
-    fn brush_follow_tool(&mut self, group: Group) {
-        let tool = if group.is_eraser() {
-            Tool::Eraser
-        } else {
-            Tool::Brush
+    /// ブラシのあるツールへ替える（消しゴムのツールの中のブラシなら消しゴムのツール）。
+    fn brush_follow_slot(&mut self, slot: Option<SlotId>) {
+        let Some(slot) = slot else {
+            return;
+        };
+        let Some(tool) = self.toolset.set.slot(slot).map(|s| s.tool) else {
+            return;
         };
         if self.tool != tool {
-            // `switch_tool` は `brush_for_tool` と互いに呼び合うので通らない。離れる道具の変えたままの設定を一覧へ書き戻す
-            // （入る道具はブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
+            // `switch_tool` は `brush_for_slot` と互いに呼び合うので通らない。離れるツールの変えたままの設定を一覧へ書き戻す
+            // （入るツールはブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
             self.subtool_leave(self.tool);
             self.sel_tool_changed();
             self.tool = tool;
         }
+        self.toolset.set.set_active(Some(slot));
+    }
+
+    /// 新しいブラシを置くグループ（今のツールの出しているグループ。今のツールがブラシを持たなければ今のブラシのグループ、それも無ければ
+    /// ペンのグループか最初のブラシのツールの先頭のグループ）。
+    pub(crate) fn brush_target_group(&mut self) -> Option<GroupId> {
+        let set = &self.toolset.set;
+        if let Some(slot) = set.active_slot().filter(|s| s.holds_brushes()) {
+            if let Some(group) = set.shown_group(slot.id) {
+                return Some(group);
+            }
+        }
+        if let Some(group) = set.group_of(self.brushes.lib.current) {
+            return Some(group);
+        }
+        if set.locked.is_some() {
+            return None;
+        }
+        self.toolset.set.builtin_group_or_first(Group::Pen)
+    }
+
+    /// グループ `group` に置く新しいファイルの元のグループ（消しゴムのツールの中なら消しゴム。ほかは `own`、それが消しゴムならペン）。
+    fn brush_origin_for(&self, group: GroupId, own: Group) -> Group {
+        let erases = self
+            .toolset
+            .set
+            .group(group)
+            .is_some_and(|(s, _)| s.tool.erases());
+        match (erases, own.is_eraser()) {
+            (true, _) => Group::Eraser,
+            (false, true) => Group::Pen,
+            (false, false) => own,
+        }
+    }
+
+    /// 並びを変えられるか（新しい版・読めなかった並びのファイルなら断って false）。
+    fn brush_layout_open(&mut self) -> bool {
+        match self.toolset.set.lock_refusal() {
+            Some(r) => {
+                self.toolset_refuse(r);
+                false
+            }
+            None => true,
+        }
+    }
+
+    /// グループに、あと `n` 個置けるか（置けなければ断って false）。
+    fn brush_group_has_room(&mut self, group: GroupId, n: usize) -> bool {
+        let len = self
+            .toolset
+            .set
+            .group(group)
+            .map_or(0, |(_, g)| g.file_len());
+        if len + n > crate::toolset::MAX_GROUP_BRUSHES {
+            self.toolset_refuse(crate::toolset::Refusal::TooManyBrushes);
+            return false;
+        }
+        true
+    }
+
+    /// 新しい利用者のブラシを一覧に足す（ファイルは書かない。呼ぶ側が `brush_persist`。並びにも置かない）。数・番号を使い切っていれば
+    /// 断って None。
+    pub(crate) fn brush_new_user(&mut self, new: NewBrush) -> Option<BrushKey> {
+        if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
+            self.brush_notice(
+                crate::notice::Kind::Refusal,
+                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
+                format!("At most {MAX_USER_BRUSHES} brushes."),
+            );
+            return None;
+        }
+        let lang = self.lang;
+        let base = clean_name(&new.name).unwrap_or_else(|| lang.pick("ブラシ", "Brush").into());
+        let store = self.brushes.store.as_ref();
+        let lib = &mut self.brushes.lib;
+        // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
+        let Some(id) = lib.take_id(|id| store.is_some_and(|s| s.is_taken(id))) else {
+            self.brush_notice(
+                crate::notice::Kind::Refusal,
+                "ブラシの番号を使い切りました。".into(),
+                "Out of brush numbers.".into(),
+            );
+            return None;
+        };
+        let name = lib.unused_name(&base);
+        let key = BrushKey::User(id);
+        lib.entries.push(Entry {
+            key,
+            name,
+            group: new.group,
+            baseline: canonical(&new.baseline),
+            edited: None,
+            import: new.import,
+            assist: carried_assist(new.assist),
+        });
+        Some(key)
+    }
+
+    /// `source` の写しのファイルを作る（今のブラシなら今の設定、ほかは変えたままの設定も含めた今使う設定。`pristine` なら元の設定）。
+    /// 名前は `name`（重なれば番号を付ける）。グループ `group` に置く前提で、元のグループを決める。
+    fn brush_copy_of(
+        &mut self,
+        source: BrushKey,
+        name: String,
+        group: GroupId,
+        pristine: bool,
+    ) -> Option<BrushKey> {
+        let live_assist = self.m2.brush.assist;
+        let current = source == self.brushes.lib.current;
+        if current && !pristine {
+            self.brush_sync();
+        }
+        let entry = self.brushes.lib.entry(source).cloned()?;
+        let assist = entry.assist.and_then(|own| {
+            carried_assist(Some(if current && !pristine {
+                live_assist
+            } else {
+                own
+            }))
+        });
+        let baseline = if pristine {
+            entry.baseline.clone()
+        } else {
+            entry.effective().clone()
+        };
+        let origin = self.brush_origin_for(group, entry.group);
+        self.brush_new_user(NewBrush {
+            name,
+            group: origin,
+            baseline,
+            // 写しは元の出どころと表せなかった項目を引き継ぐ（模様のブラシの写しは、模様の一覧に重ねて並べない）
+            import: entry.import.map(|m| ImportMeta {
+                pattern: false,
+                ..m
+            }),
+            assist,
+        })
     }
 
     /// 新しい利用者のブラシを足して、それに替える。`from` が None なら今の設定を「ブラシ N」として今のグループの一番後ろへ、
-    /// Some なら、そのブラシ（今のブラシなら今の設定）の複製をすぐ後ろへ。
+    /// Some なら、そのブラシ（今のブラシなら今の設定）の写しをすぐ後ろへ。
     fn brush_create(&mut self, from: Option<BrushKey>) {
         if self.is_stroking() {
             return self.brush_refuse();
         }
-        if self.brush_refuse_while_importing() {
+        if self.brush_refuse_while_importing() || !self.brush_layout_open() {
             return;
-        }
-        if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
-            return self.brush_notice(
-                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
-                format!("At most {MAX_USER_BRUSHES} brushes."),
-            );
         }
         let lang = self.lang;
         self.brush_sync();
-        let live_assist = self.m2.brush.assist;
         let source_key = from.unwrap_or(self.brushes.lib.current);
         let Some(source) = self.brushes.lib.entry(source_key).cloned() else {
             return;
         };
-        let base = match from {
+        let placed_after = from.filter(|k| self.toolset.set.contains(*k));
+        let group = match placed_after.and_then(|k| self.toolset.set.group_of(k)) {
+            Some(g) => g,
+            None => match self.brush_target_group() {
+                Some(g) => g,
+                None => return,
+            },
+        };
+        if !self.brush_group_has_room(group, 1) {
+            return;
+        }
+        let name = match from {
             None => lang.pick("ブラシ", "Brush").to_owned(),
             Some(_) => lang.pick(
                 format!("{} のコピー", source.name_in(lang)),
                 format!("{} copy", source.name_in(lang)),
             ),
         };
-        let base = clean_name(&base).unwrap_or_else(|| lang.pick("ブラシ", "Brush").into());
-        let new_assist = source.assist.and_then(|own| {
-            let current = source_key == self.brushes.lib.current;
-            carried_assist(Some(if current { live_assist } else { own }))
+        let key = match from {
+            Some(_) => self.brush_copy_of(source_key, name.clone(), group, false),
+            None => {
+                // 今の設定からの追加は、利用者が作ったブラシ（出どころは持たない）
+                let live_assist = self.m2.brush.assist;
+                let assist = source
+                    .assist
+                    .and_then(|_| carried_assist(Some(live_assist)));
+                let origin = self.brush_origin_for(group, source.group);
+                self.brush_new_user(NewBrush {
+                    name,
+                    group: origin,
+                    baseline: source.effective().clone(),
+                    import: None,
+                    assist,
+                })
+            }
+        };
+        let Some(key) = key else {
+            return;
+        };
+        // すぐ後ろ（写し）か、グループの一番後ろ
+        let before = placed_after.and_then(|k| {
+            let (_, g) = self.toolset.set.group(group)?;
+            let at = g.brushes.iter().position(|b| *b == k)?;
+            g.brushes.get(at + 1).copied()
         });
-        let store = self.brushes.store.as_ref();
-        let lib = &mut self.brushes.lib;
-        // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
-        let Some(id) = lib.take_id(|id| store.is_some_and(|s| s.is_taken(id))) else {
-            return self.brush_notice(
-                "ブラシの番号を使い切りました。".into(),
-                "Out of brush numbers.".into(),
-            );
-        };
-        let name = lib.unused_name(&base);
-        let key = BrushKey::User(id);
-        let after = |lib: &BrushLibrary, pred: &dyn Fn(&Entry) -> bool| {
-            lib.entries
-                .iter()
-                .rposition(pred)
-                .map_or(lib.entries.len(), |i| i + 1)
-        };
-        let at = match from {
-            None => after(lib, &|e| e.group == source.group),
-            Some(_) => after(lib, &|e| e.key == source_key),
-        };
-        lib.entries.insert(
-            at,
-            Entry {
-                key,
-                name: name.clone(),
-                group: source.group,
-                baseline: source.effective().clone(),
-                edited: None,
-                // 複製は元の出どころと表せなかった項目を引き継ぐ（模様のブラシの複製は、模様の一覧に重ねて並べない）。
-                // 今の設定からの追加は、利用者が作ったブラシ
-                import: from.and(source.import.clone()).map(|m| ImportMeta {
-                    pattern: false,
-                    ..m
-                }),
-                // 入り抜き・手ぶれ補正を持つブラシの複製・追加は、その値を引き継ぐ（今のブラシからなら、選んでいる間に変えた今の値）
-                assist: new_assist,
-            },
-        );
+        if self.toolset.set.insert_brush(key, group, before).is_err() {
+            return;
+        }
         self.brush_activate(key);
-        self.brush_follow_tool(source.group);
+        self.brush_follow_slot(self.toolset.set.slot_of(key));
+        let name = self
+            .brushes
+            .lib
+            .entry(key)
+            .map(|e| e.name.clone())
+            .unwrap_or_default();
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.brush_notice(
+            crate::notice::Kind::Info,
             format!("ブラシを追加しました: {name}"),
             format!("Brush added: {name}"),
         );
         // ブラシのファイルを書けなかったなら、並びは書かない（同じ理由で書けず、知らせを上書きするだけ）
         if self.brush_persist(key) {
-            self.brush_persist_order();
+            self.toolset_persist();
         }
+    }
+
+    /// 並びから外れた・今のツールの外へ動いたブラシがあったあと: 今のブラシが今のツールの中に無くなったら、今のツールのブラシへ替える
+    /// （今のツールにブラシが 1 つも無ければ、今のブラシのまま）。
+    pub(crate) fn brush_after_unplaced(&mut self) {
+        let Some(active) = self.toolset.set.active_slot().map(|s| s.id) else {
+            return;
+        };
+        if !self
+            .toolset
+            .set
+            .slot(active)
+            .is_some_and(|s| s.holds_brushes())
+        {
+            return;
+        }
+        if self.toolset.set.slot_of(self.brushes.lib.current) == Some(active) {
+            return;
+        }
+        if let Some(key) = self.toolset.set.pick_for(active) {
+            self.brush_sync();
+            self.brush_activate(key);
+        }
+    }
+
+    /// 並びにある組み込み `key` を、同じ場所の利用者のブラシのファイルの写しに替える（名前を変える・この設定で登録するとき）。
+    /// `register` なら変えたままの設定を元にし、ほかは元の設定のまま変えたままの設定を引き継ぐ。替えた印。
+    fn brush_convert_builtin(
+        &mut self,
+        key: BrushKey,
+        name: String,
+        register: bool,
+    ) -> Option<BrushKey> {
+        if key.is_user() || !self.toolset.set.contains(key) {
+            return None;
+        }
+        if self.brush_refuse_while_importing() || !self.brush_layout_open() {
+            return None;
+        }
+        let current = self.brushes.lib.current == key;
+        if current {
+            self.brush_sync();
+        }
+        let entry = self.brushes.lib.entry(key).cloned()?;
+        let group = self.toolset.set.group_of(key)?;
+        let origin = self.brush_origin_for(group, entry.group);
+        let (baseline, edited) = if register {
+            (entry.effective().clone(), None)
+        } else {
+            (entry.baseline.clone(), entry.edited.clone())
+        };
+        let new = self.brush_new_user(NewBrush {
+            name,
+            group: origin,
+            baseline,
+            import: None,
+            assist: None,
+        })?;
+        if let Some(e) = self.brushes.lib.entry_mut(new) {
+            e.edited = edited;
+        }
+        if let Some(e) = self.brushes.lib.entry_mut(key) {
+            e.edited = None;
+        }
+        self.toolset.set.replace_brush(key, new);
+        if current {
+            // 今の設定はそのまま（同じ設定の写しへ替えるだけ）
+            self.brushes.lib.current = new;
+            self.m2.preset = None;
+        }
+        if self.brushes.ui.renaming == Some(key) {
+            self.brushes.ui.renaming = None;
+        }
+        if self.brush_persist(new) {
+            self.toolset_persist();
+        }
+        Some(new)
+    }
+
+    /// グループの写し（中のブラシの写しのファイルも作る）を、すぐ後ろに作る。
+    pub(crate) fn brush_duplicate_group(&mut self, group: GroupId) {
+        if self.toolset_blocked() || !self.brush_layout_open() {
+            return;
+        }
+        let lang = self.lang;
+        let Some((slot, source)) = self
+            .toolset
+            .set
+            .group(group)
+            .map(|(s, g)| (s.id, g.clone()))
+        else {
+            return;
+        };
+        let room = MAX_USER_BRUSHES.saturating_sub(self.brushes.lib.user_count());
+        if source.brushes.len() > room {
+            return self.brush_notice(
+                crate::notice::Kind::Refusal,
+                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
+                format!("At most {MAX_USER_BRUSHES} brushes."),
+            );
+        }
+        let name = lang.pick(
+            format!("{} のコピー", source.name_in(lang)),
+            format!("{} copy", source.name_in(lang)),
+        );
+        let before = self.toolset.set.slot(slot).and_then(|s| {
+            let at = s.groups.iter().position(|g| g.id == group)?;
+            s.groups.get(at + 1).map(|g| g.id)
+        });
+        let new_group = match self.toolset.set.add_group(slot, before, name, Vec::new()) {
+            Ok(g) => g,
+            Err(r) => return self.toolset_refuse(r),
+        };
+        self.brush_sync();
+        let mut failed = false;
+        for key in source.brushes {
+            let entry_name = self
+                .brushes
+                .lib
+                .entry(key)
+                .map(|e| e.name_in(lang))
+                .unwrap_or_default();
+            let Some(copy) = self.brush_copy_of(key, entry_name, new_group, false) else {
+                failed = true;
+                break;
+            };
+            let _ = self.toolset.set.insert_brush(copy, new_group, None);
+            if !self.brush_persist(copy) {
+                failed = true;
+                break;
+            }
+        }
+        self.toolset.set.show_group(new_group);
+        if !failed {
+            let name = self
+                .toolset
+                .set
+                .group(new_group)
+                .map(|(_, g)| g.name_in(lang))
+                .unwrap_or_default();
+            self.brush_notice(
+                crate::notice::Kind::Info,
+                format!("グループを複製しました: {name}"),
+                format!("Group duplicated: {name}"),
+            );
+        }
+        self.toolset_persist();
+    }
+
+    /// 「＋」のウィンドウで選んだ物を、今のグループの後ろへ置く（並びにある物・同梱の Krita は写しのファイルを作る）。最初に置いた物に替える。
+    pub(crate) fn brush_add_from(&mut self, items: Vec<crate::toolset::catalog::CatalogItem>) {
+        use crate::toolset::catalog::CatalogItem;
+        if items.is_empty() {
+            return;
+        }
+        if self.is_stroking() {
+            return self.brush_refuse();
+        }
+        if self.brush_refuse_while_importing() || !self.brush_layout_open() {
+            return;
+        }
+        let lang = self.lang;
+        let Some(group) = self.brush_target_group() else {
+            return;
+        };
+        if !self.brush_group_has_room(group, items.len()) {
+            return;
+        }
+        self.brush_sync();
+        let mut added: Vec<BrushKey> = Vec::new();
+        let mut write_failed = false;
+        for item in items {
+            let key = match item {
+                CatalogItem::Builtin(id) => {
+                    let Some(b) = builtin::find(id) else { continue };
+                    let key = BrushKey::Builtin(b.id);
+                    if self.toolset.set.contains(key) {
+                        self.brush_copy_of(key, builtin::name(lang, b.id), group, true)
+                    } else {
+                        Some(key)
+                    }
+                }
+                CatalogItem::User(id) => {
+                    let key = BrushKey::User(id);
+                    let Some(entry) = self.brushes.lib.entry(key).cloned() else {
+                        continue;
+                    };
+                    if self.toolset.set.contains(key) {
+                        self.brush_copy_of(key, entry.name, group, true)
+                    } else {
+                        Some(key)
+                    }
+                }
+                CatalogItem::Krita(index) => {
+                    let Some(b) = store::krita().brushes.get(index) else {
+                        continue;
+                    };
+                    let mut brush = b.brush.clone();
+                    let assist = carried_assist(Some(brush.assist));
+                    brush.base.radius = brush
+                        .base
+                        .radius
+                        .clamp(0.5, crate::state::MAX_RADIUS as f64);
+                    let import =
+                        ImportMeta::new(b.source.label(), false, gaps::fold(&b.unrepresented));
+                    let own = match self.toolset.set.group(group).and_then(|(_, g)| g.builtin) {
+                        Some(g) => g,
+                        None => Group::Brush,
+                    };
+                    let origin = self.brush_origin_for(group, own);
+                    self.brush_new_user(NewBrush {
+                        name: b.name.clone(),
+                        group: origin,
+                        baseline: brush,
+                        import: Some(import),
+                        assist,
+                    })
+                }
+            };
+            let Some(key) = key else {
+                break;
+            };
+            if key.is_user()
+                && !matches!(item, CatalogItem::User(id) if BrushKey::User(id) == key)
+                && !self.brush_persist(key)
+            {
+                write_failed = true;
+                // 一覧には残る（並びにも置く。次に保存し直したときに書く）
+            }
+            if self.toolset.set.insert_brush(key, group, None).is_ok() {
+                added.push(key);
+            }
+            if write_failed {
+                break;
+            }
+        }
+        let Some(first) = added.first().copied() else {
+            return;
+        };
+        self.brush_activate(first);
+        self.brush_follow_slot(self.toolset.set.slot_of(first));
+        if !write_failed {
+            if added.len() == 1 {
+                let name = self
+                    .brushes
+                    .lib
+                    .entry(first)
+                    .map(|e| e.name_in(lang))
+                    .unwrap_or_default();
+                self.brush_notice(
+                    crate::notice::Kind::Info,
+                    format!("ブラシを追加しました: {name}"),
+                    format!("Brush added: {name}"),
+                );
+            } else {
+                let n = added.len();
+                self.brush_notice(
+                    crate::notice::Kind::Info,
+                    format!("ブラシを {n} 個追加しました。"),
+                    format!("{n} brushes added."),
+                );
+            }
+        }
+        self.toolset_persist();
     }
 
     /// 一覧の操作を当てる。
@@ -1088,12 +1467,28 @@ impl AppState {
                 if self.is_stroking() {
                     return self.brush_refuse();
                 }
-                self.brush_sync();
-                let Some(group) = self.brushes.lib.entry(key).map(|e| e.group) else {
+                if self.brushes.lib.entry(key).is_none() {
                     return;
-                };
+                }
+                if !self.toolset.set.contains(key) {
+                    // 並びに無いブラシ（ライブラリの「使う」）は、今のグループの後ろへ置いてから
+                    if self.brush_refuse_while_importing() || !self.brush_layout_open() {
+                        return;
+                    }
+                    let Some(group) = self.brush_target_group() else {
+                        return;
+                    };
+                    if !self.brush_group_has_room(group, 1) {
+                        return;
+                    }
+                    if self.toolset.set.insert_brush(key, group, None).is_err() {
+                        return;
+                    }
+                    self.toolset_persist();
+                }
+                self.brush_sync();
                 self.brush_activate(key);
-                self.brush_follow_tool(group);
+                self.brush_follow_slot(self.toolset.set.slot_of(key));
             }
             BrushAction::Add => self.brush_create(None),
             BrushAction::Duplicate(key) => self.brush_create(Some(key)),
@@ -1101,76 +1496,120 @@ impl AppState {
                 if self.is_stroking() {
                     return self.brush_refuse();
                 }
-                if self.brush_refuse_while_importing() {
+                if self.brush_refuse_while_importing() || !self.brush_layout_open() {
                     return;
                 }
-                let Some(entry) = self.brushes.lib.entry(key).cloned() else {
+                let Some(place) = self.toolset.set.find(key) else {
                     return;
                 };
-                if !key.is_user() {
-                    return self.brush_notice(
-                        "組み込みのブラシは消せません。".into(),
-                        "Built-in brushes cannot be deleted.".into(),
-                    );
-                }
+                let name = self
+                    .brushes
+                    .lib
+                    .entry(key)
+                    .map(|e| e.name_in(lang))
+                    .unwrap_or_default();
                 self.brush_sync();
-                // 今のブラシなら、同じグループの隣（なければ道具の標準）へ移る
+                // 今のブラシなら、同じグループの隣（なければツールの最後のブラシ）へ移る
                 let next = if self.brushes.lib.current == key {
-                    let group = self.brushes.lib.in_group(entry.group);
-                    let at = group.iter().position(|e| e.key == key).unwrap_or(0);
+                    let group = &self.toolset.set.slots()[place.slot].groups[place.group].brushes;
                     group
-                        .get(at + 1)
-                        .or_else(|| at.checked_sub(1).and_then(|i| group.get(i)))
-                        .map(|e| e.key)
+                        .get(place.index + 1)
+                        .or_else(|| place.index.checked_sub(1).and_then(|i| group.get(i)))
+                        .copied()
                 } else {
                     None
                 };
-                if let Some(store) = &self.brushes.store {
-                    if let BrushKey::User(id) = key {
-                        if let Err(e) = store.delete_brush(id) {
-                            let reason = e.describe(lang);
-                            return self.brush_notice(
-                                format!("ブラシを消せません: {reason}"),
-                                format!("Cannot delete the brush: {reason}"),
-                            );
-                        }
-                    }
-                }
-                self.brushes.lib.entries.retain(|e| e.key != key);
-                let standard = |eraser: bool| {
-                    BrushKey::Builtin(if eraser {
-                        builtin::STANDARD_ERASER
-                    } else {
-                        builtin::STANDARD
-                    })
-                };
-                for eraser in [false, true] {
-                    if self.brushes.lib.last[eraser as usize] == key {
-                        self.brushes.lib.last[eraser as usize] = standard(eraser);
-                    }
+                if let Err(r) = self.toolset.set.remove_brush(key) {
+                    return self.toolset_refuse(r);
                 }
                 if self.brushes.ui.renaming == Some(key) {
                     self.brushes.ui.renaming = None;
                 }
                 if self.brushes.lib.current == key {
-                    self.brush_activate(next.unwrap_or_else(|| standard(entry.group.is_eraser())));
+                    match next {
+                        Some(next) => self.brush_activate(next),
+                        None => self.brush_after_unplaced(),
+                    }
                 }
-                let name = entry.name;
                 self.brush_notice(
+                    crate::notice::Kind::Info,
                     format!("ブラシを削除しました: {name}"),
                     format!("Brush deleted: {name}"),
                 );
-                self.brush_persist_order();
+                self.toolset_persist();
+            }
+            BrushAction::DeleteFileDialog(key) => {
+                if !key.is_user() || self.brushes.lib.entry(key).is_none() {
+                    return;
+                }
+                if self.is_stroking() {
+                    return self.brush_refuse();
+                }
+                if self.brush_refuse_while_importing() {
+                    return;
+                }
+                self.toolset.catalog.pending_delete = Some(key);
+                self.dialog_request = Some(crate::state::DialogRequest::BrushFileDelete);
+            }
+            BrushAction::DeleteFile(key) => {
+                if self.is_stroking() {
+                    return self.brush_refuse();
+                }
+                if self.brush_refuse_while_importing() {
+                    return;
+                }
+                let BrushKey::User(id) = key else {
+                    return;
+                };
+                let Some(entry) = self.brushes.lib.entry(key).cloned() else {
+                    return;
+                };
+                let placed = self.toolset.set.contains(key);
+                if placed && !self.brush_layout_open() {
+                    return;
+                }
+                self.brush_sync();
+                if let Some(store) = &self.brushes.store {
+                    if let Err(e) = store.delete_brush(id) {
+                        let reason = e.describe(lang);
+                        return self.brush_notice(
+                            crate::notice::Kind::Error,
+                            Lang::Ja.with_reason("ブラシを消せません", &reason),
+                            Lang::En.with_reason("Cannot delete the brush", &reason),
+                        );
+                    }
+                }
+                let _ = self.toolset.set.remove_brush(key);
+                self.brushes.lib.entries.retain(|e| e.key != key);
+                self.toolset.catalog.forget(key);
+                if self.brushes.ui.renaming == Some(key) {
+                    self.brushes.ui.renaming = None;
+                }
+                if self.brushes.lib.current == key {
+                    let next = self
+                        .toolset
+                        .set
+                        .active_slot()
+                        .and_then(|s| self.toolset.set.pick_for(s.id))
+                        .unwrap_or(BrushKey::Builtin(builtin::STANDARD));
+                    self.brush_activate(next);
+                }
+                let name = entry.name;
+                self.brush_notice(
+                    crate::notice::Kind::Info,
+                    format!("ブラシのファイルを削除しました: {name}"),
+                    format!("Brush file deleted: {name}"),
+                );
+                if placed {
+                    self.toolset_persist();
+                }
             }
             BrushAction::StartRename(key) => {
                 if self.brushes.lib.entry(key).is_none() {
                     return;
                 }
-                if !key.is_user() {
-                    return self.brush_notice(
-                        "組み込みのブラシは名前を変えられません。".into(),
-                        "Built-in brushes cannot be renamed.".into(),
-                    );
+                if !key.is_user() && !self.toolset.set.contains(key) {
+                    return;
                 }
                 self.brushes.ui.renaming = Some(key);
                 self.brushes.ui.rename_started = false;
@@ -1182,7 +1621,14 @@ impl AppState {
                 let Some(name) = clean_name(&name) else {
                     return;
                 };
-                if !key.is_user() {
+                if let BrushKey::Builtin(id) = key {
+                    // 組み込みの名前のままなら、何もしない（写しを作らない）
+                    if builtin::name(lang, id) != name {
+                        self.brush_convert_builtin(key, name, false);
+                    }
+                    return;
+                }
+                if self.brush_refuse_while_importing() {
                     return;
                 }
                 if let Some(entry) = self.brushes.lib.entry_mut(key) {
@@ -1193,10 +1639,67 @@ impl AppState {
                 }
             }
             BrushAction::Move { key, at } => {
-                if self.brushes.lib.move_entry(key, at) {
-                    self.brush_persist_order();
+                if self.toolset_blocked() {
+                    return;
+                }
+                let Some(group) = self.toolset.set.group_of(key) else {
+                    return;
+                };
+                let result = self.toolset.set.move_brush(key, group, at.before());
+                match result {
+                    Ok(true) => {
+                        self.toolset_persist();
+                    }
+                    Ok(false) => {}
+                    Err(r) => self.toolset_refuse(r),
                 }
             }
+            BrushAction::Place {
+                key,
+                group,
+                at,
+                copy,
+            } => {
+                if self.toolset_blocked() || !self.brush_layout_open() {
+                    return;
+                }
+                if self.toolset.set.group(group).is_none() {
+                    return;
+                }
+                if copy || !self.toolset.set.contains(key) {
+                    if !self.brush_group_has_room(group, 1) {
+                        return;
+                    }
+                    let Some(source) = self.brushes.lib.entry(key).map(|e| e.name_in(lang)) else {
+                        return;
+                    };
+                    let name = lang.pick(format!("{source} のコピー"), format!("{source} copy"));
+                    let Some(new) = self.brush_copy_of(key, name, group, false) else {
+                        return;
+                    };
+                    if self
+                        .toolset
+                        .set
+                        .insert_brush(new, group, at.before())
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if self.brush_persist(new) {
+                        self.toolset_persist();
+                    }
+                    return;
+                }
+                match self.toolset.set.move_brush(key, group, at.before()) {
+                    Ok(true) => {
+                        self.brush_after_unplaced();
+                        self.toolset_persist();
+                    }
+                    Ok(false) => {}
+                    Err(r) => self.toolset_refuse(r),
+                }
+            }
+            BrushAction::AddFrom(items) => self.brush_add_from(items),
             BrushAction::Revert(key) => {
                 if self.is_stroking() {
                     return self.brush_refuse();
@@ -1226,10 +1729,18 @@ impl AppState {
             BrushAction::ClipStudioSelectAll(on) => self.brush_csp_select_all(on),
             BrushAction::ClipStudioImport => self.brush_csp_import(),
             BrushAction::Register(key) => {
-                if !key.is_user() {
+                if self.brush_refuse_while_importing() {
                     return;
                 }
-                if self.brush_refuse_while_importing() {
+                if !key.is_user() {
+                    // 組み込みは、変えたままの設定を元にした写しのファイルに替える
+                    if self.brush_is_modified(key) {
+                        let name = match key {
+                            BrushKey::Builtin(id) => builtin::name(lang, id),
+                            BrushKey::User(_) => return,
+                        };
+                        self.brush_convert_builtin(key, name, true);
+                    }
                     return;
                 }
                 let is_current = self.brushes.lib.current == key;
@@ -1311,13 +1822,19 @@ mod tests {
                     })
                 })
                 .collect();
-            workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+            workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap())
+                .collect()
         });
         let mut sorted = taken.clone();
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), 1000, "どのスレッドの番号も重ならない");
-        assert!(taken.iter().all(|id| id % 7 != 0), "使われている番号は飛ばす");
+        assert!(
+            taken.iter().all(|id| id % 7 != 0),
+            "使われている番号は飛ばす"
+        );
         // 番号を読んだファイルの続きから取り、使い切ったら None のまま
         ids.reserve_through(u32::MAX - 1);
         assert_eq!(ids.take(|_| false), Some(u32::MAX));

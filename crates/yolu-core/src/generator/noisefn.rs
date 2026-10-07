@@ -13,11 +13,11 @@ use super::noise::{fade_lanes, lerp_lanes};
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
 
-/// 1 つの層の最大のオクターブ数。
+/// 1 つのレイヤーの最大のオクターブ数。
 pub const MAX_OCTAVES: u32 = 8;
 
 /// 度の sin・cos（多項式。libm を使わない）。`deg` は有限であること（検査済みの入力）。
-pub(super) fn sin_cos_deg(deg: f64) -> (f64, f64) {
+pub(crate) fn sin_cos_deg(deg: f64) -> (f64, f64) {
     let q = (deg / 90. + 0.5).floor();
     let r = (deg - 90. * q) * (std::f64::consts::PI / 180.);
     let r2 = r * r;
@@ -227,19 +227,13 @@ impl WorleyCell {
     pub(super) const EMPTY: Self = Self {
         valid: false,
         key: [0; 3],
-        points: [Point {
-            q: [0.; 3],
-            h: 0,
-        }; 27],
+        points: [Point { q: [0.; 3], h: 0 }; 27],
     };
 }
 fn fill_points(seed: u32, ix: i32, iy: i32, iz: i32, per: [i32; 2]) -> [Point; 27] {
     let hx = [-1, 0, 1].map(|d| hash(seed ^ (wrap(ix + d, per[0]) as u32).wrapping_mul(KX)));
     let ys = [-1, 0, 1].map(|d| (wrap(iy + d, per[1]) as u32).wrapping_mul(KY));
-    let mut points = [Point {
-        q: [0.; 3],
-        h: 0,
-    }; 27];
+    let mut points = [Point { q: [0.; 3], h: 0 }; 27];
     for dz in -1..=1i32 {
         let zk = ((iz + dz) as u32).wrapping_mul(KZ);
         for dy in -1..=1i32 {
@@ -311,7 +305,11 @@ unsafe fn same_cell<V: Lanes>(fx: V::F, fy: V::F, fz: V::F) -> Option<Key> {
             return None;
         }
     }
-    Some([floors[0][0] as i32, floors[1][0] as i32, floors[2][0] as i32])
+    Some([
+        floors[0][0] as i32,
+        floors[1][0] as i32,
+        floors[2][0] as i32,
+    ])
 }
 /// N 画素を 1 画素ずつの式 `f` で引く（格子をまたぐ組）。
 #[inline(always)]
@@ -397,10 +395,7 @@ pub(super) unsafe fn perlin3_lanes<V: Lanes>(
             if k & 4 == 0 { z } else { z1 },
         ];
         let (i1, s1, i2, s2) = GRAD[cell.sel[k] as usize];
-        *out = V::add(
-            V::mul(V::splat(s1), c[i1]),
-            V::mul(V::splat(s2), c[i2]),
-        );
+        *out = V::add(V::mul(V::splat(s1), c[i1]), V::mul(V::splat(s2), c[i2]));
     }
     let x00 = lerp_lanes::<V>(g[0], g[1], u);
     let x10 = lerp_lanes::<V>(g[2], g[3], u);
@@ -636,8 +631,16 @@ pub(super) unsafe fn sin_cos_deg_lanes<V: Lanes>(deg: V::F) -> (V::F, V::F) {
     );
     let (neg_sin, neg_cos) = (V::neg(sin), V::neg(cos));
     (
-        V::select(is3, neg_cos, V::select(is2, neg_sin, V::select(is1, cos, sin))),
-        V::select(is3, sin, V::select(is2, neg_cos, V::select(is1, neg_sin, cos))),
+        V::select(
+            is3,
+            neg_cos,
+            V::select(is2, neg_sin, V::select(is1, cos, sin)),
+        ),
+        V::select(
+            is3,
+            sin,
+            V::select(is2, neg_cos, V::select(is1, neg_sin, cos)),
+        ),
     )
 }
 /// N 画素のハッシュ（整数の値を持つ f64）を [0, 1) の値に（`unit24` と同じ値）。
@@ -648,6 +651,24 @@ pub(super) unsafe fn unit24_lanes<V: Lanes>(h: V::F) -> V::F {
         V::floor(V::mul(h, V::splat(1. / 256.))),
         V::splat(1. / 16777216.),
     )
+}
+
+/// 2D の値のノイズ（`value3` の z = 0 の面と同じ値）と、その勾配（格子の単位。x・y の偏微分）。フィルターのスロープぼかし・ゆがみが
+/// 読む向きを決める。格子を巻かない。
+pub(crate) fn value2_gradient(x: f64, y: f64, seed: u32) -> (f64, [f64; 2]) {
+    let (fx, fy) = (x.floor(), y.floor());
+    let (ix, iy) = (fx as i32, fy as i32);
+    let (tx, ty) = (x - fx, y - fy);
+    let (u, v) = (fade(tx), fade(ty));
+    let c = |dx: i32, dy: i32| unit24(cell_hash(seed, ix + dx, iy + dy, 0));
+    let (c00, c10, c01, c11) = (c(0, 0), c(1, 0), c(0, 1), c(1, 1));
+    let x0 = lerp(c00, c10, u);
+    let x1 = lerp(c01, c11, u);
+    // fade(t) = 6t⁵ − 15t⁴ + 10t³ の微分 30t²(t − 1)²
+    let dfade = |t: f64| 30. * t * t * (t - 1.) * (t - 1.);
+    let dx = dfade(tx) * lerp(c10 - c00, c11 - c01, v);
+    let dy = dfade(ty) * (x1 - x0);
+    (lerp(x0, x1, v), [dx, dy])
 }
 
 #[cfg(test)]
@@ -744,6 +765,33 @@ mod tests {
                 f2: d2.sqrt(),
                 id,
                 point,
+            }
+        }
+    }
+
+    #[test]
+    fn value2_gradient_is_the_z0_value_noise_and_its_slope() {
+        for (i, seed) in [0u32, 7, 0xdead_beef].into_iter().enumerate() {
+            for k in 0..200 {
+                let x = -13.7 + k as f64 * 0.173 + i as f64;
+                let y = 5.1 - k as f64 * 0.091;
+                let (n, g) = value2_gradient(x, y, seed);
+                assert_eq!(
+                    n.to_bits(),
+                    plain::value3([x, y, 0.], seed, [0, 0]).to_bits()
+                );
+                // 勾配は差分と合う
+                let e = 1e-6;
+                let nx = (plain::value3([x + e, y, 0.], seed, [0, 0])
+                    - plain::value3([x - e, y, 0.], seed, [0, 0]))
+                    / (2. * e);
+                let ny = (plain::value3([x, y + e, 0.], seed, [0, 0])
+                    - plain::value3([x, y - e, 0.], seed, [0, 0]))
+                    / (2. * e);
+                assert!(
+                    (g[0] - nx).abs() < 1e-5 && (g[1] - ny).abs() < 1e-5,
+                    "{x} {y}"
+                );
             }
         }
     }
@@ -966,7 +1014,12 @@ mod tests {
                 let mut got = [0.; 4];
                 V::store_f64(&mut got, unit24_lanes::<V>(V::load_f64(&lanes)));
                 for k in 0..V::N {
-                    assert_eq!(got[k].to_bits(), unit24(hs[k]).to_bits(), "unit24 {}", hs[k]);
+                    assert_eq!(
+                        got[k].to_bits(),
+                        unit24(hs[k]).to_bits(),
+                        "unit24 {}",
+                        hs[k]
+                    );
                 }
             }
         }
@@ -1023,11 +1076,8 @@ mod tests {
                     let (mut e1, mut e2, mut ew) = (f64::MAX, f64::MAX, 0usize);
                     let mut same = 0;
                     for (j, pt) in points.iter().enumerate() {
-                        let (x, y, z) = (
-                            pt.q[0] - at[0][k],
-                            pt.q[1] - at[1][k],
-                            pt.q[2] - at[2][k],
-                        );
+                        let (x, y, z) =
+                            (pt.q[0] - at[0][k], pt.q[1] - at[1][k], pt.q[2] - at[2][k]);
                         let d = x * x + y * y + z * z;
                         if d == e1 {
                             same += 1;

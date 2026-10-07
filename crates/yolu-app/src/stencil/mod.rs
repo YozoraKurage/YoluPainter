@@ -1,6 +1,6 @@
 //! ステンシル（Substance Painter のステンシル。Unity 版の `TexturePaintWindow.Stencil` と同じ振る舞い）: PNG の画像を 2D のキャンバスと
 //! 3D のビューの画面に半透明で重ね、ブラシはその上から塗る。画面に貼り付いている（カメラを回しても・キャンバスを動かしても画面の同じ所に
-//! ある）。置き場は表示域に対する割合（中心）・表示域の高さに対する大きさ・画面の上の角度で、T を押したままのドラッグで変える（左 = 回す
+//! ある）。置き場は表示域に対する割合（中心）・表示域の高さに対する大きさ・画面の上の角度で、Y を押したままのドラッグで変える（左 = 回す
 //! （Shift で 15° 刻み）、中か Ctrl+左 = 動かす、右か Alt+左 = 大きさ）。N を押しているあいだは効かない。
 //!
 //! 塗る値は core の `BrushStencil`: 2D はキャンバスの画素の中心を画面へ写し、3D は面のテクセルの点をカメラで画面へ写して（core の
@@ -8,7 +8,7 @@
 //! ストロークの間は変えない。
 //!
 //! 保存: ステンシルの状態（画像・読み方・繰り返し・反転・重ねの不透明度・置き場）は文書ではなくアプリの状態で、.ylp には入れない
-//! （Unity 版も窓の状態で、.ylp・ブラシの設定・プリセットには入れない）。1 つの操作は 1 つの `StencilOp` で、文書を変えないので Undo の
+//! （Unity 版もウィンドウの状態で、.ylp・ブラシの設定・プリセットには入れない）。1 つの操作は 1 つの `StencilOp` で、文書を変えないので Undo の
 //! 段にはならない（塗ったストロークは 1 回の Undo）。
 
 mod frame;
@@ -32,8 +32,8 @@ pub use frame::{
 pub use input::{handle_event, settle, update_keys, DragKind, StencilDrag};
 pub use overlay::draw as draw_overlay;
 
-/// T を押している・動かしているあいだのポインタ（大きさは斜めの矢印、ほかは動かす形）。画像が無ければ替えない（Unity 版は重ね表示を出す
-/// 画像があるときだけポインタの形を替える。T を押しても何も起きない・ブラシのカーソルを隠さない）。
+/// Y を押している・動かしているあいだのポインタ（大きさは斜めの矢印、ほかは動かす形）。画像が無ければ替えない（Unity 版は重ね表示を出す
+/// 画像があるときだけポインタの形を替える。Y を押しても何も起きない・ブラシのカーソルを隠さない）。
 pub fn cursor_icon(st: &StencilState) -> Option<egui::CursorIcon> {
     if !st.handling() || st.image.is_none() {
         return None;
@@ -44,6 +44,7 @@ pub fn cursor_icon(st: &StencilState) -> Option<egui::CursorIcon> {
     })
 }
 
+use crate::notice::Source;
 use crate::state::{AppState, DialogRequest};
 
 /// 重ね表示の元の画像の長い辺（塗る値は元の画像から読む。表示だけ縮める）。
@@ -243,7 +244,7 @@ pub struct RecentImage {
 /// ステンシルの操作（画面だけ。文書を変えないので Undo の段にはならない）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum StencilOp {
-    /// 画像のファイルを選ぶ窓を開く。
+    /// 画像のファイルを選ぶウィンドウを開く。
     Pick,
     /// PNG を読む。
     Load(PathBuf),
@@ -278,7 +279,7 @@ pub struct StencilState {
     pub size: f32,
     /// 画面の上の角度（度、時計回りが正、(-180, 180]）。
     pub angle: f32,
-    /// T を押している。
+    /// Y を押している。
     pub key_held: bool,
     /// N を押していて、ステンシルを使わない。
     pub ignore_held: bool,
@@ -327,12 +328,12 @@ impl StencilState {
         self.image.is_some() && !self.ignore_held
     }
 
-    /// T を押しているか、ステンシルを動かしているあいだ（ストロークを始めない。ブラシのカーソルを隠すのは、画像があるとき: `cursor_icon`）。
+    /// Y を押しているか、ステンシルを動かしているあいだ（ストロークを始めない。ブラシのカーソルを隠すのは、画像があるとき: `cursor_icon`）。
     pub fn handling(&self) -> bool {
         self.key_held || self.drag.is_some()
     }
 
-    /// 重ね表示を出すか: 画像があり、N を押していない（T を押しているあいだは出す）。
+    /// 重ね表示を出すか: 画像があり、N を押していない（Y を押しているあいだは出す）。
     pub fn shown(&self) -> bool {
         self.image.is_some() && (!self.ignore_held || self.handling())
     }
@@ -438,9 +439,7 @@ impl AppState {
     pub fn stencil_op(&mut self, op: StencilOp) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Stencil, crate::lang::refusals::during_stroke(lang));
             return;
         }
         match op {
@@ -456,9 +455,10 @@ impl AppState {
                 self.stencil.overlay = None;
                 self.stencil.thumb = None;
                 self.stencil.drag = None;
-                self.message = lang
-                    .pick("ステンシルを外しました。", "The stencil was removed.")
-                    .into();
+                self.info(
+                    Source::Stencil,
+                    lang.pick("ステンシルを外しました。", "The stencil was removed."),
+                );
             }
             StencilOp::Mode(mode) => self.stencil.mode = mode,
             StencilOp::Tiling(tiling) => self.stencil.tiling = tiling,
@@ -484,14 +484,22 @@ impl AppState {
         match result {
             Ok(()) => {
                 self.stencil.remember(&name, path);
-                self.message = format!("{}: {name}", lang.pick("ステンシル", "Stencil"));
+                self.info(
+                    Source::Stencil,
+                    format!("{}: {name}", lang.pick("ステンシル", "Stencil")),
+                );
             }
             Err(e) => {
                 self.stencil.recent.retain(|r| r.path != path);
-                self.message = format!(
-                    "{}: {name}: {}",
-                    lang.pick("ステンシルを読めません", "Cannot load the stencil"),
-                    lang.stencil_error(&e)
+                self.fail(
+                    Source::Stencil,
+                    lang.with_reason(
+                        lang.pick(
+                            format!("ステンシル{}を読めません", lang.quote(&name)),
+                            format!("Cannot load the stencil {}", lang.quote(&name)),
+                        ),
+                        lang.stencil_error(&e),
+                    ),
                 );
             }
         }

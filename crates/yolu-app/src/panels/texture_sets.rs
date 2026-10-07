@@ -1,7 +1,7 @@
 //! テクスチャセットのパネル（Substance Painter の Texture Set List の並び）: 行は目・名前・状態のアイコン・解像度。押すと今のセットを
 //! 替え、ダブルクリックで名前を変え、右クリックでメニュー。マテリアルの名前や付いていない状態を書く帯は置かない（名前は行に出ている。
 //! 付いていない状態は行のアイコン、理由と詳しいマテリアルはツールチップ）。
-//! 下の帯に、足す・消す（`newproject`）・メッシュマップをベイク（炎のアイコン。ベイクの窓を開く）・プロジェクトの構成のボタン。
+//! 下の帯に、足す・消す（`newproject`）・メッシュマップをベイク（炎のアイコン。ベイクのウィンドウを開く）・プロジェクトの構成のボタン。
 //! ベイクのボタンは、今のセットにまだ焼いたメッシュマップが無いあいだ、アイコンの角に印を付ける（理由はツールチップ）。
 //!
 //! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖（薄い）= 今のモデルのマテリアルに付いていない、
@@ -11,6 +11,7 @@
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
+use crate::notice::Source;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
 use crate::ui::scroll::Scroll;
@@ -64,47 +65,28 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         };
         return look("link_off", t::TEXT_DIM, tooltip.into());
     };
-    // 流し込み先は Live Link のモデルだけの話（FBX・試しの人形は Unity に出さないので、無くても警告しない）
-    let routed = !model.is_link()
-        || model.materials.get(material as usize).is_some_and(|m| {
-            m.routes
-                .iter()
-                .any(|r| r.channel == yolu_protocol::channel::COLOR)
-        });
     if !set.visible {
         return look(
             "visibility_off",
             t::TEXT_DIM,
-            app.lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity").into(),
+            app.lang
+                .pick("3D ビューに見せていない", "Hidden in the 3D View")
+                .into(),
         );
     }
-    let published = app.link.published.contains(&set.uid);
-    let unpainted = app.view3d.unpainted.contains(&(material as i32));
-    if !routed || unpainted {
-        // 行の印は 1 つ。Unity の流し込み先が無いことと、3D ビューの予算で絵を見せていないことは別の事実なので、どちらもツールチップで言う
-        // （予算の警告が、Unity に見えない警告や「Unity に見せている」の印を隠さない）
-        let mut lines: Vec<&str> = Vec::new();
-        if !routed {
-            lines.push(app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity)."));
-        }
-        if unpainted {
-            lines.push(app.lang.pick(
-                "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
-                "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
-            ));
-            if published && routed {
-                lines.push(app.lang.pick("Unity に見せている", "Shown in Unity"));
-            }
-        }
-        return look("warning", t::WARNING, lines.join("\n"));
-    }
-    if published {
+    if app.view3d.unpainted.contains(&(material as i32)) {
         return look(
-            "sync",
-            t::ACCENT,
-            app.lang.pick("Unity に見せている", "Shown in Unity").into(),
+            "warning",
+            t::WARNING,
+            app.lang
+                .pick(
+                    "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
+                    "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
+                )
+                .into(),
         );
     }
+    let _ = model;
     None
 }
 
@@ -116,7 +98,7 @@ pub struct BakeEntrance {
 }
 
 /// 今のセットのベイクのボタンの見え方。印はそのセットに焼いたメッシュマップが 1 枚も無いあいだ（ほかのセットが焼けていても付く）。
-/// 理由は、焼いている最中ならそれ、そうでなければ「まだ焼いていない」。窓はどちらでも開ける（押せるのは描いていないときだけ）。
+/// 理由は、焼いている最中ならそれ、そうでなければ「まだ焼いていない」。ウィンドウはどちらでも開ける（押せるのは描いていないときだけ）。
 pub fn bake_entrance(app: &AppState) -> BakeEntrance {
     let lang = app.lang;
     let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
@@ -152,13 +134,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let n = app.sets.len();
     let content = n as f32 * ROW_HEIGHT;
-    let bar = Scroll::begin(ui, list, content, &mut app.set_scroll);
+    let bar = Scroll::begin(ui, list, content, &mut app.ui.set_scroll);
     let row_width = list.width() - bar.reserved();
     for index in 0..n {
         let row = Rect::from_min_size(
             pos2(
                 list.left(),
-                list.top() + index as f32 * ROW_HEIGHT - app.set_scroll,
+                list.top() + index as f32 * ROW_HEIGHT - app.ui.set_scroll,
             ),
             vec2(row_width, ROW_HEIGHT),
         );
@@ -167,20 +149,21 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
         set_row(ui, app, &ctx, list, row, index);
     }
-    bar.end(ui, "texture_sets.scroll", &mut app.set_scroll);
+    bar.end(ui, "texture_sets.scroll", &mut app.ui.set_scroll);
 
     // 足す・消す・プロジェクトの構成（今のセットのマテリアルや見え方を文字の行で繰り返さない。状態は行の印とツールチップ）
     toolbar_buttons(ui, app, toolbar);
 }
 
-/// 一覧の下のボタンの行: 空のセットを足す・今のセットを消す（確かめる）、右にメッシュマップをベイク（窓を開く）・プロジェクト設定を開く。
+/// 一覧の下のボタンの行: 空のセットを足す・今のセットを消す（確かめる）、右にメッシュマップをベイク（ウィンドウを開く）・プロジェクト設定を開く。
 fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, bar, t::PANEL_HEADER);
     w::hline(&p, bar.left(), bar.right(), bar.top(), t::BORDER);
     let lang = app.lang;
     let free = !app.is_stroking();
-    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
+    let button =
+        |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
     let mut action = None;
     let mut action_bake = false;
     if w::icon_button(
@@ -189,7 +172,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         "set.add",
         "add",
         lang.pick(
-            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
             "Add an empty texture set (same size and channels as this one)",
         ),
         false,
@@ -223,7 +206,9 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     )
     .clicked()
     {
-        action = Some(crate::newproject::NpAction::RemoveSets(vec![app.sets.current().uid]));
+        action = Some(crate::newproject::NpAction::RemoveSets(vec![
+            app.sets.current().uid,
+        ]));
     }
     // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクはメニューから）
     if bar.width() >= BAKE_BUTTON_MIN_BAR_WIDTH {
@@ -340,8 +325,8 @@ fn set_row(
 
     if response.clicked() {
         app.apply(Action::SelectSet(uid));
-        if app.renaming_set != Some(uid) {
-            app.renaming_set = None;
+        if app.ui.renaming_set != Some(uid) {
+            app.ui.renaming_set = None;
         }
     }
     if response.double_clicked()
@@ -370,7 +355,10 @@ fn set_row(
             "visibility_off"
         },
         if visible {
-            app.lang.pick("隠す（3D ビューと Unity に見せない）", "Hide in the 3D View and Unity")
+            app.lang.pick(
+                "隠す（3D ビューと Unity に見せない）",
+                "Hide in the 3D View and Unity",
+            )
         } else {
             app.lang.pick("見せる", "Show")
         },
@@ -395,17 +383,17 @@ fn set_row(
     }
     w::text(&painter, res_rect, &resolution, t::LABEL_DIM, Align::Right);
 
-    if app.renaming_set == Some(uid) {
-        let first = !app.rename_set_started;
-        app.rename_set_started = true;
+    if app.ui.renaming_set == Some(uid) {
+        let first = !app.ui.rename_set_started;
+        app.ui.rename_set_started = true;
         let out = w::text_field(ui, name_rect, ("set.rename", uid), &name, None, first);
         if let Some(next) = out.committed {
             if let Err(e) = app.rename_set(uid, &next) {
-                app.message = e;
+                app.refuse(Source::TextureSet, e);
             }
         }
         if !first && !out.focused {
-            app.renaming_set = None;
+            app.ui.renaming_set = None;
         }
     } else {
         let color = if selected {

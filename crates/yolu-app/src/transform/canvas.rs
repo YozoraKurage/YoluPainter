@@ -1,4 +1,4 @@
-//! 移動・変形の道具のキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
+//! 移動・変形のツールのキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
 //! ドラッグ中の変形後の外枠）。ドラッグの間は文書を変えず、離したところ（か Enter）で `Edit::Transform` を 1 回当てる。
 
 use egui::{Color32, CursorIcon, Modifiers, Painter, Pos2, Rect, Shape, Stroke, Vec2};
@@ -7,10 +7,11 @@ use super::{arrow_to_canvas, collapses, handle_points, handles_usable, hit, Boun
 use crate::canvas::view::CanvasView;
 use crate::layerops::Xform;
 use crate::m2::Edit;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 impl AppState {
-    /// 動かすものの範囲（文書の版・動かす層が変わるまで覚える）。
+    /// 動かすものの範囲（文書の版・動かすレイヤーが変わるまで覚える）。
     pub fn transform_bounds_cached(&mut self) -> Option<Bounds> {
         let ids = self.transform_targets();
         let revision = self.doc.revision();
@@ -24,7 +25,7 @@ impl AppState {
         bounds
     }
 
-    /// 道具を替えたとき・窓がフォーカスを失ったとき: 途中のドラッグは何も変えずに捨てる。
+    /// ツールを替えたとき・ウィンドウがフォーカスを失ったとき: 途中のドラッグは何も変えずに捨てる。
     pub fn transform_cancel_drag(&mut self) -> bool {
         self.transform.advanced.draft = None;
         self.transform.advanced.session = None;
@@ -41,33 +42,37 @@ pub fn press(
     source: StrokeSource,
     modifiers: Modifiers,
 ) {
-    if app.is_stroking() || !matches!(app.tool, Tool::Move | Tool::Liquify) || app.transform.drag.is_some() {
+    if app.is_stroking()
+        || !matches!(app.tool, Tool::Move | Tool::Liquify)
+        || app.transform.drag.is_some()
+    {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            Source::Transform,
+            crate::lang::refusals::read_only_set(app.lang, &reason),
         );
         return;
     }
     let Some(bounds) = super::advanced::interaction_bounds(app) else {
-        app.message = if app.transform_targets().is_empty() {
-            app.lang.pick(
-                "動かす画素のあるレイヤーがありません。",
-                "No layer with pixels to move.",
-            )
-        } else if app.doc.selection().is_some() {
-            app.lang.pick(
-                "選択範囲の中に動かす画素がありません。",
-                "No pixels to move inside the selection.",
-            )
-        } else {
-            app.lang
-                .pick("動かす画素がありません。", "No pixels to move.")
-        }
-        .into();
+        app.refuse(
+            Source::Transform,
+            if app.transform_targets().is_empty() {
+                app.lang.pick(
+                    "動かす画素のあるレイヤーがありません。",
+                    "No layer with pixels to move.",
+                )
+            } else if app.doc.selection().is_some() {
+                app.lang.pick(
+                    "選択範囲の中に動かす画素がありません。",
+                    "No pixels to move inside the selection.",
+                )
+            } else {
+                app.lang
+                    .pick("動かす画素がありません。", "No pixels to move.")
+            },
+        );
         return;
     };
     super::advanced::press(app, view, pos, bounds, modifiers);
@@ -116,7 +121,9 @@ pub fn release(
 
 /// ドラッグを今の位置で確定する（離した・Enter）。動かしていない・何も変わらない変形は当てない。
 pub fn commit(app: &mut AppState) {
-    if super::advanced::commit(app) { return; }
+    if super::advanced::commit(app) {
+        return;
+    }
     let Some(drag) = app.transform.drag.take() else {
         return;
     };
@@ -134,13 +141,13 @@ pub fn commit(app: &mut AppState) {
                 return;
             }
             if collapses(&t) {
-                app.message = app
-                    .lang
-                    .pick(
+                app.refuse(
+                    Source::Transform,
+                    app.lang.pick(
                         "潰れてしまうので変形しません。",
                         "That would collapse the layer.",
-                    )
-                    .into();
+                    ),
+                );
                 return;
             }
             Xform::Affine(t)
@@ -154,10 +161,10 @@ pub fn cancel(app: &mut AppState) -> bool {
     app.transform.advanced.draft = None;
     let any = app.transform.drag.take().is_some();
     if any {
-        app.message = app
-            .lang
-            .pick("変形をやめました。", "Transform cancelled.")
-            .into();
+        app.info(
+            Source::Transform,
+            app.lang.pick("変形をやめました。", "Transform cancelled."),
+        );
     }
     any
 }
@@ -188,7 +195,7 @@ pub fn pen_sample(
 
 /// 矢印キー: 1 画素（Shift で 10）。`screen` は画面の向き（右・下が正）。表示を回していても画面の向きに動く。
 pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
-    let Some(rect) = app.canvas_rect else {
+    let Some(rect) = app.ui.canvas_rect else {
         return;
     };
     let view = app.view.view(rect, app.doc.width(), app.doc.height());
@@ -202,7 +209,9 @@ pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
 
 /// ポインタの下のカーソル（ドラッグ中はドラッグの種類）。
 pub fn cursor(app: &mut AppState, view: &CanvasView, hover: Option<Pos2>) -> CursorIcon {
-    if app.tool == Tool::Liquify { return CursorIcon::Crosshair; }
+    if app.tool == Tool::Liquify {
+        return CursorIcon::Crosshair;
+    }
     let mode = match (&app.transform.drag, hover) {
         (Some(drag), _) => drag.mode,
         (None, Some(p)) => match app.transform_bounds_cached() {
@@ -250,9 +259,11 @@ fn corners(view: &CanvasView, b: Bounds, map: impl Fn((f64, f64)) -> (f64, f64))
         .collect()
 }
 
-/// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動の道具のときだけ。
+/// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動のツールのときだけ。
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &mut AppState) {
-    if super::advanced::paint(painter, view, app) { return; }
+    if super::advanced::paint(painter, view, app) {
+        return;
+    }
     if app.tool != Tool::Move {
         return;
     }

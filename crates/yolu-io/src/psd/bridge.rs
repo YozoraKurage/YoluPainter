@@ -1,10 +1,10 @@
 //! core の文書への明示変換（C# の `PsdBridge.Export`・`Import` と対）。名前によるレイヤー対応付けはしない。
 //!
 //! - 書き出しは [`super::bake`]（焼き込み・チャンネルごと）と、ここの `from_core`（厳密: Color の写しで、そのままは書けないものは
-//!   平らにも黙って落とすこともせず、層の名前と理由で断る。C# の `PsdBridge.Export` の断りと対）。PSD の形で書くのは、ラスター・
+//!   平らにも黙って落とすこともせず、レイヤーの名前と理由で断る。C# の `PsdBridge.Export` の断りと対）。PSD の形で書くのは、ラスター・
 //!   グループ（入れ子・通過/分離）・単色の塗りつぶし・調整（反転・レベル補正・色相/彩度・色調補正の 6 種。PSD の刻みに収まるものだけ）・クリッピング・
-//!   ラスターマスク（有効/無効・濃度）・層のロック。
-//! - 取り込み（`to_core`）は逆で、並びも ID も C# の取り込みと同じ（PSD の層 ID と区切りの ID を core の層 ID の中に持ち、
+//!   ラスターマスク（有効/無効・濃度）・レイヤーのロック。
+//! - 取り込み（`to_core`）は逆で、並びも ID も C# の取り込みと同じ（PSD のレイヤー ID と区切りの ID を core のレイヤー ID の中に持ち、
 //!   書き出し直すと同じ ID になる）。
 use super::*;
 use crate::{check, Error, Result};
@@ -17,11 +17,11 @@ use yolu_core::{
     TileCoord, ToneChannel, ToneCurves,
 };
 
-/// PSD の画素の合計の予算（C# と同じ。マスクは画布 1 枚ぶんを数える）。厳密な書き出し（`from_core`）と、予算を決めない焼き込みの書き出し（`ExportControl::default()`）の上限。
+/// PSD の画素の合計の予算（C# と同じ。マスクはキャンバス 1 枚ぶんを数える）。厳密な書き出し（`from_core`）と、予算を決めない焼き込みの書き出し（`ExportControl::default()`）の上限。
 /// アプリの書き出しは、設定の「レイヤーのメモリ」から決まる予算（`ExportControl::source_budget`）で書く。
 pub(super) const PIXEL_BUDGET: u64 = 128 * 1024 * 1024;
 
-/// core の層のロック（1:透明部分・2:画素・4:位置・8:すべて）を PSD の lspf のビット（0:透明部分・1:画素・2:位置・31:すべて）へ。
+/// core のレイヤーのロック（1:透明部分・2:画素・4:位置・8:すべて）を PSD の lspf のビット（0:透明部分・1:画素・2:位置・31:すべて）へ。
 /// すべては 0x80000000 だけにする（その下の個別のビットは足さない。効くロックは同じで、読み直した PSD も同じ形になる）。
 pub(super) fn psd_locks(locks: LayerLocks) -> u32 {
     if locks.contains(LayerLocks::ALL) {
@@ -316,7 +316,7 @@ pub(super) fn core_adjustment(a: &Adjustment) -> Result<AdjustmentSettings> {
         }
     })
 }
-/// 厳密に（焼かず・丸めず・落とさずに）PSD へ書けない理由（層ごと）。`from_core` は 1 つでもあれば断る。焼き込みの書き出し（[`super::plan_export`]）は、
+/// 厳密に（焼かず・丸めず・落とさずに）PSD へ書けない理由（レイヤーごと）。`from_core` は 1 つでもあれば断る。焼き込みの書き出し（[`super::plan_export`]）は、
 /// これらを機能ごとに焼く・丸める・落とすで書き、書けないものだけを断りとして返す。画面は種類から画面の言語の文を作る。`message` は日本語の
 /// 診断（`from_core` の断りの文）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,13 +339,13 @@ pub enum Refusal {
     GradientMapBetweenSteps,
     /// グラデーションマップのランプに値のカーブがある（PSD のグラデーションに形が無い）。
     GradientMapCurve,
-    /// グラデーションマップの値のカーブを、停止点の上限（32）の中で、層の出力の差 4 以下（通常の合成モード・不透明度 100%・下の色によらない最悪）に
-    /// 展開できない。焼き込みの書き出しだけの断りで、合成に出る層にだけ付く（合成に出ない層は最良の展開を隠して書く）。厳密な書き出しは展開をしないので、
+    /// グラデーションマップの値のカーブを、停止点の上限（32）の中で、レイヤーの出力の差 4 以下（通常の合成モード・不透明度 100%・下の色によらない最悪）に
+    /// 展開できない。焼き込みの書き出しだけの断りで、合成に出るレイヤーにだけ付く（合成に出ないレイヤーは最良の展開を隠して書く）。厳密な書き出しは展開をしないので、
     /// 値のカーブがあれば収まる曲線も含めて `GradientMapCurve` で断る。
     GradientMapCurveStops,
     /// グラデーションマップのランプが混色（混色モードが通常でない）か区間の混合率曲線を使っている（PSD のグラデーションに形が無い）。
     GradientMapMixing,
-    /// グラデーションマップの混色・混合率曲線を、停止点の上限（32）の中で、層の出力の差 4 以下に展開できない。`GradientMapCurveStops` と同じ決めで、
+    /// グラデーションマップの混色・混合率曲線を、停止点の上限（32）の中で、レイヤーの出力の差 4 以下に展開できない。`GradientMapCurveStops` と同じ決めで、
     /// 焼き込みの書き出しだけの断り（厳密な書き出しは混色があれば `GradientMapMixing` で断る）。
     GradientMapMixingStops,
     /// トーンカーブの点が PSD の刻み（入力・出力とも 1/255）の間にある。
@@ -354,7 +354,7 @@ pub enum Refusal {
     ColorBalanceBetweenSteps,
     /// 明るさ・コントラストが PSD の刻み（整数）の間にある。
     BrightnessContrastBetweenSteps,
-    /// 層かマスクのフィルター・Generator（効いていない段・無効の段も。設定が PSD に残らず、層の画素と統合画像が食い違う）。
+    /// レイヤーかマスクのフィルター・Generator（効いていない段・無効の段も。設定が PSD に残らず、レイヤーの画素と統合画像が食い違う）。
     Effects,
     /// Anchor（PSD に形が無い）。
     Anchor,
@@ -362,20 +362,22 @@ pub enum Refusal {
     Path,
     /// ファイルの向きが DirectX の Normal のレベル補正（緑だけ別の曲線になり、PSD の 1 つのレベル補正では書けない）。
     NormalLevels,
+    /// テキストレイヤーの値（このアプリのテキストの値は PSD のテキストレイヤーの形に無い）。
+    Text,
 }
-/// 層 1 枚の断りの理由。
+/// レイヤー 1 枚の断りの理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blocker {
     pub layer: String,
     pub refusal: Refusal,
 }
 impl Blocker {
-    /// 日本語の診断（層の名前つき）。
+    /// 日本語の診断（レイヤーの名前つき）。
     pub fn message(&self) -> String {
         let name = &self.layer;
         match &self.refusal {
             Refusal::ClippedGroup => format!("グループ「{name}」はクリッピングされています。クリッピングされたフォルダーを Photoshop が正しく扱うかは確かめられていないので、PSD に書きません"),
-            Refusal::InvertedMask => format!("層「{name}」のマスクは反転しています。PSD には非破壊のマスクの反転がないので、画素に焼かず断ります"),
+            Refusal::InvertedMask => format!("レイヤー「{name}」のマスクは反転しています。PSD には非破壊のマスクの反転がないので、画素に焼かず断ります"),
             Refusal::FillTranslucent => format!("塗りつぶし「{name}」の Color は半透明です。PSD の単色の塗りつぶしは不透明だけです"),
             Refusal::FillPixels => format!("塗りつぶし「{name}」は画像・投影・デカール・グラデーションを使っています。PSD の単色の塗りつぶしに形が無いので、画素に焼かず断ります"),
             Refusal::LevelsBetweenSteps => format!("調整「{name}」のレベル補正は PSD の刻み（0〜255 の整数・ガンマは 1/100）の間にあります。丸めて書かず断ります"),
@@ -383,21 +385,22 @@ impl Blocker {
             Refusal::HueSaturationBetweenSteps => format!("調整「{name}」の色相・彩度は PSD の刻み（1 度・1%）の間にあります。丸めて書かず断ります"),
             Refusal::GradientMapBetweenSteps => format!("調整「{name}」のグラデーションマップは PSD の刻み（位置 1/4096・中点 1%・不透明度 1/255）の間にあります。丸めて書かず断ります"),
             Refusal::GradientMapCurve => format!("調整「{name}」のグラデーションマップのランプに値のカーブがあります。PSD のグラデーションに値のカーブはないので、書かず断ります"),
-            Refusal::GradientMapCurveStops => format!("調整「{name}」のグラデーションマップの値のカーブを、PSD の停止点の上限（32 個）の中で、層の出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
+            Refusal::GradientMapCurveStops => format!("調整「{name}」のグラデーションマップの値のカーブを、PSD の停止点の上限（32 個）の中で、レイヤーの出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
             Refusal::GradientMapMixing => format!("調整「{name}」のグラデーションマップのランプに混色（混色モード・混合率曲線）があります。PSD のグラデーションに形はないので、書かず断ります"),
-            Refusal::GradientMapMixingStops => format!("調整「{name}」のグラデーションマップの混色（混色モード・混合率曲線）を、PSD の停止点の上限（32 個）の中で、層の出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
+            Refusal::GradientMapMixingStops => format!("調整「{name}」のグラデーションマップの混色（混色モード・混合率曲線）を、PSD の停止点の上限（32 個）の中で、レイヤーの出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
             Refusal::ToneCurveBetweenSteps => format!("調整「{name}」のトーンカーブの点は PSD の刻み（入力・出力とも 0〜255 の整数）の間にあります。丸めて書かず断ります"),
             Refusal::ColorBalanceBetweenSteps => format!("調整「{name}」のカラーバランスは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
             Refusal::BrightnessContrastBetweenSteps => format!("調整「{name}」の明るさ・コントラストは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
-            Refusal::Effects => format!("層「{name}」にフィルターかジェネレーターがあります。効果は PSD に書けません"),
-            Refusal::Anchor => format!("層「{name}」に Anchor があります。Anchor は PSD に書けません"),
-            Refusal::Path => format!("層「{name}」にパスがあります。パスは PSD に書けません"),
+            Refusal::Effects => format!("レイヤー「{name}」にフィルターかジェネレーターがあります。効果は PSD に書けません"),
+            Refusal::Anchor => format!("レイヤー「{name}」に Anchor があります。Anchor は PSD に書けません"),
+            Refusal::Path => format!("レイヤー「{name}」にパスがあります。パスは PSD に書けません"),
             Refusal::NormalLevels => format!("調整「{name}」のレベル補正は、ファイルの向きが DirectX の Normal の PSD に書けません。緑だけ別の曲線になります"),
+            Refusal::Text => format!("「{name}」はテキストレイヤーです。テキストの値は PSD に書けません"),
         }
     }
 }
 
-/// PSD 側の ID（正の整数）。core の層 ID の上位 32 bit（C# の Guid の先頭 4 バイト）から取り、重なれば次の空きへ。
+/// PSD 側の ID（正の整数）。core のレイヤー ID の上位 32 bit（C# の Guid の先頭 4 バイト）から取り、重なれば次の空きへ。
 pub(super) fn unique_id(raw: i32, used: &mut HashSet<i32>) -> i32 {
     let mut id = raw & i32::MAX;
     if id == 0 {
@@ -411,11 +414,11 @@ pub(super) fn unique_id(raw: i32, used: &mut HashSet<i32>) -> i32 {
 pub(super) fn layer_part(id: LayerId) -> i32 {
     (id.0 >> 96) as i32
 }
-/// グループの区切りの ID（C# の Guid の 4〜7 バイト目。core の層 ID では 64〜95 bit 目の 2 つの 16 bit）。
+/// グループの区切りの ID（C# の Guid の 4〜7 バイト目。core のレイヤー ID では 64〜95 bit 目の 2 つの 16 bit）。
 pub(super) fn divider_part(id: LayerId) -> i32 {
     ((((id.0 >> 80) & 0xffff) as u32) | ((((id.0 >> 64) & 0xffff) as u32) << 16)) as i32
 }
-/// `divider_part` の逆（取り込みで区切りの ID を core の層 ID に持つ）。
+/// `divider_part` の逆（取り込みで区切りの ID を core のレイヤー ID に持つ）。
 pub(super) fn divider_bits(divider: i32) -> u128 {
     let d = divider as u32;
     (u128::from(d & 0xffff) << 80) | (u128::from(d >> 16) << 64)
@@ -433,7 +436,7 @@ impl ReadResult {
             .to_core()
     }
 }
-/// 層の並び（下から上）。グループの中身はグループのすぐ下に続き、親はグループの並びの位置。
+/// レイヤーの並び（下から上）。グループの中身はグループのすぐ下に続き、親はグループの並びの位置。
 struct Item<'a> {
     layer: &'a Layer,
     parent: Option<usize>,
@@ -465,7 +468,7 @@ pub(super) fn mask_off_canvas(m: &Mask, width: u32, height: u32) -> bool {
     })
 }
 impl Document {
-    /// core に入れられない内容を、層ごとに 1 つ（`layers[2].children[0]: …` の形）返す。キャンバス外の画素・マスクを切り捨てて黙って
+    /// core に入れられない内容を、レイヤーごとに 1 つ（`layers[2].children[0]: …` の形）返す。キャンバス外の画素・マスクを切り捨てて黙って
     /// 捨てることはしない。グループ・調整・塗りつぶし・マスク・ロックは core が持てる。
     pub fn core_issues(&self) -> Vec<String> {
         let mut issues = Vec::new();
@@ -499,7 +502,7 @@ impl Document {
             }
         }
     }
-    /// ラスターの層の画素を core の Color の面へ（PSD は上から下、core は下から上）。
+    /// ラスターレイヤーの画素を core の Color の面へ（PSD は上から下、core は下から上）。
     fn import_pixels(&self, d: &mut CoreDocument, id: LayerId, l: &Layer) -> Result<()> {
         let ts = d.tile_size();
         let x0 = l.left as u32;
@@ -522,8 +525,8 @@ impl Document {
         }
         Ok(())
     }
-    /// ラスターの層の画素を core の Color の面へ。`import_pixels` と違い、画布からはみ出す層は、はみ出した所を入れずに切る
-    /// （アルファが 0 でない画素を切ったら true を返す。透明の画素は、切っても何も失わない）。層の画素が空の層は何もしない。
+    /// ラスターレイヤーの画素を core の Color の面へ。`import_pixels` と違い、キャンバスからはみ出すレイヤーは、はみ出した所を入れずに切る
+    /// （アルファが 0 でない画素を切ったら true を返す。透明の画素は、切っても何も失わない）。レイヤーの画素が空のレイヤーは何もしない。
     pub(super) fn import_pixels_clipped(
         &self,
         d: &mut CoreDocument,
@@ -562,21 +565,21 @@ impl Document {
         // core の行は下から。PSD の行 y0..y1 は core の行 (高さ − y1)..(高さ − y0)
         let (cx0, cx1) = (x0 as u32, x1 as u32);
         let (cy0, cy1) = ((ch - y1) as u32, (ch - y0) as u32);
-        let mut tile = vec![0u8; (ts * ts * 4) as usize];
-        for ty in cy0 / ts..cy1.div_ceil(ts) {
-            for tx in cx0 / ts..cx1.div_ceil(ts) {
-                tile.fill(0);
-                for y in (ty * ts).max(cy0)..((ty + 1) * ts).min(cy1) {
-                    let row = (ch - 1 - i64::from(y) - top) as usize;
-                    for x in (tx * ts).max(cx0)..((tx + 1) * ts).min(cx1) {
-                        let src = (row * l.width as usize + (i64::from(x) - left) as usize) * 4;
-                        let dest = ((y % ts) * ts + x % ts) as usize * 4;
-                        tile[dest..dest + 4].copy_from_slice(&l.pixels_rgba[src..src + 4])
-                    }
-                }
-                d.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &tile)?;
+        let coords: Vec<TileCoord> = (cy0 / ts..cy1.div_ceil(ts))
+            .flat_map(|ty| (cx0 / ts..cx1.div_ceil(ts)).map(move |tx| TileCoord::new(tx, ty)))
+            .collect();
+        // タイルの画素を行ごとに写す（タイルはワーカーが作り、core へはタイルの順に入れる）
+        d.import_tiles_with(id, Channel::Color, &coords, |c, tile| {
+            tile.fill(0);
+            let (xa, xb) = ((c.x * ts).max(cx0), ((c.x + 1) * ts).min(cx1));
+            let n = (xb - xa) as usize * 4;
+            for y in (c.y * ts).max(cy0)..((c.y + 1) * ts).min(cy1) {
+                let row = (ch - 1 - i64::from(y) - top) as usize;
+                let src = (row * l.width as usize + (i64::from(xa) - left) as usize) * 4;
+                let dest = ((y % ts) * ts + xa % ts) as usize * 4;
+                tile[dest..dest + n].copy_from_slice(&l.pixels_rgba[src..src + n]);
             }
-        }
+        })?;
         Ok(clipped)
     }
     /// マスクを core へ。core は隠す量（255 − PSD の値）を持ち、何も隠さないタイルは持たないので、隠す所のあるタイルだけを入れる。
@@ -672,7 +675,7 @@ impl Document {
                 d.set_locks_for_load(*id, core_locks(item.layer.locks))?;
             }
         }
-        // 層 ID に PSD の層 ID（上位 32 bit）とグループの区切りの ID を持たせ、書き出し直すと同じ ID になる。残りは文書ごとに違う
+        // レイヤー ID に PSD のレイヤー ID（上位 32 bit）とグループの区切りの ID を持たせ、書き出し直すと同じ ID になる。残りは文書ごとに違う
         let ids: Vec<LayerId> = items
             .iter()
             .map(|i| {
@@ -687,14 +690,14 @@ impl Document {
         Ok(d.with_persistent_ids(doc_id, &ids)?)
     }
 
-    /// 厳密な新規投影（Color）。そのままは書けないもの（焼く・丸める・落とすが要るもの）が 1 つでもあれば、層の名前と理由で断る。
+    /// 厳密な新規投影（Color）。そのままは書けないもの（焼く・丸める・落とすが要るもの）が 1 つでもあれば、レイヤーの名前と理由で断る。
     /// 焼き込みで書くには [`export_core`](super::export_core)。インポート原本の編集保存には、この結果と `write_edited` を使う。
     pub fn from_core(d: &CoreDocument) -> Result<Self> {
         Self::from_core_with(d, &ExportControl::default())
     }
 
-    /// [`from_core`](Self::from_core) の、上限の値を呼び手が決める形（`ctl.source_budget` は設定の「レイヤーのメモリ」。層の記録の数・キャンバス・
-    /// 全層の画素の合計がこの予算から決まる）。何を断るかは `from_core` と同じ。
+    /// [`from_core`](Self::from_core) の、上限の値を呼び手が決める形（`ctl.source_budget` は設定の「レイヤーのメモリ」。レイヤーの記録の数・キャンバス・
+    /// 全レイヤーの画素の合計がこの予算から決まる）。何を断るかは `from_core` と同じ。
     pub fn from_core_with(d: &CoreDocument, ctl: &ExportControl) -> Result<Self> {
         super::bake::from_core_strict(d, ctl)
     }

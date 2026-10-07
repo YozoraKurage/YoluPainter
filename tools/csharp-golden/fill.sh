@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C# Core を原文のまま組む。fill.sh golden [出力先] / fill.sh bench [回数] [並列度]
+# C# Core を原文のままビルドする。fill.sh golden [出力先] / fill.sh bench [回数] [並列度]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"

@@ -5,16 +5,18 @@
 //! - 戻すのは「休みの形 + 保存した差」: 合わない項目（名前の道に合う骨が無い・同じ名前が並ぶ・メッシュと BlendShape の名前の組が決まらない）は
 //!   飛ばして理由を残し（ポーズの欄の知らせ）、1 つも合わなければポーズを変えない。戻したポーズは取り消しの段にも「変更あり」の印にもならない
 //!   （開いた直後の状態）。
+//! - 欄で選んでいるテイクとフレーム（`takes`）も同じエントリに残し（最初のテイクの始まりのままなら書かない）、開いたときに選びを戻す。
+//!   名前の合うテイクが無ければ、選びは最初のテイクのままにして理由を残す。
 //! - 保存するのは、プロジェクトのモデル（FBX）のポーズだけ。Live Link で Unity から受けるポーズは頂点の位置（骨ではない）で、Live Link のモデルは
 //!   ポーズのセッションを持たないので、保存しない。Live Link のモデルが出ている間（セッションが無い間）の保存は、ファイルのポーズに触れない
 //!   （消さず、受けたポーズで上書きもしない）。保存済みのポーズは、そのプロジェクトのモデルを読み直したときに戻る。
 
 use yolu_core::glam::{Quat, Vec3};
 use yolu_core::skin::{Pose, Rig};
-use yolu_io::pose::{StoredBone, StoredPose, StoredShape};
+use yolu_io::pose::{StoredBone, StoredPose, StoredShape, StoredTake};
 
-use super::presets::{self, Built, SkipReason, Skipped};
 use super::presets::store::PoseEntry;
+use super::presets::{self, Built, SkipReason, Skipped};
 use crate::lang::Lang;
 use crate::state::AppState;
 
@@ -33,9 +35,11 @@ pub fn stored_from_pose(rig: &Rig, pose: &Pose) -> (StoredPose, Vec<String>) {
             && e.path.len() <= yolu_io::pose::MAX_PATH_DEPTH
             && e.path.iter().all(|n| savable_name(n))
             && out.bones.len() < yolu_io::pose::MAX_BONES
-            && [e.translation, e.scale]
-                .iter()
-                .all(|v| v.to_array().iter().all(|x| x.is_finite() && x.abs() <= yolu_io::pose::MAX_MAGNITUDE));
+            && [e.translation, e.scale].iter().all(|v| {
+                v.to_array()
+                    .iter()
+                    .all(|x| x.is_finite() && x.abs() <= yolu_io::pose::MAX_MAGNITUDE)
+            });
         if !ok {
             unsaved.push(e.path.last().cloned().unwrap_or_default());
             continue;
@@ -137,28 +141,43 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         Ok(Some(p)) => p,
         Ok(None) => return None,
         Err(e) => {
-            return Some(format!(
-                "{}: {}",
-                lang.pick("ポーズを読めません（ファイルには残っています）", "Cannot read the pose (kept in the file)"),
-                lang.io_error(&e)
-            ))
+            return Some(lang.kept_in_file(lang.with_reason(
+                lang.pick("ポーズを読めません", "Cannot read the pose"),
+                lang.io_error(&e),
+            )))
         }
     };
     let session = app.view3d.pose.session.as_ref()?;
     let label = lang.pick("ファイルのポーズ", "Pose in file");
     let built = pose_from_stored(&session.rig, &stored, label);
     let total = stored.bones.len() + stored.shapes.len();
-    let skipped = built.skipped.len();
     let nothing_fits = built.applied == 0 && total > 0;
     let mut result = Ok(());
     if !nothing_fits {
         result = super::restore_pose(&mut app.view3d, built.pose);
     }
+    let mut notes = built.skipped;
     if let Some(s) = app.view3d.pose.session.as_mut() {
-        s.preset_notes = built.skipped;
+        // 欄のテイクの選び（「変更あり」にも取り消しにも数えない: 開いた直後の状態）
+        if let Some(t) = &stored.take {
+            if !s.takes.choose_by_name(&t.name, t.frame) {
+                notes.push(Skipped {
+                    preset: label.to_owned(),
+                    path: t.name.clone(),
+                    reason: SkipReason::TakeNotFound,
+                });
+            }
+        }
+    }
+    let skipped = notes.len();
+    if let Some(s) = app.view3d.pose.session.as_mut() {
+        s.preset_notes = notes;
     }
     Some(match result {
-        Err(e) => format!("{}: {}", lang.pick("ポーズを戻せません", "Cannot restore the pose"), lang.view_error(&e)),
+        Err(e) => lang.with_reason(
+            lang.pick("ポーズを戻せません", "Cannot restore the pose"),
+            lang.view_error(&e),
+        ),
         Ok(()) if nothing_fits => lang.pick(
             "ファイルのポーズに合うボーンがありません。".to_owned(),
             "No bone fits the pose in the file.".to_owned(),
@@ -167,7 +186,10 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
             format!("ポーズを戻しました（合わない項目 {skipped} 件）。"),
             format!("Pose restored (unmatched items: {skipped})."),
         ),
-        Ok(()) => lang.pick("ポーズを戻しました。".to_owned(), "Pose restored.".to_owned()),
+        Ok(()) => lang.pick(
+            "ポーズを戻しました。".to_owned(),
+            "Pose restored.".to_owned(),
+        ),
     })
 }
 
@@ -190,8 +212,24 @@ pub fn capture(app: &AppState) -> (PoseCapture, Vec<String>) {
     let Some(session) = app.view3d.pose.session.as_ref() else {
         return (PoseCapture::Keep, Vec::new());
     };
-    let (stored, unsaved) = stored_from_pose(&session.rig, session.pose());
-    (PoseCapture::Write((!stored.is_rest()).then_some(stored)), unsaved)
+    let (mut stored, unsaved) = stored_from_pose(&session.rig, session.pose());
+    stored.take = stored_take(&session.takes);
+    (
+        PoseCapture::Write((!stored.is_rest()).then_some(stored)),
+        unsaved,
+    )
+}
+
+/// 欄で選んでいるテイクとフレーム（最初のテイクの始まりのまま・名前が決まりに合わないなら None）。
+fn stored_take(takes: &super::takes::TakeState) -> Option<StoredTake> {
+    if takes.is_default_choice() {
+        return None;
+    }
+    let take = takes.chosen_take()?;
+    savable_name(&take.name).then(|| StoredTake {
+        name: take.name.clone(),
+        frame: takes.frame(),
+    })
 }
 
 /// 保存できなかった項目の知らせ（無ければ空。先頭に空白を置いて、保存の知らせの文へ続ける）。
@@ -200,9 +238,15 @@ pub fn unsaved_note(lang: Lang, unsaved: &[String]) -> String {
         return String::new();
     }
     let names = unsaved.join(lang.pick("・", ", "));
-    lang.pick(
-        format!(" ポーズに保存できない項目: {names}。"),
-        format!(" Not saved in the pose: {names}."),
+    format!(
+        " {}",
+        lang.with_reason(
+            lang.pick(
+                "ポーズに保存できない項目があります",
+                "Some items are not saved in the pose",
+            ),
+            names,
+        )
     )
 }
 
@@ -224,7 +268,10 @@ pub fn write_into(
         Ok(_) => {}
     }
     let written = project.with_pose(next.as_ref()).map_err(|e| {
-        format!("{}: {}", lang.pick("ポーズを書けません", "Cannot write the pose"), lang.io_error(&e))
+        lang.with_reason(
+            lang.pick("ポーズを書けません", "Cannot write the pose"),
+            lang.io_error(&e),
+        )
     })?;
     Ok((written, overwritten))
 }

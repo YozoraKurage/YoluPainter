@@ -1,6 +1,6 @@
-//! キャンバスの表示の GPU の合成が、CPU の合成と同じ絵になる文書の形: 独立して合成するグループ・調整の層（全種類）・法線の種類のチャンネル・
+//! キャンバスの表示の GPU の合成が、CPU の合成と同じ絵になる文書の形: 独立して合成するグループ・調整レイヤー（全種類）・法線の種類のチャンネル・
 //! 効果（フィルター・Generator・塗りつぶしのグラデーション・マスクのフィルター）のある文書。
-//! 許しの範囲は `tests/canvas.rs` と同じ（GPU は f32、CPU は f64 で、層ごとに半段切り上げで丸める式は同じ。1 段ごとに最大 1、
+//! 許しの範囲は `tests/canvas.rs` と同じ（GPU も CPU も f32 だが、シェーダーの演算の丸めは CPU の式と同じとは限らない。レイヤーごとに半段切り上げで丸める式は同じ。1 段ごとに最大 1、
 //! 重ねた文書で 2 以内）。調整は、表を引く種類（レベル補正・トーンカーブ・明るさ/コントラスト・グラデーションマップ）と整数の式
 //! （反転・2 値化・ポスタリゼーション）が CPU とバイトまで同じで、色相/彩度とカラーバランスだけ浮動小数の丸めの差が出る。
 use yolu_core::curve::{Curve, CurvePoint};
@@ -20,6 +20,8 @@ const TOLERANCE: u8 = 2;
 
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
     gpu_lease::lease();
@@ -27,7 +29,7 @@ fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            eprintln!("キャンバスの GPU 試験をスキップ: {e}");
+            require_gpu::skipped("キャンバスの GPU 試験", &e.to_string());
             return None;
         }
     };
@@ -128,7 +130,7 @@ fn doc() -> Document {
 }
 
 fn add_painted(d: &mut Document, rng: &mut Rng, alphas: &[u8]) -> LayerId {
-    let l = d.add_layer("層").unwrap();
+    let l = d.add_layer("レイヤー").unwrap();
     paint(d, l, rng, alphas);
     l
 }
@@ -146,15 +148,20 @@ fn paint_tiles(d: &mut Document, layer: LayerId, rng: &mut Rng, percent: u8, alp
             for y in ty * ts..((ty + 1) * ts).min(d.height()) {
                 for x in tx * ts..((tx + 1) * ts).min(d.width()) {
                     let a = alphas[(x as usize + y as usize) % alphas.len()];
-                    d.set_pixel(layer, x, y, Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a))
-                        .unwrap();
+                    d.set_pixel(
+                        layer,
+                        x,
+                        y,
+                        Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a),
+                    )
+                    .unwrap();
                 }
             }
         }
     }
 }
 
-/// 層が疎に描かれた文書（独立・通過のグループ・クリッピング・調整・マスクを持つ）。どのタイルも、描いた層の組み合わせが違う。
+/// レイヤーが疎に描かれた文書（独立・通過のグループ・クリッピング・調整・マスクを持つ）。どのタイルも、描いたレイヤーの組み合わせが違う。
 /// 描いていないタイルの命令を落としても、CPU と同じ絵になる。描き足す・消す・構造を変えると、タイルの命令も変わって追従する。
 #[test]
 fn sparse_documents_with_culled_tile_programs_match_cpu() {
@@ -165,24 +172,30 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
     paint_tiles(&mut d, base, &mut rng, 60, &[255]);
     let mut layers = vec![base];
     for k in 0..9 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         paint_tiles(&mut d, l, &mut rng, 35, &[255, 200, 90, 0][k % 3..]);
         d.set_layer_blend_mode(
             l,
-            [BlendMode::Normal, BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay][k % 4],
+            [
+                BlendMode::Normal,
+                BlendMode::Multiply,
+                BlendMode::Screen,
+                BlendMode::Overlay,
+            ][k % 4],
         )
         .unwrap();
         layers.push(l);
     }
-    check(&mut g, &d, "疎な層");
-    // 一部の層だけにマスク（マスクも一部のタイルだけ）。マスクだけがあって層の画素が無いタイルもある
+    check(&mut g, &d, "疎なレイヤー");
+    // 一部のレイヤーだけにマスク（マスクも一部のタイルだけ）。マスクだけがあってレイヤーの画素が無いタイルもある
     for &l in &[layers[2], layers[5]] {
         d.add_layer_mask(l).unwrap();
         let ts = d.tile_size();
         for ty in 0..d.height().div_ceil(ts) {
             for tx in 0..d.width().div_ceil(ts) {
                 if rng.byte().is_multiple_of(2) {
-                    d.set_mask_pixel(l, tx * ts + 2, ty * ts + 3, rng.byte()).unwrap();
+                    d.set_mask_pixel(l, tx * ts + 2, ty * ts + 3, rng.byte())
+                        .unwrap();
                 }
             }
         }
@@ -199,9 +212,14 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
             Some(layers[6]),
         )
         .unwrap();
-    check(&mut g, &d, "疎な層の上の調整");
+    check(&mut g, &d, "疎なレイヤーの上の調整");
     let clip_adj = d
-        .add_adjustment_layer("クリップの反転", AdjustmentSettings::invert(), None, Some(layers[7]))
+        .add_adjustment_layer(
+            "クリップの反転",
+            AdjustmentSettings::invert(),
+            None,
+            Some(layers[7]),
+        )
         .unwrap();
     d.set_layer_clipping(clip_adj, true).unwrap();
     check(&mut g, &d, "疎な下地へのクリッピングの調整");
@@ -209,10 +227,12 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
     let g1 = d.group_layers(&[layers[1], layers[2]], "独立 1").unwrap();
     d.set_layer_blend_mode(g1, BlendMode::Normal).unwrap();
     d.set_layer_opacity(g1, 0.8, false).unwrap();
-    let g2 = d.group_layers(&[layers[6], adj, layers[7]], "通過").unwrap();
+    let g2 = d
+        .group_layers(&[layers[6], adj, layers[7]], "通過")
+        .unwrap();
     d.set_layer_blend_mode(g2, BlendMode::PassThrough).unwrap();
     d.set_layer_opacity(g2, 0.6, false).unwrap();
-    check(&mut g, &d, "疎な層のグループ");
+    check(&mut g, &d, "疎なレイヤーのグループ");
     let g3 = d.group_layers(&[g1, layers[3]], "外").unwrap();
     d.set_layer_blend_mode(g3, BlendMode::Multiply).unwrap();
     check(&mut g, &d, "入れ子のグループ");
@@ -220,12 +240,22 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
     let l9 = layers[9];
     for (x, y) in [(3, 3), (70, 40), (120, 90), (17, 33)] {
         d.set_pixel(l9, x, y, Rgba8::new(255, 0, 255, 255)).unwrap();
-        step(&mut g, &d, Channel::Color, &format!("({x}, {y}) に描き足す"));
+        step(
+            &mut g,
+            &d,
+            Channel::Color,
+            &format!("({x}, {y}) に描き足す"),
+        );
     }
     for &l in &layers[1..6] {
         d.set_pixel(l, 66, 10, Rgba8::new(0, 255, 0, 255)).unwrap();
     }
-    step(&mut g, &d, Channel::Color, "複数の層の同じタイルへ描き足す");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "複数のレイヤーの同じタイルへ描き足す",
+    );
     d.set_layer_visible(g1, false).unwrap();
     step(&mut g, &d, Channel::Color, "独立のグループを隠す");
     d.set_layer_visible(g1, true).unwrap();
@@ -275,12 +305,12 @@ fn isolated_groups_match_cpu() {
     check(&mut g, &d, "マスクを無効に");
     d.set_layer_mask_enabled(group, true).unwrap();
     d.set_layer_opacity(group, 1.0, false).unwrap();
-    // 隠す・中の層を隠す
+    // 隠す・中のレイヤーを隠す
     d.set_layer_visible(group, false).unwrap();
     check(&mut g, &d, "グループを隠す");
     d.set_layer_visible(group, true).unwrap();
     d.set_layer_visible(b, false).unwrap();
-    check(&mut g, &d, "中の層を隠す");
+    check(&mut g, &d, "中のレイヤーを隠す");
     d.set_layer_visible(b, true).unwrap();
     // グループが下地になるクリッピング
     let clip = add_painted(&mut d, &mut rng, &[255, 90]);
@@ -295,10 +325,18 @@ fn isolated_groups_match_cpu() {
     let clipped = d.group_layers(&[inner, inner2], "クリップの組").unwrap();
     d.move_layer_to(clipped, None, 1).unwrap();
     d.set_layer_clipping(clipped, true).unwrap();
-    check(&mut g, &d, "クリッピングされたグループ（通過の指定でも透明から）");
+    check(
+        &mut g,
+        &d,
+        "クリッピングされたグループ（通過の指定でも透明から）",
+    );
     d.set_layer_blend_mode(clipped, BlendMode::Normal).unwrap();
     d.set_layer_opacity(clipped, 0.5, false).unwrap();
-    check(&mut g, &d, "クリッピングされたグループの Normal・不透明度 0.5");
+    check(
+        &mut g,
+        &d,
+        "クリッピングされたグループの Normal・不透明度 0.5",
+    );
     let _ = base;
 }
 
@@ -318,9 +356,11 @@ fn nested_and_mixed_groups_match_cpu() {
     let l3 = add_painted(&mut d, &mut rng, &[255, 0, 160]);
     d.set_layer_blend_mode(l3, BlendMode::Screen).unwrap();
     let pass_inner = add_painted(&mut d, &mut rng, &[240, 120]);
-    d.set_layer_blend_mode(pass_inner, BlendMode::Overlay).unwrap();
+    d.set_layer_blend_mode(pass_inner, BlendMode::Overlay)
+        .unwrap();
     let pass = d.group_layers(&[pass_inner], "通過").unwrap();
-    d.set_layer_blend_mode(pass, BlendMode::PassThrough).unwrap();
+    d.set_layer_blend_mode(pass, BlendMode::PassThrough)
+        .unwrap();
     d.set_layer_opacity(pass, 0.5, false).unwrap();
     let clip = add_painted(&mut d, &mut rng, &[255, 100]);
     d.set_layer_clipping(clip, true).unwrap();
@@ -340,14 +380,18 @@ fn nested_and_mixed_groups_match_cpu() {
             Some(l3),
         )
         .unwrap();
-    check(&mut g, &d, "独立のグループの中の調整（中の合成だけを変える）");
+    check(
+        &mut g,
+        &d,
+        "独立のグループの中の調整（中の合成だけを変える）",
+    );
     d.set_layer_opacity(adj, 0.5, false).unwrap();
     check(&mut g, &d, "調整の不透明度");
     d.set_layer_opacity(outer, 0.6, false).unwrap();
     check(&mut g, &d, "外のグループの不透明度");
     // 構造の編集（グループの中へ・外へ・解く・Undo）
     d.move_layer_to(base, Some(inner), 0).unwrap();
-    check(&mut g, &d, "層を独立のグループの中へ");
+    check(&mut g, &d, "レイヤーを独立のグループの中へ");
     d.ungroup(inner).unwrap();
     check(&mut g, &d, "グループを解く");
     d.undo().unwrap();
@@ -358,8 +402,11 @@ fn nested_and_mixed_groups_match_cpu() {
         let l = add_painted(&mut d, &mut rng, &[255, 0, 200 - k * 30]);
         deep_layers.push(l);
         let grp = d.group_layers(&deep_layers, "段").unwrap();
-        d.set_layer_blend_mode(grp, [BlendMode::Normal, BlendMode::PassThrough][k as usize % 2])
-            .unwrap();
+        d.set_layer_blend_mode(
+            grp,
+            [BlendMode::Normal, BlendMode::PassThrough][k as usize % 2],
+        )
+        .unwrap();
         if k % 2 == 1 {
             d.set_layer_opacity(grp, 0.7, false).unwrap();
         }
@@ -375,7 +422,8 @@ fn deep_isolated_nesting_up_to_the_stack_still_matches_cpu() {
     let mut rng = Rng(107);
     let mut inner = add_painted(&mut d, &mut rng, &[255, 120, 60]);
     let sibling = add_painted(&mut d, &mut rng, &[200, 255]);
-    d.set_layer_blend_mode(sibling, BlendMode::Multiply).unwrap();
+    d.set_layer_blend_mode(sibling, BlendMode::Multiply)
+        .unwrap();
     // 32 段（独立のグループは 2 語ずつ退避するので、積みの限り）
     for k in 0..32 {
         let grp = d.group_layers(&[inner], "段").unwrap();
@@ -388,7 +436,7 @@ fn deep_isolated_nesting_up_to_the_stack_still_matches_cpu() {
     check(&mut g, &d, "32 段の独立のグループ");
 }
 
-// ───────── 調整の層 ─────────
+// ───────── 調整レイヤー ─────────
 
 fn bent_curve() -> Curve {
     Curve::new(vec![
@@ -477,15 +525,25 @@ fn adjustment_kinds() -> Vec<(&'static str, AdjustmentSettings)> {
         (
             "カラーバランス",
             AdjustmentSettings::color_balance(
-                ColorBalance::new([30.0, -10.0, 0.0], [0.0, 40.0, -40.0], [-20.0, 0.0, 60.0], true)
-                    .unwrap(),
+                ColorBalance::new(
+                    [30.0, -10.0, 0.0],
+                    [0.0, 40.0, -40.0],
+                    [-20.0, 0.0, 60.0],
+                    true,
+                )
+                .unwrap(),
             ),
         ),
         (
             "カラーバランス（輝度を保たない）",
             AdjustmentSettings::color_balance(
-                ColorBalance::new([30.0, -10.0, 0.0], [0.0, 40.0, -40.0], [-20.0, 0.0, 60.0], false)
-                    .unwrap(),
+                ColorBalance::new(
+                    [30.0, -10.0, 0.0],
+                    [0.0, 40.0, -40.0],
+                    [-20.0, 0.0, 60.0],
+                    false,
+                )
+                .unwrap(),
             ),
         ),
         (
@@ -511,7 +569,7 @@ fn adjustment_kinds() -> Vec<(&'static str, AdjustmentSettings)> {
     ]
 }
 
-/// 調整の層 1 枚を、下の合成（透明・半透明・不透明の画素まじり）の上に、モード・不透明度・マスクを変えて置く。
+/// 調整レイヤー 1 枚を、下の合成（透明・半透明・不透明の画素まじり）の上に、モード・不透明度・マスクを変えて置く。
 #[test]
 fn every_adjustment_kind_matches_cpu() {
     let Some(mut g) = gpu() else { return };
@@ -534,7 +592,12 @@ fn every_adjustment_kind_matches_cpu() {
             yolu_core::AdjustmentType::HueSaturation | yolu_core::AdjustmentType::ColorBalance
         );
         let modes: &[BlendMode] = if exact {
-            &[BlendMode::Multiply, BlendMode::Hue, BlendMode::Screen, BlendMode::Divide]
+            &[
+                BlendMode::Multiply,
+                BlendMode::Hue,
+                BlendMode::Screen,
+                BlendMode::Divide,
+            ]
         } else {
             &[BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay]
         };
@@ -548,7 +611,7 @@ fn every_adjustment_kind_matches_cpu() {
         d.add_layer_mask(adj).unwrap();
         paint_mask(&mut d, adj, &mut rng);
         worst = worst.max(check(&mut g, &d, &format!("{name} マスク")));
-        // 調整の設定を差し替える（同じ層の命令・表が変わる）
+        // 調整の設定を差し替える（同じレイヤーの命令・表が変わる）
         d.set_adjustment(adj, settings, false).unwrap();
         worst = worst.max(check(&mut g, &d, &format!("{name} 設定の再設定")));
         d.set_layer_visible(adj, false).unwrap();
@@ -565,7 +628,7 @@ fn clipped_and_grouped_adjustments_match_cpu() {
     let mut d = doc();
     let base = add_painted(&mut d, &mut rng, &[255]);
     let a = add_painted(&mut d, &mut rng, &[255, 170, 0]);
-    // 下地 a に、クリッピングされた調整（下地の中の画素だけ変わる）と、クリッピングされた層
+    // 下地 a に、クリッピングされた調整（下地の中の画素だけ変わる）と、クリッピングされたレイヤー
     let kinds = adjustment_kinds();
     let adj1 = d
         .add_adjustment_layer("クリップの調整", kinds[2].1.clone(), None, Some(a))
@@ -580,7 +643,7 @@ fn clipped_and_grouped_adjustments_match_cpu() {
         .unwrap();
     d.set_layer_clipping(adj2, true).unwrap();
     d.set_layer_opacity(adj2, 0.5, false).unwrap();
-    check(&mut g, &d, "クリッピングの調整を 2 つ・間に層");
+    check(&mut g, &d, "クリッピングの調整を 2 つ・間にレイヤー");
     d.add_layer_mask(adj1).unwrap();
     paint_mask(&mut d, adj1, &mut rng);
     check(&mut g, &d, "クリッピングの調整のマスク");
@@ -626,7 +689,13 @@ fn adjustments_on_scalar_channels_match_cpu() {
         let adj = d
             .add_adjustment_layer(name, settings, Some(&[Channel::Roughness]), None)
             .unwrap();
-        check_in(&mut g, &d, Channel::Roughness, TOLERANCE, &format!("Roughness {name}"));
+        check_in(
+            &mut g,
+            &d,
+            Channel::Roughness,
+            TOLERANCE,
+            &format!("Roughness {name}"),
+        );
         d.remove_layer(adj).unwrap();
     }
 }
@@ -646,7 +715,10 @@ fn normal_doc(rng: &mut Rng) -> (Document, LayerId, LayerId, LayerId) {
                 let c = if (x + y) % 5 == 0 {
                     Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a)
                 } else {
-                    let (nx, ny) = ((rng.byte() as f64 - 128.0) / 400.0, (rng.byte() as f64 - 128.0) / 400.0);
+                    let (nx, ny) = (
+                        (rng.byte() as f64 - 128.0) / 400.0,
+                        (rng.byte() as f64 - 128.0) / 400.0,
+                    );
                     let nz = (1.0 - nx * nx - ny * ny).sqrt();
                     let enc = |v: f64| ((v * 0.5 + 0.5) * 255.0).round() as u8;
                     Rgba8::new(enc(nx), enc(ny), enc(nz), a)
@@ -669,39 +741,104 @@ fn normal_channels_match_cpu() {
     let normal_tolerance = TOLERANCE;
     let mut worst = check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 通常");
     d.set_layer_blend_mode(b, BlendMode::Overlay).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 Overlay（RNM）"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 Overlay（RNM）",
+    ));
     d.set_layer_opacity(b, 0.6, false).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 Overlay 不透明度"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 Overlay 不透明度",
+    ));
     d.set_layer_blend_mode(c, BlendMode::Multiply).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 ほかのモードは置き換え"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 ほかのモードは置き換え",
+    ));
     d.add_layer_mask(c).unwrap();
     paint_mask(&mut d, c, &mut rng);
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 マスク"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 マスク",
+    ));
     // クリッピング・グループ・フェード
     d.set_layer_clipping(c, true).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 クリッピング"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 クリッピング",
+    ));
     d.set_layer_blend_mode(c, BlendMode::Overlay).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 クリッピングの Overlay"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 クリッピングの Overlay",
+    ));
     let grp = d.group_layers(&[b, c], "組").unwrap();
     d.set_layer_blend_mode(grp, BlendMode::Normal).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 独立のグループ"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 独立のグループ",
+    ));
     d.set_layer_blend_mode(grp, BlendMode::PassThrough).unwrap();
     d.set_layer_opacity(grp, 0.5, false).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 通過のグループのフェード"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 通過のグループのフェード",
+    ));
     d.set_layer_opacity(grp, 1.0, false).unwrap();
     // 法線にも使える調整（反転・レベル補正）は色の式のまま
     for (name, settings) in adjustment_kinds().into_iter().take(2) {
         let adj = d
             .add_adjustment_layer(name, settings, Some(&[Channel::Normal]), None)
             .unwrap();
-        worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, &format!("法線 {name}")));
+        worst = worst.max(check_in(
+            &mut g,
+            &d,
+            Channel::Normal,
+            normal_tolerance,
+            &format!("法線 {name}"),
+        ));
         d.remove_layer(adj).unwrap();
     }
     // 法線に使えない調整は描かない（CPU も描かない）
     let adj = d
-        .add_adjustment_layer("色相/彩度", adjustment_kinds()[2].1.clone(), Some(&[Channel::Color]), None)
+        .add_adjustment_layer(
+            "色相/彩度",
+            adjustment_kinds()[2].1.clone(),
+            Some(&[Channel::Color]),
+            None,
+        )
         .unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 色のチャンネルだけの調整"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 色のチャンネルだけの調整",
+    ));
     d.remove_layer(adj).unwrap();
     let _ = a;
     eprintln!("法線の最大差 {worst}");
@@ -719,7 +856,7 @@ fn layers_with_filters_match_cpu_and_follow_edits_through_the_change_record() {
     let mut rng = Rng(401);
     let mut d = Document::with_tile_size(96, 80, 16).unwrap();
     let base = add_painted(&mut d, &mut rng, &[255]);
-    let a = d.add_layer("ぼかす層").unwrap();
+    let a = d.add_layer("ぼかすレイヤー").unwrap();
     // 疎な絵（一部のタイルだけ）をぼかす: ぼかしは元のタイルの外へも広がる
     for y in 20..44 {
         for x in 30..62 {
@@ -729,11 +866,11 @@ fn layers_with_filters_match_cpu_and_follow_edits_through_the_change_record() {
     }
     let filter = d.add_filter(a, FilterTarget::Content, blur_spec()).unwrap();
     assert_eq!(supports(&d, Channel::Color), Ok(()));
-    let stats = step(&mut g, &d, Channel::Color, "ぼかしのある層");
+    let stats = step(&mut g, &d, Channel::Color, "ぼかしのあるレイヤー");
     assert!(stats.cached_tiles > 0);
     // 1 画素を描くと、ぼかしの半径の分だけ広がった近くのタイルが更新される（変更の記録がその範囲を返す）
     d.set_pixel(a, 40, 30, Rgba8::new(255, 0, 0, 255)).unwrap();
-    let stats = step(&mut g, &d, Channel::Color, "ぼかした層に描く");
+    let stats = step(&mut g, &d, Channel::Color, "ぼかしたレイヤーに描く");
     assert!(stats.updated_tiles >= 1);
     // タイルの境の近くに描く（隣のタイルの出力も変わる）
     d.set_pixel(a, 47, 31, Rgba8::new(0, 255, 0, 255)).unwrap();
@@ -746,12 +883,17 @@ fn layers_with_filters_match_cpu_and_follow_edits_through_the_change_record() {
     step(&mut g, &d, Channel::Color, "フィルターを無効に");
     d.set_filter_enabled(a, filter, true).unwrap();
     step(&mut g, &d, Channel::Color, "有効に戻す");
-    // 同じ層にマスクとモード・不透明度
+    // 同じレイヤーにマスクとモード・不透明度
     d.set_layer_blend_mode(a, BlendMode::Multiply).unwrap();
     d.set_layer_opacity(a, 0.8, false).unwrap();
     d.add_layer_mask(a).unwrap();
     paint_mask(&mut d, a, &mut rng);
-    step(&mut g, &d, Channel::Color, "ぼかした層のマスクとモード");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "ぼかしたレイヤーのマスクとモード",
+    );
     // 段を重ねる（シャープ・ノイズ・レベル補正）
     d.add_filter(
         a,
@@ -788,13 +930,22 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
         .unwrap();
     step(&mut g, &d, Channel::Color, "正規化（全体の統計が要る段）");
     d.set_pixel(a, 5, 5, Rgba8::new(0, 0, 0, 255)).unwrap();
-    step(&mut g, &d, Channel::Color, "正規化の層に描く（全体が変わる）");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "正規化のレイヤーに描く（全体が変わる）",
+    );
     d.remove_filter(a, normalize).unwrap();
     // マスクのフィルター
     d.add_layer_mask(a).unwrap();
     paint_mask(&mut d, a, &mut rng);
     let mask_filter = d
-        .add_filter(a, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2)))
+        .add_filter(
+            a,
+            FilterTarget::Mask,
+            FilterSpec::new(EffectSettings::blur(2)),
+        )
         .unwrap();
     step(&mut g, &d, Channel::Color, "マスクのぼかし");
     d.set_mask_pixel(a, 20, 20, 255).unwrap();
@@ -804,13 +955,21 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
     d.set_filter_enabled(a, mask_filter, true).unwrap();
     // 反転のフィルターは何も無い所にも値を作る（マスクの外側がすべて隠す量 0 → 255）
     let invert_mask = d
-        .add_filter(a, FilterTarget::Mask, FilterSpec::new(EffectSettings::invert()))
+        .add_filter(
+            a,
+            FilterTarget::Mask,
+            FilterSpec::new(EffectSettings::invert()),
+        )
         .unwrap();
     step(&mut g, &d, Channel::Color, "マスクの反転のフィルター");
     d.remove_filter(a, invert_mask).unwrap();
     // 塗りつぶしのグラデーション（全面）
     let fill = d
-        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(10, 20, 30, 255))], None)
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(10, 20, 30, 255))],
+            None,
+        )
         .unwrap();
     let mut gradient = generator::Settings::new(generator::Kind::ShapeGradient);
     gradient.ramp = Some(three_stop_ramp(0.8));
@@ -822,11 +981,16 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
     step(&mut g, &d, Channel::Color, "塗りつぶしのグラデーション");
     d.set_layer_opacity(fill, 0.3, false).unwrap();
     step(&mut g, &d, Channel::Color, "グラデーションの不透明度");
-    d.set_fill_gradient(fill, Channel::Color, None, false).unwrap();
+    d.set_fill_gradient(fill, Channel::Color, None, false)
+        .unwrap();
     step(&mut g, &d, Channel::Color, "グラデーションを外す");
     // フィルターを掛けた塗りつぶし（全面。値が画素ごとに違う）
     let noisy = d
-        .add_fill_layer("ノイズの塗り", &[(Channel::Color, Rgba8::new(128, 120, 90, 200))], None)
+        .add_fill_layer(
+            "ノイズの塗り",
+            &[(Channel::Color, Rgba8::new(128, 120, 90, 200))],
+            None,
+        )
         .unwrap();
     let noise = d
         .add_filter(
@@ -836,13 +1000,33 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
         )
         .unwrap();
     d.set_layer_blend_mode(noisy, BlendMode::Overlay).unwrap();
-    let stats = step(&mut g, &d, Channel::Color, "ノイズのフィルターを掛けた塗りつぶし");
+    let stats = step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "ノイズのフィルターを掛けた塗りつぶし",
+    );
     assert!(stats.cached_tiles >= 5 * 4, "全面のタイルが常駐する");
-    d.set_fill_value(noisy, Channel::Color, Some(Rgba8::new(10, 200, 90, 255)), false)
-        .unwrap();
-    step(&mut g, &d, Channel::Color, "塗りの値を替える（出力が変わる）");
+    d.set_fill_value(
+        noisy,
+        Channel::Color,
+        Some(Rgba8::new(10, 200, 90, 255)),
+        false,
+    )
+    .unwrap();
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "塗りの値を替える（出力が変わる）",
+    );
     d.remove_filter(noisy, noise).unwrap();
-    step(&mut g, &d, Channel::Color, "ノイズを外す（単色の塗りつぶしに戻る）");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "ノイズを外す（単色の塗りつぶしに戻る）",
+    );
     let _ = base;
 }
 
@@ -866,9 +1050,15 @@ fn effects_inside_isolated_groups_and_clipping_match_cpu() {
     let grp = d.group_layers(&[a, b], "効果入り").unwrap();
     d.set_layer_blend_mode(grp, BlendMode::Normal).unwrap();
     d.set_layer_opacity(grp, 0.75, false).unwrap();
-    step(&mut g, &d, Channel::Color, "独立のグループの中の効果とクリッピング");
-    d.set_pixel(a, 30, 30, Rgba8::new(255, 255, 0, 255)).unwrap();
-    step(&mut g, &d, Channel::Color, "効果のある層に描く");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "独立のグループの中の効果とクリッピング",
+    );
+    d.set_pixel(a, 30, 30, Rgba8::new(255, 255, 0, 255))
+        .unwrap();
+    step(&mut g, &d, Channel::Color, "効果のあるレイヤーに描く");
     let _ = base;
 }
 
@@ -883,7 +1073,11 @@ fn evaluated_layers_count_toward_the_budget_and_come_back_when_they_fit() {
     let plain = resident_requirements(&d, Channel::Color, &options, &limits).unwrap();
     // ノイズのフィルターを掛けた塗りつぶし: 全部のタイルが常駐する（見積もりは全タイルぶん増える）
     let fill = d
-        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(128, 128, 128, 255))], None)
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(128, 128, 128, 255))],
+            None,
+        )
         .unwrap();
     let noise = d
         .add_filter(
@@ -898,7 +1092,7 @@ fn evaluated_layers_count_toward_the_budget_and_come_back_when_they_fit() {
     assert_eq!(
         with_fill.tile_bytes - plain.tile_bytes,
         tiles * tile * 2,
-        "全面の効果の層は全タイルを数える（GPU のコピーと同量の CPU のコピー）"
+        "全面の効果のレイヤーは全タイルを数える（GPU のコピーと同量の CPU のコピー）"
     );
     // 実際に常駐した量はこれ以下
     let mut g = gpu_with(options).unwrap();
@@ -915,7 +1109,10 @@ fn evaluated_layers_count_toward_the_budget_and_come_back_when_they_fit() {
     // 効果を外すと、要る量は元に戻る（予算を超えて CPU へ落ちていても、収まれば GPU へ戻る）
     d.remove_filter(fill, noise).unwrap();
     let back = resident_requirements(&d, Channel::Color, &options, &limits).unwrap();
-    assert_eq!(back.tile_bytes, plain.tile_bytes, "単色の塗りつぶしは面を持たない");
+    assert_eq!(
+        back.tile_bytes, plain.tile_bytes,
+        "単色の塗りつぶしは面を持たない"
+    );
     let _ = base;
 }
 
@@ -977,7 +1174,7 @@ fn busy_doc(rng: &mut Rng) -> Document {
     d
 }
 
-/// 常駐の予算が、表示と作業域と 1 束の全入力をちょうど保持できる量でも、束の途中で今の束のタイルを追い出さず（層が欠けない）、
+/// 常駐の予算が、表示と作業域と 1 束の全入力をちょうど保持できる量でも、束の途中で今の束のタイルを追い出さず（レイヤーが欠けない）、
 /// 止まらず、CPU と同じ絵になる。保持できない予算は、止まらずに断る。
 fn check_smallest_budget(d: &Document, label: &str) {
     let limits = wgpu_limits();

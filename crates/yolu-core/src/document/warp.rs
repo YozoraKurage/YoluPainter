@@ -3,7 +3,7 @@ use super::operations::Dirty;
 use super::transform::{read, sample, selected_amount, selection_surface};
 use super::{Document, LayerLocks, Resampling, Target};
 use crate::math::to_byte;
-use crate::surface::{Growth, Tile};
+use crate::surface::{Growth, PixelReader, Tile};
 use crate::{CoreError, LayerId, Rgba8, SelectionMask, Surface, TileCoord};
 use rayon::prelude::*;
 
@@ -390,12 +390,12 @@ impl Document {
         let region = None;
         let include_mask = true;
         if ids.is_empty() {
-            return Err(CoreError::Unsupported("動かすラスター層が無い"));
+            return Err(CoreError::Unsupported("動かすラスターレイヤーが無い"));
         }
         for &id in ids {
             let index = self.index_of(id)?;
             self.ensure_raster(index)?;
-            // パスで描かれた層を動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
+            // パスで描かれたレイヤーを動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
             self.refuse_path_layer(index)?;
         }
         if transform.identity() {
@@ -463,6 +463,7 @@ impl Document {
                         .map(|&coord| {
                             let ts = source.tile_size();
                             let mut bytes = vec![0; source.tile_bytes()];
+                            let mut reader = PixelReader::new(source);
                             for y in 0..ts.min(source.height() - coord.y * ts) {
                                 for x in 0..ts.min(source.width() - coord.x * ts) {
                                     let mapping = inverse.apply(
@@ -472,7 +473,7 @@ impl Document {
                                     let (sx, sy) = mapping.unwrap_or((f64::NAN, f64::NAN));
                                     let px = coord.x * ts + x;
                                     let py = coord.y * ts + y;
-                                    let original = read(source, px as i64, py as i64);
+                                    let original = read(&mut reader, px as i64, py as i64);
                                     let here =
                                         selected_amount(effective.as_ref(), px as i64, py as i64);
                                     let remaining = if here == 0 {
@@ -490,11 +491,12 @@ impl Document {
                                             ),
                                         )
                                     };
-                                    let moved = sample(source, effective.as_ref(), method, sx, sy);
+                                    let moved =
+                                        sample(&mut reader, effective.as_ref(), method, sx, sy);
                                     let p = if mapping.is_none() {
                                         original
                                     } else if matches!(transform, Warp::Liquify(_)) {
-                                        let moved = sample(source, None, method, sx, sy);
+                                        let moved = sample(&mut reader, None, method, sx, sy);
                                         mix(original, moved, here)
                                     } else if moved.a == 0 {
                                         if here == 255 {
@@ -516,9 +518,10 @@ impl Document {
                                     bytes[at..at + 4].copy_from_slice(&p.to_array());
                                 }
                             }
-                            (coord, Tile::from_bytes(&bytes))
+                            reader.finish()?;
+                            Ok((coord, Tile::from_vec(bytes)))
                         })
-                        .collect();
+                        .collect::<Result<_, CoreError>>()?;
                     for (coord, after) in rendered {
                         let before = self.target_surface(i, target).expect("面").tile(coord);
                         if Tile::same(before, after.as_ref()) {
@@ -556,6 +559,7 @@ impl Document {
             if !matches!(transform, Warp::Liquify(_)) {
                 if let Some(selection) = &self.selection {
                     let source = selection_surface(selection);
+                    let mut reader = PixelReader::new(&source);
                     let mut tiles = Vec::new();
                     for coord in targets(&source) {
                         if cancelled() {
@@ -567,17 +571,19 @@ impl Document {
                             for x in 0..ts.min(self.width - coord.x * ts) {
                                 let px = coord.x * ts + x;
                                 let py = coord.y * ts + y;
-                                bytes[(y * ts + x) as usize] =
-                                    match inverse.apply(px as f64 + 0.5, py as f64 + 0.5) {
-                                        Some((sx, sy)) => sample(&source, None, method, sx, sy).a,
-                                        None => read(&source, px as i64, py as i64).a,
-                                    };
+                                bytes[(y * ts + x) as usize] = match inverse
+                                    .apply(px as f64 + 0.5, py as f64 + 0.5)
+                                {
+                                    Some((sx, sy)) => sample(&mut reader, None, method, sx, sy).a,
+                                    None => read(&mut reader, px as i64, py as i64).a,
+                                };
                             }
                         }
                         if bytes.iter().any(|&a| a != 0) {
                             tiles.push((coord, bytes));
                         }
                     }
+                    reader.finish()?;
                     let moved = SelectionMask::from_amount_tiles(
                         self.width,
                         self.height,

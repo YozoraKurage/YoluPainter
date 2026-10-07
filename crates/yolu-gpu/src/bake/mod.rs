@@ -477,7 +477,11 @@ impl BakeGpu {
         // 前提の最適化を許す）、コンテナの実 GPU では黙って誤った値になった。焼く前に座標の大きさで決め打ちに断り、CPU（f64）に任せる
         for m in std::iter::once(input).chain(reference) {
             let (min, max) = m.bounds();
-            if min.iter().chain(&max).any(|v| !v.is_finite() || v.abs() > MAX_GPU_COORDINATE) {
+            if min
+                .iter()
+                .chain(&max)
+                .any(|v| !v.is_finite() || v.abs() > MAX_GPU_COORDINATE)
+            {
                 return Err(GpuBakeError::Failed(format!(
                     "座標が大きすぎて GPU の f32 では焼けません（絶対値 {MAX_GPU_COORDINATE:e} まで）。NaN・無限大を避けて CPU で焼きます"
                 )));

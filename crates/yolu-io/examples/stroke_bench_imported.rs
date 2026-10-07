@@ -4,7 +4,7 @@
 //!
 //! `--sut-dir` のフォルダの .sut を、ファイルの大きさの順に 1 から数える（名前は出さない）。ブラシごとに、取り込んだままの設定の大きさ
 //! （`native`）と、半径だけを大きさへ替えた各 `--sizes` で測る。`--bundled N` は同梱の筆先の先頭 N 個（番号だけで出す）。
-//! 文書は 4096²、空の層。時間の意味は `stroke_bench` と同じ（1 スレッドは CPU 時間、2 以上は壁時計）。
+//! 文書は 4096²、空のレイヤー。時間の意味は `stroke_bench` と同じ（1 スレッドは CPU 時間、2 以上は壁時計）。
 #[path = "../../yolu-core/examples/stroke_support/mod.rs"]
 mod stroke_support;
 

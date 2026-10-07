@@ -1,4 +1,4 @@
-//! 名前を付けた層の断片。捕捉した時点の写しを保持し、配置しても変わらない。
+//! 名前を付けたレイヤーの断片。捕捉した時点の写しを保持し、配置しても変わらない。
 use crate::{Channel, ChannelInfo, CoreError, Layer, LayerId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

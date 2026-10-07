@@ -1,9 +1,11 @@
 //! 合成・調整・フィルターの画素の計算の速さ（SIMD の前後を同じ表で比べる）。
-//!   cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|all] [回数]
-//! 1 タイル（256²）と 4096² を、合成モードごと・調整の種類ごと・フィルターの種類ごとに測る。スレッドは環境変数 SIMD_THREADS（既定 1。
-//! 1 は 1 コアあたりの時間）。下の層の違い（不透明 / アルファ入り）も分ける。時間は最小の回の CPU 時間（ほかの負荷で待たされた分を除く。
+//!   cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|normal|all] [回数]
+//! 1 タイル（256²）と 4096² を、合成モードごと・調整の種類ごと・フィルターの種類ごとに測る。`normal` は Normal のチャンネルの
+//! 合成（4096²・レイヤー 10。Normal と Overlay（RNM）を交互に、不透明度 0.45〜1）。スレッドは環境変数 SIMD_THREADS（既定 1。
+//! 1 は 1 コアあたりの時間）。下のレイヤーの違い（不透明 / アルファ入り）も分ける。時間は最小の回の CPU 時間（ほかの負荷で待たされた分を除く。
 //! スレッドが 1 本のときだけ意味がある）。
-//! 道の切り替え: 環境変数 YOLU_SIMD=scalar|sse41|avx2（SIMD の道を持つ版だけ。無ければ無視）。`kernel` は行の核だけの時間（ns / 画素）。
+//! 道の切り替え: 環境変数 YOLU_SIMD=scalar|sse41|avx2（SIMD の道を持つ版だけ。無ければ無視）。`kernel` は行の核だけの時間
+//! （ns / 画素）。
 #[path = "../tests/filter_support/mod.rs"]
 mod filter_support;
 
@@ -167,7 +169,7 @@ fn blend_section(runs: usize) {
         let tile = Rect::new(0, 0, 256, 256);
         let full = doc.bounds();
         if wanted("基準") {
-            // 上の層を隠して下の層だけ（合成の枠組みそのものの時間）
+            // 上のレイヤーを隠して下のレイヤーだけ（合成の枠組みそのものの時間）
             doc.set_layer_visible(b, false).unwrap();
             let t = min_batch_ms(runs, 60, || {
                 black_box(doc.composite(tile).unwrap());
@@ -175,7 +177,7 @@ fn blend_section(runs: usize) {
             let f = min_ms(runs, || {
                 black_box(doc.composite(full).unwrap());
             });
-            row(&format!("合成 {label}"), "基準（下の層だけ）", t, f);
+            row(&format!("合成 {label}"), "基準（下のレイヤーだけ）", t, f);
             doc.set_layer_visible(b, true).unwrap();
         }
         let mut modes: Vec<BlendMode> = BlendMode::LAYER_MODES.to_vec();
@@ -194,6 +196,63 @@ fn blend_section(runs: usize) {
             row(&format!("合成 {label}"), mode.name(), t, f);
         }
     }
+}
+
+/// 法線の画素のレイヤー（上向きに寄った乱数の向き。アルファは opaque なら 255、ほかは 0・255・中間が混ざる）。
+fn fill_normals(doc: &mut Document, layer: LayerId, seed: u64, opaque: bool) {
+    let ts = doc.tile_size() as usize;
+    let mut rng = SplitMix(seed);
+    let mut bytes = vec![0u8; ts * ts * 4];
+    for ty in 0..doc.height().div_ceil(ts as u32) {
+        for tx in 0..doc.width().div_ceil(ts as u32) {
+            for p in bytes.as_chunks_mut::<4>().0 {
+                let r = rng.next();
+                let (x, y, z) = (
+                    68 + (r % 121) as u8,
+                    68 + ((r >> 8) % 121) as u8,
+                    190 + ((r >> 16) % 66) as u8,
+                );
+                p.copy_from_slice(&[x, y, z, rng.alpha(opaque)]);
+            }
+            doc.import_tile(layer, Channel::Normal, TileCoord::new(tx, ty), &bytes)
+                .unwrap();
+        }
+    }
+    doc.clear_history().unwrap();
+}
+
+/// Normal のチャンネルの合成（4096²・レイヤー 10）。
+fn normal_section(runs: usize) {
+    let mut doc = Document::new(4096, 4096).unwrap();
+    doc.set_source_budget_bytes(4 << 30).unwrap();
+    for k in 0..10u64 {
+        let l = doc.add_layer("n").unwrap();
+        fill_normals(&mut doc, l, 10 + k, k == 0);
+        if k > 0 {
+            doc.set_layer_opacity(l, 0.45 + 0.06 * k as f64, false)
+                .unwrap();
+            let mode = if k % 2 == 0 {
+                BlendMode::Overlay
+            } else {
+                BlendMode::Normal
+            };
+            doc.set_layer_blend_mode(l, mode).unwrap();
+        }
+    }
+    let tile = Rect::new(0, 0, 256, 256);
+    let full = doc.bounds();
+    let t = min_batch_ms(runs, 6, || {
+        black_box(doc.composite_channel(Channel::Normal, tile).unwrap());
+    }) * 1000.0;
+    let f = min_ms(runs, || {
+        black_box(doc.composite_channel(Channel::Normal, full).unwrap());
+    });
+    row(
+        "Normal のチャンネル",
+        "レイヤー 10（Normal・Overlay）",
+        t,
+        f,
+    );
 }
 
 fn adjust_kinds() -> Vec<(&'static str, AdjustmentSettings)> {
@@ -399,6 +458,32 @@ fn kernel_section(runs: usize) {
         row_ns(&format!("核 fade {label}"), "通過のグループ", per_pixel(ms));
     }
     let _ = &factor;
+    for (label, below) in [
+        ("不透明の下", &below_opaque),
+        ("アルファ入りの下", &below_alpha),
+    ] {
+        for mode in [BlendMode::Normal, BlendMode::Overlay] {
+            let ms = min_batch_ms(runs, 20, || {
+                buf.copy_from_slice(below);
+                for r in 0..ROWS {
+                    let a = r * W * 4;
+                    yolu_core::normal::blend_row(
+                        &mut buf[a..a + W * 4],
+                        &over[a..a + W * 4],
+                        4,
+                        amount,
+                        mode,
+                    );
+                }
+                black_box(&buf);
+            });
+            row_ns(
+                &format!("核 Normal のチャンネル {label}"),
+                mode.name(),
+                per_pixel(ms),
+            );
+        }
+    }
     // コピーだけの床（行の複写）
     let ms = min_batch_ms(runs, 20, || {
         buf.copy_from_slice(&below_opaque);
@@ -462,6 +547,9 @@ fn main() {
         }
         if which == "all" || which == "filter" {
             filter_section(runs);
+        }
+        if which == "all" || which == "normal" {
+            normal_section(runs);
         }
     });
 }

@@ -268,7 +268,7 @@ fn mouse(h: &mut Harness<'_, YoluApp>, p: Pos2, down: bool, m: Modifiers) {
 fn point(h: &Harness<'_, YoluApp>, x: f64, y: f64) -> Pos2 {
     let s = &h.state().state;
     s.view
-        .view(s.canvas_rect.unwrap(), s.doc.width(), s.doc.height())
+        .view(s.ui.canvas_rect.unwrap(), s.doc.width(), s.doc.height())
         .to_screen(x, y)
 }
 fn pen(h: &mut Harness<'_, YoluApp>, p: Pos2, contact: bool, pressure: f32, m: Modifiers) {
@@ -626,12 +626,14 @@ fn tool_strip_and_symmetry_toggle_fit_the_minimum_window_in_both_languages() {
         let mut h = common::app(960.0, 640.0, 64);
         h.state_mut().state.lang = lang;
         h.run();
-        // 窓の最小の大きさ（960x640）で、ツールの帯の全部のボタンが帯の中に収まる
+        // ウィンドウの最小の大きさ（960x640）で、ツールの帯の全部のボタンが帯の中に収まる
         let (top, bottom) = (24.0 + 36.0, 640.0 - 22.0);
         for tool in Tool::ALL {
-            let label = match lang {
-                Lang::Ja => format!("{}（{}）", tool.name_in(lang), tool.key()),
-                Lang::En => format!("{} ({})", tool.name_in(lang), tool.key()),
+            // キーの無いツール（ゆがみ）は名前だけ
+            let label = match (lang, tool.key()) {
+                (_, "") => tool.name_in(lang).to_string(),
+                (Lang::Ja, key) => format!("{}（{key}）", tool.name_in(lang)),
+                (Lang::En, key) => format!("{} ({key})", tool.name_in(lang)),
             };
             let r = h.get_by_label(&label).rect();
             assert!(
@@ -653,7 +655,7 @@ fn tool_strip_and_symmetry_toggle_fit_the_minimum_window_in_both_languages() {
             assert!(t.is_some(), "{lang:?} {mode:?}");
             assert!(t.unwrap().rect().right() <= 960.0);
         }
-        // 図形・定規のオプションバーも、いちばん長い並び（長方形の角の丸み・2 点パース）で、スナップのボタンが窓の中に収まる
+        // 図形・定規のオプションバーも、いちばん長い並び（長方形の角の丸み・2 点パース）で、スナップのボタンがウィンドウの中に収まる
         let snap = lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)");
         for (tool, ruler_kind) in [
             (Tool::Shape, RulerKind::Line),
@@ -791,7 +793,7 @@ fn figure_strokes_ignore_speed_controls_whatever_the_vertex_spacing() {
     }
 }
 
-/// 入力の経路（マウス・ペン）で、図形の道具でなくブラシの 1 ストロークを (a → b) と動かして離す。
+/// 入力の経路（マウス・ペン）で、図形のツールでなくブラシの 1 ストロークを (a → b) と動かして離す。
 fn stroke(h: &mut Harness<'_, YoluApp>, is_pen: bool, a: Pos2, b: Pos2, m: Modifiers) {
     if is_pen {
         pen(h, a, true, 1.0, m);
@@ -975,7 +977,7 @@ fn a_shape_drag_with_the_pen_is_dropped_when_the_canvas_is_hidden() {
     // 触れたまま別のタブへ（キャンバスは隠れ、ペンの離れを受け取れない）
     common::click_tab(&mut h, Tab::View3d);
     h.run();
-    assert!(!h.state().state.canvas_visible);
+    assert!(!h.state().state.ui.canvas_visible);
     assert!(
         h.state().state.drafting.drag.is_none(),
         "図形の途中を捨てた"
@@ -987,7 +989,7 @@ fn a_shape_drag_with_the_pen_is_dropped_when_the_canvas_is_hidden() {
     pen(&mut h, b, false, 0.0, Modifiers::NONE);
     common::click_tab(&mut h, Tab::Canvas);
     h.run();
-    assert!(h.state().state.canvas_visible);
+    assert!(h.state().state.ui.canvas_visible);
     assert!(
         !h.state().state.doc.can_undo(),
         "隠れているあいだに何も塗らない"

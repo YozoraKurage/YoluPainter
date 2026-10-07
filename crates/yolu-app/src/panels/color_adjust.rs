@@ -1,5 +1,5 @@
 //! 色調補正の 6 種（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション）の欄。
-//! 調整の層（`layer_props`）とフィルターの段（`effect_props`）が同じ欄を使う（値は `yolu_core::ColorAdjust`）。変更が決まったときだけ
+//! 調整レイヤー（`layer_props`）とフィルターの段（`effect_props`）が同じ欄を使う（値は `yolu_core::ColorAdjust`）。変更が決まったときだけ
 //! 新しい値を返し、`discrete` は 1 回の操作で決まる変更（曲線・分岐点・プリセット・切り替え・色）かを言う（スライダーのドラッグは離すまで
 //! 1 回の取り消しにまとめるので `false`）。画面には名前と値だけを出し、説明はツールチップ。
 
@@ -15,8 +15,8 @@ use yolu_core::{
 use super::properties::{slider_row, toggle_row};
 use super::ramp_rows;
 use crate::eyedrop::EyedropState;
-use crate::rampsets::RampSets;
 use crate::lang::Lang;
+use crate::rampsets::RampSets;
 use crate::ui::curve::{self, CurveStyle};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
@@ -31,7 +31,7 @@ pub struct Change {
 
 /// 欄を出すときの文脈。
 pub struct Params<'a> {
-    /// 選びを覚える置き場の名前（層・段ごと）。
+    /// 選びを覚える置き場の名前（レイヤー・段ごと）。
     pub key: (&'static str, u128),
     pub enabled: bool,
     /// 描くチャンネルに効かないときの理由（スライダーのツールチップに出す）。
@@ -41,18 +41,23 @@ pub struct Params<'a> {
     /// サブの色（背景色）。
     pub sub: [f32; 4],
     pub lang: Lang,
-    /// トーンカーブの後ろに薄く敷く分布（調整の層の下の合成）。
+    /// トーンカーブの後ろに薄く敷く分布（調整レイヤーの下の合成）。
     pub histogram: Option<&'a Histogram>,
     /// グラデーションセット（グラデーションマップの見本の一覧）。
     pub sets: &'a mut RampSets,
     /// 画面の色を取るスポイトの状態（グラデーションマップの色の分岐点のスポイトが使う）。
     pub eyedrop: &'a mut EyedropState,
-    /// 状態の帯の知らせ（グラデーションセットの保存の失敗など）。
-    pub message: &'a mut String,
+    /// グラデーションセットの保存の失敗の文（呼んだ側が `AppState::fail` で知らせる）。
+    pub failure: &'a mut Option<String>,
 }
 
 /// 6 種の欄の全部。
-pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, value: &ColorAdjust) -> Option<Change> {
+pub fn rows(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    p: &mut Params<'_>,
+    value: &ColorAdjust,
+) -> Option<Change> {
     match value {
         ColorAdjust::GradientMap(v) => gradient_map_rows(ui, rows, p, v),
         ColorAdjust::ToneCurve(v) => tone_curve_rows(ui, rows, p, v),
@@ -153,7 +158,7 @@ fn gradient_map_rows(
         },
         sets: &mut *p.sets,
         eyedrop: &mut *p.eyedrop,
-        message: &mut *p.message,
+        failure: &mut *p.failure,
     };
     if let Some(change) = ramp_rows::rows(ui, rows, &mut params, map.ramp()) {
         result = Some(Change {
@@ -265,7 +270,7 @@ fn tone_curve_rows(
         curves.curve(channel),
         &style,
         lang.pick(
-            "横が入力、縦が出力。何も無い所を押すと点を足し、ドラッグで動かし、右クリックか枠の外へ離すと消す。Esc でドラッグをやめる",
+            "横が入力、縦が出力。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックか枠の外へ離すと消す。Esc でドラッグをやめる",
             "Input across, output up. Click to add a point, drag to move, right-click or drag outside to remove. Escape cancels a drag",
         ),
         p.enabled,
@@ -506,7 +511,7 @@ fn posterize_rows(
 
 // ───────── トーンカーブの後ろの分布 ─────────
 
-/// 調整の層の下の合成の明るさと R・G・B の分布（粗い標本。数は出さず、曲線の後ろに薄く敷く）。
+/// 調整レイヤーの下の合成の明るさと R・G・B の分布（粗い標本。数は出さず、曲線の後ろに薄く敷く）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Histogram {
     composite: Vec<f32>,
@@ -529,7 +534,7 @@ impl Histogram {
         }
     }
 
-    /// 層 `layer` の下の `channel` の合成から、画布の 8 × 8 か所の小さな区画を標本にして作る（不透明度で重みを付ける）。
+    /// レイヤー `layer` の下の `channel` の合成から、キャンバスの 8 × 8 か所の小さな区画を標本にして作る（不透明度で重みを付ける）。
     /// スカラーのチャンネルは灰色として数えるので、R・G・B の分布は明るさと同じ。何も見えていなければ None。
     pub fn below(doc: &Document, layer: LayerId, channel: Channel) -> Option<Histogram> {
         const GRID: u32 = 8;
@@ -575,8 +580,8 @@ impl Histogram {
     }
 }
 
-/// 曲線が効くチャンネルのうち、分布を敷くもの。描くチャンネルが層で有効（法線でない）ならそれ、そうでなければ層の有効なチャンネルの先頭
-/// （法線は除く）。トーンカーブの調整の層は Color 以外のスカラーだけに有効にもできるので、いつも Color の分布を敷くと入力と違う分布を見せてしまう。
+/// 曲線が効くチャンネルのうち、分布を敷くもの。描くチャンネルがレイヤーで有効（法線でない）ならそれ、そうでなければレイヤーの有効なチャンネルの先頭
+/// （法線は除く）。トーンカーブの調整レイヤーは Color 以外のスカラーだけに有効にもできるので、いつも Color の分布を敷くと入力と違う分布を見せてしまう。
 pub fn histogram_channel(doc: &Document, layer: LayerId, paint: Channel) -> Channel {
     let Some(l) = doc.layer(layer) else {
         return Channel::Color;
@@ -597,7 +602,7 @@ pub fn histogram_channel(doc: &Document, layer: LayerId, paint: Channel) -> Chan
     }
 }
 
-/// 層の下の分布（文書の変更の通し番号とチャンネルが変わるまで覚える）。トーンカーブの調整の層だけで求める。
+/// レイヤーの下の分布（文書の変更の通し番号とチャンネルが変わるまで覚える）。トーンカーブの調整レイヤーだけで求める。
 /// `paint` は描いているチャンネル（敷くチャンネルは [`histogram_channel`] が決める）。
 pub fn cached_histogram(
     ui: &Ui,
@@ -654,7 +659,7 @@ mod tests {
                 .count()
                 > 20
         );
-        // 下に何も無ければ None（一番下の層の下）
+        // 下に何も無ければ None（一番下のレイヤーの下）
         assert!(Histogram::below(&doc, base, Channel::Color).is_none());
     }
 
@@ -671,7 +676,7 @@ mod tests {
             }
         }
         let curves = || yolu_core::AdjustmentSettings::tone_curve(ToneCurves::identity());
-        // 粗さだけに効く層: 描くチャンネルが色でも、敷くのは層が効く粗さ
+        // 粗さだけに効くレイヤー: 描くチャンネルが色でも、敷くのはレイヤーが効く粗さ
         let rough = doc
             .add_adjustment_layer("粗さ", curves(), Some(&[Channel::Roughness]), None)
             .unwrap();
@@ -698,7 +703,7 @@ mod tests {
         );
         let h_colour = Histogram::below(&doc, rough, Channel::Color).unwrap();
         assert_ne!(peak(&h_colour), peak(&h_rough), "色の分布は別");
-        // すべてのチャンネルに効く層: 描くチャンネルが有効ならそれ、法線は選ばない
+        // すべてのチャンネルに効くレイヤー: 描くチャンネルが有効ならそれ、法線は選ばない
         let all = doc
             .add_adjustment_layer("全部", curves(), None, None)
             .unwrap();

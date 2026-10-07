@@ -1,4 +1,4 @@
-//! UV の表示専用の入口と、日英のショートカットの窓。
+//! UV の表示専用の入口と、日英のショートカットのウィンドウ。
 use crate::common;
 use egui::{vec2, Color32, Rect};
 use egui_kittest::kittest::Queryable;

@@ -1,18 +1,20 @@
-//! Normal チャンネルの計算（C# の NormalMaps、AlgorithmVersion 1）: 層を単位ベクトルとして重ねる式と、Normal の出力
-//! （塗った法線を平らな法線へ載せ、Height から作った法線を下に敷く）。
+//! Normal チャンネルの計算: レイヤーを単位ベクトルとして重ねる式と、Normal の出力（塗った法線を平らな法線へ載せ、Height から作った
+//! 法線を下に敷く）。
 //!
 //! - バイトは c / 255 × 2 − 1 と読み、使う前に必ず正規化する。長さ² が 1e-12 より短いベクトルは平ら (0, 0, 1)。
-//! - 層の重ねは色の合成と同じ W3C の source-over の形で、色の代わりにベクトル: t = 上のアルファ × 不透明度 × マスク、
+//! - レイヤーの重ねは色の合成と同じ W3C の source-over の形で、色の代わりにベクトル: t = 上のアルファ × 不透明度 × マスク、
 //!   da = 下のアルファで normalize((1 − t)·da·下 + (1 − da)·t·上 + da·t·B(下, 上))、アルファは t + da(1 − t)。
 //! - B は Overlay で RNM（Reoriented Normal Mapping、上を細部として下の向きへ回す）、ほかのモードは上そのもの（置き換え）。
 //! - 調整レイヤーはこのチャンネルでも色の式のまま（出力で正規化する）。
 //! - 出力は合成をアルファで平らな法線へ載せ（塗っていない所は (128, 128, 255)）、Height から作った法線を土台に塗った法線を
 //!   細部として RNM で重ね、不透明。Height → Normal は高さ = R × A（0 の上）を Sobel 3×3 ÷ 8 で微分し（傾き s の坂はちょうど s）、
-//!   n = normalize(−強さ·∂h/∂x, −強さ·∂h/∂y, 1)。UV の歪み・島の境・余白は見ない。
-//! - 演算の順は C# と同じ（同じ double を経てバイトが一致する）。
+//!   n = normalize(−強さ·∂h/∂x, −強さ·∂h/∂y, 1)。UV の歪み・アイランドの境・余白は見ない。
+//! - レイヤーの重ね（[`blend`]・[`clip_onto`]・[`fade`] と行の核）は f32 の式で、道（スカラー・SSE4.1・AVX2）とスレッド数によらず同じバイト
+//!   （`rows`）。出力の式と、ほかの計算が使う [`decode`]・[`encode`]・[`rnm`] は f64。
 
 use rayon::prelude::*;
 
+mod output;
 mod rows;
 pub use rows::{blend_row, clip_row, fade_row};
 
@@ -30,7 +32,7 @@ pub enum NormalYDirection {
     DirectX = 1,
 }
 
-/// 高さの微分が画布の外で読むもの: 端のテクセル（Clamp）か、反対側の端（Wrap、繰り返すテクスチャ向け）。
+/// 高さの微分がキャンバスの外で読むもの: 端のテクセル（Clamp）か、反対側の端（Wrap、繰り返すテクスチャ向け）。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(u8)]
 pub enum HeightEdgeMode {
@@ -123,7 +125,7 @@ impl NormalSettings {
     }
 }
 
-/// [`Document::normal_output`] の作業メモリの既定の上限（出力の画布と帯）。
+/// [`Document::normal_output`] の作業メモリの既定の上限（出力のキャンバスと帯）。
 pub const DEFAULT_WORKING_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 /// 向きを持たない長さ²（これより短いと平ら）。
 const DEGENERATE_LENGTH_SQUARED: f64 = 1e-12;
@@ -190,82 +192,27 @@ pub fn rnm(b: (f64, f64, f64), d: (f64, f64, f64)) -> (f64, f64, f64) {
     (tx * k - ux, ty * k - uy, tz * k - uz)
 }
 
-#[inline]
-fn combine(mode: BlendMode, b: (f64, f64, f64), s: (f64, f64, f64)) -> (f64, f64, f64) {
-    if is_detail(mode) {
-        rnm(b, s)
-    } else {
-        s
-    }
-}
-
-/// 1 つの層の画素を下へベクトルとして重ねる（不透明度 0〜1）。
+/// 1 つのレイヤーの画素を下へベクトルとして重ねる（不透明度 0〜1。f32 へ丸めて使う）。
 pub fn blend(below: Rgba8, over: Rgba8, opacity: f64, mode: BlendMode) -> Rgba8 {
     blend_unchecked(below, over, opacity, mode)
 }
 
+/// [`blend`] の中身（行の核と同じ f32 の式）。上が透明・量が 0 以下なら下（その RGB も）をそのまま返す。
 #[inline]
 pub(crate) fn blend_unchecked(below: Rgba8, over: Rgba8, opacity: f64, mode: BlendMode) -> Rgba8 {
-    let t = UNIT[over.a as usize] * opacity;
-    let da = UNIT[below.a as usize];
-    if t <= 0.0 {
-        return below; // 透明な画素は下（その RGB も）をそのまま返す
-    }
-    let b = decode(below);
-    let s = decode(over);
-    let c = combine(mode, b, s);
-    let wb = (1.0 - t) * da;
-    let ws = (1.0 - da) * t;
-    let wc = da * t;
-    encode(
-        wb * b.0 + ws * s.0 + wc * c.0,
-        wb * b.1 + ws * s.1 + wc * c.1,
-        wb * b.2 + ws * s.2 + wc * c.2,
-        to_byte(t + da * (1.0 - t)),
-    )
+    rows::blend_pixel(below, over, opacity, mode)
 }
 
-/// クリッピングされた層を下地へ: normalize((1 − t)·下地 + t·B(下地, 上))、t = 上のアルファ × 量。下地のアルファのまま。
+/// クリッピングされたレイヤーを下地へ: normalize((1 − t)·下地 + t·B(下地, 上))、t = 上のアルファ × 量。下地のアルファのまま。
 #[inline]
 pub fn clip_onto(group: Rgba8, clipped: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
-    let t = UNIT[clipped.a as usize] * amount;
-    if t <= 0.0 || group.a == 0 {
-        return group;
-    }
-    let g = decode(group);
-    let s = decode(clipped);
-    let c = combine(mode, g, s);
-    encode(
-        (1.0 - t) * g.0 + t * c.0,
-        (1.0 - t) * g.1 + t * c.1,
-        (1.0 - t) * g.2 + t * c.2,
-        group.a,
-    )
+    rows::clip_pixel(group, clipped, amount, mode)
 }
 
 /// 通過のグループのフェード: 下と中身のアルファで重みを付けた平均を正規化する。
 #[inline]
 pub fn fade(backdrop: Rgba8, inner: Rgba8, amount: f64) -> Rgba8 {
-    if amount >= 1.0 {
-        return inner;
-    }
-    if amount <= 0.0 {
-        return backdrop;
-    }
-    let ba = UNIT[backdrop.a as usize] * (1.0 - amount);
-    let ia = UNIT[inner.a as usize] * amount;
-    let a = ba + ia;
-    if a <= 0.0 {
-        return Rgba8::TRANSPARENT;
-    }
-    let b = decode(backdrop);
-    let i = decode(inner);
-    encode(
-        ba * b.0 + ia * i.0,
-        ba * b.1 + ia * i.1,
-        ba * b.2 + ia * i.2,
-        to_byte(a),
-    )
+    rows::fade_pixel(backdrop, inner, amount)
 }
 
 /// 合成の画素を平らな面に載せた法線: normalize(a·n + (1 − a)·(0, 0, 1))。
@@ -382,7 +329,7 @@ fn row(
     let wrap = settings.edges == HeightEdgeMode::Wrap;
     let s = settings.strength;
     let (start, end) =
-        rows::output_row_at(crate::math::simd::level(), normal, heights, w, s, output);
+        output::output_row_at(crate::math::simd::level(), normal, heights, w, s, output);
     for x in (0..start).chain(end..w) {
         output_pixel(x, normal, heights, w, wrap, s, output);
     }
@@ -426,7 +373,7 @@ pub fn output_from_composites(
         if let Some(hc) = heights_src {
             for r in 0..3 {
                 let rr = edge_row(y as i64 + r as i64 - 1, h as i64, settings.edges) as usize;
-                rows::heights_from_rgba(
+                output::heights_from_rgba(
                     crate::math::simd::level(),
                     &hc[rr * w * 4..(rr + 1) * w * 4],
                     &mut heights[r * w..(r + 1) * w],
@@ -450,7 +397,7 @@ impl Document {
         self.normal_settings
     }
 
-    /// Normal の層が無くても Normal の出力があるか: Height → Normal が有効で、Height を使う層がある。
+    /// Normal のレイヤーが無くても Normal の出力があるか: Height → Normal が有効で、Height を使うレイヤーがある。
     pub fn derives_normal(&self) -> bool {
         self.normal_settings.derive_from_height
             && self
@@ -459,7 +406,7 @@ impl Document {
                 .any(|l| l.is_channel_enabled(Channel::Height))
     }
 
-    /// [`Document::normal_output`] が確保するバイト数: 出力の画布、Normal の合成の帯 1 つ、作る設定なら上下に 1 行ずつの
+    /// [`Document::normal_output`] が確保するバイト数: 出力のキャンバス、Normal の合成の帯 1 つ、作る設定なら上下に 1 行ずつの
     /// 余白を持つ Height の帯（バイトと高さ）。
     pub fn normal_working_bytes(&self) -> u64 {
         let (w, h) = (self.width() as u64, self.height() as u64);
@@ -484,7 +431,7 @@ impl Document {
         )
     }
 
-    /// 他の道具へのファイル向け: 文書のファイルの Y の向き（DirectX なら緑を反転）。
+    /// 他のツールへのファイル向け: 文書のファイルの Y の向き（DirectX なら緑を反転）。
     pub fn normal_file_output(&self, max_working_bytes: u64) -> Result<Vec<u8>, CoreError> {
         let mut bytes = self.normal_output(max_working_bytes)?;
         if self.normal_settings.file_direction == NormalYDirection::DirectX {
@@ -515,7 +462,7 @@ impl Document {
         self.evaluate_normal(settings, false, true)
     }
 
-    /// 帯ごと: Normal と Height の合成を 1 帯ずつ（Height は上下に 1 行の余白）。出力のほかに画布全体を持たない。
+    /// 帯ごと: Normal と Height の合成を 1 帯ずつ（Height は上下に 1 行の余白）。出力のほかにキャンバス全体を持たない。
     fn evaluate_normal(
         &self,
         settings: &NormalSettings,
@@ -598,7 +545,7 @@ impl Document {
                 &inner[(rr - a) * w * 4..(rr - a + 1) * w * 4]
             };
             let base = ((r + 1) as usize) * w;
-            rows::heights_from_rgba(
+            output::heights_from_rgba(
                 crate::math::simd::level(),
                 &source[..w * 4],
                 &mut heights[base..base + w],

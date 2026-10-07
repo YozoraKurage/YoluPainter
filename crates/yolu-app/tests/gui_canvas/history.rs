@@ -121,7 +121,7 @@ fn empty_and_evicted_history_do_not_show_discarded_steps() {
     let cost = h.state().doc.history_bytes() - 128;
     h.state_mut().doc.set_undo_budget_bytes(cost).unwrap();
     h.run();
-    assert!(h.query_by_label("レイヤーを足す").is_none());
+    assert!(h.query_by_label("レイヤーを追加").is_none());
     h.get_by_label("レイヤーを変える");
     h.get_by_label("開始位置").click();
     h.run();
@@ -137,7 +137,7 @@ fn history_rows_are_disabled_during_a_stroke() {
     h.run();
     assert!(h.get_by_label("開始位置").accesskit_node().is_disabled());
     assert!(h
-        .get_by_label("レイヤーを足す")
+        .get_by_label("レイヤーを追加")
         .accesskit_node()
         .is_disabled());
     h.state_mut().doc.cancel_stroke(s);

@@ -1028,3 +1028,38 @@ fn a_stopped_bake_names_the_gpu_only_when_a_dispatch_ran() {
     assert_eq!(stats.dispatches, 2);
     assert!(run.fallback_kind.is_none());
 }
+
+/// 重なった UV の持ち主の決め方（`MeshBakeSettings::overlap`）は、受け手の並びとして GPU にも渡る: 同じ UV に重ねた −X の小さな四角
+/// （三角形 0・1）と +X の大きな四角（2・3）で、決め方ごとに CPU と同じ側が焼かれる（違う側なら位置のマップの差が許す幅を超える）。
+#[test]
+fn overlapped_uvs_take_the_same_owner_as_the_cpu() {
+    use yolu_core::mesh_maps::{MeshBakeAttributes, MeshOverlapPriority, MeshOverlapRule};
+    let Some(mut g) = gpu() else { return };
+    let quad = |x0: f32, x1: f32, y1: f32| {
+        vec![
+            x0, 0., 0., x1, 0., 0., x0, y1, 0., x0, y1, 0., x1, 0., 0., x1, y1, 0.,
+        ]
+    };
+    let mut corners = quad(-2., -1., 1.);
+    corners.extend(quad(1., 3., 2.));
+    let uv = [
+        0.25f32, 0.25, 0.75, 0.25, 0.25, 0.75, 0.25, 0.75, 0.75, 0.25, 0.75, 0.75,
+    ];
+    let uvs = [uv, uv].concat();
+    let input =
+        MeshBakeInput::new(corners, uvs, vec![0; 4], MeshBakeAttributes::default()).unwrap();
+    for rule in MeshOverlapRule::ALL {
+        let mut overlap = MeshOverlapPriority::default();
+        overlap.rule = rule;
+        let settings = MeshBakeSettings {
+            width: 32,
+            height: 32,
+            padding: 0,
+            maps: vec![MeshMapKind::Position],
+            overlap,
+            ..Default::default()
+        };
+        eprintln!("重なった UV・{}", rule.name());
+        let _ = run(&mut g, &input, None, &settings);
+    }
+}

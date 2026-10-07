@@ -1,4 +1,4 @@
-//! 新規プロジェクトの窓（Ctrl+N）とプロジェクトの構成（ファイル ▸ プロジェクト設定）: 窓の操作（egui_kittest）、作ったプロジェクトの中身
+//! 新規プロジェクトのウィンドウ（Ctrl+N）とプロジェクトの構成（ファイル ▸ プロジェクト設定）: ウィンドウの操作（egui_kittest）、作ったプロジェクトの中身
 //! （セットの数・大きさ・チャンネル・法線の形式・マテリアルの鍵）、構成の変更（追加・削除・名前・大きさ・モデルの差し替えと読み直し）、
 //! 保存と開き直し（モデルのファイルの参照）、取消、日英。
 use crate::common;
@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use common::fbx::{ascii_fbx, mesh, temp_dir, write_fbx};
-use common::{app, click, key, menu_title, popup_item, rect_of};
+use common::{app, click, has_japanese, key, menu_title, popup_item, rect_of};
 use egui::{Key, Modifiers, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use yolu_app::engine::{CanvasResampling, Channel, Document, NormalYDirection, Rgba8, SelectionMask};
+use yolu_app::engine::{
+    CanvasResampling, Channel, Document, NormalYDirection, Rgba8, SelectionMask,
+};
 use yolu_app::lang::Lang;
 use yolu_app::newproject::{DraftOp, NpAction, Prep, Template};
 use yolu_app::sets::MaterialRef;
@@ -24,7 +26,7 @@ fn np(s: &mut S, a: NpAction) {
     s.apply(Action::Project(a));
 }
 
-/// 窓のモデルの読み込みが終わるまで待つ（試験が止まらないよう、上限つき）。
+/// ウィンドウのモデルの読み込みが終わるまで待つ（試験が止まらないよう、上限つき）。
 fn wait_model(s: &mut S) {
     let start = Instant::now();
     loop {
@@ -88,7 +90,7 @@ fn enabled_channels(doc: &Document) -> Vec<Channel> {
     v
 }
 
-/// 窓を開き、モデルを選んで準備を終える。
+/// ウィンドウを開き、モデルを選んで準備を終える。
 fn open_new_with(s: &mut S, path: &Path) {
     np(s, NpAction::OpenNew);
     np(s, NpAction::ChooseModel(path.to_path_buf()));
@@ -109,7 +111,7 @@ fn a_project_without_a_model_follows_the_template_resolution_and_normal_format()
     np(&mut s, NpAction::Resolution(1024));
     np(&mut s, NpAction::Normal(NormalYDirection::DirectX));
     np(&mut s, NpAction::Submit);
-    assert!(s.np.window.is_none(), "作ったら窓は閉じる");
+    assert!(s.np.window.is_none(), "作ったらウィンドウは閉じる");
     assert_eq!(s.sets.len(), 1);
     assert_eq!(size_of(&s, 0), (1024, 1024));
     assert_eq!(enabled_channels(&s.doc), [Channel::Color]);
@@ -378,7 +380,7 @@ fn bakes_mesh_maps_after_creating_when_asked() {
         "焼いたメッシュマップがセットに付く: {}",
         s.message
     );
-    // モデルが無ければベイクの設定は効かない（窓の部品も押せない）
+    // モデルが無ければベイクの設定は効かない（ウィンドウの部品も押せない）
     let mut t = S::new(64, 64);
     np(&mut t, NpAction::OpenNew);
     np(&mut t, NpAction::BakeAfter(true));
@@ -404,7 +406,7 @@ fn paint_dot(s: &mut S, index: usize, at: (u32, u32), color: Rgba8) {
     doc.set_pixel(layer, at.0, at.1, color).unwrap();
 }
 
-/// 一番上の層の全面を 1 回のストロークで塗る（どのタイルにも画素が入る）。
+/// 一番上のレイヤーの全面を 1 回のストロークで塗る（どのタイルにも画素が入る）。
 fn fill_all(s: &mut S, index: usize, color: Rgba8) {
     let doc = s.set_doc_mut(index);
     let layer = doc.layers().last().unwrap().id();
@@ -510,7 +512,7 @@ fn names_and_materials_that_collide_are_refused_with_a_reason_and_nothing_change
     np(&mut s, NpAction::OpenConfigure);
     let refused = |s: &mut S, why: &str| {
         np(s, NpAction::Submit);
-        let win = s.np.window.as_ref().expect("断ったら窓は残る");
+        let win = s.np.window.as_ref().expect("断ったらウィンドウは残る");
         assert!(win.confirm.is_none());
         let error = win.error.clone().expect("理由が出る");
         assert!(!error.is_empty(), "{why}");
@@ -548,7 +550,7 @@ fn resizing_resamples_the_set_clears_its_history_and_asks_first() {
     );
     np(&mut s, NpAction::Submit);
     // 確かめが先に出る（まだ変えない）
-    let win = s.np.window.as_ref().expect("確かめの間は窓が残る");
+    let win = s.np.window.as_ref().expect("確かめの間はウィンドウが残る");
     let plan = win.confirm.as_ref().expect("大きさの変更は確かめる");
     assert!(plan.needs_confirm());
     assert_eq!(plan.rows.len(), 1);
@@ -600,21 +602,41 @@ fn a_shrink_that_removes_remembered_selections_says_so_in_the_result_in_both_lan
         let set_name = s.sets.get(0).unwrap().name.clone();
         np(&mut s, NpAction::OpenConfigure);
         np(&mut s, NpAction::Draft(0, DraftOp::Size(512, 512)));
-        np(&mut s, NpAction::Resampling(Some(CanvasResampling::Nearest)));
+        np(
+            &mut s,
+            NpAction::Resampling(Some(CanvasResampling::Nearest)),
+        );
         np(&mut s, NpAction::Submit);
         np(&mut s, NpAction::ConfirmApply);
-        assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+        assert!(
+            s.np.window.is_none(),
+            "{:?}",
+            s.np.window.as_ref().map(|w| w.error.clone())
+        );
         assert_eq!(size_of(&s, 0), (512, 512));
-        let kept: Vec<&str> = s.set_doc(0).saved_selections().iter().map(|x| x.name.as_str()).collect();
+        let kept: Vec<&str> = s
+            .set_doc(0)
+            .saved_selections()
+            .iter()
+            .map(|x| x.name.as_str())
+            .collect();
         assert_eq!(kept, ["wide"], "{lang:?}");
-        assert!(!s.set_doc(0).can_undo(), "履歴は消える（取り消しでは戻らない）");
+        assert!(
+            !s.set_doc(0).can_undo(),
+            "履歴は消える（取り消しでは戻らない）"
+        );
         // 戻せないので、外れたことと数を、結果の文で言う
         let want = lang.pick(
-            format!("縮小で消えた覚えた選択範囲: {set_name} 1 件"),
-            format!("Remembered selections lost to the shrink: {set_name} 1"),
+            format!("縮小で消えた覚えた選択範囲があります（{set_name} 1 件）。"),
+            format!("Some remembered selections were lost to the shrink ({set_name} 1)."),
         );
         assert!(s.message.contains(&want), "{lang:?}: {}", s.message);
-        assert_eq!(s.message.contains("縮小"), lang == Lang::Ja, "{lang:?}: {}", s.message);
+        assert_eq!(
+            s.message.contains("縮小"),
+            lang == Lang::Ja,
+            "{lang:?}: {}",
+            s.message
+        );
     }
     // 縮小でも全部残るときは、何も言わない
     let mut s = S::new(64, 64);
@@ -679,7 +701,12 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     s.set_doc_mut(1).set_source_budget_bytes(tight).unwrap();
     let state = |s: &S, i: usize| {
         let d = s.set_doc(i);
-        (d.undo_count(), d.redo_count(), d.history_bytes(), d.revision())
+        (
+            d.undo_count(),
+            d.redo_count(),
+            d.history_bytes(),
+            d.revision(),
+        )
     };
     let before = (state(&s, 0), state(&s, 1));
     assert!(before.0 .0 >= 1 && before.0 .1 == 1, "{before:?}");
@@ -688,10 +715,14 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     np(&mut s, NpAction::Draft(1, DraftOp::Size(2048, 2048)));
     np(&mut s, NpAction::Submit);
     np(&mut s, NpAction::ConfirmApply);
-    let win = s.np.window.as_ref().expect("断られたら窓は残る");
+    let win = s.np.window.as_ref().expect("断られたらウィンドウは残る");
     let error = win.error.clone().expect("理由");
-    assert!(error.starts_with("Hair"), "{error}");
-    assert_eq!(size_of(&s, 0), (1024, 1024), "先に縮めるはずのセットも元の大きさ");
+    assert!(error.contains("「Hair」"), "{error}");
+    assert_eq!(
+        size_of(&s, 0),
+        (1024, 1024),
+        "先に縮めるはずのセットも元の大きさ"
+    );
     assert_eq!(size_of(&s, 1), (1024, 1024));
     assert_eq!(pixel_of(&s, 0, (3, 3)), Rgba8::new(10, 20, 30, 255));
     assert_eq!(pixel_of(&s, 1, (4, 4)), Rgba8::new(40, 50, 60, 255));
@@ -707,7 +738,9 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     assert!(
         s.np.window.is_none(),
         "{:?}",
-        s.np.window.as_ref().map(|w| (w.error.clone(), w.confirm.is_some()))
+        s.np.window
+            .as_ref()
+            .map(|w| (w.error.clone(), w.confirm.is_some()))
     );
     assert_eq!(size_of(&s, 0), (512, 512));
     assert_eq!(size_of(&s, 1), (512, 512));
@@ -743,7 +776,7 @@ fn removing_sets_asks_first_loses_their_work_and_keeps_one() {
     np(&mut s, NpAction::ConfirmApply);
     assert_eq!(set_names(&s), ["Skin", "Eye"]);
     assert_eq!(s.sets.iter().map(|x| x.uid).collect::<Vec<_>>(), keep);
-    // 最後の 1 つは消せない（窓でも消す操作でも）
+    // 最後の 1 つは消せない（ウィンドウでも消す操作でも）
     np(&mut s, NpAction::OpenConfigure);
     np(&mut s, NpAction::Draft(0, DraftOp::Remove));
     np(&mut s, NpAction::Draft(0, DraftOp::Remove));
@@ -1151,7 +1184,7 @@ fn a_key_two_sets_would_share_is_made_unique_so_the_project_still_saves() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 3D のパスの層を足す。指紋は今のモデルのもの（`fingerprint` があればそれ。別のモデルのパスの代わり）。
+/// 3D のパスレイヤーを足す。指紋は今のモデルのもの（`fingerprint` があればそれ。別のモデルのパスの代わり）。
 fn add_surface_path_layer(s: &mut S, index: usize, fingerprint: Option<&str>) {
     use yolu_core::paths::{
         fingerprint as print_of, render_surface, Options, PathBrush, SurfacePath,
@@ -1159,6 +1192,7 @@ fn add_surface_path_layer(s: &mut S, index: usize, fingerprint: Option<&str>) {
     let geometry = s.view3d.model.as_ref().unwrap().geometry.clone();
     let doc = s.set_doc_mut(index);
     let mut path = SurfacePath {
+        style: Default::default(),
         id: 1 + doc.layers().len() as u128,
         channel: Channel::Color,
         brush: PathBrush::default(),
@@ -1188,13 +1222,13 @@ fn a_model_change_names_the_3d_path_layers_that_will_not_follow_it() {
     let mut s = project_from(&old, 512);
     add_surface_path_layer(&mut s, 0, None);
     add_surface_path_layer(&mut s, 1, Some("別のモデルの指紋"));
-    // 別のモデルへ: どちらの層もパスのままでは新しいモデルに結び付かない（画素は残る）
+    // 別のモデルへ: どちらのレイヤーもパスのままでは新しいモデルに結び付かない（画素は残る）
     configure_with(&mut s, &new);
     np(&mut s, NpAction::Submit);
     let rows = s.np.window.as_ref().unwrap().confirm.clone().unwrap().rows;
     let paths = rows
         .iter()
-        .find(|r| r.left == "3D のパスの層")
+        .find(|r| r.left == "3D のパスレイヤー")
         .expect("パスの行");
     assert_eq!((paths.middle.as_str(), paths.warning), ("2", true));
     np(&mut s, NpAction::ConfirmApply);
@@ -1202,10 +1236,10 @@ fn a_model_change_names_the_3d_path_layers_that_will_not_follow_it() {
     for i in [0, 1] {
         assert!(
             s.set_doc(i).layers().iter().any(|l| l.path().is_some()),
-            "パスの層はそのまま"
+            "パスレイヤーはそのまま"
         );
     }
-    // 同じ形のモデルを読み直すと、現在のモデルの指紋の層は結び付いたまま（行に数えない）
+    // 同じ形のモデルを読み直すと、現在のモデルの指紋のレイヤーは結び付いたまま（行に数えない）
     let mut t = project_from(&old, 512);
     add_surface_path_layer(&mut t, 0, None);
     add_surface_path_layer(&mut t, 1, Some("別のモデルの指紋"));
@@ -1216,11 +1250,11 @@ fn a_model_change_names_the_3d_path_layers_that_will_not_follow_it() {
     let rows = t.np.window.as_ref().unwrap().confirm.clone().unwrap().rows;
     let paths = rows
         .iter()
-        .find(|r| r.left == "3D のパスの層")
+        .find(|r| r.left == "3D のパスレイヤー")
         .expect("パスの行");
     assert_eq!(
         paths.middle, "1",
-        "同じ形のモデルなら、その指紋の層は数えない"
+        "同じ形のモデルなら、その指紋のレイヤーは数えない"
     );
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1283,7 +1317,7 @@ fn a_live_link_model_is_never_replaced_from_the_window() {
     let dir = temp_dir("link");
     let path = character(&dir, "c.fbx");
     let mut s = S::new(64, 64);
-    let (report, shape) = s.receive_link_model(&link, 0);
+    let (report, shape) = s.receive_link_model(&link);
     assert!(shape.is_ok());
     assert_eq!(report.created, ["Hair"]);
     np(&mut s, NpAction::OpenConfigure);
@@ -1302,7 +1336,7 @@ fn a_live_link_model_is_never_replaced_from_the_window() {
         "Live Link のモデルのまま"
     );
     assert!(s.np.model_file.is_none());
-    // FBX を開くときは、シーンのモデルを替えずに新しいプロジェクトの窓
+    // FBX を開くときは、シーンのモデルを替えずに新しいプロジェクトのウィンドウ
     np(&mut s, NpAction::OpenModel(path));
     let win = s.np.window.as_ref().unwrap();
     assert!(!win.configure && win.is_loading());
@@ -1312,9 +1346,9 @@ fn a_live_link_model_is_never_replaced_from_the_window() {
 #[test]
 fn a_new_project_with_a_live_link_model_makes_a_set_for_each_chosen_material() {
     let mut s = S::new(64, 64);
-    let (_, shape) = s.receive_link_model(&link_model(), 0);
+    let (_, shape) = s.receive_link_model(&link_model());
     assert!(shape.is_ok());
-    // Ctrl+N の窓は、Live Link のモデルのマテリアルの組を出し、前と同じく全部を初めから選ぶ
+    // Ctrl+N のウィンドウは、Live Link のモデルのマテリアルの組を出し、前と同じく全部を初めから選ぶ
     np(&mut s, NpAction::OpenNew);
     {
         let win = s.np.window.as_ref().unwrap();
@@ -1366,7 +1400,7 @@ fn a_model_dropped_while_the_list_is_up_drops_the_list_and_a_stale_list_is_never
     configure_with(&mut s, &new);
     np(&mut s, NpAction::Submit);
     assert!(s.np.window.as_ref().unwrap().confirm.is_some());
-    // 一覧が出ている間に、別の FBX を落とす（ファイルを選ぶボタンは止まるが、落とした分は窓に届く）
+    // 一覧が出ている間に、別の FBX を落とす（ファイルを選ぶボタンは止まるが、落とした分はウィンドウに届く）
     np(&mut s, NpAction::OpenModel(again.clone()));
     {
         let win = s.np.window.as_ref().unwrap();
@@ -1381,7 +1415,13 @@ fn a_model_dropped_while_the_list_is_up_drops_the_list_and_a_stale_list_is_never
     assert_eq!(s.model.as_ref().unwrap().name, "old");
     // 出し直した一覧を見て決める
     np(&mut s, NpAction::Submit);
-    let plan = s.np.window.as_ref().unwrap().confirm.clone().expect("出し直す");
+    let plan =
+        s.np.window
+            .as_ref()
+            .unwrap()
+            .confirm
+            .clone()
+            .expect("出し直す");
     assert_eq!(plan.rows[0].left, "old → again");
     np(&mut s, NpAction::ConfirmApply);
     assert!(s.np.window.is_none(), "{:?}", s.message);
@@ -1416,7 +1456,13 @@ fn a_list_that_no_longer_matches_the_window_is_shown_again_instead_of_applied() 
     assert!(s.np.window.is_some(), "見せていない変更は適用しない");
     assert_eq!(size_of(&s, 0), (512, 512));
     assert_eq!(size_of(&s, 1), (512, 512));
-    let now = s.np.window.as_ref().unwrap().confirm.clone().expect("今の計画の一覧を出し直す");
+    let now =
+        s.np.window
+            .as_ref()
+            .unwrap()
+            .confirm
+            .clone()
+            .expect("今の計画の一覧を出し直す");
     assert_ne!(now, shown);
     assert_eq!(now.rows.len(), 2);
     np(&mut s, NpAction::ConfirmApply);
@@ -1435,7 +1481,10 @@ fn a_model_added_to_a_project_without_one_is_listed_by_its_name_alone() {
         configure_with(&mut s, &new);
         np(&mut s, NpAction::Submit);
         let plan = s.np.window.as_ref().unwrap().confirm.clone().unwrap();
-        assert_eq!(plan.rows[0].left, "new", "前のモデルの名前の代わりの文字を出さない");
+        assert_eq!(
+            plan.rows[0].left, "new",
+            "前のモデルの名前の代わりの文字を出さない"
+        );
         assert_eq!(plan.rows[0].right, lang.pick("追加", "Add"));
         for row in &plan.rows {
             for text in [&row.left, &row.middle, &row.right] {
@@ -1484,7 +1533,7 @@ fn a_configuration_window_closes_when_the_sets_change_underneath_it() {
                 .collect(),
         }],
     };
-    let _ = s.receive_link_model(&model, 0);
+    let _ = s.receive_link_model(&model);
     s.poll_newproject();
     assert!(s.np.window.is_none());
     assert!(
@@ -1492,15 +1541,12 @@ fn a_configuration_window_closes_when_the_sets_change_underneath_it() {
         "{}",
         s.message
     );
-    // 新規プロジェクトの窓は、窓の外の変更に影響されない
+    // 新規プロジェクトのウィンドウは、ウィンドウの外の変更に影響されない
     np(&mut s, NpAction::OpenNew);
-    let _ = s.receive_link_model(
-        &Model {
-            generation: 2,
-            ..model
-        },
-        0,
-    );
+    let _ = s.receive_link_model(&Model {
+        generation: 2,
+        ..model
+    });
     s.poll_newproject();
     assert!(s.np.window.is_some());
 }
@@ -1509,7 +1555,7 @@ fn a_configuration_window_closes_when_the_sets_change_underneath_it() {
 fn opening_an_fbx_picks_the_window_that_fits_the_project() {
     let dir = temp_dir("route");
     let path = character(&dir, "c.fbx");
-    // 何も触っていない: 新規プロジェクトの窓に、そのモデル
+    // 何も触っていない: 新規プロジェクトのウィンドウに、そのモデル
     let mut s = S::new(64, 64);
     assert!(s.is_pristine());
     np(&mut s, NpAction::OpenModel(path.clone()));
@@ -1517,7 +1563,7 @@ fn opening_an_fbx_picks_the_window_that_fits_the_project() {
         let win = s.np.window.as_ref().unwrap();
         assert!(!win.configure && win.is_loading() && win.model.as_deref() == Some(path.as_path()));
     }
-    // 窓が開いていれば、その窓のモデルを替える
+    // ウィンドウが開いていれば、そのウィンドウのモデルを替える
     let other = cape_model(&dir, "other.fbx");
     np(&mut s, NpAction::OpenModel(other.clone()));
     assert_eq!(
@@ -1526,7 +1572,7 @@ fn opening_an_fbx_picks_the_window_that_fits_the_project() {
     );
     wait_model(&mut s);
     np(&mut s, NpAction::Close);
-    // 描いたあと: 構成の窓で、そのモデルに替える下書き
+    // 描いたあと: 構成のウィンドウで、そのモデルに替える下書き
     paint_dot(&mut s, 0, (1, 1), Rgba8::new(1, 1, 1, 255));
     assert!(!s.is_pristine());
     np(&mut s, NpAction::OpenModel(path.clone()));
@@ -1580,7 +1626,12 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     let mut s = project_from(&model, 256);
     // モデルの骨を 1 本回す（読んだ FBX の骨のうち、最初のもの）
     let posed = {
-        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        let session = s
+            .view3d
+            .pose
+            .session
+            .as_ref()
+            .expect("モデルのポーズのセッション");
         assert!(!session.rig.bones().is_empty());
         let mut p = session.pose().clone();
         p.locals[0].rotation = Quat::from_rotation_y(0.7);
@@ -1600,7 +1651,13 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     wait_reopen(&mut t);
     let session = t.view3d.pose.session.as_ref().unwrap();
     assert!(session.is_posed(), "{}", t.message);
-    assert!(session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999);
+    assert!(
+        session.pose().locals[0]
+            .rotation
+            .dot(posed.locals[0].rotation)
+            .abs()
+            > 0.999_999
+    );
     assert!(!session.can_undo());
     assert!(t.message.contains("ポーズを戻しました"), "{}", t.message);
     yolu_app::view3d::pose::sync_modified(&mut t);
@@ -1609,22 +1666,35 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     let other = write_fbx(
         &dir.join("other"),
         "o.fbx",
-        &ascii_fbx(&["Cloth"], &[mesh("Wing", &[Some(0)]), mesh("Tail", &[Some(0)])]),
+        &ascii_fbx(
+            &["Cloth"],
+            &[mesh("Wing", &[Some(0)]), mesh("Tail", &[Some(0)])],
+        ),
     );
     let swapped = read_file(&ylp)
-        .with_view_model(Some(&yolu_app::newproject::relative_model_path(&other, &ylp)))
+        .with_view_model(Some(&yolu_app::newproject::relative_model_path(
+            &other, &ylp,
+        )))
         .unwrap();
     std::fs::write(&ylp, swapped.to_bytes().unwrap()).unwrap();
     let mut u = S::new(64, 64);
     u.apply(Action::OpenProject(ylp.clone()));
     wait_reopen(&mut u);
     let session = u.view3d.pose.session.as_ref().unwrap();
-    assert!(!session.is_posed(), "合わないポーズは当てない: {}", u.message);
+    assert!(
+        !session.is_posed(),
+        "合わないポーズは当てない: {}",
+        u.message
+    );
     assert!(!session.preset_notes.is_empty(), "飛ばした項目の理由が残る");
-    assert!(u.message.contains("合わない") || u.message.contains("合うボーンがありません"), "{}", u.message);
+    assert!(
+        u.message.contains("合わない") || u.message.contains("合うボーンがありません"),
+        "{}",
+        u.message
+    );
 }
 
-/// プロジェクトの構成の窓で、モデルを選び直す（`reload` なら読み直す）。確かめが出たら適用する。
+/// プロジェクトの構成のウィンドウで、モデルを選び直す（`reload` なら読み直す）。確かめが出たら適用する。
 fn configure_model(s: &mut S, choose: Option<&Path>) {
     np(s, NpAction::OpenConfigure);
     match choose {
@@ -1636,18 +1706,28 @@ fn configure_model(s: &mut S, choose: Option<&Path>) {
     if s.np.window.as_ref().is_some_and(|w| w.confirm.is_some()) {
         np(s, NpAction::ConfirmApply);
     }
-    assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+    assert!(
+        s.np.window.is_none(),
+        "{:?}",
+        s.np.window.as_ref().map(|w| w.error.clone())
+    );
 }
 
 #[test]
-fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configuration_and_is_not_lost_on_save() {
+fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configuration_and_is_not_lost_on_save(
+) {
     use yolu_core::glam::Quat;
     let dir = temp_dir("configure-pose");
     let model = character(&dir.join("models"), "c.fbx");
     let ylp = dir.join("p.ylp");
     let mut s = project_from(&model, 256);
     let posed = {
-        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        let session = s
+            .view3d
+            .pose
+            .session
+            .as_ref()
+            .expect("モデルのポーズのセッション");
         let mut p = session.pose().clone();
         p.locals[0].rotation = Quat::from_rotation_y(0.7);
         p
@@ -1658,7 +1738,12 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     let stored = read_file(&ylp).pose().unwrap().expect("保存したポーズ");
     let rotated = |t: &S| {
         let session = t.view3d.pose.session.as_ref().expect("ポーズのセッション");
-        session.is_posed() && session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999
+        session.is_posed()
+            && session.pose().locals[0]
+                .rotation
+                .dot(posed.locals[0].rotation)
+                .abs()
+                > 0.999_999
     };
     // モデルのファイルを動かしてから開く: 見つからず、ポーズのセッションは無い
     let moved = dir.join("moved");
@@ -1666,16 +1751,20 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp.clone()));
     wait_reopen(&mut t);
-    assert!(t.message.contains("モデルが見つかりません"), "{}", t.message);
+    assert!(t.message.contains("が見つかりません"), "{}", t.message);
     assert!(t.view3d.pose.session.is_none());
-    // 構成の窓で動かした先のモデルを選び直すと、ファイルのポーズが戻り、そのことが結果の文に出る
+    // 構成のウィンドウで動かした先のモデルを選び直すと、ファイルのポーズが戻り、そのことが結果の文に出る
     configure_model(&mut t, Some(&moved.join("c.fbx")));
     assert!(rotated(&t), "{}", t.message);
     assert!(t.message.contains("ポーズを戻しました"), "{}", t.message);
     // そのまま保存しても pose.json は消えず、同じ中身
     t.apply(Action::SaveProject);
     assert!(t.message.contains("保存しました"), "{}", t.message);
-    assert_eq!(read_file(&ylp).pose().unwrap().as_ref(), Some(&stored), "ファイルのポーズが残る");
+    assert_eq!(
+        read_file(&ylp).pose().unwrap().as_ref(),
+        Some(&stored),
+        "ファイルのポーズが残る"
+    );
     // 読み直しでも戻る（ポーズのセッションは新しい休みの形から始まる）
     let mut u = S::new(64, 64);
     u.apply(Action::OpenProject(ylp.clone()));
@@ -1773,11 +1862,15 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     assert!(t.np.reopening.is_some() && t.model.is_none());
     wait_reopen(&mut t);
     assert!(
-        t.message.contains("モデルが見つかりません: c.fbx"),
+        t.message.contains("モデル「c.fbx」が見つかりません。"),
         "{}",
         t.message
     );
-    assert!(t.message.starts_with("開きました"), "開いた知らせの後ろに続く: {}", t.message);
+    assert!(
+        t.message.starts_with("開きました"),
+        "開いた知らせの後ろに続く: {}",
+        t.message
+    );
     assert!(t.np.reopening.is_none() && t.model.is_none());
     assert!(t.np.model_file.is_some(), "参照は残す");
     // 別の場所へ保存しても、参照は（その場所からの相対で）残る
@@ -1807,7 +1900,7 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     f.apply(Action::OpenProject(dir.join("p.ylp")));
     wait_reopen(&mut f);
     assert!(
-        f.message.contains("Model not found: c.fbx"),
+        f.message.contains("The model \"c.fbx\" was not found."),
         "{}",
         f.message
     );
@@ -1834,16 +1927,30 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
     let stored = "//nas.invalid/share/models/c.fbx";
     let ylp = project_with_stored_model(&dir, stored);
     for (lang, text) in [
-        (Lang::Ja, "ネットワーク上のモデルは自動では読みません: c.fbx"),
-        (Lang::En, "Not reading the model on the network automatically: c.fbx"),
+        (
+            Lang::Ja,
+            "ネットワーク上のモデル「c.fbx」は自動では読みません。",
+        ),
+        (
+            Lang::En,
+            "The model \"c.fbx\" on the network is not read automatically.",
+        ),
     ] {
         let mut t = S::new_in(64, 64, lang);
         t.apply(Action::OpenProject(ylp.clone()));
         assert!(t.np.reopening.is_none(), "確かめも読み込みも始めない");
         assert!(t.model.is_none() && t.view3d.pose.session.is_none());
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(stored)), "参照は残す");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(stored)),
+            "参照は残す"
+        );
         assert!(t.message.contains(text), "{}", t.message);
-        assert!(t.message.starts_with(lang.pick("開きました", "Opened")), "{}", t.message);
+        assert!(
+            t.message.starts_with(lang.pick("開きました", "Opened")),
+            "{}",
+            t.message
+        );
         assert_eq!(t.sets.len(), 3, "セットは開く");
     }
     // 書き直しても参照は消えない（保存し直すと、同じ文字列が残る。UNC を相対に直さない。どの OS でも）
@@ -1851,7 +1958,13 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(ylp));
         t.apply(Action::SaveProjectAs(dir.join("again.ylp")));
-        assert_eq!(read_file(&dir.join("again.ylp")).view_model().unwrap().as_deref(), Some(stored));
+        assert_eq!(
+            read_file(&dir.join("again.ylp"))
+                .view_model()
+                .unwrap()
+                .as_deref(),
+            Some(stored)
+        );
     }
     // バックスラッシュで書かれた UNC も、'/' 区切りの同じ参照として残る（OS によらず、別の相対のファイル名にならない）
     {
@@ -1859,7 +1972,13 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(back));
         t.apply(Action::SaveProjectAs(dir.join("again2.ylp")));
-        assert_eq!(read_file(&dir.join("again2.ylp")).view_model().unwrap().as_deref(), Some(stored));
+        assert_eq!(
+            read_file(&dir.join("again2.ylp"))
+                .view_model()
+                .unwrap()
+                .as_deref(),
+            Some(stored)
+        );
     }
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1878,17 +1997,25 @@ fn a_model_reference_on_the_network_is_not_touched_by_a_new_project_window_eithe
         let ylp = project_with_stored_model(&dir, &stored);
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(ylp));
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は残る");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(&stored)),
+            "参照は残る"
+        );
         assert!(t.np.reopening.is_none(), "{stored}");
         np(&mut t, NpAction::OpenNew);
-        let win = t.np.window.as_ref().expect("窓は開く");
+        let win = t.np.window.as_ref().expect("ウィンドウは開く");
         assert!(
             !win.is_loading() && win.model_path().is_none() && matches!(win.prep, Prep::Idle),
             "{stored}: ネットワークの参照を初めのモデルにして読み始めた"
         );
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は消えない");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(&stored)),
+            "参照は消えない"
+        );
     }
-    // 対照: 同じファイルをローカルの絶対のパスで参照していれば、新規の窓の初めのモデルとして読む
+    // 対照: 同じファイルをローカルの絶対のパスで参照していれば、新規のウィンドウの初めのモデルとして読む
     let ylp = project_with_stored_model(&dir, &local.to_string_lossy());
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp));
@@ -1926,7 +2053,8 @@ fn a_broken_model_file_is_told_when_the_project_opens_and_the_sets_stay() {
     t.apply(Action::OpenProject(ylp));
     wait_reopen(&mut t);
     assert!(
-        t.message.starts_with("開きました") && t.message.contains("c.fbx:"),
+        t.message.starts_with("開きました")
+            && t.message.contains("モデル「c.fbx」を読み込めません（"),
         "{}",
         t.message
     );
@@ -2101,7 +2229,7 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     let mut t = S::new(64, 64);
     open_new_with(&mut t, &path);
     assert_eq!(t.np.window.as_ref().unwrap().groups(&t).len(), 70);
-    // 窓は上限までしか選ばせない: 初めは先頭の 64、65 個目は理由つきで断る
+    // ウィンドウは上限までしか選ばせない: 初めは先頭の 64、65 個目は理由つきで断る
     {
         let win = t.np.window.as_ref().unwrap();
         assert_eq!(win.chosen(70), (0..64).collect::<Vec<_>>());
@@ -2110,7 +2238,11 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     np(&mut t, NpAction::Material(64, true));
     {
         let win = t.np.window.as_ref().unwrap();
-        assert!(win.error.as_deref().is_some_and(|e| e.contains("64")), "{:?}", win.error);
+        assert!(
+            win.error.as_deref().is_some_and(|e| e.contains("64")),
+            "{:?}",
+            win.error
+        );
         assert_eq!(win.materials, None, "選びは変わらない");
     }
     // 1 つ外せば別の 1 つを選べる。選びを初めの形へ戻せば「選び直していない」に戻る
@@ -2145,7 +2277,11 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     {
         let win = t.np.window.as_ref().unwrap();
         assert_eq!(win.drafts.len(), 64, "上限を超えて足さない");
-        assert!(win.error.as_deref().is_some_and(|e| e.contains("64")), "{:?}", win.error);
+        assert!(
+            win.error.as_deref().is_some_and(|e| e.contains("64")),
+            "{:?}",
+            win.error
+        );
     }
     np(&mut t, NpAction::Close);
     // 英語でも
@@ -2214,10 +2350,13 @@ fn applying_without_touching_the_normal_format_leaves_sets_with_another_format_a
         (format(&s, 0), format(&s, 1)),
         (NormalYDirection::OpenGL, NormalYDirection::DirectX)
     );
-    // 名前だけ変えて適用: どちらのセットの形式も、Undo の段も変わらない（窓は今のセット = 1 つ目の形式で開く）
+    // 名前だけ変えて適用: どちらのセットの形式も、Undo の段も変わらない（ウィンドウは今のセット = 1 つ目の形式で開く）
     s.switch_set(0).unwrap();
     np(&mut s, NpAction::OpenConfigure);
-    assert_eq!(s.np.window.as_ref().unwrap().normal, NormalYDirection::OpenGL);
+    assert_eq!(
+        s.np.window.as_ref().unwrap().normal,
+        NormalYDirection::OpenGL
+    );
     np(&mut s, NpAction::Draft(0, DraftOp::Name("名前".into())));
     np(&mut s, NpAction::Submit);
     assert!(s.np.window.is_none(), "{:?}", s.message);
@@ -2283,7 +2422,7 @@ fn has_jp(text: &str) -> bool {
         .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
 }
 
-// ───────── 窓の操作（egui_kittest） ─────────
+// ───────── ウィンドウの操作（egui_kittest） ─────────
 
 type H = Harness<'static, YoluApp>;
 
@@ -2296,9 +2435,9 @@ fn run_np(h: &mut H, a: NpAction) {
     h.run();
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
-    let rect = yolu_app::newproject::window::last_rect(&h.ctx).expect("窓を描いていない");
+    let rect = yolu_app::newproject::window::last_rect(&h.ctx).expect("ウィンドウを描いていない");
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);
     h.step();
@@ -2327,7 +2466,7 @@ fn dd_item(h: &H, label: &str) -> Rect {
     rect_of(h, label, |r| body.contains(r.center()))
 }
 
-/// 描いた文字（窓の中だけ）。クリップの外へはみ出す文字があれば落とす。
+/// 描いた文字（ウィンドウの中だけ）。クリップの外へはみ出す文字があれば落とす。
 fn window_texts(h: &H) -> Vec<String> {
     use egui::epaint::Shape;
     fn walk(shape: &Shape, clip: Rect, out: &mut Vec<String>) {
@@ -2345,7 +2484,7 @@ fn window_texts(h: &H) -> Vec<String> {
             _ => {}
         }
     }
-    let rect = yolu_app::newproject::window::last_rect(&h.ctx).expect("窓を描いていない");
+    let rect = yolu_app::newproject::window::last_rect(&h.ctx).expect("ウィンドウを描いていない");
     let mut out = Vec::new();
     for s in &h.output().shapes {
         if rect.intersects(s.clip_rect) {
@@ -2355,11 +2494,6 @@ fn window_texts(h: &H) -> Vec<String> {
         }
     }
     out
-}
-
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
 }
 
 fn gui() -> H {
@@ -2392,11 +2526,11 @@ fn ctrl_n_asks_then_the_window_creates_with_the_chosen_template_and_resolution()
     assert_eq!(
         st(&h).dialog_request,
         Some(DialogRequest::New),
-        "Ctrl+N は保存していない変更を先に聞く（窓は聞いたあとに開く）"
+        "Ctrl+N は保存していない変更を先に聞く（ウィンドウは聞いたあとに開く）"
     );
     h.state_mut().state.dialog_request = None;
     run_np(&mut h, NpAction::OpenNew);
-    let win = yolu_app::newproject::window::last_rect(&h.ctx).expect("窓");
+    let win = yolu_app::newproject::window::last_rect(&h.ctx).expect("ウィンドウ");
     assert!(win.width() > 400.0);
     for label in [
         "作成",
@@ -2447,7 +2581,7 @@ fn escape_closes_the_window_and_enter_creates() {
     h.run();
     assert!(st(&h).np.window.is_none());
     assert_eq!(st(&h).doc.id(), id);
-    // 窓の外のキーは効かない（モーダル）
+    // ウィンドウの外のキーは効かない（モーダル）
     run_np(&mut h, NpAction::OpenNew);
     key(&h, Key::B, Modifiers::NONE);
     key(&h, Key::E, Modifiers::NONE);
@@ -2605,7 +2739,11 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
             Lang::En => ("Preparing the model", "Cancel preparation"),
         };
         h.run();
-        assert!(window_texts(&h).iter().any(|t| t == label), "{lang:?}: {:?}", window_texts(&h));
+        assert!(
+            window_texts(&h).iter().any(|t| t == label),
+            "{lang:?}: {:?}",
+            window_texts(&h)
+        );
         assert!(h.query_by_label(cancel).is_some(), "{lang:?}");
         match &st(&h).np.window.as_ref().unwrap().prep {
             Prep::Loading { job, .. } => job.report_progress(0.37),
@@ -2613,7 +2751,9 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
         }
         h.run();
         assert!(
-            window_texts(&h).iter().any(|t| *t == format!("{label} 37%")),
+            window_texts(&h)
+                .iter()
+                .any(|t| *t == format!("{label} 37%")),
             "{lang:?}: {:?}",
             window_texts(&h)
         );
@@ -2700,7 +2840,7 @@ fn the_window_follows_the_language_without_clipped_or_japanese_text() {
         for expected in [
             lang.pick("補間方法", "Resampling"),
             lang.pick("適用", "Apply"),
-            lang.pick("テクスチャセットを足す", "Add Texture Set"),
+            lang.pick("テクスチャセットを追加", "Add Texture Set"),
         ] {
             assert!(
                 texts.iter().any(|t| t == expected),
@@ -2810,12 +2950,12 @@ fn the_file_menu_opens_the_configuration_and_a_row_edits_removes_and_applies() {
         .expect("確かめる");
     assert_eq!(plan.rows.len(), 2, "消す 1 つと大きさ 1 つ");
     shot(&mut h, "newproject_confirm");
-    // 確かめの「やめる」→ 窓は残り、何も変わっていない
+    // 確かめの「やめる」→ ウィンドウは残り、何も変わっていない
     h.get_by_label("やめる").click();
     h.run();
     assert!(st(&h).np.window.as_ref().unwrap().confirm.is_none());
     assert_eq!(st(&h).sets.len(), 3);
-    // もう一度: 確かめの「適用」（窓の「適用」は確かめの下で押せない）
+    // もう一度: 確かめの「適用」（ウィンドウの「適用」は確かめの下で押せない）
     h.get_by_label("適用").click();
     h.run();
     let apply: Vec<_> = h.get_all_by_label("適用").map(|n| n.rect()).collect();
@@ -2830,12 +2970,12 @@ fn the_file_menu_opens_the_configuration_and_a_row_edits_removes_and_applies() {
 #[test]
 fn the_texture_set_panel_adds_removes_and_opens_the_configuration() {
     let mut h = gui();
-    h.get_by_label("空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）")
+    h.get_by_label("空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）")
         .click();
     h.run();
     assert_eq!(st(&h).sets.len(), 2);
     assert_eq!(st(&h).sets.current_index(), 1);
-    // 今のセットを消す: 確かめの窓が先に出る
+    // 今のセットを消す: 確認のウィンドウが先に出る
     h.get_by_label("今のテクスチャセットを消す（確かめます。その作業は消えます）")
         .click();
     h.run();
@@ -2878,7 +3018,7 @@ fn the_context_menu_removes_a_set_after_asking() {
     assert_eq!(st(&h).sets.len(), 2);
 }
 
-/// 窓に落としたファイル（パスだけ持つ）。
+/// ウィンドウに落としたファイル（パスだけ持つ）。
 #[derive(Debug)]
 struct Dropped(PathBuf);
 impl egui::DroppedFile for Dropped {
@@ -2905,11 +3045,11 @@ fn an_fbx_dropped_on_the_window_opens_the_new_project_window_or_replaces_the_win
             .np
             .window
             .as_ref()
-            .expect("落とした FBX で新規プロジェクトの窓");
+            .expect("落とした FBX で新規プロジェクトのウィンドウ");
         assert!(!win.configure && win.model.as_deref() == Some(path.as_path()));
     }
     settle_model(&mut h);
-    // 窓が開いているあいだに別の FBX を落とすと、窓のモデルが替わる（窓は 1 つのまま）
+    // ウィンドウが開いているあいだに別の FBX を落とすと、ウィンドウのモデルが替わる（ウィンドウは 1 つのまま）
     h.input_mut()
         .dropped_files
         .push(std::sync::Arc::new(Dropped(other.clone())));
@@ -2965,9 +3105,9 @@ fn opening_or_creating_another_project_closes_the_window() {
     np(&mut s, NpAction::OpenNew);
     s.apply(Action::NewProject);
     assert!(s.np.window.is_none());
-    // 開けなかったときは、窓を閉じず何も変えない
+    // 開けなかったときは、ウィンドウを閉じず何も変えない
     np(&mut s, NpAction::OpenNew);
     s.apply(Action::OpenProject(dir.join("missing.ylp")));
-    assert!(s.np.window.is_some(), "開けなかったら窓はそのまま");
+    assert!(s.np.window.is_some(), "開けなかったらウィンドウはそのまま");
     let _ = std::fs::remove_dir_all(dir);
 }

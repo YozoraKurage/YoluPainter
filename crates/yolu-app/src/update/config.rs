@@ -13,7 +13,7 @@
 //! 試験版の行を別のファイルにしなかったのは、アンインストーラーが消すファイルを名前で挙げている（`installer/yolupainter.nsi`・
 //! `docs/INSTALL.md` の表）ため。増やすと、その 3 か所と試験を揃える必要がある。
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// 起動時に更新を確かめるか。
@@ -98,21 +98,7 @@ pub fn save(path: &Path, stored: &Stored) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing"))?;
     std::fs::create_dir_all(parent)?;
-    let pending = path.with_extension(format!("{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    yolu_io::atomic::replace_bytes(path, text.as_bytes())
 }
 
 #[cfg(test)]
@@ -167,9 +153,15 @@ mod tests {
         }
         // 試験版を切のまま保存すると、旧い版と同じ 1 行のまま（旧い版が読める）
         save(&path, &checked(Preference::On)).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "check_on_startup=on\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "check_on_startup=on\n"
+        );
         // 入のときだけ 2 行目が付く。保存し直しても、もう一方の値を落とさない
-        let both = Stored { check: Preference::On, beta: true };
+        let both = Stored {
+            check: Preference::On,
+            beta: true,
+        };
         save(&path, &both).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -177,7 +169,10 @@ mod tests {
         );
         assert_eq!(load(&path).unwrap(), both);
         // 順番は問わない・切の行も読める
-        for text in ["use_beta=on\ncheck_on_startup=on\n", "check_on_startup=on\nuse_beta=on"] {
+        for text in [
+            "use_beta=on\ncheck_on_startup=on\n",
+            "check_on_startup=on\nuse_beta=on",
+        ] {
             std::fs::write(&path, text).unwrap();
             assert_eq!(load(&path).unwrap(), both, "{text:?}");
         }
@@ -191,7 +186,10 @@ mod tests {
         let dir = scratch("beta-alone");
         let path = dir.join("update.conf");
         // まだ聞いていない人が試験版だけを入れる: 問いはまだ聞いていないまま
-        let beta_only = Stored { check: Preference::Unset, beta: true };
+        let beta_only = Stored {
+            check: Preference::Unset,
+            beta: true,
+        };
         save(&path, &beta_only).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "use_beta=on\n");
         assert_eq!(load(&path).unwrap(), beta_only);
@@ -208,12 +206,10 @@ mod tests {
         let dir = scratch("broken");
         let path = dir.join("update.conf");
         save(&path, &checked(Preference::On)).unwrap();
-        // 書きかけの一時ファイルが道をふさいでいる: 保存は失敗し、前の選択が残る。
-        let pending = path.with_extension(format!("{}.pending", std::process::id()));
-        std::fs::write(&pending, "busy").unwrap();
-        assert!(save(&path, &checked(Preference::Off)).is_err());
+        // 置き換える前に失敗する: 保存は失敗し、前の選択が残る（一時ファイルも残らない）。
+        assert!(yolu_io::atomic::failing(|| save(&path, &checked(Preference::Off))).is_err());
         assert_eq!(load(&path).unwrap(), checked(Preference::On));
-        std::fs::remove_file(&pending).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         for bad in [
             "check_on_startup=maybe",
             "language=ja",

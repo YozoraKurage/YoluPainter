@@ -230,9 +230,7 @@ fn the_frame_the_drag_is_released_still_shows_the_moved_point_not_the_old_one() 
             first.points()[1]
         );
         assert!(
-            painted
-                .iter()
-                .all(|c| (c.points()[1].x - 0.3).abs() < 0.02),
+            painted.iter().all(|c| (c.points()[1].x - 0.3).abs() < 0.02),
             "離したあとのどのフレームも動かした位置"
         );
     });

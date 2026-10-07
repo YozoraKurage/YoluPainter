@@ -259,10 +259,7 @@ mod tests {
         let arm = mesh_range(&rig, 1);
         let slice = &weights[arm];
         assert!(slice.iter().any(|w| *w > 0.99), "手の先は手の骨");
-        assert!(
-            slice.contains(&0.0),
-            "肩のそばは手の骨に掛からない"
-        );
+        assert!(slice.contains(&0.0), "肩のそばは手の骨に掛からない");
         assert!(
             slice.iter().any(|w| *w > 0.0 && *w < 1.0),
             "関節のまわりは混ざる"

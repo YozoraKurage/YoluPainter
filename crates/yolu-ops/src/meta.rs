@@ -23,6 +23,8 @@ pub enum Danger {
     Always,
     /// ファイルを置き換える・開いている文書の変更を捨てるときだけ壊す。そうなるときに `confirm: true` が無ければ断る。
     WhenReplacing,
+    /// 列の中の命令による（`action.run`）。壊す命令は、その命令に `confirm: true` が無ければ、列の全部を当てる前に断る。
+    PerCommand,
 }
 
 /// 命令 1 つの説明。
@@ -130,8 +132,8 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<LayerAddArgs, Edited>(
             "layer.add", "edited", false, Safe, false,
-            ("レイヤーを足す", "ペイント・塗りつぶし・グループ・調整のレイヤーを足す。1 回の取り消しで戻る。"),
-            ("Add a layer", "Add a paint, fill, group or adjustment layer. One undo step."),
+            ("レイヤーを追加", "ペイント・塗りつぶし・グループ・調整・テキストレイヤーを追加する。1 回の取り消しで戻る。"),
+            ("Add a layer", "Add a paint, fill, group, adjustment or text layer. One undo step."),
         ),
         spec::<LayerDeleteArgs, Edited>(
             "layer.delete", "edited", false, Always, true,
@@ -145,12 +147,12 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<LayerSetArgs, Edited>(
             "layer.set", "edited", false, Safe, true,
-            ("レイヤーを変える", "名前・表示・不透明度・合成モード・クリッピング・ロック・チャンネルの有効・塗りつぶしの値・調整の値を変える。まとめて 1 回の取り消しで戻る。"),
-            ("Change a layer", "Change name, visibility, opacity, blend mode, clipping, locks, enabled channels, fill values or adjustment values. All of it is one undo step."),
+            ("レイヤーを変える", "名前・表示・不透明度・合成モード・クリッピング・ロック・チャンネルの有効・塗りつぶしの値・調整の値・文字の値を変える。まとめて 1 回の取り消しで戻る。"),
+            ("Change a layer", "Change name, visibility, opacity, blend mode, clipping, locks, enabled channels, fill values, adjustment values or text values. All of it is one undo step."),
         ),
         spec::<MaskAddArgs, Edited>(
             "mask.add", "edited", false, Safe, false,
-            ("マスクを足す", "何も隠さないラスターマスクを足す。1 回の取り消しで戻る。"),
+            ("マスクを追加", "何も隠さないラスターマスクを追加する。1 回の取り消しで戻る。"),
             ("Add a mask", "Add a raster mask that hides nothing. One undo step."),
         ),
         spec::<MaskDeleteArgs, Edited>(
@@ -170,7 +172,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<EffectAddArgs, Edited>(
             "effect.add", "edited", false, Safe, false,
-            ("効果を足す", "フィルター・Generator を種類の名前と値で足す（種類は effect.list_kinds）。1 回の取り消しで戻る。"),
+            ("効果を追加", "フィルター・Generator を種類の名前と値で追加する（種類は effect.list_kinds）。1 回の取り消しで戻る。"),
             ("Add an effect", "Add a filter or generator by kind and parameter values (see effect.list_kinds). One undo step."),
         ),
         spec::<EffectSetArgs, Edited>(
@@ -232,6 +234,11 @@ fn build() -> Vec<CommandSpec> {
             "save_as", "saved", false, WhenReplacing, true,
             ("名前を付けて保存", "別の .ylp として保存する。既にあるファイルへは confirm: true が要る。"),
             ("Save as", "Save as another .ylp. Replacing an existing file needs confirm: true."),
+        ),
+        spec::<ActionRunArgs, ActionDone>(
+            "action.run", "action", false, PerCommand, false,
+            ("アクションを実行", "レイヤー・マスク・効果を変える命令の列を、1 つのテクスチャセットへ取り消しの 1 段で当てる。途中の命令が断れば全部を戻し、何番目か（data.index、0 から）を返す。中の壊す命令には、それぞれ confirm: true が要る。"),
+            ("Run an action", "Apply a list of commands that change layers, masks and effects to one texture set as one undo step. If a command fails, everything is rolled back and the error tells which one (data.index, from 0). Destructive commands in the list need their own confirm: true."),
         ),
     ]
 }

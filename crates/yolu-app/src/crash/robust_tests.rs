@@ -30,14 +30,23 @@ fn child_robust() {
         return;
     };
     install_at(PathBuf::from(dir));
-    match std::env::var("YOLU_ROBUST_MODE").unwrap_or_default().as_str() {
+    match std::env::var("YOLU_ROBUST_MODE")
+        .unwrap_or_default()
+        .as_str()
+    {
         "service" => {
             // サムネイルの仕事場: 仕事が panic しても、スレッドは続き、結果は None（落ちた記録にはならない）
             let service = crate::library::service::Service::<u8>::new(1);
-            service.request("thumb", || Box::new(|_| -> u8 { panic!("thumbnail worker panic") }));
+            service.request("thumb", || {
+                Box::new(|_| -> u8 { panic!("thumbnail worker panic") })
+            });
             service.wait_done();
             let done = service.poll(8);
-            assert!(matches!(done.as_slice(), [(key, None)] if key == "thumb"), "{}", done.len());
+            assert!(
+                matches!(done.as_slice(), [(key, None)] if key == "thumb"),
+                "{}",
+                done.len()
+            );
             // 続けて、次の仕事も走る
             service.request("next", || Box::new(|_| 7u8));
             service.wait_done();
@@ -47,9 +56,14 @@ fn child_robust() {
         "convert" => {
             // 文書を開く変換の途中の panic は、理由の文の失敗になる（ほかのセットは開く）
             let failed: Result<u8, String> =
-                crate::project::caught_as_text(crate::lang::Lang::En, || panic!("conversion panic"));
+                crate::project::caught_as_text(crate::lang::Lang::En, || {
+                    panic!("conversion panic")
+                });
             assert_eq!(failed.unwrap_err(), "Reading the document stopped");
-            assert_eq!(crate::project::caught_as_text(crate::lang::Lang::En, || Ok(3u8)), Ok(3));
+            assert_eq!(
+                crate::project::caught_as_text(crate::lang::Lang::En, || Ok(3u8)),
+                Ok(3)
+            );
             panic!("final panic");
         }
         "alloc_fatal" => {
@@ -84,7 +98,10 @@ fn child_robust() {
         }
         "event" => {
             // panic ではない出来事（GPU の装置を失った、など）は、落ちた記録の枠と普段のログに書ける
-            let path = event("GPU device lost", "Adapter: Sample (Vulkan)\nReason: Unknown\nSaved for recovery: Yes");
+            let path = event(
+                "GPU device lost",
+                "Adapter: Sample (Vulkan)\nReason: Unknown\nSaved for recovery: Yes",
+            );
             assert!(path.is_some_and(|p| p.is_file()));
             note("GPU error: Validation Error: sample\nsecond line");
             note("GPU error: private image.png");
@@ -97,7 +114,11 @@ fn child_robust() {
 fn run_child(mode: &str) -> (Dir, std::process::Output) {
     let dir = Dir::new();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash::robust_tests::child_robust", "--nocapture"])
+        .args([
+            "--exact",
+            "crash::robust_tests::child_robust",
+            "--nocapture",
+        ])
         .env("YOLU_ROBUST_DIR", &dir.0)
         .env("YOLU_ROBUST_MODE", mode)
         .output()
@@ -124,14 +145,29 @@ fn only_the_final_panic_is_a_crash(mode: &str, handled_text: &str) {
     let (dir, output) = run_child(mode);
     assert!(!output.status.success(), "最後の panic で終わる");
     let texts = crash_texts(&dir.0);
-    let panics: Vec<_> = texts.iter().filter(|t| t.contains("Kind: Rust panic")).collect();
-    assert_eq!(panics.len(), 1, "{texts:?}\n{}", String::from_utf8_lossy(&output.stderr));
+    let panics: Vec<_> = texts
+        .iter()
+        .filter(|t| t.contains("Kind: Rust panic"))
+        .collect();
+    assert_eq!(
+        panics.len(),
+        1,
+        "{texts:?}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(panics[0].contains("final panic"));
     assert!(!panics[0].contains(handled_text));
     let session = session_text(&dir.0);
-    assert!(session.contains("Handled panic") && session.contains(handled_text), "{session}");
-    assert!(window::Report::load(dir.0.clone()).text.contains("final panic"));
-    assert!(!window::Report::load(dir.0.clone()).text.contains(handled_text));
+    assert!(
+        session.contains("Handled panic") && session.contains(handled_text),
+        "{session}"
+    );
+    assert!(window::Report::load(dir.0.clone())
+        .text
+        .contains("final panic"));
+    assert!(!window::Report::load(dir.0.clone())
+        .text
+        .contains(handled_text));
 }
 
 #[test]
@@ -146,7 +182,9 @@ fn a_panic_while_converting_a_document_to_open_it_is_not_a_crash_record() {
 
 /// 確保の失敗が書かれた記録（この起動のネイティブ記録先）を探す。
 fn allocation_record(dir: &Path) -> Option<String> {
-    crash_texts(dir).into_iter().find(|t| t.contains("Allocation failed"))
+    crash_texts(dir)
+        .into_iter()
+        .find(|t| t.contains("Allocation failed"))
 }
 
 /// 確保が失敗して止まると、失敗した大きさと呼び出しの番地が、次の起動に出る記録に残る。ヘッダーは 1 つだけ。
@@ -155,30 +193,62 @@ fn allocation_record(dir: &Path) -> Option<String> {
 fn an_allocation_failure_that_ends_the_process_leaves_its_size_and_frames_in_the_record() {
     let (dir, output) = run_child("alloc_fatal");
     assert!(!output.status.success(), "確保の失敗で止まる");
-    let record = allocation_record(&dir.0)
-        .unwrap_or_else(|| panic!("{:?}\n{}", crash_texts(&dir.0), String::from_utf8_lossy(&output.stderr)));
-    assert!(record.contains(&format!("Allocation failed: {IMPOSSIBLE} bytes (align 1)")), "{record}");
+    let record = allocation_record(&dir.0).unwrap_or_else(|| {
+        panic!(
+            "{:?}\n{}",
+            crash_texts(&dir.0),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert!(
+        record.contains(&format!("Allocation failed: {IMPOSSIBLE} bytes (align 1)")),
+        "{record}"
+    );
     assert!(record.contains("Kind: Native crash"), "{record}");
-    assert_eq!(record.matches("YoluPainter ").count(), 1, "ヘッダーは 1 つ: {record}");
+    assert_eq!(
+        record.matches("YoluPainter ").count(),
+        1,
+        "ヘッダーは 1 つ: {record}"
+    );
     assert!(record.contains("Image base: 0x"), "{record}");
     #[cfg(any(windows, all(target_os = "linux", target_env = "gnu")))]
-    assert!(record.lines().any(|l| l.starts_with("0x")), "呼び出しの番地: {record}");
+    assert!(
+        record.lines().any(|l| l.starts_with("0x")),
+        "呼び出しの番地: {record}"
+    );
     #[cfg(target_os = "linux")]
     {
         let at = record.find("Signal: SIGABRT").expect(&record);
-        assert!(at > record.find("Allocation failed").unwrap(), "シグナルの行は欄の後ろ");
+        assert!(
+            at > record.find("Allocation failed").unwrap(),
+            "シグナルの行は欄の後ろ"
+        );
     }
     // 次の起動が読む記録になる
-    assert!(window::Report::load(dir.0.clone()).text.contains("Allocation failed"));
+    assert!(window::Report::load(dir.0.clone())
+        .text
+        .contains("Allocation failed"));
 }
 
 /// 受け止めて動き続けた確保の失敗（`try_reserve` の断り）は、正常に終われば落ちた記録に残らない。
 #[test]
 fn a_handled_allocation_failure_is_not_a_crash_record_after_a_clean_exit() {
     let (dir, output) = run_child("alloc_handled");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert!(crash_texts(&dir.0).iter().all(|t| t.is_empty()), "{:?}", crash_texts(&dir.0));
-    assert!(files(&dir.0, "crash-").is_empty(), "空の記録先は残さない: {:?}", files(&dir.0, "crash-"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        crash_texts(&dir.0).iter().all(|t| t.is_empty()),
+        "{:?}",
+        crash_texts(&dir.0)
+    );
+    assert!(
+        files(&dir.0, "crash-").is_empty(),
+        "空の記録先は残さない: {:?}",
+        files(&dir.0, "crash-")
+    );
     assert!(!window::Report::load(dir.0.clone()).unread);
 }
 
@@ -199,22 +269,53 @@ fn a_panic_inside_a_destructor_during_a_panic_leaves_both_panics_in_the_record()
     let (dir, output) = run_child("double_panic");
     assert!(!output.status.success());
     let texts = crash_texts(&dir.0);
-    let panics: Vec<_> = texts.iter().filter(|t| t.contains("Kind: Rust panic")).collect();
-    assert!(panics.iter().any(|t| t.contains("first panic")), "{texts:?}");
-    assert!(panics.iter().any(|t| t.contains("second panic in a destructor")), "{texts:?}");
+    let panics: Vec<_> = texts
+        .iter()
+        .filter(|t| t.contains("Kind: Rust panic"))
+        .collect();
+    assert!(
+        panics.iter().any(|t| t.contains("first panic")),
+        "{texts:?}"
+    );
+    assert!(
+        panics
+            .iter()
+            .any(|t| t.contains("second panic in a destructor")),
+        "{texts:?}"
+    );
 }
 
 /// panic ではない出来事は、落ちた記録の枠に書かれ、次の起動に報告の印が出る。診断の 1 行は普段のログへ（名前のある行は伏せる）。
 #[test]
 fn an_event_is_a_crash_record_and_a_note_is_one_line_of_the_ordinary_log() {
     let (dir, output) = run_child("event");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let texts = crash_texts(&dir.0);
-    let events: Vec<_> = texts.iter().filter(|t| t.contains("Kind: GPU device lost")).collect();
+    let events: Vec<_> = texts
+        .iter()
+        .filter(|t| t.contains("Kind: GPU device lost"))
+        .collect();
     assert_eq!(events.len(), 1, "{texts:?}");
-    assert!(events[0].contains("Reason: Unknown") && events[0].contains("Saved for recovery: Yes"), "{}", events[0]);
-    assert!(window::Report::load(dir.0.clone()).unread, "次の起動に報告の印が出る");
+    assert!(
+        events[0].contains("Reason: Unknown") && events[0].contains("Saved for recovery: Yes"),
+        "{}",
+        events[0]
+    );
+    assert!(
+        window::Report::load(dir.0.clone()).unread,
+        "次の起動に報告の印が出る"
+    );
     let session = session_text(&dir.0);
-    assert!(session.contains("GPU error: Validation Error: sample | second line"), "{session}");
-    assert!(!session.contains("private"), "名前のある行は伏せる: {session}");
+    assert!(
+        session.contains("GPU error: Validation Error: sample | second line"),
+        "{session}"
+    );
+    assert!(
+        !session.contains("private"),
+        "名前のある行は伏せる: {session}"
+    );
 }

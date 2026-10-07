@@ -1,34 +1,34 @@
-//! レーンの合成の式・行の核が、スカラーの式（画素ごとの `blend`・`clip_onto`・`fade`）と同じバイトを出すことの試験。
-//! 入力は乱数（アルファ 0・255・境目の値を多めに）で、道ごと（スカラー・SSE4.1・AVX2、この CPU が持つもの）に比べる。
+//! 合成の式が、道（1 本のレーン・SSE4.1・AVX2、この CPU が持つもの）によらず同じ bit・同じバイトを出すことの試験。
+//! 式そのもの（モードの値）は `blend.rs` の試験と、正解の絵（`tests/golden.rs` など）が見る。
+//! 入力は乱数（アルファ 0・255・境目の値を多めに）。
 #![allow(clippy::needless_range_loop)]
 
 use super::super::lanes::{self, dispatch_mode};
 use super::*;
 use crate::math::simd::forced;
-use crate::math::simd::on_each_level;
+use crate::math::simd::on_each_level32;
 use crate::math::simd::tests::Rng;
 use crate::types::Rgba8;
 
-fn mode_of<const MODE: u8>() -> BlendMode {
-    BlendMode::from_index(MODE).unwrap()
+fn unit(b: usize) -> f32 {
+    b as f32 / 255.0
 }
 
 // ───────── 分離できるモードの式: 下・上の 256 × 256 の全部の組 ─────────
 
-unsafe fn separable_for_every_byte_pair<V: Lanes, const MODE: u8>() {
-    let mode = mode_of::<MODE>();
+unsafe fn separable_for_every_byte_pair<V: Lanes32, const MODE: u8>() {
     for d in 0..256usize {
         let mut s = 0usize;
         while s < 256 {
-            let dv = V::splat(UNIT[d]);
-            let sv = V::from_fn(|k| UNIT[(s + k).min(255)]);
+            let dv = V::splat(unit(d));
+            let sv = V::from_fn(|k| unit((s + k).min(255)));
             let got = lanes::separable::<V, MODE>(dv, sv);
             for k in 0..V::N {
-                let want = super::super::separable(mode, UNIT[d], UNIT[(s + k).min(255)]);
+                let want = lanes::separable::<Scalar1, MODE>(unit(d), unit((s + k).min(255)));
                 assert_eq!(
                     V::lane(got, k).to_bits(),
                     want.to_bits(),
-                    "{mode:?} d={d} s={}",
+                    "{MODE} d={d} s={}",
                     (s + k).min(255)
                 );
             }
@@ -37,7 +37,7 @@ unsafe fn separable_for_every_byte_pair<V: Lanes, const MODE: u8>() {
     }
 }
 
-unsafe fn all_separable_modes<V: Lanes>() {
+unsafe fn all_separable_modes<V: Lanes32>() {
     for mode in BlendMode::LAYER_MODES {
         if mode.is_separable() {
             dispatch_mode!(mode, separable_for_every_byte_pair::<V>());
@@ -46,19 +46,19 @@ unsafe fn all_separable_modes<V: Lanes>() {
 }
 
 #[test]
-fn separable_lanes_match_the_formula_for_every_byte_pair() {
-    on_each_level!(all_separable_modes);
+fn separable_lanes_match_the_single_lane_for_every_byte_pair() {
+    on_each_level32!(all_separable_modes);
 }
 
 // ───────── 3 成分のモード: 乱数の組 ─────────
 
-unsafe fn rgb_for_random_triples<V: Lanes, const MODE: u8>() {
-    let mode = mode_of::<MODE>();
+unsafe fn rgb_for_random_triples<V: Lanes32, const MODE: u8>() {
     let mut rng = Rng(u64::from(MODE) + 100);
+    let mut next = || rng.unit() as f32;
     for round in 0..40_000 {
         // 成分の一部を等しくする・端の値にする（最大最小の同点・彩度 0・クリップの境）
-        let mut d = [rng.unit(), rng.unit(), rng.unit()];
-        let mut s = [rng.unit(), rng.unit(), rng.unit()];
+        let mut d = [next(), next(), next()];
+        let mut s = [next(), next(), next()];
         match round % 6 {
             0 => d[1] = d[0],
             1 => s[2] = s[1],
@@ -67,21 +67,15 @@ unsafe fn rgb_for_random_triples<V: Lanes, const MODE: u8>() {
             4 => {
                 // 8 bit の値だけ（実際に来る入力）
                 for v in d.iter_mut().chain(s.iter_mut()) {
-                    *v = UNIT[rng.byte() as usize];
+                    *v = unit((next() * 255.0) as usize);
                 }
             }
             _ => {}
         }
         let dv = [V::splat(d[0]), V::splat(d[1]), V::splat(d[2])];
         // レーンごとに別の上の色を入れる
-        let ss: Vec<[f64; 3]> = (0..V::N)
-            .map(|k| {
-                if k == 0 {
-                    s
-                } else {
-                    [rng.unit(), rng.unit(), rng.unit()]
-                }
-            })
+        let ss: Vec<[f32; 3]> = (0..V::N)
+            .map(|k| if k == 0 { s } else { [next(), next(), next()] })
             .collect();
         let sv = [
             V::from_fn(|k| ss[k][0]),
@@ -90,20 +84,19 @@ unsafe fn rgb_for_random_triples<V: Lanes, const MODE: u8>() {
         ];
         let got = lanes::blend_rgb::<V, MODE>(dv, sv);
         for k in 0..V::N {
-            let want =
-                super::super::blend_rgb(mode, d[0], d[1], d[2], ss[k][0], ss[k][1], ss[k][2]);
-            let have = (V::lane(got[0], k), V::lane(got[1], k), V::lane(got[2], k));
+            let want = lanes::blend_rgb::<Scalar1, MODE>(d, ss[k]);
+            let have = [V::lane(got[0], k), V::lane(got[1], k), V::lane(got[2], k)];
             assert_eq!(
-                (have.0.to_bits(), have.1.to_bits(), have.2.to_bits()),
-                (want.0.to_bits(), want.1.to_bits(), want.2.to_bits()),
-                "{mode:?} d={d:?} s={:?}",
+                have.map(f32::to_bits),
+                want.map(f32::to_bits),
+                "{MODE} d={d:?} s={:?}",
                 ss[k]
             );
         }
     }
 }
 
-unsafe fn all_rgb_modes<V: Lanes>() {
+unsafe fn all_rgb_modes<V: Lanes32>() {
     for mode in BlendMode::LAYER_MODES {
         if !mode.is_separable() {
             dispatch_mode!(mode, rgb_for_random_triples::<V>());
@@ -112,8 +105,8 @@ unsafe fn all_rgb_modes<V: Lanes>() {
 }
 
 #[test]
-fn rgb_lanes_match_the_scalar_for_random_triples() {
-    on_each_level!(all_rgb_modes);
+fn rgb_lanes_match_the_single_lane_for_random_triples() {
+    on_each_level32!(all_rgb_modes);
 }
 
 // ───────── 行の核 ─────────
@@ -121,19 +114,23 @@ fn rgb_lanes_match_the_scalar_for_random_triples() {
 fn factor_table() -> [f64; 256] {
     let mut factor = [0.0; 256];
     for (h, f) in factor.iter_mut().enumerate() {
-        *f = 1.0 - 0.8 * UNIT[h];
+        *f = 1.0 - 0.8 * (h as f64 / 255.0);
     }
     factor
 }
 
-const AMOUNTS: [f64; 9] = [
+/// 量: f32 へ丸めると 1 になる値・近道の境（1e-30）の前後・f32 の非正規化数・f32 では 0 になる値も入れる。
+const AMOUNTS: [f64; 12] = [
     1.0,
     0.7,
     0.5,
     1.0 / 255.0,
+    1e-30,
+    1e-31,
+    1e-40,
     1e-305,
-    f64::from_bits(1),
-    0.99999999,
+    0.999999999,
+    0.99999,
     0.0,
     1.5,
 ];

@@ -1,11 +1,11 @@
-//! 選択範囲と 2D の対称の道具（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
+//! 選択範囲と 2D の対称のツール（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
 //! 作成方法（新規・追加・削除・共通）で組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
 //! core の `SelectionMask` の操作を呼ぶだけ。選択範囲は文書（`Document`）が持つので、セットごとに別で、Undo・.ylp の保存と読み込みも文書に付く。
 //!
 //! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
 //! - `outline`: 選択範囲の縁の線分（点線の元）
 //! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸、3D の面の対称（ミラー・放射状）
-//! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さな窓
+//! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さなウィンドウ
 //! - `io`: .ylp の `selection.bin` との受け渡し
 //! - `pen`: 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す）。`quick`: クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・
 //!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて残した選択範囲（文書の持ち物。.ylp に保存）
@@ -30,10 +30,11 @@ pub mod shape;
 pub mod symmetry;
 
 use crate::engine::{
-    CanvasSymmetry, CoreError, DVec2, Document, LayerKind, SelectionCombine, SelectionMask,
-    SymmetryMode, DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
+    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask, SymmetryMode,
+    DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 pub use self::symmetry::SymmetryState;
@@ -75,7 +76,7 @@ impl ModifyKind {
         self != ModifyKind::Sharpen
     }
 
-    /// 画布の縁を固定するかの設定が効くか（拡張は外へ広がるだけなので効かない）。
+    /// キャンバスの縁を固定するかの設定が効くか（拡張は外へ広がるだけなので効かない）。
     pub fn uses_edge_lock(self) -> bool {
         matches!(
             self,
@@ -145,7 +146,7 @@ pub enum SelEdit {
         radius: u32,
         mode: SelectionCombine,
     },
-    /// 投げ縄・多角形（画布の座標の点。3 つ未満なら何も選ばない）。
+    /// 投げ縄・多角形（キャンバスの座標の点。3 つ未満なら何も選ばない）。
     Polygon {
         points: Vec<(f64, f64)>,
         mode: SelectionCombine,
@@ -166,31 +167,31 @@ pub enum SelEdit {
         y: u32,
         mode: SelectionCombine,
     },
-    /// 選択範囲を描画色で塗りつぶす（選んでいる層。マスクを描いているならマスク）。
+    /// 選択範囲を描画色で塗りつぶす（選んでいるレイヤー。マスクを描いているならマスク）。
     Fill,
     /// 選択範囲の画素を消す（アルファを減らす。マスクなら隠す）。
     Erase,
     /// 選択範囲の画素を新しいレイヤーとして元の位置にコピーする（クリップボードは変えない）。
     ToNewLayer,
-    /// 選択範囲を選んでいる層のマスクにする（外を隠す）。
+    /// 選択範囲を選んでいるレイヤーのマスクにする（外を隠す）。
     ToMask,
 }
 
 /// 画面だけの選択の操作（Undo に入らない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelUiOp {
-    /// 選択の道具の組み合わせ方（オプションバー）。
+    /// 選択のツールの組み合わせ方（オプションバー）。
     Combine(SelectionCombine),
-    /// 量を聞く窓を開く（選択範囲が無ければ開かない）。
+    /// 量を聞くウィンドウを開く（選択範囲が無ければ開かない）。
     OpenAmount(ModifyKind),
-    /// 窓の値で適用して閉じる。
+    /// ウィンドウの値で適用して閉じる。
     ApplyAmount,
     CancelAmount,
     /// 選択範囲の下のボタンの帯を出す・出さない。
     Bar(bool),
     /// クイックマスクを入れる・切る（None は切り替え）。
     QuickMask(Option<bool>),
-    /// 選択ペンの道具の基本（false が選択ペン、true が選択消し。Shift・Ctrl は押している間だけ替える）。
+    /// 選択ペンのツールの基本（false が選択ペン、true が選択消し。Shift・Ctrl は押している間だけ替える）。
     PenErase(bool),
 }
 
@@ -231,11 +232,11 @@ pub enum SelAction {
     Edit(SelEdit),
     Ui(SelUiOp),
     Symmetry(SymOp),
-    /// 名前を付けて残した選択範囲（残す・名前を変える・消す・窓。文書の持ち物で、1 回の Undo。.ylp に保存）。
+    /// 名前を付けて残した選択範囲（残す・名前を変える・消す・ウィンドウ。文書の持ち物で、1 回の Undo。.ylp に保存）。
     Saved(saved::SavedOp),
 }
 
-/// 量を聞く窓の状態。
+/// 量を聞くウィンドウの状態。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AmountDialog {
     pub kind: ModifyKind,
@@ -250,7 +251,7 @@ pub struct ShapeDrag {
     pub source: StrokeSource,
     /// 押した画面の点（クリックとドラッグを分ける）。
     pub start_screen: egui::Pos2,
-    /// 画布の座標。
+    /// キャンバスの座標。
     pub start: (f64, f64),
     pub current: (f64, f64),
     /// 投げ縄の点（1 画素以上離れたものだけ）。
@@ -261,20 +262,20 @@ pub struct ShapeDrag {
 
 /// 選択範囲と対称の画面の状態。
 pub struct SelState {
-    /// 選択の道具の組み合わせ方（キーの修飾が無いとき）。
+    /// 選択のツールの組み合わせ方（キーの修飾が無いとき）。
     pub combine: SelectionCombine,
     /// 自動選択の許し幅（0〜255）・隣接・全レイヤー（選んだレイヤーでなく合成から選ぶ）。
     pub tolerance: u8,
     pub contiguous: bool,
     pub all_layers: bool,
-    /// 拡張・縮小・境界・ぼかしの半径（画素）と、画布の縁を固定するか。
+    /// 拡張・縮小・境界・ぼかしの半径（画素）と、キャンバスの縁を固定するか。
     pub radius: u32,
     pub edge_lock: bool,
     pub dialog: Option<AmountDialog>,
-    /// 窓を見出しで動かした量。
+    /// ウィンドウを見出しで動かした量。
     pub dialog_offset: egui::Vec2,
     pub drag: Option<ShapeDrag>,
-    /// 多角形の途中の点（画布の座標）と、ポインタの今の位置（ゴムの線）。
+    /// 多角形の途中の点（キャンバスの座標）と、ポインタの今の位置（ゴムの線）。
     pub polygon: Vec<(f64, f64)>,
     pub polygon_hover: Option<(f64, f64)>,
     /// 最後に押した時刻と点（ダブルクリックで多角形を閉じる）。
@@ -294,9 +295,9 @@ pub struct SelState {
     pub from_center: bool,
     /// 長方形の角の丸め（画素。0 は丸めない）。
     pub corner_radius: u32,
-    /// 選択ペンの道具の基本: false が選択ペン、true が選択消し。
+    /// 選択ペンのツールの基本: false が選択ペン、true が選択消し。
     pub pen_erase: bool,
-    /// 動いているペンのストローク（選択ペンの道具・クイックマスクのブラシ）。
+    /// 動いているペンのストローク（選択ペンのツール・クイックマスクのブラシ）。
     pub pen: Option<pen::ActivePen>,
     /// 最後に来たペンの点（ID・筆圧・消しゴムの端）。選択ペンが筆圧と消しゴムの端を使う。
     pub pen_note: Option<(u32, f32, bool)>,
@@ -309,7 +310,7 @@ pub struct SelState {
     /// 残した選択範囲そのものは文書（core の `Document`）が持つ。
     pub saved_budget: u64,
     pub pen_budget: u64,
-    /// 残した選択範囲の窓（開いていれば）。
+    /// 残した選択範囲のウィンドウ（開いていれば）。
     pub saved_window: Option<saved::SavedWindow>,
     /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
     pub animate: bool,
@@ -388,7 +389,7 @@ impl SelState {
 
     /// 途中の形（ドラッグ・多角形）を捨てる。何かあったか。
     pub fn cancel_drafts(&mut self) -> bool {
-        // クイックマスクのブラシのストロークは描くストロークの流れ（`canvas.stroke`）が終わらせる。選択ペンの道具のものは、ほかの形と同じく捨てる
+        // クイックマスクのブラシのストロークは描くストロークの流れ（`canvas.stroke`）が終わらせる。選択ペンのツールのものは、ほかの形と同じく捨てる
         let pen = self.pen.as_ref().is_some_and(|a| !a.quick);
         if pen {
             self.pen = None;
@@ -402,7 +403,7 @@ impl SelState {
         any
     }
 
-    /// 選択範囲に量のある画素を全部含む矩形（x0, y0, x1, y1。半開区間、画布の画素の座標）。何も選んでいなければ None。
+    /// 選択範囲に量のある画素を全部含む矩形（x0, y0, x1, y1。半開区間、キャンバスの画素の座標）。何も選んでいなければ None。
     /// 選択範囲が変わったときだけ求め直す（タイル 1 枚ずつ量を見て、量のある画素の端まで詰める）。
     pub fn bounds_of(&mut self, mask: &SelectionMask) -> Option<(u32, u32, u32, u32)> {
         let fresh = self.bounds.as_ref().is_some_and(|c| c.mask.same_as(mask));
@@ -478,7 +479,7 @@ pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
             "New: replace the selection",
         ),
         SelectionCombine::Add => lang.pick(
-            "追加選択: 選択範囲に足す（Shift）",
+            "追加選択: 選択範囲に追加（Shift）",
             "Add to the selection (Shift)",
         ),
         SelectionCombine::Subtract => lang.pick(
@@ -521,16 +522,16 @@ impl AppState {
     /// 選択範囲を変える（描いている間と読むだけのセットは `Action::apply` が先に断る）。断られたら何も変えず、理由をステータスバーへ。
     pub fn sel_edit(&mut self, edit: SelEdit) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
         match self.sel_apply(edit) {
-            Ok(text) => self.message = text,
-            Err(e) => self.message = e,
+            Ok(text) => self.info(Source::Selection, text),
+            Err(e) => self.refuse(Source::Selection, e),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -589,7 +590,7 @@ impl AppState {
         }
     }
 
-    /// 自動選択の基準の層（選んだレイヤー。ラスターでない・全レイヤーなら None で、チャンネルの合成）。
+    /// 自動選択の基準のレイヤー（選んだレイヤー。ラスターでない・全レイヤーなら None で、チャンネルの合成）。
     fn wand_layer(&self) -> Option<crate::engine::LayerId> {
         if self.sel.all_layers {
             return None;
@@ -748,20 +749,19 @@ impl AppState {
             SelUiOp::Combine(mode) => self.sel.combine = mode,
             SelUiOp::OpenAmount(kind) => {
                 if self.is_stroking() {
-                    self.message = self
-                        .lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::Selection,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                 } else if self.doc.selection().is_none() {
-                    self.message = self
-                        .lang
-                        .pick("選択範囲がありません。", "No selection.")
-                        .into();
+                    self.refuse(
+                        Source::Selection,
+                        self.lang.pick("選択範囲がありません。", "No selection."),
+                    );
                 } else if let Some(reason) = self.read_only_reason() {
-                    self.message = format!(
-                        "{}: {reason}",
-                        self.lang
-                            .pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    self.refuse(
+                        Source::Selection,
+                        crate::lang::refusals::read_only_set(self.lang, reason),
                     );
                 } else {
                     self.sel.dialog = Some(AmountDialog {
@@ -793,10 +793,10 @@ impl AppState {
     /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
     pub fn sel_symmetry(&mut self, op: SymOp) {
         if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_) | SymOp::ShowPlane3d(_)) {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         // 境界の中央は、モデルの今の形から（モデルが無ければ何もしない）
@@ -845,7 +845,7 @@ impl AppState {
         true
     }
 
-    /// 文書（セット）が替わったとき: 前の文書に向けた途中の形と、量を聞く窓を捨てる。
+    /// 文書（セット）が替わったとき: 前の文書に向けた途中の形と、量を聞くウィンドウを捨てる。
     pub fn sel_doc_changed(&mut self) {
         self.sel.cancel_drafts();
         self.sel.dialog = None;
@@ -856,7 +856,7 @@ impl AppState {
         self.sel.pen_overlay.clear();
     }
 
-    /// 道具を替えたとき: 途中の形を捨てる。
+    /// ツールを替えたとき: 途中の形を捨てる。
     pub fn sel_tool_changed(&mut self) {
         self.sel.cancel_drafts();
     }
@@ -905,9 +905,4 @@ impl AppState {
             .filter(|s| s.enabled());
         result
     }
-}
-
-/// 文書の選択範囲があるか。
-pub fn has_selection(doc: &Document) -> bool {
-    doc.selection().is_some()
 }

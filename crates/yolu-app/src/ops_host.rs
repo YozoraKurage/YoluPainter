@@ -6,7 +6,7 @@
 //! - 描いている最中（ストロークと移動・変形などのドラッグ）・保存の途中は、編集・取り消し・保存を理由つきで断る。読むだけのセットは断る
 //!   （理由は画面に出している文）。読む命令は、保存の途中でも答える。見本と書き出しは合成を使うので、描いている最中は断る。
 //! - `doc.open` は、起動中のアプリでは文書を開き替えない（今開いている同じファイルなら、今の文書を返す）。
-//! - 保存は画面の保存と同じ裏の仕組み（`project::save_for_ops`）で始め、返事は保存が終わってから（`opslive` が結果を受けて返す）。`OpHost::save` は
+//! - 保存は画面の保存と同じ裏の仕組み（`project::save_for_ops`）で始め、返事は保存が終わってから（`mcp_server` が結果を受けて返す）。`OpHost::save` は
 //!   同期の形なので、始めたことを `AppHost::take_started_save` に残して、返事を持たない印の誤りを返す。呼び手はその印を見て、返事を待たせる。
 //! - 見本・書き出しは、画面なしのホストと同じ関数を、セットの文書（画面で効果の入力を渡している文書）に当てる。塗り広げ（UV の外）と焼いた AO は、
 //!   画面なしと同じく使わない。
@@ -75,7 +75,11 @@ impl<'a> AppHost<'a> {
         let policy = PathPolicy::new(&base)
             .or_else(|_| PathPolicy::new(std::env::temp_dir()))
             .expect("一時フォルダは絶対パスにできる");
-        AppHost { state, policy, started: None }
+        AppHost {
+            state,
+            policy,
+            started: None,
+        }
     }
 
     /// 裏で始めた保存（あれば。取ると空になる）。
@@ -102,21 +106,33 @@ impl<'a> AppHost<'a> {
 
     /// 開いている .ylp のファイル（まだファイルが無い文書は None）。
     fn open_file(&self) -> Option<PathBuf> {
-        self.state.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf())
+        self.state
+            .project
+            .as_ref()
+            .filter(|p| p.is_file())
+            .map(|p| p.path().to_path_buf())
     }
 
     fn resolve(&self, set: Option<&str>) -> Result<usize, OpError> {
-        let list: Vec<(&str, &str)> = self.state.sets.iter().map(|s| (s.id.as_str(), s.name.as_str())).collect();
+        let list: Vec<(&str, &str)> = self
+            .state
+            .sets
+            .iter()
+            .map(|s| (s.id.as_str(), s.name.as_str()))
+            .collect();
         yolu_ops::refs::resolve_set(&list, set, &self.state.sets.current().id)
     }
 
     /// セットが、開いた・保存したあとに編集されたか（まだファイルに無いセットは、いつも編集済み）。
     fn unsaved(&self, index: usize) -> bool {
         let doc = self.state.set_doc(index);
-        self.state.sets.get(index).is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
+        self.state
+            .sets
+            .get(index)
+            .is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
     }
 
-    /// セットの大きさと層の数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
+    /// セットの大きさとレイヤーの数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
     fn size_of(&self, index: usize) -> (u32, u32, u32) {
         let doc = self.state.set_doc(index);
         let set = &self.state.sets.get(index).expect("範囲内");
@@ -153,7 +169,11 @@ impl<'a> AppHost<'a> {
             width,
             height,
             layer_count: layers,
-            state: if reason.is_some() { SetState::ReadOnly } else { SetState::Editable },
+            state: if reason.is_some() {
+                SetState::ReadOnly
+            } else {
+                SetState::Editable
+            },
             reason,
             unsaved: self.unsaved(index),
         }
@@ -168,7 +188,9 @@ impl<'a> AppHost<'a> {
         let project = state.project.as_ref();
         let mut notes = Vec::new();
         for id in &facts.sets_written {
-            let Some(index) = state.sets.iter().position(|s| s.id == *id) else { continue };
+            let Some(index) = state.sets.iter().position(|s| s.id == *id) else {
+                continue;
+            };
             let name = state.sets.get(index).map_or("", |s| s.name.as_str());
             let inactive = inactive_texts(state.set_doc(index));
             if !inactive.is_empty() {
@@ -183,6 +205,13 @@ impl<'a> AppHost<'a> {
                 .map_or(0, |s| s.document.version());
             notes.extend(yolu_ops::newer_version_note(name, version));
         }
+        // 読めないため保存に入れなかったセット（保存したことが無いセット。ファイルには入っていない）
+        for name in &facts.left_out {
+            notes.push(Text::new(
+                format!("テクスチャセット「{name}」は読めないため、保存に入れていません"),
+                format!("Texture set \"{name}\" could not be read and was left out of the save"),
+            ));
+        }
         Reply::Saved(Saved {
             path: started.path.display().to_string(),
             written: true,
@@ -196,16 +225,51 @@ impl<'a> AppHost<'a> {
 }
 
 impl OpHost for AppHost<'_> {
+    /// 同梱のフォント（画面の書体と同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
+    fn bundled_font(&self, name: &str) -> Option<std::sync::Arc<[u8]>> {
+        crate::textlayer::bundled_font(name)
+    }
+    /// OS のフォントの一覧は、アプリが別のスレッドでなめたもの（`AppState::text_fonts_wanted`）。まだできていなければ、なめ始めて `Busy` で断る
+    /// （画面のスレッドでフォルダ全体をなめて止めない。呼び手は少し待って同じ命令をもう一度送る）。
+    fn system_fonts(&mut self) -> Result<std::sync::Arc<yolu_io::fonts::SystemFonts>, OpError> {
+        self.state.text_fonts_wanted();
+        self.state
+            .text
+            .fonts
+            .list
+            .clone()
+            .ok_or_else(|| busy("フォントを探しています", "Searching for the fonts"))
+    }
     fn policy(&self) -> &PathPolicy {
         &self.policy
+    }
+
+    /// `$selected`: 今のテクスチャセットで選んでいるレイヤー（ほかのセットには選んでいるレイヤーが無い）。
+    fn selected_layer(&mut self, set: Option<&str>) -> Result<String, OpError> {
+        let index = self.resolve(set)?;
+        if index != self.state.sets.current_index() {
+            return Err(yolu_ops::refs::no_selection(Some((
+                "選んでいるレイヤーは今のテクスチャセットにだけあります",
+                "only the current texture set has a selected layer",
+            ))));
+        }
+        self.state
+            .selected_layer
+            .filter(|id| self.state.doc.layer(*id).is_some())
+            .map(|id| id.to_string())
+            .ok_or_else(|| yolu_ops::refs::no_selection(None))
     }
 
     fn doc_info(&mut self) -> Result<DocInfo, OpError> {
         let project = self.state.project.as_ref().filter(|p| p.is_file());
         let info = project.map(|p| p.project().info());
-        let sets: Vec<SetSummary> = (0..self.state.sets.len()).map(|i| self.summary(i)).collect();
+        let sets: Vec<SetSummary> = (0..self.state.sets.len())
+            .map(|i| self.summary(i))
+            .collect();
         Ok(DocInfo {
-            path: project.map(|p| p.path().display().to_string()).unwrap_or_default(),
+            path: project
+                .map(|p| p.path().display().to_string())
+                .unwrap_or_default(),
             // まだファイルが無い文書は、保存で書く形式
             format: project.map_or(7, |p| p.format()),
             saved_by: info.and_then(|i| i.saved_by.as_ref()).map(|w| WriterInfo {
@@ -213,7 +277,9 @@ impl OpHost for AppHost<'_> {
                 version: w.version.clone(),
                 platform: w.unity.clone(),
             }),
-            unsaved: self.state.shows_modified() || self.state.shelf.changed || sets.iter().any(|s| s.unsaved),
+            unsaved: self.state.shows_modified()
+                || self.state.shelf.changed
+                || sets.iter().any(|s| s.unsaved),
             sets,
             current_set: self.state.sets.current().id.clone(),
             notes: Vec::new(),
@@ -282,11 +348,18 @@ impl OpHost for AppHost<'_> {
         // 直前の画面の操作（スライダーなど）の段に混ざらないよう、取り消しのまとめを切る
         doc.end_coalescing();
         let before = (doc.id(), doc.revision());
-        let result = f(SetFacts { id: &id, name: &name, unsaved: true }, doc);
+        let result = f(
+            SetFacts {
+                id: &id,
+                name: &name,
+                unsaved: true,
+            },
+            doc,
+        );
         if (doc.id(), doc.revision()) != before {
             state.modified = true;
             if current {
-                // 消した層を選んだままにしない（画面の取り消しと同じ後始末）
+                // 消したレイヤーを選んだままにしない（画面の取り消しと同じ後始末）
                 state.ensure_selection();
             }
         }
@@ -298,7 +371,10 @@ impl OpHost for AppHost<'_> {
             return Err(e);
         }
         if self.state.distribute.is_busy() || self.state.distribute.is_open() {
-            return Err(busy("配布用に保存の途中です", "Saving for distribution is in progress"));
+            return Err(busy(
+                "配布用に保存の途中です",
+                "Saving for distribution is in progress",
+            ));
         }
         let open_file = self.open_file();
         let (destination, confirm) = match job {
@@ -310,15 +386,27 @@ impl OpHost for AppHost<'_> {
             (None, Some(file)) => file.clone(),
             (None, None) => return Err(OpError::no_file_to_save()),
         };
-        if !target.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")) {
+        if !target
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ylp"))
+        {
             return Err(OpError::ylp_name_required(&target.display().to_string()));
         }
-        let same_file = open_file.as_ref().is_some_and(|f| crate::project::same_file(f, &target));
+        let same_file = open_file
+            .as_ref()
+            .is_some_and(|f| crate::project::same_file(f, &target));
         let exists = std::fs::symlink_metadata(&target).is_ok();
         if exists && !confirm {
-            return Err(OpError::replace_confirm_required(&[target.display().to_string()]));
+            return Err(OpError::replace_confirm_required(&[target
+                .display()
+                .to_string()]));
         }
-        let upgraded_from = self.state.project.as_ref().map(|p| p.format()).filter(|f| *f < 7);
+        let upgraded_from = self
+            .state
+            .project
+            .as_ref()
+            .map(|p| p.format())
+            .filter(|f| *f < 7);
         // 何も編集していなければ書かない（開いているファイルへの上書きだけ）
         if same_file && !self.state.shows_modified() && !self.state.shelf.changed {
             return Ok(Reply::Saved(Saved {
@@ -335,7 +423,11 @@ impl OpHost for AppHost<'_> {
             return Err(OpError::new(ErrorCode::Refused, text.clone(), text)
                 .with_data(json!({"path": target.display().to_string()})));
         }
-        self.started = Some(StartedSave { path: target, upgraded_from, replaced: exists });
+        self.started = Some(StartedSave {
+            path: target,
+            upgraded_from,
+            replaced: exists,
+        });
         Err(deferred())
     }
 
@@ -344,13 +436,77 @@ impl OpHost for AppHost<'_> {
             return Err(e);
         }
         let policy = self.policy.clone();
-        self.read_set(job.set(), &mut |view| yolu_ops::export::run(view, &policy, job))
+        self.read_set(job.set(), &mut |view| {
+            yolu_ops::export::run(view, &policy, job)
+        })
     }
 
     fn preview(&mut self, args: &PreviewArgs) -> Result<Reply, OpError> {
         if let Some(e) = self.drawing() {
             return Err(e);
         }
-        self.read_set(args.set.as_deref(), &mut |view| yolu_ops::preview::render(view, args))
+        self.read_set(args.set.as_deref(), &mut |view| {
+            yolu_ops::preview::render(view, args)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jobs::Worker;
+    use serde_json::json;
+    use std::sync::Arc;
+    use yolu_core::text::TextFont;
+    use yolu_io::fonts::SystemFonts;
+
+    /// OS のフォントを名前で選ぶ命令は、アプリが別のスレッドでなめた一覧を使う。なめている間は、画面のスレッドでフォルダ全体をなめずに
+    /// `Busy` で断り（文書は変えない）、できたら当たる。
+    #[test]
+    fn installed_fonts_come_from_the_apps_list_and_a_search_in_progress_is_refused_for_now() {
+        let dir = std::env::temp_dir().join(format!("yolu-ops-host-fonts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
+        std::fs::copy(source.join("BIZUDPGothic-Bold.ttf"), dir.join("b.ttf")).unwrap();
+        let list = Arc::new(SystemFonts::from_dirs(&[&dir]));
+        let add = yolu_ops::parse_command(&json!({"command": "layer.add", "args": {
+            "kind": "text", "name": "Label",
+            "text": {"content": "x", "font": "BIZUDPGothic-Bold"}}}))
+        .unwrap();
+        let mut state = AppState::new(64, 64);
+        let (searching, _hold) = Worker::parked();
+        state.text.fonts.worker = Some(searching);
+        let layers = state.doc.layers().len();
+        let undo = state.doc.undo_count();
+        let refused = yolu_ops::execute(&mut AppHost::new(&mut state), &add).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Busy);
+        assert!(
+            refused.message.ja.contains("フォントを探しています"),
+            "{}",
+            refused.message.ja
+        );
+        assert!(
+            refused.message.en.contains("Searching"),
+            "{}",
+            refused.message.en
+        );
+        assert_eq!(state.doc.layers().len(), layers, "断った命令は何も変えない");
+        assert_eq!(state.doc.undo_count(), undo);
+        // 一覧ができた: その一覧（OS の一覧ではなく、アプリが持っている物）から選ぶ
+        state.text.fonts.worker = None;
+        state.text.fonts.list = Some(list);
+        yolu_ops::execute(&mut AppHost::new(&mut state), &add).expect("一覧から選べる");
+        let layer = state
+            .doc
+            .layers()
+            .iter()
+            .find(|l| l.name() == "Label")
+            .expect("追加したレイヤー");
+        let Some(TextFont::File { path, .. }) = layer.text().map(|t| t.font.clone()) else {
+            panic!("ファイルのフォント")
+        };
+        assert!(Path::new(&path).starts_with(&dir), "{path}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

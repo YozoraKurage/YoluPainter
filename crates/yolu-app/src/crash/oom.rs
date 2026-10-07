@@ -1,6 +1,6 @@
 //! 確保の失敗の記録用のアロケーター。実行ファイルの `#[global_allocator]` に置く（`main.rs`）。
 //!
-//! Rust の標準の確保（`Vec`・`Box` など）が失敗すると、`handle_alloc_error` が標準エラーへ書いて abort する。標準エラーの無い窓のアプリでは
+//! Rust の標準の確保（`Vec`・`Box` など）が失敗すると、`handle_alloc_error` が標準エラーへ書いて abort する。標準エラーの無いウィンドウのアプリでは
 //! 何も残らず、Windows の abort は `__fastfail` なので未処理例外のフィルターにも来ない。`std::alloc::set_alloc_error_hook` は不安定版
 //! （nightly）の機能で使えないため、システムのアロケーターを包み、確保が null を返したとき（致命的かは分からないので、すぐ）
 //! 記録の先へ大きさと呼び出しの番地を書く（`native::allocation_failed`）。普段の確保は、null かの確かめが 1 つ増えるだけ。

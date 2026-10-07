@@ -1,5 +1,5 @@
 //! Windows でも同じ計測: cargo run --release -p yolu-gpu --example resident_measure -- 4096 3
-//! 引数は画布の一辺と反復数。CPU は合成のみ、GPU は転送・完了待ちを含む表示更新。
+//! 引数はキャンバスの一辺と反復数。CPU は合成のみ、GPU は転送・完了待ちを含む表示更新。
 use std::time::Instant;
 use yolu_core::{BlendMode, Channel, Document, TileCoord};
 use yolu_gpu::{ResidentCompositor, ResidentOptions};
@@ -12,9 +12,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let size: u32 = args.get(1).map_or(Ok(4096), |s| s.parse())?;
     let repeats: usize = args.get(2).map_or(Ok(3), |s| s.parse())?;
     if size < 128 || !size.is_multiple_of(128) || repeats == 0 {
-        return Err("画布は128の倍数、反復は1以上".into());
+        return Err("キャンバスは128の倍数、反復は1以上".into());
     }
-    println!("画布={size}²、反復={repeats}、release={}、CPUは合成のみ（表示転送なし）、GPUは完了待ち込み",!cfg!(debug_assertions));
+    println!("キャンバス={size}²、反復={repeats}、release={}、CPUは合成のみ（表示転送なし）、GPUは完了待ち込み",!cfg!(debug_assertions));
     for layer_count in [4, 16] {
         let mut g = ResidentCompositor::new(ResidentOptions {
             resident_budget_bytes: 3u64 << 30,
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             batch_tiles: 16,
             ..Default::default()
         })?;
-        println!("{layer_count}層 GPU: {:?}", g.adapter_info());
+        println!("{layer_count}レイヤー GPU: {:?}", g.adapter_info());
         if g.adapter_info().device_type == wgpu::DeviceType::Cpu {
             println!("ソフトウェアGPUの数値。実GPUやWindowsの結果ではない。");
         }
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut worst = 0u8;
                 let mut uploaded = 0;
                 for iteration in 0..=repeats {
-                    // 更新の入力を作る時間は双方の計測外。全面は全層の全タイル、局所は1層の1タイルを実際に変更。
+                    // 更新の入力を作る時間は双方の計測外。全面は全レイヤーの全タイル、局所は 1 レイヤーの1タイルを実際に変更。
                     if full {
                         for (id, tile) in ids.iter().zip(&mut patterns) {
                             for px in tile.as_chunks_mut::<4>().0 {
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let cm = median(&mut cpu);
                 let gm = median(&mut gpu);
-                println!("{layer_count}層 {} 読み戻し={readback}: CPU中央値={cm:.3}ms GPU中央値={gm:.3}ms 比={:.3} 転送={uploaded}B 最大差={worst} CPU={cpu:?} GPU={gpu:?}",if full{"全層全面変更"}else{"1層1タイル変更"},gm/cm);
+                println!("{layer_count}レイヤー {} 読み戻し={readback}: CPU中央値={cm:.3}ms GPU中央値={gm:.3}ms 比={:.3} 転送={uploaded}B 最大差={worst} CPU={cpu:?} GPU={gpu:?}",if full{"全レイヤー全面変更"}else{"1 レイヤー1タイル変更"},gm/cm);
             }
         }
     }

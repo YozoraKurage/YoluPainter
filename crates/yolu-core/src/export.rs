@@ -387,7 +387,7 @@ pub fn channel_working_bytes(document: &Document, channel: Channel) -> u64 {
     }
 }
 
-/// 1 つのチャンネルを、ほかの道具へ渡すファイルの画像（straight RGBA8、行は下から上、文書の大きさ。C# の `YlpContent.FileImage`）にする。
+/// 1 つのチャンネルを、ほかのツールへ渡すファイルの画像（straight RGBA8、行は下から上、文書の大きさ。C# の `YlpContent.FileImage`）にする。
 /// Normal は文書の設定のファイルの Y の向き（[`Document::normal_file_output`]。DirectX なら緑を反転）、ほかはチャンネルの合成そのまま。
 /// テンプレートの画像（[`build`]）と違い、詰めたり色を掛けたりしない（Emission も合成のまま）ので、そのチャンネルだけを読み戻せる。
 /// 作業のバイト数（[`channel_working_bytes`]）が `max_working_bytes` を超えるなら、確保の前に断る。

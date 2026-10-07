@@ -1,6 +1,6 @@
-//! ステンシルのキーとドラッグ（Unity 版と同じ）: T を押しているあいだ、2D のキャンバスか 3D のビューでのドラッグが置き場を動かす
+//! ステンシルのキーとドラッグ（Unity 版と同じ）: Y を押しているあいだ、2D のキャンバスか 3D のビューでのドラッグが置き場を動かす
 //! （左 = 回す（Shift で 15° 刻み）、中か Ctrl+左 = 動かす、右か Alt+左 = 大きさ）。N を押しているあいだはステンシルを使わない。
-//! ドラッグの最中の Esc は始めの置き場に戻す。T を離してもドラッグはボタンを離すまで続く。フォーカスを失ったら、押していた印を捨て、
+//! ドラッグの最中の Esc は始めの置き場に戻す。Y を離してもドラッグはボタンを離すまで続く。フォーカスを失ったら、押していた印を捨て、
 //! ドラッグは今の置き場で終える（離したのを受け取れないので）。ストロークの最中・ポップアップが開いているあいだは始めない。ドラッグの最中は、
 //! ほかのボタンを押しても何も始めない（ストローク・パン・3D のカメラ）。
 
@@ -8,6 +8,7 @@ use egui::{Event, Key, PointerButton, Pos2, Rect};
 
 use super::frame::{MAX_SIZE, MIN_SIZE, ROTATE_STEP};
 use crate::canvas::view::normalize_angle;
+use crate::notice::Source;
 use crate::state::AppState;
 
 /// 回す角度を測らない、ステンシルの中心からの距離（画面の点）。
@@ -141,7 +142,7 @@ impl super::StencilState {
 /// だけ（Ctrl+N は新しいプロジェクト、Ctrl+Shift+N は新しいレイヤー）。押し始めたあとは、離すまで続く（Ctrl を足しても外れない）。
 pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let typing = ctx.egui_wants_keyboard_input();
-    let blocked = app.popup.is_some() || app.popup_was_open;
+    let blocked = app.popup.is_some() || app.ui.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
             i.key_down(crate::keymap::STENCIL_MOVE),
@@ -218,12 +219,12 @@ pub fn handle_event(
     if !app.stencil.key_held
         || app.is_stroking()
         || app.popup.is_some()
-        || app.popup_was_open
+        || app.ui.popup_was_open
         || !over
     {
         return false;
     }
-    // 押し方で決まるドラッグの種類は `keymap::GESTURES`（T を押しながら）
+    // 押し方で決まるドラッグの種類は `keymap::GESTURES`（Y を押しながら）
     let kind = match crate::keymap::gesture("stencil", *button, modifiers, true) {
         Some(crate::keymap::Operation::MoveStencil) => DragKind::Move,
         Some(crate::keymap::Operation::ScaleStencil) => DragKind::Scale,
@@ -231,17 +232,18 @@ pub fn handle_event(
         _ => return false,
     };
     if app.stencil.image.is_none() {
-        app.message = app
-            .lang
-            .pick("ステンシルの画像がありません。", "No stencil image.")
-            .into();
+        app.refuse(
+            Source::Stencil,
+            app.lang
+                .pick("ステンシルの画像がありません。", "No stencil image."),
+        );
         return true;
     }
     app.stencil.begin_drag(kind, *button, rect, *pos);
     true
 }
 
-/// ボタンを離したのを取りこぼしたとき（窓の外で離したなど）に、押していなければドラッグを終える（イベントを全部見た後で）。
+/// ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）に、押していなければドラッグを終える（イベントを全部見た後で）。
 pub fn settle(app: &mut AppState, any_button_down: bool) {
     if app.stencil.drag.is_some() && !any_button_down {
         app.stencil.end_drag(false);

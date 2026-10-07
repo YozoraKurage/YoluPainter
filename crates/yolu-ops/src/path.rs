@@ -19,7 +19,9 @@ pub struct PathPolicy {
 impl PathPolicy {
     /// `base`（相対パスの起点）。相対で渡されたら、今のフォルダからの絶対パスにする。
     pub fn new(base: impl AsRef<Path>) -> std::io::Result<Self> {
-        Ok(PathPolicy { base: std::path::absolute(base.as_ref())? })
+        Ok(PathPolicy {
+            base: std::path::absolute(base.as_ref())?,
+        })
     }
     /// プロセスの今のフォルダを作業のフォルダにする。
     pub fn current_dir() -> std::io::Result<Self> {
@@ -89,7 +91,10 @@ mod tests {
     #[test]
     fn relative_paths_start_at_the_working_folder() {
         let p = policy();
-        assert_eq!(p.resolve("a/b.ylp").unwrap(), p.base().join("a").join("b.ylp"));
+        assert_eq!(
+            p.resolve("a/b.ylp").unwrap(),
+            p.base().join("a").join("b.ylp")
+        );
         assert_eq!(p.resolve("./a.ylp").unwrap(), p.base().join("a.ylp"));
         // 中で .. を使って戻っても、外へ出なければよい
         assert_eq!(p.resolve("a/../b.ylp").unwrap(), p.base().join("b.ylp"));
@@ -101,7 +106,10 @@ mod tests {
         for bad in ["../x.ylp", "a/../../x.ylp", "..", "a/../.."] {
             let e = p.resolve(bad).unwrap_err();
             assert_eq!(e.code, ErrorCode::PathRefused, "{bad}");
-            assert!(e.message.ja.contains("外へ出ます") && e.message.en.contains("leaves"), "{bad}");
+            assert!(
+                e.message.ja.contains("外へ出ます") && e.message.en.contains("leaves"),
+                "{bad}"
+            );
         }
     }
 
@@ -111,7 +119,11 @@ mod tests {
         let abs = std::env::temp_dir().join("elsewhere").join("x.ylp");
         assert_eq!(p.resolve(abs.to_str().unwrap()).unwrap(), abs);
         for bad in ["", ".", "./", "a\0b"] {
-            assert_eq!(p.resolve(bad).unwrap_err().code, ErrorCode::PathRefused, "{bad:?}");
+            assert_eq!(
+                p.resolve(bad).unwrap_err().code,
+                ErrorCode::PathRefused,
+                "{bad:?}"
+            );
         }
     }
 }

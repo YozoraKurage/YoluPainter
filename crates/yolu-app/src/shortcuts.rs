@@ -1,4 +1,4 @@
-//! キーの一覧の窓（読むだけ）。割り当ては `keymap` の表で、一覧と実際のキーの処理は同じ表を読む。名前はメニューと共有する。
+//! キーの一覧のウィンドウ（読むだけ）。割り当ては `keymap` の表で、一覧と実際のキーの処理は同じ表を読む。名前はメニューと共有する。
 pub mod gestures;
 
 use crate::{
@@ -31,7 +31,7 @@ pub fn bindings() -> Vec<Binding> {
         .collect()
 }
 
-/// 移動・変形の道具の矢印キー。
+/// 移動・変形のツールの矢印キー。
 pub fn movement_keys() -> [Key; 4] {
     keymap::MOVE_KEYS.map(|(key, _)| key)
 }
@@ -142,8 +142,14 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
             Action::Fill(crate::fillfx::FillOp::ToggleHandles) => {
                 l.pick("投影のハンドル", "Projection Handles")
             }
+            Action::Fill(crate::fillfx::FillOp::DeletePoint) => {
+                l.pick("グラデーションの点を削除", "Delete Gradient Point")
+            }
             Action::Path(PathAction::DeleteSelected) => {
                 l.pick("パスの点を削除", "Delete Path Point")
+            }
+            Action::Path(PathAction::SelectPath(None)) => {
+                l.pick("パスの編集を終える", "Finish Path")
             }
             Action::Sel(SelAction::Edit(SelEdit::ToNewLayer)) => {
                 l.pick("選択した画素を新しいレイヤーへ", "Selection to New Layer")
@@ -184,7 +190,7 @@ fn group(action: &Action) -> usize {
 pub fn rows(app: &AppState) -> Vec<Row> {
     let l = app.lang;
     let groups = [
-        l.pick("道具", "Tools"),
+        l.pick("ツール", "Tools"),
         l.pick("編集", "Edit"),
         l.pick("レイヤー", "Layer"),
         l.pick("選択範囲", "Selection"),
@@ -318,7 +324,9 @@ mod tests {
                 assert!(!label.is_empty());
                 if lang == Lang::En {
                     assert!(
-                        !label.chars().any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)),
+                        !label
+                            .chars()
+                            .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)),
                         "{label}"
                     );
                 }
@@ -326,14 +334,17 @@ mod tests {
             for context in keymap::CONTEXT_KEYS {
                 assert!(!context.label(lang).is_empty());
                 if lang == Lang::En {
-                    assert!(!context.label(lang).chars().any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)));
+                    assert!(!context
+                        .label(lang)
+                        .chars()
+                        .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)));
                 }
             }
             assert!(rows(&app).len() > bindings().len());
         }
     }
 
-    /// 割り当てが効く条件を満たした状態（道具は、道具の割り当てなら押す前と違うもの）。
+    /// 割り当てが効く条件を満たした状態（ツールは、ツールの割り当てなら押す前と違うもの）。
     fn state_for(binding: &Binding) -> AppState {
         let mut app = AppState::new(32, 32);
         app.tool = match (binding.when, &binding.action) {
@@ -343,6 +354,15 @@ mod tests {
         };
         if binding.when == When::HasSelection {
             app.apply(Action::Sel(SelAction::Edit(SelEdit::All)));
+        }
+        if binding.when == When::PointSelected {
+            app.apply(Action::M2(Edit::NewFill));
+            let layer = app.selected_layer.expect("足したレイヤー");
+            app.apply(Action::Fill(crate::fillfx::FillOp::AddPoints {
+                layer,
+                channel: yolu_core::Channel::Color,
+            }));
+            app.apply(Action::Fill(crate::fillfx::FillOp::SelectPoint(Some(0))));
         }
         app
     }
@@ -372,7 +392,7 @@ mod tests {
             });
             output.textures_delta.clear();
             assert_eq!(got, vec![binding.action.clone()], "{}", key_label(&binding));
-            // 道具のキーは、実際のキーの処理で道具が替わり、一覧の文字は道具の表のキーと同じ
+            // ツールのキーは、実際のキーの処理でツールが替わり、一覧の文字はツールの表のキーと同じ
             if let Action::SelectTool(tool) = binding.action {
                 let mut app = state_for(&binding);
                 press(&mut app, binding.key, binding.modifiers);
@@ -380,6 +400,62 @@ mod tests {
                 assert_eq!(tool.key(), key_label(&binding));
             }
         }
+    }
+
+    /// 点のグラデーションの点を編集していて、点を選んでいる状態（Delete・Backspace が点を消す割り当ての条件）。
+    fn with_point_selected() -> AppState {
+        let delete = bindings()
+            .into_iter()
+            .find(|b| b.when == When::PointSelected)
+            .expect("点を消す割り当て");
+        state_for(&delete)
+    }
+
+    fn dispatched(app: &AppState, key: Key) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = keymap::dispatch(i, app));
+        });
+        output.textures_delta.clear();
+        got
+    }
+
+    #[test]
+    fn a_selected_gradient_point_takes_delete_and_backspace_before_the_selection_and_the_path_tool()
+    {
+        let point = Action::Fill(crate::fillfx::FillOp::DeletePoint);
+        // 選択範囲があっても、Delete は点を消す（選択範囲の消去に取られない）
+        let mut app = with_point_selected();
+        app.apply(Action::Sel(SelAction::Edit(SelEdit::All)));
+        assert!(app.doc.selection().is_some());
+        assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
+        assert_eq!(dispatched(&app, Key::Backspace), vec![point.clone()]);
+        // パスのツールでも、点を選んでいる間は点を消す（パスの点の削除に取られない）
+        app.tool = Tool::Path;
+        assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
+        assert_eq!(dispatched(&app, Key::Backspace), vec![point]);
+        // 点を選んでいなければ、今までどおり選択範囲の消去・パスの点の削除
+        app.apply(Action::Fill(crate::fillfx::FillOp::SelectPoint(None)));
+        assert_eq!(dispatched(&app, Key::Delete), vec![sel_edit_erase()]);
+        assert_eq!(
+            dispatched(&app, Key::Backspace),
+            vec![Action::Path(PathAction::DeleteSelected)]
+        );
+    }
+
+    fn sel_edit_erase() -> Action {
+        Action::Sel(SelAction::Edit(SelEdit::Erase))
     }
 
     #[test]
@@ -411,10 +487,21 @@ mod tests {
 
     #[test]
     fn the_table_is_the_only_place_that_names_a_shortcut_key() {
-        // 文字・数字・記号のキー（ショートカット）を `consume_key` で直に読む所は、割り当ての表だけ。窓の Enter・Escape・Tab などの
+        // 文字・数字・記号のキー（ショートカット）を `consume_key` で直に読む所は、割り当ての表だけ。ウィンドウの Enter・Escape・Tab などの
         // 操作のキーは、その部品が持つ。ここに足すときは、表に足してから使う
         const UI_KEYS: [&str; 12] = [
-            "Enter", "Escape", "Tab", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End",
+            "Enter",
+            "Escape",
+            "Tab",
+            "Space",
+            "Backspace",
+            "Delete",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
         ];
         fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) {
             for entry in std::fs::read_dir(dir).unwrap().flatten() {
@@ -422,7 +509,11 @@ mod tests {
                 if path.is_dir() {
                     walk(&path, root, out);
                 } else if path.extension().is_some_and(|e| e == "rs") {
-                    let name = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                    let name = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     if name == "keymap.rs" || name == "clipboard/keys.rs" {
                         continue; // 表と、表の割り当てを使う受け口
                     }
@@ -431,7 +522,10 @@ mod tests {
                     for call in code.split(".consume_key(").skip(1) {
                         let args = call.split(')').next().unwrap_or("");
                         if let Some(key) = args.split("Key::").nth(1) {
-                            let key = key.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
+                            let key = key
+                                .split(|c: char| !c.is_ascii_alphanumeric())
+                                .next()
+                                .unwrap_or("");
                             if !UI_KEYS.contains(&key) {
                                 out.push(format!("{name}: Key::{key}"));
                             }
@@ -443,7 +537,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut found = Vec::new();
         walk(&root, &root, &mut found);
-        assert!(found.is_empty(), "ショートカットのキーを表の外で直に読んでいる: {found:?}");
+        assert!(
+            found.is_empty(),
+            "ショートカットのキーを表の外で直に読んでいる: {found:?}"
+        );
     }
 
     #[test]
@@ -455,7 +552,7 @@ mod tests {
         let all = rows(&app);
         assert!(all.iter().any(|r| r.left.contains("Move (1 px / 10 px)")));
         assert!(all.iter().any(|r| r.right == "^"));
-        // 道具のキーは道具の表のとおり、ツールの帯の並びで一覧に出る
+        // ツールのキーはツールの表のとおり、ツールの帯の並びで一覧に出る
         let mut last = 0;
         for tool in Tool::ALL.iter().filter(|t| !t.key().is_empty()) {
             let at = all
@@ -495,18 +592,31 @@ mod tests {
             .collect();
         assert_eq!(listed.len(), 2);
         for b in listed {
-            let Action::ScreenPick(mode) = b.action else { unreachable!() };
+            let Action::ScreenPick(mode) = b.action else {
+                unreachable!()
+            };
             assert_eq!(key_label(&b), mode.shortcut());
             assert_eq!(b.when, When::Windows);
         }
-        assert!(bindings().iter().all(|b| !matches!(b.action, Action::ScreenPick(_))) || cfg!(windows));
+        assert!(
+            bindings()
+                .iter()
+                .all(|b| !matches!(b.action, Action::ScreenPick(_)))
+                || cfg!(windows)
+        );
     }
 
     #[test]
     fn selection_bindings_are_listed_with_their_conditions() {
         let all = bindings();
-        assert!(all.iter().any(|b| b.action == Action::Sel(SelAction::Edit(SelEdit::ToNewLayer))));
-        assert!(all.iter().any(|b| b.action == Action::Path(PathAction::DeleteSelected)));
-        assert!(all.iter().any(|b| b.action == Action::Clip(ClipAction::Paste)));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Sel(SelAction::Edit(SelEdit::ToNewLayer))));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Path(PathAction::DeleteSelected)));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Clip(ClipAction::Paste)));
     }
 }

@@ -390,7 +390,7 @@ fn bucket_properties_draw_new_labels_in_both_languages() {
         (
             Lang::Ja,
             [
-                "編集している層",
+                "編集しているレイヤー",
                 "参照レイヤー",
                 "隙間閉じ",
                 "塗り残し部分に塗る",

@@ -2,7 +2,7 @@
 //! マテリアルの値（[`yolu_core::look::MaterialLook`]）。
 //!
 //! 正本（`document.utpaint`）の画素とは別のエントリで、正本の版も .ylp の形式も変えない。Unity 版 0.2.0 の読み手は、知らないエントリとして
-//! 開くときに一覧で知らせ（「保存すると残らない」）、Unity 版で保存するとこのエントリは落ちる（画素・層・チャンネルは失わない。
+//! 開くときに一覧で知らせ（「保存すると残らない」）、Unity 版で保存するとこのエントリは落ちる（画素・レイヤー・チャンネルは失わない。
 //! 失うのは見た目の設定だけで、標準の描き方に戻る）。
 //!
 //! 形（UTF-8 の JSON のオブジェクト、64 KiB の中ではなく 1 MiB まで。プロパティの数が多いため）:
@@ -28,19 +28,24 @@
 //!   "received": {
 //!     "kind": "lilToon",
 //!     "shader": "Hidden/lilToonTransparent",
-//!     "source": "lilToon 2.3.4 · Standard/Transparent",
+//!     "shaderGuid": "<32 桁の 16 進>",
+//!     "shaderVersion": "2.3.4",
+//!     "renderQueue": 3000,
+//!     "source": "lilToon 2.3.4",
 //!     "properties": { "_ShadowBorder": { "float": 0.3 } },
 //!     "textures": { "_MainTex": { "channel": 0 } },
 //!     "keywords": [],
-//!     "missing": { "_MatCapTex": "pending", "_ShadowColorTex": "overBudget" }
+//!     "missing": { "_MatCapTex": "notAFile", "_ShadowColorTex": "overBudget" }
 //!   }
 //! }
 //! ```
 //!
-//! - 根の本体（`kind`〜`keywords`）は利用者の設定。`kindChosen` は利用者が欄で描き方を選んだか（無ければ偽）。
+//! - 根の本体（`kind`〜`keywords`・`shaderGuid`・`shaderVersion`・`renderQueue`）は利用者の設定。`kindChosen` は利用者が欄で描き方を
+//!   選んだか（無ければ偽）。`shaderGuid`・`shaderVersion`（Unity のシェーダーの身元）と `renderQueue`（描画の順）は無ければ不明・既定。
 //! - `received` は Live Link で Unity のマテリアルから受けた値（`yolu_core::look::ReceivedLook`。本体と同じ形と、出どころの文 `source`、
-//!   絵の無いスロットの理由 `missing`）。描くときは受けた値の上に利用者の設定を重ねる。受けた絵の画素は書かない（Unity のアセットで、
-//!   つなぎ直せば届く）。絵のあったスロットは `missing` の `pending`（届いていない）として書く。理由は `pending`・`overBudget`・`unreadable`。
+//!   絵の無いスロットの理由 `missing`）。描くときは受けた値の上に利用者の設定を重ねる。受けた絵の画素は書かない（絵はファイルから
+//!   読み直す）。絵のあったスロットは `missing` に書かない。理由は `overBudget`・`unreadable`・`notAFile`（Unity の中にしかない絵）。
+//!   0.4 までの書き手の `pending` は `unreadable` として読む。
 //!   利用者の設定と受けた見た目は別々に書き換える（[`write`] は `received` を前のエントリのまま、[`write_received`] は本体を前のまま）。
 //! - `format` は 1。2 以上は読まずに断る（エントリはバイト列のまま残る）。
 //! - `kind` は `standard`・`lilToon`。知らない値は断る。
@@ -82,7 +87,7 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
 }
 
 /// 受けた見た目（`received`。Live Link で Unity のマテリアルから受けた値）を読む。無ければ None。絵の画素は保存しないので、
-/// 絵のあったスロットは「届いていない」（`missing` の `pending`）として戻る。
+/// 絵のあったスロットは絵も理由も無いまま戻る（絵は Live Link の相手の絵のファイルから読み直す）。
 pub fn read_received(bytes: &[u8]) -> Result<Option<ReceivedLook>> {
     let obj = root_object(bytes)?;
     let Some(received) = obj.get("received").filter(|v| !v.is_null()) else {
@@ -112,7 +117,11 @@ pub fn read_received(bytes: &[u8]) -> Result<Option<ReceivedLook>> {
             let why = why
                 .as_str()
                 .and_then(MissingImage::from_key)
-                .ok_or_else(|| invalid(format!("look.json の received.missing の {slot} が違います")))?;
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "look.json の received.missing の {slot} が違います"
+                    ))
+                })?;
             missing.insert(slot.clone(), why);
         }
     }
@@ -163,9 +172,29 @@ fn read_body(obj: &Map<String, Value>, at: &str) -> Result<MaterialLook> {
             .ok_or_else(|| invalid(format!("{at} の shader が文字列ではありません")))?
             .to_owned(),
     };
+    let text = |key: &str| -> Result<String> {
+        match obj.get(key) {
+            None | Some(Value::Null) => Ok(String::new()),
+            Some(v) => Ok(v
+                .as_str()
+                .ok_or_else(|| invalid(format!("{at} の {key} が文字列ではありません")))?
+                .to_owned()),
+        }
+    };
+    let render_queue = match obj.get("renderQueue") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_i64()
+                .and_then(|q| i32::try_from(q).ok())
+                .ok_or_else(|| invalid(format!("{at} の renderQueue が整数ではありません")))?,
+        ),
+    };
     let mut look = MaterialLook {
         kind,
         shader,
+        shader_guid: text("shaderGuid")?,
+        shader_version: text("shaderVersion")?,
+        render_queue,
         ..MaterialLook::default()
     };
     if let Some(props) = obj.get("properties") {
@@ -246,8 +275,31 @@ fn write_body(root: &mut Map<String, Value>, look: &MaterialLook) {
     root.insert("textures".into(), Value::Object(textures));
     root.insert(
         "keywords".into(),
-        Value::Array(look.keywords.iter().map(|k| Value::from(k.as_str())).collect()),
+        Value::Array(
+            look.keywords
+                .iter()
+                .map(|k| Value::from(k.as_str()))
+                .collect(),
+        ),
     );
+    for (key, text) in [
+        ("shaderGuid", &look.shader_guid),
+        ("shaderVersion", &look.shader_version),
+    ] {
+        if text.is_empty() {
+            root.remove(key);
+        } else {
+            root.insert(key.into(), Value::from(text.as_str()));
+        }
+    }
+    match look.render_queue {
+        Some(q) => {
+            root.insert("renderQueue".into(), Value::from(q));
+        }
+        None => {
+            root.remove("renderQueue");
+        }
+    }
 }
 
 fn finish(root: Map<String, Value>) -> Result<Vec<u8>> {
@@ -275,7 +327,10 @@ pub fn write(look: &MaterialLook, previous: Option<&[u8]>) -> Result<Vec<u8>> {
 /// 受けた見た目（`received`）だけを置き換えて書く（None は外す）。利用者の設定と知らないキーは前のエントリのまま（前のエントリが無ければ、
 /// 利用者の設定は既定（標準）で書く。読めない前のエントリには書かずに断る）。絵の画素は書かず、絵のあったスロットは `missing` の `pending` にする。
 /// 利用者の設定が既定で受けた見た目も無いなら None（エントリを消す）。
-pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+pub fn write_received(
+    received: Option<&ReceivedLook>,
+    previous: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>> {
     // 読めない前のエントリ（新しい形式・壊れた）の上には書かない（利用者の設定を黙って消さない）
     if let Some(b) = previous {
         root_object(b)?;
@@ -305,14 +360,13 @@ pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) 
             if !r.source.is_empty() {
                 body.insert("source".into(), Value::from(r.source.as_str()));
             }
-            let mut missing: Map<String, Value> = r
+            // 絵のあったスロットは書かない（絵はファイルから読み直す）
+            let missing: Map<String, Value> = r
                 .missing
                 .iter()
+                .filter(|(k, _)| !r.images.contains_key(*k))
                 .map(|(k, why)| (k.clone(), Value::from(why.key())))
                 .collect();
-            for slot in r.images.keys() {
-                missing.insert(slot.clone(), Value::from(MissingImage::Pending.key()));
-            }
             if !missing.is_empty() {
                 body.insert("missing".into(), Value::Object(missing));
             }
@@ -323,7 +377,18 @@ pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) 
 }
 
 /// 利用者の設定の本体のキー（これだけのエントリは、既定なら消してよい）。
-const BODY_KEYS: [&str; 7] = ["format", "kind", "shader", "properties", "textures", "keywords", "kindChosen"];
+const BODY_KEYS: [&str; 10] = [
+    "format",
+    "kind",
+    "shader",
+    "properties",
+    "textures",
+    "keywords",
+    "kindChosen",
+    "shaderGuid",
+    "shaderVersion",
+    "renderQueue",
+];
 
 /// 前のエントリに受けた見た目（`received`）があるか（読めなくても、キーがあれば true）。
 pub fn has_received(previous: &[u8]) -> bool {
@@ -392,7 +457,11 @@ fn value_json(v: &LookValue) -> Value {
 fn channel(name: &str, v: &Value) -> Result<Channel> {
     v.as_u64()
         .and_then(|i| Channel::from_index(i as usize).filter(|_| i < 64))
-        .ok_or_else(|| invalid(format!("look.json の {name} のチャンネルの番号が範囲外です")))
+        .ok_or_else(|| {
+            invalid(format!(
+                "look.json の {name} のチャンネルの番号が範囲外です"
+            ))
+        })
 }
 
 fn plane(name: &str, v: &Value) -> Result<PlaneSource> {
@@ -423,10 +492,11 @@ fn texture(name: &str, v: &Value) -> Result<TextureSource> {
         return Ok(TextureSource::Channel(channel(name, c)?));
     }
     if let Some(p) = o.get("packed") {
-        let a = p
-            .as_array()
-            .filter(|a| a.len() == 4)
-            .ok_or_else(|| invalid(format!("look.json の {name} の packed が 4 つではありません")))?;
+        let a = p.as_array().filter(|a| a.len() == 4).ok_or_else(|| {
+            invalid(format!(
+                "look.json の {name} の packed が 4 つではありません"
+            ))
+        })?;
         let mut planes = [PlaneSource::Zero; 4];
         for (out, x) in planes.iter_mut().zip(a) {
             *out = plane(name, x)?;
@@ -478,7 +548,8 @@ mod tests {
         };
         look.properties
             .insert("_ShadowBorder".into(), LookValue::Float(0.375));
-        look.properties.insert("_UseShadow".into(), LookValue::Int(1));
+        look.properties
+            .insert("_UseShadow".into(), LookValue::Int(1));
         look.properties.insert(
             "_ShadowColor".into(),
             LookValue::Color([0.82, 0.76, 0.85, 1.0]),
@@ -536,7 +607,9 @@ mod tests {
             ..ReceivedLook::default()
         };
         received.look.kind_chosen = false;
-        let with = write_received(Some(&received), Some(&bytes)).unwrap().unwrap();
+        let with = write_received(Some(&received), Some(&bytes))
+            .unwrap()
+            .unwrap();
         assert_eq!(read(&with).unwrap(), look, "利用者の設定はそのまま");
         // 利用者の設定を書き直しても受けた見た目は残る
         let mut changed = look.clone();
@@ -547,11 +620,18 @@ mod tests {
         assert!(has_received(&rewritten));
         assert!(!has_received(&bytes));
         // 知らないキーがあれば、受けた見た目を外してもエントリは残る
-        let mut v: Value = serde_json::from_slice(&write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap()).unwrap();
+        let mut v: Value = serde_json::from_slice(
+            &write_received(Some(&ReceivedLook::default()), None)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         v["futureKey"] = Value::from(1);
         let kept = write_received(None, Some(&serde_json::to_vec(&v).unwrap())).unwrap();
         assert!(kept.is_some());
-        let plain = write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap();
+        let plain = write_received(Some(&ReceivedLook::default()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(write_received(None, Some(&plain)).unwrap(), None);
         // 本体が読めない（形式は同じ）エントリは、受けた見た目を外しても消さない
         let mut broken: Value = serde_json::from_slice(&plain).unwrap();
@@ -567,10 +647,14 @@ mod tests {
         let previous = serde_json::to_vec(&v).unwrap();
         let mut changed = sample();
         changed.kind = LookKind::Standard;
-        let rewritten: Value = serde_json::from_slice(&write(&changed, Some(&previous)).unwrap()).unwrap();
+        let rewritten: Value =
+            serde_json::from_slice(&write(&changed, Some(&previous)).unwrap()).unwrap();
         assert_eq!(rewritten["futureKey"], serde_json::json!({"x": [1, 2]}));
         assert_eq!(rewritten["kind"], "standard");
-        assert_eq!(read(&serde_json::to_vec(&rewritten).unwrap()).unwrap(), changed);
+        assert_eq!(
+            read(&serde_json::to_vec(&rewritten).unwrap()).unwrap(),
+            changed
+        );
     }
 
     #[test]
@@ -586,21 +670,46 @@ mod tests {
         assert!(refuse(&|v| v["format"] = Value::from("1")));
         assert!(refuse(&|v| v["kind"] = Value::from("lilToonFur")));
         assert!(refuse(&|v| v["shader"] = Value::from(3)));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"float": "x"})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"color": [1, 2, 3]})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"texture": 1})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"int": 5_000_000_000i64})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"float": 1, "int": 1})));
-        assert!(refuse(&|v| v["properties"][""] = serde_json::json!({"float": 1})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"channel": 64})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"channel": -1})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"packed": ["zero"]})));
-        assert!(refuse(&|v| v["textures"]["_T"] =
-            serde_json::json!({"packed": [{"channel": 0, "component": 4}, "one", "one", "one"]})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"image": "00"})));
-        assert!(refuse(&|v| v["textures"]["_T"] =
-            serde_json::json!({"image": "00000000000000000000000000000000"})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"lut": 1})));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"float": "x"})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"color": [1, 2, 3]})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"texture": 1})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"int": 5_000_000_000i64})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"float": 1, "int": 1})
+        ));
+        assert!(refuse(
+            &|v| v["properties"][""] = serde_json::json!({"float": 1})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"channel": 64})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"channel": -1})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"packed": ["zero"]})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"packed": [{"channel": 0, "component": 4}, "one", "one", "one"]})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"image": "00"})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] =
+                serde_json::json!({"image": "00000000000000000000000000000000"})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"lut": 1})
+        ));
         assert!(refuse(&|v| v["keywords"] = serde_json::json!(["A", "A"])));
         assert!(read(b"[]").is_err());
         assert!(read(b"{").is_err());
@@ -611,12 +720,20 @@ mod tests {
     fn json_numbers_are_not_rounded_through_text() {
         // f32 → f64 の JSON → f32 で同じ値に戻る（色の値・境界の値を保存で変えない）
         let mut look = MaterialLook::default();
-        for (i, x) in [0.1f32, 1.0 / 3.0, 0.82, 1e-7, 123456.79, -0.0].iter().enumerate() {
-            look.properties.insert(format!("_V{i}"), LookValue::Float(*x));
+        for (i, x) in [0.1f32, 1.0 / 3.0, 0.82, 1e-7, 123456.79, -0.0]
+            .iter()
+            .enumerate()
+        {
+            look.properties
+                .insert(format!("_V{i}"), LookValue::Float(*x));
         }
         let back = read(&write(&look, None).unwrap()).unwrap();
         for (k, v) in &look.properties {
-            assert_eq!(back.properties[k].as_f32().to_bits(), v.as_f32().to_bits(), "{k}");
+            assert_eq!(
+                back.properties[k].as_f32().to_bits(),
+                v.as_f32().to_bits(),
+                "{k}"
+            );
         }
     }
 }

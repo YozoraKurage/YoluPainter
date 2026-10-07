@@ -4,12 +4,14 @@
 
 use egui::{pos2, vec2, Rect, Ui};
 
+use super::color_window::{self, Pick};
 use super::properties::{group_label, percent_row, section, slider_row, toggle_row};
 use crate::engine::{
     AdjustmentSettings, AdjustmentType, BlendMode, ChannelKind, LayerId, LayerKind, Rgba8,
 };
 use crate::lang::Lang;
 use crate::m2::{self, AdjustmentKind, Edit, UiOp};
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
@@ -36,21 +38,21 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
         return;
     };
     let (kind, name) = (layer.kind(), layer.name().to_owned());
+    let icon = if layer.text().is_some() {
+        "tools/text"
+    } else {
+        m2::layer_kind_icon(kind)
+    };
     let enabled = app.can_edit();
 
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "layer",
-        &name,
-        m2::layer_kind_icon(kind),
-        None,
-    );
+    let (open, _) = section(ui, app, rows, "layer", &name, icon, None);
     if open {
         layer_section(ui, app, rows, id, enabled, lang);
     }
     lock_section(ui, app, rows);
+    if app.doc.layer(id).is_some_and(|l| l.text().is_some()) {
+        crate::textlayer::props::layer_section(ui, app, rows, enabled);
+    }
     match kind {
         LayerKind::Fill => {
             fill_section(ui, app, rows, id, enabled, lang);
@@ -114,15 +116,18 @@ fn layer_section(
             );
         }
     }
-    // この層までの合成に名前を付ける（上の層の Generator が読む）
+    // このレイヤーまでの合成に名前を付ける（上のレイヤーの Generator が読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
-    // 画素へのフィルター（調整・グループの層には画素が無い）
-    if matches!(app.doc.layer(id).map(|l| l.kind()), Some(LayerKind::Raster | LayerKind::Fill)) {
+    // 画素へのフィルター（調整・グループのレイヤーには画素が無い）
+    if matches!(
+        app.doc.layer(id).map(|l| l.kind()),
+        Some(LayerKind::Raster | LayerKind::Fill)
+    ) {
         super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
     }
 }
 
-/// ロックの 4 種（選んでいる層の全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
+/// ロックの 4 種（選んでいるレイヤーの全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
 /// チェックせず、ツールチップで言う。1 回の Undo。
 pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     use crate::layerops::{lock_name, LOCK_FLAGS};
@@ -131,7 +136,15 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if ids.is_empty() {
         return;
     }
-    let (open, _) = section(ui, app, rows, "locks", lang.pick("ロック", "Lock"), "lock", None);
+    let (open, _) = section(
+        ui,
+        app,
+        rows,
+        "locks",
+        lang.pick("ロック", "Lock"),
+        "lock",
+        None,
+    );
     if !open {
         return;
     }
@@ -152,17 +165,17 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             )
         } else if flag == yolu_core::LayerLocks::PIXELS {
             lang.pick(
-                "層の画素は変えられない（移動とマスクへの描画はできる）",
+                "レイヤーの画素は変えられない（移動とマスクへの描画はできる）",
                 "The layer's pixels cannot be changed (it can still be moved and its mask painted)",
             )
         } else if flag == yolu_core::LayerLocks::POSITION {
             lang.pick(
-                "層を動かす・変形できない",
+                "レイヤーを動かす・変形できない",
                 "The layer cannot be moved or transformed",
             )
         } else {
             lang.pick(
-                "画素・位置・層の設定を変えられない",
+                "画素・位置・レイヤーの設定を変えられない",
                 "Pixels, position and the layer's settings cannot be changed",
             )
         };
@@ -241,7 +254,7 @@ fn fill_section(
                     ("fill.add", channel.index()),
                     "add",
                     &lang.pick(
-                        format!("{name} の値を足す（描画色から）"),
+                        format!("{name} の値を追加（描画色から）"),
                         format!("Add a value for {name} (from the paint color)"),
                     ),
                     false,
@@ -293,26 +306,19 @@ fn fill_section(
                         pos2(main.left() + 84.0, main.top() + 1.0),
                         pos2(main.right(), main.bottom() - 1.0),
                     );
-                    let color = [
-                        v.r as f32 / 255.0,
-                        v.g as f32 / 255.0,
-                        v.b as f32 / 255.0,
-                        v.a as f32 / 255.0,
-                    ];
-                    if w::color_swatch(
+                    // 押すと色のウィンドウ（相手はレイヤーとチャンネルごと）。ウィンドウの変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+                    let target = egui::Id::new(("fill.value", id.0, channel.index()));
+                    if let Some(u) = color_window::field(
                         ui,
                         swatch,
-                        ("fill.swatch", channel.index()),
-                        color,
-                        &lang.pick(
-                            format!("{name} の値（押すと描画色にする）"),
-                            format!("Value of {name} (click to set it to the paint color)"),
-                        ),
+                        target,
+                        &name,
+                        Pick::rgb([v.r, v.g, v.b]),
+                        &lang.pick(format!("{name} の値"), format!("Value of {name}")),
                         enabled,
-                    )
-                    .clicked()
-                    {
-                        let next = m2::fill_from_color(app.color.main);
+                    ) {
+                        let [r, g, b] = u.pick.rgb;
+                        let next = Rgba8::new(r, g, b, v.a);
                         if next != v {
                             edit(
                                 app,
@@ -322,6 +328,8 @@ fn fill_section(
                                     value: Some(next),
                                 },
                             );
+                        }
+                        if u.done {
                             app.m2_end_drag();
                         }
                     }
@@ -385,7 +393,7 @@ fn adjustment_section(
     if !open {
         return;
     }
-    // 描くチャンネルに使えない調整は、注記の行を置かず、理由をツールチップに出す。欄は無効にしない: 層の値は効くチャンネル（色）の
+    // 描くチャンネルに使えない調整は、注記の行を置かず、理由をツールチップに出す。欄は無効にしない: レイヤーの値は効くチャンネル（色）の
     // 出力には今も効くので、直すためにチャンネルを替えさせない
     let paint = app.m2.paint_channel;
     let reason = app
@@ -415,6 +423,7 @@ fn adjustment_section(
                 let histogram = (a.kind() == AdjustmentType::ToneCurve)
                     .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
                     .flatten();
+                let mut failure = None;
                 let mut params = super::color_adjust::Params {
                     key: ("adjustment", id.0),
                     enabled,
@@ -425,11 +434,14 @@ fn adjustment_section(
                     histogram: histogram.as_deref(),
                     sets: &mut app.ramp_sets,
                     eyedrop: &mut app.eyedrop,
-                    message: &mut app.message,
+                    failure: &mut failure,
                 };
                 if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(Ok(change.value.into_settings()));
+                }
+                if let Some(text) = failure {
+                    app.fail(crate::notice::Source::Gradient, text);
                 }
             }
         }
@@ -452,7 +464,10 @@ fn adjustment_section(
                 ib,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick("これ以下の入力は黒", "Input at or below this becomes black"))),
+                why.or(Some(lang.pick(
+                    "これ以下の入力は黒",
+                    "Input at or below this becomes black",
+                ))),
                 enabled,
             ) {
                 ib = v.min(iw - 0.004).max(0.0);
@@ -466,7 +481,10 @@ fn adjustment_section(
                 iw,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick("これ以上の入力は白", "Input at or above this becomes white"))),
+                why.or(Some(lang.pick(
+                    "これ以上の入力は白",
+                    "Input at or above this becomes white",
+                ))),
                 enabled,
             ) {
                 iw = v.max(ib + 0.004).min(1.0);
@@ -588,12 +606,16 @@ fn adjustment_section(
                 app.m2_end_drag();
             }
         }
-        Some(Err(e)) => app.message = app.lang.core_error(&e),
+        Some(Err(e)) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Layer,
+            app.lang.core_error(&e),
+        ),
         _ => {}
     }
 }
 
-/// チャンネルごとの有効と、自分の合成（持っているチャンネルだけ。× で層の値に戻す）。
+/// チャンネルごとの有効と、自分の合成（持っているチャンネルだけ。× でレイヤーの値に戻す）。
 fn channels_section(
     ui: &mut Ui,
     app: &mut AppState,
@@ -672,7 +694,7 @@ fn channels_section(
                 ("layer.channel.clear", channel.index()),
                 "close",
                 &lang.pick(
-                    format!("{name} も層の合成モードと不透明度に戻す"),
+                    format!("{name} もレイヤーの合成モードと不透明度に戻す"),
                     format!("Use the layer's blend mode and opacity in {name} again"),
                 ),
                 false,
@@ -830,7 +852,7 @@ fn mask_section(
         edit(app, Edit::RemoveMask(id));
         return;
     }
-    // このマスクに名前を付ける（上の層の Generator が、この層の見える度合いを読む）
+    // このマスクに名前を付ける（上のレイヤーの Generator が、このレイヤーの見える度合いを読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Mask);
     super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Mask);
 }

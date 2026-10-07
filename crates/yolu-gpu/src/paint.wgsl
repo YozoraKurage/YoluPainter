@@ -1,9 +1,9 @@
-// yolu-core::blend・normal・adjust と brush の式。各層で半段切り上げの RGBA8 に戻す。
+// yolu-core::blend・normal・adjust と brush の式。各レイヤーで半段切り上げの RGBA8 に戻す。
 // 先頭に Rust が定数（OP_*・ADJ_*・LUT_WORDS・STACK_SLOTS・BLEND_OVERLAY）を書き足す（plan.rs の `shader_source`）。
 // extra: ブラシではダブの数（合成では使わない。法線の種類のチャンネルは、重ねる式を単位ベクトルの式にしたシェーダーの形で選ぶ）。
 struct Params { count: u32, layers: u32, size: u32, extra: u32 }
 // 合成の 1 つの命令（plan.rs の命令の並び）。slot は source の面の番号（NONE なら塗りつぶしの色 fill）、mask はマスクの面の番号
-// （NONE ならマスク無し。アルファが隠す量）。描かない層は並びに入れない。調整の命令は面も塗りつぶしの色も持たないので、slot に調整の式の
+// （NONE ならマスク無し。アルファが隠す量）。描かないレイヤーは並びに入れない。調整の命令は面も塗りつぶしの色も持たないので、slot に調整の式の
 // 種類、fill に値・表の語の番号（tables の中）を置く。
 struct Layer { kind: u32, opacity: f32, mode: u32, slot: u32, mask: u32, fill: u32, mask_invert: u32, mask_density: f32 }
 const NONE: u32 = 0xffffffffu;
@@ -17,7 +17,7 @@ struct Dab { x: f32, y: f32, radius: f32, hardness: f32, ceiling: f32, flow: f32
 @group(0) @binding(7) var<storage, read> tables: array<u32>;
 // 面ごと・束のタイルごとに 1 語（0 はその面のそのタイルに画素が無い。無いタイルは作業域を埋めず、読まない）。
 @group(0) @binding(8) var<storage, read> presence: array<u32>;
-// タイルごとの命令の番号の列（先頭にタイルごとの（始まり, 長さ）。plan.rs の `tile_program`。画素の無い層の命令を落とした列）。
+// タイルごとの命令の番号の列（先頭にタイルごとの（始まり, 長さ）。plan.rs の `tile_program`。画素の無いレイヤーの命令を落とした列）。
 @group(0) @binding(9) var<storage, read> programs: array<u32>;
 fn unpack(v: u32) -> vec4f { return vec4f(f32(v & 255u), f32((v >> 8u)&255u), f32((v >> 16u)&255u), f32(v >> 24u))/255.0; }
 fn pack(c: vec4f) -> u32 { let b = vec4u(floor(clamp(c, vec4f(0), vec4f(1))*255.0+0.5)); return b.x | (b.y<<8u) | (b.z<<16u) | (b.w<<24u); }
@@ -110,7 +110,7 @@ fn op_fade(backdrop:vec4f,inner:vec4f,amount:f32)->vec4f { return fade_n(backdro
 // @end normal
 
 // ───────── 色の式での、組への重ね・フェード ─────────
-// クリッピングされた層の色を組（下地）へ重ねる。下地のアルファはそのまま（下地の外へは描かない）。
+// クリッピングされたレイヤーの色を組（下地）へ重ねる。下地のアルファはそのまま（下地の外へは描かない）。
 fn clip_c(g:vec4f,c:vec4f,amount:f32,m:u32)->vec4f {
  let t=c.a*amount;
  if t<=0 || g.a==0 {return g;}
@@ -199,7 +199,7 @@ fn adjust_color(o: Layer, c: vec4f) -> vec3f {
 // @end adjust
 
 // ───────── 命令 ─────────
-// 層の画素（面の画素か塗りつぶしの色）。画素の無い面の命令は、タイルの命令の列が落とすので、ここでは有無を見ない。
+// レイヤーの画素（面の画素か塗りつぶしの色）。画素の無い面の命令は、タイルの命令の列が落とすので、ここでは有無を見ない。
 fn layer_pixel(l: Layer, i: u32) -> vec4f {
  if l.slot == NONE {return unpack(l.fill);}
  return unpack(source[l.slot*p.count+i]);
@@ -226,7 +226,7 @@ fn evaluate(i:u32) -> vec4f {
  let area=p.size*p.size;
  let t=vec2u(i/area,p.count/area);   // 束の中のタイルの番号・束のタイルの数
  var result=vec4f(0);   // 今の段の結果
- var clipped=vec4f(0);    // クリッピングの組（下地とクリッピングの層を重ねた値）
+ var clipped=vec4f(0);    // クリッピングの組（下地とクリッピングのレイヤーを重ねた値）
  // @begin stack
  var stack: array<u32, STACK_SLOTS>;   // グループの入れ子で退避する値（バイトの値なので 1 語に詰められる）
  var top=0u;

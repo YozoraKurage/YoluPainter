@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""配る組みの profile（release と dist。dist は lto = "fat"・codegen-units = 1 を --config で与える）を、組む時間・exe の大きさ・重い操作の時間で比べる（Linux）。
+"""配布のビルドの profile（release と dist。dist は lto = "fat"・codegen-units = 1 を --config で与える）を、ビルドの時間・exe の大きさ・重い操作の時間で比べる（Linux）。
 
   python3 tools/bench-profiles.py [--app] [--cold] [--runs 5] [--rounds 3] [--cpu N] [--clean]
 
-組む: sccache なし・インクリメンタルなしで、各 profile の yolu-core の examples と yolu-io の io_bench（保存・PSD。tools/profile-bench/ から一時的に
-yolu-io/examples/ へ写して組み、終わったら消す）を組む。`--app` は yolu-app（exe の大きさと、依存を含む全部の組み時間）も組む。`--cold` は組む前に
+ビルド: sccache なし・インクリメンタルなしで、各 profile の yolu-core の examples と yolu-io の io_bench（保存・PSD。tools/profile-bench/ から一時的に
+yolu-io/examples/ へ写してビルドし、終わったら消す）をビルドする。`--app` は yolu-app（exe の大きさと、依存を含む全部のビルド時間）もビルドする。`--cold` はビルドの前に
 target/<profile> を消す（ほかの profile・worktree には触れない）。
 測る: 1 つの CPU に固定（taskset）・rayon 1 スレッドで、yolu-core の bench（合成・ブラシ）と export_bench（書き出し）、io_bench（保存・PSD）を、
 profile を交互に、`--rounds` 回まわす。各行は、回ごとの中央値の中央値。profile ごとの比（release ÷ dist。1 より大きいほど dist が速い）を、操作の種類ごとの
@@ -100,8 +100,8 @@ def main():
     parser.add_argument('--runs', type=int, default=5)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--cpu', type=int, default=sorted(os.sched_getaffinity(0))[-1])
-    parser.add_argument('--app', action='store_true', help='yolu-app も組む（exe の大きさ・全部の組み時間）')
-    parser.add_argument('--cold', action='store_true', help='組む前に target/<profile> を消す')
+    parser.add_argument('--app', action='store_true', help='yolu-app もビルドする（exe の大きさ・全部のビルド時間）')
+    parser.add_argument('--cold', action='store_true', help='ビルドの前に target/<profile> を消す')
     parser.add_argument('--no-build', action='store_true')
     parser.add_argument('--clean', action='store_true', help='終わったら target/<profile> を消す（ディスクのため）')
     args = parser.parse_args()
@@ -134,7 +134,7 @@ def main():
     print(f'機械: {cpu_model}（CPU {args.cpu} に固定・rayon 1 スレッド）、{rustc}、負荷平均 開始前 {load_start[0]:.1f} 終了 {os.getloadavg()[0]:.1f}。'
           f'各行は {args.runs} 回の中央値を {args.rounds} 回まわした中央値（profile を交互に）。比 = {base} ÷ {other}（1 より大きいほど {other} が速い）。\n')
     if built:
-        print('## 組む（sccache なし・インクリメンタルなし。この機械の cargo jobs と負荷つき）\n')
+        print('## ビルド（sccache なし・インクリメンタルなし。この機械の cargo jobs と負荷つき）\n')
         print(f'| profile | yolu-app 全部 | yolu-core examples | io_bench | exe の大きさ |\n|---|---:|---:|---:|---:|')
         for profile in profiles:
             row = built[profile]
@@ -142,7 +142,7 @@ def main():
             exe = f'{row["exe"] / 1e6:.1f} MB' if 'exe' in row else '—'
             print(f'| {profile} | {app} | {row["examples"]:.0f} s | {row["io"]:.0f} s | {exe} |')
         if args.app:
-            print(f'\n組み時間の比（{other} ÷ {base}）: {built[other]["app"] / built[base]["app"]:.2f}、'
+            print(f'\nビルド時間の比（{other} ÷ {base}）: {built[other]["app"] / built[base]["app"]:.2f}、'
                   f'exe の大きさの比: {built[other]["exe"] / built[base]["exe"]:.3f}')
         print()
     print('## 重い操作の比（操作の種類ごとの幾何平均）\n')

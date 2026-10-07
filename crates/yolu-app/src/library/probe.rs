@@ -1,4 +1,4 @@
-//! ライブラリのファイル 1 つを見る（別のスレッドで走る）: 中身の札（SHA-256）・画像の画素の札・寸法・層の数・チャンネル・置けない理由・
+//! ライブラリのファイル 1 つを見る（別のスレッドで走る）: 中身の札（SHA-256）・画像の画素の札・寸法・レイヤーの数・チャンネル・置けない理由・
 //! サムネイル。同じ中身の絵はディスクのキャッシュから読み、作った絵はそこへ覚える。読めないファイルは、止まらずに理由を返す。
 use std::path::PathBuf;
 
@@ -8,7 +8,8 @@ use yolu_io::library as files;
 use super::cache::Cache;
 use super::image as png;
 use super::service::Cancel;
-use super::{reason, LibInfo};
+use super::LibInfo;
+use crate::lang::library_io_error as reason;
 use crate::lang::Lang;
 use crate::shelf::{
     from_cached, image_picture, inspect_smart_kind, remembered, to_cached, Block, Inspected,
@@ -63,7 +64,7 @@ fn line<'a>(info: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
 }
 
-/// ファイルを見る。ブラシ・マテリアルは中身を読まない（置けない種類として並べるだけ）。
+/// ファイルを見る。ブラシは中身を読まない（置けない種類として並べるだけ）。マテリアルは .ylsmart と同じに見る。
 pub fn probe(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &Cancel) -> LibInfo {
     match target.kind {
         files::Kind::Brush => LibInfo {
@@ -72,15 +73,14 @@ pub fn probe(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &Ca
             sha256: String::new(),
             content: String::new(),
         },
-        files::Kind::Material => LibInfo {
-            kind: ItemKind::Material,
-            inspected: Inspected::bare(Some(Block::Kind(ItemKind::Material))),
-            sha256: String::new(),
-            content: String::new(),
-        },
         files::Kind::Image => probe_image(target, limits, cache, cancel),
-        files::Kind::Smart => probe_smart(target, limits, cache, cancel),
+        files::Kind::Smart | files::Kind::Material => probe_smart(target, limits, cache, cancel),
     }
+}
+
+/// 壊れたファイル・形式が違うファイルの短い理由（診断の本文は日本語で、英語の画面には出せない）。
+pub(crate) fn wrong_format() -> Unreadable {
+    Unreadable::pair("形式が合いません", "Wrong format")
 }
 
 fn too_large() -> Unreadable {
@@ -156,10 +156,20 @@ fn probe_image(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &
     }
 }
 
+/// .ylsmart と .ylmaterial（塗りつぶしレイヤーを持つ .ylsmart と同じ形）を見る。マテリアルのファイルの中身がスマートマスクなら、
+/// 形式が合わないとして置かない（プロジェクトのアセットの索引も、マテリアルにはスマートマテリアルの中身を求める）。
 fn probe_smart(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &Cancel) -> LibInfo {
+    let material = target.kind == files::Kind::Material;
     let sha = match hashed(target, limits, cancel) {
         Ok(sha) => sha,
-        Err(why) => return broken(ItemKind::SmartMaterial, why),
+        Err(why) => {
+            let kind = if material {
+                ItemKind::Material
+            } else {
+                ItemKind::SmartMaterial
+            };
+            return broken(kind, why);
+        }
     };
     let key = Cache::key("library-smart", &sha);
     let (inspected, kind) = remembered(
@@ -169,12 +179,9 @@ fn probe_smart(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &
         || match files::read(&target.root, &target.rel, limits.read, Some(cancel.flag())) {
             Ok(bytes) => {
                 let (mut inspected, kind) = inspect_smart_kind(Some(&bytes), limits.preview);
-                // 壊れたファイル・形式が違うファイルは、短い言い方で（診断の本文は日本語で、英語の画面には出せない）
+                // 壊れたファイル・形式が違うファイルは、短い言い方で
                 if matches!(inspected.block, Some(Block::Unreadable(_))) {
-                    inspected.block = Some(Block::Unreadable(Unreadable::pair(
-                        "形式が合いません",
-                        "Wrong format",
-                    )));
+                    inspected.block = Some(Block::Unreadable(wrong_format()));
                 }
                 (inspected, kind)
             }
@@ -184,12 +191,21 @@ fn probe_smart(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &
             ),
         },
     );
-    // 読めないファイルは、スマートマテリアルの方に並べる（理由つきで）
-    LibInfo {
-        kind: match kind {
+    let mut inspected = inspected;
+    let kind = if material {
+        if kind == Some(SmartKind::Mask) {
+            inspected = Inspected::bare(Some(Block::Unreadable(wrong_format())));
+        }
+        ItemKind::Material
+    } else {
+        // 読めないファイルは、スマートマテリアルの方に並べる（理由つきで）
+        match kind {
             Some(SmartKind::Mask) => ItemKind::SmartMask,
             _ => ItemKind::SmartMaterial,
-        },
+        }
+    };
+    LibInfo {
+        kind,
         inspected,
         content: sha.clone(),
         sha256: sha,

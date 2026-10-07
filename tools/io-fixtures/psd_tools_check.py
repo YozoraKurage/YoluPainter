@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Rust が書いた PSD の調整レイヤー（YOLU_PSD_DUMP で出した adjust0〜5.psd）を psd-tools で読み直して値を確かめる（開発用）。
 
-  YOLU_PSD_DUMP=<ディレクトリ> cargo test -p yolu-io --test psd_adjust dump_psd_for_psd_tools
+  YOLU_PSD_DUMP=<ディレクトリ> cargo test -p yolu-io --test psd_io psd_adjust::dump_psd_for_psd_tools
   python3 tools/io-fixtures/psd_tools_check.py <ディレクトリ>
 
 psd-tools（MIT）は開発用の scratch の venv に入れる（`python3 -m venv <scratch>/venv && <scratch>/venv/bin/pip install psd-tools`）。
-読めた値を試験の期待値（tests/psd_adjust.rs の exact()）と同じかを人が見る。Photoshop・CLIP STUDIO の実機の読みではない。
+読めた値を試験の期待値（crates/yolu-io/tests/psd_io/psd_adjust.rs の exact()）と同じかを人が見る。Photoshop・CLIP STUDIO の実機の読みではない。
 """
 import sys
 from pathlib import Path

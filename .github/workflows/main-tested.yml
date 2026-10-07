@@ -1,6 +1,6 @@
 name: main CI
 
-# main への push で、その中身（ファイルの木）が PR の CI（ci.yml）を通った中身と同じかだけを確かめる（組み直さない）。
+# main への push で、その中身（ファイルの木）が PR の CI（ci.yml）を通った中身と同じかだけを確かめる（ビルドし直さない）。
 # main は CI 必須の PR からしか変わらないので、中身が PR の最後の head と同じで、その head の CI が成功していれば、main は試験済み。
 # 違うのは PR の枝が main より古いまま入ったとき。そのときは失敗にして、CI を手で回す（ci.yml の workflow_dispatch）。
 # README の CI の印はこのワークフローの結果を出す。

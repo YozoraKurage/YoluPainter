@@ -53,7 +53,10 @@ impl<'a> Fetcher<'a> {
                 None => t,
                 Some(r) => {
                     let (x0, y0) = (r.x.min(t.x), r.y.min(t.y));
-                    let (x1, y1) = ((r.x + r.width).max(t.x + t.width), (r.y + r.height).max(t.y + t.height));
+                    let (x1, y1) = (
+                        (r.x + r.width).max(t.x + t.width),
+                        (r.y + r.height).max(t.y + t.height),
+                    );
                     Rect::new(x0, y0, x1 - x0, y1 - y0)
                 }
             });
@@ -70,7 +73,7 @@ impl<'a> Fetcher<'a> {
     }
 
     /// 面 `k` の取り置きを手放す（束の次の面へ進むとき。評価の結果は文書の評価のキャッシュにも残るので、次の束で同じ範囲を頼んでも
-    /// 評価し直さない。取り置きを全部の面で持ち続けると、効果のある層の数に比例してメモリを使う）。
+    /// 評価し直さない。取り置きを全部の面で持ち続けると、効果のあるレイヤーの数に比例してメモリを使う）。
     pub(crate) fn release(&mut self, k: usize) {
         self.held[k] = None;
     }

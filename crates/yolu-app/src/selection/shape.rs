@@ -6,7 +6,7 @@ use super::SelState;
 use crate::engine::DVec2;
 use crate::state::Tool;
 
-/// 長方形・楕円のドラッグの 2 つの角（押した点 `start`・今の点 `current`。画布の座標）。`square` なら縦横を同じ長さに（長い方に合わせ、
+/// 長方形・楕円のドラッグの 2 つの角（押した点 `start`・今の点 `current`。キャンバスの座標）。`square` なら縦横を同じ長さに（長い方に合わせ、
 /// 動かした向きを保つ）、`center` なら押した点が中心になるように反対側へ同じだけ広げる。返すのは（もう一方の角, 今の点の角）。
 pub fn drag_corners(
     start: (f64, f64),

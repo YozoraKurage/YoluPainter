@@ -1,4 +1,4 @@
-//! 配布用に保存の窓（除く物を種類ごとに並べ、種類ごとに外せる）と、置き換えの確かめの窓。窓には名前・状態・短い理由だけを書き、
+//! 配布用に保存のウィンドウ（除く物を種類ごとに並べ、種類ごとに外せる）と、置き換えの確認のウィンドウ。ウィンドウには名前・状態・短い理由だけを書き、
 //! 説明はツールチップに置く。0 件の種類は出さない。数・容量・説明の文は出さない。
 
 use egui::{pos2, vec2, Id, Key, Rect};
@@ -13,7 +13,7 @@ use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
 use crate::windows::{show_list, Button, ListSpec, Reply, Row};
 
-/// 窓の名前（`windows::window_rect` で矩形を引く名前）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く名前）。
 pub const WINDOW: &str = "distribute";
 pub const CONFIRM: &str = "distribute-replace";
 
@@ -27,7 +27,7 @@ const MAX_NAMES: usize = 40;
 pub fn label(lang: Lang, removal: Removal) -> &'static str {
     match removal {
         Removal::PsdOriginals => lang.pick("PSD の原本", "Original PSDs"),
-        Removal::UnusedShelf => lang.pick("使っていない棚の素材", "Unused shelf assets"),
+        Removal::UnusedShelf => lang.pick("使っていないアセット", "Unused assets"),
         Removal::SourcePaths => lang.pick("素材の出どころのパス", "Asset source paths"),
         Removal::ModelReference => lang.pick("モデルの参照", "Model reference"),
         Removal::MeshMaps => lang.pick("メッシュマップ", "Mesh maps"),
@@ -46,8 +46,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "The original bytes of imported PSDs. They are left out of the copy",
         ),
         Removal::UnusedShelf => lang.pick(
-            "どの層からも、見た目の設定からも使われていない棚の画像・スマート素材・ブラシ。使っている素材は残します",
-            "Shelf images, smart assets and brushes no layer or look setting uses. Assets in use stay",
+            "どのレイヤーからも、見た目の設定からも使われていないアセット（画像・スマート素材・ブラシ）。使っているアセットは残します",
+            "Project assets (images, smart assets and brushes) that no layer or look setting uses. Assets in use stay",
         ),
         Removal::SourcePaths => lang.pick(
             "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します",
@@ -88,7 +88,7 @@ fn save_tooltip(lang: Lang) -> &'static str {
     )
 }
 
-/// 窓の 1 行。
+/// ウィンドウの 1 行。
 enum Item {
     /// 種類（切り替え）。
     Kind(Removal, bool),
@@ -98,9 +98,9 @@ enum Item {
     More,
 }
 
-// ───────── 窓 ─────────
+// ───────── ウィンドウ ─────────
 
-/// 毎フレーム、開いている窓を描き、押された操作を当てる。
+/// 毎フレーム、開いているウィンドウを描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.distribute.window_visible() {
         return;
@@ -239,7 +239,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
 // ───────── 置き換えの確かめ ─────────
 
-/// 毎フレーム、置き換えの確かめの窓を描き、押された操作を当てる（既にあるファイルを選んだとき）。
+/// 毎フレーム、置き換えの確認のウィンドウを描き、押された操作を当てる（既にあるファイルを選んだとき）。
 pub fn show_replace(ctx: &egui::Context, app: &mut AppState) {
     let Some(path) = app.distribute.replace.clone() else {
         return;

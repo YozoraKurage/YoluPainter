@@ -1,14 +1,14 @@
-//! 描画試験の窓（wgpu の Instance・Device）の作成・使用・破棄を、同時に 1 つの試験だけに絞る。
+//! 描画試験のウィンドウ（wgpu の Instance・Device）の作成・使用・破棄を、同時に 1 つの試験だけに絞る。
 //!
-//! Vulkan（lavapipe）は、別々のスレッドで窓を同時に作ると中（create_bind_group）で落ちることがあった。窓を持つ試験どうしを
+//! Vulkan（lavapipe）は、別々のスレッドでウィンドウを同時に作ると中（create_bind_group）で落ちることがあった。ウィンドウを持つ試験どうしを
 //! 重ねないために、3 つの口がある。どれも同じ貸し出し（`WINDOWS`）を取るので、混ぜて使っても重ならない。
 //!
 //! - [`builder`]（kittest の harness を作る入口）: 試験のスレッドが、最初の harness を作る前に貸し出しを取る。持ったまま試験が終わる
 //!   （スレッドが終わる）と放す。`.wgpu()` を呼ばない harness も取る: kittest の既定の描画器は、最初の `render()`（画像の比べ・
 //!   `image_snapshot`）で wgpu の装置を遅れて作るので、描くかどうかは builder の形では見分けられない。したがって、画面を描かない
-//!   harness（CPU だけの部品の試験）も窓を持つ試験と同時には走らない。貸し出しを取らずに並列のままなのは、kittest の harness を
+//!   harness（CPU だけの部品の試験）もウィンドウを持つ試験と同時には走らない。貸し出しを取らずに並列のままなのは、kittest の harness を
 //!   作らず、GPU の装置も作らない試験（画面を作らない `headless_` の試験など）だけ。
-//! - [`run`]（試験の本体を常駐の 1 本のスレッドへ送る）: 窓の作成・使用・破棄を同じスレッドで行う。送っている間だけ貸し出しを持つ。
+//! - [`run`]（試験の本体を常駐の 1 本のスレッドへ送る）: ウィンドウの作成・使用・破棄を同じスレッドで行う。送っている間だけ貸し出しを持つ。
 //! - [`lease`]（直接）: harness を作らなくても GPU の装置を作る試験は、先頭で呼ぶ。製品のスレッドで GPU の確認・ベイクをする試験
 //!   （`BakeBackend::Gpu` を選んで焼くなど。装置は製品のスレッドが作る）と、`canvas_device::begin`（中で呼ぶ）。製品のスレッドが試験の中で
 //!   終わるなら、試験のスレッドが持てば足りる。`window_lease` の `every_gpu_bake_test_takes_the_lease` が、このような試験の呼び忘れを見つける。
@@ -16,7 +16,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::sync::{mpsc, Mutex, MutexGuard, Once, OnceLock, PoisonError};
 
-/// 窓を持っている試験の貸し出し（同時に 1 つ）。
+/// ウィンドウを持っている試験の貸し出し（同時に 1 つ）。
 static WINDOWS: Mutex<()> = Mutex::new(());
 
 thread_local! {
@@ -24,7 +24,7 @@ thread_local! {
     static LEASE: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
 }
 
-/// 窓を作る前に呼ぶ。ほかのスレッドが窓を持っていれば、その試験が終わるまで待つ。同じスレッドで何度呼んでも 1 回分。
+/// ウィンドウを作る前に呼ぶ。ほかのスレッドがウィンドウを持っていれば、その試験が終わるまで待つ。同じスレッドで何度呼んでも 1 回分。
 /// 放すのは、スレッドが終わるとき（libtest は試験ごとにスレッドを分ける）か、`run` に送るとき。
 pub fn lease() {
     LEASE.with(|slot| {
@@ -40,7 +40,7 @@ fn release() {
     let _ = LEASE.try_with(|slot| slot.borrow_mut().take());
 }
 
-/// 誰も窓を持っていないか（試験が貸し出しの放し忘れを確かめる）。自分が持っていれば false。
+/// 誰もウィンドウを持っていないか（試験が貸し出しの放し忘れを確かめる）。自分が持っていれば false。
 pub fn is_free() -> bool {
     WINDOWS.try_lock().is_ok()
 }
@@ -59,7 +59,7 @@ thread_local! {
     static LAST_PANIC_AT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// 既存のフックの前に、panic の場所を控えるだけの層を 1 度だけ重ねる。既存のフックの出力は変えない。
+/// 既存のフックの前に、panic の場所を控えるだけのレイヤーを 1 度だけ重ねる。既存のフックの出力は変えない。
 fn record_panic_locations() {
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
@@ -118,7 +118,7 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
         sender
     });
     let (sender, receiver) = mpsc::sync_channel(1);
-    // 呼び手が窓を持っていれば先に放す（常駐のスレッドが貸し出しを待って、呼び手が結果を待つ行き止まりを避ける）
+    // 呼び手がウィンドウを持っていれば先に放す（常駐のスレッドが貸し出しを待って、呼び手が結果を待つ行き止まりを避ける）
     release();
     worker
         .send(Box::new(move || {
@@ -129,7 +129,7 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
                 payload,
                 location: LAST_PANIC_AT.with(|slot| slot.borrow_mut().take()),
             });
-            // 常駐のスレッドは終わらないので、ジョブごとに放す（ほかの試験の窓を止めない）。この試験が控えた一時の物も、ここで消す
+            // 常駐のスレッドは終わらないので、ジョブごとに放す（ほかの試験のウィンドウを止めない）。この試験が控えた一時の物も、ここで消す
             release();
             crate::common::tmp::sweep();
             let _ = sender.send(result);

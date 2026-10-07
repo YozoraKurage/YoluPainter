@@ -18,7 +18,8 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 const C2F_SIGNATURE: &[u8] = b"\x89C2F";
 
 /// 素材の絵ではない汎用のプレビュー（PNG の SHA-256）。本物の `.sut` で、全部の素材に同じ絵が入っていたもの。
-const PLACEHOLDER_PREVIEWS: &[&str] = &["ef425e25330db3d6288c9c42d2229de46fd7d6c470474a5df8b77e46917e99e9"];
+const PLACEHOLDER_PREVIEWS: &[&str] =
+    &["ef425e25330db3d6288c9c42d2229de46fd7d6c470474a5df8b77e46917e99e9"];
 
 fn is_placeholder(png: &[u8], placeholders: &[&str]) -> bool {
     placeholders.contains(&crate::hash(png).as_str())
@@ -214,12 +215,24 @@ mod tests {
     #[test]
     fn a_known_placeholder_preview_is_not_taken_and_the_proprietary_image_is_reported() {
         let thumb = png(4, 10);
-        let blob = tar(&[("thumbnail/thumbnail.png", &thumb), ("data/material.layer", b"\x89C2F\r\n\x1a\nbody")]);
+        let blob = tar(&[
+            ("thumbnail/thumbnail.png", &thumb),
+            ("data/material.layer", b"\x89C2F\r\n\x1a\nbody"),
+        ]);
         let hash = crate::hash(&thumb);
-        assert!(extract_with(&blob, &[hash.as_str()], &work()).is_none(), "汎用の絵は筆先にしない");
-        assert!(extract_with(&blob, &[], &work()).is_some(), "知らない絵はこれまでどおりプレビューとして使う");
+        assert!(
+            extract_with(&blob, &[hash.as_str()], &work()).is_none(),
+            "汎用の絵は筆先にしない"
+        );
+        assert!(
+            extract_with(&blob, &[], &work()).is_some(),
+            "知らない絵はこれまでどおりプレビューとして使う"
+        );
         assert!(has_proprietary_image(&blob));
-        assert!(!has_proprietary_image(&tar(&[("thumbnail/thumbnail.png", &thumb)])));
+        assert!(!has_proprietary_image(&tar(&[(
+            "thumbnail/thumbnail.png",
+            &thumb
+        )])));
         assert!(!has_proprietary_image(&thumb), "tar でないものは数えない");
     }
 

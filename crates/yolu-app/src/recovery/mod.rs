@@ -6,13 +6,13 @@
 //! が使うのは写しを取る時間だけで、書き置きの失敗は状態の帯に短い理由を出すだけで描くのを止めない。保存した `.ylp` と
 //! 同じ（変更なし）ときは書かない。
 //!
-//! 1 回の起動が 1 つのプール（`pool`）を持つ。落ちると印（`session.lock`）が残るので、次の起動は復旧の窓（`window`）で世代の
+//! 1 回の起動が 1 つのプール（`pool`）を持つ。落ちると印（`session.lock`）が残るので、次の起動は復旧のウィンドウ（`window`）で世代の
 //! 一覧から開く・捨てるを選ばせる。開いたものは「名称未設定（復旧）」で、元の `.ylp` には書かない。正しく閉じると印を消し、
 //! 世代は閉じたプールの合計で設定の数だけ残す。
 //!
 //! ディスクの使いすぎを防ぐ歯止めが 2 つある。1 つは使う量の上限（`quota`。利用者が選ぶ。超えたぶんは古い世代から消し、この実行の
 //! 最新と落ちた実行ごとの最新は残す）、もう 1 つは書く前の空きの守り（`space`。書くと空きが残す量を割るなら、書かずに理由を出す。
-//! 描くのは止めない）。使っている量は復旧の窓に出す。
+//! 描くのは止めない）。使っている量は復旧のウィンドウに出す。
 //!
 //! 試験では `RecoveryState::enable` に一時フォルダを渡して使う（何もしなければ復旧は動かず、ディスクに触れない）。
 
@@ -34,12 +34,15 @@ pub use capture::Fingerprint;
 pub use pool::{Kind as PoolKind, Row};
 pub use quota::{usage, Limits, Trimmed, Usage, CRASHED_KEEP_DAYS};
 pub use settings::{
-    DiskBudget, IoReason, Problem, RecoverySettings, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE, MAX_STROKES,
+    DiskBudget, IoReason, Problem, RecoverySettings, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE,
+    MAX_STROKES,
 };
 pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
 pub(crate) use writer::Waiter;
 
+use crate::jobs::JobSpec;
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 
 /// 復旧の失敗。画面は種類から短い理由を作る（`Lang::recovery_error`）。
@@ -84,17 +87,17 @@ impl From<std::io::Error> for RecoveryError {
     }
 }
 
-/// 復旧の窓・メニューからの操作。
+/// 復旧のウィンドウ・メニューからの操作。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecoveryAction {
-    /// 窓を開く（一覧を読み直す）。
+    /// ウィンドウを開く（一覧を読み直す）。
     OpenWindow,
     CloseWindow,
     /// 一覧の行を選ぶ。
     Select(usize),
     /// 選んだ世代を開く（保存していない変更があれば、捨ててよいか聞いてから）。
     Open,
-    /// 選んだ世代を捨てる（確かめの窓を出す）。
+    /// 選んだ世代を捨てる（確認のウィンドウを出す）。
     Discard,
     ConfirmDiscard,
     CancelDiscard,
@@ -103,7 +106,7 @@ pub enum RecoveryAction {
     SetKeep(u32),
     /// 使うディスクの量を替える（設定のファイルへ書き、超えていれば古い世代から消す）。
     SetDisk(DiskBudget),
-    /// 窓の「詳しく」を開く・閉じる（窓の中だけの状態。設定には書かない）。
+    /// ウィンドウの「詳しく」を開く・閉じる（ウィンドウの中だけの状態。設定には書かない）。
     DiskDetails(bool),
 }
 
@@ -139,6 +142,17 @@ struct Active {
     force: bool,
 }
 
+/// 復旧のウィンドウの確かめ（キーの割り当てを止める）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    modal: Some(|app| {
+        app.recovery
+            .window
+            .as_ref()
+            .is_some_and(|w| w.confirm.is_some())
+    }),
+    ..JobSpec::new("recovery", crate::jobs::never)
+};
+
 /// アプリの状態の中の、復旧の状態。
 #[derive(Default)]
 pub struct RecoveryState {
@@ -161,9 +175,9 @@ pub struct RecoveryState {
     /// 設定のファイルを読めなかった。利用者が選んだ世代の数が分からないので、選び直すまで世代を整理せず、設定のファイルに
     /// 書かない（既定の数で、選んだ世代を消さない・選んだ設定を既定で上書きしない）。
     settings_unreadable: bool,
-    /// 読めなかった設定のまま、利用者が窓で世代の数を選んだ（この実行のあいだ、その数で整理する）。
+    /// 読めなかった設定のまま、利用者がウィンドウで世代の数を選んだ（この実行のあいだ、その数で整理する）。
     keep_chosen: bool,
-    /// 読めなかった設定のまま、利用者が窓で使う量を選んだ（この実行のあいだ、その量で整理する）。読めないあいだは、選んだ量が
+    /// 読めなかった設定のまま、利用者がウィンドウで使う量を選んだ（この実行のあいだ、その量で整理する）。読めないあいだは、選んだ量が
     /// 分からないので、ディスクの上限では消さない（空きの守りは、設定に関わらず働く）。
     disk_chosen: bool,
     fault: Option<Fault>,
@@ -215,7 +229,8 @@ impl RecoveryState {
     }
     /// 世代を整理する数。設定のファイルを読めず、数も選んでいないときは None（整理しない）。
     fn keep(&self) -> Option<usize> {
-        (!self.settings_unreadable || self.keep_chosen).then_some(self.settings.generations_to_keep as usize)
+        (!self.settings_unreadable || self.keep_chosen)
+            .then_some(self.settings.generations_to_keep as usize)
     }
     /// 空きの確かめと上限のもと。
     fn limits(&self) -> Limits {
@@ -229,7 +244,7 @@ impl RecoveryState {
     fn quota_limits(&self) -> Option<Limits> {
         (!self.settings_unreadable || self.disk_chosen).then(|| self.limits())
     }
-    /// 試験用: 空きを偽る（`None` で OS に聞く）。書く前の守りと、自動の上限と、窓の表示が使う。
+    /// 試験用: 空きを偽る（`None` で OS に聞く）。書く前の守りと、自動の上限と、ウィンドウの表示が使う。
     pub fn set_space_probe(&mut self, probe: Option<SpaceProbe>) {
         self.probe = probe;
     }
@@ -269,20 +284,25 @@ impl RecoveryState {
     pub fn take_open_request(&mut self) -> Option<OpenRequest> {
         self.open_request.take()
     }
-    pub fn has_open_request(&self) -> bool {
-        self.open_request.is_some()
-    }
 
-    /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧の窓を開いた
+    /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧のウィンドウを開いた
     /// 状態にする。始められなければ Err（復旧は動かない）。返すのは、前の実行の後片付けで気づいたこと。
-    pub fn enable(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
+    pub fn enable(
+        &mut self,
+        root: PathBuf,
+        settings: RecoverySettings,
+    ) -> Result<Vec<Problem>, RecoveryError> {
         self.settings_unreadable = false;
         self.keep_chosen = false;
         self.disk_chosen = false;
         self.enable_with(root, settings)
     }
 
-    fn enable_with(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
+    fn enable_with(
+        &mut self,
+        root: PathBuf,
+        settings: RecoverySettings,
+    ) -> Result<Vec<Problem>, RecoveryError> {
         self.settings = settings;
         let started = pool::start(&root, self.keep(), self.quota_limits().as_ref())?;
         let mut problems = Vec::new();
@@ -352,7 +372,7 @@ impl RecoveryState {
         Ok(problems)
     }
 
-    /// 一覧を読み直す（窓が開いていれば）。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
+    /// 一覧を読み直す（ウィンドウが開いていれば）。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
     pub(crate) fn refresh_window(&mut self) {
         let Some(active) = self.active.as_ref() else {
             return;
@@ -377,7 +397,10 @@ impl RecoveryState {
         let since = a.dirty_since?;
         let base = a.last_attempt.map_or(since, |l| l.max(since));
         let due = base + Duration::from_secs(self.settings.interval_seconds as u64);
-        Some(due.saturating_duration_since(now).max(Duration::from_millis(50)))
+        Some(
+            due.saturating_duration_since(now)
+                .max(Duration::from_millis(50)),
+        )
     }
 }
 
@@ -455,8 +478,22 @@ impl AppState {
     /// 材料を取って書き手へ頼む（取れない区切り — ストロークの最中・取り込みの途中 — なら、何もせず次のフレームで）。
     fn recovery_submit(&mut self, now: Instant) {
         let recovered_from = self.recovery.recovered_from.clone();
-        let Ok(captured) = capture::capture(self, recovered_from.as_deref()) else {
-            return;
+        let captured = match capture::capture(self, recovered_from.as_deref()) {
+            Ok(captured) => captured,
+            Err(capture::Refusal::NothingToWrite) => {
+                // 書けるセットが無い（どのセットも保存したことが無く読めない）。書き置きは作らず、同じ札のうちは頼み直さない
+                // （保存のときに、入れなかったセットを知らせる）
+                let fingerprint = capture::fingerprint(self);
+                let a = self.recovery.active.as_mut().expect("呼ぶ前に確かめた");
+                a.submitted = Some(fingerprint);
+                a.last_attempt = Some(now);
+                a.dirty_since = None;
+                a.strokes_since = 0;
+                a.force = false;
+                return;
+            }
+            // 描いている最中・取り込みの途中は、次のフレームで取り直す
+            Err(_) => return,
         };
         let keep = self.recovery.keep();
         let limits = self.recovery.limits();
@@ -501,17 +538,17 @@ impl AppState {
                     landed = true;
                     if self.recovery.failed {
                         self.recovery.failed = false;
-                        self.message = self.lang.recovery_working_again().into();
+                        self.info(Source::Recovery, self.lang.recovery_working_again());
                     }
                 }
                 Err(error) => {
                     a.submitted = None;
                     self.recovery.failed = true;
-                    self.message = self.lang.recovery_failed(&error);
+                    self.fail(Source::Recovery, self.lang.recovery_failed(&error));
                 }
             }
         }
-        // 窓が開いていれば、増えた世代を一覧に足す
+        // ウィンドウが開いていれば、増えた世代を一覧に足す
         if landed {
             self.recovery.refresh_window();
         }
@@ -629,7 +666,12 @@ impl AppState {
                 }
             }
             A::Open => {
-                let Some(row) = self.recovery.window.as_ref().and_then(|w| w.selected_row()).cloned()
+                let Some(row) = self
+                    .recovery
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.selected_row())
+                    .cloned()
                 else {
                     return;
                 };
@@ -637,12 +679,18 @@ impl AppState {
                     return;
                 }
                 if self.is_stroking() {
-                    self.message = self.lang.pick("描いている間は開きません。", "Cannot open during a stroke.").into();
+                    self.refuse(
+                        Source::Recovery,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                     return;
                 }
-                let request = OpenRequest { pool: row.pool, id: row.id };
+                let request = OpenRequest {
+                    pool: row.pool,
+                    id: row.id,
+                };
                 if self.modified {
-                    // 今の変更を捨ててよいかは、窓を持つ側（YoluApp）が聞いてから `recovery_open` する
+                    // 今の変更を捨ててよいかは、ウィンドウを持つ側（YoluApp）が聞いてから `recovery_open` する
                     self.recovery.open_request = Some(request);
                 } else {
                     self.recovery_open(request);
@@ -673,7 +721,9 @@ impl AppState {
             }
             A::SetDisk(budget) => {
                 self.recovery.settings.disk = match budget {
-                    DiskBudget::Gib(n) => DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1)),
+                    DiskBudget::Gib(n) => {
+                        DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1))
+                    }
                     other => other,
                 };
                 // 読めなかった設定でも、利用者が選んだ量は分かった（この実行のあいだ、その量で整理する）
@@ -695,7 +745,9 @@ impl AppState {
             a.writer.wait();
         }
         self.recovery_poll();
-        if let (Some(a), Some(limits)) = (self.recovery.active.as_ref(), self.recovery.quota_limits()) {
+        if let (Some(a), Some(limits)) =
+            (self.recovery.active.as_ref(), self.recovery.quota_limits())
+        {
             quota::enforce(&a.root, &limits, Some(a.session.dir()), pool::now_ms());
         }
         self.recovery.refresh_window();
@@ -708,7 +760,13 @@ impl AppState {
             None => !self.recovery.settings_unreadable,
         };
         if !saved {
-            self.message = self.lang.pick("復旧の設定を保存できません。", "Cannot save the recovery settings.").into();
+            self.fail(
+                Source::Recovery,
+                self.lang.pick(
+                    "復旧の設定を保存できません。",
+                    "Cannot save the recovery settings.",
+                ),
+            );
         }
     }
 
@@ -721,10 +779,13 @@ impl AppState {
             return;
         }
         if self.is_saving() {
-            self.message = format!(
-                "{}: {}",
-                self.lang.pick("開けません", "Cannot open"),
-                crate::project::busy_reason(self.lang)
+            self.refuse(
+                Source::Recovery,
+                self.lang.with_reason(
+                    self.lang
+                        .pick("復旧を開けません", "Cannot open the recovery"),
+                    crate::lang::refusals::saving(self.lang),
+                ),
             );
             return;
         }
@@ -738,7 +799,7 @@ impl AppState {
                 self.recovery.window = None;
             }
             Err(error) => {
-                self.message = self.lang.recovery_cannot_open(&error);
+                self.fail(Source::Recovery, self.lang.recovery_cannot_open(&error));
                 if let Some(w) = self.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
@@ -773,7 +834,7 @@ impl AppState {
             }
             Ok(()) => {}
             Err(error) => {
-                self.message = self.lang.recovery_error(&error);
+                self.fail(Source::Recovery, self.lang.recovery_error(&error));
                 if let Some(w) = self.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }

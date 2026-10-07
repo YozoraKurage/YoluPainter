@@ -19,6 +19,7 @@ use yolu_app::lang::Lang;
 use yolu_app::m2::{BrushOp, UiOp};
 use yolu_app::m2_menu::{self, Popup};
 use yolu_app::state::{Action, AppState, Tool};
+use yolu_app::toolset::{ToolsetAction, MAX_GROUP_BRUSHES};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,12 +59,27 @@ fn import(s: &mut AppState, paths: &[PathBuf]) {
 }
 
 fn imported(s: &AppState) -> Vec<Entry> {
-    s.brushes
-        .lib
-        .in_group(Group::Imported)
+    s.brush_entries_in(Group::Imported)
         .into_iter()
         .cloned()
         .collect()
+}
+
+/// 今の設定の新しいブラシを `n` 個足す（1 つのグループは 512 個までなので、いっぱいになったら今のツールにグループを足す）。
+fn add_many(s: &mut AppState, n: usize) {
+    for _ in 0..n {
+        let slot = s.toolset.set.active().unwrap();
+        let full = s
+            .toolset
+            .set
+            .shown_group(slot)
+            .and_then(|g| s.toolset.set.group(g))
+            .is_some_and(|(_, g)| g.brushes.len() >= MAX_GROUP_BRUSHES);
+        if full {
+            s.apply(Action::Tools(ToolsetAction::AddGroup(slot)));
+        }
+        s.apply(Action::Brush(BrushAction::Add));
+    }
 }
 
 fn brush_files(dir: &Path) -> usize {
@@ -99,7 +115,7 @@ fn headless_a_gbr_is_imported_in_the_background_saved_and_comes_back() {
     assert_eq!((e.name.as_str(), e.group), ("Chalk 筆", Group::Imported));
     // 取り込んだブラシに替わり、「取り込み」のタブが開く
     assert_eq!(s.brushes.lib.current(), e.key);
-    assert_eq!(s.brushes.ui.group, Group::Imported);
+    assert_eq!(s.shown_brush_group(), Some(Group::Imported));
     assert!(
         s.message.starts_with("ブラシを 1 個取り込みました"),
         "{}",
@@ -132,6 +148,82 @@ fn headless_a_gbr_is_imported_in_the_background_saved_and_comes_back() {
     assert_eq!(again[0].baseline, e.baseline);
     assert_eq!(again[0].import, e.import);
     assert_eq!(again[0].name, "Chalk 筆");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn headless_imported_brushes_go_to_the_current_brush_tool_never_into_an_eraser_tool() {
+    let dir = temp_dir("import-tool");
+    let file = write(&dir, "chalk_set.gbr", &gbr_gray("Chalk"));
+    let mut s = state(&dir);
+    let slot = |s: &AppState, tool: Tool| s.toolset.set.first_of(tool).unwrap();
+    let group_of = |s: &AppState, key: BrushKey| {
+        let id = s.toolset.set.group_of(key).expect("並びにある");
+        s.toolset
+            .set
+            .group(id)
+            .map(|(slot, g)| (slot.id, g.clone()))
+            .unwrap()
+    };
+    // 取り込みのタブを消しゴムのツールへ動かしておく
+    import(&mut s, std::slice::from_ref(&file));
+    let first = s.brushes.lib.current();
+    let (_, tab) = group_of(&s, first);
+    assert_eq!(tab.builtin, Some(Group::Imported));
+    let eraser = slot(&s, Tool::Eraser);
+    s.apply(Action::Tools(ToolsetAction::MoveGroup {
+        group: tab.id,
+        to: eraser,
+        before: None,
+    }));
+    assert_eq!(s.toolset.set.slot_of(first), Some(eraser));
+    // ブラシのツールで取り込むと、ブラシのツールの最後に取り込みのグループができる
+    let brush = slot(&s, Tool::Brush);
+    s.apply(Action::Tools(ToolsetAction::Select(brush)));
+    import(&mut s, std::slice::from_ref(&file));
+    let second = s.brushes.lib.current();
+    assert_ne!(second, first);
+    let (second_slot, second_tab) = group_of(&s, second);
+    assert_eq!(second_slot, brush, "消しゴムのツールの中には置かない");
+    assert_eq!(second_tab.builtin, Some(Group::Imported));
+    assert_eq!(
+        s.toolset.set.slot(brush).unwrap().groups.last().unwrap().id,
+        second_tab.id,
+        "ツールの最後"
+    );
+    assert_eq!(
+        s.toolset.set.slot_of(first),
+        Some(eraser),
+        "前に取り込んだ物は動かさない"
+    );
+    // 2 つ目のブラシのツールで取り込むと、そのツールの中に作る。元のツールの取り込みのグループには入らない
+    s.apply(Action::Tools(ToolsetAction::Add {
+        tool: Tool::Brush,
+        after: None,
+    }));
+    let other = s.toolset.set.slots().last().unwrap().id;
+    s.apply(Action::Tools(ToolsetAction::Select(other)));
+    import(&mut s, std::slice::from_ref(&file));
+    let third = s.brushes.lib.current();
+    let (third_slot, third_tab) = group_of(&s, third);
+    assert_eq!(third_slot, other);
+    assert_eq!(third_tab.builtin, Some(Group::Imported));
+    assert_eq!(
+        group_of(&s, second).1.brushes,
+        [second],
+        "元のツールのグループのまま"
+    );
+    // 元のブラシのツールへ戻して取り込むと、そのツールの取り込みのグループの後ろへ入る
+    s.apply(Action::Tools(ToolsetAction::Select(brush)));
+    import(&mut s, &[file]);
+    let fourth = s.brushes.lib.current();
+    let (fourth_slot, fourth_tab) = group_of(&s, fourth);
+    assert_eq!((fourth_slot, fourth_tab.id), (brush, second_tab.id));
+    assert_eq!(fourth_tab.brushes, [second, fourth]);
+    // 並びは保存され、読み戻せる
+    let back = state(&dir);
+    assert!(back.toolset.problem.is_none(), "{:?}", back.toolset.problem);
+    assert_eq!(back.toolset.set, s.toolset.set);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -194,9 +286,13 @@ fn headless_an_abr_gives_several_brushes_and_a_second_import_gets_new_names() {
         names,
         ["Old set 1", "Old set 2", "Old set 1 2", "Old set 2 2"]
     );
-    // 1 つ消すと、そのブラシのファイルだけが消え、同じ画像を使うほかのブラシが残るあいだ画像は残る
+    // 並びから外しても、ファイルは残る（「＋」のウィンドウから戻せる）
     let key = imported(&s)[1].key;
     s.apply(Action::Brush(BrushAction::Delete(key)));
+    assert!(!s.toolset.set.contains(key));
+    assert_eq!((brush_files(&dir), image_files(&dir)), (4, 1));
+    // ファイルを 1 つ消すと、そのブラシのファイルだけが消え、同じ画像を使うほかのブラシが残るあいだ画像は残る
+    s.apply(Action::Brush(BrushAction::DeleteFile(key)));
     assert_eq!((brush_files(&dir), image_files(&dir)), (3, 1));
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -304,8 +400,8 @@ fn headless_files_that_cannot_be_read_say_why_in_both_languages_and_add_nothing(
     for (path, ja, en) in [
         (
             &garbage,
-            "取り込めません: broken.gbr — ",
-            "Cannot import: broken.gbr — ",
+            "「broken.gbr」を取り込めません（",
+            "Cannot import \"broken.gbr\" (",
         ),
         (
             &kpp,
@@ -344,7 +440,7 @@ fn headless_files_that_cannot_be_read_say_why_in_both_languages_and_add_nothing(
     import(&mut s, &[garbage.clone(), good]);
     assert_eq!(imported(&s).len(), 1);
     assert!(
-        s.message.contains("broken.gbr は読めません"),
+        s.message.contains("「broken.gbr」は読めません（"),
         "{}",
         s.message
     );
@@ -486,7 +582,7 @@ fn headless_a_failed_save_keeps_what_was_placed_stops_the_rest_and_says_so_in_bo
 fn headless_finishing_an_import_does_not_take_the_tool_from_a_selection_in_progress() {
     let dir = temp_dir("keeps-tool");
     let mut s = state(&dir);
-    // 多角形の選択の途中。取り込みが終わっても、道具も途中の形もそのまま。ブラシだけが取り込んだものに替わる
+    // 多角形の選択の途中。取り込みが終わっても、ツールも途中の形もそのまま。ブラシだけが取り込んだものに替わる
     s.tool = Tool::Polygon;
     s.sel.polygon.push((3.0, 4.0));
     s.sel.polygon.push((10.0, 4.0));
@@ -498,15 +594,15 @@ fn headless_finishing_an_import_does_not_take_the_tool_from_a_selection_in_progr
     let key = imported(&s)[0].key;
     assert_ne!(before, key);
     assert_eq!(s.brushes.lib.current(), key);
-    assert_eq!(s.brushes.ui.group, Group::Imported);
+    assert_eq!(s.shown_brush_group(), Some(Group::Imported));
     assert!(s.m2.brush.tip.image.is_some(), "今の設定も取り込んだ筆先");
-    // バケツなどほかの道具でも同じ
+    // バケツなどほかのツールでも同じ
     s.tool = Tool::Fill;
     let file = write(&dir, "second.gbr", &gbr_gray("Second"));
     import(&mut s, &[file]);
     assert_eq!(s.tool, Tool::Fill);
     assert_eq!(s.brushes.lib.current(), imported(&s)[1].key);
-    // ブラシ・消しゴムのときは従来どおり、ブラシに合わせて道具もブラシへ
+    // ブラシ・消しゴムのときは従来どおり、ブラシに合わせてツールもブラシへ
     s.tool = Tool::Eraser;
     let file = write(&dir, "third.gbr", &gbr_gray("Third"));
     import(&mut s, &[file]);
@@ -531,6 +627,7 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
     assert!(s.is_brush_importing());
     for action in [
         BrushAction::Delete(old),
+        BrushAction::DeleteFile(old),
         BrushAction::Add,
         BrushAction::Duplicate(old),
         BrushAction::Register(old),
@@ -550,10 +647,12 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
     s.lang = Lang::En;
     s.apply(Action::Brush(BrushAction::Delete(old)));
     assert!(s.message.contains("Importing brushes"), "{}", s.message);
-    // 取消のあと（仕事が無くなれば）、また消せる
+    // 取消のあと（仕事が無くなれば）、また消せる（並びから外す・ファイルを消す）
     s.apply(Action::Brush(BrushAction::ImportCancel));
     finish(&mut s);
     s.apply(Action::Brush(BrushAction::Delete(old)));
+    assert!(!s.toolset.set.contains(old));
+    s.apply(Action::Brush(BrushAction::DeleteFile(old)));
     assert!(s.brushes.lib.entry(old).is_none());
     assert_eq!(brush_files(&dir), 1);
     std::fs::remove_dir_all(dir).unwrap();
@@ -562,15 +661,15 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
 #[test]
 fn headless_a_brush_order_that_cannot_be_saved_is_reported_after_the_import() {
     for (lang, expect) in [
-        (Lang::Ja, "ブラシの並びを保存できません"),
-        (Lang::En, "Cannot save the brush order"),
+        (Lang::Ja, "ツールの並びを保存できません"),
+        (Lang::En, "Cannot save the tool layout"),
     ] {
         let dir = temp_dir("order-fails");
         let file = write(&dir, "chalk.gbr", &gbr_gray("Chalk"));
         let mut s = state(&dir);
         s.lang = lang;
-        // 並びのファイルの場所をフォルダで塞ぐ（置換できない）。ブラシのファイルは置ける
-        std::fs::create_dir_all(dir.join("brushes/order.conf")).unwrap();
+        // ツールの並びのファイルの場所をフォルダで塞ぐ（置換できない）。ブラシのファイルは置ける
+        std::fs::create_dir_all(dir.join("tools.json")).unwrap();
         import(&mut s, &[file]);
         assert_eq!(imported(&s).len(), 1);
         assert_eq!(brush_files(&dir), 1);
@@ -590,9 +689,7 @@ fn headless_the_number_of_brushes_stops_the_import_and_says_so() {
     let dir = temp_dir("cap");
     let file = write(&dir, "old.abr", &abr_v1());
     let mut s = AppState::new(64, 64);
-    for _ in 0..MAX_USER_BRUSHES - 1 {
-        s.apply(Action::Brush(BrushAction::Add));
-    }
+    add_many(&mut s, MAX_USER_BRUSHES - 1);
     import(&mut s, std::slice::from_ref(&file));
     assert_eq!(imported(&s).len(), 1, "あと 1 個だけ入る");
     assert!(
@@ -676,8 +773,8 @@ fn headless_a_pat_adds_its_patterns_to_the_texture_choices_and_they_survive_a_re
             .collect::<Vec<_>>(),
         ["Paper A", "Paper B"]
     );
-    // 模様のブラシを消すと、その模様は選びから消える
-    s.apply(Action::Brush(BrushAction::Delete(a.key)));
+    // 模様のブラシのファイルを消すと、その模様は選びから消える
+    s.apply(Action::Brush(BrushAction::DeleteFile(a.key)));
     assert_eq!(&labels(&s)[builtin.len()..], ["Paper B"]);
     assert_eq!(image_files(&dir), 1, "A の画像のファイルも消える");
     std::fs::remove_dir_all(dir).unwrap();
@@ -860,7 +957,8 @@ fn taper_sut(name: &str, taper_in: f64, taper_out: f64, level: i64) -> Vec<u8> {
 }
 
 #[test]
-fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_while_it_is_selected() {
+fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_while_it_is_selected(
+) {
     use yolu_app::engine::StrokeAssist;
     let dir = temp_dir("assist");
     let first = write(&dir, "first.sut", &taper_sut("First", 20.0, 30.0, 8));
@@ -881,7 +979,11 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
     assert_eq!(list[0].baseline.assist, StrokeAssist::default());
     let carried = |e: &Entry| e.assist.expect("入り抜きを持つ");
     assert_eq!(
-        (carried(&list[0]).taper_in, carried(&list[0]).taper_out, carried(&list[0]).stabilizer),
+        (
+            carried(&list[0]).taper_in,
+            carried(&list[0]).taper_out,
+            carried(&list[0]).stabilizer
+        ),
         (20.0, 30.0, 8.0)
     );
     assert_eq!(carried(&list[1]).taper_in, 50.0);
@@ -900,7 +1002,10 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
     assert!(!s.brush_is_modified(list[0].key));
     // 持つブラシから持つブラシへ: 値が替わり、描き手の設定は覚えたまま
     s.apply(Action::Brush(BrushAction::Select(list[1].key)));
-    assert_eq!((s.m2.brush.assist.taper_in, s.m2.brush.assist.stabilizer), (50.0, 0.0));
+    assert_eq!(
+        (s.m2.brush.assist.taper_in, s.m2.brush.assist.stabilizer),
+        (50.0, 0.0)
+    );
     assert_eq!(s.brushes.drawer_assist, Some(drawer));
     // 持たないブラシへ替えると、描き手の設定へ戻る
     s.apply(Action::Brush(BrushAction::Select(BrushKey::Builtin(
@@ -925,32 +1030,79 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
     s.m2.brush.assist.taper_out = 31.0;
     s.apply(Action::Brush(BrushAction::Register(list[0].key)));
     assert!(!s.brush_is_modified(list[0].key));
-    assert_eq!(s.brushes.lib.entry(list[0].key).unwrap().assist.map(|a| a.taper_out), Some(31.0));
-    assert_eq!(state(&dir).brushes.lib.entry(list[0].key).unwrap().assist.map(|a| a.taper_out), Some(31.0));
+    assert_eq!(
+        s.brushes
+            .lib
+            .entry(list[0].key)
+            .unwrap()
+            .assist
+            .map(|a| a.taper_out),
+        Some(31.0)
+    );
+    assert_eq!(
+        state(&dir)
+            .brushes
+            .lib
+            .entry(list[0].key)
+            .unwrap()
+            .assist
+            .map(|a| a.taper_out),
+        Some(31.0)
+    );
     s.m2.brush.assist.taper_out = 30.0;
     s.apply(Action::Brush(BrushAction::Register(list[0].key)));
-    assert_eq!(s.brushes.lib.entry(list[0].key).unwrap().assist.map(|a| a.taper_out), Some(30.0));
+    assert_eq!(
+        s.brushes
+            .lib
+            .entry(list[0].key)
+            .unwrap()
+            .assist
+            .map(|a| a.taper_out),
+        Some(30.0)
+    );
     s.m2.brush.assist.taper_in = 99.0;
     // 複製は持つ値を引き継ぐ（今のブラシからの複製は今の値）
     s.apply(Action::Brush(BrushAction::Duplicate(list[0].key)));
-    let copy = s.brushes.lib.entry(s.brushes.lib.current()).unwrap().clone();
+    let copy = s
+        .brushes
+        .lib
+        .entry(s.brushes.lib.current())
+        .unwrap()
+        .clone();
     assert_eq!(copy.assist.map(|a| a.taper_in), Some(99.0));
     // 今の設定からの追加も、持つブラシの上なら今の値を持つ
     s.m2.brush.assist.taper_out = 5.0;
     s.apply(Action::Brush(BrushAction::Add));
-    let added = s.brushes.lib.entry(s.brushes.lib.current()).unwrap().clone();
-    assert_eq!(added.assist.map(|a| (a.taper_in, a.taper_out)), Some((99.0, 5.0)));
+    let added = s
+        .brushes
+        .lib
+        .entry(s.brushes.lib.current())
+        .unwrap()
+        .clone();
+    assert_eq!(
+        added.assist.map(|a| (a.taper_in, a.taper_out)),
+        Some((99.0, 5.0))
+    );
     // 持たないブラシからの追加は持たない
     s.apply(Action::Brush(BrushAction::Select(BrushKey::Builtin(
         yolu_app::brushes::builtin::STANDARD,
     ))));
     s.apply(Action::Brush(BrushAction::Add));
-    let plain = s.brushes.lib.entry(s.brushes.lib.current()).unwrap().clone();
+    let plain = s
+        .brushes
+        .lib
+        .entry(s.brushes.lib.current())
+        .unwrap()
+        .clone();
     assert_eq!(plain.assist, None);
     assert_eq!(s.m2.brush.assist, drawer, "描き手の設定は変わらない");
     // 保存して読み戻しても、持つ値は同じ（持たないブラシは持たない）
     let back = state(&dir);
-    assert!(back.brushes.problems.is_empty(), "{:?}", back.brushes.problems);
+    assert!(
+        back.brushes.problems.is_empty(),
+        "{:?}",
+        back.brushes.problems
+    );
     let key = |e: &Entry| e.key;
     let find = |s: &AppState, k: BrushKey| s.brushes.lib.entry(k).unwrap().assist;
     assert_eq!(find(&back, key(&list[0])), list[0].assist);
@@ -972,13 +1124,26 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
                 .to_owned()
         })
         .collect();
-    assert_eq!(versions.iter().filter(|v| *v == "yolupainter-brush 4").count(), 4);
-    assert_eq!(versions.iter().filter(|v| *v == "yolupainter-brush 1").count(), 1);
+    assert_eq!(
+        versions
+            .iter()
+            .filter(|v| *v == "yolupainter-brush 4")
+            .count(),
+        4
+    );
+    assert_eq!(
+        versions
+            .iter()
+            .filter(|v| *v == "yolupainter-brush 1")
+            .count(),
+        1
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_setting_while_another_is_selected() {
+fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_setting_while_another_is_selected(
+) {
     use yolu_app::engine::StrokeAssist;
     let dir = temp_dir("assist-sample");
     let first = write(&dir, "first.sut", &taper_sut("First", 1130.0, 14.0, 6));
@@ -997,7 +1162,8 @@ fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_se
     // 取り込み終わりに替わった持つブラシを選んでいる間: 今の設定には持つ値が重なっている
     assert_eq!(s.brushes.lib.current(), list[0].key);
     assert_eq!(s.m2.brush.assist.taper_in, 1130.0);
-    let row = |s: &AppState, key: BrushKey| s.brush_row_assist(s.brushes.lib.entry(key).unwrap().assist);
+    let row =
+        |s: &AppState, key: BrushKey| s.brush_row_assist(s.brushes.lib.entry(key).unwrap().assist);
     // 持たないブラシの見本は、重なった値ではなく描き手の設定
     assert_eq!(row(&s, plain), drawer);
     // 持つブラシの見本は、それぞれの持つ値（曲線の切り替えだけは今の値）
@@ -1013,7 +1179,13 @@ fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_se
     assert_eq!(row(&s, plain).taper_in, 3.0);
     // 持たないブラシを選べば、今の設定が描き手の設定そのもの
     s.apply(Action::Brush(BrushAction::Select(plain)));
-    assert_eq!(row(&s, plain), StrokeAssist { curve: true, ..drawer });
+    assert_eq!(
+        row(&s, plain),
+        StrokeAssist {
+            curve: true,
+            ..drawer
+        }
+    );
     assert_eq!(row(&s, list[0].key).taper_in, 1130.0);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -1035,7 +1207,12 @@ fn headless_what_a_sut_carried_over_is_listed_apart_from_what_was_left_out() {
                 ("BrushRotation", real(15.0)),
                 (
                     "BrushSizeEffector",
-                    blob(effector_slots(0x30, 0, Some(&[(0.0, 0.0), (1.0, 1.0)]), Some(&fall))),
+                    blob(effector_slots(
+                        0x30,
+                        0,
+                        Some(&[(0.0, 0.0), (1.0, 1.0)]),
+                        Some(&fall),
+                    )),
                 ),
                 ("BrushUseSpray", int(1)),
             ],
@@ -1048,7 +1225,12 @@ fn headless_what_a_sut_carried_over_is_listed_apart_from_what_was_left_out() {
     let carried = e.import.as_ref().unwrap().mapped.clone();
     assert_eq!(
         carried,
-        [SutMapped::Pressure, SutMapped::Tilt, SutMapped::StartEnd, SutMapped::TipAngle]
+        [
+            SutMapped::Pressure,
+            SutMapped::Tilt,
+            SutMapped::StartEnd,
+            SutMapped::TipAngle
+        ]
     );
     // ツールチップには、取り込んだときに写した項目と表せなかった項目がそのまま並ぶ
     let tip = yolu_app::brushes::gaps::row_tooltip(Lang::En, "Mixed", false, e.import.as_ref());
@@ -1058,11 +1240,18 @@ fn headless_what_a_sut_carried_over_is_listed_apart_from_what_was_left_out() {
     );
     assert!(tip.contains("Not represented: "), "{tip}");
     let tip_ja = yolu_app::brushes::gaps::row_tooltip(Lang::Ja, "Mixed", true, e.import.as_ref());
-    assert!(tip_ja.starts_with("Mixed（変更あり）\n") && tip_ja.contains("写した項目: 筆圧、傾き、入り抜き、筆先の角度"), "{tip_ja}");
+    assert!(
+        tip_ja.starts_with("Mixed（変更あり）\n")
+            && tip_ja.contains("写した項目: 筆圧、傾き、入り抜き、筆先の角度"),
+        "{tip_ja}"
+    );
     // 近似したものと表せなかったものは、写した項目とは別に「表せなかった項目」に出る
     let gaps = &e.import.as_ref().unwrap().gaps;
     assert!(gaps.contains(&Gap::StartEndDetail) && gaps.contains(&Gap::Spray));
-    assert!(!gaps.contains(&Gap::StartEnd), "写せた入り抜きを未対応とは言わない");
+    assert!(
+        !gaps.contains(&Gap::StartEnd),
+        "写せた入り抜きを未対応とは言わない"
+    );
     // 保存して読み戻しても、同じ項目が出る
     let back = state(&dir);
     let again = &imported(&back)[0];
@@ -1089,24 +1278,47 @@ fn headless_the_carried_over_list_is_what_the_file_gave_not_what_the_brush_has_n
     s.m2.brush.tip.angle = 30.0;
     s.apply(Action::Brush(BrushAction::Register(key)));
     let e = s.brushes.lib.entry(key).unwrap().clone();
-    assert!(e.baseline.controls.tilt_size && e.baseline.base.pressure_flow && e.baseline.tip.angle == 30.0);
+    assert!(
+        e.baseline.controls.tilt_size
+            && e.baseline.base.pressure_flow
+            && e.baseline.tip.angle == 30.0
+    );
     // ファイルから写していない項目は、写した項目に並ばない（ブラシの今の設定から導かない）
     assert_eq!(e.import.as_ref().unwrap().mapped, from_file);
     let tip = yolu_app::brushes::gaps::row_tooltip(Lang::En, "Taper", false, e.import.as_ref());
-    assert!(tip.contains("Carried over: start and end, stabilization"), "{tip}");
-    assert!(!tip.contains("pen tilt") && !tip.contains("pen pressure") && !tip.contains("tip angle"), "{tip}");
+    assert!(
+        tip.contains("Carried over: start and end, stabilization"),
+        "{tip}"
+    );
+    assert!(
+        !tip.contains("pen tilt") && !tip.contains("pen pressure") && !tip.contains("tip angle"),
+        "{tip}"
+    );
     // 保存して読み戻しても同じ。複製は引き継ぐ
     let back = state(&dir);
     assert_eq!(back.brushes.lib.entry(key).unwrap().import, e.import);
     s.apply(Action::Brush(BrushAction::Duplicate(key)));
-    let copy = s.brushes.lib.entry(s.brushes.lib.current()).unwrap().clone();
+    let copy = s
+        .brushes
+        .lib
+        .entry(s.brushes.lib.current())
+        .unwrap()
+        .clone();
     assert_eq!(copy.import.as_ref().unwrap().mapped, from_file);
     // 今の設定からの追加は、取り込んだブラシではないので何も持たない
     s.apply(Action::Brush(BrushAction::Add));
-    let added = s.brushes.lib.entry(s.brushes.lib.current()).unwrap().clone();
+    let added = s
+        .brushes
+        .lib
+        .entry(s.brushes.lib.current())
+        .unwrap()
+        .clone();
     assert_eq!(added.import, None);
     // 取り込みの印の無い行は、名前だけ
-    assert_eq!(yolu_app::brushes::gaps::row_tooltip(Lang::En, "Plain", false, None), "Plain");
+    assert_eq!(
+        yolu_app::brushes::gaps::row_tooltip(Lang::En, "Plain", false, None),
+        "Plain"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1162,7 +1374,12 @@ fn tree(dir: &Path) -> Vec<(String, u64, Option<std::time::SystemTime>)> {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
             let meta = entry.metadata().unwrap();
             out.push((
-                entry.path().strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                entry
+                    .path()
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
                 meta.len(),
                 meta.modified().ok(),
             ));
@@ -1215,12 +1432,20 @@ fn headless_the_clip_studio_window_lists_what_it_finds_and_imports_only_the_sele
         RowState::Ready(p) => {
             let side = p.preview.side as usize;
             assert_eq!(p.preview.alpha.len(), side * side);
-            assert_eq!(p.preview.alpha[side / 4 * side + side / 4], 255, "左上の暗い画素");
+            assert_eq!(
+                p.preview.alpha[side / 4 * side + side / 4],
+                255,
+                "左上の暗い画素"
+            );
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!((listing.ready(), listing.selected()), (2, 0), "初めは何も選んでいない");
-    // 何も選ばずに取り込んでも何もしない・窓は開いたまま
+    assert_eq!(
+        (listing.ready(), listing.selected()),
+        (2, 0),
+        "初めは何も選んでいない"
+    );
+    // 何も選ばずに取り込んでも何もしない・ウィンドウは開いたまま
     s.apply(Action::Brush(BrushAction::ClipStudioImport));
     assert!(s.brushes.csp.open && !s.is_brush_importing());
     // 読めなかった行は選べない。全部選ぶも読めた行だけ
@@ -1230,7 +1455,7 @@ fn headless_the_clip_studio_window_lists_what_it_finds_and_imports_only_the_sele
     let l = s.brushes.csp.listing.as_ref().unwrap();
     assert_eq!((l.selected(), l.rows[2].selected), (2, false));
     s.apply(Action::Brush(BrushAction::ClipStudioSelectAll(false)));
-    // 選んだ行だけを取り込む（いつもの .sut の取り込みの道）。窓は閉じる
+    // 選んだ行だけを取り込む（いつもの .sut の取り込みの道）。ウィンドウは閉じる
     s.apply(Action::Brush(BrushAction::ClipStudioToggle(1)));
     s.apply(Action::Brush(BrushAction::ClipStudioImport));
     assert!(!s.brushes.csp.open && s.brushes.csp.listing.is_none());
@@ -1238,7 +1463,10 @@ fn headless_the_clip_studio_window_lists_what_it_finds_and_imports_only_the_sele
     let list = imported(&s);
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].name, "Ink");
-    assert_eq!(list[0].assist.map(|a| (a.taper_in, a.taper_out)), Some((20.0, 20.0)));
+    assert_eq!(
+        list[0].assist.map(|a| (a.taper_in, a.taper_out)),
+        Some((20.0, 20.0))
+    );
     assert!(
         s.message.starts_with("ブラシを 1 個取り込みました"),
         "{}",
@@ -1263,7 +1491,7 @@ fn headless_when_nothing_is_found_the_window_says_why_and_a_folder_can_be_chosen
     finish_csp(&mut s);
     let l = s.brushes.csp.listing.as_ref().unwrap();
     assert_eq!((l.rows.len(), l.missing), (0, Some(Missing::NoFolder)));
-    assert!(s.brushes.csp.open, "窓は開いたまま");
+    assert!(s.brushes.csp.open, "ウィンドウは開いたまま");
     // 場所はあるが .sut が無い
     std::fs::create_dir_all(dir.join("AppData/Roaming/CELSYSUserData/CELSYS")).unwrap();
     s.apply(Action::Brush(BrushAction::ClipStudioRescan));
@@ -1274,7 +1502,10 @@ fn headless_when_nothing_is_found_the_window_says_why_and_a_folder_can_be_chosen
     );
     // 手で選んだフォルダ（CLIP STUDIO の外でもよい）の下を同じ探し方で一覧にする。探し直しも、手で選んだフォルダを探す
     let other = temp_dir("csp-picked");
-    let picked = celsys_home(&other).appdata.unwrap().join("CELSYSUserData/CELSYS");
+    let picked = celsys_home(&other)
+        .appdata
+        .unwrap()
+        .join("CELSYSUserData/CELSYS");
     s.apply(Action::Brush(BrushAction::ClipStudioFolder(picked.clone())));
     finish_csp(&mut s);
     assert_eq!(s.brushes.csp.folder.as_deref(), Some(picked.as_path()));
@@ -1290,7 +1521,7 @@ fn headless_when_nothing_is_found_the_window_says_why_and_a_folder_can_be_chosen
         s.brushes.csp.listing.as_ref().unwrap().missing,
         Some(Missing::NoFolder)
     );
-    // 窓を開き直すと、既定の場所へ戻る
+    // ウィンドウを開き直すと、既定の場所へ戻る
     s.apply(Action::Brush(BrushAction::ClipStudioClose));
     s.apply(Action::Brush(BrushAction::ClipStudioOpen));
     assert_eq!(s.brushes.csp.folder, None);
@@ -1313,11 +1544,17 @@ fn headless_closing_the_window_or_searching_again_cancels_the_running_search() {
     s.apply(Action::Brush(BrushAction::ClipStudioOpen));
     s.apply(Action::Brush(BrushAction::ClipStudioRescan));
     finish_csp(&mut s);
-    assert_eq!(s.brushes.csp.listing.as_ref().unwrap().rows.len(), 3, "新しい探しの結果だけが残る");
+    assert_eq!(
+        s.brushes.csp.listing.as_ref().unwrap().rows.len(),
+        3,
+        "新しい探しの結果だけが残る"
+    );
     // 取り込みが走っている間は、取り込めない
     s.apply(Action::Brush(BrushAction::ClipStudioSelectAll(true)));
     s.brushes.import.park_next = true;
-    s.apply(Action::Brush(BrushAction::Import(vec![dir.join("AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen/b_ink.sut")])));
+    s.apply(Action::Brush(BrushAction::Import(vec![dir.join(
+        "AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen/b_ink.sut",
+    )])));
     s.apply(Action::Brush(BrushAction::ClipStudioImport));
     assert!(s.brushes.csp.open, "取り込み中は閉じず、何も足さない");
     s.apply(Action::Brush(BrushAction::ImportCancel));

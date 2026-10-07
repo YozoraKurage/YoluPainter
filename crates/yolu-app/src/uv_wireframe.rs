@@ -1,5 +1,6 @@
-//! 文書とは独立した UV の辺と表示座標のキャッシュ。
-mod color;
+//! 文書とは独立した UV の辺と表示座標のキャッシュ。重なった UV の図は `overlap`。
+pub mod color;
+pub mod overlap;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +20,8 @@ use crate::{
 
 pub const MAX_EDGES: usize = 1 << 20;
 pub const DEFAULT_COLOR: [u8; 4] = [89, 217, 255, 153];
+/// 重なった UV の既定の色。
+pub const DEFAULT_OVERLAP_COLOR: [u8; 4] = overlap::DEFAULT_COLOR;
 
 pub struct Wireframe {
     /// 辺を作った（または同じ辺になると確かめた）幾何。ポーズで世代が替わるたびに持ち替える。
@@ -202,6 +205,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView) {
         app.uv_wireframe
             .idle(target.as_ref().map(|(model, _)| &model.geometry));
     }
+    // 重なった UV（ワイヤーフレームとは別の入切。表示のメニュー）
+    if target.is_some() {
+        let painter = ui.painter_at(ui.max_rect());
+        overlap::paint(&painter, app, view);
+    }
     let has = app.view3d.model.is_some();
     let tip = tip(app);
     // 状態アイコンの列の下。独立した Area でキャンバスへの押下の伝播を止める。
@@ -240,5 +248,12 @@ pub fn save_settings(text: &mut String, s: &crate::settings::Settings) {
     if s.uv_wireframe_color != DEFAULT_COLOR {
         let [r, g, b, a] = s.uv_wireframe_color;
         text.push_str(&format!("uv_wireframe_color={r},{g},{b},{a}\n"));
+    }
+    if !s.uv_overlap {
+        text.push_str("uv_overlap=off\n");
+    }
+    if s.uv_overlap_color != DEFAULT_OVERLAP_COLOR {
+        let [r, g, b, a] = s.uv_overlap_color;
+        text.push_str(&format!("uv_overlap_color={r},{g},{b},{a}\n"));
     }
 }

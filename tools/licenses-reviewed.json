@@ -119,19 +119,6 @@
         }
       ]
     },
-    "aho-corasick@1.1.5": {
-      "declared": "Unlicense OR MIT",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
-        }
-      ]
-    },
     "allocator-api2@0.2.21": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -396,6 +383,19 @@
         }
       ]
     },
+    "base64@0.23.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "ab499c75a0f0da8e0fe83bf9ba3a27e5c39705310f07107c6c66b69958d2401c"
+        }
+      ]
+    },
     "bevy_mikktspace@1.0.0": {
       "declared": "Zlib AND (MIT OR Apache-2.0)",
       "selected": [
@@ -639,6 +639,19 @@
         }
       ]
     },
+    "chacha20@0.10.2": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0"
+        }
+      ]
+    },
     "chrono@0.4.45": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -717,6 +730,19 @@
         }
       ]
     },
+    "cpufeatures@0.3.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa"
+        }
+      ]
+    },
     "crc32fast@1.5.2": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -779,19 +805,6 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897"
-        }
-      ]
-    },
-    "csbindgen@1.9.8": {
-      "declared": "MIT",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "url": "https://raw.githubusercontent.com/Cysharp/csbindgen/24bcf088fd6ae06a61f7c929f3fe203cdc055482/LICENSE",
-          "sha256": "691fea33753bb047e3d6380e4ec078275d6732c13be736fb0a248efd464dd6b8"
         }
       ]
     },
@@ -870,19 +883,6 @@
         {
           "path": "LICENSE.txt",
           "sha256": "10e5daea68c3ab7da6468ea51860e9d4ac87ea6a9a2d34127beff17b7193b618"
-        }
-      ]
-    },
-    "doctest-file@1.1.1": {
-      "declared": "0BSD",
-      "selected": [
-        "0BSD"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE.txt",
-          "sha256": "00515b2bb13879db00e9483244b1bb80d7af9237c58e4de30af52a761d8d2524"
         }
       ]
     },
@@ -1685,6 +1685,97 @@
         }
       ]
     },
+    "http-body-util@0.1.5": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab"
+        }
+      ]
+    },
+    "http-body@1.1.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab"
+        }
+      ]
+    },
+    "http@1.5.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "dc91f8200e4b2a1f9261035d4c18c33c246911a6c0f7b543d75347e61b249cff"
+        }
+      ]
+    },
+    "httparse@1.10.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "391a5396cec6230bfabd4ef4eb2350eb895bc5efce377a2218f5702ed020d3e3"
+        }
+      ]
+    },
+    "httpdate@1.0.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "934887691e05d69d7c86ad3f2c360980fa30c15b035e351f3c9865e99da4debc"
+        }
+      ]
+    },
+    "hyper-util@0.1.21": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "9e0a97848ea543aef745c98e84fde696a9a3e0735538f6daefdd3cb1942effc1"
+        }
+      ]
+    },
+    "hyper@1.12.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2d01890414494742ba4a509fcec8efa40f6d8be22cbd72be7cff08d6fda4ec89"
+        }
+      ]
+    },
     "image@0.25.10": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -1708,19 +1799,6 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055"
-        }
-      ]
-    },
-    "interprocess@2.4.4": {
-      "declared": "0BSD OR Apache-2.0",
-      "selected": [
-        "Apache-2.0"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-APACHE.txt",
-          "sha256": "814fc616d256859d513d7c1a1f76d5a759a6318971cfdc7f9ac934e1d85f58eb"
         }
       ]
     },
@@ -1973,6 +2051,19 @@
         {
           "path": "LICENSE-MIT.md",
           "sha256": "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d"
+        }
+      ]
+    },
+    "mio@1.2.4": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "07919255c7e04793d8ea760d6c2ce32d19f9ff02bdbdde3ce90b1e1880929a9b"
         }
       ]
     },
@@ -2435,6 +2526,40 @@
         }
       ]
     },
+    "rand@0.10.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b"
+        },
+        {
+          "path": "COPYRIGHT",
+          "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5"
+        }
+      ]
+    },
+    "rand_core@0.10.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "8b6e9feec03e7c9a5facb26855cecd31662bf989b636bcfe79521bdf8ac863f0"
+        },
+        {
+          "path": "COPYRIGHT",
+          "sha256": "92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7"
+        }
+      ]
+    },
     "range-alloc@0.1.5": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -2497,63 +2622,6 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "7b4c9a3946dfcea7967582760e963e27799e225dcf20565c8ef55324bb017427"
-        }
-      ]
-    },
-    "recvmsg@1.0.0": {
-      "declared": "0BSD",
-      "selected": [
-        "0BSD"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE.txt",
-          "sha256": "612938d4e581d578f2377fdaa2978ff9b79e2dd978f6b1ea45418af475258bbb"
-        }
-      ]
-    },
-    "regex-automata@0.4.18": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
-        }
-      ]
-    },
-    "regex-syntax@0.8.11": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT",
-        "Unicode-DFS-2016"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
-        },
-        {
-          "path": "src/unicode_tables/LICENSE-UNICODE",
-          "sha256": "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"
-        }
-      ]
-    },
-    "regex@1.13.1": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
         }
       ]
     },
@@ -2969,6 +3037,19 @@
         }
       ]
     },
+    "socket2@0.6.5": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397"
+        }
+      ]
+    },
     "spirv@0.4.0+sdk-1.4.341.0": {
       "declared": "Apache-2.0",
       "selected": [
@@ -2979,6 +3060,19 @@
         {
           "url": "https://raw.githubusercontent.com/gfx-rs/rspirv/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4/LICENSE",
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    "sse-stream@0.2.6": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "049d23c7810a0723f186a193f841378dbc307f62be89bdba21c73126b0df2c52"
         }
       ]
     },
@@ -3112,6 +3206,19 @@
         }
       ]
     },
+    "tokio-stream@0.1.19": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552"
+        }
+      ]
+    },
     "tokio-util@0.7.19": {
       "declared": "MIT",
       "selected": [
@@ -3190,6 +3297,19 @@
         }
       ]
     },
+    "tower-service@0.3.3": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "4249c8e6c5ebb85f97c77e6457c6fafc1066406eb8f1ef61e796fbdc5ff18482"
+        }
+      ]
+    },
     "tracing-attributes@0.1.31": {
       "declared": "MIT",
       "selected": [
@@ -3230,6 +3350,19 @@
         {
           "path": "LICENSE",
           "sha256": "898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1"
+        }
+      ]
+    },
+    "try-lock@0.2.5": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c816a0749cdc6bf062a5111c159723de51b2bfac66a1dac2655abd9e6b1583eb"
         }
       ]
     },
@@ -3386,6 +3519,19 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "b7e650f3fce5c53249d1cdc608b54df156a97edd636cf9d23498d0cfe7aec63e"
+        }
+      ]
+    },
+    "want@0.3.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "a65f5d0a945d267751344c95665945b90c030ea107faf5c85d518929886187da"
         }
       ]
     },
@@ -3632,19 +3778,6 @@
         {
           "path": "LICENSE.MIT",
           "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
-        }
-      ]
-    },
-    "widestring@1.2.1": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
         }
       ]
     },
@@ -4678,6 +4811,71 @@
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
         }
       ]
+    },
+    "zune-core@0.5.3": {
+      "declared": "MIT OR Apache-2.0 OR Zlib",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
+        }
+      ]
+    },
+    "zune-jpeg@0.5.15": {
+      "declared": "MIT OR Apache-2.0 OR Zlib",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
+        }
+      ]
+    },
+    "fontdb@0.24.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "59a1fdac3bd550043599bd159fd70f09a1108c2b09e3751d39b11e1ff8e51f00"
+        }
+      ]
+    },
+    "slotmap@1.1.1": {
+      "declared": "Zlib",
+      "selected": [
+        "Zlib"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6cec81441b2ab2b5090954c1fb5d0bcca81b86487b5849061fa8952d20ef67d4"
+        }
+      ]
+    },
+    "tinyvec@1.13.3": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT.md",
+          "sha256": "fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc"
+        }
+      ]
     }
   },
   "bundled": {
@@ -4807,8 +5005,16 @@
             "sha256": "25b5ce0b99ae4ecc6176c29f0fb591d2f90a0c7a1c0830802c4ccc4835662cc7"
           },
           {
+            "path": "crates/yolu-app/assets/icons/document_copy.png",
+            "sha256": "52a915b73b74a1f5222f43d540226c460662ce96036cb0c39edb669dc475db29"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/edit.png",
             "sha256": "fead6c92af84756a511877bf958ca886a0110bb561cb9ebd92c51504aaf1c161"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/error_circle.png",
+            "sha256": "aae2800b7c3c1e32445851d0555469b16f368b6651653d1875ded5db2805656f"
           },
           {
             "path": "crates/yolu-app/assets/icons/expand_less.png",
@@ -4907,8 +5113,16 @@
             "sha256": "cd980b25c0895c4495372aaa0033cd688d98e7074ba31209c06f53d6257316e3"
           },
           {
+            "path": "crates/yolu-app/assets/icons/play.png",
+            "sha256": "42250f165ece05911f33bddd9261709ee3bd331da6fbc91d31fa2905bea84941"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/quick_mask.png",
             "sha256": "854dd2943014cf17363658523d9e2d78c1bd8f247d91ee655804e957bc714ba9"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/record.png",
+            "sha256": "9be08f93f8d40ed9284cb57e5481daa72e64fb0d6f4ade3807d36db2241cc2fe"
           },
           {
             "path": "crates/yolu-app/assets/icons/restart_alt.png",
@@ -4953,6 +5167,10 @@
           {
             "path": "crates/yolu-app/assets/icons/square.png",
             "sha256": "6e922704256fc78ee14675e95e6caa9919b13212717d7f0023db792e251df773"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/stop.png",
+            "sha256": "a922a186a31d56d6f2a3b17348197c43c31d6bc58f52aa7cf10b1dac442b1d33"
           },
           {
             "path": "crates/yolu-app/assets/icons/stylus.png",
@@ -5103,12 +5321,24 @@
             "sha256": "6f9cfa6c4c6cb5c43752119d8bee8bacd8aada572855a2c9e915f32153b7fd68"
           },
           {
+            "path": "crates/yolu-app/assets/icons/tools/text.png",
+            "sha256": "ce492d9e37b67ef238d157789db1fe35726806d25381a9e0eca6fd3cca92c309"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/text_selected.png",
+            "sha256": "3049b843291c8ee083b88ab549d79e677674c830629830991b7ed5cb2215a422"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/tune.png",
             "sha256": "1df5a746ffedd24914dceab69604e42d50ea078efbea4481a46168d171f0cf4e"
           },
           {
             "path": "crates/yolu-app/assets/icons/uv_wireframe.png",
             "sha256": "0135ae5d3dabe8c3c7371518e411a4c8f571a0b90b872e64a2b3705ea1efb11c"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/video_clip.png",
+            "sha256": "f27796cfbe223f7ec5aafca001d006e40b2579ef5e633a388ba7403eceb6d28d"
           },
           {
             "path": "crates/yolu-app/assets/icons/view_in_ar.png",
@@ -5148,7 +5378,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "276b36e3106f8ff1648700373479ace150de5cf9911edd5d0247259776f70f8c"
+          "sha256": "0ed43d6b46b4248f4d7be65c344dbfe1d4ff9a432b88cb2783908dd2a5ca9f83"
         }
       },
       {
@@ -5496,12 +5726,12 @@
         "files": [
           {
             "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-            "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
+            "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-          "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
+          "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
         }
       }
     ]

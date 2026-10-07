@@ -18,7 +18,7 @@ pub(super) struct MixRegion {
 
 impl StrokeState {
     /// 打点の前に、読み元を凍結する: 色の混ぜは下地を、効果のブラシは読み元を（[`StrokeState::prepare_effect_dab`]）。
-    /// `canvas_shift` は伸ばすが画布の中の打点の動き（前の打点との差）を読む位置のずれに使うか（2D の 1 つながりのダブ。3D の面のダブと
+    /// `canvas_shift` は伸ばすがキャンバスの中の打点の動き（前の打点との差）を読む位置のずれに使うか（2D の 1 つながりのダブ。3D の面のダブと
     /// 対称のダブは [`StrokeState::begin_mix_regions`] で動きの向きなしに読む）。
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_dab(
@@ -134,7 +134,7 @@ impl StrokeState {
         }
     }
 
-    /// 画素の範囲 (xr, yr) の下地を読むために凍結する枠を作る（伸ばすは、ずらした先と平均の箱の分だけ広げる）。画布の外へ出ると空
+    /// 画素の範囲 (xr, yr) の下地を読むために凍結する枠を作る（伸ばすは、ずらした先と平均の箱の分だけ広げる）。キャンバスの外へ出ると空
     /// （None）。枠のバイトがストロークの予算を超えたら断る。
     fn freeze_mix_box(
         &mut self,
@@ -150,7 +150,7 @@ impl StrokeState {
         };
         let (w, h) = (self.width, self.height);
         let (x0, x1, y0, y1) = if mode == MixMode::Smear {
-            // 画素の読みの中心は画布の中へ収める（端の外は端の画素）ので、収めた範囲に箱の半径を足す
+            // 画素の読みの中心はキャンバスの中へ収める（端の外は端の画素）ので、収めた範囲に箱の半径を足す
             (
                 (xr.0 + shift.0).clamp(0, w - 1) - blur,
                 (xr.1 + shift.0).clamp(0, w - 1) + blur,
@@ -194,19 +194,19 @@ impl StrokeState {
             (y0, y1),
             composite,
             mode == MixMode::Mix,
-        );
+        )?;
         if blur > 0 {
             frame.build_integral();
         }
         Ok(Some(frame))
     }
 
-    /// 面のダブ（3D）と対称のダブ（2D）の色の混ぜの打点の前の仕事: 前の打点を荷へ畳み、今の打点の値を決め、画素 `cells`（画布の中の
+    /// 面のダブ（3D）と対称のダブ（2D）の色の混ぜの打点の前の仕事: 前の打点を荷へ畳み、今の打点の値を決め、画素 `cells`（キャンバスの中の
     /// 画素の座標）を、下地を読む範囲が離れた塊へ分けて返す。動きの向きは使わない（面のダブの中心は UV の継ぎ目で飛び、対称の写しは
     /// 動きの向きが写しごとに違う）ので、伸ばすは同じ画素の周りの箱だけを読む。
     ///
-    /// 塊ごとに枠を凍結して順に塗る（[`StrokeState::freeze_mix_region`]）。1 つの打点の画素が UV の離れた島や対称の離れた写しにまたがるとき、
-    /// 外接の箱を丸ごと枠にすると、画布の大半を読んで予算を食う。塊は、画素を含むタイルが（平均の箱の半径が届く分まで）つながるものを 1 つに
+    /// 塊ごとに枠を凍結して順に塗る（[`StrokeState::freeze_mix_region`]）。1 つの打点の画素が UV の離れたアイランドや対称の離れた写しにまたがるとき、
+    /// 外接の箱を丸ごと枠にすると、キャンバスの大半を読んで予算を食う。塊は、画素を含むタイルが（平均の箱の半径が届く分まで）つながるものを 1 つに
     /// するので、別の塊の画素は、ある塊の読む範囲に入らない。だから 1 塊ずつ凍結して塗っても、全部をまとめて凍結してから塗ったのと同じ画素
     /// になる。1 つにつながるダブは、今までと同じ 1 つの枠。
     pub(super) fn begin_mix_regions(
@@ -218,7 +218,7 @@ impl StrokeState {
         self.effect.scratch = 0;
         self.effect.started = true;
         let regions = self.split_mix_regions(cells);
-        // 平均の箱の大きさは、一番大きい塊の大きさから（離れた島の間の距離は入れない）
+        // 平均の箱の大きさは、一番大きい塊の大きさから（離れたアイランドの間の距離は入れない）
         let size = regions
             .iter()
             .map(|r| (r.xr.1 - r.xr.0 + 1).max(r.yr.1 - r.yr.0 + 1))
@@ -350,7 +350,7 @@ impl StrokeState {
         self.mix_run.dab = Some(self.mix_dab(pressure, (0, 0), 0));
     }
 
-    /// 下地を枠へ読む: 見えている層の重なり（凍結した合成の参照元があれば）か、今の層。今の層は、`from_start` ならストロークを始める前の
+    /// 下地を枠へ読む: 見えているレイヤーの重なり（凍結した合成の参照元があれば）か、今のレイヤー。今のレイヤーは、`from_start` ならストロークを始める前の
     /// 画素（もう手を付けたタイルは巻き戻しの写しを読む）、そうでなければ今の面（このストロークが置いた分を含む）。
     fn read_ground(
         &self,
@@ -360,7 +360,7 @@ impl StrokeState {
         yr: (i64, i64),
         composite: bool,
         from_start: bool,
-    ) {
+    ) -> Result<(), CoreError> {
         let ts = surface.tile_size() as i64;
         let source = if composite {
             self.source.as_ref()
@@ -380,14 +380,14 @@ impl StrokeState {
                     source.read_row(py, px, out);
                 } else {
                     let coord = TileCoord::new(tx as u32, ty as u32);
-                    let tile: Option<&Tile> = match (from_start, self.tiles.get(&coord)) {
-                        (true, Some(held)) => held.before.as_ref(),
-                        _ => surface.tile(coord),
+                    let tile: Option<Pixels> = match (from_start, self.tiles.get(&coord)) {
+                        (true, Some(held)) => held.before_px.clone(),
+                        _ => surface.read(coord)?,
                     };
-                    match tile {
+                    match &tile {
                         None => {} // 枠は透明で始まる
-                        Some(Tile::Uniform(c)) => out.fill(*c),
-                        Some(Tile::Data(d)) => {
+                        Some(Pixels::Uniform(c)) => out.fill(*c),
+                        Some(Pixels::Data(d)) => {
                             let start = (row + (px - tx * ts) as usize) * 4;
                             for (o, p) in out
                                 .iter_mut()
@@ -401,5 +401,6 @@ impl StrokeState {
                 px = end + 1;
             }
         }
+        Ok(())
     }
 }

@@ -11,19 +11,19 @@
 //! - 今のポーズは、プロジェクトのモデル（FBX）のものだけ `.ylp` の根の `pose.json` に残り、同じモデルを開くと戻る（`stored`。形式は上げない状態の
 //!   エントリ）。変えると「変更あり」の印が付く（`sync_modified`）。名前を付けてモデルをまたいで使うのは個人の設定のフォルダのプリセット（`presets`）。
 //! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`、ポーズのプリセット（保存・当てる・左右反転）は
-//!   `presets`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・プリセットを当てるのは 1 つの取り消しの段、
-//!   隠すのは見せ方の状態で取り消しの対象ではない）。
+//!   `presets`、FBX のテイクとフレームからポーズにするのは `takes`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・
+//!   プリセットやテイクを当てるのは 1 つの取り消しの段、隠すのは見せ方の状態で取り消しの対象ではない）。
 
 pub mod edit;
 pub mod hide;
 pub mod loads;
 pub mod presets;
 pub mod stored;
+pub mod takes;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,7 +37,9 @@ use loads::LoadProgress;
 
 use super::model::{ViewError, ViewModel};
 use super::View3dState;
+use crate::jobs::{JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::notice::{Kind, Source};
 use crate::state::{AppState, DialogRequest};
 
 /// 取り消しの並びの長さ（1 つはポーズの写し。骨 500・BlendShape 200 で約 20 KiB）。
@@ -46,7 +48,7 @@ pub const MAX_POSE_HISTORY: usize = 256;
 /// ポーズの操作（メニュー・ボタン・キーから）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoseAction {
-    /// ファイルを選ぶ窓を頼む（選ばれたら FBX を開く）。
+    /// ファイルを選ぶウィンドウを頼む（選ばれたら FBX を開く）。
     OpenFbx,
     /// 読んでいる FBX を取り消す（今のモデルは前のまま）。
     CancelLoad,
@@ -58,6 +60,10 @@ pub enum PoseAction {
     Reset,
     Undo,
     Redo,
+    /// 欄でテイクを選ぶ（テイクを持つ FBX の番号・その中のテイクの番号）。
+    ChooseTake(usize, usize),
+    /// 選んでいるテイクとフレームのポーズにする（裏で求め、終わったら取り消しの 1 段として当てる）。
+    ApplyTake,
 }
 
 /// 組み直しの時間（ミリ秒。状態の表示と試験用）。
@@ -94,8 +100,11 @@ pub struct PoseSession {
     pub hide: hide::HideState,
     /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
     pub preset_notes: Vec<presets::Skipped>,
-    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。このセッションが始まってから）。「変更あり」の印と復旧の書き置きの鍵。
+    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。欄で選ぶテイクとフレームを変えたのも数える。このセッションが始まってから）。
+    /// 「変更あり」の印と復旧の書き置きの鍵。
     pub edits: u64,
+    /// FBX のテイク（一覧・欄の選び・求めている途中の仕事）。
+    pub takes: takes::TakeState,
 }
 
 impl PoseSession {
@@ -129,21 +138,15 @@ struct Loaded {
     rest: SurfaceGeometry,
     meshes: Vec<ModelMesh>,
     warnings: Vec<String>,
+    takes: Vec<takes::TakeSource>,
 }
 
 struct Loading {
     name: String,
-    rx: Receiver<Result<Loaded, ViewError>>,
-    cancel: Arc<AtomicBool>,
+    /// 受け口を捨てたら、読み込みも止める（結果の行き先が無い）。
+    worker: Worker<Result<Loaded, ViewError>>,
     progress: Arc<LoadProgress>,
     revision: u32,
-}
-
-impl Drop for Loading {
-    /// 受け口を捨てたら、読み込みも止める（結果の行き先が無い）。
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
 }
 
 /// 3D ビューのポーズの状態（`View3dState::pose`）。
@@ -179,6 +182,16 @@ pub struct PoseEditor {
     pub loads: loads::Loads,
 }
 
+/// このビューが始めた FBX の読み込み（終わる前に止める。読むだけの仕事なので、閉じる前の確かめには入れない）。登録した旗は、結果の
+/// 受け口を捨てたあとのスレッドの分も持つ。
+pub(crate) const JOB: JobSpec = JobSpec {
+    cancel: Some(|app| {
+        app.view3d.pose.cancel_loading();
+        app.view3d.pose.cancel_loads();
+    }),
+    ..JobSpec::new("fbx", |app| app.view3d.pose.loads_running() > 0)
+};
+
 impl PoseEditor {
     pub fn is_loading(&self) -> bool {
         self.loading.is_some()
@@ -195,7 +208,7 @@ impl PoseEditor {
     pub fn cancel_loading(&mut self) {
         self.loading = None;
     }
-    /// このビューが始めた読み込みを全部取り消す（窓の準備・.ylp を開いたときの読み込みを含む。終わるとき）。
+    /// このビューが始めた読み込みを全部取り消す（ウィンドウの準備・.ylp を開いたときの読み込みを含む。終わるとき）。
     pub fn cancel_loads(&self) {
         self.loads.cancel_all();
     }
@@ -275,6 +288,7 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         hide: hide::HideState::default(),
         preset_notes: Vec::new(),
         edits: 0,
+        takes: takes::TakeState::new(loaded.takes),
     });
     view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
@@ -297,6 +311,7 @@ pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
             rest,
             meshes,
             warnings: Vec::new(),
+            takes: Vec::new(),
         },
     );
     Ok(())
@@ -337,45 +352,55 @@ fn load_blocking(
     progress.set(MODEL_SHARE);
     let (meshes, rest) = build_rest(&model.rig, revision, Some(cancel))?;
     progress.set(1.0);
+    let takes = takes::TakeSource::whole(
+        path.to_path_buf(),
+        model.takes,
+        model.rig.bones().len(),
+        model.rig.meshes().len(),
+    );
     Ok(Loaded {
         rig: model.rig,
         rest,
         meshes,
         warnings: model.report.warnings,
+        takes: takes.into_iter().collect(),
     })
 }
 
-/// 読み込みのスレッドを始める（結果の受け口・取消の旗・進み具合を返す）。スレッドは `view3d` に登録する（終わるときに止まるのを待つため）。
+/// 読み込みのスレッドを始める（結果の受け口と進み具合を返す。受け口を捨てると読み込みも止める）。スレッドは `view3d` に登録する
+/// （終わるときに止まるのを待つため）。スレッドを作れなければ panic（`std::thread::spawn` と同じ）。
 fn spawn_load<T: Send + 'static>(
     view3d: &mut View3dState,
     path: &Path,
     limits: ModelLimits,
     revision: u32,
     wrap: fn(Loaded) -> T,
-) -> (
-    Receiver<Result<T, ViewError>>,
-    Arc<AtomicBool>,
-    Arc<LoadProgress>,
-) {
+) -> (Worker<Result<T, ViewError>>, Arc<LoadProgress>) {
     let cancel = Arc::new(AtomicBool::new(false));
     let progress = Arc::new(LoadProgress::default());
     let finished = view3d.pose.loads.register(&cancel);
-    let (tx, rx) = channel();
     let path: PathBuf = path.to_path_buf();
-    let (flag, shared) = (cancel.clone(), progress.clone());
-    std::thread::spawn(move || {
-        let _finished = finished;
-        let _ = tx.send(load_blocking(&path, &limits, revision, &flag, &shared).map(wrap));
-    });
-    (rx, cancel, progress)
+    let shared = progress.clone();
+    let worker = Worker::spawn_on(
+        std::thread::Builder::new().name("yolu-fbx-load".into()),
+        cancel,
+        move |tx, flag| {
+            let _finished = finished;
+            let _ =
+                tx.send(load_blocking(&path, &limits, revision, flag.flag(), &shared).map(wrap));
+        },
+    )
+    .expect("failed to spawn thread")
+    .cancel_on_drop();
+    (worker, progress)
 }
 
-/// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成の窓が持ち、決めたときに
-/// `install_prepared` で入れる。窓を閉じれば、入れずに捨てる）。
+/// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成のウィンドウが持ち、決めたときに
+/// `install_prepared` で入れる。ウィンドウを閉じれば、入れずに捨てる）。
 pub struct PreparedModel(Loaded);
 
 impl PreparedModel {
-    /// 読んだスキン（マテリアルの組・メッシュの名前を窓が読む）。
+    /// 読んだスキン（マテリアルの組・メッシュの名前をウィンドウが読む）。
     pub fn rig(&self) -> &Rig {
         &self.0.rig
     }
@@ -391,30 +416,23 @@ impl PreparedModel {
 
 /// 読み込みの結果を受ける口（裏のスレッドと、取消の旗）。
 pub struct PrepareJob {
-    rx: Receiver<Result<PreparedModel, ViewError>>,
-    cancel: Arc<AtomicBool>,
+    /// 受け口を捨てたら、読み込みも止める（ウィンドウを閉じた・別のモデルを読み始めた。結果の行き先が無い）。
+    worker: Worker<Result<PreparedModel, ViewError>>,
     progress: Arc<LoadProgress>,
-}
-
-impl Drop for PrepareJob {
-    /// 受け口を捨てたら、読み込みも止める（窓を閉じた・別のモデルを読み始めた。結果の行き先が無い）。
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
 }
 
 impl PrepareJob {
     /// 読み終わっていれば結果（まだなら None。スレッドが落ちたら読み込みが止まったとして返す）。
     pub fn poll(&self) -> Option<Result<PreparedModel, ViewError>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err(ViewError::LoadStopped)),
+        match self.worker.poll() {
+            Polled::Message(r) => Some(r),
+            Polled::Empty => None,
+            Polled::Lost => Some(Err(ViewError::LoadStopped)),
         }
     }
     /// 取り消す（読み込みは次の区切りで止まり、途中の物と結果は捨てる）。
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        self.worker.cancel();
     }
     /// 進み具合（0〜1。読み込みのスレッドからまだ知らせが無ければ None）。
     pub fn fraction(&self) -> Option<f32> {
@@ -427,12 +445,14 @@ impl PrepareJob {
     }
     /// 終わらない読み込み（試験用）。返す送り口を持っているあいだは読み込み中のまま、送れば（失敗で）終わる。
     #[doc(hidden)]
-    pub fn parked() -> (PrepareJob, std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>) {
-        let (tx, rx) = channel();
+    pub fn parked() -> (
+        PrepareJob,
+        std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>,
+    ) {
+        let (worker, tx) = Worker::parked();
         (
             PrepareJob {
-                rx,
-                cancel: Arc::new(AtomicBool::new(false)),
+                worker: worker.cancel_on_drop(),
                 progress: Arc::new(LoadProgress::default()),
             },
             tx,
@@ -440,15 +460,81 @@ impl PrepareJob {
     }
 }
 
+/// 別のスレッドで組んだスキン（Live Link の相手: FBX を並べたもの）と、呼び手の残りの結果。受け口を捨てたら、組むのも止める。
+pub struct RigJob<T> {
+    worker: Worker<Result<(PreparedModel, T), ViewError>>,
+}
+
+impl<T> RigJob<T> {
+    /// 終わっていれば結果（まだなら None。スレッドが落ちたら読み込みが止まったとして返す）。
+    pub fn poll(&self) -> Option<Result<(PreparedModel, T), ViewError>> {
+        match self.worker.poll() {
+            Polled::Message(r) => Some(r),
+            Polled::Empty => None,
+            Polled::Lost => Some(Err(ViewError::LoadStopped)),
+        }
+    }
+    /// 取り消す。
+    pub fn cancel(&self) {
+        self.worker.cancel();
+    }
+    /// 試験用: 終わるまで待つ（上限 120 秒）。
+    #[doc(hidden)]
+    pub fn wait(&self) -> Result<(PreparedModel, T), ViewError> {
+        match self.worker.wait(std::time::Duration::from_secs(120)) {
+            Polled::Message(r) => r,
+            Polled::Empty | Polled::Lost => Err(ViewError::LoadStopped),
+        }
+    }
+}
+
+/// スキンを別のスレッドで組み（`work` が読む・並べる。取消の旗を区切りで見る）、休みの形まで作る（3D ビューには入れない。入れるのは
+/// `install_prepared`）。`work` はスキン・読み込みの知らせ・テイクを持つ FBX（スキンのどこに入ったか）・呼び手の残りの結果を返す。
+/// スレッドは `view3d` に登録する（終わるときに止まるのを待つ）。
+pub fn prepare_rig_with<T: Send + 'static>(
+    view3d: &mut View3dState,
+    work: impl FnOnce(&AtomicBool) -> Result<(Rig, Vec<String>, Vec<takes::TakeSource>, T), ViewError>
+        + Send
+        + 'static,
+) -> RigJob<T> {
+    let revision = view3d.next_revision();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let finished = view3d.pose.loads.register(&cancel);
+    let worker = Worker::spawn_on(
+        std::thread::Builder::new().name("yolu-livelink-rig".into()),
+        cancel,
+        move |tx, flag| {
+            let _finished = finished;
+            let flag = flag.flag();
+            let result = work(flag).and_then(|(rig, warnings, takes, rest)| {
+                if flag.load(Ordering::Relaxed) {
+                    return Err(ViewError::Cancelled);
+                }
+                let (meshes, geometry) = build_rest(&rig, revision, Some(flag))?;
+                Ok((
+                    PreparedModel(Loaded {
+                        rig,
+                        rest: geometry,
+                        meshes,
+                        warnings,
+                        takes,
+                    }),
+                    rest,
+                ))
+            });
+            let _ = tx.send(result);
+        },
+    )
+    .expect("failed to spawn thread")
+    .cancel_on_drop();
+    RigJob { worker }
+}
+
 /// FBX を別のスレッドで読み始める（3D ビューには入れない）。`view3d` は世代の番号を取るためだけに借りる。
 pub fn prepare_fbx(view3d: &mut View3dState, path: &Path, limits: ModelLimits) -> PrepareJob {
     let revision = view3d.next_revision();
-    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, PreparedModel);
-    PrepareJob {
-        rx,
-        cancel,
-        progress,
-    }
+    let (worker, progress) = spawn_load(view3d, path, limits, revision, PreparedModel);
+    PrepareJob { worker, progress }
 }
 
 /// 終わらない読み込みの送り口（`park_loading` が返す。持っているあいだは読み込み中のまま）。
@@ -461,7 +547,7 @@ pub struct ParkedLoad {
 /// 取り消すか、返す物を捨てると読み込み中でなくなる。
 #[doc(hidden)]
 pub fn park_loading(view3d: &mut View3dState, name: &str, fraction: Option<f32>) -> ParkedLoad {
-    let (tx, rx) = channel();
+    let (worker, tx) = Worker::parked();
     let progress = Arc::new(LoadProgress::default());
     if let Some(f) = fraction {
         progress.set(f);
@@ -469,8 +555,7 @@ pub fn park_loading(view3d: &mut View3dState, name: &str, fraction: Option<f32>)
     let revision = view3d.next_revision();
     view3d.pose.loading = Some(Loading {
         name: name.to_owned(),
-        rx,
-        cancel: Arc::new(AtomicBool::new(false)),
+        worker: worker.cancel_on_drop(),
         progress,
         revision,
     });
@@ -500,43 +585,55 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, |loaded| loaded);
+    let (worker, progress) = spawn_load(view3d, path, limits, revision, |loaded| loaded);
     view3d.pose.loading = Some(Loading {
         name,
-        rx,
-        cancel,
+        worker,
         progress,
         revision,
     });
 }
 
+/// 「「名前」を読み込めません（理由）。」（ポーズのモデルの読み込みの失敗）。
+fn cannot_load(lang: Lang, name: &str, error: &ViewError) -> String {
+    let name = lang.quote(name);
+    lang.with_reason(
+        lang.pick(
+            format!("{name}を読み込めません"),
+            format!("Cannot load {name}"),
+        ),
+        lang.view_error(error),
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) {
     if let Some(loading) = &mut view3d.pose.loading {
-        let result = loading
-            .rx
-            .recv_timeout(std::time::Duration::from_secs(120))
-            .expect("FBXの完了通知が来ない（受信切断またはハング検出上限）");
-        let (tx, rx) = channel();
+        let Polled::Message(result) = loading.worker.wait(std::time::Duration::from_secs(120))
+        else {
+            panic!("FBXの完了通知が来ない（受信切断またはハング検出上限）");
+        };
+        let (worker, tx) = Worker::parked();
         tx.send(result).unwrap();
-        loading.rx = rx;
+        loading.worker = worker.cancel_on_drop();
     }
     poll(view3d)
 }
 
-/// `poll_in`の、日本語のもの（試験・言語を持たない呼び出し）。
+/// `poll_in`の、日本語のもの（試験・言語を持たない呼び出し）。知らせの種類は捨てる。
 pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
-    poll_in(view3d, Lang::Ja)
+    let (message, installed) = poll_in(view3d, Lang::Ja);
+    (message.map(|(_, text)| text), installed)
 }
 
-/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文（言語に合わせる）と、
-/// モデルを入れたかを返す。
-pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
+/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文（言語に合わせる）とその種類
+/// （読めた: 済んだ知らせ、読めなかった所がある: 注意、読めない・止まった: 失敗、取り消した: 済んだ知らせ）と、モデルを入れたかを返す。
+pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>, bool) {
     let mut message = None;
     let mut installed = false;
     if let Some(loading) = &view3d.pose.loading {
-        match loading.rx.try_recv() {
-            Ok(Ok(loaded)) => {
+        match loading.worker.poll() {
+            Polled::Message(Ok(loaded)) => {
                 let name = loading.name.clone();
                 let stale = loaded.rest.revision() != loading.revision;
                 view3d.pose.loading = None;
@@ -546,28 +643,41 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
                     installed = true;
                     // 名前と、読めなかった所があるか（件数は状態）。三角形・骨の数や読んだ時間は出さない
                     message = Some(if warnings > 0 {
-                        lang.pick(
-                            format!("{name}を読み込みました（知らせ {warnings} 件）"),
-                            format!("Loaded {name} ({warnings} notices)"),
+                        (
+                            Kind::Warning,
+                            lang.pick(
+                                format!("{name}を読み込みました（知らせ {warnings} 件）"),
+                                format!("Loaded {name} ({warnings} notices)"),
+                            ),
                         )
                     } else {
-                        lang.pick(
-                            format!("{name}を読み込みました"),
-                            format!("Loaded {name}"),
+                        (
+                            Kind::Info,
+                            lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}")),
                         )
                     });
                 }
             }
-            Ok(Err(e)) => {
-                message = Some(format!("{}: {}", loading.name, lang.view_error(&e)));
+            Polled::Message(Err(e)) => {
+                let name = lang.quote(&loading.name);
+                message = Some(if matches!(e, ViewError::Cancelled) {
+                    (
+                        Kind::Info,
+                        lang.pick(
+                            format!("{name}の読み込みを取り消しました。"),
+                            format!("Loading {name} was canceled."),
+                        ),
+                    )
+                } else {
+                    (Kind::Error, cannot_load(lang, &loading.name, &e))
+                });
                 view3d.pose.loading = None;
             }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
-                message = Some(format!(
-                    "{}: {}",
-                    loading.name,
-                    lang.view_error(&ViewError::LoadStopped)
+            Polled::Empty => {}
+            Polled::Lost => {
+                message = Some((
+                    Kind::Error,
+                    cannot_load(lang, &loading.name, &ViewError::LoadStopped),
                 ));
                 view3d.pose.loading = None;
             }
@@ -589,26 +699,21 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
 /// ポーズを当てる（スキニング → 三角形の写し → 休みの形の refit → モデルを入れ替える）。
 fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     let revision = view3d.next_revision();
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     let clock = Instant::now();
     let meshes = s.rig.deform(&pose)?;
     let skin_ms = clock.elapsed().as_secs_f64() * 1000.0;
     let clock2 = Instant::now();
     let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
-    let geometry = s
-        .rest
-        .reposition(triangles, revision, BvhUpdate::Refit)?;
+    let geometry = s.rest.reposition(triangles, revision, BvhUpdate::Refit)?;
     let refit_ms = clock2.elapsed().as_secs_f64() * 1000.0;
     let model = ViewModel::with_geometry(
         s.rig.name(),
         meshes,
         s.rig.materials().iter().cloned().map(Some).collect(),
         Arc::new(geometry),
-    );
+    )
+    .with_rest(s.rest.clone());
     s.pose = pose;
     s.edits += 1;
     s.model_revision = revision;
@@ -634,11 +739,7 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     s.rig.check_pose(&pose)?;
     if s.pose == pose {
         return Ok(());
@@ -653,11 +754,7 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
 
 /// 開いた .ylp のポーズを戻す（取り消しの段にも「変更あり」の印にも数えない: 開いた直後の状態）。
 pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    let s = view3d
-        .pose
-        .session
-        .as_ref()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
     s.rig.check_pose(&pose)?;
     apply(view3d, pose)?;
     if let Some(s) = view3d.pose.session.as_mut() {
@@ -674,11 +771,7 @@ pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
         s.edit_start = Some(s.pose.clone());
     }
@@ -687,11 +780,7 @@ pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
 
 /// 続けて変えている途中のポーズ（取り消しには積まない）。
 pub fn edit(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    let s = view3d
-        .pose
-        .session
-        .as_ref()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
         return Err(ViewError::NoPoseEdit);
     }
@@ -773,10 +862,10 @@ pub fn reset(view3d: &mut View3dState) -> Result<(), ViewError> {
     set_pose(view3d, rest)
 }
 
-/// 決まったパスの FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作る窓、作業のあるプロジェクトなら、
-/// プロジェクトの構成の窓でそのモデルに替える下書き（どのマテリアルをテクスチャセットにするか・大きさ・照合を、決めてから入れる）。
-/// 別のスレッドで読む。ファイルを選ぶ窓は `YoluApp` が開く（`DialogRequest::OpenModel`。窓に落としたファイルもここへ来る）ので、
-/// ここは OS の窓に頼らない。描いている最中は断る。
+/// 決まったパスの FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作るウィンドウ、作業のあるプロジェクトなら、
+/// プロジェクトの構成のウィンドウでそのモデルに替える下書き（どのマテリアルをテクスチャセットにするか・大きさ・照合を、決めてから入れる）。
+/// 別のスレッドで読む。ファイルを選ぶウィンドウは `YoluApp` が開く（`DialogRequest::OpenModel`。ウィンドウに落としたファイルもここへ来る）ので、
+/// ここは OS のウィンドウに頼らない。描いている最中は断る。
 pub fn open_file(app: &mut AppState, path: &Path) {
     app.np_apply(crate::newproject::NpAction::OpenModel(path.to_path_buf()));
 }
@@ -787,20 +876,23 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         // 読み込みの結果は 3D ビューに入れていない。取り消すと、途中の物を捨てて今のモデルは前のまま
         if let Some(name) = app.view3d.pose.loading_name().map(str::to_owned) {
             app.view3d.pose.cancel_loading();
-            app.message = app.lang.pick(
-                format!("{name}の読み込みを取り消しました。"),
-                format!("Cancelled loading {name}."),
+            app.info(
+                Source::Pose,
+                app.lang.pick(
+                    format!("{name}の読み込みを取り消しました。"),
+                    format!("Cancelled loading {name}."),
+                ),
             );
         }
         return;
     }
     if app.is_stroking() {
-        app.message = app.lang.view_error(&ViewError::Stroking);
+        app.refuse(Source::Pose, app.lang.view_error(&ViewError::Stroking));
         return;
     }
     let result = match action {
         PoseAction::OpenFbx => {
-            // 窓は YoluApp が開く（選ばれたら `open_file`）
+            // ウィンドウは YoluApp が開く（選ばれたら `open_file`）
             app.dialog_request = Some(DialogRequest::OpenModel);
             Ok(())
         }
@@ -811,13 +903,16 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.np.model_file = None;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
-                app.message = app.lang.pick(
+                let mut text = app.lang.pick(
                     format!("{}を読み込みました", s.rig.name()),
                     format!("Loaded {}", s.rig.name()),
                 );
-                if let Some(note) = note {
-                    app.message += &format!(" {note}");
+                let mut kind = Kind::Info;
+                if let Some((note_kind, note)) = note {
+                    text += &format!(" {note}");
+                    kind = note_kind;
                 }
+                app.notify(kind, Source::Pose, text);
             }
         }),
         PoseAction::ToggleMode => {
@@ -832,17 +927,29 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app.lang.pick("ポーズを取り消しました。", "Pose undone.").into();
+                app.info(
+                    Source::Pose,
+                    app.lang.pick("ポーズを取り消しました。", "Pose undone."),
+                );
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app.lang.pick("ポーズをやり直しました。", "Pose redone.").into();
+                app.info(
+                    Source::Pose,
+                    app.lang.pick("ポーズをやり直しました。", "Pose redone."),
+                );
             }
         }),
+        PoseAction::ChooseTake(source, take) => {
+            takes::choose(app, source, take);
+            Ok(())
+        }
+        PoseAction::ApplyTake => takes::start(&mut app.view3d),
     };
     if let Err(e) = result {
-        app.message = app.lang.view_error(&e);
+        let text = app.lang.view_error(&e);
+        app.notify(e.notice_kind(), Source::Pose, text);
     }
 }
 
@@ -852,15 +959,15 @@ pub fn owns_undo(app: &AppState) -> bool {
     app.view3d.pose.mode && app.view3d.pose.session.is_some() && app.view3d.visible
 }
 
-/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデルが無い試しの人形のポーズは残らないので数えない）。
-/// 開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
+/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデル・Live Link の相手の無い試しの人形のポーズは
+/// 残らないので数えない）。開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
 pub fn sync_modified(app: &mut AppState) {
     let Some(edits) = app.view3d.pose.session.as_ref().map(|s| s.edits) else {
         return;
     };
     if edits != app.view3d.pose.seen_edits {
         app.view3d.pose.seen_edits = edits;
-        if app.np.model_file.is_some() {
+        if app.np.model_file.is_some() || app.link_target.is_some() {
             app.modified = true;
         }
     }
@@ -868,7 +975,7 @@ pub fn sync_modified(app: &mut AppState) {
 
 /// フレームの初めに（app から）: 読み込みを見て、知らせを出す。3D ビューのタブを前に出すなら true。
 pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
-    // 窓に落とした FBX を開く
+    // ウィンドウに落とした FBX を開く
     let dropped = ctx.input(|i| {
         i.raw
             .dropped_files
@@ -892,6 +999,7 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     });
     edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
+    takes::poll(app);
     sync_modified(app);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();
@@ -900,13 +1008,23 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     } else {
         None
     };
-    if let Some(mut m) = message {
-        if let Some(note) = note {
+    if let Some((mut kind, mut m)) = message {
+        if let Some((note_kind, note)) = note {
             m += &format!(" {note}");
+            // 結び付けの但し書き（モデルに無いセット・上限）は、済んだ知らせを注意にする
+            if kind == Kind::Info {
+                kind = note_kind;
+            }
         }
-        app.message = m;
+        app.notify(kind, Source::Pose, m);
     }
-    if app.view3d.pose.is_loading() {
+    let taking = app
+        .view3d
+        .pose
+        .session
+        .as_ref()
+        .is_some_and(|s| s.takes.is_running());
+    if app.view3d.pose.is_loading() || taking {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     let focus = installed || app.view3d.pose.focus;
@@ -1065,7 +1183,7 @@ mod tests {
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
             app.dialog_request, None,
-            "描いている間はファイルの窓を頼まない"
+            "描いている間はファイルのウィンドウを頼まない"
         );
         open_file(&mut app, Path::new("読まれない.fbx"));
         assert!(!app.view3d.pose.is_loading(), "描いている間は読み始めない");
@@ -1167,7 +1285,10 @@ mod tests {
         assert!(installed, "{message:?}");
         // 名前を知らせる（三角形・骨の数や時間は出さない）
         let message = message.unwrap();
-        assert!(message.contains("三角.fbx") && !message.contains("三角形"), "{message}");
+        assert!(
+            message.contains("三角.fbx") && !message.contains("三角形"),
+            "{message}"
+        );
         let s = app.view3d.pose.session.as_ref().unwrap();
         assert_eq!(s.rig.name(), "三角");
         assert_eq!(app.view3d.model.as_ref().unwrap().triangle_count(), 1);
@@ -1175,7 +1296,9 @@ mod tests {
         open_fbx(&mut app.view3d, &bad);
         let (message, installed) = wait(&mut app);
         assert!(!installed);
-        assert!(message.unwrap().starts_with("壊れた.fbx: "));
+        assert!(message
+            .unwrap()
+            .starts_with("「壊れた.fbx」を読み込めません（"));
         assert!(app.view3d.pose.session.is_some());
         // 大きすぎる
         let limits = ModelLimits {
@@ -1200,14 +1323,18 @@ mod tests {
         let path = dir.join("三角.fbx");
         std::fs::write(&path, TRIANGLE_FBX).unwrap();
         let mut app = AppState::new(64, 64);
-        // 状態の層は OS の窓を開かない: 頼みを残すだけ
+        // 状態のレイヤーは OS のウィンドウを開かない: 頼みを残すだけ
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(app.dialog_request, Some(DialogRequest::OpenModel));
         assert!(!app.view3d.pose.is_loading());
-        // 選ばれたパス（窓に落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトの窓で読む（3D ビューには、
+        // 選ばれたパス（ウィンドウに落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトのウィンドウで読む（3D ビューには、
         // 決めるまで入れない）
         open_file(&mut app, &path);
-        let win = app.np.window.as_ref().expect("新規プロジェクトの窓");
+        let win = app
+            .np
+            .window
+            .as_ref()
+            .expect("新規プロジェクトのウィンドウ");
         assert!(!win.configure && win.is_loading());
         assert!(!app.view3d.pose.is_loading() && app.view3d.pose.session.is_none());
         std::fs::remove_dir_all(&dir).unwrap();

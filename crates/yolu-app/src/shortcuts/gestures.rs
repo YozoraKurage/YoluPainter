@@ -65,7 +65,7 @@ pub fn key_label(binding: &Binding, lang: Lang) -> String {
     text
 }
 
-/// 一覧で見せるまとまり。選択範囲の道具の組み合わせは 2D ビューに並べる。
+/// 一覧で見せるまとまり。選択範囲のツールの組み合わせは 2D ビューに並べる。
 fn listed_under(scope: &str) -> &str {
     if scope == "selection" {
         "canvas"

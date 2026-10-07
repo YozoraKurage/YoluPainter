@@ -1,4 +1,5 @@
-//! 画素の計算の SIMD の土台: 実行時の道の選び（[`Level`]）と、f64 の並び（レーン）の演算の型（[`Lanes`]）。
+//! 画素の計算の SIMD の土台: 実行時の道の選び（[`Level`]）と、f64 の並び（レーン）の演算の型（[`Lanes`]）・f32 の並びの演算の型
+//! （[`Lanes32`]。レイヤーの合成の式が使う）。
 //!
 //! 道は x86_64 の AVX2（+ FMA）・SSE4.1・スカラーの 3 つ。`is_x86_feature_detected!` で CPU に合う一番広い道を選ぶ（Windows の配布物
 //! x86_64-pc-windows-msvc でも同じ）。x86_64 以外（aarch64 など）と、環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`、広げる向きには
@@ -177,6 +178,7 @@ pub(crate) trait Lanes: Copy {
     unsafe fn eq(a: Self::F, b: Self::F) -> Self::M;
 
     unsafe fn and(a: Self::M, b: Self::M) -> Self::M;
+    #[cfg_attr(not(test), allow(dead_code))]
     unsafe fn or(a: Self::M, b: Self::M) -> Self::M;
     unsafe fn not(a: Self::M) -> Self::M;
     /// 真のレーンは a、偽のレーンは b。選ばれなかった方が NaN でも結果に影響しない。
@@ -206,6 +208,7 @@ pub(crate) trait Lanes: Copy {
     /// チャンネルごとのレーン（0〜65535 の整数の値）を、連続する N 画素の u16 の 4 チャンネル（4N 個以上のスライスの先頭、R・G・B・A の順）へ。
     unsafe fn store_u16x4(p: &mut [u16], v: [Self::F; 4]);
     /// 1 つの画素をすべてのレーンへ。
+    #[cfg_attr(not(test), allow(dead_code))]
     unsafe fn splat_px(px: [u8; 4]) -> [Self::F; 4];
     /// R・G・B・A のレーン（0〜255 の整数の値）を連続する N 画素の RGBA（4N バイト以上のスライスの先頭）へ。
     unsafe fn store(p: &mut [u8], v: [Self::F; 4]);
@@ -235,6 +238,42 @@ pub(crate) unsafe fn clamp01<V: Lanes>(v: V::F) -> V::F {
 mod x86;
 #[cfg(target_arch = "x86_64")]
 pub(crate) use x86::{Avx2, Sse41};
+
+mod lanes32;
+pub(crate) use lanes32::{clamp01_32, to_byte32, Lanes32, Scalar1};
+#[cfg(target_arch = "x86_64")]
+pub(crate) use lanes32::{Avx2x8, Sse41x4};
+
+/// 試験用: [`on_each_level`] の f32 のレーン（[`Lanes32`]）の版。1 本のレーン（[`Scalar1`]）と、この CPU が持つ SIMD の道
+/// （AVX2・SSE4.1）ごとに、その命令を有効にした入口の中で `f::<V>()` を走らせる。
+#[cfg(test)]
+macro_rules! on_each_level32 {
+    ($f:ident) => {{
+        // SAFETY: 1 本のレーンは CPU の前提を持たない
+        unsafe { $f::<$crate::math::simd::Scalar1>() }
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[target_feature(enable = "avx2,fma")]
+            unsafe fn avx2() {
+                $f::<$crate::math::simd::Avx2x8>()
+            }
+            #[target_feature(enable = "sse4.1")]
+            unsafe fn sse41() {
+                $f::<$crate::math::simd::Sse41x4>()
+            }
+            if $crate::math::simd::detect() >= $crate::math::simd::Level::Avx2 {
+                // SAFETY: avx2 と fma を持つことを確かめた
+                unsafe { avx2() }
+            }
+            if $crate::math::simd::detect() >= $crate::math::simd::Level::Sse41 {
+                // SAFETY: sse4.1 を持つことを確かめた
+                unsafe { sse41() }
+            }
+        }
+    }};
+}
+#[cfg(test)]
+pub(crate) use on_each_level32;
 
 /// 試験用: ジェネリックな関数 `f::<V>()` を、この CPU が持つ SIMD の道（AVX2・SSE4.1）ごとに、その命令を有効にした入口の中で走らせる。
 /// スカラーの道は SIMD の型を持たないので、呼び出し側が別に確かめる。

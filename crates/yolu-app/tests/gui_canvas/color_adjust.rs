@@ -1,6 +1,6 @@
 //! 色調補正の 6 種（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション）の欄
-//! （`panels::color_adjust`。調整の層と、フィルターの段が同じ欄を使う）。欄だけを並べた見本の窓で、操作・日英・説明を置かないこと・無効・
-//! スナップショットを確かめる。アプリの中でのつなぎ（層・段の選び・1 回の Undo）は `color_adjust_app.rs`。
+//! （`panels::color_adjust`。調整レイヤーと、フィルターの段が同じ欄を使う）。欄だけを並べた見本のウィンドウで、操作・日英・説明を置かないこと・無効・
+//! スナップショットを確かめる。アプリの中でのつなぎ（レイヤー・段の選び・1 回の Undo）は `color_adjust_app.rs`。
 use crate::common;
 
 use common::*;
@@ -9,8 +9,8 @@ use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotResults};
 use yolu_app::eyedrop::EyedropState;
 use yolu_app::lang::Lang;
-use yolu_app::rampsets::RampSets;
 use yolu_app::panels::color_adjust::{self, Change, Histogram, Params};
+use yolu_app::rampsets::RampSets;
 use yolu_app::ui::theme as t;
 use yolu_app::ui::widgets::Rows;
 use yolu_app::YoluApp;
@@ -36,7 +36,7 @@ struct Panel {
     height: f32,
     sets: RampSets,
     eyedrop: EyedropState,
-    message: String,
+    failure: Option<String>,
 }
 
 fn draw(ui: &mut Ui, p: &mut Panel) {
@@ -62,7 +62,7 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         histogram: p.histogram.as_ref(),
         sets: &mut p.sets,
         eyedrop: &mut p.eyedrop,
-        message: &mut p.message,
+        failure: &mut p.failure,
     };
     if let Some(change) = color_adjust::rows(ui, &mut rows, &mut params, &p.value) {
         p.value = change.value.clone();
@@ -90,7 +90,7 @@ fn panel(value: ColorAdjust, lang: Lang) -> Harness<'static, Panel> {
                 height,
                 sets: RampSets::default(),
                 eyedrop: EyedropState::default(),
-                message: String::new(),
+                failure: None,
             },
         );
     h.run();
@@ -311,8 +311,14 @@ fn tone_curve_edits_one_curve_at_a_time_and_presets_set_the_selected_one() {
 fn stops_editor_rect(h: &Harness<'_, Panel>) -> Rect {
     let prev = rect(h, "<");
     Rect::from_min_size(
-        pos2(prev.left(), prev.top() - 4.0 - yolu_app::ui::ramp::STOPS_HEIGHT),
-        vec2(WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT, yolu_app::ui::ramp::STOPS_HEIGHT),
+        pos2(
+            prev.left(),
+            prev.top() - 4.0 - yolu_app::ui::ramp::STOPS_HEIGHT,
+        ),
+        vec2(
+            WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT,
+            yolu_app::ui::ramp::STOPS_HEIGHT,
+        ),
     )
 }
 
@@ -375,7 +381,10 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     click_slider(&mut h, "位置", 0.25);
     assert!(h.state().changes.len() > n);
     assert_ne!(ramp_of(&h), before);
-    assert!(!last(&h).discrete, "スライダーは離すまで 1 回の取り消しにまとめる");
+    assert!(
+        !last(&h).discrete,
+        "スライダーは離すまで 1 回の取り消しにまとめる"
+    );
 }
 
 #[test]

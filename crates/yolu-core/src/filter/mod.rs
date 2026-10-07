@@ -1,16 +1,20 @@
 //! 非破壊フィルター。入力は左下原点の straight RGBA8、マスクは隠す量。
 //! 文書・履歴・キャッシュに依存せず、成功時だけ完成した領域を返す。
-//! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整層の責務。
+//! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整レイヤーの責務。
 //! Normalize の全域統計は `statistics` で単独に求められ、`Options::statistics` で評価へ渡せる（タイルごとの再走査を避けられる）。
 
+mod generated;
 mod pixels;
 mod rows;
+mod seams;
+pub use seams::seam_working_bytes;
+mod spatial;
 #[cfg(test)]
 mod tests;
 use crate::{
-    math::{clamp01, to_byte},
-    ranges,
-    BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold, ToneCurves,
+    math::{clamp01, to_byte, UNIT},
+    ranges, BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold,
+    ToneCurves,
 };
 use rayon::prelude::*;
 use std::{
@@ -37,13 +41,17 @@ pub enum Locality {
 
 /// Generator のマップ解決は呼び出し側。値は 0..1、欠損は None。
 /// 同じ座標は評価中いつも同じ値を返すこと。ランプ適用後は Mapped を返す。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Generated {
-    Scalar(f64),
-    Mapped([u8; 4]),
-}
+/// 型は [`crate::generator::Generated`] そのもの（束縛済みの Generator の結果を写し替えずに渡せる）。
+pub use crate::generator::Generated;
 pub trait GeneratorInput: Sync {
     fn sample(&self, slot: u32, x: u32, y: u32) -> Option<Generated>;
+    /// 行 `y` の `x0` から `out.len()` 画素の `sample` と同じ結果（範囲外は None）。評価器は段ごと・行ごとにこちらを呼ぶ。
+    /// 既定は `sample` を 1 画素ずつ呼ぶ。行をまとめて作れる入力（束縛済みの Generator）は置き換える。
+    fn sample_row(&self, slot: u32, x0: u32, y: u32, out: &mut [Option<Generated>]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = self.sample(slot, x0 + i as u32, y);
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GeneratorBlend {
@@ -54,6 +62,20 @@ pub enum GeneratorBlend {
     Min,
     Add,
     Subtract,
+}
+
+/// スロープぼかしの合わせ方（取った値の平均・最小・最大）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlopeMode {
+    Blur,
+    Min,
+    Max,
+}
+/// モルフォロジーの向き（丸い範囲の最大で太らせる・最小で細らせる）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MorphologyMode {
+    Dilate,
+    Erode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,7 +107,7 @@ pub enum Settings {
         slot: u32,
         blend: GeneratorBlend,
     },
-    // 色調補正の 6 種（調整の層と同じ値と式。Rust 版だけの種類で、段の種類の番号は 64 から。画素ごとの点の処理で、強さは元との混ぜ）。
+    // 色調補正の 6 種（調整レイヤーと同じ値と式。Rust 版だけの種類で、段の種類の番号は 64 から。画素ごとの点の処理で、強さは元との混ぜ）。
     /// グラデーションマップ。色のチャンネルだけ。
     GradientMap(GradientMap),
     /// トーンカーブ。スカラーとマスクでは RGB 全体の曲線だけが効く。
@@ -95,14 +117,148 @@ pub enum Settings {
     BrightnessContrast(BrightnessContrast),
     Threshold(Threshold),
     Posterize(Posterize),
+    // 0.5.0 の 10 種（Rust 版だけ。段の種類の番号は 70〜79）。式は `spatial.rs`（値の表の 2 種は `point`）。
+    /// ヒストグラムスキャン（70）: 幅 w = max(1 − contrast, 1/255)、out = clamp((in − (position − w/2)) / w)。スカラーとマスクだけ。
+    HistogramScan {
+        position: f64,
+        contrast: f64,
+    },
+    /// ヒストグラムレンジ（71）: out = clamp(position + (in − 0.5) × range)。スカラーとマスクだけ。
+    HistogramRange {
+        range: f64,
+        position: f64,
+    },
+    /// スロープぼかし（72）: 内蔵の値ノイズの勾配の向きへ intensity 画素を samples 回取り、平均・最小・最大。
+    SlopeBlur {
+        intensity: f64,
+        samples: u32,
+        mode: SlopeMode,
+        scale: f64,
+        seed: i32,
+    },
+    /// 方向のぼかし（73）: angle の向きの両側へ distance 画素の線のぼかし。
+    DirectionalBlur {
+        angle: f64,
+        distance: f64,
+    },
+    /// ゆがみ（74）: 内蔵の値ノイズの勾配で読む位置をずらす（双線形）。
+    Warp {
+        intensity: f64,
+        scale: f64,
+        seed: i32,
+    },
+    /// モルフォロジー（75）: 丸い範囲の最大（dilate）・最小（erode）。スカラーとマスクだけ。
+    Morphology {
+        mode: MorphologyMode,
+        radius: u32,
+    },
+    /// エッジ検出（76）: width でぼかしてから Sobel の強さ、threshold 以下を 0。スカラーとマスクだけ。
+    EdgeDetect {
+        width: u32,
+        threshold: f64,
+    },
+    /// ハイパス（77）: out = 0.5 + (in − ぼかし(in, radius))。アルファは元のまま。
+    HighPass {
+        radius: u32,
+    },
+    /// メディアン（78）: 正方形の範囲の中央値（チャンネルごと）。
+    Median {
+        radius: u32,
+    },
+    /// グロー（79）: out = in + ぼかし(max(in − threshold, 0), radius) × intensity。色のチャンネルだけ。アルファは元のまま。
+    Glow {
+        threshold: f64,
+        radius: u32,
+        intensity: f64,
+    },
 }
 impl Settings {
     pub const ALGORITHM_VERSION: u32 = 1;
     pub fn halo(&self) -> u32 {
         match *self {
             Self::GaussianBlur { radius } | Self::Sharpen { radius, .. } => radius,
+            Self::SlopeBlur { intensity, .. } | Self::Warp { intensity, .. } => halo_of(intensity),
+            Self::DirectionalBlur { distance, .. } => halo_of(distance),
+            Self::Morphology { radius, .. }
+            | Self::HighPass { radius }
+            | Self::Median { radius }
+            | Self::Glow { radius, .. } => radius,
+            Self::EdgeDetect { width, .. } => width + 1,
             _ => 0,
         }
+    }
+    /// 0.5.0 の近傍の段（`spatial.rs` が評価する。長さ 0 のスロープぼかし・方向のぼかし・ゆがみは何もしない）。
+    pub(crate) fn is_spatial(&self) -> bool {
+        matches!(
+            self,
+            Self::SlopeBlur { .. }
+                | Self::DirectionalBlur { .. }
+                | Self::Warp { .. }
+                | Self::Morphology { .. }
+                | Self::EdgeDetect { .. }
+                | Self::HighPass { .. }
+                | Self::Median { .. }
+                | Self::Glow { .. }
+        )
+    }
+    /// 粗い評価（歩幅 `stride` 画素ごとに 1 画素）の段: 画素で数える長さ・半径・ノイズの大きさを歩幅で割る（丸めて 0 になる半径の段は
+    /// None。長さは実数のまま割る）。0.5.0 の近傍の段だけ（ぼかし・シャープは文書の評価の側が割る）。
+    pub(crate) fn coarse(&self, stride: u32) -> Option<Self> {
+        let k = f64::from(stride.max(1));
+        let reduce = |r: u32| (r + stride / 2) / stride.max(1);
+        Some(match *self {
+            Self::SlopeBlur {
+                intensity,
+                samples,
+                mode,
+                scale,
+                seed,
+            } => Self::SlopeBlur {
+                intensity: intensity / k,
+                samples,
+                mode,
+                // ノイズの塊は 1 画素より細かくしない（範囲の下限。粗い絵では細かい模様は見えない）
+                scale: (scale / k).max(*ranges::FILTER_NOISE_SCALE.start()),
+                seed,
+            },
+            Self::DirectionalBlur { angle, distance } => Self::DirectionalBlur {
+                angle,
+                distance: distance / k,
+            },
+            Self::Warp {
+                intensity,
+                scale,
+                seed,
+            } => Self::Warp {
+                intensity: intensity / k,
+                scale: (scale / k).max(*ranges::FILTER_NOISE_SCALE.start()),
+                seed,
+            },
+            Self::Morphology { mode, radius } => Self::Morphology {
+                mode,
+                radius: Some(reduce(radius)).filter(|r| *r > 0)?,
+            },
+            Self::EdgeDetect { width, threshold } => Self::EdgeDetect {
+                width: reduce(width).max(1),
+                threshold,
+            },
+            Self::HighPass { radius } => Self::HighPass {
+                radius: Some(reduce(radius)).filter(|r| *r > 0)?,
+            },
+            Self::Median { radius } => Self::Median {
+                radius: Some(reduce(radius)).filter(|r| *r > 0)?,
+            },
+            Self::Glow {
+                threshold,
+                radius,
+                intensity,
+            } => Self::Glow {
+                threshold,
+                radius: reduce(radius).max(1),
+                intensity,
+            },
+            _ => self.clone(),
+        })
     }
     pub fn locality(&self) -> Locality {
         if matches!(self, Self::Normalize) {
@@ -114,6 +270,11 @@ impl Settings {
         }
     }
     pub fn validate(&self, value_type: ValueType) -> Result<(), Error> {
+        self.validate_values()?;
+        self.validate_type(value_type)
+    }
+    /// 値の範囲だけの検査（値の種類に依らない。効果の目録が欄の値から組むときに使う）。
+    pub fn validate_values(&self) -> Result<(), Error> {
         let valid = match *self {
             Self::GaussianBlur { radius } => ranges::BLUR_RADIUS.contains(&radius),
             Self::Sharpen {
@@ -126,7 +287,9 @@ impl Settings {
                     && ranges::SHARPEN_AMOUNT.contains(&amount)
                     && ranges::SHARPEN_THRESHOLD.contains(&threshold)
             }
-            Self::Noise { amount, .. } => amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount),
+            Self::Noise { amount, .. } => {
+                amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount)
+            }
             Self::Levels {
                 input_black: b,
                 input_white: w,
@@ -142,11 +305,56 @@ impl Settings {
                     && ranges::LEVELS_UNIT.contains(&ob)
                     && ranges::LEVELS_UNIT.contains(&ow)
             }
+            Self::HistogramScan { position, contrast } => {
+                within(&ranges::UNIT, position) && within(&ranges::UNIT, contrast)
+            }
+            Self::HistogramRange { range, position } => {
+                within(&ranges::UNIT, range) && within(&ranges::UNIT, position)
+            }
+            Self::SlopeBlur {
+                intensity,
+                samples,
+                scale,
+                ..
+            } => {
+                within(&ranges::SLOPE_INTENSITY, intensity)
+                    && ranges::SLOPE_SAMPLES.contains(&samples)
+                    && within(&ranges::FILTER_NOISE_SCALE, scale)
+            }
+            Self::DirectionalBlur { angle, distance } => {
+                within(&ranges::DIRECTIONAL_ANGLE, angle)
+                    && within(&ranges::DIRECTIONAL_DISTANCE, distance)
+            }
+            Self::Warp {
+                intensity, scale, ..
+            } => {
+                within(&ranges::WARP_INTENSITY, intensity)
+                    && within(&ranges::FILTER_NOISE_SCALE, scale)
+            }
+            Self::Morphology { radius, .. } => ranges::MORPHOLOGY_RADIUS.contains(&radius),
+            Self::EdgeDetect { width, threshold } => {
+                ranges::EDGE_WIDTH.contains(&width) && within(&ranges::UNIT, threshold)
+            }
+            Self::HighPass { radius } => ranges::HIGH_PASS_RADIUS.contains(&radius),
+            Self::Median { radius } => ranges::MEDIAN_RADIUS.contains(&radius),
+            Self::Glow {
+                threshold,
+                radius,
+                intensity,
+            } => {
+                within(&ranges::UNIT, threshold)
+                    && ranges::GLOW_RADIUS.contains(&radius)
+                    && within(&ranges::GLOW_INTENSITY, intensity)
+            }
             _ => true,
         };
         if !valid {
             return Err(Error::Invalid("フィルターの設定が範囲外です"));
         }
+        Ok(())
+    }
+    /// 値の種類（色・スカラー・接空間法線・マスク）に使えるか。
+    fn validate_type(&self, value_type: ValueType) -> Result<(), Error> {
         if value_type == ValueType::TangentNormal && !matches!(self, Self::GaussianBlur { .. }) {
             return Err(Error::Invalid(
                 "接空間法線には再正規化するぼかしだけを適用できます",
@@ -170,8 +378,32 @@ impl Settings {
                 "グラデーションマップとカラーバランスは色のチャンネルだけに適用できます",
             ));
         }
+        if value_type == ValueType::Color
+            && matches!(
+                self,
+                Self::HistogramScan { .. }
+                    | Self::HistogramRange { .. }
+                    | Self::Morphology { .. }
+                    | Self::EdgeDetect { .. }
+            )
+        {
+            return Err(Error::Invalid(
+                "値の切り出し・値の幅・太らせる・細らせる・輪郭の検出はスカラーとマスクだけに適用できます",
+            ));
+        }
+        if value_type != ValueType::Color && matches!(self, Self::Glow { .. }) {
+            return Err(Error::Invalid("グローは色のチャンネルだけに適用できます"));
+        }
         Ok(())
     }
+}
+/// 有限で範囲の中か。
+fn within(range: &std::ops::RangeInclusive<f64>, v: f64) -> bool {
+    v.is_finite() && range.contains(&v)
+}
+/// 実数の長さ（画素）の到達半径（切り上げ）。
+fn halo_of(length: f64) -> u32 {
+    length.ceil() as u32
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stage {
@@ -272,6 +504,9 @@ pub struct Options<'a> {
     /// `statistics` が返した値（段と同じ並び）。Some の段は走査せずその値を使う。None の段は評価の中で求める。
     /// 入力・スタック・Generator の値が変わったら取り直すのは呼び出し側。長さと段の種類だけ検証する。
     pub statistics: Option<&'a [Option<Statistics>]>,
+    /// UV の継ぎ目をまたいで読む帯の写し（大きさは読み元と同じこと）。Some なら、近傍の段（`halo` > 0）は、段の入力のアイランドの外の帯を
+    /// 継ぎ目の相手のアイランドの画素で埋めてからかけ、アイランドの外は段の入力のまま戻す（`seams.rs`）。None は今までと同じバイト。
+    pub seams: Option<&'a crate::geometry::SeamBand>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -281,6 +516,7 @@ impl Default for Options<'_> {
             cancel: None,
             generators: None,
             statistics: None,
+            seams: None,
         }
     }
 }
@@ -348,7 +584,11 @@ pub fn block_working_bytes(
         let row_sums = u64::from(width.min(block.saturating_add(2 * halo))) * 16;
         halo -= s.settings.halo();
         let output = a(halo);
-        peak = peak.max(if s.settings.halo() > 0 {
+        let input_width =
+            u64::from(width.min(block.saturating_add(2 * (halo + s.settings.halo()))));
+        peak = peak.max(if s.settings.is_spatial() {
+            spatial::working_bytes(&s.settings, input, output, input_width, row_sums)
+        } else if s.settings.halo() > 0 {
             input * 28 + output * 4 + row_sums
         } else {
             input * 4
@@ -433,7 +673,20 @@ fn prepare(
             supplied.push(given);
         }
     }
-    let working = block_working_bytes(&chain, options.block_size, w, h)?;
+    let mut working = block_working_bytes(&chain, options.block_size, w, h)?;
+    if let Some(band) = options.seams {
+        if (band.width(), band.height()) != (w, h) {
+            return Err(Error::Invalid("継ぎ目の帯の写しの大きさが画像と合いません"));
+        }
+        // 帯の写しがあるので、帯のテクセルの数は分かる（文書が評価の前に見積もる最悪の数以下）
+        working = working.saturating_add(seam_working_bytes(
+            &chain,
+            options.block_size,
+            w,
+            h,
+            band.texel_count() as u64,
+        ));
+    }
     Ok(Plan {
         chain,
         supplied,
@@ -544,7 +797,7 @@ pub fn evaluate(
     }
     Ok(output)
 }
-/// 色調補正の段（調整の層と同じ式）の 1 画素の結果。トーンカーブはスカラーとマスクでは RGB 全体の曲線だけ。
+/// 色調補正の段（調整レイヤーと同じ式）の 1 画素の結果。トーンカーブはスカラーとマスクでは RGB 全体の曲線だけ。
 fn adjust_pixel(settings: &Settings, value_type: ValueType, c: Rgba8) -> Rgba8 {
     match settings {
         Settings::GradientMap(v) => v.apply(c),
@@ -658,16 +911,7 @@ impl<'a> Engine<'a> {
             after -= s.settings.halo();
             let next = grow(target, after, self.width, self.height);
             if s.settings.halo() > 0 {
-                buf = pixels::neighborhood(
-                    &buf,
-                    cur,
-                    next,
-                    self.width,
-                    self.height,
-                    s,
-                    self.value_type,
-                    &|| self.options.check(),
-                )?;
+                buf = self.neighborhood_stage(k, s, buf, cur, next)?;
             } else {
                 self.point(&mut buf, cur, k, s)?;
             }
@@ -709,6 +953,13 @@ impl<'a> Engine<'a> {
                             .powf(1.0 / gamma)
                             * (output_white - output_black),
                 ),
+                Settings::HistogramScan { position, contrast } => {
+                    let w = (1.0 - contrast).max(1.0 / 255.0);
+                    to_byte(clamp01((UNIT[v] - (position - w / 2.0)) / w))
+                }
+                Settings::HistogramRange { range, position } => {
+                    to_byte(clamp01(position + (UNIT[v] - 0.5) * range))
+                }
                 Settings::Normalize => {
                     let st = self.stats[k].expect("統計は評価の前に段の順で確定している");
                     if st.max > st.min {
@@ -726,6 +977,8 @@ impl<'a> Engine<'a> {
         let width4 = r.width as usize * 4;
         // 調整の段が行ごとの結果を置く作業の領域
         let mut adjusted: Vec<u8> = Vec::new();
+        // Generator の段の行の値（`generated::spans` の範囲の外は前の行の値が残るが、そこは透明な画素で読まない）
+        let mut values: Vec<Option<Generated>> = Vec::new();
         for (y, row) in buf.chunks_exact_mut(width4).enumerate() {
             self.options.check()?;
             let y_canvas = r.y + y as u32;
@@ -748,15 +1001,24 @@ impl<'a> Engine<'a> {
                     rows::lerp_rows_at(level, row, &adjusted, s.strength);
                 }
                 Settings::Generator { slot, blend } => {
-                    for (x, p) in row.chunks_exact_mut(4).enumerate() {
-                        if p[3] == 0 && self.value_type != ValueType::Mask {
+                    let Some(input) = self.options.generators else {
+                        continue;
+                    };
+                    let mask = self.value_type == ValueType::Mask;
+                    values.resize(r.width as usize, None);
+                    generated::spans(row, mask, |start, end| {
+                        input.sample_row(
+                            slot,
+                            r.x + start as u32,
+                            y_canvas,
+                            &mut values[start..end],
+                        );
+                    });
+                    for (p, g) in row.chunks_exact_mut(4).zip(&values) {
+                        if p[3] == 0 && !mask {
                             continue;
                         }
-                        let Some(g) = self
-                            .options
-                            .generators
-                            .and_then(|g| g.sample(slot, r.x + x as u32, y_canvas))
-                        else {
+                        let Some(g) = *g else {
                             continue;
                         };
                         if matches!(g,Generated::Scalar(v) if !v.is_finite() || !(0.0..=1.0).contains(&v))
@@ -772,6 +1034,8 @@ impl<'a> Engine<'a> {
                         );
                     }
                 }
+                // 長さ 0 のスロープぼかし・方向のぼかし・ゆがみ（近傍の段で半径が 0）は何もしない
+                _ if s.settings.is_spatial() => {}
                 _ => rows::lut_row_at(level, row, &lut, s.strength),
             }
         }

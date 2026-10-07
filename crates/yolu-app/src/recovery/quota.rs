@@ -96,7 +96,7 @@ pub fn usage(root: &Path, own: Option<&Path>) -> Usage {
 pub struct Trimmed {
     /// 消した世代の数。
     pub generations: usize,
-    /// 整理のあとも上限を超えているか（守る世代だけで超えている・別の窓が使っている・消せなかった）。
+    /// 整理のあとも上限を超えているか（守る世代だけで超えている・別のウィンドウが使っている・消せなかった）。
     pub over: bool,
 }
 
@@ -118,7 +118,11 @@ struct Plan {
 
 /// 守る世代の名前。
 fn protected(pool: &PoolView, now_ms: u64) -> Option<&str> {
-    let newest = pool.footprint.generations.iter().find(|g| g.problem.is_none())?;
+    let newest = pool
+        .footprint
+        .generations
+        .iter()
+        .find(|g| g.problem.is_none())?;
     let keep = if pool.is_own {
         true
     } else if pool.kind == Kind::Crashed {
@@ -150,13 +154,22 @@ fn plan(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) -> Plan {
     for path in pool::pools(root) {
         let is_own = own == Some(path.as_path());
         // 自分のプールは、自分のロックで「使用中」になるので種類を聞かない
-        let kind = if is_own { Kind::Closed } else { pool::kind(&path) };
+        let kind = if is_own {
+            Kind::Closed
+        } else {
+            pool::kind(&path)
+        };
         used += GenerationStore::new(&path).disk_bytes();
         found.push((path, kind, is_own));
     }
     let mut cap = limits.cap(root, used);
     if used <= cap {
-        return Plan { deletions: Vec::new(), over: false, used, expected: used };
+        return Plan {
+            deletions: Vec::new(),
+            over: false,
+            used,
+            expected: used,
+        };
     }
     // 世代を消す前に、落ちた書き込みの残りを片付ける（ロックを持たれているプール・動いているプールは飛ばす）。
     // 世代を消しても減らないので、見積もりが外れる原因になる
@@ -167,10 +180,18 @@ fn plan(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) -> Plan {
         }
     }
     if reclaimed > 0 {
-        used = found.iter().map(|(path, _, _)| GenerationStore::new(path).disk_bytes()).sum();
+        used = found
+            .iter()
+            .map(|(path, _, _)| GenerationStore::new(path).disk_bytes())
+            .sum();
         cap = limits.cap(root, used);
         if used <= cap {
-            return Plan { deletions: Vec::new(), over: false, used, expected: used };
+            return Plan {
+                deletions: Vec::new(),
+                over: false,
+                used,
+                expected: used,
+            };
         }
     }
     let mut pools: Vec<PoolView> = Vec::new();
@@ -178,7 +199,12 @@ fn plan(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) -> Plan {
         let Ok(footprint) = GenerationStore::new(&path).footprint() else {
             continue;
         };
-        pools.push(PoolView { path, kind, is_own, footprint });
+        pools.push(PoolView {
+            path,
+            kind,
+            is_own,
+            footprint,
+        });
     }
     // 共有の中身を、いくつの世代が使っているか（プールごと。共有は同じプールの中だけ）
     let mut refs: HashMap<(usize, &str), usize> = HashMap::new();
@@ -206,7 +232,11 @@ fn plan(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) -> Plan {
     }
     // 壊れた世代を先に（残すと、どの世代の中身も消せない）。そのあとは古い順
     candidates.sort_by(|a, b| {
-        (a.1.problem.is_none(), &a.1.id, &pools[a.0].path).cmp(&(b.1.problem.is_none(), &b.1.id, &pools[b.0].path))
+        (a.1.problem.is_none(), &a.1.id, &pools[a.0].path).cmp(&(
+            b.1.problem.is_none(),
+            &b.1.id,
+            &pools[b.0].path,
+        ))
     });
     let mut chosen = vec![false; candidates.len()];
     let mut remaining = used;
@@ -267,7 +297,12 @@ fn plan(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) -> Plan {
         .filter(|(_, c)| **c)
         .map(|((pi, g), _)| (pools[*pi].path.clone(), g.id.clone()))
         .collect();
-    Plan { deletions, over: remaining > cap, used, expected: remaining }
+    Plan {
+        deletions,
+        over: remaining > cap,
+        used,
+        expected: remaining,
+    }
 }
 
 /// 合計が上限を超えていれば、まず落ちた書き込みの残りを片付け、それでも超えていれば古い世代から消して収める。世代を消せなかった
@@ -301,7 +336,11 @@ pub fn enforce(root: &Path, limits: &Limits, own: Option<&Path>, now_ms: u64) ->
         }
         // 世代が無くなったプールは（この実行のものを除いて）フォルダごと消す
         for pool in touched {
-            if Some(pool.as_path()) != own && GenerationStore::new(&pool).list().is_ok_and(|g| g.is_empty()) {
+            if Some(pool.as_path()) != own
+                && GenerationStore::new(&pool)
+                    .list()
+                    .is_ok_and(|g| g.is_empty())
+            {
                 let _ = std::fs::remove_dir_all(&pool);
             }
         }
@@ -371,20 +410,32 @@ mod tests {
         let store = GenerationStore::new(pool);
         let token = store.token().ok();
         let mut files = Files::new();
-        files.insert("document.utpaint".into(), yolu_io::Blob::from(vec![unique; SIZE]));
+        files.insert(
+            "document.utpaint".into(),
+            yolu_io::Blob::from(vec![unique; SIZE]),
+        );
         if let Some((value, size)) = shared {
             files.insert("shared.bin".into(), yolu_io::Blob::from(vec![value; size]));
         }
         store
             .commit(
                 &files,
-                &CommitOptions { expected: token.as_deref(), keep: None, share: true },
+                &CommitOptions {
+                    expected: token.as_deref(),
+                    keep: None,
+                    share: true,
+                },
             )
             .unwrap()
             .id
     }
     fn ids(pool: &Path) -> Vec<String> {
-        let mut v: Vec<String> = GenerationStore::new(pool).list().unwrap().into_iter().map(|g| g.id).collect();
+        let mut v: Vec<String> = GenerationStore::new(pool)
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
         v.sort();
         v
     }
@@ -411,9 +462,15 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_generations_go_first_across_pools_and_the_newest_of_this_run_and_of_each_crash_stay() {
+    fn the_oldest_generations_go_first_across_pools_and_the_newest_of_this_run_and_of_each_crash_stay(
+    ) {
         let root = Root::new("order");
-        let (p1, p2, own, crashed) = (new_pool(&root), new_pool(&root), new_pool(&root), new_pool(&root));
+        let (p1, p2, own, crashed) = (
+            new_pool(&root),
+            new_pool(&root),
+            new_pool(&root),
+            new_pool(&root),
+        );
         let g1 = add(&p1, 1, None);
         let g2 = add(&p1, 2, None);
         let g3 = add(&p2, 3, None);
@@ -426,10 +483,23 @@ mod tests {
         // 4 世代ぶんを消せば収まる上限（古い順に g1・g2・g3・g4）
         let cap = total - 3 * SIZE as u64 - 1000;
         let report = enforce(&root.0, &limits(cap), Some(&own), now());
-        assert_eq!(report, Trimmed { generations: 4, over: false });
-        assert!(!p1.exists() && !p2.exists(), "世代が無くなったプールは消える");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 4,
+                over: false
+            }
+        );
+        assert!(
+            !p1.exists() && !p2.exists(),
+            "世代が無くなったプールは消える"
+        );
         assert_eq!(ids(&own), vec![g5.clone()], "この実行の最新は残る");
-        assert_eq!(ids(&crashed), vec![g6.clone(), g7.clone()], "上限に収まったので、落ちた実行の古い世代はまだある");
+        assert_eq!(
+            ids(&crashed),
+            vec![g6.clone(), g7.clone()],
+            "上限に収まったので、落ちた実行の古い世代はまだある"
+        );
         let _ = (g1, g2, g3, g4);
         assert!(used(&root) <= cap);
         // 消したあとの置き場は読める（ポインタは残った世代を指す）
@@ -437,7 +507,8 @@ mod tests {
     }
 
     #[test]
-    fn a_cap_below_what_the_kept_generations_use_removes_everything_else_and_says_it_is_still_over() {
+    fn a_cap_below_what_the_kept_generations_use_removes_everything_else_and_says_it_is_still_over()
+    {
         let root = Root::new("over");
         let (closed, own, crashed) = (new_pool(&root), new_pool(&root), new_pool(&root));
         add(&closed, 1, None);
@@ -454,7 +525,13 @@ mod tests {
         assert_eq!(ids(&own), vec![newest_own]);
         assert_eq!(ids(&crashed), vec![newest_crashed]);
         // 2 回目は何も消さない（守る世代しか無い）
-        assert_eq!(enforce(&root.0, &limits(1), Some(&own), now()), Trimmed { generations: 0, over: true });
+        assert_eq!(
+            enforce(&root.0, &limits(1), Some(&own), now()),
+            Trimmed {
+                generations: 0,
+                over: true
+            }
+        );
     }
 
     #[test]
@@ -465,25 +542,42 @@ mod tests {
         let g1 = add(&pool, 1, Some((9, BIG)));
         let g2 = add(&pool, 2, Some((9, BIG)));
         let g3 = add(&pool, 3, Some((9, BIG)));
-        let contents = |pool: &Path| fs::read_dir(pool.join("contents")).map(|d| d.count()).unwrap_or(0);
+        let contents = |pool: &Path| {
+            fs::read_dir(pool.join("contents"))
+                .map(|d| d.count())
+                .unwrap_or(0)
+        };
         assert_eq!(contents(&pool), 4, "正本が 3 つと、共有の中身が 1 つ");
         // g1 を消せば収まる上限: 世代の正本だけが空き、共有の中身は残る
         let total = used(&root);
         let report = enforce(&root.0, &limits(total - SIZE as u64 / 2), None, now());
-        assert_eq!(report, Trimmed { generations: 1, over: false });
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: false
+            }
+        );
         assert_eq!(ids(&pool), vec![g2.clone(), g3.clone()]);
         assert_eq!(contents(&pool), 3);
-        assert!(GenerationStore::new(&pool).load_generation(&g3).is_ok(), "残る世代は共有の中身ごと読める");
+        assert!(
+            GenerationStore::new(&pool).load_generation(&g3).is_ok(),
+            "残る世代は共有の中身ごと読める"
+        );
         let _ = g1;
         // 全部を消す上限: 最後の世代が消えたあとで、共有の中身も消える（プールごと）
         let report = enforce(&root.0, &limits(1), None, now());
         assert_eq!(report.generations, 2);
         assert!(!pool.exists());
-        assert!(matches!(GenerationStore::new(&pool).load(), Err(StoreError::NoGeneration) | Err(StoreError::Io(_))));
+        assert!(matches!(
+            GenerationStore::new(&pool).load(),
+            Err(StoreError::NoGeneration) | Err(StoreError::Io(_))
+        ));
     }
 
     #[test]
-    fn a_generation_that_shares_everything_does_not_free_anything_and_is_kept_while_others_can_be() {
+    fn a_generation_that_shares_everything_does_not_free_anything_and_is_kept_while_others_can_be()
+    {
         let root = Root::new("skip");
         let pool = new_pool(&root);
         const BIG: usize = 40_000;
@@ -496,8 +590,18 @@ mod tests {
         // 世代 1 つぶんだけ超えている。古い順は g1 → g2。g1 が空く
         let total = used(&root);
         let report = enforce(&root.0, &limits(total - SIZE as u64 / 2), Some(&own), now());
-        assert_eq!(report, Trimmed { generations: 1, over: false });
-        assert_eq!(ids(&pool), vec![g2.clone(), g3.clone()], "g2 を消しても空かないので、空く g1 を消した");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: false
+            }
+        );
+        assert_eq!(
+            ids(&pool),
+            vec![g2.clone(), g3.clone()],
+            "g2 を消しても空かないので、空く g1 を消した"
+        );
         // さらに削る: g2 と g3 は同じ正本を持つので、どちらを消しても空かない。いちばん古い g2 を消して、g3 の正本を空く側にする
         let report = enforce(&root.0, &limits(1), Some(&own), now());
         assert_eq!(report.generations, 2, "{report:?}");
@@ -516,7 +620,13 @@ mod tests {
         let day = 86_400_000u64;
         // 29 日: 上限がどれだけ小さくても最新は残る。古い世代は消える
         let report = enforce(&root.0, &limits(1), None, t + 29 * day);
-        assert_eq!(report, Trimmed { generations: 1, over: true });
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: true
+            }
+        );
         assert_eq!(ids(&crashed), vec![newest.clone()]);
         // 31 日を過ぎても、上限に収まっているなら消さない
         let report = enforce(&root.0, &limits(u64::MAX), None, t + 31 * day);
@@ -524,13 +634,20 @@ mod tests {
         assert_eq!(ids(&crashed), vec![newest.clone()]);
         // 31 日を過ぎて上限を超えていれば、ほかの世代と同じに古いほうから消える
         let report = enforce(&root.0, &limits(1), None, t + 31 * day);
-        assert_eq!(report, Trimmed { generations: 1, over: false });
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: false
+            }
+        );
         assert!(!crashed.exists());
         let _ = older;
     }
 
     #[test]
-    fn a_pool_another_window_is_running_counts_but_is_never_touched_and_unrelated_folders_are_left_alone() {
+    fn a_pool_another_window_is_running_counts_but_is_never_touched_and_unrelated_folders_are_left_alone(
+    ) {
         let root = Root::new("live");
         let live = new_pool(&root);
         let lock = fs::OpenOptions::new()
@@ -552,7 +669,14 @@ mod tests {
         assert_eq!(usage.own + usage.crashed, 0);
         assert!(usage.total() < 100_000, "プールの外は数えない");
         let report = enforce(&root.0, &limits(1), None, now());
-        assert_eq!(report, Trimmed { generations: 1, over: true }, "動いているプールは消せないので、超えたまま");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: true
+            },
+            "動いているプールは消せないので、超えたまま"
+        );
         assert_eq!(ids(&live), vec![live_g]);
         assert!(!closed.exists());
         assert!(foreign.join("big.bin").is_file());
@@ -560,7 +684,8 @@ mod tests {
     }
 
     #[test]
-    fn a_generation_that_cannot_be_removed_now_is_skipped_and_the_rest_still_goes_without_looping() {
+    fn a_generation_that_cannot_be_removed_now_is_skipped_and_the_rest_still_goes_without_looping()
+    {
         let root = Root::new("busy");
         let (busy, free) = (new_pool(&root), new_pool(&root));
         let kept = add(&busy, 1, None);
@@ -575,12 +700,25 @@ mod tests {
             .unwrap();
         lock.try_lock().unwrap();
         let report = enforce(&root.0, &limits(1), None, now());
-        assert_eq!(report, Trimmed { generations: 1, over: true }, "消せたものだけ消し、収まっていないと知らせて終わる");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: true
+            },
+            "消せたものだけ消し、収まっていないと知らせて終わる"
+        );
         assert_eq!(ids(&busy), vec![kept.clone()]);
         assert!(!free.exists());
         drop(lock);
         // ロックが外れれば、次の機会に消える
-        assert_eq!(enforce(&root.0, &limits(1), None, now()), Trimmed { generations: 1, over: false });
+        assert_eq!(
+            enforce(&root.0, &limits(1), None, now()),
+            Trimmed {
+                generations: 1,
+                over: false
+            }
+        );
         assert!(!busy.exists());
     }
 
@@ -596,7 +734,11 @@ mod tests {
         let own = pool.clone();
         let report = enforce(&root.0, &limits(1), Some(&own), now());
         assert!(report.over);
-        assert_eq!(ids(&pool), vec![b.clone()], "読める最新（b）が残り、壊れた c と古い a は消える");
+        assert_eq!(
+            ids(&pool),
+            vec![b.clone()],
+            "読める最新（b）が残り、壊れた c と古い a は消える"
+        );
         let _ = a;
     }
 
@@ -623,7 +765,9 @@ mod tests {
         // 落ちた書き込みの残り（大きい）と、確定の前に落ちて誰も使わない中身
         let stale = leave_staging(&pool, "a", 3 * SIZE);
         let stale_crashed = leave_staging(&crashed, "b", SIZE);
-        let orphan = pool.join("contents").join(format!("{}.bin", "ab".repeat(32)));
+        let orphan = pool
+            .join("contents")
+            .join(format!("{}.bin", "ab".repeat(32)));
         fs::write(&orphan, vec![7u8; SIZE / 2]).unwrap();
         let total = used(&root);
         // 残りを片付ければ収まる上限。世代を 1 つでも消せば、必要以上に消している
@@ -634,20 +778,33 @@ mod tests {
         assert!(!stale.exists() && !stale_crashed.exists() && !orphan.exists());
         assert!(used(&root) <= cap, "実際の量が上限へ向かって減る");
         // 残りの無い置き場は、収まっているあいだ何も起きない
-        assert_eq!(enforce(&root.0, &limits(cap), None, now()), Trimmed::default());
+        assert_eq!(
+            enforce(&root.0, &limits(cap), None, now()),
+            Trimmed::default()
+        );
     }
 
     #[test]
     fn after_reclaiming_only_what_is_still_over_is_taken_from_the_oldest_generations() {
         let root = Root::new("leftover-then-cap");
         let pool = new_pool(&root);
-        let (g1, g2, g3) = (add(&pool, 1, None), add(&pool, 2, None), add(&pool, 3, None));
+        let (g1, g2, g3) = (
+            add(&pool, 1, None),
+            add(&pool, 2, None),
+            add(&pool, 3, None),
+        );
         let stale = leave_staging(&pool, "c", 5 * SIZE);
         let total = used(&root);
         // 残り（5 SIZE）を片付けて、さらに世代 1 つぶん
         let cap = total - 5 * SIZE as u64 - SIZE as u64 / 2;
         let report = enforce(&root.0, &limits(cap), None, now());
-        assert_eq!(report, Trimmed { generations: 1, over: false });
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: false
+            }
+        );
         assert_eq!(ids(&pool), vec![g2, g3], "いちばん古い 1 つだけ");
         assert!(!stale.exists());
         assert!(used(&root) <= cap);
@@ -682,7 +839,10 @@ mod tests {
         let report = enforce(&root.0, &limits(1), None, now());
         assert!(report.over);
         assert!(stale_live.exists(), "動いているプールは触らない");
-        assert!(stale_busy.exists(), "書いている最中かもしれないので触らない");
+        assert!(
+            stale_busy.exists(),
+            "書いている最中かもしれないので触らない"
+        );
         assert!(!stale_closed.exists() && !closed.exists());
         drop((live_lock, save_lock));
     }
@@ -691,20 +851,36 @@ mod tests {
     fn a_round_that_frees_less_than_estimated_stops_the_removal_instead_of_emptying_the_pool() {
         let root = Root::new("estimate");
         let pool = new_pool(&root);
-        let (g1, g2, g3) = (add(&pool, 1, None), add(&pool, 2, None), add(&pool, 3, None));
+        let (g1, g2, g3) = (
+            add(&pool, 1, None),
+            add(&pool, 2, None),
+            add(&pool, 3, None),
+        );
         // 共有の中身を消せなくするもの（`.staging-` の名前の、フォルダではないもの。整理は読めない作りかけとして、何も消さない）
         fs::write(pool.join(".staging-blocker"), b"x").unwrap();
         let total = used(&root);
         // g1 を消せば収まる見積もり。実際は g1 の正本が空かない
         let cap = total - SIZE as u64 / 2;
         let report = enforce(&root.0, &limits(cap), Some(&pool), now());
-        assert_eq!(report, Trimmed { generations: 1, over: true }, "{report:?}");
-        assert_eq!(ids(&pool), vec![g2, g3], "見積もりが外れたら、残りの世代を消し続けない");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 1,
+                over: true
+            },
+            "{report:?}"
+        );
+        assert_eq!(
+            ids(&pool),
+            vec![g2, g3],
+            "見積もりが外れたら、残りの世代を消し続けない"
+        );
         let _ = g1;
     }
 
     #[test]
-    fn a_damaged_generation_goes_before_the_readable_ones_so_the_contents_it_blocked_can_be_freed() {
+    fn a_damaged_generation_goes_before_the_readable_ones_so_the_contents_it_blocked_can_be_freed()
+    {
         let root = Root::new("damaged-first");
         let pool = new_pool(&root);
         let g1 = add(&pool, 1, None);
@@ -717,7 +893,14 @@ mod tests {
         // 読める世代の 1 つぶんだけ超えている
         let cap = total - SIZE as u64 / 2;
         let report = enforce(&root.0, &limits(cap), Some(&pool), now());
-        assert_eq!(report, Trimmed { generations: 2, over: false }, "{report:?}");
+        assert_eq!(
+            report,
+            Trimmed {
+                generations: 2,
+                over: false
+            },
+            "{report:?}"
+        );
         assert_eq!(ids(&pool), vec![g2, g3], "壊れた g4 と、いちばん古い g1");
         assert!(used(&root) <= cap, "g1 の中身も実際に空いた");
         let _ = g1;

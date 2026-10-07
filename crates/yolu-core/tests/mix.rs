@@ -1,7 +1,8 @@
 //! 色の混ぜ（厚塗りのブラシ）: 混ぜ方が切のブラシは今までと同じ（設定の値は効かない）、混ぜるは下の色を拾って描く色と混ぜる（絵の具の量・濃さ・
-//! 色延び・筆圧）、伸ばすは動きの後ろの色を引きずる、下地は今の層か見えている層の重なり、並列と直列で同じ画素、選択範囲・透明部分のロック、
-//! 2D の対称（左右が鏡像）、3D の面でも効く（離れた島にまたがるダブは塊ごとに下地を凍結）、取消・予算・Undo、色以外のチャンネル・消しゴム・
+//! 色延び・筆圧）、伸ばすは動きの後ろの色を引きずる、下地は今のレイヤーか見えているレイヤーの重なり、並列と直列で同じ画素、選択範囲・透明部分のロック、
+//! 2D の対称（左右が鏡像）、3D の面でも効く（離れたアイランドにまたがるダブは塊ごとに下地を凍結）、取消・予算・Undo、色以外のチャンネル・消しゴム・
 //! 効果のブラシでは混ぜない。式そのものは `brush/mix.rs` の単体試験と `docs/BRUSH.md`。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最大と 0 に切り替えて、直列の経路だけ・ワーカーの経路を通ることを確かめる（このファイルの中では `THRESHOLD` で順に走らせる）。同じプロセスのほかの試験が閾値を変えると外れる。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::sync::{Arc, Mutex};
@@ -31,7 +32,7 @@ impl Drop for Restore {
     }
 }
 
-/// 画布（タイル 16）。`ground(x, y)` で最初の層を塗る（画素の座標は左下原点）。
+/// キャンバス（タイル 16）。`ground(x, y)` で最初のレイヤーを塗る（画素の座標は左下原点）。
 fn canvas(w: u32, h: u32, ts: u32, ground: impl Fn(u32, u32) -> Rgba8) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(w, h, ts).unwrap();
     let l = d.add_layer("L").unwrap();
@@ -373,7 +374,7 @@ fn the_composite_ground_reads_the_layers_below() {
         b.mix.ground = ground;
         b
     };
-    // 今の層だけ: 上の層は空なので何も拾えず、描く色のまま
+    // 今のレイヤーだけ: 上のレイヤーは空なので何も拾えず、描く色のまま
     let (mut layer_only, top) = build();
     dot(
         &mut layer_only,
@@ -384,7 +385,7 @@ fn the_composite_ground_reads_the_layers_below() {
         1.0,
     );
     assert_eq!(px(&layer_only, top, 32, 32), Rgba8::new(0, 0, 0, 255));
-    // 見えている層の重なり: 下の赤を拾って混ぜる
+    // 見えているレイヤーの重なり: 下の赤を拾って混ぜる
     let (mut composite, top) = build();
     let b = brush(MixGround::Composite);
     let mut s = composite.begin_brush_stroke(top, &b).unwrap();
@@ -393,10 +394,10 @@ fn the_composite_ground_reads_the_layers_below() {
         .unwrap();
     composite.end_stroke(s).unwrap();
     assert_eq!(px(&composite, top, 32, 32), Rgba8::new(128, 0, 0, 255));
-    // 下の層は変わらない
+    // 下のレイヤーは変わらない
     let below = composite.layers()[0].id();
     assert_eq!(px(&composite, below, 32, 32), RED);
-    // 参照元を凍結しなければ、今の層から読む（拾うものが無いので描く色）
+    // 参照元を凍結しなければ、今のレイヤーから読む（拾うものが無いので描く色）
     let (mut forgot, top) = build();
     dot(&mut forgot, top, &b, 32.0, 32.0, 1.0);
     assert_eq!(px(&forgot, top, 32, 32), Rgba8::new(0, 0, 0, 255));
@@ -404,7 +405,7 @@ fn the_composite_ground_reads_the_layers_below() {
 
 #[test]
 fn the_composite_ground_reads_the_picture_frozen_before_the_stroke() {
-    // 同じ場所を 2 回通っても、見えている層の重なりは最初の打点の前の絵のまま（このストロークの描きは読み返さない）
+    // 同じ場所を 2 回通っても、見えているレイヤーの重なりは最初の打点の前の絵のまま（このストロークの描きは読み返さない）
     let (mut d, l) = canvas(64, 64, 16, |_, _| BLUE);
     let mut b = mixing(8.0, RED, MixMode::Mix, 0.5);
     b.mix.ground = MixGround::Composite;
@@ -418,7 +419,7 @@ fn the_composite_ground_reads_the_picture_frozen_before_the_stroke() {
             .unwrap();
     }
     d.end_stroke(s).unwrap();
-    // 何度重ねても、半々の紫を超えて赤くはならない（今の層から読むと、重ねるたびに赤へ寄る）
+    // 何度重ねても、半々の紫を超えて赤くはならない（今のレイヤーから読むと、重ねるたびに赤へ寄る）
     assert_eq!(px(&d, l, 20, 32), Rgba8::new(128, 0, 128, 255));
 }
 
@@ -629,7 +630,7 @@ fn the_pixels_read_for_mixing_count_against_the_stroke_budget() {
 
 // ───────── 選択範囲・透明部分のロック ─────────
 
-/// 画布を左から 16 画素ずつの 4 つのタイル（x 0..15・16..31・32..47・48..63）に分けた選択範囲: 量は左から 255・128・0・0。
+/// キャンバスを左から 16 画素ずつの 4 つのタイル（x 0..15・16..31・32..47・48..63）に分けた選択範囲: 量は左から 255・128・0・0。
 fn banded_selection(d: &Document) -> SelectionMask {
     let band = |amount: u8| vec![amount; 16 * 16];
     SelectionMask::from_amount_tiles(
@@ -679,7 +680,7 @@ fn a_selection_cuts_the_mixed_colour_by_its_amount_and_leaves_the_rest_alone() {
     }
 }
 
-/// 幅 64 の画布の左半分（x 0..31）の画素。
+/// 幅 64 のキャンバスの左半分（x 0..31）の画素。
 fn left_half(d: &Document, l: LayerId) -> Vec<Rgba8> {
     (0..d.height())
         .flat_map(|y| (0..32).map(move |x| (x, y)))
@@ -793,7 +794,7 @@ fn a_mirror_symmetric_mix_or_smear_gives_a_mirror_image() {
 
 #[test]
 fn symmetric_copies_far_apart_read_only_their_own_regions() {
-    // 対称の写しが画布の両端にあるとき、外接の箱（画布の幅いっぱい）を枠にせず、写しごとの小さな範囲を読む:
+    // 対称の写しがキャンバスの両端にあるとき、外接の箱（キャンバスの幅いっぱい）を枠にせず、写しごとの小さな範囲を読む:
     // 外接の箱なら要る量よりずっと小さい予算でも、ストロークは取り消されず、両側が混ざる
     let (w, h) = (4096u32, 32u32);
     for mode in [MixMode::Mix, MixMode::Smear] {
@@ -825,8 +826,8 @@ fn symmetric_copies_far_apart_read_only_their_own_regions() {
 
 #[test]
 fn a_surface_dab_over_two_distant_islands_freezes_only_the_pixels_it_reads() {
-    // UV の離れた 2 つの島にまたがるダブ（継ぎ目のダブ）: 外接の箱（画布の大半）を枠にすると予算を超えてストロークごと取り消されるが、
-    // 塊ごとに凍結するので、小さな予算でも取り消されず、両方の島が混ざる。ダブの外は触れない
+    // UV の離れた 2 つのアイランドにまたがるダブ（継ぎ目のダブ）: 外接の箱（キャンバスの大半）を枠にすると予算を超えてストロークごと取り消されるが、
+    // 塊ごとに凍結するので、小さな予算でも取り消されず、両方のアイランドが混ざる。ダブの外は触れない
     let size = 512u32;
     let island = |x0: i64, y0: i64| -> Vec<BrushPixel> {
         (0..8)
@@ -854,9 +855,9 @@ fn a_surface_dab_over_two_distant_islands_freezes_only_the_pixels_it_reads() {
         assert!(d.has_active_stroke(), "{mode:?} 取り消されていない");
         let mixed = Rgba8::new(128, 0, 128, 255);
         d.end_stroke(stroke).unwrap();
-        assert_eq!(px(&d, l, 23, 23), mixed, "{mode:?} 1 つ目の島");
-        assert_eq!(px(&d, l, 483, 483), mixed, "{mode:?} 2 つ目の島");
-        assert_eq!(px(&d, l, 28, 28), BLUE, "{mode:?} 島の外");
+        assert_eq!(px(&d, l, 23, 23), mixed, "{mode:?} 1 つ目のアイランド");
+        assert_eq!(px(&d, l, 483, 483), mixed, "{mode:?} 2 つ目のアイランド");
+        assert_eq!(px(&d, l, 28, 28), BLUE, "{mode:?} アイランドの外");
         assert_eq!(px(&d, l, 250, 250), BLUE, "{mode:?} 間");
         d.undo().unwrap();
         assert_eq!(bytes(&d, l), before, "{mode:?}");
@@ -865,7 +866,7 @@ fn a_surface_dab_over_two_distant_islands_freezes_only_the_pixels_it_reads() {
 
 #[test]
 fn distant_islands_in_one_dab_come_out_as_if_painted_separately() {
-    // 1 つのダブの画素が離れた島にまたがっても、島ごとに別のストロークの最初のダブとして塗ったのと同じ画素（塊ごとの枠は、その島の下地だけを
+    // 1 つのダブの画素が離れたアイランドにまたがっても、アイランドごとに別のストロークの最初のダブとして塗ったのと同じ画素（塊ごとの枠は、そのアイランドの下地だけを
     // 読む。荷は最初のダブなので描く色、箱の大きさは一番大きい塊から）
     let island = |x0: i64, y0: i64| -> Vec<BrushPixel> {
         (0..9)

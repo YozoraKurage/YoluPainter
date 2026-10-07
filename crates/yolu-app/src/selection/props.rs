@@ -1,8 +1,8 @@
 //! 選択範囲と対称の、オプションバーとツールプロパティの部品。
-//! - 選択の道具のオプションバー: 作成方法（新規・追加・削除・共通。選択ペンは選択ペン・選択消し）、選択ペンの直径、自動選択の許容値
+//! - 選択のツールのオプションバー: 作成方法（新規・追加・削除・共通。選択ペンは選択ペン・選択消し）、選択ペンの直径、自動選択の許容値
 //! - ブラシ・消しゴムのオプションバーの右端: 対称の切り替えとモードの選び（▾）
-//! - 左のドックのツールプロパティ: 選択の道具の作成方法・すべて・解除・反転・クイックマスク、道具ごとの設定（自動選択の許容値・隣接・全レイヤー、
-//!   形の道具のアンチエイリアス・縦横比・中心から・角の丸め、選択ペンの直径・硬さ・不透明度）、選択範囲を変更。対称の欄は、ブラシの詳細の窓の
+//! - 左のドックのツールプロパティ: 選択のツールの作成方法・すべて・解除・反転・クイックマスク、ツールごとの設定（自動選択の許容値・隣接・全レイヤー、
+//!   形のツールのアンチエイリアス・縦横比・中心から・角の丸め、選択ペンの直径・硬さ・不透明度）、選択範囲を変更。対称の欄は、ブラシの詳細のウィンドウの
 //!   「対称」のカテゴリ（`symmetry_fields`）
 //!
 //! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
@@ -136,7 +136,7 @@ fn creation_group(
     x + width
 }
 
-/// 選択ペン・選択消しの切り替え（選択ペンの道具のオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
+/// 選択ペン・選択消しの切り替え（選択ペンのツールのオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
 fn pen_group(
     ui: &mut Ui,
     app: &mut AppState,
@@ -152,7 +152,7 @@ fn pen_group(
             false,
             "edit",
             l.pick(
-                "選択ペン: 選択範囲に足す（Shift）",
+                "選択ペン: 選択範囲に追加（Shift）",
                 "Selection Pen: add to the selection (Shift)",
             ),
         ),
@@ -194,8 +194,8 @@ fn pen_group(
     x + width
 }
 
-/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。作成方法（選択ペンは選択ペンと選択消し）に、
-/// 選択ペンは直径、自動選択は許容値。すべて・解除・反転・クイックマスクと、道具ごとのほかの設定はツールプロパティ。
+/// 選択のツールのオプションバーの中身。`x` は次の部品を置く左端（ツールのアイコンと区切りの右）。作成方法（選択ペンは選択ペンと選択消し）に、
+/// 選択ペンは直径、自動選択は許容値。すべて・解除・反転・クイックマスクと、ツールごとのほかの設定はツールプロパティ。
 pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     let mut x = x + 4.0;
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
@@ -207,7 +207,7 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     } else {
         creation_group(ui, app, y, h, x, held)
     };
-    // 窓が狭いときは、入りきらない部品を出さない
+    // ウィンドウが狭いときは、入りきらない部品を出さない
     let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
     if app.tool == Tool::SelectPen {
         x += 8.0;
@@ -242,7 +242,13 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
             return;
         }
         let at = Rect::from_min_size(pos2(x, y), vec2(170.0, h));
-        let out = w::slider(ui, at, "options.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(l));
+        let out = w::slider(
+            ui,
+            at,
+            "options.wand.tolerance",
+            app.sel.tolerance as f32,
+            &wand_tolerance_spec(l),
+        );
         if out.changed {
             app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
         }
@@ -250,7 +256,13 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 }
 
 fn wand_tolerance_spec(l: Lang) -> SliderSpec<'static> {
-    SliderSpec::new(l.pick("許容値", "Tolerance"), 0.0, 255.0, NumberFormat::int("")).tooltip(l.pick(
+    SliderSpec::new(
+        l.pick("許容値", "Tolerance"),
+        0.0,
+        255.0,
+        NumberFormat::int(""),
+    )
+    .tooltip(l.pick(
         "種の色から、各成分（RGBA）の差がこの値以下の画素を選ぶ",
         "Selects pixels whose every RGBA component is within this distance of the clicked color",
     ))
@@ -268,7 +280,7 @@ pub fn symmetry_options(ui: &mut Ui, app: &mut AppState, r: Rect, left: f32) {
         None
     };
     let text_w = mode_text.map_or(0.0, |t| w::text_width(&p, t, t::LABEL) + 8.0);
-    // モード名が入らないほど狭い（窓の最小の幅で、英語の長い名前）ときは、名前を落としてトグルと ▾ を残す
+    // モード名が入らないほど狭い（ウィンドウの最小の幅で、英語の長い名前）ときは、名前を落としてトグルと ▾ を残す
     let fixed = 28.0 + 20.0 + 14.0;
     let (mode_text, text_w) = if r.right() - 8.0 - (fixed + text_w) >= left {
         (mode_text, text_w)
@@ -345,7 +357,10 @@ pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let held = ui.input(|i| i.modifiers);
     let effective = super::combine_of(app.sel.combine, held);
     for (i, mode) in CREATION_MODES.into_iter().enumerate() {
-        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let at = Rect::from_min_size(
+            pos2(row.left() + 30.0 * i as f32, row.top()),
+            vec2(28.0, row.height()),
+        );
         let lit = effective == mode;
         if w::icon_button(
             ui,
@@ -378,7 +393,7 @@ fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             false,
             "edit",
             l.pick(
-                "選択ペン: 選択範囲に足す（Shift）",
+                "選択ペン: 選択範囲に追加（Shift）",
                 "Selection Pen: add to the selection (Shift)",
             ),
         ),
@@ -392,9 +407,23 @@ fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ),
     ];
     for (i, (erase, icon, tip)) in items.into_iter().enumerate() {
-        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let at = Rect::from_min_size(
+            pos2(row.left() + 30.0 * i as f32, row.top()),
+            vec2(28.0, row.height()),
+        );
         let lit = erasing == erase;
-        if w::icon_button(ui, at, ("props.select.pen", erase), icon, tip, lit, true, 18.0).clicked() {
+        if w::icon_button(
+            ui,
+            at,
+            ("props.select.pen", erase),
+            icon,
+            tip,
+            lit,
+            true,
+            18.0,
+        )
+        .clicked()
+        {
             app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(erase))));
         }
         if app.sel.pen_erase == erase && !lit {
@@ -410,9 +439,24 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let free = !app.is_stroking() && app.read_only_reason().is_none();
     let any = app.doc.selection().is_some();
     let buttons: [(&str, &str, SelEdit, bool); 3] = [
-        ("select_all", l.pick("すべてを選択", "Select All"), SelEdit::All, free),
-        ("deselect", l.pick("選択を解除", "Deselect"), SelEdit::Clear, free && any),
-        ("invert_colors", l.pick("選択範囲を反転", "Invert Selection"), SelEdit::Invert, free && any),
+        (
+            "select_all",
+            l.pick("すべてを選択", "Select All"),
+            SelEdit::All,
+            free,
+        ),
+        (
+            "deselect",
+            l.pick("選択を解除", "Deselect"),
+            SelEdit::Clear,
+            free && any,
+        ),
+        (
+            "invert_colors",
+            l.pick("選択範囲を反転", "Invert Selection"),
+            SelEdit::Invert,
+            free && any,
+        ),
     ];
     let mut x = row.left();
     for (icon, name, edit, enabled) in buttons {
@@ -420,7 +464,18 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         // キーは割り当ての表から（文字を直に書かない）
         let action = Action::Sel(SelAction::Edit(edit));
         let tip = crate::shortcuts::tip_with_key(l, name, &action);
-        if w::icon_button(ui, at, ("props.select.op", icon), icon, &tip, false, enabled, 18.0).clicked() {
+        if w::icon_button(
+            ui,
+            at,
+            ("props.select.op", icon),
+            icon,
+            &tip,
+            false,
+            enabled,
+            18.0,
+        )
+        .clicked()
+        {
             app.apply(action);
         }
         x += 30.0;
@@ -447,7 +502,7 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// ツールプロパティの中身（選択の道具のもの。ID の色で選択は範囲の道具の欄 `region_props`）。
+/// ツールプロパティの中身（選択のツールのもの。ID の色で選択は範囲のツールの欄 `region_props`）。
 pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     if app.tool == Tool::SelectPen {
         pen_row(ui, app, rows);
@@ -511,7 +566,11 @@ fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             label: kind.name(lang),
             primary: false,
             enabled: any && free,
-            tooltip: if any { kind.tooltip(lang) } else { no_selection },
+            tooltip: if any {
+                kind.tooltip(lang)
+            } else {
+                no_selection
+            },
         })
         .collect();
     if let Some(i) = flow_buttons(ui, rows, "sel.modify", &items) {
@@ -523,13 +582,19 @@ fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// 道具ごとの設定（自動選択: 許容値・隣接・全レイヤー。形の道具: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 直径・硬さ・不透明度）。
+/// ツールごとの設定（自動選択: 許容値・隣接・全レイヤー。形のツール: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 直径・硬さ・不透明度）。
 fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     let tool = app.tool;
     if tool == Tool::Wand {
         let at = rows.slider_row();
-        let out = w::slider(ui, at, "props.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(lang));
+        let out = w::slider(
+            ui,
+            at,
+            "props.wand.tolerance",
+            app.sel.tolerance as f32,
+            &wand_tolerance_spec(lang),
+        );
         if out.changed {
             app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
         }
@@ -687,7 +752,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// ブラシの詳細の窓の「対称」の欄（見出しと既定に戻すは窓が出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
+/// ブラシの詳細のウィンドウの「対称」の欄（見出しと既定に戻すはウィンドウが出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
 /// 指先・クローンは対称と組めないので、対称のモードは「なし」のほかを無効にする。
 pub fn symmetry_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     rows.indent = 0.0;

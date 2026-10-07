@@ -17,7 +17,7 @@ fn prepare(ts: &[PixelTriangle], w: u32, h: u32) -> Result<Vec<Prepared>, CoreEr
         let [a, mut b, mut c] = t;
         let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
         // 面積がほぼ 0 の三角形は何も覆わない。座標が大きすぎて面積が溢れる（有限でなくなる）三角形も、辺の式が定まらないので
-        // 飛ばす（C# も int へ収まらない座標を飛ばす。画布を含む巨大な三角形は、面積が溢れない大きさまでは画布に切って塗る）
+        // 飛ばす（C# も int へ収まらない座標を飛ばす。キャンバスを含む巨大な三角形は、面積が溢れない大きさまではキャンバスに切って塗る）
         if !area.is_finite() || area.abs() < 1e-12 {
             continue;
         }
@@ -48,7 +48,7 @@ fn inside(a: DVec2, b: DVec2, x: f64, y: f64) -> bool {
 pub(crate) fn coverage(bits: u16) -> u8 {
     ((bits.count_ones() * 255 + 8) / 16) as u8
 }
-/// 各タイルの 16 ビットのサンプル。None は画布内の全画素を覆うタイル。
+/// 各タイルの 16 ビットのサンプル。None はキャンバス内の全画素を覆うタイル。
 pub(crate) type Samples = BTreeMap<TileCoord, Option<Vec<u16>>>;
 /// 並列で一度に作るタイルの数（作業の場所を、全タイル分でなくこの数だけにする。結果は数によらない）。
 const SAMPLE_BATCH: usize = 64;

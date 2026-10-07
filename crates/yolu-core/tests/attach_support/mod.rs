@@ -1,4 +1,4 @@
-//! 効果の試験の道具: 人工の文書・メッシュマップ・画像・乱数。実データは使わない。
+//! 効果の試験のツール: 人工の文書・メッシュマップ・画像・乱数。実データは使わない。
 #![allow(dead_code)]
 use yolu_core::generator::{MapKind, MapState};
 use yolu_core::{
@@ -152,7 +152,7 @@ pub fn world() -> (Document, Vec<LayerId>) {
         )
         .unwrap();
     doc.set_effect_inputs(inputs(0)).unwrap();
-    // 評価のブロックを小さく（2×2 タイル）して、ブロックの境・半径の窓を使う
+    // 評価のブロックを小さく（2×2 タイル）して、ブロックの境・半径のウィンドウを使う
     doc.set_filter_block_pixels(16).unwrap();
     (doc, vec![base, mid, top, fill])
 }

@@ -1,4 +1,4 @@
-//! ブラシの一覧の操作・道具ごとの覚え・保存と読み戻し・見本の描き直しの条件。画面を描かないので Wine でも回る（`headless_`）。
+//! ブラシの一覧の操作・ツールごとの覚え・保存と読み戻し・見本の描き直しの条件。画面を描かないので Wine でも回る（`headless_`）。
 use std::path::PathBuf;
 
 use yolu_app::brushes::sample::{SampleCache, SampleSpec, RENDERS_PER_FRAME};
@@ -8,6 +8,7 @@ use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState, BrushState, Tool};
+use yolu_app::toolset::{ToolsetAction, MAX_GROUP_BRUSHES};
 use yolu_app::YoluApp;
 
 fn b(id: &'static str) -> BrushKey {
@@ -18,13 +19,32 @@ fn select(s: &mut AppState, key: BrushKey) {
     s.apply(Action::Brush(BrushAction::Select(key)));
 }
 
+/// 試験ごとの設定のフォルダの中の、ブラシのフォルダ（ツールの並びの `tools.json` は、その隣の設定のフォルダの直下に置かれる）。
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/brush-list-tests")
         .join(format!("{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("brushes");
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+/// 今の設定の新しいブラシを `n` 個足す（1 つのグループは 512 個までなので、いっぱいになったら今のツールにグループを足す）。
+fn add_many(s: &mut AppState, n: usize) {
+    for _ in 0..n {
+        let slot = s.toolset.set.active().unwrap();
+        let full = s
+            .toolset
+            .set
+            .shown_group(slot)
+            .and_then(|g| s.toolset.set.group(g))
+            .is_some_and(|(_, g)| g.brushes.len() >= MAX_GROUP_BRUSHES);
+        if full {
+            s.apply(Action::Tools(ToolsetAction::AddGroup(slot)));
+        }
+        s.apply(Action::Brush(BrushAction::Add));
+    }
 }
 
 /// 利用者のブラシの名前（一覧の並びの順）。
@@ -39,12 +59,7 @@ fn user_names(s: &AppState) -> Vec<String> {
 }
 
 fn group_keys(s: &AppState, group: Group) -> Vec<BrushKey> {
-    s.brushes
-        .lib
-        .in_group(group)
-        .iter()
-        .map(|e| e.key)
-        .collect()
+    s.brush_entries_in(group).iter().map(|e| e.key).collect()
 }
 
 fn user_id(key: BrushKey) -> u32 {
@@ -58,7 +73,7 @@ fn user_id(key: BrushKey) -> u32 {
 fn headless_the_list_starts_on_the_standard_brush_and_changes_nothing() {
     let s = AppState::new(64, 64);
     assert_eq!(s.brushes.lib.current(), b(builtin::STANDARD));
-    assert_eq!(s.brushes.ui.group, Group::Pen);
+    assert_eq!(s.shown_brush_group(), Some(Group::Pen));
     // 起動直後の設定は、今までの既定のブラシと同じ（標準を選んでも何も変わらない）
     assert_eq!(s.brush, BrushState::default());
     assert_eq!(s.m2.brush, Brush::default());
@@ -89,23 +104,23 @@ fn headless_selecting_a_brush_loads_its_settings_and_follows_the_tool() {
     assert_eq!((s.brush.radius, s.brush.hardness), (3.0, 0.6));
     assert!(s.m2.brush.texture.is_some());
     assert_eq!(s.tool, Tool::Brush);
-    assert_eq!(s.brushes.ui.group, Group::Pen);
+    assert_eq!(s.shown_brush_group(), Some(Group::Pen));
     assert_eq!(
         s.m2.brush.assist.stabilizer, 12.0,
         "手ぶれ補正は描き手の設定"
     );
     assert_eq!(s.color.main, [0.2, 0.4, 0.6, 1.0], "描画色は替わらない");
-    // 消しゴムのグループのブラシは、道具も消しゴムにする
+    // 消しゴムのグループのブラシは、ツールも消しゴムにする
     select(&mut s, b("soft-eraser"));
     assert_eq!(s.tool, Tool::Eraser);
-    assert_eq!(s.brushes.ui.group, Group::Eraser);
+    assert_eq!(s.shown_brush_group(), Some(Group::Eraser));
     assert_eq!((s.brush.radius, s.brush.hardness), (24.0, 0.0));
-    // 効果のブラシは描く道具
+    // 効果のブラシは描くツール
     select(&mut s, b("blur"));
     assert_eq!(s.tool, Tool::Brush);
     assert!(matches!(s.m2.brush.effect, BrushEffect::Blur { .. }));
-    assert_eq!(s.brushes.ui.group, Group::Effect);
-    // 選択の道具のときに選べば、描く道具になる
+    assert_eq!(s.shown_brush_group(), Some(Group::Effect));
+    // 選択のツールのときに選べば、描くツールになる
     s.apply(Action::SelectTool(Tool::Lasso));
     select(&mut s, b("marker"));
     assert_eq!(s.tool, Tool::Brush);
@@ -136,12 +151,12 @@ fn headless_each_tool_remembers_its_last_brush() {
     // E: 消しゴムのグループの、最後に使ったブラシ（初めは標準の消しゴム）
     s.apply(Action::SelectTool(Tool::Eraser));
     assert_eq!(s.brushes.lib.current(), b(builtin::STANDARD_ERASER));
-    assert_eq!(s.brushes.ui.group, Group::Eraser);
+    assert_eq!(s.shown_brush_group(), Some(Group::Eraser));
     select(&mut s, b("hard-eraser"));
     s.brush.radius = 33.0;
     s.apply(Action::SelectTool(Tool::Eraser)); // もう消しゴムなので何も変わらない
     assert_eq!(s.brush.radius, 33.0);
-    // B: 描く道具の最後のブラシ（チョーク）
+    // B: 描くツールの最後のブラシ（チョーク）
     s.apply(Action::SelectTool(Tool::Brush));
     assert_eq!(s.brushes.lib.current(), b("chalk"));
     assert_eq!(s.brush.radius, 18.0, "チョークの設定");
@@ -149,10 +164,10 @@ fn headless_each_tool_remembers_its_last_brush() {
     assert_eq!(s.brushes.lib.current(), b("hard-eraser"));
     assert_eq!(s.brush.radius, 33.0, "消しゴムの変えた設定も覚えている");
     assert!(s.brush_is_modified(b("hard-eraser")));
-    // 選択の道具へ替えても、ブラシは替わらない
+    // 選択のツールへ替えても、ブラシは替わらない
     s.apply(Action::SelectTool(Tool::SelectRect));
     assert_eq!(s.brushes.lib.current(), b("hard-eraser"));
-    // 選択の道具から B を押すと、描く道具の最後のブラシへ
+    // 選択のツールから B を押すと、描くツールの最後のブラシへ
     s.apply(Action::SelectTool(Tool::Brush));
     assert_eq!(s.brushes.lib.current(), b("chalk"));
     // 消した利用者のブラシを覚えたままにしない
@@ -228,7 +243,7 @@ fn headless_switching_brushes_is_refused_while_stroking() {
         assert_eq!(s.message, "描いている間はできません。", "{action:?}");
         assert_eq!(s.brushes.lib.current(), b("pencil"));
     }
-    // 道具をブラシから消しゴムへ替えるのも断る
+    // ツールをブラシから消しゴムへ替えるのも断る
     s.message.clear();
     s.apply(Action::SelectTool(Tool::Eraser));
     assert_eq!(s.tool, Tool::Brush);
@@ -259,7 +274,7 @@ fn headless_add_duplicate_rename_delete_and_reorder_user_brushes() {
     assert_eq!(s.brush.radius, 21.0);
     assert!(!s.brush_is_modified(first), "登録した設定が元");
     assert_eq!(*group_keys(&s, Group::Pen).last().unwrap(), first);
-    assert_eq!(s.brushes.ui.group, Group::Pen);
+    assert_eq!(s.shown_brush_group(), Some(Group::Pen));
     // 元のマーカーは、変更ありのまま残る
     assert!(s.brush_is_modified(b("marker")));
     // 複製: すぐ後ろへ。名前は「… のコピー」で重ならない
@@ -276,7 +291,7 @@ fn headless_add_duplicate_rename_delete_and_reorder_user_brushes() {
     let at = pen.iter().position(|k| *k == first).unwrap();
     assert_eq!(pen[at + 1], third, "元のすぐ後ろ");
     assert_eq!(pen[at + 2], second);
-    // 組み込みも複製できる（利用者のブラシになる）。消しゴムの複製は消しゴムのグループで、道具も消しゴム
+    // 組み込みも複製できる（利用者のブラシになる）。消しゴムの複製は消しゴムのグループで、ツールも消しゴム
     s.apply(Action::Brush(BrushAction::Duplicate(b("soft-eraser"))));
     let eraser_copy = s.brushes.lib.current();
     assert!(eraser_copy.is_user());
@@ -314,25 +329,26 @@ fn headless_add_duplicate_rename_delete_and_reorder_user_brushes() {
         at: DropAt::End,
     }));
     assert_eq!(*group_keys(&s, Group::Pen).last().unwrap(), first);
-    let order = s.brushes.lib.order();
+    let order = s.toolset.set.brushes();
     s.apply(Action::Brush(BrushAction::Move {
         key: first,
         at: DropAt::Before(b("soft-eraser")), // ほかのグループの前へは動かさない
     }));
-    assert_eq!(s.brushes.lib.order(), order);
+    assert_eq!(s.toolset.set.brushes(), order);
     s.apply(Action::Brush(BrushAction::Move {
         key: first,
         at: DropAt::Before(first),
     }));
-    assert_eq!(s.brushes.lib.order(), order);
+    assert_eq!(s.toolset.set.brushes(), order);
     // 削除: 今のブラシなら同じグループの隣へ移る
     select(&mut s, third);
     let pen = group_keys(&s, Group::Pen);
     let at = pen.iter().position(|k| *k == third).unwrap();
     s.apply(Action::Brush(BrushAction::Delete(third)));
-    assert!(s.brushes.lib.entry(third).is_none());
+    assert!(!s.toolset.set.contains(third));
+    assert!(s.brushes.lib.entry(third).is_some(), "並びから外すだけ");
     assert_eq!(s.brushes.lib.current(), pen[at + 1]);
-    assert_eq!(user_names(&s).len(), 3);
+    assert_eq!(user_names(&s).len(), 4);
     // 一番後ろの今のブラシを消すと、前のブラシへ
     let pen = group_keys(&s, Group::Pen);
     let last = *pen.last().unwrap();
@@ -344,36 +360,88 @@ fn headless_add_duplicate_rename_delete_and_reorder_user_brushes() {
 }
 
 #[test]
-fn headless_built_in_brushes_cannot_be_deleted_or_renamed() {
+fn headless_built_in_brushes_are_taken_out_of_the_layout_and_become_copies_when_renamed_or_registered(
+) {
     let mut s = AppState::new(64, 64);
     let count = s.brushes.lib.entries().len();
-    s.message.clear();
-    s.apply(Action::Brush(BrushAction::Delete(b("pencil"))));
-    assert_eq!(s.message, "組み込みのブラシは消せません。");
+    // 削除は並びから外すだけ（組み込みの元は残り、「＋」のウィンドウから戻せる）
+    s.apply(Action::Brush(BrushAction::Delete(b("chalk"))));
+    assert_eq!(s.message, "ブラシを削除しました: チョーク");
+    assert!(!s.toolset.set.contains(b("chalk")));
     assert_eq!(s.brushes.lib.entries().len(), count);
-    s.message.clear();
-    s.apply(Action::Brush(BrushAction::StartRename(b("pencil"))));
-    assert_eq!(s.message, "組み込みのブラシは名前を変えられません。");
-    assert_eq!(s.brushes.ui.renaming, None);
-    s.apply(Action::Brush(BrushAction::Rename(b("pencil"), "x".into())));
-    assert_eq!(s.brushes.lib.entry(b("pencil")).unwrap().name, "");
-    s.lang = Lang::En;
-    s.apply(Action::Brush(BrushAction::Delete(b("pencil"))));
-    assert_eq!(s.message, "Built-in brushes cannot be deleted.");
-    // 登録は利用者のブラシだけ（組み込みの元は出荷時のまま）
-    select(&mut s, b("pencil"));
+    s.apply(Action::Brush(BrushAction::AddFrom(vec![
+        yolu_app::toolset::catalog::CatalogItem::Builtin("chalk"),
+    ])));
+    assert!(s.toolset.set.contains(b("chalk")), "参照のまま戻る");
+    assert_eq!(s.brushes.lib.user_count(), 0, "写しは作らない");
+    // 名前の変更は、同じ場所でファイルの写しに替える（組み込みの名前のままなら、何もしない）
+    let place = s.toolset.set.find(b("chalk")).unwrap();
+    s.apply(Action::Brush(BrushAction::StartRename(b("chalk"))));
+    assert_eq!(s.brushes.ui.renaming, Some(b("chalk")));
+    s.apply(Action::Brush(BrushAction::Rename(
+        b("chalk"),
+        "チョーク".into(),
+    )));
+    assert!(s.toolset.set.contains(b("chalk")));
+    s.apply(Action::Brush(BrushAction::Rename(
+        b("chalk"),
+        "下描き".into(),
+    )));
+    assert!(!s.toolset.set.contains(b("chalk")));
+    let copy = s.toolset.set.slots()[place.slot].groups[place.group].brushes[place.index];
+    assert!(copy.is_user());
+    assert_eq!(s.brushes.lib.entry(copy).unwrap().name, "下描き");
+    assert_eq!(
+        s.brushes.lib.entry(copy).unwrap().baseline,
+        s.brushes.lib.entry(b("chalk")).unwrap().baseline,
+        "組み込みと同じ設定"
+    );
+    // 登録も、変えたままの設定を元にした写しに替える（組み込みの元は出荷時のまま）
+    select(&mut s, b("marker"));
     s.brush.radius = 9.0;
-    s.apply(Action::Brush(BrushAction::Register(b("pencil"))));
-    assert!(s.brush_is_modified(b("pencil")));
+    let marker = s.toolset.set.find(b("marker")).unwrap();
+    s.apply(Action::Brush(BrushAction::Register(b("marker"))));
+    let registered = s.brushes.lib.current();
+    assert!(registered.is_user());
+    assert_eq!(
+        s.toolset.set.slots()[marker.slot].groups[marker.group].brushes[marker.index],
+        registered
+    );
+    assert!(!s.brush_is_modified(registered));
+    assert_eq!(
+        s.brushes
+            .lib
+            .entry(registered)
+            .unwrap()
+            .baseline
+            .base
+            .radius,
+        9.0
+    );
+    assert_ne!(
+        s.brushes
+            .lib
+            .entry(b("marker"))
+            .unwrap()
+            .baseline
+            .base
+            .radius,
+        9.0
+    );
+    assert_eq!(s.brushes.lib.entry(b("marker")).unwrap().edited, None);
+    s.lang = Lang::En;
+    s.apply(Action::Brush(BrushAction::Delete(b("ink-pen"))));
+    assert_eq!(s.message, "Brush deleted: Ink Pen");
     // 名前は言語に従う
-    let pencil = s.brushes.lib.entry(b("pencil")).unwrap();
-    assert_eq!(pencil.name_in(Lang::En), "Pencil");
-    assert_eq!(pencil.name_in(Lang::Ja), "鉛筆");
+    let chalk = s.brushes.lib.entry(b("chalk")).unwrap();
+    assert_eq!(chalk.name_in(Lang::En), "Chalk");
+    assert_eq!(chalk.name_in(Lang::Ja), "チョーク");
     for e in s.brushes.lib.entries() {
         for lang in Lang::ALL {
             assert!(!e.name_in(lang).is_empty());
         }
     }
+    assert!(!s.doc.can_undo(), "文書は変えない");
 }
 
 #[test]
@@ -395,9 +463,7 @@ fn headless_registering_makes_the_edit_the_brush_and_revert_goes_back_to_it() {
 #[test]
 fn headless_the_number_of_user_brushes_is_capped() {
     let mut s = AppState::new(64, 64);
-    for _ in 0..MAX_USER_BRUSHES {
-        s.apply(Action::Brush(BrushAction::Add));
-    }
+    add_many(&mut s, MAX_USER_BRUSHES);
     assert_eq!(user_names(&s).len(), MAX_USER_BRUSHES);
     s.message.clear();
     s.apply(Action::Brush(BrushAction::Add));
@@ -444,12 +510,12 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
     s.apply(Action::Brush(BrushAction::Register(one)));
     // 変えただけで登録していない設定は、保存しない
     s.brush.radius = 99.0;
-    let saved_order = s.brushes.lib.order();
+    let saved_order = s.toolset.set.brushes();
     // 起動し直し: 同じフォルダを読む
     let mut back = AppState::new(64, 64);
     back.attach_brush_store(dir.clone());
     assert!(back.brushes.problems.is_empty());
-    assert_eq!(back.brushes.lib.order(), saved_order);
+    assert_eq!(back.toolset.set.brushes(), saved_order);
     assert_eq!(user_names(&back).len(), 2);
     let loaded = back.brushes.lib.entry(one).unwrap();
     assert_eq!(loaded.name, "粉の線");
@@ -466,15 +532,20 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
     assert_eq!(back.brush.radius, 31.0);
     back.apply(Action::Brush(BrushAction::Add));
     assert!(user_id(back.brushes.lib.current()) > user_id(two));
-    // 削除はファイルも消す。並びのファイルも直る
+    // 削除は並びから外すだけ（ファイルは残り、起動し直しても並びには戻らない）。並びのファイルも直る
     let files = store::BrushStore::new(dir.clone());
     assert!(files.path_of(user_id(one)).exists());
     back.apply(Action::Brush(BrushAction::Delete(one)));
-    assert!(!files.path_of(user_id(one)).exists());
+    assert!(files.path_of(user_id(one)).exists());
     let mut again = AppState::new(64, 64);
     again.attach_brush_store(dir.clone());
+    assert!(again.brushes.lib.entry(one).is_some());
+    assert!(!again.toolset.set.contains(one));
+    assert_eq!(again.toolset.set.brushes(), back.toolset.set.brushes());
+    // ファイルの削除は、ファイルを消す
+    again.apply(Action::Brush(BrushAction::DeleteFile(one)));
+    assert!(!files.path_of(user_id(one)).exists());
     assert!(again.brushes.lib.entry(one).is_none());
-    assert_eq!(again.brushes.lib.order(), back.brushes.lib.order());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -516,7 +587,11 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
     // 起動し直すと、応えが戻り、選べば今の設定に入る。別のブラシへ替えると応えも替わる
     let mut back = AppState::new(64, 64);
     back.attach_brush_store(dir.clone());
-    assert!(back.brushes.problems.is_empty(), "{:?}", back.brushes.problems.len());
+    assert!(
+        back.brushes.problems.is_empty(),
+        "{:?}",
+        back.brushes.problems.len()
+    );
     select(&mut back, key);
     assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
     assert_eq!(back.m2.brush.pressure.opacity.curve().len(), 3);
@@ -619,7 +694,11 @@ fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_langu
     assert_eq!(next, 0x66, "読めなかったファイルの番号の続き");
     assert_ne!(next, user_id(good));
     for (name, bytes) in &broken {
-        assert_eq!(&std::fs::read(folder.join(name)).unwrap(), bytes, "{name} はそのまま");
+        assert_eq!(
+            &std::fs::read(folder.join(name)).unwrap(),
+            bytes,
+            "{name} はそのまま"
+        );
     }
     // 並びのファイルが壊れていても読める（元の並び）
     std::fs::write(folder.join("order.conf"), vec![b'x'; 70_000]).unwrap();
@@ -680,7 +759,10 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
             .filter(|(name, _)| name != "order.conf" && only.iter().any(|(o, _)| o == name))
             .collect::<Vec<_>>()
     };
-    assert_eq!(brush_files(snapshot_of(&dir), &before), brush_files(before.clone(), &before));
+    assert_eq!(
+        brush_files(snapshot_of(&dir), &before),
+        brush_files(before.clone(), &before)
+    );
     assert!(dir.join("brush-00000005.ylbrush").is_dir());
     assert_eq!(
         std::fs::read(dir.join("brush-00000002.ylbrush")).unwrap(),
@@ -706,7 +788,11 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
 #[test]
 fn headless_when_the_brush_numbers_run_out_adding_is_refused_and_nothing_is_overwritten() {
     for readable in [false, true] {
-        let dir = temp_dir(if readable { "ids-max-ok" } else { "ids-max-bad" });
+        let dir = temp_dir(if readable {
+            "ids-max-ok"
+        } else {
+            "ids-max-bad"
+        });
         let mut s = AppState::new(64, 64);
         s.attach_brush_store(dir.clone());
         s.apply(Action::Brush(BrushAction::Add));
@@ -725,7 +811,11 @@ fn headless_when_the_brush_numbers_run_out_adding_is_refused_and_nothing_is_over
             let count = back.brushes.lib.entries().len();
             for _ in 0..2 {
                 back.apply(Action::Brush(BrushAction::Add));
-                assert_eq!(back.brushes.lib.entries().len(), count, "{readable} {lang:?}: 足さない");
+                assert_eq!(
+                    back.brushes.lib.entries().len(),
+                    count,
+                    "{readable} {lang:?}: 足さない"
+                );
                 assert_eq!(back.brushes.lib.current(), current);
                 assert!(
                     back.message.contains(lang.pick("使い切", "Out of")),
@@ -789,7 +879,11 @@ fn headless_imported_tip_images_are_saved_with_the_brush_and_come_back() {
     );
     s.m2.brush.tip.image = Some(tip.clone());
     s.apply(Action::Brush(BrushAction::Add));
-    assert!(s.message.starts_with("ブラシを追加しました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("ブラシを追加しました"),
+        "{}",
+        s.message
+    );
     let key = s.brushes.lib.current();
     assert!(dir.join("brush-00000001.ylbrush").exists());
     // 画像は内容の名前で 1 枚（ブラシのファイルは画像の名前を指すだけ）
@@ -798,11 +892,15 @@ fn headless_imported_tip_images_are_saved_with_the_brush_and_come_back() {
     // 別の起動で読み戻しても、同じ画像（名前・画素）のブラシ
     let mut again = AppState::new(64, 64);
     again.attach_brush_store(dir.clone());
-    assert!(again.brushes.problems.is_empty(), "{:?}", again.brushes.problems);
+    assert!(
+        again.brushes.problems.is_empty(),
+        "{:?}",
+        again.brushes.problems
+    );
     let back = again.brushes.lib.entry(key).expect("読み戻したブラシ");
     assert_eq!(back.baseline.tip.image.as_deref(), Some(&*tip));
-    // 消すと、その画像のファイルも消える
-    again.apply(Action::Brush(BrushAction::Delete(key)));
+    // ファイルを消すと、その画像のファイルも消える
+    again.apply(Action::Brush(BrushAction::DeleteFile(key)));
     assert_eq!(std::fs::read_dir(dir.join("images")).unwrap().count(), 0);
     std::fs::remove_dir_all(dir).unwrap();
 }

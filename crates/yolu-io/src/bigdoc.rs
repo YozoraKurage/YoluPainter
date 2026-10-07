@@ -1,19 +1,20 @@
 //! 大きな正本: 正本の版 26（分けた正本）と、正本を全体の `Vec` に組まずに流して作る・読む道。
 //!
-//! 版 26 は中身の正本（中の版 21〜25 の並び）が [`Thresholds::split_above`]（512 MiB）を超える文書だけが使う。
+//! 版 26 は中身の正本（中の版 21〜25・27 の並び）が [`Thresholds::split_above`]（512 MiB）を超える文書だけが使う。
 //! `document.utpaint` は `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値（色・画素）を抜いたもの（ヘッダー）、
-//! `Bytes` の値は並びの順に同じセットの `document.utpaint.1`・`.2`…（部分）へ書く。部分の区切りは、2 番目からの層の始まりと、
-//! [`Thresholds::part_bytes`]（256 MiB）を超える手前（値 1 つは分けない）。ただし今の部分も次の層の値も [`Thresholds::part_min`]（16 MiB）に
-//! 満たなければ、層の始まりで区切らずに続ける（層の多い文書でエントリが増えすぎないように）。変わらない層の部分は前と同じ中身になり、
+//! `Bytes` の値は並びの順に同じセットの `document.utpaint.1`・`.2`…（部分）へ書く。部分の区切りは、2 番目からのレイヤーの始まりと、
+//! [`Thresholds::part_bytes`]（256 MiB）を超える手前（値 1 つは分けない）。ただし今の部分も次のレイヤーの値も [`Thresholds::part_min`]（16 MiB）に
+//! 満たなければ、レイヤーの始まりで区切らずに続ける（レイヤーの多い文書でエントリが増えすぎないように）。変わらないレイヤーの部分は前と同じ中身になり、
 //! 復旧の世代で共有される。読み手は区切りの位置を決め打ちせず、値が部分の境目をまたがないこと・空の部分が無いこと・部分の数と余りが
 //! 合うことを確かめる。
 //!
-//! メモリ: 作る・読む・確かめるどの道も、持つのは層 1 枚ぶんの並びと小さな作業域だけ（core の文書とその写しのほかに）。
+//! メモリ: 作る・読む・確かめるどの道も、持つのはレイヤー 1 枚ぶんの並びと小さな作業域だけ（core の文書とその写しのほかに）。
 use crate::{
+    check, check_budget,
     core_bridge::{check_writable, version_of, write_document, CoreLoad, Fields, Sink},
     native::{ByteSource, Keep, Parse, Part, PartStream, StreamSource, SPLIT_VERSION},
     package::{Blob, Made, Thresholds, MAX_ONE_ENTRY},
-    check, check_budget, Error, NativeDocument, NativeField, NativeValue, Result,
+    Error, NativeDocument, NativeField, NativeValue, Result,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,7 +31,7 @@ const TOO_BIG_FOR_MEMORY: &str = "正本が大きすぎてメモリに読めま�
 /// 部分の区切り: `Bytes` の値の流れのバイトの範囲 `[始まり, 終わり)`。
 pub(crate) type Ranges = Vec<(u64, u64)>;
 
-/// 値の並び（`(層の番号, 長さ)`。層より前の値は層 0 に数える）から、部分の区切りを決める。
+/// 値の並び（`(レイヤーの番号, 長さ)`。レイヤーより前の値はレイヤー 0 に数える）から、部分の区切りを決める。
 pub(crate) fn cut(values: &[(u32, u32)], t: &Thresholds) -> Ranges {
     let mut totals: Vec<u64> = Vec::new();
     for &(section, len) in values {
@@ -102,7 +103,8 @@ impl Sink for PlanSink {
         Ok(())
     }
     fn tile(&mut self, surface: &Surface, _: TileCoord) -> Result<()> {
-        self.values.push((self.section, surface.tile_bytes() as u32));
+        self.values
+            .push((self.section, surface.tile_bytes() as u32));
         Ok(())
     }
     fn layer(&mut self, i: usize) -> Result<()> {
@@ -179,11 +181,16 @@ impl CoreDoc {
         };
         match &self.plan.split {
             None => vec![(format!("{prefix}document.utpaint"), blob(Which::Full))],
-            Some(ranges) => std::iter::once((format!("{prefix}document.utpaint"), blob(Which::Header)))
-                .chain((0..ranges.len()).map(|k| {
-                    (format!("{prefix}document.utpaint.{}", k + 1), blob(Which::Part(k)))
-                }))
-                .collect(),
+            Some(ranges) => {
+                std::iter::once((format!("{prefix}document.utpaint"), blob(Which::Header)))
+                    .chain((0..ranges.len()).map(|k| {
+                        (
+                            format!("{prefix}document.utpaint.{}", k + 1),
+                            blob(Which::Part(k)),
+                        )
+                    }))
+                    .collect()
+            }
         }
     }
     fn len_of(&self, which: Which) -> u64 {
@@ -218,7 +225,13 @@ impl CoreDoc {
             plain_at: 0,
             value_at: 0,
         };
-        let skeleton = walk(&self.doc, self.plan.version, Keep::Skeleton, &mut hashes, |_, _| Ok(()))?;
+        let skeleton = walk(
+            &self.doc,
+            self.plan.version,
+            Keep::Skeleton,
+            &mut hashes,
+            |_, _| Ok(()),
+        )?;
         Ok(Checked {
             full: hashes.full.map(|h| format!("{:x}", h.finalize())),
             header: hashes.header.map(|h| format!("{:x}", h.finalize())),
@@ -261,7 +274,7 @@ impl CoreDoc {
         }
         write_document(&mut sink, &self.doc, self.plan.version)
     }
-    /// 流して core の文書にする（作った正本を読み手で読むのと同じ。持つのは層 1 枚ぶん）。
+    /// 流して core の文書にする（作った正本を読み手で読むのと同じ。持つのはレイヤー 1 枚ぶん）。
     pub fn to_core(&self, budget: Option<u64>) -> Result<Document> {
         let skeleton = self.skeleton()?;
         refuse_issues(&skeleton)?;
@@ -269,25 +282,21 @@ impl CoreDoc {
         let mut head: Vec<NativeField> = Vec::new();
         let version = self.plan.version;
         let size = (skeleton.width(), skeleton.height(), skeleton.tile_size());
-        walk(
-            &self.doc,
-            version,
-            Keep::All,
-            &mut NoSink,
-            |parse, i| {
-                if load.is_none() {
-                    head = parse.head_fields().to_vec();
-                    load = Some(CoreLoad::begin(&Fields::of(&head), version, size, budget)?);
-                }
-                if let Some(i) = i {
-                    load.as_mut().expect("頭で作った").layer(&Fields::of(parse.layer_fields()), i)?;
-                    parse.drop_layer_values();
-                }
-                Ok(())
-            },
-        )?;
+        let read = walk(&self.doc, version, Keep::All, &mut NoSink, |parse, i| {
+            if load.is_none() {
+                head = parse.head_fields().to_vec();
+                load = Some(CoreLoad::begin(&Fields::of(&head), version, size, budget)?);
+            }
+            if let Some(i) = i {
+                load.as_mut()
+                    .expect("頭で作った")
+                    .layer(&Fields::of(parse.layer_fields()), i)?;
+                parse.drop_layer_values();
+            }
+            Ok(())
+        })?;
         load.ok_or_else(|| Error::InvalidData("正本の頭がありません".into()))?
-            .finish(&Fields::of(&head))
+            .finish(&Fields::of(&head), read.fields())
     }
     /// 全部をメモリの正本にする（小さな文書・試験のため。分けない正本で 512 MiB まで。超えれば読まずに断る）。
     pub fn to_native(&self) -> Result<NativeDocument> {
@@ -419,7 +428,7 @@ impl Observer for NoSink {
     fn plain(&mut self, _: &[u8]) {}
     fn value(&mut self, _: &[u8]) {}
 }
-/// 並びを層ごとに貯めて読み手へ渡す書き先。
+/// 並びをレイヤーごとに貯めて読み手へ渡す書き先。
 struct Feed<'a> {
     buf: Rc<RefCell<Fed>>,
     observer: &'a mut dyn Observer,
@@ -449,7 +458,7 @@ impl Sink for Feed<'_> {
         Ok(())
     }
 }
-/// 貯めた並びを読む側（読み手は、書き手が 1 つの層を書き終えてから、その層を読む）。
+/// 貯めた並びを読む側（読み手は、書き手が 1 つのレイヤーを書き終えてから、そのレイヤーを読む）。
 struct FedSource {
     buf: Rc<RefCell<Fed>>,
     out: Vec<u8>,
@@ -480,8 +489,8 @@ impl ByteSource for FedSource {
         Ok(fed.at >= fed.bytes.len())
     }
 }
-/// core の文書を正本の並び（分けない形）にしながら、層ごとに読み手で読む。`step` は頭を読んだあと（`None`）と各層を読んだあと
-/// （`Some(層)`）に呼ばれる。持つのは層 1 枚ぶんの並び。読み手の骨組みか全部の項目を返す（`keep`）。
+/// core の文書を正本の並び（分けない形）にしながら、レイヤーごとに読み手で読む。`step` は頭を読んだあと（`None`）と各レイヤーを読んだあと
+/// （`Some(レイヤー)`）に呼ばれる。持つのはレイヤー 1 枚ぶんの並び。読み手の骨組みか全部の項目を返す（`keep`）。
 fn walk(
     doc: &Document,
     version: i32,
@@ -495,11 +504,8 @@ fn walk(
         out: Vec::new(),
         at: 0,
     };
-    let mut feed = Feed {
-        buf: fed,
-        observer,
-    };
-    // 層の前までを書いて読み、層は 1 つずつ書いて読む
+    let mut feed = Feed { buf: fed, observer };
+    // レイヤーの前までを書いて読み、レイヤーは 1 つずつ書いて読む
     crate::core_bridge::write_head(&mut feed, doc, version)?;
     let mut parse = Parse::begin(&mut source, None, keep)?;
     step(&mut parse, None)?;
@@ -507,10 +513,15 @@ fn walk(
         feed.layer(i)?;
         crate::core_bridge::write_layer_to(&mut feed, layer, version)?;
         let read = parse.next_layer()?;
-        check(read == Some(i), "正本の層の数が合いません")?;
+        check(read == Some(i), "正本のレイヤーの数が合いません")?;
         step(&mut parse, Some(i))?;
     }
-    check(parse.next_layer()?.is_none(), "正本の層の数が合いません")?;
+    check(
+        parse.next_layer()?.is_none(),
+        "正本のレイヤーの数が合いません",
+    )?;
+    // レイヤーの後（手動の ID の色）
+    crate::core_bridge::write_tail(&mut feed, doc, version)?;
     parse.finish()
 }
 /// core へ渡せない項目があれば断る。
@@ -543,12 +554,28 @@ pub(crate) fn native_entries(doc: &NativeDocument, prefix: &str) -> Vec<(String,
         .collect()
 }
 /// 項目の並びから、版 26 のヘッダーと部分を作る（`Bytes` の値は、はじめの識別子を除いて部分へ）。
-pub(crate) fn split_fields(fields: &[NativeField], version: i32, t: &Thresholds) -> (Vec<u8>, Vec<Vec<u8>>) {
-    let section = |path: &str| -> u32 {
+pub(crate) fn split_fields(
+    fields: &[NativeField],
+    version: i32,
+    t: &Thresholds,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let layer_of = |path: &str| -> Option<u32> {
         path.strip_prefix("layers[")
             .and_then(|r| r.split(']').next())
             .and_then(|n| n.parse().ok())
-            .unwrap_or(0)
+    };
+    // レイヤーより前の値はレイヤー 0、レイヤーより後（手動の ID の色の `tag`）の値は最後のレイヤーに数える（`PlanSink` が、書いた順の「今のレイヤー」に数えるのと同じ）
+    let last_layer = fields
+        .iter()
+        .filter_map(|f| layer_of(&f.path))
+        .max()
+        .unwrap_or(0);
+    let section = |path: &str| -> u32 {
+        if path.starts_with("manual_id_colors.") {
+            last_layer
+        } else {
+            layer_of(path).unwrap_or(0)
+        }
     };
     let values: Vec<(u32, u32)> = fields
         .iter()
@@ -613,7 +640,7 @@ impl StoredDoc {
         while parse.next_layer()?.is_some() {}
         parse.finish()
     }
-    /// 流して core の文書にする（持つのは層 1 枚ぶん）。
+    /// 流して core の文書にする（持つのはレイヤー 1 枚ぶん）。
     pub fn to_core(&self, skeleton: &NativeDocument, budget: Option<u64>) -> Result<Document> {
         refuse_issues(skeleton)?;
         let mut src = StreamSource::new(self.header.reader()?);
@@ -627,8 +654,8 @@ impl StoredDoc {
             load.layer(&Fields::of(parse.layer_fields()), i)?;
             parse.drop_layer_values();
         }
-        parse.finish()?;
-        load.finish(&Fields::of(&head))
+        let read = parse.finish()?;
+        load.finish(&Fields::of(&head), read.fields())
     }
     /// 全部をメモリの正本にする（小さな文書・試験。ヘッダーと部分の合計で 512 MiB まで。超えれば読まずに断る）。
     pub fn to_native(&self) -> Result<NativeDocument> {
@@ -662,14 +689,14 @@ pub enum DocumentSource {
 impl std::fmt::Debug for DocumentSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Native(d) => write!(f, "Native({} 層)", d.layer_count()),
-            Self::Core(d) => write!(f, "Core({} 層)", d.layers().len()),
+            Self::Native(d) => write!(f, "Native({} レイヤー)", d.layer_count()),
+            Self::Core(d) => write!(f, "Core({} レイヤー)", d.layers().len()),
         }
     }
 }
 impl DocumentSource {
-    /// core の文書（保存・書き置きのための写し）から。正本に書けるかを先に確かめる（進行中のストローク・まだ書けない手動の ID の色・
-    /// 寸法など。`NativeDocument::from_core` と同じ断り）。画素は写さない。
+    /// core の文書（保存・書き置きのための写し）から。正本に書けるかを先に確かめる（進行中のストローク・寸法など。
+    /// `NativeDocument::from_core` と同じ断り）。画素は写さない。
     pub fn from_core(doc: Arc<Document>) -> Result<Self> {
         crate::core_bridge::check_writable(&doc)?;
         Ok(Self::Core(doc))
@@ -692,7 +719,7 @@ impl From<Document> for DocumentSource {
 }
 
 /// テクスチャセットの正本。置いてある正本（.ylp のエントリ・復旧の中身。分けない形か版 26）、メモリの正本、core の文書から作る正本の
-/// どれか。画素は持たず（置いてある正本）、要るときに流して読む。頭の値（ID・寸法・版・層の数）はいつでも安く読める。
+/// どれか。画素は持たず（置いてある正本）、要るときに流して読む。頭の値（ID・寸法・版・レイヤーの数）はいつでも安く読める。
 #[derive(Clone)]
 pub struct SetDocument(Arc<SetDoc>);
 struct SetDoc {
@@ -743,7 +770,9 @@ impl SetDocument {
     /// メモリの正本から（どこにも置いていない正本。試験や、メモリの正本を `SetDocument` として扱うため）。
     pub fn in_memory(doc: NativeDocument) -> Self {
         let source = DocumentSource::Native(doc);
-        Self::from_source(&source, "").expect("メモリの正本は作れる").0
+        Self::from_source(&source, "")
+            .expect("メモリの正本は作れる")
+            .0
     }
     /// 置いてある正本（ヘッダーと番号の順の部分）。骨組みを読んで確かめる（版 26 の部分は長さと数だけ。中身は読むときに確かめる）。
     pub(crate) fn stored(header: Blob, parts: Vec<Blob>) -> Result<Self> {
@@ -765,7 +794,10 @@ impl SetDocument {
         }))
     }
     /// 元から作る正本と、`prefix`（`sets/<ID>/` か根なら空）の下に置くエントリ。
-    pub(crate) fn from_source(source: &DocumentSource, prefix: &str) -> Result<(Self, Vec<(String, Blob)>)> {
+    pub(crate) fn from_source(
+        source: &DocumentSource,
+        prefix: &str,
+    ) -> Result<(Self, Vec<(String, Blob)>)> {
         match source {
             DocumentSource::Native(doc) => {
                 let entries = native_entries(doc, prefix);
@@ -833,7 +865,7 @@ impl SetDocument {
     pub fn is_split(&self) -> bool {
         self.0.head.split
     }
-    /// 骨組み（`Bytes` の値（色・画素）を持たない項目。層の構造・名前・ID・効果の設定）。core の文書から作る正本は、初めて呼ぶと
+    /// 骨組み（`Bytes` の値（色・画素）を持たない項目。レイヤーの構造・名前・ID・効果の設定）。core の文書から作る正本は、初めて呼ぶと
     /// 流して作る。
     pub fn skeleton(&self) -> Result<Arc<NativeDocument>> {
         self.0
@@ -860,7 +892,7 @@ impl SetDocument {
             },
         }
     }
-    /// 編集用の core の文書にする（`NativeDocument::to_core` と同じ意味）。置いてある正本は流して読み、持つのは層 1 枚ぶん。
+    /// 編集用の core の文書にする（`NativeDocument::to_core` と同じ意味）。置いてある正本は流して読み、持つのはレイヤー 1 枚ぶん。
     pub fn to_core(&self) -> Result<Document> {
         self.to_core_within(None)
     }

@@ -1,4 +1,4 @@
-//! 効果のつなぎ目の試験の道具: 効果をひと通り持つ文書（`rig`）と 2D のパス。人工データだけ。
+//! 効果のつなぎ目の試験のツール: 効果をひと通り持つ文書（`rig`）と 2D のパス。人工データだけ。
 #![allow(dead_code)]
 use super::attach_support::*;
 use yolu_core::generator::{self, anchor::ReadMode, Settings};
@@ -10,6 +10,7 @@ use yolu_core::{
 
 pub fn path_points(shift: f64) -> CanvasPath {
     CanvasPath {
+        style: Default::default(),
         id: 0x77,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {
@@ -42,7 +43,7 @@ pub fn rendered(path: &CanvasPath) -> Vec<(Channel, yolu_core::Surface)> {
 }
 
 /// 効果をひと通り持つ文書: 土台に Anchor とぼかし、中に Anchor を読む Generator、上にマスクとマスクのぼかし、塗りつぶしに
-/// 画像・グラデーション、パスの層。
+/// 画像・グラデーション、パスレイヤー。
 pub struct Rig {
     pub doc: Document,
     pub base: LayerId,

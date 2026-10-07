@@ -2,70 +2,69 @@
 
 [日本語](../MCP.md)
 
-`yolupainter-cli mcp` is an MCP server that lets an AI assistant (Claude Desktop, Claude Code, the ChatGPT desktop app and others) operate YoluPainter.
-It is a local server spoken to over standard input and output and never goes onto the network. The assistant can read the layers, masks and effects of a `.ylp`, change values, look at preview images, export and save.
-The tools are the same 25 as the [command line](CLI.md) commands (the `.` in names becomes `_`).
-Painting operations (strokes, fills, selections) are not available yet.
+While "Accept external commands" is on in its settings, YoluPainter is an MCP server at `http://127.0.0.1:17347/mcp`. AI assistants (Claude Code, Codex,
+Claude Desktop and others) connect there to read the layers, masks and effects of the document open in the app, change values, look at preview images, export and save.
+The tools live in the app, so updating the app brings the new tools. The connection stays inside this PC and never goes onto the network.
+The tools are the same 25 as the [command line](CLI.md) commands (the `.` in names becomes `_`). Painting (strokes, fills, selections), baking and opening another document are not available.
 
-The target is chosen per tool with the optional argument `file`:
+## YoluPainter settings
 
-- With `file`: the `.ylp` is opened and operated on directly, without the app. Edits stay in the server's memory until `save` (which needs `confirm: true`) is called, so the file is unchanged until then.
-  Later calls with the same `file` use the same document, so `undo` works. Up to 8 files are open at once; when all of them have unsaved edits another file is refused until one is saved.
-  A relative `file` starts at the folder the server was started in, and relative paths such as export folders start at the folder of that `.ylp` (the folder it was first opened from; saving under a name in another folder does not change it).
-  - When the file is changed outside: without unsaved edits, the next call reopens it and reads the new content. With unsaved edits it is not reopened and `save` is refused with `conflict`.
-    To discard those edits and reload, call `doc_open` with the same `.ylp` as `file` and `path`, and `confirm: true` (the undo steps are discarded too).
-  - After `save_as`: that document has moved to the new file, so pass the new path as `file` from then on. The old path as `file` is a separate document, reopened from the old file.
-    When another `file` holds the destination with unsaved edits, `save_as` is refused with `conflict` before anything is written.
-- Without `file`: the target is the document open in the running YoluPainter. Turn on "Accept external commands" in the app's settings first.
+1. In the app, open Edit → Settings… and turn on "Accept external commands" (off by default). It listens only while on, and a small dot appears at the right end of the status bar. The dot's tooltip shows the URL to connect to.
+2. The port can be changed in "Port", shown below it while it is on (17347 by default; 1024 to 65535). When you change it, use the same port in the programs that connect.
+3. When it cannot listen (another program uses the port, for example), the dot turns to the "cannot accept" color and its tooltip says why. Change the port or close that program, then turn the setting off and on again.
+
+A command becomes one step of the app's undo history and shows up in the app right away. While drawing, while saving and in read-only texture sets, commands are refused with a reason (`busy`, `read_only`).
+Turning the setting off stops listening. Requests still waiting for a reply get a "stopped accepting" error (a save that already started still finishes).
 
 ## Connecting
 
-`yolupainter-cli.exe` is in `%LOCALAPPDATA%\Programs\YoluPainter\` when installed with the installer (next to `yolupainter.exe` in the zip). `<name>` below is your Windows user name.
+### Claude Code (plugin)
 
-### Claude Desktop (extension)
-
-Download `yolupainter-<version>-x86_64-pc-windows-msvc.mcpb` from [Releases](https://github.com/YozoraKurage/YoluPainter/releases), double-click it or drag it onto the extensions page of Claude Desktop's settings,
-and confirm the installation. The extension contains `yolupainter-cli.exe`, so working with `file` is possible even without installing YoluPainter itself. To operate the app, install and start the app as well.
-The extension is not replaced by app updates; install the new `.mcpb` the same way.
-
-### Claude Code
+The YoluPainter plugin holds the MCP setting that connects to the app and a skill describing how to use the tools.
 
 ```
-claude mcp add yolupainter -- C:\Users\<name>\AppData\Local\Programs\YoluPainter\yolupainter-cli.exe mcp
+/plugin marketplace add YozoraKurage/YoluPainter
+/plugin install yolupainter@yolupainter
 ```
 
-To share it in a project, write it in `.mcp.json`:
+To receive new versions of the plugin automatically, select `yolupainter` under Marketplaces in `/plugin` and turn on auto-update (auto-update is off by default for other people's marketplaces).
+From a shell, use `claude plugin marketplace add YozoraKurage/YoluPainter` and `claude plugin install yolupainter@yolupainter`.
 
-```json
-{
-  "mcpServers": {
-    "yolupainter": {
-      "command": "C:\\Users\\<name>\\AppData\\Local\\Programs\\YoluPainter\\yolupainter-cli.exe",
-      "args": ["mcp"]
-    }
-  }
-}
+You can also add only the MCP server, without the plugin:
+
+```
+claude mcp add --transport http yolupainter http://127.0.0.1:17347/mcp
 ```
 
-### ChatGPT desktop (Work and Codex)
+The plugin points at the default port. If you changed the port in the app, add your port with the `claude mcp add` above and turn off the plugin's `yolupainter` in `/mcp`.
 
-Local servers on standard input and output work in the desktop Work and Codex. Add this to `~/.codex/config.toml` (single quotes let you write a Windows path as it is):
+### Codex (plugin)
+
+```
+codex plugin marketplace add YozoraKurage/YoluPainter
+codex plugin add yolupainter@yolupainter
+```
+
+Every time Codex starts, it refreshes the marketplaces you added and reinstalls the plugins from them (run `codex plugin marketplace upgrade` to do it by hand).
+
+Without the plugin, add it to `~/.codex/config.toml` (`codex mcp add yolupainter --url http://127.0.0.1:17347/mcp` does the same):
 
 ```toml
 [mcp_servers.yolupainter]
-command = 'C:\Users\<name>\AppData\Local\Programs\YoluPainter\yolupainter-cli.exe'
-args = ["mcp"]
+url = "http://127.0.0.1:17347/mcp"
 ```
 
-ChatGPT on the web and claude.ai can only reach servers published over HTTPS, so this local server cannot be used there (not supported for now).
-ChatGPT may not display MCP image replies. Besides the image, a preview is also returned as a link (the same PNG can be read with `resources/read`).
+### Claude Desktop (extension)
 
-## Settings in YoluPainter
+Chats in Claude Desktop connect through an extension (`.mcpb`) that speaks over standard input and output. Download `yolupainter-<version>-x86_64-pc-windows-msvc.mcpb`
+from [Releases](https://github.com/YozoraKurage/YoluPainter/releases), then double-click it or drag it onto the extensions page of Claude Desktop's settings and confirm the installation.
+The extension only relays standard input and output to the app's endpoint (`yolupainter-cli mcp`); the tools are answered by the app. If you changed the port in the app, set the extension's "Port" to the same.
+The extension asks the app when Claude Desktop starts it. If the app is not accepting commands at that moment the connection fails, so start the app, turn on the setting, and then turn the extension off and on again.
 
-Turning on "Accept external commands" in the app's settings makes the app accept commands from programs of the same user on the same PC. It is off by default, and a small mark appears in the status bar while it is on.
-Turning it off stops accepting and closes the connections. While it is off, tools without `file` return a "cannot connect" error that says how to fix it.
+### Other clients
 
-The app refuses with a reason while you are drawing, while a save is running, for read-only sets and so on. A command it accepts becomes one undo step of the app.
+Clients that speak Streamable HTTP MCP can connect to `http://127.0.0.1:17347/mcp`. Clients that only use standard input and output can start
+`yolupainter-cli mcp` (with the installer: `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`; add `--port number` if you changed the port).
 
 ## Tools and resources
 
@@ -76,18 +75,27 @@ A failure is an `isError` reply holding JSON with `code`, a Japanese and an Engl
 - A preview (`preview`) returns the PNG as an image and also a resource_link (`yolupainter://preview/<number>.png`; the last 8 are kept) to the same PNG.
 - Resources: `yolupainter://docs/<name>` is the documentation of the installed version (`guide`, `cli`, `mcp`, `install`, `psd`, `brush`, the .ylp format specification `ylp-format` and so on; where an English version exists it is the default, and `<name>.ja` and `<name>.en` choose a language).
   `yolupainter://ops/commands` is the command list with JSON Schemas, and `yolupainter://ops/effect-kinds` is the effect kinds and their value ranges (the same as `effect_list_kinds`).
-- Protocol versions 2025-11-25 and 2026-07-28 are both answered (the flow with `initialize`, and the flow with `server/discover` and a per-request `_meta`).
+- `doc_open` returns the document only for the file the app has open. Another file is refused with `unsupported` (the app does not switch documents).
+- `$selected` in a layer field (`layer`, `above`, `parent`) refers to the layer selected in the app's current texture set. `$created:<n>` works only inside a run of several commands
+  (a command-line batch or an action) and is refused for a single tool call ([relative references](CLI.md#relative-references)).
+- `action_run` applies a list of commands that change layers, masks and effects (`{"commands": [{"command": "layer.add", "args": {...}}, ...]}`) as one undo step in the app.
+  If a command is refused, everything is rolled back and the error tells which one (`data.index`, from 0). `$created:<n>` works inside the list.
+- Protocol versions 2025-11-25 and 2026-07-28 are both answered (the flow with `initialize`, and the flow with `server/discover` and a per-request `_meta`). The endpoint is stateless
+  and does not use `Mcp-Session-Id`.
 
 ## Safety
 
-- Destructive operations (deleting layers, masks and effects, saving over a file, replacing an existing file) are refused without changing anything unless the argument `confirm: true` is given, and the tools carry the destructive annotation.
-  The AI should confirm with the user before passing `confirm: true`. Saving keeps the previous version in the `<file name>-backups~` folder next to the file.
-- There is no tool that runs arbitrary code. The files touched are the `.ylp` of `file` and the paths named by the export and save tools. A relative path cannot climb out of the working folder with `..`.
-- Commands to the app are accepted only from programs of the same user on the same PC. The channel is a Unix socket or a Windows named pipe; a key file is placed in a folder only that user can read, and each connection proves it knows the key.
-  The name and key are separate from Live Link's. No network port is opened.
-- Whether an MCP client trusts tool annotations is up to the client. In the assistant's settings it is safer to make destructive tools ask every time.
+- Destructive operations (deleting layers, masks and effects, saving over the file, replacing existing files) change nothing and are refused unless the argument `confirm: true` is given,
+  and those tools carry the destructive annotation (in `action_run`, each destructive command of the list needs its own `confirm: true`, and the tool carries the annotation). The assistant should ask you before passing `confirm: true`. Saving keeps the previous version in `<file name>-backups~` next to the file.
+- There is no tool that runs arbitrary code. The only files touched are the paths given to the export and save tools. Relative paths start at the folder of the open project, and `..` cannot leave it.
+- It listens on `127.0.0.1` (inside this PC) only. A request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, or whose `Origin` is present and not the same place
+  (a web page that points another name at 127.0.0.1, or a page of another site), is refused. Up to 8 connections at once.
+- There is no password. While the setting is on, programs of other accounts on this PC can connect too. Turn it off when you do not use it.
+- Whether a client trusts the tool annotations is up to the client. Setting the assistant to ask before every destructive tool is the safe choice.
 
 ## When it does not connect
 
-- "Cannot reach a running YoluPainter": the app is not running, or "Accept external commands" is off. Turn it on, or pass `file` to work without the app.
-- "No reply": the app is busy (for example drawing) and did not take the command. It is unknown whether the command ran, so check with `doc_info` or `history_info` before asking again.
+- "Cannot reach a running YoluPainter": the app is not running, "Accept external commands" is off, or the port differs. Check the URL in the tooltip of the dot in the app's status bar.
+- The dot shows "cannot accept": read the reason in its tooltip. If another program uses the port, change the port in the app and use the same port in the clients.
+- "Too many connections" (`busy`): the 8 connections the app takes at once are used up, for example by other clients. Wait a moment and ask again.
+- "No reply": the app could not take the command, for example while you are drawing. It is unknown whether the command ran, so check with `doc_info` or `history_info` before asking again.

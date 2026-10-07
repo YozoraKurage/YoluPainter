@@ -257,6 +257,8 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/en/UNITY.md",
     "docs/en/INSTALL.md",
     "docs/en/BUILDING.md",
+    "docs/LIVELINK.md",
+    "docs/en/LIVELINK.md",
 ];
 /// docs/ にあって配布物へは入れないファイル（開発・リリースの手順）。docs/ に足したファイルは、入れるか外すかのどちらかに必ず載せる（試験が確かめる）。
 const LEFT_OUT_DOCS: &[&str] = &["docs/DEVELOPMENT.md", "docs/RELEASING.md"];
@@ -492,16 +494,21 @@ const MCPB_FILES: &[&str] = &[
 ];
 /// 配布物の GitHub の置き場（マニフェストの作者・文書のリンク）。インストーラーの `HOMEPAGE` と同じ。
 const HOMEPAGE: &str = "https://github.com/YozoraKurage/YoluPainter";
-/// .mcpb の `manifest.json`（mcpb の manifest_version 0.3。`server.type` は binary）。ツールの一覧は書かず（`tools_generated`）、
-/// 実行ファイルが `tools/list` で返す物が正本になる（命令を足しても、manifest との食い違いが起きない）。
+/// .mcpb の中継に渡す引数（アプリの番号は、拡張の設定 `port` から。既定はアプリの既定と同じ）。
+const MCPB_ARGS: [&str; 3] = ["mcp", "--port", "${user_config.port}"];
+/// アプリの既定の番号（`yolu_mcp::DEFAULT_PORT` と同じ。xtask はアプリの crate に依らないので、試験が食い違いを見つける）。
+const MCPB_DEFAULT_PORT: u16 = 17347;
+/// .mcpb の `manifest.json`（mcpb の manifest_version 0.3。`server.type` は binary）。中身は、標準入出力を起動中のアプリの MCP の受け口
+/// （`http://127.0.0.1:<番号>/mcp`）へつなぐ中継（`yolupainter-cli mcp`）だけで、ツールの一覧は書かない（`tools_generated`。アプリが返す物が正本になり、
+/// アプリの更新だけで新しくなる）。
 fn mcpb_manifest(version: &Version) -> serde_json::Value {
     serde_json::json!({
         "manifest_version": "0.3",
         "name": "yolupainter",
         "display_name": "YoluPainter",
         "version": version.to_string(),
-        "description": "Read and edit YoluPainter texture projects (.ylp): layers, masks, effects, previews and exports. Runs locally on this PC.",
-        "long_description": "Lets an AI assistant work with YoluPainter texture projects. It can open a .ylp file directly, or operate the running YoluPainter app when \"Accept external commands\" is turned on in the app's settings. Reading, previewing and editing layers, masks and effects are available; deleting, saving over a file and replacing exported files need an explicit confirmation. Nothing is sent over the network.",
+        "description": "Work on the project open in YoluPainter: layers, masks, effects, previews and exports. Connects to the app running on this PC.",
+        "long_description": "Lets an AI assistant work on the project open in the YoluPainter app on this PC. Turn on \"Accept external commands\" in the app's settings first. This extension only relays to the app, so the tools come from the app and follow its updates. Reading, previewing and editing layers, masks and effects are available; deleting, saving over a file and replacing exported files need an explicit confirmation. Nothing is sent over the network.",
         "author": {"name": "Yozolab", "url": HOMEPAGE},
         "repository": {"type": "git", "url": HOMEPAGE},
         "homepage": HOMEPAGE,
@@ -512,8 +519,19 @@ fn mcpb_manifest(version: &Version) -> serde_json::Value {
             "entry_point": MCPB_SERVER,
             "mcp_config": {
                 "command": format!("${{__dirname}}/{MCPB_SERVER}"),
-                "args": ["mcp"],
+                "args": MCPB_ARGS,
                 "env": {},
+            },
+        },
+        "user_config": {
+            "port": {
+                "type": "number",
+                "title": "Port",
+                "description": "The port set in YoluPainter's settings next to \"Accept external commands\"",
+                "default": MCPB_DEFAULT_PORT,
+                "min": 1024,
+                "max": 65535,
+                "required": false,
             },
         },
         "tools_generated": true,
@@ -522,7 +540,7 @@ fn mcpb_manifest(version: &Version) -> serde_json::Value {
         "compatibility": {"platforms": ["win32"]},
     })
 }
-/// .mcpb の `manifest.json` が、この xtask の組む形（版が今の版・実行ファイルが入る名前・Windows だけ・引数は `mcp`）であること。
+/// .mcpb の `manifest.json` が、この xtask の組む形（版が今の版・実行ファイルが入る名前・Windows だけ・引数は `mcp` と設定の番号）であること。
 fn check_mcpb_manifest(manifest: &serde_json::Value, version: &Version) -> Result<()> {
     let text = |pointer: &str| manifest.pointer(pointer).and_then(|v| v.as_str());
     let mut problems = Vec::new();
@@ -554,8 +572,13 @@ fn check_mcpb_manifest(manifest: &serde_json::Value, version: &Version) -> Resul
             "server.mcp_config.command が実行ファイルを指していません: {command}"
         ));
     }
-    if manifest.pointer("/server/mcp_config/args") != Some(&serde_json::json!(["mcp"])) {
-        problems.push("server.mcp_config.args が [\"mcp\"] ではありません".to_owned());
+    if manifest.pointer("/server/mcp_config/args") != Some(&serde_json::json!(MCPB_ARGS)) {
+        problems.push(format!(
+            "server.mcp_config.args が {MCPB_ARGS:?} ではありません"
+        ));
+    }
+    if manifest.pointer("/user_config/port/type") != Some(&serde_json::json!("number")) {
+        problems.push("user_config.port（番号）がありません".to_owned());
     }
     if manifest.pointer("/compatibility/platforms") != Some(&serde_json::json!(["win32"])) {
         problems.push(
@@ -1674,7 +1697,7 @@ mod tests {
         archive(&path, &entries, true).unwrap();
         fs::read(path).unwrap()
     }
-    /// Claude Desktop の拡張の manifest: binary のサーバーで、実行ファイルは拡張の中の 1 つ、引数は mcp、Windows だけ。
+    /// Claude Desktop の拡張の manifest: binary のサーバーで、実行ファイルは拡張の中の 1 つ、引数は mcp と設定の番号（既定はアプリの既定）、Windows だけ。
     #[test]
     fn the_mcpb_manifest_names_the_binary_server_and_only_windows() {
         let v = Version::parse("0.4.0-rc.1").unwrap();
@@ -1693,8 +1716,9 @@ mod tests {
         );
         assert_eq!(
             manifest["server"]["mcp_config"]["args"],
-            serde_json::json!(["mcp"])
+            serde_json::json!(["mcp", "--port", "${user_config.port}"])
         );
+        assert_eq!(manifest["user_config"]["port"]["default"], 17347);
         assert_eq!(
             manifest["compatibility"]["platforms"],
             serde_json::json!(["win32"])
@@ -1721,6 +1745,8 @@ mod tests {
                 serde_json::json!("yolupainter-cli.exe"),
             ),
             ("/server/mcp_config/args", serde_json::json!(["serve"])),
+            ("/server/mcp_config/args", serde_json::json!(["mcp"])),
+            ("/user_config/port/type", serde_json::json!("string")),
             (
                 "/compatibility/platforms",
                 serde_json::json!(["win32", "linux"]),

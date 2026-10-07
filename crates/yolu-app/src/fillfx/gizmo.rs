@@ -1,10 +1,11 @@
-//! 3D ビューの形のギズモの操作と描画（Unity 版の `TexturePaintWindow.ShapeGizmo`）: 選んでいる塗りつぶしの層の、投影の置き場（型の上の
+//! 3D ビューの形のギズモの操作と描画（Unity 版の `TexturePaintWindow.ShapeGizmo`）: 選んでいる塗りつぶしレイヤーの、投影の置き場（型の上の
 //! 投影とデカールの箱）か、3D ビューで編集している塗りつぶしのグラデーションの形を、モデルの面の上で動かす・回す・大きさを変える。
 //!
-//! - 出る条件: 3D のモデルがあり、選んでいる層が塗りつぶしで、マスクを編集していない。グラデーションを「3D ビューで編集」にしていればその形
+//! - 出る条件: 3D のモデルがあり、選んでいるレイヤーが塗りつぶしで、マスクを編集していない。グラデーションを「3D ビューで編集」にしていればその形
 //!   （ギズモは 1 つなのでグラデーションが先）、そうでなければ投影が UV 以外のとき置き場を出す（Q で隠す。Substance の Show/Hide manipulator）。
+//!   フィルターの欄で形のグラデーション・画像の Generator のハンドルを出していれば、レイヤーの種類とマスクに依らず、それが一番先。
 //! - ハンドルを押したときだけ受け取り（ハンドルの無い所の押下は今のツールへ）、離すまでの変更は 1 回の Undo にまとめる（`coalesce`）。
-//!   Esc・窓のフォーカスの喪失・描き始めでは、ドラッグの前に戻して履歴にも残さない（`cancel_coalescing`）。
+//!   Esc・ウィンドウのフォーカスの喪失・描き始めでは、ドラッグの前に戻して履歴にも残さない（`cancel_coalescing`）。
 //! - 計算は `view3d::shape_gizmo`（始まりの形とポインタから毎回計算する）。ここは文書への入れ方と、3D ビューへの重ね描きだけ。
 
 use egui::{pos2, vec2, Color32, Pos2, Rect, Shape as EguiShape, Stroke, Ui};
@@ -13,18 +14,18 @@ use yolu_core::generator::Kind as GeneratorKind;
 use yolu_core::glam::Vec2;
 use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind};
 
-use crate::matpaint::refusal_text;
+use crate::notice::Source as NoticeSource;
 use crate::state::AppState;
 use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
 
 /// ギズモが動かしているもの。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// 塗りつぶしの層の投影の置き場。
+    /// 塗りつぶしレイヤーの投影の置き場。
     Projection(LayerId),
-    /// 塗りつぶしの層のチャンネルのグラデーションの形。
+    /// 塗りつぶしレイヤーのチャンネルのグラデーションの形。
     Gradient(LayerId, Channel),
-    /// 層（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形。
+    /// レイヤー（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形か、画像の Generator の投影の置き場。
     Filter(LayerId, FilterId),
 }
 
@@ -52,7 +53,7 @@ pub struct ShapeDrag {
     pub from: Vec2,
     pub target: Target,
     pub source: Source,
-    /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号の層へ当てない）。
+    /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号のレイヤーへ当てない）。
     pub doc_id: u128,
 }
 
@@ -72,7 +73,7 @@ pub fn target(app: &AppState) -> Option<Target> {
     let id = app.selected_layer?;
     let layer = app.doc.layer(id)?;
     if let Some((l, f)) = app.fillfx.edit_filter {
-        if l == id && filter_volume(app, l, f).is_some() {
+        if l == id && filter_shape(app, l, f).is_some() {
             return Some(Target::Filter(l, f));
         }
     }
@@ -93,18 +94,24 @@ pub fn target(app: &AppState) -> Option<Target> {
     (layer.projection().mode != ProjectionMode::Uv).then_some(Target::Projection(id))
 }
 
-/// 層のフィルターのスタックの段が、形のグラデーションの Generator なら、その形。
-fn filter_volume(
-    app: &AppState,
-    layer: LayerId,
-    filter: FilterId,
-) -> Option<yolu_core::generator::Volume> {
+/// レイヤーのフィルターのスタックの段が、形のグラデーションの Generator ならその形、UV 以外の投影の画像の Generator なら投影の置き場。
+fn filter_shape(app: &AppState, layer: LayerId, filter: FilterId) -> Option<Shape> {
     let (owner, effect, _) = app.doc.find_filter(filter)?;
     if owner != layer {
         return None;
     }
     let g = effect.settings().generator_settings()?;
-    (g.kind == GeneratorKind::ShapeGradient).then_some(g.volume)
+    match g.kind {
+        GeneratorKind::ShapeGradient => Some(Shape::from_volume(&g.volume)),
+        GeneratorKind::Image if g.image.projection.mode != ProjectionMode::Uv => {
+            let p = &g.image.projection;
+            Some(Shape::from_placement(
+                &p.placement,
+                p.mode == ProjectionMode::Spherical,
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// 対象の今の形。
@@ -121,7 +128,7 @@ pub fn shape(app: &AppState, target: Target) -> Option<Shape> {
         Target::Gradient(_, ch) => layer
             .fill_gradient(ch)
             .map(|g| Shape::from_volume(&g.volume)),
-        Target::Filter(l, f) => filter_volume(app, l, f).map(|v| Shape::from_volume(&v)),
+        Target::Filter(l, f) => filter_shape(app, l, f),
     }
 }
 
@@ -134,7 +141,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
         return Handle::None;
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
-    sg::hit(&s, &root(), &view, app.fillfx.gizmo_mode, local(rect, at))
+    sg::hit(&s, &root(), &view, local(rect, at))
 }
 
 /// ハンドルの画面の点（画面の座標。試験が掴む位置に使う）。
@@ -142,7 +149,7 @@ pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> 
     let t = target(app)?;
     let s = shape(app, t)?;
     let view = app.view3d.camera.view(rect.width(), rect.height());
-    sg::handle_points(&s, &root(), &view, app.fillfx.gizmo_mode)
+    sg::handle_points(&s, &root(), &view)
         .into_iter()
         .find(|(h, _)| *h == handle)
         .map(|(_, p)| pos2(rect.left() + p.x, rect.top() + p.y))
@@ -161,15 +168,14 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let p = local(rect, at);
-    let handle = sg::hit(&start, &root(), &view, app.fillfx.gizmo_mode, p);
+    let handle = sg::hit(&start, &root(), &view, p);
     if handle == Handle::None {
         return false;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            NoticeSource::FillLayer,
+            crate::lang::refusals::read_only_set(app.lang, reason),
         );
         return true; // ハンドルを押したので、下のツールで描き始めない
     }
@@ -195,7 +201,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         app.fillfx.drag = None;
         return;
     }
-    // 層が替わった・無くなった: そこで終える
+    // レイヤーが替わった・無くなった: そこで終える
     if app.selected_layer != Some(d.target.layer()) || app.doc.layer(d.target.layer()).is_none() {
         release(app, true);
         return;
@@ -224,7 +230,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             let mut p = *l.projection();
             p.placement = next.into_placement();
             if let Err(e) = p.validate() {
-                app.message = app.lang.fill_error(&e);
+                app.fail(NoticeSource::FillLayer, app.lang.fill_error(&e));
                 return;
             }
             app.doc.set_fill_projection(layer, p, true)
@@ -240,10 +246,11 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             };
             g.volume = next.into_volume(&g.volume);
             if g.validate().is_err() {
-                app.message = app
-                    .lang
-                    .pick("形の値が範囲外です", "The shape is out of range")
-                    .into();
+                app.fail(
+                    NoticeSource::FillLayer,
+                    app.lang
+                        .pick("形の値が範囲外です", "The shape is out of range"),
+                );
                 return;
             }
             app.doc.set_fill_gradient(layer, ch, Some(g), true)
@@ -256,12 +263,17 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             else {
                 return;
             };
-            g.volume = next.into_volume(&g.volume);
+            if g.kind == GeneratorKind::Image {
+                g.image.projection.placement = next.into_placement();
+            } else {
+                g.volume = next.into_volume(&g.volume);
+            }
             if g.validate().is_err() {
-                app.message = app
-                    .lang
-                    .pick("形の値が範囲外です", "The shape is out of range")
-                    .into();
+                app.fail(
+                    NoticeSource::FillLayer,
+                    app.lang
+                        .pick("形の値が範囲外です", "The shape is out of range"),
+                );
                 return;
             }
             app.doc
@@ -275,7 +287,11 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
             }
         }
         Err(e) => {
-            app.message = refusal_text(app.lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                NoticeSource::FillLayer,
+                app.lang.core_error(&e),
+            );
             release(app, false);
         }
     }
@@ -295,14 +311,19 @@ pub fn release(app: &mut AppState, commit: bool) {
     }
     match app.doc.cancel_coalescing() {
         Ok(true) => {
-            app.message = app
-                .lang
-                .pick("形の操作をやめました", "Shape edit cancelled")
-                .into();
+            app.info(
+                NoticeSource::FillLayer,
+                app.lang
+                    .pick("形の操作をやめました", "Shape edit cancelled"),
+            );
         }
         Ok(false) => {}
         Err(e) => {
-            app.message = app.lang.core_error(&e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                NoticeSource::FillLayer,
+                app.lang.core_error(&e),
+            );
             app.doc.end_coalescing();
         }
     }
@@ -317,7 +338,7 @@ pub fn dragging(app: &AppState) -> bool {
 pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> Handle {
     let Some(t) = target(app) else {
         app.fillfx.hover = Handle::None;
-        // 出さなくなった（層を替えた・隠した）ドラッグは取り残さない
+        // 出さなくなった（レイヤーを替えた・隠した）ドラッグは取り残さない
         if app.fillfx.drag.is_some() {
             release(app, false);
         }
@@ -330,20 +351,19 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let mode = app.fillfx.gizmo_mode;
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let hover = match &app.fillfx.drag {
         Some(d) => d.handle,
         None => pointer
             .filter(|_| !app.is_stroking())
             .map_or(Handle::None, |p| {
-                sg::hit(&s, &root(), &view, mode, local(rect, p))
+                sg::hit(&s, &root(), &view, local(rect, p))
             }),
     };
     app.fillfx.hover = hover;
     let painter = ui.painter_at(rect);
     let to = |p: Vec2| pos2(rect.left() + p.x, rect.top() + p.y);
-    for line in sg::lines(&s, &root(), &view, mode, hover) {
+    for line in sg::lines(&s, &root(), &view, hover) {
         let points: Vec<Pos2> = line.points.iter().map(|p| to(*p)).collect();
         if line.filled {
             painter.add(EguiShape::convex_polygon(points, line.color, Stroke::NONE));
@@ -356,7 +376,7 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
         ));
         painter.add(EguiShape::line(points, Stroke::new(line.width, line.color)));
     }
-    for (handle, at) in sg::handle_points(&s, &root(), &view, mode) {
+    for (handle, at) in sg::handle_points(&s, &root(), &view) {
         let c = to(at);
         if handle == Handle::MoveFree {
             let r = Rect::from_center_size(c, vec2(sg::CENTER_POINTS, sg::CENTER_POINTS));

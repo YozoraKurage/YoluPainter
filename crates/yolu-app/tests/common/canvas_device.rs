@@ -7,8 +7,8 @@ use eframe::egui_wgpu::{wgpu, WgpuSetup, WgpuSetupExisting};
 static DEVICE: OnceLock<Result<WgpuSetupExisting, String>> = OnceLock::new();
 static TEST: Mutex<()> = Mutex::new(());
 
-/// 窓を捨てるまで保持する。共有デバイスのエラースコープとキューを試験どうしで混ぜない。
-/// 窓の貸し出し（`gpu_thread::lease`。harness を持つほかの試験と同じもの）を先に取る: この装置は kittest の共用の接続とは別の
+/// ウィンドウを捨てるまで保持する。共有デバイスのエラースコープとキューを試験どうしで混ぜない。
+/// ウィンドウの貸し出し（`gpu_thread::lease`。harness を持つほかの試験と同じもの）を先に取る: この装置は kittest の共用の接続とは別の
 /// Instance・Device なので、貸し出しを通さないと、harness を持つ試験と同時に別々の装置を作ってしまう（lavapipe の中で落ちる向き）。
 /// 取る順は貸し出し → `TEST` で、どの試験もこの順。
 pub fn begin(name: &str) -> Option<MutexGuard<'static, ()>> {
@@ -20,6 +20,11 @@ pub fn begin(name: &str) -> Option<MutexGuard<'static, ()>> {
             // libtest の成功時の出力捕捉を通さず、省略を通常の cargo test でも残す。
             let _ = writeln!(std::io::stderr(),
                 "省略: canvas_gpu::{name}: {reason}。未検証: この試験の GPU 合成・表示と CPU との比較、切替・復帰の保証。");
+            // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、使える描画器が無いときに通った扱いにしない（yolu-gpu の試験と同じ）
+            assert!(
+                std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),
+                "YOLUPAINTER_REQUIRE_GPU があるのに GPU 合成の装置を作れない: canvas_gpu::{name}: {reason}"
+            );
             None
         }
     }

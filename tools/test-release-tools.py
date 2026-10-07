@@ -149,7 +149,7 @@ class LicenseChecks(unittest.TestCase):
     )
 
     def test_the_tree_of_a_product_built_together_with_another_counts_the_unified_features(self):
-        # 同じ cargo の組みで作ると機能が合わさり、単独の木に無い依存（libm）が入る。木は根ごとに分け、重なる部分木も展開された物を読む
+        # 同じ cargo のビルドで作ると機能が合わさり、単独の木に無い依存（libm）が入る。木は根ごとに分け、重なる部分木も展開された物を読む
         self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'cli'),
                          {'cli@1.0.0', 'shared@1.0.0', 'heavy@2.0.0', 'libm@0.2.16', 'rmcp@3.5.1'})
         self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'app'),
@@ -190,19 +190,19 @@ class LicenseChecks(unittest.TestCase):
         self.assertTrue(other.exists())
 
     def test_stale_bundle_removed_before_config_failure(self):
-        bundle = self.root / 'yolu-bridge/THIRD_PARTY_LICENSES.txt'
+        bundle = self.root / 'yolu-cli/THIRD_PARTY_LICENSES.txt'
         bundle.parent.mkdir()
         bundle.write_text('前回の成功')
-        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'CONFIG', self.root / 'missing.json'), patch('sys.argv', ['third-party.py', '--package', 'yolu-bridge', '--bundle']):
+        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'CONFIG', self.root / 'missing.json'), patch('sys.argv', ['third-party.py', '--package', 'yolu-cli', '--bundle']):
             with self.assertRaises(OSError):
                 licenses.main()
         self.assertFalse(bundle.exists())
 
     def test_stale_bundle_removed_before_metadata_failure(self):
-        bundle = self.root / 'yolu-bridge/THIRD_PARTY_LICENSES.txt'
+        bundle = self.root / 'yolu-cli/THIRD_PARTY_LICENSES.txt'
         bundle.parent.mkdir()
         bundle.write_text('前回の成功')
-        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'cargo', side_effect=OSError('失敗')), patch('sys.argv', ['third-party.py', '--package', 'yolu-bridge', '--bundle']):
+        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'cargo', side_effect=OSError('失敗')), patch('sys.argv', ['third-party.py', '--package', 'yolu-cli', '--bundle']):
             with self.assertRaises(OSError):
                 licenses.main()
         self.assertFalse(bundle.exists())

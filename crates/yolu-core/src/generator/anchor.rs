@@ -19,7 +19,7 @@ pub struct Point {
     pub host: usize,
     pub placement: Placement,
 }
-/// 下から上の層番号で参照を解決する。すべての辺が小さい番号を向くので循環は成立しない。
+/// 下から上のレイヤー番号で参照を解決する。すべての辺が小さい番号を向くので循環は成立しない。
 pub fn resolve(
     points: &[Point],
     id: u128,
@@ -47,7 +47,7 @@ pub fn validate_points(points: &[Point], layer_count: usize) -> Result<(), Error
                 .any(|q| p.id == q.id || (p.host == q.host && p.placement == q.placement))
         {
             return Err(Error::Invalid(
-                "Anchor の ID・層・配置が不正または重複しています",
+                "Anchor の ID・レイヤー・配置が不正または重複しています",
             ));
         }
     }
@@ -82,7 +82,7 @@ pub enum ReadMode {
 }
 /// `Settings` が持つ Anchor の参照（C# の `GeneratorSettings` の AnchorId・AnchorChannel・AnchorRead。正本の版 20）。
 /// `id` は [`Point::id`] で、0 は未選択。Anchor 以外の種類は既定値（0・Color・Value）のままにする。
-/// 層の Anchor は `channel` のスタックを `read` で読み、マスクの Anchor は `channel` と `read` を無視する。
+/// レイヤーの Anchor は `channel` のスタックを `read` で読み、マスクの Anchor は `channel` と `read` を無視する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reference {
     pub id: u128,
@@ -90,7 +90,7 @@ pub struct Reference {
     pub read: ReadMode,
 }
 impl Reference {
-    /// 新しい設定の既定。Anchor は下の層の Height を読むのがいちばん多いので Height、他の種類は C# と同じ Color。
+    /// 新しい設定の既定。Anchor は下のレイヤーの Height を読むのがいちばん多いので Height、他の種類は C# と同じ Color。
     pub(super) fn default_for(kind: Kind) -> Self {
         Self {
             id: 0,
@@ -102,7 +102,7 @@ impl Reference {
             read: ReadMode::Value,
         }
     }
-    /// 参照先の層番号を [`resolve`](self::resolve) で解決する。
+    /// 参照先のレイヤー番号を [`resolve`](self::resolve) で解決する。
     pub fn resolve(
         &self,
         points: &[Point],
@@ -111,7 +111,7 @@ impl Reference {
     ) -> Result<Point, Issue> {
         resolve(points, self.id, reader, layer_count)
     }
-    /// 層の Anchor を読むときの [`Read`]。`kind` は `channel` の種類で、値の読み方は色なら輝度・スカラーなら R になる。
+    /// レイヤーの Anchor を読むときの [`Read`]。`kind` は `channel` の種類で、値の読み方は色なら輝度・スカラーなら R になる。
     /// Normal は 1 画素 1 値でないので断る。
     pub fn read_for(&self, kind: ChannelKind) -> Result<Read, Error> {
         match (self.read, kind) {
@@ -166,8 +166,7 @@ impl ValueSource for LayerSample<'_> {
         let mut bytes = [0u8; ROW_CHUNK * 4];
         for (n, chunk) in head.chunks_mut(ROW_CHUNK).enumerate() {
             let bytes = &mut bytes[..chunk.len() * 4];
-            self.source
-                .read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
+            self.source.read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
             for (o, p) in chunk.iter_mut().zip(bytes.chunks_exact(4)) {
                 *o = self.read_value(Rgba8::from_slice(p));
             }
@@ -307,7 +306,9 @@ impl<'a> Plan<'a> {
             || dimensions.1 == 0
             || kind == ChannelKind::Normal
         {
-            return Err(Error::Invalid("Anchor の層・大きさ・チャンネルが不正です"));
+            return Err(Error::Invalid(
+                "Anchor のレイヤー・大きさ・チャンネルが不正です",
+            ));
         }
         for (i, l) in layers.iter().enumerate() {
             if !unit(l.opacity)
@@ -316,7 +317,7 @@ impl<'a> Plan<'a> {
                 })
                 || (!matches!(l.content, Content::Group) && l.blend == BlendMode::PassThrough)
             {
-                return Err(Error::Invalid("Anchor の層の設定が不正です"));
+                return Err(Error::Invalid("Anchor のレイヤーの設定が不正です"));
             }
             if let Content::Pixels(s) = l.content {
                 if s.dimensions() != dimensions {

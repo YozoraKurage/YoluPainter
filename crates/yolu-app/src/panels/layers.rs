@@ -6,15 +6,18 @@
 use std::collections::HashMap;
 
 use egui::{
-    pos2, vec2, Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, WidgetInfo,
-    WidgetType,
+    pos2, vec2, Color32, ColorImage, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui,
+    WidgetInfo, WidgetType,
 };
+
+use yolu_core::FilterTarget;
 
 use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
 use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
-use crate::panels::effect_rows;
 use crate::m2_menu::Popup;
+use crate::notice::Source;
+use crate::panels::effect_rows;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
 use crate::ui::scroll::Scroll;
@@ -30,12 +33,21 @@ pub const LIST_TOP: f32 = 6.0 + 24.0 + 6.0;
 pub const STACKED_LIST_TOP: f32 = LIST_TOP + 24.0 + 4.0;
 /// 1 段の字下げ。
 const INDENT: f32 = 14.0;
-/// 行の右端の印（描くチャンネルを使っていない層・パスの層）の幅。
+/// 行の右端の印（描くチャンネルを使っていないレイヤー・パスレイヤー）の幅。
 const MARK_WIDTH: f32 = 20.0;
 
 /// 右から `slot` 番目（0 が右端）の印の左端が、行の右端から内へどれだけか。
 fn mark_inset(slot: usize) -> f32 {
     24.0 + MARK_WIDTH * slot as f32
+}
+
+/// マスクのサムネイルの印のツールチップの 1 行（マスクの効果の数。レイヤーが対象のあいだ、それらの行は一覧に出ない）。
+pub fn mask_effects_tip(lang: crate::lang::Lang, count: usize) -> String {
+    match (count, lang) {
+        (1, crate::lang::Lang::En) => "1 effect on the mask".to_owned(),
+        (n, crate::lang::Lang::En) => format!("{n} effects on the mask"),
+        (n, crate::lang::Lang::Ja) => format!("マスクに効果 {n} 件"),
+    }
 }
 
 /// 名前欄の右端が、行の右端から内へどれだけか（印が `marks` 個）。印が無いときと 1 つのときは同じ（1 つぶんの場所を空けておく）で、
@@ -53,7 +65,7 @@ pub enum ThumbSource {
     Mask,
 }
 
-/// レイヤーのサムネイル（文書の版が変わったら作り直す。core は層ごとの版を持たないので文書の版で見る。描いている間は毎フレーム）。
+/// レイヤーのサムネイル（文書の版が変わったら作り直す。core はレイヤーごとの版を持たないので文書の版で見る。描いている間は毎フレーム）。
 #[derive(Default)]
 pub struct Thumbnails {
     map: HashMap<(LayerId, ThumbSource), (u64, TextureHandle)>,
@@ -61,7 +73,7 @@ pub struct Thumbnails {
     pub rebuilt: usize,
 }
 
-/// 層の 1 画素（straight RGBA8）。マスクは見せる量の灰色。
+/// レイヤーの 1 画素（straight RGBA8）。マスクは見せる量の灰色。
 fn thumb_pixel(doc: &Document, id: LayerId, source: ThumbSource, x: u32, y: u32) -> [u8; 4] {
     let Some(layer) = doc.layer(id) else {
         return [0; 4];
@@ -165,6 +177,28 @@ impl Thumbnails {
     }
 }
 
+/// 描くチャンネルだけの合成モードと不透明度のときの印: 合成モードの箱の上の縁に、チャンネルの名前を小さく（縁の線を切って重ねる）。
+fn own_legend(ui: &mut Ui, blend: Rect, name: &str, tip: &str) {
+    let p = ui.painter();
+    let shown = w::fit(p, name, blend.width() - 16.0, t::LABEL_SMALL);
+    let width = w::text_width(p, &shown, t::LABEL_SMALL);
+    let at = Rect::from_min_size(
+        pos2(blend.left() + 6.0, blend.top() - 6.0),
+        vec2(width + 4.0, 11.0),
+    );
+    w::fill(p, at, t::PANEL_BG);
+    w::text(
+        p,
+        at.translate(vec2(2.0, 0.0)),
+        &shown,
+        t::LABEL_SMALL.with_color(t::ACCENT),
+        Align::Left,
+    );
+    let response = ui.interact(at, ui.make_persistent_id("layers.own"), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
+    response.on_hover_text(tip);
+}
+
 fn open_popup(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect, min: f32) {
     app.popup = Some(OpenPopup {
         kind,
@@ -190,13 +224,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         })
     });
 
-    // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。左端の切り替えで、そのチャンネルだけの値にする
-    let top = Rect::from_min_size(
+    // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。そのチャンネルだけの値にするのは、合成モードのメニューの頭の項目
+    let rest = Rect::from_min_size(
         pos2(r.left() + t::PADDING, r.top() + 6.0),
         vec2(r.width() - 2.0 * t::PADDING, 24.0),
     );
-    let own_rect = Rect::from_min_size(top.min, vec2(18.0, top.height()));
-    let rest = Rect::from_min_max(pos2(top.left() + 20.0, top.top()), top.max);
     let left_w = ((rest.width() - 6.0) * 0.42).floor();
     let mut blend_rect = Rect::from_min_size(rest.min, vec2(left_w, rest.height()));
     let mut opacity_rect =
@@ -216,56 +248,42 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
         let name = m2::channel_name(lang, &app.doc, channel);
-        let own_tip = if own {
-            lang.pick(
-                format!("{name} だけの合成モードと不透明度（押すと層の値に戻す）"),
-                format!("{name} only: its own blend mode and opacity (click to follow the layer)"),
+        let (blend_tip, opacity_tip) = if own {
+            (
+                lang.pick(
+                    format!("{name} だけの合成モード"),
+                    format!("Blend mode ({name} only)"),
+                ),
+                lang.pick(
+                    format!("{name} だけの不透明度"),
+                    format!("Opacity ({name} only)"),
+                ),
             )
         } else {
-            lang.pick(
-                format!("層の合成モードと不透明度（押すと {name} 専用にする）"),
-                format!("The layer's blend mode and opacity (click to give {name} its own)"),
+            (
+                lang.pick("合成モード", "Blend mode").to_owned(),
+                lang.pick("レイヤーの不透明度", "Layer opacity").to_owned(),
             )
         };
-        if w::icon_button(
-            ui,
-            own_rect,
-            "layers.own",
-            m2::channel_icon(channel),
-            &own_tip,
-            own,
-            enabled,
-            15.0,
-        )
-        .clicked()
-        {
-            app.apply(Action::M2(Edit::OwnBlend {
-                id,
-                channel,
-                own: !own,
-            }));
-        }
         let (response, b) = w::dropdown(
             ui,
             blend_rect,
             "layers.blend",
             None,
             m2::blend_label(lang, blend),
-            Some(lang.pick("合成モード", "Blend mode")),
+            Some(&blend_tip),
             enabled,
             0.0,
         );
+        if own {
+            own_legend(ui, b, &name, &blend_tip);
+        }
         if response.clicked() {
             open_popup(app, &ctx, PopupKind::BlendMode(id), b, b.width());
         }
-        let spec = SliderSpec::new(
-            opacity_label,
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .enabled(enabled)
-        .tooltip(lang.pick("レイヤーの不透明度", "Layer opacity"));
+        let spec = SliderSpec::new(opacity_label, 0.0, 100.0, NumberFormat::int("%"))
+            .enabled(enabled)
+            .tooltip(&opacity_tip);
         let o = w::slider(
             ui,
             opacity_rect,
@@ -296,17 +314,18 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let rows = m2::visible_rows(&app.doc, &app.m2.collapsed);
-    // 層の行の下に効果の行（高さが違う）が続くので、行の位置は配置を数えて決める
-    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT);
+    // レイヤーの行の下に効果の行（高さが違う。マスクが対象のレイヤーはマスクの効果、それ以外はレイヤーの効果）が続くので、行の位置は配置を数えて決める。
+    // ドラッグの落とす先の数え方も、このフレームで描いた配置と同じ物を使う（途中で対象が替わっても、見えている行とずれない）
+    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT, crate::fx::mask_target(app));
     let content = layout.height;
-    let bar = Scroll::begin(ui, list, content, &mut app.layer_scroll);
+    let bar = Scroll::begin(ui, list, content, &mut app.ui.layer_scroll);
     let row_width = list.width() - bar.reserved();
 
     // 空白の右クリック（行の下）
     let blank = Rect::from_min_max(
         pos2(
             list.left(),
-            (list.top() + content - app.layer_scroll).max(list.top()),
+            (list.top() + content - app.ui.layer_scroll).max(list.top()),
         ),
         list.max,
     );
@@ -328,33 +347,42 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let chosen = app.selected_layers();
     for entry in &layout.entries {
         let rect = Rect::from_min_size(
-            pos2(list.left(), list.top() + entry.y - app.layer_scroll),
+            pos2(list.left(), list.top() + entry.y - app.ui.layer_scroll),
             vec2(row_width, entry.height),
         );
         if rect.bottom() < list.top() || rect.top() > list.bottom() {
             continue;
         }
         match entry.kind {
-            effect_rows::Kind::Layer(row_index) => {
-                layer_row(ui, app, thumbs, &ctx, list, rect, rows[row_index], &rows, &chosen)
-            }
+            effect_rows::Kind::Layer(row_index) => layer_row(
+                ui,
+                app,
+                thumbs,
+                &ctx,
+                list,
+                rect,
+                rows[row_index],
+                &rows,
+                &layout,
+                &chosen,
+            ),
             effect_rows::Kind::Child(child) => {
                 effect_rows::child_row(ui, app, list, rect, entry, child)
             }
         }
     }
-    follow_drag(ui, app, list, &rows);
-    crate::panels::assets::layer_list_drop(ui, app, list, &rows);
+    follow_drag(ui, app, list, &rows, &layout);
+    crate::panels::assets::layer_list_drop(ui, app, list, &rows, &layout);
     // ドラッグの落とす先（線か、グループの枠）
     if let Some(LayerDrag {
         target: Some(target),
         ..
-    }) = app.layer_drag
+    }) = app.ui.layer_drag
     {
         let painter = ui.painter_at(list);
         match target {
             DropTarget::Gap(gap) => {
-                let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
+                let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
                 painter.rect_filled(
                     Rect::from_min_size(
                         pos2(list.left() + 4.0, y - 1.0),
@@ -366,7 +394,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
             DropTarget::Into(group) => {
                 if let Some(i) = rows.iter().position(|r| r.id == group) {
-                    let y = list.top() + layout.layer_y(i) - app.layer_scroll;
+                    let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
                     w::outline(
                         &painter,
                         Rect::from_min_size(
@@ -381,13 +409,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
         }
     }
-    bar.end(ui, "layers.scroll", &mut app.layer_scroll);
+    bar.end(ui, "layers.scroll", &mut app.ui.layer_scroll);
 
     toolbar(ui, app, &ctx, r, list, enabled);
 }
 
-/// 下の操作の帯のボタンの数（左 7 つ・右 3 つ）。
-const TOOLBAR_BUTTONS: usize = 10;
+/// 下の操作の帯のボタンの数（左 8 つ・右 3 つ）。
+const TOOLBAR_BUTTONS: usize = 11;
 
 /// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
 pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
@@ -419,7 +447,10 @@ pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
         return (false, None);
     };
     let parent = layer.parent();
-    if app.doc.layers()[..index].iter().any(|l| l.parent() == parent) {
+    if app.doc.layers()[..index]
+        .iter()
+        .any(|l| l.parent() == parent)
+    {
         (false, None)
     } else if parent.is_some() {
         (
@@ -452,7 +483,7 @@ fn toolbar(
         vec2(r.width(), TOOLBAR_HEIGHT),
     );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
-    // ボタンは左に 7 つ（新規・塗りつぶし・調整・効果・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
+    // ボタンは左に 8 つ（新規・塗りつぶし・調整・フィルター・ジェネレーター・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
     // 重ならないよう間隔を詰める
     let pitch = ((bar.width() - 8.0) / TOOLBAR_BUTTONS as f32).min(27.0);
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
@@ -519,14 +550,14 @@ fn toolbar(
     if response.clicked() {
         open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
     }
-    // 効果（フィルター・ジェネレーター）を選んでいる層に足す
+    // フィルター・ジェネレーターを選んでいるレイヤーの今の対象（画素かマスク）に足す。入り口は別々
     let b = next();
     if w::icon_button(
         ui,
         b,
-        "layers.effect",
+        "layers.filter",
         "auto_awesome",
-        lang.pick("効果を足す", "Add Effect"),
+        crate::fx::menu::add_filter_label(lang),
         false,
         has,
         icon(17.0),
@@ -534,7 +565,23 @@ fn toolbar(
     .clicked()
     {
         let target = crate::fx::menu::target(app);
-        open_popup(app, ctx, PopupKind::M2(Popup::AddEffect(target)), b, 0.0);
+        open_popup(app, ctx, PopupKind::M2(Popup::AddFilter(target)), b, 0.0);
+    }
+    let b = next();
+    if w::icon_button(
+        ui,
+        b,
+        "layers.generator",
+        "texture",
+        crate::fx::menu::add_generator_label(lang),
+        false,
+        has,
+        icon(17.0),
+    )
+    .clicked()
+    {
+        let target = crate::fx::menu::target(app);
+        open_popup(app, ctx, PopupKind::M2(Popup::AddGenerator(target)), b, 0.0);
     }
     if w::icon_button(
         ui,
@@ -639,7 +686,7 @@ fn toolbar(
     }
 }
 
-/// 層の種類の見た目（サムネイルの位置）。ラスターは絵、塗りつぶしは色（無ければアイコン）、調整・グループはアイコン。
+/// レイヤーの種類の見た目（サムネイルの位置）。ラスターは絵、塗りつぶしは色（無ければアイコン）、調整・グループはアイコン。
 #[allow(clippy::too_many_arguments)]
 fn kind_thumb(
     ui: &mut Ui,
@@ -718,7 +765,7 @@ fn kind_thumb(
     }
 }
 
-/// ドラッグで運ぶ層: つかんだ層が複数選択の中にあれば選んだ層の全部、なければそれだけ。
+/// ドラッグで運ぶレイヤー: つかんだレイヤーが複数選択の中にあれば選んだレイヤーの全部、なければそれだけ。
 fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
     let chosen = app.selected_layers();
     if chosen.len() > 1 && chosen.contains(&id) {
@@ -729,39 +776,51 @@ fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
 }
 
 /// ポインタの位置から、いまの落とす先を決める。
-fn update_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row], id: LayerId) {
+fn update_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+    id: LayerId,
+) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
-        let layout = effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
-        let position = layout.position_at(p.y - list.top() + app.layer_scroll);
+        let position = layout.position_at(p.y - list.top() + app.ui.layer_scroll);
         let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
-        app.layer_drag = Some(LayerDrag { id, target });
+        app.ui.layer_drag = Some(LayerDrag { id, target });
     }
 }
 
-/// ドラッグを終える（落とす先があれば落とす。複数選んでいれば選んだ層をまとめて、1 回の Undo）。
+/// ドラッグを終える（落とす先があれば落とす。複数選んでいれば選んだレイヤーをまとめて、1 回の Undo）。
 fn drop_drag(app: &mut AppState, rows: &[Row]) {
     if let Some(LayerDrag {
         id: dragged,
         target: Some(target),
-    }) = app.layer_drag.take()
+    }) = app.ui.layer_drag.take()
     {
         let ids = dragged_layers(app, dragged);
         if let Some(edit) = m2::drop_edit_for(&app.doc, rows, &ids, target) {
             app.apply(Action::M2(edit));
         }
     }
-    app.layer_drag = None;
+    app.ui.layer_drag = None;
 }
 
 /// ドラッグ中にホイールで一覧を送って、ドラッグしている行が見えなくなったとき。見えない行は描かない（応答が来ない）ので、
 /// 行の側の「動いた・離した」が届かず、落とす先の線が残り続けて落とす操作も起きない。ここで、ボタンを押しているあいだは
 /// 落とす先をポインタに追わせ、離したら行の側と同じく落として手放す。
-fn follow_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
-    let Some(LayerDrag { id, .. }) = app.layer_drag else {
+fn follow_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+) {
+    let Some(LayerDrag { id, .. }) = app.ui.layer_drag else {
         return;
     };
     if ui.input(|i| i.pointer.primary_down()) {
-        update_drag(ui, app, list, rows, id);
+        update_drag(ui, app, list, rows, layout, id);
     } else {
         drop_drag(app, rows);
     }
@@ -786,7 +845,67 @@ fn click_modifiers(ui: &Ui) -> egui::Modifiers {
     })
 }
 
-/// 右クリックで選ぶ: 選んだ層の中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
+/// 行を押したとき（修飾キー無しならそのレイヤーだけを選ぶ。別のレイヤーなら画素が対象、同じレイヤーなら今の対象のまま。Ctrl・Cmd で足し引き、
+/// Shift で範囲、Ctrl + Shift で範囲を足す）。選んでいた効果の欄はレイヤーの欄へ戻る。
+fn click_row(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row]) {
+    app.fx.selected = None;
+    let modifiers = click_modifiers(ui);
+    if modifiers.command || modifiers.shift {
+        let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
+        if modifiers.shift {
+            app.select_layer_range(id, modifiers.command, &ids);
+        } else {
+            app.toggle_layer_selected(id);
+        }
+    } else {
+        app.select_single_layer(id);
+    }
+    if app.ui.renaming != Some(id) {
+        app.ui.renaming = None;
+    }
+}
+
+/// レイヤーかマスクのサムネイルを押したとき: 修飾キー無しなら、そのレイヤーを選んで（今選んでいるレイヤーならそのまま）`mask` の側を対象にする
+/// （切り替えではなく、もう一度押しても同じ側）。修飾キーつきは行を押したのと同じ（選び方だけを変える）。
+fn click_thumb(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row], mask: bool) {
+    let modifiers = click_modifiers(ui);
+    if modifiers.command || modifiers.shift {
+        click_row(ui, app, id, rows);
+        return;
+    }
+    if app.selected_layer != Some(id) {
+        app.select_single_layer(id);
+    }
+    app.fx.selected = None;
+    if app.ui.renaming != Some(id) {
+        app.ui.renaming = None;
+    }
+    if app.m2.edit_mask != mask {
+        app.apply(Action::M2Ui(UiOp::EditMask(mask)));
+    }
+}
+
+/// レイヤーの右クリックのメニュー（行とレイヤーのサムネイルで同じ）。押したレイヤーを選んでから開く。
+fn open_layer_menu(
+    app: &mut AppState,
+    ctx: &egui::Context,
+    id: LayerId,
+    in_selection: bool,
+    at: Option<Pos2>,
+) {
+    select_for_menu(app, id, in_selection);
+    if let Some(at) = at {
+        open_popup(
+            app,
+            ctx,
+            PopupKind::LayerContext(id),
+            context_anchor(at),
+            0.0,
+        );
+    }
+}
+
+/// 右クリックで選ぶ: 選んだレイヤーの中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
 fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
     if in_selection && app.has_multiple_layers_selected() {
         let chosen = app.selected_layers();
@@ -796,7 +915,7 @@ fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
     }
 }
 
-/// 行の右端のロックの印。自分のロックなら押すと外す（選んだ層の中の行なら選んだ全部の自分のロックを外す）。
+/// 行の右端のロックの印。自分のロックなら押すと外す（選んだレイヤーの中の行なら選んだ全部の自分のロックを外す）。
 fn lock_mark(
     ui: &mut Ui,
     app: &mut AppState,
@@ -842,7 +961,11 @@ fn lock_mark(
         &painter,
         mark,
         if full { "lock_filled" } else { "lock" },
-        if own_locked { t::TEXT_DIM } else { t::TEXT_DISABLED },
+        if own_locked {
+            t::TEXT_DIM
+        } else {
+            t::TEXT_DISABLED
+        },
         13.0,
     );
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled && own_locked, &tip));
@@ -872,6 +995,7 @@ fn layer_row(
     row: Rect,
     info: Row,
     rows: &[Row],
+    layout: &effect_rows::Layout,
     chosen: &[LayerId],
 ) {
     let id = info.id;
@@ -881,6 +1005,7 @@ fn layer_row(
     let (name, visible, kind) = (layer.name().to_owned(), layer.visible(), layer.kind());
     let has_mask = layer.mask().is_some();
     let has_path = layer.path().is_some();
+    let has_text = layer.text().is_some();
     let channel = app.m2.paint_channel;
     let no_pixels = kind == LayerKind::Raster && !layer.is_channel_enabled(channel);
     let clipped = app
@@ -889,7 +1014,7 @@ fn layer_row(
         .is_some_and(|i| app.doc.is_effectively_clipped(i));
     let selected = app.selected_layer == Some(id);
     let in_selection = selected || (chosen.len() > 1 && chosen.contains(&id));
-    let editing_mask = selected && app.m2.edit_mask && has_mask;
+    let editing_mask = crate::fx::mask_target(app) == Some(id);
     let enabled = app.can_edit();
     let lang = app.lang;
     let hit = row.intersect(list);
@@ -970,28 +1095,14 @@ fn layer_row(
     // 選ぶ（Ctrl・Cmd で足し引き、Shift で範囲、Ctrl + Shift で範囲を足す。選んだ行を押してそのままドラッグすれば選んだ全部を運ぶ）・
     // ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
     if response.clicked() {
-        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
-        let modifiers = click_modifiers(ui);
-        if modifiers.command || modifiers.shift {
-            let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
-            if modifiers.shift {
-                app.select_layer_range(id, modifiers.command, &ids);
-            } else {
-                app.toggle_layer_selected(id);
-            }
-        } else {
-            app.select_single_layer(id);
-        }
-        if app.renaming != Some(id) {
-            app.renaming = None;
-        }
+        click_row(ui, app, id, rows);
     } else if response.drag_started() {
         if !in_selection {
             app.select_single_layer(id);
         }
-        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
-        if app.renaming != Some(id) {
-            app.renaming = None;
+        app.fx.selected = None; // レイヤーを選ぶと、選んでいた効果の欄はレイヤーの欄へ戻る
+        if app.ui.renaming != Some(id) {
+            app.ui.renaming = None;
         }
     }
     if (response.double_clicked() || response.triple_clicked())
@@ -999,23 +1110,14 @@ fn layer_row(
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| name_rect.contains(p))
     {
-        app.renaming = Some(id);
-        app.rename_started = false;
+        app.ui.renaming = Some(id);
+        app.ui.rename_started = false;
     }
     if response.secondary_clicked() {
-        select_for_menu(app, id, in_selection);
-        if let Some(at) = response.interact_pointer_pos() {
-            open_popup(
-                app,
-                ctx,
-                PopupKind::LayerContext(id),
-                context_anchor(at),
-                0.0,
-            );
-        }
+        open_layer_menu(app, ctx, id, in_selection, response.interact_pointer_pos());
     }
     if response.dragged() {
-        update_drag(ui, app, list, rows, id);
+        update_drag(ui, app, list, rows, layout, id);
     }
     if response.drag_stopped() {
         drop_drag(app, rows);
@@ -1073,7 +1175,38 @@ fn layer_row(
         w::icon(&painter, fold, "keyboard_arrow_down", t::TEXT_DIM, 14.0);
     }
     kind_thumb(ui, app, thumbs, ctx, list, thumb, id, !collapsed);
-    // マスク（押すとマスクに描く）
+    // レイヤーのサムネイル（押すとレイヤーの画素が対象。選んだレイヤーで画素が対象なら、マスクの有無によらずマスクと同じ青い枠）
+    let pixels_target = selected && !editing_mask;
+    if pixels_target {
+        w::outline(&painter, thumb.expand(2.0), t::ACCENT, 2.0, 2.0);
+    }
+    let thumbr = ui.interact(
+        thumb,
+        ui.make_persistent_id(("layer.thumb", id.0)),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let thumb_label = lang.pick("レイヤーの画素", "Layer pixels");
+    thumbr.widget_info(|| {
+        WidgetInfo::selected(WidgetType::Button, enabled, pixels_target, thumb_label)
+    });
+    if thumbr.clicked() {
+        click_thumb(ui, app, id, rows, false);
+    }
+    // レイヤーのサムネイルは行の上で click を取るので、右クリックも行と同じメニューにつなぐ
+    if thumbr.secondary_clicked() {
+        open_layer_menu(app, ctx, id, in_selection, thumbr.interact_pointer_pos());
+    }
+    if has_mask {
+        let _ = thumbr.on_hover_text(lang.pick(
+            "レイヤーの画素（押すと画素が対象）",
+            "Layer pixels (click to target the pixels)",
+        ));
+    }
+    // マスク（押すとマスクが対象。右クリックでマスクのメニュー）
     if has_mask {
         let maskr = ui.interact(
             mask_box,
@@ -1102,14 +1235,46 @@ fn layer_row(
         if editing_mask {
             w::outline(&painter, mask_box.expand(2.0), t::ACCENT, 2.0, 2.0);
         }
+        // マスクが対象でないあいだはマスクの効果の行が一覧に出ないので、効果の付いたマスクのサムネイルの角に小さな効果の印
+        // （数は画面に出さず、ツールチップに）
+        let hidden_effects = if editing_mask {
+            0
+        } else {
+            app.doc
+                .filters_of(id, FilterTarget::Mask)
+                .map_or(0, <[_]>::len)
+        };
+        if hidden_effects > 0 {
+            let at = mask_box.right_bottom() - vec2(2.0, 2.0);
+            painter.circle_filled(at, 6.0, t::PANEL_HEADER);
+            painter.circle_stroke(at, 6.0, egui::Stroke::new(1.0, t::BORDER));
+            w::icon(
+                &painter,
+                Rect::from_center_size(at, vec2(10.0, 10.0)),
+                "auto_awesome",
+                t::TEXT,
+                9.0,
+            );
+            // 押す操作とツールチップはマスクのサムネイルが受ける（印は読み上げの名前を持つだけ。ツールチップが 2 つ重ならない）
+            let count = mask_effects_tip(lang, hidden_effects);
+            let mark = ui.interact(
+                Rect::from_center_size(at, vec2(12.0, 12.0)),
+                ui.make_persistent_id(("layer.mask.fx", id.0)),
+                Sense::hover(),
+            );
+            mark.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, &count));
+        }
         let tip = lang.pick(
-            "レイヤーマスク（押すとマスクに描く）",
-            "Layer mask (click to paint on it)",
+            "レイヤーマスク（押すとマスクが対象）",
+            "Layer mask (click to target the mask)",
         );
+        let hover = match hidden_effects {
+            0 => tip.to_owned(),
+            n => format!("{tip}\n{}", mask_effects_tip(lang, n)),
+        };
         maskr.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, editing_mask, tip));
         if maskr.clicked() {
-            app.selected_layer = Some(id);
-            app.apply(Action::M2Ui(UiOp::EditMask(!editing_mask)));
+            click_thumb(ui, app, id, rows, true);
         }
         if maskr.secondary_clicked() {
             select_for_menu(app, id, in_selection);
@@ -1117,32 +1282,39 @@ fn layer_row(
                 open_popup(
                     app,
                     ctx,
-                    PopupKind::LayerContext(id),
+                    PopupKind::M2(Popup::MaskContext(id)),
                     context_anchor(at),
                     0.0,
                 );
             }
         }
-        let _ = maskr.on_hover_text(tip);
+        let _ = maskr.on_hover_text(hover);
     }
 
     // 名前（ダブルクリックで変える）
     let painter = ui.painter_at(list);
-    if app.renaming == Some(id) {
-        let first = !app.rename_started;
-        app.rename_started = true;
+    if app.ui.renaming == Some(id) {
+        let first = !app.ui.rename_started;
+        app.ui.rename_started = true;
         let out = w::text_field(ui, name_rect, ("layer.rename", id.0), &name, None, first);
         if let Some(next) = out.committed {
             let next = next.trim().to_owned();
             if !next.is_empty() {
+                // 記録中なら、名前の変更も記録する（レイヤーの欄は文書へ直に当てるので、ここで前後を渡す）
+                let pending = crate::automation::record::before_rename(app, id, &next);
                 if let Err(e) = app.doc.set_layer_name(id, &next) {
-                    app.message = app.lang.core_error(&e);
+                    app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Layer,
+                        app.lang.core_error(&e),
+                    );
                 }
+                crate::automation::record::after(app, pending);
                 app.modified = true;
             }
         }
         if !first && !out.focused {
-            app.renaming = None;
+            app.ui.renaming = None;
         }
     } else {
         let color = if !visible {
@@ -1162,7 +1334,7 @@ fn layer_row(
         );
     }
     // 右端の印: ロック（すべては塗った錠、ほかの自分のロックは線の錠、グループから効いているだけなら薄い線の錠。自分のロックは押すと外す）と、
-    // 描くチャンネルを使っていないラスターの層
+    // 描くチャンネルを使っていないラスターレイヤー
     if locked {
         lock_mark(ui, app, row, id, effective_locks, chosen);
     }
@@ -1182,7 +1354,7 @@ fn layer_row(
             "This layer does not use the paint channel",
         ));
     }
-    // 右端の印: パスで描かれた層（手では描けない。ラスタライズで普通の層になる）
+    // 右端の印: パスで描かれたレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
     if has_path {
         let at = row.right() - mark_inset(usize::from(locked) + usize::from(no_pixels));
         let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));
@@ -1195,6 +1367,21 @@ fn layer_row(
         .on_hover_text(lang.pick(
             "パスで描かれたレイヤー（手では描けません。ラスタライズで普通のレイヤーになります）",
             "Drawn by a path (it cannot be painted by hand; Rasterize makes it a normal layer)",
+        ));
+    }
+    // 右端の印: テキストレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
+    if has_text {
+        let at = row.right() - mark_inset(usize::from(locked) + usize::from(no_pixels));
+        let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));
+        w::icon(&painter, mark, "tools/text", t::TEXT_DIM, 13.0);
+        ui.interact(
+            mark,
+            ui.make_persistent_id(("layer.text", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(lang.pick(
+            "テキストレイヤー（文字を打ち直せます。手では描けません。ラスタライズで普通のレイヤーになります）",
+            "Text layer (the text stays editable; it cannot be painted by hand; Rasterize makes it a normal layer)",
         ));
     }
     // 右端の印: Live Link で入れた元の絵の読み方（理由はツールチップ）

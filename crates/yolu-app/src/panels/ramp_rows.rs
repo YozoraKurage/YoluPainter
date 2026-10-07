@@ -1,9 +1,9 @@
-//! ランプの欄（グラデーションマップの調整・フィルターと、塗りつぶしのグラデーションが共通で使う。CLIP STUDIO のグラデーションマップの窓の並びを手本に、
+//! ランプの欄（グラデーションマップの調整・フィルターと、塗りつぶしのグラデーションが共通で使う。CLIP STUDIO のグラデーションマップのウィンドウの並びを手本に、
 //! このアプリの欄の部品で組む）。上から順に:
 //!
 //! 1. 混色モード（通常・知覚的・リニア）と輝度の補正（知覚的のときだけ）。`features.mixing` のとき（グラデーションマップ）。
 //! 2. グラデーションセット: 組の切り替え、見本の一覧（押すと当てる。利用者の組は名前を変える・消す・今のランプを足す）。
-//! 3. 分岐点の編集（ダブルクリックで、その分岐点のそばに色の選びが出る）。
+//! 3. 分岐点の編集（ダブルクリックか色の見本の押しで、色のウィンドウ `color_window` がその分岐点を相手に開く）。
 //! 4. 選んでいる分岐点: 前後へ移る・消す、位置、色（メイン・サブ・指定。メイン・サブは描画色に付いていく。スポイト）または不透明度、区間の中点、
 //!    区間の混合率曲線（`features.mixing`）。
 //! 5. 値のカーブ（`features.value_curve`。塗りつぶしのグラデーション）。
@@ -16,7 +16,7 @@ use yolu_core::curve::Curve;
 use yolu_core::generator::{ColorStop, LuminanceCorrection, MixMode, Ramp};
 use yolu_core::Rgba8;
 
-use super::color_popup;
+use super::color_window::{self, Pick};
 use super::properties::{
     choice_buttons, group_label, percent_row, slider_row, toggle_row, ChoiceButton,
 };
@@ -39,7 +39,7 @@ pub struct Features {
 
 /// 欄を出すときの文脈。
 pub struct Params<'a> {
-    /// 選びを覚える置き場の名前（層・段・チャンネルごと）。
+    /// 選びを覚える置き場の名前（レイヤー・段・チャンネルごと）。
     pub key: (&'static str, u128),
     pub enabled: bool,
     pub lang: Lang,
@@ -51,8 +51,8 @@ pub struct Params<'a> {
     pub features: Features,
     pub sets: &'a mut RampSets,
     pub eyedrop: &'a mut EyedropState,
-    /// 状態の帯の知らせ（保存の失敗など）。
-    pub message: &'a mut String,
+    /// グラデーションセットの保存の失敗の文（呼んだ側が `AppState::fail` で知らせる。部品は `AppState` を借りない）。
+    pub failure: &'a mut Option<String>,
 }
 
 /// 決まった変更。
@@ -216,9 +216,28 @@ fn remembered<T: Clone + Send + Sync + 'static>(
     (id, value)
 }
 
-/// 色の選びの窓の名前（`color_popup` の ID の元。試験が窓の場所を引く）。画面の部品の並びによらず、`key` だけで決まる。
-pub fn popup_id(key: (&'static str, u128)) -> egui::Id {
-    egui::Id::new(("ramp_rows", "popup", key))
+/// 色の分岐点 `index` を色のウィンドウの相手にするときの名前（試験がウィンドウの相手を確かめる）。画面の部品の並びによらず、`key` と番号だけで決まる。
+pub fn stop_target(key: (&'static str, u128), index: usize) -> egui::Id {
+    egui::Id::new(("ramp_rows", "color-window", key)).with(index)
+}
+
+/// 色のウィンドウの相手が、このランプの色の分岐点（`count` 個）のどれかなら、その番号。
+fn targeted_stop(ctx: &egui::Context, key: (&'static str, u128), count: usize) -> Option<usize> {
+    let target = color_window::target(ctx)?;
+    (0..count).find(|i| stop_target(key, *i) == target)
+}
+
+/// 色の分岐点が減る変更（消す）で、色のウィンドウがこのランプの分岐点を相手にしていたら閉じる（番号が別の分岐点を指さないように）。
+fn close_if_removed(ctx: &egui::Context, key: (&'static str, u128), before: &Ramp, after: &Ramp) {
+    let count = before.colors().len();
+    if after.colors().len() < count && targeted_stop(ctx, key, count).is_some() {
+        color_window::close(ctx);
+    }
+}
+
+/// 色のウィンドウの見出しに出す名前。
+fn stop_name(lang: Lang) -> &'static str {
+    lang.pick("分岐点の色", "Stop Color")
 }
 
 /// 今選んでいる分岐点（試験が読む）。
@@ -497,7 +516,7 @@ fn sets_rows(
         (p.key, "ramp.add"),
         "add",
         lang.pick(
-            "今のグラデーションを自分の組に足す",
+            "今のグラデーションを自分の組に追加",
             "Add the current gradient to your set",
         ),
         false,
@@ -511,7 +530,7 @@ fn sets_rows(
                 p.sets.show_group(RampSets::user_group());
                 p.sets.selected = Some(index);
             }
-            Err(e) => *p.message = e.describe(lang),
+            Err(e) => *p.failure = Some(e.describe(lang)),
         }
     }
     let (renaming_id, renaming) = remembered(ui, p, "renaming", false);
@@ -545,7 +564,7 @@ fn sets_rows(
         if let Some(index) = user_selected {
             match p.sets.remove(index) {
                 Ok(()) => p.sets.selected = None,
-                Err(e) => *p.message = e.describe(lang),
+                Err(e) => *p.failure = Some(e.describe(lang)),
             }
             renaming = false;
         }
@@ -565,7 +584,7 @@ fn sets_rows(
             );
             if let Some(name) = out.committed {
                 if let Err(e) = p.sets.rename(index, &name) {
-                    *p.message = e.describe(lang);
+                    *p.failure = Some(e.describe(lang));
                 }
                 renaming = false;
             } else if started && !out.focused {
@@ -604,8 +623,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     let mut result: Option<Change> = None;
     let (selection_id, mut selection) = remembered(ui, p, "selection", Selection::default());
     let (link_id, mut links) = remembered::<Links>(ui, p, "link", Links::default());
-    let popup = popup_id(p.key);
-    // 欄が何フレームも描かれなかった（別の層・段を選んでいた）なら、付いていくのをやめる（見ているだけで文書が変わらないように）
+    // 欄が何フレームも描かれなかった（別のレイヤー・段を選んでいた）なら、付いていくのをやめる（見ているだけで文書が変わらないように）
     let (seen_id, seen) = remembered::<u64>(ui, p, "seen", 0);
     let frame = ctx.cumulative_frame_nr();
     if frame > seen + 3 {
@@ -628,8 +646,8 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     }
     // 3. 分岐点
     let r = rows.row(ramp::STOPS_HEIGHT, 4.0);
-    // 色の選びの窓を置く目安の列（欄の左の端と幅）
-    let column = Rect::from_min_size(r.min, vec2(r.width(), 0.0));
+    // 色のウィンドウを初めて置く目安の列（欄の見える範囲。ウィンドウは入ればその左）
+    let column = ui.clip_rect();
     let salt = stops_salt(p.key);
     if let Some(next) = ramp::stops_editor(
         ui,
@@ -639,11 +657,12 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         &mut selection,
         p.scalar,
         lang.pick(
-            "上: 不透明度の分岐点。下: 色の分岐点（ダブルクリックで色を選ぶ）。何も無い所を押すと足し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
+            "上: 不透明度の分岐点。下: 色の分岐点（ダブルクリックで色を選ぶ）。何も無い所を押すと追加し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
             "Top: opacity stops. Bottom: color stops (double-click to pick a color). Click to add, drag to move, right-click or drag outside to remove. Small diamonds move the midpoint. Escape cancels a drag",
         ),
         enabled,
     ) {
+        close_if_removed(&ctx, p.key, &ramp, &next);
         links.reshape(&ramp, &next);
         ramp = next;
         put(&mut result, &ramp, true);
@@ -651,16 +670,17 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     selection = ops::clamp_selection(&ramp, selection);
     if let Some(request) = ramp::take_color_request(ui, salt) {
         if !p.scalar && enabled {
-            let color = ramp.colors()[request.index.min(ramp.colors().len() - 1)].color;
-            color_popup::open(
+            let index = request.index.min(ramp.colors().len() - 1);
+            let color = ramp.colors()[index].color;
+            color_window::open(
                 &ctx,
-                popup,
+                stop_target(p.key, index),
+                stop_name(lang),
                 request.anchor,
                 column,
-                bytes(color),
-                request.index,
+                Pick::rgb(bytes(color)),
             );
-            links.unfollow(request.index);
+            links.unfollow(index);
         }
     }
     // 画面から取れた色（スポイト）を、選んでいる色の分岐点へ
@@ -731,6 +751,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     .clicked()
     {
         if let Some(next) = ops::remove(&ramp, selection.alpha, selection.index) {
+            close_if_removed(&ctx, p.key, &ramp, &next);
             links.reshape(&ramp, &next);
             ramp = next;
             put(&mut result, &ramp, true);
@@ -837,51 +858,25 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
                 }
             }
         } else {
-            color_rows(
-                ui,
-                rows,
-                p,
-                &mut ramp,
-                selection,
-                &mut links,
-                &mut result,
-                &ctx,
-                popup,
-            );
+            // 色のウィンドウがこのランプの別の分岐点を相手にしていたら、ウィンドウはそのままで、選んだ分岐点へ相手を替える
+            if enabled {
+                let count = ramp.colors().len();
+                if targeted_stop(&ctx, p.key, count).is_some_and(|i| i != selection.index) {
+                    color_window::open(
+                        &ctx,
+                        stop_target(p.key, selection.index),
+                        stop_name(lang),
+                        r,
+                        column,
+                        Pick::rgb(bytes(ramp.colors()[selection.index].color)),
+                    );
+                }
+            }
+            color_rows(ui, rows, p, &mut ramp, selection, &mut links, &mut result);
         }
         if selection.index + 1 < count {
             segment_rows(ui, rows, p, &mut ramp, selection.index, &mut result);
         }
-    }
-    // 色の選びの窓（開いていれば）
-    let current = ramp
-        .colors()
-        .get(selection.index)
-        .map_or([0; 3], |c| bytes(c.color));
-    match color_popup::show(
-        &ctx,
-        popup,
-        current,
-        if selection.alpha {
-            usize::MAX
-        } else {
-            selection.index
-        },
-        !selection.alpha && !p.scalar && enabled,
-        lang,
-    ) {
-        color_popup::Outcome::Changed(rgb) | color_popup::Outcome::Reverted(rgb) => {
-            if let Some(next) = replace_color(
-                &ramp,
-                selection.index,
-                Rgba8::new(rgb[0], rgb[1], rgb[2], 255),
-            ) {
-                ramp = next;
-                links.unfollow(selection.index);
-                put(&mut result, &ramp, false);
-            }
-        }
-        color_popup::Outcome::Idle | color_popup::Outcome::Closed => {}
     }
     // 5. 値のカーブ
     if p.features.value_curve {
@@ -904,12 +899,9 @@ fn color_rows(
     selection: Selection,
     links: &mut Links,
     result: &mut Option<Change>,
-    ctx: &egui::Context,
-    popup: egui::Id,
 ) {
     let lang = p.lang;
     let enabled = p.enabled;
-    let node = ramp.colors()[selection.index];
     let source = links.source(selection.index);
     let items = [
         ChoiceButton {
@@ -984,29 +976,32 @@ fn color_rows(
             row.bottom() - 1.0,
         ),
     );
-    let c = node.color;
-    let shown = [
-        f32::from(c.r) / 255.0,
-        f32::from(c.g) / 255.0,
-        f32::from(c.b) / 255.0,
-        1.0,
-    ];
-    if w::color_swatch(
+    // 見本（押すと色のウィンドウ。分岐点をダブルクリックしても開く）と、ウィンドウからの変更
+    let target = stop_target(p.key, selection.index);
+    let was_target = color_window::is_target(ui.ctx(), target);
+    let update = color_window::field(
         ui,
         swatch,
-        (p.key, "ramp.color"),
-        shown,
-        lang.pick(
-            "分岐点の色（押すと色の選びを開く）",
-            "Color of the stop (opens the color picker)",
-        ),
+        target,
+        stop_name(lang),
+        Pick::rgb(bytes(ramp.colors()[selection.index].color)),
+        lang.pick("分岐点の色", "Stop color"),
         enabled,
-    )
-    .clicked()
-    {
-        let column = Rect::from_min_size(row.min, vec2(row.width(), 0.0));
-        color_popup::open(ctx, popup, swatch, column, bytes(c), selection.index);
+    );
+    if !was_target && color_window::is_target(ui.ctx(), target) {
+        // 押して開いた: ウィンドウが決める色なので、メイン・サブに付いていくのをやめる
         links.unfollow(selection.index);
+    }
+    if let Some(u) = update {
+        let rgb = u.pick.rgb;
+        let next = Rgba8::new(rgb[0], rgb[1], rgb[2], 255);
+        if ramp.colors()[selection.index].color != next {
+            if let Some(changed) = replace_color(ramp, selection.index, next) {
+                *ramp = changed;
+                links.unfollow(selection.index);
+                put(result, ramp, !u.dragging);
+            }
+        }
     }
     if picker
         && w::icon_button(
@@ -1074,7 +1069,7 @@ fn segment_rows(
                 diagonal: true,
             },
             lang.pick(
-                "横: 2 つの分岐点の間の位置。縦: 左の分岐点の色（下）から右の分岐点の色（上）への混ざり具合。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す",
+                "横: 2 つの分岐点の間の位置。縦: 左の分岐点の色（下）から右の分岐点の色（上）への混ざり具合。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す",
                 "Across: position between the two stops. Up: from the left stop color (bottom) to the right stop color (top). Click to add a point, drag to move, right-click to remove",
             ),
             enabled,
@@ -1152,7 +1147,7 @@ fn value_curve_rows(
         (p.key, "ramp.vc.editor"),
         ramp,
         lang.pick(
-            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
             "Shape value in (across), gradient position out (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
         ),
         p.enabled,

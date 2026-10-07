@@ -1,17 +1,17 @@
-//! ペンの入力。Windows では Windows Ink（WM_POINTER）を窓のプロシージャで先に受け、筆圧・傾き・消しゴムの端・サイドボタンを
+//! ペンの入力。Windows では Windows Ink（WM_POINTER）をウィンドウのプロシージャで先に受け、筆圧・傾き・消しゴムの端・サイドボタンを
 //! 履歴の点ごとに読む（winit も WM_POINTER を受けて egui の Touch に変えるが、筆圧だけで、履歴の点にも最新の筆圧を付ける）。
 //! 読んだあとは winit にそのまま渡すので、ペンでボタンを押すなどの画面の操作はいつもどおり egui に届く。
 //! ほかの OS では何も入らず、キャンバスはマウスと egui の Touch の筆圧（winit が出せば）で描く。
 //!
-//! ペンの押し（触れてから離すまで）の行き先は、触れた最初の点で決めて離すまで変えない（`PenPress`）: 描く道具の押し・ビューを動かす操作
+//! ペンの押し（触れてから離すまで）の行き先は、触れた最初の点で決めて離すまで変えない（`PenPress`）: 描くツールの押し・ビューを動かす操作
 //! （回す・パン・拡縮。サイドボタン・Alt・Space・Ctrl+Space・R）・何もしない（押した所がビューの外や別の部品）。描くのは、修飾もサイドボタンも
 //! 無いペン先の接触だけ。winit はペンを egui のポインタ（左ボタン）にも変えて同じ押しを二重に届けるので、ペンの点が持つ押しの間は、
 //! egui のポインタの押しをビューが使わない。サイドボタンを押した接触は、egui の部品にも右ボタンとして届ける（`ButtonMap`）。
 
 pub mod adjust;
-pub mod window;
 #[cfg(windows)]
 mod win_ink;
+pub mod window;
 
 use std::sync::{Arc, Mutex};
 
@@ -20,11 +20,11 @@ use crate::engine::Tilt;
 /// ペンの押しの行き先。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PressKind {
-    /// 道具の押し（ブラシ・消しゴム・範囲の道具・選択の道具）。始められなかった押し（読むだけ・Alt の予約など）も、離すまでここに留まる。
+    /// ツールの押し（ブラシ・消しゴム・範囲のツール・選択のツール）。始められなかった押し（読むだけ・Alt の予約など）も、離すまでここに留まる。
     Tool,
     /// ビューを動かす操作（2D は回す・パン・拡縮、3D は回す・パン・拡縮・クローンの元）。
     View,
-    /// 何もしない（押した所がビューの外・別の部品の上・ポップアップの下、サイドボタンの 2D、修飾を押した描く道具）。
+    /// 何もしない（押した所がビューの外・別の部品の上・ポップアップの下、サイドボタンの 2D、修飾を押した描くツール）。
     Ignored,
 }
 
@@ -37,7 +37,7 @@ pub struct PenPress {
     pub last: egui::Pos2,
 }
 
-/// ペンの 1 点（位置は窓のクライアント領域の物理の画素、左上が原点）。
+/// ペンの 1 点（位置はウィンドウのクライアント領域の物理の画素、左上が原点）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PenSample {
     pub pos: [f32; 2],
@@ -68,7 +68,7 @@ impl PenSample {
     }
 }
 
-/// ペンの点の受け口（窓のプロシージャが詰め、画面のフレームが取り出す）。
+/// ペンの点の受け口（ウィンドウのプロシージャが詰め、画面のフレームが取り出す）。
 #[derive(Clone, Default)]
 pub struct PenInput {
     queue: Arc<Mutex<Vec<PenSample>>>,
@@ -76,12 +76,12 @@ pub struct PenInput {
 }
 
 impl PenInput {
-    /// 窓に繋がない受け口（試験と、Windows 以外）。
+    /// ウィンドウに繋がない受け口（試験と、Windows 以外）。
     pub fn detached() -> PenInput {
         PenInput::default()
     }
 
-    /// eframe の窓に繋ぐ（Windows だけ。ほかの OS と窓の無い試験では何もしない）。
+    /// eframe のウィンドウに繋ぐ（Windows だけ。ほかの OS とウィンドウの無い試験では何もしない）。
     pub fn attach(cc: &eframe::CreationContext<'_>) -> PenInput {
         let input = PenInput::detached();
         #[cfg(windows)]
@@ -99,7 +99,15 @@ impl PenInput {
         input
     }
 
-    /// 窓に繋がっている（Windows Ink の点が来る）か。
+    /// ウィンドウのハンドル（HWND の値）に繋ぐ（Windows の別ウィンドウ。eframe は子ウィンドウのハンドルを渡さないので、`detach` が見つけたウィンドウ）。
+    #[cfg(windows)]
+    pub fn attach_hwnd(hwnd: isize, ctx: &egui::Context) -> PenInput {
+        let input = PenInput::detached();
+        let hooked = win_ink::hook(hwnd, input.queue.clone(), ctx.clone());
+        PenInput { hooked, ..input }
+    }
+
+    /// ウィンドウに繋がっている（Windows Ink の点が来る）か。
     pub fn is_hooked(&self) -> bool {
         self.hooked
     }
@@ -114,7 +122,7 @@ impl PenInput {
         self.queue.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// 点を足す（試験が Windows の窓の代わりに使う）。
+    /// 点を足す（試験が Windows のウィンドウの代わりに使う）。
     pub fn push(&self, sample: PenSample) {
         self.queue
             .lock()
@@ -136,9 +144,7 @@ impl ButtonMap {
     pub fn remap(&mut self, samples: &[PenSample], events: &mut [egui::Event]) {
         for event in events {
             let egui::Event::PointerButton {
-                button,
-                pressed,
-                ..
+                button, pressed, ..
             } = event
             else {
                 continue;

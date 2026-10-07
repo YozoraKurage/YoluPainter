@@ -47,7 +47,12 @@ impl Default for PressureAdjust {
 impl PressureAdjust {
     /// 下限・上限（0〜1、上限 − 下限が [`MIN_SPAN`] 以上）と曲線の点（空か (0,0)(1,1) は直線）から作る。範囲外は断る。
     pub fn new(low: f32, high: f32, curve: Vec<CurvePoint>) -> Result<PressureAdjust, CoreError> {
-        if !low.is_finite() || !high.is_finite() || low < 0.0 || high > 1.0 || high - low < MIN_SPAN - 1e-6 {
+        if !low.is_finite()
+            || !high.is_finite()
+            || low < 0.0
+            || high > 1.0
+            || high - low < MIN_SPAN - 1e-6
+        {
             return Err(CoreError::InvalidArgument("筆圧の下限・上限"));
         }
         Ok(PressureAdjust {
@@ -112,11 +117,6 @@ impl PressureAdjust {
             high: self.high,
             curve: PressureResponse::from_curve(0.0, curve)?.rounded_to_f32(),
         })
-    }
-
-    /// 曲線だけの値（t は 0〜1。下限・上限を通したあとの横軸）。窓が曲線を描くのに使う。
-    pub fn curve_at(&self, t: f32) -> f32 {
-        self.curve.apply(t.clamp(0.0, 1.0) as f64).clamp(0.0, 1.0) as f32
     }
 
     /// ペンの筆圧 p（0〜1）をブラシへ渡す筆圧にする。既定なら p そのもの。
@@ -272,15 +272,26 @@ mod tests {
         // 余裕のある所（相手を動かせる場合）でも相手は動かさない: 下限 0.2・上限 0.3 で、下限を 0.25 へ → 下限は 0.2 で止まり、上限は 0.3 のまま
         let narrow = PressureAdjust::new(0.2, 0.3, vec![]).unwrap();
         let d = narrow.with_range(0.25, 0.3, true);
-        assert!((d.low() - 0.2).abs() < 1e-6 && d.high() == 0.3, "{} {}", d.low(), d.high());
+        assert!(
+            (d.low() - 0.2).abs() < 1e-6 && d.high() == 0.3,
+            "{} {}",
+            d.low(),
+            d.high()
+        );
         // 上限を 0.25 へ → 上限は 0.3 で止まり、下限は 0.2 のまま
         let e = narrow.with_range(0.2, 0.25, false);
-        assert!((e.high() - 0.3).abs() < 1e-6 && e.low() == 0.2, "{} {}", e.low(), e.high());
+        assert!(
+            (e.high() - 0.3).abs() < 1e-6 && e.low() == 0.2,
+            "{} {}",
+            e.low(),
+            e.high()
+        );
         // 下限を相手の向こうまで動かしても、相手の手前で止まる
         let f = narrow.with_range(0.9, 0.3, true);
         assert!((f.low() - 0.2).abs() < 1e-6 && f.high() == 0.3);
         // 曲線は変えない
-        let curved = PressureAdjust::new(0.0, 1.0, vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)]).unwrap();
+        let curved =
+            PressureAdjust::new(0.0, 1.0, vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)]).unwrap();
         assert_eq!(curved.with_range(0.1, 0.9, true).curve(), curved.curve());
     }
 
@@ -315,7 +326,11 @@ mod tests {
         let mut sorted = samples.clone();
         sorted.sort_by(f32::total_cmp);
         let median = sorted[sorted.len() / 2];
-        assert!((fit.apply(median) - 0.5).abs() < 0.01, "{}", fit.apply(median));
+        assert!(
+            (fit.apply(median) - 0.5).abs() < 0.01,
+            "{}",
+            fit.apply(median)
+        );
         // 同じ入力は同じ結果（決定的）、順序によらない
         let mut reversed = samples.clone();
         reversed.reverse();
@@ -326,12 +341,18 @@ mod tests {
     fn the_fit_ignores_zeros_and_refuses_when_there_is_nothing_to_fit() {
         let mut with_zero = uniform(0.2, 0.6, 201);
         with_zero.extend(std::iter::repeat_n(0.0, 500));
-        assert_eq!(fit(&with_zero).unwrap(), fit(&uniform(0.2, 0.6, 201)).unwrap());
+        assert_eq!(
+            fit(&with_zero).unwrap(),
+            fit(&uniform(0.2, 0.6, 201)).unwrap()
+        );
         assert_eq!(fit(&[]).unwrap_err(), FitError::TooFew);
         assert_eq!(fit(&uniform(0.2, 0.6, 23)).unwrap_err(), FitError::TooFew);
         assert!(fit(&uniform(0.2, 0.6, 24)).is_ok());
         assert_eq!(fit(&vec![0.5; 100]).unwrap_err(), FitError::TooNarrow);
-        assert_eq!(fit(&uniform(0.5, 0.57, 100)).unwrap_err(), FitError::TooNarrow);
+        assert_eq!(
+            fit(&uniform(0.5, 0.57, 100)).unwrap_err(),
+            FitError::TooNarrow
+        );
         // 有限でない値は数えない
         let mut noisy = uniform(0.2, 0.6, 201);
         noisy.extend([f32::NAN, f32::INFINITY]);
@@ -349,7 +370,12 @@ mod tests {
     fn a_narrow_fit_clamped_on_one_side_widens_to_the_minimum_span_instead_of_panicking() {
         // 強く押して飽和するペン: p10 = 0.915・p90 = 1.0（幅 0.085）。上限が 1 に収まり、そのままだと幅 0.0956 になる
         let fit = fit(&two_levels(0.915, 1.0)).unwrap();
-        assert!(fit.high() == 1.0 && fit.high() - fit.low() >= MIN_SPAN - 1e-6, "{} {}", fit.low(), fit.high());
+        assert!(
+            fit.high() == 1.0 && fit.high() - fit.low() >= MIN_SPAN - 1e-6,
+            "{} {}",
+            fit.low(),
+            fit.high()
+        );
         assert!((fit.low() - 0.9).abs() < 1e-5, "{}", fit.low());
         assert_eq!(fit.apply(1.0), 1.0);
         // 中央値が上限に張り付くので曲線も付くが、どの筆圧も 0〜1 に写って増える
@@ -361,14 +387,29 @@ mod tests {
         }
         // 軽くしか押さないペン: p10 = 0.001・p90 = 0.086（幅 0.085）。下限が 0 に収まり、そのままだと幅 0.0966 になる
         let fit = fit_of(&two_levels(0.001, 0.086));
-        assert!(fit.low() == 0.0 && fit.high() - fit.low() >= MIN_SPAN - 1e-6, "{} {}", fit.low(), fit.high());
+        assert!(
+            fit.low() == 0.0 && fit.high() - fit.low() >= MIN_SPAN - 1e-6,
+            "{} {}",
+            fit.low(),
+            fit.high()
+        );
         assert!((fit.high() - 0.1).abs() < 1e-6, "{}", fit.high());
         assert_eq!(fit.apply(0.0), 0.0);
         assert_eq!(fit.apply(0.1), 1.0);
         // 境界の幅（0.08 ちょうど付近）でも落ちない
-        for (lo, hi) in [(0.915, 1.0), (0.911, 1.0), (0.001, 0.0861), (0.0005, 0.0856)] {
+        for (lo, hi) in [
+            (0.915, 1.0),
+            (0.911, 1.0),
+            (0.001, 0.0861),
+            (0.0005, 0.0856),
+        ] {
             let fit = fit_of(&two_levels(lo, hi));
-            assert!(fit.high() - fit.low() >= MIN_SPAN - 1e-6, "{lo} {hi}: {} {}", fit.low(), fit.high());
+            assert!(
+                fit.high() - fit.low() >= MIN_SPAN - 1e-6,
+                "{lo} {hi}: {} {}",
+                fit.low(),
+                fit.high()
+            );
         }
     }
 
@@ -385,14 +426,22 @@ mod tests {
         let mut decided = 0;
         for i in 0..=steps {
             for j in i..=steps {
-                let (p10, p90) = (i as f32 / steps as f32 * 0.9999 + 0.0001, j as f32 / steps as f32);
+                let (p10, p90) = (
+                    i as f32 / steps as f32 * 0.9999 + 0.0001,
+                    j as f32 / steps as f32,
+                );
                 if p90 < p10 {
                     continue;
                 }
                 match fit(&two_levels(p10, p90)) {
                     Ok(f) => {
                         decided += 1;
-                        assert!(f.low() >= 0.0 && f.high() <= 1.0 && f.high() - f.low() >= MIN_SPAN - 1e-6, "{p10} {p90}");
+                        assert!(
+                            f.low() >= 0.0
+                                && f.high() <= 1.0
+                                && f.high() - f.low() >= MIN_SPAN - 1e-6,
+                            "{p10} {p90}"
+                        );
                         let mut last = -1.0;
                         for k in 0..=20 {
                             let v = f.apply(k as f32 / 20.0);
@@ -408,7 +457,8 @@ mod tests {
     }
 
     #[test]
-    fn when_the_fit_adds_a_curve_the_median_is_one_half_and_the_outer_percentiles_are_not_pinned_to_a_tenth_and_nine_tenths() {
+    fn when_the_fit_adds_a_curve_the_median_is_one_half_and_the_outer_percentiles_are_not_pinned_to_a_tenth_and_nine_tenths(
+    ) {
         let percentile = |samples: &[f32], f: f32| {
             let mut sorted = samples.to_vec();
             sorted.sort_by(f32::total_cmp);
@@ -416,20 +466,38 @@ mod tests {
         };
         // 縁に収められない分布（0.3〜0.9 を二乗で寄せる。中央値は範囲の下の方）: 下限・上限だけなら p10・p90 は 0.1・0.9 に写る
         // が、中央値を 0.5 に合わせる曲線が付くと、p10・p90 はその曲がりの分だけ 0.1・0.9 から離れる
-        let samples: Vec<f32> = uniform(0.0, 1.0, 301).into_iter().map(|t| 0.3 + 0.6 * t * t).collect();
+        let samples: Vec<f32> = uniform(0.0, 1.0, 301)
+            .into_iter()
+            .map(|t| 0.3 + 0.6 * t * t)
+            .collect();
         let fit = fit_of(&samples);
         assert_eq!(fit.curve().len(), 3);
-        let (p10, p50, p90) = (percentile(&samples, 0.1), percentile(&samples, 0.5), percentile(&samples, 0.9));
+        let (p10, p50, p90) = (
+            percentile(&samples, 0.1),
+            percentile(&samples, 0.5),
+            percentile(&samples, 0.9),
+        );
         let straight = PressureAdjust::new(fit.low(), fit.high(), vec![]).unwrap();
-        assert!((straight.apply(p10) - 0.1).abs() < 1e-3, "{}", straight.apply(p10));
-        assert!((straight.apply(p90) - 0.9).abs() < 1e-3, "{}", straight.apply(p90));
+        assert!(
+            (straight.apply(p10) - 0.1).abs() < 1e-3,
+            "{}",
+            straight.apply(p10)
+        );
+        assert!(
+            (straight.apply(p90) - 0.9).abs() < 1e-3,
+            "{}",
+            straight.apply(p90)
+        );
         let (m10, m50, m90) = (fit.apply(p10), fit.apply(p50), fit.apply(p90));
         // 測った値: p10 → 約 0.168、p50 → 0.5、p90 → 約 0.962（曲線が持ち上げるので、どちらも 0.1・0.9 より内側でなく外側へ）
         assert!((m50 - 0.5).abs() < 0.01, "{m50}");
         assert!(m10 > 0.12 && m10 < 0.2, "{m10}");
         assert!(m90 > 0.93 && m90 < 1.0, "{m90}");
         // 軽い筆圧が多い分布（0.05 + 0.7 t²。下限が 0 に収まる）でも中央値は 0.5
-        let light: Vec<f32> = uniform(0.0, 1.0, 301).into_iter().map(|t| 0.05 + 0.7 * t * t).collect();
+        let light: Vec<f32> = uniform(0.0, 1.0, 301)
+            .into_iter()
+            .map(|t| 0.05 + 0.7 * t * t)
+            .collect();
         let fit = fit_of(&light);
         assert_eq!(fit.curve().len(), 3);
         let (m10, m50, m90) = (
@@ -442,7 +510,10 @@ mod tests {
         assert!(m10 > 0.12 && m10 < 0.2, "{m10}");
         assert!(m90 > 0.93 && m90 < 1.0, "{m90}");
         // 中央値が上に寄る分布では、逆に下へ曲がる
-        let heavy: Vec<f32> = uniform(0.0, 1.0, 301).into_iter().map(|t| 0.25 + 0.7 * t.sqrt()).collect();
+        let heavy: Vec<f32> = uniform(0.0, 1.0, 301)
+            .into_iter()
+            .map(|t| 0.25 + 0.7 * t.sqrt())
+            .collect();
         let fit = fit_of(&heavy);
         assert_eq!(fit.curve().len(), 3);
         assert!((fit.apply(percentile(&heavy, 0.5)) - 0.5).abs() < 0.01);
@@ -452,7 +523,12 @@ mod tests {
     fn a_pen_that_already_uses_the_whole_range_keeps_almost_the_same_pressure() {
         // 0〜1 を一様に使うペン: 下限・上限は縁のすぐ内側で、ほぼ直線のまま
         let fit = fit(&uniform(0.0, 1.0, 1001)).unwrap();
-        assert!(fit.low() < 0.01 && fit.high() > 0.99, "{} {}", fit.low(), fit.high());
+        assert!(
+            fit.low() < 0.01 && fit.high() > 0.99,
+            "{} {}",
+            fit.low(),
+            fit.high()
+        );
         assert!(fit.curve().is_empty());
         for p in uniform(0.0, 1.0, 21) {
             assert!((fit.apply(p) - p).abs() < 0.02, "{p}: {}", fit.apply(p));

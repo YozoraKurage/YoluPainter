@@ -165,7 +165,9 @@ mod tests {
             assert_eq!(mirror_name(b).as_deref(), Some(a), "{b}");
         }
         // 区切りの無い 1 文字・語の一部の L/R は対にしない
-        for name in ["L", "R", "Leg", "Rib", "Arm", "Root", "Spine_01", "Bone.001"] {
+        for name in [
+            "L", "R", "Leg", "Rib", "Arm", "Root", "Spine_01", "Bone.001",
+        ] {
             assert_eq!(mirror_name(name), None, "{name}");
         }
     }
@@ -185,18 +187,34 @@ mod tests {
             assert_eq!(mirror_name(b).as_deref(), Some(a), "{b}");
         }
         // 語の一部は対にしない
-        for name in ["Leftover", "Copyright", "Bright", "Lefty", "Rightmost", "Upleft"] {
+        for name in [
+            "Leftover",
+            "Copyright",
+            "Bright",
+            "Lefty",
+            "Rightmost",
+            "Upleft",
+        ] {
             assert_eq!(mirror_name(name), None, "{name}");
         }
     }
 
     #[test]
     fn leading_or_trailing_kanji_swap() {
-        for (a, b) in [("左上腕", "右上腕"), ("右足", "左足"), ("腕左", "腕右"), ("左", "右")] {
+        for (a, b) in [
+            ("左上腕", "右上腕"),
+            ("右足", "左足"),
+            ("腕左", "腕右"),
+            ("左", "右"),
+        ] {
             assert_eq!(mirror_name(a).as_deref(), Some(b), "{a}");
             assert_eq!(mirror_name(b).as_deref(), Some(a), "{b}");
         }
-        assert_eq!(mirror_name("左右"), Some("右右".to_owned()), "先頭の 1 文字だけ");
+        assert_eq!(
+            mirror_name("左右"),
+            Some("右右".to_owned()),
+            "先頭の 1 文字だけ"
+        );
         for name in ["上腕", "腰", "背骨", "手首の左側"] {
             assert_eq!(mirror_name(name), None, "{name}");
         }

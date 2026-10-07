@@ -8,20 +8,24 @@
 //! - 投影の画素の覚えは 1 回の操作のメモリ（文書のストロークの予算から巻き戻しの分を除いたもの）に収め、超えたら長く使っていない
 //!   区画から捨てる（要るときに同じものを作り直す）。元の側と対称の写しの投影の塗りは 1 つの予算を分け、どれの区画でも古いものから
 //!   捨てる（元の側が覚えを溜めても、後から作る写しが締め出されない）。1 つのダブに要る区画だけで入らないときは、そのダブ（写しなら
-//!   その写し）を飛ばして理由を `note` に残す（ストロークは取り消さない）。1 回の入力のダブが多すぎるときと、指先・クローン・伸ばす・
-//!   色の混ぜの読み元が 1 回の操作のメモリに入らないときは `Err`（呼ぶ側がストロークを取り消す）。
+//!   その写し）を飛ばして理由を `note` に残す（ストロークは取り消さない）。区間のダブがありえない数（[`SURFACE_DABS_PER_SEGMENT`]）の
+//!   ときと、指先・クローン・伸ばす・色の混ぜの読み元が 1 回の操作のメモリに入らないときは `Err`（呼ぶ側がストロークを取り消す）。
+//! - 速い入力: 区間のダブは、位置・面の当たり・画面の大きさを先に決めて待ち行列に並べ、1 回の入力（[`SurfaceStroke::add`]）と
+//!   1 フレーム（[`SurfaceStroke::paint_queued`]）ごとに [`SURFACE_DABS_PER_EVENT`] まで塗り、残りは持ち越す。離したとき
+//!   （[`SurfaceStroke::finish`]）は残りを全部塗る。並べる時に当たりと大きさを決めるので、次の区間の間隔も、塗る時も、いつ塗っても
+//!   すぐ塗ったときと同じ（塗った結果は入力のまとまり方・フレームの区切りによらない）。
 //! - 3D の対称（[`SurfaceSymmetrySetup`]）: 写しの点が、向きの合う同じテクスチャセットの面の近くにあるときだけ、写しの側を塗る。
 //!   写しの点は、中心の下の面の点か、中心がほかのセット・背景にあるダブでは元の側の画素の点を写して探す。
 //!   見えない面にも塗らない設定では、写したカメラ（鏡映・回転したカメラ）から同じ画面の円で投影の塗りをする（元の側の見え方を写した
 //!   ものになる）。見えない面にも塗る設定では、写しの点のまわりの球の中の面（カメラによらない足跡）を塗る。全ての写しを画素ごとに
 //!   大きい方の覆いで 1 つにして塗る。写しが作れなかったときは、その写しだけ飛ばして知らせる。ぼかしは写しも含めて 1 つのダブとして
 //!   読み元を凍結する。指先・クローンは写しごとの読み元と動きが要るので対称とは組めない（ストロークの始めに断る）。
-//! - 色の混ぜ（ストロークの `Brush` の `mix`）は、混ぜるならぼかしと同じく面のダブを `apply_dab` へ（下地を書く前に、UV の離れた島ごとの塊に分けて凍結する）。伸ばす
+//! - 色の混ぜ（ストロークの `Brush` の `mix`）は、混ぜるならぼかしと同じく面のダブを `apply_dab` へ（下地を書く前に、UV の離れたアイランドごとの塊に分けて凍結する）。伸ばす
 //!   （対称なし）は指先と同じ写像されたダブで、展開の図で UV の継ぎ目をまたいで前のダブの側を読む（最初のダブ・動いていないダブ・図に入らない
 //!   ダブも、ずれ 0 で塗る）。対称と組むときは、写しごとの読み元が要るので `apply_dab`（動きの向きなし）へ。
 //! - 効果のブラシ（[`SurfaceEffect`]）: ぼかしは画素ごとに面の上のまわりの 4 点を読み元にする。指先は直前のダブの面の点から今の点へ
 //!   引きずり、クローンは固定した元の面の点から、ストロークの最初の面の点に対応させて写す。どれも展開の図（[`super::SamplingChart`]）で
-//!   UV の島の継ぎ目をまたいで読み元の画素を決め、全ての読みを書く前に凍結する（`Stroke::apply_mapped_dab`）。画面の円に入った、図に
+//!   UV アイランドの継ぎ目をまたいで読み元の画素を決め、全ての読みを書く前に凍結する（`Stroke::apply_mapped_dab`）。画面の円に入った、図に
 //!   つながらない面の画素は、指先・クローンでは塗らず、ぼかしでは UV の画像の上で読む。ぼかしは、図を作れないとき（1 回の操作の
 //!   メモリ・参照を探す回数）も UV の画像の上の箱の平均で塗る（取り消さない）。
 //! - 画面の円の半径と中心の下の面の点は、カメラ（[`CameraView`]）の単精度の tan で出す（投影の塗りの中は四則と平方根だけ）。
@@ -39,7 +43,9 @@ use super::project::{
 };
 use super::sampling::SamplingError;
 use super::stencil::SurfaceStencil;
-use super::stroke::{ScreenStrokeSampler, TooManyDabs};
+use super::stroke::{
+    ScreenStrokeSampler, TooManyDabs, SURFACE_DABS_PER_EVENT, SURFACE_DABS_PER_SEGMENT,
+};
 use super::symmetry::{find_copy, union_dabs, CopyHit, MirrorOutcome, MirrorPlane, RadialSymmetry};
 use super::unity::{dot, fmax, magnitude, sqr_magnitude};
 use super::{SurfaceGeometry, SurfaceHit};
@@ -53,7 +59,7 @@ use crate::{
 pub enum SurfaceStrokeError {
     /// ダブを作れなかった（投影の塗りの準備が範囲外の値を断った）。
     Dab(DabRefusal),
-    /// 1 回の入力のダブが多すぎる。
+    /// 1 つの区間のダブがありえない数（[`SURFACE_DABS_PER_SEGMENT`] を超える）。
     TooManyDabs,
     /// 文書が断った（core はストロークを取り消してから返す）。
     Core(CoreError),
@@ -167,12 +173,30 @@ pub struct SurfaceStrokeStats {
     pub lost: usize,
 }
 
+/// 待ち行列に置けるダブの数（超えた分は、入力のときにその場で塗る）。1 つの区間の上限と同じ。
+pub const MAX_QUEUED_DABS: usize = SURFACE_DABS_PER_SEGMENT;
+
+/// 位置と当たりを決めて、まだ塗っていないダブ。
+#[derive(Clone, Copy, Debug)]
+struct QueuedDab {
+    at: Vec2,
+    pressure: f32,
+    /// 中心の下の、塗るセットの面の当たり。
+    hit: Option<SurfaceHit>,
+    /// このダブを置いた時の、モデルの単位 1 の画面の大きさ（まだ一度も面に当たっていなければ None）。
+    scale: Option<f32>,
+    /// 大きさ 0 のダブ（塗らない・数えない）。
+    skip: bool,
+}
+
 /// 進行中の 3D のストローク（文書のストロークの札と一緒に持つ）。
 pub struct SurfaceStroke {
     geometry: Arc<SurfaceGeometry>,
     view: CameraView,
     material: Option<i32>,
     sampler: ScreenStrokeSampler,
+    /// 位置と当たりを決めて、まだ塗っていないダブ（古い順）。
+    queue: std::collections::VecDeque<QueuedDab>,
     /// 見えない面にも塗る写し（カメラによらない足跡）の、ダブごとの上限。
     budget: SurfaceBrushBudget,
     projection: ProjectionSettings,
@@ -331,6 +355,7 @@ impl SurfaceStroke {
             view,
             material,
             sampler: ScreenStrokeSampler::new(at, pressure),
+            queue: std::collections::VecDeque::new(),
             budget: SurfaceBrushBudget::default(),
             projection: options.projection.sanitized(),
             projector: None,
@@ -414,7 +439,9 @@ impl SurfaceStroke {
         self.symmetry_note
     }
 
-    /// 新しい入力の点（画面の座標。区間を描けるようになった分だけダブを置く）。
+    /// 新しい入力の点（画面の座標）。描けるようになった区間のダブを待ち行列に並べ、古い順に [`SURFACE_DABS_PER_EVENT`] まで塗る
+    /// （残りは次の入力・[`SurfaceStroke::paint_queued`]・[`SurfaceStroke::finish`] で塗る）。待ちが [`MAX_QUEUED_DABS`] を超える分は、
+    /// その場で塗る（覚えるメモリを抑える）。
     pub fn add(
         &mut self,
         doc: &mut Document,
@@ -438,13 +465,36 @@ impl SurfaceStroke {
                 &mut points,
             )
             .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
-        for (p, pressure) in points {
-            self.paint_at(doc, stroke, p, pressure)?;
-        }
+        self.enqueue(points);
+        let over = self.queue.len().saturating_sub(MAX_QUEUED_DABS);
+        self.paint_queued(doc, stroke, SURFACE_DABS_PER_EVENT.max(over))?;
         Ok(())
     }
 
-    /// 離したとき: 待たせている最後の区間を描く（この後に文書のストロークを確定する）。
+    /// 待ち行列のダブを、古い順に max まで塗る（入力の無いフレームの分。塗った数を返す）。
+    pub fn paint_queued(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        max: usize,
+    ) -> Result<usize, SurfaceStrokeError> {
+        let mut painted = 0;
+        while painted < max {
+            let Some(dab) = self.queue.pop_front() else {
+                break;
+            };
+            self.paint_located(doc, stroke, dab)?;
+            painted += 1;
+        }
+        Ok(painted)
+    }
+
+    /// まだ塗っていないダブの数。
+    pub fn queued(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// 離したとき: 待たせている最後の区間を並べ、待ち行列を全部塗る（この後に文書のストロークを確定する）。
     pub fn finish(
         &mut self,
         doc: &mut Document,
@@ -464,30 +514,40 @@ impl SurfaceStroke {
                 &mut points,
             )
             .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
-        for (p, pressure) in points {
-            self.paint_at(doc, stroke, p, pressure)?;
-        }
+        self.enqueue(points);
+        self.paint_queued(doc, stroke, usize::MAX)?;
         Ok(())
     }
 
-    /// 1 つのダブ。
-    fn paint_at(
-        &mut self,
-        doc: &mut Document,
-        stroke: &mut Stroke,
-        at: Vec2,
-        pressure: f32,
-    ) -> Result<(), SurfaceStrokeError> {
-        // 筆圧を応えに通した大きさの係数（既定の応えは筆圧そのもの）
-        let size_pressure = match &self.size_response {
+    /// 区間のダブの位置を、当たりと画面の大きさを決めて待ち行列の後ろに並べる。
+    fn enqueue(&mut self, points: Vec<(Vec2, f32)>) {
+        self.queue.reserve(points.len());
+        for (p, pressure) in points {
+            let dab = self.locate(p, pressure);
+            self.queue.push_back(dab);
+        }
+    }
+
+    /// 筆圧を応えに通した大きさの係数（既定の応えは筆圧そのもの）。
+    fn size_pressure(&self, pressure: f32) -> f32 {
+        match &self.size_response {
             Some(r) => r.apply(pressure as f64) as f32,
             None => pressure,
-        };
-        if self.pressure_size && size_pressure <= 0.0 {
-            return Ok(());
         }
-        let inside =
-            at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height;
+    }
+
+    /// ダブの面の当たりを決め、画面の大きさ（直前に塗るセットの面に当たった所の奥行き）を進める。大きさ 0 のダブは当てない
+    /// （塗らず、大きさも進めない）。次の区間の間隔はこの大きさで決まるので、並べるときに決める。
+    fn locate(&mut self, at: Vec2, pressure: f32) -> QueuedDab {
+        if self.pressure_size && self.size_pressure(pressure) <= 0.0 {
+            return QueuedDab {
+                at,
+                pressure,
+                hit: None,
+                scale: None,
+                skip: true,
+            };
+        }
         let hit = pick(&self.geometry, &self.view, at)
             .filter(|h| self.material.is_none_or(|m| m == h.material));
         if let Some(h) = &hit {
@@ -496,13 +556,51 @@ impl SurfaceStroke {
                 self.screen_scale = Some(scale);
             }
         }
+        QueuedDab {
+            at,
+            pressure,
+            hit,
+            scale: self.screen_scale,
+            skip: false,
+        }
+    }
+
+    /// 1 つのダブ（すぐ塗る。押した点のダブ）。
+    fn paint_at(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        at: Vec2,
+        pressure: f32,
+    ) -> Result<(), SurfaceStrokeError> {
+        let dab = self.locate(at, pressure);
+        self.paint_located(doc, stroke, dab)
+    }
+
+    /// 当たりを決めたダブを塗る。
+    fn paint_located(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        dab: QueuedDab,
+    ) -> Result<(), SurfaceStrokeError> {
+        let QueuedDab {
+            at,
+            pressure,
+            hit,
+            scale,
+            skip,
+        } = dab;
+        if skip {
+            return Ok(());
+        }
+        let size_pressure = self.size_pressure(pressure);
+        let inside =
+            at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height;
         // 指先・クローン・色の混ぜの伸ばすは、面の上の中心から読み元を決めるので、中心が塗るセットの面に無いダブは飛ばす
         let needs_hit = matches!(self.effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
             || (self.smears && matches!(self.effect, SurfaceEffect::Paint));
-        let Some(scale) = self
-            .screen_scale
-            .filter(|_| inside && (hit.is_some() || !needs_hit))
-        else {
+        let Some(scale) = scale.filter(|_| inside && (hit.is_some() || !needs_hit)) else {
             self.stats.missed += 1;
             return Ok(());
         };
@@ -960,11 +1058,11 @@ impl SurfaceStroke {
         Ok(())
     }
 
-    /// ぼかしの 1 つのダブ。箱の窓（半径 r）が塗るセットの UV の中に収まる画素は、今までどおり UV の画像の上の箱の平均（`apply_dab`）。
-    /// 窓が UV の島の縁にかかる画素は、面の上でまわりの 4 点（展開の図で UV の継ぎ目をまたぐ）を読み元にする（`apply_mapped_dab`）。
+    /// ぼかしの 1 つのダブ。箱の範囲（半径 r）が塗るセットの UV の中に収まる画素は、今までどおり UV の画像の上の箱の平均（`apply_dab`）。
+    /// ウィンドウが UV アイランドの縁にかかる画素は、面の上でまわりの 4 点（展開の図で UV の継ぎ目をまたぐ）を読み元にする（`apply_mapped_dab`）。
     /// 4 点は画素の点から、箱の平均と同じ広がり（1 軸の標準偏差）の所の 4 方向で、向きはダブごとに回す（重なるダブで方向の偏りが
     /// 残らない）。図に入らない縁の画素（つながらない面・対称の写しの側）は、UV の画像の上の同じ広がりの 4 点を読む。2 つは同じ
-    /// ストロークの中で続けて塗るので 1 回の取り消しで戻る（縁の画素の読みは、島の中の画素を書いた後の値）。展開の図が 1 回の操作の
+    /// ストロークの中で続けて塗るので 1 回の取り消しで戻る（縁の画素の読みは、アイランドの中の画素を書いた後の値）。展開の図が 1 回の操作の
     /// メモリに入らない・参照を探す回数を超えたときなど、図で読めないときは、縁の画素も UV の画像の上の箱の平均で塗る（継ぎ目は
     /// またがないが、図のためにストロークを取り消さない）。
     #[allow(clippy::too_many_arguments)]
@@ -982,7 +1080,7 @@ impl SurfaceStroke {
         }
         let r = self.blur_radius as i64;
         let (width, height) = (self.width, self.height);
-        // 窓が島の縁にかかる画素（窓の中に、塗るセットの UV の外のテクセルがある）。ダブの箱の上の外のテクセルの累積和で数える
+        // ウィンドウがアイランドの縁にかかる画素（ウィンドウの中に、塗るセットの UV の外のテクセルがある）。ダブの箱の上の外のテクセルの累積和で数える
         let border: Vec<bool> = {
             let projector = self.projector.as_ref().expect("ダブがあれば作ってある");
             let x0 = pixels.iter().map(|p| p.x as i64).min().unwrap_or(0) - r - 1;
@@ -1009,7 +1107,7 @@ impl SurfaceStroke {
                 })
                 .collect()
         };
-        // UV の画像の上の箱の平均で塗る（島の中の画素と、図で読めなかった縁の画素）
+        // UV の画像の上の箱の平均で塗る（アイランドの中の画素と、図で読めなかった縁の画素）
         let center = DVec2::new(
             hit.uv.x as f64 * width as f64,
             hit.uv.y as f64 * height as f64,

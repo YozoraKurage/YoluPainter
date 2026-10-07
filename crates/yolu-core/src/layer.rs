@@ -1,11 +1,11 @@
-//! 層（C# の PaintLayer・RasterMask・ChannelBlend）。種類はラスター・塗りつぶし・調整・グループ。
+//! レイヤー（C# の PaintLayer・RasterMask・ChannelBlend）。種類はラスター・塗りつぶし・調整・グループ。
 //!
-//! - 文書の層は下から上の平らな並びで、グループの中身はグループのすぐ下に続けて並ぶ（PSD のフォルダと同じ）。親は `parent`。
-//! - チャンネルごとに: ラスターは面、塗りつぶしは 1 つの値、どの種類も有効の印と、層の値を置き換える合成モード・不透明度
+//! - 文書のレイヤーは下から上の平らな並びで、グループの中身はグループのすぐ下に続けて並ぶ（PSD のフォルダと同じ）。親は `parent`。
+//! - チャンネルごとに: ラスターは面、塗りつぶしは 1 つの値、どの種類も有効の印と、レイヤーの値を置き換える合成モード・不透明度
 //!   （[`ChannelBlend`]）。表示・マスク・クリッピングは全チャンネルで共有する。
 //! - マスクは隠す量を面のアルファに持つ（RGB は 0）。無いタイルは何も隠さない。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::adjust::AdjustmentSettings;
@@ -32,8 +32,8 @@ impl fmt::Display for LayerId {
     }
 }
 
-/// 層のチャンネルごとの合成モード・不透明度（Substance Painter のチャンネルごとの合成）。None の部分は層の値に従い、
-/// 値のある部分はそのチャンネルでだけ層の値を置き換える（掛けない）。
+/// レイヤーのチャンネルごとの合成モード・不透明度（Substance Painter のチャンネルごとの合成）。None の部分はレイヤーの値に従い、
+/// 値のある部分はそのチャンネルでだけレイヤーの値を置き換える（掛けない）。
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct ChannelBlend {
     pub mode: Option<BlendMode>,
@@ -44,20 +44,20 @@ impl ChannelBlend {
     pub const fn new(mode: Option<BlendMode>, opacity: Option<f64>) -> Self {
         ChannelBlend { mode, opacity }
     }
-    /// どちらも層に従う。
+    /// どちらもレイヤーに従う。
     pub fn is_empty(&self) -> bool {
         self.mode.is_none() && self.opacity.is_none()
     }
 }
 
-/// 層のラスターマスク（全チャンネルで共有）。隠す量を面のアルファに持つ。塗ると隠し、消すと見せる。
+/// レイヤーのラスターマスク（全チャンネルで共有）。隠す量を面のアルファに持つ。塗ると隠し、消すと見せる。
 #[derive(Clone, Debug)]
 pub struct RasterMask {
     pub(crate) surface: Surface,
     pub(crate) enabled: bool,
     pub(crate) inverted: bool,
     pub(crate) density: f64,
-    /// マスクのフィルターのスタック（隠す量にかける。下から上の順に当たる。全チャンネルで共有し、層の画素のスタックとは別）。
+    /// マスクのフィルターのスタック（隠す量にかける。下から上の順に当たる。全チャンネルで共有し、レイヤーの画素のスタックとは別）。
     pub(crate) filters: Vec<FilterEffect>,
     /// このマスクにある Anchor（マスクを外すと一緒に無くなる）。
     pub(crate) anchor: Option<Anchor>,
@@ -78,7 +78,7 @@ impl RasterMask {
     pub fn filters(&self) -> &[FilterEffect] {
         &self.filters
     }
-    /// マスクの Anchor（マスクが層を見せる量。上の層の Generator が読む）。
+    /// マスクの Anchor（マスクがレイヤーを見せる量。上のレイヤーの Generator が読む）。
     pub fn anchor(&self) -> Option<&Anchor> {
         self.anchor.as_ref()
     }
@@ -100,7 +100,7 @@ impl RasterMask {
     pub fn density(&self) -> f64 {
         self.density
     }
-    /// 隠す量（0〜255）に対して、層のアルファに掛ける値（C# の Factor と同じ式）。
+    /// 隠す量（0〜255）に対して、レイヤーのアルファに掛ける値（C# の Factor と同じ式）。
     #[inline]
     pub fn factor(&self, hide: u8) -> f64 {
         if !self.enabled {
@@ -134,7 +134,7 @@ impl RasterMask {
     }
 }
 
-/// 層。種類ごとに中身が違う（ラスターは面、塗りつぶしは値、調整は設定、グループは何も持たない）。
+/// レイヤー。種類ごとに中身が違う（ラスターは面、塗りつぶしは値、調整は設定、グループは何も持たない）。
 #[derive(Clone, Debug)]
 pub struct Layer {
     pub(crate) locks: crate::LayerLocks,
@@ -158,18 +158,24 @@ pub struct Layer {
     pub(crate) mask: Option<RasterMask>,
     /// チャンネルごとの合成（空の設定は持たない）。
     pub(crate) blends: BTreeMap<Channel, ChannelBlend>,
-    /// 層の画素のフィルターのスタック（下から上。各段が適用するチャンネルを持つ。ラスターと塗りつぶしだけ）。
+    /// レイヤーの画素のフィルターのスタック（下から上。各段が適用するチャンネルを持つ。ラスターと塗りつぶしだけ）。
     pub(crate) filters: Vec<FilterEffect>,
-    /// この層にある Anchor（その層までのスタックの結果）。
+    /// このレイヤーにある Anchor（そのレイヤーまでのスタックの結果）。
     pub(crate) anchor: Option<Anchor>,
     /// 塗りつぶしのチャンネルごとの画像（プロジェクトの画像リソースの ID。そのチャンネルの値は画像が使えない所に出る）。
     pub(crate) fill_images: BTreeMap<Channel, ImageId>,
-    /// 塗りつぶしの画像の投影（層で 1 つ。画像が無くてもデカールは投影を使う）。
+    /// 塗りつぶしの画像を異方性のフィルターなしで読むチャンネル（既定は異方性で読む。画像のあるチャンネルだけ）。
+    pub(crate) fill_isotropic: BTreeSet<Channel>,
+    /// 塗りつぶしの画像の投影（レイヤーで 1 つ。画像が無くてもデカールは投影を使う）。
     pub(crate) projection: Projection,
     /// 塗りつぶしのチャンネルごとのグラデーション（ランプ付きの形のグラデーションの Generator。置き換え）。
     pub(crate) fill_gradients: BTreeMap<Channel, generator::Settings>,
-    /// 層の画素を描くパス（ラスターだけ。対象のチャンネルの画素はパスから描いた結果）。
-    pub(crate) path: Option<LayerPath>,
+    /// 塗りつぶしのチャンネルごとの点のグラデーション（画像・形のグラデーションとは同じチャンネルに置かない）。
+    pub(crate) fill_points: BTreeMap<Channel, crate::fill_points::PointGradient>,
+    /// レイヤーの画素を描くパスの一覧（ラスターだけ。対象のチャンネルの画素は、一覧の見せるパスを順に描いた結果）。
+    pub(crate) paths: Vec<crate::paths::LayerPathEntry>,
+    /// レイヤーの Color の画素を描くテキストの値（ラスターだけ。パスとは両方持たない。画素は値とフォントから描いた結果）。
+    pub(crate) text: Option<crate::text::TextSettings>,
 }
 
 impl Layer {
@@ -197,9 +203,12 @@ impl Layer {
             filters: Vec::new(),
             anchor: None,
             fill_images: BTreeMap::new(),
+            fill_isotropic: BTreeSet::new(),
             projection: Projection::default(),
             fill_gradients: BTreeMap::new(),
-            path: None,
+            fill_points: BTreeMap::new(),
+            paths: Vec::new(),
+            text: None,
         }
     }
 
@@ -291,7 +300,7 @@ impl Layer {
     pub fn fill_values(&self) -> impl Iterator<Item = (Channel, Rgba8)> + '_ {
         self.fill.iter().map(|(c, v)| (*c, *v))
     }
-    /// 調整の設定（調整の層だけ）。
+    /// 調整の設定（調整レイヤーだけ）。
     pub fn adjustment(&self) -> Option<&AdjustmentSettings> {
         self.adjustment.as_ref()
     }
@@ -299,7 +308,7 @@ impl Layer {
     pub fn mask(&self) -> Option<&RasterMask> {
         self.mask.as_ref()
     }
-    /// そのチャンネルの層自身の合成の設定（層に従うなら空）。
+    /// そのチャンネルのレイヤー自身の合成の設定（レイヤーに従うなら空）。
     pub fn channel_blend(&self, channel: Channel) -> ChannelBlend {
         self.blends.get(&channel).copied().unwrap_or_default()
     }
@@ -307,7 +316,7 @@ impl Layer {
     pub fn channel_blends(&self) -> impl Iterator<Item = (Channel, ChannelBlend)> + '_ {
         self.blends.iter().map(|(c, b)| (*c, *b))
     }
-    /// そのチャンネルで合成に使うモード（チャンネルの設定があればそれ、なければ層の）。
+    /// そのチャンネルで合成に使うモード（チャンネルの設定があればそれ、なければレイヤーの）。
     pub fn blend_mode_in(&self, channel: Channel) -> BlendMode {
         self.blends
             .get(&channel)
@@ -329,7 +338,7 @@ impl Layer {
         }
     }
 
-    /// 層の画素のフィルターのスタック（下から上。最初が先に当たる）。
+    /// レイヤーの画素のフィルターのスタック（下から上。最初が先に当たる）。
     pub fn filters(&self) -> &[FilterEffect] {
         &self.filters
     }
@@ -345,11 +354,23 @@ impl Layer {
             .iter()
             .any(|e| e.is_active() && e.applies_to(channel))
     }
-    /// 層の画素を描いているパス（無ければ None）。
+    /// レイヤーの画素を描いているパスの一覧の、最初のパス（無ければ None。パスレイヤーかを見るだけなら [`Layer::has_paths`]）。
     pub fn path(&self) -> Option<&LayerPath> {
-        self.path.as_ref()
+        self.paths.first().map(|e| &e.path)
     }
-    /// この層の Anchor（その層までのスタックの結果）。
+    /// レイヤーの画素を描いているパスの一覧（下から順に描く）。
+    pub fn paths(&self) -> &[crate::paths::LayerPathEntry] {
+        &self.paths
+    }
+    /// パスで描かれたレイヤーか（一覧が空でない）。
+    pub fn has_paths(&self) -> bool {
+        !self.paths.is_empty()
+    }
+    /// テキストレイヤーの値（テキストレイヤーでなければ None）。
+    pub fn text(&self) -> Option<&crate::text::TextSettings> {
+        self.text.as_ref()
+    }
+    /// このレイヤーの Anchor（そのレイヤーまでのスタックの結果）。
     pub fn anchor(&self) -> Option<&Anchor> {
         self.anchor.as_ref()
     }
@@ -357,9 +378,28 @@ impl Layer {
     pub fn fill_image(&self, channel: Channel) -> Option<ImageId> {
         self.fill_images.get(&channel).copied()
     }
+    /// 塗りつぶしのチャンネルの画像を異方性のフィルターで読むか（既定は読む）。
+    pub fn fill_anisotropic(&self, channel: Channel) -> bool {
+        !self.fill_isotropic.contains(&channel)
+    }
     /// 画像を持つチャンネルと画像（番号の順）。
     pub fn fill_images(&self) -> impl Iterator<Item = (Channel, ImageId)> + '_ {
         self.fill_images.iter().map(|(c, i)| (*c, *i))
+    }
+    /// 内容とマスクのフィルターのスタックの、画像の段（Generator の種類 Image）が読む画像（選んでいない段は除く。無効な段も含む）。
+    pub fn generator_images(&self) -> impl Iterator<Item = ImageId> + '_ {
+        self.filters
+            .iter()
+            .chain(self.mask.iter().flat_map(|m| m.filters.iter()))
+            .filter_map(|e| e.settings.generator_settings())
+            .filter(|g| g.kind == generator::Kind::Image && g.image.image != 0)
+            .map(|g| ImageId(g.image.image))
+    }
+    /// このレイヤーが読むプロジェクトの画像（塗りつぶしの画像と画像の段。重なりうる）。
+    pub fn image_ids(&self) -> impl Iterator<Item = ImageId> + '_ {
+        self.fill_images()
+            .map(|(_, id)| id)
+            .chain(self.generator_images())
     }
     /// 塗りつぶしの画像の投影。
     pub fn projection(&self) -> &Projection {
@@ -373,6 +413,16 @@ impl Layer {
     pub fn fill_gradients(&self) -> impl Iterator<Item = (Channel, &generator::Settings)> + '_ {
         self.fill_gradients.iter().map(|(c, g)| (*c, g))
     }
+    /// 塗りつぶしのチャンネルの点のグラデーション。
+    pub fn fill_points(&self, channel: Channel) -> Option<&crate::fill_points::PointGradient> {
+        self.fill_points.get(&channel)
+    }
+    /// 点のグラデーションを持つチャンネルと設定（番号の順）。
+    pub fn fill_point_gradients(
+        &self,
+    ) -> impl Iterator<Item = (Channel, &crate::fill_points::PointGradient)> + '_ {
+        self.fill_points.iter().map(|(c, g)| (*c, g))
+    }
     /// 投影がデカールの塗りつぶしか。
     pub fn is_decal(&self) -> bool {
         self.kind == LayerKind::Fill
@@ -384,16 +434,30 @@ impl Layer {
             && (self.fill_images.contains_key(&channel)
                 || self.is_decal() && self.fill.contains_key(&channel))
     }
-    /// 層のそのチャンネルの画素が、保存した値でなく評価で決まるか（有効なフィルター・グラデーション・投影。C# の `HasEvaluatedOutput`）。
+    /// レイヤーのそのチャンネルの画素が、保存した値でなく評価で決まるか（有効なフィルター・グラデーション・投影。C# の `HasEvaluatedOutput`）。
     pub fn has_evaluated_output(&self, channel: Channel) -> bool {
         self.has_active_filters(channel)
             || self.kind == LayerKind::Fill && self.fill_gradients.contains_key(&channel)
+            || self.kind == LayerKind::Fill && self.fill_points.contains_key(&channel)
             || self.is_projected_fill(channel)
+            || self.fill_paths_draw(channel)
     }
-    /// 塗りつぶしが焼いたメッシュマップ・画像を読むか（C# の `ReadsMeshMapsForFill` と、画像の層）。
+    /// 塗りつぶしレイヤーのパスがこのチャンネルを描くか（塗りつぶし → 効果のスタック → パスの順に評価する）。
+    pub(crate) fn fill_paths_draw(&self, channel: Channel) -> bool {
+        self.kind == LayerKind::Fill
+            && !self.paths.is_empty()
+            && crate::paths::list_channels(&self.paths).contains(&channel)
+    }
+    /// 塗りつぶしが焼いたメッシュマップ・画像を読むか（C# の `ReadsMeshMapsForFill` と、画像のレイヤー）。
     pub(crate) fn reads_inputs_for_fill(&self) -> bool {
         self.kind == LayerKind::Fill
-            && (!self.fill_gradients.is_empty() || !self.fill_images.is_empty() || self.is_decal())
+            && (!self.fill_gradients.is_empty()
+                || !self.fill_images.is_empty()
+                || self.is_decal()
+                || self
+                    .fill_points
+                    .values()
+                    .any(|g| g.space == crate::fill_points::PointSpace::Model))
     }
 
     /// そのチャンネルについて何かを持つか: 有効の印・面・塗りつぶしの値・チャンネルごとの合成のどれか。無効にしても面・値・合成は
@@ -409,7 +473,7 @@ impl Layer {
     /// グループは中身が決める（ここでは false）。
     pub(crate) fn has_content(&self, channel: Channel, applies: bool) -> bool {
         match self.kind {
-            LayerKind::Fill => self.fill.contains_key(&channel),
+            LayerKind::Fill => self.fill.contains_key(&channel) || self.fill_paths_draw(channel),
             LayerKind::Adjustment => {
                 self.adjustment.is_some() && applies && self.is_channel_enabled(channel)
             }
@@ -418,7 +482,7 @@ impl Layer {
         }
     }
 
-    /// 層そのものの画素（マスク・不透明度・合成の前）。中身の無い所・調整・グループは透明。
+    /// レイヤーそのものの画素（マスク・不透明度・合成の前）。中身の無い所・調整・グループは透明。
     pub fn pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         match self.kind {
             LayerKind::Raster => match self.surface(channel) {
@@ -428,9 +492,6 @@ impl Layer {
             LayerKind::Fill => Ok(self.fill_value(channel).unwrap_or(Rgba8::TRANSPARENT)),
             _ => Ok(Rgba8::TRANSPARENT),
         }
-    }
-    pub(crate) fn pixel_or_transparent(&self, channel: Channel, x: u32, y: u32) -> Rgba8 {
-        self.pixel(channel, x, y).unwrap_or(Rgba8::TRANSPARENT)
     }
     /// 全チャンネルの面とマスクの画素のバイト数。
     pub fn allocated_bytes(&self) -> u64 {

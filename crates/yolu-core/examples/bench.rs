@@ -1,7 +1,7 @@
 //! 速さの計測（tools/csharp-golden/run.sh bench の C# と同じ中身）。
 //!   cargo run --release -p yolu-core --example bench [回数] [M2 の種類だけ: round|jitter|tip|texture|dual|color|all|blur|smudge]
-//! 4096² の合成（全タイル乱数の 1 層、Normal + Multiply 0.7 の 2 層、グループ・マスク・調整・塗りつぶしの文書、Normal の合成と
-//! Height → Normal の出力）と、101 点のストローク（半径 40 を空の層・乱数の画素の上、半径 200 を空の層）。
+//! 4096² の合成（全タイル乱数の 1 レイヤー、Normal + Multiply 0.7 の 2 レイヤー、グループ・マスク・調整・塗りつぶしの文書、Normal の合成と
+//! Height → Normal の出力）と、101 点のストローク（半径 40 を空のレイヤー・乱数の画素の上、半径 200 を空のレイヤー）。
 //! M2 のブラシ: 半径 40・200 で、ゆらぎ・筆先の画像・紙の質感・デュアル・ダブごとの色・全部・ぼかし・指先（効果は乱数の画素の上）。
 
 use std::time::Instant;
@@ -181,7 +181,7 @@ fn main() {
         let a = doc.add_layer("a").unwrap();
         fill_random(&mut doc, a, 1);
         println!(
-            "合成 4096² 1 層（全タイル乱数）: {}",
+            "合成 4096² 1 レイヤー（全タイル乱数）: {}",
             time_composite(&doc, runs)
         );
         let mut buf = vec![0u8; 4096 * 4096 * 4];
@@ -195,7 +195,7 @@ fn main() {
             .skip(2)
             .collect();
         println!(
-            "合成 4096² 1 層（composite_into・使い回しの領域・TopDown）: {}",
+            "合成 4096² 1 レイヤー（composite_into・使い回しの領域・TopDown）: {}",
             stats(&mut ms)
         );
         let b = doc.add_layer("b").unwrap();
@@ -203,7 +203,7 @@ fn main() {
         doc.set_layer_blend_mode(b, BlendMode::Multiply).unwrap();
         doc.set_layer_opacity(b, 0.7, false).unwrap();
         println!(
-            "合成 4096² 2 層（Normal + Multiply 0.7）: {}",
+            "合成 4096² 2 レイヤー（Normal + Multiply 0.7）: {}",
             time_composite(&doc, runs)
         );
         // M2: 通過のグループ（不透明度 0.6 でフェード）の中に Multiply とマスク付きの Screen、分離のグループ（Overlay）、
@@ -241,7 +241,7 @@ fn main() {
         );
     }
     {
-        // M2: Normal の 2 層（Normal + Overlay 0.6）と Height 1 層
+        // M2: Normal の 2 レイヤー（Normal + Overlay 0.6）と Height 1 レイヤー
         let mut doc = Document::new(4096, 4096).unwrap();
         doc.set_source_budget_bytes(2 << 30).unwrap();
         let a = doc.add_layer("a").unwrap();
@@ -253,7 +253,7 @@ fn main() {
         let h = doc.add_layer("h").unwrap();
         fill_random_in(&mut doc, h, Some(Channel::Height), 8);
         println!(
-            "合成 4096² Normal 2 層（Normal + Overlay 0.6、ベクトル）: {}",
+            "合成 4096² Normal 2 レイヤー（Normal + Overlay 0.6、ベクトル）: {}",
             time_channel(&doc, Channel::Normal, runs)
         );
         doc.set_normal_settings(
@@ -271,7 +271,7 @@ fn main() {
             .skip(2)
             .collect();
         println!(
-            "Normal の出力 4096²（上の 2 層 + Height → Normal）: {}",
+            "Normal の出力 4096²（上の 2 レイヤー + Height → Normal）: {}",
             stats(&mut ms)
         );
     }
@@ -316,7 +316,7 @@ fn main() {
             if over {
                 "乱数の画素の上"
             } else {
-                "空の層"
+                "空のレイヤー"
             },
             stats(&mut ms)
         );

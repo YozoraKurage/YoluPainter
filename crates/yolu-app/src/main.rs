@@ -27,9 +27,9 @@ fn start() -> eframe::Result {
     if yolu_app::titlebar::CUSTOM_FRAME {
         viewport = viewport.with_decorations(false);
     }
-    // 前に終わったときの窓の大きさと位置（設定のフォルダの layout.json）。画面を列挙できる OS（Windows）では、画面ごとの拡大率・
-    // 作業領域と突き合わせて置き場所を決める（初回は主の画面の中央。記録の画面が無ければ主の画面の中央）。窓の位置と最大化は、
-    // 窓ができてから最初のフレームで合わせる（`windowpos`）ので、作るときは大きさだけ渡す
+    // 前に終わったときのウィンドウの大きさと位置（設定のフォルダの layout.json）。画面を列挙できる OS（Windows）では、画面ごとの拡大率・
+    // 作業領域と突き合わせて置き場所を決める（初回は主の画面の中央。記録の画面が無ければ主の画面の中央）。ウィンドウの位置と最大化は、
+    // ウィンドウができてから最初のフレームで合わせる（`windowpos`）ので、作るときは大きさだけ渡す
     let record = yolu_app::layout::saved_window();
     if let Some(place) = yolu_app::windowpos::startup(record.as_ref()) {
         viewport = viewport.with_inner_size(place.size_points());
@@ -49,13 +49,20 @@ fn start() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す
         wgpu_options: yolu_app::view3d::render::wgpu_configuration(),
+        // Linux: ウィンドウは X11 で開く（Wayland の机では XWayland の上）。Wayland は浮かせるウィンドウの位置を決められず、ウィンドウの外へ出す欄・位置の覚えが
+        // 効かないため。X11 が無い机（XWayland の無い Wayland）では起動できない
+        #[cfg(target_os = "linux")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            builder.with_x11();
+        })),
         ..Default::default()
     };
     eframe::run_native(
         "YoluPainter",
         options,
         Box::new(|cc| {
-            // Windows: ファイルの窓の親になる主の窓を預け、枠を外した窓の最大化を自動で隠すタスクバーに合わせる
+            // Windows: ファイルのウィンドウの親になるメインウィンドウを預け、枠を外したウィンドウの最大化を自動で隠すタスクバーに合わせる
             yolu_app::dialog::set_owner(cc);
             yolu_app::windowpos::install(cc);
             Ok(Box::new(yolu_app::YoluApp::new(cc)))
@@ -63,7 +70,7 @@ fn start() -> eframe::Result {
     )
 }
 
-/// 窓とタスクバーのアイコン（ロゴ。exe とインストーラーのアイコンは assets/logo/yolupainter.ico）。
+/// ウィンドウとタスクバーのアイコン（ロゴ。exe とインストーラーのアイコンは assets/logo/yolupainter.ico）。
 fn icon() -> egui::IconData {
     let png = include_bytes!("../assets/logo/yolupainter-256.png");
     let image = image::load_from_memory(png)

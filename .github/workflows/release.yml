@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       rebuild:
-        description: CI の成果物を受け取らず、必ず組み直す
+        description: CI の成果物を受け取らず、必ずビルドし直す
         required: true
         type: boolean
         default: false
@@ -32,7 +32,7 @@ concurrency:
 permissions:
   contents: read
 
-# 配る物は、同じ木で全部のジョブが成功した main 向けの PR の CI（ci.yml）が組んだ成果物を受け取る（find）。受け取れなければ、同じ手順（dist-build.yml）で組む
+# 配る物は、同じ木で全部のジョブが成功した main 向けの PR の CI（ci.yml）がビルドした成果物を受け取る（find）。受け取れなければ、同じ手順（dist-build.yml）でビルドする
 # （理由は実行の Summary に出る）。どちらの道でも、metadata 以降は同じ。docs/RELEASING.md に安全の筋と保証しないことを書く。
 # このワークフローはキャッシュを使わない（汚染されたキャッシュが配る物に入る道を作らない。tools/check-workflows.py が確かめる）。
 jobs:
@@ -76,7 +76,7 @@ jobs:
           --work "$RUNNER_TEMP/found" --rebuild "$REBUILD"
 
   build:
-    name: 組む
+    name: ビルド
     needs: [plan, find]
     if: ${{ needs.find.outputs.promote != 'true' }}
     uses: ./.github/workflows/dist-build.yml
@@ -88,7 +88,7 @@ jobs:
 
   metadata:
     needs: [plan, find, build]
-    # 組みを飛ばした（受け取った）ときは build が skipped。組んで失敗したときは進めない。
+    # ビルドを飛ばした（受け取った）ときは build が skipped。ビルドして失敗したときは進めない。
     if: ${{ !cancelled() && needs.find.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) }}
     runs-on: ubuntu-22.04
     permissions:
@@ -100,7 +100,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # この実行で組んだ成果物
+      # この実行でビルドした成果物
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: ${{ needs.find.outputs.promote != 'true' }}
         with:
@@ -157,7 +157,9 @@ jobs:
           retention-days: 7
 
   draft:
-    if: ${{ !inputs.dry-run }}
+    # 状態の関数（!cancelled()）を明示する。書かないと暗に success() が付き、CI の成果物を受け取って build が skipped の回に、
+    # metadata が成功していても下書きまで飛ばされる（needs の先の skipped が伝わる）。
+    if: ${{ !cancelled() && !inputs.dry-run && needs.metadata.result == 'success' }}
     needs: metadata
     runs-on: ubuntu-22.04
     environment: release

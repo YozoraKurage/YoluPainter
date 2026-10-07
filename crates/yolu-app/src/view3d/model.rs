@@ -3,10 +3,10 @@
 
 use std::sync::{Arc, OnceLock};
 
+use yolu_core::geometry::GeometryError;
 use yolu_core::geometry::{
     demo_cube, model_triangles, ModelMesh, Submesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
 };
-use yolu_core::geometry::GeometryError;
 use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::skin::RigError;
 use yolu_model::ModelError;
@@ -33,7 +33,10 @@ pub enum ViewError {
     /// 読み込みのスレッドが結果を返さずに止まった。
     LoadStopped,
     /// Live Link のポーズの世代がモデルと違う（モデルが無ければ None）。
-    PoseGeneration { pose: u32, model: Option<u32> },
+    PoseGeneration {
+        pose: u32,
+        model: Option<u32>,
+    },
     /// Live Link のポーズのメッシュの番号が範囲外。
     PoseMesh,
     /// Live Link のポーズの頂点の数がメッシュと違う。
@@ -43,10 +46,28 @@ pub enum ViewError {
     Model(ModelError),
 }
 
+impl ViewError {
+    /// 知らせの種類: 今の状態で受けない物（描いている間・モデルが無い・操作が始まっていない）は断り、取り消しは済んだ知らせ、ほかは失敗。
+    pub fn notice_kind(&self) -> crate::notice::Kind {
+        use crate::notice::Kind;
+        match self {
+            Self::Stroking
+            | Self::NoPoseModel
+            | Self::NoPoseEdit
+            | Self::NoLinkModel
+            | Self::NoPoseBase => Kind::Refusal,
+            Self::Cancelled => Kind::Info,
+            _ => Kind::Error,
+        }
+    }
+}
+
 impl std::fmt::Display for ViewError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Stroking => f.write_str("描いている間はポーズを変えられません。"),
+            Self::Stroking => {
+                f.write_str(crate::lang::refusals::during_stroke(crate::lang::Lang::Ja))
+            }
             Self::NoPoseModel => f.write_str("ポーズを付けるモデルがありません"),
             Self::NoPoseEdit => f.write_str("ポーズの操作が始まっていません"),
             Self::NoLinkModel => f.write_str("モデルを受ける前のポーズは使えません"),
@@ -55,7 +76,10 @@ impl std::fmt::Display for ViewError {
             Self::NoTriangles => f.write_str("三角形がありません"),
             Self::Cancelled => f.write_str("取り消しました"),
             Self::LoadStopped => f.write_str("読み込みが止まりました"),
-            Self::PoseGeneration { pose, model: Some(model) } => write!(
+            Self::PoseGeneration {
+                pose,
+                model: Some(model),
+            } => write!(
                 f,
                 "ポーズの世代 {pose} は今のモデルの世代 {model} と違います"
             ),
@@ -108,6 +132,8 @@ pub struct ViewModel {
     pub demo: bool,
     /// 角ごとの接線（`tangents`）。法線マップを見せるときだけ、最初に要る所で作る。
     tangents: OnceLock<Arc<Vec<Tangent>>>,
+    /// ポーズを付けた形のときの休みの形（三角形・UV・スロットの並びは同じで、位置だけが違う）。None はこの形が休みの形。
+    rest: Option<Arc<SurfaceGeometry>>,
 }
 
 impl ViewModel {
@@ -131,6 +157,7 @@ impl ViewModel {
             link_generation: None,
             demo: false,
             tangents: OnceLock::new(),
+            rest: None,
         })
     }
 
@@ -149,7 +176,20 @@ impl ViewModel {
             link_generation: None,
             demo: false,
             tangents: OnceLock::new(),
+            rest: None,
         }
+    }
+
+    /// 休みの形を添える（ポーズを付けた形を作ったとき。`rest` は同じ三角形・UV・スロットの並びの、ポーズの無い形）。
+    pub fn with_rest(mut self, rest: Arc<SurfaceGeometry>) -> ViewModel {
+        self.rest = Some(rest);
+        self
+    }
+
+    /// 休みの形（ポーズの無い形。FBX の休みの姿勢・Live Link で最初に受けた形）。3D のパスはこの形で描くので、ポーズを変えても
+    /// テクスチャの絵は変わらない。ポーズを付けていない形は自分自身。
+    pub fn rest_geometry(&self) -> &Arc<SurfaceGeometry> {
+        self.rest.as_ref().unwrap_or(&self.geometry)
     }
 
     /// 試しの立方体（Unity 版のデモと同じ。6 面が別の UV アイランド）。
@@ -235,9 +275,7 @@ impl ViewModel {
         }
         let mut meshes = self.meshes.clone();
         for p in &pose.meshes {
-            let m = meshes
-                .get_mut(p.mesh as usize)
-                .ok_or(ViewError::PoseMesh)?;
+            let m = meshes.get_mut(p.mesh as usize).ok_or(ViewError::PoseMesh)?;
             if p.positions.len() != m.positions.len()
                 || (!p.normals.is_empty() && p.normals.len() != m.positions.len())
             {
@@ -248,6 +286,8 @@ impl ViewModel {
         }
         let mut m = ViewModel::new(&self.name, meshes, self.materials.clone(), revision)?;
         m.link_generation = self.link_generation;
+        // 休みの形は最初に受けた形のまま（ポーズを重ねても、前のポーズの形を休みにしない）
+        m.rest = Some(self.rest_geometry().clone());
         Ok(m)
     }
 
@@ -319,7 +359,10 @@ mod tests {
         let m = ViewModel::from_live_link(&model, 5).unwrap();
         assert_eq!(m.triangle_count(), 4);
         assert_eq!(m.revision(), 5);
-        assert_eq!(m.materials, vec![Some("肌".to_string()), Some("服".to_string())]);
+        assert_eq!(
+            m.materials,
+            vec![Some("肌".to_string()), Some("服".to_string())]
+        );
         let t = m.geometry.triangles();
         assert_eq!(
             t.iter()

@@ -1,6 +1,6 @@
-//! OS のファイルの窓・確かめの窓は、主の窓を親にして出す口（`dialog::file`・`dialog::message`）から作る。`rfd::FileDialog::new()`・
-//! `rfd::MessageDialog::new()` を直に呼ぶと、親の無い窓が主の窓の後ろに回る（Windows）。ソースの中で直に呼んでよいのは、
-//! 口そのもの（`dialog.rs`）と、窓の無い起動でも出すクラッシュの知らせ（`crash/`）だけ。
+//! OS のファイルのウィンドウ・確認のウィンドウは、メインウィンドウを親にして出す口（`dialog::file`・`dialog::message`）から作る。`rfd::FileDialog::new()`・
+//! `rfd::MessageDialog::new()` を直に呼ぶと、親の無いウィンドウがメインウィンドウの後ろに回る（Windows）。ソースの中で直に呼んでよいのは、
+//! 口そのもの（`dialog.rs`）と、ウィンドウの無い起動でも出すクラッシュの知らせ（`crash/`）だけ。
 use std::path::{Path, PathBuf};
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -18,7 +18,13 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 fn enclosing_fn(text: &str, at: usize) -> String {
     let head = &text[..at];
     head.rfind("fn ")
-        .map(|i| head[i + 3..].split(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or("").to_owned())
+        .map(|i| {
+            head[i + 3..]
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or("")
+                .to_owned()
+        })
         .unwrap_or_default()
 }
 
@@ -30,7 +36,11 @@ fn file_and_message_dialogs_come_from_the_parented_helpers() {
     assert!(files.len() > 50, "ソースを集められていない");
     let mut direct = Vec::new();
     for file in files {
-        let relative = file.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        let relative = file
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
         if relative == "dialog.rs" || relative.starts_with("crash/") {
             continue;
         }
@@ -42,5 +52,8 @@ fn file_and_message_dialogs_come_from_the_parented_helpers() {
         }
     }
     let unexpected: Vec<_> = direct.iter().collect();
-    assert!(unexpected.is_empty(), "親なしの窓を直に作っている（`crate::dialog::file()`・`message()` を使う）: {unexpected:?}");
+    assert!(
+        unexpected.is_empty(),
+        "親なしのウィンドウを直に作っている（`crate::dialog::file()`・`message()` を使う）: {unexpected:?}"
+    );
 }

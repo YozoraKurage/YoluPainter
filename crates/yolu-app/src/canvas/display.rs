@@ -8,7 +8,7 @@
 //! 合成は 2 つの道のどちらか。使えるときは GPU の常駐の合成（[`super::gpu`]。表示のテクスチャ 1 枚を egui へそのまま見せる）、
 //! 使えない・予算を超える・合成できない機能があるときは理由を覚えて、上の CPU の頁へ落ちる。同時には持たない（落ちるとき・戻る
 //! ときにもう一方の資源を手放す）。straight から乗算済みへの変換の式は両方の道で同じ整数の式だが、合成の画素は GPU が f32、
-//! CPU が f64 の丸めなので、窓の絵で最大 1、多段の文書で 2 以内ずれ得る（表示だけ。保存・書き出し・3D は CPU の正本）。
+//! CPU が f64 の丸めなので、ウィンドウの絵で最大 1、多段の文書で 2 以内ずれ得る（表示だけ。保存・書き出し・3D は CPU の正本）。
 
 use egui::{pos2, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions};
 
@@ -252,11 +252,6 @@ impl CanvasDisplay {
         self.viewport = viewport;
     }
 
-    /// 1 フレームに合成してよい時間（見えているタイルと、見えていないタイル）。
-    pub fn set_frame_budget(&mut self, budget: FrameBudget) {
-        self.budget = budget;
-    }
-
     /// CPU の頁でまだ正確でないタイルの数（GPU の道では 0）。
     pub fn pending_tiles(&self) -> usize {
         if self.shown == Shown::Cpu {
@@ -284,7 +279,9 @@ impl CanvasDisplay {
         }
         match &self.viewport {
             Some(v) => self.cpu.unshown_in(&v.visible),
-            None => self.cpu.unshown_in(&DocRect::new(0, 0, self.size.0, self.size.1)),
+            None => self
+                .cpu
+                .unshown_in(&DocRect::new(0, 0, self.size.0, self.size.1)),
         }
     }
 

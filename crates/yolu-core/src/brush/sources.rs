@@ -1,9 +1,9 @@
 //! 合成済みの参照元と、写像されたダブ（C# の BrushStroke.Sources）。3D の面のクローン・指先の土台。
 //!
-//! - **合成の参照元**: クローンが読むのは、描く層だけでなく見えている層の重なり（チャンネルごとの合成）。最初のダブの前に、
-//!   層が画素を持ち得るタイルだけ合成して凍結する（書き込みの途中で合成を読み返さない）。タイルの写しと索引はストロークの予算に
+//! - **合成の参照元**: クローンが読むのは、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごとの合成）。最初のダブの前に、
+//!   レイヤーが画素を持ち得るタイルだけ合成して凍結する（書き込みの途中で合成を読み返さない）。タイルの写しと索引はストロークの予算に
 //!   数え、超えたらストローク全体を取り消す。確定・取消で手放す。
-//! - **写像されたダブ**: 面のダブの画素ごとに、読む場所（画素中心の最大 4 点と重み）を呼び手が決めて渡す。3D の面は UV の島の
+//! - **写像されたダブ**: 面のダブの画素ごとに、読む場所（画素中心の最大 4 点と重み）を呼び手が決めて渡す。3D の面は UV アイランドの
 //!   継ぎ目をまたいで隣の面の画素を読むので、画素の隣り合わせでは決まらない（[`crate::geometry::SamplingChart`]）。全ての読みを
 //!   どの画素を書くより前に済ませ、プリマルチプライドで混ぜた色を画素ごとに持つ。同じ画素の重複・範囲外・参照の無い画素は、
 //!   ダブごと取り消す。
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use super::effects::byte255;
 use super::*;
 
-/// 画素中心の参照 1 点（画布の画素の座標）。重みが 0 の点は読まない。
+/// 画素中心の参照 1 点（キャンバスの画素の座標）。重みが 0 の点は読まない。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BrushSourceTap {
     pub x: i64,
@@ -74,7 +74,7 @@ pub(crate) struct CompositeTile {
     pub pixels: Vec<u8>,
 }
 
-/// 1 つのチャンネルの、見えている層の重なりを凍結した参照元（疎: 層が画素を持ち得るタイルだけ。無い所は透明）。
+/// 1 つのチャンネルの、見えているレイヤーの重なりを凍結した参照元（疎: レイヤーが画素を持ち得るタイルだけ。無い所は透明）。
 pub(crate) struct CloneSource {
     tile_size: i64,
     tiles: HashMap<TileCoord, CompositeTile>,
@@ -171,23 +171,26 @@ impl StrokeState {
 
     /// 効果が読む色（C# の ReadEffectSource）: 合成の参照元があればその合成、無ければ今の面。クローンは、ストロークがもう触った
     /// タイルでは巻き戻しの写し（ストロークの前）を読む。
-    fn read_effect_source(&self, surface: &Surface, x: i64, y: i64) -> Rgba8 {
+    fn read_effect_source(&self, surface: &Surface, x: i64, y: i64) -> Result<Rgba8, CoreError> {
         if let Some(source) = &self.source {
-            return source.read(x, y);
+            return Ok(source.read(x, y));
         }
         let ts = self.tile_size;
         let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
-        let tile: Option<&Tile> = match (&self.brush.effect, self.tiles.get(&coord)) {
-            (BrushEffect::Clone { .. }, Some(held)) => held.before.as_ref(),
-            _ => surface.tile(coord),
-        };
-        tile.map_or(Rgba8::TRANSPARENT, |t| {
-            t.get((((y % ts) * ts + x % ts) * 4) as usize)
-        })
+        let at = (((y % ts) * ts + x % ts) * 4) as usize;
+        match (&self.brush.effect, self.tiles.get(&coord)) {
+            (BrushEffect::Clone { .. }, Some(held)) => Ok(held
+                .before_px
+                .as_ref()
+                .map_or(Rgba8::TRANSPARENT, |t| t.get(at))),
+            _ => surface
+                .tile(coord)
+                .map_or(Ok(Rgba8::TRANSPARENT), |t| t.get(at)),
+        }
     }
 
     /// 参照の最大 4 点を、アルファで重みを付けて混ぜる（C# の SampleMapped）。参照が 1 点だけなら、その色そのもの。
-    fn sample_mapped(&self, surface: &Surface, p: &BrushMappedPixel) -> Rgba8 {
+    fn sample_mapped(&self, surface: &Surface, p: &BrushMappedPixel) -> Result<Rgba8, CoreError> {
         let (mut r, mut g, mut b, mut alpha, mut weight) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
         let mut count = 0;
         let mut single = Rgba8::TRANSPARENT;
@@ -195,7 +198,7 @@ impl StrokeState {
             if tap.weight == 0.0 {
                 continue;
             }
-            let c = self.read_effect_source(surface, tap.x, tap.y);
+            let c = self.read_effect_source(surface, tap.x, tap.y)?;
             count += 1;
             single = c;
             let a = c.a as f64 * tap.weight;
@@ -206,17 +209,17 @@ impl StrokeState {
             weight += tap.weight;
         }
         if count == 1 {
-            return single;
+            return Ok(single);
         }
         if alpha <= 0.0 {
-            return Rgba8::TRANSPARENT;
+            return Ok(Rgba8::TRANSPARENT);
         }
-        Rgba8::new(
+        Ok(Rgba8::new(
             byte255(r / alpha),
             byte255(g / alpha),
             byte255(b / alpha),
             byte255(alpha / weight),
-        )
+        ))
     }
 
     /// クローン・指先の面のダブを、全画素の参照を書く前にまとめて凍結してから 1 ダブ適用する（C# の ApplyMappedDab）。
@@ -333,7 +336,7 @@ impl StrokeState {
             {
                 return Err(CoreError::InvalidArgument("写像されたダブの画素が重複"));
             }
-            mapped.colors.push(self.sample_mapped(surface, p));
+            mapped.colors.push(self.sample_mapped(surface, p)?);
         }
         let brush = self.brush.clone();
         let pressure = brush.pressure_scale(pressure);
@@ -348,10 +351,22 @@ impl StrokeState {
             let coord = TileCoord::new((d.x / ts) as u32, (d.y / ts) as u32);
             let local = ((d.y % ts) * ts + d.x % ts) as usize;
             let point = points.map(|v| v[i]);
-            cursor.move_to(self, surface, coord);
+            if let Err(e) = cursor.move_to(self, surface, coord) {
+                result = Err(e);
+                break;
+            }
             let r = cursor.with(self, surface, &paint, |cx, held, live| {
                 apply_at::<false>(
-                    cx, held, live, coord, local, d.coverage, pressure, 1.0, 1.0, None, point,
+                    cx,
+                    held,
+                    live,
+                    coord,
+                    local,
+                    d.coverage as f32,
+                    pressure,
+                    (1.0, 1.0),
+                    None,
+                    point,
                 )
             });
             match r {

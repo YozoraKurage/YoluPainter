@@ -14,7 +14,7 @@ pub enum CoreError {
         lock: crate::LayerLocks,
     },
     /// 入力のまま通している効果（使えるマップが無い Generator・出ていないデカール）を焼き込む操作（結合）は、効果を落とすので断る。
-    /// `mask` は層のマスクのスタックの効果か。
+    /// `mask` はレイヤーのマスクのスタックの効果か。
     InactiveEffect {
         layer: crate::LayerId,
         mask: bool,
@@ -38,10 +38,12 @@ pub enum CoreError {
     StrokeBudgetExceeded,
     /// 作業のメモリの上限（Normal の出力など）を超えるので、確保の前に断った。
     WorkingBudgetExceeded,
-    /// 層の画素のコピー・カット・ペーストを断った理由（何も変えていない）。
+    /// レイヤーの画素のコピー・カット・ペーストを断った理由（何も変えていない）。
     Clipboard(crate::ClipboardRefusal),
     /// `Document::batch` の編集の中では、ストローク・Undo・Redo・履歴を消す書き込みはできない（まとめは入れ子にもできない）。
     BatchActive,
+    /// ディスクへ逃がしたタイルの中身を読み戻せない（キャッシュのファイルが読めない）。読めない中身は透明として扱わない。
+    TileUnreadable,
 }
 
 impl fmt::Display for CoreError {
@@ -54,7 +56,9 @@ impl fmt::Display for CoreError {
                 report.max_visible_difference
             ),
             CoreError::Cancelled => write!(f, "操作を取り消した"),
-            CoreError::LayerLocked { .. } => write!(f, "層または親グループがロックされている"),
+            CoreError::LayerLocked { .. } => {
+                write!(f, "レイヤーまたは親グループがロックされている")
+            }
             CoreError::InactiveEffect { reason, .. } => {
                 write!(f, "効いていない効果は焼き込めない: {reason}")
             }
@@ -71,6 +75,7 @@ impl fmt::Display for CoreError {
             }
             CoreError::Clipboard(reason) => write!(f, "{reason}"),
             CoreError::BatchActive => write!(f, "まとめた編集の途中ではできない"),
+            CoreError::TileUnreadable => write!(f, "ディスクのキャッシュからタイルを読めない"),
         }
     }
 }

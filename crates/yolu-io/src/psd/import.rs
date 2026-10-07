@@ -4,21 +4,22 @@
 //! 写しとしての取り込みは、元の PSD へ書き戻さない（書き出しはいつも新しい PSD）ので、情報を捨てても原本は壊れない。そこで、
 //! 理由を 3 つに仕分ける（表は `docs/PSD.md`）。
 //!
-//! - **合成にも内容にも効かないもの**（全体マスクの表示の設定・解像度などの画像リソース・色ラベル・メタデータ・効果の無い層の `tsly`）
-//!   は持たない（[`ImportAction::Ignored`]）。層 ID の欠落・重複は、名前で補修せず新しい ID を振る。
-//! - **合成に効くのに評価できないもの**（レイヤー効果・ベクターマスク・未対応の合成モードなど）と、**層の画素は持っているが設定を
-//!   持たないもの**（スマートオブジェクトの元・テキスト・グラデーション/パターンの塗りつぶしの設定）は、層の画素のまま取り込む
-//!   （[`ImportAction::Changed`]・[`ImportAction::Dropped`]）。画素を持たない未対応の調整だけは層ごと落とす。
+//! - **合成にも内容にも効かないもの**（全体マスクの表示の設定・解像度などの画像リソース・色ラベル・メタデータ・効果の無いレイヤーの `tsly`）
+//!   は持たない（[`ImportAction::Ignored`]）。レイヤー ID の欠落・重複は、名前で補修せず新しい ID を振る。
+//! - **合成に効くのに評価できないもの**（レイヤー効果・ベクターマスク・未対応の合成モードなど）と、**レイヤーの画素は持っているが設定を
+//!   持たないもの**（スマートオブジェクトの元・テキスト・グラデーション/パターンの塗りつぶしの設定）は、レイヤーの画素のまま取り込む
+//!   （[`ImportAction::Changed`]・[`ImportAction::Dropped`]）。画素を持たない未対応の調整だけはレイヤーごと落とす。
 //! - **どうしても取れないもの**（PSB・RGB8 以外・予算を超える・壊れている）だけを断る（[`CopyRefusal`]）。
 //!
 //! 取り込んだ文書の合成は、PSD の統合画像と照らして最大の差と差のある画素の数を知らせる。
 //!
-//! 読みは `Read + Seek` から流す。付加情報は層ごと・タグごとに読んで捨て、層の画素は 1 枚ずつ復号して core へ入れてすぐ捨てる
-//! （全層の復号を同時に持たない）。層の数・画素・層 1 枚の付加情報の予算は、呼び手が渡す「レイヤーのメモリ」の予算（`source_budget`）で決める。
+//! 読みは `Read + Seek` から流す。付加情報はレイヤーごと・タグごとに読んで捨て、レイヤーの画素は 1 枚ずつ復号して core へ入れてすぐ捨てる
+//! （全レイヤーの復号を同時に持たない）。レイヤーの数・画素・レイヤー 1 枚の付加情報の予算は、呼び手が渡す「レイヤーのメモリ」の予算（`source_budget`）で決める。
 use super::binary::Reader;
 use super::read::{self, State};
 use super::*;
 use crate::{Error, Result};
+use rayon::prelude::*;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -29,13 +30,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum ImportAction {
     /// 持たない。見え方にも内容にも効かない情報（無視）。
     Ignored,
-    /// 持たない。層の画素は残るが、その機能の設定・元のデータは取り込まない（層ごと落とすものも含む）。
+    /// 持たない。レイヤーの画素は残るが、その機能の設定・元のデータは取り込まない（レイヤーごと落とすものも含む）。
     Dropped,
     /// 取り込む形が変わる。合成が PSD の統合画像と変わり得る（評価できない効果・値が変わるもの）。
     Changed,
 }
 
-/// 取り込みの知らせの機能。層ごとの機能は `ImportNote::layers` に層の名前が付く。
+/// 取り込みの知らせの機能。レイヤーごとの機能は `ImportNote::layers` にレイヤーの名前が付く。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ImportFeature {
     // ── 文書 ──
@@ -66,10 +67,10 @@ pub enum ImportFeature {
     },
     /// 統合画像と照らしていない。
     CompositeUnchecked(Unchecked),
-    // ── 層 ──
-    /// 層 ID の欠落・重複・不正（新しい ID を振った。名前では補修しない）。
+    // ── レイヤー ──
+    /// レイヤー ID の欠落・重複・不正（新しい ID を振った。名前では補修しない）。
     LayerIds,
-    /// 層の名前の中の NUL・Unicode 名のない非 ASCII 名。
+    /// レイヤーの名前の中の NUL・Unicode 名のない非 ASCII 名。
     LayerName,
     /// レイヤー効果（`lfx2` など）。評価しない。
     LayerEffects,
@@ -77,7 +78,7 @@ pub enum ImportFeature {
     BlendIf,
     /// 塗りの不透明度（不透明度に掛けた）。
     FillOpacity,
-    /// 「クリップした層をグループとして合成」の設定。
+    /// 「クリップしたレイヤーをグループとして合成」の設定。
     ClippedBlend,
     /// 「内部効果をグループとして合成」の設定。
     InteriorBlend,
@@ -87,15 +88,15 @@ pub enum ImportFeature {
     TransparencyShapes,
     /// チャンネルの合成制限。
     ChannelRestrictions,
-    /// スマートオブジェクト（元のデータは持たず、層の画素のまま）。
+    /// スマートオブジェクト（元のデータは持たず、レイヤーの画素のまま）。
     SmartObject,
-    /// テキスト（文字のデータは持たず、層の画素のまま）。
+    /// テキスト（文字のデータは持たず、レイヤーの画素のまま）。
     TextLayer,
     /// ベクターマスク（評価しない）。
     VectorMask,
-    /// グラデーション・パターンの塗りつぶし（設定は持たず、層の画素のまま）。
+    /// グラデーション・パターンの塗りつぶし（設定は持たず、レイヤーの画素のまま）。
     FillSettings,
-    /// 未対応の調整レイヤー（画素を持たないので層ごと落とす。キーは `details`）。
+    /// 未対応の調整レイヤー（画素を持たないのでレイヤーごと落とす。キーは `details`）。
     UnsupportedAdjustment,
     /// 未対応の合成モード（通常にした。キーは `details`）。
     BlendMode,
@@ -109,25 +110,25 @@ pub enum ImportFeature {
     MaskWithoutPixels,
     /// ユーザーマスクとベクターマスクの組（実マスク）。
     UserAndVectorMask,
-    /// 画布の外の画素（切り捨てた）。
+    /// キャンバスの外の画素（切り捨てた）。
     OutsideCanvas,
-    /// 画布の外のマスクの値（切り捨てた）。
+    /// キャンバスの外のマスクの値（切り捨てた）。
     MaskOutsideCanvas,
     /// グループ自身の画素。
     GroupPixels,
-    /// RGB のチャンネルが揃わない層（層ごと落とす）。
+    /// RGB のチャンネルが揃わないレイヤー（レイヤーごと落とす）。
     MissingChannels,
-    /// 層の未対応のチャンネル。
+    /// レイヤーの未対応のチャンネル。
     LayerChannels,
-    /// 層のメタデータ（キーは `details`）。
+    /// レイヤーのメタデータ（キーは `details`）。
     LayerMetadata,
-    /// 層の色ラベル。
+    /// レイヤーの色ラベル。
     LayerColorLabel,
     /// 閉じたグループ（開閉の状態）。
     CollapsedGroup,
     /// 未対応のロックのビット。
     LayerLockBits,
-    /// 層のフラグ・クリッピング値の未知の値。
+    /// レイヤーのフラグ・クリッピング値の未知の値。
     LayerFlags,
 }
 
@@ -138,7 +139,7 @@ pub enum Unchecked {
     NoComposite,
     /// 統合画像の圧縮が未対応・壊れている。
     Unreadable,
-    /// 画布が大きく、照らす 2 枚が予算に入らない。
+    /// キャンバスが大きく、照らす 2 枚が予算に入らない。
     Budget,
 }
 
@@ -154,9 +155,9 @@ pub enum ImportDetail {
 pub struct ImportNote {
     pub feature: ImportFeature,
     pub action: ImportAction,
-    /// 当たった層の名前（初めの `ImportNote::MAX_LAYERS` 枚。文書の機能では空）。
+    /// 当たったレイヤーの名前（初めの `ImportNote::MAX_LAYERS` 枚。文書の機能では空）。
     pub layers: Vec<String>,
-    /// 当たった層の数（文書の機能・画像リソースなどは件数）。
+    /// 当たったレイヤーの数（文書の機能・画像リソースなどは件数）。
     pub count: usize,
     /// 細目（重複なし・初めの `ImportNote::MAX_DETAILS` 個）。
     pub details: Vec<ImportDetail>,
@@ -177,19 +178,19 @@ pub enum CopyRefusal {
     ColorFormat { depth: u16, mode: u16 },
     /// レイヤーが無い（統合画像だけ）。
     NoLayers,
-    /// 層の数が予算から決めた上限を超える。
+    /// レイヤーの数が予算から決めた上限を超える。
     TooManyLayers { count: usize, limit: usize },
-    /// 画布 1 枚ぶんの画素が予算を超える。
+    /// キャンバス 1 枚ぶんの画素が予算を超える。
     CanvasTooLarge { width: u32, height: u32 },
-    /// 1 枚の層の画素が予算を超える。
+    /// 1 枚のレイヤーの画素が予算を超える。
     LayerTooLarge { layer: String },
-    /// 層を足すと文書の画素が予算を超える。
+    /// レイヤーを足すと文書の画素が予算を超える。
     BudgetExceeded { layer: String },
-    /// 層 1 枚の付加情報（効果・スマートオブジェクトの中身など）が予算を超える。層の名前は読む前なので `#番号`。
+    /// レイヤー 1 枚の付加情報（効果・スマートオブジェクトの中身など）が予算を超える。レイヤーの名前は読む前なので `#番号`。
     LayerDataTooLarge { layer: String },
     /// 辺が .ylp の上限（`MAX_DOCUMENT_EDGE`）を超える。取り込めても保存できない文書になるので、予算を上げても取り込めない。
     EdgeOverLimit { width: u32, height: u32, limit: u32 },
-    /// 層（グループも数える。区切りの記録は数えない）が .ylp の上限（`MAX_DOCUMENT_LAYERS`）を超える。予算を上げても取り込めない。
+    /// レイヤー（グループも数える。区切りの記録は数えない）が .ylp の上限（`MAX_DOCUMENT_LAYERS`）を超える。予算を上げても取り込めない。
     LayerCountOverLimit { count: usize, limit: usize },
     /// グループの入れ子が上限（`yolu_core::MAX_GROUP_DEPTH`）を超える。合成の再帰がスタックを使い切るので、予算を上げても取り込めない。
     NestingTooDeep { limit: usize },
@@ -217,7 +218,11 @@ impl CopyRefusal {
             Self::LayerDataTooLarge { layer } => {
                 format!("レイヤー「{layer}」の付加情報が大きすぎます")
             }
-            Self::EdgeOverLimit { width, height, limit } => {
+            Self::EdgeOverLimit {
+                width,
+                height,
+                limit,
+            } => {
                 format!("キャンバスが大きすぎます（{width}×{height}、上限 {limit}）")
             }
             Self::LayerCountOverLimit { count, limit } => {
@@ -244,13 +249,13 @@ impl CopyRefusal {
 /// 取り込みの設定。
 #[derive(Clone, Copy, Debug)]
 pub struct CopyOptions<'a> {
-    /// 文書の層の画素に許すバイト数（設定の「レイヤーのメモリ」）。層の数・画布・層の画素の上限をここから決める。
+    /// 文書のレイヤーの画素に許すバイト数（設定の「レイヤーのメモリ」）。レイヤーの数・キャンバス・レイヤーの画素の上限をここから決める。
     pub source_budget: u64,
-    /// 立てると、層の間・統合画像と照らす間に止めて `Error::Core(Cancelled)` で戻る。
+    /// 立てると、レイヤーの間・統合画像と照らす間に止めて `Error::Core(Cancelled)` で戻る。
     pub cancel: Option<&'a AtomicBool>,
 }
 impl CopyOptions<'_> {
-    /// 取り込める層の数（予算 1 MiB につき 1 枚。PSD の上限 32767 と 256 の間）。
+    /// 取り込めるレイヤーの数（予算 1 MiB につき 1 枚。PSD の上限 32767 と 256 の間）。
     pub fn max_layers(&self) -> usize {
         ((self.source_budget / (1024 * 1024)) as usize).clamp(256, 32767)
     }
@@ -269,15 +274,15 @@ pub enum CopyOutcome {
 
 // ───────── 読み手の状態（`read.rs` の `State` が持つ） ─────────
 
-/// 写しとしての取り込みの状態。層ごとの知らせは、層の名前が決まる（`luni` を読み終える）まで `pending` に置く。
+/// 写しとしての取り込みの状態。レイヤーごとの知らせは、レイヤーの名前が決まる（`luni` を読み終える）まで `pending` に置く。
 #[derive(Default)]
 pub(super) struct CopyState {
     notes: Vec<ImportNote>,
-    /// 読んでいる層の知らせ。
+    /// 読んでいるレイヤーの知らせ。
     pending: Vec<(ImportFeature, ImportAction, Vec<ImportDetail>)>,
-    /// 層を読んでいる間か（知らせを層の知らせにするか、文書の知らせにするか）。
+    /// レイヤーを読んでいる間か（知らせをレイヤーの知らせにするか、文書の知らせにするか）。
     pub(super) in_layer: bool,
-    /// 読んでいる層を、層ごと落とす理由（画素を持たない未対応の調整など）。
+    /// 読んでいるレイヤーを、レイヤーごと落とす理由（画素を持たない未対応の調整など）。
     pub(super) drop_layer: bool,
     /// 取り込めない理由（見つかったら、読み手は次の区切りで止める）。
     pub(super) refusal: Option<CopyRefusal>,
@@ -292,14 +297,19 @@ impl CopyState {
     pub(super) fn take_refusal(&mut self) -> Option<CopyRefusal> {
         self.refusal.take()
     }
-    /// 層の知らせを層の名前つきで文書の知らせへ移す。
+    /// レイヤーの知らせをレイヤーの名前つきで文書の知らせへ移す。
     pub(super) fn flush_layer(&mut self, name: &str) {
         for (feature, action, details) in std::mem::take(&mut self.pending) {
             self.add(feature, action, details, Some(name));
         }
     }
-    /// 層の画素を入れるときに分かった知らせ（層の名前つき）。
-    pub(super) fn add_layer_note(&mut self, feature: ImportFeature, action: ImportAction, name: &str) {
+    /// レイヤーの画素を入れるときに分かった知らせ（レイヤーの名前つき）。
+    pub(super) fn add_layer_note(
+        &mut self,
+        feature: ImportFeature,
+        action: ImportAction,
+        name: &str,
+    ) {
         self.add(feature, action, Vec::new(), Some(name))
     }
     pub(super) fn discard_layer(&mut self) {
@@ -352,12 +362,17 @@ impl State<'_> {
     ) {
         let Some(c) = self.copy.as_mut() else { return };
         if c.in_layer {
-            // 1 枚の層の中で同じ機能は 1 度だけ数える（細目は足す）
-            if let Some(p) = c.pending.iter_mut().find(|p| p.0 == feature && p.1 == action) {
+            // 1 枚のレイヤーの中で同じ機能は 1 度だけ数える（細目は足す）
+            if let Some(p) = c
+                .pending
+                .iter_mut()
+                .find(|p| p.0 == feature && p.1 == action)
+            {
                 p.2.extend(detail);
                 return;
             }
-            c.pending.push((feature, action, detail.into_iter().collect()))
+            c.pending
+                .push((feature, action, detail.into_iter().collect()))
         } else {
             c.add(feature, action, detail.into_iter().collect(), None)
         }
@@ -377,14 +392,14 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
     let (feature, action, detail) = match code {
         // 取れないもの（読み手が理由を見て断る。ヘッダーの種類は呼び手が付ける）
         "PSB" | "ColorFormat" | "NoLayers" => return,
-        // 画素の無い層は、ふつうにある（空のレイヤー）
+        // 画素の無いレイヤーは、ふつうにある（空のレイヤー）
         "EmptyLayer" => return,
         "Compression" | "CompositeCompression" => {
             return s.refuse(CopyRefusal::Malformed(
                 "未対応の圧縮方式です（RAW・RLE・ZIP だけ読めます）".into(),
             ))
         }
-        // 層 ID は、全部の層を読んでから振り直す（`LayerIds`）
+        // レイヤー ID は、全部のレイヤーを読んでから振り直す（`LayerIds`）
         "LayerIdentity" => return,
         // 合成にも内容にも効かない
         "ColorData" => (F::ColorModeData, Ignored, None),
@@ -398,7 +413,7 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
         "LayerFlags" | "Clipping" => (F::LayerFlags, Ignored, None),
         "LayerChannel" => (F::LayerChannels, Ignored, None),
         "TransparencyShapes" => (F::TransparencyShapes, Ignored, None),
-        // 合成が変わる（層の画素のまま取り込む）
+        // 合成が変わる（レイヤーの画素のまま取り込む）
         "BlendIf" => (F::BlendIf, Changed, None),
         "BlendMode" => (F::BlendMode, Changed, Some(key)),
         "FillOpacity" => (F::FillOpacity, Changed, None),
@@ -415,7 +430,7 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
         "UserAndVectorMask" | "RealUserMask" => (F::UserAndVectorMask, Changed, None),
         // 取り込めない形（グループ自身の画素）
         "GroupPixels" => (F::GroupPixels, Dropped, None),
-        // RGB のチャンネルが揃わない層は、層ごと落とす
+        // RGB のチャンネルが揃わないレイヤーは、レイヤーごと落とす
         "LayerChannels" => {
             if let Some(c) = s.copy.as_mut() {
                 c.drop_layer = true
@@ -432,10 +447,10 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
     s.copy_note(feature, action, detail)
 }
 
-/// 調整レイヤーのタグのキー（読めたもの・読めなかったもの・未対応のもの）。読めない内容なら層ごと落とし、
+/// 調整レイヤーのタグのキー（読めたもの・読めなかったもの・未対応のもの）。読めない内容ならレイヤーごと落とし、
 /// 知らせの細目にこのキーが付く（画面は名前にする。`ImportFeature::UnsupportedAdjustment`）。
 /// 取り込んだ文書の合成と PSD の統合画像の差のうち、合成の 8 bit の丸めの違いとして知らせないもの（0〜255）。
-/// CLIP STUDIO が書き出した実物の PSD 4 つ（4096²・7〜62 層）で、合成の最大の差は 2（差のある画素は 0.001% 以下）だった。
+/// CLIP STUDIO が書き出した実物の PSD 4 つ（4096²・7〜62 レイヤー）で、合成の最大の差は 2（差のある画素は 0.001% 以下）だった。
 const COMPOSITE_TOLERANCE: u8 = 2;
 
 pub const ADJUSTMENT_TAG_KEYS: [[u8; 4]; 18] = [
@@ -446,13 +461,13 @@ fn adjustment_key(key: [u8; 4]) -> bool {
     ADJUSTMENT_TAG_KEYS.contains(&key)
 }
 
-/// 層のタグのキーから、取り込みでの扱いを決める。
+/// レイヤーのタグのキーから、取り込みでの扱いを決める。
 fn sort_tag(s: &mut State, key: [u8; 4]) {
     use ImportAction::{Changed, Dropped, Ignored};
     use ImportFeature as F;
     let detail = Some(ImportDetail::Key(key));
     if adjustment_key(key) {
-        // 画素を持たない調整は、表せなければ層ごと落とす
+        // 画素を持たない調整は、表せなければレイヤーごと落とす
         if let Some(c) = s.copy.as_mut() {
             c.drop_layer = true
         }
@@ -498,7 +513,7 @@ impl From<yolu_core::CoreError> for Stop {
 }
 type Step<T> = std::result::Result<T, Stop>;
 
-/// どの層の読み込みで失敗したかを添える（壊れた PSD の理由を、層の番号つきで見られるように）。
+/// どのレイヤーの読み込みで失敗したかを添える（壊れた PSD の理由を、レイヤーの番号つきで見られるように）。
 fn in_layer(e: Error, number: usize) -> Stop {
     match e {
         Error::InvalidData(why) | Error::Budget(why) => {
@@ -527,11 +542,34 @@ fn read_u32<R: Read>(r: &mut R) -> Step<u32> {
     r.read_exact(&mut b)?;
     Ok(u32::from_be_bytes(b))
 }
+/// buf を埋めるまで読む。読めたバイト数と、途中で読めなくなったときの誤り（`read_exact` が返すのと同じ種類。終わりに着いたら
+/// `UnexpectedEof`）を返す。
+fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> (usize, Option<std::io::Error>) {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match r.read(&mut buf[filled..]) {
+            Ok(0) => {
+                return (
+                    filled,
+                    Some(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "failed to fill whole buffer",
+                    )),
+                )
+            }
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return (filled, Some(e)),
+        }
+    }
+    (filled, None)
+}
 fn tell<R: Seek>(r: &mut R) -> Step<u64> {
     Ok(r.stream_position()?)
 }
 fn skip<R: Seek>(r: &mut R, n: u64) -> Step<()> {
-    let n = i64::try_from(n).map_err(|_| Stop::Error(Error::InvalidData("区間長が大きすぎます".into())))?;
+    let n = i64::try_from(n)
+        .map_err(|_| Stop::Error(Error::InvalidData("区間長が大きすぎます".into())))?;
     r.seek(SeekFrom::Current(n))?;
     Ok(())
 }
@@ -558,14 +596,14 @@ pub fn import_copy<R: Read + Seek>(reader: &mut R, options: &CopyOptions) -> Res
 /// 書いた PSD の読み戻しの確かめの結果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Verified {
-    /// 読み戻した層の数（グループの区切りの記録を除く。取り込んだ文書の層の数と同じ）。
+    /// 読み戻したレイヤーの数（グループの区切りの記録を除く。取り込んだ文書のレイヤーの数と同じ）。
     pub layers: usize,
     /// ファイルの大きさ。
     pub bytes: u64,
 }
 
-/// 書いた PSD を、最後まで流して読み戻して確かめる。`import_copy` と同じ読み手（層の記録・チャンネルの復号・統合画像の読み）を通すが、core の文書は
-/// 作らない（層 1 枚ぶんのチャンネルしかメモリに持たず、焼いた画素が文書の予算を超えても確かめは止まらない）。全層・マスク・統合画像のすべての行を
+/// 書いた PSD を、最後まで流して読み戻して確かめる。`import_copy` と同じ読み手（レイヤーの記録・チャンネルの復号・統合画像の読み）を通すが、core の文書は
+/// 作らない（レイヤー 1 枚ぶんのチャンネルしかメモリに持たず、焼いた画素が文書の予算を超えても確かめは止まらない）。全レイヤー・マスク・統合画像のすべての行を
 /// 復号し、記録の長さがデータの長さと一致し、ファイルの終わりが統合画像の終わりであることを確かめる。取り込みで落とす・変わるものがあれば、
 /// 自分の書き手が書いた PSD ではない（書き手の不具合）ので断る。壊れている・途中で切れているときは `Error::InvalidData`、取消は `Error::Core(Cancelled)`。
 pub fn verify_stream<R: Read + Seek>(
@@ -618,7 +656,14 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     let channels = usize::from(h.u16()?);
     let (height, width) = (h.u32()?, h.u32()?);
     let (depth, mode) = (h.u16()?, h.u16()?);
-    if depth != 8 || mode != 3 || !(3..=56).contains(&channels) || width == 0 || height == 0 {
+    // 寸法は PSD（版 1）の上限まで（統合画像の場所の大きさを決めるので、化けた寸法をそのまま使わない）
+    let edge = limits.max_dimension;
+    if depth != 8
+        || mode != 3
+        || !(3..=56).contains(&channels)
+        || !(1..=edge).contains(&width)
+        || !(1..=edge).contains(&height)
+    {
         return malformed("PSD の寸法・色の形式が不正です");
     }
     for _ in 0..2 {
@@ -639,7 +684,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     let signed = read_u16(r)? as i16;
     let count = i32::from(signed).unsigned_abs() as usize;
     if count == 0 || count > limits.max_layers {
-        return malformed("層の数が不正です");
+        return malformed("レイヤーの数が不正です");
     }
     let mut records: Vec<read::Record> = Vec::with_capacity(count);
     for i in 0..count {
@@ -673,7 +718,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
         if let Some(why) = c.take_refusal() {
             return Err(Stop::Refused(why));
         }
-        // 層ごとの知らせは文書の知らせへ移す（取り込みで落とす・変わるものがあれば、最後に断る）。区切りは層ではない
+        // レイヤーごとの知らせは文書の知らせへ移す（取り込みで落とす・変わるものがあれば、最後に断る）。区切りはレイヤーではない
         if rec.section == 3 {
             c.discard_layer();
         } else {
@@ -682,13 +727,17 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
         }
         records.push(rec);
     }
-    // 全層・マスクのチャンネルを、最後の行まで復号する（層 1 枚・チャンネル 1 本ぶんだけ持つ）
+    // 全レイヤー・マスクのチャンネルを、最後の行まで復号する（画素は持たない。圧縮したチャンネル 1 本ぶんと、ZIP のときだけ面 1 枚）
     let mut plane: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     for (i, rec) in records.iter().enumerate() {
         cancelled(cancel)?;
         let (w, hh) = (rec.layer.width, rec.layer.height);
-        let (mw, mh) = rec.layer.mask.as_ref().map_or((0, 0), |m| (m.width, m.height));
+        let (mw, mh) = rec
+            .layer
+            .mask
+            .as_ref()
+            .map_or((0, 0), |m| (m.width, m.height));
         for &(id, len) in &rec.channels {
             let (cw, ch) = if id == -2 { (mw, mh) } else { (w, hh) };
             let bound = u64::from(cw) * u64::from(ch) * 2 + u64::from(ch) * 4 + 1024;
@@ -696,13 +745,11 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
                 return malformed(format!("レイヤー #{}: チャンネルの長さが不正です", i + 1));
             }
             if tell(r)? + len as u64 > info_end {
-                return malformed("チャンネルが層の情報を超えています");
+                return malformed("チャンネルがレイヤーの情報を超えています");
             }
             buf.resize(len, 0);
             r.read_exact(&mut buf)?;
-            plane.clear();
-            plane.resize(cw as usize * ch as usize, 0);
-            read::decode(Reader::new(&buf), cw, ch, &mut plane, 0, 1, &mut s)
+            read::check_rows(Reader::new(&buf), cw, ch, &mut plane, &mut s)
                 .map_err(|e| in_layer(e, i + 1))?;
             if let Some(why) = s.copy.as_mut().unwrap().take_refusal() {
                 return Err(Stop::Refused(why));
@@ -738,7 +785,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     })
 }
 
-/// 層 1 枚の読み込みの途中の姿（記録と、層ごとの落とす印）。
+/// レイヤー 1 枚の読み込みの途中の姿（記録と、レイヤーごとの落とす印）。
 struct Parsed {
     rec: read::Record,
     dropped: bool,
@@ -851,7 +898,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         return malformed("レイヤー情報が区間を超えています");
     }
     let signed = read_u16(r)? as i16;
-    // 統合画像の透明度は、層の数が負で、4 つ目のチャンネルがあるとき
+    // 統合画像の透明度は、レイヤーの数が負で、4 つ目のチャンネルがあるとき
     let merged_alpha = signed < 0 && channels >= 4;
     if usize::from(channels) > 3 + usize::from(merged_alpha) {
         s.preserve("ExtraAlpha", "", 0, 0);
@@ -867,7 +914,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }));
     }
 
-    // 層の記録（付加情報は 1 枚ずつ読んで、知らせだけ残す）
+    // レイヤーの記録（付加情報は 1 枚ずつ読んで、知らせだけ残す）
     let mut parsed: Vec<Parsed> = Vec::with_capacity(count);
     for i in 0..count {
         cancelled(o.cancel)?;
@@ -883,7 +930,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         if tell(r)? + u64::from(extra) > info_end {
             return malformed("レイヤーの付加情報が区間を超えています");
         }
-        // 付加情報は層ごとに全部メモリへ読む。固定の上限でなく、層の画素と同じ予算（設定の「レイヤーのメモリ」）に合わせる
+        // 付加情報はレイヤーごとに全部メモリへ読む。固定の上限でなく、レイヤーの画素と同じ予算（設定の「レイヤーのメモリ」）に合わせる
         if u64::from(extra) > o.source_budget {
             return Err(Stop::Refused(CopyRefusal::LayerDataTooLarge {
                 layer: format!("#{}", i + 1),
@@ -919,10 +966,14 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let mut dropped = c.drop_layer && plain;
         c.drop_layer = false;
         if mask_values_lost && !dropped {
-            s.copy_note(ImportFeature::MaskWithoutPixels, ImportAction::Changed, None);
+            s.copy_note(
+                ImportFeature::MaskWithoutPixels,
+                ImportAction::Changed,
+                None,
+            );
         }
         s.copy.as_mut().unwrap().in_layer = false;
-        // 形のあるシェイプ（塗りつぶし + ベクターマスク）は、塗りの設定でなく層の画素（描画された形）で取り込む
+        // 形のあるシェイプ（塗りつぶし + ベクターマスク）は、塗りの設定でなくレイヤーの画素（描画された形）で取り込む
         if rec.vector_mask && rec.fill_seen && matches!(rec.layer.kind, LayerKind::SolidColor(_)) {
             rec.layer.kind = LayerKind::Raster;
             s.copy.as_mut().unwrap().in_layer = true;
@@ -930,7 +981,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             s.copy.as_mut().unwrap().in_layer = false;
         }
         if rec.section == 3 {
-            // 区切り: 層ではない（知らせは出さない）
+            // 区切り: レイヤーではない（知らせは出さない）
             s.copy.as_mut().unwrap().discard_layer();
             dropped = false;
         } else {
@@ -944,7 +995,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         parsed.push(Parsed { rec, dropped });
     }
 
-    // 層の並び（下から上）と、グループの親。落とした層は並びに入れない
+    // レイヤーの並び（下から上）と、グループの親。落としたレイヤーは並びに入れない
     let mut items: Vec<usize> = Vec::new();
     let mut item_of: Vec<Option<usize>> = vec![None; parsed.len()];
     let mut parent: Vec<Option<usize>> = Vec::new();
@@ -992,7 +1043,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if !open.is_empty() {
         return malformed("閉じていないグループ区切り");
     }
-    // 文書の層の数（区切りの記録と、落とした層を除く）。.ylp に書ける数を超えれば、画素を読む前に断る
+    // 文書のレイヤーの数（区切りの記録と、落としたレイヤーを除く）。.ylp に書ける数を超えれば、画素を読む前に断る
     if items.len() > crate::MAX_DOCUMENT_LAYERS {
         return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
             count: items.len(),
@@ -1000,9 +1051,9 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }));
     }
 
-    // 層 ID: 欠落・重複・不正だけに新しい ID を振る（名前では補修しない）。
-    // 先に全部の層を見て、正で最初に出た一意な ID（区切りの ID を含む）をすべて取っておき、そのあとで振る。
-    // 見ながら振ると、あとに出てくる有効な ID と振った ID がぶつかって、有効な層まで振り直されてしまう
+    // レイヤー ID: 欠落・重複・不正だけに新しい ID を振る（名前では補修しない）。
+    // 先に全部のレイヤーを見て、正で最初に出た一意な ID（区切りの ID を含む）をすべて取っておき、そのあとで振る。
+    // 見ながら振ると、あとに出てくる有効な ID と振った ID がぶつかって、有効なレイヤーまで振り直されてしまう
     let mut used: std::collections::HashSet<i32> = parsed
         .iter()
         .filter(|p| p.rec.section == 3 && p.rec.layer.id > 0)
@@ -1035,7 +1086,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }
     }
 
-    // 層の画素: 1 枚ずつ復号して core へ入れ、すぐ捨てる
+    // レイヤーの画素: 1 枚ずつ復号して core へ入れ、すぐ捨てる
     let mut d = yolu_core::Document::new(width, height)?;
     d.set_source_budget_bytes(o.source_budget)?;
     let canvas = Document {
@@ -1046,6 +1097,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     };
     let salt = d.id() & ((1u128 << 64) - 1);
     let mut made: Vec<yolu_core::LayerId> = Vec::with_capacity(items.len());
+    let mut scratch: Vec<u8> = Vec::new();
     for (i, p) in parsed.iter_mut().enumerate() {
         cancelled(o.cancel)?;
         let kept = item_of[i].is_some();
@@ -1060,10 +1112,20 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             }));
         }
         if raster && layer_bytes > 0 {
-            l.pixels_rgba = vec![0; layer_bytes as usize];
-            for px in l.pixels_rgba.as_chunks_mut::<4>().0 {
-                px[3] = 255
+            // 前のレイヤーの場所を使い回し（新しく取った場所は、最初に触るページごとに時間がかかる）、色 0・不透明で埋める
+            let n = layer_bytes as usize;
+            let mut pixels = std::mem::take(&mut scratch);
+            if pixels.capacity() < n {
+                pixels = vec![0; n];
+            } else {
+                pixels.resize(n, 0);
             }
+            pixels.par_chunks_mut(1 << 16).for_each(|chunk| {
+                for px in chunk.as_chunks_mut::<4>().0 {
+                    *px = [0, 0, 0, 255];
+                }
+            });
+            l.pixels_rgba = pixels;
         }
         if let Some(m) = &mut l.mask {
             let n = u64::from(m.width) * u64::from(m.height);
@@ -1097,7 +1159,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
                 return malformed("チャンネルの長さが不正です");
             }
             if tell(r)? + len as u64 > info_end {
-                return malformed("チャンネルが層の情報を超えています");
+                return malformed("チャンネルがレイヤーの情報を超えています");
             }
             let mut buf = vec![0u8; len];
             r.read_exact(&mut buf)?;
@@ -1106,10 +1168,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             }
             let decoded = if id == -2 {
                 let m = l.mask.as_mut().unwrap();
-                read::decode(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
+                read::decode_rows(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
             } else {
                 let component = if id == -1 { 3 } else { id as usize };
-                read::decode(
+                read::decode_rows(
                     Reader::lenient(&buf),
                     cw,
                     ch,
@@ -1151,7 +1213,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             LayerKind::Group { .. } => d.add_group(&l.name, None)?,
             LayerKind::SolidColor([cr, cg, cb]) => d.add_fill_layer(
                 &l.name,
-                &[(yolu_core::Channel::Color, yolu_core::Rgba8::new(*cr, *cg, *cb, 255))],
+                &[(
+                    yolu_core::Channel::Color,
+                    yolu_core::Rgba8::new(*cr, *cg, *cb, 255),
+                )],
                 None,
             )?,
             LayerKind::Adjustment(a) => {
@@ -1172,8 +1237,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             canvas.import_mask(&mut d, id, m).map_err(budget_stop)?;
         }
         made.push(id);
-        // 復号した画素は、core へ入れたのでもう要らない
-        l.pixels_rgba = Vec::new();
+        // 復号した画素は、core へ入れたのでもう要らない（場所は次のレイヤーで使い回す）
+        scratch = std::mem::take(&mut l.pixels_rgba);
         if let Some(m) = &mut l.mask {
             m.pixels = Vec::new()
         }
@@ -1182,6 +1247,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             c.add_layer_note(feature, ImportAction::Dropped, &name);
         }
     }
+    drop(scratch);
     let here = tell(r)?;
     if here > info_end {
         return malformed("チャンネルのデータがレイヤー情報を超えています");
@@ -1256,7 +1322,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     // 統合画像と照らす
     check_composite(r, &d, channels, merged_alpha, total, o, &mut s)?;
     let notes = s.copy.take().unwrap().into_notes();
-    Ok(CopyOutcome::Imported(Box::new(CopyImport { document: d, notes })))
+    Ok(CopyOutcome::Imported(Box::new(CopyImport {
+        document: d,
+        notes,
+    })))
 }
 
 /// 画像リソースを読み飛ばす（色に効くものだけ中身を見る）。
@@ -1319,7 +1388,11 @@ fn check_composite<R: Read + Seek>(
 ) -> Step<()> {
     let (w, h) = (d.width() as usize, d.height() as usize);
     let unchecked = |s: &mut State, why: Unchecked| -> Step<()> {
-        s.copy_note(ImportFeature::CompositeUnchecked(why), ImportAction::Ignored, None);
+        s.copy_note(
+            ImportFeature::CompositeUnchecked(why),
+            ImportAction::Ignored,
+            None,
+        );
         Ok(())
     };
     // 統合画像（1 枚）と、帯の合成が予算に入るか
@@ -1341,21 +1414,34 @@ fn check_composite<R: Read + Seek>(
         cancelled(o.cancel)?;
         let rows = BAND_ROWS.min(d.height() - y);
         let mut out = d.composite(yolu_core::Rect::new(0, y, d.width(), rows))?;
-        super::composite::matte(&mut out);
-        for row in 0..rows as usize {
-            // core の行は下から、統合画像は上から
-            let psd_row = h - 1 - (y as usize + row);
-            let ours = &out[row * w * 4..(row + 1) * w * 4];
-            let theirs = &merged[psd_row * w * 4..(psd_row + 1) * w * 4];
-            for (a, b) in ours.as_chunks::<4>().0.iter().zip(theirs.as_chunks::<4>().0) {
-                let worst = (0..compared_channels)
-                    .map(|c| a[c].abs_diff(b[c]))
-                    .max()
-                    .unwrap_or(0);
-                max_diff = max_diff.max(worst);
-                differing += u64::from(worst > COMPOSITE_TOLERANCE);
-            }
-        }
+        // 行ごとに並べて白へ重ね、比べる（数は最大と和なので、分け方によらない）
+        let (band_max, band_differing) = out
+            .par_chunks_mut(w * 4)
+            .enumerate()
+            .map(|(row, ours)| {
+                super::composite::matte(ours);
+                // core の行は下から、統合画像は上から
+                let psd_row = h - 1 - (y as usize + row);
+                let theirs = &merged[psd_row * w * 4..(psd_row + 1) * w * 4];
+                let (mut most, mut count) = (0u8, 0u64);
+                for (a, b) in ours
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(theirs.as_chunks::<4>().0)
+                {
+                    let worst = (0..compared_channels)
+                        .map(|c| a[c].abs_diff(b[c]))
+                        .max()
+                        .unwrap_or(0);
+                    most = most.max(worst);
+                    count += u64::from(worst > COMPOSITE_TOLERANCE);
+                }
+                (most, count)
+            })
+            .reduce(|| (0, 0), |a, b| (a.0.max(b.0), a.1 + b.1));
+        max_diff = max_diff.max(band_max);
+        differing += band_differing;
         y += rows;
     }
     if max_diff > COMPOSITE_TOLERANCE {
@@ -1382,18 +1468,28 @@ fn read_merged<R: Read + Seek>(
     cancel: Option<&AtomicBool>,
 ) -> Step<Option<Vec<u8>>> {
     let compression = read_u16(r)?;
-    let mut out = vec![0u8; w * h * 4];
-    for px in out.as_chunks_mut::<4>().0 {
-        px[3] = 255
-    }
     // 色（と透明度）の先頭の 4 面だけ読む。残りのチャンネル（アルファチャンネル）は要らない
     let planes = channels.min(4);
+    // 統合画像の場所（幅 × 高さ × 4）は、ファイルの残りがその圧縮の最小の長さを満たすときだけ取る（寸法の化けた・切れたファイルで、
+    // 入らない大きさを先に確保しない）。無圧縮は面ごとに幅 × 高さ。RLE は行の長さの表と、1 行に少なくとも 2⌈幅/128⌉ バイト
+    // （PackBits の 1 組は 2 バイトで 128 画素まで）。満たさなければ、どの行かが入らないか展開できないので、読んでも読めない統合画像になる
+    let (w64, h64) = (w as u64, h as u64);
+    let least = match compression {
+        0 => w64 * h64 * planes as u64,
+        1 => channels as u64 * h64 * 2 + planes as u64 * h64 * 2 * w64.div_ceil(128),
+        _ => 0,
+    };
+    if total.saturating_sub(tell(r)?) < least {
+        return Ok(None);
+    }
+    let mut out = vec![0u8; w * h * 4];
+    out.par_chunks_mut(1 << 16).for_each(|chunk| {
+        for px in chunk.as_chunks_mut::<4>().0 {
+            px[3] = 255
+        }
+    });
     match compression {
         0 => {
-            let need = (w * h * planes) as u64;
-            if total.saturating_sub(tell(r)?) < need {
-                return Ok(None);
-            }
             let mut row = vec![0u8; w];
             for c in 0..planes {
                 for y in 0..h {
@@ -1417,22 +1513,44 @@ fn read_merged<R: Read + Seek>(
             left -= table_len;
             let mut table = vec![0u8; table_len as usize];
             r.read_exact(&mut table)?;
+            // 面（チャンネル）ごとに、残りの長さに入る行までをまとめて読み、行ごとに並べて展開する（行は互いに独立）。行ごとに読んで
+            // 展開するのと同じ結果: どこかで展開できない・長さが入らなければ None、読み込みの失敗は、その前の行が全部展開できたときだけ誤り
             let mut data = Vec::new();
+            let mut ends: Vec<usize> = Vec::with_capacity(h);
             for c in 0..planes {
                 cancelled(cancel)?;
+                ends.clear();
+                let mut fits = true;
                 for y in 0..h {
                     let i = (c * h + y) * 2;
                     let n = usize::from(u16::from_be_bytes([table[i], table[i + 1]]));
                     if n as u64 > left {
-                        return Ok(None);
+                        fits = false;
+                        break;
                     }
                     left -= n as u64;
-                    data.resize(n, 0);
-                    r.read_exact(&mut data)?;
-                    let mut line = Reader::lenient(&data);
-                    if unpack_row(&mut line, w, &mut out, y * w * 4 + c).is_err() {
-                        return Ok(None);
-                    }
+                    ends.push(ends.last().copied().unwrap_or(0) + n);
+                }
+                data.resize(ends.last().copied().unwrap_or(0), 0);
+                let (filled, failed) = read_up_to(r, &mut data);
+                let complete = ends.partition_point(|&end| end <= filled);
+                let unpacked =
+                    out.par_chunks_mut(w * 4)
+                        .take(complete)
+                        .enumerate()
+                        .all(|(y, row)| {
+                            let start = if y == 0 { 0 } else { ends[y - 1] };
+                            unpack_row(&mut Reader::lenient(&data[start..ends[y]]), w, row, c)
+                                .is_ok()
+                        });
+                if !unpacked {
+                    return Ok(None);
+                }
+                if let Some(e) = failed {
+                    return Err(e.into());
+                }
+                if !fits {
+                    return Ok(None);
                 }
             }
         }

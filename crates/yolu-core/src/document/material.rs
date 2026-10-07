@@ -18,22 +18,25 @@ impl Document {
     pub fn id_colors(&self) -> &crate::mesh_maps::IdColorAssignments {
         &self.id_colors
     }
-    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする。
+    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする（`coalesce` なら、間に何も無い手動 ID 色の変更へまとめる。色のウィンドウのドラッグ。
+    /// まとめは `end_coalescing` まで。戻すと最初の変更の前へ）。同じ値なら何もしない。
     pub fn set_id_colors(
         &mut self,
         colors: crate::mesh_maps::IdColorAssignments,
+        coalesce: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if self.id_colors.binding == colors.binding && self.id_colors.colors == colors.colors {
             return Ok(());
         }
         let cost = 128 + 16 * (self.id_colors.colors.len() + colors.colors.len()) as u64;
-        self.execute(
+        self.record(
             Command::IdColors {
                 old: self.id_colors.clone(),
                 new: colors,
             },
             cost,
+            coalesce.then_some(CoalesceKey::IdColors),
         )
     }
     /// 読み込み直後に手動 ID 色を復元する。履歴・リビジョンを増やさない。
@@ -48,6 +51,53 @@ impl Document {
         self.id_colors = colors;
         Ok(())
     }
+    /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。テクスチャセットごと）。画素ではなく文書の状態で、Document 自身は
+    /// 保存しない: `.ylp` へは呼び手（yolu-io の正本の版 33）がこの値を書き出し、読み込み直後に [`Document::restore_bake_priority`] で戻す。
+    pub fn bake_priority(&self) -> &crate::mesh_maps::MeshOverlapPriority {
+        &self.bake_priority
+    }
+    /// ベイクの優先の変更。画素を変えず、1 回の Undo にする。範囲の外の値は断る。
+    pub fn set_bake_priority(
+        &mut self,
+        priority: crate::mesh_maps::MeshOverlapPriority,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        priority
+            .validate()
+            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+        if self.bake_priority == priority {
+            return Ok(());
+        }
+        let cost = 192
+            + 16 * (self.bake_priority.skipped().len()
+                + self.bake_priority.preferred().len()
+                + priority.skipped().len()
+                + priority.preferred().len()) as u64;
+        self.execute(
+            Command::BakePriority {
+                old: self.bake_priority.clone(),
+                new: priority,
+            },
+            cost,
+        )
+    }
+    /// 読み込み直後にベイクの優先を戻す。履歴・リビジョンを増やさない。
+    pub fn restore_bake_priority(
+        &mut self,
+        priority: crate::mesh_maps::MeshOverlapPriority,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        if !self.undo.is_empty() || !self.redo.is_empty() {
+            return Err(CoreError::Unsupported(
+                "ベイクの優先の復元は読み込み直後だけ",
+            ));
+        }
+        priority
+            .validate()
+            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+        self.bake_priority = priority;
+        Ok(())
+    }
     pub fn begin_material_stroke(
         &mut self,
         layer: LayerId,
@@ -59,7 +109,7 @@ impl Document {
     /// 同じ入力を全チャンネルへ与える。覆い（画素ごとの被覆率）はチャンネルごとに持ち、巻き戻しの確保量は全チャンネルの実際の
     /// 合計を予算に数える。C# は覆いを全チャンネルで 1 枚共有するので、同じ入力でも確保量が多く、予算で断る側にずれる: 元が空の
     /// タイルを 6 チャンネルで塗ると 6 倍（既定の予算 64 MiB・タイル 128² で 1 回のストロークが通るタイルは 170 枚、C# は 1023 枚）、
-    /// 全チャンネルに画素のあるタイルなら約 1.7 倍（85 枚と 146 枚）。1 チャンネルは C# と同じ。数は tests/material_golden.rs が
+    /// 全チャンネルに画素のあるタイルなら約 1.7 倍（85 枚と 146 枚）。1 チャンネルは C# と同じ。数は tests/reference/material_golden.rs が
     /// C# の測った値と照らして固定している。
     ///
     /// 画像・すべてのロックと、消すときの透明部分のロックで断る。何も変えない（無効のチャンネルを有効にするのも、断るより後）。
@@ -297,7 +347,7 @@ impl Document {
         }
         for (c, had) in std::mem::take(&mut self.material.enabled).into_iter().rev() {
             self.switch_channel_enabled(layer, c, true, had, true)
-                .expect("進行中の層");
+                .expect("進行中のレイヤー");
         }
         self.material.started = false;
         self.revision += 1;

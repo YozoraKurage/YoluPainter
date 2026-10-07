@@ -23,6 +23,8 @@ use yolu_core::skin::{
     RigMesh, Skin,
 };
 
+use crate::takes::Takes;
+
 /// 読み込みの上限。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelLimits {
@@ -61,6 +63,10 @@ pub enum ModelError {
     Rig(RigError),
     /// 読み込みの途中で取り消した（途中の物は捨てた）。
     Cancelled,
+    /// テイクを求めるために読み直したファイルが、読んだときと違う形（ノードの名前の並び・BlendShape のチャンネル）。
+    Changed,
+    /// テイクがファイルに無い。
+    NoTake,
 }
 
 impl std::fmt::Display for ModelError {
@@ -77,6 +83,8 @@ impl std::fmt::Display for ModelError {
             ModelError::NoMesh => f.write_str("三角形のメッシュがありません"),
             ModelError::Rig(e) => e.fmt(f),
             ModelError::Cancelled => f.write_str("取り消しました"),
+            ModelError::Changed => f.write_str("ファイルが読み込んだときと変わっています"),
+            ModelError::NoTake => f.write_str("テイクがファイルにありません"),
         }
     }
 }
@@ -106,6 +114,9 @@ pub struct LoadReport {
     pub convert_ms: f64,
     /// 骨のワールドを 親 × ローカル で求め直したときの、ufbx の node_to_world との差の最大（メートル。行列の成分の差）。
     pub max_transform_error: f64,
+    /// ファイルの単位（1 単位が何メートルか。FBX の UnitScaleFactor ÷ 100）。読んだ形は単位によらずメートルに直してある。
+    /// Unity の取り込みで `useFileScale` を切ったときの大きさ（ファイルの数をそのまま 1 とする）は、メートル ÷ この値。
+    pub file_unit_meters: f64,
 }
 
 /// 読んだモデル。
@@ -113,6 +124,8 @@ pub struct LoadReport {
 pub struct LoadedModel {
     pub rig: Rig,
     pub report: LoadReport,
+    /// テイク（アニメのスタック）の一覧と、テイクからポーズを求めるときの対応（`crate::takes`）。
+    pub takes: Takes,
 }
 
 /// 読み込みを途中で止める旗と、進み具合の知らせ。どちらも読み込みを走らせているスレッドの中で見る・呼ぶ。
@@ -129,17 +142,17 @@ pub struct LoadControl<'a> {
 }
 
 /// 進み具合の段の境（読み込み・解析・変換）。
-const READ_END: f32 = 0.05;
-const PARSE_END: f32 = 0.60;
+pub(crate) const READ_END: f32 = 0.05;
+pub(crate) const PARSE_END: f32 = 0.60;
 
 /// 区切りで旗を見て、進み具合を知らせる。
-struct Gate<'a> {
+pub(crate) struct Gate<'a> {
     control: LoadControl<'a>,
     last: Cell<f32>,
 }
 
 impl<'a> Gate<'a> {
-    fn new(control: LoadControl<'a>) -> Self {
+    pub(crate) fn new(control: LoadControl<'a>) -> Self {
         Gate {
             control,
             last: Cell::new(-1.0),
@@ -152,7 +165,7 @@ impl<'a> Gate<'a> {
             .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
-    fn check(&self) -> Result<(), ModelError> {
+    pub(crate) fn check(&self) -> Result<(), ModelError> {
         if self.cancelled() {
             Err(ModelError::Cancelled)
         } else {
@@ -161,7 +174,7 @@ impl<'a> Gate<'a> {
     }
 
     /// 進み具合を知らせる（前より 0.2% 以上進んだときと、初めと終わり。戻らない）。
-    fn report(&self, fraction: f32) {
+    pub(crate) fn report(&self, fraction: f32) {
         let Some(progress) = self.control.progress else {
             return;
         };
@@ -188,6 +201,20 @@ pub fn load_fbx_with(
     let gate = Gate::new(control);
     gate.check()?;
     gate.report(0.0);
+    let data = read_file(path, limits, &gate)?;
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "モデル".into());
+    load_with_gate(&data, &name, limits, &gate)
+}
+
+/// ファイルを読む（上限を超えたら断る。8 MiB ごとに旗を見て、進み具合を `READ_END` まで知らせる）。
+pub(crate) fn read_file(
+    path: &std::path::Path,
+    limits: &ModelLimits,
+    gate: &Gate<'_>,
+) -> Result<Vec<u8>, ModelError> {
     let mut file = std::fs::File::open(path).map_err(|e| ModelError::Io(e.to_string()))?;
     let bytes = file
         .metadata()
@@ -221,11 +248,7 @@ pub fn load_fbx_with(
             break;
         }
     }
-    let name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "モデル".into());
-    load_with_gate(&data, &name, limits, &gate)
+    Ok(data)
 }
 
 /// バイト列から読む。
@@ -256,13 +279,41 @@ fn load_with_gate(
     limits: &ModelLimits,
     gate: &Gate<'_>,
 ) -> Result<LoadedModel, ModelError> {
+    let clock = Instant::now();
+    let scene = parse(data, limits, Reading::Model, gate)?;
+    let parse_ms = clock.elapsed().as_secs_f64() * 1000.0;
+    gate.check()?;
+    gate.report(PARSE_END);
+    let clock = Instant::now();
+    let mut model = convert(&scene, name, limits, gate)?;
+    model.report.parse_ms = parse_ms;
+    model.report.convert_ms = clock.elapsed().as_secs_f64() * 1000.0;
+    gate.report(1.0);
+    Ok(model)
+}
+
+/// 何を読むか。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// 形・スキン・BlendShape（アニメの曲線は読まない。`load_options`）。
+    Model,
+    /// アニメの曲線とノード・BlendShape のチャンネル（形は読まない。テイクの評価）。
+    Animation,
+}
+
+/// ufbx で解析する（上限を超えたバイト列は断る。解析の進み具合を `READ_END`〜`PARSE_END` で知らせ、旗が立ったら止める）。
+pub(crate) fn parse(
+    data: &[u8],
+    limits: &ModelLimits,
+    reading: Reading,
+    gate: &Gate<'_>,
+) -> Result<ufbx::SceneRoot, ModelError> {
     if data.len() as u64 > limits.max_file_bytes {
         return Err(ModelError::FileTooLarge {
             bytes: data.len() as u64,
             limit: limits.max_file_bytes,
         });
     }
-    let clock = Instant::now();
     // ufbx の呼び返しは C の関数の中から呼ばれるので、中で起きた panic は外へ出さずに取っておき、解析が戻ってから投げ直す
     let panicked: RefCell<Option<Box<dyn std::any::Any + Send>>> = RefCell::new(None);
     let mut on_progress = |p: &ufbx::Progress| -> ufbx::ProgressResult {
@@ -280,27 +331,23 @@ fn load_with_gate(
         })
     };
     let mut options = load_options(limits);
+    if reading == Reading::Animation {
+        options.ignore_animation = false;
+        options.ignore_geometry = true;
+    }
     options.progress_cb = ufbx::ProgressCb::Mut(&mut on_progress);
     let loaded = ufbx::load_memory(data, options);
     if let Some(payload) = panicked.take() {
         resume_unwind(payload);
     }
-    let scene = loaded.map_err(|e| match e.type_ {
+    loaded.map_err(|e| match e.type_ {
         ufbx::ErrorType::Cancelled => ModelError::Cancelled,
         _ => ModelError::Parse(format!("{:?}: {}", e.type_, &*e.description)),
-    })?;
-    let parse_ms = clock.elapsed().as_secs_f64() * 1000.0;
-    gate.check()?;
-    gate.report(PARSE_END);
-    let clock = Instant::now();
-    let mut model = convert(&scene, name, limits, gate)?;
-    model.report.parse_ms = parse_ms;
-    model.report.convert_ms = clock.elapsed().as_secs_f64() * 1000.0;
-    gate.report(1.0);
-    Ok(model)
+    })
 }
 
-/// ufbx の読み込みの設定（Unity の FBX の読み込みに合わせる。アニメーション・埋め込みの画像・外のファイルは読まない）。
+/// ufbx の読み込みの設定（Unity の FBX の読み込みに合わせる。アニメーションの曲線・埋め込みの画像・外のファイルは読まない。
+/// アニメのスタックの名前・長さと、どの要素の値を動かすかは、曲線を読まなくても読める）。
 pub(crate) fn load_options<'a>(limits: &ModelLimits) -> ufbx::LoadOpts<'a> {
     let memory = |limit: usize| ufbx::AllocatorOpts {
         memory_limit: limit,
@@ -376,7 +423,7 @@ pub(crate) fn mirror_transform(t: &ufbx::Transform) -> BoneTransform {
 type VertexKey = (u32, [u64; 3], [u64; 2]);
 
 /// ノードを根から深さ優先（親が先・子はファイルの順）に並べる。
-fn node_order(scene: &ufbx::Scene) -> Vec<&ufbx::Node> {
+pub(crate) fn node_order(scene: &ufbx::Scene) -> Vec<&ufbx::Node> {
     let mut out = Vec::with_capacity(scene.nodes.count);
     let mut stack: Vec<&ufbx::Node> = vec![&scene.root_node];
     while let Some(n) = stack.pop() {
@@ -398,7 +445,10 @@ fn convert(
     gate: &Gate<'_>,
 ) -> Result<LoadedModel, ModelError> {
     let budget = &limits.rig;
-    let mut report = LoadReport::default();
+    let mut report = LoadReport {
+        file_unit_meters: scene.settings.original_unit_meters,
+        ..LoadReport::default()
+    };
     let too_large = |what, value: usize, limit: usize| {
         ModelError::Rig(RigError::TooLarge { what, value, limit })
     };
@@ -460,6 +510,8 @@ fn convert(
 
     let mut meshes = Vec::new();
     let mut rest_weights = Vec::new();
+    // メッシュごと・BlendShape ごとの ufbx のチャンネルの番号（テイクの重みを求めるとき、読み直したシーンで引く）
+    let mut channels: Vec<Vec<u32>> = Vec::new();
     // ウェイトと BlendShape の差分は、インスタンスを含む全体の和で数える（メッシュごとに数え直すと、同じメッシュを多数のノードで
     // 参照するファイルが、メッシュごとの上限をインスタンスの数だけ使い切ってから `Rig::new` で断られる）
     let mut influences_total: usize = 0;
@@ -693,9 +745,9 @@ fn convert(
                     }
                 }
                 if joint_of_cluster.iter().any(|j| j.is_none()) {
-                    report
-                        .warnings
-                        .push(format!("{label}: ボーンの無いクラスターのウェイトを捨てました"));
+                    report.warnings.push(format!(
+                        "{label}: ボーンの無いクラスターのウェイトを捨てました"
+                    ));
                 }
                 let fallback = joints.len() as u32;
                 joints.push(Joint {
@@ -748,6 +800,7 @@ fn convert(
         let linear = DMat3::from_mat4(g);
         let mut shapes = Vec::new();
         let mut weights = Vec::new();
+        let mut shape_channels = Vec::new();
         for bd in mesh.blend_deformers.iter() {
             for ch in bd.channels.iter() {
                 let mut frames: Vec<BlendFrame> = Vec::new();
@@ -819,6 +872,7 @@ fn convert(
                     frames,
                 });
                 weights.push((ch.weight * 100.0) as f32);
+                shape_channels.push(ch.element.typed_id);
             }
         }
         report.blend_shapes += shapes.len();
@@ -832,8 +886,10 @@ fn convert(
             },
             skin,
             blend_shapes: shapes,
+            node: Some(node_bone),
         });
         rest_weights.push(weights);
+        channels.push(shape_channels);
         if meshes.len() > budget.max_meshes {
             return Err(too_large("メッシュ", meshes.len(), budget.max_meshes));
         }
@@ -864,5 +920,6 @@ fn convert(
     report.triangles = rig.triangle_count();
     report.bones = rig.bones().len();
     report.materials = rig.materials().len();
-    Ok(LoadedModel { rig, report })
+    let takes = crate::takes::list(scene, &order, channels);
+    Ok(LoadedModel { rig, report, takes })
 }

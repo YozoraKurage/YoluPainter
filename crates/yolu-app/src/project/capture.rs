@@ -5,6 +5,9 @@
 //! - 組み立て（`build`）は別のスレッドで動かす: セットごとの正本（写しから流して作る）・合成の PNG・選択範囲・見た目・メッシュマップ・
 //!   棚・モデルの参照を、`Project` の置き換えとして重ねる。材料だけを読み、`AppState` には触らない（保存の間も、描く・見るは止まらない）。
 //!
+//! 読むだけで、保存したプロジェクトにも無いセット（ディスクのキャッシュが読めなくなった、保存したことの無いセット）は元の中身が無いので、
+//! そのセットだけ入れず（`Capture::left_out`）、ほかのセットの保存は続ける。
+//!
 //! 画面のスレッドで同期に保存していた並びと同じで、書く .ylp のバイトは変わらない。
 
 use std::path::PathBuf;
@@ -41,6 +44,8 @@ pub(crate) struct SetCapture {
 /// 組み立ての材料。
 pub(crate) struct Capture {
     pub sets: Vec<SetCapture>,
+    /// 保存に入れなかったセットの名前（保存したことが無く、読めなくなったセット。元の中身が無いので書けない）。
+    pub left_out: Vec<String>,
     pub current: String,
     pub base: Option<Arc<Project>>,
     /// 開いたあとに文書を別の物に替えたセット（古い PSD の原本を持ち越さない）。
@@ -53,6 +58,8 @@ pub(crate) struct Capture {
     /// プロジェクトのモデルのポーズ（`pose.json` へ書く材料）と、保存できなかった項目（骨・BlendShape の名前）。
     pub pose: crate::view3d::pose::stored::PoseCapture,
     pub pose_unsaved: Vec<String>,
+    /// Live Link の相手の文書（`livelink.json` へ書く材料）。
+    pub livelink: crate::livelink::store::Stored,
     /// モデルの相対のパスの基準にする .ylp の場所。
     pub anchor: PathBuf,
     /// Unity から受けた値を書くか（設定。切っていれば外す）。
@@ -64,12 +71,11 @@ pub(crate) struct Capture {
 pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, String> {
     let lang = state.lang;
     if state.is_stroking() {
-        return Err(lang
-            .pick("描いている間は保存しません", "Cannot save during a stroke")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     let base = state.project.as_ref().map(|p| p.project_shared());
     let mut sets = Vec::with_capacity(state.sets.len());
+    let mut left_out = Vec::new();
     let mut maps = Vec::new();
     for (i, set) in state.sets.iter().enumerate() {
         let doc = state.set_doc(i);
@@ -78,10 +84,10 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
         let read_only = set.read_only.is_some();
         if read_only && !in_base {
-            return Err(lang.pick(
-                format!("読むだけのセット「{}」の元の文書がありません", set.name),
-                format!("Original document missing for read-only set “{}”", set.name),
-            ));
+            // 読むだけで、保存したプロジェクトにも無いセットは、書く元の中身が無い。ほかのセットの保存まで断らず、このセットだけ入れない
+            // （焼いたメッシュマップも入れない。保存済みの印も付かないので、次の保存でもまた除いて知らせる）
+            left_out.push(set.name.clone());
+            continue;
         }
         let unchanged = set.saved == Some((doc.id(), doc.revision()));
         let rewrite = !(in_base && (read_only || unchanged));
@@ -89,13 +95,12 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             None
         } else {
             let what = |e: &yolu_core::CoreError| {
-                format!(
-                    "{}: {}",
+                lang.with_reason(
                     lang.pick(
                         format!("セット「{}」の文書の写しを取れません", set.name),
-                        format!("Cannot copy texture set “{}”", set.name)
+                        format!("Cannot copy texture set “{}”", set.name),
                     ),
-                    lang.core_error(e)
+                    lang.core_error(e),
                 )
             };
             Some(Arc::new(doc.capture_snapshot().map_err(|e| what(&e))?))
@@ -113,7 +118,22 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             mark: (doc.id(), doc.revision()),
         });
     }
-    let (pose, pose_unsaved) = crate::view3d::pose::stored::capture(state);
+    // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする。残るセットが無ければ書くものが無いので断る
+    let current = state.sets.current().id.clone();
+    let current = match sets.iter().find(|s| s.id == current).or(sets.first()) {
+        Some(set) => set.id.clone(),
+        None => {
+            let quoted = quoted_names(lang, &left_out);
+            let have = if left_out.len() == 1 { "has" } else { "have" };
+            return Err(lang.pick(
+                format!("{quoted}は保存したことが無く、読めません"),
+                format!("{quoted} cannot be read and {have} never been saved"),
+            ));
+        }
+    };
+    let (pose, mut pose_unsaved) = crate::view3d::pose::stored::capture(state);
+    let (livelink, link_unsaved) = crate::livelink::store::capture(state);
+    pose_unsaved.extend(link_unsaved);
     let replaced = super::replaced_sets(
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
@@ -126,7 +146,8 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
     );
     Ok(Capture {
         sets,
-        current: state.sets.current().id.clone(),
+        left_out,
+        current,
         base,
         replaced,
         shelf: (state.shelf.changed && state.shelf.unavailable.is_none())
@@ -135,10 +156,35 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         model: state.np.model_file.clone(),
         pose,
         pose_unsaved,
+        livelink,
         anchor,
         keep_received: state.prefs.settings.livelink_keep_values,
         lang,
     })
+}
+
+/// セットの名前を、言語ごとの引用の形に並べる（日本語は「A」「B」、英語は "A", "B"）。
+pub(crate) fn quoted_names(lang: Lang, names: &[String]) -> String {
+    lang.pick(
+        names.iter().map(|n| format!("「{n}」")).collect::<String>(),
+        names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// 読めないため保存に入れなかったセットの知らせ（1 文。無ければ空）。
+pub(crate) fn left_out_note(lang: Lang, names: &[String]) -> String {
+    if names.is_empty() {
+        return String::new();
+    }
+    let quoted = quoted_names(lang, names);
+    lang.pick(
+        format!("テクスチャセット{quoted}は読めないため、保存に入れていません。"),
+        format!("Texture set {quoted} could not be read and was left out of the save."),
+    )
 }
 
 /// 組み立てが済まなかった理由。
@@ -183,7 +229,9 @@ pub(crate) fn build(
     let io = |e: yolu_io::Error| BuildError::Message(lang.io_error(&e));
     let canceled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     let rewriting: Vec<&SetCapture> = capture.sets.iter().filter(|s| s.rewrite).collect();
-    progress.sets_total.store(rewriting.len(), Ordering::Relaxed);
+    progress
+        .sets_total
+        .store(rewriting.len(), Ordering::Relaxed);
     progress.sets_done.store(0, Ordering::Relaxed);
     // 書き直すセットの正本の元と合成の PNG。セットは互いに独立なので、いくつかを同時に作る（結果は 1 つずつ作るのと同じ並び・
     // 失敗の理由も、並びのいちばん前に失敗したセットのもの）
@@ -218,7 +266,11 @@ pub(crate) fn build(
         .sets
         .iter()
         .filter(|s| s.rewrite)
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size()))))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size())))
+        })
         .collect();
     let resized = capture
         .base
@@ -235,7 +287,8 @@ pub(crate) fn build(
                 base
             };
             // 大きさを変えた文書の、古い大きさの今の選択範囲は外す（新しい文書と合わず、書き直しの検証が断る。今の選択範囲はあとで書く）
-            let fitted = crate::selection::io::without_stale(base, &sizes, lang).map_err(BuildError::Message)?;
+            let fitted = crate::selection::io::without_stale(base, &sizes, lang)
+                .map_err(BuildError::Message)?;
             let base: &Project = &fitted;
             // 開いたあとに消したセット（プロジェクトの構成・テクスチャセットのパネルで確かめて消したもの）は、ファイルからも消す
             let dropped: Vec<&str> = base
@@ -265,9 +318,14 @@ pub(crate) fn build(
     let saved: Vec<(&str, &[yolu_core::SavedSelection])> = capture
         .sets
         .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.saved_selections())))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), d.saved_selections()))
+        })
         .collect();
-    let (written, saved_overwritten) = crate::selection::io::write_saved_into(project, &saved, &resized, lang).map_err(text)?;
+    let (written, saved_overwritten) =
+        crate::selection::io::write_saved_into(project, &saved, &resized, lang).map_err(text)?;
     project = written;
     // 見た目の設定（look.json。正本と別のエントリ。違うセットだけ書き換える）。Unity から受けた値は、設定が入のときだけ書く
     let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
@@ -275,14 +333,18 @@ pub(crate) fn build(
         .iter()
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
         .collect();
-    let (written, looks_overwritten) = crate::look::io::write_into(project, &looks, lang).map_err(text)?;
+    let (written, looks_overwritten) =
+        crate::look::io::write_into(project, &looks, lang).map_err(text)?;
     project = written;
     let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
         .sets
         .iter()
         .filter_map(|s| {
             s.snapshot.as_ref().map(|d| {
-                (s.id.as_str(), d.received_look().filter(|_| capture.keep_received))
+                (
+                    s.id.as_str(),
+                    d.received_look().filter(|_| capture.keep_received),
+                )
             })
         })
         .collect();
@@ -291,13 +353,18 @@ pub(crate) fn build(
     let (written, pose_overwritten) =
         crate::view3d::pose::stored::write_into(project, &capture.pose, lang).map_err(text)?;
     project = written;
+    // Live Link の相手の文書（livelink.json。状態のエントリで、形式は上げない。違うときだけ書く）
+    project = crate::livelink::store::write_into(project, &capture.livelink).map_err(io)?;
     // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
     for (id, name, maps) in &capture.maps {
         for map in maps {
             project = project.with_mesh_map(id, map).map_err(|e| {
-                BuildError::Message(lang.pick(
-                    format!("セット「{name}」のメッシュマップ: {}", lang.io_error(&e)),
-                    format!("Mesh maps of set \"{name}\": {}", lang.io_error(&e)),
+                BuildError::Message(lang.with_reason(
+                    lang.pick(
+                        format!("セット「{name}」のメッシュマップを書けません"),
+                        format!("Cannot write the mesh maps of set \"{name}\""),
+                    ),
+                    lang.io_error(&e),
                 ))
             })?;
         }
@@ -305,10 +372,12 @@ pub(crate) fn build(
     // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
     if let Some(shelf) = &capture.shelf {
         project = project.with_shelf(shelf, writer).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
-                lang.pick("棚を書けません", "Cannot write the shelf"),
-                lang.io_error(&e)
+            BuildError::Message(lang.with_reason(
+                lang.pick(
+                    "プロジェクトのアセットを書けません",
+                    "Cannot write the project's assets",
+                ),
+                lang.io_error(&e),
             ))
         })?;
     }
@@ -334,7 +403,13 @@ pub(crate) fn build(
             }
         }
     }
-    Ok(Built { project, looks_overwritten, saved_overwritten, pose_overwritten, inactive_effects })
+    Ok(Built {
+        project,
+        looks_overwritten,
+        saved_overwritten,
+        pose_overwritten,
+        inactive_effects,
+    })
 }
 
 /// 書き直すセットごとの（正本の元・合成の PNG）。並びはセットの並び。失敗したセットより後ろは作らず `None`（先に断りが見つかる）。
@@ -344,8 +419,10 @@ fn compose_sets(
     canceled: &(dyn Fn() -> bool + Sync),
     progress: &BuildProgress,
 ) -> Vec<Option<Result<Composed, BuildError>>> {
-    let results: Vec<std::sync::Mutex<Option<Result<_, BuildError>>>> =
-        rewriting.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let results: Vec<std::sync::Mutex<Option<Result<_, BuildError>>>> = rewriting
+        .iter()
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
     let next = AtomicUsize::new(0);
     let failed = AtomicUsize::new(usize::MAX);
     let threads = rewriting.len().clamp(1, COMPOSITE_PARALLEL);
@@ -356,25 +433,29 @@ fn compose_sets(
         if canceled() {
             return Err(BuildError::Canceled);
         }
-        let doc = set.snapshot.as_ref().expect("読むだけのセットは作り直さない");
+        let doc = set
+            .snapshot
+            .as_ref()
+            .expect("読むだけのセットは作り直さない");
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
+            BuildError::Message(lang.with_reason(
                 lang.pick(
                     format!("セット「{}」の文書を作れません", set.name),
-                    format!("Cannot convert texture set “{}” to a document", set.name)
+                    format!("Cannot convert texture set “{}” to a document", set.name),
                 ),
-                lang.io_error(&e)
+                lang.io_error(&e),
             ))
         })?;
         let pngs = composite_pngs(doc).map_err(|e| {
-            BuildError::Message(format!(
-                "{}: {}",
+            BuildError::Message(lang.with_reason(
                 lang.pick(
                     format!("セット「{}」の合成の PNG を作れません", set.name),
-                    format!("Cannot build the composite PNG of texture set “{}”", set.name)
+                    format!(
+                        "Cannot build the composite PNG of texture set “{}”",
+                        set.name
+                    ),
                 ),
-                lang.io_error(&e)
+                lang.io_error(&e),
             ))
         })?;
         Ok((native, pngs))

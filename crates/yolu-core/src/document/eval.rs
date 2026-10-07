@@ -1,10 +1,10 @@
-//! 効果の評価と、評価した出力のキャッシュ（C# の `FilterEngine` の文書側: 設定・入力・元画素から、層の出力を合成が読む形で作る）。
+//! 効果の評価と、評価した出力のキャッシュ（C# の `FilterEngine` の文書側: 設定・入力・元画素から、レイヤーの出力を合成が読む形で作る）。
 //!
 //! - 評価は文書に依らない口（[`crate::filter`]・[`crate::generator`]・[`crate::fill_image`]）を呼ぶだけで、式をここに持たない。
 //! - 作業の単位は、タイルの大きさに揃えたブロック（既定 256 画素四方。結果はブロックの大きさによらない）。評価した出力は
 //!   「評価済みの面」（[`Surface`]）のタイルとして合成に渡し、合成の式は元の画素の面を読むときと同じ。
-//! - キャッシュは派生の表示用（保存の正本にしない）。鍵（[`Stamp`]）は、層の効果の設定そのものの写し・元画素のタイルごとの通し番号
-//!   （ぼかしなどの半径の分だけ広げた窓。正規化は全部）・外から渡した入力の版・Anchor を読む段では変化の記録の通し番号。
+//! - キャッシュは派生の表示用（保存の正本にしない）。鍵（[`Stamp`]）は、レイヤーの効果の設定そのものの写し・元画素のタイルごとの通し番号
+//!   （ぼかしなどの半径の分だけ広げたウィンドウ。正規化は全部）・外から渡した入力の版・Anchor を読む段では変化の記録の通し番号。
 //!   鍵が等しければ出力は等しい。予算を超えたら古いブロックから捨てる。
 //! - 評価の途中で取り消したら、完成したブロックだけがキャッシュに残る（途中の画素は公開しない）。
 
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use super::Document;
 use crate::composite::{Entry, Stack};
@@ -27,10 +27,10 @@ use crate::fill_image::{
 use crate::filter::{self, GeneratorInput, ValueType};
 use crate::generator::{self, anchor, BoundGenerator, MapKind, MapState};
 use crate::layer::LayerId;
-use crate::surface::{Surface, Tile};
+use crate::surface::{Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, LayerKind, Rect, Rgba8, TileCoord};
 
-/// 評価の入力の元: 層のチャンネルの画素（内容）か、層のラスターマスク。
+/// 評価の入力の元: レイヤーのチャンネルの画素（内容）か、レイヤーのラスターマスク。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum SourceKey {
     Channel(Channel),
@@ -82,6 +82,9 @@ impl filter::Source for StridedSource<'_> {
 }
 
 /// 粗い評価の Generator: 粗い画素 (x, y) の値は、元の画素 (x·歩幅, y·歩幅) での値。
+/// 行の評価（`sample_row`）は置き換えず、1 画素ずつ読む: 粗い行の画素は元の行で歩幅ごとに離れていて、元の行を続けて作ってから拾うと
+/// 歩幅の倍の画素を作る（4096²・1 スレッドの `generator_stage_bench` で、歩幅 4 は 3 段のレイヤーで 1 画素ずつと同じ程度・ランプの段で 1.4〜2.5 倍、
+/// 歩幅 8・16 は 1.6〜6.2 倍遅かった）。
 struct ScaledGenerators<'e> {
     inner: &'e dyn GeneratorInput,
     stride: u32,
@@ -98,6 +101,19 @@ impl GeneratorInput for ScaledGenerators<'_> {
     }
 }
 
+/// 束縛した Generator に、アイランドごとのばらつきのアイランドの図を渡す（`islands` が None は、アイランドの図を読む段が無い。モデルが無ければ
+/// 段はアイランドの図を待ったまま、予算で断られたら断られたことにする）。ほかの種類の段は何もしない。
+fn with_islands<'a>(
+    b: BoundGenerator<'a>,
+    islands: Option<&Result<Arc<crate::geometry::IslandMap>, generator::Inactive>>,
+) -> BoundGenerator<'a> {
+    match islands {
+        Some(Ok(map)) => b.with_islands(map.clone()),
+        Some(Err(generator::Inactive::IslandMap)) => b.islands_refused(),
+        _ => b,
+    }
+}
+
 /// 粗い評価の段: ぼかし・シャープの半径を歩幅で割る（丸めて 0 になる段は外す。半径が歩幅の半分に満たないぼかしは、粗い絵では見えない）。
 /// ほかの段は点ごとの処理かノイズ・正規化なので、そのまま。
 fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
@@ -107,11 +123,19 @@ fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
         .map(|stage| {
             let mut stage = stage.clone();
             let keep = match &mut stage.settings {
-                filter::Settings::GaussianBlur { radius } | filter::Settings::Sharpen { radius, .. } => {
+                filter::Settings::GaussianBlur { radius }
+                | filter::Settings::Sharpen { radius, .. } => {
                     let r = reduce(*radius);
                     *radius = r.max(1);
                     r > 0
                 }
+                s if s.is_spatial() => match s.coarse(stride) {
+                    Some(c) => {
+                        *s = c;
+                        true
+                    }
+                    None => false,
+                },
                 _ => true,
             };
             stage.enabled &= keep;
@@ -120,24 +144,48 @@ fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
         .collect()
 }
 
+/// 評価の仕様の段を、作業メモリの見積りに使うフィルターの段の並びへ（強さと有効は仕様のまま）。
+pub(super) fn spec_stages(spec: &Spec) -> Vec<filter::Stage> {
+    spec.config
+        .chain
+        .iter()
+        .map(|e| filter::Stage {
+            settings: match &e.settings {
+                EffectSettings::Filter(f) => f.clone(),
+                EffectSettings::Generator(g) => filter::Settings::Generator {
+                    slot: 0,
+                    blend: super::effects::generator_blend(g.blend),
+                },
+            },
+            enabled: true,
+            strength: e.strength,
+        })
+        .collect()
+}
+
 /// 評価の状態（文書の一部。保存も Undo もしない）。
 pub(crate) struct EffectState {
     pub inputs: EffectInputs,
+    /// マップ・モデルのルート・画像（位相以外の入力）が替わるたびに増える（それを読む段の評価の鍵）。
     pub inputs_revision: u64,
+    /// モデルの UV の位相が別の物に替わるたびに増える（継ぎ目をまたぐ段の評価の鍵。マップや画像の差し替えでは増えない）。
+    pub topology_revision: u64,
     /// 読み込み・直接の書き込みのたびに増える（キャッシュを全部無効にする）。
     pub generation: u64,
     /// 元画素の変化の時計（タイルが変わるたびに進む）。
     pub clock: u64,
-    /// 層の元画素のタイルごとの、最後に変わったときの時計。
+    /// レイヤーの元画素のタイルごとの、最後に変わったときの時計。
     pub source: HashMap<(LayerId, SourceKey), HashMap<TileCoord, u64>>,
-    /// マスクの Anchor を持つ層ごとに、マスクが最後に変わった変化の記録の通し番号。
+    /// マスクの Anchor を持つレイヤーごとに、マスクが最後に変わった変化の記録の通し番号。
     pub mask_serials: HashMap<LayerId, u64>,
-    /// Anchor を読む段の解決の署名（変わったら、読む層を全部変わったことにする）。
+    /// Anchor を読む段の解決の署名（変わったら、読むレイヤーを全部変わったことにする）。
     pub anchor_signature: Vec<AnchorSig>,
     pub cache: Mutex<EvalCache>,
     pub working_budget: u64,
     pub cache_budget: u64,
     pub image_cache_budget: u64,
+    /// モデルの UV の位相が覚えるアイランドの図・帯の写しと、それを作る間の作業メモリの予算（`uv_seams`）。
+    pub seam_budget: u64,
     pub block_pixels: u32,
 }
 
@@ -155,6 +203,7 @@ impl Default for EffectState {
         EffectState {
             inputs: EffectInputs::default(),
             inputs_revision: 1,
+            topology_revision: 1,
             generation: 1,
             clock: 0,
             source: HashMap::new(),
@@ -164,6 +213,7 @@ impl Default for EffectState {
             working_budget: 256 * 1024 * 1024,
             cache_budget: 256 * 1024 * 1024,
             image_cache_budget: 256 * 1024 * 1024,
+            seam_budget: crate::geometry::DEFAULT_BUDGET,
             block_pixels: 256,
         }
     }
@@ -178,6 +228,8 @@ pub struct EffectCounters {
     pub anchor_tiles_composited: u64,
     /// 作ったミップマップの数。
     pub mip_chains_built: u64,
+    /// ほかの文書（テクスチャセット）が作って持っているミップマップを、作らずに使った数。
+    pub mip_chains_shared: u64,
     /// 正規化の統計を求めた回数。
     pub statistics_computed: u64,
     /// 持っている評価済みのタイルのバイト数。
@@ -186,12 +238,45 @@ pub struct EffectCounters {
     pub image_cache_bytes: u64,
 }
 
+/// 画像のミップマップの鍵（中身のハッシュ・色の変換・輝度）。
+type ChainKey = (String, u8, bool);
+
+/// チャンネルの種類で決まる画像の読み方（変換と輝度）と、その鍵。
+fn chain_key(
+    image: &crate::effects::ImageInput,
+    color: bool,
+    luminance: bool,
+) -> (ChainKey, Conversion, bool) {
+    let conversion = if color && image.color_space == crate::brush::ImageColorSpace::Linear {
+        Conversion::LinearToSrgb
+    } else {
+        Conversion::None
+    };
+    (
+        (image.hash.clone(), conversion as u8, luminance),
+        conversion,
+        luminance,
+    )
+}
+
+/// 文書（テクスチャセット）のあいだで共有する画像のミップマップ。持ち主は各文書のキャッシュ（予算もそれぞれの文書で数える）で、
+/// ここは弱い参照だけ: どの文書も持たなくなったミップマップは消え、同じ中身の画像を読む次の文書は作り直す。
+fn shared_chains() -> MutexGuard<'static, HashMap<ChainKey, std::sync::Weak<ImageMipChain<'static>>>>
+{
+    static SHARED: OnceLock<Mutex<HashMap<ChainKey, std::sync::Weak<ImageMipChain<'static>>>>> =
+        OnceLock::new();
+    SHARED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Default)]
 pub(crate) struct EvalCache {
     blocks: HashMap<BlockKey, BlockEntry>,
     stats: HashMap<(LayerId, SourceKey), StatsEntry>,
     anchors: HashMap<(LayerId, Channel, TileCoord), AnchorEntry>,
-    chains: HashMap<(String, u8, bool), ChainEntry>,
+    chains: HashMap<ChainKey, ChainEntry>,
     bytes: u64,
     anchor_bytes: u64,
     chain_bytes: u64,
@@ -236,6 +321,8 @@ struct Stamp {
     generation: u64,
     source: u64,
     inputs: u64,
+    /// 継ぎ目をまたぐ段・アイランドごとのばらつきの段が読むモデルの UV の位相の世代（どちらも無ければ 0）。
+    topology: u64,
     anchors: u64,
 }
 
@@ -248,6 +335,8 @@ struct Config {
     fill: Option<FillConfig>,
     /// 段ごとの Anchor の解決（Anchor の Generator でない段は None）。
     anchors: Vec<Option<AnchorStage>>,
+    /// UV の継ぎ目をまたぐ帯の幅（0 はまたがない。`uv_seams`）。
+    seam_band: u32,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -255,7 +344,12 @@ struct FillConfig {
     value: Rgba8,
     kind: ChannelKind,
     image: Option<ImageId>,
+    /// 画像を異方性のフィルターで読むか。
+    anisotropic: bool,
+    /// デカールの形（別チャンネルの画像）を異方性のフィルターで読むか（その画像のチャンネルの設定）。
+    shape_anisotropic: bool,
     gradient: Option<generator::Settings>,
+    points: Option<crate::fill_points::PointGradient>,
     projection: Projection,
     /// デカールの形に使う別チャンネルの画像（チャンネルの順で最初の画像のチャンネル。自分なら None）。
     shape: Option<(Channel, ImageId)>,
@@ -276,8 +370,8 @@ struct AnchorRef {
     read: anchor::ReadMode,
 }
 
-/// 層・チャンネル（またはマスク）の評価の指定。
-struct Spec {
+/// レイヤー・チャンネル（またはマスク）の評価の指定。
+pub(super) struct Spec {
     layer: usize,
     id: LayerId,
     key: SourceKey,
@@ -286,9 +380,13 @@ struct Spec {
     global: bool,
     reads_inputs: bool,
     reads_anchor: bool,
+    /// UV の継ぎ目をまたぐ帯の幅と近傍の段の数（帯の幅 0 はまたがない。`uv_seams`）。
+    pub(super) seam: (u32, usize),
+    /// アイランドごとのばらつきの段がある（モデルの UV アイランドの図を読む）。
+    reads_islands: bool,
 }
 
-/// 合成が読む評価済みの面（層の番号から）。内容とマスクは別。
+/// 合成が読む評価済みの面（レイヤーの番号から）。内容とマスクは別。
 #[derive(Default)]
 pub(crate) struct EvalSet {
     pub content: HashMap<usize, Surface>,
@@ -298,7 +396,7 @@ pub(crate) struct EvalSet {
 }
 
 impl EvalSet {
-    /// 層 `from` の出力だけを、番号 `to` で持つ写し（面のタイルは共有する）。
+    /// レイヤー `from` の出力だけを、番号 `to` で持つ写し（面のタイルは共有する）。
     pub(crate) fn only(&self, from: usize, to: usize) -> EvalSet {
         let pick = |m: &HashMap<usize, Surface>| m.get(&from).map(|s| (to, s.clone()));
         EvalSet {
@@ -344,12 +442,19 @@ pub(super) fn cancelled(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
     }
 }
 
-/// 評価の途中の読み元: タイルの面（層の画素・マスク）。
+/// 評価の途中の読み元: タイルの面（レイヤーの画素・マスク）。ディスクから読めないタイルは誤りを覚えて 0 を返す（評価の後に
+/// `with_env` が誤りを返すので、その出力は使わない）。
 struct SurfaceSource<'a> {
     surface: Option<&'a Surface>,
     width: u32,
     height: u32,
-    tile_size: u32,
+    failed: OnceLock<CoreError>,
+}
+
+impl SurfaceSource<'_> {
+    fn latch(&self, e: CoreError) {
+        let _ = self.failed.set(e);
+    }
 }
 
 impl filter::Source for SurfaceSource<'_> {
@@ -357,45 +462,37 @@ impl filter::Source for SurfaceSource<'_> {
         (self.width, self.height)
     }
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
-        self.surface
-            .and_then(|s| s.pixel(x, y).ok())
-            .map_or([0; 4], Rgba8::to_array)
+        match self.surface.map(|s| s.pixel(x, y)) {
+            None | Some(Err(CoreError::InvalidArgument(_))) => [0; 4],
+            Some(Ok(p)) => p.to_array(),
+            Some(Err(e)) => {
+                self.latch(e);
+                [0; 4]
+            }
+        }
     }
     fn read_row(&self, x: u32, y: u32, out: &mut [u8]) {
         let Some(surface) = self.surface else {
             out.fill(0);
             return;
         };
-        let ts = self.tile_size;
-        let n = out.len() / 4;
-        let mut i = 0usize;
-        while i < n {
-            let px = x + i as u32;
-            let run = ((ts - px % ts) as usize).min(n - i);
-            let dst = &mut out[i * 4..(i + run) * 4];
-            match surface.tile(TileCoord::new(px / ts, y / ts)) {
-                None => dst.fill(0),
-                Some(Tile::Uniform(c)) => {
-                    for p in dst.chunks_exact_mut(4) {
-                        p.copy_from_slice(&c.to_array());
-                    }
-                }
-                Some(Tile::Data(d)) => {
-                    let at = (((y % ts) * ts + px % ts) * 4) as usize;
-                    dst.copy_from_slice(&d[at..at + run * 4]);
-                }
-            }
-            i += run;
+        if let Err(e) = surface.read_row(x, y, out) {
+            out.fill(0);
+            self.latch(e);
         }
     }
 }
 
-/// 塗りつぶしの層のチャンネルの画素（値・グラデーション・投影した画像）。
+/// 塗りつぶしレイヤーのチャンネルの画素（値・グラデーション・投影した画像）。
 struct FillSource<'a> {
     value: Rgba8,
     width: u32,
     height: u32,
     gradient: Option<BoundGenerator<'a>>,
+    /// 点のグラデーション（使えない入力なら None で、値を見せる）。
+    points: Option<crate::fill_points::BoundPoints<'a>>,
+    /// 点のグラデーションを持つチャンネルか（束ねられなくても、画像を読まずに値を見せる）。
+    has_points: bool,
     scalar: bool,
     sampler: Option<FillSampler<'a>>,
     decal: bool,
@@ -406,6 +503,22 @@ impl filter::Source for FillSource<'_> {
         (self.width, self.height)
     }
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        if self.has_points {
+            // 点のグラデーション: 位置のマップが覆わない所・使えない入力は値のまま
+            let mut v = self
+                .points
+                .as_ref()
+                .and_then(|p| p.pixel(x, y))
+                .unwrap_or(self.value);
+            if self.decal {
+                if let Some(s) = &self.sampler {
+                    v = s
+                        .apply_decal_to_value(x, y, v)
+                        .unwrap_or(Rgba8::TRANSPARENT);
+                }
+            }
+            return v.to_array();
+        }
         if let Some(g) = &self.gradient {
             // 置き換えのランプ付きのグラデーション: マップが使えない所は値のまま
             let mut v = self.value;
@@ -467,10 +580,13 @@ struct StageInput<'e> {
 impl GeneratorInput for StageInput<'_> {
     fn sample(&self, slot: u32, x: u32, y: u32) -> Option<filter::Generated> {
         let b = self.bound.get(slot as usize)?.as_ref()?;
-        b.sample(x, y, self.scalar).map(|g| match g {
-            generator::Generated::Scalar(v) => filter::Generated::Scalar(v),
-            generator::Generated::Mapped(p) => filter::Generated::Mapped(p),
-        })
+        b.sample(x, y, self.scalar)
+    }
+    fn sample_row(&self, slot: u32, x0: u32, y: u32, out: &mut [Option<filter::Generated>]) {
+        match self.bound.get(slot as usize).and_then(Option::as_ref) {
+            Some(b) => b.sample_row(x0, y, self.scalar, out),
+            None => out.fill(None),
+        }
     }
 }
 
@@ -509,7 +625,7 @@ struct TileView {
     coord: TileCoord,
     tile_size: u32,
     dims: (u32, u32),
-    tile: Option<Tile>,
+    tile: Option<Pixels>,
 }
 
 impl generator::Source for TileView {
@@ -574,6 +690,22 @@ impl Document {
             image_cache_bytes: c.chain_bytes,
             ..c.counters
         }
+    }
+
+    /// 画像のミップマップ（この文書のキャッシュにあるもの。無ければ None）。テクスチャセットのあいだで同じ物を共有しているかを
+    /// 確かめる口。
+    pub fn cached_mip_chain(
+        &self,
+        image: ImageId,
+        kind: ChannelKind,
+    ) -> Option<Arc<ImageMipChain<'static>>> {
+        let input = self.effects.inputs.images.get(&image)?;
+        let (key, _, _) = chain_key(
+            input,
+            kind == ChannelKind::Color,
+            kind == ChannelKind::Scalar,
+        );
+        self.cache().chains.get(&key).map(|e| e.chain.clone())
     }
 
     /// 持っている評価済みのタイルを全部捨てる（次に読むときに作り直す）。
@@ -641,7 +773,7 @@ impl Document {
 
     // ───────── 元画素の変化の記録 ─────────
 
-    /// 層の元画素（チャンネルの面かマスク）のタイルが変わったことを覚える（評価のキャッシュの鍵）。
+    /// レイヤーの元画素（チャンネルの面かマスク）のタイルが変わったことを覚える（評価のキャッシュの鍵）。
     pub(super) fn note_source(&mut self, index: usize, target: super::Target, coord: TileCoord) {
         let id = self.layers[index].id;
         let key = match target {
@@ -660,8 +792,8 @@ impl Document {
         }
     }
 
-    /// 層のマスクの出力が変わり得ることを覚える。マスクに Anchor があれば、マスクを読む段のあるどの層の出力も変わり得るので、変化の記録の
-    /// 通し番号を進め（読む段のブロックの鍵は通し番号を含む。ホストに画素のタイルが無くても、鍵が変わる）、`changed_tiles` が読む層を
+    /// レイヤーのマスクの出力が変わり得ることを覚える。マスクに Anchor があれば、マスクを読む段のあるどのレイヤーの出力も変わり得るので、変化の記録の
+    /// 通し番号を進め（読む段のブロックの鍵は通し番号を含む。ホストに画素のタイルが無くても、鍵が変わる）、`changed_tiles` が読むレイヤーを
     /// 全部返せるよう、マスクが最後に変わった通し番号を持つ。マスクの画素・有効・反転・濃度・フィルター・付け外し・スマートマスクの
     /// 入れ替えは、どれも `mark_layer`（と画素の変化）を通る。
     pub(super) fn note_mask_output(&mut self, index: usize) {
@@ -699,7 +831,7 @@ impl Document {
         }
     }
 
-    /// 画素の矩形（画布の中）を、半径 margin だけ広げたタイルの範囲に。
+    /// 画素の矩形（キャンバスの中）を、半径 margin だけ広げたタイルの範囲に。
     fn grown_range(&self, r: TileRange, margin_pixels: u32) -> TileRange {
         let (cols, rows) = self.tile_dims();
         let m = margin_pixels.div_ceil(self.tile_size);
@@ -756,7 +888,10 @@ impl Document {
                         value: layer.fill.get(&c).copied().unwrap_or(Rgba8::TRANSPARENT),
                         kind,
                         image: layer.fill_images.get(&c).copied(),
+                        anisotropic: layer.fill_anisotropic(c),
+                        shape_anisotropic: shape.is_some_and(|(sc, _)| layer.fill_anisotropic(sc)),
                         gradient: layer.fill_gradients.get(&c).cloned(),
+                        points: layer.fill_points.get(&c).cloned(),
                         projection: layer.projection,
                         shape,
                         decal: layer.is_decal(),
@@ -791,11 +926,14 @@ impl Document {
             .collect();
         let halo = chain.iter().map(|e| e.settings.halo()).sum();
         let global = chain.iter().any(|e| e.settings.is_global());
+        let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
+        // 継ぎ目をまたぐ評価が読むモデルの UV の位相は、マップ・画像とは別の鍵（`Stamp::topology`）で見る
         let reads_inputs = chain.iter().any(|e| e.settings.is_generator())
             || fill
                 .as_ref()
                 .is_some_and(|f| f.image.is_some() || f.gradient.is_some() || f.decal);
         let reads_anchor = anchors.iter().any(Option::is_some);
+        let reads_islands = chain.iter().any(|e| e.settings.reads_islands());
         Spec {
             layer: index,
             id: layer.id,
@@ -805,11 +943,14 @@ impl Document {
                 value_type,
                 fill,
                 anchors,
+                seam_band: seam.0,
             }),
             halo,
             global,
             reads_inputs,
             reads_anchor,
+            seam,
+            reads_islands,
         }
     }
 
@@ -834,12 +975,22 @@ impl Document {
     }
 
     fn stamp(&self, spec: &Spec, range: TileRange) -> Stamp {
-        let source = if matches!(spec.key, SourceKey::Channel(_)) && spec.config.fill.is_some() {
+        // 塗りつぶしは面を読まない。ただしパスのある塗りつぶしレイヤーは、パスの画素（レイヤーの面）を最後に重ねるので、面の変化を見る
+        let fill_paths = match spec.key {
+            SourceKey::Channel(c) => self.layers[spec.layer].fill_paths_draw(c),
+            SourceKey::Mask => false,
+        };
+        let source = if matches!(spec.key, SourceKey::Channel(_))
+            && spec.config.fill.is_some()
+            && !fill_paths
+        {
             0
         } else if spec.global {
             self.source_serial_window(spec.id, spec.key, self.whole_range())
         } else {
-            self.source_serial_window(spec.id, spec.key, self.grown_range(range, spec.halo))
+            let grown = self.grown_range(range, spec.halo);
+            self.source_serial_window(spec.id, spec.key, grown)
+                .max(self.seam_source_serial(spec.id, spec.key, spec.seam, spec.halo, grown.iter()))
         };
         Stamp {
             config: spec.config.clone(),
@@ -850,7 +1001,12 @@ impl Document {
             } else {
                 0
             },
-            // Anchor が読む合成は、どの層の変化でも変わり得る。変化の記録の通し番号が同じなら何も変わっていない
+            topology: if spec.seam.0 > 0 || spec.reads_islands {
+                self.effects.topology_revision
+            } else {
+                0
+            },
+            // Anchor が読む合成は、どのレイヤーの変化でも変わり得る。変化の記録の通し番号が同じなら何も変わっていない
             anchors: if spec.reads_anchor {
                 self.journal.serial + 1
             } else {
@@ -861,7 +1017,7 @@ impl Document {
 
     // ───────── 評価済みの面の作成（合成が読む） ─────────
 
-    /// 合成のために、プランに出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。
+    /// 合成のために、プランに出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。
     pub(crate) fn evaluate_for_composite(
         &self,
         channel: Channel,
@@ -895,7 +1051,7 @@ impl Document {
         self.evaluate_entries_in(&stack.plan(), channel, region, cancel)
     }
 
-    /// 計画（段の並び）に出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
+    /// 計画（段の並び）に出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
     /// 出力（そのグループの子の計画）が同じ道を通る。
     pub(super) fn evaluate_entries(
         &self,
@@ -936,8 +1092,10 @@ impl Document {
                 .as_ref()
                 .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
             {
-                set.masks
-                    .insert(i, self.output_surface_in(i, SourceKey::Mask, region, cancel)?);
+                set.masks.insert(
+                    i,
+                    self.output_surface_in(i, SourceKey::Mask, region, cancel)?,
+                );
             }
         }
         Ok(set)
@@ -985,8 +1143,8 @@ impl Document {
         })
     }
 
-    /// 合成のために、プランに出る層の評価した出力を、歩幅 stride で粗く評価して作る（タイルの束のタイルだけ。面は文書の 1/歩幅で、
-    /// キャッシュには入れない）。評価が要る層が無ければ空。
+    /// 合成のために、プランに出るレイヤーの評価した出力を、歩幅 stride で粗く評価して作る（タイルの束のタイルだけ。面は文書の 1/歩幅で、
+    /// キャッシュには入れない）。評価が要るレイヤーが無ければ空。
     pub(crate) fn evaluate_for_composite_coarse(
         &self,
         channel: Channel,
@@ -1015,7 +1173,13 @@ impl Document {
             {
                 set.content.insert(
                     i,
-                    self.coarse_output_surface(i, SourceKey::Channel(channel), coords, stride, cancel)?,
+                    self.coarse_output_surface(
+                        i,
+                        SourceKey::Channel(channel),
+                        coords,
+                        stride,
+                        cancel,
+                    )?,
                 );
             }
             if l.mask
@@ -1031,7 +1195,7 @@ impl Document {
         Ok(set)
     }
 
-    /// 層の出力の面を、歩幅 stride で粗く評価する（coords のタイルだけ）。読み元を歩幅で拾い、ぼかし・シャープの半径を歩幅で割って、
+    /// レイヤーの出力の面を、歩幅 stride で粗く評価する（coords のタイルだけ）。読み元を歩幅で拾い、ぼかし・シャープの半径を歩幅で割って、
     /// 縮めた画像の上で評価する（評価にかかる画素数が 1/歩幅²）。操作中の仮の絵で、離したあとの正確な評価の代わりではない。面は幅・高さが
     /// 文書の 1/歩幅、タイルの一辺が文書のタイルの 1/歩幅で、タイルの座標は文書と同じ。
     fn coarse_output_surface(
@@ -1086,6 +1250,7 @@ impl Document {
     ) -> Result<Arc<Vec<Option<filter::Statistics>>>, CoreError> {
         let full = (self.width, self.height);
         let coarse = (full.0.div_ceil(stride), full.1.div_ceil(stride));
+        let seams = self.coarse_seam_table(spec, stride, coarse);
         let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1105,10 +1270,35 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: None,
+                seams: seams.as_deref(),
             };
-            filter::statistics(&strided, env.value_type, &stages, &options).map_err(map_filter_error)
+            filter::statistics(&strided, env.value_type, &stages, &options)
+                .map_err(map_filter_error)
         })?;
         Ok(Arc::new(stats))
+    }
+
+    /// 粗い評価の、縮めた画像の大きさの帯の写し（半径を歩幅で割った近傍の段の最大から。またがないなら None）。
+    fn coarse_seam_table(
+        &self,
+        spec: &Spec,
+        stride: u32,
+        (width, height): (u32, u32),
+    ) -> Option<Arc<crate::geometry::SeamBand>> {
+        if spec.seam.0 == 0 {
+            return None;
+        }
+        let max = spec
+            .config
+            .chain
+            .iter()
+            .map(|e| (e.settings.halo() + stride / 2) / stride)
+            .max()
+            .unwrap_or(0);
+        let table = self.seam_table_at(width, height, crate::geometry::seam_band_width(max))?;
+        // 使うと作業メモリの予算を超えるなら、またがずに 2D で評価する
+        let stages = coarse_stages(&spec_stages(spec), stride);
+        self.seams_fit(&stages, &table).then_some(table)
     }
 
     /// 粗い評価の 1 ブロックぶん（tiles は同じブロックの、出力を持ち得るタイル）。
@@ -1142,6 +1332,7 @@ impl Document {
             x1: bx1,
             y1: by1,
         };
+        let seams = self.coarse_seam_table(spec, stride, coarse);
         let output = self.with_env(spec, self.grown_range(range, spec.halo), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1161,6 +1352,7 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: statistics.map(Vec::as_slice),
+                seams: seams.as_deref(),
             };
             filter::evaluate(&strided, env.value_type, &stages, region, &options)
                 .map_err(map_filter_error)
@@ -1181,9 +1373,9 @@ impl Document {
         Ok(out)
     }
 
-    /// 合成のためでなく、層の並びの写し（結合の準備のために並べ直した層）の、評価した出力を作る。鍵は `layers` の番号で、
-    /// `doc_index[k]` は `layers[k]` のこの文書での番号（評価は文書の層の設定・Anchor・入力・キャッシュで行うので、写しの番号ではなく
-    /// 文書の番号で引く）。`layers` を下から上へ並べた計画に出る層だけ、全面を評価する。評価が要る層が無ければ空。
+    /// 合成のためでなく、レイヤーの並びの写し（結合の準備のために並べ直したレイヤー）の、評価した出力を作る。鍵は `layers` の番号で、
+    /// `doc_index[k]` は `layers[k]` のこの文書での番号（評価は文書のレイヤーの設定・Anchor・入力・キャッシュで行うので、写しの番号ではなく
+    /// 文書の番号で引く）。`layers` を下から上へ並べた計画に出るレイヤーだけ、全面を評価する。評価が要るレイヤーが無ければ空。
     pub(crate) fn evaluate_slice(
         &self,
         layers: &[crate::layer::Layer],
@@ -1227,7 +1419,7 @@ impl Document {
         Ok(set)
     }
 
-    /// 層の（フィルター・投影を通した）出力の面を、タイルの範囲だけ。評価済みのブロックを使い回し、足りないブロックは作業メモリの
+    /// レイヤーの（フィルター・投影を通した）出力の面を、タイルの範囲だけ。評価済みのブロックを使い回し、足りないブロックは作業メモリの
     /// 予算に収まる数ずつ並べて評価する（結果は並びによらない）。
     pub(super) fn output_surface(
         &self,
@@ -1254,8 +1446,7 @@ impl Document {
                 .flat_map(|by| (range.x0 / bt..=(range.x1 - 1) / bt).map(move |bx| (bx, by)))
                 .collect(),
             Region::Tiles(tiles) => {
-                let mut set: Vec<(u32, u32)> =
-                    tiles.iter().map(|c| (c.x / bt, c.y / bt)).collect();
+                let mut set: Vec<(u32, u32)> = tiles.iter().map(|c| (c.x / bt, c.y / bt)).collect();
                 set.sort_by_key(|&(bx, by)| (by, bx));
                 set.dedup();
                 set
@@ -1271,7 +1462,12 @@ impl Document {
         if !missing.is_empty() {
             self.prepare_shared(&spec, cancel)?;
         }
-        for batch in missing.chunks(self.parallel_blocks(&spec)) {
+        let parallel = if missing.is_empty() {
+            1
+        } else {
+            self.parallel_blocks(&spec)
+        };
+        for batch in missing.chunks(parallel) {
             cancelled(cancel)?;
             let done: Vec<Result<BlockTiles, CoreError>> = batch
                 .par_iter()
@@ -1303,6 +1499,8 @@ impl Document {
     /// 並べてから各ブロックが取りに行くと、キャッシュが空の最初のバッチでは全ブロックが同じものを同時に作り、作業メモリが予算の
     /// 並列数倍に届き（統計は呼ぶたびに予算いっぱいまで使う）、画像のミップマップも重複して作る。
     fn prepare_shared(&self, spec: &Spec, cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
+        // 継ぎ目をまたぐ帯の写しも、ブロックを並べる前に 1 回だけ作る（作れなければ、どのブロックも 2D で評価する）
+        let _ = self.seam_table(spec.seam.0);
         if spec.global {
             self.stage_statistics(spec, cancel)?;
         }
@@ -1321,31 +1519,26 @@ impl Document {
 
     /// 同時に評価してよいブロックの数: 作業メモリの予算に収まる数を、並列の数で頭打ちにする（最小 1）。
     fn parallel_blocks(&self, spec: &Spec) -> usize {
-        let stages: Vec<filter::Stage> = spec
-            .config
-            .chain
-            .iter()
-            .map(|e| filter::Stage {
-                settings: match &e.settings {
-                    EffectSettings::Filter(f) => f.clone(),
-                    EffectSettings::Generator(g) => filter::Settings::Generator {
-                        slot: 0,
-                        blend: super::effects::generator_blend(g.blend),
-                    },
-                },
-                enabled: true,
-                strength: e.strength,
-            })
-            .collect();
+        let stages = spec_stages(spec);
         let side = (self.effects.block_pixels / self.tile_size).max(1) * self.tile_size;
         let output = u64::from(side.min(self.width)) * u64::from(side.min(self.height)) * 4;
-        let working = filter::block_working_bytes(
+        let mut working = filter::block_working_bytes(
             &stages,
             self.effects.block_pixels,
             self.width,
             self.height,
         )
         .unwrap_or(0);
+        // 継ぎ目をまたいで評価する（帯の写しがあって、使っても予算に収まる）なら、その分も。帯の写しは `prepare_shared` が先に作ってある
+        if let Some(table) = self.seam_table_for(spec) {
+            working += filter::seam_working_bytes(
+                &stages,
+                self.effects.block_pixels,
+                self.width,
+                self.height,
+                table.texel_count() as u64,
+            );
+        }
         let need = working.saturating_add(output).max(1);
         ((self.effects.working_budget / need) as usize)
             .clamp(1, rayon::current_num_threads().max(1))
@@ -1443,7 +1636,7 @@ impl Document {
         }
     }
 
-    /// 層のそのタイルの出力（評価した出力か、保存した画素。無ければ None）。Anchor の合成が読む。
+    /// レイヤーのそのタイルの出力（評価した出力か、保存した画素。無ければ None）。Anchor の合成が読む。
     fn layer_output_tile(
         &self,
         index: usize,
@@ -1468,7 +1661,7 @@ impl Document {
         })
     }
 
-    /// 層のマスクのそのタイルの出力（フィルターを通した隠す量。無ければ None）。
+    /// レイヤーのマスクのそのタイルの出力（フィルターを通した隠す量。無ければ None）。
     fn mask_output_tile(
         &self,
         index: usize,
@@ -1490,7 +1683,7 @@ impl Document {
         Ok(m.surface.tile(coord).cloned())
     }
 
-    /// 層の評価済みの出力の画素（フィルター・投影を通した、マスク・不透明度・合成の前の値）。
+    /// レイヤーの評価済みの出力の画素（フィルター・投影を通した、マスク・不透明度・合成の前の値）。
     pub fn layer_output_pixel(
         &self,
         id: LayerId,
@@ -1510,11 +1703,11 @@ impl Document {
             return Ok(Rgba8::TRANSPARENT);
         }
         if l.has_evaluated_output(channel) {
-            return Ok(self
+            return self
                 .layer_output_tile(index, channel, coord, None)?
-                .map_or(Rgba8::TRANSPARENT, |t| {
+                .map_or(Ok(Rgba8::TRANSPARENT), |t| {
                     t.get((((y % ts) * ts + x % ts) * 4) as usize)
-                }));
+                });
         }
         l.pixel(channel, x, y)
     }
@@ -1526,12 +1719,13 @@ impl Document {
             return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         let ts = self.tile_size;
-        Ok(self
-            .mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
-            .map_or(0, |t| t.get((((y % ts) * ts + x % ts) * 4) as usize).a))
+        self.mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
+            .map_or(Ok(0), |t| {
+                t.get((((y % ts) * ts + x % ts) * 4) as usize).map(|p| p.a)
+            })
     }
 
     // ───────── ブロックの評価 ─────────
@@ -1563,13 +1757,17 @@ impl Document {
                     return true; // 反転・ノイズなどは、何も無い所にも値を作る
                 }
                 near(surface, spec.halo)
+                    || self.seam_reaches_content(spec.seam, spec.halo, coord, surface)
             }
             SourceKey::Channel(c) => {
                 if let Some(f) = &spec.config.fill {
                     if f.image.is_some() || f.decal {
                         return true;
                     }
-                    return f.gradient.is_some() || f.value != Rgba8::TRANSPARENT;
+                    // パスの画素（レイヤーの面）のあるタイルも
+                    return f.gradient.is_some()
+                        || f.value != Rgba8::TRANSPARENT
+                        || (layer.fill_paths_draw(c) && near(layer.surface(c), 0));
                 }
                 let expansion: u32 = chain
                     .iter()
@@ -1577,6 +1775,7 @@ impl Document {
                     .map(|e| e.settings.halo())
                     .sum();
                 near(layer.surface(c), expansion)
+                    || self.seam_reaches_content(spec.seam, expansion, coord, layer.surface(c))
             }
         }
     }
@@ -1598,7 +1797,7 @@ impl Document {
         if covered.is_empty() {
             return Ok(coords.into_iter().map(|c| (c, None)).collect());
         }
-        // 評価する画素の矩形: 評価するタイルを含む最小の矩形（画布の中）
+        // 評価する画素の矩形: 評価するタイルを含む最小の矩形（キャンバスの中）
         let bx0 = covered.iter().map(|c| c.x).min().unwrap_or(0);
         let by0 = covered.iter().map(|c| c.y).min().unwrap_or(0);
         let bx1 = covered.iter().map(|c| c.x).max().unwrap_or(0) + 1;
@@ -1620,6 +1819,7 @@ impl Document {
         } else {
             None
         };
+        let seams = self.seam_table_for(spec);
         let output = self.with_env(spec, self.grown_range(tiles, spec.halo), cancel, |env| {
             let options = filter::Options {
                 working_budget: self.effects.working_budget,
@@ -1627,10 +1827,21 @@ impl Document {
                 cancel,
                 generators: Some(env.generators),
                 statistics: statistics.as_deref().map(Vec::as_slice),
+                seams: seams.as_deref(),
             };
             filter::evaluate(env.source, env.value_type, env.stages, region, &options)
                 .map_err(map_filter_error)
         })?;
+        // 塗りつぶしレイヤーのパス: 塗りつぶしと効果のスタックの結果の上に、パスの画素（レイヤーの面）を重ねる
+        let mut output = output;
+        if let SourceKey::Channel(c) = spec.key {
+            let layer = &self.layers[spec.layer];
+            if layer.fill_paths_draw(c) {
+                if let Some(surface) = layer.surface(c) {
+                    over_surface(&mut output, region, surface)?;
+                }
+            }
+        }
         // 評価した画素を、タイルへ切り出す。評価するタイルで全部 0 なら「何も無いが評価した」印の一様な透明にする
         let row = region.width as usize * 4;
         let mut out = Vec::with_capacity(coords.len());
@@ -1668,6 +1879,7 @@ impl Document {
                 }
             }
         }
+        let seams = self.seam_table_for(spec);
         let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
             let options = filter::Options {
                 working_budget: self.effects.working_budget,
@@ -1675,6 +1887,7 @@ impl Document {
                 cancel,
                 generators: Some(env.generators),
                 statistics: None,
+                seams: seams.as_deref(),
             };
             filter::statistics(env.source, env.value_type, env.stages, &options)
                 .map_err(map_filter_error)
@@ -1755,6 +1968,37 @@ impl Document {
             });
         }
 
+        // 画像の段の画像（ミップマップと、投影を束縛したサンプラー。束縛した Generator より長く生きる）。読めない画像の段は入力のまま
+        let image_chains: Vec<Option<Arc<ImageMipChain<'static>>>> = cfg
+            .chain
+            .iter()
+            .map(|e| match &e.settings {
+                EffectSettings::Generator(g)
+                    if g.kind == generator::Kind::Image && g.image.image != 0 =>
+                {
+                    self.generator_image_chain(g.image.image, scalar).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        let mut samplers: Vec<Option<FillSampler<'_>>> = Vec::with_capacity(cfg.chain.len());
+        for (e, chain) in cfg.chain.iter().zip(&image_chains) {
+            samplers.push(match (&e.settings, chain) {
+                // 組めない投影（極端な位置の箱など）の段は、画像を待つ段のまま入力を通す（理由は `generator_status` が言う）
+                (EffectSettings::Generator(g), Some(chain)) => {
+                    self.image_sampler(&g.image.projection, chain).ok()
+                }
+                _ => None,
+            });
+        }
+
+        // アイランドごとのばらつきの段が読むアイランドの図（文書の大きさ。段が無ければ引かない）
+        let islands = cfg
+            .chain
+            .iter()
+            .any(|e| e.settings.reads_islands())
+            .then(|| self.island_map());
+
         // 段と束縛した Generator
         let mut stages = Vec::with_capacity(cfg.chain.len());
         let mut bound: Vec<Option<BoundGenerator<'_>>> = Vec::with_capacity(cfg.chain.len());
@@ -1783,7 +2027,12 @@ impl Document {
                             (_, Some(v)) => Ok(v),
                             _ => Err(anchor::Issue::NotChosen),
                         };
-                    bound.push(BoundGenerator::bind(g, &maps, frame, dims, value_source).ok());
+                    let b = BoundGenerator::bind(g, &maps, frame, dims, value_source).ok();
+                    let b = match (b, &samplers[k]) {
+                        (Some(b), Some(sampler)) => Some(b.with_image(sampler)),
+                        (b, _) => b,
+                    };
+                    bound.push(b.map(|b| with_islands(b, islands.as_ref())));
                 }
             }
         }
@@ -1812,7 +2061,7 @@ impl Document {
                     surface,
                     width: self.width,
                     height: self.height,
-                    tile_size: self.tile_size,
+                    failed: OnceLock::new(),
                 })
             }
             Some(f) => {
@@ -1838,28 +2087,43 @@ impl Document {
                         frame: inputs.frame.map(|fr| fr.for_fill()),
                         stale_position: position.is_some_and(|m| m.state != MapState::Current),
                         stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
+                        anisotropic: f.anisotropic,
+                        shape_anisotropic: f.shape_anisotropic,
                     };
                     Some(FillSampler::bind(input).map_err(map_fill_error)?)
                 } else {
                     None
                 };
+                let points = f.points.as_ref().and_then(|g| {
+                    let position = maps.iter().find(|m| m.kind == MapKind::Position).cloned();
+                    crate::fill_points::BoundPoints::bind(g, position, frame, dims)
+                });
                 ChainSource::Fill(Box::new(FillSource {
                     value: f.value,
                     width: self.width,
                     height: self.height,
                     gradient,
+                    points,
+                    has_points: f.points.is_some(),
                     scalar: f.kind != ChannelKind::Color,
                     sampler,
                     decal: f.decal,
                 }))
             }
         };
-        body(&Env {
+        let result = body(&Env {
             source: &source,
             value_type: cfg.value_type,
             stages: &stages,
             generators: &stage_input,
-        })
+        });
+        // 読み元のタイルをディスクから読めなかった評価は使わない（キャッシュにも入れない）
+        if let ChainSource::Surface(s) = &source {
+            if let Some(e) = s.failed.get() {
+                return Err(e.clone());
+            }
+        }
+        result
     }
 
     /// 画像のミップマップ（変換と輝度はチャンネルの種類で決まる。同じ中身・変換・輝度は 1 つを共有し、予算で古いものから捨てる）。
@@ -1868,21 +2132,36 @@ impl Document {
         id: ImageId,
         kind: ChannelKind,
     ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
+        self.mip_chain_as(id, kind == ChannelKind::Color, kind == ChannelKind::Scalar)
+    }
+
+    /// 画像の段が読む画像のミップマップ（色の対象は色として読む: リニアの画像は sRGB に直す。マスク・スカラーは値のまま。輝度には直さない。
+    /// 成分は段が選ぶ）。画像が入力に無いときは `MissingImage`。
+    fn generator_image_chain(
+        &self,
+        id: u128,
+        scalar: bool,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
+        if !self.effects.inputs.images.contains_key(&ImageId(id)) {
+            return Err(InactiveReason::Generator(generator::Inactive::MissingImage));
+        }
+        self.mip_chain_as(ImageId(id), !scalar, false)
+    }
+
+    /// `color` は色として読む（リニアの画像を sRGB に直す）か、`luminance` は輝度に直すか。
+    fn mip_chain_as(
+        &self,
+        id: ImageId,
+        color: bool,
+        luminance: bool,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
         let image = self
             .effects
             .inputs
             .images
             .get(&id)
             .ok_or_else(|| InactiveReason::Rejected("プロジェクトにその画像が無い".into()))?;
-        let conversion = if kind == ChannelKind::Color
-            && image.color_space == crate::brush::ImageColorSpace::Linear
-        {
-            Conversion::LinearToSrgb
-        } else {
-            Conversion::None
-        };
-        let luminance = kind == ChannelKind::Scalar;
-        let key = (image.hash.clone(), conversion as u8, luminance);
+        let (key, conversion, luminance) = chain_key(image, color, luminance);
         {
             let mut c = self.cache();
             c.clock += 1;
@@ -1893,20 +2172,40 @@ impl Document {
             }
         }
         let budget = self.effects.image_cache_budget;
-        let chain = ImageMipChain::build_shared(
-            image.pixels.clone(),
-            image.width,
-            image.height,
-            conversion,
-            luminance,
-            budget,
-            None,
-        )
-        .map_err(|e| InactiveReason::Rejected(e.to_string()))?;
-        let chain = Arc::new(chain);
+        // ほかの文書が同じ中身の画像のミップマップを持っていれば、それを使う（予算はこの文書でも数える）
+        let shared = shared_chains()
+            .get(&key)
+            .and_then(std::sync::Weak::upgrade)
+            .filter(|c| c.bytes() <= budget);
+        let reused = shared.is_some();
+        let chain = match shared {
+            Some(chain) => chain,
+            None => {
+                let chain = Arc::new(
+                    ImageMipChain::build_shared(
+                        image.pixels.clone(),
+                        image.width,
+                        image.height,
+                        conversion,
+                        luminance,
+                        budget,
+                        None,
+                    )
+                    .map_err(|e| InactiveReason::Rejected(e.to_string()))?,
+                );
+                let mut registry = shared_chains();
+                registry.retain(|_, w| w.strong_count() > 0);
+                registry.insert(key.clone(), Arc::downgrade(&chain));
+                chain
+            }
+        };
         {
             let mut c = self.cache();
-            c.counters.mip_chains_built += 1;
+            if reused {
+                c.counters.mip_chains_shared += 1;
+            } else {
+                c.counters.mip_chains_built += 1;
+            }
             c.clock += 1;
             let used = c.clock;
             c.chain_bytes += chain.bytes();
@@ -1924,7 +2223,7 @@ impl Document {
 
     // ───────── Anchor ─────────
 
-    /// Anchor が読むタイルの並び（範囲のタイルの、層なら合成したチャンネルの結果・マスクなら評価した隠す量）。
+    /// Anchor が読むタイルの並び（範囲のタイルの、レイヤーなら合成したチャンネルの結果・マスクなら評価した隠す量）。
     fn anchor_grid(
         &self,
         r: &AnchorRef,
@@ -1933,7 +2232,7 @@ impl Document {
     ) -> Result<TileGrid, CoreError> {
         let host = self.layer_index(r.host).ok_or(CoreError::LayerNotFound)?;
         let coords: Vec<TileCoord> = range.iter().collect();
-        // タイルごとに独立に合成する（結果は並びによらない）。下の層の評価済みのブロックは、キャッシュを通して共有する
+        // タイルごとに独立に合成する（結果は並びによらない）。下のレイヤーの評価済みのブロックは、キャッシュを通して共有する
         let tiles = coords
             .par_iter()
             .map(|&coord| -> Result<Option<Arc<Vec<u8>>>, CoreError> {
@@ -1942,11 +2241,18 @@ impl Document {
                     AnchorPlacement::Layer => {
                         self.anchor_layer_tile(host, r.channel, coord, cancel)?
                     }
-                    AnchorPlacement::Mask => self.mask_output_tile(host, coord, cancel)?.map(|t| {
-                        let mut bytes = vec![0u8; (self.tile_size * self.tile_size * 4) as usize];
-                        t.copy_to(&mut bytes);
-                        Arc::new(bytes)
-                    }),
+                    AnchorPlacement::Mask => match self.mask_output_tile(host, coord, cancel)? {
+                        None => None,
+                        Some(t) => Some(match t.read()? {
+                            Pixels::Data(d) => d,
+                            uniform => {
+                                let mut bytes =
+                                    vec![0u8; (self.tile_size * self.tile_size * 4) as usize];
+                                uniform.copy_to(&mut bytes);
+                                Arc::new(bytes)
+                            }
+                        }),
+                    },
                 })
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
@@ -1958,7 +2264,7 @@ impl Document {
         })
     }
 
-    /// 層の Anchor のタイル: その層までのスタックを、その層より上が無いものとして合成した結果（全部透明なら None）。
+    /// レイヤーの Anchor のタイル: そのレイヤーまでのスタックを、そのレイヤーより上が無いものとして合成した結果（全部透明なら None）。
     fn anchor_layer_tile(
         &self,
         host: usize,
@@ -1967,7 +2273,7 @@ impl Document {
         cancel: Option<&AtomicBool>,
     ) -> Result<Option<Arc<Vec<u8>>>, CoreError> {
         let key = (self.layers[host].id, channel, coord);
-        // 変化の記録の通し番号（どの層のどの変化でも進む）と世代が同じなら、合成は同じ
+        // 変化の記録の通し番号（どのレイヤーのどの変化でも進む）と世代が同じなら、合成は同じ
         let stamp = (self.journal.serial, self.effects.generation);
         {
             let mut c = self.cache();
@@ -1983,16 +2289,16 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
         let dims = (self.width, self.height);
-        // 合成が読む層は、host とそれより下（host の下の兄弟、祖先の下の兄弟、host がグループなら中身）だけで、どれも番号が host 以下
+        // 合成が読むレイヤーは、host とそれより下（host の下の兄弟、祖先の下の兄弟、host がグループなら中身）だけで、どれも番号が host 以下
         // （グループは中身の上に並ぶ）。host より上の兄弟は読まない: 評価すると、それが host の Anchor を読むときに host の Anchor へ戻って
-        // 終わらない。祖先のグループは画素が要らないので、読まれない層と同じ Group の入れ物にする
+        // 終わらない。祖先のグループは画素が要らないので、読まれないレイヤーと同じ Group の入れ物にする
         let position: HashMap<LayerId, usize> = self
             .layers
             .iter()
             .enumerate()
             .map(|(i, l)| (l.id, i))
             .collect();
-        // 層ごとの入力（読まれる層だけ画素を用意する）
+        // レイヤーごとの入力（読まれるレイヤーだけ画素を用意する）
         let mut views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
         let mut mask_views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
         for (i, l) in self.layers.iter().enumerate() {
@@ -2007,7 +2313,10 @@ impl Document {
                     coord,
                     tile_size: ts,
                     dims,
-                    tile: self.layer_output_tile(i, channel, coord, cancel)?,
+                    tile: self
+                        .layer_output_tile(i, channel, coord, cancel)?
+                        .map(|t| t.read())
+                        .transpose()?,
                 })
             } else {
                 None
@@ -2018,7 +2327,10 @@ impl Document {
                     coord,
                     tile_size: ts,
                     dims,
-                    tile: self.mask_output_tile(i, coord, cancel)?,
+                    tile: self
+                        .mask_output_tile(i, coord, cancel)?
+                        .map(|t| t.read())
+                        .transpose()?,
                 })
             } else {
                 None
@@ -2037,7 +2349,7 @@ impl Document {
             .enumerate()
             .map(|(i, l)| {
                 let content = if i > host {
-                    anchor::Content::Group // 読まれない層（host より上）と、画素の要らない祖先のグループ
+                    anchor::Content::Group // 読まれないレイヤー（host より上）と、画素の要らない祖先のグループ
                 } else {
                     match l.kind {
                         LayerKind::Group => anchor::Content::Group,
@@ -2132,7 +2444,7 @@ impl Document {
 
     // ───────── Anchor を読む段の解決の見張りと、変化の記録 ─────────
 
-    /// Anchor を読む段の解決（読む Anchor がどの層・置き場か、使えるか）の署名。
+    /// Anchor を読む段の解決（読む Anchor がどのレイヤー・置き場か、使えるか）の署名。
     fn anchor_signature(&self) -> Vec<AnchorSig> {
         let points = self.anchor_points();
         let mut v = Vec::new();
@@ -2180,7 +2492,7 @@ impl Document {
         })
     }
 
-    /// 編集（Undo・Redo を含む）の後に: Anchor を読む段の解決が変わっていれば、読む層を全部変わったことにする
+    /// 編集（Undo・Redo を含む）の後に: Anchor を読む段の解決が変わっていれば、読むレイヤーを全部変わったことにする
     /// （Anchor を置いた・外した・動かした・参照を選び直した）。値の変化はタイルごとに記録されている。
     pub(super) fn refresh_anchor_readers(&mut self) {
         let now = self.anchor_signature();
@@ -2206,7 +2518,7 @@ impl Document {
         }
     }
 
-    /// 変化したタイルを、Anchor を読む段の出力へ広げる（読む Anchor が変わると、読む層の出力も、段より後のぼかしなどの半径だけ
+    /// 変化したタイルを、Anchor を読む段の出力へ広げる（読む Anchor が変わると、読むレイヤーの出力も、段より後のぼかしなどの半径だけ
     /// 広がって変わる）。不動点まで回す。sets はチャンネルの番号ごとの変わったタイル。
     pub(super) fn close_over_anchor_readers(
         &self,
@@ -2216,14 +2528,16 @@ impl Document {
         let points = self.anchor_points();
         let (cols, rows) = self.tile_dims();
         let all: Vec<TileCoord> = self.whole_range().iter().collect();
-        // (読む層の番号, 影響するチャンネル, 読む元, 段より後の半径)
+        // (読むレイヤーの番号, 影響するチャンネル, 読む元, 段より後の半径)
         struct Reader {
             channels: Vec<Channel>,
             source: Source,
             halo: u32,
-            /// 段より後に全域の段（正規化など）がある: 読む Anchor の 1 タイルの変化が、読む層の全タイルの出力を変える。
+            /// 段より後の近傍の段が UV の継ぎ目をまたぐときの帯の幅と段の数（`uv_seams`）。
+            seam: (u32, usize),
+            /// 段より後に全域の段（正規化など）がある: 読む Anchor の 1 タイルの変化が、読むレイヤーの全タイルの出力を変える。
             global: bool,
-            /// マスクのスタックの段なら、そのマスクを持つ層（読む元が変わると、そのマスクの出力が変わる）。
+            /// マスクのスタックの段なら、そのマスクを持つレイヤー（読む元が変わると、そのマスクの出力が変わる）。
             mask_of: Option<LayerId>,
         }
         enum Source {
@@ -2251,6 +2565,7 @@ impl Document {
                         continue;
                     };
                     let halo: u32 = active[k..].iter().map(|e| e.settings.halo()).sum();
+                    let seam = self.seam_shape(active[k..].iter().map(|e| e.settings.halo()));
                     let global = active[k..].iter().any(|e| e.settings.is_global());
                     let channels = if target_mask {
                         self.covered_channels(i)
@@ -2264,13 +2579,14 @@ impl Document {
                             anchor::Placement::Mask => Source::Mask(self.layers[p.host].id),
                         },
                         halo,
+                        seam,
                         global,
                         mask_of: target_mask.then_some(l.id),
                     });
                 }
             }
         }
-        // 読む元が変わって出力が変わるマスク（マスクのスタックが Anchor を読む。そのマスクの Anchor を読む層も変わる）
+        // 読む元が変わって出力が変わるマスク（マスクのスタックが Anchor を読む。そのマスクの Anchor を読むレイヤーも変わる）
         let mut dirty_masks = std::collections::HashSet::new();
         for _ in 0..=2 * readers.len() {
             let mut grew = false;
@@ -2297,6 +2613,12 @@ impl Document {
                     grew |= dirty_masks.insert(owner);
                 }
                 let m = r.halo.div_ceil(self.tile_size);
+                // 継ぎ目をまたいで届く所（全域の段があれば下で全部）
+                let across = if r.global {
+                    Vec::new()
+                } else {
+                    self.seam_write_tiles(r.seam, r.halo, source.iter().copied())
+                };
                 for c in &r.channels {
                     let set = sets.entry(*c).or_default();
                     if r.global {
@@ -2312,6 +2634,9 @@ impl Document {
                             }
                         }
                     }
+                    for t in &across {
+                        grew |= set.insert(*t);
+                    }
                 }
             }
             if !grew {
@@ -2322,7 +2647,7 @@ impl Document {
 
     // ───────── 状態の説明 ─────────
 
-    /// Generator の設定が今は使えない（入力のまま通す・値を見せる）理由。使えるなら None。読む層は reader の番号。
+    /// Generator の設定が今は使えない（入力のまま通す・値を見せる）理由。使えるなら None。読むレイヤーは reader の番号。
     pub(super) fn generator_reason(
         &self,
         g: &generator::Settings,
@@ -2361,12 +2686,82 @@ impl Document {
             None => Err(anchor::Issue::NotChosen),
         };
         match BoundGenerator::bind(g, &maps, frame, dims, value_source) {
+            // 画像の段: 画像だけを待っているなら、画像を読めるか・投影を組めるかを見る（色かスカラーかで読めるかは変わらない）
+            Ok(b) if b.inactive() == Some(&generator::Inactive::MissingImage) => {
+                let chain = match self.generator_image_chain(g.image.image, true) {
+                    Ok(chain) => chain,
+                    Err(why) => return (Some(why), None),
+                };
+                match self.image_sampler(&g.image.projection, &chain) {
+                    Ok(sampler) => (
+                        b.with_image(&sampler)
+                            .inactive()
+                            .cloned()
+                            .map(InactiveReason::Generator),
+                        None,
+                    ),
+                    Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
+                }
+            }
+            // アイランドごとのばらつき: アイランドの図を引いて（評価と同じ。覚えていればそれ、断ったままなら作り直さずに断る）使えるかを見る
+            Ok(b) if b.inactive() == Some(&generator::Inactive::NoModel) => (
+                with_islands(b, Some(&self.island_map()))
+                    .inactive()
+                    .cloned()
+                    .map(InactiveReason::Generator),
+                None,
+            ),
             Ok(b) => (
                 b.inactive().cloned().map(InactiveReason::Generator),
                 b.fallback().cloned(),
             ),
             Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
         }
+    }
+
+    /// アイランドごとのばらつきが読む、文書の大きさのアイランドの図（モデルのこのテクスチャセットの UV の位相から、アイランドの図・帯の写しの予算
+    /// `seam_budget` の中で作る。覚えていればそれ）。モデルが無い・予算に収まらないときは、その理由。
+    fn island_map(&self) -> Result<Arc<crate::geometry::IslandMap>, generator::Inactive> {
+        let topology = self
+            .effects
+            .inputs
+            .topology
+            .as_ref()
+            .ok_or(generator::Inactive::NoModel)?;
+        // 文書の辺はアイランドの図の辺の上限（8192）の中なので、大きさの範囲で断られることは無い。断るのは作業予算だけ
+        topology
+            .island_map_within(self.width, self.height, self.effects.seam_budget)
+            .map_err(|_| generator::Inactive::IslandMap)
+    }
+
+    /// 画像の段の投影のサンプラー（塗りつぶしレイヤーの画像と同じ入力: 文書の大きさ・位置と向きのマップ（最新のものだけ）・モデルのルート）。
+    fn image_sampler<'s>(
+        &'s self,
+        projection: &Projection,
+        chain: &'s ImageMipChain<'static>,
+    ) -> Result<FillSampler<'s>, fill_image::FillError> {
+        let inputs = &self.effects.inputs;
+        let position = inputs.map(MapKind::Position);
+        let normal = inputs.map(MapKind::WorldNormal);
+        FillSampler::bind(FillInput {
+            projection: *projection,
+            width: self.width,
+            height: self.height,
+            image: Some(chain),
+            shape: None,
+            // 塗りつぶしの画像の既定と同じく異方性で読む（同じ画像・同じ投影の塗りつぶしレイヤーと同じ画素。段ごとの切り替えは持たない）
+            anisotropic: true,
+            shape_anisotropic: false,
+            fallback: Rgba8::TRANSPARENT,
+            missing_image: false,
+            positions: usable_map(position).map(|m| m.as_fill()),
+            normals: usable_map(normal).map(|m| m.as_fill()),
+            bounds_min: position.map_or([0.; 3], |m| m.bounds_min),
+            bounds_max: position.map_or([1.; 3], |m| m.bounds_max),
+            frame: inputs.frame.map(|fr| fr.for_fill()),
+            stale_position: position.is_some_and(|m| m.state != MapState::Current),
+            stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
+        })
     }
 
     /// デカールが今は出ていない理由（位置・法線のマップが使えない・モデルのルートが分からない）。
@@ -2425,7 +2820,7 @@ fn covered_tile(bytes: Vec<u8>) -> Tile {
     if bytes.chunks_exact(4).all(|p| p == first.to_array()) {
         Tile::Uniform(first)
     } else {
-        Tile::Data(Arc::new(bytes))
+        Tile::kept(bytes)
     }
 }
 
@@ -2439,6 +2834,32 @@ fn collect_layers(plan: &[Entry], out: &mut Vec<usize>) {
         collect_layers(&e.children, out);
         collect_layers(&e.clips, out);
     }
+}
+
+/// 評価した画素（`region` の straight RGBA8、行は下から）の上に、面の画素を「通常」で重ねる（塗りつぶしレイヤーのパス。
+/// `src · a + dst · da · (1 − a)` を 8 bit に丸める。パスの作業面へリボンを重ねるのと同じ式）。
+fn over_surface(output: &mut [u8], region: Rect, surface: &Surface) -> Result<(), CoreError> {
+    let w = region.width as usize;
+    let mut row = vec![0u8; w * 4];
+    for y in 0..region.height {
+        surface.read_row(region.x, region.y + y, &mut row)?;
+        let dst = &mut output[y as usize * w * 4..][..w * 4];
+        for (d, s) in dst.chunks_exact_mut(4).zip(row.chunks_exact(4)) {
+            let a = s[3] as f64 / 255.0;
+            if a <= 0.0 {
+                continue;
+            }
+            let da = d[3] as f64 / 255.0;
+            let out = a + da * (1.0 - a);
+            for k in 0..3 {
+                d[k] = ((s[k] as f64 * a + d[k] as f64 * da * (1.0 - a)) / out)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+            d[3] = (out * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

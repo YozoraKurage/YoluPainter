@@ -24,7 +24,9 @@ const ERASE: &str = "選択範囲を消去（Delete）";
 const COPY: &str = "コピーして新しいレイヤーに（Ctrl+J）";
 const MASK: &str = "選択範囲をレイヤーマスクにする";
 const REMEMBER: &str = "選択範囲を覚える…";
-const ALL: [&str; 9] = [DESELECT, INVERT, GROW, SHRINK, FILL, ERASE, COPY, MASK, REMEMBER];
+const ALL: [&str; 9] = [
+    DESELECT, INVERT, GROW, SHRINK, FILL, ERASE, COPY, MASK, REMEMBER,
+];
 
 fn select_rect(h: &mut H, x0: i64, y0: i64, x1: i64, y1: i64) {
     h.state_mut()
@@ -45,7 +47,7 @@ fn st(h: &H) -> &yolu_app::state::AppState {
 
 const GRIP: &str = "ボタンの帯を動かす";
 
-/// 帯の部品（キャンバスの中のもの。選択の道具のときはプロパティの欄にも同じ名前のボタンがある）。
+/// 帯の部品（キャンバスの中のもの。選択のツールのときはプロパティの欄にも同じ名前のボタンがある）。
 fn in_canvas(h: &H, label: &str) -> Option<Rect> {
     let canvas = canvas_rect(h);
     h.query_all_by_label(label)
@@ -83,8 +85,8 @@ fn screen_bounds(h: &H) -> Rect {
             }
         }
     }
-    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        .map(|(x, y)| view.to_screen(x as f64, y as f64));
+    let corners =
+        [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(x, y)| view.to_screen(x as f64, y as f64));
     Rect::from_points(&corners)
 }
 
@@ -106,12 +108,18 @@ fn the_bar_floats_below_the_selection_with_icons_only() {
     select_rect(&mut h, 80, 80, 140, 120);
     assert!(bar_shown(&h));
     let (bar, bounds, canvas) = (bar_rect(&h), screen_bounds(&h), canvas_rect(&h));
-    assert!(bar.top() >= bounds.bottom(), "外接矩形の下: {bar:?} {bounds:?}");
+    assert!(
+        bar.top() >= bounds.bottom(),
+        "外接矩形の下: {bar:?} {bounds:?}"
+    );
     assert!(bar.top() - bounds.bottom() < 24.0, "すぐ下");
     assert!((bar.center().x - bounds.center().x).abs() < 2.0, "中央");
     assert!(canvas.contains_rect(bar), "表示域の中");
     // ボタンの並びは左から右（解除・反転・拡張・縮小・塗りつぶし・消去・コピー・マスク・覚える）
-    let xs: Vec<f32> = ALL.iter().map(|l| in_canvas(&h, l).unwrap().center().x).collect();
+    let xs: Vec<f32> = ALL
+        .iter()
+        .map(|l| in_canvas(&h, l).unwrap().center().x)
+        .collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
     // 文字のラベルは無い: 帯の中の読み上げの名前はボタンのツールチップだけ（描いた文字は無い）
     h.snapshot("selection_bar");
@@ -151,7 +159,7 @@ fn the_bar_follows_zoom_rotation_flip_and_pan() {
 #[test]
 fn the_bar_goes_above_or_inside_when_there_is_no_room_below() {
     let mut h = app(1280.0, 800.0, 256);
-    // 画布の下端に近い選択範囲: 下に入らないので上
+    // キャンバスの下端に近い選択範囲: 下に入らないので上
     select_rect(&mut h, 100, 0, 160, 8);
     let (bar, bounds) = (bar_rect(&h), screen_bounds(&h));
     // （文書の y は画面の下から数える設定の場合もあるので、どちらかの側にあればよい）
@@ -165,7 +173,10 @@ fn the_bar_goes_above_or_inside_when_there_is_no_room_below() {
     let bar = bar_rect(&h);
     let canvas = canvas_rect(&h);
     assert!(canvas.contains_rect(bar));
-    assert!(bar.bottom() > canvas.bottom() - 20.0, "表示域の下の内側 {bar:?} {canvas:?}");
+    assert!(
+        bar.bottom() > canvas.bottom() - 20.0,
+        "表示域の下の内側 {bar:?} {canvas:?}"
+    );
     // 表示域の外へ出た選択範囲には、帯を出さない
     h.state_mut().state.view.zoom = 8.0;
     h.state_mut().state.view.pan = vec2(-5000.0, 0.0);
@@ -192,7 +203,9 @@ fn the_bar_hides_while_painting_making_a_shape_or_moving_the_view() {
     h.run();
     assert!(bar_shown(&h), "離したら戻る");
     // 選択の形を作っている間
-    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    h.state_mut()
+        .state
+        .apply(Action::SelectTool(Tool::SelectRect));
     press(&h, offset(c, -100.0, -100.0), PointerButton::Primary);
     h.step();
     move_to(&h, offset(c, -60.0, -70.0));
@@ -251,7 +264,9 @@ fn the_bar_appears_as_soon_as_any_selection_tool_finishes_the_selection() {
     let mut h = app(1280.0, 800.0, 256);
     let c = canvas_rect(&h).center();
     let clear = |h: &mut H| {
-        h.state_mut().state.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+        h.state_mut()
+            .state
+            .apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
         h.run();
         assert!(!bar_shown(h) && st(h).doc.selection().is_none());
     };
@@ -301,7 +316,9 @@ fn the_bar_appears_as_soon_as_any_selection_tool_finishes_the_selection() {
     assert!(bar_shown(&h), "自動選択: クリックしたら帯が出る");
     clear(&mut h);
     // ペン（Windows Ink）: 触れて動かして離す。離したら帯が出る（押しの札が残らない）
-    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    h.state_mut()
+        .state
+        .apply(Action::SelectTool(Tool::SelectRect));
     for (p, contact) in [
         (offset(c, -80.0, -60.0), true),
         (offset(c, 0.0, 0.0), true),
@@ -364,7 +381,10 @@ fn escape_clears_a_finished_selection_like_ctrl_d_in_one_undo() {
     assert!(st(&h).doc.selection().is_some());
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(st(&h).doc.selection().is_none(), "描き終えたあとの Esc で解除");
+    assert!(
+        st(&h).doc.selection().is_none(),
+        "描き終えたあとの Esc で解除"
+    );
 }
 
 #[test]
@@ -377,7 +397,9 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
         h.run();
     };
     // 選択の形を作っている途中（ドラッグ）: Esc はそれをやめるだけで、今の選択は残る
-    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    h.state_mut()
+        .state
+        .apply(Action::SelectTool(Tool::SelectRect));
     press(&h, offset(c, -100.0, -100.0), PointerButton::Primary);
     h.step();
     move_to(&h, offset(c, -60.0, -70.0));
@@ -388,7 +410,10 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
     assert!(st(&h).doc.selection().is_some(), "選択は残る");
     release(&h, offset(c, -60.0, -70.0), PointerButton::Primary);
     h.run();
-    assert!(st(&h).doc.selection().is_some(), "離した後も選択は残り、新しく作らない");
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "離した後も選択は残り、新しく作らない"
+    );
     // 多角形の点を打っている途中: 1 回目の Esc は途中の形だけ、2 回目で選択を解除
     h.state_mut().state.apply(Action::SelectTool(Tool::Polygon));
     click(&mut h, offset(c, 100.0, -100.0));
@@ -413,7 +438,7 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
     click_tab(&mut h, yolu_app::Tab::Channels);
     h.get_by_label("チャンネルを追加").click();
     h.run();
-    let at = popup_item(&h, "スカラー").center();
+    let at = popup_item(&h, "L8").center();
     click(&mut h, at);
     let row = rect_of(&h, "スカラー 1", |r| r.height() < 40.0);
     let name_at = egui::pos2(row.left() + 100.0, row.center().y);
@@ -423,28 +448,47 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
         h.step();
     }
     h.run();
-    assert!(st(&h).m2.renaming_channel.is_some(), "名前を変える入力欄が開いた");
+    assert!(
+        st(&h).m2.renaming_channel.is_some(),
+        "名前を変える入力欄が開いた"
+    );
     esc(&mut h);
     assert!(st(&h).m2.renaming_channel.is_none(), "入力をやめた");
-    assert!(st(&h).doc.selection().is_some(), "入力欄の Esc で選択を外さない");
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "入力欄の Esc で選択を外さない"
+    );
     // メニューを開いている間: Esc はメニューを閉じるだけ
     let title = menu_title(&h, "選択範囲").center();
     click(&mut h, title);
     assert!(st(&h).popup.is_some());
     esc(&mut h);
     assert!(st(&h).popup.is_none(), "メニューが閉じた");
-    assert!(st(&h).doc.selection().is_some(), "メニューの Esc で選択を外さない");
-    // 浮いた窓が開いている間（設定の窓）: 窓を優先して、選択は残す
-    h.state_mut().state.apply(Action::Prefs(yolu_app::prefs::PrefsAction::Open));
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "メニューの Esc で選択を外さない"
+    );
+    // 浮いたウィンドウが開いている間（設定のウィンドウ）: ウィンドウを優先して、選択は残す
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(yolu_app::prefs::PrefsAction::Open));
     h.run();
     esc(&mut h);
-    assert!(st(&h).doc.selection().is_some(), "窓が開いている間の Esc で選択を外さない");
-    h.state_mut().state.apply(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "ウィンドウが開いている間の Esc で選択を外さない"
+    );
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
     h.run();
     h.run();
     // 何も使わなくなったら、Esc で解除
     esc(&mut h);
-    assert!(st(&h).doc.selection().is_none(), "Esc を使うものが無いので解除");
+    assert!(
+        st(&h).doc.selection().is_none(),
+        "Esc を使うものが無いので解除"
+    );
 }
 
 /// Esc を 1 回押して、選択がまだ残り、取り消しの段が増えていないこと（Esc は先に別の部品が使った）。
@@ -452,15 +496,25 @@ fn esc_keeps_the_selection(h: &mut H, what: &str) {
     let steps = st(h).doc.undo_count();
     key(h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(st(h).doc.selection().is_some(), "{what}: Esc で選択を外さない");
-    assert_eq!(st(h).doc.undo_count(), steps, "{what}: 取り消しの段も積まない");
+    assert!(
+        st(h).doc.selection().is_some(),
+        "{what}: Esc で選択を外さない"
+    );
+    assert_eq!(
+        st(h).doc.undo_count(),
+        steps,
+        "{what}: 取り消しの段も積まない"
+    );
 }
 
 /// 何も Esc を使うものが無くなったら、次の 1 回で選択を解除する。
 fn esc_clears_the_selection(h: &mut H, what: &str) {
     key(h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(st(h).doc.selection().is_none(), "{what}: 使うものが無いので Esc で解除");
+    assert!(
+        st(h).doc.selection().is_none(),
+        "{what}: 使うものが無いので Esc で解除"
+    );
 }
 
 #[test]
@@ -477,7 +531,9 @@ fn escape_closes_the_3d_settings_panel_before_the_selection_with_the_canvas_besi
     h.run();
     assert!(h.state().view3d_rect().is_some(), "3D も出ている");
     select_rect(&mut h, 80, 80, 140, 120);
-    h.state_mut().state.apply(Action::View3d(Op::ToggleSettings));
+    h.state_mut()
+        .state
+        .apply(Action::View3d(Op::ToggleSettings));
     h.run();
     assert!(st(&h).view3d.display.settings_open, "設定のパネルが開いた");
     // Esc はパネルを閉じるだけ
@@ -495,10 +551,10 @@ fn escape_closes_the_color_picker_before_the_selection() {
         .state
         .apply(Action::M2(Edit::NewAdjustment(AdjustmentKind::GradientMap)));
     h.run();
-    let id = st(&h).selected_layer.expect("足した層を選ぶ");
+    let id = st(&h).selected_layer.expect("足したレイヤーを選ぶ");
     select_rect(&mut h, 10, 10, 30, 30);
     // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
-    let label = "分岐点の色（押すと色の選びを開く）";
+    let label = "分岐点の色";
     let right = |r: Rect| r.left() > 1000.0;
     let at = rect_of(&h, label, right).top();
     let scroll = st(&h).m2.props_scroll + (at - 900.0);
@@ -506,14 +562,25 @@ fn escape_closes_the_color_picker_before_the_selection() {
     h.run();
     let swatch = rect_of(&h, label, right);
     click(&mut h, swatch.center());
-    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
-    assert!(yolu_app::panels::color_popup::is_open(&h.ctx, popup), "色の選びが開いた");
+    assert!(
+        yolu_app::panels::color_window::is_target(
+            &h.ctx,
+            yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0)
+        ),
+        "色のウィンドウが開いた"
+    );
     assert!(st(&h).doc.selection().is_some(), "開く押しで選択を外さない");
     // Esc は色の選びを（元の色へ戻して）閉じるだけ
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(!yolu_app::panels::color_popup::is_open(&h.ctx, popup), "色の選びが閉じた");
-    assert!(st(&h).doc.selection().is_some(), "色の選びの Esc で選択を外さない");
+    assert!(
+        !yolu_app::panels::color_window::is_open(&h.ctx),
+        "色のウィンドウが閉じた"
+    );
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "色の選びの Esc で選択を外さない"
+    );
     h.run();
     esc_clears_the_selection(&mut h, "色の選びを閉じたあと");
 }
@@ -535,7 +602,7 @@ fn escape_answers_a_confirm_window_before_the_selection() {
         }
         id
     };
-    // 下から 3 つの層。間をはさんだ 2 つを結合すると見た目が変わるので、確かめの窓が出る
+    // 下から 3 つのレイヤー。間をはさんだ 2 つを結合すると見た目が変わるので、確認のウィンドウが出る
     let a = paint(&mut h, (2, 2, 12, 12), Rgba8::new(255, 0, 0, 255));
     h.state_mut().state.apply(Action::NewLayer);
     paint(&mut h, (6, 6, 16, 16), Rgba8::new(0, 255, 0, 255));
@@ -546,14 +613,20 @@ fn escape_answers_a_confirm_window_before_the_selection() {
     h.state_mut().state.select_layers([a, c], c);
     h.state_mut().state.apply(Action::M2(Edit::MergeDown));
     h.run();
-    assert!(st(&h).layer_ops.merge_confirm.is_some(), "確かめの窓が出た");
+    assert!(
+        st(&h).layer_ops.merge_confirm.is_some(),
+        "確認のウィンドウが出た"
+    );
     let layers = st(&h).doc.layers().len();
-    // Esc は窓をやめるだけ
-    esc_keeps_the_selection(&mut h, "確かめの窓");
-    assert!(st(&h).layer_ops.merge_confirm.is_none(), "窓が閉じた");
+    // Esc はウィンドウをやめるだけ
+    esc_keeps_the_selection(&mut h, "確認のウィンドウ");
+    assert!(
+        st(&h).layer_ops.merge_confirm.is_none(),
+        "ウィンドウが閉じた"
+    );
     assert_eq!(st(&h).doc.layers().len(), layers, "結合していない");
     h.run();
-    esc_clears_the_selection(&mut h, "確かめの窓を閉じたあと");
+    esc_clears_the_selection(&mut h, "確認のウィンドウを閉じたあと");
 }
 
 #[test]
@@ -610,7 +683,7 @@ fn escape_cancels_a_brush_row_drag_before_the_selection() {
             r.left() < 340.0 && r.top() > 100.0 && r.top() < 900.0 && r.width() > 200.0
         })
     };
-    let order = st(&h).brushes.lib.order();
+    let order = st(&h).toolset.set.brushes();
     let a = row(&h, "ブラシ");
     let b = row(&h, "ブラシ 2");
     let from = egui::pos2(b.left() + 30.0, b.center().y);
@@ -621,12 +694,12 @@ fn escape_cancels_a_brush_row_drag_before_the_selection() {
     let over = egui::pos2(a.left() + 30.0, a.top() + 4.0);
     move_to(&h, over);
     h.step();
-    assert!(st(&h).brushes.ui.drag.is_some(), "ブラシを動かしている");
+    assert!(st(&h).toolset.ui.drag.is_some(), "ブラシを動かしている");
     esc_keeps_the_selection(&mut h, "ブラシの並べ替えのドラッグ");
-    assert!(st(&h).brushes.ui.drag.is_none(), "ドラッグをやめた");
+    assert!(st(&h).toolset.ui.drag.is_none(), "ドラッグをやめた");
     release(&h, over, PointerButton::Primary);
     h.run();
-    assert_eq!(st(&h).brushes.lib.order(), order, "落とさない");
+    assert_eq!(st(&h).toolset.set.brushes(), order, "落とさない");
     esc_clears_the_selection(&mut h, "ドラッグをやめたあと");
 }
 
@@ -654,22 +727,33 @@ fn deselect_invert_grow_and_shrink_each_take_one_undo_step() {
     // 反転
     click_label(&mut h, INVERT);
     assert_eq!(st(&h).doc.undo_count(), steps + 1);
-    assert_eq!(st(&h).doc.selection().unwrap().amount(120, 120), 0, "中は外れた");
+    assert_eq!(
+        st(&h).doc.selection().unwrap().amount(120, 120),
+        0,
+        "中は外れた"
+    );
     assert_eq!(st(&h).doc.selection().unwrap().amount(10, 10), 255);
     h.state_mut().state.apply(Action::Undo);
     h.run();
     assert_eq!(st(&h).doc.selection().unwrap().amount(120, 120), 255);
-    // 拡張: 量を聞く窓が開き、OK で 1 回の Undo
+    // 拡張: 量を聞くウィンドウが開き、OK で 1 回の Undo
     click_label(&mut h, GROW);
     assert_eq!(st(&h).sel.dialog.map(|d| d.kind), Some(ModifyKind::Grow));
-    assert!(!bar_shown(&h), "窓が開いている間は隠れる");
+    assert!(!bar_shown(&h), "ウィンドウが開いている間は隠れる");
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::ApplyAmount)));
     h.run();
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "反転を戻したあとの拡張で 1 段");
+    assert_eq!(
+        st(&h).doc.undo_count(),
+        steps + 1,
+        "反転を戻したあとの拡張で 1 段"
+    );
     let m = st(&h).doc.selection().unwrap();
-    assert!(m.amount(97, 120) > 0 && m.amount(120, 120) == 255, "広がった");
+    assert!(
+        m.amount(97, 120) > 0 && m.amount(120, 120) == 255,
+        "広がった"
+    );
     // 縮小
     click_label(&mut h, SHRINK);
     assert_eq!(st(&h).sel.dialog.map(|d| d.kind), Some(ModifyKind::Shrink));
@@ -740,18 +824,40 @@ fn copy_to_a_new_layer_keeps_the_selection_the_clipboard_and_takes_one_undo() {
     assert!(st(&h).clip.pixels.is_none());
     click_label(&mut h, COPY);
     assert_eq!(st(&h).doc.layers().len(), layers + 1, "新しいレイヤー");
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "貼り付けと選択の戻しが 1 回の Undo");
-    assert_eq!(st(&h).selected_layer, st(&h).doc.layers().last().map(|l| l.id()), "足した層を選ぶ");
+    assert_eq!(
+        st(&h).doc.undo_count(),
+        steps + 1,
+        "貼り付けと選択の戻しが 1 回の Undo"
+    );
+    assert_eq!(
+        st(&h).selected_layer,
+        st(&h).doc.layers().last().map(|l| l.id()),
+        "足したレイヤーを選ぶ"
+    );
     assert!(st(&h).doc.selection().is_some(), "選択範囲は残る");
     assert!(st(&h).clip.pixels.is_none(), "クリップボードは変えない");
-    assert!(st(&h).message.contains("新しいレイヤー"), "{}", st(&h).message);
-    // 新しい層に同じ画素がある
+    assert!(
+        st(&h).message.contains("新しいレイヤー"),
+        "{}",
+        st(&h).message
+    );
+    // 新しいレイヤーに同じ画素がある
     let new = st(&h).selected_layer.unwrap();
-    let top = st(&h).doc.layer(new).unwrap().surface(yolu_app::engine::Channel::Color).unwrap().pixel(120, 120).unwrap();
+    let top = st(&h)
+        .doc
+        .layer(new)
+        .unwrap()
+        .surface(yolu_app::engine::Channel::Color)
+        .unwrap()
+        .pixel(120, 120)
+        .unwrap();
     assert_eq!(top.a, 255);
     h.state_mut().state.apply(Action::Undo);
     assert_eq!(st(&h).doc.layers().len(), layers);
-    assert!(st(&h).doc.selection().is_some(), "Undo のあとも選択範囲は同じ");
+    assert!(
+        st(&h).doc.selection().is_some(),
+        "Undo のあとも選択範囲は同じ"
+    );
     assert_eq!(st(&h).doc.layers()[0].id(), before);
     assert_eq!(st(&h).doc.undo_count(), steps);
 }
@@ -765,9 +871,17 @@ fn make_mask_adds_a_mask_hides_the_outside_keeps_the_selection_and_takes_one_und
     let steps = st(&h).doc.undo_count();
     click_label(&mut h, MASK);
     let mask = st(&h).doc.layer(id).unwrap().mask().expect("マスクが付く");
-    assert_eq!(mask.factor_at(120, 120).unwrap(), 1.0, "選択範囲の中は見える");
+    assert_eq!(
+        mask.factor_at(120, 120).unwrap(),
+        1.0,
+        "選択範囲の中は見える"
+    );
     assert_eq!(mask.factor_at(10, 10).unwrap(), 0.0, "外は隠れる");
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "マスクを足すのと隠すのが 1 回の Undo");
+    assert_eq!(
+        st(&h).doc.undo_count(),
+        steps + 1,
+        "マスクを足すのと隠すのが 1 回の Undo"
+    );
     assert!(st(&h).doc.selection().is_some(), "選択範囲は残る");
     assert!(st(&h).m2.edit_mask, "マスクを描く状態");
     // マスクがあれば、その上に重ねて隠す（中は変えない）
@@ -775,7 +889,11 @@ fn make_mask_adds_a_mask_hides_the_outside_keeps_the_selection_and_takes_one_und
     click_label(&mut h, MASK);
     let mask = st(&h).doc.layer(id).unwrap().mask().unwrap();
     assert_eq!(mask.factor_at(120, 120).unwrap(), 1.0);
-    assert_eq!(mask.factor_at(105, 105).unwrap(), 0.0, "前は見えていた所も、今の選択範囲の外は隠れる");
+    assert_eq!(
+        mask.factor_at(105, 105).unwrap(),
+        0.0,
+        "前は見えていた所も、今の選択範囲の外は隠れる"
+    );
     h.state_mut().state.apply(Action::Undo);
     let mask = st(&h).doc.layer(id).unwrap().mask().unwrap();
     assert_eq!(mask.factor_at(105, 105).unwrap(), 1.0, "1 回の Undo で戻る");
@@ -793,7 +911,14 @@ fn make_mask_on_an_inverted_mask_still_hides_the_outside_and_takes_one_undo() {
         .state
         .apply(Action::M2(yolu_app::m2::Edit::MaskInverted(id, true)));
     let factor = |h: &H, x: u32, y: u32| {
-        st(h).doc.layer(id).unwrap().mask().unwrap().factor_at(x, y).unwrap()
+        st(h)
+            .doc
+            .layer(id)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .factor_at(x, y)
+            .unwrap()
     };
     assert_eq!(factor(&h, 10, 10), 0.0, "空の反転マスクは全部隠す");
     // 選択範囲の中を見せる（反転したマスクの「塗りつぶし」= 見せる）
@@ -808,7 +933,11 @@ fn make_mask_on_an_inverted_mask_still_hides_the_outside_and_takes_one_undo() {
     click_label(&mut h, MASK);
     assert_eq!(factor(&h, 120, 120), 1.0, "選択範囲の中は見える");
     assert_eq!(factor(&h, 105, 105), 0.0, "前は見えていた所も、外は隠れる");
-    assert_eq!(factor(&h, 10, 10), 0.0, "外は隠れたまま（見える側へ書かない）");
+    assert_eq!(
+        factor(&h, 10, 10),
+        0.0,
+        "外は隠れたまま（見える側へ書かない）"
+    );
     assert_eq!(st(&h).doc.undo_count(), steps + 1);
     h.state_mut().state.apply(Action::Undo);
     assert_eq!(factor(&h, 105, 105), 1.0, "1 回の Undo で戻る");
@@ -826,7 +955,11 @@ fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
         let c = canvas_rect(&h).center();
         drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
         select_rect(&mut h, 0, 0, 256, 256);
-        h.state_mut().state.doc.set_stroke_budget_bytes(1024).unwrap();
+        h.state_mut()
+            .state
+            .doc
+            .set_stroke_budget_bytes(1024)
+            .unwrap();
         let (layers, steps, selected) = (
             st(&h).doc.layers().len(),
             st(&h).doc.undo_count(),
@@ -836,9 +969,17 @@ fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
         let label = in_canvas(&h, lang.pick(COPY, "Copy to a New Layer (Ctrl+J)"));
         let at = label.expect("コピーのボタン").center();
         click(&mut h, at);
-        assert_eq!(st(&h).doc.layers().len(), layers, "{lang:?}: 層は増えない");
+        assert_eq!(
+            st(&h).doc.layers().len(),
+            layers,
+            "{lang:?}: レイヤーは増えない"
+        );
         assert_eq!(st(&h).doc.undo_count(), steps, "{lang:?}: 1 段も積まれない");
-        assert_eq!(st(&h).doc.revision(), revision, "{lang:?}: 文書は変わらない");
+        assert_eq!(
+            st(&h).doc.revision(),
+            revision,
+            "{lang:?}: 文書は変わらない"
+        );
         assert_eq!(st(&h).selected_layer, selected);
         assert!(st(&h).doc.selection().is_some(), "選択範囲はそのまま");
         assert_eq!(
@@ -853,7 +994,7 @@ fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
     }
 }
 
-/// ロックされた層では、塗りつぶし・消去（画素のロック以上）とマスク（すべてのロック）を core が断る。理由を言って、文書は 1 段も変わらない。
+/// ロックされたレイヤーでは、塗りつぶし・消去（画素のロック以上）とマスク（すべてのロック）を core が断る。理由を言って、文書は 1 段も変わらない。
 #[test]
 fn fill_erase_and_mask_on_a_locked_layer_are_refused_and_change_nothing() {
     use yolu_core::LayerLocks;
@@ -896,7 +1037,10 @@ fn fill_erase_and_mask_on_a_locked_layer_are_refused_and_change_nothing() {
     h.state_mut().state.message.clear();
     click_label(&mut h, MASK);
     assert!(st(&h).message.contains("ロック"), "{}", st(&h).message);
-    assert!(st(&h).doc.layer(id).unwrap().mask().is_none(), "マスクは付かない");
+    assert!(
+        st(&h).doc.layer(id).unwrap().mask().is_none(),
+        "マスクは付かない"
+    );
     assert_eq!(st(&h).doc.revision(), revision);
     assert_eq!(st(&h).doc.undo_count(), steps);
     assert_eq!(st(&h).doc.layers().len(), layers);
@@ -914,23 +1058,37 @@ fn buttons_that_cannot_work_say_why_and_do_nothing() {
     let mut h = app(1280.0, 800.0, 256);
     select_rect(&mut h, 100, 100, 140, 140);
     // グループは描けず、画素もコピーできない（マスクにはできる）
-    h.state_mut().state.apply(Action::M2(yolu_app::m2::Edit::GroupSelected));
+    h.state_mut()
+        .state
+        .apply(Action::M2(yolu_app::m2::Edit::GroupSelected));
     h.run();
     let steps = st(&h).doc.undo_count();
-    let reason = "このレイヤーには描けません: グループ";
+    let reason = "このレイヤーには描けません（グループ）。";
     let fill = format!("{FILL}（{reason}）");
-    assert!(h.get_by_label(&fill).accesskit_node().is_disabled(), "塗りつぶしは押せない");
+    assert!(
+        h.get_by_label(&fill).accesskit_node().is_disabled(),
+        "塗りつぶしは押せない"
+    );
     let erase = format!("選択範囲を消去（Delete）（{reason}）");
     assert!(h.get_by_label(&erase).accesskit_node().is_disabled());
     let copy = "コピーして新しいレイヤーに（Ctrl+J）（画素を持たないレイヤーです）";
-    assert!(h.get_by_label(copy).accesskit_node().is_disabled(), "コピーは押せない");
-    assert!(!h.get_by_label(MASK).accesskit_node().is_disabled(), "マスクは付けられる");
+    assert!(
+        h.get_by_label(copy).accesskit_node().is_disabled(),
+        "コピーは押せない"
+    );
+    assert!(
+        !h.get_by_label(MASK).accesskit_node().is_disabled(),
+        "マスクは付けられる"
+    );
     let at = h.get_by_label(&fill).rect().center();
     click(&mut h, at);
     assert_eq!(st(&h).doc.undo_count(), steps, "押せないボタンは何もしない");
-    // 解除・反転・拡張・縮小は層に依らず使える
+    // 解除・反転・拡張・縮小はレイヤーに依らず使える
     for label in [DESELECT, INVERT, GROW, SHRINK] {
-        assert!(!h.get_by_label(label).accesskit_node().is_disabled(), "{label}");
+        assert!(
+            !h.get_by_label(label).accesskit_node().is_disabled(),
+            "{label}"
+        );
     }
 }
 
@@ -940,14 +1098,31 @@ fn the_bar_can_be_dragged_and_comes_home_when_the_selection_is_cleared() {
     select_rect(&mut h, 100, 100, 140, 140);
     let home = bar_rect(&h);
     let grip = in_canvas(&h, GRIP).unwrap().center();
-    drag(&mut h, &[grip, offset(grip, 40.0, 10.0), offset(grip, 120.0, 40.0)]);
+    drag(
+        &mut h,
+        &[grip, offset(grip, 40.0, 10.0), offset(grip, 120.0, 40.0)],
+    );
     h.run();
     let moved = bar_rect(&h);
-    assert!((moved.min - home.min - vec2(120.0, 40.0)).length() < 3.0, "{home:?} → {moved:?}");
-    assert_eq!(st(&h).doc.undo_count(), 1, "持ち手のドラッグは描かず、Undo にも入らない");
+    assert!(
+        (moved.min - home.min - vec2(120.0, 40.0)).length() < 3.0,
+        "{home:?} → {moved:?}"
+    );
+    assert_eq!(
+        st(&h).doc.undo_count(),
+        1,
+        "持ち手のドラッグは描かず、Undo にも入らない"
+    );
     // 表示域の外へはみ出す引き方をしても、帯は表示域の中
     let grip = in_canvas(&h, GRIP).unwrap().center();
-    drag(&mut h, &[grip, offset(grip, 800.0, 800.0), offset(grip, 3000.0, 3000.0)]);
+    drag(
+        &mut h,
+        &[
+            grip,
+            offset(grip, 800.0, 800.0),
+            offset(grip, 3000.0, 3000.0),
+        ],
+    );
     h.run();
     assert!(canvas_rect(&h).contains_rect(bar_rect(&h)));
     // 選択範囲を外すと初めの位置へ戻る（次の選択範囲では、その下に出る）
@@ -984,7 +1159,10 @@ fn a_pen_touch_on_a_button_presses_it_once_and_never_paints() {
         modifiers: Modifiers::NONE,
     });
     h.step();
-    assert!(bar_shown(&h), "ペンが触れている間も、押したボタンは消えない");
+    assert!(
+        bar_shown(&h),
+        "ペンが触れている間も、押したボタンは消えない"
+    );
     h.state().pen().push(sample(false));
     h.event(Event::PointerButton {
         pos: at,
@@ -993,7 +1171,11 @@ fn a_pen_touch_on_a_button_presses_it_once_and_never_paints() {
         modifiers: Modifiers::NONE,
     });
     h.run();
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "反転が 1 回だけ（描かない）");
+    assert_eq!(
+        st(&h).doc.undo_count(),
+        steps + 1,
+        "反転が 1 回だけ（描かない）"
+    );
     assert_eq!(st(&h).doc.selection().unwrap().amount(120, 120), 0);
 }
 
@@ -1024,30 +1206,41 @@ fn the_select_menu_runs_the_same_edits_and_hides_the_bar() {
 }
 
 #[test]
-fn delete_erases_the_selection_and_ctrl_j_copies_it_to_a_new_layer_while_without_one_it_duplicates_the_layer() {
+fn delete_erases_the_selection_and_ctrl_j_copies_it_to_a_new_layer_while_without_one_it_duplicates_the_layer(
+) {
     let mut h = app(1280.0, 800.0, 256);
     h.state_mut().state.color.set_main([0.9, 0.5, 0.1, 1.0]);
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -60.0, 0.0), offset(c, 60.0, 0.0)]);
     let steps = st(&h).doc.undo_count();
-    // 選択範囲が無いとき、Delete は何もしない。Ctrl+J はレイヤーの複製（層の操作）
+    // 選択範囲が無いとき、Delete は何もしない。Ctrl+J はレイヤーの複製（レイヤーの操作）
     key(&h, Key::Delete, Modifiers::NONE);
     h.run();
     assert_eq!(st(&h).doc.undo_count(), steps, "Delete は何もしない");
     key(&h, Key::J, Modifiers::COMMAND);
     h.run();
-    assert_eq!(st(&h).doc.layers().len(), 2, "選択範囲が無ければレイヤーの複製");
+    assert_eq!(
+        st(&h).doc.layers().len(),
+        2,
+        "選択範囲が無ければレイヤーの複製"
+    );
     h.state_mut().state.apply(Action::Undo);
     h.run();
     assert_eq!(st(&h).doc.layers().len(), 1);
     // 選択範囲があるとき: Ctrl+J は選択範囲の画素だけを新しいレイヤーへ（レイヤーの複製ではない）
     let at = |dx: f32| canvas_pixel_xy(&h, dx);
-    assert_eq!(canvas_pixel(&h, offset(c, 40.0, 0.0))[3], 255, "塗った線は中心から 40 点の所にもある");
+    assert_eq!(
+        canvas_pixel(&h, offset(c, 40.0, 0.0))[3],
+        255,
+        "塗った線は中心から 40 点の所にもある"
+    );
     let inside_x = at(0.0) as u32;
     // 塗った線（中心から左右に 60 点）の中で、選択範囲（中心の左右に 5 画素）の外になる点（中心から 40 点の所）
     let scale = {
         let s = st(&h);
-        s.view.view(canvas_rect(&h), s.doc.width(), s.doc.height()).pixel_size()
+        s.view
+            .view(canvas_rect(&h), s.doc.width(), s.doc.height())
+            .pixel_size()
     };
     let outside_x = inside_x + (40.0 / scale).ceil() as u32;
     select_rect(&mut h, inside_x as i64 - 5, 0, inside_x as i64 + 5, 256);
@@ -1067,7 +1260,7 @@ fn delete_erases_the_selection_and_ctrl_j_copies_it_to_a_new_layer_while_without
     assert_eq!(surface(&h, inside_x), 255, "選択範囲の中は写る");
     assert_eq!(surface(&h, outside_x), 0, "外は写らない（塗ってあっても）");
     assert!(st(&h).doc.selection().is_some(), "選択範囲は残る");
-    // Delete: 選んでいる層の選択範囲の中だけを消す（下の層はそのまま）
+    // Delete: 選んでいるレイヤーの選択範囲の中だけを消す（下のレイヤーはそのまま）
     let below = st(&h).doc.layers()[0].id();
     h.state_mut().state.selected_layer = Some(below);
     h.run();
@@ -1095,12 +1288,14 @@ fn the_layer_menu_shows_ctrl_j_for_duplicate_only_while_there_is_no_selection() 
     use yolu_app::state::AppState;
     use yolu_app::ui::menu::Entry;
     let shortcut_of = |s: &AppState, name: &str| -> Option<Option<String>> {
-        yolu_app::shell::menu_entries(s, 2).into_iter().find_map(|e| match e {
-            Entry::Item {
-                label, shortcut, ..
-            } if label == name => Some(shortcut),
-            _ => None,
-        })
+        yolu_app::shell::menu_entries(s, 2)
+            .into_iter()
+            .find_map(|e| match e {
+                Entry::Item {
+                    label, shortcut, ..
+                } if label == name => Some(shortcut),
+                _ => None,
+            })
     };
     for lang in Lang::ALL {
         let mut s = AppState::new_in(64, 64, lang);
@@ -1123,7 +1318,11 @@ fn the_layer_menu_shows_ctrl_j_for_duplicate_only_while_there_is_no_selection() 
             "{lang:?}: 選択範囲があるあいだは複製に Ctrl+J を出さない"
         );
         s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
-        assert_eq!(shortcut_of(&s, duplicate), Some(Some("Ctrl+J".to_owned())), "{lang:?}: 外せば戻る");
+        assert_eq!(
+            shortcut_of(&s, duplicate),
+            Some(Some("Ctrl+J".to_owned())),
+            "{lang:?}: 外せば戻る"
+        );
     }
 }
 
@@ -1172,7 +1371,10 @@ fn the_remember_button_opens_the_remembered_selections_window_and_a_name_can_be_
     assert!(st(&h).sel.saved_window.is_none());
     click_label(&mut h, REMEMBER);
     h.run();
-    assert!(st(&h).sel.saved_window.is_some(), "帯のボタンで窓が開く");
+    assert!(
+        st(&h).sel.saved_window.is_some(),
+        "帯のボタンでウィンドウが開く"
+    );
     h.get_by_label("覚える").click();
     h.run();
     assert_eq!(st(&h).saved_selections().len(), 1);

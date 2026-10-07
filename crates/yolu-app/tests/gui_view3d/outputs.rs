@@ -1,4 +1,4 @@
-//! メッシュマップのベイク・テンプレートの書き出し・PSD の読み書きの画面（egui_kittest）: 窓を開く → 選ぶ → 結果のファイル・文書が変わる、
+//! メッシュマップのベイク・テンプレートの書き出し・PSD の読み書きの画面（egui_kittest）: ウィンドウを開く → 選ぶ → 結果のファイル・文書が変わる、
 //! 取消、上書きの確かめ、断る理由、日本語と英語。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -53,7 +53,7 @@ impl Drop for TempDir {
     }
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     let rect = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
@@ -176,7 +176,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         assert_eq!(h.state().state.dialog_request, Some(expect), "{label}");
         h.state_mut().state.dialog_request = None;
     }
-    // PSD の書き出しは、先に設定の窓（方式・チャンネル）を開き、ファイルはその窓の「書き出し…」で選ぶ
+    // PSD の書き出しは、先に設定のウィンドウ（方式・チャンネル）を開き、ファイルはそのウィンドウの「書き出し…」で選ぶ
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let at = popup_item(&h, "PSD…").center();
@@ -277,12 +277,37 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
     {
         let s = &mut h.state_mut().state;
         s.message = "試験".into();
-        s.bake.outcome = Some(("テクスチャセット 1: 試験".into(), true));
+        s.bake.outcome = Some((
+            "「テクスチャセット 1」のメッシュマップ 5 枚を焼きました。".into(),
+            true,
+        ));
         s.bake.window.as_mut().unwrap().page = Page::Map(MeshMapKind::AmbientOcclusion);
     }
     h.run();
     shot(&mut h, "bake", "bake_window_baked");
-    // 窓の目で別のマップを見る
+    // 共通の設定の頁の「最後のベイク」は、焼いた場所と注意の行だけ（時間・レイ・テクセル・三角形の数は出さない）
+    h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Common;
+    h.run();
+    for dev in ["テクセル 焼いた", "三角形 焼いた", "（準備 "] {
+        assert!(
+            h.query_by_label_contains(dev).is_none(),
+            "開発用の数の行「{dev}」を出さない"
+        );
+    }
+    assert!(
+        !h.query_all_by_label_contains("レイ ").any(|n| {
+            n.accesskit_node()
+                .label()
+                .and_then(|l| l.strip_prefix("レイ ").map(str::to_owned))
+                .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+        }),
+        "レイの数の行を出さない"
+    );
+    shot(&mut h, "bake", "bake_window_last_bake");
+    h.state_mut().state.bake.window.as_mut().unwrap().page =
+        Page::Map(MeshMapKind::AmbientOcclusion);
+    h.run();
+    // ウィンドウの目で別のマップを見る
     h.get_by_label("アンビエントオクルージョンをキャンバスに出す")
         .click();
     h.run();
@@ -314,7 +339,7 @@ fn the_bake_window_checks_a_replaced_model_in_another_thread_and_keeps_working()
     settle(&mut h);
     assert_eq!(kinds(&h).len(), 5);
     assert!(!h.state().state.bake.is_checking());
-    // モデルが替わった次の 1 フレームで、窓は入力を別のスレッドで作り始める（このフレームでは作らず、窓は描かれる）
+    // モデルが替わった次の 1 フレームで、ウィンドウは入力を別のスレッドで作り始める（このフレームでは作らず、ウィンドウは描かれる）
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.step();
     assert!(h.state().state.bake.is_checking());
@@ -326,7 +351,7 @@ fn the_bake_window_checks_a_replaced_model_in_another_thread_and_keeps_working()
         let check = h.state_mut().state.mesh_map_check(0, kind).unwrap();
         assert_eq!(check.state, MeshMapState::Current, "{kind:?}");
     }
-    // 窓を閉じると、作っている最中のものは手放す
+    // ウィンドウを閉じると、作っている最中のものは手放す
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.step();
     assert!(h.state().state.bake.is_checking());
@@ -416,7 +441,7 @@ fn cancel_from_the_window_and_the_job_card_after_closing_it() {
     h.get_by_label("チェックしたマップをベイク").click();
     h.run();
     assert!(h.state().state.bake.is_baking());
-    // 窓の取消（1 フレームだけ進める: 取消の旗は立つが、止まった仕事を受けるのは次のフレーム）
+    // ウィンドウの取消（1 フレームだけ進める: 取消の旗は立つが、止まった仕事を受けるのは次のフレーム）
     h.get_by_label("取消").click();
     h.step();
     assert!(h.state().state.bake.progress().unwrap().canceling);
@@ -424,7 +449,7 @@ fn cancel_from_the_window_and_the_job_card_after_closing_it() {
     assert!(h.state().state.sets.current().mesh_maps.is_empty());
     assert!(h.state().state.message.contains("取り消しました"));
 
-    // 窓を閉じても焼き続け、仕事の札から取り消せる
+    // ウィンドウを閉じても焼き続け、仕事の札から取り消せる
     h.state_mut().state.bake.park_next = true;
     h.get_by_label("チェックしたマップをベイク").click();
     h.run();
@@ -432,7 +457,10 @@ fn cancel_from_the_window_and_the_job_card_after_closing_it() {
     h.get_by_label("閉じる").click();
     h.run();
     assert!(h.state().state.bake.window.is_none());
-    assert!(h.state().state.bake.is_baking(), "窓を閉じてもベイクは続く");
+    assert!(
+        h.state().state.bake.is_baking(),
+        "ウィンドウを閉じてもベイクは続く"
+    );
     h.get_by_label("取消: メッシュマップをベイク").click();
     h.step();
     assert!(h.state().state.bake.progress().unwrap().canceling);
@@ -530,7 +558,7 @@ fn the_bake_window_refuses_with_a_short_reason_and_speaks_english() {
     );
     apply(&mut h, Action::LoadDemoModel);
     shot(&mut h, "bake", "bake_window_english");
-    // Esc: 焼いていなければ窓を閉じる（窓の上にポインタがあるとき）
+    // Esc: 焼いていなければウィンドウを閉じる（ウィンドウの上にポインタがあるとき）
     move_to(&h, egui::pos2(640.0, 400.0));
     h.run();
     key(&h, Key::Escape, egui::Modifiers::NONE);
@@ -538,9 +566,9 @@ fn the_bake_window_refuses_with_a_short_reason_and_speaks_english() {
     assert!(h.state().state.bake.window.is_none());
 }
 
-/// 窓の中の、名前のボタンの矩形（同じ名前の部品と区別するため、窓の中で探す）。
+/// ウィンドウの中の、名前のボタンの矩形（同じ名前の部品と区別するため、ウィンドウの中で探す）。
 fn bake_button(h: &Harness<'_, YoluApp>, label: &str) -> egui::Rect {
-    let win = yolu_app::windows::window_rect(&h.ctx, "bake").expect("窓");
+    let win = yolu_app::windows::window_rect(&h.ctx, "bake").expect("ウィンドウ");
     rect_of(h, label, |r| win.contains(r.center()))
 }
 
@@ -726,7 +754,7 @@ fn exporting_asks_before_replacing_then_shows_the_short_list() {
         dir.files(),
         ["Texture_Hair_Albedo.png", "Texture_Skin_Albedo.png"]
     );
-    // 結果の窓: 書いた画像の一覧
+    // 結果のウィンドウ: 書いた画像の一覧
     assert!(h.state().state.export.report.is_some());
     {
         // 撮る絵は毎回同じに（書き出し先は毎回違う）
@@ -751,13 +779,13 @@ fn exporting_asks_before_replacing_then_shows_the_short_list() {
     assert!(h.state().state.export.confirm.is_some());
     assert!(!h.state().state.export.is_exporting());
     shot(&mut h, "export-confirm", "export_confirm");
-    // 確かめの窓の間は、キーの割り当てが働かない
+    // 確認のウィンドウの間は、キーの割り当てが働かない
     key(&h, Key::E, egui::Modifiers::NONE);
     h.run();
     assert_eq!(
         h.state().state.tool,
         yolu_app::state::Tool::Brush,
-        "確かめの窓の間は E で消しゴムにならない"
+        "確認のウィンドウの間は E で消しゴムにならない"
     );
     // やめる
     h.get_by_label("やめる").click();
@@ -849,7 +877,7 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     // テクスチャセットのパネルに出る
     h.get_by_label("Body");
 
-    // 取り込めない PSD（PSB）: 何も変えず、理由の窓
+    // 取り込めない PSD（PSB）: 何も変えず、理由のウィンドウ
     let mut psb = bytes.clone();
     psb[4..6].copy_from_slice(&2u16.to_be_bytes());
     let psb_path = dir.0.join("Big.psd");
@@ -882,12 +910,12 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     assert!(h.state().state.message.contains("PSB (large document)"));
 }
 
-/// 層 ID を持たない 2 層の PSD を書く（書き手は ID を必ず書くので、lyid のタグを同じ長さの別のタグに書き換える）。
+/// レイヤー ID を持たない 2 レイヤーの PSD を書く（書き手は ID を必ず書くので、lyid のタグを同じ長さの別のタグに書き換える）。
 fn psd_without_layer_ids(path: &Path) {
     psd_without_layer_ids_with(path, false)
 }
 
-/// `dissolve` のとき、下の層の合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になる＝変わる。確かめの窓が出る）。
+/// `dissolve` のとき、下のレイヤーの合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になる＝変わる。確認のウィンドウが出る）。
 fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
     use yolu_io::psd::{self, Document, Layer, Limits};
     let layer = |id: i32, name: &str, rgba: [u8; 4]| Layer {
@@ -901,7 +929,10 @@ fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
     let doc = Document {
         width: 8,
         height: 8,
-        layers: vec![layer(2, "上", [0, 0, 255, 255]), layer(1, "下", [255, 0, 0, 255])],
+        layers: vec![
+            layer(2, "上", [0, 0, 255, 255]),
+            layer(1, "下", [255, 0, 0, 255]),
+        ],
         composite_rgba: None,
     };
     let mut bytes = psd::write(&doc, &Limits::default()).unwrap();
@@ -911,7 +942,10 @@ fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
         at += i + 4;
     }
     if dissolve {
-        let i = bytes.windows(8).position(|w| w == b"8BIMnorm").expect("層の記録の合成モード");
+        let i = bytes
+            .windows(8)
+            .position(|w| w == b"8BIMnorm")
+            .expect("レイヤーの記録の合成モード");
         bytes[i + 4..i + 8].copy_from_slice(b"diss");
     }
     std::fs::write(path, bytes).unwrap();
@@ -937,13 +971,26 @@ fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_th
     assert!(h.state().state.psd.import_check.is_some());
     assert_eq!(h.state().state.sets.len(), 1, "確かめるまで入れない");
     let texts = window_texts(&h, "psd-import");
-    for want in ["レイヤー ID の欠落・重複", "レイヤーのメタデータ", "変わる", "無視", "下、上"] {
+    for want in [
+        "レイヤー ID の欠落・重複",
+        "レイヤーのメタデータ",
+        "変わる",
+        "無視",
+        "下、上",
+    ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
     // PSD の内部のタグ名（4 文字のキー）は画面に出さない
-    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
     assert!(
-        texts.iter().any(|t| t.contains("Ids.psd") && t.contains("変わる 1") && t.contains("無視 2")),
+        texts
+            .iter()
+            .all(|t| !t.contains("lnsr") && !t.contains("lyid")),
+        "{texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Ids.psd") && t.contains("変わる 1") && t.contains("無視 2")),
         "{texts:?}"
     );
     shot(&mut h, "psd-import", "psd_import_check");
@@ -956,13 +1003,25 @@ fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_th
     h.state_mut().state.lang = Lang::En;
     import(&mut h);
     let texts = window_texts(&h, "psd-import");
-    for want in ["Missing or duplicate layer IDs", "Layer metadata", "Changed", "Ignored"] {
+    for want in [
+        "Missing or duplicate layer IDs",
+        "Layer metadata",
+        "Changed",
+        "Ignored",
+    ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
-    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
-    // 日本語が残ってよいのは、利用者の名前（層の名前）だけ
     assert!(
-        texts.iter().all(|t| !has_japanese(t) || t == "下, 上" || t == "下"),
+        texts
+            .iter()
+            .all(|t| !t.contains("lnsr") && !t.contains("lyid")),
+        "{texts:?}"
+    );
+    // 日本語が残ってよいのは、利用者の名前（レイヤーの名前）だけ
+    assert!(
+        texts
+            .iter()
+            .all(|t| !has_japanese(t) || t == "下, 上" || t == "下"),
         "{texts:?}"
     );
     shot(&mut h, "psd-import", "psd_import_check_english");
@@ -973,7 +1032,7 @@ fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_th
     assert_eq!(h.state().state.sets.current().name, "Ids");
 }
 
-/// 窓の中に描いた文字（描いた順）。
+/// ウィンドウの中に描いた文字（描いた順）。
 fn window_texts(h: &Harness<'_, YoluApp>, window: &str) -> Vec<String> {
     use egui::epaint::Shape;
     fn walk(shape: &Shape, area: egui::Rect, out: &mut Vec<String>) {
@@ -998,7 +1057,7 @@ fn window_texts(h: &Harness<'_, YoluApp>, window: &str) -> Vec<String> {
     out
 }
 
-/// 窓の中の、名前の部品の中心（同じ名前のドックの部品に取り違えない）。
+/// ウィンドウの中の、名前の部品の中心（同じ名前のドックの部品に取り違えない）。
 fn in_window(h: &Harness<'_, YoluApp>, window: &str, label: &str) -> egui::Pos2 {
     let area = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
@@ -1065,7 +1124,7 @@ fn exporting_a_psd_with_an_inverted_mask_lists_what_it_bakes_and_writes_only_aft
     let texts = window_texts(&h, "psd-bake");
     assert!(texts.iter().any(|t| t == "Inverted mask"), "{texts:?}");
     assert!(texts.iter().any(|t| t == "To mask pixels"), "{texts:?}");
-    // 日本語が残ってよいのは、利用者の名前（層の名前）だけ
+    // 日本語が残ってよいのは、利用者の名前（レイヤーの名前）だけ
     let layer_name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
     assert!(
         texts.iter().all(|t| !has_japanese(t) || *t == layer_name),
@@ -1191,7 +1250,7 @@ fn the_psd_export_window_chooses_the_mode_and_channels_and_asks_for_the_file() {
     let at = in_window(&h, "psd-export", "ラフネス");
     click(&mut h, at);
     assert_eq!(channels(&h), [Channel::Roughness], "最後の 1 つは外せない");
-    // 書き出し…: 窓を閉じて、書き出す先を選ぶ窓を頼む。初めのファイル名は 1 つのチャンネルなら末尾にチャンネル
+    // 書き出し…: ウィンドウを閉じて、書き出す先を選ぶウィンドウを頼む。初めのファイル名は 1 つのチャンネルなら末尾にチャンネル
     let name = yolu_app::psd::default_export_name(&h.state().state);
     assert!(name.ends_with("_Roughness.psd"), "{name}");
     let at = in_window(&h, "psd-export", "書き出し…");
@@ -1201,7 +1260,7 @@ fn the_psd_export_window_chooses_the_mode_and_channels_and_asks_for_the_file() {
         h.state().state.dialog_request,
         Some(DialogRequest::PsdExport)
     );
-    // 英語: 窓の文字に日本語が残らない。やめるで閉じる
+    // 英語: ウィンドウの文字に日本語が残らない。やめるで閉じる
     h.state_mut().state.dialog_request = None;
     h.state_mut().state.lang = Lang::En;
     apply(&mut h, Action::Psd(PsdAction::ExportDialog));
@@ -1277,7 +1336,10 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
         "開いたものは保存済み"
     );
     // 開いただけでは古くならない: 焼く設定は保存したマップの条件にそろう（モデルが無いあいだは照合できないので「未確認」）
-    assert_eq!((again.bake.settings.padding, again.bake.settings.ao_samples), (4, 8));
+    assert_eq!(
+        (again.bake.settings.padding, again.bake.settings.ao_samples),
+        (4, 8)
+    );
     let check = again.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
     assert_eq!(check.state, MeshMapState::Unverified);
     // 設定を変えれば、前のマップは古い（照合できなくても、条件の違いは分かる）
@@ -1342,7 +1404,7 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
 /// （焼いた場所は保存しない。GPU を使えない環境では省く）。
 #[test]
 fn headless_gpu_baked_mesh_maps_survive_save_and_reopen() {
-    // 窓（harness）は作らないが、確認とベイクが製品のスレッドで GPU の装置を作る。窓を持つ試験と同時に作らないよう、先に貸し出しを取る
+    // ウィンドウ（harness）は作らないが、確認とベイクが製品のスレッドで GPU の装置を作る。ウィンドウを持つ試験と同時に作らないよう、先に貸し出しを取る
     // （確認のループと `wait_bake` で製品のスレッドはこの試験の中で終わるので、試験のスレッドが持てば足りる）
     common::gpu_thread::lease();
     let dir = TempDir::new("hgpu");
@@ -1368,6 +1430,11 @@ fn headless_gpu_baked_mesh_maps_survive_save_and_reopen() {
     };
     if let Err(why) = probe {
         eprintln!("GPU を使えない環境なので、GPU で焼いた結果の保存と復元の試験は省く: {why}");
+        // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、アダプターを取れないときに通った扱いにしない（common::canvas_device と同じ）
+        assert!(
+            std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),
+            "YOLUPAINTER_REQUIRE_GPU があるのに GPU を使えない: {why}"
+        );
         return;
     }
     s.apply(Action::LoadDemoModel);
@@ -1428,7 +1495,7 @@ fn headless_each_sets_mesh_maps_are_saved_under_its_own_set() {
     let path = dir.0.join("two.ylp");
     let mut s = AppState::new(64, 64);
     s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
-    s.receive_link_model(&two_quads(), 0).1.unwrap();
+    s.receive_link_model(&two_quads()).1.unwrap();
     s.bake.settings.maps = vec![MeshMapKind::Position];
     s.bake.settings.padding = 2;
     s.apply(Action::Bake(BakeAction::Start));
@@ -1502,7 +1569,7 @@ fn headless_an_imported_psd_survives_save_and_reopen_and_exports_again() {
     assert!(out.exists(), "{}", again.message);
 }
 
-/// 写しとして取り込んだ PSD（層 ID の欠落に新しい ID を振ったもの）も、.ylp に保存して開き直しても同じ絵・同じ層・同じ ID で戻り、
+/// 写しとして取り込んだ PSD（レイヤー ID の欠落に新しい ID を振ったもの）も、.ylp に保存して開き直しても同じ絵・同じレイヤー・同じ ID で戻り、
 /// 書き出しは新しい PSD になる（取り込んだ PSD は 1 バイトも変わらない。同じファイルへ書くときは置き換える前に確かめる）。
 #[test]
 fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_original() {
@@ -1517,12 +1584,19 @@ fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_
         target: PsdTarget::NewSet,
     }));
     s.wait_psd();
-    assert!(s.psd.import_check.is_none(), "層 ID の欠落は無視（確かめずに入る）");
+    assert!(
+        s.psd.import_check.is_none(),
+        "レイヤー ID の欠落は無視（確かめずに入る）"
+    );
     assert_eq!(s.sets.len(), 2);
     let composite = |s: &AppState| s.doc.composite(s.doc.bounds()).unwrap();
     let before = composite(&s);
     let layers = |s: &AppState| -> Vec<(String, u128)> {
-        s.doc.layers().iter().map(|l| (l.name().to_owned(), l.id().0)).collect()
+        s.doc
+            .layers()
+            .iter()
+            .map(|l| (l.name().to_owned(), l.id().0))
+            .collect()
     };
     let ids = layers(&s);
     assert!(ids.iter().all(|(_, id)| id >> 96 > 0));
@@ -1533,18 +1607,34 @@ fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_
     let mut again = AppState::new(32, 32);
     again.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     again.apply(Action::OpenProject(project));
-    let index = again.sets.iter().position(|x| x.name == "Copy").expect("セットの名前");
+    let index = again
+        .sets
+        .iter()
+        .position(|x| x.name == "Copy")
+        .expect("セットの名前");
     again.switch_set(index).unwrap();
     assert!(composite(&again) == before, "同じ絵");
-    assert_eq!(layers(&again), ids, "同じ層・同じ ID");
+    assert_eq!(layers(&again), ids, "同じレイヤー・同じ ID");
     // 書き出しは別のファイルへ新しい PSD として。取り込んだ PSD は変わらない
     let out = dir.0.join("out.psd");
     again.apply(Action::Psd(PsdAction::Export(out.clone())));
     again.wait_psd();
     assert!(out.exists(), "{}", again.message);
-    assert_eq!(std::fs::read(&psd).unwrap(), original, "取り込んだ PSD は書き換えない");
+    assert_eq!(
+        std::fs::read(&psd).unwrap(),
+        original,
+        "取り込んだ PSD は書き換えない"
+    );
     // 取り込んだ文書から、取り込んだファイルと同じ場所へ書き出そうとすると、置き換える前に確かめる
     s.apply(Action::Psd(PsdAction::Export(psd.clone())));
-    assert!(s.psd.confirm.as_ref().is_some_and(|c| c.imported), "{}", s.message);
-    assert_eq!(std::fs::read(&psd).unwrap(), original, "確かめるまで書かない");
+    assert!(
+        s.psd.confirm.as_ref().is_some_and(|c| c.imported),
+        "{}",
+        s.message
+    );
+    assert_eq!(
+        std::fs::read(&psd).unwrap(),
+        original,
+        "確かめるまで書かない"
+    );
 }

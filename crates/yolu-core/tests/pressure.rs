@@ -3,6 +3,7 @@
 //! 効く、切っている項目は応えを使わない、範囲と形の検査、同じ入力は同じ画素、Undo で戻る。
 //! 1 つのダブは「1 点だけのストローク」で置き、筆圧の応えを通した値は、同じ値を固定の設定に入れたブラシと画素を比べて確かめる
 //! （応えの式そのものは `brush/pressure.rs` の単体試験）。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最大と 0 に切り替えて、直列の経路だけ・ワーカーの経路を通ることを確かめる。同じプロセスのほかの試験が閾値を変えると外れる。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use yolu_core::generator::CurvePoint;
@@ -111,7 +112,7 @@ fn fnv(bytes: &[u8]) -> u64 {
     h
 }
 
-/// 応えを足す前のコード（8ac0a3d の親）が、同じ線・同じブラシで描いた画素のハッシュ。同じ試験の道具立て（`canvas`・`round`・`wavy`・`draw`）を
+/// 応えを足す前のコード（8ac0a3d の親）が、同じ線・同じブラシで描いた画素のハッシュ。同じ試験の補助関数（`canvas`・`round`・`wavy`・`draw`）を
 /// そのコードに写して測った。筆圧が行ったり来たりする線なので、ダブごとに大きさ・不透明度・流量が筆圧そのものに従う道が効く。
 #[test]
 fn the_default_response_paints_the_bytes_the_code_painted_before_responses_existed() {

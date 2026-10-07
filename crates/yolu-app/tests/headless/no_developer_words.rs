@@ -12,9 +12,9 @@ const BANNED: [(&str, &str); 20] = [
     ("M2 prototype", "試作の名残"),
     ("Rust 版", "実装の言語は利用者に関係ない"),
     ("(Rust)", "実装の言語は利用者に関係ない"),
-    ("core の", "内部の層の名前"),
-    ("core で", "内部の層の名前"),
-    ("core document", "内部の層の名前"),
+    ("core の", "内部の階層の名前"),
+    ("core で", "内部の階層の名前"),
+    ("core document", "内部の階層の名前"),
     ("スナップショット", "内部の仕組みの名前"),
     ("Model snapshot", "内部の仕組みの名前"),
     ("BVH", "内部の仕組みの名前"),
@@ -66,9 +66,15 @@ fn literals(line: &str, with_keys: bool) -> Vec<String> {
                 let before: String = chars[..start].iter().collect();
                 let before = before.trim_end();
                 // `=>` の左（表のキー）と、`expect("…")`・`panic!("…")` などの開発者向けの文は見ない
-                let developer = ["expect(", "panic!(", "unreachable!(", "assert!(", "debug_assert!("]
-                    .iter()
-                    .any(|m| before.ends_with(m));
+                let developer = [
+                    "expect(",
+                    "panic!(",
+                    "unreachable!(",
+                    "assert!(",
+                    "debug_assert!(",
+                ]
+                .iter()
+                .any(|m| before.ends_with(m));
                 if (with_keys || !after.trim_start().starts_with("=>")) && !developer {
                     out.push(text);
                 }
@@ -85,6 +91,20 @@ fn scan(root: &Path) -> Vec<String> {
 }
 
 fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<String> {
+    scan_literals(root, with_keys, |literal| {
+        banned
+            .iter()
+            .find(|(word, _)| literal.contains(word))
+            .map(|(word, why)| (word.to_string(), why.to_string()))
+    })
+}
+
+/// `hit` が文字列リテラルごとに（言葉, 理由）を返したものを「ファイル:行」つきで集める。
+fn scan_literals(
+    root: &Path,
+    with_keys: bool,
+    hit: impl Fn(&str) -> Option<(String, String)>,
+) -> Vec<String> {
     let mut files = Vec::new();
     rust_files(root, &mut files);
     files.sort();
@@ -102,14 +122,12 @@ fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<Stri
                 continue;
             }
             for literal in literals(line, with_keys) {
-                for (word, why) in banned {
-                    if literal.contains(word) {
-                        found.push(format!(
-                            "{}:{}: 「{word}」（{why}）: {literal}",
-                            file.strip_prefix(root).unwrap().display(),
-                            n + 1
-                        ));
-                    }
+                if let Some((word, why)) = hit(&literal) {
+                    found.push(format!(
+                        "{}:{}: 「{word}」（{why}）: {literal}",
+                        file.strip_prefix(root).unwrap().display(),
+                        n + 1
+                    ));
                 }
             }
         }
@@ -121,7 +139,11 @@ fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<Stri
 fn no_screen_text_in_the_app_uses_a_developer_word() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let found = scan(&root);
-    assert!(found.is_empty(), "画面の文に開発の言葉:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "画面の文に開発の言葉:\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]
@@ -146,23 +168,177 @@ fn the_dab_refusal_texts_of_the_core_are_plain_words_too() {
 }
 
 /// どの crate の文でも使わない書き方（core の文はそのまま画面に出るものがあり、`lang/errors.rs` の表のキーにもなる）。
-const EVERYWHERE: [(&str, &str); 1] = [("画布", "「キャンバス」と書く")];
+/// 英語の直訳の言い回し（layer・island・window・tool・canvas・font）は、使う人の言葉で書く。
+const EVERYWHERE: [(&str, &str); 6] = [
+    ("画布", "「キャンバス」と書く"),
+    ("層", "「レイヤー」と書く"),
+    ("島", "「アイランド」と書く"),
+    ("窓", "「ウィンドウ」と書く"),
+    ("道具", "「ツール」と書く"),
+    ("字体", "「フォント」と書く"),
+];
 
 #[test]
-fn no_message_in_any_crate_writes_the_canvas_with_the_old_kanji() {
-    // core・io・gpu の文と、`lang/errors.rs` の表のキー（`=>` の左）も見る。core の文を直したら、表のキーも同じ文に直す
+fn no_message_in_any_crate_uses_a_literal_translation_word() {
+    // core・io・gpu・ops の文と、`lang/errors.rs` の表のキー（`=>` の左）も見る。core の文を直したら、表のキーも同じ文に直す
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut found = Vec::new();
+    for name in [
+        "yolu-core",
+        "yolu-io",
+        "yolu-gpu",
+        "yolu-app",
+        "yolu-ops",
+        "yolu-mcp",
+        "yolu-cli",
+    ] {
+        let root = crates.join(name).join("src");
+        found.extend(
+            scan_words(&root, &EVERYWHERE, true)
+                .into_iter()
+                .map(|f| format!("{name}/{f}")),
+        );
+    }
+    assert!(
+        found.is_empty(),
+        "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）:\n{}",
+        found.join("\n")
+    );
+}
+
+/// 画面の言葉に「棚」（英語は shelf）を使わない。プロジェクトの品（.ylp に保存される画像・スマート素材・ブラシ）は「アセット」
+/// （"assets"・"the project's assets"）、自分のフォルダは「ライブラリ」（"library"）。ウィジェットの id・キャッシュのファイルの名前などの
+/// 識別子（空白を含まない文字列）は、コードの名前のまま（保存の形と試験の口を変えないため）なので、英語は空白を含む文だけを見る。
+fn shelf_word(literal: &str) -> Option<(String, String)> {
+    let why = "画面の言葉は「アセット」（プロジェクトの品）か「ライブラリ」（自分のフォルダ）";
+    if literal.contains('棚') {
+        return Some(("棚".to_owned(), why.to_owned()));
+    }
+    if literal.to_ascii_lowercase().contains("shelf") && literal.contains(char::is_whitespace) {
+        return Some(("shelf".to_owned(), why.to_owned()));
+    }
+    None
+}
+
+#[test]
+fn no_screen_text_in_any_crate_calls_the_projects_assets_a_shelf() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut found = Vec::new();
     for name in ["yolu-core", "yolu-io", "yolu-gpu", "yolu-app"] {
         let root = crates.join(name).join("src");
-        found.extend(scan_words(&root, &EVERYWHERE, true).into_iter().map(|f| format!("{name}/{f}")));
+        found.extend(
+            scan_literals(&root, true, shelf_word)
+                .into_iter()
+                .map(|f| format!("{name}/{f}")),
+        );
     }
-    assert!(found.is_empty(), "文に「画布」:\n{}", found.join("\n"));
+    assert!(found.is_empty(), "文に「棚」・shelf:\n{}", found.join("\n"));
+}
+
+/// 公開の文書（docs と docs/en・README・crate の README・プラグインの文書）の地の文にも「棚」・shelf を使わない。コードの書式（`…` と
+/// コードのブロック）の中は、コードの名前（`yolu_io::shelf::Shelf` など）なので見ない。CHANGELOG は出荷した版の記録なので対象外。
+fn prose_with_shelf(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut fenced = false;
+    for (n, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        // 1 行の中の `…` を除く（奇数番目の区切りの間がコード）
+        let prose: String = line
+            .split('`')
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .map(|(_, part)| part)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if prose.contains('棚') || prose.to_ascii_lowercase().contains("shelf") {
+            found.push(format!("{}: {}", n + 1, line.trim()));
+        }
+    }
+    found
+}
+
+fn markdown_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            // 試験の入力（fixtures・golden）と生成物は文書ではない
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if !matches!(name.as_str(), "tests" | "target" | "node_modules" | "data") {
+                markdown_files(&path, out);
+            }
+        } else if path.extension().is_some_and(|e| e == "md") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn no_public_document_calls_the_projects_assets_a_shelf() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = vec![root.join("README.md"), root.join("README.en.md")];
+    for dir in ["docs", "crates", "plugin"] {
+        markdown_files(&root.join(dir), &mut files);
+    }
+    files.sort();
+    let mut checked = 0;
+    let mut found = Vec::new();
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        checked += 1;
+        for hit in prose_with_shelf(&text) {
+            found.push(format!(
+                "{}:{hit}",
+                file.strip_prefix(&root).unwrap().display()
+            ));
+        }
+    }
+    assert!(checked > 20, "文書を見つけられない（{checked} 件）");
+    assert!(
+        found.is_empty(),
+        "公開の文書に「棚」・shelf:\n{}",
+        found.join("\n")
+    );
+}
+
+#[test]
+fn the_document_check_skips_code_and_finds_prose() {
+    assert!(prose_with_shelf("棚に入れる").len() == 1);
+    assert!(prose_with_shelf("Added to the shelf").len() == 1);
+    assert!(prose_with_shelf("`yolu_io::shelf::Shelf` で扱います").is_empty());
+    assert!(prose_with_shelf("```\nshelf.json\n```").is_empty());
+    assert!(prose_with_shelf("`a` shelf `b`").len() == 1);
+    assert!(prose_with_shelf("アセットに入れる").is_empty());
+}
+
+#[test]
+fn the_shelf_word_check_skips_identifiers_but_not_sentences() {
+    assert!(shelf_word("棚に入れました").is_some());
+    assert!(shelf_word("Added to the shelf").is_some());
+    assert!(shelf_word("Shelf is full").is_some());
+    assert!(shelf_word("shelf.library.add").is_none());
+    assert!(shelf_word("shelf:abc").is_none());
+    assert!(shelf_word("yolu-shelf-cache-a-1").is_none());
+    assert!(shelf_word("アセットに入れました").is_none());
+    assert!(shelf_word("Added to the project's assets").is_none());
 }
 
 #[test]
 fn the_scanner_finds_a_developer_word_and_skips_table_keys_and_comments() {
-    assert_eq!(literals(r#"let a = "core の文書"; // "BVH""#, false), ["core の文書"]);
+    assert_eq!(
+        literals(r#"let a = "core の文書"; // "BVH""#, false),
+        ["core の文書"]
+    );
     assert_eq!(literals(r#""キー" => "Value""#, false), ["Value"]);
     assert_eq!(literals(r#""キー" => "Value""#, true), ["キー", "Value"]);
 }

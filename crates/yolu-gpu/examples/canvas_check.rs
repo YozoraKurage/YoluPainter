@@ -152,9 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         d.undo()?;
         worst = worst.max(check(&mut g, &d, "取消", premultiplied));
         d.move_layer_to(clip, None, 0)?;
-        worst = worst.max(check(&mut g, &d, "層の並べ替え", premultiplied));
+        worst = worst.max(check(&mut g, &d, "レイヤーの並べ替え", premultiplied));
         d.remove_layer(a)?;
-        worst = worst.max(check(&mut g, &d, "層の削除", premultiplied));
+        worst = worst.max(check(&mut g, &d, "レイヤーの削除", premultiplied));
     }
     println!("最大差の最悪値 {worst}");
     Ok(())

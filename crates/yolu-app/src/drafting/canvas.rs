@@ -1,4 +1,5 @@
 use super::{endpoints, outline, Drag, Figure, Ruler, RulerKind};
+use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
     state::{AppState, StrokeSource, Tool},
@@ -13,7 +14,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
     let ruler = app.tool == Tool::Ruler;
     if !ruler {
         if let Err(reason) = crate::region::tools::paint_gate(app) {
-            app.message = reason;
+            app.refuse(Source::Ruler, reason);
             return;
         }
     }
@@ -104,7 +105,7 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     let layer = match crate::region::tools::paint_gate(app) {
         Ok(id) => id,
         Err(e) => {
-            app.message = e;
+            app.refuse(Source::Ruler, e);
             return;
         }
     };
@@ -149,7 +150,11 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     };
     if let Err(e) = result {
         app.doc.cancel_active_stroke();
-        app.message = crate::matpaint::refusal_text(app.lang, &e);
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Ruler,
+            app.lang.core_error(&e),
+        );
     }
     if app.doc.revision() != before {
         app.modified = true;

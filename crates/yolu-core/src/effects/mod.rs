@@ -1,10 +1,10 @@
 //! 非破壊の効果（フィルターのスタック・Generator の段・Anchor・塗りつぶしの画像と投影・グラデーション）の文書側の型。
 //!
-//! Unity 版の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` と同じ持ち方で、層と層のマスクが設定を持つ。
+//! Unity 版の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` と同じ持ち方で、レイヤーとレイヤーのマスクが設定を持つ。
 //! 評価の式は文書に依らない口（[`crate::filter`]・[`crate::generator`]・[`crate::fill_image`]）にあり、ここは設定の入れ物と検査だけを持つ
 //! （式を二重に持たない）。評価の結果は合成のときに作り、保存の正本にしない。
 //!
-//! - フィルターのスタックは層の内容（チャンネルごとに適用する段を選ぶ）と層のマスク（全チャンネルで共有する 1 つのスカラー）にそれぞれある。
+//! - フィルターのスタックはレイヤーの内容（チャンネルごとに適用する段を選ぶ）とレイヤーのマスク（全チャンネルで共有する 1 つのスカラー）にそれぞれある。
 //!   Generator は同じスタックの段（C# の `FilterType.Generator`）で、焼いたメッシュマップ・Anchor から値を作る。
 //! - 効果を置けるのは標準のチャンネル（0〜5）だけ。正本の読み手（Unity 版も）が標準のチャンネルだけを許すので、保存で失わないようにここで断る。
 //! - メッシュマップ・プロジェクトの画像は文書の外にある。[`EffectInputs`] で渡す（保存も Undo もしない）。
@@ -55,7 +55,7 @@ id_type!(
     ImageId
 );
 
-/// どちらのスタックか: 層の画素（内容。チャンネルごと）か、層のラスターマスク（隠す量。全チャンネルで共有）か。
+/// どちらのスタックか: レイヤーの画素（内容。チャンネルごと）か、レイヤーのラスターマスク（隠す量。全チャンネルで共有）か。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum FilterTarget {
     Content,
@@ -160,7 +160,9 @@ impl EffectSettings {
     }
 
     /// 保存形式の段の種類の番号（ぼかし 0・シャープ 1・ノイズ 2・レベル補正 3・反転 4・正規化 5・Generator 6。Rust 版だけの種類は 64 から:
-    /// グラデーションマップ 64・トーンカーブ 65・カラーバランス 66・明るさ/コントラスト 67・2 値化 68・ポスタリゼーション 69）。
+    /// グラデーションマップ 64・トーンカーブ 65・カラーバランス 66・明るさ/コントラスト 67・2 値化 68・ポスタリゼーション 69、
+    /// ヒストグラムスキャン 70・ヒストグラムレンジ 71・スロープぼかし 72・方向のぼかし 73・ゆがみ 74・モルフォロジー 75・エッジ検出 76・
+    /// ハイパス 77・メディアン 78・グロー 79）。
     pub fn type_index(&self) -> i32 {
         match self {
             Self::Filter(filter::Settings::GaussianBlur { .. }) => 0,
@@ -175,6 +177,16 @@ impl EffectSettings {
             Self::Filter(filter::Settings::BrightnessContrast(_)) => 67,
             Self::Filter(filter::Settings::Threshold(_)) => 68,
             Self::Filter(filter::Settings::Posterize(_)) => 69,
+            Self::Filter(filter::Settings::HistogramScan { .. }) => 70,
+            Self::Filter(filter::Settings::HistogramRange { .. }) => 71,
+            Self::Filter(filter::Settings::SlopeBlur { .. }) => 72,
+            Self::Filter(filter::Settings::DirectionalBlur { .. }) => 73,
+            Self::Filter(filter::Settings::Warp { .. }) => 74,
+            Self::Filter(filter::Settings::Morphology { .. }) => 75,
+            Self::Filter(filter::Settings::EdgeDetect { .. }) => 76,
+            Self::Filter(filter::Settings::HighPass { .. }) => 77,
+            Self::Filter(filter::Settings::Median { .. }) => 78,
+            Self::Filter(filter::Settings::Glow { .. }) => 79,
             // 評価器の中の Generator の段（slot と合成）は文書では Generator として持つので、ここへは来ない
             Self::Filter(filter::Settings::Generator { .. }) | Self::Generator(_) => 6,
         }
@@ -185,6 +197,10 @@ impl EffectSettings {
     /// Anchor を読む Generator か。
     pub fn reads_anchor(&self) -> bool {
         matches!(self, Self::Generator(g) if g.kind == generator::Kind::Anchor)
+    }
+    /// モデルの UV アイランドの図を読む Generator（アイランドごとのばらつき）か。
+    pub fn reads_islands(&self) -> bool {
+        matches!(self, Self::Generator(g) if g.kind == generator::Kind::UvIslandVariation)
     }
     pub fn generator_settings(&self) -> Option<&generator::Settings> {
         match self {
@@ -203,9 +219,18 @@ impl EffectSettings {
     pub fn is_global(&self) -> bool {
         matches!(self, Self::Filter(filter::Settings::Normalize))
     }
-    /// 透明な所へ不透明を広げる段（ぼかしだけ）か。
+    /// 透明な所へ不透明を広げる段（ぼかしと、A を混ぜる・動かすスロープぼかし・方向のぼかし・ゆがみ・メディアン）か。
     pub fn expands_coverage(&self) -> bool {
-        matches!(self, Self::Filter(filter::Settings::GaussianBlur { .. }))
+        matches!(
+            self,
+            Self::Filter(
+                filter::Settings::GaussianBlur { .. }
+                    | filter::Settings::SlopeBlur { .. }
+                    | filter::Settings::DirectionalBlur { .. }
+                    | filter::Settings::Warp { .. }
+                    | filter::Settings::Median { .. }
+            )
+        )
     }
     /// マスク（不透明な灰色の画像）で、半径の中がすべて 0 の所が 0 のままか（C# の PreservesZero）。
     pub(crate) fn preserves_zero(&self) -> bool {
@@ -213,7 +238,14 @@ impl EffectSettings {
             Self::Filter(f) => match f {
                 filter::Settings::GaussianBlur { .. }
                 | filter::Settings::Sharpen { .. }
-                | filter::Settings::Normalize => true,
+                | filter::Settings::Normalize
+                // 0 だけの近所の平均・最小・最大・中央値・Sobel は 0
+                | filter::Settings::SlopeBlur { .. }
+                | filter::Settings::DirectionalBlur { .. }
+                | filter::Settings::Warp { .. }
+                | filter::Settings::Morphology { .. }
+                | filter::Settings::EdgeDetect { .. }
+                | filter::Settings::Median { .. } => true,
                 filter::Settings::Levels { output_black, .. } => *output_black == 0.0,
                 _ => false,
             },
@@ -270,6 +302,16 @@ impl EffectSettings {
                 filter::Settings::BrightnessContrast(_) => "明るさ・コントラスト",
                 filter::Settings::Threshold(_) => "2 値化",
                 filter::Settings::Posterize(_) => "ポスタリゼーション",
+                filter::Settings::HistogramScan { .. } => "値の切り出し",
+                filter::Settings::HistogramRange { .. } => "値の幅",
+                filter::Settings::SlopeBlur { .. } => "ノイズに沿ったぼかし",
+                filter::Settings::DirectionalBlur { .. } => "方向ぼかし",
+                filter::Settings::Warp { .. } => "ゆがみ",
+                filter::Settings::Morphology { .. } => "太らせる・細らせる",
+                filter::Settings::EdgeDetect { .. } => "輪郭の検出",
+                filter::Settings::HighPass { .. } => "ハイパス",
+                filter::Settings::Median { .. } => "メディアン",
+                filter::Settings::Glow { .. } => "グロー",
                 filter::Settings::Generator { .. } => "ジェネレーター",
             },
             Self::Generator(g) => generator_kind_name(g.kind),
@@ -290,6 +332,11 @@ pub fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Anchor => "Anchor",
         generator::Kind::Noise => "ノイズ",
         generator::Kind::Grunge => "グランジ",
+        generator::Kind::Image => "画像",
+        generator::Kind::Pattern => "模様",
+        generator::Kind::Light => "ライト",
+        generator::Kind::MaskBuilder => "マスクの組み立て",
+        generator::Kind::UvIslandVariation => "アイランドごとのばらつき",
     }
 }
 
@@ -386,8 +433,8 @@ impl FilterSpec {
     }
 }
 
-/// 層・マスクに置く名前の付いた接続点（C# の `AnchorPoint`）。層の Anchor は、その層までのスタックの結果、マスクの Anchor は、
-/// マスクが層を見せる量。上の層の Anchor Generator が読む。
+/// レイヤー・マスクに置く名前の付いた接続点（C# の `AnchorPoint`）。レイヤーの Anchor は、そのレイヤーまでのスタックの結果、マスクの Anchor は、
+/// マスクがレイヤーを見せる量。上のレイヤーの Anchor Generator が読む。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Anchor {
     pub(crate) id: AnchorId,
@@ -418,13 +465,13 @@ impl Anchor {
 /// Anchor の置き場。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AnchorPlacement {
-    /// 層: その層までのスタックの結果（全チャンネル）。
+    /// レイヤー: そのレイヤーまでのスタックの結果（全チャンネル）。
     Layer,
-    /// 層のマスク: マスクが層を見せる量。
+    /// レイヤーのマスク: マスクがレイヤーを見せる量。
     Mask,
 }
 
-/// Anchor と、それがある層（マスクの Anchor はそのマスクの層）。
+/// Anchor と、それがあるレイヤー（マスクの Anchor はそのマスクのレイヤー）。
 #[derive(Clone, Copy, Debug)]
 pub struct AnchorInfo<'a> {
     pub anchor: &'a Anchor,
@@ -437,9 +484,9 @@ pub struct AnchorInfo<'a> {
 pub enum AnchorIssueKind {
     /// まだ選んでいない。
     NotChosen,
-    /// 読む Anchor がもう無い（消した・層やマスクを消した）。
+    /// 読む Anchor がもう無い（消した・レイヤーやマスクを消した）。
     Missing,
-    /// Anchor が読む層より下に無い（層を動かした）、または自分の層にある。
+    /// Anchor が読むレイヤーより下に無い（レイヤーを動かした）、または自分のレイヤーにある。
     NotBelow,
 }
 
@@ -492,7 +539,15 @@ impl fmt::Display for InactiveReason {
                 f.write_str("読む Anchor がありません")
             }
             Self::Generator(I::Anchor(generator::anchor::Issue::NotBelow)) => {
-                f.write_str("Anchor が自分の層より下にありません")
+                f.write_str("Anchor が自分のレイヤーより下にありません")
+            }
+            Self::Generator(I::NoImage) => f.write_str("画像が選ばれていません"),
+            Self::Generator(I::MissingImage) => {
+                f.write_str("画像がプロジェクトに無いか、読めません")
+            }
+            Self::Generator(I::NoModel) => f.write_str("モデルがありません"),
+            Self::Generator(I::IslandMap) => {
+                f.write_str("UV アイランドの図が作業メモリの予算に収まりません")
             }
             Self::Rejected(why) => write!(f, "設定が使えません: {why}"),
         }
@@ -510,13 +565,15 @@ pub enum InactiveTarget {
     Decal,
     /// 画像を投影していない（値を見せている）塗りつぶしのチャンネル。
     FillImage(Channel),
+    /// 塗りつぶしのチャンネルの点のグラデーション（値を見せている）。
+    FillPoints(Channel),
 }
 
 /// 入力のまま通している効果 1 件（[`crate::Document::inactive_effect_list`]）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InactiveEffect {
     pub layer: crate::layer::LayerId,
-    /// 層の名前（利用者が付けた文字列）。
+    /// レイヤーの名前（利用者が付けた文字列）。
     pub layer_name: String,
     pub target: InactiveTarget,
     pub reason: InactiveReason,
@@ -535,11 +592,20 @@ impl fmt::Display for InactiveEffect {
                 generator_kind_name(kind),
             ),
             InactiveTarget::FillGradient(c) => {
-                write!(f, "「{name}」（{c:?}）: グラデーションは値を見せています。{why}")
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: グラデーションは値を見せています。{why}"
+                )
             }
             InactiveTarget::Decal => write!(f, "「{name}」（デカール）: 出ていません。{why}"),
             InactiveTarget::FillImage(c) => {
                 write!(f, "「{name}」（{c:?}）: 画像を投影していません。{why}")
+            }
+            InactiveTarget::FillPoints(c) => {
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: 点のグラデーションは値を見せています。{why}"
+                )
             }
         }
     }
@@ -549,7 +615,7 @@ impl fmt::Display for InactiveEffect {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FallbackEffect {
     pub layer: crate::layer::LayerId,
-    /// 層の名前（利用者が付けた文字列）。
+    /// レイヤーの名前（利用者が付けた文字列）。
     pub layer_name: String,
     /// マスクのスタックの段か。
     pub mask: bool,
@@ -583,7 +649,7 @@ pub(crate) fn require_standard(channel: Channel) -> Result<(), CoreError> {
     }
 }
 
-/// 層に付く編集できるパス（C# の `EditablePath`）。層の対象チャンネルの画素はパスから描いた結果で、パスと画素はいつも一緒に変わる
+/// レイヤーに付く編集できるパス（C# の `EditablePath`）。レイヤーの対象チャンネルの画素はパスから描いた結果で、パスと画素はいつも一緒に変わる
 /// （[`crate::Document::set_path`]）。キャンバスの点のパス（2D）か、モデルの三角形の上の点のパス（3D）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayerPath {
@@ -596,6 +662,20 @@ impl LayerPath {
         match self {
             Self::Canvas(p) => p.id,
             Self::Surface(p) => p.id,
+        }
+    }
+    /// 描き方の設定（種類など）。
+    pub fn style(&self) -> &crate::paths::PathStyle {
+        match self {
+            Self::Canvas(p) => &p.style,
+            Self::Surface(p) => &p.style,
+        }
+    }
+    /// ID だけを替えた写し（一覧へ写す・貼り付けるとき）。
+    pub fn with_id(&self, id: u128) -> LayerPath {
+        match self {
+            Self::Canvas(p) => Self::Canvas(crate::paths::CanvasPath { id, ..p.clone() }),
+            Self::Surface(p) => Self::Surface(crate::paths::SurfacePath { id, ..p.clone() }),
         }
     }
     /// 基準のチャンネル（組を持たないパスが描くチャンネル）。
@@ -652,5 +732,7 @@ pub(crate) fn paths_error(e: crate::paths::Error) -> CoreError {
         E::Canceled => CoreError::Cancelled,
         E::Core(e) => e,
         E::Dab(_) => CoreError::Unsupported("面のダブを拒否した"),
+        E::MissingImage => CoreError::Unsupported("リボンの画像が無い"),
+        E::FillIslands => CoreError::Unsupported("塗りのパスが 1 つの UV アイランドに収まらない"),
     }
 }

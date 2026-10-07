@@ -1,16 +1,16 @@
-//! 移動・変形の道具（V、Unity 版の Move / Transform）: 選んでいる層（グループなら中身のラスター層ごと、複数選んでいればその全部）を、
+//! 移動・変形のツール（V、Unity 版の Move / Transform）: 選んでいるレイヤー（グループなら中身のラスターレイヤーごと、複数選んでいればその全部）を、
 //! 範囲の外枠のハンドルで移動・拡大縮小・回転する。選択範囲があればその中の画素と選択範囲を動かす（core の `transform_layers`）。
 //!
 //! 角のハンドルは拡大縮小（Shift で縦横比を保つ）、辺の中点は片方向、角の外側は回転（Shift で 15° 刻み）、それ以外は移動（整数画素）。
 //! ドラッグの間は変形後の外枠だけを見せ、離したところで 1 回の Undo にする（途中で文書を変えないので、Esc・フォーカスを失う・
-//! 道具の切り替えは何も変えずにやめるだけ。取り残さない）。Enter はドラッグの途中で押すとその位置で確定する。矢印キーは 1 画素
-//! （Shift で 10）の移動で、表示を回していても画面の向きに合わせる。数値の変形・90° 回転・反転・補間は道具の設定の欄とメニューから。
+//! ツールの切り替えは何も変えずにやめるだけ。取り残さない）。Enter はドラッグの途中で押すとその位置で確定する。矢印キーは 1 画素
+//! （Shift で 10）の移動で、表示を回していても画面の向きに合わせる。数値の変形・90° 回転・反転・補間はツールの設定の欄とメニューから。
 //!
-//! 形は画布の座標（左下が原点）で決まり、表示を回している・反転しているときは回って見える。
+//! 形はキャンバスの座標（左下が原点）で決まり、表示を回している・反転しているときは回って見える。
 
+pub mod advanced;
 pub mod canvas;
 pub mod props;
-pub mod advanced;
 
 use egui::Pos2;
 use yolu_core::{Affine2D, Resampling};
@@ -19,7 +19,7 @@ use crate::canvas::view::CanvasView;
 use crate::engine::LayerId;
 use crate::state::StrokeSource;
 
-/// 動かすものの範囲（画布の座標。右・上は含まない）。
+/// 動かすものの範囲（キャンバスの座標。右・上は含まない）。
 pub type Bounds = (i64, i64, i64, i64);
 
 /// ハンドルを掴める距離（画面の点）。
@@ -41,7 +41,7 @@ pub enum Mode {
     Rotate,
 }
 
-/// ドラッグの途中（押した所と今の所は画布の座標）。
+/// ドラッグの途中（押した所と今の所はキャンバスの座標）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drag {
     pub mode: Mode,
@@ -74,7 +74,7 @@ impl Default for Numeric {
     }
 }
 
-/// 道具の状態。
+/// ツールの状態。
 #[derive(Debug)]
 pub struct TransformState {
     pub advanced: advanced::State,
@@ -83,7 +83,7 @@ pub struct TransformState {
     pub pen_down: Option<u32>,
     pub resampling: Resampling,
     pub numeric: Numeric,
-    /// 範囲の計算は画素を数えるので、文書の版・動かす層が変わるまで覚える。
+    /// 範囲の計算は画素を数えるので、文書の版・動かすレイヤーが変わるまで覚える。
     cache: Option<(u64, Vec<LayerId>, Option<Bounds>)>,
 }
 
@@ -142,7 +142,7 @@ pub fn handles_usable(view: &CanvasView, b: Bounds) -> bool {
     }
 }
 
-/// 範囲の内側か（表示が回っていれば画布の座標で見る）。
+/// 範囲の内側か（表示が回っていればキャンバスの座標で見る）。
 pub fn inside_box(view: &CanvasView, b: Bounds, pointer: Pos2) -> bool {
     let (x, y) = view.to_canvas(pointer);
     x >= b.0 as f64 && x < b.2 as f64 && y >= b.1 as f64 && y < b.3 as f64
@@ -259,7 +259,7 @@ impl Drag {
     }
 }
 
-/// 矢印キーの向き（画面の右・下が正）を、画布の向き（上・右が正）の 1 画素の軸に（回っているときは長い軸の向き）。
+/// 矢印キーの向き（画面の右・下が正）を、キャンバスの向き（上・右が正）の 1 画素の軸に（回っているときは長い軸の向き）。
 pub fn arrow_to_canvas(view: &CanvasView, screen: (f64, f64)) -> (i32, i32) {
     let (x, y) = view.direction_to_canvas(screen.0, screen.1);
     if x.abs() >= y.abs() {

@@ -49,12 +49,15 @@ impl SetsError {
                 "Built-in gradients cannot be changed".to_owned(),
             ),
             SetsError::Unreadable(ja, en) => lang.pick(
-                format!("グラデーションを保存できません: ファイルが読めないままです（{ja}）"),
-                format!("Cannot save the gradients: the file is still unreadable ({en})"),
+                format!("ファイルが読めないままなので、グラデーションを保存できません（{ja}）。"),
+                format!("Cannot save the gradients because the file is still unreadable ({en})."),
             ),
-            SetsError::Store(e) => lang.pick(
-                format!("グラデーションを保存できません: {}", e.describe(lang)),
-                format!("Cannot save the gradients: {}", e.describe(lang)),
+            SetsError::Store(e) => lang.with_reason(
+                lang.pick(
+                    "グラデーションを保存できません",
+                    "Cannot save the gradients",
+                ),
+                e.describe(lang),
             ),
         }
     }

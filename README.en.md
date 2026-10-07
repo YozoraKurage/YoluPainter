@@ -17,7 +17,7 @@ Windows is the primary platform. Mac and Linux support is experimental.
 - Material painting: Color, Roughness, Metallic, Height, Normal, Emission, and user channels in a single stroke
 - Filters, generators that read baked mesh maps (AO, curvature, thickness, ID, and more), noise and grunge, and smart materials
 - The lilToon look in the 3D view
-- Live Link with Unity: open a model in one step and see your colors on the scene's materials (original assets are never modified)
+- Live Link with Unity: open a scene model in one step and send exported textures back to Unity (they are assigned to materials only after you confirm in Unity)
 - PSD layers, groups, masks, and adjustments in and out; import of ABR and CLIP STUDIO (.sut) brushes
 - Export of per-channel PNGs and templates for Unity Standard, URP, HDRP, and lilToon
 - Automatic recovery after a crash
@@ -35,13 +35,13 @@ You need stable Rust and a C/C++ build environment.
 cargo build --release -p yolu-app --locked
 ```
 
-See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) (Japanese) for tests and the Unity bridge.
+See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) (Japanese) for tests.
 
 ## Documentation
 
 - [Features and controls](docs/en/GUIDE.md)
 - [Working with Unity](docs/en/UNITY.md) (Live Link, exchanging `.ylp` files with the Unity version)
-- [Command line and AI assistants](docs/en/CLI.md) (`yolupainter-cli`, the [MCP server](docs/en/MCP.md))
+- [Command line and AI assistants](docs/en/CLI.md) (`yolupainter-cli`, [connecting over MCP](docs/en/MCP.md))
 - In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md), [the .ylp format](docs/YLP_FORMAT.md)
 - [Changelog](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 

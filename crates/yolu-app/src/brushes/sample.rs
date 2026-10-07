@@ -12,6 +12,9 @@
 //! 描くのを別のスレッド（見本専用の小さな rayon の池。`POOL_THREADS` 本）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の
 //! 見本で画面が止まらない）。見本の中の並列（core の筆の計算・合成）もこの池の中で回るので、全体の rayon の池（合成・保存の並列）を
 //! 見本が塞がない。描いている最中の札は重ねて頼まず、同時に頼む数にも上限がある。
+//!
+//! 見本を出す所（ツールのプロパティ・詳細のウィンドウ・一覧の行・アセットの欄）は、所ごとに最後に出した札を覚え、設定を変えて新しい札の絵が
+//! まだ無い間は前の絵を出し続ける（[`SampleCache::shown`]。つまみを動かすたびに紙だけになって点滅しない）。
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -102,7 +105,7 @@ impl SampleSpec {
             eraser,
         }
     }
-    /// 詳細の窓の上の見本。
+    /// 詳細のウィンドウの上の見本。
     pub fn detail(eraser: bool) -> SampleSpec {
         SampleSpec {
             width: 640,
@@ -343,6 +346,18 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
     })
 }
 
+/// 見本を出す所で出す絵（[`SampleCache::shown`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shown {
+    /// 出す絵の札（その所でまだ一度も絵を出していなければ None で、紙だけ）。
+    pub key: Option<u64>,
+    /// 今の設定の絵か（false なら、新しい絵ができるまで前の絵を出している）。
+    pub current: bool,
+}
+
+/// 覚える「最後に出した札」の数の上限（超えたら、絵の無くなった所の分を捨てる）。
+const MAX_SHOWN: usize = 4 * MAX_ENTRIES;
+
 /// 描いた回数などの数（試験が「描き直す条件」を確かめる）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SampleStats {
@@ -380,6 +395,8 @@ pub struct SampleCache {
     background: Option<Background>,
     /// このフレームに、同時の上限で頼めなかった札があった（次のフレームで頼み直す）。
     starved: bool,
+    /// 見本を出す所ごとの、最後に出した札。
+    shown: HashMap<egui::Id, u64>,
     pub stats: SampleStats,
 }
 
@@ -533,6 +550,39 @@ impl SampleCache {
         Some(key)
     }
 
+    /// 見本を出す所 place に出す絵: 今の設定の絵があればそれ（その所の最後に出した札として覚える）。まだ無ければ（描いている最中・
+    /// 1 フレームの上限で次へ送った）、その所で最後に出した絵を出し続ける（新しい絵が上がったら替わる）。
+    pub fn shown(&mut self, place: egui::Id, brush: &Brush, spec: SampleSpec) -> Shown {
+        if let Some(key) = self.request(brush, spec) {
+            if self.shown.len() >= MAX_SHOWN && !self.shown.contains_key(&place) {
+                let slots = &self.slots;
+                self.shown.retain(|_, k| slots.contains_key(k));
+            }
+            self.shown.insert(place, key);
+            return Shown {
+                key: Some(key),
+                current: true,
+            };
+        }
+        let previous = self.shown.get(&place).copied();
+        let key = previous.filter(|key| match self.slots.get_mut(key) {
+            Some(slot) => {
+                // 出している間は、一番使っていない画像として捨てられないように
+                self.clock += 1;
+                slot.used = self.clock;
+                true
+            }
+            None => false,
+        });
+        if previous.is_some() && key.is_none() {
+            self.shown.remove(&place);
+        }
+        Shown {
+            key,
+            current: false,
+        }
+    }
+
     /// 上限を超えていれば、一番使っていない画像から捨てる（今入れた `keep` は残す）。
     fn evict(&mut self, keep: u64) {
         while self.slots.len() > MAX_ENTRIES || self.bytes > MAX_BYTES {
@@ -547,6 +597,7 @@ impl SampleCache {
             if let Some(slot) = self.slots.remove(&oldest) {
                 self.bytes -= slot.image.rgba.len();
                 self.stats.evicted += 1;
+                self.shown.retain(|_, k| *k != oldest);
             }
         }
     }
@@ -699,16 +750,23 @@ mod tests {
     #[test]
     fn images_with_the_same_name_and_size_but_other_pixels_get_other_keys() {
         use crate::engine::{DualBrush, PaperTexture};
-        let tip = |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
+        let tip =
+            |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
         let (a, b) = (tip([0, 255, 255, 0]), tip([255, 0, 0, 255]));
         let same_as_a = tip([0, 255, 255, 0]);
-        assert_eq!(format!("{a:?}"), format!("{b:?}"), "Debug だけでは見分けられない画像");
+        assert_eq!(
+            format!("{a:?}"),
+            format!("{b:?}"),
+            "Debug だけでは見分けられない画像"
+        );
         let spec = SampleSpec::row(false);
         type Put = fn(&mut Brush, Arc<BrushTip>);
         let places: [(&str, Put); 4] = [
             ("tip", |br, t| br.tip.image = Some(t)),
             ("tips", |br, t| br.tip.images = vec![t]),
-            ("texture", |br, t| br.texture = Some(PaperTexture::new(t, 0.5))),
+            ("texture", |br, t| {
+                br.texture = Some(PaperTexture::new(t, 0.5))
+            }),
             ("dual", |br, t| {
                 br.dual = Some(DualBrush {
                     tip: Some(t),
@@ -724,8 +782,16 @@ mod tests {
                 br
             };
             let (ba, bb, bc) = (make(&a), make(&b), make(&same_as_a));
-            assert_ne!(key_of(&ba, spec), key_of(&bb, spec), "{place}: 画素だけが違う");
-            assert_eq!(key_of(&ba, spec), key_of(&bc, spec), "{place}: 中身が同じなら同じ札");
+            assert_ne!(
+                key_of(&ba, spec),
+                key_of(&bb, spec),
+                "{place}: 画素だけが違う"
+            );
+            assert_eq!(
+                key_of(&ba, spec),
+                key_of(&bc, spec),
+                "{place}: 中身が同じなら同じ札"
+            );
             // キャッシュも同じ札を使い、画素だけが違うブラシには別の見本を描く
             cache.begin_frame(1000 + cache.stats.renders);
             let ka = cache.request(&ba, spec).unwrap();
@@ -838,6 +904,60 @@ mod tests {
         assert_eq!(cache.image(key).unwrap().width, 340);
     }
 
+    /// 設定を変えた直後のフレームは、新しい見本ができるまで、その所の前の絵を出す（紙だけにしない）。できたら新しい絵に替わる。
+    /// 一度も絵を出していない所は紙だけ。前の絵は、出している間は覚えの上限で捨てられない。
+    #[test]
+    fn a_place_keeps_showing_its_last_sample_until_the_new_one_is_drawn() {
+        let ctx = egui::Context::default();
+        let mut cache = SampleCache::default();
+        cache.render_in_background(&ctx);
+        let spec = SampleSpec::tool(false);
+        let (tool, other) = (egui::Id::new("tool"), egui::Id::new("other"));
+        let mut frame = 0;
+        let mut until_current = |cache: &mut SampleCache, brush: &Brush| {
+            let start = std::time::Instant::now();
+            loop {
+                frame += 1;
+                cache.begin_frame(frame);
+                let shown = cache.shown(tool, brush, spec);
+                if shown.current {
+                    return shown.key.unwrap();
+                }
+                assert!(start.elapsed() < std::time::Duration::from_secs(20));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        let before = Brush::default();
+        let old = until_current(&mut cache, &before);
+        // つまみを動かした直後のフレーム: 新しい札の絵はまだ無いので、前の絵
+        let mut after = before.clone();
+        after.base.radius = 30.0;
+        cache.begin_frame(10_000);
+        let shown = cache.shown(tool, &after, spec);
+        assert_eq!(
+            shown,
+            Shown {
+                key: Some(old),
+                current: false
+            }
+        );
+        assert!(cache.image(old).is_some());
+        // ほかの所（一度も出していない）は紙だけ
+        let mut third = before.clone();
+        third.base.radius = 40.0;
+        assert_eq!(
+            cache.shown(other, &third, spec),
+            Shown {
+                key: None,
+                current: false
+            }
+        );
+        // できたら新しい絵
+        let new = until_current(&mut cache, &after);
+        assert_ne!(new, old);
+        assert_eq!(cache.shown(tool, &after, spec).key, Some(new));
+    }
+
     /// 池を塞ぐ試験どうしを 1 つずつにする（片方が全体の池を塞いだまま、もう片方が見本の池を塞いで、互いを待つのを避ける）。
     static POOL_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -928,7 +1048,10 @@ mod tests {
         for _ in 0..jobs {
             let (flag, tx) = (release.0.clone(), tx.clone());
             spawn_for_test(move || {
-                let name = std::thread::current().name().map(str::to_owned).unwrap_or_default();
+                let name = std::thread::current()
+                    .name()
+                    .map(str::to_owned)
+                    .unwrap_or_default();
                 let _ = tx.send(name);
                 let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 while !flag.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
@@ -940,14 +1063,21 @@ mod tests {
         // 走り出すのは専用の池のスレッドの数だけ（残りは待つ）
         let mut names = Vec::new();
         for _ in 0..POOL_THREADS {
-            names.push(started.recv_timeout(Duration::from_secs(20)).expect("専用の池で走り出す"));
+            names.push(
+                started
+                    .recv_timeout(Duration::from_secs(20))
+                    .expect("専用の池で走り出す"),
+            );
         }
         assert!(
             names.iter().all(|n| n.starts_with(POOL_THREAD_PREFIX)),
             "見本は専用の池のスレッドで走る: {names:?}"
         );
         assert!(
-            matches!(started.recv_timeout(Duration::from_millis(200)), Err(RecvTimeoutError::Timeout)),
+            matches!(
+                started.recv_timeout(Duration::from_millis(200)),
+                Err(RecvTimeoutError::Timeout)
+            ),
             "専用の池のスレッドの数を超えて走らない"
         );
         // そのあいだも、全体の池の仕事は進む

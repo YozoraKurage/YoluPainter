@@ -1,4 +1,4 @@
-//! 利用者のサブツールのプリセットの保存（設定のフォルダの `subtools/`）。道具ごとに 1 ファイル（`<道具>.ylsubtool`。道具は `fill`・
+//! 利用者のサブツールのプリセットの保存（設定のフォルダの `subtools/`）。ツールごとに 1 ファイル（`<ツール>.ylsubtool`。ツールは `fill`・
 //! `polygon-fill`・`gradient`・`shape`・`ruler`・`eyedropper`・`move`・`liquify`）。ブラシと消しゴムは `.ylbrush`（`brushes::store`）で、ここには入れない。
 //!
 //! 形式は 1 行目が `yolupainter-subtools 1`、あとは `key=value` の行（UTF-8、512 KiB まで、空行は読み飛ばす）。
@@ -9,10 +9,10 @@
 //! preset.1.by_color=true
 //! preset.1.tolerance=48
 //! ```
-//! `tool` は 2 行目で、ファイルの名前の道具と同じこと。`preset.<番号>.name` は名前（40 文字まで）、ほかは道具の欄（`fields`）の名前。
+//! `tool` は 2 行目で、ファイルの名前のツールと同じこと。`preset.<番号>.name` は名前（40 文字まで）、ほかはツールの欄（`fields`）の名前。
 //! 数は Rust の表記のまま書き（読み戻しても同じ値）、選びは名前（`kind=triangle` など）。書かれていない欄は既定で読む（欄が増えても
 //! 古いファイルを読める）。番号は 1 から、プリセットは番号の順。知らない項目・重なった項目・範囲を外れた値・名前のないプリセット・
-//! 別の道具のファイル・多すぎるプリセットは、そのファイルを読み飛ばして理由を残す（ほかの道具のファイルは読む）。版が新しいファイルは
+//! 別のツールのファイル・多すぎるプリセットは、そのファイルを読み飛ばして理由を残す（ほかのツールのファイルは読む）。版が新しいファイルは
 //! 触らずに読み飛ばす。書き込みは、一時ファイルへ書いて読み戻して確かめてから、最後の 1 回の置換で確定する（途中で落ちても前の版が残る）。
 //! 一覧の並び（組み込みが先、利用者のものが番号の順）と「変えたままの設定」は保存しない。
 
@@ -28,10 +28,10 @@ use crate::state::Tool;
 
 pub const HEADER: &str = "yolupainter-subtools 1";
 const EXTENSION: &str = "ylsubtool";
-/// 1 ファイルの大きさの上限。プリセットの数の上限（`MAX_USER_PRESETS`）まで、どの道具のどんな値でも収まる大きさ（試験が、いちばん長い書き方で確かめる）。
+/// 1 ファイルの大きさの上限。プリセットの数の上限（`MAX_USER_PRESETS`）まで、どのツールのどんな値でも収まる大きさ（試験が、いちばん長い書き方で確かめる）。
 /// 数の上限に先に当たるので、足したプリセットだけがメモリに残って保存できない、ということが起きない。
 pub const MAX_FILE_BYTES: u64 = 512 * 1024;
-/// 1 つの道具の利用者のプリセットの数の上限。
+/// 1 つのツールの利用者のプリセットの数の上限。
 pub const MAX_USER_PRESETS: usize = 256;
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub enum StoreError {
     UnknownKey(String),
     DuplicateKey(String),
     BadValue(String),
-    /// 別の道具のファイル。
+    /// 別のツールのファイル。
     WrongTool,
     TooMany,
     /// 書いたファイルを読み戻したら、書いた設定と違った。
@@ -78,19 +78,23 @@ impl StoreError {
                 format!("{line} 行目が読めません"),
                 format!("Cannot read line {line}"),
             ),
-            StoreError::UnknownKey(k) => {
-                lang.pick(format!("知らない項目: {k}"), format!("Unknown item: {k}"))
-            }
+            StoreError::UnknownKey(k) => lang.pick(
+                format!("知らない項目「{k}」があります"),
+                format!("Unknown item \"{k}\""),
+            ),
             StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目が重なっています: {k}"),
-                format!("Repeated item: {k}"),
+                format!("項目「{k}」が重なっています"),
+                format!("Repeated item \"{k}\""),
             ),
             StoreError::BadValue(k) => lang.pick(
-                format!("値が読めません: {k}"),
-                format!("Invalid value: {k}"),
+                format!("項目「{k}」の値が読めません"),
+                format!("Invalid value of \"{k}\""),
             ),
             StoreError::WrongTool => lang
-                .pick("別の道具のファイルです", "The file belongs to another tool")
+                .pick(
+                    "別のツールのファイルです",
+                    "The file belongs to another tool",
+                )
                 .into(),
             StoreError::TooMany => lang
                 .pick("プリセットが多すぎます", "Too many presets")
@@ -184,7 +188,7 @@ pub fn encode(tool: Tool, presets: &[UserPreset]) -> String {
     text
 }
 
-/// 文を読む。ファイルの道具が `tool` と違えば断る。
+/// 文を読む。ファイルのツールが `tool` と違えば断る。
 pub fn decode(tool: Tool, text: &str) -> Result<Vec<UserPreset>, StoreError> {
     let mut lines = text.lines().enumerate();
     let first = lines.next().map(|(_, l)| l.trim_end()).unwrap_or("");
@@ -215,7 +219,7 @@ pub fn decode(tool: Tool, text: &str) -> Result<Vec<UserPreset>, StoreError> {
             continue;
         }
         if !seen_tool {
-            // 道具の行が先でないファイルは、どの道具のものか決められない
+            // ツールの行が先でないファイルは、どのツールのものか決められない
             return Err(StoreError::Syntax(index + 1));
         }
         let rest = key
@@ -273,14 +277,14 @@ fn file_name(tool: Tool) -> String {
 }
 
 fn read_text(path: &Path) -> Result<String, StoreError> {
-    use std::io::Read;
-    let file = std::fs::File::open(path)?;
-    let mut text = String::new();
-    file.take(MAX_FILE_BYTES + 1).read_to_string(&mut text)?;
-    if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    Ok(text)
+    crate::userfiles::read_text(path, MAX_FILE_BYTES).map_err(|e| match e {
+        crate::userfiles::FileError::TooLarge => StoreError::TooLarge,
+        crate::userfiles::FileError::Io(e) => StoreError::Io(e),
+        // read_text は文でない中身を読み込みの失敗（Io）で返し、確かめの失敗は返さない
+        crate::userfiles::FileError::NotText | crate::userfiles::FileError::Mismatch => {
+            StoreError::Io(std::io::ErrorKind::InvalidData.into())
+        }
+    })
 }
 
 /// 設定のフォルダの `subtools/`。
@@ -302,7 +306,7 @@ impl SubToolStore {
         self.dir.join(file_name(tool))
     }
 
-    /// 道具の利用者のプリセットを置く（一時ファイルへ書き、読み戻して確かめてから置換）。プリセットが 1 つも無ければファイルを消す。
+    /// ツールの利用者のプリセットを置く（一時ファイルへ書き、読み戻して確かめてから置換）。プリセットが 1 つも無ければファイルを消す。
     pub fn save(&self, tool: Tool, presets: &[UserPreset]) -> Result<(), StoreError> {
         let path = self.path_of(tool);
         if presets.is_empty() {
@@ -332,7 +336,7 @@ impl SubToolStore {
     }
 }
 
-/// フォルダの道具ごとのファイルを全部読む。読めないファイルは読み飛ばして `problems` に残す。フォルダが無ければ空。
+/// フォルダのツールごとのファイルを全部読む。読めないファイルは読み飛ばして `problems` に残す。フォルダが無ければ空。
 pub fn load_all(dir: &Path) -> LoadReport {
     let mut report = LoadReport::default();
     for tool in TOOLS {
@@ -681,13 +685,17 @@ mod tests {
                     values: longest_values(tool),
                 })
                 .collect();
-            store.save(tool, &presets).unwrap_or_else(|e| {
-                panic!("{tool:?}: {MAX_USER_PRESETS} 個を保存できない: {e:?}")
-            });
+            store
+                .save(tool, &presets)
+                .unwrap_or_else(|e| panic!("{tool:?}: {MAX_USER_PRESETS} 個を保存できない: {e:?}"));
             let size = std::fs::metadata(store.path_of(tool)).unwrap().len();
             assert!(size <= MAX_FILE_BYTES, "{tool:?}: {size}");
             let report = load_all(&dir);
-            assert!(report.problems.is_empty(), "{tool:?}: {:?}", report.problems);
+            assert!(
+                report.problems.is_empty(),
+                "{tool:?}: {:?}",
+                report.problems
+            );
             assert!(
                 report.presets.contains(&(tool, presets)),
                 "{tool:?}: 読み戻した中身が違う"

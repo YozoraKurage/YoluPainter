@@ -1,15 +1,10 @@
-//! 合成モードの式（`blend_rgb`・`separable`）の、レーン（SIMD）の版。
+//! 合成モードの式（B(下, 上)）。f32 のレーン（[`Lanes32`]）の上の 1 つの式で、スカラーの道・行の端・画素ごとの関数
+//! （`super::blend` など）は 1 本のレーン（`Scalar1`）として同じ関数を通る。
 //!
-//! 演算の順・比較の向き・丸めの位置は、スカラーの式（`super::separable`・`super::blend_rgb`）の 1 つ 1 つに対応させてある（積和へまとめない、
-//! `a * b * c` は `(a * b) * c`）。分岐は両方の側を計算して選ぶ。選ばれなかった側が 0 での割り算などで NaN・無限になっても結果に混ざらない。
-//! モードはコンパイル時の定数（`MODE`）で、モードごとに 1 つの関数になる。
-#![cfg_attr(
-    not(target_arch = "x86_64"),
-    allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
-)]
-
+//! 分岐は両方の側を計算して選ぶ。選ばれなかった側が 0 での割り算などで NaN・無限になっても結果に混ざらない。積和へまとめず、
+//! `a * b * c` は `(a * b) * c`。モードはコンパイル時の定数（`MODE`）で、モードごとに 1 つの関数になる。
 use super::TIE_MARGIN;
-use crate::math::simd::{clamp01, Lanes};
+use crate::math::simd::{clamp01_32, Lanes32};
 use crate::types::BlendMode;
 
 macro_rules! mode_consts {
@@ -33,25 +28,25 @@ pub(crate) const fn is_simple(mode: u8) -> bool {
 }
 
 /// R・G・B の 3 つのレーン。
-pub(crate) type Rgb<V> = [<V as Lanes>::F; 3];
+pub(crate) type Rgb<V> = [<V as Lanes32>::F; 3];
 
 #[inline(always)]
-unsafe fn dodge<V: Lanes>(d: V::F, s: V::F) -> V::F {
+unsafe fn dodge<V: Lanes32>(d: V::F, s: V::F) -> V::F {
     let (zero, one) = (V::splat(0.0), V::splat(1.0));
     let q = V::min(one, V::div(d, V::sub(one, s)));
     V::select(V::le(d, zero), zero, V::select(V::ge(s, one), one, q))
 }
 
 #[inline(always)]
-unsafe fn burn<V: Lanes>(d: V::F, s: V::F) -> V::F {
+unsafe fn burn<V: Lanes32>(d: V::F, s: V::F) -> V::F {
     let (zero, one) = (V::splat(0.0), V::splat(1.0));
     let q = V::sub(one, V::min(one, V::div(V::sub(one, d), s)));
     V::select(V::ge(d, one), one, V::select(V::le(s, zero), zero, q))
 }
 
-/// 分離できるモードの 1 成分（`super::separable` と同じ bit）。
+/// 分離できるモードの 1 成分。結果は 0〜1 に収める。
 #[inline(always)]
-pub(crate) unsafe fn separable<V: Lanes, const MODE: u8>(d: V::F, s: V::F) -> V::F {
+pub(crate) unsafe fn separable<V: Lanes32, const MODE: u8>(d: V::F, s: V::F) -> V::F {
     let (zero, one, half, two) = (V::splat(0.0), V::splat(1.0), V::splat(0.5), V::splat(2.0));
     let v = match MODE {
         MULTIPLY => V::mul(d, s),
@@ -109,34 +104,34 @@ pub(crate) unsafe fn separable<V: Lanes, const MODE: u8>(d: V::F, s: V::F) -> V:
         ),
         _ => s,
     };
-    clamp01::<V>(v)
+    clamp01_32::<V>(v)
 }
 
 #[inline(always)]
-unsafe fn lum<V: Lanes>(c: Rgb<V>) -> V::F {
+unsafe fn lum<V: Lanes32>(c: Rgb<V>) -> V::F {
     V::add(
         V::add(V::mul(V::splat(0.3), c[0]), V::mul(V::splat(0.59), c[1])),
         V::mul(V::splat(0.11), c[2]),
     )
 }
 
-/// 成分の最大・最小（スカラーの `if g > b { g } else { b }` の順）。
+/// 成分の最大・最小。
 #[inline(always)]
-unsafe fn extremes<V: Lanes>(c: Rgb<V>) -> (V::F, V::F) {
+unsafe fn extremes<V: Lanes32>(c: Rgb<V>) -> (V::F, V::F) {
     let mx = V::max(c[0], V::max(c[1], c[2]));
     let mn = V::min(c[0], V::min(c[1], c[2]));
     (mx, mn)
 }
 
 #[inline(always)]
-unsafe fn sat<V: Lanes>(c: Rgb<V>) -> V::F {
+unsafe fn sat<V: Lanes32>(c: Rgb<V>) -> V::F {
     let (mx, mn) = extremes::<V>(c);
     V::sub(mx, mn)
 }
 
 /// W3C の SetLum の後に ClipColor と 0〜1 への切り詰め。
 #[inline(always)]
-unsafe fn set_lum<V: Lanes>(c: Rgb<V>, l: V::F) -> Rgb<V> {
+unsafe fn set_lum<V: Lanes32>(c: Rgb<V>, l: V::F) -> Rgb<V> {
     let (zero, one, eps) = (V::splat(0.0), V::splat(1.0), V::splat(1e-12));
     let delta = V::sub(l, lum::<V>(c));
     let mut k = [
@@ -146,7 +141,7 @@ unsafe fn set_lum<V: Lanes>(c: Rgb<V>, l: V::F) -> Rgb<V> {
     ];
     let lm = lum::<V>(k);
     let (x, n) = extremes::<V>(k);
-    // n・x は下の 2 つの補正の前の値のまま使う（スカラーも同じ）
+    // n・x は下の 2 つの補正の前の値のまま使う
     let low = V::and(V::lt(n, zero), V::gt(V::sub(lm, n), eps));
     for v in &mut k {
         let adjusted = V::add(lm, V::div(V::mul(V::sub(*v, lm), lm), V::sub(lm, n)));
@@ -160,12 +155,16 @@ unsafe fn set_lum<V: Lanes>(c: Rgb<V>, l: V::F) -> Rgb<V> {
         );
         *v = V::select(high, adjusted, *v);
     }
-    [clamp01::<V>(k[0]), clamp01::<V>(k[1]), clamp01::<V>(k[2])]
+    [
+        clamp01_32::<V>(k[0]),
+        clamp01_32::<V>(k[1]),
+        clamp01_32::<V>(k[2]),
+    ]
 }
 
 /// SetSat の 1 成分: 最大なら s、最小なら 0、中間は比を保つ。mx = mn（flat）の画素は 0。
 #[inline(always)]
-unsafe fn set_sat_channel<V: Lanes>(v: V::F, mn: V::F, mx: V::F, s: V::F, flat: V::M) -> V::F {
+unsafe fn set_sat_channel<V: Lanes32>(v: V::F, mn: V::F, mx: V::F, s: V::F, flat: V::M) -> V::F {
     let zero = V::splat(0.0);
     let middle = V::div(V::mul(V::sub(v, mn), s), V::sub(mx, mn));
     let r = V::select(V::eq(v, mx), s, V::select(V::eq(v, mn), zero, middle));
@@ -174,7 +173,7 @@ unsafe fn set_sat_channel<V: Lanes>(v: V::F, mn: V::F, mx: V::F, s: V::F, flat: 
 
 /// W3C の SetSat: 一番大きい成分を s、一番小さい成分を 0 に、中間は比を保つ。
 #[inline(always)]
-unsafe fn set_sat<V: Lanes>(c: Rgb<V>, s: V::F) -> Rgb<V> {
+unsafe fn set_sat<V: Lanes32>(c: Rgb<V>, s: V::F) -> Rgb<V> {
     let (mx, mn) = extremes::<V>(c);
     let flat = V::le(V::sub(mx, mn), V::splat(1e-12));
     [
@@ -185,13 +184,13 @@ unsafe fn set_sat<V: Lanes>(c: Rgb<V>, s: V::F) -> Rgb<V> {
 }
 
 #[inline(always)]
-unsafe fn sum3<V: Lanes>(c: Rgb<V>) -> V::F {
+unsafe fn sum3<V: Lanes32>(c: Rgb<V>) -> V::F {
     V::add(V::add(c[0], c[1]), c[2])
 }
 
-/// モードの合成色 B(下, 上)。成分は 0〜1（`super::blend_rgb` と同じ bit）。
+/// モードの合成色 B(下, 上)。成分は 0〜1。
 #[inline(always)]
-pub(crate) unsafe fn blend_rgb<V: Lanes, const MODE: u8>(d: Rgb<V>, s: Rgb<V>) -> Rgb<V> {
+pub(crate) unsafe fn blend_rgb<V: Lanes32, const MODE: u8>(d: Rgb<V>, s: Rgb<V>) -> Rgb<V> {
     match MODE {
         NORMAL | PASS_THROUGH => s,
         HUE => set_lum::<V>(set_sat::<V>(s, sat::<V>(d)), lum::<V>(d)),

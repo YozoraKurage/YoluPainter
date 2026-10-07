@@ -1,6 +1,6 @@
 //! キャンバスの表示の更新の計測（アプリの CPU の表示と GPU の常駐の表示を、同じ装置・同じ変更で比べる）。
 //!   cargo run --release -p yolu-gpu --example canvas_measure -- 4096 5
-//! 引数は画布の一辺（128 の倍数）と反復数（既定 4096・5）。環境変数 `LAYERS`（既定 4,16,32）で層の数を選ぶ。
+//! 引数はキャンバスの一辺（128 の倍数）と反復数（既定 4096・5）。環境変数 `LAYERS`（既定 4,16,32）でレイヤーの数を選ぶ。
 //!
 //! CPU の道はアプリの `CanvasDisplay` と同じ手順: `changed_tiles` で変わったタイルを知り、タイルごとに `composite_into`
 //! （下から上の行）→ 乗算済みへ変換 → 表示のテクスチャのそのタイルの範囲へ `write_texture`（egui-wgpu が `set_partial` で行う
@@ -132,7 +132,7 @@ fn tile_pattern(seed: &mut u32, alpha: u8) -> Vec<u8> {
     tile
 }
 
-/// 文書: 先頭の層は全面で不透明、ほかは dense なら全面・sparse なら 4 タイルだけ（実際の絵の疎さに近い）。
+/// 文書: 先頭のレイヤーは全面で不透明、ほかは dense なら全面・sparse なら 4 タイルだけ（実際の絵の疎さに近い）。
 fn build(size: u32, layers: usize, dense: bool) -> (Document, Vec<yolu_core::LayerId>) {
     let mut d = Document::with_tile_size(size, size, TS).unwrap();
     d.set_source_budget_bytes(4 << 30).unwrap();
@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let size: u32 = args.get(1).map_or(Ok(4096), |s| s.parse())?;
     let repeats: usize = args.get(2).map_or(Ok(5), |s| s.parse())?;
     if size < TS || !size.is_multiple_of(TS) || repeats == 0 {
-        return Err("画布は 128 の倍数、反復は 1 以上".into());
+        return Err("キャンバスは 128 の倍数、反復は 1 以上".into());
     }
     let layer_counts: Vec<usize> = std::env::var("LAYERS")
         .unwrap_or_else(|_| "4,16,32".into())
@@ -198,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (device, queue) =
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
     println!(
-        "画布={size}²、タイル={TS}²、反復={repeats}、release={}、アダプター={} backend={:?} type={:?}",
+        "キャンバス={size}²、タイル={TS}²、反復={repeats}、release={}、アダプター={} backend={:?} type={:?}",
         !cfg!(debug_assertions),
         info.name,
         info.backend,
@@ -249,25 +249,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let first = gpu.update(&d, Channel::Color)?;
             let gpu_first = t.elapsed().as_secs_f64() * 1000.0;
             println!(
-                "\n{layers}層 {}: 初めて見せる CPU={cpu_first:.1}ms GPU={gpu_first:.1}ms（GPU は {} タイル常駐・{:.0} MiB）",
-                if dense { "全層が全面" } else { "下地だけ全面・ほかは 4 タイル" },
+                "\n{layers}レイヤー {}: 初めて見せる CPU={cpu_first:.1}ms GPU={gpu_first:.1}ms（GPU は {} タイル常駐・{:.0} MiB）",
+                if dense { "全レイヤーが全面" } else { "下地だけ全面・ほかは 4 タイル" },
                 first.cached_tiles,
                 first.resident_bytes as f64 / 1048576.0,
             );
             let n = size / TS;
             let mut seed = 0x1234567u32;
-            // 変更の種類: 1 タイル・16 タイル（4×4 の大きなブラシ）・1 層の不透明度（その層の全タイル）
+            // 変更の種類: 1 タイル・16 タイル（4×4 の大きなブラシ）・1 レイヤーの不透明度（そのレイヤーの全タイル）
             for (name, kind) in [
                 ("1 タイル", 0),
                 ("16 タイル(4×4)", 1),
-                ("1 層の不透明度", 2),
+                ("1 レイヤーの不透明度", 2),
             ] {
                 let mut cpu_ms = Vec::new();
                 let mut gpu_ms = Vec::new();
                 let mut worst = 0u8;
                 let (mut tiles, mut uploaded) = (0, 0);
                 for iteration in 0..=repeats {
-                    // 変更の作成（計測の外）。描く層は、上の層のうち 1 枚（最後の層）。
+                    // 変更の作成（計測の外）。描くレイヤーは、上のレイヤーのうち 1 枚（最後のレイヤー）。
                     let target = *ids.last().unwrap();
                     match kind {
                         0 => {

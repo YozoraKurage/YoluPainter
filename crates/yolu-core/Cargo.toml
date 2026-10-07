@@ -10,6 +10,10 @@ glam = "0.33"
 rayon = "1.12"
 
 sha2 = "0.10"
+# テキストレイヤー: 並べ・字の形・塗り。どれも egui（epaint）が既に使っている版で、許諾は登録済み
+harfrust = "0.12"   # MIT
+skrifa = { version = "0.44", default-features = false, features = ["std"] }   # MIT OR Apache-2.0
+vello_cpu = { version = "0.1", default-features = false, features = ["std", "u8_pipeline"] }   # Apache-2.0 OR MIT
 
 [features]
 # ストロークの段ごとの時間の計測（examples/stroke_bench.rs が読む）。既定は無効で、無いときは何も残らない

@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::adjust::{
-    AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust, ColorBalance,
-    Posterize, Threshold,
+    AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust,
+    ColorBalance, Posterize, Threshold,
 };
 use crate::effects::EffectSettings;
 use crate::error::CoreError;
@@ -27,12 +27,20 @@ use crate::ranges;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamType {
     /// 整数（両端を含む）。
-    Integer { min: i64, max: i64 },
+    Integer {
+        min: i64,
+        max: i64,
+    },
     /// 実数（両端を含む）。
-    Number { min: f64, max: f64 },
+    Number {
+        min: f64,
+        max: f64,
+    },
     Bool,
     /// 選択肢のどれか（綴りは小文字の英数字と `_`）。
-    Choice { options: Vec<&'static str> },
+    Choice {
+        options: Vec<&'static str>,
+    },
 }
 
 /// 欄の値。整数も `Number`（整数かどうかは型が見る）。
@@ -58,7 +66,7 @@ pub struct EffectKind {
     pub id: &'static str,
     /// フィルターのスタックの段にできる（フィルターと Generator）。
     pub stack: bool,
-    /// 調整の層の設定にできる。
+    /// 調整レイヤーの設定にできる。
     pub adjustment: bool,
     /// Generator（フィルターのスタックの Generator の段）。
     pub generator: bool,
@@ -84,15 +92,35 @@ impl EffectKind {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamError {
     UnknownKind(String),
-    /// その使い方（フィルターの段・調整の層）にできない種類。
-    WrongTarget { kind: &'static str, adjustment: bool },
+    /// その使い方（フィルターの段・調整レイヤー）にできない種類。
+    WrongTarget {
+        kind: &'static str,
+        adjustment: bool,
+    },
     /// 値だけでは足せない・値を変えられない種類（リスト・曲線・参照を持つ）。
-    NotEditable { kind: &'static str },
-    UnknownParam { kind: &'static str, name: String },
-    WrongType { name: &'static str, expected: &'static str },
-    OutOfRange { name: &'static str, min: f64, max: f64 },
-    NotInteger { name: &'static str },
-    UnknownOption { name: &'static str, options: Vec<&'static str> },
+    NotEditable {
+        kind: &'static str,
+    },
+    UnknownParam {
+        kind: &'static str,
+        name: String,
+    },
+    WrongType {
+        name: &'static str,
+        expected: &'static str,
+    },
+    OutOfRange {
+        name: &'static str,
+        min: f64,
+        max: f64,
+    },
+    NotInteger {
+        name: &'static str,
+    },
+    UnknownOption {
+        name: &'static str,
+        options: Vec<&'static str>,
+    },
     /// 欄の組み合わせが、組んだ設定の検査で断られた。
     Refused(CoreError),
 }
@@ -104,7 +132,11 @@ impl std::fmt::Display for ParamError {
             Self::WrongTarget { kind, adjustment } => write!(
                 f,
                 "{kind} は{}にできない",
-                if *adjustment { "調整の層の設定" } else { "フィルターの段" }
+                if *adjustment {
+                    "調整レイヤーの設定"
+                } else {
+                    "フィルターの段"
+                }
             ),
             Self::NotEditable { kind } => write!(f, "{kind} は値の欄では足せない・変えられない"),
             Self::UnknownParam { kind, name } => write!(f, "{kind} に欄 {name} は無い"),
@@ -125,22 +157,40 @@ type Bag = BTreeMap<&'static str, ParamValue>;
 // ───────── 欄の定義 ─────────
 
 fn int<T: Into<i64> + Copy>(r: &std::ops::RangeInclusive<T>) -> ParamType {
-    ParamType::Integer { min: (*r.start()).into(), max: (*r.end()).into() }
+    ParamType::Integer {
+        min: (*r.start()).into(),
+        max: (*r.end()).into(),
+    }
 }
 fn num(r: &std::ops::RangeInclusive<f64>) -> ParamType {
-    ParamType::Number { min: *r.start(), max: *r.end() }
+    ParamType::Number {
+        min: *r.start(),
+        max: *r.end(),
+    }
 }
 fn choice(options: &[&'static str]) -> ParamType {
-    ParamType::Choice { options: options.to_vec() }
+    ParamType::Choice {
+        options: options.to_vec(),
+    }
 }
 
-const BLEND_OPTIONS: [&str; 7] = ["multiply", "replace", "screen", "max", "min", "add", "subtract"];
+const BLEND_OPTIONS: [&str; 7] = [
+    "multiply", "replace", "screen", "max", "min", "add", "subtract",
+];
 const NOISE_SPACE_OPTIONS: [&str; 2] = ["model", "uv"];
 const AXIS_OPTIONS: [&str; 3] = ["x", "y", "z"];
 const SPACE_OPTIONS: [&str; 3] = ["position", "triplanar", "uv"];
 const BASIS_OPTIONS: [&str; 3] = ["value", "perlin", "worley"];
 const CELL_OPTIONS: [&str; 3] = ["f1", "f2", "f2_minus_f1"];
 const FRACTAL_OPTIONS: [&str; 3] = ["fbm", "ridged", "turbulence"];
+const SLOPE_MODE_OPTIONS: [&str; 3] = ["blur", "min", "max"];
+const PATTERN_SHAPE_OPTIONS: [&str; 5] = ["stripes", "checker", "dots", "border", "grid"];
+const MASK_COMBINE_OPTIONS: [&str; 3] = ["multiply", "max", "add"];
+/// マスクの組み立てのマップ（欄の名前の頭。`generator::MaskBuilder::MAPS` と同じ並び）。
+const MASK_MAPS: [&str; 4] = ["curvature", "ambient_occlusion", "position", "thickness"];
+/// マスクの組み立ての 1 つのマップの欄（`{マップ}_weight` など）。
+const MASK_FIELDS: [&str; 4] = ["weight", "level", "contrast", "invert"];
+const MORPHOLOGY_MODE_OPTIONS: [&str; 2] = ["dilate", "erode"];
 
 fn preset_options() -> Vec<&'static str> {
     GrungePreset::ALL.iter().map(|p| p.id()).collect()
@@ -148,7 +198,10 @@ fn preset_options() -> Vec<&'static str> {
 
 /// `(i32::MIN, i32::MAX)` の整数（シード）。
 fn seed_type() -> ParamType {
-    ParamType::Integer { min: i64::from(i32::MIN), max: i64::from(i32::MAX) }
+    ParamType::Integer {
+        min: i64::from(i32::MIN),
+        max: i64::from(i32::MAX),
+    }
 }
 
 /// 色調補正の欄の名前（カラーバランス）。
@@ -224,7 +277,13 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
         "color_balance" => {
             let range = ColorBalance::RANGE;
             for name in BALANCE_NAMES {
-                v.push((name, ParamType::Number { min: -range, max: range }));
+                v.push((
+                    name,
+                    ParamType::Number {
+                        min: -range,
+                        max: range,
+                    },
+                ));
             }
             v.push(("preserve_luminosity", ParamType::Bool));
         }
@@ -265,7 +324,13 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
                 ("basis", choice(&BASIS_OPTIONS)),
                 ("cell_output", choice(&CELL_OPTIONS)),
                 ("fractal", choice(&FRACTAL_OPTIONS)),
-                ("octaves", ParamType::Integer { min: 1, max: i64::from(generator::MAX_OCTAVES) }),
+                (
+                    "octaves",
+                    ParamType::Integer {
+                        min: 1,
+                        max: i64::from(generator::MAX_OCTAVES),
+                    },
+                ),
                 ("lacunarity", num(&ranges::LACUNARITY)),
                 ("gain", num(&ranges::UNIT)),
             ]);
@@ -273,16 +338,160 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
         "grunge" => {
             v.extend(generator_common());
             v.extend(procedural_common());
-            v.push(("preset", ParamType::Choice { options: preset_options() }));
+            v.push((
+                "preset",
+                ParamType::Choice {
+                    options: preset_options(),
+                },
+            ));
+        }
+        "histogram_scan" => v.extend([
+            ("position", num(&ranges::UNIT)),
+            ("contrast", num(&ranges::UNIT)),
+        ]),
+        "histogram_range" => v.extend([
+            ("range", num(&ranges::UNIT)),
+            ("position", num(&ranges::UNIT)),
+        ]),
+        "slope_blur" => v.extend([
+            ("intensity", num(&ranges::SLOPE_INTENSITY)),
+            ("samples", int(&ranges::SLOPE_SAMPLES)),
+            ("mode", choice(&SLOPE_MODE_OPTIONS)),
+            ("scale", num(&ranges::FILTER_NOISE_SCALE)),
+            ("seed", seed_type()),
+        ]),
+        "directional_blur" => v.extend([
+            ("angle", num(&ranges::DIRECTIONAL_ANGLE)),
+            ("distance", num(&ranges::DIRECTIONAL_DISTANCE)),
+        ]),
+        "warp" => v.extend([
+            ("intensity", num(&ranges::WARP_INTENSITY)),
+            ("scale", num(&ranges::FILTER_NOISE_SCALE)),
+            ("seed", seed_type()),
+        ]),
+        "morphology" => v.extend([
+            ("mode", choice(&MORPHOLOGY_MODE_OPTIONS)),
+            ("radius", int(&ranges::MORPHOLOGY_RADIUS)),
+        ]),
+        "edge_detect" => v.extend([
+            ("width", int(&ranges::EDGE_WIDTH)),
+            ("threshold", num(&ranges::UNIT)),
+        ]),
+        "high_pass" => v.push(("radius", int(&ranges::HIGH_PASS_RADIUS))),
+        "median" => v.push(("radius", int(&ranges::MEDIAN_RADIUS))),
+        "glow" => v.extend([
+            ("threshold", num(&ranges::UNIT)),
+            ("radius", int(&ranges::GLOW_RADIUS)),
+            ("intensity", num(&ranges::GLOW_INTENSITY)),
+        ]),
+        // 模様・ライトは境目のぼかしを自分の欄（softness）で持つので、共通の減衰を置かない
+        "pattern" => {
+            v.extend(
+                generator_common()
+                    .into_iter()
+                    .filter(|(n, _)| *n != "softness"),
+            );
+            v.extend([
+                ("shape", choice(&PATTERN_SHAPE_OPTIONS)),
+                ("scale", num(&ranges::PATTERN_SCALE)),
+                ("angle", num(&ranges::TURN_DEGREES)),
+                ("width", num(&ranges::UNIT)),
+                ("softness", num(&ranges::UNIT)),
+                ("offset_u", num(&ranges::UNIT)),
+                ("offset_v", num(&ranges::UNIT)),
+            ]);
+        }
+        "light" => {
+            v.extend(
+                generator_common()
+                    .into_iter()
+                    .filter(|(n, _)| *n != "softness"),
+            );
+            v.extend([
+                ("azimuth", num(&ranges::TURN_DEGREES)),
+                ("elevation", num(&ranges::LIGHT_ELEVATION)),
+                ("softness", num(&ranges::UNIT)),
+                ("ambient", num(&ranges::UNIT)),
+            ]);
+        }
+        "mask_builder" => {
+            v.extend(generator_common());
+            for map in MASK_MAPS {
+                for field in MASK_FIELDS {
+                    v.push((
+                        mask_param(map, field),
+                        if field == "invert" {
+                            ParamType::Bool
+                        } else {
+                            num(&ranges::UNIT)
+                        },
+                    ));
+                }
+            }
+            v.push(("combine", choice(&MASK_COMBINE_OPTIONS)));
+        }
+        "uv_island_variation" => {
+            v.extend(generator_common());
+            v.extend([
+                ("seed", seed_type()),
+                ("min", num(&ranges::UNIT)),
+                ("max", num(&ranges::UNIT)),
+            ]);
         }
         _ => {}
     }
     v
 }
 
-/// 一覧の 1 行の元: (id, フィルターのスタック, 調整の層, Generator, 足せる, 値の欄で変えられない中身)。
-type Row = (&'static str, bool, bool, bool, bool, &'static [&'static str]);
-const KIND_ROWS: [Row; 23] = [
+/// マスクの組み立ての欄の名前（`curvature_weight` など。表に載る名前なので 'static）。
+fn mask_param(map: &str, field: &str) -> &'static str {
+    const NAMES: [[&str; 4]; 4] = [
+        [
+            "curvature_weight",
+            "curvature_level",
+            "curvature_contrast",
+            "curvature_invert",
+        ],
+        [
+            "ambient_occlusion_weight",
+            "ambient_occlusion_level",
+            "ambient_occlusion_contrast",
+            "ambient_occlusion_invert",
+        ],
+        [
+            "position_weight",
+            "position_level",
+            "position_contrast",
+            "position_invert",
+        ],
+        [
+            "thickness_weight",
+            "thickness_level",
+            "thickness_contrast",
+            "thickness_invert",
+        ],
+    ];
+    let m = MASK_MAPS
+        .iter()
+        .position(|m| *m == map)
+        .expect("マップの名前");
+    let f = MASK_FIELDS
+        .iter()
+        .position(|f| *f == field)
+        .expect("欄の名前");
+    NAMES[m][f]
+}
+
+/// 一覧の 1 行の元: (id, フィルターのスタック, 調整レイヤー, Generator, 足せる, 値の欄で変えられない中身)。
+type Row = (
+    &'static str,
+    bool,
+    bool,
+    bool,
+    bool,
+    &'static [&'static str],
+);
+const KIND_ROWS: [Row; 38] = [
     ("blur", true, false, false, true, &[]),
     ("sharpen", true, false, false, true, &[]),
     ("noise", true, false, false, true, &[]),
@@ -303,9 +512,38 @@ const KIND_ROWS: [Row; 23] = [
     ("direction", true, false, true, true, &["pins"]),
     ("procedural_noise", true, false, true, true, &["pins"]),
     ("grunge", true, false, true, true, &["pins"]),
-    ("shape_gradient", true, false, true, false, &["volume", "ramp", "pins"]),
+    (
+        "shape_gradient",
+        true,
+        false,
+        true,
+        false,
+        &["volume", "ramp", "pins"],
+    ),
     ("id_color", true, false, true, false, &["id_colors", "pins"]),
     ("anchor", true, false, true, false, &["anchor"]),
+    ("histogram_scan", true, false, false, true, &[]),
+    ("histogram_range", true, false, false, true, &[]),
+    ("slope_blur", true, false, false, true, &[]),
+    ("directional_blur", true, false, false, true, &[]),
+    ("warp", true, false, false, true, &[]),
+    ("morphology", true, false, false, true, &[]),
+    ("edge_detect", true, false, false, true, &[]),
+    ("high_pass", true, false, false, true, &[]),
+    ("median", true, false, false, true, &[]),
+    ("glow", true, false, false, true, &[]),
+    ("pattern", true, false, true, true, &["pins"]),
+    ("light", true, false, true, true, &["pins"]),
+    ("mask_builder", true, false, true, true, &["pins"]),
+    (
+        "image",
+        true,
+        false,
+        true,
+        false,
+        &["image", "projection", "component"],
+    ),
+    ("uv_island_variation", true, false, true, true, &[]),
 ];
 
 /// 効果の種類の一覧（フィルター・調整・Generator。足せない種類も含む）。
@@ -327,8 +565,20 @@ pub fn kinds() -> &'static [EffectKind] {
                         ty,
                     })
                     .collect();
-                let needs_maps = generator && !matches!(id, "procedural_noise" | "grunge");
-                EffectKind { id, stack, adjustment, generator, needs_maps, addable, rust_only: rust_only(id), params, opaque }
+                // 画像の段は投影しだい（UV は読まない）なので、ここでは偽
+                let needs_maps =
+                    generator && !matches!(id, "procedural_noise" | "grunge" | "pattern" | "image");
+                EffectKind {
+                    id,
+                    stack,
+                    adjustment,
+                    generator,
+                    needs_maps,
+                    addable,
+                    rust_only: rust_only(id),
+                    params,
+                    opaque,
+                }
             })
             .collect()
     })
@@ -337,12 +587,18 @@ pub fn kinds() -> &'static [EffectKind] {
 /// Rust 版だけの種類か（保存形式の種類の番号・Generator の種類で決める）。
 fn rust_only(id: &str) -> bool {
     let stack = default_stack(id).or_else(|| match id {
-        "gradient_map" => ColorAdjust::default_for(AdjustmentType::GradientMap).map(EffectSettings::from_color_adjust),
-        "tone_curve" => ColorAdjust::default_for(AdjustmentType::ToneCurve).map(EffectSettings::from_color_adjust),
+        "gradient_map" => ColorAdjust::default_for(AdjustmentType::GradientMap)
+            .map(EffectSettings::from_color_adjust),
+        "tone_curve" => ColorAdjust::default_for(AdjustmentType::ToneCurve)
+            .map(EffectSettings::from_color_adjust),
         _ => None,
     });
     match stack {
-        Some(s) => s.type_index() >= 64 || s.generator_settings().is_some_and(|g| g.kind.is_procedural()),
+        Some(s) => {
+            s.type_index() >= 64
+                || s.generator_settings()
+                    .is_some_and(|g| g.kind.is_rust_only())
+        }
         None => default_adjustment(id).is_some_and(|a| a.kind().is_rust_only()),
     }
 }
@@ -363,9 +619,9 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         "invert" => EffectSettings::invert(),
         "normalize" => EffectSettings::normalize(),
         "color_balance" => EffectSettings::color_balance(ColorBalance::neutral()),
-        "brightness_contrast" => EffectSettings::from_color_adjust(
-            ColorAdjust::default_for(AdjustmentType::BrightnessContrast)?,
-        ),
+        "brightness_contrast" => EffectSettings::from_color_adjust(ColorAdjust::default_for(
+            AdjustmentType::BrightnessContrast,
+        )?),
         "threshold" => {
             EffectSettings::from_color_adjust(ColorAdjust::default_for(AdjustmentType::Threshold)?)
         }
@@ -374,11 +630,60 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         }
         "edge_wear" => EffectSettings::generator(generator::Settings::new(G::EdgeWear)),
         "dirt" => EffectSettings::generator(generator::Settings::new(G::Dirt)),
-        "position_gradient" => EffectSettings::generator(generator::Settings::new(G::PositionGradient)),
+        "position_gradient" => {
+            EffectSettings::generator(generator::Settings::new(G::PositionGradient))
+        }
         "thickness" => EffectSettings::generator(generator::Settings::new(G::Thickness)),
         "direction" => EffectSettings::generator(generator::Settings::new(G::Direction)),
         "procedural_noise" => EffectSettings::generator(generator::Settings::new(G::Noise)),
         "grunge" => EffectSettings::generator(generator::Settings::new(G::Grunge)),
+        "pattern" => EffectSettings::generator(generator::Settings::new(G::Pattern)),
+        "light" => EffectSettings::generator(generator::Settings::new(G::Light)),
+        "mask_builder" => EffectSettings::generator(generator::Settings::new(G::MaskBuilder)),
+        // 0.5.0 の 10 種の既定（アプリのメニューで足すときもこの値）
+        "histogram_scan" => EffectSettings::Filter(filter::Settings::HistogramScan {
+            position: 0.5,
+            contrast: 0.0,
+        }),
+        "histogram_range" => EffectSettings::Filter(filter::Settings::HistogramRange {
+            range: 0.5,
+            position: 0.5,
+        }),
+        "slope_blur" => EffectSettings::Filter(filter::Settings::SlopeBlur {
+            intensity: 8.0,
+            samples: 8,
+            mode: filter::SlopeMode::Blur,
+            scale: 16.0,
+            seed: 0,
+        }),
+        "directional_blur" => EffectSettings::Filter(filter::Settings::DirectionalBlur {
+            angle: 0.0,
+            distance: 8.0,
+        }),
+        "warp" => EffectSettings::Filter(filter::Settings::Warp {
+            intensity: 16.0,
+            scale: 32.0,
+            seed: 0,
+        }),
+        "morphology" => EffectSettings::Filter(filter::Settings::Morphology {
+            mode: filter::MorphologyMode::Dilate,
+            radius: 2,
+        }),
+        "edge_detect" => EffectSettings::Filter(filter::Settings::EdgeDetect {
+            width: 1,
+            threshold: 0.1,
+        }),
+        "high_pass" => EffectSettings::Filter(filter::Settings::HighPass { radius: 8 }),
+        "median" => EffectSettings::Filter(filter::Settings::Median { radius: 1 }),
+        "glow" => EffectSettings::Filter(filter::Settings::Glow {
+            threshold: 0.7,
+            radius: 16,
+            intensity: 1.0,
+        }),
+        "image" => EffectSettings::generator(generator::Settings::new(G::Image)),
+        "uv_island_variation" => {
+            EffectSettings::generator(generator::Settings::new(G::UvIslandVariation))
+        }
         _ => return None,
     })
 }
@@ -454,6 +759,11 @@ fn generator_kind_id(k: generator::Kind) -> &'static str {
         G::Anchor => "anchor",
         G::Noise => "procedural_noise",
         G::Grunge => "grunge",
+        G::Pattern => "pattern",
+        G::Light => "light",
+        G::MaskBuilder => "mask_builder",
+        G::Image => "image",
+        G::UvIslandVariation => "uv_island_variation",
     }
 }
 
@@ -462,7 +772,17 @@ fn read_generator(g: &generator::Settings) -> Bag {
     let mut b = Bag::new();
     if !matches!(
         g.kind,
-        G::EdgeWear | G::Dirt | G::PositionGradient | G::Thickness | G::Direction | G::Noise | G::Grunge
+        G::EdgeWear
+            | G::Dirt
+            | G::PositionGradient
+            | G::Thickness
+            | G::Direction
+            | G::Noise
+            | G::Grunge
+            | G::Pattern
+            | G::Light
+            | G::MaskBuilder
+            | G::UvIslandVariation
     ) {
         return b;
     }
@@ -471,6 +791,46 @@ fn read_generator(g: &generator::Settings) -> Bag {
     b.insert("softness", n(g.softness));
     b.insert("invert", ParamValue::Bool(g.invert));
     b.insert("blend", c(blend_id(g.blend)));
+    match g.kind {
+        G::Pattern => {
+            let p = &g.pattern;
+            b.insert("shape", c(PATTERN_SHAPE_OPTIONS[p.shape as usize]));
+            b.insert("scale", n(p.scale));
+            b.insert("angle", n(p.angle));
+            b.insert("width", n(p.width));
+            b.insert("softness", n(p.softness));
+            b.insert("offset_u", n(p.offset[0]));
+            b.insert("offset_v", n(p.offset[1]));
+            return b;
+        }
+        G::Light => {
+            let l = &g.light;
+            b.insert("azimuth", n(l.azimuth));
+            b.insert("elevation", n(l.elevation));
+            b.insert("softness", n(l.softness));
+            b.insert("ambient", n(l.ambient));
+            return b;
+        }
+        G::MaskBuilder => {
+            let m = &g.mask_builder;
+            for (map, input) in MASK_MAPS.iter().zip(&m.inputs) {
+                b.insert(mask_param(map, "weight"), n(input.weight));
+                b.insert(mask_param(map, "level"), n(input.level));
+                b.insert(mask_param(map, "contrast"), n(input.contrast));
+                b.insert(mask_param(map, "invert"), ParamValue::Bool(input.invert));
+            }
+            b.insert("combine", c(MASK_COMBINE_OPTIONS[m.combine as usize]));
+            return b;
+        }
+        G::UvIslandVariation => {
+            let v = &g.island;
+            b.insert("seed", n(f64::from(v.seed)));
+            b.insert("min", n(v.min));
+            b.insert("max", n(v.max));
+            return b;
+        }
+        _ => {}
+    }
     if !g.kind.is_procedural() {
         b.insert("noise_amount", n(g.noise_amount));
         b.insert("noise_scale", n(g.noise_scale));
@@ -560,7 +920,10 @@ fn read_color_adjust(a: &ColorAdjust) -> Bag {
                     b.insert(BALANCE_NAMES[i * 3 + k], n(*value));
                 }
             }
-            b.insert("preserve_luminosity", ParamValue::Bool(cb.preserve_luminosity()));
+            b.insert(
+                "preserve_luminosity",
+                ParamValue::Bool(cb.preserve_luminosity()),
+            );
         }
         ColorAdjust::BrightnessContrast(v) => {
             b.insert("brightness", n(v.brightness()));
@@ -604,19 +967,33 @@ fn read_stack(s: &EffectSettings) -> Option<(&'static str, Bag)> {
                 b.insert("radius", n(f64::from(*radius)));
                 "blur"
             }
-            F::Sharpen { radius, amount, threshold } => {
+            F::Sharpen {
+                radius,
+                amount,
+                threshold,
+            } => {
                 b.insert("radius", n(f64::from(*radius)));
                 b.insert("amount", n(*amount));
                 b.insert("threshold", n(f64::from(*threshold)));
                 "sharpen"
             }
-            F::Noise { amount, seed, monochrome } => {
+            F::Noise {
+                amount,
+                seed,
+                monochrome,
+            } => {
                 b.insert("amount", n(*amount));
                 b.insert("seed", n(f64::from(*seed)));
                 b.insert("monochrome", ParamValue::Bool(*monochrome));
                 "noise"
             }
-            F::Levels { input_black, input_white, gamma, output_black, output_white } => {
+            F::Levels {
+                input_black,
+                input_white,
+                gamma,
+                output_black,
+                output_white,
+            } => {
                 b.insert("input_black", n(*input_black));
                 b.insert("input_white", n(*input_white));
                 b.insert("gamma", n(*gamma));
@@ -635,12 +1012,92 @@ fn read_stack(s: &EffectSettings) -> Option<(&'static str, Bag)> {
             | F::BrightnessContrast(_)
             | F::Threshold(_)
             | F::Posterize(_) => return None,
+            F::HistogramScan { position, contrast } => {
+                b.insert("position", n(*position));
+                b.insert("contrast", n(*contrast));
+                "histogram_scan"
+            }
+            F::HistogramRange { range, position } => {
+                b.insert("range", n(*range));
+                b.insert("position", n(*position));
+                "histogram_range"
+            }
+            F::SlopeBlur {
+                intensity,
+                samples,
+                mode,
+                scale,
+                seed,
+            } => {
+                b.insert("intensity", n(*intensity));
+                b.insert("samples", n(f64::from(*samples)));
+                b.insert(
+                    "mode",
+                    c(match mode {
+                        filter::SlopeMode::Blur => "blur",
+                        filter::SlopeMode::Min => "min",
+                        filter::SlopeMode::Max => "max",
+                    }),
+                );
+                b.insert("scale", n(*scale));
+                b.insert("seed", n(f64::from(*seed)));
+                "slope_blur"
+            }
+            F::DirectionalBlur { angle, distance } => {
+                b.insert("angle", n(*angle));
+                b.insert("distance", n(*distance));
+                "directional_blur"
+            }
+            F::Warp {
+                intensity,
+                scale,
+                seed,
+            } => {
+                b.insert("intensity", n(*intensity));
+                b.insert("scale", n(*scale));
+                b.insert("seed", n(f64::from(*seed)));
+                "warp"
+            }
+            F::Morphology { mode, radius } => {
+                b.insert(
+                    "mode",
+                    c(match mode {
+                        filter::MorphologyMode::Dilate => "dilate",
+                        filter::MorphologyMode::Erode => "erode",
+                    }),
+                );
+                b.insert("radius", n(f64::from(*radius)));
+                "morphology"
+            }
+            F::EdgeDetect { width, threshold } => {
+                b.insert("width", n(f64::from(*width)));
+                b.insert("threshold", n(*threshold));
+                "edge_detect"
+            }
+            F::HighPass { radius } => {
+                b.insert("radius", n(f64::from(*radius)));
+                "high_pass"
+            }
+            F::Median { radius } => {
+                b.insert("radius", n(f64::from(*radius)));
+                "median"
+            }
+            F::Glow {
+                threshold,
+                radius,
+                intensity,
+            } => {
+                b.insert("threshold", n(*threshold));
+                b.insert("radius", n(f64::from(*radius)));
+                b.insert("intensity", n(*intensity));
+                "glow"
+            }
         },
     };
     Some((id, b))
 }
 
-/// 調整の層の設定の、種類と値。
+/// 調整レイヤーの設定の、種類と値。
 fn read_adjustment(a: &AdjustmentSettings) -> (&'static str, Bag) {
     let mut b = Bag::new();
     if let Some(ca) = a.color_adjust() {
@@ -728,19 +1185,80 @@ fn build_generator(
     g.softness = get_n(bag, "softness");
     g.invert = get_b(bag, "invert");
     g.blend = blend_from(get_c(bag, "blend"));
-    if !g.kind.is_procedural() {
+    match id {
+        // 模様・ライトの softness は種類の欄（共通の減衰は 0 のまま）
+        "pattern" => {
+            g.softness = 0.;
+            g.pattern = generator::Pattern {
+                shape: PATTERN_SHAPE_OPTIONS
+                    .iter()
+                    .position(|o| *o == get_c(bag, "shape"))
+                    .and_then(|i| generator::PatternShape::from_index(i as i64))
+                    .unwrap_or(generator::PatternShape::Stripes),
+                scale: get_n(bag, "scale"),
+                angle: get_n(bag, "angle"),
+                width: get_n(bag, "width"),
+                softness: get_n(bag, "softness"),
+                offset: [get_n(bag, "offset_u"), get_n(bag, "offset_v")],
+            };
+        }
+        "light" => {
+            g.softness = 0.;
+            g.light = generator::Light {
+                azimuth: get_n(bag, "azimuth"),
+                elevation: get_n(bag, "elevation"),
+                softness: get_n(bag, "softness"),
+                ambient: get_n(bag, "ambient"),
+            };
+        }
+        "mask_builder" => {
+            for (map, input) in MASK_MAPS.iter().zip(g.mask_builder.inputs.iter_mut()) {
+                *input = generator::MaskInput {
+                    weight: get_n(bag, mask_param(map, "weight")),
+                    level: get_n(bag, mask_param(map, "level")),
+                    contrast: get_n(bag, mask_param(map, "contrast")),
+                    invert: get_b(bag, mask_param(map, "invert")),
+                };
+            }
+            g.mask_builder.combine = MASK_COMBINE_OPTIONS
+                .iter()
+                .position(|o| *o == get_c(bag, "combine"))
+                .and_then(|i| generator::MaskCombine::from_index(i as i64))
+                .unwrap_or(generator::MaskCombine::Multiply);
+        }
+        "uv_island_variation" => {
+            g.island = generator::IslandVariation {
+                seed: get_n(bag, "seed") as i32,
+                min: get_n(bag, "min"),
+                max: get_n(bag, "max"),
+            };
+        }
+        _ => {}
+    }
+    if !g.kind.is_procedural() && !g.kind.is_050() {
         g.noise_amount = get_n(bag, "noise_amount");
         g.noise_scale = get_n(bag, "noise_scale");
         g.noise_seed = get_n(bag, "noise_seed") as i32;
-        g.noise_space = if get_c(bag, "noise_space") == "uv" { NoiseSpace::Uv } else { NoiseSpace::Model };
+        g.noise_space = if get_c(bag, "noise_space") == "uv" {
+            NoiseSpace::Uv
+        } else {
+            NoiseSpace::Model
+        };
     }
     match id {
         "dirt" => g.balance = get_n(bag, "balance"),
         "position_gradient" => {
-            g.axis = AXIS_OPTIONS.iter().position(|a| *a == get_c(bag, "axis")).unwrap_or(1);
+            g.axis = AXIS_OPTIONS
+                .iter()
+                .position(|a| *a == get_c(bag, "axis"))
+                .unwrap_or(1);
         }
         "direction" => {
-            g.direction = [get_n(bag, "direction_x"), get_n(bag, "direction_y"), get_n(bag, "direction_z")];
+            g.direction = [
+                get_n(bag, "direction_x"),
+                get_n(bag, "direction_y"),
+                get_n(bag, "direction_z"),
+            ];
             g.use_bent_normal = get_b(bag, "use_bent_normal");
         }
         _ => {}
@@ -754,7 +1272,11 @@ fn build_generator(
         };
         p.scale = get_n(bag, "scale");
         p.seed = get_n(bag, "seed") as i32;
-        p.rotation = [get_n(bag, "rotation_x"), get_n(bag, "rotation_y"), get_n(bag, "rotation_z")];
+        p.rotation = [
+            get_n(bag, "rotation_x"),
+            get_n(bag, "rotation_y"),
+            get_n(bag, "rotation_z"),
+        ];
         p.bleed = get_n(bag, "bleed");
         p.blend_width = get_n(bag, "blend_width");
         if id == "procedural_noise" {
@@ -778,7 +1300,11 @@ fn build_generator(
             p.gain = get_n(bag, "gain");
         } else {
             let want = get_c(bag, "preset");
-            p.preset = GrungePreset::ALL.iter().copied().find(|x| x.id() == want).unwrap_or(p.preset);
+            p.preset = GrungePreset::ALL
+                .iter()
+                .copied()
+                .find(|x| x.id() == want)
+                .unwrap_or(p.preset);
         }
     }
     g.validate().map_err(|e| match e {
@@ -789,7 +1315,11 @@ fn build_generator(
 }
 
 /// フィルターのスタックの段を、欄の値から組む。`base` は変える前の段（Generator のピンなど値の欄に無い中身を残すため。足すときは None）。
-fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<EffectSettings, ParamError> {
+fn build_stack(
+    id: &str,
+    bag: &Bag,
+    base: Option<&EffectSettings>,
+) -> Result<EffectSettings, ParamError> {
     use generator::Kind as G;
     let settings = match id {
         "blur" => EffectSettings::blur(get_n(bag, "radius") as u32),
@@ -815,7 +1345,68 @@ fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<Eff
         "color_balance" | "brightness_contrast" | "threshold" | "posterize" => {
             EffectSettings::from_color_adjust(build_color_adjust(id, bag)?)
         }
-        "edge_wear" | "dirt" | "position_gradient" | "thickness" | "direction" | "procedural_noise" | "grunge" => {
+        "histogram_scan" => EffectSettings::Filter(filter::Settings::HistogramScan {
+            position: get_n(bag, "position"),
+            contrast: get_n(bag, "contrast"),
+        }),
+        "histogram_range" => EffectSettings::Filter(filter::Settings::HistogramRange {
+            range: get_n(bag, "range"),
+            position: get_n(bag, "position"),
+        }),
+        "slope_blur" => EffectSettings::Filter(filter::Settings::SlopeBlur {
+            intensity: get_n(bag, "intensity"),
+            samples: get_n(bag, "samples") as u32,
+            mode: match get_c(bag, "mode") {
+                "min" => filter::SlopeMode::Min,
+                "max" => filter::SlopeMode::Max,
+                _ => filter::SlopeMode::Blur,
+            },
+            scale: get_n(bag, "scale"),
+            seed: get_n(bag, "seed") as i32,
+        }),
+        "directional_blur" => EffectSettings::Filter(filter::Settings::DirectionalBlur {
+            angle: get_n(bag, "angle"),
+            distance: get_n(bag, "distance"),
+        }),
+        "warp" => EffectSettings::Filter(filter::Settings::Warp {
+            intensity: get_n(bag, "intensity"),
+            scale: get_n(bag, "scale"),
+            seed: get_n(bag, "seed") as i32,
+        }),
+        "morphology" => EffectSettings::Filter(filter::Settings::Morphology {
+            mode: if get_c(bag, "mode") == "erode" {
+                filter::MorphologyMode::Erode
+            } else {
+                filter::MorphologyMode::Dilate
+            },
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "edge_detect" => EffectSettings::Filter(filter::Settings::EdgeDetect {
+            width: get_n(bag, "width") as u32,
+            threshold: get_n(bag, "threshold"),
+        }),
+        "high_pass" => EffectSettings::Filter(filter::Settings::HighPass {
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "median" => EffectSettings::Filter(filter::Settings::Median {
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "glow" => EffectSettings::Filter(filter::Settings::Glow {
+            threshold: get_n(bag, "threshold"),
+            radius: get_n(bag, "radius") as u32,
+            intensity: get_n(bag, "intensity"),
+        }),
+        "edge_wear"
+        | "dirt"
+        | "position_gradient"
+        | "thickness"
+        | "direction"
+        | "procedural_noise"
+        | "grunge"
+        | "pattern"
+        | "light"
+        | "mask_builder"
+        | "uv_island_variation" => {
             let kind = match id {
                 "edge_wear" => G::EdgeWear,
                 "dirt" => G::Dirt,
@@ -823,6 +1414,10 @@ fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<Eff
                 "thickness" => G::Thickness,
                 "direction" => G::Direction,
                 "procedural_noise" => G::Noise,
+                "pattern" => G::Pattern,
+                "light" => G::Light,
+                "mask_builder" => G::MaskBuilder,
+                "uv_island_variation" => G::UvIslandVariation,
                 _ => G::Grunge,
             };
             let start = match base.and_then(EffectSettings::generator_settings) {
@@ -831,12 +1426,16 @@ fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<Eff
             };
             return build_generator(id, start, bag);
         }
-        _ => return Err(ParamError::NotEditable { kind: static_id(id) }),
+        _ => {
+            return Err(ParamError::NotEditable {
+                kind: static_id(id),
+            })
+        }
     };
     // 組んだ設定の検査（欄の組み合わせの条件。チャンネルの種類に依る条件は文書に足すときに見る）
     match &settings {
         EffectSettings::Filter(f) => f
-            .validate(filter::ValueType::Color)
+            .validate_values()
             .map_err(|_| refused(CoreError::InvalidArgument("フィルターの設定")))?,
         EffectSettings::Generator(_) => {}
     }
@@ -863,7 +1462,11 @@ fn build_adjustment(id: &str, bag: &Bag) -> Result<AdjustmentSettings, ParamErro
         "color_balance" | "brightness_contrast" | "threshold" | "posterize" => {
             build_color_adjust(id, bag)?.into_settings()
         }
-        _ => return Err(ParamError::NotEditable { kind: static_id(id) }),
+        _ => {
+            return Err(ParamError::NotEditable {
+                kind: static_id(id),
+            })
+        }
     };
     settings.validate().map_err(refused)?;
     Ok(settings)
@@ -872,7 +1475,12 @@ fn build_adjustment(id: &str, bag: &Bag) -> Result<AdjustmentSettings, ParamErro
 /// 読んだ値を、表の欄の並びにする。
 fn ordered(id: &str, mut bag: Bag) -> Vec<(&'static str, ParamValue)> {
     kind(id)
-        .map(|k| k.params.iter().filter_map(|p| bag.remove(p.name).map(|v| (p.name, v))).collect())
+        .map(|k| {
+            k.params
+                .iter()
+                .filter_map(|p| bag.remove(p.name).map(|v| (p.name, v)))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -891,7 +1499,10 @@ fn overlay(
 ) -> Result<Bag, ParamError> {
     for (name, value) in given {
         let Some(param) = kind.param(name) else {
-            return Err(ParamError::UnknownParam { kind: kind.id, name: name.clone() });
+            return Err(ParamError::UnknownParam {
+                kind: kind.id,
+                name: name.clone(),
+            });
         };
         check_value(param, value)?;
     }
@@ -922,13 +1533,21 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
                 return Err(ParamError::NotInteger { name: param.name });
             }
             if *v < *min as f64 || *v > *max as f64 {
-                return Err(ParamError::OutOfRange { name: param.name, min: *min as f64, max: *max as f64 });
+                return Err(ParamError::OutOfRange {
+                    name: param.name,
+                    min: *min as f64,
+                    max: *max as f64,
+                });
             }
             Ok(())
         }
         (ParamType::Number { min, max }, ParamValue::Number(v)) => {
             if !v.is_finite() || *v < *min || *v > *max {
-                return Err(ParamError::OutOfRange { name: param.name, min: *min, max: *max });
+                return Err(ParamError::OutOfRange {
+                    name: param.name,
+                    min: *min,
+                    max: *max,
+                });
             }
             Ok(())
         }
@@ -937,7 +1556,10 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
             if options.iter().any(|o| *o == v) {
                 Ok(())
             } else {
-                Err(ParamError::UnknownOption { name: param.name, options: options.clone() })
+                Err(ParamError::UnknownOption {
+                    name: param.name,
+                    options: options.clone(),
+                })
             }
         }
         (ty, _) => Err(ParamError::WrongType {
@@ -955,7 +1577,10 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
 fn editable(id: &str, adjustment: bool) -> Result<&'static EffectKind, ParamError> {
     let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
     if (adjustment && !kind.adjustment) || (!adjustment && !kind.stack) {
-        return Err(ParamError::WrongTarget { kind: kind.id, adjustment });
+        return Err(ParamError::WrongTarget {
+            kind: kind.id,
+            adjustment,
+        });
     }
     if !kind.addable {
         return Err(ParamError::NotEditable { kind: kind.id });
@@ -970,24 +1595,36 @@ impl EffectSettings {
     }
     /// 値の欄の値（欄を持たない種類は空。並びは表の欄の並び）。
     pub fn catalog_values(&self) -> Vec<(&'static str, ParamValue)> {
-        read_stack(self).map(|(id, bag)| ordered(id, bag)).unwrap_or_default()
+        read_stack(self)
+            .map(|(id, bag)| ordered(id, bag))
+            .unwrap_or_default()
     }
     /// 値の欄では変えられない中身（グラデーションマップのランプなど。無ければ空）。
     pub fn opaque_parts(&self) -> &'static [&'static str] {
         kind(self.kind_id()).map_or(&[], |k| k.opaque)
     }
     /// 種類の名前と値から、新しい設定を組む（渡さない欄は既定）。
-    pub fn from_catalog(kind_id: &str, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn from_catalog(
+        kind_id: &str,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let kind = editable(kind_id, false)?;
         let bag = overlay(kind, default_bag(kind.id), values)?;
         build_stack(kind.id, &bag, None)
     }
     /// 今の設定に、渡した欄の値だけを重ねた設定（同じ種類のまま。値の欄に無い中身は残す）。
-    pub fn with_catalog_values(&self, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn with_catalog_values(
+        &self,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let id = self.kind_id();
         let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
         if !kind.addable {
-            return if values.is_empty() { Ok(self.clone()) } else { Err(ParamError::NotEditable { kind: kind.id }) };
+            return if values.is_empty() {
+                Ok(self.clone())
+            } else {
+                Err(ParamError::NotEditable { kind: kind.id })
+            };
         }
         let base = read_stack(self).map(|(_, bag)| bag).unwrap_or_default();
         let bag = overlay(kind, base, values)?;
@@ -1010,17 +1647,27 @@ impl AdjustmentSettings {
         kind(self.kind_id()).map_or(&[], |k| k.opaque)
     }
     /// 種類の名前と値から、新しい調整の設定を組む（渡さない欄は既定）。
-    pub fn from_catalog(kind_id: &str, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn from_catalog(
+        kind_id: &str,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let kind = editable(kind_id, true)?;
         let bag = overlay(kind, default_bag(kind.id), values)?;
         build_adjustment(kind.id, &bag)
     }
     /// 今の設定に、渡した欄の値だけを重ねた設定（同じ種類のまま）。
-    pub fn with_catalog_values(&self, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn with_catalog_values(
+        &self,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let id = self.kind_id();
         let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
         if !kind.addable {
-            return if values.is_empty() { Ok(self.clone()) } else { Err(ParamError::NotEditable { kind: kind.id }) };
+            return if values.is_empty() {
+                Ok(self.clone())
+            } else {
+                Err(ParamError::NotEditable { kind: kind.id })
+            };
         }
         let bag = overlay(kind, read_adjustment(self).1, values)?;
         build_adjustment(kind.id, &bag)

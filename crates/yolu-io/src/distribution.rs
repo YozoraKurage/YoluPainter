@@ -1,6 +1,6 @@
 //! 配布用の写し: 開いている .ylp から、作った人が気づかないまま残る物を除いた写しを作る。
 //!
-//! .ylp は販売物に含まれることがある。作業用のファイルには、取り込んだ PSD の原本・どの層にも使われていない棚の素材・取り込んだ元のパス・モデルの
+//! .ylp は販売物に含まれることがある。作業用のファイルには、取り込んだ PSD の原本・どのレイヤーにも使われていない棚の素材・取り込んだ元のパス・モデルの
 //! 場所・焼いたメッシュマップ・Unity のマテリアルの値・古い状態のエントリ・知らないエントリが残るので、写しを書くときに種類ごとに除く
 //! （[`Removal`]。目録は [`Project::distribution_inventory`]、写しは [`Project::for_distribution`]）。作業用のファイルは変えない。
 //!
@@ -11,7 +11,7 @@
 //! Unity 版の読み手のコードと形式の決まりを読んで確かめたもので、Unity では開いていない。スタンドアロン版では、写しを読み直す試験で確かめる。
 //!
 //! - PSD の原本: `sets/<ID>/imported-original.psd`。
-//! - 使っていない棚の物: どのセットの層（正本の ID の項目）からも、見た目の設定（`look.json`）からも指されない `resources.json` の項目と中身。
+//! - 使っていない棚の物: どのセットのレイヤー（正本の ID の項目）からも、見た目の設定（`look.json`）からも指されない `resources.json` の項目と中身。
 //!   使っているかは [`Project::used_resource_ids`] の 1 か所で決める。
 //! - 出どころのパス: 棚の項目の `origin` のうち `file`（絶対のパス）・`unityAsset`（Assets の中のパス）・`library`（置き場の相対パス）を `none` に。
 //!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。
@@ -24,7 +24,7 @@
 //! - 古い状態: 根の `thumbnail.png`・`brush.json`・`model.json`（Unity 版が残したもの。スタンドアロン版は更新しない）。
 //! - 知らないエントリ: 今の形式のどの読み手も知らないエントリ（開くときに「保存すると残らない」と知らせるもの）。
 //!
-//! 保証しないこと: 棚の `.ylsmart`・`.ylbrush` の中身（ファイルごと残すか除くかで、中は書き換えない。中の画像の出どころは触れない）、層の名前・
+//! 保証しないこと: 棚の `.ylsmart`・`.ylbrush` の中身（ファイルごと残すか除くかで、中は書き換えない。中の画像の出どころは触れない）、レイヤーの名前・
 //! セットの名前・マテリアルの参照（作品の一部）、今の選択範囲・合成の PNG（絵そのもの）。
 
 use crate::{
@@ -43,7 +43,7 @@ use std::collections::{BTreeSet, HashMap};
 pub enum Removal {
     /// 取り込んだ PSD の原本（`imported-original.psd`）。
     PsdOriginals,
-    /// どの層からも使われていない棚の物。
+    /// どのレイヤーからも使われていない棚の物。
     UnusedShelf,
     /// 棚の物の出どころのパス。
     SourcePaths,
@@ -61,7 +61,7 @@ pub enum Removal {
     UnknownEntries,
 }
 impl Removal {
-    /// 全部の種類（窓に並べる順）。
+    /// 全部の種類（ウィンドウに並べる順）。
     pub const ALL: [Removal; 9] = [
         Removal::PsdOriginals,
         Removal::UnusedShelf,
@@ -159,7 +159,7 @@ impl References {
     }
     /// 文字列の中の、16 進とハイフンだけが 32 文字以上続く所を ID の候補として照合する（JSON の構造を見ない: 知らない形のキーの中の
     /// ID も拾い、使っている物を見落とさない）。連なり全体に加え、ID の前後に 16 進の文字（`face<ID>`・`<ID>-1`）やハイフンが隣り合う
-    /// ときのために、36 文字（ハイフンつき）と 32 文字（ハイフン無し）の窓も当てる。長さが 32 文字以上なら、短い連なりでも必ず窓を当てる。
+    /// ときのために、36 文字（ハイフンつき）と 32 文字（ハイフン無し）のウィンドウも当てる。長さが 32 文字以上なら、短い連なりでも必ずウィンドウを当てる。
     fn scan_text(&mut self, bytes: &[u8]) {
         let is_id_byte = |b: &u8| b.is_ascii_hexdigit() || *b == b'-';
         let mut at = 0;
@@ -217,7 +217,7 @@ impl References {
 }
 
 impl Project {
-    /// 棚の項目のうち、どれかのセットの層（正本の中の ID の項目。塗りつぶしの画像・グラデーションの形・Generator・マスクなど、正本が棚を
+    /// 棚の項目のうち、どれかのセットのレイヤー（正本の中の ID の項目。塗りつぶしの画像・グラデーションの形・Generator・マスクなど、正本が棚を
     /// ID で指すもの全部）か、見た目の設定（`look.json` の画像の割り当て。`received` の中も）が指すものの ID。配布用の写しで「使っている」の
     /// 判定は、これと同じ集め方（[`Project::used_in`]）の 1 か所だけで決める。
     pub fn used_resource_ids(&self) -> BTreeSet<String> {
@@ -297,9 +297,10 @@ impl Project {
         }
         let remembered = sets_with(&|s| {
             let prefix = set_entry(&s.id, "");
-            self.files
-                .keys()
-                .any(|n| n.strip_prefix(&prefix).is_some_and(crate::saved_selections::is_entry_leaf))
+            self.files.keys().any(|n| {
+                n.strip_prefix(&prefix)
+                    .is_some_and(crate::saved_selections::is_entry_leaf)
+            })
         });
         if !remembered.is_empty() {
             add(Removal::SavedSelections, remembered);

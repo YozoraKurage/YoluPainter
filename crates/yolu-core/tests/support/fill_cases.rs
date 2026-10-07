@@ -54,12 +54,14 @@ impl Fixture {
         }
         s
     }
-    pub fn sampler<'a>(
+    /// `anisotropic` が false なら C# の正解と同じ入力。true なら画像とデカールの形の両方を異方性で読む（文書の既定と同じ）。
+    pub fn sampler_with<'a>(
         &'a self,
         mode: u8,
         v: usize,
         chain: &'a ImageMipChain<'a>,
         shape: &'a ImageMipChain<'a>,
+        anisotropic: bool,
     ) -> FillSampler<'a> {
         let frame = if v.is_multiple_of(2) {
             ModelFrame::default()
@@ -104,6 +106,8 @@ impl Fixture {
             bounds_min: [-1., -1., -0.5],
             bounds_max: [1., 1., 0.5],
             frame: Some(frame),
+            anisotropic,
+            shape_anisotropic: anisotropic,
             ..FillInput::default()
         })
         .unwrap()

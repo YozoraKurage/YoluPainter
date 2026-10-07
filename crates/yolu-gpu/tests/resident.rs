@@ -1,6 +1,8 @@
 use yolu_core::{BlendMode, Channel, Document, Rect, Rgba8, TileCoord};
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 use yolu_gpu::{GpuPainter, Options, ResidentCompositor, ResidentOptions};
 fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
     gpu_lease::lease();
@@ -8,7 +10,7 @@ fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            eprintln!("GPU 常駐試験をスキップ: {e}");
+            require_gpu::skipped("GPU 常駐試験", &e.to_string());
             return None;
         }
     };
@@ -18,7 +20,7 @@ fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
 fn document(w: u32, h: u32) -> Document {
     let mut d = Document::with_tile_size(w, h, 16).unwrap();
     for k in 0..3 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         for y in 0..h {
             for x in 0..w {
                 d.set_pixel(
@@ -106,7 +108,7 @@ fn lru_evicts_oldest_and_remains_inside_budget() {
     };
     let Some(mut g) = gpu(options) else { return };
     let mut d = Document::with_tile_size(48, 16, 16).unwrap();
-    let l = d.add_layer("層").unwrap();
+    let l = d.add_layer("レイヤー").unwrap();
     for x in [0, 16, 32] {
         d.set_pixel(l, x, 0, Rgba8::new(99, 100, 101, 255)).unwrap();
     }

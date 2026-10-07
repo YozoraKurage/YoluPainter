@@ -2,11 +2,11 @@
 //! 隣り合わせ・BVH・レイの当たり（重心座標・UV）・最近点・ブラシの半径の中の面のテクセル（面の上のダブ）・範囲（UV アイランドなど）・
 //! 3D ビューのカメラ・画面のストロークの点の並べ方。
 //!
-//! - 参照の写像（`sampling`）: クローン・指先が読む画素を、辺でつながった三角形の局所の展開（UV の島の継ぎ目をまたぐ）で決める。
+//! - 参照の写像（`sampling`）: クローン・指先が読む画素を、辺でつながった三角形の局所の展開（UV アイランドの継ぎ目をまたぐ）で決める。
 //!   対称（`symmetry`）: ダブの中心をモデルの軸に直交する面で映す・軸のまわりに回して面へ投げ直し、写しの画素を大きい方の覆いで 1 つに
 //!   する。`SurfaceStroke` の options（`paint`）が、ぼかし・指先・クローンと 3D の対称をストロークに通す。
 //! - 位置・UV は Unity と同じ単精度で、式の順も同じにする（`unity` の写し）。C# の SurfaceGeometry に同じ入力を通した結果と、
-//!   当たり・隣り合わせ・BVH・ダブの画素と覆いまでビットで一致することを `tests/surface_golden.rs` で確かめる。
+//!   当たり・隣り合わせ・BVH・ダブの画素と覆いまでビットで一致することを `tests/reference/surface_golden.rs` で確かめる。
 //! - 座標は Unity と同じ左手系（Y が上）。UV (0, 0) がテクスチャの左下（文書の画素 (0, 0)）。
 //! - 三角形の番号は入力の並びのまま変わらない。`revision`（スナップショットの世代）が違う当たりでダブは作らない。
 //! - BVH は読むだけなので、レイは並列に撃てる（ダブの遮蔽のレイ）。並列でも結果・数・断る理由は逐次と同じ。
@@ -22,10 +22,12 @@ mod refit;
 mod regions;
 mod restrict;
 mod sampling;
+pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
 mod symmetry;
 pub(crate) mod unity;
+mod uv_topology;
 
 use std::sync::atomic::AtomicBool;
 
@@ -38,7 +40,7 @@ pub use dab::{
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
     pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceStroke, SurfaceStrokeError,
-    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup,
+    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup, MAX_QUEUED_DABS,
 };
 pub use project::{
     CopyTransform, ProjectionSettings, ProjectionStats, SurfaceProjector, MAX_BUCKET,
@@ -52,8 +54,11 @@ pub use regions::{region, SurfaceRegionKind};
 pub use sampling::{
     SamplingChart, SamplingError, SAMPLING_CHART_MAX_TRIANGLES, SAMPLING_CHART_TRIANGLE_BYTES,
 };
+pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
-pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
+pub use stroke::{
+    ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT, SURFACE_DABS_PER_SEGMENT,
+};
 pub use symmetry::{
     build_expanded, build_mirrored, copy_count, copy_hits, find_copy, search_distance, union_dabs,
     CopyHit, DabSide, ExpandedSurfaceDab, MirrorOutcome, MirrorPlane, RadialSymmetry,
@@ -61,6 +66,10 @@ pub use symmetry::{
     ON_PLANE_FRACTION,
 };
 pub use unity::{Bounds, Ray};
+pub use uv_topology::{
+    IslandMap, IslandRun, UvTopology, UvTopologyError, DEFAULT_BUDGET, MAX_SEAM_BAND,
+    MAX_TOPOLOGY_EDGE,
+};
 
 /// スナップショットの三角形 1 つ（位置はモデルの空間、UV は 0 番）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -210,7 +219,7 @@ pub struct SurfaceGeometry {
     /// ブラシの半径をモデルの単位に直す基準（箱の対角線。`reposition` は元の値を引き継ぐ）。
     pub(crate) brush_scale: f32,
     pub(crate) timings: BuildTimings,
-    /// 投影の塗りの、カメラによらない一覧（UV の覆い・島の縁）の覚え（テクスチャセットと文書の大きさごと。新しい 2 つまで）。
+    /// 投影の塗りの、カメラによらない一覧（UV の覆い・アイランドの縁）の覚え（テクスチャセットと文書の大きさごと。新しい 2 つまで）。
     /// 位置だけ変えたスナップショット（ポーズ）は、UV と隣り合わせが同じなので引き継ぐ。
     pub(crate) projection_cache: std::sync::Mutex<Vec<std::sync::Arc<project::Shared>>>,
 }

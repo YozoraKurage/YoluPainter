@@ -12,16 +12,18 @@
 //! - 効果（ぼかし・指先・クローン）は、ダブの前に読む範囲を凍結し（[`effects`]）、覆いの割合でその色へ寄せる。
 //! - 色の混ぜ（厚塗り。拡張: C# に無い）は、効果と同じくダブの前に下地を凍結し、画素ごとに下の色と筆の荷を混ぜた色を、ダブごとの色と同じ道
 //!   （画素ごとの色の積み）で置く（`mix`・`mix_stroke`）。混ぜ方が切のブラシの画素は混ぜを足す前とバイト単位で同じ。
-//! - 覆いは C# と同じく float（単精度）で持つ。計算は倍精度で、演算の順も C# と同じ（画素の結果は C# とバイト一致）。
-//!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、一致を確かめたのは同じ libm（Linux の glibc）の上。
+//! - 覆いは float（単精度）で持ち、画素の計算（覆い・天井と流量・覆いの寄せ・画素ごとの色・合成・効果の読み）も f32 の式
+//!   （`rows`。合成は `crate::blend` の Normal とフェード）。ダブの位置・形・筆圧・ゆらぎは倍精度で求め、画素の式へ渡すときに f32 へ丸める。
+//!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、ダブの形は libm（OS）によって 1 ULP ずれ得る。
 //!
-//! - 画素の計算は、道が SIMD（x86_64 の AVX2・SSE4.1）なら、ステンシルを使わないブラシを行ごとにレーンで行う（`rows`。選択範囲・透明部分のロックは、色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式）。
-//!   結果のバイトは画素ごとの式（`YOLU_SIMD=scalar`）と同じ。ワーカーで描くかは、箱の大きさに画素ごとの時間の見積もりを掛けて決める。
+//! - ステンシルを使わないブラシの画素は、行ごとにレーンで描く（`rows`。道は AVX2・SSE4.1・スカラー。選択範囲・透明部分のロックは、
+//!   色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式）。どの道も同じ式なので、結果のバイトは道と
+//!   スレッド数によらず、画素ごとの式（[`apply_at`]）とも同じ。ワーカーで描くかは、箱の大きさに画素ごとの時間の見積もりを掛けて決める。
 //!
-//! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
+//! 1 つのストロークは 1 つの面（レイヤーの 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
 //! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。透明部分の
 //! ロックは `keep_alpha`（ストロークを作るときに必ず決める）で、描く画素のアルファと透明画素の RGB を守る。C# の
-//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンは、見えている層の重なりを凍結した参照元（`sources`）も読め、
+//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンは、見えているレイヤーの重なりを凍結した参照元（`sources`）も読め、
 //! 3D の面のクローン・指先は、画素ごとの参照を呼び手が決める写像されたダブ（`sources`）で塗る。
 //!
 //! ```
@@ -73,8 +75,8 @@ use rayon::prelude::*;
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use mix::{ColorMix, MixGround, MixMode};
 pub use presets::{builtin_presets, BrushPreset};
-pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub(crate) use pressure::PressureScale;
+pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
@@ -87,15 +89,14 @@ pub use stencil::{
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
 
-use crate::blend::{blend, fade};
 use crate::error::CoreError;
-use crate::math::{clamp01, require_finite, to_byte};
+use crate::math::{clamp01, require_finite};
 use crate::selection::{Amounts, SelectionMask};
-use crate::surface::{Growth, LiveTile, Surface, Tile};
-use crate::types::{BlendMode, Channel, ChannelKind, Rgba8, TileCoord};
+use crate::surface::{Growth, LiveTile, Pixels, Surface, Tile};
+use crate::types::{Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
 use dynamics::{f64_max, f64_min};
-use effects::{mix_effect, EffectFrame};
+use effects::EffectFrame;
 use mix::{MixDab, MixRun, MixTally};
 use random::NetRandom;
 
@@ -169,7 +170,7 @@ impl BrushSettings {
 }
 
 /// ペンの入力 1 つ。画素の座標（左下原点、画素の中心は n + 0.5）。時刻は減ってはならない（速さの制御は秒を勧める）。
-/// 傾きはペンの直立からの角度（ラジアン、画布の X・Y 軸に沿って。0 は直立か傾きの情報なし）。[`Controls`] の傾きで使う。
+/// 傾きはペンの直立からの角度（ラジアン、キャンバスの X・Y 軸に沿って。0 は直立か傾きの情報なし）。[`Controls`] の傾きで使う。
 /// 作るときは [`BrushSample::new`]（回転は [`BrushSample::with_rotation`]）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSample {
@@ -178,7 +179,7 @@ pub struct BrushSample {
     pub pressure: f64,
     pub time: f64,
     pub tilt: DVec2,
-    /// ペンの軸の回転（ラジアン、画布で反時計回り。0 は回転なしか情報なし）。拡張（C# に無い）: [`Controls::rotation_angle`] で使う。
+    /// ペンの軸の回転（ラジアン、キャンバスで反時計回り。0 は回転なしか情報なし）。拡張（C# に無い）: [`Controls::rotation_angle`] で使う。
     pub rotation: f64,
     /// 筆の速さ（画素 / 時刻の単位）。ストロークが手ぶれ補正の後の点の間から求めて入れる（渡した値は使わない）。
     pub(crate) speed: f64,
@@ -204,7 +205,7 @@ impl BrushSample {
             speed: 0.0,
         })
     }
-    /// ペンの軸の回転（ラジアン、画布で反時計回り）を付けた写し。有限でない値は断る。
+    /// ペンの軸の回転（ラジアン、キャンバスで反時計回り）を付けた写し。有限でない値は断る。
     pub fn with_rotation(self, rotation: f64) -> Result<Self, CoreError> {
         require_finite(rotation, "rotation")?;
         Ok(BrushSample { rotation, ..self })
@@ -265,6 +266,8 @@ pub struct BrushPixel {
 pub(crate) struct StrokeTile {
     wash: Vec<f32>,
     pub before: Option<Tile>,
+    /// `before` の読んだ中身（ストロークの間は持ったまま。画素ごとに読む所はこれを読む）。
+    pub before_px: Option<Pixels>,
     paint: Option<Vec<f32>>,
     /// ステンシルがあるとき: ダブが初めて届いたときに読んだ量（NaN は未読）と色。ストロークの間、画素のステンシルの上の位置は
     /// 変わらないので 1 回だけ読む（重なったダブが何度も読まない）。
@@ -366,7 +369,7 @@ pub(crate) struct StrokeState {
     curve_from: BrushSample,
     curve_to: BrushSample,
     effect: EffectState,
-    /// クローンが読む合成（見えている層の重なりを、最初のダブの前に凍結したもの。None は今の層から読む）。
+    /// クローンが読む合成（見えているレイヤーの重なりを、最初のダブの前に凍結したもの。None は今のレイヤーから読む）。
     source: Option<sources::CloneSource>,
     /// 効果の読み元の枠の領域（ダブの間で使い回す。予算に数えるのはダブの間だけ、C# と同じ）。
     frame_cache: Option<EffectFrame>,
@@ -1120,7 +1123,7 @@ impl StrokeState {
             tip: dual.tip.as_deref(),
         };
         if self.brush.symmetry.enabled() {
-            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
             return self.symmetric_dual_dab(&shape, extent);
         }
         if min_x > max_x || min_y > max_y {
@@ -1136,9 +1139,7 @@ impl StrokeState {
                 let ys = (min_y.max(ty * ts), max_y.min(ty * ts + ts - 1));
                 let (origin_x, origin_y) = (tx * ts, ty * ts);
                 let mut cells = self.dual_coverage.remove(&coord);
-                let mut result = Ok(());
-                // レーンで溜める（道がスカラーなら None で、下の画素ごとの式）
-                let lanes = {
+                let result = {
                     let mut alloc = || {
                         let next = self.rollback_bytes + 64 + (ts * ts * 4) as u64;
                         self.ensure_budget(next)?;
@@ -1154,36 +1155,6 @@ impl StrokeState {
                         &mut alloc,
                     )
                 };
-                if let Some(r) = lanes {
-                    if let Some(c) = cells {
-                        self.dual_coverage.insert(coord, c);
-                    }
-                    r?;
-                    continue;
-                }
-                'tile: for py in ys.0..=ys.1 {
-                    let row = (py - origin_y) * ts;
-                    for px in xs.0..=xs.1 {
-                        let coverage = shape.coverage(px, py);
-                        if coverage <= 0.0 {
-                            continue;
-                        }
-                        if cells.is_none() {
-                            let next = self.rollback_bytes + 64 + (ts * ts * 4) as u64;
-                            if let Err(e) = self.ensure_budget(next) {
-                                result = Err(e);
-                                break 'tile;
-                            }
-                            self.rollback_bytes = next;
-                            cells = Some(vec![0.0; (ts * ts) as usize]);
-                        }
-                        let c = cells.as_mut().expect("直前に作った");
-                        let local = (row + px - origin_x) as usize;
-                        if coverage > c[local] as f64 {
-                            c[local] = coverage as f32;
-                        }
-                    }
-                }
                 if let Some(c) = cells {
                     self.dual_coverage.insert(coord, c);
                 }
@@ -1222,7 +1193,7 @@ impl StrokeState {
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
         if brush.symmetry.enabled() {
-            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
             return self.symmetric_dab(surface, brush, shape, extent, changed);
         }
         if min_x > max_x || min_y > max_y {
@@ -1317,7 +1288,7 @@ impl StrokeState {
             && self.fits_any_order(surface, spans, &paint);
         if parallel {
             self.parallel_dabs += 1;
-            return Ok(self.dab_parallel(surface, &paint, shape, spans, changed));
+            return self.dab_parallel(surface, &paint, shape, spans, changed);
         }
         let mut any = false;
         for &(coord, xs, ys) in spans {
@@ -1468,17 +1439,17 @@ impl StrokeState {
             while px <= x1 {
                 let tx = px / ts;
                 let coord = TileCoord::new(tx as u32, ty as u32);
-                let tile: Option<&Tile> = match (clone, self.tiles.get(&coord)) {
-                    (true, Some(held)) => held.before.as_ref(),
-                    _ => surface.tile(coord),
+                let tile: Option<Pixels> = match (clone, self.tiles.get(&coord)) {
+                    (true, Some(held)) => held.before_px.clone(),
+                    _ => surface.read(coord)?,
                 };
                 let end = x1.min(tx * ts + ts - 1);
                 let len = (end - px + 1) as usize;
                 let out = frame.row_mut(py, px, len);
-                match tile {
+                match &tile {
                     None => {} // 枠は透明で始まる
-                    Some(Tile::Uniform(c)) => out.fill(*c),
-                    Some(Tile::Data(d)) => {
+                    Some(Pixels::Uniform(c)) => out.fill(*c),
+                    Some(Pixels::Data(d)) => {
                         let start = (row + (px - tx * ts) as usize) * 4;
                         for (o, p) in out
                             .iter_mut()
@@ -1533,19 +1504,26 @@ impl StrokeState {
         shape: &DabShape<'_>,
         spans: &[TileSpan],
         changed: &mut Vec<TileCoord>,
-    ) -> bool {
+    ) -> Result<bool, CoreError> {
         let ts = surface.tile_size() as usize;
-        let mut work: Vec<(TileSpan, Option<StrokeTile>, LiveTile)> = spans
-            .iter()
-            .map(|&span| {
-                let coord = span.0;
-                (
-                    span,
-                    self.tiles.remove(&coord),
-                    LiveTile::from(surface.tiles.remove(&coord)),
-                )
-            })
-            .collect();
+        let mut work: Vec<(TileSpan, Option<StrokeTile>, LiveTile)> =
+            Vec::with_capacity(spans.len());
+        for &span in spans {
+            let coord = span.0;
+            match LiveTile::take(surface, coord) {
+                Ok(live) => work.push((span, self.tiles.remove(&coord), live)),
+                Err(e) => {
+                    // 読めないタイルがあれば何も描かずに戻す（取り出したタイルは元の場所へ）
+                    for ((coord, _, _), held, live) in work {
+                        if let Some(h) = held {
+                            self.tiles.insert(coord, h);
+                        }
+                        live.put_back(surface, coord);
+                    }
+                    return Err(e);
+                }
+            }
+        }
         let dual = &self.dual_coverage;
         let selection = self.selection.as_ref();
         let unlimited = Budgets {
@@ -1584,9 +1562,7 @@ impl StrokeState {
             if let Some(h) = held {
                 self.tiles.insert(coord, h);
             }
-            if let Some(l) = live.into_tile() {
-                surface.tiles.insert(coord, l);
-            }
+            live.put_back(surface, coord);
             self.rollback_bytes += rollback;
             surface.allocated += allocated;
             if painted {
@@ -1594,7 +1570,7 @@ impl StrokeState {
                 any = true;
             }
         }
-        any
+        Ok(any)
     }
 
     /// 画素ごとに筆圧を渡す呼び出し用: 筆圧を応えに通した係数。同じ筆圧が続く間（1 つのダブの画素）は直前の結果を使う。
@@ -1610,7 +1586,7 @@ impl StrokeState {
     }
 
     /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。ストロークに 1 色）。
-    /// 画布の外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
+    /// キャンバスの外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_pixel(
         &mut self,
@@ -1648,7 +1624,16 @@ impl StrokeState {
         let local = ((y % ts) * ts + x % ts) as usize;
         let done = self.with_tile(surface, &paint, coord, |cx, held, live| {
             apply_at::<false>(
-                cx, held, live, coord, local, coverage, pressure, 1.0, 1.0, None, at,
+                cx,
+                held,
+                live,
+                coord,
+                local,
+                coverage as f32,
+                pressure,
+                (1.0, 1.0),
+                None,
+                at,
             )
         })?;
         if done {
@@ -1657,7 +1642,7 @@ impl StrokeState {
         Ok(done)
     }
 
-    /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心は画布の画素の座標で、
+    /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心はキャンバスの画素の座標で、
     /// 継ぎ目をまたぐときは呼び手が [`StrokeState::reset_effect_direction`] する。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dab(
@@ -1736,7 +1721,7 @@ impl StrokeState {
         result
     }
 
-    /// 面のダブの画素のうち `order` の番号のものを、この順に塗る（画布の外は飛ばす）。
+    /// 面のダブの画素のうち `order` の番号のものを、この順に塗る（キャンバスの外は飛ばす）。
     #[allow(clippy::too_many_arguments)]
     fn paint_listed_pixels(
         &mut self,
@@ -1760,10 +1745,22 @@ impl StrokeState {
             let point = points.map(|v| v[i]);
             let coord = TileCoord::new((p.x / ts) as u32, (p.y / ts) as u32);
             let local = ((p.y % ts) * ts + p.x % ts) as usize;
-            cursor.move_to(self, surface, coord);
+            if let Err(e) = cursor.move_to(self, surface, coord) {
+                result = Err(e);
+                break;
+            }
             let r = cursor.with(self, surface, paint, |cx, held, live| {
                 apply_at::<false>(
-                    cx, held, live, coord, local, p.coverage, pressure, 1.0, 1.0, None, point,
+                    cx,
+                    held,
+                    live,
+                    coord,
+                    local,
+                    p.coverage as f32,
+                    pressure,
+                    (1.0, 1.0),
+                    None,
+                    point,
                 )
             });
             match r {
@@ -1805,8 +1802,8 @@ impl StrokeState {
             &mut LiveTile,
         ) -> Result<bool, CoreError>,
     {
+        let mut live = LiveTile::take(surface, coord)?;
         let mut held = self.tiles.remove(&coord);
-        let mut live = LiveTile::from(surface.tiles.remove(&coord));
         let ts = surface.tile_size() as usize;
         let mut cx = PixelContext {
             paint,
@@ -1823,9 +1820,7 @@ impl StrokeState {
         if let Some(h) = held {
             self.tiles.insert(coord, h);
         }
-        if let Some(l) = live.into_tile() {
-            surface.tiles.insert(coord, l);
-        }
+        live.put_back(surface, coord);
         result
     }
 }
@@ -1839,14 +1834,21 @@ struct TileCursor {
 }
 
 impl TileCursor {
-    fn move_to(&mut self, state: &mut StrokeState, surface: &mut Surface, coord: TileCoord) {
+    fn move_to(
+        &mut self,
+        state: &mut StrokeState,
+        surface: &mut Surface,
+        coord: TileCoord,
+    ) -> Result<(), CoreError> {
         if self.coord == Some(coord) {
-            return;
+            return Ok(());
         }
         self.release(state, surface);
+        let live = LiveTile::take(surface, coord)?;
         self.coord = Some(coord);
         self.held = state.tiles.remove(&coord);
-        self.live = Some(LiveTile::from(surface.tiles.remove(&coord)));
+        self.live = Some(live);
+        Ok(())
     }
 
     fn with<F>(
@@ -1889,8 +1891,8 @@ impl TileCursor {
             if let Some(h) = self.held.take() {
                 state.tiles.insert(coord, h);
             }
-            if let Some(l) = self.live.take().and_then(|l| l.into_tile()) {
-                surface.tiles.insert(coord, l);
+            if let Some(l) = self.live.take() {
+                l.put_back(surface, coord);
             }
         }
     }
@@ -1911,12 +1913,6 @@ struct DualShape<'a> {
 }
 
 impl DualShape<'_> {
-    /// 画素 (px, py) の被覆率（0 以下は塗らない）。
-    #[inline(always)]
-    fn coverage(&self, px: i64, py: i64) -> f64 {
-        self.coverage_at(px as f64 + 0.5 - self.x, py as f64 + 0.5 - self.y)
-    }
-
     /// 中心からのずれ (dx, dy) の被覆率（対称の写しは、画素の中心を元へ戻した位置で測る）。
     #[inline(always)]
     fn coverage_at(&self, dx: f64, dy: f64) -> f64 {
@@ -1945,7 +1941,7 @@ impl DualShape<'_> {
 
 /// prepare_effect_dab の結果。
 enum Prepared {
-    /// このダブは何も塗らない（指先の最初のダブ、読み元が画布の外）。
+    /// このダブは何も塗らない（指先の最初のダブ、読み元がキャンバスの外）。
     Skip,
     /// 色を塗る（読み元は要らない）。
     Paint,
@@ -2052,13 +2048,13 @@ impl<'a> Selected<'a> {
             Some(s) => s.tile(coord).map_or(Selected::Nothing, Selected::Tile),
         }
     }
-    /// タイルの中の画素の番号の量（0〜1。C# と同じ量 / 255.0）。
+    /// タイルの中の画素の番号の量（0〜1。量 / 255 を f32 で。行の核と同じ値）。
     #[inline(always)]
-    fn amount(&self, local: usize) -> f64 {
+    fn amount(&self, local: usize) -> f32 {
         match self {
             Selected::Everywhere => 1.0,
             Selected::Nothing => 0.0,
-            Selected::Tile(t) => t.get(local) as f64 / 255.0,
+            Selected::Tile(t) => rows::unit32(t.get(local)),
         }
     }
 }
@@ -2087,19 +2083,18 @@ fn worth_parallel_for(limit: i64, box_pixels: i64, cost: i64) -> bool {
 }
 
 /// 試験のための口（C# の BrushStroke.ParallelDabPixels と同じ役目）: ワーカーで描くダブの外接の箱の下限（既定の 128² 以上の値は、
-/// 画素ごとの式で描く箱の大きさへ換算した下限）を変え、前の値を返す。小さな画布でもワーカーの経路を通すために使う。
+/// 画素ごとの式で描く箱の大きさへ換算した下限）を変え、前の値を返す。小さなキャンバスでもワーカーの経路を通すために使う。
 /// どの値でも画素の結果は同じ（経路の選び方だけが変わる）。
 #[doc(hidden)]
 pub fn set_parallel_dab_pixels(pixels: i64) -> i64 {
     PARALLEL_THRESHOLD.swap(pixels, Ordering::Relaxed)
 }
 
-/// ダブが触るタイルと、その中の画布の画素の範囲（x の両端、y の両端）。
+/// ダブが触るタイルと、その中のキャンバスの画素の範囲（x の両端、y の両端）。
 type TileSpan = (TileCoord, (i64, i64), (i64, i64));
 
-/// 1 枚のタイルの中のダブの画素（C# の DabPixels。xs・ys は画布の画素の範囲、両端を含む）。
-/// 回転・潰し・筆先の画像・デュアル・質感の無い丸と、色を塗るだけ（ダブごとの色・効果なし）の組は、分岐の無い形に分けて組む
-/// （式は同じ。M1 の丸いブラシの速さを保つため）。
+/// 1 枚のタイルの中のダブの画素（C# の DabPixels。xs・ys はキャンバスの画素の範囲、両端を含む）。ステンシルを使わないブラシの多くは
+/// 行の核（[`rows`]、どの道でも）で、ほかは画素ごとの式（[`dab_tile_with`]）で描く。
 #[allow(clippy::too_many_arguments)]
 fn dab_tile(
     cx: &mut PixelContext<'_>,
@@ -2114,22 +2109,22 @@ fn dab_tile(
     if matches!(cx.selected, Selected::Nothing) {
         return Ok(false); // 選択範囲がこのタイルに何も選んでいない: どの画素も `apply_at` の最初で断られる
     }
-    let round = s.tip.is_none() && s.plain && s.dual.is_none() && s.texture.is_none();
-    let simple =
-        cx.paint.effect == EffectKind::Paint && !cx.paint.tip_colors && cx.paint.stencil.is_none();
     if let Some(level) = rows::usable(cx, s) {
         return rows::dab_tile(level, cx, held, live, dual, s, coord, xs, ys);
     }
-    match (round, simple) {
-        (true, true) => dab_tile_with::<true, true>(cx, held, live, dual, s, coord, xs, ys),
-        (true, false) => dab_tile_with::<true, false>(cx, held, live, dual, s, coord, xs, ys),
-        (false, true) => dab_tile_with::<false, true>(cx, held, live, dual, s, coord, xs, ys),
-        (false, false) => dab_tile_with::<false, false>(cx, held, live, dual, s, coord, xs, ys),
+    let simple =
+        cx.paint.effect == EffectKind::Paint && !cx.paint.tip_colors && cx.paint.stencil.is_none();
+    if simple {
+        dab_tile_with::<true>(cx, held, live, dual, s, coord, xs, ys)
+    } else {
+        dab_tile_with::<false>(cx, held, live, dual, s, coord, xs, ys)
     }
 }
 
+/// 画素ごとの式で 1 枚のタイルのダブの画素を描く。覆い・デュアル・乗算の紙の質感は行の核と同じ式を 1 本のレーンで求め
+/// （[`rows::cover_row`] など）、画素は [`apply_at`]。SIMPLE は色を塗るだけ（ダブごとの色・効果・ステンシルなし）。
 #[allow(clippy::too_many_arguments)]
-fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
+fn dab_tile_with<const SIMPLE: bool>(
     cx: &mut PixelContext<'_>,
     held: &mut Option<StrokeTile>,
     live: &mut LiveTile,
@@ -2139,107 +2134,47 @@ fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
     xs: (i64, i64),
     ys: (i64, i64),
 ) -> Result<bool, CoreError> {
+    use crate::math::simd::Scalar1;
     let ts = cx.tile_size as i64;
     let (ox, oy) = (coord.x as i64 * ts, coord.y as i64 * ts);
+    let shape = rows::Shape32::new(s);
+    let (opacity_scale, flow_scale) = (s.opacity_scale as f32, s.flow_scale as f32);
+    let n = (xs.1 - xs.0 + 1) as usize;
+    let mut cov = vec![0.0f32; n];
     let mut changed = false;
     for py in ys.0..=ys.1 {
-        let dy = (py as f64 + 0.5) - s.y;
-        let row = (py - oy) * ts;
-        // 紙の質感の y の側は行で同じ（(py + 0.5) / 大きさ）
-        let grain_row = if ROUND {
-            None
-        } else {
-            s.texture
-                .map(|t| t.image.tiled_row((py as f64 + 0.5) / t.scale))
-        };
-        for px in xs.0..=xs.1 {
-            let dx = (px as f64 + 0.5) - s.x;
-            let mut coverage;
-            if ROUND {
-                let d = (dx * dx + dy * dy).sqrt() / s.radius;
-                if d > 1.0 {
-                    continue;
-                }
-                coverage = 1.0;
-                if d > s.hardness {
-                    let t = (1.0 - d) / (1.0 - s.hardness);
-                    coverage = t * t * (3.0 - 2.0 * t);
-                }
-                let local = (row + px - ox) as usize;
-                changed |= apply_at::<SIMPLE>(
-                    cx,
-                    held,
-                    live,
-                    coord,
-                    local,
-                    coverage,
-                    s.pressure,
-                    s.opacity_scale,
-                    s.flow_scale,
-                    None,
-                    None,
-                )?;
+        let row = ((py - oy) * ts) as usize;
+        let x0 = (xs.0 - ox) as usize;
+        // SAFETY: 1 本のレーンは CPU の前提を持たない
+        let (lo, hi) = unsafe { rows::cover_row::<Scalar1>(s, &shape, py, xs, &mut cov) };
+        if lo >= hi {
+            continue;
+        }
+        if let Some(mode) = s.dual {
+            // SAFETY: 同上
+            unsafe { rows::dual_row::<Scalar1>(mode, dual, &mut cov, lo, hi, row + x0) };
+        }
+        // 紙の質感の y の側は行で同じ
+        let grain = s.texture.map(|t| (t, rows::Grain::new(t, py)));
+        for (i, &coverage) in cov.iter().enumerate().take(hi).skip(lo) {
+            if coverage <= 0.0 {
                 continue;
             }
-            match s.tip {
-                None => {
-                    // 回転も潰しも無いときは元の式そのもので測る（丸ブラシの結果を以前とビット単位で揃える）
-                    let d = if s.plain {
-                        (dx * dx + dy * dy).sqrt() / s.radius
-                    } else {
-                        let u = (s.cos * dx + s.sin * dy) / s.radius;
-                        let v = (-s.sin * dx + s.cos * dy) / (s.radius * s.roundness);
-                        (u * u + v * v).sqrt()
-                    };
-                    if d > 1.0 {
-                        continue;
-                    }
-                    coverage = 1.0;
-                    if d > s.hardness {
-                        let t = (1.0 - d) / (1.0 - s.hardness);
-                        coverage = t * t * (3.0 - 2.0 * t);
-                    }
-                }
-                Some(tip) => {
-                    let mut u = (s.cos * dx + s.sin * dy) / s.radius;
-                    let mut v = (-s.sin * dx + s.cos * dy) / (s.radius * s.roundness);
-                    if s.flip_x {
-                        u = -u;
-                    }
-                    if s.flip_y {
-                        v = -v;
-                    }
-                    coverage =
-                        tip.sample((u / s.aspect_x + 1.0) * 0.5, (v / s.aspect_y + 1.0) * 0.5);
-                    if coverage <= 0.0 {
-                        continue;
-                    }
-                }
-            }
-            let local = (row + px - ox) as usize;
-            if let Some(mode) = s.dual {
-                coverage = mode.combine(coverage, dual.map_or(0.0, |c| c[local] as f64));
-                if coverage <= 0.0 {
-                    continue;
-                }
-            }
-            let mut ceiling_scale = s.opacity_scale;
+            let px = xs.0 + i as i64;
+            let mut ceiling_scale = opacity_scale;
             let mut paper = None;
-            if let Some(tex) = s.texture {
+            if let Some((tex, g)) = &grain {
                 // 紙の質感は流量ではなく天井に効かせる（Photoshop の「描点ごとに適用」オフと同じ）。流量に効かせると、
                 // 間隔の細かいブラシでは重なったダブが溜まって質感が消えてしまう
-                let grain = tex.image.sample_tiled_in(
-                    grain_row.as_ref().expect("質感の行"),
-                    (px as f64 + 0.5) / tex.scale,
-                );
+                let depth = tex.depth as f32;
                 match tex.mode.as_blend() {
                     None => {
-                        ceiling_scale *= 1.0 - tex.depth * (1.0 - grain);
+                        ceiling_scale = rows::texture_scale_one(g, depth, opacity_scale, px);
                         if ceiling_scale <= 0.0 {
                             continue;
                         }
                     }
-                    Some(mode) => paper = Some((mode, grain, tex.depth)),
+                    Some(mode) => paper = Some((mode, rows::grain_one(g, px), depth)),
                 }
             }
             changed |= apply_at::<SIMPLE>(
@@ -2247,11 +2182,10 @@ fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
                 held,
                 live,
                 coord,
-                local,
+                row + x0 + i,
                 coverage,
                 s.pressure,
-                ceiling_scale,
-                s.flow_scale,
+                (ceiling_scale, flow_scale),
                 paper,
                 None,
             )?;
@@ -2287,9 +2221,11 @@ fn new_stroke_tile(
         return Err(CoreError::StrokeBudgetExceeded);
     }
     let stencil = !simple && p.stencil.is_some();
+    let (before, before_px) = live.snapshot();
     let tile = StrokeTile {
         wash: vec![0.0; ts * ts],
-        before: live.snapshot(),
+        before,
+        before_px,
         paint: (!simple && p.tip_colors).then(|| vec![0.0; ts * ts * 4]),
         stencil_amount: stencil.then(|| vec![f64::NAN; ts * ts]),
         stencil_color: stencil.then(|| vec![Rgba8::TRANSPARENT; ts * ts]),
@@ -2299,8 +2235,9 @@ fn new_stroke_tile(
 }
 
 /// 1 画素（C# の ApplyPixelAt の 1 チャンネルの経路。選択範囲の量と、透明部分のロックの `keep_alpha`（アルファと透明画素の RGB を
-/// 守る）はここだけで掛ける）。SIMPLE は色を塗るだけ
-/// （ダブごとの色・効果なし）と分かっているとき（分岐を除いた同じ式）。paper は乗算以外の紙の質感（拡張）: 合わせ方・質感の値・深さ。
+/// 守る）はここだけで掛ける）。計算は行の核（[`rows`]）と同じ f32 の式を 1 本のレーンで通るので、行の核が描くブラシでは同じバイトになる。
+/// SIMPLE は色を塗るだけ（ダブごとの色・効果なし）と分かっているとき（分岐を除いた同じ式）。`scales` は不透明度と流量の係数、
+/// paper は乗算以外の紙の質感（拡張）: 合わせ方・質感の値・深さ。
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn apply_at<const SIMPLE: bool>(
@@ -2309,11 +2246,10 @@ fn apply_at<const SIMPLE: bool>(
     live: &mut LiveTile,
     coord: TileCoord,
     local: usize,
-    coverage: f64,
+    coverage: f32,
     pressure: PressureScale,
-    opacity_scale: f64,
-    flow_scale: f64,
-    paper: Option<(DualBrushMode, f64, f64)>,
+    (opacity_scale, flow_scale): (f32, f32),
+    paper: Option<(DualBrushMode, f32, f32)>,
     at: Option<StencilPoint>,
 ) -> Result<bool, CoreError> {
     let p = cx.paint;
@@ -2373,7 +2309,7 @@ fn apply_at<const SIMPLE: bool>(
             if through.amount <= 0.0 {
                 return Ok(false);
             }
-            opacity_scale *= through.amount;
+            opacity_scale *= through.amount as f32;
         }
     }
     // 色の混ぜ: 打点の前に凍結した下地の色を読み、荷と混ぜた色をこの画素の色にする。下地の合計（荷の更新の元）はここで足す
@@ -2387,34 +2323,41 @@ fn apply_at<const SIMPLE: bool>(
                 Some(mapped) => mapped.get(p.width, px, py),
                 None => mix.ground_at(p.frame.expect("混ぜの下地"), px, py, p.width, p.height),
             };
-            cx.tally.add(coverage, ground);
-            match mix.pixel_color(ground) {
+            rows::tally32(&mut cx.tally, coverage, ground);
+            match rows::mixed32(&mix, ground) {
                 Some(color) => mixed = Some(color),
                 None => return Ok(false),
             }
         }
     }
-    let mut ceiling = s.opacity * opacity_scale * pressure.opacity;
-    if !SIMPLE {
-        // SIMPLE（色を塗るだけの丸いブラシ）は、混ぜがあれば画素ごとの色を持つので選ばれない（混ぜの分岐を持ち込まない）
-        if let Some(mix) = p.mix {
-            ceiling *= mix.density;
-        }
-    }
+    // SIMPLE（色を塗るだけの丸いブラシ）は、混ぜがあれば画素ごとの色を持つので選ばれない（混ぜ・指先の分岐を持ち込まない）
+    let (density, smudge) = if SIMPLE {
+        (None, None)
+    } else {
+        (
+            p.mix.map(|m| m.density),
+            match p.effect {
+                EffectKind::Smudge(strength) => Some(strength),
+                _ => None,
+            },
+        )
+    };
+    let (mut ceiling, flow) = rows::ceiling_and_flow32(
+        p,
+        pressure,
+        (opacity_scale, flow_scale),
+        coverage,
+        density,
+        smudge,
+    );
     if let Some((mode, grain, depth)) = paper {
-        ceiling += (mode.combine(ceiling, grain) - ceiling) * depth;
-    }
-    let mut flow = coverage * s.flow * flow_scale * pressure.flow;
-    if !SIMPLE {
-        if let EffectKind::Smudge(strength) = p.effect {
-            flow *= strength;
-        }
+        ceiling += (rows::combine32(mode, ceiling, grain) - ceiling) * depth;
     }
     if flow <= 0.0 || ceiling <= 0.0 {
         return Ok(false);
     }
     if let Some(st) = held.as_ref() {
-        if st.wash[local] as f64 >= ceiling && (SIMPLE || p.stop_at_ceiling) {
+        if st.wash[local] >= ceiling && (SIMPLE || p.stop_at_ceiling) {
             return Ok(false);
         }
     }
@@ -2430,39 +2373,29 @@ fn apply_at<const SIMPLE: bool>(
         *held = Some(tile);
     }
     let st = held.as_mut().expect("直前に作った");
-    let previous = st.wash[local] as f64;
+    let previous = st.wash[local];
     // 天井に届いた画素も、ダブごとの色ならその色へは寄せる（濃さは天井のまま）
     let accumulated = if previous >= ceiling {
         previous
     } else {
-        previous + (ceiling - previous) * f64_min(1.0, flow)
+        rows::accumulate32(previous, ceiling, flow)
     };
-    st.wash[local] = accumulated as f32;
+    st.wash[local] = accumulated;
     let mut color = p.stroke_color;
     if !SIMPLE && p.tip_colors {
         // 画素ごとの色は、チャンネルごとの面（R の面・G の面・B の面・A の面の順、1 面は TileSize²）に持つ
         let pc = st.paint.as_mut().expect("ダブごとの色");
         let plane = ts * ts;
-        let o = [local, plane + local, 2 * plane + local, 3 * plane + local];
-        let w = f64_min(1.0, flow);
-        let d = mixed.unwrap_or(p.dab_color);
-        if previous <= 0.0 {
-            pc[o[0]] = d.r as f32 / 255.0;
-            pc[o[1]] = d.g as f32 / 255.0;
-            pc[o[2]] = d.b as f32 / 255.0;
-            pc[o[3]] = d.a as f32 / 255.0;
-        } else {
-            pc[o[0]] += ((d.r as f64 / 255.0 - pc[o[0]] as f64) * w) as f32;
-            pc[o[1]] += ((d.g as f64 / 255.0 - pc[o[1]] as f64) * w) as f32;
-            pc[o[2]] += ((d.b as f64 / 255.0 - pc[o[2]] as f64) * w) as f32;
-            pc[o[3]] += ((d.a as f64 / 255.0 - pc[o[3]] as f64) * w) as f32;
+        let w = rows::min32(1.0, flow);
+        let d = mixed.unwrap_or(p.dab_color).to_array();
+        let fresh = previous <= 0.0;
+        let mut v = [0u8; 4];
+        for (c, out) in v.iter_mut().enumerate() {
+            let at = c * plane + local;
+            pc[at] = rows::plane_step32(pc[at], rows::unit32(d[c]), w, fresh);
+            *out = rows::byte32(pc[at]);
         }
-        color = Rgba8::new(
-            to_byte(pc[o[0]] as f64),
-            to_byte(pc[o[1]] as f64),
-            to_byte(pc[o[2]] as f64),
-            to_byte(pc[o[3]] as f64),
-        );
+        color = Rgba8::new(v[0], v[1], v[2], v[3]);
     }
     if !SIMPLE {
         // ステンシルの色（色のモード）: その画素のステンシルの色を、塗りつぶしの画像と同じ読み方でこのチャンネルの値にする
@@ -2474,33 +2407,23 @@ fn apply_at<const SIMPLE: bool>(
         }
     }
     let start = st
-        .before
+        .before_px
         .as_ref()
         .map_or(Rgba8::TRANSPARENT, |t| t.get(local * 4));
     let effect = if SIMPLE { EffectKind::Paint } else { p.effect };
+    let amount = rows::min32(1.0, accumulated);
     let next = match effect {
         EffectKind::Paint => {
             let next = if s.erase {
-                let alpha = to_byte(
-                    start.a as f64 / 255.0 * (1.0 - accumulated * s.color.a as f64 / 255.0),
-                );
-                if alpha == 0 {
-                    Rgba8::TRANSPARENT
-                } else {
-                    Rgba8::new(start.r, start.g, start.b, alpha)
-                }
+                rows::erase32(start, accumulated, s.color.a)
             } else if p.keep_alpha {
-                crate::document::locks::paint_keeping_alpha(
-                    start,
-                    color,
-                    f64_min(1.0, accumulated) * selected,
-                )
+                rows::keeping32(start, color, amount * selected)
             } else {
-                blend(start, color, f64_min(1.0, accumulated), BlendMode::Normal)
+                rows::normal32(start, color, amount)
             };
             // 選択範囲の量だけ、描く前の画素から寄せる（塗りも消しゴムも。C# の Fade(start, next, selected)）
             if selected < 1.0 && !p.keep_alpha {
-                fade(start, next, selected)
+                rows::fade32(start, next, selected)
             } else {
                 next
             }
@@ -2509,12 +2432,16 @@ fn apply_at<const SIMPLE: bool>(
             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
             let sampled = match (effect, p.mapped) {
-                // 面のダブ: 参照は書く前にまとめて読んで混ぜてある（画布の外の判定も、そのとき済んでいる）
+                // 面のダブ: 参照は書く前にまとめて読んで混ぜてある（キャンバスの外の判定も、そのとき済んでいる）
                 (_, Some(mapped)) => mapped.get(p.width, px, py),
-                (EffectKind::Blur(radius), None) => p
-                    .frame
-                    .expect("効果の読み元")
-                    .blur(px, py, radius, p.width, p.height),
+                (EffectKind::Blur(radius), None) => rows::blur32(
+                    p.frame.expect("効果の読み元"),
+                    px,
+                    py,
+                    radius,
+                    p.width,
+                    p.height,
+                ),
                 _ => {
                     let frame = p.frame.expect("効果の読み元");
                     let sx = px as f64 + p.offset_x;
@@ -2526,7 +2453,7 @@ fn apply_at<const SIMPLE: bool>(
                     {
                         return Ok(false);
                     }
-                    frame.sample(sx, sy, p.width, p.height)
+                    rows::sample32(frame, sx, sy, p.width, p.height)
                 }
             };
             // ぼかしは透明部分に色を広げない。指先とクローンは透明な場所へ描ける
@@ -2534,25 +2461,25 @@ fn apply_at<const SIMPLE: bool>(
                 return Ok(false);
             }
             // 選択範囲の量も寄せ方に入れる（クローンは塗りと同じく Fade で）
-            let amount = f64_min(1.0, accumulated) * selected;
+            let amount = amount * selected;
             let mut next = if p.keep_alpha {
                 if effect == EffectKind::Clone {
-                    crate::document::locks::paint_keeping_alpha(start, sampled, amount)
+                    rows::keeping32(start, sampled, amount)
                 } else {
-                    crate::document::locks::paint_keeping_alpha(
+                    rows::keeping32(
                         start,
                         Rgba8::new(sampled.r, sampled.g, sampled.b, 255),
-                        amount * sampled.a as f64 / 255.0,
+                        amount * f32::from(sampled.a) / 255.0,
                     )
                 }
             } else if effect == EffectKind::Clone {
-                fade(
+                rows::fade32(
                     start,
-                    blend(start, sampled, f64_min(1.0, accumulated), BlendMode::Normal),
+                    rows::normal32(start, sampled, rows::min32(1.0, accumulated)),
                     selected,
                 )
             } else {
-                mix_effect(start, sampled, amount)
+                rows::mix_effect32(start, sampled, amount)
             };
             if next.a == 0 {
                 next = Rgba8::new(start.r, start.g, start.b, 0);

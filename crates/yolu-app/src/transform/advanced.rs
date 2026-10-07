@@ -1,5 +1,6 @@
 //! 自由・遠近・格子・ゆがみの操作。ドラッグの原点から計算し、確定まで元画素を保つ。
 use super::{handle_points, Bounds, HANDLE_HIT};
+use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
     state::{AppState, StrokeSource, Tool},
@@ -245,10 +246,11 @@ pub fn commit(app: &mut AppState) -> bool {
     };
     app.transform.drag = None;
     if d.input_limit_exceeded {
-        app.message = app
-            .lang
-            .pick("ゆがみの入力数が上限です", "Liquify input limit reached")
-            .into();
+        app.warn(
+            Source::Transform,
+            app.lang
+                .pick("ゆがみの入力数が上限です", "Liquify input limit reached"),
+        );
         return true;
     }
     if app.doc.revision() != d.revision || app.transform_targets() != d.targets || !app.can_edit() {
@@ -282,7 +284,11 @@ pub fn commit(app: &mut AppState) -> bool {
             app.modified |= changed;
             app.transform.forget_bounds();
         }
-        Err(e) => app.message = crate::matpaint::refusal_text(app.lang, &e),
+        Err(e) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Transform,
+            app.lang.core_error(&e),
+        ),
     }
     true
 }

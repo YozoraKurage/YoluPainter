@@ -1,0 +1,16 @@
+{
+  "name": "yolupainter",
+  "owner": {
+    "name": "Yozolab",
+    "url": "https://github.com/YozoraKurage/YoluPainter"
+  },
+  "description": "Plugins for YoluPainter, a texture painting app for 3D models",
+  "plugins": [
+    {
+      "name": "yolupainter",
+      "source": "./plugin",
+      "description": "Work on the project open in YoluPainter from an AI assistant: read and edit layers, masks and effects, preview channels, export and save.",
+      "category": "Design"
+    }
+  ]
+}

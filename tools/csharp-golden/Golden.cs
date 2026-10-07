@@ -119,7 +119,7 @@ namespace YoluPainterRs.Golden
         }
 
         /// <summary>yolu-io の試験の正解: 70×50・タイル 16 の文書の選択範囲を作り、selection-名前.bin（SelectionBinary.Write）と
-        /// selection-名前.amounts（画布の量、下の行から行優先）を書く。作り方は crates/yolu-io/tests/selection.rs と揃える。</summary>
+        /// selection-名前.amounts（キャンバスの量、下の行から行優先）を書く。作り方は crates/yolu-io/tests/ylp/selection.rs と揃える。</summary>
         static void SelectionFixtures(string outDir)
         {
             Directory.CreateDirectory(outDir);
@@ -203,7 +203,7 @@ namespace YoluPainterRs.Golden
             if (!Enum.TryParse(s, false, out m) || !Enum.IsDefined(typeof(LayerBlendMode), m)) throw new FormatException("モード: " + s);
             return m;
         }
-        /// <summary>層の番号（今の並び、下から 0）か、@名前（最初に見つかった同じ名前の層）。</summary>
+        /// <summary>レイヤーの番号（今の並び、下から 0）か、@名前（最初に見つかった同じ名前のレイヤー）。</summary>
         static int LayerIndex(CaseState c, string s)
         {
             if (s.StartsWith("@"))
@@ -233,7 +233,7 @@ namespace YoluPainterRs.Golden
                 default: throw new FormatException("調整: " + s);
             }
         }
-        /// <summary>層の行の後ろの印（hidden・clip）を当てる。</summary>
+        /// <summary>レイヤーの行の後ろの印（hidden・clip）を当てる。</summary>
         static void Flags(PaintDocument doc, Guid id, string flag)
         {
             if (flag == "hidden") doc.SetLayerVisibility(id, false);
@@ -689,14 +689,14 @@ namespace YoluPainterRs.Golden
                 case "srcbudget": doc.SourceBudgetBytes = long.Parse(t[1], CultureInfo.InvariantCulture); return;
                 case "regionfill":
                 {
-                    // regionfill 層 ch R,G,B,A 不透明度 消す [範囲]
+                    // regionfill レイヤー ch R,G,B,A 不透明度 消す [範囲]
                     var region = t.Length > 6 ? Region(c, doc, t[6]) : null;
                     bool changed = doc.Fill(LayerAt(c, t[1]), Chan(t[2]), Color(t[3]), Num(c, t[4]), region, Flag(t[5]));
                     c.Events.Add("fill " + (changed ? 1 : 0)); return;
                 }
                 case "maskfill":
                 {
-                    // maskfill 層 量 見せる [範囲]
+                    // maskfill レイヤー 量 見せる [範囲]
                     var region = t.Length > 4 ? Region(c, doc, t[4]) : null;
                     bool changed = doc.FillMask(LayerAt(c, t[1]), Num(c, t[2]), region, Flag(t[3]));
                     c.Events.Add("fill " + (changed ? 1 : 0)); return;
@@ -717,7 +717,7 @@ namespace YoluPainterRs.Golden
             }
         }
 
-        /// <summary>選択範囲の形: rect X0 Y0 X1 Y1 | ellipse CX CY RX RY | poly X,Y… | wand 層|* ch X Y 許し幅 つながり | all | none。</summary>
+        /// <summary>選択範囲の形: rect X0 Y0 X1 Y1 | ellipse CX CY RX RY | poly X,Y… | wand レイヤー|* ch X Y 許し幅 つながり | all | none。</summary>
         static SelectionMask Shape(CaseState c, PaintDocument doc, string[] t, int at)
         {
             switch (t[at])
@@ -738,10 +738,10 @@ namespace YoluPainterRs.Golden
             }
         }
 
-        /// <summary>塗りつぶしの範囲: 形を : と , で区切って 1 語に（rect:X0,Y0,X1,Y1、wand:層:ch:X:Y:許し幅:つながり など）。</summary>
+        /// <summary>塗りつぶしの範囲: 形を : と , で区切って 1 語に（rect:X0,Y0,X1,Y1、wand:レイヤー:ch:X:Y:許し幅:つながり など）。</summary>
         static SelectionMask Region(CaseState c, PaintDocument doc, string spec) { return Shape(c, doc, spec.Split(':', ','), 0); }
 
-        /// <summary>層の中身。random は画布の全画素を下の行から、sparse はタイルごとに 無し・一様・画素 を選ぶ。</summary>
+        /// <summary>レイヤーの中身。random はキャンバスの全画素を下の行から、sparse はタイルごとに 無し・一様・画素 を選ぶ。</summary>
         static void Fill(PaintDocument doc, SparseTileSurface surface, string fill)
         {
             int w = doc.Width, h = doc.Height, ts = doc.TileSize;
@@ -1022,12 +1022,12 @@ namespace YoluPainterRs.Golden
                 for (int i = 0; i < 2; i++) CpuCompositor.Composite(doc, PaintChannel.Color);
                 var ms = new List<double>();
                 for (int i = 0; i < runs; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Color); ms.Add(sw.Elapsed.TotalMilliseconds); }
-                Console.WriteLine("合成 4096² 1 層（全タイル乱数）: " + Stats(ms));
+                Console.WriteLine("合成 4096² 1 レイヤー（全タイル乱数）: " + Stats(ms));
                 var l2 = doc.AddLayer("b"); FillRandom(doc, l2, 2); doc.SetLayerBlendMode(l2.Id, LayerBlendMode.Multiply); doc.SetLayerOpacity(l2.Id, 0.7);
                 for (int i = 0; i < 2; i++) CpuCompositor.Composite(doc, PaintChannel.Color);
                 ms.Clear();
                 for (int i = 0; i < runs; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Color); ms.Add(sw.Elapsed.TotalMilliseconds); }
-                Console.WriteLine("合成 4096² 2 層（Normal + Multiply 0.7）: " + Stats(ms));
+                Console.WriteLine("合成 4096² 2 レイヤー（Normal + Multiply 0.7）: " + Stats(ms));
                 // M2: Rust の bench と同じ文書
                 doc.SourceBudgetBytes = 2L << 30;
                 var l3 = doc.AddLayer("c"); FillRandom(doc, l3, 3); doc.SetLayerBlendMode(l3.Id, LayerBlendMode.Screen); doc.SetLayerOpacity(l3.Id, 0.8);
@@ -1052,11 +1052,11 @@ namespace YoluPainterRs.Golden
                 doc.ClearHistory();
                 var ms = new List<double>();
                 for (int i = 0; i < runs + 2; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Normal); if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds); }
-                Console.WriteLine("合成 4096² Normal 2 層（Normal + Overlay 0.6、ベクトル）: " + Stats(ms));
+                Console.WriteLine("合成 4096² Normal 2 レイヤー（Normal + Overlay 0.6、ベクトル）: " + Stats(ms));
                 doc.SetNormalSettings(new NormalSettings(true, 4, HeightEdgeMode.Clamp, NormalYDirection.OpenGL));
                 ms.Clear();
                 for (int i = 0; i < runs + 2; i++) { var sw = Stopwatch.StartNew(); NormalMaps.Output(doc, 1L << 30); if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds); }
-                Console.WriteLine("Normal の出力 4096²（上の 2 層 + Height → Normal）: " + Stats(ms));
+                Console.WriteLine("Normal の出力 4096²（上の 2 レイヤー + Height → Normal）: " + Stats(ms));
             }
             foreach (var (radius, over) in new[] { (40.0, false), (40.0, true), (200.0, false) })
             {
@@ -1073,7 +1073,7 @@ namespace YoluPainterRs.Golden
                     if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds);
                     stamps = s.StampCount;
                 }
-                Console.WriteLine("ストローク 半径 " + radius + "・101 点・" + stamps + " ダブ（" + (over ? "乱数の画素の上" : "空の層") + "）: " + Stats(ms));
+                Console.WriteLine("ストローク 半径 " + radius + "・101 点・" + stamps + " ダブ（" + (over ? "乱数の画素の上" : "空のレイヤー") + "）: " + Stats(ms));
             }
             // M2 のブラシ（crates/yolu-core/examples/bench.rs の dynamic_brush と同じ設定）
             string only = Environment.GetEnvironmentVariable("BENCH_ONLY");

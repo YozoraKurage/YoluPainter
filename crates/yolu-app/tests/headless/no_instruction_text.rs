@@ -39,11 +39,52 @@ const JA_WORDS: [&str; 8] = [
 ];
 /// 命令形の動詞（文の頭・「; 」「, or 」のあと）。
 const VERBS: [&str; 46] = [
-    "Read", "Place", "Choose", "Select", "Wait", "Make", "Turn", "Check", "Unlock", "Bake", "Pick",
-    "Enter", "Type", "Switch", "Load", "Enable", "Disable", "Set", "Add", "Use", "Move", "Merge",
-    "Finish", "Show", "Hide", "Rasterize", "Redraw", "Reset", "Plan", "Try", "Reduce", "Remove",
-    "Open", "Close", "Apply", "Copy", "Edit", "Paint", "Restore", "Delete", "Create", "Reload",
-    "Export", "Rename", "Fix", "Drag",
+    "Read",
+    "Place",
+    "Choose",
+    "Select",
+    "Wait",
+    "Make",
+    "Turn",
+    "Check",
+    "Unlock",
+    "Bake",
+    "Pick",
+    "Enter",
+    "Type",
+    "Switch",
+    "Load",
+    "Enable",
+    "Disable",
+    "Set",
+    "Add",
+    "Use",
+    "Move",
+    "Merge",
+    "Finish",
+    "Show",
+    "Hide",
+    "Rasterize",
+    "Redraw",
+    "Reset",
+    "Plan",
+    "Try",
+    "Reduce",
+    "Remove",
+    "Open",
+    "Close",
+    "Apply",
+    "Copy",
+    "Edit",
+    "Paint",
+    "Restore",
+    "Delete",
+    "Create",
+    "Reload",
+    "Export",
+    "Rename",
+    "Fix",
+    "Drag",
 ];
 
 fn ascii_word_at(lower: &str, word: &str) -> bool {
@@ -122,7 +163,9 @@ fn looks_like_instruction(text: &str, sentence: bool) -> bool {
         return true;
     }
     // 「〜すると〜します。」「点を置くと、〜ます。」の使い方の説明（日本語の文）
-    if ["すると", "れば", "たら", "と、"].iter().any(|w| text.contains(w))
+    if ["すると", "れば", "たら", "と、"]
+        .iter()
+        .any(|w| text.contains(w))
         && (text.contains("ます。") || text.ends_with("ます"))
         && !text.contains("ません")
     {
@@ -168,9 +211,11 @@ fn looks_like_instruction(text: &str, sentence: bool) -> bool {
         }
         if let Some(again) = lower.find("again") {
             let before = &lower[..again];
-            if ["bake", "plan", "set", "redraw", "reset", "try", "choose", "select"]
-                .iter()
-                .any(|v| ascii_word_at(before, v))
+            if [
+                "bake", "plan", "set", "redraw", "reset", "try", "choose", "select",
+            ]
+            .iter()
+            .any(|v| ascii_word_at(before, v))
             {
                 return true;
             }
@@ -262,7 +307,7 @@ fn strip_test_items(text: &str) -> String {
 }
 
 /// 試験を除いたソース（ファイル名が tests.rs で終わるファイルと、`#[cfg(test)]` を付けた項目を除く）。
-fn production_sources() -> Vec<(String, String)> {
+pub(crate) fn production_sources() -> Vec<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     source_files(&root, &mut files);
@@ -302,7 +347,9 @@ fn tooltip_parameters(sources: &[(String, String)]) -> BTreeMap<String, BTreeSet
                 .collect();
             let after = &rest[name.len()..];
             // ジェネリクス `<…>` を飛ばして `(` へ
-            let Some(open) = after.find('(') else { continue };
+            let Some(open) = after.find('(') else {
+                continue;
+            };
             if after[..open].contains(['{', ';']) {
                 continue;
             }
@@ -347,7 +394,10 @@ fn tooltip_parameters(sources: &[(String, String)]) -> BTreeMap<String, BTreeSet
                     continue;
                 }
                 let param = piece.split(':').next().unwrap().trim();
-                let param = param.trim_start_matches("mut ").trim_start_matches('&').trim();
+                let param = param
+                    .trim_start_matches("mut ")
+                    .trim_start_matches('&')
+                    .trim();
                 if param == "self" || param.ends_with("self") && !param.contains(' ') {
                     continue;
                 }
@@ -383,7 +433,11 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
     let mut previous_was_fn = false;
     let mut let_name: Option<String> = None;
     let mut after_let = false;
-    let starts = |i: usize, s: &str| s.chars().enumerate().all(|(k, c)| chars.get(i + k) == Some(&c));
+    let starts = |i: usize, s: &str| {
+        s.chars()
+            .enumerate()
+            .all(|(k, c)| chars.get(i + k) == Some(&c))
+    };
     while i < n {
         let c = chars[i];
         if c == '\n' {
@@ -443,7 +497,9 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
             let start_line = line;
             let mut buf = String::new();
             if let Some((_, hashes)) = raw_prefix {
-                let closing: String = std::iter::once('"').chain(std::iter::repeat_n('#', hashes)).collect();
+                let closing: String = std::iter::once('"')
+                    .chain(std::iter::repeat_n('#', hashes))
+                    .collect();
                 while j < n && !starts(j, &closing) {
                     if chars[j] == '\n' {
                         line += 1;
@@ -575,7 +631,11 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
             '(' | '[' | '{' => {
                 frames.push(Frame {
                     kind: c,
-                    call: if c == '(' { last_ident.clone().unwrap_or_default() } else { String::new() },
+                    call: if c == '(' {
+                        last_ident.clone().unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                     arg: 0,
                     field: None,
                 });
@@ -628,7 +688,10 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
 
 /// 画面の文字として見るもの（日本語を含む、または英語の語句。コード・シェーダー・識別子は除く）。
 fn is_screen_text(text: &str) -> bool {
-    if text.chars().count() > 600 || text.contains("@group") || text.contains("fn ") && text.contains(';') {
+    if text.chars().count() > 600
+        || text.contains("@group")
+        || text.contains("fn ") && text.contains(';')
+    {
         return false;
     }
     let cjk = text.chars().any(|c| {
@@ -658,7 +721,12 @@ const ALLOWED: [&str; 2] = [
 fn offenders(filter: impl Fn(&Literal) -> bool, rule: impl Fn(&str) -> bool) -> Vec<String> {
     collect_literals()
         .into_iter()
-        .filter(|l| !l.tooltip && filter(l) && is_screen_text(&l.text) && !ALLOWED.contains(&l.text.as_str()))
+        .filter(|l| {
+            !l.tooltip
+                && filter(l)
+                && is_screen_text(&l.text)
+                && !ALLOWED.contains(&l.text.as_str())
+        })
         .filter(|l| rule(&l.text))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text.replace('\n', "\\n")))
         .collect()
@@ -672,11 +740,25 @@ fn texts_on_screen_are_names_states_and_reasons_not_instructions() {
     let literals = collect_literals();
     // 走査が空振りしていない: ソースの文字列を数百件以上見つけ、ツールチップの場所と画面の文字の場所を見分けている
     assert!(literals.len() > 2000, "リテラル {}", literals.len());
-    let screen = literals.iter().filter(|l| !l.tooltip && is_screen_text(&l.text)).count();
-    let tooltips = literals.iter().filter(|l| l.tooltip && is_screen_text(&l.text)).count();
-    assert!(screen > 800 && tooltips > 100, "画面 {screen}・ツールチップ {tooltips}");
+    let screen = literals
+        .iter()
+        .filter(|l| !l.tooltip && is_screen_text(&l.text))
+        .count();
+    let tooltips = literals
+        .iter()
+        .filter(|l| l.tooltip && is_screen_text(&l.text))
+        .count();
+    assert!(
+        screen > 800 && tooltips > 100,
+        "画面 {screen}・ツールチップ {tooltips}"
+    );
     // 見分けの例: 色の欄の「押すと…」はツールチップ、描くレイヤーが無いという理由は画面の文字
-    let find = |needle: &str| literals.iter().find(|l| l.text.contains(needle)).unwrap_or_else(|| panic!("{needle}"));
+    let find = |needle: &str| {
+        literals
+            .iter()
+            .find(|l| l.text.contains(needle))
+            .unwrap_or_else(|| panic!("{needle}"))
+    };
     assert!(find("押すとメインの色と入れ替えます").tooltip);
     assert!(find("Click to swap with the foreground color").tooltip);
     assert!(!find("描くレイヤーがありません。").tooltip);
@@ -694,7 +776,20 @@ fn texts_on_screen_are_names_states_and_reasons_not_instructions() {
 #[test]
 fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
     const DEVELOPER_WORDS: [&str; 14] = [
-        "MiB", "KiB", "GiB", "タイル", "tile", "三角形", "triangle", "頂点", "vertices", "CPU", "GPU", "compositing", "合成の方式", "メモリ",
+        "MiB",
+        "KiB",
+        "GiB",
+        "タイル",
+        "tile",
+        "三角形",
+        "triangle",
+        "頂点",
+        "vertices",
+        "CPU",
+        "GPU",
+        "compositing",
+        "合成の方式",
+        "メモリ",
     ];
     // 状態の帯・ビューの隅を描く関数の中の文字には、開発用の言葉が無い
     const CHROME: [(&str, &str); 4] = [
@@ -704,12 +799,24 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         ("panels/view3d.rs", "corner"),
     ];
     let literals = collect_literals();
+    let sources = production_sources();
     for (file, function) in CHROME {
+        // 表の関数はソースにある（名前を変えたら表も直す。見つからないまま通すと、黙って確かめが外れる）
+        let source = sources
+            .iter()
+            .find(|(f, _)| f == file)
+            .unwrap_or_else(|| panic!("{file} が無い（CHROME の表を直す）"));
+        assert!(
+            [format!("fn {function}("), format!("fn {function}<")]
+                .iter()
+                .any(|head| source.1.contains(head.as_str())),
+            "{file} に関数 {function} が無い（CHROME の表を直す）"
+        );
         let inside: Vec<&Literal> = literals
             .iter()
             .filter(|l| l.file == file && l.function.as_deref() == Some(function))
             .collect();
-        // 3D の隅と状態の帯は固定の文字を持たないことがあるので、見つからないのは許すが、見つかったものは開発用の言葉を含まない
+        // 3D の隅と状態の帯は固定の文字を持たないことがある（関数はあるが文字が無いのは許す）。見つかったものは開発用の言葉を含まない
         for l in inside {
             for word in DEVELOPER_WORDS {
                 assert!(
@@ -730,31 +837,62 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         .unwrap()
         .1;
     let start = shell.find("pub fn status_text").expect("status_text");
-    let end = shell[start..].find("/// Live Link の入口の印の色。").expect("次の関数") + start;
+    let end = shell[start..]
+        .find("/// Live Link の入口の印の色。")
+        .expect("次の関数")
+        + start;
     let body = &shell[start..end];
-    for forbidden in ["allocated_bytes", "history_bytes", "total_tiles", "stats", "uploaded", "doc.", "MiB"] {
-        assert!(!body.contains(forbidden), "状態の帯が {forbidden} を読んでいる");
+    for forbidden in [
+        "allocated_bytes",
+        "history_bytes",
+        "total_tiles",
+        "stats",
+        "uploaded",
+        "doc.",
+        "MiB",
+    ] {
+        assert!(
+            !body.contains(forbidden),
+            "状態の帯が {forbidden} を読んでいる"
+        );
     }
     // 画面の文字（ツールチップ以外）のうち、メモリの量・タイルの数・合成の方式は、理由として断る文にだけある（原文を確かめて足す）
-    const REASONS: [&str; 5] = [
+    const REASONS: [&str; 6] = [
         "ファイルが {} MiB を超えています",
+        // FBX を読まない理由（ファイルの大きさと上限。yolu-model の日本語の文の英語）
+        "File too large ({:.1} MiB, maximum {:.0} MiB)",
         "タイルの大きさ {} は共有メモリで使えません（16〜1024 の 2 の冪）",
         "Invalid shared tile size {} (power of two, 16–1024)",
         "3D を描けません（GPU なし）",
         "Cannot draw 3D (no GPU)",
     ];
-    // 設定の窓のメモリの予算の値（MiB は値の単位で、説明でも内部の数でもない。状態の帯・ビューの隅には出さない）
+    // 設定のウィンドウのメモリの予算の値（MiB は値の単位で、説明でも内部の数でもない。状態の帯・ビューの隅には出さない）
     const SETTING_VALUES: [&str; 3] = ["自動（{mib} MiB）", "Auto ({mib} MiB)", "{n} MiB"];
     let leaks: Vec<String> = literals
         .iter()
         .filter(|l| !l.tooltip && is_screen_text(&l.text))
-        .filter(|l| !l.file.starts_with("lang/") && !l.file.starts_with("bake/") && !l.file.starts_with("export/") && !l.file.starts_with("view3d/"))
-        .filter(|l| ["MiB", "CPU で合成", "CPU compositing", "上げたタイル", "Uploaded tiles", "Layers {", "History {"].iter().any(|w| l.text.contains(w)))
+        .filter(|l| {
+            [
+                "MiB",
+                "CPU で合成",
+                "CPU compositing",
+                "上げたタイル",
+                "Uploaded tiles",
+                "Layers {",
+                "History {",
+            ]
+            .iter()
+            .any(|w| l.text.contains(w))
+        })
         .filter(|l| !REASONS.contains(&l.text.as_str()))
         .filter(|l| !(l.file == "prefs.rs" && SETTING_VALUES.contains(&l.text.as_str())))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text))
         .collect();
-    assert!(leaks.is_empty(), "開発用の数が画面の文字にある:\n{}", leaks.join("\n"));
+    assert!(
+        leaks.is_empty(),
+        "開発用の数が画面の文字にある:\n{}",
+        leaks.join("\n")
+    );
 }
 
 /// ユーザーが名指しで「余計な文章やめろ」と言った文言は、ソースに画面の文字として無い（ツールチップは除く。`chrome.rs` が画面でも確かめる）。
@@ -776,7 +914,11 @@ fn the_texts_the_user_named_are_not_screen_text_in_the_source() {
         .filter(|l| !l.tooltip && NAMED.iter().any(|n| l.text.contains(n)))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text))
         .collect();
-    assert!(found.is_empty(), "名指しされた文言が画面の文字にある:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "名指しされた文言が画面の文字にある:\n{}",
+        found.join("\n")
+    );
 }
 
 /// 規則が、止めたい文（ユーザーが挙げた例など）を捉え、状態と理由を通すこと。
@@ -873,7 +1015,12 @@ fn the_scan_tells_tooltips_from_screen_text() {
     assert_eq!(table.get("icon"), Some(&BTreeSet::from([2])));
     let mut out = Vec::new();
     lex("sample.rs", &sources[0].1, &table, &mut out);
-    let tooltip_of = |text: &str| out.iter().find(|l| l.text == text).unwrap_or_else(|| panic!("{text}")).tooltip;
+    let tooltip_of = |text: &str| {
+        out.iter()
+            .find(|l| l.text == text)
+            .unwrap_or_else(|| panic!("{text}"))
+            .tooltip
+    };
     assert!(!tooltip_of("名前"));
     assert!(tooltip_of("クリックして切り替え"));
     assert!(!tooltip_of("クリックして点を追加"));
@@ -912,7 +1059,11 @@ mod tests {
 }
 ";
     let stripped = strip_test_items(sample);
-    assert_eq!(stripped.lines().count(), sample.lines().count(), "行番号が合う");
+    assert_eq!(
+        stripped.lines().count(),
+        sample.lines().count(),
+        "行番号が合う"
+    );
     for kept in ["本番の前", "試験の関数の後ろ", "use の後ろ"] {
         assert!(stripped.contains(kept), "{kept} が残る");
     }
@@ -922,9 +1073,13 @@ mod tests {
 
     // 実物: pose.rs の試験用の関数の後ろの本番のコード（読み込みの知らせ）が、走査に入っている
     let literals = collect_literals();
-    let pose: Vec<&Literal> = literals.iter().filter(|l| l.file == "view3d/pose.rs").collect();
+    let pose: Vec<&Literal> = literals
+        .iter()
+        .filter(|l| l.file == "view3d/pose.rs")
+        .collect();
     assert!(
-        pose.iter().any(|l| l.text.contains("を読み込みました") && !l.tooltip),
+        pose.iter()
+            .any(|l| l.text.contains("を読み込みました") && !l.tooltip),
         "pose.rs の本番の知らせが走査に入っていない（{} 件）",
         pose.len()
     );
@@ -945,7 +1100,10 @@ mod tests {
 #[test]
 #[ignore = "見直し用の一覧"]
 fn list_the_screen_texts() {
-    for l in collect_literals().into_iter().filter(|l| !l.tooltip && is_screen_text(&l.text)) {
+    for l in collect_literals()
+        .into_iter()
+        .filter(|l| !l.tooltip && is_screen_text(&l.text))
+    {
         println!("{}:{}: {}", l.file, l.line, l.text.replace('\n', "\\n"));
     }
 }

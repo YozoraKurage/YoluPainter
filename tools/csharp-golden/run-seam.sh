@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-seam.sh [dump <事例名> <出力>]。効果と層のロック・層の操作のつなぎ目の正解（事例ごとの SHA-256）を作る。
+# run-seam.sh [dump <事例名> <出力>]。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）を作る。
 # 既定の生成先は crates/yolu-core/tests/golden/seam.txt。生成物の途中経過は target/csharp-seam/ に置く。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,4 +1,5 @@
 //! `yolupainter-cli` の本体。引数を読み（`args`）、命令を .ylp（画面なし）か起動中のアプリへ当て、JSON を返す。
+//! `mcp` は、標準入出力の MCP のクライアントを起動中のアプリの受け口へつなぐ中継（`relay`）を動かす。
 //!
 //! - 返事は標準出力の JSON（`--pretty` で整形）。失敗は標準出力に `{"error": {...}}`（`code`・日英の `message`・`data`）、標準エラーに 1 行の文、
 //!   終了コードは `exit_code`（0 成功・1 命令が断った・2 引数の誤り・3 起動中のアプリにつなげない・4 確認が要る）。
@@ -11,7 +12,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
-use yolu_ops::command::SaveArgs;
+use yolu_ops::action::{self, at_index, ActionFile};
+use yolu_ops::command::{ActionRunArgs, LayerGetArgs, SaveArgs};
+use yolu_ops::refs::{
+    no_selection, resolve_relative, substitute_created, uses_selected, Created, SELECTED,
+};
+use yolu_ops::wire::command_json;
 use yolu_ops::{
     command_schema, command_spec, command_spec_by_tool, commands, error_schema, execute,
     parse_command, reply_schema, Command, CommandSpec, Danger, ErrorCode, FileHost, Lang, OpError,
@@ -20,8 +26,8 @@ use yolu_ops::{
 
 use crate::args::{self, Action, Global, Invocation};
 use crate::live::{self, LiveConfig};
-use crate::mcp::{self, McpOptions};
-use crate::tools;
+use crate::relay::{self, RelayConfig};
+use yolu_mcp::tools;
 
 /// 実行した結果（標準出力・標準エラー・終了コード）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,10 +56,7 @@ impl Env {
 
 /// 環境変数の言語（`ja`・`en`。`C`・知らない言語は手がかりにしない）。
 pub fn lang_from_vars(get: impl Fn(&str) -> Option<String>) -> Option<Lang> {
-    ["YOLUPAINTER_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| get(name).filter(|v| !v.is_empty()))
-        .find_map(|v| Lang::parse(&v))
+    Lang::from_vars(get)
 }
 
 /// 終了コード。
@@ -197,6 +200,7 @@ fn kind_of(spec: &CommandSpec) -> &'static str {
             Danger::Safe => "edit",
             Danger::Always => "destructive",
             Danger::WhenReplacing => "replace",
+            Danger::PerCommand => "per_command",
         }
     }
 }
@@ -255,18 +259,6 @@ fn schema_output(name: Option<&str>, tools_only: bool) -> Result<Value, OpError>
     }
 }
 
-/// `--link-name` の名前を確かめる（使えない名前を鍵のファイル探しへ渡すと、「アプリが待ち受けていない」という誤った直し方になる）。
-fn checked_link_name(name: &str) -> Result<String, OpError> {
-    if yolu_protocol::link::valid_link_name(name) {
-        Ok(name.to_owned())
-    } else {
-        Err(OpError::invalid_request(
-            "--link-name は 1〜64 文字の英数字と . _ - です",
-            "--link-name is 1 to 64 letters, digits, . _ or -",
-        ))
-    }
-}
-
 /// 命令を当てる相手。
 enum Target {
     File(Box<FileHost>),
@@ -288,16 +280,7 @@ impl Target {
                 host.open(&resolve(&env.cwd, file), true)?;
                 Ok(Target::File(Box::new(host)))
             }
-            None => {
-                let mut live = LiveConfig::default();
-                if let Some(name) = &global.link_name {
-                    live.name = checked_link_name(name)?;
-                }
-                if let Some(secs) = global.timeout_secs {
-                    live.timeout = Duration::from_secs_f64(secs);
-                }
-                Ok(Target::Live(live))
-            }
+            None => Ok(Target::Live(live_config(global))),
         }
     }
 
@@ -307,6 +290,18 @@ impl Target {
             Target::Live(config) => live::call(config, command),
         }
     }
+}
+
+/// 起動中のアプリへのつなぎ先（`--port`・`--timeout`）。
+fn live_config(global: &Global) -> LiveConfig {
+    let mut live = LiveConfig::default();
+    if let Some(port) = global.port {
+        live.port = port;
+    }
+    if let Some(secs) = global.timeout_secs {
+        live.timeout = Duration::from_secs_f64(secs);
+    }
+    live
 }
 
 fn execute_action(
@@ -335,19 +330,15 @@ fn execute_action(
         Action::Mcp => {
             if global.file.is_some() || global.save || global.out.is_some() {
                 return Err(OpError::invalid_request(
-                    "mcp では --file・--save・--out は使えません（相手は、ツールの引数 file で選びます）",
-                    "--file, --save and --out cannot be used with mcp (the target is chosen by the `file` argument of each tool)",
+                    "mcp は起動中のアプリへの中継です。--file・--save・--out は使えません",
+                    "mcp relays to the running app; --file, --save and --out cannot be used with it",
                 ));
             }
-            let mut options = McpOptions::from_env();
-            options.base = env.cwd.clone();
-            if let Some(name) = &global.link_name {
-                options.live.name = checked_link_name(name)?;
-            }
-            if let Some(secs) = global.timeout_secs {
-                options.live.timeout = Duration::from_secs_f64(secs);
-            }
-            let code = mcp::serve_stdio(options);
+            let live = live_config(global);
+            let code = relay::serve_stdio(RelayConfig {
+                port: live.port,
+                timeout: live.timeout,
+            });
             Ok(Outcome {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -378,18 +369,37 @@ fn execute_action(
             let commands = parse_batch(&text)?;
             let mut target = Target::open(global, env)?;
             let mut replies: Vec<Value> = Vec::new();
+            // `$created:<n>` は、この batch で作ったレイヤー・効果（送る前に ID へ替える）
+            let mut created = Created::default();
+            // 起動中のアプリへは 1 つずつ送るので、`$selected` を相手に任せると命令ごとに引き直される（途中の削除で選びが隣へ移る）。
+            // アクションと同じに、始めた時の 1 つを先に聞いて ID に決める
+            let live = matches!(target, Target::Live(_));
+            let selected = if live {
+                start_selected(&mut target, &commands)?
+            } else {
+                Vec::new()
+            };
             for (index, command) in commands.iter().enumerate() {
-                let reply = target.execute(command).map_err(|mut e| {
-                    let mut data = match e.data.take() {
-                        Some(Value::Object(map)) => map,
-                        Some(other) => Map::from_iter([("detail".to_owned(), other)]),
-                        None => Map::new(),
-                    };
-                    data.insert("index".into(), json!(index));
-                    data.insert("command".into(), json!(command.name()));
-                    data.insert("completed".into(), json!(replies.len()));
-                    e.with_data(Value::Object(data))
-                })?;
+                let set = command.set().map(str::to_owned);
+                let resolved = if live {
+                    resolve_relative(command, Some(&created), &mut || {
+                        selected
+                            .iter()
+                            .find(|(chosen_set, _)| *chosen_set == set)
+                            .map(|(_, id)| id.clone())
+                            .ok_or_else(|| no_selection(None))
+                    })
+                    .map(|command_resolved| command_resolved.unwrap_or_else(|| command.clone()))
+                } else {
+                    substitute_created(command, &created)
+                };
+                let reply = resolved
+                    .and_then(|command| {
+                        let reply = target.execute(&command)?;
+                        created.note(&command, &reply);
+                        Ok(reply)
+                    })
+                    .map_err(|e| at_index(e, index, command, replies.len()))?;
                 replies.push(finish_reply(
                     &reply,
                     &Global {
@@ -406,7 +416,95 @@ fn execute_action(
             }
             Ok(ok(&Value::Object(output), pretty))
         }
+        Action::RunAction { path } => {
+            if global.out.is_some() {
+                return Err(OpError::invalid_request(
+                    "--out は run-action には使えません",
+                    "--out cannot be used with run-action",
+                ));
+            }
+            let file = read_action(&resolve(&env.cwd, &path))?;
+            let mut target = Target::open(global, env)?;
+            // 画面なしの .ylp にも起動中のアプリにも、命令 `action.run` の 1 回で当てる（全部で取り消しの 1 段。途中で断れば全部戻る）
+            let command = Command::ActionRun(ActionRunArgs {
+                commands: file.commands.iter().map(command_json).collect(),
+            });
+            let reply = target.execute(&command)?;
+            if !matches!(reply, Reply::Action(_)) {
+                return Err(OpError::new(
+                    ErrorCode::Internal,
+                    format!("action.run の返事が {} でした", reply.name()),
+                    format!("action.run replied with {}", reply.name()),
+                ));
+            }
+            // 返事（`reply: "action"`・`set`・`steps`・`undo_count` …）に、アクションの名前を添える
+            let mut output = Map::new();
+            output.insert("action".into(), json!(file.name));
+            if let Value::Object(fields) = serde_json::to_value(&reply).expect("JSON") {
+                output.extend(fields);
+            }
+            if global.save {
+                output.insert("saved".into(), save(&mut target)?);
+            }
+            Ok(ok(&Value::Object(output), pretty))
+        }
     }
+}
+
+/// 起動中のアプリへ 1 つずつ送る batch の、始めた時の `$selected`（命令の `set` ごと）。`$selected` を使う命令があるときだけ、
+/// アプリに `layer.get` で聞く（読むだけで何も変えない）。選んでいるレイヤーが無ければ、何も変える前に、最初に使う命令の番号つきで断る。
+fn start_selected(
+    target: &mut Target,
+    commands: &[Command],
+) -> Result<Vec<(Option<String>, String)>, OpError> {
+    let mut chosen: Vec<(Option<String>, String)> = Vec::new();
+    for (index, command) in commands.iter().enumerate() {
+        if !uses_selected(command) {
+            continue;
+        }
+        let set = command.set().map(str::to_owned);
+        if chosen.iter().any(|(known, _)| *known == set) {
+            continue;
+        }
+        let ask = Command::LayerGet(LayerGetArgs {
+            set: set.clone(),
+            layer: SELECTED.to_owned(),
+        });
+        let id = match target.execute(&ask) {
+            Ok(Reply::Layer(info)) => info.summary.id,
+            Ok(other) => {
+                return Err(OpError::new(
+                    ErrorCode::Internal,
+                    format!("layer.get の返事が {} でした", other.name()),
+                    format!("layer.get replied with {}", other.name()),
+                ))
+            }
+            Err(e) => return Err(at_index(e, index, command, 0)),
+        };
+        chosen.push((set, id));
+    }
+    Ok(chosen)
+}
+
+/// アクションのファイルを読む（大きさを先に確かめる）。
+fn read_action(path: &Path) -> Result<ActionFile, OpError> {
+    let display = path.display().to_string();
+    let meta = std::fs::metadata(path).map_err(|e| read_error(&display, &display, &e))?;
+    if meta.len() > action::MAX_FILE_BYTES {
+        return Err(OpError::new(
+            ErrorCode::Budget,
+            format!(
+                "アクションのファイルが大きすぎます（{} MiB まで）: {display}",
+                action::MAX_FILE_BYTES >> 20
+            ),
+            format!(
+                "The action file is too large (at most {} MiB): {display}",
+                action::MAX_FILE_BYTES >> 20
+            ),
+        ));
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| read_error(&display, &display, &e))?;
+    action::parse_action(&text)
 }
 
 fn save(target: &mut Target) -> Result<Value, OpError> {
@@ -504,14 +602,15 @@ pub fn parse_batch(text: &str) -> Result<Vec<Command>, OpError> {
 }
 
 const USAGE_EN: &str = "\
-yolupainter-cli - operate YoluPainter projects from the command line, and run the MCP server
+yolupainter-cli - operate YoluPainter projects from the command line, and relay MCP to the running app
 
 Usage:
   yolupainter-cli <command> [--name value ...] [--file project.ylp [--save]] [--pretty]
   yolupainter-cli batch [file|-] --file project.ylp [--save]
+  yolupainter-cli run-action <action.json> [--file project.ylp [--save]]
   yolupainter-cli commands          list every command
   yolupainter-cli schema [command]  JSON Schema of the commands (--tools: MCP tool definitions)
-  yolupainter-cli mcp               MCP server on stdio
+  yolupainter-cli mcp               relay MCP on stdio to the running app (http://127.0.0.1:<port>/mcp)
 
 Commands are named like layer.set (or layer_set). Pass arguments as flags (--layer Base --opacity 0.5,
 --values.radius 4, --confirm) or as one JSON object ('{\"layer\":\"Base\"}', @file.json, or - for stdin).
@@ -520,22 +619,24 @@ Target:
   --file <x.ylp>   open the project without the app; edits are lost unless --save is given
   --save           save the .ylp in place after the command succeeded (with --file)
   (no --file)      the running YoluPainter (Settings: Accept external commands)
+  --port <number>  the port set in the app (default 17347)
 Options:
-  --pretty  --lang ja|en  --timeout <seconds>  --out <png>  --link-name <name>  --cwd <folder>  --version  --help
+  --pretty  --lang ja|en  --timeout <seconds>  --out <png>  --cwd <folder>  --version  --help
 
 The reply is JSON on stdout. On failure stdout has {\"error\": ...}, stderr one line, and the exit code is
 1 refused, 2 bad arguments, 3 the app cannot be reached, 4 confirmation needed (--confirm).
 ";
 
 const USAGE_JA: &str = "\
-yolupainter-cli - YoluPainter のプロジェクトをコマンドラインから操作し、MCP サーバーを動かす
+yolupainter-cli - YoluPainter のプロジェクトをコマンドラインから操作し、MCP を起動中のアプリへ中継する
 
 使い方:
   yolupainter-cli <命令> [--名前 値 ...] [--file project.ylp [--save]] [--pretty]
   yolupainter-cli batch [ファイル|-] --file project.ylp [--save]
+  yolupainter-cli run-action <アクション.json> [--file project.ylp [--save]]
   yolupainter-cli commands          命令の一覧
   yolupainter-cli schema [命令]     命令の JSON Schema（--tools は MCP のツールの定義）
-  yolupainter-cli mcp               MCP サーバー（stdio）
+  yolupainter-cli mcp               標準入出力の MCP を起動中のアプリ（http://127.0.0.1:<番号>/mcp）へ中継する
 
 命令の名前は layer.set（か layer_set）の形です。引数は --layer Base --opacity 0.5・--values.radius 4・--confirm のように渡すか、
 JSON のオブジェクト 1 つ（'{\"layer\":\"Base\"}'・@file.json・- は標準入力）で渡します。
@@ -544,8 +645,9 @@ JSON のオブジェクト 1 つ（'{\"layer\":\"Base\"}'・@file.json・- は�
   --file <x.ylp>   アプリなしでプロジェクトを開く（--save が無ければ、編集はファイルに入りません）
   --save           命令が成功したら .ylp に上書き保存する（--file のとき）
   （--file なし）  起動中の YoluPainter（設定「外からの操作を受ける」を入れておく）
+  --port <番号>    アプリの設定の番号（既定は 17347）
 オプション:
-  --pretty  --lang ja|en  --timeout <秒>  --out <png>  --link-name <名前>  --cwd <フォルダ>  --version  --help
+  --pretty  --lang ja|en  --timeout <秒>  --out <png>  --cwd <フォルダ>  --version  --help
 
 返事は標準出力の JSON です。失敗は標準出力に {\"error\": ...}、標準エラーに 1 行、終了コードは
 1 命令が断った・2 引数の誤り・3 起動中のアプリにつなげない・4 確認が要る（--confirm）です。
@@ -558,7 +660,7 @@ fn usage(lang: Option<Lang>) -> &'static str {
     }
 }
 
-/// 標準入力（読むたびに錠を取る）。`stdin().lock()` を持ち続けると、MCP サーバーの標準入力の読み（tokio が同じ錠を使う）が止まる。
+/// 標準入力（読むたびに錠を取る）。`stdin().lock()` を持ち続けると、MCP の中継の標準入力の読み（tokio が同じ錠を使う）が止まる。
 struct LazyStdin;
 
 impl Read for LazyStdin {

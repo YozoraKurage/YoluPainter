@@ -32,10 +32,13 @@ fn main() -> Result<(), yolu_ops::OpError> {
 対象の指し方:
 
 - **セット**（`set`）: ID か名前。省くと今のセット。
-- **層**（`layer`、`above`、`parent`）: 32 桁の 16 進の ID か、名前（同じ名前が複数あれば `ambiguous` で、候補の ID を返します）。
+- **レイヤー**（`layer`、`above`、`parent`）: 32 桁の 16 進の ID か、名前（同じ名前が複数あれば `ambiguous` で、候補の ID を返します）。
 - **チャンネル**: `Color`・`Roughness`・`Metallic`・`Height`・`Normal`・`Emission`、またはユーザーチャンネルの名前（大文字小文字は問いません）。番号でも指せます。
 - **効果**: 効果の ID（`effect.add` の返事と `effect.get` に出ます）。
 - **色**: `#rrggbb` か `#rrggbbaa`。
+- **相対の指し方**（`refs`）: レイヤーの欄の `$selected` はホストが選んでいるレイヤー（`OpHost::selected_layer`。画面なしの `FileHost` は .ylp に選んでいたレイヤーが
+  無いので断る）。`$created:<n>` は同じ実行の中で n 番目に作ったレイヤーか効果（`layer.add`・`effect.add` の通し番号）で、まとめて当てる実行（`execute_in` に
+  `Created` を渡す・`action::run`・`action.run`）の中だけ。1 つだけの命令（`execute`）では断ります。起動中のアプリへ 1 つずつ送る呼び手は、送る前に `substitute_created` で替えます。
 
 ## 命令の一覧
 
@@ -48,10 +51,10 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `doc.open` | `path`、`confirm` | `doc` | 置き換え（開いていた文書の保存していない変更を捨てるとき） |
 | `set.info` | `set` | `set` | 読む |
 | `layer.get` | `layer` | `layer` | 読む |
-| `layer.add` | `kind`（paint・fill・group・adjustment）、`name`、`above`、`fill`、`adjustment`、`channels` | `edited` | 編集 |
+| `layer.add` | `kind`（paint・fill・group・adjustment・text）、`name`、`above`、`fill`、`adjustment`、`channels`、`text` | `edited` | 編集 |
 | `layer.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `layer.move` | `layer`、`parent`、`to_root`、`index` | `edited` | 編集 |
-| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment` | `edited` | 編集（全部で 1 段） |
+| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`text` | `edited` | 編集（全部で 1 段） |
 | `mask.add` | `layer` | `edited` | 編集 |
 | `mask.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `mask.set` | `layer`、`enabled`、`inverted`、`density` | `edited` | 編集 |
@@ -68,11 +71,23 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `export.psd` | `set`、`path`、`channel`、`mode`（bake・flat）、`confirm` | `exported` | 置き換え |
 | `save` | `confirm` | `saved` | 壊す（開いている `.ylp` を上書き） |
 | `save_as` | `path`、`confirm` | `saved` | 置き換え |
+| `action.run` | `commands`（命令の列。[アクション](#アクション)） | `action` | 編集（全部で 1 段。中の壊す命令は、それぞれ `confirm`） |
 
 ツールの名前は、命令の名前の `.` を `_` にしたもの（`layer.set` → `layer_set`。`CommandSpec::tool_name`）です。
 欄の型・範囲・説明は `yolu_ops::commands()`（命令の一覧。名前・日英の説明・読むだけか壊すか・引数と返事の JSON Schema）と、`command_schema()`・
-`reply_schema()`・`error_schema()` で取れます。壊す印は `Danger`（`Always`・`WhenReplacing`）で、確認の欄（`confirm`）を持つ命令と持たない命令が、
-この印と一致することを試験が確かめます。
+`reply_schema()`・`error_schema()` で取れます。壊す印は `Danger`（`Always`・`WhenReplacing`・`PerCommand`）で、確認の欄（`confirm`）を持つ命令
+（`Always`・`WhenReplacing`）と持たない命令が、この印と一致することを試験が確かめます。`PerCommand` は `action.run` で、列の中の壊す命令がそれぞれ `confirm` を持ちます。
+
+## アクション
+
+`action` は、記録した命令の列のファイル（`{"format": 1, "name": "...", "commands": [...]}`。命令は上の JSON）と、その列を 1 つのテクスチャセットへ
+**取り消しの 1 段**で当てる `action::run` です。命令 `action.run`（`{"commands": [...]}`。MCP のツール `action_run`）も同じ実行で、起動中のアプリにも画面なしの
+ホストにも同じに当たります。返事は `action`（`set`・命令ごとの `steps`（作った・変えた `layer`・`effect`、`unchanged`）・`unchanged`・`undo_count`・`can_undo`）。
+
+- 入れられるのは、レイヤー・マスク・効果を変える命令だけ（`ACTION_COMMANDS`・`check_allowed`）。読む・見本・書き出し・保存・取り消し・`action.run` は、当てる前に断ります。壊す命令の `confirm` も先に見ます。
+- 全部を `Document::batch` の 1 回で当てます（`doc_ops` の編集は、外がまとめの中ならそのまとめに積む）。途中の命令が断ったら、そこまでの分も戻して、誤りの
+  `data` に `index`（0 から）・`command`・`completed` を添えます。
+- 上限: 命令 1,000 個（`MAX_COMMANDS`）・ファイル 4 MiB（`MAX_FILE_BYTES`）・名前 100 文字（`MAX_NAME_CHARS`）。`format` が 1 でないファイルは `unsupported_version`。
 
 ## 取り消し
 
@@ -84,16 +99,18 @@ fn main() -> Result<(), yolu_ops::OpError> {
 効果は `kind`（種類の名前）と `values`（欄の名前 → 数・真偽・選択肢の文字列）で足し、変えます。種類・欄の型・範囲・既定は `effect.list_kinds` が返し、
 範囲の検査は文書（core）と同じ定義です（範囲の外は切り詰めず断ります）。渡さない欄は、足すときは既定、変えるときは今の値です。
 
-- フィルター: `blur`・`sharpen`・`noise`・`levels`・`invert`・`normalize`・`color_balance`・`brightness_contrast`・`threshold`・`posterize`
+- フィルター: `blur`・`sharpen`・`noise`・`levels`・`invert`・`normalize`・`color_balance`・`brightness_contrast`・`threshold`・`posterize`・
+  `histogram_scan`・`histogram_range`・`slope_blur`・`directional_blur`・`warp`・`morphology`・`edge_detect`・`high_pass`・`median`・`glow`
   （調整レイヤーには `levels`・`invert`・`hue_saturation` などを `layer.add`・`layer.set` の `adjustment` で）。
-- Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`。
-- リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`）は、値だけでは足せません（`addable: false`）。
+- Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`・`pattern`・`light`・`mask_builder`・`uv_island_variation`。
+- リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは足せません（`addable: false`）。
   すでにある段は `effect.get` で読め、強さ・有効・チャンネルは変えられ、値を渡して変えるのは断ります（その部分を黙って作り直しません）。
-- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション）を使ったセットは、新しい文書の版で保存され、
+- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
+  0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`・`uv_island_variation`））を使ったセットは、新しい文書の版で保存され、
   Unity 版（0.2.0）のブリッジは開けません（理由を言って断り、中身は消えません）。保存の返事の `notes` がそのセットを知らせます。
 - 効果の種類を変えるとき、適用中のチャンネルに使えない設定は、どのチャンネルかを言って断ります（`channels` で選び直します）。
 
-**画面なしでは効かない効果**: 焼いたメッシュマップ・モデルを読む Generator（`needs_baked_maps: true`）は、画面なしのホストにマップもモデルも無いので、入力のまま通します。
+**画面なしでは効かない効果**: 焼いたメッシュマップ・モデルを読む Generator（`needs_baked_maps: true`。モデルの UV アイランドを読む `uv_island_variation` も）は、画面なしのホストにマップもモデルも無いので、入力のまま通します。
 設定は文書に残りますが、見本・書き出し・保存した合成の PNG には入りません（返事の `notes`・`inactive_effects` に出ます）。手続き型のノイズ・グランジは、位置のマップが
 無ければ UV で評価するので効きます。塗りつぶしの画像はプロジェクトの画像を渡します。
 
@@ -110,7 +127,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 - `export.channels`: チャンネルごとの PNG。名前は `<名前>_<チャンネル>.png`（セットが複数のとき `<名前>_<セット>_<チャンネル>.png`）。既定の名前は `.ylp` の名前。
 - `export.textures`: テンプレート（`unity-standard`・`unity-hdrp`・`liltoon`）の画像のうち、読むものがある画像だけ。塗り広げ（UV の外）と焼いた AO は、モデルから作るもので、
   画面なしでは渡せないので使いません。
-- `export.psd`: 1 つのチャンネルを PSD に（`bake` は層を残して PSD に形の無いものを焼き、焼いた・丸めた・落としたものを `notes` に出す。`flat` は合成を 1 枚）。
+- `export.psd`: 1 つのチャンネルを PSD に（`bake` はレイヤーを残して PSD に形の無いものを焼き、焼いた・丸めた・落としたものを `notes` に出す。`flat` は合成を 1 枚）。
   書いたあと読み戻して確かめます。
 
 ## 保存
@@ -137,11 +154,11 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `unknown_command` | 知らない命令の名前（`data.commands` に一覧） |
 | `unsupported_version` | 命令の版が合わない（`data.supported`） |
 | `no_document` | 開いている文書が無い |
-| `not_found` | セット・層・効果・チャンネル・効果の種類・テンプレートが無い |
-| `ambiguous` | 名前が複数に当たる（`data.candidates`。層は `{id, kind}`・セットは `{id, name}`・チャンネルは `{index, name}` の並び） |
+| `not_found` | セット・レイヤー・効果・チャンネル・効果の種類・テンプレートが無い |
+| `ambiguous` | 名前が複数に当たる（`data.candidates`。レイヤーは `{id, kind}`・セットは `{id, name}`・チャンネルは `{index, name}` の並び） |
 | `invalid_value` | 値が範囲の外・選択肢に無い・組み合わせが断られた |
 | `read_only` | 読むだけのセット |
-| `unsupported` | その層・チャンネル・種類にはできない、この版では扱わない |
+| `unsupported` | そのレイヤー・チャンネル・種類にはできない、この版では扱わない |
 | `confirm_required` | 壊す操作に `confirm: true` が無い（`data.files` などに対象） |
 | `path_refused` | 道が使えない（作業のフォルダの外・名前の形・通常のファイルでない） |
 | `budget` | 予算・上限を超える |
@@ -160,22 +177,11 @@ fn main() -> Result<(), yolu_ops::OpError> {
 命令の版は `COMMAND_VERSION`（今は 1）です。引数の欄を足すだけなら上げず、古い命令が読めなくなる変え方をするときに上げます。版の違う命令は `unsupported_version` で断ります。
 `.ylp` の形式は変えません（保存は今の形式 7 か、名前を付けて残した選択範囲を使うファイルの 8 のまま）。
 
-## 起動中のアプリへの通信の枠
+## 起動中のアプリへの通信
 
-`link` は、要求（`{"v":1,"id":7,"command":"layer.set","args":{...}}`）と返事（`{"v":1,"id":7,"ok":true,"reply":{...}}` か `{"v":1,"id":7,"ok":false,"error":{...}}`）の
-JSON と、yolu-protocol の枠（`YLNK`、種類 `0x4f50` が要求、`0x4f51` が返事）への読み書きを持ちます。経路は yolu-protocol の手元の経路（Unix のソケット・Windows の
-名前付きパイプ・鍵のファイルの確かめ合い）を、Live Link とは別の名前（`link::LINK_NAME` = `yolupainter-ops`）で使います。名前が違えば、ソケット・パイプも鍵のファイルも別です。
-経路そのもの（待ち受け・つなぎ・鍵の確かめ合い）はこの crate には含みません。枠の中身の上限は 64 MiB で、超える返事は同じ `id` の `budget` の誤りに替えて返します。
-
-起動中のアプリの受け口は、設定「外からの操作を受ける」が入っている間だけ、この名前で待ち受けます（環境変数 `YOLUPAINTER_OPS_NAME` で名前を替えられます）。鍵のファイルは
-`<名前>.key`（`yolu_protocol::auth::key_path`）で、挨拶は `yolu_protocol::link::connect_and_greet_as` です。挨拶のあとの枠は `ConnectionReader::raw()` で読み、書くのは
-`Connection::send_frame` です。要求は画面のスレッドで 1 つずつ実行され、返事は要求の `id` で結びます（保存は裏で動くので、返事が保存の終わりまで遅れ、後の要求の返事より後になってよい）。
-同時につなげるのは 8 つまで（9 つ目は挨拶で `Busy` の断りを受けます）。受け口が閉じるとき（設定を切ったとき・アプリが終わるとき）は、`Bye` の枠（Live Link と同じ種類）を送ってから
-つながりを閉じます。切ったあとに残っていた要求は実行せず、返事も返しません（呼び手は `Bye` かつながりの切れで、受け口が閉じたと知ります）。相対パスはアプリが開いているプロジェクトの
+起動中のアプリへの命令は、アプリの MCP の受け口（`http://127.0.0.1:<番号>/mcp`。yolu-mcp）のツール（`tools/call`）で運びます。この crate は通信を持ちません。
+アプリのホストは、受けた命令を画面のスレッドで 1 つずつ実行します（保存は裏で動き、返事は保存の終わりまで遅れます）。相対パスはアプリが開いているプロジェクトの
 フォルダからなので、呼び手は絶対パスにして渡してください。
-
-`link::read_frame` は流れから枠を 1 つ読み、結果を 3 つに分けて返します。`Received::Frame`（枠がそろった）・`Received::Idle`（読みの時間切れ。つながりは続き、読みかけの分は
-`FrameReader` に残るので、同じ `FrameReader` でもう一度呼ぶ）・`Received::Closed`（枠の切れ目で相手が閉じた）。枠の途中で閉じたとき（要求が欠けたとき）は `Closed` にせず、`io` の誤りにします。
 
 ## ホストを作る側へ
 

@@ -119,6 +119,12 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "window_minimize",
     "window_maximize",
     "window_restore",
+    "error_circle",
+    "document_copy",
+    "record",
+    "stop",
+    "play",
+    "video_clip",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -165,10 +171,16 @@ impl Icons {
             }
             map.insert(*name, set);
         }
-        // 同梱の MIT アイコンを道具にも共用する。
-        for (alias, source) in [("tools/shape", "shapes"), ("tools/shape_selected", "shapes"),
-            ("tools/ruler", "grid_dots"), ("tools/ruler_selected", "grid_dots")] {
-            if let Some(set) = map.get(source).cloned() { map.insert(alias, set); }
+        // 同梱の MIT アイコンをツールにも共用する。
+        for (alias, source) in [
+            ("tools/shape", "shapes"),
+            ("tools/shape_selected", "shapes"),
+            ("tools/ruler", "grid_dots"),
+            ("tools/ruler_selected", "grid_dots"),
+        ] {
+            if let Some(set) = map.get(source).cloned() {
+                map.insert(alias, set);
+            }
         }
         Icons { map }
     }

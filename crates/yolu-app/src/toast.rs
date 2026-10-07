@@ -2,21 +2,23 @@
 //!
 //! - `message` を書く操作（`AppState::apply`・1 フレーム）の終わりに、`message` が書かれていれば、前と同じ文でも新しい知らせとして出す
 //!   （「保存しました。」を続けて押せば、そのたびに出る）。操作の外で直接書かれた文は、次のフレームの始めに、前に見た文と違えば出す。
-//!   普通の知らせは数秒、エラー（「〜できません」「開けません」などの断り）はそれより長く。押せば（どの知らせも）すぐ消える。
-//!   ポインタを乗せているあいだは消えない（読む間）。最後の 0.4 秒でうすくなる。
-//! - 文の中身は今のまま（`message` を書く所は変えない。試験は `message` と `shell::status_text` を読む。操作の外でも最後の文は読める）。
-//! - 文を空にして（操作の中は `AppState::clear_message`。外なら `message.clear()`）から同じ文が来たときも、新しい知らせとして出す。
+//! - 出し方は知らせの種類（`notice::Kind`。文の中身では決めない）で決める: 済んだ知らせは数秒、断り・注意・失敗はそれより長く。
+//!   押せば（どの知らせも）すぐ消える。ポインタを乗せているあいだは消えない（読む間）。最後の 0.4 秒でうすくなる。
+//!   知らせを通さずに直に書かれた文（種類が無い）は、済んだ知らせと同じ出し方。
+//! - 文の中身は今のまま（`message` は `notice` の `notify` が書く。試験は `message` と `shell::status_text` を読む。操作の外でも最後の文は読める）。
+//! - 文を空にして（操作の中は `AppState::clear_message`）から同じ文が来たときも、新しい知らせとして出す。
 
 use egui::{pos2, vec2, Align2, Color32, Order, Sense, Stroke};
 
+use crate::notice::Kind;
 use crate::state::AppState;
 use crate::ui::theme as t;
 
-/// 普通の知らせを出している秒数。
+/// 済んだ知らせを出している秒数。
 pub const INFO_SECONDS: f64 = 4.0;
-/// エラーを出している秒数。
-pub const ERROR_SECONDS: f64 = 12.0;
-/// ポインタを乗せ続けたとき、初めて出てから出し続けてよい長さの上限（普通の出し方の何倍まで。普通 12 秒・エラー 36 秒）。
+/// 断り・注意・失敗を出している秒数。
+pub const LONG_SECONDS: f64 = 12.0;
+/// ポインタを乗せ続けたとき、初めて出てから出し続けてよい長さの上限（普通の出し方の何倍まで。済んだ知らせ 12 秒・ほか 36 秒）。
 pub const HOLD_LIMIT: f64 = 3.0;
 /// 消える前にうすくなる秒数。
 pub const FADE_SECONDS: f64 = 0.4;
@@ -31,15 +33,16 @@ pub struct Toast {
     text: String,
     /// 最後に見た `message`（操作の外で直接書かれた文が新しいかを見る。空になれば空）。
     observed: String,
-    /// 新しく出す文（次の `update` で出し始める）。
-    pending: Option<String>,
+    /// 新しく出す文と種類（次の `update` で出し始める）。
+    pending: Option<(String, Kind)>,
     /// 出し始めた時刻（egui の時刻。ポインタを乗せているあいだは延びる）。
     since: f64,
     /// この文が初めて出た時刻（乗せ続けても、ここから `HOLD_LIMIT` 倍までしか出さない）。
     first: f64,
     /// 押されて消した。
     dismissed: bool,
-    error: bool,
+    /// 出している文の種類。
+    kind: Kind,
     /// `message` を書く操作が入れ子になっている深さ（`begin` から `end` まで）。
     depth: u32,
     /// いちばん外の操作の中で、`message` を明示して空にした（空のまま終わっても、前の文を戻さない）。
@@ -48,25 +51,11 @@ pub struct Toast {
     noted: Option<String>,
 }
 
-/// エラー（断りや失敗）の文か。日本語は「ません」「失敗」「できない」、英語は Cannot・Could not・Failed・Unable・Invalid・No …。
-/// 見るのは最初の文（「。」・". " の前）だけ: 済んだ知らせに添えた但し書き（「PSD 自体は書き換えません。」）でエラーにしない。
-pub fn is_error(text: &str) -> bool {
-    let main = text.split('。').next().unwrap_or(text);
-    let main = main.split(". ").next().unwrap_or(main);
-    let lower = main.to_lowercase();
-    main.contains("ません")
-        || main.contains("失敗")
-        || main.contains("できない")
-        || ["cannot", "can't", "could not", "couldn't", "failed", "unable", "invalid", "not supported", "no "]
-            .iter()
-            .any(|w| lower.starts_with(w) || lower.contains(&format!(" {w}")) || lower.contains(&format!("; {w}")))
-}
-
 impl Toast {
     /// `message` を書く操作の終わりに呼ぶ: 書かれた文を、前と同じ文でも新しい知らせとして出す（次の `update` から）。
-    pub fn write(&mut self, message: &str) {
+    pub fn write(&mut self, message: &str, kind: Kind) {
         self.observed = message.to_owned();
-        self.pending = (!message.is_empty()).then(|| message.to_owned());
+        self.pending = (!message.is_empty()).then(|| (message.to_owned(), kind));
         if message.is_empty() {
             // 文が空になれば、出している知らせも消える（空の message に知らせは無い）
             self.text.clear();
@@ -75,17 +64,17 @@ impl Toast {
 
     /// 操作の外で直接書かれた `message` を見る（フレームの始め）。前に見た文と違えば新しい知らせ。空になっていれば、出している知らせも
     /// 出す前の知らせも取り下げる（次に来る文は、前と同じでも新しい知らせ）。
-    pub fn observe(&mut self, message: &str) {
+    pub fn observe(&mut self, message: &str, kind: Kind) {
         if self.observed != message {
-            self.write(message);
+            self.write(message, kind);
         }
     }
 
     /// `message` を書く操作（`AppState::apply`・1 フレーム）の入口: 前の文を預かって `message` を空にする。出口（`end`）で、
     /// 操作が文を書いたかを、前と同じ文でも見分けられる。操作の外で直接書かれていた文は、ここで見る。
-    pub fn begin(&mut self, message: &mut String) -> String {
+    pub fn begin(&mut self, message: &mut String, kind: Kind) -> String {
         if self.depth == 0 {
-            self.observe(message);
+            self.observe(message, kind);
             self.noted = None;
             self.cleared = false;
         }
@@ -95,10 +84,10 @@ impl Toast {
 
     /// `begin` の出口。文が書かれていれば新しい知らせとして出し（文はそのまま残す）、書かれていなければ預かった前の文を戻す
     /// （操作の外から最後の文はいつでも読める）。
-    pub fn end(&mut self, message: &mut String, prior: String) {
+    pub fn end(&mut self, message: &mut String, prior: String, kind: Kind) {
         self.depth = self.depth.saturating_sub(1);
         if !message.is_empty() {
-            self.flush(message);
+            self.flush(message, kind);
         } else if !self.cleared {
             *message = prior;
         }
@@ -108,13 +97,13 @@ impl Toast {
     pub fn clear(&mut self, message: &mut String) {
         message.clear();
         self.cleared = true;
-        self.write("");
+        self.write("", Kind::Info);
     }
 
     /// 操作の途中で、ここまでに書かれた `message`（`begin` のあとに書かれた分だけ）を知らせにする。同じ操作の中で出した文は重ねて出さない。
-    pub fn flush(&mut self, message: &str) {
+    pub fn flush(&mut self, message: &str, kind: Kind) {
         if !message.is_empty() && self.noted.as_deref() != Some(message) {
-            self.write(message);
+            self.write(message, kind);
             self.noted = Some(message.to_owned());
         }
     }
@@ -126,8 +115,8 @@ impl Toast {
 
     /// 毎フレーム、時刻 `now` に呼ぶ。新しく出す文があれば、そこから出し始める。
     pub fn update(&mut self, now: f64) {
-        if let Some(text) = self.pending.take() {
-            self.error = is_error(&text);
+        if let Some((text, kind)) = self.pending.take() {
+            self.kind = kind;
             self.text = text;
             self.since = now;
             self.first = now;
@@ -140,16 +129,17 @@ impl Toast {
         &self.text
     }
 
-    pub fn is_error(&self) -> bool {
-        self.error
+    /// 出している文の種類。
+    pub fn kind(&self) -> Kind {
+        self.kind
     }
 
     /// この文を出している秒数。
     pub fn lifetime(&self) -> f64 {
-        if self.error {
-            ERROR_SECONDS
-        } else {
+        if self.kind == Kind::Info {
             INFO_SECONDS
+        } else {
+            LONG_SECONDS
         }
     }
 
@@ -190,16 +180,17 @@ impl Toast {
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let now = ctx.input(|i| i.time);
     // フレームの中で、ここまでに書かれた文（`apply` の外の書き込みも）をすぐ出す
-    app.toast.flush(&app.message);
+    app.flush_message();
     app.toast.update(now);
     if !app.toast.is_visible(now) {
         return;
     }
     let text = app.toast.text().to_owned();
-    let error = app.toast.is_error();
+    let kind = app.toast.kind();
     let opacity = app.toast.opacity(now);
     let screen = ctx.content_rect();
-    let wrap = (screen.width() - t::TOOL_STRIP_WIDTH - 48.0 - PADDING.x * 2.0).clamp(120.0, MAX_WIDTH);
+    let wrap =
+        (screen.width() - t::TOOL_STRIP_WIDTH - 48.0 - PADDING.x * 2.0).clamp(120.0, MAX_WIDTH);
     let mut dismissed = false;
     let mut hovered = false;
     egui::Area::new(egui::Id::new("yolu.toast"))
@@ -212,21 +203,36 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         .interactable(true)
         .show(ctx, |ui| {
             let fade = |c: Color32| c.gamma_multiply(opacity);
-            let galley = ui.painter().layout(text.clone(), t::LABEL.font(), fade(t::TEXT), wrap);
+            let galley = ui
+                .painter()
+                .layout(text.clone(), t::LABEL.font(), fade(t::TEXT), wrap);
             let size = galley.size() + PADDING * 2.0 + vec2(4.0, 0.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let p = ui.painter();
             p.rect_filled(rect.expand(1.0), 6.0, fade(Color32::from_black_alpha(60)));
             p.rect_filled(rect, 5.0, fade(t::PANEL_HEADER));
-            p.rect_stroke(rect, 5.0, Stroke::new(1.0, fade(t::SEPARATOR)), egui::StrokeKind::Inside);
-            // 左の帯: エラーは赤、ふつうは青
-            p.rect_filled(
-                egui::Rect::from_min_size(rect.min + vec2(0.0, 3.0), vec2(3.0, rect.height() - 6.0)),
-                1.5,
-                fade(if error { t::ERROR } else { t::ACCENT }),
+            p.rect_stroke(
+                rect,
+                5.0,
+                Stroke::new(1.0, fade(t::SEPARATOR)),
+                egui::StrokeKind::Inside,
             );
-            p.galley(rect.min + pos2(PADDING.x + 4.0, PADDING.y).to_vec2(), galley, t::TEXT);
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
+            // 左の帯: 失敗と断りは赤、注意は黄、済んだ知らせは青
+            p.rect_filled(
+                egui::Rect::from_min_size(
+                    rect.min + vec2(0.0, 3.0),
+                    vec2(3.0, rect.height() - 6.0),
+                ),
+                1.5,
+                fade(band_color(kind)),
+            );
+            p.galley(
+                rect.min + pos2(PADDING.x + 4.0, PADDING.y).to_vec2(),
+                galley,
+                t::TEXT,
+            );
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
             dismissed = response.clicked();
             hovered = response.hovered();
         });
@@ -239,8 +245,21 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     // 消える時刻（と、うすくなっていく間）に描き直す
     let remaining = app.toast.remaining(now);
-    let wait = if remaining > FADE_SECONDS { remaining - FADE_SECONDS } else { 1.0 / 30.0 };
+    let wait = if remaining > FADE_SECONDS {
+        remaining - FADE_SECONDS
+    } else {
+        1.0 / 30.0
+    };
     ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.0)));
+}
+
+/// トーストの左の帯の色（種類ごと。色は今ある物だけ）。
+pub fn band_color(kind: Kind) -> Color32 {
+    match kind {
+        Kind::Info => t::ACCENT,
+        Kind::Warning => t::WARNING,
+        Kind::Refusal | Kind::Error => t::ERROR,
+    }
 }
 
 #[cfg(test)]
@@ -248,48 +267,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn errors_are_the_refusals_and_failures_in_both_languages() {
-        for text in [
-            "開けません: 壊れています",
-            "設定を保存できません。",
-            "描くレイヤーがありません。",
-            "保存に失敗しました",
-            "Cannot save the settings.",
-            "Could not open the file",
-            "Failed to export",
-            "Invalid shared tile size 3",
-            "No model loaded",
-            "Export finished; cannot reload",
+    fn the_kind_decides_how_long_a_toast_stays_not_the_wording() {
+        // 言い回しによらず、種類だけで決まる: 済んだ知らせは短く、断り・注意・失敗は長く
+        for (kind, seconds) in [
+            (Kind::Info, INFO_SECONDS),
+            (Kind::Refusal, LONG_SECONDS),
+            (Kind::Warning, LONG_SECONDS),
+            (Kind::Error, LONG_SECONDS),
         ] {
-            assert!(is_error(text), "{text}");
+            for text in [
+                "保存できません。",
+                "保存しました。",
+                "Cannot save.",
+                "Saved.",
+            ] {
+                let mut toast = Toast::default();
+                toast.write(text, kind);
+                toast.update(0.0);
+                assert_eq!(toast.kind(), kind);
+                assert_eq!(toast.lifetime(), seconds, "{kind:?} {text}");
+            }
         }
-        for text in [
-            "保存しました。",
-            "取り消しました。",
-            "新しいプロジェクトを作りました。",
-            "Saved.",
-            "Undid the stroke.",
-            "Created a new project.",
-            "Normal map baked",
-            "Know more",
-            // 済んだ知らせの後ろの但し書きはエラーにしない
-            "PSD を読み込みました: a.psd（レイヤー 62）。PSD 自体は書き換えません。",
-            "Imported a.psd (62 layers). The PSD itself is never rewritten.",
-        ] {
-            assert!(!is_error(text), "{text}");
-        }
-        // 最初の文の断りは、後ろに文が続いてもエラー
-        assert!(is_error("開けません。別のファイルを選んでください。"));
-        assert!(is_error("Cannot open the file. Choose another one."));
+        // 色: 失敗と断りは赤、注意は黄、済んだ知らせは青（今ある色だけ）
+        assert_eq!(band_color(Kind::Error), t::ERROR);
+        assert_eq!(band_color(Kind::Refusal), t::ERROR);
+        assert_eq!(band_color(Kind::Warning), t::WARNING);
+        assert_eq!(band_color(Kind::Info), t::ACCENT);
     }
 
     /// `message` を書く操作（`apply`・1 フレーム）の代わり: 入口で預かり、`text` を書いて（None なら書かずに）、出口で出す。
     fn operation(toast: &mut Toast, message: &mut String, text: Option<&str>) {
-        let prior = toast.begin(message);
+        operation_with(toast, message, text, Kind::Info);
+    }
+
+    /// `operation` の、書く文の種類を決めた形。
+    fn operation_with(toast: &mut Toast, message: &mut String, text: Option<&str>, kind: Kind) {
+        let prior = toast.begin(message, Kind::Info);
         if let Some(text) = text {
             *message = text.to_owned();
         }
-        toast.end(message, prior);
+        toast.end(message, prior, kind);
     }
 
     #[test]
@@ -302,12 +319,18 @@ mod tests {
         toast.update(1.0);
         assert!(toast.is_visible(1.0) && toast.is_visible(1.0 + INFO_SECONDS - 0.01));
         assert!(!toast.is_visible(1.0 + INFO_SECONDS + 0.01));
-        operation(&mut toast, &mut message, Some("開けません"));
+        operation_with(&mut toast, &mut message, Some("開けません"), Kind::Error);
         toast.update(10.0);
-        assert!(toast.is_error());
-        assert!(toast.is_visible(10.0 + INFO_SECONDS + 1.0), "エラーは普通の知らせより長く出る");
-        assert!(toast.is_visible(10.0 + ERROR_SECONDS - 0.01) && !toast.is_visible(10.0 + ERROR_SECONDS + 0.01));
-        const { assert!(ERROR_SECONDS > INFO_SECONDS * 2.0) };
+        assert_eq!(toast.kind(), Kind::Error);
+        assert!(
+            toast.is_visible(10.0 + INFO_SECONDS + 1.0),
+            "エラーは普通の知らせより長く出る"
+        );
+        assert!(
+            toast.is_visible(10.0 + LONG_SECONDS - 0.01)
+                && !toast.is_visible(10.0 + LONG_SECONDS + 0.01)
+        );
+        const { assert!(LONG_SECONDS > INFO_SECONDS * 2.0) };
     }
 
     #[test]
@@ -321,13 +344,19 @@ mod tests {
         assert!(!toast.is_visible(INFO_SECONDS + 0.5));
         operation(&mut toast, &mut message, Some("保存しました。"));
         toast.update(10.0);
-        assert!(toast.is_visible(10.5), "時間切れのあとの同じ文も、新しい知らせ");
+        assert!(
+            toast.is_visible(10.5),
+            "時間切れのあとの同じ文も、新しい知らせ"
+        );
         // 押して消したあとにも
         toast.dismiss();
         assert!(!toast.is_visible(11.0));
         operation(&mut toast, &mut message, Some("保存しました。"));
         toast.update(12.0);
-        assert!(toast.is_visible(12.5), "押して消したあとの同じ文も、新しい知らせ");
+        assert!(
+            toast.is_visible(12.5),
+            "押して消したあとの同じ文も、新しい知らせ"
+        );
         assert_eq!(message, "保存しました。");
     }
 
@@ -342,7 +371,10 @@ mod tests {
         operation(&mut toast, &mut message, None);
         assert_eq!(message, "取り消しました。", "最後の文は操作の外から読める");
         toast.update(INFO_SECONDS + 1.0);
-        assert!(!toast.is_pending() && !toast.is_visible(INFO_SECONDS + 1.0), "書かれていなければ出し直さない");
+        assert!(
+            !toast.is_pending() && !toast.is_visible(INFO_SECONDS + 1.0),
+            "書かれていなければ出し直さない"
+        );
     }
 
     #[test]
@@ -350,22 +382,22 @@ mod tests {
         let mut toast = Toast::default();
         let mut message = String::from("前の文");
         // 明示して空にした操作は、何も書かずに終わっても、前の文を戻さない（保存の結果が書かれたかを見分ける所が頼る）
-        let prior = toast.begin(&mut message);
+        let prior = toast.begin(&mut message, Kind::Info);
         toast.clear(&mut message);
-        toast.end(&mut message, prior);
+        toast.end(&mut message, prior, Kind::Info);
         assert!(message.is_empty());
         // 書いてから空にすれば、まだ出していない知らせも取り下げる
-        let prior = toast.begin(&mut message);
+        let prior = toast.begin(&mut message, Kind::Info);
         message = "書いた文".into();
-        toast.flush(&message);
+        toast.flush(&message, Kind::Info);
         assert!(toast.is_pending());
         toast.clear(&mut message);
-        toast.end(&mut message, prior);
+        toast.end(&mut message, prior, Kind::Info);
         assert!(message.is_empty() && !toast.is_pending());
         // 次の操作は、また前の文を戻す
         message = "後の文".into();
-        let prior = toast.begin(&mut message);
-        toast.end(&mut message, prior);
+        let prior = toast.begin(&mut message, Kind::Info);
+        toast.end(&mut message, prior, Kind::Info);
         assert_eq!(message, "後の文");
     }
 
@@ -374,23 +406,26 @@ mod tests {
         let mut toast = Toast::default();
         let mut message = String::new();
         // フレームの中の apply（入れ子）が書いた文は、外側の終わりで重ねて出さない（出し始めたあとに、もう一度出し始めて消えた印を戻さない）
-        let frame = toast.begin(&mut message);
-        let apply = toast.begin(&mut message);
+        let frame = toast.begin(&mut message, Kind::Info);
+        let apply = toast.begin(&mut message, Kind::Info);
         message = "保存しました。".into();
-        toast.end(&mut message, apply);
+        toast.end(&mut message, apply, Kind::Info);
         toast.update(0.0);
         toast.dismiss();
-        toast.end(&mut message, frame);
+        toast.end(&mut message, frame, Kind::Info);
         assert!(!toast.is_pending(), "内側で出した文を外側が重ねて出さない");
         toast.update(0.1);
-        assert!(!toast.is_visible(0.2), "押して消した知らせが、同じフレームの終わりで戻らない");
+        assert!(
+            !toast.is_visible(0.2),
+            "押して消した知らせが、同じフレームの終わりで戻らない"
+        );
         // 同じフレームの中で、別の文があとから書かれれば、それも出す
-        let frame = toast.begin(&mut message);
-        let apply = toast.begin(&mut message);
+        let frame = toast.begin(&mut message, Kind::Info);
+        let apply = toast.begin(&mut message, Kind::Info);
         message = "保存しました。".into();
-        toast.end(&mut message, apply);
+        toast.end(&mut message, apply, Kind::Info);
         message = "取り消しました。".into();
-        toast.end(&mut message, frame);
+        toast.end(&mut message, frame, Kind::Info);
         assert!(toast.is_pending());
         toast.update(1.0);
         assert_eq!(toast.text(), "取り消しました。");
@@ -401,35 +436,44 @@ mod tests {
         let mut toast = Toast::default();
         // 起動の知らせ・試験が直接書いた文: 次のフレームの始めに、前に見た文と違えば出す
         let mut message = String::from("起動時の知らせ");
-        let prior = toast.begin(&mut message);
+        let prior = toast.begin(&mut message, Kind::Info);
         assert!(message.is_empty(), "操作の中では前の文は見えない");
-        toast.end(&mut message, prior);
+        toast.end(&mut message, prior, Kind::Info);
         assert_eq!(message, "起動時の知らせ");
         toast.update(0.0);
         assert!(toast.is_visible(1.0));
         // 同じ文のままなら出し直さない。空にしてからなら、同じ文でも新しい知らせ
-        let prior = toast.begin(&mut message);
-        toast.end(&mut message, prior);
+        let prior = toast.begin(&mut message, Kind::Info);
+        toast.end(&mut message, prior, Kind::Info);
         assert!(!toast.is_pending());
         message.clear();
-        let prior = toast.begin(&mut message);
-        toast.end(&mut message, prior);
-        assert!(!toast.is_visible(1.5), "空にされたら、出している知らせも消える");
+        let prior = toast.begin(&mut message, Kind::Info);
+        toast.end(&mut message, prior, Kind::Info);
+        assert!(
+            !toast.is_visible(1.5),
+            "空にされたら、出している知らせも消える"
+        );
         message = "起動時の知らせ".into();
-        let prior = toast.begin(&mut message);
-        toast.end(&mut message, prior);
+        let prior = toast.begin(&mut message, Kind::Info);
+        toast.end(&mut message, prior, Kind::Info);
         assert!(toast.is_pending(), "空を挟めば、同じ文でも新しい知らせ");
     }
 
     #[test]
     fn pressing_dismisses_and_hovering_holds_and_the_end_fades() {
         let mut toast = Toast::default();
-        toast.write("取り消しました。");
+        toast.write("取り消しました。", Kind::Info);
         toast.update(0.0);
         assert_eq!(toast.opacity(1.0), 1.0);
-        assert!(toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) < 1.0 && toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) > 0.0);
+        assert!(
+            toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) < 1.0
+                && toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) > 0.0
+        );
         toast.hold(3.0);
-        assert!(toast.is_visible(3.0 + INFO_SECONDS - 0.01), "乗せているあいだは延びる");
+        assert!(
+            toast.is_visible(3.0 + INFO_SECONDS - 0.01),
+            "乗せているあいだは延びる"
+        );
         // 乗せ続けても、初めて出てから HOLD_LIMIT 倍で打ち切る（合計で INFO_SECONDS * HOLD_LIMIT を超えない）
         let limit = INFO_SECONDS * HOLD_LIMIT;
         let mut t = 3.0;
@@ -437,9 +481,15 @@ mod tests {
             toast.hold(t);
             t += 0.25;
         }
-        assert!(!toast.is_visible(limit + 0.01), "置きっぱなしでも、初めて出てから {limit} 秒で消える");
-        assert!(toast.is_visible(limit - 0.5), "乗せているあいだは、上限まで出ている");
-        toast.write("取り消しました。");
+        assert!(
+            !toast.is_visible(limit + 0.01),
+            "置きっぱなしでも、初めて出てから {limit} 秒で消える"
+        );
+        assert!(
+            toast.is_visible(limit - 0.5),
+            "乗せているあいだは、上限まで出ている"
+        );
+        toast.write("取り消しました。", Kind::Info);
         toast.update(100.0);
         toast.dismiss();
         assert!(!toast.is_visible(101.0));

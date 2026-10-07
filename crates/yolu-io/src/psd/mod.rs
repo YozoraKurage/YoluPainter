@@ -7,11 +7,13 @@ mod composite;
 mod descriptor;
 mod import;
 mod read;
+mod verified;
 mod write;
 use crate::{check, Result};
 pub use bake::{
-    check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode, ExportNote, ExportOptions,
-    ExportPlan, Exported, FillSources, GradientExpansion, NoteAction, RoundedParameter, RoundedValue,
+    check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode,
+    ExportNote, ExportOptions, ExportPlan, Exported, FillSources, GradientExpansion, NoteAction,
+    RoundedParameter, RoundedValue,
 };
 pub use bridge::{Blocker, Refusal};
 pub use import::{
@@ -19,7 +21,32 @@ pub use import::{
     ImportDetail, ImportFeature, ImportNote, Unchecked, Verified, ADJUSTMENT_TAG_KEYS,
 };
 pub use read::{read, read_cancellable, read_stream};
-pub use write::{write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written};
+pub use verified::{
+    check_written, stage_verified, stage_with, write_verified, Commit, Staged, WriteError,
+};
+pub use write::{
+    write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Recount, Written,
+};
+
+/// PSD を読み、レイヤーを重ねた 1 枚にする（幅・高さ・straight RGBA8、上の行から）。レイヤーを持たない（読めない・原本を残すだけの）PSD は断る。
+/// 重ね方は取り込みの見本と同じ（`composite`）。取消の旗は読み込みと行ごとに見る。
+pub fn read_flattened(
+    bytes: &[u8],
+    limits: &Limits,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<(u32, u32, Vec<u8>)> {
+    let read = read_cancellable(bytes, limits, cancel)?;
+    let Some(document) = read.document() else {
+        let why = read
+            .diagnostics()
+            .iter()
+            .find(|d| !d.is_informational())
+            .map_or_else(|| "読めない PSD です".to_owned(), |d| d.message.clone());
+        return Err(crate::Error::InvalidData(why));
+    };
+    let rgba = composite::composite_cancellable(document, cancel)?;
+    Ok((document.width, document.height, rgba))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompatibilityMode {
@@ -97,8 +124,8 @@ impl Default for Limits {
 }
 impl Limits {
     /// 書き出しの上限。設定の「レイヤーのメモリ」の予算 `budget`（バイト）から決める（取り込みの `CopyOptions` と同じ考え方）:
-    /// 層の記録の数は予算 1 MiB につき 1 件（256〜32767 件。グループの区切りも数える）、キャンバス・層 1 枚の画素は予算以内（辺は PSD の上限 30000）、
-    /// ファイルは PSD の上限 2 GiB。全層の画素の合計には上限が無い（流して書くので、メモリには層 1 枚ぶんしか持たない）。メモリに全層を組む書き出し
+    /// レイヤーの記録の数は予算 1 MiB につき 1 件（256〜32767 件。グループの区切りも数える）、キャンバス・レイヤー 1 枚の画素は予算以内（辺は PSD の上限 30000）、
+    /// ファイルは PSD の上限 2 GiB。全レイヤーの画素の合計には上限が無い（流して書くので、メモリにはレイヤー 1 枚ぶんしか持たない）。メモリに全レイヤーを組む書き出し
     /// （Normal の焼き込み・平らの 1 枚）の合計だけは、書き出しの側が予算で止める。
     pub fn for_export(budget: u64) -> Self {
         Self {

@@ -23,7 +23,7 @@ fn coverage(inside: i64) -> u8 {
     ((inside * 255 + SUPERSAMPLE * SUPERSAMPLE / 2) / (SUPERSAMPLE * SUPERSAMPLE)) as u8
 }
 
-/// 小数の座標を整数へ（C# の (int) は範囲の外で未定義なので、i64 へ飽和させる。画布で切るので結果は同じ）。
+/// 小数の座標を整数へ（C# の (int) は範囲の外で未定義なので、i64 へ飽和させる。キャンバスで切るので結果は同じ）。
 #[inline]
 fn floor(v: f64) -> i64 {
     v.floor() as i64
@@ -51,7 +51,7 @@ impl SelectionMask {
         )
     }
 
-    /// 中心が [x0, x1) × [y0, y1) にある画素（画布の画素の座標、左下原点）。逆向きの角は入れ替える。
+    /// 中心が [x0, x1) × [y0, y1) にある画素（キャンバスの画素の座標、左下原点）。逆向きの角は入れ替える。
     pub fn rectangle(doc: &Document, x0: i64, y0: i64, x1: i64, y1: i64) -> SelectionMask {
         let (x0, x1) = if x1 < x0 { (x1, x0) } else { (x0, x1) };
         let (y0, y1) = if y1 < y0 { (y1, y0) } else { (y0, y1) };
@@ -107,7 +107,7 @@ impl SelectionMask {
         ))
     }
 
-    /// 縁を滑らかにした多角形（投げ縄）。偶奇の規則、画素ごとに 4 × 4 の点。点は画布の座標で、3 つ未満なら何も選ばない。
+    /// 縁を滑らかにした多角形（投げ縄）。偶奇の規則、画素ごとに 4 × 4 の点。点はキャンバスの座標で、3 つ未満なら何も選ばない。
     ///
     /// C# は点ごとに全部の辺を数えるが、ここでは点の行ごとに、その高さをまたぐ辺の交点の x（C# と同じ式の double）を並べて
     /// おき、点より右にある交点の数の偶奇を二分探索で数える（同じ数なので結果は同じ。点の多い投げ縄でも速い）。
@@ -189,9 +189,9 @@ impl SelectionMask {
         ))
     }
 
-    /// 自動選択（とバケツの範囲）: 種の画素の色から、各成分（RGBA）の差がどれも許し幅（0〜255）以下の画素。基準は層の
+    /// 自動選択（とバケツの範囲）: 種の画素の色から、各成分（RGBA）の差がどれも許し幅（0〜255）以下の画素。基準はレイヤーの
     /// そのチャンネルの画素（layer）か、チャンネルの合成（None）。contiguous なら種から 4 近傍でつながる所だけ、でなければ
-    /// 画布全体の合う画素。縁は 0 か 255。作業の場所（選んだ印・読んだタイルの合うかの印・つながるときの待ちの連の列の最悪の長さ）は
+    /// キャンバス全体の合う画素。縁は 0 か 255。作業の場所（選んだ印・読んだタイルの合うかの印・つながるときの待ちの連の列の最悪の長さ）は
     /// 確保の前に見積もり、budget を超えるなら断る（8192² で 300 MB ほど。列は画像の中身によらず最悪で見る）。
     #[allow(clippy::too_many_arguments)]
     pub fn magic_wand(
@@ -238,7 +238,9 @@ impl SelectionMask {
                 band + tile_bytes * rayon::current_num_threads() as u128,
                 budget,
             )?;
-            return Ok(match source {
+            // ディスクから読めないタイルがあれば、選択範囲を作らずに誤りを返す
+            let failed = std::sync::OnceLock::new();
+            let mask = match source {
                 Some(l) => Self::build_tiles(
                     w,
                     h,
@@ -246,7 +248,10 @@ impl SelectionMask {
                     (0, 0, w as i64, h as i64),
                     |coord, xs, ys, out| {
                         let mut bytes = vec![0u8; tile_bytes as usize];
-                        layer_tile(l, channel, w, h, ts, coord, &mut bytes);
+                        if let Err(e) = layer_tile(l, channel, w, h, ts, coord, &mut bytes) {
+                            let _ = failed.set(e);
+                            return false;
+                        }
                         let t = ts as i64;
                         let (bx, by) = (coord.x as i64 * t, coord.y as i64 * t);
                         let mut any = false;
@@ -262,8 +267,12 @@ impl SelectionMask {
                         any
                     },
                 ),
-                None => wand_composite_everywhere(doc, channel, &matches),
-            });
+                None => wand_composite_everywhere(doc, channel, &matches)?,
+            };
+            return match failed.into_inner() {
+                Some(e) => Err(e),
+                None => Ok(mask),
+            };
         }
         // 走査線の塗りつぶし: 種から 4 近傍でつながる、条件に合う画素の集まり（どの順で辿っても同じ集まりになる）。
         // 作業は、選んだ印・タイルごとの「合うか」の印・待ちの連の列（最悪の長さで見積もる。下の `max_pending_runs`）
@@ -315,7 +324,7 @@ fn pending_bytes(width: usize, height: usize) -> u128 {
 
 /// 種から 4 近傍でつながる合う画素を選ぶ。連を見つけたらその場で全体（左右の端まで）に印を付けて待ちの列へ入れ、上下の行は
 /// 取り出してから見る。印を付けた連は二度と見つからないので、どの連も 1 度しか入らず、列は max_pending_runs を超えない
-/// （入れるのは連の左端の画素の番号だけで、取り出すときに印のついた並びの右端を数え直す）。画素の番号は、画布が 32768² までなので
+/// （入れるのは連の左端の画素の番号だけで、取り出すときに印のついた並びの右端を数え直す）。画素の番号は、キャンバスが 32768² までなので
 /// u32 に収まる。
 fn fill_contiguous<F: Fn(Rgba8) -> bool>(
     reader: &Reference,
@@ -399,7 +408,7 @@ impl<F: Fn(Rgba8) -> bool> Flood<'_, F> {
     }
 }
 
-/// 自動選択の基準（層の画素か、チャンネルの合成）。
+/// 自動選択の基準（レイヤーの画素か、チャンネルの合成）。
 struct Reference<'a> {
     doc: &'a Document,
     layer: Option<&'a Layer>,
@@ -407,11 +416,11 @@ struct Reference<'a> {
 }
 
 impl Reference<'_> {
-    /// タイル 1 枚の基準の画素（TileSize² × 4、画布の外の余白は 0）。
+    /// タイル 1 枚の基準の画素（TileSize² × 4、キャンバスの外の余白は 0）。
     fn tile(&self, coord: TileCoord, out: &mut [u8]) -> Result<(), CoreError> {
         let (w, h, ts) = (self.doc.width(), self.doc.height(), self.doc.tile_size());
         match self.layer {
-            Some(l) => layer_tile(l, self.channel, w, h, ts, coord, out),
+            Some(l) => layer_tile(l, self.channel, w, h, ts, coord, out)?,
             None => {
                 let rect = self.doc.tile_rect(coord).expect("キャンバスの中のタイル");
                 let mut region = vec![0u8; rect.width as usize * rect.height as usize * 4];
@@ -436,7 +445,7 @@ impl Reference<'_> {
     }
 }
 
-/// 層そのものの画素（C# の PaintLayer.CopyTile）: ラスターは面、塗りつぶしは値（画布の中だけ）、調整・グループは無し。
+/// レイヤーそのものの画素（C# の PaintLayer.CopyTile）: ラスターは面、塗りつぶしは値（キャンバスの中だけ）、調整・グループは無し。
 fn layer_tile(
     layer: &Layer,
     channel: Channel,
@@ -445,12 +454,12 @@ fn layer_tile(
     ts: u32,
     coord: TileCoord,
     out: &mut [u8],
-) {
+) -> Result<(), CoreError> {
     out.fill(0);
     match layer.kind() {
         LayerKind::Raster => {
             if let Some(s) = layer.surface(channel) {
-                s.copy_tile(coord, out).expect("キャンバスの中のタイル");
+                s.copy_tile(coord, out)?;
             }
         }
         LayerKind::Fill => {
@@ -458,7 +467,7 @@ fn layer_tile(
                 .fill_value(channel)
                 .filter(|v| *v != Rgba8::TRANSPARENT)
             else {
-                return;
+                return Ok(());
             };
             let w = (width - coord.x * ts).min(ts) as usize;
             let h = (height - coord.y * ts).min(ts) as usize;
@@ -471,10 +480,15 @@ fn layer_tile(
         }
         LayerKind::Adjustment | LayerKind::Group => {}
     }
+    Ok(())
 }
 
 /// 合成が基準の、つながりを見ない自動選択: タイル 1 行の帯ずつ合成し（合成は中で並列）、帯の中のタイルを並列に調べる。
-fn wand_composite_everywhere<F>(doc: &Document, channel: Channel, matches: &F) -> SelectionMask
+fn wand_composite_everywhere<F>(
+    doc: &Document,
+    channel: Channel,
+    matches: &F,
+) -> Result<SelectionMask, CoreError>
 where
     F: Fn(Rgba8) -> bool + Sync,
 {
@@ -490,8 +504,7 @@ where
             Rect::new(0, y0, w, rows),
             &mut band,
             RowOrder::BottomUp,
-        )
-        .expect("キャンバスの中の帯");
+        )?;
         let tiles: Vec<(TileCoord, Option<super::Amounts>)> = (0..w.div_ceil(ts))
             .into_par_iter()
             .map(|tx| {
@@ -521,7 +534,7 @@ where
             .collect();
         map.extend(tiles.into_iter().filter_map(|(c, t)| t.map(|t| (c, t))));
     }
-    SelectionMask::from_map(w, h, ts, map)
+    Ok(SelectionMask::from_map(w, h, ts, map))
 }
 
 /// 画素ごとの印（ビットの並び）。

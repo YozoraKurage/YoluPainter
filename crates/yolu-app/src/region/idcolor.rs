@@ -3,8 +3,8 @@
 //! - 選択は、押した所の ID の色（2D はその画素、3D は当たった面の UV のテクセル）から、許し幅の中の色の画素を選択範囲にする
 //!   （core の `SelectionMask::from_id_colors`。Shift 追加・Ctrl 削除・Shift+Ctrl 交差。1 回の Undo）。ID マップが無い・古い
 //!   （大きさやモデルが今と違う）ときは何も選ばず、短い理由を出す。読むのはマップだけで、元のモデルには触れない。
-//! - 手動の ID の色は文書の状態（`Document::id_colors`。メッシュの塊の番号 → 色とモデルの指紋）。1 回の Undo。.ylp にはまだ書けない
-//!   ので、手動の色を付けた文書の保存は断られ（yolu-io）、プロパティの欄がそれを短く出す。
+//! - 手動の ID の色は文書の状態（`Document::id_colors`。メッシュの塊の番号 → 色とモデルの指紋）。1 回の Undo（色のウィンドウのドラッグは
+//!   まとめて 1 回）。.ylp には正本の版 19 の塊として書き、開き直すと戻る（yolu-io）。
 //!
 //! 焼いた ID マップは、ベイク（`bake`）がセットごとに持つメッシュマップ。使えるのは、今の条件（モデル・文書の大きさ・セットのスロット・
 //! 設定・手動の ID の色）で焼いたものだけ（`bake` の照合）。手動の ID の色を直すと、前の ID マップは「古い」になり、焼き直すと色が入る。
@@ -21,9 +21,9 @@ use yolu_core::mesh_maps::{
 use yolu_core::SelectionMask;
 
 use super::tools::{read_only_message, Hover, Where};
-use crate::selection::{combine_name, combine_of};
 use crate::lang::Lang;
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
+use crate::selection::{combine_name, combine_of};
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
 
@@ -34,6 +34,10 @@ pub enum IdColorOp {
     Set { part: usize, rgb: Option<u32> },
     /// 全部を自動に戻す。
     ResetAll,
+    /// 色のウィンドウのドラッグの途中: 部品の色をその場で変え、続くドラッグの変更と 1 回の取り消しにまとめる（知らせは出さない）。
+    Drag { part: usize, rgb: u32 },
+    /// 色のウィンドウのドラッグの終わり: まとめを切り、ドラッグで色を変えていれば 1 回だけ知らせる。
+    EndDrag,
 }
 
 /// モデルの部品（メッシュの塊）の割り当てと、そのモデルの指紋。
@@ -44,12 +48,14 @@ struct Parts {
     binding: String,
 }
 
-/// ID の道具の状態。
+/// ID のツールの状態。
 #[derive(Default)]
 pub struct IdState {
     /// 手動の ID の色を直している部品（今のセットの部品の並びの番号）。
     pub part: usize,
     parts: Option<Parts>,
+    /// 色のウィンドウのドラッグで手動の ID の色を変えた（まだ知らせていない）。そのときの履歴の段の数（捨てられていないかを見る）。
+    dragged: Option<usize>,
 }
 
 impl AppState {
@@ -174,81 +180,115 @@ impl AppState {
                 )
                 .into()),
             _ => Err(lang
-                .pick("ID マップを確かめられません", "The ID map cannot be checked")
+                .pick(
+                    "ID マップを確かめられません",
+                    "The ID map cannot be checked",
+                )
                 .into()),
         }
     }
 
-    /// 手動の ID の色を変える（1 回の Undo。断られたら理由をステータスバーへ）。
+    /// 手動の ID の色を変える（1 回の Undo。色のウィンドウのドラッグは離すまでを 1 回にまとめる。断られたら理由をステータスバーへ）。
     pub fn id_color_edit(&mut self, op: IdColorOp) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Bake, crate::lang::refusals::during_stroke(lang));
             return;
         }
-        let next = match &op {
-            IdColorOp::ResetAll => IdColorAssignments::default(),
-            IdColorOp::Set { part, rgb } => {
-                let colors = self.doc.id_colors().clone();
-                // 押して直すときは、入力を作り終えるまで待つ
-                let parts = match self.id_parts(true) {
-                    Some(Ok(p)) => p,
-                    Some(Err(m)) => {
-                        self.message = m;
-                        return;
-                    }
-                    None => return,
-                };
-                let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
-                if *part >= count {
-                    self.message = lang
-                        .pick("その部品はありません", "No such part")
-                        .into();
-                    return;
+        let drag = matches!(op, IdColorOp::Drag { .. });
+        let next = match op {
+            IdColorOp::EndDrag => {
+                self.doc.end_coalescing();
+                // まとめていた段が、押したままの Esc などで捨てられていれば（そのあとウィンドウの戻しが次のフレームに届く）、変わっていないので
+                // 知らせない（直前の「取り消しました。」を上書きしない）。段を捨てると履歴の段の数が減るので、ドラッグで入れたときの数と比べる
+                let kept = self.region.id.dragged.take() == Some(self.doc.undo_count());
+                if kept {
+                    self.info(Source::Bake, changed(lang));
                 }
-                if !colors.colors().is_empty() && colors.binding() != parts.binding {
-                    self.message = lang
-                        .pick(
-                            "手動の ID の色は別のモデルのものです",
-                            "These manual ID colors belong to another model",
-                        )
-                        .into();
-                    return;
-                }
-                if rgb.is_some_and(|c| c > 0xffffff) {
-                    return;
-                }
-                match colors.with_color(&parts.binding, *part, *rgb) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.message = e.to_string();
-                        return;
-                    }
-                }
+                return;
             }
+            IdColorOp::ResetAll => Some(IdColorAssignments::default()),
+            IdColorOp::Set { part, rgb } => self.id_color_next(part, rgb),
+            IdColorOp::Drag { part, rgb } => self.id_color_next(part, Some(rgb)),
         };
-        match self.doc.set_id_colors(next) {
+        let Some(next) = next else {
+            return;
+        };
+        match self.doc.set_id_colors(next, drag) {
             Ok(()) => {
                 self.modified = true;
                 self.region.hover = None;
-                self.message = lang
-                    .pick("手動の ID の色を変えました。", "Manual ID colors changed.")
-                    .into();
+                if drag {
+                    self.region.id.dragged = Some(self.doc.undo_count());
+                } else {
+                    self.region.id.dragged = None;
+                    self.info(Source::Bake, changed(lang));
+                }
             }
-            Err(e) => self.message = refusal_text(lang, &e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Bake,
+                lang.core_error(&e),
+            ),
+        }
+    }
+
+    /// 部品の色を `rgb`（None は自動）にした手動の ID の色。断るときは理由を出して None。
+    fn id_color_next(&mut self, part: usize, rgb: Option<u32>) -> Option<IdColorAssignments> {
+        let lang = self.lang;
+        let colors = self.doc.id_colors().clone();
+        // 押して直すときは、入力を作り終えるまで待つ
+        let parts = match self.id_parts(true)? {
+            Ok(p) => p,
+            Err(m) => {
+                self.refuse(Source::Bake, m);
+                return None;
+            }
+        };
+        let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
+        if part >= count {
+            self.refuse(
+                Source::Bake,
+                lang.pick("その部品はありません", "No such part"),
+            );
+            return None;
+        }
+        if !colors.colors().is_empty() && colors.binding() != parts.binding {
+            self.refuse(
+                Source::Bake,
+                lang.pick(
+                    "手動の ID の色は別のモデルのものです",
+                    "These manual ID colors belong to another model",
+                ),
+            );
+            return None;
+        }
+        if rgb.is_some_and(|c| c > 0xffffff) {
+            return None;
+        }
+        match colors.with_color(&parts.binding, part, rgb) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                self.fail(
+                    Source::Bake,
+                    lang.with_reason(
+                        lang.pick("ID の色を変えられません", "Cannot change the ID color"),
+                        lang.mesh_map_error(&e),
+                    ),
+                );
+                None
+            }
         }
     }
 }
 
+/// 手動の ID の色を変えた知らせ。
+fn changed(lang: Lang) -> &'static str {
+    lang.pick("手動の ID の色を変えました。", "Manual ID colors changed.")
+}
+
 /// ポインタの下の ID の色。取れなければ理由。
-fn color_under(
-    app: &mut AppState,
-    w: Where,
-    at: Pos2,
-    map: &BakedMeshMap,
-) -> Result<u32, String> {
+fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Result<u32, String> {
     let lang = app.lang;
     let none = |s: &'static str, e: &'static str| lang.pick(s, e).to_owned();
     match w {
@@ -266,10 +306,7 @@ fn color_under(
             };
             if hit.material != material {
                 let name = model.material_name(hit.material as usize, lang);
-                return Err(format!(
-                    "{}: {name}",
-                    lang.pick("ほかのテクスチャセットの面です", "Another texture set's face")
-                ));
+                return Err(super::tools::other_set_face(lang, &name));
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
                 Ok(Some(rgb)) => Ok(rgb),
@@ -286,10 +323,7 @@ fn color_under(
             }
             match try_get(map, x.floor() as i64, y.floor() as i64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none(
-                    "そこには部品がありません",
-                    "No part there",
-                )),
+                _ => Err(none("そこには部品がありません", "No part there")),
             }
         }
     }
@@ -300,20 +334,20 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
     // 読むだけのセットは選択範囲も変えない（変えても、Undo が読むだけのセットで断られて戻せない）
     if let Some(message) = read_only_message(app) {
-        app.message = message;
+        app.refuse(Source::Selection, message);
         return;
     }
     let map = match app.usable_id_map_waiting() {
         Ok(m) => m,
         Err(reason) => {
-            app.message = reason;
+            app.refuse(Source::Selection, reason);
             return;
         }
     };
     let rgb = match color_under(app, w, at, &map) {
         Ok(c) => c,
         Err(reason) => {
-            app.message = reason;
+            app.refuse(Source::Selection, reason);
             return;
         }
     };
@@ -322,32 +356,43 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         return;
     }
     let tolerance = app.region.id_tolerance;
-    // 組み合わせ方は選択の道具と同じ（キーの修飾が無ければ、オプションバーで選んだ方）
+    // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
     let mode = combine_of(app.sel.combine, app.region.modifiers);
     let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {
-            app.message = refusal_text(lang, &e);
+            app.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Selection,
+                lang.core_error(&e),
+            );
             return;
         }
     };
     if let Err(e) = app.doc.combine_selection(&mask, mode) {
-        app.message = refusal_text(lang, &e);
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Selection,
+            lang.core_error(&e),
+        );
         return;
     }
     app.modified = true;
-    app.message = if app.doc.selection().is_none() {
-        lang.pick("何も選択されていません。", "Nothing selected.")
-            .into()
-    } else {
-        format!(
-            "{} {} ± {} ({})",
-            lang.pick("ID の色", "ID color"),
-            hex(rgb),
-            tolerance,
-            combine_name(lang, mode)
-        )
-    };
+    app.info(
+        Source::Selection,
+        if app.doc.selection().is_none() {
+            lang.pick("何も選択されていません。", "Nothing selected.")
+                .into()
+        } else {
+            format!(
+                "{} {} ± {} ({})",
+                lang.pick("ID の色", "ID color"),
+                hex(rgb),
+                tolerance,
+                combine_name(lang, mode)
+            )
+        },
+    );
 }
 
 /// ID の色で選択の強調: ポインタの下の色のマップの部分を含む今のセットの三角形（三角形の中心の UV のテクセルが許し幅の中のもの）。

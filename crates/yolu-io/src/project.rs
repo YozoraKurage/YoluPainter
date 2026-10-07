@@ -175,7 +175,10 @@ impl std::fmt::Display for Note {
                 write!(f, "形式{format}を形式7の並びへメモリ上で移行しました")
             }
             Self::MaterialRefsMigrated { format } => {
-                write!(f, "形式{format}のマテリアル参照を形式7へメモリ上で移行しました")
+                write!(
+                    f,
+                    "形式{format}のマテリアル参照を形式7へメモリ上で移行しました"
+                )
             }
             Self::UnknownEntryKept(name) => {
                 write!(f, "未対応のエントリを原本のまま保持します: {name}")
@@ -464,7 +467,8 @@ impl Project {
         };
         let mut files = self.original.files.clone();
         remove_document_entries(&mut files, &prefix);
-        let (fresh, entries) = SetDocument::from_source(&DocumentSource::Native(doc.clone()), &prefix)?;
+        let (fresh, entries) =
+            SetDocument::from_source(&DocumentSource::Native(doc.clone()), &prefix)?;
         files.extend(entries);
         self.rebuild(files, self.original.level, &[fresh])
     }
@@ -493,13 +497,20 @@ impl Project {
     }
     /// セットの、名前を付けて残した選択範囲（`sets/<ID>/selections.json` と `selection-<SHA-256>.bin`。形式 8）。読めない項目は飛ばして
     /// 理由を `skipped` に返し（ファイルにはバイト列のまま残る）、読める項目だけを `items` に返す。何も無ければ空。セットが無ければ断る。
-    pub fn saved_selections(&self, set_id: &str) -> Result<crate::saved_selections::SavedSelections> {
+    pub fn saved_selections(
+        &self,
+        set_id: &str,
+    ) -> Result<crate::saved_selections::SavedSelections> {
         let set = self
             .sets
             .iter()
             .find(|s| s.id == set_id)
             .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
-        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        let size = (
+            set.document.width(),
+            set.document.height(),
+            set.document.tile_size(),
+        );
         let prefix = format!("sets/{set_id}/");
         Ok(crate::saved_selections::read(
             &|leaf| self.files.get(&format!("{prefix}{leaf}")).map(Blob::bytes),
@@ -523,13 +534,18 @@ impl Project {
             .iter()
             .find(|s| s.id == set_id)
             .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
-        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        let size = (
+            set.document.width(),
+            set.document.height(),
+            set.document.tile_size(),
+        );
         crate::saved_selections::validate(items, size)?;
         let prefix = format!("sets/{set_id}/");
         let mut files = self.original.files.clone();
         files.retain(|n, _| {
-            n.strip_prefix(&prefix)
-                .is_none_or(|leaf| leaf.contains('/') || !crate::saved_selections::is_entry_leaf(leaf))
+            n.strip_prefix(&prefix).is_none_or(|leaf| {
+                leaf.contains('/') || !crate::saved_selections::is_entry_leaf(leaf)
+            })
         });
         for (leaf, blob) in crate::saved_selections::entries(items)? {
             files.insert(format!("{prefix}{leaf}"), blob);
@@ -553,10 +569,41 @@ impl Project {
         let mut files = self.original.files.clone();
         match pose {
             Some(p) => {
-                files.insert(crate::pose::ENTRY.into(), Blob::from(crate::pose::write(p)?));
+                files.insert(
+                    crate::pose::ENTRY.into(),
+                    Blob::from(crate::pose::write(p)?),
+                );
             }
             None => {
                 files.remove(crate::pose::ENTRY);
+            }
+        }
+        self.rebuild(files, self.original.level, &[])
+    }
+    /// Live Link の相手の文書（根の `livelink.json`。状態のエントリ）のバイト列。無ければ None。形の確かめ（大きさ・オブジェクト・版）に
+    /// 合わないものはエラーを返し、エントリはバイト列のまま残る。
+    pub fn livelink(&self) -> Result<Option<Vec<u8>>> {
+        let Some(blob) = self.files.get(crate::livelink::ENTRY) else {
+            return Ok(None);
+        };
+        let bytes = blob.bytes()?.to_vec();
+        crate::livelink::validate(&bytes)?;
+        Ok(Some(bytes))
+    }
+    /// 根の `livelink.json` だけを置き換える（None はエントリを消す）。形式 7 以上だけ。形式も正本の版も変えない。
+    pub fn with_livelink(&self, bytes: Option<&[u8]>) -> Result<Self> {
+        check(
+            self.is_current(),
+            "Live Link の記録を書く前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        match bytes {
+            Some(b) => {
+                crate::livelink::validate(b)?;
+                files.insert(crate::livelink::ENTRY.into(), Blob::from(b.to_vec()));
+            }
+            None => {
+                files.remove(crate::livelink::ENTRY);
             }
         }
         self.rebuild(files, self.original.level, &[])
@@ -877,7 +924,9 @@ impl Project {
             }
             let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
             files.insert("project.json".into(), Blob::from(project.into_bytes()));
-            notes.push(Note::Migrated { format: info.format });
+            notes.push(Note::Migrated {
+                format: info.format,
+            });
         }
         let mut root = json(&required(&files, "project.json")?, 65536)?;
         if info.format < 7 {
@@ -894,8 +943,13 @@ impl Project {
                     .ok_or_else(|| Error::InvalidData("セットがオブジェクトではありません".into()))?
                     .remove("materialSlot");
             }
-            files.insert("project.json".into(), Blob::from(serde_json::to_vec(&root)?));
-            notes.push(Note::MaterialRefsMigrated { format: info.format });
+            files.insert(
+                "project.json".into(),
+                Blob::from(serde_json::to_vec(&root)?),
+            );
+            notes.push(Note::MaterialRefsMigrated {
+                format: info.format,
+            });
         }
         let list = array(&root, "sets", 1, MAX_PROJECT_SETS)?;
         let current = id_text(&root, "current")?.to_string();
@@ -1090,8 +1144,8 @@ fn set_document(
     SetDocument::stored(header.clone(), parts)
 }
 /// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリ」の表）と同じ一覧で、
-/// `tests/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
-pub const ROOT_ENTRIES: [&str; 8] = [
+/// `tests/ylp/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
+pub const ROOT_ENTRIES: [&str; 9] = [
     "ylp.json",
     "project.json",
     "resources.json",
@@ -1100,6 +1154,7 @@ pub const ROOT_ENTRIES: [&str; 8] = [
     "brush.json",
     "thumbnail.png",
     "model.json",
+    crate::livelink::ENTRY,
 ];
 /// 棚の中身のエントリの形（`resources.json` の並びにあるもの。`<content>` は中身のハッシュ）。
 pub const RESOURCE_ENTRIES: [&str; 3] = [
@@ -1177,10 +1232,14 @@ fn settle_format(files: &mut Files) -> Result<()> {
     if !(7..=i64::from(MAX_FORMAT)).contains(&format) {
         return Ok(());
     }
-    let uses = files
-        .keys()
-        .any(|n| split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf)));
-    let want = if uses { i64::from(SAVED_SELECTIONS_FORMAT) } else { 7 };
+    let uses = files.keys().any(|n| {
+        split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf))
+    });
+    let want = if uses {
+        i64::from(SAVED_SELECTIONS_FORMAT)
+    } else {
+        7
+    };
     if format != want {
         info["format"] = Value::from(want);
         files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
@@ -1367,7 +1426,7 @@ pub(crate) fn load_resources(
                         number(&info, "width", 1, 8192)? == d.width() as i64
                             && number(&info, "height", 1, 8192)? == d.height() as i64
                             && number(&info, "layers", 1, 2048)? == d.layer_count() as i64,
-                        "スマートリソースの寸法・層数が一致しません",
+                        "スマートリソースの寸法・レイヤー数が一致しません",
                     )?;
                     validate_smart(&info, &d)?;
                     load_resources(&a.files, budget, depth + 1, notes)?;
@@ -1475,7 +1534,10 @@ pub(crate) fn image_inputs_of<'a>(
             budget
                 .checked_add(w as usize * h as usize * 4)
                 .is_some_and(|total| total <= limit),
-            format!("画像「{name}」: 復号した画像の{} MiB予算超過です", limit >> 20),
+            format!(
+                "画像「{name}」: 復号した画像の{} MiB予算超過です",
+                limit >> 20
+            ),
         )?;
         let top_down = png_pixels(&bytes, w, h, &mut budget)
             .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
@@ -1555,7 +1617,9 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<Note>) -> Re
                 tips += 1;
             }
             let d = png::Decoder::new(Cursor::new(b.as_ref()));
-            let r = d.read_info().map_err(|e| Error::InvalidData(e.to_string()))?;
+            let r = d
+                .read_info()
+                .map_err(|e| Error::InvalidData(e.to_string()))?;
             let (w, h) = (r.info().width, r.info().height);
             check(
                 (1..=2048).contains(&w) && (1..=2048).contains(&h),
@@ -1672,7 +1736,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
                 && d.field("layers[0].has_mask") == Some(&NativeValue::Bool(true))
                 && d.field("layers[0].filters.count")
                     .is_none_or(|v| *v == NativeValue::Int(0)),
-            "スマートマスクは値を持たない塗りつぶし1層とマスクが必要です",
+            "スマートマスクは値を持たない塗りつぶし 1 レイヤーとマスクが必要です",
         )?;
     }
     let mut enabled = HashSet::new();

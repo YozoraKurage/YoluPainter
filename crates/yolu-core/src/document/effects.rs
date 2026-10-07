@@ -2,7 +2,7 @@
 //! （C# の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` の編集の口）。
 //!
 //! どれも 1 回の Undo で、断ったら何も変えない。スライダーのドラッグ（強さ・設定・投影・グラデーション）はまとめられる。
-//! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（その層が出す所を作り直させる）まで。
+//! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（そのレイヤーが出す所を作り直させる）まで。
 
 use std::collections::BTreeMap;
 
@@ -15,6 +15,7 @@ use crate::effects::{
 };
 use crate::error::CoreError;
 use crate::fill_image::{ImageMipChain, Projection, ProjectionMode};
+use crate::fill_points::{PointGradient, PointSpace};
 use crate::filter::{self, ValueType};
 use crate::generator::{self, anchor};
 use crate::layer::{Layer, LayerId};
@@ -27,7 +28,10 @@ pub(crate) struct FillChannelState {
     pub value: Option<Rgba8>,
     pub enabled: bool,
     pub image: Option<ImageId>,
+    /// 画像を異方性のフィルターで読むか（画像の無いチャンネルは既定の true）。
+    pub anisotropic: bool,
     pub gradient: Option<generator::Settings>,
+    pub points: Option<PointGradient>,
 }
 
 impl FillChannelState {
@@ -36,7 +40,9 @@ impl FillChannelState {
             value: layer.fill.get(&channel).copied(),
             enabled: layer.is_channel_enabled(channel),
             image: layer.fill_images.get(&channel).copied(),
+            anisotropic: layer.fill_anisotropic(channel),
             gradient: layer.fill_gradients.get(&channel).cloned(),
+            points: layer.fill_points.get(&channel).cloned(),
         }
     }
     fn put(&self, layer: &mut Layer, channel: Channel) {
@@ -47,6 +53,16 @@ impl FillChannelState {
         match self.image {
             Some(i) => layer.fill_images.insert(channel, i),
             None => layer.fill_images.remove(&channel),
+        };
+        // 画像の読み方は画像と一緒にだけ持つ（画像の無いチャンネルは既定）
+        if self.anisotropic || self.image.is_none() {
+            layer.fill_isotropic.remove(&channel);
+        } else {
+            layer.fill_isotropic.insert(channel);
+        }
+        match &self.points {
+            Some(g) => layer.fill_points.insert(channel, g.clone()),
+            None => layer.fill_points.remove(&channel),
         };
         match &self.gradient {
             Some(g) => layer.fill_gradients.insert(channel, g.clone()),
@@ -66,7 +82,7 @@ pub(crate) fn default_fill_fallback(kind: ChannelKind) -> Rgba8 {
 }
 
 /// 段の設定が使うブロックの作業バイト数の見積もり用の段の並び。
-fn stages_of(chain: &[&FilterEffect]) -> Vec<filter::Stage> {
+pub(super) fn stages_of(chain: &[&FilterEffect]) -> Vec<filter::Stage> {
     chain
         .iter()
         .map(|e| {
@@ -102,7 +118,7 @@ pub(crate) fn generator_blend(b: generator::Blend) -> filter::GeneratorBlend {
 impl Document {
     // ───────── 参照 ─────────
 
-    /// ID の段と、それがある層・スタック（内容・マスクの順に探す）。
+    /// ID の段と、それがあるレイヤー・スタック（内容・マスクの順に探す）。
     pub fn find_filter(&self, id: FilterId) -> Option<(LayerId, &FilterEffect, FilterTarget)> {
         for l in &self.layers {
             if let Some(e) = l.filters.iter().find(|e| e.id == id) {
@@ -119,7 +135,7 @@ impl Document {
         None
     }
 
-    /// 層の、そのスタック（内容・マスク）の段。マスクのスタックはマスクが無ければ空。
+    /// レイヤーの、そのスタック（内容・マスク）の段。マスクのスタックはマスクが無ければ空。
     pub fn filters_of(
         &self,
         layer: LayerId,
@@ -144,7 +160,7 @@ impl Document {
                 .mask
                 .as_ref()
                 .map(|m| &m.filters)
-                .ok_or(CoreError::Unsupported("層にマスクが無い")),
+                .ok_or(CoreError::Unsupported("レイヤーにマスクが無い")),
         }
     }
 
@@ -170,7 +186,7 @@ impl Document {
     // ───────── 写し ─────────
 
     /// 結合の結果へ写した、残すマスクの段に新しい ID を付ける（C# の `CloneMask` は段に新しい ID を付ける。マスクの Anchor は同じものを
-    /// 保つので触らない）。段の ID を持つ層は文書に無いまま、`self`（準備用の文書）の数で決める。
+    /// 保つので触らない）。段の ID を持つレイヤーは文書に無いまま、`self`（準備用の文書）の数で決める。
     pub(super) fn renew_kept_mask_filter_ids(&mut self, result: &mut Layer) {
         if let Some(m) = &mut result.mask {
             for e in &mut m.filters {
@@ -179,8 +195,8 @@ impl Document {
         }
     }
 
-    /// 層の写し（まだ文書に入れていない）の段・Anchor に新しい ID を付ける。写しの中の Anchor を読む段は写しの Anchor を読む（外の Anchor
-    /// への参照はそのまま）。層を写す操作（複製・グループの写し）が、写しを文書へ入れる前に呼ぶ。
+    /// レイヤーの写し（まだ文書に入れていない）の段・Anchor に新しい ID を付ける。写しの中の Anchor を読む段は写しの Anchor を読む（外の Anchor
+    /// への参照はそのまま）。レイヤーを写す操作（複製・グループの写し）が、写しを文書へ入れる前に呼ぶ。
     pub(super) fn renew_effect_ids(&mut self, copies: &mut [Layer]) {
         let mut anchors: std::collections::HashMap<u128, u128> = std::collections::HashMap::new();
         for l in copies.iter_mut() {
@@ -191,7 +207,7 @@ impl Document {
             for stack in stacks {
                 for e in stack.iter_mut() {
                     e.id = self.new_filter_id();
-                    // 次の ID が同じにならないよう、この段の ID を持つ層は文書に無いので、数の進みで分ける（new_filter_id は進める）
+                    // 次の ID が同じにならないよう、この段の ID を持つレイヤーは文書に無いので、数の進みで分ける（new_filter_id は進める）
                 }
             }
             let mut renew = |a: &mut Option<Anchor>| {
@@ -205,15 +221,17 @@ impl Document {
             if let Some(m) = &mut l.mask {
                 renew(&mut m.anchor);
             }
-            // パスにも新しい ID（C# の複製と同じ）
-            let new_path_id = match &l.path {
-                Some(_) => Some(super::random_id(self.id_counter.wrapping_add(0x5041_5448))),
-                None => None,
-            };
-            match (&mut l.path, new_path_id) {
-                (Some(crate::effects::LayerPath::Canvas(p)), Some(id)) => p.id = id,
-                (Some(crate::effects::LayerPath::Surface(p)), Some(id)) => p.id = id,
-                _ => {}
+            // パスにも新しい ID（C# の複製と同じ。一覧のパスごとに別の ID）
+            for (k, e) in l.paths.iter_mut().enumerate() {
+                let id = super::random_id(
+                    self.id_counter
+                        .wrapping_add(0x5041_5448)
+                        .wrapping_add(k as u64),
+                );
+                match &mut e.path {
+                    crate::effects::LayerPath::Canvas(p) => p.id = id,
+                    crate::effects::LayerPath::Surface(p) => p.id = id,
+                }
             }
         }
         if anchors.is_empty() {
@@ -237,7 +255,7 @@ impl Document {
         }
     }
 
-    /// 大きさを変えて写した層（画素の大きさを変える操作の結果）の、ぼかし・シャープの半径を倍率に合わせる（C# の `Resampled` と同じ:
+    /// 大きさを変えて写したレイヤー（画素の大きさを変える操作の結果）の、ぼかし・シャープの半径を倍率に合わせる（C# の `Resampled` と同じ:
     /// 半径 × 倍率を 0 から遠い向きへ丸め、1 以上・段の最大以下。変えたものは理由を返す）。段の ID・並び・有効・強さ・チャンネルは
     /// そのまま。縦横の倍率が違うときは、呼び手が幾何平均を渡す。
     pub(crate) fn scale_effect_radii(layers: &mut [Layer], scale: f64) -> Vec<String> {
@@ -258,9 +276,54 @@ impl Document {
                     let EffectSettings::Filter(f) = &mut e.settings else {
                         continue;
                     };
+                    // 0.5.0 の段の実数の長さ（画素）とノイズの大きさは、倍率を掛けて範囲へ収める
+                    let mut real = |v: &mut f64, range: std::ops::RangeInclusive<f64>| {
+                        let wanted = *v * scale;
+                        let fitted = wanted.clamp(*range.start(), *range.end());
+                        if fitted != wanted {
+                            notes.push(format!(
+                                "「{owner}」の{label}: {} → {fitted} 画素（範囲の端。見た目を保つには {wanted:.1} 画素）",
+                                *v
+                            ));
+                        }
+                        *v = fitted;
+                    };
                     let (radius, max) = match f {
                         filter::Settings::GaussianBlur { radius } => (radius, 256u32),
                         filter::Settings::Sharpen { radius, .. } => (radius, 64u32),
+                        filter::Settings::Morphology { radius, .. } => {
+                            (radius, *crate::ranges::MORPHOLOGY_RADIUS.end())
+                        }
+                        filter::Settings::EdgeDetect { width, .. } => {
+                            (width, *crate::ranges::EDGE_WIDTH.end())
+                        }
+                        filter::Settings::HighPass { radius } => {
+                            (radius, *crate::ranges::HIGH_PASS_RADIUS.end())
+                        }
+                        filter::Settings::Median { radius } => {
+                            (radius, *crate::ranges::MEDIAN_RADIUS.end())
+                        }
+                        filter::Settings::Glow { radius, .. } => {
+                            (radius, *crate::ranges::GLOW_RADIUS.end())
+                        }
+                        filter::Settings::SlopeBlur {
+                            intensity, scale, ..
+                        } => {
+                            real(intensity, crate::ranges::SLOPE_INTENSITY);
+                            real(scale, crate::ranges::FILTER_NOISE_SCALE);
+                            continue;
+                        }
+                        filter::Settings::DirectionalBlur { distance, .. } => {
+                            real(distance, crate::ranges::DIRECTIONAL_DISTANCE);
+                            continue;
+                        }
+                        filter::Settings::Warp {
+                            intensity, scale, ..
+                        } => {
+                            real(intensity, crate::ranges::WARP_INTENSITY);
+                            real(scale, crate::ranges::FILTER_NOISE_SCALE);
+                            continue;
+                        }
                         _ => continue,
                     };
                     let wanted = f64::from(*radius) * scale;
@@ -287,7 +350,7 @@ impl Document {
         notes
     }
 
-    /// 文書へ入れる前の層（読み込み・スマートマテリアルの配置など）の段が、今の文書の決まり（段の数・到達半径・作業メモリ・
+    /// 文書へ入れる前のレイヤー（読み込み・スマートマテリアルの配置など）の段が、今の文書の決まり（段の数・到達半径・作業メモリ・
     /// ID の重ならなさ・標準のチャンネル）に収まるか。収まらなければ何も変えずに断る。
     pub(crate) fn check_layer_effects(&self, layers: &[Layer]) -> Result<(), CoreError> {
         let mut seen = std::collections::HashSet::new();
@@ -307,8 +370,8 @@ impl Document {
         self.check_layer_stacks(layers)
     }
 
-    /// 層の段が、今の文書の大きさ・予算で収まるか（標準のチャンネル・段の数・到達半径・作業メモリ）。ID は見ない。大きさを変えた写しの
-    /// 検査にも使う（同じ ID の層が文書の中にあってよい）。
+    /// レイヤーの段が、今の文書の大きさ・予算で収まるか（標準のチャンネル・段の数・到達半径・作業メモリ）。ID は見ない。大きさを変えた写しの
+    /// 検査にも使う（同じ ID のレイヤーが文書の中にあってよい）。
     pub(crate) fn check_layer_stacks(&self, layers: &[Layer]) -> Result<(), CoreError> {
         for l in layers {
             for c in l.filters.iter().flat_map(|e| e.channels.iter()) {
@@ -324,7 +387,7 @@ impl Document {
 
     // ───────── フィルターのスタックの編集 ─────────
 
-    /// 段を足せない理由（足せるなら Ok）。内容のスタックは層の種類（調整・グループにはかけられない）と、設定を受け付けるチャンネル、
+    /// 段を足せない理由（足せるなら Ok）。内容のスタックはレイヤーの種類（調整・グループにはかけられない）と、設定を受け付けるチャンネル、
     /// マスクのスタックはマスクがあることと、設定が 1 つのスカラーに使えること。
     pub fn filter_refusal(
         &self,
@@ -349,13 +412,13 @@ impl Document {
 
     fn content_kind_refusal(layer: &Layer) -> Result<(), CoreError> {
         match layer.kind {
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整の層には画素が無い")),
+            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには画素が無い")),
             LayerKind::Group => Err(CoreError::Unsupported("グループの合成へのフィルターは無い")),
             _ => Ok(()),
         }
     }
 
-    /// 層のスタックの上（既定）か `spec.index` へ段を足す（1 回の Undo）。内容のスタックは適用するチャンネルを選ぶ
+    /// レイヤーのスタックの上（既定）か `spec.index` へ段を足す（1 回の Undo）。内容のスタックは適用するチャンネルを選ぶ
     /// （指定が無ければ設定を受け付ける標準のチャンネル全部）。段の数・到達半径・作業メモリの上限を超えるなら断る。
     pub fn add_filter(
         &mut self,
@@ -609,7 +672,7 @@ impl Document {
         {
             return Ok((index, FilterTarget::Mask, at));
         }
-        Err(CoreError::Unsupported("その層にそのフィルターが無い"))
+        Err(CoreError::Unsupported("そのレイヤーにそのフィルターが無い"))
     }
 
     /// スタックの検査（段の数・到達半径・ブロックの作業メモリ）。チャンネルごと・マスクの有効な段の並びで見る。
@@ -660,16 +723,28 @@ impl Document {
     fn block_need_with(&self, chain: &[&FilterEffect], block: u32) -> Result<u64, CoreError> {
         let side = (block / self.tile_size).max(1) * self.tile_size;
         let (w, h) = (side.min(self.width), side.min(self.height));
-        let working =
-            filter::block_working_bytes(&stages_of(chain), block, self.width, self.height)
-                .map_err(|e| match e {
-                    filter::Error::Invalid(why) => CoreError::InvalidArgument(why),
-                    _ => CoreError::WorkingBudgetExceeded,
-                })?;
+        let stages = stages_of(chain);
+        let mut working = filter::block_working_bytes(&stages, block, self.width, self.height)
+            .map_err(|e| match e {
+                filter::Error::Invalid(why) => CoreError::InvalidArgument(why),
+                _ => CoreError::WorkingBudgetExceeded,
+            })?;
+        // 継ぎ目をまたいで評価するなら、その分も（`filter::evaluate` が足すのと同じ見積り）
+        if self.seam_shape(chain.iter().map(|e| e.settings.halo())).0 > 0 {
+            // 帯の写しを作る前なので、帯のテクセルの数は分からない（最悪: 入力の画素ぜんぶ）。評価（`filter::evaluate`）は帯の写しの実際の数で
+            // 見積もるので、これより小さい
+            working = working.saturating_add(filter::seam_working_bytes(
+                &stages,
+                block,
+                self.width,
+                self.height,
+                u64::MAX,
+            ));
+        }
         Ok(working.saturating_add(u64::from(w) * u64::from(h) * 4))
     }
 
-    /// 新しいスタックを検査して、1 つの Undo として入れ替える。層が出す所（前・後）を作り直させる。
+    /// 新しいスタックを検査して、1 つの Undo として入れ替える。レイヤーが出す所（前・後）を作り直させる。
     fn execute_stack(
         &mut self,
         index: usize,
@@ -710,7 +785,7 @@ impl Document {
         )
     }
 
-    /// 段の入れ替え（Undo・Redo・最初の実行）。前後の層が出す所に印を付ける。
+    /// 段の入れ替え（Undo・Redo・最初の実行）。前後のレイヤーが出す所に印を付ける。
     pub(super) fn switch_stack(
         &mut self,
         id: LayerId,
@@ -725,7 +800,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("層にマスクが無い"))?
+                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
                     .filters = stack.to_vec()
             }
         }
@@ -736,7 +811,7 @@ impl Document {
 
     // ───────── Anchor ─────────
 
-    /// 層の Anchor（下から上。層の Anchor、次にそのマスクの Anchor）。
+    /// レイヤーの Anchor（下から上。レイヤーの Anchor、次にそのマスクの Anchor）。
     pub fn anchors(&self) -> Vec<AnchorInfo<'_>> {
         let mut v = Vec::new();
         for l in &self.layers {
@@ -762,8 +837,8 @@ impl Document {
         self.anchors().into_iter().find(|a| a.anchor.id == id)
     }
 
-    /// 層（またはそのマスク）に Anchor を置く（1 回の Undo）。層ごとに、置き場ごとに 1 つまで。マスクの Anchor はマスクが要る。
-    /// 名前の既定は層の名前（マスクは「（マスク）」を付ける）。
+    /// レイヤー（またはそのマスク）に Anchor を置く（1 回の Undo）。レイヤーごとに、置き場ごとに 1 つまで。マスクの Anchor はマスクが要る。
+    /// 名前の既定はレイヤーの名前（マスクは「（マスク）」を付ける）。
     pub fn add_anchor(
         &mut self,
         layer: LayerId,
@@ -777,7 +852,7 @@ impl Document {
         match placement {
             AnchorPlacement::Mask => {
                 let m = l.mask.as_ref().ok_or(CoreError::Unsupported(
-                    "マスクの無い層のマスクには Anchor を置けない",
+                    "マスクの無いレイヤーのマスクには Anchor を置けない",
                 ))?;
                 if m.anchor.is_some() {
                     return Err(CoreError::Unsupported("このマスクにはもう Anchor がある"));
@@ -785,7 +860,7 @@ impl Document {
             }
             AnchorPlacement::Layer => {
                 if l.anchor.is_some() {
-                    return Err(CoreError::Unsupported("この層にはもう Anchor がある"));
+                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
                 }
             }
         }
@@ -885,7 +960,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("層にマスクが無い"))?
+                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
                     .anchor = value.cloned()
             }
         }
@@ -893,7 +968,7 @@ impl Document {
         Ok(())
     }
 
-    /// 層の上の Generator が読める Anchor かの確かめ（読めるなら None）。選ばない（None）は断らない。
+    /// レイヤーの上の Generator が読める Anchor かの確かめ（読めるなら None）。選ばない（None）は断らない。
     pub fn anchor_reference_refusal(
         &self,
         layer: LayerId,
@@ -914,7 +989,7 @@ impl Document {
         )
     }
 
-    /// 層の Generator が読める Anchor（その層より下にあるもの）。
+    /// レイヤーの Generator が読める Anchor（そのレイヤーより下にあるもの）。
     pub fn anchors_readable_from(&self, layer: LayerId) -> Result<Vec<AnchorInfo<'_>>, CoreError> {
         self.index_of(layer)?;
         let mut v = Vec::new();
@@ -956,7 +1031,7 @@ impl Document {
         if let Some(why) = self.anchor_reference_refusal(layer, anchor)? {
             return Err(CoreError::Unsupported(match why {
                 AnchorIssueKind::NotBelow => {
-                    "Anchor が層より下に無い（自分の層の Anchor は読めない）"
+                    "Anchor がレイヤーより下に無い（自分のレイヤーの Anchor は読めない）"
                 }
                 _ => "その Anchor が無い",
             }));
@@ -970,7 +1045,7 @@ impl Document {
         self.set_filter_settings(layer, filter, EffectSettings::generator(next), coalesce)
     }
 
-    /// 入力のまま通している Anchor の Generator（読む Anchor を選んでいない・無い・層より下に無い）。下から上の順。
+    /// 入力のまま通している Anchor の Generator（読む Anchor を選んでいない・無い・レイヤーより下に無い）。下から上の順。
     pub fn anchor_issues(&self) -> Vec<AnchorIssue> {
         let points = self.anchor_points();
         let mut v = Vec::new();
@@ -1009,7 +1084,7 @@ impl Document {
         v
     }
 
-    /// 文書の Anchor を、評価器の点（層の番号と置き場）の並びにする。
+    /// 文書の Anchor を、評価器の点（レイヤーの番号と置き場）の並びにする。
     pub(crate) fn anchor_points(&self) -> Vec<anchor::Point> {
         let mut v = Vec::new();
         for (i, l) in self.layers.iter().enumerate() {
@@ -1031,7 +1106,7 @@ impl Document {
         v
     }
 
-    /// 読み込み用: 履歴なしで層・マスクに Anchor を置く（検査は編集と同じ。読み込みなので履歴を消す）。
+    /// 読み込み用: 履歴なしでレイヤー・マスクに Anchor を置く（検査は編集と同じ。読み込みなので履歴を消す）。
     pub fn set_anchor_for_load(
         &mut self,
         layer: LayerId,
@@ -1054,7 +1129,7 @@ impl Document {
         match placement {
             AnchorPlacement::Layer => {
                 if self.layers[index].anchor.is_some() {
-                    return Err(CoreError::Unsupported("この層にはもう Anchor がある"));
+                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
                 }
                 self.layers[index].anchor = Some(anchor);
             }
@@ -1073,7 +1148,7 @@ impl Document {
         Ok(())
     }
 
-    /// 読み込みの最後に: 自分の層の Anchor を読む段（値が自分に戻る参照。どの編集でも作れない）があれば断る。消えた Anchor・上の層の
+    /// 読み込みの最後に: 自分のレイヤーの Anchor を読む段（値が自分に戻る参照。どの編集でも作れない）があれば断る。消えた Anchor・上のレイヤーの
     /// Anchor を指す参照は、保存されたまま読み込む（入力のまま通し、保存しても参照は残る）。
     pub fn check_anchor_references_for_load(&self) -> Result<(), CoreError> {
         let points = self.anchor_points();
@@ -1089,7 +1164,7 @@ impl Document {
                             if let Some(p) = points.iter().find(|p| p.id == g.anchor.id) {
                                 if p.host == i && g.anchor.id != 0 {
                                     return Err(CoreError::InvalidArgument(
-                                        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）",
+                                        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）",
                                     ));
                                 }
                             }
@@ -1106,7 +1181,7 @@ impl Document {
     fn fill_layer_index(&self, layer: LayerId) -> Result<usize, CoreError> {
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported("塗りつぶしの層だけが持つ"));
+            return Err(CoreError::Unsupported("塗りつぶしレイヤーだけが持つ"));
         }
         Ok(index)
     }
@@ -1148,8 +1223,13 @@ impl Document {
         self.ensure_pixels_rewritable(layer)?;
         let mut new = old.clone();
         new.image = image;
+        if image.is_none() {
+            // 画像の読み方は画像と一緒に保存する（画像の無いチャンネルは既定に戻す）
+            new.anisotropic = true;
+        }
         if image.is_some() {
             new.gradient = None;
+            new.points = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1166,7 +1246,59 @@ impl Document {
         )
     }
 
-    /// 塗りつぶしの投影（層で 1 つ。UV・トライプラナー・平面・球・円柱・デカール）を置き換える（1 回の Undo。coalesce ならドラッグをまとめる）。
+    /// 塗りつぶしのチャンネルの画像を異方性のフィルターで読むか（1 回の Undo）。画像の無いチャンネルは断る。
+    pub fn set_fill_anisotropic(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        anisotropic: bool,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        require_standard(channel)?;
+        let index = self.fill_layer_index(layer)?;
+        let old = FillChannelState::of(&self.layers[index], channel);
+        if old.image.is_none() {
+            return Err(CoreError::InvalidArgument("画像の無いチャンネル"));
+        }
+        if old.anisotropic == anisotropic {
+            return Ok(());
+        }
+        self.ensure_pixels_rewritable(layer)?;
+        let mut new = old.clone();
+        new.anisotropic = anisotropic;
+        self.execute(
+            Command::FillChannel {
+                id: layer,
+                channel,
+                old: Box::new(old),
+                new: Box::new(new),
+            },
+            96,
+        )
+    }
+
+    /// 読み込み用: 履歴なしで、塗りつぶしの画像を異方性のフィルターなしで読むチャンネルを置く（画像のあるチャンネルだけ）。
+    pub fn set_fill_isotropic_for_load(
+        &mut self,
+        layer: LayerId,
+        channels: &[Channel],
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.fill_layer_index(layer)?;
+        let mut set = std::collections::BTreeSet::new();
+        for c in channels {
+            if !self.layers[index].fill_images.contains_key(c) || !set.insert(*c) {
+                return Err(CoreError::InvalidArgument(
+                    "異方性を切る塗りつぶしの画像のチャンネル",
+                ));
+            }
+        }
+        self.layers[index].fill_isotropic = set;
+        self.external_mutation();
+        Ok(())
+    }
+
+    /// 塗りつぶしの投影（レイヤーで 1 つ。UV・トライプラナー・平面・球・円柱・デカール）を置き換える（1 回の Undo。coalesce ならドラッグをまとめる）。
     pub fn set_fill_projection(
         &mut self,
         layer: LayerId,
@@ -1182,7 +1314,7 @@ impl Document {
         if old == projection {
             return Ok(());
         }
-        // 画像のある層・デカール（前か後）は画素を変えるので、画像・透明部分のロックでも断る。それ以外は、すべてのロックだけ
+        // 画像のあるレイヤー・デカール（前か後）は画素を変えるので、画像・透明部分のロックでも断る。それ以外は、すべてのロックだけ
         // （C# の SetFillProjection）
         if !self.layers[index].fill_images.is_empty()
             || old.mode == ProjectionMode::Decal
@@ -1236,6 +1368,7 @@ impl Document {
         new.gradient = gradient;
         if new.gradient.is_some() {
             new.image = None;
+            new.points = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1251,6 +1384,126 @@ impl Document {
             cost,
             coalesce.then_some(CoalesceKey::FillGradient(layer, channel)),
         )
+    }
+
+    /// 塗りつぶしのチャンネルの点のグラデーションを置き換える・外す（1 回の Undo。coalesce なら点のドラッグをまとめる）。置くと、その
+    /// チャンネルの画像・形のグラデーションは外れる。法線のチャンネル・点の数（1〜64）・位置・広がりの範囲の外は断る。
+    pub fn set_fill_points(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        points: Option<PointGradient>,
+        coalesce: bool,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let kind = self.channel_kind(channel)?;
+        require_standard(channel)?;
+        let index = self.fill_layer_index(layer)?;
+        if let Some(g) = &points {
+            validate_fill_points(channel, g)?;
+        }
+        let old = FillChannelState::of(&self.layers[index], channel);
+        if old.points == points {
+            return Ok(());
+        }
+        self.ensure_pixels_rewritable(layer)?;
+        let cost = 96
+            + old
+                .points
+                .as_ref()
+                .map_or(0, |g| g.points.len() as u64 * 32)
+            + points.as_ref().map_or(0, |g| g.points.len() as u64 * 32);
+        let mut new = old.clone();
+        new.points = points;
+        if new.points.is_some() {
+            new.image = None;
+            new.anisotropic = true;
+            new.gradient = None;
+            if new.value.is_none() {
+                new.value = Some(default_fill_fallback(kind));
+            }
+            new.enabled = true;
+        }
+        self.record(
+            Command::FillChannel {
+                id: layer,
+                channel,
+                old: Box::new(old),
+                new: Box::new(new),
+            },
+            cost,
+            coalesce.then_some(CoalesceKey::FillPoints(layer, channel)),
+        )
+    }
+
+    /// 読み込み用: 履歴なしで塗りつぶしの点のグラデーションを置く（画像・形のグラデーションのあるチャンネルは断る）。
+    pub fn set_fill_points_for_load(
+        &mut self,
+        layer: LayerId,
+        points: Vec<(Channel, PointGradient)>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.fill_layer_index(layer)?;
+        let mut map = BTreeMap::new();
+        for (c, g) in points {
+            require_standard(c)?;
+            validate_fill_points(c, &g)?;
+            let l = &self.layers[index];
+            if !l.fill.contains_key(&c)
+                || l.fill_images.contains_key(&c)
+                || l.fill_gradients.contains_key(&c)
+                || map.insert(c, g).is_some()
+            {
+                return Err(CoreError::InvalidArgument(
+                    "塗りつぶしの点のグラデーションのチャンネル",
+                ));
+            }
+        }
+        self.layers[index].fill_points = map;
+        self.external_mutation();
+        Ok(())
+    }
+
+    /// 塗りつぶしのチャンネルの点のグラデーションが今は値を見せているなら、その理由（モデルの空間で、位置のマップ・ルートが使えない）。
+    pub fn fill_points_inactive(
+        &self,
+        layer: LayerId,
+        channel: Channel,
+    ) -> Result<Option<InactiveReason>, CoreError> {
+        let index = self.fill_layer_index(layer)?;
+        let g = self.layers[index]
+            .fill_points
+            .get(&channel)
+            .ok_or(CoreError::Unsupported(
+                "そのチャンネルに点のグラデーションが無い",
+            ))?;
+        Ok(self.points_reason(g))
+    }
+
+    /// 文書の画素 (x, y) の、モデルのルートの空間の位置（効果の入力の位置のマップが今の物で、その画素を覆っているときだけ）。
+    pub fn model_position_at(&self, x: u32, y: u32) -> Option<[f64; 3]> {
+        let inputs = &self.effects.inputs;
+        let map = inputs
+            .map(generator::MapKind::Position)
+            .filter(|m| m.state == generator::MapState::Current)?;
+        if (map.width, map.height) != (self.width, self.height) {
+            return None;
+        }
+        let frame = inputs.frame.and_then(|f| f.for_generator().ok())?;
+        crate::fill_points::root_position(&map.as_generator(), frame, x, y)
+    }
+
+    fn points_reason(&self, g: &PointGradient) -> Option<InactiveReason> {
+        if g.space != PointSpace::Model {
+            return None;
+        }
+        let inputs = &self.effects.inputs;
+        let map = inputs
+            .map(generator::MapKind::Position)
+            .map(|m| m.as_generator());
+        let frame = inputs.frame.and_then(|f| f.for_generator().ok());
+        crate::fill_points::inactive_reason(g, map.as_ref(), frame, (self.width, self.height))
+            .map(InactiveReason::Generator)
     }
 
     pub(super) fn switch_fill_channel(
@@ -1297,6 +1550,7 @@ impl Document {
                 || seen.insert(*c, *id).is_some()
                 || !self.layers[index].fill.contains_key(c)
                 || self.layers[index].fill_gradients.contains_key(c)
+                || self.layers[index].fill_points.contains_key(c)
             {
                 return Err(CoreError::InvalidArgument(
                     "塗りつぶしの画像のチャンネルか ID",
@@ -1304,6 +1558,7 @@ impl Document {
             }
         }
         let l = &mut self.layers[index];
+        l.fill_isotropic.retain(|c| seen.contains_key(c));
         l.fill_images = seen;
         l.projection = projection;
         self.external_mutation();
@@ -1416,19 +1671,58 @@ impl Document {
 
     // ───────── 外から渡す入力 ─────────
 
-    /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像）を置く。保存も Undo もしない。
-    /// 今までと違えば、それを読む層（Generator・画像・デカール・グラデーション）の合成を作り直させる。
-    pub fn set_effect_inputs(&mut self, inputs: EffectInputs) -> Result<(), CoreError> {
+    /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像・モデルの UV の位相）を置く。保存も Undo もしない。
+    /// 今までと違えば、それを読むレイヤーの合成を作り直させる。マップ・画像・モデルのルートが替われば、それを読むレイヤー（Generator・画像・デカール・
+    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐレイヤー（近傍の段のあるレイヤー）と アイランドごとのばらつきの段のあるレイヤー。
+    /// ほかの読み手は評価し直さない。
+    pub fn set_effect_inputs(&mut self, mut inputs: EffectInputs) -> Result<(), CoreError> {
         for m in &inputs.maps {
             m.validate()?;
         }
-        if self.effects.inputs.same_as(&inputs) {
+        let topology = !self.effects.inputs.same_topology(&inputs);
+        let data = !self.effects.inputs.same_data(&inputs);
+        if !topology && !data {
             return Ok(());
         }
+        if topology {
+            // UV の位相が替わると、継ぎ目をまたぐレイヤーの出力も変わる（前と後の両方で、またぐ所に印を付ける）
+            self.mark_seam_readers();
+        } else {
+            // 同じ UV の位相なら今の物を使い続ける（覚えたアイランドの図・帯の写しを捨てない）
+            inputs.topology = self.effects.inputs.topology.clone();
+        }
         self.effects.inputs = inputs;
-        self.effects.inputs_revision += 1;
-        self.mark_input_readers();
+        if topology {
+            self.effects.topology_revision += 1;
+        }
+        if data {
+            self.effects.inputs_revision += 1;
+            self.mark_input_readers();
+        }
+        if topology {
+            self.mark_seam_readers();
+            self.mark_island_readers();
+        }
         Ok(())
+    }
+
+    /// アイランドごとのばらつきの段のあるレイヤー（内容・マスク）が出す所に印を付ける（モデルの UV の位相・アイランドの図の予算が替わったとき）。
+    pub(super) fn mark_island_readers(&mut self) {
+        let readers: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| {
+                let l = &self.layers[i];
+                l.filters
+                    .iter()
+                    .chain(l.mask.iter().flat_map(|m| m.filters.iter()))
+                    .any(|e| e.settings.reads_islands())
+            })
+            .collect();
+        for &i in &readers {
+            self.mark_layer(i, None);
+        }
+        if !readers.is_empty() {
+            self.mark_clipped_layers();
+        }
     }
 
     /// 今の入力。
@@ -1436,7 +1730,7 @@ impl Document {
         &self.effects.inputs
     }
 
-    /// 入力を読む層（Generator の段のある層・画像やグラデーションやデカールの塗りつぶし）が出す所に印を付ける。
+    /// 入力を読むレイヤー（Generator の段のあるレイヤー・画像やグラデーションやデカールの塗りつぶし）が出す所に印を付ける。
     fn mark_input_readers(&mut self) {
         let mut any = false;
         for i in 0..self.layers.len() {
@@ -1470,7 +1764,12 @@ impl Document {
                 "予算が今のフィルターの要る量より小さい",
             ));
         }
-        self.effects.working_budget = bytes;
+        if bytes != self.effects.working_budget {
+            self.effects.working_budget = bytes;
+            // 継ぎ目をまたげるか（使うとブロックの作業メモリが予算を超えるか）が変わり得る: またぐレイヤーを描き直す
+            self.mark_seam_readers();
+            self.release_effect_cache();
+        }
         Ok(())
     }
     /// 評価のブロックの一辺（画素。1〜4096。タイルの大きさの倍数に切り下げ、最低 1 タイル）。結果はブロックの大きさによらない。
@@ -1486,7 +1785,7 @@ impl Document {
             return Err(CoreError::WorkingBudgetExceeded);
         }
         if pixels != self.effects.block_pixels {
-            // 評価済みのブロックの鍵（層・元・ブロックの番号）はブロックの大きさを含まない: 大きさを替えたら、前の大きさのブロックを返さない
+            // 評価済みのブロックの鍵（レイヤー・元・ブロックの番号）はブロックの大きさを含まない: 大きさを替えたら、前の大きさのブロックを返さない
             self.effects.block_pixels = pixels;
             self.release_effect_cache();
         }
@@ -1528,7 +1827,7 @@ impl Document {
             return;
         }
         self.effects.image_cache_budget = bytes;
-        // 予算で使えなかった（使えるようになった）画像があり得るので、画像の層を描き直す
+        // 予算で使えなかった（使えるようになった）画像があり得るので、画像のレイヤーを描き直す
         self.effects.inputs_revision += 1;
         self.mark_input_readers();
         self.trim_effect_cache();
@@ -1646,13 +1945,7 @@ impl Document {
                 for e in stack {
                     if let (EffectSettings::Generator(g), true) = (&e.settings, e.is_active()) {
                         if let Some(why) = self.generator_reason(g, i) {
-                            push(
-                                InactiveTarget::Generator {
-                                    mask,
-                                    kind: g.kind,
-                                },
-                                why,
-                            );
+                            push(InactiveTarget::Generator { mask, kind: g.kind }, why);
                         }
                     }
                 }
@@ -1677,9 +1970,26 @@ impl Document {
                     push(InactiveTarget::FillImage(*c), why);
                 }
             }
+            for (c, g) in &l.fill_points {
+                if l.is_channel_enabled(*c) {
+                    if let Some(why) = self.points_reason(g) {
+                        push(InactiveTarget::FillPoints(*c), why);
+                    }
+                }
+            }
         }
         out
     }
+}
+
+/// 塗りつぶしの点のグラデーションの検査。
+fn validate_fill_points(channel: Channel, g: &PointGradient) -> Result<(), CoreError> {
+    if channel == Channel::Normal {
+        return Err(CoreError::Unsupported(
+            "点のグラデーションは色かスカラーで、法線ではない",
+        ));
+    }
+    g.validate().map_err(CoreError::InvalidArgument)
 }
 
 /// 塗りつぶしのグラデーションの設定の検査（C# の `ValidateFillGradient`）。

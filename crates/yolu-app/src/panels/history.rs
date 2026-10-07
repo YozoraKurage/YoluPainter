@@ -1,45 +1,47 @@
 //! 現在のテクスチャセットの履歴。位置は保持された最古の段の直前を 0 とする。
 
-use crate::{engine::HistoryKind, lang::Lang, state::AppState};
+use crate::lang::{refusals, Lang};
+use crate::notice::{Kind, Source};
+use crate::{engine::HistoryKind, state::AppState};
 
 pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
     match kind {
         HistoryKind::Other => lang.pick("その他", "Other"),
         HistoryKind::Brush => lang.pick("ブラシで描く", "Brush stroke"),
         HistoryKind::Pixels => lang.pick("画素を変える", "Edit pixels"),
-        HistoryKind::AddLayer => lang.pick("レイヤーを足す", "Add layer"),
+        HistoryKind::AddLayer => lang.pick("レイヤーを追加", "Add layer"),
         HistoryKind::RemoveLayer => lang.pick("レイヤーを消す", "Remove layer"),
         HistoryKind::LayerOrder => lang.pick("レイヤーを並べ替える", "Arrange layers"),
         HistoryKind::LayerProperties => lang.pick("レイヤーを変える", "Edit layer"),
         HistoryKind::Channel => lang.pick("チャンネルを変える", "Edit channel"),
         HistoryKind::Fill => lang.pick("塗りつぶしを変える", "Edit fill"),
-        HistoryKind::AddMask => lang.pick("マスクを足す", "Add mask"),
+        HistoryKind::AddMask => lang.pick("マスクを追加", "Add mask"),
         HistoryKind::RemoveMask => lang.pick("マスクを消す", "Remove mask"),
         HistoryKind::Mask => lang.pick("マスクを変える", "Edit mask"),
         HistoryKind::Selection => lang.pick("選択範囲を変える", "Change selection"),
-        HistoryKind::AddEffect => lang.pick("効果を足す", "Add effect"),
+        HistoryKind::AddEffect => lang.pick("効果を追加", "Add effect"),
         HistoryKind::RemoveEffect => lang.pick("効果を消す", "Remove effect"),
         HistoryKind::Effect => lang.pick("効果を変える", "Edit effect"),
         HistoryKind::Anchor => lang.pick("アンカーを変える", "Edit anchor"),
         HistoryKind::Path => lang.pick("パスを変える", "Edit path"),
         HistoryKind::Batch => lang.pick("まとめて編集", "Batch edit"),
         HistoryKind::Look => lang.pick("見た目を変える", "Edit look"),
-        HistoryKind::SavedSelections => lang.pick("覚えた選択範囲を変える", "Edit remembered selections"),
+        HistoryKind::SavedSelections => {
+            lang.pick("覚えた選択範囲を変える", "Edit remembered selections")
+        }
+        HistoryKind::Text => lang.pick("テキストを変える", "Edit Text"),
     }
 }
 
 /// ポーズや未確定の多角形の Undo と区別して、文書の保持された位置へ移動する。
 pub fn go_to(app: &mut AppState, target: usize) {
     if app.is_stroking() {
-        app.message = app.lang.pick("描画中", "Drawing in progress").into();
+        app.refuse(Source::Edit, refusals::during_stroke(app.lang));
         return;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセット", "Read-only texture set")
-        );
+        let text = refusals::read_only_set(app.lang, reason);
+        app.refuse(Source::Edit, text);
         return;
     }
     if target > app.doc.undo_count() + app.doc.redo_count() {
@@ -55,7 +57,7 @@ pub fn go_to(app: &mut AppState, target: usize) {
             Ok(true) => app.modified = true,
             Ok(false) => break,
             Err(e) => {
-                app.message = app.lang.core_error(&e);
+                app.notify(Kind::of_core(&e), Source::Edit, app.lang.core_error(&e));
                 break;
             }
         }
@@ -73,7 +75,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
     let mut target = None;
     let row_height = ui.spacing().interact_size.y;
     egui::ScrollArea::vertical().show_rows(ui, row_height, count + 1, |ui, rows| {
-        ui.add_enabled_ui(app.can_edit(), |ui| {
+        // 描いている間も、行は描き始める前の見た目のまま（押せないことは、下で本当の `can_edit` で守る）
+        let can_edit = app.can_edit();
+        let shown =
+            crate::ui::widgets::look_enabled(ui, ui.make_persistent_id("history.rows"), can_edit);
+        ui.add_enabled_ui(shown, |ui| {
             // スライスのイテレーターで先頭を飛ばし、可視範囲だけ読む。全段のコピーは作らない。
             let mut kinds = app.doc.history().skip(rows.start.saturating_sub(1));
             for position in rows {
@@ -95,6 +101,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                         egui::Button::selectable(position == current, text).truncate(),
                     )
                     .clicked()
+                    && can_edit
                 {
                     target = Some(position);
                 }

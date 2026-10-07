@@ -1,5 +1,5 @@
 //! ブラシの取り込みの画面（egui_kittest）: 一覧の下のボタン・取り込んだブラシのタブと行の印・ツールチップの項目の一覧・ファイルのドロップ・
-//! 詳細の窓の Krita の格子と模様の選び・日英。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
+//! 詳細のウィンドウの Krita の格子と模様の選び・日英。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
 #[path = "../brush_import_files/mod.rs"]
 mod brush_import_files;
 use crate::common;
@@ -93,11 +93,6 @@ fn tooltip_text(h: &H, needle: &str) -> Option<String> {
         .find(|text| text.contains(needle))
 }
 
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 #[derive(Debug)]
 struct Dropped(PathBuf);
 
@@ -122,7 +117,7 @@ fn drop_files(h: &mut H, at: egui::Pos2, files: &[&PathBuf]) {
     h.step();
 }
 
-/// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細の窓の同じ格子）が
+/// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細のウィンドウの同じ格子）が
 /// 全部同じ印のときだけ、その値を返す（食い違えば None）。部品が無くても None。
 fn marked(h: &H, label: &str) -> Option<bool> {
     let all: Vec<bool> = h
@@ -186,7 +181,7 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
         .apply(Action::Brush(BrushAction::Import(vec![colour, plain])));
     wait_import(&mut h);
     // タブが現れ、取り込んだブラシに替わって、そのグループを開いている
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     assert!(h.query_by_label("取り込み").is_some());
     assert!(h.query_by_label("Colour tip").is_some());
     assert!(h.query_by_label("Plain tip").is_some());
@@ -231,11 +226,9 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
         .filter(|t| has_japanese(t))
         .collect();
     assert!(japanese.is_empty(), "英語の画面に日本語: {japanese:?}");
-    // 取り込んだブラシを全部消すと、タブも消えて、ほかのグループへ戻る
+    // 取り込んだブラシを全部並びから外しても、グループ（タブ）は残る（グループは利用者が消す）。今のブラシはツールのほかのブラシへ
     for key in st(&h)
-        .brushes
-        .lib
-        .in_group(Group::Imported)
+        .brush_entries_in(Group::Imported)
         .iter()
         .map(|e| e.key)
         .collect::<Vec<_>>()
@@ -246,8 +239,8 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
     }
     h.run();
     h.run();
-    assert_eq!(st(&h).brushes.ui.group, Group::Pen);
-    assert!(h.query_by_label("Imported").is_none());
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Pen));
+    assert!(h.query_by_label("Imported").is_some());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -290,9 +283,7 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
     wait_import(&mut h);
     let find = |h: &H, name: &str| {
         st(h)
-            .brushes
-            .lib
-            .in_group(Group::Imported)
+            .brush_entries_in(Group::Imported)
             .into_iter()
             .find(|e| e.name == name)
             .map(|e| e.key)
@@ -346,19 +337,19 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     let outside = pos2(900.0, 500.0);
     let abr = write(&dir, "old.abr", &abr_v1());
     let png = write(&dir, "tip.png", b"not even a png");
-    // ABR は窓のどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
+    // ABR はウィンドウのどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
     drop_files(&mut h, outside, &[&png]);
     assert!(!st(&h).is_brush_importing());
     drop_files(&mut h, outside, &[&abr]);
     assert!(st(&h).is_brush_importing());
     wait_import(&mut h);
-    assert_eq!(st(&h).brushes.lib.in_group(Group::Imported).len(), 2);
+    assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     // 一覧の上の PNG は取り込もうとする（PNG として読めなければ、その理由を状態の帯に出す）
     drop_files(&mut h, inside, &[&png]);
     assert!(st(&h).is_brush_importing());
     wait_import(&mut h);
     assert!(st(&h).message.contains("tip.png"), "{}", st(&h).message);
-    assert_eq!(st(&h).brushes.lib.in_group(Group::Imported).len(), 2);
+    assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -503,7 +494,7 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
         .apply(Action::Brush(BrushAction::Import(vec![file])));
     wait_import(&mut h);
     h.run();
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     assert_eq!(marked(&h, round), Some(false));
     assert_eq!(marked(&h, &krita.brushes[0].name), Some(false));
     // 丸へ戻せば丸のマスだけ
@@ -523,7 +514,7 @@ fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
     h.state_mut().state.brushes.ui.detail.category = Category::Shape;
     h.run();
     h.run();
-    // 反転の欄（プロパティの欄のアルファのタブと詳細の窓に 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
+    // 反転の欄（プロパティの欄のアルファのタブと詳細のウィンドウに 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
     let flip_x = |h: &H| {
         let all: Vec<bool> = h
             .query_all_by_label("左右反転")
@@ -629,7 +620,7 @@ fn snapshot_the_imported_group_in_english() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-// ---------------- 「CLIP STUDIO から」の窓 ----------------
+// ---------------- 「CLIP STUDIO から」のウィンドウ ----------------
 
 /// 試験用の CELSYS の設定のフォルダ: 筆先の画像を持つ .sut・丸い筆先の .sut・読めないファイル。
 fn celsys_places(dir: &Path) -> yolu_io::brushes::clipstudio::Places {
@@ -703,7 +694,14 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     let mut h = csp_window(Lang::Ja, &dir);
     assert!(st(&h).brushes.csp.open);
     // 見出し・状態の 1 行・名前（読めたもの）・ファイル名（読めなかったもの）・下の帯のボタン
-    for label in ["Stamp", "Ink", "c_broken", "フォルダ…", "探し直す", "すべて選ぶ"] {
+    for label in [
+        "Stamp",
+        "Ink",
+        "c_broken",
+        "フォルダ…",
+        "探し直す",
+        "すべて選ぶ",
+    ] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
@@ -722,19 +720,25 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     h.get_by_label("取り込む（1）").click();
     h.run();
     wait_import(&mut h);
-    // 窓が閉じ、選んだものだけが取り込まれている
+    // ウィンドウが閉じ、選んだものだけが取り込まれている
     assert!(!st(&h).brushes.csp.open);
     assert!(!drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
     assert!(h.query_by_label("Ink").is_some() && h.query_by_label("Stamp").is_none());
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     // 取り込んだブラシの行のツールチップに、写した項目（入り抜き）が並ぶ
     let row = rect_of(&h, "Ink", |r| in_panel(r) && r.width() > 200.0);
     move_to(&h, pos2(2.0, 2.0));
     h.run();
     hover_and_wait(&mut h, pos2(row.left() + 30.0, row.center().y));
     let tip = tooltip_text(&h, "写した項目").expect("ツールチップ");
-    assert!(tip.contains("入り抜き") && tip.contains("CLIP STUDIO SUT"), "{tip}");
-    assert!(tip.contains("入り抜きの速さ・割合"), "近似した中身は表せなかった項目に: {tip}");
+    assert!(
+        tip.contains("入り抜き") && tip.contains("CLIP STUDIO SUT"),
+        "{tip}"
+    );
+    assert!(
+        tip.contains("入り抜きの速さ・割合"),
+        "近似した中身は表せなかった項目に: {tip}"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -742,13 +746,26 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
 fn the_clip_studio_window_in_english_and_the_button_is_off_while_importing() {
     let dir = temp_dir("csp-ui-en");
     let mut h = csp_window(Lang::En, &dir);
-    for label in ["Stamp", "Ink", "c_broken", "Folder…", "Rescan", "Select All"] {
+    for label in [
+        "Stamp",
+        "Ink",
+        "c_broken",
+        "Folder…",
+        "Rescan",
+        "Select All",
+    ] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(drawn_texts(&h).iter().any(|t| t == "From CLIP STUDIO"));
-    assert!(drawn_texts(&h).iter().any(|t| t == "3 sub tools"), "{:?}", drawn_texts(&h));
     assert!(
-        drawn_texts(&h).iter().all(|t| !has_japanese(t) || t.contains("Ink") || t.contains("Stamp")),
+        drawn_texts(&h).iter().any(|t| t == "3 sub tools"),
+        "{:?}",
+        drawn_texts(&h)
+    );
+    assert!(
+        drawn_texts(&h)
+            .iter()
+            .all(|t| !has_japanese(t) || t.contains("Ink") || t.contains("Stamp")),
         "英語の画面に日本語が混ざらない: {:?}",
         drawn_texts(&h)
     );
@@ -797,7 +814,11 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
         h.get_by_label(lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"))
             .click();
         wait_csp(&mut h);
-        assert!(drawn_texts(&h).iter().any(|t| t == expect), "{lang:?}: {:?}", drawn_texts(&h));
+        assert!(
+            drawn_texts(&h).iter().any(|t| t == expect),
+            "{lang:?}: {:?}",
+            drawn_texts(&h)
+        );
         // 一覧が無いので、取り込むと全部選ぶは押せない
         let import = lang.pick("取り込む", "Import");
         assert!(h.get_by_label(import).accesskit_node().is_disabled());
@@ -805,10 +826,10 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
     }
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる。
+/// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot_window(h: &mut H, name: &str) {
     let rect = yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
-        .expect("窓が開いている");
+        .expect("ウィンドウが開いている");
     h.event(Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");

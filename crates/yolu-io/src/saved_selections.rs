@@ -12,13 +12,11 @@
 //!   重ならない。知らないキーは読み飛ばし、`format` が 1 でないもの（新しい版）は読まない。
 //! - 読み手は、壊れた項目だけを飛ばし（理由は [`SkipReason`]）、読める項目は読む。索引そのものが読めなければ全部を飛ばす。
 //!   飛ばしたエントリはファイルにバイト列のまま残る（残した選択範囲を書き換えるまで）。選択範囲と文書の大きさが違うものは断る
-//!   （画布の大きさを変える操作は、書く前に残した選択範囲も新しい大きさへ作り直す）。
+//!   （キャンバスの大きさを変える操作は、書く前に残した選択範囲も新しい大きさへ作り直す）。
 //! - 書き手は、決まりに合わない並びを書かずに断り、書き直すときは前の索引と `selection-*.bin` をセットごと全部置き換える
 //!   （使われなくなった中身を残さない）。同じ並びはいつも同じバイト列になる。
 
-use crate::{
-    check, hash, package::Blob, Error, Result, Selection, MAX_ENTRY_BYTES,
-};
+use crate::{check, hash, package::Blob, Error, Result, Selection, MAX_ENTRY_BYTES};
 use serde_json::Value;
 
 /// 索引のエントリ名（セットの下）。
@@ -39,7 +37,9 @@ const CONTENT_ID_LEN: usize = 32;
 
 /// 中身の印（SHA-256 の先頭 32 桁）か。
 fn is_content_id(s: &str) -> bool {
-    s.len() == CONTENT_ID_LEN && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == CONTENT_ID_LEN
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// 選択範囲のバイト列の中身の印。
@@ -118,10 +118,7 @@ pub(crate) fn valid_name(name: &str) -> bool {
 }
 
 /// `prefix`（`sets/<ID>/`）の下から読む。`entry` は葉の名前から中身を引く口、`size` は文書の（幅・高さ・タイルの大きさ）。
-pub(crate) fn read(
-    entry: &Entry<'_>,
-    size: (i32, i32, i32),
-) -> SavedSelections {
+pub(crate) fn read(entry: &Entry<'_>, size: (i32, i32, i32)) -> SavedSelections {
     let mut out = SavedSelections::default();
     let Some(index) = entry(INDEX) else {
         return out;
@@ -221,7 +218,10 @@ fn parse_index(bytes: &[u8]) -> Result<Value> {
         "残した選択範囲の索引が大きすぎます",
     )?;
     let value: Value = serde_json::from_slice(bytes)?;
-    check(value.is_object(), "残した選択範囲の索引がオブジェクトではありません")?;
+    check(
+        value.is_object(),
+        "残した選択範囲の索引がオブジェクトではありません",
+    )?;
     let format = value.get("format").and_then(Value::as_i64);
     check(
         format == Some(FORMAT),
@@ -250,7 +250,11 @@ pub(crate) fn validate(items: &[SavedSelection], size: (i32, i32, i32)) -> Resul
             format!("残した選択範囲の名前が重なっています: {}", s.name),
         )?;
         check(
-            (s.selection.width(), s.selection.height(), s.selection.tile_size()) == size,
+            (
+                s.selection.width(),
+                s.selection.height(),
+                s.selection.tile_size(),
+            ) == size,
             format!("残した選択範囲と正本の大きさが一致しません: {}", s.name),
         )?;
     }

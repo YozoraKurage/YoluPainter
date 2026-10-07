@@ -1,4 +1,4 @@
-//! 4096²、4 層の全面と 1 タイル。転送・読み戻し込みの時間を同じ矩形の CPU と比べる。
+//! 4096²、4 レイヤーの全面と 1 タイル。転送・読み戻し込みの時間を同じ矩形の CPU と比べる。
 use std::time::Instant;
 use yolu_core::{BlendMode, BrushSettings, Channel, Document, TileCoord};
 use yolu_gpu::{GpuPainter, Options};

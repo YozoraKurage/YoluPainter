@@ -1,5 +1,5 @@
 //! ステンシル（画面に重ねた画像を通して塗る）の画面の操作（egui_kittest）: プロパティのタブ（画像を読む・読み方・繰り返し・反転・不透明度・
-//! 大きさ・角度）、2D のキャンバスと 3D のビューの上の重ね表示、T を押したままのドラッグ（回す・動かす・大きさ）、N（効かない）、
+//! 大きさ・角度）、2D のキャンバスと 3D のビューの上の重ね表示、Y を押したままのドラッグ（回す・動かす・大きさ）、N（効かない）、
 //! 通して塗った結果。どれも「操作 → 文書が変わる → Undo で戻る」。ステンシルは文書ではなくアプリの状態で、保存しない。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
@@ -115,12 +115,12 @@ fn release_at(h: &mut Harness<'_, YoluApp>, at: Pos2, button: PointerButton) {
     h.step();
 }
 
-/// 回した重ね表示のテクスチャの補間は、GPU のドライバの層で数画素ゆれる（回したキャンバスの試験と同じ）。それ以外の差は落とす。
+/// 回した重ね表示のテクスチャの補間は、GPU のドライバのレイヤーで数画素ゆれる（回したキャンバスの試験と同じ）。それ以外の差は落とす。
 fn rotated_texture() -> egui_kittest::SnapshotOptions {
     egui_kittest::SnapshotOptions::new().max_failed_pixels(64)
 }
 
-/// 窓に落としたファイル（パスだけ）。
+/// ウィンドウに落としたファイル（パスだけ）。
 #[derive(Debug)]
 struct Dropped(PathBuf);
 
@@ -352,12 +352,12 @@ fn headless_ops_clamp_their_values_and_are_refused_while_stroking() {
     assert_eq!(s.dialog_request, Some(DialogRequest::OpenStencil));
 }
 
-/// 64 × 64 の画布の矩形（拡大 100% で画布にぴったり重なる）。
+/// 64 × 64 のキャンバスの矩形（拡大 100% でキャンバスにぴったり重なる）。
 fn exact_rect() -> Rect {
     Rect::from_min_size(pos2(0.0, 0.0), vec2(64.0, 64.0))
 }
 
-/// 画布の横線を、ステンシルを通して描く（ステンシルは画布と 1 対 1 で重ねる）。
+/// キャンバスの横線を、ステンシルを通して描く（ステンシルはキャンバスと 1 対 1 で重ねる）。
 fn stencil_line(s: &mut AppState, y: f32) {
     let layer = s.selected_layer.unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
@@ -378,7 +378,7 @@ fn stencil_line(s: &mut AppState, y: f32) {
 
 fn half_state(dir: &Path) -> AppState {
     let mut s = AppState::new(64, 64);
-    s.stencil.size = 1.0; // 画布にぴったり（画像は正方形）
+    s.stencil.size = 1.0; // キャンバスにぴったり（画像は正方形）
     s.brush.radius = 3.0;
     s.brush.hardness = 1.0;
     s.m2.random_seed = false;
@@ -432,8 +432,8 @@ fn headless_a_canvas_stroke_through_the_stencil_paints_only_where_it_is_open_and
 fn headless_the_stencil_stays_on_the_screen_when_the_canvas_view_changes() {
     let dir = temp_dir("screen");
     let mut s = half_state(&dir);
-    // 画面は 64 × 64 の矩形そのまま。画面を 90° 回すと、画布の左は画面の上へ回る。ステンシルは画面に貼り付いているので、
-    // 白い左半分は画面の左のまま（画布の上の位置が変わる）
+    // 画面は 64 × 64 の矩形そのまま。画面を 90° 回すと、キャンバスの左は画面の上へ回る。ステンシルは画面に貼り付いているので、
+    // 白い左半分は画面の左のまま（キャンバスの上の位置が変わる）
     s.view.set_angle(90.0);
     let rect = exact_rect();
     let stencil = s.canvas_stencil(rect).unwrap().unwrap();
@@ -473,7 +473,7 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
     let rect = exact_rect();
     let open_at = |s: &AppState, x: f32, y: f32| {
         let stencil = s.canvas_stencil(rect).unwrap().unwrap();
-        // 画面の点（y は下向き）→ 画布の画素（拡大 100% で、y が上向き）
+        // 画面の点（y は下向き）→ キャンバスの画素（拡大 100% で、y が上向き）
         stencil
             .sample_canvas(x.floor() as i64, (63.0 - y).floor() as i64)
             .unwrap()
@@ -514,7 +514,7 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 画布の点（x, y）をなぞる 1 本のストロークを、今のステンシルの設定で描く（試験の道具）。
+/// キャンバスの点（x, y）をなぞる 1 本のストロークを、今のステンシルの設定で描く（試験のツール）。
 fn run_stroke(s: &mut AppState, eraser: bool, points: &[(f64, f64)]) {
     let layer = s.selected_layer.unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
@@ -527,7 +527,7 @@ fn run_stroke(s: &mut AppState, eraser: bool, points: &[(f64, f64)]) {
     s.doc.end_stroke(stroke).unwrap();
 }
 
-/// 画布の 1 行の覆い（左から）。
+/// キャンバスの 1 行の覆い（左から）。
 fn alpha_row(s: &AppState, y: u32) -> Vec<u8> {
     (0..s.doc.width())
         .map(|x| composite_pixel(&s.doc, x, y)[3])
@@ -623,7 +623,7 @@ fn headless_the_top_of_the_image_is_the_top_of_the_screen() {
     });
     s.apply(Action::Stencil(StencilOp::Load(path)));
     let stencil = s.canvas_stencil(exact_rect()).unwrap().unwrap();
-    // 画面の点（y は下向き）→ 画布の画素（y は上向き）
+    // 画面の点（y は下向き）→ キャンバスの画素（y は上向き）
     let open =
         |x: i64, screen_y: i64| stencil.sample_canvas(x, 63 - screen_y).unwrap().amount > 0.5;
     assert!(open(32, 10) && !open(32, 54), "画面の上が白");
@@ -725,7 +725,7 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
     // 読み込み直したステンシルの置き場へ戻す（上で外したので、もう一度読んで、角度を戻す）
     s.apply(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
     s.apply(Action::Stencil(StencilOp::Angle(33.0)));
-    // 別のプロジェクトを開いても、新しいプロジェクトにしても、ステンシルはそのまま（窓の状態）
+    // 別のプロジェクトを開いても、新しいプロジェクトにしても、ステンシルはそのまま（ウィンドウの状態）
     s.apply(Action::NewProject);
     assert!(s.stencil.image.is_some() && s.stencil.angle == 33.0);
     s.apply(Action::OpenProject(path.clone()));
@@ -740,7 +740,7 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
 // ───────── プロパティのタブ ─────────
 
 fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
-    h.state_mut().state.property_tab = 0;
+    h.state_mut().state.ui.property_tab = 0;
     h.run();
 }
 
@@ -750,7 +750,7 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
     assert!(h.query_by_label("画像: なし").is_some());
-    // 画像の箱 → 「画像を読む…」: ファイルの窓の頼みが出る（試験では窓は開かない）
+    // 画像の箱 → 「画像を読む…」: ファイルのウィンドウの頼みが出る（試験ではウィンドウは開かない）
     h.get_by_label("画像: なし").click();
     h.run();
     assert_eq!(
@@ -903,20 +903,20 @@ fn snapshot_the_stencil_tab() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// ───────── キャンバスの上の重ね表示と T のドラッグ ─────────
+// ───────── キャンバスの上の重ね表示と Y のドラッグ ─────────
 
 #[test]
-fn snapshot_the_overlay_on_the_canvas_with_t_held_and_tiled() {
+fn snapshot_the_overlay_on_the_canvas_with_y_held_and_tiled() {
     let dir = temp_dir("snap-canvas");
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &ring_png(&dir, "ring.png"));
     h.state_mut().state.stencil.opacity = 0.6;
     small_brush(&mut h);
     line_across(&mut h, -120.0, 120.0); // 通して塗った後
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     h.run();
     h.snapshot("stencil_canvas_overlay_held");
-    key_up(&mut h, Key::T);
+    key_up(&mut h, Key::Y);
     h.state_mut()
         .state
         .apply(Action::Stencil(StencilOp::Tiling(StencilTiling::Both)));
@@ -1007,7 +1007,7 @@ fn t_drag_turns_moves_and_resizes_the_stencil_and_never_paints() {
     load(&mut h, &half_png(&dir, "half.png"));
     let r = canvas_rect(&h);
     let c = r.center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     assert!(st(&h).key_held);
     // 左ドラッグ: 回す（中心の右から真下へ = 時計回りに 90°）
     press_with(
@@ -1074,9 +1074,9 @@ fn t_drag_turns_moves_and_resizes_the_stencil_and_never_paints() {
         pos2(c.x + 200.0, c.y + 100.0),
         PointerButton::Middle,
     );
-    // T を離してもドラッグはボタンを離すまで続く
+    // Y を離してもドラッグはボタンを離すまで続く
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
-    key_up(&mut h, Key::T);
+    key_up(&mut h, Key::Y);
     assert!(!st(&h).key_held && st(&h).drag.is_some());
     move_to(&h, pos2(c.x + 30.0, c.y));
     h.step();
@@ -1086,7 +1086,7 @@ fn t_drag_turns_moves_and_resizes_the_stencil_and_never_paints() {
     let s = &h.state().state;
     assert!(!s.doc.can_undo() && !s.modified);
     assert_eq!((s.view.angle, s.view.pan), (0.0, vec2(0.0, 0.0)));
-    // T を離したら、ふつうに描ける（ステンシルを通して）
+    // Y を離したら、ふつうに描ける（ステンシルを通して）
     small_brush(&mut h);
     h.state_mut().state.stencil.reset_placement();
     h.run();
@@ -1101,7 +1101,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     let c = canvas_rect(&h).center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     move_to(&h, pos2(c.x + 40.0, c.y));
     h.step();
@@ -1110,7 +1110,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     assert!(st(&h).drag.is_none() && !st(&h).key_held);
     assert!(st(&h).center[0] > 0.5, "今の置き場のまま終わる");
     release_at(&mut h, pos2(c.x + 40.0, c.y), PointerButton::Middle);
-    // 描いている最中に T を押しても、ドラッグは始まらない
+    // 描いている最中に Y を押しても、ドラッグは始まらない
     h.event(Event::WindowFocused(true));
     h.step();
     small_brush(&mut h);
@@ -1118,7 +1118,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     press(&h, pos2(c.x - 40.0, c.y), PointerButton::Primary);
     h.step();
     assert!(h.state().state.is_stroking());
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(
         &mut h,
         pos2(c.x, c.y),
@@ -1128,7 +1128,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     assert!(st(&h).drag.is_none(), "ストロークの最中は始めない");
     release_at(&mut h, pos2(c.x, c.y), PointerButton::Secondary);
     release_at(&mut h, pos2(c.x - 40.0, c.y), PointerButton::Primary);
-    key_up(&mut h, Key::T);
+    key_up(&mut h, Key::Y);
     h.run();
     assert!(!h.state().state.is_stroking());
     let _ = std::fs::remove_dir_all(dir);
@@ -1138,7 +1138,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
 fn t_drag_without_an_image_says_so_and_does_not_paint() {
     let mut h = app(1280.0, 800.0, 256);
     let c = canvas_rect(&h).center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_none());
     assert_eq!(h.state().state.message, "ステンシルの画像がありません。");
@@ -1406,7 +1406,7 @@ fn t_drag_works_over_the_3d_view_too_and_the_overlay_follows_the_screen() {
     let (mut h, rect) = cube_view(256);
     load(&mut h, &ring_png(&dir, "ring.png"));
     let c = rect.center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(
         &mut h,
         pos2(c.x + 100.0, c.y),
@@ -1418,7 +1418,7 @@ fn t_drag_works_over_the_3d_view_too_and_the_overlay_follows_the_screen() {
     release_at(&mut h, pos2(c.x, c.y + 100.0), PointerButton::Primary);
     assert!((st(&h).angle - 90.0).abs() < 1.0, "{}", st(&h).angle);
     // カメラを回しても（右ドラッグ）、置き場は変わらない
-    key_up(&mut h, Key::T);
+    key_up(&mut h, Key::Y);
     let placement = (st(&h).center, st(&h).size, st(&h).angle);
     press_with(&mut h, c, PointerButton::Secondary, Modifiers::NONE);
     move_to(&h, pos2(c.x + 60.0, c.y + 20.0));
@@ -1445,7 +1445,7 @@ fn snapshot_the_overlay_over_the_3d_view() {
     h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
     h.run();
     cube_line(&mut h, rect);
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     h.run();
     h.snapshot("stencil_view3d_overlay");
     let _ = std::fs::remove_dir_all(dir);
@@ -1499,7 +1499,7 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
     small_brush(&mut h);
     let c = canvas_rect(&h).center();
     let moved = pos2(c.x + 40.0, c.y);
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     // 中ボタンで動かしている最中に左を押す: ストロークは始まらず、ドラッグは続く
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
@@ -1545,10 +1545,10 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
         "キャンバスは動かない"
     );
     // ドラッグの前から押していた中ボタン（パン）は、ドラッグの最中に離しても戻る
-    key_up(&mut h, Key::T);
+    key_up(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     assert!(h.state().state.canvas.panning);
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(
         &mut h,
         pos2(c.x + 100.0, c.y),
@@ -1569,7 +1569,7 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     let (mut h, rect) = cube_view(256);
     load(&mut h, &half_png(&dir, "half.png"));
     let c = rect.center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     // 中で動かしている最中に左を押す: ストロークは始まらない
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
@@ -1597,15 +1597,15 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ペン: T を押しているあいだは、ペンを置いて動かすとステンシルの置き場が動いて、描かない。
+/// ペン: Y を押しているあいだは、ペンを置いて動かすとステンシルの置き場が動いて、描かない。
 #[test]
-fn a_pen_with_t_held_moves_the_stencil_and_does_not_paint() {
+fn a_pen_with_y_held_moves_the_stencil_and_does_not_paint() {
     let dir = temp_dir("pen-t");
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     let c = canvas_rect(&h).center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     // ペンを置く（Windows ではペンはマウスのボタンの知らせも出す）→ 回すドラッグが始まる
     let down = pos2(c.x + 100.0, c.y);
     h.state().pen().push(pen_sample(down, true));
@@ -1625,7 +1625,7 @@ fn a_pen_with_t_held_moves_the_stencil_and_does_not_paint() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ペン: T を押していなければ、ステンシルを通した画素だけが塗れて、1 回の Undo で戻る（2D）。
+/// ペン: Y を押していなければ、ステンシルを通した画素だけが塗れて、1 回の Undo で戻る（2D）。
 #[test]
 fn a_pen_stroke_goes_through_the_stencil_on_the_canvas_and_undoes_in_one_step() {
     let dir = temp_dir("pen-canvas");
@@ -1653,9 +1653,9 @@ fn a_pen_stroke_goes_through_the_stencil_on_the_canvas_and_undoes_in_one_step() 
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ペン（3D）: T を押しているあいだは置き場が動いて描かず、押していなければ、ステンシルを通した画素だけが塗れて、1 回の Undo で戻る。
+/// ペン（3D）: Y を押しているあいだは置き場が動いて描かず、押していなければ、ステンシルを通した画素だけが塗れて、1 回の Undo で戻る。
 #[test]
-fn a_pen_over_the_3d_view_moves_the_stencil_with_t_and_paints_through_it_without() {
+fn a_pen_over_the_3d_view_moves_the_stencil_with_y_and_paints_through_it_without() {
     let dir = temp_dir("pen-cube");
     let path = half_png(&dir, "half.png");
     let plain = {
@@ -1688,8 +1688,8 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_t_and_paints_through_it_without
         .set_center(mid.x / rect.width(), mid.y / rect.height());
     h.run();
     let points = cube_points(&h, rect);
-    // T を押しているあいだ: 置き場が動き、描かない
-    key_down(&mut h, Key::T);
+    // Y を押しているあいだ: 置き場が動き、描かない
+    key_down(&mut h, Key::Y);
     let before = st(&h).center;
     h.state().pen().push(pen_sample(points[2], true));
     press_with(&mut h, points[2], PointerButton::Middle, Modifiers::NONE);
@@ -1702,8 +1702,8 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_t_and_paints_through_it_without
     h.state().pen().push(pen_sample(points[8], false));
     release_at(&mut h, points[8], PointerButton::Middle);
     assert!(painted(&h).is_empty() && !h.state().state.doc.can_undo());
-    // 置き場を戻して、T を離し、ペンで描く
-    key_up(&mut h, Key::T);
+    // 置き場を戻して、Y を離し、ペンで描く
+    key_up(&mut h, Key::Y);
     h.state_mut()
         .state
         .stencil
@@ -1727,7 +1727,7 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_t_and_paints_through_it_without
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ポップアップが開いているあいだは、T を押してキャンバスを押しても、ステンシルのドラッグは始まらない。
+/// ポップアップが開いているあいだは、Y を押してキャンバスを押しても、ステンシルのドラッグは始まらない。
 #[test]
 fn a_stencil_drag_does_not_start_while_a_popup_is_open() {
     use egui_kittest::kittest::Queryable;
@@ -1735,9 +1735,9 @@ fn a_stencil_drag_does_not_start_while_a_popup_is_open() {
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     let c = canvas_rect(&h).center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     assert!(st(&h).key_held);
-    // レイヤーの合成モードのドロップダウンを開く（T を押したまま）
+    // レイヤーの合成モードのドロップダウンを開く（Y を押したまま）
     h.get_by_label("通常").click();
     h.run();
     assert!(popup_kind(&h).is_some(), "ポップアップが開いた");
@@ -1787,13 +1787,13 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
     assert_eq!(try_start(&mut s, true), (false, false), "ポップアップ");
     s.popup = None;
     // 直前のフレームで開いていたポップアップ（このフレームの外のクリックで閉じたもの）
-    s.popup_was_open = true;
+    s.ui.popup_was_open = true;
     assert_eq!(
         try_start(&mut s, true),
         (false, false),
         "直前のポップアップ"
     );
-    s.popup_was_open = false;
+    s.ui.popup_was_open = false;
     // ストロークの最中
     let layer = s.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke_with(layer, false, None).unwrap();
@@ -1805,7 +1805,7 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ポーズのモードの 3D ビューでは、T を押しながらドラッグしても置き場は動かず、重ね表示も出ない（ギズモと骨を選ぶ操作が優先）。
+/// ポーズのモードの 3D ビューでは、Y を押しながらドラッグしても置き場は動かず、重ね表示も出ない（ギズモと骨を選ぶ操作が優先）。
 #[test]
 fn the_stencil_is_not_moved_or_shown_in_pose_mode() {
     let dir = temp_dir("pose");
@@ -1819,7 +1819,7 @@ fn the_stencil_is_not_moved_or_shown_in_pose_mode() {
     );
     let placement = (st(&h).center, st(&h).size, st(&h).angle);
     let c = rect.center();
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_none(), "ポーズのモードでドラッグが始まった");
     move_to(&h, pos2(c.x + 60.0, c.y + 30.0));
@@ -1837,9 +1837,9 @@ fn the_stencil_is_not_moved_or_shown_in_pose_mode() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ステンシルの画像が無いときは、T を押してもブラシのカーソルのまま（ポインタを動かす形に替えるのは、画像があるときだけ。Unity 版と同じ）。
+/// ステンシルの画像が無いときは、Y を押してもブラシのカーソルのまま（ポインタを動かす形に替えるのは、画像があるときだけ。Unity 版と同じ）。
 #[test]
-fn the_pointer_changes_with_t_only_when_there_is_an_image() {
+fn the_pointer_changes_with_y_only_when_there_is_an_image() {
     let dir = temp_dir("cursor");
     let icon = |h: &Harness<'_, YoluApp>| h.output().platform_output.cursor_icon;
     let mut h = app(1280.0, 800.0, 256);
@@ -1851,19 +1851,19 @@ fn the_pointer_changes_with_t_only_when_there_is_an_image() {
         egui::CursorIcon::None,
         "ブラシの円（システムのポインタは隠す）"
     );
-    key_down(&mut h, Key::T);
+    key_down(&mut h, Key::Y);
     assert!(st(&h).key_held);
     assert_eq!(
         icon(&h),
         egui::CursorIcon::None,
-        "画像が無ければ、T を押してもブラシのまま"
+        "画像が無ければ、Y を押してもブラシのまま"
     );
     load(&mut h, &half_png(&dir, "half.png"));
     move_to(&h, c);
     h.step();
     assert_eq!(icon(&h), egui::CursorIcon::Move, "画像があれば、動かす形");
-    key_up(&mut h, Key::T);
-    assert_eq!(icon(&h), egui::CursorIcon::None, "T を離すとブラシ");
+    key_up(&mut h, Key::Y);
+    assert_eq!(icon(&h), egui::CursorIcon::None, "Y を離すとブラシ");
     // 3D のビューも同じ
     let (mut h, rect) = cube_view(256);
     let c = rect.center();
@@ -1871,8 +1871,8 @@ fn the_pointer_changes_with_t_only_when_there_is_an_image() {
     h.step();
     let brush = icon(&h);
     assert_ne!(brush, egui::CursorIcon::Move);
-    key_down(&mut h, Key::T);
-    assert_eq!(icon(&h), brush, "画像が無ければ、T を押してもブラシのまま");
+    key_down(&mut h, Key::Y);
+    assert_eq!(icon(&h), brush, "画像が無ければ、Y を押してもブラシのまま");
     load(&mut h, &half_png(&dir, "half.png"));
     move_to(&h, c);
     h.step();

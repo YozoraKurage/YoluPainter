@@ -44,6 +44,8 @@ struct Context {
     actions: VecDeque<(&'static str, u32)>,
     /// 最後に見た画面の文（生のまま。毎フレーム比べるので、伏せ字より先に比べる）。
     last_message: String,
+    /// 最後に書いた知らせ（種類・出どころ・生の文。同じ知らせが続いたら 1 行だけ書く）。
+    last_notice: String,
     /// 直前に記録した panic の見出しと時刻。
     last_panic: Option<(String, Instant)>,
 }
@@ -373,6 +375,25 @@ impl Recorder {
             self.write_line(&one_line(problem));
         }
     }
+    /// 注意・失敗の知らせを 1 行書く（`notice` の `notify` が呼ぶ）。種類と出どころの名前（言語によらない）に、文のうち失敗の文として
+    /// 覚えた部分（名前の付かない理由）だけを添える。覚えた部分が無い文は、種類と出どころだけ（名前やパスを書かない決まりのまま）。
+    /// 同じ知らせが続いたら、2 つ目からは書かない。
+    pub fn notice(&self, kind: &str, source: &str, text: &str) {
+        {
+            let Ok(mut context) = self.context.try_lock() else {
+                return;
+            };
+            let key = format!("{kind}\u{1f}{source}\u{1f}{text}");
+            if context.last_notice == key {
+                return;
+            }
+            context.last_notice = key;
+        }
+        match self.problem_in(text) {
+            Some(problem) => self.write_line(&format!("{kind} {source}: {}", one_line(problem))),
+            None => self.write_line(&format!("{kind} {source}")),
+        }
+    }
     fn write_line(&self, text: &str) {
         let text = bounded(self.redactor.redact(text));
         let Ok(_writing) = self.writes.try_lock() else {
@@ -502,6 +523,12 @@ pub fn message(text: &str) {
         r.message(text);
     }
 }
+/// 注意・失敗の知らせを普段のログへ 1 行書く（`Recorder::notice`）。
+pub fn notice(kind: &str, source: &str, text: &str) {
+    if let Some(r) = LOGGER.get() {
+        r.notice(kind, source, text);
+    }
+}
 /// 普段のログへ診断の 1 行を書く（伏せ字にして、同じ回転のログへ。失敗の文として覚える必要のない、起きたことの記録）。
 pub fn note(text: &str) {
     if let Some(r) = LOGGER.get() {
@@ -526,7 +553,7 @@ pub fn handled<R>(work: impl FnOnce() -> R + UnwindSafe) -> std::thread::Result<
     HANDLED.with(|depth| depth.set(depth.get() - 1));
     result
 }
-/// 起動の本体を守る。panic で止まったら、窓の知らせを出し、空のネイティブ記録先を片付けてから panic を渡し直す。
+/// 起動の本体を守る。panic で止まったら、ウィンドウの知らせを出し、空のネイティブ記録先を片付けてから panic を渡し直す。
 pub fn guard<R>(start: impl FnOnce() -> R + UnwindSafe, on_panic: impl FnOnce()) -> R {
     match std::panic::catch_unwind(start) {
         Ok(result) => result,
@@ -554,18 +581,20 @@ pub fn startup_failure(reason: &str) {
     failure_dialog_with(Some(reason));
 }
 
-/// panic hook の記録を上書きせず、窓が無い場合にも短い理由を見せる。
+/// panic hook の記録を上書きせず、ウィンドウが無い場合にも短い理由を見せる。
 pub fn failure_dialog() {
     failure_dialog_with(None);
 }
 
-/// 窓のボタンの文言を OS が受け付けるか。Windows の `MessageBoxW` は OK とキャンセルだけで、文言は捨てられる。
+/// ウィンドウのボタンの文言を OS が受け付けるか。Windows の `MessageBoxW` は OK とキャンセルだけで、文言は捨てられる。
 const LABELLED_BUTTONS: bool = cfg!(not(windows));
 
 fn failure_dialog_with(reason: Option<&str>) {
+    // アプリの起動と同じ決め方（設定に言語が無いときは OS の言語）
+    let system = crate::lang::system_lang();
     let lang = crate::settings::path()
-        .map(|p| crate::settings::load(&p).0.lang)
-        .unwrap_or(crate::lang::Lang::En);
+        .map(|p| crate::settings::load_for_startup(&p, system).0.lang)
+        .unwrap_or(system);
     let folder = lang.pick("ログのフォルダを開く", "Open Log Folder");
     let result = rfd::MessageDialog::new()
         .set_title("YoluPainter")
@@ -593,7 +622,7 @@ fn opens_folder(result: &rfd::MessageDialogResult, folder: &str) -> bool {
     }
 }
 
-/// 窓の文。ボタンの文言が出ない OS では、OK が何をするかを 1 行の問いで示す。
+/// ウィンドウの文。ボタンの文言が出ない OS では、OK が何をするかを 1 行の問いで示す。
 fn dialog_text(lang: crate::lang::Lang, reason: Option<&str>, labelled: bool) -> String {
     let reason = short_reason(lang, reason);
     if labelled {

@@ -1,7 +1,7 @@
-//! 保存（.ylp）と PSD の速さ。`tools/bench-profiles.py` が yolu-io の example として一時的に置いて組む（リポジトリには入れない）。
+//! 保存（.ylp）と PSD の速さ。`tools/bench-profiles.py` が yolu-io の example として一時的に置いてビルドする（リポジトリには入れない）。
 //!   io_bench [回数]
-//! 2048² の 4 層（なめらかな濃淡に低い桁の雑音。圧縮が実際に働く）で、.ylp の保存（正本の組み立て・合成の PNG・ZIP）と読み込み、
-//! PSD の書き出し（RLE・層を流して書く）と読み込み。出力の形は yolu-core の `bench` と同じ（`label: 最小 x ms / 中央 y ms（n 回）`）。
+//! 2048² の 4 レイヤー（なめらかな濃淡に低い桁の雑音。圧縮が実際に働く）で、.ylp の保存（正本の組み立て・合成の PNG・ZIP）と読み込み、
+//! PSD の書き出し（RLE・レイヤーを流して書く）と読み込み。出力の形は yolu-core の `bench` と同じ（`label: 最小 x ms / 中央 y ms（n 回）`）。
 use std::io::Cursor;
 use std::time::Instant;
 use yolu_core::{Channel, Document, LayerId, TileCoord};
@@ -61,7 +61,7 @@ fn main() {
     println!("Rust / io_bench / 論理プロセッサ {}", std::thread::available_parallelism().map_or(0, |n| n.get()));
     let mut doc = Document::new(SIZE, SIZE).unwrap();
     for n in 0..4 {
-        let layer = doc.add_layer(&format!("層 {n}")).unwrap();
+        let layer = doc.add_layer(&format!("レイヤー {n}")).unwrap();
         fill(&mut doc, layer, 7 + n as u64);
     }
     let writer = WriterInfo { app: "bench".into(), version: "0".into(), unity: "standalone".into() };
@@ -76,10 +76,10 @@ fn main() {
         Project::create(writer.clone(), &[spec], SET).unwrap().to_bytes().unwrap()
     };
     let ylp = save(&doc);
-    measure("保存 .ylp 2048² 4 層（正本・合成の PNG・ZIP）", runs, || {
+    measure("保存 .ylp 2048² 4 レイヤー（正本・合成の PNG・ZIP）", runs, || {
         std::hint::black_box(save(&doc));
     });
-    measure("開く .ylp 2048² 4 層（読み込みと core の文書へ）", runs, || {
+    measure("開く .ylp 2048² 4 レイヤー（読み込みと core の文書へ）", runs, || {
         let project = Project::read(&ylp).unwrap();
         std::hint::black_box(project.sets()[0].document.to_core().unwrap());
     });
@@ -92,11 +92,11 @@ fn main() {
         out.into_inner()
     };
     let psd_bytes = export(&doc);
-    measure("PSD 書き出し 2048² 4 層（RLE・流して書く）", runs, || {
+    measure("PSD 書き出し 2048² 4 レイヤー（RLE・流して書く）", runs, || {
         std::hint::black_box(export(&doc));
     });
     let limits = Limits::for_export(1 << 30);
-    measure("PSD 読み込み 2048² 4 層", runs, || {
+    measure("PSD 読み込み 2048² 4 レイヤー", runs, || {
         let read = psd::read(&psd_bytes, &limits).unwrap();
         assert!(read.document().is_some(), "{:?}", read.diagnostics());
     });

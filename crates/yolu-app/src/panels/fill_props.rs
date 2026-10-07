@@ -1,14 +1,18 @@
-//! 塗りつぶしのレイヤーのプロパティ（Unity 版の FillImages・Decals・FillGradients・GradientRamp・ShapeGradient の欄）: 描くチャンネルの画像、層の投影
+//! 塗りつぶしのレイヤーのプロパティ（Unity 版の FillImages・Decals・FillGradients・GradientRamp・ShapeGradient の欄）: 描くチャンネルの画像、レイヤーの投影
 //! （UV・トライプラナー・平面・球・円柱・デカール、タイル・オフセット・回転、トライプラナーのぼかし、デカールの間引き、モデルの上の置き場）、描くチャンネルの
-//! ワールドスペースのグラデーション（形・置き場・減衰・色と不透明度の分岐点・値のカーブ）。値は `Action::Fill` を通る（1 回の Undo。数値とスライダーの
+//! グラデーションデカール（形・置き場・減衰・色と不透明度の分岐点・値のカーブ）。値は `Action::Fill` を通る（1 回の Undo。数値とスライダーの
 //! ドラッグは離したところで区切る）。画面には名前と値と短い理由だけを出し、使い方の説明はツールチップ。
 
 use egui::{pos2, vec2, DragAndDrop, Rect, Sense, Ui, WidgetInfo, WidgetType};
 use yolu_core::fill_image::{Projection, ProjectionMode, Wrap};
+use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{Preset, Ramp, Settings, Shape};
 use yolu_core::{Channel, ChannelKind, ImageId, InactiveEffect, InactiveTarget, LayerId, Rgba8};
 
-use super::properties::{percent_row, section, slider_row, toggle_row};
+use super::color_window::{self, Pick};
+use super::properties::{
+    choice_buttons, percent_row, section, slider_row, toggle_row, ChoiceButton,
+};
 use crate::fillfx::{inputs, FillOp};
 use crate::fx::names::{shape_tooltip, SHAPES};
 use crate::lang::Lang;
@@ -21,7 +25,7 @@ use crate::ui::numfield::{number_field, NumSpec};
 use crate::ui::ramp::ops as ramp_ops;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
-use crate::view3d::shape_gizmo::{wrap_degrees, Mode, AXIS_X, AXIS_Y, AXIS_Z};
+use crate::view3d::shape_gizmo::{wrap_degrees, AXIS_X, AXIS_Y, AXIS_Z};
 
 const LABEL_W: f32 = 64.0;
 /// X・Y・Z の 3 つの欄の行の名前の幅（3 つの欄に値が収まるように、2 つの欄の行より狭く）。
@@ -87,15 +91,17 @@ fn vec3_row(
     enabled: bool,
 ) -> Option<[f64; 3]> {
     let row = rows.row(t::ROW_HEIGHT, 3.0);
+    // 名前が狭い幅に入らない言語（英語の Rotation・Position）は、名前の幅だけ広げる（名前を切らない）
+    let label_w = VEC3_LABEL_W.max(w::text_width(ui.painter(), label, t::LABEL) + 6.0);
     w::text(
         ui.painter(),
-        Rect::from_min_size(row.min, vec2(VEC3_LABEL_W, row.height())),
+        Rect::from_min_size(row.min, vec2(label_w, row.height())),
         label,
         t::LABEL,
         w::Align::Left,
     );
     let cells = Rows::split(
-        Rect::from_min_max(pos2(row.left() + VEC3_LABEL_W, row.top()), row.max),
+        Rect::from_min_max(pos2(row.left() + label_w, row.top()), row.max),
         3,
         3.0,
     );
@@ -170,7 +176,7 @@ fn vec2_row(
 
 // ───────── 全体 ─────────
 
-/// 塗りつぶしの層の画像・投影・グラデーションの欄（値の欄のあとに並べる）。
+/// 塗りつぶしレイヤーの画像・投影・グラデーションの欄（値の欄のあとに並べる）。
 pub fn sections(
     ui: &mut Ui,
     app: &mut AppState,
@@ -192,7 +198,9 @@ pub fn sections(
     projection_section(ui, app, rows, id, &problems, enabled, lang);
     if channel.is_standard() && channel != Channel::Normal {
         gradient_section(ui, app, rows, id, channel, &problems, enabled, lang);
+        points_section(ui, app, rows, id, channel, &problems, enabled, lang);
     }
+    crate::panels::path_props::fill_layer_rows(ui, app, rows, id);
 }
 
 // ───────── 画像 ─────────
@@ -221,65 +229,60 @@ fn image_section(
     if !open_section {
         return;
     }
-    let ctx_for_popup = ui.ctx().clone();
     let image = app.doc.layer(id).and_then(|l| l.fill_image(channel));
-    let row = rows.row(26.0, 4.0);
-    let clear_w = if image.is_some() { 28.0 } else { 0.0 };
-    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
-    image_box(ui, app, box_rect, id, channel, image, enabled, lang);
-    if image.is_some() {
-        let b = Rect::from_min_size(
-            pos2(row.right() - 26.0, row.top()),
-            vec2(26.0, row.height()),
-        );
-        if w::icon_button(
-            ui,
-            b,
-            "fill.image.clear",
-            "close",
-            lang.pick(
+    image_row(
+        ui,
+        app,
+        rows,
+        ImageRow {
+            key: "fill.image",
+            box_key: ("fill.image", channel.index()),
+            image,
+            enabled,
+            popup: Popup::FillImage(id, channel),
+            clear_tip: lang.pick(
                 "画像を外す（値に戻る）",
                 "Remove the image (the channel shows its value)",
             ),
-            false,
+        },
+        |image| {
+            Action::Fill(FillOp::Image {
+                layer: id,
+                channel,
+                image,
+            })
+        },
+    );
+    if image.is_some() {
+        // 異方性のフィルター（斜めから当てた画像を、画素の細長い足跡に沿って読む）
+        let anisotropic = app
+            .doc
+            .layer(id)
+            .is_some_and(|l| l.fill_anisotropic(channel));
+        let label = lang.pick("異方性フィルター", "Anisotropic filtering");
+        let h = w::toggle_height(ui.painter(), rows.width(), label);
+        let r = rows.row(h, 4.0);
+        let next = w::toggle(
+            ui,
+            r,
+            "fill.image.anisotropic",
+            label,
+            anisotropic,
+            Some(lang.pick(
+                "斜めから当てた画像や縦横の繰り返しの違う画像を、画素の細長い足跡に沿って最大 16 点で読み、にじみを減らす",
+                "Reads images projected at an angle or tiled unevenly along each pixel's long footprint (up to 16 samples), so they blur less",
+            )),
             enabled,
-            15.0,
-        )
-        .clicked()
-        {
+        );
+        if next != anisotropic {
             fill(
                 app,
-                FillOp::Image {
+                FillOp::Anisotropic {
                     layer: id,
                     channel,
-                    image: None,
+                    on: next,
                 },
             );
-        }
-        // 読み方（棚の画像の色空間。この画像を読む全部の層に効く）
-        if let Some(space) = image
-            .and_then(|i| app.shelf.get(&inputs::resource_id(i)))
-            .map(|r| inputs::space_of(r).1)
-        {
-            let r = rows.row(t::ROW_HEIGHT, 4.0);
-            let (response, anchor) = w::dropdown(
-                ui,
-                r,
-                "fill.image.space",
-                Some(lang.pick("読み方", "Read as")),
-                space_name(lang, space),
-                Some(lang.pick(
-                    "画像の値が何か（棚の画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
-                    "What the image's values are (the shelf image's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
-                )),
-                enabled,
-                LABEL_W + 22.0,
-            );
-            if response.clicked() {
-                if let Some(image) = image {
-                    open(app, &ctx_for_popup, Popup::ImageSpace(image), anchor);
-                }
-            }
         }
         if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::FillImage(channel)) {
             warn_row(ui, rows, &why);
@@ -287,20 +290,106 @@ fn image_section(
     }
 }
 
-/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと棚の画像の一覧、棚の素材のドラッグを受ける。
+/// 画像の行（[`image_row`]）の置き場と見た目。
+pub struct ImageRow<'a, K> {
+    /// 行の部品の ID の頭（外すボタンは `<key>.clear`、読み方は `<key>.space`）。
+    pub key: &'a str,
+    /// 画像の箱の ID。
+    pub box_key: K,
+    pub image: Option<ImageId>,
+    pub enabled: bool,
+    /// 箱を押すと開く一覧（[`image_list`] の項目を出すもの）。
+    pub popup: Popup,
+    /// 外すボタンのツールチップ。
+    pub clear_tip: &'a str,
+}
+
+/// 画像の箱と外すボタンの行、選んでいれば読み方（アセットの画像の色空間）の行。`set` は差す・外す操作（落とした画像も同じ）。
+pub fn image_row<K: egui::AsIdSalt>(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    spec: ImageRow<'_, K>,
+    set: impl Fn(Option<ImageId>) -> Action,
+) {
+    let lang = app.lang;
+    let ctx_for_popup = ui.ctx().clone();
+    let ImageRow {
+        key,
+        box_key,
+        image,
+        enabled,
+        popup,
+        clear_tip,
+    } = spec;
+    let row = rows.row(26.0, 4.0);
+    let clear_w = if image.is_some() { 28.0 } else { 0.0 };
+    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
+    if let Some(dropped) = image_box(ui, app, box_rect, box_key, image, enabled, lang, popup) {
+        app.apply(set(Some(dropped)));
+    }
+    let Some(image) = image else {
+        return;
+    };
+    let b = Rect::from_min_size(
+        pos2(row.right() - 26.0, row.top()),
+        vec2(26.0, row.height()),
+    );
+    if w::icon_button(
+        ui,
+        b,
+        format!("{key}.clear"),
+        "close",
+        clear_tip,
+        false,
+        enabled,
+        15.0,
+    )
+    .clicked()
+    {
+        app.apply(set(None));
+    }
+    // 読み方（棚の画像の色空間。この画像を読む全部のレイヤーに効く）
+    if let Some(space) = app
+        .shelf
+        .get(&inputs::resource_id(image))
+        .map(|r| inputs::space_of(r).1)
+    {
+        let r = rows.row(t::ROW_HEIGHT, 4.0);
+        let (response, anchor) = w::dropdown(
+            ui,
+            r,
+            format!("{key}.space"),
+            Some(lang.pick("読み方", "Read as")),
+            space_name(lang, space),
+            Some(lang.pick(
+                "画像の値が何か（アセットの画像の色空間。この画像を読む全部のレイヤーに効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
+                "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
+            )),
+            enabled,
+            LABEL_W + 22.0,
+        );
+        if response.clicked() {
+            open(app, &ctx_for_popup, Popup::ImageSpace(image), anchor);
+        }
+    }
+}
+
+/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと `popup`（棚の画像の一覧）を開く。棚の素材のドラッグを受け、落とした画像を返す。
 #[allow(clippy::too_many_arguments)]
 fn image_box(
     ui: &mut Ui,
     app: &mut AppState,
     r: Rect,
-    layer: LayerId,
-    channel: Channel,
+    key: impl egui::AsIdSalt,
     image: Option<ImageId>,
     enabled: bool,
     lang: Lang,
-) {
+    popup: Popup,
+) -> Option<ImageId> {
     let ctx = ui.ctx().clone();
-    let id = ui.make_persistent_id(("fill.image", channel.index()));
+    let id = ui.make_persistent_id(key);
+    let look = w::look(&ctx, id, enabled);
     let response = ui.interact(
         r,
         id,
@@ -333,7 +422,7 @@ fn image_box(
         r,
         if dropping {
             t::ACCENT_DIM
-        } else if enabled && response.hovered() {
+        } else if look.live && response.hovered() {
             t::CONTROL_HOVER
         } else {
             t::CONTROL_BG
@@ -382,7 +471,11 @@ fn image_box(
         p,
         area,
         &shown,
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(if look.enabled {
+            t::TEXT
+        } else {
+            t::TEXT_DISABLED
+        }),
         w::Align::Left,
     );
     w::icon(
@@ -404,23 +497,14 @@ fn image_box(
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, &info));
     let response = response.on_hover_text(tip);
     if enabled && response.clicked() {
-        open(app, &ctx, Popup::FillImage(layer, channel), r);
+        open(app, &ctx, popup, r);
     }
+    let mut dropped = None;
     if dropping && ui.input(|i| i.pointer.any_released()) {
-        if let Some(drag) = dragged {
-            if let Some(image) = inputs::image_id(&drag.id) {
-                fill(
-                    app,
-                    FillOp::Image {
-                        layer,
-                        channel,
-                        image: Some(image),
-                    },
-                );
-            }
-        }
+        dropped = dragged.and_then(|drag| inputs::image_id(&drag.id));
         DragAndDrop::clear_payload(&ctx);
     }
+    dropped
 }
 
 /// 棚の画像の読み方（色空間）の名前。
@@ -459,9 +543,24 @@ fn space_entries(app: &AppState, image: ImageId) -> Vec<Entry<Action>> {
 
 /// 画像の一覧のポップアップ（棚の画像・ファイルから取り込む・外す）。
 fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
+    let current = app.doc.layer(layer).and_then(|l| l.fill_image(channel));
+    image_list(app, current, |image| {
+        Action::Fill(FillOp::Image {
+            layer,
+            channel,
+            image,
+        })
+    })
+}
+
+/// 画像の一覧の項目（棚の画像・ファイルから取り込む・外す）。`current` は今の画像、`set` は差す・外す操作。
+pub fn image_list(
+    app: &AppState,
+    current: Option<ImageId>,
+    set: impl Fn(Option<ImageId>) -> Action,
+) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let current = app.doc.layer(layer).and_then(|l| l.fill_image(channel));
     let mut v = Vec::new();
     for r in app.shelf.resources().iter().filter(|r| r.kind == "image") {
         let Some(image) = inputs::image_id(&r.id) else {
@@ -472,16 +571,9 @@ fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<
             r.metadata["height"].as_u64().unwrap_or(0),
         );
         v.push(
-            Entry::item(
-                format!("{}  ({w} × {h})", r.name),
-                Action::Fill(FillOp::Image {
-                    layer,
-                    channel,
-                    image: Some(image),
-                }),
-            )
-            .radio(current == Some(image))
-            .enabled(free),
+            Entry::item(format!("{}  ({w} × {h})", r.name), set(Some(image)))
+                .radio(current == Some(image))
+                .enabled(free),
         );
     }
     if !v.is_empty() {
@@ -495,17 +587,7 @@ fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<
         .enabled(free && app.shelf.unavailable.is_none()),
     );
     if current.is_some() {
-        v.push(
-            Entry::item(
-                lang.pick("画像を外す", "Remove the Image"),
-                Action::Fill(FillOp::Image {
-                    layer,
-                    channel,
-                    image: None,
-                }),
-            )
-            .enabled(free),
-        );
+        v.push(Entry::item(lang.pick("画像を外す", "Remove the Image"), set(None)).enabled(free));
     }
     v
 }
@@ -589,31 +671,97 @@ fn projection_section(
     let Some(p) = app.doc.layer(id).map(|l| *l.projection()) else {
         return;
     };
+    let popups = ProjectionPopups {
+        mode: Popup::ProjectionMode(id),
+        wrap: Popup::ProjectionWrap(id),
+    };
+    if let Some(next) = projection_rows(ui, app, rows, &ctx, "projection", &p, popups, enabled) {
+        fill(
+            app,
+            FillOp::Projection {
+                layer: id,
+                projection: Box::new(next),
+                coalesce: true,
+            },
+        );
+    }
+    // デカールの出ていない理由と、置き場
+    if p.mode == ProjectionMode::Decal {
+        if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::Decal) {
+            warn_row(ui, rows, &why);
+        }
+    }
+    if p.mode != ProjectionMode::Uv {
+        placement_rows(ui, app, rows, id, &p, enabled, lang);
+    } else {
+        // 画像のチャンネルが投影できない理由（UV は画像がなければ何も出ない）
+        for e in problems {
+            if let InactiveTarget::FillImage(c) = e.target {
+                let name = m2::channel_name(lang, &app.doc, c);
+                warn_row(
+                    ui,
+                    rows,
+                    &format!("{name}: {}", lang.inactive_reason(&e.reason)),
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// 投影の種類と外側のドロップダウンが開く一覧。
+pub struct ProjectionPopups {
+    pub mode: Popup,
+    pub wrap: Popup,
+}
+
+/// 投影の欄（種類・外側・タイル・オフセット・回転、トライプラナーの混ぜ幅、デカールの縁と裏向き。置き場は [`placement_fields`]）。
+/// 部品の ID は `<key>.mode` のように頭を付ける。変えたら新しい投影を返す（数値とスライダーはドラッグの続き）。
+#[allow(clippy::too_many_arguments)]
+pub fn projection_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    ctx: &egui::Context,
+    key: &str,
+    p: &Projection,
+    popups: ProjectionPopups,
+    enabled: bool,
+) -> Option<Projection> {
+    let lang = app.lang;
+    let p = *p;
     let mut next = p;
     // 種類
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let (response, anchor) = w::dropdown(
         ui,
         r,
-        "projection.mode",
+        format!("{key}.mode"),
         Some(lang.pick("投影", "Projection")),
         projection_name(lang, p.mode),
-        Some(lang.pick(
-            "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに。デカール: 箱の正面から、箱の中だけに、画像のアルファで切り抜く",
-            "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre. Decal: through the box's front face, only inside the box, cut out by the image's alpha",
-        )),
+        Some(if matches!(popups.mode, Popup::ProjectionMode(_)) {
+            lang.pick(
+                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに。デカール: 箱の正面から、箱の中だけに、画像のアルファで切り抜く",
+                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre. Decal: through the box's front face, only inside the box, cut out by the image's alpha",
+            )
+        } else {
+            lang.pick(
+                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに",
+                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre",
+            )
+        }),
         enabled,
         LABEL_W + 22.0,
     );
     if response.clicked() {
-        open(app, &ctx, Popup::ProjectionMode(id), anchor);
+        open(app, ctx, popups.mode, anchor);
     }
     // 外側
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let (response, anchor) = w::dropdown(
         ui,
         r,
-        "projection.wrap",
+        format!("{key}.wrap"),
         Some(lang.pick("外側", "Outside")),
         wrap_name(lang, p.wrap),
         Some(lang.pick(
@@ -624,13 +772,13 @@ fn projection_section(
         LABEL_W + 22.0,
     );
     if response.clicked() {
-        open(app, &ctx, Popup::ProjectionWrap(id), anchor);
+        open(app, ctx, popups.wrap, anchor);
     }
     // タイル・オフセット・回転
     if let Some(v) = vec2_row(
         ui,
         rows,
-        "projection.tiles",
+        &format!("{key}.tiles"),
         lang.pick("タイル", "Tiling"),
         p.tiles,
         &NumSpec::new(1e-3, 1e4, 0.01, 3),
@@ -651,7 +799,7 @@ fn projection_section(
     if let Some(v) = vec2_row(
         ui,
         rows,
-        "projection.offset",
+        &format!("{key}.offset"),
         lang.pick("オフセット", "Offset"),
         p.offset,
         &NumSpec::new(-1e4, 1e4, 0.005, 3),
@@ -672,7 +820,7 @@ fn projection_section(
     if let Some(v) = slider_row(
         ui,
         rows,
-        "projection.rotation",
+        &format!("{key}.rotation"),
         lang.pick("回転", "Rotation"),
         p.rotation as f32,
         (-180.0, 180.0),
@@ -693,7 +841,7 @@ fn projection_section(
         if let Some(v) = percent_row(
             ui,
             rows,
-            "projection.blend",
+            &format!("{key}.blend"),
             lang.pick("混ぜ幅", "Blend"),
             p.blend_width,
             (0.0, 1.0),
@@ -754,38 +902,7 @@ fn projection_section(
             next.backface_hardness = 1.0 - v;
         }
     }
-    if next != p {
-        fill(
-            app,
-            FillOp::Projection {
-                layer: id,
-                projection: Box::new(next),
-                coalesce: true,
-            },
-        );
-    }
-    // デカールの出ていない理由と、置き場
-    if p.mode == ProjectionMode::Decal {
-        if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::Decal) {
-            warn_row(ui, rows, &why);
-        }
-    }
-    if p.mode != ProjectionMode::Uv {
-        placement_rows(ui, app, rows, id, &p, enabled, lang);
-    } else {
-        // 画像のチャンネルが投影できない理由（UV は画像がなければ何も出ない）
-        for e in problems {
-            if let InactiveTarget::FillImage(c) = e.target {
-                let name = m2::channel_name(lang, &app.doc, c);
-                warn_row(
-                    ui,
-                    rows,
-                    &format!("{name}: {}", lang.inactive_reason(&e.reason)),
-                );
-                break;
-            }
-        }
-    }
+    (next != p).then_some(next)
 }
 
 /// 投影の置き場: 3D ビューのハンドル（出す・隠す・移動・回転・モデルに合わせる）と、中心・回転・大きさ（モデルのルートの空間）。
@@ -800,15 +917,14 @@ fn placement_rows(
 ) {
     let editing =
         crate::fillfx::gizmo::target(app) == Some(crate::fillfx::gizmo::Target::Projection(id));
-    let has_model = app.view3d.model.is_some();
-    handle_buttons(
+    let next = placement_fields(
         ui,
         app,
         rows,
         "projection",
+        p,
         editing,
         enabled,
-        has_model,
         lang,
         |app| {
             fill(app, FillOp::ToggleHandles);
@@ -817,12 +933,45 @@ fn placement_rows(
             fill(app, FillOp::FitPlacement { layer: id });
         },
     );
+    if let Some(next) = next {
+        let mut projection = *p;
+        projection.placement = next;
+        fill(
+            app,
+            FillOp::Projection {
+                layer: id,
+                projection: Box::new(projection),
+                coalesce: true,
+            },
+        );
+    }
+}
+
+/// 投影の置き場の欄: 3D ビューのハンドルの行（`toggle` で出す・隠す、`fit` でモデルに合わせる。`editing` はハンドルが出ているか）と、
+/// 中心・回転・大きさ（球は大きさを持たない）。変えたら新しい置き場を返す。
+#[allow(clippy::too_many_arguments)]
+pub fn placement_fields(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    key: &str,
+    p: &Projection,
+    editing: bool,
+    enabled: bool,
+    lang: Lang,
+    toggle: impl FnOnce(&mut AppState),
+    fit: impl FnOnce(&mut AppState),
+) -> Option<yolu_core::fill_image::Placement> {
+    let has_model = app.view3d.model.is_some();
+    handle_buttons(
+        ui, app, rows, key, editing, enabled, has_model, lang, toggle, fit,
+    );
     let v = p.placement;
     let mut next = v;
     if let Some(c) = vec3_row(
         ui,
         rows,
-        "projection.center",
+        &format!("{key}.center"),
         lang.pick("中心", "Center"),
         v.center,
         &NumSpec::new(-1e6, 1e6, 0.01, 3),
@@ -837,7 +986,7 @@ fn placement_rows(
     if let Some(r) = vec3_row(
         ui,
         rows,
-        "projection.rotation3d",
+        &format!("{key}.rotation3d"),
         lang.pick("回転", "Rotation"),
         v.rotation,
         &NumSpec::new(-360.0, 360.0, 1.0, 1),
@@ -853,7 +1002,7 @@ fn placement_rows(
         if let Some(s) = vec3_row(
             ui,
             rows,
-            "projection.size",
+            &format!("{key}.size"),
             lang.pick("大きさ", "Size"),
             v.size,
             &NumSpec::new(1e-6, 1e6, 0.01, 3),
@@ -863,21 +1012,10 @@ fn placement_rows(
             next.size = s;
         }
     }
-    if next != v {
-        let mut projection = *p;
-        projection.placement = next;
-        fill(
-            app,
-            FillOp::Projection {
-                layer: id,
-                projection: Box::new(projection),
-                coalesce: true,
-            },
-        );
-    }
+    (next != v).then_some(next)
 }
 
-/// 3D ビューのハンドルの行: 出す・隠す（Q）、移動・回転の組、モデルに合わせる。
+/// 3D ビューのハンドルの行: 出す・隠す（Q）、モデルに合わせる。
 #[allow(clippy::too_many_arguments)]
 fn handle_buttons(
     ui: &mut Ui,
@@ -906,8 +1044,8 @@ fn handle_buttons(
         editing,
         enabled && has_model,
         Some(lang.pick(
-            "3D ビューに箱とハンドルを出す・隠す（Q）",
-            "Show or hide the box and its handles in the 3D view (Q)",
+            "3D ビューに箱とハンドルを出す・隠す（Q）。矢印と中心の四角で移動、輪で回転（Ctrl で 15° ずつ）、面のつまみで大きさ（Shift で両側）",
+            "Show or hide the box and its handles in the 3D view (Q). Arrows and the centre square move, rings rotate (Ctrl for 15° steps), face knobs resize (Shift for both sides)",
         )),
         Some("view_in_ar"),
     )
@@ -929,45 +1067,9 @@ fn handle_buttons(
     {
         fit(app);
     }
-    let row = rows.row(24.0, 4.0);
-    let cols = Rows::split(row, 2, 4.0);
-    for (k, (mode, ja, en, tip_ja, tip_en)) in [
-        (
-            Mode::Move,
-            "移動",
-            "Move",
-            "ハンドル: 移動（モデルの軸に沿った矢印、中心の四角はビューの面の中で）",
-            "Handles: move (arrows along the model's axes, the square in the view's plane)",
-        ),
-        (
-            Mode::Rotate,
-            "回転",
-            "Rotate",
-            "ハンドル: 回転（モデルの軸のまわりの輪。Ctrl で 15° ずつ）",
-            "Handles: rotate (rings about the model's axes; Ctrl for 15° steps)",
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if w::button(
-            ui,
-            cols[k],
-            (key, "mode", k),
-            lang.pick(ja, en),
-            app.fillfx.gizmo_mode == mode,
-            enabled && editing,
-            Some(lang.pick(tip_ja, tip_en)),
-            None,
-        )
-        .clicked()
-        {
-            fill(app, FillOp::GizmoMode(mode));
-        }
-    }
 }
 
-// ───────── ワールドスペースのグラデーション ─────────
+// ───────── グラデーションデカール ─────────
 
 /// 形の名前。新規塗りつぶしレイヤーのメニュー・効果の欄と同じもの（`fx::names`）。
 pub fn shape_name(lang: Lang, shape: Shape) -> &'static str {
@@ -1009,7 +1111,7 @@ fn gradient_section(
         app,
         rows,
         "fill-gradient",
-        lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        lang.pick("グラデーションデカール", "Gradient Decal"),
         "palette",
         None,
     );
@@ -1027,7 +1129,7 @@ fn gradient_section(
             ui,
             r,
             "fill.gradient.add",
-            lang.pick("グラデーションを足す", "Add Gradient"),
+            lang.pick("グラデーションを追加", "Add Gradient"),
             false,
             enabled,
             Some(lang.pick(
@@ -1109,30 +1211,6 @@ fn gradient_section(
             app,
             FillOp::EditGradient(if editing { None } else { Some((id, channel)) }),
         );
-    }
-    let row = rows.row(24.0, 4.0);
-    let cols = Rows::split(row, 2, 4.0);
-    for (k, (mode, ja, en)) in [
-        (Mode::Move, "移動", "Move"),
-        (Mode::Rotate, "回転", "Rotate"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if w::button(
-            ui,
-            cols[k],
-            ("fill.gradient.mode", k),
-            lang.pick(ja, en),
-            app.fillfx.gizmo_mode == mode,
-            enabled && editing,
-            None,
-            None,
-        )
-        .clicked()
-        {
-            fill(app, FillOp::GizmoMode(mode));
-        }
     }
     // 置き場
     let mut v = g.volume;
@@ -1295,11 +1373,12 @@ fn ramp_rows(
     enabled: bool,
     lang: Lang,
 ) -> Option<(Ramp, bool)> {
-    // 層・チャンネルごとに、分岐点の選びなどを別に覚える
+    // レイヤー・チャンネルごとに、分岐点の選びなどを別に覚える
     let key = (
         "fill-gradient",
         id.0 ^ (channel.index() as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15),
     );
+    let mut failure = None;
     let mut params = super::ramp_rows::Params {
         key,
         enabled,
@@ -1313,9 +1392,445 @@ fn ramp_rows(
         },
         sets: &mut app.ramp_sets,
         eyedrop: &mut app.eyedrop,
-        message: &mut app.message,
+        failure: &mut failure,
     };
-    super::ramp_rows::rows(ui, rows, &mut params, ramp).map(|c| (c.ramp, c.discrete))
+    let change = super::ramp_rows::rows(ui, rows, &mut params, ramp).map(|c| (c.ramp, c.discrete));
+    if let Some(text) = failure {
+        app.fail(crate::notice::Source::Gradient, text);
+    }
+    change
+}
+
+// ───────── 点のグラデーション ─────────
+
+fn set_points(
+    app: &mut AppState,
+    layer: LayerId,
+    channel: Channel,
+    g: PointGradient,
+    coalesce: bool,
+) {
+    fill(
+        app,
+        FillOp::Points {
+            layer,
+            channel,
+            points: Some(Box::new(g)),
+            coalesce,
+        },
+    );
+}
+
+/// 点を空間の間で移す: モデル → UV は面の上のいちばん近い点の UV、UV → モデルは位置のマップのその画素。移せない点は、新しい点の
+/// グラデーションの左右の位置に並べる。
+fn convert_space(
+    app: &AppState,
+    g: &PointGradient,
+    to: PointSpace,
+    channel: Channel,
+) -> PointGradient {
+    let fresh = crate::fillfx::points::new_gradient(app, channel);
+    let fallback = |i: usize| -> [f64; 3] {
+        let n = g.points.len().max(2) as f64;
+        let t = i as f64 / (n - 1.0);
+        match to {
+            PointSpace::Uv => [0.1 + 0.8 * t, 0.5, 0.0],
+            PointSpace::Model => {
+                let (a, b) = (fresh.points[0].position, fresh.points[1].position);
+                if fresh.space == PointSpace::Model {
+                    std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
+                } else {
+                    [t, 0.5, 0.0]
+                }
+            }
+        }
+    };
+    let (w, h) = (app.doc.width(), app.doc.height());
+    let model = app.region_model();
+    let points = g
+        .points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let moved = match to {
+                PointSpace::Uv => model.as_ref().and_then(|(m, material)| {
+                    let at = yolu_core::glam::Vec3::new(
+                        p.position[0] as f32,
+                        p.position[1] as f32,
+                        p.position[2] as f32,
+                    );
+                    m.geometry
+                        .find_closest_point(
+                            at,
+                            f32::INFINITY,
+                            yolu_core::glam::Vec3::ZERO,
+                            1 << 20,
+                            *material,
+                        )
+                        .ok()
+                        .flatten()
+                        .map(|hit| [hit.uv.x as f64, hit.uv.y as f64, 0.0])
+                }),
+                PointSpace::Model => {
+                    let x = (p.position[0] * w as f64).floor();
+                    let y = (p.position[1] * h as f64).floor();
+                    (x >= 0.0 && y >= 0.0 && x < w as f64 && y < h as f64)
+                        .then(|| app.doc.model_position_at(x as u32, y as u32))
+                        .flatten()
+                }
+            };
+            GradientPoint {
+                position: moved.unwrap_or_else(|| fallback(i)),
+                color: p.color,
+            }
+        })
+        .collect();
+    PointGradient {
+        space: to,
+        spread: g.spread,
+        points,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn points_section(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    id: LayerId,
+    channel: Channel,
+    problems: &[InactiveEffect],
+    enabled: bool,
+    lang: Lang,
+) {
+    let (open_section, _) = section(
+        ui,
+        app,
+        rows,
+        "fill-points",
+        lang.pick("点のグラデーション", "Point Gradient"),
+        "data_scatter",
+        None,
+    );
+    if !open_section {
+        return;
+    }
+    let Some(g) = app
+        .doc
+        .layer(id)
+        .and_then(|l| l.fill_points(channel))
+        .cloned()
+    else {
+        let r = rows.row(24.0, 4.0);
+        if w::button(
+            ui,
+            r,
+            "fill.points.add",
+            lang.pick("点のグラデーションを追加", "Add Point Gradient"),
+            false,
+            enabled,
+            Some(lang.pick(
+                "置いた点ごとに色を決め、点の間を滑らかにつなぐ（モデルがあればモデルの面の上の位置で、継ぎ目で切れない）",
+                "Sets a colour at each placed point and blends smoothly between them (on the model's surface when there is a model, without breaking at seams)",
+            )),
+            Some("add"),
+        )
+        .clicked()
+        {
+            fill(app, FillOp::AddPoints { layer: id, channel });
+        }
+        return;
+    };
+    // 点を編集・外す
+    let editing = crate::fillfx::points::target(app) == Some((id, channel));
+    let row = rows.row(24.0, 4.0);
+    let remove_w = 28.0;
+    let edit_rect = Rect::from_min_max(row.min, pos2(row.right() - remove_w - 4.0, row.bottom()));
+    if w::button(
+        ui,
+        edit_rect,
+        "fill.points.edit",
+        lang.pick("点を編集", "Edit Points"),
+        editing,
+        enabled,
+        Some(lang.pick(
+            "3D ビューと 2D のキャンバスで: 面を押して点を追加、印をドラッグで移動、Delete で選んだ点を削除",
+            "In the 3D view and the 2D canvas: press on the surface to add a point, drag a marker to move it, Delete removes the selected point",
+        )),
+        Some("edit"),
+    )
+    .clicked()
+    {
+        fill(
+            app,
+            FillOp::EditPoints(if editing { None } else { Some((id, channel)) }),
+        );
+    }
+    let remove_rect = Rect::from_min_size(
+        pos2(row.right() - remove_w, row.top()),
+        vec2(remove_w, row.height()),
+    );
+    if w::icon_button(
+        ui,
+        remove_rect,
+        "fill.points.remove",
+        "delete",
+        lang.pick("点のグラデーションを外す", "Remove Point Gradient"),
+        false,
+        enabled,
+        15.0,
+    )
+    .clicked()
+    {
+        fill(
+            app,
+            FillOp::Points {
+                layer: id,
+                channel,
+                points: None,
+                coalesce: false,
+            },
+        );
+        return;
+    }
+    // 空間
+    let has_model = app.region_model().is_some();
+    let items = [
+        ChoiceButton {
+            id: "fill.points.model",
+            label: lang.pick("モデル", "Model"),
+            selected: g.space == PointSpace::Model,
+            enabled: enabled && has_model,
+            tooltip: Some(lang.pick(
+                "モデルの面の上の位置でつなぐ（焼いた位置のマップを読む。UV の継ぎ目で切れない）",
+                "Blends by position on the model's surface (reads the baked position map; continuous across UV seams)",
+            )),
+        },
+        ChoiceButton {
+            id: "fill.points.uv",
+            label: lang.pick("UV", "UV"),
+            selected: g.space == PointSpace::Uv,
+            enabled,
+            tooltip: Some(lang.pick(
+                "テクスチャの UV の上の位置でつなぐ",
+                "Blends by position on the texture's UV",
+            )),
+        },
+    ];
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        let to = if i == 0 {
+            PointSpace::Model
+        } else {
+            PointSpace::Uv
+        };
+        if to != g.space {
+            let converted = convert_space(app, &g, to, channel);
+            set_points(app, id, channel, converted, false);
+            return;
+        }
+    }
+    if let Some(why) = problem(problems, lang, |t| {
+        *t == InactiveTarget::FillPoints(channel)
+    }) {
+        warn_row(ui, rows, &why);
+    }
+    // 広がり
+    if let Some(v) = percent_row(
+        ui,
+        rows,
+        "fill.points.spread",
+        lang.pick("広がり", "Spread"),
+        g.spread,
+        (0.0, 1.0),
+        Some(lang.pick(
+            "点の周りの色の平らさと、遠くの点の色の混ざり方（0%: 点の真上がその点の色）",
+            "How flat the colour is around each point and how much distant points mix in (0%: exactly the point's colour on the point)",
+        )),
+        enabled,
+    ) {
+        let mut next = g.clone();
+        next.spread = v;
+        set_points(app, id, channel, next, true);
+        return;
+    }
+    // 点の一覧（印と同じ色の見本・名前・削除）
+    let selected = app.fillfx.point_selected.filter(|i| *i < g.points.len());
+    for (i, p) in g.points.iter().enumerate() {
+        let row = rows.row(22.0, 3.0);
+        let swatch = Rect::from_min_size(row.min + vec2(0.0, 2.0), vec2(28.0, row.height() - 4.0));
+        let c = p.color;
+        let shown = [c.r, c.g, c.b, c.a].map(|v| v as f32 / 255.0);
+        let tip = lang.pick("点の色と不透明度", "The point's colour and opacity");
+        if w::color_swatch(ui, swatch, ("fill.points.swatch", i), shown, tip, enabled).clicked() {
+            fill(app, FillOp::SelectPoint(Some(i)));
+        }
+        let name_rect = Rect::from_min_max(
+            pos2(swatch.right() + 4.0, row.top()),
+            pos2(row.right() - 26.0, row.bottom()),
+        );
+        let name = match lang {
+            Lang::Ja => format!("点 {}", i + 1),
+            Lang::En => format!("Point {}", i + 1),
+        };
+        if w::button(
+            ui,
+            name_rect,
+            ("fill.points.select", i),
+            &name,
+            selected == Some(i),
+            enabled,
+            None,
+            None,
+        )
+        .clicked()
+        {
+            fill(
+                app,
+                FillOp::SelectPoint(if selected == Some(i) { None } else { Some(i) }),
+            );
+        }
+        let delete = Rect::from_min_size(
+            pos2(row.right() - 22.0, row.top()),
+            vec2(22.0, row.height()),
+        );
+        if w::icon_button(
+            ui,
+            delete,
+            ("fill.points.delete", i),
+            "close",
+            lang.pick("点を削除", "Delete Point"),
+            false,
+            enabled && g.points.len() > 1,
+            13.0,
+        )
+        .clicked()
+        {
+            let mut next = g.clone();
+            next.points.remove(i);
+            fill(app, FillOp::SelectPoint(None));
+            set_points(app, id, channel, next, false);
+            return;
+        }
+    }
+    // 選んだ点の色・不透明度・位置
+    let Some(i) = selected else {
+        return;
+    };
+    let point = g.points[i];
+    let row = rows.row(t::ROW_HEIGHT + 2.0, 4.0);
+    w::text(
+        ui.painter(),
+        Rect::from_min_size(row.min, vec2(LABEL_W, row.height())),
+        lang.pick("色", "Color"),
+        t::LABEL,
+        w::Align::Left,
+    );
+    let swatch = Rect::from_min_max(
+        pos2(row.left() + LABEL_W, row.top() + 1.0),
+        pos2(row.right(), row.bottom() - 1.0),
+    );
+    let c = point.color;
+    if let Some(u) = point_color(ui, app, swatch, (id, channel), i, c, enabled) {
+        let [r, g_, b] = u.pick.rgb;
+        let next_color = Rgba8::new(r, g_, b, c.a);
+        if next_color != c {
+            let mut next = g.clone();
+            next.points[i].color = next_color;
+            set_points(app, id, channel, next, u.dragging);
+        }
+        if u.done {
+            app.m2_end_drag();
+        }
+        return;
+    }
+    if let Some(v) = percent_row(
+        ui,
+        rows,
+        "fill.points.opacity",
+        lang.pick("不透明度", "Opacity"),
+        c.a as f64 / 255.0,
+        (0.0, 1.0),
+        None,
+        enabled,
+    ) {
+        let mut next = g.clone();
+        next.points[i].color.a = (v * 255.0).round().clamp(0.0, 255.0) as u8;
+        set_points(app, id, channel, next, true);
+        return;
+    }
+    let moved = match g.space {
+        PointSpace::Model => vec3_row(
+            ui,
+            rows,
+            "fill.points.position",
+            lang.pick("位置", "Position"),
+            point.position,
+            &NumSpec::new(-1e6, 1e6, 0.01, 3),
+            lang.pick(
+                "点の位置（モデルのルートから。シーンの単位）",
+                "The point's position, from the model root (scene units)",
+            ),
+            enabled,
+        ),
+        PointSpace::Uv => vec2_row(
+            ui,
+            rows,
+            "fill.points.uv",
+            lang.pick("位置", "Position"),
+            [point.position[0], point.position[1]],
+            &NumSpec::new(-1e3, 1e3, 0.01, 3),
+            [
+                lang.pick("点の U", "The point's U"),
+                lang.pick("点の V", "The point's V"),
+            ],
+            enabled,
+        )
+        .map(|[u, v]| [u, v, 0.0]),
+    };
+    if let Some(position) = moved {
+        let mut next = g.clone();
+        next.points[i].position = position;
+        set_points(app, id, channel, next, true);
+    }
+}
+
+/// 選んだ点の色の欄。押すと色のウィンドウ（相手は文書・レイヤー・チャンネル・点ごと）。ウィンドウがこのグラデーションの前に選んだ点の色を相手にしている
+/// 間に点を選び替えたら、ウィンドウはそのままで相手を新しい点へ替える。不透明度は欄の「不透明度」で決める（ウィンドウは RGB だけ）。
+fn point_color(
+    ui: &mut Ui,
+    app: &AppState,
+    swatch: Rect,
+    (layer, channel): (LayerId, Channel),
+    index: usize,
+    color: Rgba8,
+    enabled: bool,
+) -> Option<color_window::Update> {
+    let lang = app.lang;
+    let ctx = ui.ctx().clone();
+    let doc = app.doc.id();
+    let target_of =
+        |i: usize| egui::Id::new(("fill.points.color", doc, layer.0, channel.index(), i));
+    let target = target_of(index);
+    let current = Pick::rgb([color.r, color.g, color.b]);
+    let name = match lang {
+        Lang::Ja => format!("点 {} の色", index + 1),
+        Lang::En => format!("Point {} Color", index + 1),
+    };
+    let last_id = egui::Id::new(("fill.points.color.last", doc, layer.0, channel.index()));
+    let last = ctx.data(|d| d.get_temp::<usize>(last_id));
+    ctx.data_mut(|d| d.insert_temp(last_id, index));
+    if enabled && last.is_some_and(|l| l != index && color_window::is_target(&ctx, target_of(l))) {
+        color_window::open(&ctx, target, &name, swatch, ui.clip_rect(), current);
+    }
+    color_window::field(
+        ui,
+        swatch,
+        target,
+        &name,
+        current,
+        lang.pick("点の色", "The point's colour"),
+        enabled,
+    )
 }
 
 // ───────── ポップアップ ─────────

@@ -18,11 +18,17 @@ fn field<'a>(key: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn number(key: &str, name: &str) -> Option<f64> {
-    field(key, name)?.parse::<f64>().ok().filter(|v| v.is_finite())
+    field(key, name)?
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
 }
 
 fn samples(key: &str) -> Option<i32> {
-    field(key, "samples")?.parse::<i32>().ok().filter(|v| (1..=1024).contains(v))
+    field(key, "samples")?
+        .parse::<i32>()
+        .ok()
+        .filter(|v| (1..=1024).contains(v))
 }
 
 fn occluders(key: &str) -> Option<MeshOccluders> {
@@ -225,12 +231,23 @@ mod tests {
     #[test]
     fn the_baked_kinds_are_listed_in_the_standard_order() {
         let mut settings = MeshBakeSettings::default();
-        adopt_kinds(&mut settings, &[MeshMapKind::Curvature, MeshMapKind::Position], false);
-        assert_eq!(settings.maps, [MeshMapKind::Position, MeshMapKind::Curvature]);
+        adopt_kinds(
+            &mut settings,
+            &[MeshMapKind::Curvature, MeshMapKind::Position],
+            false,
+        );
+        assert_eq!(
+            settings.maps,
+            [MeshMapKind::Position, MeshMapKind::Curvature]
+        );
         adopt_kinds(&mut settings, &[MeshMapKind::WorldNormal], true);
         assert_eq!(
             settings.maps,
-            [MeshMapKind::WorldNormal, MeshMapKind::Position, MeshMapKind::Curvature]
+            [
+                MeshMapKind::WorldNormal,
+                MeshMapKind::Position,
+                MeshMapKind::Curvature
+            ]
         );
     }
 }

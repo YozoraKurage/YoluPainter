@@ -126,7 +126,10 @@ pub fn can_reset(rig: &Rig, pose: &Pose, what: Reset) -> bool {
 /// 戻す（取り消しの並びに 1 段。変わらなければ積まない）。描いている最中と、続けて変える操作の途中は断る。
 pub fn reset(app: &mut AppState, what: Reset) {
     if app.is_stroking() {
-        app.message = app.lang.view_error(&super::ViewError::Stroking);
+        app.refuse(
+            crate::notice::Source::Pose,
+            app.lang.view_error(&super::ViewError::Stroking),
+        );
         return;
     }
     let Some(s) = app.view3d.pose.session.as_ref() else {
@@ -137,7 +140,11 @@ pub fn reset(app: &mut AppState, what: Reset) {
     }
     let next = apply_reset(&s.rig, s.pose(), what);
     if let Err(e) = set_pose(&mut app.view3d, next) {
-        app.message = app.lang.view_error(&e);
+        app.notify(
+            e.notice_kind(),
+            crate::notice::Source::Pose,
+            app.lang.view_error(&e),
+        );
     }
 }
 
@@ -154,7 +161,10 @@ pub enum Field {
 /// 描いている最中は断って理由を知らせる。
 pub fn set_field(app: &mut AppState, bone: usize, field: Field) {
     if app.is_stroking() {
-        app.message = app.lang.view_error(&super::ViewError::Stroking);
+        app.refuse(
+            crate::notice::Source::Pose,
+            app.lang.view_error(&super::ViewError::Stroking),
+        );
         return;
     }
     let Some(s) = app.view3d.pose.session.as_ref() else {
@@ -210,7 +220,11 @@ fn live_edit(app: &mut AppState, next: Pose) {
     }
     .and_then(|()| edit(&mut app.view3d, next));
     if let Err(e) = result {
-        app.message = app.lang.view_error(&e);
+        app.notify(
+            e.notice_kind(),
+            crate::notice::Source::Pose,
+            app.lang.view_error(&e),
+        );
     }
 }
 

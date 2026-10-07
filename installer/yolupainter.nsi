@@ -12,7 +12,7 @@
 ;                   /RUN          入れ終わったらアプリを起こす（アプリの更新が使う）。待ちの上限で何も変えずに終わるときも、今入っているアプリを起こし直す
 ;                   /D=PATH       入れ先（最後に置く。省略は前の入れ先、初めては %LOCALAPPDATA%\Programs\YoluPainter）
 ;   アンインストーラー  /S           無音
-;                       /DELETEDATA  アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
+;                       /DELETEDATA  アプリが作り直せるデータ（設定・ウィンドウの配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
 ;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）は、どちらでも消さない
 ;
 ; 実行中のアプリは終了させない。exe が使われている間（アプリと、MCP の接続などが使っている yolupainter-cli.exe のどちらでも）は待つ
@@ -54,7 +54,7 @@ CRCCheck on
 !define PUBLISHER "Yozolab"
 !define HOMEPAGE "https://github.com/YozoraKurage/YoluPainter"
 !define EXE "yolupainter.exe"
-; コマンドラインと MCP サーバー（アプリと同じ入れ先・同じ版。PATH は変えない）
+; コマンドラインと、標準入出力の MCP の中継（アプリと同じ入れ先・同じ版。PATH は変えない）
 !define CLI_EXE "yolupainter-cli.exe"
 !define UNINSTALLER "uninstall.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"
@@ -122,7 +122,7 @@ VIProductVersion "${VERSION_NUMERIC}"
 !insertmacro VersionKeys ${LANG_ENGLISH}
 
 ; /RUN が付いていれば、今入っている exe を起こす（入れ終わったとき、と、待ちの上限で何も変えずに終わるとき）。exe が無ければ何もしない。
-; 更新のアプリは、インストーラーを起こしたあと自分を閉じる。別の窓が exe を使い続けていてインストーラーが諦めても、利用者を窓の無い状態に置かない。
+; 更新のアプリは、インストーラーを起こしたあと自分を閉じる。別のウィンドウが exe を使い続けていてインストーラーが諦めても、利用者をウィンドウの無い状態に置かない。
 Function RunIfRequested
   ${GetParameters} $R0
   ClearErrors
@@ -202,6 +202,8 @@ FunctionEnd
   !insertmacro ${ACTION} "docs\en" "UNITY.md"
   !insertmacro ${ACTION} "docs\en" "INSTALL.md"
   !insertmacro ${ACTION} "docs\en" "BUILDING.md"
+  !insertmacro ${ACTION} "docs" "LIVELINK.md"
+  !insertmacro ${ACTION} "docs\en" "LIVELINK.md"
 !macroend
 !macro InstallDoc DIR NAME
   SetOutPath "$INSTDIR\${DIR}"
@@ -370,7 +372,7 @@ Section "Uninstall"
   RMDir "$LOCALAPPDATA\${PRODUCT}"
 
   ; アプリが作り直せるデータは、消すかを聞く（無音では /DELETEDATA のときだけ消す）。
-  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・pose_presets・colorsets）と、
+  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・pose_presets・colorsets・actions）と、
   ; 後の版が足した知らないファイル・フォルダは、どちらの答えでも消さない（フォルダも、空になったときだけ消す）。
   ${un.GetParameters} $R0
   ClearErrors
@@ -383,11 +385,13 @@ Section "Uninstall"
     Goto keep_data
   ${EndIf}
   delete_data:
-  ; %APPDATA%\YoluPainter: 設定・窓の配置・復旧・クラッシュの記録（と、書き込み途中で残った一時ファイル）
+  ; %APPDATA%\YoluPainter: 設定・ウィンドウの配置・復旧・クラッシュの記録（と、書き込み途中で残った一時ファイル）
   Delete "$APPDATA\${PRODUCT}\settings.conf"
   Delete "$APPDATA\${PRODUCT}\recovery.conf"
   Delete "$APPDATA\${PRODUCT}\update.conf"
   Delete "$APPDATA\${PRODUCT}\layout.json"
+  ; 書き込み途中の一時ファイル: 今の版は .{名前}.{pid}-{番号}.pending~、前の版は {名前}.{pid}.pending
+  Delete "$APPDATA\${PRODUCT}\.*.pending~"
   Delete "$APPDATA\${PRODUCT}\*.pending"
   RMDir /r "$APPDATA\${PRODUCT}\recovery"
   RMDir /r "$APPDATA\${PRODUCT}\logs"

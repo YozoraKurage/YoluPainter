@@ -140,7 +140,7 @@ fn headless_every_bundled_material_places_into_documents_of_other_sizes() {
             place(&mut s, &id);
             assert!(s.doc.layers().len() > before, "{id} {w}x{h}: {}", s.message);
             assert!(s.message.starts_with("Placed"), "{}", s.message);
-            // 層は画素を持たず（値とマスクの Generator）、どの大きさでも保存の予算を使わない
+            // レイヤーは画素を持たず（値とマスクの Generator）、どの大きさでも保存の予算を使わない
             assert!(
                 s.doc
                     .layers()
@@ -161,7 +161,7 @@ fn headless_a_bundled_item_is_never_removed_exported_or_written_into_the_project
     for op in [ShelfOp::Remove(id.clone()), ShelfOp::AskRemove(id.clone())] {
         s.message.clear();
         s.apply(Action::Shelf(op));
-        assert_eq!(s.message, "できません: 組み込みは消せません");
+        assert_eq!(s.message, "組み込みは消せません。");
         assert!(s.shelf.pending_remove.is_none());
     }
     for op in [
@@ -173,14 +173,14 @@ fn headless_a_bundled_item_is_never_removed_exported_or_written_into_the_project
     ] {
         s.message.clear();
         s.apply(Action::Shelf(op));
-        assert_eq!(s.message, "できません: 組み込みは書き出せません");
+        assert_eq!(s.message, "組み込みは書き出せません。");
         assert!(s.shelf.export_id.is_none());
     }
     assert!(!dir.0.join("x.ylsmart").exists());
     assert!(!s.shelf.changed);
     s.lang = Lang::En;
     s.apply(Action::Shelf(ShelfOp::Remove(id.clone())));
-    assert_eq!(s.message, "Cannot: Built-in items cannot be removed");
+    assert_eq!(s.message, "Built-in items cannot be removed.");
     // 保存したプロジェクトの棚には入らず、開き直しても棚は空（組み込みはコードから出る）
     place(&mut s, &id);
     let path = dir.0.join("shelf.ylp");

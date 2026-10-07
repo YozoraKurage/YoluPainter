@@ -32,7 +32,9 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `data_scatter` | fluent | `data_scatter` | regular |
 | `delete` | fluent | `delete` | regular |
 | `deselect` | fluent | `select_all_off` | regular |
+| `document_copy` | fluent | `document_copy` | regular |
 | `edit` | fluent | `edit` | regular |
+| `error_circle` | fluent | `error_circle` | regular |
 | `expand_less` | fluent | `chevron_up` | regular |
 | `expand_more` | fluent | `chevron_down` | regular |
 | `flip` | fluent | `flip_horizontal` | regular |
@@ -57,7 +59,9 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `opacity` | fluent | `drop` | regular |
 | `paint_brush` | fluent | `paint_brush` | regular |
 | `palette` | fluent | `color` | regular |
+| `play` | fluent | `play` | regular |
 | `quick_mask` | fluent | `shape_organic` | regular |
+| `record` | fluent | `record` | regular |
 | `restart_alt` | fluent | `arrow_reset` | regular |
 | `rotate_90_degrees_ccw` | fluent | `arrow_rotate_counterclockwise` | regular |
 | `rotate_90_degrees_cw` | fluent | `arrow_rotate_clockwise` | regular |
@@ -69,6 +73,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `shape_union` | fluent | `shape_union` | regular |
 | `shapes` | fluent | `shapes` | regular |
 | `square` | fluent | `image` | regular |
+| `stop` | fluent | `stop` | regular |
 | `stylus` | fluent | `inking_tool` | regular |
 | `swap_horiz` | fluent | `arrow_swap` | regular |
 | `sync` | fluent | `arrow_sync` | regular |
@@ -106,7 +111,10 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/select-polygon_selected` | phosphor | `polygon` | regular |
 | `tools/select-rectangle` | phosphor | `selection` | regular |
 | `tools/select-rectangle_selected` | phosphor | `selection` | bold |
+| `tools/text` | fluent | `text_t` | regular |
+| `tools/text_selected` | fluent | `text_t` | filled |
 | `tune` | fluent | `options` | regular |
+| `video_clip` | fluent | `video_clip` | regular |
 | `view_in_ar` | fluent | `cube` | regular |
 | `vignette` | fluent | `image_circle` | regular |
 | `visibility` | fluent | `eye` | regular |
@@ -128,6 +136,10 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `local_fire_department` is copied unchanged from the Unity package: Fluent UI `fire` regular (MIT). It marks the Bake Mesh Maps button.
 
 `window_minimize`・`window_maximize`・`window_restore` are the standalone app's window buttons on Windows (Fluent regular; the close button is the existing `close`). They were rendered white at 48 px by the same procedure as the rest.
+
+`error_circle` (the error mark of the Log panel and its Errors Only toggle) and `document_copy` (its Copy All button) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
+
+`record`・`stop`・`play` (the Actions panel: start and stop recording, play an action) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

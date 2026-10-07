@@ -2,33 +2,33 @@
 //! マテリアルを使うスロットと文書の大きさで、法線・位置・AO・曲率・厚みなどを焼き、セットのメッシュマップ（`MeshMapSet`）に入れる。
 //!
 //! - **別のスレッドで焼く**: 始めるときに入力（モデルの写し）・設定・スロット・文書の ID と大きさを固定し、焼くのは `yolu_gpu::bake_mesh_maps`
-//!   （窓で選んだ「自動・GPU・CPU」。自動は使えるハードウェアの GPU があれば GPU、なければ CPU。GPU が使えない・壊れた・予算を超えたときは
+//!   （ウィンドウで選んだ「自動・GPU・CPU」。自動は使えるハードウェアの GPU があれば GPU、なければ CPU。GPU が使えない・壊れた・予算を超えたときは
 //!   理由つきで CPU の `yolu_core::mesh_maps::bake`（rayon で並列）に戻る。進み具合は共有の値、取消は `AtomicBool`）。画面は毎フレーム
 //!   `poll_bake` で終わりを見る。使った場所と戻った理由はセットの記録（`MeshMapSet::run`）と結果の一文に出る。
 //! - **結果を使う前に確かめる**: 終わったとき、セット・文書（ID と大きさ）・スロット・モデルの形（ポーズを含む）が始めたときと同じなら
 //!   マップを入れ、違えば捨てる。取消・時間切れ・拒否・捨てた結果では、前のマップは変えない。残りのセットも焼かない。
-//! - **セットごとに焼く**: 窓でチェックしたセットを並びの順に 1 つずつ。モデルに無いマテリアルのセットは焼かない。
+//! - **セットごとに焼く**: ウィンドウでチェックしたセットを並びの順に 1 つずつ。モデルに無いマテリアルのセットは焼かない。
 //! - **古いマップを黙って使わない**: 由来（モデルの指紋・大きさ・スロット・設定・エンジンの版）が今と違うマップは `Stale`、モデルが無ければ
 //!   `Unverified` と言い、書き出しの AO にも使わない（`occlusion_for_export`）。
 //! - 描いている間は始めない。焼いている間の描画は許す（結果の意味を変えない）。ポーズやモデルが変われば結果を捨てる。
 //! - **モデルの同一性は `Arc` の弱い参照で見る**（`ModelId`）。アドレスだけを覚えると、旧モデルが解放されたあとに別のモデルが同じ
 //!   アドレスに置かれて同じと取り違える（ポーズを変えるたびにモデルは作り直される）。
-//! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。窓の状態表示は毎フレーム
+//! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。ウィンドウの状態表示は毎フレーム
 //!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。
 //!
-//! 高ポリからの投影（参照）は、窓で選べるようになるまで使わない（参照なしで焼く）。
+//! 高ポリからの投影（参照）は、ウィンドウで選べるようになるまで使わない（参照なしで焼く）。
 
 pub mod adopt;
 pub mod input;
 pub mod maps;
+pub mod overlap;
 pub mod overlay;
+pub mod uvmap;
 pub mod window;
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Instant;
 
 use yolu_gpu::{bake_mesh_maps, GpuBakeSlot};
 pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMethod};
@@ -37,13 +37,17 @@ pub use maps::MeshMapSet;
 pub use overlay::{MeshMapView, Overlay};
 use yolu_core::export::occlusion_byte;
 use yolu_core::mesh_maps::{
-    material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeResult, MeshBakeSettings,
-    MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind, MeshMapState,
+    material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeReport, MeshBakeResult,
+    MeshBakeSettings, MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind,
+    MeshMapState,
 };
 
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
-use crate::state::AppState;
+use crate::notice::Source;
+use crate::state::{Action, AppState};
 use crate::view3d::model::ViewModel;
+use crate::windows::CloseJob;
 
 /// ベイクの操作（`Action::Bake`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +66,8 @@ pub enum BakeAction {
     View(MeshMapView),
     /// 焼く場所（自動・GPU・CPU）。次のベイクから効く。
     Backend(BakeBackend),
+    /// 重なった UV のテクセルの持ち主の決め方（今のセットの文書。1 回の Undo）と、手でアイランドを選ぶ。
+    Priority(overlap::PriorityOp),
 }
 
 /// 焼いている 1 回の仕事（1 つのテクスチャセット）。始めたときの条件を持つ。
@@ -69,9 +75,8 @@ struct Job {
     uid: u32,
     name: String,
     settings: MeshBakeSettings,
-    cancel: Arc<AtomicBool>,
     progress: Arc<Mutex<(f64, String)>>,
-    rx: Receiver<Result<(MeshBakeResult, BakeRun), String>>,
+    worker: Worker<Result<(MeshBakeResult, BakeRun), String>>,
     doc_id: u128,
     size: (u32, u32),
     slots: Vec<i32>,
@@ -79,7 +84,7 @@ struct Job {
     model: ModelId,
 }
 
-/// GPU が使えるかの確認（窓の状態表示のために、別のスレッドで 1 回だけ作ってみる）。
+/// GPU が使えるかの確認（ウィンドウの状態表示のために、別のスレッドで 1 回だけ作ってみる）。
 #[derive(Clone, Debug, Default)]
 pub enum GpuProbe {
     /// まだ確かめていない。
@@ -118,7 +123,7 @@ struct CachedInput {
     input: Result<Arc<MeshBakeInput>, String>,
 }
 
-/// 別のスレッドで作っている入力（窓の状態表示のため。モデルが替わるたびに UI のスレッドで作り直さない）。
+/// 別のスレッドで作っている入力（ウィンドウの状態表示のため。モデルが替わるたびに UI のスレッドで作り直さない）。
 struct PendingInput {
     model: ModelId,
     rx: Receiver<Result<MeshBakeInput, String>>,
@@ -135,8 +140,10 @@ pub struct BakeState {
     /// 2D のキャンバスに重ねて見るもの。
     pub view: MeshMapView,
     pub overlay: Overlay,
-    /// 最後のベイクの結果の一文と、成功か（窓の下に出す）。
+    /// 最後のベイクの結果の一文と、成功か（ウィンドウの下に出す）。
     pub outcome: Option<(String, bool)>,
+    /// 今の並びでここまでに焼いたセットの UV の注意（`uv_warning`。同じ文は 1 つ）。複数のセットの最後のまとめの知らせに添える。
+    uv_notes: Vec<String>,
     /// 焼く場所（既定は自動）。
     pub backend: BakeBackend,
     /// GPU のデバイスとシェーダー（焼くたびに作り直さない。別のスレッドから共有する）。
@@ -148,6 +155,20 @@ pub struct BakeState {
     finished: usize,
     input: Option<CachedInput>,
     pending: Option<PendingInput>,
+    /// 手でアイランドを選んでいる（次に 2D・3D で押したアイランドをこの一覧へ入れる）。
+    pub pick: Option<overlap::Picking>,
+    /// 手で選ぶアイランドの索引（モデルの入力ごと）。
+    islands: Option<Arc<overlap::Islands>>,
+    /// 別のスレッドで作っているアイランドの索引（入力ごとに 1 つ。UI のスレッドを止めない）。
+    pending_islands: Option<overlap::PendingIslands>,
+    /// ポリゴン塗りつぶしの右クリックで、アイランドの索引ができるのを待っているメニュー（できたフレームで開く）。
+    pub(crate) menu_wait: Option<overlap::MenuWait>,
+    /// ポリゴン塗りつぶしの右ボタンを押した所（3D か）。離した所が近ければアイランドのメニューを開く。
+    pub(crate) menu_press: Option<(egui::Pos2, bool, std::time::Instant)>,
+    /// ウィンドウの UV の見取り図か一覧の行でポインタを置いているアイランド（キャンバスと 3D ビューでも同じアイランドを強調する）。
+    pub map_hover: Option<usize>,
+    /// ウィンドウの UV の見取り図の中身（モデル・マテリアル・アイランドごと）。
+    map: Option<Arc<uvmap::MapData>>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
     pub park_next: bool,
@@ -157,7 +178,7 @@ pub struct BakeState {
     pub park_mid_bake: bool,
 }
 
-/// 進み具合（窓・仕事の札が出す）。
+/// 進み具合（ウィンドウ・仕事の札が出す）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Progress {
     pub fraction: f64,
@@ -234,9 +255,10 @@ impl BakeState {
         matches!(self.gpu_probe(), GpuProbe::Probing { .. })
     }
 
-    /// 窓の状態表示のために、モデルの入力を別のスレッドで作っている。
+    /// ウィンドウの状態表示のために、モデルの入力を別のスレッドで作っている（アイランドの索引を作っている・右クリックのメニューが待っているときも、
+    /// 描き直しを続けるために真）。
     pub fn is_checking(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.pending_islands.is_some() || self.menu_wait.is_some()
     }
 
     pub fn progress(&self) -> Option<Progress> {
@@ -248,12 +270,90 @@ impl BakeState {
             set: job.name.clone(),
             index: self.finished + 1,
             total: self.total.max(1),
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
 
+// ───────── 仕事の表 ─────────
+
+/// ベイク（ウィンドウを閉じているあいだは札を出す）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(card),
+    close: Some(|app| app.bake.is_baking().then_some(CloseJob::Bake)),
+    cancel: Some(|app| app.apply(Action::Bake(BakeAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_bake),
+    ..JobSpec::new("bake", |app| app.bake.is_baking())
+};
+
+/// ウィンドウの状態表示のための確かめ（モデルの入力を作る・GPU が使えるかを見る）。描き直すだけ（止めて待たない）。
+pub(crate) const CHECK_JOB: JobSpec = JobSpec {
+    repaint: true,
+    ..JobSpec::new("bake.check", |app| {
+        app.bake.is_checking() || app.bake.is_probing_gpu()
+    })
+};
+
+fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
+    if app.bake.window.is_some() {
+        return None;
+    }
+    let p = app.bake.progress()?;
+    let set = if p.total > 1 {
+        format!(
+            "{} {}/{}: {} · ",
+            lang.pick("セット", "Set"),
+            p.index,
+            p.total,
+            p.set
+        )
+    } else {
+        String::new()
+    };
+    Some(JobCard {
+        text: format!(
+            "{} — {set}{}… {}%",
+            lang.pick("メッシュマップをベイク", "Baking mesh maps"),
+            if p.canceling {
+                lang.pick("取り消し中", "Canceling").to_owned()
+            } else {
+                phase_label(lang, &p.phase)
+            },
+            (p.fraction * 100.0) as i32
+        ),
+        fraction: Some(p.fraction as f32),
+        cancel: Some(Action::Bake(BakeAction::Cancel)),
+        canceling: p.canceling,
+    })
+}
+
 // ───────── 名前 ─────────
+
+/// 焼けたが気をつけること（UV の面積が 0 の三角形・縮退した三角形・UV が重なるテクセル）を 1 つの文にする。数は書かない
+/// （数は記録 `MeshBakeReport` に残り、試験と計測が読む）。無ければ None。
+pub fn uv_warning(lang: Lang, report: &MeshBakeReport) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    if report.zero_uv_area_triangles > 0 {
+        parts.push(lang.pick(
+            "UV の面積が 0 の三角形があり、その面は焼けません。",
+            "Some triangles have no UV area; those faces are not baked.",
+        ));
+    }
+    if report.degenerate_triangles > 0 {
+        parts.push(lang.pick(
+            "縮退した三角形があり、その面は焼けません。",
+            "Some triangles are degenerate; those faces are not baked.",
+        ));
+    }
+    if report.overlap_texels > 0 {
+        parts.push(lang.pick(
+            "UV が重なる所があり、重なったテクセルにはどちらか一方の面だけが焼かれます。",
+            "Some UVs overlap; an overlapping texel takes only one of the faces.",
+        ));
+    }
+    (!parts.is_empty()).then(|| crate::crash::problem(parts.join(" ")))
+}
 
 pub fn kind_label(lang: Lang, kind: MeshMapKind) -> &'static str {
     match kind {
@@ -312,7 +412,7 @@ pub fn backend_help(lang: Lang, backend: BakeBackend) -> &'static str {
     }
 }
 
-/// アダプターの名前（窓の状態・結果の一文）。
+/// アダプターの名前（ウィンドウの状態・結果の一文）。
 fn adapter_text(lang: Lang, a: &BakeAdapter) -> String {
     let software = if a.software {
         lang.pick("ソフトウェア", "software")
@@ -343,7 +443,7 @@ pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
     }
 }
 
-/// 焼く場所の一行（窓の状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
+/// 焼く場所の一行（ウィンドウの状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceLine {
     pub text: String,
@@ -445,7 +545,7 @@ pub fn id_source_label(lang: Lang, source: MeshIdSource) -> &'static str {
     }
 }
 
-/// 窓で選べる ID の分け方（頂点カラーと素材の識別は、入力に渡さないので選べない）。
+/// ウィンドウで選べる ID の分け方（頂点カラーと素材の識別は、入力に渡さないので選べない）。
 pub const ID_SOURCES: [MeshIdSource; 4] = [
     MeshIdSource::MaterialSlot,
     MeshIdSource::Mesh,
@@ -509,8 +609,8 @@ impl AppState {
         let set = self.sets.get(index)?;
         match &self.model {
             Some(record) => {
-                // 3D が指しているモデルが記録と同じものか（Live Link の世代）
-                if record.is_link() && self.view3d.link_generation() != Some(record.generation) {
+                // 3D が指しているモデルが記録と同じものか（形ごと渡されたメッシュの世代）
+                if record.is_mesh() && self.view3d.link_generation() != Some(record.generation) {
                     return None;
                 }
                 let _ = model;
@@ -549,7 +649,7 @@ impl AppState {
         self.cache_input(&model, built)
     }
 
-    /// 窓の状態表示のための入力。作ってあればそれ。モデルが替わっていれば別のスレッドで作り直し（UI のスレッドを止めない。
+    /// ウィンドウの状態表示のための入力。作ってあればそれ。モデルが替わっていれば別のスレッドで作り直し（UI のスレッドを止めない。
     /// 作っているのは 1 つだけで、モデルがまた替われば終わってから最新のものを作る）、できるまでは None。ポーズを変えている間は
     /// 始めない（毎フレーム別の形になる）。
     pub fn bake_input_nowait(&mut self) -> Option<Result<Arc<MeshBakeInput>, String>> {
@@ -602,7 +702,7 @@ impl AppState {
         }
     }
 
-    /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクの窓が入力を作っている
+    /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクのウィンドウが入力を作っている
     /// あいだ、効果の入力が毎フレーム横から見る）。
     pub(crate) fn bake_input_ready(&self) -> Option<Result<Arc<MeshBakeInput>, String>> {
         let model = self.view3d.full_model()?;
@@ -649,6 +749,8 @@ impl AppState {
         let mut settings = self.bake.settings.clone();
         // 手動の ID の色はセットの文書の状態（ID マップに入る。別のモデルのものなら core が焼く前に断る）
         settings.manual_id_colors = doc.id_colors().clone();
+        // 重なった UV の持ち主の決め方もセットの文書の状態（手で選んだアイランドが別のモデルのものなら core が焼く前に断る）
+        settings.overlap = doc.bake_priority().clone();
         settings.width = doc.width() as i32;
         settings.height = doc.height() as i32;
         settings.target_slot = slots[0];
@@ -661,7 +763,7 @@ impl AppState {
         Ok((settings, slots))
     }
 
-    /// マップを使う側の今の条件（モデル・セットの文書の大きさ・スロット・窓の設定）。入力が None ならモデルが無い。
+    /// マップを使う側の今の条件（モデル・セットの文書の大きさ・スロット・ウィンドウの設定）。入力が None ならモデルが無い。
     pub fn mesh_map_expectation(
         &self,
         index: usize,
@@ -672,6 +774,8 @@ impl AppState {
         // 手動の ID の色を直したら、前の ID マップは古い（焼いたときの設定と同じ手動の色で比べる）
         let mut settings = self.bake.settings.clone();
         settings.manual_id_colors = doc.id_colors().clone();
+        // 持ち主の決め方を変えたら、前のマップは古い
+        settings.overlap = doc.bake_priority().clone();
         MeshMapExpectation {
             mesh_hash: input.map(|i| i.hash().to_owned()),
             topology_hash: input.map(|i| i.topology_hash().to_owned()),
@@ -719,13 +823,13 @@ impl AppState {
             .collect()
     }
 
-    /// 今ベイクを始められない理由（始められれば None）。窓のボタンと `Start` が同じ理由で断る。入力を作る必要があればここで作る。
+    /// 今ベイクを始められない理由（始められれば None）。ウィンドウのボタンと `Start` が同じ理由で断る。入力を作る必要があればここで作る。
     pub fn bake_refusal(&mut self) -> Option<String> {
         self.refusal(true)
     }
 
-    /// 窓に出す理由。`bake_refusal` と同じ順で、入力を作っている最中は入力の理由を出さない（押せば `Start` が作るか、作り終えるのを
-    /// 待って断る。窓を描くたびに UI のスレッドで作らない）。
+    /// ウィンドウに出す理由。`bake_refusal` と同じ順で、入力を作っている最中は入力の理由を出さない（押せば `Start` が作るか、作り終えるのを
+    /// 待って断る。ウィンドウを描くたびに UI のスレッドで作らない）。
     pub fn bake_refusal_nowait(&mut self) -> Option<String> {
         self.refusal(false)
     }
@@ -733,10 +837,7 @@ impl AppState {
     fn refusal(&mut self, wait: bool) -> Option<String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Some(
-                lang.pick("描いている間はできません", "Not while drawing")
-                    .into(),
-            );
+            return Some(crate::lang::refusals::during_stroke(lang).into());
         }
         if self.bake.job.is_some() {
             return Some(lang.pick("ベイク中です", "Already baking").into());
@@ -779,10 +880,7 @@ impl AppState {
             self.bake_input_nowait()
         };
         match input {
-            Some(Err(e)) => Some(lang.pick(
-                format!("ベイクできません: {e}"),
-                format!("Cannot bake: {e}"),
-            )),
+            Some(Err(e)) => Some(lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), e)),
             Some(Ok(_)) | None => None,
         }
     }
@@ -832,20 +930,60 @@ impl AppState {
         Occlusion::Bytes(bytes)
     }
 
-    /// 窓を閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。作っている最中のものも、窓を閉じていれば手放す（ID の色の道具を選んでいるときを除く）。毎フレーム呼ぶ。
+    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
+    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるときを除く）。毎フレーム呼ぶ。
     pub fn release_idle_bake_input(&mut self) {
-        // ID の色の道具（強調・部品の欄）は、窓が無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
+        // ID の色のツール（強調・部品の欄）は、ウィンドウが無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
         // 始まって終わらない
-        if self.bake.window.is_none() && self.tool != crate::state::Tool::IdSelect {
+        // アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
+        // （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）
+        let island_menu = matches!(
+            self.popup.as_ref().map(|p| p.kind),
+            Some(crate::state::PopupKind::BakeIsland { .. })
+        ) || self.bake.menu_wait.is_some()
+            || self.bake.menu_press.is_some();
+        if self.bake.window.is_none() && self.tool != crate::state::Tool::IdSelect && !island_menu {
             self.bake.pending = None;
         }
         if self.bake.input.is_some()
             && self.bake.window.is_none()
+            && !island_menu
             && self.bake.job.is_none()
             && self.sets.iter().all(|s| s.mesh_maps.is_empty())
         {
             self.bake.input = None;
+        }
+        self.release_overlap_caches();
+    }
+
+    /// 手で選ぶアイランドの索引（`Islands`）とウィンドウの見取り図（`MapData`）は、ベイクの入力・モデルの形を握る。入力を手放したあと・別の入力に
+    /// 替わったあとに残すと、入力の写しも古いモデル・ポーズの形も解放されない。索引は今の入力の物だけ、見取り図はウィンドウを開いている間の
+    /// 今の索引の上の物だけ持つ（アイランドのメニューを開いている間も、メニューが使うのは索引で、見取り図ではない）。毎フレーム呼ぶ。
+    fn release_overlap_caches(&mut self) {
+        let input = self.bake.input.as_ref().and_then(|c| c.input.as_ref().ok());
+        if !self
+            .bake
+            .islands
+            .as_ref()
+            .is_some_and(|i| input.is_some_and(|input| i.is_on(input)))
+        {
+            self.bake.islands = None;
+        }
+        if !self
+            .bake
+            .pending_islands
+            .as_ref()
+            .is_some_and(|p| input.is_some_and(|input| p.is_on(input)))
+        {
+            self.bake.pending_islands = None;
+        }
+        let map_on_islands = match (&self.bake.map, &self.bake.islands) {
+            (Some(m), Some(i)) => m.is_on(i),
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        if self.bake.window.is_none() || !map_on_islands {
+            self.bake.map = None;
         }
     }
 
@@ -864,7 +1002,14 @@ impl AppState {
                 self.bake.backend = backend;
                 self.bake.ensure_gpu_probe();
             }
-            BakeAction::CloseWindow => self.bake.window = None,
+            BakeAction::CloseWindow => {
+                self.bake.window = None;
+                self.bake.pick = None;
+                self.bake.map_hover = None;
+                // 見取り図はウィンドウの物（形を握り続けない）。アイランドのメニューが使うのはアイランドの索引で、見取り図ではない
+                self.bake.map = None;
+            }
+            BakeAction::Priority(op) => self.bake_priority_apply(op),
             BakeAction::Start => self.start_bake(),
             BakeAction::Cancel => self.cancel_bake(),
             BakeAction::Map(kind, on) => {
@@ -877,12 +1022,13 @@ impl AppState {
                 } else if maps.len() > 1 {
                     maps.retain(|k| *k != kind);
                 } else {
-                    self.message = lang
-                        .pick(
+                    self.refuse(
+                        Source::Bake,
+                        lang.pick(
                             "マップを 1 つは残します。",
                             "At least one map stays checked.",
-                        )
-                        .into();
+                        ),
+                    );
                 }
             }
             BakeAction::Set(uid, on) => {
@@ -893,12 +1039,13 @@ impl AppState {
                     let last = checked.len() == 1
                         && self.sets.get(checked[0]).is_some_and(|s| s.uid == uid);
                     if last {
-                        self.message = lang
-                            .pick(
+                        self.refuse(
+                            Source::Bake,
+                            lang.pick(
                                 "テクスチャセットを 1 つは残します。",
                                 "At least one texture set stays checked.",
-                            )
-                            .into();
+                            ),
+                        );
                     } else {
                         self.bake.skipped.insert(uid);
                     }
@@ -926,7 +1073,7 @@ impl AppState {
 
     fn start_bake(&mut self) {
         if let Some(reason) = self.bake_refusal() {
-            self.message = reason.clone();
+            self.refuse(Source::Bake, reason.clone());
             self.bake.outcome = Some((reason, false));
             return;
         }
@@ -939,6 +1086,7 @@ impl AppState {
         self.bake.finished = 0;
         self.bake.queue = queue;
         self.bake.outcome = None;
+        self.bake.uv_notes.clear();
         self.start_next_bake();
     }
 
@@ -952,19 +1100,18 @@ impl AppState {
             };
             match self.prepare_bake(index) {
                 Ok(job) => {
-                    self.message = lang
-                        .pick("メッシュマップをベイク中…", "Baking mesh maps…")
-                        .into();
+                    self.info(
+                        Source::Bake,
+                        lang.pick("メッシュマップをベイク中…", "Baking mesh maps…"),
+                    );
                     self.bake.job = Some(job);
                     return true;
                 }
                 Err(reason) => {
                     self.bake.queue.clear();
                     self.bake_ended(
-                        lang.pick(
-                            format!("ベイクできません: {reason}"),
-                            format!("Cannot bake: {reason}"),
-                        ),
+                        crate::notice::Kind::Error,
+                        lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), reason),
                         false,
                     );
                     return false;
@@ -987,54 +1134,50 @@ impl AppState {
         let (uid, name) = (set.uid, set.name.clone());
         let doc = self.set_doc(index);
         let (doc_id, size) = (doc.id(), (doc.width(), doc.height()));
-        let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(Mutex::new((0.0, "Preparing".to_owned())));
-        let (tx, rx) = channel();
-        let (flag, shared, run_settings) = (cancel.clone(), progress.clone(), settings.clone());
+        let (shared, run_settings) = (progress.clone(), settings.clone());
         let park = std::mem::take(&mut self.bake.park_next);
         let park_mid = std::mem::take(&mut self.bake.park_mid_bake);
         let backend = self.bake.backend;
         let gpu = self.bake.gpu.clone();
-        std::thread::Builder::new()
-            .name("yolu-bake".into())
-            .spawn(move || {
-                if park {
-                    crate::windows::park_until_canceled(&flag);
-                }
-                let mut baking = 0;
-                let result = bake_mesh_maps(
-                    backend,
-                    &gpu,
-                    &input,
-                    &run_settings,
-                    &MeshBakeBudget::default(),
-                    Some(&flag),
-                    None,
-                    |fraction, phase| {
-                        if park_mid && phase == "Baking" {
-                            // 1 回目は焼き始めの通知。2 回目が、最初の dispatch（行）を終えたあと
-                            baking += 1;
-                            if baking == 2 {
-                                crate::windows::park_until_canceled(&flag);
-                            }
+        let worker = Worker::spawn("yolu-bake", move |tx, cancel| {
+            let flag = cancel.flag();
+            if park {
+                crate::windows::park_until_canceled(flag);
+            }
+            let mut baking = 0;
+            let result = bake_mesh_maps(
+                backend,
+                &gpu,
+                &input,
+                &run_settings,
+                &MeshBakeBudget::default(),
+                Some(flag),
+                None,
+                |fraction, phase| {
+                    if park_mid && phase == "Baking" {
+                        // 1 回目は焼き始めの通知。2 回目が、最初の dispatch（行）を終えたあと
+                        baking += 1;
+                        if baking == 2 {
+                            crate::windows::park_until_canceled(flag);
                         }
-                        if let Ok(mut p) = shared.lock() {
-                            *p = (fraction, phase.to_owned());
-                        }
-                        true
-                    },
-                )
-                .map_err(|e| e.to_string());
-                let _ = tx.send(result);
-            })
-            .map_err(|e| e.to_string())?;
+                    }
+                    if let Ok(mut p) = shared.lock() {
+                        *p = (fraction, phase.to_owned());
+                    }
+                    true
+                },
+            )
+            .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
         Ok(Job {
             uid,
             name,
             settings,
-            cancel,
             progress,
-            rx,
+            worker,
             doc_id,
             size,
             slots,
@@ -1047,13 +1190,14 @@ impl AppState {
         let lang = self.lang;
         if let Some(job) = &self.bake.job {
             self.bake.queue.clear();
-            job.cancel.store(true, Ordering::Relaxed);
-            self.message = lang
-                .pick(
+            job.worker.cancel();
+            self.info(
+                Source::Bake,
+                lang.pick(
                     "メッシュマップのベイクを取り消しています…",
                     "Canceling the mesh-map bake…",
-                )
-                .into();
+                ),
+            );
         }
     }
 
@@ -1063,12 +1207,10 @@ impl AppState {
         let Some(job) = &self.bake.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                Err(lang.pick("ベイクが止まりました", "The bake stopped").into())
-            }
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(lang.pick("ベイクが止まりました", "The bake stopped").into()),
         };
         let job = self.bake.job.take().expect("上で見た");
         self.finish_bake(job, result);
@@ -1101,9 +1243,13 @@ impl AppState {
             Err(e) => {
                 self.bake.queue.clear();
                 return self.bake_ended(
-                    lang.pick(
-                        format!("メッシュマップをベイクできません: {e}"),
-                        format!("Mesh maps were not baked: {e}"),
+                    crate::notice::Kind::Error,
+                    lang.with_reason(
+                        lang.pick(
+                            "メッシュマップをベイクできません",
+                            "Cannot bake the mesh maps",
+                        ),
+                        e,
                     ),
                     false,
                 );
@@ -1112,24 +1258,32 @@ impl AppState {
         match result.status {
             MeshBakeStatus::Canceled | MeshBakeStatus::TimedOut => {
                 self.bake.queue.clear();
-                let text = if result.status == MeshBakeStatus::TimedOut {
-                    lang.pick(
-                        "ベイクが時間切れになりました（前のマップはそのまま）",
-                        "The bake hit its time limit; the previous maps are unchanged",
+                // 時間切れは失敗、取り消しは利用者の操作の結果（済んだ知らせ）
+                let (kind, text) = if result.status == MeshBakeStatus::TimedOut {
+                    (
+                        crate::notice::Kind::Error,
+                        lang.pick(
+                            "ベイクが時間切れになりました（前のマップはそのまま）",
+                            "The bake hit its time limit; the previous maps are unchanged",
+                        ),
                     )
                 } else {
-                    lang.pick(
-                        "ベイクを取り消しました（前のマップはそのまま）",
-                        "The bake was canceled; the previous maps are unchanged",
+                    (
+                        crate::notice::Kind::Info,
+                        lang.pick(
+                            "ベイクを取り消しました（前のマップはそのまま）",
+                            "The bake was canceled; the previous maps are unchanged",
+                        ),
                     )
                 };
-                return self.bake_ended(text.into(), false);
+                return self.bake_ended(kind, text.into(), false);
             }
             MeshBakeStatus::Completed => {}
         }
         if let Some(what) = self.bake_changed(&job) {
             self.bake.queue.clear();
             return self.bake_ended(
+                crate::notice::Kind::Warning,
                 lang.pick(
                     format!("{what}が変わったので、焼いた結果を捨てました（前のマップはそのまま）"),
                     format!("Discarded the bake because {what} changed; the previous maps are unchanged"),
@@ -1160,66 +1314,69 @@ impl AppState {
         let place = run_line(lang, &run).text;
         let mut text = lang.pick(
             format!(
-                "{}: {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
-                job.name,
+                "{}の {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
+                lang.quote(&job.name),
                 job.settings.width,
                 job.settings.height,
                 slot_list(&job.slots)
             ),
             format!(
-                "{}: baked {count} map(s) at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
-                job.name,
+                "Baked {count} map(s) of {} at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
+                lang.quote(&job.name),
                 job.settings.width,
                 job.settings.height,
                 slot_list(&job.slots)
             ),
         );
-        if result.report.overlap_texels > 0 {
-            text += &lang.pick(
-                format!(" UV が重なるテクセル {} 個。", result.report.overlap_texels),
-                format!(
-                    " {} texels have overlapping UVs.",
-                    result.report.overlap_texels
-                ),
-            );
-        }
-        self.bake_ended(text, true);
+        // 焼けたが、UV の面積が 0 の三角形・縮退した三角形・UV が重なるテクセルがあれば、1 つの注意にする（数は書かない。数は記録に残る）
+        let kind = match uv_warning(lang, &result.report) {
+            Some(warning) => {
+                text.push(' ');
+                text += &warning;
+                if !self.bake.uv_notes.contains(&warning) {
+                    self.bake.uv_notes.push(warning);
+                }
+                crate::notice::Kind::Warning
+            }
+            None => crate::notice::Kind::Info,
+        };
+        self.bake_ended(kind, text, true);
         if !self.bake.queue.is_empty() {
             // 次のセット（始められなかった理由は `start_next_bake` が知らせる）
             self.start_next_bake();
         } else if self.bake.total > 1 {
-            let text = lang.pick(
+            let mut text = lang.pick(
                 format!(
                     "{} 個のテクスチャセットのメッシュマップを焼きました。",
                     self.bake.total
                 ),
                 format!("Baked the mesh maps of {} texture sets.", self.bake.total),
             );
-            self.message = text.clone();
-            self.bake.outcome = Some((text, true));
+            // どれかのセットに UV の注意があれば、まとめも注意（種類は重いほう）。まとめで、そのセットの注意の文を上書きして消さない
+            let mut kind = crate::notice::Kind::Info;
+            for warning in &self.bake.uv_notes {
+                text.push(' ');
+                text += warning;
+                kind = kind.worse(crate::notice::Kind::Warning);
+            }
+            self.bake_ended(kind, text, true);
         }
     }
 
-    fn bake_ended(&mut self, text: String, ok: bool) {
-        self.message = text.clone();
+    fn bake_ended(&mut self, kind: crate::notice::Kind, text: String, ok: bool) {
+        self.notify(kind, Source::Bake, text.clone());
         self.bake.outcome = Some((text, ok));
     }
 
     /// 試験用: 焼いている仕事が終わるまで待って入れる（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_bake(&mut self) {
-        let start = Instant::now();
-        while self.bake.job.is_some() {
-            self.poll_bake();
-            if self.bake.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "ベイクが終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "ベイクが終わらない（ハング検出上限）",
+            |s| s.bake.job.is_some(),
+            Self::poll_bake,
+        );
     }
 }
 

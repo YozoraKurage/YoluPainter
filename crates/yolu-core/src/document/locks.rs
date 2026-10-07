@@ -1,4 +1,4 @@
-//! 層自身と祖先のロック。番号は C# と保存形式の版 12 に合わせる。
+//! レイヤー自身と祖先のロック。番号は C# と保存形式の版 12 に合わせる。
 use super::operations::Dirty;
 use super::{Document, Property};
 use crate::{CoreError, LayerId, Rgba8};
@@ -89,7 +89,7 @@ impl Document {
     /// 画素を書く入口が、書く前に必ず通る関門。ロックで断る（画像・すべて、消すなら透明部分も）か、書くなら透明部分のロックで
     /// アルファを守るか（`true`）を返す。検査と守り方を別々に扱うと、新しい書き込み口が黙ってロックを迂回するので、
     /// 返した値は `StrokeState::new` の `keep_alpha` や塗りつぶしの式へそのまま渡す（どちらも必須の引数で、渡し忘れはコンパイルで落ちる。
-    /// ただし false を書く入口は通るので、足し忘れを見つけるのは入口の表 `tests/docops.rs` の `write_entries` の網羅だけ）。マスクへの
+    /// ただし false を書く入口は通るので、足し忘れを見つけるのは入口の表 `tests/edit/docops.rs` の `write_entries` の網羅だけ）。マスクへの
     /// 書き込みは透明部分のロックの対象外で、すべてのロックだけで断る（`refuse_lock`）。
     pub(crate) fn pixel_write_guard(&self, id: LayerId, erase: bool) -> Result<bool, CoreError> {
         self.ensure_pixels_editable(id, erase)?;
@@ -104,8 +104,8 @@ impl Document {
         self.ensure_pixels_editable(id, false)?;
         self.refuse_lock(id, LayerLocks::TRANSPARENCY)
     }
-    /// [`Document::ensure_pixels_rewritable`] の、まだ文書に無い層（これから親 `parent` の中へ入る。自分のロックは無い）の分。
-    /// 断るときの名指しは `layer`（入る層の ID）。親のグループのロックだけが効く。
+    /// [`Document::ensure_pixels_rewritable`] の、まだ文書に無いレイヤー（これから親 `parent` の中へ入る。自分のロックは無い）の分。
+    /// 断るときの名指しは `layer`（入るレイヤーの ID）。親のグループのロックだけが効く。
     pub(super) fn ensure_new_layer_rewritable(
         &self,
         layer: LayerId,
@@ -118,7 +118,7 @@ impl Document {
         self.refuse_lock_from(layer, parent, LayerLocks::PIXELS)?;
         self.refuse_lock_from(layer, parent, LayerLocks::TRANSPARENCY)
     }
-    /// `start`（層自身かその祖先）から見て `flag` が掛かっていれば断る。名指しは `named`、持ち主は `start` から祖先へ探した最初の層。
+    /// `start`（レイヤー自身かその祖先）から見て `flag` が掛かっていれば断る。名指しは `named`、持ち主は `start` から祖先へ探した最初のレイヤー。
     fn refuse_lock_from(
         &self,
         named: LayerId,

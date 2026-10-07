@@ -255,10 +255,17 @@ pub use ids::{
 };
 mod surface;
 pub use surface::reconstruct_normals;
+mod overlap;
+mod priority;
+pub use overlap::{uv_overlap, UvOverlap};
+pub use priority::{
+    bake_islands, islands_of, MeshOverlapList, MeshOverlapPriority, MeshOverlapRule,
+    MAX_OVERLAP_ISLANDS,
+};
 mod bake;
 mod curvature;
 mod plan;
-mod raster;
+pub(crate) mod raster;
 mod rays;
 pub use bake::{
     bake, base_name, condition_key, estimate_bytes, material_identity, MeshBakeRaw, ENGINE_VERSION,

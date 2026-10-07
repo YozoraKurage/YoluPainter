@@ -12,12 +12,13 @@
 //! 前の版か新しい版のどちらか。名前を変える・上書きも同じ）。
 
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use yolu_core::glam::{Quat, Vec3};
 
 use crate::lang::Lang;
+use crate::userfiles;
 use crate::view3d::pose::hide::store::{escape, unescape};
 
 pub const HEADER: &str = "yolupainter-pose 1";
@@ -90,6 +91,17 @@ impl From<io::Error> for StoreError {
     }
 }
 
+impl From<userfiles::FileError> for StoreError {
+    fn from(e: userfiles::FileError) -> Self {
+        match e {
+            userfiles::FileError::Io(e) => StoreError::Io(e),
+            userfiles::FileError::TooLarge => StoreError::TooLarge,
+            userfiles::FileError::NotText => StoreError::NotAPreset,
+            userfiles::FileError::Mismatch => StoreError::Mismatch,
+        }
+    }
+}
+
 impl StoreError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
@@ -125,9 +137,7 @@ impl StoreError {
                     "Written file does not read back",
                 )
                 .into(),
-            StoreError::TooMany => lang
-                .pick("ポーズが多すぎます", "Too many poses")
-                .into(),
+            StoreError::TooMany => lang.pick("ポーズが多すぎます", "Too many poses").into(),
             StoreError::Missing => lang
                 .pick("一覧にないポーズです", "The pose is not in the list")
                 .into(),
@@ -161,47 +171,26 @@ pub struct Presets {
 impl Presets {
     /// 設定のフォルダのプリセットを読む（起動のとき 1 回。読めないファイルは読み飛ばして理由を残す）。
     pub fn attach(&mut self, dir: PathBuf) {
-        self.items.clear();
-        self.problems.clear();
-        let mut files: Vec<(u32, PathBuf)> = Vec::new();
-        if let Ok(read) = std::fs::read_dir(&dir) {
-            for entry in read.flatten() {
-                let path = entry.path();
-                if let Some(id) = file_id(&path) {
-                    files.push((id, path));
-                }
-            }
-        }
-        files.sort_by_key(|(id, _)| *id);
-        let mut max_id = 0;
-        for (id, path) in files {
-            max_id = max_id.max(id);
-            let file = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if self.items.len() >= MAX_PRESETS {
-                self.problems.push(Problem {
-                    file,
-                    error: StoreError::TooMany,
-                });
-                continue;
-            }
-            match read_file(&path) {
-                Ok((name, entries)) => {
-                    if self.items.iter().any(|p| p.name == name) {
-                        self.problems.push(Problem {
-                            file,
-                            error: StoreError::DuplicateName,
-                        });
-                    } else {
-                        self.items.push(Preset { id, name, entries });
-                    }
-                }
-                Err(error) => self.problems.push(Problem { file, error }),
-            }
-        }
-        self.next_id = max_id + 1;
+        let loaded = userfiles::load_numbered(
+            &dir,
+            file_id,
+            MAX_PRESETS,
+            read_file,
+            |(name, _)| name.as_str(),
+            || StoreError::TooMany,
+            || StoreError::DuplicateName,
+        );
+        self.items = loaded
+            .items
+            .into_iter()
+            .map(|(id, (name, entries))| Preset { id, name, entries })
+            .collect();
+        self.problems = loaded
+            .problems
+            .into_iter()
+            .map(|(file, error)| Problem { file, error })
+            .collect();
+        self.next_id = loaded.next_id;
         self.dir = Some(dir);
     }
 
@@ -321,11 +310,7 @@ impl Presets {
             return Ok(());
         };
         if let Some(dir) = &self.dir {
-            match std::fs::remove_file(path_of(dir, id)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
+            userfiles::remove(&path_of(dir, id))?;
         }
         self.items.remove(at);
         Ok(())
@@ -390,10 +375,7 @@ fn parse_entry(value: &str) -> Option<PoseEntry> {
     if (q.length() - 1.0).abs() > QUAT_TOLERANCE {
         return None;
     }
-    let path: Vec<String> = path_text
-        .split('/')
-        .map(unescape)
-        .collect::<Option<_>>()?;
+    let path: Vec<String> = path_text.split('/').map(unescape).collect::<Option<_>>()?;
     if path.iter().any(|c| c.is_empty()) {
         return None;
     }
@@ -439,7 +421,8 @@ pub fn parse(text: &str) -> Result<(String, Vec<PoseEntry>), StoreError> {
                 if entries.len() >= MAX_ENTRIES {
                     return Err(StoreError::TooMany);
                 }
-                let entry = parse_entry(value).ok_or_else(|| StoreError::BadValue("bone".into()))?;
+                let entry =
+                    parse_entry(value).ok_or_else(|| StoreError::BadValue("bone".into()))?;
                 if !paths.insert(entry.path.clone()) {
                     // 同じ骨の項目が 2 つ（どちらを当てるか決まらない）
                     return Err(StoreError::BadValue("bone".into()));
@@ -454,45 +437,17 @@ pub fn parse(text: &str) -> Result<(String, Vec<PoseEntry>), StoreError> {
 }
 
 fn read_file(path: &Path) -> Result<(String, Vec<PoseEntry>), StoreError> {
-    let meta = std::fs::metadata(path)?;
-    if meta.len() > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    let bytes = std::fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|_| StoreError::NotAPreset)?;
-    parse(&text)
+    parse(&userfiles::read_checked(path, MAX_FILE_BYTES)?)
 }
 
 /// 一時ファイルへ書き、読み戻して確かめてから、プリセットのファイルへ 1 回の置換で確定する（新しい番号でも、名前を変える・
 /// 上書きの置き換えでも同じ）。
 fn write_file(dir: &Path, preset: &Preset) -> Result<(), StoreError> {
-    std::fs::create_dir_all(dir)?;
     let text = render(&preset.name, &preset.entries);
-    if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    let path = path_of(dir, preset.id);
-    let pending = path.with_extension(format!("{EXTENSION}.{}.pending", std::process::id()));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&pending)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        let (name, entries) = read_file(&pending)?;
-        if name != preset.name || entries != preset.entries {
-            return Err(StoreError::Mismatch);
-        }
-        std::fs::rename(&pending, &path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    userfiles::write_text(&path_of(dir, preset.id), &text, MAX_FILE_BYTES, |read| {
+        parse(read).is_ok_and(|(name, entries)| name == preset.name && entries == preset.entries)
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -500,7 +455,8 @@ mod tests {
     use super::*;
 
     fn dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("yolu-pose-store-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yolu-pose-store-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -595,7 +551,12 @@ mod tests {
             parse(&format!("yolupainter-pose 1\nname={long}\n")),
             Err(StoreError::BadValue(_))
         ));
-        for e in [StoreError::Missing, StoreError::TooMany, StoreError::Mismatch, StoreError::TooLarge] {
+        for e in [
+            StoreError::Missing,
+            StoreError::TooMany,
+            StoreError::Mismatch,
+            StoreError::TooLarge,
+        ] {
             assert!(!e.describe(Lang::Ja).is_empty() && e.describe(Lang::En).is_ascii());
         }
     }
@@ -606,15 +567,22 @@ mod tests {
         let mut presets = Presets::default();
         presets.attach(dir.clone());
         assert!(presets.items().is_empty());
-        let a = presets.add("構え", vec![entry(&["腰", "頭"], 0.3)]).unwrap();
-        let b = presets.add("座り", vec![entry(&["腰", "胸"], 0.5)]).unwrap();
+        let a = presets
+            .add("構え", vec![entry(&["腰", "頭"], 0.3)])
+            .unwrap();
+        let b = presets
+            .add("座り", vec![entry(&["腰", "胸"], 0.5)])
+            .unwrap();
         assert!(b > a);
         assert!(dir.join(format!("pose-{a}.ylpose")).exists());
         // 一時ファイルは残さない
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".pending"))
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.ends_with(".pending") || name.ends_with(".pending~")
+            })
             .collect();
         assert!(leftovers.is_empty());
         let mut again = Presets::default();
@@ -645,7 +613,10 @@ mod tests {
         presets.add(" ポーズ ", e()).unwrap();
         let names: Vec<&str> = presets.items().iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["ポーズ", "ポーズ 2", "ポーズ 3"]);
-        assert!(matches!(presets.add("  ", e()), Err(StoreError::BadValue(_))));
+        assert!(matches!(
+            presets.add("  ", e()),
+            Err(StoreError::BadValue(_))
+        ));
         // 休みの形（項目が 0）のプリセットも足せる
         assert!(presets.add("休み", Vec::new()).is_ok());
         std::fs::remove_dir_all(dir).unwrap();
@@ -686,10 +657,15 @@ mod tests {
         assert_eq!(presets.rename(a, "走り").unwrap(), "走り");
         // 別のプリセットの名前と重なれば番号を付ける
         assert_eq!(presets.rename(a, "座り").unwrap(), "座り 2");
-        assert!(matches!(presets.rename(a, " "), Err(StoreError::BadValue(_))));
+        assert!(matches!(
+            presets.rename(a, " "),
+            Err(StoreError::BadValue(_))
+        ));
         assert!(matches!(presets.rename(999, "x"), Err(StoreError::Missing)));
         // 上書き: 名前はそのまま、項目だけ入れ替わる
-        presets.replace(b, vec![entry(&["腰", "頭"], -0.4)]).unwrap();
+        presets
+            .replace(b, vec![entry(&["腰", "頭"], -0.4)])
+            .unwrap();
         assert_eq!(presets.get(b).unwrap().name, "座り");
         assert!(matches!(
             presets.replace(999, Vec::new()),
@@ -733,7 +709,8 @@ mod tests {
             format!("pose-{}.ylpose", MAX_PRESETS + 1)
         );
         assert!(
-            dir.join(format!("pose-{}.ylpose", MAX_PRESETS + 1)).exists(),
+            dir.join(format!("pose-{}.ylpose", MAX_PRESETS + 1))
+                .exists(),
             "読み飛ばしたファイルには触らない"
         );
         let err = presets.add("あふれ", vec![entry(&["根"], 0.3)]);
@@ -832,7 +809,9 @@ mod tests {
     fn without_a_folder_presets_live_in_memory() {
         let mut presets = Presets::default();
         assert!(presets.dir().is_none());
-        let id = presets.add("メモリだけ", vec![entry(&["根"], 0.3)]).unwrap();
+        let id = presets
+            .add("メモリだけ", vec![entry(&["根"], 0.3)])
+            .unwrap();
         assert_eq!(presets.get(id).unwrap().name, "メモリだけ");
         assert_eq!(presets.rename(id, "改名").unwrap(), "改名");
         presets.replace(id, Vec::new()).unwrap();
@@ -865,13 +844,11 @@ mod tests {
         presets.attach(dir.clone());
         let id = presets.add("元", vec![entry(&["腰"], 0.3)]).unwrap();
         let before = std::fs::read(dir.join(format!("pose-{id}.ylpose"))).unwrap();
-        // 一時ファイルの場所をフォルダでふさぐ
-        let pending = dir
-            .join(format!("pose-{id}.ylpose"))
-            .with_extension(format!("{EXTENSION}.{}.pending", std::process::id()));
-        std::fs::create_dir_all(&pending).unwrap();
-        assert!(presets.rename(id, "先").is_err());
-        assert!(presets.replace(id, Vec::new()).is_err());
+        // 置き換える前に失敗させる
+        yolu_io::atomic::failing(|| {
+            assert!(presets.rename(id, "先").is_err());
+            assert!(presets.replace(id, Vec::new()).is_err());
+        });
         assert_eq!(presets.get(id).unwrap().name, "元");
         assert_eq!(presets.get(id).unwrap().entries.len(), 1);
         assert_eq!(

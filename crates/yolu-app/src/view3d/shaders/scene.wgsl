@@ -34,7 +34,7 @@ struct Uniforms {
     shadow_matrix: mat4x4<f32>,
     // x: 影を使う（1）、y: ぼかしの半径（u v）、z: 深さの偏りの基本（深さの単位）、w: 法線の向きにずらす量（世界）
     shadow: vec4<f32>,
-    // lilToon の光（liltoon.wgsl）: 環境光の SH を Unity の unity_SHAr・SHAg・SHAb・SHBr・SHBg・SHBb・SHC の形で（環境の明るさ込み。
+    // lilToon の光（liltoon/light.wgsl）: 環境光の SH を Unity の unity_SHAr・SHAg・SHAb・SHBr・SHBg・SHBb・SHC の形で（環境の明るさ込み。
     // 環境を使わないときは一様な環境光を L0 に）
     lil_sh: array<vec4<f32>, 7>,
     // カメラの上と、画面から手前への向き（Unity の視点の行列の 1 行目と 2 行目）
@@ -266,7 +266,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     let tex_roughness = textureSample(roughness_tex, paint_sampler, f.uv).r;
     let tex_normal = textureSample(normal_tex, paint_sampler, f.uv).rgb;
     let tex_emission = textureSample(emission_tex, paint_sampler, f.uv).rgb;
-    // 市松の上に重ねるのは今までどおりガンマの値で（画面の 2D の画布と同じ見え方）
+    // 市松の上に重ねるのは今までどおりガンマの値で（画面の 2D のキャンバスと同じ見え方）
     let color_gamma = premultiplied_gamma(tex_color);
     let tex_height = textureSample(height_tex, paint_sampler, f.uv).r;
     let tex_map = textureSample(map_tex, paint_sampler, f.uv);

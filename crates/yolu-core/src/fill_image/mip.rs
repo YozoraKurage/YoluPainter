@@ -251,22 +251,26 @@ impl Acc {
         }
     }
     pub fn resolve(&self, fallback: Rgba8) -> Rgba8 {
+        self.resolved().unwrap_or(fallback)
+    }
+    /// 足した画素の混ぜ（1 つも足していなければ None）。
+    pub fn resolved(&self) -> Option<Rgba8> {
         if self.count == 0 {
-            return fallback;
+            return None;
         }
         if self.same {
-            return self.first;
+            return Some(self.first);
         }
         let a = to_byte(self.a / 255.);
         if a == 0 {
-            return self.clear();
+            return Some(self.clear());
         }
-        Rgba8::new(
+        Some(Rgba8::new(
             to_byte(self.r / self.a / 255.),
             to_byte(self.g / self.a / 255.),
             to_byte(self.b / self.a / 255.),
             a,
-        )
+        ))
     }
     pub fn scaled(&self, scale: f64) -> Rgba8 {
         if self.count == 0 {

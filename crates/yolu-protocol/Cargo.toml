@@ -6,23 +6,18 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-interprocess = "2.4"   # 0BSD OR Apache-2.0
-memmap2 = "0.9"        # MIT OR Apache-2.0
-getrandom = "0.3"      # MIT OR Apache-2.0（Live Link の鍵と挨拶の nonce を OS の乱数から）
-sha2 = "0.10"          # MIT OR Apache-2.0（鍵を知っていることを示す HMAC-SHA256。HMAC は auth.rs に 20 行で）
+serde = { version = "1", features = ["derive"] }   # MIT OR Apache-2.0（ファイルの受け渡しの頼みと返事。yolu-io・yolu-ops が既に使っている）
+serde_json = "1"       # MIT OR Apache-2.0（同上）
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"           # MIT OR Apache-2.0（自分の euid と、相手のプロセスの euid を比べる）
+libc = "0.2"           # MIT OR Apache-2.0（自分の euid と、ファイルの持ち主を比べる。シンボリックリンクを辿らずに開く）
 
 [target.'cfg(windows)'.dependencies]
-widestring = "1"       # MIT OR Apache-2.0（interprocess と同じ。名前付きパイプのセキュリティ記述子の SDDL）
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
-    "Win32_System_IO",
     "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
     "Win32_System_Threading",
 ] }

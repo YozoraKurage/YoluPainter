@@ -79,16 +79,17 @@ impl StoreError {
                 format!("{line} 行目が読めません"),
                 format!("Cannot read line {line}"),
             ),
-            StoreError::UnknownKey(k) => {
-                lang.pick(format!("知らない項目: {k}"), format!("Unknown item: {k}"))
-            }
+            StoreError::UnknownKey(k) => lang.pick(
+                format!("知らない項目「{k}」があります"),
+                format!("Unknown item \"{k}\""),
+            ),
             StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目が重なっています: {k}"),
-                format!("Repeated item: {k}"),
+                format!("項目「{k}」が重なっています"),
+                format!("Repeated item \"{k}\""),
             ),
             StoreError::BadValue(k) => lang.pick(
-                format!("値が読めません: {k}"),
-                format!("Invalid value: {k}"),
+                format!("項目「{k}」の値が読めません"),
+                format!("Invalid value of \"{k}\""),
             ),
             StoreError::TooMany => lang.pick("セットが多すぎます", "Too many gradients").into(),
             StoreError::Mismatch => lang
@@ -302,14 +303,14 @@ pub fn decode(text: &str) -> Result<Vec<UserRamp>, StoreError> {
 }
 
 fn read_text(path: &Path) -> Result<String, StoreError> {
-    use std::io::Read;
-    let file = std::fs::File::open(path)?;
-    let mut text = String::new();
-    file.take(MAX_FILE_BYTES + 1).read_to_string(&mut text)?;
-    if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    Ok(text)
+    crate::userfiles::read_text(path, MAX_FILE_BYTES).map_err(|e| match e {
+        crate::userfiles::FileError::TooLarge => StoreError::TooLarge,
+        crate::userfiles::FileError::Io(e) => StoreError::Io(e),
+        // read_text は文でない中身を読み込みの失敗（Io）で返し、確かめの失敗は返さない
+        crate::userfiles::FileError::NotText | crate::userfiles::FileError::Mismatch => {
+            StoreError::Io(std::io::ErrorKind::InvalidData.into())
+        }
+    })
 }
 
 /// 設定のフォルダの `gradients/`。

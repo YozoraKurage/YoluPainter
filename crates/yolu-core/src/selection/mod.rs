@@ -11,7 +11,7 @@
 //!   通るのは、ぼかしの小さい半径（標準偏差 2 未満、半径 7 未満）の正確な核だけで、別の libm では 1 ULP ずれ得て、画素の量が
 //!   1 違う可能性がある。形・組み合わせ・拡張・縮小・境界・鋭く・自動選択と、ぼかしの箱ぼかしの分岐は、加減乗除・平方根・
 //!   floor/ceil・丸めだけを通る。
-//! - 大きな作業の場所（変更の窓・自動選択の印と待ちの連の列）は、確保の前に見積もって作業の予算（[`DEFAULT_WORKING_BUDGET_BYTES`] など、
+//! - 大きな作業の場所（変更のウィンドウ・自動選択の印と待ちの連の列）は、確保の前に見積もって作業の予算（[`DEFAULT_WORKING_BUDGET_BYTES`] など、
 //!   呼び手が渡す）で断る（C# には無い）。
 //!
 //! ```
@@ -42,7 +42,7 @@ pub use modify::MAX_MODIFY_RADIUS;
 pub use shapes::MAX_POLYGON_POINTS;
 
 /// 選択範囲の変更・自動選択の作業の場所の既定の予算（1 GiB）。8192² の全面の選択範囲で、拡張・縮小・境界は半径 200、ぼかしは
-/// 半径 100 まで入る（ぼかし 200 は 1.08 GB 要るので超える。小さい画布や狭い選択範囲なら 200 まで入る）。つながる自動選択は、待ちの連の列を
+/// 半径 100 まで入る（ぼかし 200 は 1.08 GB 要るので超える。小さいキャンバスや狭い選択範囲なら 200 まで入る）。つながる自動選択は、待ちの連の列を
 /// 最悪の長さで見るので、12288² までは入り、16384² は予算を上げる必要がある。
 pub const DEFAULT_WORKING_BUDGET_BYTES: u64 = 1 << 30;
 
@@ -63,9 +63,9 @@ pub enum SelectionCombine {
 /// 1 枚のタイルの量。全部 0 のタイルは持たない（無いタイル）。
 #[derive(Clone, Debug)]
 pub(crate) enum Amounts {
-    /// 全画素（画布の外の余白も）が同じ量（0 でない）。
+    /// 全画素（キャンバスの外の余白も）が同じ量（0 でない）。
     Uniform(u8),
-    /// TileSize² バイト（行優先、下の行から。画布の外の余白は 0）。
+    /// TileSize² バイト（行優先、下の行から。キャンバスの外の余白は 0）。
     Data(Arc<Vec<u8>>),
 }
 
@@ -190,8 +190,8 @@ impl SelectionMask {
         }))
     }
 
-    /// 保存したタイルの量（TileSize² バイト、行優先・下の行から）から作る（selection.bin の読み込み）。どのタイルも画布の中に
-    /// あり、重ならず、全部 0 でなく、画布の外の余白が 0 でなければ断る（C# の SelectionBinary.Read が断るものと同じ）。
+    /// 保存したタイルの量（TileSize² バイト、行優先・下の行から）から作る（selection.bin の読み込み）。どのタイルもキャンバスの中に
+    /// あり、重ならず、全部 0 でなく、キャンバスの外の余白が 0 でなければ断る（C# の SelectionBinary.Read が断るものと同じ）。
     pub fn from_amount_tiles(
         width: u32,
         height: u32,
@@ -215,7 +215,7 @@ impl SelectionMask {
         Ok(Self::from_map(width, height, tile_size, map))
     }
 
-    /// タイル 1 枚の量の検査（画布の中・長さ・画布の外の余白が 0）。量のある画素が 1 つでもあれば true。
+    /// タイル 1 枚の量の検査（キャンバスの中・長さ・キャンバスの外の余白が 0）。量のある画素が 1 つでもあれば true。
     fn check_tile(
         width: u32,
         height: u32,
@@ -249,8 +249,8 @@ impl SelectionMask {
     }
 
     /// 一部のタイルの量だけを置き換えた選択範囲（ペンで描くストロークの途中の見え方の更新に使う。置き換えないタイルは同じ中身を
-    /// 共有するので、置き換えた枚数に比例する）。タイルの検査は [`SelectionMask::from_amount_tiles`] と同じ（画布の中・TileSize²
-    /// バイト・画布の外の余白が 0。同じタイルを 2 度渡せば後のものが残る）。全部 0 のタイルは「無いタイル」にする。
+    /// 共有するので、置き換えた枚数に比例する）。タイルの検査は [`SelectionMask::from_amount_tiles`] と同じ（キャンバスの中・TileSize²
+    /// バイト・キャンバスの外の余白が 0。同じタイルを 2 度渡せば後のものが残る）。全部 0 のタイルは「無いタイル」にする。
     pub fn with_tiles(
         &self,
         tiles: impl IntoIterator<Item = (TileCoord, Vec<u8>)>,
@@ -294,7 +294,7 @@ impl SelectionMask {
     pub fn history_bytes(&self) -> u64 {
         self.0.tiles.values().map(Amounts::csharp_bytes).sum()
     }
-    /// 画素 (x, y) の量（0〜255）。画布の外は 0。
+    /// 画素 (x, y) の量（0〜255）。キャンバスの外は 0。
     pub fn amount(&self, x: u32, y: u32) -> u8 {
         let d = &self.0;
         if x >= d.width || y >= d.height {
@@ -335,7 +335,7 @@ impl SelectionMask {
             }
         }
     }
-    /// 画布全体の量（幅 × 高さ バイト、下の行から）。表示の覆いや試験に。
+    /// キャンバス全体の量（幅 × 高さ バイト、下の行から）。表示の覆いや試験に。
     pub fn to_canvas_bytes(&self) -> Vec<u8> {
         let d = &self.0;
         let (w, ts) = (d.width as usize, d.tile_size as usize);
@@ -354,7 +354,7 @@ impl SelectionMask {
         }
         out
     }
-    /// 量のあるタイルを全部含む画素の矩形（x0, y0, x1, y1 は半開区間。画布で切る）。何も無ければ None。
+    /// 量のあるタイルを全部含む画素の矩形（x0, y0, x1, y1 は半開区間。キャンバスで切る）。何も無ければ None。
     pub fn tile_bounds(&self) -> Option<(u32, u32, u32, u32)> {
         self.window(0).map(|w| {
             (
@@ -378,7 +378,7 @@ impl SelectionMask {
 
     // ───────── 組み合わせ・反転・鋭く ─────────
 
-    /// 反転（画布の中の量を 255 − 量に。全タイルを作る）。
+    /// 反転（キャンバスの中の量を 255 − 量に。全タイルを作る）。
     pub fn invert(&self) -> SelectionMask {
         self.map_tiles(None, true, |a, _| 255 - a)
     }
@@ -407,8 +407,8 @@ impl SelectionMask {
         self.map_tiles(None, false, |a, _| if a >= 128 { 255 } else { 0 })
     }
 
-    /// 2 つの選択範囲のタイルから、画素ごとの式で作る（C# の FromTiles。無いタイルは 0 と読み、画布の外の余白は 0 のまま）。
-    /// every_tile なら画布の全タイル、でなければどちらかにあるタイルだけ。タイルごとに並列。
+    /// 2 つの選択範囲のタイルから、画素ごとの式で作る（C# の FromTiles。無いタイルは 0 と読み、キャンバスの外の余白は 0 のまま）。
+    /// every_tile ならキャンバスの全タイル、でなければどちらかにあるタイルだけ。タイルごとに並列。
     fn map_tiles<F>(&self, other: Option<&SelectionMask>, every_tile: bool, f: F) -> SelectionMask
     where
         F: Fn(u8, u8) -> u8 + Sync,
@@ -466,7 +466,7 @@ impl SelectionMask {
         Self::from_map(width, height, tile_size, map)
     }
 
-    /// [x0, x1) × [y0, y1)（画布で切る）の画素の量を amount(x, y) で決めて作る（C# の Build）。タイルごとに並列なので、amount は
+    /// [x0, x1) × [y0, y1)（キャンバスで切る）の画素の量を amount(x, y) で決めて作る（C# の Build）。タイルごとに並列なので、amount は
     /// 純粋な関数（共有の状態を持たない）であること。
     pub(crate) fn build<F>(
         width: u32,
@@ -536,7 +536,7 @@ impl SelectionMask {
         Self::collect(width, height, tile_size, tiles)
     }
 
-    /// 量のあるタイルを全部含む矩形を margin 広げて画布で切ったもの（C# の Window）。何も無ければ None。
+    /// 量のあるタイルを全部含む矩形を margin 広げてキャンバスで切ったもの（C# の Window）。何も無ければ None。
     pub(crate) fn window(&self, margin: i64) -> Option<Window> {
         let d = &self.0;
         let (w, h, t) = (d.width as i64, d.height as i64, d.tile_size as i64);
@@ -563,7 +563,7 @@ impl SelectionMask {
         })
     }
 
-    /// 窓の中の量（窓の一番下の行から、行優先）。
+    /// ウィンドウの中の量（ウィンドウの一番下の行から、行優先）。
     pub(crate) fn dense(&self, w: Window) -> Vec<u8> {
         let d = &self.0;
         let t = d.tile_size as i64;
@@ -592,7 +592,7 @@ impl SelectionMask {
         dense
     }
 
-    /// 窓の量から同じ大きさの新しい選択範囲を作る（C# の FromDense）。
+    /// ウィンドウの量から同じ大きさの新しい選択範囲を作る（C# の FromDense）。
     pub(crate) fn with_dense(&self, dense: &[u8], w: Window) -> SelectionMask {
         let d = &self.0;
         let t = d.tile_size as i64;
@@ -630,7 +630,7 @@ impl SelectionMask {
     }
 }
 
-/// 画布の中の画素の窓（左下の画素と大きさ）。
+/// キャンバスの中の画素のウィンドウ（左下の画素と大きさ）。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Window {
     pub x: i64,

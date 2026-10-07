@@ -1,7 +1,7 @@
 # 第三者の許諾
 
 Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
-`yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じ組みでの部分木）、`yolu-bridge`（Unity に入れるライブラリ）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
+`yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じビルドでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
 各対象の依存と、Linux の配布を止めている条件を分けて記載する。
 
@@ -27,12 +27,15 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   （MIT OR Apache-2.0 から MIT）と、その依存の `os_pipe`・`tree_magic_mini`・`nom`（いずれも MIT）、`petgraph`・`fixedbitset`・
   `hashbrown 0.15.5`（MIT OR Apache-2.0 から MIT）、`foldhash 0.1.5`（Zlib）。Windows の依存は変わらない。`tree_magic_mini` の GPL のデータ
   （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を足さないこと。
-- `yolu-app` は画面の並び（ドックのタブの組・分け方・窓の大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
+- `yolu-app` は画面の並び（ドックのタブの組・分け方・ウィンドウの大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
   `egui`・`epaint`・`emath`・`ecolor`・`accesskit` などが既に使っている `serde` を使うだけで、増えるクレートは `accesskit` の `serde` 機能が引く
   手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
   OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
-- 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU は app・bridge ともクレート分の配布用全文束を生成できる**。
+- `yolu-app` は Live Link の元の絵（JPG）を読むために `image` の `jpeg` 機能を有効にしている。増えるのは `zune-jpeg 0.5.15` と `zune-core 0.5.3`
+  （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（試験の依存の `tiff` 経由で）あった。
+  2 件の全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。TGA の読み（`tga` 機能）は `image` の中だけで、クレートは増えない。
+- 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU は app のクレート分の配布用全文束を生成できる**。
   未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。
@@ -43,14 +46,22 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   `schemars 1.2.2`（MIT。原文はクレートの `LICENSE`）を使う。増えるクレートは `schemars_derive 1.2.2`（手続きマクロ。MIT）と、`serde_derive_internals 0.30.0`・
   `dyn-clone 1.0.20`・`ref-cast 1.0.27`・`ref-cast-impl 1.0.27`（いずれも MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の計 6 件で、どれも各クレートに同梱の原文を
   SHA-256 で照合する。アプリは外からの操作を受けるために `yolu-ops` を直接使い、同じ配布物に入る `yolu-cli` も使うので、この 6 件は `yolu-app` の一覧に入る。
-- `yolu-cli`（コマンドライン `yolupainter-cli` と MCP サーバー。アプリと同じ配布物・同じ版で配り、Claude Desktop 用の `.mcpb` にも入る）は、MCP のために公式の Rust SDK
-  `rmcp 3.5.1` と `tokio`（MIT。標準入出力と実行基盤の機能だけ）を使う。`rmcp` の宣言は **Apache-2.0** で、クレートの配布物には許諾の全文が無い。MCP の project は MIT から
+- `yolu-cli`（コマンドライン `yolupainter-cli` と、標準入出力の MCP を起動中のアプリへつなぐ中継。アプリと同じ配布物・同じ版で配り、Claude Desktop 用の `.mcpb` にも入る）と
+  `yolu-mcp` は、MCP のために公式の Rust SDK `rmcp 3.5.1` と `tokio`（MIT。標準入出力・実行基盤・127.0.0.1 の通信の機能だけ）を使う。`rmcp` の宣言は **Apache-2.0** で、クレートの配布物には許諾の全文が無い。MCP の project は MIT から
   Apache-2.0 へ移行する途中で、再許諾の同意を得ていない寄稿は MIT のままなので、上流の `LICENSE`（Apache-2.0 の全文・MIT・文書だけに適用する CC-BY-4.0 の注記）を、
   発行時の commit（`79437f291b2c44053d00dcd5db969fd0cca7c887`）の固定 URL から取り、SHA-256 で照合して Apache-2.0 と MIT の両方を選ぶ（CC-BY-4.0 は文書だけで、コードには適用しない）。
   増えるクレートは `rmcp` と、`rmcp` が引く `pastey 0.2.3`（MIT OR Apache-2.0 から MIT）、`tokio 1.53.2`・`tokio-macros 2.7.2`・`tokio-util 0.7.19`・`bytes 1.12.1`（いずれも MIT）、
   `futures`・`futures-channel`・`futures-executor`・`futures-sink`（0.3.34。MIT OR Apache-2.0 から MIT）、`chrono 0.4.45`（MIT OR Apache-2.0 から MIT。原文は `LICENSE.txt`）の 11 件。
   `getrandom 0.4.3`（MIT OR Apache-2.0 から MIT）は、試験専用から通常の依存に移る（`rmcp` が引く `uuid` が使う。登録済み）。いずれも各クレートに同梱の原文を SHA-256 で照合し、
-  クレートの全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。`rmcp` の `macros`・`client`・HTTP・OAuth の機能は使わないので、`reqwest` などの通信の部品は入らない。
+  クレートの全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。`rmcp` の `macros`・`client`・OAuth の機能は使わないので、`reqwest` などの通信の部品は入らない。
+- `yolu-mcp`（MCP の中身と、127.0.0.1 の HTTP の受け口・客。アプリが受け口を動かし、`yolu-cli` が中継と起動中のアプリへの命令に使う）は、`rmcp` の
+  Streamable HTTP の受け口の機能（`transport-streamable-http-server`）と、それを載せる `hyper 1.12.0`（`server`・`client`・`http1` の機能だけ。HTTP/2 は入れない）・
+  `hyper-util 0.1.21`（`tokio` の機能だけ）・`http-body-util 0.1.5`（いずれも MIT）を使う。増えるクレートは、`hyper`・`hyper-util`・`http-body-util`・`http-body 1.1.0`・
+  `tokio-stream 0.1.19`・`tower-service 0.3.3`・`try-lock 0.2.5`・`want 0.3.2`・`mio 1.2.4`（いずれも MIT。原文は `LICENSE`）と、`http 1.5.0`・`httparse 1.10.1`・
+  `httpdate 1.0.3`・`socket2 0.6.5`・`sse-stream 0.2.6`・`base64 0.23.1`・`rand 0.10.3`・`rand_core 0.10.1`・`chacha20 0.10.2`・`cpufeatures 0.3.1`（いずれも MIT OR Apache-2.0
+  から MIT。原文は `LICENSE-MIT`、`rand`・`rand_core` は `COPYRIGHT` も）の 19 件。`rand` 以下の 4 件と `sse-stream`・`base64 0.23.1` は `rmcp` の HTTP の受け口の機能が、
+  `mio`・`socket2` は `tokio` の `net` の機能が引く。いずれも各クレートに同梱の原文を SHA-256 で照合し、クレートの全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。
+  TLS の部品は入らない（待つのも客も 127.0.0.1 の平文の HTTP だけ）。
 - exe のバージョン情報（アイコン・製品名・版）を埋めるビルド用の `winresource`（MIT）は、実行ファイルには入らず、ビルド依存として全文束に含める。
 - 更新の通信は OS の部品を呼ぶだけで、通信の部品は同梱しない。Windows は OS 付属の WinHTTP、Linux は利用者の環境の `curl` を呼ぶ。
 - Windows のインストーラーは NSIS 3（zlib/libpng 許諾）で作る。作ったインストーラーには NSIS の実行時の部品（stub）が入り、
@@ -99,13 +110,13 @@ Phosphor はブラシ・グラデーション・楕円選択・多角形選択�
 （確認済みファイルの変更・欠落、対象フォルダーへの未登録ファイルの追加では全文束を作らない）。書体を加工して配る場合は、予約された書体名などの条件を再確認する。
 
 `libz-sys` の Rust 側は MIT を選び、同梱 zlib の Zlib 許諾も含める。
-`unicode-ident` の Unicode-3.0、ビルド用 `regex-syntax` の Unicode データの Unicode-DFS-2016、
+`unicode-ident` の Unicode-3.0、
 `tracing-core` 内の spin の MIT 原文も収集する。未使用の zlib contrib・zlib-ng は対象外。
 Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原文も保持する（共通設定のため Windows の束にも保守的に含める）。
 
 ## lilToon の再現（式の移植）
 
-3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）と、見た目の欄のプロパティの名前・既定値
+3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon/` の部品）と、見た目の欄のプロパティの名前・既定値
 （`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
 シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
 OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilToon の `lilHashRGB4` からで、その元は Shadertoy の
@@ -118,12 +129,12 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 （<https://bottosson.github.io/posts/oklab/>。著者は式と参照コードを **MIT**（Copyright (c) 2020 Björn Ottosson）で公開している）の係数を使う。
 変換の行列の係数だけを使い、参照コードは移していない。クレートではないので、上の件数には含めない。輝度の補正の式（彩度の落ちた量に比例して明るさを持ち上げる）はこのアプリのもの。
 
-## 生成・試験に使う道具
+## 生成・試験に使うツール
 
 許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。
-以下は開発環境で使う道具の許諾であり、道具本体を製品へ同梱しない。
+以下は開発環境で使うツールの許諾であり、ツール本体を製品へ同梱しない。
 
-| 道具 | 許諾・参照元 |
+| ツール | 許諾・参照元 |
 |---|---|
 | Python | PSF License と付随する許諾。 [Python の表記](https://docs.python.org/3/license.html) |
 | Rust / Cargo | 主に MIT OR Apache-2.0。 [Rust](https://github.com/rust-lang/rust/blob/master/COPYRIGHT)・[Cargo](https://github.com/rust-lang/cargo/blob/master/LICENSE-MIT) の第三者表記も参照 |
@@ -195,16 +206,14 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 `cargo xtask bundle` と同じく app は `--include-update --include-cli` を付けた集合を記載する。
 `yolu-update` はアプリの自動更新として組み込み済みで、その依存も app の一覧に含まれる。
 `yolu-cli`（`yolupainter-cli`）は app と同じ配布物（zip・tar.gz・インストーラー）に入るので、その依存も app の一覧と全文束に含め、
-`.mcpb` には `yolu-cli` の一覧と全文束（`--package yolu-cli --built-with yolu-app`）を入れる。実行ファイルは `-p yolu-app -p yolu-cli` の 1 回の組みで作り、2 つのクレートの機能が合わさって、`yolu-cli` 単独の木に無い依存（`libm`・`foldhash`）が入るので、数えるのはその組みでの `yolu-cli` の部分木。
-bridge は更新・コマンドラインの依存を加えず別に照合し、開発用 `xtask` の依存は後段に分ける。
+`.mcpb` には `yolu-cli` の一覧と全文束（`--package yolu-cli --built-with yolu-app`）を入れる。実行ファイルは `-p yolu-app -p yolu-cli` の 1 回のビルドで作り、2 つのクレートの機能が合わさって、`yolu-cli` 単独の木に無い依存（`libm`・`foldhash`）が入るので、数えるのはそのビルドでの `yolu-cli` の部分木。
+開発用 `xtask` の依存は後段に分ける。
 同名でも別版のクレートは別件として数える。製品間・対象間の件数は重複する。
 
 ```sh
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-gnu --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-cli --built-with yolu-app --bundle
-python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-bridge --bundle
-python3 tools/third-party.py --target x86_64-pc-windows-gnu --package yolu-bridge --bundle
 # Linux の app は下記の条件が未承認のため終了 1。全文束を作らない。
 python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-app --include-update --include-cli --bundle
 ```
@@ -215,11 +224,11 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/RELEASING.md) と一致する。
 別の対象の一覧を流用しない。結果は `target/third-party/<target>/<クレート>/` に出力する。
 
-| 対象 | app（更新・コマンドライン込み） | cli（app と同じ組み） | bridge | update 単独 | xtask | app の全文束 |
-|---|---:|---:|---:|---:|---:|---|
-| Windows MSVC | 230 | 95 | 27 | 31 | 49 | 生成成功 |
-| Windows GNU | 230 | 95 | 27 | 31 | 49 | 生成成功 |
-| Linux GNU | 297 | 93 | 24 | 31 | 54 | 判断待ち |
+| 対象 | app（更新・コマンドライン込み） | cli（app と同じビルド） | update 単独 | xtask | app の全文束 |
+|---|---:|---:|---:|---:|---|
+| Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
+| Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
+| Linux GNU | 319 | 131 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
@@ -227,7 +236,7 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` はクレートの宣言が MIT でも、
 同梱 protocol XML に **LGPL-2.1-or-later** の条件がある。生成バインディングの配布条件についてユーザーの判断待ちであり、
 `blocked` を維持する。以下の Linux 集計の MIT 件数にはこの 2 件も含まれるが、許可済みという意味ではない。
-Linux app の全文束は生成せず、依存の変更・削除も行わない。bridge・update・xtask の照合は成功する。
+Linux app の全文束は生成せず、依存の変更・削除も行わない。update・xtask の照合は成功する。
 
 ## Cargo.lock 全体と試験専用の依存
 
@@ -236,13 +245,13 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。外部クレート 484 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。外部クレート 496 件の内訳は次のとおり。
 
 | 範囲（3 対象の和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 340 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
+| 通常・ビルド依存 | 355 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
 | 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
-| 対象外（他 OS・現在無効な機能） | 132 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
+| 対象外（他 OS・現在無効な機能） | 129 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
 
 試験専用の一覧（配布用全文束には含めない）:
@@ -265,7 +274,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 `egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
 現在の製品の依存には含まれない。上記の lock 監査はこの 1 件と Linux の 2 件で終了 1 となる。
 
-全 484 件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
+全件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（今の Cargo.lock の 496 件で、`gpl` の部分一致と `General Public License` を大文字小文字を区別せずに検索し、語としてのヒットは下に挙げた物だけだった。部分一致だけのヒットは `eggplant`・`SIGPLAN94`・`Placement`・`WindowsFilteringPlatform` など、別の語や識別子の一部）（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
 対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
 現在の Windows・Linux の依存には含まれないが、このクレートを使う対象・機能を追加するときは判断が必要。
 `self_cell` の GPL は Apache-2.0 と選択できる条件、対象外の `r-efi 5.3.0`・`6.0.0` の LGPL は MIT・Apache-2.0 と選択できる条件。
@@ -280,25 +289,24 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 230 件（同名の別版は別件）。実行時 186 件。
+外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 12 |
+| Apache-2.0 | 11 |
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 203 |
+| MIT | 226 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: クレートの許諾照合は成功。
 
@@ -314,7 +322,10 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | arboard | 3.6.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ash | 0.38.0+1.3.281 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| async-trait | 0.1.92 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| atomic-waker | 1.1.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -327,11 +338,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg_aliases | 0.2.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | clipboard-win | 5.4.1 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | codespan-reporting | 0.13.1 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -341,7 +354,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | curve25519-dalek-derive | 0.1.1 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | curve25519-dalek | 4.1.3 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | document-features | 0.2.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | dpi | 0.1.2 | 実行時 | Apache-2.0 AND MIT | Apache-2.0 AND MIT | 確認済み |
 | duplicate | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -370,6 +382,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -380,7 +393,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | futures-util | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | getrandom | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | gl_generator | 0.14.0 | ビルド・マクロ用 | Apache-2.0 | Apache-2.0 | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -394,9 +406,15 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | heck | 0.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | hex | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | image | 0.25.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itertools | 0.15.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | khronos-egl | 6.0.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
@@ -415,6 +433,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | moxcms | 0.8.1 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | naga-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | naga | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -438,12 +457,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pxfm | 0.1.30 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | range-alloc | 0.1.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | raw-window-handle | 0.6.2 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
 | ref-cast-impl | 1.0.27 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast | 1.0.27 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | renderdoc-sys | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -470,24 +490,31 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | simd-adler32 | 0.3.10 | 実行時 | MIT | MIT | 確認済み |
 | skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | smol_str | 0.2.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | static_assertions | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
 | toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 確認済み |
@@ -500,6 +527,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | web-time | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-core-deps-windows-linux-android | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-core | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -507,7 +535,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | wgpu-naga-bridge | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-collections | 0.3.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-core | 0.62.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-future | 0.3.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -534,56 +561,68 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | zerocopy | 0.8.59 | 実行時 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
 | zeroize | 1.9.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
+| zune-core | 0.5.3 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
+| zune-jpeg | 0.5.15 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 95 件（同名の別版は別件）。実行時 73 件。
+外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 1 |
 | Apache-2.0 AND MIT | 1 |
-| MIT | 88 |
+| MIT | 127 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 1 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: クレートの許諾照合は成功。
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
+| arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| async-trait | 0.1.92 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| atomic-waker | 1.1.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| bytemuck | 1.25.2 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
+| bytemuck_derive | 1.12.1 | ビルド・マクロ用 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | bytes | 1.12.1 | 実行時 | MIT | MIT | 確認済み |
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-utils | 0.8.23 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | dyn-clone | 1.0.20 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
+| font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -594,31 +633,46 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | futures-util | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | getrandom | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| guillotiere | 0.7.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| harfrust | 0.12.0 | 実行時 | MIT | MIT | 確認済み |
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| kurbo | 0.13.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
 | libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
+| linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| log | 0.4.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | memchr | 2.8.3 | 実行時 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | num-traits | 0.2.19 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | once_cell | 1.21.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pastey | 0.2.3 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| peniko | 0.6.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pin-project-lite | 0.2.17 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pkg-config | 0.3.34 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | png | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| polycool | 0.4.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
+| read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast-impl | 1.0.27 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast | 1.0.27 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rmcp | 3.5.1 | 実行時 | Apache-2.0 | Apache-2.0 AND MIT | 確認済み |
@@ -633,99 +687,60 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | simd-adler32 | 0.3.10 | 実行時 | MIT | MIT | 確認済み |
+| skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
 | uuid | 1.27.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vcpkg | 0.2.15 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
-
-### yolu-bridge の依存一覧
-
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
-
-外部クレート 27 件（同名の別版は別件）。実行時 15 件。
-
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
-
-| 選択した許諾（追加条件を含む） | 件数 |
-|---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 1 |
-| MIT | 22 |
-| MIT AND Unicode-3.0 | 1 |
-| MIT AND Unicode-DFS-2016 | 1 |
-
-状態: クレートの許諾照合は成功。
-
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
-|---|---|---|---|---|---|
-| aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
-| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
-| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
-| memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
-| regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
-| regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
-| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 
 ## Windows GNU の製品別一覧
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 230 件（同名の別版は別件）。実行時 186 件。
+外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 12 |
+| Apache-2.0 | 11 |
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 203 |
+| MIT | 226 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: クレートの許諾照合は成功。
 
@@ -741,7 +756,10 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | arboard | 3.6.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ash | 0.38.0+1.3.281 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| async-trait | 0.1.92 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| atomic-waker | 1.1.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -754,11 +772,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg_aliases | 0.2.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | clipboard-win | 5.4.1 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | codespan-reporting | 0.13.1 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -768,7 +788,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | curve25519-dalek-derive | 0.1.1 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | curve25519-dalek | 4.1.3 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | document-features | 0.2.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | dpi | 0.1.2 | 実行時 | Apache-2.0 AND MIT | Apache-2.0 AND MIT | 確認済み |
 | duplicate | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -797,6 +816,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -807,7 +827,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | futures-util | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | getrandom | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | gl_generator | 0.14.0 | ビルド・マクロ用 | Apache-2.0 | Apache-2.0 | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -821,9 +840,15 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | heck | 0.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | hex | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | image | 0.25.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itertools | 0.15.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | khronos-egl | 6.0.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
@@ -842,6 +867,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | moxcms | 0.8.1 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | naga-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | naga | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -865,12 +891,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pxfm | 0.1.30 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | range-alloc | 0.1.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | raw-window-handle | 0.6.2 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
 | ref-cast-impl | 1.0.27 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast | 1.0.27 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | renderdoc-sys | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -897,24 +924,31 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | simd-adler32 | 0.3.10 | 実行時 | MIT | MIT | 確認済み |
 | skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | smol_str | 0.2.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | static_assertions | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
 | toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 確認済み |
@@ -927,6 +961,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | web-time | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-core-deps-windows-linux-android | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-core | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -934,7 +969,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | wgpu-naga-bridge | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | wgpu | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-collections | 0.3.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-core | 0.62.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-future | 0.3.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -961,56 +995,68 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | zerocopy | 0.8.59 | 実行時 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
 | zeroize | 1.9.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
+| zune-core | 0.5.3 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
+| zune-jpeg | 0.5.15 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 95 件（同名の別版は別件）。実行時 73 件。
+外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 1 |
 | Apache-2.0 AND MIT | 1 |
-| MIT | 88 |
+| MIT | 127 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 1 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: クレートの許諾照合は成功。
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
+| arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| async-trait | 0.1.92 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| atomic-waker | 1.1.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| bytemuck | 1.25.2 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
+| bytemuck_derive | 1.12.1 | ビルド・マクロ用 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | bytes | 1.12.1 | 実行時 | MIT | MIT | 確認済み |
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-utils | 0.8.23 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | dyn-clone | 1.0.20 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
+| font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1021,31 +1067,46 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | futures-util | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | getrandom | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| guillotiere | 0.7.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| harfrust | 0.12.0 | 実行時 | MIT | MIT | 確認済み |
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| kurbo | 0.13.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
 | libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
+| linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| log | 0.4.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | memchr | 2.8.3 | 実行時 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | num-traits | 0.2.19 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | once_cell | 1.21.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pastey | 0.2.3 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| peniko | 0.6.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pin-project-lite | 0.2.17 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pkg-config | 0.3.34 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | png | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| polycool | 0.4.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
+| read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast-impl | 1.0.27 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast | 1.0.27 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rmcp | 3.5.1 | 実行時 | Apache-2.0 | Apache-2.0 AND MIT | 確認済み |
@@ -1060,98 +1121,59 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | simd-adler32 | 0.3.10 | 実行時 | MIT | MIT | 確認済み |
+| skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
 | uuid | 1.27.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vcpkg | 0.2.15 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
-
-### yolu-bridge の依存一覧
-
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
-
-外部クレート 27 件（同名の別版は別件）。実行時 15 件。
-
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
-
-| 選択した許諾（追加条件を含む） | 件数 |
-|---|---:|
-| 0BSD | 2 |
-| Apache-2.0 | 1 |
-| MIT | 22 |
-| MIT AND Unicode-3.0 | 1 |
-| MIT AND Unicode-DFS-2016 | 1 |
-
-状態: クレートの許諾照合は成功。
-
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
-|---|---|---|---|---|---|
-| aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
-| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
-| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
-| memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
-| regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
-| regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
-| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
-| widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 
 ## Linux GNU の製品別一覧
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 297 件（同名の別版は別件）。実行時 248 件。
+外部クレート 319 件（同名の別版は別件）。実行時 271 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 1 |
-| Apache-2.0 | 10 |
+| Apache-2.0 | 9 |
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 274 |
+| MIT | 297 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
-| Zlib | 2 |
+| Zlib | 3 |
 
 状態: 要確認。配布用全文束は生成しない。
 
@@ -1184,6 +1206,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | atspi-proxies | 0.13.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | atspi | 0.29.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -1201,11 +1224,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg_aliases | 0.2.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | codespan-reporting | 0.13.1 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | concurrent-queue | 2.5.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1216,7 +1241,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | curve25519-dalek | 4.1.3 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | dlib | 0.5.3 | 実行時 | MIT | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | document-features | 0.2.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | downcast-rs | 1.2.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | dpi | 0.1.2 | 実行時 | Apache-2.0 AND MIT | Apache-2.0 AND MIT | 確認済み |
@@ -1254,6 +1278,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | foldhash | 0.1.5 | 実行時 | Zlib | Zlib | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1279,9 +1304,15 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | heck | 0.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | hex | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | image | 0.25.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itertools | 0.15.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | khronos-egl | 6.0.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
@@ -1301,6 +1332,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | moxcms | 0.8.1 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | naga-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | naga | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1339,6 +1371,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | pxfm | 0.1.30 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | quick-xml | 0.41.0 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | quote | 1.0.47 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | raw-window-handle | 0.6.2 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1375,12 +1409,15 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | siphasher | 1.0.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | smithay-client-toolkit | 0.19.2 | 実行時 | MIT | MIT | 確認済み |
 | smithay-client-toolkit | 0.20.0 | 実行時 | MIT | MIT | 確認済み |
 | smithay-clipboard | 0.7.3 | 実行時 | MIT | MIT | 確認済み |
 | smol_str | 0.2.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | static_assertions | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1389,17 +1426,21 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 1.0.69 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
 | toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_edit | 0.25.15+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
 | tree_magic_mini | 3.2.2 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 確認済み |
@@ -1412,6 +1453,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | wayland-backend | 0.3.17 | 実行時 | MIT | MIT | 確認済み |
 | wayland-client | 0.31.15 | 実行時 | MIT | MIT | 確認済み |
 | wayland-csd-frame | 0.3.0 | 実行時 | MIT | MIT | 確認済み |
@@ -1451,59 +1493,71 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | zerocopy | 0.8.59 | 実行時 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
 | zeroize | 1.9.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
+| zune-core | 0.5.3 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
+| zune-jpeg | 0.5.15 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
 | zvariant | 5.15.0 | 実行時 | MIT | MIT | 確認済み |
 | zvariant_derive | 5.15.0 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | zvariant_utils | 4.2.0 | 実行時 | MIT | MIT | 確認済み |
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
 
-外部クレート 93 件（同名の別版は別件）。実行時 71 件。
+外部クレート 131 件（同名の別版は別件）。実行時 108 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
-| 0BSD | 1 |
-| Apache-2.0 | 1 |
 | Apache-2.0 AND MIT | 1 |
-| MIT | 87 |
+| MIT | 126 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 1 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: クレートの許諾照合は成功。
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
+| arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| async-trait | 0.1.92 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| atomic-waker | 1.1.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| base64 | 0.23.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| bytemuck | 1.25.2 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
+| bytemuck_derive | 1.12.1 | ビルド・マクロ用 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | bytes | 1.12.1 | 実行時 | MIT | MIT | 確認済み |
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| chacha20 | 0.10.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | chrono | 0.4.45 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.3.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crc32fast | 1.5.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-deque | 0.8.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-epoch | 0.9.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crossbeam-utils | 0.8.23 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
 | dyn-clone | 1.0.20 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
+| font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fontdb | 0.24.0 | 実行時 | MIT | MIT | 確認済み |
 | futures-channel | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-executor | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1514,32 +1568,47 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | futures-util | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | getrandom | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| guillotiere | 0.7.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| harfrust | 0.12.0 | 実行時 | MIT | MIT | 確認済み |
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| http-body-util | 0.1.5 | 実行時 | MIT | MIT | 確認済み |
+| http-body | 1.1.0 | 実行時 | MIT | MIT | 確認済み |
+| http | 1.5.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httparse | 1.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| httpdate | 1.0.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| hyper-util | 0.1.21 | 実行時 | MIT | MIT | 確認済み |
+| hyper | 1.12.0 | 実行時 | MIT | MIT | 確認済み |
 | indexmap | 2.14.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| kurbo | 0.13.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
 | libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
+| linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | log | 0.4.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | memchr | 2.8.3 | 実行時 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.9.1 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
+| mio | 1.2.4 | 実行時 | MIT | MIT | 確認済み |
 | num-traits | 0.2.19 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | once_cell | 1.21.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pastey | 0.2.3 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| peniko | 0.6.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pin-project-lite | 0.2.17 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | pkg-config | 0.3.34 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | png | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| polycool | 0.4.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand | 0.10.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rand_core | 0.10.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon-core | 1.13.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rayon | 1.12.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast-impl | 1.0.27 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ref-cast | 1.0.27 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rmcp | 3.5.1 | 実行時 | Apache-2.0 | Apache-2.0 AND MIT | 確認済み |
@@ -1554,69 +1623,35 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | simd-adler32 | 0.3.10 | 実行時 | MIT | MIT | 確認済み |
+| skrifa | 0.44.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | slab | 0.4.12 | 実行時 | MIT | MIT | 確認済み |
+| slotmap | 1.1.1 | 実行時 | Zlib | Zlib | 確認済み |
 | smallvec | 1.16.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| socket2 | 0.6.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sse-stream | 0.2.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| tinyvec | 1.13.3 | 実行時 | Zlib OR Apache-2.0 OR MIT | MIT | 確認済み |
 | tokio-macros | 2.7.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| tokio-stream | 0.1.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio-util | 0.7.19 | 実行時 | MIT | MIT | 確認済み |
 | tokio | 1.53.2 | 実行時 | MIT | MIT | 確認済み |
+| tower-service | 0.3.3 | 実行時 | MIT | MIT | 確認済み |
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| try-lock | 0.2.5 | 実行時 | MIT | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
 | uuid | 1.27.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | vcpkg | 0.2.15 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| vello_common | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| vello_cpu | 0.1.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| want | 0.3.2 | 実行時 | MIT | MIT | 確認済み |
 | zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |
-
-### yolu-bridge の依存一覧
-
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `97023e7a3b7bf79308a55cb91715906a16381295287d46ca6fd2b872cb5d4862`。
-
-外部クレート 24 件（同名の別版は別件）。実行時 12 件。
-
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
-
-| 選択した許諾（追加条件を含む） | 件数 |
-|---|---:|
-| 0BSD | 1 |
-| Apache-2.0 | 1 |
-| MIT | 20 |
-| MIT AND Unicode-3.0 | 1 |
-| MIT AND Unicode-DFS-2016 | 1 |
-
-状態: クレートの許諾照合は成功。
-
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
-|---|---|---|---|---|---|
-| aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
-| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
-| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
-| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
-| libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
-| memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
-| regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
-| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 
 ## 開発用 xtask の依存一覧
 

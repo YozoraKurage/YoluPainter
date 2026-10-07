@@ -15,7 +15,7 @@ use yolu_core::glam::Vec3;
 const SIZE: u32 = 256;
 
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
-fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
+pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1100.0, 760.0, SIZE);
     h.state_mut().state.view3d.load_demo();
     h.state_mut().state.view3d.camera.yaw = -40.0;
@@ -26,7 +26,7 @@ fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     (h, rect)
 }
 
-fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
+pub(crate) fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
     let view = h
         .state()
         .state
@@ -37,7 +37,7 @@ fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
-/// 立方体の UV の島（3 × 2）。文書の画素 → (列, 行)。
+/// 立方体の UV アイランド（3 × 2）。文書の画素 → (列, 行)。
 fn island(x: u32, y: u32) -> (u32, u32) {
     (x * 3 / SIZE, y * 2 / SIZE)
 }
@@ -64,7 +64,7 @@ fn snapshot(h: &Harness<'_, YoluApp>) -> Vec<u8> {
     doc.composite(doc.bounds()).unwrap()
 }
 
-/// 選んでいるレイヤーの、島の中（縁を除く）を f で塗る。履歴は消える（準備なので）。
+/// 選んでいるレイヤーの、アイランドの中（縁を除く）を f で塗る。履歴は消える（準備なので）。
 fn fill_island(h: &mut Harness<'_, YoluApp>, col: u32, row: u32, f: impl Fn(u32, u32) -> Rgba8) {
     let layer = h.state().state.selected_layer.expect("レイヤー");
     let (w, hh) = (SIZE / 3, SIZE / 2);
@@ -81,7 +81,7 @@ fn set_effect(h: &mut Harness<'_, YoluApp>, effect: BrushEffect) {
     h.state_mut().state.m2.brush.effect = effect;
 }
 
-fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
+pub(crate) fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
     h.event(Event::PointerMoved(at));
     h.event(Event::PointerButton {
         pos: at,
@@ -90,7 +90,7 @@ fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
         modifiers,
     });
 }
-fn release_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
+pub(crate) fn release_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
     h.event(Event::PointerButton {
         pos: at,
         button: PointerButton::Primary,
@@ -262,7 +262,7 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
     let at = screen_of(&h, rect, Vec3::new(0.25, 0.0, -0.5));
     click(&mut h, at);
     assert!(message(&h).is_empty(), "{}", message(&h));
-    // 手前の面の島の、左右の半分の画素
+    // 手前の面のアイランドの、左右の半分の画素
     let (mid, w) = ((10 + SIZE / 3 - 10) / 2, SIZE / 3);
     let count = |h: &Harness<'_, YoluApp>, range: std::ops::Range<u32>| -> usize {
         (0..SIZE / 2)
@@ -298,7 +298,7 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
     click(&mut h, at);
     // 見える 2 面（手前と右）だけ。後ろと左は見えないので、知らせて飛ばす
     assert_eq!(painted_islands(&h), [(0, 0), (0, 1)].into_iter().collect());
-    assert_eq!(message(&h), "対称: 見えない写しは飛ばしました");
+    assert_eq!(message(&h), "見えない対称の写しは飛ばしました");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     h.state_mut().state.sel.symmetry.surface.ignore_visibility = true;
@@ -352,7 +352,7 @@ fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
 #[test]
 fn the_symmetry_panel_offers_the_3d_items_beside_the_2d_ones() {
     use egui_kittest::kittest::Queryable;
-    // 対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ
+    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
     let (mut h, _rect) = cube_view();
     open_detail(&mut h, yolu_app::brushes::Category::Symmetry);
     // 3D のビューを出しているので、2D と 3D の両方の項目
@@ -516,7 +516,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
             offset: Default::default(),
         },
     );
-    // クローンの欄は、ブラシの詳細の窓の「効果」のカテゴリ
+    // クローンの欄は、ブラシの詳細のウィンドウの「効果」のカテゴリ
     open_detail(&mut h, yolu_app::brushes::Category::Effect);
     let disabled = |h: &Harness<'_, YoluApp>, label: &str| {
         h.get_by_role_and_label(Role::CheckBox, label)
@@ -528,7 +528,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     assert!(!disabled(&h, "全レイヤーから"));
     assert!(h.query_by_label("元がありません").is_none());
     assert!(h.query_by_label("元を決めました").is_none());
-    // Alt クリックで元を決めると、揃えるが使える（詳細の窓がモデルに重ならないよう、押す間は閉じる）
+    // Alt クリックで元を決めると、揃えるが使える（詳細のウィンドウがモデルに重ならないよう、押す間は閉じる）
     h.state_mut().state.brushes.ui.detail.open = false;
     h.run();
     let source = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
@@ -561,7 +561,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     );
 }
 
-/// ブラシの詳細の窓を、そのカテゴリで開く。
+/// ブラシの詳細のウィンドウを、そのカテゴリで開く。
 fn open_detail(h: &mut Harness<'_, YoluApp>, category: yolu_app::brushes::Category) {
     let ui = &mut h.state_mut().state.brushes.ui;
     ui.detail.open = true;
@@ -609,8 +609,109 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
     };
     let adjusted = painted(PressureAdjust::new(0.25, 0.75, vec![]).unwrap(), 0.375);
     let plain = painted(PressureAdjust::default(), 0.25);
-    assert!(plain.iter().skip(3).step_by(4).any(|a| *a != 0), "3D に描けている");
+    assert!(
+        plain.iter().skip(3).step_by(4).any(|a| *a != 0),
+        "3D に描けている"
+    );
     assert_eq!(adjusted, plain);
     let unadjusted = painted(PressureAdjust::default(), 0.375);
-    assert_ne!(unadjusted, plain, "調整が無ければ、ペンの 0.375 は 0.25 と別の線");
+    assert_ne!(
+        unadjusted, plain,
+        "調整が無ければ、ペンの 0.375 は 0.25 と別の線"
+    );
+}
+
+/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力ごと・
+/// フレームごとに決まった数までダブを塗り、残りを持ち越して後のフレームで塗る。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを
+/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを
+/// 失っても、同じ画素の 1 本の線になる（終える時に持ち越しを塗ってから確定する）。
+#[test]
+fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_in() {
+    let corners = [
+        Vec3::new(-0.45, 0.3, -0.5),
+        Vec3::new(0.45, -0.3, -0.5),
+        Vec3::new(0.45, -0.25, -0.5),
+        Vec3::new(0.4, -0.2, -0.5),
+    ];
+    let mut shots = Vec::new();
+    for how in [
+        "one per frame",
+        "one frame",
+        "with the release",
+        "focus lost",
+    ] {
+        let (mut h, rect) = cube_view();
+        h.state_mut().state.brush.radius = 2.0;
+        h.state_mut().state.brush.spacing = 0.05;
+        let points: Vec<Pos2> = corners.iter().map(|c| screen_of(&h, rect, *c)).collect();
+        let last = *points.last().unwrap();
+        press_with(&h, points[0], Modifiers::NONE);
+        h.step();
+        match how {
+            "one per frame" => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                    h.run();
+                    let left = h
+                        .state()
+                        .state
+                        .view3d
+                        .input
+                        .surface
+                        .as_ref()
+                        .unwrap()
+                        .queued();
+                    assert_eq!(left, 0, "{how}: 持ち越した分は後のフレームで塗り終える");
+                }
+                release_with(&h, last, Modifiers::NONE);
+            }
+            "one frame" | "focus lost" => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                }
+                h.step();
+                let left = h
+                    .state()
+                    .state
+                    .view3d
+                    .input
+                    .surface
+                    .as_ref()
+                    .unwrap()
+                    .queued();
+                assert!(
+                    left > 0,
+                    "{how}: 試験の前提: 1 回の入力で塗る数を超えて持ち越した"
+                );
+                if how == "focus lost" {
+                    h.event(Event::WindowFocused(false));
+                } else {
+                    release_with(&h, last, Modifiers::NONE);
+                }
+            }
+            _ => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                }
+                release_with(&h, last, Modifiers::NONE);
+            }
+        }
+        h.step();
+        assert!(
+            h.state().state.view3d.input.surface.is_none(),
+            "{how}: 離したら確定"
+        );
+        h.run();
+        assert!(message(&h).is_empty(), "{how}: {}", message(&h));
+        assert_eq!(h.state().state.doc.undo_count(), 1, "{how}: 1 本の線");
+        shots.push(snapshot(&h));
+    }
+    let painted = shots[0].chunks(4).filter(|p| p[3] > 0).count();
+    assert!(painted > 100, "線が描けている（{painted}）");
+    assert!(shots[1] == shots[0], "1 フレームにまとめても同じ画素");
+    assert!(shots[2] == shots[0], "離すのと同じフレームでも同じ画素");
+    assert!(
+        shots[3] == shots[0],
+        "フォーカスを失っても、持ち越しを塗ってから確定"
+    );
 }

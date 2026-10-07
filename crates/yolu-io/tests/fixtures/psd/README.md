@@ -8,7 +8,7 @@
 
 ```sh
 python3 tools/psd-fixtures/generate.py --source "$UNITY_SOURCE"
-cargo test -p yolu-io --test psd
+cargo test -p yolu-io --test psd_io psd::
 ```
 
 生成にはUnity同梱の.NET/Roslyn・Monoと、既存のNUnit DLLを使う。場所は `--unity-data`・`--nunit` で指定可能。Unityのエディタやテストデーモンは起動しない。Unity側は読み取りだけで、書き込みはRust側の `target/psd-fixtures/` とこのフォルダだけ。
@@ -35,11 +35,11 @@ Rust の試験では互換モード・原本保持、拒否以外の診断コー
 
 ## PSD の写し（core ⇔ PSD）の正解
 
-`../../golden/psd/` は Unity 版の `PsdBridge.Export`・`Import` と `PsdCodec` に人工データを通した正解（マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）。`<事例>.psd` は C# の書き出しのバイト列（取り込み事例は C# が組んだ PSD）、`<事例>.snap` はそれを C# で取り込んだ文書の中身、`<事例>.refused` は C# が書き出しを断る事例の理由。Photoshop/CSP の実データは含まない。台本は `tools/csharp-golden/PsdBridgeGolden.cs` と `tests/psd_golden.rs` が同じものを持つ。
+`../../golden/psd/` は Unity 版の `PsdBridge.Export`・`Import` と `PsdCodec` に人工データを通した正解（マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）。`<事例>.psd` は C# の書き出しのバイト列（取り込み事例は C# が組んだ PSD）、`<事例>.snap` はそれを C# で取り込んだ文書の中身、`<事例>.refused` は C# が書き出しを断る事例の理由。Photoshop/CSP の実データは含まない。台本は `tools/csharp-golden/PsdBridgeGolden.cs` と `tests/psd_io/psd_golden.rs` が同じものを持つ。
 
 ```sh
 tools/csharp-golden/run.sh psd          # Unity 版は /workspace、$YOLUPAINTER_UNITY_SOURCE か --source で変えられる
-cargo test -p yolu-io --test psd_golden
+cargo test -p yolu-io --test psd_io psd_golden::
 ```
 
-Rust の試験は、同じ台本の文書を core で組んで `from_core` → `write` した結果が C# の書き出しと全バイト一致することと、その PSD を `to_core` にした中身が C# の取り込みと同じこと、C# が断る書き出しを Rust も断ることを確かめる。往復・断り・ロック・ID の試験は `tests/psd_m2.rs`。
+Rust の試験は、同じ台本の文書を core で組んで `from_core` → `write` した結果が C# の書き出しと全バイト一致することと、その PSD を `to_core` にした中身が C# の取り込みと同じこと、C# が断る書き出しを Rust も断ることを確かめる。往復・断り・ロック・ID の試験は `tests/psd_io/psd_m2.rs`。

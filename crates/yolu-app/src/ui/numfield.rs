@@ -3,7 +3,7 @@
 //! 打つ欄になり、Enter で決め（範囲の外は端へ）、Esc か外を押すとやめる。ドラッグ中の変更を 1 回の Undo にまとめるのは、欄を並べる側
 //! （`changed` のたびに `coalesce` で渡し、離したらまとめを終える）。軸の色の下線は X・Y・Z の見分け。
 
-use egui::{pos2, vec2, Color32, Id, Rect, Sense, Ui, WidgetInfo};
+use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo};
 
 use super::theme as t;
 use super::widgets::{fit, outline, rounded, text, Align};
@@ -68,6 +68,8 @@ pub fn number_field(
 ) -> NumOutcome {
     let id = ui.make_persistent_id(id_salt);
     let enabled = enabled && ui.is_enabled();
+    // 色・枠の見た目（描いている間は描き始める前のまま。押せるかは本当の `enabled`）
+    let shown_look = super::widgets::look(ui.ctx(), id, enabled);
     let mut out = NumOutcome {
         value,
         changed: false,
@@ -213,8 +215,8 @@ pub fn number_field(
             &shown,
             underline,
             false,
-            enabled && (response.hovered() || dragging),
-            enabled,
+            shown_look.live && (response.hovered() || dragging),
+            shown_look.enabled,
         );
     }
     let name = if label.is_empty() {
@@ -300,9 +302,4 @@ fn draw_box(
             if enabled { c } else { c.gamma_multiply(0.4) },
         );
     }
-}
-
-/// 同じ名前を作った欄の ID（試験が欄を探す）。
-pub fn field_id(id_salt: impl egui::AsIdSalt, ui: &Ui) -> Id {
-    ui.make_persistent_id(id_salt)
 }

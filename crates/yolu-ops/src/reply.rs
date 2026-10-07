@@ -1,6 +1,6 @@
 //! 返事（`Reply`）と、その中身の型。JSON は `{"reply": "layer", ...中身の欄}`。
 //!
-//! 読む命令は中身を返し、編集の命令は `Edited`（新しい層・効果の ID と、取り消しの状態）を返す。
+//! 読む命令は中身を返し、編集の命令は `Edited`（新しいレイヤー・効果の ID と、取り消しの状態）を返す。
 
 use std::collections::BTreeMap;
 
@@ -25,6 +25,7 @@ pub enum Reply {
     Undone(Undone),
     Exported(Exported),
     Saved(Saved),
+    Action(ActionDone),
 }
 
 impl Reply {
@@ -42,6 +43,7 @@ impl Reply {
             Reply::Undone(_) => "undone",
             Reply::Exported(_) => "exported",
             Reply::Saved(_) => "saved",
+            Reply::Action(_) => "action",
         }
     }
 }
@@ -128,6 +130,8 @@ pub enum LayerKindName {
     Fill,
     Adjustment,
     Group,
+    /// A paint layer whose Color pixels are drawn from editable text.
+    Text,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -189,6 +193,9 @@ pub struct LayerChannel {
     /// Opacity used only in this channel (absent: the layer's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
+    /// Fill layers: the point gradient of this channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<crate::command::PointGradientSpec>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -241,6 +248,38 @@ pub struct LayerInfo {
     pub mask: Option<MaskInfo>,
     /// Content stack, in the order they are applied.
     pub effects: Vec<EffectInfo>,
+    /// Text layers: the text values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Box<TextInfo>>,
+}
+
+/// Values of a text layer (see `TextSpec` for their meaning).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TextInfo {
+    pub content: String,
+    /// Bundled font name, when the layer uses a bundled font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Font file path, when the layer uses a font file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_index: Option<u32>,
+    /// Family name of the font file, when the layer uses a font file and the font names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// PostScript name of the font file, when the layer uses a font file and the font names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_postscript: Option<String>,
+    pub size: f64,
+    pub color: String,
+    pub line_height: f64,
+    pub letter_spacing: f64,
+    pub align: crate::command::TextAlignName,
+    pub x: f64,
+    pub y: f64,
+    pub rotation: f64,
+    pub wrap_width: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -352,6 +391,9 @@ pub struct Edited {
     pub unchanged: bool,
     pub undo_count: u32,
     pub can_undo: bool,
+    /// Things to know about the edit (a text layer redrawn with a different font than the one it remembered ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Text>,
 }
 
 fn is_false(v: &bool) -> bool {
@@ -406,4 +448,37 @@ pub struct Saved {
     pub backup: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Text>,
+}
+
+// ───────── アクション ─────────
+
+/// What one command of an action did.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionStep {
+    /// The layer the command added or changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// The effect the command added or changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+    /// The command changed nothing (the values were already as asked).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unchanged: bool,
+    /// Things to know about this command's edit (the same notes as the command's own reply).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Text>,
+}
+
+/// Every command of the action was applied, as one undo step.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionDone {
+    /// The texture set that was changed.
+    pub set: String,
+    /// One entry per command, in the same order.
+    pub steps: Vec<ActionStep>,
+    /// Nothing changed (no undo step was added).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unchanged: bool,
+    pub undo_count: u32,
+    pub can_undo: bool,
 }

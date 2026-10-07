@@ -1,4 +1,4 @@
-//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細の窓の「色の混ぜ」の節（混ぜ方の排他の切り替え・スライダー・全レイヤーから・
+//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細のウィンドウの「色の混ぜ」の節（混ぜ方の排他の切り替え・スライダー・全レイヤーから・
 //! 筆圧・既定に戻す・効かない理由）、組み込みの厚塗りの筆 3 つ（筆のグループ・見本の線・版 3 で保存して読み戻す）、
 //! 「全レイヤーから」で下のレイヤーの色を拾う（アプリの入口から）、日英。
 use crate::common;
@@ -42,10 +42,10 @@ fn open_detail(h: &mut H, category: Category) {
 
 fn detail_rect(h: &H) -> Rect {
     yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-        .expect("ブラシの詳細の窓を描いている")
+        .expect("ブラシの詳細のウィンドウを描いている")
 }
 
-/// 窓の右側の欄の部品（左のカテゴリの同じ名前と区別する）。上から順に。
+/// ウィンドウの右側の欄の部品（左のカテゴリの同じ名前と区別する）。上から順に。
 fn pane_nodes(h: &H, label: &str) -> Vec<Rect> {
     let window = detail_rect(h);
     let mut nodes: Vec<Rect> = h
@@ -60,7 +60,7 @@ fn pane_nodes(h: &H, label: &str) -> Vec<Rect> {
 fn in_pane(h: &H, label: &str) -> Rect {
     *pane_nodes(h, label)
         .first()
-        .unwrap_or_else(|| panic!("窓の欄に {label} が無い"))
+        .unwrap_or_else(|| panic!("ウィンドウの欄に {label} が無い"))
 }
 
 fn disabled(h: &H, label: &str) -> bool {
@@ -87,11 +87,13 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
     egui_kittest::image_snapshot(&cropped, name);
 }
 
+/// 試験ごとの設定のフォルダの中の、ブラシのフォルダ（ツールの並びの `tools.json` は、その隣に置かれる）。
 fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/brush-mix-tests")
         .join(format!("{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("brushes");
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -108,7 +110,7 @@ fn headless_the_thick_paint_brushes_are_built_in_brush_group_brushes_that_mix() 
     ] {
         s.apply(Action::Brush(BrushAction::Select(b(id))));
         assert_eq!(s.brushes.lib.current(), b(id), "{id}");
-        assert_eq!(s.brushes.ui.group, Group::Brush, "{id}");
+        assert_eq!(s.shown_brush_group(), Some(Group::Brush), "{id}");
         assert_eq!(s.tool, Tool::Brush);
         assert_eq!(s.m2.brush.mix.mode, mode, "{id}");
         assert!(s.m2.brush.mix.validate().is_ok());
@@ -122,7 +124,10 @@ fn headless_the_thick_paint_brushes_are_built_in_brush_group_brushes_that_mix() 
         .filter(|e| e.group == Group::Brush)
         .map(|e| e.name_in(Lang::Ja))
         .collect();
-    assert!(names.ends_with(&["油彩".into(), "ガッシュ".into(), "混色".into()]), "{names:?}");
+    assert!(
+        names.ends_with(&["油彩".into(), "ガッシュ".into(), "混色".into()]),
+        "{names:?}"
+    );
     let english: Vec<String> = s
         .brushes
         .lib
@@ -131,7 +136,10 @@ fn headless_the_thick_paint_brushes_are_built_in_brush_group_brushes_that_mix() 
         .filter(|e| e.group == Group::Brush)
         .map(|e| e.name_in(Lang::En))
         .collect();
-    assert!(english.ends_with(&["Oil paint".into(), "Gouache".into(), "Mixer".into()]), "{english:?}");
+    assert!(
+        english.ends_with(&["Oil paint".into(), "Gouache".into(), "Mixer".into()]),
+        "{english:?}"
+    );
     // 選び直すと元の設定へ戻る（変えたら変更あり、元へ戻すで戻る）
     s.apply(Action::Brush(BrushAction::Select(b("oil"))));
     s.m2.brush.mix.paint = 0.9;
@@ -164,7 +172,11 @@ fn headless_a_thick_paint_brush_is_saved_as_version_three_and_reads_back_equal()
     // 起動し直したアプリが、同じブラシを読む
     let mut again = AppState::new(64, 64);
     again.attach_brush_store(dir.clone());
-    assert!(again.brushes.problems.is_empty(), "{:?}", again.brushes.problems);
+    assert!(
+        again.brushes.problems.is_empty(),
+        "{:?}",
+        again.brushes.problems
+    );
     again.apply(Action::Brush(BrushAction::Select(saved)));
     assert_eq!(again.brush_live(), live);
     assert_eq!(again.m2.brush.mix.stretch, 0.8f32 as f64);
@@ -196,7 +208,7 @@ fn the_thick_paint_samples_draw_over_a_picture_so_the_mixing_shows() {
     }
 }
 
-// ───────── 詳細の窓の節 ─────────
+// ───────── 詳細のウィンドウの節 ─────────
 
 #[test]
 fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
@@ -232,11 +244,25 @@ fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
     // スライダー（左の端 0%・右の端 100%。真ん中あたりで約 50%）
     click(&mut h, mix.center());
     let amount = in_pane(&h, "絵の具の量");
-    click(&mut h, pos2(amount.left() + amount.width() * 0.2, amount.center().y));
-    assert!(st(&h).m2.brush.mix.paint < 0.4, "{}", st(&h).m2.brush.mix.paint);
+    click(
+        &mut h,
+        pos2(amount.left() + amount.width() * 0.2, amount.center().y),
+    );
+    assert!(
+        st(&h).m2.brush.mix.paint < 0.4,
+        "{}",
+        st(&h).m2.brush.mix.paint
+    );
     let density = in_pane(&h, "絵の具の濃さ");
-    click(&mut h, pos2(density.left() + density.width() * 0.3, density.center().y));
-    assert!(st(&h).m2.brush.mix.density < 0.6, "{}", st(&h).m2.brush.mix.density);
+    click(
+        &mut h,
+        pos2(density.left() + density.width() * 0.3, density.center().y),
+    );
+    assert!(
+        st(&h).m2.brush.mix.density < 0.6,
+        "{}",
+        st(&h).m2.brush.mix.density
+    );
     // 全レイヤーから
     let all = in_pane(&h, "全レイヤーから");
     click(&mut h, all.center());
@@ -261,16 +287,25 @@ fn the_mix_pressure_items_follow_their_switch_and_edit_the_response() {
     assert!(disabled(&h, "最小"));
     assert!(!st(&h).m2.brush.mix.pressure_paint);
     let toggles = pane_nodes(&h, "筆圧を使う");
-    assert!(!toggles.is_empty(), "量の筆圧（濃さは下にスクロールして出る）");
+    assert!(
+        !toggles.is_empty(),
+        "量の筆圧（濃さは下にスクロールして出る）"
+    );
     click(&mut h, toggles[0].center());
     assert!(st(&h).m2.brush.mix.pressure_paint);
     assert!(!st(&h).m2.brush.mix.pressure_density);
     assert!(!pane_nodes(&h, "最小").is_empty());
     let minimum = pane_nodes(&h, "最小")[0];
-    click(&mut h, pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y));
+    click(
+        &mut h,
+        pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y),
+    );
     let response = st(&h).m2.brush.mix.response_paint.clone();
     assert!((0.3..0.5).contains(&response.min()), "{}", response.min());
-    assert!(st(&h).m2.brush.mix.response_density.is_identity(), "濃さの応えは変わらない");
+    assert!(
+        st(&h).m2.brush.mix.response_density.is_identity(),
+        "濃さの応えは変わらない"
+    );
     // 切ると、切り替えだけが戻る（応えは残る）
     click(&mut h, toggles[0].center());
     assert!(!st(&h).m2.brush.mix.pressure_paint);
@@ -302,7 +337,11 @@ fn the_mix_section_says_why_it_does_not_apply_by_disabling_instead_of_a_note() {
     // 画面に注記の文を置かない（使い方の文・説明の段落）。名前と状態だけ
     let window = detail_rect(&h);
     for n in h.query_all_by_label_contains("します") {
-        assert!(!window.contains(n.rect().center()), "{:?}", n.accesskit_node().label());
+        assert!(
+            !window.contains(n.rect().center()),
+            "{:?}",
+            n.accesskit_node().label()
+        );
     }
 }
 
@@ -316,7 +355,14 @@ fn the_mix_section_is_in_english_without_japanese() {
     h.run();
     open_detail(&mut h, Category::Mix);
     let window = detail_rect(&h);
-    for label in ["Mix", "Smear", "Paint amount", "Paint density", "Color stretch", "All layers"] {
+    for label in [
+        "Mix",
+        "Smear",
+        "Paint amount",
+        "Paint density",
+        "Color stretch",
+        "All layers",
+    ] {
         assert!(
             h.query_all_by_label(label)
                 .any(|n| window.contains(n.rect().center())),
@@ -324,7 +370,11 @@ fn the_mix_section_is_in_english_without_japanese() {
         );
     }
     assert!(h.query_all_by_label("Color Mixing").next().is_some());
-    let has_japanese = |t: &str| t.chars().any(|c| ('\u{3040}'..='\u{30ff}').contains(&c) || ('\u{4e00}'..='\u{9fff}').contains(&c));
+    let has_japanese = |t: &str| {
+        t.chars().any(|c| {
+            ('\u{3040}'..='\u{30ff}').contains(&c) || ('\u{4e00}'..='\u{9fff}').contains(&c)
+        })
+    };
     for n in h.query_all_by_label_contains("") {
         if window.contains(n.rect().center()) {
             if let Some(label) = n.accesskit_node().label() {
@@ -376,7 +426,14 @@ fn two_layers() -> (AppState, yolu_app::engine::LayerId) {
     let mut s = AppState::new(64, 64);
     let below = s.selected_layer.unwrap();
     s.doc
-        .fill(below, Channel::Color, Rgba8::new(255, 0, 0, 255), 1.0, None, false)
+        .fill(
+            below,
+            Channel::Color,
+            Rgba8::new(255, 0, 0, 255),
+            1.0,
+            None,
+            false,
+        )
         .unwrap();
     let top = s.doc.add_layer("top").unwrap();
     s.selected_layer = Some(top);
@@ -416,11 +473,19 @@ fn headless_all_layers_picks_up_the_layers_below_and_the_layer_alone_does_not() 
     let (mut s, top) = two_layers();
     s.m2.brush.mix = mix(MixGround::Composite);
     let picked = dot(&mut s, top);
-    assert!(picked.r > 100 && picked.g == 0 && picked.b == 0, "{picked:?}");
+    assert!(
+        picked.r > 100 && picked.g == 0 && picked.b == 0,
+        "{picked:?}"
+    );
     // 1 回の Undo で戻る
     s.apply(Action::Undo);
     assert_eq!(
-        s.doc.layer(top).unwrap().pixel(Channel::Color, 32, 32).unwrap().a,
+        s.doc
+            .layer(top)
+            .unwrap()
+            .pixel(Channel::Color, 32, 32)
+            .unwrap()
+            .a,
         0
     );
     // 消しゴムは混ぜない（参照元を凍結しない）
@@ -431,7 +496,10 @@ fn headless_all_layers_picks_up_the_layers_below_and_the_layer_alone_does_not() 
     s.doc.cancel_stroke(stroke);
     // 混ぜる筆は下地を凍結する
     let stroke = s.begin_paint_stroke(top, false).unwrap();
-    assert!(s.doc.clone_source_bytes() > 0, "混ぜる筆は見えている層の重なりを凍結する");
+    assert!(
+        s.doc.clone_source_bytes() > 0,
+        "混ぜる筆は見えているレイヤーの重なりを凍結する"
+    );
     s.doc.cancel_stroke(stroke);
 }
 
@@ -520,10 +588,18 @@ fn mixing_and_smearing_work_in_the_3d_view_and_undo_in_one_step() {
     );
     h.state_mut().state.message.clear();
     drag_world(&mut h, rect, [-0.2, 0.0, -0.5], [0.2, 0.0, -0.5], 8);
-    assert!(h.state().state.message.is_empty(), "{}", h.state().state.message);
+    assert!(
+        h.state().state.message.is_empty(),
+        "{}",
+        h.state().state.message
+    );
     let purple = pixels_where(&h, |p| p[0] > 80 && p[2] > 80 && p[1] < 40);
     assert!(purple > 30, "赤と青が混ざる: {purple}");
-    assert_eq!(pixels_where(&h, |p| p[2] > 200 && p[0] < 60), 0, "青だけは置かれない");
+    assert_eq!(
+        pixels_where(&h, |p| p[2] > 200 && p[0] < 60),
+        0,
+        "青だけは置かれない"
+    );
     assert_eq!(h.state().state.doc.undo_count(), 1);
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -544,7 +620,11 @@ fn mixing_and_smearing_work_in_the_3d_view_and_undo_in_one_step() {
     );
     let before = snapshot(&h);
     drag_world(&mut h, rect, [0.35, 0.0, -0.5], [0.5, 0.0, -0.1], 12);
-    assert!(h.state().state.message.is_empty(), "{}", h.state().state.message);
+    assert!(
+        h.state().state.message.is_empty(),
+        "{}",
+        h.state().state.message
+    );
     let mut dragged = 0;
     for y in SIZE / 2..SIZE {
         for x in 10..SIZE / 3 - 10 {
@@ -578,7 +658,14 @@ fn a_canvas_stroke_with_a_mixing_brush_blends_with_the_picture_and_undoes() {
     h.state_mut()
         .state
         .doc
-        .fill(layer, Channel::Color, Rgba8::new(0, 0, 255, 255), 1.0, None, false)
+        .fill(
+            layer,
+            Channel::Color,
+            Rgba8::new(0, 0, 255, 255),
+            1.0,
+            None,
+            false,
+        )
         .unwrap();
     h.state_mut().state.doc.clear_history().unwrap();
     h.state_mut().state.brush.radius = 12.0;
@@ -586,7 +673,11 @@ fn a_canvas_stroke_with_a_mixing_brush_blends_with_the_picture_and_undoes() {
     h.state_mut().state.brush.pressure_opacity = false;
     h.run();
     let c = canvas_rect(&h).center();
-    let path = [offset(c, -30.0, 0.0), offset(c, 0.0, 0.0), offset(c, 30.0, 0.0)];
+    let path = [
+        offset(c, -30.0, 0.0),
+        offset(c, 0.0, 0.0),
+        offset(c, 30.0, 0.0),
+    ];
     // 混ぜない: 描く色（黒）がそのまま
     drag(&mut h, &path);
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
@@ -602,7 +693,10 @@ fn a_canvas_stroke_with_a_mixing_brush_blends_with_the_picture_and_undoes() {
     };
     drag(&mut h, &path);
     let mixed = canvas_pixel(&h, c);
-    assert!(mixed[0] == 0 && (120..=135).contains(&mixed[2]) && mixed[3] == 255, "{mixed:?}");
+    assert!(
+        mixed[0] == 0 && (120..=135).contains(&mixed[2]) && mixed[3] == 255,
+        "{mixed:?}"
+    );
     assert_eq!(h.state().state.doc.undo_count(), 1);
     h.state_mut().state.apply(Action::Undo);
     h.run();

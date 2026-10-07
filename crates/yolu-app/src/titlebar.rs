@@ -1,19 +1,22 @@
-//! 上の帯と窓の枠（Windows だけ。Mac・Linux は OS の枠のまま）。Windows では OS のタイトルバーを外し、メニューの帯の右端に
-//! 小さな最小化・最大化（最大化中は元に戻す）・閉じるを置く。窓を動かす・大きさを変える・最大化を切り替えるのは、枠を外した窓が
+//! 上の帯とウィンドウの枠（Windows だけ。Mac・Linux は OS の枠のまま）。Windows では OS のタイトルバーを外し、メニューの帯の右端に
+//! 小さな最小化・最大化（最大化中は元に戻す）・閉じるを置く。ウィンドウを動かす・大きさを変える・最大化を切り替えるのは、枠を外したウィンドウが
 //! 自分で OS に頼む（`ViewportCommand`）。
 //!
 //! - 動かす: 帯の何も無い所を押して引くと `StartDrag`（OS の移動なので、画面の端へのスナップ・別のモニターへの移動が効く）。
 //!   ダブルクリックで最大化と元に戻すを切り替える。メニューの見出し・Live Link の印・クラッシュの印を押したときは動かさない。
-//! - 大きさ: 窓の縁（`EDGE`）を押すと `BeginResize`。最大化中・全画面中は無い。縁を押す前に、押した所の部品に譲る
+//! - 大きさ: ウィンドウの縁（`EDGE`）を押すと `BeginResize`。最大化中・全画面中は無い。縁を押す前に、押した所の部品に譲る
 //!   （メニューの見出し・スクロールのつまみなど、縁と同じ所にある細い部品。egui の押しを持たない Live Link の印は矩形で渡す）、
-//!   浮かせた窓・メニューが上にあれば何もしない、ペン・タッチの押しは受けない（ペンは `contact`）。縁の押しはビューの押しとして
+//!   浮かせたウィンドウ・メニューが上にあれば何もしない、ペン・タッチの押しは受けない（ペンは `contact`）。縁の押しはビューの押しとして
 //!   使わせない（`edge_press_held`）。
 //! - 閉じる: メニューの「終了」と同じ道（保存していない変更の確かめ）。
 //!
-//! 最大化中の内側は、自動で隠すタスクバーのある辺を 1 画素空ける（そうしないと、端へ寄せてもタスクバーが出てこない）。これは窓の
+//! 最大化中の内側は、自動で隠すタスクバーのある辺を 1 画素空ける（そうしないと、端へ寄せてもタスクバーが出てこない）。これはウィンドウの
 //! プロシージャの側（`windowpos::native`）で行い、ここの帯と縁の描き方は変わらない。
 //!
-//! 窓の枠を外すのは `main.rs` が `CUSTOM_FRAME`（Windows だけ true）を見て決める。ここの関数は OS に依らず動くので、試験は
+//! 別ウィンドウ（`detach`。パネルを外へ出したウィンドウ）も同じ決まりで枠を外す: タブの並ぶ行の何も無い所が帯の代わり（`drag_zone_with`）、
+//! 行の右端に閉じるだけ（`close_button`。最小化・最大化は置かない）、縁は `edges_with`。縁の押しの印はウィンドウごとに持つ。
+//!
+//! ウィンドウの枠を外すのは `main.rs` が `CUSTOM_FRAME`（Windows だけ true）を見て決める。ここの関数は OS に依らず動くので、試験は
 //! Linux でも Windows の帯を描いて確かめられる（アプリは `YoluApp::set_custom_frame` で帯を切り替える。設定には出さない）。
 
 use egui::{
@@ -25,7 +28,7 @@ use crate::lang::Lang;
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
-/// 実際の窓で OS の枠を外すか（Windows だけ）。
+/// 実際のウィンドウで OS の枠を外すか（Windows だけ）。
 pub const CUSTOM_FRAME: bool = cfg!(windows);
 
 /// ボタン 1 つの幅（高さは帯いっぱい）。
@@ -34,26 +37,30 @@ pub const BUTTON_WIDTH: f32 = 30.0;
 pub const BUTTONS_WIDTH: f32 = BUTTON_WIDTH * 3.0;
 /// ボタンのアイコンの大きさ（論理の点）。
 pub const ICON_SIZE: f32 = 14.0;
-/// 窓の縁の、大きさを変えられる幅（点）。
+/// ウィンドウの縁の、大きさを変えられる幅（点）。
 pub const EDGE: f32 = 5.0;
 /// 角の、2 方向に変えられる長さ（点）。
 pub const CORNER: f32 = 12.0;
 /// 縁の押しを譲る部品の、縁をまたぐ向きの大きさの上限（点）。メニューの見出し（高さ 20）・スクロールのつまみの溝（幅 10）が入り、
-/// 窓の端まで広がるキャンバス・一覧の行は入らない。
+/// ウィンドウの端まで広がるキャンバス・一覧の行は入らない。
 pub const YIELD_SIZE: f32 = 24.0;
 
 /// 帯の何も無い所（動かす・最大化）の部品の名前。
 const DRAG_ID: &str = "yolu.titlebar.drag";
-/// 縁の押しを譲らない自分の部品（帯の何も無い所と 3 つのボタン。右上の角でも、縁が先に押しを受ける）。
-fn is_own(id: Id) -> bool {
-    id == Id::new(DRAG_ID) || Button::ALL.iter().any(|b| id == button_id(*b))
+/// 縁の押しを譲らない自分の部品（帯の何も無い所と 3 つのボタン、`own` の部品。右上の角でも、縁が先に押しを受ける）。
+fn is_own(id: Id, own: &[Id]) -> bool {
+    id == Id::new(DRAG_ID) || Button::ALL.iter().any(|b| id == button_id(*b)) || own.contains(&id)
 }
 
 fn button_id(button: Button) -> Id {
     Id::new(("yolu.titlebar.button", button as u8))
 }
-/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。
+/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。ウィンドウ（viewport）ごと。
 const EDGE_PRESS: &str = "yolu.titlebar.edge_press";
+
+fn edge_press_id(ctx: &Context) -> Id {
+    Id::new((EDGE_PRESS, ctx.viewport_id()))
+}
 
 /// 帯の右端の 3 つのボタン。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +95,7 @@ impl Button {
         }
     }
 
-    /// 押したときに窓へ送る頼み。閉じるは窓を直に閉じず、メニューの「終了」と同じ道（保存の確かめ）を通るので無い。
+    /// 押したときにウィンドウへ送る頼み。閉じるはウィンドウを直に閉じず、メニューの「終了」と同じ道（保存の確かめ）を通るので無い。
     pub fn command(self, maximized: bool) -> Option<ViewportCommand> {
         match self {
             Button::Minimize => Some(ViewportCommand::Minimized(true)),
@@ -101,7 +108,10 @@ impl Button {
 /// 帯のうち、ボタンを除いた左側（`custom` でなければ帯そのまま）。名前・印はこの右端に寄せる。
 pub fn content_rect(bar: Rect, custom: bool) -> Rect {
     if custom {
-        Rect::from_min_max(bar.min, egui::pos2(bar.right() - BUTTONS_WIDTH, bar.bottom()))
+        Rect::from_min_max(
+            bar.min,
+            egui::pos2(bar.right() - BUTTONS_WIDTH, bar.bottom()),
+        )
     } else {
         bar
     }
@@ -113,7 +123,10 @@ pub fn button_rects(bar: Rect) -> [Rect; 3] {
     let bottom = bar.bottom() - 1.0;
     std::array::from_fn(|i| {
         let x = left + i as f32 * BUTTON_WIDTH;
-        Rect::from_min_max(egui::pos2(x, bar.top()), egui::pos2(x + BUTTON_WIDTH, bottom))
+        Rect::from_min_max(
+            egui::pos2(x, bar.top()),
+            egui::pos2(x + BUTTON_WIDTH, bottom),
+        )
     })
 }
 
@@ -122,40 +135,85 @@ pub fn buttons(ui: &mut Ui, bar: Rect, maximized: bool, lang: Lang) -> Option<Bu
     let mut clicked = None;
     for (button, rect) in Button::ALL.into_iter().zip(button_rects(bar)) {
         let name = button.name(lang, maximized);
-        let response = ui.interact(rect, button_id(button), Sense::click());
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
-        let hover = response.hovered();
-        let down = response.is_pointer_button_down_on();
-        let close = button == Button::Close;
-        let fill = match (hover, down, close) {
-            (_, true, true) => Some(t::ERROR.gamma_multiply(0.75)),
-            (true, _, true) => Some(t::ERROR),
-            (_, true, false) => Some(t::CONTROL_ACTIVE),
-            (true, _, false) => Some(t::CONTROL_HOVER),
-            _ => None,
-        };
-        let p = ui.painter();
-        if let Some(fill) = fill {
-            w::fill(p, rect, fill);
-        }
-        let color = if hover || down { Color32::WHITE } else { t::TEXT };
-        w::icon(p, rect, button.icon(maximized), color, ICON_SIZE);
-        if response.on_hover_text(name).clicked() {
+        let response = paint_button(
+            ui,
+            rect,
+            button_id(button),
+            button.icon(maximized),
+            name,
+            button == Button::Close,
+        );
+        if response.clicked() {
             clicked = Some(button);
         }
     }
     clicked
 }
 
-/// 帯の何も無い所の部品。メニューの見出しなどより先に（下に）作る。
-pub fn drag_zone(ui: &mut Ui, zone: Rect) -> Response {
-    ui.interact(zone, Id::new(DRAG_ID), Sense::click_and_drag())
+/// 行（別ウィンドウのタブの並ぶ行）の右端の閉じるの矩形。帯の閉じると同じ幅で、行の下の線の上までの高さ。
+pub fn close_rect(row: Rect) -> Rect {
+    Rect::from_min_max(
+        egui::pos2(row.right() - BUTTON_WIDTH, row.top()),
+        egui::pos2(row.right(), row.bottom() - 1.0),
+    )
 }
 
-/// 帯の何も無い所の操作が窓へ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
+/// 閉じるを 1 つ描く（帯の閉じると同じ見た目。`name` はツールチップと読み上げ）。押された（離した）なら true。
+pub fn close_button(ui: &mut Ui, rect: Rect, id: Id, name: &str) -> bool {
+    paint_button(ui, rect, id, Button::Close.icon(false), name, true).clicked()
+}
+
+/// ボタン 1 つを描く（乗せる・押すと地の色が変わる。閉じるは赤）。ツールチップは名前だけ。
+fn paint_button(ui: &mut Ui, rect: Rect, id: Id, icon: &str, name: &str, close: bool) -> Response {
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
+    let hover = response.hovered();
+    let down = response.is_pointer_button_down_on();
+    let fill = match (hover, down, close) {
+        (_, true, true) => Some(t::ERROR.gamma_multiply(0.75)),
+        (true, _, true) => Some(t::ERROR),
+        (_, true, false) => Some(t::CONTROL_ACTIVE),
+        (true, _, false) => Some(t::CONTROL_HOVER),
+        _ => None,
+    };
+    let p = ui.painter();
+    if let Some(fill) = fill {
+        w::fill(p, rect, fill);
+    }
+    let color = if hover || down {
+        Color32::WHITE
+    } else {
+        t::TEXT
+    };
+    w::icon(p, rect, icon, color, ICON_SIZE);
+    response.on_hover_text(name)
+}
+
+/// 帯の何も無い所の部品。メニューの見出しなどより先に（下に）作る。
+pub fn drag_zone(ui: &mut Ui, zone: Rect) -> Response {
+    drag_zone_with(ui, zone, Id::new(DRAG_ID))
+}
+
+/// 別ウィンドウ（`window` はウィンドウごとの番号）の、帯の代わりの部品の名前。
+pub fn drag_id(window: u64) -> Id {
+    Id::new((DRAG_ID, window))
+}
+
+/// 帯の代わりの部品（別ウィンドウのタブの並ぶ行）。タブより先に（下に）作る。
+pub fn drag_zone_with(ui: &mut Ui, zone: Rect, id: Id) -> Response {
+    ui.interact(zone, id, Sense::click_and_drag())
+}
+
+/// 帯の何も無い所の操作がウィンドウへ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
 /// Live Link の印など、自分の押しを持つ部品の矩形）の上で押したものは、帯の操作にしない。
-pub fn drag_commands(response: &Response, blockers: &[Rect], maximized: bool) -> Vec<ViewportCommand> {
-    let at = response.ctx.input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()));
+pub fn drag_commands(
+    response: &Response,
+    blockers: &[Rect],
+    maximized: bool,
+) -> Vec<ViewportCommand> {
+    let at = response
+        .ctx
+        .input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()));
     if at.is_some_and(|at| blockers.iter().any(|b| b.contains(at))) {
         return Vec::new();
     }
@@ -168,9 +226,9 @@ pub fn drag_commands(response: &Response, blockers: &[Rect], maximized: bool) ->
     }
 }
 
-// ───────── 窓の縁 ─────────
+// ───────── ウィンドウの縁 ─────────
 
-/// 窓の縁（`window` の内側 `EDGE`）の位置 `at` が指す、大きさを変える向き。角は `CORNER` まで 2 方向。縁でなければ None。
+/// ウィンドウの縁（`window` の内側 `EDGE`）の位置 `at` が指す、大きさを変える向き。角は `CORNER` まで 2 方向。縁でなければ None。
 pub fn resize_direction(window: Rect, at: Pos2) -> Option<ResizeDirection> {
     if !window.contains(at) {
         return None;
@@ -221,16 +279,22 @@ pub fn cursor_for(direction: ResizeDirection) -> CursorIcon {
 /// 縁の押しを譲る部品か: `rect` の、縁をまたぐ向きの大きさが `YIELD_SIZE` 以下（左右の縁なら幅、上下の縁なら高さ。角はどちらか）。
 fn yields_to(direction: ResizeDirection, rect: Rect) -> bool {
     use ResizeDirection::*;
-    let horizontal = matches!(direction, East | West | NorthEast | NorthWest | SouthEast | SouthWest);
-    let vertical = matches!(direction, North | South | NorthEast | NorthWest | SouthEast | SouthWest);
+    let horizontal = matches!(
+        direction,
+        East | West | NorthEast | NorthWest | SouthEast | SouthWest
+    );
+    let vertical = matches!(
+        direction,
+        North | South | NorthEast | NorthWest | SouthEast | SouthWest
+    );
     (horizontal && rect.width() <= YIELD_SIZE) || (vertical && rect.height() <= YIELD_SIZE)
 }
 
 /// ポインタの下で、縁の押しを譲る部品が押しを受けるか（egui の当たり判定の結果: 押し・つまみを受ける部品のうち、細いもの）。
-fn control_under_pointer(ctx: &Context, direction: ResizeDirection) -> bool {
+fn control_under_pointer(ctx: &Context, direction: ResizeDirection, own: &[Id]) -> bool {
     let hovered = ctx.interaction_snapshot(|s| s.hovered.clone());
     hovered.into_iter().any(|id| {
-        if is_own(id) {
+        if is_own(id, own) {
             return false;
         }
         ctx.read_response(id).is_some_and(|r| {
@@ -239,23 +303,36 @@ fn control_under_pointer(ctx: &Context, direction: ResizeDirection) -> bool {
     })
 }
 
-/// 浮かせた窓・メニューなど、帯とパネルの上にある層が `at` を覆っているか。
+/// 浮かせたウィンドウ・メニューなど、帯とパネルの上にあるレイヤーが `at` を覆っているか。
 fn covered(ctx: &Context, at: Pos2) -> bool {
-    ctx.layer_id_at(at).is_some_and(|layer| layer.order != Order::Background)
+    ctx.layer_id_at(at)
+        .is_some_and(|layer| layer.order != Order::Background)
 }
 
 /// 縁の押しを受けている間か（ビューは、この押しを自分のものにしない）。
 pub fn edge_press_held(ctx: &Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(Id::new(EDGE_PRESS))).unwrap_or(false)
+    let id = edge_press_id(ctx);
+    ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false)
 }
 
 /// フレームの始めに呼ぶ。縁を押したら `BeginResize` を送り、ポインタが縁に乗っているときはその向きを返す（ポインタの形は、ほかの部品が
 /// 決めたあとに `edge_cursor` で上書きする）。`busy` は描いている最中・ペンが触れている最中（縁の押しを受けない）。`press_rects` は、
 /// egui の押しを持たず生の押しで動く部品（Live Link の印）の矩形で、縁の押しはその上では譲る（egui の当たり判定に出ないので矩形で渡す）。
 pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDirection> {
+    edges_with(ctx, busy, press_rects, &[])
+}
+
+/// `edges` に、縁の押しを譲らない自分の部品（別ウィンドウの帯の代わりの部品と閉じる）を足したもの。`ctx` のウィンドウ（viewport）の縁を見る。
+pub fn edges_with(
+    ctx: &Context,
+    busy: bool,
+    press_rects: &[Rect],
+    own: &[Id],
+) -> Option<ResizeDirection> {
     let any_down = ctx.input(|i| i.pointer.any_down());
+    let press_id = edge_press_id(ctx);
     if !any_down {
-        ctx.data_mut(|d| d.remove::<bool>(Id::new(EDGE_PRESS)));
+        ctx.data_mut(|d| d.remove::<bool>(press_id));
     }
     let (maximized, fullscreen) = ctx.input(|i| {
         let v = i.viewport();
@@ -267,13 +344,20 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
     let (hover, press, touched) = ctx.input(|i| {
         (
             i.pointer.hover_pos(),
-            if i.pointer.primary_pressed() { i.pointer.press_origin() } else { None },
+            if i.pointer.primary_pressed() {
+                i.pointer.press_origin()
+            } else {
+                None
+            },
             i.events.iter().any(|e| matches!(e, Event::Touch { .. })),
         )
     });
     let at = press.or(hover)?;
     let direction = resize_direction(ctx.content_rect(), at)?;
-    if covered(ctx, at) || control_under_pointer(ctx, direction) || press_rects.iter().any(|r| r.contains(at)) {
+    if covered(ctx, at)
+        || control_under_pointer(ctx, direction, own)
+        || press_rects.iter().any(|r| r.contains(at))
+    {
         return None;
     }
     if press.is_some() {
@@ -281,7 +365,7 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
             return None;
         }
         ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
-        ctx.data_mut(|d| d.insert_temp(Id::new(EDGE_PRESS), true));
+        ctx.data_mut(|d| d.insert_temp(press_id, true));
         return Some(direction);
     }
     // 別の操作でボタンを押している最中は、ポインタの形を変えない
@@ -329,7 +413,13 @@ mod tests {
     #[test]
     fn the_inside_and_the_outside_do_not_resize() {
         let w = window();
-        for at in [pos2(500.0, 350.0), pos2(EDGE + 0.5, 350.0), pos2(500.0, EDGE + 0.5), pos2(-1.0, 350.0), pos2(1001.0, 10.0)] {
+        for at in [
+            pos2(500.0, 350.0),
+            pos2(EDGE + 0.5, 350.0),
+            pos2(500.0, EDGE + 0.5),
+            pos2(-1.0, 350.0),
+            pos2(1001.0, 10.0),
+        ] {
             assert_eq!(resize_direction(w, at), None, "{at:?}");
         }
     }
@@ -380,13 +470,24 @@ mod tests {
 
     #[test]
     fn buttons_name_and_command_follow_the_maximized_state() {
-        for (maximized, name_en, icon) in [(false, "Maximize", "window_maximize"), (true, "Restore", "window_restore")] {
+        for (maximized, name_en, icon) in [
+            (false, "Maximize", "window_maximize"),
+            (true, "Restore", "window_restore"),
+        ] {
             assert_eq!(Button::Maximize.name(Lang::En, maximized), name_en);
             assert_eq!(Button::Maximize.icon(maximized), icon);
-            assert!(matches!(Button::Maximize.command(maximized), Some(ViewportCommand::Maximized(m)) if m == !maximized));
+            assert!(
+                matches!(Button::Maximize.command(maximized), Some(ViewportCommand::Maximized(m)) if m == !maximized)
+            );
         }
-        assert!(matches!(Button::Minimize.command(false), Some(ViewportCommand::Minimized(true))));
-        assert!(Button::Close.command(false).is_none(), "閉じるは終了の道を通る");
+        assert!(matches!(
+            Button::Minimize.command(false),
+            Some(ViewportCommand::Minimized(true))
+        ));
+        assert!(
+            Button::Close.command(false).is_none(),
+            "閉じるは終了の道を通る"
+        );
         assert_eq!(Button::Close.name(Lang::Ja, false), "閉じる");
     }
 }

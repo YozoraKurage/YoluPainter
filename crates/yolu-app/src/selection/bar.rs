@@ -1,6 +1,6 @@
 //! 選択範囲の下のボタンの帯（Photoshop のコンテキストタスクバー・CLIP STUDIO の選択範囲ランチャーと同じ）。選択範囲があるとき、その外接矩形の
 //! すぐ下（画面の外へはみ出すなら上、どちらも入らなければ内側の下）に、アイコンだけのボタンを小さな帯にして浮かべる。ボタン: 選択を解除・
-//! 反転・拡張・縮小・境界をぼかす（量を聞く窓）・塗りつぶし・消去・コピーして新しいレイヤー・マスクにする・選択範囲を覚える（名前を付けて残す窓）。文字のラベルは無く、名前とキーはツールチップ。
+//! 反転・拡張・縮小・境界をぼかす（量を聞くウィンドウ）・塗りつぶし・消去・コピーして新しいレイヤー・マスクにする・選択範囲を覚える（名前を付けて残すウィンドウ）。文字のラベルは無く、名前とキーはツールチップ。
 //! 表示の回転・拡大・パンに付いていく（外接矩形は画面の点へ写した 4 隅から求める）。描いている間・選択の形を作っている間・表示を動かして
 //! いる間は隠す。左端の持ち手をドラッグするとずらせる（選択範囲を外すと初めの位置へ戻る）。「選択範囲」メニューで出さないこともできる。
 //! 押した操作は `Action::Sel`（1 回の Undo）を通る。
@@ -56,7 +56,9 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "deselect",
                 icon: "deselect",
-                tooltip: lang.pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)").into(),
+                tooltip: lang
+                    .pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)")
+                    .into(),
                 enabled: free,
                 action: edit(SelEdit::Clear),
             },
@@ -146,9 +148,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "remember",
                 icon: "save",
-                tooltip: lang
-                    .pick("選択範囲を覚える…", "Remember Selection…")
-                    .into(),
+                tooltip: lang.pick("選択範囲を覚える…", "Remember Selection…").into(),
                 enabled: free,
                 action: Action::Sel(SelAction::Saved(SavedOp::OpenWindow)),
             },
@@ -156,7 +156,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
     ]
 }
 
-/// 塗る・コピー・マスクにするが、今の層でできない理由（できるなら None）。
+/// 塗る・コピー・マスクにするが、今のレイヤーでできない理由（できるなら None）。
 fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
     let lang = app.lang;
     let Some(layer) = app.selected_layer.and_then(|id| app.doc.layer(id)) else {
@@ -167,12 +167,15 @@ fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
     };
     let paint = app.paint_blocker();
     let masked = app.m2.edit_mask && layer.mask().is_some();
-    let copy = (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill))
-        .then(|| lang.pick("画素を持たないレイヤーです", "This layer has no pixels").to_owned());
+    let copy =
+        (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill)).then(|| {
+            lang.pick("画素を持たないレイヤーです", "This layer has no pixels")
+                .to_owned()
+        });
     (paint, copy, None)
 }
 
-/// 帯を出すか。描いている間・選択の形を作っている間・表示を動かしている間・量を聞く窓が開いている間・ペンでキャンバスを押している間は隠す。
+/// 帯を出すか。描いている間・選択の形を作っている間・表示を動かしている間・量を聞くウィンドウが開いている間・ペンでキャンバスを押している間は隠す。
 pub fn visible(app: &AppState) -> bool {
     app.prefs.settings.selection_bar
         && app.doc.selection().is_some()
@@ -209,8 +212,8 @@ fn bar_size(groups: &[Vec<Item>; 3]) -> Vec2 {
 fn screen_bounds(app: &mut AppState, view: &CanvasView) -> Option<Rect> {
     let mask = app.doc.selection().cloned()?;
     let (x0, y0, x1, y1) = app.sel.bounds_of(&mask)?;
-    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        .map(|(x, y)| view.to_screen(x as f64, y as f64));
+    let corners =
+        [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(x, y)| view.to_screen(x as f64, y as f64));
     Some(Rect::from_points(&corners))
 }
 

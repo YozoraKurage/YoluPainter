@@ -1,10 +1,10 @@
-//! 塗りつぶしの層の画像と投影・デカール・ワールドスペースのグラデーション（Substance の Fill の画像と Projection、Decal）の画面の状態と操作。
+//! 塗りつぶしレイヤーの画像と投影・デカール・グラデーションデカール（Substance の Fill の画像と Projection、Decal）の画面の状態と操作。
 //!
-//! - 文書が持つもの（チャンネルごとの画像の参照・層ごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
+//! - 文書が持つもの（チャンネルごとの画像の参照・レイヤーごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
 //!   選ぶ・渡す・覚えるだけ。どの変更も `Action::Fill` を通る（欄・キー・試験と同じ道）。1 つの操作が 1 回の Undo で、スライダー・数値・ギズモの
 //!   ドラッグは `coalesce` で離すまでを 1 回にまとめる。断られたら何も変えず、理由を状態の帯へ。
 //! - 画像の画素は棚から、文書の効果の入力へ渡す。復号・予算・失敗の理由・文書への受け渡しは効果の画面と共通で、`fx::inputs` が持つ
-//!   （画像を差す操作が先に `use_shelf_image` で頼み、層が指したあとは毎フレームの `sync_effects` が保つ。差さなかった画像は
+//!   （画像を差す操作が先に `use_shelf_image` で頼み、レイヤーが指したあとは毎フレームの `sync_effects` が保つ。差さなかった画像は
 //!   `release_shelf_image` で手放す）。ここの `inputs` は棚の画像の ID と色空間の再公開だけ。マップ（位置・法線）とモデルのルートは、
 //!   入力を作る側（メッシュマップのベイク）が渡す。入力がそろわない間は、core が値を見せ、その理由を `inactive_effect_list` が言う
 //!   （欄は理由を短く出す）。
@@ -13,6 +13,7 @@
 pub mod gizmo;
 pub mod inputs;
 pub mod placement;
+pub mod points;
 
 use std::path::PathBuf;
 
@@ -25,25 +26,29 @@ use yolu_core::{
 };
 
 use crate::lang::Lang;
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
 use crate::state::{AppState, DialogRequest};
-use crate::view3d::shape_gizmo::{Handle, Mode};
+use crate::view3d::shape_gizmo::Handle;
 
 /// 塗りつぶしの画面の状態。
 #[derive(Default)]
 pub struct FillFxState {
-    /// ギズモの組（移動の矢印と中心の四角か、回す輪か）。
-    pub gizmo_mode: Mode,
     /// 投影の置き場のハンドルを隠している（Q・欄のボタン）。
     pub handles_hidden: bool,
-    /// 3D ビューで形を編集している塗りつぶしのグラデーション（層とチャンネル）。
+    /// 3D ビューで形を編集している塗りつぶしのグラデーション（レイヤーとチャンネル）。
     pub edit_gradient: Option<(LayerId, Channel)>,
-    /// 3D ビューで形を編集している、フィルターの欄の形のグラデーションの Generator（層とフィルターの段）。
+    /// 3D ビューで形を編集している、フィルターの欄の形のグラデーションの Generator（レイヤーとフィルターの段）。
     pub edit_filter: Option<(LayerId, yolu_core::FilterId)>,
     /// ギズモのドラッグの途中。
     pub drag: Option<gizmo::ShapeDrag>,
     /// ポインタの下のハンドル（カーソル用。描くたびに更新）。
     pub hover: Handle,
+    /// 点を置く・動かしている塗りつぶしの点のグラデーション（レイヤーとチャンネル）。
+    pub edit_points: Option<(LayerId, Channel)>,
+    /// 選んでいる点の番号。
+    pub point_selected: Option<usize>,
+    /// 点のドラッグの途中。
+    pub point_drag: Option<points::PointDrag>,
 }
 
 /// 塗りつぶしの操作（`Action::Fill`）。
@@ -54,6 +59,12 @@ pub enum FillOp {
         layer: LayerId,
         channel: Channel,
         image: Option<ImageId>,
+    },
+    /// チャンネルの画像を異方性のフィルターで読むか（斜めから当てた画像のにじみを減らす。既定は読む）。
+    Anisotropic {
+        layer: LayerId,
+        channel: Channel,
+        on: bool,
     },
     /// 投影を置き換える（`coalesce` ならドラッグを 1 回にまとめる）。
     Projection {
@@ -82,6 +93,20 @@ pub enum FillOp {
         layer: LayerId,
         channel: Channel,
     },
+    /// 点のグラデーションを追加する（モデルがあればモデルの空間で 2 点。メインの色とサブの色）。追加したら点の編集に入る。
+    AddPoints {
+        layer: LayerId,
+        channel: Channel,
+    },
+    /// 点のグラデーションを置き換える・外す（`coalesce` なら欄のドラッグを 1 回にまとめる）。
+    Points {
+        layer: LayerId,
+        channel: Channel,
+        points: Option<Box<yolu_core::fill_points::PointGradient>>,
+        coalesce: bool,
+    },
+    /// 選んだ点を消す（最後の 1 つは消さない）。
+    DeletePoint,
     /// 3D ビューのモデルへ画像をデカールとして置く（`at` は画面の点、`rect` は 3D ビューの表示域）。
     PlaceDecal {
         image: ImageId,
@@ -96,34 +121,47 @@ pub enum FillOp {
     },
     /// 棚へ PNG を取り込む（棚の画像として入る。文書は変えない）。
     ImportImage(PathBuf),
-    /// PNG を選ぶ窓を開く。
+    /// PNG を選ぶウィンドウを開く。
     ImportImageDialog,
     // ── 画面だけ ──
     /// 置き場のハンドルを隠す・出す。
     Handles(bool),
     ToggleHandles,
-    GizmoMode(Mode),
     /// グラデーションの形を 3D ビューで編集する・やめる。
     EditGradient(Option<(LayerId, Channel)>),
     /// フィルターの欄の形のグラデーションの Generator の形を 3D ビューで編集する・やめる。
     EditFilter(Option<(LayerId, yolu_core::FilterId)>),
+    /// 点のグラデーションの点を、3D ビューと 2D のキャンバスで置く・動かす編集に入る・やめる。
+    EditPoints(Option<(LayerId, Channel)>),
+    /// 点を選ぶ（欄の行・ビューの印）。
+    SelectPoint(Option<usize>),
 }
 
 impl FillOp {
     /// 文書を変える操作か（読むだけのセットでは断る）。
     pub fn edits_document(&self) -> bool {
-        // 画像の読み方は棚の索引を替えるだけで、文書の層は変えない（読むだけのセットでも替えられる）
+        // 画像の読み方は棚の索引を替えるだけで、文書のレイヤーは変えない（読むだけのセットでも替えられる）
         matches!(
             self,
             FillOp::Image { .. }
+                | FillOp::Anisotropic { .. }
                 | FillOp::Projection { .. }
                 | FillOp::ProjectionMode { .. }
                 | FillOp::FitPlacement { .. }
                 | FillOp::Gradient { .. }
                 | FillOp::AddGradient { .. }
                 | FillOp::PlaceDecal { .. }
+                | FillOp::AddPoints { .. }
+                | FillOp::Points { .. }
+                | FillOp::DeletePoint
         )
     }
+}
+
+/// 形のギズモか点のグラデーションの点をドラッグしている間か。ペンの接触は egui のポインタの押下にならないので、パネルが「押していなければまとめを
+/// 終える」を毎フレーム行うとき、この間は終えない（終えると 1 フレームごとに別の Undo の段になる）。離す・Esc・フォーカスの喪失は、ドラッグの側が自分で終える。
+pub fn dragging(app: &AppState) -> bool {
+    gizmo::dragging(app) || points::dragging(app)
 }
 
 /// 画像を差したチャンネルに値が無いとき core が置く既定の値（画像が使えない所に出る）。
@@ -139,21 +177,24 @@ impl Lang {
     /// 塗りつぶしの投影の値の断り（core の `FillError`）。
     pub fn fill_error(self, e: &FillError) -> String {
         match e {
-            FillError::Invalid(what) => self.pick(
-                format!("投影の値が使えません: {what}"),
-                format!(
-                    "Invalid projection: {}",
+            FillError::Invalid(what) => self.with_reason(
+                self.pick("投影の値が使えません", "Invalid projection"),
+                self.pick(
+                    (*what).to_owned(),
                     match *what {
-                        "投影に有限でない値" | "箱に有限でない値" =>
-                            "not a finite number",
+                        "投影に有限でない値" | "箱に有限でない値" => {
+                            "not a finite number"
+                        }
                         "繰り返しは 0.001..10000" => "tiling must be 0.001 to 10000",
                         "オフセット・回転の範囲" => "offset or rotation out of range",
                         "混ぜ幅・減衰の範囲" => "blend or falloff out of range",
                         "減衰はデカールだけ" => "falloff is for decals only",
-                        "箱の位置・回転・大きさの範囲" =>
-                            "box position, rotation or size out of range",
+                        "箱の位置・回転・大きさの範囲" => {
+                            "box position, rotation or size out of range"
+                        }
                         _ => "out of range",
                     }
+                    .to_owned(),
                 ),
             ),
             other => self.pick(other.to_string(), "The projection cannot be used".into()),
@@ -161,7 +202,7 @@ impl Lang {
     }
 }
 
-/// 層・チャンネルの効かない理由（無ければ `None`）。画像は `FillImage`、グラデーションは `FillGradient`、デカールは `Decal`。
+/// レイヤー・チャンネルの効かない理由（無ければ `None`）。画像は `FillImage`、グラデーションは `FillGradient`、デカールは `Decal`。
 fn inactive_reason(
     app: &AppState,
     layer: LayerId,
@@ -175,7 +216,7 @@ fn inactive_reason(
 }
 
 impl AppState {
-    /// 画像を使う層が、今は画像を投影できない理由（短い文。使えれば `None`）。
+    /// 画像を使うレイヤーが、今は画像を投影できない理由（短い文。使えれば `None`）。
     pub fn fill_image_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
         inactive_reason(self, layer, InactiveTarget::FillImage(channel))
             .map(|r| self.lang.inactive_reason(&r))
@@ -186,30 +227,26 @@ impl AppState {
         inactive_reason(self, layer, InactiveTarget::Decal).map(|r| self.lang.inactive_reason(&r))
     }
 
-    /// チャンネルのグラデーションが今は値を見せている理由。
-    pub fn fill_gradient_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
-        inactive_reason(self, layer, InactiveTarget::FillGradient(channel))
-            .map(|r| self.lang.inactive_reason(&r))
-    }
-
     /// 3D のモデルの外形（無ければ `None`）。
     pub fn model_bounds(&self) -> Option<yolu_core::geometry::Bounds> {
         self.view3d.model.as_ref().map(|m| m.geometry.bounds())
     }
 
     fn fill_refusal(&mut self, e: &yolu_core::CoreError) {
-        self.message = refusal_text(self.lang, e);
+        let text = self.lang.core_error(e);
+        self.notify(crate::notice::Kind::of_core(e), Source::FillLayer, text);
     }
 
-    /// 塗りつぶしの層の id（塗りつぶしでなければ理由を出して `None`）。
+    /// 塗りつぶしレイヤーの id（塗りつぶしでなければ理由を出して `None`）。
     fn fill_layer(&mut self, layer: LayerId) -> Option<LayerId> {
         match self.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
             _ => {
-                self.message = self
-                    .lang
-                    .pick("塗りつぶしのレイヤーではありません", "Not a fill layer")
-                    .into();
+                self.refuse(
+                    Source::FillLayer,
+                    self.lang
+                        .pick("塗りつぶしのレイヤーではありません", "Not a fill layer"),
+                );
                 None
             }
         }
@@ -219,9 +256,10 @@ impl AppState {
     pub fn fill_apply(&mut self, op: FillOp) {
         let lang = self.lang;
         if op.edits_document() && self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let revision = self.doc.revision();
@@ -236,14 +274,15 @@ impl AppState {
                 };
                 if let Some(image) = image {
                     if let Err(why) = self.use_shelf_image(&inputs::resource_id(image)) {
-                        self.message = why;
+                        self.fail(Source::FillLayer, why);
                         return;
                     }
                 }
                 self.doc.end_coalescing();
                 match self.doc.set_fill_image(layer, channel, image) {
                     Ok(()) => {
-                        self.message =
+                        self.info(
+                            Source::FillLayer,
                             match image.and_then(|i| self.shelf.get(&inputs::resource_id(i))) {
                                 Some(r) => format!(
                                     "{}: {}",
@@ -251,7 +290,8 @@ impl AppState {
                                     r.name
                                 ),
                                 None => lang.pick("画像を外しました", "Image removed").into(),
-                            };
+                            },
+                        );
                     }
                     Err(e) => {
                         // 画像は先に復号して文書へ渡してある（core はそれを見てから断る）。差さなかった画像は手放す
@@ -260,6 +300,15 @@ impl AppState {
                         }
                         self.fill_refusal(&e);
                     }
+                }
+            }
+            FillOp::Anisotropic { layer, channel, on } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                self.doc.end_coalescing();
+                if let Err(e) = self.doc.set_fill_anisotropic(layer, channel, on) {
+                    self.fill_refusal(&e);
                 }
             }
             FillOp::Projection {
@@ -272,7 +321,7 @@ impl AppState {
                 };
                 let projection = *projection;
                 if let Err(e) = projection.validate() {
-                    self.message = lang.fill_error(&e);
+                    self.fail(Source::FillLayer, lang.fill_error(&e));
                     return;
                 }
                 if let Err(e) = self.doc.set_fill_projection(layer, projection, coalesce) {
@@ -302,7 +351,10 @@ impl AppState {
                         }
                     }
                     None => {
-                        self.message = lang.pick("モデルがありません", "No model").into();
+                        self.refuse(
+                            Source::FillLayer,
+                            lang.pick("モデルがありません", "No model"),
+                        );
                     }
                 }
             }
@@ -346,10 +398,53 @@ impl AppState {
                     Err(e) => self.fill_refusal(&e),
                 }
             }
+            FillOp::AddPoints { layer, channel } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                let g = points::new_gradient(self, channel);
+                self.doc.end_coalescing();
+                match self.doc.set_fill_points(layer, channel, Some(g), false) {
+                    Ok(()) => {
+                        self.fillfx.edit_points = Some((layer, channel));
+                        self.fillfx.point_selected = None;
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::Points {
+                layer,
+                channel,
+                points: g,
+                coalesce,
+            } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                if !coalesce {
+                    self.doc.end_coalescing();
+                }
+                let removed = g.is_none();
+                match self
+                    .doc
+                    .set_fill_points(layer, channel, g.map(|g| *g), coalesce)
+                {
+                    Ok(()) => {
+                        if removed {
+                            if self.fillfx.edit_points == Some((layer, channel)) {
+                                self.fillfx.edit_points = None;
+                            }
+                            self.fillfx.point_selected = None;
+                        }
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::DeletePoint => points::delete_selected(self),
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
             FillOp::ImportImage(path) => {
                 // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
-                // その間に取り込むと取り込んだ画像が消え、その画像を差した層が棚に無い画像を指す）
+                // その間に取り込むと取り込んだ画像が消え、その画像を差したレイヤーが棚に無い画像を指す）
                 if self.shelf_refuse_while_saving() {
                     return;
                 }
@@ -357,9 +452,10 @@ impl AppState {
             }
             FillOp::ImageColorSpace { image, space } => {
                 if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::FillLayer,
+                        crate::lang::refusals::during_stroke(lang),
+                    );
                     return;
                 }
                 // 読み方は棚の索引に書くので、取り込みと同じく保存中は断る
@@ -378,12 +474,12 @@ impl AppState {
                         // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
                         if self.fx.inputs.has_decoded_image(image) {
                             if let Err(why) = self.use_shelf_image(&id) {
-                                self.message = why;
+                                self.fail(Source::FillLayer, why);
                             }
                         }
                     }
                     Ok(false) => {}
-                    Err(why) => self.message = why,
+                    Err(why) => self.fail(Source::FillLayer, why),
                 }
             }
             FillOp::ImportImageDialog => {
@@ -415,11 +511,6 @@ impl AppState {
                 self.fill_apply(FillOp::Handles(hidden));
                 return;
             }
-            FillOp::GizmoMode(mode) => {
-                if self.fillfx.drag.is_none() {
-                    self.fillfx.gizmo_mode = mode;
-                }
-            }
             FillOp::EditGradient(target) => {
                 if self.fillfx.edit_gradient != target {
                     gizmo::release(self, false);
@@ -441,6 +532,16 @@ impl AppState {
                     self.fillfx.edit_gradient = None;
                     self.selected_layer = Some(layer);
                 }
+            }
+            FillOp::EditPoints(target) => {
+                if self.fillfx.edit_points != target {
+                    points::release(self, true);
+                    self.fillfx.point_selected = None;
+                }
+                self.fillfx.edit_points = target;
+            }
+            FillOp::SelectPoint(index) => {
+                self.fillfx.point_selected = index;
             }
         }
         if self.doc.revision() != revision {
@@ -503,7 +604,7 @@ impl AppState {
         self.fitted_placement_for(mode, image)
     }
 
-    /// `fitted_placement` の、まだ層が無い（これから作る）ときの形。`image` は差す画像の大きさ（デカールの縦横比に使う）。
+    /// `fitted_placement` の、まだレイヤーが無い（これから作る）ときの形。`image` は差す画像の大きさ（デカールの縦横比に使う）。
     pub fn fitted_placement_for(
         &self,
         mode: ProjectionMode,
@@ -522,8 +623,8 @@ impl AppState {
         ))
     }
 
-    /// 棚の画像を塗りつぶしの層が指すために取る: 名前と大きさ（デカールを置く道と、メニューが画像・デカールの層を作る道が同じに使う）。
-    /// 棚に無い・復号できない（予算など）ときは理由。取ったあとで読めなければ手放してから返す（どの層も指さない画像を予算に残さない）。
+    /// 棚の画像を塗りつぶしレイヤーが指すために取る: 名前と大きさ（デカールを置く道と、メニューが画像・デカールのレイヤーを作る道が同じに使う）。
+    /// 棚に無い・復号できない（予算など）ときは理由。取ったあとで読めなければ手放してから返す（どのレイヤーも指さない画像を予算に残さない）。
     pub(crate) fn take_shelf_image(
         &mut self,
         image: ImageId,
@@ -532,7 +633,10 @@ impl AppState {
         let rid = inputs::resource_id(image);
         let Some(name) = self.shelf.get(&rid).map(|r| r.name.clone()) else {
             return Err(lang
-                .pick("棚に画像がありません", "The shelf has no such image")
+                .pick(
+                    "アセットに画像がありません",
+                    "No such image in the project's assets",
+                )
                 .into());
         };
         self.use_shelf_image(&rid)?;
@@ -552,35 +656,39 @@ impl AppState {
         }
     }
 
-    /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだ層の上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
-    /// 塗りつぶしの層を作り、投影をデカールにして面に向ける（1 回の Undo）。置けない（モデルの外・ほかのテクスチャセットの面）ときは
+    /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだレイヤーの上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
+    /// 塗りつぶしレイヤーを作り、投影をデカールにして面に向ける（1 回の Undo）。置けない（モデルの外・ほかのテクスチャセットの面）ときは
     /// 何も変えずに理由を出す。
     fn place_decal(&mut self, image: ImageId, at: Pos2, rect: Rect) {
         let lang = self.lang;
         let Some((model, material)) = self.region_model() else {
-            self.message = self.region_missing_reason();
+            self.refuse(Source::FillLayer, self.region_missing_reason());
             return;
         };
         let view = self.view3d.camera.view(rect.width(), rect.height());
         let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
         let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
-            self.message = lang
-                .pick("モデルの上ではありません", "Not on the model")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                lang.pick("モデルの上ではありません", "Not on the model"),
+            );
             return;
         };
         if hit.material != material {
             let name = model.material_name(hit.material as usize, lang);
-            self.message = lang.pick(
-                format!("ほかのテクスチャセット（{name}）の面です。"),
-                format!("Surface of another texture set ({name})."),
+            self.refuse(
+                Source::FillLayer,
+                lang.pick(
+                    format!("ほかのテクスチャセット（{name}）の面です。"),
+                    format!("Surface of another texture set ({name})."),
+                ),
             );
             return;
         }
         let (name, size) = match self.take_shelf_image(image) {
             Ok(taken) => taken,
             Err(why) => {
-                self.message = why;
+                self.fail(Source::FillLayer, why);
                 return;
             }
         };
@@ -607,16 +715,29 @@ impl AppState {
                 self.set_edit_mask(false);
                 self.fillfx.handles_hidden = false;
                 self.fillfx.edit_gradient = None;
-                self.message = match self.decal_problem(id) {
-                    None => format!(
-                        "{}: {name}",
-                        lang.pick("デカールを置きました", "Decal placed")
+                match self.decal_problem(id) {
+                    None => self.info(
+                        Source::FillLayer,
+                        format!(
+                            "{}: {name}",
+                            lang.pick("デカールを置きました", "Decal placed")
+                        ),
                     ),
-                    Some(why) => lang.pick(
-                        format!("デカールを置きました。まだ出ません: {name}（{why}）"),
-                        format!("Decal placed, not shown yet: {name} ({why})"),
+                    // 置いたが、まだ出ない（理由つき）: 気をつけること
+                    Some(why) => self.warn(
+                        Source::FillLayer,
+                        lang.pick(
+                            format!(
+                                "デカールを置きました。{}はまだ出ません（{why}）。",
+                                lang.quote(&name)
+                            ),
+                            format!(
+                                "Decal placed. {} is not shown yet ({why}).",
+                                lang.quote(&name)
+                            ),
+                        ),
                     ),
-                };
+                }
             }
             Err(e) => {
                 self.release_shelf_image(image);
@@ -637,7 +758,10 @@ impl AppState {
         let (mut rgba, w, h) = match read_png(path, lang) {
             Ok(read) => read,
             Err(why) => {
-                self.message = format!("{name}: {why}");
+                self.fail(
+                    Source::FillLayer,
+                    lang.with_reason(cannot_add_image(lang, &name), why),
+                );
                 return;
             }
         };
@@ -651,18 +775,39 @@ impl AppState {
                 if added {
                     self.modified = true;
                 }
-                self.message = format!(
-                    "{}: {name}",
-                    if added {
-                        lang.pick("棚に画像を取り込みました", "Image added to the shelf")
-                    } else {
-                        lang.pick("すでに棚にあります", "Already on the shelf")
-                    }
+                self.info(
+                    Source::FillLayer,
+                    format!(
+                        "{}: {name}",
+                        if added {
+                            lang.pick(
+                                "アセットに画像を取り込みました",
+                                "Image added to the project's assets",
+                            )
+                        } else {
+                            lang.pick(
+                                "すでにアセットにあります",
+                                "Already in the project's assets",
+                            )
+                        }
+                    ),
                 );
             }
-            Err(why) => self.message = format!("{name}: {why}"),
+            Err(why) => self.fail(
+                Source::FillLayer,
+                lang.with_reason(cannot_add_image(lang, &name), why),
+            ),
         }
     }
+}
+
+/// 「「名前」をアセットに取り込めません」（理由は `Lang::with_reason` で添える）。
+fn cannot_add_image(lang: Lang, name: &str) -> String {
+    let name = lang.quote(name);
+    lang.pick(
+        format!("{name}をアセットに取り込めません"),
+        format!("Cannot import {name}"),
+    )
 }
 
 /// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。
@@ -708,7 +853,7 @@ fn flip_rows(raw: &mut [u8], stride: usize) {
     }
 }
 
-/// 棚の画像を読んでいる層の名前（全部のテクスチャセット。セットが 2 つ以上ならセットの名前を前に付ける）。棚から消す前の確かめに使う。
+/// 棚の画像を読んでいるレイヤーの名前（全部のテクスチャセット。セットが 2 つ以上ならセットの名前を前に付ける）。棚から消す前の確かめに使う。
 pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let Some(image) = inputs::image_id(resource_id) else {
         return Vec::new();
@@ -717,7 +862,9 @@ pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let mut users = Vec::new();
     for (i, set) in app.sets.iter().enumerate() {
         for layer in app.set_doc(i).layers() {
-            if layer.fill_images().any(|(_, id)| id == image) {
+            if layer.image_ids().any(|id| id == image)
+                || yolu_core::paths::list_images(layer.paths()).contains(&image)
+            {
                 users.push(if named {
                     format!("{}: {}", set.name, layer.name())
                 } else {

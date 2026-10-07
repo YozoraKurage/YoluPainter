@@ -2,7 +2,7 @@
 //!
 //! 守ること:
 //! - 聞かずに通信しない。起動時の確かめは、初回の問い（`window`）で「はい」を選んだあとだけ。手で確かめる（ヘルプのメニュー）は、押したときだけ。
-//! - 公開鍵は組み込んだ物だけを信じる（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。組み込んでいないビルドは、更新の項目も窓も出さない。
+//! - 公開鍵は組み込んだ物だけを信じる（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。組み込んでいないビルドは、更新の項目もウィンドウも出さない。
 //! - 試験版は、設定「試験版を使う」を入れたときだけ、stable の更新情報に加えて試験版の置き場（`BETA_UPDATER_URL`）を見て、新しい方を勧める。
 //!   切のときは stable だけ（stable が載せない試験版は受けない）。版を下げる更新はしないので、試験版を入れていた人が設定を切っても、
 //!   次の stable が今の版より新しくなるまで何も勧めない。どちらの置き場も同じ鍵・同じ検証（`yolu_update::UpdateClient::check_channels`）。
@@ -11,12 +11,12 @@
 //! - 新しい版が見つかっても、利用者が押すまでダウンロードしない。落としたファイルは、署名つきの更新情報の SHA-256・大きさで確かめた
 //!   ものだけを置き、走らせる直前にもう一度確かめる。
 //! - 描いている最中は入れない。保存していない変更があるときは、保存してから入れるか聞く。
-//! - 同じ実行ファイルの別の起動（別の窓）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じた窓だけが戻らないので、
-//!   始める前に断る。落としたインストーラーは残し、別の窓を閉じてからもう一度押せばすぐ入る。
+//! - 同じ実行ファイルの別の起動（別のウィンドウ）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じたウィンドウだけが戻らないので、
+//!   始める前に断る。落としたインストーラーは残し、別のウィンドウを閉じてからもう一度押せばすぐ入る。
 //! - インストールした Windows は、インストーラーを無音で走らせてアプリを閉じ、インストーラーが終わったらアプリを起こし直す。
 //!   それ以外（Linux・zip で展開した Windows）は、その版のリリースのページを開くだけ（自分で入れ替えない）。
 //!
-//! 通信・ダウンロードは別のスレッドで、取消ができる（`Link`）。状態は `UpdateState`、操作は `UpdateAction`（メニュー・窓から）。
+//! 通信・ダウンロードは別のスレッドで、取消ができる（`Link`）。状態は `UpdateState`、操作は `UpdateAction`（メニュー・ウィンドウから）。
 
 pub mod config;
 pub mod http;
@@ -35,8 +35,11 @@ use yolu_update::{
     Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
+use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
+use crate::windows::CloseJob;
 pub use config::Preference;
 use http::{HttpTransport, Link};
 
@@ -49,7 +52,7 @@ pub enum Mode {
     Page,
 }
 
-/// 更新の操作（メニュー・窓から）。
+/// 更新の操作（メニュー・ウィンドウから）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateAction {
     /// 初回の問い「起動時に更新を確かめる」への答え。
@@ -60,13 +63,13 @@ pub enum UpdateAction {
     SetBeta(bool),
     /// 手で確かめる。
     Check,
-    /// 見つかった版へ更新する（Installer はダウンロードを始める。落とし済みなら準備の窓を出す。Page はリリースのページを開く）。
+    /// 見つかった版へ更新する（Installer はダウンロードを始める。落とし済みなら準備のウィンドウを出す。Page はリリースのページを開く）。
     Install,
     /// ダウンロードを取り消す。
     Cancel,
-    /// 準備の窓: 更新して再起動する。`save` なら、先に保存する。
+    /// 準備のウィンドウ: 更新して再起動する。`save` なら、先に保存する。
     Run { save: bool },
-    /// 準備の窓: あとで。
+    /// 準備のウィンドウ: あとで。
     Later,
 }
 
@@ -155,6 +158,35 @@ pub struct Progress {
     pub canceling: bool,
 }
 
+/// 更新の確かめとダウンロード（ダウンロードだけが札と閉じる前の確かめに出る。起動時の確かめは利用者が待っていない）。更新のウィンドウは、
+/// キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.update.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}",
+                lang.pick("更新をダウンロード中", "Downloading update"),
+                p.version
+            ),
+            fraction: Some(p.fraction),
+            cancel: Some(crate::state::Action::Update(UpdateAction::Cancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| {
+        app.update
+            .progress()
+            .is_some()
+            .then_some(CloseJob::UpdateDownload)
+    }),
+    cancel: Some(|app| app.apply(crate::state::Action::Update(UpdateAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_update),
+    modal: Some(|app| app.update.window_open()),
+    ..JobSpec::new("update", |app| app.update.is_busy())
+};
+
 pub struct UpdateState {
     key: Option<[u8; 32]>,
     current: Version,
@@ -176,10 +208,10 @@ pub struct UpdateState {
     job: Option<Job>,
     offer: Option<Offer>,
     ready: Option<Ready>,
-    /// 準備の窓を出したい（描いている最中は、描き終わるまで待つ）。
+    /// 準備のウィンドウを出したい（描いている最中は、描き終わるまで待つ）。
     ready_wanted: bool,
     ready_open: bool,
-    /// 別の起動が動いていて、更新を始められなかった（準備の窓が理由を出す。押し直すか「あとで」で消える）。
+    /// 別の起動が動いていて、更新を始められなかった（準備のウィンドウが理由を出す。押し直すか「あとで」で消える）。
     pub(crate) ready_blocked: bool,
     pub(crate) ready_offset: Vec2,
     /// 保存してから入れる、の保存の結果待ち。
@@ -237,7 +269,7 @@ impl UpdateState {
         }
     }
 
-    /// 更新の項目・窓を出すビルドか（公開鍵が組み込まれ、この OS で更新できる）。
+    /// 更新の項目・ウィンドウを出すビルドか（公開鍵が組み込まれ、この OS で更新できる）。
     pub fn enabled(&self) -> bool {
         self.key.is_some() && self.target.is_some()
     }
@@ -276,12 +308,12 @@ impl UpdateState {
         self.ready_open
     }
 
-    /// 別の起動が動いているので、更新を始められなかった（準備の窓が理由を出している）。
+    /// 別の起動が動いているので、更新を始められなかった（準備のウィンドウが理由を出している）。
     pub fn is_blocked(&self) -> bool {
         self.ready_blocked
     }
 
-    /// 更新の窓（初回の問い・準備）が開いている（キーの割り当てを止める）。
+    /// 更新のウィンドウ（初回の問い・準備）が開いている（キーの割り当てを止める）。
     pub fn window_open(&self) -> bool {
         self.asking || self.ready_open
     }
@@ -348,15 +380,6 @@ impl UpdateState {
     #[doc(hidden)]
     pub fn set_other_instance_for_test(&mut self, other_instance: Peers) {
         self.other_instance = other_instance;
-    }
-
-    /// 試験用: 見つかった版を直接入れる（通信を通さずに窓・メニューを見る）。
-    #[doc(hidden)]
-    pub fn set_offer_for_test(&mut self, update: AvailableUpdate) {
-        self.offer = Some(Offer {
-            version: update.version().clone(),
-            update,
-        });
     }
 
     /// ヘルプのメニューの「更新」の項目の名前。
@@ -470,30 +493,23 @@ fn stage(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     for entry in std::fs::read_dir(dir)?.flatten() {
         let old = entry.file_name().to_string_lossy().into_owned();
-        if old.starts_with("yolupainter-") && (old.ends_with(".exe") || old.ends_with(".part")) {
+        // 書きかけは今の一時ファイル（`.{名前}.{pid}-{番号}.pending~`）と、前の版の `.part`
+        let target = yolu_io::atomic::leftover_target(&old).unwrap_or(&old);
+        if target.starts_with("yolupainter-")
+            && (target.ends_with(".exe") || target.ends_with(".part"))
+        {
             let _ = std::fs::remove_file(entry.path());
         }
     }
     let path = dir.join(name);
-    let part = dir.join(format!("{name}.part"));
-    let written = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&part)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&part, &path)
-    })();
-    if written.is_err() {
-        let _ = std::fs::remove_file(&part);
-    }
-    written.map(|()| path)
+    yolu_io::atomic::replace_with(&path, &Default::default(), |file| file.write_all(bytes))?;
+    Ok(path)
 }
 
-/// 置き場のファイル名（`yolupainter-<版>-<対象の鍵>.exe`、書きかけは末尾に `.part`）から版を取る。
+/// 置き場のファイル名（`yolupainter-<版>-<対象の鍵>.exe`、書きかけは一時ファイル `.{名前}.{pid}-{番号}.pending~` か、前の版の
+/// 末尾の `.part`）から版を取る。
 fn staged_version(file: &str) -> Option<Version> {
+    let file = yolu_io::atomic::leftover_target(file).unwrap_or(file);
     let rest = file.strip_prefix("yolupainter-")?;
     let rest = rest.strip_suffix(".part").unwrap_or(rest);
     let rest = rest.strip_suffix(".exe")?;
@@ -533,7 +549,7 @@ fn staged_file_is_intact(ready: &Ready) -> bool {
     bytes.len() as u64 == ready.asset.size && sha256(&bytes) == ready.asset.sha256
 }
 
-/// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備の窓が同じ文を出す）。
+/// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備のウィンドウが同じ文を出す）。
 pub(crate) fn blocked_text(lang: Lang) -> &'static str {
     lang.pick(
         "ほかの YoluPainter が開いています",
@@ -541,29 +557,16 @@ pub(crate) fn blocked_text(lang: Lang) -> &'static str {
     )
 }
 
-fn failure_text(lang: Lang, what: &'static str, failure: Failure) -> String {
-    // what: "check" か "download"
-    let head = match what {
-        "check" => lang.pick("更新を確かめられません", "Cannot check for updates"),
-        _ => lang.pick("更新をダウンロードできません", "Cannot download the update"),
-    };
-    let reason = match failure {
-        Failure::Network => lang.pick("通信できません", "connection failed"),
-        Failure::Verify => lang.pick("検証を通りません", "verification failed"),
-        Failure::NoAsset => lang.pick("この環境向けの配布物がありません", "no download for this system"),
-        Failure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
-        Failure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
-        Failure::Canceled => {
-            return lang
-                .pick("ダウンロードを取り消しました。", "Download canceled.")
-                .into()
-        }
-    };
-    format!("{head}: {reason}")
+/// 失敗の知らせの種類（取り消しは済んだ知らせ、ほかは失敗）。
+fn failure_kind(failure: &Failure) -> crate::notice::Kind {
+    match failure {
+        Failure::Canceled => crate::notice::Kind::Info,
+        _ => crate::notice::Kind::Error,
+    }
 }
 
 impl AppState {
-    /// 起動時に 1 度（実際の窓だけ。試験は呼ばない）: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる。
+    /// 起動時に 1 度（実際のウィンドウだけ。試験は呼ばない）: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる。
     pub fn update_startup(&mut self) {
         if !self.update.enabled() {
             return;
@@ -646,13 +649,13 @@ impl AppState {
         };
         if let Some(path) = &self.update.config {
             if config::save(path, &stored).is_err() {
-                self.message = self
-                    .lang
-                    .pick(
+                self.fail(
+                    Source::Update,
+                    self.lang.pick(
                         "更新の設定を保存できません。",
                         "Cannot save the update setting.",
-                    )
-                    .into();
+                    ),
+                );
             }
         }
     }
@@ -661,9 +664,10 @@ impl AppState {
         let lang = self.lang;
         if self.update.job.is_some() {
             if manual {
-                self.message = lang
-                    .pick("更新を処理中です。", "An update job is running.")
-                    .into();
+                self.refuse(
+                    Source::Update,
+                    lang.pick("更新を処理中です。", "An update job is running."),
+                );
             }
             return;
         }
@@ -686,13 +690,17 @@ impl AppState {
                 let _ = tx.send(Outcome::Checked(worker.check(&current, target, beta)));
             });
         if let Err(e) = spawned {
-            self.message = e.to_string();
+            self.fail(
+                Source::Update,
+                crate::lang::update_start_failure(lang, "check", &e),
+            );
             return;
         }
         if manual {
-            self.message = lang
-                .pick("更新を確かめています…", "Checking for updates…")
-                .into();
+            self.info(
+                Source::Update,
+                lang.pick("更新を確かめています…", "Checking for updates…"),
+            );
         }
         self.update.job = Some(Job {
             kind: Kind::Check { manual },
@@ -704,9 +712,7 @@ impl AppState {
     fn update_install(&mut self) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Update, crate::lang::refusals::during_stroke(lang));
             return;
         }
         let Some(offer) = self.update.offer.clone() else {
@@ -715,22 +721,28 @@ impl AppState {
         match self.update.mode {
             Mode::Page => {
                 let url = release_page(&offer.version);
-                self.message = match (self.update.opener)(&url) {
-                    Ok(()) => lang.pick(
-                        format!(
-                            "YoluPainter {} のリリースのページを開きました。",
-                            offer.version
+                match (self.update.opener)(&url) {
+                    Ok(()) => self.info(
+                        Source::Update,
+                        lang.pick(
+                            format!(
+                                "YoluPainter {} のリリースのページを開きました。",
+                                offer.version
+                            ),
+                            format!("Opened the YoluPainter {} release page.", offer.version),
                         ),
-                        format!("Opened the YoluPainter {} release page.", offer.version),
                     ),
-                    Err(_) => lang.pick(
-                        format!("ページを開けません: {url}"),
-                        format!("Cannot open the page: {url}"),
+                    Err(_) => self.fail(
+                        Source::Update,
+                        lang.pick(
+                            format!("ページ{}を開けません。", lang.quote(&url)),
+                            format!("Cannot open the page {}.", lang.quote(&url)),
+                        ),
                     ),
-                };
+                }
             }
             Mode::Installer => {
-                // 落とし済みで、まだ変わっていなければ、落とし直さずに準備の窓へ。
+                // 落とし済みで、まだ変わっていなければ、落とし直さずに準備のウィンドウへ。
                 if let Some(ready) = &self.update.ready {
                     if ready.version == offer.version && staged_file_is_intact(ready) {
                         self.update.ready_wanted = true;
@@ -764,12 +776,18 @@ impl AppState {
                         ));
                     });
                 if let Err(e) = spawned {
-                    self.message = e.to_string();
+                    self.fail(
+                        Source::Update,
+                        crate::lang::update_start_failure(lang, "download", &e),
+                    );
                     return;
                 }
-                self.message = lang.pick(
-                    format!("YoluPainter {version} をダウンロード中…"),
-                    format!("Downloading YoluPainter {version}…"),
+                self.info(
+                    Source::Update,
+                    lang.pick(
+                        format!("YoluPainter {version} をダウンロード中…"),
+                        format!("Downloading YoluPainter {version}…"),
+                    ),
                 );
                 self.update.job = Some(Job {
                     kind: Kind::Download { version, total },
@@ -780,7 +798,7 @@ impl AppState {
         }
     }
 
-    /// 毎フレームの初め: 終わった通信・ダウンロードを受ける。準備の窓は、描いている最中は開かない。
+    /// 毎フレームの初め: 終わった通信・ダウンロードを受ける。準備のウィンドウは、描いている最中は開かない。
     pub fn poll_update(&mut self) {
         let lang = self.lang;
         if let Some(job) = &self.update.job {
@@ -801,24 +819,35 @@ impl AppState {
                         Ok(Some(update)) => {
                             let version = update.version().clone();
                             if manual {
-                                self.message = lang.pick(
-                                    format!("YoluPainter {version} があります。"),
-                                    format!("YoluPainter {version} is available."),
+                                self.info(
+                                    Source::Update,
+                                    lang.pick(
+                                        format!("YoluPainter {version} があります。"),
+                                        format!("YoluPainter {version} is available."),
+                                    ),
                                 );
                             }
                             self.update.offer = Some(Offer { version, update });
                         }
                         Ok(None) => {
                             if manual {
-                                self.message = lang
-                                    .pick("YoluPainter は最新です。", "YoluPainter is up to date.")
-                                    .into();
+                                self.info(
+                                    Source::Update,
+                                    lang.pick(
+                                        "YoluPainter は最新です。",
+                                        "YoluPainter is up to date.",
+                                    ),
+                                );
                             }
                         }
                         // 起動時の確かめの失敗は、利用者が頼んだことではないので知らせない。
                         Err(failure) => {
                             if manual {
-                                self.message = failure_text(lang, "check", failure);
+                                self.notify(
+                                    failure_kind(&failure),
+                                    Source::Update,
+                                    crate::lang::update_failure(lang, "check", failure),
+                                );
                             }
                         }
                     },
@@ -829,14 +858,21 @@ impl AppState {
                             || (!self.update.beta && !ready.version.pre.is_empty())
                         {
                             let _ = std::fs::remove_file(&ready.path);
-                            self.message = failure_text(lang, "download", Failure::Canceled);
+                            self.info(
+                                Source::Update,
+                                crate::lang::update_failure(lang, "download", Failure::Canceled),
+                            );
                         } else {
                             self.update.ready = Some(ready);
                             self.update.ready_wanted = true;
                         }
                     }
                     Outcome::Downloaded(Err(failure)) => {
-                        self.message = failure_text(lang, "download", failure);
+                        self.notify(
+                            failure_kind(&failure),
+                            Source::Update,
+                            crate::lang::update_failure(lang, "download", failure),
+                        );
                     }
                 }
             }
@@ -850,30 +886,30 @@ impl AppState {
     fn update_run(&mut self, save: bool) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(Source::Update, crate::lang::refusals::during_stroke(lang));
             return;
         }
         if self.update.ready.is_none() {
             return;
         }
         // 保存の途中は入れ替えない（保存の頼みは「変更あり」を下ろすので、いま入れ替えると、保存が失敗して変更が残っても、更新のために
-        // 終わる流れは確認なしで閉じてしまう）。更新の窓と落としたインストーラーは残し、保存が終わってからやり直せる
+        // 終わる流れは確認なしで閉じてしまう）。更新のウィンドウと落としたインストーラーは残し、保存が終わってからやり直せる
         if self.is_saving() {
-            self.message = format!(
-                "{}: {}",
-                lang.pick("更新できません", "Cannot update"),
-                crate::project::busy_reason(lang)
+            self.refuse(
+                Source::Update,
+                lang.with_reason(
+                    lang.pick("更新できません", "Cannot update"),
+                    crate::lang::refusals::saving(lang),
+                ),
             );
             return;
         }
-        // 保存する前に断る（更新が始まらないのに、保存の窓を出さない）。落としたインストーラーは残す。
+        // 保存する前に断る（更新が始まらないのに、保存のウィンドウを出さない）。落としたインストーラーは残す。
         if self.update_blocked_by_another_instance() {
             return;
         }
         if save && self.modified {
-            // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先の窓を取り消した
+            // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先のウィンドウを取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
             self.clear_message();
             self.apply(crate::state::Action::SaveProject);
@@ -884,8 +920,8 @@ impl AppState {
         }
     }
 
-    /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶ窓が開いている間は待つ）。保存されていなければ入れない。
-    /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先の窓を取り消したときだけ。
+    /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶウィンドウが開いている間は待つ）。保存されていなければ入れない。
+    /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先のウィンドウを取り消したときだけ。
     pub fn update_finish_save(&mut self) {
         // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
         if !self.update.after_save || self.dialog_request.is_some() || self.is_saving() {
@@ -894,26 +930,26 @@ impl AppState {
         self.update.after_save = false;
         if self.modified {
             if self.message.is_empty() {
-                self.message = self
-                    .lang
-                    .pick(
+                self.refuse(
+                    Source::Update,
+                    self.lang.pick(
                         "保存しなかったので、更新しません。",
-                        "Not updating: the project was not saved.",
-                    )
-                    .into();
+                        "Not updating because the project was not saved.",
+                    ),
+                );
             }
             return;
         }
         self.update_launch();
     }
 
-    /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備の窓も開いたまま。
-    /// 別の窓を閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
+    /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備のウィンドウも開いたまま。
+    /// 別のウィンドウを閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
     fn update_blocked_by_another_instance(&mut self) -> bool {
         let blocked = (self.update.other_instance)();
         self.update.ready_blocked = blocked;
         if blocked {
-            self.message = blocked_text(self.lang).into();
+            self.refuse(Source::Update, blocked_text(self.lang));
         }
         blocked
     }
@@ -927,7 +963,7 @@ impl AppState {
         if self.is_saving() {
             return;
         }
-        // 保存の窓を待つ間に別の窓が開いたかもしれないので、走らせる直前にもう一度確かめる。
+        // 保存のウィンドウを待つ間に別のウィンドウが開いたかもしれないので、走らせる直前にもう一度確かめる。
         if self.update_blocked_by_another_instance() {
             return;
         }
@@ -935,31 +971,36 @@ impl AppState {
             let _ = std::fs::remove_file(&ready.path);
             self.update.ready = None;
             self.update.ready_open = false;
-            self.message = lang
-                .pick(
+            self.fail(
+                Source::Update,
+                lang.pick(
                     "ダウンロードしたファイルが変わっています。更新しません。",
                     "The downloaded file has changed. Not updating.",
-                )
-                .into();
+                ),
+            );
             return;
         }
         match (self.update.launcher)(&ready.path) {
             Ok(()) => {
-                self.message = lang.pick(
-                    format!("YoluPainter {} に更新します。", ready.version),
-                    format!("Updating to YoluPainter {}.", ready.version),
+                self.info(
+                    Source::Update,
+                    lang.pick(
+                        format!("YoluPainter {} に更新します。", ready.version),
+                        format!("Updating to YoluPainter {}.", ready.version),
+                    ),
                 );
                 self.update.ready_open = false;
                 self.update.quitting = true;
                 self.quit = true;
             }
             Err(_) => {
-                self.message = lang
-                    .pick(
+                self.fail(
+                    Source::Update,
+                    lang.pick(
                         "インストーラーを起動できません。",
                         "Cannot start the installer.",
-                    )
-                    .into();
+                    ),
+                );
             }
         }
     }
@@ -1135,26 +1176,34 @@ mod tests {
                 Failure::Stopped,
             ] {
                 for what in ["check", "download"] {
-                    let text = failure_text(lang, what, failure);
-                    assert!(text.contains(": "), "{text}");
+                    let text = crate::lang::update_failure(lang, what, failure);
+                    // 何が（なぜ）の 1 つの文（コロンでつながない）
+                    assert!(
+                        !text.contains(": ") && text.ends_with(lang.pick("）。", ").")),
+                        "{text}"
+                    );
                 }
             }
         }
-        assert!(failure_text(Lang::En, "check", Failure::Network)
-            .starts_with("Cannot check for updates"));
-        assert!(failure_text(Lang::Ja, "download", Failure::Verify)
-            .starts_with("更新をダウンロードできません"));
+        assert!(
+            crate::lang::update_failure(Lang::En, "check", Failure::Network)
+                .starts_with("Cannot check for updates")
+        );
+        assert!(
+            crate::lang::update_failure(Lang::Ja, "download", Failure::Verify)
+                .starts_with("更新をダウンロードできません")
+        );
         // 更新情報に対象の配布物が無いのは、検証の失敗とは別の理由で言う
         assert_eq!(
-            failure_text(Lang::Ja, "check", Failure::NoAsset),
-            "更新を確かめられません: この環境向けの配布物がありません"
+            crate::lang::update_failure(Lang::Ja, "check", Failure::NoAsset),
+            "更新を確かめられません（この環境向けの配布物がありません）。"
         );
         assert_eq!(
-            failure_text(Lang::En, "check", Failure::NoAsset),
-            "Cannot check for updates: no download for this system"
+            crate::lang::update_failure(Lang::En, "check", Failure::NoAsset),
+            "Cannot check for updates (no download for this system)."
         );
         assert_eq!(
-            failure_text(Lang::En, "download", Failure::Canceled),
+            crate::lang::update_failure(Lang::En, "download", Failure::Canceled),
             "Download canceled."
         );
     }

@@ -54,8 +54,8 @@ fn report(scene: &str, metric: &str, value: f64) {
     println!("{scene}\t{metric}\t{value:.2}");
 }
 
-/// 乱数の文書: 下地の塗りつぶし・ラスター層（合成モードと不透明度を替える）・通過のグループ（クリッピングと調整つき）・
-/// 分離のグループ（マスクつき）・上の層と調整。返す 2 つは描く層（入れ子の中と、一番上の近く）。
+/// 乱数の文書: 下地の塗りつぶし・ラスターレイヤー（合成モードと不透明度を替える）・通過のグループ（クリッピングと調整つき）・
+/// 分離のグループ（マスクつき）・上のレイヤーと調整。返す 2 つは描くレイヤー（入れ子の中と、一番上の近く）。
 fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     let mut rng = Rng(0xC0FFEE);
@@ -85,7 +85,8 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
             let mut s = d.begin_stroke(id, &brush).unwrap();
             let (x, y) = (rng.below(size as u64) as f64, rng.below(size as u64) as f64);
             s.add_point(d, x, y, 1.0, DVec2::ZERO).unwrap();
-            s.add_point(d, x + 30.0, y + 10.0, 1.0, DVec2::ZERO).unwrap();
+            s.add_point(d, x + 30.0, y + 10.0, 1.0, DVec2::ZERO)
+                .unwrap();
             d.end_stroke(s).unwrap();
         }
     };
@@ -96,10 +97,11 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
         let id = d.add_layer(&format!("L{i}")).unwrap();
         blob(&mut d, &mut rng, id, 12);
         d.set_layer_blend_mode(id, modes[i % modes.len()]).unwrap();
-        d.set_layer_opacity(id, 0.6 + 0.06 * i as f64, false).unwrap();
+        d.set_layer_opacity(id, 0.6 + 0.06 * i as f64, false)
+            .unwrap();
         ids.push(id);
     }
-    // 通過のグループ（入れ子の描く層・クリッピング・調整）
+    // 通過のグループ（入れ子の描くレイヤー・クリッピング・調整）
     let g1a = d.add_layer("g1a").unwrap();
     blob(&mut d, &mut rng, g1a, 10);
     let g1b = d.add_layer("g1b").unwrap();
@@ -128,15 +130,21 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
     d.set_layer_opacity(g2, 0.8, false).unwrap();
     d.add_layer_mask(inner[1]).unwrap();
     for i in 0..400u32 {
-        d.set_mask_pixel(inner[1], (i * 37) % size, (i * 91) % size, (i * 53 % 256) as u8)
-            .unwrap();
+        d.set_mask_pixel(
+            inner[1],
+            (i * 37) % size,
+            (i * 91) % size,
+            (i * 53 % 256) as u8,
+        )
+        .unwrap();
     }
-    // 上の層
+    // 上のレイヤー
     let mut top = Vec::new();
     for i in 0..4 {
         let id = d.add_layer(&format!("U{i}")).unwrap();
         blob(&mut d, &mut rng, id, 6);
-        d.set_layer_opacity(id, 0.5 + 0.1 * i as f64, false).unwrap();
+        d.set_layer_opacity(id, 0.5 + 0.1 * i as f64, false)
+            .unwrap();
         top.push(id);
     }
     d.add_adjustment_layer(
@@ -150,7 +158,7 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
     (d, g1b, top[1])
 }
 
-/// 詰まった文書: 全面を半透明の乱数で埋めた層を `layers` 枚（合成モードを替える）。どのタイルも全部の層に画素がある（覚えが一番効く形）。
+/// 詰まった文書: 全面を半透明の乱数で埋めたレイヤーを `layers` 枚（合成モードを替える）。どのタイルも全部のレイヤーに画素がある（覚えが一番効く形）。
 fn dense(size: u32, layers: usize) -> (Document, LayerId, LayerId) {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     d.set_source_budget_bytes(2 << 30).unwrap();
@@ -192,7 +200,8 @@ fn dense(size: u32, layers: usize) -> (Document, LayerId, LayerId) {
         }
         d.end_stroke(s).unwrap();
         d.set_layer_blend_mode(id, modes[i % modes.len()]).unwrap();
-        d.set_layer_opacity(id, 0.5 + 0.02 * (i % 10) as f64, false).unwrap();
+        d.set_layer_opacity(id, 0.5 + 0.02 * (i % 10) as f64, false)
+            .unwrap();
         ids.push(id);
     }
     d.clear_history().unwrap();
@@ -224,7 +233,7 @@ fn shown(doc: &Document, l: &yolu_app::engine::Layer) -> bool {
     true
 }
 
-/// 色の面のタイルが多い順の、描ける層（合成に出るラスター）の ID。
+/// 色の面のタイルが多い順の、描けるレイヤー（合成に出るラスター）の ID。
 fn rasters_by_tiles(doc: &Document) -> Vec<(LayerId, usize)> {
     let mut v: Vec<(LayerId, usize)> = doc
         .layers()
@@ -241,7 +250,7 @@ fn rasters_by_tiles(doc: &Document) -> Vec<(LayerId, usize)> {
     v
 }
 
-/// 描く層: 紙の中ほどの順で、タイルを十分持つ（なければ一番多い）層。
+/// 描くレイヤー: 紙の中ほどの順で、タイルを十分持つ（なければ一番多い）レイヤー。
 fn middle_raster(doc: &Document) -> LayerId {
     let list = rasters_by_tiles(doc);
     let max = list.first().map_or(0, |(_, n)| *n);
@@ -261,7 +270,9 @@ fn middle_raster(doc: &Document) -> LayerId {
         })
         .collect();
     if enough.is_empty() {
-        list.first().map(|(id, _)| *id).expect("ラスター層が無い")
+        list.first()
+            .map(|(id, _)| *id)
+            .expect("ラスターレイヤーが無い")
     } else {
         enough[enough.len() / 2]
     }
@@ -282,7 +293,7 @@ struct Settle {
     frames: usize,
 }
 
-/// 見る範囲: 窓に収めた全体（fit）と、等倍で中央（z100）。
+/// 見る範囲: ウィンドウに収めた全体（fit）と、等倍で中央（z100）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum View {
     /// 枠なしで全部を上げてから返る（前の同期と同じ形。比較用）。
@@ -310,9 +321,17 @@ impl View {
                 pixel_size: (WINDOW.0 / w).min(WINDOW.1 / h) as f32,
             }),
             View::Z100 => {
-                let (vw, vh) = ((WINDOW.0 as u32).min(doc.width()), (WINDOW.1 as u32).min(doc.height()));
+                let (vw, vh) = (
+                    (WINDOW.0 as u32).min(doc.width()),
+                    (WINDOW.1 as u32).min(doc.height()),
+                );
                 Some(Viewport {
-                    visible: yolu_core::Rect::new((doc.width() - vw) / 2, (doc.height() - vh) / 2, vw, vh),
+                    visible: yolu_core::Rect::new(
+                        (doc.width() - vw) / 2,
+                        (doc.height() - vh) / 2,
+                        vw,
+                        vh,
+                    ),
                     pixel_size: 1.0,
                 })
             }
@@ -410,7 +429,11 @@ fn report_settle(scene: &str, view: View, s: &Settle) {
     report(scene, &format!("[{v}] 最初のフレーム(ms)"), s.first);
     if view != View::Blocking {
         report(scene, &format!("[{v}] 見える所が済むまで(ms)"), s.visible);
-        report(scene, &format!("[{v}] 見える所が済むまでのフレーム"), s.visible_frames as f64);
+        report(
+            scene,
+            &format!("[{v}] 見える所が済むまでのフレーム"),
+            s.visible_frames as f64,
+        );
         report(scene, &format!("[{v}] 1 フレームの最長(ms)"), s.worst);
     }
     report(scene, &format!("[{v}] 全部が済むまで(ms)"), s.total);
@@ -483,7 +506,14 @@ fn scene_open(b: &mut Bench, doc: &Document) {
 fn scene_stroke(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
     for memo in [false, true] {
         doc.set_composite_memo(memo);
-        let name = format!("{label}{}", if memo { "(覚えあり)" } else { "(覚えなし)" });
+        let name = format!(
+            "{label}{}",
+            if memo {
+                "(覚えあり)"
+            } else {
+                "(覚えなし)"
+            }
+        );
         stroke_once(b, doc, layer, &name);
     }
     doc.set_composite_memo(true);
@@ -507,7 +537,7 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
     let mut stroke_ms = Vec::new();
     let mut tiles = 0usize;
     let mut first = 0.0;
-    let mut s = doc.begin_stroke(layer, &brush).expect("描ける層");
+    let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
     let total = Instant::now();
     for i in 0..120 {
         let t = i as f64 / 119.0;
@@ -531,7 +561,11 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
     let mut all = frames.clone();
     let mut tail: Vec<f64> = frames[20..].to_vec();
     report(label, "1 フレームの合成 中央値(ms)", median(&mut all));
-    report(label, "1 フレームの合成 p95(ms)", percentile(&mut all, 0.95));
+    report(
+        label,
+        "1 フレームの合成 p95(ms)",
+        percentile(&mut all, 0.95),
+    );
     report(label, "最初のフレーム(ms)", first);
     report(label, "2 秒目以降の中央値(ms)", median(&mut tail));
     report(label, "点の追加 中央値(ms)", median(&mut stroke_ms));
@@ -552,7 +586,8 @@ fn scene_toggle(b: &mut Bench, doc: &mut Document, layer: LayerId) {
 
 fn scene_opacity(b: &mut Bench, doc: &mut Document, layer: LayerId) {
     scene_change(b, doc, "opacity", |d, on| {
-        d.set_layer_opacity(layer, if on { 0.4 } else { 1.0 }, false).unwrap();
+        d.set_layer_opacity(layer, if on { 0.4 } else { 1.0 }, false)
+            .unwrap();
     });
     b.sync_ms(doc);
 }
@@ -572,17 +607,30 @@ fn scene_effect(b: &mut Bench, doc: &mut Document, layer: LayerId) {
         let mut visibles = Vec::new();
         let mut worsts = Vec::new();
         for r in [12u32, 18, 26, 36, 48, 60, 40, 24] {
-            doc.set_filter_settings(layer, id, EffectSettings::blur(r), true).unwrap();
+            doc.set_filter_settings(layer, id, EffectSettings::blur(r), true)
+                .unwrap();
             let s = b.settle_dragging(doc, view);
             steps.push(s.first);
             visibles.push(s.visible);
             worsts.push(s.worst);
         }
         let v = view.name();
-        report("effect", &format!("[{v}] 半径を変えた 1 回の最初のフレーム 中央値(ms)"), median(&mut steps));
+        report(
+            "effect",
+            &format!("[{v}] 半径を変えた 1 回の最初のフレーム 中央値(ms)"),
+            median(&mut steps),
+        );
         if view != View::Blocking {
-            report("effect", &format!("[{v}] 半径を変えた 1 回の見える所 中央値(ms)"), median(&mut visibles));
-            report("effect", &format!("[{v}] 半径を変えた 1 回の最長フレーム 中央値(ms)"), median(&mut worsts));
+            report(
+                "effect",
+                &format!("[{v}] 半径を変えた 1 回の見える所 中央値(ms)"),
+                median(&mut visibles),
+            );
+            report(
+                "effect",
+                &format!("[{v}] 半径を変えた 1 回の最長フレーム 中央値(ms)"),
+                median(&mut worsts),
+            );
         }
         // 離したあと
         doc.end_coalescing();
@@ -609,20 +657,32 @@ fn scene_zoom(b: &mut Bench, doc: &Document) {
             totals.push(s.total);
         }
         let v = view.name();
-        report("zoom", &format!("[{v}] 補間の境を越えた最初のフレーム(ms)"), median(&mut firsts));
+        report(
+            "zoom",
+            &format!("[{v}] 補間の境を越えた最初のフレーム(ms)"),
+            median(&mut firsts),
+        );
         if view != View::Blocking {
-            report("zoom", &format!("[{v}] 補間の境を越えて見える所が済むまで(ms)"), median(&mut visibles));
+            report(
+                "zoom",
+                &format!("[{v}] 補間の境を越えて見える所が済むまで(ms)"),
+                median(&mut visibles),
+            );
         }
-        report("zoom", &format!("[{v}] 補間の境を越えて全部が済むまで(ms)"), median(&mut totals));
+        report(
+            "zoom",
+            &format!("[{v}] 補間の境を越えて全部が済むまで(ms)"),
+            median(&mut totals),
+        );
     }
     b.display.set_nearest(false);
     b.sync_ms(doc);
 }
 
-/// 結合（表示に寄与する層・上から最初に結合できる層を下へ）の時間と、結合したあとの合成の指紋（前後のコードで同じ値になること）。結合は Undo で戻す。
+/// 結合（表示に寄与するレイヤー・上から最初に結合できるレイヤーを下へ）の時間と、結合したあとの合成の指紋（前後のコードで同じ値になること）。結合は Undo で戻す。
 fn scene_merge(doc: &mut Document) {
     let whole = |d: &Document| fnv(&d.composite_channel(Channel::Color, d.bounds()).unwrap());
-    // 結合の 1 段は外した層と結果の層の分だけ大きく、既定の履歴の予算では Undo の段が残らない
+    // 結合の 1 段は外したレイヤーと結果のレイヤーの分だけ大きく、既定の履歴の予算では Undo の段が残らない
     doc.set_undo_budget_bytes(4 << 30).unwrap();
     let before = whole(doc);
     let mut run = |label: &str, f: &mut dyn FnMut(&mut Document) -> bool| {
@@ -636,12 +696,17 @@ fn scene_merge(doc: &mut Document) {
             println!("merge\t{label} は断られた\t-");
         }
     };
-    run("表示に寄与する層を結合", &mut |d| d.merge_visible("merged", 255).is_ok());
-    // 下の層へ: 上から順に、断られない最初の層（断られた層は文書を変えない）
-    run("上から最初に結合できる層を下へ結合", &mut |d| {
-        let ids: Vec<LayerId> = d.layers().iter().rev().map(|l| l.id()).collect();
-        ids.iter().any(|id| d.merge_down(*id, 255).is_ok())
+    run("表示に寄与するレイヤーを結合", &mut |d| {
+        d.merge_visible("merged", 255).is_ok()
     });
+    // 下のレイヤーへ: 上から順に、断られない最初のレイヤー（断られたレイヤーは文書を変えない）
+    run(
+        "上から最初に結合できるレイヤーを下へ結合",
+        &mut |d| {
+            let ids: Vec<LayerId> = d.layers().iter().rev().map(|l| l.id()).collect();
+            ids.iter().any(|id| d.merge_down(*id, 255).is_ok())
+        },
+    );
 }
 
 /// 合成の呼び出し 1 回の固定費: 中央の 8×8 タイルを、タイルごと（スレッド 1 / 既定）・1 回の矩形で合成する時間。
@@ -659,8 +724,13 @@ fn scene_call(doc: &Document) {
             let t = Instant::now();
             let mut run = || {
                 for r in &tiles {
-                    doc.composite_into(Channel::Color, *r, &mut buf[..(r.width * r.height * 4) as usize], yolu_core::RowOrder::BottomUp)
-                        .unwrap();
+                    doc.composite_into(
+                        Channel::Color,
+                        *r,
+                        &mut buf[..(r.width * r.height * 4) as usize],
+                        yolu_core::RowOrder::BottomUp,
+                    )
+                    .unwrap();
                 }
             };
             match pool {
@@ -672,7 +742,10 @@ fn scene_call(doc: &Document) {
         report("call", label, median(&mut v));
     };
     per_tile("タイルごとの呼び出し(1 タイル ms)", None);
-    let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    let one = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
     per_tile("タイルごと・スレッド 1(1 タイル ms)", Some(&one));
     let coords: Vec<TileCoord> = (0..8)
         .flat_map(|j| (0..8).map(move |i| TileCoord::new(cx - 4 + i, cy - 4 + j)))
@@ -728,49 +801,75 @@ fn scene_call(doc: &Document) {
         for _ in 0..5 {
             let t = Instant::now();
             for chunk in all.chunks(64) {
-                std::hint::black_box(doc.composite_coarse_tiles(Channel::Color, chunk, stride).unwrap());
+                std::hint::black_box(
+                    doc.composite_coarse_tiles(Channel::Color, chunk, stride)
+                        .unwrap(),
+                );
             }
             v.push(ms(t));
         }
-        report("call", &format!("全タイルの粗い合成 歩幅 {stride}(ms)"), median(&mut v));
+        report(
+            "call",
+            &format!("全タイルの粗い合成 歩幅 {stride}(ms)"),
+            median(&mut v),
+        );
     }
-    report("call", "全タイルの乗算済みへの変換だけ(ms)", median(&mut v_conv));
-    let r = yolu_core::Rect::new(
-        (cx - 4) * ts,
-        (cy - 4) * ts,
-        8 * ts,
-        8 * ts,
+    report(
+        "call",
+        "全タイルの乗算済みへの変換だけ(ms)",
+        median(&mut v_conv),
     );
+    let r = yolu_core::Rect::new((cx - 4) * ts, (cy - 4) * ts, 8 * ts, 8 * ts);
     let mut big = vec![0u8; (r.width * r.height * 4) as usize];
     let mut v = Vec::new();
     for _ in 0..5 {
         let t = Instant::now();
-        doc.composite_into(Channel::Color, r, &mut big, yolu_core::RowOrder::BottomUp).unwrap();
+        doc.composite_into(Channel::Color, r, &mut big, yolu_core::RowOrder::BottomUp)
+            .unwrap();
         v.push(ms(t) / 64.0);
     }
     report("call", "8×8 を 1 回の矩形(1 タイル ms)", median(&mut v));
     let mut v = Vec::new();
     for _ in 0..5 {
         let t = Instant::now();
-        one.install(|| doc.composite_into(Channel::Color, r, &mut big, yolu_core::RowOrder::BottomUp).unwrap());
+        one.install(|| {
+            doc.composite_into(Channel::Color, r, &mut big, yolu_core::RowOrder::BottomUp)
+                .unwrap()
+        });
         v.push(ms(t) / 64.0);
     }
-    report("call", "8×8 を 1 回の矩形・スレッド 1(1 タイル ms)", median(&mut v));
-    // 画布全体を 1 回の矩形で（スレッド 1 / 既定）: 空のタイルが多い文書の、1 コアあたりの全体の費用
+    report(
+        "call",
+        "8×8 を 1 回の矩形・スレッド 1(1 タイル ms)",
+        median(&mut v),
+    );
+    // キャンバス全体を 1 回の矩形で（スレッド 1 / 既定）: 空のタイルが多い文書の、1 コアあたりの全体の費用
     let whole = doc.bounds();
     let mut all_px = vec![0u8; (whole.width as usize) * (whole.height as usize) * 4];
     for (label, pool) in [("スレッド 1", Some(&one)), ("既定", None)] {
         let mut v = Vec::new();
         for _ in 0..3 {
             let t = Instant::now();
-            let mut run = || doc.composite_into(Channel::Color, whole, &mut all_px, yolu_core::RowOrder::BottomUp).unwrap();
+            let mut run = || {
+                doc.composite_into(
+                    Channel::Color,
+                    whole,
+                    &mut all_px,
+                    yolu_core::RowOrder::BottomUp,
+                )
+                .unwrap()
+            };
             match pool {
                 Some(p) => p.install(run),
                 None => run(),
             }
             v.push(ms(t));
         }
-        report("call", &format!("画布全体を 1 回の矩形・{label}(ms)"), median(&mut v));
+        report(
+            "call",
+            &format!("キャンバス全体を 1 回の矩形・{label}(ms)"),
+            median(&mut v),
+        );
     }
 }
 
@@ -789,8 +888,13 @@ fn scene_bundle_ratio(doc: &Document) {
     for _ in 0..31 {
         let t = Instant::now();
         for r in &rects {
-            doc.composite_into(Channel::Color, *r, &mut buf[..(r.width * r.height * 4) as usize], yolu_core::RowOrder::BottomUp)
-                .unwrap();
+            doc.composite_into(
+                Channel::Color,
+                *r,
+                &mut buf[..(r.width * r.height * 4) as usize],
+                yolu_core::RowOrder::BottomUp,
+            )
+            .unwrap();
         }
         let single = ms(t) / rects.len() as f64;
         let t = Instant::now();
@@ -800,11 +904,23 @@ fn scene_bundle_ratio(doc: &Document) {
         bundles.push(bundle);
         ratios.push(single / bundle);
     }
-    report("call", "1 枚ずつ composite_into(1 タイル ms)", median(&mut singles));
-    report("call", "1 回の composite_tiles(1 タイル ms)", median(&mut bundles));
+    report(
+        "call",
+        "1 枚ずつ composite_into(1 タイル ms)",
+        median(&mut singles),
+    );
+    report(
+        "call",
+        "1 回の composite_tiles(1 タイル ms)",
+        median(&mut bundles),
+    );
     ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
     report("call", "1 枚ずつ ÷ 束(倍) 最小", ratios[0]);
-    report("call", "1 枚ずつ ÷ 束(倍) 中央値", median(&mut ratios.clone()));
+    report(
+        "call",
+        "1 枚ずつ ÷ 束(倍) 中央値",
+        median(&mut ratios.clone()),
+    );
     report("call", "1 枚ずつ ÷ 束(倍) 最大", ratios[ratios.len() - 1]);
 }
 
@@ -836,7 +952,7 @@ fn scene_hash(doc: &mut Document, layer: LayerId) {
             pressure_flow: false,
             erase: false,
         };
-        let mut s = doc.begin_stroke(layer, &brush).expect("描ける層");
+        let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
         for i in 0..60 {
             let t = i as f64 / 59.0;
             let x = w * (0.3 + 0.4 * t);
@@ -885,7 +1001,7 @@ fn main() {
                 }
             }
             "--dense" => {
-                // --dense 辺 層の数
+                // --dense 辺 レイヤーの数
                 dense_doc = Some((
                     args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(1024),
                     args.get(i + 2).and_then(|s| s.parse().ok()).unwrap_or(24),
@@ -928,7 +1044,7 @@ fn main() {
         (None, size) => synthetic(size.unwrap_or(2048)),
     };
     eprintln!(
-        "{label}: {}×{} タイル{} 層{} 描く層の番号={:?}",
+        "{label}: {}×{} タイル{} レイヤー{} 描くレイヤーの番号={:?}",
         doc.width(),
         doc.height(),
         doc.tile_size(),
@@ -937,7 +1053,12 @@ fn main() {
     );
     let mut b = Bench::new(repeat);
     let want = |name: &str| only.as_deref().is_none_or(|o| o == name);
-    println!("# {label}\t{}×{}\t層 {}", doc.width(), doc.height(), doc.layers().len());
+    println!(
+        "# {label}\t{}×{}\tレイヤー {}",
+        doc.width(),
+        doc.height(),
+        doc.layers().len()
+    );
     if want("open") {
         scene_open(&mut b, &doc);
     } else {

@@ -1,4 +1,4 @@
-//! 物理ピクセルの仮想デスクトップを 1 枚取得し、同じ座標の枠なし窓に表示する。
+//! 物理ピクセルの仮想デスクトップを 1 枚取得し、同じ座標の枠なしウィンドウに表示する。
 use super::native_input::Pointer;
 use super::*;
 use ::windows::{
@@ -319,7 +319,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
             }
         };
         if overlay.selection.get().done {
-            // 同期のフォーカス喪失通知でも GetMessage を起こして窓を戻す。
+            // 同期のフォーカス喪失通知でも GetMessage を起こしてウィンドウを戻す。
             let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         }
         result

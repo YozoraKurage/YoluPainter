@@ -1,10 +1,10 @@
 //! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリック・
 //! レイヤーのパネルの下の帯のボタンが同じものを使う）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
 //!
-//! 塗りつぶしの種類は単色・ワールドスペースのグラデーション・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
-//! 入れ子に開き、選んだ形で新しい塗りつぶしの層を作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
-//! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしの層を作る（デカールは投影を Decal に）。選ばずに閉じれば
-//! 何も作らず、Undo の段も増えない。層の作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしの層の画像・投影・グラデーション）。
+//! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
+//! 入れ子に開き、選んだ形で新しい塗りつぶしレイヤーを作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
+//! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしレイヤーを作る（デカールは投影を Decal に）。選ばずに閉じれば
+//! 何も作らず、Undo の段も増えない。レイヤーの作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしレイヤーの画像・投影・グラデーション）。
 
 use std::path::PathBuf;
 
@@ -15,23 +15,23 @@ use yolu_core::{Channel, ChannelKind, ImageId, LayerKind};
 use crate::fillfx::{default_fallback, inputs, placement, FillOp};
 use crate::fx::names;
 use crate::m2::{AdjustmentKind, Edit};
-use crate::matpaint::refusal_text;
+use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
 use crate::ui::menu::Entry;
 
-/// 新しい塗りつぶしの層を作る操作（メニューの項目）。
+/// 新しい塗りつぶしレイヤーを作る操作（メニューの項目）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
-    /// 棚の画像で、投影が `mode`（UV・デカールなど）の塗りつぶしの層を作る。
+    /// 棚の画像で、投影が `mode`（UV・デカールなど）の塗りつぶしレイヤーを作る。
     FillImage {
         image: ImageId,
         mode: ProjectionMode,
     },
-    /// PNG を選ぶ窓を開く（選んだら棚へ取り込み、その画像で `FillImage` と同じ層を作る。選ばずに閉じたら何もしない）。
+    /// PNG を選ぶウィンドウを開く（選んだら棚へ取り込み、その画像で `FillImage` と同じレイヤーを作る。選ばずに閉じたら何もしない）。
     FillImageDialog(ProjectionMode),
-    /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしの層を作る（窓の結果）。
+    /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしレイヤーを作る（ウィンドウの結果）。
     FillImageFile { path: PathBuf, mode: ProjectionMode },
-    /// ワールドスペースのグラデーション（モデルの外形に合わせた、その形の置き場）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
+    /// グラデーションデカール（モデルの外形に合わせた、その形の置き場）の塗りつぶしレイヤーを作り、3D ビューで形を編集できるようにする。
     FillGradient(Shape),
 }
 
@@ -63,14 +63,14 @@ pub fn adjustment_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 塗りつぶしの種類: 単色・ワールドスペースのグラデーション ▸・画像 ▸・デカール ▸。
+/// 塗りつぶしの種類: 単色・グラデーションデカール ▸・画像 ▸・デカール ▸。
 pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
         Entry::item(lang.pick("単色", "Solid Color"), Action::M2(Edit::NewFill)).enabled(free),
         Entry::submenu(
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            lang.pick("グラデーションデカール", "Gradient Decal"),
             gradient_entries(app),
         )
         .tooltip(lang.pick(
@@ -91,7 +91,7 @@ pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     ]
 }
 
-/// ワールドスペースのグラデーションの形の一覧（選ぶと、その形の塗りつぶしの層を作る）。名前と順は塗りつぶしの欄の「形」と同じ。
+/// グラデーションデカールの形の一覧（選ぶと、その形の塗りつぶしレイヤーを作る）。名前と順は塗りつぶしの欄の「形」と同じ。
 fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -108,7 +108,7 @@ fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 棚の画像の一覧（選ぶと、その画像と投影 `mode` の塗りつぶしの層を作る）と、「ファイルから取り込む…」。
+/// 棚の画像の一覧（選ぶと、その画像と投影 `mode` の塗りつぶしレイヤーを作る）と、「ファイルから取り込む…」。
 fn image_entries(app: &AppState, mode: ProjectionMode) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -145,7 +145,7 @@ fn image_entries(app: &AppState, mode: ProjectionMode) -> Vec<Entry<Action>> {
 }
 
 impl AppState {
-    /// 新しい塗りつぶしの層を作る操作を当てる。断られたら何も変えず、理由を状態の帯へ。
+    /// 新しい塗りつぶしレイヤーを作る操作を当てる。断られたら何も変えず、理由を状態の帯へ。
     pub fn layer_menu_apply(&mut self, op: Op) {
         match op {
             Op::FillImage { image, mode } => self.new_image_fill(image, mode),
@@ -157,10 +157,10 @@ impl AppState {
             Op::FillImageFile { path, mode } => {
                 // 描いている間は、棚へも取り込まない（断るなら何も変えない）
                 if self.is_stroking() {
-                    self.message = self
-                        .lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                    self.refuse(
+                        Source::FillLayer,
+                        crate::lang::refusals::during_stroke(self.lang),
+                    );
                     return;
                 }
                 // 取り込みは「画像を差す」欄のファイル取り込みと同じ道（棚を変える操作は、保存の最中は断る）。成功すると棚の選択が
@@ -181,7 +181,7 @@ impl AppState {
         }
     }
 
-    /// 選んでいる層の上に、塗りつぶしの層を 1 回の Undo で足す（`fill` が層を作ってから中身を入れる）。作れたら選んで、マスクを描く状態をやめる。
+    /// 選んでいるレイヤーの上に、塗りつぶしレイヤーを 1 回の Undo で足す（`fill` がレイヤーを作ってから中身を入れる）。作れたら選んで、マスクを描く状態をやめる。
     fn add_fill_layer_with(
         &mut self,
         name: &str,
@@ -213,25 +213,30 @@ impl AppState {
                 Some(id)
             }
             Err(e) => {
-                self.message = refusal_text(self.lang, &e);
+                self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::FillLayer,
+                    self.lang.core_error(&e),
+                );
                 None
             }
         }
     }
 
-    /// 棚の画像と投影 `mode` で、新しい塗りつぶしの層を作る。画像を使えない（棚に無い・読めない・予算）ときは何も作らず理由を出す。
+    /// 棚の画像と投影 `mode` で、新しい塗りつぶしレイヤーを作る。画像を使えない（棚に無い・読めない・予算）ときは何も作らず理由を出す。
     fn new_image_fill(&mut self, image: ImageId, mode: ProjectionMode) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let (name, size) = match self.take_shelf_image(image) {
             Ok(taken) => taken,
             Err(why) => {
-                self.message = why;
+                self.fail(Source::FillLayer, why);
                 return;
             }
         };
@@ -254,36 +259,53 @@ impl AppState {
                 if mode != ProjectionMode::Uv {
                     self.fillfx.handles_hidden = false;
                 }
-                self.message = if mode == ProjectionMode::Decal {
+                if mode == ProjectionMode::Decal {
                     match self.decal_problem(id) {
-                        None => format!(
-                            "{}: {name}",
-                            lang.pick("デカールを置きました", "Decal placed")
+                        None => self.info(
+                            Source::FillLayer,
+                            format!(
+                                "{}: {name}",
+                                lang.pick("デカールを置きました", "Decal placed")
+                            ),
                         ),
-                        Some(why) => lang.pick(
-                            format!("デカールを置きました。まだ出ません: {name}（{why}）"),
-                            format!("Decal placed, not shown yet: {name} ({why})"),
+                        // 置いたが、まだ出ない（理由つき）: 気をつけること
+                        Some(why) => self.warn(
+                            Source::FillLayer,
+                            lang.pick(
+                                format!(
+                                    "デカールを置きました。{}はまだ出ません（{why}）。",
+                                    lang.quote(&name)
+                                ),
+                                format!(
+                                    "Decal placed. {} is not shown yet ({why}).",
+                                    lang.quote(&name)
+                                ),
+                            ),
                         ),
                     }
                 } else {
-                    format!(
-                        "{}: {name}",
-                        lang.pick("画像の塗りつぶしを足しました", "Image fill added")
-                    )
-                };
+                    self.info(
+                        Source::FillLayer,
+                        format!(
+                            "{}: {name}",
+                            lang.pick("画像の塗りつぶしを追加しました", "Image fill added")
+                        ),
+                    );
+                }
             }
-            // 作れなかった画像は手放す（どの層も指さない画像を、予算に残さない）
+            // 作れなかった画像は手放す（どのレイヤーも指さない画像を、予算に残さない）
             None => self.release_shelf_image(image),
         }
     }
 
-    /// ワールドスペースのグラデーションの新しい塗りつぶしの層（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
+    /// グラデーションデカールの新しい塗りつぶしレイヤー（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
     fn new_gradient_fill(&mut self, shape: Shape) {
         let lang = self.lang;
         if self.is_stroking() {
-            self.message = lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::FillLayer,
+                crate::lang::refusals::during_stroke(lang),
+            );
             return;
         }
         let name = self.new_layer_name(LayerKind::Fill);
@@ -296,12 +318,15 @@ impl AppState {
             let channel = self.m2.paint_channel;
             self.fillfx.edit_gradient = Some((id, channel));
             self.fillfx.handles_hidden = false;
-            self.message = format!(
-                "{}: {name}",
-                lang.pick(
-                    "ワールドスペースのグラデーションを足しました",
-                    "World space gradient added"
-                )
+            self.info(
+                Source::FillLayer,
+                format!(
+                    "{}: {name}",
+                    lang.pick(
+                        "グラデーションデカールを追加しました",
+                        "Gradient decal added"
+                    )
+                ),
             );
         }
     }

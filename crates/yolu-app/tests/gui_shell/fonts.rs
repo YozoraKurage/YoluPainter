@@ -19,7 +19,7 @@ const ROW: f32 = 24.0;
 const GAP: f32 = 8.0;
 
 /// 文字を 1 つずつ別の行の矩形の中に描き、行ごとに、字面（背景と違う画素）の縦の中心と、行の矩形の真ん中との差（点）を返す。
-/// 1 つの窓に全部の行を描くので、組ごとに窓を作らない。
+/// 1 つのウィンドウに全部の行を描くので、組ごとにウィンドウを作らない。
 fn center_offsets(texts: &[&str], style: TextStyle, ppp: f32) -> Vec<f32> {
     let rows: Vec<(Rect, String)> = texts
         .iter()
@@ -149,7 +149,10 @@ fn lowercase_english_sits_a_little_below_the_middle_like_any_typeface_but_not_fa
     for ppp in [1.0, 2.0] {
         for size in [11.0, 12.0] {
             let offset = center_offsets(&["xaecnomu"], regular(size), ppp)[0];
-            assert!(offset > -0.5 && offset <= 2.0, "小文字（{size} pt・拡大 {ppp}）: {offset} 点");
+            assert!(
+                offset > -0.5 && offset <= 2.0,
+                "小文字（{size} pt・拡大 {ppp}）: {offset} 点"
+            );
         }
     }
 }
@@ -188,5 +191,11 @@ fn japanese_and_english_text_share_one_line_height() {
     h.run();
     let s = h.state();
     assert!(s.ja > 0.0);
-    assert!((s.ja - s.en).abs() < 0.01 && (s.ja - s.mixed).abs() < 0.01, "{} {} {}", s.ja, s.en, s.mixed);
+    assert!(
+        (s.ja - s.en).abs() < 0.01 && (s.ja - s.mixed).abs() < 0.01,
+        "{} {} {}",
+        s.ja,
+        s.en,
+        s.mixed
+    );
 }

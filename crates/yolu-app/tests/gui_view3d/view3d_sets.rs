@@ -136,7 +136,7 @@ fn op(h: &mut Harness<'_, YoluApp>, op: Op) {
     h.run();
 }
 
-/// セット i の文書に、全面の Color の塗りつぶしの層を足す（今のセットでなくてもよい）。
+/// セット i の文書に、全面の Color の塗りつぶしレイヤーを足す（今のセットでなくてもよい）。
 fn paint(h: &mut Harness<'_, YoluApp>, set: usize, rgb: [u8; 3]) -> yolu_core::LayerId {
     let layer = h
         .state_mut()
@@ -267,7 +267,7 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
     let layer = paint(&mut h, 1, COLORS[1]);
     paint(&mut h, 2, COLORS[2]);
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "初め");
-    // ほかのセットの文書の層の値を替える（今のセットは 0 のまま）
+    // ほかのセットの文書のレイヤーの値を替える（今のセットは 0 のまま）
     h.state_mut()
         .state
         .set_doc_mut(1)
@@ -281,9 +281,9 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
     h.run();
     assert_close(face(&mut h, 1, 3), COLORS[3], 2, "値を替えた");
     assert_eq!(h.state().state.sets.current_index(), 0);
-    // 層を足す（全面を覆う）
+    // レイヤーを足す（全面を覆う）
     paint(&mut h, 1, COLORS[2]);
-    assert_close(face(&mut h, 1, 3), COLORS[2], 2, "層を足した");
+    assert_close(face(&mut h, 1, 3), COLORS[2], 2, "レイヤーを足した");
     // 今のセットの面と、もう一方のセットの面は触っていない
     assert_close(face(&mut h, 0, 3), COLORS[0], 2, "今のセット");
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "もう一方");
@@ -401,7 +401,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         let s = h.state().view3d_stats().unwrap();
         if built.last() != Some(&s.other_sets) {
             built.push(s.other_sets);
-            // 待たせているセットがあるあいだ、窓は次のフレームを求める
+            // 待たせているセットがあるあいだ、ウィンドウは次のフレームを求める
             assert_eq!(
                 h.state().view3d_wants_repaint(),
                 s.other_pending > 0,
@@ -500,7 +500,7 @@ fn raising_the_cap_builds_the_other_sets_again_at_the_larger_size() {
     assert_eq!(h.state().view3d_stats().unwrap().other_level, 0);
 }
 
-/// 最初の層（絵を描ける層）に、模様（画素ごとに違う色）を全面に置く。
+/// 最初のレイヤー（絵を描けるレイヤー）に、模様（画素ごとに違う色）を全面に置く。
 fn speckle(h: &mut Harness<'_, YoluApp>, set: usize, size: u32) {
     let doc = h.state_mut().state.set_doc_mut(set);
     let layer = doc.layers()[0].id();
@@ -840,7 +840,7 @@ fn a_baked_mesh_map_shows_only_on_the_current_sets_faces() {
     );
 }
 
-/// 最初の層の 1 チャンネルに、画素ごとに違う値の模様を全面に置く。アルファも画素ごとに違い、透明（RGB は残っていても見えない）と
+/// 最初のレイヤーの 1 チャンネルに、画素ごとに違う値の模様を全面に置く。アルファも画素ごとに違い、透明（RGB は残っていても見えない）と
 /// 半透明を含む。
 fn speckle_channel(h: &mut Harness<'_, YoluApp>, set: usize, size: u32, channel: Channel) {
     let doc = h.state_mut().state.set_doc_mut(set);
@@ -1088,7 +1088,7 @@ fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_fu
 #[test]
 fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_building_it_again() {
     // セット 0 は Color + Normal + Emission（12 B/テクセル。512² で 4,194,300 B）で、予算 3,000,000 B には入らず 256²（1,048,572 B）へ縮む。
-    // そのあと Normal と Emission の層を消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
+    // そのあと Normal と Emission のレイヤーを消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
     // 今のセットを 1 に替えるとき、前の絵は縮めたまま持ち越す。ほかのセットへ回すときの `u64::MAX` の入れ直しを「予算を上げた」と
     // 数えると、替えるたびに 512² へ作り直す（新しい絵を作る前に前の絵を縮める、が逆になる）。予算を上げたときだけ戻る
     // （`lowering_the_memory_shrinks_the_current_sets_picture_and_raising_it_restores_the_size`）
@@ -1115,16 +1115,31 @@ fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_buildi
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.paint_level, s.paint_by_budget), (1, true), "{s:?}");
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
-    h.state_mut().state.set_doc_mut(0).remove_layer(extra).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(0)
+        .remove_layer(extra)
+        .unwrap();
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.paint_level, 1, "縮めは上げるだけ: {s:?}");
     // 替える: 前の絵（セット 0）は縮めたまま。作り直さない
     switch(&mut h, 1);
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.paint_level, s.other_sets, s.other_skipped), (0, 1, 0), "{s:?}");
-    assert_eq!((s.other_level, s.other_bytes), (1, 349_524), "縮めたまま持ち越す: {s:?}");
-    let (_, size, level) = h.state().view3d_read_other_level(0, Slot::Color, 0).unwrap();
+    assert_eq!(
+        (s.paint_level, s.other_sets, s.other_skipped),
+        (0, 1, 0),
+        "{s:?}"
+    );
+    assert_eq!(
+        (s.other_level, s.other_bytes),
+        (1, 349_524),
+        "縮めたまま持ち越す: {s:?}"
+    );
+    let (_, size, level) = h
+        .state()
+        .view3d_read_other_level(0, Slot::Color, 0)
+        .unwrap();
     assert_eq!((size, level), ([256, 256], 1));
     assert_close(face(&mut h, 0, 2), COLORS[0], 2, "縮めたままの絵");
     // 前の絵が今のセットへ戻ると、文書の大きさで作る（下げるのは文書が替わるとき）
@@ -1267,14 +1282,10 @@ fn sixty_four_sets_each_show_their_own_picture() {
 }
 
 #[test]
-fn the_list_mark_for_a_set_left_out_of_the_budget_does_not_hide_the_unity_state() {
+fn the_list_mark_for_a_set_left_out_of_the_budget_says_why_in_both_languages() {
     use yolu_app::lang::Lang;
     use yolu_app::panels::texture_sets::set_state;
     let mut h = scene(3, 256);
-    // 3 つ目のマテリアルは Unity に Color の流し込み先が無い（Live Link のモデルだけの警告）
-    let mut unrouted = model_with(3, 256, 3, &[0, 1, 2], 2);
-    unrouted.materials[2].routes.clear();
-    h.state_mut().load_live_link_model(&unrouted).unwrap();
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
@@ -1282,67 +1293,23 @@ fn the_list_mark_for_a_set_left_out_of_the_budget_does_not_hide_the_unity_state(
     h.run();
     assert_eq!(h.state().state.view3d.unpainted, vec![2]);
     let look = |h: &Harness<'_, YoluApp>, i| set_state(&h.state().state, i);
-
-    // 予算の警告と Unity の流し込み先の警告は別の事実: どちらもツールチップに出る（印は 1 つ）
-    let both = look(&h, 2).expect("印が出る");
-    assert_eq!(both.icon, "warning");
-    assert!(
-        both.tooltip.contains("GPU") && both.tooltip.contains("Unity"),
-        "{}",
-        both.tooltip
-    );
-    assert!(both.tooltip.contains("流し込み先"), "{}", both.tooltip);
-    both.tooltip
-        .lines()
-        .for_each(|line| assert_plain("予算と流し込み先の印", line));
-    h.state_mut().state.lang = Lang::En;
-    let en = look(&h, 2).unwrap();
-    assert!(
-        en.tooltip.contains("GPU memory budget") && en.tooltip.contains("no Color route"),
-        "{}",
-        en.tooltip
-    );
-    assert!(!has_japanese(&en.tooltip), "{}", en.tooltip);
-    h.state_mut().state.lang = Lang::Ja;
-
-    // 流し込み先がある（Unity に見せている）セットが予算で外れても、「Unity に見せている」を隠さない
-    h.state_mut()
-        .load_live_link_model(&model_with(3, 256, 3, &[0, 1, 2], 3))
-        .unwrap();
-    h.run();
-    let uid2 = h.state().state.sets.get(2).unwrap().uid;
-    let uid1 = h.state().state.sets.get(1).unwrap().uid;
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
-    // 見せているセットの一覧は毎フレーム Live Link の側から入るので、入れてすぐ見る
-    h.state_mut().state.link.published = vec![uid1, uid2];
-    let shown = look(&h, 2).expect("印が出る");
-    assert_eq!(shown.icon, "warning");
-    assert!(shown.tooltip.contains("GPU"), "{}", shown.tooltip);
-    assert!(
-        shown.tooltip.contains("Unity に見せている"),
-        "{}",
-        shown.tooltip
-    );
-    assert!(!shown.tooltip.contains("見えない"), "{}", shown.tooltip);
-    shown
+    let left_out = look(&h, 2).expect("印が出る");
+    assert_eq!(left_out.icon, "warning");
+    assert!(left_out.tooltip.contains("GPU"), "{}", left_out.tooltip);
+    left_out
         .tooltip
         .lines()
-        .for_each(|line| assert_plain("予算と Unity に見せている印", line));
-    // 予算に収まるセットは、今までどおり「Unity に見せている」
-    let ok = look(&h, 1).expect("印が出る");
-    assert_eq!(
-        (ok.icon, ok.tooltip.as_str()),
-        ("sync", "Unity に見せている")
-    );
-    // 予算を戻すと、予算の警告だけが消えて「Unity に見せている」に戻る
+        .for_each(|line| assert_plain("予算の印", line));
+    assert!(look(&h, 1).is_none(), "予算に収まるセットに印は無い");
+    h.state_mut().state.lang = Lang::En;
+    let en = look(&h, 2).unwrap();
+    assert!(en.tooltip.contains("GPU memory budget"), "{}", en.tooltip);
+    assert!(!has_japanese(&en.tooltip), "{}", en.tooltip);
+    h.state_mut().state.lang = Lang::Ja;
+    // 予算を戻すと、印が消える
     h.state_mut().view3d_set_paint_budget(512 << 20);
     h.run();
-    h.state_mut().state.link.published = vec![uid1, uid2];
-    let back = look(&h, 2).expect("印が出る");
-    assert_eq!(
-        (back.icon, back.tooltip.as_str()),
-        ("sync", "Unity に見せている")
-    );
+    assert!(look(&h, 2).is_none());
 }
 
 #[test]
@@ -1535,7 +1502,7 @@ fn measure_switching_sets() {
             None,
         )
         .unwrap();
-        // 絵のあるタイルも少し（画布の全面に効く層だけでなく、合成の手間が要るように）
+        // 絵のあるタイルも少し（キャンバスの全面に効くレイヤーだけでなく、合成の手間が要るように）
         let layer = doc.layers()[0].id();
         for k in 0..64u32 {
             doc.set_channel_pixel(

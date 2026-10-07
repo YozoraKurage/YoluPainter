@@ -56,20 +56,34 @@ pub struct Image {
 
 /// チャンネルの合成を、長い辺が `max_edge` に収まるように縮めた PNG にする。
 pub fn render_image(doc: &Document, channel: Channel, max_edge: u32) -> Result<Image, OpError> {
-    let rgba = yolu_core::export::channel_image(doc, channel, WORKING_BYTES).map_err(|e| match e {
-        yolu_core::export::ExportError::Core(core) => OpError::from_core(&core),
-        other => OpError::new(
-            ErrorCode::Budget,
-            format!("見本を作れません: {other}"),
-            "The preview cannot be built within the working memory limit",
-        ),
-    })?;
+    let rgba =
+        yolu_core::export::channel_image(doc, channel, WORKING_BYTES).map_err(|e| match e {
+            yolu_core::export::ExportError::Core(core) => OpError::from_core(&core),
+            other => OpError::new(
+                ErrorCode::Budget,
+                format!("見本を作れません: {other}"),
+                "The preview cannot be built within the working memory limit",
+            ),
+        })?;
     let (w, h) = (doc.width(), doc.height());
     let (tw, th) = fit(w, h, max_edge);
-    let pixels = if (tw, th) == (w, h) { rgba } else { shrink(&rgba, w, h, tw, th) };
-    let png = encode_png(&pixels, tw, th)
-        .map_err(|e| OpError::new(ErrorCode::Internal, format!("PNG を作れません: {e}"), format!("Cannot encode the PNG: {e}")))?;
-    Ok(Image { width: tw, height: th, png })
+    let pixels = if (tw, th) == (w, h) {
+        rgba
+    } else {
+        shrink(&rgba, w, h, tw, th)
+    };
+    let png = encode_png(&pixels, tw, th).map_err(|e| {
+        OpError::new(
+            ErrorCode::Internal,
+            format!("PNG を作れません: {e}"),
+            format!("Cannot encode the PNG: {e}"),
+        )
+    })?;
+    Ok(Image {
+        width: tw,
+        height: th,
+        png,
+    })
 }
 
 /// 縮めた大きさ。長い辺が `max_edge` に（元より大きくしない）、短い辺は比を保って四捨五入（1 以上）。
@@ -78,7 +92,10 @@ pub fn fit(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
     if long <= max_edge {
         return (width, height);
     }
-    let scale = |side: u32| ((u64::from(side) * u64::from(max_edge) + u64::from(long) / 2) / u64::from(long)).max(1) as u32;
+    let scale = |side: u32| {
+        ((u64::from(side) * u64::from(max_edge) + u64::from(long) / 2) / u64::from(long)).max(1)
+            as u32
+    };
     (scale(width), scale(height))
 }
 
@@ -134,7 +151,11 @@ pub fn shrink(src: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Ve
 }
 
 /// 左下原点の straight RGBA8 を、上の行から並べた RGBA の PNG にする。
-pub fn encode_png(bottom_up: &[u8], width: u32, height: u32) -> Result<Vec<u8>, png::EncodingError> {
+pub fn encode_png(
+    bottom_up: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, png::EncodingError> {
     let mut out = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut out, width, height);
@@ -155,7 +176,12 @@ pub fn encode_png(bottom_up: &[u8], width: u32, height: u32) -> Result<Vec<u8>, 
 pub fn decode_png(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), png::DecodingError> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size().ok_or(png::DecodingError::LimitsExceeded)?];
+    let mut buf = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or(png::DecodingError::LimitsExceeded)?
+    ];
     let info = reader.next_frame(&mut buf)?;
     let (w, h) = (info.width, info.height);
     let stride = w as usize * 4;
@@ -201,7 +227,10 @@ mod tests {
         let out = shrink(&src, 2, 1, 1, 1);
         assert_eq!(out, vec![255, 0, 0, 128]);
         // 全部透明なら RGB は 0
-        assert_eq!(shrink(&[9, 9, 9, 0, 9, 9, 9, 0], 2, 1, 1, 1), vec![0, 0, 0, 0]);
+        assert_eq!(
+            shrink(&[9, 9, 9, 0, 9, 9, 9, 0], 2, 1, 1, 1),
+            vec![0, 0, 0, 0]
+        );
     }
 
     #[test]

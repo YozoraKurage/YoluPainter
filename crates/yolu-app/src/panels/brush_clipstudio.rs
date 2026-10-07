@@ -1,6 +1,6 @@
-//! 取り込みの窓の「CLIP STUDIO から」: 見つけた `.sut` の一覧（選ぶ印・筆先の見本・名前）、下の帯にフォルダを手で選ぶ・探し直す・
+//! 取り込みのウィンドウの「CLIP STUDIO から」: 見つけた `.sut` の一覧（選ぶ印・筆先の見本・名前）、下の帯にフォルダを手で選ぶ・探し直す・
 //! 全部選ぶ・取り込む。文字は名前・状態・短い理由だけで、説明はツールチップ（探したフォルダ・ファイル名・読めなかった理由）。
-//! 窓は下の部品へ入力を渡さない（モーダル）。探す・中身を覗く仕事は別のスレッド（`brushes::clipstudio`）。
+//! ウィンドウは下の部品へ入力を渡さない（モーダル）。探す・中身を覗く仕事は別のスレッド（`brushes::clipstudio`）。
 
 use egui::{
     pos2, vec2, Color32, Id, Key, Rect, Sense, TextureOptions, UiBuilder, Vec2, WidgetInfo,
@@ -22,7 +22,7 @@ const MAX_ROWS: usize = 7;
 const FOOTER: f32 = 48.0;
 const THUMB: f32 = 36.0;
 
-/// 窓の名前（`windows::window_rect` で矩形を引く）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く）。
 pub const NAME: &str = "brush-clipstudio";
 
 fn id() -> Id {
@@ -91,9 +91,7 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
                 "サブツールのフォルダが見つかりません",
                 "Sub tool folder not found",
             ),
-            Missing::Unreadable => {
-                lang.pick("フォルダを開けません", "Cannot open the folder")
-            }
+            Missing::Unreadable => lang.pick("フォルダを開けません", "Cannot open the folder"),
             Missing::NoFiles => lang.pick("サブツールがありません", "No sub tools"),
         };
         return (text.into(), true, tip);
@@ -111,18 +109,13 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
     (text, false, tip)
 }
 
-/// 窓を描く（開いていなければ何もしない）。
+/// ウィンドウを描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.csp.open {
         return;
     }
     let lang = app.lang;
-    let rows = app
-        .brushes
-        .csp
-        .listing
-        .as_ref()
-        .map_or(0, |l| l.rows.len());
+    let rows = app.brushes.csp.listing.as_ref().map_or(0, |l| l.rows.len());
     let visible = rows.clamp(1, MAX_ROWS);
     let height = window::HEADER_HEIGHT + 30.0 + visible as f32 * ROW_HEIGHT + 10.0 + FOOTER;
     // 見える行の見本の絵を作る（見えない行は作らない。一覧が長くても絵は 8 枚ほど）
@@ -177,7 +170,15 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             vec2(body.width(), visible as f32 * ROW_HEIGHT),
         );
         if let Some(listing) = &csp.listing {
-            draw_list(ui, list, listing, window_id, &mut scroll, &mut actions, state);
+            draw_list(
+                ui,
+                list,
+                listing,
+                window_id,
+                &mut scroll,
+                &mut actions,
+                state,
+            );
         }
         // 下の帯
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
@@ -252,8 +253,14 @@ fn draw_list(
                     pos2(r.right(), r.bottom()),
                 );
                 let shown = w::fit(&cp, &title, text_rect.width(), t::LABEL);
-                w::text(&cp, text_rect, &shown, t::LABEL.with_color(t::WARNING), Align::Left);
-                let reason = crate::brushes::import::describe_error(lang, error);
+                w::text(
+                    &cp,
+                    text_rect,
+                    &shown,
+                    t::LABEL.with_color(t::WARNING),
+                    Align::Left,
+                );
+                let reason = crate::lang::brush_import_error(lang, error);
                 let response = child.interact(r, window_id.with(("row", i)), Sense::hover());
                 response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &title));
                 let _ = response.on_hover_text(format!("{hint}\n{reason}"));
@@ -329,7 +336,10 @@ fn draw_footer(
     };
     // 右から: 取り込む・全部選ぶ（外す）
     let import_label = if selected > 0 {
-        lang.pick(format!("取り込む（{selected}）"), format!("Import ({selected})"))
+        lang.pick(
+            format!("取り込む（{selected}）"),
+            format!("Import ({selected})"),
+        )
     } else {
         lang.pick("取り込む", "Import").to_owned()
     };
@@ -366,7 +376,10 @@ fn draw_footer(
         "all",
         false,
         ready > 0,
-        lang.pick("読めたサブツールを全部選ぶ・外す", "Select or clear every readable sub tool"),
+        lang.pick(
+            "読めたサブツールを全部選ぶ・外す",
+            "Select or clear every readable sub tool",
+        ),
     )
     .0
     {

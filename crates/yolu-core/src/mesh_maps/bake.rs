@@ -313,12 +313,10 @@ pub(crate) fn prepare<'a>(
         if !super::surface::face_normal(&input.corners, t).1 {
             continue;
         }
-        check(
-            u.iter().all(|v| *v >= -1e-6f32 && *v <= 1. + 1e-6f32),
-            "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません",
-        )?;
         receivers.push(t);
     }
+    // 焼かないアイランドを外し、重なったテクセルを先に取る順に並べる（既定は番号の昇順のまま）。0〜1 の外の UV の拒否もここ
+    let receivers = super::priority::arrange(input, &s.overlap, receivers)?;
     check(
         !receivers.is_empty(),
         "対象スロットに焼き込めるUVのある三角形がありません",

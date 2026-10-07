@@ -1,37 +1,13 @@
-//! スタンドアロンと Unity のブリッジのあいだの通信の形（Live Link）。
+//! モデルの形と、Live Link のファイルの受け渡し。
 //!
-//! - Unity → スタンドアロン: モデル（メッシュの頂点・法線・UV0・三角形・サブメッシュ・マテリアルの組と名前と安定した鍵）、ポーズの変化
-//!   （焼いたメッシュの位置）、マテリアルの情報（シェーダーとテクスチャのプロパティの名前、Unity 側が見せられるチャンネル）、
-//!   マテリアルの値（lilToon のプロパティの値と、描いていないスロットの絵。機能の印 `MATERIAL_VALUES` が双方にあるときだけ）。
-//! - スタンドアロン → Unity: テクスチャセット（マテリアル）ごと・チャンネルごとの画像の「変わったタイル」。画素は共有メモリ（`shm`）、
-//!   どのタイルが変わったかは命令で知らせる。
-//!
-//! 命令はパイプ（`link`。Windows は名前付きパイプ、Linux は Unix のソケット）に枠（`frame`）で流す。版と知らない命令の扱いは `message`。
-//! この形を読むのは Rust 同士だけ（Unity の C# はブリッジの C の関数を呼ぶ）なので、C# に同じ読み手は要らない。
+//! - `model`: メッシュ・マテリアルの組・ポーズの型（`yolu_protocol::Model` など）。アプリの中で 3D ビューとテクスチャセットの結びつけが
+//!   共有する。通信の形ではない。
+//! - `files`: Live Link の受け渡し。Unity が頼みの JSON を `inbox/` に置き、スタンドアロンが拾う。書き出したら返事の JSON を `outbox/` に
+//!   置き、Unity が拾う。送るのはファイルの道と小さな値だけで、スタンドアロンが FBX と絵のファイルを自分で読む。
+//! - `private`: 自分だけが読み書きできるフォルダとファイル（受け渡しのフォルダが使う）。
 
-// 画素（4 バイト）・数（4 バイト）を chunks_exact で回すのは読みやすさのため（yolu-core と同じ）。
-#![allow(clippy::chunks_exact_to_as_chunks)]
-
-pub mod auth;
-pub mod compat;
-pub mod frame;
-pub mod host;
-pub mod link;
-pub mod message;
+pub mod files;
+pub mod model;
 pub mod private;
-pub mod shm;
-pub mod wire;
-#[cfg(windows)]
-pub(crate) mod winpipe;
 
-pub use auth::{HelloCheck, LinkKey, ServerKey};
-pub use compat::{
-    feature, AppVersion, Identity, LinkInfo, PeerInfo, Product, RejectDetail, RequestUnavailable,
-    SkewReport, VersionInfo, VersionRefusal, MIN_STANDALONE, MIN_UNITY_PACKAGE, REQUEST_SINCE,
-};
-pub use frame::{
-    encode_message, try_encode_message, try_encode_message_within, Frame, FrameError, FrameReader,
-};
-pub use link::{Connection, ConnectionReader, LinkError, Received, Server, DEFAULT_LINK_NAME};
-pub use message::*;
-pub use shm::{ImageLayout, SharedImageReader, SharedImageWriter, ShmError, TileRead};
+pub use model::*;

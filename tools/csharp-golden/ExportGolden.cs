@@ -2,7 +2,7 @@
 // 同じ入力を通して作る（Core と一緒に組んで Mono で走らせる）。
 //   golden <cases.txt> <出力のフォルダ>   台本の事例を走らせ、index.txt と <事例>.bin を書く
 //   bench [回数]                          4096² のテンプレートの Build とパディング（覆い・塗り広げ）の時間を測る
-// 台本の読み方・乱数・出力の書き方は crates/yolu-core/tests/export_golden.rs と揃えてある（片方を変えたら両方を変える）。
+// 台本の読み方・乱数・出力の書き方は crates/yolu-core/tests/reference/export_golden.rs と揃えてある（片方を変えたら両方を変える）。
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -132,7 +132,7 @@ namespace YoluPainterRs.ExportGolden
             if (!Enum.TryParse(s, false, out ch) || !Enum.IsDefined(typeof(PaintChannel), ch)) throw new FormatException("チャンネル: " + s);
             return ch;
         }
-        /// <summary>層の番号（今の並び、下から 0）か、@名前。</summary>
+        /// <summary>レイヤーの番号（今の並び、下から 0）か、@名前。</summary>
         static Guid LayerAt(CaseState c, string s)
         {
             if (s.StartsWith("@"))
@@ -174,7 +174,7 @@ namespace YoluPainterRs.ExportGolden
             {
                 // ── 文書 ──
                 case "canvas": c.Doc = new PaintDocument(Int(t[1]), Int(t[2]), Int(t[3])); return;
-                case "layer": // layer 名前 モード 不透明度 中身 [印…]（Color の層）
+                case "layer": // layer 名前 モード 不透明度 中身 [印…]（Color のレイヤー）
                 {
                     var layer = doc.AddLayer(t[1]);
                     ModeOpacity(doc, layer.Id, t[2], t[3], LayerBlendMode.Normal);
@@ -183,7 +183,7 @@ namespace YoluPainterRs.ExportGolden
                     doc.ClearHistory();
                     return;
                 }
-                case "paint": // paint 層 チャンネル 中身（チャンネルを有効にして埋める）
+                case "paint": // paint レイヤー チャンネル 中身（チャンネルを有効にして埋める）
                 {
                     var layer = doc.GetLayer(LayerAt(c, t[1]));
                     Fill(doc, layer.GetChannel(Chan(t[2])), t[3]);
@@ -324,7 +324,7 @@ namespace YoluPainterRs.ExportGolden
             }
         }
 
-        /// <summary>層の中身。empty | random:種（画布の全画素を下の行から）| sparse:種（タイルごとに 無し・一様・画素）| solid:R,G,B,A。</summary>
+        /// <summary>レイヤーの中身。empty | random:種（キャンバスの全画素を下の行から）| sparse:種（タイルごとに 無し・一様・画素）| solid:R,G,B,A。</summary>
         static void Fill(PaintDocument doc, SparseTileSurface surface, string fill)
         {
             int w = doc.Width, h = doc.Height, ts = doc.TileSize;
@@ -393,7 +393,7 @@ namespace YoluPainterRs.ExportGolden
         {
             Console.WriteLine("C#（Mono " + Environment.Version + "）/ 論理プロセッサ " + Environment.ProcessorCount + " / 回数 " + runs);
             const int size = 4096;
-            // 全チャンネルに全タイル乱数の層を 1 つずつ（Color・Roughness・Metallic・Height・Emission）。Height → Normal は有効（Normal の出力も重い方で測る）
+            // 全チャンネルに全タイル乱数のレイヤーを 1 つずつ（Color・Roughness・Metallic・Height・Emission）。Height → Normal は有効（Normal の出力も重い方で測る）
             var doc = new PaintDocument(size, size, 128); doc.SourceBudgetBytes = 4L << 30;
             var layer = doc.AddLayer("a");
             Fill(doc, layer.GetChannel(PaintChannel.Color), "random:1");
@@ -402,7 +402,7 @@ namespace YoluPainterRs.ExportGolden
                 Fill(doc, layer.GetChannel(channel), "random:" + seed++);
             doc.SetNormalSettings(new NormalSettings(true, 4, HeightEdgeMode.Clamp, NormalYDirection.OpenGL));
             doc.ClearHistory();
-            Console.WriteLine("Build 4096²（全チャンネルが全タイル乱数の 1 層、Height → Normal 有効）:");
+            Console.WriteLine("Build 4096²（全チャンネルが全タイル乱数の 1 レイヤー、Height → Normal 有効）:");
             foreach (var template in ExportTemplate.BuiltIn)
                 foreach (var image in template.Images)
                 {
@@ -426,11 +426,11 @@ namespace YoluPainterRs.ExportGolden
             for (int i = 0; i < size * size; i++) { var p = prng.Rgba(); pixels[i * 4] = p.R; pixels[i * 4 + 1] = p.G; pixels[i * 4 + 2] = p.B; pixels[i * 4 + 3] = p.A; }
             foreach (int texels in new[] { 16, TexturePadding.Fill })
                 Console.WriteLine("塗り広げ 4096² " + (texels == TexturePadding.Fill ? "全部（既定）" : texels + " テクセル") + ": " + Time(runs, () => TexturePadding.Dilate(pixels, size, size, keep, texels)));
-            // 大きな島（画像の 7 割を覆う 2 つの三角形）での覆い
+            // 大きなアイランド（画像の 7 割を覆う 2 つの三角形）での覆い
             var island = new List<(double, double, double, double, double, double)> { (200, 200, 3800, 200, 3800, 3800), (200, 200, 3800, 3800, 200, 3800) };
-            Console.WriteLine("覆い 4096²（大きな島 2 三角形）: " + Time(runs, () => TexturePadding.Coverage(size, size, island)));
+            Console.WriteLine("覆い 4096²（大きなアイランド 2 三角形）: " + Time(runs, () => TexturePadding.Coverage(size, size, island)));
             var keepIsland = TexturePadding.Coverage(size, size, island);
-            Console.WriteLine("塗り広げ 4096² 全部（大きな島の外を埋める）: " + Time(runs, () => TexturePadding.Dilate(pixels, size, size, keepIsland, TexturePadding.Fill)));
+            Console.WriteLine("塗り広げ 4096² 全部（大きなアイランドの外を埋める）: " + Time(runs, () => TexturePadding.Dilate(pixels, size, size, keepIsland, TexturePadding.Fill)));
         }
     }
 }

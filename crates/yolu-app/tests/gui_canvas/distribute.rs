@@ -1,5 +1,5 @@
-//! 配布用に保存: 開いているものを変えずに、作った人が気づかないまま残る物（PSD の原本・使っていない棚の素材・出どころのパス・モデルの参照・
-//! メッシュマップ・古い状態・知らないエントリ）を除いた写しを書く。窓・切り替え・保存先・置き換え・断る理由・日英・窓の画像。
+//! 配布用に保存: 開いているものを変えずに、作った人が気づかないまま残る物（PSD の原本・使っていないアセット・出どころのパス・モデルの参照・
+//! メッシュマップ・古い状態・知らないエントリ）を除いた写しを書く。ウィンドウ・切り替え・保存先・置き換え・断る理由・日英・ウィンドウの画像。
 //! 取り込み直した PSD の古い原本が、いつもの保存に残らないことも確かめる。`headless_` で始まる試験は画面を描かない。
 //! Unity 版が作った .ylp（PSD の原本・file と unityAsset の出どころ・thumbnail・brush.json・view.json）は試験の中で組み立てる。
 use crate::common;
@@ -189,14 +189,18 @@ fn opened(dir: &TempDir) -> (AppState, PathBuf) {
     (s, path)
 }
 
-/// 窓を開く（準備が終わるまで待つ）。
+/// ウィンドウを開く（準備が終わるまで待つ）。
 fn start(s: &mut AppState) {
     s.apply(Action::Distribute(DistributeAction::Start));
     s.wait_distribute();
 }
 
 fn kinds(s: &AppState) -> Vec<Removal> {
-    s.distribute.window().expect("窓がある").inventory().kinds()
+    s.distribute
+        .window()
+        .expect("ウィンドウがある")
+        .inventory()
+        .kinds()
 }
 
 /// 開いているものの目印（文書・Undo・未保存の印・開いているファイル）。
@@ -359,7 +363,7 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
     assert!(!s.distribute.is_open());
     // 開いているものは 1 バイトも変わらない（文書・Undo・未保存の印・開いているファイル）
     assert_eq!(fingerprint(&s, &path), before);
-    // 写しには、除くものが無い。層の画素は元と同じ（保存していない変更も入る）
+    // 写しには、除くものが無い。レイヤーの画素は元と同じ（保存していない変更も入る）
     let copy = read_entries(&dest);
     let text = text_of(&copy);
     for sentinel in SENTINELS {
@@ -399,7 +403,11 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
 #[test]
 fn headless_the_copy_is_written_from_the_opened_contents_after_the_file_moved_or_changed_outside() {
     // 開いたエントリはメモリに残さず、ファイルのハンドルで持つ（パスで開き直す形は、外で変わると読めなくなる）
-    Thresholds { keep_in_memory: 0, ..Thresholds::REAL }.scoped(|| {
+    Thresholds {
+        keep_in_memory: 0,
+        ..Thresholds::REAL
+    }
+    .scoped(|| {
         for how in ["moved", "deleted", "replaced"] {
             let dir = TempDir::new(how);
             let (mut s, path) = opened(&dir);
@@ -423,15 +431,30 @@ fn headless_the_copy_is_written_from_the_opened_contents_after_the_file_moved_or
             let theirs = outside.as_ref().map(|p| std::fs::read(p).unwrap());
             let dir_before = dir.files();
             let dest = dir.path("Copy.ylp");
-            write_copy(&mut s, &dest, &[Removal::PsdOriginals, Removal::MeshMaps, Removal::UnknownEntries]);
+            write_copy(
+                &mut s,
+                &dest,
+                &[
+                    Removal::PsdOriginals,
+                    Removal::MeshMaps,
+                    Removal::UnknownEntries,
+                ],
+            );
             let copy = read_entries(&dest);
             let kept: Vec<&String> = base
                 .keys()
-                .filter(|n| n.ends_with("/imported-original.psd") || n.contains("meshmap-") || *n == "extra.dat")
+                .filter(|n| {
+                    n.ends_with("/imported-original.psd")
+                        || n.contains("meshmap-")
+                        || *n == "extra.dat"
+                })
                 .collect();
             assert_eq!(kept.len(), 3, "{how}: {kept:?}");
             for name in kept {
-                assert!(copy.get(name) == Some(&base[name]), "{how}: {name} は開いたときのバイト列のまま");
+                assert!(
+                    copy.get(name) == Some(&base[name]),
+                    "{how}: {name} は開いたときのバイト列のまま"
+                );
             }
             let project = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
             assert_eq!(
@@ -524,7 +547,7 @@ fn headless_the_open_file_is_never_written_and_an_existing_file_is_replaced_only
     s.apply(Action::Distribute(DistributeAction::Save(plain_name)));
     s.wait_distribute();
     assert!(dir.path("Release.ylp").exists(), "{:?}", dir.files());
-    // 既にあるファイル: 確かめの窓。やめるとファイルはそのまま、窓は戻る
+    // 既にあるファイル: 確認のウィンドウ。やめるとファイルはそのまま、ウィンドウは戻る
     start(&mut s);
     let dest = dir.path("Release.ylp");
     let old = std::fs::read(&dest).unwrap();
@@ -536,7 +559,7 @@ fn headless_the_open_file_is_never_written_and_an_existing_file_is_replaced_only
     assert!(!s.distribute.is_busy());
     assert!(
         !s.distribute.window_visible(),
-        "確かめの間は除く物の窓を出さない"
+        "確かめの間は除く物のウィンドウを出さない"
     );
     assert_eq!(std::fs::read(&dest).unwrap(), old);
     s.apply(Action::Distribute(DistributeAction::CancelReplace));
@@ -572,7 +595,7 @@ fn headless_the_open_file_is_never_written_and_an_existing_file_is_replaced_only
     s.wait_distribute();
     assert!(
         s.message
-            .starts_with("配布用に保存できません: 置き換える先を .ylp として読めません"),
+            .starts_with("配布用に保存できません（置き換える先を .ylp として読めません（"),
         "{}",
         s.message
     );
@@ -600,7 +623,7 @@ fn headless_it_refuses_while_drawing_and_a_canceled_job_writes_nothing() {
     assert_eq!(s.message, "Not while drawing.");
     s.lang = Lang::Ja;
     s.doc.end_stroke(stroke).unwrap();
-    // 窓が開いたあとに描き始めても、書かない
+    // ウィンドウが開いたあとに描き始めても、書かない
     start(&mut s);
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     let dest = dir.path("Never.ylp");
@@ -608,11 +631,14 @@ fn headless_it_refuses_while_drawing_and_a_canceled_job_writes_nothing() {
     assert_eq!(s.message, "描いている間はできません。");
     assert!(!dest.exists() && !s.distribute.is_busy());
     s.doc.end_stroke(stroke).unwrap();
-    // 書いている途中の取消: 何も書かず、窓に戻る。一時ファイルも残さない
+    // 書いている途中の取消: 何も書かず、ウィンドウに戻る。一時ファイルも残さない
     s.distribute.park_write = true;
     s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
     assert!(s.distribute.is_busy());
-    assert!(!s.distribute.window_visible(), "書いている間は窓を出さない");
+    assert!(
+        !s.distribute.window_visible(),
+        "書いている間はウィンドウを出さない"
+    );
     s.apply(Action::Distribute(DistributeAction::CancelJob));
     s.wait_distribute();
     assert!(s.message.contains("取り消しました"), "{}", s.message);
@@ -621,7 +647,7 @@ fn headless_it_refuses_while_drawing_and_a_canceled_job_writes_nothing() {
     assert_eq!(dir.files(), ["Work.ylp"]);
     s.apply(Action::Distribute(DistributeAction::CancelWindow));
     assert!(!s.distribute.is_open());
-    // 準備の途中の取消: 窓は出ない
+    // 準備の途中の取消: ウィンドウは出ない
     s.distribute.park_next = true;
     s.apply(Action::Distribute(DistributeAction::Start));
     assert!(s.distribute.is_busy());
@@ -642,7 +668,7 @@ fn headless_a_project_with_nothing_to_remove_goes_straight_to_the_file_and_engli
     s.apply(Action::SaveProjectAs(base.clone()));
     s.lang = Lang::En;
     start(&mut s);
-    // 除く物が無いので、窓を出さずにすぐ保存先を選ぶ
+    // 除く物が無いので、ウィンドウを出さずにすぐ保存先を選ぶ
     assert!(s.distribute.is_open() && !s.distribute.window_visible());
     assert!(s.distribute.window().unwrap().inventory().is_empty());
     assert_eq!(s.dialog_request, Some(DialogRequest::DistributeSave));
@@ -661,13 +687,13 @@ fn headless_a_project_with_nothing_to_remove_goes_straight_to_the_file_and_engli
     assert_eq!(yolu_app::distribute::default_name(&s), "Plain-dist.ylp");
 }
 
-// ───────── いつもの保存と同じ組み立て（状態ごと）・窓なしの流れの断り・復旧 ─────────
+// ───────── いつもの保存と同じ組み立て（状態ごと）・ウィンドウなしの流れの断り・復旧 ─────────
 
-/// 窓を開いて、`keep` の種類は残す選びにして、`dest` へ書く（除く物が無く窓なしで保存先に進む流れも通す）。
+/// ウィンドウを開いて、`keep` の種類は残す選びにして、`dest` へ書く（除く物が無くウィンドウなしで保存先に進む流れも通す）。
 fn write_copy(s: &mut AppState, dest: &Path, keep: &[Removal]) {
     start(s);
     for removal in keep {
-        let window = s.distribute.window().expect("窓がある");
+        let window = s.distribute.window().expect("ウィンドウがある");
         if window.selected().contains(removal) {
             s.apply(Action::Distribute(DistributeAction::Toggle(*removal)));
         }
@@ -737,7 +763,7 @@ fn headless_a_changed_shelf_is_written_like_a_plain_save_and_the_unused_items_go
     let resources = s.shelf.resources().len();
     assert_eq!(
         resources, 3,
-        "開いた棚の 2 つに、今の層のスマートマテリアル"
+        "開いた棚の 2 つに、今のレイヤーのスマートマテリアル"
     );
     // 除く選びなら、使っていない 3 つとも消えて棚の索引も無い。残す選びなら新しい素材ごと残る（いつもの保存と同じ）
     let removed = dir.path("Removed.ylp");
@@ -833,15 +859,35 @@ fn headless_the_received_values_follow_the_setting_and_the_choice() {
     assert_eq!(plain.received_look(&id).unwrap(), None);
 }
 
+/// 手動の ID の色は文書の一部なので、配布用の写しでも残る（モデルの参照などを除いても消えない）。何も除かない写しは、いつもの保存と全エントリが同じ。
+#[test]
+fn headless_manual_id_colors_stay_in_the_distribution_copy() {
+    let dir = TempDir::new("id-colors");
+    let mut s = plain_project(&dir, "Plain.ylp");
+    let colors = yolu_core::mesh_maps::IdColorAssignments::new(
+        "0123456789abcdef".repeat(4),
+        [(0usize, 0x112233u32), (2, 0xffeedd)].into_iter().collect(),
+    )
+    .unwrap();
+    s.doc.set_id_colors(colors.clone(), false).unwrap();
+    s.modified = true;
+    // 除く選びの初めのまま（モデルの参照・メッシュマップなどを除く）でも、色は残る
+    let copy = dir.path("Copy.ylp");
+    write_copy(&mut s, &copy, &[]);
+    let mut opened = AppState::new(32, 32);
+    opened.apply(Action::OpenProject(copy));
+    assert_eq!(opened.doc.id_colors().binding(), colors.binding());
+    assert_eq!(opened.doc.id_colors().colors(), colors.colors());
+    assert!(!opened.doc.can_undo());
+    assert!(opened.sets.get(0).unwrap().read_only.is_none());
+    // 何も除かない写しは、いつもの保存と同じ（色の塊も）
+    assert_copy_matches_plain_save(&mut s, &dir, "keep");
+}
+
 /// 描けるセット 1 つと、core で扱えない中身で読むだけになるセット 1 つ（どちらも PSD の原本つき）の .ylp。返すのは（描けるセット・
 /// 読むだけのセット）の ID。
 fn read_only_style(path: &Path) -> (String, String) {
-    let rich = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../yolu-io/tests/fixtures/native-rich-v21.utpaint"),
-    )
-    .unwrap();
-    let rich = NativeDocument::read(&rich).unwrap();
+    let rich = crate::common::core_refused::native_core_cannot_hold();
     assert!(
         !rich.core_issues().is_empty(),
         "core で扱えない中身がある正本"
@@ -946,26 +992,60 @@ fn headless_a_read_only_set_keeps_its_original_in_every_save_and_the_copy_matche
 }
 
 #[test]
-fn headless_a_read_only_set_without_its_original_document_refuses_the_copy_in_both_languages() {
+fn headless_a_read_only_set_without_its_original_document_is_left_out_of_the_copy_and_a_copy_of_nothing_is_refused(
+) {
     let dir = TempDir::new("readonly-missing");
     let path = dir.path("Mixed.ylp");
-    read_only_style(&path);
+    let (editable, readonly) = read_only_style(&path);
     let mut s = AppState::new(32, 32);
     s.apply(Action::OpenProject(path.clone()));
     assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
-    // 開いたファイルとのつながりが無い（元の正本が無い）
+    // 開いたファイルとのつながりが無い（元の正本が無い）: 読むだけのセットだけを写しに入れず、書けるセットは入れる。知らせが入れなかったセットを言う
     s.project = None;
+    let copy = dir.path("Copy.ylp");
+    write_copy(&mut s, &copy, &[]);
+    assert_eq!(
+        s.message,
+        format!(
+            "配布用に保存しました: {}。 テクスチャセット「Preview」は読めないため、保存に入れていません。",
+            copy.display()
+        )
+    );
+    let entries = read_entries(&copy);
+    assert!(entries
+        .keys()
+        .any(|k| k.starts_with(&format!("sets/{editable}/"))));
+    assert!(
+        !entries.keys().any(|k| k.contains(&readonly)),
+        "{:?}",
+        entries.keys()
+    );
+    s.lang = Lang::En;
+    let english = dir.path("English.ylp");
+    start(&mut s);
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(english.clone())));
+    s.wait_distribute();
+    assert_eq!(
+        s.message,
+        format!(
+            "Saved for distribution: {}. Texture set \"Preview\" could not be read and was left out of the save.",
+            english.display()
+        )
+    );
+    // 書けるセットが 1 つも無ければ、断る（ウィンドウも開かない）
+    s.sets.get_mut(0).unwrap().read_only = Some("reason".into());
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "配布用に保存できません: 読むだけのセット「Preview」の元の文書がありません"
+        "Cannot save for distribution (\"Paintable\", \"Preview\" cannot be read and have never been saved)."
     );
     assert!(!s.distribute.is_open() && !s.distribute.is_busy());
-    s.lang = Lang::En;
+    s.lang = Lang::Ja;
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "Cannot save for distribution: Original document missing for read-only set “Preview”"
+        "配布用に保存できません（「Paintable」「Preview」は保存したことが無く、読めません）。"
     );
     assert!(!s.distribute.is_open());
 }
@@ -1044,7 +1124,7 @@ fn headless_the_model_reference_is_pointed_again_from_where_the_copy_is_written(
     assert!(!text_of(&read_entries(&removed)).contains("Prop.fbx"));
 }
 
-/// 窓なしの流れ（除く物が 1 つも無い）で保存先を決めたところから、断られて戻る。
+/// ウィンドウなしの流れ（除く物が 1 つも無い）で保存先を決めたところから、断られて戻る。
 fn windowless(dir: &TempDir) -> (AppState, PathBuf) {
     let s = plain_project(dir, "Plain.ylp");
     (s, dir.path("Plain.ylp"))
@@ -1096,7 +1176,7 @@ fn headless_a_refusal_without_the_window_closes_it_and_the_menu_works_again() {
     assert!(!s.distribute.is_open() && s.distribute.replace.is_none());
     assert_eq!(std::fs::read(&existing).unwrap(), b"x");
     s.doc.end_stroke(stroke).unwrap();
-    // 保存先を選ばなかった（窓なしの流れ）
+    // 保存先を選ばなかった（ウィンドウなしの流れ）
     open_windowless(&mut s);
     s.apply(Action::Distribute(DistributeAction::CancelWindow));
     assert!(!s.distribute.is_open());
@@ -1132,7 +1212,10 @@ fn headless_a_refusal_with_the_window_shows_the_window_again() {
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Distribute(DistributeAction::ConfirmReplace));
     assert_eq!(s.message, "描いている間はできません。");
-    assert!(s.distribute.window_visible(), "確かめを閉じて窓に戻る");
+    assert!(
+        s.distribute.window_visible(),
+        "確かめを閉じてウィンドウに戻る"
+    );
     assert_eq!(std::fs::read(&existing).unwrap(), b"x");
     s.doc.end_stroke(stroke).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -1231,7 +1314,7 @@ fn headless_a_checkpoint_after_a_psd_reimport_has_no_stale_original_and_neither_
     assert!(read_entries(&path).contains_key(&original));
 }
 
-// ───────── 窓（画面） ─────────
+// ───────── ウィンドウ（画面） ─────────
 
 fn settle(h: &mut Harness<'_, YoluApp>) {
     let start = Instant::now();
@@ -1301,11 +1384,7 @@ fn in_window(h: &Harness<'_, YoluApp>, window: &str, label: &str) -> egui::Pos2 
     rect_of(h, label, |r| area.contains_rect(r)).center()
 }
 
-fn has_japanese(text: &str) -> bool {
-    text.chars().any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
-/// 窓を開いた画面（Unity 版が作った .ylp を開いて、メニューから）。
+/// ウィンドウを開いた画面（Unity 版が作った .ylp を開いて、メニューから）。
 fn window_app(dir: &TempDir) -> (Harness<'static, YoluApp>, PathBuf) {
     let path = dir.path("Work.ylp");
     unity_style(&path);
@@ -1328,7 +1407,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     for want in [
         "配布用に保存",
         "PSD の原本",
-        "使っていない棚の素材",
+        "使っていないアセット",
         "素材の出どころのパス",
         "モデルの参照",
         "メッシュマップ",
@@ -1353,7 +1432,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
         "{texts:?}"
     );
     for t in &texts {
-        assert_plain("配布用に保存の窓", t);
+        assert_plain("配布用に保存のウィンドウ", t);
         assert!(
             !t.contains("MiB") && !t.chars().all(|c| c.is_ascii_digit()),
             "{t}"
@@ -1376,7 +1455,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     let at = in_window(&h, "distribute", "PSD の原本");
     click(&mut h, at);
     assert_eq!(h.state().state.distribute.window().unwrap().selected(), all);
-    // 「保存…」は保存先を選ぶ窓を頼む（窓は開いたまま）
+    // 「保存…」は保存先を選ぶウィンドウを頼む（ウィンドウは開いたまま）
     let at = in_window(&h, "distribute", "保存…");
     click(&mut h, at);
     assert_eq!(
@@ -1385,14 +1464,14 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     );
     assert!(h.state().state.distribute.window_visible());
     h.state_mut().state.dialog_request = None;
-    // 英語: 窓の文字に日本語が残らない
+    // 英語: ウィンドウの文字に日本語が残らない
     h.state_mut().state.lang = Lang::En;
     h.run();
     let texts = window_texts(&h, "distribute");
     for want in [
         "Save for Distribution",
         "Original PSDs",
-        "Unused shelf assets",
+        "Unused assets",
         "Asset source paths",
         "Model reference",
         "Mesh maps",
@@ -1412,7 +1491,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
         "{texts:?}"
     );
     shot(&mut h, "distribute", "distribute_window_english");
-    // やめる: 窓を閉じて準備した写しを捨てる
+    // やめる: ウィンドウを閉じて準備した写しを捨てる
     let at = in_window(&h, "distribute", "Cancel");
     click(&mut h, at);
     assert!(!h.state().state.distribute.is_open());
@@ -1431,7 +1510,7 @@ fn the_replace_window_names_the_file_and_cancel_returns_to_the_list() {
     for want in ["置き換えるファイル", "Existing.ylp", "やめる", "置き換える"] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
-    // 窓の画像は撮らない（行の保存先の絶対パスが、実行ごとの一時フォルダで揺れる）
+    // ウィンドウの画像は撮らない（行の保存先の絶対パスが、実行ごとの一時フォルダで揺れる）
     h.state_mut().state.lang = Lang::En;
     h.run();
     let texts = window_texts(&h, "distribute-replace");
@@ -1441,7 +1520,7 @@ fn the_replace_window_names_the_file_and_cancel_returns_to_the_list() {
     let at = in_window(&h, "distribute-replace", "Cancel");
     click(&mut h, at);
     assert!(h.state().state.distribute.replace.is_none());
-    // 窓に戻る。やめれば準備した写しを捨てる
+    // ウィンドウに戻る。やめれば準備した写しを捨てる
     assert!(h.state().state.distribute.window_visible());
     apply(&mut h, Action::Distribute(DistributeAction::CancelWindow));
     assert!(!h.state().state.distribute.is_open());
@@ -1455,12 +1534,29 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     let dir = TempDir::new("remembered");
     let (mut s, _path) = opened(&dir);
     // 残した選択範囲を持つ（開いている文書の変更として）
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect { x0: 2, y0: 2, x1: 20, y1: 20, mode: SelectionCombine::Replace })));
+    s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
+        x0: 2,
+        y0: 2,
+        x1: 20,
+        y1: 20,
+        mode: SelectionCombine::Replace,
+    })));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Save("髪".into()))));
     assert_eq!(s.saved_selections().len(), 1);
     start(&mut s);
-    assert!(kinds(&s).contains(&Removal::SavedSelections), "{:?}", kinds(&s));
-    assert!(s.distribute.window().unwrap().selected().contains(&Removal::SavedSelections), "既定は除く");
+    assert!(
+        kinds(&s).contains(&Removal::SavedSelections),
+        "{:?}",
+        kinds(&s)
+    );
+    assert!(
+        s.distribute
+            .window()
+            .unwrap()
+            .selected()
+            .contains(&Removal::SavedSelections),
+        "既定は除く"
+    );
     // 既定（除く）: 写しは形式 7 で、残した選択範囲のエントリが無い。今の選択範囲は絵の一部として残る
     let dest = dir.path("Dist.ylp");
     s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
@@ -1472,7 +1568,9 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     assert!(copy.sets()[0].selection.is_some());
     // 切り替えを外すと残り、形式は 8
     start(&mut s);
-    s.apply(Action::Distribute(DistributeAction::Toggle(Removal::SavedSelections)));
+    s.apply(Action::Distribute(DistributeAction::Toggle(
+        Removal::SavedSelections,
+    )));
     let kept = dir.path("Kept.ylp");
     s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
     s.wait_distribute();
@@ -1481,7 +1579,7 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     assert_eq!(copy.saved_selections(&id).unwrap().items.len(), 1);
     // 開いているプロジェクトの残した選択範囲は、どちらでも変わらない
     assert_eq!(s.saved_selections().len(), 1);
-    // 窓の種類の名前は日英で出る
+    // ウィンドウの種類の名前は日英で出る
     for lang in Lang::ALL {
         assert!(!yolu_app::distribute::window::label(lang, Removal::SavedSelections).is_empty());
         assert!(!yolu_app::distribute::window::tooltip(lang, Removal::SavedSelections).is_empty());

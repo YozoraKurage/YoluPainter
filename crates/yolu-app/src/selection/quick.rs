@@ -12,6 +12,7 @@ use super::overlay::Tint;
 use super::pen;
 use crate::canvas::view::CanvasView;
 use crate::engine::SelectionMask;
+use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
 
 /// 赤い重ね（満量の画素の濃さ）。
@@ -28,23 +29,25 @@ impl AppState {
             return;
         }
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Selection,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         self.sel.quick = want;
         if !want {
             self.sel.quick_overlay.clear();
         }
-        self.message = if want {
-            self.lang.pick("クイックマスク", "Quick Mask").into()
-        } else {
-            self.lang
-                .pick("クイックマスクを終えました。", "Quick Mask off.")
-                .into()
-        };
+        self.info(
+            Source::Selection,
+            if want {
+                self.lang.pick("クイックマスク", "Quick Mask")
+            } else {
+                self.lang
+                    .pick("クイックマスクを終えました。", "Quick Mask off.")
+            },
+        );
     }
 }
 

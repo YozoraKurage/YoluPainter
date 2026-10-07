@@ -10,7 +10,7 @@
 //! - プロジェクトで使う: ファイルを読んで検証し、写しを .ylp の棚へ入れる（出どころは `library`。参照だけにしない）。別のスレッドで走り、
 //!   やめられる。同じ中身は 1 つ（棚の `add` が札で見分ける）。
 //! - ライブラリへ入れる: 棚の素材のバイト列を、種類のフォルダへ書く（別のスレッドで走り、やめられる）。同じバイト列があれば書かない。
-//! - 消す: 確かめてから、ファイルだけを消す。ほかのプロジェクトの写しと、置いた層は変わらない。
+//! - 消す: 確かめてから、ファイルだけを消す。ほかのプロジェクトの写しと、置いたレイヤーは変わらない。
 //! - ブラシは、今の `brushes/`（利用者のブラシ）をそのまま一覧に出す（ライブラリのフォルダへは写さない）。
 //!
 //! ③ Unity のプロジェクト（Live Link でつないでいる間だけ並ぶ置き場）を足すときの差し込み口:
@@ -42,10 +42,13 @@ use yolu_io::shelf::Shelf;
 use self::cache::Cache;
 use self::probe::{Limits, Target};
 use self::service::{Service, Work};
+use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::shelf::{
-    Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
+    Attempt, Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
+use crate::state::AppState;
+use crate::windows::CloseJob;
 
 /// ライブラリのファイルの項目の ID の前置き（プロジェクトの棚の ID は UUID、組み込みは `builtin:` なので重ならない）。
 pub const LIBRARY_PREFIX: &str = "library:";
@@ -59,7 +62,7 @@ pub const PROBES_PER_FRAME: usize = 8;
 pub const MAX_KNOWN: usize = 1024;
 
 /// 足せない種類のファイルの断りの文言（`reason` が言語ごとの短い文にする）。
-pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ足せるのは PNG と .ylsmart だけです";
+pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ追加できるのは PNG と .ylsmart だけです";
 /// 画像の読めない理由の文言（`reason` が言語ごとの短い文にする）。
 pub const REFUSAL_PNG: &str = "PNG として読めません";
 pub const REFUSAL_PNG_SIZE: &str = "画像の 1 辺は 1〜8192 です";
@@ -105,8 +108,8 @@ impl Source {
     pub fn tooltip(self, lang: Lang) -> &'static str {
         match self {
             Source::Project => lang.pick(
-                "このプロジェクトの棚（.ylp に保存される）",
-                "This project's shelf (saved in the .ylp)",
+                "このプロジェクトのアセット（.ylp に保存される）",
+                "This project's assets (saved in the .ylp)",
             ),
             Source::Library => lang.pick(
                 "個人のライブラリ（フォルダ。ほかのプロジェクトからも使える）",
@@ -114,49 +117,6 @@ impl Source {
             ),
         }
     }
-}
-
-/// ライブラリのフォルダ・画像の断りの短い文（そうでない断りは None）。
-pub fn known_reason(lang: Lang, e: &yolu_io::Error) -> Option<String> {
-    let m = e.to_string();
-    let has = |text: &str| m.contains(text);
-    let short = if has(files::REFUSAL_ROOT_LINK) {
-        lang.pick(
-            "ライブラリの場所がリンクです",
-            "The library folder is a link",
-        )
-    } else if has(files::REFUSAL_ROOT_NOT_FOLDER) {
-        lang.pick(
-            "ライブラリの場所がフォルダではありません",
-            "The library location is not a folder",
-        )
-    } else if has(files::REFUSAL_LINK) {
-        lang.pick("リンクはたどりません", "Links are not followed")
-    } else if has(files::REFUSAL_PATH) {
-        lang.pick("名前が使えません", "Name not allowed")
-    } else if has(files::REFUSAL_NOT_FILE) {
-        lang.pick("ファイルではありません", "Not a file")
-    } else if has(files::REFUSAL_TOO_LARGE) {
-        lang.pick("大きすぎます", "Too large")
-    } else if has(files::REFUSAL_EMPTY) {
-        lang.pick("空のファイルです", "Empty file")
-    } else if has(files::REFUSAL_NO_NAME) {
-        lang.pick("名前を決められません", "Cannot choose a name")
-    } else if has(REFUSAL_UNSUPPORTED) {
-        lang.pick("PNG と .ylsmart だけです", "PNG and .ylsmart only")
-    } else if has(REFUSAL_PNG_SIZE) {
-        lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
-    } else if has(REFUSAL_PNG) {
-        lang.pick(REFUSAL_PNG, "Not a readable PNG")
-    } else {
-        return None;
-    };
-    Some(short.to_owned())
-}
-
-/// 断りの理由の短い文（ライブラリのフォルダの断り・画像の断りは言語ごとに、ほかは棚の言い方）。
-pub fn reason(lang: Lang, e: &yolu_io::Error) -> String {
-    known_reason(lang, e).unwrap_or_else(|| crate::shelf::io_reason(lang, e))
 }
 
 /// ファイルの状態（長さと更新時刻）。変わったら、情報を作り直す。
@@ -247,9 +207,11 @@ impl Drop for ListingRun {
     }
 }
 
-/// 別のスレッドで走っているライブラリへの書き込み（ライブラリへ入れる・ファイルを足す）。
+/// 別のスレッドで走っているライブラリへの書き込み（ライブラリへ入れる・ファイルを足す・マテリアルとして保存する）。
 pub(crate) struct PendingWrite {
     pub(crate) name: String,
+    /// 押された操作。断られたときの知らせの「何が」をこれで決める（書き込みが途中で止まったときも）。
+    pub(crate) attempt: Attempt,
     pub(crate) rx: Receiver<ops::WriteDone>,
     /// やめたことをスレッドへ伝える旗（書き込みの区切りで切り上げる）。
     pub(crate) cancel: Arc<AtomicBool>,
@@ -270,6 +232,20 @@ fn probe_kind(kind: files::Kind) -> ItemKind {
     }
 }
 
+/// ライブラリのフォルダへの書き込み（閉じる前の確かめ・止める。やめた書き込みのスレッドも、終わるまで待つ）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    close: Some(|app| {
+        app.library
+            .write
+            .is_some()
+            .then_some(CloseJob::LibraryWrite)
+    }),
+    cancel: Some(AppState::cancel_library_write),
+    ..JobSpec::new("library.write", |app| {
+        app.library.busy_reason(app.lang).is_some()
+    })
+};
+
 /// 個人のライブラリの状態（一覧・見た結果・選び・書き込みの仕事）。
 pub struct LibraryState {
     /// 画面が見せている置き場。
@@ -277,10 +253,10 @@ pub struct LibraryState {
     /// 選んでいる項目の ID（`library:` + 相対パス、または `brush:` + ブラシの札）。
     pub selected: Option<String>,
     pub scroll: f32,
-    /// ライブラリの格子の範囲（このフレームで描いたときだけ入る。窓に落としたファイルが格子の上かを見る。
+    /// ライブラリの格子の範囲（このフレームで描いたときだけ入る。ウィンドウに落としたファイルが格子の上かを見る。
     /// 棚・チャンネルのタブを開いている間は入らない）。
     pub grid_rect: Option<egui::Rect>,
-    /// 消してよいか確かめている相対パス（確かめの窓は `YoluApp` が出す）。
+    /// 消してよいか確かめている相対パス（確認のウィンドウは `YoluApp` が出す）。
     pub pending_remove: Option<String>,
     /// 項目を見るときの上限（試験で小さくする）。
     pub limits: Limits,
@@ -347,11 +323,6 @@ impl LibraryState {
     /// サムネイルのキャッシュのフォルダ（None ならディスクには覚えない）。
     pub fn attach_cache(&mut self, dir: Option<PathBuf>) {
         self.cache = dir.map(|d| Arc::new(Cache::new(d)));
-    }
-
-    /// 上限を指定してキャッシュを付ける（試験用）。
-    pub fn attach_cache_with(&mut self, cache: Cache) {
-        self.cache = Some(Arc::new(cache));
     }
 
     pub fn cache(&self) -> Option<&Arc<Cache>> {
@@ -460,8 +431,12 @@ impl LibraryState {
         let spawned = std::thread::Builder::new()
             .name("yolu-library-list".into())
             .spawn(move || {
-                let result = files::list(&root, Some(&flag))
-                    .map_err(|e| Unreadable::pair(&reason(Lang::Ja, &e), &reason(Lang::En, &e)));
+                let result = files::list(&root, Some(&flag)).map_err(|e| {
+                    Unreadable::pair(
+                        &crate::lang::library_io_error(Lang::Ja, &e),
+                        &crate::lang::library_io_error(Lang::En, &e),
+                    )
+                });
                 let _ = tx.send(result);
                 if let Some(ctx) = repaint {
                     ctx.request_repaint();
@@ -551,10 +526,6 @@ impl LibraryState {
         self.truncated
     }
 
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
-    }
-
     pub fn entry(&self, rel: &str) -> Option<&files::Entry> {
         self.index.get(rel).map(|i| &self.entries[*i])
     }
@@ -583,7 +554,7 @@ impl LibraryState {
         known.info.inspected.texture(ctx, &format!("library:{rel}"))
     }
 
-    /// 見えている項目のうちまだ見ていないものを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。ブラシ・マテリアルはその場で決める。
+    /// 見えている項目のうちまだ見ていないものを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。ブラシはその場で決める。
     pub fn request_probes(&mut self, rels: &[String]) {
         self.clock += 1;
         self.visible_now = rels.iter().cloned().collect();
@@ -606,7 +577,7 @@ impl LibraryState {
                 len: entry.len,
             };
             let limits = self.limits;
-            if matches!(entry.kind, files::Kind::Brush | files::Kind::Material) {
+            if entry.kind == files::Kind::Brush {
                 let info = probe::probe(&target, limits, None, &service::Cancel::default());
                 self.known.insert(
                     rel.clone(),

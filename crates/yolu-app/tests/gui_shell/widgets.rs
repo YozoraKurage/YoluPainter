@@ -1,4 +1,4 @@
-//! 部品の振る舞いと見た目（Unity 版の PaintGui の部品を写したもの）。部品だけを並べた見本の窓で確かめる。
+//! 部品の振る舞いと見た目（Unity 版の PaintGui の部品を写したもの）。部品だけを並べた見本のウィンドウで確かめる。
 use crate::common;
 
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};

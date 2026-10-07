@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use serde_json::{json, Value};
-use yolu_cli::tools;
+use yolu_mcp::tools;
 use yolu_ops::value::base64_decode;
 use yolu_ops::{command_schema, commands, error_schema, parse_command, reply_schema, ErrorCode};
 
@@ -17,7 +17,7 @@ fn layer_id(fx: &Fixture, file: &str, name: &str) -> String {
         .unwrap()
         .iter()
         .find(|l| l["name"] == name)
-        .unwrap_or_else(|| panic!("層 {name}"))["id"]
+        .unwrap_or_else(|| panic!("レイヤー {name}"))["id"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -155,7 +155,7 @@ fn layer_and_effect_commands_edit_through_flags() {
     let path = fx.project("a.ylp");
     let base = layer_id(&fx, "a.ylp", "Base");
     let batch = format!(
-        "# 層と効果と値を足す\n{}\n{}\n{}\n{}\n",
+        "# レイヤーと効果と値を足す\n{}\n{}\n{}\n{}\n",
         json!({"command": "layer.add", "args": {"kind": "fill", "name": "Wash", "fill": {"Color": "#336699"}}}),
         json!({"command": "effect.add", "args": {"layer": base, "kind": "blur", "values": {"radius": 3}}}),
         json!({"command": "mask.add", "args": {"layer": "Tint"}}),
@@ -175,6 +175,66 @@ fn layer_and_effect_commands_edit_through_flags() {
     assert_eq!(wash["channels"][0]["fill"], "#336699");
     assert!(fx.ok(&["layer.get", "--file", "a.ylp", "--layer", "Tint"])["mask"].is_object());
     assert!(path.is_file());
+}
+
+/// 0.5.0 のフィルター・ジェネレーターが一覧に出て、フラグで値つきで足し、保存して別の起動で読める。
+#[test]
+fn the_new_filters_and_generators_are_listed_and_added_through_flags() {
+    let fx = Fixture::new("new-kinds");
+    fx.project("a.ylp");
+    let kinds = fx.ok(&["effect.list_kinds", "--file", "a.ylp"]);
+    let ids: Vec<&str> = kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["id"].as_str().unwrap())
+        .collect();
+    for id in [
+        "slope_blur",
+        "morphology",
+        "glow",
+        "pattern",
+        "light",
+        "mask_builder",
+    ] {
+        assert!(ids.contains(&id), "{id}: {ids:?}");
+    }
+    let out = fx.cli(&[
+        "effect.add",
+        "--file",
+        "a.ylp",
+        "--layer",
+        "Base",
+        "--kind",
+        "glow",
+        "--values.radius",
+        "12",
+        "--channels",
+        "Color",
+        "--save",
+    ]);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let out = fx.cli(&[
+        "effect.add",
+        "--file",
+        "a.ylp",
+        "--layer",
+        "Base",
+        "--kind",
+        "pattern",
+        "--values.shape",
+        "checker",
+        "--save",
+    ]);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let layer = fx.ok(&["layer.get", "--file", "a.ylp", "--layer", "Base"]);
+    let effects = layer["effects"].as_array().unwrap();
+    assert!(effects
+        .iter()
+        .any(|e| e["kind"] == "glow" && e["values"]["radius"] == 12));
+    assert!(effects
+        .iter()
+        .any(|e| e["kind"] == "pattern" && e["values"]["shape"] == "checker"));
 }
 
 #[test]
@@ -262,7 +322,7 @@ fn preview_embeds_the_png_or_writes_it_with_out() {
     let written = file_bytes(&fx.path("shot.png"));
     assert_eq!(written, png, "--out の PNG は埋め込みと同じ画素");
     assert_eq!(out["png_file"], fx.path("shot.png").display().to_string());
-    // 道具のほかの命令に --out は付けない
+    // ツールのほかの命令に --out は付けない
     let (code, _) = fx.fails(&["doc.info", "--file", "a.ylp", "--out", "x.png"]);
     assert_eq!(code, 2);
     // 画像の大きさの範囲は yolu-ops が断る
@@ -706,13 +766,13 @@ fn mcp_refuses_the_options_that_choose_a_file() {
 }
 
 #[test]
-fn an_unusable_link_name_is_refused_by_mcp_as_by_the_commands() {
-    // 使えない名前を鍵のファイル探しへ渡すと「アプリが待ち受けていない」という誤った直し方になるので、起こす前に断る
-    let fx = Fixture::new("link-name");
-    for name in ["../x", "a/b", "", "x y", &"n".repeat(65)] {
+fn an_unusable_port_is_refused_by_mcp_as_by_the_commands() {
+    // 1024 より下・番号でない物は、つなぐ前に断る（「アプリが待ち受けていない」という誤った直し方にしない）
+    let fx = Fixture::new("port");
+    for port in ["0", "80", "1023", "65536", "x", ""] {
         for args in [
-            vec!["mcp", "--link-name", name],
-            vec!["doc.info", "--link-name", name],
+            vec!["mcp", "--port", port],
+            vec!["doc.info", "--port", port],
         ] {
             let (code, error) = fx.fails(&args);
             assert_eq!(
@@ -722,4 +782,138 @@ fn an_unusable_link_name_is_refused_by_mcp_as_by_the_commands() {
             );
         }
     }
+}
+
+/// アクションのファイルを書く。
+fn write_action(fx: &Fixture, file: &str, commands: Value) {
+    let text = json!({"format": 1, "name": "Test action", "commands": commands}).to_string();
+    std::fs::write(fx.path(file), text).unwrap();
+}
+
+#[test]
+fn run_action_applies_an_action_file_to_a_ylp_and_saves_only_with_save() {
+    let fx = Fixture::new("run-action");
+    let path = fx.project("a.ylp");
+    let before = file_bytes(&path);
+    write_action(
+        &fx,
+        "wash.json",
+        json!([
+            {"command": "layer.add", "args": {"kind": "fill", "name": "Wash", "fill": {"Color": "#336699"}, "above": "Base"}},
+            {"command": "layer.set", "args": {"layer": "$created:1", "opacity": 0.5}},
+            {"command": "effect.add", "args": {"layer": "$created:1", "kind": "invert"}},
+            {"command": "effect.set", "args": {"layer": "$created:1", "effect": "$created:2", "strength": 0.25}},
+        ]),
+    );
+    let out = fx.ok(&["run-action", "wash.json", "--file", "a.ylp"]);
+    assert_eq!(out["action"], "Test action");
+    assert_eq!(out["reply"], "action");
+    let steps = out["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 4);
+    assert_eq!(steps[1]["layer"], steps[0]["layer"]);
+    assert!(steps[2]["effect"].is_string());
+    assert_eq!(out["undo_count"], 1, "全部で 1 段");
+    assert_eq!(
+        file_bytes(&path),
+        before,
+        "--save が無ければファイルは変わらない"
+    );
+    let out = fx.ok(&["run_action", "wash.json", "--file", "a.ylp", "--save"]);
+    assert_eq!(out["saved"]["reply"], "saved");
+    let layer = fx.ok(&["layer.get", "--file", "a.ylp", "--layer", "Wash"]);
+    assert_eq!(layer["opacity"], 0.5);
+    assert_eq!(layer["effects"][0]["strength"], 0.25);
+}
+
+#[test]
+fn run_action_stops_at_the_refused_command_and_saves_nothing() {
+    let fx = Fixture::new("run-action-fail");
+    let path = fx.project("a.ylp");
+    let before = file_bytes(&path);
+    write_action(
+        &fx,
+        "bad.json",
+        json!([
+            {"command": "layer.set", "args": {"layer": "Base", "opacity": 0.1}},
+            {"command": "layer.set", "args": {"layer": "NoSuchLayer", "opacity": 0.9}},
+        ]),
+    );
+    let (code, error) = fx.fails(&["run-action", "bad.json", "--file", "a.ylp", "--save"]);
+    assert_eq!(code, 1);
+    assert_eq!(error["code"], "not_found");
+    assert_eq!(error["data"]["index"], 1);
+    assert_eq!(error["data"]["completed"], 1);
+    assert_eq!(file_bytes(&path), before);
+    // .ylp には選んでいたレイヤーが入っていない
+    write_action(
+        &fx,
+        "selected.json",
+        json!([{"command": "mask.add", "args": {"layer": "$selected"}}]),
+    );
+    let (code, error) = fx.fails(&["run-action", "selected.json", "--file", "a.ylp"]);
+    assert_eq!((code, error["code"].as_str().unwrap()), (1, "not_found"));
+    // 読めない・形の違う・入れられない命令のファイルは、当てる前に断る
+    std::fs::write(fx.path("broken.json"), "{ not json").unwrap();
+    let (code, error) = fx.fails(&["run-action", "broken.json", "--file", "a.ylp"]);
+    assert_eq!(
+        (code, error["code"].as_str().unwrap()),
+        (1, "invalid_project")
+    );
+    write_action(
+        &fx,
+        "save.json",
+        json!([{"command": "save", "args": {"confirm": true}}]),
+    );
+    let (code, error) = fx.fails(&["run-action", "save.json", "--file", "a.ylp"]);
+    assert_eq!((code, error["code"].as_str().unwrap()), (1, "unsupported"));
+    std::fs::write(
+        fx.path("v2.json"),
+        json!({"format": 2, "name": "x", "commands": []}).to_string(),
+    )
+    .unwrap();
+    let (code, error) = fx.fails(&["run-action", "v2.json", "--file", "a.ylp"]);
+    assert_eq!(
+        (code, error["code"].as_str().unwrap()),
+        (2, "unsupported_version")
+    );
+    let (code, _) = fx.fails(&["run-action", "missing.json", "--file", "a.ylp"]);
+    assert_eq!(code, 2);
+    let (code, _) = fx.fails(&["run-action", "--file", "a.ylp"]);
+    assert_eq!(code, 2, "ファイルが無い");
+    let (code, _) = fx.fails(&["run-action", "a.json", "b.json", "--file", "a.ylp"]);
+    assert_eq!(code, 2, "ファイルは 1 つ");
+    assert_eq!(file_bytes(&path), before);
+}
+
+#[test]
+fn a_batch_can_point_at_what_it_created() {
+    let fx = Fixture::new("batch-created");
+    fx.project("a.ylp");
+    let lines = format!(
+        "{}\n{}\n{}\n",
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "New"}}),
+        json!({"command": "effect.add", "args": {"layer": "$created:1", "kind": "blur"}}),
+        json!({"command": "effect.set", "args": {"layer": "$created:1", "effect": "$created:2", "enabled": false}}),
+    );
+    let out = fx.cli_in(&["batch", "-", "--file", "a.ylp"], &lines);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let v: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["replies"][2]["layer"], v["replies"][0]["layer"]);
+    assert_eq!(v["replies"][2]["effect"], v["replies"][1]["effect"]);
+    // 番号の外は、何番目かを言って断る
+    let lines = format!(
+        "{}\n",
+        json!({"command": "mask.add", "args": {"layer": "$created:1"}})
+    );
+    let out = fx.cli_in(&["batch", "-", "--file", "a.ylp"], &lines);
+    assert_eq!(out.code, 1);
+    let v: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["error"]["code"], "not_found");
+    assert_eq!(v["error"]["data"]["index"], 0);
+    // 1 つだけの命令では使えない
+    let (code, error) = fx.fails(&["mask.add", "--file", "a.ylp", "--layer", "$created:1"]);
+    assert_eq!(
+        (code, error["code"].as_str().unwrap()),
+        (2, "invalid_request")
+    );
 }

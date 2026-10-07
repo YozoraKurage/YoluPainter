@@ -21,27 +21,29 @@ yolu-core.workspace = true
 yolu-gpu.workspace = true
 yolu-io.workspace = true
 yolu-model.workspace = true
-yolu-ops.workspace = true   # 外からの操作（CLI・MCP）の命令。起動中のアプリのホストは `ops_host`
+yolu-ops.workspace = true   # 外からの操作（MCP・コマンドライン）の命令。起動中のアプリのホストは `ops_host`
+yolu-mcp.workspace = true   # 外からの操作の受け口（127.0.0.1 の MCP。`mcp_server`）
+tokio = { version = "1", default-features = false, features = ["sync"] }   # MIT（受け口のスレッドから画面のスレッドへの一回きりの返事の口。yolu-mcp が使う版）
 yolu-protocol.workspace = true
 yolu-update.workspace = true   # 更新の確かめ（署名・版・SHA-256・大きさ）。通信は `update/http.rs`
 serde = "1"   # MIT OR Apache-2.0（ドックのタブの名前の保存。yolu-io・yolu-update が既に使っている）
-serde_json = "1"   # MIT OR Apache-2.0（ドックの並びと窓の位置の保存。yolu-io が既に使っている）
+serde_json = "1"   # MIT OR Apache-2.0（ドックの並びとウィンドウの位置の保存。yolu-io が既に使っている）
 half = "2.7"   # MIT OR Apache-2.0（環境のキューブを half float で上げる。wgpu の naga が既に使っている版）
 rayon = "1.12"   # MIT OR Apache-2.0（環境の畳み込みを並べる。yolu-core が既に使っている）
 bevy_mikktspace = "1.0"   # Zlib AND (MIT OR Apache-2.0)（接線。Unity の RecalculateTangents と同じ MikkTSpace。依存なし・unsafe なし）
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "tga", "jpeg"] }   # Live Link の元の絵（PNG・TGA・JPG）を読む。jpeg は zune-jpeg（MIT OR Apache-2.0 OR Zlib）
 png = "0.18"   # MIT OR Apache-2.0（取り込んだ筆先の画像を、名前つきの灰色の PNG で置く。yolu-io が既に使っている版）
 sha2 = "0.10"   # MIT OR Apache-2.0（筆先の画像を内容の SHA-256 で名づける。yolu-io が既に使っている版）
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
-interprocess = "2.4"   # 0BSD OR Apache-2.0（Live Link の待ち受け）
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶ窓。Windows は OS の窓、Linux は xdg-desktop-portal）
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶウィンドウ。Windows は OS のウィンドウ、Linux は xdg-desktop-portal）
 
 [target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }   # Apache-2.0（eframe が使う版と同じ。起動のウィンドウを X11 に決めるため。新しい crate ではない）
 libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの記録。新しい crate ではなく、yolu-protocol も使う）
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Shutdown", "Win32_System_Threading"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_Globalization"] }
 
 [dev-dependencies]
 pollster = "1"   # 既存の許諾確認済み依存。試験用の描画器選択で非同期の wgpu 初期化を待つ
@@ -49,8 +51,7 @@ egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
 ed25519-dalek = "2.2"   # 試験で、使い捨ての鍵で更新情報に署名する（本物の鍵は使わない）
 hex = "0.4"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "serialize"] }   # MIT。試験で、合成の CLIP STUDIO のブラシ（.sut。SQLite）を一から組む（yolu-io が読み取りに使う版と同じ）
-yolu-bridge = { path = "../yolu-bridge" }   # 試験で Unity の役（本物のブリッジの C の口）を別のプロセスで動かす
-yolu-cli = { path = "../yolu-cli" }   # 試験で、外からの操作の客（CLI・MCP が使う起動中のアプリへの道）を本物の受け口へつなぐ
+yolu-cli = { path = "../yolu-cli" }   # 試験で、外からの操作の客（コマンドラインの起動中のアプリへの道）を本物の受け口へつなぐ
 
 [build-dependencies]
 winresource = "0.1.31"

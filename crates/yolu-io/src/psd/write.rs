@@ -48,8 +48,8 @@ impl Record<'_> {
         !self.divider && self.layer.kind == LayerKind::Raster
     }
 }
-/// 層の並びを PSD の記録の順（下から上。グループは区切り・中身・グループ自身）に並べる。`pixels` が false のときは、画素に関わる確かめ（矩形・
-/// 画素数・マスクの値）をしない（流して書くときの層の骨組みは画素を持たない。画素を渡すときに確かめる）。
+/// レイヤーの並びを PSD の記録の順（下から上。グループは区切り・中身・グループ自身）に並べる。`pixels` が false のときは、画素に関わる確かめ（矩形・
+/// 画素数・マスクの値）をしない（流して書くときのレイヤーの骨組みは画素を持たない。画素を渡すときに確かめる）。
 fn flatten<'a>(
     layers: &'a [Layer],
     depth: usize,
@@ -247,7 +247,14 @@ fn preflight<'a>(
         "統合RGBAの大きさが不一致です",
     )?;
     let mut records = Vec::new();
-    flatten(&d.layers, 0, &mut records, &mut HashSet::new(), limits, true)?;
+    flatten(
+        &d.layers,
+        0,
+        &mut records,
+        &mut HashSet::new(),
+        limits,
+        true,
+    )?;
     let mut pixels = canvas;
     let mut metadata = 0u64;
     let mut info = 2u64;
@@ -303,31 +310,31 @@ fn preflight<'a>(
     }
     Ok((records, total.min(usize::MAX as u64) as usize))
 }
-/// 層・マスク・統合画像のチャンネルを書く圧縮。
+/// レイヤー・マスク・統合画像のチャンネルを書く圧縮。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Compression {
     /// 無圧縮。Unity 版の書き手と同じバイト列になる（厳密な書き出しの照合はこれ）。
     #[default]
     Raw,
-    /// RLE（PackBits。Photoshop の既定）。層・マスクのチャンネルは 1 つずつ、圧縮して小さくならなければ無圧縮のまま書く。統合画像は全チャンネルで
+    /// RLE（PackBits。Photoshop の既定）。レイヤー・マスクのチャンネルは 1 つずつ、圧縮して小さくならなければ無圧縮のまま書く。統合画像は全チャンネルで
     /// 1 つの圧縮なので、小さくならなければ無圧縮で書く。
     Rle,
 }
 
-/// 書き出しが予算・形式の上限で断る理由（層の名前つき。画面は種類から画面の言語の文を作る。`Error::Budget` の文は [`Overrun::message`]）。
+/// 書き出しが予算・形式の上限で断る理由（レイヤーの名前つき。画面は種類から画面の言語の文を作る。`Error::Budget` の文は [`Overrun::message`]）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Overrun {
     /// キャンバスの画素の数が予算に入らない。
     Canvas { width: u32, height: u32 },
     /// キャンバスの辺が上限（`limit`）を超える。PSD の形式の上限は 30000 で、それより小さい上限（予算を決めない既定の上限）なら予算を決めれば書ける。
     Side { width: u32, height: u32, limit: u32 },
-    /// 層の記録（グループは区切りの記録も要る）が上限を超える。
+    /// レイヤーの記録（グループは区切りの記録も要る）が上限を超える。
     Layers { count: usize, limit: usize },
-    /// 全層の画素をメモリに組む書き出し（Normal の焼き込み・平らの 1 枚）で、層を足すと画素の予算を超える。`layer` が空なら 1 枚の作業の領域。
+    /// 全レイヤーの画素をメモリに組む書き出し（Normal の焼き込み・平らの 1 枚）で、レイヤーを足すと画素の予算を超える。`layer` が空なら 1 枚の作業の領域。
     Memory { layer: String },
-    /// 層の付加情報（名前・調整の設定）の合計が予算を超える。
+    /// レイヤーの付加情報（名前・調整の設定）の合計が予算を超える。
     Extra,
-    /// PSD は 1 ファイル 2 GiB まで。この層を書くと超える（圧縮したあとの大きさ。`layer` が空なら統合画像）。
+    /// PSD は 1 ファイル 2 GiB まで。このレイヤーを書くと超える（圧縮したあとの大きさ。`layer` が空なら統合画像）。
     FileSize { layer: String },
 }
 impl Overrun {
@@ -339,7 +346,7 @@ impl Overrun {
             _ => true,
         }
     }
-    /// 日本語の診断（層の名前つき）。
+    /// 日本語の診断（レイヤーの名前つき）。
     pub fn message(&self) -> String {
         match self {
             Self::Canvas { width, height } => {
@@ -356,13 +363,13 @@ impl Overrun {
             Self::Memory { layer } if layer.is_empty() => {
                 "画素の予算を超えます（1 枚ぶんの作業の領域）".into()
             }
-            Self::Memory { layer } => format!("層「{layer}」を足すと画素の予算を超えます"),
-            Self::Extra => "層の付加情報（名前・調整の設定）が予算を超えます".into(),
+            Self::Memory { layer } => format!("レイヤー「{layer}」を足すと画素の予算を超えます"),
+            Self::Extra => "レイヤーの付加情報（名前・調整の設定）が予算を超えます".into(),
             Self::FileSize { layer } if layer.is_empty() => {
                 "統合画像を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです".into()
             }
             Self::FileSize { layer } => format!(
-                "層「{layer}」を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです"
+                "レイヤー「{layer}」を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです"
             ),
         }
     }
@@ -373,7 +380,7 @@ impl From<Overrun> for Error {
     }
 }
 
-/// 書き出しの失敗。予算・形式の上限は種類を保つ（画面が層の名前つきの文とツールチップを作る）。ほかは [`Error`]（取消は `Error::Core(Cancelled)`）。
+/// 書き出しの失敗。予算・形式の上限は種類を保つ（画面がレイヤーの名前つきの文とツールチップを作る）。ほかは [`Error`]（取消は `Error::Core(Cancelled)`）。
 #[derive(Debug)]
 pub enum ExportError {
     Overrun(Overrun),
@@ -418,14 +425,14 @@ pub(super) type XResult<T> = std::result::Result<T, ExportError>;
 pub struct Written {
     /// ファイルの大きさ（バイト）。
     pub bytes: u64,
-    /// PSD の層の数（グループの区切りの記録を除く。取り込んだ文書の層の数と同じになる）。
+    /// PSD のレイヤーの数（グループの区切りの記録を除く。取り込んだ文書のレイヤーの数と同じになる）。
     pub layers: usize,
     /// 書いたバイト列の照合用の値（読み戻したファイルが書いたとおりか、[`Checksum::matches`] で確かめる）。
     pub checksum: Checksum,
 }
 
-/// 書いたファイルの照合用の値（CRC-32 を 2 つと長さ）。流して書くと、先頭（ヘッダーと層の記録の表）は画素から決まる欄を最後に確定した値で書き直すので、
-/// 先頭と、その後ろ（層の画素・統合画像。書いた順のまま）を別々に数える。構造を壊さない画素のビット化け・書き込みの取り違えを読み戻しで見つける
+/// 書いたファイルの照合用の値（CRC-32 を 2 つと長さ）。流して書くと、先頭（ヘッダーとレイヤーの記録の表）は画素から決まる欄を最後に確定した値で書き直すので、
+/// 先頭と、その後ろ（レイヤーの画素・統合画像。書いた順のまま）を別々に数える。構造を壊さない画素のビット化け・書き込みの取り違えを読み戻しで見つける
 /// （バイト単位の完全な比較ではなく CRC-32 なので、化けを 2^-32 の確率で見逃す）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Checksum {
@@ -464,6 +471,138 @@ impl Checksum {
         }
         Ok(pos == self.len && head.finalize() == self.head && tail.finalize() == self.tail)
     }
+
+    /// 読み戻しと照合を 1 度の読みで行う読み手（[`Recount`]）。ファイルの先頭にある `reader` を包み、通ったバイトを
+    /// [`Checksum::matches`] と同じ形で数える。
+    pub fn recount<R: std::io::Read + Seek>(&self, reader: R) -> Recount<R> {
+        Recount {
+            inner: reader,
+            expected: *self,
+            pos: 0,
+            counted: 0,
+            head: crc32fast::Hasher::new(),
+            tail: crc32fast::Hasher::new(),
+            deferred: None,
+        }
+    }
+}
+
+/// 通ったバイトを、ファイルの先頭から順に 1 度ずつ数える読み手（[`Checksum::recount`]）。包んだ読み手の利用者（読み戻しの確かめ）が
+/// 先へ飛んだ区間は、次に読むときに飛んだ所から読んで数え、戻って読み直した所は数え直さない。[`Recount::finish`] が残りを最後まで
+/// 読んで数え、書いたバイト列と照らす。ファイルのどのバイトも 1 度ずつ数えるので、[`Checksum::matches`] でファイルをもう 1 度
+/// 読むのと同じ照合になる。
+pub struct Recount<R> {
+    inner: R,
+    expected: Checksum,
+    /// 利用者から見た今の位置（包んだ読み手の位置と同じ）。
+    pos: u64,
+    /// 先頭から続けて数え終えたバイト数。
+    counted: u64,
+    head: crc32fast::Hasher,
+    tail: crc32fast::Hasher,
+    /// 飛んだ区間を数えるための読みの失敗。利用者の読みは続け、照合（`finish`）の失敗にする（その区間は照合だけが読む所なので）。
+    deferred: Option<std::io::Error>,
+}
+
+impl<R: std::io::Read + Seek> Recount<R> {
+    /// 先頭からの位置 `at` から始まるバイト列のうち、まだ数えていない所を数える（数え終えた所の続きのときだけ）。
+    fn count(&mut self, at: u64, bytes: &[u8]) {
+        let end = at + bytes.len() as u64;
+        if self.deferred.is_some() || end <= self.counted || at > self.counted {
+            return;
+        }
+        let fresh = &bytes[(self.counted - at) as usize..];
+        let in_head = self
+            .expected
+            .head_len
+            .saturating_sub(self.counted)
+            .min(fresh.len() as u64) as usize;
+        self.head.update(&fresh[..in_head]);
+        self.tail.update(&fresh[in_head..]);
+        self.counted = end;
+    }
+
+    /// 数え終えた所から `to` まで（ファイルの終わりが先ならそこまで）を読んで数える。包んだ読み手の位置は読んだ所の終わり。
+    fn count_up_to(&mut self, to: u64, cancel: Option<&AtomicBool>) -> std::io::Result<()> {
+        if self.counted >= to {
+            return Ok(());
+        }
+        self.inner.seek(SeekFrom::Start(self.counted))?;
+        let mut buf = vec![0u8; (to - self.counted).min(256 * 1024) as usize];
+        while self.counted < to {
+            if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                return Err(std::io::Error::other(RecountCancelled));
+            }
+            let want = (to - self.counted).min(buf.len() as u64) as usize;
+            let n = match self.inner.read(&mut buf[..want]) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            let at = self.counted;
+            self.count(at, &buf[..n]);
+            // 書いたより長いファイルは、終わりまで読まずに違うと決まる
+            if self.counted > self.expected.len {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// 残り（数えていない所からファイルの終わりまで）を読んで数え、書いたバイト列と一致するか（長さ・先頭・後ろの 3 つが合うときだけ
+    /// true）。飛んだ区間を読めなかったときは、その誤り。取消は `Error::Core(Cancelled)`。
+    pub fn finish(mut self, cancel: Option<&AtomicBool>) -> Result<bool> {
+        if let Some(e) = self.deferred.take() {
+            return Err(e.into());
+        }
+        if let Err(e) = self.count_up_to(u64::MAX, cancel) {
+            return Err(if e.get_ref().is_some_and(|i| i.is::<RecountCancelled>()) {
+                Error::Core(yolu_core::CoreError::Cancelled)
+            } else {
+                e.into()
+            });
+        }
+        let Checksum {
+            len, head, tail, ..
+        } = self.expected;
+        Ok(self.counted == len && self.head.finalize() == head && self.tail.finalize() == tail)
+    }
+}
+
+/// 照合の読みの取消（`Recount::finish` の中だけで使う印）。
+#[derive(Debug)]
+struct RecountCancelled;
+impl std::fmt::Display for RecountCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cancelled")
+    }
+}
+impl std::error::Error for RecountCancelled {}
+
+impl<R: std::io::Read + Seek> std::io::Read for Recount<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let at = self.pos;
+        if self.deferred.is_none() && self.counted < at {
+            // 飛んだ区間を数えてから戻る
+            let caught = self.count_up_to(at, None);
+            if let Err(e) = caught {
+                self.deferred = Some(e);
+            }
+            self.inner.seek(SeekFrom::Start(at))?;
+        }
+        let n = self.inner.read(buf)?;
+        self.count(at, &buf[..n]);
+        self.pos = at + n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: std::io::Read + Seek> Seek for Recount<R> {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        self.pos = self.inner.seek(to)?;
+        Ok(self.pos)
+    }
 }
 
 /// 書いたバイトを CRC-32 に数えながら中へ渡す（先頭の書き直しより後ろの、順に書く区間）。
@@ -482,7 +621,7 @@ impl<W: Write> Write for Tail<'_, W> {
     }
 }
 
-/// 流して書くときに、1 つの記録（層・区切り）の画素を渡す形。画素は渡したあとすぐ捨てられる。
+/// 流して書くときに、1 つの記録（レイヤー・区切り）の画素を渡す形。画素は渡したあとすぐ捨てられる。
 pub(super) struct Region<'a> {
     pub left: i32,
     pub top: i32,
@@ -514,11 +653,8 @@ pub(super) struct StreamOptions<'a> {
     pub cancel: Option<&'a AtomicBool>,
 }
 
-/// 記録の骨組みだけの層の並び（画素を持たない層）を、書く順（PSD の記録の順）に並べる。構造・名前・ID・調整の確かめだけで、画素は渡すときに確かめる。
-pub(super) fn skeleton_records<'a>(
-    d: &'a Document,
-    limits: &Limits,
-) -> Result<Vec<Record<'a>>> {
+/// 記録の骨組みだけのレイヤーの並び（画素を持たないレイヤー）を、書く順（PSD の記録の順）に並べる。構造・名前・ID・調整の確かめだけで、画素は渡すときに確かめる。
+pub(super) fn skeleton_records<'a>(d: &'a Document, limits: &Limits) -> Result<Vec<Record<'a>>> {
     limits.validate()?;
     rectangle(0, 0, d.width, d.height, limits)?;
     check(
@@ -526,7 +662,14 @@ pub(super) fn skeleton_records<'a>(
         "PSD は空のキャンバス・レイヤー一覧を持てません",
     )?;
     let mut records = Vec::new();
-    flatten(&d.layers, 0, &mut records, &mut HashSet::new(), limits, false)?;
+    flatten(
+        &d.layers,
+        0,
+        &mut records,
+        &mut HashSet::new(),
+        limits,
+        false,
+    )?;
     Ok(records)
 }
 
@@ -537,7 +680,7 @@ struct Patch {
     mask_at: Option<usize>,
 }
 
-/// 層の記録 1 つを、画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形と既定値）を仮の値にして書く。付加情報の大きさを返す。
+/// レイヤーの記録 1 つを、画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形と既定値）を仮の値にして書く。付加情報の大きさを返す。
 fn emit_record(r: &Record, info: &mut Vec<u8>) -> (Patch, u64) {
     let l = r.layer;
     let rect_at = info.len();
@@ -680,7 +823,7 @@ pub(super) fn packbits_row(row: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// チャンネルを書く間の作業の置き場（層ごとに作り直さない）。
+/// チャンネルを書く間の作業の置き場（レイヤーごとに作り直さない）。
 #[derive(Default)]
 struct Scratch {
     row: Vec<u8>,
@@ -765,7 +908,10 @@ fn write_merged<W: Write>(
     cancel: Option<&AtomicBool>,
 ) -> XResult<u64> {
     let plane = |c: usize, y: usize, row: &mut [u8]| {
-        for (d, px) in row.iter_mut().zip(merged[y * w * 4..(y + 1) * w * 4].as_chunks::<4>().0) {
+        for (d, px) in row
+            .iter_mut()
+            .zip(merged[y * w * 4..(y + 1) * w * 4].as_chunks::<4>().0)
+        {
             *d = px[c]
         }
     };
@@ -830,8 +976,8 @@ fn check_mask_region(m: &MaskRegion, limits: &Limits) -> Result<()> {
     )
 }
 
-/// PSD を流して書く。先に、ヘッダーと全層の記録（画素から決まる欄は仮の値）を書き、層の画素を記録の順に 1 枚ずつ `supply` から受けて圧縮して書き
-/// （受けた画素はすぐ捨てる。メモリには層 1 枚ぶんと記録の表しか持たない）、最後に統合画像（`composite`。層を書いたあとに作る）を書いて、先頭へ戻って
+/// PSD を流して書く。先に、ヘッダーと全レイヤーの記録（画素から決まる欄は仮の値）を書き、レイヤーの画素を記録の順に 1 枚ずつ `supply` から受けて圧縮して書き
+/// （受けた画素はすぐ捨てる。メモリにはレイヤー 1 枚ぶんと記録の表しか持たない）、最後に統合画像（`composite`。レイヤーを書いたあとに作る）を書いて、先頭へ戻って
 /// 画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形・各区間の長さ）を確定した記録で書き直す。書いたファイルの大きさと、書いたバイト列の照合用の値を返す。
 /// `out` は書き始めの位置が先頭で、書き直しのために Seek が要る。途中で失敗したら、書きかけを残さないのは呼び手の仕事（一時ファイルを消す）。
 pub(super) fn stream<'a, W: Write + Seek>(
@@ -855,7 +1001,7 @@ pub(super) fn stream<'a, W: Write + Seek>(
         "レイヤー記録数の予算超過",
     )?;
     let (w, h) = (width as usize, height as usize);
-    // ヘッダー・色モードデータ（空）・画像リソース（空）・レイヤーとマスクの情報の長さ・レイヤー情報の長さ・層の数・層の記録
+    // ヘッダー・色モードデータ（空）・画像リソース（空）・レイヤーとマスクの情報の長さ・レイヤー情報の長さ・レイヤーの数・レイヤーの記録
     let mut head = Vec::new();
     head.extend(b"8BPS");
     head.u16(1);
@@ -907,9 +1053,14 @@ pub(super) fn stream<'a, W: Write + Seek>(
     for (i, r) in records.iter().enumerate() {
         cancelled(opts.cancel)?;
         let wanted = r.raster() || r.mask().is_some();
-        let supplied = if wanted { supply(i)? } else { Supplied::default() };
+        let supplied = if wanted {
+            supply(i)?
+        } else {
+            Supplied::default()
+        };
         check(
-            supplied.raster.is_some() == r.raster() && supplied.mask.is_some() == r.mask().is_some(),
+            supplied.raster.is_some() == r.raster()
+                && supplied.mask.is_some() == r.mask().is_some(),
             "PSD に書く画素が記録と一致しません",
         )?;
         let patch = &patches[i];
@@ -938,7 +1089,10 @@ pub(super) fn stream<'a, W: Write + Seek>(
                         &mut sc,
                         opts.cancel,
                         |y, row| {
-                            for (d, px) in row.iter_mut().zip(rgba[y * rw * 4..(y + 1) * rw * 4].as_chunks::<4>().0) {
+                            for (d, px) in row
+                                .iter_mut()
+                                .zip(rgba[y * rw * 4..(y + 1) * rw * 4].as_chunks::<4>().0)
+                            {
                                 *d = px[c]
                             }
                         },
@@ -971,7 +1125,11 @@ pub(super) fn stream<'a, W: Write + Seek>(
             put_bounds(&mut head[at..], m.left, m.top, m.width, m.height);
             head[at + 16] = m.default_color
         }
-        for (k, len) in lens.iter().take(4 + usize::from(supplied.mask.is_some())).enumerate() {
+        for (k, len) in lens
+            .iter()
+            .take(4 + usize::from(supplied.mask.is_some()))
+            .enumerate()
+        {
             let at = patch.lens_at + k * 6 + 2;
             head[at..at + 4].copy_from_slice(&len.to_be_bytes())
         }
@@ -998,7 +1156,15 @@ pub(super) fn stream<'a, W: Write + Seek>(
         "統合RGBAの大きさが不一致です",
     )?;
     super::composite::matte(&mut merged);
-    pos += write_merged(&mut out, &merged, w, h, opts.compression, &mut sc, opts.cancel)?;
+    pos += write_merged(
+        &mut out,
+        &merged,
+        w,
+        h,
+        opts.compression,
+        &mut sc,
+        opts.cancel,
+    )?;
     drop(merged);
     too_big(pos, "")?;
     let tail = out.crc.finalize();
@@ -1082,7 +1248,7 @@ pub fn write(d: &Document, limits: &Limits) -> Result<Vec<u8>> {
     write_with(d, limits, Compression::Raw)
 }
 
-/// 文書を PSD のバイト列にする。`Compression::Raw` は Unity 版と同じバイト列、`Compression::Rle` は層・マスク・統合画像を RLE で書く。
+/// 文書を PSD のバイト列にする。`Compression::Raw` は Unity 版と同じバイト列、`Compression::Rle` はレイヤー・マスク・統合画像を RLE で書く。
 pub fn write_with(d: &Document, limits: &Limits, compression: Compression) -> Result<Vec<u8>> {
     let (_, total) = preflight(d, limits, compression)?;
     // 無圧縮は長さが決まっている。RLE は圧縮したあとの長さが分からないので、無圧縮の長さを上限にせず、小さく始めて伸ばす
@@ -1091,7 +1257,14 @@ pub fn write_with(d: &Document, limits: &Limits, compression: Compression) -> Re
         Compression::Rle => total.min(16 * 1024 * 1024),
     };
     let mut out = std::io::Cursor::new(Vec::with_capacity(capacity));
-    stream_document(&mut out, d, limits, compression, limits.max_output_bytes as u64, None)?;
+    stream_document(
+        &mut out,
+        d,
+        limits,
+        compression,
+        limits.max_output_bytes as u64,
+        None,
+    )?;
     let out = out.into_inner();
     // 無圧縮の長さは、書く前の確かめが数えた長さと一致する（書き手と確かめのずれを見つける）
     if compression == Compression::Raw {
@@ -1218,7 +1391,7 @@ fn adjustment_block(a: &Adjustment) -> ([u8; 4], Vec<u8>) {
             brightness,
             contrast,
         } => {
-            // 平均値は 127（旧式の式の入力。この道具の式は使わない）、Lab だけの印は 0、余白 1 バイト
+            // 平均値は 127（旧式の式の入力。このツールの式は使わない）、Lab だけの印は 0、余白 1 バイト
             for v in [brightness, contrast, 127] {
                 b.u16(v as u16)
             }

@@ -1,9 +1,9 @@
-//! プロパティの欄（Substance Painter の並び）: 選んでいる層の中身だけを出す。道具の設定は出さない（道具の設定は左のドックのサブツールのパネルの
-//! ツールプロパティ。どの道具を選んでいても、この欄は同じ層には同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
-//! 頭にタブ（ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、層の下の
+//! プロパティの欄（Substance Painter の並び）: 選んでいるレイヤーの中身だけを出す。ツールの設定は出さない（ツールの設定は左のドックのサブツールのパネルの
+//! ツールプロパティ。どのツールを選んでいても、この欄は同じレイヤーには同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
+//! 頭にタブ（ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、レイヤーの下の
 //! 効果の行を選んでいるときはその行の設定だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルとマテリアルの欄は `brush_props` 経由、
 //! レイヤーの欄は `layer_props`）。ブラシそのもの（一覧・ツールプロパティ・詳細）は左のドックのサブツールのパネル（`subtools`・`brushes`）と
-//! 詳細の窓（`brush_detail`）。値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には
+//! 詳細のウィンドウ（`brush_detail`）。値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には
 //! 名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
@@ -18,18 +18,18 @@ use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
 pub const TAB_ICONS: [&str; 3] = ["square", "layers", "tune"];
 
-/// 欄の文脈（選んでいる層で決まる。道具では決まらない）。
+/// 欄の文脈（選んでいるレイヤーで決まる。ツールでは決まらない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Context {
-    /// 描ける層（ペイントのレイヤーか、マスク）。
+    /// 描けるレイヤー（ペイントのレイヤーか、マスク）。
     Paint,
     /// 塗りつぶし・調整・グループの中身（これらには描けない）。
     Layer,
-    /// 層の下の効果の行（フィルター・Generator・アンカー）を選んでいる。タブは出さず、その行の設定だけ。
+    /// レイヤーの下の効果の行（フィルター・Generator・アンカー）を選んでいる。タブは出さず、その行の設定だけ。
     Effect,
 }
 
-/// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
+/// 今の文脈（マスクを選んでいればどのレイヤーでも描く文脈）。
 pub fn context(app: &AppState) -> Context {
     if crate::fx::props_visible(app) {
         return Context::Effect;
@@ -72,41 +72,6 @@ pub fn open_popup(
     });
 }
 
-/// 筆圧に従わせられるスライダー（2 行目の右にペンのボタン）。
-#[allow(clippy::too_many_arguments)]
-pub fn pen_slider(
-    ui: &mut Ui,
-    rows: &mut Rows,
-    id: &str,
-    spec: SliderSpec,
-    shown: f32,
-    pressure: &mut bool,
-    pen_tooltip: &str,
-) -> Option<f32> {
-    const PEN: f32 = 24.0;
-    let row = rows.slider_row();
-    let out = w::slider(ui, row, id, shown, &spec.inset(PEN + 4.0));
-    let button = Rect::from_min_size(
-        pos2(row.right() - PEN, row.bottom() - 20.0),
-        vec2(PEN, 20.0),
-    );
-    if w::icon_button(
-        ui,
-        button,
-        (id, "pen"),
-        "stylus",
-        pen_tooltip,
-        *pressure,
-        true,
-        15.0,
-    )
-    .clicked()
-    {
-        *pressure = !*pressure;
-    }
-    out.changed.then_some(out.value)
-}
-
 /// 大見出し（開閉を覚える）。返すのは (開いているか, 既定に戻す頼み)。
 pub fn section(
     ui: &mut Ui,
@@ -122,7 +87,7 @@ pub fn section(
     let header = rows.full_row(t::PANEL_HEADER_HEIGHT, 5.0);
     let out = w::section_header(ui, header, ("section", key), title, open, Some(icon), reset);
     if out.open != open {
-        app.sections.insert(key, out.open);
+        app.ui.sections.insert(key, out.open);
     }
     if out.open {
         rows.indent = t::SECTION_INDENT;
@@ -162,7 +127,7 @@ pub fn subsection(
         .clicked();
     }
     if next != open {
-        app.sections.insert(key, next);
+        app.ui.sections.insert(key, next);
     }
     rows.indent = t::SECTION_INDENT + 10.0;
     (next, reset_clicked)
@@ -283,7 +248,18 @@ pub fn choice_buttons(ui: &mut Ui, rows: &mut Rows, items: &[ChoiceButton]) -> O
         let row = rows.row(24.0, GAP);
         let cells = Rows::split(row, cols, GAP);
         for (i, (cell, b)) in cells.iter().zip(line).enumerate() {
-            if w::button(ui, *cell, (b.id, "choice"), b.label, b.selected, b.enabled, b.tooltip, None).clicked() {
+            if w::button(
+                ui,
+                *cell,
+                (b.id, "choice"),
+                b.label,
+                b.selected,
+                b.enabled,
+                b.tooltip,
+                None,
+            )
+            .clicked()
+            {
                 clicked = Some(line_no * cols + i);
             }
         }
@@ -316,7 +292,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let context = context(app);
     let mut top = r.top();
-    let mut tab = app.property_tab.min(TAB_ICONS.len() - 1);
+    let mut tab = app.ui.property_tab.min(TAB_ICONS.len() - 1);
     if context == Context::Paint {
         let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
         let labels = tab_labels(app);
@@ -325,7 +301,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             app.m2.props_scroll = 0.0;
         }
         tab = chosen;
-        app.property_tab = tab;
+        app.ui.property_tab = tab;
         top = strip.bottom();
     }
     let body = Rect::from_min_max(pos2(r.left(), top), r.max);
@@ -354,10 +330,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     rows.space(8.0);
     app.m2.props_content = rows.used();
     ui.set_clip_rect(outer_clip);
-    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモのドラッグ中は終えない（ペンの接触は egui の
-    // ポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。ギズモが離す・Esc・
-    // フォーカスの喪失で自分で終える）
-    if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::gizmo::dragging(app) {
+    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモと点のグラデーションの点のドラッグ中は終えない
+    // （ペンの接触は egui のポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。
+    // ドラッグの側が離す・Esc・フォーカスの喪失で自分で終える）
+    if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::dragging(app) {
         app.m2_end_drag();
     }
     bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);

@@ -40,8 +40,8 @@ pub fn fit_to_bounds(bounds: &Bounds, mode: ProjectionMode) -> Placement {
     }
 }
 
-/// 新しく作る塗りつぶしの層の投影: 種類を `mode` にし、置き場があればそれにする（無ければ初めのまま）。デカールは画像を 1 回だけ置く
-/// （繰り返さない）。デカールを置く道とメニューが画像・デカールの層を作る道が、同じ投影を作るための 1 か所。
+/// 新しく作る塗りつぶしレイヤーの投影: 種類を `mode` にし、置き場があればそれにする（無ければ初めのまま）。デカールは画像を 1 回だけ置く
+/// （繰り返さない）。デカールを置く道とメニューが画像・デカールのレイヤーを作る道が、同じ投影を作るための 1 か所。
 pub fn new_projection(mode: ProjectionMode, placement: Option<Placement>) -> Projection {
     let mut projection = Projection {
         mode,
@@ -173,7 +173,7 @@ pub fn new_shape_gradient(bounds: Option<&Bounds>) -> Settings {
     g
 }
 
-/// 形を選んで作る新しいワールドスペースのグラデーション（新規塗りつぶしレイヤーのメニュー）。ランプと置き換えの合成は `new_shape_gradient` と
+/// 形を選んで作る新しいグラデーションデカール（新規塗りつぶしレイヤーのメニュー）。ランプと置き換えの合成は `new_shape_gradient` と
 /// 同じで、置き場は形ごとにモデルの外形から決める（モデルが無ければ形の既定の置き場）:
 /// ボックスは `new_shape_gradient` のまま、球は外形の中央に一番長い辺の 4 分の 3 の直径（どこに効くかすぐ見えるように）、
 /// 平面（線形）は外形の中央で、下の端が 0・上の端が 1 になる幅（モデルの高さ）。高さが一番長い辺の `THIN_HEIGHT_FRACTION` 未満の外形
@@ -372,7 +372,10 @@ mod tests {
         assert!(
             at(-2.0).abs() < 1e-9 && (at(2.0) - 1.0).abs() < 1e-9 && (at(0.0) - 0.5).abs() < 1e-9
         );
-        assert_eq!(plane.volume.rotation, [0.0; 3], "ふつうの高さの外形は回さない");
+        assert_eq!(
+            plane.volume.rotation, [0.0; 3],
+            "ふつうの高さの外形は回さない"
+        );
         for g in [&sphere, &plane] {
             assert!(g.ramp.is_some());
             assert_eq!(g.blend, yolu_core::generator::Blend::Replace);
@@ -403,14 +406,21 @@ mod tests {
     #[test]
     fn a_new_plane_gradient_on_a_flat_model_runs_along_its_longest_horizontal_side() {
         // 地面のような高さ 0 のモデル。X が長い（4）と Z が長い（6）の両方
-        for (size, along_x) in [(Vec3::new(4.0, 0.0, 2.0), true), (Vec3::new(2.0, 0.0, 6.0), false)] {
+        for (size, along_x) in [
+            (Vec3::new(4.0, 0.0, 2.0), true),
+            (Vec3::new(2.0, 0.0, 6.0), false),
+        ] {
             let b = Bounds::new(Vec3::new(0.5, 1.0, 0.0), size);
             let plane = new_shape_gradient_of(Shape::Plane, Some(&b));
             assert!(plane.validate().is_ok(), "{size:?}");
             assert_eq!(plane.volume.shape, Shape::Plane);
             assert_eq!(plane.volume.center, [0.5, 1.0, 0.0]);
             let long = f64::from(size.x.max(size.z));
-            assert!((plane.volume.size[1] - long).abs() < 1e-5, "{size:?}: {:?}", plane.volume.size);
+            assert!(
+                (plane.volume.size[1] - long).abs() < 1e-5,
+                "{size:?}: {:?}",
+                plane.volume.size
+            );
             let at = |t: f64| {
                 if along_x {
                     on_surface(&plane, &b, t * long / 2.0, 0.0)
@@ -422,9 +432,16 @@ mod tests {
             assert!(at(-1.0).abs() < 1e-9, "{size:?}: {}", at(-1.0));
             assert!((at(1.0) - 1.0).abs() < 1e-9, "{size:?}: {}", at(1.0));
             assert!((at(0.0) - 0.5).abs() < 1e-9);
-            assert!(at(-0.5) > at(-1.0) && at(0.5) > at(0.0), "途中の値は段階的に");
+            assert!(
+                at(-0.5) > at(-1.0) && at(0.5) > at(0.0),
+                "途中の値は段階的に"
+            );
             // 平面の欄で見せる大きさは、薄いワールドの Y ではなく短い水平の辺
-            assert!(plane.volume.size[0] > 1.0 && plane.volume.size[2] > 1.0, "{:?}", plane.volume.size);
+            assert!(
+                plane.volume.size[0] > 1.0 && plane.volume.size[2] > 1.0,
+                "{:?}",
+                plane.volume.size
+            );
         }
     }
 
@@ -438,11 +455,17 @@ mod tests {
         assert!((p.volume.size[1] - 4.0).abs() < 1e-5);
         let p = new_shape_gradient_of(Shape::Plane, Some(&thick));
         assert_eq!(p.volume.rotation, [0.0; 3]);
-        assert!((p.volume.size[1] - 0.041).abs() < 1e-5, "高さに沿う: {:?}", p.volume.size);
+        assert!(
+            (p.volume.size[1] - 0.041).abs() < 1e-5,
+            "高さに沿う: {:?}",
+            p.volume.size
+        );
         // ごく薄いが 0 ではない外形でも、面の上の値は分かれる
         let sheet = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 1e-4, 4.0));
         let p = new_shape_gradient_of(Shape::Plane, Some(&sheet));
-        assert!(on_surface(&p, &sheet, -2.0, 0.0) < 0.01 && on_surface(&p, &sheet, 2.0, 0.0) > 0.99);
+        assert!(
+            on_surface(&p, &sheet, -2.0, 0.0) < 0.01 && on_surface(&p, &sheet, 2.0, 0.0) > 0.99
+        );
         // 一番長い辺が高さのとき（背の高い外形）は今までどおり回さない
         let tall = Bounds::new(Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0));
         let p = new_shape_gradient_of(Shape::Plane, Some(&tall));

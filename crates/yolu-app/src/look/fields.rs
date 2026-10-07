@@ -18,7 +18,10 @@ fn layer_prop(prefix: &str, rest: &str) -> Option<&'static str> {
 }
 
 fn floats(values: impl IntoIterator<Item = (&'static str, f32)>) -> Vec<(&'static str, LookValue)> {
-    values.into_iter().map(|(n, v)| (n, LookValue::Float(v))).collect()
+    values
+        .into_iter()
+        .map(|(n, v)| (n, LookValue::Float(v)))
+        .collect()
 }
 
 // ───────── 光沢のタイプ ─────────
@@ -69,10 +72,21 @@ pub fn copy_mode(copy: bool, flip: bool) -> usize {
 
 /// ミラーモードを選ぶ操作（`IsLeftOnly`・`IsRightOnly`・`ShouldFlipMirror` を 1 回の Undo で）。`prefix` は `_Main2nd`・`_Main3rd`。
 pub fn mirror_op(prefix: &str, mode: usize) -> LookOp {
-    let (l, r, f) = [(0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 1.0, 1.0)][mode.min(4)];
+    let (l, r, f) = [
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 1.0, 1.0),
+    ][mode.min(4)];
     let names = ["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror"];
     LookOp::Values {
-        values: floats(names.into_iter().zip([l, r, f]).filter_map(|(n, v)| Some((layer_prop(prefix, n)?, v)))),
+        values: floats(
+            names
+                .into_iter()
+                .zip([l, r, f])
+                .filter_map(|(n, v)| Some((layer_prop(prefix, n)?, v))),
+        ),
         drag: false,
     }
 }
@@ -82,7 +96,12 @@ pub fn copy_op(prefix: &str, mode: usize) -> LookOp {
     let (c, f) = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)][mode.min(2)];
     let names = ["ShouldCopy", "ShouldFlipCopy"];
     LookOp::Values {
-        values: floats(names.into_iter().zip([c, f]).filter_map(|(n, v)| Some((layer_prop(prefix, n)?, v)))),
+        values: floats(
+            names
+                .into_iter()
+                .zip([c, f])
+                .filter_map(|(n, v)| Some((layer_prop(prefix, n)?, v))),
+        ),
         drag: false,
     }
 }
@@ -92,7 +111,13 @@ pub fn copy_op(prefix: &str, mode: usize) -> LookOp {
 pub fn decal_op(prefix: &str, on: bool) -> LookOp {
     let mut names = vec!["IsDecal"];
     if !on {
-        names.extend(["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror", "ShouldCopy", "ShouldFlipCopy"]);
+        names.extend([
+            "IsLeftOnly",
+            "IsRightOnly",
+            "ShouldFlipMirror",
+            "ShouldCopy",
+            "ShouldFlipCopy",
+        ]);
     }
     LookOp::Values {
         values: floats(names.into_iter().filter_map(|n| {
@@ -106,8 +131,16 @@ pub fn decal_op(prefix: &str, on: bool) -> LookOp {
 /// デカールのタイリング・オフセット（`_ST`）を、欄の位置と大きさ（X 座標・Y 座標・X 軸サイズ・Y 軸サイズ）で。複製モードのときの
 /// X 座標は右半分（0.5〜1）で見せる。
 pub fn decal_shown(st: [f32; 4], copy: bool) -> [f32; 4] {
-    let (sx, px) = if st[0] == 0.0 { (0.000_001, 0.5) } else { (1.0 / st[0], (0.5 - st[2]) / st[0]) };
-    let (sy, py) = if st[1] == 0.0 { (0.000_001, 0.5) } else { (1.0 / st[1], (0.5 - st[3]) / st[1]) };
+    let (sx, px) = if st[0] == 0.0 {
+        (0.000_001, 0.5)
+    } else {
+        (1.0 / st[0], (0.5 - st[2]) / st[0])
+    };
+    let (sy, py) = if st[1] == 0.0 {
+        (0.000_001, 0.5)
+    } else {
+        (1.0 / st[1], (0.5 - st[3]) / st[1])
+    };
     let (sx, sy, px, py) = (round6(sx), round6(sy), round6(px), round6(py));
     let px = if copy && px < 0.5 { 1.0 - px } else { px };
     [px, py, sx, sy]
@@ -139,7 +172,11 @@ pub fn decal_st_op(st: &'static str, shown: [f32; 4], drag: bool) -> LookOp {
 
 /// `_GlitterParams1`・`_GlitterSensitivity` を、欄の値（サイズ X・サイズ Y・パーティクルサイズ・密度・感度）で。
 pub fn glitter_shown(params1: [f32; 4], sensitivity: f32) -> [f32; 5] {
-    let size = if params1[2] == 0.0 { 0.0 } else { params1[2].max(0.0).sqrt() };
+    let size = if params1[2] == 0.0 {
+        0.0
+    } else {
+        params1[2].max(0.0).sqrt()
+    };
     let density = (1.0 / params1[3].max(1e-6)).sqrt() / 1.5;
     [
         256.0 / params1[0].max(1e-6),
@@ -156,7 +193,12 @@ pub fn glitter_values(shown: [f32; 5]) -> ([f32; 4], f32) {
     let (sx, sy) = (sx.max(0.000_000_1), sy.max(0.000_000_1));
     let density = density.max(0.001);
     (
-        [256.0 / sx, 256.0 / sy, size * size, 1.0 / (density * density * 1.5 * 1.5)],
+        [
+            256.0 / sx,
+            256.0 / sy,
+            size * size,
+            1.0 / (density * density * 1.5 * 1.5),
+        ],
         (sensitivity * density).max(0.25),
     )
 }
@@ -186,7 +228,10 @@ pub fn alpha_mask_op(invert: bool, transparency: f32, drag: bool) -> LookOp {
     LookOp::Values {
         values: floats([
             ("_AlphaMaskScale", if invert { -1.0 } else { 1.0 }),
-            ("_AlphaMaskValue", transparency + if invert { 1.0 } else { 0.0 }),
+            (
+                "_AlphaMaskValue",
+                transparency + if invert { 1.0 } else { 0.0 },
+            ),
         ]),
         drag,
     }
@@ -243,26 +288,55 @@ mod tests {
         assert_eq!(mirror_mode(false, true, true), 4);
         assert_eq!(mirror_mode(true, true, true), 2);
         for mode in 0..5 {
-            let LookOp::Values { values, drag: false } = mirror_op("_Main2nd", mode) else {
+            let LookOp::Values {
+                values,
+                drag: false,
+            } = mirror_op("_Main2nd", mode)
+            else {
                 panic!("1 回の操作");
             };
-            let on = |n: &str| values.iter().any(|(k, v)| *k == n && *v == LookValue::Float(1.0));
+            let on = |n: &str| {
+                values
+                    .iter()
+                    .any(|(k, v)| *k == n && *v == LookValue::Float(1.0))
+            };
             assert_eq!(values.len(), 3);
-            assert_eq!(mirror_mode(on("_Main2ndTexIsLeftOnly"), on("_Main2ndTexIsRightOnly"), on("_Main2ndTexShouldFlipMirror")), mode);
+            assert_eq!(
+                mirror_mode(
+                    on("_Main2ndTexIsLeftOnly"),
+                    on("_Main2ndTexIsRightOnly"),
+                    on("_Main2ndTexShouldFlipMirror")
+                ),
+                mode
+            );
         }
         for mode in 0..3 {
             let LookOp::Values { values, .. } = copy_op("_Main3rd", mode) else {
                 panic!("1 回の操作");
             };
-            let on = |n: &str| values.iter().any(|(k, v)| *k == n && *v == LookValue::Float(1.0));
-            assert_eq!(copy_mode(on("_Main3rdTexShouldCopy"), on("_Main3rdTexShouldFlipCopy")), mode);
+            let on = |n: &str| {
+                values
+                    .iter()
+                    .any(|(k, v)| *k == n && *v == LookValue::Float(1.0))
+            };
+            assert_eq!(
+                copy_mode(on("_Main3rdTexShouldCopy"), on("_Main3rdTexShouldFlipCopy")),
+                mode
+            );
         }
         for mode in 0..3 {
             let LookOp::Values { values, .. } = specular_op(mode) else {
                 panic!("1 回の操作");
             };
-            let on = |n: &str| values.iter().any(|(k, v)| *k == n && *v == LookValue::Float(1.0));
-            assert_eq!(specular_mode(on("_ApplySpecular"), on("_SpecularToon")), mode);
+            let on = |n: &str| {
+                values
+                    .iter()
+                    .any(|(k, v)| *k == n && *v == LookValue::Float(1.0))
+            };
+            assert_eq!(
+                specular_mode(on("_ApplySpecular"), on("_SpecularToon")),
+                mode
+            );
         }
         // 既定（`_ApplySpecular` = 1・`_SpecularToon` = 1）は lilToon の欄と同じくトゥーン
         let d = |n: &str| liltoon::prop(n).unwrap().default[0] > 0.5;
@@ -271,7 +345,11 @@ mod tests {
 
     #[test]
     fn turning_the_decal_off_clears_the_mirror_and_copy_flags() {
-        let LookOp::Values { values, drag: false } = decal_op("_Main2nd", false) else {
+        let LookOp::Values {
+            values,
+            drag: false,
+        } = decal_op("_Main2nd", false)
+        else {
             panic!("1 回の操作");
         };
         let names: Vec<&str> = values.iter().map(|(n, _)| *n).collect();
@@ -297,12 +375,25 @@ mod tests {
     #[test]
     fn the_decal_position_and_scale_read_like_the_liltoon_inspector_and_round_trip() {
         // 既定の (1, 1, 0, 0) は lilToon の欄で X 座標 0.5・Y 座標 0.5・サイズ 1・1
-        assert_eq!(decal_shown(default_vec("_Main2ndTex_ST"), false), [0.5, 0.5, 1.0, 1.0]);
+        assert_eq!(
+            decal_shown(default_vec("_Main2ndTex_ST"), false),
+            [0.5, 0.5, 1.0, 1.0]
+        );
         // 比べの場面の値（大きさ 0.2・中心 (1/6, 1/4)）
         let shown = decal_shown([5.0, 5.0, -1.0 / 3.0, -0.75], false);
-        assert!(near(shown[0], 1.0 / 6.0) && near(shown[1], 0.25) && near(shown[2], 0.2) && near(shown[3], 0.2), "{shown:?}");
+        assert!(
+            near(shown[0], 1.0 / 6.0)
+                && near(shown[1], 0.25)
+                && near(shown[2], 0.2)
+                && near(shown[3], 0.2),
+            "{shown:?}"
+        );
         // 欄の値 → 保存する値 → 欄の値
-        for s in [[0.3, 0.7, 0.25, -0.4], [0.9, 0.1, 1.0, 0.05], [0.5, 0.5, -1.0, 1.0]] {
+        for s in [
+            [0.3, 0.7, 0.25, -0.4],
+            [0.9, 0.1, 1.0, 0.05],
+            [0.5, 0.5, -1.0, 1.0],
+        ] {
             let back = decal_shown(decal_st(s), false);
             for k in 0..4 {
                 assert!(near(back[k], s[k]), "{s:?} → {back:?}");
@@ -319,15 +410,31 @@ mod tests {
     #[test]
     fn the_glitter_fields_read_like_the_liltoon_inspector_and_round_trip() {
         // 既定の (256, 256, 0.16, 50)・感度 0.25 は、lilToon の欄でサイズ 1・1、パーティクルサイズ 0.4、密度 √(1/50)/1.5、感度 0.25 / 密度
-        let shown = glitter_shown(default_vec("_GlitterParams1"), liltoon::prop("_GlitterSensitivity").unwrap().default[0]);
+        let shown = glitter_shown(
+            default_vec("_GlitterParams1"),
+            liltoon::prop("_GlitterSensitivity").unwrap().default[0],
+        );
         let density = (1.0f32 / 50.0).sqrt() / 1.5;
-        assert!(near(shown[0], 1.0) && near(shown[1], 1.0) && near(shown[2], 0.4), "{shown:?}");
-        assert!(near(shown[3], density) && (shown[4] - 0.25 / density).abs() < 1e-4, "{shown:?}");
-        for s in [[0.5, 2.0, 0.3, 0.2, 5.0], [4.0, 4.0, 1.5, 0.9, 1.0], [1.0, 1.0, 0.0, 0.05, 10.0]] {
+        assert!(
+            near(shown[0], 1.0) && near(shown[1], 1.0) && near(shown[2], 0.4),
+            "{shown:?}"
+        );
+        assert!(
+            near(shown[3], density) && (shown[4] - 0.25 / density).abs() < 1e-4,
+            "{shown:?}"
+        );
+        for s in [
+            [0.5, 2.0, 0.3, 0.2, 5.0],
+            [4.0, 4.0, 1.5, 0.9, 1.0],
+            [1.0, 1.0, 0.0, 0.05, 10.0],
+        ] {
             let (p, sens) = glitter_values(s);
             let back = glitter_shown(p, sens);
             for k in 0..5 {
-                assert!((back[k] - s[k]).abs() < 1e-3 * s[k].abs().max(1.0), "{s:?} → {back:?}");
+                assert!(
+                    (back[k] - s[k]).abs() < 1e-3 * s[k].abs().max(1.0),
+                    "{s:?} → {back:?}"
+                );
             }
         }
         // 感度は 0.25 より下げない（lilToon と同じ）
@@ -337,7 +444,10 @@ mod tests {
     #[test]
     fn the_alpha_mask_fields_read_like_the_liltoon_inspector_and_round_trip() {
         let d = |n: &str| liltoon::prop(n).unwrap().default[0];
-        assert_eq!(alpha_mask_shown(d("_AlphaMaskScale"), d("_AlphaMaskValue")), (false, 0.0));
+        assert_eq!(
+            alpha_mask_shown(d("_AlphaMaskScale"), d("_AlphaMaskValue")),
+            (false, 0.0)
+        );
         for (invert, transparency) in [(false, 0.4), (true, -0.3), (true, 0.0), (false, -1.0)] {
             let LookOp::Values { values, .. } = alpha_mask_op(invert, transparency, false) else {
                 panic!("1 回の操作");

@@ -1,11 +1,12 @@
-//! 効果の層（フィルターのスタック・Generator・Anchor）の画面の状態と操作（Unity 版の `TexturePaintWindow.Filters / Generators / Anchors`）。
+//! 効果のレイヤー（フィルターのスタック・Generator・Anchor）の画面の状態と操作（Unity 版の `TexturePaintWindow.Filters / Generators / Anchors`）。
 //!
-//! - 一覧: 層の行の下に、その層の Anchor・画素の効果の段（上が後に掛かる）・マスクの Anchor・マスクの効果の段を字下げした子の行で並べる
-//!   （`panels::effect_rows`）。押すとその段を選び（`FxState::selected`）、プロパティの欄にその段の設定が出る（`panels::effect_props`）。
+//! - 一覧: レイヤーの行の下に、対象の側のスタックだけを字下げした子の行で並べる（`panels::effect_rows`）。選んだレイヤーでマスクが対象なら
+//!   マスクの Anchor・マスクの効果の段、それ以外（選んでいないレイヤーも）はレイヤーの Anchor・画素の効果の段（どちらも上が後に掛かる）。
+//!   押すとその段を選び（`FxState::selected`。そのスタックの側が対象になる）、プロパティの欄にその段の設定が出る（`panels::effect_props`）。
 //! - 操作: どれも `Action::Fx(FxOp)` を通り、core の編集の口（`add_filter` ほか）を 1 つ呼ぶ。1 つが 1 回の Undo で、スライダーのドラッグは
 //!   core がまとめる。ロック・段の数・作業メモリの上限などの断りは core が決め、ここは理由を画面の言語で出すだけ。
 //! - 入力: Generator と塗りつぶしの画像が読むメッシュマップ・モデルのルート・画像は文書の外のもので、`inputs` が毎フレーム
-//!   セットごとに文書へ渡す（焼き直し・モデルの差し替えで読む層だけが描き直される）。入力がそろわない効果を持つ .ylp は読むだけにする。
+//!   セットごとに文書へ渡す（焼き直し・モデルの差し替えで読むレイヤーだけが描き直される）。入力がそろわない効果を持つ .ylp は読むだけにする。
 //! - Anchor を読む Generator が使えなくなる操作（並べ替え・削除・結合）のあとは、新しく使えなくなった参照を状態の帯で知らせる。
 //!   編集そのものは断らない（取り消せば戻る）。
 
@@ -18,15 +19,16 @@ use std::collections::HashSet;
 use yolu_core::generator::{self, anchor::ReadMode, Kind};
 use yolu_core::{
     AnchorId, AnchorInfo, AnchorIssueKind, AnchorPlacement, Channel, CoreError, Document,
-    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, LayerId,
+    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId, LayerId,
 };
 
 pub use names::FilterKind;
 
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::AppState;
 
-/// 選んでいる行（層の行の下の子の行）。
+/// 選んでいる行（レイヤーの行の下の子の行）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selected {
     Filter { layer: LayerId, id: FilterId },
@@ -37,7 +39,7 @@ pub enum Selected {
 #[derive(Default)]
 pub struct FxState {
     pub selected: Option<Selected>,
-    /// 「ID の色」の Generator の色を、ID マップから選んでいる（押した所の ID の色をその段に足す）。段の層と ID。
+    /// 「ID の色」の Generator の色を、ID マップから選んでいる（押した所の ID の色をその段に足す）。段のレイヤーと ID。
     pub id_pick: Option<(LayerId, FilterId)>,
     pub inputs: inputs::InputsState,
     /// 前に見た文書の版と、そのとき使えなくなっていた Anchor の参照（新しく使えなくなったものだけを知らせる）。
@@ -53,7 +55,7 @@ struct AnchorIssuesSeen {
 /// 文書の効果を変える操作と、行を選ぶ操作。
 #[derive(Clone, Debug, PartialEq)]
 pub enum FxOp {
-    /// 選んでいる層のスタックにフィルターを足す（画素なら描くチャンネルだけに掛かる）。
+    /// 選んでいるレイヤーのスタックにフィルターを足す（画素なら描くチャンネルだけに掛かる）。
     AddFilter {
         target: FilterTarget,
         kind: FilterKind,
@@ -118,19 +120,27 @@ pub enum FxOp {
     },
     SelectAnchor(AnchorId),
     Deselect,
-    /// Anchor を置いた層（マスクの Anchor ならそのマスク）へ移る。
+    /// Anchor を置いたレイヤー（マスクの Anchor ならそのマスク）へ移る。
     GoToAnchor(AnchorId),
     /// 「ID の色」の Generator の色を、ID マップから選び始める・やめる（2D のキャンバスか 3D ビューを押すと、その所の ID の色を足す。
-    /// Ctrl を押していれば外す）。「ID の色で選択」の道具の入力をそのまま使う。
+    /// Ctrl を押していれば外す）。「ID の色で選択」のツールの入力をそのまま使う。
     PickIdColors {
         layer: LayerId,
         id: FilterId,
         on: bool,
     },
+    /// レイヤーのフィルターが UV の継ぎ目をまたぐか（文書の設定。テクスチャセットのすべてのフィルターに効く）。
+    SetFilterSeams(bool),
+    /// 画像の段が読むアセットの画像を差す・外す（差す前に復号して、読めなければ理由を添えて断る）。
+    SetImage {
+        layer: LayerId,
+        id: FilterId,
+        image: Option<ImageId>,
+    },
 }
 
 impl FxOp {
-    /// 道具を替える操作か（描いている間は断る。道具を替えると途中のストロークの前提が変わる）。
+    /// ツールを替える操作か（描いている間は断る。ツールを替えると途中のストロークの前提が変わる）。
     pub fn changes_tool(&self) -> bool {
         matches!(self, FxOp::PickIdColors { on: true, .. })
     }
@@ -149,12 +159,15 @@ impl FxOp {
 }
 
 impl FxState {
-    /// 選んでいる段（層・マスクにまだあるもの）。
-    pub fn filter<'a>(&self, doc: &'a Document) -> Option<(LayerId, &'a FilterEffect, FilterTarget)> {
+    /// 選んでいる段（レイヤー・マスクにまだあるもの）。
+    pub fn filter<'a>(
+        &self,
+        doc: &'a Document,
+    ) -> Option<(LayerId, &'a FilterEffect, FilterTarget)> {
         match self.selected {
-            Some(Selected::Filter { layer, id }) => doc
-                .find_filter(id)
-                .filter(|(l, _, _)| *l == layer),
+            Some(Selected::Filter { layer, id }) => {
+                doc.find_filter(id).filter(|(l, _, _)| *l == layer)
+            }
             _ => None,
         }
     }
@@ -166,23 +179,40 @@ impl FxState {
             _ => None,
         }
     }
+
+    /// 選んでいる行が、マスクのスタックの行か（まだあるもの）。
+    pub fn in_mask(&self, doc: &Document) -> bool {
+        self.filter(doc)
+            .is_some_and(|(_, _, target)| target == FilterTarget::Mask)
+            || self
+                .anchor(doc)
+                .is_some_and(|info| info.placement == AnchorPlacement::Mask)
+    }
 }
 
-/// プロパティの欄に出す効果の行を選んでいるか（選んだ層が今の層で、マスクに描いていない）。
+/// マスクが対象のレイヤー（そのレイヤーを選んでマスクに描いているあいだだけ。マスクの無いレイヤーは対象にならない）。レイヤーの行の下の効果の行・
+/// 効果の追加の先・レイヤーとマスクのサムネイルの青い枠が、同じこの結果を見る。
+pub fn mask_target(app: &AppState) -> Option<LayerId> {
+    let id = app.selected_layer?;
+    let has_mask = app.doc.layer(id)?.mask().is_some();
+    (app.m2.edit_mask && has_mask).then_some(id)
+}
+
+/// プロパティの欄に出す効果の行を選んでいるか（選んだレイヤーが今のレイヤーで、選んだ行のスタックが今の対象の側）。マスクの効果の行を選ぶと
+/// マスクが対象になる（`select_effect`）ので、レイヤーの画素が対象のあいだはマスクの効果の行を選んだ状態は残らない。
 pub fn props_visible(app: &AppState) -> bool {
-    if app.m2.edit_mask {
-        return false;
-    }
-    if let Some((layer, _, _)) = app.fx.filter(&app.doc) {
-        return app.selected_layer == Some(layer);
+    let mask_side = app.m2.edit_mask;
+    if let Some((layer, _, target)) = app.fx.filter(&app.doc) {
+        return app.selected_layer == Some(layer) && (target == FilterTarget::Mask) == mask_side;
     }
     if let Some(info) = app.fx.anchor(&app.doc) {
-        return app.selected_layer == Some(info.layer);
+        return app.selected_layer == Some(info.layer)
+            && (info.placement == AnchorPlacement::Mask) == mask_side;
     }
     false
 }
 
-/// 新しい Anchor の名前（層の名前。同じ名前があれば番号を足す）。
+/// 新しい Anchor の名前（レイヤーの名前。同じ名前があれば番号を足す）。
 fn unique_anchor_name(doc: &Document, base: &str, lang: Lang) -> String {
     let base = base.trim();
     let mut name = if base.is_empty() {
@@ -212,17 +242,21 @@ impl AppState {
     /// 効果の操作を当てる（描いている間の文書の変更は断る。断られたら何も変えず、理由を状態の帯へ）。
     pub fn fx_apply(&mut self, op: FxOp) {
         if (op.edits_document() || op.changes_tool()) && self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Effect,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
         match self.fx_run(op) {
-            Ok(Some(text)) => self.message = text,
+            Ok(Some(text)) => self.info(Source::Effect, text),
             Ok(None) => {}
-            Err(e) => self.message = self.lang.core_error(&e),
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Effect,
+                self.lang.core_error(&e),
+            ),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -236,18 +270,23 @@ impl AppState {
             .ok_or(CoreError::LayerNotFound)
     }
 
-    /// 段を選ぶ（その層を選び、マスクへの描画はやめる）。
+    /// 段を選ぶ（そのレイヤーを選び、その段のスタックの側を対象にする。画素の段ならレイヤーの画素、マスクの段ならマスク）。対象の側の効果の行だけが
+    /// 一覧に出るので、選んだ行は選んだ直後も見えたまま残る。
     pub fn select_effect(&mut self, layer: LayerId, id: FilterId) {
+        let mask = self
+            .doc
+            .find_filter(id)
+            .is_some_and(|(_, _, target)| target == FilterTarget::Mask);
         self.selected_layer = Some(layer);
-        self.set_edit_mask(false);
+        self.set_edit_mask(mask);
         self.fx.selected = Some(Selected::Filter { layer, id });
     }
 
     pub fn select_anchor(&mut self, id: AnchorId) {
         if let Some(info) = self.doc.find_anchor(id) {
-            let layer = info.layer;
+            let (layer, mask) = (info.layer, info.placement == AnchorPlacement::Mask);
             self.selected_layer = Some(layer);
-            self.set_edit_mask(false);
+            self.set_edit_mask(mask);
             self.fx.selected = Some(Selected::Anchor { id });
         }
     }
@@ -289,9 +328,9 @@ impl AppState {
                 if let Ok(Some(why)) = self.doc.generator_inactive(layer, id) {
                     text += &format!(
                         " {}",
-                        lang.pick(
-                            format!("効果なし: {}", lang.inactive_reason(&why)),
-                            format!("No effect: {}", lang.inactive_reason(&why)),
+                        lang.with_reason(
+                            lang.pick("効果がありません", "It has no effect"),
+                            lang.inactive_reason(&why),
                         )
                     );
                 }
@@ -350,9 +389,7 @@ impl AppState {
                     AnchorPlacement::Layer => l.name().to_owned(),
                 };
                 let name = unique_anchor_name(&self.doc, &base, lang);
-                let id = self
-                    .doc
-                    .add_anchor(layer, placement, Some(&name), None)?;
+                let id = self.doc.add_anchor(layer, placement, Some(&name), None)?;
                 self.select_anchor(id);
                 Ok(Some(lang.pick(
                     format!("アンカー「{name}」を置きました。"),
@@ -389,6 +426,48 @@ impl AppState {
                     .set_generator_anchor(layer, filter, anchor, channel, read, false)?;
                 Ok(None)
             }
+            FxOp::SetImage { layer, id, image } => {
+                let Some(mut g) = self
+                    .doc
+                    .find_filter(id)
+                    .filter(|(l, _, _)| *l == layer)
+                    .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
+                else {
+                    return Ok(None);
+                };
+                if let Some(image) = image {
+                    if let Err(why) =
+                        self.use_shelf_image(&crate::fillfx::inputs::resource_id(image))
+                    {
+                        self.fail(Source::Effect, why);
+                        return Ok(None);
+                    }
+                }
+                g.image.image = image.map_or(0, |i| i.0);
+                self.doc.end_coalescing();
+                if let Err(e) =
+                    self.doc
+                        .set_filter_settings(layer, id, EffectSettings::generator(g), false)
+                {
+                    // 画像は先に復号して文書へ渡してある。差さなかった画像は手放す
+                    if let Some(image) = image {
+                        self.release_shelf_image(image);
+                    }
+                    return Err(e);
+                }
+                Ok(Some(
+                    match image.and_then(|i| {
+                        self.shelf
+                            .get(&crate::fillfx::inputs::resource_id(i))
+                            .map(|r| r.name.clone())
+                    }) {
+                        Some(name) => {
+                            format!("{}: {name}", lang.pick("画像を差しました", "Image set"))
+                        }
+                        None => lang.pick("画像を外しました", "Image removed").into(),
+                    },
+                ))
+            }
             FxOp::SelectFilter { layer, id } => {
                 if self.doc.find_filter(id).is_some_and(|(l, _, _)| l == layer) {
                     self.select_effect(layer, id);
@@ -408,7 +487,7 @@ impl AppState {
                     self.fx.id_pick = None;
                     return Ok(None);
                 }
-                // 押した所の ID の色を読むのは「ID の色で選択」の入力（2D・3D の押す・強調）。道具の切り替えは「道具を選ぶ」と同じ口を通し
+                // 押した所の ID の色を読むのは「ID の色で選択」の入力（2D・3D の押す・強調）。ツールの切り替えは「ツールを選ぶ」と同じ口を通し
                 // （移動・パスの途中のドラッグと選んだ点を捨てる）、効果の欄は開いたまま・選ぶ状態は残す
                 if !self.switch_tool(crate::state::Tool::IdSelect, true) {
                     return Ok(None);
@@ -425,6 +504,10 @@ impl AppState {
                 }
                 Ok(None)
             }
+            FxOp::SetFilterSeams(on) => {
+                self.doc.set_filter_seams(on)?;
+                Ok(None)
+            }
         }
     }
 
@@ -432,13 +515,13 @@ impl AppState {
         let lang = self.lang;
         match target {
             FilterTarget::Mask => lang.pick(
-                format!("マスクに {name} を足しました。"),
+                format!("マスクに {name} を追加しました。"),
                 format!("Added {name} to the mask."),
             ),
             FilterTarget::Content => {
                 let channel = crate::m2::channel_name(lang, &self.doc, self.m2.paint_channel);
                 lang.pick(
-                    format!("{channel} の画素に {name} を足しました。"),
+                    format!("{channel} の画素に {name} を追加しました。"),
                     format!("Added {name} to the {channel} pixels."),
                 )
             }
@@ -446,7 +529,7 @@ impl AppState {
     }
 
     /// 「ID の色」の Generator の色を選んでいる間に、2D のキャンバスか 3D ビューで押した所の ID の色（`rgb`）を、その段に足す
-    /// （Ctrl を押していれば外す）。選んでいなければ false（呼んだ側が選択の道具として扱う）。
+    /// （Ctrl を押していれば外す）。選んでいなければ false（呼んだ側が選択のツールとして扱う）。
     pub fn pick_id_color(&mut self, rgb: u32) -> bool {
         let Some((layer, id)) = self.fx.id_pick else {
             return false;
@@ -467,31 +550,57 @@ impl AppState {
             next.id_colors.retain(|c| *c != rgb);
         } else if !next.id_colors.contains(&rgb) {
             if next.id_colors.len() >= 32 {
-                self.message = lang
-                    .pick("ID の色は 32 個までです。", "At most 32 ID colors.")
-                    .into();
+                self.refuse(
+                    Source::Effect,
+                    lang.pick("ID の色は 32 個までです。", "At most 32 ID colors."),
+                );
                 return true;
             }
             next.id_colors.push(rgb);
         }
         if next == g {
             // 足す色がもう入っている・外す色が入っていない
-            self.message = if remove {
-                lang.pick(format!("ID の色 {hex} は入っていません。"), format!("{hex} is not in the ID colors."))
-            } else {
-                lang.pick(format!("ID の色 {hex} は入っています。"), format!("{hex} is already in the ID colors."))
-            };
+            self.refuse(
+                Source::Effect,
+                if remove {
+                    lang.pick(
+                        format!("ID の色 {hex} は入っていません。"),
+                        format!("{hex} is not in the ID colors."),
+                    )
+                } else {
+                    lang.pick(
+                        format!("ID の色 {hex} は入っています。"),
+                        format!("{hex} is already in the ID colors."),
+                    )
+                },
+            );
         } else {
             let revision = self.doc.revision();
-            match self.doc.set_filter_settings(layer, id, EffectSettings::generator(next), false) {
+            match self
+                .doc
+                .set_filter_settings(layer, id, EffectSettings::generator(next), false)
+            {
                 Ok(()) => {
-                    self.message = if remove {
-                        lang.pick(format!("ID の色から {hex} を外しました。"), format!("Took {hex} out of the ID colors."))
-                    } else {
-                        lang.pick(format!("ID の色に {hex} を足しました。"), format!("Added {hex} to the ID colors."))
-                    };
+                    self.info(
+                        Source::Effect,
+                        if remove {
+                            lang.pick(
+                                format!("ID の色から {hex} を外しました。"),
+                                format!("Took {hex} out of the ID colors."),
+                            )
+                        } else {
+                            lang.pick(
+                                format!("ID の色に {hex} を追加しました。"),
+                                format!("Added {hex} to the ID colors."),
+                            )
+                        },
+                    );
                 }
-                Err(e) => self.message = lang.core_error(&e),
+                Err(e) => self.notify(
+                    crate::notice::Kind::of_core(&e),
+                    Source::Effect,
+                    lang.core_error(&e),
+                ),
             }
             if self.doc.revision() != revision {
                 self.modified = true;
@@ -505,7 +614,7 @@ impl AppState {
         if self.is_stroking() {
             return; // 描いている間は入力を替えない（ストロークの途中で合成の意味を変えない）
         }
-        // ID の色を選ぶのは、その段の欄が開いていて「ID の色で選択」の道具のあいだだけ
+        // ID の色を選ぶのは、その段の欄が開いていて「ID の色で選択」のツールのあいだだけ
         if self.fx.id_pick.is_some()
             && (self.tool != crate::state::Tool::IdSelect
                 || !self.fx.id_pick.is_some_and(|(_, id)| {
@@ -534,7 +643,8 @@ impl AppState {
             issues
                 .iter()
                 .filter(|i| {
-                    !self.fx.issues.known.contains(&i.filter) && i.kind != AnchorIssueKind::NotChosen
+                    !self.fx.issues.known.contains(&i.filter)
+                        && i.kind != AnchorIssueKind::NotChosen
                 })
                 .collect()
         } else {
@@ -543,28 +653,30 @@ impl AppState {
         let lang = self.lang;
         if let Some(first) = fresh.first() {
             let reason = match first.kind {
-                AnchorIssueKind::Missing => lang.pick("読むアンカーがありません", "The anchor to read is gone"),
+                AnchorIssueKind::Missing => {
+                    lang.pick("読むアンカーがありません", "The anchor to read is gone")
+                }
                 AnchorIssueKind::NotBelow => lang.pick(
-                    "アンカーが自分の層より下にありません",
+                    "アンカーが自分のレイヤーより下にありません",
                     "The anchor is not below its layer",
                 ),
                 AnchorIssueKind::NotChosen => "",
             };
-            let note = lang.pick(
-                format!(
-                    "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました: {reason}",
-                    fresh.len()
+            let note = lang.with_reason(
+                lang.pick(
+                    format!(
+                        "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました",
+                        fresh.len()
+                    ),
+                    format!(
+                        "{} anchor generator(s) now pass their input through",
+                        fresh.len()
+                    ),
                 ),
-                format!(
-                    "{} anchor generator(s) now pass their input through: {reason}",
-                    fresh.len()
-                ),
+                reason,
             );
-            self.message = if self.message.is_empty() {
-                note
-            } else {
-                format!("{} {note}", self.message)
-            };
+            // 直前の知らせ（あれば）に、アンカーの但し書きを添える（気をつけること）
+            self.amend(crate::notice::Kind::Warning, Source::Effect, " ", &note);
         }
         let known: HashSet<FilterId> = issues.iter().map(|i| i.filter).collect();
         self.fx.issues = AnchorIssuesSeen {

@@ -6,7 +6,7 @@
 //! 変えたセットは履歴を消す（元へ戻せない）。
 
 use super::{
-    groups_of, limit_error, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
+    groups_of, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
     SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, Document, PreparedResize};
@@ -16,7 +16,7 @@ use crate::sets::{guid_string, MaterialRef};
 use crate::state::AppState;
 use crate::view3d::pose;
 
-/// 確かめる理由（一覧の窓の見出しに使う）。
+/// 確かめる理由（一覧のウィンドウの見出しに使う）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfirmKind {
     /// セットを消す（その作業が消える）。
@@ -174,7 +174,7 @@ fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> Se
 pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     if win.drafts.len() >= MAX_SETS {
-        win.error = Some(limit_error(app.lang));
+        win.error = Some(crate::lang::refusals::set_limit(app.lang));
         return;
     }
     let groups = win.groups(app);
@@ -185,7 +185,7 @@ pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     win.drafts.push(draft);
 }
 
-/// セットの無いマテリアルの組に、空のセットを 1 つずつ足す（上限まで。上限で足せないものがあれば理由を窓に出す）。
+/// セットの無いマテリアルの組に、空のセットを 1 つずつ足す（上限まで。上限で足せないものがあれば理由をウィンドウに出す）。
 pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     let groups = win.groups(app);
@@ -193,7 +193,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
         if win.drafts.iter().all(|d| d.material != Some(g.index)) {
             if win.drafts.len() >= MAX_SETS {
                 // 上限で足せなかったマテリアルがある
-                win.error = Some(limit_error(app.lang));
+                win.error = Some(crate::lang::refusals::set_limit(app.lang));
                 break;
             }
             let draft = new_draft(app, win, Some(g));
@@ -202,7 +202,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     }
 }
 
-/// セットの無いマテリアルの組の数（窓の状態に出す）。
+/// セットの無いマテリアルの組の数（ウィンドウの状態に出す）。
 pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
     win.groups(app)
         .iter()
@@ -216,9 +216,7 @@ pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
 pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     let lang = app.lang;
     if app.is_stroking() {
-        return Err(lang
-            .pick("描いている間はできません", "Not while drawing")
-            .into());
+        return Err(crate::lang::refusals::during_stroke(lang).into());
     }
     let drafts = &win.drafts;
     if drafts.is_empty() {
@@ -230,7 +228,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             .into());
     }
     if drafts.len() > MAX_SETS {
-        return Err(limit_error(lang));
+        return Err(crate::lang::refusals::set_limit(lang));
     }
     if win.model.is_some() && !matches!(win.prep, Prep::Ready { .. }) {
         return Err(lang
@@ -265,7 +263,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
         let standard = d.size.0 == d.size.1 && RESOLUTIONS.contains(&d.size.0);
         if d.uid.is_none() && !standard {
-            return Err(size_error(lang));
+            return Err(crate::lang::refusals::set_size(lang));
         }
         if d.resizes() {
             if d.read_only {
@@ -275,7 +273,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 ));
             }
             if !standard {
-                return Err(size_error(lang));
+                return Err(crate::lang::refusals::set_size(lang));
             }
         }
     }
@@ -383,8 +381,8 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             warning: false,
         });
         let groups = win.groups(app);
-        // 3D のパスを持つ層は、新しいモデルの形（指紋）と合わなければ、パスのまま新しいモデルには結び付かない（画素は残る。パスを
-        // 新しいメッシュへ描き直す・画素にするのは、パスの道具ができたとき。Unity 版の SurfacePathRebind は移していない）
+        // 3D のパスを持つレイヤーは、新しいモデルの形（指紋）と合わなければ、パスのまま新しいモデルには結び付かない（画素は残る。パスを
+        // 新しいメッシュへ描き直す・画素にするのは、パスのツールができたとき。Unity 版の SurfacePathRebind は移していない）
         if let Prep::Ready { model, .. } = &win.prep {
             let print = yolu_core::paths::fingerprint(model.geometry());
             let unbound = drafts
@@ -397,7 +395,9 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 .count();
             if unbound > 0 {
                 rows.push(PlanRow {
-                    left: lang.pick("3D のパスの層", "Layers with 3D paths").into(),
+                    left: lang
+                        .pick("3D のパスレイヤー", "Layers with 3D paths")
+                        .into(),
                     middle: unbound.to_string(),
                     right: lang.pick("画素だけ残る", "Pixels stay").into(),
                     warning: true,
@@ -429,23 +429,14 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     })
 }
 
-fn size_error(lang: Lang) -> String {
-    lang.pick(
-        format!(
-            "セットの大きさは {} のどれかです",
-            RESOLUTIONS.map(|r| r.to_string()).join("・")
-        ),
-        format!(
-            "A texture set's size is one of {}",
-            RESOLUTIONS.map(|r| r.to_string()).join(", ")
-        ),
-    )
-}
-
 // ───────── 適用 ─────────
 
 /// 計画どおりに適用する。断るときは何も変えず、理由を返す。うまくいけば知らせの文を返す。
-pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, String> {
+/// 当てた結果の知らせ（種類と文。消えた覚えた選択範囲・モデルに無いセット・戻せなかったポーズの項目があれば注意）。
+pub(super) fn apply(
+    app: &mut AppState,
+    win: &mut NpWindow,
+) -> Result<(crate::notice::Kind, String), String> {
     let lang = app.lang;
     let plan = plan(app, win)?;
     // ── 失敗しうる所（まだ何も変えない）──
@@ -550,7 +541,7 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     let removed_names = app.remove_sets(&plan.removed).unwrap_or_default();
     app.sets.reorder(&order);
     app.dedupe_set_keys();
-    // 法線の形式（利用者が窓で変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
+    // 法線の形式（利用者がウィンドウで変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
     // 触っていないときは、形式が混在したプロジェクトの別のセットを黙って書き換えない
     if win.normal != win.normal_opened {
         for i in 0..app.sets.len() {
@@ -572,8 +563,8 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     }
     app.sel_doc_changed();
     app.ensure_selection();
-    app.renaming_set = None;
-    app.set_scroll = 0.0;
+    app.ui.renaming_set = None;
+    app.ui.set_scroll = 0.0;
     app.sync_mesh_map_view();
     app.sync_view3d();
     app.modified = true;
@@ -599,6 +590,7 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     if let Some(name) = model_note {
         text += &lang.pick(format!(" モデル: {name}。"), format!(" Model: {name}."));
     }
+    let pose_noted = pose_note.is_some();
     if let Some(note) = pose_note {
         text += &format!(" {note}");
     }
@@ -622,18 +614,31 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
                 .collect::<Vec<_>>()
                 .join(sep)
         };
-        text += &lang.pick(
-            format!(" 縮小で消えた覚えた選択範囲: {}。", list("・", &|n| format!("{n} 件"))),
-            format!(" Remembered selections lost to the shrink: {}.", list(", ", &|n| n.to_string())),
+        text += " ";
+        text += &lang.with_reason(
+            lang.pick(
+                "縮小で消えた覚えた選択範囲があります",
+                "Some remembered selections were lost to the shrink",
+            ),
+            lang.pick(
+                list("・", &|n| format!("{n} 件")),
+                list(", ", &|n| n.to_string()),
+            ),
         );
     }
-    if app.model.is_some() && missing > 0 {
+    let not_in_model = app.model.is_some() && missing > 0;
+    if not_in_model {
         text += &lang.pick(
             format!(" モデルに無いセット {missing}。"),
             format!(" Not in the model: {missing}."),
         );
     }
-    Ok(text)
+    let kind = if dropped.is_empty() && !not_in_model && !pose_noted {
+        crate::notice::Kind::Info
+    } else {
+        crate::notice::Kind::Warning
+    };
+    Ok((kind, text))
 }
 
 /// 大きさを変えたセット（`resample` の結果）。
@@ -665,7 +670,13 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
                     .get(index)
                     .map(|s| s.name.clone())
                     .unwrap_or_default();
-                return Err(format!("{name}: {}", lang.core_error(&e)));
+                return Err(lang.with_reason(
+                    lang.pick(
+                        format!("テクスチャセット{}を変えられません", lang.quote(&name)),
+                        format!("Cannot change texture set {}", lang.quote(&name)),
+                    ),
+                    lang.core_error(&e),
+                ));
             }
         }
     }
@@ -675,7 +686,10 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
     for (uid, index, one) in prepared {
         match app.set_doc_mut(index).commit_prepared_resize(one) {
             Ok(report) => done.push((
-                Resized { uid, dropped_saved_selections: report.dropped_saved_selections },
+                Resized {
+                    uid,
+                    dropped_saved_selections: report.dropped_saved_selections,
+                },
                 index,
             )),
             Err(e) => {

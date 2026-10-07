@@ -17,7 +17,7 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 - Color・Roughness・Metallic・Height・Normal・Emission とユーザーチャンネルを 1 回のストロークでまとめて描くマテリアルのペイント
 - フィルター、焼いたメッシュマップ（AO・曲率・厚み・ID など）を読む Generator、ノイズとグランジ、スマートマテリアル
 - 3D ビューでの lilToon の見た目
-- Unity との Live Link。モデルを 1 回の操作で開き、描いた色をシーンのマテリアルに映します（元のアセットは変えません）
+- Unity との Live Link。シーンのモデルを 1 回の操作で開き、書き出した絵を Unity へ返します（マテリアルに当てるのは、Unity で確かめたときだけ）
 - PSD のレイヤー・グループ・マスク・調整の読み書き、ABR のブラシと CLIP STUDIO のブラシ（.sut）の取り込み
 - チャンネルごとの PNG と、Unity Standard・URP・HDRP・lilToon 向けのテンプレートの書き出し
 - 落ちたときの自動の復旧
@@ -35,13 +35,13 @@ Rust の stable と C/C++ のビルド環境が要ります。
 cargo build --release -p yolu-app --locked
 ```
 
-OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
+OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験は [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
 
 ## 文書
 
 - [機能と操作](docs/GUIDE.md)
 - [Unity との連携](docs/UNITY.md)（Live Link・Unity 版との `.ylp` の受け渡し）
-- [コマンドラインと AI からの操作](docs/CLI.md)（`yolupainter-cli`・[MCP サーバー](docs/MCP.md)）
+- [コマンドラインと AI からの操作](docs/CLI.md)（`yolupainter-cli`・[MCP でつなぐ](docs/MCP.md)）
 - [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)、[.ylp の形式](docs/YLP_FORMAT.md)
 - [変更の記録](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 

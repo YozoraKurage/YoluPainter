@@ -4,7 +4,7 @@
 例: 画面の束を 20 回続ける
     tools/repeat-tests.py --rounds 20 --out /tmp/repeat --test gui_canvas --test gui_shell --test gui_view3d
 `--shuffle` を付けると、回ごとに違う種で試験の順を混ぜる（試験どうしが順序に頼っていないかの確かめ。libtest の不安定な機能なので、
-`RUSTC_BOOTSTRAP` は試験の実行のときだけ付ける。組み直しにはならない）。
+`RUSTC_BOOTSTRAP` は試験の実行のときだけ付ける。ビルドし直しにはならない）。
 `--test` を省くと、yolu-app の `tests/` の全部（束と、直下の 1 ファイル 1 本の実行ファイル）。
 各回は `cargo test -p <クレート> --test …` と同じ形で回す（`.cargo/config.toml` の環境と実行先の設定が本番の試験と揃う）。
 """
@@ -58,7 +58,7 @@ def main():
     env.setdefault('XDG_RUNTIME_DIR', '/tmp/xdg-' + env.get('USER', 'node'))
     Path(env['XDG_RUNTIME_DIR']).mkdir(parents=True, exist_ok=True)
     if args.shuffle:
-        # 実行のときだけ RUSTC_BOOTSTRAP を付ける実行先（cargo が rustc にも同じ環境を渡すので、環境変数で直に付けると依存まで組み直しになる）
+        # 実行のときだけ RUSTC_BOOTSTRAP を付ける実行先（cargo が rustc にも同じ環境を渡すので、環境変数で直に付けると依存までビルドし直しになる）
         runner = out / 'shuffle-runner.sh'
         runner.write_text('#!/bin/sh\nexe="$1"; shift\nRUSTC_BOOTSTRAP=1 exec "$exe" "$@" -Zunstable-options --shuffle --shuffle-seed "$YOLU_SHUFFLE_SEED"\n')
         runner.chmod(runner.stat().st_mode | stat.S_IXUSR)

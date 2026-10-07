@@ -20,13 +20,27 @@ fn the_thread_count_in_the_settings_file_sets_the_global_rayon_pool_at_startup()
     // rayon の数を聞くと、聞いた時点で全体のプールが既定の数で作られてしまう。既定の数は OS に聞く
     let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let wanted: u32 = if default_threads == 3 { 2 } else { 3 };
-    settings::save(&path, &Settings { cpu_threads: Some(wanted), ..Settings::default() }).unwrap();
+    settings::save(
+        &path,
+        &Settings {
+            cpu_threads: Some(wanted),
+            ..Settings::default()
+        },
+    )
+    .unwrap();
     assert_eq!(settings::load(&path).0.cpu_threads, Some(wanted));
     // プールがまだ使われていないので、設定の数になる（使われたあとは変えられないので、最初の 1 回）
     settings::apply_thread_setting();
     assert_eq!(rayon::current_num_threads(), wanted as usize);
     // 2 回目は何もしない（作れない。壊れず、数も変わらない）
-    settings::save(&path, &Settings { cpu_threads: Some(5), ..Settings::default() }).unwrap();
+    settings::save(
+        &path,
+        &Settings {
+            cpu_threads: Some(5),
+            ..Settings::default()
+        },
+    )
+    .unwrap();
     settings::apply_thread_setting();
     assert_eq!(rayon::current_num_threads(), wanted as usize);
     let _ = std::fs::remove_dir_all(dir);

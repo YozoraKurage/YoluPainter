@@ -1,21 +1,21 @@
 //! core の文書 → PSD の書き出し（チャンネルごと・焼き込み）。
 //!
-//! 1 つの PSD は 1 つのチャンネルの写し。層の合成モード・不透明度・表示はそのチャンネルの値で書く。PSD に形の無いものは、機能ごとに
-//! 決めた形で書き、した事は層の名前つきの注記（[`ExportNote`]）にして返す（黙って捨てない）:
+//! 1 つの PSD は 1 つのチャンネルの写し。レイヤーの合成モード・不透明度・表示はそのチャンネルの値で書く。PSD に形の無いものは、機能ごとに
+//! 決めた形で書き、した事はレイヤーの名前つきの注記（[`ExportNote`]）にして返す（黙って捨てない）:
 //!
 //! | 機能 | 書き出し |
 //! |---|---|
-//! | 層の中身のフィルター（Generator も）・塗りつぶしの画像/投影/デカール/グラデーション・半透明の塗りつぶし | 評価した画素のラスター層 |
+//! | レイヤーの中身のフィルター（Generator も）・塗りつぶしの画像/投影/デカール/グラデーション・半透明の塗りつぶし | 評価した画素のラスターレイヤー |
 //! | マスクのフィルター・反転したマスク | 評価・反転した値をマスクの画素に |
-//! | クリッピングされたグループ | グループの合成を 1 枚のラスター層に（クリッピングの印は付けたまま） |
+//! | クリッピングされたグループ | グループの合成を 1 枚のラスターレイヤーに（クリッピングの印は付けたまま） |
 //! | 印だけ付いた何にもクリッピングされないグループ（兄弟の一番下） | 印を外した普通のグループ（見た目は同じ） |
 //! | 効いていないフィルターの段・Anchor | 落とす（画素は変わらない） |
 //! | パス | 画素のまま（パスの情報を落とす） |
 //! | 刻みの間の調整（レベル補正・色相/彩度・トーンカーブ・カラーバランス・明るさ/コントラスト・グラデーションマップ） | 最寄りの刻みへ丸めた調整レイヤー（値と合成の最大の差を注記に） |
 //! | グラデーションマップの値のカーブ | カーブを通した色・不透明度の停止点（各 32 個まで）に展開した調整レイヤー（停止点の数と合成の最大の差を注記に。収まらなければ断る） |
-//! | そのチャンネルで効かない・有効でない層 | 隠した層 |
+//! | そのチャンネルで効かない・有効でないレイヤー | 隠したレイヤー |
 //!
-//! 焼いた層・マスクは元の層の名前・ID・合成モード・不透明度・表示・クリッピング・ロック・マスクの有効と濃度を持ち、層の並びと入れ子は変えない。
+//! 焼いたレイヤー・マスクは元のレイヤーの名前・ID・合成モード・不透明度・表示・クリッピング・ロック・マスクの有効と濃度を持ち、レイヤーの並びと入れ子は変えない。
 //! 画素は `Document::layer_output`・`mask_output`・`group_output`（合成と同じ評価の道）から取る。計画（[`plan_export`]）は画素を作らず、
 //! 構築（[`ExportPlan::build`]）が画素を作る。同じ文書・同じ設定なら、計画と構築は同じ判断をする。
 //!
@@ -25,19 +25,17 @@
 //! 刻みへ丸める調整があるとき、画素は丸めた設定の文書から焼く（Anchor のように合成を読む画素も、PSD に書く丸めた調整の上の見た目になる）。
 //!
 //! 保証の射程: 焼いた PSD を読み戻した合成は、書き出したチャンネルの今の合成と全バイト一致する（丸めた調整・不透明度と濃度の 1/255 の
-//! 刻みの外の値・Normal の層が重なる所を除く）。PSD の層は不透明度・マスクの濃度を 1/255 の刻みで持つので、刻みの外の値はこれまでどおり
+//! 刻みの外の値・Normal のレイヤーが重なる所を除く）。PSD のレイヤーは不透明度・マスクの濃度を 1/255 の刻みで持つので、刻みの外の値はこれまでどおり
 //! 丸めて書く（注記には出ない）。Normal は PSD の合成が色の式で重ねるので、重なる所の結果は Yolu の法線の重ね方と違い得る（注記
-//! `NormalBlend`）。Normal の焼き込みで書く統合画像は、書いた層を PSD と同じ色の式で重ねたもの（層と統合画像を食い違わせない）で、Yolu の
-//! 合成を使うのは平らの方式だけ。ファイルの向きが DirectX の Normal は、層の緑を反転して書き、レベル補正は PSD の 1 つのレベル補正で書けないので断る。
-//! 反転したマスクを画素に焼くと、不透明度に掛ける値が実数では同じでも浮動小数の最後の桁で違う画素値があり、反転したマスクを焼いた層が重なる所で
+//! `NormalBlend`）。Normal の焼き込みで書く統合画像は、書いたレイヤーを PSD と同じ色の式で重ねたもの（レイヤーと統合画像を食い違わせない）で、Yolu の
+//! 合成を使うのは平らの方式だけ。ファイルの向きが DirectX の Normal は、レイヤーの緑を反転して書き、レベル補正は PSD の 1 つのレベル補正で書けないので断る。
+//! 反転したマスクを画素に焼くと、不透明度に掛ける値が実数では同じでも浮動小数の最後の桁で違う画素値があり、反転したマスクを焼いたレイヤーが重なる所で
 //! まれに 1 画素が 1 ずれ得る（見た目に出る差ではない）。
 use super::bridge::{
     channel_label, core_adjustment, divider_part, layer_part, psd_adjustment, psd_locks, unique_id,
     Blocker, Refusal, PIXEL_BUDGET,
 };
-use super::write::{
-    MaskRegion, Region, StreamOptions, Supplied, XResult,
-};
+use super::write::{MaskRegion, Region, StreamOptions, Supplied, XResult};
 use super::*;
 use crate::{check, check_budget, Error, Result};
 use std::borrow::Cow;
@@ -56,10 +54,10 @@ use yolu_core::{
 /// 書き出しの方式。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExportMode {
-    /// 層を残し、PSD に形の無いものを焼いて書く。
+    /// レイヤーを残し、PSD に形の無いものを焼いて書く。
     #[default]
     Bake,
-    /// 合成だけを 1 枚のラスター層に書く。
+    /// 合成だけを 1 枚のラスターレイヤーに書く。
     Flat,
 }
 
@@ -73,7 +71,7 @@ impl ExportOptions {
     pub fn new(channel: Channel, mode: ExportMode) -> Self {
         Self { channel, mode }
     }
-    /// Color を、層を残して焼いて書く。
+    /// Color を、レイヤーを残して焼いて書く。
     pub fn color() -> Self {
         Self::new(Channel::Color, ExportMode::Bake)
     }
@@ -83,8 +81,8 @@ impl ExportOptions {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExportControl<'a> {
     pub cancel: Option<&'a AtomicBool>,
-    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーのメモリ」。取り込みの `CopyOptions::source_budget` と同じ値）。層の記録の数（予算 1 MiB につき 1 件）・
-    /// キャンバス・層 1 枚の画素の上限をここから決める（[`Limits::for_export`]）。`None` は C# の書き手と対の固定の上限（画素の合計 128 MiB と既定の
+    /// 書き出しに許すレイヤーの画素のバイト数（設定の「レイヤーのメモリ」。取り込みの `CopyOptions::source_budget` と同じ値）。レイヤーの記録の数（予算 1 MiB につき 1 件）・
+    /// キャンバス・レイヤー 1 枚の画素の上限をここから決める（[`Limits::for_export`]）。`None` は C# の書き手と対の固定の上限（画素の合計 128 MiB と既定の
     /// [`Limits`]。厳密な書き出し `from_core` はいつもこれ）。
     pub source_budget: Option<u64>,
     /// 書くファイルの大きさの上限（バイト）。既定と上限は PSD の 2 GiB で、それより小さい値だけ指定できる。
@@ -97,7 +95,7 @@ impl ExportControl<'_> {
             None => Limits::default(),
         }
     }
-    /// 1 枚の作業の領域と、メモリに全層を組むときの画素の合計に許すバイト数。
+    /// 1 枚の作業の領域と、メモリに全レイヤーを組むときの画素の合計に許すバイト数。
     pub(super) fn cap(&self) -> u64 {
         self.source_budget.unwrap_or(PIXEL_BUDGET)
     }
@@ -175,22 +173,22 @@ pub enum RoundedParameter {
     OpacityStopValue(u8),
 }
 
-/// した事（層ごとの注記の中身）。
+/// した事（レイヤーごとの注記の中身）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum NoteAction {
-    /// 層の中身のフィルター・Generator の段（名前の並び）を、層の画素へ焼いた。
+    /// レイヤーの中身のフィルター・Generator の段（名前の並び）を、レイヤーの画素へ焼いた。
     BakedFilters(Vec<EffectSettings>),
-    /// 塗りつぶしの画像・投影・デカール・グラデーションを、層の画素へ焼いた。
+    /// 塗りつぶしの画像・投影・デカール・グラデーションを、レイヤーの画素へ焼いた。
     BakedFill(FillSources),
-    /// 半透明の塗りつぶしを、層の画素へ焼いた（PSD の単色の塗りつぶしは不透明だけ）。
+    /// 半透明の塗りつぶしを、レイヤーの画素へ焼いた（PSD の単色の塗りつぶしは不透明だけ）。
     BakedTranslucentFill,
-    /// パスの層。画素はパスから描いた結果のままで、パスの情報は PSD に残らない。
+    /// パスレイヤー。画素はパスから描いた結果のままで、パスの情報は PSD に残らない。
     BakedPath,
     /// マスクのフィルター・Generator の段を、マスクの画素へ焼いた。
     BakedMaskFilters(Vec<EffectSettings>),
     /// 反転したマスクを、反転した値のマスクの画素へ焼いた。
     BakedInvertedMask,
-    /// クリッピングされたグループを、1 枚のラスター層にした。
+    /// クリッピングされたグループを、1 枚のラスターレイヤーにした。
     BakedClippedGroup,
     /// 兄弟の一番下のグループのクリッピングの印（何にもクリッピングされない）を外し、普通のグループとして書いた。見た目は変わらない。
     DroppedClippingMark,
@@ -202,8 +200,8 @@ pub enum NoteAction {
     DroppedAnchor,
     /// マスクの Anchor を落とした。
     DroppedMaskAnchor,
-    /// Normal の層が重なる所は、PSD では色の式で重なる（Yolu は法線のベクトルとして重ねる）。統合画像は、書いた層を色の式で重ねたもの。
-    /// 注記の層の名前は、チャンネルの名前。
+    /// Normal のレイヤーが重なる所は、PSD では色の式で重なる（Yolu は法線のベクトルとして重ねる）。統合画像は、書いたレイヤーを色の式で重ねたもの。
+    /// 注記のレイヤーの名前は、チャンネルの名前。
     NormalBlend,
     /// 調整を PSD の刻みへ丸めた。`max_diff` は、書き出したチャンネルの合成の最大の差（0〜255。隠した調整は 0）。
     Rounded {
@@ -213,13 +211,15 @@ pub enum NoteAction {
     },
     /// グラデーションマップの値のカーブか混色（混色モード・区間の混合率曲線。PSD のグラデーションに形が無い）を、それを通した色・不透明度の停止点の列へ展開した（近似）。
     /// `cause` は展開した理由（どちらを使っていたか）、`colors`・`opacities` は停止点の数、`max_diff` は書き出したチャンネルの合成の最大の差（0〜255。隠した調整は 0）。
-    /// `max_diff` は文書の合成の実測で、展開の基準（層 1 枚の出力の差 `EXPANSION_DIFFS`。通常の合成モード・不透明度 100% のとき）を超えることがある（超えても断らない）。
+    /// `max_diff` は文書の合成の実測で、展開の基準（レイヤー 1 枚の出力の差 `EXPANSION_DIFFS`。通常の合成モード・不透明度 100% のとき）を超えることがある（超えても断らない）。
     ExpandedGradientCurve {
         cause: GradientExpansion,
         colors: usize,
         opacities: usize,
         max_diff: u8,
     },
+    /// テキストレイヤー。画素はテキストの値から描いた結果のままで、テキストの値は PSD に残らない（PSD のテキストレイヤーは書かない）。
+    BakedText,
 }
 
 /// グラデーションマップを停止点へ展開した理由（PSD のグラデーションに形が無いもののうち、使っていたもの）。
@@ -233,14 +233,14 @@ pub enum GradientExpansion {
     CurveAndMixing,
 }
 
-/// 層 1 枚の注記。
+/// レイヤー 1 枚の注記。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportNote {
     pub layer: String,
     pub action: NoteAction,
 }
 impl ExportNote {
-    /// 日本語の 1 行（層の名前つき。画面は種類から画面の言語の文を作る）。
+    /// 日本語の 1 行（レイヤーの名前つき。画面は種類から画面の言語の文を作る）。
     pub fn message(&self) -> String {
         let name = &self.layer;
         let names = |v: &[EffectSettings]| {
@@ -251,7 +251,7 @@ impl ExportNote {
         };
         match &self.action {
             NoteAction::BakedFilters(v) => {
-                format!("層「{name}」のフィルター（{}）を画素に焼きました", names(v))
+                format!("レイヤー「{name}」のフィルター（{}）を画素に焼きました", names(v))
             }
             NoteAction::BakedFill(_) => {
                 format!("塗りつぶし「{name}」の画像・投影・グラデーションを画素に焼きました")
@@ -260,35 +260,35 @@ impl ExportNote {
                 format!("塗りつぶし「{name}」の半透明の値を画素に焼きました")
             }
             NoteAction::BakedPath => {
-                format!("層「{name}」のパスの情報は PSD に残りません。画素はそのままです")
+                format!("レイヤー「{name}」のパスの情報は PSD に残りません。画素はそのままです")
             }
             NoteAction::BakedMaskFilters(v) => format!(
-                "層「{name}」のマスクのフィルター（{}）をマスクの画素に焼きました",
+                "レイヤー「{name}」のマスクのフィルター（{}）をマスクの画素に焼きました",
                 names(v)
             ),
             NoteAction::BakedInvertedMask => {
-                format!("層「{name}」の反転したマスクを、反転した値のマスクの画素に焼きました")
+                format!("レイヤー「{name}」の反転したマスクを、反転した値のマスクの画素に焼きました")
             }
             NoteAction::BakedClippedGroup => {
-                format!("グループ「{name}」はクリッピングされているので、1 枚の画素の層にしました")
+                format!("グループ「{name}」はクリッピングされているので、1 枚の画素のレイヤーにしました")
             }
             NoteAction::DroppedClippingMark => format!(
                 "グループ「{name}」のクリッピングの印を外しました（何にもクリッピングされないので、見た目は同じです）"
             ),
             NoteAction::DroppedFilters(v) => format!(
-                "層「{name}」の効いていないフィルター（{}）を落としました",
+                "レイヤー「{name}」の効いていないフィルター（{}）を落としました",
                 names(v)
             ),
             NoteAction::DroppedMaskFilters(v) => format!(
-                "層「{name}」のマスクの効いていないフィルター（{}）を落としました",
+                "レイヤー「{name}」のマスクの効いていないフィルター（{}）を落としました",
                 names(v)
             ),
-            NoteAction::DroppedAnchor => format!("層「{name}」の Anchor を落としました"),
+            NoteAction::DroppedAnchor => format!("レイヤー「{name}」の Anchor を落としました"),
             NoteAction::DroppedMaskAnchor => {
-                format!("層「{name}」のマスクの Anchor を落としました")
+                format!("レイヤー「{name}」のマスクの Anchor を落としました")
             }
             NoteAction::NormalBlend => {
-                format!("チャンネル「{name}」の層が重なる所は、PSD では色の式で重なります（Yolu は法線のベクトルとして重ねます）")
+                format!("チャンネル「{name}」のレイヤーが重なる所は、PSD では色の式で重なります（Yolu は法線のベクトルとして重ねます）")
             }
             NoteAction::Rounded { max_diff, .. } => {
                 format!("調整「{name}」を PSD の刻みへ丸めました（合成の最大の差 {max_diff}）")
@@ -308,11 +308,14 @@ impl ExportNote {
                     "調整「{name}」のグラデーションマップの{what}を、色 {colors} 個・不透明度 {opacities} 個の停止点に展開しました（合成の最大の差 {max_diff}）"
                 )
             }
+            NoteAction::BakedText => {
+                format!("テキストレイヤー「{name}」は画素のレイヤーとして書きました。テキストの値は PSD に残りません")
+            }
         }
     }
 }
 
-/// 層がチャンネルで必要とすること（そのままは書けない理由）。
+/// レイヤーがチャンネルで必要とすること（そのままは書けない理由）。
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Need {
     ContentFilters(Vec<EffectSettings>),
@@ -331,6 +334,8 @@ pub(super) enum Need {
     Round(Box<Rounding>),
     /// 焼いても丸めても書けない（断る）。
     Hard(Refusal),
+    /// テキストレイヤー（Color のチャンネルの画素はテキストの値から描いた結果）。
+    Text,
 }
 impl Need {
     /// そのまま書く（焼かない・丸めない・落とさない）ときに断る理由。
@@ -352,6 +357,7 @@ impl Need {
             Need::Hard(Refusal::GradientMapCurveStops) => Refusal::GradientMapCurve,
             Need::Hard(Refusal::GradientMapMixingStops) => Refusal::GradientMapMixing,
             Need::Hard(r) => r.clone(),
+            Need::Text => Refusal::Text,
         }
     }
     /// 焼き込みの書き出しが断る理由。`Hard` は計画の `blockers` にある理由そのまま（展開できなかった理由を言う）。ほかは `refusal`。
@@ -420,11 +426,11 @@ fn curve_gap() -> i64 {
 
 /// グラデーションの停止点の数の上限（PSD の読みと core のランプの上限）。
 const STOP_LIMIT: usize = 32;
-/// 値のカーブの展開が許す、調整の層 1 枚の出力の差（0〜255 の値）の段階。測るのは [`mix_diff`] の値で、その層が通常の合成モード・不透明度 100% で、
+/// 値のカーブの展開が許す、調整レイヤー 1 枚の出力の差（0〜255 の値）の段階。測るのは [`mix_diff`] の値で、そのレイヤーが通常の合成モード・不透明度 100% で、
 /// 下の色 0〜255 のどれに当たっても出る最悪の差。まず 1 以下を目指し、停止点が足りなければ緩める（不透明度がカーブに沿って動くと、不透明度の
-/// 1 の誤差が下の色によっては出力で 1 を超えるので、1 では足りないことがある）。最後の段階でも足りなければ、合成に出る層は断る（合成に出ない
-/// 層は、最後の段階の最良の展開を隠した層で書く）。
-/// 文書の合成の差の上限ではない: 層の合成モード（傾きの大きいもの）・不透明度・上の層（2 値化・レベル補正など）が、この差を増やすことがある。
+/// 1 の誤差が下の色によっては出力で 1 を超えるので、1 では足りないことがある）。最後の段階でも足りなければ、合成に出るレイヤーは断る（合成に出ない
+/// レイヤーは、最後の段階の最良の展開を隠したレイヤーで書く）。
+/// 文書の合成の差の上限ではない: レイヤーの合成モード（傾きの大きいもの）・不透明度・上のレイヤー（2 値化・レベル補正など）が、この差を増やすことがある。
 /// 文書の合成の差は、計画が丸めた文書の合成と今の合成を比べて測り、注記に出す（断る基準にはしない）。
 const EXPANSION_DIFFS: [u32; 3] = [1, 2, 4];
 
@@ -432,7 +438,7 @@ const EXPANSION_DIFFS: [u32; 3] = [1, 2, 4];
 fn knot_location(k: usize) -> u16 {
     ((k * 4096 * 2 + 255) / 510) as u16
 }
-/// 調整の表（輝度 → 色・不透明度）が `want` と `have` で違うとき、その層が通常の合成モード・不透明度 100% で、下の色 `0..=255` のどれに当てても出る
+/// 調整の表（輝度 → 色・不透明度）が `want` と `have` で違うとき、そのレイヤーが通常の合成モード・不透明度 100% で、下の色 `0..=255` のどれに当てても出る
 /// 出力の最大の差。
 fn mix_diff(want: Rgba8, have: Rgba8) -> (u32, u32, u32) {
     if want == have {
@@ -482,7 +488,7 @@ fn expand_curve(g: &GradientMap) -> Option<Expansion> {
 }
 
 /// 調整が当たる輝度は `k / 255`（k = 0〜255）の 256 点だけなので、停止点は輝度の点に置き、その位置の元の色・不透明度（カーブを通した値）を
-/// 持たせる。誤差の一番大きい輝度に、色か不透明度の停止点を 1 つずつ足し、層 1 枚の出力の差（[`mix_diff`]。通常モード・不透明度 100%・下の色によらない
+/// 持たせる。誤差の一番大きい輝度に、色か不透明度の停止点を 1 つずつ足し、レイヤー 1 枚の出力の差（[`mix_diff`]。通常モード・不透明度 100%・下の色によらない
 /// 最悪）が `tolerance` 以下になった所で止める。停止点が [`STOP_LIMIT`] を超えて足りなければ、足せなくなった所の展開を `fits: false` で返す。
 /// 位置は 1/4096 の刻みに寄るので、急なカーブでは輝度の点の隣にも足すことがある。
 fn expand_within(g: &GradientMap, tolerance: u32) -> Option<Expansion> {
@@ -577,8 +583,8 @@ fn expand_within(g: &GradientMap, tolerance: u32) -> Option<Expansion> {
 /// 刻みの間（PSD の範囲の外も）の調整を、最寄りの刻みへ。グラデーションマップの値のカーブは停止点へ展開する。種類を足すときは、ここに腕を足す
 /// （その種類の `psd_adjustment` が断る値を、PSD の刻みの整数へ寄せる。寄せられない種類は断りのまま）。反転・2 値化・ポスタリゼーションは常に
 /// 刻みの上にある（断りが無い）。丸めても書けないときは、断る理由を返す。
-/// `shown` は、その層が書き出すチャンネルの合成に出るか。値のカーブが停止点の上限・差の段階に収まらないとき、合成に出る層は断る（`GradientMapCurveStops`）が、
-/// 合成に出ない層（表示を切った・そのチャンネルに効かない・無効）は、展開の失敗で断る理由が無いので、最後の段階の最良の展開を隠した層で書く。
+/// `shown` は、そのレイヤーが書き出すチャンネルの合成に出るか。値のカーブが停止点の上限・差の段階に収まらないとき、合成に出るレイヤーは断る（`GradientMapCurveStops`）が、
+/// 合成に出ないレイヤー（表示を切った・そのチャンネルに効かない・無効）は、展開の失敗で断る理由が無いので、最後の段階の最良の展開を隠したレイヤーで書く。
 fn rounding(
     s: &AdjustmentSettings,
     why: Refusal,
@@ -885,12 +891,12 @@ fn effective_adjustment<'a>(
     }
 }
 
-/// 層が書き出すチャンネルで必要とすること。そのチャンネルに効かない層（無効・面の無い層）も、持っている情報の扱いは同じ判断にする
-/// （隠した層として書く）。
+/// レイヤーが書き出すチャンネルで必要とすること。そのチャンネルに効かないレイヤー（無効・面の無いレイヤー）も、持っている情報の扱いは同じ判断にする
+/// （隠したレイヤーとして書く）。
 pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     let kind = l.kind();
     let mut out = Vec::new();
-    // 層の中身のフィルター: 効く段は焼き、効いていない段（無効・強さ 0）は落とす。ほかのチャンネルだけの段は、この PSD に関わらない
+    // レイヤーの中身のフィルター: 効く段は焼き、効いていない段（無効・強さ 0）は落とす。ほかのチャンネルだけの段は、この PSD に関わらない
     let mut baked_content = false;
     if matches!(kind, CoreKind::Raster | CoreKind::Fill) {
         let (active, idle): (Vec<_>, Vec<_>) = l
@@ -920,6 +926,9 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     }
     if l.path().is_some_and(|p| p.channels().contains(&c)) {
         out.push(Need::Path)
+    }
+    if c == Channel::Color && l.text().is_some() {
+        out.push(Need::Text)
     }
     if l.anchor().is_some() {
         out.push(Need::Anchor)
@@ -963,7 +972,7 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
                 Err(refusal) => out.push(Need::Hard(refusal)),
             },
         }
-        // Normal の PSD をファイルの Y の向き（DirectX）で書くと、緑を反転した値が層に入る。反転と、チャンネルごとに同じ式の調整は順序を
+        // Normal の PSD をファイルの Y の向き（DirectX）で書くと、緑を反転した値がレイヤーに入る。反転と、チャンネルごとに同じ式の調整は順序を
         // 入れ替えても同じだが、レベル補正は緑だけ別の曲線になるので、PSD の 1 つのレベル補正では書けない
         if s.kind() == AdjustmentType::Levels
             && l.visible()
@@ -976,28 +985,28 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     out
 }
 
-/// 法線のチャンネルか（層を単位ベクトルとして重ねる）。
+/// 法線のチャンネルか（レイヤーを単位ベクトルとして重ねる）。
 fn is_normal(d: &CoreDocument, c: Channel) -> bool {
     d.channel_info(c)
         .is_some_and(|i| i.kind == ChannelKind::Normal)
 }
 
-/// このチャンネルの層の値に、ファイルの Y の向きを掛けるか（Normal で、文書のファイルの向きが DirectX）。
+/// このチャンネルのレイヤーの値に、ファイルの Y の向きを掛けるか（Normal で、文書のファイルの向きが DirectX）。
 fn flips_green(d: &CoreDocument, c: Channel) -> bool {
     is_normal(d, c) && d.normal_settings().file_direction() == NormalYDirection::DirectX
 }
 
-/// 書き出しの計画（画素は作らない）。注記は上の層から。`blockers` があれば、構築は断る。
+/// 書き出しの計画（画素は作らない）。注記は上のレイヤーから。`blockers` があれば、構築は断る。
 #[derive(Clone, Debug)]
 pub struct ExportPlan {
     pub options: ExportOptions,
     pub notes: Vec<ExportNote>,
-    /// 焼いても丸めても書けない層とその理由（今は、ファイルの向きが DirectX の Normal のレベル補正と、PSD の記録の無い種類の調整）。
+    /// 焼いても丸めても書けないレイヤーとその理由（今は、ファイルの向きが DirectX の Normal のレベル補正と、PSD の記録の無い種類の調整）。
     pub blockers: Vec<Blocker>,
-    /// 注記に出した、刻みへ丸める調整の層と丸めた設定（構築が、画素を丸めた設定の写しから焼くために使う）。
+    /// 注記に出した、刻みへ丸める調整レイヤーと丸めた設定（構築が、画素を丸めた設定の写しから焼くために使う）。
     rounded: Vec<(LayerId, AdjustmentSettings)>,
 }
-/// 書き出した結果（PSD の層と、した事の注記）。
+/// 書き出した結果（PSD のレイヤーと、した事の注記）。
 #[derive(Clone, Debug)]
 pub struct Exported {
     pub document: Document,
@@ -1025,7 +1034,7 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// 書き出しの前に、文書そのものが書き出せるか（ストロークの確定・チャンネルがある・画布・層の数の予算）を安く確かめる。計画・構築も同じ検査を
+/// 書き出しの前に、文書そのものが書き出せるか（ストロークの確定・チャンネルがある・キャンバス・レイヤーの数の予算）を安く確かめる。計画・構築も同じ検査を
 /// 先頭で行う。予算で断るときは `ExportError::Overrun`（画面が理由と、設定で上げられることを言う）。
 pub fn check_exportable(
     d: &CoreDocument,
@@ -1084,7 +1093,7 @@ fn composite(d: &CoreDocument, c: Channel, cancel: Option<&AtomicBool>) -> Resul
     Ok(out)
 }
 
-/// 書き出しの計画: 何を焼き・丸め・落とすかを層の名前つきの注記にする（丸める調整は、丸めた文書と今の文書の合成の最大の差も測る）。
+/// 書き出しの計画: 何を焼き・丸め・落とすかをレイヤーの名前つきの注記にする（丸める調整は、丸めた文書と今の文書の合成の最大の差も測る）。
 /// 断るものは `blockers` に。文書は変えない。
 pub fn plan_export(
     d: &CoreDocument,
@@ -1109,7 +1118,7 @@ pub fn plan_export(
     }
     let c = options.channel;
     let tree = Tree::new(d);
-    // (注記の番号, 層, 丸め, 合成に出るか)
+    // (注記の番号, レイヤー, 丸め, 合成に出るか)
     let mut rounded: Vec<(usize, LayerId, Rounding, bool)> = Vec::new();
     fn walk<'a>(
         tree: &Tree<'a>,
@@ -1141,6 +1150,7 @@ pub fn plan_export(
                     Need::DroppedMaskFilters(v) => NoteAction::DroppedMaskFilters(v),
                     Need::Anchor => NoteAction::DroppedAnchor,
                     Need::MaskAnchor => NoteAction::DroppedMaskAnchor,
+                    Need::Text => NoteAction::BakedText,
                     Need::Round(r) => {
                         rounded.push((plan.notes.len(), l.id(), (*r).clone(), shown_in(d, l, c)));
                         match r.stops {
@@ -1170,7 +1180,7 @@ pub fn plan_export(
         .iter()
         .map(|(_, id, r, _)| (*id, r.settings.clone()))
         .collect();
-    // Normal の層が 2 枚以上重なると、PSD の色の式の重ねは Yolu の法線の重ねと違い得る
+    // Normal のレイヤーが 2 枚以上重なると、PSD の色の式の重ねは Yolu の法線の重ねと違い得る
     if is_normal(d, c)
         && d.layers()
             .iter()
@@ -1204,7 +1214,7 @@ pub fn plan_export(
     Ok(plan)
 }
 
-/// 層が書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、表示。グループは表示）。
+/// レイヤーが書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、表示。グループは表示）。
 fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
     if !l.visible() {
         return false;
@@ -1234,8 +1244,8 @@ impl ExportPlan {
         }
     }
 
-    /// 計画どおりに PSD の層を作る（画素を評価する。全層の画素をメモリに組むので、画素の合計は予算に入る範囲だけ）。断るものがあれば断る。
-    /// 取消・予算超過はエラー。実物の大きさの文書は、層を 1 枚ずつ流して書く [`write_psd`](Self::write_psd) で書く。
+    /// 計画どおりに PSD のレイヤーを作る（画素を評価する。全レイヤーの画素をメモリに組むので、画素の合計は予算に入る範囲だけ）。断るものがあれば断る。
+    /// 取消・予算超過はエラー。実物の大きさの文書は、レイヤーを 1 枚ずつ流して書く [`write_psd`](Self::write_psd) で書く。
     pub fn build(&self, d: &CoreDocument, ctl: &ExportControl) -> Result<Exported> {
         let twin = self.source(d)?;
         let source = twin.as_ref().unwrap_or(d);
@@ -1246,9 +1256,9 @@ impl ExportPlan {
         })
     }
 
-    /// 計画どおりに、PSD を `out`（書き始めが先頭の、Seek できる出力）へ流して書く。層の画素は PSD の記録の順に 1 枚ずつ評価して、圧縮して書いたらすぐ
-    /// 捨てるので、メモリには層 1 枚ぶんと記録の表しか持たない（画素の合計に上限は無く、ファイルの 2 GiB が上限）。Normal の焼き込みと平らの 1 枚だけは、
-    /// 全層をメモリに組む（合計は予算で止める）。書きかけを消すのは呼び手の仕事（途中で失敗・取消すると、`out` には書きかけが残る）。
+    /// 計画どおりに、PSD を `out`（書き始めが先頭の、Seek できる出力）へ流して書く。レイヤーの画素は PSD の記録の順に 1 枚ずつ評価して、圧縮して書いたらすぐ
+    /// 捨てるので、メモリにはレイヤー 1 枚ぶんと記録の表しか持たない（画素の合計に上限は無く、ファイルの 2 GiB が上限）。Normal の焼き込みと平らの 1 枚だけは、
+    /// 全レイヤーをメモリに組む（合計は予算で止める）。書きかけを消すのは呼び手の仕事（途中で失敗・取消すると、`out` には書きかけが残る）。
     pub fn write_psd<W: Write + Seek>(
         &self,
         d: &CoreDocument,
@@ -1262,7 +1272,7 @@ impl ExportPlan {
     }
 }
 
-/// 計画して構築する（確かめの窓を挟まない呼び出し向け）。
+/// 計画して構築する（確認のウィンドウを挟まない呼び出し向け）。
 pub fn export_core(
     d: &CoreDocument,
     options: &ExportOptions,
@@ -1291,21 +1301,21 @@ impl Baked {
     }
 }
 
-/// 層の画素の出どころ。層の構造（記録）を先に作り、画素は PSD の記録の順に 1 枚ずつ作る（流して書くときは、書いたらすぐ捨てる）。
+/// レイヤーの画素の出どころ。レイヤーの構造（記録）を先に作り、画素は PSD の記録の順に 1 枚ずつ作る（流して書くときは、書いたらすぐ捨てる）。
 #[derive(Clone, Copy)]
 enum Source<'a> {
     /// 保存した画素（面のあるタイルの外接矩形）。
     Stored(&'a CoreLayer),
-    /// 評価して焼く層（フィルター・塗りつぶしの画像など）。
+    /// 評価して焼くレイヤー（フィルター・塗りつぶしの画像など）。
     Baked(&'a CoreLayer),
     /// 評価して 1 枚にしたクリッピングされたグループ。
     BakedGroup(&'a CoreLayer),
 }
-/// 層の構造を作ったあとの、画素の出どころの表（PSD の層 ID から）。
+/// レイヤーの構造を作ったあとの、画素の出どころの表（PSD のレイヤー ID から）。
 #[derive(Default)]
 struct Slots<'a> {
     content: HashMap<i32, Source<'a>>,
-    /// マスクのある層: (層, マスク, 評価して焼くか)。
+    /// マスクのあるレイヤー: (レイヤー, マスク, 評価して焼くか)。
     masks: HashMap<i32, (&'a CoreLayer, &'a RasterMask, bool)>,
 }
 
@@ -1332,9 +1342,9 @@ struct Builder<'a> {
     tree: Tree<'a>,
     used: HashSet<i32>,
     limits: Limits,
-    /// 1 枚の作業の領域と、メモリに全層を組むときの画素の合計に許すバイト数。
+    /// 1 枚の作業の領域と、メモリに全レイヤーを組むときの画素の合計に許すバイト数。
     cap: u64,
-    /// 画素の合計を数えて `cap` で止めるか（メモリに全層を組む書き出し。流して書くときは層 1 枚ぶんしか持たないので数えない）。
+    /// 画素の合計を数えて `cap` で止めるか（メモリに全レイヤーを組む書き出し。流して書くときはレイヤー 1 枚ぶんしか持たないので数えない）。
     accumulate: bool,
     budget: u64,
     max_file_bytes: u64,
@@ -1373,7 +1383,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    /// メモリに全層を組む。層の画素は PSD の記録の順に 1 枚ずつ作って層へ入れる。`compression` は、このあとの書き方（RLE は圧縮したあとの長さを書きながら
+    /// メモリに全レイヤーを組む。レイヤーの画素は PSD の記録の順に 1 枚ずつ作ってレイヤーへ入れる。`compression` は、このあとの書き方（RLE は圧縮したあとの長さを書きながら
     /// 上限と比べるので、無圧縮で書いたときの長さは確かめない。無圧縮はその長さも上限に入るか確かめる）。
     pub(super) fn run(mut self, compression: Compression) -> XResult<Document> {
         let d = self.d;
@@ -1386,7 +1396,7 @@ impl<'a> Builder<'a> {
             }
             ExportMode::Flat => Vec::new(),
         };
-        // Normal の層を重ねた統合画像は、書いた層を PSD と同じ色の式で重ねたもの（読み戻したとき、層と統合画像が食い違って編集できない PSD に
+        // Normal のレイヤーを重ねた統合画像は、書いたレイヤーを PSD と同じ色の式で重ねたもの（読み戻したとき、レイヤーと統合画像が食い違って編集できない PSD に
         // ならない）。Yolu の法線の重ねとは、重なる所で違い得る（注記 `NormalBlend`）
         if self.mode == ExportMode::Bake && is_normal(d, self.c) {
             let mut out = Document {
@@ -1425,8 +1435,8 @@ impl<'a> Builder<'a> {
         Ok(out)
     }
 
-    /// 流して書く。層の画素は PSD の記録の順に 1 枚ずつ作り、圧縮して書いたらすぐ捨てる（メモリには層 1 枚ぶんと記録の表）。統合画像は層を書いたあとで
-    /// 作る。Normal の焼き込み（統合画像を書いた層から作る）と平らの 1 枚は、全層をメモリに組んでから書く（画素の合計は予算で止める）。
+    /// 流して書く。レイヤーの画素は PSD の記録の順に 1 枚ずつ作り、圧縮して書いたらすぐ捨てる（メモリにはレイヤー 1 枚ぶんと記録の表）。統合画像はレイヤーを書いたあとで
+    /// 作る。Normal の焼き込み（統合画像を書いたレイヤーから作る）と平らの 1 枚は、全レイヤーをメモリに組んでから書く（画素の合計は予算で止める）。
     pub(super) fn write<W: Write + Seek>(
         mut self,
         out: &mut W,
@@ -1513,7 +1523,7 @@ impl<'a> Builder<'a> {
         }
         Ok(())
     }
-    /// メモリに組む画素に `bytes` を足す（全層をメモリに組むときだけ合計を数えて、予算で断る）。
+    /// メモリに組む画素に `bytes` を足す（全レイヤーをメモリに組むときだけ合計を数えて、予算で断る）。
     fn add(&mut self, layer: &str, bytes: u64) -> XResult<()> {
         self.work(layer, bytes)?;
         if self.accumulate {
@@ -1528,7 +1538,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    /// 1 つの段（None は一番上）の層の構造。上から下の並びで返す（画素は作らない）。
+    /// 1 つの段（None は一番上）のレイヤーの構造。上から下の並びで返す（画素は作らない）。
     fn level(&mut self, parent: Option<LayerId>, slots: &mut Slots<'a>) -> XResult<Vec<Layer>> {
         let mut out = Vec::new();
         for l in self.tree.level(parent) {
@@ -1537,10 +1547,10 @@ impl<'a> Builder<'a> {
         Ok(out)
     }
 
-    /// 層の PSD での合成モードと不透明度（書き出すチャンネルの値。PSD の層は 1 組しか持てない）。
+    /// レイヤーの PSD での合成モードと不透明度（書き出すチャンネルの値。PSD のレイヤーは 1 組しか持てない）。
     fn blend(&self, l: &CoreLayer, baked_group: bool) -> (BlendMode, u8) {
         let mode = BlendMode::ALL[l.blend_mode_in(self.c) as usize];
-        // 焼いたグループはラスターの層になり、通過は使えない
+        // 焼いたグループはラスターレイヤーになり、通過は使えない
         let mode = if baked_group && mode == BlendMode::PassThrough {
             BlendMode::Normal
         } else {
@@ -1549,7 +1559,7 @@ impl<'a> Builder<'a> {
         (mode, (l.opacity_in(self.c) * 255.0).round_ties_even() as u8)
     }
 
-    /// 層が PSD で表示か。そのチャンネルで合成に出ない層（有効でない・面や値が無い・効かない調整）は隠して書く。
+    /// レイヤーが PSD で表示か。そのチャンネルで合成に出ないレイヤー（有効でない・面や値が無い・効かない調整）は隠して書く。
     fn visible(&self, l: &CoreLayer, baked_group: bool) -> bool {
         match l.kind() {
             // 画素にしたグループは、合成が落とす（中身が無い・不透明度 0）なら隠す。残すと、クリッピングの組に入って、下地のグループの
@@ -1562,7 +1572,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// 層の記録（画素を除く）。画素・マスクの値の出どころは `slots` に入れる。
+    /// レイヤーの記録（画素を除く）。画素・マスクの値の出どころは `slots` に入れる。
     fn layer(&mut self, l: &'a CoreLayer, slots: &mut Slots<'a>) -> XResult<Layer> {
         self.check_cancel()?;
         let needs = needs(self.d, l, self.c);
@@ -1629,7 +1639,7 @@ impl<'a> Builder<'a> {
             }
             CoreKind::Fill => self.fill(l, &mut layer, bake_content, slots),
             CoreKind::Adjustment => {
-                let settings = l.adjustment().expect("調整の層は設定を持つ");
+                let settings = l.adjustment().expect("調整レイヤーは設定を持つ");
                 let adjustment = needs
                     .iter()
                     .find_map(|n| match n {
@@ -1672,7 +1682,7 @@ impl<'a> Builder<'a> {
         layer.kind = LayerKind::SolidColor([rgba[0], rgba[1], rgba[2]]);
     }
 
-    /// 構造の層へ、PSD の記録の順（下から上。グループは中身のあとにグループ自身）に画素とマスクの値を 1 枚ずつ作って入れる。
+    /// 構造のレイヤーへ、PSD の記録の順（下から上。グループは中身のあとにグループ自身）に画素とマスクの値を 1 枚ずつ作って入れる。
     fn fill_pixels(&mut self, layers: &mut [Layer], slots: &Slots<'a>) -> XResult<()> {
         for l in layers.iter_mut().rev() {
             if let LayerKind::Group { children, .. } = &mut l.kind {
@@ -1699,7 +1709,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    /// 記録 1 つの画素とマスクの値を作る（`id` は PSD の層 ID）。
+    /// 記録 1 つの画素とマスクの値を作る（`id` は PSD のレイヤー ID）。
     fn supply(
         &mut self,
         slots: &Slots<'a>,
@@ -1709,11 +1719,17 @@ impl<'a> Builder<'a> {
     ) -> XResult<Supplied<'static>> {
         let mut supplied = Supplied::default();
         if raster {
-            let source = *slots.content.get(&id).expect("ラスターの層には出どころがある");
+            let source = *slots
+                .content
+                .get(&id)
+                .expect("ラスターレイヤーには出どころがある");
             supplied.raster = Some(self.content(source)?.into_region());
         }
         if has_mask {
-            let (l, m, baked) = *slots.masks.get(&id).expect("マスクのある層には出どころがある");
+            let (l, m, baked) = *slots
+                .masks
+                .get(&id)
+                .expect("マスクのあるレイヤーには出どころがある");
             supplied.mask = Some(self.mask(l, m, baked)?);
         }
         Ok(supplied)
@@ -1742,7 +1758,7 @@ impl<'a> Builder<'a> {
     }
 
     /// 領域を帯ごとに評価して集め（上の帯から。各帯は上から下）、透明でない画素の外接矩形へ切り詰める（無ければ 1×1 の透明）。
-    /// 作業のバッファは画布 1 枚ぶんで、予算を先に見る。
+    /// 作業のバッファはキャンバス 1 枚ぶんで、予算を先に見る。
     fn bake(
         &mut self,
         name: &str,
@@ -1802,10 +1818,7 @@ impl<'a> Builder<'a> {
                 pixels,
             }
         };
-        self.add(
-            name,
-            u64::from(region.width) * u64::from(region.height) * 4,
-        )?;
+        self.add(name, u64::from(region.width) * u64::from(region.height) * 4)?;
         Ok(region)
     }
 
@@ -1837,7 +1850,7 @@ impl<'a> Builder<'a> {
         self.add(l.name(), u64::from(width) * u64::from(height) * 4)?;
         let mut pixels = vec![0; width as usize * height as usize * 4];
         if let Some(surface) = surface {
-            // タイルごとに行を写す（面の無いタイルは透明のまま）。1 画素ずつ引くと、全面の層でタイルの探索が画素の数だけ要る
+            // タイルごとに行を写す（面の無いタイルは透明のまま）。1 画素ずつ引くと、全面のレイヤーでタイルの探索が画素の数だけ要る
             let ts = d.tile_size() as usize;
             let (canvas_w, canvas_h) = (d.width() as usize, d.height() as usize);
             let mut tile = vec![0u8; surface.tile_bytes()];
@@ -1847,9 +1860,11 @@ impl<'a> Builder<'a> {
                 let (x0, y0) = (c.x as usize * ts, c.y as usize * ts);
                 let n = ts.min(canvas_w - x0);
                 for row in 0..ts.min(canvas_h - y0) {
-                    // core の行（下から）を、層の行（上から）へ
-                    let at = (top as usize - 1 - (y0 + row)) * width as usize + (x0 - left as usize);
-                    pixels[at * 4..(at + n) * 4].copy_from_slice(&tile[row * ts * 4..(row * ts + n) * 4])
+                    // core の行（下から）を、レイヤーの行（上から）へ
+                    let at =
+                        (top as usize - 1 - (y0 + row)) * width as usize + (x0 - left as usize);
+                    pixels[at * 4..(at + n) * 4]
+                        .copy_from_slice(&tile[row * ts * 4..(row * ts + n) * 4])
                 }
             }
         }
@@ -1865,13 +1880,8 @@ impl<'a> Builder<'a> {
 
     /// core のマスク（隠す量をアルファに持ち、左下原点）→ PSD のマスク（255 が見える、上から下）。焼くときは、フィルターを通した隠す量を
     /// 使い、反転は値を反転して画素にする（有効と濃度はそのまま）。矩形は既定の値と違う画素の外接矩形で、既定の値は 255 と 0 のうち
-    /// 矩形が小さくなるほう（同じなら 255）。画布のどこでも同じ値になる。
-    fn mask(
-        &mut self,
-        l: &CoreLayer,
-        m: &RasterMask,
-        baked: bool,
-    ) -> XResult<MaskRegion<'static>> {
+    /// 矩形が小さくなるほう（同じなら 255）。キャンバスのどこでも同じ値になる。
+    fn mask(&mut self, l: &CoreLayer, m: &RasterMask, baked: bool) -> XResult<MaskRegion<'static>> {
         let d = self.d;
         let (w, h, ts) = (
             d.width() as usize,
@@ -1936,7 +1946,7 @@ impl<'a> Builder<'a> {
     }
 }
 
-/// 構造の層の並びの記録の数（グループは区切りの記録も 1 つ要る）。
+/// 構造のレイヤーの並びの記録の数（グループは区切りの記録も 1 つ要る）。
 fn skeleton_count(layers: &[Layer]) -> usize {
     layers
         .iter()
@@ -1968,7 +1978,7 @@ fn bounds(values: &[u8], w: usize, background: u8) -> (usize, usize, usize, usiz
     }
 }
 
-/// 厳密な書き出し（Color）の断りの理由（下の層から。そのまま書けるなら空）。`from_core` が断るのと同じ判断。
+/// 厳密な書き出し（Color）の断りの理由（下のレイヤーから。そのまま書けるなら空）。`from_core` が断るのと同じ判断。
 pub fn export_blockers(d: &CoreDocument) -> Vec<Blocker> {
     let mut out = Vec::new();
     for l in d.layers() {
@@ -1982,7 +1992,7 @@ pub fn export_blockers(d: &CoreDocument) -> Vec<Blocker> {
     out
 }
 
-/// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、層の名前と理由で断る。使う上限の値だけ `ctl` から
+/// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、レイヤーの名前と理由で断る。使う上限の値だけ `ctl` から
 /// （既定は C# と対の固定の上限）。振る舞い（何を断るか）は変わらない。
 pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<Document> {
     Ok(Builder::new(d, &ExportOptions::color(), ctl, true)?.run(Compression::Raw)?)

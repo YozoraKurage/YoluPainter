@@ -7,7 +7,7 @@ use egui::Pos2;
 use egui_kittest::Harness;
 use yolu_app::state::Action;
 use yolu_app::view3d::brdf;
-use yolu_app::view3d::display::{EnvKind, Op};
+use yolu_app::view3d::display::{Display, EnvKind, Op};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
 use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
@@ -15,7 +15,9 @@ use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::look::{
     LookKind, LookValue, MaterialLook, PlaneSource, ReceivedImage, ReceivedLook, TextureSource,
 };
-use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, ImageColorSpace, ImageInput, Rgba8};
+use yolu_core::{
+    Channel, ChannelInfo, ChannelKind, ColorSpace, ImageColorSpace, ImageInput, Rgba8,
+};
 
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
@@ -100,7 +102,10 @@ fn fill_color(h: &mut Harness<'_, YoluApp>, color: [u8; 4]) {
         .doc
         .add_fill_layer(
             "色",
-            &[(Channel::Color, Rgba8::new(color[0], color[1], color[2], color[3]))],
+            &[(
+                Channel::Color,
+                Rgba8::new(color[0], color[1], color[2], color[3]),
+            )],
             None,
         )
         .unwrap();
@@ -157,7 +162,7 @@ fn to_bytes(c: Vec3) -> [u8; 3] {
 
 /// 3D ビューの光（表示の既定の強さ・色）から、lilToon の光の向きと明るさ（OpenLit の ComputeLights と lilToon の補正）。
 fn lil_light(to_light: Vec3) -> (Vec3, Vec3) {
-    let main = brdf::srgb_to_linear(0.769);
+    let main = Display::default().direct_light()[0];
     let flat = brdf::srgb_to_linear(0.2);
     let lum = main * (0.039_681_915 + 0.458_021_8 + 0.006_096_539_6); // OpenLitLuminance の係数
     let dir = (to_light * lum + Vec3::new(0.001, 0.002, 0.001)).normalize();
@@ -202,20 +207,31 @@ fn a_lit_toon_surface_is_albedo_times_the_clamped_light() {
     fill_color(&mut h, color);
     set_look(&mut h, lil());
     let image = h.render().expect("描ける");
-    let albedo = lin([color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0]);
+    let albedo = lin([
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+    ]);
     let (_, lc) = lil_light(Vec3::NEG_Z);
     assert_close(px(&image, middle(&h)), to_bytes(albedo * lc), 2, "影なし");
     // 明るさの上限・下限・モノクロ化・Unlit 化
     let mut look = lil();
-    look.properties.insert("_AsUnlit".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_AsUnlit".into(), LookValue::Float(1.0));
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
     assert_close(px(&image, middle(&h)), to_bytes(albedo), 2, "Unlit 化");
     let mut look = lil();
-    look.properties.insert("_LightMaxLimit".into(), LookValue::Float(0.3));
+    look.properties
+        .insert("_LightMaxLimit".into(), LookValue::Float(0.3));
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
-    assert_close(px(&image, middle(&h)), to_bytes(albedo * 0.3), 2, "明るさの上限");
+    assert_close(
+        px(&image, middle(&h)),
+        to_bytes(albedo * 0.3),
+        2,
+        "明るさの上限",
+    );
     // 標準へ戻すと PBR（lilToon の絵と違う）
     let mut back = lil();
     back.kind = LookKind::Standard;
@@ -232,16 +248,33 @@ fn the_shadow_follows_lilgetshading_from_lit_to_dark() {
     let color = [230u8, 200, 180, 255];
     fill_color(&mut h, color);
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
     set_look(&mut h, look);
-    let albedo = lin([color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0]);
+    let albedo = lin([
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+    ]);
     // 光を横から後ろへ回す（板の法線は −Z）: 明るい側・境界・1 影・2 影
-    for (yaw, pitch) in [(180.0f32, 0.0f32), (180.0, 70.0), (180.0, 88.0), (90.0, 0.0), (60.0, 0.0), (0.0, 0.0)] {
+    for (yaw, pitch) in [
+        (180.0f32, 0.0f32),
+        (180.0, 70.0),
+        (180.0, 88.0),
+        (90.0, 0.0),
+        (60.0, 0.0),
+        (0.0, 0.0),
+    ] {
         light(&mut h, yaw, pitch);
         let to_light = h.state().state.view3d.display.light_direction();
         let image = h.render().expect("描ける");
         let expected = to_bytes(shaded(albedo, Vec3::NEG_Z, to_light));
-        assert_close(px(&image, middle(&h)), expected, 3, &format!("光 {yaw}° {pitch}°"));
+        assert_close(
+            px(&image, middle(&h)),
+            expected,
+            3,
+            &format!("光 {yaw}° {pitch}°"),
+        );
     }
 }
 
@@ -267,11 +300,13 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
     doc.set_channel_enabled(layer, mask, true).unwrap();
     for y in 0..64 {
         for x in 0..32 {
-            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(0, 0, 0, 255)).unwrap();
+            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(0, 0, 0, 255))
+                .unwrap();
         }
     }
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
     look.textures
         .insert("_ShadowStrengthMask".into(), TextureSource::Channel(mask));
     set_look(&mut h, look);
@@ -280,23 +315,40 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
     let c = rect.center();
     // 板は画面の真ん中に、幅は高さのおよそ 0.4 倍
     let half = rect.height() * 0.12;
-    let albedo = lin([color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0]);
+    let albedo = lin([
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+    ]);
     let (_, lc) = lil_light(Vec3::Z);
     // 左（UV の u が小さい側が画面の左）: 強度 0 = 影なしで光の色
-    assert_close(px(&image, egui::pos2(c.x - half, c.y)), to_bytes(albedo * lc), 3, "マスク 0");
+    assert_close(
+        px(&image, egui::pos2(c.x - half, c.y)),
+        to_bytes(albedo * lc),
+        3,
+        "マスク 0",
+    );
     assert_close(
         px(&image, egui::pos2(c.x + half, c.y)),
-        to_bytes(shaded(albedo, Vec3::NEG_Z, h.state().state.view3d.display.light_direction())),
+        to_bytes(shaded(
+            albedo,
+            Vec3::NEG_Z,
+            h.state().state.view3d.display.light_direction(),
+        )),
         3,
         "マスク 1",
     );
     // 詰め合わせで同じ成分を読んでも同じ
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
     look.textures.insert(
         "_ShadowStrengthMask".into(),
         TextureSource::Packed([
-            PlaneSource::Channel { channel: mask, component: 0 },
+            PlaneSource::Channel {
+                channel: mask,
+                component: 0,
+            },
             PlaneSource::One,
             PlaneSource::One,
             PlaneSource::One,
@@ -304,7 +356,10 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
     );
     set_look(&mut h, look);
     let again = h.render().expect("描ける");
-    assert_eq!(px(&again, egui::pos2(c.x - half, c.y)), px(&image, egui::pos2(c.x - half, c.y)));
+    assert_eq!(
+        px(&again, egui::pos2(c.x - half, c.y)),
+        px(&image, egui::pos2(c.x - half, c.y))
+    );
 }
 
 #[test]
@@ -329,32 +384,49 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
             .unwrap(),
         );
     }
-    // 2 つ目の層（配列の層 1）の左半分に 0 を塗る
+    // 2 つ目のレイヤー（配列のレイヤー 1）の左半分に 0 を塗る
     let layer = doc.add_layer("マスク").unwrap();
     doc.set_channel_enabled(layer, masks[1], true).unwrap();
     for y in 0..512 {
         for x in 0..256 {
-            doc.set_channel_pixel(layer, masks[1], x, y, Rgba8::new(0, 0, 0, 255)).unwrap();
+            doc.set_channel_pixel(layer, masks[1], x, y, Rgba8::new(0, 0, 0, 255))
+                .unwrap();
         }
     }
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
     look.textures
         .insert("_ShadowBlurMask".into(), TextureSource::Channel(masks[0]));
-    look.textures
-        .insert("_ShadowStrengthMask".into(), TextureSource::Channel(masks[1]));
+    look.textures.insert(
+        "_ShadowStrengthMask".into(),
+        TextureSource::Channel(masks[1]),
+    );
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
     let rect = h.state().view3d_rect().unwrap();
     let c = rect.center();
     // 板の幅は高さのおよそ 0.1 倍（512 の文書が 60 画素ほど: 3 段ほど縮めた段を読む）
     let quarter = rect.height() * 0.025;
-    let albedo = lin([color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0]);
+    let albedo = lin([
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+    ]);
     let (_, lc) = lil_light(Vec3::Z);
-    assert_close(px(&image, egui::pos2(c.x - quarter, c.y)), to_bytes(albedo * lc), 3, "遠くのマスク 0");
+    assert_close(
+        px(&image, egui::pos2(c.x - quarter, c.y)),
+        to_bytes(albedo * lc),
+        3,
+        "遠くのマスク 0",
+    );
     assert_close(
         px(&image, egui::pos2(c.x + quarter, c.y)),
-        to_bytes(shaded(albedo, Vec3::NEG_Z, h.state().state.view3d.display.light_direction())),
+        to_bytes(shaded(
+            albedo,
+            Vec3::NEG_Z,
+            h.state().state.view3d.display.light_direction(),
+        )),
         3,
         "遠くのマスク 1",
     );
@@ -391,14 +463,18 @@ fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
     let at = middle(&h);
     let shadow_with = |h: &mut Harness<'_, YoluApp>, strength: TextureSource| {
         let mut look = lil();
-        look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+        look.properties
+            .insert("_UseShadow".into(), LookValue::Float(1.0));
         look.textures.insert("_ShadowStrengthMask".into(), strength);
         set_look(h, look);
         px(&h.render().expect("描ける"), at)
     };
     let packed = |channel: Channel| {
         TextureSource::Packed([
-            PlaneSource::Channel { channel, component: 0 },
+            PlaneSource::Channel {
+                channel,
+                component: 0,
+            },
             PlaneSource::One,
             PlaneSource::One,
             PlaneSource::One,
@@ -417,8 +493,18 @@ fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
         (0..3).any(|k| user[0][k].abs_diff(user[1][k]) >= 4),
         "マスク 128 と 55 で見た目が違う（試験が値の違いを見分けられる）: {user:?}"
     );
-    assert_close(from_color, user[0], 1, "詰め合わせで読んだ Color の R（128）");
-    assert_close(from_emission, user[0], 1, "詰め合わせで読んだ Emission の R（128）");
+    assert_close(
+        from_color,
+        user[0],
+        1,
+        "詰め合わせで読んだ Color の R（128）",
+    );
+    assert_close(
+        from_emission,
+        user[0],
+        1,
+        "詰め合わせで読んだ Emission の R（128）",
+    );
 }
 
 #[test]
@@ -484,14 +570,16 @@ fn cutout_discards_and_transparent_blends_over_the_background() {
     let image = h.render().expect("描ける");
     assert_close(px(&image, at), background, 1, "カットアウト");
     // Cutoff を下げると残る
-    look.properties.insert("_Cutoff".into(), LookValue::Float(0.1));
+    look.properties
+        .insert("_Cutoff".into(), LookValue::Float(0.1));
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
     assert!(px(&image, at) != background);
     // 半透明: 色 × α が背景に重なる（Unity と同じくリニアの空間で、乗算済み。描き先の sRGB の見え方を作れない機材（GL）はガンマの値で重ねる）
     let mut look = lil();
     look.shader = "Hidden/lilToonTransparent".into();
-    look.properties.insert("_Cutoff".into(), LookValue::Float(0.001));
+    look.properties
+        .insert("_Cutoff".into(), LookValue::Float(0.001));
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
     let linear = h.state().view3d_stats().unwrap().linear_transparent;
@@ -508,7 +596,16 @@ fn cutout_discards_and_transparent_blends_over_the_background() {
         };
         (mixed.clamp(0.0, 1.0) * 255.0).round() as u8
     });
-    assert_close(px(&image, at), expected, 3, if linear { "半透明（リニア）" } else { "半透明（ガンマ）" });
+    assert_close(
+        px(&image, at),
+        expected,
+        3,
+        if linear {
+            "半透明（リニア）"
+        } else {
+            "半透明（ガンマ）"
+        },
+    );
 }
 
 #[test]
@@ -521,7 +618,10 @@ fn the_alpha_mask_replaces_multiplies_adds_or_subtracts_the_alpha_like_liltoon()
     let color = [200u8, 120, 60, 128];
     fill_color(&mut h, color);
     let rect = h.state().view3d_rect().unwrap();
-    let background = px(&h.render().expect("描ける"), egui::pos2(rect.left() + 5.0, rect.top() + 5.0));
+    let background = px(
+        &h.render().expect("描ける"),
+        egui::pos2(rect.left() + 5.0, rect.top() + 5.0),
+    );
     // アルファマスクのユーザーチャンネル: 左半分 0.2、右半分 0.8
     let doc = &mut h.state_mut().state.doc;
     let mask = doc
@@ -537,22 +637,38 @@ fn the_alpha_mask_replaces_multiplies_adds_or_subtracts_the_alpha_like_liltoon()
     for y in 0..64 {
         for x in 0..64 {
             let v = if x < 32 { 51 } else { 204 };
-            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(v, v, v, 255)).unwrap();
+            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(v, v, v, 255))
+                .unwrap();
         }
     }
-    let albedo = lin([color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0]);
+    let albedo = lin([
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+    ]);
     let (_, lc) = lil_light(Vec3::NEG_Z);
     let src = albedo * lc;
     let base = color[3] as f32 / 255.0;
     let (c, q) = (rect.center(), rect.height() * 0.12);
-    for (mode, scale, offset) in [(1.0f32, 1.0f32, 0.0f32), (2.0, 1.0, 0.0), (3.0, 1.0, 0.0), (4.0, 1.0, 0.0), (1.0, -1.0, 1.0)] {
+    for (mode, scale, offset) in [
+        (1.0f32, 1.0f32, 0.0f32),
+        (2.0, 1.0, 0.0),
+        (3.0, 1.0, 0.0),
+        (4.0, 1.0, 0.0),
+        (1.0, -1.0, 1.0),
+    ] {
         let mut look = lil();
         look.shader = "Hidden/lilToonTransparent".into();
-        look.properties.insert("_Cutoff".into(), LookValue::Float(0.001));
-        look.properties.insert("_AlphaMaskMode".into(), LookValue::Float(mode));
-        look.properties.insert("_AlphaMaskScale".into(), LookValue::Float(scale));
-        look.properties.insert("_AlphaMaskValue".into(), LookValue::Float(offset));
-        look.textures.insert("_AlphaMask".into(), TextureSource::Channel(mask));
+        look.properties
+            .insert("_Cutoff".into(), LookValue::Float(0.001));
+        look.properties
+            .insert("_AlphaMaskMode".into(), LookValue::Float(mode));
+        look.properties
+            .insert("_AlphaMaskScale".into(), LookValue::Float(scale));
+        look.properties
+            .insert("_AlphaMaskValue".into(), LookValue::Float(offset));
+        look.textures
+            .insert("_AlphaMask".into(), TextureSource::Channel(mask));
         set_look(&mut h, look);
         let image = h.render().expect("描ける");
         let linear = h.state().view3d_stats().unwrap().linear_transparent;
@@ -605,11 +721,16 @@ fn the_outline_draws_a_shell_outside_the_silhouette() {
     let before = px(&image, outside);
     let mut look = lil();
     look.shader = "Hidden/lilToonOutline".into();
+    look.properties.insert(
+        "_OutlineColor".into(),
+        LookValue::Color([1.0, 0.0, 0.0, 1.0]),
+    );
     look.properties
-        .insert("_OutlineColor".into(), LookValue::Color([1.0, 0.0, 0.0, 1.0]));
-    look.properties.insert("_OutlineWidth".into(), LookValue::Float(1.0));
-    look.properties.insert("_OutlineFixWidth".into(), LookValue::Float(0.0));
-    look.properties.insert("_OutlineEnableLighting".into(), LookValue::Float(0.0));
+        .insert("_OutlineWidth".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_OutlineFixWidth".into(), LookValue::Float(0.0));
+    look.properties
+        .insert("_OutlineEnableLighting".into(), LookValue::Float(0.0));
     set_look(&mut h, look);
     let image = h.render().expect("描ける");
     let after = px(&image, outside);
@@ -647,12 +768,17 @@ fn the_pipelines_per_feature_set_are_reused_and_kept_under_the_cap() {
     set_model(&mut h, vec![quad(1.0)]);
     look_at(&mut h, 2.5);
     set_look(&mut h, lil());
-    let software = h.state().view3d_adapter().unwrap_or_default().contains("Cpu");
+    let software = h
+        .state()
+        .view3d_adapter()
+        .unwrap_or_default()
+        .contains("Cpu");
     let stats = |h: &Harness<'_, YoluApp>| h.state().view3d_stats().expect("3D ビュー");
     let with = |on: &[&str]| {
         let mut look = lil();
         for name in on {
-            look.properties.insert((*name).into(), LookValue::Float(1.0));
+            look.properties
+                .insert((*name).into(), LookValue::Float(1.0));
         }
         look
     };
@@ -666,7 +792,11 @@ fn the_pipelines_per_feature_set_are_reused_and_kept_under_the_cap() {
     }
     set_look(&mut h, lil());
     set_look(&mut h, with(&["_UseShadow"]));
-    assert_eq!(stats(&h).lil_pipeline_builds, made, "同じ組み合わせへ戻るときは作り直さない");
+    assert_eq!(
+        stats(&h).lil_pipeline_builds,
+        made,
+        "同じ組み合わせへ戻るときは作り直さない"
+    );
     let toggles = [
         "_UseShadow",
         "_UseRimShade",
@@ -683,18 +813,26 @@ fn the_pipelines_per_feature_set_are_reused_and_kept_under_the_cap() {
             .map(|(_, name)| *name)
             .collect();
         set_look(&mut h, with(&on));
-        assert!(stats(&h).lil_pipelines <= 48, "持つ数: {}", stats(&h).lil_pipelines);
+        assert!(
+            stats(&h).lil_pipelines <= 48,
+            "持つ数: {}",
+            stats(&h).lil_pipelines
+        );
     }
     if software {
-        assert!(stats(&h).lil_pipeline_builds >= made + 60, "64 通りを作った");
+        assert!(
+            stats(&h).lil_pipeline_builds >= made + 60,
+            "64 通りを作った"
+        );
     } else {
         assert_eq!(stats(&h).lil_pipelines, 1);
-    }}
+    }
+}
 
 // ───────── ユーザーチャンネルの配列と 3D ビューの予算・ほかのセットの lilToon ─────────
 
 /// 文書に影の強度のマスク（スカラーのユーザーチャンネル。左半分に 0）を足し、lilToon（影を入）でそれを読む見た目を返す。
-/// `extra` 個のユーザーチャンネルも、影のぼかしのマスクなどに割り当てる（配列の層を増やす）。
+/// `extra` 個のユーザーチャンネルも、影のぼかしのマスクなどに割り当てる（配列のレイヤーを増やす）。
 fn masked_shadow(doc: &mut yolu_core::Document, extra: usize) -> MaterialLook {
     let size = doc.width();
     let mask = doc
@@ -709,14 +847,20 @@ fn masked_shadow(doc: &mut yolu_core::Document, extra: usize) -> MaterialLook {
     doc.set_channel_enabled(layer, mask, true).unwrap();
     for y in 0..size {
         for x in 0..size / 2 {
-            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(0, 0, 0, 255)).unwrap();
+            doc.set_channel_pixel(layer, mask, x, y, Rgba8::new(0, 0, 0, 255))
+                .unwrap();
         }
     }
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
     look.textures
         .insert("_ShadowStrengthMask".into(), TextureSource::Channel(mask));
-    for (i, slot) in ["_ShadowBlurMask", "_ShadowBorderMask"].iter().take(extra).enumerate() {
+    for (i, slot) in ["_ShadowBlurMask", "_ShadowBorderMask"]
+        .iter()
+        .take(extra)
+        .enumerate()
+    {
         let c = doc
             .add_channel(ChannelInfo {
                 name: format!("ほか {i}"),
@@ -725,7 +869,8 @@ fn masked_shadow(doc: &mut yolu_core::Document, extra: usize) -> MaterialLook {
                 default: Rgba8::new(255, 255, 255, 255),
             })
             .unwrap();
-        look.textures.insert((*slot).into(), TextureSource::Channel(c));
+        look.textures
+            .insert((*slot).into(), TextureSource::Channel(c));
     }
     look
 }
@@ -755,9 +900,20 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     let look = masked_shadow(&mut h.state_mut().state.doc, 1);
     set_look(&mut h, look);
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!(s.paint_bytes, mip_bytes(256, 4), "標準のチャンネルは Color だけ");
-    assert_eq!((s.user_level, s.user_bytes), (0, mip_bytes(256, 8)), "2 層の配列を文書の大きさで: {s:?}");
-    assert!(s.peak_bytes >= s.paint_bytes + s.user_bytes, "持っている絵の数に入る: {s:?}");
+    assert_eq!(
+        s.paint_bytes,
+        mip_bytes(256, 4),
+        "標準のチャンネルは Color だけ"
+    );
+    assert_eq!(
+        (s.user_level, s.user_bytes),
+        (0, mip_bytes(256, 8)),
+        "2 レイヤーの配列を文書の大きさで: {s:?}"
+    );
+    assert!(
+        s.peak_bytes >= s.paint_bytes + s.user_bytes,
+        "持っている絵の数に入る: {s:?}"
+    );
     let full = h.render().expect("描ける");
     // 全体の予算を、標準のチャンネルの絵と 128² の配列が入る分にする: 配列だけが縮む（標準のチャンネルが先）
     let budget = mip_bytes(256, 4) + mip_bytes(128, 8);
@@ -766,26 +922,42 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.paint_level, 0);
-    assert_eq!((s.user_level, s.user_bytes), (1, mip_bytes(128, 8)), "{s:?}");
+    assert_eq!(
+        (s.user_level, s.user_bytes),
+        (1, mip_bytes(128, 8)),
+        "{s:?}"
+    );
     assert!(s.peak_bytes <= budget, "{s:?}");
     // 縮めてもマスクは効く（左は影なし、右は影）
     let image = h.render().expect("描ける");
     let rect = h.state().view3d_rect().unwrap();
     let (c, q) = (rect.center(), rect.height() * 0.12);
     for x in [c.x - q, c.x + q] {
-        assert_close(px(&image, egui::pos2(x, c.y)), px(&full, egui::pos2(x, c.y)), 2, "縮めた配列");
+        assert_close(
+            px(&image, egui::pos2(x, c.y)),
+            px(&full, egui::pos2(x, c.y)),
+            2,
+            "縮めた配列",
+        );
     }
     assert!(px(&image, egui::pos2(c.x - q, c.y))[0] > px(&image, egui::pos2(c.x + q, c.y))[0] + 10);
     // 標準のチャンネルの絵で予算が尽きても、配列は 1 × 1 まで縮めて持つ（標準のチャンネルの絵と同じ決まり）
     h.state_mut().view3d_set_paint_budget(mip_bytes(256, 4));
     h.run();
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.paint_level, s.user_level, s.user_bytes), (0, 8, 2 * 4), "{s:?}");
+    assert_eq!(
+        (s.paint_level, s.user_level, s.user_bytes),
+        (0, 8, 2 * 4),
+        "{s:?}"
+    );
 }
 
 /// 横に並べた 2 枚の板（マテリアル 0・1。セット i = マテリアル i、文書は size × size）を、マテリアルの表示で見る。
 fn two_sets(size: u32) -> Harness<'static, YoluApp> {
-    use yolu_protocol::{channel, ChannelRoute, MaterialInfo, MaterialKey, MeshData, Model, Submesh as Sub, TextureProperty};
+    use yolu_protocol::{
+        channel, ChannelRoute, MaterialInfo, MaterialKey, MeshData, Model, Submesh as Sub,
+        TextureProperty,
+    };
     let mut h = view(1000.0, 640.0, size);
     let materials = (0..2)
         .map(|i| MaterialInfo {
@@ -851,7 +1023,12 @@ fn side_of(h: &Harness<'_, YoluApp>, set: usize) -> u32 {
 /// 世界の点が見えている画素。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h.state().state.view3d.camera.view(area.width(), area.height());
+    let view = h
+        .state()
+        .state
+        .view3d
+        .camera
+        .view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -860,7 +1037,14 @@ fn fill_set(h: &mut Harness<'_, YoluApp>, set: usize, color: [u8; 4]) {
     h.state_mut()
         .state
         .set_doc_mut(set)
-        .add_fill_layer("色", &[(Channel::Color, Rgba8::new(color[0], color[1], color[2], color[3]))], None)
+        .add_fill_layer(
+            "色",
+            &[(
+                Channel::Color,
+                Rgba8::new(color[0], color[1], color[2], color[3]),
+            )],
+            None,
+        )
         .unwrap();
     h.run();
 }
@@ -882,12 +1066,19 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
         fill_set(&mut h, i, [230, 200, 180, 255]);
     }
     let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut().state.set_doc_mut(1).set_look(look.clone(), false).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(look.clone(), false)
+        .unwrap();
     // セット 1 を今のセットにして描いた絵を基準に
     h.state_mut().state.switch_set(1).unwrap();
     h.run();
     let (lit, dark) = set1_halves(&mut h);
-    assert!(lit[0] > dark[0] + 10, "マスク 0 の所は影なし: {lit:?} {dark:?}");
+    assert!(
+        lit[0] > dark[0] + 10,
+        "マスク 0 の所は影なし: {lit:?} {dark:?}"
+    );
     // 今のセットを 0 に替えても、セット 1 の面は lilToon（ユーザーチャンネルのマスクも）のまま
     h.state_mut().state.switch_set(0).unwrap();
     h.run();
@@ -897,12 +1088,22 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     assert_close(d, dark, 3, "ほかのセットの影の所");
     let s = h.state().view3d_stats().unwrap();
     let side = side_of(&h, 1);
-    assert_eq!(s.other_bytes, mip_bytes(side, 4) + mip_bytes(side, 8), "ほかのセットの配列も数える: {s:?}");
+    assert_eq!(
+        s.other_bytes,
+        mip_bytes(side, 4) + mip_bytes(side, 8),
+        "ほかのセットの配列も数える: {s:?}"
+    );
     assert_eq!(s.user_bytes, 0, "今のセット（標準）は配列を持たない");
     // ほかのセットのままで見た目を変えると、3D ビューが追う（影の強度 0 で右も影なし）
     let mut weaker = look.clone();
-    weaker.properties.insert("_ShadowStrength".into(), LookValue::Float(0.0));
-    h.state_mut().state.set_doc_mut(1).set_look(weaker, false).unwrap();
+    weaker
+        .properties
+        .insert("_ShadowStrength".into(), LookValue::Float(0.0));
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(weaker, false)
+        .unwrap();
     h.run();
     let (l, d) = set1_halves(&mut h);
     assert_close(d, l, 2, "影の強度 0");
@@ -910,7 +1111,11 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     // 標準へ戻すと、ほかのセットの配列を手放す
     let mut standard = look;
     standard.kind = LookKind::Standard;
-    h.state_mut().state.set_doc_mut(1).set_look(standard, false).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(standard, false)
+        .unwrap();
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.other_bytes, mip_bytes(side, 4), "{s:?}");
@@ -924,15 +1129,23 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
         fill_set(&mut h, i, [230, 200, 180, 255]);
     }
     let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut().state.set_doc_mut(1).set_look(look, false).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(look, false)
+        .unwrap();
     h.run();
-    // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 層の配列
+    // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 レイヤーの配列
     let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
     let need = mip_bytes(side0, 4) + mip_bytes(side1, 4) + mip_bytes(side1, 8);
     h.state_mut().view3d_set_paint_budget(need - 1);
     h.run();
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.other_sets, s.other_skipped), (0, 1), "標準のチャンネルの絵だけなら入るが、配列が入らない: {s:?}");
+    assert_eq!(
+        (s.other_sets, s.other_skipped),
+        (0, 1),
+        "標準のチャンネルの絵だけなら入るが、配列が入らない: {s:?}"
+    );
     assert_eq!(h.state().state.view3d.unpainted, vec![1]);
     // 同期の途中の最大は直前のフレームの終わりの分から数えるので、予算を下げた次のフレームで見る
     h.step();
@@ -959,7 +1172,10 @@ fn solid(side: u32, rgba: [u8; 4], srgb: bool) -> std::sync::Arc<ReceivedImage> 
 }
 
 /// Unity から受けた見た目（`look`）と絵。
-fn received_with(look: MaterialLook, images: &[(&str, std::sync::Arc<ReceivedImage>)]) -> ReceivedLook {
+fn received_with(
+    look: MaterialLook,
+    images: &[(&str, std::sync::Arc<ReceivedImage>)],
+) -> ReceivedLook {
     let mut r = ReceivedLook {
         look,
         ..ReceivedLook::default()
@@ -971,7 +1187,11 @@ fn received_with(look: MaterialLook, images: &[(&str, std::sync::Arc<ReceivedIma
 }
 
 fn set_received(h: &mut Harness<'_, YoluApp>, set: usize, r: Option<ReceivedLook>) {
-    h.state_mut().state.set_doc_mut(set).set_received_look(r).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(set)
+        .set_received_look(r)
+        .unwrap();
     h.run();
 }
 
@@ -990,27 +1210,59 @@ fn a_texture_received_from_unity_draws_its_slot_and_a_channel_assigned_here_wins
     look_at(&mut h, 2.5);
     light(&mut h, 180.0, 0.0);
     let (_, lc) = lil_light(Vec3::NEG_Z);
-    let albedo = |c: [u8; 4]| lin([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]);
+    let albedo = |c: [u8; 4]| {
+        lin([
+            c[0] as f32 / 255.0,
+            c[1] as f32 / 255.0,
+            c[2] as f32 / 255.0,
+        ])
+    };
     // メインカラーを Unity から受けた絵で描く（流し込み先でない。sRGB の絵はリニアへ直して読む）
     let orange = [200u8, 120, 60, 255];
-    set_received(&mut h, 0, Some(received_with(lil_received(), &[("_MainTex", solid(4, orange, true))])));
+    set_received(
+        &mut h,
+        0,
+        Some(received_with(
+            lil_received(),
+            &[("_MainTex", solid(4, orange, true))],
+        )),
+    );
     let image = h.render().expect("描ける");
-    assert_close(px(&image, middle(&h)), to_bytes(albedo(orange) * lc), 2, "受けた絵");
+    assert_close(
+        px(&image, middle(&h)),
+        to_bytes(albedo(orange) * lc),
+        2,
+        "受けた絵",
+    );
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.received_bytes, s.received_size), (mip_bytes(4, 8), [4, 4]), "2 層（GL）で持つ: {s:?}");
+    assert_eq!(
+        (s.received_bytes, s.received_size),
+        (mip_bytes(4, 8), [4, 4]),
+        "2 レイヤー（GL）で持つ: {s:?}"
+    );
     // 欄で Color を割り当てると、チャンネルが勝つ（受けた絵の配列は手放す）
     let green = [60u8, 180, 90, 255];
     fill_color(&mut h, green);
     set_look(&mut h, lil());
     let image = h.render().expect("描ける");
-    assert_close(px(&image, middle(&h)), to_bytes(albedo(green) * lc), 2, "割り当てたチャンネル");
+    assert_close(
+        px(&image, middle(&h)),
+        to_bytes(albedo(green) * lc),
+        2,
+        "割り当てたチャンネル",
+    );
     assert_eq!(h.state().view3d_stats().unwrap().received_bytes, 0);
     // 割り当てを外すと、また受けた絵
     let mut unassigned = lil();
     unassigned.textures.clear();
     set_look(&mut h, unassigned);
     let image = h.render().expect("描ける");
-    assert_close(px(&image, middle(&h)), to_bytes(albedo(orange) * lc), 2, "割り当てを外した");
+    assert_close(
+        px(&image, middle(&h)),
+        to_bytes(albedo(orange) * lc),
+        2,
+        "割り当てを外した",
+    );
 }
 
 #[test]
@@ -1023,25 +1275,49 @@ fn an_emission_texture_unity_left_empty_glows_from_the_default_white_not_the_unu
     // 新しいセットの既定の割り当て（発光 → Emission）。どのレイヤーも Emission を使っていない。発光の色はオレンジ
     let mut look = lil();
     yolu_app::look::default_textures(&mut look);
-    look.properties.insert("_UseEmission".into(), LookValue::Float(1.0));
-    look.properties.insert("_EmissionColor".into(), LookValue::Color([1.0, 0.5, 0.2, 1.0]));
+    look.properties
+        .insert("_UseEmission".into(), LookValue::Float(1.0));
+    look.properties.insert(
+        "_EmissionColor".into(),
+        LookValue::Color([1.0, 0.5, 0.2, 1.0]),
+    );
     set_look(&mut h, look);
     // Live Link でつないでいない: 使っていないチャンネルの値（黒）を読むので光らない
     let unconnected = px(&h.render().expect("描ける"), middle(&h));
     assert!(unconnected[0] < 40, "{unconnected:?}");
     // Unity が発光のテクスチャを空と知らせた（絵も理由も来ない）: Unity は空を既定の白で読むので、発光の色で光る
     let mut received_look = lil_received();
-    received_look.textures.insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    received_look
+        .textures
+        .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
     set_received(&mut h, 0, Some(received_with(received_look.clone(), &[])));
     let empty = px(&h.render().expect("描ける"), middle(&h));
-    assert!(empty[0] > 200 && empty[0] > empty[1] && empty[1] > empty[2], "発光の色（1, 0.5, 0.2）で光る: {empty:?}");
-    // まだ届いていない絵（理由つき）の間も同じ
+    assert!(
+        empty[0] > 200 && empty[0] > empty[1] && empty[1] > empty[2],
+        "発光の色（1, 0.5, 0.2）で光る: {empty:?}"
+    );
+    // 読めない絵（理由つき）の間も同じ
     let mut pending = received_with(received_look, &[]);
-    pending.missing.insert("_EmissionMap".into(), yolu_core::look::MissingImage::Pending);
+    pending.missing.insert(
+        "_EmissionMap".into(),
+        yolu_core::look::MissingImage::Unreadable,
+    );
     set_received(&mut h, 0, Some(pending));
-    assert_close(px(&h.render().expect("描ける"), middle(&h)), empty, 1, "届くまで");
+    assert_close(
+        px(&h.render().expect("描ける"), middle(&h)),
+        empty,
+        1,
+        "届くまで",
+    );
     // 絵が届けば、その絵（黒）が勝つ
-    set_received(&mut h, 0, Some(received_with(lil_received(), &[("_EmissionMap", solid(4, [0, 0, 0, 255], true))])));
+    set_received(
+        &mut h,
+        0,
+        Some(received_with(
+            lil_received(),
+            &[("_EmissionMap", solid(4, [0, 0, 0, 255], true))],
+        )),
+    );
     let black = px(&h.render().expect("描ける"), middle(&h));
     assert!(black[0] < 40, "{black:?}");
 }
@@ -1054,11 +1330,20 @@ fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alph
     light(&mut h, 180.0, 88.0); // ほぼ真上から: 平らな面は影の境界、法線の傾きがよく見える
     fill_color(&mut h, [230, 200, 180, 255]);
     let mut look = lil();
-    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
-    look.properties.insert("_UseBumpMap".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_UseBumpMap".into(), LookValue::Float(1.0));
     set_look(&mut h, look);
     let draw = |h: &mut Harness<'_, YoluApp>, normal: [u8; 4]| {
-        set_received(h, 0, Some(received_with(lil_received(), &[("_BumpMap", solid(4, normal, false))])));
+        set_received(
+            h,
+            0,
+            Some(received_with(
+                lil_received(),
+                &[("_BumpMap", solid(4, normal, false))],
+            )),
+        );
         px(&h.render().expect("描ける"), middle(h))
     };
     // RGB の絵（A は 1、X は R）と、DXT5nm（R は 1、X は A）の同じ法線は同じ絵
@@ -1076,7 +1361,10 @@ fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alph
     );
     set_received(&mut h, 0, None);
     let flat = px(&h.render().expect("描ける"), middle(&h));
-    assert!((0..3).any(|k| flat[k].abs_diff(rgb[k]) > 10), "法線マップが効いている: {flat:?} {rgb:?}");
+    assert!(
+        (0..3).any(|k| flat[k].abs_diff(rgb[k]) > 10),
+        "法線マップが効いている: {flat:?} {rgb:?}"
+    );
 }
 
 #[test]
@@ -1089,14 +1377,22 @@ fn a_unity_texture_past_the_layer_limit_draws_the_slot_default() {
     // 利用者の設定は値だけ（スロットは割り当てない: メインカラーも受けた絵）
     let mut look = lil();
     look.textures.clear();
-    look.properties.insert("_UseMatCap2nd".into(), LookValue::Float(1.0));
-    look.properties.insert("_MatCap2ndBlendMode".into(), LookValue::Float(0.0));
+    look.properties
+        .insert("_UseMatCap2nd".into(), LookValue::Float(1.0));
+    look.properties
+        .insert("_MatCap2ndBlendMode".into(), LookValue::Float(0.0));
     set_look(&mut h, look);
     // メインカラーと、その後ろのスロットに既定と同じ値の絵（描く絵は変わらない）を `fillers` 枚。マットキャップ 2nd（並びの 17 番目）に赤
     let neutral = |d: SlotDefault| d.rgba().map(|v| (v * 255.0).round() as u8);
     let draw = |h: &mut Harness<'_, YoluApp>, fillers: usize, red: bool| {
-        let mut images: Vec<(&str, std::sync::Arc<ReceivedImage>)> = vec![("_MainTex", solid(2, [200, 120, 60, 255], true))];
-        images.extend(SLOTS[1..16].iter().take(fillers).map(|s| (s.name, solid(2, neutral(s.default), false))));
+        let mut images: Vec<(&str, std::sync::Arc<ReceivedImage>)> =
+            vec![("_MainTex", solid(2, [200, 120, 60, 255], true))];
+        images.extend(
+            SLOTS[1..16]
+                .iter()
+                .take(fillers)
+                .map(|s| (s.name, solid(2, neutral(s.default), false))),
+        );
         if red {
             images.push(("_MatCap2ndTex", solid(2, [255, 0, 0, 255], true)));
         }
@@ -1106,14 +1402,27 @@ fn a_unity_texture_past_the_layer_limit_draws_the_slot_default() {
     let white = draw(&mut h, 15, false);
     // 前に 15 枚: 16 枚目なので受けた絵で描く
     let red_drawn = draw(&mut h, 14, true);
-    assert!(red_drawn[1] + 30 < white[1], "16 枚目までは受けた絵で描く: {red_drawn:?} {white:?}");
-    assert!(!yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_MatCap2ndTex"));
+    assert!(
+        red_drawn[1] + 30 < white[1],
+        "16 枚目までは受けた絵で描く: {red_drawn:?} {white:?}"
+    );
+    assert!(!yolu_app::look::panel::slot_over_received_limit(
+        &h.state().state.doc,
+        "_MatCap2ndTex"
+    ));
     // 前に 16 枚あると、17 枚目は持たず既定（白）で描く
     let dropped = draw(&mut h, 15, true);
     assert_close(dropped, white, 1, "17 枚目は既定");
-    assert!(yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_MatCap2ndTex"));
+    assert!(yolu_app::look::panel::slot_over_received_limit(
+        &h.state().state.doc,
+        "_MatCap2ndTex"
+    ));
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!(s.received_bytes, mip_bytes(2, 4 * 16), "層は 16 まで: {s:?}");
+    assert_eq!(
+        s.received_bytes,
+        mip_bytes(2, 4 * 16),
+        "レイヤーは 16 まで: {s:?}"
+    );
 }
 
 #[test]
@@ -1127,9 +1436,12 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
     for i in 0..2 {
         fill_set(&mut h, i, [230, 200, 180, 255]);
         let mut look = lil_received();
-        look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
-        look.properties.insert("_UseMatCap".into(), LookValue::Float(1.0));
-        look.properties.insert("_MatCapBlendMode".into(), LookValue::Float(0.0));
+        look.properties
+            .insert("_UseShadow".into(), LookValue::Float(1.0));
+        look.properties
+            .insert("_UseMatCap".into(), LookValue::Float(1.0));
+        look.properties
+            .insert("_MatCapBlendMode".into(), LookValue::Float(0.0));
         look.textures
             .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
         set_received(&mut h, i, Some(received_with(look, &images)));
@@ -1137,8 +1449,16 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
     let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
     let received = mip_bytes(32, 8);
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.received_bytes, s.received_size), (received, [32, 32]), "{s:?}");
-    assert_eq!(s.other_bytes, mip_bytes(side1, 4) + received, "ほかのセットの受けた絵も数える: {s:?}");
+    assert_eq!(
+        (s.received_bytes, s.received_size),
+        (received, [32, 32]),
+        "{s:?}"
+    );
+    assert_eq!(
+        s.other_bytes,
+        mip_bytes(side1, 4) + received,
+        "ほかのセットの受けた絵も数える: {s:?}"
+    );
     // ほかのセットは、標準のチャンネルの絵と受けた絵の配列の両方が入るときだけ持つ
     let need = mip_bytes(side0, 4) + received + mip_bytes(side1, 4) + received;
     h.state_mut().view3d_set_paint_budget(need - 1);
@@ -1160,7 +1480,11 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
     h.run();
     h.step();
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.received_bytes, s.received_size), (mip_bytes(16, 8), [16, 16]), "{s:?}");
+    assert_eq!(
+        (s.received_bytes, s.received_size),
+        (mip_bytes(16, 8), [16, 16]),
+        "{s:?}"
+    );
     assert_eq!(s.other_sets, 0, "{s:?}");
     assert!(s.peak_bytes <= budget, "{s:?}");
     // 縮めても受けた絵で描く（マットキャップの赤）
@@ -1188,7 +1512,11 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     assert_eq!(builds(&h), base);
     // lilToon にすると作る。カメラを回すだけのフレームでは作り直さない
     let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut().state.set_doc_mut(1).set_look(look.clone(), false).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(look.clone(), false)
+        .unwrap();
     h.run();
     let after = builds(&h);
     assert!(after > base);
@@ -1197,12 +1525,21 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
         h.state_mut().state.view3d.camera.yaw = yaw;
         h.run();
     }
-    assert!(h.state().view3d_stats().unwrap().renders > renders, "描いてはいる");
+    assert!(
+        h.state().view3d_stats().unwrap().renders > renders,
+        "描いてはいる"
+    );
     assert_eq!(builds(&h), after);
     // 値を変えると作り直す
     let mut changed = look;
-    changed.properties.insert("_ShadowBorder".into(), LookValue::Float(0.3));
-    h.state_mut().state.set_doc_mut(1).set_look(changed, false).unwrap();
+    changed
+        .properties
+        .insert("_ShadowBorder".into(), LookValue::Float(0.3));
+    h.state_mut()
+        .state
+        .set_doc_mut(1)
+        .set_look(changed, false)
+        .unwrap();
     h.run();
     assert!(builds(&h) > after);
 }
@@ -1240,7 +1577,8 @@ fn measure_frames_standard_and_liltoon() {
     let standard = h.state().state.doc.look().clone();
     let simple = {
         let mut look = lil();
-        look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+        look.properties
+            .insert("_UseShadow".into(), LookValue::Float(1.0));
         look
     };
     let full = {
@@ -1263,14 +1601,26 @@ fn measure_frames_standard_and_liltoon() {
         }
         state.apply(Action::Look(LookOp::Outline(true)));
         state.apply(Action::Look(LookOp::Template));
-        // マスクのチャンネルにも絵を置く（GPU に層を持たせる）
-        let users: Vec<Channel> = state.doc.channels().into_iter().filter(|c| !c.is_standard()).collect();
+        // マスクのチャンネルにも絵を置く（GPU にレイヤーを持たせる）
+        let users: Vec<Channel> = state
+            .doc
+            .channels()
+            .into_iter()
+            .filter(|c| !c.is_standard())
+            .collect();
         assert_eq!(users.len(), 9, "ひな形のマスク");
-        let fills: Vec<(Channel, Rgba8)> = users.iter().map(|c| (*c, Rgba8::new(180, 180, 180, 255))).collect();
+        let fills: Vec<(Channel, Rgba8)> = users
+            .iter()
+            .map(|c| (*c, Rgba8::new(180, 180, 180, 255)))
+            .collect();
         state.doc.add_fill_layer("マスク", &fills, None).unwrap();
         state.doc.look().clone()
     };
-    let looks = [("標準", standard), ("lilToon（影）", simple), ("lilToon（全部・マスク 9）", full)];
+    let looks = [
+        ("標準", standard),
+        ("lilToon（影）", simple),
+        ("lilToon（全部・マスク 9）", full),
+    ];
     // 測る格子は `LIL_MEASURE_GRIDS`（例 `20,77`）で絞れる
     let grids: Vec<u32> = std::env::var("LIL_MEASURE_GRIDS")
         .ok()
@@ -1293,7 +1643,11 @@ fn measure_frames_standard_and_liltoon() {
         for _round in 0..3 {
             for (k, (_, look)) in looks.iter().enumerate() {
                 let started = Instant::now();
-                h.state_mut().state.doc.set_look(look.clone(), false).unwrap();
+                h.state_mut()
+                    .state
+                    .doc
+                    .set_look(look.clone(), false)
+                    .unwrap();
                 h.state_mut().state.sync_view3d();
                 h.run();
                 h.state().view3d_wait_gpu();
@@ -1343,7 +1697,12 @@ fn process_cpu_ms() -> f64 {
         // 2 つ目の欄（名前）は括弧で囲まれ、空白を含みうる
         let rest = stat.rsplit_once(')').map_or("", |(_, r)| r);
         let fields: Vec<&str> = rest.split_whitespace().collect();
-        let ticks = |i: usize| fields.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        let ticks = |i: usize| {
+            fields
+                .get(i)
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
         // utime・stime は 3 つ目の欄の後の 12・13 番目（0 始まりで 11・12）。1 秒は 100 ティック
         (ticks(11) + ticks(12)) * 10.0
     }

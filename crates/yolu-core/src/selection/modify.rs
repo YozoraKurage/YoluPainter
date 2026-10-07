@@ -1,7 +1,7 @@
 //! 選択範囲の変更: 拡張・縮小・境界・ぼかし（C# の SelectionModify。GIMP の Select メニューの考え方）。
 //!
 //! 拡張・縮小は濃淡のあるモルフォロジー（半径の円の中の最大・最小）で、柔らかい縁は柔らかいまま。作業は量のあるタイルの外接の
-//! 矩形を半径だけ広げた窓に限り、行（ぼかしの縦は列）ごとに並列。どの行も独立に計算するので、結果はスレッドの数によらない。
+//! 矩形を半径だけ広げたウィンドウに限り、行（ぼかしの縦は列）ごとに並列。どの行も独立に計算するので、結果はスレッドの数によらない。
 
 use rayon::prelude::*;
 
@@ -20,14 +20,14 @@ fn check_radius(radius: u32) -> Result<(), CoreError> {
     }
 }
 
-/// 窓と周りの作業の大きさ（バイト）の見積もり: 窓の量・広げた窓・出力・ワーカーの列の溜まり。
+/// ウィンドウと周りの作業の大きさ（バイト）の見積もり: ウィンドウの量・広げたウィンドウ・出力・ワーカーの列の溜まり。
 fn morphology_bytes(w: Window, pad: i64, threads: usize) -> u128 {
     let (ww, wh) = (w.width as u128, w.height as u128);
     let (pw, ph) = (ww + 2 * pad as u128, wh + 2 * pad as u128);
     ww * wh * 2 + pw * ph + (pad as u128 + 1) * pw * threads as u128
 }
 
-/// 並列の 1 つの仕事が受け持つ計算の下限（画素 × 画素あたりの手間）。小さな窓でワーカーを何十本も起こす費用が計算そのものより
+/// 並列の 1 つの仕事が受け持つ計算の下限（画素 × 画素あたりの手間）。小さなウィンドウでワーカーを何十本も起こす費用が計算そのものより
 /// 大きくなる（32 スレッドで半径 200 の楕円のぼかしが 1 スレッドの 4 倍かかった）のを避け、行の数で仕事を束ねる。行ごとに独立に
 /// 計算するので、束ね方で結果は変わらない。
 const MIN_JOB_WORK: usize = 1 << 17;
@@ -42,7 +42,7 @@ pub(super) fn min_tiles(tile_size: usize) -> usize {
     (MIN_JOB_WORK / (tile_size * tile_size).max(1)).max(1)
 }
 
-/// ぼかしの作業の大きさ（バイト）の見積もり: 窓の量・出力（窓 × 2）、広げた窓（バイト）、float の 2 枚と縦の箱ぼかしの列の束
+/// ぼかしの作業の大きさ（バイト）の見積もり: ウィンドウの量・出力（ウィンドウ × 2）、広げたウィンドウ（バイト）、float の 2 枚と縦の箱ぼかしの列の束
 /// （float 1 枚分）。
 fn feather_bytes(w: Window, pad: i64) -> u128 {
     let cells = (w.width as u128 + 2 * pad as u128) * (w.height as u128 + 2 * pad as u128);
@@ -50,7 +50,7 @@ fn feather_bytes(w: Window, pad: i64) -> u128 {
 }
 
 impl SelectionMask {
-    /// どの画素も、半径の円の中の最大の量になる（GIMP の Grow）。画布の外は選ばれていないと数える。
+    /// どの画素も、半径の円の中の最大の量になる（GIMP の Grow）。キャンバスの外は選ばれていないと数える。
     pub fn grow(&self, radius: u32, budget: u64) -> Result<SelectionMask, CoreError> {
         check_radius(radius)?;
         if radius == 0 || self.is_empty() {
@@ -65,7 +65,7 @@ impl SelectionMask {
         Ok(self.with_dense(&out, w))
     }
 
-    /// どの画素も、半径の円の中の最小の量になる（GIMP の Shrink）。edge_lock なら選択範囲は画布の外へ続く（画布の縁からは縮まない）。
+    /// どの画素も、半径の円の中の最小の量になる（GIMP の Shrink）。edge_lock なら選択範囲はキャンバスの外へ続く（キャンバスの縁からは縮まない）。
     pub fn shrink(
         &self,
         radius: u32,
@@ -117,7 +117,7 @@ impl SelectionMask {
         Ok(self.with_dense(&grown, w))
     }
 
-    /// 量のガウスぼかし（標準偏差は半径 / 3.5、GIMP の Feather の定数）。画布の外は選ばれていない、edge_lock なら縁の画素が
+    /// 量のガウスぼかし（標準偏差は半径 / 3.5、GIMP の Feather の定数）。キャンバスの外は選ばれていない、edge_lock なら縁の画素が
     /// 続く。小さい半径は正確な核、大きい半径は 3 回の箱ぼかし（ガウスの近似。C# と同じ式・同じ float の溜め方）。
     ///
     /// C# とのバイト一致を確かめたのは同じ libm（Linux の glibc）の上。正確な核（標準偏差 2 未満）は libm の `exp` を通るので、
@@ -200,8 +200,8 @@ impl SelectionMask {
         Ok(self.with_dense(&result, w))
     }
 
-    /// 窓の周りに pad 画素を足したもの（C# の Padded）。画布の中で窓の外は選ばれていない（窓が量のある画素を全部含む）。
-    /// 画布の外は、edge_lock なら 255（replicate なら一番近い縁の画素）、でなければ 0。
+    /// ウィンドウの周りに pad 画素を足したもの（C# の Padded）。キャンバスの中でウィンドウの外は選ばれていない（ウィンドウが量のある画素を全部含む）。
+    /// キャンバスの外は、edge_lock なら 255（replicate なら一番近い縁の画素）、でなければ 0。
     fn padded(&self, w: Window, pad: i64, edge_lock: bool, replicate: bool) -> Vec<u8> {
         let dense = self.dense(w);
         let (pw, ph) = ((w.width + 2 * pad) as usize, (w.height + 2 * pad) as usize);
@@ -378,7 +378,7 @@ fn boxes_for_gauss(sigma: f64, n: i64) -> Vec<i64> {
     (0..n).map(|i| if i < m { wl } else { wu }).collect()
 }
 
-/// 1 本の線の、半幅 r の累積和の箱ぼかし（C# の Box の 1 本分。窓は配列の端で止める）。sum は double、配列は float で、
+/// 1 本の線の、半幅 r の累積和の箱ぼかし（C# の Box の 1 本分。ウィンドウは配列の端で止める）。sum は double、配列は float で、
 /// 足し引きは float の差を double に足す（C# の `sum += src[a] - src[b]`）。
 #[inline]
 fn box_line(get: impl Fn(usize) -> f32, mut put: impl FnMut(usize, f32), length: usize, r: usize) {

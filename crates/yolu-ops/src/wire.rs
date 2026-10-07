@@ -31,9 +31,15 @@ pub fn parse_command(value: &Value) -> Result<Command, OpError> {
         ));
     };
     check_version(object.get("v"))?;
-    let name = object.get("command").and_then(Value::as_str).ok_or_else(|| {
-        OpError::invalid_request("command（命令の名前）がありません", "`command` (the command name) is missing")
-    })?;
+    let name = object
+        .get("command")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            OpError::invalid_request(
+                "command（命令の名前）がありません",
+                "`command` (the command name) is missing",
+            )
+        })?;
     if !commands().iter().any(|c| c.name == name) {
         return Err(OpError::new(
             ErrorCode::UnknownCommand,
@@ -45,15 +51,21 @@ pub fn parse_command(value: &Value) -> Result<Command, OpError> {
     let args = object.get("args").cloned().unwrap_or_else(|| json!({}));
     let tagged = json!({"command": name, "args": args});
     serde_json::from_value::<Command>(tagged).map_err(|e| {
-        OpError::invalid_request(format!("{name} の引数が正しくありません: {e}"), format!("Invalid arguments for {name}: {e}"))
-            .with_data(json!({"command": name}))
+        OpError::invalid_request(
+            format!("{name} の引数が正しくありません: {e}"),
+            format!("Invalid arguments for {name}: {e}"),
+        )
+        .with_data(json!({"command": name}))
     })
 }
 
 /// JSON の文字列から命令へ。
 pub fn parse_command_str(text: &str) -> Result<Command, OpError> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
-        OpError::invalid_request(format!("JSON を読めません: {e}"), format!("Cannot read the JSON: {e}"))
+        OpError::invalid_request(
+            format!("JSON を読めません: {e}"),
+            format!("Cannot read the JSON: {e}"),
+        )
     })?;
     parse_command(&value)
 }

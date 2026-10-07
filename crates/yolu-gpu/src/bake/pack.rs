@@ -150,7 +150,8 @@ fn word_count(v: usize, what: &str) -> Result<u32, GpuBakeError> {
 }
 
 /// UV の 8×8 テクセルのタイルごとに、覆う三角形（受け手の番号、昇順）の一覧を作る。
-/// 番号の昇順に並べるのは、同じテクセルを覆う三角形のうち番号の小さい方が所有するという core の規則のため。
+/// 受け手の番号の昇順に並べるのは、同じテクセルを覆う三角形のうち受け手の並び（core が決めた優先の順。既定は元の番号の昇順）で
+/// 先のものが所有するという core の規則のため。
 fn bin_tiles(
     scene: &MeshBakeScene,
     max_entries: usize,

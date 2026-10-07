@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use yolu_app::engine::{Channel, LayerId, TileCoord};
+use yolu_app::engine::{Channel, LayerId, LayerKind, Rgba8, TileCoord};
 use yolu_app::lang::Lang;
 use yolu_app::library::cache::Cache;
 use yolu_app::library::{self, Source};
@@ -16,7 +16,8 @@ use yolu_app::shelf::{Block, ItemKind, PlaceTarget, ShelfOp, ShelfState, SHELF_B
 use yolu_app::state::{Action, AppState, DialogRequest};
 use yolu_io::library as files;
 use yolu_io::shelf::{image_hash, Shelf, MAX_RESOURCES};
-use yolu_io::Project;
+use yolu_io::smart::SmartFile;
+use yolu_io::{Project, UNITY_NATIVE_VERSION};
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
@@ -292,7 +293,7 @@ fn headless_the_library_lists_files_by_kind_and_looks_at_each_one() {
             .info(rel)
             .unwrap_or_else(|| panic!("{rel} を見ていない"))
     };
-    // スマートマテリアル: 層の数・大きさ・チャンネル・絵。中身の札はファイルの札
+    // スマートマテリアル: レイヤーの数・大きさ・チャンネル・絵。中身の札はファイルの札
     let raster = info("Smart/raster.ylsmart");
     let bytes = fixture("raster.ylsmart");
     assert_eq!(
@@ -906,18 +907,30 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     let mut s = state(&dir);
     scan(&mut s);
     for (rel, expect) in [
-        ("broken.ylsmart", "できません: broken: "),
-        ("Images/cut.png", "できません: cut: PNG として読めません"),
-        ("missing.ylsmart", "できません: missing: "),
+        (
+            "broken.ylsmart",
+            "「broken」をライブラリから取り込めません（",
+        ),
+        (
+            "Images/cut.png",
+            "「cut」をライブラリから取り込めません（PNG として読めません）。",
+        ),
+        (
+            "missing.ylsmart",
+            "「missing」をライブラリから取り込めません（",
+        ),
         (
             "../outside.ylsmart",
-            "できません: outside: 名前が使えません",
+            "「outside」をライブラリから取り込めません（名前に使えない文字があります）。",
         ),
-        ("Images/..\\x.png", "できません: .."),
+        (
+            "Images/..\\x.png",
+            "をライブラリから取り込めません（名前に使えない文字があります）。",
+        ),
     ] {
         s.message.clear();
         use_file(&mut s, rel);
-        assert!(s.message.starts_with(expect), "{rel}: {}", s.message);
+        assert!(s.message.contains(expect), "{rel}: {}", s.message);
         assert!(s.shelf.resources().is_empty(), "{rel}");
         assert!(!s.modified && !s.shelf.changed, "{rel}");
     }
@@ -925,7 +938,8 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     s.library.limits.read = sample_png().len() as u64 - 1;
     use_file(&mut s, "Images/big.png");
     assert!(
-        s.message.starts_with("できません: big: 大きすぎます"),
+        s.message
+            .starts_with("「big」をライブラリから取り込めません（大きすぎます）"),
         "{}",
         s.message
     );
@@ -933,7 +947,10 @@ fn headless_a_file_that_cannot_be_used_says_why_and_changes_nothing() {
     // 英語の画面では英語の理由
     s.lang = Lang::En;
     use_file(&mut s, "Images/cut.png");
-    assert_eq!(s.message, "Cannot: cut: Not a readable PNG");
+    assert_eq!(
+        s.message,
+        "Cannot import \"cut\" from the library (Not a readable PNG)."
+    );
 }
 
 #[test]
@@ -943,7 +960,11 @@ fn headless_using_a_file_is_refused_when_the_shelf_is_full_or_unreadable() {
     let mut s = state(&dir);
     s.shelf = ShelfState::with_shelf(images_shelf(MAX_RESOURCES));
     use_file(&mut s, "Smart/raster.ylsmart");
-    assert!(s.message.contains("棚がいっぱいです"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットがいっぱいです"),
+        "{}",
+        s.message
+    );
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES);
     assert!(!s.modified);
     s.shelf = ShelfState::unreadable("試験の理由");
@@ -1005,7 +1026,7 @@ fn headless_putting_shelf_items_into_the_library_writes_their_bytes_once() {
     for r in &items {
         put_in_library(&mut s, &r.id);
         assert!(
-            s.message.starts_with("ライブラリに入れました: "),
+            s.message.ends_with("」をライブラリに入れました。"),
             "{}: {}",
             r.name,
             s.message
@@ -1032,7 +1053,7 @@ fn headless_putting_shelf_items_into_the_library_writes_their_bytes_once() {
     // 同じ素材をもう一度入れても、書かない
     put_in_library(&mut s, &items[2].id);
     assert!(
-        s.message.starts_with("すでにライブラリにあります: "),
+        s.message.ends_with("」はすでにライブラリにあります。"),
         "{}",
         s.message
     );
@@ -1111,8 +1132,7 @@ fn headless_an_image_whose_pixels_are_already_in_the_library_is_not_written_agai
         .unwrap();
     put_in_library(&mut s, &id);
     assert!(
-        s.message
-            .starts_with("すでにライブラリにあります: Images/mine.png"),
+        s.message == "「Images/mine.png」はすでにライブラリにあります。",
         "{}",
         s.message
     );
@@ -1202,8 +1222,7 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
     let mut s = state(&dir);
     add_files(&mut s, vec![good_smart.clone()]);
     assert!(
-        s.message
-            .starts_with("ライブラリに入れました: Smart/試験素材.ylsmart"),
+        s.message == "「Smart/試験素材.ylsmart」をライブラリに入れました。",
         "{}",
         s.message
     );
@@ -1215,38 +1234,53 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
     let copy = make("another name.ylsmart", &fixture("raster.ylsmart"));
     add_files(&mut s, vec![copy]);
     assert!(
-        s.message
-            .starts_with("すでにライブラリにあります: Smart/試験素材.ylsmart"),
+        s.message == "「Smart/試験素材.ylsmart」はすでにライブラリにあります。",
         "{}",
         s.message
     );
     // まとめて: 入れた分・すでにあった分・断った理由が 1 つの知らせに
     add_files(&mut s, vec![good_png, good_smart, junk, cut, text]);
     let message = s.message.clone();
-    assert!(message.starts_with("できません: "), "{message}");
+    assert!(
+        message.starts_with("「junk.ylsmart」をライブラリに入れられません（"),
+        "{message}"
+    );
     for expect in [
-        "junk.ylsmart: ",
-        "cut.png: PNG として読めません",
-        "notes.txt: PNG と .ylsmart だけです",
+        "「cut.png」をライブラリに入れられません（PNG として読めません）。",
+        "「notes.txt」をライブラリに入れられません（PNG と .ylsmart だけです）。",
     ] {
         assert!(message.contains(expect), "{expect}: {message}");
     }
     assert!(
-        message.contains("ライブラリに入れました: 1 件"),
+        message.contains("1 件をライブラリに入れました。"),
         "{message}"
     );
-    assert!(message.contains("すでにあった: 1 件"), "{message}");
+    assert!(
+        message.contains("1 件はすでにライブラリにありました。"),
+        "{message}"
+    );
     assert_eq!(dir.files(), ["Images/pic.png", "Smart/試験素材.ylsmart"]);
     // 大きさの上限（1 バイト足りない）
     s.library.limits.read = sample_png().len() as u64 - 1;
     let big = make("big.png", &sample_png());
     add_files(&mut s, vec![big]);
-    assert!(s.message.contains("big.png: 大きすぎます"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("「big.png」をライブラリに入れられません（大きすぎます）"),
+        "{}",
+        s.message
+    );
     // 英語
     s.lang = Lang::En;
     let cut = outside.join("cut.png");
     add_files(&mut s, vec![cut]);
-    assert_eq!(s.message, "Cannot: cut.png: Not a readable PNG");
+    assert_eq!(
+        s.message,
+        "Cannot add \"cut.png\" to the library (Not a readable PNG)."
+    );
+    s.library.limits.read = sample_png().len() as u64;
+    add_files(&mut s, vec![make("again.png", &sample_png())]);
+    assert_eq!(s.message, "\"Images/pic.png\" is already in the library.");
 }
 
 #[test]
@@ -1264,7 +1298,7 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
         target: PlaceTarget::Selected,
     }));
     let layers = s.doc.layers().len();
-    // 確かめの窓を頼む（まだ消さない）
+    // 確認のウィンドウを頼む（まだ消さない）
     s.apply(Action::Shelf(ShelfOp::LibraryAskRemove(
         "Smart/raster.ylsmart".into(),
     )));
@@ -1292,7 +1326,7 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
     );
     assert_eq!(dir.files(), ["Smart/mask.ylsmart"]);
     assert!(s.library.pending_remove.is_none() && s.library.selected.is_none());
-    // プロジェクトの写しと、置いた層は変わらない
+    // プロジェクトの写しと、置いたレイヤーは変わらない
     assert_eq!(s.shelf.resources().len(), 1);
     assert_eq!(s.doc.layers().len(), layers);
     // ライブラリの外のファイルは消せない
@@ -1303,7 +1337,11 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
         "Smart",
     ] {
         s.apply(Action::Shelf(ShelfOp::LibraryRemove(rel.into())));
-        assert!(s.message.starts_with("できません"), "{rel}: {}", s.message);
+        assert!(
+            s.message.contains("をライブラリから消せません（"),
+            "{rel}: {}",
+            s.message
+        );
     }
     assert!(victim.exists());
     assert_eq!(dir.files(), ["Smart/mask.ylsmart"]);
@@ -1335,11 +1373,11 @@ fn headless_a_library_file_is_placed_without_going_through_the_shelf_in_one_undo
     assert!(s.shelf.resources().is_empty(), "棚へは入れない");
     s.apply(Action::Undo);
     assert_eq!(s.doc.layers().len(), before);
-    // 画像は 1 枚の層
+    // 画像は 1 枚のレイヤー
     place(&mut s, "Images/pic.png");
     assert_eq!(s.doc.layers().len(), before + 1, "{}", s.message);
     s.apply(Action::Undo);
-    // スマートマスクは選んだ層のマスクへ
+    // スマートマスクは選んだレイヤーのマスクへ
     s.selected_layer = Some(base);
     place(&mut s, "Smart/mask.ylsmart");
     assert!(s.doc.layer(base).unwrap().mask().is_some(), "{}", s.message);
@@ -1349,9 +1387,12 @@ fn headless_a_library_file_is_placed_without_going_through_the_shelf_in_one_undo
     let layers = s.doc.layers().len();
     for (rel, expect) in [
         ("Brushes/brush.ylbrush", "ブラシ"),
-        ("broken.ylsmart", "broken: "),
-        ("missing.png", "missing: "),
-        ("../x.png", "x: 名前が使えません"),
+        ("broken.ylsmart", "「broken」を置けません（"),
+        ("missing.png", "「missing」を置けません（"),
+        (
+            "../x.png",
+            "「x」を置けません（名前に使えない文字があります）",
+        ),
     ] {
         s.message.clear();
         place(&mut s, rel);
@@ -1371,7 +1412,7 @@ fn headless_a_16_bit_png_is_added_unchanged_and_used_with_a_note_that_it_was_red
     let mut s = state(&dir);
     // 足すときは、ファイルのバイト列のまま（丸めない）
     add_files(&mut s, vec![outside.join("height.png")]);
-    assert_eq!(s.message, "ライブラリに入れました: Images/height.png");
+    assert_eq!(s.message, "「Images/height.png」をライブラリに入れました。");
     assert_eq!(dir.read("Images/height.png"), bytes);
     scan(&mut s);
     // 使うと 8 ビットになり、その知らせを出す（黙って落とさない）
@@ -1523,7 +1564,9 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
     for lang in Lang::ALL {
         let texts: Vec<String> = markers
             .iter()
-            .map(|m| library::reason(lang, &yolu_io::Error::InvalidData((*m).into())))
+            .map(|m| {
+                yolu_app::lang::library_io_error(lang, &yolu_io::Error::InvalidData((*m).into()))
+            })
             .collect();
         for (i, a) in texts.iter().enumerate() {
             assert!(!a.is_empty(), "{lang:?} {}", markers[i]);
@@ -1536,7 +1579,10 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
     }
     // 棚の断り（予算・個数）は、棚の言い方のまま
     let budget = yolu_io::Error::Budget(yolu_io::shelf::REFUSAL_MEMORY_BUDGET.into());
-    assert_eq!(library::reason(Lang::Ja, &budget), "棚の予算を超えます");
+    assert_eq!(
+        yolu_app::lang::library_io_error(Lang::Ja, &budget),
+        "アセットの予算を超えます"
+    );
 }
 
 // ───────── 棚（プロジェクト）のサムネイルも別のスレッドで ─────────
@@ -1557,9 +1603,9 @@ fn headless_the_shelfs_pictures_are_made_on_another_thread_and_equal_the_direct_
     later.show_builtin = false;
     later.hold_inspections(true);
     later.request_inspections(&ids, None);
-    // 別のスレッドを止めている間は、何も無い（頼んでも待たない。ブラシ・マテリアルは見る所が無いので、その場で決まる）
+    // 別のスレッドを止めている間は、何も無い（頼んでも待たない。ブラシは見る所が無いので、その場で決まる）
     for r in later.resources() {
-        let slow = matches!(r.kind.as_str(), "image" | "smartMaterial" | "smartMask");
+        let slow = r.kind != "brush";
         assert_eq!(later.info(&r.id).is_none(), slow, "{}", r.name);
     }
     assert!(later.inspections_pending());
@@ -1649,7 +1695,7 @@ fn headless_an_item_removed_from_the_shelf_while_being_looked_at_is_not_brought_
 
 #[test]
 fn headless_the_documents_pixels_survive_a_library_round_trip_of_a_saved_layer() {
-    // 層をスマートマテリアルとして棚へ保存し、ライブラリへ入れ、別のプロジェクトで使って置くと、同じ画素になる
+    // レイヤーをスマートマテリアルとして棚へ保存し、ライブラリへ入れ、別のプロジェクトで使って置くと、同じ画素になる
     let dir = Dir::new("journey");
     let mut a = state(&dir);
     let base = a.selected_layer.unwrap();
@@ -1683,6 +1729,389 @@ fn headless_the_documents_pixels_survive_a_library_round_trip_of_a_saved_layer()
     assert_eq!(pixel, [200, 40, 30, 255]);
 }
 
+// ───────── マテリアル（塗りつぶしレイヤー） ─────────
+
+const IRON: Rgba8 = Rgba8::new(90, 80, 70, 255);
+const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
+
+/// Color と Metallic の値を持ち、マスクの付いた塗りつぶしレイヤーを 1 つ足して選ぶ。
+fn fill_layer(s: &mut AppState, name: &str) -> LayerId {
+    let id = s
+        .doc
+        .add_fill_layer(
+            name,
+            &[(Channel::Color, IRON), (Channel::Metallic, WHITE)],
+            None,
+        )
+        .unwrap();
+    s.doc.add_layer_mask(id).unwrap();
+    s.selected_layer = Some(id);
+    id
+}
+
+fn save_as_material(s: &mut AppState, id: LayerId) {
+    s.apply(Action::Shelf(ShelfOp::SaveAsMaterial(id)));
+    s.library_wait();
+}
+
+/// レイヤーの種類・Color と Metallic の値・マスクの有無。
+fn fill_of(s: &AppState, id: LayerId) -> (LayerKind, Option<Rgba8>, Option<Rgba8>, bool) {
+    let l = s.doc.layer(id).unwrap();
+    (
+        l.kind(),
+        l.fill_value(Channel::Color),
+        l.fill_value(Channel::Metallic),
+        l.mask().is_some(),
+    )
+}
+
+fn place_here(s: &mut AppState, id: String) {
+    s.apply(Action::Shelf(ShelfOp::Place {
+        id,
+        target: PlaceTarget::Selected,
+    }));
+}
+
+#[test]
+fn headless_a_fill_layer_saved_as_a_material_is_placed_as_a_fill_layer_and_kept_in_the_ylp() {
+    let dir = Dir::new("material");
+    let mut s = state(&dir);
+    let fill = fill_layer(&mut s, "鉄");
+    let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
+    save_as_material(&mut s, fill);
+    assert_eq!(
+        s.message,
+        "「Materials/鉄.ylmaterial」をライブラリに入れました。"
+    );
+    assert_eq!(dir.files(), ["Materials/鉄.ylmaterial"]);
+    // 文書とプロジェクトのアセットは変えない
+    assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
+    assert!(s.shelf.resources().is_empty() && !s.shelf.changed && !s.modified);
+    // 中身は塗りつぶしレイヤー 1 つの .ylsmart と同じ形で、Unity 版（0.2.0）が読む範囲（smart.json の形式 1・種類 smartMaterial・正本の版 21 まで）
+    let bytes = dir.read("Materials/鉄.ylmaterial");
+    let file = SmartFile::read(&bytes).unwrap();
+    assert_eq!(file.info()["format"], 1);
+    assert_eq!(file.info()["kind"], "smartMaterial");
+    assert_eq!(file.info()["name"], "鉄");
+    assert_eq!(file.info()["layers"], 1);
+    assert!(
+        file.fragment().version() <= UNITY_NATIVE_VERSION,
+        "{}",
+        file.fragment().version()
+    );
+    // 同じ名前でもう一度: 番号の付いた別のファイル（前のファイルは置き換えない）
+    save_as_material(&mut s, fill);
+    assert_eq!(
+        dir.files(),
+        ["Materials/鉄 2.ylmaterial", "Materials/鉄.ylmaterial"],
+        "{}",
+        s.message
+    );
+    assert_eq!(dir.read("Materials/鉄.ylmaterial"), bytes);
+    std::fs::remove_file(dir.library().join("Materials/鉄 2.ylmaterial")).unwrap();
+    // ライブラリにマテリアルとして並び、置ける（絵がある）
+    scan(&mut s);
+    let rel = "Materials/鉄.ylmaterial";
+    let info = s.library.info(rel).unwrap();
+    assert_eq!(info.kind, ItemKind::Material);
+    assert!(info.inspected.block.is_none(), "{:?}", info.inspected.block);
+    assert!(info.inspected.has_thumbnail());
+    assert_eq!(info.inspected.layers, 1);
+    assert_eq!(info.inspected.channels, [Channel::Color, Channel::Metallic]);
+    let listed: Vec<String> = s
+        .library
+        .visible(Some(ItemKind::Material), "")
+        .into_iter()
+        .map(|i| i.rel)
+        .collect();
+    assert_eq!(listed, [rel]);
+    // ライブラリから置く: 選んだレイヤーの上に、マスクの無い塗りつぶしレイヤーが 1 つ。1 回の取り消しで戻る
+    let layers = s.doc.layers().len();
+    place_here(&mut s, library::library_id(rel));
+    assert_eq!(s.doc.layers().len(), layers + 1, "{}", s.message);
+    assert!(s.message.starts_with("置きました: 鉄"), "{}", s.message);
+    let placed = s.selected_layer.unwrap();
+    assert_ne!(placed, fill);
+    assert_eq!(
+        fill_of(&s, placed),
+        (LayerKind::Fill, Some(IRON), Some(WHITE), false)
+    );
+    s.apply(Action::Undo);
+    assert_eq!(s.doc.layers().len(), layers);
+    // プロジェクトで使う: マテリアルの種類でアセットに入り（バイト列はファイルのまま）、そこから置ける
+    use_file(&mut s, rel);
+    let res = s.shelf.resources()[0].clone();
+    assert_eq!((res.kind.as_str(), res.name.as_str()), ("material", "鉄"));
+    assert_eq!(s.shelf.shelf().content_bytes(&res.id).unwrap(), bytes);
+    s.shelf.inspect(&res.id);
+    assert_eq!(s.shelf.block_of(&res.id), None);
+    place_here(&mut s, res.id.clone());
+    assert_eq!(s.doc.layers().len(), layers + 1, "{}", s.message);
+    let placed = s.selected_layer.unwrap();
+    // 保存して開き直す: アセットのマテリアルと置いたレイヤーが同じに戻る。.ylp の中身の形式は上げない（形式 6 の種類）
+    let path = dir.0.join("material.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let project = Project::read(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(project.info().format, 7);
+    assert_eq!(project.resources()[0].kind, "material");
+    let mut again = state(&dir);
+    again.apply(Action::OpenProject(path));
+    let got = again
+        .shelf
+        .get(&res.id)
+        .unwrap_or_else(|| panic!("{}", again.message))
+        .clone();
+    assert_eq!((got.kind.as_str(), got.name.as_str()), ("material", "鉄"));
+    assert_eq!(again.shelf.shelf().content_bytes(&res.id).unwrap(), bytes);
+    assert_eq!(fill_of(&again, placed), fill_of(&s, placed));
+    let layers = again.doc.layers().len();
+    again.selected_layer = Some(placed);
+    place_here(&mut again, res.id);
+    assert_eq!(again.doc.layers().len(), layers + 1, "{}", again.message);
+    let twice = again.selected_layer.unwrap();
+    assert_eq!(
+        fill_of(&again, twice),
+        (LayerKind::Fill, Some(IRON), Some(WHITE), false)
+    );
+    again.apply(Action::Undo);
+    assert_eq!(again.doc.layers().len(), layers);
+}
+
+#[test]
+fn headless_only_a_fill_layer_is_saved_as_a_material_and_offered_in_its_menu() {
+    use yolu_app::state::PopupKind;
+    use yolu_app::ui::menu::Entry;
+    let dir = Dir::new("material-refused");
+    let mut s = state(&dir);
+    let raster = s.selected_layer.unwrap();
+    let group = s.doc.add_group("組", None).unwrap();
+    let fill = fill_layer(&mut s, "鉄");
+    let labels = |s: &AppState, id| -> Vec<String> {
+        yolu_app::shell::popup_entries(s, PopupKind::LayerContext(id))
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Item { label, .. } => Some(label),
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(labels(&s, fill).contains(&"マテリアルとして保存".to_owned()));
+    for id in [raster, group] {
+        let menu = labels(&s, id);
+        assert!(
+            !menu.iter().any(|l| l == "マテリアルとして保存"),
+            "{menu:?}"
+        );
+        assert!(menu.contains(&"スマートマテリアルとして保存".to_owned()));
+    }
+    let name = s.doc.layer(raster).unwrap().name().to_owned();
+    let fingerprint = |s: &AppState| (s.doc.layers().len(), s.doc.undo_count(), s.doc.revision());
+    let before = fingerprint(&s);
+    save_as_material(&mut s, raster);
+    assert_eq!(
+        s.message,
+        format!(
+            "「{name}」をマテリアルとして保存できません（塗りつぶしのレイヤーではありません）。"
+        )
+    );
+    save_as_material(&mut s, group);
+    assert_eq!(
+        s.message,
+        "「組」をマテリアルとして保存できません（塗りつぶしのレイヤーではありません）。"
+    );
+    assert_eq!(fingerprint(&s), before);
+    assert!(s.shelf.resources().is_empty() && !s.modified);
+    // アセットの画像を使う塗りつぶしは、項目を押せなくして理由をツールチップに。押しても断る
+    let rid = s
+        .shelf
+        .add_image(Lang::Ja, "四色", &[1, 2, 3, 255], 1, 1)
+        .unwrap();
+    let textured = fill_layer(&mut s, "絵");
+    s.apply(Action::Fill(yolu_app::fillfx::FillOp::Image {
+        layer: textured,
+        channel: Channel::Color,
+        image: yolu_app::fillfx::inputs::image_id(&rid),
+    }));
+    assert!(s
+        .doc
+        .layer(textured)
+        .unwrap()
+        .fill_image(Channel::Color)
+        .is_some());
+    let item = yolu_app::shell::popup_entries(&s, PopupKind::LayerContext(textured))
+        .into_iter()
+        .find(|e| e.label() == Some("マテリアルとして保存"))
+        .unwrap();
+    let Entry::Item {
+        enabled, tooltip, ..
+    } = item
+    else {
+        panic!("項目")
+    };
+    assert!(!enabled);
+    assert_eq!(tooltip.as_deref(), Some("画像を使っています"));
+    let before = fingerprint(&s);
+    save_as_material(&mut s, textured);
+    assert_eq!(
+        s.message,
+        "「絵」をマテリアルとして保存できません（画像を使っています）。"
+    );
+    assert_eq!(fingerprint(&s), before);
+    s.lang = Lang::En;
+    assert!(labels(&s, fill).contains(&"Save as Material".to_owned()));
+    save_as_material(&mut s, raster);
+    assert_eq!(
+        s.message,
+        format!("Cannot save \"{name}\" as a material (Not a fill layer).")
+    );
+    save_as_material(&mut s, textured);
+    assert_eq!(
+        s.message,
+        "Cannot save \"絵\" as a material (It uses images)."
+    );
+    assert!(dir.files().is_empty());
+    assert_eq!(fingerprint(&s), before);
+    assert!(s.shelf.resources().len() == 1);
+    // 英語の済んだ知らせも、名前を引用符で文に入れる
+    save_as_material(&mut s, fill);
+    assert_eq!(
+        s.message,
+        "Added \"Materials/鉄.ylmaterial\" to the library."
+    );
+}
+
+/// 書き込みのスレッドで `.ylsmart` にできないと断られるレイヤー（画素のフィルターのノイズ・グランジ、ユーザーチャンネルの値）は、
+/// 押した操作の名前（「マテリアルとして保存できません」）で理由を知らせ、ライブラリにも文書にも何も残さない。
+#[test]
+fn headless_a_fill_layer_the_writer_cannot_hold_is_refused_as_a_material_not_as_a_library_add() {
+    use yolu_core::generator::{Kind, Settings};
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let dir = Dir::new("material-writer-refused");
+    let mut s = state(&dir);
+    let noisy = fill_layer(&mut s, "鉄");
+    s.doc
+        .add_filter(
+            noisy,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::generator(Settings::new(Kind::Noise)))
+                .channels(&[Channel::Color]),
+        )
+        .unwrap();
+    let channel = s
+        .doc
+        .add_channel(yolu_app::m2::new_channel_info(
+            "AO".into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))
+        .unwrap();
+    let user = s
+        .doc
+        .add_fill_layer("遮蔽", &[(channel, WHITE)], None)
+        .unwrap();
+    let fingerprint = |s: &AppState| (s.doc.layers().len(), s.doc.undo_count(), s.doc.revision());
+    let before = fingerprint(&s);
+    for (id, name, ja, en) in [
+        (
+            noisy,
+            "鉄",
+            "ノイズ・グランジを使っています",
+            "It uses Noise and Grunge",
+        ),
+        (
+            user,
+            "遮蔽",
+            "ユーザーチャンネルを使っています",
+            "It uses user channels",
+        ),
+    ] {
+        for lang in [Lang::Ja, Lang::En] {
+            s.lang = lang;
+            save_as_material(&mut s, id);
+            let want = match lang {
+                Lang::Ja => format!("「{name}」をマテリアルとして保存できません（{ja}）。"),
+                Lang::En => format!("Cannot save \"{name}\" as a material ({en})."),
+            };
+            assert_eq!(s.message, want);
+            assert!(
+                !s.message.contains("ライブラリに入れられません")
+                    && !s.message.contains("to the library"),
+                "{}",
+                s.message
+            );
+        }
+    }
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    assert_eq!(fingerprint(&s), before);
+    assert!(s.shelf.resources().is_empty() && !s.modified);
+}
+
+#[test]
+fn headless_a_material_file_that_cannot_be_placed_says_why_and_changes_nothing() {
+    let dir = Dir::new("material-broken");
+    dir.put("Materials/broken.ylmaterial", b"not a smart file");
+    dir.put("Materials/mask.ylmaterial", &fixture("mask.ylsmart"));
+    dir.put("Materials/raster.ylmaterial", &fixture("raster.ylsmart"));
+    let mut s = state(&dir);
+    let base = s.selected_layer.unwrap();
+    paint(&mut s, base, [200, 40, 30, 255]);
+    scan(&mut s);
+    // 壊れたファイルと、中身がスマートマスクのファイルは、マテリアルとして並べて理由を出す
+    for rel in ["Materials/broken.ylmaterial", "Materials/mask.ylmaterial"] {
+        let info = s.library.info(rel).unwrap();
+        assert_eq!(info.kind, ItemKind::Material, "{rel}");
+        let Some(Block::Unreadable(why)) = &info.inspected.block else {
+            panic!("{rel}: {:?}", info.inspected.block)
+        };
+        assert_eq!(
+            (why.reason(Lang::Ja), why.reason(Lang::En)),
+            ("形式が合いません", "Wrong format")
+        );
+    }
+    let (layers, undo) = (s.doc.layers().len(), s.doc.undo_count());
+    let place = |s: &mut AppState, rel: &str| place_here(s, library::library_id(rel));
+    place(&mut s, "Materials/broken.ylmaterial");
+    assert!(
+        s.message.starts_with("「broken」を置けません（"),
+        "{}",
+        s.message
+    );
+    place(&mut s, "Materials/mask.ylmaterial");
+    assert_eq!(s.message, "「mask」を置けません（形式が合いません）。");
+    // レイヤーの画素の予算を超える: 置く前に断る
+    s.doc
+        .set_source_budget_bytes(s.doc.allocated_bytes() + 16)
+        .unwrap();
+    place(&mut s, "Materials/raster.ylmaterial");
+    assert!(
+        s.message.contains("レイヤーのメモリの予算を超えます"),
+        "{}",
+        s.message
+    );
+    // 読む大きさの上限を超える: 読まずに断る
+    s.library.limits.read = fixture("raster.ylsmart").len() as u64 - 1;
+    place(&mut s, "Materials/raster.ylmaterial");
+    assert_eq!(s.message, "「raster」を置けません（大きすぎます）。");
+    assert_eq!(
+        (s.doc.layers().len(), s.doc.undo_count()),
+        (layers, undo),
+        "断った操作は文書と取り消しに残らない"
+    );
+    // 英語の画面では英語の理由
+    s.lang = Lang::En;
+    place(&mut s, "Materials/mask.ylmaterial");
+    assert_eq!(s.message, "Cannot place \"mask\" (Wrong format).");
+    // プロジェクトで使う: 形式の合わないファイルはアセットへ入らない
+    use_file(&mut s, "Materials/mask.ylmaterial");
+    assert!(s.shelf.resources().is_empty(), "{}", s.message);
+    assert!(
+        s.message
+            .starts_with("Cannot import \"mask\" from the library ("),
+        "{}",
+        s.message
+    );
+}
+
 // ───────── 画面（egui_kittest） ─────────
 
 mod ui {
@@ -1695,7 +2124,7 @@ mod ui {
     use yolu_app::state::PopupKind;
     use yolu_app::YoluApp;
 
-    /// 窓に落としたファイル（パスだけ持つ）。
+    /// ウィンドウに落としたファイル（パスだけ持つ）。
     #[derive(Debug)]
     struct Dropped(PathBuf);
     impl egui::DroppedFile for Dropped {
@@ -1751,7 +2180,7 @@ mod ui {
         h.run();
     }
 
-    /// 人工のライブラリ（スマートマテリアル 2・スマートマスク・画像・ブラシのファイル・読めないファイル）を見せている窓。
+    /// 人工のライブラリ（スマートマテリアル 2・スマートマスク・画像・ブラシのファイル・読めないファイル）を見せているウィンドウ。
     fn window(dir: &Dir) -> Harness<'static, YoluApp> {
         dir.put("Smart/raster.ylsmart", &fixture("raster.ylsmart"));
         dir.put("Smart/multi.ylsmart", &fixture("multi.ylsmart"));
@@ -1789,13 +2218,13 @@ mod ui {
         for name in ["raster", "multi", "mask", "pic", "broken"] {
             assert!(card_shown(&h, name), "{name}");
         }
-        // 「層を保存」はプロジェクトの棚のもの。ライブラリでは出ない
-        assert!(h.query_by_label("層を保存").is_none());
+        // 「レイヤーを保存」はプロジェクトの棚のもの。ライブラリでは出ない
+        assert!(h.query_by_label("レイヤーを保存").is_none());
         h.get_by_label("プロジェクト").click();
         settle(&mut h);
         assert_eq!(st(&h).library.source, Source::Project);
         assert!(!card_shown(&h, "raster"));
-        assert!(h.query_by_label("層を保存").is_some());
+        assert!(h.query_by_label("レイヤーを保存").is_some());
         // 英語の画面
         h.state_mut().state.lang = Lang::En;
         h.run();
@@ -1849,7 +2278,7 @@ mod ui {
             .is_disabled());
         // 消すことはできる
         assert!(!h
-            .get_by_label("ライブラリから消す（プロジェクトの写しと置いた層はそのまま）")
+            .get_by_label("ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）")
             .accesskit_node()
             .is_disabled());
         let info = st(&h).library.info("broken.ylsmart").unwrap();
@@ -1875,7 +2304,7 @@ mod ui {
             .library
             .in_project(st(&h).shelf.shelf(), "Smart/raster.ylsmart"));
         // 消す前に確かめる
-        h.get_by_label("ライブラリから消す（プロジェクトの写しと置いた層はそのまま）")
+        h.get_by_label("ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）")
             .click();
         h.run();
         assert_eq!(st(&h).dialog_request, Some(DialogRequest::LibraryRemove));
@@ -1885,7 +2314,7 @@ mod ui {
         );
         assert!(dir.exists("Smart/raster.ylsmart"), "確かめる前は消さない");
         h.state_mut().state.dialog_request = None;
-        // フォルダを開く（窓を頼む。上の帯と下の帯の 2 か所にある）
+        // フォルダを開く（ウィンドウを頼む。上の帯と下の帯の 2 か所にある）
         let nodes: Vec<_> = h.get_all_by_label("ライブラリのフォルダを開く").collect();
         assert_eq!(nodes.len(), 2);
         nodes
@@ -2120,7 +2549,7 @@ mod ui {
         );
     }
 
-    /// ポインタを `at` に置いてから、ファイルを窓に落とす（落とした時点のポインタの位置で、落とし先が決まる）。
+    /// ポインタを `at` に置いてから、ファイルをウィンドウに落とす（落とした時点のポインタの位置で、落とし先が決まる）。
     fn drop_at(h: &mut Harness<'_, YoluApp>, at: egui::Pos2, files: &[&Path]) {
         move_to(h, at);
         h.step();
@@ -2132,7 +2561,7 @@ mod ui {
         h.run();
     }
 
-    /// 窓に落とす PNG と、PNG でないファイル。
+    /// ウィンドウに落とす PNG と、PNG でないファイル。
     fn files_to_drop(dir: &Dir, png_name: &str) -> (PathBuf, PathBuf) {
         let outside = dir.0.join("outside");
         std::fs::create_dir_all(&outside).unwrap();
@@ -2177,7 +2606,7 @@ mod ui {
         let grid = st(&h).library.grid_rect.expect("格子を描いている");
         let before = dir.files();
         let (png_path, _) = files_to_drop(&dir, "tip.png");
-        // 窓のほかの場所（格子の外）へ落とした PNG は、筆先・ステンシルなどほかの落とし先のもの
+        // ウィンドウのほかの場所（格子の外）へ落とした PNG は、筆先・ステンシルなどほかの落とし先のもの
         for at in [
             pos2(grid.right() + 40.0, grid.center().y),
             pos2(grid.center().x, grid.top() - 8.0),
@@ -2306,7 +2735,7 @@ mod ui {
         h.run();
         assert_eq!(st(&h).library.writing_name(), Some("raster"));
         assert!(
-            h.query_by_label("層を保存").is_none(),
+            h.query_by_label("レイヤーを保存").is_none(),
             "保存のボタンは名前とやめるに替わる"
         );
         h.get_by_label("やめる").click();
@@ -2316,7 +2745,7 @@ mod ui {
         h.state_mut().state.library.wait_idle();
         h.run();
         assert_eq!(dir.files(), before, "やめた書き込みは何も残さない");
-        assert!(h.query_by_label("層を保存").is_some());
+        assert!(h.query_by_label("レイヤーを保存").is_some());
     }
 
     #[test]
@@ -2355,6 +2784,63 @@ mod ui {
         click(&mut h, at);
         settle(&mut h);
         h.snapshot("assets_library_english");
+    }
+
+    /// 塗りつぶしレイヤーを「マテリアルとして保存」したあと: ライブラリのマテリアルのカードを選び、そのレイヤーの右クリックのメニューを開いた所。
+    /// アセットの画像を使う塗りつぶしでは、項目を押せず、理由がツールチップに出る（日英）。
+    #[test]
+    fn snapshot_material_menu_and_card() {
+        let mut results = egui_kittest::SnapshotResults::new();
+        for lang in Lang::ALL {
+            let suffix = lang.pick("ja", "en");
+            let dir = Dir::new("ui-material");
+            let mut h = window(&dir);
+            let name = lang.pick("鉄", "Iron");
+            {
+                let s = &mut h.state_mut().state;
+                s.lang = lang;
+                let fill = fill_layer(s, name);
+                s.apply(Action::Shelf(ShelfOp::SaveAsMaterial(fill)));
+                s.library_wait();
+            }
+            settle(&mut h);
+            let at = card(&h, name).center();
+            click(&mut h, at);
+            settle(&mut h);
+            assert!(st(&h).library.selected.is_some());
+            let at = row(&h, name).center();
+            right_click(&mut h, at);
+            settle(&mut h);
+            let save = lang.pick("マテリアルとして保存", "Save as Material");
+            assert!(!popup_item(&h, save).is_negative());
+            h.snapshot(format!("assets_material_{suffix}"));
+            results.extend_harness(&mut h);
+            key(&h, egui::Key::Escape, Modifiers::NONE);
+            h.run();
+            // アセットの画像を使う塗りつぶし
+            let textured = lang.pick("絵", "Picture");
+            {
+                let s = &mut h.state_mut().state;
+                let rid = s
+                    .shelf
+                    .add_image(lang, textured, &[200, 120, 40, 255], 1, 1)
+                    .unwrap();
+                let layer = fill_layer(s, textured);
+                s.apply(Action::Fill(yolu_app::fillfx::FillOp::Image {
+                    layer,
+                    channel: Channel::Color,
+                    image: yolu_app::fillfx::inputs::image_id(&rid),
+                }));
+            }
+            settle(&mut h);
+            let at = row(&h, textured).center();
+            right_click(&mut h, at);
+            settle(&mut h);
+            let at = popup_item(&h, save).center();
+            hover_and_wait(&mut h, at);
+            h.snapshot(format!("assets_material_images_{suffix}"));
+            results.extend_harness(&mut h);
+        }
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! ベイクの試験（画面なし）。試しの立方体と、Live Link と同じ形のモデルを別のスレッドで焼き、結果・取消・捨てる条件・古さの判定を確かめる。
 
+use std::time::Instant;
+
 use yolu_core::mesh_maps::{MeshMapKind, MeshMapStaleReason, MeshMapState};
 use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, MeshPose, Model, Pose, Submesh};
 
@@ -94,10 +96,10 @@ fn refusals_come_in_the_order_the_window_shows_them() {
     let layer = s.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
     let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
-    assert_eq!(lang_ja(&mut s), "描いている間はできません");
+    assert_eq!(lang_ja(&mut s), "描いている間はできません。");
     s.apply(bake(BakeAction::Start));
     assert!(!s.bake.is_baking(), "描いている間は始めない");
-    assert_eq!(s.message, "描いている間はできません");
+    assert_eq!(s.message, "描いている間はできません。");
     s.doc.end_stroke(stroke).unwrap();
     assert_eq!(s.bake_refusal(), None);
     // 英語
@@ -293,7 +295,7 @@ fn checks_keep_one_map_and_one_set() {
 fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let (report, shape) = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let (report, shape) = s.receive_link_model(&two_quads(1, 0.0));
     assert_eq!(shape, Ok(()));
     assert_eq!(report.created, ["Hair"]);
     quick(&mut s);
@@ -352,7 +354,7 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
 fn a_moved_vertex_or_a_new_model_makes_the_maps_stale_for_their_reason() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
@@ -430,7 +432,7 @@ fn corner_model() -> Model {
 fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&corner_model(), 0);
+    let _ = s.receive_link_model(&corner_model());
     quick(&mut s);
     s.bake.settings.ao_samples = 32;
     assert_eq!(s.occlusion_for_export(0), Occlusion::None);
@@ -571,7 +573,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     model.meshes[0].uv0[3] = [1.5, 1.0];
     let mut t = AppState::new(64, 64);
     t.bake.backend = BakeBackend::Cpu;
-    t.receive_link_model(&model, 0).1.unwrap();
+    t.receive_link_model(&model).1.unwrap();
     quick(&mut t);
     t.apply(bake(BakeAction::Start));
     t.wait_bake();
@@ -582,7 +584,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     t.apply(bake(BakeAction::Start));
     t.wait_bake();
     assert!(
-        t.message.starts_with("Mesh maps were not baked"),
+        t.message.starts_with("Cannot bake the mesh maps"),
         "{}",
         t.message
     );
@@ -611,7 +613,7 @@ fn a_refusal_is_the_same_whichever_place_is_chosen_and_the_cpu_is_not_retried() 
         model.meshes[0].uv0[3] = [1.5, 1.0];
         let mut t = AppState::new(64, 64);
         t.bake.backend = backend;
-        t.receive_link_model(&model, 0).1.unwrap();
+        t.receive_link_model(&model).1.unwrap();
         quick(&mut t);
         t.apply(bake(BakeAction::Start));
         t.wait_bake();
@@ -626,8 +628,11 @@ fn the_built_input_is_released_when_nothing_needs_it() {
     assert!(s.bake_input().is_ok());
     assert!(s.bake.input.is_some());
     s.release_idle_bake_input();
-    assert!(s.bake.input.is_none(), "窓も焼いたマップも無ければ手放す");
-    // 窓を開いている間・マップがあるあいだは持つ
+    assert!(
+        s.bake.input.is_none(),
+        "ウィンドウも焼いたマップも無ければ手放す"
+    );
+    // ウィンドウを開いている間・マップがあるあいだは持つ
     s.apply(bake(BakeAction::OpenWindow));
     assert!(s.bake_input().is_ok());
     s.release_idle_bake_input();
@@ -638,6 +643,72 @@ fn the_built_input_is_released_when_nothing_needs_it() {
     assert!(s.bake_input().is_ok());
     s.release_idle_bake_input();
     assert!(s.bake.input.is_some(), "焼いたマップの古さの判定に要る");
+}
+
+#[test]
+fn closing_the_window_frees_the_input_the_overlap_caches_point_at() {
+    // ウィンドウを閉じて、焼いたマップも走っているベイクも無ければ、アイランドの索引・見取り図も入力と形を握り続けない
+    let mut s = cube();
+    let geometry_refs = |s: &AppState| Arc::strong_count(&s.view3d.full_model().unwrap().geometry);
+    let baseline = geometry_refs(&s);
+    s.apply(bake(BakeAction::OpenWindow));
+    let input = s.bake_input().unwrap();
+    let weak = Arc::downgrade(&input);
+    drop(input);
+    assert!(matches!(s.overlap_islands(true), Some(Ok(_))));
+    assert!(s.overlap_map().is_some(), "見取り図の中身ができる");
+    assert!(s.bake.islands.is_some() && s.bake.map.is_some());
+    assert!(geometry_refs(&s) > baseline, "見取り図が形を握っている");
+    // ウィンドウを開いている間は、入力も索引も見取り図も持つ
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some() && s.bake.islands.is_some() && s.bake.map.is_some());
+    s.apply(bake(BakeAction::CloseWindow));
+    assert!(s.bake.map.is_none(), "見取り図はウィンドウの物");
+    assert_eq!(
+        geometry_refs(&s),
+        baseline,
+        "ウィンドウを閉じたら形を握らない"
+    );
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_none());
+    assert!(s.bake.islands.is_none(), "手放した入力を索引が握っている");
+    assert!(weak.upgrade().is_none(), "入力がどこかに残っている");
+    assert_eq!(geometry_refs(&s), baseline);
+}
+
+#[test]
+fn the_island_index_of_the_polygon_fill_menu_does_not_outlive_the_input() {
+    // ウィンドウを開かずに、ポリゴン塗りつぶしの右クリックだけでアイランドの索引を作った場合
+    let mut s = cube();
+    let islands = s.overlap_islands(true).unwrap().unwrap();
+    let weak = Arc::downgrade(&s.bake_input().unwrap());
+    drop(islands);
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_none());
+    assert!(s.bake.islands.is_none());
+    assert!(weak.upgrade().is_none(), "入力がどこかに残っている");
+}
+
+#[test]
+fn an_island_index_of_a_replaced_input_is_dropped_while_the_window_is_open() {
+    // ウィンドウを開いている間にモデルの形が替わって入力が作り直されたら、古い入力に結び付いた索引は残さない
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    s.apply(bake(BakeAction::OpenWindow));
+    assert!(matches!(s.overlap_islands(true), Some(Ok(_))));
+    let old = Arc::downgrade(&s.bake_input().unwrap());
+    lift(&mut s, 0.3);
+    let now = s.bake_input().unwrap();
+    assert!(old.upgrade().is_some(), "索引がまだ古い入力を握っている");
+    s.release_idle_bake_input();
+    assert!(
+        s.bake.input.is_some(),
+        "ウィンドウを開いている間は今の入力を持つ"
+    );
+    assert!(s.bake.islands.is_none());
+    assert!(old.upgrade().is_none(), "古い入力が残っている");
+    assert!(matches!(s.overlap_islands(true), Some(Ok(i)) if i.is_on(&now)));
 }
 
 // ───────── モデルの同一性・入力を作る場所 ─────────
@@ -658,7 +729,7 @@ fn lift(s: &mut AppState, z: f32) {
     .unwrap();
 }
 
-/// 窓の表示と同じ作り方（別のスレッド）で入力ができるまで待つ。
+/// ウィンドウの表示と同じ作り方（別のスレッド）で入力ができるまで待つ。
 fn wait_input(s: &mut AppState) -> Result<Arc<MeshBakeInput>, String> {
     let start = Instant::now();
     loop {
@@ -681,7 +752,7 @@ fn fresh_hash(s: &AppState) -> String {
 fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     for round in 0..60 {
         let z = 0.001 * (3 * round + 1) as f32;
         lift(&mut s, z);
@@ -704,7 +775,7 @@ fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
 fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
     for round in 0..12 {
         s.apply(bake(BakeAction::Start));
@@ -714,7 +785,7 @@ fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() 
             MeshMapState::Current,
             "{round} 回目"
         );
-        // 窓は閉じていて、マップがあるので入力は残っている。そのまま 2 回替わる
+        // ウィンドウは閉じていて、マップがあるので入力は残っている。そのまま 2 回替わる
         let z = 0.01 * (2 * round + 1) as f32;
         lift(&mut s, z);
         lift(&mut s, z + 0.01);
@@ -733,7 +804,7 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
     for round in 0..20 {
         let mut s = AppState::new(64, 64);
         s.bake.backend = BakeBackend::Cpu;
-        let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+        let _ = s.receive_link_model(&two_quads(1, 0.0));
         quick(&mut s);
         s.apply(bake(BakeAction::Start));
         assert!(s.bake.is_baking());
@@ -754,9 +825,9 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
 fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
-    // 作っている最中は None（窓は「確認中」）。入力の理由で断らない
+    // 作っている最中は None（ウィンドウは「確認中」）。入力の理由で断らない
     assert!(s.bake_input_nowait().is_none());
     assert!(s.bake.is_checking());
     assert_eq!(s.bake_refusal_nowait(), None);
@@ -769,7 +840,7 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
         "同じモデルなら作り直さない"
     );
 
-    // モデルが替わると、また別のスレッドで作り直す（その間も窓は止まらない）
+    // モデルが替わると、また別のスレッドで作り直す（その間もウィンドウは止まらない）
     lift(&mut s, 0.3);
     assert!(s.bake_input_nowait().is_none());
     assert!(s.bake.is_checking());
@@ -786,7 +857,7 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
     assert_eq!(waited.hash(), fresh_hash(&s));
     assert!(!s.bake.is_checking());
 
-    // 窓を閉じていれば、作っている最中のものは手放す
+    // ウィンドウを閉じていれば、作っている最中のものは手放す
     lift(&mut s, 0.6);
     assert!(s.bake_input_nowait().is_none());
     s.release_idle_bake_input();
@@ -844,12 +915,12 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     s.lang = Lang::En;
     assert_eq!(
         status(&s, MeshMapKind::Id).as_deref(),
-        Some("Last bake: one part, one ID color")
+        Some("The last bake had one part, so the ID is one color")
     );
     // 2 枚の板（同じマテリアルでも別のスロット）: 高ポリが無くても板ごとに別の色。1 色とは言わない
     let mut t = AppState::new(64, 64);
     t.bake.backend = BakeBackend::Cpu;
-    let _ = t.receive_link_model(&corner_model(), 0);
+    let _ = t.receive_link_model(&corner_model());
     quick(&mut t);
     t.bake.settings.maps = vec![MeshMapKind::Id];
     for source in [MeshIdSource::MaterialSlot, MeshIdSource::UvIsland] {
@@ -947,7 +1018,7 @@ fn choosing_a_backend_probes_the_gpu_in_another_thread_and_a_different_choice_pr
     if let Ok(a) = &second {
         assert!(!a.software, "自動はソフトウェアの描画を使わない: {a:?}");
     }
-    // 窓の一行は確かめた結果を言う
+    // ウィンドウの一行は確かめた結果を言う
     let line = probe_line(Lang::Ja, BakeBackend::Auto, &s.bake.gpu_probe()).unwrap();
     assert_eq!(line.warn, second.is_err());
     assert_eq!(line.detail.is_some(), second.is_err());
@@ -1294,4 +1365,128 @@ fn where_it_baked_reads_in_both_languages_without_mixing_them() {
             );
         }
     }
+}
+
+/// 焼けたが気をつけること（UV の面積が 0 の三角形・縮退・UV の重なり）は 1 つの文で、数を書かない。無ければ None。
+#[test]
+fn the_uv_warning_has_no_numbers_and_is_absent_for_a_clean_bake() {
+    use yolu_core::mesh_maps::MeshBakeReport;
+    let clean = MeshBakeReport::default();
+    for lang in Lang::ALL {
+        assert_eq!(super::uv_warning(lang, &clean), None);
+        let report = MeshBakeReport {
+            zero_uv_area_triangles: 12,
+            degenerate_triangles: 3,
+            overlap_texels: 4567,
+            ..MeshBakeReport::default()
+        };
+        let text = super::uv_warning(lang, &report).expect("注意");
+        for count in ["12", "3", "4567"] {
+            assert!(!text.contains(count), "数を書かない: {text}");
+        }
+        assert_eq!(
+            text.matches(lang.pick("。", ".")).count(),
+            3,
+            "3 つの文: {text}"
+        );
+    }
+    let only_overlap = MeshBakeReport {
+        overlap_texels: 1,
+        ..MeshBakeReport::default()
+    };
+    assert_eq!(
+        super::uv_warning(Lang::Ja, &only_overlap).unwrap(),
+        "UV が重なる所があり、重なったテクセルにはどちらか一方の面だけが焼かれます。"
+    );
+}
+
+/// 2 枚の板のうち `flat` 番目に、UV の面積が 0 で形のある三角形を足したモデル。
+fn two_quads_with_flat_uv(flat: &[usize]) -> Model {
+    let mut model = two_quads(1, 0.0);
+    for &mesh in flat {
+        let mesh = &mut model.meshes[mesh];
+        let first = mesh.positions.len() as u32;
+        let u = mesh.uv0[0][0] + 0.1;
+        mesh.positions
+            .extend([[0.1, 0.1, 0.5], [0.3, 0.1, 0.5], [0.1, 0.3, 0.5]]);
+        mesh.uv0.extend([[u, 0.5]; 3]);
+        mesh.submeshes[0]
+            .indices
+            .extend([first, first + 1, first + 2]);
+    }
+    model
+}
+
+/// 2 つのセットを焼いたあとの状態（`flat` の板に UV の面積が 0 の三角形がある）。
+fn baked_two_sets(flat: &[usize]) -> AppState {
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let (_, shape) = s.receive_link_model(&two_quads_with_flat_uv(flat));
+    assert_eq!(shape, Ok(()));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(kinds(&s, 0).len(), 3);
+    assert_eq!(kinds(&s, 1).len(), 3);
+    s
+}
+
+/// 複数のセットのまとめの知らせは、どれかのセットに UV の注意があれば注意のまま、その文も添える（最後のセットが無事でも、
+/// 最初のセットの注意をまとめの済んだ知らせで上書きして消さない。トーストとウィンドウの下の帯の両方）。同じ注意は 1 回だけ。
+#[test]
+fn the_summary_of_several_sets_keeps_the_uv_warning_of_any_set() {
+    use crate::notice::Kind;
+    let warning = "UV の面積が 0 の三角形があり、その面は焼けません。";
+    for (flat, count) in [(vec![0], 1), (vec![1], 1), (vec![0, 1], 1), (vec![], 0)] {
+        let s = baked_two_sets(&flat);
+        assert!(
+            s.message
+                .starts_with("2 個のテクスチャセットのメッシュマップを焼きました。"),
+            "{flat:?}: {}",
+            s.message
+        );
+        assert_eq!(
+            s.message.matches(warning).count(),
+            count,
+            "{flat:?}: {}",
+            s.message
+        );
+        let expected = if flat.is_empty() {
+            Kind::Info
+        } else {
+            Kind::Warning
+        };
+        assert_eq!(s.message_kind(), expected, "{flat:?}: {}", s.message);
+        let (outcome, ok) = s.bake.outcome.clone().expect("ウィンドウの下の結果");
+        assert_eq!((outcome.as_str(), ok), (s.message.as_str(), true));
+        // ログのウィンドウには、セットごとの注意とまとめの注意（種類は注意）が入る
+        let logged = s
+            .notice_log
+            .entries()
+            .filter(|e| e.notice.text.contains(warning))
+            .count();
+        assert_eq!(
+            logged,
+            flat.len() + usize::from(!flat.is_empty()),
+            "{flat:?}"
+        );
+    }
+}
+
+/// 次に焼くときは、前の並びの注意を引き継がない。
+#[test]
+fn the_uv_warning_of_the_previous_bake_is_not_carried_to_the_next() {
+    let warning = "UV の面積が 0 の三角形があり、その面は焼けません。";
+    let mut s = baked_two_sets(&[0]);
+    assert!(s.message.contains(warning), "{}", s.message);
+    let (_, shape) = s.receive_link_model(&two_quads_with_flat_uv(&[]));
+    assert_eq!(shape, Ok(()));
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(
+        s.message.starts_with("2 個のテクスチャセット"),
+        "{}",
+        s.message
+    );
+    assert!(!s.message.contains(warning), "{}", s.message);
 }

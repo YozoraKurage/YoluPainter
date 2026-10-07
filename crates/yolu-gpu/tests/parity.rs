@@ -1,6 +1,8 @@
 use yolu_core::{BlendMode, BrushSettings, Channel, Document, Rgba8, TileCoord};
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 use yolu_gpu::{Compositor, Dab, GpuPainter, Options};
 fn gpu() -> Option<GpuPainter> {
     gpu_lease::lease();
@@ -14,7 +16,7 @@ fn gpu() -> Option<GpuPainter> {
                 e.to_string().starts_with("GPU 利用不可:"),
                 "GPU 実装の初期化失敗: {e}"
             );
-            eprintln!("GPU 試験をスキップ: {e}");
+            require_gpu::skipped("GPU 試験", &e.to_string());
             None
         }
     }
@@ -364,7 +366,7 @@ fn multiple_clip_groups_and_channels() {
     }
 }
 
-/// 常駐しない合成（`composite_tiles` と `Compositor`）も、独立して合成するグループ・調整の層・効果のある層・法線のチャンネルを CPU と同じ画素にする。
+/// 常駐しない合成（`composite_tiles` と `Compositor`）も、独立して合成するグループ・調整レイヤー・効果のあるレイヤー・法線のチャンネルを CPU と同じ画素にする。
 #[test]
 fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     use yolu_core::effects::{EffectSettings, FilterSpec, FilterTarget};
@@ -380,7 +382,7 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     };
     let mut layers = Vec::new();
     for k in 0..4 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         d.set_channel_enabled(l, Channel::Normal, true).unwrap();
         for y in 0..35 {
             for x in 0..67 {
@@ -399,7 +401,8 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
         }
         layers.push(l);
     }
-    d.set_layer_blend_mode(layers[1], BlendMode::Multiply).unwrap();
+    d.set_layer_blend_mode(layers[1], BlendMode::Multiply)
+        .unwrap();
     let group = d.group_layers(&[layers[1], layers[2]], "組").unwrap();
     d.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
     d.set_layer_opacity(group, 0.7, false).unwrap();

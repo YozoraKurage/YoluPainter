@@ -1,9 +1,9 @@
-//! 選択の道具のキャンバスの入力（押す・動く・離す・Esc・Enter・Backspace）と、キャンバスの上の表示（選択の縁の流れる点線・
+//! 選択のツールのキャンバスの入力（押す・動く・離す・Esc・Enter・Backspace）と、キャンバスの上の表示（選択の縁の流れる点線・
 //! ドラッグ中の形・多角形の途中・対称の軸と映した側のカーソル）。
 //!
-//! 形は画布の座標（左下が原点）で決まり、表示を回している・反転しているときは回って見える（矩形・楕円はキャンバスの軸に沿う。
+//! 形はキャンバスの座標（左下が原点）で決まり、表示を回している・反転しているときは回って見える（矩形・楕円はキャンバスの軸に沿う。
 //! Photoshop・CLIP STUDIO と同じ）。組み合わせ方は Shift で足す・Ctrl で引く・両方で重ねる（離したときの修飾。Unity 版と同じ）で、
-//! 修飾が無ければオプションバーの値。ストロークの最中・読むだけのセットでは始めない。フォーカスを失う・Esc・道具の切り替えで、
+//! 修飾が無ければオプションバーの値。ストロークの最中・読むだけのセットでは始めない。フォーカスを失う・Esc・ツールの切り替えで、
 //! 途中の形は捨てる（取り残さない）。
 
 use std::time::Duration;
@@ -17,6 +17,7 @@ use super::{combine_of, pen, quick, shape, SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -61,10 +62,9 @@ pub fn press(
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        app.message = format!(
-            "{}: {reason}",
-            app.lang
-                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        app.refuse(
+            Source::Selection,
+            crate::lang::refusals::read_only_set(app.lang, &reason),
         );
         return;
     }
@@ -130,10 +130,11 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
         return;
     }
     if points.len() < 3 {
-        app.message = app
-            .lang
-            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points.")
-            .into();
+        app.refuse(
+            Source::Selection,
+            app.lang
+                .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+        );
         return;
     }
     let mode = combine_of(app.sel.combine, modifiers);
@@ -309,10 +310,11 @@ pub fn note_pen(app: &mut AppState, pointer_id: u32, pressure: f32, eraser_end: 
 pub fn cancel(app: &mut AppState) -> bool {
     let any = app.sel.cancel_drafts();
     if any {
-        app.message = app
-            .lang
-            .pick("選択の途中をやめました。", "Selection cancelled.")
-            .into();
+        app.info(
+            Source::Selection,
+            app.lang
+                .pick("選択の途中をやめました。", "Selection cancelled."),
+        );
     }
     any
 }
@@ -646,7 +648,7 @@ pub fn paint_overlay(
     paint_axes(painter, view, app);
 }
 
-/// 選択ペンの道具: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。
+/// 選択ペンのツール: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。
 fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mut AppState) {
     let drawing = app.sel.pen.as_ref().is_some_and(|a| !a.quick);
     if drawing {

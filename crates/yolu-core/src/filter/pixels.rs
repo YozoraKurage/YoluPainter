@@ -23,7 +23,7 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
         [v[0] / l, v[1] / l, v[2] / l]
     }
 }
-fn encode(v: [f64; 3], a: u8) -> [u8; 4] {
+pub(super) fn encode(v: [f64; 3], a: u8) -> [u8; 4] {
     let v = normalize(v);
     [
         to_byte(v[0] * 0.5 + 0.5),
@@ -92,21 +92,12 @@ pub(super) fn neighborhood(
     ty: ValueType,
     check: Check<'_>,
 ) -> Result<Vec<u8>, Error> {
+    if s.settings.is_spatial() {
+        return super::spatial::evaluate(buf, cur, next, w, h, s, ty, check);
+    }
     let mut q = zeros::<u16>(buf.len())?;
     rows::premultiply_at(crate::math::simd::level(), buf, &mut q);
-    let radius = s.settings.halo();
-    let mut remaining = radius;
-    let mut bounds = cur;
-    for r in [radius.div_ceil(3), (radius + 1) / 3, radius / 3] {
-        if r == 0 {
-            continue;
-        }
-        check()?;
-        remaining -= r;
-        let target = grow(next, remaining, w, h);
-        q = box_blur(&q, bounds, target, r, w, h, check)?;
-        bounds = target;
-    }
+    let q = gaussian_q(q, cur, next, s.settings.halo(), w, h, check)?;
     let level = crate::math::simd::level();
     let mut out = zeros::<u8>(area(next) * 4)?;
     let nw = next.width as usize;
@@ -153,6 +144,31 @@ pub(super) fn neighborhood(
         }
     }
     Ok(out)
+}
+/// 乗算済み（u16 × 4。`rows::premultiply_at`）の矩形 cur の q を、半径 radius のガウスの近似（半径の和が radius になる 3 回の箱ぼかし）で
+/// ぼかし、矩形 next（cur = grow(next, radius)）の q を返す（ぼかし・シャープと、0.5.0 のハイパス・エッジ検出・グローが使う）。
+pub(super) fn gaussian_q(
+    mut q: Vec<u16>,
+    cur: Rect,
+    next: Rect,
+    radius: u32,
+    w: u32,
+    h: u32,
+    check: Check<'_>,
+) -> Result<Vec<u16>, Error> {
+    let mut remaining = radius;
+    let mut bounds = cur;
+    for r in [radius.div_ceil(3), (radius + 1) / 3, radius / 3] {
+        if r == 0 {
+            continue;
+        }
+        check()?;
+        remaining -= r;
+        let target = grow(next, remaining, w, h);
+        q = box_blur(&q, bounds, target, r, w, h, check)?;
+        bounds = target;
+    }
+    Ok(q)
 }
 fn edge(v: i64, n: u32) -> u32 {
     v.clamp(0, i64::from(n) - 1) as u32

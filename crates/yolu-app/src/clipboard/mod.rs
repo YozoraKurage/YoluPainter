@@ -1,13 +1,13 @@
-//! 層の画素のコピー・カット・ペースト（編集メニューと Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+Shift+C）。
+//! レイヤーの画素のコピー・カット・ペースト（編集メニューと Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+Shift+C）。
 //!
-//! 計算と断りは core（`copy_pixels`・`cut_pixels`・`copy_merged`・`paste_as_layer`）に任せ、ここは「どの層の何を」（選んでいる層・描く
+//! 計算と断りは core（`copy_pixels`・`cut_pixels`・`copy_merged`・`paste_as_layer`）に任せ、ここは「どのレイヤーの何を」（選んでいるレイヤー・描く
 //! チャンネル・マスクを描いているか）と、アプリの中のクリップボード、OS のクリップボードの画像との受け渡し、知らせだけを持つ。
 //!
 //! アプリの中のクリップボード（core の `PixelClipboard`）が基本: 透明画素の RGB・写した位置・出どころのチャンネルまで正確に持つ。
 //! コピー・カットは同じ画素を OS のクリップボードへも画像で書き、ペーストは OS の画像が「最後に書いた画像」と違えば外の画像
 //! （ほかのアプリでコピーしたもの）を貼り、同じ・画像が無い・読めないならアプリの中の写しを貼る（読めなかったときは、その理由を
 //! 知らせに添える）。OS への書き込みに失敗したあとは、そのとき OS に残っていた古い画像が OS にある間、新しくコピーした写しを
-//! 優先する（古い外の画像を貼らない）。外の画像は画布より大きければ、行を並べ替える前に断る（大きさを合わせる操作は無い）。
+//! 優先する（古い外の画像を貼らない）。外の画像はキャンバスより大きければ、行を並べ替える前に断る（大きさを合わせる操作は無い）。
 //! OS 側は [`os::OsClipboard`] の口で、試験は差し替える。
 
 pub mod image;
@@ -15,6 +15,7 @@ pub mod keys;
 pub mod os;
 
 use crate::engine::{Channel, LayerKind, PixelClipboard};
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 use os::{ClipImage, NoClipboard, OsClipboard, OsClipboardError, SystemClipboard};
@@ -22,13 +23,13 @@ use os::{ClipImage, NoClipboard, OsClipboard, OsClipboardError, SystemClipboard}
 /// 編集メニューとキーの操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipAction {
-    /// 選んでいる層の今のチャンネル（マスクを描いているならマスク）の、選択範囲の中（無ければ全体）を写す。
+    /// 選んでいるレイヤーの今のチャンネル（マスクを描いているならマスク）の、選択範囲の中（無ければ全体）を写す。
     Copy,
     /// 写してから消す（1 回の Undo）。
     Cut,
     /// 見えている合成（今のチャンネル）を写す。
     CopyMerged,
-    /// 新しい層として貼る（1 回の Undo）。
+    /// 新しいレイヤーとして貼る（1 回の Undo）。
     Paste,
 }
 
@@ -59,7 +60,7 @@ pub struct ClipState {
 }
 
 impl Default for ClipState {
-    /// OS には繋がない（試験と画面の無い場面）。窓のアプリは [`ClipState::use_system`] で繋ぐ。
+    /// OS には繋がない（試験と画面の無い場面）。ウィンドウのアプリは [`ClipState::use_system`] で繋ぐ。
     fn default() -> Self {
         ClipState {
             pixels: None,
@@ -135,10 +136,10 @@ impl AppState {
     /// 操作を当てる（`Action::Clip`。読むだけのセットは `Action::apply` が先に断る）。断られたら何も変えず、理由をステータスバーへ。
     pub fn clip_action(&mut self, action: ClipAction) {
         if self.is_stroking() {
-            self.message = self
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into();
+            self.refuse(
+                Source::Clipboard,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         let revision = self.doc.revision();
@@ -148,9 +149,11 @@ impl AppState {
             ClipAction::CopyMerged => self.clip_copy_merged(),
             ClipAction::Paste => self.clip_paste(),
         };
-        self.message = match result {
-            Ok(text) | Err(text) => text,
-        };
+        // 断られた理由（選んでいない・写した物が無い・ロック）は断り
+        match result {
+            Ok(text) => self.info(Source::Clipboard, text),
+            Err(text) => self.refuse(Source::Clipboard, text),
+        }
         if self.doc.revision() != revision {
             self.modified = true;
         }
@@ -161,17 +164,20 @@ impl AppState {
         if let Some(error) = self.clip.os.take_error() {
             self.clip.write_failed();
             let text = error.text(self.lang);
-            self.message = format!(
-                "{}: {text}",
-                self.lang.pick(
-                    "画像を OS へコピーできません",
-                    "Cannot copy the image to the OS"
-                )
+            self.fail(
+                Source::Clipboard,
+                self.lang.with_reason(
+                    self.lang.pick(
+                        "画像を OS へコピーできません",
+                        "Cannot copy the image to the OS",
+                    ),
+                    text,
+                ),
             );
         }
     }
 
-    /// 写す先の層とチャンネル、マスクを写すか。
+    /// 写す先のレイヤーとチャンネル、マスクを写すか。
     pub(crate) fn clip_target(&self) -> Result<(crate::engine::LayerId, Channel, bool), String> {
         let id = self
             .selected_layer
@@ -222,7 +228,7 @@ impl AppState {
         Ok(text)
     }
 
-    /// 貼る写し: OS の画像が自分の書いたものでなければ外の画像、そうでなければアプリの中の写し。外の画像が画布より大きければ、
+    /// 貼る写し: OS の画像が自分の書いたものでなければ外の画像、そうでなければアプリの中の写し。外の画像がキャンバスより大きければ、
     /// 行を並べ替える前（読んだ画像のほかに何も確保しない）に断る。
     fn clip_source(&mut self) -> Result<PasteSource, String> {
         let lang = self.lang;

@@ -1,4 +1,4 @@
-//! 層の中身の設定の編集（C# の AddLayerMask・RemoveLayerMask・SetLayerMask*・SetFillValue・SetAdjustment・SetChannelEnabled・
+//! レイヤーの中身の設定の編集（C# の AddLayerMask・RemoveLayerMask・SetLayerMask*・SetFillValue・SetAdjustment・SetChannelEnabled・
 //! SetChannelBlend・SetNormalSettings）。どれも 1 回の Undo で、断ったら何も変えない。スライダーのドラッグはまとめられる。
 
 use super::{CoalesceKey, Command, Document, Property};
@@ -13,13 +13,13 @@ use crate::types::{BlendMode, Channel, LayerKind, Rgba8};
 impl Document {
     // ───────── マスク ─────────
 
-    /// 空のラスターマスク（何も隠さない）を層に足す。どの種類の層にも 1 つまで。1 回の Undo。
+    /// 空のラスターマスク（何も隠さない）をレイヤーに足す。どの種類のレイヤーにも 1 つまで。1 回の Undo。
     pub fn add_layer_mask(&mut self, id: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(id)?;
         // マスクの有無がロックより先（C# の AddLayerMask）
         if self.layers[index].mask.is_some() {
-            return Err(CoreError::Unsupported("層はもうマスクを持っている"));
+            return Err(CoreError::Unsupported("レイヤーはもうマスクを持っている"));
         }
         self.refuse_lock(id, super::LayerLocks::ALL)?;
         let mask = RasterMask::new(Surface::new(self.width, self.height, self.tile_size));
@@ -32,7 +32,7 @@ impl Document {
         )
     }
 
-    /// 層のマスクを外す。1 回の Undo で同じマスク（画素・設定）が戻る。
+    /// レイヤーのマスクを外す。1 回の Undo で同じマスク（画素・設定）が戻る。
     pub fn remove_layer_mask(&mut self, id: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(id)?;
@@ -76,7 +76,7 @@ impl Document {
 
     // ───────── 塗りつぶし・調整 ─────────
 
-    /// 塗りつぶしの層のチャンネルの値を置く（None で消す）。値を置くとそのチャンネルを有効にする。coalesce ならドラッグをまとめる。
+    /// 塗りつぶしレイヤーのチャンネルの値を置く（None で消す）。値を置くとそのチャンネルを有効にする。coalesce ならドラッグをまとめる。
     pub fn set_fill_value(
         &mut self,
         id: LayerId,
@@ -89,7 +89,7 @@ impl Document {
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
         if layer.kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported("塗りつぶしの層だけが値を持つ"));
+            return Err(CoreError::Unsupported("塗りつぶしレイヤーだけが値を持つ"));
         }
         let old = layer.fill_value(channel);
         let was_enabled = layer.is_channel_enabled(channel);
@@ -97,7 +97,7 @@ impl Document {
         if old == value && (value.is_none() || was_enabled) {
             return Ok(());
         }
-        // 塗りつぶしの値は層の中身: 画像・すべてのロックで断る。アルファが変わるときと、画像のあるチャンネルの値を消す（画像も外れて
+        // 塗りつぶしの値はレイヤーの中身: 画像・すべてのロックで断る。アルファが変わるときと、画像のあるチャンネルの値を消す（画像も外れて
         // アルファが変わる）ときは、透明部分のロックでも断る（C# は画像だけを見る。グラデーションを外す側は、値が消える側のアルファの
         // 変化として数える）
         self.ensure_pixels_editable(id, false)?;
@@ -109,13 +109,15 @@ impl Document {
         // 画像・グラデーションのあるチャンネルの値を消すと、画像・グラデーションも一緒に外れる（1 回の Undo で一緒に戻る）
         if value.is_none()
             && (layer.fill_images.contains_key(&channel)
-                || layer.fill_gradients.contains_key(&channel))
+                || layer.fill_gradients.contains_key(&channel)
+                || layer.fill_points.contains_key(&channel))
         {
             let before = super::effects::FillChannelState::of(layer, channel);
             let mut after = before.clone();
             after.value = None;
             after.image = None;
             after.gradient = None;
+            after.points = None;
             return self.execute(
                 Command::FillChannel {
                     id,
@@ -141,7 +143,7 @@ impl Document {
         )
     }
 
-    /// 調整の層の設定を置き換える（種類も変えられる。有効なチャンネルのどれかに使えない設定は断る: 先にそのチャンネルを無効に）。
+    /// 調整レイヤーの設定を置き換える（種類も変えられる。有効なチャンネルのどれかに使えない設定は断る: 先にそのチャンネルを無効に）。
     pub fn set_adjustment(
         &mut self,
         id: LayerId,
@@ -153,7 +155,7 @@ impl Document {
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
         if layer.kind != LayerKind::Adjustment {
-            return Err(CoreError::Unsupported("調整の層だけが調整の設定を持つ"));
+            return Err(CoreError::Unsupported("調整レイヤーだけが調整の設定を持つ"));
         }
         for c in layer.enabled_channels() {
             if !settings.applies_to(self.channel_kind(c)?) {
@@ -169,8 +171,8 @@ impl Document {
 
     // ───────── チャンネル ─────────
 
-    /// 層のチャンネルを有効・無効にする（無効のチャンネルの画素・値は保つ）。ラスターの層で面が無ければ作る（取り消しで外す）。
-    /// 調整の層は、その調整を使えないチャンネルを有効にできない。1 回の Undo。
+    /// レイヤーのチャンネルを有効・無効にする（無効のチャンネルの画素・値は保つ）。ラスターレイヤーで面が無ければ作る（取り消しで外す）。
+    /// 調整レイヤーは、その調整を使えないチャンネルを有効にできない。1 回の Undo。
     pub fn set_channel_enabled(
         &mut self,
         id: LayerId,
@@ -199,12 +201,17 @@ impl Document {
         // チャンネルも組のチャンネルも無効にできる。validate_path_target も組があれば基準の有効を要らないとする）
         if !enabled
             && layer
-                .path
-                .as_ref()
-                .is_some_and(|p| p.material().is_none() && p.channel() == channel)
+                .paths
+                .iter()
+                .any(|e| e.path.material().is_none() && e.path.channel() == channel)
         {
             return Err(CoreError::Unsupported(
                 "パスで描かれたチャンネルは無効にできない",
+            ));
+        }
+        if !enabled && channel == Channel::Color && layer.text.is_some() {
+            return Err(CoreError::Unsupported(
+                "テキストレイヤーの Color は無効にできない",
             ));
         }
         let had_surface = layer.surface(channel).is_some();
@@ -251,7 +258,7 @@ impl Document {
         Ok(())
     }
 
-    /// 層のチャンネルの合成モードと不透明度をまとめて置く（空の値ならチャンネルは層に従う）。1 回の Undo。
+    /// レイヤーのチャンネルの合成モードと不透明度をまとめて置く（空の値ならチャンネルはレイヤーに従う）。1 回の Undo。
     pub fn set_channel_blend(
         &mut self,
         id: LayerId,
@@ -280,7 +287,7 @@ impl Document {
         )
     }
 
-    /// 層のチャンネルの合成モードを置く（None で層のモードに従う）。不透明度の設定はそのまま。
+    /// レイヤーのチャンネルの合成モードを置く（None でレイヤーのモードに従う）。不透明度の設定はそのまま。
     pub fn set_channel_blend_mode(
         &mut self,
         id: LayerId,
@@ -294,7 +301,7 @@ impl Document {
         self.set_channel_blend(id, channel, ChannelBlend::new(mode, current.opacity), false)
     }
 
-    /// 層のチャンネルの不透明度を置く（None で層の不透明度に従う）。モードの設定はそのまま。coalesce ならドラッグをまとめる。
+    /// レイヤーのチャンネルの不透明度を置く（None でレイヤーの不透明度に従う）。モードの設定はそのまま。coalesce ならドラッグをまとめる。
     pub fn set_channel_opacity(
         &mut self,
         id: LayerId,
@@ -316,7 +323,7 @@ impl Document {
 
     // ───────── Normal の出力の設定 ─────────
 
-    /// 文書の Normal の出力の設定（Height → Normal・強さ・端・ファイルの Y）。層の合成は変えない（出力だけ）ので、変化の記録に
+    /// 文書の Normal の出力の設定（Height → Normal・強さ・端・ファイルの Y）。レイヤーの合成は変えない（出力だけ）ので、変化の記録に
     /// タイルを足さない。1 回の Undo（coalesce ならドラッグをまとめる）。
     pub fn set_normal_settings(
         &mut self,

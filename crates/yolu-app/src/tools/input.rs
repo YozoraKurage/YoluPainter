@@ -1,9 +1,9 @@
-//! 道具の入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、道具ごとの枝を持たず、道具の表（`tools::TOOLS`）が
-//! 指す受け口を引く。2D は `CanvasTool`（押す・動く・離す・ペン・Esc・Enter・取りこぼした離し・フォーカスを失う）。ドラッグの札を持つ道具
+//! ツールの入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、ツールごとの枝を持たず、ツールの表（`tools::TOOLS`）が
+//! 指す受け口を引く。2D は `CanvasTool`（押す・動く・離す・ペン・Esc・Enter・取りこぼした離し・フォーカスを失う）。ドラッグの札を持つツール
 //! （移動・変形とゆがみ、図形と定規、グラデーション、パス、選択）がそれぞれ 1 つの実装で、ドラッグを始めた側が離す・Esc・フォーカスの喪失で終える
-//! （途中で道具を替えても、始めた側を終わらせる）ので、動き・離す・取りこぼしは、道具でなくドラッグの持ち主で振り分ける。ブラシ・消しゴム・範囲の道具・
+//! （途中でツールを替えても、始めた側を終わらせる）ので、動き・離す・取りこぼしは、ツールでなくドラッグの持ち主で振り分ける。ブラシ・消しゴム・範囲のツール・
 //! スポイトはストロークで描くので `CanvasTool` を持たず、キャンバスの入力が直に扱う。3D は `Surface`（面の上で押したときの行き先）。
-//! 各道具の実際の仕事は、道具のモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
+//! 各ツールの実際の仕事は、ツールのモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
 
 use egui::{CursorIcon, Key, Modifiers, Pos2, Rect};
 
@@ -20,9 +20,9 @@ pub struct InputCtx {
     pub pass: u64,
 }
 
-/// 2D のキャンバスの入力を受ける道具（ドラッグの札を持つもの）。
+/// 2D のキャンバスの入力を受けるツール（ドラッグの札を持つもの）。
 pub trait CanvasTool: Sync {
-    /// 押した（今の道具が自分のとき）。
+    /// 押した（今のツールが自分のとき）。
     fn press(
         &self,
         app: &mut AppState,
@@ -67,17 +67,17 @@ pub trait CanvasTool: Sync {
     fn wants_move(&self, app: &AppState) -> bool {
         self.dragging(app, None)
     }
-    /// マウスを離したのを取りこぼしたとき（窓の外で離したなど）の終わらせ方。既定は、最後の位置で離したことにする。
+    /// マウスを離したのを取りこぼしたとき（ウィンドウの外で離したなど）の終わらせ方。既定は、最後の位置で離したことにする。
     fn lost_release(&self, app: &mut AppState, view: &CanvasView, at: Pos2, ctx: &InputCtx) {
         self.release(app, view, at, StrokeSource::Mouse, ctx);
     }
     /// Esc: やめたら true。
     fn cancel(&self, app: &mut AppState, ctx: &InputCtx) -> bool;
-    /// Esc で、ストロークや表示の回転より先に聞く（あとから聞く道具は false）。
+    /// Esc で、ストロークや表示の回転より先に聞く（あとから聞くツールは false）。
     fn cancel_first(&self) -> bool {
         true
     }
-    /// 窓がフォーカスを失った: 途中の操作を取り残さない。
+    /// ウィンドウがフォーカスを失った: 途中の操作を取り残さない。
     fn focus_lost(&self, app: &mut AppState);
     /// 毎フレーム（そのフレームの修飾キーを、途中のドラッグへ渡す）。
     fn each_frame(&self, _app: &mut AppState, _ctx: &InputCtx) {}
@@ -85,13 +85,13 @@ pub trait CanvasTool: Sync {
     fn key(&self, _app: &mut AppState, _key: Key, _modifiers: Modifiers) -> bool {
         false
     }
-    /// ステンシルを動かしている間は押しを渡さない道具か。
+    /// ステンシルを動かしている間は押しを渡さないツールか。
     fn respects_stencil(&self) -> bool {
         true
     }
 }
 
-/// キャンバスの入力を受ける道具の種類（表が指す。受け口の実体は `handler`）。
+/// キャンバスの入力を受けるツールの種類（表が指す。受け口の実体は `handler`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasKind {
     Transform,
@@ -99,16 +99,18 @@ pub enum CanvasKind {
     Gradient,
     Path,
     Selection,
+    Text,
 }
 
 impl CanvasKind {
-    /// 全部（Esc などで聞く順。Esc は、ストロークと表示の回転より先に `cancel_first` の道具、あとに残りを聞く）。
-    pub const ALL: [CanvasKind; 5] = [
+    /// 全部（Esc などで聞く順。Esc は、ストロークと表示の回転より先に `cancel_first` のツール、あとに残りを聞く）。
+    pub const ALL: [CanvasKind; 6] = [
         CanvasKind::Drafting,
         CanvasKind::Transform,
         CanvasKind::Path,
         CanvasKind::Gradient,
         CanvasKind::Selection,
+        CanvasKind::Text,
     ];
 
     pub fn handler(self) -> &'static dyn CanvasTool {
@@ -118,6 +120,7 @@ impl CanvasKind {
             CanvasKind::Gradient => &GradientInput,
             CanvasKind::Path => &PathInput,
             CanvasKind::Selection => &SelectionInput,
+            CanvasKind::Text => &TextInput,
         }
     }
 }
@@ -139,6 +142,12 @@ impl CanvasTool for TransformInput {
         source: StrokeSource,
         ctx: &InputCtx,
     ) {
+        // テキストレイヤーのダブルクリックは、テキストツールで打ち直す（離したときに替える）
+        if app.tool == crate::state::Tool::Move
+            && crate::textlayer::canvas::move_press(app, view, at, source, ctx.now)
+        {
+            return;
+        }
         crate::transform::canvas::press(app, view, at, source, ctx.modifiers);
     }
     fn moved(
@@ -159,6 +168,9 @@ impl CanvasTool for TransformInput {
         source: StrokeSource,
         ctx: &InputCtx,
     ) {
+        if crate::textlayer::canvas::move_release(app, source) {
+            return;
+        }
         crate::transform::canvas::release(app, view, at, source, ctx.modifiers.shift);
     }
     fn pen(
@@ -180,16 +192,25 @@ impl CanvasTool for TransformInput {
             .drag
             .as_ref()
             .is_some_and(|d| same_source(d.source, source))
+            || app
+                .text
+                .move_press
+                .as_ref()
+                .is_some_and(|(_, _, s)| same_source(*s, source))
     }
     fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
+        // ダブルクリックの押しは、離したのを受け取れなければ打ち直さない
+        app.text.move_press = None;
         // 離した位置が分からないので、最後の位置で確定する
         crate::transform::canvas::commit(app);
     }
     fn cancel(&self, app: &mut AppState, _ctx: &InputCtx) -> bool {
-        crate::transform::canvas::cancel(app)
+        let double_click = app.text.move_press.take().is_some();
+        crate::transform::canvas::cancel(app) || double_click
     }
     fn focus_lost(&self, app: &mut AppState) {
         // 離したのを受け取れないので、何も変えずにやめる
+        app.text.move_press = None;
         app.transform_cancel_drag();
     }
     fn key(&self, app: &mut AppState, key: Key, _modifiers: Modifiers) -> bool {
@@ -348,6 +369,16 @@ impl CanvasTool for GradientInput {
 
 struct PathInput;
 
+/// パスのツールへ、修飾キー（取っ手の Alt・Ctrl）と時刻（点のダブルクリック）を渡す。
+fn path_input(app: &mut AppState, ctx: &InputCtx) {
+    app.path.input = crate::pathtool::PathInputState {
+        alt: ctx.modifiers.alt,
+        ctrl: ctx.modifiers.command,
+        shift: ctx.modifiers.shift,
+        now: Some(ctx.now),
+    };
+}
+
 impl CanvasTool for PathInput {
     fn press(
         &self,
@@ -355,8 +386,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::press(app, view, at, source);
     }
     fn moved(
@@ -365,8 +397,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::moved(app, view, at, source);
     }
     fn release(
@@ -375,8 +408,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::release(app, view, at, source);
     }
     fn pen(
@@ -386,8 +420,9 @@ impl CanvasTool for PathInput {
         at: Pos2,
         id: u32,
         contact: bool,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::pen_sample(app, view, at, id, contact);
     }
     fn pen_active(&self, app: &AppState, id: u32) -> bool {
@@ -395,14 +430,21 @@ impl CanvasTool for PathInput {
         app.path.pen_down.is_some_and(|d| d.id == id && !d.surface)
     }
     fn dragging(&self, app: &AppState, source: Option<StrokeSource>) -> bool {
-        // 2D のキャンバスで始めたドラッグだけ（3D の面のドラッグは `pathtool::surface`）
+        // 2D のキャンバスで始めたドラッグだけ（3D の面のドラッグは `pathtool::surface`）。点を矩形で選ぶドラッグも
         app.path
             .drag
             .is_some_and(|d| !d.surface && same_source(d.source, source))
+            || app
+                .path
+                .rect
+                .is_some_and(|r| !r.surface && same_source(r.source, source))
     }
-    fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
+    fn lost_release(&self, app: &mut AppState, view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
         // 離したのを取りこぼしたら、最後の位置で確定する
         app.path_finish_drag();
+        if app.path.rect.is_some_and(|r| !r.surface) {
+            crate::pathtool::canvas::finish_rect(app, view);
+        }
     }
     fn cancel(&self, app: &mut AppState, ctx: &InputCtx) -> bool {
         // 点のドラッグを捨てる（ドラッグが無ければ選んだ点を外す）
@@ -410,6 +452,7 @@ impl CanvasTool for PathInput {
     }
     fn focus_lost(&self, app: &mut AppState) {
         app.path_finish_drag();
+        app.path.rect = None;
     }
 }
 
@@ -498,6 +541,73 @@ impl CanvasTool for SelectionInput {
     }
 }
 
+// ───────── 文字 ─────────
+
+struct TextInput;
+
+impl CanvasTool for TextInput {
+    fn press(
+        &self,
+        app: &mut AppState,
+        view: &CanvasView,
+        at: Pos2,
+        source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+        crate::textlayer::canvas::press(app, view, at, source);
+    }
+    fn moved(
+        &self,
+        _app: &mut AppState,
+        _view: &CanvasView,
+        _at: Pos2,
+        _source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+    }
+    fn release(
+        &self,
+        app: &mut AppState,
+        _view: &CanvasView,
+        _at: Pos2,
+        source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+        crate::textlayer::canvas::release(app, source);
+    }
+    fn pen(
+        &self,
+        app: &mut AppState,
+        view: &CanvasView,
+        at: Pos2,
+        _id: u32,
+        contact: bool,
+        _ctx: &InputCtx,
+    ) {
+        if contact && app.text.press.is_none() {
+            crate::textlayer::canvas::press(app, view, at, StrokeSource::Mouse);
+        } else if !contact {
+            crate::textlayer::canvas::release(app, StrokeSource::Mouse);
+        }
+    }
+    fn pen_active(&self, app: &AppState, _id: u32) -> bool {
+        app.text.press.is_some()
+    }
+    fn dragging(&self, app: &AppState, source: Option<StrokeSource>) -> bool {
+        crate::textlayer::canvas::dragging(app, source)
+    }
+    fn cancel(&self, app: &mut AppState, _ctx: &InputCtx) -> bool {
+        // 押しの途中だけ（打っている文字の Esc は入力欄が受けて、打ち終わる）
+        app.text.press.take().is_some()
+    }
+    fn cancel_first(&self) -> bool {
+        false
+    }
+    fn focus_lost(&self, app: &mut AppState) {
+        app.text.press = None;
+    }
+}
+
 // ───────── 3D ビューの面 ─────────
 
 /// 3D ビューで面を押したときの行き先。
@@ -511,7 +621,7 @@ pub enum Surface {
     Region,
     /// 面に点を置く・掴む（パス）。
     Path,
-    /// 2D のキャンバスだけの道具（選択・移動・変形・図形・グラデーションなど）。
+    /// 2D のキャンバスだけのツール（選択・移動・変形・図形・グラデーションなど）。
     Unsupported,
 }
 
@@ -528,6 +638,8 @@ pub enum Cursor {
     Transform,
     /// 点の上は掴む手、曲線の上は足す形（パス）。
     Path,
+    /// 文字を打つ形（文字）。
+    Text,
 }
 
 impl Cursor {
@@ -546,6 +658,7 @@ impl Cursor {
                 Some(p) => crate::pathtool::canvas::cursor_icon(app, view, p),
                 None => CursorIcon::Crosshair,
             }),
+            Cursor::Text => Some(CursorIcon::Text),
         }
     }
 }

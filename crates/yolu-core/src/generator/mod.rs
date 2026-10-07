@@ -2,6 +2,7 @@
 pub mod anchor;
 mod evaluate;
 mod grunge;
+mod kinds050;
 mod mixing;
 mod noise;
 mod noisefn;
@@ -9,16 +10,20 @@ mod preview;
 mod procedural;
 mod ramp;
 mod shape;
+pub use crate::curve::CurvePoint;
 pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target};
+pub use kinds050::{
+    IslandVariation, Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape,
+};
+pub use mixing::{LuminanceCorrection, MixMode};
+pub(crate) use noisefn::MAX_OCTAVES;
+pub(crate) use noisefn::{sin_cos_deg, value2_gradient};
 pub use preview::preview;
 pub use procedural::{
     CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
 };
-pub use crate::curve::CurvePoint;
-pub use mixing::{LuminanceCorrection, MixMode};
 pub use ramp::{ColorStop, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
-pub(crate) use noisefn::MAX_OCTAVES;
 use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +66,17 @@ pub enum Kind {
     Noise = 64,
     /// グランジ（ノイズの組み合わせのプリセット）。Rust 版だけの種類。
     Grunge = 65,
+    /// 模様（UV の空間の縞・市松・水玉・縁・格子）。Rust 版だけの種類（正本の版 28）。
+    Pattern = 66,
+    /// ライト（焼いたワールドの法線と光の向き）。Rust 版だけの種類（正本の版 28）。
+    Light = 68,
+    /// マスクの組み立て（焼いた曲率・AO・位置の高さ・厚み）。Rust 版だけの種類（正本の版 28）。
+    MaskBuilder = 69,
+    /// 画像（プロジェクトの画像を塗りつぶしレイヤーと同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
+    Image = 70,
+    /// アイランドごとのばらつき（アイランドの番号とシードから決まる一様な乱数の値。[`IslandVariation`]）。モデルの UV アイランドの図を
+    /// [`BoundGenerator::with_islands`] で渡す。Rust 版だけの種類（正本の版 28）。
+    UvIslandVariation = 67,
 }
 impl Kind {
     /// 正本の種類の番号から。知らない番号は None。
@@ -76,14 +92,72 @@ impl Kind {
             7 => Self::Anchor,
             64 => Self::Noise,
             65 => Self::Grunge,
+            66 => Self::Pattern,
+            68 => Self::Light,
+            69 => Self::MaskBuilder,
+            70 => Self::Image,
+            67 => Self::UvIslandVariation,
             _ => return None,
         })
+    }
+    /// 0.5.0 の種類（模様・ライト・マスクの組み立て・アイランドごとのばらつき。正本の版 28）か。
+    pub fn is_050(self) -> bool {
+        matches!(
+            self,
+            Self::Pattern | Self::Light | Self::MaskBuilder | Self::UvIslandVariation
+        )
     }
     /// Rust 版だけの種類か（マップを読まず位置・UV から値を作る。Unity 版は読めない）。
     pub fn is_procedural(self) -> bool {
         matches!(self, Self::Noise | Self::Grunge)
     }
+    /// Unity 版に無い種類か（種類の番号が 64 から）。
+    pub fn is_rust_only(self) -> bool {
+        self as u8 >= 64
+    }
 }
+
+/// 画像の段（[`Kind::Image`]）が値にする成分。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ImageComponent {
+    Red = 0,
+    Green = 1,
+    Blue = 2,
+    Alpha = 3,
+    /// 輝度（0.2126・0.7152・0.0722）。投影で補間した後の RGB から、丸めずに求める。塗りつぶしレイヤーが画像をスカラーのチャンネルで読むときは、元の画素ごとに
+    /// 8 bit へ丸めてから補間するので、補間がかかる投影（タイル・回転・縮小）では値が少し違う。
+    #[default]
+    Luminance = 4,
+}
+
+impl ImageComponent {
+    pub const ALL: [Self; 5] = [
+        Self::Red,
+        Self::Green,
+        Self::Blue,
+        Self::Alpha,
+        Self::Luminance,
+    ];
+    /// 保存の番号から。知らない番号は None。
+    pub fn from_index(i: i64) -> Option<Self> {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| Self::ALL.get(i).copied())
+    }
+}
+
+/// 画像の段（[`Kind::Image`]）の設定: 読む画像・投影（塗りつぶしレイヤーの画像と同じ。デカールは除く）・値にする成分。
+/// 画像そのもの（画素）は文書の外の入力で、束縛のときに [`BoundGenerator::with_image`] で渡す。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ImageSource {
+    /// プロジェクトの画像リソースの ID（`effects::ImageId` の値）。0 はまだ選んでいない。
+    pub image: u128,
+    pub projection: crate::fill_image::Projection,
+    /// マスク・スカラーのチャンネルで値にする成分（色のチャンネルでは画素の色をそのまま使う）。
+    pub component: ImageComponent,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Blend {
@@ -195,6 +269,16 @@ pub struct Settings {
     pub pins: BTreeMap<MapKind, String>,
     /// ノイズ・グランジの設定（[`Procedural`]）。Noise・Grunge 以外の種類は既定のまま。
     pub procedural: Procedural,
+    /// 模様の設定（[`Pattern`]）。Pattern 以外の種類は既定のまま。
+    pub pattern: Pattern,
+    /// 光の設定（[`Light`]）。Light 以外の種類は既定のまま。
+    pub light: Light,
+    /// マスクの組み立ての設定（[`MaskBuilder`]）。MaskBuilder 以外の種類は既定のまま。
+    pub mask_builder: MaskBuilder,
+    /// 画像の段の設定（[`ImageSource`]）。Image 以外の種類は既定のまま。
+    pub image: ImageSource,
+    /// アイランドごとのばらつきの設定（[`IslandVariation`]）。UvIslandVariation 以外の種類は既定のまま。
+    pub island: IslandVariation,
 }
 impl Settings {
     pub fn new(kind: Kind) -> Self {
@@ -220,6 +304,11 @@ impl Settings {
             anchor: anchor::Reference::default_for(kind),
             pins: BTreeMap::new(),
             procedural: Procedural::default(),
+            pattern: Pattern::default(),
+            light: Light::default(),
+            mask_builder: MaskBuilder::default(),
+            image: ImageSource::default(),
+            island: IslandVariation::default(),
         };
         match kind {
             Kind::EdgeWear => {
@@ -241,6 +330,8 @@ impl Settings {
                 g.noise_amount = 0.3;
             }
             Kind::Grunge => g.procedural = Procedural::for_preset(GrungePreset::Stain),
+            // 画像の段は、足したときに画像がそのまま見えるように置き換える（塗りつぶしレイヤーの画像と同じ見え方）
+            Kind::Image => g.blend = Blend::Replace,
             _ => {}
         }
         g
@@ -282,7 +373,9 @@ impl Settings {
             || self.axis > 2
             || (self.kind != Kind::PositionGradient && self.axis != 1)
         {
-            return Err(Error::Invalid("ジェネレーターの種類に対して割合・軸が不正です"));
+            return Err(Error::Invalid(
+                "ジェネレーターの種類に対して割合・軸が不正です",
+            ));
         }
         let [x, y, z] = self.direction;
         if self
@@ -321,13 +414,26 @@ impl Settings {
         } else if self.anchor != anchor::Reference::default_for(self.kind) {
             return Err(Error::Invalid("Anchor の参照は Anchor 専用です"));
         }
+        let default_overlay = self.noise_amount == 0.
+            && self.noise_scale == 0.05
+            && self.noise_seed == 0
+            && self.noise_space == NoiseSpace::Model;
+        if self.kind == Kind::Image {
+            let p = &self.image.projection;
+            if p.validate().is_err() || p.mode == crate::fill_image::ProjectionMode::Decal {
+                return Err(Error::Invalid(
+                    "画像の投影が範囲外か、デカールです（画像の段は UV・トライプラナー・平面・球・円柱）",
+                ));
+            }
+            if !default_overlay {
+                return Err(Error::Invalid("画像の段は重ねるノイズを持ちません"));
+            }
+        } else if self.image != ImageSource::default() {
+            return Err(Error::Invalid("画像の設定は画像の段専用です"));
+        }
         if self.kind.is_procedural() {
             self.procedural.validate(self.kind)?;
-            if self.noise_amount != 0.
-                || self.noise_scale != 0.05
-                || self.noise_seed != 0
-                || self.noise_space != NoiseSpace::Model
-            {
+            if !default_overlay {
                 return Err(Error::Invalid(
                     "ノイズ・グランジは重ねるノイズを持たず、大きさ・シードは自身の設定で決めます",
                 ));
@@ -337,6 +443,31 @@ impl Settings {
                 "ノイズ・グランジの設定はノイズ・グランジ専用です",
             ));
         }
+        // 模様・ライト・マスクの組み立て・アイランドごとのばらつき: 重ねるノイズを持たない。模様・ライトは境目のぼかしを種類の欄で持つ（共通の減衰は 0）
+        if self.kind.is_050()
+            && (self.noise_amount != 0.
+                || self.noise_scale != 0.05
+                || self.noise_seed != 0
+                || self.noise_space != NoiseSpace::Model
+                || (matches!(self.kind, Kind::Pattern | Kind::Light) && self.softness != 0.))
+        {
+            return Err(Error::Invalid(
+                "模様・ライト・マスクの組み立て・アイランドごとのばらつきは重ねるノイズを持たず、模様・ライトのぼかしは自身の設定で決めます",
+            ));
+        }
+        if (self.kind != Kind::Pattern && self.pattern != Pattern::default())
+            || (self.kind != Kind::Light && self.light != Light::default())
+            || (self.kind != Kind::MaskBuilder && self.mask_builder != MaskBuilder::default())
+            || (self.kind != Kind::UvIslandVariation && self.island != IslandVariation::default())
+        {
+            return Err(Error::Invalid(
+                "模様・ライト・マスクの組み立て・アイランドごとのばらつきの設定はその種類専用です",
+            ));
+        }
+        self.pattern.validate()?;
+        self.light.validate()?;
+        self.mask_builder.validate()?;
+        self.island.validate()?;
         for (kind, key) in &self.pins {
             if !self.candidate_maps().contains(kind) || !key_valid(key) {
                 return Err(Error::Invalid(
@@ -356,6 +487,13 @@ impl Settings {
             Kind::Direction => vec![WorldNormal, BentNormal, Position],
             Kind::IdColor => vec![Id, Position],
             Kind::Noise | Kind::Grunge => vec![Position, WorldNormal],
+            Kind::Pattern => vec![],
+            Kind::Light => vec![WorldNormal],
+            Kind::MaskBuilder => MaskBuilder::MAPS.to_vec(),
+            // 投影のマップは塗りつぶしレイヤーと同じく、ピンを持たない
+            Kind::Image => vec![],
+            // 焼いたマップを読まない（モデルの UV アイランドの図を読む）
+            Kind::UvIslandVariation => vec![],
         }
     }
     pub fn used_maps(&self) -> Vec<MapKind> {
@@ -383,6 +521,19 @@ impl Settings {
             Kind::Anchor => vec![],
             // 位置のマップが使えないときは UV に落とす（入力のまま通さない）ので、読むマップは設定だけで決まる
             Kind::Noise | Kind::Grunge => return self.procedural.maps(self.kind),
+            Kind::Pattern | Kind::UvIslandVariation => vec![],
+            Kind::Light => vec![WorldNormal],
+            // 重みが 0 のマップは読まない（無くても断らない）
+            Kind::MaskBuilder => self.mask_builder.used(),
+            // 投影の種類で決まる（UV は読まない。トライプラナーは向きも）
+            Kind::Image => {
+                use crate::fill_image::ProjectionMode as M;
+                return match self.image.projection.mode {
+                    M::Uv => vec![],
+                    M::Triplanar | M::Decal => vec![Position, WorldNormal],
+                    M::Planar | M::Spherical | M::Cylindrical => vec![Position],
+                };
+            }
         };
         if self.noise_amount > 0. && self.noise_space == NoiseSpace::Model && !v.contains(&Position)
         {
@@ -403,6 +554,14 @@ pub enum Inactive {
     EmptyBounds,
     NoIdColors,
     Anchor(anchor::Issue),
+    /// 画像の段: 画像をまだ選んでいない。
+    NoImage,
+    /// 画像の段: 選んだ画像が入力に無い・読めない。
+    MissingImage,
+    /// アイランドごとのばらつき: モデルが無い（アイランドの図を渡していない）。
+    NoModel,
+    /// アイランドごとのばらつき: アイランドの図を作れない（作る作業メモリが予算に収まらない）。
+    IslandMap,
 }
 /// 左下原点の読み取り専用 RGBA8。タイルはこの口を実装する。
 pub trait Source: Sync {

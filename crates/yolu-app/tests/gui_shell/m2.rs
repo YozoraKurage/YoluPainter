@@ -5,7 +5,7 @@ use crate::common;
 
 use common::*;
 use egui::{pos2, Key, Modifiers, PointerButton};
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::engine::{BlendMode, Channel, LayerKind};
 use yolu_app::lang::Lang;
@@ -97,7 +97,7 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     );
     undo(&mut h);
     assert_eq!(doc_layers(&h), 1);
-    // マスク: 足すと描く先がマスクになり、もう一度押すと層へ戻る
+    // マスク: 足すと描く先がマスクになり、もう一度押すとレイヤーへ戻る
     h.get_by_label("レイヤーマスクを追加").click();
     h.run();
     assert!(h.state().state.doc.layer(first).unwrap().mask().is_some());
@@ -176,15 +176,19 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
         move_to(&h, offset(start, 0.0, dy));
         h.step();
     }
-    assert!(h.state().state.layer_drag.is_some(), "ドラッグが始まった");
+    assert!(
+        h.state().state.ui.layer_drag.is_some(),
+        "ドラッグが始まった"
+    );
     // ホイールで一覧を送る（最後まで）。ドラッグしている行は見えなくなる
-    h.state_mut().state.layer_scroll = 100_000.0;
+    h.state_mut().state.ui.layer_scroll = 100_000.0;
     h.step();
     h.step();
     assert!(h.query_by_label(&name).is_none(), "行は一覧の外");
     assert!(
         h.state()
             .state
+            .ui
             .layer_drag
             .is_some_and(|d| d.target.is_some()),
         "ボタンを押しているあいだは、落とす先をポインタに追わせる"
@@ -193,13 +197,13 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     h.step();
     h.step();
     assert!(
-        h.state().state.layer_drag.is_none(),
+        h.state().state.ui.layer_drag.is_none(),
         "離したらドラッグを手放す（線が残り続けない）"
     );
     assert_eq!(h.state().state.doc.layers().len(), before);
     assert!(
         h.state().state.doc.layers().last().map(|l| l.id()) != Some(top),
-        "落とす操作は起きる（一番上にいた層が動いた）"
+        "落とす操作は起きる（一番上にいたレイヤーが動いた）"
     );
     undo(&mut h);
     assert_eq!(
@@ -209,7 +213,7 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     );
 }
 
-/// レイヤーの欄の上の合成モードと不透明度は、欄が狭くて 1 行に収まらないとき（窓の最小の幅など）は、名前を詰めずに 2 行に積む。
+/// レイヤーの欄の上の合成モードと不透明度は、欄が狭くて 1 行に収まらないとき（ウィンドウの最小の幅など）は、名前を詰めずに 2 行に積む。
 /// ふつうの幅では横に並べる。どちらでも一覧は不透明度の下から始まる。
 #[test]
 fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
@@ -221,10 +225,19 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
             let slider = rect_of(&h, lang.pick("不透明度", "Opacity"), panel);
             let blend = rect_of(&h, lang.pick("通常", "Normal"), panel);
             if stacked {
-                assert!(slider.top() >= blend.bottom(), "{lang:?} {width}: 積む {slider:?} {blend:?}");
-                assert!(slider.left() <= blend.left() + 1.0, "{lang:?} {width}: 合成モードの下に揃える");
+                assert!(
+                    slider.top() >= blend.bottom(),
+                    "{lang:?} {width}: 積む {slider:?} {blend:?}"
+                );
+                assert!(
+                    slider.left() <= blend.left() + 1.0,
+                    "{lang:?} {width}: 合成モードの下に揃える"
+                );
             } else {
-                assert!(slider.left() >= blend.right(), "{lang:?} {width}: 横に並ぶ {slider:?} {blend:?}");
+                assert!(
+                    slider.left() >= blend.right(),
+                    "{lang:?} {width}: 横に並ぶ {slider:?} {blend:?}"
+                );
                 assert_eq!(slider.top(), blend.top(), "{lang:?} {width}");
             }
             // 名前は詰めずに出る（最小の幅でも「…」にならない）
@@ -233,11 +246,26 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
             h.step();
             let truncated = yolu_app::ui::widgets::take_truncations();
             yolu_app::ui::widgets::record_truncations(false);
-            assert!(!truncated.iter().any(|t| t == lang.pick("不透明度", "Opacity")), "{lang:?} {width}: {truncated:?}");
+            assert!(
+                !truncated
+                    .iter()
+                    .any(|t| t == lang.pick("不透明度", "Opacity")),
+                "{lang:?} {width}: {truncated:?}"
+            );
             // 一覧は、積んだ分だけ下から始まる
-            let layer = h.state().state.doc.layers().first().map(|l| l.name().to_owned()).unwrap();
+            let layer = h
+                .state()
+                .state
+                .doc
+                .layers()
+                .first()
+                .map(|l| l.name().to_owned())
+                .unwrap();
             let row = rect_of(&h, &layer, |r| panel(r) && r.top() >= slider.top());
-            assert!(row.top() >= slider.bottom(), "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下");
+            assert!(
+                row.top() >= slider.bottom(),
+                "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下"
+            );
         }
     }
 }
@@ -309,7 +337,7 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
     assert_eq!(h.state().state.doc.channels().len(), 6);
     h.get_by_label("チャンネルを追加").click();
     h.run();
-    let at = popup_item(&h, "スカラー").center();
+    let at = popup_item(&h, "L8").center();
     click(&mut h, at);
     let ao = h.state().state.m2.paint_channel;
     assert!(!ao.is_standard(), "足したチャンネルを描く先にする");
@@ -340,10 +368,10 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
         "スカラー 1",
         "名前の変更も 1 回の取り消し"
     );
-    // 種類（行の右端の箱）
-    h.get_by_label("スカラー").click();
+    // 種類（行の右端の箱。形式の名前）
+    h.get_by_label("L8").click();
     h.run();
-    let at = popup_item(&h, "ノーマル").center();
+    let at = popup_item(&h, "RGB8").center();
     click(&mut h, at);
     assert_eq!(
         h.state().state.doc.channel_info(ao).unwrap().kind,
@@ -367,6 +395,26 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
     assert!(h.state().state.doc.channel_info(ao).is_some());
 }
 
+/// 開いているポップアップの項目のチェックの印。
+fn popup_item_checked(h: &Harness<'_, YoluApp>, label: &str) -> bool {
+    let at = popup_item(h, label);
+    h.get_all_by_label(label)
+        .find(|n| n.rect() == at)
+        .unwrap()
+        .accesskit_node()
+        .toggled()
+        == Some(egui::accesskit::Toggled::True)
+}
+
+/// 合成モードの箱の上の縁の、描くチャンネルだけの値の印（チャンネルの名前の小さな文字。チャンネルの行など、同じ名前のほかの部品より低い）。
+fn own_legend(h: &Harness<'_, YoluApp>, name: &str) -> Option<egui::Rect> {
+    h.query_all_by_label(name)
+        .map(|n| n.rect())
+        .find(|r| r.height() < 14.0)
+}
+
+/// 描くチャンネルだけの合成モードと不透明度は、合成モードのメニューの頭の項目（チェック）で切り替える。そのチャンネルだけの値のときは、
+/// 合成モードの箱の上にチャンネルの名前が出て、合成モードを替えてもレイヤーの値は変わらない。切り替えも 1 回の Undo。
 #[test]
 fn per_channel_blend_leaves_the_layer_value_alone() {
     let mut h = app(1280.0, 800.0, 128);
@@ -376,24 +424,45 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
     h.get_by_label("ラフネス を描くチャンネルにする").click();
     h.run();
     assert_eq!(h.state().state.m2.paint_channel, Channel::Roughness);
-    // そのチャンネル専用の合成にして、合成モードを替える
-    h.get_by_label_contains("専用にする").click();
+    let own = |h: &Harness<'_, YoluApp>| {
+        !h.state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .channel_blend(Channel::Roughness)
+            .is_empty()
+    };
+    assert!(
+        own_legend(&h, "ラフネス").is_none(),
+        "レイヤーの値に従う間は名前を出さない"
+    );
+    // メニューの頭の項目で、そのチャンネル専用の合成にする
+    let blend_box = h.get_by_label("通常").rect().center();
+    click(&mut h, blend_box);
     h.run();
-    assert!(!h
-        .state()
-        .state
-        .doc
-        .layer(id)
-        .unwrap()
-        .channel_blend(Channel::Roughness)
-        .is_empty());
+    assert!(!popup_item_checked(&h, "ラフネス だけの値"));
+    let at = popup_item(&h, "ラフネス だけの値").center();
+    click(&mut h, at);
+    assert!(own(&h));
+    assert!(popup_kind(&h).is_none(), "選ぶとメニューは閉じる");
+    assert!(
+        own_legend(&h, "ラフネス").is_some(),
+        "専用のときは箱の上に名前"
+    );
+    // 合成モードを替える
     h.get_by_label("通常").click();
     h.run();
+    assert!(popup_item_checked(&h, "ラフネス だけの値"));
     let at = popup_item(&h, "乗算").center();
     click(&mut h, at);
     let layer = h.state().state.doc.layer(id).unwrap();
     assert_eq!(layer.blend_mode_in(Channel::Roughness), BlendMode::Multiply);
-    assert_eq!(layer.blend_mode(), BlendMode::Normal, "層の値は変わらない");
+    assert_eq!(
+        layer.blend_mode(),
+        BlendMode::Normal,
+        "レイヤーの値は変わらない"
+    );
     undo(&mut h);
     assert_eq!(
         h.state()
@@ -404,6 +473,25 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
             .blend_mode_in(Channel::Roughness),
         BlendMode::Normal
     );
+    assert!(own(&h), "合成モードの取り消しは専用のまま");
+    // レイヤーの値に戻す（同じ項目のチェックを外す）。戻すのも 1 回の Undo
+    h.get_by_label("通常").click();
+    h.run();
+    let at = popup_item(&h, "ラフネス だけの値").center();
+    click(&mut h, at);
+    assert!(!own(&h));
+    assert!(own_legend(&h, "ラフネス").is_none());
+    undo(&mut h);
+    assert!(own(&h));
+    undo(&mut h);
+    assert!(!own(&h), "専用にしたのも 1 回の Undo");
+    // 英語: 項目は「<名前> only」、印はチャンネルの名前
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    click(&mut h, blend_box);
+    let at = popup_item(&h, "Roughness only").center();
+    click(&mut h, at);
+    assert!(own(&h));
+    assert!(own_legend(&h, "Roughness").is_some());
 }
 
 #[test]
@@ -480,33 +568,37 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
     use yolu_app::m2::MASK_TAB;
     let mut s = AppState::new(64, 64);
     let id = s.selected_layer.unwrap();
-    assert_eq!(s.property_tab, 0);
+    assert_eq!(s.ui.property_tab, 0);
     // マスクを足す → マスクのタブ。編集をやめる → 先頭（アルファ）。もう一度 → マスク
     s.apply(Action::M2(Edit::AddMask(id)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
     s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
     s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
     // マスクを消す
     s.apply(Action::M2(Edit::RemoveMask(id)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
     // マスクを足したあとの取り消し
     s.apply(Action::M2(Edit::AddMask(id)));
     s.apply(Action::Undo);
     s.apply(Action::Undo);
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "足す前に戻る");
+    assert_eq!(
+        (s.m2.edit_mask, s.ui.property_tab),
+        (false, 0),
+        "足す前に戻る"
+    );
     // マスクの編集中に新しいレイヤーを足す・マスクのあるレイヤーを消す
     s.apply(Action::M2(Edit::AddMask(id)));
     s.apply(Action::NewLayer);
     assert_eq!(
-        (s.m2.edit_mask, s.property_tab),
+        (s.m2.edit_mask, s.ui.property_tab),
         (false, 0),
-        "新しい層を選ぶ"
+        "新しいレイヤーを選ぶ"
     );
     s.selected_layer = Some(id);
     s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!(s.property_tab, MASK_TAB);
+    assert_eq!(s.ui.property_tab, MASK_TAB);
     let other = s
         .doc
         .layers()
@@ -514,14 +606,17 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
         .map(|l| l.id())
         .find(|l| *l != id)
         .unwrap();
-    s.apply(Action::DeleteLayer); // マスクの層を消す（選んでいるのは id）
+    s.apply(Action::DeleteLayer); // マスクのレイヤーを消す（選んでいるのは id）
     assert!(s.doc.layer(id).is_none() && s.doc.layer(other).is_some());
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "消した");
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0), "消した");
     // マテリアルのタブを自分で選んでいるだけなら、そのまま
-    s.property_tab = MASK_TAB;
+    s.ui.property_tab = MASK_TAB;
     s.ensure_m2_selection();
     s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!(s.property_tab, MASK_TAB, "マスクを描いていなければ触らない");
+    assert_eq!(
+        s.ui.property_tab, MASK_TAB,
+        "マスクを描いていなければ触らない"
+    );
 }
 
 #[test]
@@ -531,13 +626,17 @@ fn selecting_another_layer_row_leaves_the_mask_tab() {
     apply(&mut h, Action::NewLayer);
     let top = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(top)));
-    assert_eq!(h.state().state.property_tab, yolu_app::m2::MASK_TAB);
+    assert_eq!(h.state().state.ui.property_tab, yolu_app::m2::MASK_TAB);
     let name = h.state().state.doc.layer(first).unwrap().name().to_owned();
     let row = rect_of(&h, &name, |_| true);
     click(&mut h, pos2(row.left() + 90.0, row.center().y));
     assert_eq!(h.state().state.selected_layer, Some(first));
     assert!(!h.state().state.m2.edit_mask);
-    assert_eq!(h.state().state.property_tab, 0, "使えないタブに落とさない");
+    assert_eq!(
+        h.state().state.ui.property_tab,
+        0,
+        "使えないタブに落とさない"
+    );
 }
 
 // ───────── グループを含む削除と上へ・下へ ─────────
@@ -581,7 +680,7 @@ fn nest(s: &mut AppState) -> Nest {
     Nest { a, g2, c, g1, b }
 }
 
-/// 層の並び（下から）と、それぞれの親。
+/// レイヤーの並び（下から）と、それぞれの親。
 fn structure(s: &AppState) -> Vec<(LayerId, Option<LayerId>)> {
     s.doc
         .layers()
@@ -610,7 +709,7 @@ fn headless_nest_is_built_as_documented() {
 fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
     let mut s = AppState::new(64, 64);
     let n = nest(&mut s);
-    // 一番下に別の層 D（G1 の塊の下）
+    // 一番下に別のレイヤー D（G1 の塊の下）
     s.apply(Action::NewLayer);
     let d = s.selected_layer.unwrap();
     s.apply(Action::M2(Edit::Move {
@@ -629,11 +728,15 @@ fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
         "入れ子の中身ごと消える"
     );
     assert_eq!(s.doc.undo_count(), steps + 1, "1 回の取り消し");
-    assert_eq!(s.selected_layer, Some(d), "消えた塊のすぐ下の層を選ぶ");
+    assert_eq!(
+        s.selected_layer,
+        Some(d),
+        "消えた塊のすぐ下のレイヤーを選ぶ"
+    );
     s.apply(Action::Undo);
     assert_eq!(structure(&s), before, "中身も入れ子も元どおり");
     assert!(s.selected_layer.is_some_and(|id| s.doc.layer(id).is_some()));
-    // グループの中の一番上の層を消すと、すぐ下を選ぶ。グループは残る
+    // グループの中の一番上のレイヤーを消すと、すぐ下を選ぶ。グループは残る
     s.selected_layer = Some(n.c);
     s.apply(Action::DeleteLayer);
     assert_eq!(s.selected_layer, Some(n.g2));
@@ -755,6 +858,199 @@ fn snapshot_channels_panel() {
     h.snapshot("m2_channels_panel");
 }
 
+/// 見た目を lilToon にして、影・発光・マットキャップ・リムライト・ラメを入にしてひな形のチャンネルを作り、ラメだけを切る。どのスロットも
+/// 読まないユーザーチャンネルを 1 つ追加する（「そのほか」）。
+fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
+    use yolu_core::look::{LookKind, LookValue};
+    let mut h = app(1280.0, 1000.0, 256);
+    apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+    {
+        let doc = &mut h.state_mut().state.doc;
+        let mut look = doc.look().clone();
+        look.kind = LookKind::LilToon;
+        for p in [
+            "_UseShadow",
+            "_UseEmission",
+            "_UseMatCap",
+            "_UseRim",
+            "_UseGlitter",
+        ] {
+            look.properties.insert(p.into(), LookValue::Float(1.0));
+        }
+        doc.set_look(look, false).unwrap();
+        yolu_app::look::apply_template(doc, lang).unwrap();
+        let mut look = doc.look().clone();
+        look.properties
+            .insert("_UseGlitter".into(), LookValue::Float(0.0));
+        doc.set_look(look, false).unwrap();
+    }
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+            lang.pick("スカラー 1", "Scalar 1").into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))),
+    );
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    h
+}
+
+/// チャンネルの欄のまとまりの見出し（上から）と、開いているか。見出しは開閉の印を持つ低いボタン（行の部品より低い）。
+fn channel_groups(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+    let mut out: Vec<(f32, String, bool)> = h
+        .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Button))
+        .filter(|n| {
+            let r = n.rect();
+            r.left() < 320.0 && (r.height() - 20.0).abs() < 1.0
+        })
+        .filter_map(|n| {
+            let node = n.accesskit_node();
+            let open = node.toggled()? == egui::accesskit::Toggled::True;
+            Some((n.rect().top(), node.label()?.to_string(), open))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.into_iter().map(|(_, l, o)| (l, o)).collect()
+}
+
+/// 見た目が lilToon なら、ユーザーチャンネルは読むスロットの部位ごとのまとまり（lilToon のインスペクターの節の並び、最後に「そのほか」）。
+/// 標準の 6 つは上のまま。見た目がその部位の機能を切っているまとまりは、開いたことが無ければたたむ。見出しを押すと開閉し、描くチャンネルが
+/// たたんだまとまりにあると見出しの左に印。
+#[test]
+fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
+    let mut h = liltoon_channels(Lang::Ja);
+    let groups = channel_groups(&h);
+    assert_eq!(
+        groups,
+        [
+            ("影", true),
+            ("発光", true),
+            ("マットキャップ", true),
+            ("リムライト", true),
+            ("ラメ", false),
+            ("そのほか", true),
+        ]
+        .map(|(l, o)| (l.to_string(), o)),
+        "インスペクターの並び。切っている部位（ラメ）はたたむ"
+    );
+    let row = |h: &Harness<'_, YoluApp>, name: &str| {
+        h.query_all_by_label(name)
+            .map(|n| n.rect())
+            .find(|r| r.left() < 320.0 && (r.height() - 28.0).abs() < 1.0)
+    };
+    let header = |h: &Harness<'_, YoluApp>, name: &str| {
+        h.get_all_by_label(name)
+            .map(|n| n.rect())
+            .find(|r| r.left() < 320.0 && r.height() < 24.0)
+            .unwrap()
+    };
+    // 標準の 6 つは見出しより上
+    let first = header(&h, "影");
+    for name in [
+        "カラー",
+        "ラフネス",
+        "メタリック",
+        "ハイト",
+        "ノーマル",
+        "エミッション",
+    ] {
+        assert!(
+            row(&h, name).unwrap().bottom() <= first.top() + 0.5,
+            "{name}"
+        );
+    }
+    // 開いたまとまりの行はその見出しの下、たたんだまとまりの行は出ない
+    let shadow = row(&h, "影の強度").unwrap();
+    assert!(shadow.top() >= first.bottom() - 0.5);
+    assert!(row(&h, "スカラー 1").unwrap().top() > header(&h, "そのほか").top());
+    assert!(row(&h, "ラメのマスク").is_none());
+    // 押すと開閉（画面の状態。文書は変わらない）
+    let steps = h.state().state.doc.undo_count();
+    let at = header(&h, "影").center();
+    click(&mut h, at);
+    assert!(row(&h, "影の強度").is_none());
+    assert_eq!(channel_groups(&h)[0], ("影".to_string(), false));
+    let at = header(&h, "ラメ").center();
+    click(&mut h, at);
+    assert!(row(&h, "ラメのマスク").is_some());
+    let at = header(&h, "影").center();
+    click(&mut h, at);
+    assert!(row(&h, "影の強度").is_some());
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    // 描くチャンネルがたたんだまとまりにあると、見出しの左に印（開いていれば行が見えるので出さない）
+    let accent_at = |h: &mut Harness<'_, YoluApp>, name: &str| {
+        let r = header(h, name);
+        let img = h.render().unwrap();
+        let px = img.get_pixel((r.left() - 8.0 + 1.0) as u32, r.center().y as u32);
+        [px[0], px[1], px[2]] == [0x3D, 0x8E, 0xF0]
+    };
+    let glitter = h
+        .state()
+        .state
+        .doc
+        .channels()
+        .into_iter()
+        .find(|c| h.state().state.doc.channel_info(*c).unwrap().name == "ラメのマスク")
+        .unwrap();
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(glitter)));
+    assert!(!accent_at(&mut h, "ラメ"), "開いているときは印なし");
+    let at = header(&h, "ラメ").center();
+    click(&mut h, at);
+    assert!(accent_at(&mut h, "ラメ"));
+    assert!(!accent_at(&mut h, "影"));
+    h.snapshot("channels_groups_ja");
+    // 英語
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    let names: Vec<String> = channel_groups(&h).into_iter().map(|(l, _)| l).collect();
+    assert_eq!(
+        names,
+        [
+            "Shadow",
+            "Emission",
+            "MatCap",
+            "Rim Light",
+            "Glitter",
+            "Other"
+        ]
+    );
+    h.snapshot("channels_groups_en");
+}
+
+/// 見た目が lilToon でないとき・どのスロットも読まないユーザーチャンネルだけのときは、まとめない（見出しを出さない）。
+#[test]
+fn channels_are_not_grouped_without_liltoon_parts() {
+    use yolu_core::look::LookKind;
+    // lilToon でも、どのスロットも読まないユーザーチャンネルだけ
+    let mut h = app(1280.0, 1000.0, 256);
+    assert_eq!(h.state().state.doc.look().kind, LookKind::LilToon);
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+            "AO".into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))),
+    );
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    assert!(channel_groups(&h).is_empty());
+    assert!(h.query_by_label("AO").is_some());
+    // 見た目が標準（PBR）なら、スロットを読むチャンネルがあってもまとめない
+    let mut h = liltoon_channels(Lang::Ja);
+    assert!(!channel_groups(&h).is_empty());
+    {
+        let doc = &mut h.state_mut().state.doc;
+        let mut look = doc.look().clone();
+        look.kind = LookKind::Standard;
+        doc.set_look(look, false).unwrap();
+    }
+    h.run();
+    assert!(channel_groups(&h).is_empty());
+    for name in ["影の強度", "ラメのマスク", "スカラー 1"] {
+        assert!(h.query_by_label(name).is_some(), "{name}");
+    }
+}
+
 #[test]
 fn snapshot_properties_layer_kinds() {
     let mut h = app(1280.0, 1000.0, 256);
@@ -792,7 +1088,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
         b.radius = 3.0;
         b.hardness = 1.0;
     }
-    stroke_across(&mut h, 0.0); // 層に長い線
+    stroke_across(&mut h, 0.0); // レイヤーに長い線
     assert_eq!(canvas_alpha(&h, 0.0), 255);
     assert_eq!(canvas_alpha(&h, 50.0), 255);
     h.get_by_label("レイヤーマスクを追加").click();
@@ -852,9 +1148,11 @@ fn fill_and_adjustment_properties_edit_and_undo() {
             .fill_value(Channel::Color),
         Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
     );
-    // 描画色を替えて、値の見本を押すと値が描画色になる
+    // 描画色を替えて、値の見本を押して色のウィンドウの「描画色を入れる」を押すと、値が描画色になる
     h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
-    h.get_by_label_contains("押すと描画色にする").click();
+    h.get_by_label("カラー の値").click();
+    h.run();
+    h.get_by_label("描画色を入れる").click();
     h.run();
     assert_eq!(
         h.state()
@@ -876,7 +1174,7 @@ fn fill_and_adjustment_properties_edit_and_undo() {
         Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
     );
     // ほかのチャンネルの値を足す・外す
-    h.get_by_label_contains("ラフネス の値を足す").click();
+    h.get_by_label_contains("ラフネス の値を追加").click();
     h.run();
     assert!(h
         .state()
@@ -1260,7 +1558,7 @@ fn the_two_languages_name_the_panels() {
 
 // ───────── 保存（.ylp） ─────────
 
-/// 保存と読み直しで変わってはいけない中身の全部（層ごとの id・種類・親・名前・表示・不透明度・合成・クリッピング・
+/// 保存と読み直しで変わってはいけない中身の全部（レイヤーごとの id・種類・親・名前・表示・不透明度・合成・クリッピング・
 /// 有効なチャンネル・面の画素・塗りつぶしの値・調整・マスクの状態と画素・チャンネルごとの合成、文書のチャンネルの一覧）。
 fn content(s: &AppState) -> Vec<String> {
     use std::hash::{Hash, Hasher};
@@ -1307,7 +1605,7 @@ fn content(s: &AppState) -> Vec<String> {
     out
 }
 
-/// 左下のタイル（0, 0）の、画布の中の画素を単色にして層のチャンネルへ入れる（透明の画素の RGB も保つ読み込み。画布の外は 0）。
+/// 左下のタイル（0, 0）の、キャンバスの中の画素を単色にしてレイヤーのチャンネルへ入れる（透明の画素の RGB も保つ読み込み。キャンバスの外は 0）。
 fn put_tile(s: &mut AppState, id: yolu_app::engine::LayerId, channel: Channel, rgba: [u8; 4]) {
     let ts = s.doc.tile_size() as usize;
     let (w, h) = (s.doc.width() as usize, s.doc.height() as usize);
@@ -1330,7 +1628,7 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// 保存の往復で、今の yolu-io が書ける範囲（ラスターの層・Color だけ）の中身がそのまま戻る。比較は `content` の全部。
+/// 保存の往復で、今の yolu-io が書ける範囲（ラスターレイヤー・Color だけ）の中身がそのまま戻る。比較は `content` の全部。
 #[test]
 fn headless_saveable_documents_survive_save_and_reopen() {
     let dir = temp_dir("plain");
@@ -1388,7 +1686,7 @@ fn headless_each_m2_content_saves_and_reopens() {
             }),
         ),
         (
-            "Color の層ごとの合成だけ",
+            "Color のレイヤーごとの合成だけ",
             Box::new(|s| {
                 let id = s.selected_layer.unwrap();
                 s.apply(Action::M2(Edit::OwnBlend {
@@ -1428,7 +1726,11 @@ fn headless_each_m2_content_saves_and_reopens() {
         let mut s = AppState::new(64, 64);
         make(&mut s);
         s.apply(Action::SaveProjectAs(path.clone()));
-        assert!(s.message.starts_with("保存しました"), "{name}: {}", s.message);
+        assert!(
+            s.message.starts_with("保存しました"),
+            "{name}: {}",
+            s.message
+        );
         assert!(!s.modified, "{name}: 保存したら変更の印は下りる");
         let mut again = AppState::new(64, 64);
         again.apply(Action::OpenProject(path));
@@ -1454,7 +1756,10 @@ fn headless_overwriting_with_m2_content_keeps_the_previous_version() {
     assert!(!s.modified);
     assert_ne!(std::fs::read(&path).unwrap(), first);
     let backups = dir.join("keep.ylp-backups~");
-    let kept: Vec<_> = std::fs::read_dir(&backups).unwrap().map(|e| std::fs::read(e.unwrap().path()).unwrap()).collect();
+    let kept: Vec<_> = std::fs::read_dir(&backups)
+        .unwrap()
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect();
     assert!(kept.contains(&first), "前の版は -backups~ に残る");
     let mut again = AppState::new(64, 64);
     again.apply(Action::OpenProject(path));
@@ -1702,7 +2007,7 @@ fn the_3d_notes_follow_the_tab_that_is_on_screen() {
     );
 }
 
-/// 試しの人形（マテリアル 2 つ）を読んだ窓と 3D の表示域。
+/// 試しの人形（マテリアル 2 つ）を読んだウィンドウと 3D の表示域。
 fn figure_window() -> (Harness<'static, YoluApp>, egui::Rect) {
     let mut h = app(1280.0, 860.0, 128);
     h.state_mut()
@@ -1806,3 +2111,107 @@ fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
     );
 }
 
+/// 開いている種類のメニューの 3 つの形式の行を上から並べる（文字・印）。欄の箱にも同じ文字があるので、メニューの中の行だけを数える。
+fn kind_menu_rows(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+    let body = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("popup open")
+        .state
+        .rect;
+    let mut rows: Vec<(f32, String, bool)> = Vec::new();
+    for label in ["sRGB8", "L8", "RGB8"] {
+        for node in h.query_all_by_label(label) {
+            let rect = node.rect();
+            if body.contains_rect(rect) {
+                let marked =
+                    node.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True);
+                rows.push((rect.top(), label.to_owned(), marked));
+            }
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, l, m)| (l, m)).collect()
+}
+
+/// 開いている種類のメニューの中の、この形式の行の箱。
+fn kind_menu_row(h: &Harness<'_, YoluApp>, label: &str) -> egui::Rect {
+    let body = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("popup open")
+        .state
+        .rect;
+    h.query_all_by_label(label)
+        .map(|n| n.rect())
+        .find(|r| body.contains_rect(*r))
+        .unwrap_or_else(|| panic!("メニューに {label} の行が無い"))
+}
+
+/// 種類のメニューの印は、欄が出す形式と同じ文字の項目に付く。ほかで作った文書にあるリニアのカラー（欄は RGB8）はノーマルの項目に付く。
+/// 印の付いた項目を押しても、種類も色空間も Undo の段も変わらず、ほかの項目を選ぶと 1 回の Undo で戻る。絵は日英。
+#[test]
+fn snapshot_channel_kind_menu_marks_the_row_format() {
+    use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
+    let mut h = app(1280.0, 800.0, 128);
+    click_tab(&mut h, Tab::Channels);
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(ChannelInfo {
+            name: "Tint".into(),
+            kind: ChannelKind::Color,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(255, 255, 255, 255),
+        })),
+    );
+    let tint = h.state().state.m2.paint_channel;
+    let before = h.state().state.doc.channel_info(tint).cloned();
+    let steps = h.state().state.doc.undo_count();
+    for (lang, name) in [
+        (Lang::Ja, "channel_kind_menu_ja"),
+        (Lang::En, "channel_kind_menu_en"),
+    ] {
+        apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+        h.get_by_label("RGB8").click();
+        h.run();
+        assert_eq!(
+            popup_kind(&h),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::ChannelKind(tint)))
+        );
+        assert_eq!(
+            kind_menu_rows(&h),
+            [
+                ("sRGB8".to_owned(), false),
+                ("L8".to_owned(), false),
+                ("RGB8".to_owned(), true),
+            ],
+            "{name}"
+        );
+        h.snapshot(name);
+        h.state_mut().state.popup = None;
+        h.run();
+    }
+    // 印の付いた項目（RGB8）を押しても何も変わらない
+    h.get_by_label("RGB8").click();
+    h.run();
+    let at = kind_menu_row(&h, "RGB8").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.doc.channel_info(tint).cloned(), before);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert!(h.state().state.popup.is_none());
+    // ほかの項目（sRGB8）を選ぶと、カラー（sRGB）になって 1 回の Undo で戻る
+    h.get_by_label("RGB8").click();
+    h.run();
+    let at = kind_menu_row(&h, "sRGB8").center();
+    click(&mut h, at);
+    let after = h.state().state.doc.channel_info(tint).cloned().unwrap();
+    assert_eq!(after.kind, ChannelKind::Color);
+    assert_eq!(after.color_space, ColorSpace::Srgb);
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    apply(&mut h, Action::Undo);
+    assert_eq!(h.state().state.doc.channel_info(tint).cloned(), before);
+}

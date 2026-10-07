@@ -269,7 +269,7 @@ mod tests {
         let pose = bent(&rig);
         let tri = posed(&rig, &pose);
         let refit = g.reposition(tri.clone(), 2, BvhUpdate::Refit).unwrap();
-        // 曲げた右の前腕の三角形（UV の島は 2 番目）の真ん中へ、面の法線の向きの外から撃つ
+        // 曲げた右の前腕の三角形（UV アイランドは 2 番目）の真ん中へ、面の法線の向きの外から撃つ
         let arm = &rig.meshes()[1];
         assert_eq!(arm.mesh.name, "右腕");
         let first = rig.meshes()[0].mesh.triangle_count();

@@ -1,4 +1,5 @@
 //! カラーセット・履歴・中間色の専用タブ。
+use crate::notice::Source;
 use crate::{
     colorsets::{self, Edit, Error, Palette, Swatch},
     state::AppState,
@@ -8,7 +9,7 @@ use egui::{vec2, Color32, Rect, Response, Sense, Ui, WidgetInfo, WidgetType};
 
 fn report(app: &mut AppState, result: Result<(), Error>) {
     if let Err(e) = result {
-        app.message = e.message(app.lang);
+        app.fail(Source::Color, e.message(app.lang));
     }
 }
 fn swatch(ui: &mut Ui, color: &Swatch, size: f32, selected: bool) -> Response {
@@ -144,7 +145,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         ))
                         .clicked()
                     {
-                        // 透明色を含む場合は保存先の窓を開く前に理由を返す。
+                        // 透明色を含む場合は保存先のウィンドウを開く前に理由を返す。
                         match colorsets::format::write_gpl(app.colorsets.palette()) {
                             Err(e) => report(app, Err(e)),
                             Ok(_) => {

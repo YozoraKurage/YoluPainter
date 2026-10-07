@@ -14,7 +14,7 @@ fn harness(lang: Lang) -> Harness<'static, AppState> {
                 .unwrap();
         }
     }
-    app.canvas_rect = Some(Rect::from_min_size(pos2(400.0, 20.0), vec2(600.0, 400.0)));
+    app.ui.canvas_rect = Some(Rect::from_min_size(pos2(400.0, 20.0), vec2(600.0, 400.0)));
     app.view.zoom = 3.0;
     app.view.angle = 30.0;
     let mut ready = false;
@@ -68,7 +68,7 @@ fn navigator_buttons_and_languages() {
         let app = h.state();
         assert!(
             (app.view
-                .view(app.canvas_rect.unwrap(), 256, 128)
+                .view(app.ui.canvas_rect.unwrap(), 256, 128)
                 .pixel_size()
                 - 1.0)
                 .abs()
@@ -98,7 +98,7 @@ fn navigator_click_and_drag_move_the_view() {
     pointer(&mut h, p, true);
     pointer(&mut h, p, false);
     let app = h.state();
-    let viewport = app.canvas_rect.unwrap();
+    let viewport = app.ui.canvas_rect.unwrap();
     let c = app
         .view
         .view(viewport, 256, 128)
@@ -243,7 +243,7 @@ fn review_zoom_numbers_are_percentages_in_both_languages() {
             let expected = if text == "50%" { 0.5 } else { 1.0 };
             let actual = app
                 .view
-                .view(app.canvas_rect.unwrap(), 256, 128)
+                .view(app.ui.canvas_rect.unwrap(), 256, 128)
                 .pixel_size();
             assert!(
                 (actual - expected).abs() < 1e-4,
@@ -270,7 +270,7 @@ fn review_click_with_press_and_release_in_one_frame_moves_the_view() {
     }
     h.run();
     let app = h.state();
-    let rect = app.canvas_rect.unwrap();
+    let rect = app.ui.canvas_rect.unwrap();
     let c = app.view.view(rect, 256, 128).to_canvas(rect.center());
     assert!(
         (c.0 - 20.0).abs() < 0.001 && (c.1 - 20.0).abs() < 0.001,

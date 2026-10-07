@@ -6,6 +6,10 @@
 //!
 //! Unity 版の `TexturePadding`（`Runtime/Core/TexturePadding.cs`）と同じ結果を、並列で計算する。結果は並列の度合い（スレッド数・
 //! 分け方）に依らない: 覆いは三角形ごとの重なりの OR で、塗り広げは段ごとに前の段までの結果だけを読む。
+//!
+//! 変わった所だけを塗り広げ直す口（[`Rings`]）: 段の地図（各テクセルを埋める段）を覆いから 1 度だけ作っておき、矩形 1 つを、その周りを
+//! 段数だけ広げた入力から塗り広げる（[`Rings::dilate_region`]）。段 k のテクセルの色は、距離 k 以内のテクセルだけで決まるので、矩形の中は
+//! 画像全体を [`dilate`] したときと同じ値になる（3D ビューの表示の写しが、描いたタイルの周りだけを塗り広げ直すのに使う）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -13,6 +17,7 @@ use rayon::prelude::*;
 
 use crate::export::ExportError;
 use crate::glam::DVec2;
+use crate::Rect;
 
 /// 塗り広げの届く範囲。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,6 +410,233 @@ pub fn dilate_tuned(
     Ok(output)
 }
 
+/// [`Rings`] が持てる段数の上限（段を 1 テクセル 1 バイトで持つ）。
+pub const MAX_RING_REACH: u32 = 254;
+
+/// 段の地図: [`dilate`] が各テクセルを埋める段（`keep` から 8 近傍で 1 段ずつ広げた距離）を、`reach` 段まで持つ。
+/// [`Rings::dilate_region`] が、変わった矩形の周りだけを塗り広げ直すのに使う（画像全体の段を毎回数え直さない）。
+/// 1 テクセル 1 バイト（[`Rings::bytes`]）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rings {
+    width: u32,
+    height: u32,
+    reach: u32,
+    /// 0: 届かない（元のまま）、1: 残すテクセル、k + 1: 段 k で埋める。
+    step: Vec<u8>,
+}
+
+impl Rings {
+    /// 覆い（`keep`、`[y * width + x]`）から `reach` 段までの地図を作る（[`dilate`] の段と同じ数え方。`keep` が 1 つも無ければ全部 0）。
+    /// `reach` は 0〜[`MAX_RING_REACH`]。
+    pub fn new(width: u32, height: u32, keep: &[bool], reach: u32) -> Result<Rings, ExportError> {
+        if width == 0 || height == 0 {
+            return Err(ExportError::InvalidArgument("大きさ"));
+        }
+        let n = width as u64 * height as u64;
+        if keep.len() as u64 != n {
+            return Err(ExportError::InvalidArgument("覆いは幅 × 高さ"));
+        }
+        if n > u32::MAX as u64 {
+            return Err(ExportError::InvalidArgument("画素数が多すぎる"));
+        }
+        if reach > MAX_RING_REACH {
+            return Err(ExportError::InvalidArgument("塗り広げの段数"));
+        }
+        let (w, h, n) = (width as usize, height as usize, n as usize);
+        let mut step: Vec<u8> = keep.iter().map(|&k| u8::from(k)).collect();
+        let mut frontier: Vec<u32> = (0..n)
+            .into_par_iter()
+            .filter(|&i| {
+                keep[i] && {
+                    let (around, count) = neighbors(i, w, h);
+                    around[..count].iter().any(|&j| step[j] == 0)
+                }
+            })
+            .map(|i| i as u32)
+            .collect();
+        let mut next: Vec<u32> = Vec::new();
+        for ring in 1..=reach {
+            if frontier.is_empty() {
+                break;
+            }
+            next.clear();
+            for &f in &frontier {
+                let (around, count) = neighbors(f as usize, w, h);
+                for &j in &around[..count] {
+                    if step[j] == 0 {
+                        step[j] = (ring + 1) as u8;
+                        next.push(j as u32);
+                    }
+                }
+            }
+            std::mem::swap(&mut frontier, &mut next);
+        }
+        Ok(Rings {
+            width,
+            height,
+            reach,
+            step,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// 段数（[`Reach::Texels`] の値）。
+    pub fn reach(&self) -> u32 {
+        self.reach
+    }
+
+    /// 持っているバイト数（1 テクセル 1 バイト）。
+    pub fn bytes(&self) -> usize {
+        self.step.len()
+    }
+
+    /// 矩形（画像の中に切る）の中に、覆いの中のテクセルと、塗り広げるテクセル（段 1〜`reach`）があるか。変わった矩形の塗り広げ直しを
+    /// 要る所だけにするのに使う: 覆いの中のテクセルが無い矩形の変化は、ほかのテクセルの塗り広げの色に届かない。
+    pub fn kinds_in(&self, rect: Rect) -> (bool, bool) {
+        let x1 = (rect.x as u64 + rect.width as u64).min(self.width as u64) as usize;
+        let y1 = (rect.y as u64 + rect.height as u64).min(self.height as u64) as usize;
+        let (x0, y0) = (rect.x as usize, rect.y as usize);
+        let (mut keep, mut filled) = (false, false);
+        for y in y0..y1.max(y0) {
+            let row = &self.step[y * self.width as usize..(y + 1) * self.width as usize];
+            for &s in &row[x0.min(x1)..x1] {
+                keep |= s == 1;
+                filled |= s >= 2;
+            }
+            if keep && filled {
+                break;
+            }
+        }
+        (keep, filled)
+    }
+
+    /// テクセルを埋める段（0: 覆いの中、k: 段 k で埋める、None: `reach` 段では届かない）。
+    pub fn ring(&self, x: u32, y: u32) -> Option<u32> {
+        match self.step[(y * self.width + x) as usize] {
+            0 => None,
+            s => Some(s as u32 - 1),
+        }
+    }
+
+    /// `pixels`（straight RGBA8、行は下から上）は画像の中の矩形 `outer` の中身。そのうち `inner` の中のテクセルを、画像全体を
+    /// [`dilate`]（`Reach::Texels(self.reach())`）したときと同じ値に書き換える。`inner` を `reach` 段広げた矩形（画像の中に切ったもの）が
+    /// `outer` に入っていること（入っていなければ断る）: 段 k のテクセルの色は距離 k 以内のテクセルだけで決まるので、その範囲の入力が
+    /// あれば同じ値になる。`outer` の中の `inner` の外は途中の値（近傍が `outer` の外にあると違う値）で、使わない。
+    pub fn dilate_region(
+        &self,
+        pixels: &mut [u8],
+        outer: Rect,
+        inner: Rect,
+    ) -> Result<(), ExportError> {
+        let inside = |r: &Rect, x0: u32, y0: u32, x1: u32, y1: u32| {
+            r.x >= x0
+                && r.y >= y0
+                && r.x.checked_add(r.width).is_some_and(|e| e <= x1)
+                && r.y.checked_add(r.height).is_some_and(|e| e <= y1)
+        };
+        if !inside(&outer, 0, 0, self.width, self.height) {
+            return Err(ExportError::InvalidArgument("外の矩形は画像の中"));
+        }
+        if pixels.len() as u64 != outer.width as u64 * outer.height as u64 * 4 {
+            return Err(ExportError::InvalidArgument(
+                "画素は外の矩形の幅 × 高さ × 4 バイト",
+            ));
+        }
+        if inner.is_empty() {
+            return Ok(());
+        }
+        let need = Rect::new(
+            inner.x.saturating_sub(self.reach),
+            inner.y.saturating_sub(self.reach),
+            0,
+            0,
+        );
+        let need_x1 =
+            (inner.x as u64 + inner.width as u64 + self.reach as u64).min(self.width as u64);
+        let need_y1 =
+            (inner.y as u64 + inner.height as u64 + self.reach as u64).min(self.height as u64);
+        let need = Rect::new(
+            need.x,
+            need.y,
+            (need_x1 - need.x as u64) as u32,
+            (need_y1 - need.y as u64) as u32,
+        );
+        if !inside(
+            &need,
+            outer.x,
+            outer.y,
+            outer.x + outer.width,
+            outer.y + outer.height,
+        ) {
+            return Err(ExportError::InvalidArgument(
+                "外の矩形は、内の矩形を段数だけ広げた範囲を含む",
+            ));
+        }
+        if self.reach == 0 {
+            return Ok(());
+        }
+        // 外の矩形の中のテクセルを段ごとに並べる（段 1 から順に、前の段までの値だけを読んで埋める）
+        let (ow, oh) = (outer.width as usize, outer.height as usize);
+        let step_at = |lx: usize, ly: usize| -> u8 {
+            self.step[(outer.y as usize + ly) * self.width as usize + outer.x as usize + lx]
+        };
+        let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); self.reach as usize];
+        for ly in 0..oh {
+            for lx in 0..ow {
+                let s = step_at(lx, ly);
+                if s >= 2 {
+                    buckets[s as usize - 2].push((ly * ow + lx) as u32);
+                }
+            }
+        }
+        let color = |c: u32, s: u8, pixels: &[u8]| -> u32 {
+            let (ly, lx) = ((c as usize) / ow, (c as usize) % ow);
+            let mut around = [0usize; 8];
+            let mut count = 0;
+            for ny in ly.saturating_sub(1)..=(ly + 1).min(oh - 1) {
+                for nx in lx.saturating_sub(1)..=(lx + 1).min(ow - 1) {
+                    if (nx, ny) == (lx, ly) {
+                        continue;
+                    }
+                    let t = step_at(nx, ny);
+                    if t > 0 && t < s {
+                        around[count] = ny * ow + nx;
+                        count += 1;
+                    }
+                }
+            }
+            mix(around[..count].iter().map(|&j| &pixels[j * 4..j * 4 + 4]))
+        };
+        let mut colors: Vec<u32> = Vec::new();
+        for (k, bucket) in buckets.iter().enumerate() {
+            let s = (k + 2) as u8;
+            colors.clear();
+            if bucket.len() >= Tuning::DEFAULT.parallel_min {
+                let read: &[u8] = pixels;
+                bucket
+                    .par_iter()
+                    .with_min_len(4096)
+                    .map(|&c| color(c, s, read))
+                    .collect_into_vec(&mut colors);
+            } else {
+                colors.extend(bucket.iter().map(|&c| color(c, s, pixels)));
+            }
+            for (&c, v) in bucket.iter().zip(&colors) {
+                let at = c as usize * 4;
+                pixels[at..at + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
 /// 8 近傍（画像の中だけ）の添え字と、その数。内側のテクセルは境界の判定なしで引く。
 #[inline(always)]
 fn neighbors(i: usize, w: usize, h: usize) -> ([usize; 8], usize) {
@@ -442,15 +674,21 @@ fn neighbors(i: usize, w: usize, h: usize) -> ([usize; 8], usize) {
 /// 埋まった（正の段の）8 近傍の色の平均。色はアルファで重みを付ける（透明な近傍の色に引っ張られない）。全部が透明なら色の平均。
 /// R | G << 8 | B << 16 | A << 24。
 fn average(c: usize, w: usize, h: usize, step: &[i32], image: &[u8]) -> u32 {
+    let (around, around_count) = neighbors(c, w, h);
+    mix(around[..around_count]
+        .iter()
+        .filter(|&&j| step[j] > 0)
+        .map(|&j| &image[j * 4..j * 4 + 4]))
+}
+
+/// 近傍の画素（straight RGBA8）の平均（[`average`] の式。色はアルファで重みを付け、全部が透明なら色の平均。どちらも四捨五入）。
+/// 近傍が無ければ 0。R | G << 8 | B << 16 | A << 24。
+#[inline]
+fn mix<'a>(around: impl Iterator<Item = &'a [u8]>) -> u32 {
     let (mut r, mut g, mut b, mut a) = (0u64, 0u64, 0u64, 0u64);
     let (mut rw, mut gw, mut bw) = (0u64, 0u64, 0u64);
     let mut count = 0u64;
-    let (around, around_count) = neighbors(c, w, h);
-    for &j in &around[..around_count] {
-        if step[j] <= 0 {
-            continue;
-        }
-        let px = &image[j * 4..j * 4 + 4];
+    for px in around {
         let alpha = px[3] as u64;
         r += px[0] as u64;
         g += px[1] as u64;

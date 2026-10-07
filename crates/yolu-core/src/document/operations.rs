@@ -6,10 +6,10 @@ use crate::{CoreError, Layer, LayerId, NormalSettings, TileCoord};
 /// 交換が合成を変え得る範囲。変化の記録（`changed_tiles`）の印を、交換の前後の両方で付ける範囲を決める。
 #[derive(Clone, Debug)]
 pub(crate) enum Dirty {
-    /// 全層（寸法が変わるなど、どの層も変わり得る）。
+    /// 全レイヤー（寸法が変わるなど、どのレイヤーも変わり得る）。
     All,
-    /// この層（グループなら中身ごと）。空なら合成は変わらない（ロックだけの変更）。層の出入りや並びで下地が変わるクリッピングの
-    /// 組は、層が 1 つでもあれば交換のあとで印を付ける（単独の構造編集と同じ）。
+    /// このレイヤー（グループなら中身ごと）。空なら合成は変わらない（ロックだけの変更）。レイヤーの出入りや並びで下地が変わるクリッピングの
+    /// 組は、レイヤーが 1 つでもあれば交換のあとで印を付ける（単独の構造編集と同じ）。
     Layers(Vec<LayerId>),
 }
 impl Dirty {
@@ -25,7 +25,7 @@ pub(crate) struct State {
     height: u32,
     normal: NormalSettings,
     selection: Option<crate::SelectionMask>,
-    /// 名前を付けて残した選択範囲（画布の大きさを変える操作が作り直す。ほかの操作は文書のものをそのまま写している）。
+    /// 名前を付けて残した選択範囲（キャンバスの大きさを変える操作が作り直す。ほかの操作は文書のものをそのまま写している）。
     saved_selections: super::saved_selections::SavedList,
     dirty: Dirty,
 }
@@ -49,17 +49,19 @@ impl State {
             // 始まらず、準備用の文書では始めない）
             material: _,
             triangle_fill: _,
-            // 交換しない: 手動の ID 色（塊の番号と色の結び付け）は画素でも層でもなく、層の操作・変形・サイズ変更では変わらない
+            // 交換しない: 手動の ID 色（塊の番号と色の結び付け）は画素でもレイヤーでもなく、レイヤーの操作・変形・サイズ変更では変わらない
             // （C# の Resampled は別の文書を返すので持ち越さないが、Rust は同じ文書の中で交換するので値がそのまま残る）
             id_colors: _,
-            // 交換しない: 見た目の設定は画素でも層でもなく、層の操作・変形・サイズ変更では変わらない（専用の段で変える）。受けた見た目と
+            // 交換しない: ベイクの優先（三角形の番号とモデルの結び付け）も同じ。画素でもレイヤーでもない
+            bake_priority: _,
+            // 交換しない: 見た目の設定は画素でもレイヤーでもなく、レイヤーの操作・変形・サイズ変更では変わらない（専用の段で変える）。受けた見た目と
             // 描く見た目も同じ（受け取りは段の外）
             look: _,
             received_look: _,
             drawn_look: _,
             look_serial: _,
-            // 交換しない: 効果の入力・予算・評価のキャッシュ・元画素の時計は本物の文書のもの。交換で入る層の出力は、`swap_state` が前後の
-            // 両方で層に印を付けて作り直させる（準備用の文書の時計は本物と別の数え方なので、持ち込むと別の内容に同じ鍵が付き得る）
+            // 交換しない: 効果の入力・予算・評価のキャッシュ・元画素の時計は本物の文書のもの。交換で入るレイヤーの出力は、`swap_state` が前後の
+            // 両方でレイヤーに印を付けて作り直させる（準備用の文書の時計は本物と別の数え方なので、持ち込むと別の内容に同じ鍵が付き得る）
             effects: _,
             // 交換しない: 準備用の文書の履歴・進行中のストローク・変化の記録・予算は本物の文書のもの
             undo: _,
@@ -79,6 +81,8 @@ impl State {
             trimmed_bytes: _,
             // 交換しない: `batch` の編集の中かの印は本物の文書のもの（準備用の文書は自分の履歴を作るだけ）
             batching: _,
+            // 交換しない: 継ぎ目の設定は専用の段で変える（準備の操作は変えない）
+            filter_seams: _,
         } = doc;
         Self {
             layers: std::mem::take(layers),
@@ -92,7 +96,7 @@ impl State {
     }
 }
 impl Document {
-    /// 層・チャンネル・選択範囲などを写した準備用の文書。タイルは共有し、履歴の予算は無制限（本物へ交換するときに確かめる）。
+    /// レイヤー・チャンネル・選択範囲などを写した準備用の文書。タイルは共有し、履歴の予算は無制限（本物へ交換するときに確かめる）。
     pub(super) fn edit_copy(&self) -> Result<Document, CoreError> {
         // 項目を全部挙げる（`..` を使わない）: `Document` に項目が増えたら、準備用へ写すか、写さない理由を書くかをここで決める。
         // 準備で変わる項目は `State::take` でも交換するか決める。
@@ -109,6 +113,8 @@ impl Document {
             source_budget,
             stroke_budget,
             id_counter,
+            // 写す: 準備の中で合成して前後を比べるので、本物と同じく継ぎ目をまたいで評価する
+            filter_seams,
             // 効果は入力と予算・ブロックの大きさだけ写す（下で）。写さない: 評価のキャッシュ・元画素の時計・Anchor の解決の署名。準備用の
             // 文書は使い捨てで、時計は 0 から数え直す。本物のキャッシュや時計を共有すると、準備の中で進んだ時計の値が本物の別の編集と
             // 重なったとき、別の内容に同じ鍵が付いて古い出力を新しいものと取り違える
@@ -118,6 +124,8 @@ impl Document {
             material: _,
             triangle_fill: _,
             id_colors: _,
+            // 写さない: ベイクの優先（準備の操作は読まず、交換もしない）
+            bake_priority: _,
             // 写さない: 見た目の設定と受けた見た目（準備の操作は読まず、交換もしない）
             look: _,
             received_look: _,
@@ -153,14 +161,17 @@ impl Document {
         d.stroke_budget = *stroke_budget;
         d.undo_budget = u64::MAX;
         d.id_counter = *id_counter;
+        d.filter_seams = *filter_seams;
         // 準備の中で段を足す・合成して前後を比べる（結合・変形・大きさの変更）ので、画像・メッシュマップ・モデルのルートが無いと、
         // 本物では効く Generator や画像が入力のまま通り、本物と違う見た目で比べてしまう。予算は、準備の中の段の検査（到達半径・
         // 作業メモリ）を本物と同じ決まりにする
         d.effects.inputs = effects.inputs.clone();
         d.effects.inputs_revision = effects.inputs_revision;
+        d.effects.topology_revision = effects.topology_revision;
         d.effects.working_budget = effects.working_budget;
         d.effects.cache_budget = effects.cache_budget;
         d.effects.image_cache_budget = effects.image_cache_budget;
+        d.effects.seam_budget = effects.seam_budget;
         d.effects.block_pixels = effects.block_pixels;
         Ok(d)
     }
@@ -191,15 +202,15 @@ impl Document {
         let incoming: u64 = state.layers.iter().map(Layer::allocated_bytes).sum();
         let current = self.allocated_bytes();
         self.ensure_source_growth(incoming.saturating_sub(current))?;
-        // 交換の前は文書にある側と段が持つ側（これから文書へ入る層）、後は入れ替わった側に印を付ける。どちらかの時点で
-        // 文書の中にある層は、グループの中身も含めて印が付く。
+        // 交換の前は文書にある側と段が持つ側（これから文書へ入るレイヤー）、後は入れ替わった側に印を付ける。どちらかの時点で
+        // 文書の中にあるレイヤーは、グループの中身も含めて印が付く。
         self.mark_dirty(&state.dirty, &state.layers);
         let resized = self.width != state.width || self.height != state.height;
         std::mem::swap(&mut self.layers, &mut state.layers);
         std::mem::swap(&mut self.width, &mut state.width);
         std::mem::swap(&mut self.height, &mut state.height);
         if resized {
-            // 画布の大きさが変わると、元の画素の無い層（Generator・塗りつぶし）の出力の鍵（時計）は変わらないまま内容が変わる:
+            // キャンバスの大きさが変わると、元の画素の無いレイヤー（Generator・塗りつぶし）の出力の鍵（時計）は変わらないまま内容が変わる:
             // 評価済みのものを全部捨てる
             self.effects.generation += 1;
             self.release_effect_cache();
@@ -214,12 +225,12 @@ impl Document {
         }
         Ok(())
     }
-    /// 交換で画素が変わった層の、元画素の変化を覚える（評価のキャッシュの鍵）。`mark_dirty` の印は合成が変わり得るタイルの記録
+    /// 交換で画素が変わったレイヤーの、元画素の変化を覚える（評価のキャッシュの鍵）。`mark_dirty` の印は合成が変わり得るタイルの記録
     /// （`changed_tiles`）で、キャッシュの鍵（元画素のタイルごとの時計）は画素の変化の道（`mark_target_tile`）でしか進まない。変形や
-    /// 結合のように、同じ ID の層の画素が交換で入れ替わると、時計が進まず古い評価の出力を新しい画素のものとして返してしまう。
-    /// 交換の前後（`spare` は交換で外へ出た側の層）で同じ ID の層のタイルを比べ、**中身が違うタイルだけ**進める。複数選択の表示の
+    /// 結合のように、同じ ID のレイヤーの画素が交換で入れ替わると、時計が進まず古い評価の出力を新しい画素のものとして返してしまう。
+    /// 交換の前後（`spare` は交換で外へ出た側のレイヤー）で同じ ID のレイヤーのタイルを比べ、**中身が違うタイルだけ**進める。複数選択の表示の
     /// 切り替え・並べ替え・複製・削除のように画素を変えない交換では進まず、評価したぼかしなどのキャッシュが生き残る（共有している
-    /// タイルは `Tile::same` が安く同じと答える）。文書から無くなった層には何も足さない（戻すときは、前に層が無い側として全部進む）。
+    /// タイルは `Tile::same` が安く同じと答える）。文書から無くなったレイヤーには何も足さない（戻すときは、前にレイヤーが無い側として全部進む）。
     fn note_swapped_sources(&mut self, dirty: &Dirty, spare: &[Layer]) {
         let parents: Vec<(LayerId, Option<LayerId>)> = self
             .layers

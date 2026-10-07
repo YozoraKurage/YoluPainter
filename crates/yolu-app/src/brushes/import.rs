@@ -10,8 +10,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use yolu_io::brushes::{self, BrushImportError, Unrepresented};
 
@@ -19,8 +18,12 @@ use super::store::{BrushStore, StoreError};
 use super::{
     clean_name, gaps, BrushAction, BrushKey, Entry, Group, IdSource, ImportMeta, UserBrush,
 };
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
-use crate::state::{AppState, DialogRequest, MAX_RADIUS};
+use crate::notice::Source;
+use crate::state::Tool;
+use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
+use crate::windows::CloseJob;
 
 /// 仕事の途中経過（進み具合の札が読む）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,8 +50,7 @@ pub struct ImportState {
 }
 
 struct Job {
-    rx: Receiver<Msg>,
-    cancel: Arc<AtomicBool>,
+    worker: Worker<Msg>,
     canceling: bool,
     file: String,
     index: usize,
@@ -237,14 +239,6 @@ fn run(mut work: Work, cancel: &AtomicBool, tx: &Sender<Msg>) {
     let _ = tx.send(Msg::Finished);
 }
 
-/// 取り込めない理由の文（言語ごと）。
-pub fn describe_error(lang: Lang, error: &BrushImportError) -> String {
-    match error {
-        BrushImportError::Io(e) => lang.file_error(e),
-        other => lang.pick(other.to_string(), other.english()),
-    }
-}
-
 impl ImportState {
     /// 仕事が走っているか。
     pub fn is_busy(&self) -> bool {
@@ -261,8 +255,40 @@ impl ImportState {
     }
 }
 
+/// ブラシの取り込み（札・閉じる前の確かめ・止める）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.brushes.import.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}{}",
+                lang.pick("ブラシを取り込み中", "Importing brushes"),
+                p.file,
+                if p.total > 1 {
+                    format!(" ({}/{})", p.index, p.total)
+                } else {
+                    String::new()
+                }
+            ),
+            fraction: None,
+            cancel: Some(Action::Brush(super::BrushAction::ImportCancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| {
+        app.brushes
+            .import
+            .is_busy()
+            .then_some(CloseJob::BrushImport)
+    }),
+    cancel: Some(|app| app.apply(Action::Brush(super::BrushAction::ImportCancel))),
+    poll_while_stopping: Some(AppState::poll_brush_import),
+    ..JobSpec::new("brush-import", |app| app.brushes.import.is_busy())
+};
+
 impl AppState {
-    /// 取り込む窓を開く頼み。
+    /// 取り込むウィンドウを開く頼み。
     pub(super) fn brush_import_dialog(&mut self) {
         self.dialog_request = Some(DialogRequest::ImportBrushes);
     }
@@ -281,11 +307,19 @@ impl AppState {
             self.brush_refuse_while_importing();
             return;
         }
+        // 取り込んだブラシは並びに置くので、並びを変えられないときは断る
+        if let Some(r) = self.toolset.set.lock_refusal() {
+            self.toolset_refuse(r);
+            return;
+        }
         let user_count = self.brushes.lib.user_count();
         if user_count >= super::MAX_USER_BRUSHES {
-            self.message = lang.pick(
-                format!("ブラシは {} 個までです。", super::MAX_USER_BRUSHES),
-                format!("At most {} brushes.", super::MAX_USER_BRUSHES),
+            self.refuse(
+                Source::Brush,
+                lang.pick(
+                    format!("ブラシは {} 個までです。", super::MAX_USER_BRUSHES),
+                    format!("At most {} brushes.", super::MAX_USER_BRUSHES),
+                ),
             );
             return;
         }
@@ -309,24 +343,32 @@ impl AppState {
             park_after,
             placed: 0,
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-brush-import".into())
-            .spawn(move || run(work, &flag, &tx));
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+        let spawned = Worker::spawn("yolu-brush-import", move |tx, cancel| {
+            run(work, cancel.flag(), &tx)
+        });
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.fail(
+                    Source::Brush,
+                    lang.with_reason(
+                        lang.pick("ブラシを取り込めません", "Cannot import the brushes"),
+                        lang.thread_error(&e),
+                    ),
+                );
+                return;
+            }
+        };
         let first = paths.first().map(|p| file_name(p)).unwrap_or_default();
-        self.message = lang.pick(
-            format!("ブラシを取り込み中: {first}"),
-            format!("Importing brushes: {first}"),
+        self.info(
+            Source::Brush,
+            lang.pick(
+                format!("ブラシを取り込み中: {first}"),
+                format!("Importing brushes: {first}"),
+            ),
         );
         self.brushes.import.job = Some(Job {
-            rx,
-            cancel,
+            worker,
             canceling: false,
             file: first,
             index: 1,
@@ -339,11 +381,12 @@ impl AppState {
     pub(super) fn brush_import_cancel(&mut self) {
         let lang = self.lang;
         if let Some(job) = &mut self.brushes.import.job {
-            job.cancel.store(true, Ordering::Relaxed);
+            job.worker.cancel();
             job.canceling = true;
-            self.message = lang
-                .pick("取り込みを取り消しています…", "Canceling the import…")
-                .into();
+            self.info(
+                Source::Brush,
+                lang.pick("取り込みを取り消しています…", "Canceling the import…"),
+            );
         }
     }
 
@@ -353,11 +396,11 @@ impl AppState {
             let Some(job) = &mut self.brushes.import.job else {
                 return;
             };
-            let msg = match job.rx.try_recv() {
-                Ok(m) => m,
-                Err(TryRecvError::Empty) => return,
+            let msg = match job.worker.poll() {
+                Polled::Message(m) => m,
+                Polled::Empty => return,
                 // 仕事が知らせずに止まった（スレッドの異常）。届いた分で終えて、止まったことを知らせる
-                Err(TryRecvError::Disconnected) => {
+                Polled::Lost => {
                     job.report.stopped = true;
                     Msg::Finished
                 }
@@ -390,32 +433,59 @@ impl AppState {
                 if loaded.save_error.is_some() {
                     job.report.save_error = loaded.save_error;
                 }
-                let lib = &mut self.brushes.lib;
                 for user in loaded.brushes {
                     let key = BrushKey::User(user.id);
-                    // 取り込んだブラシは「取り込み」のグループの後ろ（無ければ一覧の最後）
-                    let at = lib
-                        .entries
-                        .iter()
-                        .rposition(|e| e.group == Group::Imported)
-                        .map_or(lib.entries.len(), |i| i + 1);
-                    lib.entries.insert(
-                        at,
-                        Entry {
-                            key,
-                            name: user.name,
-                            group: Group::Imported,
-                            baseline: super::canonical(&user.brush),
-                            edited: None,
-                            import: user.import,
-                            assist: user.assist,
-                        },
-                    );
+                    self.brushes.lib.entries.push(Entry {
+                        key,
+                        name: user.name,
+                        group: Group::Imported,
+                        baseline: super::canonical(&user.brush),
+                        edited: None,
+                        import: user.import,
+                        assist: user.assist,
+                    });
+                    // 取り込んだブラシは、今のブラシのツールの「取り込み」のグループの後ろ（無ければそのツールの最後に作る。いっぱいなら
+                    // 次の「取り込み」のグループを作る。どこにも置けなければファイルだけ残り、「＋」のウィンドウから戻せる）
+                    if let Some(group) = self.brush_import_group() {
+                        let _ = self.toolset.set.insert_brush(key, group, None);
+                    }
+                    let Some(job) = &mut self.brushes.import.job else {
+                        return;
+                    };
                     job.report.imported += 1;
                     job.report.first.get_or_insert(key);
                 }
             }
         }
+    }
+
+    /// 取り込んだブラシを置くグループ。今のブラシのツール（今のツールがブラシのツールならそれ、そうでなければ今のブラシがあるブラシの
+    /// ツール、それも無ければ最初のブラシのツール）の「取り込み」のグループで、空きのある最初の物。無ければ、そのツールの最後に作る
+    /// （いっぱいなら次を作る）。消しゴムのツールの中のグループは選ばない（取り込んだブラシが、描かずに消す筆になってしまうため）。
+    /// ツールのグループが上限なら None（ファイルだけ残り、「＋」のウィンドウから戻せる）。
+    fn brush_import_group(&mut self) -> Option<crate::toolset::GroupId> {
+        let set = &self.toolset.set;
+        let is_brush_tool =
+            |id: &crate::toolset::SlotId| set.slot(*id).is_some_and(|s| s.tool == Tool::Brush);
+        let slot = set
+            .active_slot()
+            .map(|s| s.id)
+            .filter(is_brush_tool)
+            .or_else(|| {
+                set.slot_of(self.brushes.lib.current())
+                    .filter(is_brush_tool)
+            })
+            .or_else(|| set.first_of(Tool::Brush))?;
+        let room = set
+            .slot(slot)?
+            .groups
+            .iter()
+            .find(|g| g.builtin == Some(Group::Imported) && g.has_room())
+            .map(|g| g.id);
+        if room.is_some() {
+            return room;
+        }
+        self.toolset.set.add_imported_group(slot)
     }
 
     /// 仕事の終わり: 並びを書き、最初のブラシに替え、結果を状態の帯へ。
@@ -427,9 +497,9 @@ impl AppState {
         let report = job.report;
         let mut order_error = None;
         if report.imported > 0 {
-            if !self.brush_persist_order() {
-                // 知らせは下で組み直すので、並びを保存できなかった理由は今の知らせから取っておく
-                order_error = Some(std::mem::take(&mut self.message));
+            // 並びを保存できなかった理由は、取り込みの知らせに添えて 1 回だけ知らせる
+            if let Err(text) = self.toolset_save() {
+                order_error = Some(text);
             }
             if let Some(first) = report.first {
                 if !self.is_stroking() {
@@ -438,15 +508,17 @@ impl AppState {
             }
         }
         let mut text = Self::brush_import_message(lang, &report, job.canceling);
+        let mut kind = import_kind(&report);
         if let Some(order) = order_error.filter(|o| !o.is_empty()) {
             text.push_str(&lang.pick(format!("。{order}"), format!(". {order}")));
+            kind = kind.worse(crate::notice::Kind::Warning);
         }
-        self.message = text;
+        self.notify(kind, Source::Brush, text);
     }
 
-    /// 取り込みが終わったとき、取り込んだ最初のブラシに替える。道具は、描く道具（ブラシ・消しゴム）のときだけ従来どおりブラシに
-    /// 合わせて替える。ほかの道具（選択・バケツなど）は、裏の仕事の終わりという利用者の操作でない出来事で奪わない
-    /// （選択範囲の途中の形が消えるため）。そのときはブラシだけ替え、道具をブラシへ戻したときにそのブラシで描く。
+    /// 取り込みが終わったとき、取り込んだ最初のブラシに替える。ツールは、描くツール（ブラシ・消しゴム）のときだけ従来どおりブラシに
+    /// 合わせて替える。ほかのツール（選択・バケツなど）は、裏の仕事の終わりという利用者の操作でない出来事で奪わない
+    /// （選択範囲の途中の形が消えるため）。そのときはブラシだけ替え、ツールをブラシへ戻したときにそのブラシで描く。
     fn brush_import_select(&mut self, key: BrushKey) {
         if self.tool.paints() {
             self.brush_action(BrushAction::Select(key));
@@ -457,27 +529,30 @@ impl AppState {
     }
 
     fn brush_import_message(lang: Lang, r: &Report, canceled: bool) -> String {
-        let reason = |e: &BrushImportError| describe_error(lang, e);
+        let reason = |e: &BrushImportError| crate::lang::brush_import_error(lang, e);
         // 1 つのファイルが読めなかっただけなら、その理由
         if r.imported == 0 && r.save_error.is_none() {
             if let Some((file, error)) = r.failed.first() {
+                let file = lang.quote(file);
                 if r.failed.len() == 1 {
-                    return lang.pick(
-                        format!("取り込めません: {file} — {}", reason(error)),
-                        format!("Cannot import: {file} — {}", reason(error)),
+                    return lang.with_reason(
+                        lang.pick(
+                            format!("{file}を取り込めません"),
+                            format!("Cannot import {file}"),
+                        ),
+                        reason(error),
                     );
                 }
+                let unreadable = lang.with_reason(
+                    lang.pick(format!("{file}は読めません"), format!("Cannot read {file}")),
+                    reason(error),
+                );
                 return lang.pick(
                     format!(
-                        "{} 個のファイルを取り込めません。{file} — {}",
-                        r.failed.len(),
-                        reason(error)
+                        "{} 個のファイルを取り込めません。{unreadable}",
+                        r.failed.len()
                     ),
-                    format!(
-                        "Cannot import {} files. {file} — {}",
-                        r.failed.len(),
-                        reason(error)
-                    ),
+                    format!("Cannot import {} files. {unreadable}", r.failed.len()),
                 );
             }
         }
@@ -489,9 +564,9 @@ impl AppState {
         }
         let mut text = if r.files <= 1 {
             lang.pick(
-                format!("ブラシを {n} 個取り込みました: {}", r.last_file),
+                format!("ブラシを {n} 個取り込みました（{}）", r.last_file),
                 format!(
-                    "Imported {n} brush{}: {}",
+                    "Imported {n} brush{} ({})",
                     if n == 1 { "" } else { "es" },
                     r.last_file
                 ),
@@ -526,10 +601,15 @@ impl AppState {
             ));
         }
         if let Some((file, error)) = r.failed.first() {
-            text.push_str(&lang.pick(
-                format!("。{file} は読めません — {}", reason(error)),
-                format!(". Cannot read {file} — {}", reason(error)),
-            ));
+            let unreadable = lang.with_reason(
+                lang.pick(
+                    format!("{}は読めません", lang.quote(file)),
+                    format!("Cannot read {}", lang.quote(file)),
+                ),
+                reason(error),
+            );
+            text.push_str(lang.pick("。", ". "));
+            text.push_str(unreadable.trim_end_matches(['。', '.']));
         }
         if r.capped {
             text.push_str(&lang.pick(
@@ -538,12 +618,29 @@ impl AppState {
             ));
         }
         if let Some(e) = &r.save_error {
-            text.push_str(&lang.pick(
-                format!("。保存できません: {}", e.describe(lang)),
-                format!(". Cannot save: {}", e.describe(lang)),
-            ));
+            let unsaved = lang.with_reason(
+                lang.pick("ブラシを保存できません", "Cannot save the brushes"),
+                e.describe(lang),
+            );
+            text.push_str(lang.pick("。", ". "));
+            text.push_str(unsaved.trim_end_matches(['。', '.']));
         }
         text
+    }
+}
+
+/// 取り込みの知らせの種類: 1 つも入らなかった失敗（読めない・止まった・保存できない）は失敗、入ったが読めない・止まった・上限・
+/// 保存できない物があれば注意、ほか（取り消しを含む）は済んだ知らせ。
+fn import_kind(r: &Report) -> crate::notice::Kind {
+    use crate::notice::Kind;
+    let problems =
+        r.stopped || r.skipped > 0 || !r.failed.is_empty() || r.capped || r.save_error.is_some();
+    if r.imported == 0 && problems {
+        Kind::Error
+    } else if problems {
+        Kind::Warning
+    } else {
+        Kind::Info
     }
 }
 

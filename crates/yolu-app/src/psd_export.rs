@@ -1,5 +1,5 @@
-//! PSD の書き出しの窓 2 つ: 書き出しの設定（方式・チャンネル）と、書く前の確かめ（焼く・丸める・落とすものを層の名前つきで並べる）。
-//! 窓には名前・状態・短い理由だけを書き、説明はツールチップに置く。何を焼くかの判断は `yolu_io::psd::plan_export`（ここは文にするだけ）。
+//! PSD の書き出しのウィンドウ 2 つ: 書き出しの設定（方式・チャンネル）と、書く前の確かめ（焼く・丸める・落とすものをレイヤーの名前つきで並べる）。
+//! ウィンドウには名前・状態・短い理由だけを書き、説明はツールチップに置く。何を焼くかの判断は `yolu_io::psd::plan_export`（ここは文にするだけ）。
 
 use egui::{pos2, vec2, Id, Key, Rect, Sense, Ui};
 use yolu_core::{AdjustmentType, BalanceRange, Channel, Document, ToneChannel};
@@ -18,7 +18,7 @@ use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
 use crate::windows::{show_list, Button, ListSpec, Reply, Row};
 
-/// 窓の名前（`windows::window_rect` で矩形を引く名前）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く名前）。
 pub const OPTIONS: &str = "psd-export";
 pub const CONFIRM: &str = "psd-bake";
 
@@ -26,7 +26,7 @@ const ROW_HEIGHT: f32 = 26.0;
 const MAX_ROWS: usize = 12;
 const FOOTER: f32 = 48.0;
 
-/// 窓の 1 行。
+/// ウィンドウの 1 行。
 enum Item {
     /// 区切りの名前（押せない）。
     Label(String),
@@ -36,9 +36,9 @@ enum Item {
     Channel(Channel, String, bool),
 }
 
-// ───────── 書き出しの設定の窓 ─────────
+// ───────── 書き出しの設定のウィンドウ ─────────
 
-/// 毎フレーム、開いている設定の窓を描き、押された操作を当てる。
+/// 毎フレーム、開いている設定のウィンドウを描き、押された操作を当てる。
 pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
     if !app.psd.options_open {
         return;
@@ -176,7 +176,7 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
 fn mode_tooltip(lang: Lang, mode: ExportMode) -> &'static str {
     match mode {
         ExportMode::Bake => lang.pick(
-            "層を残し、PSD に形の無いフィルター・ジェネレーター・画像・パスなどは、評価した画素にして書きます。書く前に、焼くものを一覧で確かめます",
+            "レイヤーを残し、PSD に形の無いフィルター・ジェネレーター・画像・パスなどは、評価した画素にして書きます。書く前に、焼くものを一覧で確かめます",
             "Keeps the layers. Filters, generators, images, paths and other features PSD has no form for are written as evaluated pixels. What changes is listed before writing",
         ),
         ExportMode::Flat => lang.pick(
@@ -237,9 +237,9 @@ fn radio(
     response.clicked()
 }
 
-// ───────── 書く前の確かめの窓 ─────────
+// ───────── 書く前の確認のウィンドウ ─────────
 
-/// 確かめの窓の 1 行目の文（焼く・丸める・落とすの数。短い状態）。
+/// 確認のウィンドウの 1 行目の文（焼く・丸める・落とすの数。短い状態）。
 fn summary(lang: Lang, sections: &[(Channel, Vec<ExportNote>)]) -> String {
     let (mut baked, mut rounded, mut dropped, mut other) = (0, 0, 0, 0);
     for (_, notes) in sections {
@@ -274,13 +274,13 @@ fn summary(lang: Lang, sections: &[(Channel, Vec<ExportNote>)]) -> String {
     parts.join(" · ")
 }
 
-/// 確かめの窓の 1 行目の文（試験用）。
+/// 確認のウィンドウの 1 行目の文（試験用）。
 #[cfg(test)]
 pub(crate) fn summary_for_test(lang: Lang, sections: &[(Channel, Vec<ExportNote>)]) -> String {
     summary(lang, sections)
 }
 
-/// 毎フレーム、書く前の確かめの窓を描き、押された操作を当てる。
+/// 毎フレーム、書く前の確認のウィンドウを描き、押された操作を当てる。
 pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
     let Some(confirm) = app.psd.notes_confirm.as_ref() else {
         return;
@@ -296,7 +296,7 @@ pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
         }
         for n in notes {
             let (what, how) = note_columns(lang, n);
-            // チャンネルの注記（法線の重ね方）は、層の名前でなくチャンネルの名前を左に
+            // チャンネルの注記（法線の重ね方）は、レイヤーの名前でなくチャンネルの名前を左に
             let left = if matches!(n.action, NoteAction::NormalBlend) {
                 channel_name(lang, doc, *channel)
             } else {
@@ -461,7 +461,7 @@ fn changes_text(lang: Lang, changes: &[RoundedValue]) -> String {
     parts.join(lang.pick("、", ", "))
 }
 
-/// 注記の「機能」と「結果」（確かめの窓の 2 つの列。文は名詞句）。
+/// 注記の「機能」と「結果」（確認のウィンドウの 2 つの列。文は名詞句）。
 pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
     let pixels: String = lang.pick("画素へ", "To pixels").into();
     let mask_pixels: String = lang.pick("マスクの画素へ", "To mask pixels").into();
@@ -586,10 +586,14 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
                 lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
             )
         }
+        NoteAction::BakedText => (
+            lang.pick("テキストレイヤー", "Text layer").into(),
+            lang.pick("画素のみ", "Pixels only").into(),
+        ),
     }
 }
 
-/// 書けない理由（層の名前つき。画面の言語）。`channel` は複数のチャンネルを書くときだけ付ける。
+/// 書けない理由（レイヤーの名前つき。画面の言語）。`channel` は複数のチャンネルを書くときだけ付ける。
 pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Blocker) -> String {
     let name = &b.layer;
     let what = match &b.refusal {
@@ -668,6 +672,10 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
         Refusal::Path => lang.pick(
             format!("「{name}」にパスがあります"),
             format!("\"{name}\" has a path"),
+        ),
+        Refusal::Text => lang.pick(
+            format!("「{name}」はテキストレイヤーです"),
+            format!("\"{name}\" is a text layer"),
         ),
     };
     match channel {

@@ -13,6 +13,7 @@ use crate::doc_ops::{self, SetFacts};
 use crate::error::{ErrorCode, OpError};
 use crate::meta::{command_spec, Danger};
 use crate::path::PathPolicy;
+use crate::refs::{resolve_relative, Created};
 use crate::reply::*;
 use crate::text::Text;
 
@@ -24,7 +25,7 @@ pub struct SetView<'a> {
     pub doc: Option<&'a Document>,
     /// 読むだけの理由。
     pub read_only: Option<&'a Text>,
-    /// 読むだけのセットの大きさ・層の数（文書を読めなくても、正本の骨組みから分かる）。
+    /// 読むだけのセットの大きさ・レイヤーの数（文書を読めなくても、正本の骨組みから分かる）。
     pub size: (u32, u32),
     pub layer_count: u32,
     /// 開いた・保存したあとに編集した。
@@ -33,17 +34,22 @@ pub struct SetView<'a> {
     pub stem: &'a str,
     /// プロジェクトのセットの数（書き出しのファイル名にセット名を入れるか）。
     pub set_count: usize,
-    /// 層の画素に許すバイト数（PSD の書き出しの予算）。
+    /// レイヤーの画素に許すバイト数（PSD の書き出しの予算）。
     pub source_budget: u64,
 }
 
 impl SetView<'_> {
     pub fn facts(&self) -> SetFacts<'_> {
-        SetFacts { id: self.id, name: self.name, unsaved: self.unsaved }
+        SetFacts {
+            id: self.id,
+            name: self.name,
+            unsaved: self.unsaved,
+        }
     }
     /// 編集できるセットの文書。読むだけのセットは理由つきで断る。
     pub fn editable_doc(&self) -> Result<&Document, OpError> {
-        self.doc.ok_or_else(|| read_only_error(self.name, self.read_only))
+        self.doc
+            .ok_or_else(|| read_only_error(self.name, self.read_only))
     }
 }
 
@@ -112,20 +118,43 @@ pub trait OpHost {
     /// 書き出す。既定は、セットの文書を読んで `crate::export` の関数を通す。
     fn export(&mut self, job: &ExportJob<'_>) -> Result<Reply, OpError> {
         let policy = self.policy().clone();
-        self.read_set(job.set(), &mut |view| crate::export::run(view, &policy, job))
+        self.read_set(job.set(), &mut |view| {
+            crate::export::run(view, &policy, job)
+        })
     }
     /// 見本の画像。既定は、セットの文書を読んで `crate::preview` を通す。
     fn preview(&mut self, args: &PreviewArgs) -> Result<Reply, OpError> {
-        self.read_set(args.set.as_deref(), &mut |view| crate::preview::render(view, args))
+        self.read_set(args.set.as_deref(), &mut |view| {
+            crate::preview::render(view, args)
+        })
+    }
+    /// セット（省略は今のセット）で選んでいるレイヤーの ID（`$selected`）。選んでいるレイヤーが無ければ、理由つきで断る
+    /// （[`crate::refs::no_selection`]）。既定は、選ぶ画面が無いので断る。
+    fn selected_layer(&mut self, _set: Option<&str>) -> Result<String, OpError> {
+        Err(crate::refs::no_selection(None))
+    }
+    /// 同梱のフォントの中身（名前は `yolu_core::text::BUNDLED_FONTS`）。既定は持たない（画面なしのホスト。同梱のフォントのテキストは理由を添えて断る）。
+    fn bundled_font(&self, _name: &str) -> Option<std::sync::Arc<[u8]>> {
+        None
+    }
+    /// OS に入っているフォントの一覧（テキストレイヤーのフォントを名前で選ぶ・探す）。既定はプロセスに 1 つの一覧で、初めて呼んだときに
+    /// フォントのフォルダを呼んだスレッドでなめる（遅い。画面のスレッドで呼ぶホストは上書きして、なめ終わるまで `Busy` で断る）。
+    fn system_fonts(&mut self) -> Result<std::sync::Arc<yolu_io::fonts::SystemFonts>, OpError> {
+        Ok(yolu_io::fonts::system())
     }
 }
 
 /// 壊す操作に `confirm: true` があるか（`Danger::Always` の命令。置き換えるときだけ壊す命令は、置き換える所で確かめる）。
-fn check_confirm(command: &Command) -> Result<(), OpError> {
-    let Some(spec) = command_spec(command.name()) else { return Ok(()) };
+pub(crate) fn check_confirm(command: &Command) -> Result<(), OpError> {
+    let Some(spec) = command_spec(command.name()) else {
+        return Ok(());
+    };
     if spec.danger == Danger::Always && command.confirmed() != Some(true) {
         return Err(OpError::confirm_required(
-            format!("{} は壊す操作です。confirm: true を付けてください", command.name()),
+            format!(
+                "{} は壊す操作です。confirm: true を付けてください",
+                command.name()
+            ),
             format!("{} is destructive; pass confirm: true", command.name()),
             Some(serde_json::json!({"command": command.name()})),
         ));
@@ -133,30 +162,53 @@ fn check_confirm(command: &Command) -> Result<(), OpError> {
     Ok(())
 }
 
-/// 命令を実行する。壊す操作の確認 → 振り分け。断った命令は何も変えない。
+/// 命令を実行する。壊す操作の確認 → 相対の指し方（`$selected`）を ID に → 振り分け。断った命令は何も変えない。
+/// 1 つだけの命令なので、`$created:<n>` は断る（まとめて当てるときは [`execute_in`]）。
 ///
 /// 途中の panic は `internal` の誤りにして返す（呼び手のプロセス・つながりを落とさない）。文書の編集は `Document::batch` が積んだ段を戻してから
 /// panic を返すので、文書は編集の前のまま。
 pub fn execute(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(host, command))).unwrap_or_else(
-        |payload| {
-            let detail = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_owned())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_default();
-            Err(OpError::new(
-                ErrorCode::Internal,
-                format!("{} の途中で想定していない失敗が起きました", command.name()),
-                format!("{} stopped because of an unexpected failure", command.name()),
-            )
-            .with_data(serde_json::json!({"command": command.name(), "detail": detail})))
-        },
-    )
+    execute_in(host, command, None)
 }
 
-fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
+/// まとめて当てる実行（CLI の batch など）の中の 1 つの命令を実行する。`created` は、その実行でここまでに作ったレイヤー・効果
+/// （`$created:<n>` が指す。返事を [`Created::note`] で覚えさせるのは呼び手）。None なら 1 つだけの命令。
+pub fn execute_in(
+    host: &mut dyn OpHost,
+    command: &Command,
+    created: Option<&Created>,
+) -> Result<Reply, OpError> {
+    guard(command.name(), || dispatch(host, command, created))
+}
+
+/// 途中の panic を `internal` の誤りにする。
+pub(crate) fn guard<T>(name: &str, run: impl FnOnce() -> Result<T, OpError>) -> Result<T, OpError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(OpError::new(
+            ErrorCode::Internal,
+            format!("{name} の途中で想定していない失敗が起きました"),
+            format!("{name} stopped because of an unexpected failure"),
+        )
+        .with_data(serde_json::json!({"command": name, "detail": detail})))
+    })
+}
+
+fn dispatch(
+    host: &mut dyn OpHost,
+    command: &Command,
+    created: Option<&Created>,
+) -> Result<Reply, OpError> {
     check_confirm(command)?;
+    let set = command.set().map(str::to_owned);
+    let resolved = resolve_relative(command, created, &mut || {
+        host.selected_layer(set.as_deref())
+    })?;
+    let command = resolved.as_ref().unwrap_or(command);
     match command {
         Command::DocInfo(_) => host.doc_info().map(Reply::Doc),
         Command::DocOpen(a) => {
@@ -167,14 +219,22 @@ fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> 
         Command::Save(a) => host.save(&SaveJob::InPlace { confirm: a.confirm }),
         Command::SaveAs(a) => {
             let path = host.policy().resolve(&a.path)?;
-            host.save(&SaveJob::As { path, confirm: a.confirm })
+            host.save(&SaveJob::As {
+                path,
+                confirm: a.confirm,
+            })
         }
         Command::Preview(a) => host.preview(a),
         Command::ExportChannels(a) => host.export(&ExportJob::Channels(a)),
         Command::ExportTextures(a) => host.export(&ExportJob::Textures(a)),
         Command::ExportPsd(a) => host.export(&ExportJob::Psd(a)),
+        Command::ActionRun(a) => crate::action::run_args(host, a).map(Reply::Action),
         c if doc_ops::is_write(c) => {
-            host.write_set(c.set(), &mut |facts, doc| doc_ops::write(facts, doc, c))
+            // テキストレイヤーを描く命令は、文書を変える前にフォントを探す（見つからなければ何も変えずに断る）
+            let font = crate::text_layer::font_for(host, c)?;
+            host.write_set(c.set(), &mut |facts, doc| {
+                doc_ops::write_with_font(facts, doc, c, font.as_ref())
+            })
         }
         c => host.read_set(c.set(), &mut |view| match view.doc {
             Some(doc) => doc_ops::read(view.facts(), doc, c),

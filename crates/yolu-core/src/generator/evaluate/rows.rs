@@ -4,6 +4,8 @@
 //! ノイズの格子の値は同じ格子の中で使い回す。式の演算とその順は 1 画素ずつの式と同じで、結果のビットは変わらない（試験で全画素を比べる）。
 //! 値を持たない画素（`Option::None`）は、有限の 0..1 の値と取り違えない印（[`none`]）で表す。
 use super::*;
+#[cfg(target_arch = "x86_64")]
+use crate::generator::mixing::MixLanes;
 use crate::generator::shape::{self, BOX, PLANE, SPHERE};
 use crate::math::simd::{self, Level};
 #[cfg(target_arch = "x86_64")]
@@ -71,7 +73,11 @@ fn scalar_row(m: &Map<'_>, at: usize, out: &mut [f64], f: impl Fn(f64) -> f64) {
     let n = out.len();
     let (cover, data) = (&m.coverage[at..at + n], &m.data[at..at + n]);
     for ((o, c), d) in out.iter_mut().zip(cover).zip(data) {
-        *o = if *c == 0 { none() } else { f(*d as f64 / 65535.) };
+        *o = if *c == 0 {
+            none()
+        } else {
+            f(*d as f64 / 65535.)
+        };
     }
 }
 /// 3 チャンネルのマップを行で読み、被覆 0 の画素は「値なし」、ほかは `f(生の値の 3 つ)`。
@@ -169,11 +175,10 @@ impl BoundGenerator<'_> {
                 let tolerance = g.id_tolerance as i32;
                 vector_row(self.map(MapKind::Id), at, out, |v| {
                     let rgb = v.map(|v| ((v as u32 + 128) / 257) as i32);
-                    if colors.iter().any(|c| {
-                        c.iter()
-                            .zip(rgb)
-                            .all(|(c, v)| (c - v).abs() <= tolerance)
-                    }) {
+                    if colors
+                        .iter()
+                        .any(|c| c.iter().zip(rgb).all(|(c, v)| (c - v).abs() <= tolerance))
+                    {
                         1.
                     } else {
                         0.
@@ -193,6 +198,18 @@ impl BoundGenerator<'_> {
             },
             Kind::Noise | Kind::Grunge => {
                 self.procedural_row(x0, y, at, out, plan.expect("束縛済み"), level)
+            }
+            Kind::Image => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = self.image_value(x0 + k as u32, y).unwrap_or_else(none);
+                }
+            }
+            Kind::UvIslandVariation => self.island_row(x0, y, out),
+            // 模様・ライト・マスクの組み立ては 1 画素ずつ（SIMD にしない）
+            Kind::Pattern | Kind::Light | Kind::MaskBuilder => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = self.base_050(x0 + k as u32, y, at + k).unwrap_or_else(none);
+                }
             }
             Kind::ShapeGradient => {
                 let local = g.volume.local();
@@ -237,6 +254,28 @@ impl BoundGenerator<'_> {
             *o = self
                 .procedural_value_with(x0 + k as u32, y, at + k, scratch)
                 .unwrap_or_else(none);
+        }
+    }
+
+    /// アイランドごとのばらつきの行の基底の値。アイランドの図の行の連なりを歩き、連なりごとに 1 回だけ値を求めて埋める（`island_value` と同じ式）。
+    fn island_row(&self, x0: u32, y: u32, out: &mut [f64]) {
+        out.fill(none());
+        let Some(map) = &self.islands else {
+            return;
+        };
+        let x1 = x0 + out.len() as u32;
+        let row = map.row(y);
+        let first = row.partition_point(|r| r.end <= x0);
+        for r in &row[first..] {
+            if r.start >= x1 {
+                break;
+            }
+            if r.island == 0 {
+                continue;
+            }
+            let v = self.g.island.value_in(self.island_stream, r.island);
+            let (a, b) = (r.start.max(x0), r.end.min(x1));
+            out[(a - x0) as usize..(b - x0) as usize].fill(v);
         }
     }
 
@@ -327,14 +366,7 @@ impl BoundGenerator<'_> {
             _ => self.noise_scalar(x0, y, at, out, cache),
         }
     }
-    fn noise_scalar(
-        &self,
-        x0: u32,
-        y: u32,
-        at: usize,
-        out: &mut [f64],
-        cache: &mut noise::Cache,
-    ) {
+    fn noise_scalar(&self, x0: u32, y: u32, at: usize, out: &mut [f64], cache: &mut noise::Cache) {
         let g = self.g;
         let amount = g.noise_amount;
         let seeds = self.seeds;
@@ -372,6 +404,34 @@ impl BoundGenerator<'_> {
                 ];
                 gain(t, p, cache);
             }
+        }
+    }
+
+    /// 画像の段の色の対象: 行の画素に、画素ごとの画像の色を合成する（`apply_with` のランプの色と同じ式。透明な画素・値の無い画素は入力のまま）。
+    pub(super) fn apply_image_row(&self, dst: &mut [u8], x0: u32, y: u32, strength: f64) {
+        match self.g.blend {
+            Blend::Multiply => self.apply_image_with::<Multiply>(dst, x0, y, strength),
+            Blend::Replace => self.apply_image_with::<Replace>(dst, x0, y, strength),
+            Blend::Screen => self.apply_image_with::<Screen>(dst, x0, y, strength),
+            Blend::Max => self.apply_image_with::<Max>(dst, x0, y, strength),
+            Blend::Min => self.apply_image_with::<Min>(dst, x0, y, strength),
+            Blend::Add => self.apply_image_with::<Add>(dst, x0, y, strength),
+            Blend::Subtract => self.apply_image_with::<Subtract>(dst, x0, y, strength),
+        }
+    }
+    fn apply_image_with<B: Op>(&self, dst: &mut [u8], x0: u32, y: u32, strength: f64) {
+        let u = |b: u8| UNIT[b as usize];
+        for (k, p) in dst.chunks_exact_mut(4).enumerate() {
+            if p[3] == 0 {
+                continue;
+            }
+            let Some(m) = self.image_color(x0 + k as u32, y) else {
+                continue;
+            };
+            for c in 0..3 {
+                p[c] = to_byte(mix::<B>(u(p[c]), u(m[c]), strength));
+            }
+            p[3] = to_byte(u(p[3]) * (1. - strength + strength * u(m[3])));
         }
     }
 
@@ -455,6 +515,13 @@ impl BoundGenerator<'_> {
     /// 行 `y` の `x0` から `out.len()` 画素の `sample` と同じ結果。範囲外の画素は `None`。1 画素ずつ `sample` を呼ぶより速い（同じ行の
     /// 値を SIMD でまとめて作る）。作業領域はスレッドごとに持って使い回すので、行ごとに呼んでも確保し直さない。
     pub fn sample_row(&self, x0: u32, y: u32, scalar: bool, out: &mut [Option<Generated>]) {
+        // 画像の段の色は画素ごとの画像の色（値の行を作らない）
+        if self.g.kind == Kind::Image && !scalar {
+            for (i, o) in out.iter_mut().enumerate() {
+                *o = self.sample(x0 + i as u32, y, false);
+            }
+            return;
+        }
         use std::cell::RefCell;
         thread_local! {
             static ROW: RefCell<(Vec<f64>, Option<Aux>)> = const { RefCell::new((Vec::new(), None)) };
@@ -494,8 +561,7 @@ fn ramp_row(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>
 }
 fn ramp_scalar(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>]) {
     for (o, v) in out.iter_mut().zip(values) {
-        *o = (!is_none(*v))
-            .then(|| Generated::Mapped(r.evaluate_unchecked(*v, scalar).to_array()));
+        *o = (!is_none(*v)).then(|| Generated::Mapped(r.evaluate_unchecked(*v, scalar).to_array()));
     }
 }
 
@@ -673,11 +739,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
         let p = match position {
             None => {
                 let x = x0 + k as u32;
-                [
-                    V::from_fn(|j| ((x + j as u32) as f64 + 0.5) * kx),
-                    py,
-                    zero,
-                ]
+                [V::from_fn(|j| ((x + j as u32) as f64 + 0.5) * kx), py, zero]
             }
             Some(m) => {
                 let d = &m.data[i0 * 3..(i0 + V::N) * 3];
@@ -692,10 +754,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
         let m = simd::clamp01::<V>(V::div(V::sub(f, offset), span));
         let smooth = V::mul(V::mul(m, m), V::sub(three, V::mul(two, m)));
         let t = V::load_f64(group);
-        V::store_f64(
-            group,
-            V::mul(t, V::sub(one, V::mul(amount, smooth))),
-        );
+        V::store_f64(group, V::mul(t, V::sub(one, V::mul(amount, smooth))));
         k += V::N;
     }
     g.noise_scalar(x0 + k as u32, y, at + k, &mut out[k..], cache);
@@ -720,7 +779,7 @@ unsafe fn gather_lanes<V: Lanes>(m: Option<&Map<'_>>, i0: usize, none: [V::F; 3]
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn procedural_row_lanes<V: Lanes>(
+unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
     g: &BoundGenerator<'_>,
     x0: u32,
     y: u32,
@@ -762,7 +821,7 @@ unsafe fn procedural_row_lanes<V: Lanes>(
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn ramp_lanes<V: Lanes>(
+unsafe fn ramp_lanes<V: MixLanes>(
     r: &Ramp,
     values: &[f64],
     scalar: bool,
@@ -804,7 +863,7 @@ unsafe fn mix_lanes<V: Lanes, B: Op>(s: V::F, v: V::F, strength: f64) -> V::F {
 /// 行の合成（`apply_with` の N 画素ぶん）。組の値が全部「値あり」なら N 画素を同時に、そうでない組は 1 画素ずつ。
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn apply_lanes<V: Lanes, B: Op>(
+unsafe fn apply_lanes<V: MixLanes, B: Op>(
     g: &BoundGenerator<'_>,
     dst: &mut [u8],
     values: &[f64],
@@ -834,7 +893,10 @@ unsafe fn apply_lanes<V: Lanes, B: Op>(
                 }
             };
             let covered = mix_lanes::<V, B>(V::sub(one, V::unit(src[3])), value, strength);
-            V::store(px, [zero, zero, zero, V::sub(top, simd::to_byte::<V>(covered))]);
+            V::store(
+                px,
+                [zero, zero, zero, V::sub(top, simd::to_byte::<V>(covered))],
+            );
         } else {
             let (rgb, alpha) = match ramp {
                 None => ([v; 3], src[3]),
@@ -947,8 +1009,16 @@ mod tests {
                 for x in 0..W {
                     let jump = (x + y) % 9 == 0;
                     position.extend([
-                        (if jump { next() % 65536 } else { x * 1700 + y * 90 }) as u16,
-                        (if jump { next() % 65536 } else { y * 2900 + x * 40 }) as u16,
+                        (if jump {
+                            next() % 65536
+                        } else {
+                            x * 1700 + y * 90
+                        }) as u16,
+                        (if jump {
+                            next() % 65536
+                        } else {
+                            y * 2900 + x * 40
+                        }) as u16,
                         ((x * 11 + y * 17) % 60 * 1000) as u16,
                     ]);
                     normal.extend([

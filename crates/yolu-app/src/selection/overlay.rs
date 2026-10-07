@@ -80,7 +80,7 @@ impl TileOverlay {
             mask.width().div_ceil(ts) as i64,
             mask.height().div_ceil(ts) as i64,
         );
-        // 見えているタイルの範囲（表示の矩形の 4 隅を画布へ写して囲む）
+        // 見えているタイルの範囲（表示の矩形の 4 隅をキャンバスへ写して囲む）
         let clip = painter.clip_rect();
         let corners = [
             clip.left_top(),
@@ -137,7 +137,7 @@ impl TileOverlay {
             };
             match slot {
                 Slot::Solid(v) => {
-                    // 画布の外の余白は描かない
+                    // キャンバスの外の余白は描かない
                     let corners = [
                         (x0, y0),
                         ((x0 + tile).min(w), y0),

@@ -70,6 +70,90 @@ pub struct Mesh {
     pub channels: Vec<Channel>,
 }
 
+/// アニメの曲線の補間（キーごとに同じもの）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interpolation {
+    Constant,
+    Linear,
+    /// 3 次（接線は自動）。
+    Cubic,
+}
+
+impl Interpolation {
+    /// KeyAttrFlags（ufbx の読み: 定数 0x2・線形 0x4・3 次 0x8、自動の接線 0x100）。
+    fn flags(self) -> u32 {
+        match self {
+            Interpolation::Constant => 0x2,
+            Interpolation::Linear => 0x4,
+            Interpolation::Cubic => 0x8 | 0x100,
+        }
+    }
+}
+
+/// ノードの変換のどれか（`Lcl Translation`・`Lcl Rotation`・`Lcl Scaling`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lcl {
+    Translation,
+    /// オイラー角（度。XYZ の順）。
+    Rotation,
+    Scaling,
+}
+
+impl Lcl {
+    fn property(self) -> &'static str {
+        match self {
+            Lcl::Translation => "Lcl Translation",
+            Lcl::Rotation => "Lcl Rotation",
+            Lcl::Scaling => "Lcl Scaling",
+        }
+    }
+    fn short(self) -> &'static str {
+        match self {
+            Lcl::Translation => "T",
+            Lcl::Rotation => "R",
+            Lcl::Scaling => "S",
+        }
+    }
+}
+
+/// ノードの変換 1 つの曲線（x・y・z の 3 本を同じ時刻で）。
+#[derive(Clone, Debug)]
+pub struct NodeCurve {
+    pub node: usize,
+    pub lcl: Lcl,
+    /// （秒、値）。
+    pub keys: Vec<(f64, [f64; 3])>,
+    pub interpolation: Interpolation,
+}
+
+/// BlendShape のチャンネル 1 つの DeformPercent（0〜100）の曲線。
+#[derive(Clone, Debug)]
+pub struct ShapeCurve {
+    pub mesh: usize,
+    pub channel: usize,
+    /// （秒、値）。
+    pub keys: Vec<(f64, f64)>,
+    pub interpolation: Interpolation,
+}
+
+/// テイク（AnimationStack 1 つ・AnimationLayer 1 つ）。
+#[derive(Clone, Debug, Default)]
+pub struct Take {
+    pub name: String,
+    /// 始まりと終わり（秒。LocalStart・LocalStop）。
+    pub start: f64,
+    pub stop: f64,
+    pub nodes: Vec<NodeCurve>,
+    pub shapes: Vec<ShapeCurve>,
+}
+
+/// FBX の時刻の目盛り（1 秒の KTime）。
+pub const KTIME_SECOND: f64 = 46_186_158_000.0;
+
+fn ktime(seconds: f64) -> i64 {
+    (seconds * KTIME_SECOND).round() as i64
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     pub nodes: Vec<Node>,
@@ -79,6 +163,10 @@ pub struct Scene {
     pub centimeters: bool,
     /// Z が上・−Y が前の右手系（Blender の書き出しの既定）にする（既定は Y が上・+Z が前）。
     pub z_up: bool,
+    /// テイク。
+    pub takes: Vec<Take>,
+    /// フレームの速さ（TimeMode を任意 + CustomFrameRate で書く。None なら書かない）。
+    pub frame_rate: Option<f64>,
 }
 
 fn array<T: std::fmt::Display>(out: &mut String, indent: &str, name: &str, values: &[T]) {
@@ -138,6 +226,62 @@ impl Scene {
         }
     }
 
+    /// `Definitions` の節（種類ごとの数）。ufbx は無くても読むが、Unity（Autodesk の FBX SDK）は無いと中身を取り込まない
+    /// （Unity 2022.3.22f1 で、節の無い ASCII の FBX は子の無い GameObject 1 つになった）。
+    fn definitions(&self) -> String {
+        let limbs = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| n.limb && !self.meshes.iter().any(|m| m.node == *i))
+            .count();
+        let deformers: usize = self
+            .meshes
+            .iter()
+            .map(|m| {
+                usize::from(!m.clusters.is_empty())
+                    + m.clusters.len()
+                    + usize::from(!m.channels.is_empty())
+                    + m.channels.len()
+            })
+            .sum();
+        let shapes: usize = self
+            .meshes
+            .iter()
+            .flat_map(|m| &m.channels)
+            .map(|c| c.shapes.len())
+            .sum();
+        let curve_nodes: usize = self
+            .takes
+            .iter()
+            .map(|t| t.nodes.len() + t.shapes.len())
+            .sum();
+        let curves: usize = self
+            .takes
+            .iter()
+            .map(|t| t.nodes.len() * 3 + t.shapes.len())
+            .sum();
+        let counts = [
+            ("GlobalSettings", 1),
+            ("Model", self.nodes.len()),
+            ("NodeAttribute", limbs),
+            ("Geometry", self.meshes.len() + shapes),
+            ("Material", self.materials.len()),
+            ("Deformer", deformers),
+            ("AnimationStack", self.takes.len()),
+            ("AnimationLayer", self.takes.len()),
+            ("AnimationCurveNode", curve_nodes),
+            ("AnimationCurve", curves),
+        ];
+        let total: usize = counts.iter().map(|(_, n)| n).sum();
+        let mut o = format!("Definitions:  {{\n\tVersion: 100\n\tCount: {total}\n");
+        for (kind, n) in counts.into_iter().filter(|(_, n)| *n > 0) {
+            let _ = writeln!(o, "\tObjectType: \"{kind}\" {{\n\t\tCount: {n}\n\t}}");
+        }
+        o.push_str("}\n");
+        o
+    }
+
     pub fn to_ascii(&self) -> String {
         let mut o = String::new();
         o.push_str("; FBX 7.4.0 project file\n");
@@ -159,7 +303,15 @@ impl Scene {
             o,
             "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",{unit}"
         );
+        if let Some(fps) = self.frame_rate {
+            o.push_str("\t\tP: \"TimeMode\", \"enum\", \"\", \"\",14\n");
+            let _ = writeln!(
+                o,
+                "\t\tP: \"CustomFrameRate\", \"double\", \"Number\", \"\",{fps}"
+            );
+        }
         o.push_str("\t}\n}\n");
+        o.push_str(&self.definitions());
         o.push_str("Objects:  {\n");
         let mut c = String::new(); // Connections
         let model_id = |i: usize| 100_000 + i as i64;
@@ -315,10 +467,120 @@ impl Scene {
                 }
             }
         }
+        self.write_takes(&mut o, &mut c);
         o.push_str("}\nConnections:  {\n");
         o.push_str(&c);
         o.push_str("}\n");
         o
+    }
+
+    /// テイク（AnimationStack → AnimationLayer → AnimationCurveNode → AnimationCurve。ノードへは "OP" の Lcl の名前、
+    /// BlendShape のチャンネルへは DeformPercent でつなぐ）。
+    fn write_takes(&self, o: &mut String, c: &mut String) {
+        let mut next = 9_000_000_000i64;
+        let mut id = || {
+            next += 1;
+            next
+        };
+        let curve = |o: &mut String,
+                     c: &mut String,
+                     id: i64,
+                     owner: i64,
+                     channel: &str,
+                     keys: &[(f64, f64)],
+                     interpolation: Interpolation| {
+            let default = keys.first().map_or(0.0, |k| k.1);
+            let _ = writeln!(
+                o,
+                "\tAnimationCurve: {id}, \"AnimCurve::\", \"\" {{\n\t\tDefault: {default}\n\t\tKeyVer: 4009"
+            );
+            let times: Vec<i64> = keys.iter().map(|k| ktime(k.0)).collect();
+            let values: Vec<f64> = keys.iter().map(|k| k.1).collect();
+            array(o, "\t\t", "KeyTime", &times);
+            array(o, "\t\t", "KeyValueFloat", &values);
+            array(o, "\t\t", "KeyAttrFlags", &[interpolation.flags()]);
+            array(o, "\t\t", "KeyAttrDataFloat", &[0, 0, 0, 0]);
+            array(o, "\t\t", "KeyAttrRefCount", &[keys.len()]);
+            o.push_str("\t}\n");
+            let _ = writeln!(c, "\tC: \"OP\",{id},{owner}, \"{channel}\"");
+        };
+        for take in &self.takes {
+            let stack = id();
+            let layer = id();
+            let (start, stop) = (ktime(take.start), ktime(take.stop));
+            let _ = writeln!(
+                o,
+                "\tAnimationStack: {stack}, \"AnimStack::{}\", \"\" {{\n\t\tProperties70:  {{",
+                take.name
+            );
+            for (name, v) in [
+                ("LocalStart", start),
+                ("LocalStop", stop),
+                ("ReferenceStart", start),
+                ("ReferenceStop", stop),
+            ] {
+                let _ = writeln!(o, "\t\t\tP: \"{name}\", \"KTime\", \"Time\", \"\",{v}");
+            }
+            o.push_str("\t\t}\n\t}\n");
+            let _ = writeln!(
+                o,
+                "\tAnimationLayer: {layer}, \"AnimLayer::BaseLayer\", \"\" {{\n\t}}"
+            );
+            let _ = writeln!(c, "\tC: \"OO\",{layer},{stack}");
+            for nc in &take.nodes {
+                let node = id();
+                let first = nc.keys.first().map_or([0.0; 3], |k| k.1);
+                let _ = writeln!(
+                    o,
+                    "\tAnimationCurveNode: {node}, \"AnimCurveNode::{}\", \"\" {{\n\t\tProperties70:  {{",
+                    nc.lcl.short()
+                );
+                for (axis, v) in ["X", "Y", "Z"].iter().zip(first) {
+                    let _ = writeln!(o, "\t\t\tP: \"d|{axis}\", \"Number\", \"\", \"A\",{v}");
+                }
+                o.push_str("\t\t}\n\t}\n");
+                let _ = writeln!(c, "\tC: \"OO\",{node},{layer}");
+                let _ = writeln!(
+                    c,
+                    "\tC: \"OP\",{node},{}, \"{}\"",
+                    100_000 + nc.node as i64,
+                    nc.lcl.property()
+                );
+                for (k, axis) in ["X", "Y", "Z"].iter().enumerate() {
+                    let keys: Vec<(f64, f64)> = nc.keys.iter().map(|(t, v)| (*t, v[k])).collect();
+                    curve(
+                        o,
+                        c,
+                        id(),
+                        node,
+                        &format!("d|{axis}"),
+                        &keys,
+                        nc.interpolation,
+                    );
+                }
+            }
+            for sc in &take.shapes {
+                let node = id();
+                let first = sc.keys.first().map_or(0.0, |k| k.1);
+                let _ = writeln!(
+                    o,
+                    "\tAnimationCurveNode: {node}, \"AnimCurveNode::DeformPercent\", \"\" {{\n\t\tProperties70:  {{\n\t\t\tP: \"d|DeformPercent\", \"Number\", \"\", \"A\",{first}\n\t\t}}\n\t}}"
+                );
+                // チャンネルの番号は `to_ascii` の BlendShapeChannel と同じ式
+                let channel = 400_000 + sc.mesh as i64 * 1000 + 500 + 1 + sc.channel as i64 * 20;
+                let _ = writeln!(c, "\tC: \"OO\",{node},{layer}");
+                let _ = writeln!(c, "\tC: \"OP\",{node},{channel}, \"DeformPercent\"");
+                curve(
+                    o,
+                    c,
+                    id(),
+                    node,
+                    "d|DeformPercent",
+                    &sc.keys,
+                    sc.interpolation,
+                );
+            }
+        }
     }
 }
 
@@ -468,5 +730,219 @@ pub fn arm_scene() -> Scene {
         clusters: Vec::new(),
         channels: Vec::new(),
     });
+    s
+}
+
+/// 試しの腕（`arm_scene`）に、テイクを 3 つ（Wave・Raise・動かす値の無い Empty）を追加したもの。30 fps。
+/// Wave（0〜1 秒）: Lower の回転 z を 0 → 90 度（線形）、Upper の回転 y を 0 → 30 → 10 度（3 次）、Bend を 0 → 100（線形）。
+/// Raise（0.5〜2 秒）: Upper の移動を (0, 1, 0) → (0, 1.2, 0)（定数）、Lower の大きさ x を 1 → 1.5（線形）。
+pub fn arm_takes_scene() -> Scene {
+    let mut s = arm_scene();
+    s.frame_rate = Some(30.0);
+    s.takes = vec![
+        Take {
+            name: "Wave".into(),
+            start: 0.0,
+            stop: 1.0,
+            nodes: vec![
+                NodeCurve {
+                    node: 2,
+                    lcl: Lcl::Rotation,
+                    keys: vec![(0.0, [0.0; 3]), (1.0, [0.0, 0.0, 90.0])],
+                    interpolation: Interpolation::Linear,
+                },
+                NodeCurve {
+                    node: 1,
+                    lcl: Lcl::Rotation,
+                    keys: vec![
+                        (0.0, [0.0; 3]),
+                        (0.5, [0.0, 30.0, 0.0]),
+                        (1.0, [0.0, 10.0, 0.0]),
+                    ],
+                    interpolation: Interpolation::Cubic,
+                },
+            ],
+            shapes: vec![ShapeCurve {
+                mesh: 0,
+                channel: 1,
+                keys: vec![(0.0, 0.0), (1.0, 100.0)],
+                interpolation: Interpolation::Linear,
+            }],
+        },
+        Take {
+            name: "Raise".into(),
+            start: 0.5,
+            stop: 2.0,
+            nodes: vec![
+                NodeCurve {
+                    node: 1,
+                    lcl: Lcl::Translation,
+                    keys: vec![(0.5, [0.0, 1.0, 0.0]), (1.5, [0.0, 1.2, 0.0])],
+                    interpolation: Interpolation::Constant,
+                },
+                NodeCurve {
+                    node: 2,
+                    lcl: Lcl::Scaling,
+                    keys: vec![(0.5, [1.0; 3]), (2.0, [1.5, 1.0, 1.0])],
+                    interpolation: Interpolation::Linear,
+                },
+            ],
+            shapes: Vec::new(),
+        },
+        Take {
+            name: "Empty".into(),
+            start: 0.0,
+            stop: 1.0,
+            ..Take::default()
+        },
+    ];
+    s
+}
+
+/// 測りに使うアバターの形の大きさ（実のデータではなく、数だけを似せた物）。
+#[derive(Clone, Debug)]
+pub struct AvatarSpec {
+    /// 骨の数（根の下に `chains` 本の鎖で並べる）。
+    pub bones: usize,
+    pub chains: usize,
+    /// メッシュごとの輪の数（頂点は輪の 4 倍。どれも骨の鎖 1 本にスキンで付く）。
+    pub mesh_rings: Vec<usize>,
+    /// 最初のメッシュの BlendShape のチャンネルの数と、1 つの差分の頂点の数。
+    pub blend_channels: usize,
+    pub blend_offsets: usize,
+    /// テイクの数と、1 つのテイクのフレームの数（30 fps。どの骨も毎フレーム T・R・S にキー。BlendShape は最初の 8 個に毎フレーム）。
+    pub takes: usize,
+    pub frames: usize,
+}
+
+/// 数だけを似せたアバターの形（骨の鎖・四角い筒のメッシュ・スキン・BlendShape・毎フレームのキーのテイク）。
+pub fn avatar_scene(spec: &AvatarSpec) -> Scene {
+    let mut s = Scene {
+        nodes: vec![Node::new("Armature", None, [0.0; 3], false)],
+        materials: vec!["Body".into(), "Cloth".into()],
+        frame_rate: Some(30.0),
+        ..Scene::default()
+    };
+    let per_chain = (spec.bones / spec.chains.max(1)).max(1);
+    let mut chain_bones: Vec<Vec<usize>> = Vec::new();
+    for c in 0..spec.chains {
+        let mut bones = Vec::new();
+        let mut parent = 0;
+        for b in 0..per_chain {
+            let i = s.nodes.len();
+            let t = if b == 0 {
+                [c as f64 * 0.1, 1.0, 0.0]
+            } else {
+                [0.02, 0.0, 0.0]
+            };
+            s.nodes
+                .push(Node::new(&format!("Bone{c}_{b}"), Some(parent), t, true));
+            bones.push(i);
+            parent = i;
+        }
+        chain_bones.push(bones);
+    }
+    for (mi, &rings) in spec.mesh_rings.iter().enumerate() {
+        let node = s.nodes.len();
+        s.nodes
+            .push(Node::new(&format!("Mesh{mi}"), None, [0.0; 3], false));
+        let mut m = box_tube(&format!("Mesh{mi}"), node, 2.0, 1.0, 0.05, rings.max(2));
+        m.materials = vec![0, 1];
+        let chain = &chain_bones[mi % chain_bones.len()];
+        let mut clusters: Vec<Cluster> = chain
+            .iter()
+            .map(|&bone| Cluster {
+                bone,
+                indexes: Vec::new(),
+                weights: Vec::new(),
+            })
+            .collect();
+        let n = clusters.len();
+        for v in 0..m.vertices.len() {
+            let ring = v / 4;
+            let at = ring * n / rings.max(1);
+            let (a, b) = (at.min(n - 1), (at + 1).min(n - 1));
+            clusters[a].indexes.push(v as u32);
+            clusters[a].weights.push(0.6);
+            if b != a {
+                clusters[b].indexes.push(v as u32);
+                clusters[b].weights.push(0.4);
+            }
+        }
+        m.clusters = clusters
+            .into_iter()
+            .filter(|c| !c.indexes.is_empty())
+            .collect();
+        if mi == 0 {
+            let count = spec.blend_offsets.min(m.vertices.len());
+            m.channels = (0..spec.blend_channels)
+                .map(|k| Channel {
+                    name: format!("Shape{k}"),
+                    deform_percent: 0.0,
+                    shapes: vec![Shape {
+                        full_weight: 100.0,
+                        indexes: (0..count as u32).collect(),
+                        deltas: (0..count)
+                            .map(|v| [0.0, 0.001 * ((v + k) % 7) as f64, 0.0])
+                            .collect(),
+                    }],
+                })
+                .collect();
+        }
+        s.meshes.push(m);
+    }
+    let fps = 30.0;
+    for t in 0..spec.takes {
+        let times: Vec<f64> = (0..spec.frames).map(|f| f as f64 / fps).collect();
+        let mut take = Take {
+            name: format!("Take{t}"),
+            start: 0.0,
+            stop: (spec.frames.max(1) - 1) as f64 / fps,
+            ..Take::default()
+        };
+        for chain in &chain_bones {
+            for &bone in chain {
+                let base = s.nodes[bone].translation;
+                for (lcl, f) in [
+                    (Lcl::Translation, 0usize),
+                    (Lcl::Rotation, 1),
+                    (Lcl::Scaling, 2),
+                ] {
+                    let keys = times
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &time)| {
+                            let w = (i as f64 * 0.1 + bone as f64 + t as f64).sin();
+                            let v = match f {
+                                0 => base,
+                                1 => [w * 10.0, w * 5.0, w * 2.0],
+                                _ => [1.0; 3],
+                            };
+                            (time, v)
+                        })
+                        .collect();
+                    take.nodes.push(NodeCurve {
+                        node: bone,
+                        lcl,
+                        keys,
+                        interpolation: Interpolation::Cubic,
+                    });
+                }
+            }
+        }
+        for k in 0..spec.blend_channels.min(8) {
+            take.shapes.push(ShapeCurve {
+                mesh: 0,
+                channel: k,
+                keys: times
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &time)| (time, 50.0 + 50.0 * (i as f64 * 0.2).sin()))
+                    .collect(),
+                interpolation: Interpolation::Cubic,
+            });
+        }
+        s.takes.push(take);
+    }
     s
 }

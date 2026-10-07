@@ -1,10 +1,10 @@
 //! 状態の帯の右端に出す、版・ビルドと、使っているメモリの量（ユーザーの頼み。開発用の数を画面に出さない決まりの、この 2 つだけの例外）。
 //!
-//! - 版とビルド: Cargo の版と、ビルドに埋めた git の短い ID（`build.rs`。無ければ出さない）。試験の窓は出さない（画像がコミットごとに
-//!   変わらないように）。実際の窓だけが `Usage::build` に入れる。
+//! - 版とビルド: Cargo の版と、ビルドに埋めた git の短い ID（`build.rs`。無ければ出さない）。試験のウィンドウは出さない（画像がコミットごとに
+//!   変わらないように）。実際のウィンドウだけが `Usage::build` に入れる。
 //! - 使っているメモリ: このプロセスの実メモリ（Windows は作業セット、Linux は VmRSS。分からない OS は出さない）。GPU は wgpu の確保済みの
 //!   量が分かるときだけ（Vulkan・D3D12。OpenGL は分からない）。数は短く（「812 MB」「1.4 GB」）、内訳はツールチップ。
-//!   測るのは実際の窓だけで、1.5 秒おき（毎フレームは測らない）。試験は自分で値を入れる。
+//!   測るのは実際のウィンドウだけで、1.5 秒おき（毎フレームは測らない）。試験は自分で値を入れる。
 
 use crate::lang::Lang;
 use crate::state::AppState;
@@ -15,7 +15,7 @@ pub const INTERVAL: f64 = 1.5;
 /// 状態の帯の右端が出す値。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Usage {
-    /// 版とビルド（「0.1.0 · a1b2c3d」。実際の窓だけ）。
+    /// 版とビルド（「0.1.0 · a1b2c3d」。実際のウィンドウだけ）。
     pub build: Option<String>,
     /// このプロセスの実メモリ（バイト。分からなければ None）。
     pub process: Option<u64>,
@@ -32,7 +32,8 @@ pub struct Usage {
 impl Usage {
     /// 測る頃か。
     pub fn due(&self, now: f64) -> bool {
-        self.sampled_at.is_none_or(|at| now - at >= INTERVAL || now < at)
+        self.sampled_at
+            .is_none_or(|at| now - at >= INTERVAL || now < at)
     }
 }
 
@@ -55,7 +56,10 @@ fn is_beta_label(text: &str) -> bool {
 /// 「について」の知らせ。試験版には、版のあとに試験版の印を付ける（正式版は製品名と版だけ）。
 pub fn about_text(lang: Lang, version: &str) -> String {
     if is_beta_label(version) {
-        format!("YoluPainter {version}{}", lang.pick("（試験版）", " (beta)"))
+        format!(
+            "YoluPainter {version}{}",
+            lang.pick("（試験版）", " (beta)")
+        )
     } else {
         format!("YoluPainter {version}")
     }
@@ -94,14 +98,17 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     pub fn process_bytes() -> Option<u64> {
-        use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+        use windows::Win32::System::ProcessStatus::{
+            K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
         use windows::Win32::System::Threading::GetCurrentProcess;
         let mut counters = PROCESS_MEMORY_COUNTERS {
             cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
             ..Default::default()
         };
         // SAFETY: cb を設定した PROCESS_MEMORY_COUNTERS と、自分のプロセスの疑似ハンドルを渡す（Win32 の呼び方どおり）。
-        let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
+        let ok =
+            unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
         ok.as_bool().then_some(counters.WorkingSetSize as u64)
     }
 }
@@ -129,7 +136,11 @@ impl AppState {
         let (mut layers, mut history) = (0u64, 0u64);
         let current = self.sets.current_index();
         for i in 0..self.sets.len() {
-            let doc = if i == current { &self.doc } else { self.set_doc(i) };
+            let doc = if i == current {
+                &self.doc
+            } else {
+                self.set_doc(i)
+            };
             layers = layers.saturating_add(doc.allocated_bytes());
             history = history.saturating_add(doc.history_bytes());
         }
@@ -170,7 +181,10 @@ impl Usage {
                     key: "beta",
                     text: lang.pick("試験版", "Beta").to_owned(),
                     tip: lang
-                        .pick("試験版（正式版より前の版）", "Beta version (before the stable release)")
+                        .pick(
+                            "試験版（正式版より前の版）",
+                            "Beta version (before the stable release)",
+                        )
                         .to_owned(),
                 });
             }
@@ -178,10 +192,18 @@ impl Usage {
         if self.process.is_some() || self.gpu.is_some() {
             let tip = tooltip(self, lang);
             if let Some(gpu) = self.gpu {
-                items.push(Item { key: "gpu", text: format!("GPU {}", format_size(gpu)), tip: tip.clone() });
+                items.push(Item {
+                    key: "gpu",
+                    text: format!("GPU {}", format_size(gpu)),
+                    tip: tip.clone(),
+                });
             }
             if let Some(bytes) = self.process {
-                items.push(Item { key: "memory", text: format_size(bytes), tip });
+                items.push(Item {
+                    key: "memory",
+                    text: format_size(bytes),
+                    tip,
+                });
             }
         }
         items
@@ -192,10 +214,22 @@ impl Usage {
 pub fn tooltip(usage: &Usage, lang: Lang) -> String {
     let mut lines = Vec::new();
     if let Some(bytes) = usage.process {
-        lines.push(format!("{}: {}", lang.pick("アプリ全体（実メモリ）", "App (resident)"), format_size(bytes)));
+        lines.push(format!(
+            "{}: {}",
+            lang.pick("アプリ全体（実メモリ）", "App (resident)"),
+            format_size(bytes)
+        ));
     }
-    lines.push(format!("{}: {}", lang.pick("レイヤーのメモリ", "Layer memory"), format_size(usage.layers)));
-    lines.push(format!("{}: {}", lang.pick("取り消しの履歴", "Undo history"), format_size(usage.history)));
+    lines.push(format!(
+        "{}: {}",
+        lang.pick("レイヤーのメモリ", "Layer memory"),
+        format_size(usage.layers)
+    ));
+    lines.push(format!(
+        "{}: {}",
+        lang.pick("取り消しの履歴", "Undo history"),
+        format_size(usage.history)
+    ));
     if let Some(bytes) = usage.gpu {
         lines.push(format!("GPU: {}", format_size(bytes)));
     }
@@ -222,31 +256,51 @@ mod tests {
         let label = build_label();
         assert!(label.starts_with(env!("CARGO_PKG_VERSION")), "{label}");
         match option_env!("YOLU_GIT_REV") {
-            Some(rev) if !rev.is_empty() => assert!(label.ends_with(&format!(" · {rev}")), "{label}"),
+            Some(rev) if !rev.is_empty() => {
+                assert!(label.ends_with(&format!(" · {rev}")), "{label}")
+            }
             _ => assert_eq!(label, env!("CARGO_PKG_VERSION")),
         }
     }
 
     #[test]
     fn a_beta_version_carries_a_mark_in_the_status_band_and_the_about_text() {
-        let usage = |build: &str| Usage { build: Some(build.into()), ..Usage::default() };
+        let usage = |build: &str| Usage {
+            build: Some(build.into()),
+            ..Usage::default()
+        };
         for lang in Lang::ALL {
             let mark = lang.pick("試験版", "Beta");
             // 試験版: 版とビルドの左に印が付く（右端が版とビルド）
             let items = usage("0.4.0-rc.1 · a1b2c3d").items(lang);
             let keys: Vec<_> = items.iter().map(|i| (i.key, i.text.as_str())).collect();
-            assert_eq!(keys, [("build", "0.4.0-rc.1 · a1b2c3d"), ("beta", mark)], "{lang:?}");
+            assert_eq!(
+                keys,
+                [("build", "0.4.0-rc.1 · a1b2c3d"), ("beta", mark)],
+                "{lang:?}"
+            );
             assert!(!items[1].tip.is_empty());
             // 版だけ（ビルドの ID が埋まっていない）でも同じ
             assert_eq!(usage("0.4.0-beta.2").items(lang).len(), 2);
-            // 正式版・試験版の形でないプレリリース・測っていない窓には、印を足さない
-            for plain in ["0.4.0 · a1b2c3d", "0.4.0", "0.4.0-preview.1 · a1b2c3d", "0.4.0-rc1"] {
+            // 正式版・試験版の形でないプレリリース・測っていないウィンドウには、印を足さない
+            for plain in [
+                "0.4.0 · a1b2c3d",
+                "0.4.0",
+                "0.4.0-preview.1 · a1b2c3d",
+                "0.4.0-rc1",
+            ] {
                 assert_eq!(usage(plain).items(lang).len(), 1, "{plain}");
             }
             assert!(Usage::default().items(lang).is_empty());
         }
-        assert_eq!(about_text(Lang::Ja, "0.4.0-rc.1"), "YoluPainter 0.4.0-rc.1（試験版）");
-        assert_eq!(about_text(Lang::En, "0.4.0-rc.1"), "YoluPainter 0.4.0-rc.1 (beta)");
+        assert_eq!(
+            about_text(Lang::Ja, "0.4.0-rc.1"),
+            "YoluPainter 0.4.0-rc.1（試験版）"
+        );
+        assert_eq!(
+            about_text(Lang::En, "0.4.0-rc.1"),
+            "YoluPainter 0.4.0-rc.1 (beta)"
+        );
         for lang in Lang::ALL {
             assert_eq!(about_text(lang, "0.4.0"), "YoluPainter 0.4.0");
         }
@@ -255,7 +309,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_resident_size_is_read_from_the_status_file() {
-        assert_eq!(resident_from_status("Name:\tx\nVmRSS:\t   2048 kB\nThreads:\t3\n"), Some(2048 * 1024));
+        assert_eq!(
+            resident_from_status("Name:\tx\nVmRSS:\t   2048 kB\nThreads:\t3\n"),
+            Some(2048 * 1024)
+        );
         assert_eq!(resident_from_status("VmRSS: many kB\n"), None);
         assert_eq!(resident_from_status("Name: x\n"), None);
         // 自分のプロセスは測れて、0 ではない
@@ -270,6 +327,6 @@ mod tests {
         assert!(!usage.due(10.5));
         assert!(!usage.due(11.4));
         assert!(usage.due(11.6));
-        assert!(usage.due(5.0), "時刻が戻ったら（新しい窓）測り直す");
+        assert!(usage.due(5.0), "時刻が戻ったら（新しいウィンドウ）測り直す");
     }
 }

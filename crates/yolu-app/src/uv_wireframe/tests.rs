@@ -321,7 +321,7 @@ fn the_overlay_uses_the_surface_three_d_paints_even_when_the_link_is_stale() {
     for lang in Lang::ALL {
         let mut app = AppState::new(64, 64);
         app.lang = lang;
-        app.receive_link_model(&link_model(), 1).1.unwrap();
+        app.receive_link_model(&link_model()).1.unwrap();
         app.sync_view3d();
         let bound = app.sets.current().bound;
         assert!(bound.is_some());

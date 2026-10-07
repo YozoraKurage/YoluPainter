@@ -4,7 +4,7 @@ use super::operations::Dirty;
 use super::Document;
 use crate::composite::{self, Stack};
 use crate::effects::EffectSettings;
-use crate::surface::Tile;
+use crate::surface::{Readers, Tile};
 use crate::{
     BlendMode, Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind, LayerLocks, Rgba8,
     Surface, TileCoord,
@@ -25,7 +25,8 @@ pub enum MergeMethod {
 pub struct LayerMergeReport {
     pub result_id: LayerId,
     pub method: MergeMethod,
-    /// C# MergeNotes のビット（1: フィルター・Generator を画素へ焼いた、2: パスを画素にした、4: 隠した子を除去、8: 無効チャンネルを除去）。
+    /// C# MergeNotes のビット（1: フィルター・Generator を画素へ焼いた、2: パスを画素にした、4: 隠した子を除去、8: 無効チャンネルを除去）と、
+    /// Rust だけのビット 16（テキストレイヤーの値を外して画素にした）。
     pub notes: u8,
     pub compared_pixels: u64,
     pub changed_pixels: u64,
@@ -54,17 +55,76 @@ pub enum MergeRefusal {
 impl std::fmt::Display for MergeRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            MergeRefusal::NoLayerBelow => "下に層が無い",
+            MergeRefusal::NoLayerBelow => "下にレイヤーが無い",
             MergeRefusal::LayerBelowIsGroup => "下がグループ",
-            MergeRefusal::LayerBelowIsAdjustment => "下が調整層",
-            MergeRefusal::HiddenLayer => "非表示の層がある",
+            MergeRefusal::LayerBelowIsAdjustment => "下が調整レイヤー",
+            MergeRefusal::HiddenLayer => "非表示のレイヤーがある",
             MergeRefusal::IsGroup => "対象がグループ",
             MergeRefusal::NotGroup => "グループではない",
             MergeRefusal::EmptyGroup => "グループが空",
-            MergeRefusal::NothingVisible => "表示している層が無い",
+            MergeRefusal::NothingVisible => "表示中のレイヤーが無い",
             MergeRefusal::DifferentGroups => "親のグループが違う",
         })
     }
+}
+
+/// 結合の前と後の 1 タイルの画素の差（報告の数の、そのタイルの分）。
+#[derive(Clone, Copy, Debug, Default)]
+struct Difference {
+    compared: u64,
+    changed: u64,
+    max_difference: u8,
+    max_visible_difference: u8,
+}
+
+impl Difference {
+    /// 後（after）と前（before）の同じ並びの straight RGBA8 を比べる。両方とも透明な画素は変わっていないとみなす。見える差は、
+    /// アルファと、アルファを掛けた RGB の差の大きいほう。
+    fn of(after: &[u8], before: &[u8]) -> Difference {
+        debug_assert_eq!(after.len(), before.len());
+        let mut d = Difference::default();
+        for (a, b) in after.chunks_exact(4).zip(before.chunks_exact(4)) {
+            d.compared += 1;
+            if a[3] == 0 && b[3] == 0 {
+                continue;
+            }
+            let delta = (0..4).map(|q| a[q].abs_diff(b[q])).max().expect("RGBA");
+            if delta == 0 {
+                continue;
+            }
+            d.changed += 1;
+            d.max_difference = d.max_difference.max(delta);
+            let mut v = a[3].abs_diff(b[3]);
+            for q in 0..3 {
+                let e = ((a[q] as i32 * a[3] as i32 - b[q] as i32 * b[3] as i32).abs() + 127) / 255;
+                v = v.max(e as u8);
+            }
+            d.max_visible_difference = d.max_visible_difference.max(v);
+        }
+        d
+    }
+}
+
+/// レイヤーそのものの画素（`Layer::pixel` と同じ値）の、キャンバスの中の矩形（1 枚のタイルの中）。行は下から、行ごとに面から写す。
+fn layer_rect(l: &Layer, c: Channel, rect: crate::Rect) -> Result<Vec<u8>, CoreError> {
+    let row = rect.width as usize * 4;
+    let mut out = vec![0u8; row * rect.height as usize];
+    match l.kind {
+        LayerKind::Raster => {
+            if let Some(s) = l.surface(c) {
+                for (bytes, y) in out.chunks_exact_mut(row).zip(rect.y..) {
+                    s.read_row(rect.x, y, bytes)?;
+                }
+            }
+        }
+        LayerKind::Fill => {
+            if let Some(v) = l.fill_value(c) {
+                crate::surface::fill(&mut out, v);
+            }
+        }
+        _ => {}
+    }
+    Ok(out)
 }
 
 /// 段のスタックが段を持つか（有効かどうかは問わない。C# の MergeNotes が数える形）。
@@ -72,14 +132,17 @@ fn has_stack(stack: &[crate::FilterEffect]) -> bool {
     !stack.is_empty()
 }
 
-/// 結合が焼いた効果とパスの印（C# の MergeNotes: 1 はフィルター・Generator、2 はパス。層の画素とマスクのスタックを数える）。
+/// 結合が焼いた効果とパスの印（C# の MergeNotes: 1 はフィルター・Generator、2 はパス。レイヤーの画素とマスクのスタックを数える）。
 fn effect_notes(l: &Layer) -> u8 {
     let mut notes = 0;
     if has_stack(&l.filters) || l.mask.as_ref().is_some_and(|m| has_stack(&m.filters)) {
         notes |= 1;
     }
-    if l.path.is_some() {
+    if l.has_paths() {
         notes |= 2;
+    }
+    if l.text.is_some() {
+        notes |= 16;
     }
     notes
 }
@@ -105,7 +168,7 @@ impl Document {
             None
         })
     }
-    /// 層がそのチャンネルに出し得るタイル。ぼかしは元のタイルの外へ届く分だけ広げる（C# の OutputContentTiles）。Generator など
+    /// レイヤーがそのチャンネルに出し得るタイル。ぼかしは元のタイルの外へ届く分だけ広げる（C# の OutputContentTiles）。Generator など
     /// 元の画素が無い所へ出す効果のタイルは、評価した出力の面（`merge_eval`）が持つので、結合は面のタイルも足す。
     fn content_coords(&self, l: &Layer, c: Channel) -> Vec<TileCoord> {
         match l.kind {
@@ -136,7 +199,7 @@ impl Document {
             _ => Vec::new(),
         }
     }
-    /// タイルの並びを、画素の距離 `reach` が届く分だけ周りへ広げる（画布の外へは出ない。並びは Y・X の順）。
+    /// タイルの並びを、画素の距離 `reach` が届く分だけ周りへ広げる（キャンバスの外へは出ない。並びは Y・X の順）。
     fn grown_tiles(&self, tiles: &[TileCoord], reach: u32) -> Vec<TileCoord> {
         let ts = self.tile_size;
         let m = reach.div_ceil(ts);
@@ -152,7 +215,7 @@ impl Document {
             .collect();
         set.into_iter().collect()
     }
-    /// 結合で読む層（`layers`。準備のために並べ直した写しでよい）の、チャンネルの評価した出力。`doc_index[k]` は `layers[k]` の文書での
+    /// 結合で読むレイヤー（`layers`。準備のために並べ直した写しでよい）の、チャンネルの評価した出力。`doc_index[k]` は `layers[k]` の文書での
     /// 番号。効果が無ければ空（結合は保存している画素をそのまま読む）。評価した面のタイル（効果が元の画素の無い所へ出したものも）を
     /// 結合が読むタイルに足せるよう、面のタイルの並びも返す。
     fn merge_eval(
@@ -171,7 +234,7 @@ impl Document {
         Ok((eval, tiles))
     }
     /// 効果を焼き込む結合の前に、効いていない効果（使えるマップが無い Generator・出ていないデカール）が無いか確かめる。焼き込むと
-    /// その効果が落ちるので断る（C# の RefuseInactiveGenerators）。`content` は層の画素のスタックとデカール、`mask` はマスクのスタック。
+    /// その効果が落ちるので断る（C# の RefuseInactiveGenerators）。`content` はレイヤーの画素のスタックとデカール、`mask` はマスクのスタック。
     fn refuse_inactive_effects(
         &self,
         index: usize,
@@ -214,12 +277,13 @@ impl Document {
         }
         Ok(())
     }
-    /// 画素ごとの式 render(x, y) で組んだ面（結合の方法ごとに式が違う `merge_down` 用）。
-    fn merge_surface(
+    /// 画素ごとの式 render(読み手, x, y) で組んだ面（結合の方法ごとに式が違う `merge_down` 用）。読み手はタイルごとに 1 つ
+    /// （画素ごとにタイルを引き直さない）で、ディスクから読めない画素があれば面を組まずに誤りを返す。
+    fn merge_surface<'r>(
         &self,
         coords: &BTreeSet<TileCoord>,
         budget: &mut u64,
-        render: impl Fn(u32, u32) -> Rgba8 + Sync,
+        render: impl Fn(&mut Readers<'r>, u32, u32) -> Rgba8 + Sync,
     ) -> Result<Surface, CoreError> {
         let ts = self.tile_size;
         self.merge_surface_tiles(coords, budget, |batch| {
@@ -227,19 +291,23 @@ impl Document {
                 .par_iter()
                 .map(|&coord| {
                     let mut bytes = vec![0; (ts * ts * 4) as usize];
+                    let mut readers = Readers::default();
                     for y in 0..ts.min(self.height - coord.y * ts) {
                         for x in 0..ts.min(self.width - coord.x * ts) {
-                            let p = render(coord.x * ts + x, coord.y * ts + y);
+                            let p = render(&mut readers, coord.x * ts + x, coord.y * ts + y);
                             let at = ((y * ts + x) * 4) as usize;
                             bytes[at..at + 4].copy_from_slice(&p.to_array());
                         }
                     }
-                    Tile::from_bytes(&bytes)
+                    readers.finish()?;
+                    Ok(Tile::from_vec(bytes))
                 })
+                .collect::<Vec<Result<_, CoreError>>>()
+                .into_iter()
                 .collect()
         })
     }
-    /// 計画（plan）の合成だけを焼く面（表示に寄与する層・複数の層・グループの結合）。バッチ（`merge_surface_tiles`）ごとに計画を 1 回組み、
+    /// 計画（plan）の合成だけを焼く面（表示に寄与するレイヤー・複数のレイヤー・グループの結合）。バッチ（`merge_surface_tiles`）ごとに計画を 1 回組み、
     /// バッチのタイルをまとめてワーカーへ分ける（`composite::composite_tiles_with`。タイルごとに計画を組み直さない。組む回数はバッチの数）。
     /// 合成・アルファ 0 の画素の RGB の 0 揃え・タイルの圧縮は、タイルを合成したワーカーが続けて行う（並列の段は 1 つ）。
     /// 画素は、画素ごとの `composite::evaluate_pixel` と同じバイトになる。
@@ -253,7 +321,10 @@ impl Document {
         self.merge_surface_tiles(coords, budget, |batch| {
             let regions: Vec<crate::Rect> = batch
                 .iter()
-                .map(|&c| self.tile_rect(c).expect("結合が読むタイルは画布の中にある"))
+                .map(|&c| {
+                    self.tile_rect(c)
+                        .expect("結合が読むタイルはキャンバスの中にある")
+                })
                 .collect();
             composite::composite_tiles_with(stack, self.tile_size, &regions, None, |i, image| {
                 // 矩形の画素を、ts × ts の 0 埋めの行（下から）に置く
@@ -267,9 +338,17 @@ impl Document {
                         *p = [0; 4];
                     }
                 }
-                Tile::from_bytes(&bytes)
+                Tile::from_vec(bytes)
             })
         })
+    }
+    /// 結合の束（面の組み立て・前と後の比べ）のタイルの数。束ごとに合成の計画を組み、束のタイルをワーカーへ分けて待つので、束が小さいと
+    /// 計画と待ちの費用が勝つ。スレッドあたり 32 枚で、束の画素（比べの前の合成）は 16 MiB までに抑える。
+    fn merge_batch_tiles(&self) -> usize {
+        let tile_bytes = self.tile_size as usize * self.tile_size as usize * 4;
+        (rayon::current_num_threads().clamp(1, 64) * 32)
+            .min((16 << 20) / tile_bytes)
+            .max(1)
     }
     /// タイルのバッチごとに render(座標の並び) → 座標ごとのタイル（画素が無ければ None）で組んだ面。タイルの計算はバッチの中で並列に行い、
     /// 予算の確かめと書き込みは座標の順にこのスレッドで行う。
@@ -277,12 +356,12 @@ impl Document {
         &self,
         coords: &BTreeSet<TileCoord>,
         budget: &mut u64,
-        render: impl Fn(&[TileCoord]) -> Vec<Option<Tile>>,
+        render: impl Fn(&[TileCoord]) -> Result<Vec<Option<Tile>>, CoreError>,
     ) -> Result<Surface, CoreError> {
         let mut out = Surface::new(self.width, self.height, self.tile_size);
         let coords: Vec<_> = coords.iter().copied().collect();
-        for batch in coords.chunks(rayon::current_num_threads().clamp(1, 64) * 2) {
-            let tiles = render(batch);
+        for batch in coords.chunks(self.merge_batch_tiles()) {
+            let tiles = render(batch)?;
             debug_assert_eq!(tiles.len(), batch.len());
             for (&coord, t) in batch.iter().zip(tiles) {
                 if let Some(t) = t {
@@ -333,11 +412,11 @@ impl Document {
         let li = (0..ui)
             .rev()
             .find(|&i| self.layers[i].parent == upper.parent)
-            .expect("下の層");
+            .expect("下のレイヤー");
         let lower = &self.layers[li];
         self.ensure_pixels_editable(id, false)?;
         self.ensure_pixels_editable(lower.id, false)?;
-        // 効果は焼き込まれる（結果は効果を持たない）ので、効いていない効果があれば落とさず断る。下の層のマスクは、残すとき
+        // 効果は焼き込まれる（結果は効果を持たない）ので、効いていない効果があれば落とさず断る。下のレイヤーのマスクは、残すとき
         // （分離の結合でないとき）は効果ごと結果へ写るので、ここでは見ない（C# の RefuseInactiveGenerators(upper, 内容, マスク)・(lower, 内容)）。
         // 分離の結合のときだけ、方法が決まったあとで見る（下）
         self.refuse_inactive_effects(ui, true, true)?;
@@ -351,7 +430,7 @@ impl Document {
         } else {
             MergeMethod::OntoLowerLayer
         };
-        // 分離の結合は下の層のマスクのフィルターも画素へ焼き（結果はマスクを持たない）、焼けば効いていない Generator の設定が落ちる。
+        // 分離の結合は下のレイヤーのマスクのフィルターも画素へ焼き（結果はマスクを持たない）、焼けば効いていない Generator の設定が落ちる。
         // C# はこの検査を持たず入力のまま通して黙って落とす。Rust は意図して断る（OntoLowerLayer・IntoClippingBase はマスクが効果ごと残る）
         if method == MergeMethod::Isolated {
             self.refuse_inactive_effects(li, false, true)?;
@@ -384,8 +463,11 @@ impl Document {
         {
             notes |= 1;
         }
-        if upper.path.is_some() || lower.path.is_some() {
+        if upper.has_paths() || lower.has_paths() {
             notes |= 2;
+        }
+        if upper.text.is_some() || lower.text.is_some() {
+            notes |= 16;
         }
         let mut budget = 0;
         let mut output_tiles: BTreeMap<Channel, BTreeSet<TileCoord>> = BTreeMap::new();
@@ -398,7 +480,7 @@ impl Document {
             upper_shell.parent = None;
             upper_shell.clipping = false;
             let upper_layers = [upper_shell];
-            // 計画（どの層が出るか）は評価に依らない。評価した出力は、効果を使う所で（下で）作る
+            // 計画（どのレイヤーが出るか）は評価に依らない。評価した出力は、効果を使う所で（下で）作る
             let upper_plan = Stack::new(&upper_layers, c, kind, None).plan();
             let upper_on = !upper_plan.is_empty()
                 && (method != MergeMethod::IntoClippingBase || on && lower.opacity_in(c) > 0.);
@@ -439,7 +521,7 @@ impl Document {
                 l.parent = None;
                 l.clipping = false;
             }
-            // 下の層（0）と上の層（1）の評価した出力。結合は保存している画素でなく、合成が読む出力を焼く
+            // 下のレイヤー（0）と上のレイヤー（1）の評価した出力。結合は保存している画素でなく、合成が読む出力を焼く
             let (eval, evaluated_tiles) = self.merge_eval(&isolated, &[li, ui], c, kind)?;
             if upper_on {
                 coords.extend(
@@ -460,17 +542,18 @@ impl Document {
             let upper_stack = Stack::new(&upper_layers, c, kind, Some(&upper_eval));
             let isolated_stack = Stack::new(&isolated, c, kind, Some(&eval));
             let isolated_plan = isolated_stack.plan();
-            let surface = self.merge_surface(&coords, &mut budget, |x, y| {
-                // 保存している画素（透明の下に残る RGB を守る所で使う）と、層の出力（効果を通した画素）
-                let raw = lower.pixel_or_transparent(c, x, y);
+            let surface = self.merge_surface(&coords, &mut budget, |readers, x, y| {
+                // 保存している画素（透明の下に残る RGB を守る所で使う）と、レイヤーの出力（効果を通した画素）
+                let raw = composite::raw_layer_pixel(readers, lower, c, x, y);
                 let below = if on {
-                    isolated_stack.layer_pixel(0, x, y)
+                    isolated_stack.layer_pixel(readers, 0, x, y)
                 } else {
                     Rgba8::TRANSPARENT
                 };
                 let p = match method {
                     MergeMethod::Isolated => composite::evaluate_pixel(
                         &isolated_stack,
+                        readers,
                         &isolated_plan,
                         Rgba8::TRANSPARENT,
                         x,
@@ -496,11 +579,12 @@ impl Document {
                                     },
                                 )) =>
                     {
-                        let amount = upper.opacity_in(c) * upper_stack.mask_factor(0, x, y);
+                        let amount =
+                            upper.opacity_in(c) * upper_stack.mask_factor(readers, 0, x, y);
                         if let Some(a) = &upper.adjustment {
                             a.composite(below, amount, upper.blend_mode_in(c))
                         } else {
-                            let p = upper_stack.layer_pixel(0, x, y);
+                            let p = upper_stack.layer_pixel(readers, 0, x, y);
                             if normal {
                                 crate::normal::clip_onto(below, p, amount, upper.blend_mode_in(c))
                             } else {
@@ -509,7 +593,7 @@ impl Document {
                         }
                     }
                     MergeMethod::OntoLowerLayer if upper_on => {
-                        composite::evaluate_pixel(&upper_stack, &upper_plan, below, x, y)
+                        composite::evaluate_pixel(&upper_stack, readers, &upper_plan, below, x, y)
                     }
                     _ => below,
                 };
@@ -527,8 +611,8 @@ impl Document {
             result.put_surface(c, Some(surface));
             result.set_enabled(c, on || upper_on);
         }
-        // Anchor: 結果までの合成は上の層までの合成と同じなので、上の層の Anchor を結果へ移す（読む段はそのまま使える）。残したマスクの
-        // Anchor は、マスクごと写っている（lower.mask の複製）。下の層の Anchor（上の層を含まない合成）は表せないので無くなり、
+        // Anchor: 結果までの合成は上のレイヤーまでの合成と同じなので、上のレイヤーの Anchor を結果へ移す（読む段はそのまま使える）。残したマスクの
+        // Anchor は、マスクごと写っている（lower.mask の複製）。下のレイヤーの Anchor（上のレイヤーを含まない合成）は表せないので無くなり、
         // 読む段は理由を出して入力のまま通す
         result.anchor = upper.anchor.clone();
         let removed = vec![lower.id, upper.id];
@@ -538,7 +622,7 @@ impl Document {
         copy.layers[li] = result;
         self.finish_merge(copy, &removed, method, notes, tolerance, &output_tiles)
     }
-    /// 表示に寄与する層を結合。非表示・不透明度ゼロの層と、それを持つグループは残す。
+    /// 表示に寄与するレイヤーを結合。非表示・不透明度ゼロのレイヤーと、それを持つグループは残す。
     pub fn merge_visible(
         &mut self,
         name: &str,
@@ -563,7 +647,7 @@ impl Document {
         if removed.is_empty() {
             return Err(CoreError::MergeRefused(MergeRefusal::NothingVisible));
         }
-        removed.retain(|id| !self.layer(*id).expect("層").is_group());
+        removed.retain(|id| !self.layer(*id).expect("レイヤー").is_group());
         self.ensure_members_editable(&removed)?;
         let mut notes = self.disabled_notes(&removed);
         for (i, l) in self.layers.iter().enumerate() {
@@ -598,7 +682,7 @@ impl Document {
             if Stack::new(&self.layers, c, kind, None).plan().is_empty() {
                 continue;
             }
-            // 全部の層の評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
+            // 全部のレイヤーの評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
             let (eval, evaluated_tiles) = self.merge_eval(&self.layers, &in_place, c, kind)?;
             let mut coords: BTreeSet<_> = self
                 .layers
@@ -640,7 +724,7 @@ impl Document {
             &output_tiles,
         )
     }
-    /// 外す層の画素が編集できるか（ロック）を、文書の並びの順（下から）に確かめる。最初に断った層を返すので、どの層を名指すかは
+    /// 外すレイヤーの画素が編集できるか（ロック）を、文書の並びの順（下から）に確かめる。最初に断ったレイヤーを返すので、どのレイヤーを名指すかは
     /// 集合の並びで変わらない。
     fn ensure_members_editable(&self, removed: &HashSet<LayerId>) -> Result<(), CoreError> {
         self.layers
@@ -672,7 +756,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let members = self.topmost_of(ids)?;
         if members.len() < 2 {
-            return Err(CoreError::InvalidArgument("結合は 2 層以上"));
+            return Err(CoreError::InvalidArgument("結合は 2 レイヤー以上"));
         }
         let parent = self.layer(members[0]).expect("対象").parent;
         if members
@@ -742,7 +826,7 @@ impl Document {
             .collect();
         self.ensure_members_editable(&removed)?;
         // 効果は焼き込まれる: 効いていない効果は落とさず断る。グループの結合では、グループ自身のマスクは結果へ効果ごと写るので
-        // 焼かない（見ない）。選んだ層の結合では、選んだグループのマスクも焼かれる（C# の MergeGroup・MergeLayers）
+        // 焼かない（見ない）。選んだレイヤーの結合では、選んだグループのマスクも焼かれる（C# の MergeGroup・MergeLayers）
         let mut effect_bits = 0;
         for (i, l) in self.layers.iter().enumerate() {
             if !removed.contains(&l.id) || Some(l.id) == group {
@@ -751,7 +835,9 @@ impl Document {
             self.refuse_inactive_effects(i, group.is_some() || !l.is_group(), true)?;
             effect_bits |= effect_notes(l);
         }
-        let top = self.layer(*members.last().expect("対象")).expect("層");
+        let top = self
+            .layer(*members.last().expect("対象"))
+            .expect("レイヤー");
         let mut result = Layer::new(
             LayerId(super::random_id(self.id_counter)),
             &top.name,
@@ -771,7 +857,7 @@ impl Document {
             result.mask = top.mask.clone();
             result.locks = top.locks;
             // Anchor: 結果までの合成はグループまでの合成と同じなので、グループの Anchor を結果へ移す（マスクの Anchor はマスクごと写る）。
-            // 中の層の Anchor は無くなる
+            // 中のレイヤーの Anchor は無くなる
             result.anchor = top.anchor.clone();
             result.blends = top.blends.clone();
             for b in result.blends.values_mut() {
@@ -857,7 +943,7 @@ impl Document {
         tolerance: u8,
         output_tiles: &BTreeMap<Channel, BTreeSet<TileCoord>>,
     ) -> Result<LayerMergeReport, CoreError> {
-        // 表示に寄与する層の結合だけは、結合前の合成でなく結果の層の画素と比べる（結合した層が全部の見た目を持つ）
+        // 表示に寄与するレイヤーの結合だけは、結合前の合成でなく結果のレイヤーの画素と比べる（結合したレイヤーが全部の見た目を持つ）
         let visible = method == MergeMethod::Visible;
         let result = copy
             .layers
@@ -887,7 +973,7 @@ impl Document {
                 .flat_map(|l| self.content_coords(l, c))
                 .collect();
             coords.extend(self.content_coords(result, c));
-            // 結合した層の出力は、元の画素の無いタイルへも届く（Generator など）。比べる所に足す
+            // 結合したレイヤーの出力は、元の画素の無いタイルへも届く（Generator など）。比べる所に足す
             if let Some(tiles) = output_tiles.get(&c) {
                 coords.extend(tiles.iter().copied());
             }
@@ -902,41 +988,39 @@ impl Document {
                     }
                 }
             }
-            for coord in coords {
-                let rect = self.tile_rect(coord).expect("タイル");
-                let before = if visible {
-                    let mut v = Vec::new();
-                    for y in rect.y..rect.y + rect.height {
-                        for x in rect.x..rect.x + rect.width {
-                            v.extend_from_slice(&result.pixel_or_transparent(c, x, y).to_array());
-                        }
-                    }
-                    v
+            // 束ごとに、結合後の合成（と、結合前の合成）を計画 1 回でワーカーへ分け、合成したワーカーがそのまま比べる。束はタイルの
+            // 座標の順で、誤りは並びの最初のタイルのもの（前と同じ規則）。比べの数は和と最大なので、分け方によらない
+            let coords: Vec<TileCoord> = coords.into_iter().collect();
+            let mut changed = 0;
+            for chunk in coords.chunks(self.merge_batch_tiles()) {
+                let differences = if visible {
+                    copy.composite_tiles_then(c, chunk, None, |_, _, rect, after| {
+                        Ok(Difference::of(&after, &layer_rect(result, c, rect)?))
+                    })?
                 } else {
-                    self.composite_channel(c, rect)?
+                    let before = self.composite_tiles(c, chunk)?;
+                    copy.composite_tiles_then(c, chunk, None, |i, coord, _, after| {
+                        debug_assert_eq!(before[i].coord, coord);
+                        Ok(Difference::of(&after, &before[i].pixels))
+                    })?
                 };
-                let after = copy.composite_channel(c, rect)?;
-                for (a, b) in after.chunks_exact(4).zip(before.chunks_exact(4)) {
-                    report.compared_pixels += 1;
-                    if a[3] == 0 && b[3] == 0 {
-                        continue;
-                    }
-                    let delta = (0..4).map(|q| a[q].abs_diff(b[q])).max().expect("RGBA");
-                    if delta == 0 {
-                        continue;
-                    }
-                    report.changed_pixels += 1;
-                    *report.changed_by_channel.entry(c).or_default() += 1;
-                    report.max_difference = report.max_difference.max(delta);
-                    let mut v = a[3].abs_diff(b[3]);
-                    for q in 0..3 {
-                        let d = ((a[q] as i32 * a[3] as i32 - b[q] as i32 * b[3] as i32).abs()
-                            + 127)
-                            / 255;
-                        v = v.max(d as u8);
-                    }
-                    report.max_visible_difference = report.max_visible_difference.max(v);
+                assert_eq!(
+                    differences.len(),
+                    chunk.len(),
+                    "比べるタイルはキャンバスの中"
+                );
+                for d in differences {
+                    let d: Difference = d?;
+                    report.compared_pixels += d.compared;
+                    report.changed_pixels += d.changed;
+                    changed += d.changed;
+                    report.max_difference = report.max_difference.max(d.max_difference);
+                    report.max_visible_difference =
+                        report.max_visible_difference.max(d.max_visible_difference);
                 }
+            }
+            if changed > 0 {
+                *report.changed_by_channel.entry(c).or_default() += changed;
             }
         }
         if report.max_visible_difference > tolerance {
@@ -950,7 +1034,7 @@ impl Document {
                 .filter(|l| removed.contains(&l.id))
                 .map(Layer::allocated_bytes)
                 .sum::<u64>();
-        // 変わり得るのは外した層と結果の層（結果の見た目の差は許容差の内で、外から見える所は変えない）
+        // 変わり得るのは外したレイヤーと結果のレイヤー（結果の見た目の差は許容差の内で、外から見える所は変えない）
         let mut dirty = removed.to_vec();
         dirty.push(report.result_id);
         self.commit_copy(copy, cost, Dirty::Layers(dirty))?;

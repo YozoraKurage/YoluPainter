@@ -1,4 +1,4 @@
-//! 縦のスクロールの共通の部品。このアプリの自前の欄（ブラシの一覧・レイヤー・アセット・設定の窓など）は、行を自分で並べて
+//! 縦のスクロールの共通の部品。このアプリの自前の欄（ブラシの一覧・レイヤー・アセット・設定のウィンドウなど）は、行を自分で並べて
 //! 位置をずらすので、ホイールで送る・つまみを掴んで動かす・溝を押して移る、までをここ 1 か所に持つ。振る舞いと寸法は、カラーセットの
 //! 欄が使う egui の `ScrollArea`（`ScrollStyle::thin`）と同じ: つまみの太さは普段 2 点で、ポインタを乗せる・掴むと 10 点に広がり、
 //! 掴める幅はいつも 10 点（右の縁）。つまみを押せばその位置から動かし、溝を押せばつまみがそこへ移って（中心がポインタ）、そのまま
@@ -48,7 +48,11 @@ impl Scroll {
     /// ホイールは受けず、寸法だけ。`offset` を範囲に収める。
     pub fn new(view: Rect, content: f32, offset: &mut f32) -> Scroll {
         let max = (content - view.height()).max(0.0);
-        *offset = if offset.is_finite() { offset.clamp(0.0, max) } else { 0.0 };
+        *offset = if offset.is_finite() {
+            offset.clamp(0.0, max)
+        } else {
+            0.0
+        };
         Scroll { view, content, max }
     }
 
@@ -76,7 +80,10 @@ impl Scroll {
 
     /// 掴める縦の帯（`view` の右の縁）。
     pub fn grab_rect(&self) -> Rect {
-        Rect::from_min_max(pos2(self.view.right() - BAR_WIDTH, self.view.top()), self.view.max)
+        Rect::from_min_max(
+            pos2(self.view.right() - BAR_WIDTH, self.view.top()),
+            self.view.max,
+        )
     }
 
     /// 今の `offset` のつまみ（掴める帯の中の、縦の範囲。幅は帯いっぱい）。
@@ -85,14 +92,23 @@ impl Scroll {
         let length = (track.height() * track.height() / self.content.max(1.0))
             .max(HANDLE_MIN)
             .min(track.height());
-        let top = remap_clamp(offset, 0.0..=self.max.max(f32::EPSILON), track.top()..=(track.bottom() - length));
+        let top = remap_clamp(
+            offset,
+            0.0..=self.max.max(f32::EPSILON),
+            track.top()..=(track.bottom() - length),
+        );
         let grab = self.grab_rect();
         Rect::from_min_max(pos2(grab.left(), top), pos2(grab.right(), top + length))
     }
 
     /// つまみの操作を受けて `offset` を動かし、つまみを重ねて描く（行を描いたあとに呼ぶ）。`id` は欄ごとに別の値。
     /// 掴んでいる間だけ true を返す。
-    pub fn end(&self, ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, offset: &mut f32) -> bool {
+    pub fn end(
+        &self,
+        ui: &mut Ui,
+        id: impl std::hash::Hash + std::fmt::Debug,
+        offset: &mut f32,
+    ) -> bool {
         let id = Id::new(id);
         if !self.needed() {
             ui.data_mut(|d| d.remove::<f32>(grab_id(id)));
@@ -105,15 +121,18 @@ impl Scroll {
         let handle = self.handle_rect(*offset);
         if let Some(pointer) = response.interact_pointer_pos() {
             // 押した位置: つまみの上ならそのままつかみ、溝ならつまみの中心がポインタに来る所へ移して掴む
-            let start = ui.data(|d| d.get_temp::<f32>(grab_id(id))).unwrap_or_else(|| {
-                if handle.contains(pointer) {
-                    pointer.y - handle.top()
-                } else {
-                    let travel_end = self.view.bottom() - handle.height();
-                    let top = (pointer.y - handle.height() / 2.0).clamp(self.view.top(), travel_end);
-                    pointer.y - top
-                }
-            });
+            let start = ui
+                .data(|d| d.get_temp::<f32>(grab_id(id)))
+                .unwrap_or_else(|| {
+                    if handle.contains(pointer) {
+                        pointer.y - handle.top()
+                    } else {
+                        let travel_end = self.view.bottom() - handle.height();
+                        let top =
+                            (pointer.y - handle.height() / 2.0).clamp(self.view.top(), travel_end);
+                        pointer.y - top
+                    }
+                });
             ui.data_mut(|d| d.insert_temp(grab_id(id), start));
             let top = pointer.y - start;
             let travel = self.view.top()..=(self.view.bottom() - handle.height());
@@ -140,8 +159,15 @@ impl Scroll {
         } else {
             HANDLE
         };
-        let painter = ui.painter().with_clip_rect(self.view.intersect(ui.clip_rect()));
-        let shown = |r: Rect| Rect::from_min_max(pos2(grab.right() - width, r.top()), pos2(grab.right(), r.bottom()));
+        let painter = ui
+            .painter()
+            .with_clip_rect(self.view.intersect(ui.clip_rect()));
+        let shown = |r: Rect| {
+            Rect::from_min_max(
+                pos2(grab.right() - width, r.top()),
+                pos2(grab.right(), r.bottom()),
+            )
+        };
         if grow > 0.0 {
             // 溝は、広がっているあいだだけ（普段は行の地のまま）
             painter.rect_filled(

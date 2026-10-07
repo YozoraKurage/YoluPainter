@@ -1,13 +1,14 @@
 //! 文書の解像度変更。C# ResampleAxis / CanvasResampler と同じ整数比の重み。
 //!
 //! 行き先の面はタイルごとに作る。C# の CanvasResampler と同じく、読む元のタイルが 1 枚も無い行き先は飛ばし、読む元が全部同じ
-//! 一様なタイルなら計算せずその色で埋める（どちらも画素ごとに計算した結果と同じバイトで、疎な層の費用が内容に比例する）。
+//! 一様なタイルなら計算せずその色で埋める（どちらも画素ごとに計算した結果と同じバイトで、疎なレイヤーの費用が内容に比例する）。
 use super::operations::Dirty;
 use super::{Document, Target};
 use crate::effects::LayerPath;
 use crate::math::to_byte;
-use crate::paths::{render_canvas, CanvasPath, CanvasPoint, Options};
-use crate::surface::Tile;
+use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
+use crate::surface::{PixelReader, Tile};
+use crate::text::TextSettings;
 use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
 use rayon::prelude::*;
 
@@ -20,7 +21,7 @@ pub enum CanvasResampling {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ResizeReport {
     pub notes: Vec<String>,
-    /// モデルの上のパスで描かれた層。UV に結び付いたパスは残り、パスのチャンネルの画素は画素として写した（resize_image は補間、
+    /// モデルの上のパスで描かれたレイヤー。UV に結び付いたパスは残り、パスのチャンネルの画素は画素として写した（resize_image は補間、
     /// resize_canvas はずらし）だけなので、呼び手がモデルでパスから描き直すか、写した画素のままにして知らせる（C# の
     /// `ResampledDocument.SurfacePathLayers`）。
     pub surface_path_layers: Vec<LayerId>,
@@ -93,53 +94,12 @@ impl Axis {
     }
 }
 
-/// 行き先のある範囲が読む元の範囲（両端を含む。元の画布の中だけ）。
+/// 行き先のある範囲が読む元の範囲（両端を含む。元のキャンバスの中だけ）。
 struct Span {
     lo: u32,
     hi: u32,
-    /// 範囲のどの画素も元の画布の中を読む（外を読む画素があると、一様な元でも外は透明なので埋められない）。
+    /// 範囲のどの画素も元のキャンバスの中を読む（外を読む画素があると、一様な元でも外は透明なので埋められない）。
     inside: bool,
-}
-
-/// 元の面を、直前に読んだタイルを覚えて読む（C# の TileReader）。読み手ごとに 1 つ作り、共有しない。
-struct Reader<'a> {
-    surface: &'a Surface,
-    tile_size: u32,
-    at: (u32, u32),
-    tile: Option<&'a Tile>,
-}
-impl<'a> Reader<'a> {
-    fn new(surface: &'a Surface) -> Self {
-        Self {
-            surface,
-            tile_size: surface.tile_size(),
-            at: (u32::MAX, u32::MAX),
-            tile: None,
-        }
-    }
-    /// 画布の中の画素。無いタイルは透明。
-    #[inline]
-    fn get(&mut self, x: u32, y: u32) -> Rgba8 {
-        debug_assert!(x < self.surface.width() && y < self.surface.height());
-        let ts = self.tile_size;
-        let at = (x / ts, y / ts);
-        if at != self.at {
-            self.at = at;
-            self.tile = self.surface.tile(TileCoord::new(at.0, at.1));
-        }
-        self.tile.map_or(Rgba8::TRANSPARENT, |t| {
-            t.get((((y % ts) * ts + x % ts) * 4) as usize)
-        })
-    }
-    /// 画布の外は透明。
-    #[inline]
-    fn get_or_transparent(&mut self, x: i64, y: i64) -> Rgba8 {
-        if x < 0 || y < 0 || x >= self.surface.width() as i64 || y >= self.surface.height() as i64 {
-            Rgba8::TRANSPARENT
-        } else {
-            self.get(x as u32, y as u32)
-        }
-    }
 }
 
 /// 行き先の画素が元のどこから来るか。
@@ -147,7 +107,7 @@ trait Mapping: Sync {
     /// 行き先の [lo, hi]（両端を含む）が読む元の範囲。全部が元の外なら None。
     fn span_x(&self, lo: u32, hi: u32) -> Option<Span>;
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span>;
-    fn pixel(&self, source: &mut Reader<'_>, normal: bool, x: u32, y: u32) -> Rgba8;
+    fn pixel(&self, source: &mut PixelReader<'_>, normal: bool, x: u32, y: u32) -> Rgba8;
 }
 /// 整数比の重みで拡大・縮小する（resize_image）。
 struct Resampled {
@@ -161,7 +121,7 @@ impl Mapping for Resampled {
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span> {
         Some(self.ys.span(lo, hi))
     }
-    fn pixel(&self, source: &mut Reader<'_>, normal: bool, x: u32, y: u32) -> Rgba8 {
+    fn pixel(&self, source: &mut PixelReader<'_>, normal: bool, x: u32, y: u32) -> Rgba8 {
         resampled_pixel(
             source,
             &self.xs.0[x as usize],
@@ -193,8 +153,8 @@ impl Mapping for Shifted {
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span> {
         Self::span(lo, hi, self.offset.1, self.source.1)
     }
-    fn pixel(&self, source: &mut Reader<'_>, _normal: bool, x: u32, y: u32) -> Rgba8 {
-        source.get_or_transparent(
+    fn pixel(&self, source: &mut PixelReader<'_>, _normal: bool, x: u32, y: u32) -> Rgba8 {
+        source.pixel(
             x as i64 - self.offset.0 as i64,
             y as i64 - self.offset.1 as i64,
         )
@@ -202,13 +162,13 @@ impl Mapping for Shifted {
 }
 
 fn resampled_pixel(
-    source: &mut Reader<'_>,
+    source: &mut PixelReader<'_>,
     xs: &[(u32, f64)],
     ys: &[(u32, f64)],
     normal: bool,
 ) -> Rgba8 {
     if xs.len() == 1 && ys.len() == 1 {
-        return source.get(xs[0].0, ys[0].0);
+        return source.pixel(xs[0].0 as i64, ys[0].0 as i64);
     }
     let (mut a, mut r, mut g, mut b, mut zw, mut zr, mut zg, mut zb) =
         (0., 0., 0., 0., 0., 0., 0., 0.);
@@ -223,7 +183,7 @@ fn resampled_pixel(
             if w <= 0. {
                 continue;
             }
-            let p = source.get(x, y);
+            let p = source.pixel(x as i64, y as i64);
             if let Some(f) = first {
                 if p != f {
                     same = false;
@@ -282,6 +242,28 @@ fn resampled_pixel(
 struct Budget {
     used: u64,
     limit: Option<u64>,
+}
+
+/// A だけの RGBA の面（[`super::transform::selection_surface`] の逆）から選択範囲を作る。作ったばかりの面でも、裏の書き手が上限を
+/// 超えた分をディスクへ逃がしていることがあるので、読めないタイルは誤りで返す（選ばれていないことにしない）。
+pub(super) fn selection_from_surface(surface: &Surface) -> Result<crate::SelectionMask, CoreError> {
+    let n = (surface.tile_size() * surface.tile_size()) as usize;
+    let mut tiles = Vec::new();
+    for coord in surface.tile_coords() {
+        let Some(tile) = surface.read(coord)? else {
+            continue;
+        };
+        let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
+        if amounts.iter().any(|&a| a != 0) {
+            tiles.push((coord, amounts));
+        }
+    }
+    crate::SelectionMask::from_amount_tiles(
+        surface.width(),
+        surface.height(),
+        surface.tile_size(),
+        tiles,
+    )
 }
 
 /// 元の面から、寸法の違う行き先の面を作る。行き先のタイルごとに、読む元のタイルが 1 枚も無ければ飛ばし、全部が同じ一様な
@@ -348,7 +330,7 @@ fn resample_surface(
                 let (x0, y0) = (coord.x * ts, coord.y * ts);
                 let (tw, th) = (ts.min(width - x0), ts.min(height - y0));
                 let mut bytes = vec![0; source.tile_bytes()];
-                let mut reader = Reader::new(source);
+                let mut reader = PixelReader::new(source);
                 for y in 0..th {
                     for x in 0..tw {
                         let p = match uniform {
@@ -359,9 +341,10 @@ fn resample_surface(
                         bytes[at..at + 4].copy_from_slice(&p.to_array());
                     }
                 }
-                (coord, Tile::from_bytes(&bytes))
+                reader.finish()?;
+                Ok((coord, Tile::from_vec(bytes)))
             })
-            .collect();
+            .collect::<Result<_, CoreError>>()?;
         for (coord, tile) in tiles {
             budget.used += tile.as_ref().map_or(0, Tile::byte_size);
             if budget.limit.is_some_and(|limit| budget.used > limit) {
@@ -462,7 +445,7 @@ impl Document {
         self.commit_resized(copy, &mut report)?;
         Ok(report)
     }
-    /// 画素を再補間せず画布だけを変更する。offset は元の左下を置く先。外へ出た画素は切り落とし、Undo で戻す。履歴の予算は
+    /// 画素を再補間せずキャンバスだけを変更する。offset は元の左下を置く先。外へ出た画素は切り落とし、Undo で戻す。履歴の予算は
     /// [`Document::resize_image`] と同じ（超えてもこの 1 段は残す）。
     pub fn resize_canvas(
         &mut self,
@@ -495,8 +478,16 @@ impl Document {
             + copy.allocated_bytes()
             + self.selection.as_ref().map_or(0, |s| s.history_bytes())
             + copy.selection.as_ref().map_or(0, |s| s.history_bytes())
-            + self.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>()
-            + copy.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>();
+            + self
+                .saved_selections
+                .iter()
+                .map(|s| s.mask.history_bytes())
+                .sum::<u64>()
+            + copy
+                .saved_selections
+                .iter()
+                .map(|s| s.mask.history_bytes())
+                .sum::<u64>();
         self.commit_copy_kept(copy, cost, Dirty::All)?;
         report.history_over_budget = cost > self.undo_budget;
         if report.history_over_budget {
@@ -504,7 +495,7 @@ impl Document {
         }
         Ok(())
     }
-    /// 選択範囲を新しい大きさへ作り直す（A だけの RGBA の面として層と同じ道で）。
+    /// 選択範囲を新しい大きさへ作り直す（A だけの RGBA の面としてレイヤーと同じ道で）。
     fn resample_mask(
         &self,
         selection: &crate::SelectionMask,
@@ -526,13 +517,7 @@ impl Document {
                 limit: None,
             },
         )?;
-        let n = (self.tile_size * self.tile_size) as usize;
-        let tiles = resized.tile_coords().into_iter().filter_map(|coord| {
-            let tile = resized.tile(coord)?;
-            let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
-            amounts.iter().any(|&a| a != 0).then_some((coord, amounts))
-        });
-        crate::SelectionMask::from_amount_tiles(width, height, self.tile_size, tiles)
+        selection_from_surface(&resized)
     }
     fn check_resize(width: u32, height: u32) -> Result<(), CoreError> {
         if width == 0
@@ -563,8 +548,8 @@ impl Document {
         for i in 0..self.layers.len() {
             // 2D のパスで描かれたチャンネルは写さない（下で、大きさに合わせたパスから描き直す）。resize_image（Fit::Scale）は C# の
             // Resampled と同じ。resize_canvas（Fit::Shift: 点をずらして描き直す）に当たる C# の操作は無く、Rust 独自の決め
-            let redrawn: Vec<Channel> = match &self.layers[i].path {
-                Some(p) if p.is_canvas() => p.channels(),
+            let redrawn: Vec<Channel> = match self.layers[i].path() {
+                Some(p) if p.is_canvas() => crate::paths::list_channels(&self.layers[i].paths),
                 _ => Vec::new(),
             };
             let mut surfaces: Vec<_> = self.layers[i]
@@ -587,7 +572,7 @@ impl Document {
             }
         }
         if let Some(selection) = &self.selection {
-            // 選択範囲は A だけの RGBA の面として層と同じ道を通る（飛ばす・埋める・取消）。画素の予算には数えない
+            // 選択範囲は A だけの RGBA の面としてレイヤーと同じ道を通る（飛ばす・埋める・取消）。画素の予算には数えない
             let mask = self.resample_mask(selection, width, height, map, cancelled)?;
             copy.selection = (!mask.is_empty()).then_some(mask);
         }
@@ -615,30 +600,48 @@ impl Document {
             }
             copy.saved_selections = std::sync::Arc::new(kept);
         }
-        // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled が層ごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
-        // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（層ごと複製済み）
+        // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled がレイヤーごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
+        // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（レイヤーごと複製済み）
         for i in 0..self.layers.len() {
-            match &self.layers[i].path {
-                Some(LayerPath::Canvas(path)) => {
+            match self.layers[i].path() {
+                Some(LayerPath::Canvas(_)) => {
                     if cancelled() {
                         return Err(CoreError::Cancelled);
                     }
-                    let fitted = fit.canvas_path(path, &self.layers[i].name, &mut report.notes);
-                    let rendered = render_canvas(
+                    let fitted: Vec<crate::paths::LayerPathEntry> = self.layers[i]
+                        .paths
+                        .iter()
+                        .map(|e| {
+                            let LayerPath::Canvas(path) = &e.path else {
+                                unreachable!("一覧はどれも同じ側")
+                            };
+                            crate::paths::LayerPathEntry {
+                                path: LayerPath::Canvas(fit.canvas_path(
+                                    path,
+                                    &self.layers[i].name,
+                                    &mut report.notes,
+                                )),
+                                ..e.clone()
+                            }
+                        })
+                        .collect();
+                    let rendered = render_list(
                         &fitted,
+                        None,
                         &Options {
                             width,
                             height,
                             tile_size: self.tile_size,
                             source_budget_bytes: self.source_budget,
                             stroke_budget_bytes: self.stroke_budget,
+                            images: self.effects.inputs.images.clone(),
                             ..Options::default()
                         },
                     )
                     .map_err(crate::effects::paths_error)?;
                     let layer = &mut copy.layers[i];
                     // パスのチャンネルは写していないので、古い大きさの面のまま残らないよう、空の面へ置き換えてから描いた結果を入れる
-                    for c in LayerPath::Canvas(fitted.clone()).channels() {
+                    for c in crate::paths::list_channels(&fitted) {
                         layer.put_surface(c, Some(Surface::new(width, height, self.tile_size)));
                     }
                     for (c, surface) in rendered.channels {
@@ -648,10 +651,14 @@ impl Document {
                         }
                         layer.put_surface(c, Some(surface));
                     }
-                    layer.path = Some(LayerPath::Canvas(fitted));
+                    layer.paths = fitted;
                 }
                 Some(LayerPath::Surface(_)) => report.surface_path_layers.push(self.layers[i].id),
                 None => {}
+            }
+            // テキストレイヤー: 画素は上で写した（ずらし・補間）。値を同じだけ動かし、次に文を直したときに同じ所・大きさで描き直す
+            if let Some(text) = &self.layers[i].text {
+                copy.layers[i].text = Some(fit.text(text, &self.layers[i].name, &mut report.notes));
             }
         }
         if let Fit::Scale { scale, .. } = fit {
@@ -673,24 +680,44 @@ impl Document {
 enum Fit {
     /// 拡大・縮小（resize_image）: 半径・パスの点と太さを倍率に合わせる。`scale` は縦横の倍率の幾何平均（C# の Resampled）。
     Scale { sx: f64, sy: f64, scale: f64 },
-    /// 画布だけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
+    /// キャンバスだけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
     /// （C# と照らしていない。試験は seam_ops の resizing_the_canvas_moves_2d_path_points_and_redraws）。
     Shift((i32, i32)),
 }
 impl Fit {
-    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点は縦横の倍率かずらしで、ブラシの半径は縦横の倍率の幾何平均で
-    /// 動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
+    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点とキャンバスの対称の中心は縦横の倍率かずらしで、ブラシの半径は縦横の
+    /// 倍率の幾何平均で動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
     fn canvas_path(self, path: &CanvasPath, owner: &str, notes: &mut Vec<String>) -> CanvasPath {
         const LIMIT: f64 = 1e6;
         let mut next = path.clone();
         let mut clamped = false;
+        // 取っ手は点からの向きなので、拡大・縮小では縦横の倍率を掛け、ずらしでは変えない
+        let (hx, hy) = match self {
+            Fit::Scale { sx, sy, .. } => (sx, sy),
+            Fit::Shift(_) => (1.0, 1.0),
+        };
         let mut place = |p: &CanvasPoint, x: f64, y: f64| {
             let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
             clamped |= cx != x || cy != y;
+            let handle = |h: glam::DVec2| {
+                glam::DVec2::new(
+                    (h.x * hx).clamp(-crate::paths::MAX_HANDLE, crate::paths::MAX_HANDLE),
+                    (h.y * hy).clamp(-crate::paths::MAX_HANDLE, crate::paths::MAX_HANDLE),
+                )
+            };
             CanvasPoint {
                 x: cx,
                 y: cy,
                 pressure: p.pressure,
+                tangent: match p.tangent {
+                    crate::paths::Tangent::Handles { incoming, outgoing } => {
+                        crate::paths::Tangent::Handles {
+                            incoming: handle(incoming),
+                            outgoing: handle(outgoing),
+                        }
+                    }
+                    other => other,
+                },
             }
         };
         match self {
@@ -717,10 +744,46 @@ impl Fit {
                     .collect();
             }
         }
+        // キャンバスの対称の中心はキャンバスの画素の座標なので、点と同じに動かす（動かさないと、映した側が古い中心で映されて違う所に描かれる）
+        if let PathSymmetry::Canvas(symmetry) = &mut next.style.symmetry {
+            let (x, y) = match self {
+                Fit::Scale { sx, sy, .. } => (symmetry.center.x * sx, symmetry.center.y * sy),
+                Fit::Shift((dx, dy)) => {
+                    (symmetry.center.x + dx as f64, symmetry.center.y + dy as f64)
+                }
+            };
+            let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
+            clamped |= cx != x || cy != y;
+            symmetry.center = glam::DVec2::new(cx, cy);
+        }
         if clamped {
             notes.push(format!(
                 "「{owner}」のパス: キャンバスから遠く外れた点を ±1000000 画素の内へ寄せた"
             ));
+        }
+        next
+    }
+
+    /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は
+    /// 基準の点を縦横の倍率で、大きさを幾何平均で、折り返しの幅を横の倍率で動かす。このとき画素は補間で写しただけなので、
+    /// `notes` に書く（文を直すと新しい大きさで描き直す。縦横の倍率が違えば、描き直した形は写した画素と同じにならない）。
+    fn text(self, text: &TextSettings, owner: &str, notes: &mut Vec<String>) -> TextSettings {
+        let limit = crate::text::MAX_COORDINATE;
+        let mut next = text.clone();
+        match self {
+            Fit::Scale { sx, sy, scale } => {
+                next.x = (text.x * sx).clamp(-limit, limit);
+                next.y = (text.y * sy).clamp(-limit, limit);
+                next.size = (text.size * scale).clamp(crate::text::MIN_SIZE, crate::text::MAX_SIZE);
+                next.wrap_width = (text.wrap_width * sx).clamp(0.0, limit);
+                notes.push(format!(
+                    "「{owner}」のテキストは画素を拡大・縮小しました（文を直すと新しいサイズで描き直す）"
+                ));
+            }
+            Fit::Shift((dx, dy)) => {
+                next.x = (text.x + dx as f64).clamp(-limit, limit);
+                next.y = (text.y + dy as f64).clamp(-limit, limit);
+            }
         }
         next
     }
@@ -782,7 +845,7 @@ mod tests {
         map: &dyn Mapping,
         normal: bool,
     ) -> Vec<u8> {
-        let mut reader = Reader::new(source);
+        let mut reader = PixelReader::new(source);
         let mut out = Vec::new();
         for y in 0..height {
             for x in 0..width {

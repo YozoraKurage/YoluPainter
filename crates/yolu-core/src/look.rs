@@ -97,7 +97,7 @@ impl LookValue {
         }
     }
 
-    fn is_finite(&self) -> bool {
+    pub fn is_finite(&self) -> bool {
         match self {
             LookValue::Float(v) => v.is_finite(),
             LookValue::Int(_) => true,
@@ -112,7 +112,10 @@ pub enum PlaneSource {
     Zero,
     One,
     /// チャンネルの成分（0 R・1 G・2 B・3 A。スカラーのチャンネルは 0 が値）。
-    Channel { channel: Channel, component: u8 },
+    Channel {
+        channel: Channel,
+        component: u8,
+    },
 }
 
 /// テクスチャのスロットの入力。
@@ -163,6 +166,12 @@ pub struct MaterialLook {
     pub textures: BTreeMap<String, TextureSource>,
     /// シェーダーのキーワード（受けたものを持つだけ。並びは受けた順）。
     pub keywords: Vec<String>,
+    /// Unity のシェーダーのアセットの GUID（受けたものを持つだけ。空は不明）。
+    pub shader_guid: String,
+    /// シェーダーの版（lilToon の版など。受けたものを持つだけ。空は不明）。
+    pub shader_version: String,
+    /// 描画の順（Unity のマテリアルの renderQueue。None はシェーダーの既定）。
+    pub render_queue: Option<i32>,
 }
 
 impl MaterialLook {
@@ -206,7 +215,8 @@ impl MaterialLook {
     /// このチャンネルを読むスロットを外した設定（チャンネルを消すとき、割り当てを残さない。詰め合わせはその成分だけ既定の 1 に）。
     pub fn without_channel(&self, channel: Channel) -> MaterialLook {
         let mut look = self.clone();
-        look.textures.retain(|_, t| *t != TextureSource::Channel(channel));
+        look.textures
+            .retain(|_, t| *t != TextureSource::Channel(channel));
         for t in look.textures.values_mut() {
             if let TextureSource::Packed(planes) = t {
                 for p in planes.iter_mut() {
@@ -242,6 +252,15 @@ impl MaterialLook {
         if !self.keywords.is_empty() {
             out.keywords = self.keywords.clone();
         }
+        if !self.shader_guid.is_empty() {
+            out.shader_guid = self.shader_guid.clone();
+        }
+        if !self.shader_version.is_empty() {
+            out.shader_version = self.shader_version.clone();
+        }
+        if self.render_queue.is_some() {
+            out.render_queue = self.render_queue;
+        }
         out
     }
 
@@ -253,6 +272,12 @@ impl MaterialLook {
         };
         if !self.shader.is_empty() && !name_ok(&self.shader, MAX_SHADER_NAME) {
             return Err(CoreError::InvalidArgument("見た目のシェーダーの名前"));
+        }
+        if [&self.shader_guid, &self.shader_version]
+            .iter()
+            .any(|s| !s.is_empty() && !name_ok(s, MAX_NAME))
+        {
+            return Err(CoreError::InvalidArgument("見た目のシェーダーの身元"));
         }
         if self.properties.len() > MAX_PROPERTIES {
             return Err(CoreError::InvalidArgument("見た目のプロパティの数"));
@@ -307,7 +332,8 @@ impl MaterialLook {
             .chain(self.keywords.iter())
             .map(|s| s.len() + 32)
             .sum();
-        (256 + names + self.shader.len()) as u64
+        (256 + names + self.shader.len() + self.shader_guid.len() + self.shader_version.len())
+            as u64
     }
 }
 
@@ -331,29 +357,30 @@ pub struct ReceivedImage {
 /// 受けた見た目のスロットの、絵が無い理由（絵があれば無い）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MissingImage {
-    /// 送り手に絵があり、まだ届いていない（届く途中・保存したファイルから開いた。絵は保存しない）。
-    Pending,
-    /// 送り手が予算を超えたので送らなかった。
+    /// 絵の予算（受けた絵の合計）を超えたので持たなかった。
     OverBudget,
-    /// 送り手が読めなかった・受け手が持てなかった。
+    /// 絵のファイルを読めなかった。
     Unreadable,
+    /// 送り手の中にしか無い絵（ファイルが無い生成物など）。
+    NotAFile,
 }
 
 impl MissingImage {
     /// 保存の名前。
     pub fn key(self) -> &'static str {
         match self {
-            MissingImage::Pending => "pending",
             MissingImage::OverBudget => "overBudget",
             MissingImage::Unreadable => "unreadable",
+            MissingImage::NotAFile => "notAFile",
         }
     }
 
+    /// 保存の名前から。0.4 までの `pending`（届いていない）は、読めないとして読む（絵のファイルを読み直すまで描けない）。
     pub fn from_key(key: &str) -> Option<MissingImage> {
         match key {
-            "pending" => Some(MissingImage::Pending),
             "overBudget" => Some(MissingImage::OverBudget),
-            "unreadable" => Some(MissingImage::Unreadable),
+            "unreadable" | "pending" => Some(MissingImage::Unreadable),
+            "notAFile" => Some(MissingImage::NotAFile),
             _ => None,
         }
     }
@@ -380,7 +407,9 @@ impl ReceivedLook {
             let n = s.encode_utf16().count();
             (1..=MAX_NAME).contains(&n) && !s.chars().any(|c| c.is_control())
         };
-        if self.source.encode_utf16().count() > MAX_SHADER_NAME || self.source.chars().any(|c| c.is_control()) {
+        if self.source.encode_utf16().count() > MAX_SHADER_NAME
+            || self.source.chars().any(|c| c.is_control())
+        {
             return Err(CoreError::InvalidArgument("受けた見た目の出どころ"));
         }
         if self.images.len() + self.missing.len() > MAX_TEXTURES {
@@ -423,7 +452,10 @@ mod tests {
         assert_eq!(look.kind, LookKind::Standard);
         assert_eq!(look.shader_name(), LILTOON_SHADER);
         assert!(look.validate().is_ok());
-        assert_eq!(LookKind::from_key(LookKind::LilToon.key()), Some(LookKind::LilToon));
+        assert_eq!(
+            LookKind::from_key(LookKind::LilToon.key()),
+            Some(LookKind::LilToon)
+        );
         assert_eq!(LookKind::from_key("lilToonFur"), None);
     }
 
@@ -432,9 +464,12 @@ mod tests {
         let mut look = MaterialLook::default();
         look.properties
             .insert("_ShadowBorder".into(), LookValue::Float(0.25));
+        look.properties.insert(
+            "_ShadowColor".into(),
+            LookValue::Color([0.1, 0.2, 0.3, 1.0]),
+        );
         look.properties
-            .insert("_ShadowColor".into(), LookValue::Color([0.1, 0.2, 0.3, 1.0]));
-        look.properties.insert("_UseShadow".into(), LookValue::Int(1));
+            .insert("_UseShadow".into(), LookValue::Int(1));
         assert_eq!(look.float("_ShadowBorder", 0.5), 0.25);
         assert_eq!(look.float("_ShadowBlur", 0.1), 0.1);
         assert_eq!(look.float("_UseShadow", 0.0), 1.0);
@@ -447,8 +482,10 @@ mod tests {
         let mut look = MaterialLook::default();
         look.textures
             .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
-        look.textures
-            .insert("_ShadowStrengthMask".into(), TextureSource::Channel(user(7)));
+        look.textures.insert(
+            "_ShadowStrengthMask".into(),
+            TextureSource::Channel(user(7)),
+        );
         look.textures.insert(
             "_ShadowBorderMask".into(),
             TextureSource::Packed([
@@ -502,7 +539,8 @@ mod tests {
         })
         .is_err());
         assert!(ok(&|l| {
-            l.properties.insert("x".repeat(MAX_NAME + 1), LookValue::Float(1.0));
+            l.properties
+                .insert("x".repeat(MAX_NAME + 1), LookValue::Float(1.0));
         })
         .is_err());
         assert!(ok(&|l| {
@@ -510,8 +548,10 @@ mod tests {
         })
         .is_err());
         assert!(ok(&|l| {
-            l.properties
-                .insert("_A".into(), LookValue::Color([0.0, f32::INFINITY, 0.0, 1.0]));
+            l.properties.insert(
+                "_A".into(),
+                LookValue::Color([0.0, f32::INFINITY, 0.0, 1.0]),
+            );
         })
         .is_err());
         assert!(ok(&|l| {

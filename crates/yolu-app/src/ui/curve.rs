@@ -149,7 +149,7 @@ pub fn curve_editor_with(
     );
     let drag_id = id.with("drag");
     let mut drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id));
-    // 別のカーブのドラッグ（層を替えたなど）の下書きは、今のカーブへ当てずに捨てる
+    // 別のカーブのドラッグ（レイヤーを替えたなど）の下書きは、今のカーブへ当てずに捨てる
     if drag.as_ref().is_some_and(|d| d.original != *curve) {
         ui.data_mut(|data| data.remove::<Drag>(drag_id));
         drag = None;

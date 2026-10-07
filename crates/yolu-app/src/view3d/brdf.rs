@@ -203,11 +203,6 @@ pub fn roughness_of_mip(mip: u32) -> f32 {
 /// 中立の表示の環境の映り込みの粗さ（誘電体。塗った値は変えず、形を読む手がかりとして足す。Unity 版の `NeutralReflectionRoughness`）。
 pub const NEUTRAL_REFLECTION_ROUGHNESS: f32 = 0.5;
 
-/// 中立の表示の映り込みの重み（F0 = 0.04 から 0.5 へ、Schlick の 5 乗）。
-pub fn neutral_fresnel(nv: f32) -> f32 {
-    0.04 + (0.5 - 0.04) * pow5(1.0 - nv)
-}
-
 // ───────── トーンマッピング（PreviewToneMap） ─────────
 
 /// 曲線。
@@ -312,7 +307,14 @@ mod tests {
         // sRGB 0.5 → リニア 0.21404
         assert!(close(srgb_to_linear(0.5), 0.214_041, 1e-5));
         // Unity の GammaToLinearSpace（Unity 2022.3 のリニアの色空間で、色のプロパティ・光の色を float の描き先へ書いて測った値）
-        for (v, unity) in [(0.02, 0.001_547_987_6), (0.5, 0.214_041_14), (1.0, 1.0), (1.5, 2.440_061_6), (2.119, 5.217_808), (16.948, 505.895_33)] {
+        for (v, unity) in [
+            (0.02, 0.001_547_987_6),
+            (0.5, 0.214_041_14),
+            (1.0, 1.0),
+            (1.5, 2.440_061_6),
+            (2.119, 5.217_808),
+            (16.948, 505.895_33),
+        ] {
             assert!(close(unity_gamma_to_linear(v), unity, unity * 1e-5), "{v}");
         }
         // 1 未満は sRGB の式と同じ、1 を超えると sRGB の式を延ばしたものより暗い

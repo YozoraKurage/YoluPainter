@@ -17,7 +17,7 @@ use yolu_core::{Channel, Document, LayerId, Rect, TileCoord};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResidentOptions {
-    /// 表示テクスチャ、層タイルと同量の CPU コピー、作業域と転送の余裕を含む。
+    /// 表示テクスチャ、レイヤータイルと同量の CPU コピー、作業域と転送の余裕を含む。
     pub resident_budget_bytes: u64,
     /// 未完了・取得前の読み戻しバッファを合計した別予算。
     pub readback_budget_bytes: u64,
@@ -171,7 +171,7 @@ fn layout(
         return Err(error("表示テクスチャがデバイス上限を超える"));
     }
     let meta = entries.max(1) as u64 * std::mem::size_of::<LayerData>() as u64;
-    // 調整の表と値（調整の層が無ければ 0。空の束縛は作れないので、作業域の確保では 16 バイトを下限にする）
+    // 調整の表と値（調整レイヤーが無ければ 0。空の束縛は作れないので、作業域の確保では 16 バイトを下限にする）
     let tables = table_words as u64 * 4;
     // 作業入力と転送ステージング、座標・定数を先に予約。束の全入力を常駐できる最小量も確保。
     // 1 タイルあたりの量: 入力（GPU と転送用で 2 つ）と、束の全入力の常駐（GPU と CPU のコピーで 2 つ）で `per_batch * 4`、座標 16、
@@ -219,7 +219,7 @@ fn layout(
 pub struct Requirements {
     /// 表示のテクスチャ・作業域・転送の余裕。予算が表示と 1 束を保持できないなら `u64::MAX`。
     pub fixed_bytes: u64,
-    /// 描いたタイル（層とマスクの、無いタイルを除く）の GPU コピーと同量の CPU コピー。
+    /// 描いたタイル（レイヤーとマスクの、無いタイルを除く）の GPU コピーと同量の CPU コピー。
     pub tile_bytes: u64,
 }
 
@@ -230,7 +230,7 @@ impl Requirements {
     }
 }
 
-/// 全部を常駐させるのに要る量を、GPU に触れずに見積もる。層の並びだけを見る軽い計算で、`update` が実際に数える
+/// 全部を常駐させるのに要る量を、GPU に触れずに見積もる。レイヤーの並びだけを見る軽い計算で、`update` が実際に数える
 /// `UpdateStats::resident_bytes` と同じ式（全タイルが常駐したとき一致する）。予算を超える文書は、追い出しながら合成すると
 /// 全面の変更のたびにタイルを上げ直すので、呼び手は CPU の合成を選べる。デバイスの上限（表示のテクスチャの大きさ）を超える・
 /// GPU が扱えない文書は Err。
@@ -632,7 +632,7 @@ impl ResidentCompositor {
             self.reset()?;
         }
         self.stats = UpdateStats::default();
-        // 層の追加・削除・並べ替え・入れ子・表示・マスクなどの変更も、core の変更記録がその層のタイルとして持つ。
+        // レイヤーの追加・削除・並べ替え・入れ子・表示・マスクなどの変更も、core の変更記録がそのレイヤーのタイルとして持つ。
         // 全部の合成し直しは、初めて・文書やチャンネルが替わったとき（binding が無いとき）だけ。
         let first = self.binding.is_none();
         let coords = if first {
@@ -654,9 +654,9 @@ impl ResidentCompositor {
             return Ok(self.account());
         }
         self.generation += 1;
-        // 今の計画が読む面（層・マスク）だけを常駐に残す。消えた層に加えて、隠した層・不透明度 0・チャンネルが無効・外した
+        // 今の計画が読む面（レイヤー・マスク）だけを常駐に残す。消えたレイヤーに加えて、隠したレイヤー・不透明度 0・チャンネルが無効・外した
         // マスクなど計画から外れた面のタイルも手放す（GPU バッファと同量の CPU のコピーを抱え続けて予算に数えられ、LRU の
-        // 追い出しで生きているタイルを押し出さないように）。戻したとき（表示・不透明度など）は core の変更記録がその層の
+        // 追い出しで生きているタイルを押し出さないように）。戻したとき（表示・不透明度など）は core の変更記録がそのレイヤーの
         // タイルを返すので、そこで上げ直す。
         let wanted: HashSet<(LayerId, bool)> = plan
             .slots

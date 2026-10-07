@@ -1,5 +1,5 @@
-//! 描いている間の下の覚え（`composite::Memo`）が、描く層の外の変化で捨てられること。
-//! 描いている間は層の属性・並び・画素の編集はどれも断られるので、外の変化の道は変化の記録（`Journal::mark`）への直の印で作る
+//! 描いている間の下の覚え（`composite::Memo`）が、描くレイヤーの外の変化で捨てられること。
+//! 描いている間はレイヤーの属性・並び・画素の編集はどれも断られるので、外の変化の道は変化の記録（`Journal::mark`）への直の印で作る
 //! （入力のマップを替える・Live Link のように、断られずに合成を変える道の代わり）。
 
 use super::*;
@@ -11,10 +11,12 @@ fn painted() -> (Document, LayerId, LayerId) {
     let above = d.add_layer("above").unwrap();
     for y in 0..32 {
         for x in 0..48 {
-            d.set_pixel(below, x, y, Rgba8::new(40, 90, 200, 255)).unwrap();
+            d.set_pixel(below, x, y, Rgba8::new(40, 90, 200, 255))
+                .unwrap();
         }
     }
-    d.set_pixel(above, 3, 3, Rgba8::new(255, 0, 0, 255)).unwrap();
+    d.set_pixel(above, 3, 3, Rgba8::new(255, 0, 0, 255))
+        .unwrap();
     d.clear_history().unwrap();
     (d, below, above)
 }
@@ -52,7 +54,10 @@ fn the_stroke_own_writes_keep_the_memory_but_any_other_mark_drops_it() {
     let before = d.composite_memo_stats().built;
     d.journal.mark(Channel::Color, TileCoord::new(1, 0));
     let _ = d.composite_channel(Channel::Color, d.bounds()).unwrap();
-    assert!(d.composite_memo_stats().built > before, "外の印のあとは作り直す");
+    assert!(
+        d.composite_memo_stats().built > before,
+        "外の印のあとは作り直す"
+    );
     d.end_stroke(s).unwrap();
     assert_eq!(d.composite_memo_stats().tiles, 0, "確定したら手放す");
 }

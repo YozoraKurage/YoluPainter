@@ -29,6 +29,8 @@ pub enum HistoryKind {
     Look,
     /// 名前を付けて残した選択範囲の変更（`Document::save_selection` など）。
     SavedSelections,
+    /// テキストレイヤーの値（`Document::set_text`・テキストの値を外す）。
+    Text,
 }
 
 impl Document {
@@ -64,12 +66,13 @@ impl Command {
             Self::Stack { before, after, .. } if after.len() < before.len() => {
                 HistoryKind::RemoveEffect
             }
-            Self::Stack { .. } => HistoryKind::Effect,
+            Self::Stack { .. } | Self::FilterSeams { .. } => HistoryKind::Effect,
             Self::Anchor { .. } => HistoryKind::Anchor,
             Self::Path(_) => HistoryKind::Path,
             Self::Compound(_) => HistoryKind::Batch,
             Self::Look { .. } => HistoryKind::Look,
             Self::SavedSelections { .. } => HistoryKind::SavedSelections,
+            Self::Text(_) => HistoryKind::Text,
             _ => HistoryKind::Other,
         }
     }

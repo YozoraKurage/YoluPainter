@@ -1,6 +1,6 @@
-//! 浮いた窓（ベイクの窓・確かめ・結果）。Unity 版の浮いた窓と同じく、見出しの帯（アイコン・名前・閉じる）と本体と下の帯を持つ。
-//! 見出しをドラッグして動かせる。モーダルの窓は、画面全体に入力の受け皿を敷いて下の部品へ渡さない。
-//! 中身は呼ぶ側が `w::*` の部品で描く（窓の矩形を渡す）。
+//! 浮いたウィンドウ（ベイクのウィンドウ・確かめ・結果）。Unity 版の浮いたウィンドウと同じく、見出しの帯（アイコン・名前・閉じる）と本体と下の帯を持つ。
+//! 見出しをドラッグして動かせる。モーダルのウィンドウは、画面全体に入力の受け皿を敷いて下の部品へ渡さない。
+//! 中身は呼ぶ側が `w::*` の部品で描く（ウィンドウの矩形を渡す）。
 
 use egui::{pos2, vec2, Color32, Id, Order, Rect, Sense, Ui, Vec2};
 
@@ -9,10 +9,10 @@ use super::widgets::{self as w, Align};
 
 /// 見出しの帯の高さ。
 pub const HEADER_HEIGHT: f32 = 28.0;
-/// 窓と画面の端の余白。
+/// ウィンドウと画面の端の余白。
 const SCREEN_MARGIN: f32 = 12.0;
 
-/// 窓の形。
+/// ウィンドウの形。
 pub struct Spec<'a> {
     pub title: &'a str,
     pub icon: Option<&'a str>,
@@ -24,30 +24,31 @@ pub struct Spec<'a> {
     pub close_label: &'a str,
 }
 
-/// 窓の中身を描くときに渡す矩形。
+/// ウィンドウの中身を描くときに渡す矩形。
 pub struct Frame {
-    /// 窓全体。
+    /// ウィンドウ全体。
     pub rect: Rect,
     /// 見出しの帯の下の本体。
     pub body: Rect,
 }
 
-/// 浮いた窓（や、浮いて Esc で閉じる部品）を描いた最後のフレームの番号を覚えておく場所。
+/// 浮いたウィンドウ（や、浮いて Esc で閉じる部品）を描いた最後のフレームの番号を覚えておく場所。
 fn shown_id() -> Id {
     Id::new("yolu.window.shown")
 }
 
-/// 浮いた窓を描いたことを覚える（`show` が呼ぶ。Esc で閉じる浮いた部品が自分で描くときも呼ぶ）。
+/// 浮いたウィンドウを描いたことを覚える（`show` が呼ぶ。Esc で閉じる浮いた部品が自分で描くときも呼ぶ）。
 pub fn note_open(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| d.insert_temp(shown_id(), frame));
 }
 
-/// 浮いた窓が開いているか（今のフレームか、1 つ前のフレームで描いた）。窓が Esc で閉じたフレームも含むので、窓が使う Esc を、
-/// 窓より先に描くキャンバスなどが横取りしない（窓を優先する）ために使う。
+/// 浮いたウィンドウが開いているか（今のフレームか、1 つ前のフレームで描いた）。ウィンドウが Esc で閉じたフレームも含むので、ウィンドウが使う Esc を、
+/// ウィンドウより先に描くキャンバスなどが横取りしない（ウィンドウを優先する）ために使う。
 pub fn any_open(ctx: &egui::Context) -> bool {
     let now = ctx.cumulative_frame_nr();
-    ctx.data(|d| d.get_temp::<u64>(shown_id())).is_some_and(|at| now.saturating_sub(at) <= 1)
+    ctx.data(|d| d.get_temp::<u64>(shown_id()))
+        .is_some_and(|at| now.saturating_sub(at) <= 1)
 }
 
 /// Esc を使い切ったフレームの番号を覚えておく場所。
@@ -68,12 +69,12 @@ pub fn escape_taken(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<u64>(escape_taken_id())) == Some(now)
 }
 
-/// 最後に描いた窓の矩形（画面の点。まだ描いていなければ None）。
+/// 最後に描いたウィンドウの矩形（画面の点。まだ描いていなければ None）。
 pub fn last_rect(ctx: &egui::Context, id: Id) -> Option<Rect> {
     ctx.data(|d| d.get_temp(id.with("rect")))
 }
 
-/// 窓を描く。見出しの閉じるボタンが押された・Esc（`esc` が true のとき）なら true を返す。`offset` は見出しのドラッグで動いた量
+/// ウィンドウを描く。見出しの閉じるボタンが押された・Esc（`esc` が true のとき）なら true を返す。`offset` は見出しのドラッグで動いた量
 /// （画面の真ん中からの）。
 pub fn show(
     ctx: &egui::Context,
@@ -109,7 +110,7 @@ pub fn show(
                     .rect_filled(screen, 0.0, Color32::from_black_alpha(90));
             });
     }
-    // 最後に描いた窓の矩形（試験が窓の中だけを撮る・位置を知るために読む）
+    // 最後に描いたウィンドウの矩形（試験がウィンドウの中だけを撮る・位置を知るために読む）
     ctx.data_mut(|d| d.insert_temp(id.with("rect"), rect));
     note_open(ctx);
     let mut closed = esc;
@@ -122,7 +123,7 @@ pub fn show(
         .fixed_pos(rect.min)
         .constrain(false)
         .show(ctx, |ui| {
-            // 窓の上の押下は下へ通さない
+            // ウィンドウの上の押下は下へ通さない
             ui.allocate_exact_size(rect.size(), Sense::click_and_drag());
             let p = ui.painter().clone();
             for i in (1..=6).rev() {

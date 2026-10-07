@@ -45,7 +45,7 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// 左下のタイルの画布の中を単色にして層のチャンネルへ入れる。
+/// 左下のタイルのキャンバスの中を単色にしてレイヤーのチャンネルへ入れる。
 fn paint_channel(s: &mut AppState, id: LayerId, channel: Channel, rgba: [u8; 4]) {
     let ts = s.doc.tile_size() as usize;
     let (w, h) = (s.doc.width() as usize, s.doc.height() as usize);
@@ -64,7 +64,7 @@ fn paint(s: &mut AppState, id: LayerId, rgba: [u8; 4]) {
     paint_channel(s, id, Channel::Color, rgba);
 }
 
-/// 1 層（赤）の文書。
+/// 1 レイヤー（赤）の文書。
 fn painted(size: u32) -> (AppState, LayerId) {
     let mut s = AppState::new(size, size);
     let id = s.selected_layer.unwrap();
@@ -99,7 +99,7 @@ fn place(s: &mut AppState, id: &str) {
     }));
 }
 
-/// 文書の全体の指紋（層の並び・親・名前・Color と マスクの全画素）。
+/// 文書の全体の指紋（レイヤーの並び・親・名前・Color と マスクの全画素）。
 fn fingerprint(s: &AppState) -> Vec<String> {
     let doc = &s.doc;
     doc.layers()
@@ -153,9 +153,9 @@ fn headless_a_saved_layer_comes_back_as_one_undo_step() {
     place(&mut s, &id);
     assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
     let placed = s.selected_layer.unwrap();
-    assert_ne!(placed, base, "置いた層は新しい ID");
+    assert_ne!(placed, base, "置いたレイヤーは新しい ID");
     assert_eq!(pixel(&s, placed), [200, 40, 30, 255]);
-    assert_eq!(s.doc.layers()[1].id(), placed, "選んでいた層のすぐ上");
+    assert_eq!(s.doc.layers()[1].id(), placed, "選んでいたレイヤーのすぐ上");
     assert!(
         s.message.starts_with("置きました: レイヤー 1"),
         "{}",
@@ -179,7 +179,7 @@ fn headless_a_group_is_saved_with_its_contents_and_placed_as_a_group() {
     s.apply(Action::NewLayer);
     let on_top = s.selected_layer.unwrap();
     place(&mut s, &id);
-    // 元の 2 層 + 置いた 2 層（グループとその中身）。新しい層は選んでいた層の上
+    // 元の 2 レイヤー + 置いた 2 レイヤー（グループとその中身）。新しいレイヤーは選んでいたレイヤーの上
     assert_eq!(s.doc.layers().len(), 3 + 2, "{}", s.message);
     let placed = s.selected_layer.unwrap();
     let layer = s.doc.layer(placed).unwrap();
@@ -204,7 +204,7 @@ fn headless_a_smart_mask_replaces_the_mask_and_undo_brings_the_old_one_back() {
         s.shelf.resources().last().unwrap().name,
         "レイヤー 1 のマスク"
     );
-    // 別の層（マスクなし）へ: マスクができる
+    // 別のレイヤー（マスクなし）へ: マスクができる
     s.apply(Action::NewLayer);
     let other = s.selected_layer.unwrap();
     place(&mut s, &id);
@@ -324,12 +324,16 @@ fn headless_what_cannot_be_saved_or_placed_changes_nothing_and_says_why() {
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     assert!(s.shelf.resources().is_empty());
     assert!(!s.modified && !s.shelf.changed);
-    assert!(s.message.contains("棚の予算を超えます"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットの予算を超えます"),
+        "{}",
+        s.message
+    );
     s.lang = Lang::En;
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-    assert!(s.message.contains("Over the shelf budget"), "{}", s.message);
+    assert!(s.message.contains("Over the asset budget"), "{}", s.message);
     s.lang = Lang::Ja;
-    // ユーザーチャンネルを使う層は .ylsmart（形式 1）に書けない
+    // ユーザーチャンネルを使うレイヤーは .ylsmart（形式 1）に書けない
     s.shelf = ShelfState::default();
     let channel = s
         .doc
@@ -342,12 +346,12 @@ fn headless_what_cannot_be_saved_or_placed_changes_nothing_and_says_why() {
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     assert!(s.shelf.resources().is_empty());
     assert!(
-        s.message.contains("ユーザーチャンネルは保存できません"),
+        s.message.contains("ユーザーチャンネルを使っています"),
         "{}",
         s.message
     );
     s.doc.remove_channel(channel).unwrap();
-    // マスクの無い層からはスマートマスクを作れない
+    // マスクの無いレイヤーからはスマートマスクを作れない
     s.apply(Action::Shelf(ShelfOp::SaveMask(base)));
     assert!(s.shelf.resources().is_empty());
     assert!(s.message.contains("マスクがありません"), "{}", s.message);
@@ -376,29 +380,36 @@ fn headless_a_placement_over_the_pixel_budget_is_refused_whole() {
     let before = fingerprint(&s);
     place(&mut s, &id);
     assert_eq!(fingerprint(&s), before);
-    assert!(s.message.contains("画素の予算を超えます"), "{}", s.message);
+    assert!(
+        s.message.contains("レイヤーのメモリの予算を超えます"),
+        "{}",
+        s.message
+    );
 }
 
 #[test]
-fn headless_brushes_and_materials_are_listed_but_not_placed_yet() {
+fn headless_brushes_are_listed_but_not_placed_yet_and_materials_are_placed_in_one_undo() {
     let mut s = AppState::new(16, 16);
     s.shelf = ShelfState::with_shelf(fixture_shelf());
     s.shelf.inspect_pending(100);
     let before = fingerprint(&s);
-    for (kind, word) in [("brush", "ブラシ"), ("material", "マテリアル")] {
-        for id in ids(&s, kind) {
-            place(&mut s, &id);
-            assert!(
-                s.message.contains(word) && s.message.contains("置けません"),
-                "{kind}: {}",
-                s.message
-            );
-            assert_eq!(
-                s.shelf.block_of(&id),
-                Some(&Block::Kind(ItemKind::of(kind).unwrap()))
-            );
-        }
+    for id in ids(&s, "brush") {
+        place(&mut s, &id);
+        assert!(
+            s.message.contains("ブラシ") && s.message.contains("置けません"),
+            "{}",
+            s.message
+        );
+        assert_eq!(s.shelf.block_of(&id), Some(&Block::Kind(ItemKind::Brush)));
     }
+    assert_eq!(fingerprint(&s), before);
+    // マテリアル（中身は .ylsmart と同じ形。人工データは 2 レイヤー）は、スマートマテリアルと同じ道で置ける
+    let material = ids(&s, "material").pop().unwrap();
+    assert_eq!(s.shelf.block_of(&material), None);
+    place(&mut s, &material);
+    assert!(s.doc.layers().len() >= 3, "{}", s.message);
+    assert!(s.message.starts_with("置きました: multi"), "{}", s.message);
+    s.apply(Action::Undo);
     assert_eq!(fingerprint(&s), before);
     s.lang = Lang::En;
     let brush = ids(&s, "brush").pop().unwrap();
@@ -484,17 +495,13 @@ fn headless_items_are_inspected_once_for_thumbnails_details_and_blocks() {
         let kind = ItemKind::of(&r.kind).unwrap();
         let thumb = shelf.texture(&ctx, &r.id);
         match kind {
-            ItemKind::Image | ItemKind::SmartMaterial | ItemKind::SmartMask => {
-                assert!(thumb.is_some(), "{}: サムネイルがある", r.name)
-            }
-            _ => assert!(thumb.is_none(), "{}", r.name),
+            ItemKind::Brush => assert!(thumb.is_none(), "{}", r.name),
+            _ => assert!(thumb.is_some(), "{}: サムネイルがある", r.name),
         }
         let block = shelf.block_of(&r.id);
         match kind {
-            ItemKind::Image | ItemKind::SmartMaterial | ItemKind::SmartMask => {
-                assert!(block.is_none(), "{}: {block:?}", r.name)
-            }
-            _ => assert_eq!(block, Some(&Block::Kind(kind))),
+            ItemKind::Brush => assert_eq!(block, Some(&Block::Kind(kind))),
+            _ => assert!(block.is_none(), "{}: {block:?}", r.name),
         }
     }
     let raster = shelf
@@ -504,7 +511,10 @@ fn headless_items_are_inspected_once_for_thumbnails_details_and_blocks() {
         .unwrap()
         .clone();
     let detail = shelf.detail(Lang::Ja, &raster);
-    assert!(detail.contains("層") && detail.contains("×"), "{detail}");
+    assert!(
+        detail.contains("レイヤー") && detail.contains("×"),
+        "{detail}"
+    );
     assert!(shelf.detail(Lang::En, &raster).contains("layer"));
     // 2 度目は作り直さない
     assert!(!shelf.inspect_pending(100));
@@ -559,7 +569,7 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
     let (mut s, base) = painted(32);
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     let id = ids(&s, "smartMaterial").pop().unwrap();
-    // 書き出す前にファイルを選ぶ窓を頼む（窓を開かない試験では頼みが残る）
+    // 書き出す前にファイルを選ぶウィンドウを頼む（ウィンドウを開かない試験では頼みが残る）
     s.apply(Action::Shelf(ShelfOp::ExportDialog(id.clone())));
     assert_eq!(s.dialog_request, Some(DialogRequest::ShelfExport));
     assert_eq!(s.shelf.export_id.as_deref(), Some(id.as_str()));
@@ -571,10 +581,12 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
     assert!(s.message.starts_with("書き出しました"), "{}", s.message);
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(bytes, s.shelf.shelf().content_bytes(&id).unwrap());
-    assert!(
-        !dir.join("木目.ylsmart.tmp~").exists(),
-        "一時ファイルを残さない"
-    );
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("pending") || n.ends_with("tmp~"))
+        .collect();
+    assert!(left.is_empty(), "一時ファイルを残さない: {left:?}");
     // 別のプロジェクトへ読み込む: 同じ中身・名前・種類。もう一度は「すでにある」
     let mut other = AppState::new(32, 32);
     other.apply(Action::Shelf(ShelfOp::ImportFile(path.clone())));
@@ -589,7 +601,7 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
     other.apply(Action::Shelf(ShelfOp::ImportFile(path.clone())));
     assert_eq!(other.shelf.resources().len(), 1);
     assert!(
-        other.message.starts_with("すでに棚にあります"),
+        other.message.starts_with("すでにアセットにあります"),
         "{}",
         other.message
     );
@@ -601,14 +613,14 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
         id: image,
         path: dir.join("x.ylsmart"),
     }));
-    assert!(s.message.contains("スマート素材だけ"), "{}", s.message);
+    assert!(s.message.contains("スマート素材ではない"), "{}", s.message);
     assert!(!dir.join("x.ylsmart").exists());
     // 書き出し先に書けない（フォルダが無い）: 断る
     s.apply(Action::Shelf(ShelfOp::ExportFile {
         id: ids(&s, "smartMask").pop().unwrap(),
         path: dir.join("no-such-folder").join("m.ylsmart"),
     }));
-    assert!(s.message.contains("できません"), "{}", s.message);
+    assert!(s.message.contains("に書き出せません（"), "{}", s.message);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -631,10 +643,7 @@ fn headless_the_shelf_survives_save_and_reopen_in_every_kind() {
     let bytes = std::fs::read(&path).unwrap();
     let project = Project::read(&bytes).unwrap();
     assert_eq!(project.resources().len(), 8);
-    assert_eq!(
-        project.info().saved_by.as_ref().unwrap().app,
-        "YoluPainter"
-    );
+    assert_eq!(project.info().saved_by.as_ref().unwrap().app, "YoluPainter");
     let mut again = AppState::new(8, 8);
     again.apply(Action::OpenProject(path.clone()));
     assert_eq!(again.shelf.resources().len(), 8, "{}", again.message);
@@ -763,7 +772,7 @@ fn headless_removing_leaves_placed_layers_and_the_saved_file_loses_the_resource(
     let id = ids(&s, "smartMaterial").pop().unwrap();
     place(&mut s, &id);
     let layers = s.doc.layers().len();
-    // 消す前に確かめる窓を頼む（窓を開かない試験では頼みが残る。消すのは確かめた後）
+    // 消す前に確かめるウィンドウを頼む（ウィンドウを開かない試験では頼みが残る。消すのは確かめた後）
     s.apply(Action::Shelf(ShelfOp::AskRemove(id.clone())));
     assert_eq!(s.dialog_request, Some(DialogRequest::ShelfRemove));
     assert_eq!(s.shelf.pending_remove.as_deref(), Some(id.as_str()));
@@ -778,7 +787,7 @@ fn headless_removing_leaves_placed_layers_and_the_saved_file_loses_the_resource(
     );
     s.apply(Action::Shelf(ShelfOp::Remove(id.clone())));
     assert!(s.shelf.resources().is_empty() && s.shelf.pending_remove.is_none());
-    assert_eq!(s.doc.layers().len(), layers, "置いた層はそのまま");
+    assert_eq!(s.doc.layers().len(), layers, "置いたレイヤーはそのまま");
     assert!(s.modified && s.shelf.changed);
     assert!(s.shelf.selected.is_none());
     s.apply(Action::SaveProject);
@@ -821,7 +830,9 @@ fn headless_an_unreadable_shelf_is_not_modified_and_the_files_resources_stay() {
     again.apply(Action::Shelf(ShelfOp::SaveMaterial(layer)));
     assert!(again.shelf.resources().is_empty());
     assert!(
-        again.message.contains("棚を読めません"),
+        again
+            .message
+            .contains("プロジェクトのアセットを読めなかったので、変えられません"),
         "{}",
         again.message
     );
@@ -901,7 +912,11 @@ fn headless_a_large_material_is_written_on_another_thread_and_kept_when_done() {
     s.shelf.hold_saves(false);
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), 1, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     let id = s.shelf.resources()[0].id.clone();
     assert_eq!(s.shelf.selected.as_deref(), Some(id.as_str()));
     assert!(
@@ -947,8 +962,7 @@ fn headless_cancelling_a_save_keeps_it_off_the_shelf_and_a_refusal_arrives_later
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), 1);
     assert!(
-        s.message.contains("レイヤー 1")
-            && s.message.contains("ユーザーチャンネルは保存できません"),
+        s.message.contains("レイヤー 1") && s.message.contains("ユーザーチャンネルを使っています"),
         "{}",
         s.message
     );
@@ -1004,7 +1018,12 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
     );
     assert_eq!(
         shelf_menu(&s),
-        ["置く", "書き出す…", "ライブラリへ入れる", "棚から消す…"]
+        [
+            "置く",
+            "書き出す…",
+            "ライブラリへ入れる",
+            "アセットから消す…"
+        ]
     );
     s.shelf.selected = Some(ids(&s, "smartMask").pop().unwrap());
     assert_eq!(shelf_menu(&s)[0], "マスクに適用");
@@ -1018,10 +1037,10 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
             "Apply to Mask",
             "Export…",
             "Put into the library",
-            "Remove from the shelf…"
+            "Remove from the project's assets…"
         ]
     );
-    // 層にマスクが無ければ、マスクの保存は出さない
+    // レイヤーにマスクが無ければ、マスクの保存は出さない
     s.apply(Action::M2(Edit::RemoveMask(base)));
     assert!(!layer_menu(&s).iter().any(|l| l.contains("Mask as Smart")));
 }
@@ -1049,7 +1068,7 @@ fn headless_cancelling_a_save_keeps_the_next_big_write_waiting_until_the_first_t
     );
     assert!(s.shelf.saving_name().is_none());
     assert_eq!(s.shelf.saves_running(), 1, "スレッドは積み上がらない");
-    // 断るのは、写しを捕まえる前（マスクの無い層でも、理由は書き出しの待ち）
+    // 断るのは、写しを捕まえる前（マスクの無いレイヤーでも、理由は書き出しの待ち）
     s.apply(Action::Shelf(ShelfOp::SaveMask(base)));
     assert!(
         s.message.contains("やめた保存を終えています"),
@@ -1126,9 +1145,9 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     ])));
     assert_eq!(s.shelf.resources().len(), 2, "{}", s.message);
     assert!(
-        s.message.starts_with("できません: bad.ylsmart")
-            && s.message.contains("スマート素材として読めません")
-            && s.message.contains("棚に入れました: 2 件"),
+        s.message
+            .starts_with("「bad.ylsmart」はスマート素材として読めません（")
+            && s.message.contains("2 件をアセットに入れました。"),
         "{}",
         s.message
     );
@@ -1142,10 +1161,11 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert_eq!(s.shelf.resources().len(), 3, "{}", s.message);
     // 3 つのうち raster はすでにあり、multi だけが新しく入る（すでにあった分を「入れました」と数えない）
     assert!(
-        s.message.starts_with("Cannot: bad.ylsmart")
-            && s.message.contains("Not a readable smart asset")
-            && s.message
-                .ends_with("Added to the shelf: 1 · Already there: 1"),
+        s.message
+            .starts_with("\"bad.ylsmart\" is not a readable smart asset (")
+            && s.message.ends_with(
+                "Added 1 to the project's assets. 1 was already in the project's assets."
+            ),
         "{}",
         s.message
     );
@@ -1157,9 +1177,10 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         good("multi.ylsmart"),
     ])));
     assert!(
-        s.message.starts_with("できません: bad.ylsmart")
-            && s.message.ends_with("すでに棚にあった: 2 件")
-            && !s.message.contains("棚に入れました"),
+        s.message
+            .starts_with("「bad.ylsmart」はスマート素材として読めません（")
+            && s.message.ends_with("2 件はすでにアセットにありました。")
+            && !s.message.contains("をアセットに入れました"),
         "{}",
         s.message
     );
@@ -1171,7 +1192,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message.contains("bad.ylsmart")
             && s.message.contains("none.ylsmart")
-            && !s.message.contains("棚に入れました"),
+            && !s.message.contains("をアセットに入れました"),
         "{}",
         s.message
     );
@@ -1181,20 +1202,29 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         good("images.ylsmart"),
     ])));
     assert_eq!(
-        s.message, "棚に入れました: 1 件 · すでに棚にあった: 1 件",
+        s.message, "1 件をアセットに入れました。1 件はすでにアセットにありました。",
         "{}",
         s.message
     );
     s.apply(Action::Shelf(ShelfOp::ImportFiles(vec![good(
         "images.ylsmart",
     )])));
-    assert!(s.message.starts_with("すでに棚にあります"), "{}", s.message);
+    assert!(
+        s.message.starts_with("すでにアセットにあります"),
+        "{}",
+        s.message
+    );
     // 読めない棚には、まとめてでも足さない
     s.shelf = ShelfState::unreadable("試験");
     s.apply(Action::Shelf(ShelfOp::ImportFiles(vec![good(
         "raster.ylsmart",
     )])));
-    assert!(s.message.contains("棚を読めません"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("プロジェクトのアセットを読めなかったので、変えられません"),
+        "{}",
+        s.message
+    );
     assert!(s.shelf.resources().is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1240,7 +1270,7 @@ fn headless_a_smart_mask_without_a_layer_says_the_state_not_an_instruction() {
 #[test]
 fn headless_an_image_placed_at_its_own_size_keeps_every_byte_including_transparent_rgb() {
     // 人工データの 2×1（左は透明で RGB を持つ）と、その場で作る 5×3（透明・半透明・不透明が RGB を変えて混ざる。
-    // 左下原点・straight RGBA8）を、同じ大きさの文書へ。置いた層の Color は元の画素と 1 バイトも違わない
+    // 左下原点・straight RGBA8）を、同じ大きさの文書へ。置いたレイヤーの Color は元の画素と 1 バイトも違わない
     let mut synthetic = Vec::new();
     for y in 0..3u8 {
         for x in 0..5u8 {
@@ -1340,7 +1370,7 @@ fn headless_a_material_over_the_preview_budget_shows_an_icon_and_can_still_be_pl
             "既定の予算ではサムネイルが出る"
         );
     }
-    // 展開の予算を超える素材: アイコン（サムネイル無し）で、置けない印は付けず、大きさ・層の数は出る
+    // 展開の予算を超える素材: アイコン（サムネイル無し）で、置けない印は付けず、大きさ・レイヤーの数は出る
     let mut over = AppState::new(8, 8);
     over.shelf = ShelfState::with_shelf(fixture_shelf());
     over.shelf.preview_budget = 1;
@@ -1399,7 +1429,6 @@ fn headless_an_image_over_the_thumbnail_pixel_limit_shows_an_icon_and_can_still_
 #[test]
 fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
     use yolu_app::engine::CoreError;
-    use yolu_app::shelf::core_reason;
     use yolu_core::smart::SmartPlacement;
     // 本物の core の呼び出しから断りを取る（core の文言が変わると、ここが落ちる）
     let (mut s, base) = painted(8);
@@ -1431,10 +1460,10 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
         s.doc
             .place_smart_material(&material, &SmartPlacement::default())
             .unwrap_err(),
-        "画素の予算を超えます",
-        "Over the pixel budget",
+        "レイヤーのメモリの予算を超えます",
+        "Over the Layer memory budget",
     ));
-    // 層は 2048 まで
+    // レイヤーは 2048 まで
     let mut full = Document::new(8, 8).unwrap();
     while full.layers().len() < 2048 {
         full.add_group("g", None).unwrap();
@@ -1442,10 +1471,10 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
     cases.push((
         full.place_smart_material(&material, &SmartPlacement::default())
             .unwrap_err(),
-        "層が多すぎます",
+        "レイヤーが多すぎます",
         "Too many layers",
     ));
-    // マスクが無い・層が無い・名前が使えない・置き先がグループでない
+    // マスクが無い・レイヤーが無い・名前が使えない・置き先がグループでない
     cases.push((
         s.doc.capture_smart_mask(base, "x").unwrap_err(),
         "マスクがありません",
@@ -1454,14 +1483,14 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
     cases.push((
         s.doc.capture_smart_material(&[], "x").unwrap_err(),
         "レイヤーがありません",
-        "No layer",
+        "Layer not found",
     ));
     cases.push((
         s.doc
             .capture_smart_material(&[LayerId(0xdead)], "x")
             .unwrap_err(),
         "レイヤーがありません",
-        "No layer",
+        "Layer not found",
     ));
     cases.push((
         s.doc.capture_smart_material(&[base], "  ").unwrap_err(),
@@ -1482,16 +1511,17 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
         "置き先がグループではありません",
         "Target is not a group",
     ));
+    // 棚の断りも、ほかの操作と同じ core の誤りの文（`Lang::core_error`。同じ誤りは 1 つの文）
     for (error, ja, en) in &cases {
-        assert_eq!(core_reason(Lang::Ja, error), *ja, "{error:?}");
-        assert_eq!(core_reason(Lang::En, error), *en, "{error:?}");
-        assert_ne!(core_reason(Lang::Ja, error), error.to_string(), "{error:?}");
+        assert_eq!(Lang::Ja.core_error(error), *ja, "{error:?}");
+        assert_eq!(Lang::En.core_error(error), *en, "{error:?}");
+        assert_ne!(Lang::Ja.core_error(error), error.to_string(), "{error:?}");
     }
     assert_eq!(cases.len(), 8);
-    // 知らない断りは core の文のまま
+    // 個別の文の無い断りは core の文のまま
     assert_eq!(
-        core_reason(Lang::Ja, &CoreError::Cancelled),
-        CoreError::Cancelled.to_string()
+        Lang::Ja.core_error(&CoreError::BatchActive),
+        CoreError::BatchActive.to_string()
     );
 }
 
@@ -1499,10 +1529,11 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
 /// 本物の呼び出しから断りを取る確かめは次の試験（アーカイブの大きさの上限だけは、本物を作ると棚が 768 MiB を超えるので、この表だけ）。
 #[test]
 fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_languages() {
-    use yolu_app::shelf::io_reason;
+    use yolu_app::lang::shelf_io_error as io_reason;
     use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
     use yolu_io::smart::{
-        REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+        REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_RUST_GENERATORS,
+        REFUSAL_USER_CHANNELS,
     };
     let cases = [
         (REFUSAL_IMAGES, "画像入りは置けません", "Contains images"),
@@ -1513,31 +1544,40 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
         ),
         (
             REFUSAL_MEMORY_BUDGET,
-            "棚の予算を超えます",
-            "Over the shelf budget",
+            "アセットの予算を超えます",
+            "Over the asset budget",
         ),
         (
             REFUSAL_ARCHIVE_BUDGET,
             "ファイルの大きさの上限を超えます",
             "Over the file size limit",
         ),
-        (REFUSAL_RESOURCE_COUNT, "棚がいっぱいです", "Shelf is full"),
+        (
+            REFUSAL_RESOURCE_COUNT,
+            "アセットがいっぱいです",
+            "Assets are full",
+        ),
         (
             REFUSAL_USER_CHANNELS,
-            "ユーザーチャンネルは保存できません",
-            "User channels cannot be saved",
+            "ユーザーチャンネルを使っています",
+            "It uses user channels",
         ),
         (
             REFUSAL_RUST_GENERATORS,
-            "ノイズ・グランジは保存できません",
-            "Noise and Grunge cannot be saved",
+            "ノイズ・グランジを使っています",
+            "It uses Noise and Grunge",
+        ),
+        (
+            REFUSAL_NEW_FILTERS,
+            "0.5.0 で追加したフィルター・ジェネレーターを使っています",
+            "It uses filters or generators added in 0.5.0",
         ),
     ];
     for (message, ja, en) in cases {
         let error = yolu_io::Error::InvalidData(message.to_owned());
         assert_eq!(io_reason(Lang::Ja, &error), ja, "{message}");
         assert_eq!(io_reason(Lang::En, &error), en, "{message}");
-        // 予算の種類で返っても、ほかの文に包まれても（読み込みの失敗は層や場所を添える）見分ける
+        // 予算の種類で返っても、ほかの文に包まれても（読み込みの失敗はレイヤーや場所を添える）見分ける
         let budget = yolu_io::Error::Budget(message.to_owned());
         assert_eq!(io_reason(Lang::En, &budget), en, "{message}");
         let wrapped = yolu_io::Error::InvalidData(format!("layers[0]「x」: {message}"));
@@ -1558,10 +1598,10 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
 }
 
 /// 本物の呼び出しから断りを取る（io の文言が変わると、ここが落ちる）。画像入り・Generator の再固定・棚の予算・個数の上限・
-/// ユーザーチャンネル・層のロック。
+/// ユーザーチャンネル・レイヤーのロック。
 #[test]
 fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
-    use yolu_app::shelf::io_reason;
+    use yolu_app::lang::shelf_io_error as io_reason;
     use yolu_io::shelf::ResourceKind;
     use yolu_io::smart::SmartFile;
     let raster = std::fs::read(fixtures().join("raster.ylsmart")).unwrap();
@@ -1572,7 +1612,10 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     assert_eq!(io_reason(Lang::En, &error), "Contains images");
     // Generator の再固定（実物: フィルターを Generator に書き換え、索引の repin に入れた素材）
     let error = to_core(&generator_pinned_bytes());
-    assert_eq!(io_reason(Lang::Ja, &error), "ジェネレーター付きは置けません");
+    assert_eq!(
+        io_reason(Lang::Ja, &error),
+        "ジェネレーター付きは置けません"
+    );
     assert_eq!(io_reason(Lang::En, &error), "Has pinned generators");
     // 棚の予算
     let mut tiny = Shelf::new(1);
@@ -1584,8 +1627,8 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
             &raster,
         )
         .unwrap_err();
-    assert_eq!(io_reason(Lang::Ja, &error), "棚の予算を超えます");
-    assert_eq!(io_reason(Lang::En, &error), "Over the shelf budget");
+    assert_eq!(io_reason(Lang::Ja, &error), "アセットの予算を超えます");
+    assert_eq!(io_reason(Lang::En, &error), "Over the asset budget");
     // 個数の上限（256 個の棚への 257 個目）。予算とは別の理由
     let mut full = shelf_of_images(MAX_RESOURCES);
     let error = full
@@ -1596,9 +1639,9 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
             &raster,
         )
         .unwrap_err();
-    assert_eq!(io_reason(Lang::Ja, &error), "棚がいっぱいです");
-    assert_eq!(io_reason(Lang::En, &error), "Shelf is full");
-    // ユーザーチャンネルを持つ層の保存
+    assert_eq!(io_reason(Lang::Ja, &error), "アセットがいっぱいです");
+    assert_eq!(io_reason(Lang::En, &error), "Assets are full");
+    // ユーザーチャンネルを持つレイヤーの保存
     let (mut s, base) = painted(8);
     let channel = s
         .doc
@@ -1612,10 +1655,10 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     let error = SmartFile::from_core(&material, &yolu_app::project::writer()).unwrap_err();
     assert_eq!(
         io_reason(Lang::Ja, &error),
-        "ユーザーチャンネルは保存できません"
+        "ユーザーチャンネルを使っています"
     );
-    assert_eq!(io_reason(Lang::En, &error), "User channels cannot be saved");
-    // 層のロックを持つ層は保存できる（ロックも一緒に書く）
+    assert_eq!(io_reason(Lang::En, &error), "It uses user channels");
+    // レイヤーのロックを持つレイヤーは保存できる（ロックも一緒に書く）
     s.doc.remove_channel(channel).unwrap();
     s.doc
         .set_layer_locks(base, yolu_core::LayerLocks::ALL)
@@ -1628,24 +1671,39 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     );
 }
 
-/// 同梱の素材はどれもノイズ・グランジを使う。置いたグループを「層を保存」しても、日英の短い理由で断られ（yolu-io の長い診断も
+/// 同梱の素材はどれもノイズ・グランジを使う。置いたグループを「レイヤーを保存」しても、日英の短い理由で断られ（yolu-io の長い診断も
 /// 「Invalid or unsupported project data」も出さない）、棚にも文書の保存状態にも触れない。
 #[test]
 fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both_languages() {
     for (lang, want) in [
-        (Lang::Ja, "できません: ノイズ・グランジは保存できません"),
-        (Lang::En, "Cannot: Noise and Grunge cannot be saved"),
+        (
+            Lang::Ja,
+            "をアセットに保存できません（ノイズ・グランジを使っています）。",
+        ),
+        (
+            Lang::En,
+            " to the project's assets (It uses Noise and Grunge).",
+        ),
     ] {
         for id in ["builtin:rusty-iron", "builtin:wood"] {
             let mut s = AppState::new(64, 64);
             s.lang = lang;
             place(&mut s, id);
             let group = s.selected_layer.unwrap();
-            assert!(s.doc.layer(group).unwrap().is_group(), "{id}: {}", s.message);
+            assert!(
+                s.doc.layer(group).unwrap().is_group(),
+                "{id}: {}",
+                s.message
+            );
             s.modified = false;
             let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
             s.apply(Action::Shelf(ShelfOp::SaveMaterial(group)));
-            assert_eq!(s.message, want, "{id}");
+            assert!(
+                s.message.ends_with(want)
+                    && s.message.starts_with(lang.pick("「", "Cannot save \"")),
+                "{id}: {}",
+                s.message
+            );
             assert!(s.shelf.resources().is_empty() && !s.shelf.changed, "{id}");
             assert!(!s.modified && s.shelf.saving_name().is_none(), "{id}");
             assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
@@ -1674,10 +1732,13 @@ fn headless_an_unreadable_shelf_result_keeps_the_reason_and_the_open_notice_name
     assert_eq!(yolu_app::project::unreadable_shelf_notice(&s), None);
     s.shelf = broken;
     for (lang, want) in [
-        (Lang::Ja, "アセットの棚を読めません（索引が壊れています）"),
+        (
+            Lang::Ja,
+            "プロジェクトのアセットを読めません（索引が壊れています）",
+        ),
         (
             Lang::En,
-            "The asset shelf cannot be read (Invalid or unsupported project data)",
+            "The project's assets cannot be read (Invalid or unsupported project data)",
         ),
     ] {
         s.lang = lang;
@@ -1755,20 +1816,27 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
         fixtures().join("raster.ylsmart"),
     )));
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 257 個目は、棚も未保存の印も変えずに「いっぱい」と断る（予算超過とは別の理由）
     let entries = s.shelf.shelf().entries().clone();
     s.modified = false;
-    for (lang, want) in [(Lang::Ja, "棚がいっぱいです"), (Lang::En, "Shelf is full")] {
+    for (lang, want) in [
+        (Lang::Ja, "アセットがいっぱいです"),
+        (Lang::En, "Assets are full"),
+    ] {
         s.lang = lang;
         s.apply(Action::Shelf(ShelfOp::ImportFile(
             fixtures().join("mask.ylsmart"),
         )));
         assert!(
             s.message.starts_with(if lang == Lang::Ja {
-                "できません"
+                "「mask.ylsmart」をアセットに読み込めません"
             } else {
-                "Cannot"
+                "Cannot import \"mask.ylsmart\" into the project's assets"
             }) && s.message.contains(want),
             "{}",
             s.message
@@ -1783,12 +1851,20 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
     s.apply(Action::Shelf(ShelfOp::ImportFile(
         fixtures().join("raster.ylsmart"),
     )));
-    assert!(s.message.starts_with("すでに棚にあります"), "{}", s.message);
-    // 層の保存は、写しを作る前に断る（別のスレッドも始めない）
+    assert!(
+        s.message.starts_with("すでにアセットにあります"),
+        "{}",
+        s.message
+    );
+    // レイヤーの保存は、写しを作る前に断る（別のスレッドも始めない）
     s.shelf.async_bytes = 0;
     let before = fingerprint(&s);
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-    assert!(s.message.contains("棚がいっぱいです"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットがいっぱいです"),
+        "{}",
+        s.message
+    );
     assert!(s.shelf.saving_name().is_none() && s.shelf.saves_running() == 0);
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES);
     assert_eq!(fingerprint(&s), before);
@@ -1799,7 +1875,11 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 読み込みも同じ上限: 256 個の棚は .ylp を経て戻り、1 つ多い索引は棚を読めない
     let dir = temp_dir("limit");
     let path = dir.join("full.ylp");
@@ -1906,27 +1986,31 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
     let dir = temp_dir("unsupported");
     let pinned = dir.join("pinned.ylsmart");
     std::fs::write(&pinned, generator_pinned_bytes()).unwrap();
-    // フィルター入りの素材は、効果の層が core に入ってから置ける（前は core で扱えない中身として断っていた）
+    // フィルター入りの素材は、効果のレイヤーが core に入ってから置ける（前は core で扱えない中身として断っていた）
     {
         let mut s = AppState::new(16, 16);
-        s.apply(Action::Shelf(ShelfOp::ImportFile(fixtures().join("filtered.ylsmart"))));
+        s.apply(Action::Shelf(ShelfOp::ImportFile(
+            fixtures().join("filtered.ylsmart"),
+        )));
         let id = ids(&s, "smartMaterial").pop().expect(&s.message);
         s.shelf.inspect_pending(10);
         assert_eq!(s.shelf.block_of(&id), None, "フィルター入りは置ける");
     }
     // 本物の入力: Generator の再固定
-    for (file, block, ja, en) in [
-        (
-            pinned.clone(),
-            "generators",
-            "ジェネレーター付きは置けません",
-            "Has pinned generators",
-        ),
-    ] {
+    for (file, block, ja, en) in [(
+        pinned.clone(),
+        "generators",
+        "ジェネレーター付きは置けません",
+        "Has pinned generators",
+    )] {
         let mut s = AppState::new(16, 16);
         s.apply(Action::Shelf(ShelfOp::ImportFile(file.clone())));
         let id = ids(&s, "smartMaterial").pop().expect(&s.message);
-        assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+        assert!(
+            s.message.starts_with("アセットに入れました"),
+            "{}",
+            s.message
+        );
         // 棚に並び、置けない理由と警告の印がつく（名前の帯・一覧の印は block を見る）
         s.shelf.inspect_pending(10);
         match (block, s.shelf.block_of(&id)) {
@@ -1998,7 +2082,7 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
 
 #[test]
 fn headless_a_layer_with_locks_is_saved_to_the_shelf_with_its_locks() {
-    // 層のロックは正本の版 12 の項目で、.ylsmart にも書く（C# の CloneLayer がロックを写すのと同じ）。同期も別のスレッドも
+    // レイヤーのロックは正本の版 12 の項目で、.ylsmart にも書く（C# の CloneLayer がロックを写すのと同じ）。同期も別のスレッドも
     let (mut s, base) = painted(16);
     s.doc
         .set_layer_locks(base, yolu_core::LayerLocks::PIXELS)
@@ -2008,7 +2092,12 @@ fn headless_a_layer_with_locks_is_saved_to_the_shelf_with_its_locks() {
         s.modified = false;
         s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
         s.shelf_wait();
-        assert_eq!(s.shelf.resources().len(), n + 1, "{async_bytes}: {}", s.message);
+        assert_eq!(
+            s.shelf.resources().len(),
+            n + 1,
+            "{async_bytes}: {}",
+            s.message
+        );
         assert!(s.shelf.changed && s.modified, "{}", s.message);
     }
     // 文書のロックは変わらず、棚の素材のロックも持つ
@@ -2064,7 +2153,11 @@ fn headless_a_big_save_adds_to_the_shelf_on_the_worker_and_the_shelf_stays_put_m
     s.shelf_poll();
     assert_eq!(s.shelf.resources().len(), count + 1, "{}", s.message);
     assert!(s.shelf.saving_name().is_none() && s.shelf.changed && s.modified);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 差し替えた棚は、読み直しても同じ（別のスレッドで足した結果が、画面のスレッドで足した結果と同じ）
     let reread = Shelf::read(s.shelf.shelf().entries(), SHELF_BUDGET).unwrap();
     assert_eq!(reread.used_bytes(), s.shelf.shelf().used_bytes());
@@ -2096,7 +2189,7 @@ fn headless_a_big_save_adds_to_the_shelf_on_the_worker_and_the_shelf_stays_put_m
     assert_eq!(s.shelf.resources().len(), count + 1, "{}", s.message);
 }
 
-/// 測定用: 全面を塗った層の画素（`noisy` は乱数。`seed` から続く。そうでなければなだらかな勾配）。
+/// 測定用: 全面を塗ったレイヤーの画素（`noisy` は乱数。`seed` から続く。そうでなければなだらかな勾配）。
 fn fill_whole_layer(s: &mut AppState, id: LayerId, noisy: bool, seed: &mut u32) {
     let size = s.doc.width();
     let ts = s.doc.tile_size();
@@ -2139,9 +2232,9 @@ fn median(v: &mut [f64]) -> f64 {
     v[v.len() / 2]
 }
 
-/// 測定（普段は回さない）。全面を塗った 1 層をスマートマテリアルとして棚へ入れるとき、画面のスレッドが止まる時間と、別のスレッドで
+/// 測定（普段は回さない）。全面を塗った 1 レイヤーをスマートマテリアルとして棚へ入れるとき、画面のスレッドが止まる時間と、別のスレッドで
 /// 走る時間を分けて、画素の中身（なだらかな勾配・乱数）と大きさ（2048²・4096²）ごとに 3 回ずつの中央値で出す（棚は空）。
-/// - `click`: 「層を保存」を押してから戻るまで（画面のスレッド。画素の写しを捕まえて、別のスレッドを始める）
+/// - `click`: 「レイヤーを保存」を押してから戻るまで（画面のスレッド。画素の写しを捕まえて、別のスレッドを始める）
 /// - `encode`: 別のスレッドの変換・圧縮・サムネイルと、棚の写しへの追加（棚全体の検証。画面は止まらない）
 /// - `keep`: できた素材を受け取って棚を差し替える（画面のスレッド。足した後の棚を受け取るだけ）
 ///
@@ -2183,7 +2276,7 @@ fn measure_how_long_saving_a_full_layer_takes() {
 }
 
 /// 測定（普段は回さない）。棚を数百 MiB 埋めた状態で、素材を足す・消す・見る・外のファイルから読み込む操作が画面のスレッドを止める時間。
-/// 棚の中身は 2048² の乱数の層（画素 16 MiB・圧縮してもほぼそのまま。棚の使用量はファイルと画素で 1 個およそ 30 MiB）を 4・8・14 個
+/// 棚の中身は 2048² の乱数のレイヤー（画素 16 MiB・圧縮してもほぼそのまま。棚の使用量はファイルと画素で 1 個およそ 30 MiB）を 4・8・14 個
 /// （使用量およそ 120・240・415 MiB。棚の予算は 512 MiB）。
 /// 足す・消す・見るは同じ棚の写しで 3 回ずつの中央値、読み込みは 1 回。`inspect` は 1 項目の分（画面は 1 フレームに 2 個まで見る）。
 /// 画面のスレッドを止めるのは `keep`（保存の結果を受け取る差し替え）・`remove`・`inspect`・`import`。`add` は別のスレッドで走る分。
@@ -2198,7 +2291,7 @@ fn measure_how_long_a_full_shelf_stalls_the_screen() {
     let mut s = AppState::new(2048, 2048);
     let id = s.selected_layer.unwrap();
     fill_whole_layer(&mut s, id, true, &mut seed);
-    // 同じ層を捕まえるたびに別の .ylsmart になる。1 つずつ空の棚に入れて索引の項目と中身を集め、棚は 1 回の読み込みで作る
+    // 同じレイヤーを捕まえるたびに別の .ylsmart になる。1 つずつ空の棚に入れて索引の項目と中身を集め、棚は 1 回の読み込みで作る
     // （1 つずつ足す作り方は、棚の検証が個数の 2 乗の時間になる）
     let started = Instant::now();
     let mut entries: BTreeMap<String, Arc<[u8]>> = BTreeMap::new();
@@ -2321,7 +2414,7 @@ fn measure_how_long_a_full_shelf_stalls_the_screen() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 測定用: 層を捕まえて .ylsmart のバイト列にする（捕まえるたびに別の素材になる）。
+/// 測定用: レイヤーを捕まえて .ylsmart のバイト列にする（捕まえるたびに別の素材になる）。
 fn encode_with(s: &AppState, id: LayerId, name: &str) -> Vec<u8> {
     use yolu_io::smart::SmartFile;
     let material = s.doc.capture_smart_material(&[id], name).unwrap();
@@ -2342,7 +2435,7 @@ mod ui {
     use yolu_app::state::PopupKind;
     use yolu_app::YoluApp;
 
-    /// 人工の棚（6 種）を持った窓。縦を伸ばして格子が 3 行見えるようにする。
+    /// 人工の棚（6 種）を持ったウィンドウ。縦を伸ばして格子が 3 行見えるようにする。
     pub fn window() -> Harness<'static, YoluApp> {
         let mut h = app(1280.0, 1000.0, 64);
         // 左の列の先頭はブラシのパネルなので、棚の「アセット」のタブを前へ出す
@@ -2352,7 +2445,7 @@ mod ui {
             h.step();
         }
         h.state_mut().state.shelf = ShelfState::with_shelf(fixture_shelf());
-        // プロジェクトの棚だけの並びを調べる試験の窓（同梱の素材は別の試験で見る）
+        // プロジェクトの棚だけの並びを調べる試験のウィンドウ（同梱の素材は別の試験で見る）
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
         settle(&mut h);
@@ -2425,7 +2518,7 @@ mod ui {
         h.run();
     }
 
-    /// 層が 3 つ（下から レイヤー 1・2・3）の文書。
+    /// レイヤーが 3 つ（下から レイヤー 1・2・3）の文書。
     fn three_layers(h: &mut Harness<'_, YoluApp>) {
         apply(h, Action::NewLayer);
         apply(h, Action::NewLayer);
@@ -2497,7 +2590,7 @@ mod ui {
         assert_eq!(layers(&h), before);
     }
 
-    /// 既定の棚（プロジェクトの棚は空）の窓。同梱の素材が並ぶ。
+    /// 既定の棚（プロジェクトの棚は空）のウィンドウ。同梱の素材が並ぶ。
     fn window_with_bundled() -> Harness<'static, YoluApp> {
         let mut h = app(1280.0, 1000.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
@@ -2515,10 +2608,7 @@ mod ui {
         let before = layers(&h);
         let at = card(&h, "錆びた鉄").center();
         click(&mut h, at);
-        assert_eq!(
-            st(&h).shelf.selected.as_deref(),
-            Some("builtin:rusty-iron")
-        );
+        assert_eq!(st(&h).shelf.selected.as_deref(), Some("builtin:rusty-iron"));
         assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
         // 組み込みは棚に入っていないので、書き出せず消せない（ボタンが効かない）
         assert!(h
@@ -2526,13 +2616,21 @@ mod ui {
             .accesskit_node()
             .is_disabled());
         assert!(h
-            .get_by_label("棚から消す（置いた層はそのまま）")
+            .get_by_label("アセットから消す（置いたレイヤーはそのまま）")
             .accesskit_node()
             .is_disabled());
         h.get_by_label("置く").click();
         h.run();
-        assert!(st(&h).doc.layers().len() > before.len() + 3, "{}", st(&h).message);
-        assert!(st(&h).message.starts_with("置きました: 錆びた鉄"), "{}", st(&h).message);
+        assert!(
+            st(&h).doc.layers().len() > before.len() + 3,
+            "{}",
+            st(&h).message
+        );
+        assert!(
+            st(&h).message.starts_with("置きました: 錆びた鉄"),
+            "{}",
+            st(&h).message
+        );
         undo(&mut h);
         assert_eq!(layers(&h), before);
         // 右クリックのメニューでも、書き出す・消すは効かない（置くだけが効く）
@@ -2542,7 +2640,7 @@ mod ui {
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), false),
                 ("ライブラリへ入れる".to_owned(), false),
-                ("棚から消す…".to_owned(), false),
+                ("アセットから消す…".to_owned(), false),
             ]
         );
     }
@@ -2559,7 +2657,7 @@ mod ui {
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), true),
                 ("ライブラリへ入れる".to_owned(), true),
-                ("棚から消す…".to_owned(), true),
+                ("アセットから消す…".to_owned(), true),
             ]
         );
     }
@@ -2594,11 +2692,23 @@ mod ui {
         h.run();
         assert!(st(&h).doc.layers().len() > 3 + 4, "{}", st(&h).message);
         let names = layers(&h);
-        let group = names.iter().position(|n| n == "錆びた鉄").expect("グループが置かれる");
+        let group = names
+            .iter()
+            .position(|n| n == "錆びた鉄")
+            .expect("グループが置かれる");
         // レイヤー 2 の行の下の隙間に落としたので、レイヤー 1 の上・レイヤー 2 の下に置かれる
-        assert!(names[..group].contains(&"レイヤー 1".to_owned()), "{names:?}");
-        assert!(names[group..].contains(&"レイヤー 2".to_owned()), "{names:?}");
-        assert!(names[group..].contains(&"レイヤー 3".to_owned()), "{names:?}");
+        assert!(
+            names[..group].contains(&"レイヤー 1".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names[group..].contains(&"レイヤー 2".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names[group..].contains(&"レイヤー 3".to_owned()),
+            "{names:?}"
+        );
     }
 
     #[test]
@@ -2767,7 +2877,7 @@ mod ui {
         h.state_mut().state.dialog_request = None;
         let at = card(&h, "raster").center();
         right_click(&mut h, at);
-        let at = popup_item(&h, "棚から消す…").center();
+        let at = popup_item(&h, "アセットから消す…").center();
         click(&mut h, at);
         assert_eq!(st(&h).dialog_request, Some(DialogRequest::ShelfRemove));
         assert_eq!(st(&h).shelf.resources().len(), 6, "確かめるまでは消さない");
@@ -2792,11 +2902,11 @@ mod ui {
                 .is_disabled(),
             "マスクが無ければ保存できない"
         );
-        h.get_by_label("層を保存").click();
+        h.get_by_label("レイヤーを保存").click();
         h.run();
         assert_eq!(ids(st(&h), "smartMaterial").len(), 1, "{}", st(&h).message);
         assert!(
-            st(&h).message.starts_with("棚に入れました"),
+            st(&h).message.starts_with("アセットに入れました"),
             "{}",
             st(&h).message
         );
@@ -2855,7 +2965,7 @@ mod ui {
         );
         settle(&mut h);
         let id = st(&h).shelf.selected.clone().unwrap();
-        // 効果の層が core に入ったので、フィルター入りの素材は印なしで置ける（見終わっている）
+        // 効果のレイヤーが core に入ったので、フィルター入りの素材は印なしで置ける（見終わっている）
         assert!(st(&h).shelf.info(&id).is_some());
         assert_eq!(st(&h).shelf.block_of(&id), None);
         assert!(!st(&h).shelf.warns(&id));
@@ -2916,7 +3026,7 @@ mod ui {
         assert!(h.query_by_label("置く").is_none());
     }
 
-    /// 窓に落としたファイル（パスだけ持つ）。
+    /// ウィンドウに落としたファイル（パスだけ持つ）。
     #[derive(Debug)]
     struct Dropped(PathBuf);
     impl egui::DroppedFile for Dropped {
@@ -2979,7 +3089,7 @@ mod ui {
         assert_eq!(st(&h).shelf.scroll, 0.0);
     }
 
-    /// 14 枚（人工データ 6 + 保存した 8）の棚の窓。
+    /// 14 枚（人工データ 6 + 保存した 8）の棚のウィンドウ。
     fn window_with_fourteen() -> Harness<'static, YoluApp> {
         let mut h = window();
         let layer = st(&h).selected_layer.unwrap();
@@ -2999,7 +3109,7 @@ mod ui {
     fn the_grid_reaches_the_last_card_at_the_widths_where_the_scrollbar_changes_the_columns() {
         use yolu_app::panels::assets::CELL_H;
         let mut h = window_with_fourteen();
-        // 左の列の幅は窓の幅の 19%。格子の幅が 3 → 2 列（窓 1450〜1510 付近）と 2 → 1 列（1020〜1080 付近）に分かれる所を
+        // 左の列の幅はウィンドウの幅の 19%。格子の幅が 3 → 2 列（ウィンドウ 1450〜1510 付近）と 2 → 1 列（1020〜1080 付近）に分かれる所を
         // 4 点ずつ通る（バーが出ると幅が 10 点狭まり、列が減って行が増える）
         let widths: Vec<u32> = (1020..=1080)
             .step_by(4)
@@ -3011,12 +3121,12 @@ mod ui {
             h.run();
             assert!(
                 card_shown(&h, "素材 8"),
-                "窓の幅 {width}: 最後の素材までスクロールで届く"
+                "ウィンドウの幅 {width}: 最後の素材までスクロールで届く"
             );
             let last = card(&h, "素材 8");
             assert!(
                 last.height() >= CELL_H - 0.5,
-                "窓の幅 {width}: 最後の素材が欠けずに見える {last:?}"
+                "ウィンドウの幅 {width}: 最後の素材が欠けずに見える {last:?}"
             );
         }
     }
@@ -3042,7 +3152,7 @@ mod ui {
         assert_eq!(st(&h).shelf.resources().len(), 2, "{}", st(&h).message);
         let message = &st(&h).message;
         assert!(
-            message.contains("bad.ylsmart") && message.contains("棚に入れました: 2 件"),
+            message.contains("bad.ylsmart") && message.contains("2 件をアセットに入れました。"),
             "{message}"
         );
         let _ = std::fs::remove_dir_all(dir);
@@ -3055,7 +3165,10 @@ mod ui {
         h.state_mut().state.shelf = ShelfState::unreadable("試験の理由");
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
-        assert!(h.get_by_label("層を保存").accesskit_node().is_disabled());
+        assert!(h
+            .get_by_label("レイヤーを保存")
+            .accesskit_node()
+            .is_disabled());
         assert!(h
             .get_by_label(".ylsmart を読み込む…")
             .accesskit_node()
@@ -3069,23 +3182,23 @@ mod ui {
         let mut h = window();
         h.state_mut().state.shelf.async_bytes = 0;
         h.state_mut().state.shelf.hold_saves(true);
-        h.get_by_label("層を保存").click();
+        h.get_by_label("レイヤーを保存").click();
         h.run();
         assert_eq!(st(&h).shelf.saving_name(), Some("レイヤー 1"));
         assert!(
-            h.query_by_label("層を保存").is_none(),
+            h.query_by_label("レイヤーを保存").is_none(),
             "保存のあいだは名前とやめるに替わる"
         );
         h.get_by_label("やめる").click();
         h.run();
         assert!(st(&h).shelf.saving_name().is_none());
-        assert!(h.query_by_label("層を保存").is_some());
+        assert!(h.query_by_label("レイヤーを保存").is_some());
         // やめた保存のスレッドが終わるまでは次の保存を始められない。放して終わらせてから、もう一度保存する
         h.state_mut().state.shelf.hold_saves(false);
         st(&h).shelf.wait_idle();
         h.run();
         // 終わるまで待てば、棚に入って選ばれる（絞り込みで隠れない）
-        h.get_by_label("層を保存").click();
+        h.get_by_label("レイヤーを保存").click();
         h.run();
         for _ in 0..200 {
             if st(&h).shelf.saving_name().is_none() {
@@ -3103,7 +3216,7 @@ mod ui {
         let mut h = window();
         h.state_mut().state.shelf.async_bytes = 0;
         h.state_mut().state.shelf.hold_saves(true);
-        h.get_by_label("層を保存").click();
+        h.get_by_label("レイヤーを保存").click();
         h.run();
         settle(&mut h);
         h.snapshot("assets_shelf_saving");
@@ -3170,5 +3283,50 @@ mod ui {
         h.snapshot("assets_shelf_dragging");
         release(&h, to, PointerButton::Primary);
         h.run();
+    }
+
+    /// 英語のパネル: 読めないときの状態と、取り込んだときの知らせ（日本語の絵は `assets_shelf_unreadable`・`assets_shelf_blocked`）。
+    #[test]
+    fn snapshot_shelf_english_unreadable_and_notice() {
+        let mut h = app(1280.0, 800.0, 64);
+        click_tab(&mut h, yolu_app::Tab::Assets);
+        h.state_mut().state.lang = Lang::En;
+        h.state_mut().state.shelf = ShelfState::unreadable("test reason");
+        h.state_mut().state.shelf.show_builtin = false;
+        h.run();
+        settle(&mut h);
+        h.snapshot("assets_shelf_unreadable_english");
+        h.state_mut().state.shelf = ShelfState::default();
+        h.state_mut().state.shelf.show_builtin = false;
+        h.run();
+        apply(
+            &mut h,
+            Action::Shelf(ShelfOp::ImportFile(fixtures().join("images.ylsmart"))),
+        );
+        h.run();
+        h.run();
+        settle(&mut h);
+        h.snapshot("assets_shelf_blocked_english");
+    }
+
+    /// 右クリックのメニュー（日英）。「アセットから消す…」が「ライブラリへ入れる」と並ぶ。
+    fn snapshot_context_menu(lang: Lang, name: &str) {
+        let mut h = window();
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = card(&h, "raster").center();
+        right_click(&mut h, at);
+        settle(&mut h);
+        h.snapshot(name);
+    }
+
+    #[test]
+    fn snapshot_shelf_context_menu() {
+        snapshot_context_menu(Lang::Ja, "assets_shelf_menu");
+    }
+
+    #[test]
+    fn snapshot_shelf_context_menu_english() {
+        snapshot_context_menu(Lang::En, "assets_shelf_menu_english");
     }
 }

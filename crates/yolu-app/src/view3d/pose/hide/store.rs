@@ -7,10 +7,11 @@
 //! 書き込みは、一時ファイルへ書いて読み戻して確かめてから、プリセットのファイルを 1 回の置換で確定する（途中で落ちても、前の版か
 //! 新しい版のどちらか）。
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::lang::Lang;
+use crate::userfiles;
 
 pub const HEADER: &str = "yolupainter-hide 1";
 const EXTENSION: &str = "ylhide";
@@ -72,6 +73,17 @@ pub enum StoreError {
 impl From<io::Error> for StoreError {
     fn from(e: io::Error) -> Self {
         StoreError::Io(e)
+    }
+}
+
+impl From<userfiles::FileError> for StoreError {
+    fn from(e: userfiles::FileError) -> Self {
+        match e {
+            userfiles::FileError::Io(e) => StoreError::Io(e),
+            userfiles::FileError::TooLarge => StoreError::TooLarge,
+            userfiles::FileError::NotText => StoreError::NotAPreset,
+            userfiles::FileError::Mismatch => StoreError::Mismatch,
+        }
     }
 }
 
@@ -144,47 +156,26 @@ pub struct Presets {
 impl Presets {
     /// 設定のフォルダのプリセットを読む（起動のとき 1 回。読めないファイルは読み飛ばして理由を残す）。
     pub fn attach(&mut self, dir: PathBuf) {
-        self.items.clear();
-        self.problems.clear();
-        let mut files: Vec<(u32, PathBuf)> = Vec::new();
-        if let Ok(read) = std::fs::read_dir(&dir) {
-            for entry in read.flatten() {
-                let path = entry.path();
-                if let Some(id) = file_id(&path) {
-                    files.push((id, path));
-                }
-            }
-        }
-        files.sort_by_key(|(id, _)| *id);
-        let mut max_id = 0;
-        for (id, path) in files {
-            max_id = max_id.max(id);
-            let file = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if self.items.len() >= MAX_PRESETS {
-                self.problems.push(Problem {
-                    file,
-                    error: StoreError::TooMany,
-                });
-                continue;
-            }
-            match read_file(&path) {
-                Ok((name, entries)) => {
-                    if self.items.iter().any(|p| p.name == name) {
-                        self.problems.push(Problem {
-                            file,
-                            error: StoreError::DuplicateName,
-                        });
-                    } else {
-                        self.items.push(Preset { id, name, entries });
-                    }
-                }
-                Err(error) => self.problems.push(Problem { file, error }),
-            }
-        }
-        self.next_id = max_id + 1;
+        let loaded = userfiles::load_numbered(
+            &dir,
+            file_id,
+            MAX_PRESETS,
+            read_file,
+            |(name, _)| name.as_str(),
+            || StoreError::TooMany,
+            || StoreError::DuplicateName,
+        );
+        self.items = loaded
+            .items
+            .into_iter()
+            .map(|(id, (name, entries))| Preset { id, name, entries })
+            .collect();
+        self.problems = loaded
+            .problems
+            .into_iter()
+            .map(|(file, error)| Problem { file, error })
+            .collect();
+        self.next_id = loaded.next_id;
         self.dir = Some(dir);
     }
 
@@ -250,11 +241,7 @@ impl Presets {
             return Ok(());
         };
         if let Some(dir) = &self.dir {
-            match std::fs::remove_file(path_of(dir, id)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
+            userfiles::remove(&path_of(dir, id))?;
         }
         self.items.remove(at);
         Ok(())
@@ -397,44 +384,16 @@ pub fn parse(text: &str) -> Result<(String, Vec<PresetEntry>), StoreError> {
 }
 
 fn read_file(path: &Path) -> Result<(String, Vec<PresetEntry>), StoreError> {
-    let meta = std::fs::metadata(path)?;
-    if meta.len() > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    let bytes = std::fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|_| StoreError::NotAPreset)?;
-    parse(&text)
+    parse(&userfiles::read_checked(path, MAX_FILE_BYTES)?)
 }
 
 /// 一時ファイルへ書き、読み戻して確かめてから、プリセットのファイルへ 1 回の置換で確定する。
 fn write_file(dir: &Path, preset: &Preset) -> Result<(), StoreError> {
-    std::fs::create_dir_all(dir)?;
     let text = render(&preset.name, &preset.entries);
-    if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(StoreError::TooLarge);
-    }
-    let path = path_of(dir, preset.id);
-    let pending = path.with_extension(format!("{EXTENSION}.{}.pending", std::process::id()));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&pending)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        let (name, entries) = read_file(&pending)?;
-        if name != preset.name || entries != preset.entries {
-            return Err(StoreError::Mismatch);
-        }
-        std::fs::rename(&pending, &path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    userfiles::write_text(&path_of(dir, preset.id), &text, MAX_FILE_BYTES, |read| {
+        parse(read).is_ok_and(|(name, entries)| name == preset.name && entries == preset.entries)
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -546,7 +505,10 @@ mod tests {
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".pending"))
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.ends_with(".pending") || name.ends_with(".pending~")
+            })
             .collect();
         assert!(leftovers.is_empty());
         let mut again = Presets::default();
