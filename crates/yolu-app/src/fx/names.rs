@@ -11,7 +11,7 @@ use yolu_core::{Anchor, AnchorPlacement, Channel, FilterEffect, FilterTarget};
 
 use crate::lang::Lang;
 
-/// 足せるフィルターの種類（足すときの既定値は Unity 版のメニューと同じ）。
+/// 足せるフィルターの種類（足すときの既定値は Unity 版のメニューと同じ。0.5.0 の種類は効果の目録の既定）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FilterKind {
     Blur,
@@ -27,15 +27,36 @@ pub enum FilterKind {
     BrightnessContrast,
     Threshold,
     Posterize,
+    HistogramScan,
+    HistogramRange,
+    SlopeBlur,
+    DirectionalBlur,
+    Warp,
+    Morphology,
+    EdgeDetect,
+    HighPass,
+    Median,
+    Glow,
 }
 
 impl FilterKind {
-    pub const ALL: [FilterKind; 13] = [
+    /// メニューの並び（ぼかしの仲間 → 輪郭・形 → ノイズ → 値の調整 → 色調補正）。
+    pub const ALL: [FilterKind; 23] = [
         FilterKind::Blur,
+        FilterKind::DirectionalBlur,
+        FilterKind::SlopeBlur,
+        FilterKind::Warp,
+        FilterKind::Median,
         FilterKind::Sharpen,
+        FilterKind::HighPass,
+        FilterKind::Glow,
+        FilterKind::EdgeDetect,
+        FilterKind::Morphology,
         FilterKind::NoiseMono,
         FilterKind::NoiseColor,
         FilterKind::Levels,
+        FilterKind::HistogramScan,
+        FilterKind::HistogramRange,
         FilterKind::Invert,
         FilterKind::Normalize,
         FilterKind::GradientMap,
@@ -45,6 +66,23 @@ impl FilterKind {
         FilterKind::Threshold,
         FilterKind::Posterize,
     ];
+
+    /// 0.5.0 の種類の、効果の目録の名前（値の欄は目録から作る）。
+    pub fn catalog_id(self) -> Option<&'static str> {
+        Some(match self {
+            FilterKind::HistogramScan => "histogram_scan",
+            FilterKind::HistogramRange => "histogram_range",
+            FilterKind::SlopeBlur => "slope_blur",
+            FilterKind::DirectionalBlur => "directional_blur",
+            FilterKind::Warp => "warp",
+            FilterKind::Morphology => "morphology",
+            FilterKind::EdgeDetect => "edge_detect",
+            FilterKind::HighPass => "high_pass",
+            FilterKind::Median => "median",
+            FilterKind::Glow => "glow",
+            _ => return None,
+        })
+    }
 
     /// 色調補正の 6 種（調整の層と同じ値。Rust 版だけの種類）なら、その種類。
     fn color_adjust(self) -> Option<yolu_core::AdjustmentType> {
@@ -70,6 +108,11 @@ impl FilterKind {
             FilterKind::Levels => EffectSettings::levels(0.0, 1.0, 1.0, 0.0, 1.0),
             FilterKind::Invert => EffectSettings::invert(),
             FilterKind::Normalize => EffectSettings::normalize(),
+            other if other.catalog_id().is_some() => EffectSettings::from_catalog(
+                other.catalog_id().expect("目録の種類"),
+                &Default::default(),
+            )
+            .expect("目録の既定は作れる"),
             other => EffectSettings::from_color_adjust(
                 yolu_core::ColorAdjust::default_for(other.color_adjust().expect("色調補正の種類"))
                     .expect("色調補正の既定値"),
@@ -80,7 +123,9 @@ impl FilterKind {
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
             FilterKind::Blur => lang.pick("ぼかし（ガウス）", "Gaussian Blur"),
-            FilterKind::Sharpen => lang.pick("シャープ", "Sharpen"),
+            FilterKind::Sharpen => {
+                lang.pick("シャープ（アンシャープマスク）", "Sharpen (Unsharp Mask)")
+            }
             FilterKind::NoiseMono => lang.pick("ノイズ（モノクロ）", "Noise (Mono)"),
             FilterKind::NoiseColor => lang.pick("ノイズ（カラー）", "Noise (Color)"),
             FilterKind::Levels => lang.pick("レベル補正", "Levels"),
@@ -94,22 +139,231 @@ impl FilterKind {
             }
             FilterKind::Threshold => lang.pick("2 値化", "Threshold"),
             FilterKind::Posterize => lang.pick("ポスタリゼーション", "Posterize"),
+            FilterKind::HistogramScan => lang.pick("値の切り出し", "Histogram Scan"),
+            FilterKind::HistogramRange => lang.pick("値の幅", "Histogram Range"),
+            FilterKind::SlopeBlur => lang.pick("ノイズに沿ったぼかし", "Slope Blur"),
+            FilterKind::DirectionalBlur => lang.pick("方向ぼかし", "Directional Blur"),
+            FilterKind::Warp => lang.pick("ゆがみ", "Warp"),
+            FilterKind::Morphology => lang.pick("太らせる・細らせる", "Dilate / Erode"),
+            FilterKind::EdgeDetect => lang.pick("輪郭の検出", "Edge Detect"),
+            FilterKind::HighPass => lang.pick("ハイパス", "High Pass"),
+            FilterKind::Median => lang.pick("メディアン", "Median"),
+            FilterKind::Glow => lang.pick("グロー", "Glow"),
         }
+    }
+
+    /// 段の設定の種類。
+    pub fn of(settings: &Filter) -> Option<FilterKind> {
+        Some(match settings {
+            Filter::GaussianBlur { .. } => FilterKind::Blur,
+            Filter::Sharpen { .. } => FilterKind::Sharpen,
+            Filter::Noise {
+                monochrome: true, ..
+            } => FilterKind::NoiseMono,
+            Filter::Noise { .. } => FilterKind::NoiseColor,
+            Filter::Levels { .. } => FilterKind::Levels,
+            Filter::Invert => FilterKind::Invert,
+            Filter::Normalize => FilterKind::Normalize,
+            Filter::GradientMap(_) => FilterKind::GradientMap,
+            Filter::ToneCurve(_) => FilterKind::ToneCurve,
+            Filter::ColorBalance(_) => FilterKind::ColorBalance,
+            Filter::BrightnessContrast(_) => FilterKind::BrightnessContrast,
+            Filter::Threshold(_) => FilterKind::Threshold,
+            Filter::Posterize(_) => FilterKind::Posterize,
+            Filter::HistogramScan { .. } => FilterKind::HistogramScan,
+            Filter::HistogramRange { .. } => FilterKind::HistogramRange,
+            Filter::SlopeBlur { .. } => FilterKind::SlopeBlur,
+            Filter::DirectionalBlur { .. } => FilterKind::DirectionalBlur,
+            Filter::Warp { .. } => FilterKind::Warp,
+            Filter::Morphology { .. } => FilterKind::Morphology,
+            Filter::EdgeDetect { .. } => FilterKind::EdgeDetect,
+            Filter::HighPass { .. } => FilterKind::HighPass,
+            Filter::Median { .. } => FilterKind::Median,
+            Filter::Glow { .. } => FilterKind::Glow,
+            Filter::Generator { .. } => return None,
+        })
     }
 }
 
-/// 足せる Generator の種類（メニューの並び）。
-pub const GENERATOR_KINDS: [Kind; 11] = [
+/// 目録の値の欄の名前（0.5.0 のフィルター。`kind` は目録の種類の名前、`param` は欄の名前）。
+pub fn param_label(lang: Lang, kind: &str, param: &str) -> &'static str {
+    match (kind, param) {
+        ("pattern", "shape") => lang.pick("形", "Shape"),
+        ("pattern", "scale") => lang.pick("繰り返し", "Repeat"),
+        ("pattern", "width") => lang.pick("太さ", "Width"),
+        ("pattern", "softness") => lang.pick("ぼかし", "Blur"),
+        ("pattern", "offset_u") => lang.pick("ずらす U", "Offset U"),
+        ("pattern", "offset_v") => lang.pick("ずらす V", "Offset V"),
+        ("light", "azimuth") => lang.pick("水平の角度", "Azimuth"),
+        ("light", "elevation") => lang.pick("高さ", "Elevation"),
+        ("light", "softness") => lang.pick("回り込み", "Wrap"),
+        ("light", "ambient") => lang.pick("底上げ", "Ambient"),
+        ("mask_builder", "combine") => lang.pick("合わせ方", "Combine"),
+        ("mask_builder", p) if p.ends_with("_weight") => lang.pick("重み", "Weight"),
+        ("mask_builder", p) if p.ends_with("_level") => lang.pick("位置", "Level"),
+        ("mask_builder", p) if p.ends_with("_contrast") => lang.pick("コントラスト", "Contrast"),
+        ("mask_builder", p) if p.ends_with("_invert") => lang.pick("反転", "Invert"),
+        (_, "position") => lang.pick("位置", "Position"),
+        (_, "contrast") => lang.pick("コントラスト", "Contrast"),
+        (_, "range") => lang.pick("幅", "Range"),
+        ("warp", "intensity") => lang.pick("ずらす量", "Amount"),
+        ("glow", "intensity") => lang.pick("明るさ", "Intensity"),
+        (_, "intensity") => lang.pick("長さ", "Length"),
+        (_, "samples") => lang.pick("取る数", "Samples"),
+        ("morphology", "mode") => lang.pick("向き", "Mode"),
+        (_, "mode") => lang.pick("合わせ方", "Mode"),
+        (_, "scale") => lang.pick("ノイズの大きさ", "Noise Size"),
+        (_, "seed") => lang.pick("シード", "Seed"),
+        (_, "angle") => lang.pick("角度", "Angle"),
+        (_, "distance") => lang.pick("長さ", "Distance"),
+        (_, "width") => lang.pick("ぼかす幅", "Width"),
+        (_, "threshold") => lang.pick("しきい値", "Threshold"),
+        _ => lang.pick("半径", "Radius"),
+    }
+}
+
+/// 目録の値の欄の前に置く小さな見出し（マスクの組み立てのマップの名前。無ければ None）。
+pub fn param_group(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
+    if kind != "mask_builder" {
+        return None;
+    }
+    Some(match param {
+        "curvature_weight" => lang.pick("曲率", "Curvature"),
+        "ambient_occlusion_weight" => lang.pick("AO", "Ambient Occlusion"),
+        "position_weight" => lang.pick("位置の高さ", "Height (Position)"),
+        "thickness_weight" => lang.pick("厚み", "Thickness"),
+        _ => return None,
+    })
+}
+
+/// 目録の値の欄のツールチップ（無ければ None）。
+pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
+    Some(match (kind, param) {
+        ("pattern", "scale") => lang.pick(
+            "UV の 0〜1 に繰り返す回数",
+            "How many times the pattern repeats across UV 0–1",
+        ),
+        ("pattern", "width") => lang.pick(
+            "縞・水玉・格子の太さ、縁の幅（繰り返しの 1 つに対する割合）",
+            "Width of stripes, dots and grid lines, or of the border",
+        ),
+        ("pattern", "softness") => lang.pick("境目のぼかし", "Blur of the edges"),
+        ("light", "azimuth") => lang.pick(
+            "光の来る水平の向き（0° が +Z、90° が +X）",
+            "Horizontal direction the light comes from (0° = +Z, 90° = +X)",
+        ),
+        ("light", "elevation") => lang.pick(
+            "光の高さ（0° が水平、90° が真上）",
+            "Height of the light (0° = horizon, 90° = straight above)",
+        ),
+        ("light", "softness") => lang.pick(
+            "明暗の境を裏側へ回り込ませる量",
+            "How far the light wraps around past the terminator",
+        ),
+        ("light", "ambient") => lang.pick("暗い所の明るさ", "Brightness of the dark side"),
+        ("mask_builder", p) if p.ends_with("_weight") => lang.pick(
+            "このマップをどれだけ使うか（0 % は読まない）",
+            "How much this map counts (0% = not read)",
+        ),
+        ("mask_builder", p) if p.ends_with("_level") => lang.pick(
+            "どの値から上を 1 へ寄せるか",
+            "Where values start turning to 1",
+        ),
+        ("mask_builder", "combine") => {
+            lang.pick("マップの値の合わせ方", "How the maps are combined")
+        }
+        ("histogram_scan", "position") => lang.pick(
+            "どの値から上を 1 にするか",
+            "Where values start turning to 1",
+        ),
+        ("histogram_scan", "contrast") => lang.pick(
+            "境目の鋭さ（1 で 2 値）",
+            "How sharp the cut is (1 = two values)",
+        ),
+        ("histogram_range", "range") => lang.pick(
+            "値の広がり（0 で位置の値 1 つ）",
+            "How far the values spread (0 = only the position)",
+        ),
+        ("histogram_range", "position") => lang.pick("真ん中の値", "The middle value"),
+        ("slope_blur", "intensity") => lang.pick(
+            "ノイズの坂の向きへ伸ばす長さ（画素）",
+            "How far along the noise slope (pixels)",
+        ),
+        ("slope_blur", "mode") => lang.pick(
+            "取った値の平均・最小・最大",
+            "Average, minimum or maximum of the samples",
+        ),
+        ("slope_blur" | "warp", "scale") => lang.pick(
+            "内蔵のノイズの 1 つの塊の大きさ（画素）",
+            "Size of one blob of the built-in noise (pixels)",
+        ),
+        ("warp", "intensity") => lang.pick(
+            "読む位置をずらす長さ（画素）",
+            "How far the pixels are moved (pixels)",
+        ),
+        ("directional_blur", "distance") => lang.pick(
+            "片側の長さ（画素。両側へぼかす）",
+            "Length to each side (pixels)",
+        ),
+        ("morphology", "radius") => {
+            lang.pick("丸い窓の半径（画素）", "Round window radius (pixels)")
+        }
+        ("edge_detect", "width") => lang.pick(
+            "輪郭を探す前にぼかす幅（画素）",
+            "Blur before finding edges (pixels)",
+        ),
+        ("edge_detect", "threshold") => {
+            lang.pick("これ以下の弱い輪郭は 0", "Edges weaker than this become 0")
+        }
+        ("glow", "threshold") => lang.pick(
+            "これより明るい所だけ光る",
+            "Only parts brighter than this glow",
+        ),
+        ("median", "radius") => {
+            lang.pick("正方形の窓の半径（画素）", "Square window radius (pixels)")
+        }
+        (_, "seed") => lang.pick(
+            "同じシードなら同じノイズ",
+            "The same seed gives the same noise.",
+        ),
+        _ => return None,
+    })
+}
+
+/// 目録の選択肢の名前（0.5.0 のフィルター）。
+pub fn option_label(lang: Lang, option: &str) -> &'static str {
+    match option {
+        "blur" => lang.pick("平均", "Average"),
+        "min" => lang.pick("最小", "Min"),
+        "max" => lang.pick("最大", "Max"),
+        "dilate" => lang.pick("太らせる", "Dilate"),
+        "erode" => lang.pick("細らせる", "Erode"),
+        "stripes" => lang.pick("縞", "Stripes"),
+        "checker" => lang.pick("市松", "Checker"),
+        "dots" => lang.pick("水玉", "Dots"),
+        "border" => lang.pick("縁", "Border"),
+        "grid" => lang.pick("格子", "Grid"),
+        "multiply" => lang.pick("乗算", "Multiply"),
+        "add" => lang.pick("加算", "Add"),
+        _ => "?",
+    }
+}
+
+/// 足せる Generator の種類（メニューの並び: 焼いたマップを読む種類 → 読まない種類 → 画像）。
+pub const GENERATOR_KINDS: [Kind; 14] = [
     Kind::EdgeWear,
     Kind::Dirt,
     Kind::PositionGradient,
     Kind::ShapeGradient,
     Kind::Thickness,
     Kind::Direction,
+    Kind::Light,
+    Kind::MaskBuilder,
     Kind::IdColor,
     Kind::Anchor,
     Kind::Noise,
     Kind::Grunge,
+    Kind::Pattern,
     Kind::Image,
 ];
 
@@ -149,6 +403,9 @@ pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
         Kind::Noise => lang.pick("ノイズ", "Noise"),
         Kind::Grunge => lang.pick("グランジ", "Grunge"),
         Kind::Image => lang.pick("画像", "Image"),
+        Kind::Pattern => lang.pick("模様", "Pattern"),
+        Kind::Light => lang.pick("光", "Light"),
+        Kind::MaskBuilder => lang.pick("マスクの組み立て", "Mask Builder"),
     }
 }
 
@@ -173,6 +430,7 @@ pub fn effect_name(lang: Lang, settings: &EffectSettings) -> &'static str {
             Filter::Threshold(_) => FilterKind::Threshold.name(lang),
             Filter::Posterize(_) => FilterKind::Posterize.name(lang),
             Filter::Generator { .. } => generator_kind_name(Kind::EdgeWear), // 文書には置かれない形
+            other => FilterKind::of(other).map_or("?", |k| k.name(lang)),
         },
     }
 }
@@ -384,6 +642,22 @@ pub fn effect_label(
         }
         EffectSettings::Filter(Filter::Noise { amount, .. }) => {
             text += &format!("  {}%", (amount * 100.0).round() as i32);
+        }
+        EffectSettings::Filter(
+            Filter::Morphology { radius, .. }
+            | Filter::HighPass { radius }
+            | Filter::Median { radius }
+            | Filter::Glow { radius, .. },
+        ) => {
+            text += &format!("  {radius} px");
+        }
+        EffectSettings::Filter(
+            Filter::SlopeBlur { intensity, .. } | Filter::Warp { intensity, .. },
+        ) => {
+            text += &format!("  {} px", trim(*intensity, 1));
+        }
+        EffectSettings::Filter(Filter::DirectionalBlur { angle, distance }) => {
+            text += &format!("  {}° {} px", trim(*angle, 1), trim(*distance, 1));
         }
         EffectSettings::Generator(g) => {
             text += &format!("  {}", blend_name(lang, g.blend));

@@ -408,6 +408,9 @@ fn inactive_text(e: &InactiveEffect) -> Text {
                 yolu_core::generator::Kind::Noise => "noise",
                 yolu_core::generator::Kind::Grunge => "grunge",
                 yolu_core::generator::Kind::Image => "image",
+                yolu_core::generator::Kind::Pattern => "pattern",
+                yolu_core::generator::Kind::Light => "light",
+                yolu_core::generator::Kind::MaskBuilder => "mask builder",
             };
             if mask {
                 format!("{name} generator (mask)")

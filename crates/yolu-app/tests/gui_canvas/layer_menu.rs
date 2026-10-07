@@ -107,7 +107,8 @@ fn has_japanese(text: &str) -> bool {
 // ───────── 効果のメニュー ─────────
 
 #[test]
-fn the_filter_menu_has_no_heading_and_the_generators_are_one_submenu() {
+fn the_filter_menu_has_only_filters_and_anchors_without_a_heading() {
+    let filter_count = yolu_app::fx::FilterKind::ALL.len();
     for lang in Lang::ALL {
         for edit_mask in [false, true] {
             let mut s = AppState::new(64, 64);
@@ -130,29 +131,34 @@ fn the_filter_menu_has_no_heading_and_the_generators_are_one_submenu() {
                     "{lang:?}: {text}"
                 );
             }
-            // 並び: フィルター 13 種（平ら）→ 区切り → ジェネレーター ▸ → 区切り → アンカーの項目
+            // 並び: フィルター（平ら）→ 区切り → アンカーの項目。ジェネレーターは入れない（入り口を分ける）
             let labels = names(&entries);
-            assert_eq!(labels[13], None, "{lang:?}");
-            assert_eq!(
-                labels[14].as_deref(),
-                Some(lang.pick("ジェネレーター", "Generators"))
-            );
-            assert_eq!(labels[15], None);
+            assert_eq!(labels[filter_count], None, "{lang:?}");
             assert!(
-                labels[16]
+                labels[filter_count + 1]
                     .as_deref()
                     .is_some_and(|l| l.contains(lang.pick("アンカー", "Anchor"))),
                 "{lang:?}: {labels:?}"
             );
-            assert!(entries[..13]
-                .iter()
-                .all(|e| matches!(e, Entry::Item { .. })));
-            let generators = submenu(&entries, lang.pick("ジェネレーター", "Generators"));
-            assert_eq!(
-                generators.len(),
-                yolu_app::fx::names::GENERATOR_KINDS.len(),
-                "{lang:?}: ジェネレーターの種類の全部"
+            // 断られる項目は押せない項目（理由はツールチップ）で残る
+            assert!(entries[..filter_count].iter().all(|e| matches!(
+                e,
+                Entry::Item {
+                    action: Action::Fx(yolu_app::fx::FxOp::AddFilter { .. }),
+                    ..
+                } | Entry::Item { enabled: false, .. }
+            )));
+            assert!(
+                !leaves(&entries).iter().any(|e| matches!(
+                    e,
+                    Entry::Item {
+                        action: Action::Fx(yolu_app::fx::FxOp::AddGenerator { .. }),
+                        ..
+                    }
+                )),
+                "{lang:?}: フィルターのメニューにジェネレーターを置かない"
             );
+            assert!(!entries.iter().any(|e| matches!(e, Entry::Submenu { .. })));
             // 足す先は、今の編集の状態のまま（マスクを描いていればマスク、そうでなければ層の画素）
             let target = if edit_mask {
                 FilterTarget::Mask
@@ -178,8 +184,7 @@ fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() 
     for lang in Lang::ALL {
         let mut s = AppState::new(64, 64);
         s.lang = lang;
-        let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
-        let generators = submenu(&entries, lang.pick("ジェネレーター", "Generators"));
+        let generators = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
         let anchor = generators
             .iter()
             .find_map(|e| match e {
@@ -210,19 +215,117 @@ fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() 
 }
 
 #[test]
-fn the_effect_button_popup_has_the_same_order_without_a_heading() {
+fn the_filter_and_generator_buttons_open_separate_flat_lists() {
     for lang in Lang::ALL {
         let mut s = AppState::new(64, 64);
         s.lang = lang;
-        let popup = yolu_app::m2_menu::entries(
+        let filters = yolu_app::m2_menu::entries(
             &s,
-            yolu_app::m2_menu::Popup::AddEffect(FilterTarget::Content),
+            yolu_app::m2_menu::Popup::AddFilter(FilterTarget::Content),
+        );
+        let generators = yolu_app::m2_menu::entries(
+            &s,
+            yolu_app::m2_menu::Popup::AddGenerator(FilterTarget::Content),
         );
         let bar = shell::menu_entries(&s, 4);
-        // メニューバーの「フィルター」は、ボタンのポップアップに、区切りとアンカーの項目が続くだけ
-        assert_eq!(shape(&popup), shape(&bar[..popup.len()]));
-        assert!(!popup.iter().any(|e| matches!(e, Entry::Heading(_))));
-        assert!(matches!(popup.last(), Some(Entry::Submenu { .. })));
+        // メニューバーの「フィルター」は、フィルターのボタンのポップアップに、区切りとアンカーの項目が続くだけ
+        assert_eq!(shape(&filters), shape(&bar[..filters.len()]));
+        for popup in [&filters, &generators] {
+            assert!(!popup.iter().any(|e| matches!(
+                e,
+                Entry::Heading(_) | Entry::Separator | Entry::Submenu { .. }
+            )));
+        }
+        assert_eq!(filters.len(), yolu_app::fx::FilterKind::ALL.len());
+        assert_eq!(generators.len(), yolu_app::fx::names::GENERATOR_KINDS.len());
+    }
+}
+
+#[test]
+fn the_mask_menu_adds_to_the_mask_and_has_the_mask_switches() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let layer = s.selected_layer.unwrap();
+        assert!(
+            shell::popup_entries(
+                &s,
+                PopupKind::M2(yolu_app::m2_menu::Popup::MaskContext(layer))
+            )
+            .is_empty(),
+            "マスクが無ければ空"
+        );
+        s.apply(Action::M2(Edit::AddMask(layer)));
+        // 層の画素を対象にしていても、マスクのメニューの項目はマスクへ足す
+        s.apply(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
+        let v = shell::popup_entries(
+            &s,
+            PopupKind::M2(yolu_app::m2_menu::Popup::MaskContext(layer)),
+        );
+        let ja_en = |ja: &str, en: &str| Some(lang.pick(ja, en).to_owned());
+        assert_eq!(
+            names(&v),
+            [
+                ja_en("フィルターを追加", "Add Filter"),
+                ja_en("ジェネレーターを追加", "Add Generator"),
+                None,
+                ja_en("反転", "Invert"),
+                ja_en("有効", "Enabled"),
+                None,
+                ja_en("マスクを削除", "Delete Mask"),
+            ]
+        );
+        let filters = submenu(&v, lang.pick("フィルターを追加", "Add Filter"));
+        assert!(filters.iter().all(|e| matches!(
+            e,
+            Entry::Item {
+                action: Action::Fx(yolu_app::fx::FxOp::AddFilter {
+                    target: FilterTarget::Mask,
+                    ..
+                }),
+                ..
+            } | Entry::Item { enabled: false, .. }
+        )));
+        let generators = submenu(&v, lang.pick("ジェネレーターを追加", "Add Generator"));
+        assert!(generators.iter().any(|e| matches!(
+            e,
+            Entry::Item {
+                action: Action::Fx(yolu_app::fx::FxOp::AddGenerator {
+                    target: FilterTarget::Mask,
+                    ..
+                }),
+                ..
+            }
+        )));
+        // 反転・有効・削除は、プロパティのマスクの欄と同じ操作
+        // 入れ子の中（フィルターの「階調の反転」= Invert など）ではなく、マスクのメニューの直下の項目
+        let action = |label: &str| {
+            v.iter()
+                .find_map(|e| match e {
+                    Entry::Item {
+                        label: l, action, ..
+                    } if l == label => Some(action.clone()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            action(lang.pick("反転", "Invert")),
+            Action::M2(Edit::MaskInverted(layer, true))
+        );
+        assert_eq!(
+            action(lang.pick("有効", "Enabled")),
+            Action::M2(Edit::MaskEnabled(layer, false))
+        );
+        assert_eq!(
+            action(lang.pick("マスクを削除", "Delete Mask")),
+            Action::M2(Edit::RemoveMask(layer))
+        );
+        if lang == Lang::En {
+            for text in names(&v).into_iter().flatten() {
+                assert!(!has_japanese(&text), "{text}");
+            }
+        }
     }
 }
 
@@ -275,8 +378,8 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             ja_en("新規塗りつぶしレイヤー", "New Fill Layer"),
             ja_en("新規調整レイヤー", "New Adjustment Layer"),
             None,
-            ja_en("フィルター", "Filter"),
-            ja_en("ジェネレーター", "Generators"),
+            ja_en("フィルターを追加", "Add Filter"),
+            ja_en("ジェネレーターを追加", "Add Generator"),
             ja_en("アンカーを置く", "Add Anchor"),
             None,
             ja_en("新規グループ", "New Group"),
@@ -311,10 +414,10 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
         for l in labels.iter().flatten() {
             assert!(!l.contains(": ") && !l.contains(" — "), "{l}");
         }
-        // 入れ子の中は、フィルター 13 種・ジェネレーター（全部）・調整 9 種（全部）・塗りつぶし 4 種
-        let filters = submenu(&v, lang.pick("フィルター", "Filter"));
-        assert_eq!(filters.len(), 13);
-        let generators = submenu(&v, lang.pick("ジェネレーター", "Generators"));
+        // 入れ子の中は、フィルター・ジェネレーター・調整（全部）・塗りつぶし 4 種
+        let filters = submenu(&v, lang.pick("フィルターを追加", "Add Filter"));
+        assert_eq!(filters.len(), yolu_app::fx::FilterKind::ALL.len());
+        let generators = submenu(&v, lang.pick("ジェネレーターを追加", "Add Generator"));
         assert_eq!(generators.len(), yolu_app::fx::names::GENERATOR_KINDS.len());
         let adjustments = submenu(&v, lang.pick("新規調整レイヤー", "New Adjustment Layer"));
         let expected: Vec<Option<String>> = AdjustmentKind::ALL
@@ -1286,34 +1389,59 @@ fn the_layers_toolbar_fill_button_opens_the_kinds_and_the_effect_button_the_filt
         }
         common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
-        // 効果: フィルター → 区切り → ジェネレーター ▸（見出しなし）
-        h.get_by_label(lang.pick("効果を追加", "Add Effect"))
-            .click();
-        h.run();
+        // 効果: 「フィルターを追加」はフィルターだけ、「ジェネレーターを追加」はジェネレーターだけ（見出し・入れ子なし）
+        let at = toolbar_button(&h, lang.pick("フィルターを追加", "Add Filter")).center();
+        click(&mut h, at);
         assert_eq!(
             h.state().state.popup.as_ref().map(|p| p.kind),
-            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddEffect(
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddFilter(
                 FilterTarget::Content
             )))
         );
         assert!(h
-            .query_by_label(lang.pick("ジェネレーター", "Generators"))
+            .query_by_label(lang.pick("ぼかし（ガウス）", "Gaussian Blur"))
             .is_some());
+        assert!(h
+            .query_by_label(lang.pick("エッジの摩耗", "Edge Wear"))
+            .is_none());
         assert!(h.query_by_label("Generator").is_none());
+        common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        let at = toolbar_button(&h, lang.pick("ジェネレーターを追加", "Add Generator")).center();
+        click(&mut h, at);
+        assert_eq!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddGenerator(
+                FilterTarget::Content
+            )))
+        );
+        assert!(h
+            .query_by_label(lang.pick("エッジの摩耗", "Edge Wear"))
+            .is_some());
+        assert!(h
+            .query_by_label(lang.pick("ぼかし（ガウス）", "Gaussian Blur"))
+            .is_none());
     }
 }
 
+/// レイヤーのパネルの下の帯のボタン（小さい四角。プロパティの欄の同じ名前のボタンと取り違えない）。
+fn toolbar_button(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    common::rect_of(h, label, |r| r.top() > 200.0 && r.width() < 40.0)
+}
+
 #[test]
-fn the_effect_button_needs_a_selected_layer() {
+fn the_effect_buttons_need_a_selected_layer() {
     let mut h = app(1280.0, 800.0, 64);
     h.state_mut().state.selected_layer = None;
     h.run();
-    h.get_by_label("効果を追加").click();
-    h.run();
-    assert!(
-        h.state().state.popup.is_none(),
-        "層が無ければ効果は足せない"
-    );
+    for label in ["フィルターを追加", "ジェネレーターを追加"] {
+        let at = toolbar_button(&h, label).center();
+        click(&mut h, at);
+        assert!(
+            h.state().state.popup.is_none(),
+            "層が無ければ効果は足せない"
+        );
+    }
 }
 
 #[test]
@@ -1326,7 +1454,8 @@ fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both
             lang.pick("新規レイヤー", "New Layer"),
             lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
             lang.pick("新規調整レイヤー", "New Adjustment Layer"),
-            lang.pick("効果を追加", "Add Effect"),
+            lang.pick("フィルターを追加", "Add Filter"),
+            lang.pick("ジェネレーターを追加", "Add Generator"),
             lang.pick("レイヤーをグループ化", "Group Layers"),
             lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
             // 押せないときは名前に理由が続く
@@ -1689,21 +1818,30 @@ fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
 }
 
 #[test]
-fn snapshot_the_filter_menu_with_the_generators_open_in_both_languages() {
+fn snapshot_the_filter_menu_and_the_layer_menu_generators_in_both_languages() {
+    let mut results = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
+        // メニューバーの「フィルター」: フィルターとアンカーだけ
         let mut h = app(1280.0, 800.0, 64);
         h.state_mut().state.lang = lang;
         h.run();
         let at = menu_title(&h, lang.pick("フィルター", "Filter")).center();
         click(&mut h, at);
         hover(&mut h, pos2(640.0, 400.0));
-        let generators = popup_item(&h, lang.pick("ジェネレーター", "Generators"));
+        assert_eq!(depth(&h), 0, "{lang:?}");
+        snapshot_open_menu(&mut h, &format!("menus_filter_{}", lang.pick("ja", "en")));
+        // メニューバーの「レイヤー」の「ジェネレーターを追加 ▸」
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        hover(&mut h, pos2(640.0, 400.0));
+        let generators = popup_item(&h, lang.pick("ジェネレーターを追加", "Add Generator"));
         hover(&mut h, generators.center());
         assert_eq!(depth(&h), 1, "{lang:?}");
-        snapshot_open_menu(
-            &mut h,
-            &format!("menus_filter_generators_{}", lang.pick("ja", "en")),
-        );
+        h.snapshot(format!("menus_layer_generators_{}", lang.pick("ja", "en")));
+        results.extend_harness(&mut h);
     }
 }
 
@@ -1715,13 +1853,13 @@ fn snapshot_the_filter_menu_on_a_normal_map_shows_the_reason_as_a_tooltip() {
     let at = menu_title(&h, "フィルター").center();
     click(&mut h, at);
     hover(&mut h, pos2(640.0, 400.0));
-    let sharpen = popup_item(&h, "シャープ");
+    let sharpen = popup_item(&h, "シャープ（アンシャープマスク）");
     h.event(Event::PointerMoved(sharpen.center()));
     for _ in 0..60 {
         h.step();
     }
     // ラベルは名前だけ。理由はツールチップ（アクセシビリティの木に出る）
-    let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
+    let entries = yolu_app::fx::menu::add_filter_entries(&h.state().state, FilterTarget::Content);
     let tip = leaves(&entries)
         .into_iter()
         .find_map(|e| match e {
@@ -1730,7 +1868,7 @@ fn snapshot_the_filter_menu_on_a_normal_map_shows_the_reason_as_a_tooltip() {
                 enabled: false,
                 tooltip: Some(t),
                 ..
-            } if label == "シャープ" => Some(t.clone()),
+            } if label == "シャープ（アンシャープマスク）" => Some(t.clone()),
             _ => None,
         })
         .expect("法線ではシャープは押せず、理由を持つ");

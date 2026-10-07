@@ -21,12 +21,14 @@ pub const ADJUST_VERSION: i32 = 24;
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
-/// 0.5.0 の新しい効果を足した版。版 25 の中身に、Generator の種類 70（画像。`effect` の塊）が加わる。これを使う文書だけがこの版になり、
-/// 版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 0.5.0 の新しい効果を足した版。版 25 の中身に、フィルターの段の種類 70〜79（ヒストグラムスキャン・ヒストグラムレンジ・スロープぼかし・方向のぼかし・
+/// ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、Generator の種類 66（模様）・68（光）・69（マスクの組み立て）・70（画像）が加わる
+/// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
+/// 「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const EFFECTS_VERSION: i32 = 28;
 /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
-/// この版の文書は版 28 の中身（画像の Generator）も読み書きできる。
+/// この版の文書は版 28 の中身（0.5.0 の効果）も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`EFFECTS_VERSION`（28）・
 /// `SEAMS_VERSION`（32）で、間の 27・29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
@@ -1208,8 +1210,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     )?;
     // 8〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
     check(
-        !(8..PROCEDURAL_KIND_MIN).contains(&t)
-            && !(PROCEDURAL_KIND_MAX + 1..IMAGE_KIND).contains(&t),
+        !(8..PROCEDURAL_KIND_MIN).contains(&t) && t != 67,
         "未知のジェネレーターの種類です",
     )?;
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
@@ -1253,6 +1254,9 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         3 => &[4, 1],
         6 => &[7, 1],
         IMAGE_KIND => &[],
+        66 => &[],
+        68 => &[0],
+        69 => &[3, 2, 1, 4],
         PROCEDURAL_KIND_MIN.. => &[1, 0],
         _ => &[0, 8, 1],
     };
@@ -1315,11 +1319,47 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
             r.int("component", 0, 4)?;
             Ok(())
         })?;
+    } else if t > PROCEDURAL_KIND_MAX {
+        r.block("effect", |r| generator_effect(r, t))?;
     }
     Ok(t)
 }
-/// Generator の種類 70（画像。正本の版 28）。
+/// Generator の種類 70（画像。正本の版 28。66 模様・68 光・69 マスクの組み立ても同じ版。67 は空けてある）。
 const IMAGE_KIND: i32 = 70;
+/// 版 28 の Generator の種類ごとの欄（`effect` の塊の中）。66: 形・繰り返し・角度・太さ・ぼかし・ずれ。68: 水平の角度・高さ・回り込み・底上げ。
+/// 69: 曲率・AO・位置・厚みの塊（重み・位置・コントラスト・反転）と合わせ方。
+fn generator_effect(r: &mut Reader<'_>, t: i32) -> Result<()> {
+    match t {
+        66 => {
+            r.int("shape", 0, 4)?;
+            r.float("scale", 1., 512.)?;
+            r.float("angle", 0., 360.)?;
+            r.unit("width")?;
+            r.unit("softness")?;
+            r.unit("offset_u")?;
+            r.unit("offset_v")?;
+        }
+        68 => {
+            r.float("azimuth", 0., 360.)?;
+            r.float("elevation", 0., 90.)?;
+            r.unit("softness")?;
+            r.unit("ambient")?;
+        }
+        _ => {
+            for map in ["curvature", "ambient_occlusion", "position", "thickness"] {
+                r.block(map, |r| {
+                    r.unit("weight")?;
+                    r.unit("level")?;
+                    r.unit("contrast")?;
+                    r.boolean("invert")?;
+                    Ok(())
+                })?;
+            }
+            r.int("combine", 0, 2)?;
+        }
+    }
+    Ok(())
+}
 /// Rust 版だけの Generator の種類の番号（ノイズ 64・グランジ 65）。
 const PROCEDURAL_KIND_MIN: i32 = 64;
 const PROCEDURAL_KIND_MAX: i32 = 65;
@@ -1350,6 +1390,61 @@ fn procedural(r: &mut Reader<'_>, t: i32) -> Result<()> {
 /// Rust 版だけの調整・フィルターの種類の番号（グラデーションマップ 64〜ポスタリゼーション 69）。
 const ADJUST_KIND_MIN: i32 = 64;
 const ADJUST_KIND_MAX: i32 = 69;
+/// 版 28 のフィルターの段の種類の一番大きい番号（70 ヒストグラムスキャン〜79 グロー）。
+const FILTER_KIND_MAX: i32 = 79;
+/// 版 28 のフィルターの段の種類ごとの欄（`effect` の塊の中）。返すのは到達半径（画素。実数の長さは切り上げ）。
+/// 70: 位置・コントラスト。71: 範囲・位置。72: 長さ・取る数・合わせ方・ノイズの大きさ・シード。73: 角度・長さ。74: 長さ・ノイズの大きさ・シード。
+/// 75: 向き・半径。76: 幅・しきい値。77・78: 半径。79: しきい値・半径・強さ。
+fn effect_filter(r: &mut Reader<'_>, t: i32) -> Result<i32> {
+    let length = |v: f64| v.ceil() as i32;
+    Ok(match t {
+        70 => {
+            r.unit("position")?;
+            r.unit("contrast")?;
+            0
+        }
+        71 => {
+            r.unit("range")?;
+            r.unit("position")?;
+            0
+        }
+        72 => {
+            let intensity = r.float("intensity", 0., 64.)?;
+            r.int("samples", 1, 32)?;
+            r.int("mode", 0, 2)?;
+            r.float("scale", 1., 256.)?;
+            r.int("seed", i32::MIN, i32::MAX)?;
+            length(intensity)
+        }
+        73 => {
+            r.float("angle", 0., 360.)?;
+            length(r.float("distance", 0., 256.)?)
+        }
+        74 => {
+            let intensity = r.float("intensity", 0., 128.)?;
+            r.float("scale", 1., 256.)?;
+            r.int("seed", i32::MIN, i32::MAX)?;
+            length(intensity)
+        }
+        75 => {
+            r.int("mode", 0, 1)?;
+            r.int("radius", 1, 64)?
+        }
+        76 => {
+            let width = r.int("width", 1, 16)?;
+            r.unit("threshold")?;
+            width + 1
+        }
+        77 => r.int("radius", 1, 256)?,
+        78 => r.int("radius", 1, 16)?,
+        _ => {
+            r.unit("threshold")?;
+            let radius = r.int("radius", 1, 256)?;
+            r.float("intensity", 0., 4.)?;
+            radius
+        }
+    })
+}
 /// 64 からの調整・フィルターの種類ごとの欄（調整の層は `detail`、フィルターの段は `adjust` のブロックの中）。
 /// 64: 逆向き・ランプ。65: 合成・R・G・B の 4 本のカーブ。66: 範囲ごとの 3 本のスライダーと輝度を保つ。
 /// 67: 明るさ・コントラスト。68: しきい値。69: 階調。
@@ -1480,7 +1575,9 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
             let t = r.int(
                 "type",
                 0,
-                if v >= ADJUST_VERSION {
+                if v >= EFFECTS_VERSION {
+                    FILTER_KIND_MAX
+                } else if v >= ADJUST_VERSION {
                     ADJUST_KIND_MAX
                 } else if v >= 11 {
                     6
@@ -1554,7 +1651,7 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
             if t == 6 {
                 r.block("generator", |r| generator(r, v, refs))?;
             }
-            if t >= ADJUST_KIND_MIN {
+            if (ADJUST_KIND_MIN..=ADJUST_KIND_MAX).contains(&t) {
                 // グラデーションマップ・カラーバランスは色のチャンネルだけ（スカラーのチャンネルとマスクには置けない）
                 if matches!(t, 64 | 66) {
                     check(
@@ -1564,10 +1661,28 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
                 }
                 r.block("adjust", |r| color_adjust(r, v, t))?;
             }
+            // 版 28 の種類（70〜79）の欄と、その到達半径
+            let mut reach = 0;
+            if t > ADJUST_KIND_MAX {
+                // ヒストグラム・モルフォロジー・エッジ検出はスカラーのチャンネルとマスクだけ、グローは色のチャンネルだけ
+                if matches!(t, 70 | 71 | 75 | 76) {
+                    check(
+                        !content || channels.iter().all(|c| [1, 2, 3].contains(c)),
+                        "色のチャンネルにスカラーだけのフィルターを適用できません",
+                    )?;
+                }
+                if t == 79 {
+                    check(
+                        content && !channels.iter().any(|c| [1, 2, 3].contains(c)),
+                        "スカラーチャンネルとマスクに色だけのフィルターを適用できません",
+                    )?;
+                }
+                reach = r.block("effect", |r| effect_filter(r, t))?;
+            }
             if active && strength > 0. {
                 for (channel, halo) in halos.iter_mut().enumerate() {
                     if !content || channels.contains(&(channel as i32)) {
-                        *halo += radius;
+                        *halo += radius + reach;
                         check_budget(
                             *halo <= 512,
                             "フィルタースタックの到達半径が512を超えています",

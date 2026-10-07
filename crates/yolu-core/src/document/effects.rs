@@ -258,9 +258,54 @@ impl Document {
                     let EffectSettings::Filter(f) = &mut e.settings else {
                         continue;
                     };
+                    // 0.5.0 の段の実数の長さ（画素）とノイズの大きさは、倍率を掛けて範囲へ収める
+                    let mut real = |v: &mut f64, range: std::ops::RangeInclusive<f64>| {
+                        let wanted = *v * scale;
+                        let fitted = wanted.clamp(*range.start(), *range.end());
+                        if fitted != wanted {
+                            notes.push(format!(
+                                "「{owner}」の{label}: {} → {fitted} 画素（範囲の端。見た目を保つには {wanted:.1} 画素）",
+                                *v
+                            ));
+                        }
+                        *v = fitted;
+                    };
                     let (radius, max) = match f {
                         filter::Settings::GaussianBlur { radius } => (radius, 256u32),
                         filter::Settings::Sharpen { radius, .. } => (radius, 64u32),
+                        filter::Settings::Morphology { radius, .. } => {
+                            (radius, *crate::ranges::MORPHOLOGY_RADIUS.end())
+                        }
+                        filter::Settings::EdgeDetect { width, .. } => {
+                            (width, *crate::ranges::EDGE_WIDTH.end())
+                        }
+                        filter::Settings::HighPass { radius } => {
+                            (radius, *crate::ranges::HIGH_PASS_RADIUS.end())
+                        }
+                        filter::Settings::Median { radius } => {
+                            (radius, *crate::ranges::MEDIAN_RADIUS.end())
+                        }
+                        filter::Settings::Glow { radius, .. } => {
+                            (radius, *crate::ranges::GLOW_RADIUS.end())
+                        }
+                        filter::Settings::SlopeBlur {
+                            intensity, scale, ..
+                        } => {
+                            real(intensity, crate::ranges::SLOPE_INTENSITY);
+                            real(scale, crate::ranges::FILTER_NOISE_SCALE);
+                            continue;
+                        }
+                        filter::Settings::DirectionalBlur { distance, .. } => {
+                            real(distance, crate::ranges::DIRECTIONAL_DISTANCE);
+                            continue;
+                        }
+                        filter::Settings::Warp {
+                            intensity, scale, ..
+                        } => {
+                            real(intensity, crate::ranges::WARP_INTENSITY);
+                            real(scale, crate::ranges::FILTER_NOISE_SCALE);
+                            continue;
+                        }
                         _ => continue,
                     };
                     let wanted = f64::from(*radius) * scale;

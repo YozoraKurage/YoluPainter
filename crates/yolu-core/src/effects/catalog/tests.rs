@@ -405,15 +405,18 @@ fn a_kind_table_row_exists_for_every_generator_kind_and_adjustment_type() {
         G::Anchor,
         G::Noise,
         G::Grunge,
+        G::Pattern,
+        G::Light,
+        G::MaskBuilder,
         G::Image,
     ] {
         let id = generator_kind_id(kind);
         let row = super::kind(id).unwrap_or_else(|| panic!("{id} が表に無い"));
         assert!(row.generator && row.stack && !row.adjustment, "{id}");
-        // 画像の段は投影しだい（UV は読まない）
+        // マップを読まない（無くても値を出す）のはノイズ・グランジ・模様。画像の段は投影しだい（UV は読まない）
         assert_eq!(
             row.needs_maps,
-            !kind.is_procedural() && kind != G::Image,
+            !kind.is_procedural() && kind != G::Pattern && kind != G::Image,
             "{id}"
         );
     }
@@ -479,6 +482,19 @@ fn the_rust_only_kinds_are_the_ones_unity_cannot_read() {
             "posterize",
             "procedural_noise",
             "grunge",
+            "histogram_scan",
+            "histogram_range",
+            "slope_blur",
+            "directional_blur",
+            "warp",
+            "morphology",
+            "edge_detect",
+            "high_pass",
+            "median",
+            "glow",
+            "pattern",
+            "light",
+            "mask_builder",
             "image"
         ]
     );

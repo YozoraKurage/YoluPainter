@@ -42,8 +42,10 @@ pub enum Popup {
     StencilImage,
     StencilMode,
     StencilTiling,
-    /// プロパティの欄の「フィルターを足す」（画素かマスクへ、フィルターと Generator を足す）。
-    AddEffect(yolu_core::FilterTarget),
+    /// 「フィルターを追加」のボタン（画素かマスクへ、フィルターを足す）。
+    AddFilter(yolu_core::FilterTarget),
+    /// 「ジェネレーターを追加」のボタン（画素かマスクへ、ジェネレーターを足す）。
+    AddGenerator(yolu_core::FilterTarget),
     /// 選んでいる効果の欄のドロップダウン（合成・軸・向き・置き場・形・アンカーなど）。
     Fx(crate::fx::menu::FxChoice),
     /// 効果の行の右クリック（選んでいる段・アンカーの操作）。
@@ -70,6 +72,8 @@ pub enum Popup {
     CurvePresets(crate::engine::LayerId, Channel),
     /// 見た目の設定の欄のドロップダウン（種類・描画モード・選ぶ値・テクスチャのスロット）。
     Look(crate::look::panel::LookChoice),
+    /// レイヤーの一覧のマスクのサムネイルの右クリック（その層のマスク）。
+    MaskContext(crate::engine::LayerId),
 }
 
 fn tips(
@@ -367,7 +371,9 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         | Popup::GradientShape(..)
         | Popup::RampPresets(..)
         | Popup::CurvePresets(..) => crate::panels::fill_props::entries(app, popup),
-        Popup::AddEffect(target) => crate::fx::menu::add_entries(app, target),
+        Popup::AddFilter(target) => crate::fx::menu::add_filter_entries(app, target),
+        Popup::AddGenerator(target) => crate::fx::menu::add_generator_entries(app, target),
+        Popup::MaskContext(layer) => crate::fx::menu::mask_entries(app, layer),
         Popup::Fx(choice) => crate::fx::menu::choice_entries(app, choice),
         Popup::EffectContext => crate::fx::menu::context_entries(app),
         Popup::StencilImage => crate::panels::stencil_props::image_entries(app),

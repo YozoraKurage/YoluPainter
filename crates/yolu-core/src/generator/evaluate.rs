@@ -167,6 +167,10 @@ impl<'a> BoundGenerator<'a> {
         if b.inactive.is_some() {
             return Ok(b);
         }
+        // 光は向きの欄の代わりに、光の来る向きを持つ
+        if g.kind == Kind::Light {
+            b.direction = g.light.direction();
+        }
         if g.noise_amount > 0. && g.noise_space == NoiseSpace::Model {
             let p = b.map(MapKind::Position);
             let e = std::array::from_fn::<_, 3, _>(|i| p.bounds_max[i] - p.bounds_min[i]);
@@ -360,6 +364,7 @@ impl<'a> BoundGenerator<'a> {
             Kind::Anchor => self.anchor?.value(x, y)?,
             Kind::Noise | Kind::Grunge => self.procedural_value(x, y, i)?,
             Kind::Image => self.image_value(x, y)?,
+            Kind::Pattern | Kind::Light | Kind::MaskBuilder => self.base_050(x, y, i)?,
             Kind::ShapeGradient => {
                 let [x, y, z] = vector(MapKind::Position)?;
                 let m = self.matrix;
@@ -393,6 +398,24 @@ impl<'a> BoundGenerator<'a> {
             t *= 1. - g.noise_amount * (m * m * (3. - 2. * m));
         }
         Some(t)
+    }
+    /// 模様・光・マスクの組み立ての 1 画素の基底の値（レベル・反転の前）。`i` は画素の添字。行の評価もこの式を 1 画素ずつ呼ぶ。
+    fn base_050(&self, x: u32, y: u32, i: usize) -> Option<f64> {
+        let g = self.g;
+        match g.kind {
+            Kind::Pattern => Some(g.pattern.value(
+                (f64::from(x) + 0.5) / f64::from(self.width),
+                (f64::from(y) + 0.5) / f64::from(self.height),
+            )),
+            Kind::Light => g
+                .light
+                .value(self.vector_at(MapKind::WorldNormal, i)?, self.direction),
+            _ => g.mask_builder.value(|k| match k {
+                // 位置は高さ（Y。境界箱の中の 0〜1）
+                MapKind::Position => Some(self.vector_at(MapKind::Position, i)?[1] / 65535.),
+                other => self.scalar_at(other, i),
+            }),
+        }
     }
     /// ノイズ・グランジの 1 画素の基底の値（レベル・反転の前）。`i` は画素の添字。格子の覚えはスレッドごとに持ち、同じ計画の呼びどうしで
     /// 使い回す（画素を隣へ進める呼びでは同じ格子の中の hash を引き直さない。計画が変われば捨てる）。

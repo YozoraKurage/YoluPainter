@@ -84,12 +84,14 @@ fn main() -> Result<(), yolu_ops::OpError> {
 効果は `kind`（種類の名前）と `values`（欄の名前 → 数・真偽・選択肢の文字列）で足し、変えます。種類・欄の型・範囲・既定は `effect.list_kinds` が返し、
 範囲の検査は文書（core）と同じ定義です（範囲の外は切り詰めず断ります）。渡さない欄は、足すときは既定、変えるときは今の値です。
 
-- フィルター: `blur`・`sharpen`・`noise`・`levels`・`invert`・`normalize`・`color_balance`・`brightness_contrast`・`threshold`・`posterize`
+- フィルター: `blur`・`sharpen`・`noise`・`levels`・`invert`・`normalize`・`color_balance`・`brightness_contrast`・`threshold`・`posterize`・
+  `histogram_scan`・`histogram_range`・`slope_blur`・`directional_blur`・`warp`・`morphology`・`edge_detect`・`high_pass`・`median`・`glow`
   （調整レイヤーには `levels`・`invert`・`hue_saturation` などを `layer.add`・`layer.set` の `adjustment` で）。
-- Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`。
+- Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`・`pattern`・`light`・`mask_builder`。
 - リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは足せません（`addable: false`）。
   すでにある段は `effect.get` で読め、強さ・有効・チャンネルは変えられ、値を渡して変えるのは断ります（その部分を黙って作り直しません）。
-- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション）を使ったセットは、新しい文書の版で保存され、
+- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
+  0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`））を使ったセットは、新しい文書の版で保存され、
   Unity 版（0.2.0）のブリッジは開けません（理由を言って断り、中身は消えません）。保存の返事の `notes` がそのセットを知らせます。
 - 効果の種類を変えるとき、適用中のチャンネルに使えない設定は、どのチャンネルかを言って断ります（`channels` で選び直します）。
 

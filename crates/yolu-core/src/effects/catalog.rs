@@ -183,6 +183,14 @@ const SPACE_OPTIONS: [&str; 3] = ["position", "triplanar", "uv"];
 const BASIS_OPTIONS: [&str; 3] = ["value", "perlin", "worley"];
 const CELL_OPTIONS: [&str; 3] = ["f1", "f2", "f2_minus_f1"];
 const FRACTAL_OPTIONS: [&str; 3] = ["fbm", "ridged", "turbulence"];
+const SLOPE_MODE_OPTIONS: [&str; 3] = ["blur", "min", "max"];
+const PATTERN_SHAPE_OPTIONS: [&str; 5] = ["stripes", "checker", "dots", "border", "grid"];
+const MASK_COMBINE_OPTIONS: [&str; 3] = ["multiply", "max", "add"];
+/// マスクの組み立てのマップ（欄の名前の頭。`generator::MaskBuilder::MAPS` と同じ並び）。
+const MASK_MAPS: [&str; 4] = ["curvature", "ambient_occlusion", "position", "thickness"];
+/// マスクの組み立ての 1 つのマップの欄（`{マップ}_weight` など）。
+const MASK_FIELDS: [&str; 4] = ["weight", "level", "contrast", "invert"];
+const MORPHOLOGY_MODE_OPTIONS: [&str; 2] = ["dilate", "erode"];
 
 fn preset_options() -> Vec<&'static str> {
     GrungePreset::ALL.iter().map(|p| p.id()).collect()
@@ -337,9 +345,133 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
                 },
             ));
         }
+        "histogram_scan" => v.extend([
+            ("position", num(&ranges::UNIT)),
+            ("contrast", num(&ranges::UNIT)),
+        ]),
+        "histogram_range" => v.extend([
+            ("range", num(&ranges::UNIT)),
+            ("position", num(&ranges::UNIT)),
+        ]),
+        "slope_blur" => v.extend([
+            ("intensity", num(&ranges::SLOPE_INTENSITY)),
+            ("samples", int(&ranges::SLOPE_SAMPLES)),
+            ("mode", choice(&SLOPE_MODE_OPTIONS)),
+            ("scale", num(&ranges::FILTER_NOISE_SCALE)),
+            ("seed", seed_type()),
+        ]),
+        "directional_blur" => v.extend([
+            ("angle", num(&ranges::DIRECTIONAL_ANGLE)),
+            ("distance", num(&ranges::DIRECTIONAL_DISTANCE)),
+        ]),
+        "warp" => v.extend([
+            ("intensity", num(&ranges::WARP_INTENSITY)),
+            ("scale", num(&ranges::FILTER_NOISE_SCALE)),
+            ("seed", seed_type()),
+        ]),
+        "morphology" => v.extend([
+            ("mode", choice(&MORPHOLOGY_MODE_OPTIONS)),
+            ("radius", int(&ranges::MORPHOLOGY_RADIUS)),
+        ]),
+        "edge_detect" => v.extend([
+            ("width", int(&ranges::EDGE_WIDTH)),
+            ("threshold", num(&ranges::UNIT)),
+        ]),
+        "high_pass" => v.push(("radius", int(&ranges::HIGH_PASS_RADIUS))),
+        "median" => v.push(("radius", int(&ranges::MEDIAN_RADIUS))),
+        "glow" => v.extend([
+            ("threshold", num(&ranges::UNIT)),
+            ("radius", int(&ranges::GLOW_RADIUS)),
+            ("intensity", num(&ranges::GLOW_INTENSITY)),
+        ]),
+        // 模様・光は境目のぼかしを自分の欄（softness）で持つので、共通の減衰を置かない
+        "pattern" => {
+            v.extend(
+                generator_common()
+                    .into_iter()
+                    .filter(|(n, _)| *n != "softness"),
+            );
+            v.extend([
+                ("shape", choice(&PATTERN_SHAPE_OPTIONS)),
+                ("scale", num(&ranges::PATTERN_SCALE)),
+                ("angle", num(&ranges::TURN_DEGREES)),
+                ("width", num(&ranges::UNIT)),
+                ("softness", num(&ranges::UNIT)),
+                ("offset_u", num(&ranges::UNIT)),
+                ("offset_v", num(&ranges::UNIT)),
+            ]);
+        }
+        "light" => {
+            v.extend(
+                generator_common()
+                    .into_iter()
+                    .filter(|(n, _)| *n != "softness"),
+            );
+            v.extend([
+                ("azimuth", num(&ranges::TURN_DEGREES)),
+                ("elevation", num(&ranges::LIGHT_ELEVATION)),
+                ("softness", num(&ranges::UNIT)),
+                ("ambient", num(&ranges::UNIT)),
+            ]);
+        }
+        "mask_builder" => {
+            v.extend(generator_common());
+            for map in MASK_MAPS {
+                for field in MASK_FIELDS {
+                    v.push((
+                        mask_param(map, field),
+                        if field == "invert" {
+                            ParamType::Bool
+                        } else {
+                            num(&ranges::UNIT)
+                        },
+                    ));
+                }
+            }
+            v.push(("combine", choice(&MASK_COMBINE_OPTIONS)));
+        }
         _ => {}
     }
     v
+}
+
+/// マスクの組み立ての欄の名前（`curvature_weight` など。表に載る名前なので 'static）。
+fn mask_param(map: &str, field: &str) -> &'static str {
+    const NAMES: [[&str; 4]; 4] = [
+        [
+            "curvature_weight",
+            "curvature_level",
+            "curvature_contrast",
+            "curvature_invert",
+        ],
+        [
+            "ambient_occlusion_weight",
+            "ambient_occlusion_level",
+            "ambient_occlusion_contrast",
+            "ambient_occlusion_invert",
+        ],
+        [
+            "position_weight",
+            "position_level",
+            "position_contrast",
+            "position_invert",
+        ],
+        [
+            "thickness_weight",
+            "thickness_level",
+            "thickness_contrast",
+            "thickness_invert",
+        ],
+    ];
+    let m = MASK_MAPS
+        .iter()
+        .position(|m| *m == map)
+        .expect("マップの名前");
+    let f = MASK_FIELDS
+        .iter()
+        .position(|f| *f == field)
+        .expect("欄の名前");
+    NAMES[m][f]
 }
 
 /// 一覧の 1 行の元: (id, フィルターのスタック, 調整の層, Generator, 足せる, 値の欄で変えられない中身)。
@@ -351,7 +483,7 @@ type Row = (
     bool,
     &'static [&'static str],
 );
-const KIND_ROWS: [Row; 24] = [
+const KIND_ROWS: [Row; 37] = [
     ("blur", true, false, false, true, &[]),
     ("sharpen", true, false, false, true, &[]),
     ("noise", true, false, false, true, &[]),
@@ -382,6 +514,19 @@ const KIND_ROWS: [Row; 24] = [
     ),
     ("id_color", true, false, true, false, &["id_colors", "pins"]),
     ("anchor", true, false, true, false, &["anchor"]),
+    ("histogram_scan", true, false, false, true, &[]),
+    ("histogram_range", true, false, false, true, &[]),
+    ("slope_blur", true, false, false, true, &[]),
+    ("directional_blur", true, false, false, true, &[]),
+    ("warp", true, false, false, true, &[]),
+    ("morphology", true, false, false, true, &[]),
+    ("edge_detect", true, false, false, true, &[]),
+    ("high_pass", true, false, false, true, &[]),
+    ("median", true, false, false, true, &[]),
+    ("glow", true, false, false, true, &[]),
+    ("pattern", true, false, true, true, &["pins"]),
+    ("light", true, false, true, true, &["pins"]),
+    ("mask_builder", true, false, true, true, &["pins"]),
     (
         "image",
         true,
@@ -413,7 +558,7 @@ pub fn kinds() -> &'static [EffectKind] {
                     .collect();
                 // 画像の段は投影しだい（UV は読まない）なので、ここでは偽
                 let needs_maps =
-                    generator && !matches!(id, "procedural_noise" | "grunge" | "image");
+                    generator && !matches!(id, "procedural_noise" | "grunge" | "pattern" | "image");
                 EffectKind {
                     id,
                     stack,
@@ -483,6 +628,49 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         "direction" => EffectSettings::generator(generator::Settings::new(G::Direction)),
         "procedural_noise" => EffectSettings::generator(generator::Settings::new(G::Noise)),
         "grunge" => EffectSettings::generator(generator::Settings::new(G::Grunge)),
+        "pattern" => EffectSettings::generator(generator::Settings::new(G::Pattern)),
+        "light" => EffectSettings::generator(generator::Settings::new(G::Light)),
+        "mask_builder" => EffectSettings::generator(generator::Settings::new(G::MaskBuilder)),
+        // 0.5.0 の 10 種の既定（アプリのメニューで足すときもこの値）
+        "histogram_scan" => EffectSettings::Filter(filter::Settings::HistogramScan {
+            position: 0.5,
+            contrast: 0.0,
+        }),
+        "histogram_range" => EffectSettings::Filter(filter::Settings::HistogramRange {
+            range: 0.5,
+            position: 0.5,
+        }),
+        "slope_blur" => EffectSettings::Filter(filter::Settings::SlopeBlur {
+            intensity: 8.0,
+            samples: 8,
+            mode: filter::SlopeMode::Blur,
+            scale: 16.0,
+            seed: 0,
+        }),
+        "directional_blur" => EffectSettings::Filter(filter::Settings::DirectionalBlur {
+            angle: 0.0,
+            distance: 8.0,
+        }),
+        "warp" => EffectSettings::Filter(filter::Settings::Warp {
+            intensity: 16.0,
+            scale: 32.0,
+            seed: 0,
+        }),
+        "morphology" => EffectSettings::Filter(filter::Settings::Morphology {
+            mode: filter::MorphologyMode::Dilate,
+            radius: 2,
+        }),
+        "edge_detect" => EffectSettings::Filter(filter::Settings::EdgeDetect {
+            width: 1,
+            threshold: 0.1,
+        }),
+        "high_pass" => EffectSettings::Filter(filter::Settings::HighPass { radius: 8 }),
+        "median" => EffectSettings::Filter(filter::Settings::Median { radius: 1 }),
+        "glow" => EffectSettings::Filter(filter::Settings::Glow {
+            threshold: 0.7,
+            radius: 16,
+            intensity: 1.0,
+        }),
         "image" => EffectSettings::generator(generator::Settings::new(G::Image)),
         _ => return None,
     })
@@ -559,6 +747,9 @@ fn generator_kind_id(k: generator::Kind) -> &'static str {
         G::Anchor => "anchor",
         G::Noise => "procedural_noise",
         G::Grunge => "grunge",
+        G::Pattern => "pattern",
+        G::Light => "light",
+        G::MaskBuilder => "mask_builder",
         G::Image => "image",
     }
 }
@@ -575,6 +766,9 @@ fn read_generator(g: &generator::Settings) -> Bag {
             | G::Direction
             | G::Noise
             | G::Grunge
+            | G::Pattern
+            | G::Light
+            | G::MaskBuilder
     ) {
         return b;
     }
@@ -583,6 +777,39 @@ fn read_generator(g: &generator::Settings) -> Bag {
     b.insert("softness", n(g.softness));
     b.insert("invert", ParamValue::Bool(g.invert));
     b.insert("blend", c(blend_id(g.blend)));
+    match g.kind {
+        G::Pattern => {
+            let p = &g.pattern;
+            b.insert("shape", c(PATTERN_SHAPE_OPTIONS[p.shape as usize]));
+            b.insert("scale", n(p.scale));
+            b.insert("angle", n(p.angle));
+            b.insert("width", n(p.width));
+            b.insert("softness", n(p.softness));
+            b.insert("offset_u", n(p.offset[0]));
+            b.insert("offset_v", n(p.offset[1]));
+            return b;
+        }
+        G::Light => {
+            let l = &g.light;
+            b.insert("azimuth", n(l.azimuth));
+            b.insert("elevation", n(l.elevation));
+            b.insert("softness", n(l.softness));
+            b.insert("ambient", n(l.ambient));
+            return b;
+        }
+        G::MaskBuilder => {
+            let m = &g.mask_builder;
+            for (map, input) in MASK_MAPS.iter().zip(&m.inputs) {
+                b.insert(mask_param(map, "weight"), n(input.weight));
+                b.insert(mask_param(map, "level"), n(input.level));
+                b.insert(mask_param(map, "contrast"), n(input.contrast));
+                b.insert(mask_param(map, "invert"), ParamValue::Bool(input.invert));
+            }
+            b.insert("combine", c(MASK_COMBINE_OPTIONS[m.combine as usize]));
+            return b;
+        }
+        _ => {}
+    }
     if !g.kind.is_procedural() {
         b.insert("noise_amount", n(g.noise_amount));
         b.insert("noise_scale", n(g.noise_scale));
@@ -764,6 +991,86 @@ fn read_stack(s: &EffectSettings) -> Option<(&'static str, Bag)> {
             | F::BrightnessContrast(_)
             | F::Threshold(_)
             | F::Posterize(_) => return None,
+            F::HistogramScan { position, contrast } => {
+                b.insert("position", n(*position));
+                b.insert("contrast", n(*contrast));
+                "histogram_scan"
+            }
+            F::HistogramRange { range, position } => {
+                b.insert("range", n(*range));
+                b.insert("position", n(*position));
+                "histogram_range"
+            }
+            F::SlopeBlur {
+                intensity,
+                samples,
+                mode,
+                scale,
+                seed,
+            } => {
+                b.insert("intensity", n(*intensity));
+                b.insert("samples", n(f64::from(*samples)));
+                b.insert(
+                    "mode",
+                    c(match mode {
+                        filter::SlopeMode::Blur => "blur",
+                        filter::SlopeMode::Min => "min",
+                        filter::SlopeMode::Max => "max",
+                    }),
+                );
+                b.insert("scale", n(*scale));
+                b.insert("seed", n(f64::from(*seed)));
+                "slope_blur"
+            }
+            F::DirectionalBlur { angle, distance } => {
+                b.insert("angle", n(*angle));
+                b.insert("distance", n(*distance));
+                "directional_blur"
+            }
+            F::Warp {
+                intensity,
+                scale,
+                seed,
+            } => {
+                b.insert("intensity", n(*intensity));
+                b.insert("scale", n(*scale));
+                b.insert("seed", n(f64::from(*seed)));
+                "warp"
+            }
+            F::Morphology { mode, radius } => {
+                b.insert(
+                    "mode",
+                    c(match mode {
+                        filter::MorphologyMode::Dilate => "dilate",
+                        filter::MorphologyMode::Erode => "erode",
+                    }),
+                );
+                b.insert("radius", n(f64::from(*radius)));
+                "morphology"
+            }
+            F::EdgeDetect { width, threshold } => {
+                b.insert("width", n(f64::from(*width)));
+                b.insert("threshold", n(*threshold));
+                "edge_detect"
+            }
+            F::HighPass { radius } => {
+                b.insert("radius", n(f64::from(*radius)));
+                "high_pass"
+            }
+            F::Median { radius } => {
+                b.insert("radius", n(f64::from(*radius)));
+                "median"
+            }
+            F::Glow {
+                threshold,
+                radius,
+                intensity,
+            } => {
+                b.insert("threshold", n(*threshold));
+                b.insert("radius", n(f64::from(*radius)));
+                b.insert("intensity", n(*intensity));
+                "glow"
+            }
         },
     };
     Some((id, b))
@@ -857,7 +1164,50 @@ fn build_generator(
     g.softness = get_n(bag, "softness");
     g.invert = get_b(bag, "invert");
     g.blend = blend_from(get_c(bag, "blend"));
-    if !g.kind.is_procedural() {
+    match id {
+        // 模様・光の softness は種類の欄（共通の減衰は 0 のまま）
+        "pattern" => {
+            g.softness = 0.;
+            g.pattern = generator::Pattern {
+                shape: PATTERN_SHAPE_OPTIONS
+                    .iter()
+                    .position(|o| *o == get_c(bag, "shape"))
+                    .and_then(|i| generator::PatternShape::from_index(i as i64))
+                    .unwrap_or(generator::PatternShape::Stripes),
+                scale: get_n(bag, "scale"),
+                angle: get_n(bag, "angle"),
+                width: get_n(bag, "width"),
+                softness: get_n(bag, "softness"),
+                offset: [get_n(bag, "offset_u"), get_n(bag, "offset_v")],
+            };
+        }
+        "light" => {
+            g.softness = 0.;
+            g.light = generator::Light {
+                azimuth: get_n(bag, "azimuth"),
+                elevation: get_n(bag, "elevation"),
+                softness: get_n(bag, "softness"),
+                ambient: get_n(bag, "ambient"),
+            };
+        }
+        "mask_builder" => {
+            for (map, input) in MASK_MAPS.iter().zip(g.mask_builder.inputs.iter_mut()) {
+                *input = generator::MaskInput {
+                    weight: get_n(bag, mask_param(map, "weight")),
+                    level: get_n(bag, mask_param(map, "level")),
+                    contrast: get_n(bag, mask_param(map, "contrast")),
+                    invert: get_b(bag, mask_param(map, "invert")),
+                };
+            }
+            g.mask_builder.combine = MASK_COMBINE_OPTIONS
+                .iter()
+                .position(|o| *o == get_c(bag, "combine"))
+                .and_then(|i| generator::MaskCombine::from_index(i as i64))
+                .unwrap_or(generator::MaskCombine::Multiply);
+        }
+        _ => {}
+    }
+    if !g.kind.is_procedural() && !g.kind.is_050() {
         g.noise_amount = get_n(bag, "noise_amount");
         g.noise_scale = get_n(bag, "noise_scale");
         g.noise_seed = get_n(bag, "noise_seed") as i32;
@@ -967,8 +1317,59 @@ fn build_stack(
         "color_balance" | "brightness_contrast" | "threshold" | "posterize" => {
             EffectSettings::from_color_adjust(build_color_adjust(id, bag)?)
         }
+        "histogram_scan" => EffectSettings::Filter(filter::Settings::HistogramScan {
+            position: get_n(bag, "position"),
+            contrast: get_n(bag, "contrast"),
+        }),
+        "histogram_range" => EffectSettings::Filter(filter::Settings::HistogramRange {
+            range: get_n(bag, "range"),
+            position: get_n(bag, "position"),
+        }),
+        "slope_blur" => EffectSettings::Filter(filter::Settings::SlopeBlur {
+            intensity: get_n(bag, "intensity"),
+            samples: get_n(bag, "samples") as u32,
+            mode: match get_c(bag, "mode") {
+                "min" => filter::SlopeMode::Min,
+                "max" => filter::SlopeMode::Max,
+                _ => filter::SlopeMode::Blur,
+            },
+            scale: get_n(bag, "scale"),
+            seed: get_n(bag, "seed") as i32,
+        }),
+        "directional_blur" => EffectSettings::Filter(filter::Settings::DirectionalBlur {
+            angle: get_n(bag, "angle"),
+            distance: get_n(bag, "distance"),
+        }),
+        "warp" => EffectSettings::Filter(filter::Settings::Warp {
+            intensity: get_n(bag, "intensity"),
+            scale: get_n(bag, "scale"),
+            seed: get_n(bag, "seed") as i32,
+        }),
+        "morphology" => EffectSettings::Filter(filter::Settings::Morphology {
+            mode: if get_c(bag, "mode") == "erode" {
+                filter::MorphologyMode::Erode
+            } else {
+                filter::MorphologyMode::Dilate
+            },
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "edge_detect" => EffectSettings::Filter(filter::Settings::EdgeDetect {
+            width: get_n(bag, "width") as u32,
+            threshold: get_n(bag, "threshold"),
+        }),
+        "high_pass" => EffectSettings::Filter(filter::Settings::HighPass {
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "median" => EffectSettings::Filter(filter::Settings::Median {
+            radius: get_n(bag, "radius") as u32,
+        }),
+        "glow" => EffectSettings::Filter(filter::Settings::Glow {
+            threshold: get_n(bag, "threshold"),
+            radius: get_n(bag, "radius") as u32,
+            intensity: get_n(bag, "intensity"),
+        }),
         "edge_wear" | "dirt" | "position_gradient" | "thickness" | "direction"
-        | "procedural_noise" | "grunge" => {
+        | "procedural_noise" | "grunge" | "pattern" | "light" | "mask_builder" => {
             let kind = match id {
                 "edge_wear" => G::EdgeWear,
                 "dirt" => G::Dirt,
@@ -976,6 +1377,9 @@ fn build_stack(
                 "thickness" => G::Thickness,
                 "direction" => G::Direction,
                 "procedural_noise" => G::Noise,
+                "pattern" => G::Pattern,
+                "light" => G::Light,
+                "mask_builder" => G::MaskBuilder,
                 _ => G::Grunge,
             };
             let start = match base.and_then(EffectSettings::generator_settings) {
@@ -993,7 +1397,7 @@ fn build_stack(
     // 組んだ設定の検査（欄の組み合わせの条件。チャンネルの種類に依る条件は文書に足すときに見る）
     match &settings {
         EffectSettings::Filter(f) => f
-            .validate(filter::ValueType::Color)
+            .validate_values()
             .map_err(|_| refused(CoreError::InvalidArgument("フィルターの設定")))?,
         EffectSettings::Generator(_) => {}
     }

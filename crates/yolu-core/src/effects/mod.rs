@@ -160,7 +160,9 @@ impl EffectSettings {
     }
 
     /// 保存形式の段の種類の番号（ぼかし 0・シャープ 1・ノイズ 2・レベル補正 3・反転 4・正規化 5・Generator 6。Rust 版だけの種類は 64 から:
-    /// グラデーションマップ 64・トーンカーブ 65・カラーバランス 66・明るさ/コントラスト 67・2 値化 68・ポスタリゼーション 69）。
+    /// グラデーションマップ 64・トーンカーブ 65・カラーバランス 66・明るさ/コントラスト 67・2 値化 68・ポスタリゼーション 69、
+    /// ヒストグラムスキャン 70・ヒストグラムレンジ 71・スロープぼかし 72・方向のぼかし 73・ゆがみ 74・モルフォロジー 75・エッジ検出 76・
+    /// ハイパス 77・メディアン 78・グロー 79）。
     pub fn type_index(&self) -> i32 {
         match self {
             Self::Filter(filter::Settings::GaussianBlur { .. }) => 0,
@@ -175,6 +177,16 @@ impl EffectSettings {
             Self::Filter(filter::Settings::BrightnessContrast(_)) => 67,
             Self::Filter(filter::Settings::Threshold(_)) => 68,
             Self::Filter(filter::Settings::Posterize(_)) => 69,
+            Self::Filter(filter::Settings::HistogramScan { .. }) => 70,
+            Self::Filter(filter::Settings::HistogramRange { .. }) => 71,
+            Self::Filter(filter::Settings::SlopeBlur { .. }) => 72,
+            Self::Filter(filter::Settings::DirectionalBlur { .. }) => 73,
+            Self::Filter(filter::Settings::Warp { .. }) => 74,
+            Self::Filter(filter::Settings::Morphology { .. }) => 75,
+            Self::Filter(filter::Settings::EdgeDetect { .. }) => 76,
+            Self::Filter(filter::Settings::HighPass { .. }) => 77,
+            Self::Filter(filter::Settings::Median { .. }) => 78,
+            Self::Filter(filter::Settings::Glow { .. }) => 79,
             // 評価器の中の Generator の段（slot と合成）は文書では Generator として持つので、ここへは来ない
             Self::Filter(filter::Settings::Generator { .. }) | Self::Generator(_) => 6,
         }
@@ -203,9 +215,18 @@ impl EffectSettings {
     pub fn is_global(&self) -> bool {
         matches!(self, Self::Filter(filter::Settings::Normalize))
     }
-    /// 透明な所へ不透明を広げる段（ぼかしだけ）か。
+    /// 透明な所へ不透明を広げる段（ぼかしと、A を混ぜる・動かすスロープぼかし・方向のぼかし・ゆがみ・メディアン）か。
     pub fn expands_coverage(&self) -> bool {
-        matches!(self, Self::Filter(filter::Settings::GaussianBlur { .. }))
+        matches!(
+            self,
+            Self::Filter(
+                filter::Settings::GaussianBlur { .. }
+                    | filter::Settings::SlopeBlur { .. }
+                    | filter::Settings::DirectionalBlur { .. }
+                    | filter::Settings::Warp { .. }
+                    | filter::Settings::Median { .. }
+            )
+        )
     }
     /// マスク（不透明な灰色の画像）で、半径の中がすべて 0 の所が 0 のままか（C# の PreservesZero）。
     pub(crate) fn preserves_zero(&self) -> bool {
@@ -213,7 +234,14 @@ impl EffectSettings {
             Self::Filter(f) => match f {
                 filter::Settings::GaussianBlur { .. }
                 | filter::Settings::Sharpen { .. }
-                | filter::Settings::Normalize => true,
+                | filter::Settings::Normalize
+                // 0 だけの近所の平均・最小・最大・中央値・Sobel は 0
+                | filter::Settings::SlopeBlur { .. }
+                | filter::Settings::DirectionalBlur { .. }
+                | filter::Settings::Warp { .. }
+                | filter::Settings::Morphology { .. }
+                | filter::Settings::EdgeDetect { .. }
+                | filter::Settings::Median { .. } => true,
                 filter::Settings::Levels { output_black, .. } => *output_black == 0.0,
                 _ => false,
             },
@@ -270,6 +298,16 @@ impl EffectSettings {
                 filter::Settings::BrightnessContrast(_) => "明るさ・コントラスト",
                 filter::Settings::Threshold(_) => "2 値化",
                 filter::Settings::Posterize(_) => "ポスタリゼーション",
+                filter::Settings::HistogramScan { .. } => "値の切り出し",
+                filter::Settings::HistogramRange { .. } => "値の幅",
+                filter::Settings::SlopeBlur { .. } => "ノイズに沿ったぼかし",
+                filter::Settings::DirectionalBlur { .. } => "方向ぼかし",
+                filter::Settings::Warp { .. } => "ゆがみ",
+                filter::Settings::Morphology { .. } => "太らせる・細らせる",
+                filter::Settings::EdgeDetect { .. } => "輪郭の検出",
+                filter::Settings::HighPass { .. } => "ハイパス",
+                filter::Settings::Median { .. } => "メディアン",
+                filter::Settings::Glow { .. } => "グロー",
                 filter::Settings::Generator { .. } => "ジェネレーター",
             },
             Self::Generator(g) => generator_kind_name(g.kind),
@@ -291,6 +329,9 @@ pub fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Noise => "ノイズ",
         generator::Kind::Grunge => "グランジ",
         generator::Kind::Image => "画像",
+        generator::Kind::Pattern => "模様",
+        generator::Kind::Light => "光",
+        generator::Kind::MaskBuilder => "マスクの組み立て",
     }
 }
 

@@ -19,8 +19,8 @@ use yolu_io::library as files;
 use yolu_io::psd::CopyRefusal;
 use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
 use yolu_io::smart::{
-    REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_ADJUSTMENTS, REFUSAL_RUST_GENERATORS,
-    REFUSAL_USER_CHANNELS,
+    REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_RUST_ADJUSTMENTS,
+    REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
 };
 
 /// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
@@ -522,6 +522,9 @@ fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Noise => "Noise",
         generator::Kind::Grunge => "Grunge",
         generator::Kind::Image => "Image",
+        generator::Kind::Pattern => "Pattern",
+        generator::Kind::Light => "Light",
+        generator::Kind::MaskBuilder => "Mask builder",
     }
 }
 
@@ -757,6 +760,12 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "接空間法線には再正規化するぼかしだけを適用できます" => {
             "Only the renormalizing blur applies to tangent-space normals"
+        }
+        "値の切り出し・値の幅・太らせる・細らせる・輪郭の検出はスカラーとマスクだけに適用できます" => {
+            "Histogram Scan, Histogram Range, Dilate / Erode and Edge Detect apply only to scalar channels and masks"
+        }
+        "グローは色のチャンネルだけに適用できます" => {
+            "Glow applies only to color channels"
         }
         "親の数が層の数と違う" => "Parent count does not match layer count",
         "調整の層だけが調整の設定を持つ" => {
@@ -1317,6 +1326,12 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
     } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
         lang.pick("色調補正を使っています", "It uses colour adjustments")
             .into()
+    } else if m.contains(REFUSAL_NEW_FILTERS) {
+        lang.pick(
+            "0.5.0 で追加したフィルター・ジェネレーターを使っています",
+            "It uses filters or generators added in 0.5.0",
+        )
+        .into()
     } else {
         lang.io_error(e)
     }

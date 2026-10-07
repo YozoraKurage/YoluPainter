@@ -127,10 +127,14 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
     let layer = st(&h).selected_layer.unwrap();
     assert!(st(&h).fill_image_problem(layer, Channel::Color).is_none());
-    // 画像の箱（右の列。同じ名前の格子の素材は左の列）。まだ画像が無いので名前は「画像」
-    let boxed = rect_of(&h, "画像", |r| {
-        r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0
-    });
+    // 画像の箱（右の列。同じ名前の格子の素材は左の列）。まだ画像が無いので名前は「画像」。欄は縦に長く、箱が窓の下端の外に
+    // 出ることがあるので、右の列を箱が見える所まで送ってから位置を取る
+    let in_column = |r: Rect| r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0;
+    let first = rect_of(&h, "画像", in_column);
+    let scroll = st(&h).m2.props_scroll + (first.top() - 900.0).max(0.0);
+    h.state_mut().state.m2.props_scroll = scroll;
+    h.run();
+    let boxed = rect_of(&h, "画像", in_column);
     // 押すと一覧
     click(&mut h, boxed.center());
     assert!(st(&h).popup.is_some(), "画像の一覧が開く");

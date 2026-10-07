@@ -39,3 +39,35 @@ pub const PROCEDURAL_ROTATION: RangeInclusive<f64> = -360.0..=360.0;
 pub const LACUNARITY: RangeInclusive<f64> = 1.0..=4.0;
 /// Generator の方向の成分の大きさの上限（これを超えるものは断る）。
 pub const DIRECTION_COMPONENT: RangeInclusive<f64> = -1.0e6..=1.0e6;
+
+/// ヒストグラムスキャン・ヒストグラムレンジ・エッジ検出のしきい値・グローのしきい値（0〜1）は [`UNIT`]。
+/// スロープぼかしの長さ（画素）。
+pub const SLOPE_INTENSITY: RangeInclusive<f64> = 0.0..=64.0;
+/// スロープぼかしの取る数。
+pub const SLOPE_SAMPLES: RangeInclusive<u32> = 1..=32;
+/// スロープぼかし・ゆがみの内蔵の値ノイズの大きさ（1 つの格子の辺の画素）。
+pub const FILTER_NOISE_SCALE: RangeInclusive<f64> = 1.0..=256.0;
+/// 方向のぼかしの角度（度）。
+pub const DIRECTIONAL_ANGLE: RangeInclusive<f64> = 0.0..=360.0;
+/// 方向のぼかしの片側の長さ（画素）。
+pub const DIRECTIONAL_DISTANCE: RangeInclusive<f64> = 0.0..=256.0;
+/// ゆがみのずらす長さ（画素）。
+pub const WARP_INTENSITY: RangeInclusive<f64> = 0.0..=128.0;
+/// モルフォロジーの丸い窓の半径（画素）。
+pub const MORPHOLOGY_RADIUS: RangeInclusive<u32> = 1..=64;
+/// エッジ検出の前にぼかす幅（画素）。
+pub const EDGE_WIDTH: RangeInclusive<u32> = 1..=16;
+/// ハイパスの半径（画素）。
+pub const HIGH_PASS_RADIUS: RangeInclusive<u32> = 1..=256;
+/// メディアンの正方形の窓の半径（画素）。
+pub const MEDIAN_RADIUS: RangeInclusive<u32> = 1..=16;
+/// グローの広がりの半径（画素）。
+pub const GLOW_RADIUS: RangeInclusive<u32> = 1..=256;
+/// グローの強さ。
+pub const GLOW_INTENSITY: RangeInclusive<f64> = 0.0..=4.0;
+/// 模様の繰り返しの数（UV の 0〜1 に何回）。
+pub const PATTERN_SCALE: RangeInclusive<f64> = 1.0..=512.0;
+/// 模様の回転・光の水平の角度（度）。
+pub const TURN_DEGREES: RangeInclusive<f64> = 0.0..=360.0;
+/// 光の高さ（度。0 が水平、90 が真上）。
+pub const LIGHT_ELEVATION: RangeInclusive<f64> = 0.0..=90.0;

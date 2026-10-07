@@ -116,6 +116,13 @@ fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
                     *radius = r.max(1);
                     r > 0
                 }
+                s if s.is_spatial() => match s.coarse(stride) {
+                    Some(c) => {
+                        *s = c;
+                        true
+                    }
+                    None => false,
+                },
                 _ => true,
             };
             stage.enabled &= keep;

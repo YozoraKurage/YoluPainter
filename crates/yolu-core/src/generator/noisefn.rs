@@ -17,7 +17,7 @@ use crate::math::simd::{self, Lanes};
 pub const MAX_OCTAVES: u32 = 8;
 
 /// 度の sin・cos（多項式。libm を使わない）。`deg` は有限であること（検査済みの入力）。
-pub(super) fn sin_cos_deg(deg: f64) -> (f64, f64) {
+pub(crate) fn sin_cos_deg(deg: f64) -> (f64, f64) {
     let q = (deg / 90. + 0.5).floor();
     let r = (deg - 90. * q) * (std::f64::consts::PI / 180.);
     let r2 = r * r;
@@ -653,6 +653,24 @@ pub(super) unsafe fn unit24_lanes<V: Lanes>(h: V::F) -> V::F {
     )
 }
 
+/// 2D の値のノイズ（`value3` の z = 0 の面と同じ値）と、その勾配（格子の単位。x・y の偏微分）。フィルターのスロープぼかし・ゆがみが
+/// 読む向きを決める。格子を巻かない。
+pub(crate) fn value2_gradient(x: f64, y: f64, seed: u32) -> (f64, [f64; 2]) {
+    let (fx, fy) = (x.floor(), y.floor());
+    let (ix, iy) = (fx as i32, fy as i32);
+    let (tx, ty) = (x - fx, y - fy);
+    let (u, v) = (fade(tx), fade(ty));
+    let c = |dx: i32, dy: i32| unit24(cell_hash(seed, ix + dx, iy + dy, 0));
+    let (c00, c10, c01, c11) = (c(0, 0), c(1, 0), c(0, 1), c(1, 1));
+    let x0 = lerp(c00, c10, u);
+    let x1 = lerp(c01, c11, u);
+    // fade(t) = 6t⁵ − 15t⁴ + 10t³ の微分 30t²(t − 1)²
+    let dfade = |t: f64| 30. * t * t * (t - 1.) * (t - 1.);
+    let dx = dfade(tx) * lerp(c10 - c00, c11 - c01, v);
+    let dy = dfade(ty) * (x1 - x0);
+    (lerp(x0, x1, v), [dx, dy])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,6 +765,33 @@ mod tests {
                 f2: d2.sqrt(),
                 id,
                 point,
+            }
+        }
+    }
+
+    #[test]
+    fn value2_gradient_is_the_z0_value_noise_and_its_slope() {
+        for (i, seed) in [0u32, 7, 0xdead_beef].into_iter().enumerate() {
+            for k in 0..200 {
+                let x = -13.7 + k as f64 * 0.173 + i as f64;
+                let y = 5.1 - k as f64 * 0.091;
+                let (n, g) = value2_gradient(x, y, seed);
+                assert_eq!(
+                    n.to_bits(),
+                    plain::value3([x, y, 0.], seed, [0, 0]).to_bits()
+                );
+                // 勾配は差分と合う
+                let e = 1e-6;
+                let nx = (plain::value3([x + e, y, 0.], seed, [0, 0])
+                    - plain::value3([x - e, y, 0.], seed, [0, 0]))
+                    / (2. * e);
+                let ny = (plain::value3([x, y + e, 0.], seed, [0, 0])
+                    - plain::value3([x, y - e, 0.], seed, [0, 0]))
+                    / (2. * e);
+                assert!(
+                    (g[0] - nx).abs() < 1e-5 && (g[1] - ny).abs() < 1e-5,
+                    "{x} {y}"
+                );
             }
         }
     }

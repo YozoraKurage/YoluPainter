@@ -374,6 +374,17 @@ fn filter_body(
                 ));
             }
         }
+        EffectSettings::Filter(f)
+            if names::FilterKind::of(f)
+                .and_then(|k| k.catalog_id())
+                .is_some() =>
+        {
+            next = catalog_rows(ui, app, rows, effect.settings(), &[]);
+            // 選択肢のボタンは 1 回で決まる変更
+            discrete = next
+                .as_ref()
+                .is_some_and(|n| choices_differ(n, effect.settings()));
+        }
         EffectSettings::Filter(_) => {
             if let Some(value) = effect.settings().color_adjust() {
                 let mut failure = None;
@@ -460,6 +471,129 @@ fn filter_body(
         );
     }
     rows.space(4.0);
+}
+
+/// 0.5.0 のフィルターの値の欄。効果の目録の欄の型と範囲から並べる（整数・実数はスライダー、シードは数の入力、選択肢はボタン）。
+/// 変えた値の設定を返す。
+fn catalog_rows(
+    ui: &mut Ui,
+    app: &AppState,
+    rows: &mut Rows,
+    settings: &EffectSettings,
+    skip: &[&str],
+) -> Option<EffectSettings> {
+    use yolu_core::effects::catalog::{self, ParamType, ParamValue};
+    let lang = app.lang;
+    let enabled = app.can_edit();
+    let kind = catalog::kind(settings.kind_id())?;
+    let mut changed: std::collections::BTreeMap<String, ParamValue> = Default::default();
+    for (name, value) in settings.catalog_values() {
+        let Some(param) = kind.param(name) else {
+            continue;
+        };
+        if skip.contains(&name) {
+            continue;
+        }
+        if let Some(heading) = names::param_group(lang, kind.id, name) {
+            group_label(ui, rows, heading);
+        }
+        let label = names::param_label(lang, kind.id, name);
+        let hint = names::param_hint(lang, kind.id, name);
+        let key = format!("fx.{name}");
+        // 画素で数える欄は px、角度は °（Generator の欄は画素で数えない）
+        let suffix = match name {
+            "angle" | "azimuth" | "elevation" => "°",
+            _ if kind.generator => "",
+            "intensity" if kind.id == "glow" => "",
+            "intensity" | "scale" | "distance" | "radius" | "width" => " px",
+            _ => "",
+        };
+        let next = match (&param.ty, &value) {
+            (ParamType::Integer { .. }, ParamValue::Number(v)) if name == "seed" => {
+                int_row(ui, rows, &key, label, *v as i32, hint).map(f64::from)
+            }
+            (ParamType::Integer { min, max }, ParamValue::Number(v)) => slider_row(
+                ui,
+                rows,
+                &key,
+                label,
+                *v as f32,
+                (*min as f32, *max as f32),
+                NumberFormat::int(suffix),
+                hint,
+                enabled,
+            )
+            .map(|n| f64::from(n.round()).clamp(*min as f64, *max as f64)),
+            (ParamType::Number { min, max }, ParamValue::Number(v))
+                if (*min, *max) == (0.0, 1.0) =>
+            {
+                percent_row(ui, rows, &key, label, *v, (0.0, 1.0), hint, enabled)
+            }
+            (ParamType::Number { min, max }, ParamValue::Number(v)) => slider_row(
+                ui,
+                rows,
+                &key,
+                label,
+                *v as f32,
+                (*min as f32, *max as f32),
+                NumberFormat {
+                    decimals: if max - min > 50.0 { 1 } else { 2 },
+                    trim: true,
+                    suffix,
+                },
+                hint,
+                enabled,
+            )
+            .map(|n| f64::from(n).clamp(*min, *max)),
+            (ParamType::Choice { options }, ParamValue::Choice(current)) => {
+                group_label(ui, rows, label);
+                let buttons: Vec<super::properties::ChoiceButton> = options
+                    .iter()
+                    .map(|o| super::properties::ChoiceButton {
+                        id: o,
+                        label: names::option_label(lang, o),
+                        selected: current == o,
+                        enabled,
+                        tooltip: hint,
+                    })
+                    .collect();
+                if let Some(i) = super::properties::choice_buttons(ui, rows, &buttons) {
+                    if options[i] != current {
+                        changed.insert(name.into(), ParamValue::Choice(options[i].into()));
+                    }
+                }
+                None
+            }
+            (ParamType::Bool, ParamValue::Bool(v)) => {
+                if let Some(b) = toggle_row(ui, rows, &key, label, *v, hint, enabled) {
+                    changed.insert(name.into(), ParamValue::Bool(b));
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(n) = next {
+            if value != ParamValue::Number(n) {
+                changed.insert(name.into(), ParamValue::Number(n));
+            }
+        }
+    }
+    if changed.is_empty() {
+        return None;
+    }
+    settings.with_catalog_values(&changed).ok()
+}
+
+/// 選択肢の欄（合わせ方・向き）が違うか（1 回で決まる変更として、続くスライダーの変更とまとめない）。
+fn choices_differ(a: &EffectSettings, b: &EffectSettings) -> bool {
+    use yolu_core::effects::catalog::ParamValue;
+    let choices = |s: &EffectSettings| {
+        s.catalog_values()
+            .into_iter()
+            .filter(|(_, v)| matches!(v, ParamValue::Choice(_)))
+            .collect::<Vec<_>>()
+    };
+    choices(a) != choices(b)
 }
 
 // ───────── Generator ─────────
@@ -866,9 +1000,24 @@ fn generator_rows(
         }
         Kind::IdColor => id_color_rows(ui, app, rows, layer, id, g, &mut next, enabled),
         Kind::Noise | Kind::Grunge => procedural_rows(ui, app, rows, ctx, &mut next, enabled),
+        // 模様・光・マスクの組み立ては目録の欄から並べる（範囲・反転・合成は下の共通の行。模様・光の softness は自分の欄）
+        Kind::Pattern | Kind::Light | Kind::MaskBuilder => {
+            let common: &[&str] = if g.kind == Kind::MaskBuilder {
+                &["low", "high", "softness", "invert", "blend"]
+            } else {
+                &["low", "high", "invert", "blend"]
+            };
+            if let Some(EffectSettings::Generator(r)) =
+                catalog_rows(ui, app, rows, effect.settings(), common)
+            {
+                next.pattern = r.pattern;
+                next.light = r.light;
+                next.mask_builder = r.mask_builder;
+            }
+        }
         Kind::EdgeWear | Kind::Thickness | Kind::Anchor | Kind::Image => {}
     }
-    // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す）
+    // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す。模様・光のやわらかさは自分の欄）
     if g.kind != Kind::IdColor && values {
         group_label(ui, rows, lang.pick("範囲", "Range"));
         let gap = 0.001 + 1e-6;
@@ -904,20 +1053,22 @@ fn generator_rows(
         ) {
             next.high = (v as f64).max(g.low + gap).min(1.0);
         }
-        if let Some(v) = percent_row(
-            ui,
-            rows,
-            "fx.softness",
-            lang.pick("やわらかさ", "Softness"),
-            g.softness,
-            (0.0, 1.0),
-            Some(lang.pick(
-                "0 %: 下限から上限までまっすぐ。100 %: なめらかな S 字。",
-                "0 %: a straight ramp from low to high. 100 %: a smooth S curve.",
-            )),
-            enabled,
-        ) {
-            next.softness = v;
+        if !matches!(g.kind, Kind::Pattern | Kind::Light) {
+            if let Some(v) = percent_row(
+                ui,
+                rows,
+                "fx.softness",
+                lang.pick("やわらかさ", "Softness"),
+                g.softness,
+                (0.0, 1.0),
+                Some(lang.pick(
+                    "0 %: 下限から上限までまっすぐ。100 %: なめらかな S 字。",
+                    "0 %: a straight ramp from low to high. 100 %: a smooth S curve.",
+                )),
+                enabled,
+            ) {
+                next.softness = v;
+            }
         }
     }
     if let Some(on) = toggle_row(
@@ -934,8 +1085,8 @@ fn generator_rows(
     ) {
         next.invert = on;
     }
-    // 崩し（ノイズ・グランジ・画像は重ねるノイズを持たない。core が断るので出さない）
-    if !g.kind.is_procedural() && g.kind != Kind::Image {
+    // 崩し（ノイズ・グランジ・画像・模様・光・マスクの組み立ては重ねるノイズを持たない。core が断るので出さない）
+    if !g.kind.is_procedural() && !g.kind.is_050() && g.kind != Kind::Image {
         group_label(ui, rows, lang.pick("崩し", "Breakup"));
         if let Some(v) = percent_row(
             ui,
@@ -1464,43 +1615,66 @@ fn anchor_fields(
     }
 }
 
-/// プロパティの「層」と「レイヤーマスク」の欄の「フィルターを足す」（押すと、画素かマスクへ足すフィルターと Generator の一覧）。
+/// プロパティの「層」と「レイヤーマスク」の欄の「フィルターを追加」と「ジェネレーターを追加」の 2 行（押すと、画素かマスクへ足す
+/// フィルター・ジェネレーターの一覧。どちらも同じスタックに積む）。
 pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: FilterTarget) {
     let lang: Lang = app.lang;
     let enabled = app.can_edit();
-    let r = rows.row(24.0, 4.0);
-    let (key, label, tip) = match target {
-        FilterTarget::Content => (
-            "fx.add",
-            lang.pick("フィルターを追加", "Add Filter"),
-            lang.pick(
-                "画素にフィルターかジェネレーター（焼いたメッシュマップから値を作る）を追加",
-                "Add a filter or a generator (values from the baked mesh maps) on the pixels",
-            ),
+    let mask = target == FilterTarget::Mask;
+    let buttons = [
+        (
+            Popup::AddFilter(target),
+            if mask { "fx.add.mask" } else { "fx.add" },
+            if mask {
+                lang.pick("マスクにフィルターを追加", "Add Filter to Mask")
+            } else {
+                crate::fx::menu::add_filter_label(lang)
+            },
+            if mask {
+                lang.pick(
+                    "マスクにフィルター（ぼかし・レベル補正など）を追加",
+                    "Add a filter (blur, levels, ...) on the mask",
+                )
+            } else {
+                lang.pick(
+                    "画素にフィルター（ぼかし・レベル補正など）を追加",
+                    "Add a filter (blur, levels, ...) on the pixels",
+                )
+            },
+            "auto_awesome",
         ),
-        FilterTarget::Mask => (
-            "fx.add.mask",
-            lang.pick("マスクにフィルターを追加", "Add Filter to Mask"),
-            lang.pick(
-                "マスクにフィルターかジェネレーター（レイヤーの見える所を、焼いたメッシュマップから作る）を追加",
-                "Add a filter or a generator on the mask (where the layer shows, from the baked mesh maps)",
-            ),
+        (
+            Popup::AddGenerator(target),
+            if mask {
+                "fx.add.generator.mask"
+            } else {
+                "fx.add.generator"
+            },
+            if mask {
+                lang.pick("マスクにジェネレーターを追加", "Add Generator to Mask")
+            } else {
+                crate::fx::menu::add_generator_label(lang)
+            },
+            if mask {
+                lang.pick(
+                    "マスクにジェネレーター（レイヤーの見える所を、焼いたメッシュマップやノイズから作る）を追加",
+                    "Add a generator on the mask (where the layer shows, from the baked mesh maps or noise)",
+                )
+            } else {
+                lang.pick(
+                    "画素にジェネレーター（焼いたメッシュマップやノイズから値を作る）を追加",
+                    "Add a generator (values from the baked mesh maps or noise) on the pixels",
+                )
+            },
+            "texture",
         ),
-    };
-    if w::button(
-        ui,
-        r,
-        key,
-        label,
-        false,
-        enabled,
-        Some(tip),
-        Some("auto_awesome"),
-    )
-    .clicked()
-    {
-        let ctx = ui.ctx().clone();
-        open_popup(app, &ctx, Popup::AddEffect(target), r, r.width());
+    ];
+    for (popup, key, label, tip, icon) in buttons {
+        let r = rows.row(24.0, 4.0);
+        if w::button(ui, r, key, label, false, enabled, Some(tip), Some(icon)).clicked() {
+            let ctx = ui.ctx().clone();
+            open_popup(app, &ctx, popup, r, r.width());
+        }
     }
 }
 

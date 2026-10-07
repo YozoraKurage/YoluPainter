@@ -2,6 +2,7 @@
 pub mod anchor;
 mod evaluate;
 mod grunge;
+mod kinds050;
 mod mixing;
 mod noise;
 mod noisefn;
@@ -11,8 +12,10 @@ mod ramp;
 mod shape;
 pub use crate::curve::CurvePoint;
 pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target};
+pub use kinds050::{Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape};
 pub use mixing::{LuminanceCorrection, MixMode};
 pub(crate) use noisefn::MAX_OCTAVES;
+pub(crate) use noisefn::{sin_cos_deg, value2_gradient};
 pub use preview::preview;
 pub use procedural::{
     CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
@@ -61,6 +64,12 @@ pub enum Kind {
     Noise = 64,
     /// グランジ（ノイズの組み合わせのプリセット）。Rust 版だけの種類。
     Grunge = 65,
+    /// 模様（UV の空間の縞・市松・水玉・縁・格子）。Rust 版だけの種類（正本の版 28）。
+    Pattern = 66,
+    /// 光（焼いたワールドの法線と光の向き）。Rust 版だけの種類（正本の版 28）。
+    Light = 68,
+    /// マスクの組み立て（焼いた曲率・AO・位置の高さ・厚み）。Rust 版だけの種類（正本の版 28）。
+    MaskBuilder = 69,
     /// 画像（プロジェクトの画像を塗りつぶしの層と同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
     Image = 70,
 }
@@ -78,9 +87,16 @@ impl Kind {
             7 => Self::Anchor,
             64 => Self::Noise,
             65 => Self::Grunge,
+            66 => Self::Pattern,
+            68 => Self::Light,
+            69 => Self::MaskBuilder,
             70 => Self::Image,
             _ => return None,
         })
+    }
+    /// 0.5.0 の種類（模様・光・マスクの組み立て。正本の版 28）か。
+    pub fn is_050(self) -> bool {
+        matches!(self, Self::Pattern | Self::Light | Self::MaskBuilder)
     }
     /// Rust 版だけの種類か（マップを読まず位置・UV から値を作る。Unity 版は読めない）。
     pub fn is_procedural(self) -> bool {
@@ -244,6 +260,12 @@ pub struct Settings {
     pub pins: BTreeMap<MapKind, String>,
     /// ノイズ・グランジの設定（[`Procedural`]）。Noise・Grunge 以外の種類は既定のまま。
     pub procedural: Procedural,
+    /// 模様の設定（[`Pattern`]）。Pattern 以外の種類は既定のまま。
+    pub pattern: Pattern,
+    /// 光の設定（[`Light`]）。Light 以外の種類は既定のまま。
+    pub light: Light,
+    /// マスクの組み立ての設定（[`MaskBuilder`]）。MaskBuilder 以外の種類は既定のまま。
+    pub mask_builder: MaskBuilder,
     /// 画像の段の設定（[`ImageSource`]）。Image 以外の種類は既定のまま。
     pub image: ImageSource,
 }
@@ -271,6 +293,9 @@ impl Settings {
             anchor: anchor::Reference::default_for(kind),
             pins: BTreeMap::new(),
             procedural: Procedural::default(),
+            pattern: Pattern::default(),
+            light: Light::default(),
+            mask_builder: MaskBuilder::default(),
             image: ImageSource::default(),
         };
         match kind {
@@ -406,6 +431,29 @@ impl Settings {
                 "ノイズ・グランジの設定はノイズ・グランジ専用です",
             ));
         }
+        // 模様・光・マスクの組み立て: 重ねるノイズを持たず、境目のぼかしは種類の欄で持つ（共通の減衰は 0）
+        if self.kind.is_050()
+            && (self.noise_amount != 0.
+                || self.noise_scale != 0.05
+                || self.noise_seed != 0
+                || self.noise_space != NoiseSpace::Model
+                || (self.kind != Kind::MaskBuilder && self.softness != 0.))
+        {
+            return Err(Error::Invalid(
+                "模様・光・マスクの組み立ては重ねるノイズを持たず、ぼかしは自身の設定で決めます",
+            ));
+        }
+        if (self.kind != Kind::Pattern && self.pattern != Pattern::default())
+            || (self.kind != Kind::Light && self.light != Light::default())
+            || (self.kind != Kind::MaskBuilder && self.mask_builder != MaskBuilder::default())
+        {
+            return Err(Error::Invalid(
+                "模様・光・マスクの組み立ての設定はその種類専用です",
+            ));
+        }
+        self.pattern.validate()?;
+        self.light.validate()?;
+        self.mask_builder.validate()?;
         for (kind, key) in &self.pins {
             if !self.candidate_maps().contains(kind) || !key_valid(key) {
                 return Err(Error::Invalid(
@@ -425,6 +473,9 @@ impl Settings {
             Kind::Direction => vec![WorldNormal, BentNormal, Position],
             Kind::IdColor => vec![Id, Position],
             Kind::Noise | Kind::Grunge => vec![Position, WorldNormal],
+            Kind::Pattern => vec![],
+            Kind::Light => vec![WorldNormal],
+            Kind::MaskBuilder => MaskBuilder::MAPS.to_vec(),
             // 投影のマップは塗りつぶしの層と同じく、ピンを持たない
             Kind::Image => vec![],
         }
@@ -454,6 +505,10 @@ impl Settings {
             Kind::Anchor => vec![],
             // 位置のマップが使えないときは UV に落とす（入力のまま通さない）ので、読むマップは設定だけで決まる
             Kind::Noise | Kind::Grunge => return self.procedural.maps(self.kind),
+            Kind::Pattern => vec![],
+            Kind::Light => vec![WorldNormal],
+            // 重みが 0 のマップは読まない（無くても断らない）
+            Kind::MaskBuilder => self.mask_builder.used(),
             // 投影の種類で決まる（UV は読まない。トライプラナーは向きも）
             Kind::Image => {
                 use crate::fill_image::ProjectionMode as M;

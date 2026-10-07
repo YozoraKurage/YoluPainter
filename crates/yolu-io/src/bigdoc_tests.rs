@@ -306,6 +306,37 @@ fn wrong_parts_are_refused() {
 }
 
 #[test]
+fn the_undefined_version_27_is_refused_as_the_inner_version_too() {
+    // 色調補正のフィルターだけの文書は、版 24 の並びが 25・28 と同じなので、中の版の数だけを書き換えても中身は読める（対照）。
+    // 27 は番号だけ空けてあり、範囲の中でも断る（版 25 の並びとして読み進めない）
+    let mut core = uniform_layers(16, 8, 1);
+    let layer = core.layers()[0].id();
+    let posterize =
+        yolu_core::EffectSettings::from_catalog("posterize", &Default::default()).unwrap();
+    core.add_filter(
+        layer,
+        yolu_core::FilterTarget::Content,
+        yolu_core::FilterSpec::new(posterize).channels(&[yolu_core::Channel::Color]),
+    )
+    .unwrap();
+    let doc = NativeDocument::from_core(&core).unwrap();
+    assert_eq!(doc.version(), crate::ADJUST_VERSION);
+    let t = tiny(largest_tile(&doc), 0);
+    let (header, parts) = split_fields(doc.fields(), doc.version(), &t);
+    let read = |inner: i32| {
+        let mut h = header.clone();
+        h[12..16].copy_from_slice(&inner.to_le_bytes());
+        let refs: Vec<&[u8]> = parts.iter().map(|p| &p[..]).collect();
+        NativeDocument::read_split(&h, &refs)
+    };
+    for inner in [crate::ADJUST_VERSION, crate::MIXING_VERSION] {
+        assert_eq!(read(inner).unwrap().version(), inner);
+    }
+    let e = read(27).err().map(|e| e.to_string());
+    assert!(e.is_some_and(|e| e.contains("27")), "版 27 を断らなかった");
+}
+
+#[test]
 fn cut_groups_small_layers_keeps_big_layers_apart_and_never_splits_a_value() {
     let t = Thresholds {
         part_bytes: 100,

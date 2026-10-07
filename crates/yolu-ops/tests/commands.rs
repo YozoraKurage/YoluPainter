@@ -778,10 +778,14 @@ fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
     for kind in kinds.kinds.iter().filter(|k| k.addable) {
         let mut host = fx.host("a.ylp");
         if kind.used_as.contains(&KindUse::EffectStack) {
-            ok(
-                &mut host,
-                json!({"command": "effect.add", "args": {"layer": "Base", "kind": kind.id, "channels": ["Color"]}}),
-            );
+            // 色のチャンネルに置けない種類（スカラーとマスクだけのフィルター）は Roughness へ
+            let color = json!({"command": "effect.add", "args": {"layer": "Base", "kind": kind.id, "channels": ["Color"]}});
+            if run(&mut host, color).is_err() {
+                ok(
+                    &mut host,
+                    json!({"command": "effect.add", "args": {"layer": "Base", "kind": kind.id, "channels": ["Roughness"]}}),
+                );
+            }
         } else {
             ok(
                 &mut host,
@@ -826,4 +830,129 @@ fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
         panic!()
     };
     assert!(saved.notes.is_empty(), "{:?}", saved.notes);
+}
+
+/// 0.5.0 のフィルター（種類 70〜79）と Generator（模様・光・マスクの組み立て）が `effect.list_kinds` に出て、`effect.add` で値つきで
+/// 足せ、`effect.get` で同じ値が読める。
+#[test]
+fn the_new_filters_are_listed_and_added_with_values() {
+    let fx = Fixture::new("new-filters");
+    fx.project("a.ylp");
+    let Reply::Kinds(kinds) = ({
+        let mut host = fx.host("a.ylp");
+        ok(&mut host, json!({"command": "effect.list_kinds"}))
+    }) else {
+        panic!()
+    };
+    let cases = [
+        (
+            "histogram_scan",
+            "Roughness",
+            json!({"position": 0.25, "contrast": 0.75}),
+        ),
+        (
+            "histogram_range",
+            "Height",
+            json!({"range": 0.4, "position": 0.6}),
+        ),
+        (
+            "slope_blur",
+            "Color",
+            json!({"intensity": 12.5, "samples": 6, "mode": "max", "scale": 20.0, "seed": 4}),
+        ),
+        (
+            "directional_blur",
+            "Color",
+            json!({"angle": 45.0, "distance": 10.0}),
+        ),
+        (
+            "warp",
+            "Roughness",
+            json!({"intensity": 8.0, "scale": 16.0, "seed": -3}),
+        ),
+        (
+            "morphology",
+            "Metallic",
+            json!({"mode": "erode", "radius": 5}),
+        ),
+        (
+            "edge_detect",
+            "Height",
+            json!({"width": 2, "threshold": 0.2}),
+        ),
+        ("high_pass", "Color", json!({"radius": 12})),
+        ("median", "Emission", json!({"radius": 2})),
+        (
+            "glow",
+            "Color",
+            json!({"threshold": 0.5, "radius": 24, "intensity": 2.0}),
+        ),
+        (
+            "pattern",
+            "Color",
+            json!({"shape": "dots", "scale": 12.0, "width": 0.4, "softness": 0.2}),
+        ),
+        (
+            "light",
+            "Roughness",
+            json!({"azimuth": 120.0, "elevation": 30.0, "ambient": 0.1}),
+        ),
+        (
+            "mask_builder",
+            "Height",
+            json!({"curvature_weight": 0.5, "ambient_occlusion_weight": 1.0, "combine": "max", "thickness_invert": true}),
+        ),
+    ];
+    let mut host = fx.host("a.ylp");
+    for (id, channel, values) in &cases {
+        let kind = kinds
+            .kinds
+            .iter()
+            .find(|k| k.id == *id)
+            .unwrap_or_else(|| panic!("{id} が一覧に無い"));
+        assert!(kind.addable && kind.rust_only, "{id}");
+        assert_eq!(
+            kind.generator,
+            ["pattern", "light", "mask_builder"].contains(id),
+            "{id}"
+        );
+        assert!(kind.used_as.contains(&KindUse::EffectStack), "{id}");
+        assert!(
+            !kind.title.ja.is_empty() && kind.title.en != *id,
+            "{id}: 名前"
+        );
+        for p in &kind.params {
+            assert!(!p.description.en.is_empty(), "{id}.{}: 説明", p.name);
+        }
+        let e = edited(ok(
+            &mut host,
+            json!({"command": "effect.add", "args": {"layer": "Base", "kind": id, "values": values, "channels": [channel]}}),
+        ));
+        let effect = e.effect.unwrap();
+        let Reply::Effects(list) = ok(
+            &mut host,
+            json!({"command": "effect.get", "args": {"layer": "Base"}}),
+        ) else {
+            panic!()
+        };
+        let got = list.effects.iter().find(|x| x.id == effect).unwrap();
+        assert_eq!(got.kind, *id);
+        for (name, v) in values.as_object().unwrap() {
+            let want = match v {
+                serde_json::Value::String(s) => yolu_ops::Value::Text(s.clone()),
+                serde_json::Value::Bool(b) => yolu_ops::Value::Bool(*b),
+                other => yolu_ops::Value::Number(other.as_f64().unwrap()),
+            };
+            assert_eq!(got.values[name], want, "{id}.{name}");
+        }
+    }
+    // 置けないチャンネルは理由つきで断る（グローは Roughness に、太らせる・細らせるは Color に置けない）
+    err(
+        &mut host,
+        json!({"command": "effect.add", "args": {"layer": "Base", "kind": "glow", "channels": ["Roughness"]}}),
+    );
+    err(
+        &mut host,
+        json!({"command": "effect.add", "args": {"layer": "Base", "kind": "morphology", "channels": ["Color"]}}),
+    );
 }

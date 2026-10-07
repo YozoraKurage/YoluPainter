@@ -177,6 +177,66 @@ fn layer_and_effect_commands_edit_through_flags() {
     assert!(path.is_file());
 }
 
+/// 0.5.0 のフィルター・ジェネレーターが一覧に出て、フラグで値つきで足し、保存して別の起動で読める。
+#[test]
+fn the_new_filters_and_generators_are_listed_and_added_through_flags() {
+    let fx = Fixture::new("new-kinds");
+    fx.project("a.ylp");
+    let kinds = fx.ok(&["effect.list_kinds", "--file", "a.ylp"]);
+    let ids: Vec<&str> = kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["id"].as_str().unwrap())
+        .collect();
+    for id in [
+        "slope_blur",
+        "morphology",
+        "glow",
+        "pattern",
+        "light",
+        "mask_builder",
+    ] {
+        assert!(ids.contains(&id), "{id}: {ids:?}");
+    }
+    let out = fx.cli(&[
+        "effect.add",
+        "--file",
+        "a.ylp",
+        "--layer",
+        "Base",
+        "--kind",
+        "glow",
+        "--values.radius",
+        "12",
+        "--channels",
+        "Color",
+        "--save",
+    ]);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let out = fx.cli(&[
+        "effect.add",
+        "--file",
+        "a.ylp",
+        "--layer",
+        "Base",
+        "--kind",
+        "pattern",
+        "--values.shape",
+        "checker",
+        "--save",
+    ]);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let layer = fx.ok(&["layer.get", "--file", "a.ylp", "--layer", "Base"]);
+    let effects = layer["effects"].as_array().unwrap();
+    assert!(effects
+        .iter()
+        .any(|e| e["kind"] == "glow" && e["values"]["radius"] == 12));
+    assert!(effects
+        .iter()
+        .any(|e| e["kind"] == "pattern" && e["values"]["shape"] == "checker"));
+}
+
 #[test]
 fn a_failing_batch_stops_names_the_command_and_saves_nothing() {
     let fx = Fixture::new("batch-fail");

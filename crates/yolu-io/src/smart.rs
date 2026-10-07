@@ -21,6 +21,8 @@ pub const REFUSAL_RUST_ADJUSTMENTS: &str =
     ".ylsmart 形式1は Unity 版にもある調整・フィルターの種類だけです（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーションは入れられません）";
 pub const REFUSAL_IMAGE_GENERATORS: &str =
     ".ylsmart 形式1は Unity 版にもあるジェネレーターの種類だけです（画像のジェネレーターは入れられません）";
+pub const REFUSAL_NEW_FILTERS: &str =
+    ".ylsmart 形式1は Unity 版にもある効果の種類だけです（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グローのフィルターと、模様・光・マスクの組み立てのジェネレーターは入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
 const PREFIX: &str = "YOLUPAINTER-SMART-";
 #[derive(Clone, Debug)]
@@ -128,6 +130,11 @@ impl SmartFile {
         check(
             !crate::core_bridge::uses_image_generators(&doc),
             REFUSAL_IMAGE_GENERATORS,
+        )?;
+        // 0.5.0 のフィルター（種類 70〜79）と Generator（66・68・69）は正本の版 28 になり、Unity 版が読めない
+        check(
+            !crate::core_bridge::uses_new_filters(&doc),
+            REFUSAL_NEW_FILTERS,
         )?;
         let native = NativeDocument::from_core(&doc)?;
         let names = [

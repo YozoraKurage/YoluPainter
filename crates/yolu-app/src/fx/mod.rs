@@ -1,7 +1,8 @@
 //! 効果の層（フィルターのスタック・Generator・Anchor）の画面の状態と操作（Unity 版の `TexturePaintWindow.Filters / Generators / Anchors`）。
 //!
-//! - 一覧: 層の行の下に、その層の Anchor・画素の効果の段（上が後に掛かる）・マスクの Anchor・マスクの効果の段を字下げした子の行で並べる
-//!   （`panels::effect_rows`）。押すとその段を選び（`FxState::selected`）、プロパティの欄にその段の設定が出る（`panels::effect_props`）。
+//! - 一覧: 層の行の下に、対象の側のスタックだけを字下げした子の行で並べる（`panels::effect_rows`）。選んだ層でマスクが対象なら
+//!   マスクの Anchor・マスクの効果の段、それ以外（選んでいない層も）は層の Anchor・画素の効果の段（どちらも上が後に掛かる）。
+//!   押すとその段を選び（`FxState::selected`。そのスタックの側が対象になる）、プロパティの欄にその段の設定が出る（`panels::effect_props`）。
 //! - 操作: どれも `Action::Fx(FxOp)` を通り、core の編集の口（`add_filter` ほか）を 1 つ呼ぶ。1 つが 1 回の Undo で、スライダーのドラッグは
 //!   core がまとめる。ロック・段の数・作業メモリの上限などの断りは core が決め、ここは理由を画面の言語で出すだけ。
 //! - 入力: Generator と塗りつぶしの画像が読むメッシュマップ・モデルのルート・画像は文書の外のもので、`inputs` が毎フレーム
@@ -178,18 +179,35 @@ impl FxState {
             _ => None,
         }
     }
+
+    /// 選んでいる行が、マスクのスタックの行か（まだあるもの）。
+    pub fn in_mask(&self, doc: &Document) -> bool {
+        self.filter(doc)
+            .is_some_and(|(_, _, target)| target == FilterTarget::Mask)
+            || self
+                .anchor(doc)
+                .is_some_and(|info| info.placement == AnchorPlacement::Mask)
+    }
 }
 
-/// プロパティの欄に出す効果の行を選んでいるか（選んだ層が今の層で、マスクに描いていない）。
+/// マスクが対象の層（その層を選んでマスクに描いているあいだだけ。マスクの無い層は対象にならない）。層の行の下の効果の行・
+/// 効果の追加の先・層とマスクのサムネイルの青い枠が、同じこの結果を見る。
+pub fn mask_target(app: &AppState) -> Option<LayerId> {
+    let id = app.selected_layer?;
+    let has_mask = app.doc.layer(id)?.mask().is_some();
+    (app.m2.edit_mask && has_mask).then_some(id)
+}
+
+/// プロパティの欄に出す効果の行を選んでいるか（選んだ層が今の層で、選んだ行のスタックが今の対象の側）。マスクの効果の行を選ぶと
+/// マスクが対象になる（`select_effect`）ので、層の画素が対象のあいだはマスクの効果の行を選んだ状態は残らない。
 pub fn props_visible(app: &AppState) -> bool {
-    if app.m2.edit_mask {
-        return false;
-    }
-    if let Some((layer, _, _)) = app.fx.filter(&app.doc) {
-        return app.selected_layer == Some(layer);
+    let mask_side = app.m2.edit_mask;
+    if let Some((layer, _, target)) = app.fx.filter(&app.doc) {
+        return app.selected_layer == Some(layer) && (target == FilterTarget::Mask) == mask_side;
     }
     if let Some(info) = app.fx.anchor(&app.doc) {
-        return app.selected_layer == Some(info.layer);
+        return app.selected_layer == Some(info.layer)
+            && (info.placement == AnchorPlacement::Mask) == mask_side;
     }
     false
 }
@@ -252,18 +270,23 @@ impl AppState {
             .ok_or(CoreError::LayerNotFound)
     }
 
-    /// 段を選ぶ（その層を選び、マスクへの描画はやめる）。
+    /// 段を選ぶ（その層を選び、その段のスタックの側を対象にする。画素の段なら層の画素、マスクの段ならマスク）。対象の側の効果の行だけが
+    /// 一覧に出るので、選んだ行は選んだ直後も見えたまま残る。
     pub fn select_effect(&mut self, layer: LayerId, id: FilterId) {
+        let mask = self
+            .doc
+            .find_filter(id)
+            .is_some_and(|(_, _, target)| target == FilterTarget::Mask);
         self.selected_layer = Some(layer);
-        self.set_edit_mask(false);
+        self.set_edit_mask(mask);
         self.fx.selected = Some(Selected::Filter { layer, id });
     }
 
     pub fn select_anchor(&mut self, id: AnchorId) {
         if let Some(info) = self.doc.find_anchor(id) {
-            let layer = info.layer;
+            let (layer, mask) = (info.layer, info.placement == AnchorPlacement::Mask);
             self.selected_layer = Some(layer);
-            self.set_edit_mask(false);
+            self.set_edit_mask(mask);
             self.fx.selected = Some(Selected::Anchor { id });
         }
     }

@@ -1298,7 +1298,13 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
 
 /// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアルは行の間・グループの中、
 /// スマートマスクは行の層のマスク、それ以外は断る理由をステータスバーへ）。
-pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
+pub fn layer_list_drop(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &crate::panels::effect_rows::Layout,
+) {
     let ctx = ui.ctx();
     let Some(drag) = DragAndDrop::payload::<ShelfDrag>(ctx) else {
         return;
@@ -1307,8 +1313,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
         return;
     };
     let released = ui.input(|i| i.pointer.any_released());
-    // 一覧の行の高さは層と効果で違うので、行の数え方は効果の行の配置から（層の行の単位に直す）
-    let layout = crate::panels::effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
+    // 一覧の行の高さは層と効果で違うので、行の数え方は一覧を描いた効果の行の配置から（層の行の単位に直す）
     let at = p.y - list.top() + app.ui.layer_scroll;
     let position = layout.position_at(at);
     let painter = ui.painter_at(list);

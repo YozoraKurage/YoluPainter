@@ -1530,7 +1530,8 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
     use yolu_app::lang::shelf_io_error as io_reason;
     use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
     use yolu_io::smart::{
-        REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+        REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_RUST_GENERATORS,
+        REFUSAL_USER_CHANNELS,
     };
     let cases = [
         (REFUSAL_IMAGES, "画像入りは置けません", "Contains images"),
@@ -1563,6 +1564,11 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
             REFUSAL_RUST_GENERATORS,
             "ノイズ・グランジを使っています",
             "It uses Noise and Grunge",
+        ),
+        (
+            REFUSAL_NEW_FILTERS,
+            "0.5.0 で追加したフィルター・ジェネレーターを使っています",
+            "It uses filters or generators added in 0.5.0",
         ),
     ];
     for (message, ja, en) in cases {

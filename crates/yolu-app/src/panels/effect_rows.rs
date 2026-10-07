@@ -1,5 +1,6 @@
-//! 層の行の下の効果の行（Substance Painter の効果の行。Unity 版の `EffectRows`）: 層の行の下に、その層の Anchor（そこまでの結果）、
-//! 画素の効果の段（上が後に掛かる）、マスクの Anchor、マスクの効果の段を字下げした子の行で並べる。行は目（有効の切り替え）・アイコン・
+//! 層の行の下の効果の行（Substance Painter の効果の行。Unity 版の `EffectRows`）: 層の行の下に、対象の側のスタックだけを字下げした
+//! 子の行で並べる。選んだ層でマスクが対象ならマスクの Anchor（そこまでの結果）とマスクの効果の段、それ以外（選んでいない層も）は層の
+//! Anchor と画素の効果の段（どちらも上が後に掛かる）。行は目（有効の切り替え）・アイコン・
 //! 名前と主な値で、押すとその段を選び、プロパティの欄にその段の設定が出る。マウスの乗った行と選んだ行に上へ・下へ・消すのボタン、
 //! 右クリックで同じ操作。効いていない Generator には印（理由はツールチップ）。
 //!
@@ -70,8 +71,9 @@ pub struct Layout {
     layer_tops: Vec<f32>,
 }
 
-/// 層の行の下に並べる子の行（上から）。
-fn children_of(doc: &Document, layer: LayerId) -> Vec<Child> {
+/// 層の行の下に並べる子の行（上から）。`mask_target` はマスクが対象の層（`crate::fx::mask_target`）で、その層の下にはマスクの Anchor と
+/// マスクの効果の段だけ、ほかの層の下には層の Anchor と画素の効果の段だけを出す。
+fn children_of(doc: &Document, layer: LayerId, mask_target: Option<LayerId>) -> Vec<Child> {
     let Some(l) = doc.layer(layer) else {
         return Vec::new();
     };
@@ -96,15 +98,22 @@ fn children_of(doc: &Document, layer: LayerId) -> Vec<Child> {
             });
         }
     };
-    stack(FilterTarget::Content, l.anchor(), AnchorPlacement::Layer);
-    if let Some(mask) = l.mask() {
-        stack(FilterTarget::Mask, mask.anchor(), AnchorPlacement::Mask);
+    match l.mask().filter(|_| mask_target == Some(layer)) {
+        Some(mask) => stack(FilterTarget::Mask, mask.anchor(), AnchorPlacement::Mask),
+        None => stack(FilterTarget::Content, l.anchor(), AnchorPlacement::Layer),
     }
     v
 }
 
-/// 一覧の行を数える。`rows` は層の行（上から。閉じたグループの中身は含まない）、`layer_height` は層の行の高さ。
-pub fn layout(doc: &Document, rows: &[Row], layer_height: f32) -> Layout {
+/// 一覧の行を数える。`rows` は層の行（上から。閉じたグループの中身は含まない）、`layer_height` は層の行の高さ、`mask_target` は
+/// マスクが対象の層（`crate::fx::mask_target`）。対象で子の行の数が変わるので、一覧を描く・ドラッグの落とす先を数える・棚の素材を
+/// 落とす先を数えるのは、同じフレームの同じ `Layout` で行う。
+pub fn layout(
+    doc: &Document,
+    rows: &[Row],
+    layer_height: f32,
+    mask_target: Option<LayerId>,
+) -> Layout {
     let mut entries = Vec::new();
     let mut layer_tops = Vec::with_capacity(rows.len());
     let mut y = 0.0;
@@ -118,7 +127,7 @@ pub fn layout(doc: &Document, rows: &[Row], layer_height: f32) -> Layout {
             last_child: false,
         });
         y += layer_height;
-        let children = children_of(doc, row.id);
+        let children = children_of(doc, row.id, mask_target);
         let n = children.len();
         for (k, child) in children.into_iter().enumerate() {
             entries.push(Entry {
@@ -633,14 +642,17 @@ mod tests {
         crate::m2::visible_rows(&app.doc, &app.m2.collapsed)
     }
 
-    #[test]
-    fn children_follow_the_stack_top_first_and_masks_after_the_pixels() {
-        let mut app = AppState::new(32, 32);
+    /// 層の効果（アンカー・ぼかし・反転）とマスクの効果（アンカー・ぼかし）を両方持つ層。
+    fn both_stacks(app: &mut AppState) -> (LayerId, AnchorId, AnchorId) {
         let layer = app.selected_layer.unwrap();
         app.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        let a = app
+        let layer_anchor = app
             .doc
             .add_anchor(layer, AnchorPlacement::Layer, Some("A"), None)
+            .unwrap();
+        let mask_anchor = app
+            .doc
+            .add_anchor(layer, AnchorPlacement::Mask, Some("M"), None)
             .unwrap();
         for kind in [FilterKind::Blur, FilterKind::Invert] {
             app.apply(Action::Fx(FxOp::AddFilter {
@@ -653,12 +665,22 @@ mod tests {
             target: FilterTarget::Mask,
             kind: FilterKind::Blur,
         }));
+        (layer, layer_anchor, mask_anchor)
+    }
+
+    #[test]
+    fn children_follow_the_stack_top_first_and_only_the_target_side_shows() {
+        let mut app = AppState::new(32, 32);
+        let (layer, layer_anchor, mask_anchor) = both_stacks(&mut app);
         let rows = rows(&app);
-        let l = layout(&app.doc, &rows, 30.0);
+        // 層の画素が対象（マスクは対象でない）: 層のアンカーと画素の段だけ。上（後に掛かる）から反転（index 1）、ぼかし（index 0）
+        let l = layout(&app.doc, &rows, 30.0, None);
         let kinds: Vec<Kind> = l.entries.iter().map(|e| e.kind).collect();
-        assert_eq!(kinds.len(), 1 + 1 + 2 + 1);
-        assert!(matches!(kinds[1], Kind::Child(Child::Anchor { id, .. }) if id == a));
-        // 画素の段は上（後に掛かる）から: 反転（index 1）、ぼかし（index 0）
+        assert_eq!(kinds.len(), 1 + 1 + 2);
+        assert!(matches!(
+            kinds[1],
+            Kind::Child(Child::Anchor { id, placement: AnchorPlacement::Layer, .. }) if id == layer_anchor
+        ));
         assert!(matches!(
             kinds[2],
             Kind::Child(Child::Effect {
@@ -673,18 +695,108 @@ mod tests {
             Kind::Child(Child::Effect {
                 index: 0,
                 count: 2,
+                target: FilterTarget::Content,
                 ..
             })
+        ));
+        assert!(l.entries[3].last_child && !l.entries[2].last_child);
+        assert_eq!(l.height, 30.0 + 3.0 * EFFECT_ROW_HEIGHT);
+        // マスクが対象: マスクのアンカーとマスクの段だけ
+        let l = layout(&app.doc, &rows, 30.0, Some(layer));
+        let kinds: Vec<Kind> = l.entries.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds.len(), 1 + 1 + 1);
+        assert!(matches!(
+            kinds[1],
+            Kind::Child(Child::Anchor { id, placement: AnchorPlacement::Mask, .. }) if id == mask_anchor
         ));
         assert!(matches!(
-            kinds[4],
+            kinds[2],
             Kind::Child(Child::Effect {
                 target: FilterTarget::Mask,
+                index: 0,
+                count: 1,
                 ..
             })
         ));
-        assert!(l.entries[4].last_child && !l.entries[3].last_child);
-        assert_eq!(l.height, 30.0 + 4.0 * EFFECT_ROW_HEIGHT);
+        assert!(l.entries[2].last_child && !l.entries[1].last_child);
+        assert_eq!(l.height, 30.0 + 2.0 * EFFECT_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn the_mask_target_changes_only_that_layers_children() {
+        let mut app = AppState::new(32, 32);
+        let (layer, _, _) = both_stacks(&mut app);
+        // 上の層（選んでいない。マスクの効果も持つ）の下には、マスクが対象の層があっても層の効果を出す
+        app.apply(Action::NewLayer);
+        let upper = app.selected_layer.unwrap();
+        assert_ne!(upper, layer);
+        app.apply(Action::M2(crate::m2::Edit::AddMask(upper)));
+        app.apply(Action::Fx(FxOp::AddFilter {
+            target: FilterTarget::Mask,
+            kind: FilterKind::Invert,
+        }));
+        app.apply(Action::Fx(FxOp::AddFilter {
+            target: FilterTarget::Content,
+            kind: FilterKind::Blur,
+        }));
+        let rows = rows(&app);
+        let upper_row = rows.iter().position(|r| r.id == upper).unwrap();
+        let layer_row = rows.iter().position(|r| r.id == layer).unwrap();
+        let children_of_row = |l: &Layout, row: usize| -> Vec<Child> {
+            l.entries
+                .iter()
+                .filter_map(|e| match e.kind {
+                    Kind::Child(c) if l.row_at(e.y) == Some(row) => Some(c),
+                    _ => None,
+                })
+                .collect()
+        };
+        for mask in [Some(layer), Some(upper), None] {
+            let l = layout(&app.doc, &rows, 30.0, mask);
+            for (row, id) in [(upper_row, upper), (layer_row, layer)] {
+                let targets: Vec<FilterTarget> = children_of_row(&l, row)
+                    .into_iter()
+                    .filter_map(|c| match c {
+                        Child::Effect { target, .. } => Some(target),
+                        Child::Anchor { .. } => None,
+                    })
+                    .collect();
+                let want = if mask == Some(id) {
+                    FilterTarget::Mask
+                } else {
+                    FilterTarget::Content
+                };
+                assert!(!targets.is_empty());
+                assert!(
+                    targets.iter().all(|t| *t == want),
+                    "{mask:?} {id:?}: {targets:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mask_target_without_a_mask_shows_the_layer_effects() {
+        let mut app = AppState::new(32, 32);
+        app.apply(Action::Fx(FxOp::AddFilter {
+            target: FilterTarget::Content,
+            kind: FilterKind::Blur,
+        }));
+        let layer = app.selected_layer.unwrap();
+        let rows = rows(&app);
+        let l = layout(&app.doc, &rows, 30.0, Some(layer));
+        assert_eq!(
+            l.entries.len(),
+            2,
+            "マスクの無い層は、対象を渡されても層の効果"
+        );
+        assert!(matches!(
+            l.entries[1].kind,
+            Kind::Child(Child::Effect {
+                target: FilterTarget::Content,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -699,7 +811,7 @@ mod tests {
         let rows = rows(&app);
         assert_eq!(rows.len(), 2);
         // 上の行: 新しい層（効果なし）、下の行: 下の層（アンカーの行が続く）
-        let l = layout(&app.doc, &rows, 30.0);
+        let l = layout(&app.doc, &rows, 30.0, None);
         assert_eq!(l.layer_y(0), 0.0);
         assert_eq!(l.layer_y(1), 30.0);
         assert_eq!(l.gap_y(2), 30.0 + 30.0 + EFFECT_ROW_HEIGHT);

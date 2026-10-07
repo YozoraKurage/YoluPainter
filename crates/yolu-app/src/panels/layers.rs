@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 
 use egui::{
-    pos2, vec2, Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, WidgetInfo,
-    WidgetType,
+    pos2, vec2, Color32, ColorImage, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui,
+    WidgetInfo, WidgetType,
 };
+
+use yolu_core::FilterTarget;
 
 use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
@@ -37,6 +39,15 @@ const MARK_WIDTH: f32 = 20.0;
 /// 右から `slot` 番目（0 が右端）の印の左端が、行の右端から内へどれだけか。
 fn mark_inset(slot: usize) -> f32 {
     24.0 + MARK_WIDTH * slot as f32
+}
+
+/// マスクのサムネイルの印のツールチップの 1 行（マスクの効果の数。層が対象のあいだ、それらの行は一覧に出ない）。
+pub fn mask_effects_tip(lang: crate::lang::Lang, count: usize) -> String {
+    match (count, lang) {
+        (1, crate::lang::Lang::En) => "1 effect on the mask".to_owned(),
+        (n, crate::lang::Lang::En) => format!("{n} effects on the mask"),
+        (n, crate::lang::Lang::Ja) => format!("マスクに効果 {n} 件"),
+    }
 }
 
 /// 名前欄の右端が、行の右端から内へどれだけか（印が `marks` 個）。印が無いときと 1 つのときは同じ（1 つぶんの場所を空けておく）で、
@@ -292,8 +303,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let rows = m2::visible_rows(&app.doc, &app.m2.collapsed);
-    // 層の行の下に効果の行（高さが違う）が続くので、行の位置は配置を数えて決める
-    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT);
+    // 層の行の下に効果の行（高さが違う。マスクが対象の層はマスクの効果、それ以外は層の効果）が続くので、行の位置は配置を数えて決める。
+    // ドラッグの落とす先の数え方も、このフレームで描いた配置と同じ物を使う（途中で対象が替わっても、見えている行とずれない）
+    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT, crate::fx::mask_target(app));
     let content = layout.height;
     let bar = Scroll::begin(ui, list, content, &mut app.ui.layer_scroll);
     let row_width = list.width() - bar.reserved();
@@ -340,6 +352,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
                 rect,
                 rows[row_index],
                 &rows,
+                &layout,
                 &chosen,
             ),
             effect_rows::Kind::Child(child) => {
@@ -347,8 +360,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
         }
     }
-    follow_drag(ui, app, list, &rows);
-    crate::panels::assets::layer_list_drop(ui, app, list, &rows);
+    follow_drag(ui, app, list, &rows, &layout);
+    crate::panels::assets::layer_list_drop(ui, app, list, &rows, &layout);
     // ドラッグの落とす先（線か、グループの枠）
     if let Some(LayerDrag {
         target: Some(target),
@@ -390,8 +403,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     toolbar(ui, app, &ctx, r, list, enabled);
 }
 
-/// 下の操作の帯のボタンの数（左 7 つ・右 3 つ）。
-const TOOLBAR_BUTTONS: usize = 10;
+/// 下の操作の帯のボタンの数（左 8 つ・右 3 つ）。
+const TOOLBAR_BUTTONS: usize = 11;
 
 /// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
 pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
@@ -459,7 +472,7 @@ fn toolbar(
         vec2(r.width(), TOOLBAR_HEIGHT),
     );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
-    // ボタンは左に 7 つ（新規・塗りつぶし・調整・効果・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
+    // ボタンは左に 8 つ（新規・塗りつぶし・調整・フィルター・ジェネレーター・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
     // 重ならないよう間隔を詰める
     let pitch = ((bar.width() - 8.0) / TOOLBAR_BUTTONS as f32).min(27.0);
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
@@ -526,14 +539,14 @@ fn toolbar(
     if response.clicked() {
         open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
     }
-    // 効果（フィルター・ジェネレーター）を選んでいる層に足す
+    // フィルター・ジェネレーターを選んでいる層の今の対象（画素かマスク）に足す。入り口は別々
     let b = next();
     if w::icon_button(
         ui,
         b,
-        "layers.effect",
+        "layers.filter",
         "auto_awesome",
-        lang.pick("効果を追加", "Add Effect"),
+        crate::fx::menu::add_filter_label(lang),
         false,
         has,
         icon(17.0),
@@ -541,7 +554,23 @@ fn toolbar(
     .clicked()
     {
         let target = crate::fx::menu::target(app);
-        open_popup(app, ctx, PopupKind::M2(Popup::AddEffect(target)), b, 0.0);
+        open_popup(app, ctx, PopupKind::M2(Popup::AddFilter(target)), b, 0.0);
+    }
+    let b = next();
+    if w::icon_button(
+        ui,
+        b,
+        "layers.generator",
+        "texture",
+        crate::fx::menu::add_generator_label(lang),
+        false,
+        has,
+        icon(17.0),
+    )
+    .clicked()
+    {
+        let target = crate::fx::menu::target(app);
+        open_popup(app, ctx, PopupKind::M2(Popup::AddGenerator(target)), b, 0.0);
     }
     if w::icon_button(
         ui,
@@ -736,9 +765,15 @@ fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
 }
 
 /// ポインタの位置から、いまの落とす先を決める。
-fn update_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row], id: LayerId) {
+fn update_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+    id: LayerId,
+) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
-        let layout = effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
         let position = layout.position_at(p.y - list.top() + app.ui.layer_scroll);
         let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
         app.ui.layer_drag = Some(LayerDrag { id, target });
@@ -763,12 +798,18 @@ fn drop_drag(app: &mut AppState, rows: &[Row]) {
 /// ドラッグ中にホイールで一覧を送って、ドラッグしている行が見えなくなったとき。見えない行は描かない（応答が来ない）ので、
 /// 行の側の「動いた・離した」が届かず、落とす先の線が残り続けて落とす操作も起きない。ここで、ボタンを押しているあいだは
 /// 落とす先をポインタに追わせ、離したら行の側と同じく落として手放す。
-fn follow_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
+fn follow_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+) {
     let Some(LayerDrag { id, .. }) = app.ui.layer_drag else {
         return;
     };
     if ui.input(|i| i.pointer.primary_down()) {
-        update_drag(ui, app, list, rows, id);
+        update_drag(ui, app, list, rows, layout, id);
     } else {
         drop_drag(app, rows);
     }
@@ -791,6 +832,66 @@ fn click_modifiers(ui: &Ui) -> egui::Modifiers {
             })
             .unwrap_or(i.modifiers)
     })
+}
+
+/// 行を押したとき（修飾キー無しならその層だけを選ぶ。別の層なら画素が対象、同じ層なら今の対象のまま。Ctrl・Cmd で足し引き、
+/// Shift で範囲、Ctrl + Shift で範囲を足す）。選んでいた効果の欄は層の欄へ戻る。
+fn click_row(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row]) {
+    app.fx.selected = None;
+    let modifiers = click_modifiers(ui);
+    if modifiers.command || modifiers.shift {
+        let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
+        if modifiers.shift {
+            app.select_layer_range(id, modifiers.command, &ids);
+        } else {
+            app.toggle_layer_selected(id);
+        }
+    } else {
+        app.select_single_layer(id);
+    }
+    if app.ui.renaming != Some(id) {
+        app.ui.renaming = None;
+    }
+}
+
+/// 層かマスクのサムネイルを押したとき: 修飾キー無しなら、その層を選んで（今選んでいる層ならそのまま）`mask` の側を対象にする
+/// （切り替えではなく、もう一度押しても同じ側）。修飾キーつきは行を押したのと同じ（選び方だけを変える）。
+fn click_thumb(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row], mask: bool) {
+    let modifiers = click_modifiers(ui);
+    if modifiers.command || modifiers.shift {
+        click_row(ui, app, id, rows);
+        return;
+    }
+    if app.selected_layer != Some(id) {
+        app.select_single_layer(id);
+    }
+    app.fx.selected = None;
+    if app.ui.renaming != Some(id) {
+        app.ui.renaming = None;
+    }
+    if app.m2.edit_mask != mask {
+        app.apply(Action::M2Ui(UiOp::EditMask(mask)));
+    }
+}
+
+/// 層の右クリックのメニュー（行と層のサムネイルで同じ）。押した層を選んでから開く。
+fn open_layer_menu(
+    app: &mut AppState,
+    ctx: &egui::Context,
+    id: LayerId,
+    in_selection: bool,
+    at: Option<Pos2>,
+) {
+    select_for_menu(app, id, in_selection);
+    if let Some(at) = at {
+        open_popup(
+            app,
+            ctx,
+            PopupKind::LayerContext(id),
+            context_anchor(at),
+            0.0,
+        );
+    }
 }
 
 /// 右クリックで選ぶ: 選んだ層の中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
@@ -883,6 +984,7 @@ fn layer_row(
     row: Rect,
     info: Row,
     rows: &[Row],
+    layout: &effect_rows::Layout,
     chosen: &[LayerId],
 ) {
     let id = info.id;
@@ -900,7 +1002,7 @@ fn layer_row(
         .is_some_and(|i| app.doc.is_effectively_clipped(i));
     let selected = app.selected_layer == Some(id);
     let in_selection = selected || (chosen.len() > 1 && chosen.contains(&id));
-    let editing_mask = selected && app.m2.edit_mask && has_mask;
+    let editing_mask = crate::fx::mask_target(app) == Some(id);
     let enabled = app.can_edit();
     let lang = app.lang;
     let hit = row.intersect(list);
@@ -981,21 +1083,7 @@ fn layer_row(
     // 選ぶ（Ctrl・Cmd で足し引き、Shift で範囲、Ctrl + Shift で範囲を足す。選んだ行を押してそのままドラッグすれば選んだ全部を運ぶ）・
     // ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
     if response.clicked() {
-        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
-        let modifiers = click_modifiers(ui);
-        if modifiers.command || modifiers.shift {
-            let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
-            if modifiers.shift {
-                app.select_layer_range(id, modifiers.command, &ids);
-            } else {
-                app.toggle_layer_selected(id);
-            }
-        } else {
-            app.select_single_layer(id);
-        }
-        if app.ui.renaming != Some(id) {
-            app.ui.renaming = None;
-        }
+        click_row(ui, app, id, rows);
     } else if response.drag_started() {
         if !in_selection {
             app.select_single_layer(id);
@@ -1014,19 +1102,10 @@ fn layer_row(
         app.ui.rename_started = false;
     }
     if response.secondary_clicked() {
-        select_for_menu(app, id, in_selection);
-        if let Some(at) = response.interact_pointer_pos() {
-            open_popup(
-                app,
-                ctx,
-                PopupKind::LayerContext(id),
-                context_anchor(at),
-                0.0,
-            );
-        }
+        open_layer_menu(app, ctx, id, in_selection, response.interact_pointer_pos());
     }
     if response.dragged() {
-        update_drag(ui, app, list, rows, id);
+        update_drag(ui, app, list, rows, layout, id);
     }
     if response.drag_stopped() {
         drop_drag(app, rows);
@@ -1084,7 +1163,38 @@ fn layer_row(
         w::icon(&painter, fold, "keyboard_arrow_down", t::TEXT_DIM, 14.0);
     }
     kind_thumb(ui, app, thumbs, ctx, list, thumb, id, !collapsed);
-    // マスク（押すとマスクに描く）
+    // 層のサムネイル（押すと層の画素が対象。選んだ層で画素が対象なら、マスクの有無によらずマスクと同じ青い枠）
+    let pixels_target = selected && !editing_mask;
+    if pixels_target {
+        w::outline(&painter, thumb.expand(2.0), t::ACCENT, 2.0, 2.0);
+    }
+    let thumbr = ui.interact(
+        thumb,
+        ui.make_persistent_id(("layer.thumb", id.0)),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let thumb_label = lang.pick("レイヤーの画素", "Layer pixels");
+    thumbr.widget_info(|| {
+        WidgetInfo::selected(WidgetType::Button, enabled, pixels_target, thumb_label)
+    });
+    if thumbr.clicked() {
+        click_thumb(ui, app, id, rows, false);
+    }
+    // 層のサムネイルは行の上で click を取るので、右クリックも行と同じメニューにつなぐ
+    if thumbr.secondary_clicked() {
+        open_layer_menu(app, ctx, id, in_selection, thumbr.interact_pointer_pos());
+    }
+    if has_mask {
+        let _ = thumbr.on_hover_text(lang.pick(
+            "レイヤーの画素（押すと画素が対象）",
+            "Layer pixels (click to target the pixels)",
+        ));
+    }
+    // マスク（押すとマスクが対象。右クリックでマスクのメニュー）
     if has_mask {
         let maskr = ui.interact(
             mask_box,
@@ -1113,14 +1223,46 @@ fn layer_row(
         if editing_mask {
             w::outline(&painter, mask_box.expand(2.0), t::ACCENT, 2.0, 2.0);
         }
+        // マスクが対象でないあいだはマスクの効果の行が一覧に出ないので、効果の付いたマスクのサムネイルの角に小さな効果の印
+        // （数は画面に出さず、ツールチップに）
+        let hidden_effects = if editing_mask {
+            0
+        } else {
+            app.doc
+                .filters_of(id, FilterTarget::Mask)
+                .map_or(0, <[_]>::len)
+        };
+        if hidden_effects > 0 {
+            let at = mask_box.right_bottom() - vec2(2.0, 2.0);
+            painter.circle_filled(at, 6.0, t::PANEL_HEADER);
+            painter.circle_stroke(at, 6.0, egui::Stroke::new(1.0, t::BORDER));
+            w::icon(
+                &painter,
+                Rect::from_center_size(at, vec2(10.0, 10.0)),
+                "auto_awesome",
+                t::TEXT,
+                9.0,
+            );
+            // 押す操作とツールチップはマスクのサムネイルが受ける（印は読み上げの名前を持つだけ。ツールチップが 2 つ重ならない）
+            let count = mask_effects_tip(lang, hidden_effects);
+            let mark = ui.interact(
+                Rect::from_center_size(at, vec2(12.0, 12.0)),
+                ui.make_persistent_id(("layer.mask.fx", id.0)),
+                Sense::hover(),
+            );
+            mark.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, &count));
+        }
         let tip = lang.pick(
-            "レイヤーマスク（押すとマスクに描く）",
-            "Layer mask (click to paint on it)",
+            "レイヤーマスク（押すとマスクが対象）",
+            "Layer mask (click to target the mask)",
         );
+        let hover = match hidden_effects {
+            0 => tip.to_owned(),
+            n => format!("{tip}\n{}", mask_effects_tip(lang, n)),
+        };
         maskr.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, editing_mask, tip));
         if maskr.clicked() {
-            app.selected_layer = Some(id);
-            app.apply(Action::M2Ui(UiOp::EditMask(!editing_mask)));
+            click_thumb(ui, app, id, rows, true);
         }
         if maskr.secondary_clicked() {
             select_for_menu(app, id, in_selection);
@@ -1128,13 +1270,13 @@ fn layer_row(
                 open_popup(
                     app,
                     ctx,
-                    PopupKind::LayerContext(id),
+                    PopupKind::M2(Popup::MaskContext(id)),
                     context_anchor(at),
                     0.0,
                 );
             }
         }
-        let _ = maskr.on_hover_text(tip);
+        let _ = maskr.on_hover_text(hover);
     }
 
     // 名前（ダブルクリックで変える）

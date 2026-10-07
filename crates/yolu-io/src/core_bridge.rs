@@ -437,15 +437,15 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
         .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
 }
 
-/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の画像の Generator も読み書きできる版）、
-/// 画像の Generator（種類 70）があれば 28、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正
-/// （種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。手動の ID の色
-/// （版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
+/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の中身も読み書きできる版）、
+/// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
+/// Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
+/// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     if !doc.filter_seams() {
         SEAMS_VERSION
-    } else if uses_image_generators(doc) {
+    } else if uses_image_generators(doc) || uses_new_filters(doc) {
         EFFECTS_VERSION
     } else if uses_gradient_mixing(doc) {
         MIXING_VERSION
@@ -636,6 +636,21 @@ pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
                 .iter()
                 .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
                 .any(|e| mixes(e.settings().color_adjust()))
+    })
+}
+/// 文書が 0.5.0 の効果（層の内容とマスクのフィルターの段の種類 70〜79、Generator の種類 66・68・69。無効な段も数える）を持つか。
+/// 持っていれば正本の版は 28 になり、版 25 までの読み手と Unity 版は開けない。
+pub(crate) fn uses_new_filters(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.filters()
+            .iter()
+            .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+            .any(|e| {
+                (70..=79).contains(&e.settings().type_index())
+                    || e.settings()
+                        .generator_settings()
+                        .is_some_and(|g| g.kind.is_050())
+            })
     })
 }
 /// 文書が Rust 版だけの色調補正（調整の層の種類 64〜69、層の内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
@@ -1043,6 +1058,9 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
         6 => generator::Kind::IdColor,
         64 => generator::Kind::Noise,
         65 => generator::Kind::Grunge,
+        66 => generator::Kind::Pattern,
+        68 => generator::Kind::Light,
+        69 => generator::Kind::MaskBuilder,
         70 => generator::Kind::Image,
         _ => generator::Kind::Anchor,
     };
@@ -1139,7 +1157,54 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
             )?,
         };
     }
+    if kind.is_050() {
+        read_generator_effect(f, &format!("{p}.effect"), &mut g)?;
+    }
     Ok(g)
+}
+
+/// 模様・光・マスクの組み立ての欄（正本の版 28。`write_generator_effect` と対）。
+fn read_generator_effect(f: &Fields<'_>, p: &str, g: &mut generator::Settings) -> Result<()> {
+    let int = |name: &str| f.int(&format!("{p}.{name}"));
+    let float = |name: &str| f.float(&format!("{p}.{name}"));
+    let bad = |name: &str| Error::InvalidData(format!("{p}.{name} は範囲外です"));
+    match g.kind {
+        generator::Kind::Pattern => {
+            g.pattern = generator::Pattern {
+                shape: generator::PatternShape::from_index(i64::from(int("shape")?))
+                    .ok_or_else(|| bad("shape"))?,
+                scale: float("scale")?,
+                angle: float("angle")?,
+                width: float("width")?,
+                softness: float("softness")?,
+                offset: [float("offset_u")?, float("offset_v")?],
+            };
+        }
+        generator::Kind::Light => {
+            g.light = generator::Light {
+                azimuth: float("azimuth")?,
+                elevation: float("elevation")?,
+                softness: float("softness")?,
+                ambient: float("ambient")?,
+            };
+        }
+        _ => {
+            for (map, input) in ["curvature", "ambient_occlusion", "position", "thickness"]
+                .iter()
+                .zip(g.mask_builder.inputs.iter_mut())
+            {
+                *input = generator::MaskInput {
+                    weight: float(&format!("{map}.weight"))?,
+                    level: float(&format!("{map}.level"))?,
+                    contrast: float(&format!("{map}.contrast"))?,
+                    invert: f.boolean(&format!("{p}.{map}.invert"))?,
+                };
+            }
+            g.mask_builder.combine = generator::MaskCombine::from_index(i64::from(int("combine")?))
+                .ok_or_else(|| bad("combine"))?;
+        }
+    }
+    Ok(())
 }
 
 /// ノイズ・グランジの欄（正本の版 23。`write_generator` の末尾と対）。
@@ -1322,6 +1387,69 @@ fn read_ramp(f: &Fields<'_>, p: &str) -> Result<Ramp> {
 }
 
 /// 1 つのスタック（`{p}.count` と `{p}.items[i]`）。段の種類・設定・チャンネルを読む。
+/// 版 28 のフィルターの段（種類 70〜79。`effect` の塊。`write_effect_filter` と対）。
+fn read_effect_filter(f: &Fields<'_>, p: &str, kind: i32) -> Result<EffectSettings> {
+    use yolu_core::filter::{MorphologyMode, Settings as F, SlopeMode};
+    let float = |name: &str| f.float(&format!("{p}.{name}"));
+    let int = |name: &str| f.int(&format!("{p}.{name}"));
+    let uint = |name: &str| -> Result<u32> {
+        u32::try_from(int(name)?).map_err(|_| Error::InvalidData(format!("{p}.{name} が負です")))
+    };
+    Ok(EffectSettings::Filter(match kind {
+        70 => F::HistogramScan {
+            position: float("position")?,
+            contrast: float("contrast")?,
+        },
+        71 => F::HistogramRange {
+            range: float("range")?,
+            position: float("position")?,
+        },
+        72 => F::SlopeBlur {
+            intensity: float("intensity")?,
+            samples: uint("samples")?,
+            mode: match int("mode")? {
+                1 => SlopeMode::Min,
+                2 => SlopeMode::Max,
+                _ => SlopeMode::Blur,
+            },
+            scale: float("scale")?,
+            seed: int("seed")?,
+        },
+        73 => F::DirectionalBlur {
+            angle: float("angle")?,
+            distance: float("distance")?,
+        },
+        74 => F::Warp {
+            intensity: float("intensity")?,
+            scale: float("scale")?,
+            seed: int("seed")?,
+        },
+        75 => F::Morphology {
+            mode: if int("mode")? == 1 {
+                MorphologyMode::Erode
+            } else {
+                MorphologyMode::Dilate
+            },
+            radius: uint("radius")?,
+        },
+        76 => F::EdgeDetect {
+            width: uint("width")?,
+            threshold: float("threshold")?,
+        },
+        77 => F::HighPass {
+            radius: uint("radius")?,
+        },
+        78 => F::Median {
+            radius: uint("radius")?,
+        },
+        _ => F::Glow {
+            threshold: float("threshold")?,
+            radius: uint("radius")?,
+            intensity: float("intensity")?,
+        },
+    }))
+}
+
 fn read_filters(f: &Fields<'_>, p: &str, content: bool) -> Result<Vec<FilterSpec>> {
     let mut specs = Vec::new();
     for i in 0..f.int(&format!("{p}.count"))? {
@@ -1350,6 +1478,7 @@ fn read_filters(f: &Fields<'_>, p: &str, content: bool) -> Result<Vec<FilterSpec
             4 => EffectSettings::invert(),
             5 => EffectSettings::normalize(),
             6 => EffectSettings::generator(read_generator(f, &format!("{item}.generator"))?),
+            t @ 70..=79 => read_effect_filter(f, &format!("{item}.effect"), t)?,
             t => EffectSettings::from_color_adjust(read_color_adjust(
                 f,
                 &format!("{item}.adjust"),
@@ -1733,6 +1862,44 @@ fn write_generator(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
         write_projection(w, &image.projection)?;
         w.int(image.component as i32)?;
     }
+    if g.kind.is_050() {
+        write_generator_effect(w, g)?;
+    }
+    Ok(())
+}
+/// 模様・光・マスクの組み立ての欄（正本の版 28。`read_generator_effect` と対）。
+fn write_generator_effect(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
+    match g.kind {
+        generator::Kind::Pattern => {
+            let p = &g.pattern;
+            w.int(p.shape as i32)?;
+            for v in [
+                p.scale,
+                p.angle,
+                p.width,
+                p.softness,
+                p.offset[0],
+                p.offset[1],
+            ] {
+                w.float(v)?;
+            }
+        }
+        generator::Kind::Light => {
+            let l = &g.light;
+            for v in [l.azimuth, l.elevation, l.softness, l.ambient] {
+                w.float(v)?;
+            }
+        }
+        _ => {
+            for input in &g.mask_builder.inputs {
+                w.float(input.weight)?;
+                w.float(input.level)?;
+                w.float(input.contrast)?;
+                w.boolean(input.invert)?;
+            }
+            w.int(g.mask_builder.combine as i32)?;
+        }
+    }
     Ok(())
 }
 
@@ -1884,6 +2051,73 @@ fn write_filters(w: &mut Out<'_>, stack: &[FilterEffect], content: bool) -> Resu
         if let Some(detail) = e.settings().color_adjust() {
             write_color_adjust(w, &detail)?;
         }
+        if let EffectSettings::Filter(f) = e.settings() {
+            write_effect_filter(w, f)?;
+        }
+    }
+    Ok(())
+}
+/// 版 28 のフィルターの段（種類 70〜79）の `effect` の塊（`read_effect_filter` と対）。ほかの種類は何も書かない。
+fn write_effect_filter(w: &mut Out<'_>, f: &yolu_core::filter::Settings) -> Result<()> {
+    use yolu_core::filter::{MorphologyMode, Settings as F, SlopeMode};
+    match *f {
+        F::HistogramScan { position, contrast } => {
+            w.float(position)?;
+            w.float(contrast)?;
+        }
+        F::HistogramRange { range, position } => {
+            w.float(range)?;
+            w.float(position)?;
+        }
+        F::SlopeBlur {
+            intensity,
+            samples,
+            mode,
+            scale,
+            seed,
+        } => {
+            w.float(intensity)?;
+            w.int(samples as i32)?;
+            w.int(match mode {
+                SlopeMode::Blur => 0,
+                SlopeMode::Min => 1,
+                SlopeMode::Max => 2,
+            })?;
+            w.float(scale)?;
+            w.int(seed)?;
+        }
+        F::DirectionalBlur { angle, distance } => {
+            w.float(angle)?;
+            w.float(distance)?;
+        }
+        F::Warp {
+            intensity,
+            scale,
+            seed,
+        } => {
+            w.float(intensity)?;
+            w.float(scale)?;
+            w.int(seed)?;
+        }
+        F::Morphology { mode, radius } => {
+            w.int(i32::from(mode == MorphologyMode::Erode))?;
+            w.int(radius as i32)?;
+        }
+        F::EdgeDetect { width, threshold } => {
+            w.int(width as i32)?;
+            w.float(threshold)?;
+        }
+        F::HighPass { radius } | F::Median { radius } => w.int(radius as i32)?,
+        F::Glow {
+            threshold,
+            radius,
+            intensity,
+        } => {
+            w.float(threshold)?;
+            w.int(radius as i32)?;
+            w.float(intensity)?;
+        }
+        _ => {}
     }
     Ok(())
 }

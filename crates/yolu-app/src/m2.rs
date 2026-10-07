@@ -899,14 +899,21 @@ impl AppState {
     /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 2 つ目のタブはマスクを描くあいだだけ
     /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
     /// 先頭のタブ（ステンシル）へ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+    /// 選んだ効果の行は、マスクを描き始めるとき閉じ、やめるときはマスクのスタックの行だけ閉じる（一覧に出ない行を選んだままにしない。
+    /// 画素の効果の行を選んだ状態は、層の画素が対象なので残す）。
     pub fn set_edit_mask(&mut self, on: bool) {
         let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
         if on {
             self.fx.selected = None; // マスクの欄へ移る（選んだ効果の欄は閉じる）
             self.ui.property_tab = MASK_TAB;
-        } else if was && self.ui.property_tab == MASK_TAB {
-            self.ui.property_tab = 0;
+        } else {
+            if was && self.ui.property_tab == MASK_TAB {
+                self.ui.property_tab = 0;
+            }
+            if self.fx.in_mask(&self.doc) {
+                self.fx.selected = None;
+            }
         }
     }
 

@@ -39,6 +39,20 @@ fn every_filter_kind_is_added_to_the_paint_channel_with_one_undo_step() {
     for kind in FilterKind::ALL {
         let mut s = AppState::new(64, 64);
         let layer = s.selected_layer.unwrap();
+        // スカラーとマスクだけの種類は、スカラーのチャンネル（Roughness）を描いているときに足す
+        let scalar_only = matches!(
+            kind,
+            FilterKind::HistogramScan
+                | FilterKind::HistogramRange
+                | FilterKind::Morphology
+                | FilterKind::EdgeDetect
+        );
+        let paint = if scalar_only {
+            Channel::Roughness
+        } else {
+            Channel::Color
+        };
+        s.apply(Action::M2Ui(UiOp::PaintChannel(paint)));
         let before = s.doc.undo_count();
         add_filter(&mut s, FilterTarget::Content, kind);
         assert_eq!(
@@ -51,7 +65,7 @@ fn every_filter_kind_is_added_to_the_paint_channel_with_one_undo_step() {
         let stage = &s.doc.filters_of(layer, FilterTarget::Content).unwrap()[0];
         assert_eq!(
             stage.channels(),
-            &[Channel::Color],
+            &[paint],
             "{kind:?}: 描くチャンネルだけに掛かる"
         );
         assert_eq!(stage.settings(), &kind.settings(), "{kind:?}");
@@ -76,6 +90,47 @@ fn every_filter_kind_is_added_to_the_paint_channel_with_one_undo_step() {
             1,
             "{kind:?}: Redo"
         );
+    }
+}
+
+#[test]
+fn the_names_core_puts_in_its_texts_are_the_menu_names() {
+    // core の `EffectSettings::name()`（大きさを変えたときの知らせに出る）は、0.5.0 の種類も、メニューと同じ日本語の名前
+    for kind in FilterKind::ALL {
+        if kind.catalog_id().is_some() {
+            assert_eq!(kind.settings().name(), kind.name(Lang::Ja), "{kind:?}");
+        }
+    }
+    for kind in [Kind::Pattern, Kind::Light, Kind::MaskBuilder] {
+        assert_eq!(
+            yolu_core::effects::generator_kind_name(kind),
+            yolu_app::fx::names::generator_name(Lang::Ja, kind)
+        );
+    }
+    // スカラーとマスクだけの種類を色のチャンネルへ足す断り（メニューの押せない項目のツールチップ）も、日英ともメニューの名前で挙げる
+    let scalar_only = [
+        FilterKind::HistogramScan,
+        FilterKind::HistogramRange,
+        FilterKind::Morphology,
+        FilterKind::EdgeDetect,
+    ];
+    let mut s = AppState::new(32, 32);
+    let layer = s.selected_layer.unwrap();
+    for kind in scalar_only {
+        let error = s
+            .doc
+            .add_filter(
+                layer,
+                FilterTarget::Content,
+                yolu_core::FilterSpec::new(kind.settings()).channels(&[Channel::Color]),
+            )
+            .expect_err("色のチャンネルには足せない");
+        for lang in Lang::ALL {
+            let text = lang.core_error(&error);
+            for other in scalar_only {
+                assert!(text.contains(other.name(lang)), "{lang:?} {kind:?}: {text}");
+            }
+        }
     }
 }
 
@@ -468,9 +523,9 @@ fn a_mask_anchor_needs_the_mask_and_an_anchor_generator_needs_an_anchor_below() 
         "{}",
         mask_anchor.name()
     );
-    // 自分の層の Anchor は読めない: メニュー（ジェネレーター ▸）の項目は押せない。ラベルは名前だけで、理由はツールチップ
+    // 自分の層の Anchor は読めない: メニュー（ジェネレーターを追加）の項目は押せない。ラベルは名前だけで、理由はツールチップ
     s.lang = Lang::En;
-    let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
+    let entries = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
     let anchor_entry = yolu_app::ui::menu::leaves(&entries)
         .into_iter()
         .find_map(|e| match e {
@@ -503,51 +558,39 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
     for lang in Lang::ALL {
         let mut s = AppState::new(64, 64);
         s.lang = lang;
-        let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
-        // 並びは フィルター（平ら）→ 区切り → ジェネレーター ▸。見出し（「…の画素」・「Generator」）は置かない
-        assert!(
-            !entries.iter().any(|e| matches!(e, Entry::Heading(_))),
-            "{lang:?}: 見出しを置かない"
-        );
-        let separator = entries
-            .iter()
-            .position(|e| matches!(e, Entry::Separator))
-            .expect("区切り");
-        assert_eq!(separator, 13, "{lang:?}: フィルターが 13 種、平らに並ぶ");
-        assert!(entries[..separator]
-            .iter()
-            .all(|e| matches!(e, Entry::Item { .. })));
-        match &entries[separator + 1..] {
-            [Entry::Submenu {
-                label,
-                entries: generators,
-                ..
-            }] => {
-                assert_eq!(label, lang.pick("ジェネレーター", "Generators"));
-                assert_eq!(
-                    generators.len(),
-                    yolu_app::fx::names::GENERATOR_KINDS.len(),
-                    "{lang:?}"
-                );
-            }
-            other => panic!("{lang:?}: 区切りの後はジェネレーターの入れ子だけ: {other:?}"),
+        // 入り口は 2 つ: 「フィルターを追加」はフィルターだけ、「ジェネレーターを追加」はジェネレーターだけを平らに並べる
+        // （見出し・区切り・入れ子は置かない）
+        let filters = yolu_app::fx::menu::add_filter_entries(&s, FilterTarget::Content);
+        let generators = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
+        for (entries, count) in [
+            (&filters, yolu_app::fx::FilterKind::ALL.len()),
+            (&generators, yolu_app::fx::names::GENERATOR_KINDS.len()),
+        ] {
+            assert_eq!(entries.len(), count, "{lang:?}");
+            assert!(
+                entries.iter().all(|e| matches!(e, Entry::Item { .. })),
+                "{lang:?}: 見出し・区切り・入れ子を置かない"
+            );
         }
-        let labels: Vec<(String, bool)> = leaves(&entries)
-            .into_iter()
-            .filter_map(|e| match e {
-                Entry::Item { label, enabled, .. } => Some((label.clone(), *enabled)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            labels.len(),
-            13 + yolu_app::fx::names::GENERATOR_KINDS.len(),
-            "{lang:?}: {labels:?}"
-        );
+        // 断られる種類（色のチャンネルにスカラーだけのフィルター）は押せない項目で残る
+        assert!(filters.iter().all(|e| matches!(
+            e,
+            Entry::Item {
+                action: Action::Fx(FxOp::AddFilter { .. }),
+                ..
+            } | Entry::Item { enabled: false, .. }
+        )));
+        assert!(generators.iter().all(|e| matches!(
+            e,
+            Entry::Item {
+                action: Action::Fx(FxOp::AddGenerator { .. }) | Action::Fx(FxOp::Deselect),
+                ..
+            }
+        )));
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(Edit::AddMask(layer)));
         for target in [FilterTarget::Content, FilterTarget::Mask] {
-            let entries = yolu_app::fx::menu::add_entries(&s, target);
+            let entries = yolu_app::fx::menu::add_generator_entries(&s, target);
             for expected in [Kind::Noise, Kind::Grunge] {
                 assert!(leaves(&entries).iter().any(|e| matches!(e,
                     Entry::Item { action: Action::Fx(FxOp::AddGenerator { kind, .. }), enabled: true, .. } if *kind == expected
@@ -557,7 +600,11 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
 
         // 法線のチャンネル: ぼかし以外は押せない。理由はラベルに続けず、ツールチップに置く
         s.apply(Action::M2Ui(UiOp::PaintChannel(Channel::Normal)));
-        let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
+        let mut entries = yolu_app::fx::menu::add_filter_entries(&s, FilterTarget::Content);
+        entries.extend(yolu_app::fx::menu::add_generator_entries(
+            &s,
+            FilterTarget::Content,
+        ));
         let disabled: Vec<(&String, &Option<String>)> = leaves(&entries)
             .into_iter()
             .filter_map(|e| match e {
@@ -600,7 +647,7 @@ fn the_filter_menu_is_in_the_menu_bar_before_view() {
     assert_eq!(yolu_app::shell::menu_titles(Lang::En)[4], "Filter");
     let s = AppState::new(64, 64);
     let entries = yolu_app::shell::menu_entries(&s, 4);
-    assert!(entries.len() > 15);
+    assert!(entries.len() > yolu_app::fx::FilterKind::ALL.len());
 }
 
 // ───────── 入力のつなぎ ─────────
@@ -1060,6 +1107,112 @@ fn filters_and_anchors_survive_save_and_reopen_and_can_be_edited_after() {
     let mut third = AppState::new(64, 64);
     third.apply(Action::OpenProject(path));
     assert_eq!(effect_counts(&third), (3, 1, 1), "{}", third.message);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 0.5.0 のフィルター（種類 70〜79）を画素とマスクに足し、値を変え、保存して開き直しても同じ設定（取り消しで足す前へ戻る）。
+#[test]
+fn the_new_filters_survive_save_and_reopen_with_their_values() {
+    use yolu_core::filter::{MorphologyMode, Settings as F};
+    let dir = temp_dir("filters_v28");
+    let path = dir.join("fx.ylp");
+    let mut s = AppState::new(64, 64);
+    let base = s.selected_layer.unwrap();
+    let before = s.doc.undo_count();
+    for kind in [
+        FilterKind::DirectionalBlur,
+        FilterKind::SlopeBlur,
+        FilterKind::Warp,
+        FilterKind::Median,
+        FilterKind::HighPass,
+        FilterKind::Glow,
+    ] {
+        add_filter(&mut s, FilterTarget::Content, kind);
+    }
+    s.apply(Action::M2(Edit::AddMask(base)));
+    for kind in [
+        FilterKind::HistogramScan,
+        FilterKind::HistogramRange,
+        FilterKind::Morphology,
+        FilterKind::EdgeDetect,
+    ] {
+        add_filter(&mut s, FilterTarget::Mask, kind);
+    }
+    // 1 つの値を変える（目録の欄の値で）
+    let morph = s.doc.filters_of(base, FilterTarget::Mask).unwrap()[2].id();
+    fx(
+        &mut s,
+        FxOp::SetSettings {
+            layer: base,
+            id: morph,
+            settings: EffectSettings::Filter(F::Morphology {
+                mode: MorphologyMode::Erode,
+                radius: 7,
+            }),
+            coalesce: false,
+        },
+    );
+    let stages = |app: &AppState| -> Vec<EffectSettings> {
+        app.doc.layers()[0]
+            .filters()
+            .iter()
+            .chain(app.doc.layers()[0].mask().unwrap().filters().iter())
+            .map(|e| e.settings().clone())
+            .collect()
+    };
+    let expected = stages(&s);
+    assert_eq!(expected.len(), 10, "{}", s.message);
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path.clone()));
+    assert!(again.read_only_reason().is_none(), "{}", again.message);
+    assert_eq!(stages(&again), expected);
+    // 取り消しを重ねると、足す前（マスクを足す前）へ戻る
+    while s.doc.undo_count() > before {
+        s.apply(Action::Undo);
+    }
+    assert!(s.doc.layers()[0].filters().is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 0.5.0 の模様（マップを読まない Generator）を足して値を変え、保存して開き直しても同じ設定（開いた文書はマップを待たずに編集できる）。
+/// 光・マスクの組み立ての往復は yolu-io の `filters_v28`（マップを読む種類は、開くとマップがそろうまで読むだけ）。
+#[test]
+fn the_pattern_generator_survives_save_and_reopen() {
+    let dir = temp_dir("generators_v28");
+    let path = dir.join("gen.ylp");
+    let mut s = AppState::new(64, 64);
+    let base = s.selected_layer.unwrap();
+    add_generator(&mut s, FilterTarget::Content, Kind::Pattern);
+    let pattern = s.doc.filters_of(base, FilterTarget::Content).unwrap()[0].id();
+    let mut g = generator::Settings::new(Kind::Pattern);
+    g.pattern.shape = generator::PatternShape::Checker;
+    g.pattern.scale = 3.0;
+    fx(
+        &mut s,
+        FxOp::SetSettings {
+            layer: base,
+            id: pattern,
+            settings: EffectSettings::generator(g),
+            coalesce: false,
+        },
+    );
+    let stages = |app: &AppState| -> Vec<EffectSettings> {
+        app.doc.layers()[0]
+            .filters()
+            .iter()
+            .map(|e| e.settings().clone())
+            .collect()
+    };
+    let expected = stages(&s);
+    assert_eq!(expected.len(), 1, "{}", s.message);
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path));
+    assert!(again.read_only_reason().is_none(), "{}", again.message);
+    assert_eq!(stages(&again), expected, "{}", again.message);
     let _ = std::fs::remove_dir_all(dir);
 }
 

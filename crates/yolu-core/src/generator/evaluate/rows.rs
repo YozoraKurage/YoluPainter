@@ -204,6 +204,12 @@ impl BoundGenerator<'_> {
                     *o = self.image_value(x0 + k as u32, y).unwrap_or_else(none);
                 }
             }
+            // 模様・光・マスクの組み立ては 1 画素ずつ（SIMD にしない）
+            Kind::Pattern | Kind::Light | Kind::MaskBuilder => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = self.base_050(x0 + k as u32, y, at + k).unwrap_or_else(none);
+                }
+            }
             Kind::ShapeGradient => {
                 let local = g.volume.local();
                 match local.shape() {

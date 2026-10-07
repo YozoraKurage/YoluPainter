@@ -395,7 +395,8 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     // (ラベル, 押せるか, 理由)。理由はラベルに続けず、ツールチップに置く
     let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool, Option<String>) {
         let lang = h.state().state.lang;
-        let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
+        let entries =
+            yolu_app::fx::menu::add_filter_entries(&h.state().state, FilterTarget::Content);
         yolu_app::ui::menu::leaves(&entries)
             .into_iter()
             .find_map(|e| match e {
