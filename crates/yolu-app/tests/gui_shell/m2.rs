@@ -5,7 +5,7 @@ use crate::common;
 
 use common::*;
 use egui::{pos2, Key, Modifiers, PointerButton};
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::engine::{BlendMode, Channel, LayerKind};
 use yolu_app::lang::Lang;
@@ -337,7 +337,7 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
     assert_eq!(h.state().state.doc.channels().len(), 6);
     h.get_by_label("チャンネルを追加").click();
     h.run();
-    let at = popup_item(&h, "スカラー").center();
+    let at = popup_item(&h, "L8").center();
     click(&mut h, at);
     let ao = h.state().state.m2.paint_channel;
     assert!(!ao.is_standard(), "足したチャンネルを描く先にする");
@@ -368,10 +368,10 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
         "スカラー 1",
         "名前の変更も 1 回の取り消し"
     );
-    // 種類（行の右端の箱）
-    h.get_by_label("スカラー").click();
+    // 種類（行の右端の箱。形式の名前）
+    h.get_by_label("L8").click();
     h.run();
-    let at = popup_item(&h, "ノーマル").center();
+    let at = popup_item(&h, "RGB8").center();
     click(&mut h, at);
     assert_eq!(
         h.state().state.doc.channel_info(ao).unwrap().kind,
@@ -395,6 +395,26 @@ fn channels_panel_adds_renames_changes_kind_and_deletes() {
     assert!(h.state().state.doc.channel_info(ao).is_some());
 }
 
+/// 開いているポップアップの項目のチェックの印。
+fn popup_item_checked(h: &Harness<'_, YoluApp>, label: &str) -> bool {
+    let at = popup_item(h, label);
+    h.get_all_by_label(label)
+        .find(|n| n.rect() == at)
+        .unwrap()
+        .accesskit_node()
+        .toggled()
+        == Some(egui::accesskit::Toggled::True)
+}
+
+/// 合成モードの箱の上の縁の、描くチャンネルだけの値の印（チャンネルの名前の小さな文字。チャンネルの行など、同じ名前のほかの部品より低い）。
+fn own_legend(h: &Harness<'_, YoluApp>, name: &str) -> Option<egui::Rect> {
+    h.query_all_by_label(name)
+        .map(|n| n.rect())
+        .find(|r| r.height() < 14.0)
+}
+
+/// 描くチャンネルだけの合成モードと不透明度は、合成モードのメニューの頭の項目（チェック）で切り替える。そのチャンネルだけの値のときは、
+/// 合成モードの箱の上にチャンネルの名前が出て、合成モードを替えても層の値は変わらない。切り替えも 1 回の Undo。
 #[test]
 fn per_channel_blend_leaves_the_layer_value_alone() {
     let mut h = app(1280.0, 800.0, 128);
@@ -404,19 +424,36 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
     h.get_by_label("ラフネス を描くチャンネルにする").click();
     h.run();
     assert_eq!(h.state().state.m2.paint_channel, Channel::Roughness);
-    // そのチャンネル専用の合成にして、合成モードを替える
-    h.get_by_label_contains("専用にする").click();
+    let own = |h: &Harness<'_, YoluApp>| {
+        !h.state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .channel_blend(Channel::Roughness)
+            .is_empty()
+    };
+    assert!(
+        own_legend(&h, "ラフネス").is_none(),
+        "層の値に従う間は名前を出さない"
+    );
+    // メニューの頭の項目で、そのチャンネル専用の合成にする
+    let blend_box = h.get_by_label("通常").rect().center();
+    click(&mut h, blend_box);
     h.run();
-    assert!(!h
-        .state()
-        .state
-        .doc
-        .layer(id)
-        .unwrap()
-        .channel_blend(Channel::Roughness)
-        .is_empty());
+    assert!(!popup_item_checked(&h, "ラフネス だけの値"));
+    let at = popup_item(&h, "ラフネス だけの値").center();
+    click(&mut h, at);
+    assert!(own(&h));
+    assert!(popup_kind(&h).is_none(), "選ぶとメニューは閉じる");
+    assert!(
+        own_legend(&h, "ラフネス").is_some(),
+        "専用のときは箱の上に名前"
+    );
+    // 合成モードを替える
     h.get_by_label("通常").click();
     h.run();
+    assert!(popup_item_checked(&h, "ラフネス だけの値"));
     let at = popup_item(&h, "乗算").center();
     click(&mut h, at);
     let layer = h.state().state.doc.layer(id).unwrap();
@@ -432,6 +469,25 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
             .blend_mode_in(Channel::Roughness),
         BlendMode::Normal
     );
+    assert!(own(&h), "合成モードの取り消しは専用のまま");
+    // 層の値に戻す（同じ項目のチェックを外す）。戻すのも 1 回の Undo
+    h.get_by_label("通常").click();
+    h.run();
+    let at = popup_item(&h, "ラフネス だけの値").center();
+    click(&mut h, at);
+    assert!(!own(&h));
+    assert!(own_legend(&h, "ラフネス").is_none());
+    undo(&mut h);
+    assert!(own(&h));
+    undo(&mut h);
+    assert!(!own(&h), "専用にしたのも 1 回の Undo");
+    // 英語: 項目は「<名前> only」、印はチャンネルの名前
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    click(&mut h, blend_box);
+    let at = popup_item(&h, "Roughness only").center();
+    click(&mut h, at);
+    assert!(own(&h));
+    assert!(own_legend(&h, "Roughness").is_some());
 }
 
 #[test]
@@ -792,6 +848,199 @@ fn snapshot_channels_panel() {
     );
     apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
     h.snapshot("m2_channels_panel");
+}
+
+/// 見た目を lilToon にして、影・発光・マットキャップ・リムライト・ラメを入にしてひな形のチャンネルを作り、ラメだけを切る。どのスロットも
+/// 読まないユーザーチャンネルを 1 つ追加する（「そのほか」）。
+fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
+    use yolu_core::look::{LookKind, LookValue};
+    let mut h = app(1280.0, 1000.0, 256);
+    apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+    {
+        let doc = &mut h.state_mut().state.doc;
+        let mut look = doc.look().clone();
+        look.kind = LookKind::LilToon;
+        for p in [
+            "_UseShadow",
+            "_UseEmission",
+            "_UseMatCap",
+            "_UseRim",
+            "_UseGlitter",
+        ] {
+            look.properties.insert(p.into(), LookValue::Float(1.0));
+        }
+        doc.set_look(look, false).unwrap();
+        yolu_app::look::apply_template(doc, lang).unwrap();
+        let mut look = doc.look().clone();
+        look.properties
+            .insert("_UseGlitter".into(), LookValue::Float(0.0));
+        doc.set_look(look, false).unwrap();
+    }
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+            lang.pick("スカラー 1", "Scalar 1").into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))),
+    );
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    h
+}
+
+/// チャンネルの欄のまとまりの見出し（上から）と、開いているか。見出しは開閉の印を持つ低いボタン（行の部品より低い）。
+fn channel_groups(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+    let mut out: Vec<(f32, String, bool)> = h
+        .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Button))
+        .filter(|n| {
+            let r = n.rect();
+            r.left() < 320.0 && (r.height() - 20.0).abs() < 1.0
+        })
+        .filter_map(|n| {
+            let node = n.accesskit_node();
+            let open = node.toggled()? == egui::accesskit::Toggled::True;
+            Some((n.rect().top(), node.label()?.to_string(), open))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.into_iter().map(|(_, l, o)| (l, o)).collect()
+}
+
+/// 見た目が lilToon なら、ユーザーチャンネルは読むスロットの部位ごとのまとまり（lilToon のインスペクターの節の並び、最後に「そのほか」）。
+/// 標準の 6 つは上のまま。見た目がその部位の機能を切っているまとまりは、開いたことが無ければたたむ。見出しを押すと開閉し、描くチャンネルが
+/// たたんだまとまりにあると見出しの左に印。
+#[test]
+fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
+    let mut h = liltoon_channels(Lang::Ja);
+    let groups = channel_groups(&h);
+    assert_eq!(
+        groups,
+        [
+            ("影", true),
+            ("発光", true),
+            ("マットキャップ", true),
+            ("リムライト", true),
+            ("ラメ", false),
+            ("そのほか", true),
+        ]
+        .map(|(l, o)| (l.to_string(), o)),
+        "インスペクターの並び。切っている部位（ラメ）はたたむ"
+    );
+    let row = |h: &Harness<'_, YoluApp>, name: &str| {
+        h.query_all_by_label(name)
+            .map(|n| n.rect())
+            .find(|r| r.left() < 320.0 && (r.height() - 28.0).abs() < 1.0)
+    };
+    let header = |h: &Harness<'_, YoluApp>, name: &str| {
+        h.get_all_by_label(name)
+            .map(|n| n.rect())
+            .find(|r| r.left() < 320.0 && r.height() < 24.0)
+            .unwrap()
+    };
+    // 標準の 6 つは見出しより上
+    let first = header(&h, "影");
+    for name in [
+        "カラー",
+        "ラフネス",
+        "メタリック",
+        "ハイト",
+        "ノーマル",
+        "エミッション",
+    ] {
+        assert!(
+            row(&h, name).unwrap().bottom() <= first.top() + 0.5,
+            "{name}"
+        );
+    }
+    // 開いたまとまりの行はその見出しの下、たたんだまとまりの行は出ない
+    let shadow = row(&h, "影の強度").unwrap();
+    assert!(shadow.top() >= first.bottom() - 0.5);
+    assert!(row(&h, "スカラー 1").unwrap().top() > header(&h, "そのほか").top());
+    assert!(row(&h, "ラメのマスク").is_none());
+    // 押すと開閉（画面の状態。文書は変わらない）
+    let steps = h.state().state.doc.undo_count();
+    let at = header(&h, "影").center();
+    click(&mut h, at);
+    assert!(row(&h, "影の強度").is_none());
+    assert_eq!(channel_groups(&h)[0], ("影".to_string(), false));
+    let at = header(&h, "ラメ").center();
+    click(&mut h, at);
+    assert!(row(&h, "ラメのマスク").is_some());
+    let at = header(&h, "影").center();
+    click(&mut h, at);
+    assert!(row(&h, "影の強度").is_some());
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    // 描くチャンネルがたたんだまとまりにあると、見出しの左に印（開いていれば行が見えるので出さない）
+    let accent_at = |h: &mut Harness<'_, YoluApp>, name: &str| {
+        let r = header(h, name);
+        let img = h.render().unwrap();
+        let px = img.get_pixel((r.left() - 8.0 + 1.0) as u32, r.center().y as u32);
+        [px[0], px[1], px[2]] == [0x3D, 0x8E, 0xF0]
+    };
+    let glitter = h
+        .state()
+        .state
+        .doc
+        .channels()
+        .into_iter()
+        .find(|c| h.state().state.doc.channel_info(*c).unwrap().name == "ラメのマスク")
+        .unwrap();
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(glitter)));
+    assert!(!accent_at(&mut h, "ラメ"), "開いているときは印なし");
+    let at = header(&h, "ラメ").center();
+    click(&mut h, at);
+    assert!(accent_at(&mut h, "ラメ"));
+    assert!(!accent_at(&mut h, "影"));
+    h.snapshot("channels_groups_ja");
+    // 英語
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    let names: Vec<String> = channel_groups(&h).into_iter().map(|(l, _)| l).collect();
+    assert_eq!(
+        names,
+        [
+            "Shadow",
+            "Emission",
+            "MatCap",
+            "Rim Light",
+            "Glitter",
+            "Other"
+        ]
+    );
+    h.snapshot("channels_groups_en");
+}
+
+/// 見た目が lilToon でないとき・どのスロットも読まないユーザーチャンネルだけのときは、まとめない（見出しを出さない）。
+#[test]
+fn channels_are_not_grouped_without_liltoon_parts() {
+    use yolu_core::look::LookKind;
+    // lilToon でも、どのスロットも読まないユーザーチャンネルだけ
+    let mut h = app(1280.0, 1000.0, 256);
+    assert_eq!(h.state().state.doc.look().kind, LookKind::LilToon);
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+            "AO".into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))),
+    );
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    assert!(channel_groups(&h).is_empty());
+    assert!(h.query_by_label("AO").is_some());
+    // 見た目が標準（PBR）なら、スロットを読むチャンネルがあってもまとめない
+    let mut h = liltoon_channels(Lang::Ja);
+    assert!(!channel_groups(&h).is_empty());
+    {
+        let doc = &mut h.state_mut().state.doc;
+        let mut look = doc.look().clone();
+        look.kind = LookKind::Standard;
+        doc.set_look(look, false).unwrap();
+    }
+    h.run();
+    assert!(channel_groups(&h).is_empty());
+    for name in ["影の強度", "ラメのマスク", "スカラー 1"] {
+        assert!(h.query_by_label(name).is_some(), "{name}");
+    }
 }
 
 #[test]

@@ -528,6 +528,16 @@ pub fn slots_reading(doc: &Document, channel: Channel) -> Vec<&'static liltoon::
         .collect()
 }
 
+/// チャンネルを読む lilToon のスロットの節（いくつもの節のスロットが読むなら、インスペクターで前の節）。見た目が lilToon でない・
+/// どのスロットも読まなければ None。チャンネルの欄のまとまりに使う。
+pub fn channel_section(doc: &Document, channel: Channel) -> Option<Section> {
+    let reading = slots_reading(doc, channel);
+    liltoon::SLOT_SECTIONS
+        .iter()
+        .find(|(_, slots)| reading.iter().any(|s| slots.contains(&s.name)))
+        .map(|(section, _)| *section)
+}
+
 /// 名前が文書のチャンネルと重ならないように（重なれば「 2」「 3」…）。
 fn free_name(doc: &Document, base: &str) -> String {
     let taken = |n: &str| {

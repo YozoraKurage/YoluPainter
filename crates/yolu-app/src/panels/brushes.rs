@@ -61,13 +61,15 @@ pub(super) fn live_brush(app: &AppState) -> Brush {
     brush
 }
 
-/// 白い紙の上の見本のストローク（まだ描けていなければ紙だけ。描くのは次のフレーム）。
+/// 白い紙の上の見本のストローク。place は見本を出す所（設定を変えて新しい絵を描いている間は、その所の前の絵を出し続ける。
+/// その所でまだ一度も描けていなければ紙だけ）。
 pub(super) fn paint_sample(
     ui: &mut Ui,
     app: &mut AppState,
     rect: Rect,
     brush: &Brush,
     spec: SampleSpec,
+    place: egui::Id,
 ) {
     w::rounded(ui.painter(), rect, Color32::WHITE, 3.0);
     if !ui.is_rect_visible(rect) {
@@ -84,23 +86,21 @@ pub(super) fn paint_sample(
     } else {
         Rect::from_center_size(inner.center(), vec2(inner.width(), inner.width() / aspect))
     };
-    match app.brushes.samples.request(brush, spec) {
-        Some(key) => {
-            if let Some(texture) = app.brushes.samples.texture(ui.ctx(), key) {
-                ui.painter().image(
-                    texture,
-                    fitted,
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-            }
-        }
-        None => {
-            // 別のスレッドで描いている最中なら、絵ができたときに描き直しが来る
-            if app.brushes.samples.needs_next_frame() {
-                ui.ctx().request_repaint();
-            }
-        }
+    let shown = app.brushes.samples.shown(place, brush, spec);
+    if let Some(texture) = shown
+        .key
+        .and_then(|key| app.brushes.samples.texture(ui.ctx(), key))
+    {
+        ui.painter().image(
+            texture,
+            fitted,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    // 別のスレッドで描いている最中なら、絵ができたときに描き直しが来る
+    if !shown.current && app.brushes.samples.needs_next_frame() {
+        ui.ctx().request_repaint();
     }
 }
 
@@ -436,6 +436,7 @@ fn brush_row(
         sample_rect,
         &brush,
         SampleSpec::row(group.is_eraser()),
+        egui::Id::new(("brush.sample.row", key)),
     );
 
     response
@@ -631,7 +632,14 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         vec2(area.width() - 2.0 * t::PADDING, TOOL_SAMPLE_HEIGHT),
     );
     let live = live_brush(app);
-    paint_sample(ui, app, sample, &live, SampleSpec::tool(is_eraser(app)));
+    paint_sample(
+        ui,
+        app,
+        sample,
+        &live,
+        SampleSpec::tool(is_eraser(app)),
+        egui::Id::new("brush.sample.tool"),
+    );
     let mut y = sample.bottom() + 6.0;
     let mut next = || {
         let r = Rect::from_min_size(

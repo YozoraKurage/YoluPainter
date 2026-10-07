@@ -94,7 +94,14 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     );
     let eraser = is_eraser(app);
     let live = live_brush(app);
-    paint_sample(ui, app, sample, &live, SampleSpec::detail(eraser));
+    paint_sample(
+        ui,
+        app,
+        sample,
+        &live,
+        SampleSpec::detail(eraser),
+        egui::Id::new("brush.sample.detail"),
+    );
     // カテゴリの名前と既定に戻す
     let title = Rect::from_min_size(
         pos2(pane.left() + 10.0, sample.bottom() + 6.0),

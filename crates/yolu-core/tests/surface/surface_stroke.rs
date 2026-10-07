@@ -9,7 +9,7 @@ use yolu_core::geometry::{
     pick, CameraView, DabRefusal, MirrorOutcome, MirrorPlane, OrbitCamera, RadialSymmetry,
     SamplingError, SurfaceCloneSource, SurfaceEffect, SurfaceGeometry, SurfaceHit, SurfaceStencil,
     SurfaceStroke, SurfaceStrokeError, SurfaceStrokeOptions, SurfaceSymmetrySetup, SurfaceTriangle,
-    SymmetryAxis,
+    SymmetryAxis, SURFACE_DABS_PER_EVENT,
 };
 use yolu_core::glam::{Quat, Vec2, Vec3};
 use yolu_core::{
@@ -1278,4 +1278,172 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
         max_alpha(&faint)
     );
     assert_eq!(max_alpha(&strong), 255);
+}
+
+/// 速い入力の線: 左の島の左端から右の島の右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より
+/// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする。
+fn fast_line() -> (Arc<SurfaceGeometry>, CameraView, Brush, [Vec2; 3]) {
+    let g = plane();
+    let view = front(&g);
+    let mut b = brush(BrushEffect::Paint);
+    b.base.spacing = 0.01;
+    let points = [
+        screen(&view, p(0.05, 0.5)),
+        screen(&view, p(1.95, 0.5)),
+        screen(&view, p(1.95, 0.45)),
+    ];
+    (g, view, b, points)
+}
+
+/// how の決まりで速い入力の線を引き、確定した層の画素と、最初の入力で塗らずに持ち越したダブの数を返す。
+fn fast_stroke(
+    effect: SurfaceEffect,
+    how: impl Fn(&mut Document, &mut SurfaceStroke, &mut Stroke),
+) -> (Vec<u8>, usize, usize) {
+    let (g, view, mut b, [from, far, next]) = fast_line();
+    let (mut d, layer) = document();
+    let undo = d.undo_count();
+    if effect == SurfaceEffect::Smudge {
+        b.effect = BrushEffect::Smudge { strength: 1.0 };
+        for y in 0..H {
+            for x in 0..W {
+                let v = if (x / 2 + y / 2) % 2 == 0 { 255 } else { 0 };
+                d.set_pixel(layer, x, y, Rgba8::new(v, 40, 255 - v, 255))
+                    .unwrap();
+            }
+        }
+        d.clear_history().unwrap();
+    }
+    let undo = if effect == SurfaceEffect::Smudge {
+        0
+    } else {
+        undo
+    };
+    let (mut stroke, s) = begin(
+        &mut d,
+        layer,
+        &g,
+        view,
+        &b,
+        from,
+        SurfaceStrokeOptions {
+            effect,
+            ..Default::default()
+        },
+    );
+    let mut s = s.unwrap();
+    s.add(&mut d, &mut stroke, far, 1.0).unwrap();
+    s.add(&mut d, &mut stroke, next, 1.0).unwrap();
+    let held = s.queued();
+    how(&mut d, &mut s, &mut stroke);
+    s.finish(&mut d, &mut stroke).unwrap();
+    assert_eq!(s.queued(), 0, "離したら残りを全部塗る");
+    let dabs = s.stats.dabs;
+    assert!(d.end_stroke(stroke).unwrap().changed);
+    assert_eq!(d.undo_count(), undo + 1, "1 本のストローク");
+    (bytes(&d, layer), held, dabs)
+}
+
+/// 3D ビューで速く動かして 1 回の入力の区間が長くなっても、ストロークは消えない: 区間のダブを全部並べ、1 回の入力で
+/// [`SURFACE_DABS_PER_EVENT`] まで塗って残りを持ち越す。持ち越した分は、後のフレームで少しずつ塗っても、離したときにまとめて
+/// 塗っても、すぐ全部塗ったときと同じ画素（並べるときに当たりと大きさを決めるので、塗る時によらない）。指先（直前のダブの面の点を
+/// 読む）も同じ。
+#[test]
+fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_rest_is_painted() {
+    for effect in [SurfaceEffect::Paint, SurfaceEffect::Smudge] {
+        // すぐ全部塗る（持ち越し無し）
+        let (at_once, held, dabs) = fast_stroke(effect, |d, s, stroke| {
+            s.paint_queued(d, stroke, usize::MAX).unwrap();
+        });
+        assert!(
+            dabs > 2 * SURFACE_DABS_PER_EVENT,
+            "{effect:?}: 試験の前提: 長い区間 ({dabs})"
+        );
+        assert!(
+            held > 0,
+            "{effect:?}: 1 回の入力で塗る数を超えた分を持ち越す"
+        );
+        // フレームごとに少しずつ
+        let (over_frames, _, frames_dabs) = fast_stroke(effect, |d, s, stroke| {
+            let mut frames = 0;
+            while s.queued() > 0 {
+                let painted = s.paint_queued(d, stroke, SURFACE_DABS_PER_EVENT).unwrap();
+                assert!(painted <= SURFACE_DABS_PER_EVENT);
+                frames += 1;
+            }
+            assert!(frames > 1, "{effect:?}: 何フレームかに分けて塗った");
+        });
+        // 離したときにまとめて
+        let (on_release, _, release_dabs) = fast_stroke(effect, |_, _, _| {});
+        assert_eq!((frames_dabs, release_dabs), (dabs, dabs), "{effect:?}");
+        assert!(
+            over_frames == at_once,
+            "{effect:?}: フレームに分けても同じ画素"
+        );
+        assert!(
+            on_release == at_once,
+            "{effect:?}: 離したときに塗っても同じ画素"
+        );
+        // 線は右の島の右端まで届いている
+        let painted = |x: usize, y: usize| at_once[(y * W as usize + x) * 4 + 3] > 0;
+        if effect == SurfaceEffect::Paint {
+            assert!((0..H as usize).any(|y| painted(2, y)), "左の島の左端");
+            assert!((0..H as usize).any(|y| painted(30, y)), "右の島の右端");
+        }
+    }
+}
+
+/// 持ち越しても、1 回の操作のメモリの上限は今のまま: 持ち越したダブで予算を超えたら、ストロークを取り消して断る（途中まで塗った
+/// 画素も戻る）。予算は、最初の入力で塗る左の島の分は入り、持ち越した右の島の分で超える値を探す（投影の塗りの覚えは別に与えて、
+/// 予算は巻き戻しの写しだけに効かせる）。
+#[test]
+fn a_held_over_dab_past_the_memory_budget_still_cancels_the_stroke() {
+    let (g, view, b, [from, far, next]) = fast_line();
+    let mut found = false;
+    for budget in (256u64..=64 << 10).step_by(64) {
+        let (mut d, layer) = document();
+        let (before, undo) = (bytes(&d, layer), d.undo_count());
+        d.set_stroke_budget_bytes(budget).unwrap();
+        let (mut stroke, s) = begin(
+            &mut d,
+            layer,
+            &g,
+            view,
+            &b,
+            from,
+            SurfaceStrokeOptions {
+                projection_memory: Some(64 << 20),
+                ..Default::default()
+            },
+        );
+        let Ok(mut s) = s else {
+            d.cancel_stroke(stroke);
+            continue;
+        };
+        if s.add(&mut d, &mut stroke, far, 1.0).is_err()
+            || s.add(&mut d, &mut stroke, next, 1.0).is_err()
+        {
+            d.cancel_active_stroke();
+            continue;
+        }
+        assert!(s.queued() > 0);
+        match s.finish(&mut d, &mut stroke) {
+            Ok(()) => {
+                d.end_stroke(stroke).unwrap();
+                break;
+            }
+            Err(e) => {
+                assert_eq!(
+                    e,
+                    SurfaceStrokeError::Core(yolu_core::CoreError::StrokeBudgetExceeded)
+                );
+                assert!(!d.has_active_stroke(), "core が取り消した");
+                assert_eq!(bytes(&d, layer), before, "途中まで塗った画素も戻る");
+                assert_eq!(d.undo_count(), undo);
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "最初の入力は入り、持ち越した分で超える予算がある");
 }

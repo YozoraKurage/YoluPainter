@@ -476,6 +476,11 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     app.canvas.shift_hold = None;
     app.canvas.ruler_constraint = None;
     let endpoint = app.canvas.current_end.take();
+    // 3D ビューのストロークは 3D ビューの終わらせ方で（持ち越したダブと最後の区間を塗ってから確定する）
+    if app.view3d.input.surface.is_some() {
+        crate::view3d::input::finish(app, cancel);
+        return;
+    }
     if crate::region::tools::finish_drag(app, cancel) {
         return;
     }

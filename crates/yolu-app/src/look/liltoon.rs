@@ -1770,6 +1770,100 @@ pub fn shader_name(mode: RenderMode, outline: bool) -> String {
     )
 }
 
+/// テクスチャのスロットの節（インスペクターの節の並び。チャンネルの欄が、ユーザーチャンネルを部位ごとにまとめるのに使う）。
+/// どのスロットもちょうど 1 つの節に入る。
+pub const SLOT_SECTIONS: &[(Section, &[&str])] = &[
+    (
+        Section::Main,
+        &[
+            "_MainTex",
+            "_MainColorAdjustMask",
+            "_AlphaMask",
+            "_Main2ndTex",
+            "_Main2ndBlendMask",
+            "_Main3rdTex",
+            "_Main3rdBlendMask",
+        ],
+    ),
+    (
+        Section::Shadow,
+        &[
+            "_ShadowStrengthMask",
+            "_ShadowBorderMask",
+            "_ShadowBlurMask",
+            "_ShadowColorTex",
+            "_Shadow2ndColorTex",
+            "_Shadow3rdColorTex",
+        ],
+    ),
+    (Section::RimShade, &["_RimShadeMask"]),
+    (
+        Section::Emission,
+        &[
+            "_EmissionMap",
+            "_EmissionBlendMask",
+            "_Emission2ndMap",
+            "_Emission2ndBlendMask",
+        ],
+    ),
+    (
+        Section::Normal,
+        &[
+            "_BumpMap",
+            "_Bump2ndMap",
+            "_Bump2ndScaleMask",
+            "_AnisotropyTangentMap",
+            "_AnisotropyScaleMask",
+            "_AnisotropyShiftNoiseMask",
+        ],
+    ),
+    (Section::Backlight, &["_BacklightColorTex"]),
+    (
+        Section::Reflection,
+        &["_SmoothnessTex", "_MetallicGlossMap", "_ReflectionColorTex"],
+    ),
+    (
+        Section::MatCap,
+        &[
+            "_MatCapTex",
+            "_MatCapBlendMask",
+            "_MatCap2ndTex",
+            "_MatCap2ndBlendMask",
+            "_MatCapBumpMap",
+            "_MatCap2ndBumpMap",
+        ],
+    ),
+    (Section::Rim, &["_RimColorTex"]),
+    (Section::Glitter, &["_GlitterColorTex"]),
+    (Section::Outline, &["_OutlineTex", "_OutlineWidthMask"]),
+];
+
+/// スロットの節。
+pub fn slot_section(name: &str) -> Option<Section> {
+    SLOT_SECTIONS
+        .iter()
+        .find(|(_, slots)| slots.contains(&name))
+        .map(|(section, _)| *section)
+}
+
+/// 見た目がその節の機能を使っているか（機能の入切。メインカラーはいつも使う。輪郭線は輪郭線のシェーダー）。
+pub fn section_in_use(look: &MaterialLook, section: Section) -> bool {
+    let any = |names: &[&str]| names.iter().any(|n| on(look, n));
+    match section {
+        Section::Shadow => any(&["_UseShadow"]),
+        Section::RimShade => any(&["_UseRimShade"]),
+        Section::Emission => any(&["_UseEmission", "_UseEmission2nd"]),
+        Section::Normal => any(&["_UseBumpMap", "_UseBump2ndMap", "_UseAnisotropy"]),
+        Section::Backlight => any(&["_UseBacklight"]),
+        Section::Reflection => any(&["_UseReflection"]),
+        Section::MatCap => any(&["_UseMatCap", "_UseMatCap2nd"]),
+        Section::Rim => any(&["_UseRim"]),
+        Section::Glitter => any(&["_UseGlitter"]),
+        Section::Outline => shader_info(look).outline,
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1882,5 +1976,43 @@ mod tests {
         assert!(section_props(Section::Main).any(|n| n == "_Main3rdTexAngle"));
         assert!(section_props(Section::RimShade)
             .all(|n| n.starts_with("_UseRimShade") || n.starts_with("_RimShade")));
+    }
+
+    /// どのスロットもちょうど 1 つの節に入る（チャンネルの欄のまとまり）。節はインスペクターの並び。見た目が使う節は機能の入切で決まる。
+    #[test]
+    fn every_slot_belongs_to_exactly_one_section_in_inspector_order() {
+        for slot in SLOTS {
+            let count = SLOT_SECTIONS
+                .iter()
+                .filter(|(_, slots)| slots.contains(&slot.name))
+                .count();
+            assert_eq!(count, 1, "{}", slot.name);
+        }
+        let listed: usize = SLOT_SECTIONS.iter().map(|(_, s)| s.len()).sum();
+        assert_eq!(listed, SLOTS.len(), "表に無いスロットの名前が無い");
+        let order: Vec<Section> = SLOT_SECTIONS.iter().map(|(s, _)| *s).collect();
+        let inspector: Vec<Section> = GROUPS
+            .iter()
+            .map(|(s, _)| *s)
+            .filter(|s| order.contains(s))
+            .fold(Vec::new(), |mut v, s| {
+                if v.last() != Some(&s) {
+                    v.push(s);
+                }
+                v
+            });
+        assert_eq!(order, inspector, "インスペクターの節の並び");
+        assert_eq!(slot_section("_ShadowBorderMask"), Some(Section::Shadow));
+        assert_eq!(slot_section("_OutlineWidthMask"), Some(Section::Outline));
+        assert_eq!(slot_section("_Nothing"), None);
+        let mut look = with_shader("lilToon");
+        assert!(section_in_use(&look, Section::Main));
+        assert!(!section_in_use(&look, Section::Emission));
+        look.properties.insert(
+            "_UseEmission2nd".into(),
+            yolu_core::look::LookValue::Float(1.0),
+        );
+        assert!(section_in_use(&look, Section::Emission));
+        assert!(!section_in_use(&look, Section::Outline));
     }
 }

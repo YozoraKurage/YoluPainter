@@ -177,6 +177,28 @@ impl Thumbnails {
     }
 }
 
+/// 描くチャンネルだけの合成モードと不透明度のときの印: 合成モードの箱の上の縁に、チャンネルの名前を小さく（縁の線を切って重ねる）。
+fn own_legend(ui: &mut Ui, blend: Rect, name: &str, tip: &str) {
+    let p = ui.painter();
+    let shown = w::fit(p, name, blend.width() - 16.0, t::LABEL_SMALL);
+    let width = w::text_width(p, &shown, t::LABEL_SMALL);
+    let at = Rect::from_min_size(
+        pos2(blend.left() + 6.0, blend.top() - 6.0),
+        vec2(width + 4.0, 11.0),
+    );
+    w::fill(p, at, t::PANEL_BG);
+    w::text(
+        p,
+        at.translate(vec2(2.0, 0.0)),
+        &shown,
+        t::LABEL_SMALL.with_color(t::ACCENT),
+        Align::Left,
+    );
+    let response = ui.interact(at, ui.make_persistent_id("layers.own"), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
+    response.on_hover_text(tip);
+}
+
 fn open_popup(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect, min: f32) {
     app.popup = Some(OpenPopup {
         kind,
@@ -202,13 +224,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         })
     });
 
-    // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。左端の切り替えで、そのチャンネルだけの値にする
-    let top = Rect::from_min_size(
+    // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。そのチャンネルだけの値にするのは、合成モードのメニューの頭の項目
+    let rest = Rect::from_min_size(
         pos2(r.left() + t::PADDING, r.top() + 6.0),
         vec2(r.width() - 2.0 * t::PADDING, 24.0),
     );
-    let own_rect = Rect::from_min_size(top.min, vec2(18.0, top.height()));
-    let rest = Rect::from_min_max(pos2(top.left() + 20.0, top.top()), top.max);
     let left_w = ((rest.width() - 6.0) * 0.42).floor();
     let mut blend_rect = Rect::from_min_size(rest.min, vec2(left_w, rest.height()));
     let mut opacity_rect =
@@ -228,51 +248,42 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
         let name = m2::channel_name(lang, &app.doc, channel);
-        let own_tip = if own {
-            lang.pick(
-                format!("{name} だけの合成モードと不透明度（押すと層の値に戻す）"),
-                format!("{name} only: its own blend mode and opacity (click to follow the layer)"),
+        let (blend_tip, opacity_tip) = if own {
+            (
+                lang.pick(
+                    format!("{name} だけの合成モード"),
+                    format!("Blend mode ({name} only)"),
+                ),
+                lang.pick(
+                    format!("{name} だけの不透明度"),
+                    format!("Opacity ({name} only)"),
+                ),
             )
         } else {
-            lang.pick(
-                format!("層の合成モードと不透明度（押すと {name} 専用にする）"),
-                format!("The layer's blend mode and opacity (click to give {name} its own)"),
+            (
+                lang.pick("合成モード", "Blend mode").to_owned(),
+                lang.pick("レイヤーの不透明度", "Layer opacity").to_owned(),
             )
         };
-        if w::icon_button(
-            ui,
-            own_rect,
-            "layers.own",
-            m2::channel_icon(channel),
-            &own_tip,
-            own,
-            enabled,
-            15.0,
-        )
-        .clicked()
-        {
-            app.apply(Action::M2(Edit::OwnBlend {
-                id,
-                channel,
-                own: !own,
-            }));
-        }
         let (response, b) = w::dropdown(
             ui,
             blend_rect,
             "layers.blend",
             None,
             m2::blend_label(lang, blend),
-            Some(lang.pick("合成モード", "Blend mode")),
+            Some(&blend_tip),
             enabled,
             0.0,
         );
+        if own {
+            own_legend(ui, b, &name, &blend_tip);
+        }
         if response.clicked() {
             open_popup(app, &ctx, PopupKind::BlendMode(id), b, b.width());
         }
         let spec = SliderSpec::new(opacity_label, 0.0, 100.0, NumberFormat::int("%"))
             .enabled(enabled)
-            .tooltip(lang.pick("レイヤーの不透明度", "Layer opacity"));
+            .tooltip(&opacity_tip);
         let o = w::slider(
             ui,
             opacity_rect,

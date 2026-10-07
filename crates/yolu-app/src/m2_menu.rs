@@ -7,8 +7,8 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::m2::{
-    self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label, BrushOp,
-    Edit, EffectKind, UiOp,
+    self, channel_format, dual_mode_label, kind_name, new_channel_info, texture_mode_label,
+    tip_label, BrushOp, Edit, EffectKind, UiOp,
 };
 use crate::state::{Action, AppState};
 use crate::subtool::SubToolAction;
@@ -138,7 +138,7 @@ pub fn edges_name(lang: Lang, mode: HeightEdgeMode) -> &'static str {
 
 /// 新しいユーザーチャンネルの名前（種類の名前に番号。文書の中で重ならない）。
 pub fn new_channel_name(app: &AppState, kind: ChannelKind) -> String {
-    let base = kind_label(app.lang, kind);
+    let base = kind_name(app.lang, kind);
     (1..)
         .map(|n| format!("{base} {n}"))
         .find(|name| {
@@ -348,7 +348,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             .iter()
             .map(|k| {
                 let info = new_channel_info(new_channel_name(app, *k), *k);
-                Entry::item(kind_label(lang, *k), Action::M2(Edit::AddChannel(info))).enabled(free)
+                Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
             })
             .collect(),
         Popup::ChannelKind(channel) => {
@@ -363,7 +363,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                         ..new_channel_info(info.name.clone(), *k)
                     };
                     Entry::item(
-                        kind_label(lang, *k),
+                        channel_format(&next),
                         Action::M2(Edit::SetChannel {
                             channel,
                             info: next,

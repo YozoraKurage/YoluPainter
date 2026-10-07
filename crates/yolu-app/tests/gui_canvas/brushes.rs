@@ -1607,3 +1607,60 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     assert!(st(&h).m2.brush.pressure.is_identity());
     assert!(!st(&h).brush_is_modified(b("standard")));
 }
+
+// ───────── 見本の点滅 ─────────
+
+/// ツールのプロパティのつまみを動かした直後のフレームでも、ツールの見本は前の絵を出し続ける（紙だけになって点滅しない）。新しい見本が
+/// できたら替わる（見本は実際の窓と同じく別のスレッドで描く）。
+#[test]
+fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
+    use yolu_app::brushes::sample::{key_of, SampleSpec};
+    let mut h = app(1600.0, 900.0, 128);
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .state
+        .brushes
+        .samples
+        .render_in_background(&ctx);
+    let key = |h: &H| {
+        let s = st(h);
+        let mut brush = s.m2.brush.clone();
+        brush.base = s.brush.settings([1.0; 4], false);
+        key_of(&brush, SampleSpec::tool(false))
+    };
+    // この絵を最後のフレームに描いたか
+    let drawn = |h: &mut H, key: u64| {
+        let Some(id) = h.state_mut().state.brushes.samples.texture(&ctx, key) else {
+            return false;
+        };
+        h.output()
+            .shapes
+            .iter()
+            .any(|c| matches!(&c.shape, egui::Shape::Mesh(m) if m.texture_id == id))
+    };
+    let wait = |h: &mut H, key: u64| {
+        let start = std::time::Instant::now();
+        while !drawn(h, key) {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(30),
+                "見本が描かれない"
+            );
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    };
+    let old = key(&h);
+    wait(&mut h, old);
+    // つまみを動かす（半径のつまみと同じく、今の設定を変える）
+    h.state_mut().state.brush.radius = 40.0;
+    h.step();
+    let new = key(&h);
+    assert_ne!(new, old);
+    let fresh = st(&h).brushes.samples.image(new).is_some() && drawn(&mut h, new);
+    assert!(
+        drawn(&mut h, old) || fresh,
+        "動かした直後のフレームも、見本は紙だけにならない"
+    );
+    wait(&mut h, new);
+    assert!(!drawn(&mut h, old), "新しい見本ができたら替わる");
+}

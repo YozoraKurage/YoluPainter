@@ -40,7 +40,7 @@ pub use dab::{
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
     pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceStroke, SurfaceStrokeError,
-    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup,
+    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup, MAX_QUEUED_DABS,
 };
 pub use project::{
     CopyTransform, ProjectionSettings, ProjectionStats, SurfaceProjector, MAX_BUCKET,
@@ -56,7 +56,9 @@ pub use sampling::{
 };
 pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
-pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
+pub use stroke::{
+    ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT, SURFACE_DABS_PER_SEGMENT,
+};
 pub use symmetry::{
     build_expanded, build_mirrored, copy_count, copy_hits, find_copy, search_distance, union_dabs,
     CopyHit, DabSide, ExpandedSurfaceDab, MirrorOutcome, MirrorPlane, RadialSymmetry,

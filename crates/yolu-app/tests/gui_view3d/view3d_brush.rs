@@ -620,3 +620,98 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
         "調整が無ければ、ペンの 0.375 は 0.25 と別の線"
     );
 }
+
+/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力ごと・
+/// フレームごとに決まった数までダブを塗り、残りを持ち越して後のフレームで塗る。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを
+/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間に窓のフォーカスを
+/// 失っても、同じ画素の 1 本の線になる（終える時に持ち越しを塗ってから確定する）。
+#[test]
+fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_in() {
+    let corners = [
+        Vec3::new(-0.45, 0.3, -0.5),
+        Vec3::new(0.45, -0.3, -0.5),
+        Vec3::new(0.45, -0.25, -0.5),
+        Vec3::new(0.4, -0.2, -0.5),
+    ];
+    let mut shots = Vec::new();
+    for how in [
+        "one per frame",
+        "one frame",
+        "with the release",
+        "focus lost",
+    ] {
+        let (mut h, rect) = cube_view();
+        h.state_mut().state.brush.radius = 2.0;
+        h.state_mut().state.brush.spacing = 0.05;
+        let points: Vec<Pos2> = corners.iter().map(|c| screen_of(&h, rect, *c)).collect();
+        let last = *points.last().unwrap();
+        press_with(&h, points[0], Modifiers::NONE);
+        h.step();
+        match how {
+            "one per frame" => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                    h.run();
+                    let left = h
+                        .state()
+                        .state
+                        .view3d
+                        .input
+                        .surface
+                        .as_ref()
+                        .unwrap()
+                        .queued();
+                    assert_eq!(left, 0, "{how}: 持ち越した分は後のフレームで塗り終える");
+                }
+                release_with(&h, last, Modifiers::NONE);
+            }
+            "one frame" | "focus lost" => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                }
+                h.step();
+                let left = h
+                    .state()
+                    .state
+                    .view3d
+                    .input
+                    .surface
+                    .as_ref()
+                    .unwrap()
+                    .queued();
+                assert!(
+                    left > 0,
+                    "{how}: 試験の前提: 1 回の入力で塗る数を超えて持ち越した"
+                );
+                if how == "focus lost" {
+                    h.event(Event::WindowFocused(false));
+                } else {
+                    release_with(&h, last, Modifiers::NONE);
+                }
+            }
+            _ => {
+                for p in &points[1..] {
+                    h.event(Event::PointerMoved(*p));
+                }
+                release_with(&h, last, Modifiers::NONE);
+            }
+        }
+        h.step();
+        assert!(
+            h.state().state.view3d.input.surface.is_none(),
+            "{how}: 離したら確定"
+        );
+        h.run();
+        assert!(message(&h).is_empty(), "{how}: {}", message(&h));
+        assert_eq!(h.state().state.doc.undo_count(), 1, "{how}: 1 本の線");
+        shots.push(snapshot(&h));
+    }
+    let painted = shots[0].chunks(4).filter(|p| p[3] > 0).count();
+    assert!(painted > 100, "線が描けている（{painted}）");
+    assert!(shots[1] == shots[0], "1 フレームにまとめても同じ画素");
+    assert!(shots[2] == shots[0], "離すのと同じフレームでも同じ画素");
+    assert!(
+        shots[3] == shots[0],
+        "フォーカスを失っても、持ち越しを塗ってから確定"
+    );
+}

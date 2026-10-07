@@ -438,7 +438,7 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
     click_tab(&mut h, yolu_app::Tab::Channels);
     h.get_by_label("チャンネルを追加").click();
     h.run();
-    let at = popup_item(&h, "スカラー").center();
+    let at = popup_item(&h, "L8").center();
     click(&mut h, at);
     let row = rect_of(&h, "スカラー 1", |r| r.height() < 40.0);
     let name_at = egui::pos2(row.left() + 100.0, row.center().y);

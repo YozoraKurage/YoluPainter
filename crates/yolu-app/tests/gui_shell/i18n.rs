@@ -1779,26 +1779,13 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
 }
 
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu() {
-    // チャンネルの名前（チャンネルのパネルの行）、プリセット・効果・合成モードの箱の値、テクスチャセットの名前。
-    // （レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
-    const KNOWN_JA: [&str; 5] = [
-        "エミッション",
-        "テクスチャセット 1",
-        "ノーマル",
-        "メタリック",
-        "ラフネス",
-    ];
-    // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。ブラシの 2 つ（「効かない」注記と
-    // 「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき（注記は欄を無効にしてツールチップへ）一覧から消える
-    const KNOWN_EN: [&str; 7] = [
-        "Emission",
-        "Height",
-        "Metallic",
-        "Normal",
-        "Roughness",
-        "Texture Set 1",
-        "Watercolor Edge",
-    ];
+    // チャンネルの名前（チャンネルのパネルの行。種類の欄は形式の名前だけなので、長い名前だけが詰まる）、プリセット・効果・合成モードの
+    // 箱の値、テクスチャセットの名前。（レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
+    const KNOWN_JA: [&str; 2] = ["エミッション", "テクスチャセット 1"];
+    // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。チャンネルの名前は詰まらない。
+    // ブラシの 2 つ（「効かない」注記と「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき
+    // （注記は欄を無効にしてツールチップへ）一覧から消える
+    const KNOWN_EN: [&str; 2] = ["Texture Set 1", "Watercolor Edge"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();

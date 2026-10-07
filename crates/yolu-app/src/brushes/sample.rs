@@ -12,6 +12,9 @@
 //! 描くのを別のスレッド（見本専用の小さな rayon の池。`POOL_THREADS` 本）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の
 //! 見本で画面が止まらない）。見本の中の並列（core の筆の計算・合成）もこの池の中で回るので、全体の rayon の池（合成・保存の並列）を
 //! 見本が塞がない。描いている最中の札は重ねて頼まず、同時に頼む数にも上限がある。
+//!
+//! 見本を出す所（ツールのプロパティ・詳細の窓・一覧の行・アセットの欄）は、所ごとに最後に出した札を覚え、設定を変えて新しい札の絵が
+//! まだ無い間は前の絵を出し続ける（[`SampleCache::shown`]。つまみを動かすたびに紙だけになって点滅しない）。
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -343,6 +346,18 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
     })
 }
 
+/// 見本を出す所で出す絵（[`SampleCache::shown`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shown {
+    /// 出す絵の札（その所でまだ一度も絵を出していなければ None で、紙だけ）。
+    pub key: Option<u64>,
+    /// 今の設定の絵か（false なら、新しい絵ができるまで前の絵を出している）。
+    pub current: bool,
+}
+
+/// 覚える「最後に出した札」の数の上限（超えたら、絵の無くなった所の分を捨てる）。
+const MAX_SHOWN: usize = 4 * MAX_ENTRIES;
+
 /// 描いた回数などの数（試験が「描き直す条件」を確かめる）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SampleStats {
@@ -380,6 +395,8 @@ pub struct SampleCache {
     background: Option<Background>,
     /// このフレームに、同時の上限で頼めなかった札があった（次のフレームで頼み直す）。
     starved: bool,
+    /// 見本を出す所ごとの、最後に出した札。
+    shown: HashMap<egui::Id, u64>,
     pub stats: SampleStats,
 }
 
@@ -533,6 +550,39 @@ impl SampleCache {
         Some(key)
     }
 
+    /// 見本を出す所 place に出す絵: 今の設定の絵があればそれ（その所の最後に出した札として覚える）。まだ無ければ（描いている最中・
+    /// 1 フレームの上限で次へ送った）、その所で最後に出した絵を出し続ける（新しい絵が上がったら替わる）。
+    pub fn shown(&mut self, place: egui::Id, brush: &Brush, spec: SampleSpec) -> Shown {
+        if let Some(key) = self.request(brush, spec) {
+            if self.shown.len() >= MAX_SHOWN && !self.shown.contains_key(&place) {
+                let slots = &self.slots;
+                self.shown.retain(|_, k| slots.contains_key(k));
+            }
+            self.shown.insert(place, key);
+            return Shown {
+                key: Some(key),
+                current: true,
+            };
+        }
+        let previous = self.shown.get(&place).copied();
+        let key = previous.filter(|key| match self.slots.get_mut(key) {
+            Some(slot) => {
+                // 出している間は、一番使っていない画像として捨てられないように
+                self.clock += 1;
+                slot.used = self.clock;
+                true
+            }
+            None => false,
+        });
+        if previous.is_some() && key.is_none() {
+            self.shown.remove(&place);
+        }
+        Shown {
+            key,
+            current: false,
+        }
+    }
+
     /// 上限を超えていれば、一番使っていない画像から捨てる（今入れた `keep` は残す）。
     fn evict(&mut self, keep: u64) {
         while self.slots.len() > MAX_ENTRIES || self.bytes > MAX_BYTES {
@@ -547,6 +597,7 @@ impl SampleCache {
             if let Some(slot) = self.slots.remove(&oldest) {
                 self.bytes -= slot.image.rgba.len();
                 self.stats.evicted += 1;
+                self.shown.retain(|_, k| *k != oldest);
             }
         }
     }
@@ -851,6 +902,60 @@ mod tests {
         assert_eq!(cache.texture(&ctx, key), Some(a), "同じ絵を作り直さない");
         assert_eq!(cache.texture(&ctx, key ^ 1), None);
         assert_eq!(cache.image(key).unwrap().width, 340);
+    }
+
+    /// 設定を変えた直後のフレームは、新しい見本ができるまで、その所の前の絵を出す（紙だけにしない）。できたら新しい絵に替わる。
+    /// 一度も絵を出していない所は紙だけ。前の絵は、出している間は覚えの上限で捨てられない。
+    #[test]
+    fn a_place_keeps_showing_its_last_sample_until_the_new_one_is_drawn() {
+        let ctx = egui::Context::default();
+        let mut cache = SampleCache::default();
+        cache.render_in_background(&ctx);
+        let spec = SampleSpec::tool(false);
+        let (tool, other) = (egui::Id::new("tool"), egui::Id::new("other"));
+        let mut frame = 0;
+        let mut until_current = |cache: &mut SampleCache, brush: &Brush| {
+            let start = std::time::Instant::now();
+            loop {
+                frame += 1;
+                cache.begin_frame(frame);
+                let shown = cache.shown(tool, brush, spec);
+                if shown.current {
+                    return shown.key.unwrap();
+                }
+                assert!(start.elapsed() < std::time::Duration::from_secs(20));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        let before = Brush::default();
+        let old = until_current(&mut cache, &before);
+        // つまみを動かした直後のフレーム: 新しい札の絵はまだ無いので、前の絵
+        let mut after = before.clone();
+        after.base.radius = 30.0;
+        cache.begin_frame(10_000);
+        let shown = cache.shown(tool, &after, spec);
+        assert_eq!(
+            shown,
+            Shown {
+                key: Some(old),
+                current: false
+            }
+        );
+        assert!(cache.image(old).is_some());
+        // ほかの所（一度も出していない）は紙だけ
+        let mut third = before.clone();
+        third.base.radius = 40.0;
+        assert_eq!(
+            cache.shown(other, &third, spec),
+            Shown {
+                key: None,
+                current: false
+            }
+        );
+        // できたら新しい絵
+        let new = until_current(&mut cache, &after);
+        assert_ne!(new, old);
+        assert_eq!(cache.shown(tool, &after, spec).key, Some(new));
     }
 
     /// 池を塞ぐ試験どうしを 1 つずつにする（片方が全体の池を塞いだまま、もう片方が見本の池を塞いで、互いを待つのを避ける）。

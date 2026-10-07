@@ -384,11 +384,36 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             let own = layer.is_some_and(|l| !l.channel_blend(channel).is_empty());
             let current = layer.map(|l| l.blend_mode_in(channel));
             let group = layer.is_some_and(|l| l.is_group());
-            crate::m2::blend_choices(group)
+            // 頭: 描くチャンネルだけの合成モードと不透明度にする・層の値に戻す
+            let name = crate::m2::channel_name(app.lang, &app.doc, channel);
+            let lang = app.lang;
+            let own_item = Entry::item(
+                lang.pick(format!("{name} だけの値"), format!("{name} only")),
+                Action::M2(Edit::OwnBlend {
+                    id,
+                    channel,
+                    own: !own,
+                }),
+            )
+            .checked(own)
+            .tooltip(if own {
+                lang.pick(
+                    format!("{name} だけの合成モードと不透明度（押すと層の値に戻す）"),
+                    format!(
+                        "{name} only: its own blend mode and opacity (click to follow the layer)"
+                    ),
+                )
+            } else {
+                lang.pick(
+                    format!("層の合成モードと不透明度（押すと {name} 専用にする）"),
+                    format!("The layer's blend mode and opacity (click to give {name} its own)"),
+                )
+            });
+            [own_item, Entry::Separator]
                 .into_iter()
-                .map(|m| {
+                .chain(crate::m2::blend_choices(group).into_iter().map(|m| {
                     Entry::item(
-                        crate::m2::blend_label(app.lang, m),
+                        crate::m2::blend_label(lang, m),
                         Action::M2(Edit::BlendMode {
                             id,
                             channel: own.then_some(channel),
@@ -396,7 +421,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                         }),
                     )
                     .radio(current == Some(m))
-                })
+                }))
                 .collect()
         }
         PopupKind::M2(popup) => crate::m2_menu::entries(app, popup),

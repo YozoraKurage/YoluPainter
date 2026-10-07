@@ -8,6 +8,8 @@
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）は、面のストロークに通す（core の `SurfaceStrokeOptions`）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
+//! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てない: 面のストロークは、1 回の入力とフレームごとに決まった数までダブを
+//!   塗り、残りを持ち越す（`SurfaceStroke::paint_queued`）。持ち越しがあればフレームを続けて頼み、離したら残りを塗ってから確定する。
 //!
 //! 画面の点はタブの中身の左上からの egui の点。core のカメラも同じ点の大きさで作る（ストロークの間隔は Unity 版と同じく画面の点）。
 
@@ -15,6 +17,7 @@ use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Stroke, Ui
 use yolu_core::geometry::{
     copy_hits, pick, world_radius, CameraView, Ray, SurfaceCloneSource, SurfaceEffect,
     SurfaceGeometry, SurfaceHit, SurfaceStroke, SurfaceStrokeOptions, SurfaceSymmetrySetup,
+    SURFACE_DABS_PER_EVENT,
 };
 use yolu_core::glam::{Vec2, Vec3};
 
@@ -295,15 +298,40 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
         }
-        Err(e) => {
-            // 予算を超えた・1 回の入力のダブが多すぎる: 途中まで塗った画素も戻す
-            if let Some(stroke) = app.stroke.take() {
-                app.doc.cancel_stroke(stroke);
-            }
-            app.view3d.stroke_ended();
-            app.fail(Source::View3d, app.lang.surface_error(&e));
-        }
+        Err(e) => abandon(app, &e),
     }
+}
+
+/// 持ち越したダブを、このフレームの分（入力 1 回と同じ数）だけ塗る。まだ残れば次のフレームを頼む（動かさずに押しているだけでも
+/// 塗り進める）。
+fn paint_queued(app: &mut AppState, ctx: &egui::Context) {
+    let (Some(stroke), Some(surface)) = (app.stroke.as_mut(), app.view3d.input.surface.as_mut())
+    else {
+        return;
+    };
+    if surface.queued() == 0 {
+        return;
+    }
+    match surface.paint_queued(&mut app.doc, stroke, SURFACE_DABS_PER_EVENT) {
+        Ok(_) => {
+            if surface.queued() > 0 {
+                ctx.request_repaint();
+            }
+            if let Some(outcome) = surface.symmetry_note() {
+                app.warn(Source::View3d, app.lang.mirror_note(outcome));
+            }
+        }
+        Err(e) => abandon(app, &e),
+    }
+}
+
+/// 塗れなかった（予算を超えた・ありえない長さの区間など）: 途中まで塗った画素も戻してストロークを取り消す。
+fn abandon(app: &mut AppState, e: &yolu_core::geometry::SurfaceStrokeError) {
+    if let Some(stroke) = app.stroke.take() {
+        app.doc.cancel_stroke(stroke);
+    }
+    app.view3d.stroke_ended();
+    app.fail(Source::View3d, app.lang.surface_error(e));
 }
 
 /// 3D のストロークを終える（cancel なら捨てる）。
@@ -888,6 +916,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
     }
     flush(app, &mut drag_at);
+    paint_queued(app, &ctx);
     // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える
     let (primary, any_down) = ui.input(|i| (i.pointer.primary_down(), i.pointer.any_down()));
     if app.view3d.input.stroke == Some(StrokeSource::Mouse)

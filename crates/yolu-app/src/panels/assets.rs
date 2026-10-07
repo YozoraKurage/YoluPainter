@@ -702,7 +702,8 @@ fn card_cell(
         if let Some(brush) = app.brushes.lib.entry(key).map(|e| e.baseline.clone()) {
             let old = ui.clip_rect();
             ui.set_clip_rect(old.intersect(grid));
-            super::brushes::paint_sample(ui, app, thumb, &brush, spec);
+            let place = egui::Id::new(("brush.sample.asset", key));
+            super::brushes::paint_sample(ui, app, thumb, &brush, spec, place);
             ui.set_clip_rect(old);
         }
     } else {

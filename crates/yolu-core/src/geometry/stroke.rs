@@ -1,14 +1,19 @@
 //! 3D ビューのストロークの画面の点の並べ方（Unity 版の TexturePaintWindow の AddSurfacePoint・PaintSurfaceSegment・FinishSurfaceCurve）。
 //!
 //! 入力の点の間を centripetal Catmull-Rom（C# の StrokeCurve）で結び、区間の始まりの面でのブラシの直径から決めた画面の間隔で
-//! ダブの位置を出す。最新の点への区間は、その先の点（向きを決める）が来るか離すまで待たせる。1 つの入力で
-//! [`SURFACE_DABS_PER_EVENT`] を超えるダブになる区間は描かずに断る（呼ぶ側はストロークを取り消す）。
+//! ダブの位置を出す。最新の点への区間は、その先の点（向きを決める）が来るか離すまで待たせる。区間のダブの数は
+//! 入力の速さで決まり、上限は [`SURFACE_DABS_PER_SEGMENT`] だけ（ありえない長さの区間を断る）。1 回の入力で塗る数の
+//! 区切り（[`SURFACE_DABS_PER_EVENT`]）は塗る側（`SurfaceStroke`）が持ち、超えた分は持ち越して後で塗る。
 //! 画面の点の単位は呼ぶ側のもの（Unity 版は GUI の点）。
 
 use glam::Vec2;
 
-/// 1 回の入力（1 区間）に置けるダブの数の上限（Unity 版と同じ 128）。
+/// 1 回の入力・1 フレームに塗るダブの数（Unity 版の 1 回の入力の上限と同じ 128）。超えた分は捨てずに持ち越す（`SurfaceStroke`）。
 pub const SURFACE_DABS_PER_EVENT: usize = 128;
+
+/// 1 つの区間のダブの数の上限。間隔は画面の 0.5 点より狭くならないので、画面の 32768 点を超える長さの区間（有限でない点など）
+/// だけが当たる。超えたら区間を描かずに断る（呼ぶ側はストロークを取り消す）。
+pub const SURFACE_DABS_PER_SEGMENT: usize = 65_536;
 
 /// 手で描いた入力の点を結ぶ曲線（C# の StrokeCurve: centripetal Catmull-Rom、α = 0.5。倍精度）。
 pub struct StrokeCurve;
@@ -70,13 +75,13 @@ fn mix(a: f64, b: f64, ta: f64, tb: f64, u: f64) -> f64 {
     (tb - u) / (tb - ta) * a + (u - ta) / (tb - ta) * b
 }
 
-/// 区間のダブが 1 つの入力の上限を超えた（ストロークを取り消す）。
+/// 区間のダブが [`SURFACE_DABS_PER_SEGMENT`] を超えた（ストロークを取り消す）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TooManyDabs;
 
 impl std::fmt::Display for TooManyDabs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("1 回の入力のダブが多すぎるので、ストロークを取り消しました。ブラシを小さくするか、ゆっくり動かしてください")
+        f.write_str("1 つの区間のダブが多すぎるので、ストロークを取り消しました")
     }
 }
 
@@ -226,7 +231,7 @@ impl ScreenStrokeSampler {
         }
         let total = lengths[pieces];
         let steps = ((total / gap).ceil() as i64).max(1);
-        if steps > SURFACE_DABS_PER_EVENT as i64 {
+        if !total.is_finite() || steps > SURFACE_DABS_PER_SEGMENT as i64 {
             return Err(TooManyDabs);
         }
         let steps = steps as usize;
@@ -293,11 +298,26 @@ mod tests {
         assert!((out.last().unwrap().1 - 0.5).abs() < 1e-6);
     }
 
+    /// 速い入力の長い区間（1 回の入力で塗る数を超えるダブ）も、全部の位置を出す。断るのは、ありえない長さの区間だけ。
     #[test]
-    fn too_many_dabs_refuses_the_segment() {
+    fn a_long_segment_gives_all_its_dabs_and_only_an_absurd_one_is_refused() {
         let mut s = ScreenStrokeSampler::new(Vec2::ZERO, 1.0);
         let mut out = Vec::new();
         s.add(Vec2::new(1000.0, 0.0), 1.0, |_| 1.0, &mut out)
+            .unwrap();
+        s.finish(|_| 1.0, &mut out).unwrap();
+        assert_eq!(out.len(), 1000);
+        assert!(out.len() > SURFACE_DABS_PER_EVENT);
+        assert_eq!(out.last().unwrap().0, Vec2::new(1000.0, 0.0));
+
+        let mut s = ScreenStrokeSampler::new(Vec2::ZERO, 1.0);
+        let mut out = Vec::new();
+        let far = SURFACE_DABS_PER_SEGMENT as f32 + 10.0;
+        s.add(Vec2::new(far, 0.0), 1.0, |_| 1.0, &mut out).unwrap();
+        assert_eq!(s.finish(|_| 1.0, &mut out), Err(TooManyDabs));
+        assert!(out.is_empty());
+        let mut s = ScreenStrokeSampler::new(Vec2::ZERO, 1.0);
+        s.add(Vec2::new(f32::MAX, 0.0), 1.0, |_| 1.0, &mut out)
             .unwrap();
         assert_eq!(s.finish(|_| 1.0, &mut out), Err(TooManyDabs));
         assert!(out.is_empty());

@@ -589,12 +589,30 @@ pub fn channel_icon(channel: Channel) -> &'static str {
     }
 }
 
-pub fn kind_label(lang: Lang, kind: ChannelKind) -> &'static str {
+/// チャンネルの種類の名前（新しいチャンネルの名前の元。画面の種類の欄は形式の名前 [`channel_format`]）。
+pub fn kind_name(lang: Lang, kind: ChannelKind) -> &'static str {
     match kind {
         ChannelKind::Color => lang.pick("カラー", "Color"),
         ChannelKind::Scalar => lang.pick("スカラー", "Scalar"),
         ChannelKind::Normal => lang.pick("ノーマル", "Normal"),
     }
+}
+
+/// チャンネルの画素の 1 成分のビット数（画素は `Rgba8`）。
+const CHANNEL_BITS: u32 = 8;
+
+/// チャンネルの形式の名前（チャンネルの欄と種類のメニューの表記。Substance Painter のテクスチャセットのチャンネルの形式と同じ書き方:
+/// sRGB8・RGB8・L8）。成分の名前（スカラーは L、カラー・ノーマルは RGB）に、色空間が sRGB なら頭に s、後ろに 1 成分のビット数。
+pub fn channel_format(info: &ChannelInfo) -> String {
+    let components = match info.kind {
+        ChannelKind::Scalar => "L",
+        ChannelKind::Color | ChannelKind::Normal => "RGB",
+    };
+    let srgb = match info.color_space {
+        ColorSpace::Srgb => "s",
+        ColorSpace::Linear => "",
+    };
+    format!("{srgb}{components}{CHANNEL_BITS}")
 }
 
 /// 描画色（0〜1）から塗りつぶしの層の値へ（描画色のまま。アルファは 255）。バケツ・ポリゴン塗りつぶしの 1 チャンネルの値
@@ -1398,6 +1416,44 @@ mod tests {
 
     fn names(s: &AppState) -> Vec<String> {
         s.doc.layers().iter().map(|l| l.name().to_owned()).collect()
+    }
+
+    /// チャンネルの種類の表記は形式の名前だけ（色空間と 1 成分のビット数から作る）。標準の 6 つと新しいチャンネルの既定の作り、
+    /// リニアのカラー・sRGB のスカラー（ファイルから読める組み合わせ）も、固定の文字でなく作りから決まる。新しいチャンネルの名前の元は
+    /// 種類の名前。
+    #[test]
+    fn the_channel_kind_reads_as_its_format_built_from_the_color_space() {
+        let format = |channel| channel_format(&ChannelInfo::standard(channel).unwrap());
+        assert_eq!(format(Channel::Color), "sRGB8");
+        assert_eq!(format(Channel::Roughness), "L8");
+        assert_eq!(format(Channel::Metallic), "L8");
+        assert_eq!(format(Channel::Height), "L8");
+        assert_eq!(format(Channel::Normal), "RGB8");
+        assert_eq!(format(Channel::Emission), "sRGB8");
+        for kind in [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal] {
+            let info = new_channel_info("x".into(), kind);
+            let standard = match kind {
+                ChannelKind::Color => "sRGB8",
+                ChannelKind::Scalar => "L8",
+                ChannelKind::Normal => "RGB8",
+            };
+            assert_eq!(channel_format(&info), standard, "{kind:?}");
+        }
+        let linear_color = ChannelInfo {
+            color_space: ColorSpace::Linear,
+            ..new_channel_info("x".into(), ChannelKind::Color)
+        };
+        assert_eq!(channel_format(&linear_color), "RGB8");
+        let srgb_scalar = ChannelInfo {
+            color_space: ColorSpace::Srgb,
+            ..new_channel_info("x".into(), ChannelKind::Scalar)
+        };
+        assert_eq!(channel_format(&srgb_scalar), "sL8");
+        let s = app();
+        assert_eq!(
+            crate::m2_menu::new_channel_name(&s, ChannelKind::Scalar),
+            "スカラー 1"
+        );
     }
 
     #[test]
