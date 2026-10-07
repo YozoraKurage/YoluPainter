@@ -1075,6 +1075,70 @@ impl Document {
         Ok(changed)
     }
 
+    /// タイルをまとめて丸ごと読み込む。座標の並びの順に、`fill(座標, タイルの領域)` が書いた中身で `import_tile` を 1 枚ずつ呼ぶのと
+    /// 同じ結果・同じ誤り（誤りのタイルより前のタイルは読み込んだまま）。`fill` は TileSize² × 4 の領域（中身は前のタイルのまま）の
+    /// 全部を書く。中身を書くこと・確かめと詰め（一様・無しの見分け。一様でなければ写す）はワーカーへ分け、ワーカーごとの領域を
+    /// 使い回す（一様・無しのタイルは場所を取らない）。予算の確かめと置くのは並びの順。変わったタイルの数を返す。`fill` は誤りを返さない
+    /// （キャンバスの外の余白を 0 にしないなどの誤りは、`import_tile` と同じ確かめが断る）。
+    pub fn import_tiles_with(
+        &mut self,
+        id: LayerId,
+        channel: Channel,
+        coords: &[TileCoord],
+        fill: impl Fn(TileCoord, &mut [u8]) + Sync,
+    ) -> Result<usize, CoreError> {
+        use rayon::prelude::*;
+        if coords.is_empty() {
+            return Ok(0);
+        }
+        self.ensure_loadable()?;
+        self.require_channel(channel)?;
+        let index = self.index_of(id)?;
+        self.ensure_raster(index)?;
+        // 予算の「ほかの面」の分は、この面に置いても変わらない（1 枚ずつ呼ぶときと同じ値）
+        let growth = self.growth_for(index, Target::Channel(channel));
+        let created = self.ensure_surface(index, channel);
+        let tile_bytes = self.tile_size as usize * self.tile_size as usize * 4;
+        // 束（詰めたタイルの場所が 16 MiB まで）ごとに作って置く。予算を超えるときに、置けないタイルを作りすぎない
+        let batch = ((16 << 20) / tile_bytes).max(1);
+        let mut changed = 0;
+        for (b, chunk) in coords.chunks(batch).enumerate() {
+            let surface = self.layers[index].surface(channel).expect("作った");
+            let prepared: Vec<_> = chunk
+                .par_iter()
+                .map_init(
+                    || vec![0u8; tile_bytes],
+                    |bytes, &coord| {
+                        fill(coord, bytes);
+                        surface.prepare_import(coord, bytes)
+                    },
+                )
+                .collect();
+            for (k, (&coord, next)) in chunk.iter().zip(prepared).enumerate() {
+                let placed = next.and_then(|next| {
+                    self.layers[index]
+                        .surface_mut(channel)
+                        .expect("作った")
+                        .commit_import(coord, next, growth)
+                });
+                match placed {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        changed += 1;
+                        self.mark_target_tile(index, Target::Channel(channel), coord);
+                        self.external_mutation();
+                    }
+                    Err(e) => {
+                        // 1 枚ずつ呼ぶなら、面を作るのは最初の 1 枚。それが断られたときだけ面を消す
+                        self.drop_created_surface(index, channel, created && b == 0 && k == 0);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Ok(changed)
+    }
+
     /// マスクの 1 タイルを丸ごと読み込む（隠す量はアルファ、RGB は 0 でなければ断る）。読み込みなので履歴を消す。
     pub fn import_mask_tile(
         &mut self,
@@ -2444,6 +2508,26 @@ impl Document {
         coords: &[TileCoord],
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.composite_tiles_then(channel, coords, cancel, |_, coord, rect, pixels| {
+            CompositedTile {
+                coord,
+                rect,
+                stride: 1,
+                pixels,
+            }
+        })
+    }
+
+    /// `composite_tiles_cancellable` の、タイルごとの仕上げ `finish(番号, 座標, 矩形, 合成した画素)` を、そのタイルを合成したワーカーが
+    /// 続けて行う形。結果と番号は、coords のうちキャンバスの中のタイルの並び（同じ大きさの文書なら、同じ coords で同じ並び）。合成のあとに
+    /// 別の並列の段を挟まずに、画素を比べる・詰めるときに使う。
+    pub(crate) fn composite_tiles_then<R: Send>(
+        &self,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+        finish: impl Fn(usize, TileCoord, Rect, Vec<u8>) -> R + Sync,
+    ) -> Result<Vec<R>, CoreError> {
         let kind = self.channel_kind(channel)?;
         let tiles: Vec<(TileCoord, Rect)> = coords
             .iter()
@@ -2462,18 +2546,13 @@ impl Document {
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
         let memo = self.memo_request(channel);
-        let images =
-            composite::composite_tiles_into(&stack, self.tile_size, &rects, memo.as_ref())?;
-        Ok(tiles
-            .into_iter()
-            .zip(images)
-            .map(|((coord, rect), pixels)| CompositedTile {
-                coord,
-                rect,
-                stride: 1,
-                pixels,
-            })
-            .collect())
+        composite::composite_tiles_with(
+            &stack,
+            self.tile_size,
+            &rects,
+            memo.as_ref(),
+            |i, pixels| finish(i, tiles[i].0, tiles[i].1, pixels),
+        )
     }
 
     /// 散らばったタイルの、歩幅 stride で拾った粗い合成（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)

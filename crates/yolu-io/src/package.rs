@@ -1024,13 +1024,13 @@ struct ZipWriter<'a> {
 /// 前のかたまりの終わりの 32 KiB を辞書にして圧縮し、終わりでないかたまりは Sync の flush でバイトの境目に揃える。最後のかたまりだけが
 /// 最後のブロックの印を持つ）。持つのは、動いているかたまりの数（スレッドの数の 2 倍）ぶんの入力と出力だけ。どの読み手にも普通の Deflate の
 /// 流れとして読める。出力はスレッドの数に依らず同じ（かたまりの大きさと水準で決まる）。今の形（`YLP-3`）には使わない（今の書き手と
-/// バイトまで同じにするため）。
-struct ParallelDeflate;
+/// バイトまで同じにするため）。かたまり 1 つの圧縮（`block`）は、書き出しの PNG の並べた圧縮も使う。
+pub(crate) struct ParallelDeflate;
 /// 圧縮するかたまり（番号・中身・辞書にする前のかたまり・最後か）。
 type Job = (usize, Arc<Vec<u8>>, Option<Arc<Vec<u8>>>, bool);
 impl ParallelDeflate {
-    const BLOCK: usize = 1 << 20;
-    const DICT: usize = 32 << 10;
+    pub(crate) const BLOCK: usize = 1 << 20;
+    pub(crate) const DICT: usize = 32 << 10;
     /// 書いた（CRC、元の長さ、圧縮した長さ）。
     fn run(blob: &Blob, out: &mut dyn Write) -> Result<(u32, u64, u64)> {
         use std::sync::mpsc::{channel, sync_channel};
@@ -1080,7 +1080,7 @@ impl ParallelDeflate {
         })
     }
     /// 1 つのかたまりを圧縮する（生の Deflate。最後でなければ Sync の flush でバイトの境目に揃える）。
-    fn block(input: &[u8], dict: Option<&[u8]>, last: bool) -> io::Result<Vec<u8>> {
+    pub(crate) fn block(input: &[u8], dict: Option<&[u8]>, last: bool) -> io::Result<Vec<u8>> {
         use flate2::{Compress, Compression, FlushCompress, Status};
         let mut c = Compress::new(Compression::default(), false);
         if let Some(d) = dict {

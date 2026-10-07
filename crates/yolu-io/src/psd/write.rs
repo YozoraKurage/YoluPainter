@@ -471,6 +471,138 @@ impl Checksum {
         }
         Ok(pos == self.len && head.finalize() == self.head && tail.finalize() == self.tail)
     }
+
+    /// 読み戻しと照合を 1 度の読みで行う読み手（[`Recount`]）。ファイルの先頭にある `reader` を包み、通ったバイトを
+    /// [`Checksum::matches`] と同じ形で数える。
+    pub fn recount<R: std::io::Read + Seek>(&self, reader: R) -> Recount<R> {
+        Recount {
+            inner: reader,
+            expected: *self,
+            pos: 0,
+            counted: 0,
+            head: crc32fast::Hasher::new(),
+            tail: crc32fast::Hasher::new(),
+            deferred: None,
+        }
+    }
+}
+
+/// 通ったバイトを、ファイルの先頭から順に 1 度ずつ数える読み手（[`Checksum::recount`]）。包んだ読み手の利用者（読み戻しの確かめ）が
+/// 先へ飛んだ区間は、次に読むときに飛んだ所から読んで数え、戻って読み直した所は数え直さない。[`Recount::finish`] が残りを最後まで
+/// 読んで数え、書いたバイト列と照らす。ファイルのどのバイトも 1 度ずつ数えるので、[`Checksum::matches`] でファイルをもう 1 度
+/// 読むのと同じ照合になる。
+pub struct Recount<R> {
+    inner: R,
+    expected: Checksum,
+    /// 利用者から見た今の位置（包んだ読み手の位置と同じ）。
+    pos: u64,
+    /// 先頭から続けて数え終えたバイト数。
+    counted: u64,
+    head: crc32fast::Hasher,
+    tail: crc32fast::Hasher,
+    /// 飛んだ区間を数えるための読みの失敗。利用者の読みは続け、照合（`finish`）の失敗にする（その区間は照合だけが読む所なので）。
+    deferred: Option<std::io::Error>,
+}
+
+impl<R: std::io::Read + Seek> Recount<R> {
+    /// 先頭からの位置 `at` から始まるバイト列のうち、まだ数えていない所を数える（数え終えた所の続きのときだけ）。
+    fn count(&mut self, at: u64, bytes: &[u8]) {
+        let end = at + bytes.len() as u64;
+        if self.deferred.is_some() || end <= self.counted || at > self.counted {
+            return;
+        }
+        let fresh = &bytes[(self.counted - at) as usize..];
+        let in_head = self
+            .expected
+            .head_len
+            .saturating_sub(self.counted)
+            .min(fresh.len() as u64) as usize;
+        self.head.update(&fresh[..in_head]);
+        self.tail.update(&fresh[in_head..]);
+        self.counted = end;
+    }
+
+    /// 数え終えた所から `to` まで（ファイルの終わりが先ならそこまで）を読んで数える。包んだ読み手の位置は読んだ所の終わり。
+    fn count_up_to(&mut self, to: u64, cancel: Option<&AtomicBool>) -> std::io::Result<()> {
+        if self.counted >= to {
+            return Ok(());
+        }
+        self.inner.seek(SeekFrom::Start(self.counted))?;
+        let mut buf = vec![0u8; (to - self.counted).min(256 * 1024) as usize];
+        while self.counted < to {
+            if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                return Err(std::io::Error::other(RecountCancelled));
+            }
+            let want = (to - self.counted).min(buf.len() as u64) as usize;
+            let n = match self.inner.read(&mut buf[..want]) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            let at = self.counted;
+            self.count(at, &buf[..n]);
+            // 書いたより長いファイルは、終わりまで読まずに違うと決まる
+            if self.counted > self.expected.len {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// 残り（数えていない所からファイルの終わりまで）を読んで数え、書いたバイト列と一致するか（長さ・先頭・後ろの 3 つが合うときだけ
+    /// true）。飛んだ区間を読めなかったときは、その誤り。取消は `Error::Core(Cancelled)`。
+    pub fn finish(mut self, cancel: Option<&AtomicBool>) -> Result<bool> {
+        if let Some(e) = self.deferred.take() {
+            return Err(e.into());
+        }
+        if let Err(e) = self.count_up_to(u64::MAX, cancel) {
+            return Err(if e.get_ref().is_some_and(|i| i.is::<RecountCancelled>()) {
+                Error::Core(yolu_core::CoreError::Cancelled)
+            } else {
+                e.into()
+            });
+        }
+        let Checksum {
+            len, head, tail, ..
+        } = self.expected;
+        Ok(self.counted == len && self.head.finalize() == head && self.tail.finalize() == tail)
+    }
+}
+
+/// 照合の読みの取消（`Recount::finish` の中だけで使う印）。
+#[derive(Debug)]
+struct RecountCancelled;
+impl std::fmt::Display for RecountCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cancelled")
+    }
+}
+impl std::error::Error for RecountCancelled {}
+
+impl<R: std::io::Read + Seek> std::io::Read for Recount<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let at = self.pos;
+        if self.deferred.is_none() && self.counted < at {
+            // 飛んだ区間を数えてから戻る
+            let caught = self.count_up_to(at, None);
+            if let Err(e) = caught {
+                self.deferred = Some(e);
+            }
+            self.inner.seek(SeekFrom::Start(at))?;
+        }
+        let n = self.inner.read(buf)?;
+        self.count(at, &buf[..n]);
+        self.pos = at + n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: std::io::Read + Seek> Seek for Recount<R> {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        self.pos = self.inner.seek(to)?;
+        Ok(self.pos)
+    }
 }
 
 /// 書いたバイトを CRC-32 に数えながら中へ渡す（先頭の書き直しより後ろの、順に書く区間）。

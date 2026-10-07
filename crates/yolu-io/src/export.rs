@@ -373,7 +373,7 @@ fn write_images_inner(
                 rgba.len()
             )));
         }
-        let png = crate::composite_png::encode(&rgba, f.width, f.height)
+        let png = crate::composite_png::encode_export(&rgba, f.width, f.height)
             .map_err(|e| ExportError::InvalidImage(format!("{}: {e}", f.name)))?;
         fs::create_dir_all(dir).map_err(|e| io("フォルダを作れない", dir, e))?;
         let nonce = NEXT.fetch_add(1, Ordering::Relaxed);

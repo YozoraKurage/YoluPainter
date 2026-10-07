@@ -562,21 +562,21 @@ impl Document {
         // core の行は下から。PSD の行 y0..y1 は core の行 (高さ − y1)..(高さ − y0)
         let (cx0, cx1) = (x0 as u32, x1 as u32);
         let (cy0, cy1) = ((ch - y1) as u32, (ch - y0) as u32);
-        let mut tile = vec![0u8; (ts * ts * 4) as usize];
-        for ty in cy0 / ts..cy1.div_ceil(ts) {
-            for tx in cx0 / ts..cx1.div_ceil(ts) {
-                tile.fill(0);
-                for y in (ty * ts).max(cy0)..((ty + 1) * ts).min(cy1) {
-                    let row = (ch - 1 - i64::from(y) - top) as usize;
-                    for x in (tx * ts).max(cx0)..((tx + 1) * ts).min(cx1) {
-                        let src = (row * l.width as usize + (i64::from(x) - left) as usize) * 4;
-                        let dest = ((y % ts) * ts + x % ts) as usize * 4;
-                        tile[dest..dest + 4].copy_from_slice(&l.pixels_rgba[src..src + 4])
-                    }
-                }
-                d.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &tile)?;
+        let coords: Vec<TileCoord> = (cy0 / ts..cy1.div_ceil(ts))
+            .flat_map(|ty| (cx0 / ts..cx1.div_ceil(ts)).map(move |tx| TileCoord::new(tx, ty)))
+            .collect();
+        // タイルの画素を行ごとに写す（タイルはワーカーが作り、core へはタイルの順に入れる）
+        d.import_tiles_with(id, Channel::Color, &coords, |c, tile| {
+            tile.fill(0);
+            let (xa, xb) = ((c.x * ts).max(cx0), ((c.x + 1) * ts).min(cx1));
+            let n = (xb - xa) as usize * 4;
+            for y in (c.y * ts).max(cy0)..((c.y + 1) * ts).min(cy1) {
+                let row = (ch - 1 - i64::from(y) - top) as usize;
+                let src = (row * l.width as usize + (i64::from(xa) - left) as usize) * 4;
+                let dest = ((y % ts) * ts + xa % ts) as usize * 4;
+                tile[dest..dest + n].copy_from_slice(&l.pixels_rgba[src..src + n]);
             }
-        }
+        })?;
         Ok(clipped)
     }
     /// マスクを core へ。core は隠す量（255 − PSD の値）を持ち、何も隠さないタイルは持たないので、隠す所のあるタイルだけを入れる。

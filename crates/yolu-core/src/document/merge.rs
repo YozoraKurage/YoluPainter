@@ -67,6 +67,65 @@ impl std::fmt::Display for MergeRefusal {
     }
 }
 
+/// 結合の前と後の 1 タイルの画素の差（報告の数の、そのタイルの分）。
+#[derive(Clone, Copy, Debug, Default)]
+struct Difference {
+    compared: u64,
+    changed: u64,
+    max_difference: u8,
+    max_visible_difference: u8,
+}
+
+impl Difference {
+    /// 後（after）と前（before）の同じ並びの straight RGBA8 を比べる。両方とも透明な画素は変わっていないとみなす。見える差は、
+    /// アルファと、アルファを掛けた RGB の差の大きいほう。
+    fn of(after: &[u8], before: &[u8]) -> Difference {
+        debug_assert_eq!(after.len(), before.len());
+        let mut d = Difference::default();
+        for (a, b) in after.chunks_exact(4).zip(before.chunks_exact(4)) {
+            d.compared += 1;
+            if a[3] == 0 && b[3] == 0 {
+                continue;
+            }
+            let delta = (0..4).map(|q| a[q].abs_diff(b[q])).max().expect("RGBA");
+            if delta == 0 {
+                continue;
+            }
+            d.changed += 1;
+            d.max_difference = d.max_difference.max(delta);
+            let mut v = a[3].abs_diff(b[3]);
+            for q in 0..3 {
+                let e = ((a[q] as i32 * a[3] as i32 - b[q] as i32 * b[3] as i32).abs() + 127) / 255;
+                v = v.max(e as u8);
+            }
+            d.max_visible_difference = d.max_visible_difference.max(v);
+        }
+        d
+    }
+}
+
+/// 層そのものの画素（`Layer::pixel` と同じ値）の、キャンバスの中の矩形（1 枚のタイルの中）。行は下から、行ごとに面から写す。
+fn layer_rect(l: &Layer, c: Channel, rect: crate::Rect) -> Result<Vec<u8>, CoreError> {
+    let row = rect.width as usize * 4;
+    let mut out = vec![0u8; row * rect.height as usize];
+    match l.kind {
+        LayerKind::Raster => {
+            if let Some(s) = l.surface(c) {
+                for (bytes, y) in out.chunks_exact_mut(row).zip(rect.y..) {
+                    s.read_row(rect.x, y, bytes)?;
+                }
+            }
+        }
+        LayerKind::Fill => {
+            if let Some(v) = l.fill_value(c) {
+                crate::surface::fill(&mut out, v);
+            }
+        }
+        _ => {}
+    }
+    Ok(out)
+}
+
 /// 段のスタックが段を持つか（有効かどうかは問わない。C# の MergeNotes が数える形）。
 fn has_stack(stack: &[crate::FilterEffect]) -> bool {
     !stack.is_empty()
@@ -276,6 +335,14 @@ impl Document {
             })
         })
     }
+    /// 結合の束（面の組み立て・前と後の比べ）のタイルの数。束ごとに合成の計画を組み、束のタイルをワーカーへ分けて待つので、束が小さいと
+    /// 計画と待ちの費用が勝つ。スレッドあたり 32 枚で、束の画素（比べの前の合成）は 16 MiB までに抑える。
+    fn merge_batch_tiles(&self) -> usize {
+        let tile_bytes = self.tile_size as usize * self.tile_size as usize * 4;
+        (rayon::current_num_threads().clamp(1, 64) * 32)
+            .min((16 << 20) / tile_bytes)
+            .max(1)
+    }
     /// タイルのバッチごとに render(座標の並び) → 座標ごとのタイル（画素が無ければ None）で組んだ面。タイルの計算はバッチの中で並列に行い、
     /// 予算の確かめと書き込みは座標の順にこのスレッドで行う。
     fn merge_surface_tiles(
@@ -286,7 +353,7 @@ impl Document {
     ) -> Result<Surface, CoreError> {
         let mut out = Surface::new(self.width, self.height, self.tile_size);
         let coords: Vec<_> = coords.iter().copied().collect();
-        for batch in coords.chunks(rayon::current_num_threads().clamp(1, 64) * 2) {
+        for batch in coords.chunks(self.merge_batch_tiles()) {
             let tiles = render(batch)?;
             debug_assert_eq!(tiles.len(), batch.len());
             for (&coord, t) in batch.iter().zip(tiles) {
@@ -909,41 +976,39 @@ impl Document {
                     }
                 }
             }
-            for coord in coords {
-                let rect = self.tile_rect(coord).expect("タイル");
-                let before = if visible {
-                    let mut v = Vec::new();
-                    for y in rect.y..rect.y + rect.height {
-                        for x in rect.x..rect.x + rect.width {
-                            v.extend_from_slice(&result.pixel(c, x, y)?.to_array());
-                        }
-                    }
-                    v
+            // 束ごとに、結合後の合成（と、結合前の合成）を計画 1 回でワーカーへ分け、合成したワーカーがそのまま比べる。束はタイルの
+            // 座標の順で、誤りは並びの最初のタイルのもの（前と同じ規則）。比べの数は和と最大なので、分け方によらない
+            let coords: Vec<TileCoord> = coords.into_iter().collect();
+            let mut changed = 0;
+            for chunk in coords.chunks(self.merge_batch_tiles()) {
+                let differences = if visible {
+                    copy.composite_tiles_then(c, chunk, None, |_, _, rect, after| {
+                        Ok(Difference::of(&after, &layer_rect(result, c, rect)?))
+                    })?
                 } else {
-                    self.composite_channel(c, rect)?
+                    let before = self.composite_tiles(c, chunk)?;
+                    copy.composite_tiles_then(c, chunk, None, |i, coord, _, after| {
+                        debug_assert_eq!(before[i].coord, coord);
+                        Ok(Difference::of(&after, &before[i].pixels))
+                    })?
                 };
-                let after = copy.composite_channel(c, rect)?;
-                for (a, b) in after.chunks_exact(4).zip(before.chunks_exact(4)) {
-                    report.compared_pixels += 1;
-                    if a[3] == 0 && b[3] == 0 {
-                        continue;
-                    }
-                    let delta = (0..4).map(|q| a[q].abs_diff(b[q])).max().expect("RGBA");
-                    if delta == 0 {
-                        continue;
-                    }
-                    report.changed_pixels += 1;
-                    *report.changed_by_channel.entry(c).or_default() += 1;
-                    report.max_difference = report.max_difference.max(delta);
-                    let mut v = a[3].abs_diff(b[3]);
-                    for q in 0..3 {
-                        let d = ((a[q] as i32 * a[3] as i32 - b[q] as i32 * b[3] as i32).abs()
-                            + 127)
-                            / 255;
-                        v = v.max(d as u8);
-                    }
-                    report.max_visible_difference = report.max_visible_difference.max(v);
+                assert_eq!(
+                    differences.len(),
+                    chunk.len(),
+                    "比べるタイルはキャンバスの中"
+                );
+                for d in differences {
+                    let d: Difference = d?;
+                    report.compared_pixels += d.compared;
+                    report.changed_pixels += d.changed;
+                    changed += d.changed;
+                    report.max_difference = report.max_difference.max(d.max_difference);
+                    report.max_visible_difference =
+                        report.max_visible_difference.max(d.max_visible_difference);
                 }
+            }
+            if changed > 0 {
+                *report.changed_by_channel.entry(c).or_default() += changed;
             }
         }
         if report.max_visible_difference > tolerance {

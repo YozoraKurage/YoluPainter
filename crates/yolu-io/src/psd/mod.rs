@@ -25,7 +25,7 @@ pub use verified::{
     check_written, stage_verified, stage_with, write_verified, Commit, Staged, WriteError,
 };
 pub use write::{
-    write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written,
+    write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Recount, Written,
 };
 
 /// PSD を読み、層を重ねた 1 枚にする（幅・高さ・straight RGBA8、上の行から）。層を持たない（読めない・原本を残すだけの）PSD は断る。

@@ -19,6 +19,7 @@ use super::binary::Reader;
 use super::read::{self, State};
 use super::*;
 use crate::{Error, Result};
+use rayon::prelude::*;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -541,6 +542,28 @@ fn read_u32<R: Read>(r: &mut R) -> Step<u32> {
     r.read_exact(&mut b)?;
     Ok(u32::from_be_bytes(b))
 }
+/// buf を埋めるまで読む。読めたバイト数と、途中で読めなくなったときの誤り（`read_exact` が返すのと同じ種類。終わりに着いたら
+/// `UnexpectedEof`）を返す。
+fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> (usize, Option<std::io::Error>) {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match r.read(&mut buf[filled..]) {
+            Ok(0) => {
+                return (
+                    filled,
+                    Some(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "failed to fill whole buffer",
+                    )),
+                )
+            }
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return (filled, Some(e)),
+        }
+    }
+    (filled, None)
+}
 fn tell<R: Seek>(r: &mut R) -> Step<u64> {
     Ok(r.stream_position()?)
 }
@@ -633,7 +656,14 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     let channels = usize::from(h.u16()?);
     let (height, width) = (h.u32()?, h.u32()?);
     let (depth, mode) = (h.u16()?, h.u16()?);
-    if depth != 8 || mode != 3 || !(3..=56).contains(&channels) || width == 0 || height == 0 {
+    // 寸法は PSD（版 1）の上限まで（統合画像の場所の大きさを決めるので、化けた寸法をそのまま使わない）
+    let edge = limits.max_dimension;
+    if depth != 8
+        || mode != 3
+        || !(3..=56).contains(&channels)
+        || !(1..=edge).contains(&width)
+        || !(1..=edge).contains(&height)
+    {
         return malformed("PSD の寸法・色の形式が不正です");
     }
     for _ in 0..2 {
@@ -697,7 +727,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
         }
         records.push(rec);
     }
-    // 全層・マスクのチャンネルを、最後の行まで復号する（層 1 枚・チャンネル 1 本ぶんだけ持つ）
+    // 全層・マスクのチャンネルを、最後の行まで復号する（画素は持たない。圧縮したチャンネル 1 本ぶんと、ZIP のときだけ面 1 枚）
     let mut plane: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     for (i, rec) in records.iter().enumerate() {
@@ -719,9 +749,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
             }
             buf.resize(len, 0);
             r.read_exact(&mut buf)?;
-            plane.clear();
-            plane.resize(cw as usize * ch as usize, 0);
-            read::decode(Reader::new(&buf), cw, ch, &mut plane, 0, 1, &mut s)
+            read::check_rows(Reader::new(&buf), cw, ch, &mut plane, &mut s)
                 .map_err(|e| in_layer(e, i + 1))?;
             if let Some(why) = s.copy.as_mut().unwrap().take_refusal() {
                 return Err(Stop::Refused(why));
@@ -1069,6 +1097,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     };
     let salt = d.id() & ((1u128 << 64) - 1);
     let mut made: Vec<yolu_core::LayerId> = Vec::with_capacity(items.len());
+    let mut scratch: Vec<u8> = Vec::new();
     for (i, p) in parsed.iter_mut().enumerate() {
         cancelled(o.cancel)?;
         let kept = item_of[i].is_some();
@@ -1083,10 +1112,20 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             }));
         }
         if raster && layer_bytes > 0 {
-            l.pixels_rgba = vec![0; layer_bytes as usize];
-            for px in l.pixels_rgba.as_chunks_mut::<4>().0 {
-                px[3] = 255
+            // 前の層の場所を使い回し（新しく取った場所は、最初に触るページごとに時間がかかる）、色 0・不透明で埋める
+            let n = layer_bytes as usize;
+            let mut pixels = std::mem::take(&mut scratch);
+            if pixels.capacity() < n {
+                pixels = vec![0; n];
+            } else {
+                pixels.resize(n, 0);
             }
+            pixels.par_chunks_mut(1 << 16).for_each(|chunk| {
+                for px in chunk.as_chunks_mut::<4>().0 {
+                    *px = [0, 0, 0, 255];
+                }
+            });
+            l.pixels_rgba = pixels;
         }
         if let Some(m) = &mut l.mask {
             let n = u64::from(m.width) * u64::from(m.height);
@@ -1129,10 +1168,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             }
             let decoded = if id == -2 {
                 let m = l.mask.as_mut().unwrap();
-                read::decode(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
+                read::decode_rows(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
             } else {
                 let component = if id == -1 { 3 } else { id as usize };
-                read::decode(
+                read::decode_rows(
                     Reader::lenient(&buf),
                     cw,
                     ch,
@@ -1198,8 +1237,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             canvas.import_mask(&mut d, id, m).map_err(budget_stop)?;
         }
         made.push(id);
-        // 復号した画素は、core へ入れたのでもう要らない
-        l.pixels_rgba = Vec::new();
+        // 復号した画素は、core へ入れたのでもう要らない（場所は次の層で使い回す）
+        scratch = std::mem::take(&mut l.pixels_rgba);
         if let Some(m) = &mut l.mask {
             m.pixels = Vec::new()
         }
@@ -1208,6 +1247,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             c.add_layer_note(feature, ImportAction::Dropped, &name);
         }
     }
+    drop(scratch);
     let here = tell(r)?;
     if here > info_end {
         return malformed("チャンネルのデータがレイヤー情報を超えています");
@@ -1374,26 +1414,34 @@ fn check_composite<R: Read + Seek>(
         cancelled(o.cancel)?;
         let rows = BAND_ROWS.min(d.height() - y);
         let mut out = d.composite(yolu_core::Rect::new(0, y, d.width(), rows))?;
-        super::composite::matte(&mut out);
-        for row in 0..rows as usize {
-            // core の行は下から、統合画像は上から
-            let psd_row = h - 1 - (y as usize + row);
-            let ours = &out[row * w * 4..(row + 1) * w * 4];
-            let theirs = &merged[psd_row * w * 4..(psd_row + 1) * w * 4];
-            for (a, b) in ours
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .zip(theirs.as_chunks::<4>().0)
-            {
-                let worst = (0..compared_channels)
-                    .map(|c| a[c].abs_diff(b[c]))
-                    .max()
-                    .unwrap_or(0);
-                max_diff = max_diff.max(worst);
-                differing += u64::from(worst > COMPOSITE_TOLERANCE);
-            }
-        }
+        // 行ごとに並べて白へ重ね、比べる（数は最大と和なので、分け方によらない）
+        let (band_max, band_differing) = out
+            .par_chunks_mut(w * 4)
+            .enumerate()
+            .map(|(row, ours)| {
+                super::composite::matte(ours);
+                // core の行は下から、統合画像は上から
+                let psd_row = h - 1 - (y as usize + row);
+                let theirs = &merged[psd_row * w * 4..(psd_row + 1) * w * 4];
+                let (mut most, mut count) = (0u8, 0u64);
+                for (a, b) in ours
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(theirs.as_chunks::<4>().0)
+                {
+                    let worst = (0..compared_channels)
+                        .map(|c| a[c].abs_diff(b[c]))
+                        .max()
+                        .unwrap_or(0);
+                    most = most.max(worst);
+                    count += u64::from(worst > COMPOSITE_TOLERANCE);
+                }
+                (most, count)
+            })
+            .reduce(|| (0, 0), |a, b| (a.0.max(b.0), a.1 + b.1));
+        max_diff = max_diff.max(band_max);
+        differing += band_differing;
         y += rows;
     }
     if max_diff > COMPOSITE_TOLERANCE {
@@ -1420,18 +1468,28 @@ fn read_merged<R: Read + Seek>(
     cancel: Option<&AtomicBool>,
 ) -> Step<Option<Vec<u8>>> {
     let compression = read_u16(r)?;
-    let mut out = vec![0u8; w * h * 4];
-    for px in out.as_chunks_mut::<4>().0 {
-        px[3] = 255
-    }
     // 色（と透明度）の先頭の 4 面だけ読む。残りのチャンネル（アルファチャンネル）は要らない
     let planes = channels.min(4);
+    // 統合画像の場所（幅 × 高さ × 4）は、ファイルの残りがその圧縮の最小の長さを満たすときだけ取る（寸法の化けた・切れたファイルで、
+    // 入らない大きさを先に確保しない）。無圧縮は面ごとに幅 × 高さ。RLE は行の長さの表と、1 行に少なくとも 2⌈幅/128⌉ バイト
+    // （PackBits の 1 組は 2 バイトで 128 画素まで）。満たさなければ、どの行かが入らないか展開できないので、読んでも読めない統合画像になる
+    let (w64, h64) = (w as u64, h as u64);
+    let least = match compression {
+        0 => w64 * h64 * planes as u64,
+        1 => channels as u64 * h64 * 2 + planes as u64 * h64 * 2 * w64.div_ceil(128),
+        _ => 0,
+    };
+    if total.saturating_sub(tell(r)?) < least {
+        return Ok(None);
+    }
+    let mut out = vec![0u8; w * h * 4];
+    out.par_chunks_mut(1 << 16).for_each(|chunk| {
+        for px in chunk.as_chunks_mut::<4>().0 {
+            px[3] = 255
+        }
+    });
     match compression {
         0 => {
-            let need = (w * h * planes) as u64;
-            if total.saturating_sub(tell(r)?) < need {
-                return Ok(None);
-            }
             let mut row = vec![0u8; w];
             for c in 0..planes {
                 for y in 0..h {
@@ -1455,22 +1513,44 @@ fn read_merged<R: Read + Seek>(
             left -= table_len;
             let mut table = vec![0u8; table_len as usize];
             r.read_exact(&mut table)?;
+            // 面（チャンネル）ごとに、残りの長さに入る行までをまとめて読み、行ごとに並べて展開する（行は互いに独立）。行ごとに読んで
+            // 展開するのと同じ結果: どこかで展開できない・長さが入らなければ None、読み込みの失敗は、その前の行が全部展開できたときだけ誤り
             let mut data = Vec::new();
+            let mut ends: Vec<usize> = Vec::with_capacity(h);
             for c in 0..planes {
                 cancelled(cancel)?;
+                ends.clear();
+                let mut fits = true;
                 for y in 0..h {
                     let i = (c * h + y) * 2;
                     let n = usize::from(u16::from_be_bytes([table[i], table[i + 1]]));
                     if n as u64 > left {
-                        return Ok(None);
+                        fits = false;
+                        break;
                     }
                     left -= n as u64;
-                    data.resize(n, 0);
-                    r.read_exact(&mut data)?;
-                    let mut line = Reader::lenient(&data);
-                    if unpack_row(&mut line, w, &mut out, y * w * 4 + c).is_err() {
-                        return Ok(None);
-                    }
+                    ends.push(ends.last().copied().unwrap_or(0) + n);
+                }
+                data.resize(ends.last().copied().unwrap_or(0), 0);
+                let (filled, failed) = read_up_to(r, &mut data);
+                let complete = ends.partition_point(|&end| end <= filled);
+                let unpacked =
+                    out.par_chunks_mut(w * 4)
+                        .take(complete)
+                        .enumerate()
+                        .all(|(y, row)| {
+                            let start = if y == 0 { 0 } else { ends[y - 1] };
+                            unpack_row(&mut Reader::lenient(&data[start..ends[y]]), w, row, c)
+                                .is_ok()
+                        });
+                if !unpacked {
+                    return Ok(None);
+                }
+                if let Some(e) = failed {
+                    return Err(e.into());
+                }
+                if !fits {
+                    return Ok(None);
                 }
             }
         }

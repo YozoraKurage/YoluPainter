@@ -460,15 +460,36 @@ impl Surface {
         bytes: &[u8],
         growth: Growth,
     ) -> Result<bool, CoreError> {
+        let next = self.prepare_import(coord, bytes)?;
+        self.commit_import(coord, next, growth)
+    }
+
+    /// `import_tile` の、確かめて詰める段（面を変えない。ワーカーで並べられる）。
+    pub(crate) fn prepare_import(
+        &self,
+        coord: TileCoord,
+        bytes: &[u8],
+    ) -> Result<Option<Tile>, CoreError> {
+        self.check_import(coord, bytes)?;
+        Ok(Tile::from_bytes(bytes))
+    }
+
+    /// 読み込むタイルの座標・バイト数・キャンバスの外の余白（0 でなければ断る）を確かめる。
+    fn check_import(&self, coord: TileCoord, bytes: &[u8]) -> Result<(), CoreError> {
         self.check_coord(coord)?;
         if bytes.len() != self.tile_bytes() {
             return Err(CoreError::InvalidArgument("タイルのバイト数が違う"));
         }
         let ts = self.tile_size as usize;
         let (sx, sy) = (coord.x as usize * ts, coord.y as usize * ts);
+        let (w, h) = (self.width as usize, self.height as usize);
+        // キャンバスの内側だけのタイルに余白は無い
+        if sx + ts <= w && sy + ts <= h {
+            return Ok(());
+        }
         for y in 0..ts {
             for x in 0..ts {
-                if sx + x < self.width as usize && sy + y < self.height as usize {
+                if sx + x < w && sy + y < h {
                     continue;
                 }
                 let p = (y * ts + x) * 4;
@@ -479,7 +500,16 @@ impl Surface {
                 }
             }
         }
-        let next = Tile::from_bytes(bytes);
+        Ok(())
+    }
+
+    /// `import_tile` の、予算を確かめて置く段（確かめて詰めたタイル）。同じ中身なら false。
+    pub(crate) fn commit_import(
+        &mut self,
+        coord: TileCoord,
+        next: Option<Tile>,
+        growth: Growth,
+    ) -> Result<bool, CoreError> {
         growth.ensure(self.allocated, self.growth_to(coord, next.as_ref()))?;
         if Tile::same(self.tiles.get(&coord), next.as_ref()) {
             return Ok(false);

@@ -8,7 +8,8 @@
 //! 出力は `ラベル<TAB>操作<TAB>中央値(ms)<TAB>各回(ms)` の TSV（標準出力）と、注記（標準エラー）。
 //! 操作（`OPERATIONS`）: open（どの操作にも要るので `--only` に関係なく測る）・composite・composite_warm・toggle・opacity・toggle2・
 //! opacity2（一番上の見た目に効く層）・blur_r8・blur_r40・levels・filter_doc_blur8（フィルターを層に付けて全体を合成）・png・
-//! psd_plan・psd_write・psd_verify（PSD の保存の計画・書き出し・書いた直後の読み戻し）・merge（許容差 255 は差があっても断らない設定）・
+//! psd_plan・psd_write・psd_verify（PSD の保存の計画・書き出し・書いた直後の確かめ。確かめはアプリの保存と同じ `psd::check_written`
+//! で、読み戻しと書いたバイト列との照合）・merge（許容差 255 は差があっても断らない設定）・
 //! merge_app（アプリの既定の許容差）。`--only` は名前ごとに選べて、選んだ操作の行だけ出す（知らない名前は断る）。
 //! 合成の文書は他の画像編集アプリでも開けるよう、層は Normal/Multiply/Screen/Overlay のラスターだけで作る。
 
@@ -164,7 +165,7 @@ fn gen_dense(size: u32, layers: usize) -> Document {
     d
 }
 
-fn write_psd(doc: &Document, path: &Path) -> Result<(u64, f64, f64), String> {
+fn write_psd(doc: &Document, path: &Path) -> Result<(u64, f64, f64, psd::Written), String> {
     // アプリと同じく、層のメモリの予算を渡す（渡さないと、書くファイルの上限が固定の 128 MiB になる）
     let ctl = ExportControl {
         source_budget: Some(4 << 30),
@@ -181,17 +182,19 @@ fn write_psd(doc: &Document, path: &Path) -> Result<(u64, f64, f64), String> {
     let t = Instant::now();
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut out = BufWriter::with_capacity(1 << 20, file);
-    plan.write_psd(doc, &ctl, &mut out, Compression::Rle)
+    let written = plan
+        .write_psd(doc, &ctl, &mut out, Compression::Rle)
         .map_err(|e| format!("{e:?}"))?;
     out.flush().map_err(|e| e.to_string())?;
     let write_ms = ms(t);
     let bytes = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
-    Ok((bytes, plan_ms, write_ms))
+    Ok((bytes, plan_ms, write_ms, written))
 }
 
 fn open_psd(path: &Path) -> Document {
     let file = std::fs::File::open(path).expect("PSD を開けない");
-    let mut reader = BufReader::new(file);
+    // アプリの取り込み（`psd::import_worker`）と同じ緩衝
+    let mut reader = BufReader::with_capacity(256 * 1024, file);
     let options = psd::CopyOptions {
         source_budget: 8 * 1024 * 1024 * 1024,
         cancel: None,
@@ -545,7 +548,7 @@ fn run(
             (want("psd_plan"), want("psd_write"), want("psd_verify"));
         if want_plan || want_write || want_verify {
             match write_psd(&doc, &psd_path) {
-                Ok((bytes, plan_ms, write_ms)) => {
+                Ok((bytes, plan_ms, write_ms, written)) => {
                     if want_plan {
                         rec.push("psd_plan", plan_ms);
                     }
@@ -557,9 +560,8 @@ fn run(
                     }
                     if want_verify {
                         let t = Instant::now();
-                        let file = std::fs::File::open(&psd_path).unwrap();
-                        let mut reader = BufReader::with_capacity(256 * 1024, file);
-                        psd::verify_stream(&mut reader, None).unwrap();
+                        let mut file = std::fs::File::open(&psd_path).unwrap();
+                        psd::check_written(&psd_path, &mut file, written, None).unwrap();
                         rec.push("psd_verify", ms(t));
                     }
                 }
@@ -609,7 +611,7 @@ fn main() {
                 "dense" => gen_dense(size, layers),
                 _ => panic!("sparse か dense"),
             };
-            let (bytes, _, _) = write_psd(&doc, &out).expect("PSD を書けない");
+            let (bytes, _, _, _) = write_psd(&doc, &out).expect("PSD を書けない");
             eprintln!("{} {bytes} バイト", out.display());
         }
         Some("info") => info(Path::new(args.get(1).expect("入力"))),
@@ -662,7 +664,7 @@ mod tests {
         let dir = temp_dir("roundtrip");
         for (name, doc) in [("sparse", gen_sparse(128, 6)), ("dense", gen_dense(128, 4))] {
             let path = dir.join(format!("{name}.psd"));
-            let (bytes, _, _) = write_psd(&doc, &path).unwrap();
+            let (bytes, _, _, _) = write_psd(&doc, &path).unwrap();
             assert!(bytes > 0);
             let back = open_psd(&path);
             assert_eq!(back.layers().len(), doc.layers().len(), "{name}: 層の数");

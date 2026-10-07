@@ -158,27 +158,30 @@ pub fn stage_verified(
     )
 }
 
-/// 書いた PSD（`path` の `file`。先頭に戻してある）を読み戻して確かめる。まず最後まで流して読み戻す（壊れている理由はここで言える）。
-/// つぎに、書いたバイト列と一致するか（書きながら数えた CRC-32 と長さ。構造を壊さない画素のビット化けも見つける）。
+/// 書いた PSD（`path` の `file`）を読み戻して確かめる。まず最後まで流して読み戻す（壊れている理由はここで言える）。つぎに、書いた
+/// バイト列と一致するか（書きながら数えた CRC-32 と長さ。構造を壊さない画素のビット化けも見つける）。照合の CRC-32 は、読み戻しが
+/// 読むバイトをその場で数え、読み戻しが飛ばした区間と残りだけを読み足して数える（ファイルを 2 度読まない。[`Checksum::recount`]）。
+///
+/// [`Checksum::recount`]: super::Checksum::recount
 pub fn check_written(
     temp: &Path,
     file: &mut File,
     written: Written,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), WriteError> {
-    let mut reader = BufReader::with_capacity(256 * 1024, &mut *file);
-    let verified = verify_stream(&mut reader, cancel).map_err(WriteError::ReadBack)?;
-    if verified.bytes != written.bytes || verified.layers != written.layers {
-        return Err(WriteError::Mismatch);
-    }
     file.seek(SeekFrom::Start(0))
         .map_err(|source| WriteError::Rewind {
             temp: temp.to_path_buf(),
             source,
         })?;
-    if written
-        .checksum
-        .matches(file, cancel)
+    let mut reader = BufReader::with_capacity(256 * 1024, written.checksum.recount(&mut *file));
+    let verified = verify_stream(&mut reader, cancel).map_err(WriteError::ReadBack)?;
+    if verified.bytes != written.bytes || verified.layers != written.layers {
+        return Err(WriteError::Mismatch);
+    }
+    if reader
+        .into_inner()
+        .finish(cancel)
         .map_err(WriteError::Compare)?
     {
         Ok(())
@@ -442,5 +445,200 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, WriteError::NotAFile), "{err:?}");
         assert_eq!(dir.files(), ["f.psd"]);
+    }
+
+    /// 照合を別の読みで行う形（読み戻してから、先頭に戻ってファイルをもう 1 度読み、CRC-32 と長さを照らす）。
+    fn check_twice(file: &mut File, written: Written) -> Result<(), WriteError> {
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut reader = BufReader::with_capacity(256 * 1024, &mut *file);
+        let verified = verify_stream(&mut reader, None).map_err(WriteError::ReadBack)?;
+        if verified.bytes != written.bytes || verified.layers != written.layers {
+            return Err(WriteError::Mismatch);
+        }
+        file.seek(SeekFrom::Start(0)).unwrap();
+        if written
+            .checksum
+            .matches(file, None)
+            .map_err(WriteError::Compare)?
+        {
+            Ok(())
+        } else {
+            Err(WriteError::Mismatch)
+        }
+    }
+
+    /// 段（どこで断ったか）と理由。
+    fn outcome(r: &Result<(), WriteError>) -> String {
+        match r {
+            Ok(()) => "ok".into(),
+            Err(WriteError::ReadBack(e)) => format!("read back: {e:?}"),
+            Err(WriteError::Compare(e)) => format!("compare: {e:?}"),
+            Err(WriteError::Mismatch) => "mismatch".into(),
+            Err(e) => format!("other: {e:?}"),
+        }
+    }
+
+    /// 書いた PSD のバイト列と、書いた記録。
+    fn written_bytes(doc: &CoreDocument, plan: &ExportPlan) -> (Vec<u8>, Written) {
+        let mut out = std::io::Cursor::new(Vec::new());
+        let written = plan
+            .write_psd(doc, &ExportControl::default(), &mut out, Compression::Rle)
+            .unwrap();
+        (out.into_inner(), written)
+    }
+
+    /// 化けたヘッダーの寸法・層の矩形が大きなキャンバスを言っても、読み戻しはその大きさの場所を先に取らずに断る（ファイルの残りに入らない
+    /// 統合画像・チャンネルは、確保の前に断る。確かめは画素を持たずに行を展開する）。
+    #[test]
+    fn a_corrupted_size_is_refused_without_reserving_room_for_it() {
+        let (doc, plan) = painted();
+        let (bytes, written) = written_bytes(&doc, &plan);
+        let be = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        // 最初の層の記録（上・左・下・右）: ヘッダー 26 バイト・色モードデータ・画像リソースのあと、2 つの長さと層の数
+        let mut at = 26;
+        for _ in 0..2 {
+            at += 4 + be(at);
+        }
+        let record = at + 4 + 4 + 2;
+        let cases: [&[(usize, u32)]; 6] = [
+            // 高さ・幅の上の桁の 1 ビット（2^30 を超える）・u32 の最大・形式の上限ちょうど
+            &[(14, (1 << 30) | 16)],
+            &[(18, (1 << 30) | 16)],
+            &[(14, u32::MAX), (18, u32::MAX)],
+            &[(14, 30000), (18, 30000)],
+            &[(14, 30001)],
+            // 層の矩形（下・右）を形式の上限まで
+            &[(record + 8, 30000), (record + 12, 30000)],
+        ];
+        let dir = Dir::new("size");
+        let path = dir.0.join("a.psd");
+        for edits in cases {
+            let mut b = bytes.clone();
+            for &(at, v) in edits {
+                b[at..at + 4].copy_from_slice(&v.to_be_bytes());
+            }
+            let err = verify_stream(&mut std::io::Cursor::new(&b), None).unwrap_err();
+            assert!(matches!(err, Error::InvalidData(_)), "{edits:?}: {err:?}");
+            fs::write(&path, &b).unwrap();
+            let mut file = OpenOptions::new().read(true).open(&path).unwrap();
+            let checked = check_written(&path, &mut file, written, None);
+            assert!(
+                matches!(checked, Err(WriteError::ReadBack(Error::InvalidData(_)))),
+                "{edits:?}: {checked:?}"
+            );
+        }
+    }
+
+    /// 読み戻しの読みで照合も数える形が、壊れた書き込みを、ファイルをもう 1 度読む形と同じ段・同じ理由で断る。小さな PSD の全部のバイトを
+    /// 1 つずつ化けさせる（読み戻しが飛ばす区間・書き直した先頭・層の画素・統合画像のどれも）。長い・短いファイルも。
+    #[test]
+    fn the_single_read_check_refuses_every_corruption_like_the_two_read_check() {
+        let dir = Dir::new("flip");
+        let path = dir.0.join("a.psd");
+        let (doc, plan) = painted();
+        let (bytes, written) = written_bytes(&doc, &plan);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        let mut put = |b: &[u8]| {
+            file.set_len(0).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.write_all(b).unwrap();
+            let one = outcome(&check_written(&path, &mut file, written, None));
+            let two = outcome(&check_twice(&mut file, written));
+            (one, two)
+        };
+        let (one, two) = put(&bytes);
+        assert_eq!((one.as_str(), two.as_str()), ("ok", "ok"));
+        let mut refused = 0;
+        // 高さ・幅の上の桁の化けも（大きな寸法は、統合画像の場所を取る前に断る）
+        for i in 0..bytes.len() {
+            // 下の桁と上の桁を交互に（長さの欄の符号の桁も化けさせる）
+            let bit = if i % 2 == 0 { 0x01u8 } else { 0x80 };
+            let mut b = bytes.clone();
+            b[i] ^= bit;
+            let (one, two) = put(&b);
+            assert_eq!(one, two, "{i} バイト目の {bit:#x}");
+            assert_ne!(one, "ok", "{i} バイト目の {bit:#x}: 化けを見逃した");
+            refused += 1;
+        }
+        for b in [
+            [bytes.clone(), vec![0]].concat(),
+            [bytes.clone(), vec![7; 300 * 1024]].concat(),
+            bytes[..bytes.len() - 1].to_vec(),
+        ] {
+            let (one, two) = put(&b);
+            assert_eq!(one, two, "{} バイト", b.len());
+            assert_ne!(one, "ok");
+        }
+        assert_eq!(refused, bytes.len());
+    }
+
+    /// 大きめの PSD（読みの緩衝を何度もまたぐ・緩衝より大きな読み）でも、化けた所によらず同じ断り。読み戻しが飛ばす区間（画像リソース）を含む。
+    #[test]
+    fn the_single_read_check_matches_on_a_larger_file() {
+        let dir = Dir::new("large");
+        let path = dir.0.join("a.psd");
+        let mut doc = CoreDocument::new(700, 500).unwrap();
+        for k in 0..3u32 {
+            let layer = doc.add_layer(&format!("l{k}")).unwrap();
+            for y in (0..500).step_by(3) {
+                for x in (k * 40..700).step_by(2) {
+                    let v = (x * 7 + y * 13 + k * 31) as u8;
+                    doc.set_pixel(layer, x, y, yolu_core::Rgba8::new(v, v ^ 0x55, 200, 255))
+                        .unwrap();
+                }
+            }
+        }
+        let plan = super::super::plan_export(
+            &doc,
+            &super::super::ExportOptions::new(
+                yolu_core::Channel::Color,
+                super::super::ExportMode::Bake,
+            ),
+            &ExportControl::default(),
+        )
+        .unwrap();
+        let (bytes, written) = written_bytes(&doc, &plan);
+        assert!(bytes.len() > 512 * 1024, "{}", bytes.len());
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(&bytes).unwrap();
+        assert!(check_written(&path, &mut file, written, None).is_ok());
+        let cancel = AtomicBool::new(true);
+        let cancelled = check_written(&path, &mut file, written, Some(&cancel));
+        assert!(
+            matches!(
+                &cancelled,
+                Err(WriteError::ReadBack(crate::Error::Core(
+                    yolu_core::CoreError::Cancelled
+                )))
+            ),
+            "{cancelled:?}"
+        );
+        let step = bytes.len() / 97;
+        for i in (0..bytes.len())
+            .step_by(step)
+            .chain([30, 34, 40, bytes.len() - 1])
+        {
+            file.seek(SeekFrom::Start(i as u64)).unwrap();
+            file.write_all(&[bytes[i] ^ 0x10]).unwrap();
+            let one = outcome(&check_written(&path, &mut file, written, None));
+            let two = outcome(&check_twice(&mut file, written));
+            assert_eq!(one, two, "{i} バイト目");
+            assert_ne!(one, "ok", "{i} バイト目");
+            file.seek(SeekFrom::Start(i as u64)).unwrap();
+            file.write_all(&[bytes[i]]).unwrap();
+        }
+        assert!(check_written(&path, &mut file, written, None).is_ok());
     }
 }

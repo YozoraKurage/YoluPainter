@@ -840,6 +840,189 @@ pub(super) fn decode(
     }
     Ok(())
 }
+
+/// 行を並べて確かめる、RLE のチャンネルの圧縮した行の合計の下限（これより小さければ 1 本で確かめる）。
+const PARALLEL_CHECK_BYTES: usize = 1 << 20;
+
+/// 無圧縮か RLE のチャンネルを、行ごとに並べて復号する形（`decode` と同じ所へ同じ値を書き、同じ誤りを返す）。RLE の行は互いに独立
+/// （表に行ごとの長さがある）なので、行の区間を先に切り出し（`decode` が順に切り出すのと同じ確かめ）、行の展開をワーカーへ分ける。
+/// 誤りは、`decode` が先に出会うもの: 展開に失敗した一番上の行、無ければ行を切り出せなかった所・末尾の余り。
+pub(super) struct ChannelRows<'a> {
+    reader: Reader<'a>,
+    width: usize,
+    height: usize,
+    /// RLE の行の区間（読み手の中の位置）。無圧縮なら空。
+    rows: Vec<(usize, usize)>,
+    raw: bool,
+    /// 行の区間を切り出したあとの誤り（切り出せなかった行・末尾の余り）。それより上の行の展開の誤りが先。
+    after: Option<Error>,
+}
+
+impl<'a> ChannelRows<'a> {
+    /// 圧縮の種類と行の区間を読む。無圧縮・RLE でなければ（ZIP・未対応）、幅か高さが 0 なら None（`decode` で 1 本ずつ）。
+    pub(super) fn new(mut r: Reader<'a>, w: u32, h: u32) -> Result<Option<ChannelRows<'a>>> {
+        let compression = r.u16()?;
+        let (w, h) = (w as usize, h as usize);
+        if w == 0 || h == 0 || compression > 1 {
+            return Ok(None);
+        }
+        let mut rows = Vec::new();
+        let mut after = None;
+        if compression == 0 {
+            check(r.remaining() == w * h, "raw チャンネル長が矩形と不一致です")?;
+        } else {
+            let mut table = r.slice(h * 2)?;
+            rows.reserve(h);
+            for _ in 0..h {
+                let n = table.u16()? as usize;
+                match r.slice(n) {
+                    Ok(row) => rows.push((row.pos, row.end)),
+                    Err(e) => {
+                        after = Some(e);
+                        break;
+                    }
+                }
+            }
+            if after.is_none() {
+                after = check(r.remaining() == 0, "RLE チャンネルに余分なデータ").err();
+            }
+        }
+        Ok(Some(ChannelRows {
+            reader: r,
+            width: w,
+            height: h,
+            rows,
+            raw: compression == 0,
+            after,
+        }))
+    }
+
+    /// `decode` と同じ誤りを返すが、画素はどこにも書かない（無圧縮は `new` で長さを確かめ済み。RLE の行はワーカーごとの 1 行の場所へ展開する）。
+    /// RLE の圧縮した行の合計が `parallel_from` より小さければ、1 本で確かめる。
+    fn check(self, parallel_from: usize) -> Result<()> {
+        use rayon::prelude::*;
+        if self.raw {
+            return Ok(());
+        }
+        let (w, r) = (self.width, &self.reader);
+        let unpack = |row: &mut Vec<u8>, (y, &(pos, end)): (usize, &(usize, usize))| {
+            let line = Reader {
+                data: r.data,
+                pos,
+                end,
+                lenient: r.lenient,
+            };
+            packbits(line, w, row, 0, 1).err().map(|e| (y, e))
+        };
+        let packed = match (self.rows.first(), self.rows.last()) {
+            (Some(first), Some(last)) => last.1 - first.0,
+            _ => 0,
+        };
+        // 小さなチャンネルは 1 本で（展開は書かずに読むだけで速く、並べる手間と、ほかの仕事で混んだ機械でワーカーを待つ時間のほうが大きい）
+        let first = if packed < parallel_from {
+            let mut row = vec![0u8; w];
+            self.rows
+                .iter()
+                .enumerate()
+                .find_map(|item| unpack(&mut row, item))
+        } else {
+            self.rows
+                .par_iter()
+                .enumerate()
+                .map_init(|| vec![0u8; w], unpack)
+                .flatten()
+                .min_by_key(|(y, _)| *y)
+        };
+        match (first, self.after) {
+            (Some((_, e)), _) | (None, Some(e)) => Err(e),
+            (None, None) => Ok(()),
+        }
+    }
+
+    /// 行ごとに並べて、out（幅 × stride のバイトの行が上から並ぶ面）の component へ展開する。
+    pub(super) fn decode(self, out: &mut [u8], component: usize, stride: usize) -> Result<()> {
+        use rayon::prelude::*;
+        let (w, r) = (self.width, &self.reader);
+        if self.raw {
+            let start = r.pos;
+            out.par_chunks_mut(w * stride)
+                .take(self.height)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    let src = &r.data[start + y * w..start + (y + 1) * w];
+                    for (x, v) in src.iter().enumerate() {
+                        row[component + x * stride] = *v;
+                    }
+                });
+            return Ok(());
+        }
+        let first = out
+            .par_chunks_mut(w * stride)
+            .zip(self.rows.par_iter())
+            .enumerate()
+            .filter_map(|(y, (row, &(pos, end)))| {
+                let line = Reader {
+                    data: r.data,
+                    pos,
+                    end,
+                    lenient: r.lenient,
+                };
+                packbits(line, w, row, component, stride)
+                    .err()
+                    .map(|e| (y, e))
+            })
+            .min_by_key(|(y, _)| *y);
+        match (first, self.after) {
+            (Some((_, e)), _) | (None, Some(e)) => Err(e),
+            (None, None) => Ok(()),
+        }
+    }
+}
+
+/// `decode_rows` の、復号できるかだけを見る形（誤り・知らせは同じ）。無圧縮・RLE は画素を書かずに確かめる（RLE の行はワーカーごとの
+/// 1 行の場所へ展開する）。ほかの圧縮は `plane` を面の大きさにして `decode` で復号する。
+pub(super) fn check_rows(
+    r: Reader,
+    w: u32,
+    h: u32,
+    plane: &mut Vec<u8>,
+    s: &mut State,
+) -> Result<()> {
+    check_rows_from(r, w, h, plane, s, PARALLEL_CHECK_BYTES)
+}
+/// `check_rows` の、行を並べる大きさの下限を渡す形（試験が 1 本の道と並べる道の両方を通す）。
+fn check_rows_from(
+    r: Reader,
+    w: u32,
+    h: u32,
+    plane: &mut Vec<u8>,
+    s: &mut State,
+    parallel_from: usize,
+) -> Result<()> {
+    match ChannelRows::new(r.clone(), w, h)? {
+        Some(rows) => rows.check(parallel_from),
+        None => {
+            // 中身は使わないので、前のチャンネルの中身は消さずに大きさだけ合わせる
+            plane.resize(w as usize * h as usize, 0);
+            decode(r, w, h, plane, 0, 1, s)
+        }
+    }
+}
+/// `decode` の、無圧縮・RLE のチャンネルを行ごとに並べて復号する形（ほかの圧縮は `decode` で 1 本ずつ）。書く値・誤り・知らせは `decode` と同じ。
+pub(super) fn decode_rows(
+    r: Reader,
+    w: u32,
+    h: u32,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+    s: &mut State,
+) -> Result<()> {
+    match ChannelRows::new(r.clone(), w, h)? {
+        Some(rows) => rows.decode(out, component, stride),
+        None => decode(r, w, h, out, component, stride, s),
+    }
+}
 fn decode_composite(
     mut r: Reader,
     w: u32,
@@ -889,16 +1072,29 @@ fn packbits(mut r: Reader, w: usize, out: &mut [u8], offset: usize, stride: usiz
             (1 - i16::from(control)) as usize
         };
         check(n <= w - x, "RLE 行が幅を超えています")?;
+        // 1 面へ（stride 1）はまとめて写す・埋める
+        let at = offset + x * stride;
         if control >= 0 {
-            for b in r.take(n)? {
-                out[offset + x * stride] = *b;
-                x += 1
+            let src = r.take(n)?;
+            if stride == 1 {
+                out[at..at + n].copy_from_slice(src);
+                x += n;
+            } else {
+                for b in src {
+                    out[offset + x * stride] = *b;
+                    x += 1
+                }
             }
         } else {
             let b = r.u8()?;
-            for _ in 0..n {
-                out[offset + x * stride] = b;
-                x += 1
+            if stride == 1 {
+                out[at..at + n].fill(b);
+                x += n;
+            } else {
+                for _ in 0..n {
+                    out[offset + x * stride] = b;
+                    x += 1
+                }
             }
         }
     }
@@ -1994,5 +2190,208 @@ mod tests {
         ));
         assert!(!curves_extra_matches(&same[..same.len() - 3], 0xf, &base));
         assert!(!curves_extra_matches(b"XXXXrest", 0xf, &base));
+    }
+
+    /// PackBits で 1 行を詰める（3 つ以上続く値は繰り返し、ほかは直書き。どちらも 128 まで）。
+    fn pack(row: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < row.len() {
+            let mut run = 1;
+            while i + run < row.len() && row[i + run] == row[i] && run < 128 {
+                run += 1;
+            }
+            if run >= 3 {
+                out.push((257 - run) as u8);
+                out.push(row[i]);
+                i += run;
+                continue;
+            }
+            let start = i;
+            while i < row.len() && i - start < 128 {
+                if i + 2 < row.len() && row[i] == row[i + 1] && row[i] == row[i + 2] {
+                    break;
+                }
+                i += 1;
+            }
+            out.push((i - start - 1) as u8);
+            out.extend_from_slice(&row[start..i]);
+        }
+        out
+    }
+
+    /// RLE のチャンネル（圧縮の番号・行の長さの表・行）。rows は詰めた行。
+    fn rle(rows: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![0, 1];
+        for r in rows {
+            out.extend((r.len() as u16).to_be_bytes());
+        }
+        for r in rows {
+            out.extend(r);
+        }
+        out
+    }
+
+    fn packed_rows(w: usize, h: usize) -> Vec<Vec<u8>> {
+        let mut seed = 0x9e37_79b9u32;
+        (0..h)
+            .map(|y| {
+                let row: Vec<u8> = (0..w)
+                    .map(|x| {
+                        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        if (x / 5 + y) % 3 == 0 {
+                            (y * 3) as u8
+                        } else {
+                            (seed >> 24) as u8
+                        }
+                    })
+                    .collect();
+                let mut p = pack(&row);
+                if y % 4 == 1 {
+                    // 何もしない印（-128）も読み飛ばす
+                    p.insert(0, 0x80);
+                }
+                p
+            })
+            .collect()
+    }
+
+    /// 行ごとに並べる復号（`decode_rows`）が、1 本ずつの `decode` と同じ値を書き、同じ誤り（文まで）を返す。壊れ方が 2 つあれば、
+    /// `decode` が先に出会うほう（上の行・行の切り出し・末尾の余り）。
+    #[test]
+    fn decoding_rows_in_parallel_matches_decoding_in_order() {
+        let (w, h) = (37usize, 23usize);
+        let good = packed_rows(w, h);
+        let bad_row = |rows: &mut Vec<Vec<u8>>, y: usize, longer: bool| {
+            if longer {
+                rows[y].extend([0, 7]);
+            } else {
+                rows[y] = pack(&vec![1; w - 2]);
+            }
+        };
+        let mut cases: Vec<(&str, Vec<u8>)> = vec![("good", rle(&good))];
+        for (name, edits) in [
+            ("long", vec![(5, true)]),
+            ("short", vec![(9, false)]),
+            ("two", vec![(12, true), (4, false)]),
+            ("last", vec![(22, false)]),
+        ] {
+            let mut rows = good.clone();
+            for (y, longer) in edits {
+                bad_row(&mut rows, y, longer);
+            }
+            cases.push((name, rle(&rows)));
+        }
+        // 表は行の長さを大きく言うが、データが足りない（15 行目で切り出せない）。上の行が壊れていればそちらが先
+        for bad in [None, Some(3), Some(18)] {
+            let mut rows = good.clone();
+            if let Some(y) = bad {
+                bad_row(&mut rows, y, true);
+            }
+            let mut bytes = rle(&rows);
+            let at = 2 + 15 * 2;
+            let n = u16::from_be_bytes([bytes[at], bytes[at + 1]]) + 2000;
+            bytes[at..at + 2].copy_from_slice(&n.to_be_bytes());
+            cases.push(("cut", bytes));
+        }
+        // 末尾の余り（上の行が壊れていればそちらが先）
+        for bad in [None, Some(20)] {
+            let mut rows = good.clone();
+            if let Some(y) = bad {
+                bad_row(&mut rows, y, false);
+            }
+            let mut bytes = rle(&rows);
+            bytes.extend([1, 2, 3]);
+            cases.push(("tail", bytes));
+        }
+        // 直書きの途中で行が終わる（行の中の位置つきの誤り）
+        let mut rows = good.clone();
+        rows[7] = vec![10, 1, 2];
+        cases.push(("literal", rle(&rows)));
+        // 表が切れている・無圧縮（長さが合う・合わない）・未対応の圧縮・空
+        cases.push(("table", rle(&good)[..20].to_vec()));
+        let raw: Vec<u8> = (0..w * h).map(|i| (i * 7) as u8).collect();
+        cases.push(("raw", [vec![0, 0], raw.clone()].concat()));
+        cases.push(("raw short", [vec![0, 0], raw[1..].to_vec()].concat()));
+        cases.push(("zip", vec![0, 2, 1, 2, 3]));
+        cases.push(("empty", vec![0]));
+        let limits = Limits::default();
+        for threads in [1, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            for (name, bytes) in &cases {
+                for (component, stride) in [(0, 1), (2, 4)] {
+                    let mut expected = vec![0xa5u8; w * h * stride];
+                    let mut got = expected.clone();
+                    let mut s = state(&limits);
+                    let e = decode(
+                        Reader::lenient(bytes),
+                        w as u32,
+                        h as u32,
+                        &mut expected,
+                        component,
+                        stride,
+                        &mut s,
+                    );
+                    let mut s2 = state(&limits);
+                    let g = pool.install(|| {
+                        decode_rows(
+                            Reader::lenient(bytes),
+                            w as u32,
+                            h as u32,
+                            &mut got,
+                            component,
+                            stride,
+                            &mut s2,
+                        )
+                    });
+                    assert_eq!(
+                        format!("{g:?}"),
+                        format!("{e:?}"),
+                        "{name} {stride} {threads}"
+                    );
+                    assert_eq!(s2.notes, s.notes, "{name}");
+                    if e.is_ok() {
+                        assert!(got == expected, "{name} {stride} {threads}");
+                    }
+                    // 画素を書かずに確かめる形も、同じ誤り・知らせ（行を並べる道と 1 本の道の両方）。場所は ZIP など 1 本ずつ
+                    // 復号するときだけ取る
+                    for parallel_from in [0, usize::MAX] {
+                        let (mut plane, mut s3) = (Vec::new(), state(&limits));
+                        let c = pool.install(|| {
+                            check_rows_from(
+                                Reader::lenient(bytes),
+                                w as u32,
+                                h as u32,
+                                &mut plane,
+                                &mut s3,
+                                parallel_from,
+                            )
+                        });
+                        let what = format!("{name} {threads} {parallel_from}");
+                        assert_eq!(format!("{c:?}"), format!("{e:?}"), "{what}");
+                        assert_eq!(s3.notes, s.notes, "{what}");
+                        let decoded_in_order = bytes.len() >= 2 && bytes[1] > 1;
+                        assert_eq!(plane.is_empty(), !decoded_in_order, "{what}");
+                    }
+                }
+            }
+        }
+        assert!(
+            cases.iter().filter(|(n, _)| *n == "good").count() == 1
+                && decode_rows(
+                    Reader::lenient(&cases[0].1),
+                    w as u32,
+                    h as u32,
+                    &mut vec![0; w * h],
+                    0,
+                    1,
+                    &mut state(&limits)
+                )
+                .is_ok(),
+            "壊れていない並びは読める"
+        );
     }
 }
