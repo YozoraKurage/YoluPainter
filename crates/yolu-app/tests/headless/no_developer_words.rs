@@ -183,7 +183,15 @@ fn no_message_in_any_crate_uses_a_literal_translation_word() {
     // core・io・gpu・ops の文と、`lang/errors.rs` の表のキー（`=>` の左）も見る。core の文を直したら、表のキーも同じ文に直す
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut found = Vec::new();
-    for name in ["yolu-core", "yolu-io", "yolu-gpu", "yolu-app", "yolu-ops", "yolu-mcp", "yolu-cli"] {
+    for name in [
+        "yolu-core",
+        "yolu-io",
+        "yolu-gpu",
+        "yolu-app",
+        "yolu-ops",
+        "yolu-mcp",
+        "yolu-cli",
+    ] {
         let root = crates.join(name).join("src");
         found.extend(
             scan_words(&root, &EVERYWHERE, true)

@@ -557,7 +557,7 @@ fn merge_down_moves_the_upper_anchor_to_the_result() {
     let upper_anchor = doc
         .add_anchor(upper, AnchorPlacement::Layer, Some("上"), None)
         .unwrap();
-    let reader_layer = doc.add_layer("読む層").unwrap();
+    let reader_layer = doc.add_layer("読むレイヤー").unwrap();
     paint(&mut doc, reader_layer, Channel::Color, 21);
     let mut g = Settings::new(generator::Kind::Anchor);
     g.blend = generator::Blend::Replace;
@@ -610,7 +610,7 @@ fn merging_away_a_read_anchor_is_counted_as_a_change() {
     let anchor = doc
         .add_anchor(lower, AnchorPlacement::Layer, Some("下"), None)
         .unwrap();
-    let reader_layer = doc.add_layer("読む層").unwrap();
+    let reader_layer = doc.add_layer("読むレイヤー").unwrap();
     paint(&mut doc, reader_layer, Channel::Height, 21);
     let mut g = Settings::new(generator::Kind::Anchor);
     g.blend = generator::Blend::Replace;

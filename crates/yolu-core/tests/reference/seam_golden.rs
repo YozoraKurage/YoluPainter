@@ -796,7 +796,7 @@ fn anchor_stage(d: &mut Document, layer: LayerId) -> FilterId {
     .unwrap()
 }
 fn reader_layer(d: &mut Document, anchor: AnchorId) -> LayerId {
-    let layer = d.add_layer("読む層").unwrap();
+    let layer = d.add_layer("読むレイヤー").unwrap();
     paint(d, layer, Channel::Color, 21);
     let reader = anchor_stage(d, layer);
     d.set_generator_anchor(
