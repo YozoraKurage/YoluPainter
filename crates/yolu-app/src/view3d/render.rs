@@ -647,8 +647,13 @@ pub fn plan_samples(
 
 /// 製品の窓の wgpu の設定: eframe の既定に、アダプター固有の形式の機能（2× と 8× の多サンプルが使えるかを調べるのに要る）を、
 /// 機材が持つときだけ装置へ足す。機能を足しても、使える形式・上限は増えるだけで減らない。
+///
+/// 面は `SurfaceConfig::LOW_LATENCY`（先に溜めるフレームを 1 枚に絞る。eframe の既定の `HIGH_THROUGHPUT` は 2 枚）にする。2D に描く操作は、
+/// 入力から画面までの遅れをなめらかさより先にする。同期は垂直同期のまま。eframe の 1 つの描画器が、別ウィンドウに出したビューポートを含む
+/// 全ての面へこの設定を使う。
 pub fn wgpu_configuration() -> egui_wgpu::WgpuConfiguration {
-    let mut config = egui_wgpu::WgpuConfiguration::default();
+    let mut config = egui_wgpu::WgpuConfiguration::default()
+        .with_surface_config(egui_wgpu::SurfaceConfig::LOW_LATENCY);
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = Arc::new(move |adapter| {
@@ -3250,6 +3255,16 @@ fn shadow_matrix(center: Vec3, radius: f32, to_light: Vec3) -> Mat4 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ウィンドウの面は、入力から画面までの遅れを短くする設定（`LOW_LATENCY`）で作る。
+    #[test]
+    fn the_window_surface_is_configured_for_low_latency() {
+        let config = wgpu_configuration();
+        assert_eq!(config.surface, egui_wgpu::SurfaceConfig::LOW_LATENCY);
+        assert_ne!(config.surface, egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT);
+        // 同期は垂直同期のまま（Immediate・Mailbox はテアリングと電力の理由で使わない）
+        assert_eq!(config.surface.present_mode, wgpu::PresentMode::AutoVsync);
+    }
 
     #[test]
     fn the_shadow_matrix_fits_the_bounding_sphere_into_the_unit_cube() {
