@@ -5663,12 +5663,12 @@
         "files": [
           {
             "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-            "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
+            "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-          "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
+          "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
         }
       }
     ]

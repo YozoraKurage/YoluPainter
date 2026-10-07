@@ -33,7 +33,7 @@ use super::environment::{self, Baked, Source, FACE_SIZE, MIP_COUNT};
 use super::look_gpu::{self, LookBudget, LookGpu, SetDraw};
 use super::model::ViewModel;
 use super::other_sets::OtherSet;
-use super::paint::{ImageTexture, Paint, PaintStats, Slot};
+use super::paint::{ImageTexture, Paint, PaintStats, Slot, UvSource};
 use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
 use super::tangents::Tangent;
 use super::user_layers::USER_BUDGET_BYTES;
@@ -398,7 +398,7 @@ pub struct View3dRenderer {
     /// 描き先のメモリの上限の指定（None は 3D の絵の予算と同じ量。試験・計測が小さくして、サンプル数を下げる道を通す）。
     /// 設定の「GPU のメモリ」が配る 3 つの予算（`gpu_memory::Budgets`）には入らない別の勘定。
     target_budget: Option<u64>,
-    /// 面のシェーダー（scene.wgsl と liltoon.wgsl）と、そのパイプラインの形（lilToon のパイプラインを使うときに作る）。
+    /// 面のシェーダー（scene.wgsl と lilToon の部品）と、そのパイプラインの形（lilToon のパイプラインを使うときに作る）。
     scene_module: wgpu::ShaderModule,
     scene_pipeline_layout: wgpu::PipelineLayout,
     lil_pipelines: std::collections::HashMap<LilPipe, wgpu::RenderPipeline>,
@@ -765,11 +765,12 @@ impl View3dRenderer {
             .get_downlevel_capabilities()
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
-        // 面のシェーダー: 標準（scene.wgsl）と lilToon の再現（liltoon.wgsl。scene.wgsl の一様バッファ・束ね・関数を使う）を 1 つのモジュールに
+        // 面のシェーダー: 標準（scene.wgsl）と lilToon の再現（`shaders/liltoon/` の部品をつないだもの。scene.wgsl の一様バッファ・束ね・
+        // 関数を使う）を 1 つのモジュールに
         let scene_source = format!(
             "{}\n{}",
             include_str!("shaders/scene.wgsl"),
-            include_str!("shaders/liltoon.wgsl")
+            super::liltoon_wgsl::SOURCE
         );
         let scene_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("yolu-3d-scene"),
@@ -1256,6 +1257,15 @@ impl View3dRenderer {
         self.show_others = show;
     }
 
+    /// 試験・計測用: 表示の写しを UV の外へ塗り広げる幅（表示のテクセル。0 は塗り広げない前の仕事）。塗り広げるかどうかが変われば
+    /// 次の同期が全部を作り直す。幅だけを変えたときは、作ってある絵は前の幅のまま（`invalidate_paint` で作り直す）。
+    pub fn set_display_padding(&mut self, texels: u32) {
+        self.paint.set_padding_texels(texels);
+        for h in &mut self.held {
+            h.paint.set_padding_texels(texels);
+        }
+    }
+
     /// ほかのセットの絵の辺の上限を決める（試験が小さくして、縮めの道を通す）。
     pub fn set_other_cap(&mut self, cap: u32) {
         self.other_cap = cap.max(1);
@@ -1537,6 +1547,12 @@ impl View3dRenderer {
         }
         // 今のセットになった文書は、ほかのセットとしては持たない
         self.held.retain(|h| h.doc_id != id);
+        // 表示の写しの塗り広げの元（UV の形が変われば、続く計画と同期が全部を作り直す）
+        let uv = |material: i32| UvSource {
+            geometry: model.geometry.clone(),
+            material,
+        };
+        self.paint.set_padding(Some(uv(material)));
 
         let shown = model_materials(model);
         let mut want: Vec<&OtherSet<'_>> = others
@@ -1595,6 +1611,7 @@ impl View3dRenderer {
                 held.material = o.material;
                 held.paint.set_budget(u64::MAX);
                 held.paint.set_cap(Some(self.other_cap));
+                held.paint.set_padding(Some(uv(o.material)));
                 if held.paint.demote(o.doc) {
                     self.demotions += 1;
                 } else if held.paint.needs_rebuild(o.doc) {
@@ -1630,6 +1647,7 @@ impl View3dRenderer {
             // ほかのセットは上限だけで縮める（予算は上の計画で見た。今のセットだった絵の予算の値を持ち越さない）
             held.paint.set_budget(u64::MAX);
             held.paint.set_cap(Some(self.other_cap));
+            held.paint.set_padding(Some(uv(o.material)));
             if held.paint.demote(o.doc) {
                 self.demotions += 1;
             }
@@ -2543,11 +2561,9 @@ impl View3dRenderer {
         f.extend_from_slice(&[p.x, p.y, p.z, 0.0]);
         let l = display.light_direction();
         f.extend_from_slice(&[l.x, l.y, l.z, 0.0]);
-        // マテリアル表示の光（Unity 版: 色 × 0.769 × 強さ をリニアへ。Unity の `_LightColor0` と同じ GammaToLinearSpace で、
-        // 1 を超える光は pow 2.2）と、環境が無いときの一様な環境光（色 × 0.4 をリニアへ）
-        let direct = display
-            .light_color
-            .map(|c| brdf::unity_gamma_to_linear(c * 0.769 * display.light_intensity));
+        // マテリアル表示の光（Unity のディレクショナルライトの `_LightColor0` と同じ値。`Display::direct_light`）と、環境が無いときの
+        // 一様な環境光（色 × 0.4 をリニアへ）
+        let direct = display.direct_light();
         f.extend_from_slice(&[direct[0], direct[1], direct[2], 0.0]);
         let flat = display.ambient.map(|c| brdf::srgb_to_linear(c * 0.4));
         f.extend_from_slice(&[flat[0], flat[1], flat[2], 0.0]);

@@ -237,6 +237,14 @@ impl Display {
         Vec3::new(y.sin() * p.cos(), p.sin(), y.cos() * p.cos())
     }
 
+    /// マテリアル表示の主な光（リニアの放射輝度）。Unity のビルトインのレンダーパイプラインのディレクショナルライトの `_LightColor0` と
+    /// 同じ値: 色 × 強さを、ライトの強さをリニアで掛けない既定の設定（`GraphicsSettings.lightsUseLinearIntensity` が偽）どおり
+    /// GammaToLinearSpace でリニアへ（1 を超える値は pow 2.2）。白・強さ 1 で 1 になり、Unity の場面の白・強さ 1 のライトと同じ明るさ。
+    pub fn direct_light(&self) -> [f32; 3] {
+        self.light_color
+            .map(|c| super::brdf::unity_gamma_to_linear(c * self.light_intensity))
+    }
+
     /// 光なしの表示か（チャンネルだけ・メッシュマップだけ。光・環境・影・トーンマッピングを使わない）。
     pub fn is_unlit(&self) -> bool {
         matches!(self.shading, Shading::Channel(_) | Shading::MeshMap(_))

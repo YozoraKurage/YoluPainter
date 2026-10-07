@@ -7,7 +7,7 @@ use egui::Pos2;
 use egui_kittest::Harness;
 use yolu_app::state::Action;
 use yolu_app::view3d::brdf;
-use yolu_app::view3d::display::{EnvKind, Op};
+use yolu_app::view3d::display::{Display, EnvKind, Op};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
 use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
@@ -162,7 +162,7 @@ fn to_bytes(c: Vec3) -> [u8; 3] {
 
 /// 3D ビューの光（表示の既定の強さ・色）から、lilToon の光の向きと明るさ（OpenLit の ComputeLights と lilToon の補正）。
 fn lil_light(to_light: Vec3) -> (Vec3, Vec3) {
-    let main = brdf::srgb_to_linear(0.769);
+    let main = Display::default().direct_light()[0];
     let flat = brdf::srgb_to_linear(0.2);
     let lum = main * (0.039_681_915 + 0.458_021_8 + 0.006_096_539_6); // OpenLitLuminance の係数
     let dir = (to_light * lum + Vec3::new(0.001, 0.002, 0.001)).normalize();

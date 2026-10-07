@@ -7,6 +7,7 @@ pub mod display;
 pub mod environment;
 pub mod gizmo;
 pub mod input;
+mod liltoon_wgsl;
 pub mod look_gpu;
 pub mod model;
 pub mod navigation;

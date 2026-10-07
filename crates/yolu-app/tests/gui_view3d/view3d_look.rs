@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use yolu_app::state::Action;
 use yolu_app::view3d::brdf::{self, Curve, Indirect, Light, Surface};
-use yolu_app::view3d::display::{EnvKind, Op, Shading};
+use yolu_app::view3d::display::{Display, EnvKind, Op, Shading};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::view3d::paint::Slot;
 use yolu_app::view3d::render::TangentHook;
@@ -156,7 +156,7 @@ fn expected_head_on(color: [u8; 3], metallic: u8, roughness: u8, emission: [u8; 
     };
     let light = Light {
         to_light: Vec3::NEG_Z,
-        radiance: Vec3::splat(brdf::srgb_to_linear(0.769)),
+        radiance: Vec3::from(Display::default().direct_light()),
     };
     let flat = Vec3::splat(brdf::srgb_to_linear(0.2));
     let lit = brdf::standard_brdf(
@@ -1027,7 +1027,7 @@ fn display_value_head_on(color: [u8; 3], metallic: u8, roughness: u8) -> Vec3 {
         Vec3::NEG_Z,
         &Light {
             to_light: Vec3::NEG_Z,
-            radiance: Vec3::splat(brdf::srgb_to_linear(0.769)),
+            radiance: Vec3::from(Display::default().direct_light()),
         },
         &Indirect {
             diffuse: flat,
@@ -1999,6 +1999,9 @@ fn snapshot_material_balls_metal_and_roughness_steps() {
     material_balls(&mut h);
     op(&mut h, Op::Env(EnvKind::Studio));
     op(&mut h, Op::Tone(Curve::Neutral));
+    // 映り込みの並びを見るので、主な光は弱め（Unity のライトの強さ 0.769）にして、滑らかな金属の光の点がトーンマッピングの上で
+    // 飽和しないようにする（強さ 1 では、滑らかと中くらいのピークがどちらも飽和の近くで並びが入れ替わる）
+    op(&mut h, Op::LightIntensity(0.769));
     let image = h.render().unwrap();
     // 並びの検算: 金属が増えるほど拡散の色（橙）は沈み、粗さが増えるほど映り込みのピークは落ちる
     let area = h.state().view3d_rect().unwrap();

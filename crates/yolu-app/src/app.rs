@@ -1397,6 +1397,13 @@ impl YoluApp {
         }
     }
 
+    /// 試験・計測用: 3D ビューの表示の写しを UV の外へ塗り広げる幅（表示のテクセル。0 は塗り広げない前の仕事）。
+    pub fn view3d_set_display_padding(&mut self, texels: u32) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_display_padding(texels);
+        }
+    }
+
     /// 試験用: ほかのテクスチャセットの絵の辺の上限を小さくして、縮めの道を通す。
     pub fn view3d_set_other_cap(&mut self, cap: u32) {
         if let Some(r) = &mut self.renderer3d {

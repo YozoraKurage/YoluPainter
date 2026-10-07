@@ -15,9 +15,10 @@ using UnityEngine.Rendering;
 // 全部入れる（テクスチャを読む機能は、使うマテリアルがあるときに lilToon が自分で入れるのと同じ）。終わったら両方を元に戻す。
 // lilToon の設定のファイル（ProjectSettings/lilToonSetting.json）が無いプロジェクトでは何も変えずに断る（撮る間に lilToon が
 // ファイルを作り、元の「ファイルが無い」状態へは戻せないため）。
-// 光は 1 つの平行光（白・強さ 0.769。ビルトインの既定の「リニアの強さを使わない」で _LightColor0 = sRGB→リニア(0.769)）、
+// 光は 1 つの平行光（白・強さは scenes.txt の light の 4 つ目。ビルトインの既定の「リニアの強さを使わない」で _LightColor0 = sRGB→リニア(強さ)）、
 // 環境光は 3D ビューの空の SH（scenes.txt の sh。9 つの係数を Unity の SphericalHarmonicsL2 へ最小二乗で当てはめる）、影は落とさない。
 // cube の行は一様な色のキューブマップをそのスロットに入れる（環境光の反射の場面: マテリアルの反射の差し替えで一様な環境を映す）。
+// reflection の行は、場面の既定の反射（反射プローブを使わない物が映す空）を一様な色のキューブマップにする（Standard の場面）。
 var dir = "__DIR__";
 var log = new System.Text.StringBuilder();
 var inv = CultureInfo.InvariantCulture;
@@ -66,6 +67,8 @@ PlayerSettings.colorSpace = ColorSpace.Linear;
 
 var ambientMode = RenderSettings.ambientMode;
 var ambientProbe = RenderSettings.ambientProbe;
+var reflectionMode = RenderSettings.defaultReflectionMode;
+var reflectionTexture = RenderSettings.customReflectionTexture;
 var made = new System.Collections.Generic.List<Object>();
 // 開いている場面のほかの光は、撮る間だけ切る
 var others = Object.FindObjectsOfType<Light>().Where(l => l.enabled).ToList();
@@ -94,6 +97,7 @@ try
         var vectors = new System.Collections.Generic.List<(string, Vector4)>();
         var textures = new System.Collections.Generic.List<(string, string, int, int, bool)>();
         var cubes = new System.Collections.Generic.List<(string, Color)>();
+        Color? reflection = null;
         while (at < lines.Length)
         {
             var p = lines[at++].Split(' ');
@@ -112,6 +116,7 @@ try
                 case "vector": vectors.Add((p[1], new Vector4(F(p[2]), F(p[3]), F(p[4]), F(p[5])))); break;
                 case "texture": textures.Add((p[1], p[2], int.Parse(p[3]), int.Parse(p[4]), p[5] == "1")); break;
                 case "cube": cubes.Add((p[1], new Color(F(p[2]), F(p[3]), F(p[4]), 1))); break;
+                case "reflection": reflection = new Color(F(p[1]), F(p[2]), F(p[3]), 1); break;
             }
         }
 
@@ -166,6 +171,23 @@ try
         }
         RenderSettings.ambientMode = AmbientMode.Custom;
         RenderSettings.ambientProbe = probe;
+        // 場面の既定の反射: 指定があれば一様な色のキューブマップ（リニアの半精度）、無ければ元のまま
+        if (reflection is Color rc)
+        {
+            var cube = new Cubemap(4, TextureFormat.RGBAHalf, false);
+            var face = Enumerable.Repeat(rc, 16).ToArray();
+            foreach (CubemapFace f in new[] { CubemapFace.PositiveX, CubemapFace.NegativeX, CubemapFace.PositiveY, CubemapFace.NegativeY, CubemapFace.PositiveZ, CubemapFace.NegativeZ })
+                cube.SetPixels(face, f);
+            cube.Apply(false);
+            made.Add(cube);
+            RenderSettings.defaultReflectionMode = DefaultReflectionMode.Custom;
+            RenderSettings.customReflectionTexture = cube;
+        }
+        else
+        {
+            RenderSettings.defaultReflectionMode = reflectionMode;
+            RenderSettings.customReflectionTexture = reflectionTexture;
+        }
 
         // メッシュ
         var meshes = new System.Collections.Generic.List<Mesh>();
@@ -339,6 +361,8 @@ finally
     foreach (var o in made) if (o != null) Object.DestroyImmediate(o);
     RenderSettings.ambientMode = ambientMode;
     RenderSettings.ambientProbe = ambientProbe;
+    RenderSettings.defaultReflectionMode = reflectionMode;
+    RenderSettings.customReflectionTexture = reflectionTexture;
     PlayerSettings.colorSpace = oldSpace;
     if (oldSetting != null && settingType != null)
     {

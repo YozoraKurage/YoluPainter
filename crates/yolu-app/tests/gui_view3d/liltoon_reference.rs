@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use common::*;
 use egui_kittest::Harness;
 use yolu_app::state::Action;
-use yolu_app::view3d::display::{EnvKind, Op};
+use yolu_app::view3d::display::{Display, EnvKind, Op};
 use yolu_app::view3d::environment::{self, SkyColors, Source};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
@@ -60,9 +60,9 @@ struct Texture {
     srgb: bool,
 }
 
-/// 環境を一様にする場面（環境光の反射の比べ）。
+/// 環境を一様にする場面（環境光の反射の比べと Standard。Standard は Unity の場面の既定の反射を同じ一様な色にする）。
 fn uniform_env(name: &str) -> bool {
-    name == "reflection_env"
+    name == "reflection_env" || name == "light_standard"
 }
 
 /// 一様な環境の色（3D ビューの環境「なし」の環境光: 環境光の色 × 0.4 をリニアへ。場面では環境光の色を白にする）。
@@ -1329,7 +1329,57 @@ fn scenes() -> Vec<Scene> {
         bright_backlight_scene("bright_backlight_front"),
         bright_backlight_scene("bright_backlight_side"),
         bright_backlight_scene("bright_backlight_back"),
+        // 光の強さ（`scene_intensity`）: 3D ビューの強さ 1 と、Unity のディレクショナルライト（白・強さ 1）。3D ビューの既定の光の向きで、
+        // 白いテクスチャの lilToon（既定の値・影あり）と Standard（一様な環境）を
+        Scene {
+            name: "light_default",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| lil("lilToon"),
+            textures: main_texture,
+        },
+        Scene {
+            name: "light_shadow",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "light_standard",
+            meshes: sphere(),
+            camera: light_camera(),
+            paint: |d| fill(d, [255, 255, 255, 255]),
+            look: |_| MaterialLook::default(),
+            textures: main_texture,
+        },
     ]
+}
+
+/// 光の強さの場面のカメラ: 光の来る向きから横へ 60° 回った所から（光の真正面の点と、光の届かない側の両方が見える）。
+fn light_camera() -> OrbitCamera {
+    OrbitCamera {
+        target: Vec3::ZERO,
+        yaw: -143.0,
+        pitch: 0.0,
+        distance: 3.0,
+        model_radius: 1.0,
+    }
+}
+
+/// 場面の光の強さ（3D ビューと Unity のディレクショナルライトで同じ値）。光の強さの場面のほかは 0.769（前に撮った Unity の絵の強さ）。
+fn scene_intensity(name: &str) -> f32 {
+    if name.starts_with("light_") {
+        1.0
+    } else {
+        0.769
+    }
 }
 
 /// 髪の場面のマットキャップの絵（自作の画像の番号）。
@@ -1404,12 +1454,16 @@ fn band_matcap_image() -> (u32, Vec<u8>) {
     (n, out)
 }
 
-/// 場面の光（来る向きの yaw・pitch、度）。髪の場面はカメラ（−Z から +Z を見る）に対して前・横・後ろ。
+/// 場面の光（来る向きの yaw・pitch、度）。髪の場面はカメラ（−Z から +Z を見る）に対して前・横・後ろ。光の強さの場面は 3D ビューの既定の向き。
 fn scene_light(name: &str) -> (f32, f32) {
     match name {
         "bright_backlight_front" => (-150.0, 30.0),
         "bright_backlight_side" => (-90.0, 20.0),
         "bright_backlight_back" => (15.0, 25.0),
+        n if n.starts_with("light_") => {
+            let d = Display::default();
+            (d.light_yaw, d.light_pitch)
+        }
         _ => LIGHT,
     }
 }
@@ -1605,6 +1659,10 @@ fn render_as(
     let light = scene_light(scene.name);
     h.state_mut().apply(Action::View3d(Op::LightYaw(light.0)));
     h.state_mut().apply(Action::View3d(Op::LightPitch(light.1)));
+    h.state_mut()
+        .apply(Action::View3d(Op::LightIntensity(scene_intensity(
+            scene.name,
+        ))));
     // Unity の参照の絵は多サンプルなし。縁の比べ（片方だけの画素・平均）が多サンプルでずれないよう、この比べは 1× で描く
     h.state_mut().apply(Action::View3d(Op::Antialias(1)));
     if uniform_env(scene.name) {
@@ -1677,8 +1735,8 @@ fn export_and_render() {
         .unwrap();
         writeln!(
             desc,
-            "light {} {} {} 0.769",
-            to_light.x, to_light.y, to_light.z
+            "light {} {} {} {}",
+            to_light.x, to_light.y, to_light.z, display.light_intensity
         )
         .unwrap();
         let mut coefficients = sky.sh;
@@ -1698,7 +1756,16 @@ fn export_and_render() {
         writeln!(desc, "mesh {mesh_file}").unwrap();
         let doc = &h.state().state.doc;
         let look = doc.look().clone();
-        writeln!(desc, "shader {}", look.shader_name()).unwrap();
+        let standard = look.kind == LookKind::Standard;
+        if standard {
+            // 3D ビューの標準は Unity の Standard（色は塗った絵だけ、金属 0、滑らかさは使っていない Roughness の既定 128 の 1 − 値）
+            writeln!(desc, "shader Standard").unwrap();
+            writeln!(desc, "color _Color 1 1 1 1").unwrap();
+            writeln!(desc, "float _Metallic 0").unwrap();
+            writeln!(desc, "float _Glossiness {}", 1.0 - 128.0 / 255.0).unwrap();
+        } else {
+            writeln!(desc, "shader {}", look.shader_name()).unwrap();
+        }
         for (name, value) in &look.properties {
             match value {
                 LookValue::Float(v) => writeln!(desc, "float {name} {v}").unwrap(),
@@ -1728,7 +1795,11 @@ fn export_and_render() {
             writeln!(desc, "feature AnisotropyTangentMap").unwrap();
         }
         // 一様な環境: Unity はマテリアルのキューブマップの差し替えで、3D ビューの環境「なし」と同じ色を映す
-        if uniform_env(scene.name) {
+        if uniform_env(scene.name) && standard {
+            // Standard は場面の既定の反射（反射プローブを使わない物が映す空）を、同じ一様な色のキューブマップにする
+            let c = uniform_env_color();
+            writeln!(desc, "reflection {c} {c} {c}").unwrap();
+        } else if uniform_env(scene.name) {
             let c = uniform_env_color();
             writeln!(desc, "cube _ReflectionCubeTex {c} {c} {c}").unwrap();
             writeln!(desc, "float _ReflectionCubeOverride 1").unwrap();
@@ -1996,6 +2067,9 @@ const BOUNDS: &[(&str, f64, f64, f64, usize)] = &[
     ("bright_backlight_front", 0.5, 1.1, 2.0, 2_600),
     ("bright_backlight_side", 0.5, 1.1, 2.0, 2_600),
     ("bright_backlight_back", 0.5, 0.9, 2.0, 2_600),
+    ("light_default", 0.3, 0.3, 1.0, 2_600),
+    ("light_shadow", 0.4, 0.4, 1.0, 2_600),
+    ("light_standard", 0.4, 0.4, 1.0, 2_600),
 ];
 /// GL（ガンマの値のまま重ねる）の `transparent` の上限。llvmpipe と実 GPU の GL で同じ値（平均 28.16〜28.19・95 % 42・片方だけ 5,623）。
 /// 片方だけの画素は、Rust 版のビューの隅のボタン（2,207）と、アルファが 0 に近い薄い縁の帯（llvmpipe の GL で 3,416 = 7 列 × 488 行）: ガンマで重ねると
@@ -2051,4 +2125,38 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
         failures.is_empty(),
         "Unity の lilToon との差が上限を超えた: {failures:#?}"
     );
+}
+
+/// 光の強さの場面の見る点（3D の表示域の画素。光の真正面の側・光と影の間・光の届かない側）と、Unity の絵との許す差（0〜255）。
+/// 測った差は lavapipe（Vulkan）・llvmpipe の GL・コンテナの実 GPU の GL（Mesa d3d12）の 3 つとも 0（2026-10-07）。上限 2 は、測っていない
+/// 機材（Windows の D3D12・macOS の Metal）の補間の違いへの余裕。
+const LIGHT_PROBES: [(u32, u32); 4] = [(380, 230), (300, 200), (200, 300), (150, 420)];
+const LIGHT_PROBE_TOLERANCE: u8 = 2;
+
+/// 3D ビューの光の強さ 1 が、Unity のディレクショナルライト（白・強さ 1）と同じ明るさ: 白いテクスチャの lilToon（既定の値）は明るい側が
+/// 白（FF）になり、影ありの lilToon の明るい側・影の側と、Standard の光の正面から影の側までの見る点が Unity の絵と合う。
+#[test]
+fn light_of_strength_one_matches_a_unity_directional_light() {
+    let scenes = scenes();
+    for name in ["light_default", "light_shadow", "light_standard"] {
+        let scene = scenes.iter().find(|s| s.name == name).expect("場面");
+        let unity = unity_image(name);
+        let (_h, ours) = render(scene, Some(unity.dimensions()));
+        let at = |img: &image::RgbaImage, (x, y): (u32, u32)| -> [u8; 3] {
+            let p = img.get_pixel(x, y).0;
+            [p[0], p[1], p[2]]
+        };
+        for probe in LIGHT_PROBES {
+            let (a, b) = (at(&ours, probe), at(&unity, probe));
+            println!("{name} {probe:?}: 3D ビュー {a:?}・Unity {b:?}");
+            assert!(
+                (0..3).all(|k| a[k].abs_diff(b[k]) <= LIGHT_PROBE_TOLERANCE),
+                "{name} の {probe:?}: 3D ビュー {a:?}・Unity {b:?}（許す差 {LIGHT_PROBE_TOLERANCE}）"
+            );
+        }
+        // 光の真正面の側は、白いテクスチャがそのまま白
+        if name != "light_standard" {
+            assert_eq!(at(&ours, LIGHT_PROBES[0]), [255; 3], "{name} の明るい側");
+        }
+    }
 }

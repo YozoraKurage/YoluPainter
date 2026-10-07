@@ -1,5 +1,5 @@
 //! Live Link で Unity から受けた、描いていないスロットの絵（影色のテクスチャ・マットキャップの絵など）を GPU に持つ: 2D テクスチャの
-//! 配列で、層 1 つがスロット 1 つ（シェーダーの元の番号 40〜55。`shaders/liltoon.wgsl`）。
+//! 配列で、層 1 つがスロット 1 つ（シェーダーの元の番号 40〜55。`shaders/liltoon/slots.wgsl`）。
 //!
 //! - 持つのはスロットの並びで先の [`MAX_RECEIVED_LAYERS`] 枚まで（超えたスロットは割り当てのない既定で描き、欄のスロットの行が
 //!   「描かない」と出す。`look_gpu::dropped_received`）。
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use eframe::egui_wgpu::wgpu;
 use yolu_core::look::ReceivedImage;
 
-/// 1 つのセットが持てる受けた絵の層の数（シェーダーの元の番号 40〜55。`liltoon.wgsl` の `NR` と同じ）。
+/// 1 つのセットが持てる受けた絵の層の数（シェーダーの元の番号 40〜55。`shaders/liltoon/bindings.wgsl` の `NR` と同じ）。
 pub const MAX_RECEIVED_LAYERS: usize = 16;
 /// 層の辺の上限。
 pub const MAX_LAYER_SIZE: u32 = 1024;

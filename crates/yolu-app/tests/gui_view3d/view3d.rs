@@ -171,6 +171,8 @@ fn open_3d_over_a_blurred_corner(seams: bool, source: &[(u32, u32)]) -> (usize, 
         "ぼかしの出力は隣のタイルにもある: {reached:?}"
     );
     let all = doc.canvas_tiles().count();
+    // 上がった絵を合成と画素ごとに比べるので、UV の外への塗り広げは切る（塗り広げは view3d_padding の試験が見る）
+    h.state_mut().view3d_set_display_padding(0);
     h.state_mut().state.view3d.load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();

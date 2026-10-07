@@ -10,9 +10,10 @@ use yolu_core::export::{
 };
 use yolu_core::glam::DVec2;
 use yolu_core::padding::{
-    self, coverage, coverage_tuned, dilate, dilate_cancellable, dilate_tuned, Reach, Tuning,
+    self, coverage, coverage_tuned, dilate, dilate_cancellable, dilate_tuned, Reach, Rings, Tuning,
+    MAX_RING_REACH,
 };
-use yolu_core::{Channel, Document, HeightEdgeMode, NormalSettings, NormalYDirection, Rgba8};
+use yolu_core::{Channel, Document, HeightEdgeMode, NormalSettings, NormalYDirection, Rect, Rgba8};
 
 const W: u32 = 8;
 const H: u32 = 4;
@@ -917,4 +918,150 @@ fn a_channel_image_refuses_before_allocating_and_for_a_channel_the_document_lack
         channel_image(&doc, missing, ALL),
         Err(ExportError::Core(_))
     ));
+}
+
+// ───────── 段の地図と、矩形だけの塗り広げ直し ─────────
+
+/// `pixels` から矩形 `r` を切り出す（行は下から上のまま）。
+fn cut(pixels: &[u8], w: usize, r: Rect) -> Vec<u8> {
+    let mut out = Vec::with_capacity((r.width * r.height * 4) as usize);
+    for y in r.y..r.y + r.height {
+        let start = (y as usize * w + r.x as usize) * 4;
+        out.extend_from_slice(&pixels[start..start + r.width as usize * 4]);
+    }
+    out
+}
+
+/// `inner` を `by` だけ広げて画像の中に切った矩形。
+fn grow(inner: Rect, by: u32, w: u32, h: u32) -> Rect {
+    let x0 = inner.x.saturating_sub(by);
+    let y0 = inner.y.saturating_sub(by);
+    let x1 = (inner.x + inner.width + by).min(w);
+    let y1 = (inner.y + inner.height + by).min(h);
+    Rect::new(x0, y0, x1 - x0, y1 - y0)
+}
+
+#[test]
+fn rings_count_the_same_steps_as_the_whole_dilation() {
+    let (w, h) = (61usize, 37usize);
+    let keep = random_keep(w, h, 31, 3.0);
+    let reach = 6;
+    let rings = Rings::new(w as u32, h as u32, &keep, reach).unwrap();
+    // 段 k のテクセルは、覆いからの 8 近傍の距離（チェビシェフ距離）がちょうど k
+    for y in 0..h {
+        for x in 0..w {
+            let d = (0..h)
+                .flat_map(|yy| (0..w).map(move |xx| (xx, yy)))
+                .filter(|&(xx, yy)| keep[yy * w + xx])
+                .map(|(xx, yy)| xx.abs_diff(x).max(yy.abs_diff(y)) as u32)
+                .min();
+            let expected = d.filter(|&d| d <= reach);
+            assert_eq!(rings.ring(x as u32, y as u32), expected, "({x}, {y})");
+        }
+    }
+    assert_eq!(rings.bytes(), w * h);
+    assert_eq!(rings.reach(), reach);
+    // 矩形の中の種類（覆いの中・塗り広げる）
+    for (x, y, rw, rh) in [(0, 0, w, h), (3, 4, 9, 5), (20, 10, 1, 1), (50, 30, 40, 40)] {
+        let r = Rect::new(x as u32, y as u32, rw as u32, rh as u32);
+        let (mut k, mut f) = (false, false);
+        for yy in y..(y + rh).min(h) {
+            for xx in x..(x + rw).min(w) {
+                match rings.ring(xx as u32, yy as u32) {
+                    Some(0) => k = true,
+                    Some(_) => f = true,
+                    None => {}
+                }
+            }
+        }
+        assert_eq!(rings.kinds_in(r), (k, f), "{r:?}");
+    }
+    // 覆いが無ければどこにも届かない
+    let none = Rings::new(5, 4, &[false; 20], 3).unwrap();
+    assert!((0..4).all(|y| (0..5).all(|x| none.ring(x, y).is_none())));
+}
+
+#[test]
+fn redilating_a_region_gives_the_whole_dilation_inside_it() {
+    let (w, h) = (83u32, 59u32);
+    let image = random_image(w as usize, h as usize, 41);
+    let keep = random_keep(w as usize, h as usize, 42, 2.0);
+    let mut rng = Rng(43);
+    for reach in [1u32, 2, 5, 12] {
+        let whole = dilate(&image, w, h, &keep, Reach::Texels(reach), ALL).unwrap();
+        let rings = Rings::new(w, h, &keep, reach).unwrap();
+        for case in 0..40 {
+            // 端に付く矩形・1 テクセルの矩形・画像全体も通す
+            let inner = match case {
+                0 => Rect::new(0, 0, w, h),
+                1 => Rect::new(0, 0, 1, 1),
+                2 => Rect::new(w - 3, h - 2, 3, 2),
+                _ => {
+                    let x = (rng.u01() * w as f64) as u32 % w;
+                    let y = (rng.u01() * h as f64) as u32 % h;
+                    let rw = 1 + (rng.u01() * 20.0) as u32;
+                    let rh = 1 + (rng.u01() * 20.0) as u32;
+                    Rect::new(x, y, rw.min(w - x), rh.min(h - y))
+                }
+            };
+            // 入力は、内の矩形を段数だけ広げた範囲（それより広くても同じ）
+            for extra in [0, 3] {
+                let outer = grow(inner, reach + extra, w, h);
+                let mut pixels = cut(&image, w as usize, outer);
+                rings.dilate_region(&mut pixels, outer, inner).unwrap();
+                let local = Rect::new(
+                    inner.x - outer.x,
+                    inner.y - outer.y,
+                    inner.width,
+                    inner.height,
+                );
+                assert!(
+                    cut(&pixels, outer.width as usize, local) == cut(&whole, w as usize, inner),
+                    "段数 {reach}・{inner:?}・外 {outer:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn redilating_a_region_is_the_same_for_any_number_of_threads() {
+    // 段 1 の候補が並列の下限（16384）を超える大きさで、並列の枝を通す
+    let (w, h) = (700u32, 500u32);
+    let image = random_image(w as usize, h as usize, 51);
+    let keep = random_keep(w as usize, h as usize, 52, 5.0);
+    let reach = 4;
+    let whole = dilate(&image, w, h, &keep, Reach::Texels(reach), ALL).unwrap();
+    let rings = Rings::new(w, h, &keep, reach).unwrap();
+    let inner = Rect::new(0, 0, w, h);
+    for threads in [1, 3, 8] {
+        let mut pixels = image.clone();
+        in_pool(threads, || rings.dilate_region(&mut pixels, inner, inner)).unwrap();
+        assert!(pixels == whole, "{threads} スレッド");
+        let again = in_pool(threads, || Rings::new(w, h, &keep, reach)).unwrap();
+        assert_eq!(again, rings, "{threads} スレッドの段の地図");
+    }
+}
+
+#[test]
+fn rings_and_region_redilation_refuse_bad_inputs() {
+    assert!(Rings::new(0, 4, &[], 1).is_err());
+    assert!(Rings::new(4, 4, &[false; 15], 1).is_err());
+    assert!(Rings::new(4, 4, &[false; 16], MAX_RING_REACH + 1).is_err());
+    assert!(Rings::new(4, 4, &[false; 16], MAX_RING_REACH).is_ok());
+    let mut keep = vec![false; 64];
+    keep[27] = true;
+    let rings = Rings::new(8, 8, &keep, 2).unwrap();
+    let inner = Rect::new(3, 3, 2, 2);
+    let outer = grow(inner, 2, 8, 8);
+    let mut pixels = vec![0u8; (outer.width * outer.height * 4) as usize];
+    // 外の矩形が画像からはみ出す・画素の数が違う・段数ぶんの入力が足りない
+    assert!(rings
+        .dilate_region(&mut pixels, Rect::new(4, 4, 6, 6), inner)
+        .is_err());
+    assert!(rings.dilate_region(&mut pixels[4..], outer, inner).is_err());
+    let narrow = grow(inner, 1, 8, 8);
+    let mut small = vec![0u8; (narrow.width * narrow.height * 4) as usize];
+    assert!(rings.dilate_region(&mut small, narrow, inner).is_err());
+    assert!(rings.dilate_region(&mut pixels, outer, inner).is_ok());
 }

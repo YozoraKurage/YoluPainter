@@ -16,16 +16,26 @@
 //! - GPU のテクスチャの辺の上限か、使っているチャンネルのミップ込みの合計のバイト数の予算（`PAINT_BUDGET_BYTES`）を超える文書は、2 の累乗で
 //!   縮めて持つ（`shift`。縮めるときは箱で平均する）。新しいチャンネルを使い始めて予算を超えるときは、縮めを上げて全部を作り直す
 //!   （縮めは上げるだけ。文書が替わると決め直す）。メッシュマップの 1 枚も同じく予算（半分）と辺の上限で縮める。
+//! - 表示の写しは UV の外へ塗り広げる（`set_padding`。書き出しと同じ式の `yolu_core::padding`。正本は変えない）: UV の覆いから作る
+//!   段の地図（`padding::Rings`）をモデルの UV の形・文書の大きさ・縮めごとに作って覚え、上げる矩形ごとに、その周りを塗り広げの幅
+//!   だけ広げて合成し、矩形の中を画像全体を塗り広げたときと同じ値にして上げる（`DISPLAY_PAD_TEXELS`）。離れて見たときにミップの段が
+//!   島の外の透明・0 を混ぜて、継ぎ目が暗く・縁が浮くのを防ぐ。今のセットは 1 度作ったら覚えたまま使い、ほかのセットは同期のたびに
+//!   作り直す（`release_scratch` が手放す。文書の大きさ・1 画素 1 バイトのメモリを、ほかのセットの数に比例して残さないため）。
 //! - 今のセットでないセットの絵も同じ `Paint` の兄弟（`sibling`）で持つ。辺の上限（`set_cap`）で縮めて持ち、文書が変わったとき
 //!   （版・変化の記録）だけ同期する。今のセットが替わったとき、前のセットの絵は、ミップの段をコピーして上限の大きさへ縮める
 //!   （`demote`。文書を合成し直さない）。
 
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use eframe::egui_wgpu::{self, wgpu};
 use rayon::prelude::*;
 use yolu_core::export::uses;
+use yolu_core::geometry::SurfaceGeometry;
+use yolu_core::glam::DVec2;
 use yolu_core::normal::output_from_composites;
+use yolu_core::padding::{self, Rings};
 use yolu_core::{
     Channel, Document, HeightEdgeMode, LayerKind, NormalSettings, Rect as DocRect, RowOrder,
     TileCoord,
@@ -39,6 +49,14 @@ pub const PAINT_BUDGET_BYTES: u64 = 512 << 20;
 /// 文書が変更をまとめている間（ギズモ・スライダーのドラッグ）に、効果の出力がまだ評価されていないタイルを粗く合成する歩幅（1/4 の
 /// 大きさで評価して、離したら正確に上げ直す）。
 pub const DRAG_STRIDE: u32 = 4;
+/// 表示の写しを UV の外へ塗り広げる幅（表示のテクスチャのテクセル。縮めて持つ絵は 2^縮め 倍の文書の画素で塗り広げてから縮める）。
+/// ミップの段 L の 1 テクセルは段 0 の 2^L 四方の平均で、バイリニアは段 L の隣の 1 テクセルまで読むので、島の縁から 2^(L+1) テクセル
+/// 塗り広げれば段 L までは島の外を混ぜない。16 は段 3（1 画素に段 0 の 8 テクセルほどを縮めて見る距離）まで。
+/// 測った（`view3d_padding` の計測、2048²・島の外を広くあけた UV の球、表示域 454 × 494 画素）: 球の内側で継ぎ目がにじむ画素は、幅 0 で
+/// 487・259・149・70（球の直径 312・154・78・40 画素）、16 で 0・0・1・24、32 で全部 0。球の輪郭の近くの寝た面は段が高く、幅 64 でも
+/// 6〜19 画素残る。描いている最中の 1 フレームの同期（4096²・Color と Roughness の 2 タイルずつ、lavapipe）は幅 0 の 0.71 ms に対して 16 で
+/// 1.16 ms・32 で 1.84 ms で、32 は増えた分が 1 ms を超えるので 16 にした。
+pub const DISPLAY_PAD_TEXELS: u32 = 16;
 /// 8 bit ずつのリニアの値（Normal・メッシュマップ・リニアの画像）と 1 チャンネル 8 bit の値の形式。
 const RGBA: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SCALAR: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -181,6 +199,31 @@ struct PaintSet {
     normal_settings: NormalSettings,
     /// チャンネルごとの、ドラッグの間に粗く合成して上げたタイル（並べて重なり無し）。ドラッグが終わった同期で正確に上げ直す。
     coarse: [Vec<TileCoord>; 6],
+    /// 塗り広げた UV の形（None は塗り広げていない）。違う形を求められたら全部を作り直す（前の形の塗り広げを残さない）。
+    pad: Option<PadShape>,
+}
+
+/// 塗り広げの元: モデルの面の形と、このセットが受け持つマテリアルの番号。
+#[derive(Clone)]
+pub struct UvSource {
+    pub geometry: Arc<SurfaceGeometry>,
+    pub material: i32,
+}
+
+/// 塗り広げる UV の形（マテリアルの三角形の UV の値の要約と、その数）。ポーズで面の世代が変わっても、UV が同じなら同じ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PadShape {
+    hash: u64,
+    triangles: usize,
+}
+
+/// 段の地図とその元（形・文書の大きさ・文書の画素での幅）。
+struct PadRings {
+    shape: PadShape,
+    size: (u32, u32),
+    reach: u32,
+    /// None: 覆うテクセルが無い（三角形が全部 UV の外など）。塗り広げない。
+    rings: Option<Arc<Rings>>,
 }
 
 #[derive(Clone)]
@@ -214,6 +257,15 @@ pub struct Paint {
     uncapped: bool,
     /// 作った順の番号（プロセスの中で一意。束ねの鍵に使う: 絵を持つ入れ物が替わっても、世代の数が同じに戻らない）。
     uid: u64,
+    /// 表示の写しを塗り広げる幅（表示のテクセル。既定は `DISPLAY_PAD_TEXELS`、0 は塗り広げない。試験・計測が変える）。
+    pad_texels: u32,
+    /// 塗り広げの元（`set_padding`）と、求める形。
+    pad_source: Option<UvSource>,
+    pad_want: Option<PadShape>,
+    /// 形の要約を作った元（面の世代とマテリアル）。同じなら数え直さない。
+    pad_seen: Option<(u32, i32, Option<PadShape>)>,
+    /// 覚えている段の地図。
+    pad_rings: Option<PadRings>,
     pub stats: PaintStats,
 }
 
@@ -347,6 +399,11 @@ impl Paint {
             cap: None,
             uncapped: false,
             uid: next_uid(),
+            pad_texels: DISPLAY_PAD_TEXELS,
+            pad_source: None,
+            pad_want: None,
+            pad_seen: None,
+            pad_rings: None,
             stats: PaintStats::default(),
         }
     }
@@ -367,8 +424,83 @@ impl Paint {
             cap: None,
             uncapped: false,
             uid: next_uid(),
+            pad_texels: self.pad_texels,
+            pad_source: None,
+            pad_want: None,
+            pad_seen: None,
+            pad_rings: None,
             stats: PaintStats::default(),
         }
+    }
+
+    /// 表示の写しを塗り広げる元を決める（同期の前に毎回。None・UV の三角形が無いマテリアルは塗り広げない）。形が前と違えば、
+    /// 次の同期が全部を作り直す（`needs_rebuild`）。形の要約は、面の世代かマテリアルが変わったときだけ数え直す。
+    pub fn set_padding(&mut self, source: Option<UvSource>) {
+        let source = source.filter(|_| self.pad_texels > 0);
+        self.pad_want = source.as_ref().and_then(|uv| {
+            let revision = uv.geometry.revision();
+            match self.pad_seen {
+                Some((r, m, shape)) if r == revision && m == uv.material => shape,
+                _ => {
+                    let shape = pad_shape(&uv.geometry, uv.material);
+                    self.pad_seen = Some((revision, uv.material, shape));
+                    shape
+                }
+            }
+        });
+        self.pad_source = source;
+    }
+
+    /// 試験・計測用: 表示の写しを塗り広げる幅（表示のテクセル。0 は塗り広げない前の仕事）。次の `set_padding` から効く（幅を変えた
+    /// だけでは作り直さない。作ってある絵を塗り広げ直すなら `invalidate`）。
+    pub fn set_padding_texels(&mut self, texels: u32) {
+        self.pad_texels = texels;
+    }
+
+    /// 覚えている段の地図のバイト数（試験と計測用）。
+    pub fn padding_bytes(&self) -> usize {
+        self.pad_rings
+            .as_ref()
+            .and_then(|p| p.rings.as_ref())
+            .map_or(0, |r| r.bytes())
+    }
+
+    /// 今の絵を塗り広げた形の段の地図（無ければ作る。形・文書の大きさ・縮めが同じなら覚えたもの）。塗り広げないなら None。
+    fn rings(&mut self, doc: &Document) -> Option<Arc<Rings>> {
+        let set = self.set.as_ref()?;
+        let shape = set.pad?;
+        let reach = (self.pad_texels << set.shift).min(padding::MAX_RING_REACH);
+        let size = (doc.width(), doc.height());
+        let fresh = self
+            .pad_rings
+            .as_ref()
+            .is_some_and(|p| p.shape == shape && p.size == size && p.reach == reach);
+        if !fresh {
+            let uv = self
+                .pad_source
+                .as_ref()
+                .filter(|_| self.pad_want == Some(shape))?;
+            let (w, h) = (size.0 as f64, size.1 as f64);
+            let at = |v: yolu_core::glam::Vec2| DVec2::new(v.x as f64 * w, v.y as f64 * h);
+            let triangles = uv
+                .geometry
+                .triangles()
+                .iter()
+                .filter(|t| t.material == uv.material)
+                .map(|t| [at(t.uv_a), at(t.uv_b), at(t.uv_c)]);
+            let rings = padding::coverage(size.0, size.1, triangles)
+                .ok()
+                .filter(|keep| keep.contains(&true))
+                .and_then(|keep| Rings::new(size.0, size.1, &keep, reach).ok())
+                .map(Arc::new);
+            self.pad_rings = Some(PadRings {
+                shape,
+                size,
+                reach,
+                rings,
+            });
+        }
+        self.pad_rings.as_ref().and_then(|p| p.rings.clone())
     }
 
     /// 辺の上限を決める（ほかのセットを縮めて持つ。None は GPU の上限だけ）。ゆるめたときは、次の同期が縮めていた絵を元の大きさで
@@ -430,6 +562,8 @@ impl Paint {
                     || (self.uncapped && s.shift > want_shift)
                     // 変化の記録がこの文書のものでない（since がこの文書の番号でない）
                     || s.serial > doc.change_serial()
+                    // 塗り広げる UV の形が変わった（モデル・マテリアルが替わった。前の形の塗り広げを残さない）
+                    || s.pad != self.pad_want
             }
         }
     }
@@ -473,14 +607,19 @@ impl Paint {
 
     /// 同期の作業用のバッファを、容量ごと手放す。合成の作業は文書の大きさ（帯の分、Height から作る Wrap の Normal は文書全体）に
     /// なるので、作り終えたあとも抱えたままだと、ほかのセットの数に比例して CPU のメモリが残る。
+    ///
+    /// 段の地図（文書の 1 画素 1 バイト）も手放す。その代わり、ほかのセットの文書が 1 タイル変わっただけでも、次の同期で覆いと段の地図を
+    /// 文書の解像度で作り直す（UI のスレッドで、取り消せない。4096²・7 万三角形のセット、縮め 2 で、1 タイルの同期が 0.5 ms から
+    /// 約 0.1 秒になる。計測の試験 `measure_syncing_another_set_*`）。
     pub fn release_scratch(&mut self) {
         self.scratch = Vec::new();
         self.scratch_height = Vec::new();
+        self.pad_rings = None;
     }
 
-    /// 同期の作業用のバッファが抱えているバイト数（容量。試験と計測用）。
+    /// 同期の作業用のバッファが抱えているバイト数（容量。段の地図を含む。試験と計測用）。
     pub fn scratch_bytes(&self) -> usize {
-        self.scratch.capacity() + self.scratch_height.capacity()
+        self.scratch.capacity() + self.scratch_height.capacity() + self.padding_bytes()
     }
 
     /// 持っている絵の縮めの段（作っていなければ 0）。
@@ -852,6 +991,7 @@ impl Paint {
             revision: 0,
             normal_settings: doc.normal_settings(),
             coarse: Default::default(),
+            pad: self.pad_want,
         });
     }
 
@@ -1016,10 +1156,31 @@ impl Paint {
         rects: &[(DocRect, usize)],
     ) -> (usize, Option<[u32; 4]>) {
         let shift = self.set.as_ref().expect("作った").shift;
+        let rings = self.rings(doc);
+        let bounds = doc.bounds();
         let mut dirty: Option<[u32; 4]> = None;
         let mut uploaded = 0;
         for (rect, tiles) in rects {
-            let Some((data, dw, dh)) = self.region_texels(doc, slot, *rect, shift) else {
+            // 塗り広げるなら、矩形の周りを塗り広げの幅だけ広げた所まで上げる（変わったタイルの色が届く所）。その中の値を画像全体を
+            // 塗り広げたときと同じにするため、合成はさらに幅だけ広げた所から
+            let (rect, pad) = match rings.as_deref() {
+                Some(r) => {
+                    let grown = expand(*rect, r.reach(), bounds);
+                    match (r.kinds_in(*rect), r.kinds_in(grown).1) {
+                        // 島の中のテクセルが変わり、届く所に塗り広げるテクセルがある: 周りまで塗り広げ直す
+                        ((true, _), true) => {
+                            let inner = align(grown, shift, bounds);
+                            (inner, Some((r, expand(inner, r.reach(), bounds))))
+                        }
+                        // 島の中が無い（変化はほかの塗り広げに届かない）が、矩形の中に塗り広げるテクセルがある: 矩形の中だけ
+                        ((false, true), _) => (*rect, Some((r, grown))),
+                        // 塗り広げるテクセルが届く所に無い: そのまま
+                        _ => (*rect, None),
+                    }
+                }
+                None => (*rect, None),
+            };
+            let Some((data, dw, dh)) = self.region_texels(doc, slot, rect, shift, pad) else {
                 continue;
             };
             let (dx, dy) = (rect.x >> shift, rect.y >> shift);
@@ -1162,22 +1323,27 @@ impl Paint {
         (covered, uploaded, dirty)
     }
 
-    /// 矩形のテクセル（チャンネルの形式で、縮めた後）。
+    /// 矩形のテクセル（チャンネルの形式で、縮めた後）。`pad` があれば、その外の矩形（`rect` を塗り広げの幅だけ広げたもの）から
+    /// 合成して塗り広げ、`rect` の分を返す。
     fn region_texels(
         &mut self,
         doc: &Document,
         slot: Slot,
         rect: DocRect,
         shift: u32,
+        pad: Option<(&Rings, DocRect)>,
     ) -> Option<(Vec<u8>, u32, u32)> {
-        let n = (rect.width * rect.height * 4) as usize;
+        // 合成する矩形（塗り広げるなら、その入力の範囲）
+        let src = pad.map_or(rect, |(_, outer)| outer);
+        let rings = pad.map(|(r, _)| r);
+        let n = (src.width * src.height * 4) as usize;
         self.scratch.resize(n, 0);
         match slot {
             Slot::Normal => {
                 // 作る設定なら、Height を 1 画素ずつ外へ広げて Sobel の隣を読めるようにする（画布の端は Clamp と同じ端のまま）
                 let settings = doc.normal_settings();
                 let pad = u32::from(settings.derive_from_height());
-                let outer = expand(rect, pad, doc.bounds());
+                let outer = expand(src, pad, doc.bounds());
                 let m = (outer.width * outer.height * 4) as usize;
                 self.scratch.resize(m, 0);
                 doc.composite_into(
@@ -1208,32 +1374,31 @@ impl Paint {
                     &settings,
                 )
                 .ok()?;
-                // 外へ広げた分を切り取る
-                let (cx, cy) = (rect.x - outer.x, rect.y - outer.y);
-                let mut cut = Vec::with_capacity((rect.width * rect.height * 4) as usize);
-                for row in 0..rect.height {
-                    let start = (((cy + row) * outer.width + cx) * 4) as usize;
-                    cut.extend_from_slice(&output[start..start + rect.width as usize * 4]);
-                }
-                Some(reduce(&cut, rect, shift, 4, |p| {
+                // Sobel のために外へ広げた分を切り取り、塗り広げる（書き出しも Normal の出力の画像を塗り広げる）
+                let mut cut = cut_rect(&output, outer, src);
+                let px = pad_region(&mut cut, src, rect, rings)?;
+                Some(reduce(&px, rect, shift, 4, |p| {
                     [p[0] as u32, p[1] as u32, p[2] as u32, 255]
                 }))
             }
             Slot::Color => {
-                doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
+                doc.composite_into(slot.channel(), src, &mut self.scratch, RowOrder::BottomUp)
                     .ok()?;
-                Some(reduce_srgb_premultiplied(&self.scratch, rect, shift))
+                let px = pad_region(&mut self.scratch, src, rect, rings)?;
+                Some(reduce_srgb_premultiplied(&px, rect, shift))
             }
             Slot::Emission => {
-                doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
+                doc.composite_into(slot.channel(), src, &mut self.scratch, RowOrder::BottomUp)
                     .ok()?;
-                Some(reduce_emission(&self.scratch, rect, shift))
+                let px = pad_region(&mut self.scratch, src, rect, rings)?;
+                Some(reduce_emission(&px, rect, shift))
             }
             Slot::Metallic | Slot::Roughness | Slot::Height => {
-                doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
+                doc.composite_into(slot.channel(), src, &mut self.scratch, RowOrder::BottomUp)
                     .ok()?;
+                let px = pad_region(&mut self.scratch, src, rect, rings)?;
                 // 値 × アルファ（書き出しと同じ整数の式。塗っていない所は 0）
-                Some(reduce(&self.scratch, rect, shift, 1, |p| {
+                Some(reduce(&px, rect, shift, 1, |p| {
                     [((p[0] as u32 * p[3] as u32 + 127) / 255), 0, 0, 0]
                 }))
             }
@@ -1326,6 +1491,56 @@ pub(super) fn choose_shift(size: [u32; 2], bytes_per_texel: u64, limit: u32, bud
         shift += 1;
     }
     shift
+}
+
+// ───────── 塗り広げ ─────────
+
+/// マテリアルの三角形の UV の形の要約（UV の値のビットと三角形の並び）。三角形が無ければ None（塗り広げない）。
+fn pad_shape(geometry: &SurfaceGeometry, material: i32) -> Option<PadShape> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut triangles = 0usize;
+    for t in geometry
+        .triangles()
+        .iter()
+        .filter(|t| t.material == material)
+    {
+        for v in [t.uv_a, t.uv_b, t.uv_c] {
+            v.x.to_bits().hash(&mut hasher);
+            v.y.to_bits().hash(&mut hasher);
+        }
+        triangles += 1;
+    }
+    (triangles > 0).then(|| PadShape {
+        hash: hasher.finish(),
+        triangles,
+    })
+}
+
+/// 矩形 `outer` の画素（RGBA8）から、その中の矩形 `inner` を切り出す。
+fn cut_rect(pixels: &[u8], outer: DocRect, inner: DocRect) -> Vec<u8> {
+    let (cx, cy) = (inner.x - outer.x, inner.y - outer.y);
+    let mut cut = Vec::with_capacity((inner.width * inner.height * 4) as usize);
+    for row in 0..inner.height {
+        let start = (((cy + row) * outer.width + cx) * 4) as usize;
+        cut.extend_from_slice(&pixels[start..start + inner.width as usize * 4]);
+    }
+    cut
+}
+
+/// 矩形 `src` の合成（straight RGBA8）を、段の地図があれば塗り広げ、その中の矩形 `rect` の分を返す（`src` が `rect` なら切らない）。
+fn pad_region<'a>(
+    pixels: &'a mut [u8],
+    src: DocRect,
+    rect: DocRect,
+    rings: Option<&Rings>,
+) -> Option<std::borrow::Cow<'a, [u8]>> {
+    if let Some(r) = rings {
+        r.dilate_region(pixels, src, rect).ok()?;
+    }
+    if src == rect {
+        return Some(std::borrow::Cow::Borrowed(pixels));
+    }
+    Some(std::borrow::Cow::Owned(cut_rect(pixels, src, rect)))
 }
 
 // ───────── 矩形の決め方 ─────────

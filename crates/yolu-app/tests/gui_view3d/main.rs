@@ -23,5 +23,6 @@ mod view3d_brush;
 mod view3d_fx;
 mod view3d_look;
 mod view3d_navigation;
+mod view3d_padding;
 mod view3d_path_rect;
 mod view3d_sets;

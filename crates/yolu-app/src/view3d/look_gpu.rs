@@ -1,4 +1,4 @@
-//! テクスチャセットの見た目の設定（`MaterialLook`）を GPU へ渡す: lilToon の値の一様バッファ（`shaders/liltoon.wgsl` の `Lil`）、
+//! テクスチャセットの見た目の設定（`MaterialLook`）を GPU へ渡す: lilToon の値の一様バッファ（`shaders/liltoon/bindings.wgsl` の `Lil`）、
 //! スロットが読むユーザーチャンネルの配列（`user_layers`）、マットキャップの絵（プロジェクトの画像）。セットごとに 1 つ持ち、
 //! 値が変わったときだけ書き直す。
 //!
@@ -34,7 +34,7 @@ const IMAGE_SOURCES: [i32; 2] = [32, 33];
 /// Unity から受けた絵の配列の元の番号の始まり（40〜55）。
 const RECEIVED_SOURCE: i32 = 40;
 
-/// lilToon のパイプラインの定数（`shaders/liltoon.wgsl` の `LIL_FEATURES`・`LIL_SINGLE*`・`LIL_LOOP*`）: 使う機能のビットと、スロットの
+/// lilToon のパイプラインの定数（`shaders/liltoon/pipeline.wgsl` の `LIL_FEATURES`・`LIL_SINGLE*`・`LIL_LOOP*`）: 使う機能のビットと、スロットの
 /// 読み方（1 つの元をそのまま・成分ごと）のビット。ソフトの描画（llvmpipe）でだけパイプラインに入れ、使わない機能とスロットの読み方を
 /// 作らない（一様な分岐の先も全部実行するので）。実機は全部入り（[`LilSpec::ALL`]）の 1 本。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,7 +63,7 @@ impl LilSpec {
     }
 }
 
-/// `shaders/liltoon.wgsl` の機能のビット（`F_*`）。
+/// `shaders/liltoon/pipeline.wgsl` の機能のビット（`F_*`）。
 pub mod feature {
     pub const SHADOW: u32 = 0;
     pub const BUMP: u32 = 1;
@@ -530,7 +530,7 @@ pub fn params_with(
         0.0,
         0.0,
     ];
-    // メインカラー 2nd・3rd（liltoon.wgsl の L_*）
+    // メインカラー 2nd・3rd（`shaders/liltoon/params.wgsl` の L_*）
     for (base, l, n) in [(61, "Main2nd", "2nd"), (70, "Main3rd", "3rd")] {
         let uv_mode = if x(&format!("_{l}Tex_UVMode")).round() == 4.0 {
             4.0

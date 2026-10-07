@@ -116,7 +116,7 @@ Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原�
 
 ## lilToon の再現（式の移植）
 
-3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）と、見た目の欄のプロパティの名前・既定値
+3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon/` の部品）と、見た目の欄のプロパティの名前・既定値
 （`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
 シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
 OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilToon の `lilHashRGB4` からで、その元は Shadertoy の
