@@ -64,6 +64,8 @@ pub enum DistributeAction {
 pub struct Prepared {
     project: Arc<Project>,
     model: Option<PathBuf>,
+    /// 読めないため写しに入れなかったセットの名前（保存したことが無いセット。無ければ空）。
+    left_out: Vec<String>,
 }
 
 /// 書く前の窓の状態。
@@ -537,11 +539,21 @@ impl AppState {
                 self.message.clear();
             }
             (Ok(Output::Written(path)), Kind::Write) => {
-                self.distribute.window = None;
+                let left_out = self
+                    .distribute
+                    .window
+                    .take()
+                    .map(|w| w.prepared.left_out.clone())
+                    .unwrap_or_default();
                 self.message = lang.pick(
                     format!("配布用に保存しました: {}", path.display()),
                     format!("Saved for distribution: {}", path.display()),
                 );
+                if !left_out.is_empty() {
+                    // パスのあとで文を区切ってから続ける（保存の知らせと同じ形。パスに空白があっても、どこまでがパスか読み分けられる）
+                    self.message += lang.pick("。 ", ". ");
+                    self.message += &crate::project::capture::left_out_note(lang, &left_out);
+                }
             }
             (Err(failure), kind) => {
                 let writing = matches!(kind, Kind::Write);
@@ -615,6 +627,7 @@ fn build(
     Ok(Prepared {
         project: Arc::new(built.project),
         model: capture.model.clone(),
+        left_out: capture.left_out.clone(),
     })
 }
 

@@ -351,6 +351,83 @@ fn what_is_drawn_during_the_save_is_asked_about_after_it() {
     assert!(close_commands(&h).contains(&"Close"));
 }
 
+/// 2 つ目のセットを足して描き、全タイルをディスクへ逃がして読めなくし、読めないセットの印を付ける（まだ 1 度も保存していないセット）。
+fn add_never_saved_unreadable_set(h: &mut H, cache: &std::path::Path) {
+    use yolu_app::engine::Channel;
+    use yolu_app::newproject::NpAction;
+    use yolu_core::tile_cache::{self, CacheSettings};
+    let s = &mut h.state_mut().state;
+    s.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets.len(), 2, "{}", s.message);
+    s.switch_set(1).unwrap();
+    s.ensure_selection();
+    paint(s, 40.0);
+    s.switch_set(0).unwrap();
+    tile_cache::configure(&CacheSettings {
+        enabled: false,
+        folder: Some(cache.to_path_buf()),
+        memory_limit: u64::MAX,
+        disk_limit: 1 << 40,
+    });
+    tile_cache::evict_now(0);
+    for l in s.set_doc(1).layers() {
+        if let Some(surface) = l.surface(Channel::Color) {
+            surface.fail_tile_reads_for_test();
+        }
+    }
+    assert!(s.set_doc(1).composite(s.set_doc(1).bounds()).is_err());
+    s.check_tile_cache();
+    assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
+}
+
+/// 読めないため保存に入れなかったセットは、画面にあってファイルに無い。保存が済んだあとも「保存していない変更」のままで、閉じるときに聞く
+/// （聞かずに閉じると、そのセットは何の確認もなく消える）。
+#[test]
+fn a_set_left_out_of_the_save_is_still_asked_about_when_closing() {
+    let dir = TempDir::new("left-out");
+    let cache = TempDir::new("left-out-cache");
+    let mut h = window();
+    add_never_saved_unreadable_set(&mut h, &cache.0);
+    let (asked, answer) = counter();
+    let (seen, reply) = (asked.clone(), answer.clone());
+    h.state_mut().answer_close_question(move |s: &AppState| {
+        assert!(s.modified, "入れなかったセットがあるので、変更は残る");
+        seen.set(seen.get() + 1);
+        reply.get()
+    });
+    let path = dir.file("作品.ylp");
+    let hold = h.state_mut().state.save.hold_next();
+    h.state_mut()
+        .state
+        .apply(Action::SaveProjectAs(path.clone()));
+    h.state_mut().state.apply(Action::Quit);
+    h.step();
+    hold.release();
+    answer.set(false);
+    let commands = step_until_saved(&mut h);
+    assert!(path.exists());
+    assert_eq!(asked.get(), 1, "保存が終わってから、1 度だけ聞く");
+    assert!(
+        !h.state().is_closing() && !h.state().state.quit,
+        "続けると答えたので、終わらない"
+    );
+    assert!(!commands.contains(&"Close"), "{commands:?}");
+    assert!(
+        h.state().state.shows_modified(),
+        "開き直す・捨てるときの問い（confirm_discard）も、この印で聞く"
+    );
+    // もう 1 度保存しても、また入れずに印は残る。捨てて終わると答えれば閉じる
+    h.state_mut().state.apply(Action::SaveProject);
+    h.state_mut().state.wait_save();
+    assert!(h.state().state.modified);
+    answer.set(true);
+    h.state_mut().state.apply(Action::Quit);
+    h.step();
+    assert_eq!(asked.get(), 2);
+    assert!(h.state().is_closing());
+    assert!(close_commands(&h).contains(&"Close"));
+}
+
 #[test]
 fn a_failed_save_gives_its_reason_and_goes_back_to_the_question() {
     let dir = TempDir::new("failed");

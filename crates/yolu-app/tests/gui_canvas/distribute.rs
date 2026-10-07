@@ -965,26 +965,60 @@ fn headless_a_read_only_set_keeps_its_original_in_every_save_and_the_copy_matche
 }
 
 #[test]
-fn headless_a_read_only_set_without_its_original_document_refuses_the_copy_in_both_languages() {
+fn headless_a_read_only_set_without_its_original_document_is_left_out_of_the_copy_and_a_copy_of_nothing_is_refused(
+) {
     let dir = TempDir::new("readonly-missing");
     let path = dir.path("Mixed.ylp");
-    read_only_style(&path);
+    let (editable, readonly) = read_only_style(&path);
     let mut s = AppState::new(32, 32);
     s.apply(Action::OpenProject(path.clone()));
     assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
-    // 開いたファイルとのつながりが無い（元の正本が無い）
+    // 開いたファイルとのつながりが無い（元の正本が無い）: 読むだけのセットだけを写しに入れず、書けるセットは入れる。知らせが入れなかったセットを言う
     s.project = None;
+    let copy = dir.path("Copy.ylp");
+    write_copy(&mut s, &copy, &[]);
+    assert_eq!(
+        s.message,
+        format!(
+            "配布用に保存しました: {}。 テクスチャセット「Preview」は読めないため、保存に入れていません。",
+            copy.display()
+        )
+    );
+    let entries = read_entries(&copy);
+    assert!(entries
+        .keys()
+        .any(|k| k.starts_with(&format!("sets/{editable}/"))));
+    assert!(
+        !entries.keys().any(|k| k.contains(&readonly)),
+        "{:?}",
+        entries.keys()
+    );
+    s.lang = Lang::En;
+    let english = dir.path("English.ylp");
+    start(&mut s);
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(english.clone())));
+    s.wait_distribute();
+    assert_eq!(
+        s.message,
+        format!(
+            "Saved for distribution: {}. Texture set \"Preview\" could not be read and was left out of the save.",
+            english.display()
+        )
+    );
+    // 書けるセットが 1 つも無ければ、断る（窓も開かない）
+    s.sets.get_mut(0).unwrap().read_only = Some("reason".into());
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "配布用に保存できません: 読むだけのセット「Preview」の元の文書がありません"
+        "Cannot save for distribution: No texture set can be saved: \"Paintable\", \"Preview\" cannot be read and have never been saved"
     );
     assert!(!s.distribute.is_open() && !s.distribute.is_busy());
-    s.lang = Lang::En;
+    s.lang = Lang::Ja;
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "Cannot save for distribution: Original document missing for read-only set “Preview”"
+        "配布用に保存できません: 保存できるテクスチャセットがありません: 「Paintable」「Preview」は保存したことが無く、読めません"
     );
     assert!(!s.distribute.is_open());
 }

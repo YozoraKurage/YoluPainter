@@ -20,7 +20,9 @@ use std::time::Duration;
 use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_io::{BackupKeep, Project, SaveStage, SaveTarget};
 
-use super::capture::{build, capture, BuildError, BuildProgress, Capture, THREAD_STACK};
+use super::capture::{
+    build, capture, left_out_note, BuildError, BuildProgress, Capture, THREAD_STACK,
+};
 use super::{backup_text, reopen_note, same_file, ProjectFile};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
@@ -57,6 +59,8 @@ pub struct SaveOutcome {
 pub struct SavedFacts {
     /// 文書を書き直したセットの ID（書き直さなかったセットは開いたときのバイト列のまま残る）。
     pub sets_written: Vec<String>,
+    /// 読めないため保存に入れなかったセットの名前（保存したことが無いセット。無ければ空）。
+    pub left_out: Vec<String>,
     /// 置き換えで残した前の版（上書きでなければ無い）。
     pub backup: Option<PathBuf>,
 }
@@ -102,6 +106,8 @@ struct Job {
     written: Vec<(String, u128, u64)>,
     /// 書いたメッシュマップ（セットの ID ごと）。成功したら保存済みにする。
     maps: Vec<(String, Vec<Arc<BakedMeshMap>>)>,
+    /// 読めないため保存に入れなかったセットの名前。
+    left_out: Vec<String>,
 }
 
 /// 裏の仕事の結果。
@@ -308,6 +314,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         .iter()
         .map(|(id, _, maps)| (id.clone(), maps.clone()))
         .collect();
+    let left_out = capture.left_out.clone();
     let request = Request {
         capture,
         path: path.to_path_buf(),
@@ -342,6 +349,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         shelf_was_changed,
         written,
         maps,
+        left_out,
     };
     if state.save.background {
         let (tx, rx) = channel();
@@ -460,6 +468,10 @@ fn work(request: Request) -> Finished {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
     let mut text = lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
+    if !capture.left_out.is_empty() {
+        text += " ";
+        text += &left_out_note(lang, &capture.left_out);
+    }
     let map_total: usize = capture.maps.iter().map(|(_, _, m)| m.len()).sum();
     if map_total > 0 {
         text += &lang.pick(
@@ -588,12 +600,18 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
             state.rewritten_sets = job.written.len();
+            // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
+            // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうる）
+            if !job.left_out.is_empty() {
+                state.modified = true;
+            }
             state.message = done.text;
             if job.report {
                 state.save.outcome = Some(SaveOutcome {
                     path: job.path.clone(),
                     result: Ok(SavedFacts {
                         sets_written: job.written.iter().map(|(id, _, _)| id.clone()).collect(),
+                        left_out: job.left_out.clone(),
                         backup: done.backup,
                     }),
                 });

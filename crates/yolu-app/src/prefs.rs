@@ -13,7 +13,8 @@
 //!   フォルダのキャッシュのファイルへ逃がす（`yolu_core::tile_cache`。どのセットの・層の・取り消しの写しのタイルかは区別せず、使っていない
 //!   ものから）。入のときは、今のセットの画素の予算を「メモリの上限＋ディスクの上限 − ほかのセットの画素」にする。ディスクの上限の自動は
 //!   64 GiB と、置き場所の空き（そのフォルダで初めて測ったとき）の半分の小さい方。ディスクから読めないタイルが出たら、それを持つセットを
-//!   読むだけにする（保存は開いたときの中身のまま。`check_tile_cache`）。
+//!   読むだけにする（保存は開いたときの中身のまま。保存したことの無いセットは元の中身が無いので、そのセットだけ保存と復旧用の書き置きに
+//!   入れない。`check_tile_cache`）。
 //! - **表示の合成**は 2D のキャンバスの表示の方針（`YoluApp::apply_compositing` がキャンバスの表示に入れる。自動は環境変数
 //!   `YOLUPAINTER_CANVAS` か自動）。保存・書き出し・3D ビューの値の合成は、どれでも CPU が正本。
 
@@ -355,7 +356,8 @@ impl AppState {
     }
 
     /// ディスクから読めなかったタイルが出たら（`tile_cache::read_failures` が増えたら）、読めないタイルを持つセットを読むだけにして
-    /// 知らせる。読むだけのセットは描けず、保存は開いたときの中身のまま書く（欠けた中身を書かない）。毎フレーム呼べる。
+    /// 知らせる。読むだけのセットは描けず、保存は開いたときの中身のまま書く（欠けた中身を書かない）。保存したことの無いセットは
+    /// 元の中身が無いので、そのセットだけ保存と復旧用の書き置きに入らない（ほかのセットは書ける）。毎フレーム呼べる。
     pub fn check_tile_cache(&mut self) {
         let failures = yolu_core::tile_cache::read_failures();
         if failures == self.prefs.cache_failures {
@@ -368,7 +370,7 @@ impl AppState {
             "Some tiles cannot be read back from the disk cache",
         );
         // 保存したプロジェクトの中にあるセットは、開いたときの中身のまま書ける。無いセット（新しいプロジェクト・前の保存の後に
-        // 追加したセット）は元の中身が無く、読めるほかのセットを含めて、保存も復旧用の書き置きも全体が断られる
+        // 追加したセット）は元の中身が無いので、そのセットだけ保存と復旧用の書き置きに入らない（保存のたびに知らせる）
         let base = self.project.as_ref().map(|p| p.project_shared());
         let (mut names, mut unsaved) = (Vec::new(), Vec::new());
         for i in 0..self.sets.len() {
@@ -405,11 +407,11 @@ impl AppState {
         }
         if !unsaved.is_empty() {
             ja_why.push(format!(
-                "{}は保存したことが無いため、プロジェクトの保存も復旧用の書き置きもできません",
+                "{}は保存したことが無いため、保存に入りません",
                 ja(&unsaved)
             ));
             en_why.push(format!(
-                "{} has never been saved, so the project cannot be saved or checkpointed",
+                "{} has never been saved, so it will be left out of the save",
                 en(&unsaved)
             ));
         }

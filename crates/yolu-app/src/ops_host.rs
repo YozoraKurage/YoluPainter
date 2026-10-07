@@ -205,6 +205,13 @@ impl<'a> AppHost<'a> {
                 .map_or(0, |s| s.document.version());
             notes.extend(yolu_ops::newer_version_note(name, version));
         }
+        // 読めないため保存に入れなかったセット（保存したことが無いセット。ファイルには入っていない）
+        for name in &facts.left_out {
+            notes.push(Text::new(
+                format!("テクスチャセット「{name}」は読めないため、保存に入れていません"),
+                format!("Texture set \"{name}\" could not be read and was left out of the save"),
+            ));
+        }
         Reply::Saved(Saved {
             path: started.path.display().to_string(),
             written: true,

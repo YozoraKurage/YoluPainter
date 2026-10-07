@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use yolu_app::engine::DVec2;
 use yolu_app::lang::Lang;
 use yolu_app::mcp_server::OpsStatus;
+use yolu_app::newproject::NpAction;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState};
 use yolu_app::YoluApp;
@@ -34,14 +35,23 @@ struct Live {
 impl Live {
     /// 外からの操作を受ける設定のアプリ（番号は 0: OS が空いた番号を選ぶ。まだ待ち受けない。最初のフレームで始まる）。
     fn on() -> Live {
-        let mut live = Live::off();
+        Live::on_with(AppState::new(64, 64))
+    }
+
+    /// `on` の、最初の状態を渡せる形。
+    fn on_with(state: AppState) -> Live {
+        let mut live = Live::off_with(state);
         live.app.state.prefs.settings.external_ops = true;
         live
     }
 
     fn off() -> Live {
+        Live::off_with(AppState::new(64, 64))
+    }
+
+    fn off_with(state: AppState) -> Live {
         let ctx = egui::Context::default();
-        let mut app = YoluApp::for_context(&ctx, AppState::new(64, 64), PenInput::detached());
+        let mut app = YoluApp::for_context(&ctx, state, PenInput::detached());
         app.state.prefs.settings.external_ops_port = 0;
         Live { ctx, app }
     }
@@ -668,6 +678,47 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
         "書かなかった保存は知らせない: {}",
         live.app.state.message
     );
+}
+
+#[test]
+fn saving_through_the_link_says_which_never_saved_unreadable_set_was_left_out() {
+    let dir = tmp::test_dir("mcpserver-leftout");
+    let cache = tmp::test_dir("mcpserver-leftout-cache");
+    // タイルの大きさに合う大きさの文書（`fill` はタイルごと画素を入れる）
+    let mut live = Live::on_with(AppState::new_in(256, 128, Lang::Ja));
+    live.frame();
+    live.app.state.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(live.app.state.sets.len(), 2, "{}", live.app.state.message);
+    for i in 0..2 {
+        crate::disk_cache::fill(live.app.state.set_doc_mut(i), 70 + i as u64);
+    }
+    live.app.state.modified = true;
+    // 2 つ目のセットだけが読めなくなる（まだ 1 度も保存していない）
+    crate::disk_cache::make_unreadable(&live.app.state, 1, &cache);
+    live.app.state.check_tile_cache();
+    let left = live.app.state.sets.get(1).unwrap().name.clone();
+    let file = dir.join("left.ylp");
+    let Reply::Saved(saved) =
+        live.ok(json!({"command": "save_as", "args": {"path": file.display().to_string()}}))
+    else {
+        panic!()
+    };
+    assert!(saved.written && file.exists());
+    assert_eq!(saved.sets_written.len(), 1);
+    assert!(
+        saved.notes.iter().any(|n| n.ja
+            == format!("テクスチャセット「{left}」は読めないため、保存に入れていません")
+            && n.en
+                == format!(
+                    "Texture set \"{left}\" could not be read and was left out of the save"
+                )),
+        "{:?}",
+        saved.notes
+    );
+    // 保存したファイルには、読めたセットだけが入っている
+    let project = yolu_io::Project::read(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(project.sets().len(), 1);
+    assert_eq!(project.sets()[0].id, live.app.state.sets.get(0).unwrap().id);
 }
 
 #[test]

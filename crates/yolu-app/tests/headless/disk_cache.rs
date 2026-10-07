@@ -12,11 +12,11 @@ use yolu_app::engine::{Channel, DVec2, Document, TileCoord};
 use yolu_app::export::ExportAction;
 use yolu_app::lang::Lang;
 use yolu_app::newproject::NpAction;
-use yolu_app::recovery::{DiskSpace, RecoverySettings, SpaceProbe};
+use yolu_app::recovery::{DiskSpace, RecoveryAction, RecoverySettings, SpaceProbe};
 use yolu_app::state::{Action, AppState};
 use yolu_core::tile_cache::{self, CacheSettings};
 use yolu_core::CoreError;
-use yolu_io::NativeDocument;
+use yolu_io::{GenerationStore, NativeDocument, Project, INFO_NAME};
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -64,7 +64,7 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 }
 
 /// 層を 2 枚足して、全タイルに違う画素を入れる。
-fn fill(doc: &mut Document, seed: u64) {
+pub(crate) fn fill(doc: &mut Document, seed: u64) {
     let ts = doc.tile_size();
     let (nx, ny) = (doc.width().div_ceil(ts), doc.height().div_ceil(ts));
     for i in 0..2u64 {
@@ -218,7 +218,7 @@ fn an_unreadable_cache_makes_the_set_read_only_and_saving_keeps_what_was_opened(
         bytes_of(&opened(&path).doc) == original,
         "保存した中身は開いたときのまま"
     );
-    // 保存したことの無いセットは、元の中身が無いので保存を断る
+    // 保存したことの無いセットだけのプロジェクトは、書けるセットが無いので保存を断る
     let mut fresh = AppState::new_in(256, 128, Lang::En);
     fill(&mut fresh.doc, 4);
     fresh.modified = true;
@@ -231,10 +231,12 @@ fn an_unreadable_cache_makes_the_set_read_only_and_saving_keeps_what_was_opened(
     assert!(fresh.doc.composite(fresh.doc.bounds()).is_err());
     fresh.check_tile_cache();
     assert!(fresh.read_only_reason().is_some());
-    // 保存したことの無いセットは、最後の保存の後の編集ではなく、プロジェクトが保存できないことを言う
+    // 保存したことの無いセットは、最後の保存の後の編集ではなく、保存に入らないことを言う
     assert!(
         fresh.message.contains("is now read-only")
-            && fresh.message.contains("has never been saved")
+            && fresh
+                .message
+                .contains("has never been saved, so it will be left out of the save")
             && !fresh.message.contains("Edits since the last save"),
         "{}",
         fresh.message
@@ -243,6 +245,11 @@ fn an_unreadable_cache_makes_the_set_read_only_and_saving_keeps_what_was_opened(
     fresh.apply(Action::SaveProjectAs(other.clone()));
     fresh.wait_save();
     assert!(!other.exists(), "{}", fresh.message);
+    assert!(
+        fresh.message.contains("No texture set can be saved"),
+        "{}",
+        fresh.message
+    );
 }
 
 /// 空きがたっぷりあるディスク（復旧の置き場のディスクの本当の空きに左右されないように）。
@@ -257,14 +264,18 @@ fn plenty() -> SpaceProbe {
 
 /// 復旧用の書き置きを 1 回頼んで、書き込みが終わるまで待つ。
 fn checkpoint(s: &mut AppState) {
-    let from = Instant::now();
+    checkpoint_from(s, Instant::now());
+}
+
+/// `checkpoint` の、時刻を渡せる形（前の頼みの 16 秒あとから続けるとき）。
+fn checkpoint_from(s: &mut AppState, from: Instant) {
     s.recovery_tick_at(from);
     s.recovery_tick_at(from + Duration::from_secs(16));
     s.recovery_wait();
 }
 
 /// そのセットの全層をディスクへ逃がし、読めなくして、読もうとして失敗させる（読めないタイルを持つ印が付く）。
-fn make_unreadable(s: &AppState, set: usize, cache: &Path) {
+pub(crate) fn make_unreadable(s: &AppState, set: usize, cache: &Path) {
     evict_all(cache);
     for l in s.set_doc(set).layers() {
         if let Some(surface) = l.surface(Channel::Color) {
@@ -274,69 +285,207 @@ fn make_unreadable(s: &AppState, set: usize, cache: &Path) {
     assert!(s.set_doc(set).composite(s.set_doc(set).bounds()).is_err());
 }
 
-#[test]
-fn a_set_never_saved_that_becomes_unreadable_stops_the_whole_project_from_saving_and_the_notice_says_so(
-) {
-    let dir = TempDir::new("unsaved-set");
-    let cache = TempDir::new("unsaved-set-cache");
-    let mut s = AppState::new_in(256, 128, Lang::Ja);
+/// 復旧用の書き置きを入れた状態（置き場は試験のフォルダ）。
+fn with_recovery(root: PathBuf, lang: Lang) -> AppState {
+    let mut s = AppState::new_in(256, 128, lang);
     s.recovery.set_space_probe(Some(plenty()));
     s.recovery
         .enable(
-            dir.file("recovery"),
+            root,
             RecoverySettings {
                 directory: None,
                 ..RecoverySettings::default()
             },
         )
         .unwrap();
+    s
+}
+
+/// この実行の置き場の最新の世代（書き置き）を、プロジェクトとして読む。
+fn newest_checkpoint(s: &AppState) -> Project {
+    let store = GenerationStore::new(s.recovery.session_dir().unwrap());
+    let mut files = store.load().unwrap().files;
+    files.remove(INFO_NAME);
+    Project::from_entries(files).unwrap()
+}
+
+#[test]
+fn a_never_saved_set_that_becomes_unreadable_is_left_out_and_the_other_sets_are_saved() {
+    let dir = TempDir::new("left-out");
+    let cache = TempDir::new("left-out-cache");
+    let mut s = AppState::new_in(256, 128, Lang::Ja);
     s.apply(Action::Project(NpAction::AddSet));
-    assert_eq!(s.sets.len(), 2, "{}", s.message);
-    for i in 0..2 {
-        fill(s.set_doc_mut(i), 20 + i as u64);
+    s.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets.len(), 3, "{}", s.message);
+    for i in 0..3 {
+        fill(s.set_doc_mut(i), 40 + i as u64);
     }
     s.modified = true;
-    // 2 つ目のセットだけ読めなくなる（プロジェクトは 1 度も保存していない）
+    let expected: Vec<Vec<u8>> = (0..3).map(|i| bytes_of(s.set_doc(i))).collect();
+    let ids: Vec<String> = (0..3).map(|i| s.sets.get(i).unwrap().id.clone()).collect();
+    let name = s.sets.get(1).unwrap().name.clone();
+    // 真ん中の（今の）セットだけが読めなくなる。プロジェクトは 1 度も保存していない
+    s.switch_set(1).unwrap();
     make_unreadable(&s, 1, &cache.0);
-    assert!(!s.set_doc(0).has_unreadable_tiles());
     s.check_tile_cache();
     assert!(s.sets.get(0).unwrap().read_only.is_none());
     assert!(s.sets.get(1).unwrap().read_only.is_some());
+    assert!(s.sets.get(2).unwrap().read_only.is_none());
+    assert!(
+        s.message.contains(&format!(
+            "「{name}」は保存したことが無いため、保存に入りません"
+        )),
+        "{}",
+        s.message
+    );
+    assert!(
+        !s.message.contains("書き置き") && !s.message.contains("最後に保存した後の編集"),
+        "{}",
+        s.message
+    );
+    // 読めるセットだけが保存され、知らせが入れなかったセットを言う。今のセットを入れなかったので、今のセットは並びで最初の残るセット
+    let path = dir.file("作品.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    s.wait_save();
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(
+        s.message.contains(&format!(
+            "テクスチャセット「{name}」は読めないため、保存に入れていません"
+        )),
+        "{}",
+        s.message
+    );
+    let back = opened(&path);
+    assert_eq!(back.sets.len(), 2);
+    assert_eq!(back.sets.get(0).unwrap().id, ids[0]);
+    assert_eq!(back.sets.get(1).unwrap().id, ids[2]);
+    assert_eq!(back.sets.current().id, ids[0], "最初の残るセット");
+    assert!(bytes_of(back.set_doc(0)) == expected[0], "残ったセット 0");
+    assert!(bytes_of(back.set_doc(1)) == expected[2], "残ったセット 2");
+    // 保存のあとも、入れなかったセットは保存していないまま（読むだけで、保存の印も付かない）
+    assert!(s.sets.get(1).unwrap().read_only.is_some());
+    assert!(s.sets.get(1).unwrap().saved.is_none());
+    // 次の保存でも、また入れずに知らせる。今のセットが残るセットなら、そのセットが今のセットのまま
+    s.switch_set(2).unwrap();
+    paint(&mut s, 30.0);
+    let edited = bytes_of(s.set_doc(2));
+    assert!(edited != expected[2]);
+    s.apply(Action::SaveProject);
+    s.wait_save();
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(
+        s.message.contains(&format!(
+            "テクスチャセット「{name}」は読めないため、保存に入れていません"
+        )),
+        "{}",
+        s.message
+    );
+    let again = opened(&path);
+    assert_eq!(again.sets.len(), 2);
+    assert_eq!(again.sets.current().id, ids[2]);
+    assert!(bytes_of(again.set_doc(0)) == expected[0]);
+    assert!(bytes_of(again.set_doc(1)) == edited, "編集した残るセット");
+}
+
+/// 入れなかったセットは、画面にあってファイルに無い。保存が成功しても「保存していない変更」の印（`modified`。閉じる・開き直す・
+/// 捨てるときの問い、題名の印、外からの操作の「保存していない」が読む）を残す。入れた物だけの保存は、今までどおり印を下ろす。
+/// 閉じるときに実際に聞かれることは `gui_shell/save_close.rs`。
+#[test]
+fn a_save_that_left_a_set_out_keeps_the_unsaved_mark_until_nothing_is_left_out() {
+    let dir = TempDir::new("left-out-mark");
+    let cache = TempDir::new("left-out-mark-cache");
+    let mut s = AppState::new_in(256, 128, Lang::Ja);
+    s.apply(Action::Project(NpAction::AddSet));
+    for i in 0..2 {
+        fill(s.set_doc_mut(i), 70 + i as u64);
+    }
+    s.modified = true;
     let name = s.sets.get(1).unwrap().name.clone();
+    make_unreadable(&s, 1, &cache.0);
+    s.check_tile_cache();
+    let path = dir.file("作品.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    s.wait_save();
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message.contains(&format!("「{name}」")), "{}", s.message);
+    assert!(s.modified && s.shows_modified(), "保存が成功しても印は残る");
+    // あとの知らせで上書きされても、印は残る
+    s.message = "別の知らせ".into();
+    assert!(s.modified);
+    // 何も編集せずもう 1 度保存しても、また入れずに知らせ、印は残る
+    s.apply(Action::SaveProject);
+    s.wait_save();
+    assert!(s.message.contains(&format!("「{name}」")), "{}", s.message);
+    assert!(s.modified, "次の保存でも残る");
+    // 入れた物だけの保存は、今までどおり印を下ろす
+    let mut plain = AppState::new_in(256, 128, Lang::Ja);
+    fill(plain.set_doc_mut(0), 72);
+    plain.modified = true;
+    plain.apply(Action::SaveProjectAs(dir.file("普通.ylp")));
+    plain.wait_save();
     assert!(
-        s.message
-            .contains(&format!("「{name}」は保存したことが無い")),
+        plain.message.starts_with("保存しました"),
         "{}",
-        s.message
+        plain.message
     );
-    assert!(
-        s.message.contains("保存も復旧用の書き置きもできません"),
-        "{}",
-        s.message
+    assert!(!plain.modified && !plain.shows_modified());
+}
+
+#[test]
+fn when_no_set_can_be_written_the_save_is_refused_and_no_checkpoint_is_made_until_a_readable_set_exists(
+) {
+    let dir = TempDir::new("none-left");
+    let cache = TempDir::new("none-left-cache");
+    let mut s = with_recovery(dir.file("recovery"), Lang::Ja);
+    s.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets.len(), 2, "{}", s.message);
+    for i in 0..2 {
+        fill(s.set_doc_mut(i), 50 + i as u64);
+    }
+    s.modified = true;
+    // どちらのセットも保存したことが無く、読めなくなる
+    make_unreadable(&s, 0, &cache.0);
+    make_unreadable(&s, 1, &cache.0);
+    s.check_tile_cache();
+    let names = (
+        s.sets.get(0).unwrap().name.clone(),
+        s.sets.get(1).unwrap().name.clone(),
     );
-    assert!(
-        !s.message.contains("最後に保存した後の編集"),
-        "{}",
-        s.message
-    );
-    // 言ったとおり、読めるセットを含めて保存は断られ、何も書かれない
+    // 保存は断られ、何も書かれない
     let path = dir.file("新しい.ylp");
     s.apply(Action::SaveProjectAs(path.clone()));
     s.wait_save();
     assert!(!path.exists(), "{}", s.message);
-    assert!(s.message.contains("元の文書がありません"), "{}", s.message);
-    // 復旧用の書き置きも、全体が断られる
+    assert!(
+        s.message.contains("保存できるテクスチャセットがありません")
+            && s.message
+                .contains(&format!("「{}」「{}」", names.0, names.1)),
+        "{}",
+        s.message
+    );
+    // 復旧用の書き置きも作らず、失敗の知らせも出さない（保存の知らせで足りる）
     checkpoint(&mut s);
     assert!(
-        s.message.starts_with("復旧用の書き置きに失敗"),
+        !s.message.starts_with("復旧用の書き置きに失敗"),
         "{}",
         s.message
     );
     assert_eq!(s.recovery.checkpoints(), 0);
+    // 読めるセットを追加すると、そのセットだけの書き置きができる
+    s.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets.len(), 3, "{}", s.message);
+    fill(s.set_doc_mut(2), 52);
+    s.modified = true;
+    checkpoint_from(&mut s, Instant::now() + Duration::from_secs(60));
+    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    let project = newest_checkpoint(&s);
+    assert_eq!(project.sets().len(), 1);
+    assert_eq!(project.sets()[0].id, s.sets.get(2).unwrap().id);
 }
 
 #[test]
-fn saved_sets_keep_what_was_opened_and_only_the_new_set_is_said_to_block_saving() {
+fn saved_unreadable_sets_keep_what_was_opened_while_a_never_saved_one_is_left_out_and_a_readable_one_is_saved_as_edited(
+) {
     let dir = TempDir::new("mixed-sets");
     let cache = TempDir::new("mixed-sets-cache");
     let mut s = AppState::new_in(256, 128, Lang::En);
@@ -349,10 +498,19 @@ fn saved_sets_keep_what_was_opened_and_only_the_new_set_is_said_to_block_saving(
     s.apply(Action::SaveProjectAs(path.clone()));
     s.wait_save();
     assert!(s.message.starts_with("Saved"), "{}", s.message);
-    // 保存の後に、3 つ目のセットを追加する
+    let opened_bytes: Vec<Vec<u8>> = {
+        let back = opened(&path);
+        (0..2).map(|i| bytes_of(back.set_doc(i))).collect()
+    };
+    // 保存の後に、3 つ目のセットを追加する。保存済みの 2 つ目は、そのあと編集する
     s.apply(Action::Project(NpAction::AddSet));
     assert_eq!(s.sets.len(), 3, "{}", s.message);
     fill(s.set_doc_mut(2), 32);
+    s.switch_set(1).unwrap();
+    paint(&mut s, 30.0);
+    let edited = bytes_of(s.set_doc(1));
+    assert!(edited != opened_bytes[1]);
+    let ids: Vec<String> = (0..2).map(|i| s.sets.get(i).unwrap().id.clone()).collect();
     // 保存済みの 1 つ目と、保存したことの無い 3 つ目が読めなくなる
     make_unreadable(&s, 0, &cache.0);
     make_unreadable(&s, 2, &cache.0);
@@ -375,19 +533,77 @@ fn saved_sets_keep_what_was_opened_and_only_the_new_set_is_said_to_block_saving(
     );
     assert!(
         s.message.contains(&format!(
-            "\"{new}\" has never been saved, so the project cannot be saved or checkpointed"
+            "\"{new}\" has never been saved, so it will be left out of the save"
         )),
         "{}",
         s.message
     );
-    // 保存したことの無い読むだけのセットがあるので、保存全体が断られ、保存済みのファイルはそのまま
-    let before = std::fs::read(&path).unwrap();
+    // 保存済みの読むだけのセットは開いたときの中身、保存したことの無いセットは入らず、読めるセットは今の編集
     s.apply(Action::SaveProject);
     s.wait_save();
+    assert!(s.message.starts_with("Saved"), "{}", s.message);
     assert!(
-        s.message.contains("Original document missing"),
+        s.message.contains(&format!(
+            "Texture set \"{new}\" could not be read and was left out of the save"
+        )),
         "{}",
         s.message
     );
-    assert!(std::fs::read(&path).unwrap() == before);
+    assert!(
+        !s.message
+            .contains(&format!("\"{saved}\" could not be read")),
+        "{}",
+        s.message
+    );
+    let back = opened(&path);
+    assert_eq!(back.sets.len(), 2);
+    assert_eq!(back.sets.get(0).unwrap().id, ids[0]);
+    assert_eq!(back.sets.get(1).unwrap().id, ids[1]);
+    assert!(
+        bytes_of(back.set_doc(0)) == opened_bytes[0],
+        "保存済みの読むだけのセットは開いたときの中身"
+    );
+    assert!(
+        bytes_of(back.set_doc(1)) == edited,
+        "読めるセットは今の編集"
+    );
+}
+
+#[test]
+fn a_checkpoint_leaves_out_a_never_saved_unreadable_set_and_restores_the_readable_one() {
+    let dir = TempDir::new("checkpoint-left-out");
+    let cache = TempDir::new("checkpoint-left-out-cache");
+    let root = dir.file("recovery");
+    let mut s = with_recovery(root.clone(), Lang::Ja);
+    s.apply(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets.len(), 2, "{}", s.message);
+    for i in 0..2 {
+        fill(s.set_doc_mut(i), 60 + i as u64);
+    }
+    s.modified = true;
+    let kept = bytes_of(s.set_doc(0));
+    let id = s.sets.get(0).unwrap().id.clone();
+    // 今のセット（2 つ目）が読めなくなる。プロジェクトは保存していない
+    make_unreadable(&s, 1, &cache.0);
+    s.check_tile_cache();
+    checkpoint(&mut s);
+    assert!(
+        !s.message.starts_with("復旧用の書き置きに失敗"),
+        "{}",
+        s.message
+    );
+    assert_eq!(s.recovery.checkpoints(), 1);
+    let project = newest_checkpoint(&s);
+    assert_eq!(project.sets().len(), 1, "読めないセットは入らない");
+    assert_eq!(project.sets()[0].id, id);
+    assert_eq!(project.current_set(), id, "今のセットは残るセット");
+    // 落ちたあとの起動で戻すと、読めたセットの編集がある
+    assert!(s.recovery.is_idle());
+    drop(s);
+    let mut next = with_recovery(root, Lang::Ja);
+    assert!(next.recovery.window.is_some(), "落ちた体の起動で窓が出る");
+    next.recovery_apply(RecoveryAction::Open);
+    assert_eq!(next.sets.len(), 1, "{}", next.message);
+    assert_eq!(next.sets.get(0).unwrap().id, id);
+    assert!(bytes_of(next.set_doc(0)) == kept, "戻したセットの中身");
 }

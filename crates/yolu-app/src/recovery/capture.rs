@@ -5,6 +5,7 @@
 //! 書き置きの中身は、保存（`project::save`）が書く `.ylp` と同じ形（同じ `Project`）で、合成の PNG とメッシュマップだけが
 //! 違う。合成の PNG は派生物で時間がかかり、メッシュマップは焼き直せる派生物なので、書き置きには入れない（開いた時の
 //! ファイルにあったものは、バイト列のまま残る）。変わっていないセット・読むだけのセットの正本も、開いた時のバイト列のまま。
+//! 読むだけで、保存したプロジェクトにも無いセット（保存したことの無いセットが読めなくなった）は、そのセットだけ書き置きに入れない。
 
 use std::sync::Arc;
 
@@ -102,6 +103,8 @@ pub(crate) enum Refusal {
     Stroke,
     /// 取り込み（PSD）の途中。
     Import,
+    /// 書けるセットが 1 つも無い（どのセットも、保存したことが無く読めない）。
+    NothingToWrite,
 }
 
 /// 書き置きの材料を取る。ストロークの最中・取り込みの途中は取らない。
@@ -119,8 +122,12 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         let in_base = base
             .as_ref()
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
-        let unchanged = in_base && set.saved == Some((doc.id(), doc.revision()));
         let read_only = set.read_only.is_some();
+        if read_only && !in_base {
+            // 読むだけで、保存したプロジェクトにも無いセットは、書く元の中身が無い。このセットだけ書き置きに入れず、ほかのセットは書く
+            continue;
+        }
+        let unchanged = in_base && set.saved == Some((doc.id(), doc.revision()));
         let snapshot = if read_only || unchanged {
             None
         } else {
@@ -135,6 +142,14 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
             snapshot,
         });
     }
+    // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする（保存と同じ）。残るセットが無ければ書き置きを作らない
+    let current = state.sets.current().id.clone();
+    let current = sets
+        .iter()
+        .find(|s| s.id == current)
+        .or(sets.first())
+        .map(|s| s.id.clone())
+        .ok_or(Refusal::NothingToWrite)?;
     let replaced = crate::project::replaced_sets(
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写しなので数えない（保存と同じ）
@@ -160,7 +175,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         .then(|| state.shelf.shelf().clone());
     Ok(Capture {
         sets,
-        current: state.sets.current().id.clone(),
+        current,
         base,
         replaced,
         shelf,

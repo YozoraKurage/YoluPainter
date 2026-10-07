@@ -5,6 +5,9 @@
 //! - 組み立て（`build`）は別のスレッドで動かす: セットごとの正本（写しから流して作る）・合成の PNG・選択範囲・見た目・メッシュマップ・
 //!   棚・モデルの参照を、`Project` の置き換えとして重ねる。材料だけを読み、`AppState` には触らない（保存の間も、描く・見るは止まらない）。
 //!
+//! 読むだけで、保存したプロジェクトにも無いセット（ディスクのキャッシュが読めなくなった、保存したことの無いセット）は元の中身が無いので、
+//! そのセットだけ入れず（`Capture::left_out`）、ほかのセットの保存は続ける。
+//!
 //! 画面のスレッドで同期に保存していた並びと同じで、書く .ylp のバイトは変わらない。
 
 use std::path::PathBuf;
@@ -41,6 +44,8 @@ pub(crate) struct SetCapture {
 /// 組み立ての材料。
 pub(crate) struct Capture {
     pub sets: Vec<SetCapture>,
+    /// 保存に入れなかったセットの名前（保存したことが無く、読めなくなったセット。元の中身が無いので書けない）。
+    pub left_out: Vec<String>,
     pub current: String,
     pub base: Option<Arc<Project>>,
     /// 開いたあとに文書を別の物に替えたセット（古い PSD の原本を持ち越さない）。
@@ -72,6 +77,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
     }
     let base = state.project.as_ref().map(|p| p.project_shared());
     let mut sets = Vec::with_capacity(state.sets.len());
+    let mut left_out = Vec::new();
     let mut maps = Vec::new();
     for (i, set) in state.sets.iter().enumerate() {
         let doc = state.set_doc(i);
@@ -80,10 +86,10 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
         let read_only = set.read_only.is_some();
         if read_only && !in_base {
-            return Err(lang.pick(
-                format!("読むだけのセット「{}」の元の文書がありません", set.name),
-                format!("Original document missing for read-only set “{}”", set.name),
-            ));
+            // 読むだけで、保存したプロジェクトにも無いセットは、書く元の中身が無い。ほかのセットの保存まで断らず、このセットだけ入れない
+            // （焼いたメッシュマップも入れない。保存済みの印も付かないので、次の保存でもまた除いて知らせる）
+            left_out.push(set.name.clone());
+            continue;
         }
         let unchanged = set.saved == Some((doc.id(), doc.revision()));
         let rewrite = !(in_base && (read_only || unchanged));
@@ -115,6 +121,19 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             mark: (doc.id(), doc.revision()),
         });
     }
+    // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする。残るセットが無ければ書くものが無いので断る
+    let current = state.sets.current().id.clone();
+    let current = match sets.iter().find(|s| s.id == current).or(sets.first()) {
+        Some(set) => set.id.clone(),
+        None => {
+            let quoted = quoted_names(lang, &left_out);
+            let have = if left_out.len() == 1 { "has" } else { "have" };
+            return Err(lang.pick(
+                format!("保存できるテクスチャセットがありません: {quoted}は保存したことが無く、読めません"),
+                format!("No texture set can be saved: {quoted} cannot be read and {have} never been saved"),
+            ));
+        }
+    };
     let (pose, mut pose_unsaved) = crate::view3d::pose::stored::capture(state);
     let (livelink, link_unsaved) = crate::livelink::store::capture(state);
     pose_unsaved.extend(link_unsaved);
@@ -130,7 +149,8 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
     );
     Ok(Capture {
         sets,
-        current: state.sets.current().id.clone(),
+        left_out,
+        current,
         base,
         replaced,
         shelf: (state.shelf.changed && state.shelf.unavailable.is_none())
@@ -144,6 +164,30 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         keep_received: state.prefs.settings.livelink_keep_values,
         lang,
     })
+}
+
+/// セットの名前を、言語ごとの引用の形に並べる（日本語は「A」「B」、英語は "A", "B"）。
+pub(crate) fn quoted_names(lang: Lang, names: &[String]) -> String {
+    lang.pick(
+        names.iter().map(|n| format!("「{n}」")).collect::<String>(),
+        names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// 読めないため保存に入れなかったセットの知らせ（1 文。無ければ空）。
+pub(crate) fn left_out_note(lang: Lang, names: &[String]) -> String {
+    if names.is_empty() {
+        return String::new();
+    }
+    let quoted = quoted_names(lang, names);
+    lang.pick(
+        format!("テクスチャセット{quoted}は読めないため、保存に入れていません。"),
+        format!("Texture set {quoted} could not be read and was left out of the save."),
+    )
 }
 
 /// 組み立てが済まなかった理由。

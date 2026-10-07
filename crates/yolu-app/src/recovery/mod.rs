@@ -477,8 +477,22 @@ impl AppState {
     /// 材料を取って書き手へ頼む（取れない区切り — ストロークの最中・取り込みの途中 — なら、何もせず次のフレームで）。
     fn recovery_submit(&mut self, now: Instant) {
         let recovered_from = self.recovery.recovered_from.clone();
-        let Ok(captured) = capture::capture(self, recovered_from.as_deref()) else {
-            return;
+        let captured = match capture::capture(self, recovered_from.as_deref()) {
+            Ok(captured) => captured,
+            Err(capture::Refusal::NothingToWrite) => {
+                // 書けるセットが無い（どのセットも保存したことが無く読めない）。書き置きは作らず、同じ札のうちは頼み直さない
+                // （保存のときに、入れなかったセットを知らせる）
+                let fingerprint = capture::fingerprint(self);
+                let a = self.recovery.active.as_mut().expect("呼ぶ前に確かめた");
+                a.submitted = Some(fingerprint);
+                a.last_attempt = Some(now);
+                a.dirty_since = None;
+                a.strokes_since = 0;
+                a.force = false;
+                return;
+            }
+            // 描いている最中・取り込みの途中は、次のフレームで取り直す
+            Err(_) => return,
         };
         let keep = self.recovery.keep();
         let limits = self.recovery.limits();
