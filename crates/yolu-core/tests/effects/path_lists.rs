@@ -1,4 +1,4 @@
-//! 層のパスの一覧: 1 本の一覧は今の 1 本のパスと同じ画素、後のパスが前のパスの上に重なる・消しゴムのパスは前のパスを消す・
+//! レイヤーのパスの一覧: 1 本の一覧は今の 1 本のパスと同じ画素、後のパスが前のパスの上に重なる・消しゴムのパスは前のパスを消す・
 //! 隠したパスは描かない。一覧の入れ替えは 1 回の Undo。上限・側・チャンネル・指紋・ID・名前を断る。複製は ID を付け直す。
 use crate::attach_support;
 use attach_support::*;
@@ -278,14 +278,14 @@ fn replacing_the_list_is_one_undo_step_and_clears_channels_no_path_draws_anymore
     moved.points[0].y = 10.5;
     doc.set_canvas_path(layer, moved).unwrap();
     assert_eq!(doc.layer(layer).unwrap().paths()[0].name, "縁");
-    // 空の一覧はパスを外し、そのチャンネルを空にする（手で描ける層に戻る）
+    // 空の一覧はパスを外し、そのチャンネルを空にする（手で描けるレイヤーに戻る）
     doc.set_canvas_paths(layer, Vec::new()).unwrap();
     let l = doc.layer(layer).unwrap();
     assert!(!l.has_paths());
     assert_eq!(l.surface(Channel::Color).unwrap().tile_count(), 0);
     doc.undo().unwrap();
     assert!(doc.layer(layer).unwrap().has_paths());
-    // 一覧を変えても、層の側と基準のチャンネルは変えない
+    // 一覧を変えても、レイヤーの側と基準のチャンネルは変えない
     let mut rough_base = canvas(5, &[(2.5, 2.5)], red);
     rough_base.channel = Channel::Roughness;
     assert!(doc

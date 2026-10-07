@@ -1,7 +1,7 @@
 //! 描いている間のパネルの見た目。線を引いている間（マウスでもペンでも、2D のキャンバスでも 3D ビューでも）、キャンバス・3D ビューの外の画素は、
 //! 描き始める前の絵のまま変わらない（押せない部品が灰色に変わって、離すと戻る点滅が出ない）。ドックの全タブ・全ツールの欄・プロパティのタブと
-//! 層の種類ごとの欄・描き始めたフレームの途中も同じ。押せないこと（操作を受けないこと）は変わらず、描き始める前から押せなかった部品は押せない
-//! 見た目のまま、離した後は今の状態の見た目に戻る。部品だけを並べた窓でも、同じ決まりを部品ごとに確かめる。
+//! レイヤーの種類ごとの欄・描き始めたフレームの途中も同じ。押せないこと（操作を受けないこと）は変わらず、描き始める前から押せなかった部品は押せない
+//! 見た目のまま、離した後は今の状態の見た目に戻る。部品だけを並べたウィンドウでも、同じ決まりを部品ごとに確かめる。
 //! 絵の差は、差のある矩形を失敗の文に出す。`STROKE_LOOK_DUMP=<フォルダ>` を付けると、比べた 2 枚の絵をそのフォルダへ書く。
 use crate::common;
 
@@ -21,17 +21,17 @@ type H = Harness<'static, YoluApp>;
 const WIDTH: f32 = 1600.0;
 const HEIGHT: f32 = 1000.0;
 
-/// 層（描く層・塗りつぶしの層）・ブラシのパネル・テクスチャセット・プロパティが写る窓。描く層を選んでいる。
+/// レイヤー（描くレイヤー・塗りつぶしレイヤー）・ブラシのパネル・テクスチャセット・プロパティが写るウィンドウ。描くレイヤーを選んでいる。
 fn window() -> H {
     window_sized(HEIGHT)
 }
 
-/// `window` の、高さを選べる形（欄の下の方の行まで窓に入れるとき）。
+/// `window` の、高さを選べる形（欄の下の方の行までウィンドウに入れるとき）。
 fn window_sized(height: f32) -> H {
     let mut h = app(WIDTH, height, 128);
     {
         let s = &mut h.state_mut().state;
-        // 2 つ目のテクスチャセット（今のセットになる）に、描く層・塗りつぶしの層・描く層を重ねる
+        // 2 つ目のテクスチャセット（今のセットになる）に、描くレイヤー・塗りつぶしレイヤー・描くレイヤーを重ねる
         s.apply(Action::Project(NpAction::AddSet));
         s.apply(Action::NewLayer);
         s.apply(Action::M2(Edit::NewFill));
@@ -41,7 +41,7 @@ fn window_sized(height: f32) -> H {
     // 1 本描いておく（描いた色が最近の色に入る。描き始めに増える物を、描いている間の差と取り違えない）
     let c = canvas_rect(&h).center();
     drag(&mut h, &[c - vec2(40.0, 0.0), c + vec2(40.0, 10.0)]);
-    // 知らせ（追加した層・セット）が消えるまで待つ（出入りの動きを、描いている間の差と取り違えない）
+    // 知らせ（追加したレイヤー・セット）が消えるまで待つ（出入りの動きを、描いている間の差と取り違えない）
     for _ in 0..((yolu_app::toast::INFO_SECONDS + 1.0) * 60.0) as usize {
         h.step();
     }
@@ -49,7 +49,7 @@ fn window_sized(height: f32) -> H {
     h
 }
 
-/// 窓に 3D ビューを開き、試しの立方体を読む。
+/// ウィンドウに 3D ビューを開き、試しの立方体を読む。
 fn window_3d() -> (H, Rect) {
     let mut h = window();
     h.state_mut().state.view3d.load_demo();
@@ -61,7 +61,7 @@ fn window_3d() -> (H, Rect) {
     (h, rect)
 }
 
-/// 描いている間に変わってよい所: 描いているビュー（キャンバス・3D ビュー）、層の画素の縮小図とナビゲーターの全体像（描いた点が写る）。
+/// 描いている間に変わってよい所: 描いているビュー（キャンバス・3D ビュー）、レイヤーの画素の縮小図とナビゲーターの全体像（描いた点が写る）。
 fn live_areas(h: &H, view: Rect) -> Vec<Rect> {
     let mut areas = vec![view];
     for label in [
@@ -195,7 +195,7 @@ fn sample(at: Pos2, contact: bool, pressure: f32) -> PenSample {
     }
 }
 
-/// ペンの点 1 つ（`emulate` なら、winit が同じ窓のメッセージから作る egui の入力も同じフレームへ入れる）。
+/// ペンの点 1 つ（`emulate` なら、winit が同じウィンドウのメッセージから作る egui の入力も同じフレームへ入れる）。
 fn pen_frame(h: &mut H, point: PenSample, events: Vec<Event>, emulate: bool) {
     h.state().pen().push(point);
     if emulate {
@@ -391,13 +391,17 @@ fn every_dock_tab_keeps_its_look_while_stroking() {
     }
 }
 
-/// プロパティのどのタブ（ステンシル・マテリアル・レイヤー）でも、層に描いてもマスクに描いても、描いている間の見た目は変わらない。
+/// プロパティのどのタブ（ステンシル・マテリアル・レイヤー）でも、レイヤーに描いてもマスクに描いても、描いている間の見た目は変わらない。
 #[test]
 fn every_property_tab_keeps_its_look_while_stroking() {
     for mask in [false, true] {
         let mut h = window();
         if mask {
-            let id = h.state().state.selected_layer.expect("層を選んでいる");
+            let id = h
+                .state()
+                .state
+                .selected_layer
+                .expect("レイヤーを選んでいる");
             h.state_mut().state.apply(Action::M2(Edit::AddMask(id)));
             h.state_mut().state.m2.edit_mask = true;
             h.run();
@@ -420,7 +424,7 @@ fn every_property_tab_keeps_its_look_while_stroking() {
     }
 }
 
-/// 道具ごとに、オプションバー・左のパネルの見た目が変わらない（描き始める道具だけ。ほかは描き始めないので何も確かめない）。
+/// ツールごとに、オプションバー・左のパネルの見た目が変わらない（描き始めるツールだけ。ほかは描き始めないので何も確かめない）。
 #[test]
 fn every_tool_keeps_its_look_while_stroking() {
     let mut h = window();
@@ -441,7 +445,7 @@ fn every_tool_keeps_its_look_while_stroking() {
         }
         release(&h, end, PointerButton::Primary);
         h.run();
-        // 押したままの途中の状態を捨てる（次の道具へ）
+        // 押したままの途中の状態を捨てる（次のツールへ）
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         assert!(!stroking(&h), "{}: 離しても描き終わらない", tool.id());
@@ -449,7 +453,7 @@ fn every_tool_keeps_its_look_while_stroking() {
     assert!(tried.len() >= 3, "描き始めたツールが少ない: {tried:?}");
 }
 
-/// どの道具の欄（オプションバー・左のパネル）も、描いている間は見た目が変わらない。マウスの押しで描き始めない道具（バケツ・選択・パスなど）
+/// どのツールの欄（オプションバー・左のパネル）も、描いている間は見た目が変わらない。マウスの押しで描き始めないツール（バケツ・選択・パスなど）
 /// の欄も確かめるため、文書の側でストロークを始める（`is_stroking` が真になるのは、押しで始めた描きでも文書の描きでも同じ）。
 #[test]
 fn every_tools_panels_keep_their_look_while_a_document_stroke_is_active() {
@@ -464,7 +468,7 @@ fn every_tools_panels_keep_their_look_while_a_document_stroke_is_active() {
         let holes = live_areas(&h, canvas);
         {
             let s = &mut h.state_mut().state;
-            let layer = s.selected_layer.expect("層を選んでいる");
+            let layer = s.selected_layer.expect("レイヤーを選んでいる");
             let brush = s.stroke_settings(false);
             // 札は捨てても、文書のストロークは進行中のまま（`cancel_active_stroke` で取り消す）
             let _ = s.doc.begin_stroke(layer, &brush).unwrap();
@@ -485,8 +489,8 @@ fn every_tools_panels_keep_their_look_while_a_document_stroke_is_active() {
     }
 }
 
-/// 層の種類・プロパティのタブごとの欄（ステンシルの画像・lilToon の節・塗りつぶしの層・調整・グループ）も、描いている間は見た目が変わらない。
-/// 欄が出ている層とは別の、描ける層に、文書の側でストロークを始める。
+/// レイヤーの種類・プロパティのタブごとの欄（ステンシルの画像・lilToon の節・塗りつぶしレイヤー・調整・グループ）も、描いている間は見た目が変わらない。
+/// 欄が出ているレイヤーとは別の、描けるレイヤーに、文書の側でストロークを始める。
 #[test]
 fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
     use yolu_app::m2::AdjustmentKind;
@@ -502,7 +506,7 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
     })
     .save(&png)
     .unwrap();
-    // 高い窓（プロパティの欄の下の方の行まで描く）
+    // 高いウィンドウ（プロパティの欄の下の方の行まで描く）
     let mut h = window_sized(3200.0);
     {
         let s = &mut h.state_mut().state;
@@ -536,8 +540,12 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
         }
     }
     h.run();
-    let raster = h.state().state.selected_layer.expect("層を選んでいる");
-    // 描ける層のほかに、塗りつぶし・調整・グループの層を足す（足した層が選ばれる）
+    let raster = h
+        .state()
+        .state
+        .selected_layer
+        .expect("レイヤーを選んでいる");
+    // 描けるレイヤーのほかに、塗りつぶし・調整・グループのレイヤーを足す（足したレイヤーが選ばれる）
     let mut others = Vec::new();
     {
         let s = &mut h.state_mut().state;
@@ -551,9 +559,9 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
     h.run();
     let canvas = canvas_rect(&h);
     let mut cases = vec![
-        ("描ける層", raster, 0),
-        ("描ける層", raster, 1),
-        ("描ける層", raster, 2),
+        ("描けるレイヤー", raster, 0),
+        ("描けるレイヤー", raster, 1),
+        ("描けるレイヤー", raster, 2),
     ];
     for (name, id) in others {
         cases.push((name, id, 2));
@@ -620,10 +628,10 @@ fn panel_buttons_do_nothing_while_stroking() {
     assert_eq!(h.state().state.doc.layers().len(), layers_before + 1);
 }
 
-/// 描いている間に今の状態が変わっても（読むだけのセットになるなど）、層の操作の帯は描き始める前の見た目のまま。離したあとは、今の状態の見た目になる。
+/// 描いている間に今の状態が変わっても（読むだけのセットになるなど）、レイヤーの操作の帯は描き始める前の見た目のまま。離したあとは、今の状態の見た目になる。
 #[test]
 fn after_the_release_the_layer_buttons_follow_the_state_again() {
-    // 読むだけの状態から始めた窓の、削除のボタンの絵（押せない見た目の見本）
+    // 読むだけの状態から始めたウィンドウの、削除のボタンの絵（押せない見た目の見本）
     let (reference, button) = {
         let mut h = window();
         h.state_mut().state.sets.get_mut(1).unwrap().read_only = Some("試験".into());

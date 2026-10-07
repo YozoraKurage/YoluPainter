@@ -1,5 +1,5 @@
 //! Live Link の入口（メニューバーの右端、プロジェクトの名前の左の Unity の印）: 受け付けていないは灰・受付中は薄い色・相手の文書は緑・
-//! 合わない物があれば警告の色・フォルダを使えなければ赤。押すと小さな窓（「Live Link: 状態」・「Unity: 名前」と、受け付ける／受け付けない）。
+//! 合わない物があれば警告の色・フォルダを使えなければ赤。押すと小さなウィンドウ（「Live Link: 状態」・「Unity: 名前」と、受け付ける／受け付けない）。
 //! 頼みを開いたら 3D ビューを前に出す（送り直しでは出し直さない）。文は名前と状態だけで、案内は書かない。
 use crate::common;
 use crate::common::wait;
@@ -68,7 +68,7 @@ fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
     h.state().state.popup.as_ref().map(|p| p.kind)
 }
 
-/// 入口の印の矩形（ボタンで、名前はツールチップの文。窓の見出し「Live Link: 状態」と同じ文になることがあるので、役でも絞る）。
+/// 入口の印の矩形（ボタンで、名前はツールチップの文。ウィンドウの見出し「Live Link: 状態」と同じ文になることがあるので、役でも絞る）。
 fn icon_rect(h: &Harness<'_, YoluApp>) -> Rect {
     let tip = h.state().state.link.tooltip(h.state().state.lang);
     h.get_by_role_and_label(egui::accesskit::Role::Button, &tip)
@@ -93,9 +93,16 @@ fn pixels_near(h: &mut Harness<'_, YoluApp>, rect: Rect, color: Color32) -> usiz
     count
 }
 
-/// 開いている窓（ポップアップ）と入口の印のあたりを撮る。
+/// 開いているウィンドウ（ポップアップ）と入口の印のあたりを撮る。
 fn shot_popup(h: &mut Harness<'_, YoluApp>, name: &str) {
-    let body = h.state().state.popup.as_ref().expect("窓").state.rect;
+    let body = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("ウィンドウ")
+        .state
+        .rect;
     let icon = icon_rect(h);
     let area = body.union(icon).expand(6.0);
     h.event(egui::Event::PointerGone);
@@ -117,7 +124,7 @@ const KEY: &str = "GlobalObjectId_V1-2-0123-4567-0";
 #[test]
 fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
     let mut h = app(1280.0, 800.0, 256);
-    // 窓を作っただけでは受け付けない（利用者のフォルダに触らない）。受けないは灰
+    // ウィンドウを作っただけでは受け付けない（利用者のフォルダに触らない）。受けないは灰
     assert_eq!(h.state().state.link.indicator(), LinkIndicator::Off);
     let rect = icon_rect(&h);
     assert!(
@@ -179,7 +186,7 @@ fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
         assert!(h.state().state.prefs.settings.livelink_on_startup);
         assert_eq!(popup_kind(&h), None);
         assert!(ex.root.join("presence.json").is_file());
-        // もう一度押すと窓が開き、押した印をもう一度押すと閉じる
+        // もう一度押すとウィンドウが開き、押した印をもう一度押すと閉じる
         let at = icon_rect(&h).center();
         click(&mut h, at);
         assert_eq!(popup_kind(&h), Some(PopupKind::LiveLink));
@@ -225,7 +232,7 @@ fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
             h.state().view3d_rect().is_some(),
             "開いたら 3D ビューに出す"
         );
-        // 窓: 「Live Link: 受付中」と、開いている Unity のオブジェクトの名前
+        // ウィンドウ: 「Live Link: 受付中」と、開いている Unity のオブジェクトの名前
         let at = icon_rect(&h).center();
         click(&mut h, at);
         h.get_by_label(&format!("Live Link: {}", lang.pick("受付中", "Accepting")));
@@ -249,7 +256,7 @@ fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
 }
 
 /// プロジェクトの名前が長くても、印は見えている名前の左に付き、メニューの見出しに重ならない。名前は後ろを詰め、全体はツールチップに出す。
-/// 窓の最小の幅（960）と、それより狭い窓の両方で、日本語（幅広の書体）の長い名前と、保存していない印（•）つきを確かめる。
+/// ウィンドウの最小の幅（960）と、それより狭いウィンドウの両方で、日本語（幅広の書体）の長い名前と、保存していない印（•）つきを確かめる。
 #[test]
 fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles() {
     let long = "とても長いプロジェクトの名前をつけたときの見え方を確かめるための名前その二十三十四十五十六十七十八十九百";
@@ -271,7 +278,7 @@ fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles(
                 icon.right() < width - 8.0,
                 "{lang:?} {width}: 印 {icon:?} が名前の左にある"
             );
-            // 見えている名前は印の右。印と窓の右の間に、名前の画素（明るい字）がある
+            // 見えている名前は印の右。印とウィンドウの右の間に、名前の画素（明るい字）がある
             let image = h.render().expect("描画");
             let mut lit = 0;
             for y in 2..(t::MENU_BAR_HEIGHT as u32 - 2) {

@@ -1,4 +1,4 @@
-//! 画像の Generator（種類 70）の保存・復元（正本の版 28）。既定と既定でない設定（投影・成分・反転・合成）を層の内容とマスクで往復させ、
+//! 画像の Generator（種類 70）の保存・復元（正本の版 28）。既定と既定でない設定（投影・成分・反転・合成）をレイヤーの内容とマスクで往復させ、
 //! 版の選び方、古い読み手（スタンドアロン 0.4.x・Unity 0.2.0）が版の数で断ること、欄の範囲・デカール・重ねるノイズの検査、
 //! アセットに無い画像の ID を残すこと、.ylsmart の断りを試す。
 use yolu_core::fill_image::{Projection, ProjectionMode, Wrap};
@@ -54,7 +54,7 @@ fn odd() -> Settings {
     g
 }
 
-/// 層の内容（Color と Roughness）とマスクに 1 つずつ置いた文書。
+/// レイヤーの内容（Color と Roughness）とマスクに 1 つずつ置いた文書。
 fn document_with(g: &Settings) -> Document {
     let (mut doc, id) = plain();
     doc.add_filter(
@@ -74,7 +74,7 @@ fn document_with(g: &Settings) -> Document {
     doc
 }
 
-/// 文書の全部の段（層の内容とマスク）の設定・有効・強さ・チャンネル。
+/// 文書の全部の段（レイヤーの内容とマスク）の設定・有効・強さ・チャンネル。
 fn stages(doc: &Document) -> Vec<(EffectSettings, bool, f64, Vec<Channel>)> {
     doc.layers()
         .iter()
@@ -261,7 +261,7 @@ fn a_document_with_the_seam_setting_off_keeps_its_image_generators() {
 fn the_reader_refuses_a_decal_a_component_out_of_range_and_overlay_noise() {
     let native = NativeDocument::from_core(&document_with(&odd())).unwrap();
     let first = |tail: &str| field_paths(&native, tail).remove(0);
-    // 画像の段はデカールに投影できない（塗りつぶしの層の投影の 5）
+    // 画像の段はデカールに投影できない（塗りつぶしレイヤーの投影の 5）
     assert!(native
         .with_value(
             &first("generator.effect.projection.mode"),

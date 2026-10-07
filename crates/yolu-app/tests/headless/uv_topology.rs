@@ -1,4 +1,4 @@
-//! 層のフィルターが UV の継ぎ目をまたぐのに使う、モデルの UV の位相の持ち方（`fx::inputs` の `refresh_topologies`）: ポーズで位置だけ
+//! レイヤーのフィルターが UV の継ぎ目をまたぐのに使う、モデルの UV の位相の持ち方（`fx::inputs` の `refresh_topologies`）: ポーズで位置だけ
 //! 変わったモデルでは前の位相を使い続け、UV の並びが違うモデルでは、前のモデルが解放されて同じ番地に別のモデルが作られても作り直す。
 use std::sync::Arc;
 
@@ -42,7 +42,7 @@ fn a_model_with_the_same_layout_keeps_the_topology() {
     let mut s = AppState::new(64, 64);
     s.view3d.set_model(plate("板", 0.0, 0.3, None));
     let first = topology_of(&mut s);
-    // 位置だけが違う（ポーズ）: 同じ位相のまま（島・帯の写しを作り直さない）
+    // 位置だけが違う（ポーズ）: 同じ位相のまま（アイランド・帯の写しを作り直さない）
     s.view3d.set_model(plate("板", 5.0, 0.3, None));
     let moved = topology_of(&mut s);
     assert!(Arc::ptr_eq(&first, &moved));

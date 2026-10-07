@@ -541,7 +541,7 @@ fn filtered_smart_file_keeps_original_and_converts_with_its_filters() {
     let material = file.to_core().unwrap();
     assert!(
         material.layers().iter().any(|l| !l.filters().is_empty()),
-        "フィルターを持つ層が断片に残る"
+        "フィルターを持つレイヤーが断片に残る"
     );
 }
 
@@ -710,7 +710,7 @@ fn user(name: &str) -> ChannelInfo {
 #[test]
 fn a_fragment_that_uses_no_user_channel_is_written_in_the_unity_version() {
     let mut d = Document::with_tile_size(8, 8, 8).unwrap();
-    d.add_channel(user("どの層も使わない")).unwrap();
+    d.add_channel(user("どのレイヤーも使わない")).unwrap();
     let l = d.add_layer("画素").unwrap();
     d.set_pixel(l, 1, 1, Rgba8::new(1, 2, 3, 255)).unwrap();
     let material = d.capture_smart_material(&[l], "素材").unwrap();
@@ -758,7 +758,7 @@ fn user_channel_content_is_refused_on_save_even_when_the_channel_is_off() {
 fn a_v22_fragment_with_an_unused_user_channel_opens_and_saves_as_the_unity_version() {
     // 版 22（ユーザーチャンネル付き）の断片を持つ .ylsmart。使っていない定義は、開くときに外れる
     let mut d = Document::with_tile_size(8, 8, 8).unwrap();
-    d.add_channel(user("どの層も使わない")).unwrap();
+    d.add_channel(user("どのレイヤーも使わない")).unwrap();
     let l = d.add_layer("画素").unwrap();
     d.set_pixel(l, 2, 2, Rgba8::new(7, 7, 7, 255)).unwrap();
     let fragment = yolu_io::NativeDocument::from_core(&d).unwrap();
@@ -778,7 +778,7 @@ fn to_core_has_no_pixel_budget_of_its_own_and_within_is_exact() {
     let file = SmartFile::read(&std::fs::read(root().join("multi.ylsmart")).unwrap()).unwrap();
     let need = file.to_core().unwrap().pixel_bytes();
     assert!(need > 0);
-    // 予算ちょうどなら開け、1 バイト足りなければ、どの層のどのタイルかを添えて断る
+    // 予算ちょうどなら開け、1 バイト足りなければ、どのレイヤーのどのタイルかを添えて断る
     assert_eq!(file.to_core_within(need).unwrap().pixel_bytes(), need);
     for budget in [need - 1, need / 2, 0] {
         let message = file.to_core_within(budget).unwrap_err().to_string();

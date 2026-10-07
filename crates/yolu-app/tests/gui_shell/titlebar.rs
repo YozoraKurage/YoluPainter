@@ -1,6 +1,6 @@
-//! Windows の上の帯（OS のタイトルバーを外し、メニューの帯の右端に小さな最小化・最大化・閉じる）と、枠なしの窓の縁。
-//! 窓の枠を外すのは Windows だけ（`main.rs`）だが、帯と縁の中身は OS に依らないので、Linux でも `set_custom_frame(true)` で
-//! Windows の帯を描いて確かめる。窓へ送る頼み（`ViewportCommand`）は、フレームごとの出力から読む。
+//! Windows の上の帯（OS のタイトルバーを外し、メニューの帯の右端に小さな最小化・最大化・閉じる）と、枠なしのウィンドウの縁。
+//! ウィンドウの枠を外すのは Windows だけ（`main.rs`）だが、帯と縁の中身は OS に依らないので、Linux でも `set_custom_frame(true)` で
+//! Windows の帯を描いて確かめる。ウィンドウへ送る頼み（`ViewportCommand`）は、フレームごとの出力から読む。
 use crate::common;
 
 use common::*;
@@ -19,7 +19,7 @@ use yolu_app::{shell, Tab, YoluApp};
 const WIDTH: f32 = 1000.0;
 const HEIGHT: f32 = 700.0;
 
-/// Windows の帯の窓（自前の枠）。
+/// Windows の帯のウィンドウ（自前の枠）。
 fn windows_app(width: f32, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, 64);
     h.state_mut().set_custom_frame(true);
@@ -36,7 +36,7 @@ fn set_maximized(h: &mut Harness<'_, YoluApp>, on: bool) {
     h.step();
 }
 
-/// 直前のフレームが窓へ送った頼み。
+/// 直前のフレームがウィンドウへ送った頼み。
 fn commands(h: &Harness<'_, YoluApp>) -> Vec<ViewportCommand> {
     h.output()
         .viewport_output
@@ -45,7 +45,7 @@ fn commands(h: &Harness<'_, YoluApp>) -> Vec<ViewportCommand> {
         .unwrap_or_default()
 }
 
-/// 入力を 1 つずつ 1 フレームで渡し、そのフレームごとに窓へ送った頼みを集める。
+/// 入力を 1 つずつ 1 フレームで渡し、そのフレームごとにウィンドウへ送った頼みを集める。
 fn play(h: &mut Harness<'_, YoluApp>, events: Vec<Event>) -> Vec<ViewportCommand> {
     let mut sent = Vec::new();
     for event in events {
@@ -83,7 +83,7 @@ fn alt_button(at: Pos2, pressed: bool) -> Event {
     }
 }
 
-/// ペンの 1 点（位置は物理の画素。試験の窓は 1 点 = 1 画素）。
+/// ペンの 1 点（位置は物理の画素。試験のウィンドウは 1 点 = 1 画素）。
 fn pen_point(at: Pos2, contact: bool, pressure: f32) -> PenSample {
     PenSample {
         pos: [at.x, at.y],
@@ -214,7 +214,7 @@ fn the_windows_bar_looks_right() {
     }
 }
 
-/// 枠を外していない窓（Mac・Linux）は、今の帯のまま: ボタンも縁も無い。
+/// 枠を外していないウィンドウ（Mac・Linux）は、今の帯のまま: ボタンも縁も無い。
 #[test]
 fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
     let mut h = app(WIDTH, HEIGHT, 64);
@@ -248,7 +248,7 @@ fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
     assert_eq!(count(&sent, toggles_maximized), 0, "{sent:?}");
 }
 
-/// ボタンは帯の右端に 3 つ並び、帯の下の線の上までの高さで、名前・印は左に収まる（細い窓でも）。
+/// ボタンは帯の右端に 3 つ並び、帯の下の線の上までの高さで、名前・印は左に収まる（細いウィンドウでも）。
 #[test]
 fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
     for lang in Lang::ALL {
@@ -269,7 +269,7 @@ fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
             assert_eq!(
                 rects[2].right(),
                 width,
-                "{lang:?} {width}: 閉じるは窓の右端"
+                "{lang:?} {width}: 閉じるはウィンドウの右端"
             );
             assert!(rects[0].left() < rects[1].left() && rects[1].left() < rects[2].left());
             let icon = link_rect(&h);
@@ -330,7 +330,7 @@ fn the_button_tooltips_are_only_the_names() {
     }
 }
 
-// ───────── ボタンが窓へ頼むこと ─────────
+// ───────── ボタンがウィンドウへ頼むこと ─────────
 
 #[test]
 fn minimize_and_maximize_and_restore_send_their_commands() {
@@ -363,7 +363,7 @@ fn minimize_and_maximize_and_restore_send_their_commands() {
     );
 }
 
-/// 閉じるは、メニューの「終了」と同じ道（`Action::Quit`。保存していない変更の確かめは、終了の処理が窓を開く実際のアプリで行う）。
+/// 閉じるは、メニューの「終了」と同じ道（`Action::Quit`。保存していない変更の確かめは、終了の処理がウィンドウを開く実際のアプリで行う）。
 #[test]
 fn close_goes_the_same_way_as_the_quit_menu_item() {
     for modified in [false, true] {
@@ -389,7 +389,7 @@ fn close_goes_the_same_way_as_the_quit_menu_item() {
             sent.iter().any(|c| matches!(c, ViewportCommand::Close)),
         );
         assert_eq!(button, menu, "modified={modified}");
-        assert!(button.0 && button.1, "modified={modified}: 終了の頼みになり、窓を閉じる頼みが出る（試験の窓は確かめを開かない）");
+        assert!(button.0 && button.1, "modified={modified}: 終了の頼みになり、ウィンドウを閉じる頼みが出る（試験のウィンドウは確かめを開かない）");
     }
 }
 
@@ -448,7 +448,7 @@ fn dragging_over_the_project_name_also_moves_the_window() {
     assert_eq!(count(&sent, starts_drag), 1, "{sent:?}");
 }
 
-/// メニューの見出し・Live Link の印を押したときは、動かさず最大化もしない（メニュー・窓はいつもどおり開く）。
+/// メニューの見出し・Live Link の印を押したときは、動かさず最大化もしない（メニュー・ウィンドウはいつもどおり開く）。
 #[test]
 fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
     for lang in Lang::ALL {
@@ -471,7 +471,7 @@ fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
             h.state_mut().state.popup = None;
             h.run();
         }
-        // Live Link の印（押すと窓が開く）
+        // Live Link の印（押すとウィンドウが開く）
         let at = link_rect(&h).center();
         let sent = press_and_drag(&mut h, at, vec2(24.0, 0.0));
         assert_eq!(count(&sent, starts_drag), 0, "{lang:?} 印: {sent:?}");
@@ -520,7 +520,7 @@ fn an_open_menu_covers_the_bar_so_it_does_not_start_a_drag() {
     assert_eq!(count(&sent, starts_drag), 0, "{sent:?}");
 }
 
-// ───────── 窓の縁 ─────────
+// ───────── ウィンドウの縁 ─────────
 
 fn edge_cases() -> [(Pos2, ResizeDirection, CursorIcon); 8] {
     [
@@ -617,7 +617,7 @@ fn inside_the_edge_nothing_resizes_and_the_cursor_stays() {
     }
 }
 
-/// 最大化中は縁が無い（最大化した窓は、縁で大きさを変えない）。
+/// 最大化中は縁が無い（最大化したウィンドウは、縁で大きさを変えない）。
 #[test]
 fn while_maximized_the_edges_do_nothing() {
     let mut h = windows_app(WIDTH, HEIGHT);
@@ -651,7 +651,7 @@ fn while_maximized_the_edges_do_nothing() {
     assert!(resizes(&sent).is_empty(), "{sent:?}");
 }
 
-/// 開いているメニュー・窓が縁を覆っているときは、縁を押しても大きさを変えない（押しはそのメニューのもの）。
+/// 開いているメニュー・ウィンドウが縁を覆っているときは、縁を押しても大きさを変えない（押しはそのメニューのもの）。
 #[test]
 fn a_menu_over_the_edge_keeps_the_press() {
     let mut h = windows_app(WIDTH, HEIGHT);
@@ -703,7 +703,7 @@ fn an_edge_press_over_the_canvas_does_not_paint() {
     let canvas = canvas_rect(&h);
     assert!(
         canvas.right() >= WIDTH - 1.0,
-        "キャンバスが窓の右端まで届く: {canvas:?}"
+        "キャンバスがウィンドウの右端まで届く: {canvas:?}"
     );
     let y = canvas.center().y;
     // 縁（右端）: 大きさを変える頼みが出て、ストロークは始まらない
@@ -849,7 +849,7 @@ fn the_top_edge_yields_to_the_menu_titles_but_resizes_over_the_empty_bar() {
     assert_eq!(resizes(&sent), vec![ResizeDirection::North], "{sent:?}");
 }
 
-/// 上の縁にかかる Live Link の印（egui の押しを持たず、生の押しで窓を開く）も、メニューの見出しと同じく縁より先に押しを受ける。
+/// 上の縁にかかる Live Link の印（egui の押しを持たず、生の押しでウィンドウを開く）も、メニューの見出しと同じく縁より先に押しを受ける。
 #[test]
 fn the_top_edge_yields_to_the_link_mark() {
     let mut h = windows_app(WIDTH, HEIGHT);
@@ -872,7 +872,7 @@ fn the_top_edge_yields_to_the_link_mark() {
             h.state().state.popup.as_ref().map(|p| p.kind),
             Some(PopupKind::LiveLink)
         ),
-        "Live Link の窓が開く"
+        "Live Link のウィンドウが開く"
     );
     // 印の外の同じ高さ（何も無い所）は、上へ大きさを変える（対照）
     h.state_mut().state.popup = None;
@@ -882,8 +882,8 @@ fn the_top_edge_yields_to_the_link_mark() {
     assert_eq!(resizes(&sent), vec![ResizeDirection::North], "{sent:?}");
 }
 
-/// 3D ビューでも、縁の押しは回す操作の始まりにならない（ビューの入力は別の経路）。縁の 1 点内側では始まる。3D ビューが窓の縁に届くのは
-/// 右だけ（左は道具の列、下は状態の帯）。
+/// 3D ビューでも、縁の押しは回す操作の始まりにならない（ビューの入力は別の経路）。縁の 1 点内側では始まる。3D ビューがウィンドウの縁に届くのは
+/// 右だけ（左はツールの列、下は状態の帯）。
 #[test]
 fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let mut h = windows_app(WIDTH, HEIGHT);
@@ -921,7 +921,7 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
 /// 右の縁にあるスクロールのつまみは、縁より先に押しを受ける（つまみを掴んで動かせる）。
 #[test]
 fn a_scroll_thumb_at_the_right_edge_keeps_its_press() {
-    // 背の低い窓で、右のパネルの欄があふれてつまみが出る
+    // 背の低いウィンドウで、右のパネルの欄があふれてつまみが出る
     let mut h = windows_app(WIDTH, 330.0);
     h.run();
     let thumbs: Vec<Rect> = h

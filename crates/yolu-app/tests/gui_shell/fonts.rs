@@ -19,7 +19,7 @@ const ROW: f32 = 24.0;
 const GAP: f32 = 8.0;
 
 /// 文字を 1 つずつ別の行の矩形の中に描き、行ごとに、字面（背景と違う画素）の縦の中心と、行の矩形の真ん中との差（点）を返す。
-/// 1 つの窓に全部の行を描くので、組ごとに窓を作らない。
+/// 1 つのウィンドウに全部の行を描くので、組ごとにウィンドウを作らない。
 fn center_offsets(texts: &[&str], style: TextStyle, ppp: f32) -> Vec<f32> {
     let rows: Vec<(Rect, String)> = texts
         .iter()

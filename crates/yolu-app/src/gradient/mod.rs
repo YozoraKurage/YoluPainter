@@ -1,7 +1,7 @@
-//! グラデーションの道具（Shift+G）: 2D のキャンバスをドラッグして、始点から終点へ、線形か放射で塗る。始点の色は描画色、終点は透明かサブの色
-//! （補間は乗算済みアルファ。core の `GradientSettings`）。選んだ層の描くチャンネル 1 つ、マテリアルで塗るときはその組の全部（終点を
+//! グラデーションのツール（Shift+G）: 2D のキャンバスをドラッグして、始点から終点へ、線形か放射で塗る。始点の色は描画色、終点は透明かサブの色
+//! （補間は乗算済みアルファ。core の `GradientSettings`）。選んだレイヤーの描くチャンネル 1 つ、マテリアルで塗るときはその組の全部（終点を
 //! 現在のマテリアルにして 2 つのマテリアルの間も）、マスクを描くときはマスクに（白で見せる・黒で隠す）。どれも 1 回の Undo。ロックは core が断る。
-//! 3D ビューには使わない（形のグラデーションは塗りつぶしの層の `fillfx`）。
+//! 3D ビューには使わない（形のグラデーションは塗りつぶしレイヤーの `fillfx`）。
 
 pub mod canvas;
 pub mod props;
@@ -33,7 +33,7 @@ pub struct EndMaterial {
     pub color: Rgba,
 }
 
-/// ドラッグの途中（画布の座標。左下が原点）。
+/// ドラッグの途中（キャンバスの座標。左下が原点）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientDrag {
     pub source: StrokeSource,
@@ -42,7 +42,7 @@ pub struct GradientDrag {
     pub start_screen: Pos2,
 }
 
-/// グラデーションの道具の設定と途中の状態。
+/// グラデーションのツールの設定と途中の状態。
 #[derive(Clone, Debug)]
 pub struct GradientState {
     pub shape: GradientShape,
@@ -81,7 +81,7 @@ pub enum GradientOp {
     Between(bool),
     /// 現在のマテリアルを終点にする。
     CaptureEnd,
-    /// 画布の座標の始点から終点へ塗る（ドラッグを離したとき。試験も同じ道）。
+    /// キャンバスの座標の始点から終点へ塗る（ドラッグを離したとき。試験も同じ道）。
     Apply {
         start: (f64, f64),
         end: (f64, f64),
@@ -100,7 +100,7 @@ fn rgba8(c: Rgba) -> Rgba8 {
 }
 
 impl AppState {
-    /// これ以内（画布の画素）しか動かさなければ、ドラッグでなくクリックで、何も塗らない。
+    /// これ以内（キャンバスの画素）しか動かさなければ、ドラッグでなくクリックで、何も塗らない。
     pub const GRADIENT_CLICK: f64 = 1.5;
 
     /// 始点の色（描画色）と終点の色。
@@ -113,7 +113,7 @@ impl AppState {
         (from, to)
     }
 
-    /// グラデーションの道具の操作を当てる。
+    /// グラデーションのツールの操作を当てる。
     pub fn gradient_apply(&mut self, op: GradientOp) {
         let lang = self.lang;
         match op {
@@ -231,7 +231,7 @@ impl AppState {
         }
     }
 
-    /// ドラッグの途中の形を捨てる（Esc・道具の切り替え・フォーカスを失ったとき）。何かあったか。
+    /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき）。何かあったか。
     pub fn gradient_cancel_drag(&mut self) -> bool {
         self.gradient.pen_down = None;
         self.gradient.drag.take().is_some()

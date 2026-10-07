@@ -1,6 +1,6 @@
-//! 「＋」の窓（ブラシを追加）: 左に種類（組み込み・同梱の Krita・Photoshop・CLIP STUDIO・そのほかの取り込み・自分のブラシ）、上に名前の
+//! 「＋」のウィンドウ（ブラシを追加）: 左に種類（組み込み・同梱の Krita・Photoshop・CLIP STUDIO・そのほかの取り込み・自分のブラシ）、上に名前の
 //! 検索、行は名前と見本のストローク（並びにある物は印）。押して選び（複数）、下の「追加」で今のグループの後ろへ置く（並びにある物と
-//! 同梱の Krita は写しのファイルを作る）。利用者のブラシのファイルは右クリックで消せる（消す前に確かめる）。浮いた窓で、開いたまま描ける。
+//! 同梱の Krita は写しのファイルを作る）。利用者のブラシのファイルは右クリックで消せる（消す前に確かめる）。浮いたウィンドウで、開いたまま描ける。
 //! 画面には名前だけを出し、説明はツールチップ。中身（行・選び）は `toolset::catalog`。
 
 use egui::{pos2, vec2, Color32, Id, Rect, Sense, Ui, Vec2, WidgetInfo, WidgetType};
@@ -25,7 +25,7 @@ const ROW_HEIGHT: f32 = 40.0;
 const SEARCH_HEIGHT: f32 = 36.0;
 const FOOTER: f32 = 44.0;
 
-/// 窓の名前（試験が窓の矩形を引く）。
+/// ウィンドウの名前（試験がウィンドウの矩形を引く）。
 pub fn id() -> Id {
     Id::new(("yolu.window", "brush-catalog"))
 }
@@ -272,7 +272,7 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) -> bool {
     .clicked()
 }
 
-/// 窓を描く（開いていなければ何もしない）。
+/// ウィンドウを描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.toolset.catalog.open {
         return;

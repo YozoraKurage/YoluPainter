@@ -1,5 +1,5 @@
 //! ブラシの取り込みの画面（egui_kittest）: 一覧の下のボタン・取り込んだブラシのタブと行の印・ツールチップの項目の一覧・ファイルのドロップ・
-//! 詳細の窓の Krita の格子と模様の選び・日英。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
+//! 詳細のウィンドウの Krita の格子と模様の選び・日英。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
 #[path = "../brush_import_files/mod.rs"]
 mod brush_import_files;
 use crate::common;
@@ -117,7 +117,7 @@ fn drop_files(h: &mut H, at: egui::Pos2, files: &[&PathBuf]) {
     h.step();
 }
 
-/// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細の窓の同じ格子）が
+/// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細のウィンドウの同じ格子）が
 /// 全部同じ印のときだけ、その値を返す（食い違えば None）。部品が無くても None。
 fn marked(h: &H, label: &str) -> Option<bool> {
     let all: Vec<bool> = h
@@ -337,7 +337,7 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     let outside = pos2(900.0, 500.0);
     let abr = write(&dir, "old.abr", &abr_v1());
     let png = write(&dir, "tip.png", b"not even a png");
-    // ABR は窓のどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
+    // ABR はウィンドウのどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
     drop_files(&mut h, outside, &[&png]);
     assert!(!st(&h).is_brush_importing());
     drop_files(&mut h, outside, &[&abr]);
@@ -514,7 +514,7 @@ fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
     h.state_mut().state.brushes.ui.detail.category = Category::Shape;
     h.run();
     h.run();
-    // 反転の欄（プロパティの欄のアルファのタブと詳細の窓に 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
+    // 反転の欄（プロパティの欄のアルファのタブと詳細のウィンドウに 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
     let flip_x = |h: &H| {
         let all: Vec<bool> = h
             .query_all_by_label("左右反転")
@@ -620,7 +620,7 @@ fn snapshot_the_imported_group_in_english() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-// ---------------- 「CLIP STUDIO から」の窓 ----------------
+// ---------------- 「CLIP STUDIO から」のウィンドウ ----------------
 
 /// 試験用の CELSYS の設定のフォルダ: 筆先の画像を持つ .sut・丸い筆先の .sut・読めないファイル。
 fn celsys_places(dir: &Path) -> yolu_io::brushes::clipstudio::Places {
@@ -720,7 +720,7 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     h.get_by_label("取り込む（1）").click();
     h.run();
     wait_import(&mut h);
-    // 窓が閉じ、選んだものだけが取り込まれている
+    // ウィンドウが閉じ、選んだものだけが取り込まれている
     assert!(!st(&h).brushes.csp.open);
     assert!(!drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
     assert!(h.query_by_label("Ink").is_some() && h.query_by_label("Stamp").is_none());
@@ -826,10 +826,10 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
     }
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる。
+/// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot_window(h: &mut H, name: &str) {
     let rect = yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
-        .expect("窓が開いている");
+        .expect("ウィンドウが開いている");
     h.event(Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");

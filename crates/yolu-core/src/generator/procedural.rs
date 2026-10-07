@@ -1,8 +1,8 @@
 //! 手続き型の Generator（ノイズ・グランジ）の設定と評価の計画。Rust 版だけの種類（`Kind::Noise`・`Kind::Grunge`。C# の番号と重ならない
 //! 64 から）で、マップを読まずに位置から値を作る。
 //!
-//! - 位置（メッシュマップの Position）で 3D のまま評価すると、UV の島の継ぎ目で模様がずれない。2D の模様（布目・指紋）は
-//!   トライプラナー（面の向きで 3 方向の平面の模様を混ぜる。塗りつぶしの層の投影と同じ重み）で評価する。
+//! - 位置（メッシュマップの Position）で 3D のまま評価すると、UV アイランドの継ぎ目で模様がずれない。2D の模様（布目・指紋）は
+//!   トライプラナー（面の向きで 3 方向の平面の模様を混ぜる。塗りつぶしレイヤーの投影と同じ重み）で評価する。
 //! - 位置のマップが使えない（無い・古い・大きさが違う・ピンと違う・境界箱が 0）ときは入力のまま通さず、UV 空間に落とす。
 //!   UV では x・y の格子を周期で巻くので、テクスチャの端で継ぎ目が出ない（回転は効かない）。理由は [`super::BoundGenerator::fallback`]。
 //! - 式は + − × ÷ sqrt floor と整数だけ（libm を使わない）。同じ設定・シード・マップなら、スレッド数・領域の切り方に依らず同じバイト。
@@ -319,7 +319,7 @@ pub(super) enum Mode {
     Uv,
 }
 
-/// 層（基底とオクターブの重ね）の指定。`freq` は基本の模様の大きさに対する周波数の倍率（軸ごと）、`slot` は層ごとに違う乱数の区別。
+/// レイヤー（基底とオクターブの重ね）の指定。`freq` は基本の模様の大きさに対する周波数の倍率（軸ごと）、`slot` はレイヤーごとに違う乱数の区別。
 #[derive(Clone, Copy)]
 pub(super) struct Layer {
     pub basis: NoiseBasis,
@@ -361,7 +361,7 @@ const F2_SPREAD: f64 = 0.7;
 const F21_SPREAD: f64 = 1.5;
 
 /// 1 回の基底の評価の座標の写し方・周期・乱数と、直前の格子を覚える場所の番号（`CellSet` の中の添字）。
-/// 層のオクターブごと・セルの枠ごとに、束縛のときに 1 回だけ作る（画素ごとには変わらない値）。
+/// レイヤーのオクターブごと・セルの枠ごとに、束縛のときに 1 回だけ作る（画素ごとには変わらない値）。
 #[derive(Clone, Copy)]
 pub(super) struct OctavePlan {
     seed: u32,
@@ -414,7 +414,7 @@ impl OctavePlan {
         }
     }
 }
-/// 層の計画（オクターブごとの `OctavePlan` と、重みの並び・その合計）。
+/// レイヤーの計画（オクターブごとの `OctavePlan` と、重みの並び・その合計）。
 pub(super) struct LayerPlan {
     basis: NoiseBasis,
     cell: CellOutput,
@@ -447,7 +447,7 @@ pub(super) struct Plan {
     layers: Vec<LayerPlan>,
     cells: Vec<OctavePlan>,
     segments: Vec<(OctavePlan, grunge::SegSpec)>,
-    /// にじみの 3 層の最初の番号（にじみが無ければ使わない）。
+    /// にじみの 3 レイヤーの最初の番号（にじみが無ければ使わない）。
     warp: usize,
     slots: Slots,
     /// 計画ごとに違う番号（格子の覚えが、別の計画の乱数で引いた値を使い回さないための印）。
@@ -548,7 +548,7 @@ impl Plan {
         Ok(plan)
     }
 
-    /// 種類・プリセットが使う層・セルの枠・線分の枠の計画を作る（画素ごとには変わらない乱数・座標の写し方を先に出す）。
+    /// 種類・プリセットが使うレイヤー・セルの枠・線分の枠の計画を作る（画素ごとには変わらない乱数・座標の写し方を先に出す）。
     fn prepare(&mut self) {
         let p = self.p;
         if self.kind == Kind::Noise {
@@ -626,7 +626,7 @@ impl Plan {
             total,
         });
     }
-    /// 周波数 `freq`・層の区別 `slot`・オクターブ `octave` の格子の座標の写し方と乱数。
+    /// 周波数 `freq`・レイヤーの区別 `slot`・オクターブ `octave` の格子の座標の写し方と乱数。
     fn octave(&self, freq: [f64; 3], slot: u32, octave: u32, cache_slot: usize) -> OctavePlan {
         use super::noisefn::{hash, unit24};
         let seed = hash(
@@ -916,16 +916,16 @@ impl Plan {
 const WARP_SLOT: u32 = 40;
 static NEXT_PLAN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// にじみのずらし量 `(層の値 - 0.5) * a`。
+/// にじみのずらし量 `(レイヤーの値 - 0.5) * a`。
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn shift_lanes<V: Lanes>(layer: V::F, a: V::F) -> V::F {
     V::mul(V::sub(layer, V::splat(0.5)), a)
 }
 
-/// Generator の重い式（ノイズの層・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1）ごとの入口。
+/// Generator の重い式（ノイズのレイヤー・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1）ごとの入口。
 ///
-/// 式の本体（`*_body`）は `#[inline(always)]` のレーンの式で、呼んだ所に丸ごと展開される。ノイズの層は 1 つの値の式の中で何十回も
+/// 式の本体（`*_body`）は `#[inline(always)]` のレーンの式で、呼んだ所に丸ごと展開される。ノイズのレイヤーは 1 つの値の式の中で何十回も
 /// 呼ばれ（にじみ・種類・グランジの各模様）、その全部を 1 つの関数に展開すると、LLVM の最適化が 1 関数で数十秒かかっていた。
 /// ここで道ごとに `#[target_feature]` 付きの展開しない関数を 1 つずつ置き、呼び出しの側は関数の呼び出しになる（式も演算の順も
 /// 変わらないので、値は同じ bit）。呼び出しは 1 回で N 画素ぶん（AVX2 は 4、SSE4.1 は 2）。
@@ -980,7 +980,7 @@ gen_lanes!(Avx2, "avx2,fma", avx2);
 #[cfg(target_arch = "x86_64")]
 gen_lanes!(Sse41, "sse4.1", sse41);
 
-/// 1 組の格子の覚え（基底ごとに、層のオクターブ・セルの枠の数だけ）。
+/// 1 組の格子の覚え（基底ごとに、レイヤーのオクターブ・セルの枠の数だけ）。
 pub(super) struct CellSet {
     value: Vec<ValueCell>,
     perlin: Vec<PerlinCell>,
@@ -1006,7 +1006,7 @@ pub(super) struct Ctx<'a> {
     set: &'a mut CellSet,
 }
 impl Ctx<'_> {
-    /// 層（オクターブの重ね）の値。0..1。
+    /// レイヤー（オクターブの重ね）の値。0..1。
     pub fn layer(&mut self, b: [f64; 3], index: usize) -> f64 {
         let plan = self.plan;
         let layer = &plan.layers[index];

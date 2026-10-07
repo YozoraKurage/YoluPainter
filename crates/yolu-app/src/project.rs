@@ -1,7 +1,7 @@
 //! .ylp（Unity 版と同じ作業ファイル）の開く・保存・新規。読み書きと検証は yolu-io、ここは画面の状態（テクスチャセット）との受け渡しだけ。
 //!
 //! - 開く: yolu-io の `SaveTarget::open_within`（ZIP・manifest・正本を流して検証し、保存で外からの書き換えを見張る印を取る。上限は設定の
-//!   「レイヤーのメモリ」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
+//!   「レイヤーのメモリ」の予算から）で読み、セットごとに正本（`SetDocument`）をレイヤーごとに流して core の文書へ変える（`to_core`。透明の画素の
 //!   RGB・文書とレイヤーの ID を保つ。ファイル全体・正本全体をメモリに組まない）。core で扱えない中身
 //!   （調整の種類が使わない値が既定でないものなど。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。手動の ID の色は文書へ戻る。
 //!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルと、効果（フィルター・Generator・Anchor・
@@ -9,7 +9,7 @@
 //!   読むだけのセットは、保存した合成の PNG（`composite/Color.png`）を 1 枚のレイヤーにして見せる（描けない。Live Link でも Unity に
 //!   見せる）。
 //! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書の
-//!   写しを正本の元にし（`DocumentSource::from_core`。書くときに層ごとに流して作り、大きければ版 26 で分ける。Color の合成の PNG も書く）、
+//!   写しを正本の元にし（`DocumentSource::from_core`。書くときにレイヤーごとに流して作り、大きければ版 26 で分ける。Color の合成の PNG も書く）、
 //!   描いていないセット・読むだけのセット・知らないエントリは開いた時のバイト列のまま（ファイルから流して写す）残す。保存した後は、書いた
 //!   ファイルを指すプロジェクト（`SaveReport::project`）を次の保存・書き置きの元にする。セットの並び・名前・マテリアルの鍵・今のセットは `with_sets`、ファイルが無かったプロジェクトは `create`。書くのは
 //!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に、設定の「退避を残す数」
@@ -97,7 +97,7 @@ pub fn writer() -> WriterInfo {
     }
 }
 
-/// 正本を core の文書へ。扱えない中身があれば、その理由（多ければ初めの 3 つと数）。`source_budget` は、この文書の層の画素に
+/// 正本を core の文書へ。扱えない中身があれば、その理由（多ければ初めの 3 つと数）。`source_budget` は、この文書のレイヤーの画素に
 /// 許すバイト数（超えれば、読むだけのセットにして理由を出す）。
 pub(crate) fn to_core(
     native: &SetDocument,
@@ -228,13 +228,13 @@ pub(crate) fn preview_document(
     (doc, None)
 }
 
-/// .ylp を開いて今の状態を置き換える。開けなければ何も変えずに理由を出す。層の画素は、設定の予算（256 MiB を下回らない）まで読む。
+/// .ylp を開いて今の状態を置き換える。開けなければ何も変えずに理由を出す。レイヤーの画素は、設定の予算（256 MiB を下回らない）まで読む。
 pub fn open_into(state: &mut AppState, path: &Path) {
     let budget = state.load_source_bytes();
     open_within(state, path, budget);
 }
 
-/// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
+/// `open_into` の、1 つのテクスチャセットのレイヤーの画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
     if state.is_saving() {
         let lang = state.lang;
@@ -296,7 +296,7 @@ fn open_project(
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
     let mut selection_issues = Vec::new();
-    // セットごとの正本を、別々のスレッドで流して core の文書にする（セットは互いに独立。持つのはスレッドごとに層 1 枚ぶん）
+    // セットごとの正本を、別々のスレッドで流して core の文書にする（セットは互いに独立。持つのはスレッドごとにレイヤー 1 枚ぶん）
     let lang = state.lang;
     let converted: Vec<Result<Document, String>> = std::thread::scope(|scope| {
         let running: Vec<_> = project
@@ -592,7 +592,7 @@ pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
 }
 
 /// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。前のプロジェクトの
-/// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶ窓は `newproject`。
+/// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶウィンドウは `newproject`。
 pub fn new_into(state: &mut AppState) {
     if state.is_saving() {
         state.refuse(
@@ -709,7 +709,7 @@ fn backup_text(lang: Lang, path: &Path, report: &yolu_io::SaveReport) -> String 
 mod tests {
     use super::*;
 
-    /// 保存した大きな形（`YLP-4`）の .ylp を今の予算で開き直せないときは、保存の知らせで言う（一様なタイルの層は core の画素が小さい
+    /// 保存した大きな形（`YLP-4`）の .ylp を今の予算で開き直せないときは、保存の知らせで言う（一様なタイルのレイヤーは core の画素が小さい
     /// まま正本だけが大きくなる）。開き直せるもの・今の形のものには何も言わない。
     #[test]
     fn a_saved_file_the_budget_cannot_reopen_is_told_when_saving() {

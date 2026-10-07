@@ -58,7 +58,7 @@ fn painted(seed: u64, layers: usize) -> Document {
     doc.set_source_budget_bytes(1 << 30).unwrap();
     let n = SIZE / TILE;
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {

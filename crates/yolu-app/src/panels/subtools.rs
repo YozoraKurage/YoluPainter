@@ -1,9 +1,9 @@
-//! 左のドックの「サブツール」のパネル（クリスタのサブツール・ツールプロパティ・ブラシサイズを 1 か所にしたもの）。中身は今の道具に合わせて替わる:
-//! 上から、サブツールの一覧（ブラシは取り込みも含むブラシの一覧とグループのタブ、消しゴムは消しゴムの一覧、バケツ・グラデーションなどはその道具の
-//! 設定の組のプリセット、選択の道具は選択の道具の一覧、パスは 1 つ）、ツールプロパティ（今の道具の設定の全部。値はオプションバーと同じ状態）、
-//! ブラシサイズ（大きさを持つ道具だけ）。入りきらなければ全体がスクロールする。右の「プロパティ」には道具の設定を出さない。
-//! 一覧の操作は、ブラシ・消しゴムが `Action::Brush`、そのほかのプリセットが `Action::SubTool`、選択の道具が `Action::SelectTool`。
-//! 画面には名前と値だけを出し、説明はツールチップ。道具の欄は道具の表（`tools`）が持つ。
+//! 左のドックの「サブツール」のパネル（クリスタのサブツール・ツールプロパティ・ブラシサイズを 1 か所にしたもの）。中身は今のツールに合わせて替わる:
+//! 上から、サブツールの一覧（ブラシは取り込みも含むブラシの一覧とグループのタブ、消しゴムは消しゴムの一覧、バケツ・グラデーションなどはそのツールの
+//! 設定の組のプリセット、選択のツールは選択のツールの一覧、パスは 1 つ）、ツールプロパティ（今のツールの設定の全部。値はオプションバーと同じ状態）、
+//! ブラシサイズ（大きさを持つツールだけ）。入りきらなければ全体がスクロールする。右の「プロパティ」にはツールの設定を出さない。
+//! 一覧の操作は、ブラシ・消しゴムが `Action::Brush`、そのほかのプリセットが `Action::SubTool`、選択のツールが `Action::SelectTool`。
+//! 画面には名前と値だけを出し、説明はツールチップ。ツールの欄はツールの表（`tools`）が持つ。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
@@ -18,7 +18,7 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, Rows};
 
-/// プリセット・道具の行の高さと、一覧が縮めずに出す行の数の上限。
+/// プリセット・ツールの行の高さと、一覧が縮めずに出す行の数の上限。
 const ROW: f32 = 28.0;
 const MAX_ROWS: f32 = 8.0;
 
@@ -202,7 +202,7 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, tool: Tool, row: Rect, view: RowV
     let _ = response.on_hover_text(tip);
 }
 
-/// 道具の一覧の行（アイコン・名前・キー）。押すと道具が替わる。
+/// ツールの一覧の行（アイコン・名前・キー）。押すとツールが替わる。
 fn tool_row(
     ui: &mut Ui,
     app: &mut AppState,
@@ -285,7 +285,7 @@ fn tool_row(
     let _ = response.on_hover_text(tip);
 }
 
-/// 今の行（`current` の番号）が窓（高さ `window`）に入るスクロールの値。すでに入っていれば `scroll` のまま。
+/// 今の行（`current` の番号）がウィンドウ（高さ `window`）に入るスクロールの値。すでに入っていれば `scroll` のまま。
 fn scroll_to_show(scroll: f32, current: usize, window: f32) -> f32 {
     let (top, bottom) = (current as f32 * ROW, (current + 1) as f32 * ROW);
     if top < scroll {
@@ -619,7 +619,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         app.subtools.ui.props_content[tool as usize] = rows.used();
         y += rows.used();
     }
-    // ブラシサイズ（大きさを持つ道具だけ）
+    // ブラシサイズ（大きさを持つツールだけ）
     if sized {
         let open = brushes::section_band(
             ui,

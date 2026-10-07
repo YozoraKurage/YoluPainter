@@ -1,5 +1,5 @@
 //! 個人のライブラリの操作（`AppState` の側）: プロジェクトで使う・ライブラリへ入れる・ファイルを足す・消す・置く・
-//! 塗りつぶしの層をマテリアルとして保存する。
+//! 塗りつぶしレイヤーをマテリアルとして保存する。
 //!
 //! 時間のかかる読み書き（ファイルの読み込み・検証・書き込み）は別のスレッドで走り、やめられる。結果は毎フレーム `library_poll` が受け取る。
 //! 断られたら何も変えず、理由を短くステータスバーへ出す。ライブラリのフォルダの外は読まない・書かない・消さない
@@ -351,8 +351,8 @@ impl AppState {
 
     // ───────── マテリアルとして保存 ─────────
 
-    /// 塗りつぶしの層をマテリアル（`.ylmaterial`。中身は塗りつぶしの層 1 つの .ylsmart）として、ライブラリの種類のフォルダへ書く。
-    /// 名前は層の名前で、同じ名前のファイルがあれば番号を付ける。保存のたびに層の ID を新しくするので、同じ層でもバイト列は毎回違い、
+    /// 塗りつぶしレイヤーをマテリアル（`.ylmaterial`。中身は塗りつぶしレイヤー 1 つの .ylsmart）として、ライブラリの種類のフォルダへ書く。
+    /// 名前はレイヤーの名前で、同じ名前のファイルがあれば番号を付ける。保存のたびにレイヤーの ID を新しくするので、同じレイヤーでもバイト列は毎回違い、
     /// 「同じバイト列は書かない」には当たらない。正本への変換と書き込みは別のスレッドで、やめられる。文書とプロジェクトのアセットは変えない。
     pub(crate) fn library_save_material(&mut self, id: LayerId) {
         let lang = self.lang;
@@ -572,7 +572,7 @@ impl AppState {
         );
     }
 
-    /// ライブラリのファイルを、棚へ入れずに、読んで文書へ置く（スマート素材・マテリアルと画像。層の組・マスクの入れ替えは 1 回の Undo）。
+    /// ライブラリのファイルを、棚へ入れずに、読んで文書へ置く（スマート素材・マテリアルと画像。レイヤーの組・マスクの入れ替えは 1 回の Undo）。
     pub(crate) fn library_place(&mut self, rel: &str, target: PlaceTarget) {
         let lang = self.lang;
         let Some(root) = self.library_root() else {
@@ -642,7 +642,7 @@ impl AppState {
 
     // ───────── 消す ─────────
 
-    /// ライブラリのファイルを消してよいか確かめる窓を頼む（窓は `YoluApp` が出す）。
+    /// ライブラリのファイルを消してよいか確かめるウィンドウを頼む（ウィンドウは `YoluApp` が出す）。
     pub(crate) fn library_ask_remove(&mut self, rel: &str) {
         if self.library.entry(rel).is_some() {
             self.library.pending_remove = Some(rel.to_owned());
@@ -650,7 +650,7 @@ impl AppState {
         }
     }
 
-    /// ライブラリのファイル 1 つを消す（ファイルだけ。プロジェクトの棚の写しと、置いた層は変わらない）。
+    /// ライブラリのファイル 1 つを消す（ファイルだけ。プロジェクトの棚の写しと、置いたレイヤーは変わらない）。
     pub(crate) fn library_remove(&mut self, rel: &str) {
         let lang = self.lang;
         if self.library.pending_remove.as_deref() == Some(rel) {
@@ -691,7 +691,7 @@ impl AppState {
     }
 }
 
-/// 層をマテリアルとして保存できない理由（できるなら None）。塗りつぶしの層だけで、アセットの画像を使う層は断る（.ylsmart に画像を
+/// レイヤーをマテリアルとして保存できない理由（できるなら None）。塗りつぶしレイヤーだけで、アセットの画像を使うレイヤーは断る（.ylsmart に画像を
 /// 入れると、今は置けない素材になる。画像の ID だけを持たせると、ほかのプロジェクトでは指す画像が無い）。
 pub(crate) fn material_refusal(lang: Lang, layer: &crate::engine::Layer) -> Option<&'static str> {
     if layer.kind() != LayerKind::Fill {
@@ -742,7 +742,7 @@ fn add_outside(
     files::add(root, kind.folder(), &name, kind, &bytes, Some(cancel))
 }
 
-/// ライブラリのフォルダを OS のファイルの窓で開く（無ければ作る）。フォルダでないものは開かない。
+/// ライブラリのフォルダを OS のファイルのウィンドウで開く（無ければ作る）。フォルダでないものは開かない。
 pub fn open_folder(path: &Path) -> std::io::Result<()> {
     if !path.is_absolute() {
         return Err(std::io::Error::new(

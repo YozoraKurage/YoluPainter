@@ -1,7 +1,7 @@
 // 出どころ: lilToon 2.3.4（MIT、Copyright (c) 2020-present lilxyzw）の lil_common_frag.hlsl・lil_common_functions.hlsl。許諾と出どころの全文は ../THIRD-PARTY-NOTICES.md。
 // ───────── メインカラー 2nd・3rd（lilGetMain2nd・lilGetSubTex・lilCalcDecalUV・lilCalcAtlasAnimation） ─────────
 
-// 重ねる層の色（リニア。A が重ねる強さ）と、描画モードが不透明でないときの透過モードの結果のアルファ。
+// 重ねるレイヤーの色（リニア。A が重ねる強さ）と、描画モードが不透明でないときの透過モードの結果のアルファ。
 struct LayerOut {
     color: vec4<f32>,
     alpha: f32,

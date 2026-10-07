@@ -28,7 +28,7 @@ fn hit_towards(g: &SurfaceGeometry, from: Vec3, to: Vec3) -> SurfaceHit {
 }
 
 fn island_of(x: i32, width: i32) -> i32 {
-    // 立方体の UV は 3 × 2 の島（横 1/3 ずつ）
+    // 立方体の UV は 3 × 2 のアイランド（横 1/3 ずつ）
     (x * 3) / width
 }
 
@@ -70,7 +70,7 @@ fn ray_hits_the_front_face_with_uv_and_culls_from_inside() {
     assert!((h.position.z + 0.5).abs() < 1e-6);
     assert_eq!(h.normal, Vec3::new(0.0, 0.0, -1.0));
     assert!(h.triangle < 2, "手前の面は 0・1 番");
-    // UV は面 0 の島（u 0.02〜0.31、v 0.03〜0.47）の中の、位置に比例した所
+    // UV は面 0 のアイランド（u 0.02〜0.31、v 0.03〜0.47）の中の、位置に比例した所
     let expect_u = 0.02 + (1.0 / 3.0 - 0.04) * 0.6;
     let expect_v = 0.03 + 0.44 * 0.7;
     assert!(
@@ -114,7 +114,7 @@ fn dab_crosses_the_seam_and_leaves_hidden_faces() {
     assert_eq!(
         islands,
         [(0, 0), (0, 1)].into_iter().collect(),
-        "面 0（島 0,0）と面 3（島 0,1）"
+        "面 0（アイランド 0,0）と面 3（アイランド 0,1）"
     );
     // 並びは下の行から、画素は重ならない
     for w in dab.pixels.windows(2) {
@@ -135,7 +135,7 @@ fn hidden_texels_are_not_painted_but_ignore_visibility_reaches_them() {
     let hit = hit_towards(&g, camera, Vec3::new(-0.45, 0.0, -0.5));
     let budget = SurfaceBrushBudget::default();
     let seen = g.build_surface_dabs(&hit, 0.2, 256, 256, camera, 0.8, &budget, None, false);
-    let left_island = |p: &SurfacePixel| island_of(p.x, 256) == 2 && p.y < 128; // 面 2 は島 (2, 0)
+    let left_island = |p: &SurfacePixel| island_of(p.x, 256) == 2 && p.y < 128; // 面 2 はアイランド (2, 0)
     assert!(!seen.pixels.is_empty());
     assert!(
         !seen.pixels.iter().any(left_island),

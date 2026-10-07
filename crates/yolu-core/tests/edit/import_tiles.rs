@@ -58,7 +58,7 @@ impl Scene {
         TileCoord::new(i as u32 % self.columns(), i as u32 / self.columns())
     }
 
-    /// 下の層と、読み込む先の層（Color に 2 枚あらかじめ置いた）。
+    /// 下のレイヤーと、読み込む先のレイヤー（Color に 2 枚あらかじめ置いた）。
     fn canvas(self) -> (Document, LayerId) {
         let mut d = Document::with_tile_size(self.width, self.height, self.ts).unwrap();
         let below = d.add_layer("below").unwrap();
@@ -139,7 +139,7 @@ fn with_threads<T: Send>(threads: usize, run: impl FnOnce() -> T + Send) -> T {
         .install(run)
 }
 
-/// 文書の比べる姿: 層の面の画素（無ければ None）と、確保量・版・履歴の数・チャンネルが有効か（Debug で出さない。画素は大きい）。
+/// 文書の比べる姿: レイヤーの面の画素（無ければ None）と、確保量・版・履歴の数・チャンネルが有効か（Debug で出さない。画素は大きい）。
 struct State {
     faces: Vec<Option<Vec<u8>>>,
     rest: String,

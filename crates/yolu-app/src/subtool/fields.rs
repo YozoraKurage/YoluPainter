@@ -1,7 +1,7 @@
-//! サブツールの欄の宣言の表。道具ごとに、プリセットが持つ設定の欄（`Field`: 名前・種類・既定・読む関数・書く関数）と、組み込みのプリセット
+//! サブツールの欄の宣言の表。ツールごとに、プリセットが持つ設定の欄（`Field`: 名前・種類・既定・読む関数・書く関数）と、組み込みのプリセット
 //! （名前と、既定から変える欄だけ）を持つ。保存の形式（`store`）・一覧の「変更あり」の判定・既定のプリセットは、この表だけから作る。
 //! 欄を足すときは、ここに 1 行（と、必要なら組み込みのプリセット）を足す。`get` で読んだ値を `set` に渡すと同じ状態に戻ること
-//! （`set` が値を整える道具は、整えたあとの値を `get` が返すこと）を、試験が確かめる。
+//! （`set` が値を整えるツールは、整えたあとの値を `get` が返すこと）を、試験が確かめる。
 
 use yolu_core::geometry::SurfaceRegionKind;
 use yolu_core::material::GradientShape;
@@ -390,7 +390,7 @@ static LIQUIFY: [Field; 3] = [
     },
 ];
 
-/// 道具のプリセットが持つ欄（プリセットの値は、この並びの `Vec<Value>`）。プリセットの道具でなければ空。
+/// ツールのプリセットが持つ欄（プリセットの値は、この並びの `Vec<Value>`）。プリセットのツールでなければ空。
 pub fn fields(tool: Tool) -> &'static [Field] {
     match tool {
         Tool::Fill => &FILL,
@@ -405,7 +405,7 @@ pub fn fields(tool: Tool) -> &'static [Field] {
     }
 }
 
-/// プリセットの欄を持つ道具（この並びで状態に 1 つずつ一覧を持つ）。
+/// プリセットの欄を持つツール（この並びで状態に 1 つずつ一覧を持つ）。
 pub const TOOLS: [Tool; 8] = [
     Tool::Fill,
     Tool::PolygonFill,
@@ -609,7 +609,7 @@ static LIQUIFY_BUILTINS: [Builtin; 6] = [
     ),
 ];
 
-/// 道具の組み込みのプリセット（一覧の先頭からこの並び。消せない）。
+/// ツールの組み込みのプリセット（一覧の先頭からこの並び。消せない）。
 pub fn builtins(tool: Tool) -> &'static [Builtin] {
     match tool {
         Tool::Fill => &FILL_BUILTINS,

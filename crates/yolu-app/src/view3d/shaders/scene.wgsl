@@ -266,7 +266,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     let tex_roughness = textureSample(roughness_tex, paint_sampler, f.uv).r;
     let tex_normal = textureSample(normal_tex, paint_sampler, f.uv).rgb;
     let tex_emission = textureSample(emission_tex, paint_sampler, f.uv).rgb;
-    // 市松の上に重ねるのは今までどおりガンマの値で（画面の 2D の画布と同じ見え方）
+    // 市松の上に重ねるのは今までどおりガンマの値で（画面の 2D のキャンバスと同じ見え方）
     let color_gamma = premultiplied_gamma(tex_color);
     let tex_height = textureSample(height_tex, paint_sampler, f.uv).r;
     let tex_map = textureSample(map_tex, paint_sampler, f.uv);

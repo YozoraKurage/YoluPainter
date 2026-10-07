@@ -1,5 +1,5 @@
 //! PSD の調整レイヤーとしての、色調補正の 6 種（グラデーションマップ `grdm`・トーンカーブ `curv`・カラーバランス `blnc`・明るさ/コントラスト `brit`・
-//! 2 値化 `thrs`・ポスタリゼーション `post`）の読み書き。PSD の刻みに乗る値はそのまま往復し、刻みの間の値は丸めず層ごとの理由で断り、
+//! 2 値化 `thrs`・ポスタリゼーション `post`）の読み書き。PSD の刻みに乗る値はそのまま往復し、刻みの間の値は丸めずレイヤーごとの理由で断り、
 //! 読み込みで表せないものは PreserveOnly と診断する。Photoshop・CLIP STUDIO の実物のファイルは持ち込まず、試験の中で一から組む
 //! （書いた PSD を psd-tools で読み直す確かめは `tools/io-fixtures/psd_tools_check.py`。Photoshop の実機は未確認）。
 use yolu_core::curve::{Curve, CurvePoint};
@@ -134,7 +134,10 @@ fn round_trip(core: &Document) -> (Document, Vec<u8>) {
         read.diagnostics()
     );
     let doc = read.document().unwrap();
-    assert_eq!(doc.layers, projected.layers, "読み直した層は書いた層と同じ");
+    assert_eq!(
+        doc.layers, projected.layers,
+        "読み直したレイヤーは書いたレイヤーと同じ"
+    );
     assert_eq!(
         psd::write_edited(&read, doc, &Limits::default()).unwrap(),
         bytes,
@@ -190,7 +193,7 @@ fn each_kind_round_trips_with_opacity_mask_clipping_blend_mode_and_hidden() {
             d.set_mask_pixel(plain, x, 5, 200).unwrap();
         }
         let shape = d.add_layer("shape").unwrap();
-        // 画布いっぱいの絵（書き出しは各層の画素の範囲を書くので、疎な層は読み直すと範囲が変わる）
+        // キャンバスいっぱいの絵（書き出しは各レイヤーの画素の範囲を書くので、疎なレイヤーは読み直すと範囲が変わる）
         for y in 0..H {
             for x in 0..W {
                 let a = if x < 3 { 0 } else { (60 + x * 8 + y * 3) as u8 };
@@ -474,8 +477,8 @@ fn a_new_adjustment_that_does_not_act_on_color_is_written_hidden_like_the_others
         .layers
         .iter()
         .find(|l| l.name == "調整")
-        .expect("層は残る");
-    assert!(!layer.visible, "Color に効かない調整は隠した層で書く");
+        .expect("レイヤーは残る");
+    assert!(!layer.visible, "Color に効かない調整は隠したレイヤーで書く");
     assert!(matches!(layer.kind, LayerKind::Adjustment(_)));
 }
 
@@ -648,8 +651,8 @@ fn what_the_tool_cannot_represent_is_preserved_not_edited() {
 
 #[test]
 fn a_curve_that_is_valid_as_psd_but_not_for_the_tool_is_preserved_not_edited() {
-    // Photoshop の「自動」は両端の点を動かす。PSD として正しくても、この道具の曲線（点は 16 まで・両端の入力は 0 と 255・隣は 6 刻み以上）で
-    // 表せないものは、編集できる層にせず（取り込みで理由が分からないまま断らず）原本を保つ
+    // Photoshop の「自動」は両端の点を動かす。PSD として正しくても、このツールの曲線（点は 16 まで・両端の入力は 0 と 255・隣は 6 刻み以上）で
+    // 表せないものは、編集できるレイヤーにせず（取り込みで理由が分からないまま断らず）原本を保つ
     let with_composite = |points: Vec<[u8; 2]>| {
         let mut projected = Psd::from_core(&adjustment_document(AdjustmentSettings::tone_curve(
             ToneCurves::identity(),
@@ -686,7 +689,7 @@ fn a_curve_that_is_valid_as_psd_but_not_for_the_tool_is_preserved_not_edited() {
             "{name}: {codes:?}"
         );
     }
-    // 表せる曲線（隣が 6 刻み・16 点）は編集できる層のまま
+    // 表せる曲線（隣が 6 刻み・16 点）は編集できるレイヤーのまま
     for (name, points) in [
         ("隣が 6 刻み", vec![[0, 0], [6, 10], [255, 255]]),
         ("点が 16", spaced(15)),
@@ -726,7 +729,7 @@ fn gradient_map_fields_the_tool_rewrites_are_reported_not_dropped_silently() {
 
 #[test]
 fn the_tool_and_psd_agree_on_every_composite_pixel() {
-    // PSD の参照合成（core の式を表にしたもの）と core の合成が、統合画像も層ごとの合成も同じ（読みが CompositeDiffers を言わない）
+    // PSD の参照合成（core の式を表にしたもの）と core の合成が、統合画像もレイヤーごとの合成も同じ（読みが CompositeDiffers を言わない）
     for (name, s) in exact() {
         let mut d = new_doc();
         let a = d

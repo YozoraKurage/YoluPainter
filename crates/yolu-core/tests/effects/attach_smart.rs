@@ -137,7 +137,7 @@ fn a_material_at_another_size_scales_blur_and_sharpen_radii_and_keeps_only_pixel
             .collect();
         assert_eq!(radii, vec![radius, sharpen], "{w}×{h}");
         assert_eq!(layer.filters().len(), 3, "雑音は半径が無いのでそのまま");
-        // 大きさが違う画布では、パスが画素だけになったことを言う（半径は丸めていないので、半径の知らせは無い）
+        // 大きさが違うキャンバスでは、パスが画素だけになったことを言う（半径は丸めていないので、半径の知らせは無い）
         if (w, h) == (40, 28) {
             assert!(layer.path().is_some(), "同じ大きさならパスのまま");
             assert!(placed.notes.is_empty(), "{:?}", placed.notes);
@@ -165,7 +165,7 @@ fn a_material_at_another_size_scales_blur_and_sharpen_radii_and_keeps_only_pixel
 
 #[test]
 fn placing_tells_which_radii_were_rounded_to_the_limit_and_which_paths_became_pixels() {
-    // 最大を超える半径: ぼかし 200 を 2 倍の画布へ（400 → 256）、シャープ 40 を 3 倍の画布へ（120 → 64）
+    // 最大を超える半径: ぼかし 200 を 2 倍のキャンバスへ（400 → 256）、シャープ 40 を 3 倍のキャンバスへ（120 → 64）
     let (mut source, l) = world();
     blur(&mut source, l[0], 200);
     source
@@ -309,7 +309,7 @@ fn a_surface_path_is_dropped_when_a_material_is_captured() {
     assert_eq!(material.notes().len(), 1, "{:?}", material.notes());
     assert!(
         material.notes()[0].contains("面") && material.notes()[0].contains("画素だけ"),
-        "どの層のパスが画素だけになったかを言う: {:?}",
+        "どのレイヤーのパスが画素だけになったかを言う: {:?}",
         material.notes()
     );
     assert!(
@@ -322,7 +322,7 @@ fn a_surface_path_is_dropped_when_a_material_is_captured() {
     );
 }
 
-/// 塗りつぶしの層（Color の値あり）にモデルの上のパス（Height。塗りつぶしの値は無い）を置く。
+/// 塗りつぶしレイヤー（Color の値あり）にモデルの上のパス（Height。塗りつぶしの値は無い）を置く。
 fn fill_layer_with_surface_path(doc: &mut Document) -> yolu_core::LayerId {
     use yolu_core::geometry::{SurfaceGeometry, SurfaceTriangle, DEFAULT_WELD_TOLERANCE};
     use yolu_core::glam::{Vec2, Vec3};
@@ -374,7 +374,7 @@ fn fill_layer_with_surface_path(doc: &mut Document) -> yolu_core::LayerId {
         .unwrap();
     assert!(
         doc.layer(layer).unwrap().surface(Channel::Height).is_some(),
-        "塗りつぶしの層のパスの画素は層の面にある"
+        "塗りつぶしレイヤーのパスの画素はレイヤーの面にある"
     );
     layer
 }
@@ -406,7 +406,7 @@ fn a_fill_layer_surface_path_leaves_the_material_without_its_hidden_surface() {
         "パスが外れたと言う（画素だけではない）: {:?}",
         material.notes()
     );
-    // 写しは文書として検証を通り、置いても層は塗りつぶしだけ
+    // 写しは文書として検証を通り、置いてもレイヤーは塗りつぶしだけ
     material.fragment_document().unwrap();
     let mut target = Document::with_tile_size(W, H, 8).unwrap();
     let placed = target
@@ -476,7 +476,7 @@ fn a_fill_layer_canvas_path_is_dropped_with_its_surface_in_a_different_sized_can
     );
 }
 
-/// マスクにフィルターと Anchor を持つ層（土台）と、マスクの無い層（中・上）。
+/// マスクにフィルターと Anchor を持つレイヤー（土台）と、マスクの無いレイヤー（中・上）。
 fn mask_world() -> (Document, Vec<yolu_core::LayerId>) {
     let (mut doc, l) = world();
     let base = l[0];
@@ -512,17 +512,17 @@ fn a_smart_mask_gets_its_own_stage_and_anchor_ids_every_time_it_is_placed() {
     let before = filter_ids(&doc);
     doc.apply_smart_mask(&mask, mid, None).unwrap();
     doc.apply_smart_mask(&mask, top, None).unwrap();
-    // 元の層へ戻す（マスクを置き換える）
+    // 元のレイヤーへ戻す（マスクを置き換える）
     doc.apply_smart_mask(&mask, base, None).unwrap();
     let ids = filter_ids(&doc);
     let mut unique = ids.clone();
     unique.sort();
     unique.dedup();
-    assert_eq!(ids.len(), 3, "マスクのフィルターは層ごとに 1 つ");
+    assert_eq!(ids.len(), 3, "マスクのフィルターはレイヤーごとに 1 つ");
     assert_eq!(unique.len(), ids.len(), "段の ID は重ならない: {ids:?}");
     assert!(
         !ids.contains(&before[0]),
-        "元の層へ戻しても、元と同じ ID にはならない"
+        "元のレイヤーへ戻しても、元と同じ ID にはならない"
     );
     let anchors: Vec<_> = doc.anchors().iter().map(|a| a.anchor.id()).collect();
     let mut unique = anchors.clone();
@@ -530,7 +530,7 @@ fn a_smart_mask_gets_its_own_stage_and_anchor_ids_every_time_it_is_placed() {
     unique.dedup();
     assert_eq!(anchors.len(), 3);
     assert_eq!(unique.len(), anchors.len(), "Anchor の ID も重ならない");
-    // 同じ ID の段を探すと、それを持つ層が見つかる（先頭の 1 つに化けない）
+    // 同じ ID の段を探すと、それを持つレイヤーが見つかる（先頭の 1 つに化けない）
     for id in &ids {
         assert!(doc.find_filter(*id).is_some());
     }

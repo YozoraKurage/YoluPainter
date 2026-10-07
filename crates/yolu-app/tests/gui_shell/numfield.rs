@@ -1,5 +1,5 @@
-//! 数値の欄（`ui::numfield`）の振る舞い。欄だけを置いた窓で、本物のポインタとキーで確かめる。欄を並べる側（投影の欄・Undo の 1 段）の配線は
-//! `fillfx_gui.rs` が窓の全体で確かめる。
+//! 数値の欄（`ui::numfield`）の振る舞い。欄だけを置いたウィンドウで、本物のポインタとキーで確かめる。欄を並べる側（投影の欄・Undo の 1 段）の配線は
+//! `fillfx_gui.rs` がウィンドウの全体で確かめる。
 use crate::common;
 
 use egui::{vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};

@@ -1,4 +1,4 @@
-//! 3D の面のストローク（`SurfaceStroke`）に通す効果ブラシと対称（画面なしで、カメラと面だけ）: ぼかし・指先・クローンが UV の島の
+//! 3D の面のストローク（`SurfaceStroke`）に通す効果ブラシと対称（画面なしで、カメラと面だけ）: ぼかし・指先・クローンが UV アイランドの
 //! 継ぎ目をまたいで読み元を運ぶ、ミラー・放射状が写しの側へも塗る、どれも 1 回の Undo で戻り、予算・対称との組み合わせ・古い元は
 //! ストロークごと断る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
@@ -24,7 +24,7 @@ fn p(x: f32, y: f32) -> Vec3 {
     Vec3::new(x, y, 0.0)
 }
 
-/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2、辺 x = 1 を共有）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れた島。表は +Z。
+/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2、辺 x = 1 を共有）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れたアイランド。表は +Z。
 fn plane() -> Arc<SurfaceGeometry> {
     let l = |x: f32, y: f32| Vec2::new(0.375 * x, 0.125 + 0.75 * y);
     let u = |x: f32, y: f32| Vec2::new(0.625 + 0.375 * (x - 1.0), 0.125 + 0.75 * y);
@@ -270,7 +270,7 @@ fn clone_in_a_surface_stroke_copies_the_pattern_across_islands() {
             if c.a == 0 {
                 continue;
             }
-            // 世界の x が 1 ずれた先の島の画素: UV の x は (x − 20) 画素
+            // 世界の x が 1 ずれた先のアイランドの画素: UV の x は (x − 20) 画素
             assert_eq!(
                 c,
                 Rgba8::new(((x - 20) * 17) as u8, (y * 13) as u8, 90, 255),
@@ -333,7 +333,10 @@ fn smudge_in_a_surface_stroke_drags_across_the_seam_without_reading_the_gap() {
     for y in 0..H {
         for x in 20..W {
             let c = color(&d, layer, x, y);
-            assert!(c.g <= 30, "離れた島の間の緑を読まない: {c:?} at {x},{y}");
+            assert!(
+                c.g <= 30,
+                "離れたアイランドの間の緑を読まない: {c:?} at {x},{y}"
+            );
             if c.r > 0 {
                 dragged += 1;
             }
@@ -378,7 +381,7 @@ fn mirror_in_a_surface_stroke_paints_the_other_island_too() {
     };
     assert!(painted(&d, 0, 12), "元の側");
     assert!(painted(&d, 20, W), "ミラーした側");
-    assert!(!painted(&d, 12, 20), "島の間は塗らない");
+    assert!(!painted(&d, 12, 20), "アイランドの間は塗らない");
     d.undo().unwrap();
     assert_eq!(d.undo_count(), 0);
     assert!(!painted(&d, 0, W));
@@ -412,7 +415,7 @@ fn radial_in_a_surface_stroke_rotates_around_the_axis() {
     s.finish(&mut d, &mut stroke).unwrap();
     assert_eq!(s.stats.copies, 1);
     d.end_stroke(stroke).unwrap();
-    // 中心 (1, 0.5) のまわりに 180° 回した先 (1.7, 0.7) は右の島の上半分
+    // 中心 (1, 0.5) のまわりに 180° 回した先 (1.7, 0.7) は右のアイランドの上半分
     let upper_right = (10..H).any(|y| (20..W).any(|x| color(&d, layer, x, y).a > 0));
     let lower_right = (0..6).any(|y| (20..W).any(|x| color(&d, layer, x, y).a > 0));
     assert!(upper_right && !lower_right);
@@ -618,7 +621,7 @@ fn clone_in_a_surface_stroke_can_read_the_visible_composite_of_other_layers() {
     let brush_value = brush(BrushEffect::Clone {
         offset: Default::default(),
     });
-    // 描く層（空）だけを読むと、何も写らない。見えている層の重なりを読むと、下の層の模様が写る
+    // 描くレイヤー（空）だけを読むと、何も写らない。見えているレイヤーの重なりを読むと、下のレイヤーの模様が写る
     for composite in [false, true] {
         let mut stroke = d.begin_brush_stroke(target, &brush_value).unwrap();
         if composite {
@@ -741,7 +744,7 @@ fn stencil_brush(effect: BrushEffect, image: &Arc<StencilImage>) -> Brush {
     b
 }
 
-/// 文書の画素 (x, y) の中心が乗る、板の上の点（左の島は x 0〜12 が世界の 0〜1、右の島は 20〜32 が 1〜2）。
+/// 文書の画素 (x, y) の中心が乗る、板の上の点（左のアイランドは x 0〜12 が世界の 0〜1、右のアイランドは 20〜32 が 1〜2）。
 fn world_of(x: u32, y: u32) -> Vec3 {
     let u = (x as f32 + 0.5) / W as f32;
     let v = (y as f32 + 0.5) / H as f32;
@@ -764,7 +767,7 @@ fn amount_at(image: &StencilImage, view: &CameraView, place: Place, x: u32, y: u
     image.read(ix, iy, 1.0, StencilTiling::None).luma_alpha
 }
 
-/// 引いたあとの文書と層（文書ごとに層の札が違う）と、引く前の画素。
+/// 引いたあとの文書とレイヤー（文書ごとにレイヤーの札が違う）と、引く前の画素。
 struct Ran {
     d: Document,
     layer: LayerId,
@@ -955,7 +958,7 @@ fn clone_through_a_stencil_keeps_each_pixels_amount_when_unreadable_pixels_are_d
     let g = plane();
     let view = front(&g);
     let image = ramp();
-    // 左の島の縁（x = 0.1）を元にして、右の島へ写す。元の円の左の欠けた側（板の外）は読めないので、その画素は落ちる
+    // 左のアイランドの縁（x = 0.1）を元にして、右のアイランドへ写す。元の円の左の欠けた側（板の外）は読めないので、その画素は落ちる
     let prepare = |d: &mut Document, l: LayerId| {
         for y in 0..H {
             for x in 0..12 {
@@ -1212,7 +1215,7 @@ fn a_closed_stencil_leaves_blur_smudge_and_clone_untouched() {
 
 // ───────── 筆圧の応え（大きさ・硬さ・不透明度）─────────
 
-/// 筆圧 pressure で 1 つだけ面にダブを置いた層の画素（板の左の中ほど）。
+/// 筆圧 pressure で 1 つだけ面にダブを置いたレイヤーの画素（板の左の中ほど）。
 fn one_dab(brush_value: &Brush, pressure: f32) -> (Vec<u8>, usize) {
     let g = plane();
     let view = front(&g);
@@ -1280,7 +1283,7 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
     assert_eq!(max_alpha(&strong), 255);
 }
 
-/// 速い入力の線: 左の島の左端から右の島の右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より
+/// 速い入力の線: 左のアイランドの左端から右のアイランドの右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より
 /// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする。
 fn fast_line() -> (Arc<SurfaceGeometry>, CameraView, Brush, [Vec2; 3]) {
     let g = plane();
@@ -1295,7 +1298,7 @@ fn fast_line() -> (Arc<SurfaceGeometry>, CameraView, Brush, [Vec2; 3]) {
     (g, view, b, points)
 }
 
-/// how の決まりで速い入力の線を引き、確定した層の画素と、最初の入力で塗らずに持ち越したダブの数を返す。
+/// how の決まりで速い入力の線を引き、確定したレイヤーの画素と、最初の入力で塗らずに持ち越したダブの数を返す。
 fn fast_stroke(
     effect: SurfaceEffect,
     how: impl Fn(&mut Document, &mut SurfaceStroke, &mut Stroke),
@@ -1384,17 +1387,23 @@ fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_
             on_release == at_once,
             "{effect:?}: 離したときに塗っても同じ画素"
         );
-        // 線は右の島の右端まで届いている
+        // 線は右のアイランドの右端まで届いている
         let painted = |x: usize, y: usize| at_once[(y * W as usize + x) * 4 + 3] > 0;
         if effect == SurfaceEffect::Paint {
-            assert!((0..H as usize).any(|y| painted(2, y)), "左の島の左端");
-            assert!((0..H as usize).any(|y| painted(30, y)), "右の島の右端");
+            assert!(
+                (0..H as usize).any(|y| painted(2, y)),
+                "左のアイランドの左端"
+            );
+            assert!(
+                (0..H as usize).any(|y| painted(30, y)),
+                "右のアイランドの右端"
+            );
         }
     }
 }
 
 /// 持ち越しても、1 回の操作のメモリの上限は今のまま: 持ち越したダブで予算を超えたら、ストロークを取り消して断る（途中まで塗った
-/// 画素も戻る）。予算は、最初の入力で塗る左の島の分は入り、持ち越した右の島の分で超える値を探す（投影の塗りの覚えは別に与えて、
+/// 画素も戻る）。予算は、最初の入力で塗る左のアイランドの分は入り、持ち越した右のアイランドの分で超える値を探す（投影の塗りの覚えは別に与えて、
 /// 予算は巻き戻しの写しだけに効かせる）。
 #[test]
 fn a_held_over_dab_past_the_memory_budget_still_cancels_the_stroke() {

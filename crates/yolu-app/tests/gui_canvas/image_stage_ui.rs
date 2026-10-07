@@ -33,7 +33,7 @@ fn apply(h: &mut Harness<'_, YoluApp>, a: Action) {
     h.run();
 }
 
-/// 試しの立方体を焼いて（位置・法線）文書の入力へ足し、3D のタブと棚（アセット）のタブを前へ出した窓。
+/// 試しの立方体を焼いて（位置・法線）文書の入力へ足し、3D のタブと棚（アセット）のタブを前へ出したウィンドウ。
 fn window(height: f32, lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, height, 64);
     {
@@ -56,7 +56,7 @@ fn window(height: f32, lang: Lang) -> Harness<'static, YoluApp> {
     }
     click_tab(&mut h, Tab::View3d);
     click_tab(&mut h, Tab::Assets);
-    // 白の塗りつぶしの層（段の画像がそのまま見える）
+    // 白の塗りつぶしレイヤー（段の画像がそのまま見える）
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
     h
 }

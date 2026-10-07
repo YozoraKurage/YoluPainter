@@ -1,10 +1,10 @@
 //! 非破壊の効果（フィルターのスタック・Generator の段・Anchor・塗りつぶしの画像と投影・グラデーション）の文書側の型。
 //!
-//! Unity 版の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` と同じ持ち方で、層と層のマスクが設定を持つ。
+//! Unity 版の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` と同じ持ち方で、レイヤーとレイヤーのマスクが設定を持つ。
 //! 評価の式は文書に依らない口（[`crate::filter`]・[`crate::generator`]・[`crate::fill_image`]）にあり、ここは設定の入れ物と検査だけを持つ
 //! （式を二重に持たない）。評価の結果は合成のときに作り、保存の正本にしない。
 //!
-//! - フィルターのスタックは層の内容（チャンネルごとに適用する段を選ぶ）と層のマスク（全チャンネルで共有する 1 つのスカラー）にそれぞれある。
+//! - フィルターのスタックはレイヤーの内容（チャンネルごとに適用する段を選ぶ）とレイヤーのマスク（全チャンネルで共有する 1 つのスカラー）にそれぞれある。
 //!   Generator は同じスタックの段（C# の `FilterType.Generator`）で、焼いたメッシュマップ・Anchor から値を作る。
 //! - 効果を置けるのは標準のチャンネル（0〜5）だけ。正本の読み手（Unity 版も）が標準のチャンネルだけを許すので、保存で失わないようにここで断る。
 //! - メッシュマップ・プロジェクトの画像は文書の外にある。[`EffectInputs`] で渡す（保存も Undo もしない）。
@@ -55,7 +55,7 @@ id_type!(
     ImageId
 );
 
-/// どちらのスタックか: 層の画素（内容。チャンネルごと）か、層のラスターマスク（隠す量。全チャンネルで共有）か。
+/// どちらのスタックか: レイヤーの画素（内容。チャンネルごと）か、レイヤーのラスターマスク（隠す量。全チャンネルで共有）か。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum FilterTarget {
     Content,
@@ -198,7 +198,7 @@ impl EffectSettings {
     pub fn reads_anchor(&self) -> bool {
         matches!(self, Self::Generator(g) if g.kind == generator::Kind::Anchor)
     }
-    /// モデルの UV の島の図を読む Generator（アイランドごとのばらつき）か。
+    /// モデルの UV アイランドの図を読む Generator（アイランドごとのばらつき）か。
     pub fn reads_islands(&self) -> bool {
         matches!(self, Self::Generator(g) if g.kind == generator::Kind::UvIslandVariation)
     }
@@ -433,8 +433,8 @@ impl FilterSpec {
     }
 }
 
-/// 層・マスクに置く名前の付いた接続点（C# の `AnchorPoint`）。層の Anchor は、その層までのスタックの結果、マスクの Anchor は、
-/// マスクが層を見せる量。上の層の Anchor Generator が読む。
+/// レイヤー・マスクに置く名前の付いた接続点（C# の `AnchorPoint`）。レイヤーの Anchor は、そのレイヤーまでのスタックの結果、マスクの Anchor は、
+/// マスクがレイヤーを見せる量。上のレイヤーの Anchor Generator が読む。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Anchor {
     pub(crate) id: AnchorId,
@@ -465,13 +465,13 @@ impl Anchor {
 /// Anchor の置き場。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AnchorPlacement {
-    /// 層: その層までのスタックの結果（全チャンネル）。
+    /// レイヤー: そのレイヤーまでのスタックの結果（全チャンネル）。
     Layer,
-    /// 層のマスク: マスクが層を見せる量。
+    /// レイヤーのマスク: マスクがレイヤーを見せる量。
     Mask,
 }
 
-/// Anchor と、それがある層（マスクの Anchor はそのマスクの層）。
+/// Anchor と、それがあるレイヤー（マスクの Anchor はそのマスクのレイヤー）。
 #[derive(Clone, Copy, Debug)]
 pub struct AnchorInfo<'a> {
     pub anchor: &'a Anchor,
@@ -484,9 +484,9 @@ pub struct AnchorInfo<'a> {
 pub enum AnchorIssueKind {
     /// まだ選んでいない。
     NotChosen,
-    /// 読む Anchor がもう無い（消した・層やマスクを消した）。
+    /// 読む Anchor がもう無い（消した・レイヤーやマスクを消した）。
     Missing,
-    /// Anchor が読む層より下に無い（層を動かした）、または自分の層にある。
+    /// Anchor が読むレイヤーより下に無い（レイヤーを動かした）、または自分のレイヤーにある。
     NotBelow,
 }
 
@@ -539,7 +539,7 @@ impl fmt::Display for InactiveReason {
                 f.write_str("読む Anchor がありません")
             }
             Self::Generator(I::Anchor(generator::anchor::Issue::NotBelow)) => {
-                f.write_str("Anchor が自分の層より下にありません")
+                f.write_str("Anchor が自分のレイヤーより下にありません")
             }
             Self::Generator(I::NoImage) => f.write_str("画像が選ばれていません"),
             Self::Generator(I::MissingImage) => {
@@ -573,7 +573,7 @@ pub enum InactiveTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InactiveEffect {
     pub layer: crate::layer::LayerId,
-    /// 層の名前（利用者が付けた文字列）。
+    /// レイヤーの名前（利用者が付けた文字列）。
     pub layer_name: String,
     pub target: InactiveTarget,
     pub reason: InactiveReason,
@@ -615,7 +615,7 @@ impl fmt::Display for InactiveEffect {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FallbackEffect {
     pub layer: crate::layer::LayerId,
-    /// 層の名前（利用者が付けた文字列）。
+    /// レイヤーの名前（利用者が付けた文字列）。
     pub layer_name: String,
     /// マスクのスタックの段か。
     pub mask: bool,
@@ -649,7 +649,7 @@ pub(crate) fn require_standard(channel: Channel) -> Result<(), CoreError> {
     }
 }
 
-/// 層に付く編集できるパス（C# の `EditablePath`）。層の対象チャンネルの画素はパスから描いた結果で、パスと画素はいつも一緒に変わる
+/// レイヤーに付く編集できるパス（C# の `EditablePath`）。レイヤーの対象チャンネルの画素はパスから描いた結果で、パスと画素はいつも一緒に変わる
 /// （[`crate::Document::set_path`]）。キャンバスの点のパス（2D）か、モデルの三角形の上の点のパス（3D）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayerPath {
@@ -733,6 +733,6 @@ pub(crate) fn paths_error(e: crate::paths::Error) -> CoreError {
         E::Core(e) => e,
         E::Dab(_) => CoreError::Unsupported("面のダブを拒否した"),
         E::MissingImage => CoreError::Unsupported("リボンの画像が無い"),
-        E::FillIslands => CoreError::Unsupported("塗りのパスが 1 つの UV の島に収まらない"),
+        E::FillIslands => CoreError::Unsupported("塗りのパスが 1 つの UV アイランドに収まらない"),
     }
 }

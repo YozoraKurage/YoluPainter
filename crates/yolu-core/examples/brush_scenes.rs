@@ -4,7 +4,7 @@
 //!   cargo run --release -p yolu-core --example brush_scenes -- compare <フォルダ A> <フォルダ B>
 //! 場面は 384² の文書に、同じ所を何十回もなぞるストローク（薄い流量・不透明度、細かい間隔、下地の有無・半透明、筆先の画像、
 //! 紙の質感、ダブごとの色、色の混ぜ、指先）。`time` は 1 スレッドの CPU 時間（ストロークの始めから確定まで）の最小の回、
-//! `dump` は各場面の層の画素を `<番号>.rgba` へ書き、`compare` は 2 つのフォルダの画素の差（最大・分布・塗った画素に対する割合）を出す。
+//! `dump` は各場面のレイヤーの画素を `<番号>.rgba` へ書き、`compare` は 2 つのフォルダの画素の差（最大・分布・塗った画素に対する割合）を出す。
 #[path = "stroke_support/mod.rs"]
 mod stroke_support;
 
@@ -88,7 +88,7 @@ fn document(filled: bool, translucent: bool) -> (Document, LayerId) {
     (doc, layer)
 }
 
-/// ストロークを描いて、層の画素・ダブの数・かかった時間（ミリ秒）を返す。
+/// ストロークを描いて、レイヤーの画素・ダブの数・かかった時間（ミリ秒）を返す。
 fn stroke(
     brush: &Brush,
     filled: bool,

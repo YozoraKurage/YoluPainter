@@ -366,7 +366,7 @@ fn multiple_clip_groups_and_channels() {
     }
 }
 
-/// 常駐しない合成（`composite_tiles` と `Compositor`）も、独立して合成するグループ・調整の層・効果のある層・法線のチャンネルを CPU と同じ画素にする。
+/// 常駐しない合成（`composite_tiles` と `Compositor`）も、独立して合成するグループ・調整レイヤー・効果のあるレイヤー・法線のチャンネルを CPU と同じ画素にする。
 #[test]
 fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     use yolu_core::effects::{EffectSettings, FilterSpec, FilterTarget};
@@ -382,7 +382,7 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     };
     let mut layers = Vec::new();
     for k in 0..4 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         d.set_channel_enabled(l, Channel::Normal, true).unwrap();
         for y in 0..35 {
             for x in 0..67 {

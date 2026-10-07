@@ -1,6 +1,6 @@
 //! 選択範囲を使う操作（選択範囲の下のボタンの帯が押す）: 描画色で塗りつぶす・消去・コピーして新しいレイヤー・マスクにする。
 //! どれも 1 回の Undo（複数の段を作る操作は `Document::batch` で 1 段にまとめる）。計算と断りは core（`fill_material`・`fill_mask`・
-//! `copy_pixels`・`paste_as_layer`・`add_layer_mask`）に任せ、ここは「どの層の何を」と、知らせだけを持つ。
+//! `copy_pixels`・`paste_as_layer`・`add_layer_mask`）に任せ、ここは「どのレイヤーの何を」と、知らせだけを持つ。
 
 use crate::engine::LayerKind;
 use crate::state::AppState;
@@ -45,7 +45,7 @@ impl AppState {
         Ok(if changed { done } else { same }.into())
     }
 
-    /// 選択範囲の画素（選んでいる層の描くチャンネル。マスクを描いているならマスク）を、新しいレイヤーとして元の位置に足す。
+    /// 選択範囲の画素（選んでいるレイヤーの描くチャンネル。マスクを描いているならマスク）を、新しいレイヤーとして元の位置に足す。
     /// OS のクリップボードもアプリの中のクリップボードも変えない。足したレイヤーを選び、選択範囲は今のまま残す（貼り付けは選択を
     /// 外すので、同じ選択へ戻す。全部 1 回の Undo）。
     pub(super) fn sel_to_new_layer(&mut self) -> Result<String, String> {
@@ -77,7 +77,7 @@ impl AppState {
         ))
     }
 
-    /// 選択範囲を、選んでいる層のマスクにする: マスクが無ければ足し、選択範囲の外を隠す（マスクがあれば、その上に重ねて隠す。
+    /// 選択範囲を、選んでいるレイヤーのマスクにする: マスクが無ければ足し、選択範囲の外を隠す（マスクがあれば、その上に重ねて隠す。
     /// 選択範囲の縁の量は、その分だけ隠さない）。マスクを描く状態にし、選択範囲は今のまま残す。
     pub(super) fn sel_to_mask(&mut self) -> Result<String, String> {
         let lang = self.lang;

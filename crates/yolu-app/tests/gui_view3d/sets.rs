@@ -291,7 +291,7 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
 
 // ───────── 下の帯のベイクのボタン ─────────
 
-/// 試しの立方体のセットを、位置のマップ 1 枚だけ CPU で焼いた状態にする（窓の外の、最小のベイク）。
+/// 試しの立方体のセットを、位置のマップ 1 枚だけ CPU で焼いた状態にする（ウィンドウの外の、最小のベイク）。
 fn bake_current_set(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>) {
     let s = &mut h.state_mut().state;
     s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
@@ -328,7 +328,7 @@ fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_ope
             configure.left() - bake.right() < 12.0,
             "{bake:?} {configure:?}"
         );
-        // 押すとベイクの窓が開く（メニューの項目と同じ操作）
+        // 押すとベイクのウィンドウが開く（メニューの項目と同じ操作）
         assert!(h.state().state.bake.window.is_none());
         click(&mut h, bake.center());
         assert!(h.state().state.bake.window.is_some(), "{lang:?}");
@@ -377,12 +377,12 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
             .expect("消すボタン")
             .rect()
         };
-        // 帯の幅: 足すボタンは左端から 4、設定のボタンは右端の 4 手前に終わる（パネルの縁の分だけ窓の幅より狭い）
+        // 帯の幅: 足すボタンは左端から 4、設定のボタンは右端の 4 手前に終わる（パネルの縁の分だけウィンドウの幅より狭い）
         let bar_width = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
             h.get_by_label(configure).rect().right() - h.get_by_label(add).rect().left() + 8.0
         };
         let edge = 400.0 - bar_width(&set_panel(400.0, lang));
-        assert!(edge >= 0.0, "{lang:?}: 帯が窓より広い");
+        assert!(edge >= 0.0, "{lang:?}: 帯がウィンドウより広い");
         for bar in [
             90.0_f32, 110.0, 120.0, 126.0, 127.0, 127.5, 128.0, 128.5, 129.0, 135.0, 160.0, 235.0,
             400.0,
@@ -436,7 +436,7 @@ fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
     let baked = bake_entrance(&h.state().state);
     assert!(!baked.marked, "焼いたセットに印は無い");
     assert_eq!(baked.tooltip, "メッシュマップをベイク…", "理由の行も無い");
-    // ボタンは焼いたあとも窓を開く
+    // ボタンは焼いたあともウィンドウを開く
     let at = h.get_by_label(&baked.tooltip).rect().center();
     click(&mut h, at);
     assert!(h.state().state.bake.window.is_some());
@@ -710,7 +710,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
 #[test]
 fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
-    // format4.ylp の最初のセットの文書を、core に持てない正本（反転の調整の層が使わない値 gamma を既定から変えたもの。C# の読み手は
+    // format4.ylp の最初のセットの文書を、core に持てない正本（反転の調整レイヤーが使わない値 gamma を既定から変えたもの。C# の読み手は
     // 黙って既定に戻すので、core へ渡すと保存で値が変わる）に差し替える。2 つ目の Trim は core が持つ中身だけ
     let dir = TempDir::new("readonly");
     let path = dir.0.join("format4.ylp");
@@ -958,14 +958,14 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
         "{}",
         h.state().state.message
     );
-    // 層の表示を切ると、そのセットだけ正本を書き直す。グループ・マスク・チャンネルごとの合成・調整は残り、もう 1 つのセットはバイト列のまま
+    // レイヤーの表示を切ると、そのセットだけ正本を書き直す。グループ・マスク・チャンネルごとの合成・調整は残り、もう 1 つのセットはバイト列のまま
     let doc = &h.state().state.doc;
     let target = doc
         .layers()
         .iter()
         .find(|l| l.mask().is_some() || l.is_group())
         .map(|l| l.id())
-        .expect("グループかマスクのある層");
+        .expect("グループかマスクのあるレイヤー");
     let mut expected = natives[0].to_core().unwrap();
     let visible = expected.layer(target).unwrap().visible();
     expected.set_layer_visible(target, !visible).unwrap();
@@ -1024,7 +1024,7 @@ fn a_new_project_saves_as_and_then_overwrites_with_a_backup() {
     let mut h = app(1280.0, 800.0, 256);
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
-    // 保存（まだファイルが無い）は別名で保存の窓を頼む
+    // 保存（まだファイルが無い）は別名で保存のウィンドウを頼む
     h.state_mut().state.apply(Action::SaveProject);
     assert_eq!(h.state().state.dialog_request, Some(DialogRequest::SaveAs));
     h.state_mut().state.dialog_request = None;

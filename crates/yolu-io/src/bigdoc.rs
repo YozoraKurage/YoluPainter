@@ -2,13 +2,13 @@
 //!
 //! 版 26 は中身の正本（中の版 21〜25・27 の並び）が [`Thresholds::split_above`]（512 MiB）を超える文書だけが使う。
 //! `document.utpaint` は `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値（色・画素）を抜いたもの（ヘッダー）、
-//! `Bytes` の値は並びの順に同じセットの `document.utpaint.1`・`.2`…（部分）へ書く。部分の区切りは、2 番目からの層の始まりと、
-//! [`Thresholds::part_bytes`]（256 MiB）を超える手前（値 1 つは分けない）。ただし今の部分も次の層の値も [`Thresholds::part_min`]（16 MiB）に
-//! 満たなければ、層の始まりで区切らずに続ける（層の多い文書でエントリが増えすぎないように）。変わらない層の部分は前と同じ中身になり、
+//! `Bytes` の値は並びの順に同じセットの `document.utpaint.1`・`.2`…（部分）へ書く。部分の区切りは、2 番目からのレイヤーの始まりと、
+//! [`Thresholds::part_bytes`]（256 MiB）を超える手前（値 1 つは分けない）。ただし今の部分も次のレイヤーの値も [`Thresholds::part_min`]（16 MiB）に
+//! 満たなければ、レイヤーの始まりで区切らずに続ける（レイヤーの多い文書でエントリが増えすぎないように）。変わらないレイヤーの部分は前と同じ中身になり、
 //! 復旧の世代で共有される。読み手は区切りの位置を決め打ちせず、値が部分の境目をまたがないこと・空の部分が無いこと・部分の数と余りが
 //! 合うことを確かめる。
 //!
-//! メモリ: 作る・読む・確かめるどの道も、持つのは層 1 枚ぶんの並びと小さな作業域だけ（core の文書とその写しのほかに）。
+//! メモリ: 作る・読む・確かめるどの道も、持つのはレイヤー 1 枚ぶんの並びと小さな作業域だけ（core の文書とその写しのほかに）。
 use crate::{
     check, check_budget,
     core_bridge::{check_writable, version_of, write_document, CoreLoad, Fields, Sink},
@@ -31,7 +31,7 @@ const TOO_BIG_FOR_MEMORY: &str = "正本が大きすぎてメモリに読めま�
 /// 部分の区切り: `Bytes` の値の流れのバイトの範囲 `[始まり, 終わり)`。
 pub(crate) type Ranges = Vec<(u64, u64)>;
 
-/// 値の並び（`(層の番号, 長さ)`。層より前の値は層 0 に数える）から、部分の区切りを決める。
+/// 値の並び（`(レイヤーの番号, 長さ)`。レイヤーより前の値はレイヤー 0 に数える）から、部分の区切りを決める。
 pub(crate) fn cut(values: &[(u32, u32)], t: &Thresholds) -> Ranges {
     let mut totals: Vec<u64> = Vec::new();
     for &(section, len) in values {
@@ -274,7 +274,7 @@ impl CoreDoc {
         }
         write_document(&mut sink, &self.doc, self.plan.version)
     }
-    /// 流して core の文書にする（作った正本を読み手で読むのと同じ。持つのは層 1 枚ぶん）。
+    /// 流して core の文書にする（作った正本を読み手で読むのと同じ。持つのはレイヤー 1 枚ぶん）。
     pub fn to_core(&self, budget: Option<u64>) -> Result<Document> {
         let skeleton = self.skeleton()?;
         refuse_issues(&skeleton)?;
@@ -428,7 +428,7 @@ impl Observer for NoSink {
     fn plain(&mut self, _: &[u8]) {}
     fn value(&mut self, _: &[u8]) {}
 }
-/// 並びを層ごとに貯めて読み手へ渡す書き先。
+/// 並びをレイヤーごとに貯めて読み手へ渡す書き先。
 struct Feed<'a> {
     buf: Rc<RefCell<Fed>>,
     observer: &'a mut dyn Observer,
@@ -458,7 +458,7 @@ impl Sink for Feed<'_> {
         Ok(())
     }
 }
-/// 貯めた並びを読む側（読み手は、書き手が 1 つの層を書き終えてから、その層を読む）。
+/// 貯めた並びを読む側（読み手は、書き手が 1 つのレイヤーを書き終えてから、そのレイヤーを読む）。
 struct FedSource {
     buf: Rc<RefCell<Fed>>,
     out: Vec<u8>,
@@ -489,8 +489,8 @@ impl ByteSource for FedSource {
         Ok(fed.at >= fed.bytes.len())
     }
 }
-/// core の文書を正本の並び（分けない形）にしながら、層ごとに読み手で読む。`step` は頭を読んだあと（`None`）と各層を読んだあと
-/// （`Some(層)`）に呼ばれる。持つのは層 1 枚ぶんの並び。読み手の骨組みか全部の項目を返す（`keep`）。
+/// core の文書を正本の並び（分けない形）にしながら、レイヤーごとに読み手で読む。`step` は頭を読んだあと（`None`）と各レイヤーを読んだあと
+/// （`Some(レイヤー)`）に呼ばれる。持つのはレイヤー 1 枚ぶんの並び。読み手の骨組みか全部の項目を返す（`keep`）。
 fn walk(
     doc: &Document,
     version: i32,
@@ -505,7 +505,7 @@ fn walk(
         at: 0,
     };
     let mut feed = Feed { buf: fed, observer };
-    // 層の前までを書いて読み、層は 1 つずつ書いて読む
+    // レイヤーの前までを書いて読み、レイヤーは 1 つずつ書いて読む
     crate::core_bridge::write_head(&mut feed, doc, version)?;
     let mut parse = Parse::begin(&mut source, None, keep)?;
     step(&mut parse, None)?;
@@ -513,11 +513,14 @@ fn walk(
         feed.layer(i)?;
         crate::core_bridge::write_layer_to(&mut feed, layer, version)?;
         let read = parse.next_layer()?;
-        check(read == Some(i), "正本の層の数が合いません")?;
+        check(read == Some(i), "正本のレイヤーの数が合いません")?;
         step(&mut parse, Some(i))?;
     }
-    check(parse.next_layer()?.is_none(), "正本の層の数が合いません")?;
-    // 層の後（手動の ID の色）
+    check(
+        parse.next_layer()?.is_none(),
+        "正本のレイヤーの数が合いません",
+    )?;
+    // レイヤーの後（手動の ID の色）
     crate::core_bridge::write_tail(&mut feed, doc, version)?;
     parse.finish()
 }
@@ -561,7 +564,7 @@ pub(crate) fn split_fields(
             .and_then(|r| r.split(']').next())
             .and_then(|n| n.parse().ok())
     };
-    // 層より前の値は層 0、層より後（手動の ID の色の `tag`）の値は最後の層に数える（`PlanSink` が、書いた順の「今の層」に数えるのと同じ）
+    // レイヤーより前の値はレイヤー 0、レイヤーより後（手動の ID の色の `tag`）の値は最後のレイヤーに数える（`PlanSink` が、書いた順の「今のレイヤー」に数えるのと同じ）
     let last_layer = fields
         .iter()
         .filter_map(|f| layer_of(&f.path))
@@ -637,7 +640,7 @@ impl StoredDoc {
         while parse.next_layer()?.is_some() {}
         parse.finish()
     }
-    /// 流して core の文書にする（持つのは層 1 枚ぶん）。
+    /// 流して core の文書にする（持つのはレイヤー 1 枚ぶん）。
     pub fn to_core(&self, skeleton: &NativeDocument, budget: Option<u64>) -> Result<Document> {
         refuse_issues(skeleton)?;
         let mut src = StreamSource::new(self.header.reader()?);
@@ -686,8 +689,8 @@ pub enum DocumentSource {
 impl std::fmt::Debug for DocumentSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Native(d) => write!(f, "Native({} 層)", d.layer_count()),
-            Self::Core(d) => write!(f, "Core({} 層)", d.layers().len()),
+            Self::Native(d) => write!(f, "Native({} レイヤー)", d.layer_count()),
+            Self::Core(d) => write!(f, "Core({} レイヤー)", d.layers().len()),
         }
     }
 }
@@ -716,7 +719,7 @@ impl From<Document> for DocumentSource {
 }
 
 /// テクスチャセットの正本。置いてある正本（.ylp のエントリ・復旧の中身。分けない形か版 26）、メモリの正本、core の文書から作る正本の
-/// どれか。画素は持たず（置いてある正本）、要るときに流して読む。頭の値（ID・寸法・版・層の数）はいつでも安く読める。
+/// どれか。画素は持たず（置いてある正本）、要るときに流して読む。頭の値（ID・寸法・版・レイヤーの数）はいつでも安く読める。
 #[derive(Clone)]
 pub struct SetDocument(Arc<SetDoc>);
 struct SetDoc {
@@ -862,7 +865,7 @@ impl SetDocument {
     pub fn is_split(&self) -> bool {
         self.0.head.split
     }
-    /// 骨組み（`Bytes` の値（色・画素）を持たない項目。層の構造・名前・ID・効果の設定）。core の文書から作る正本は、初めて呼ぶと
+    /// 骨組み（`Bytes` の値（色・画素）を持たない項目。レイヤーの構造・名前・ID・効果の設定）。core の文書から作る正本は、初めて呼ぶと
     /// 流して作る。
     pub fn skeleton(&self) -> Result<Arc<NativeDocument>> {
         self.0
@@ -889,7 +892,7 @@ impl SetDocument {
             },
         }
     }
-    /// 編集用の core の文書にする（`NativeDocument::to_core` と同じ意味）。置いてある正本は流して読み、持つのは層 1 枚ぶん。
+    /// 編集用の core の文書にする（`NativeDocument::to_core` と同じ意味）。置いてある正本は流して読み、持つのはレイヤー 1 枚ぶん。
     pub fn to_core(&self) -> Result<Document> {
         self.to_core_within(None)
     }

@@ -1,4 +1,4 @@
-//! Live Link のファイルの受け渡しの試験の道具: 試しの受け渡しのフォルダに、試しの FBX（yolu-model の試験と同じ ASCII の腕）と絵を
+//! Live Link のファイルの受け渡しの試験のツール: 試しの受け渡しのフォルダに、試しの FBX（yolu-model の試験と同じ ASCII の腕）と絵を
 //! 置き、頼みの JSON を Unity と同じ手順（`.tmp` に書いてから名前を変える）で `inbox/` に置き、`outbox/` の返事を読む。実のデータは使わない。
 #![allow(dead_code)]
 

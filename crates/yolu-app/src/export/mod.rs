@@ -43,32 +43,32 @@ use crate::windows::CloseJob;
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportAction {
-    /// テンプレート（ID）で書き出す。書き出す先のフォルダを選ぶ窓を頼む。
+    /// テンプレート（ID）で書き出す。書き出す先のフォルダを選ぶウィンドウを頼む。
     Template(String),
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確かめの窓を出す。
+    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     TemplateTo { id: String, dir: PathBuf },
-    /// 確かめの窓の「置き換える」。
+    /// 確認のウィンドウの「置き換える」。
     ConfirmReplace,
-    /// 確かめの窓の「やめる」。
+    /// 確認のウィンドウの「やめる」。
     CancelConfirm,
     /// 書いている最中の取消（元のファイルは変えない）。
     Cancel,
-    /// 結果の窓を閉じる。
+    /// 結果のウィンドウを閉じる。
     DismissReport,
-    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶ窓を頼む。
+    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶウィンドウを頼む。
     ChannelDialog,
-    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶ窓が置き換えてよいと確かめている）。
+    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶウィンドウが置き換えてよいと確かめている）。
     ChannelTo(PathBuf),
-    /// 書き出す先のファイルに、選ぶ窓が確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
-    /// 確かめの窓を出す。
+    /// 書き出す先のファイルに、選ぶウィンドウが確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
+    /// 確認のウィンドウを出す。
     ChannelNamed(PathBuf),
-    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶ窓を頼む。
+    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶウィンドウを頼む。
     ChannelsDialog,
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確かめの窓を出す。
+    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     ChannelsTo(PathBuf),
 }
 
-/// 何を書き出すか（確かめの窓の「置き換える」が、同じものをもう一度計画するのに使う）。
+/// 何を書き出すか（確認のウィンドウの「置き換える」が、同じものをもう一度計画するのに使う）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum What {
     /// テンプレート（ID）の画像。
@@ -122,7 +122,7 @@ struct Job {
     /// 書く画像ごとの（ファイルの名前・セットの uid・lilToon のプロパティ）。Live Link の `exported` の返事にする。
     targets: Vec<(String, u32, Option<String>)>,
     dir: PathBuf,
-    /// 結果の窓を出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
+    /// 結果のウィンドウを出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
     report: bool,
     total: usize,
     done: Arc<AtomicUsize>,
@@ -206,7 +206,7 @@ impl ExportState {
     }
 }
 
-/// 書き出し（札・閉じる前の確かめ・止める）。書き出しの確かめの窓は、キーの割り当てを止める。
+/// 書き出し（札・閉じる前の確かめ・止める）。書き出しの確認のウィンドウは、キーの割り当てを止める。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     card: Some(|app, lang| {
@@ -361,8 +361,8 @@ pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
     }
 }
 
-/// 選ぶ窓が返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（窓の種類で付かない環境がある）。足した名前は
-/// 窓が確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（窓が確かめた名前）。
+/// 選ぶウィンドウが返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（ウィンドウの種類で付かない環境がある）。足した名前は
+/// ウィンドウが確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（ウィンドウが確かめた名前）。
 pub fn channel_action(chosen: PathBuf) -> ExportAction {
     if chosen.extension().is_none() {
         ExportAction::ChannelNamed(chosen.with_extension("png"))
@@ -371,7 +371,7 @@ pub fn channel_action(chosen: PathBuf) -> ExportAction {
     }
 }
 
-/// 描くチャンネルの PNG の、書き出す先を選ぶ窓に出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
+/// 描くチャンネルの PNG の、書き出す先を選ぶウィンドウに出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
 pub fn default_channel_file_name(state: &AppState) -> String {
     let doc = &state.doc;
     let image = channel_image_spec(doc, state.m2.paint_channel);
@@ -798,7 +798,7 @@ impl AppState {
         true
     }
 
-    /// テンプレートか全チャンネルの画像を `dir` へ書き出す。もうあるファイルがあれば（`replace` でなければ）、確かめの窓を出す。
+    /// テンプレートか全チャンネルの画像を `dir` へ書き出す。もうあるファイルがあれば（`replace` でなければ）、確認のウィンドウを出す。
     fn start_export(&mut self, what: &What, dir: &Path, replace: bool) {
         let lang = self.lang;
         if !self.export_ready() {
@@ -820,7 +820,7 @@ impl AppState {
                 }
             },
             What::Channels => self.plan_channels(Which::All { stem: &stem }),
-            // 1 枚のファイルは確かめの窓の「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
+            // 1 枚のファイルは確認のウィンドウの「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
             What::ChannelFile(path) => {
                 self.start_channel_png(path);
                 return;
@@ -869,7 +869,7 @@ impl AppState {
         self.launch(plan, dir, replace, label, true);
     }
 
-    /// 拡張子を足した名前の PNG: もうあれば、置き換える前に確かめる（選ぶ窓は、足す前の名前しか確かめていない）。無ければそのまま書く。
+    /// 拡張子を足した名前の PNG: もうあれば、置き換える前に確かめる（選ぶウィンドウは、足す前の名前しか確かめていない）。無ければそのまま書く。
     fn confirm_channel_png(&mut self, path: PathBuf) {
         let lang = self.lang;
         if !self.export_ready() {
@@ -902,7 +902,7 @@ impl AppState {
         );
     }
 
-    /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶ窓が置き換えてよいと確かめているので、もうあれば置き換える）。
+    /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶウィンドウが置き換えてよいと確かめているので、もうあれば置き換える）。
     fn start_channel_png(&mut self, path: &Path) {
         let lang = self.lang;
         if !self.export_ready() {
@@ -935,7 +935,7 @@ impl AppState {
         self.launch(plan, &dir, true, file_name, false);
     }
 
-    /// 計画を別のスレッドで書き始める（`label` は状態の帯・結果に出す名前。`report` なら終わりに結果の窓を出す）。
+    /// 計画を別のスレッドで書き始める（`label` は状態の帯・結果に出す名前。`report` なら終わりに結果のウィンドウを出す）。
     fn launch(&mut self, plan: Plan, dir: &Path, replace: bool, label: String, report: bool) {
         let lang = self.lang;
         let reach = Reach::from_setting(self.export.padding).unwrap_or(Reach::Fill);

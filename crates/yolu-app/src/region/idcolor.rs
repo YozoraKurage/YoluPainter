@@ -3,7 +3,7 @@
 //! - 選択は、押した所の ID の色（2D はその画素、3D は当たった面の UV のテクセル）から、許し幅の中の色の画素を選択範囲にする
 //!   （core の `SelectionMask::from_id_colors`。Shift 追加・Ctrl 削除・Shift+Ctrl 交差。1 回の Undo）。ID マップが無い・古い
 //!   （大きさやモデルが今と違う）ときは何も選ばず、短い理由を出す。読むのはマップだけで、元のモデルには触れない。
-//! - 手動の ID の色は文書の状態（`Document::id_colors`。メッシュの塊の番号 → 色とモデルの指紋）。1 回の Undo（色の窓のドラッグは
+//! - 手動の ID の色は文書の状態（`Document::id_colors`。メッシュの塊の番号 → 色とモデルの指紋）。1 回の Undo（色のウィンドウのドラッグは
 //!   まとめて 1 回）。.ylp には正本の版 19 の塊として書き、開き直すと戻る（yolu-io）。
 //!
 //! 焼いた ID マップは、ベイク（`bake`）がセットごとに持つメッシュマップ。使えるのは、今の条件（モデル・文書の大きさ・セットのスロット・
@@ -34,9 +34,9 @@ pub enum IdColorOp {
     Set { part: usize, rgb: Option<u32> },
     /// 全部を自動に戻す。
     ResetAll,
-    /// 色の窓のドラッグの途中: 部品の色をその場で変え、続くドラッグの変更と 1 回の取り消しにまとめる（知らせは出さない）。
+    /// 色のウィンドウのドラッグの途中: 部品の色をその場で変え、続くドラッグの変更と 1 回の取り消しにまとめる（知らせは出さない）。
     Drag { part: usize, rgb: u32 },
-    /// 色の窓のドラッグの終わり: まとめを切り、ドラッグで色を変えていれば 1 回だけ知らせる。
+    /// 色のウィンドウのドラッグの終わり: まとめを切り、ドラッグで色を変えていれば 1 回だけ知らせる。
     EndDrag,
 }
 
@@ -48,13 +48,13 @@ struct Parts {
     binding: String,
 }
 
-/// ID の道具の状態。
+/// ID のツールの状態。
 #[derive(Default)]
 pub struct IdState {
     /// 手動の ID の色を直している部品（今のセットの部品の並びの番号）。
     pub part: usize,
     parts: Option<Parts>,
-    /// 色の窓のドラッグで手動の ID の色を変えた（まだ知らせていない）。そのときの履歴の段の数（捨てられていないかを見る）。
+    /// 色のウィンドウのドラッグで手動の ID の色を変えた（まだ知らせていない）。そのときの履歴の段の数（捨てられていないかを見る）。
     dragged: Option<usize>,
 }
 
@@ -188,7 +188,7 @@ impl AppState {
         }
     }
 
-    /// 手動の ID の色を変える（1 回の Undo。色の窓のドラッグは離すまでを 1 回にまとめる。断られたら理由をステータスバーへ）。
+    /// 手動の ID の色を変える（1 回の Undo。色のウィンドウのドラッグは離すまでを 1 回にまとめる。断られたら理由をステータスバーへ）。
     pub fn id_color_edit(&mut self, op: IdColorOp) {
         let lang = self.lang;
         if self.is_stroking() {
@@ -199,7 +199,7 @@ impl AppState {
         let next = match op {
             IdColorOp::EndDrag => {
                 self.doc.end_coalescing();
-                // まとめていた段が、押したままの Esc などで捨てられていれば（そのあと窓の戻しが次のフレームに届く）、変わっていないので
+                // まとめていた段が、押したままの Esc などで捨てられていれば（そのあとウィンドウの戻しが次のフレームに届く）、変わっていないので
                 // 知らせない（直前の「取り消しました。」を上書きしない）。段を捨てると履歴の段の数が減るので、ドラッグで入れたときの数と比べる
                 let kept = self.region.id.dragged.take() == Some(self.doc.undo_count());
                 if kept {
@@ -356,7 +356,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         return;
     }
     let tolerance = app.region.id_tolerance;
-    // 組み合わせ方は選択の道具と同じ（キーの修飾が無ければ、オプションバーで選んだ方）
+    // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
     let mode = combine_of(app.sel.combine, app.region.modifiers);
     let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,

@@ -1,4 +1,4 @@
-//! パスの道具の 3D ビュー: 入力（押す・動く・離す・ペン）と、パスの線・点の重ね表示。
+//! パスのツールの 3D ビュー: 入力（押す・動く・離す・ペン）と、パスの線・点の重ね表示。
 //!
 //! 押した所に点があれば掴んで選び、曲線の上なら、その区間に（ポインタの下の面の点を）差し込み、どちらでもなければ終わりに足す。
 //! 面の点は、見せる形（隠したマテリアルを除いた形）で当てて、保存と同じ受けたままの形の三角形の番号に直す。描くテクスチャセット
@@ -280,7 +280,7 @@ impl Scene {
     }
 }
 
-/// 今の層の 3D のパスと、受けたままの形（指紋が合うときだけ）。
+/// 今のレイヤーの 3D のパスと、受けたままの形（指紋が合うときだけ）。
 fn current(app: &AppState) -> Option<(yolu_core::LayerId, &SurfacePath, &SurfaceGeometry)> {
     let (layer, LayerPath::Surface(path)) = app.path_layer()? else {
         return None;
@@ -293,7 +293,7 @@ fn current(app: &AppState) -> Option<(yolu_core::LayerId, &SurfacePath, &Surface
     ))
 }
 
-/// 選んでいる層の、編集していないほかの 3D のパス（一覧の上のものから。今のモデルで描かれたものだけ）と、受けたままの形。
+/// 選んでいるレイヤーの、編集していないほかの 3D のパス（一覧の上のものから。今のモデルで描かれたものだけ）と、受けたままの形。
 fn others(app: &AppState) -> Vec<(u128, &SurfacePath)> {
     let Some(model) = app.view3d.full_model() else {
         return Vec::new();
@@ -639,7 +639,7 @@ pub fn cursor_icon(app: &AppState, rect: Rect, pointer: Pos2) -> CursorIcon {
     }
 }
 
-/// 選んでいる層の 3D のパスの線と点をモデルの上に重ねる（パスの道具のあいだだけ）。
+/// 選んでいるレイヤーの 3D のパスの線と点をモデルの上に重ねる（パスのツールのあいだだけ）。
 pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect, pointer: Option<Pos2>) {
     if !app.tool.is_path() {
         return;

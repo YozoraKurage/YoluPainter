@@ -1,9 +1,9 @@
 //! 別のスレッドの仕事の共通の部品（結果の受け口と取り消しの旗 `Worker`）と、仕事の表 `JOBS`（動いている間の描き直し・進み具合の札・
-//! 閉じる前の確かめ・終わる前に止める・確かめの窓）。仕事を 1 つ足すときは、機能のモジュールに `JobSpec` を置き、`JOBS` に並べる。
+//! 閉じる前の確かめ・終わる前に止める・確認のウィンドウ）。仕事を 1 つ足すときは、機能のモジュールに `JobSpec` を置き、`JOBS` に並べる。
 //! 毎フレームの結果の受け取り（`poll_*`）は表に入れない（`app.rs` の並びの間に予算の同期などが挟まり、順に意味があるため）。
 //!
 //! `Worker` にしない仕事:
-//! - `update/mod.rs` の `Job`: 取り消しの旗は通信の口（`update::http::Link`）が持ち、差し替えられる通信の層と共有する。
+//! - `update/mod.rs` の `Job`: 取り消しの旗は通信の口（`update::http::Link`）が持ち、差し替えられる通信のレイヤーと共有する。
 //! - `project/save.rs` の `Job`: 保存は途中で止めない（取り消しの旗が無い）。進み具合を画面と共有の `Shared` で持つ。
 //! - `library/service.rs` の `Job<R>`: 待ち行列の 1 つの要素（スレッドを仕事ごとに作らず、取り消しの旗も列で 1 つ）。
 
@@ -166,7 +166,7 @@ pub struct JobSpec {
     pub cancel: Option<fn(&mut AppState)>,
     /// 止めて待つ間に結果を受ける。
     pub poll_while_stopping: Option<fn(&mut AppState)>,
-    /// 確かめ・結果の窓が開いている（キーの割り当てを止める）。
+    /// 確かめ・結果のウィンドウが開いている（キーの割り当てを止める）。
     pub modal: Option<fn(&AppState) -> bool>,
 }
 
@@ -186,7 +186,7 @@ impl JobSpec {
     }
 }
 
-/// 動いていることの無い行（確かめの窓だけの行）の `busy`。
+/// 動いていることの無い行（確認のウィンドウだけの行）の `busy`。
 pub fn never(_: &AppState) -> bool {
     false
 }
@@ -217,7 +217,7 @@ pub fn repaint_needed(app: &AppState) -> bool {
     JOBS.iter().any(|j| j.repaint && (j.busy)(app))
 }
 
-/// 確かめの窓や結果の窓が開いている。
+/// 確認のウィンドウや結果のウィンドウが開いている。
 pub fn modal_open(app: &AppState) -> bool {
     JOBS.iter().any(|j| j.modal.is_some_and(|m| m(app)))
 }
@@ -466,13 +466,13 @@ mod tests {
         p
     }
 
-    /// 仕事を 1 つずつ動いている（窓を 1 つずつ開いた）形にして、表から作った並びと、寄せる前の並びを比べる。
+    /// 仕事を 1 つずつ動いている（ウィンドウを 1 つずつ開いた）形にして、表から作った並びと、寄せる前の並びを比べる。
     ///
     /// 外した物と理由:
-    /// - 窓の状態表示の確かめ（`bake.check`）: ベイクの窓を描いたときに始まり、止めておく道具が無い（すぐ終わる）。
-    /// - 更新のダウンロード（`update`）: 署名した更新の情報と通信の層の差し替えが要る（`tests/gui_shell/update.rs` が札・取り消し・終わる前の
+    /// - ウィンドウの状態表示の確かめ（`bake.check`）: ベイクのウィンドウを描いたときに始まり、止めておくツールが無い（すぐ終わる）。
+    /// - 更新のダウンロード（`update`）: 署名した更新の情報と通信のレイヤーの差し替えが要る（`tests/gui_shell/update.rs` が札・取り消し・終わる前の
     ///   止め方を確かめている）。
-    /// - 開いたあとのモデルの読み直し（`model` の札）と FBX の読み込み（`fbx`）: FBX のファイルと、読み込みを止めておく道具
+    /// - 開いたあとのモデルの読み直し（`model` の札）と FBX の読み込み（`fbx`）: FBX のファイルと、読み込みを止めておくツール
     ///   （`view3d::pose::loads` の試験の中）が要る。止める・待つは `view3d::pose::loads` の試験が確かめている。
     #[test]
     fn the_table_gives_the_same_lists_as_before_for_each_running_job() {
@@ -659,7 +659,11 @@ mod tests {
                 "{name}: 閉じる前の確かめ"
             );
             assert_eq!(repaint_needed(&s), before_repaint(&s), "{name}: 描き直し");
-            assert_eq!(modal_open(&s), before_modal_open(&s), "{name}: 確かめの窓");
+            assert_eq!(
+                modal_open(&s),
+                before_modal_open(&s),
+                "{name}: 確認のウィンドウ"
+            );
             let ids: Vec<&str> = cards(&s, Lang::Ja).into_iter().map(|(id, _)| id).collect();
             assert_eq!(ids, before_card_ids(&s), "{name}: 札");
             // 後始末: 止めた仕事・止めておいた手を放す

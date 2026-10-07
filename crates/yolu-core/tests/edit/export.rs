@@ -19,10 +19,10 @@ const W: u32 = 8;
 const H: u32 = 4;
 
 type Px = [u8; 4];
-/// 層に塗る画素（x, y から）。
+/// レイヤーに塗る画素（x, y から）。
 type Painter<'a> = &'a dyn Fn(u32, u32) -> Px;
 
-/// 8 × 4 の文書。層ごとに 1 つのチャンネルを塗る（Color 以外なら、その層の Color は使わない）。
+/// 8 × 4 の文書。レイヤーごとに 1 つのチャンネルを塗る（Color 以外なら、そのレイヤーの Color は使わない）。
 fn document(layers: &[(Channel, Painter<'_>)]) -> Document {
     let mut doc = Document::with_tile_size(W, H, 8).unwrap();
     for (channel, at) in layers {
@@ -104,11 +104,11 @@ fn unused_channels_take_the_defaults_and_unread_images_are_not_written() {
     );
     assert!(
         !should_write(&doc, image(&standard, "Height"), false),
-        "Height の層が無い"
+        "Height のレイヤーが無い"
     );
     assert!(
         !should_write(&doc, image(&standard, "Albedo"), false),
-        "Color の層が無い"
+        "Color のレイヤーが無い"
     );
     let ao = image(&standard, "Occlusion");
     assert!(!should_write(&doc, ao, false), "AO を焼いていない");
@@ -170,7 +170,7 @@ fn a_height_only_document_still_has_a_derived_normal() {
     .unwrap();
     assert!(
         !should_write(&doc, normal, false),
-        "Normal の層も、Height → Normal も無い"
+        "Normal のレイヤーも、Height → Normal も無い"
     );
     doc.set_normal_settings(
         NormalSettings::new(true, 4.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL).unwrap(),

@@ -97,7 +97,7 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     );
     undo(&mut h);
     assert_eq!(doc_layers(&h), 1);
-    // マスク: 足すと描く先がマスクになり、もう一度押すと層へ戻る
+    // マスク: 足すと描く先がマスクになり、もう一度押すとレイヤーへ戻る
     h.get_by_label("レイヤーマスクを追加").click();
     h.run();
     assert!(h.state().state.doc.layer(first).unwrap().mask().is_some());
@@ -203,7 +203,7 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     assert_eq!(h.state().state.doc.layers().len(), before);
     assert!(
         h.state().state.doc.layers().last().map(|l| l.id()) != Some(top),
-        "落とす操作は起きる（一番上にいた層が動いた）"
+        "落とす操作は起きる（一番上にいたレイヤーが動いた）"
     );
     undo(&mut h);
     assert_eq!(
@@ -213,7 +213,7 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     );
 }
 
-/// レイヤーの欄の上の合成モードと不透明度は、欄が狭くて 1 行に収まらないとき（窓の最小の幅など）は、名前を詰めずに 2 行に積む。
+/// レイヤーの欄の上の合成モードと不透明度は、欄が狭くて 1 行に収まらないとき（ウィンドウの最小の幅など）は、名前を詰めずに 2 行に積む。
 /// ふつうの幅では横に並べる。どちらでも一覧は不透明度の下から始まる。
 #[test]
 fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
@@ -414,7 +414,7 @@ fn own_legend(h: &Harness<'_, YoluApp>, name: &str) -> Option<egui::Rect> {
 }
 
 /// 描くチャンネルだけの合成モードと不透明度は、合成モードのメニューの頭の項目（チェック）で切り替える。そのチャンネルだけの値のときは、
-/// 合成モードの箱の上にチャンネルの名前が出て、合成モードを替えても層の値は変わらない。切り替えも 1 回の Undo。
+/// 合成モードの箱の上にチャンネルの名前が出て、合成モードを替えてもレイヤーの値は変わらない。切り替えも 1 回の Undo。
 #[test]
 fn per_channel_blend_leaves_the_layer_value_alone() {
     let mut h = app(1280.0, 800.0, 128);
@@ -435,7 +435,7 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
     };
     assert!(
         own_legend(&h, "ラフネス").is_none(),
-        "層の値に従う間は名前を出さない"
+        "レイヤーの値に従う間は名前を出さない"
     );
     // メニューの頭の項目で、そのチャンネル専用の合成にする
     let blend_box = h.get_by_label("通常").rect().center();
@@ -458,7 +458,11 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
     click(&mut h, at);
     let layer = h.state().state.doc.layer(id).unwrap();
     assert_eq!(layer.blend_mode_in(Channel::Roughness), BlendMode::Multiply);
-    assert_eq!(layer.blend_mode(), BlendMode::Normal, "層の値は変わらない");
+    assert_eq!(
+        layer.blend_mode(),
+        BlendMode::Normal,
+        "レイヤーの値は変わらない"
+    );
     undo(&mut h);
     assert_eq!(
         h.state()
@@ -470,7 +474,7 @@ fn per_channel_blend_leaves_the_layer_value_alone() {
         BlendMode::Normal
     );
     assert!(own(&h), "合成モードの取り消しは専用のまま");
-    // 層の値に戻す（同じ項目のチェックを外す）。戻すのも 1 回の Undo
+    // レイヤーの値に戻す（同じ項目のチェックを外す）。戻すのも 1 回の Undo
     h.get_by_label("通常").click();
     h.run();
     let at = popup_item(&h, "ラフネス だけの値").center();
@@ -590,7 +594,7 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
     assert_eq!(
         (s.m2.edit_mask, s.ui.property_tab),
         (false, 0),
-        "新しい層を選ぶ"
+        "新しいレイヤーを選ぶ"
     );
     s.selected_layer = Some(id);
     s.apply(Action::M2Ui(UiOp::EditMask(true)));
@@ -602,7 +606,7 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
         .map(|l| l.id())
         .find(|l| *l != id)
         .unwrap();
-    s.apply(Action::DeleteLayer); // マスクの層を消す（選んでいるのは id）
+    s.apply(Action::DeleteLayer); // マスクのレイヤーを消す（選んでいるのは id）
     assert!(s.doc.layer(id).is_none() && s.doc.layer(other).is_some());
     assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0), "消した");
     // マテリアルのタブを自分で選んでいるだけなら、そのまま
@@ -676,7 +680,7 @@ fn nest(s: &mut AppState) -> Nest {
     Nest { a, g2, c, g1, b }
 }
 
-/// 層の並び（下から）と、それぞれの親。
+/// レイヤーの並び（下から）と、それぞれの親。
 fn structure(s: &AppState) -> Vec<(LayerId, Option<LayerId>)> {
     s.doc
         .layers()
@@ -705,7 +709,7 @@ fn headless_nest_is_built_as_documented() {
 fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
     let mut s = AppState::new(64, 64);
     let n = nest(&mut s);
-    // 一番下に別の層 D（G1 の塊の下）
+    // 一番下に別のレイヤー D（G1 の塊の下）
     s.apply(Action::NewLayer);
     let d = s.selected_layer.unwrap();
     s.apply(Action::M2(Edit::Move {
@@ -724,11 +728,15 @@ fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
         "入れ子の中身ごと消える"
     );
     assert_eq!(s.doc.undo_count(), steps + 1, "1 回の取り消し");
-    assert_eq!(s.selected_layer, Some(d), "消えた塊のすぐ下の層を選ぶ");
+    assert_eq!(
+        s.selected_layer,
+        Some(d),
+        "消えた塊のすぐ下のレイヤーを選ぶ"
+    );
     s.apply(Action::Undo);
     assert_eq!(structure(&s), before, "中身も入れ子も元どおり");
     assert!(s.selected_layer.is_some_and(|id| s.doc.layer(id).is_some()));
-    // グループの中の一番上の層を消すと、すぐ下を選ぶ。グループは残る
+    // グループの中の一番上のレイヤーを消すと、すぐ下を選ぶ。グループは残る
     s.selected_layer = Some(n.c);
     s.apply(Action::DeleteLayer);
     assert_eq!(s.selected_layer, Some(n.g2));
@@ -1080,7 +1088,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
         b.radius = 3.0;
         b.hardness = 1.0;
     }
-    stroke_across(&mut h, 0.0); // 層に長い線
+    stroke_across(&mut h, 0.0); // レイヤーに長い線
     assert_eq!(canvas_alpha(&h, 0.0), 255);
     assert_eq!(canvas_alpha(&h, 50.0), 255);
     h.get_by_label("レイヤーマスクを追加").click();
@@ -1140,7 +1148,7 @@ fn fill_and_adjustment_properties_edit_and_undo() {
             .fill_value(Channel::Color),
         Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
     );
-    // 描画色を替えて、値の見本を押して色の窓の「描画色を入れる」を押すと、値が描画色になる
+    // 描画色を替えて、値の見本を押して色のウィンドウの「描画色を入れる」を押すと、値が描画色になる
     h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
     h.get_by_label("カラー の値").click();
     h.run();
@@ -1550,7 +1558,7 @@ fn the_two_languages_name_the_panels() {
 
 // ───────── 保存（.ylp） ─────────
 
-/// 保存と読み直しで変わってはいけない中身の全部（層ごとの id・種類・親・名前・表示・不透明度・合成・クリッピング・
+/// 保存と読み直しで変わってはいけない中身の全部（レイヤーごとの id・種類・親・名前・表示・不透明度・合成・クリッピング・
 /// 有効なチャンネル・面の画素・塗りつぶしの値・調整・マスクの状態と画素・チャンネルごとの合成、文書のチャンネルの一覧）。
 fn content(s: &AppState) -> Vec<String> {
     use std::hash::{Hash, Hasher};
@@ -1597,7 +1605,7 @@ fn content(s: &AppState) -> Vec<String> {
     out
 }
 
-/// 左下のタイル（0, 0）の、画布の中の画素を単色にして層のチャンネルへ入れる（透明の画素の RGB も保つ読み込み。画布の外は 0）。
+/// 左下のタイル（0, 0）の、キャンバスの中の画素を単色にしてレイヤーのチャンネルへ入れる（透明の画素の RGB も保つ読み込み。キャンバスの外は 0）。
 fn put_tile(s: &mut AppState, id: yolu_app::engine::LayerId, channel: Channel, rgba: [u8; 4]) {
     let ts = s.doc.tile_size() as usize;
     let (w, h) = (s.doc.width() as usize, s.doc.height() as usize);
@@ -1620,7 +1628,7 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// 保存の往復で、今の yolu-io が書ける範囲（ラスターの層・Color だけ）の中身がそのまま戻る。比較は `content` の全部。
+/// 保存の往復で、今の yolu-io が書ける範囲（ラスターレイヤー・Color だけ）の中身がそのまま戻る。比較は `content` の全部。
 #[test]
 fn headless_saveable_documents_survive_save_and_reopen() {
     let dir = temp_dir("plain");
@@ -1678,7 +1686,7 @@ fn headless_each_m2_content_saves_and_reopens() {
             }),
         ),
         (
-            "Color の層ごとの合成だけ",
+            "Color のレイヤーごとの合成だけ",
             Box::new(|s| {
                 let id = s.selected_layer.unwrap();
                 s.apply(Action::M2(Edit::OwnBlend {
@@ -1999,7 +2007,7 @@ fn the_3d_notes_follow_the_tab_that_is_on_screen() {
     );
 }
 
-/// 試しの人形（マテリアル 2 つ）を読んだ窓と 3D の表示域。
+/// 試しの人形（マテリアル 2 つ）を読んだウィンドウと 3D の表示域。
 fn figure_window() -> (Harness<'static, YoluApp>, egui::Rect) {
     let mut h = app(1280.0, 860.0, 128);
     h.state_mut()

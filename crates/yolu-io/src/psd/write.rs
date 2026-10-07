@@ -48,8 +48,8 @@ impl Record<'_> {
         !self.divider && self.layer.kind == LayerKind::Raster
     }
 }
-/// 層の並びを PSD の記録の順（下から上。グループは区切り・中身・グループ自身）に並べる。`pixels` が false のときは、画素に関わる確かめ（矩形・
-/// 画素数・マスクの値）をしない（流して書くときの層の骨組みは画素を持たない。画素を渡すときに確かめる）。
+/// レイヤーの並びを PSD の記録の順（下から上。グループは区切り・中身・グループ自身）に並べる。`pixels` が false のときは、画素に関わる確かめ（矩形・
+/// 画素数・マスクの値）をしない（流して書くときのレイヤーの骨組みは画素を持たない。画素を渡すときに確かめる）。
 fn flatten<'a>(
     layers: &'a [Layer],
     depth: usize,
@@ -310,31 +310,31 @@ fn preflight<'a>(
     }
     Ok((records, total.min(usize::MAX as u64) as usize))
 }
-/// 層・マスク・統合画像のチャンネルを書く圧縮。
+/// レイヤー・マスク・統合画像のチャンネルを書く圧縮。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Compression {
     /// 無圧縮。Unity 版の書き手と同じバイト列になる（厳密な書き出しの照合はこれ）。
     #[default]
     Raw,
-    /// RLE（PackBits。Photoshop の既定）。層・マスクのチャンネルは 1 つずつ、圧縮して小さくならなければ無圧縮のまま書く。統合画像は全チャンネルで
+    /// RLE（PackBits。Photoshop の既定）。レイヤー・マスクのチャンネルは 1 つずつ、圧縮して小さくならなければ無圧縮のまま書く。統合画像は全チャンネルで
     /// 1 つの圧縮なので、小さくならなければ無圧縮で書く。
     Rle,
 }
 
-/// 書き出しが予算・形式の上限で断る理由（層の名前つき。画面は種類から画面の言語の文を作る。`Error::Budget` の文は [`Overrun::message`]）。
+/// 書き出しが予算・形式の上限で断る理由（レイヤーの名前つき。画面は種類から画面の言語の文を作る。`Error::Budget` の文は [`Overrun::message`]）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Overrun {
     /// キャンバスの画素の数が予算に入らない。
     Canvas { width: u32, height: u32 },
     /// キャンバスの辺が上限（`limit`）を超える。PSD の形式の上限は 30000 で、それより小さい上限（予算を決めない既定の上限）なら予算を決めれば書ける。
     Side { width: u32, height: u32, limit: u32 },
-    /// 層の記録（グループは区切りの記録も要る）が上限を超える。
+    /// レイヤーの記録（グループは区切りの記録も要る）が上限を超える。
     Layers { count: usize, limit: usize },
-    /// 全層の画素をメモリに組む書き出し（Normal の焼き込み・平らの 1 枚）で、層を足すと画素の予算を超える。`layer` が空なら 1 枚の作業の領域。
+    /// 全レイヤーの画素をメモリに組む書き出し（Normal の焼き込み・平らの 1 枚）で、レイヤーを足すと画素の予算を超える。`layer` が空なら 1 枚の作業の領域。
     Memory { layer: String },
-    /// 層の付加情報（名前・調整の設定）の合計が予算を超える。
+    /// レイヤーの付加情報（名前・調整の設定）の合計が予算を超える。
     Extra,
-    /// PSD は 1 ファイル 2 GiB まで。この層を書くと超える（圧縮したあとの大きさ。`layer` が空なら統合画像）。
+    /// PSD は 1 ファイル 2 GiB まで。このレイヤーを書くと超える（圧縮したあとの大きさ。`layer` が空なら統合画像）。
     FileSize { layer: String },
 }
 impl Overrun {
@@ -346,7 +346,7 @@ impl Overrun {
             _ => true,
         }
     }
-    /// 日本語の診断（層の名前つき）。
+    /// 日本語の診断（レイヤーの名前つき）。
     pub fn message(&self) -> String {
         match self {
             Self::Canvas { width, height } => {
@@ -363,13 +363,13 @@ impl Overrun {
             Self::Memory { layer } if layer.is_empty() => {
                 "画素の予算を超えます（1 枚ぶんの作業の領域）".into()
             }
-            Self::Memory { layer } => format!("層「{layer}」を足すと画素の予算を超えます"),
-            Self::Extra => "層の付加情報（名前・調整の設定）が予算を超えます".into(),
+            Self::Memory { layer } => format!("レイヤー「{layer}」を足すと画素の予算を超えます"),
+            Self::Extra => "レイヤーの付加情報（名前・調整の設定）が予算を超えます".into(),
             Self::FileSize { layer } if layer.is_empty() => {
                 "統合画像を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです".into()
             }
             Self::FileSize { layer } => format!(
-                "層「{layer}」を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです"
+                "レイヤー「{layer}」を書くと PSD の大きさが上限（2 GiB）を超えます。PSD は 1 ファイル 2 GiB までです"
             ),
         }
     }
@@ -380,7 +380,7 @@ impl From<Overrun> for Error {
     }
 }
 
-/// 書き出しの失敗。予算・形式の上限は種類を保つ（画面が層の名前つきの文とツールチップを作る）。ほかは [`Error`]（取消は `Error::Core(Cancelled)`）。
+/// 書き出しの失敗。予算・形式の上限は種類を保つ（画面がレイヤーの名前つきの文とツールチップを作る）。ほかは [`Error`]（取消は `Error::Core(Cancelled)`）。
 #[derive(Debug)]
 pub enum ExportError {
     Overrun(Overrun),
@@ -425,14 +425,14 @@ pub(super) type XResult<T> = std::result::Result<T, ExportError>;
 pub struct Written {
     /// ファイルの大きさ（バイト）。
     pub bytes: u64,
-    /// PSD の層の数（グループの区切りの記録を除く。取り込んだ文書の層の数と同じになる）。
+    /// PSD のレイヤーの数（グループの区切りの記録を除く。取り込んだ文書のレイヤーの数と同じになる）。
     pub layers: usize,
     /// 書いたバイト列の照合用の値（読み戻したファイルが書いたとおりか、[`Checksum::matches`] で確かめる）。
     pub checksum: Checksum,
 }
 
-/// 書いたファイルの照合用の値（CRC-32 を 2 つと長さ）。流して書くと、先頭（ヘッダーと層の記録の表）は画素から決まる欄を最後に確定した値で書き直すので、
-/// 先頭と、その後ろ（層の画素・統合画像。書いた順のまま）を別々に数える。構造を壊さない画素のビット化け・書き込みの取り違えを読み戻しで見つける
+/// 書いたファイルの照合用の値（CRC-32 を 2 つと長さ）。流して書くと、先頭（ヘッダーとレイヤーの記録の表）は画素から決まる欄を最後に確定した値で書き直すので、
+/// 先頭と、その後ろ（レイヤーの画素・統合画像。書いた順のまま）を別々に数える。構造を壊さない画素のビット化け・書き込みの取り違えを読み戻しで見つける
 /// （バイト単位の完全な比較ではなく CRC-32 なので、化けを 2^-32 の確率で見逃す）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Checksum {
@@ -621,7 +621,7 @@ impl<W: Write> Write for Tail<'_, W> {
     }
 }
 
-/// 流して書くときに、1 つの記録（層・区切り）の画素を渡す形。画素は渡したあとすぐ捨てられる。
+/// 流して書くときに、1 つの記録（レイヤー・区切り）の画素を渡す形。画素は渡したあとすぐ捨てられる。
 pub(super) struct Region<'a> {
     pub left: i32,
     pub top: i32,
@@ -653,7 +653,7 @@ pub(super) struct StreamOptions<'a> {
     pub cancel: Option<&'a AtomicBool>,
 }
 
-/// 記録の骨組みだけの層の並び（画素を持たない層）を、書く順（PSD の記録の順）に並べる。構造・名前・ID・調整の確かめだけで、画素は渡すときに確かめる。
+/// 記録の骨組みだけのレイヤーの並び（画素を持たないレイヤー）を、書く順（PSD の記録の順）に並べる。構造・名前・ID・調整の確かめだけで、画素は渡すときに確かめる。
 pub(super) fn skeleton_records<'a>(d: &'a Document, limits: &Limits) -> Result<Vec<Record<'a>>> {
     limits.validate()?;
     rectangle(0, 0, d.width, d.height, limits)?;
@@ -680,7 +680,7 @@ struct Patch {
     mask_at: Option<usize>,
 }
 
-/// 層の記録 1 つを、画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形と既定値）を仮の値にして書く。付加情報の大きさを返す。
+/// レイヤーの記録 1 つを、画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形と既定値）を仮の値にして書く。付加情報の大きさを返す。
 fn emit_record(r: &Record, info: &mut Vec<u8>) -> (Patch, u64) {
     let l = r.layer;
     let rect_at = info.len();
@@ -823,7 +823,7 @@ pub(super) fn packbits_row(row: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// チャンネルを書く間の作業の置き場（層ごとに作り直さない）。
+/// チャンネルを書く間の作業の置き場（レイヤーごとに作り直さない）。
 #[derive(Default)]
 struct Scratch {
     row: Vec<u8>,
@@ -976,8 +976,8 @@ fn check_mask_region(m: &MaskRegion, limits: &Limits) -> Result<()> {
     )
 }
 
-/// PSD を流して書く。先に、ヘッダーと全層の記録（画素から決まる欄は仮の値）を書き、層の画素を記録の順に 1 枚ずつ `supply` から受けて圧縮して書き
-/// （受けた画素はすぐ捨てる。メモリには層 1 枚ぶんと記録の表しか持たない）、最後に統合画像（`composite`。層を書いたあとに作る）を書いて、先頭へ戻って
+/// PSD を流して書く。先に、ヘッダーと全レイヤーの記録（画素から決まる欄は仮の値）を書き、レイヤーの画素を記録の順に 1 枚ずつ `supply` から受けて圧縮して書き
+/// （受けた画素はすぐ捨てる。メモリにはレイヤー 1 枚ぶんと記録の表しか持たない）、最後に統合画像（`composite`。レイヤーを書いたあとに作る）を書いて、先頭へ戻って
 /// 画素から決まる欄（矩形・チャンネルの長さ・マスクの矩形・各区間の長さ）を確定した記録で書き直す。書いたファイルの大きさと、書いたバイト列の照合用の値を返す。
 /// `out` は書き始めの位置が先頭で、書き直しのために Seek が要る。途中で失敗したら、書きかけを残さないのは呼び手の仕事（一時ファイルを消す）。
 pub(super) fn stream<'a, W: Write + Seek>(
@@ -1001,7 +1001,7 @@ pub(super) fn stream<'a, W: Write + Seek>(
         "レイヤー記録数の予算超過",
     )?;
     let (w, h) = (width as usize, height as usize);
-    // ヘッダー・色モードデータ（空）・画像リソース（空）・レイヤーとマスクの情報の長さ・レイヤー情報の長さ・層の数・層の記録
+    // ヘッダー・色モードデータ（空）・画像リソース（空）・レイヤーとマスクの情報の長さ・レイヤー情報の長さ・レイヤーの数・レイヤーの記録
     let mut head = Vec::new();
     head.extend(b"8BPS");
     head.u16(1);
@@ -1248,7 +1248,7 @@ pub fn write(d: &Document, limits: &Limits) -> Result<Vec<u8>> {
     write_with(d, limits, Compression::Raw)
 }
 
-/// 文書を PSD のバイト列にする。`Compression::Raw` は Unity 版と同じバイト列、`Compression::Rle` は層・マスク・統合画像を RLE で書く。
+/// 文書を PSD のバイト列にする。`Compression::Raw` は Unity 版と同じバイト列、`Compression::Rle` はレイヤー・マスク・統合画像を RLE で書く。
 pub fn write_with(d: &Document, limits: &Limits, compression: Compression) -> Result<Vec<u8>> {
     let (_, total) = preflight(d, limits, compression)?;
     // 無圧縮は長さが決まっている。RLE は圧縮したあとの長さが分からないので、無圧縮の長さを上限にせず、小さく始めて伸ばす
@@ -1391,7 +1391,7 @@ fn adjustment_block(a: &Adjustment) -> ([u8; 4], Vec<u8>) {
             brightness,
             contrast,
         } => {
-            // 平均値は 127（旧式の式の入力。この道具の式は使わない）、Lab だけの印は 0、余白 1 バイト
+            // 平均値は 127（旧式の式の入力。このツールの式は使わない）、Lab だけの印は 0、余白 1 バイト
             for v in [brightness, contrast, 127] {
                 b.u16(v as u16)
             }

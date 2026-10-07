@@ -1,4 +1,4 @@
-//! UV の個人設定用の色・不透明度（ワイヤーフレームと、重なった UV）。見本を押すと色の窓（色と不透明度）。内部の数値型の切り替えは出さない。
+//! UV の個人設定用の色・不透明度（ワイヤーフレームと、重なった UV）。見本を押すと色のウィンドウ（色と不透明度）。内部の数値型の切り替えは出さない。
 use crate::{
     panels::color_window::{self, Pick},
     state::AppState,
@@ -13,17 +13,17 @@ use egui::{pos2, vec2, Rect, Ui};
 const SWATCH: f32 = 48.0;
 const GAP: f32 = 8.0;
 
-/// ワイヤーフレームの色の窓の相手の名前（試験が窓の相手を確かめる）。
+/// ワイヤーフレームの色のウィンドウの相手の名前（試験がウィンドウの相手を確かめる）。
 pub fn window_target() -> egui::Id {
     egui::Id::new("uv.wireframe.color")
 }
 
-/// 重なった UV の色の窓の相手の名前。
+/// 重なった UV の色のウィンドウの相手の名前。
 pub fn overlap_window_target() -> egui::Id {
     egui::Id::new("uv.overlap.color")
 }
 
-/// 色の窓で色・不透明度をドラッグしている間は true（離すまで設定のファイルへ書かない）。
+/// 色のウィンドウで色・不透明度をドラッグしている間は true（離すまで設定のファイルへ書かない）。
 pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool {
     let row = rows.row(t::ROW_HEIGHT, 4.0);
     let lang = app.lang;
@@ -72,7 +72,7 @@ pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool
         || color_window::dragging(ui.ctx(), overlap_window_target())
 }
 
-/// 色の見本 1 つ。押すと色の窓（色と不透明度）を開き、選んだ色を `color` へ入れる。
+/// 色の見本 1 つ。押すと色のウィンドウ（色と不透明度）を開き、選んだ色を `color` へ入れる。
 fn swatch(ui: &mut Ui, r: Rect, target: egui::Id, name: &str, color: &mut [u8; 4], tip: &str) {
     let c = *color;
     let current = Pick {

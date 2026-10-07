@@ -1,5 +1,5 @@
-//! PSD の取り込みの確かめの窓（無視・落とす・変わるものを、層の名前と機能の名前で並べる）と、取り込めない理由の文。
-//! 何を取り込み、何を持たないかの判断は `yolu_io::psd::import_copy`（ここは文にするだけ）。窓には名前・状態・短い理由だけを書き、
+//! PSD の取り込みの確認のウィンドウ（無視・落とす・変わるものを、レイヤーの名前と機能の名前で並べる）と、取り込めない理由の文。
+//! 何を取り込み、何を持たないかの判断は `yolu_io::psd::import_copy`（ここは文にするだけ）。ウィンドウには名前・状態・短い理由だけを書き、
 //! 説明はツールチップに置く。
 
 use egui::Vec2;
@@ -10,7 +10,7 @@ use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
 use crate::windows::{show_list_with, Button, ListSpec, Reply, Row};
 
-/// 窓の名前（`windows::window_rect` で矩形を引く名前）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く名前）。
 pub const CHECK: &str = "psd-import";
 
 /// 取り込みの確かめの待ち（読んだ文書と、その知らせ）。
@@ -33,7 +33,7 @@ impl ImportCheck {
     }
 }
 
-/// 窓の位置（`PsdState` が持つ）。
+/// ウィンドウの位置（`PsdState` が持つ）。
 #[derive(Default)]
 pub struct CheckWindow {
     pub offset: Vec2,
@@ -47,7 +47,7 @@ fn rank(action: ImportAction) -> u8 {
     }
 }
 
-/// 窓に並べる順（落とす・変わる・無視。同じ扱いの中は取り込みの順）。
+/// ウィンドウに並べる順（落とす・変わる・無視。同じ扱いの中は取り込みの順）。
 pub fn sorted(notes: &[ImportNote]) -> Vec<&ImportNote> {
     let mut out: Vec<&ImportNote> = notes.iter().collect();
     out.sort_by_key(|n| rank(n.action));
@@ -71,7 +71,7 @@ fn summary(lang: Lang, notes: &[ImportNote]) -> String {
     parts.join(" · ")
 }
 
-/// 毎フレーム、取り込みの確かめの窓を描き、押された操作を当てる。
+/// 毎フレーム、取り込みの確認のウィンドウを描き、押された操作を当てる。
 pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
     let Some(check) = app.psd.import_check.as_ref() else {
         return;
@@ -146,7 +146,7 @@ pub fn action_text(lang: Lang, action: ImportAction) -> &'static str {
     }
 }
 
-/// 当たった層の名前（初めの 3 枚と残りの数）。文書の機能は空。
+/// 当たったレイヤーの名前（初めの 3 枚と残りの数）。文書の機能は空。
 fn layers_text(lang: Lang, note: &ImportNote) -> String {
     const SHOWN: usize = 3;
     if note.layers.is_empty() {
@@ -162,7 +162,10 @@ fn layers_text(lang: Lang, note: &ImportNote) -> String {
         .join(sep);
     let rest = note.count.saturating_sub(SHOWN.min(note.layers.len()));
     if rest > 0 {
-        text += &lang.pick(format!(" ほか {rest} 層"), format!(" and {rest} more"));
+        text += &lang.pick(
+            format!(" ほか {rest} レイヤー"),
+            format!(" and {rest} more"),
+        );
     }
     text
 }
@@ -286,7 +289,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
         F::BlendIf => plain("ブレンド条件", "Blend If"),
         F::FillOpacity => plain("塗りの不透明度", "Fill opacity"),
         F::ClippedBlend => plain(
-            "クリップした層のグループ合成",
+            "クリップしたレイヤーのグループ合成",
             "Blend clipped layers as group",
         ),
         F::InteriorBlend => plain("内部効果のグループ合成", "Blend interior effects as group"),
@@ -334,27 +337,27 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
     use ImportFeature as F;
     Some(match note.feature {
         F::LayerEffects => lang.pick(
-            "レイヤー効果（ドロップシャドウなど）は評価しません。層の画素のまま取り込むので、合成が PSD の統合画像と変わります",
+            "レイヤー効果（ドロップシャドウなど）は評価しません。レイヤーの画素のまま取り込むので、合成が PSD の統合画像と変わります",
             "Layer effects (drop shadow and so on) are not evaluated. The layer pixels are imported as they are, so the composite differs from the PSD's merged image",
         ),
         F::SmartObject => lang.pick(
-            "スマートオブジェクトの元のデータは持ちません。層の画素のまま取り込みます",
+            "スマートオブジェクトの元のデータは持ちません。レイヤーの画素のまま取り込みます",
             "The smart object's source data is not kept. The layer pixels are imported as they are",
         ),
         F::TextLayer => lang.pick(
-            "文字のデータは持ちません。層の画素のまま取り込みます",
+            "文字のデータは持ちません。レイヤーの画素のまま取り込みます",
             "The text data is not kept. The layer pixels are imported as they are",
         ),
         F::VectorMask => lang.pick(
-            "ベクターマスクは評価しません。層の画素のまま取り込むので、合成が変わります",
+            "ベクターマスクは評価しません。レイヤーの画素のまま取り込むので、合成が変わります",
             "Vector masks are not evaluated. The layer pixels are imported as they are, so the composite changes",
         ),
         F::FillSettings => lang.pick(
-            "グラデーション・パターンの塗りつぶしの設定は持ちません。層の画素のまま取り込みます",
+            "グラデーション・パターンの塗りつぶしの設定は持ちません。レイヤーの画素のまま取り込みます",
             "Gradient and pattern fill settings are not kept. The layer pixels are imported as they are",
         ),
         F::UnsupportedAdjustment => lang.pick(
-            "この調整レイヤーは取り込めません。画素を持たないので、層ごと落とします",
+            "この調整レイヤーは取り込めません。画素を持たないので、レイヤーごと落とします",
             "This adjustment layer cannot be imported. It has no pixels, so the whole layer is dropped",
         ),
         F::BlendMode => lang.pick(
@@ -366,7 +369,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "Blend If is not evaluated. The composite changes",
         ),
         F::FillOpacity => lang.pick(
-            "塗りの不透明度は、層の不透明度に掛けます。合成モードによっては Photoshop と少し変わります",
+            "塗りの不透明度は、レイヤーの不透明度に掛けます。合成モードによっては Photoshop と少し変わります",
             "Fill opacity is multiplied into the layer opacity. With some blend modes it differs slightly from Photoshop",
         ),
         F::ClippedBlend | F::InteriorBlend | F::Knockout | F::ChannelRestrictions => lang.pick(
@@ -390,7 +393,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "Pixels outside the canvas cannot be kept and are cut off",
         ),
         F::LayerIds => lang.pick(
-            "層 ID が無い・重複している層には新しい ID を振ります。名前では対応付けません",
+            "レイヤー ID が無い・重複しているレイヤーには新しい ID を振ります。名前では対応付けません",
             "Layers with a missing or duplicate ID get a new ID. Nothing is matched by name",
         ),
         F::ColorProfile => lang.pick(
@@ -410,7 +413,7 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "The composite was not compared with the merged image, so it is unverified",
         ),
         F::MissingChannels => lang.pick(
-            "RGB のチャンネルが揃わない層は取り込めないので、層ごと落とします",
+            "RGB のチャンネルが揃わないレイヤーは取り込めないので、レイヤーごと落とします",
             "A layer without all RGB channels cannot be imported and is dropped",
         ),
         _ => return None,
@@ -550,7 +553,7 @@ mod tests {
         let note = |keys: &[[u8; 4]]| ImportNote {
             feature: ImportFeature::UnsupportedAdjustment,
             action: ImportAction::Dropped,
-            layers: vec!["層".into()],
+            layers: vec!["レイヤー".into()],
             count: 1,
             details: keys.iter().map(|k| ImportDetail::Key(*k)).collect(),
         };
@@ -597,7 +600,7 @@ mod tests {
         let with = |feature, details: Vec<ImportDetail>| ImportNote {
             feature,
             action: ImportAction::Changed,
-            layers: vec!["層".into()],
+            layers: vec!["レイヤー".into()],
             count: 3,
             details,
         };
@@ -627,7 +630,7 @@ mod tests {
         let mut n = every_feature().remove(0);
         n.layers = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         n.count = 9;
-        assert_eq!(layers_text(Lang::Ja, &n), "a、b、c ほか 6 層");
+        assert_eq!(layers_text(Lang::Ja, &n), "a、b、c ほか 6 レイヤー");
         assert_eq!(layers_text(Lang::En, &n), "a, b, c and 6 more");
         n.layers.clear();
         assert_eq!(layers_text(Lang::En, &n), "");
@@ -697,7 +700,7 @@ mod tests {
                 assert!(!has_japanese(&h) && h.contains("Layer memory"));
             }
         }
-        // 利用者の名前（層の名前）だけは、英語の画面でもそのまま
+        // 利用者の名前（レイヤーの名前）だけは、英語の画面でもそのまま
         assert!(crate::lang::psd_copy_refusal(
             Lang::En,
             &CopyRefusal::BudgetExceeded {

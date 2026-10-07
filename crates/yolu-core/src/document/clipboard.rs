@@ -1,12 +1,12 @@
-//! 層の画素のコピー・カット・ペーストと、画像での置き換え（C# の `PaintDocument.LayerOps.cs` の `PixelClipboard`・`CopyPixels`・
+//! レイヤーの画素のコピー・カット・ペーストと、画像での置き換え（C# の `PaintDocument.LayerOps.cs` の `PixelClipboard`・`CopyPixels`・
 //! `CopyMerged`・`CutPixels`・`PasteAsLayer` と、`PaintDocument.Regions.cs` の `ReplacePixels`）。
 //!
-//! - コピーは文書を変えない。選択範囲（無ければ画布全体）の中の、層自身の画素（フィルター・マスク・不透明度の前）か、マスク
+//! - コピーは文書を変えない。選択範囲（無ければキャンバス全体）の中の、レイヤー自身の画素（フィルター・マスク・不透明度の前）か、マスク
 //!   （隠す量を白で見える灰色に反転した不透明の画素）か、見えている合成を、値のある画素の外接矩形に切り詰めて写す。全部選ばれた
 //!   画素は透明画素の RGB も含めてそのまま、部分的に選ばれた画素は透明へ向かってプリマルチプライドで混ぜる。
 //! - カットは写してから、選択範囲の量だけ消す（1 回の Undo）。塗りつぶし・調整・グループは断り、画像・透明部分のロックで断る
 //!   （マスクはすべてのロックだけ）。断る前にクリップボードは変えない。
-//! - ペーストは新しいラスターの層（指定チャンネルだけを持つ）として足し、選択を外す（1 回の Undo）。同じ大きさの文書へは元の位置、
+//! - ペーストは新しいラスターレイヤー（指定チャンネルだけを持つ）として足し、選択を外す（1 回の Undo）。同じ大きさの文書へは元の位置、
 //!   違う大きさへは中央で、はみ出す分は切って数を返す。
 //! - 予算（バイト）を超えるなら何も変えずに断る。コピーは `max_bytes`（矩形の大きさ）、ペーストは一操作の予算（`stroke_budget`）。
 
@@ -21,35 +21,35 @@ use crate::math::{to_byte, UNIT};
 use crate::surface::{Surface, Tile};
 use crate::types::{Channel, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
 
-/// 画素のコピー・カット・ペーストを断った理由（C# の `LayerOpRefusal` のうち、この操作のもの。パスの層の切り取りは
+/// 画素のコピー・カット・ペーストを断った理由（C# の `LayerOpRefusal` のうち、この操作のもの。パスレイヤーの切り取りは
 /// 画素の書き込みの断り（`refuse_path_layer`）がそのまま返る）。数は断った理由の説明用で、画面には出さない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardRefusal {
-    /// 画素を持たない層（グループ・調整）。
+    /// 画素を持たないレイヤー（グループ・調整）。
     NoPixels,
-    /// 選択範囲の中（選択が無ければ層全体）に、値のある画素が無い。`selection` は選択範囲があったか。
+    /// 選択範囲の中（選択が無ければレイヤー全体）に、値のある画素が無い。`selection` は選択範囲があったか。
     NothingToCopy { selection: bool },
     /// 写す矩形が上限（`max_bytes`）を超える。`bytes` は超えた時点の矩形の大きさ。
     TooLarge { bytes: u64, limit: u64 },
-    /// 貼る層の画素が一操作の予算を超える。
+    /// 貼るレイヤーの画素が一操作の予算を超える。
     OperationBudget { bytes: u64, limit: u64 },
-    /// 塗りつぶしの層は値から作るので切り取れない。
+    /// 塗りつぶしレイヤーは値から作るので切り取れない。
     NotPaintLayer,
 }
 
 impl std::fmt::Display for ClipboardRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClipboardRefusal::NoPixels => write!(f, "この層には画素が無い"),
+            ClipboardRefusal::NoPixels => write!(f, "このレイヤーには画素が無い"),
             ClipboardRefusal::NothingToCopy { selection: true } => {
                 write!(f, "選択範囲の中に画素が無い")
             }
-            ClipboardRefusal::NothingToCopy { selection: false } => write!(f, "層が空"),
+            ClipboardRefusal::NothingToCopy { selection: false } => write!(f, "レイヤーが空"),
             ClipboardRefusal::TooLarge { .. } => write!(f, "コピーする範囲が大きすぎる"),
             ClipboardRefusal::OperationBudget { .. } => {
-                write!(f, "貼る層が一回の操作の予算を超える")
+                write!(f, "貼るレイヤーが一回の操作の予算を超える")
             }
-            ClipboardRefusal::NotPaintLayer => write!(f, "塗りつぶしの層は切り取れない"),
+            ClipboardRefusal::NotPaintLayer => write!(f, "塗りつぶしレイヤーは切り取れない"),
         }
     }
 }
@@ -57,9 +57,9 @@ impl std::fmt::Display for ClipboardRefusal {
 /// 写した画素の出どころ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardSource {
-    /// 層のチャンネル。
+    /// レイヤーのチャンネル。
     Layer,
-    /// 層のマスク（灰色で、白が見える）。
+    /// レイヤーのマスク（灰色で、白が見える）。
     Mask,
     /// 見えている合成。
     Composite,
@@ -67,7 +67,7 @@ pub enum ClipboardSource {
     External,
 }
 
-/// 層・マスク・合成から写した画素: straight RGBA8 の長方形（左下原点・下の行が先）と、写したときの文書の大きさ・位置。
+/// レイヤー・マスク・合成から写した画素: straight RGBA8 の長方形（左下原点・下の行が先）と、写したときの文書の大きさ・位置。
 /// 作ったあとは変わらない（中身は共有でき、写しは安い）。マスクは灰色（白 = 見える。保存している隠す量の反転）で不透明。
 #[derive(Clone, PartialEq, Eq)]
 pub struct PixelClipboard {
@@ -202,14 +202,14 @@ impl PixelClipboard {
 /// `Document::paste_as_layer` の結果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PasteResult {
-    /// 足した層。
+    /// 足したレイヤー。
     pub layer: LayerId,
-    /// 写しの左下の角が行った位置（はみ出して切ったときは画布の外になり得る）。
+    /// 写しの左下の角が行った位置（はみ出して切ったときはキャンバスの外になり得る）。
     pub x: i32,
     pub y: i32,
     /// 文書の大きさが写したときと違うので、元の位置ではなく中央へ置いた。
     pub centered: bool,
-    /// 画布の外へはみ出して切り捨てた、値のある画素の数。
+    /// キャンバスの外へはみ出して切り捨てた、値のある画素の数。
     pub clipped_pixels: u64,
 }
 
@@ -248,10 +248,10 @@ fn replace_keeping_alpha(start: Rgba8, image: Rgba8, amount: f64) -> Rgba8 {
 impl Document {
     // ───────── コピー ─────────
 
-    /// 層のチャンネル（from_mask ならマスク）の画素を、選択範囲の中（無ければ全体）だけ [`PixelClipboard`] へ写す。文書は変えない。
+    /// レイヤーのチャンネル（from_mask ならマスク）の画素を、選択範囲の中（無ければ全体）だけ [`PixelClipboard`] へ写す。文書は変えない。
     /// 全部選ばれた所は透明画素の RGB も含めてそのまま、部分的に選ばれた所は透明へ向かってプリマルチプライドで混ぜる
-    /// （[`Document::replace_pixels`] の式）。層自身の画素を写すので、フィルター・マスク・不透明度は掛けない（見えているものは
-    /// [`Document::copy_merged`]）。塗りつぶしの層は値を写す。矩形は値のある画素まで切り詰め、無ければ、`max_bytes` を超えれば断る。
+    /// （[`Document::replace_pixels`] の式）。レイヤー自身の画素を写すので、フィルター・マスク・不透明度は掛けない（見えているものは
+    /// [`Document::copy_merged`]）。塗りつぶしレイヤーは値を写す。矩形は値のある画素まで切り詰め、無ければ、`max_bytes` を超えれば断る。
     /// チャンネルが無効でも、持っている画素は写せる。
     pub fn copy_pixels(
         &self,
@@ -269,7 +269,7 @@ impl Document {
             let mask = l
                 .mask
                 .as_ref()
-                .ok_or(CoreError::Unsupported("層にマスクが無い"))?;
+                .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?;
             return self.copy_region(ClipboardSource::Mask, Channel::Color, max_bytes, |chunk| {
                 chunk
                     .iter()
@@ -301,7 +301,7 @@ impl Document {
         })
     }
 
-    /// チャンネルの合成（見えている全部の層。Normal は描いたベクトルの合成で、Unity へ出す出力ではない）を、選択範囲の中だけ
+    /// チャンネルの合成（見えている全部のレイヤー。Normal は描いたベクトルの合成で、Unity へ出す出力ではない）を、選択範囲の中だけ
     /// [`Document::copy_pixels`] と同じ規則で写す。
     pub fn copy_merged(
         &self,
@@ -320,7 +320,7 @@ impl Document {
                         .ok_or(CoreError::InvalidArgument("タイルがキャンバスの外"))?;
                     let mut rows = vec![0u8; rect.width as usize * rect.height as usize * 4];
                     self.composite_into(channel, rect, &mut rows, RowOrder::BottomUp)?;
-                    // タイルの大きさの領域へ（画布の外の余白は 0）
+                    // タイルの大きさの領域へ（キャンバスの外の余白は 0）
                     let mut tile = vec![0u8; tile_size * tile_size * 4];
                     let row_bytes = rect.width as usize * 4;
                     for (y, row) in rows.chunks_exact(row_bytes).enumerate() {
@@ -332,7 +332,7 @@ impl Document {
         })
     }
 
-    /// 層の画素の 1 タイル（余白は 0）。塗りつぶしの層は値を画布の中へ敷く。持っていないチャンネルは 0。
+    /// レイヤーの画素の 1 タイル（余白は 0）。塗りつぶしレイヤーは値をキャンバスの中へ敷く。持っていないチャンネルは 0。
     fn layer_tile(
         &self,
         layer: &Layer,
@@ -373,7 +373,7 @@ impl Document {
         }
     }
 
-    /// 選択範囲（無ければ画布）のタイルを、1 回に一操作の予算の 1/4（最大 16 MiB）ぶんずつ読み、選択の量を当て、値のある画素の外接矩形へ
+    /// 選択範囲（無ければキャンバス）のタイルを、1 回に一操作の予算の 1/4（最大 16 MiB）ぶんずつ読み、選択の量を当て、値のある画素の外接矩形へ
     /// 切り詰める。タイルは 1 回だけ読み、値のあるタイルだけを矩形に写し終わるまで持つ。矩形が `max_bytes` を超えた時点で断る。
     fn copy_region(
         &self,
@@ -491,8 +491,8 @@ impl Document {
 
     // ───────── カット ─────────
 
-    /// [`Document::copy_pixels`] で写してから、写した所を消す（1 回の Undo）。ラスターの層のチャンネルは選択範囲の量だけアルファが
-    /// 減り（全部選ばれた画素は透明の黒）、マスクは見える方へ戻る。塗りつぶし・調整・グループの層は断り（何も写さない）、
+    /// [`Document::copy_pixels`] で写してから、写した所を消す（1 回の Undo）。ラスターレイヤーのチャンネルは選択範囲の量だけアルファが
+    /// 減り（全部選ばれた画素は透明の黒）、マスクは見える方へ戻る。塗りつぶし・調整・グループのレイヤーは断り（何も写さない）、
     /// 画像のロックと透明部分のロック（消すので）で断る。マスクはすべてのロックだけで断る。写すときの上限も、消すときの
     /// 予算も、断ったら何も変えない（返すクリップボードも無い）。
     pub fn cut_pixels(
@@ -522,7 +522,7 @@ impl Document {
             self.refuse_lock(layer, super::LayerLocks::ALL)?;
         } else {
             self.pixel_write_guard(layer, true)?;
-            // パスの層の画素はパスが決めるので、手では切り取らない（C# の CutPixels も断る。断りの順はロックのあと）
+            // パスレイヤーの画素はパスが決めるので、手では切り取らない（C# の CutPixels も断る。断りの順はロックのあと）
             let index = self.index_of(layer)?;
             self.refuse_path_layer(index)?;
         }
@@ -537,10 +537,10 @@ impl Document {
 
     // ───────── ペースト ─────────
 
-    /// クリップボードの画素を、新しいラスターの層（channel だけを持つ）として above のすぐ上（同じグループの中。無ければ一番上）へ
+    /// クリップボードの画素を、新しいラスターレイヤー（channel だけを持つ）として above のすぐ上（同じグループの中。無ければ一番上）へ
     /// 足し、選択を外す（1 回の Undo。Photoshop の貼り付けと同じで、そのあと移動で動かせる）。文書が写したときと同じ大きさなら
-    /// 元の位置へ、違えば中央へ置き、画布の外へはみ出す分は切って [`PasteResult::clipped_pixels`] に数える。透明画素の RGB も
-    /// そのまま書く。新しい層の画素が一操作の予算（`stroke_budget`）か画素の予算を超えるなら、何も変えずに断る。
+    /// 元の位置へ、違えば中央へ置き、キャンバスの外へはみ出す分は切って [`PasteResult::clipped_pixels`] に数える。透明画素の RGB も
+    /// そのまま書く。新しいレイヤーの画素が一操作の予算（`stroke_budget`）か画素の予算を超えるなら、何も変えずに断る。
     pub fn paste_as_layer(
         &mut self,
         clip: &PixelClipboard,
@@ -588,7 +588,7 @@ impl Document {
         // 行ごとにタイルの幅の区間をまとめて写す（全部 0 のタイルは後で捨てる）
         let mut tiles: std::collections::BTreeMap<TileCoord, Vec<u8>> =
             std::collections::BTreeMap::new();
-        // 矩形が画布と重ならないなら、写す画素は無い（x0 < x1・y0 < y1 は、写しが文書の中の矩形か中央に置く限り常に成り立つ）
+        // 矩形がキャンバスと重ならないなら、写す画素は無い（x0 < x1・y0 < y1 は、写しが文書の中の矩形か中央に置く限り常に成り立つ）
         for py in y0..if x0 < x1 { y1 } else { y0 } {
             let mut tx = x0 / ts;
             while tx * ts < x1 {
@@ -654,7 +654,7 @@ impl Document {
 
     // ───────── 置き換え ─────────
 
-    /// 層のチャンネルを画像（文書と同じ大きさの straight RGBA8、左下原点・下の行が先）で置き換える（1 回の Undo）。選択範囲の中
+    /// レイヤーのチャンネルを画像（文書と同じ大きさの straight RGBA8、左下原点・下の行が先）で置き換える（1 回の Undo）。選択範囲の中
     /// （`within_selection` が false なら選択に関わらず全体）で、全部選ばれた画素は画像の画素をそのまま（透明画素の RGB も）、
     /// 部分的に選ばれた画素は元と画像をプリマルチプライドで補間する。画素が 1 つも変わらなければ false（段は積まない）。
     /// 画像のロックで断り、透明部分のロックでは色だけを置き換える（各画素のアルファは保ち、透明な画素はそのまま）。
@@ -674,7 +674,7 @@ impl Document {
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Raster {
             return Err(CoreError::Unsupported(
-                "画素を置き換えられるのはラスターの層だけ",
+                "画素を置き換えられるのはラスターレイヤーだけ",
             ));
         }
         if !self.layers[index].is_channel_enabled(channel) {

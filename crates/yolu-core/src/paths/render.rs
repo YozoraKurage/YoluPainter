@@ -90,7 +90,7 @@ impl<'a, 'b> Painter<'a, 'b> {
         });
         Ok(self.canvases.len() - 1)
     }
-    /// 画布の大きさ。
+    /// キャンバスの大きさ。
     pub fn size(&self) -> (u32, u32) {
         (self.options.width, self.options.height)
     }
@@ -169,7 +169,7 @@ impl<'a, 'b> Painter<'a, 'b> {
                 .map(|_| ())
         })
     }
-    /// 面のダブを丸ごと塗る（3D の指先: 読み元を凍結してから、中心 `center`（画布の画素）の動きで引きずる）。
+    /// 面のダブを丸ごと塗る（3D の指先: 読み元を凍結してから、中心 `center`（キャンバスの画素）の動きで引きずる）。
     pub fn dab(
         &mut self,
         pixels: &[crate::BrushPixel],

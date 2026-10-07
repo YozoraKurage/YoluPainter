@@ -315,7 +315,7 @@ pub(crate) fn prepare<'a>(
         }
         receivers.push(t);
     }
-    // 焼かない島を外し、重なったテクセルを先に取る順に並べる（既定は番号の昇順のまま）。0〜1 の外の UV の拒否もここ
+    // 焼かないアイランドを外し、重なったテクセルを先に取る順に並べる（既定は番号の昇順のまま）。0〜1 の外の UV の拒否もここ
     let receivers = super::priority::arrange(input, &s.overlap, receivers)?;
     check(
         !receivers.is_empty(),

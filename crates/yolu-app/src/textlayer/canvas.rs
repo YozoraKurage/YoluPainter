@@ -1,4 +1,4 @@
-//! テキストツールのキャンバス: 押して離した所で打ち始め（選んでいるテキストレイヤーの箱の中なら、その層を打ち直す。箱の中の押しはカーソルを動かす）、
+//! テキストツールのキャンバス: 押して離した所で打ち始め（選んでいるテキストレイヤーの箱の中なら、そのレイヤーを打ち直す。箱の中の押しはカーソルを動かす）、
 //! 打っている間は箱の枠・カーソル・選んだ範囲を、描いた文字の上に重ねる。打つのは見えない入力欄（egui の文字の欄。かな漢字の変換も
 //! 同じ欄が受ける）で、カーソルの位置は core の並べ（`TextLine::carets`）から描く（回した文字・折り返し・禁則でも描いた字に合う）。
 
@@ -193,7 +193,7 @@ fn caret_line(layout: &TextLayout, value: &TextSettings, byte: usize) -> ((f64, 
     }
 }
 
-/// 打っている文字の枠・カーソル・選んだ範囲と、見えない入力欄。テキストツールでテキストレイヤーを選んでいるときは、その層の枠。
+/// 打っている文字の枠・カーソル・選んだ範囲と、見えない入力欄。テキストツールでテキストレイヤーを選んでいるときは、そのレイヤーの枠。
 pub fn paint_overlay(ui: &mut Ui, painter: &Painter, view: &CanvasView, app: &mut AppState) {
     if app.text.editing.is_none() {
         if app.tool == Tool::Text {
@@ -281,7 +281,7 @@ fn outline(painter: &Painter, view: &CanvasView, value: &TextSettings, b: [f64; 
     }
 }
 
-/// 見えない入力欄（カーソルの所に置く。かな漢字の変換の窓もそこに出る）。文が変わったら描き直し、フォーカスを失ったら打ち終わる。
+/// 見えない入力欄（カーソルの所に置く。かな漢字の変換のウィンドウもそこに出る）。文が変わったら描き直し、フォーカスを失ったら打ち終わる。
 fn input(ui: &mut Ui, app: &mut AppState, view: &CanvasView, layout: &TextLayout) {
     let id = input_id();
     let ctx = ui.ctx().clone();

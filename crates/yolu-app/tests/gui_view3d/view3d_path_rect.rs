@@ -1,5 +1,5 @@
-//! 3D ビューのパスの道具で、点を矩形で選ぶドラッグ（Shift+ドラッグ）を取り残さない: フォーカスを失ったら捨て、離したのを取りこぼしたら
-//! 最後の位置で確定する（2D の道具と同じ）。egui_kittest で、試しの立方体の上。
+//! 3D ビューのパスのツールで、点を矩形で選ぶドラッグ（Shift+ドラッグ）を取り残さない: フォーカスを失ったら捨て、離したのを取りこぼしたら
+//! 最後の位置で確定する（2D のツールと同じ）。egui_kittest で、試しの立方体の上。
 use crate::common;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
 
@@ -15,7 +15,7 @@ fn front(x: f32, y: f32) -> Vec3 {
     Vec3::new(x, y, -0.5)
 }
 
-/// パスの道具で、手前の面に 3 点のパスを置いた 3D ビュー。
+/// パスのツールで、手前の面に 3 点のパスを置いた 3D ビュー。
 fn path_view() -> (Harness<'static, YoluApp>, Rect) {
     let (mut h, rect) = cube_view();
     h.state_mut().state.apply(Action::SelectTool(Tool::Path));
@@ -75,7 +75,7 @@ fn a_missed_release_finishes_the_3d_rectangle_selection_at_the_last_position() {
     // 最後の位置はビューが覚えている（ポインタが動いた）
     move_to(&h, b);
     h.step();
-    // 窓の外で離して、離した印を受け取れなかった状態: 矩形の選びは続いているのに、ボタンは押されていない
+    // ウィンドウの外で離して、離した印を受け取れなかった状態: 矩形の選びは続いているのに、ボタンは押されていない
     h.state_mut().state.path.rect = Some(yolu_app::pathtool::RectDrag {
         source: yolu_app::state::StrokeSource::Mouse,
         surface: true,

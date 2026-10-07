@@ -1,8 +1,8 @@
 //! 効果のブラシ（指先・クローン・ぼかし）の行の核。覆いの行（[`super`]）の後に、ストロークの覆いへの寄せと、読み元の枠から読んだ色との
 //! 混ぜ・面への書き込みをレーンで行う（`apply_at` の効果の道と同じバイト）。
 //!
-//! 読み元の枠は打点の前に凍結してあるので、画素どうしは独立。読む位置が画布の端にかかる・隣のレーンと連続しない・枠の外のブロックと、
-//! N 画素の窓にできない余りの画素は、1 本のレーンで同じ式を通る（読みは画素ごとの [`sample32`]・[`blur32`]。端でない画素はレーンの読みと同じ値）。
+//! 読み元の枠は打点の前に凍結してあるので、画素どうしは独立。読む位置がキャンバスの端にかかる・隣のレーンと連続しない・枠の外のブロックと、
+//! N 画素のウィンドウにできない余りの画素は、1 本のレーンで同じ式を通る（読みは画素ごとの [`sample32`]・[`blur32`]。端でない画素はレーンの読みと同じ値）。
 
 use super::*;
 
@@ -50,7 +50,7 @@ pub(in crate::brush) fn mix_effect32(start: Rgba8, sample: Rgba8, amount: f32) -
     rgba_of(unsafe { mix_effect_block::<Scalar1>(lanes_of(start), lanes_of(sample), amount) })
 }
 
-/// 枠の画布の画素 (px, py) から右へ N 画素を RGBA のレーンに（枠の中に全部あるとき）。
+/// 枠のキャンバスの画素 (px, py) から右へ N 画素を RGBA のレーンに（枠の中に全部あるとき）。
 #[inline(always)]
 pub(super) unsafe fn load_run<V: Lanes32>(
     frame: &EffectFrame,
@@ -102,7 +102,7 @@ unsafe fn bilinear_block<V: Lanes32>(px: [[V::F; 4]; 4], fx: V::F, fy: V::F) -> 
     }
 }
 
-/// 画素の座標 (x, y)（整数で画素そのもの）の双線形（`EffectFrame::sample` の f32 の式。画布の端の外は端の画素を延ばす）。
+/// 画素の座標 (x, y)（整数で画素そのもの）の双線形（`EffectFrame::sample` の f32 の式。キャンバスの端の外は端の画素を延ばす）。
 /// 位置の整数部と小数部は f64 で求め、小数部を f32 へ丸める（レーンの読みと同じ値）。
 pub(in crate::brush) fn sample32(frame: &EffectFrame, x: f64, y: f64, w: i64, h: i64) -> Rgba8 {
     let (ix, iy) = (x.floor(), y.floor());
@@ -119,7 +119,7 @@ pub(in crate::brush) fn sample32(frame: &EffectFrame, x: f64, y: f64, w: i64, h:
     rgba_of(unsafe { bilinear_block::<Scalar1>(px, fx, fy) })
 }
 
-/// 読み元の枠の双線形の N 画素（[`sample32`] と同じ式）。読む位置が画布の外・端の丸め・隣のレーンと連続しない・枠の外のときは None
+/// 読み元の枠の双線形の N 画素（[`sample32`] と同じ式）。読む位置がキャンバスの外・端の丸め・隣のレーンと連続しない・枠の外のときは None
 /// （呼び手が 1 画素ずつ描く）。
 #[inline(always)]
 unsafe fn sample_lanes<V: Lanes32>(
@@ -151,7 +151,7 @@ unsafe fn sample_lanes<V: Lanes32>(
             return None;
         }
     }
-    // 右の画素の列が画布の端で丸められないこと
+    // 右の画素の列がキャンバスの端で丸められないこと
     if ix[0] + V::N as i64 > w - 1 {
         return None;
     }
@@ -182,7 +182,7 @@ unsafe fn blur_block<V: Lanes32>(sums: [V::F; 4], area: V::F) -> [V::F; 4] {
     }
 }
 
-/// (x, y) を中心に半径 radius の箱の平均（画布 w × h の中だけ。[`blur_block`] の 1 画素）。
+/// (x, y) を中心に半径 radius の箱の平均（キャンバス w × h の中だけ。[`blur_block`] の 1 画素）。
 pub(in crate::brush) fn blur32(
     frame: &EffectFrame,
     x: i64,
@@ -196,7 +196,7 @@ pub(in crate::brush) fn blur32(
     rgba_of(unsafe { blur_block::<Scalar1>(sums.map(|v| v as f32), area as f32) })
 }
 
-/// ぼかしの箱の平均（[`blur32`] と同じ式）の N 画素。中心の x は `xs`（左から順に大きくなるか同じ）、y は共通。箱は画布の端で
+/// ぼかしの箱の平均（[`blur32`] と同じ式）の N 画素。中心の x は `xs`（左から順に大きくなるか同じ）、y は共通。箱はキャンバスの端で
 /// 切るので、レーンの箱の左右の端も左から順に並び、全部の箱が積分画像の中にあるかは、最初の箱の左と最後の箱の右で決まる。
 /// 外に出る箱があるときは None（呼び手が 1 画素ずつ描く）。
 #[inline(always)]
@@ -233,7 +233,7 @@ pub(super) unsafe fn blur_at_lanes<V: Lanes32>(
 }
 
 /// 効果のブラシの N 画素: ストロークの覆いを寄せ（天井に届いた画素もそのまま寄せ続ける）、読んだ色 sampled と混ぜて書く。
-/// readable が偽のレーン（読む位置が画布の外）は、覆いだけ寄せて画素は書かない。ぼかしは透明部分に色を広げない。
+/// readable が偽のレーン（読む位置がキャンバスの外）は、覆いだけ寄せて画素は書かない。ぼかしは透明部分に色を広げない。
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 unsafe fn effect_block<V: Slice32, const KIND: u8>(
@@ -300,7 +300,7 @@ unsafe fn effect_block<V: Slice32, const KIND: u8>(
 }
 
 /// 効果のブラシ（指先・クローン・ぼかし）の覆いの行 cov の [lo, hi) を当てる（`apply_at` の効果の道と同じ結果）。
-/// `(row, x0)` は行の先頭の画素の番号と行の中の最初の画素の位置、`(px_first, py)` は行の最初の画素の画布の座標。
+/// `(row, x0)` は行の先頭の画素の番号と行の中の最初の画素の位置、`(px_first, py)` は行の最初の画素のキャンバスの座標。
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) unsafe fn apply_effect_range<V: Slice32, const KIND: u8>(
@@ -325,7 +325,7 @@ pub(super) unsafe fn apply_effect_range<V: Slice32, const KIND: u8>(
     let mut i = lo;
     let n = if V::N > 1 { cov.len() } else { 0 };
     while let Some(b) = next_block(i, hi, n, V::N) {
-        // このブロックが受け持つ画素（窓なら生かす画素）
+        // このブロックが受け持つ画素（ウィンドウなら生かす画素）
         let part = b.live.unwrap_or((i, i + V::N));
         i = part.1;
         let local = row + x0 + b.at;

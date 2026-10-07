@@ -287,7 +287,7 @@ fn headless_a_model_that_does_not_fit_skips_with_reasons_and_leaves_the_pose_alo
         note.as_deref(),
         Some("ファイルのポーズに合うボーンがありません。")
     );
-    // 英語の窓の文
+    // 英語のウィンドウの文
     let mut en = AppState::new_in(64, 64, Lang::En);
     en.apply(Action::OpenProject(path.clone()));
     en.apply(Action::Pose(PoseAction::LoadFigure));

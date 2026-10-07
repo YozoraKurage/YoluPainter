@@ -72,9 +72,9 @@ pub enum Kind {
     Light = 68,
     /// マスクの組み立て（焼いた曲率・AO・位置の高さ・厚み）。Rust 版だけの種類（正本の版 28）。
     MaskBuilder = 69,
-    /// 画像（プロジェクトの画像を塗りつぶしの層と同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
+    /// 画像（プロジェクトの画像を塗りつぶしレイヤーと同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
     Image = 70,
-    /// アイランドごとのばらつき（島の番号とシードから決まる一様な乱数の値。[`IslandVariation`]）。モデルの UV の島の図を
+    /// アイランドごとのばらつき（アイランドの番号とシードから決まる一様な乱数の値。[`IslandVariation`]）。モデルの UV アイランドの図を
     /// [`BoundGenerator::with_islands`] で渡す。Rust 版だけの種類（正本の版 28）。
     UvIslandVariation = 67,
 }
@@ -125,7 +125,7 @@ pub enum ImageComponent {
     Green = 1,
     Blue = 2,
     Alpha = 3,
-    /// 輝度（0.2126・0.7152・0.0722）。投影で補間した後の RGB から、丸めずに求める。塗りつぶしの層が画像をスカラーのチャンネルで読むときは、元の画素ごとに
+    /// 輝度（0.2126・0.7152・0.0722）。投影で補間した後の RGB から、丸めずに求める。塗りつぶしレイヤーが画像をスカラーのチャンネルで読むときは、元の画素ごとに
     /// 8 bit へ丸めてから補間するので、補間がかかる投影（タイル・回転・縮小）では値が少し違う。
     #[default]
     Luminance = 4,
@@ -147,7 +147,7 @@ impl ImageComponent {
     }
 }
 
-/// 画像の段（[`Kind::Image`]）の設定: 読む画像・投影（塗りつぶしの層の画像と同じ。デカールは除く）・値にする成分。
+/// 画像の段（[`Kind::Image`]）の設定: 読む画像・投影（塗りつぶしレイヤーの画像と同じ。デカールは除く）・値にする成分。
 /// 画像そのもの（画素）は文書の外の入力で、束縛のときに [`BoundGenerator::with_image`] で渡す。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ImageSource {
@@ -330,7 +330,7 @@ impl Settings {
                 g.noise_amount = 0.3;
             }
             Kind::Grunge => g.procedural = Procedural::for_preset(GrungePreset::Stain),
-            // 画像の段は、足したときに画像がそのまま見えるように置き換える（塗りつぶしの層の画像と同じ見え方）
+            // 画像の段は、足したときに画像がそのまま見えるように置き換える（塗りつぶしレイヤーの画像と同じ見え方）
             Kind::Image => g.blend = Blend::Replace,
             _ => {}
         }
@@ -490,9 +490,9 @@ impl Settings {
             Kind::Pattern => vec![],
             Kind::Light => vec![WorldNormal],
             Kind::MaskBuilder => MaskBuilder::MAPS.to_vec(),
-            // 投影のマップは塗りつぶしの層と同じく、ピンを持たない
+            // 投影のマップは塗りつぶしレイヤーと同じく、ピンを持たない
             Kind::Image => vec![],
-            // 焼いたマップを読まない（モデルの UV の島の図を読む）
+            // 焼いたマップを読まない（モデルの UV アイランドの図を読む）
             Kind::UvIslandVariation => vec![],
         }
     }
@@ -558,9 +558,9 @@ pub enum Inactive {
     NoImage,
     /// 画像の段: 選んだ画像が入力に無い・読めない。
     MissingImage,
-    /// アイランドごとのばらつき: モデルが無い（島の図を渡していない）。
+    /// アイランドごとのばらつき: モデルが無い（アイランドの図を渡していない）。
     NoModel,
-    /// アイランドごとのばらつき: 島の図を作れない（作る作業メモリが予算に収まらない）。
+    /// アイランドごとのばらつき: アイランドの図を作れない（作る作業メモリが予算に収まらない）。
     IslandMap,
 }
 /// 左下原点の読み取り専用 RGBA8。タイルはこの口を実装する。

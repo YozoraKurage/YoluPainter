@@ -172,7 +172,7 @@ fn channel_composites(doc: &Document) -> Vec<Vec<u8>> {
         .map(|c| doc.composite_channel(c, doc.bounds()).unwrap())
         .collect()
 }
-/// 1 層（名前 `name`）に 1 画素だけ描いた 16×16・タイル 8 の文書。
+/// 1 レイヤー（名前 `name`）に 1 画素だけ描いた 16×16・タイル 8 の文書。
 fn one_pixel(name: &str, colour: Rgba8) -> Document {
     let mut d = Document::with_tile_size(16, 16, 8).unwrap();
     let id = d.add_layer(name).unwrap();
@@ -293,7 +293,7 @@ fn adjustments_survive_save_and_restore_and_version_3_reads() {
         vec![Channel::Roughness]
     );
     assert_eq!(channel_composites(&restored), channel_composites(&d));
-    // 版 3 の並びは、各層のクリッピングの 1 バイト（版 5）と調整のブロック（版 4）が無い。塗りつぶしだけの文書は読める
+    // 版 3 の並びは、各レイヤーのクリッピングの 1 バイト（版 5）と調整のブロック（版 4）が無い。塗りつぶしだけの文書は読める
     let mut plain = Document::with_tile_size(16, 16, 8).unwrap();
     plain
         .add_fill_layer("F", &[(Channel::Color, Rgba8::new(9, 9, 9, 9))], None)
@@ -304,7 +304,7 @@ fn adjustments_survive_save_and_restore_and_version_3_reads() {
     assert_eq!(save(&v3), save(&plain), "今の版で書き直される");
 }
 
-/// 版 3〜20 の並びは、今の書き手の出力から作った 1 層の文書を読め、今の版へ書き直すと元と同じバイト列になる。
+/// 版 3〜20 の並びは、今の書き手の出力から作った 1 レイヤーの文書を読め、今の版へ書き直すと元と同じバイト列になる。
 /// 版 10 から先は版の数だけが違い、版 9 以前は各版が足した有無の 1 バイトと、Normal の設定・親グループ・クリッピングが無い。
 #[test]
 fn a_plain_document_is_read_from_every_older_layout_and_rewritten_as_the_current_version() {

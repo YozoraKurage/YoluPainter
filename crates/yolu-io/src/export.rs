@@ -762,7 +762,7 @@ mod tests {
             for tx in 0..doc.width().div_ceil(ts as u32) {
                 let mut bytes: Vec<u8> = (0..ts * ts * 4).map(|_| lcg(&mut state)).collect();
                 for (i, px) in bytes.chunks_exact_mut(4).enumerate() {
-                    // 画布の外の余白は 0
+                    // キャンバスの外の余白は 0
                     if tx as usize * ts + i % ts >= doc.width() as usize
                         || ty as usize * ts + i / ts >= doc.height() as usize
                     {

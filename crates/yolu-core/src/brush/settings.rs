@@ -1,6 +1,6 @@
 //! 全部入りのブラシの設定（C# の BrushSettings の全体）。M1 の [`BrushSettings`]（大きさ・硬さ・間隔・不透明度・流量・色・筆圧・
 //! 消しゴム）に、筆先の形・ゆらぎ・紙の質感・デュアルブラシ・色の変化・フェードと傾き・手ぶれ補正と入り抜き・曲線・効果を足したもの。
-//! 部分の分け方は Photoshop のブラシの窓の節に合わせた（画面の節にそのまま当てられる）。
+//! 部分の分け方は Photoshop のブラシのウィンドウの節に合わせた（画面の節にそのまま当てられる）。
 //!
 //! 既定値はどれも C# の既定値と同じで、`Brush::from(settings)` は M1 の丸いブラシとバイト単位で同じストロークになる。
 //! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]）と、紙の質感のモード（[`TextureMode`] の
@@ -76,7 +76,7 @@ pub struct TipShape {
     /// 1 枚でも乱数で選ぶときは乱数を 1 つ引く（C# と同じ。`image` に置いたときとは乱数の列が違う）。
     pub images: Vec<Arc<BrushTip>>,
     pub selection: TipSelection,
-    /// 回転（度、反時計回り。画布の Y は上向き）。
+    /// 回転（度、反時計回り。キャンバスの Y は上向き）。
     pub angle: f64,
     /// 真円率: 回した縦の軸の向きに潰す（1 = 潰さない、0.01〜1）。
     pub roundness: f64,
@@ -154,14 +154,14 @@ pub enum TextureMode {
     HardMix,
 }
 
-/// 紙の質感（Photoshop の「テクスチャ」。描点ごとに適用はしない: 質感は画布に固定され、天井に効く）。
+/// 紙の質感（Photoshop の「テクスチャ」。描点ごとに適用はしない: 質感はキャンバスに固定され、天井に効く）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaperTexture {
     /// 並べて使う質感の画像（覆い 0〜255、白が塗れる）。
     pub image: Arc<BrushTip>,
     /// 0 = 効かない、1 = 質感にそのまま従う。0 なら質感を読まない。
     pub depth: f64,
-    /// 質感の 1 画素あたりの画布の画素（2 = 2 倍に大きく。0.05〜64）。
+    /// 質感の 1 画素あたりのキャンバスの画素（2 = 2 倍に大きく。0.05〜64）。
     pub scale: f64,
     pub mode: TextureMode,
 }
@@ -364,7 +364,7 @@ pub struct StrokeAssist {
     pub curve: bool,
 }
 
-/// 効果のブラシ（C# の BrushEffect）。効果は色を塗らず、層の今の画素から読んだ色をストロークの覆いで混ぜる。
+/// 効果のブラシ（C# の BrushEffect）。効果は色を塗らず、レイヤーの今の画素から読んだ色をストロークの覆いで混ぜる。
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum BrushEffect {
     /// 色を塗る（消しゴムは [`BrushSettings::erase`]）。
@@ -374,7 +374,7 @@ pub enum BrushEffect {
     Blur { radius: u32 },
     /// 指先: 前のダブの位置の色を引きずる。強さ（0〜1）を流量に掛ける。
     Smudge { strength: f64 },
-    /// クローン（今の層から）: offset だけ離れた所の、ストロークの前の画素を写す（±1e7 画素）。
+    /// クローン（今のレイヤーから）: offset だけ離れた所の、ストロークの前の画素を写す（±1e7 画素）。
     Clone { offset: DVec2 },
 }
 

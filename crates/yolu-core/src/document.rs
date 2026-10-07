@@ -1,8 +1,8 @@
 //! 文書（C# の PaintDocument）。
 //!
-//! - 層は下から上の平らな並び。グループの中身はグループのすぐ下に続けて並ぶ（[`Layer::parent`]）。
+//! - レイヤーは下から上の平らな並び。グループの中身はグループのすぐ下に続けて並ぶ（[`Layer::parent`]）。
 //! - どの編集も 1 回の Undo になり、断った編集は何も変えない。
-//! - 履歴はタイルの前後の状態そのもの（ブラシの再生や画布全体の写しではない）と、属性・構造の前後で、予算（既定 64 MiB）を
+//! - 履歴はタイルの前後の状態そのもの（ブラシの再生やキャンバス全体の写しではない）と、属性・構造の前後で、予算（既定 64 MiB）を
 //!   超えた古い段から落とす。
 //! - 進行中のストロークがある間は、ほかの編集・Undo・Redo を断る（ストロークは文書が持ち、[`Stroke`] はその札）。
 //! - 変化の記録（`change_serial` と `changed_tiles`）は、合成が変わり得るタイルをチャンネルごとに数で覚える。履歴や保存とは別。
@@ -85,7 +85,7 @@ pub use uv_seams::SeamFallback;
 #[derive(Clone, Debug)]
 pub struct CompositedTile {
     pub coord: TileCoord,
-    /// 画布の中のタイルの矩形（端のタイルは画布の内側だけ）。
+    /// キャンバスの中のタイルの矩形（端のタイルはキャンバスの内側だけ）。
     pub rect: Rect,
     /// 画素の拾い方: 1 なら全画素、そうでなければ歩幅ごとに 1 画素（粗い合成）。
     pub stride: u32,
@@ -145,7 +145,7 @@ impl Stroke {
             _ => Err(CoreError::NoActiveStroke),
         }
     }
-    /// 与えた覆い（0〜1）で 1 画素を塗る（メッシュのダブ。重なる三角形の覆いは呼び手が 1 つにまとめてから）。画布の外は何もしない。
+    /// 与えた覆い（0〜1）で 1 画素を塗る（メッシュのダブ。重なる三角形の覆いは呼び手が 1 つにまとめてから）。キャンバスの外は何もしない。
     pub fn apply_pixel(
         &mut self,
         doc: &mut Document,
@@ -157,8 +157,8 @@ impl Stroke {
         doc.stroke_apply_pixel(self.id, x, y, coverage, pressure)
     }
     /// 面のダブを丸ごと塗る（3D の面のブラシ。C# の ApplyDab）: ダブの中で重なりをまとめた画素と被覆率を、渡した順に塗る。
-    /// 効果のブラシ（ぼかし・指先・クローン）は、どの画素を書くより前に読み元を凍結する。center は指先の中心（画布の画素の座標）。
-    /// 画布の外の画素は飛ばす。失敗したら、このストロークは取り消してから返す。
+    /// 効果のブラシ（ぼかし・指先・クローン）は、どの画素を書くより前に読み元を凍結する。center は指先の中心（キャンバスの画素の座標）。
+    /// キャンバスの外の画素は飛ばす。失敗したら、このストロークは取り消してから返す。
     pub fn apply_dab(
         &mut self,
         doc: &mut Document,
@@ -198,15 +198,15 @@ impl Stroke {
             state.apply_pixel(surface, x, y, coverage, pressure, Some(at), changed)
         })
     }
-    /// クローンが読む元（と、色の混ぜが「全レイヤーから」で読む下地）を、描く層ではなく見えている層の重なり（チャンネルごとの合成）に
-    /// する（C# の UseCompositeCloneSource）。最初のダブの前に、層が画素を持ち得るタイルだけを合成して凍結する（書き込みの途中で合成を
+    /// クローンが読む元（と、色の混ぜが「全レイヤーから」で読む下地）を、描くレイヤーではなく見えているレイヤーの重なり（チャンネルごとの合成）に
+    /// する（C# の UseCompositeCloneSource）。最初のダブの前に、レイヤーが画素を持ち得るタイルだけを合成して凍結する（書き込みの途中で合成を
     /// 読み返さない）。複数チャンネルのストロークは、チャンネルごとにそのチャンネルの合成を凍結する。タイルの写しと索引はストロークの
     /// 予算に数える。クローンでも「全レイヤーから」の色の混ぜでもないブラシ・マスクへのストローク・最初のダブより後・予算を超える、の
     /// どれも、このストロークを取り消してから返す。
     pub fn use_composite_clone_source(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.use_composite_clone_source(self.id)
     }
-    /// 写像された面のダブ（3D の面のクローン・指先。C# の ApplyMappedDab）: 画素ごとに、読む場所（画素中心の最大 4 点と重み。UV の島の
+    /// 写像された面のダブ（3D の面のクローン・指先。C# の ApplyMappedDab）: 画素ごとに、読む場所（画素中心の最大 4 点と重み。UV アイランドの
     /// 継ぎ目の向こうも）を呼び手が決めて渡す。全ての読みをどの画素を書くより前に済ませるので、同じダブの中で先に変えた画素を読まない。
     /// 指先の最初の拾いと面の方向は呼び手が決める。points はステンシルの画素ごとの点（pixels と同じ数）、sampling_bytes は呼び手の
     /// 参照の計画（展開の図）の名目のバイトで、ダブの間だけ予算に数える。同じ画素の重複・範囲外・参照の無い画素・クローンでも指先でも
@@ -277,7 +277,7 @@ pub struct StrokeStats {
     pub targets: usize,
 }
 
-/// ストロークが描く面: 層のチャンネルか、層のマスク。
+/// ストロークが描く面: レイヤーのチャンネルか、レイヤーのマスク。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Target {
     Channel(Channel),
@@ -291,7 +291,7 @@ pub(crate) struct TileChange {
     after: Option<Tile>,
 }
 
-/// 層の属性（Undo の前後の値）。
+/// レイヤーの属性（Undo の前後の値）。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Property {
     Locks(LayerLocks),
@@ -307,10 +307,10 @@ pub(crate) enum Property {
     ChannelBlend(Channel, ChannelBlend),
 }
 
-/// 層の並びと入れ子（下から上の ID と親）。
+/// レイヤーの並びと入れ子（下から上の ID と親）。
 type Order = Vec<(LayerId, Option<LayerId>)>;
 
-/// 履歴の 1 段。Insert・Remove・Structure の層は、文書に無い側の状態のときに段が持つ。
+/// 履歴の 1 段。Insert・Remove・Structure のレイヤーは、文書に無い側の状態のときに段が持つ。
 pub(crate) enum Command {
     Material(material::MaterialCommand),
     IdColors {
@@ -328,7 +328,7 @@ pub(crate) enum Command {
         target: Target,
         changes: Vec<TileChange>,
     },
-    /// まとまり（層、またはグループと中身。len 枚）を index へ入れる。
+    /// まとまり（レイヤー、またはグループと中身。len 枚）を index へ入れる。
     Insert {
         index: usize,
         len: usize,
@@ -340,7 +340,7 @@ pub(crate) enum Command {
         len: usize,
         block: Option<Vec<Layer>>,
     },
-    /// 並び・入れ子の切り替え（移動・グループ化・解除）。spare は文書に無い側の層（グループの層）。
+    /// 並び・入れ子の切り替え（移動・グループ化・解除）。spare は文書に無い側のレイヤー（グループのレイヤー）。
     Structure {
         before: Order,
         after: Order,
@@ -353,7 +353,7 @@ pub(crate) enum Command {
         new: Property,
     },
     /// チャンネルの有効・無効。有効にして初めて面ができたときは、取り消しで（空の）面を外し、やり直しで作り直す
-    /// （ストロークの段は面を層とチャンネルで引くので、作り直した面へ戻せる）。
+    /// （ストロークの段は面をレイヤーとチャンネルで引くので、作り直した面へ戻せる）。
     ChannelEnabled {
         id: LayerId,
         channel: Channel,
@@ -388,7 +388,7 @@ pub(crate) enum Command {
         old: NormalSettings,
         new: NormalSettings,
     },
-    /// チャンネルの一覧の 1 つを変える（足す・消す・変える）。消すときは層のそのチャンネルの中身を段が持つ。
+    /// チャンネルの一覧の 1 つを変える（足す・消す・変える）。消すときはレイヤーのそのチャンネルの中身を段が持つ。
     ChannelInfo {
         channel: Channel,
         old: Option<ChannelInfo>,
@@ -400,7 +400,7 @@ pub(crate) enum Command {
         old: Option<SelectionMask>,
         new: Option<SelectionMask>,
     },
-    /// 層（内容）またはマスクのフィルターのスタックの入れ替え。
+    /// レイヤー（内容）またはマスクのフィルターのスタックの入れ替え。
     Stack {
         id: LayerId,
         target: FilterTarget,
@@ -427,7 +427,7 @@ pub(crate) enum Command {
         old: Projection,
         new: Projection,
     },
-    /// 層のパスを付ける・差し替える・外す（画素の入れ替えを伴うことがある）。
+    /// レイヤーのパスを付ける・差し替える・外す（画素の入れ替えを伴うことがある）。
     Path(layer_path::PathCommand),
     /// 複数の段を 1 段にまとめたもの（`Document::batch`・貼り付け）。当てるのは先頭から、戻すのは末尾から。
     Compound(Vec<Entry>),
@@ -441,7 +441,7 @@ pub(crate) enum Command {
         old: saved_selections::SavedList,
         new: saved_selections::SavedList,
     },
-    /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（`uv_seams`）。
+    /// レイヤーのフィルターが UV の継ぎ目をまたぐかの文書の設定（`uv_seams`）。
     FilterSeams {
         old: bool,
         new: bool,
@@ -473,7 +473,7 @@ pub(crate) enum CoalesceKey {
     FillPoints(LayerId, Channel),
     /// 見た目の設定（スライダーのドラッグ）。
     Look,
-    /// 手動の ID の色（色の窓のドラッグ）。
+    /// 手動の ID の色（色のウィンドウのドラッグ）。
     IdColors,
     /// テキストレイヤーの値（打ちながら描く間）。
     Text(LayerId),
@@ -484,12 +484,12 @@ pub(crate) enum CoalesceKey {
 struct Journal {
     serial: u64,
     tiles: Vec<HashMap<TileCoord, u64>>,
-    /// 描いているストロークの層の画素以外の変化（層の属性・並び・ほかの層の画素・チャンネルなど、`mark` を通ったもの）の回数。
+    /// 描いているストロークのレイヤーの画素以外の変化（レイヤーの属性・並び・ほかのレイヤーの画素・チャンネルなど、`mark` を通ったもの）の回数。
     /// 描いている間の下の覚え（[`composite::Memo`]）が、覚えがまだ正しいかを見る印。
     foreign: u64,
     /// ストロークが自分の面へ書いた変化を記録している間 true（`foreign` を進めない）。
     own: bool,
-    /// 描いている間の、描く層より下の合成の覚え。
+    /// 描いている間の、描くレイヤーより下の合成の覚え。
     memo: composite::Memo,
 }
 
@@ -507,7 +507,7 @@ impl Journal {
     }
 }
 
-/// 層の画素の予算の既定（256 MiB。新しい文書と、予算を指定しない読み込みの値）。
+/// レイヤーの画素の予算の既定（256 MiB。新しい文書と、予算を指定しない読み込みの値）。
 pub const DEFAULT_SOURCE_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 
 /// 単独の書き手の CPU の文書。
@@ -558,7 +558,7 @@ pub struct Document {
     effects: eval::EffectState,
     /// `Document::batch` の編集を実行している間 true（ストローク・Undo・Redo・履歴を消す書き込みを断る）。
     batching: bool,
-    /// 層のフィルターの近傍の段が UV の継ぎ目をまたいで読むか（文書の設定。既定は入。`uv_seams`）。
+    /// レイヤーのフィルターの近傍の段が UV の継ぎ目をまたいで読むか（文書の設定。既定は入。`uv_seams`）。
     filter_seams: bool,
 }
 
@@ -641,7 +641,7 @@ impl Document {
         })
     }
 
-    /// 読み込み直後の文書と層に保存済みのIDを復元する（層は下からの順）。
+    /// 読み込み直後の文書とレイヤーに保存済みのIDを復元する（レイヤーは下からの順）。
     /// 呼び出し前のIDを持つ履歴は消す。進行中のストローク・空ID・重複IDは拒否する。
     /// 文書を消費するので、読み込みが完了するまで外部へ公開しないこと。
     pub fn with_persistent_ids(
@@ -658,7 +658,7 @@ impl Document {
             return Err(CoreError::InvalidArgument("persistent_ids"));
         }
         self.id = document_id;
-        // グループの中の層の親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
+        // グループの中のレイヤーの親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
         let map: HashMap<LayerId, LayerId> = self
             .layers
             .iter()
@@ -688,11 +688,11 @@ impl Document {
     pub fn tile_size(&self) -> u32 {
         self.tile_size
     }
-    /// 画布全体の矩形。
+    /// キャンバス全体の矩形。
     pub fn bounds(&self) -> Rect {
         Rect::new(0, 0, self.width, self.height)
     }
-    /// タイルの矩形（画布の端で切る）。`changed_tiles` のタイルだけを合成し直すときに。画布の外のタイルは None。
+    /// タイルの矩形（キャンバスの端で切る）。`changed_tiles` のタイルだけを合成し直すときに。キャンバスの外のタイルは None。
     pub fn tile_rect(&self, coord: TileCoord) -> Option<Rect> {
         let ts = self.tile_size as u64;
         let (x, y) = (coord.x as u64 * ts, coord.y as u64 * ts);
@@ -706,7 +706,7 @@ impl Document {
             (self.height as u64 - y).min(ts) as u32,
         ))
     }
-    /// 画布のタイルの座標全部（Y、次に X）。
+    /// キャンバスのタイルの座標全部（Y、次に X）。
     pub fn canvas_tiles(&self) -> impl Iterator<Item = TileCoord> {
         let (cols, rows) = (
             self.width.div_ceil(self.tile_size),
@@ -718,7 +718,7 @@ impl Document {
     pub fn revision(&self) -> u64 {
         self.revision
     }
-    /// 層の画素（チャンネルの面とマスク）の合計のバイト数。
+    /// レイヤーの画素（チャンネルの面とマスク）の合計のバイト数。
     pub fn allocated_bytes(&self) -> u64 {
         self.layers.iter().map(|l| l.allocated_bytes()).sum()
     }
@@ -787,9 +787,9 @@ impl Document {
         Ok(self.require_channel(channel)?.kind)
     }
 
-    // ───────── 層 ─────────
+    // ───────── レイヤー ─────────
 
-    /// 層（下から上。グループの中身はグループのすぐ下）。
+    /// レイヤー（下から上。グループの中身はグループのすぐ下）。
     pub fn layers(&self) -> &[Layer] {
         &self.layers
     }
@@ -841,7 +841,7 @@ impl Document {
         self.set_property(id, Property::Visible(visible), None)
     }
 
-    /// 不透明度 0〜1。coalesce なら、間に何も無い同じ層の不透明度の変更へまとめる（スライダーのドラッグ。終わりに `end_coalescing`）。
+    /// 不透明度 0〜1。coalesce なら、間に何も無い同じレイヤーの不透明度の変更へまとめる（スライダーのドラッグ。終わりに `end_coalescing`）。
     pub fn set_layer_opacity(
         &mut self,
         id: LayerId,
@@ -922,7 +922,7 @@ impl Document {
                 layer
                     .adjustment
                     .as_ref()
-                    .ok_or(CoreError::Unsupported("調整の層だけが調整の設定を持つ"))?
+                    .ok_or(CoreError::Unsupported("調整レイヤーだけが調整の設定を持つ"))?
                     .clone(),
             ),
             Property::ChannelBlend(c, _) => Property::ChannelBlend(*c, layer.channel_blend(*c)),
@@ -943,7 +943,7 @@ impl Document {
         layer
             .mask
             .as_ref()
-            .ok_or(CoreError::Unsupported("層にマスクが無い"))
+            .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))
     }
 
     /// 段を当てて積む。鍵があり、直前の段が同じ鍵のまとめなら、その段の「後」の値だけを新しくする（戻すと最初の変更の前へ）。
@@ -1047,8 +1047,8 @@ impl Document {
 
     // ───────── 直接の書き込み（読み込み・管理。履歴を消す） ─────────
 
-    /// 1 タイルを丸ごと読み込む（TileSize² × 4、行優先・下の行から、画布の外の余白は 0）。読み込みなので履歴を消す。
-    /// ラスターの層だけ。面の無いチャンネルは作って有効にする。変わったら true。
+    /// 1 タイルを丸ごと読み込む（TileSize² × 4、行優先・下の行から、キャンバスの外の余白は 0）。読み込みなので履歴を消す。
+    /// ラスターレイヤーだけ。面の無いチャンネルは作って有効にする。変わったら true。
     pub fn import_tile(
         &mut self,
         id: LayerId,
@@ -1154,7 +1154,7 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         if bytes
             .chunks_exact(4)
@@ -1187,7 +1187,7 @@ impl Document {
         self.set_channel_pixel(id, Channel::Color, x, y, color)
     }
 
-    /// 1 画素を直接書く（ラスターの層のチャンネルへ。面が無ければ作って有効にする。履歴を消す）。
+    /// 1 画素を直接書く（ラスターレイヤーのチャンネルへ。面が無ければ作って有効にする。履歴を消す）。
     pub fn set_channel_pixel(
         &mut self,
         id: LayerId,
@@ -1233,7 +1233,7 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         let growth = self.growth_for(index, Target::Mask);
         let ts = self.tile_size;
@@ -1249,13 +1249,13 @@ impl Document {
     fn ensure_raster(&self, index: usize) -> Result<(), CoreError> {
         match self.layers[index].kind {
             LayerKind::Raster => Ok(()),
-            LayerKind::Fill => Err(CoreError::Unsupported("塗りつぶしの層には描けない")),
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整の層には描けない")),
+            LayerKind::Fill => Err(CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
+            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには描けない")),
             LayerKind::Group => Err(CoreError::Unsupported("グループには描けない")),
         }
     }
 
-    /// ラスターの層の面が無ければ作って有効にする（C# の GetChannel。履歴には入らない）。作ったら true。
+    /// ラスターレイヤーの面が無ければ作って有効にする（C# の GetChannel。履歴には入らない）。作ったら true。
     fn ensure_surface(&mut self, index: usize, channel: Channel) -> bool {
         let (w, h, ts) = (self.width, self.height, self.tile_size);
         let layer = &mut self.layers[index];
@@ -1264,7 +1264,7 @@ impl Document {
         }
         layer.put_surface(channel, Some(Surface::new(w, h, ts)));
         layer.set_enabled(channel, true);
-        // 空の面でもそのチャンネルで層が合成に入る（クリッピングの組が増えれば、下地のグループが分離になる）
+        // 空の面でもそのチャンネルでレイヤーが合成に入る（クリッピングの組が増えれば、下地のグループが分離になる）
         if layer.clipping {
             self.mark_clip_bases();
         }
@@ -1286,13 +1286,13 @@ impl Document {
     fn external_mutation(&mut self) {
         self.clear_history_unchecked();
         self.revision += 1;
-        // 直接の書き込み（読み込み・管理）は、層の元画素の変化の記録を通らないことがある: 評価済みのものは全部作り直す
+        // 直接の書き込み（読み込み・管理）は、レイヤーの元画素の変化の記録を通らないことがある: 評価済みのものは全部作り直す
         self.effects.generation += 1;
         self.release_effect_cache();
         self.refresh_anchor_readers();
     }
 
-    /// 層の画素・マスクに、ディスクのキャッシュから読めなかったタイルがあるか（読もうとして失敗したものだけ。履歴の写しは見ない）。
+    /// レイヤーの画素・マスクに、ディスクのキャッシュから読めなかったタイルがあるか（読もうとして失敗したものだけ。履歴の写しは見ない）。
     pub fn has_unreadable_tiles(&self) -> bool {
         self.layers.iter().any(|l| {
             l.surfaces
@@ -1320,7 +1320,7 @@ impl Document {
 
     // ───────── 予算 ─────────
 
-    /// 層の画素の予算（既定は `DEFAULT_SOURCE_BUDGET_BYTES`）。今の画素より小さくはできない。
+    /// レイヤーの画素の予算（既定は `DEFAULT_SOURCE_BUDGET_BYTES`）。今の画素より小さくはできない。
     pub fn source_budget_bytes(&self) -> u64 {
         self.source_budget
     }
@@ -1509,7 +1509,7 @@ impl Document {
     }
 
     /// 段を当てる（backwards なら戻す）。断ったら何も変えない（予算はまとめて先に確かめる）。当てた後で、Anchor を読む段の解決が
-    /// 変わっていれば読む層を全部変わったことにする。
+    /// 変わっていれば読むレイヤーを全部変わったことにする。
     fn switch(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
         let result = self.switch_command(command, backwards);
         if result.is_ok()
@@ -1588,7 +1588,7 @@ impl Document {
                 spare,
             } => {
                 let to = if backwards { before } else { after };
-                // 段が持っていた層（グループの層とマスク）が文書へ戻るなら、増える分を先に確かめる
+                // 段が持っていたレイヤー（グループのレイヤーとマスク）が文書へ戻るなら、増える分を先に確かめる
                 let incoming: u64 = spare
                     .iter()
                     .filter(|l| to.iter().any(|e| e.0 == l.id))
@@ -1743,7 +1743,10 @@ impl Document {
             self.layers[index].mask = Some(*m);
         } else {
             *held = Some(Box::new(
-                self.layers[index].mask.take().expect("層がマスクを持つ"),
+                self.layers[index]
+                    .mask
+                    .take()
+                    .expect("レイヤーがマスクを持つ"),
             ));
         }
         self.mark_layer(index, None);
@@ -1781,7 +1784,7 @@ impl Document {
 
     // ───────── 変化の記録の印 ─────────
 
-    /// 層が変わったことにする（C# の MarkLayerChanged）: ラスターは面のあるタイル、塗りつぶし・調整は画布全体、グループは中身と
+    /// レイヤーが変わったことにする（C# の MarkLayerChanged）: ラスターは面のあるタイル、塗りつぶし・調整はキャンバス全体、グループは中身と
     /// グループのマスクのタイル。channel が None なら全チャンネル。グループは自分と子孫の全部を `mark_layer_alone` で 1 回ずつ
     /// （入れ子のグループごとに子孫を数え直すと、入れ子の段数の指数の時間になる）。
     fn mark_layer(&mut self, index: usize, channel: Option<Channel>) {
@@ -1796,10 +1799,10 @@ impl Document {
         }
     }
 
-    /// 層 1 枚だけの印（グループは自分のマスクのタイルだけ。中身の層は `mark_layer` が子孫として別に呼ぶ）。層ごとにすることは、
-    /// 入れ子の中の層にも漏れなく働くよう、ここに置く。
+    /// レイヤー 1 枚だけの印（グループは自分のマスクのタイルだけ。中身のレイヤーは `mark_layer` が子孫として別に呼ぶ）。レイヤーごとにすることは、
+    /// 入れ子の中のレイヤーにも漏れなく働くよう、ここに置く。
     fn mark_layer_alone(&mut self, index: usize, channel: Option<Channel>) {
-        // マスクの Anchor を読む段のために、この層のマスクの出力が変わったことを数える（入れ子の中の層も 1 回ずつ）
+        // マスクの Anchor を読む段のために、このレイヤーのマスクの出力が変わったことを数える（入れ子の中のレイヤーも 1 回ずつ）
         self.note_mask_output(index);
         if self.layers[index].is_group() {
             self.mark_mask(index, channel);
@@ -1808,7 +1811,7 @@ impl Document {
         }
     }
 
-    /// 層のマスクのタイルを変わったことにする（マスクが無ければ何もしない）。
+    /// レイヤーのマスクのタイルを変わったことにする（マスクが無ければ何もしない）。
     fn mark_mask(&mut self, index: usize, channel: Option<Channel>) {
         if let Some(m) = &self.layers[index].mask {
             let coords = m.surface.tile_coords();
@@ -1820,20 +1823,20 @@ impl Document {
         }
     }
 
-    /// グループでない層の印（層は文書の index か、文書の外の object）。
+    /// グループでないレイヤーの印（レイヤーは文書の index か、文書の外の object）。
     fn mark_layer_object(
         &mut self,
         index: usize,
         object: Option<&Layer>,
         channel: Option<Channel>,
     ) {
-        // 文書の外の層を渡すとき、文書の層が 1 枚も無くても番号は引かない（全部の層を外す交換のとき）
+        // 文書の外のレイヤーを渡すとき、文書のレイヤーが 1 枚も無くても番号は引かない（全部のレイヤーを外す交換のとき）
         let layer = match object {
             Some(layer) => layer,
             None => &self.layers[index],
         };
         if layer.kind != LayerKind::Raster {
-            // 塗りつぶし・調整は画布全体に効く。値が今消えたかもしれないので、今の中身ではなく全タイルを
+            // 塗りつぶし・調整はキャンバス全体に効く。値が今消えたかもしれないので、今の中身ではなく全タイルを
             let tiles: Vec<TileCoord> = self.canvas_tiles().collect();
             for c in self.mark_targets(channel) {
                 for coord in &tiles {
@@ -1849,7 +1852,7 @@ impl Document {
         let mut marks = Vec::new();
         for c in layer.surface_channels() {
             if channel.is_none() || channel == Some(c) {
-                // フィルターのある層は、ぼかしが透明へ広げる分のタイルにも出力がある
+                // フィルターのあるレイヤーは、ぼかしが透明へ広げる分のタイルにも出力がある
                 let expansion: u32 = layer
                     .active_chain(c)
                     .iter()
@@ -1858,7 +1861,7 @@ impl Document {
                     .sum();
                 let m = expansion.div_ceil(self.tile_size);
                 let coords = layer.surface(c).expect("面").tile_coords();
-                // 継ぎ目をまたぐぼかしは、相手の島の側へも広げる
+                // 継ぎ目をまたぐぼかしは、相手のアイランドの側へも広げる
                 if expansion > 0 {
                     let chain = layer.active_chain(c);
                     let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
@@ -1884,7 +1887,7 @@ impl Document {
         }
     }
 
-    /// 層（文書の中か、段の持つ層）を変わったことにする。
+    /// レイヤー（文書の中か、段の持つレイヤー）を変わったことにする。
     fn mark_layer_anywhere(&mut self, id: LayerId, spare: &[Layer], channel: Option<Channel>) {
         if let Some(i) = self.layer_index(id) {
             self.mark_layer(i, channel);
@@ -1912,7 +1915,7 @@ impl Document {
         }
     }
 
-    /// クリッピングの印のある層（兄弟の一番下も）を全部変わったことにする: 並べ替え・表示などで下地が変わると、見える所が変わる。
+    /// クリッピングの印のあるレイヤー（兄弟の一番下も）を全部変わったことにする: 並べ替え・表示などで下地が変わると、見える所が変わる。
     /// 下地がグループなら、その中身も（クリッピングの組の有無で通過と分離が入れ替わる）。
     fn mark_clipped_layers(&mut self) {
         for i in 0..self.layers.len() {
@@ -1923,8 +1926,8 @@ impl Document {
         self.mark_clip_bases();
     }
 
-    /// クリッピングの印のある層の下地（同じグループのすぐ下の、印の無い兄弟）のうち、グループのものの中身に印を付ける。
-    /// グループはクリッピングの組を持つと通過でも分離で合成するので、組の層が出入りする（印・表示・チャンネル・面・並び）と
+    /// クリッピングの印のあるレイヤーの下地（同じグループのすぐ下の、印の無い兄弟）のうち、グループのものの中身に印を付ける。
+    /// グループはクリッピングの組を持つと通過でも分離で合成するので、組のレイヤーが出入りする（印・表示・チャンネル・面・並び）と
     /// 中身の合成が変わり得る（C# はここを記録しない）。
     fn mark_clip_bases(&mut self) {
         let mut bases = Vec::new();
@@ -1948,7 +1951,7 @@ impl Document {
         }
     }
 
-    /// マスクのタイルは、層が覆うどのチャンネルの合成も変え得る（C# の MarkMaskTileChanged と CoveredChannels）。
+    /// マスクのタイルは、レイヤーが覆うどのチャンネルの合成も変え得る（C# の MarkMaskTileChanged と CoveredChannels）。
     fn mark_mask_tile(&mut self, index: usize, coord: TileCoord) {
         let channels = self.covered_channels(index);
         for &c in &channels {
@@ -1969,7 +1972,7 @@ impl Document {
         }
     }
 
-    /// 層が合成を変え得るチャンネル: 塗りつぶしは値のあるもの、調整は有効なもの、グループは全部、ラスターは面のあるもの。
+    /// レイヤーが合成を変え得るチャンネル: 塗りつぶしは値のあるもの、調整は有効なもの、グループは全部、ラスターは面のあるもの。
     fn covered_channels(&self, index: usize) -> Vec<Channel> {
         let l = &self.layers[index];
         match l.kind {
@@ -2031,7 +2034,7 @@ impl Document {
         Ok(())
     }
 
-    /// 層の元画素（チャンネルの面かマスク）のタイルが変わった。元画素の変化の記録（評価のキャッシュの鍵）と、合成が変わり得るタイル
+    /// レイヤーの元画素（チャンネルの面かマスク）のタイルが変わった。元画素の変化の記録（評価のキャッシュの鍵）と、合成が変わり得るタイル
     /// （フィルターがあれば、その広がりの分も）を記録する。
     fn mark_target_tile(&mut self, index: usize, target: Target, coord: TileCoord) {
         self.note_source(index, target, coord);
@@ -2053,7 +2056,7 @@ impl Document {
         }
     }
 
-    /// タイルの変化が出力へ届く範囲（半径 halo の分のタイル。全域の段があれば画布全体）を、チャンネルに記録する。
+    /// タイルの変化が出力へ届く範囲（半径 halo の分のタイル。全域の段があればキャンバス全体）を、チャンネルに記録する。
     fn mark_reach(&mut self, channels: &[Channel], coord: TileCoord, halo: u32, global: bool) {
         let (cols, rows) = (
             self.width.div_ceil(self.tile_size),
@@ -2093,7 +2096,7 @@ impl Document {
         self.begin_stroke_in(layer, Channel::Color, brush)
     }
 
-    /// チャンネルを選んでストロークを始める（ラスターの層だけ。面が無ければ作って有効にする。無効のチャンネルは断る）。
+    /// チャンネルを選んでストロークを始める（ラスターレイヤーだけ。面が無ければ作って有効にする。無効のチャンネルは断る）。
     pub fn begin_stroke_in(
         &mut self,
         layer: LayerId,
@@ -2125,8 +2128,8 @@ impl Document {
         brush.validate()?;
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
-        // 型とロックの順は C# の BeginStroke と同じ: 塗りつぶしの層だけ型が先で、調整・グループの層はロックが先
-        // （面を取る GetChannel が型で断るのは、ロックの検査のあと）。そのほかの入口は、ラスターの層かどうかが先
+        // 型とロックの順は C# の BeginStroke と同じ: 塗りつぶしレイヤーだけ型が先で、調整・グループのレイヤーはロックが先
+        // （面を取る GetChannel が型で断るのは、ロックの検査のあと）。そのほかの入口は、ラスターレイヤーかどうかが先
         if self.layers[index].kind == LayerKind::Fill {
             self.ensure_raster(index)?;
         }
@@ -2161,8 +2164,8 @@ impl Document {
         Ok(Stroke { id })
     }
 
-    /// 層のマスクへのストロークを始める: 塗ると隠し、消しゴムで見せる。ブラシの色は使わない（マスクは隠す量だけを持つ）。
-    /// 不透明度・流量・硬さ・筆圧はふつうどおり。色の変化とステンシルの色は効かない（C# の ForChannel(null)）。どの種類の層
+    /// レイヤーのマスクへのストロークを始める: 塗ると隠し、消しゴムで見せる。ブラシの色は使わない（マスクは隠す量だけを持つ）。
+    /// 不透明度・流量・硬さ・筆圧はふつうどおり。色の変化とステンシルの色は効かない（C# の ForChannel(null)）。どの種類のレイヤー
     /// （グループも）のマスクにも描ける。
     pub fn begin_mask_stroke(
         &mut self,
@@ -2181,9 +2184,9 @@ impl Document {
         self.ensure_loadable()?;
         brush.validate()?;
         let index = self.index_of(layer)?;
-        // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無い層は、ロックの有無に関わらず同じ理由で断る
+        // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無いレイヤーは、ロックの有無に関わらず同じ理由で断る
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         self.refuse_lock(layer, LayerLocks::ALL)?;
         let mut brush = brush.without_color_dynamics();
@@ -2436,7 +2439,7 @@ impl Document {
         }
     }
 
-    /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別の層へ書く
+    /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別のレイヤーへ書く
     /// 多チャンネルのストロークのときは None）。
     fn memo_request(&self, channel: Channel) -> Option<composite::MemoRequest<'_>> {
         let a = self.active.as_ref()?;
@@ -2495,7 +2498,7 @@ impl Document {
         self.journal.memo.set_enabled(on);
     }
 
-    /// 散らばったタイルの合成（straight RGBA8、行は下から上。画布の外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
+    /// 散らばったタイルの合成（straight RGBA8、行は下から上。キャンバスの外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
     /// 1 回で組み、タイルをワーカーへ分けるので、表示のように何枚も作り直すときの 1 枚あたりの時間が短い（比は文書と負荷による。計測の台
     /// `comp2d_bench --only call` の「1 枚ずつ ÷ 束」）。
     /// 効果の出力は、組のタイルを含むブロックだけを評価する。画素は `composite_into` と同じバイト。
@@ -2607,8 +2610,8 @@ impl Document {
             .collect())
     }
 
-    /// 層 `id` より下の合成（その層と上の層は入れない。調整の層の入力の見積りに使う）。straight RGBA8、行は下から上。
-    /// 層の並びの前の部分だけで合成するので、入れ子の層は、親のグループがその層より前にある並びの範囲で合成する。
+    /// レイヤー `id` より下の合成（そのレイヤーと上のレイヤーは入れない。調整レイヤーの入力の見積りに使う）。straight RGBA8、行は下から上。
+    /// レイヤーの並びの前の部分だけで合成するので、入れ子のレイヤーは、親のグループがそのレイヤーより前にある並びの範囲で合成する。
     pub fn composite_below(
         &self,
         id: LayerId,
@@ -2628,7 +2631,7 @@ impl Document {
         Ok(out)
     }
 
-    /// 1 画素の合成（参照の式。画素ごとに層を引くので遅い。試験・スポイト向け）。
+    /// 1 画素の合成（参照の式。画素ごとにレイヤーを引くので遅い。試験・スポイト向け）。
     pub fn composite_pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
             return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
@@ -2663,8 +2666,8 @@ impl Document {
     }
 
     /// since（`change_serial` の値）の後に合成が変わり得るタイル（Y、次に X の順）。画素の変化（ストローク・取消・Undo・Redo・
-    /// 読み込み・マスク）と、層の並び・入れ子・表示・不透明度・モード・クリッピング・チャンネル・追加・削除のときはその層の持つ
-    /// タイル全部（塗りつぶし・調整は画布全体、グループは中身）。元に戻った所を含むことがある。since がこの文書の番号でなければ
+    /// 読み込み・マスク）と、レイヤーの並び・入れ子・表示・不透明度・モード・クリッピング・チャンネル・追加・削除のときはそのレイヤーの持つ
+    /// タイル全部（塗りつぶし・調整はキャンバス全体、グループは中身）。元に戻った所を含むことがある。since がこの文書の番号でなければ
     /// None（全部を描き直す）。
     pub fn changed_tiles(&self, channel: Channel, since: u64) -> Option<Vec<TileCoord>> {
         if since > self.journal.serial {

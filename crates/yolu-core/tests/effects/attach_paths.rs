@@ -1,4 +1,4 @@
-//! 層のパス: 描いた結果とパスは 1 回の Undo で入れ替わる。予算・検査・取消で断ったら何も変えない。パスの層に手で描かない。
+//! レイヤーのパス: 描いた結果とパスは 1 回の Undo で入れ替わる。予算・検査・取消で断ったら何も変えない。パスレイヤーに手で描かない。
 use crate::attach_support;
 use attach_support::*;
 use std::sync::atomic::AtomicBool;
@@ -108,7 +108,7 @@ fn a_path_and_its_pixels_swap_in_one_undo_step_and_enable_what_it_draws() {
     let layer = doc.add_layer("パス").unwrap();
     let before = state(&doc, layer);
     let steps = doc.undo_count();
-    // 組（Color と Roughness）。Roughness は層で有効でない
+    // 組（Color と Roughness）。Roughness はレイヤーで有効でない
     let path = canvas(Some(pair()));
     doc.set_canvas_path(layer, path.clone()).unwrap();
     assert_eq!(doc.undo_count(), steps + 1);
@@ -220,13 +220,13 @@ fn refusals_keep_the_layer_exactly_as_it_was() {
     bad.brush = brush(0.0);
     let r = doc.set_path(layer, LayerPath::Canvas(bad), drawn.clone());
     check(&mut doc, "ブラシの半径", r);
-    // 層の種類（調整の層には置けない。塗りつぶしの層には置ける: `path_fill_layers.rs`）・チャンネル
+    // レイヤーの種類（調整レイヤーには置けない。塗りつぶしレイヤーには置ける: `path_fill_layers.rs`）・チャンネル
     let (mut other, _) = world();
     let adjust = other
         .add_adjustment_layer("調整", yolu_core::AdjustmentSettings::invert(), None, None)
         .unwrap();
     let r = other.set_path(adjust, LayerPath::Canvas(path.clone()), drawn.clone());
-    assert!(r.is_err(), "調整の層");
+    assert!(r.is_err(), "調整レイヤー");
     let _ = l[3];
     let mut disabled = canvas(None);
     disabled.channel = Channel::Metallic;
@@ -236,7 +236,7 @@ fn refusals_keep_the_layer_exactly_as_it_was() {
         rendered(&disabled),
     );
     check(&mut doc, "有効でないチャンネル（組なし）", r);
-    // 予算: 巻き戻しの写し・層の画素
+    // 予算: 巻き戻しの写し・レイヤーの画素
     doc.set_stroke_budget_bytes(1).unwrap();
     let r = doc.set_path(layer, LayerPath::Canvas(path.clone()), drawn.clone());
     assert_eq!(r, Err(CoreError::StrokeBudgetExceeded));
@@ -325,7 +325,7 @@ fn adding_a_path_layer_is_one_undo_step_and_a_refusal_adds_no_layer() {
     doc.redo().unwrap();
     assert!(doc.layer(id).is_some());
     doc.undo().unwrap();
-    // 画素の予算に収まらなければ、層も作らない
+    // 画素の予算に収まらなければ、レイヤーも作らない
     doc.set_source_budget_bytes(doc.allocated_bytes()).unwrap();
     assert!(doc
         .add_path_layer("入らない", LayerPath::Canvas(path), drawn, None)

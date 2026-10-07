@@ -25,7 +25,7 @@ pub struct SetView<'a> {
     pub doc: Option<&'a Document>,
     /// 読むだけの理由。
     pub read_only: Option<&'a Text>,
-    /// 読むだけのセットの大きさ・層の数（文書を読めなくても、正本の骨組みから分かる）。
+    /// 読むだけのセットの大きさ・レイヤーの数（文書を読めなくても、正本の骨組みから分かる）。
     pub size: (u32, u32),
     pub layer_count: u32,
     /// 開いた・保存したあとに編集した。
@@ -34,7 +34,7 @@ pub struct SetView<'a> {
     pub stem: &'a str,
     /// プロジェクトのセットの数（書き出しのファイル名にセット名を入れるか）。
     pub set_count: usize,
-    /// 層の画素に許すバイト数（PSD の書き出しの予算）。
+    /// レイヤーの画素に許すバイト数（PSD の書き出しの予算）。
     pub source_budget: u64,
 }
 
@@ -128,7 +128,7 @@ pub trait OpHost {
             crate::preview::render(view, args)
         })
     }
-    /// セット（省略は今のセット）で選んでいる層の ID（`$selected`）。選んでいる層が無ければ、理由つきで断る
+    /// セット（省略は今のセット）で選んでいるレイヤーの ID（`$selected`）。選んでいるレイヤーが無ければ、理由つきで断る
     /// （[`crate::refs::no_selection`]）。既定は、選ぶ画面が無いので断る。
     fn selected_layer(&mut self, _set: Option<&str>) -> Result<String, OpError> {
         Err(crate::refs::no_selection(None))
@@ -171,7 +171,7 @@ pub fn execute(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpErro
     execute_in(host, command, None)
 }
 
-/// まとめて当てる実行（CLI の batch など）の中の 1 つの命令を実行する。`created` は、その実行でここまでに作った層・効果
+/// まとめて当てる実行（CLI の batch など）の中の 1 つの命令を実行する。`created` は、その実行でここまでに作ったレイヤー・効果
 /// （`$created:<n>` が指す。返事を [`Created::note`] で覚えさせるのは呼び手）。None なら 1 つだけの命令。
 pub fn execute_in(
     host: &mut dyn OpHost,

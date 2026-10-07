@@ -3,7 +3,7 @@
 //!       [--filled] [--runs N] [--flow F]
 //! 文書は 4096²。決まった点の列（`stroke_support::path`）を毎回新しい文書へ描く。`--threads 1` はそのスレッドの CPU 時間
 //! （ほかの負荷に左右されにくい）、2 以上は壁時計。種類: hard・soft・soft_flow・tip・texture・dual・mix・smear・smudge・blur・air・spray。
-//! 混ぜる・指先・ぼかしは、全タイルが乱数の画素の層の上（それ以外は既定で空の層、`--filled` で乱数の画素の上）。
+//! 混ぜる・指先・ぼかしは、全タイルが乱数の画素のレイヤーの上（それ以外は既定で空のレイヤー、`--filled` で乱数の画素の上）。
 #[path = "stroke_support/mod.rs"]
 mod stroke_support;
 

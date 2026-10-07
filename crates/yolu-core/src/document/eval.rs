@@ -1,10 +1,10 @@
-//! 効果の評価と、評価した出力のキャッシュ（C# の `FilterEngine` の文書側: 設定・入力・元画素から、層の出力を合成が読む形で作る）。
+//! 効果の評価と、評価した出力のキャッシュ（C# の `FilterEngine` の文書側: 設定・入力・元画素から、レイヤーの出力を合成が読む形で作る）。
 //!
 //! - 評価は文書に依らない口（[`crate::filter`]・[`crate::generator`]・[`crate::fill_image`]）を呼ぶだけで、式をここに持たない。
 //! - 作業の単位は、タイルの大きさに揃えたブロック（既定 256 画素四方。結果はブロックの大きさによらない）。評価した出力は
 //!   「評価済みの面」（[`Surface`]）のタイルとして合成に渡し、合成の式は元の画素の面を読むときと同じ。
-//! - キャッシュは派生の表示用（保存の正本にしない）。鍵（[`Stamp`]）は、層の効果の設定そのものの写し・元画素のタイルごとの通し番号
-//!   （ぼかしなどの半径の分だけ広げた窓。正規化は全部）・外から渡した入力の版・Anchor を読む段では変化の記録の通し番号。
+//! - キャッシュは派生の表示用（保存の正本にしない）。鍵（[`Stamp`]）は、レイヤーの効果の設定そのものの写し・元画素のタイルごとの通し番号
+//!   （ぼかしなどの半径の分だけ広げたウィンドウ。正規化は全部）・外から渡した入力の版・Anchor を読む段では変化の記録の通し番号。
 //!   鍵が等しければ出力は等しい。予算を超えたら古いブロックから捨てる。
 //! - 評価の途中で取り消したら、完成したブロックだけがキャッシュに残る（途中の画素は公開しない）。
 
@@ -30,7 +30,7 @@ use crate::layer::LayerId;
 use crate::surface::{Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, LayerKind, Rect, Rgba8, TileCoord};
 
-/// 評価の入力の元: 層のチャンネルの画素（内容）か、層のラスターマスク。
+/// 評価の入力の元: レイヤーのチャンネルの画素（内容）か、レイヤーのラスターマスク。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum SourceKey {
     Channel(Channel),
@@ -83,7 +83,7 @@ impl filter::Source for StridedSource<'_> {
 
 /// 粗い評価の Generator: 粗い画素 (x, y) の値は、元の画素 (x·歩幅, y·歩幅) での値。
 /// 行の評価（`sample_row`）は置き換えず、1 画素ずつ読む: 粗い行の画素は元の行で歩幅ごとに離れていて、元の行を続けて作ってから拾うと
-/// 歩幅の倍の画素を作る（4096²・1 スレッドの `generator_stage_bench` で、歩幅 4 は 3 段の層で 1 画素ずつと同じ程度・ランプの段で 1.4〜2.5 倍、
+/// 歩幅の倍の画素を作る（4096²・1 スレッドの `generator_stage_bench` で、歩幅 4 は 3 段のレイヤーで 1 画素ずつと同じ程度・ランプの段で 1.4〜2.5 倍、
 /// 歩幅 8・16 は 1.6〜6.2 倍遅かった）。
 struct ScaledGenerators<'e> {
     inner: &'e dyn GeneratorInput,
@@ -101,8 +101,8 @@ impl GeneratorInput for ScaledGenerators<'_> {
     }
 }
 
-/// 束縛した Generator に、アイランドごとのばらつきの島の図を渡す（`islands` が None は、島の図を読む段が無い。モデルが無ければ
-/// 段は島の図を待ったまま、予算で断られたら断られたことにする）。ほかの種類の段は何もしない。
+/// 束縛した Generator に、アイランドごとのばらつきのアイランドの図を渡す（`islands` が None は、アイランドの図を読む段が無い。モデルが無ければ
+/// 段はアイランドの図を待ったまま、予算で断られたら断られたことにする）。ほかの種類の段は何もしない。
 fn with_islands<'a>(
     b: BoundGenerator<'a>,
     islands: Option<&Result<Arc<crate::geometry::IslandMap>, generator::Inactive>>,
@@ -174,17 +174,17 @@ pub(crate) struct EffectState {
     pub generation: u64,
     /// 元画素の変化の時計（タイルが変わるたびに進む）。
     pub clock: u64,
-    /// 層の元画素のタイルごとの、最後に変わったときの時計。
+    /// レイヤーの元画素のタイルごとの、最後に変わったときの時計。
     pub source: HashMap<(LayerId, SourceKey), HashMap<TileCoord, u64>>,
-    /// マスクの Anchor を持つ層ごとに、マスクが最後に変わった変化の記録の通し番号。
+    /// マスクの Anchor を持つレイヤーごとに、マスクが最後に変わった変化の記録の通し番号。
     pub mask_serials: HashMap<LayerId, u64>,
-    /// Anchor を読む段の解決の署名（変わったら、読む層を全部変わったことにする）。
+    /// Anchor を読む段の解決の署名（変わったら、読むレイヤーを全部変わったことにする）。
     pub anchor_signature: Vec<AnchorSig>,
     pub cache: Mutex<EvalCache>,
     pub working_budget: u64,
     pub cache_budget: u64,
     pub image_cache_budget: u64,
-    /// モデルの UV の位相が覚える島の図・帯の写しと、それを作る間の作業メモリの予算（`uv_seams`）。
+    /// モデルの UV の位相が覚えるアイランドの図・帯の写しと、それを作る間の作業メモリの予算（`uv_seams`）。
     pub seam_budget: u64,
     pub block_pixels: u32,
 }
@@ -370,7 +370,7 @@ struct AnchorRef {
     read: anchor::ReadMode,
 }
 
-/// 層・チャンネル（またはマスク）の評価の指定。
+/// レイヤー・チャンネル（またはマスク）の評価の指定。
 pub(super) struct Spec {
     layer: usize,
     id: LayerId,
@@ -382,11 +382,11 @@ pub(super) struct Spec {
     reads_anchor: bool,
     /// UV の継ぎ目をまたぐ帯の幅と近傍の段の数（帯の幅 0 はまたがない。`uv_seams`）。
     pub(super) seam: (u32, usize),
-    /// アイランドごとのばらつきの段がある（モデルの UV の島の図を読む）。
+    /// アイランドごとのばらつきの段がある（モデルの UV アイランドの図を読む）。
     reads_islands: bool,
 }
 
-/// 合成が読む評価済みの面（層の番号から）。内容とマスクは別。
+/// 合成が読む評価済みの面（レイヤーの番号から）。内容とマスクは別。
 #[derive(Default)]
 pub(crate) struct EvalSet {
     pub content: HashMap<usize, Surface>,
@@ -396,7 +396,7 @@ pub(crate) struct EvalSet {
 }
 
 impl EvalSet {
-    /// 層 `from` の出力だけを、番号 `to` で持つ写し（面のタイルは共有する）。
+    /// レイヤー `from` の出力だけを、番号 `to` で持つ写し（面のタイルは共有する）。
     pub(crate) fn only(&self, from: usize, to: usize) -> EvalSet {
         let pick = |m: &HashMap<usize, Surface>| m.get(&from).map(|s| (to, s.clone()));
         EvalSet {
@@ -442,7 +442,7 @@ pub(super) fn cancelled(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
     }
 }
 
-/// 評価の途中の読み元: タイルの面（層の画素・マスク）。ディスクから読めないタイルは誤りを覚えて 0 を返す（評価の後に
+/// 評価の途中の読み元: タイルの面（レイヤーの画素・マスク）。ディスクから読めないタイルは誤りを覚えて 0 を返す（評価の後に
 /// `with_env` が誤りを返すので、その出力は使わない）。
 struct SurfaceSource<'a> {
     surface: Option<&'a Surface>,
@@ -483,7 +483,7 @@ impl filter::Source for SurfaceSource<'_> {
     }
 }
 
-/// 塗りつぶしの層のチャンネルの画素（値・グラデーション・投影した画像）。
+/// 塗りつぶしレイヤーのチャンネルの画素（値・グラデーション・投影した画像）。
 struct FillSource<'a> {
     value: Rgba8,
     width: u32,
@@ -773,7 +773,7 @@ impl Document {
 
     // ───────── 元画素の変化の記録 ─────────
 
-    /// 層の元画素（チャンネルの面かマスク）のタイルが変わったことを覚える（評価のキャッシュの鍵）。
+    /// レイヤーの元画素（チャンネルの面かマスク）のタイルが変わったことを覚える（評価のキャッシュの鍵）。
     pub(super) fn note_source(&mut self, index: usize, target: super::Target, coord: TileCoord) {
         let id = self.layers[index].id;
         let key = match target {
@@ -792,8 +792,8 @@ impl Document {
         }
     }
 
-    /// 層のマスクの出力が変わり得ることを覚える。マスクに Anchor があれば、マスクを読む段のあるどの層の出力も変わり得るので、変化の記録の
-    /// 通し番号を進め（読む段のブロックの鍵は通し番号を含む。ホストに画素のタイルが無くても、鍵が変わる）、`changed_tiles` が読む層を
+    /// レイヤーのマスクの出力が変わり得ることを覚える。マスクに Anchor があれば、マスクを読む段のあるどのレイヤーの出力も変わり得るので、変化の記録の
+    /// 通し番号を進め（読む段のブロックの鍵は通し番号を含む。ホストに画素のタイルが無くても、鍵が変わる）、`changed_tiles` が読むレイヤーを
     /// 全部返せるよう、マスクが最後に変わった通し番号を持つ。マスクの画素・有効・反転・濃度・フィルター・付け外し・スマートマスクの
     /// 入れ替えは、どれも `mark_layer`（と画素の変化）を通る。
     pub(super) fn note_mask_output(&mut self, index: usize) {
@@ -831,7 +831,7 @@ impl Document {
         }
     }
 
-    /// 画素の矩形（画布の中）を、半径 margin だけ広げたタイルの範囲に。
+    /// 画素の矩形（キャンバスの中）を、半径 margin だけ広げたタイルの範囲に。
     fn grown_range(&self, r: TileRange, margin_pixels: u32) -> TileRange {
         let (cols, rows) = self.tile_dims();
         let m = margin_pixels.div_ceil(self.tile_size);
@@ -975,7 +975,7 @@ impl Document {
     }
 
     fn stamp(&self, spec: &Spec, range: TileRange) -> Stamp {
-        // 塗りつぶしは面を読まない。ただしパスのある塗りつぶしの層は、パスの画素（層の面）を最後に重ねるので、面の変化を見る
+        // 塗りつぶしは面を読まない。ただしパスのある塗りつぶしレイヤーは、パスの画素（レイヤーの面）を最後に重ねるので、面の変化を見る
         let fill_paths = match spec.key {
             SourceKey::Channel(c) => self.layers[spec.layer].fill_paths_draw(c),
             SourceKey::Mask => false,
@@ -1006,7 +1006,7 @@ impl Document {
             } else {
                 0
             },
-            // Anchor が読む合成は、どの層の変化でも変わり得る。変化の記録の通し番号が同じなら何も変わっていない
+            // Anchor が読む合成は、どのレイヤーの変化でも変わり得る。変化の記録の通し番号が同じなら何も変わっていない
             anchors: if spec.reads_anchor {
                 self.journal.serial + 1
             } else {
@@ -1017,7 +1017,7 @@ impl Document {
 
     // ───────── 評価済みの面の作成（合成が読む） ─────────
 
-    /// 合成のために、プランに出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。
+    /// 合成のために、プランに出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。
     pub(crate) fn evaluate_for_composite(
         &self,
         channel: Channel,
@@ -1051,7 +1051,7 @@ impl Document {
         self.evaluate_entries_in(&stack.plan(), channel, region, cancel)
     }
 
-    /// 計画（段の並び）に出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
+    /// 計画（段の並び）に出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
     /// 出力（そのグループの子の計画）が同じ道を通る。
     pub(super) fn evaluate_entries(
         &self,
@@ -1143,8 +1143,8 @@ impl Document {
         })
     }
 
-    /// 合成のために、プランに出る層の評価した出力を、歩幅 stride で粗く評価して作る（タイルの束のタイルだけ。面は文書の 1/歩幅で、
-    /// キャッシュには入れない）。評価が要る層が無ければ空。
+    /// 合成のために、プランに出るレイヤーの評価した出力を、歩幅 stride で粗く評価して作る（タイルの束のタイルだけ。面は文書の 1/歩幅で、
+    /// キャッシュには入れない）。評価が要るレイヤーが無ければ空。
     pub(crate) fn evaluate_for_composite_coarse(
         &self,
         channel: Channel,
@@ -1195,7 +1195,7 @@ impl Document {
         Ok(set)
     }
 
-    /// 層の出力の面を、歩幅 stride で粗く評価する（coords のタイルだけ）。読み元を歩幅で拾い、ぼかし・シャープの半径を歩幅で割って、
+    /// レイヤーの出力の面を、歩幅 stride で粗く評価する（coords のタイルだけ）。読み元を歩幅で拾い、ぼかし・シャープの半径を歩幅で割って、
     /// 縮めた画像の上で評価する（評価にかかる画素数が 1/歩幅²）。操作中の仮の絵で、離したあとの正確な評価の代わりではない。面は幅・高さが
     /// 文書の 1/歩幅、タイルの一辺が文書のタイルの 1/歩幅で、タイルの座標は文書と同じ。
     fn coarse_output_surface(
@@ -1373,9 +1373,9 @@ impl Document {
         Ok(out)
     }
 
-    /// 合成のためでなく、層の並びの写し（結合の準備のために並べ直した層）の、評価した出力を作る。鍵は `layers` の番号で、
-    /// `doc_index[k]` は `layers[k]` のこの文書での番号（評価は文書の層の設定・Anchor・入力・キャッシュで行うので、写しの番号ではなく
-    /// 文書の番号で引く）。`layers` を下から上へ並べた計画に出る層だけ、全面を評価する。評価が要る層が無ければ空。
+    /// 合成のためでなく、レイヤーの並びの写し（結合の準備のために並べ直したレイヤー）の、評価した出力を作る。鍵は `layers` の番号で、
+    /// `doc_index[k]` は `layers[k]` のこの文書での番号（評価は文書のレイヤーの設定・Anchor・入力・キャッシュで行うので、写しの番号ではなく
+    /// 文書の番号で引く）。`layers` を下から上へ並べた計画に出るレイヤーだけ、全面を評価する。評価が要るレイヤーが無ければ空。
     pub(crate) fn evaluate_slice(
         &self,
         layers: &[crate::layer::Layer],
@@ -1419,7 +1419,7 @@ impl Document {
         Ok(set)
     }
 
-    /// 層の（フィルター・投影を通した）出力の面を、タイルの範囲だけ。評価済みのブロックを使い回し、足りないブロックは作業メモリの
+    /// レイヤーの（フィルター・投影を通した）出力の面を、タイルの範囲だけ。評価済みのブロックを使い回し、足りないブロックは作業メモリの
     /// 予算に収まる数ずつ並べて評価する（結果は並びによらない）。
     pub(super) fn output_surface(
         &self,
@@ -1636,7 +1636,7 @@ impl Document {
         }
     }
 
-    /// 層のそのタイルの出力（評価した出力か、保存した画素。無ければ None）。Anchor の合成が読む。
+    /// レイヤーのそのタイルの出力（評価した出力か、保存した画素。無ければ None）。Anchor の合成が読む。
     fn layer_output_tile(
         &self,
         index: usize,
@@ -1661,7 +1661,7 @@ impl Document {
         })
     }
 
-    /// 層のマスクのそのタイルの出力（フィルターを通した隠す量。無ければ None）。
+    /// レイヤーのマスクのそのタイルの出力（フィルターを通した隠す量。無ければ None）。
     fn mask_output_tile(
         &self,
         index: usize,
@@ -1683,7 +1683,7 @@ impl Document {
         Ok(m.surface.tile(coord).cloned())
     }
 
-    /// 層の評価済みの出力の画素（フィルター・投影を通した、マスク・不透明度・合成の前の値）。
+    /// レイヤーの評価済みの出力の画素（フィルター・投影を通した、マスク・不透明度・合成の前の値）。
     pub fn layer_output_pixel(
         &self,
         id: LayerId,
@@ -1719,7 +1719,7 @@ impl Document {
             return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         let ts = self.tile_size;
         self.mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
@@ -1764,7 +1764,7 @@ impl Document {
                     if f.image.is_some() || f.decal {
                         return true;
                     }
-                    // パスの画素（層の面）のあるタイルも
+                    // パスの画素（レイヤーの面）のあるタイルも
                     return f.gradient.is_some()
                         || f.value != Rgba8::TRANSPARENT
                         || (layer.fill_paths_draw(c) && near(layer.surface(c), 0));
@@ -1797,7 +1797,7 @@ impl Document {
         if covered.is_empty() {
             return Ok(coords.into_iter().map(|c| (c, None)).collect());
         }
-        // 評価する画素の矩形: 評価するタイルを含む最小の矩形（画布の中）
+        // 評価する画素の矩形: 評価するタイルを含む最小の矩形（キャンバスの中）
         let bx0 = covered.iter().map(|c| c.x).min().unwrap_or(0);
         let by0 = covered.iter().map(|c| c.y).min().unwrap_or(0);
         let bx1 = covered.iter().map(|c| c.x).max().unwrap_or(0) + 1;
@@ -1832,7 +1832,7 @@ impl Document {
             filter::evaluate(env.source, env.value_type, env.stages, region, &options)
                 .map_err(map_filter_error)
         })?;
-        // 塗りつぶしの層のパス: 塗りつぶしと効果のスタックの結果の上に、パスの画素（層の面）を重ねる
+        // 塗りつぶしレイヤーのパス: 塗りつぶしと効果のスタックの結果の上に、パスの画素（レイヤーの面）を重ねる
         let mut output = output;
         if let SourceKey::Channel(c) = spec.key {
             let layer = &self.layers[spec.layer];
@@ -1992,7 +1992,7 @@ impl Document {
             });
         }
 
-        // アイランドごとのばらつきの段が読む島の図（文書の大きさ。段が無ければ引かない）
+        // アイランドごとのばらつきの段が読むアイランドの図（文書の大きさ。段が無ければ引かない）
         let islands = cfg
             .chain
             .iter()
@@ -2223,7 +2223,7 @@ impl Document {
 
     // ───────── Anchor ─────────
 
-    /// Anchor が読むタイルの並び（範囲のタイルの、層なら合成したチャンネルの結果・マスクなら評価した隠す量）。
+    /// Anchor が読むタイルの並び（範囲のタイルの、レイヤーなら合成したチャンネルの結果・マスクなら評価した隠す量）。
     fn anchor_grid(
         &self,
         r: &AnchorRef,
@@ -2232,7 +2232,7 @@ impl Document {
     ) -> Result<TileGrid, CoreError> {
         let host = self.layer_index(r.host).ok_or(CoreError::LayerNotFound)?;
         let coords: Vec<TileCoord> = range.iter().collect();
-        // タイルごとに独立に合成する（結果は並びによらない）。下の層の評価済みのブロックは、キャッシュを通して共有する
+        // タイルごとに独立に合成する（結果は並びによらない）。下のレイヤーの評価済みのブロックは、キャッシュを通して共有する
         let tiles = coords
             .par_iter()
             .map(|&coord| -> Result<Option<Arc<Vec<u8>>>, CoreError> {
@@ -2264,7 +2264,7 @@ impl Document {
         })
     }
 
-    /// 層の Anchor のタイル: その層までのスタックを、その層より上が無いものとして合成した結果（全部透明なら None）。
+    /// レイヤーの Anchor のタイル: そのレイヤーまでのスタックを、そのレイヤーより上が無いものとして合成した結果（全部透明なら None）。
     fn anchor_layer_tile(
         &self,
         host: usize,
@@ -2273,7 +2273,7 @@ impl Document {
         cancel: Option<&AtomicBool>,
     ) -> Result<Option<Arc<Vec<u8>>>, CoreError> {
         let key = (self.layers[host].id, channel, coord);
-        // 変化の記録の通し番号（どの層のどの変化でも進む）と世代が同じなら、合成は同じ
+        // 変化の記録の通し番号（どのレイヤーのどの変化でも進む）と世代が同じなら、合成は同じ
         let stamp = (self.journal.serial, self.effects.generation);
         {
             let mut c = self.cache();
@@ -2289,16 +2289,16 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
         let dims = (self.width, self.height);
-        // 合成が読む層は、host とそれより下（host の下の兄弟、祖先の下の兄弟、host がグループなら中身）だけで、どれも番号が host 以下
+        // 合成が読むレイヤーは、host とそれより下（host の下の兄弟、祖先の下の兄弟、host がグループなら中身）だけで、どれも番号が host 以下
         // （グループは中身の上に並ぶ）。host より上の兄弟は読まない: 評価すると、それが host の Anchor を読むときに host の Anchor へ戻って
-        // 終わらない。祖先のグループは画素が要らないので、読まれない層と同じ Group の入れ物にする
+        // 終わらない。祖先のグループは画素が要らないので、読まれないレイヤーと同じ Group の入れ物にする
         let position: HashMap<LayerId, usize> = self
             .layers
             .iter()
             .enumerate()
             .map(|(i, l)| (l.id, i))
             .collect();
-        // 層ごとの入力（読まれる層だけ画素を用意する）
+        // レイヤーごとの入力（読まれるレイヤーだけ画素を用意する）
         let mut views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
         let mut mask_views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
         for (i, l) in self.layers.iter().enumerate() {
@@ -2349,7 +2349,7 @@ impl Document {
             .enumerate()
             .map(|(i, l)| {
                 let content = if i > host {
-                    anchor::Content::Group // 読まれない層（host より上）と、画素の要らない祖先のグループ
+                    anchor::Content::Group // 読まれないレイヤー（host より上）と、画素の要らない祖先のグループ
                 } else {
                     match l.kind {
                         LayerKind::Group => anchor::Content::Group,
@@ -2444,7 +2444,7 @@ impl Document {
 
     // ───────── Anchor を読む段の解決の見張りと、変化の記録 ─────────
 
-    /// Anchor を読む段の解決（読む Anchor がどの層・置き場か、使えるか）の署名。
+    /// Anchor を読む段の解決（読む Anchor がどのレイヤー・置き場か、使えるか）の署名。
     fn anchor_signature(&self) -> Vec<AnchorSig> {
         let points = self.anchor_points();
         let mut v = Vec::new();
@@ -2492,7 +2492,7 @@ impl Document {
         })
     }
 
-    /// 編集（Undo・Redo を含む）の後に: Anchor を読む段の解決が変わっていれば、読む層を全部変わったことにする
+    /// 編集（Undo・Redo を含む）の後に: Anchor を読む段の解決が変わっていれば、読むレイヤーを全部変わったことにする
     /// （Anchor を置いた・外した・動かした・参照を選び直した）。値の変化はタイルごとに記録されている。
     pub(super) fn refresh_anchor_readers(&mut self) {
         let now = self.anchor_signature();
@@ -2518,7 +2518,7 @@ impl Document {
         }
     }
 
-    /// 変化したタイルを、Anchor を読む段の出力へ広げる（読む Anchor が変わると、読む層の出力も、段より後のぼかしなどの半径だけ
+    /// 変化したタイルを、Anchor を読む段の出力へ広げる（読む Anchor が変わると、読むレイヤーの出力も、段より後のぼかしなどの半径だけ
     /// 広がって変わる）。不動点まで回す。sets はチャンネルの番号ごとの変わったタイル。
     pub(super) fn close_over_anchor_readers(
         &self,
@@ -2528,16 +2528,16 @@ impl Document {
         let points = self.anchor_points();
         let (cols, rows) = self.tile_dims();
         let all: Vec<TileCoord> = self.whole_range().iter().collect();
-        // (読む層の番号, 影響するチャンネル, 読む元, 段より後の半径)
+        // (読むレイヤーの番号, 影響するチャンネル, 読む元, 段より後の半径)
         struct Reader {
             channels: Vec<Channel>,
             source: Source,
             halo: u32,
             /// 段より後の近傍の段が UV の継ぎ目をまたぐときの帯の幅と段の数（`uv_seams`）。
             seam: (u32, usize),
-            /// 段より後に全域の段（正規化など）がある: 読む Anchor の 1 タイルの変化が、読む層の全タイルの出力を変える。
+            /// 段より後に全域の段（正規化など）がある: 読む Anchor の 1 タイルの変化が、読むレイヤーの全タイルの出力を変える。
             global: bool,
-            /// マスクのスタックの段なら、そのマスクを持つ層（読む元が変わると、そのマスクの出力が変わる）。
+            /// マスクのスタックの段なら、そのマスクを持つレイヤー（読む元が変わると、そのマスクの出力が変わる）。
             mask_of: Option<LayerId>,
         }
         enum Source {
@@ -2586,7 +2586,7 @@ impl Document {
                 }
             }
         }
-        // 読む元が変わって出力が変わるマスク（マスクのスタックが Anchor を読む。そのマスクの Anchor を読む層も変わる）
+        // 読む元が変わって出力が変わるマスク（マスクのスタックが Anchor を読む。そのマスクの Anchor を読むレイヤーも変わる）
         let mut dirty_masks = std::collections::HashSet::new();
         for _ in 0..=2 * readers.len() {
             let mut grew = false;
@@ -2647,7 +2647,7 @@ impl Document {
 
     // ───────── 状態の説明 ─────────
 
-    /// Generator の設定が今は使えない（入力のまま通す・値を見せる）理由。使えるなら None。読む層は reader の番号。
+    /// Generator の設定が今は使えない（入力のまま通す・値を見せる）理由。使えるなら None。読むレイヤーは reader の番号。
     pub(super) fn generator_reason(
         &self,
         g: &generator::Settings,
@@ -2703,7 +2703,7 @@ impl Document {
                     Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
                 }
             }
-            // アイランドごとのばらつき: 島の図を引いて（評価と同じ。覚えていればそれ、断ったままなら作り直さずに断る）使えるかを見る
+            // アイランドごとのばらつき: アイランドの図を引いて（評価と同じ。覚えていればそれ、断ったままなら作り直さずに断る）使えるかを見る
             Ok(b) if b.inactive() == Some(&generator::Inactive::NoModel) => (
                 with_islands(b, Some(&self.island_map()))
                     .inactive()
@@ -2719,7 +2719,7 @@ impl Document {
         }
     }
 
-    /// アイランドごとのばらつきが読む、文書の大きさの島の図（モデルのこのテクスチャセットの UV の位相から、島の図・帯の写しの予算
+    /// アイランドごとのばらつきが読む、文書の大きさのアイランドの図（モデルのこのテクスチャセットの UV の位相から、アイランドの図・帯の写しの予算
     /// `seam_budget` の中で作る。覚えていればそれ）。モデルが無い・予算に収まらないときは、その理由。
     fn island_map(&self) -> Result<Arc<crate::geometry::IslandMap>, generator::Inactive> {
         let topology = self
@@ -2728,13 +2728,13 @@ impl Document {
             .topology
             .as_ref()
             .ok_or(generator::Inactive::NoModel)?;
-        // 文書の辺は島の図の辺の上限（8192）の中なので、大きさの範囲で断られることは無い。断るのは作業予算だけ
+        // 文書の辺はアイランドの図の辺の上限（8192）の中なので、大きさの範囲で断られることは無い。断るのは作業予算だけ
         topology
             .island_map_within(self.width, self.height, self.effects.seam_budget)
             .map_err(|_| generator::Inactive::IslandMap)
     }
 
-    /// 画像の段の投影のサンプラー（塗りつぶしの層の画像と同じ入力: 文書の大きさ・位置と向きのマップ（最新のものだけ）・モデルのルート）。
+    /// 画像の段の投影のサンプラー（塗りつぶしレイヤーの画像と同じ入力: 文書の大きさ・位置と向きのマップ（最新のものだけ）・モデルのルート）。
     fn image_sampler<'s>(
         &'s self,
         projection: &Projection,
@@ -2749,7 +2749,7 @@ impl Document {
             height: self.height,
             image: Some(chain),
             shape: None,
-            // 塗りつぶしの画像の既定と同じく異方性で読む（同じ画像・同じ投影の塗りつぶしの層と同じ画素。段ごとの切り替えは持たない）
+            // 塗りつぶしの画像の既定と同じく異方性で読む（同じ画像・同じ投影の塗りつぶしレイヤーと同じ画素。段ごとの切り替えは持たない）
             anisotropic: true,
             shape_anisotropic: false,
             fallback: Rgba8::TRANSPARENT,
@@ -2836,7 +2836,7 @@ fn collect_layers(plan: &[Entry], out: &mut Vec<usize>) {
     }
 }
 
-/// 評価した画素（`region` の straight RGBA8、行は下から）の上に、面の画素を「通常」で重ねる（塗りつぶしの層のパス。
+/// 評価した画素（`region` の straight RGBA8、行は下から）の上に、面の画素を「通常」で重ねる（塗りつぶしレイヤーのパス。
 /// `src · a + dst · da · (1 − a)` を 8 bit に丸める。パスの作業面へリボンを重ねるのと同じ式）。
 fn over_surface(output: &mut [u8], region: Rect, surface: &Surface) -> Result<(), CoreError> {
     let w = region.width as usize;

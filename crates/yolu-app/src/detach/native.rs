@@ -1,8 +1,8 @@
-//! Windows: 外の窓の OS の窓（HWND）を見つけ、主の窓を持ち主にする。
+//! Windows: 別ウィンドウの OS のウィンドウ（HWND）を見つけ、メインウィンドウを持ち主にする。
 //!
-//! eframe は immediate の viewport の窓のハンドルをアプリへ渡さないので、画面のスレッドの最上位の窓のうち、内側の矩形（画素）が viewport の
-//! 内側の矩形と合う窓を探す（winit の窓は、どれも作ったスレッドの窓）。持ち主にすると、外の窓は主の窓より前に留まり、主の窓の最小化で
-//! 一緒に隠れる（タスクバーには出さない: `ViewportBuilder::with_taskbar(false)`）。同じ矩形に重なった窓が複数あるときは、窓の題名で
+//! eframe は immediate の viewport のウィンドウのハンドルをアプリへ渡さないので、画面のスレッドの最上位のウィンドウのうち、内側の矩形（画素）が viewport の
+//! 内側の矩形と合うウィンドウを探す（winit のウィンドウは、どれも作ったスレッドのウィンドウ）。持ち主にすると、別ウィンドウはメインウィンドウより前に留まり、メインウィンドウの最小化で
+//! 一緒に隠れる（タスクバーには出さない: `ViewportBuilder::with_taskbar(false)`）。同じ矩形に重なったウィンドウが複数あるときは、ウィンドウの題名で
 //! 1 つに決める（決まらなければ繋がず、次のフレームで探し直す。取り違えると、ほかのウィンドウのペンの点を受けてしまう）。
 
 use windows::core::BOOL;
@@ -22,13 +22,13 @@ const TOLERANCE: i32 = 2;
 struct Search {
     client: PxRect,
     skip: Vec<isize>,
-    /// 内側の矩形が合った窓（列挙の順）と、その題名。
+    /// 内側の矩形が合ったウィンドウ（列挙の順）と、その題名。
     found: Vec<(isize, String)>,
 }
 
-/// 窓の題名（読めなければ空）。
+/// ウィンドウの題名（読めなければ空）。
 fn window_title(hwnd: HWND) -> String {
-    // SAFETY: この画面のスレッドが作った窓のハンドル。読む長さは、返った長さの中。
+    // SAFETY: この画面のスレッドが作ったウィンドウのハンドル。読む長さは、返った長さの中。
     unsafe {
         let len = GetWindowTextLengthW(hwnd);
         if len <= 0 {
@@ -67,7 +67,7 @@ unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
     BOOL(1)
 }
 
-/// 画面のスレッドの見えている最上位の窓のうち、内側の矩形（画素）が `client` と合う窓（`skip` の窓を除く）。合う窓が複数あれば、題名が
+/// 画面のスレッドの見えている最上位のウィンドウのうち、内側の矩形（画素）が `client` と合うウィンドウ（`skip` のウィンドウを除く）。合うウィンドウが複数あれば、題名が
 /// `title` と同じ 1 つ（`detach::pick_window`）。
 pub fn find_window(client: PxRect, skip: &[isize], title: &str) -> Option<isize> {
     let mut search = Search {
@@ -86,9 +86,9 @@ pub fn find_window(client: PxRect, skip: &[isize], title: &str) -> Option<isize>
     super::pick_window(&search.found, title)
 }
 
-/// 外の窓の持ち主を主の窓にする。
+/// 別ウィンドウの持ち主をメインウィンドウにする。
 pub fn set_owner(hwnd: isize, owner: isize) {
-    // SAFETY: 2 つとも、この画面のスレッドが作った窓のハンドル。持ち主の付け替えは窓のプロシージャに触れない。
+    // SAFETY: 2 つとも、この画面のスレッドが作ったウィンドウのハンドル。持ち主の付け替えはウィンドウのプロシージャに触れない。
     unsafe {
         SetWindowLongPtrW(HWND(hwnd as _), GWLP_HWNDPARENT, owner);
     }

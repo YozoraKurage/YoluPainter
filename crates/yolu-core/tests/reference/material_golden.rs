@@ -8,7 +8,7 @@ use yolu_core::{
     material_triangles::PixelTriangle,
     *,
 };
-/// 画布の場面（tools/csharp-golden/MaterialGolden.cs の Scenes と同じ）。mat は画布がタイルの整数倍、edge は端が欠けたタイルに
+/// キャンバスの場面（tools/csharp-golden/MaterialGolden.cs の Scenes と同じ）。mat はキャンバスがタイルの整数倍、edge は端が欠けたタイルに
 /// 画素と三角形が掛かる。
 struct Scene {
     name: &'static str,
@@ -164,7 +164,7 @@ fn run(sc: &Scene, mode: u32, v: u32) -> Vec<u8> {
         f.add(&mut d, &[triangles[2]]).unwrap();
         f.commit(&mut d).unwrap();
     } else {
-        // 画布ぴったりの四角を 2 回に分けて（端が欠けたタイルも画布の中が全部覆われた印になる）
+        // キャンバスぴったりの四角を 2 回に分けて（端が欠けたタイルもキャンバスの中が全部覆われた印になる）
         let (w, h) = (sc.w as f64, sc.h as f64);
         let mut f = d
             .begin_material_triangle_fill(l, &material, 0.63, erase)
@@ -352,7 +352,7 @@ fn golden_covers_exactly_the_documented_cases() {
     assert_eq!(expected.len(), g.len());
 }
 /// ロックの場面の数（MaterialGolden.cs の LockDoc の lockCase）: 0 なし・1 透明部分・2 画像・3 すべて・4 位置（塗りは通る）、
-/// 5〜7 は層を 1 つだけ含むグループに 透明部分・画像・すべて。
+/// 5〜7 はレイヤーを 1 つだけ含むグループに 透明部分・画像・すべて。
 const LOCK_CASES: u32 = 8;
 const LOCK_BITS: [LayerLocks; 8] = [
     LayerLocks::NONE,
@@ -364,7 +364,7 @@ const LOCK_BITS: [LayerLocks; 8] = [
     LayerLocks::PIXELS,
     LayerLocks::ALL,
 ];
-/// ロックの場面（edge の画布）。層は 6 チャンネルとも画素あり。透明な画素はチャンネルごとに違う（アルファの式にチャンネル番号が入る）。
+/// ロックの場面（edge のキャンバス）。レイヤーは 6 チャンネルとも画素あり。透明な画素はチャンネルごとに違う（アルファの式にチャンネル番号が入る）。
 /// off は 2 つのチャンネルを無効にしておく。selected は文書の選択範囲（楕円）を立てる。
 fn lock_doc(
     lock_case: u32,
@@ -419,7 +419,7 @@ fn lock_doc(
     d.clear_history().unwrap();
     (d, l, group, sc)
 }
-/// 層の全チャンネル（有効か・面があるか・画素）か、マスクの隠す量だけ（MaterialGolden.cs の LockState）。
+/// レイヤーの全チャンネル（有効か・面があるか・画素）か、マスクの隠す量だけ（MaterialGolden.cs の LockState）。
 fn lock_state(out: &mut Vec<u8>, d: &Document, l: LayerId, mask_only: bool) {
     let layer = d.layer(l).unwrap();
     if mask_only {
@@ -438,7 +438,7 @@ fn lock_state(out: &mut Vec<u8>, d: &Document, l: LayerId, mask_only: bool) {
         }
     }
 }
-/// 書いた結果の先頭: 0 通った・1 ロックで断った（層・持ち主の並びの位置とロック）・2 そのほかの拒否。
+/// 書いた結果の先頭: 0 通った・1 ロックで断った（レイヤー・持ち主の並びの位置とロック）・2 そのほかの拒否。
 fn lock_outcome(out: &mut Vec<u8>, d: &Document, result: Result<(), CoreError>) -> bool {
     match result {
         Ok(()) => {
@@ -478,7 +478,7 @@ fn lock_after(out: &mut Vec<u8>, d: &mut Document, l: LayerId, ok: bool, mask_on
         flags(out, d);
     }
 }
-/// 層へ書く入口（ピクセルのチャンネルへ）。MaterialGolden.cs の RunLock・RunLockKind が呼ぶ書き込みと同じ。
+/// レイヤーへ書く入口（ピクセルのチャンネルへ）。MaterialGolden.cs の RunLock・RunLockKind が呼ぶ書き込みと同じ。
 #[derive(Clone, Copy)]
 enum PixelWrite {
     Stroke,
@@ -491,7 +491,7 @@ enum PixelWrite {
     Gradient,
     Triangles,
 }
-/// 層のマスクへ書く入口。
+/// レイヤーのマスクへ書く入口。
 #[derive(Clone, Copy)]
 enum MaskWrite {
     Gradient,
@@ -637,7 +637,7 @@ fn write_mask(
     }
     Ok(())
 }
-/// ロックを立てた層への書き込み（MaterialGolden.cs の RunLock）: kind 0 マテリアルのストローク・1 範囲の塗り・2 グラデーション・
+/// ロックを立てたレイヤーへの書き込み（MaterialGolden.cs の RunLock）: kind 0 マテリアルのストローク・1 範囲の塗り・2 グラデーション・
 /// 3 二つのマテリアルのグラデーション・4 マテリアルの三角形の塗り・5 単チャンネルのグラデーション・6 単チャンネルの三角形の塗り・
 /// 7 単チャンネルのストローク。v のビット 0 は消す・ビット 1 は 2 つのチャンネルを無効にしておく（単チャンネルの入口はその無効のチャンネルへ書く）・
 /// ビット 2 は文書の選択範囲。
@@ -661,8 +661,8 @@ fn run_lock(kind: u32, lock_case: u32, v: u32) -> Vec<u8> {
     lock_after(&mut out, &mut d, l, ok, false);
     out
 }
-/// ロックを立てた層のマスクへの書き込み（MaterialGolden.cs の RunLockMask）: kind 0 グラデーション・1 三角形の塗り・2 範囲の塗り・
-/// 3 ブラシのストローク。v のビット 0 は見せる側・ビット 1 は層にマスクが無い・ビット 2 は文書の選択範囲。
+/// ロックを立てたレイヤーのマスクへの書き込み（MaterialGolden.cs の RunLockMask）: kind 0 グラデーション・1 三角形の塗り・2 範囲の塗り・
+/// 3 ブラシのストローク。v のビット 0 は見せる側・ビット 1 はレイヤーにマスクが無い・ビット 2 は文書の選択範囲。
 fn run_lock_mask(kind: u32, lock_case: u32, v: u32) -> Vec<u8> {
     const KINDS: [MaskWrite; 4] = [
         MaskWrite::Gradient,
@@ -677,7 +677,7 @@ fn run_lock_mask(kind: u32, lock_case: u32, v: u32) -> Vec<u8> {
     lock_after(&mut out, &mut d, l, ok, true);
     out
 }
-/// 塗りつぶし・調整・グループの層の場面（MaterialGolden.cs の LockKindDoc）。層に全体のマスクを付け、ロックの置き方は `lock_doc` と同じ。
+/// 塗りつぶし・調整・グループのレイヤーの場面（MaterialGolden.cs の LockKindDoc）。レイヤーに全体のマスクを付け、ロックの置き方は `lock_doc` と同じ。
 /// target: 0 塗りつぶし（Color と Emission の値）・1 調整（反転）・2 グループ。
 fn lock_kind_doc(target: u32, lock_case: u32) -> (Document, LayerId, Scene) {
     let sc = scenes().into_iter().nth(1).unwrap();
@@ -728,7 +728,7 @@ fn lock_kind_state(out: &mut Vec<u8>, d: &Document, l: LayerId) {
             .map(|p| p[3]),
     );
 }
-/// 塗りつぶし・調整・グループの層への書き込みの、型の拒否とロックの拒否の順（MaterialGolden.cs の RunLockKind）: entry 0 begin_stroke・
+/// 塗りつぶし・調整・グループのレイヤーへの書き込みの、型の拒否とロックの拒否の順（MaterialGolden.cs の RunLockKind）: entry 0 begin_stroke・
 /// 1 begin_material_stroke・2 fill_material・3 gradient_material・4 begin_material_triangle_fill・5 fill・6 gradient・7 begin_triangle_fill
 /// （5〜7 は Color）・8 gradient_mask・9 begin_mask_triangle_fill・10 fill_mask・11 begin_mask_stroke。v のビット 0 は消す（マスクでは見せる）。
 fn run_lock_kind(entry: u32, target: u32, lock_case: u32, v: u32) -> Vec<u8> {
@@ -931,8 +931,8 @@ fn csharp_uv_boundaries_all_bytes() {
         );
     }
 }
-/// 三角形の和集合の選択範囲（MaterialGolden.cs の TriangleCases）。端が欠けたタイルの画布（37×29・タイル 8）の上で、
-/// 画布の外・一部が外・一直線・極小・巨大・継ぎ目を C# と全バイトで照らす。
+/// 三角形の和集合の選択範囲（MaterialGolden.cs の TriangleCases）。端が欠けたタイルのキャンバス（37×29・タイル 8）の上で、
+/// キャンバスの外・一部が外・一直線・極小・巨大・継ぎ目を C# と全バイトで照らす。
 #[test]
 fn csharp_triangle_union_all_bytes() {
     let g = golden();
@@ -1057,7 +1057,7 @@ fn id_colors_refuse_every_map_that_is_not_the_id_map() {
     assert_eq!(refused, mesh_maps::MeshMapKind::ALL.len() - 1);
 }
 /// 1 つの点で 1 回塗ったときのストロークの巻き戻しのバイト数と、手を付けたタイルの数（チャンネルの数 × 実際のタイル）。
-/// MaterialGolden.cs の Rollback と同じ入力（画布は 6×5 タイル、existing は全チャンネルに画素のある層）。
+/// MaterialGolden.cs の Rollback と同じ入力（キャンバスは 6×5 タイル、existing は全チャンネルに画素のあるレイヤー）。
 fn rollback_of(tile: u32, existing: bool, channels: usize) -> (u64, usize) {
     let mut d = Document::with_tile_size(tile * 6, tile * 5, tile).unwrap();
     let l = d.add_layer("paint").unwrap();
@@ -1118,7 +1118,7 @@ fn rollback_accounting_against_csharp_and_the_tiles_a_default_budget_admits() {
             }
         }
     }
-    // 既定の予算（64 MiB）とタイル 128² で、1 回のストロークが触れて通るタイルの数（空の層 / 全チャンネルに画素のある層）
+    // 既定の予算（64 MiB）とタイル 128² で、1 回のストロークが触れて通るタイルの数（空のレイヤー / 全チャンネルに画素のあるレイヤー）
     let budget = Document::new(1, 1).unwrap().stroke_budget_bytes();
     assert_eq!(budget, 64 << 20);
     for (existing, rust_tiles, csharp_tiles) in [(false, 170, 1023), (true, 85, 146)] {
@@ -1177,8 +1177,8 @@ fn triangle_fill_rollback_bytes_equal_csharp() {
         }
     }
 }
-/// ロックを立てた層への書き込み（マテリアルのストローク・範囲の塗り・グラデーション 2 種・三角形の塗り・単チャンネルのグラデーション・
-/// 三角形の塗り・ストローク）が、C# と全バイト一致する: 断った層・持ち主・ロック、断ったあとの文書（Undo/Redo の可否と全チャンネルの有効・画素）、
+/// ロックを立てたレイヤーへの書き込み（マテリアルのストローク・範囲の塗り・グラデーション 2 種・三角形の塗り・単チャンネルのグラデーション・
+/// 三角形の塗り・ストローク）が、C# と全バイト一致する: 断ったレイヤー・持ち主・ロック、断ったあとの文書（Undo/Redo の可否と全チャンネルの有効・画素）、
 /// 通ったときの画素と Undo/Redo。透明部分のロックでは全チャンネルがアルファと透明画素の RGB を守る。透明な画素はチャンネルごとに違い、
 /// 文書の選択範囲を立てた事例と、無効にしたチャンネルへ書く単チャンネルの事例を含む。
 #[test]
@@ -1199,8 +1199,8 @@ fn csharp_locked_layer_writes_all_bytes_at_both_parallel_degrees() {
     }
     assert_eq!(checked, 1024);
 }
-/// ロックを立てた層のマスクへの書き込みも同じ。画像・透明部分のロックでは通り、すべてのロック（層か親のグループ）でだけ断る。
-/// マスクの無い層は、どのロックでも「マスクが無い」で断る（ロックの拒否より先）。文書の選択範囲を立てた事例を含む。
+/// ロックを立てたレイヤーのマスクへの書き込みも同じ。画像・透明部分のロックでは通り、すべてのロック（レイヤーか親のグループ）でだけ断る。
+/// マスクの無いレイヤーは、どのロックでも「マスクが無い」で断る（ロックの拒否より先）。文書の選択範囲を立てた事例を含む。
 #[test]
 fn csharp_locked_layer_mask_writes_all_bytes_at_both_parallel_degrees() {
     let g = golden();
@@ -1219,7 +1219,7 @@ fn csharp_locked_layer_mask_writes_all_bytes_at_both_parallel_degrees() {
     }
     assert_eq!(checked, 512);
 }
-/// 塗りつぶし・調整・グループの層への書き込みで、型の拒否とロックの拒否のどちらが先かも C# と一致する（拒否の層・持ち主・ロック、断ったあとの
+/// 塗りつぶし・調整・グループのレイヤーへの書き込みで、型の拒否とロックの拒否のどちらが先かも C# と一致する（拒否のレイヤー・持ち主・ロック、断ったあとの
 /// 各チャンネルの有効とマスク、マスクへの書き込みが通るときの Undo/Redo まで）。拒否だけの事例が主なので並列度は 1 だけ。
 #[test]
 fn csharp_non_raster_layer_writes_order_type_and_lock_refusals_the_same() {
@@ -1239,11 +1239,11 @@ fn csharp_non_raster_layer_writes_order_type_and_lock_refusals_the_same() {
     }
     assert_eq!(checked, 576);
 }
-/// 書いた結果の先頭の 1 バイト（と、ロックで断ったときの層・持ち主・ロック）を読み直したもの。
+/// 書いた結果の先頭の 1 バイト（と、ロックで断ったときのレイヤー・持ち主・ロック）を読み直したもの。
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Outcome {
     Written,
-    /// 層・持ち主の並びの位置とロックの番号
+    /// レイヤー・持ち主の並びの位置とロックの番号
     Locked(i32, i32, i32),
     /// ロック以外の理由（型・無効のチャンネル・マスクが無い）で断った
     Other,
@@ -1256,7 +1256,7 @@ fn outcome_of(out: &[u8]) -> Outcome {
         _ => Outcome::Other,
     }
 }
-/// ロックの規則だけから決めた、書き込みを断るロック（層は 0 番。グループに掛けたロックの持ち主は 1 番）。
+/// ロックの規則だけから決めた、書き込みを断るロック（レイヤーは 0 番。グループに掛けたロックの持ち主は 1 番）。
 /// 画像・すべては断り、消すときだけ透明部分でも断る。位置のロックは塗りを妨げない。マスクはすべてのロックだけで断る（erase は無視）。
 fn locking(lock_case: u32, erase: bool, mask: bool) -> Option<Outcome> {
     let lock = match (LOCK_BITS[lock_case as usize], erase) {
@@ -1328,9 +1328,9 @@ fn locked_layer_outcomes_follow_the_lock_rules() {
     // マスク無しで 128・通る 96。
     assert_eq!(tally, [280 + 32, 76 + 128, 156 + 96]);
 }
-/// 塗りつぶし・調整・グループの層への書き込み。型で断る入口は、ロックの有無に関わらず型で断る（ロックの名指しは出ない）。ただし単チャンネルの
+/// 塗りつぶし・調整・グループのレイヤーへの書き込み。型で断る入口は、ロックの有無に関わらず型で断る（ロックの名指しは出ない）。ただし単チャンネルの
 /// ストローク（begin_stroke）は、調整・グループではロックが先（C# は GetChannel が型で断るのをロックの後に置く）で、塗りつぶしだけ型が先。
-/// マスクへの書き込みはどの種類の層にも通り、すべてのロックでだけ断る。
+/// マスクへの書き込みはどの種類のレイヤーにも通り、すべてのロックでだけ断る。
 #[test]
 fn non_raster_layer_writes_refuse_by_type_before_the_lock_except_the_single_channel_stroke() {
     let mut tally = [0u32; 3];

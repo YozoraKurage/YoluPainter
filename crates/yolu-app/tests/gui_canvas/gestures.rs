@@ -1,7 +1,7 @@
 //! ビュー（2D のキャンバス・3D ビュー）への押しの振り分け: ドックのタブをつかんだまま入っても描かない、ペンのサイドボタン・Alt・
 //! Space・Ctrl+Space・R・消しゴムの端の組み合わせ、Ctrl+Space の拡縮（マウスもペンも）、ペンの押しが egui のポインタの代わりの入力と二重に
 //! 効かないこと、サイドボタンの接触を egui の部品に右ボタンとして届けること。実機のペンは無いので、`PenSample` を差し込む
-//! （Windows Ink の窓が詰める点の代わり）。egui の側の代わりの入力（winit の Touch とポインタ）は、`Emulate::Yes` で同じ形に作る。
+//! （Windows Ink のウィンドウが詰める点の代わり）。egui の側の代わりの入力（winit の Touch とポインタ）は、`Emulate::Yes` で同じ形に作る。
 use crate::common;
 
 use common::*;
@@ -68,8 +68,8 @@ impl Pen {
         }
     }
 
-    /// ペンの点 1 つと、winit が同じ窓のメッセージから作る egui の入力を、1 つのフレームへ入れて走らせる（kittest の `event` は
-    /// 1 つにつき 1 フレームなので、同じフレームに入れるには入力へ直に足す。実際の窓では、1 つの WM_POINTER の点と Touch・ポインタは同じフレーム）。
+    /// ペンの点 1 つと、winit が同じウィンドウのメッセージから作る egui の入力を、1 つのフレームへ入れて走らせる（kittest の `event` は
+    /// 1 つにつき 1 フレームなので、同じフレームに入れるには入力へ直に足す。実際のウィンドウでは、1 つの WM_POINTER の点と Touch・ポインタは同じフレーム）。
     fn frame(&self, h: &mut H, point: PenSample, events: Vec<Event>) {
         h.state().pen().push(point);
         if self.emulate == Emulate::Yes {
@@ -202,7 +202,7 @@ fn release_key(h: &mut H, key: Key) {
     key_event(h, key, false);
 }
 
-/// マウスの押す・離す・動く（押している修飾を、イベントにも添える。実際の窓のイベントもそうなっている）。
+/// マウスの押す・離す・動く（押している修飾を、イベントにも添える。実際のウィンドウのイベントもそうなっている）。
 fn m_press(h: &H, at: Pos2) {
     h.event(Event::PointerMoved(at));
     h.event(Event::PointerButton {
@@ -708,7 +708,7 @@ fn a_pen_press_is_not_acted_on_twice_when_the_pointer_copy_arrives_too() {
         .emulated()
         .drag(&mut h, &[c, offset(c, 20.0, 0.0), offset(c, 40.0, 0.0)]);
     assert_eq!(strokes(&h), 1);
-    // 選択の道具（矩形）: 1 つの選択範囲を 1 回の Undo で
+    // 選択のツール（矩形）: 1 つの選択範囲を 1 回の Undo で
     h.state_mut()
         .state
         .apply(yolu_app::state::Action::SelectTool(
@@ -771,7 +771,7 @@ fn alt_does_not_start_a_stroke_for_the_mouse_either_and_selection_keeps_its_modi
     h.run();
     release_mods(&mut h);
     nothing_started(&h);
-    // 選択の道具では Shift・Ctrl は組み合わせの修飾で、ペンで触れても効く（足す）
+    // 選択のツールでは Shift・Ctrl は組み合わせの修飾で、ペンで触れても効く（足す）
     h.state_mut()
         .state
         .apply(yolu_app::state::Action::SelectTool(

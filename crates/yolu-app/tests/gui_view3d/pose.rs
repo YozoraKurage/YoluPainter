@@ -1,6 +1,6 @@
 //! ポーズの変更の画面の試験（egui_kittest。描画は wgpu のソフトの描画）: 試しの人形を読む、面を押して骨を選ぶ、ギズモで回す
 //! （取り消し・Esc・フォーカスを失う）、ポーズを付けた形に描く、描いている間はポーズを変えない、BlendShape のスライダー、
-//! 取り消しの行き先（読むだけのセット・別のタブ）、ファイルの窓の頼み、1 フレームに複数のポインタの動き・モデルの入れ替え。
+//! 取り消しの行き先（読むだけのセット・別のタブ）、ファイルのウィンドウの頼み、1 フレームに複数のポインタの動き・モデルの入れ替え。
 //! ポーズの欄はドックのタブ（`Tab::Pose`）。欄の中の試験（インスペクター・戻し・面を隠す・日英）は `pose_ui.rs`。
 use crate::common;
 
@@ -16,7 +16,7 @@ use yolu_app::view3d::pose::{self, PoseAction};
 use yolu_app::YoluApp;
 use yolu_core::glam::{Quat, Vec2, Vec3};
 
-/// 試しの人形を読んで、3D ビューのタブが前に出た窓。
+/// 試しの人形を読んで、3D ビューのタブが前に出たウィンドウ。
 fn figure_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1280.0, 860.0, doc);
     h.state_mut().apply(Action::Pose(PoseAction::LoadFigure));
@@ -25,7 +25,7 @@ fn figure_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     (h, rect)
 }
 
-/// ポーズのタブをドックから外して、左の上に浮いた窓にする（egui_dock は外した窓の大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
+/// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする（egui_dock は外したウィンドウの大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
 fn float_pose_tab(h: &mut Harness<'static, YoluApp>) {
     {
         let dock = &mut h.state_mut().dock;
@@ -313,13 +313,13 @@ fn painting_lands_on_the_posed_shape_in_the_arm_uvs() {
         px[3] > 0 && px[0] > 150,
         "押した三角形の UV に描いた: {px:?}"
     );
-    // 描いたのは腕の UV の島（u 0.3〜0.47）の中だけ
+    // 描いたのは腕の UV アイランド（u 0.3〜0.47）の中だけ
     let doc = &app.doc;
     for y in (0..doc.height()).step_by(2) {
         for x in (0..doc.width()).step_by(2) {
             if composite_pixel(doc, x, y)[3] > 0 {
                 let u = x as f32 / size;
-                assert!((0.3..0.47).contains(&u), "島の外 ({x}, {y})");
+                assert!((0.3..0.47).contains(&u), "アイランドの外 ({x}, {y})");
             }
         }
     }
@@ -576,7 +576,7 @@ fn opening_an_fbx_asks_for_the_file_window_instead_of_opening_one() {
     assert_eq!(
         h.state().state.dialog_request,
         Some(DialogRequest::OpenModel),
-        "窓は YoluApp が開く（試験では開かず、頼みが残る）"
+        "ウィンドウは YoluApp が開く（試験では開かず、頼みが残る）"
     );
     assert!(!h.state().state.view3d.pose.is_loading());
     h.state_mut().state.dialog_request = None;

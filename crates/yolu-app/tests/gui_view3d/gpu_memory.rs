@@ -1,6 +1,6 @@
 //! 設定の「GPU のメモリ」: 選んだ段・量が、3D の絵・キャンバスの GPU の合成・棚のサムネイルの予算へ配られ、次のフレームから効くこと。
 //! 予算を下げると 3D のほかのセットが減り、今のセットが縮めた段になること（上げると戻る）。設定のファイルの往復・古い設定・壊れた値、
-//! 窓の行（数は「詳しく」の中だけ）と日英。`headless_` で始まる試験は画面を描かない。
+//! ウィンドウの行（数は「詳しく」の中だけ）と日英。`headless_` で始まる試験は画面を描かない。
 use crate::common;
 
 use std::collections::BTreeMap;
@@ -250,7 +250,7 @@ fn lowering_the_memory_leaves_out_the_farthest_sets_and_raising_it_brings_them_b
     // 標準: 256² の Color だけ（ミップ込み 349,524 B）を、今のセットとほかの 2 枚が全部入る
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (2, 0), "{s:?}");
-    // 設定の窓が選べる下限（256 MiB）より小さい合計は、予算の道を通すために設定へ直に入れる（3D の予算 = 合計の 4/9）
+    // 設定のウィンドウが選べる下限（256 MiB）より小さい合計は、予算の道を通すために設定へ直に入れる（3D の予算 = 合計の 4/9）
     // 合計 2 MiB の 3D = 932,067 B: 今のセット + ほかの 1 枚（残り 582,543 B で 349,524 B を 1 枚）
     h.state_mut().state.prefs.settings.gpu_memory = GpuMemory::Mib(2);
     h.run();
@@ -393,7 +393,7 @@ fn headless_raising_the_preview_budget_reviews_only_what_the_budget_left_out() {
     }
 }
 
-// ───────── 窓と設定のファイル ─────────
+// ───────── ウィンドウと設定のファイル ─────────
 
 fn settings_dir(tag: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -424,7 +424,7 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
 }
 
 fn window_rect(h: &Harness<'_, YoluApp>) -> Rect {
-    prefs::last_rect(&h.ctx).expect("設定の窓が開いている")
+    prefs::last_rect(&h.ctx).expect("設定のウィンドウが開いている")
 }
 
 fn open_settings(h: &mut Harness<'static, YoluApp>) {
@@ -432,7 +432,7 @@ fn open_settings(h: &mut Harness<'static, YoluApp>) {
     h.run();
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる。
+/// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     let rect = window_rect(h);
     h.event(egui::Event::PointerGone);
@@ -460,7 +460,7 @@ fn pick(h: &mut Harness<'static, YoluApp>, label: &str, item: &str) {
 fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total() {
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
-    // 詳しくを開いた窓が全部見える高さ（800 では、メモリの節のディスクキャッシュの分だけ中身を送る）
+    // 詳しくを開いたウィンドウが全部見える高さ（800 では、メモリの節のディスクキャッシュの分だけ中身を送る）
     let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
     h.state_mut().state.prefs.gpu = Adapter::default();
     open_settings(&mut h);
@@ -479,13 +479,13 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     let closed = window_rect(&h);
     let _ = h.get_by_label("GPU のメモリ: 自動");
     let _ = gpu_details(&h, "詳しく");
-    // 段を選ぶ（窓の行に数は出ない）
+    // 段を選ぶ（ウィンドウの行に数は出ない）
     pick(&mut h, "GPU のメモリ: 自動", "高");
     h.run();
     let _ = h.get_by_label("GPU のメモリ: 高");
     assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::High);
     assert_eq!(h.state().gpu_budgets_applied(), expect(GpuMemory::High));
-    // 詳しく: 合計のスライダーが出て、窓が伸びる（最後の行も窓の中）
+    // 詳しく: 合計のスライダーが出て、ウィンドウが伸びる（最後の行もウィンドウの中）
     gpu_details(&h, "詳しく").click();
     h.run();
     assert!(h.state().state.prefs.gpu_details);
@@ -624,7 +624,7 @@ fn total_slider(h: &mut Harness<'static, YoluApp>, lang_total: &str) -> impl Fn(
     move |fraction| egui::pos2(rect.left() + rect.width() * fraction, y)
 }
 
-/// 窓を開いて合計のスライダーを押し続けているあいだ、予算は入らない。離すと、指定した量が 1 度に入る。
+/// ウィンドウを開いて合計のスライダーを押し続けているあいだ、予算は入らない。離すと、指定した量が 1 度に入る。
 #[test]
 fn the_budgets_wait_while_the_total_slider_is_held_and_apply_when_it_is_let_go() {
     let dir = settings_dir("hold");

@@ -5,7 +5,7 @@
 //!   `action.run` は入れない（取り消しはまとめの中ではできず、書き出し・保存はファイルを変えて戻せない）。
 //! - 全部を core の `Document::batch` の 1 回で当てる（命令ごとの段にしない）。途中の命令が断ったら、そこまでに当てた分も戻して文書を元のままにし、
 //!   何番目の命令が・なぜかを誤りの `data`（`index` は 0 から・`command`・`completed`）で返す。
-//! - 相手の指し方は `$selected`（始めた時に選んでいる層。1 つに決める）・`$created:<n>`（この実行で n 番目に作った層・効果）が使える
+//! - 相手の指し方は `$selected`（始めた時に選んでいるレイヤー。1 つに決める）・`$created:<n>`（この実行で n 番目に作ったレイヤー・効果）が使える
 //!   （[`crate::refs`]）。
 //! - 上限: 1 つのアクションの命令は [`MAX_COMMANDS`] まで、ファイルは [`MAX_FILE_BYTES`] まで、名前は [`MAX_NAME_CHARS`] 文字まで。
 
@@ -274,7 +274,7 @@ fn one_set(commands: &[Command]) -> Result<Option<String>, OpError> {
 /// 命令の列を、1 つのテクスチャセット（命令の `set`。省けば今のセット）の文書へ、1 回の取り消しで当てる。
 ///
 /// 当てる前に、全部の命令が入れられる物か・壊す命令に `confirm: true` があるかを確かめる（1 つでも違えば何も変えない）。`$selected` は
-/// 始めた時に選んでいる層の 1 つに決める。途中の命令が断ったら、それまでに当てた分も戻し、`data` に何番目か（`index`、0 から）を添えて返す。
+/// 始めた時に選んでいるレイヤーの 1 つに決める。途中の命令が断ったら、それまでに当てた分も戻し、`data` に何番目か（`index`、0 から）を添えて返す。
 pub fn run(host: &mut dyn OpHost, commands: &[Command]) -> Result<ActionDone, OpError> {
     guard("action", || run_checked(host, commands))
 }

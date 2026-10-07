@@ -548,7 +548,7 @@ fn to_linear(c: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// 色の行（見本を押すと色の窓、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
+/// 色の行（見本を押すと色のウィンドウ、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
 /// リニアなので、見本と 16 進はガンマに直して見せ、明るさ（1 を超える倍率）の行も出す。`label` は名前の差し替え（無ければ表の名前）。
 fn color_row(
     ui: &mut Ui,
@@ -610,7 +610,7 @@ fn color_row(
             drag,
         }));
     };
-    // 押すと色の窓（相手は文書とプロパティごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+    // 押すと色のウィンドウ（相手は文書とプロパティごと）。ウィンドウの変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
     let current = crate::panels::color_window::Pick::from_floats(shown, false);
     if let Some(u) = crate::panels::color_window::field(
         ui,
@@ -1022,7 +1022,7 @@ fn plane_name(app: &AppState, p: PlaneSource) -> String {
     }
 }
 
-/// スロットが読むユーザーチャンネルが、3D ビューの配列の層の上限（16）を超えて描かれないか（17 個目から）。
+/// スロットが読むユーザーチャンネルが、3D ビューの配列のレイヤーの上限（16）を超えて描かれないか（17 個目から）。
 pub fn slot_over_layer_limit(doc: &yolu_core::Document, name: &str) -> bool {
     let look = doc.drawn_look();
     let Some(source) = look.textures.get(name) else {
@@ -1032,7 +1032,7 @@ pub fn slot_over_layer_limit(doc: &yolu_core::Document, name: &str) -> bool {
     !dropped.is_empty() && source.channels().iter().any(|c| dropped.contains(c))
 }
 
-/// スロットの Unity から受けた絵が、3D ビューの受けた絵の配列の層の上限（16）を超えて描かれないか（スロットの並びで 17 枚目から）。
+/// スロットの Unity から受けた絵が、3D ビューの受けた絵の配列のレイヤーの上限（16）を超えて描かれないか（スロットの並びで 17 枚目から）。
 pub fn slot_over_received_limit(doc: &yolu_core::Document, name: &str) -> bool {
     let look = doc.drawn_look();
     let source = look.textures.get(name);

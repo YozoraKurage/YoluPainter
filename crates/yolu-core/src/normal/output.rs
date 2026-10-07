@@ -2,7 +2,7 @@
 //! 各画素は出力の 1 画素の式（`flatten` → Sobel → `rnm` → `encode`、[`super::output_pixel`]）と**同じバイト**になる。
 //! 計算は f64 で（高さの差 × 強さ 256 までの微分を f64 の式のまま残す）、演算の順は画素ごとの式と同じ。正規化の平方根・割り算は
 //! IEEE の厳密な演算（SSE/AVX の `sqrtpd`・`divpd`）なので同じ double になる。道の選びは `crate::math::simd`。
-//! 層の重ね（合成）は f32 の式で、[`super::rows`] にある。
+//! レイヤーの重ね（合成）は f32 の式で、[`super::rows`] にある。
 #![cfg_attr(
     not(target_arch = "x86_64"),
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)

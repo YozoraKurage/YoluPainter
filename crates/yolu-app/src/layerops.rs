@@ -1,8 +1,8 @@
-//! 層の操作の画面: 複数選択・結合・ロック・変形（移動・90° 回転・反転）。計算・検証・履歴は core（`document/merge.rs`・`locks.rs`・
-//! `transform.rs`）に任せ、ここは「どの層に当てるか」「断られた理由を画面の言語で言う」「見た目が変わる結合を確かめる」だけを持つ。
+//! レイヤーの操作の画面: 複数選択・結合・ロック・変形（移動・90° 回転・反転）。計算・検証・履歴は core（`document/merge.rs`・`locks.rs`・
+//! `transform.rs`）に任せ、ここは「どのレイヤーに当てるか」「断られた理由を画面の言語で言う」「見た目が変わる結合を確かめる」だけを持つ。
 //!
 //! 複数選択（Unity 版の `LayerSelection` と同じ）: 描く先（`AppState::selected_layer`）は 1 つのままで、複数選択はそれを含む集合。
-//! `selected_layer` をほかの所（新しい層・結合の結果・テクスチャセットの切り替え・取り消しで層が消えた）が変えると、集合は
+//! `selected_layer` をほかの所（新しいレイヤー・結合の結果・テクスチャセットの切り替え・取り消しでレイヤーが消えた）が変えると、集合は
 //! 描く先の 1 つに戻る（集合は「描く先」が同じあいだだけ有効）。選択は文書にも .ylp にも入れない。
 
 use std::collections::HashSet;
@@ -35,7 +35,7 @@ pub enum MergeOp {
     Visible,
 }
 
-/// 見た目が丸めの許容差を超えて変わる結合の確かめ（窓を出して、結合するかを聞く）。
+/// 見た目が丸めの許容差を超えて変わる結合の確かめ（ウィンドウを出して、結合するかを聞く）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergeConfirm {
     pub op: MergeOp,
@@ -43,7 +43,7 @@ pub struct MergeConfirm {
     pub channels: Vec<(Channel, u64)>,
 }
 
-/// 層の統合の確かめ（キーの割り当てを止める）。
+/// レイヤーの統合の確かめ（キーの割り当てを止める）。
 pub(crate) const JOB: JobSpec = JobSpec {
     modal: Some(|app| app.layer_ops.merge_confirm.is_some()),
     ..JobSpec::new("layers.merge", crate::jobs::never)
@@ -57,7 +57,7 @@ pub struct LayerOpsState {
     pub confirm_offset: Vec2,
 }
 
-/// 層の変形（動かす対象は選んでいる層。グループなら中身のラスター層ごと。選択範囲があればその中身と選択範囲）。
+/// レイヤーの変形（動かす対象は選んでいるレイヤー。グループなら中身のラスターレイヤーごと。選択範囲があればその中身と選択範囲）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Xform {
     /// 90° 回転・左右反転・上下反転。動かすものの範囲の中心を軸にし、90° では軸を画素の格子に合わせて画素をそのまま写す。
@@ -80,7 +80,7 @@ pub enum Xform {
         sx: f64,
         sy: f64,
     },
-    /// ハンドルのドラッグで決めた変形（画布の座標）。
+    /// ハンドルのドラッグで決めた変形（キャンバスの座標）。
     Affine(Affine2D),
 }
 
@@ -143,7 +143,7 @@ pub fn merge_notes_text(lang: Lang, notes: u8) -> String {
 impl AppState {
     // ───────── 複数選択 ─────────
 
-    /// 選んでいる層（描く先を含む）。下から上の順。描く先が無ければ空。複数選択は描く先が同じあいだだけ有効。
+    /// 選んでいるレイヤー（描く先を含む）。下から上の順。描く先が無ければ空。複数選択は描く先が同じあいだだけ有効。
     pub fn selected_layers(&self) -> Vec<LayerId> {
         let Some(active) = self
             .selected_layer
@@ -166,7 +166,7 @@ impl AppState {
         self.selected_layers().len() > 1
     }
 
-    /// 選ぶ層をまとめて決める（`active` が描く先。`ids` に無ければ足す）。
+    /// 選ぶレイヤーをまとめて決める（`active` が描く先。`ids` に無ければ足す）。
     pub fn select_layers(&mut self, ids: impl IntoIterator<Item = LayerId>, active: LayerId) {
         let mut set: HashSet<LayerId> = ids
             .into_iter()
@@ -181,7 +181,7 @@ impl AppState {
         self.layer_ops.selection.active = Some(active);
     }
 
-    /// 修飾キー無しのクリック: その層だけを選ぶ（起点にもする）。
+    /// 修飾キー無しのクリック: そのレイヤーだけを選ぶ（起点にもする）。
     pub fn select_single_layer(&mut self, id: LayerId) {
         if self.selected_layer != Some(id) {
             self.set_edit_mask(false);
@@ -219,8 +219,8 @@ impl AppState {
         }
     }
 
-    /// Shift クリック: 起点（最後に修飾キー無しか Ctrl で押した層）から押した層までの、パネルの行（上から `rows`）を選ぶ。
-    /// `add`（Ctrl + Shift）なら今の選択に足す。描く先は押した層。
+    /// Shift クリック: 起点（最後に修飾キー無しか Ctrl で押したレイヤー）から押したレイヤーまでの、パネルの行（上から `rows`）を選ぶ。
+    /// `add`（Ctrl + Shift）なら今の選択に足す。描く先は押したレイヤー。
     pub fn select_layer_range(&mut self, id: LayerId, add: bool, rows: &[LayerId]) {
         let Some(b) = rows.iter().position(|r| *r == id) else {
             return;
@@ -246,7 +246,7 @@ impl AppState {
 
     // ───────── 結合 ─────────
 
-    /// Ctrl+E の結合（複数選んでいれば選んだ層を、グループならグループを、そうでなければ下の層と）。
+    /// Ctrl+E の結合（複数選んでいれば選んだレイヤーを、グループならグループを、そうでなければ下のレイヤーと）。
     pub(crate) fn merge_down_selected(&mut self) -> Result<(), CoreError> {
         let active = self
             .selected_layer
@@ -271,7 +271,7 @@ impl AppState {
         yolu_core::Document::MERGE_ROUNDING_TOLERANCE
     }
 
-    /// 結合する。見た目が許容差を超えて変わるなら、何も変えずに確かめの窓を出す（`tolerance` が 255 なら確かめ済みで、そのまま結合）。
+    /// 結合する。見た目が許容差を超えて変わるなら、何も変えずに確認のウィンドウを出す（`tolerance` が 255 なら確かめ済みで、そのまま結合）。
     pub(crate) fn run_merge(&mut self, op: MergeOp, tolerance: u8) -> Result<(), CoreError> {
         let result = match &op {
             MergeOp::Down(id) => self.doc.merge_down(*id, tolerance),
@@ -311,7 +311,7 @@ impl AppState {
             .layer(report.result_id)
             .map(|l| l.name().to_owned())
             .unwrap_or_default();
-        // 丸めの差の画素数は載せない（見た目が許容差を超えて変わるときは、結合の前に確かめの窓がチャンネルごとに見せる）
+        // 丸めの差の画素数は載せない（見た目が許容差を超えて変わるときは、結合の前に確認のウィンドウがチャンネルごとに見せる）
         let mut text = lang.pick(
             format!("結合しました: {name}"),
             format!("Merged into {name}"),
@@ -326,7 +326,7 @@ impl AppState {
         }
     }
 
-    /// 確かめの窓の「結合する」: 見た目が変わるのを承知で、同じ結合を行う。
+    /// 確認のウィンドウの「結合する」: 見た目が変わるのを承知で、同じ結合を行う。
     pub(crate) fn confirm_merge(&mut self) -> Result<(), CoreError> {
         let Some(confirm) = self.layer_ops.merge_confirm.take() else {
             return Ok(());
@@ -334,7 +334,7 @@ impl AppState {
         self.run_merge(confirm.op, u8::MAX)
     }
 
-    /// 確かめの窓の「やめる」。
+    /// 確認のウィンドウの「やめる」。
     pub(crate) fn cancel_merge(&mut self) {
         if self.layer_ops.merge_confirm.take().is_some() {
             self.info(
@@ -344,9 +344,9 @@ impl AppState {
         }
     }
 
-    // ───────── 選んだ層への操作 ─────────
+    // ───────── 選んだレイヤーへの操作 ─────────
 
-    /// 選んでいる層（複数ならそのまま全部）を新しいグループに入れる（違うグループの層どうしは core が断る）。
+    /// 選んでいるレイヤー（複数ならそのまま全部）を新しいグループに入れる（違うグループのレイヤーどうしは core が断る）。
     pub(crate) fn group_selected_layers(&mut self) -> Result<(), CoreError> {
         let ids = self.selected_layers();
         let members = self.doc.topmost_of(&ids)?;
@@ -359,7 +359,7 @@ impl AppState {
         Ok(())
     }
 
-    /// 選んでいる層（グループなら中身ごと）を複製し、複製を選ぶ。
+    /// 選んでいるレイヤー（グループなら中身ごと）を複製し、複製を選ぶ。
     pub(crate) fn duplicate_selected_layers(&mut self) -> Result<(), CoreError> {
         let ids = self.selected_layers();
         if ids.is_empty() {
@@ -372,7 +372,7 @@ impl AppState {
         Ok(())
     }
 
-    /// 選んでいる層の表示を切り替える: どれか見えていれば全部隠し、全部隠れていれば全部見せる（Photoshop と同じ）。
+    /// 選んでいるレイヤーの表示を切り替える: どれか見えていれば全部隠し、全部隠れていれば全部見せる（Photoshop と同じ）。
     pub(crate) fn toggle_selected_visibility(&mut self) -> Result<(), CoreError> {
         let ids = self.selected_layers();
         if ids.is_empty() {
@@ -384,7 +384,7 @@ impl AppState {
         self.doc.set_layers_visibility(&ids, show)
     }
 
-    /// 選んでいる層（複数ならまとめて）を消す。何も残らなくなる削除は断る。
+    /// 選んでいるレイヤー（複数ならまとめて）を消す。何も残らなくなる削除は断る。
     pub(crate) fn delete_selected_layers(&mut self) -> Result<(), CoreError> {
         let ids = self.selected_layers();
         if ids.is_empty() {
@@ -405,7 +405,7 @@ impl AppState {
             );
             return Ok(());
         }
-        // 消した塊のすぐ下の層を選ぶ（一番下の塊の始めの 1 つ下）
+        // 消した塊のすぐ下のレイヤーを選ぶ（一番下の塊の始めの 1 つ下）
         let start = members
             .iter()
             .filter_map(|id| {
@@ -423,7 +423,7 @@ impl AppState {
         Ok(())
     }
 
-    /// 選んだ層をまとめて、グループ `parent` の子の `position`（0 が一番下）へ動かす（ドラッグ）。
+    /// 選んだレイヤーをまとめて、グループ `parent` の子の `position`（0 が一番下）へ動かす（ドラッグ）。
     pub(crate) fn move_selected_layers(
         &mut self,
         ids: &[LayerId],
@@ -439,7 +439,7 @@ impl AppState {
 
     // ───────── ロック ─────────
 
-    /// 層のロックを付ける・外す（`flag` は個別の 1 種か、まとめて外すときの全部）。ロックは合成を変えないので 1 回の Undo。
+    /// レイヤーのロックを付ける・外す（`flag` は個別の 1 種か、まとめて外すときの全部）。ロックは合成を変えないので 1 回の Undo。
     pub(crate) fn change_locks(
         &mut self,
         ids: &[LayerId],
@@ -473,7 +473,7 @@ impl AppState {
 
     // ───────── 変形 ─────────
 
-    /// 動かす層: 選んでいる層（グループなら中身も）のうちラスターの層だけ。塗りつぶし・調整は画素が無いので動かさない。
+    /// 動かすレイヤー: 選んでいるレイヤー（グループなら中身も）のうちラスターレイヤーだけ。塗りつぶし・調整は画素が無いので動かさない。
     pub fn transform_targets(&self) -> Vec<LayerId> {
         let Ok(members) = self.doc.topmost_of(&self.selected_layers()) else {
             return Vec::new();
@@ -491,8 +491,8 @@ impl AppState {
             .collect()
     }
 
-    /// 動かすものの範囲（複数の層ならその和。選択範囲があればその中の画素だけ）。画素が無ければ None。
-    /// `(x0, y0, x1, y1)`（画布の座標、右・上は含まない）。
+    /// 動かすものの範囲（複数のレイヤーならその和。選択範囲があればその中の画素だけ）。画素が無ければ None。
+    /// `(x0, y0, x1, y1)`（キャンバスの座標、右・上は含まない）。
     pub fn transform_bounds(&self) -> Option<(i64, i64, i64, i64)> {
         let mut all: Option<(i64, i64, i64, i64)> = None;
         for id in self.transform_targets() {
@@ -513,7 +513,7 @@ impl AppState {
         all
     }
 
-    /// 変形を 1 回の Undo で当てる。変わったか。動かす層や画素が無ければ短い理由で断る（文書は変えない）。
+    /// 変形を 1 回の Undo で当てる。変わったか。動かすレイヤーや画素が無ければ短い理由で断る（文書は変えない）。
     pub(crate) fn apply_xform(&mut self, x: Xform) -> Result<bool, CoreError> {
         let lang = self.lang;
         let targets = self.transform_targets();
@@ -615,7 +615,7 @@ impl AppState {
                 lang.pick("変形しました。", "Transformed."),
             ),
         };
-        // テキストレイヤーは画素でなく値（基準の点・回転・サイズ）を動かして描き直す。ほかの層と一緒なら 1 回の Undo にまとめる
+        // テキストレイヤーは画素でなく値（基準の点・回転・サイズ）を動かして描き直す。ほかのレイヤーと一緒なら 1 回の Undo にまとめる
         let (texts, pixels): (Vec<LayerId>, Vec<LayerId>) = targets
             .iter()
             .partition(|id| self.doc.layer(**id).is_some_and(|l| l.text().is_some()));

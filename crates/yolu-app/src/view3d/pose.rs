@@ -48,7 +48,7 @@ pub const MAX_POSE_HISTORY: usize = 256;
 /// ポーズの操作（メニュー・ボタン・キーから）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoseAction {
-    /// ファイルを選ぶ窓を頼む（選ばれたら FBX を開く）。
+    /// ファイルを選ぶウィンドウを頼む（選ばれたら FBX を開く）。
     OpenFbx,
     /// 読んでいる FBX を取り消す（今のモデルは前のまま）。
     CancelLoad,
@@ -208,7 +208,7 @@ impl PoseEditor {
     pub fn cancel_loading(&mut self) {
         self.loading = None;
     }
-    /// このビューが始めた読み込みを全部取り消す（窓の準備・.ylp を開いたときの読み込みを含む。終わるとき）。
+    /// このビューが始めた読み込みを全部取り消す（ウィンドウの準備・.ylp を開いたときの読み込みを含む。終わるとき）。
     pub fn cancel_loads(&self) {
         self.loads.cancel_all();
     }
@@ -395,12 +395,12 @@ fn spawn_load<T: Send + 'static>(
     (worker, progress)
 }
 
-/// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成の窓が持ち、決めたときに
-/// `install_prepared` で入れる。窓を閉じれば、入れずに捨てる）。
+/// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成のウィンドウが持ち、決めたときに
+/// `install_prepared` で入れる。ウィンドウを閉じれば、入れずに捨てる）。
 pub struct PreparedModel(Loaded);
 
 impl PreparedModel {
-    /// 読んだスキン（マテリアルの組・メッシュの名前を窓が読む）。
+    /// 読んだスキン（マテリアルの組・メッシュの名前をウィンドウが読む）。
     pub fn rig(&self) -> &Rig {
         &self.0.rig
     }
@@ -416,7 +416,7 @@ impl PreparedModel {
 
 /// 読み込みの結果を受ける口（裏のスレッドと、取消の旗）。
 pub struct PrepareJob {
-    /// 受け口を捨てたら、読み込みも止める（窓を閉じた・別のモデルを読み始めた。結果の行き先が無い）。
+    /// 受け口を捨てたら、読み込みも止める（ウィンドウを閉じた・別のモデルを読み始めた。結果の行き先が無い）。
     worker: Worker<Result<PreparedModel, ViewError>>,
     progress: Arc<LoadProgress>,
 }
@@ -862,10 +862,10 @@ pub fn reset(view3d: &mut View3dState) -> Result<(), ViewError> {
     set_pose(view3d, rest)
 }
 
-/// 決まったパスの FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作る窓、作業のあるプロジェクトなら、
-/// プロジェクトの構成の窓でそのモデルに替える下書き（どのマテリアルをテクスチャセットにするか・大きさ・照合を、決めてから入れる）。
-/// 別のスレッドで読む。ファイルを選ぶ窓は `YoluApp` が開く（`DialogRequest::OpenModel`。窓に落としたファイルもここへ来る）ので、
-/// ここは OS の窓に頼らない。描いている最中は断る。
+/// 決まったパスの FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作るウィンドウ、作業のあるプロジェクトなら、
+/// プロジェクトの構成のウィンドウでそのモデルに替える下書き（どのマテリアルをテクスチャセットにするか・大きさ・照合を、決めてから入れる）。
+/// 別のスレッドで読む。ファイルを選ぶウィンドウは `YoluApp` が開く（`DialogRequest::OpenModel`。ウィンドウに落としたファイルもここへ来る）ので、
+/// ここは OS のウィンドウに頼らない。描いている最中は断る。
 pub fn open_file(app: &mut AppState, path: &Path) {
     app.np_apply(crate::newproject::NpAction::OpenModel(path.to_path_buf()));
 }
@@ -892,7 +892,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
     }
     let result = match action {
         PoseAction::OpenFbx => {
-            // 窓は YoluApp が開く（選ばれたら `open_file`）
+            // ウィンドウは YoluApp が開く（選ばれたら `open_file`）
             app.dialog_request = Some(DialogRequest::OpenModel);
             Ok(())
         }
@@ -975,7 +975,7 @@ pub fn sync_modified(app: &mut AppState) {
 
 /// フレームの初めに（app から）: 読み込みを見て、知らせを出す。3D ビューのタブを前に出すなら true。
 pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
-    // 窓に落とした FBX を開く
+    // ウィンドウに落とした FBX を開く
     let dropped = ctx.input(|i| {
         i.raw
             .dropped_files
@@ -1183,7 +1183,7 @@ mod tests {
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
             app.dialog_request, None,
-            "描いている間はファイルの窓を頼まない"
+            "描いている間はファイルのウィンドウを頼まない"
         );
         open_file(&mut app, Path::new("読まれない.fbx"));
         assert!(!app.view3d.pose.is_loading(), "描いている間は読み始めない");
@@ -1323,14 +1323,18 @@ mod tests {
         let path = dir.join("三角.fbx");
         std::fs::write(&path, TRIANGLE_FBX).unwrap();
         let mut app = AppState::new(64, 64);
-        // 状態の層は OS の窓を開かない: 頼みを残すだけ
+        // 状態のレイヤーは OS のウィンドウを開かない: 頼みを残すだけ
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(app.dialog_request, Some(DialogRequest::OpenModel));
         assert!(!app.view3d.pose.is_loading());
-        // 選ばれたパス（窓に落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトの窓で読む（3D ビューには、
+        // 選ばれたパス（ウィンドウに落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトのウィンドウで読む（3D ビューには、
         // 決めるまで入れない）
         open_file(&mut app, &path);
-        let win = app.np.window.as_ref().expect("新規プロジェクトの窓");
+        let win = app
+            .np
+            .window
+            .as_ref()
+            .expect("新規プロジェクトのウィンドウ");
         assert!(!win.configure && win.is_loading());
         assert!(!app.view3d.pose.is_loading() && app.view3d.pose.session.is_none());
         std::fs::remove_dir_all(&dir).unwrap();

@@ -1,13 +1,13 @@
-//! Windows の画面の列挙と、枠を外した窓の最大化（自動で隠すタスクバーを呼び出せるように、その辺を 1 画素空ける）。
+//! Windows の画面の列挙と、枠を外したウィンドウの最大化（自動で隠すタスクバーを呼び出せるように、その辺を 1 画素空ける）。
 //!
-//! 最大化の 1 画素: 枠を外した窓は、winit が `WM_NCCALCSIZE` で、最大化中の内側を作業領域いっぱいに直す（枠の分を消すため）。
-//! タスクバーを自動で隠していると作業領域は画面全体と同じなので、窓が画面の端まで覆い、端へマウスを寄せてもタスクバーが出てこない。
+//! 最大化の 1 画素: 枠を外したウィンドウは、winit が `WM_NCCALCSIZE` で、最大化中の内側を作業領域いっぱいに直す（枠の分を消すため）。
+//! タスクバーを自動で隠していると作業領域は画面全体と同じなので、ウィンドウが画面の端まで覆い、端へマウスを寄せてもタスクバーが出てこない。
 //! 知られた手は 3 つあり、一番素直な「最大化中の内側を、自動で隠すタスクバーのある辺だけ 1 画素縮める」を選んだ
 //! （最大化の状態を OS に残したまま、winit が内側を作った後に縮められる）。
 //! - `WM_GETMINMAXINFO` で最大化の位置と大きさを変える: winit の `WM_NCCALCSIZE` が内側を作業領域で上書きするので効かない。
 //! - 最大化を OS に任せず、作業領域より 1 画素小さい矩形を自分で置く: Win+↑・スナップ・ダブルクリックと最大化の状態を失う。
-//! - `WM_NCCALCSIZE` で縮める: 最大化の状態は OS のまま。winit の処理（窓のプロシージャ）より前に付けて、winit が内側を作った後に縮める。
-//!   窓のプロシージャは winit のものを `SetWindowSubclass` で包む（ペンの入力の差し替え `pen::win_ink` とは、どちらを先に付けても連鎖する）。
+//! - `WM_NCCALCSIZE` で縮める: 最大化の状態は OS のまま。winit の処理（ウィンドウのプロシージャ）より前に付けて、winit が内側を作った後に縮める。
+//!   ウィンドウのプロシージャは winit のものを `SetWindowSubclass` で包む（ペンの入力の差し替え `pen::win_ink` とは、どちらを先に付けても連鎖する）。
 //!
 //! 自動で隠すタスクバーのある辺は、`SHAppBarMessage(ABM_GETAUTOHIDEBAREX)` で画面ごと・辺ごとに調べる。
 
@@ -37,7 +37,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::{maximized_client, Edges, Monitor, PxRect};
 
-/// 窓の差し替えの識別子（任意の値。同じ窓に付ける物の中で重ならなければよい）。
+/// ウィンドウの差し替えの識別子（任意の値。同じウィンドウに付ける物の中で重ならなければよい）。
 const SUBCLASS_ID: usize = 0x594F_4C55;
 
 fn px(rect: RECT) -> PxRect {
@@ -58,12 +58,12 @@ fn rect(px: PxRect) -> RECT {
     }
 }
 
-/// プロセスを画面ごとの拡大率に対応させる（winit が窓を作る前にかけるのと同じ設定を、列挙の前に 1 度だけ先にかける）。
+/// プロセスを画面ごとの拡大率に対応させる（winit がウィンドウを作る前にかけるのと同じ設定を、列挙の前に 1 度だけ先にかける）。
 ///
 /// 起動の前は、この実行ファイルに DPI の manifest が無いので、プロセスは拡大率に対応していない。そのまま列挙すると、画面の座標と
 /// 拡大率が仮想化された値（拡大率は常に 1.0）になり、画素の実際の値が読めない。かといって、呼んだスレッドの文脈を一時的に切り替えて
 /// 戻す形にはしない: 戻すときに、元の「非対応」がそのスレッドの明示の値として残りうる。すると、あとで winit がプロセスに対応を入れても、
-/// 明示したスレッドの値が優先されて、主のスレッドで作る窓が非対応になりうる（OS が窓をぼかして引き伸ばす）。プロセスにかければ、
+/// 明示したスレッドの値が優先されて、主のスレッドで作るウィンドウが非対応になりうる（OS がウィンドウをぼかして引き伸ばす）。プロセスにかければ、
 /// winit のあとの同じ呼び出しは「すでに設定済み」で失敗するだけで、結果は同じ。すでに設定されている（manifest・互換性の設定）なら変えない。
 fn become_per_monitor_aware() {
     static ONCE: Once = Once::new();
@@ -126,7 +126,7 @@ fn info(monitor: HMONITOR) -> Option<MONITORINFO> {
         .then_some(info)
 }
 
-/// 窓のプロシージャを包んで、最大化の 1 画素を空ける（実際の窓だけ。窓のハンドルが取れなければ何もしない）。
+/// ウィンドウのプロシージャを包んで、最大化の 1 画素を空ける（実際のウィンドウだけ。ウィンドウのハンドルが取れなければ何もしない）。
 pub fn install(cc: &eframe::CreationContext<'_>) {
     let Ok(handle) = cc.window_handle() else {
         return;
@@ -135,7 +135,7 @@ pub fn install(cc: &eframe::CreationContext<'_>) {
         return;
     };
     let hwnd = HWND(raw.hwnd.get() as *mut _);
-    // SAFETY: 自分の窓（このスレッドが作った）に、このモジュールの関数を付ける。同じ識別子で再び付けても参照値が替わるだけ。
+    // SAFETY: 自分のウィンドウ（このスレッドが作った）に、このモジュールの関数を付ける。同じ識別子で再び付けても参照値が替わるだけ。
     unsafe {
         let _ = SetWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID, 0);
     }
@@ -152,7 +152,7 @@ unsafe extern "system" fn subclass(
     match message {
         WM_NCCALCSIZE if wparam.0 != 0 && lparam.0 != 0 => {
             // winit（この先）が、最大化中の内側を作業領域に直す。その後で縮める
-            // SAFETY: 次の窓のプロシージャへ、同じ引数をそのまま渡す。
+            // SAFETY: 次のウィンドウのプロシージャへ、同じ引数をそのまま渡す。
             let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
             // SAFETY: wparam が真のとき、lparam は NCCALCSIZE_PARAMS を指す（Win32 の決まり）。
             let params = unsafe { &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS) };
@@ -165,9 +165,9 @@ unsafe extern "system" fn subclass(
         }
         WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => {
             // 自動で隠すかどうかを切り替えると作業領域が変わる。最大化中なら、内側の求め直しを頼む
-            // SAFETY: 次の窓のプロシージャへ、同じ引数をそのまま渡す。
+            // SAFETY: 次のウィンドウのプロシージャへ、同じ引数をそのまま渡す。
             let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
-            // SAFETY: 自分の窓への枠の再計算の頼み（位置・大きさ・重なりは変えない）。
+            // SAFETY: 自分のウィンドウへの枠の再計算の頼み（位置・大きさ・重なりは変えない）。
             unsafe {
                 if IsZoomed(hwnd).as_bool() {
                     let _ = SetWindowPos(
@@ -190,13 +190,13 @@ unsafe extern "system" fn subclass(
                 DefSubclassProc(hwnd, message, wparam, lparam)
             }
         }
-        // SAFETY: 次の窓のプロシージャへ、同じ引数をそのまま渡す。
+        // SAFETY: 次のウィンドウのプロシージャへ、同じ引数をそのまま渡す。
         _ => unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
     }
 }
 
 /// winit が作った最大化の内側（作業領域と一致するとき）から、自動で隠すタスクバーのある辺を 1 画素縮めた矩形。縮める辺が無い・
-/// winit の作った内側でない（枠つきの窓。OS が自分で 1 画素を残している）なら None。
+/// winit の作った内側でない（枠つきのウィンドウ。OS が自分で 1 画素を残している）なら None。
 fn leave_autohide_gap(client: RECT) -> Option<RECT> {
     // SAFETY: 読むだけ。
     let monitor = unsafe { MonitorFromRect(&client, MONITOR_DEFAULTTONEAREST) };
@@ -219,7 +219,7 @@ fn autohide_edges(monitor: RECT) -> Edges {
             rc: monitor,
             ..Default::default()
         };
-        // SAFETY: `cbSize` と画面の矩形を入れた APPBARDATA を渡す。戻り値はその辺のアプリバーの窓（無ければ 0）。
+        // SAFETY: `cbSize` と画面の矩形を入れた APPBARDATA を渡す。戻り値はその辺のアプリバーのウィンドウ（無ければ 0）。
         let bar = unsafe { SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &mut data) };
         bar != 0 && unsafe { IsWindow(Some(HWND(bar as *mut _))) }.as_bool()
     };
@@ -231,11 +231,11 @@ fn autohide_edges(monitor: RECT) -> Edges {
     }
 }
 
-/// `install` と同じ包みを、窓のハンドル（HWND の値）で付ける（別ウィンドウ。eframe は子の窓のハンドルを渡さないので、`detach` が見つけた窓）。
+/// `install` と同じ包みを、ウィンドウのハンドル（HWND の値）で付ける（別ウィンドウ。eframe は子ウィンドウのハンドルを渡さないので、`detach` が見つけたウィンドウ）。
 /// 付けた時にもう最大化していれば、内側の求め直しを頼む（次の `WM_NCCALCSIZE` から 1 画素が空く）。
 pub fn install_hwnd(hwnd: isize) {
     let hwnd = HWND(hwnd as *mut _);
-    // SAFETY: この画面のスレッドが作った窓（`detach::native::find_window` が同じスレッドの窓から見つけた）に、このモジュールの関数を付ける。
+    // SAFETY: この画面のスレッドが作ったウィンドウ（`detach::native::find_window` が同じスレッドのウィンドウから見つけた）に、このモジュールの関数を付ける。
     // 同じ識別子で再び付けても参照値が替わるだけ。枠の再計算の頼みは位置・大きさ・重なりを変えない。
     unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {

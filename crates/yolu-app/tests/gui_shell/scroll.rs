@@ -1,6 +1,6 @@
 //! 縦のスクロールの共通の部品（`ui::scroll`）: ホイール・つまみを掴んで動かす・溝を押して移る・ペン（winit が egui のポインタと Touch に
 //! 変えた入力）で同じことができる、つまみの太さと掴める幅がカラーセットの欄（egui の `ScrollArea`・`ScrollStyle::thin`）と同じ、
-//! 中身が収まるときはつまみを出さない。部品だけを置いた窓と、本物の窓（レイヤーの欄・一覧の窓）で確かめる。
+//! 中身が収まるときはつまみを出さない。部品だけを置いたウィンドウと、本物のウィンドウ（レイヤーの欄・一覧のウィンドウ）で確かめる。
 use crate::common;
 
 use egui::epaint::Shape;
@@ -10,7 +10,7 @@ use egui_kittest::Harness;
 use yolu_app::ui::scroll::{Scroll, BAR_WIDTH, HANDLE_MIN, THIN_WIDTH};
 use yolu_app::YoluApp;
 
-/// つまみだけを置いた窓。
+/// つまみだけを置いたウィンドウ。
 struct Pane {
     ready: bool,
     offset: f32,
@@ -382,7 +382,7 @@ fn the_scroll_bar_has_its_own_node_for_screen_readers() {
     assert_eq!(node.rect().height(), view.height());
 }
 
-// ───────── 本物の窓 ─────────
+// ───────── 本物のウィンドウ ─────────
 
 #[test]
 fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
@@ -475,7 +475,7 @@ fn a_list_window_keeps_its_scroll_between_frames_even_when_the_caller_passes_zer
             ui.ctx().request_repaint();
             return;
         }
-        // 呼ぶ側が毎フレーム 0 を渡す（確認・報告の窓の呼び方）
+        // 呼ぶ側が毎フレーム 0 を渡す（確認・報告のウィンドウの呼び方）
         let mut scroll = 0.0;
         let _ = show_list(
             &ui.ctx().clone(),
@@ -500,7 +500,7 @@ fn a_list_window_keeps_its_scroll_between_frames_even_when_the_caller_passes_zer
     h.run();
     let bar = h.get_by_role(egui::accesskit::Role::ScrollBar).rect();
     let first = text_top(&h, "row 0").expect("先頭の行が見える");
-    // つまみを引いて、窓が次のフレームも同じ位置を保つ（ずらした量が毎回 0 に戻らない）
+    // つまみを引いて、ウィンドウが次のフレームも同じ位置を保つ（ずらした量が毎回 0 に戻らない）
     let from = pos2(bar.center().x, bar.top() + 5.0);
     h.event(Event::PointerMoved(from));
     h.event(Event::PointerButton {
@@ -525,7 +525,7 @@ fn a_list_window_keeps_its_scroll_between_frames_even_when_the_caller_passes_zer
     let moved = text_top(&h, "row 0");
     assert!(
         moved.is_none_or(|y| y < first - 20.0),
-        "窓の一覧がつまみで動き、離したあとも戻らない: {first} → {moved:?}"
+        "ウィンドウの一覧がつまみで動き、離したあとも戻らない: {first} → {moved:?}"
     );
     // ホイールでも動く（一覧の上にポインタを置いて、上へ戻す）
     let view = h.get_by_role(egui::accesskit::Role::ScrollBar).rect();

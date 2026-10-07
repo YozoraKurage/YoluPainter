@@ -240,7 +240,7 @@ fn compare(g: &Arc<SurfaceGeometry>, view: &CameraView, name: &str, radius: f32,
     );
 }
 
-/// 細かく折り返す蛇腹（40 層・つながった 1 つのメッシュ、76,800 三角形）。
+/// 細かく折り返す蛇腹（40 レイヤー・つながった 1 つのメッシュ、76,800 三角形）。
 fn crowded() -> Vec<SurfaceTriangle> {
     let mut t = Vec::new();
     let folds = 40;

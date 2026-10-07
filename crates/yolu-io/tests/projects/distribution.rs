@@ -1,4 +1,4 @@
-//! 配布用の写し（`Project::for_distribution`）: 種類ごとに除かれる・使っている棚の物は参照の種類ごとに残る・層の画素は元と同じ・写しをもう一度開ける・
+//! 配布用の写し（`Project::for_distribution`）: 種類ごとに除かれる・使っている棚の物は参照の種類ごとに残る・レイヤーの画素は元と同じ・写しをもう一度開ける・
 //! 開いているプロジェクトは変わらない。Unity 版が作った .ylp（PSD の原本・file の出どころ・unityAsset・thumbnail・brush.json）は試験の中で組み立てる。
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,7 +42,7 @@ fn pixels(seed: u32) -> Vec<u8> {
     (0..16u32).map(|i| (seed * 37 + i * 11) as u8 | 1).collect()
 }
 
-/// 塗りつぶしの層が、指定したチャンネルで棚の画像を読む文書。
+/// 塗りつぶしレイヤーが、指定したチャンネルで棚の画像を読む文書。
 fn doc_reading(images: &[(u32, Channel)]) -> Document {
     let mut doc = Document::new(64, 64).unwrap();
     let mut inputs = EffectInputs::new();
@@ -290,7 +290,7 @@ fn the_fixture_is_what_a_unity_made_project_leaves_behind() {
 fn the_inventory_lists_each_kind_with_names_and_leaves_out_empty_kinds() {
     let project = unity_style();
     let inventory = project.distribution_inventory(&Removal::ALL);
-    // 窓に並べる順（Unity 版が作った .ylp は、名前を付けて残した選択範囲を持たない）
+    // ウィンドウに並べる順（Unity 版が作った .ylp は、名前を付けて残した選択範囲を持たない）
     assert_eq!(inventory.kinds(), unity_kinds());
     assert_eq!(names(&project, Removal::PsdOriginals), ["Body"]);
     assert_eq!(
@@ -367,7 +367,7 @@ fn a_shelf_item_that_a_layer_or_a_look_points_at_is_used_whatever_the_kind_of_re
     let want: BTreeSet<String> = (1..=5).map(rid).collect();
     assert_eq!(
         used, want,
-        "1: 色の画像、2: 高さの画像（チャンネル違い）、3: 別のセットの層、4: 利用者の見た目の割り当て、5: Unity の値の中の割り当て"
+        "1: 色の画像、2: 高さの画像（チャンネル違い）、3: 別のセットのレイヤー、4: 利用者の見た目の割り当て、5: Unity の値の中の割り当て"
     );
     // 使っていない物は含まれない
     for n in [6, 7, 8, 20, 21] {
@@ -375,7 +375,7 @@ fn a_shelf_item_that_a_layer_or_a_look_points_at_is_used_whatever_the_kind_of_re
     }
 }
 
-/// 棚に使っていない画像 1 つ（`rid(9)`）だけを持つプロジェクトで、`name`（層の名前の Text の項目）と `look`（`look.json` の中身。無ければ置かない）を
+/// 棚に使っていない画像 1 つ（`rid(9)`）だけを持つプロジェクトで、`name`（レイヤーの名前の Text の項目）と `look`（`look.json` の中身。無ければ置かない）を
 /// 差し替えたもの。ID が正本の Guid の項目や look.json の引用符で区切られた値としてではなく、文字列の中の ID として現れる場合の確かめに使う。
 fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
     let doc = doc_reading(&[]);
@@ -387,7 +387,7 @@ fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
             f.path.ends_with(".name")
                 && matches!(&f.value, yolu_io::NativeValue::Text(t) if t == "塗り")
         })
-        .expect("層の名前の項目")
+        .expect("レイヤーの名前の項目")
         .path
         .clone();
     let native = native
@@ -432,7 +432,7 @@ fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
 fn an_id_inside_a_string_is_found_even_with_hex_characters_or_hyphens_beside_it() {
     let id = rid(9);
     let key = id.replace('-', "");
-    // 層の名前のような Text の項目: ID の前後に 16 進の文字・ハイフン・数字が付いても、使っている物として数える
+    // レイヤーの名前のような Text の項目: ID の前後に 16 進の文字・ハイフン・数字が付いても、使っている物として数える
     for name in [
         format!("e-{key}"),
         format!("{key}-1"),
@@ -660,7 +660,7 @@ fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
             "{n}"
         );
     }
-    // 層（正本）・選択・合成は元と同じバイト列
+    // レイヤー（正本）・選択・合成は元と同じバイト列
     for set in [SET_A, SET_B] {
         for leaf in ["document.utpaint", "composite/Color.png"] {
             let name = format!("sets/{set}/{leaf}");
@@ -764,7 +764,7 @@ fn an_unused_only_shelf_leaves_no_index_and_no_resource_entries() {
 
 #[test]
 fn a_content_shared_with_a_kept_item_stays_when_the_unused_item_goes() {
-    // 同じ画素の項目が 2 つ（片方は層が読み、片方は使っていない）。PNG は 1 つで、使っている方が残る
+    // 同じ画素の項目が 2 つ（片方はレイヤーが読み、片方は使っていない）。PNG は 1 つで、使っている方が残る
     let doc = doc_reading(&[(1, Channel::Color)]);
     let base = Project::create(writer(), &[spec(SET_A, "Body", &doc)], SET_A).unwrap();
     let mut shelf = Shelf::new(1 << 30);

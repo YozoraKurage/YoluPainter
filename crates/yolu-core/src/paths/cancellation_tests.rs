@@ -398,7 +398,7 @@ fn list_cancellation_stops_at_every_check_site_across_the_second_path() {
         LayerPathEntry::new(LayerPath::Canvas(second)),
     ];
     // 入口・Painter::new・サンプルと画素ごと（1 本目のストロークと 2 本目の塗り。真ん中は 2 本目の途中）・出口の 2 回。
-    // どこで取り消しても、作業面を返さない（呼び手の層は変わらない）
+    // どこで取り消しても、作業面を返さない（呼び手のレイヤーは変わらない）
     check(
         |_| {
             vec![

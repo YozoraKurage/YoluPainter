@@ -1,4 +1,4 @@
-//! PSD の写し（core の文書 ⇔ PSD）の M2 の層: マスク・グループ・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ロック。
+//! PSD の写し（core の文書 ⇔ PSD）の M2 のレイヤー: マスク・グループ・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ロック。
 //! C# の PsdLayerFeatureTests・PsdGroupTests・PsdAdjustmentTests・PsdFillTests・PsdLockTests と同じ道筋を core の文書から確かめる
 //! （C# 正解のバイト列との照合は `psd_golden.rs`）。Photoshop・CLIP STUDIO の実物のファイルは持ち込まず、試験の中で一から組む。
 use std::fmt::Write as _;
@@ -82,7 +82,7 @@ fn fnv(bytes: &[u8]) -> u64 {
     })
 }
 
-/// 往復で変わってはいけない中身の文字列（層の並び・入れ子・属性・マスク・調整・塗りつぶし・画素・合成）。ロックは、すべてが立てば
+/// 往復で変わってはいけない中身の文字列（レイヤーの並び・入れ子・属性・マスク・調整・塗りつぶし・画素・合成）。ロックは、すべてが立てば
 /// 下の個別のロックを書かない（効くロックは同じ）ので、すべてだけにそろえる。
 fn snapshot(d: &Document) -> String {
     let mut s = String::new();
@@ -173,7 +173,7 @@ fn round_trip(core: &Document) -> (Document, Vec<u8>) {
     assert_eq!((doc.width, doc.height), (projected.width, projected.height));
     assert_eq!(
         doc.layers, projected.layers,
-        "読み直した層は書いた層と同じ（統合画像は読みでは持たない）"
+        "読み直したレイヤーは書いたレイヤーと同じ（統合画像は読みでは持たない）"
     );
     assert_eq!(
         psd::write_edited(&read, doc, &Limits::default()).unwrap(),
@@ -506,7 +506,7 @@ fn imported_locks_are_in_core_without_history_and_the_project_stores_them() {
 
 #[test]
 fn the_colour_blend_of_a_layer_is_written_whatever_the_other_channels_say() {
-    // Color の合成が層の値と違うとき、Color のほうを書く（C# が書き出すチャンネルの値で書くのと同じ）。ほかのチャンネルの設定は、その
+    // Color の合成がレイヤーの値と違うとき、Color のほうを書く（C# が書き出すチャンネルの値で書くのと同じ）。ほかのチャンネルの設定は、その
     // チャンネルの PSD の値になるので、Color の PSD には関わらず、断らない
     let mut d = new_doc();
     raster(&mut d, "bg", gradient);
@@ -541,7 +541,7 @@ fn the_colour_blend_of_a_layer_is_written_whatever_the_other_channels_say() {
     assert_eq!(
         back.layers()[1].channel_blends().count(),
         0,
-        "読み込み直すと層の値になる"
+        "読み込み直すとレイヤーの値になる"
     );
     // グループも Color の値で書く。ほかのチャンネルの実効の値が違っても断らない
     let inner = raster(&mut d, "inner", soft);
@@ -739,8 +739,11 @@ fn layer_and_divider_ids_survive_import_and_export() {
     assert_eq!(core.layers()[3].parent(), None);
     let projected = Psd::from_core(&core).unwrap();
     psd.composite_rgba = projected.composite_rgba.clone();
-    assert_eq!(projected, psd, "層の ID・区切りの ID・並び・入れ子が同じ");
-    // 同じ PSD の層の ID が重なる文書: 次の空きへ送る
+    assert_eq!(
+        projected, psd,
+        "レイヤーの ID・区切りの ID・並び・入れ子が同じ"
+    );
+    // 同じ PSD のレイヤーの ID が重なる文書: 次の空きへ送る
     let mut d = new_doc();
     let a = d.add_layer("a").unwrap();
     let b = d.add_layer("b").unwrap();
@@ -752,7 +755,7 @@ fn layer_and_divider_ids_survive_import_and_export() {
     assert_eq!(
         projected.layers.iter().map(|l| l.id).collect::<Vec<_>>(),
         [7, 8],
-        "上の層から順に、重なれば次の空きへ"
+        "上のレイヤーから順に、重なれば次の空きへ"
     );
 }
 
@@ -798,7 +801,7 @@ fn off_canvas_pixels_and_masks_are_refused_not_cropped() {
     assert_eq!(outside.core_issues().len(), 1);
     assert!(outside.core_issues()[0].contains("layers[0].mask"));
     assert!(outside.to_core().is_err());
-    // グループの中の層も数える
+    // グループの中のレイヤーも数える
     let nested = Psd {
         width: 4,
         height: 2,
@@ -889,7 +892,7 @@ fn exporting_leaves_the_document_untouched_and_a_stroke_blocks_it() {
 
 #[test]
 fn the_pixel_budget_counts_each_mask_as_a_whole_canvas() {
-    // 4096² のキャンバスに 9 枚のマスク: 1 枚で画布 1 枚ぶん（16 MiB）を数えるので、128 MiB を超えるところで書かず予算の理由を言う
+    // 4096² のキャンバスに 9 枚のマスク: 1 枚でキャンバス 1 枚ぶん（16 MiB）を数えるので、128 MiB を超えるところで書かず予算の理由を言う
     let mut d = Document::new(4096, 4096).unwrap();
     for n in 0..9 {
         let a = d.add_layer(&format!("m{n}")).unwrap();
@@ -938,7 +941,7 @@ fn undo_of_a_core_edit_after_import_does_not_reach_the_import() {
 fn export_blockers_name_every_reason_for_every_layer_and_agree_with_from_core() {
     use yolu_io::psd::{export_blockers, Blocker, Refusal};
     let mut d = new_doc();
-    // Color を無効にした層・ほかのチャンネルだけが違う層は、Color の PSD では隠すか Color の値で書くので、断る理由にならない
+    // Color を無効にしたレイヤー・ほかのチャンネルだけが違うレイヤーは、Color の PSD では隠すか Color の値で書くので、断る理由にならない
     let off = raster(&mut d, "off", gradient);
     d.set_channel_enabled(off, Channel::Color, false).unwrap();
     let inv = raster(&mut d, "inverted", soft);
@@ -967,7 +970,7 @@ fn export_blockers_name_every_reason_for_every_layer_and_agree_with_from_core() 
             ("folder", &Refusal::ClippedGroup),
         ]
     );
-    // from_core は上の層から見て初めの理由で断る（「fine」は書ける。次の「folder」）
+    // from_core は上のレイヤーから見て初めの理由で断る（「fine」は書ける。次の「folder」）
     let top_first: &Blocker = all.iter().rev().find(|b| b.layer == "folder").unwrap();
     assert_eq!(refusal(&d), top_first.message());
     // 書ける文書は空
@@ -978,7 +981,7 @@ fn export_blockers_name_every_reason_for_every_layer_and_agree_with_from_core() 
 
 #[test]
 fn group_dividers_count_against_the_layer_record_budget() {
-    // 層 130 枚は上限の 256 に収まるが、グループは区切りの記録も要るので 260 件になる。書かず予算の理由を言う
+    // レイヤー 130 枚は上限の 256 に収まるが、グループは区切りの記録も要るので 260 件になる。書かず予算の理由を言う
     let mut d = new_doc();
     for n in 0..130 {
         d.add_group(&format!("g{n}"), None).unwrap();

@@ -1,10 +1,10 @@
 //! Live Link で Unity から受けた、描いていないスロットの絵（影色のテクスチャ・マットキャップの絵など）を GPU に持つ: 2D テクスチャの
-//! 配列で、層 1 つがスロット 1 つ（シェーダーの元の番号 40〜55。`shaders/liltoon/slots.wgsl`）。
+//! 配列で、レイヤー 1 つがスロット 1 つ（シェーダーの元の番号 40〜55。`shaders/liltoon/slots.wgsl`）。
 //!
 //! - 持つのはスロットの並びで先の [`MAX_RECEIVED_LAYERS`] 枚まで（超えたスロットは割り当てのない既定で描き、欄のスロットの行が
 //!   「描かない」と出す。`look_gpu::dropped_received`）。
-//! - 層の大きさはそろえる（配列なので）: 絵の幅・高さの一番大きいものを、辺の上限（[`MAX_LAYER_SIZE`] と 3D ビューの決めた上限の小さいほう）
-//!   と、全部の層（ミップ込み）がバイトの予算（[`BUDGET_BYTES`] と、3D ビューの全体の予算の計画が渡す残りの小さいほう）に収まるまで
+//! - レイヤーの大きさはそろえる（配列なので）: 絵の幅・高さの一番大きいものを、辺の上限（[`MAX_LAYER_SIZE`] と 3D ビューの決めた上限の小さいほう）
+//!   と、全部のレイヤー（ミップ込み）がバイトの予算（[`BUDGET_BYTES`] と、3D ビューの全体の予算の計画が渡す残りの小さいほう）に収まるまで
 //!   2 の累乗で縮めたもの。1 × 1 まで縮めても収まらなければ 1 × 1 で持つ（ユーザーチャンネルの配列と同じ決まり）。違う大きさの絵は CPU で
 //!   合わせる（UV は 0〜1 なので縦横の比が違っても同じ所を読む）。ミップも CPU で作る（受けた時だけで、毎フレームはしない）。
 //! - 値は Unity が読むのと同じ straight の RGBA8（乗算済みにしない。シェーダーも割り戻さない）。A は色の不透明度とは限らず、ノーマルマップの
@@ -17,20 +17,20 @@ use std::sync::Arc;
 use eframe::egui_wgpu::wgpu;
 use yolu_core::look::ReceivedImage;
 
-/// 1 つのセットが持てる受けた絵の層の数（シェーダーの元の番号 40〜55。`shaders/liltoon/bindings.wgsl` の `NR` と同じ）。
+/// 1 つのセットが持てる受けた絵のレイヤーの数（シェーダーの元の番号 40〜55。`shaders/liltoon/bindings.wgsl` の `NR` と同じ）。
 pub const MAX_RECEIVED_LAYERS: usize = 16;
-/// 層の辺の上限。
+/// レイヤーの辺の上限。
 pub const MAX_LAYER_SIZE: u32 = 1024;
-/// 1 つのセットの受けた絵の全部（ミップ込み）の GPU のバイト数の上限（16 層の 1024² が入る。全体の予算の残りがもっと少なければそれ）。
+/// 1 つのセットの受けた絵の全部（ミップ込み）の GPU のバイト数の上限（16 レイヤーの 1024² が入る。全体の予算の残りがもっと少なければそれ）。
 pub const BUDGET_BYTES: u64 = 96 << 20;
-/// 配列の層の数の下限（GL は 1 層の配列を読めない）。
+/// 配列のレイヤーの数の下限（GL は 1 レイヤーの配列を読めない）。
 const MIN_LAYERS: usize = 2;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 struct State {
-    /// 層の並び（スロットの名前と絵）。
+    /// レイヤーの並び（スロットの名前と絵）。
     layers: Vec<(String, Arc<ReceivedImage>)>,
-    /// 層の大きさ。
+    /// レイヤーの大きさ。
     size: [u32; 2],
     view: wgpu::TextureView,
     bytes: u64,
@@ -89,7 +89,7 @@ impl ReceivedLayers {
         }
     }
 
-    /// 同じ道具の、まっさらな別の配列（ほかのセット用）。
+    /// 同じツールの、まっさらな別の配列（ほかのセット用）。
     pub fn sibling(&self) -> ReceivedLayers {
         ReceivedLayers {
             device: self.device.clone(),
@@ -115,12 +115,12 @@ impl ReceivedLayers {
         self.state.as_ref().map_or(0, |s| s.bytes)
     }
 
-    /// 層の大きさ（持っていなければ None）。
+    /// レイヤーの大きさ（持っていなければ None）。
     pub fn size(&self) -> Option<[u32; 2]> {
         self.state.as_ref().map(|s| s.size)
     }
 
-    /// スロットの層の番号（持っていなければ None）。
+    /// スロットのレイヤーの番号（持っていなければ None）。
     pub fn layer_of(&self, slot: &str) -> Option<usize> {
         self.state
             .as_ref()?
@@ -221,7 +221,7 @@ impl ReceivedLayers {
     }
 }
 
-/// ミップ込みの 1 層のバイト数。
+/// ミップ込みの 1 レイヤーのバイト数。
 fn mip_bytes(size: [u32; 2]) -> u64 {
     let (mut w, mut h, mut total) = (size[0] as u64, size[1] as u64, 0u64);
     loop {
@@ -234,8 +234,8 @@ fn mip_bytes(size: [u32; 2]) -> u64 {
     }
 }
 
-/// 層の大きさとバイト数（ミップ込み）。絵（[`MAX_RECEIVED_LAYERS`] まで数える）の一番大きい幅・高さを、辺が `limit`（[`MAX_LAYER_SIZE`] まで）に、
-/// 全部の層のバイト数が `budget`（[`BUDGET_BYTES`] まで）に収まるまで 2 の累乗で縮める。1 × 1 まで縮めても収まらなければ 1 × 1。
+/// レイヤーの大きさとバイト数（ミップ込み）。絵（[`MAX_RECEIVED_LAYERS`] まで数える）の一番大きい幅・高さを、辺が `limit`（[`MAX_LAYER_SIZE`] まで）に、
+/// 全部のレイヤーのバイト数が `budget`（[`BUDGET_BYTES`] まで）に収まるまで 2 の累乗で縮める。1 × 1 まで縮めても収まらなければ 1 × 1。
 /// 絵が無ければ持たない（0 バイト）。
 pub fn plan(images: &[(String, Arc<ReceivedImage>)], limit: u32, budget: u64) -> ([u32; 2], u64) {
     if images.is_empty() {
@@ -383,7 +383,7 @@ mod tests {
             ([0, 0], 0),
             "絵が無ければ持たない"
         );
-        // 1 枚でも 2 層（GL）で数える
+        // 1 枚でも 2 レイヤー（GL）で数える
         assert_eq!(
             plan(std::slice::from_ref(&small), MAX_LAYER_SIZE, full),
             ([256, 128], mip_bytes([256, 128]) * 2)
@@ -392,7 +392,7 @@ mod tests {
             plan(&[small.clone(), big.clone()], MAX_LAYER_SIZE, full).0,
             [1024, 1024]
         );
-        // 16 層の 1024² はミップ込みで約 85 MiB（1 つのセットの上限の中）
+        // 16 レイヤーの 1024² はミップ込みで約 85 MiB（1 つのセットの上限の中）
         let many: Vec<_> = (0..MAX_RECEIVED_LAYERS)
             .map(|i| (format!("s{i}"), big.1.clone()))
             .collect();

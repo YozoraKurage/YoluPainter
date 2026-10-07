@@ -1,8 +1,8 @@
-//! 継ぎ目をまたぐ評価と、島の図・帯の写しを作る間の、実際の確保（生きているバイト数の最大）が、見積り・予算に収まること。
+//! 継ぎ目をまたぐ評価と、アイランドの図・帯の写しを作る間の、実際の確保（生きているバイト数の最大）が、見積り・予算に収まること。
 //!
 //! 確保を数える `#[global_allocator]` を置くので、この試験だけで 1 本の実行ファイルにする。ほかの試験の確保が混ざらないよう、試験は 1 つの関数で
-//! 順に回す。モデルは「3D で隣どうしの小さな島が、UV では散らばって、島の間の隙間がぜんぶ帯のテクセルになる」並べ方（帯のテクセルが最も多く、
-//! 読む相手の島がブロックの外にも出る）。
+//! 順に回す。モデルは「3D で隣どうしの小さなアイランドが、UV では散らばって、アイランドの間の隙間がぜんぶ帯のテクセルになる」並べ方（帯のテクセルが最も多く、
+//! 読む相手のアイランドがブロックの外にも出る）。
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
@@ -71,7 +71,7 @@ fn measure<R>(f: impl FnOnce() -> R) -> (R, usize) {
 
 const SIZE: u32 = 256;
 
-/// n × n の四角を 3D で隣どうしにつなぎ、UV では並びを散らした n × n の升に、升の半分の大きさで置く（島の間は島と同じ幅）。
+/// n × n の四角を 3D で隣どうしにつなぎ、UV では並びを散らした n × n の升に、升の半分の大きさで置く（アイランドの間はアイランドと同じ幅）。
 fn atlas(n: u32) -> Arc<UvTopology> {
     let mut tris = Vec::new();
     for j in 0..n {
@@ -132,7 +132,7 @@ fn build_within(
     budget: u64,
 ) -> (Result<(), UvTopologyError>, usize) {
     let topology = atlas(n);
-    // 位相の対応（島・縁）は作る間の確保に数えない（解像度によらず、モデルごとに 1 つ）
+    // 位相の対応（アイランド・縁）は作る間の確保に数えない（解像度によらず、モデルごとに 1 つ）
     let _ = topology.seam_edge_count();
     let (r, peak) = pool(threads).install(|| {
         measure(|| {
@@ -144,7 +144,7 @@ fn build_within(
     (r, peak)
 }
 
-/// n × n の島（n が大きいほど小さな島が多く、小さいほど大きな島が少ない）と、近傍の段の半径。
+/// n × n のアイランド（n が大きいほど小さなアイランドが多く、小さいほど大きなアイランドが少ない）と、近傍の段の半径。
 const MODELS: [(u32, u32); 2] = [(32, 8), (4, 16)];
 
 #[test]
@@ -157,7 +157,7 @@ fn estimates_and_budgets_bound_the_real_allocations() {
         let topology = atlas(n);
         let band = topology.seam_band(SIZE, SIZE, radius).unwrap();
         eprintln!(
-            "島 {n}×{n}・半径 {radius}: 継ぎ目の縁 {}・帯のテクセル {}",
+            "アイランド {n}×{n}・半径 {radius}: 継ぎ目の縁 {}・帯のテクセル {}",
             topology.seam_edge_count(),
             band.texel_count()
         );
@@ -167,7 +167,7 @@ fn estimates_and_budgets_bound_the_real_allocations() {
             band.texel_count()
         );
 
-        // ── 評価: 近傍の段 1 つ・2 つ（前の段にも近傍の段があれば、相手の島を読む矩形の中でも継ぎ目をまたぐ）。ブロックの大きさも 2 通り
+        // ── 評価: 近傍の段 1 つ・2 つ（前の段にも近傍の段があれば、相手のアイランドを読む矩形の中でも継ぎ目をまたぐ）。ブロックの大きさも 2 通り
         let one = [Stage::new(Settings::GaussianBlur { radius })];
         let two = [
             Stage::new(Settings::GaussianBlur { radius }),

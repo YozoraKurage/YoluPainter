@@ -31,7 +31,7 @@ impl Rng {
     }
 }
 
-/// 層に長方形と散らばった点で画素を置く（Normal のチャンネルにも少し）。
+/// レイヤーに長方形と散らばった点で画素を置く（Normal のチャンネルにも少し）。
 fn paint(d: &mut Document, rng: &mut Rng, id: LayerId, normal: bool) {
     let (w, h) = (d.width() as u64, d.height() as u64);
     for _ in 0..1 + rng.below(3) {
@@ -57,8 +57,8 @@ fn paint(d: &mut Document, rng: &mut Rng, id: LayerId, normal: bool) {
     }
 }
 
-/// 乱数の文書: ラスター層（合成モード・不透明度・クリッピング・マスク）・調整・塗りつぶし・入れ子のグループ（通過と分離）。
-/// 返す 2 つ目は、ラスター層の ID（描く層の候補。下から上）。
+/// 乱数の文書: ラスターレイヤー（合成モード・不透明度・クリッピング・マスク）・調整・塗りつぶし・入れ子のグループ（通過と分離）。
+/// 返す 2 つ目は、ラスターレイヤーの ID（描くレイヤーの候補。下から上）。
 pub fn random_doc(seed: u64, width: u32, height: u32, tile: u32) -> (Document, Vec<LayerId>) {
     let mut rng = Rng(seed);
     let mut d = Document::with_tile_size(width, height, tile).unwrap();
@@ -135,7 +135,7 @@ pub fn random_doc(seed: u64, width: u32, height: u32, tile: u32) -> (Document, V
                 if order.len() >= n {
                     let from = order.len() - n;
                     let members: Vec<LayerId> = order[from..].to_vec();
-                    // 別のグループの中の層は、同じ親のものだけをまとめる
+                    // 別のグループの中のレイヤーは、同じ親のものだけをまとめる
                     let parent = d.layer(members[0]).unwrap().parent();
                     if members
                         .iter()
@@ -162,7 +162,7 @@ pub fn random_doc(seed: u64, width: u32, height: u32, tile: u32) -> (Document, V
     (d, rasters)
 }
 
-/// ラスター層の ID のうち、面を持つもの。
+/// ラスターレイヤーの ID のうち、面を持つもの。
 pub fn paintable(d: &Document, rasters: &[LayerId]) -> Vec<LayerId> {
     rasters
         .iter()

@@ -219,7 +219,7 @@ fn text_layer<'d>(doc: &'d Document, name: &str) -> Result<&'d Layer, OpError> {
         .ok_or_else(not_text_layer)
 }
 
-/// 命令の値を当てた文字の値（`base` は層の今の値か、新しい層の既定）。範囲の検査は文書が描くときにする。
+/// 命令の値を当てた文字の値（`base` はレイヤーの今の値か、新しいレイヤーの既定）。範囲の検査は文書が描くときにする。
 pub(crate) fn patched(
     base: &TextSettings,
     spec: &TextSpec,
@@ -270,7 +270,7 @@ pub(crate) fn patched(
     Ok(t)
 }
 
-/// 層の文字の値（読む命令の返事）。
+/// レイヤーの文字の値（読む命令の返事）。
 pub fn text_info(t: &TextSettings) -> TextInfo {
     let (font, font_file, font_index, font_family, font_postscript) = match &t.font {
         TextFont::Bundled(name) => (Some(name.clone()), None, None, None, None),

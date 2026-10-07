@@ -16,7 +16,7 @@ use crate::sets::{guid_string, MaterialRef};
 use crate::state::AppState;
 use crate::view3d::pose;
 
-/// 確かめる理由（一覧の窓の見出しに使う）。
+/// 確かめる理由（一覧のウィンドウの見出しに使う）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfirmKind {
     /// セットを消す（その作業が消える）。
@@ -185,7 +185,7 @@ pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     win.drafts.push(draft);
 }
 
-/// セットの無いマテリアルの組に、空のセットを 1 つずつ足す（上限まで。上限で足せないものがあれば理由を窓に出す）。
+/// セットの無いマテリアルの組に、空のセットを 1 つずつ足す（上限まで。上限で足せないものがあれば理由をウィンドウに出す）。
 pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     let groups = win.groups(app);
@@ -202,7 +202,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     }
 }
 
-/// セットの無いマテリアルの組の数（窓の状態に出す）。
+/// セットの無いマテリアルの組の数（ウィンドウの状態に出す）。
 pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
     win.groups(app)
         .iter()
@@ -381,8 +381,8 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             warning: false,
         });
         let groups = win.groups(app);
-        // 3D のパスを持つ層は、新しいモデルの形（指紋）と合わなければ、パスのまま新しいモデルには結び付かない（画素は残る。パスを
-        // 新しいメッシュへ描き直す・画素にするのは、パスの道具ができたとき。Unity 版の SurfacePathRebind は移していない）
+        // 3D のパスを持つレイヤーは、新しいモデルの形（指紋）と合わなければ、パスのまま新しいモデルには結び付かない（画素は残る。パスを
+        // 新しいメッシュへ描き直す・画素にするのは、パスのツールができたとき。Unity 版の SurfacePathRebind は移していない）
         if let Prep::Ready { model, .. } = &win.prep {
             let print = yolu_core::paths::fingerprint(model.geometry());
             let unbound = drafts
@@ -395,7 +395,9 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 .count();
             if unbound > 0 {
                 rows.push(PlanRow {
-                    left: lang.pick("3D のパスの層", "Layers with 3D paths").into(),
+                    left: lang
+                        .pick("3D のパスレイヤー", "Layers with 3D paths")
+                        .into(),
                     middle: unbound.to_string(),
                     right: lang.pick("画素だけ残る", "Pixels stay").into(),
                     warning: true,
@@ -539,7 +541,7 @@ pub(super) fn apply(
     let removed_names = app.remove_sets(&plan.removed).unwrap_or_default();
     app.sets.reorder(&order);
     app.dedupe_set_keys();
-    // 法線の形式（利用者が窓で変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
+    // 法線の形式（利用者がウィンドウで変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
     // 触っていないときは、形式が混在したプロジェクトの別のセットを黙って書き換えない
     if win.normal != win.normal_opened {
         for i in 0..app.sets.len() {

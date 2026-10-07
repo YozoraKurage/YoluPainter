@@ -229,7 +229,7 @@ fn draw_surface_one(
         paints(path.channel, path.brush, &path.material)?,
         &super::render::kind_brush(BrushSettings { radius: 1.0, ..b }, &path.style),
     )?;
-    // 指先: 直前のダブの中心（画布の画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
+    // 指先: 直前のダブの中心（キャンバスの画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
     let mut previous: Option<glam::DVec2> = None;
     let ps = &path.points;
     let positions: Vec<_> = ps

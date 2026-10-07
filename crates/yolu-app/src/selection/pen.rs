@@ -1,11 +1,11 @@
-//! 選択ペン・選択消し（CLIP STUDIO の「選択ペン」「選択消し」）。ブラシで塗るように選択範囲を足す・消す道具で、クイックマスクの
+//! 選択ペン・選択消し（CLIP STUDIO の「選択ペン」「選択消し」）。ブラシで塗るように選択範囲を足す・消すツールで、クイックマスクの
 //! ブラシ・消しゴムも同じ仕組みで直す（`quick`）。
 //!
 //! ダブは今のブラシの直径・硬さ・不透明度（`AppState::brush`）の形で、画素ごとの量（0〜255）に描く。硬さまでは満量、そこから縁へ
 //! なめらかに（core のブラシと同じ smoothstep）減る。1 ストローク分のダブは「ストロークの被覆」（タイルごとの量。重なりは大きい方）
 //! に積み、離したときに今の選択範囲へ足す（選択ペン）か引く（選択消し）。被覆を文書の選択範囲と 1 回だけ組み合わせるので、
 //! ダブの間隔や重なりに量が左右されず、1 ストロークが 1 回の Undo になる（`SelEdit::Shape`）。ストロークの途中は文書を変えない
-//! （描いている間の見た目は被覆の重ね表示）ので、Esc・フォーカス喪失・道具の切り替えで捨てても何も残らない。
+//! （描いている間の見た目は被覆の重ね表示）ので、Esc・フォーカス喪失・ツールの切り替えで捨てても何も残らない。
 //!
 //! 被覆は文書と同じ大きさのタイルの量で、触れたタイルだけを持つ。メモリの予算（`PEN_BUDGET_BYTES`）を超えるストロークは、
 //! 途中でも断って捨てる。
@@ -175,7 +175,7 @@ impl PenStroke {
         (radius.max(0.75), opacity)
     }
 
-    /// 点（画布の座標）まで、前の点から間隔を空けてダブを積む。最初の点には 1 つ置く。
+    /// 点（キャンバスの座標）まで、前の点から間隔を空けてダブを積む。最初の点には 1 つ置く。
     pub fn add(&mut self, x: f64, y: f64, pressure: f64) -> Result<(), PenError> {
         let Some((lx, ly, lp)) = self.last else {
             let (r, a) = self.dab_params(pressure);
@@ -334,17 +334,17 @@ pub fn combine_amount(a: u8, b: u8, erase: bool) -> u8 {
     }
 }
 
-// ───────── 道具（キャンバスの入力） ─────────
+// ───────── ツール（キャンバスの入力） ─────────
 
-/// 動いているストローク 1 つ（選択ペンの道具か、クイックマスクのブラシ・消しゴム）。
+/// 動いているストローク 1 つ（選択ペンのツールか、クイックマスクのブラシ・消しゴム）。
 pub struct ActivePen {
     pub stroke: PenStroke,
     pub source: StrokeSource,
-    /// クイックマスクのブラシ・消しゴム（false なら選択ペンの道具）。
+    /// クイックマスクのブラシ・消しゴム（false なら選択ペンのツール）。
     pub quick: bool,
 }
 
-/// 選択ペンの道具で消すか（基本の切り替えと、押したときの修飾: Shift は足す・Ctrl は消すに一時的に替える）。
+/// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: Shift は足す・Ctrl は消すに一時的に替える）。
 pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
     let ctrl = modifiers.command || modifiers.ctrl;
     match (modifiers.shift, ctrl) {
@@ -354,7 +354,7 @@ pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
     }
 }
 
-/// ストロークを始める（選択ペンの道具・クイックマスクで共通）。始められなければ理由をステータスバーへ。
+/// ストロークを始める（選択ペンのツール・クイックマスクで共通）。始められなければ理由をステータスバーへ。
 pub fn begin(app: &mut AppState, source: StrokeSource, erase: bool, quick: bool) -> bool {
     let params = PenParams::from_brush(&app.brush);
     let overlay_base = if quick {
@@ -444,7 +444,7 @@ pub fn sync(app: &mut AppState) {
     }
 }
 
-/// 選択ペンの道具を押した。
+/// 選択ペンのツールを押した。
 pub fn press(
     app: &mut AppState,
     view: &CanvasView,
@@ -476,7 +476,7 @@ pub fn press(
     add_point(app, view, pos, pressure);
 }
 
-/// 選択ペンの道具のポインタが動いた。
+/// 選択ペンのツールのポインタが動いた。
 pub fn moved(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource) {
     if app
         .sel

@@ -1,7 +1,7 @@
 //! 文書の解像度変更。C# ResampleAxis / CanvasResampler と同じ整数比の重み。
 //!
 //! 行き先の面はタイルごとに作る。C# の CanvasResampler と同じく、読む元のタイルが 1 枚も無い行き先は飛ばし、読む元が全部同じ
-//! 一様なタイルなら計算せずその色で埋める（どちらも画素ごとに計算した結果と同じバイトで、疎な層の費用が内容に比例する）。
+//! 一様なタイルなら計算せずその色で埋める（どちらも画素ごとに計算した結果と同じバイトで、疎なレイヤーの費用が内容に比例する）。
 use super::operations::Dirty;
 use super::{Document, Target};
 use crate::effects::LayerPath;
@@ -21,7 +21,7 @@ pub enum CanvasResampling {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ResizeReport {
     pub notes: Vec<String>,
-    /// モデルの上のパスで描かれた層。UV に結び付いたパスは残り、パスのチャンネルの画素は画素として写した（resize_image は補間、
+    /// モデルの上のパスで描かれたレイヤー。UV に結び付いたパスは残り、パスのチャンネルの画素は画素として写した（resize_image は補間、
     /// resize_canvas はずらし）だけなので、呼び手がモデルでパスから描き直すか、写した画素のままにして知らせる（C# の
     /// `ResampledDocument.SurfacePathLayers`）。
     pub surface_path_layers: Vec<LayerId>,
@@ -94,11 +94,11 @@ impl Axis {
     }
 }
 
-/// 行き先のある範囲が読む元の範囲（両端を含む。元の画布の中だけ）。
+/// 行き先のある範囲が読む元の範囲（両端を含む。元のキャンバスの中だけ）。
 struct Span {
     lo: u32,
     hi: u32,
-    /// 範囲のどの画素も元の画布の中を読む（外を読む画素があると、一様な元でも外は透明なので埋められない）。
+    /// 範囲のどの画素も元のキャンバスの中を読む（外を読む画素があると、一様な元でも外は透明なので埋められない）。
     inside: bool,
 }
 
@@ -445,7 +445,7 @@ impl Document {
         self.commit_resized(copy, &mut report)?;
         Ok(report)
     }
-    /// 画素を再補間せず画布だけを変更する。offset は元の左下を置く先。外へ出た画素は切り落とし、Undo で戻す。履歴の予算は
+    /// 画素を再補間せずキャンバスだけを変更する。offset は元の左下を置く先。外へ出た画素は切り落とし、Undo で戻す。履歴の予算は
     /// [`Document::resize_image`] と同じ（超えてもこの 1 段は残す）。
     pub fn resize_canvas(
         &mut self,
@@ -495,7 +495,7 @@ impl Document {
         }
         Ok(())
     }
-    /// 選択範囲を新しい大きさへ作り直す（A だけの RGBA の面として層と同じ道で）。
+    /// 選択範囲を新しい大きさへ作り直す（A だけの RGBA の面としてレイヤーと同じ道で）。
     fn resample_mask(
         &self,
         selection: &crate::SelectionMask,
@@ -572,7 +572,7 @@ impl Document {
             }
         }
         if let Some(selection) = &self.selection {
-            // 選択範囲は A だけの RGBA の面として層と同じ道を通る（飛ばす・埋める・取消）。画素の予算には数えない
+            // 選択範囲は A だけの RGBA の面としてレイヤーと同じ道を通る（飛ばす・埋める・取消）。画素の予算には数えない
             let mask = self.resample_mask(selection, width, height, map, cancelled)?;
             copy.selection = (!mask.is_empty()).then_some(mask);
         }
@@ -600,8 +600,8 @@ impl Document {
             }
             copy.saved_selections = std::sync::Arc::new(kept);
         }
-        // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled が層ごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
-        // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（層ごと複製済み）
+        // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled がレイヤーごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
+        // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（レイヤーごと複製済み）
         for i in 0..self.layers.len() {
             match self.layers[i].path() {
                 Some(LayerPath::Canvas(_)) => {
@@ -680,12 +680,12 @@ impl Document {
 enum Fit {
     /// 拡大・縮小（resize_image）: 半径・パスの点と太さを倍率に合わせる。`scale` は縦横の倍率の幾何平均（C# の Resampled）。
     Scale { sx: f64, sy: f64, scale: f64 },
-    /// 画布だけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
+    /// キャンバスだけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
     /// （C# と照らしていない。試験は seam_ops の resizing_the_canvas_moves_2d_path_points_and_redraws）。
     Shift((i32, i32)),
 }
 impl Fit {
-    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点と画布の対称の中心は縦横の倍率かずらしで、ブラシの半径は縦横の
+    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点とキャンバスの対称の中心は縦横の倍率かずらしで、ブラシの半径は縦横の
     /// 倍率の幾何平均で動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
     fn canvas_path(self, path: &CanvasPath, owner: &str, notes: &mut Vec<String>) -> CanvasPath {
         const LIMIT: f64 = 1e6;
@@ -744,7 +744,7 @@ impl Fit {
                     .collect();
             }
         }
-        // 画布の対称の中心は画布の画素の座標なので、点と同じに動かす（動かさないと、映した側が古い中心で映されて違う所に描かれる）
+        // キャンバスの対称の中心はキャンバスの画素の座標なので、点と同じに動かす（動かさないと、映した側が古い中心で映されて違う所に描かれる）
         if let PathSymmetry::Canvas(symmetry) = &mut next.style.symmetry {
             let (x, y) = match self {
                 Fit::Scale { sx, sy, .. } => (symmetry.center.x * sx, symmetry.center.y * sy),

@@ -1,5 +1,5 @@
 //! 効果（フィルターのスタック・Generator・Anchor・塗りつぶしの画像と投影・グラデーション）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書の層ごとの評価した出力・入力。
+//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書のレイヤーごとの評価した出力・入力。
 //! 全チャンネルの合成（`*.composite`）は、合成の式が f32 の core の式になってから core で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。
 use yolu_core::generator::{MapKind, MapState};
 use yolu_core::{
@@ -143,7 +143,7 @@ pub fn composites(doc: &Document) -> Vec<u8> {
     out
 }
 
-/// 層ごとの評価した出力（`EffectFixture.LayerOutputs` と同じ並び）。(見出し, 旗に続く画素) の並び。
+/// レイヤーごとの評価した出力（`EffectFixture.LayerOutputs` と同じ並び）。(見出し, 旗に続く画素) の並び。
 pub fn layer_outputs(doc: &Document) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     for (i, layer) in doc.layers().iter().enumerate() {
@@ -164,7 +164,7 @@ pub fn layer_outputs(doc: &Document) -> Vec<(String, Vec<u8>)> {
                     }
                 }
             }
-            out.push((format!("層 {i}「{}」{c:?}", layer.name()), bytes));
+            out.push((format!("レイヤー {i}「{}」{c:?}", layer.name()), bytes));
         }
         let mask = layer.mask().is_some_and(|m| m.has_active_filters());
         let mut bytes = vec![u8::from(mask)];
@@ -175,7 +175,7 @@ pub fn layer_outputs(doc: &Document) -> Vec<(String, Vec<u8>)> {
                 }
             }
         }
-        out.push((format!("層 {i}「{}」マスク", layer.name()), bytes));
+        out.push((format!("レイヤー {i}「{}」マスク", layer.name()), bytes));
     }
     out
 }
@@ -255,7 +255,7 @@ fn effect_documents_composite_every_channel_like_the_recorded_bytes() {
     }
 }
 
-/// 層ごとの評価した出力（`layer_outputs`）が、C# の `LayerOutputs` の記録と同じか。違う所の説明の一覧（空なら一致）。
+/// レイヤーごとの評価した出力（`layer_outputs`）が、C# の `LayerOutputs` の記録と同じか。違う所の説明の一覧（空なら一致）。
 pub fn layer_output_mismatches(core: &Document, want: &[u8]) -> Vec<String> {
     let mut at = 0;
     let (w, h) = (core.width() as usize, core.height() as usize);
@@ -305,7 +305,7 @@ fn csharp_effect_documents_evaluate_every_layer_like_csharp() {
         let bad = layer_output_mismatches(&core, &read(&format!("{name}.layers")));
         assert!(
             bad.is_empty(),
-            "{name}: 層の評価した出力が C# と違う:\n{}",
+            "{name}: レイヤーの評価した出力が C# と違う:\n{}",
             bad.join("\n")
         );
     }
@@ -435,7 +435,7 @@ fn project_images_become_effect_inputs() {
 }
 
 /// 2D のパスは、文書の `set_canvas_path` が、C# の `SetCanvasPath` と同じ画素を描く。パスと画素は 1 回の Undo で入れ替わり、
-/// パスの層には手で描けない。パスを外す（ラスタライズ）と画素だけが残って描ける。
+/// パスレイヤーには手で描けない。パスを外す（ラスタライズ）と画素だけが残って描ける。
 #[test]
 fn canvas_paths_render_like_csharp_and_undo_with_their_pixels() {
     use yolu_core::LayerPath;
@@ -538,7 +538,7 @@ fn mask_strokes(doc: &mut Document, id: yolu_core::LayerId) {
 /// Rust の編集 API（add_filter・move_filter・remove_filter・Undo・add_anchor・set_generator_anchor・set_fill_image・set_fill_projection・
 /// set_fill_gradient・set_canvas_path）だけで、効果を一通り付けた文書。ID は固定。C# の書き手が作った正本には現れない、Rust だけが作れる状態
 /// （参照が未選択の Anchor Generator、値の無い塗りつぶしに付けたグラデーション、編集で入れ替わった段の並び、Undo で戻した段）を含む。
-/// 画布は C# の入力（メッシュマップ・画像）と同じ 41×27。
+/// キャンバスは C# の入力（メッシュマップ・画像）と同じ 41×27。
 pub fn edited_effects_document() -> Document {
     let doc = edited_effects_with_history();
     let ids: Vec<yolu_core::LayerId> = (0..doc.layers().len())
@@ -547,7 +547,7 @@ pub fn edited_effects_document() -> Document {
     doc.with_persistent_ids(0x7777, &ids).unwrap()
 }
 
-/// `edited_effects_document` の、層の ID を固定する前の文書（Undo の履歴が残っている）。
+/// `edited_effects_document` の、レイヤーの ID を固定する前の文書（Undo の履歴が残っている）。
 pub fn edited_effects_with_history() -> Document {
     use yolu_core::fill_image::{Placement, Projection, ProjectionMode};
     use yolu_core::generator::{self, anchor::ReadMode, Ramp, Settings};
@@ -576,7 +576,7 @@ pub fn edited_effects_with_history() -> Document {
     let mut doc = Document::with_tile_size(41, 27, 8).unwrap();
     doc.set_effect_inputs(inputs).unwrap();
 
-    // 土台: 段の並びを編集で入れ替え、外した段を Undo で戻す。マスクと、層・マスクの Anchor
+    // 土台: 段の並びを編集で入れ替え、外した段を Undo で戻す。マスクと、レイヤー・マスクの Anchor
     let base = doc.add_layer("土台").unwrap();
     for (c, seed) in [
         (Channel::Color, 1),
@@ -950,7 +950,7 @@ pub fn edited_effects_with_history() -> Document {
     doc
 }
 
-/// 効果の設定が、2 つの文書で層・マスクごとに同じ（段・Anchor・塗りつぶしの画像・投影・グラデーション・パス・値・順序）。
+/// 効果の設定が、2 つの文書でレイヤー・マスクごとに同じ（段・Anchor・塗りつぶしの画像・投影・グラデーション・パス・値・順序）。
 fn assert_same_effects(a: &Document, b: &Document, what: &str) {
     assert_eq!(a.layers().len(), b.layers().len(), "{what}");
     for (x, y) in a.layers().iter().zip(b.layers()) {
@@ -993,7 +993,7 @@ fn assert_same_effects(a: &Document, b: &Document, what: &str) {
     assert_eq!(a.anchors().len(), b.anchors().len(), "{what}");
 }
 
-/// 編集 API で効果を一通り付けた文書を、正本にして開き直しても、層・マスクごとの設定と全チャンネルの合成が同じ。正本は書き直しても同じバイト列で、
+/// 編集 API で効果を一通り付けた文書を、正本にして開き直しても、レイヤー・マスクごとの設定と全チャンネルの合成が同じ。正本は書き直しても同じバイト列で、
 /// .ylp にして開き直しても同じ。
 #[test]
 fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
@@ -1031,7 +1031,7 @@ fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
     assert_eq!(
         layer_outputs(&edited),
         layer_outputs(&reopened),
-        "層ごとの評価した出力が元と同じ"
+        "レイヤーごとの評価した出力が元と同じ"
     );
     assert_eq!(
         NativeDocument::from_core(&reopened).unwrap().to_bytes(),
@@ -1117,7 +1117,7 @@ fn rust_written_effects_fixture_is_what_this_writer_produces() {
 }
 
 /// 上の正本を Unity 版の読み手（`DocumentBinary`、`Runtime/Core` をそのままコンパイル）に読ませた記録: 読めて、書き直すと同じバイト列になり、
-/// 全チャンネルの合成と層ごとの評価した出力が、Rust の評価と全バイト一致する。
+/// 全チャンネルの合成とレイヤーごとの評価した出力が、Rust の評価と全バイト一致する。
 #[test]
 fn csharp_reads_and_resaves_the_effects_document_this_writer_produces() {
     let edited = edited_effects_document();
@@ -1142,7 +1142,7 @@ fn csharp_reads_and_resaves_the_effects_document_this_writer_produces() {
     let bad = layer_output_mismatches(&edited, &read("rust-written-effects-v21.layers"));
     assert!(
         bad.is_empty(),
-        "C# が読んだ文書の層の出力が Rust と違う:\n{}",
+        "C# が読んだ文書のレイヤーの出力が Rust と違う:\n{}",
         bad.join("\n")
     );
 }

@@ -1,6 +1,6 @@
-//! 「メッシュマップをベイク」の窓（Unity 版の `MeshBakeWindow` と同じ並び: 上に焼くテクスチャセット、左に共通の設定と焼くマップの
+//! 「メッシュマップをベイク」のウィンドウ（Unity 版の `MeshBakeWindow` と同じ並び: 上に焼くテクスチャセット、左に共通の設定と焼くマップの
 //! 一覧、右に選んだ項目の設定、下に進み具合・取消・ベイク・閉じる）。値は `AppState::bake.settings` そのもの（保存したマップの
-//! 由来・古さの判定と同じ値）。窓を閉じてもベイクは続く（仕事の札に進み具合と取消が出る）。
+//! 由来・古さの判定と同じ値）。ウィンドウを閉じてもベイクは続く（仕事の札に進み具合と取消が出る）。
 //!
 //! 文言は名前・状態・短い理由だけ。マップの意味や設定の説明はツールチップ。高ポリの指定はまだ無い。
 
@@ -22,7 +22,7 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::ui::window::{self, Frame, Spec};
 
-/// 窓の大きさ（Unity 版は 780 × 600）。
+/// ウィンドウの大きさ（Unity 版は 780 × 600）。
 pub const SIZE: Vec2 = vec2(760.0, 560.0);
 const LIST_WIDTH: f32 = 252.0;
 const FOOTER_HEIGHT: f32 = 52.0;
@@ -44,7 +44,7 @@ pub enum Page {
     Overlap,
 }
 
-/// 窓の状態（右の項目・スクロール・動かした量）。
+/// ウィンドウの状態（右の項目・スクロール・動かした量）。
 #[derive(Default)]
 pub struct BakeWindow {
     pub page: Page,
@@ -58,7 +58,7 @@ pub struct BakeWindow {
     pub map: super::uvmap::MapUi,
 }
 
-/// 窓の 1 フレームぶんの表示データ（描く前に集める。描く途中で状態を借りないため）。
+/// ウィンドウの 1 フレームぶんの表示データ（描く前に集める。描く途中で状態を借りないため）。
 struct SetRow {
     uid: u32,
     name: String,
@@ -92,7 +92,7 @@ struct Overlap {
     skip_outside: bool,
     rows: [(MeshOverlapList, Vec<super::overlap::IslandRow>); 2],
     picking: Option<MeshOverlapList>,
-    /// 手で選んだ島が別のモデルのもの。
+    /// 手で選んだアイランドが別のモデルのもの。
     foreign: bool,
     /// 変えられない理由（読むだけのセット・描いている間）。
     locked: Option<String>,
@@ -101,7 +101,7 @@ struct Overlap {
 /// 焼く場所の選びの並び。
 const BACKENDS: [BakeBackend; 3] = [BakeBackend::Auto, BakeBackend::Gpu, BakeBackend::Cpu];
 
-/// 窓を描く（開いていなければ何もしない）。
+/// ウィンドウを描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let Some(mut win) = app.bake.window.take() else {
         return;
@@ -233,13 +233,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let popup_open = app.ui.popup_was_open;
     let mut offset = win.offset;
     let closed = window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
-        // Esc: 焼いている間は取消、そうでなければ閉じる（窓の上にポインタがあるとき。ポップアップを開いていたら、閉じるのはそちらだけ）
+        // Esc: 焼いている間は取消、そうでなければ閉じる（ウィンドウの上にポインタがあるとき。ポップアップを開いていたら、閉じるのはそちらだけ）
         let esc = !popup_open
             && ui.input(|i| i.key_pressed(Key::Escape))
             && ui
                 .input(|i| i.pointer.hover_pos())
                 .is_some_and(|p| frame.rect.contains(p));
-        // 島を手で選んでいる間の Esc は、ポインタの場所によらず選ぶのをやめるだけ
+        // アイランドを手で選んでいる間の Esc は、ポインタの場所によらず選ぶのをやめるだけ
         if overlap.picking.is_some() && ui.input(|i| i.key_pressed(Key::Escape)) {
             actions.push(BakeAction::Priority(super::overlap::PriorityOp::Pick(None)));
         } else if esc {
@@ -274,7 +274,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !(closed || close) {
         app.bake.window = Some(win);
     }
-    // 見取り図・一覧の行で指している島は、キャンバスと 3D ビューでも強調する。押した島はメニューを開く
+    // 見取り図・一覧の行で指しているアイランドは、キャンバスと 3D ビューでも強調する。押したアイランドはメニューを開く
     app.bake.map_hover = map_out.hover.filter(|_| showing_map && !(closed || close));
     if let Some((island, at)) = map_out.menu.filter(|_| showing_map) {
         super::overlap::open_menu(app, ctx, island, at, true, false);
@@ -972,10 +972,10 @@ fn draw_page(
                 &mut child,
                 r,
                 "bake.overlap.outside",
-                lang.pick("0〜1 の外の島を焼かない", "Skip islands outside 0–1"),
+                lang.pick("0〜1 の外のアイランドを焼かない", "Skip islands outside 0–1"),
                 overlap.skip_outside,
                 Some(locked.unwrap_or(lang.pick(
-                    "UV を 0〜1 の外へずらした島を焼かない（切っているときは、0〜1 の外の UV があるとベイクを断る）",
+                    "UV を 0〜1 の外へずらしたアイランドを焼かない（切っているときは、0〜1 の外の UV があるとベイクを断る）",
                     "Islands moved outside the 0–1 UV square are not baked (when off, a UV outside 0–1 stops the bake)",
                 ))),
                 enabled,
@@ -983,7 +983,7 @@ fn draw_page(
             if next != overlap.skip_outside {
                 actions.push(BakeAction::Priority(PriorityOp::SkipOutside(next)));
             }
-            // 左に一覧、右に UV の見取り図（窓の大きさに合わせた正方形）
+            // 左に一覧、右に UV の見取り図（ウィンドウの大きさに合わせた正方形）
             y += 6.0;
             let top = y;
             let side = (width - MAP_LIST_WIDTH - 12.0)
@@ -1011,7 +1011,7 @@ fn draw_page(
                 );
                 let on = overlap.picking == Some(*list);
                 let add_tip = lang.pick(
-                    format!("2D か 3D で押した島を{}に追加する（入っている島を押すと外す・Esc でやめる）", lang.quote(name)),
+                    format!("2D か 3D で押したアイランドを{}に追加する（入っているアイランドを押すと外す・Esc でやめる）", lang.quote(name)),
                     format!("Add the island you click in 2D or 3D to {} (clicking one already listed removes it; Esc stops)", lang.quote(name)),
                 );
                 if w::icon_button(
@@ -1078,7 +1078,7 @@ fn draw_page(
                 let r = lrow(18.0, 2.0, &mut y);
                 let text = lang.with_reason(
                     lang.pick(
-                        "手で選んだ島は使えません",
+                        "手で選んだアイランドは使えません",
                         "The chosen islands cannot be used",
                     ),
                     lang.pick("別のモデルのもの", "they belong to another model"),

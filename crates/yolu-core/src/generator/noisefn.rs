@@ -13,7 +13,7 @@ use super::noise::{fade_lanes, lerp_lanes};
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
 
-/// 1 つの層の最大のオクターブ数。
+/// 1 つのレイヤーの最大のオクターブ数。
 pub const MAX_OCTAVES: u32 = 8;
 
 /// 度の sin・cos（多項式。libm を使わない）。`deg` は有限であること（検査済みの入力）。

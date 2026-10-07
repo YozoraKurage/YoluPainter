@@ -8,7 +8,7 @@
 //! - 資料: `yolupainter://docs/<名前>`（実行ファイルに埋め込んだ、入れてある版の文書。`.ja`・`.en` で言語を指せる）、
 //!   `yolupainter://ops/commands`（命令の一覧と schema）、`yolupainter://ops/effect-kinds`（効果の種類と値の範囲）。
 //! - 版: rmcp が 2025-11-25 以前の `initialize` と、2026-07-28 の `server/discover`・要求ごとの `_meta` の両方を受ける。
-//! - 任意のコードを実行する道具は無い。ファイルは、書き出し・保存の命令が指す道だけを扱う（道の決まりは yolu-ops の `PathPolicy` と相手のホスト）。
+//! - 任意のコードを実行するツールは無い。ファイルは、書き出し・保存の命令が指す道だけを扱う（道の決まりは yolu-ops の `PathPolicy` と相手のホスト）。
 
 use std::collections::VecDeque;
 use std::future::Future;

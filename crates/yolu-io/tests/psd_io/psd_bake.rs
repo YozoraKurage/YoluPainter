@@ -1,5 +1,5 @@
 //! PSD の焼き込み書き出し（チャンネル × 方式）。機能ごとに: 文書を作る → 計画（注記）→ 構築 → 書く → 読み戻す（EditableRaster・診断は注記だけ）
-//! → 読み戻した合成が書き出したチャンネルの今の合成と全バイト一致。焼いた層の名前・属性・並びが元と同じで、文書は 1 バイトも変わらない。
+//! → 読み戻した合成が書き出したチャンネルの今の合成と全バイト一致。焼いたレイヤーの名前・属性・並びが元と同じで、文書は 1 バイトも変わらない。
 //! Photoshop・CLIP STUDIO の実物では確かめていない（読み直しはこの crate の読みだけ）。
 use crate::attach_support;
 use attach_support::*;
@@ -21,7 +21,7 @@ use yolu_io::psd::{
 };
 use yolu_io::NativeDocument;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
 fn options(channel: Channel) -> ExportOptions {
     ExportOptions::new(channel, ExportMode::Bake)
@@ -85,7 +85,7 @@ fn rounding_diff(action: &NoteAction) -> Option<u8> {
 }
 
 /// 刻みへ丸めた調整があれば、その設定だけを（読み戻した PSD の値で）替えた写しの、書き出したチャンネルの合成。丸めた調整が無ければ今の合成。
-/// 調整は層の名前で引く（名前が重ならない文書で）。
+/// 調整はレイヤーの名前で引く（名前が重ならない文書で）。
 fn rounded_look(d: &Document, channel: Channel, out: &Exported, back: &Document) -> Vec<u8> {
     let replaced: Vec<(LayerId, AdjustmentSettings)> = out
         .notes
@@ -138,7 +138,7 @@ fn round_trip_within(d: &Document, channel: Channel, tolerance: u8) -> (Exported
     (out, back)
 }
 
-/// 層に反転したマスクがあるか（焼くと、合成の最後の桁がずれ得る）。
+/// レイヤーに反転したマスクがあるか（焼くと、合成の最後の桁がずれ得る）。
 fn has_inverted_mask(d: &Document) -> bool {
     d.layers()
         .iter()
@@ -163,7 +163,7 @@ fn find<'a>(layers: &'a [Layer], name: &str) -> &'a Layer {
             }
         }
     }
-    panic!("PSD に層「{name}」が無い")
+    panic!("PSD にレイヤー「{name}」が無い")
 }
 fn find_in<'a>(l: &'a Layer, name: &str) -> Option<&'a Layer> {
     if l.name == name {
@@ -175,7 +175,7 @@ fn find_in<'a>(l: &'a Layer, name: &str) -> Option<&'a Layer> {
     }
 }
 
-/// PSD の層の画素を画布の大きさ（下から上）に広げる（外は透明）。
+/// PSD のレイヤーの画素をキャンバスの大きさ（下から上）に広げる（外は透明）。
 fn expand(l: &Layer, width: u32, height: u32) -> Vec<u8> {
     let mut out = vec![0u8; (width * height * 4) as usize];
     for r in 0..l.height {
@@ -233,7 +233,7 @@ fn blur(d: &mut Document, layer: LayerId, channels: &[Channel]) -> FilterId {
     .unwrap()
 }
 
-/// 層の PSD での属性（書き出すチャンネルの値）: 名前・不透明度・モード・クリッピング・ロック・表示。
+/// レイヤーの PSD での属性（書き出すチャンネルの値）: 名前・不透明度・モード・クリッピング・ロック・表示。
 type Attrs = (String, u8, BlendMode, bool, u32, bool);
 fn expected_attrs(d: &Document, l: LayerId, c: Channel, visible: bool) -> Attrs {
     let l = d.layer(l).unwrap();
@@ -257,7 +257,7 @@ fn attrs(l: &Layer) -> Attrs {
     )
 }
 
-/// 層を上から下に並べたときの名前（グループの中身はグループの次）。
+/// レイヤーを上から下に並べたときの名前（グループの中身はグループの次）。
 fn names(layers: &[Layer]) -> Vec<String> {
     let mut out = Vec::new();
     for l in layers {
@@ -276,7 +276,7 @@ fn three() -> (Document, LayerId, LayerId, LayerId) {
     (d, l[0], l[1], l[2])
 }
 
-// ───────── 層の中身のフィルター・Generator ─────────
+// ───────── レイヤーの中身のフィルター・Generator ─────────
 
 #[test]
 fn filters_and_generators_are_baked_into_the_layers_pixels() {
@@ -324,7 +324,7 @@ fn filters_and_generators_are_baked_into_the_layers_pixels() {
             ),
         ]
     );
-    // 層の名前・並び・属性は元と同じ（ロックも）。焼いた画素は層の出力そのもの
+    // レイヤーの名前・並び・属性は元と同じ（ロックも）。焼いた画素はレイヤーの出力そのもの
     assert_eq!(names(&out.document.layers), ["上", "中", "土台"]);
     for (name, id) in [("上", top), ("中", mid), ("土台", base)] {
         let l = find(&out.document.layers, name);
@@ -345,7 +345,7 @@ fn filters_and_generators_are_baked_into_the_layers_pixels() {
         quiet(expand(find(&out.document.layers, "中"), W, H)),
         quiet(d.layer_output(mid, Channel::Color, d.bounds()).unwrap())
     );
-    // 読み戻した層は効果の無い文書の層で、ロックと名前を持つ
+    // 読み戻したレイヤーは効果の無い文書のレイヤーで、ロックと名前を持つ
     assert!(back.layers().iter().all(|l| l.filters().is_empty()));
     assert_eq!(
         back.layers()
@@ -476,7 +476,7 @@ fn mask_filters_and_inverted_masks_are_baked_into_the_masks_pixels() {
 }
 
 /// 反転したマスクを画素に焼く（反転した値を、反転しないマスクの画素にする）と、不透明度に掛ける値は、実数では同じでも、浮動小数の最後の桁で
-/// 違う画素値がある（`1 - h` と `(255 - 隠す量) / 255`）。保証の射程は「全バイト一致」より少し狭く、反転したマスクを焼いた層が重なる所で、
+/// 違う画素値がある（`1 - h` と `(255 - 隠す量) / 255`）。保証の射程は「全バイト一致」より少し狭く、反転したマスクを焼いたレイヤーが重なる所で、
 /// まれに 1 画素が 1 ずれ得る。ずれの大きさは最後の桁（1e-15 未満）で、見た目に出る差ではない。
 #[test]
 fn an_inverted_mask_baked_into_values_differs_from_the_original_only_in_the_last_digit() {
@@ -630,7 +630,7 @@ fn fills_that_read_an_image_a_projection_or_a_gradient_are_baked_per_channel() {
     let (height, _) = round_trip(&d, Channel::Height);
     let note = height.notes.iter().find(|n| n.layer == "塗り").unwrap();
     assert!(matches!(&note.action, NoteAction::BakedFill(s) if s.gradient && !s.image));
-    // 値だけのチャンネルは、同じ層でも単色の塗りつぶしのまま（注記なし）
+    // 値だけのチャンネルは、同じレイヤーでも単色の塗りつぶしのまま（注記なし）
     let (rough, _) = round_trip(&d, Channel::Roughness);
     assert!(!rough.notes.iter().any(|n| n.layer == "塗り"));
     assert!(matches!(
@@ -807,7 +807,10 @@ fn a_clipped_group_becomes_one_raster_layer_with_the_groups_attributes() {
     let (out, back) = round_trip(&d, Channel::Color);
     assert_eq!(notes_of(&out), [("覆い", &NoteAction::BakedClippedGroup)]);
     let layer = find(&out.document.layers, "覆い");
-    assert!(matches!(layer.kind, LayerKind::Raster), "1 枚のラスター層");
+    assert!(
+        matches!(layer.kind, LayerKind::Raster),
+        "1 枚のラスターレイヤー"
+    );
     assert_eq!(
         (
             layer.opacity,
@@ -865,7 +868,7 @@ fn a_clipped_group_inside_a_group_and_an_isolated_one_are_baked_in_place() {
 fn a_clipping_mark_that_clips_nothing_is_dropped_and_the_group_stays_a_group() {
     let (mut d, base, mid, top) = three();
     let _ = (base, mid, top);
-    // 親の通過のグループの一番下にある、印つきの通過のグループ。中の調整は、親の外の下の層（土台など）へ効く
+    // 親の通過のグループの一番下にある、印つきの通過のグループ。中の調整は、親の外の下のレイヤー（土台など）へ効く
     let adj = d
         .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
         .unwrap();
@@ -886,7 +889,7 @@ fn a_clipping_mark_that_clips_nothing_is_dropped_and_the_group_stays_a_group() {
         "読み戻した文書にも印は無い"
     );
     assert!(d.layer(inner).unwrap().clipping(), "文書の印は残る");
-    // 厳密な書き出し（Unity 版の PsdBridge と同じ）は、印だけを見て同じ層を同じ理由で断る
+    // 厳密な書き出し（Unity 版の PsdBridge と同じ）は、印だけを見て同じレイヤーを同じ理由で断る
     let blockers = psd::export_blockers(&d);
     assert_eq!(
         blockers,
@@ -911,13 +914,13 @@ fn a_clipping_mark_that_clips_nothing_is_dropped_and_the_group_stays_a_group() {
         .any(|n| n.action == NoteAction::BakedClippedGroup));
 }
 
-/// 合成が落とす（中身が無い）クリッピングされたグループを、画素の層にして残すと、下地のグループがクリッピングの組を持って通過でなくなる。
-/// 落とす層は隠した層にして、下地の通過を保つ。
+/// 合成が落とす（中身が無い）クリッピングされたグループを、画素のレイヤーにして残すと、下地のグループがクリッピングの組を持って通過でなくなる。
+/// 落とすレイヤーは隠したレイヤーにして、下地の通過を保つ。
 #[test]
 fn an_empty_clipped_group_is_written_hidden_so_its_base_group_keeps_passing_through() {
     let (mut d, base, mid, top) = three();
     d.set_layer_blend_mode(top, CoreBlend::Screen).unwrap();
-    // 下地: 通過のグループ（中の Screen の層が、下の土台と混ざる）。その上に、何も出さないクリッピングされたグループ
+    // 下地: 通過のグループ（中の Screen のレイヤーが、下の土台と混ざる）。その上に、何も出さないクリッピングされたグループ
     let base_group = d.group_layers(&[top], "下地の組").unwrap();
     let empty = d.add_group("空の組", None).unwrap();
     d.set_layer_clipping(empty, true).unwrap();
@@ -1081,7 +1084,7 @@ fn exact_adjustments_have_no_note_and_a_hidden_rounded_one_has_no_difference() {
         }]
     ));
     assert!(!find(&out.document.layers, "隠す").visible);
-    // 丸めても層の属性は元のまま
+    // 丸めてもレイヤーの属性は元のまま
     let back = read_back(&out.document);
     assert!(back
         .layers()
@@ -1402,7 +1405,7 @@ fn check_expansion(label: &str, settings: AdjustmentSettings, allowed: u8) -> (u
         "{label}"
     );
     assert!(colors <= 32 && opacities <= 32, "{label}");
-    // 元の合成との最大の差は注記のとおりで、許す差以下（下の層の色によらない最悪の値で数えている。不透明度が曲線に沿って動くと 1 では
+    // 元の合成との最大の差は注記のとおりで、許す差以下（下のレイヤーの色によらない最悪の値で数えている。不透明度が曲線に沿って動くと 1 では
     // 足りないことがあり、そのときは 2・4 まで緩める）
     let truth = look(&d, Channel::Color)
         .iter()
@@ -1556,8 +1559,8 @@ fn blocked(d: &Document, channel: Channel) -> Vec<(String, Refusal)> {
         .collect()
 }
 
-/// 展開できない値のカーブで断るのは、書き出すチャンネルの合成に出る層だけ。表示を切った層・そのチャンネルに効かない層・そのチャンネルで無効の層は
-/// 合成に出ないので、最良の展開を隠した層で書く（注記の差は 0）。
+/// 展開できない値のカーブで断るのは、書き出すチャンネルの合成に出るレイヤーだけ。表示を切ったレイヤー・そのチャンネルに効かないレイヤー・そのチャンネルで無効のレイヤーは
+/// 合成に出ないので、最良の展開を隠したレイヤーで書く（注記の差は 0）。
 #[test]
 fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_channel() {
     let (mut d, base, _, _) = three();
@@ -1570,7 +1573,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
         blocked(&d, Channel::Color),
         [("調整".to_owned(), Refusal::GradientMapCurveStops)]
     );
-    // Roughness にグラデーションマップは効かない: 断らず、隠した層で書く
+    // Roughness にグラデーションマップは効かない: 断らず、隠したレイヤーで書く
     let (out, back) = round_trip(&d, Channel::Roughness);
     assert!(!find(&out.document.layers, "調整").visible);
     let note = out.notes.iter().find(|n| n.layer == "調整").unwrap();
@@ -1598,7 +1601,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
         (ramp.colors().len(), ramp.opacities().len()),
         (colors, opacities)
     );
-    // 表示を切った層: Color の PSD でも断らない
+    // 表示を切ったレイヤー: Color の PSD でも断らない
     d.set_layer_visible(map, false).unwrap();
     assert_eq!(blocked(&d, Channel::Color), []);
     let (hidden, _) = round_trip(&d, Channel::Color);
@@ -1610,7 +1613,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
             ..
         }]
     ));
-    // 表示を戻し、Color のチャンネルを無効にした層: 合成に出ないので断らない
+    // 表示を戻し、Color のチャンネルを無効にしたレイヤー: 合成に出ないので断らない
     d.set_layer_visible(map, true).unwrap();
     assert_eq!(blocked(&d, Channel::Color).len(), 1);
     d.set_channel_enabled(map, Channel::Color, false).unwrap();
@@ -1628,7 +1631,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
     );
 }
 
-/// 展開の差の基準（層 1 枚が通常の合成モード・不透明度 100% で当たったときの出力の差）は、文書の合成の差の上限ではない。合成モードが通常でない層でも、
+/// 展開の差の基準（レイヤー 1 枚が通常の合成モード・不透明度 100% で当たったときの出力の差）は、文書の合成の差の上限ではない。合成モードが通常でないレイヤーでも、
 /// 注記の最大の差は文書の合成の実測と一致し、基準を超えても断らない（超えるかは合成モードと下の色による）。
 #[test]
 fn the_expansion_note_reports_the_documents_measured_difference_in_any_blend_mode() {
@@ -1678,7 +1681,7 @@ fn the_expansion_note_reports_the_documents_measured_difference_in_any_blend_mod
         }
         worst = worst.max(max_diff);
     }
-    // 基準の差が保証するのは、通常の合成モード・不透明度 100% の層の出力まで。ほかの合成モードは傾きの大きいもので差が増え、それでも断らない
+    // 基準の差が保証するのは、通常の合成モード・不透明度 100% のレイヤーの出力まで。ほかの合成モードは傾きの大きいもので差が増え、それでも断らない
     assert!(normal <= 4, "通常の合成モード: {normal}");
     assert!(
         worst > 4,
@@ -1793,7 +1796,7 @@ fn a_hidden_new_adjustment_that_is_rounded_or_expanded_has_no_difference() {
 // ───────── チャンネルごと ─────────
 
 /// チャンネルごとに値の違う文書: 土台は Color・Roughness・Height、重ねは Color だけ（Roughness の合成だけ別）、塗りつぶしは Roughness の値、
-/// 調整は反転（全チャンネル）と色相/彩度（色のチャンネルだけ）、ユーザーチャンネルの層。
+/// 調整は反転（全チャンネル）と色相/彩度（色のチャンネルだけ）、ユーザーチャンネルのレイヤー。
 fn per_channel() -> (Document, Channel) {
     let mut d = Document::with_tile_size(W, H, 8).unwrap();
     let user = d
@@ -1857,7 +1860,7 @@ fn every_channel_writes_a_psd_that_composites_like_that_channel() {
         user,
     ] {
         let (out, back) = round_trip(&d, channel);
-        // 層の並び・名前は同じ。合成モード・不透明度は、そのチャンネルの値
+        // レイヤーの並び・名前は同じ。合成モード・不透明度は、そのチャンネルの値
         assert_eq!(
             names(&out.document.layers),
             ["独自", "色相", "反転", "塗り", "重ね", "下地"],
@@ -1931,7 +1934,7 @@ fn layers_that_do_not_show_in_a_channel_are_written_hidden() {
     let custom = exported(&d, user);
     assert!(find(&custom.document.layers, "独自").visible);
     assert!(find(&custom.document.layers, "下地").visible);
-    // 面の無い層は 1×1 の透明
+    // 面の無いレイヤーは 1×1 の透明
     let empty = find(&color.document.layers, "独自");
     assert_eq!(
         (empty.width, empty.height, empty.pixels_rgba.clone()),
@@ -2024,7 +2027,7 @@ fn a_normal_psd_is_written_in_the_documents_file_direction() {
             find(&out.document.layers, "塗り").kind,
             LayerKind::SolidColor([100, v, 240]) if v == g(60)
         ));
-        // 統合画像は、書いた層を PSD と同じ色の式で重ねたもの（読み戻した合成と同じ）。層が 2 枚あるので、法線の重ね方の注記が付く
+        // 統合画像は、書いたレイヤーを PSD と同じ色の式で重ねたもの（読み戻した合成と同じ）。レイヤーが 2 枚あるので、法線の重ね方の注記が付く
         let back = read_back(&out.document);
         let merged = out.document.composite_rgba.as_ref().unwrap();
         let top_down = rows_reversed(&look(&back, Channel::Color), d.width() as usize * 4);
@@ -2053,8 +2056,8 @@ fn a_flat_normal_reads_back_the_same_in_the_opengl_direction() {
     assert_eq!(back.layers().len(), 1);
 }
 
-/// 法線の層が重なると、Yolu の重ねと PSD の色の式の重ねは違う。統合画像を Yolu の合成にすると、層と食い違って、書いた PSD を Yolu が編集できる
-/// PSD として読めなくなる。統合画像は書いた層を色の式で重ねたものにして、読み戻せることを確かめる（注記で知らせる）。
+/// 法線のレイヤーが重なると、Yolu の重ねと PSD の色の式の重ねは違う。統合画像を Yolu の合成にすると、レイヤーと食い違って、書いた PSD を Yolu が編集できる
+/// PSD として読めなくなる。統合画像は書いたレイヤーを色の式で重ねたものにして、読み戻せることを確かめる（注記で知らせる）。
 #[test]
 fn overlapping_normals_still_read_back_as_an_editable_psd_and_say_how_they_blend() {
     for direction in [NormalYDirection::OpenGL, NormalYDirection::DirectX] {
@@ -2220,7 +2223,7 @@ fn id_of(d: &Document, name: &str) -> LayerId {
     d.layers().iter().find(|l| l.name() == name).unwrap().id()
 }
 
-/// 焼き込みの機能は、Normal のチャンネルでも、書いた層の画素が文書の向き（OpenGL）の値から、ファイルの向きに合わせて並ぶ（DirectX は緑を反転）。
+/// 焼き込みの機能は、Normal のチャンネルでも、書いたレイヤーの画素が文書の向き（OpenGL）の値から、ファイルの向きに合わせて並ぶ（DirectX は緑を反転）。
 /// フィルターつきのラスター・半透明の塗りつぶし・クリッピングされたグループ（1 枚に焼く）のどれも。マスクは向きにもチャンネルにも依らない。
 #[test]
 fn every_baked_feature_lands_in_a_normal_psd_in_the_documents_file_direction() {
@@ -2231,7 +2234,7 @@ fn every_baked_feature_lands_in_a_normal_psd_in_the_documents_file_direction() {
     let out_dx = exported(&dx, Channel::Normal);
     let color = exported(&gl, Channel::Color);
 
-    // 注記: 焼いたものと、層が重なる所の注意
+    // 注記: 焼いたものと、レイヤーが重なる所の注意
     for out in [&out_gl, &out_dx] {
         let notes = notes_of(out);
         let mask_noise = EffectSettings::noise(0.6, 3, true);
@@ -2308,7 +2311,7 @@ fn every_baked_feature_lands_in_a_normal_psd_in_the_documents_file_direction() {
         (180, true, BlendMode::Normal)
     );
 
-    // マスク: 向きにもチャンネルにも依らない（Color の PSD の同じ層のマスクと同じ）
+    // マスク: 向きにもチャンネルにも依らない（Color の PSD の同じレイヤーのマスクと同じ）
     for name in ["ぼかし", "覆い"] {
         let mask = find(&out_gl.document.layers, name).mask.as_ref();
         assert!(mask.is_some(), "{name}");
@@ -2324,7 +2327,7 @@ fn every_baked_feature_lands_in_a_normal_psd_in_the_documents_file_direction() {
         );
     }
 
-    // どちらの向きも、編集できる PSD として読み戻せ、統合画像は書いた層を重ねたものと同じ
+    // どちらの向きも、編集できる PSD として読み戻せ、統合画像は書いたレイヤーを重ねたものと同じ
     for out in [&out_gl, &out_dx] {
         let back = read_back(&out.document);
         assert_eq!(back.layers().iter().filter(|l| l.is_group()).count(), 0);
@@ -2338,8 +2341,8 @@ fn every_baked_feature_lands_in_a_normal_psd_in_the_documents_file_direction() {
     assert_eq!((state(&gl), state(&dx)), before, "文書は変わらない");
 }
 
-/// 層を書いたあとの統合画像（PSD の色の式の重ね）も、取消の旗に従う。大きな画布の Normal で、重ねている途中に旗を立てると、重ね終わるのを待たずに
-/// `Cancelled` で戻る（旗を見ない重ねは、取消が効かない時間が画布の大きさに比例して長くなる）。
+/// レイヤーを書いたあとの統合画像（PSD の色の式の重ね）も、取消の旗に従う。大きなキャンバスの Normal で、重ねている途中に旗を立てると、重ね終わるのを待たずに
+/// `Cancelled` で戻る（旗を見ない重ねは、取消が効かない時間がキャンバスの大きさに比例して長くなる）。
 #[test]
 fn a_cancel_during_the_normal_composite_of_a_big_canvas_stops_it_without_a_result() {
     use std::time::{Duration, Instant};
@@ -2377,7 +2380,7 @@ fn a_cancel_during_the_normal_composite_of_a_big_canvas_stops_it_without_a_resul
     assert!(full.is_ok(), "旗が立たなければ書ける");
     assert!(
         whole > Duration::from_millis(40),
-        "重ねに時間がかかる画布でなければ、この試験は意味が無い: {whole:?}"
+        "重ねに時間がかかるキャンバスでなければ、この試験は意味が無い: {whole:?}"
     );
     let (cut, _, since_raised) = run(Some(whole / 5));
     assert!(
@@ -2434,7 +2437,7 @@ fn a_stroke_in_progress_refuses_and_nothing_changes() {
 
 #[test]
 fn baked_layers_count_against_the_pixel_budget_and_are_refused_with_the_reason() {
-    // 4096² の全面の層を 3 枚焼くと、画素の予算（128 MiB）を超える。1 枚の焼き込みで画布 1 枚ぶんを作り、足し上げて断る
+    // 4096² の全面のレイヤーを 3 枚焼くと、画素の予算（128 MiB）を超える。1 枚の焼き込みでキャンバス 1 枚ぶんを作り、足し上げて断る
     let mut d = Document::new(4096, 4096).unwrap();
     for n in 0..3 {
         d.add_fill_layer(
@@ -2481,7 +2484,7 @@ fn a_cancel_flag_stops_planning_and_building_without_a_result() {
     ));
 }
 
-/// 取り込んだ層（PSD → core）を書き出し直しても、焼くものが無ければ今までの書き出しとバイト一致。
+/// 取り込んだレイヤー（PSD → core）を書き出し直しても、焼くものが無ければ今までの書き出しとバイト一致。
 #[test]
 fn a_document_with_nothing_to_bake_writes_the_same_bytes_as_the_strict_export() {
     let (mut d, base, _, top) = three();
@@ -2500,7 +2503,7 @@ fn a_document_with_nothing_to_bake_writes_the_same_bytes_as_the_strict_export() 
     );
 }
 
-/// 不透明度が 1/255 の刻みの外（0.5）の層を重ねても、書いた PSD は編集できる PSD として読める（統合画像は Yolu の合成で、層の値は刻みに丸めるので、
+/// 不透明度が 1/255 の刻みの外（0.5）のレイヤーを重ねても、書いた PSD は編集できる PSD として読める（統合画像は Yolu の合成で、レイヤーの値は刻みに丸めるので、
 /// 数段重なっても差が読みの許容（1）に収まる）。
 #[test]
 fn off_step_opacities_still_read_back_as_an_editable_psd() {
@@ -2516,7 +2519,7 @@ fn off_step_opacities_still_read_back_as_an_editable_psd() {
 
 // ───────── 乱数で組んだ文書 ─────────
 
-/// 種から 1 つの文書を組む: ラスター・塗りつぶし・調整・グループを重ね、層ごとに不透明度（1/255 の刻み）・合成モード・表示・クリッピング・
+/// 種から 1 つの文書を組む: ラスター・塗りつぶし・調整・グループを重ね、レイヤーごとに不透明度（1/255 の刻み）・合成モード・表示・クリッピング・
 /// チャンネルごとの合成・マスク（反転・フィルター）・内容のフィルター・Generator・Anchor を乱数で付ける。PSD の刻みに乗る調整だけ（丸めは別の試験）。
 fn random_document(seed: u64) -> (Document, Channel) {
     let mut rng = Rng(seed);
@@ -2660,7 +2663,7 @@ fn random_document(seed: u64) -> (Document, Channel) {
                     .unwrap()
             }
             _ => {
-                let id = d.add_layer(&format!("層{n}")).unwrap();
+                let id = d.add_layer(&format!("レイヤー{n}")).unwrap();
                 for c in channels {
                     if c == Channel::Color || rng.below(2) == 0 {
                         paint(
@@ -2689,7 +2692,7 @@ fn random_document(seed: u64) -> (Document, Channel) {
         if rng.below(10) < 3 && !ids.is_empty() {
             d.set_layer_clipping(id, true).unwrap();
         }
-        // そのチャンネルでは有効でない層（そのチャンネルの PSD では隠した層になる）
+        // そのチャンネルでは有効でないレイヤー（そのチャンネルの PSD では隠したレイヤーになる）
         if rng.below(10) < 2 {
             let off = [Channel::Roughness, Channel::Normal, Channel::Height, user];
             d.set_channel_enabled(id, off[rng.below(off.len())], false)
@@ -2843,7 +2846,7 @@ fn mismatch(d: &Document, channel: Channel) -> bool {
         .any(|(a, b)| a.abs_diff(*b) > tolerance)
 }
 
-/// 食い違う文書から層を 1 つずつ外して、食い違いが残るかぎり小さくし、層の一覧にして返す（食い違ったときの調べ物の道具）。
+/// 食い違う文書からレイヤーを 1 つずつ外して、食い違いが残るかぎり小さくし、レイヤーの一覧にして返す（食い違ったときの調べ物のツール）。
 fn minimal_mismatch(d: &Document, channel: Channel) -> String {
     let mut d = d.capture_snapshot().unwrap();
     'again: loop {
@@ -2875,7 +2878,7 @@ fn minimal_mismatch(d: &Document, channel: Channel) -> String {
     out
 }
 
-/// PSD の層を、グループの中も含めて上から下へ（グループの次にその中身）並べる。
+/// PSD のレイヤーを、グループの中も含めて上から下へ（グループの次にその中身）並べる。
 fn flat(layers: &[Layer]) -> Vec<&Layer> {
     let mut out = Vec::new();
     for l in layers {
@@ -2887,14 +2890,14 @@ fn flat(layers: &[Layer]) -> Vec<&Layer> {
     out
 }
 
-/// 名前の層（グループの中も）。無ければ None（グループに焼かれた層など）。
+/// 名前のレイヤー（グループの中も）。無ければ None（グループに焼かれたレイヤーなど）。
 fn find_opt<'a>(layers: &'a [Layer], name: &str) -> Option<&'a Layer> {
     layers.iter().find_map(|l| find_in(l, name))
 }
 
-/// Normal は、どちらのファイルの向きでも、書いた層の画素が文書の値から並び（OpenGL はそのまま）、読み戻せて、統合画像は書いた層を重ねたものと同じ。
-/// DirectX は OpenGL の書き出しと緑だけが違う（層・マスク・属性・並びは同じ）。DirectX のレベル補正は、PSD の 1 つのレベル補正で書けないので断る。
-/// 層が重なる所の合成は Yolu の法線の重ね方と違い得るので、チャンネルの合成との一致は言わない（注記で知らせる）。
+/// Normal は、どちらのファイルの向きでも、書いたレイヤーの画素が文書の値から並び（OpenGL はそのまま）、読み戻せて、統合画像は書いたレイヤーを重ねたものと同じ。
+/// DirectX は OpenGL の書き出しと緑だけが違う（レイヤー・マスク・属性・並びは同じ）。DirectX のレベル補正は、PSD の 1 つのレベル補正で書けないので断る。
+/// レイヤーが重なる所の合成は Yolu の法線の重ね方と違い得るので、チャンネルの合成との一致は言わない（注記で知らせる）。
 fn check_normal(d: &Document, label: &str) {
     let with = |direction| {
         let mut copy = d.capture_snapshot().unwrap();
@@ -2917,7 +2920,7 @@ fn check_normal(d: &Document, label: &str) {
         plan_gl.blockers
     );
     let out_gl = plan_gl.build(&gl, &ctl).unwrap();
-    // OpenGL: 層の画素は、文書の層（グループは焼いた合成）の出力と同じ
+    // OpenGL: レイヤーの画素は、文書のレイヤー（グループは焼いた合成）の出力と同じ
     for l in gl.layers() {
         let Some(written) = find_opt(&out_gl.document.layers, l.name()) else {
             continue; // クリッピングされたグループの中身は、グループの 1 枚になった
@@ -2934,7 +2937,7 @@ fn check_normal(d: &Document, label: &str) {
         assert_eq!(
             quiet(expand(written, W, H)),
             quiet(source),
-            "{label}: OpenGL の層「{}」",
+            "{label}: OpenGL のレイヤー「{}」",
             l.name()
         );
     }
@@ -2942,9 +2945,9 @@ fn check_normal(d: &Document, label: &str) {
     assert_eq!(
         out_gl.document.composite_rgba.as_ref().unwrap(),
         &rows_reversed(&look(&back, Channel::Color), W as usize * 4),
-        "{label}: OpenGL の統合画像は書いた層の重ね"
+        "{label}: OpenGL の統合画像は書いたレイヤーの重ね"
     );
-    // DirectX: レベル補正が効く層があれば断る。無ければ、OpenGL と緑だけが違う
+    // DirectX: レベル補正が効くレイヤーがあれば断る。無ければ、OpenGL と緑だけが違う
     let plan_dx = psd::plan_export(&dx, &options(Channel::Normal), &ctl).unwrap();
     if !plan_dx.blockers.is_empty() {
         assert!(
@@ -2990,7 +2993,7 @@ fn check_normal(d: &Document, label: &str) {
     assert_eq!(
         out_dx.document.composite_rgba.as_ref().unwrap(),
         &rows_reversed(&look(&back, Channel::Color), W as usize * 4),
-        "{label}: DirectX の統合画像は書いた層の重ね"
+        "{label}: DirectX の統合画像は書いたレイヤーの重ね"
     );
 }
 
@@ -3016,8 +3019,8 @@ fn assert_rounding_difference(d: &Document, channel: Channel, out: &Exported, ba
 
 /// 乱数で組んだ文書は、どのチャンネル（Color・Roughness・Height・ユーザー）でも、書き出して読み戻した合成が書き出したチャンネルの今の合成
 /// （刻みの間の調整は丸めた設定の合成）と全バイト一致し、丸めた差は注記のとおりで、文書は変わらず、文書の写しから書いても同じ PSD になる。
-/// Normal は上の合成の一致を言わず（層が重なる所は色の式）、`check_normal` の性質を、OpenGL と DirectX の両方で確かめる。
-/// 食い違ったら、層を外して小さくした文書を言う。
+/// Normal は上の合成の一致を言わず（レイヤーが重なる所は色の式）、`check_normal` の性質を、OpenGL と DirectX の両方で確かめる。
+/// 食い違ったら、レイヤーを外して小さくした文書を言う。
 #[test]
 fn random_documents_bake_to_the_same_look_in_every_channel() {
     let mut baked = 0;

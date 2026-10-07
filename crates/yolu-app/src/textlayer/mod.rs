@@ -161,7 +161,7 @@ enum Found {
 pub struct Editing {
     /// テキストレイヤー（新しい文字は最初の 1 文字で作るので、それまでは None）。
     pub layer: Option<LayerId>,
-    /// この打ち込みで作った層か（何も打たずに終えたら消す）。
+    /// この打ち込みで作ったレイヤーか（何も打たずに終えたら消す）。
     pub created: bool,
     /// 今の値（文は `buffer` と同じ）。
     pub value: TextSettings,
@@ -285,9 +285,9 @@ pub enum TextAction {
     Commit,
     /// 値を 1 つ変える（打っている文字・選んでいるテキストレイヤー・次の文字の既定）。
     Set(Field),
-    /// 色の窓のドラッグの途中の値（テキストレイヤーは前の変更とまとめて 1 回の取り消し）。
+    /// 色のウィンドウのドラッグの途中の値（テキストレイヤーは前の変更とまとめて 1 回の取り消し）。
     Drag(Field),
-    /// フォントのファイルを選ぶ窓を開く。
+    /// フォントのファイルを選ぶウィンドウを開く。
     PickFontFile,
     /// 選んだフォントのファイル。
     FontFile(PathBuf),
@@ -707,21 +707,21 @@ impl AppState {
         format!("{} {n}", self.lang.pick("テキスト", "Text"))
     }
 
-    /// 打ち終わる（打っている間の変更は 1 回の Undo にまとまっている）。何も打たずに終えた新しい層は消す。
+    /// 打ち終わる（打っている間の変更は 1 回の Undo にまとまっている）。何も打たずに終えた新しいレイヤーは消す。
     pub fn text_commit(&mut self) {
         let Some(editing) = self.text.editing.take() else {
             return;
         };
         self.doc.end_coalescing();
         if editing.created && editing.buffer.is_empty() {
-            // 作った層を追加した段へまとめているので、1 回の取り消しで層ごと消える
+            // 作ったレイヤーを追加した段へまとめているので、1 回の取り消しでレイヤーごと消える
             if self.doc.undo().is_ok() && self.selected_layer == editing.layer {
                 self.selected_layer = self.doc.layers().last().map(|l| l.id());
             }
         }
     }
 
-    /// 値を 1 つ変える。`coalesce` ならテキストレイヤーの変更を前の変更とまとめる（色の窓のドラッグ。終わりは `m2_end_drag`）。
+    /// 値を 1 つ変える。`coalesce` ならテキストレイヤーの変更を前の変更とまとめる（色のウィンドウのドラッグ。終わりは `m2_end_drag`）。
     fn text_set(&mut self, field: Field, coalesce: bool) {
         match self.text_target() {
             Target::Defaults => field.apply(&mut self.text.defaults),
@@ -732,7 +732,7 @@ impl AppState {
                 let mut value = e.value.clone();
                 field.apply(&mut value);
                 if e.layer.is_none() {
-                    // まだ層が無い: 値だけ（次に作る文字の既定にも）
+                    // まだレイヤーが無い: 値だけ（次に作る文字の既定にも）
                     field.apply(&mut self.text.defaults);
                     if let Some(e) = self.text.editing.as_mut() {
                         e.value = value;

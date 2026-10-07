@@ -1,11 +1,11 @@
-//! 人工 RGBA8 二層の変形・縮小・結合と、疎な層（8192²・描いたタイルが少ない）のサイズ変更。準備は計測外、各操作 3 回の中央値。
+//! 人工 RGBA8 2 レイヤーの変形・縮小・結合と、疎なレイヤー（8192²・描いたタイルが少ない）のサイズ変更。準備は計測外、各操作 3 回の中央値。
 use std::time::Instant;
 use yolu_core::*;
 fn document(side: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(side, side, 128).unwrap();
     let mut last = LayerId(0);
     for l in 0..2 {
-        last = d.add_layer("人工層").unwrap();
+        last = d.add_layer("人工レイヤー").unwrap();
         for ty in 0..side / 128 {
             for tx in 0..side / 128 {
                 let mut bytes = vec![0; 128 * 128 * 4];
@@ -29,12 +29,12 @@ fn document(side: u32) -> (Document, LayerId) {
     d.clear_history().unwrap();
     (d, last)
 }
-/// 8192² の 1 層。`painted` 枚のタイルだけ人工の画素を持ち、`uniform` なら残りの全タイルは一様な色で埋める（無い・一様・
+/// 8192² の 1 レイヤー。`painted` 枚のタイルだけ人工の画素を持ち、`uniform` なら残りの全タイルは一様な色で埋める（無い・一様・
 /// 画素ありの 3 種類が混ざる）。
 fn sparse_document(painted: u32, uniform: bool) -> Document {
     let side = 8192;
     let mut d = Document::with_tile_size(side, side, 128).unwrap();
-    let id = d.add_layer("疎な層").unwrap();
+    let id = d.add_layer("疎なレイヤー").unwrap();
     let columns = side / 128;
     for i in 0..columns * columns {
         let coord = TileCoord::new(i % columns, i / columns);
@@ -60,7 +60,7 @@ fn sparse() {
         ("1 タイルだけ", 1, false),
         ("1 タイル + 残りは一様", 1, true),
     ] {
-        for op in ["面積縮小", "双線形拡大", "画布の切り出し"] {
+        for op in ["面積縮小", "双線形拡大", "キャンバスの切り出し"] {
             let mut times = Vec::new();
             for _ in 0..3 {
                 let mut d = sparse_document(painted, uniform);

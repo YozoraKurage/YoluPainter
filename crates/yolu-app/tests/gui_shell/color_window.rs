@@ -1,6 +1,6 @@
-//! 色の窓（`panels::color_window`）をアプリの中で: 色の値の欄（塗りつぶしの層の値）を押すと動かせる窓が出て、円の変更がその場で欄へ入り、
-//! ドラッグ 1 回・ボタン 1 回が 1 回の取り消しになる。別の色の欄を押すと相手が替わり、相手の層を消すと閉じる。Esc は開いたときの色へ戻す。
-//! 窓の絵（日英）。分岐点の色の窓の細かい振る舞いは `gui_canvas/ramp_panel.rs`。
+//! 色のウィンドウ（`panels::color_window`）をアプリの中で: 色の値の欄（塗りつぶしレイヤーの値）を押すと動かせるウィンドウが出て、円の変更がその場で欄へ入り、
+//! ドラッグ 1 回・ボタン 1 回が 1 回の取り消しになる。別の色の欄を押すと相手が替わり、相手のレイヤーを消すと閉じる。Esc は開いたときの色へ戻す。
+//! ウィンドウの絵（日英）。分岐点の色のウィンドウの細かい振る舞いは `gui_canvas/ramp_panel.rs`。
 use crate::common;
 
 use common::*;
@@ -19,11 +19,14 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
     h.run();
 }
 
-/// 描画色を赤にして、塗りつぶしの層を作る（値は描画色）。
+/// 描画色を赤にして、塗りつぶしレイヤーを作る（値は描画色）。
 fn fill_layer(h: &mut Harness<'_, YoluApp>) -> LayerId {
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     apply(h, Action::M2(Edit::NewFill));
-    h.state().state.selected_layer.expect("作った層を選ぶ")
+    h.state()
+        .state
+        .selected_layer
+        .expect("作ったレイヤーを選ぶ")
 }
 
 fn value(h: &Harness<'_, YoluApp>, id: LayerId, channel: Channel) -> Option<Rgba8> {
@@ -39,7 +42,7 @@ fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
 }
 
 fn window(h: &Harness<'_, YoluApp>) -> Rect {
-    color_window::rect(&h.ctx).expect("色の窓が開いている")
+    color_window::rect(&h.ctx).expect("色のウィンドウが開いている")
 }
 
 fn target(id: LayerId, channel: Channel) -> egui::Id {
@@ -88,8 +91,8 @@ fn a_fill_value_opens_the_window_and_one_drag_in_it_is_one_undo_and_escape_goes_
     assert_eq!(value(&h, id, Channel::Color), first);
 }
 
-/// 16 進の欄を打っている途中の Esc は、その入力をやめるだけ: 窓は開いたままで、相手の値は戻さない（ここまでの変更を残す）。
-/// egui は Esc を受けたフレームの初めに欄のフォーカスを外すので、窓は前のフレームの入力中かどうかで見分ける。次の Esc で、開いたときの色へ戻して閉じる。
+/// 16 進の欄を打っている途中の Esc は、その入力をやめるだけ: ウィンドウは開いたままで、相手の値は戻さない（ここまでの変更を残す）。
+/// egui は Esc を受けたフレームの初めに欄のフォーカスを外すので、ウィンドウは前のフレームの入力中かどうかで見分ける。次の Esc で、開いたときの色へ戻して閉じる。
 #[test]
 fn escape_while_typing_in_the_hex_field_only_stops_typing_and_the_next_one_goes_back() {
     let mut h = app(1280.0, 1200.0, 64);
@@ -116,7 +119,7 @@ fn escape_while_typing_in_the_hex_field_only_stops_typing_and_the_next_one_goes_
     h.run();
     assert!(
         color_window::is_target(&h.ctx, target(id, Channel::Color)),
-        "窓は閉じない"
+        "ウィンドウは閉じない"
     );
     assert_eq!(
         value(&h, id, Channel::Color),
@@ -132,8 +135,8 @@ fn escape_while_typing_in_the_hex_field_only_stops_typing_and_the_next_one_goes_
     assert_eq!(value(&h, id, Channel::Color), first);
 }
 
-/// 窓より先に描く部品がこのフレームの Esc を使った（塗りつぶしの仕事の取消）ときは、窓は同じ Esc で相手の値を戻したり閉じたりしない。
-/// 次の Esc が窓のもの。
+/// ウィンドウより先に描く部品がこのフレームの Esc を使った（塗りつぶしの仕事の取消）ときは、ウィンドウは同じ Esc で相手の値を戻したり閉じたりしない。
+/// 次の Esc がウィンドウのもの。
 #[test]
 fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its_target() {
     use yolu_app::matpaint::MatAction;
@@ -168,9 +171,9 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(h.state().state.region.job.is_none(), "仕事は取り消された");
-    assert!(color_window::is_open(&h.ctx), "窓は閉じない");
+    assert!(color_window::is_open(&h.ctx), "ウィンドウは閉じない");
     assert_eq!(h.state().state.mat.emission, changed, "相手の値は戻さない");
-    // 次の Esc が窓のもの
+    // 次の Esc がウィンドウのもの
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(!color_window::is_open(&h.ctx));
@@ -213,7 +216,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
         .get_all_by_label(&first.label())
         .map(|n| n.rect())
         .find(|r| placed.contains_rect(*r))
-        .expect("窓の中のカラーセットの色");
+        .expect("ウィンドウの中のカラーセットの色");
     click(&mut h, cell.center());
     let c = first.rgba.map(yolu_app::ui::widgets::to_byte);
     assert_eq!(
@@ -221,18 +224,18 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
         Some(Rgba8::new(c[0], c[1], c[2], 255))
     );
     assert_eq!(undo_count(&h), steps + 2);
-    // 別の色の欄を押すと、窓はそのままで相手が替わる
+    // 別の色の欄を押すと、ウィンドウはそのままで相手が替わる
     let at = h.get_by_label("エミッション の値").rect().center();
     click(&mut h, at);
     assert!(color_window::is_target(
         &h.ctx,
         target(id, Channel::Emission)
     ));
-    assert_eq!(window(&h), placed, "窓は動かない");
+    assert_eq!(window(&h), placed, "ウィンドウは動かない");
     let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(placed));
     click(&mut h, sq.left_top() + vec2(6.0, 6.0));
     assert_ne!(value(&h, id, Channel::Emission), emission);
-    // 相手の層を消すと閉じる
+    // 相手のレイヤーを消すと閉じる
     apply(&mut h, Action::DeleteLayer);
     h.run();
     assert!(h.state().state.doc.layer(id).is_none());
@@ -267,7 +270,7 @@ fn the_window_moves_by_its_title_keeps_its_place_and_does_not_close_on_an_outsid
     assert_eq!(window(&h).min, moved.min);
 }
 
-/// 窓の絵（日英）: 塗りつぶしの層のカラーの値を押して開いたところ。
+/// ウィンドウの絵（日英）: 塗りつぶしレイヤーのカラーの値を押して開いたところ。
 #[test]
 fn snapshot_the_colour_window_on_a_fill_value() {
     let mut results = SnapshotResults::new();
@@ -288,7 +291,7 @@ fn snapshot_the_colour_window_on_a_fill_value() {
 }
 
 /// マテリアルのタブ: lilToon の色（文書の見た目。1 回のドラッグが 1 回の取り消し）と、ブラシのエミッション（ブラシの設定。取り消しに積まない）。
-/// lilToon の色から押し替えると、窓はそのままで相手が替わる。
+/// lilToon の色から押し替えると、ウィンドウはそのままで相手が替わる。
 #[test]
 fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
     use yolu_app::matpaint::MatAction;
@@ -331,7 +334,7 @@ fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
     );
     assert_ne!(main_color(&h), before, "その場で値が変わる");
     assert_eq!(undo_count(&h), steps + 1, "ドラッグは 1 回の取り消し");
-    // ブラシのエミッションの見本を押すと、窓はそのままで相手が替わる
+    // ブラシのエミッションの見本を押すと、ウィンドウはそのままで相手が替わる
     let emission = h.state().state.mat.emission;
     let at = h
         .get_by_label("ストロークが塗るエミッションの色")

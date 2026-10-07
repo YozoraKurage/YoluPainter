@@ -136,7 +136,7 @@ fn op(h: &mut Harness<'_, YoluApp>, op: Op) {
     h.run();
 }
 
-/// セット i の文書に、全面の Color の塗りつぶしの層を足す（今のセットでなくてもよい）。
+/// セット i の文書に、全面の Color の塗りつぶしレイヤーを足す（今のセットでなくてもよい）。
 fn paint(h: &mut Harness<'_, YoluApp>, set: usize, rgb: [u8; 3]) -> yolu_core::LayerId {
     let layer = h
         .state_mut()
@@ -267,7 +267,7 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
     let layer = paint(&mut h, 1, COLORS[1]);
     paint(&mut h, 2, COLORS[2]);
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "初め");
-    // ほかのセットの文書の層の値を替える（今のセットは 0 のまま）
+    // ほかのセットの文書のレイヤーの値を替える（今のセットは 0 のまま）
     h.state_mut()
         .state
         .set_doc_mut(1)
@@ -281,9 +281,9 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
     h.run();
     assert_close(face(&mut h, 1, 3), COLORS[3], 2, "値を替えた");
     assert_eq!(h.state().state.sets.current_index(), 0);
-    // 層を足す（全面を覆う）
+    // レイヤーを足す（全面を覆う）
     paint(&mut h, 1, COLORS[2]);
-    assert_close(face(&mut h, 1, 3), COLORS[2], 2, "層を足した");
+    assert_close(face(&mut h, 1, 3), COLORS[2], 2, "レイヤーを足した");
     // 今のセットの面と、もう一方のセットの面は触っていない
     assert_close(face(&mut h, 0, 3), COLORS[0], 2, "今のセット");
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "もう一方");
@@ -401,7 +401,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         let s = h.state().view3d_stats().unwrap();
         if built.last() != Some(&s.other_sets) {
             built.push(s.other_sets);
-            // 待たせているセットがあるあいだ、窓は次のフレームを求める
+            // 待たせているセットがあるあいだ、ウィンドウは次のフレームを求める
             assert_eq!(
                 h.state().view3d_wants_repaint(),
                 s.other_pending > 0,
@@ -500,7 +500,7 @@ fn raising_the_cap_builds_the_other_sets_again_at_the_larger_size() {
     assert_eq!(h.state().view3d_stats().unwrap().other_level, 0);
 }
 
-/// 最初の層（絵を描ける層）に、模様（画素ごとに違う色）を全面に置く。
+/// 最初のレイヤー（絵を描けるレイヤー）に、模様（画素ごとに違う色）を全面に置く。
 fn speckle(h: &mut Harness<'_, YoluApp>, set: usize, size: u32) {
     let doc = h.state_mut().state.set_doc_mut(set);
     let layer = doc.layers()[0].id();
@@ -840,7 +840,7 @@ fn a_baked_mesh_map_shows_only_on_the_current_sets_faces() {
     );
 }
 
-/// 最初の層の 1 チャンネルに、画素ごとに違う値の模様を全面に置く。アルファも画素ごとに違い、透明（RGB は残っていても見えない）と
+/// 最初のレイヤーの 1 チャンネルに、画素ごとに違う値の模様を全面に置く。アルファも画素ごとに違い、透明（RGB は残っていても見えない）と
 /// 半透明を含む。
 fn speckle_channel(h: &mut Harness<'_, YoluApp>, set: usize, size: u32, channel: Channel) {
     let doc = h.state_mut().state.set_doc_mut(set);
@@ -1088,7 +1088,7 @@ fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_fu
 #[test]
 fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_building_it_again() {
     // セット 0 は Color + Normal + Emission（12 B/テクセル。512² で 4,194,300 B）で、予算 3,000,000 B には入らず 256²（1,048,572 B）へ縮む。
-    // そのあと Normal と Emission の層を消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
+    // そのあと Normal と Emission のレイヤーを消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
     // 今のセットを 1 に替えるとき、前の絵は縮めたまま持ち越す。ほかのセットへ回すときの `u64::MAX` の入れ直しを「予算を上げた」と
     // 数えると、替えるたびに 512² へ作り直す（新しい絵を作る前に前の絵を縮める、が逆になる）。予算を上げたときだけ戻る
     // （`lowering_the_memory_shrinks_the_current_sets_picture_and_raising_it_restores_the_size`）
@@ -1502,7 +1502,7 @@ fn measure_switching_sets() {
             None,
         )
         .unwrap();
-        // 絵のあるタイルも少し（画布の全面に効く層だけでなく、合成の手間が要るように）
+        // 絵のあるタイルも少し（キャンバスの全面に効くレイヤーだけでなく、合成の手間が要るように）
         let layer = doc.layers()[0].id();
         for k in 0..64u32 {
             doc.set_channel_pixel(

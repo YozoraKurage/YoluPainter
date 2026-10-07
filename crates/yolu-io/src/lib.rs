@@ -56,7 +56,7 @@ pub use store::{
 #[derive(Debug)]
 pub enum Error {
     InvalidData(String),
-    /// 予算・上限を超えた（アーカイブ・展開・JSON・画素・層数・名前の長さなど）。壊れたファイルとは別に言い分けるための種類。
+    /// 予算・上限を超えた（アーカイブ・展開・JSON・画素・レイヤー数・名前の長さなど）。壊れたファイルとは別に言い分けるための種類。
     Budget(String),
     /// まだ正本に書けない中身。黙って落とさず、書けるまで保存を断る。
     Unwritable(Unwritable),

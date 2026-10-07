@@ -63,7 +63,7 @@ pub struct BoundGenerator<'a> {
     plan: Option<procedural::Plan>,
     /// 画像の段が読む、投影を束縛済みの画像（[`Self::with_image`]。ほかの種類と、まだ渡していない画像の段は None）。
     image: Option<&'a crate::fill_image::FillSampler<'a>>,
-    /// アイランドごとのばらつきが読む島の図（[`Self::with_islands`]。ほかの種類と、まだ渡していない段は None）。
+    /// アイランドごとのばらつきが読むアイランドの図（[`Self::with_islands`]。ほかの種類と、まだ渡していない段は None）。
     islands: Option<Arc<crate::geometry::IslandMap>>,
     /// アイランドごとのばらつきの乱数の種（[`IslandVariation::stream`]。ほかの種類は 0）。
     island_stream: u32,
@@ -140,7 +140,7 @@ impl<'a> BoundGenerator<'a> {
                 }
                 // 画像（`with_image`）を渡すまでは使えない
                 Kind::Image => Some(Inactive::MissingImage),
-                // 島の図（`with_islands`）を渡すまでは、モデルが無いのと同じ
+                // アイランドの図（`with_islands`）を渡すまでは、モデルが無いのと同じ
                 Kind::UvIslandVariation => Some(Inactive::NoModel),
                 _ => None,
             };
@@ -261,8 +261,8 @@ impl<'a> BoundGenerator<'a> {
         };
         self
     }
-    /// アイランドごとのばらつきが読む島の図を渡す（モデルのこのテクスチャセットの `UvTopology::island_map_within` の、ジェネレーターと
-    /// 同じ大きさの図）。島の図を待っている アイランドごとのばらつきの段にだけ効く（ほかは何もしない）。大きさの違う図は使わず、島の図を
+    /// アイランドごとのばらつきが読むアイランドの図を渡す（モデルのこのテクスチャセットの `UvTopology::island_map_within` の、ジェネレーターと
+    /// 同じ大きさの図）。アイランドの図を待っている アイランドごとのばらつきの段にだけ効く（ほかは何もしない）。大きさの違う図は使わず、アイランドの図を
     /// 作れなかったことにする（入力のまま通す）。
     pub fn with_islands(mut self, islands: Arc<crate::geometry::IslandMap>) -> Self {
         if self.g.kind != Kind::UvIslandVariation || self.inactive != Some(Inactive::NoModel) {
@@ -276,14 +276,14 @@ impl<'a> BoundGenerator<'a> {
         self.inactive = None;
         self
     }
-    /// アイランドごとのばらつきの島の図を作れなかった（作業メモリの予算で断られた）ことを渡す。島の図を待っている段にだけ効く。
+    /// アイランドごとのばらつきのアイランドの図を作れなかった（作業メモリの予算で断られた）ことを渡す。アイランドの図を待っている段にだけ効く。
     pub fn islands_refused(mut self) -> Self {
         if self.g.kind == Kind::UvIslandVariation && self.inactive == Some(Inactive::NoModel) {
             self.inactive = Some(Inactive::IslandMap);
         }
         self
     }
-    /// アイランドごとのばらつきの 1 画素の基底の値（島の外は None）。
+    /// アイランドごとのばらつきの 1 画素の基底の値（アイランドの外は None）。
     fn island_value(&self, x: u32, y: u32) -> Option<f64> {
         let island = self.islands.as_ref()?.island(x, y);
         (island != 0).then(|| self.g.island.value_in(self.island_stream, island))

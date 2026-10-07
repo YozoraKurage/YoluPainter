@@ -1,11 +1,11 @@
-//! 更新の窓 2 つ: 初回の問い（起動時に更新を確かめるか）と、ダウンロードが済んだあとの準備（更新して再起動するか）。
-//! 窓には、名前・状態・短い理由だけを書く。説明はボタンのツールチップに置く。
+//! 更新のウィンドウ 2 つ: 初回の問い（起動時に更新を確かめるか）と、ダウンロードが済んだあとの準備（更新して再起動するか）。
+//! ウィンドウには、名前・状態・短い理由だけを書く。説明はボタンのツールチップに置く。
 
 use crate::state::{Action, AppState};
 use crate::update::UpdateAction;
 use crate::windows::{show_list, Button, ListSpec, Reply, Row};
 
-/// 毎フレーム、開いている更新の窓を描き、押された操作を当てる。
+/// 毎フレーム、開いている更新のウィンドウを描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.update.enabled() {
         return;
@@ -18,7 +18,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
 }
 
-/// 窓の名前（`windows::window_rect` で矩形を引く名前）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く名前）。
 pub const ASK: &str = "update-ask";
 pub const READY: &str = "update-ready";
 

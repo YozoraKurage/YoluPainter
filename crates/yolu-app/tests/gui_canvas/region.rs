@@ -1,4 +1,4 @@
-//! マテリアルで塗る・範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）・手動の ID の色の画面の振る舞いと見た目。
+//! マテリアルで塗る・範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）・手動の ID の色の画面の振る舞いと見た目。
 //! どれも「操作 → 文書が変わる → Undo で戻る」と、日本語と英語、断られた理由。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -23,7 +23,7 @@ use yolu_core::SelectionMask;
 
 // ───────── 試験用のモデルと座標 ─────────
 
-/// 部品 A（UV の継ぎ目で左右の 2 つの島に分かれた板。位置は継ぎ目でつながる）と、離れた部品 B。マテリアルは 1 つ。
+/// 部品 A（UV の継ぎ目で左右の 2 つのアイランドに分かれた板。位置は継ぎ目でつながる）と、離れた部品 B。マテリアルは 1 つ。
 /// 三角形: A の左 0・1、A の右 2・3、B 4・5。UV は 0〜1 の中で、左 0.05〜0.25、右 0.30〜0.45、B 0.55〜0.95（縦は 0.05〜0.45）。
 fn two_parts_model() -> ViewModel {
     let v = |x: f32, y: f32| Vec3::new(x, y, 0.0);
@@ -530,7 +530,7 @@ fn headless_bucket_by_color_fills_the_similar_area_in_2d_only() {
     assert_eq!(
         composite_pixel(&s.doc, 5, 5),
         [0, 255, 0, 255],
-        "空の層は全体が近い色"
+        "空のレイヤーは全体が近い色"
     );
     // 3D では近い色は使えない（理由だけ出す）
     s.view3d.set_model(two_parts_model());
@@ -555,7 +555,7 @@ fn headless_bucket_says_why_it_cannot_fill() {
     s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     bucket(&mut s, Where::Canvas(&view), rect.center());
     assert_eq!(s.message, "No model");
-    // 塗れないレイヤー（塗りつぶしの層）
+    // 塗れないレイヤー（塗りつぶしレイヤー）
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
     let view = canvas_view(&s, rect);
@@ -789,7 +789,7 @@ fn headless_the_bucket_and_the_brush_write_the_same_value_into_a_scalar_channel(
         by_brush,
         "ポリゴン塗りつぶしも同じ値"
     );
-    // 塗りつぶしの層の値も、同じ変換（アルファは 255）
+    // 塗りつぶしレイヤーの値も、同じ変換（アルファは 255）
     assert_eq!(yolu_app::m2::fill_from_color([1.0, 0.0, 0.0, 0.3]), red);
     assert_eq!(
         yolu_app::matpaint::single_value([1.0, 0.0, 0.0, 0.3]).a,
@@ -837,7 +837,7 @@ fn headless_a_read_only_set_refuses_the_bucket_the_polygon_fill_and_the_id_selec
     assert!(s.doc.selection().is_some(), "{}", s.message);
 }
 
-/// 小さい予算の文書（タイル 4 枚分の覆いまで。512 の文書で A の島は 2〜4 枚、B の島は別の 4 枚）。
+/// 小さい予算の文書（タイル 4 枚分の覆いまで。512 の文書で A のアイランドは 2〜4 枚、B のアイランドは別の 4 枚）。
 fn four_tile_budget(s: &mut AppState) -> u64 {
     let ts = s.doc.tile_size() as u64;
     let budget = 4 * (16 + 2 * ts * ts);
@@ -866,10 +866,13 @@ fn headless_polygon_fill_over_the_budget_is_refused_and_leaves_the_document_as_i
     assert!(s.message.contains("予算"), "{}", s.message);
     assert_eq!(s.doc.undo_count(), 0);
     assert!(!painted(&s, TRI0));
-    // 途中で超える: 最初の島は塗れて、別の部品を足すと予算を超え、そこまでの塗りも戻す
+    // 途中で超える: 最初のアイランドは塗れて、別の部品を足すと予算を超え、そこまでの塗りも戻す
     let budget = four_tile_budget(&mut s);
     assert!(begin_polygon(&mut s, w, a), "{}", s.message);
-    assert!(painted(&s, TRI0), "最初の島は塗れている（予算 {budget}）");
+    assert!(
+        painted(&s, TRI0),
+        "最初のアイランドは塗れている（予算 {budget}）"
+    );
     drag_to(&mut s, w, b);
     assert!(s.region.drag.is_none(), "超えたら札を手放す");
     assert!(!s.is_stroking() && !s.doc.has_active_stroke());
@@ -915,13 +918,20 @@ fn headless_polygon_fill_adds_the_regions_it_passes_and_commits_as_one_undo() {
     let undo = s.doc.undo_count();
     assert!(begin_polygon(&mut s, w, a));
     assert!(s.is_stroking(), "ドラッグの間は描いている扱い");
-    assert!(painted(&s, TRI0) && painted(&s, TRI1), "押した島はすぐ塗る");
+    assert!(
+        painted(&s, TRI0) && painted(&s, TRI1),
+        "押したアイランドはすぐ塗る"
+    );
     drag_to(&mut s, w, b);
     drag_to(&mut s, w, c);
-    assert_eq!(s.region.drag.as_ref().unwrap().regions(), 3, "通った島の数");
+    assert_eq!(
+        s.region.drag.as_ref().unwrap().regions(),
+        3,
+        "通ったアイランドの数"
+    );
     assert!(
         painted(&s, TRI2) && painted(&s, TRI4),
-        "動かすと足す。間の島も飛ばさない"
+        "動かすと足す。間のアイランドも飛ばさない"
     );
     assert_eq!(s.doc.undo_count(), undo, "離すまで履歴に積まない");
     // 描いている間は文書を変える操作を断る
@@ -1038,7 +1048,7 @@ fn headless_hover_finds_the_region_under_the_pointer_and_clears_outside() {
     assert_eq!(
         s.region.hover.as_ref().unwrap().key,
         key,
-        "同じ島なら引き直さない"
+        "同じアイランドなら引き直さない"
     );
     {
         let at = at_uv(&s, rect, (0.8, 0.9));
@@ -1098,7 +1108,7 @@ fn headless_a_panel_without_the_pointer_clears_only_its_own_hover() {
     );
     update_hover(&mut s, surface, None);
     assert!(s.region.hover.is_none());
-    // 道具が範囲を出さないときは、どの画面のものも消す
+    // ツールが範囲を出さないときは、どの画面のものも消す
     update_hover(&mut s, canvas, Some(at));
     s.tool = Tool::Brush;
     update_hover(&mut s, surface, None);
@@ -1369,7 +1379,7 @@ fn headless_the_id_panel_does_not_wait_for_the_model_input_and_shows_checking() 
     assert!(s.bake.is_checking(), "別のスレッドで作っている");
     assert!(!s.id_colors_foreign(), "待たずに false");
     assert_eq!(s.id_part_hint(0), None);
-    // ID の道具を選んでいる間は、窓が無くても作っている最中のものを手放さないので、いつかは求まる
+    // ID のツールを選んでいる間は、ウィンドウが無くても作っている最中のものを手放さないので、いつかは求まる
     let start = std::time::Instant::now();
     let parts = loop {
         if let Some(parts) = s.id_set_parts() {
@@ -1401,7 +1411,7 @@ fn headless_the_id_panel_does_not_wait_for_the_model_input_and_shows_checking() 
     );
 }
 
-/// 今のセットの ID マップを、アプリのベイク（ベイクの窓と同じ道）で焼く。UV アイランドごとに色が付く。
+/// 今のセットの ID マップを、アプリのベイク（ベイクのウィンドウと同じ道）で焼く。UV アイランドごとに色が付く。
 fn bake_id(s: &mut AppState) {
     s.bake.settings.maps = vec![MeshMapKind::Id];
     s.bake.settings.id_source = MeshIdSource::UvIsland;
@@ -1443,8 +1453,8 @@ fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
     };
     press(&mut s, TRI0, false, false);
     assert_eq!(selected(&s, TRI0), 255);
-    assert_eq!(selected(&s, TRI1), 255, "同じ島");
-    assert_eq!(selected(&s, TRI2), 0, "別の島");
+    assert_eq!(selected(&s, TRI1), 255, "同じアイランド");
+    assert_eq!(selected(&s, TRI2), 0, "別のアイランド");
     assert_eq!(selected(&s, TRI4), 0);
     assert!(s.message.contains("ID の色 #"), "{}", s.message);
     assert!(s.message.contains("新規"), "{}", s.message);
@@ -1492,7 +1502,7 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
         let at = at_uv(s, rect, uv);
         yolu_app::region::idcolor::select_by_id(s, w, at);
     };
-    // オプションバーで「足す」を選ぶと、キーの修飾が無くても足す（選択の道具と同じ値）
+    // オプションバーで「足す」を選ぶと、キーの修飾が無くても足す（選択のツールと同じ値）
     s.apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(
         SelectionCombine::Add,
     ))));
@@ -1583,7 +1593,7 @@ fn headless_manual_id_colors_reach_the_baked_id_map_and_make_the_old_one_stale()
         "{:?}",
         s.usable_id_map().err()
     );
-    // 焼き直すと、B の島（部品 1）がその色になり、押すとその色で選ぶ
+    // 焼き直すと、B のアイランド（部品 1）がその色になり、押すとその色で選ぶ
     bake_id(&mut s);
     assert!(s.usable_id_map().is_ok());
     let view = canvas_view(&s, rect);
@@ -1606,7 +1616,7 @@ fn headless_id_hover_highlights_the_triangles_of_the_color_under_the_pointer() {
         let at = at_uv(&s, rect, TRI2);
         update_hover(&mut s, Where::Canvas(&view), Some(at));
     }
-    assert_eq!(s.region_hover_len(), Some(2), "A の右の島の三角形");
+    assert_eq!(s.region_hover_len(), Some(2), "A の右のアイランドの三角形");
     {
         let at = at_uv(&s, rect, TRI4);
         update_hover(&mut s, Where::Canvas(&view), Some(at));
@@ -1629,7 +1639,11 @@ fn headless_id_hover_is_not_reused_after_another_tool_replaced_it() {
     // ID の色の強調 → バケツ（メッシュの塊）→ ID の色。ポインタは動かさない
     s.tool = Tool::IdSelect;
     update_hover(&mut s, w, Some(at));
-    assert_eq!(s.region_hover_len(), Some(2), "A の右の島（ID の色の範囲）");
+    assert_eq!(
+        s.region_hover_len(),
+        Some(2),
+        "A の右のアイランド（ID の色の範囲）"
+    );
     s.tool = Tool::Fill;
     s.apply(Action::Region(RegionAction::FillRange(
         SurfaceRegionKind::MeshPart,
@@ -1710,7 +1724,7 @@ fn the_tools_have_buttons_keys_and_menu_entries() {
         h.run();
         assert_eq!(h.state().state.tool, tool);
     }
-    // 編集メニューの項目（描く道具）と、選択範囲メニューの項目（選ぶ道具の ID の色で選択）
+    // 編集メニューの項目（描くツール）と、選択範囲メニューの項目（選ぶツールの ID の色で選択）
     let at = menu_title(&h, "編集").center();
     click(&mut h, at);
     for tool in [Tool::Fill, Tool::PolygonFill] {
@@ -1782,7 +1796,7 @@ fn material_tab_toggle_chips_and_values_change_the_state() {
     h.snapshot("region_material_on_english");
 }
 
-/// ペンの 1 点（pointer_id は固定。位置は窓の画素 = 点）。
+/// ペンの 1 点（pointer_id は固定。位置はウィンドウの画素 = 点）。
 fn pen_sample(at: Pos2, contact: bool) -> yolu_app::pen::PenSample {
     yolu_app::pen::PenSample {
         pos: [at.x, at.y],
@@ -1827,7 +1841,7 @@ fn show_3d(h: &mut Harness<'_, YoluApp>) -> Rect {
     h.state().view3d_rect().expect("3D のタブ")
 }
 
-/// 3D の A の左の島・A の右の島・B の上の点。
+/// 3D の A の左のアイランド・A の右のアイランド・B の上の点。
 fn face_points(h: &Harness<'_, YoluApp>, rect: Rect) -> [Pos2; 3] {
     let s = &h.state().state;
     [
@@ -1837,7 +1851,7 @@ fn face_points(h: &Harness<'_, YoluApp>, rect: Rect) -> [Pos2; 3] {
     ]
 }
 
-/// バケツを 1 回押したのと同じ結果（不透明度 0.5 の A の左の島の塗り: 画素のアルファ）。押し直したかどうかが重なりで見える。
+/// バケツを 1 回押したのと同じ結果（不透明度 0.5 の A の左のアイランドの塗り: 画素のアルファ）。押し直したかどうかが重なりで見える。
 fn single_fill_alpha() -> u8 {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     s.brush.opacity = 0.5;
@@ -1864,7 +1878,7 @@ fn assert_filled_once(h: &Harness<'_, YoluApp>, alpha: u8, what: &str) {
         s.message
     );
     assert_eq!(px(s, TRI0)[3], alpha, "{what}: 押し直して重ねていない");
-    assert!(painted(s, TRI1), "{what}: 押した島");
+    assert!(painted(s, TRI1), "{what}: 押したアイランド");
     assert!(
         !painted(s, TRI2) && !painted(s, TRI4),
         "{what}: 押したまま滑らせた先の範囲は足さない"
@@ -1878,7 +1892,7 @@ fn bucket_click_in_the_canvas_fills_one_undo() {
     key(&h, Key::G, Modifiers::NONE);
     h.run();
     h.snapshot("region_bucket_options");
-    // A の左の島を押す
+    // A の左のアイランドを押す
     let at = canvas_at(&h, (0.15, 0.25));
     click(&mut h, at);
     assert_eq!(
@@ -1919,7 +1933,7 @@ fn a_pen_held_on_the_bucket_fills_once_in_the_canvas_even_when_it_slides_over_ot
         canvas_at(&h, TRI2),
         canvas_at(&h, TRI4),
     );
-    // 押したまま 4 点（同じ所・別の島・別の部品）。別のフレームで
+    // 押したまま 4 点（同じ所・別のアイランド・別の部品）。別のフレームで
     pen_frames(
         &mut h,
         &[(a, true), (a, true), (b, true), (c, true), (c, false)],
@@ -1938,7 +1952,7 @@ fn a_pen_held_on_the_bucket_fills_once_in_the_canvas_even_when_it_slides_over_ot
     assert_eq!(
         s.doc.undo_count(),
         2,
-        "触れ直すと次の島を塗る: {}",
+        "触れ直すと次のアイランドを塗る: {}",
         s.message
     );
     assert!(painted(s, TRI2) && painted(s, TRI3));
@@ -1966,7 +1980,7 @@ fn a_pen_held_on_the_bucket_fills_once_in_the_3d_view_even_when_it_slides_over_o
     assert_eq!(
         s.doc.undo_count(),
         2,
-        "触れ直すと次の島を塗る: {}",
+        "触れ直すと次のアイランドを塗る: {}",
         s.message
     );
     assert!(painted(s, TRI2) && painted(s, TRI3));
@@ -2016,7 +2030,7 @@ fn polygon_app() -> Harness<'static, YoluApp> {
     h
 }
 
-/// 画面の 3 点（A の左の島・A の右の島・B）。3D なら 3D のタブを前に出す。
+/// 画面の 3 点（A の左のアイランド・A の右のアイランド・B）。3D なら 3D のタブを前に出す。
 fn polygon_points(h: &mut Harness<'_, YoluApp>, in_3d: bool) -> [Pos2; 3] {
     if in_3d {
         let rect = show_3d(h);
@@ -2095,7 +2109,7 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
             assert_polygon_idle(&h, 0, &format!("{what} Esc のあと離す"));
             assert!(!painted(&h.state().state, TRI0), "{what}");
 
-            // 窓のフォーカスを失う: そこまでを確定する（1 回の Undo）
+            // ウィンドウのフォーカスを失う: そこまでを確定する（1 回の Undo）
             let mut h = polygon_app();
             let [a, b, c] = polygon_points(&mut h, in_3d);
             hold_over(&mut h, source, &[a, b]);
@@ -2226,7 +2240,7 @@ fn id_select_by_the_mouse_and_the_held_pen_selects_once_in_the_3d_view() {
     );
 }
 
-/// 層の Color と Roughness の、塗られた画素（アルファが 0 でない）の集合が同じで、数が多少ある。
+/// レイヤーの Color と Roughness の、塗られた画素（アルファが 0 でない）の集合が同じで、数が多少ある。
 fn painted_pixels(s: &AppState, channel: Channel) -> Vec<(u32, u32)> {
     let (w, hh) = (s.doc.width(), s.doc.height());
     let mut out = Vec::new();
@@ -2366,7 +2380,7 @@ fn polygon_fill_dragging_in_the_3d_view_is_one_undo_and_escape_cancels() {
     assert!(!painted(s, TRI0) && !painted(s, TRI2), "Esc で捨てる");
     assert_eq!(s.doc.undo_count(), 0);
     assert!(!s.is_stroking());
-    // 窓のフォーカスを失う: そこまでを確定する
+    // ウィンドウのフォーカスを失う: そこまでを確定する
     press(&h, a, egui::PointerButton::Primary);
     h.step();
     move_to(&h, b);
@@ -2490,7 +2504,7 @@ fn the_sub_tool_list_has_the_ranges_and_the_bucket_adds_similar_colors() {
     assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
 }
 
-/// ID の色で選択の道具を選び、部品が求まるまで待った画面。
+/// ID の色で選択のツールを選び、部品が求まるまで待った画面。
 fn id_panel(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app_with_model(1280.0, 800.0, 128);
     h.state_mut().state.lang = lang;
@@ -2506,9 +2520,9 @@ fn manual_color(h: &Harness<'_, YoluApp>, part: usize) -> Option<u32> {
     h.state().state.doc.id_colors().colors().get(&part).copied()
 }
 
-/// 部品の ID の色の見本を押すと色の窓が出て、円・四角のドラッグがその場で入り、1 回の取り消しになる（ドラッグの間は知らせを出さず、
-/// 離して 1 回）。自動の色を見せているときに開いて Esc を押すと自動へ戻し、手動の色から開いたときは、その色へ戻す。窓が部品の色を
-/// 相手にしている間に部品を替えると、窓はそのままで相手が新しい部品へ替わる。
+/// 部品の ID の色の見本を押すと色のウィンドウが出て、円・四角のドラッグがその場で入り、1 回の取り消しになる（ドラッグの間は知らせを出さず、
+/// 離して 1 回）。自動の色を見せているときに開いて Esc を押すと自動へ戻し、手動の色から開いたときは、その色へ戻す。ウィンドウが部品の色を
+/// 相手にしている間に部品を替えると、ウィンドウはそのままで相手が新しい部品へ替わる。
 #[test]
 fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() {
     use egui::PointerButton;
@@ -2521,7 +2535,7 @@ fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() 
     let swatch = h.get_by_label("この部品の ID の色").rect();
     click(&mut h, swatch.center());
     assert!(color_window::is_target(&h.ctx, target(0)));
-    let window = color_window::rect(&h.ctx).expect("色の窓");
+    let window = color_window::rect(&h.ctx).expect("色のウィンドウ");
     let sq = wheel_square(wheel_of(window));
     // ドラッグの途中: その場で入るが、知らせは出さない
     h.state_mut().state.message.clear();
@@ -2583,21 +2597,25 @@ fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() 
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert_eq!(manual_color(&h, 0), Some(0x336699));
-    // 部品を替えると、窓はそのままで相手が新しい部品へ替わる
+    // 部品を替えると、ウィンドウはそのままで相手が新しい部品へ替わる
     click(&mut h, swatch.center());
     assert!(color_window::is_target(&h.ctx, target(0)));
-    let placed = color_window::rect(&h.ctx).expect("色の窓");
+    let placed = color_window::rect(&h.ctx).expect("色のウィンドウ");
     apply(&mut h, Action::Region(RegionAction::IdPart(1)));
     h.run();
     assert!(color_window::is_target(&h.ctx, target(1)));
-    assert_eq!(color_window::rect(&h.ctx), Some(placed), "窓は動かない");
+    assert_eq!(
+        color_window::rect(&h.ctx),
+        Some(placed),
+        "ウィンドウは動かない"
+    );
     click(&mut h, sq.center());
     assert!(manual_color(&h, 1).is_some());
     assert_eq!(manual_color(&h, 0), Some(0x336699), "前の部品は変えない");
 }
 
-/// 部品の ID の色の窓の円を押したまま Esc: 押したあとのドラッグは取り消され（まとめていた段ごと捨てる）、「取り消しました。」が残る。
-/// 窓の戻しが次のフレームに届いても、変えていないのに「手動の ID の色を変えました。」を出して上書きしない。
+/// 部品の ID の色のウィンドウの円を押したまま Esc: 押したあとのドラッグは取り消され（まとめていた段ごと捨てる）、「取り消しました。」が残る。
+/// ウィンドウの戻しが次のフレームに届いても、変えていないのに「手動の ID の色を変えました。」を出して上書きしない。
 #[test]
 fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_change() {
     use egui::PointerButton;
@@ -2607,7 +2625,9 @@ fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_chang
     let steps = h.state().state.doc.undo_count();
     let swatch = h.get_by_label("この部品の ID の色").rect();
     click(&mut h, swatch.center());
-    let sq = wheel_square(wheel_of(color_window::rect(&h.ctx).expect("色の窓")));
+    let sq = wheel_square(wheel_of(
+        color_window::rect(&h.ctx).expect("色のウィンドウ"),
+    ));
     h.state_mut().state.message.clear();
     press(&h, sq.left_top() + vec2(8.0, 8.0), PointerButton::Primary);
     h.step();
@@ -2644,7 +2664,7 @@ fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_chang
     );
 }
 
-/// 部品の ID の色から開いた色の窓の絵（日英）。
+/// 部品の ID の色から開いた色のウィンドウの絵（日英）。
 #[test]
 fn snapshot_the_colour_window_on_a_part_id_color() {
     let mut results = egui_kittest::SnapshotResults::new();

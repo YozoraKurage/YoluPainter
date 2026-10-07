@@ -5,7 +5,7 @@ use super::Lang;
 use crate::pathtool::edit::Refusal;
 use yolu_core::CoreError;
 
-/// 描いている間（ストローク・移動と変形のドラッグ・範囲の道具やパスの途中）は受けない。
+/// 描いている間（ストローク・移動と変形のドラッグ・範囲のツールやパスの途中）は受けない。
 pub fn during_stroke(lang: Lang) -> &'static str {
     crate::crash::problem(lang.pick("描いている間はできません。", "Not while drawing."))
 }
@@ -29,7 +29,7 @@ pub fn read_only_set(lang: Lang, reason: &str) -> String {
     )
 }
 
-/// テクスチャセットの数が上限に当たったときの理由（窓の下の帯・ツールチップ）。
+/// テクスチャセットの数が上限に当たったときの理由（ウィンドウの下の帯・ツールチップ）。
 pub fn set_limit(lang: Lang) -> String {
     lang.pick(
         format!(
@@ -43,7 +43,7 @@ pub fn set_limit(lang: Lang) -> String {
     )
 }
 
-/// テクスチャセットの大きさが選べる値でない（新規・構成の窓の下の帯）。
+/// テクスチャセットの大きさが選べる値でない（新規・構成のウィンドウの下の帯）。
 pub fn set_size(lang: Lang) -> String {
     lang.pick(
         format!(

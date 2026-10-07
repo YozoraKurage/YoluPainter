@@ -196,7 +196,7 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
             .base
             .as_ref()
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
-        // 正本は全体をメモリに組まない: 写しを渡し、置き場へ書くときに層ごとに流して作る（変わらない層の部分は前の世代と共有）
+        // 正本は全体をメモリに組まない: 写しを渡し、置き場へ書くときにレイヤーごとに流して作る（変わらないレイヤーの部分は前の世代と共有）
         let document = match &set.snapshot {
             Some(doc) => Some(DocumentSource::from_core(doc.clone())?),
             None => None,

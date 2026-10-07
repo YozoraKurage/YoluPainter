@@ -853,7 +853,7 @@ fn headless_reopening_does_not_read_the_original_pictures() {
     assert_eq!(open.sets.len(), 2);
 }
 
-/// 新しい文書（何も触っていない）の窓から Live Link のモデルを開くと、前のモデルのファイルの参照は残らない。
+/// 新しい文書（何も触っていない）のウィンドウから Live Link のモデルを開くと、前のモデルのファイルの参照は残らない。
 #[test]
 fn headless_opening_into_a_pristine_document_drops_the_previous_model_file() {
     let mut h = Headless::new("model-file");
@@ -962,7 +962,7 @@ fn headless_a_resend_reuses_the_slot_pictures_of_unchanged_files() {
     assert_eq!(changed.pixels[0], 255, "新しい中身");
 }
 
-/// 書き出しの窓を開くだけでは、Unity が知らせた置き場のフォルダを作らない（取り消しても Unity のプロジェクトにフォルダを残さない）。
+/// 書き出しのウィンドウを開くだけでは、Unity が知らせた置き場のフォルダを作らない（取り消しても Unity のプロジェクトにフォルダを残さない）。
 #[test]
 fn headless_the_export_dialog_start_is_the_nearest_existing_folder_and_creates_nothing() {
     let mut h = Headless::new("export-start");

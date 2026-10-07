@@ -36,7 +36,7 @@ pub enum Tool {
     PolygonFill,
     /// スポイト（押した所の値を描画色かマテリアルの値に取る。`eyedrop`）。
     Eyedropper,
-    /// 選択の道具（形は `selection`）。
+    /// 選択のツール（形は `selection`）。
     SelectRect,
     SelectEllipse,
     Lasso,
@@ -46,7 +46,7 @@ pub enum Tool {
     IdSelect,
     /// 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す。形は `selection::pen`）。
     SelectPen,
-    /// 移動・変形（選んでいる層をハンドルで移動・拡大縮小・回転。形は `transform`）。
+    /// 移動・変形（選んでいるレイヤーをハンドルで移動・拡大縮小・回転。形は `transform`）。
     Move,
     Liquify,
     /// パス（2D のキャンバスとモデルの面の上に引く、編集できる曲線。`pathtool`）。
@@ -56,7 +56,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
+    /// 並び順（ツールの帯）。描くツール（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶツールの間、選ぶツールと移動・変形の間に区切りが入る。
     pub const ALL: [Tool; 19] = [
         Tool::Brush,
         Tool::Eraser,
@@ -93,7 +93,7 @@ impl Tool {
         self.def().key
     }
     /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
-    /// 道具の表（`tools`）が持つ。ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
+    /// ツールの表（`tools`）が持つ。ブラシの否定ではなく並べて書く（ツールが増えたとき、足したツールが黙って範囲のツールになって入力・カーソル・強調の道へ流れない）。
     pub fn is_region(self) -> bool {
         self.def().region
     }
@@ -351,7 +351,7 @@ pub struct RotateDrag {
 pub struct CanvasInput {
     pub stroke: Option<StrokeSource>,
     /// ペンの今の押し（触れてから離すまで。行き先は触れた最初の点で決める）。ペンの `contact` は押している間ずっと続くので、これが
-    /// 押し直さない印も兼ねる（押した瞬間に終わるバケツ・ID の色で選択を、押しっぱなしの次の点でまた押さない）。離した点・窓が
+    /// 押し直さない印も兼ねる（押した瞬間に終わるバケツ・ID の色で選択を、押しっぱなしの次の点でまた押さない）。離した点・ウィンドウが
     /// フォーカスを失ったときに下ろす。
     pub pen_press: Option<crate::pen::PenPress>,
     /// Ctrl+Space の拡縮のドラッグ（押した点が中心）。
@@ -406,7 +406,7 @@ pub enum PopupKind {
     Symmetry,
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
-    /// 重なった UV のベイクの島のメニュー（セット・島の代表の三角形・ベイクの窓の見取り図からか・3D ビューの右クリックからか）。
+    /// 重なった UV のベイクのアイランドのメニュー（セット・アイランドの代表の三角形・ベイクのウィンドウの見取り図からか・3D ビューの右クリックからか）。
     BakeIsland {
         set: u32,
         island: usize,
@@ -429,16 +429,16 @@ pub enum Action {
     ScreenPick(crate::screen_pick::Mode),
     ToggleUvWireframe,
     ShowShortcuts,
-    /// 文書を変える M2 の操作（層の種類・マスク・チャンネルごとの合成・文書のチャンネル。1 つが 1 回の Undo）。
+    /// 文書を変える M2 の操作（レイヤーの種類・マスク・チャンネルごとの合成・文書のチャンネル。1 つが 1 回の Undo）。
     M2(Edit),
     /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
     M2Ui(UiOp),
-    /// マテリアルで塗る（組・値）と、範囲の道具（範囲の種類・許容・塗る/消す・手動の ID の色）の操作。
+    /// マテリアルで塗る（組・値）と、範囲のツール（範囲の種類・許容・塗る/消す・手動の ID の色）の操作。
     Mat(crate::matpaint::MatAction),
     Region(crate::region::RegionAction),
-    /// アセットの棚の操作（層からの保存・文書へ置く・消す・.ylsmart の読み書き。置くのだけが文書を変え、1 回の Undo）。
+    /// アセットの棚の操作（レイヤーからの保存・文書へ置く・消す・.ylsmart の読み書き。置くのだけが文書を変え、1 回の Undo）。
     Shelf(ShelfOp),
-    /// 効果の層（フィルター・Generator・Anchor）の操作（文書を変える操作は 1 つが 1 回の Undo。行を選ぶ操作は文書を変えない）。
+    /// 効果のレイヤー（フィルター・Generator・Anchor）の操作（文書を変える操作は 1 つが 1 回の Undo。行を選ぶ操作は文書を変えない）。
     Fx(crate::fx::FxOp),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
@@ -448,16 +448,16 @@ pub enum Action {
     SubTool(crate::subtool::SubToolAction),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
-    /// パスの道具（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
+    /// パスのツール（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
     Path(crate::pathtool::PathAction),
-    /// 塗りつぶしの層の画像と投影・デカール・形のグラデーション（文書を変える操作は 1 つが 1 回の Undo。置き場のギズモは画面だけ）。
+    /// 塗りつぶしレイヤーの画像と投影・デカール・形のグラデーション（文書を変える操作は 1 つが 1 回の Undo。置き場のギズモは画面だけ）。
     Fill(crate::fillfx::FillOp),
-    /// レイヤーのメニューの「新規塗りつぶしレイヤー」の画像・デカール・グラデーション（層の作成と中身の設定は 1 回の Undo）。
+    /// レイヤーのメニューの「新規塗りつぶしレイヤー」の画像・デカール・グラデーション（レイヤーの作成と中身の設定は 1 回の Undo）。
     LayerMenu(crate::layermenu::Op),
-    /// グラデーションの道具（形・終点・塗る/消す・ドラッグで塗る）。
+    /// グラデーションのツール（形・終点・塗る/消す・ドラッグで塗る）。
     Gradient(crate::gradient::GradientOp),
     ToggleRulerSnap,
-    /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
+    /// レイヤーの画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     OpenLogFolder,
     Quit,
@@ -504,30 +504,30 @@ pub enum Action {
     /// 新しいプロジェクトにする（保存していない変更があれば聞く）。
     NewProjectDialog,
     NewProject,
-    /// .ylp を選んで開く（ファイルの窓）。
+    /// .ylp を選んで開く（ファイルのウィンドウ）。
     OpenProjectDialog,
     OpenProject(PathBuf),
     /// 開いた .ylp に上書きで保存する（まだ無ければ別名で）。
     SaveProject,
     SaveProjectAsDialog,
     SaveProjectAs(PathBuf),
-    /// メッシュマップのベイク（窓・開始・取消・チェック・2D での重ね表示）。
+    /// メッシュマップのベイク（ウィンドウ・開始・取消・チェック・2D での重ね表示）。
     Bake(crate::bake::BakeAction),
     /// テンプレートの画像の書き出し。
     Export(crate::export::ExportAction),
     /// PSD の読み込みと書き出し。
     Psd(crate::psd::PsdAction),
-    /// 配布用に保存（除く物の窓・保存先・書き込み）。
+    /// 配布用に保存（除く物のウィンドウ・保存先・書き込み）。
     Distribute(crate::distribute::DistributeAction),
-    /// 新規プロジェクトの窓・プロジェクトの構成・テクスチャセットの足す・消す。
+    /// 新規プロジェクトのウィンドウ・プロジェクトの構成・テクスチャセットの足す・消す。
     Project(crate::newproject::NpAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
     Update(crate::update::UpdateAction),
-    /// 設定の窓と、設定の値の選び。
+    /// 設定のウィンドウと、設定の値の選び。
     Prefs(crate::prefs::PrefsAction),
-    /// 筆圧の調整の窓（全体の筆圧の下限・上限・曲線）。
+    /// 筆圧の調整のウィンドウ（全体の筆圧の下限・上限・曲線）。
     Pressure(crate::pen::window::PressureAction),
-    /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
+    /// 復旧（世代の一覧のウィンドウ・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
     /// テクスチャセットの見た目の設定（標準・lilToon と lilToon の値。1 つが 1 回の Undo）。
     Look(crate::look::LookOp),
@@ -537,7 +537,7 @@ pub enum Action {
     Tools(crate::toolset::ToolsetAction),
     /// アクション（操作の記録と再生。再生だけが文書を変え、1 回の Undo）。
     Automation(crate::automation::AutomationOp),
-    /// ドックのパネルを外の窓へ出す・戻す・前に出す（画面だけ。文書は変えない）。
+    /// ドックのパネルを別ウィンドウへ出す・戻す・前に出す（画面だけ。文書は変えない）。
     Dock(crate::detach::DockOp),
     /// テキストツールとテキストレイヤーの値（打ち始め・打ち終わり・値・フォントのファイル・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
     Text(crate::textlayer::TextAction),
@@ -660,15 +660,15 @@ impl Action {
     }
 }
 
-/// 画面の一時の状態（前のフレームの結果・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・層のドラッグ）は
+/// 画面の一時の状態（前のフレームの結果・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
 /// `AppState::install_document` が戻す。
 #[derive(Debug, Default)]
 pub struct UiTemp {
-    /// 名前を変えている層。
+    /// 名前を変えているレイヤー。
     pub renaming: Option<LayerId>,
     /// 名前の入力欄がフォーカスを取った後か（外れたら名前の変更を終える）。
     pub rename_started: bool,
-    /// 層の欄のスクロール。
+    /// レイヤーの欄のスクロール。
     pub layer_scroll: f32,
     /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
     pub layer_drag: Option<LayerDrag>,
@@ -677,13 +677,13 @@ pub struct UiTemp {
     pub rename_set_started: bool,
     /// テクスチャセットの欄のスクロール。
     pub set_scroll: f32,
-    /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
+    /// 最後に描いたキャンバスの表示域（画面の点。試験と別ウィンドウの位置合わせ用）。
     pub canvas_rect: Option<egui::Rect>,
     /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
     /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
     pub canvas_visible: bool,
     pub canvas_drawn: bool,
-    /// 最後にキャンバスのタブを描いたフレームの番号（主の窓の `Context::cumulative_frame_nr_for`。キャンバスを外の窓へ出しても、主の窓の番号）。
+    /// 最後にキャンバスのタブを描いたフレームの番号（メインウィンドウの `Context::cumulative_frame_nr_for`。キャンバスを別ウィンドウへ出しても、メインウィンドウの番号）。
     /// タブが後ろにあるあいだは進まない。
     pub canvas_frame: Option<u64>,
     /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
@@ -695,7 +695,7 @@ pub struct UiTemp {
     pub sections: HashMap<&'static str, bool>,
     /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
-    /// タブのありか（主の窓・外の窓。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
+    /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
     pub panels: crate::detach::PanelIndex,
     /// ドックの操作の頼み（メニュー・タブの右クリックから。`YoluApp` が同じフレームのうちに当てる）。
     pub dock_ops: Vec<crate::detach::DockOp>,
@@ -705,11 +705,11 @@ pub struct UiTemp {
 pub struct AppState {
     /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
     pub lang: Lang,
-    /// M2 の画面の状態（層の種類・チャンネル・全部入りのブラシ）。
+    /// M2 の画面の状態（レイヤーの種類・チャンネル・全部入りのブラシ）。
     pub m2: M2State,
     /// マテリアルで塗る設定（ブラシ・バケツ・ポリゴン塗りつぶしが使う）。
     pub mat: crate::matpaint::MaterialPaint,
-    /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
+    /// 範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
     pub region: crate::region::RegionState,
     /// サブツール（バケツ・グラデーション・図形などの設定の組のプリセット。ブラシと消しゴムは `brushes`）。アプリの状態で、.ylp には入れない。
     pub subtools: crate::subtool::SubToolState,
@@ -733,15 +733,15 @@ pub struct AppState {
     pub message: String,
     /// 最後の知らせ（種類・出どころ。トーストが種類を読む）。
     pub last_notice: Option<crate::notice::Notice>,
-    /// 起動してからの注意と失敗（ログの窓が読む）。
+    /// 起動してからの注意と失敗（ログのウィンドウが読む）。
     pub notice_log: crate::notice::NoticeLog,
-    /// ログの窓の画面の状態（絞り・選んだ行）。
+    /// ログのウィンドウの画面の状態（絞り・選んだ行）。
     pub log_view: crate::panels::log::LogView,
     /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
     pub toast: crate::toast::Toast,
     /// 状態の帯の右端の版・ビルドと使っているメモリ。
     pub usage: crate::usage::Usage,
-    /// 画面の一時の状態（名前の変更・層の欄のスクロールとドラッグ・キャンバスの表示域・見出しの開閉など。保存しない）。
+    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・見出しの開閉など。保存しない）。
     pub ui: UiTemp,
     pub canvas: CanvasInput,
     pub popup: Option<OpenPopup>,
@@ -769,14 +769,14 @@ pub struct AppState {
     pub project_epoch: u64,
     /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
     pub ops: crate::mcp_server::OpsView,
-    /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
+    /// Live Link で入れた「元の絵」のレイヤーの印（レイヤーの欄が読む。保存しない）。
     pub link_originals: crate::livelink::OriginalMarks,
-    /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
+    /// 新規プロジェクトのウィンドウで、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
     /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
     pub resolution_chosen: bool,
     /// 開いた .ylp（保存先と、保存で残す元の中身）。
     pub project: Option<ProjectFile>,
-    /// ファイルの窓を開く頼み（`YoluApp` が開く。試験では開かない）。
+    /// ファイルのウィンドウを開く頼み（`YoluApp` が開く。試験では開かない）。
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
@@ -786,50 +786,50 @@ pub struct AppState {
     pub library: crate::library::LibraryState,
     /// 選択範囲と 2D の対称の画面の状態（選択範囲そのものは文書が持つ）。
     pub sel: crate::selection::SelState,
-    /// メッシュマップのベイク（設定・窓・走っている仕事）。
+    /// メッシュマップのベイク（設定・ウィンドウ・走っている仕事）。
     pub bake: crate::bake::BakeState,
     /// テンプレートの書き出し（パディング・確かめ・結果・走っている仕事）。
     pub export: crate::export::ExportState,
     /// PSD の読み書き（結果・確かめ・走っている仕事）。
     pub psd: crate::psd::PsdState,
-    /// 配布用に保存（準備した写し・窓の選び・走っている仕事）。
+    /// 配布用に保存（準備した写し・ウィンドウの選び・走っている仕事）。
     pub distribute: crate::distribute::DistributeState,
     /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
     pub save: crate::project::SaveState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
-    /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
+    /// 効果のレイヤー（選んでいる効果の行・効果の入力の覚え）。
     pub fx: crate::fx::FxState,
-    /// 新規プロジェクトの窓・プロジェクトの構成の窓と、プロジェクトのモデルのファイル。
+    /// 新規プロジェクトのウィンドウ・プロジェクトの構成のウィンドウと、プロジェクトのモデルのファイル。
     pub np: crate::newproject::NpState,
-    /// 層の複数選択と、見た目が変わる結合の確かめ。
+    /// レイヤーの複数選択と、見た目が変わる結合の確かめ。
     pub layer_ops: crate::layerops::LayerOpsState,
-    /// 移動・変形の道具（ドラッグの途中・数値・補間）。
+    /// 移動・変形のツール（ドラッグの途中・数値・補間）。
     pub transform: crate::transform::TransformState,
-    /// スポイトの設定（層だけか全体か）。
+    /// スポイトの設定（レイヤーだけか全体か）。
     pub eyedrop: crate::eyedrop::EyedropState,
-    /// パスの道具（選んだ点・点のドラッグ・スライダーの途中の値。パスそのものは文書が持つ）。
+    /// パスのツール（選んだ点・点のドラッグ・スライダーの途中の値。パスそのものは文書が持つ）。
     pub path: crate::pathtool::PathState,
-    /// 塗りつぶしの層の画像と投影・形のグラデーションの画面の状態（置き場のギズモ・ランプの選び）。
+    /// 塗りつぶしレイヤーの画像と投影・形のグラデーションの画面の状態（置き場のギズモ・ランプの選び）。
     pub fillfx: crate::fillfx::FillFxState,
-    /// グラデーションの道具の設定と途中の状態。
+    /// グラデーションのツールの設定と途中の状態。
     pub gradient: crate::gradient::GradientState,
     pub drafting: crate::drafting::Drafting,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
-    /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
+    /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定のウィンドウ。
     pub prefs: crate::prefs::PrefsState,
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
     /// 重なった UV の図（表示と塗りの知らせ）。
     pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
     pub shortcuts: crate::shortcuts::ShortcutWindow,
-    /// 筆圧の調整の窓（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
+    /// 筆圧の調整のウィンドウ（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
     pub pressure: crate::pen::window::PressureWindow,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
-    /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
+    /// ブラシの一覧（組み込みと利用者のブラシ・ツールごとの覚え・見本・詳細のウィンドウ）。アプリの状態で、.ylp には入れない。
     pub brushes: crate::brushes::BrushesState,
-    /// 復旧用の世代の書き置きと復旧の窓（`recovery`。動かすまでは何もしない）。
+    /// 復旧用の世代の書き置きと復旧のウィンドウ（`recovery`。動かすまでは何もしない）。
     pub crash: crate::crash::window::Report,
     pub recovery: crate::recovery::RecoveryState,
     /// ツールの並び（ツールの列とブラシのグループ。設定のフォルダの tools.json。.ylp には入れない）。
@@ -840,7 +840,7 @@ pub struct AppState {
     pub text: crate::textlayer::TextState,
 }
 
-/// ファイルの窓の頼み。
+/// ファイルのウィンドウの頼み。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogRequest {
     New,
@@ -858,7 +858,7 @@ pub enum DialogRequest {
     LibraryAdd,
     /// ライブラリのファイル（`library.pending_remove`）を消してよいか確かめる。
     LibraryRemove,
-    /// ライブラリのフォルダを OS のファイルの窓で開く。
+    /// ライブラリのフォルダを OS のファイルのウィンドウで開く。
     LibraryReveal,
     /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
     ExportFolder(String),
@@ -878,13 +878,13 @@ pub enum DialogRequest {
     OpenStencil,
     /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT・SUT。複数）を選ぶ。
     ImportBrushes,
-    /// 「CLIP STUDIO から」の窓で、サブツールのフォルダ（CLIP STUDIO の外のフォルダも）を手で選ぶ。
+    /// 「CLIP STUDIO から」のウィンドウで、サブツールのフォルダ（CLIP STUDIO の外のフォルダも）を手で選ぶ。
     ClipStudioFolder,
-    /// 新規プロジェクト・プロジェクトの構成の窓で、モデル（FBX）を選ぶ。
+    /// 新規プロジェクト・プロジェクトの構成のウィンドウで、モデル（FBX）を選ぶ。
     ProjectModel,
     /// 塗りつぶしの画像にする PNG を選ぶ（棚へ取り込む）。
     FillImage,
-    /// 新しい塗りつぶしの層の画像にする PNG を選ぶ（棚へ取り込み、その画像と投影で層を作る）。
+    /// 新しい塗りつぶしレイヤーの画像にする PNG を選ぶ（棚へ取り込み、その画像と投影でレイヤーを作る）。
     NewFillImage(yolu_core::fill_image::ProjectionMode),
     /// ディスクキャッシュの置き場所のフォルダを選ぶ。
     PrefsCacheFolder,
@@ -1033,7 +1033,7 @@ impl AppState {
         }
     }
 
-    /// 保存の間なら、`what`（断る操作の言い方）と理由（`refusals::saving`）を `message` に書いて true。選ぶ窓を開く前の操作が使う。
+    /// 保存の間なら、`what`（断る操作の言い方）と理由（`refusals::saving`）を `message` に書いて true。選ぶウィンドウを開く前の操作が使う。
     fn refuse_while_saving(&mut self, what: &str) -> bool {
         if !self.is_saving() {
             return false;
@@ -1066,9 +1066,9 @@ impl AppState {
         self.ui.dock_grab[0] || self.ui.dock_grab[1]
     }
 
-    /// 道具を替える（どの経路も通る 1 つの口）。ブラシと消しゴムは道具ごとに最後のブラシへ（ストロークの最中に替わるなら断って false）。
+    /// ツールを替える（どの経路も通る 1 つの口）。ブラシと消しゴムはツールごとに最後のブラシへ（ストロークの最中に替わるなら断って false）。
     /// 替わるときは、途中の選択の形・移動と変形のドラッグ・パスの途中のドラッグと選んだ点を捨てる。`keep_effect` なら、選んでいる効果の行と
-    /// 「ID の色」を選んでいる状態は残す（効果の欄から ID マップを読む道具へ移るとき。そうでなければ道具の欄へ戻す）。
+    /// 「ID の色」を選んでいる状態は残す（効果の欄から ID マップを読むツールへ移るとき。そうでなければツールの欄へ戻す）。
     pub(crate) fn switch_tool(&mut self, tool: Tool, keep_effect: bool) -> bool {
         let slot = self.toolset.set.slot_for_tool(tool);
         self.switch_to(tool, slot, keep_effect)
@@ -1088,11 +1088,11 @@ impl AppState {
         }
         self.toolset.set.set_active(slot);
         if tool != self.tool {
-            // 今の道具の設定を覚え、入る道具の今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
+            // 今のツールの設定を覚え、入るツールの今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
             self.subtool_leave(self.tool);
             self.sel_tool_changed();
             if !keep_effect {
-                self.fx.selected = None; // 選んだ効果の欄は道具を替えたら閉じる
+                self.fx.selected = None; // 選んだ効果の欄はツールを替えたら閉じる
                 self.fx.id_pick = None;
             }
             self.transform_cancel_drag();
@@ -1333,7 +1333,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if self.has_multiple_layers_selected() {
-                    // 選んだ層をまとめて 1 段（それぞれの兄弟の中で。選んだ層どうしは追い越さない）
+                    // 選んだレイヤーをまとめて 1 段（それぞれの兄弟の中で。選んだレイヤーどうしは追い越さない）
                     let ids = self.selected_layers();
                     if let Ok(true) = self.doc.step_layers(&ids, action == Action::LayerUp) {
                         self.modified = true;
@@ -1477,7 +1477,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                // 保存の間は、選んでから断るのではなく、窓を開く前に断る
+                // 保存の間は、選んでから断るのではなく、ウィンドウを開く前に断る
                 if self.refuse_while_saving(self.lang.pick(
                     "新しいプロジェクトを作れません",
                     "Cannot create a new project",
@@ -1526,7 +1526,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                // 保存の間は、保存先を選ぶ窓（まだファイルが無いプロジェクト）も開かずに断る
+                // 保存の間は、保存先を選ぶウィンドウ（まだファイルが無いプロジェクト）も開かずに断る
                 if self.refuse_while_saving(
                     self.lang
                         .pick("プロジェクトを保存できません", "Cannot save the project"),

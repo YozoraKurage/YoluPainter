@@ -41,7 +41,7 @@ impl Drop for TempDir {
     }
 }
 
-/// 何も描いていない（保存していない変更が無い）窓。
+/// 何も描いていない（保存していない変更が無い）ウィンドウ。
 fn window(lang: Lang) -> H {
     let mut h = gpu_thread::builder()
         .with_size(vec2(900.0, 600.0))

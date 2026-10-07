@@ -224,8 +224,8 @@ fn refusals_change_nothing() {
         .add_adjustment_layer("反転", yolu_core::AdjustmentSettings::invert(), None, None)
         .unwrap();
     let group = doc.group_layers(&[top], "グループ").unwrap();
-    // 層の種類・チャンネル
-    refused(&mut doc, "調整の層", |d| {
+    // レイヤーの種類・チャンネル
+    refused(&mut doc, "調整レイヤー", |d| {
         d.add_filter(
             adj,
             FilterTarget::Content,
@@ -422,7 +422,7 @@ fn refusals_change_nothing() {
         )
         .map(|_| ())
     });
-    refused(&mut doc, "その層に無い段", |d| {
+    refused(&mut doc, "そのレイヤーに無い段", |d| {
         d.remove_filter(top, f)
     });
     let top_id = top_of(&doc);
@@ -758,7 +758,7 @@ fn setting_the_same_inputs_again_does_not_evaluate_again() {
     doc.set_effect_inputs(inputs(7)).unwrap();
     assert!(
         doc.change_serial() > serial,
-        "違う入力を読む層が変わったことになる"
+        "違う入力を読むレイヤーが変わったことになる"
     );
     let _ = whole(&doc, Channel::Color);
     assert!(doc.effect_counters().blocks_evaluated > blocks);
@@ -775,7 +775,7 @@ fn anchors_must_be_below_and_say_what_is_wrong() {
         .add_anchor(top, AnchorPlacement::Layer, None, None)
         .unwrap();
     assert_eq!(doc.find_anchor(a_base).unwrap().anchor.name(), "土台");
-    refused(&mut doc, "同じ層に 2 つ目", |d| {
+    refused(&mut doc, "同じレイヤーに 2 つ目", |d| {
         d.add_anchor(base, AnchorPlacement::Layer, None, None)
             .map(|_| ())
     });
@@ -806,7 +806,7 @@ fn anchors_must_be_below_and_say_what_is_wrong() {
         .unwrap();
     assert_eq!(doc.anchor_issues().len(), 1);
     assert_eq!(doc.anchor_issues()[0].kind, AnchorIssueKind::NotChosen);
-    refused(&mut doc, "上の層の Anchor", |d| {
+    refused(&mut doc, "上のレイヤーの Anchor", |d| {
         d.set_generator_anchor(
             mid,
             reader,
@@ -874,7 +874,7 @@ fn anchors_must_be_below_and_say_what_is_wrong() {
     assert_eq!(doc.anchor_issues()[0].kind, AnchorIssueKind::Missing);
     doc.undo().unwrap();
     assert!(doc.anchor_issues().is_empty());
-    // 層を動かして Anchor が読む層より上になると、断らずに通す（Undo で戻る）
+    // レイヤーを動かして Anchor が読むレイヤーより上になると、断らずに通す（Undo で戻る）
     doc.move_layer(base, 3).unwrap();
     assert_eq!(doc.anchor_issues()[0].kind, AnchorIssueKind::NotBelow);
     doc.undo().unwrap();
@@ -909,7 +909,7 @@ fn duplicating_a_layer_gives_new_ids_and_points_copied_readers_at_the_copy() {
     )
     .unwrap();
     let copy = doc.duplicate_layer(group, None).unwrap();
-    // グループの中の層の写し
+    // グループの中のレイヤーの写し
     let copies: Vec<_> = doc
         .layers()
         .iter()
@@ -1007,7 +1007,7 @@ fn shared_statistics_and_mip_chains_are_built_once_however_many_blocks_run() {
         assert_eq!(
             after.statistics_computed - before.statistics_computed,
             2,
-            "round {round}: 正規化の統計は、チャンネルごと（上の層の Color と Height）に 1 回"
+            "round {round}: 正規化の統計は、チャンネルごと（上のレイヤーの Color と Height）に 1 回"
         );
         // 同じ中身の画像を読むほかの文書（並んで走るほかの試験）がミップマップを持っていれば、作らずにそれを使う
         assert_eq!(
@@ -1081,7 +1081,7 @@ fn image_budget_refuses_an_image_and_lowering_it_shows_the_value_with_a_reason()
     );
 }
 
-/// 単体のフィルターの評価と、層に付けたフィルターの合成が全バイト一致する。
+/// 単体のフィルターの評価と、レイヤーに付けたフィルターの合成が全バイト一致する。
 mod standalone {
     use yolu_core::filter::{self, Image, Options, Settings, Stage, ValueType};
     use yolu_core::{Channel, Document, EffectSettings, FilterSpec, FilterTarget, Rect, Rgba8};

@@ -7,8 +7,8 @@ use eframe::egui_wgpu::{wgpu, WgpuSetup, WgpuSetupExisting};
 static DEVICE: OnceLock<Result<WgpuSetupExisting, String>> = OnceLock::new();
 static TEST: Mutex<()> = Mutex::new(());
 
-/// 窓を捨てるまで保持する。共有デバイスのエラースコープとキューを試験どうしで混ぜない。
-/// 窓の貸し出し（`gpu_thread::lease`。harness を持つほかの試験と同じもの）を先に取る: この装置は kittest の共用の接続とは別の
+/// ウィンドウを捨てるまで保持する。共有デバイスのエラースコープとキューを試験どうしで混ぜない。
+/// ウィンドウの貸し出し（`gpu_thread::lease`。harness を持つほかの試験と同じもの）を先に取る: この装置は kittest の共用の接続とは別の
 /// Instance・Device なので、貸し出しを通さないと、harness を持つ試験と同時に別々の装置を作ってしまう（lavapipe の中で落ちる向き）。
 /// 取る順は貸し出し → `TEST` で、どの試験もこの順。
 pub fn begin(name: &str) -> Option<MutexGuard<'static, ()>> {

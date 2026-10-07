@@ -11,10 +11,10 @@ use crate::symmetry::SymmetryTransform;
 /// 対称の 1 ダブで調べる候補の画素の上限（C# の MaxSymmetryCandidatePixels）。超えたらストロークごと取り消す。
 pub const MAX_SYMMETRY_CANDIDATE_PIXELS: i64 = 4 << 20;
 
-/// 写しの変換と、画布の中の外接の箱（x0, x1, y0, y1。両端を含む）。
+/// 写しの変換と、キャンバスの中の外接の箱（x0, x1, y0, y1。両端を含む）。
 type CopyBounds = (SymmetryTransform, i64, i64, i64, i64);
 
-/// 写しごとの、画布の中の外接の箱（両端を含む）。候補の画素の数を先に数えて上限で断る（C# の VisitSymmetricPixels の前半）。
+/// 写しごとの、キャンバスの中の外接の箱（両端を含む）。候補の画素の数を先に数えて上限で断る（C# の VisitSymmetricPixels の前半）。
 fn symmetric_bounds(
     transforms: &[SymmetryTransform],
     x: f64,
@@ -78,7 +78,7 @@ impl DabShape<'_> {
 }
 
 impl StrokeState {
-    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、画布の画素の番号（y × 幅 + x）の順に。
+    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。
     fn symmetric_pixels(
         &self,
         x: f64,

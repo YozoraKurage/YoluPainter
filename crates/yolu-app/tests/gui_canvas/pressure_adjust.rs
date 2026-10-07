@@ -1,4 +1,4 @@
-//! 全体の筆圧の調整（表示 → 筆圧の調整…）: 設定の下限・上限・曲線がペンの筆圧に効いて（マウスは 1 のまま）ブラシへ渡ること、窓が枠の中の
+//! 全体の筆圧の調整（表示 → 筆圧の調整…）: 設定の下限・上限・曲線がペンの筆圧に効いて（マウスは 1 のまま）ブラシへ渡ること、ウィンドウが枠の中の
 //! ペンの点を集めて分布から調整を決めること、設定の保存と読み直し、日英。実機のペンは無いので、`PenSample` を差し込む。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
@@ -161,7 +161,7 @@ fn a_touch_force_goes_through_the_adjustment_like_a_pen_point() {
     assert_eq!(pixels(&a), pixels(&b));
 }
 
-// ───────── 窓: 枠の中で描いて、分布から決める ─────────
+// ───────── ウィンドウ: 枠の中で描いて、分布から決める ─────────
 
 fn open_window(h: &mut H) {
     let at = menu_title(h, "表示").center();
@@ -231,7 +231,7 @@ fn app_with_settings(path: &Path) -> H {
 
 /// 描く枠の矩形。
 fn frame_of(h: &H) -> egui::Rect {
-    h.state().state.pressure.frame.expect("窓を描いた")
+    h.state().state.pressure.frame.expect("ウィンドウを描いた")
 }
 
 /// 枠の中で、筆圧が lo〜hi に一様に変わる線を n 本引く（1 本は 12 点）。引いた筆圧を返す。
@@ -266,7 +266,7 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert!(!h.state().state.pressure.open);
     open_window(&mut h);
     assert!(h.state().state.pressure.open);
-    let rect = window::last_rect(&h.ctx).expect("窓が開いている");
+    let rect = window::last_rect(&h.ctx).expect("ウィンドウが開いている");
     assert!(rect.contains_rect(frame_of(&h)));
     // 枠の外（キャンバスの上）に描いても集めない・キャンバスにも描かない
     let canvas = canvas_rect(&h);
@@ -341,7 +341,7 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert!(!saved.is_default());
 }
 
-/// Windows Ink に掛かっていない環境のペンは egui の Touch の力として来る。窓が開いている間だけ、枠の中の点を集める。
+/// Windows Ink に掛かっていない環境のペンは egui の Touch の力として来る。ウィンドウが開いている間だけ、枠の中の点を集める。
 #[test]
 fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_collects_nothing() {
     let touch = |h: &mut H, at: Pos2, phase: egui::TouchPhase, force: Option<f32>| {
@@ -364,7 +364,7 @@ fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_c
     };
     let mut h = app_with_adjust(PressureAdjust::default());
     assert!(h.state().state.pressure.strokes.is_empty());
-    // 窓が閉じている間は何も集めない（開いたときは空から始まる）
+    // ウィンドウが閉じている間は何も集めない（開いたときは空から始まる）
     let (x, y) = (400.0, 400.0);
     touch(&mut h, pos2(x, y), egui::TouchPhase::Start, Some(0.5));
     touch(&mut h, pos2(x, y), egui::TouchPhase::End, None);
@@ -475,7 +475,7 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
         .state
         .pressure
         .curve_frame
-        .expect("窓が曲線の枠を描いた");
+        .expect("ウィンドウが曲線の枠を描いた");
     let g = frame.shrink(6.0);
     let at = |x: f32, y: f32| pos2(g.left() + x * g.width(), g.bottom() - y * g.height());
     let primary = egui::PointerButton::Primary;
@@ -596,7 +596,7 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
 }
 
 /// 下限のスライダーをドラッグする: 動かす間は値が動くが設定のファイルへは書かず、離すと 1 回だけ書く（ドラッグの間じゅう同期付きの書き込みをしない）。
-/// Esc で戻した値は、書いてある値と同じなので書かない。窓を閉じても 1 回書く。
+/// Esc で戻した値は、書いてある値と同じなので書かない。ウィンドウを閉じても 1 回書く。
 #[test]
 fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     let dir = settings_dir("range-drag");
@@ -671,7 +671,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     assert_eq!(low(&h), value);
     untouched();
 
-    // ドラッグの途中で窓を閉じると、そこまでの値を 1 回書く
+    // ドラッグの途中でウィンドウを閉じると、そこまでの値を 1 回書く
     press(&h, at(0.5), primary);
     h.step();
     move_to(&h, at(0.55));
@@ -691,7 +691,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
 
 // ───────── 集める線の上限 ─────────
 
-/// 枠を決めた状態の窓（開いている）。枠は画面の点で (100, 100) から 380 × 96。
+/// 枠を決めた状態のウィンドウ（開いている）。枠は画面の点で (100, 100) から 380 × 96。
 fn window_state() -> (AppState, egui::Rect) {
     let mut s = AppState::new(64, 64);
     let frame = egui::Rect::from_min_size(pos2(100.0, 100.0), vec2(380.0, 96.0));
@@ -786,7 +786,7 @@ fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_
 #[test]
 fn headless_fitting_a_distribution_clamped_on_one_side_does_not_panic_and_gives_a_valid_adjustment()
 {
-    // 強く押して飽和するペン（p10 = 0.915・p90 = 1.0）と、軽くしか押さないペン（p10 = 0.001・p90 = 0.086）。窓の「自動調整」と同じ Action
+    // 強く押して飽和するペン（p10 = 0.915・p90 = 1.0）と、軽くしか押さないペン（p10 = 0.001・p90 = 0.086）。ウィンドウの「自動調整」と同じ Action
     for (lo, hi) in [(0.915f32, 1.0f32), (0.001, 0.086)] {
         let (mut s, frame) = window_state();
         let mut points: Vec<PenSample> = (0..20).map(|i| inside(frame, i, lo, true)).collect();
@@ -829,9 +829,9 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
     }
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
-    let rect = window::last_rect(&h.ctx).expect("窓が開いている");
+    let rect = window::last_rect(&h.ctx).expect("ウィンドウが開いている");
     h.event(egui::Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");

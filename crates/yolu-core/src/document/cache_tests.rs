@@ -30,7 +30,7 @@ fn evict_all() {
     tile_cache::evict_now(0);
 }
 
-/// 乱数の画素の層（全タイルが画素あり）。
+/// 乱数の画素のレイヤー（全タイルが画素あり）。
 fn noise(d: &mut Document, id: LayerId, seed: u32) {
     let ts = d.tile_size();
     let n = (ts * ts) as usize;
@@ -40,7 +40,7 @@ fn noise(d: &mut Document, id: LayerId, seed: u32) {
             for (i, p) in bytes.chunks_exact_mut(4).enumerate() {
                 let (x, y) = (tx * ts + (i as u32) % ts, ty * ts + (i as u32) / ts);
                 if x >= d.width() || y >= d.height() {
-                    continue; // 画布の外の余白は 0
+                    continue; // キャンバスの外の余白は 0
                 }
                 let v = (x.wrapping_mul(2654435761) ^ y.wrapping_mul(40503) ^ seed)
                     .wrapping_mul(2246822519);
@@ -77,7 +77,7 @@ fn brush(color: Rgba8, radius: f64) -> Brush {
     b
 }
 
-/// 文書の見える状態（全体の合成と、層ごとの Color とマスクの全画素）。
+/// 文書の見える状態（全体の合成と、レイヤーごとの Color とマスクの全画素）。
 fn state(d: &Document) -> Vec<Vec<u8>> {
     let mut out = vec![d.composite(d.bounds()).unwrap()];
     for l in d.layers() {
@@ -91,7 +91,7 @@ fn state(d: &Document) -> Vec<Vec<u8>> {
     out
 }
 
-/// 決まった手順の操作を順に行い、操作ごとの見える状態を返す。`evict` なら操作の前ごとに、全部の中身を逃がす（層・取り消しの写し・
+/// 決まった手順の操作を順に行い、操作ごとの見える状態を返す。`evict` なら操作の前ごとに、全部の中身を逃がす（レイヤー・取り消しの写し・
 /// 保存の写しのどれも）。
 fn scenario(evict: bool) -> Vec<Vec<Vec<u8>>> {
     let spill = |d: &Document| {
@@ -103,7 +103,7 @@ fn scenario(evict: bool) -> Vec<Vec<Vec<u8>>> {
                 .filter_map(|l| l.surface(Channel::Color))
                 .map(Surface::evicted_tile_count)
                 .sum();
-            assert!(on_disk > 0, "層のタイルがディスクにある");
+            assert!(on_disk > 0, "レイヤーのタイルがディスクにある");
         }
     };
     let mut d = Document::with_tile_size(70, 52, 16).unwrap();
@@ -313,7 +313,7 @@ fn an_unreadable_tile_is_an_error_everywhere_and_changes_nothing() {
     );
     assert_eq!(d.revision(), before_revision);
     assert_eq!(d.undo_count(), 0);
-    // 読める層は読める
+    // 読めるレイヤーは読める
     let other = d.layer(below).unwrap().surface(Channel::Color).unwrap();
     assert!(other.canvas_bytes().is_ok());
     assert!(!other.has_unreadable_tiles());

@@ -72,14 +72,14 @@ fn a_rectangle_selects_the_pixels_whose_centres_are_inside_and_clips_to_the_canv
         ),
         (255, 255, 0, 0)
     );
-    // 逆向きの角は入れ替える。画布の外へはみ出した分は無い
+    // 逆向きの角は入れ替える。キャンバスの外へはみ出した分は無い
     assert_eq!(SelectionMask::rectangle(&d, 15, 9, 5, 4), m);
     let wide = SelectionMask::rectangle(&d, -10, -10, 100, 100);
     assert_eq!(count(&wide, |a| a == 255), 40 * 30);
     assert!(SelectionMask::rectangle(&d, 7, 7, 7, 20).is_empty(), "幅 0");
     assert!(
         SelectionMask::rectangle(&d, 50, 0, 60, 10).is_empty(),
-        "画布の外"
+        "キャンバスの外"
     );
     assert_eq!(SelectionMask::all(&d), wide);
     assert!(SelectionMask::none(&d).is_empty());
@@ -114,7 +114,7 @@ fn an_ellipse_is_smooth_symmetric_and_has_about_the_right_area() {
         assert!(SelectionMask::ellipse(&d, bad, 40.0, 3.0, 3.0).is_err());
         assert!(SelectionMask::ellipse(&d, 1.0, 40.0, bad, 3.0).is_err());
     }
-    // 画布から遠く離れた巨大な楕円でも落ちない
+    // キャンバスから遠く離れた巨大な楕円でも落ちない
     assert!(SelectionMask::ellipse(&d, 1e15, 1e15, 1e14, 1e14).is_ok());
 }
 
@@ -292,7 +292,7 @@ fn edge_lock_keeps_the_selection_going_past_the_canvas_edge() {
     assert_eq!(
         all.shrink(4, false, BUDGET).unwrap().amount(0, 0),
         0,
-        "画布の縁から縮む"
+        "キャンバスの縁から縮む"
     );
     assert_eq!(
         all.shrink(4, true, BUDGET).unwrap(),
@@ -301,9 +301,13 @@ fn edge_lock_keeps_the_selection_going_past_the_canvas_edge() {
     );
     let left = SelectionMask::rectangle(&d, 0, 0, 16, 32);
     let locked = left.shrink(3, true, BUDGET).unwrap();
-    assert_eq!(locked.amount(0, 5), 255, "画布の縁に接する辺は縮まない");
+    assert_eq!(
+        locked.amount(0, 5),
+        255,
+        "キャンバスの縁に接する辺は縮まない"
+    );
     assert_eq!(locked.amount(14, 5), 0, "内側の辺は縮む");
-    // ぼかしも、縁を固定すれば画布の縁の画素が外へ続くと数える
+    // ぼかしも、縁を固定すればキャンバスの縁の画素が外へ続くと数える
     let f = left.feather(6.0, false, BUDGET).unwrap();
     let g = left.feather(6.0, true, BUDGET).unwrap();
     assert!(f.amount(0, 16) < 255);
@@ -320,11 +324,11 @@ fn feather_blurs_the_amounts_and_keeps_their_total() {
         assert!(f.amount(29, 40) > 0, "外へ広がる r={r}");
         assert!(f.amount(31, 40) < 255 || r < 3.5, "縁が薄まる r={r}");
         let total = |m: &SelectionMask| amounts(m).iter().map(|&a| a as f64).sum::<f64>();
-        // 画布の中に収まるなら量の合計はほぼ保たれる（丸めの誤差だけ）
+        // キャンバスの中に収まるなら量の合計はほぼ保たれる（丸めの誤差だけ）
         if r <= 10.0 {
             assert!((total(&f) - total(&sq)).abs() / total(&sq) < 0.01, "r={r}");
         }
-        // 左右・上下対称（正方形は画布の真ん中）
+        // 左右・上下対称（正方形はキャンバスの真ん中）
         for (x, y) in [(25, 40), (30, 30), (28, 45)] {
             assert_eq!(f.amount(x, y), f.amount(79 - x, y), "r={r} {x},{y}");
             assert_eq!(f.amount(x, y), f.amount(x, 79 - y), "r={r} {x},{y}");
@@ -477,17 +481,17 @@ fn the_wand_can_use_the_composite_or_other_layer_kinds_as_the_reference() {
     paint(&mut d, bottom, 0, 0, 32, 32, Rgba8::new(10, 10, 10, 255));
     let top = d.add_layer("top").unwrap();
     paint(&mut d, top, 8, 8, 24, 24, red());
-    // 合成が基準: 上の層の赤い四角が 1 つの領域
+    // 合成が基準: 上のレイヤーの赤い四角が 1 つの領域
     assert_eq!(
         count(&wand(&d, None, (12, 12), 0, true), |v| v == 255),
         16 * 16
     );
-    // 層そのものが基準: 上の層の透明な所（赤の外）
+    // レイヤーそのものが基準: 上のレイヤーの透明な所（赤の外）
     assert_eq!(
         count(&wand(&d, Some(top), (2, 2), 0, true), |v| v == 255),
         32 * 32 - 16 * 16
     );
-    // 下の層は一面同じ色
+    // 下のレイヤーは一面同じ色
     assert_eq!(
         count(&wand(&d, Some(bottom), (2, 2), 0, true), |v| v == 255),
         32 * 32
@@ -497,7 +501,7 @@ fn the_wand_can_use_the_composite_or_other_layer_kinds_as_the_reference() {
         wand(&d, None, (12, 12), 0, false),
         wand(&d, None, (12, 12), 0, true)
     );
-    // 塗りつぶしの層は全面が同じ値
+    // 塗りつぶしレイヤーは全面が同じ値
     let fill = d
         .add_fill_layer("fill", &[(Channel::Color, Rgba8::new(0, 90, 0, 255))], None)
         .unwrap();
@@ -1026,7 +1030,7 @@ fn fill_over_the_budget_is_refused_and_undone() {
         "書いたタイルは全部戻す"
     );
     assert_eq!(d.undo_count(), 0);
-    // 画素の予算が足りない（空の層への塗りは新しいタイルを作る。縁が柔らかい選択範囲の縁のタイルは一様でなく、1 KiB ずつ要る）
+    // 画素の予算が足りない（空のレイヤーへの塗りは新しいタイルを作る。縁が柔らかい選択範囲の縁のタイルは一様でなく、1 KiB ずつ要る）
     d.set_stroke_budget_bytes(1 << 30).unwrap();
     let b = d.add_layer("b").unwrap();
     d.set_selection(Some(
@@ -1212,7 +1216,7 @@ fn symmetry_composes_with_the_selection_and_undo() {
 fn a_mirror_that_lands_off_canvas_still_paints_the_part_that_is_on_canvas() {
     let mut d = doc(64, 64, 16);
     let a = d.add_layer("a").unwrap();
-    // 元のダブは画布の外（x = -3.5）、鏡の中心 x = 10 の写しは x = 23.5 で画布の中
+    // 元のダブはキャンバスの外（x = -3.5）、鏡の中心 x = 10 の写しは x = 23.5 でキャンバスの中
     dot(
         &mut d,
         a,
@@ -1366,7 +1370,7 @@ fn radial_footprints_match_analytical_circles_and_use_maximum_coverage() {
 }
 
 /// C# の AsymmetricTipsAreReflectedWithTheirShape: 左右非対称の筆先（3×2・角度 31°・真円率 0.7）の縦・横・両方の写しは、元の
-/// ダブを画布の中心で鏡映した形そのもの（元の足跡と、その鏡映の最大）。
+/// ダブをキャンバスの中心で鏡映した形そのもの（元の足跡と、その鏡映の最大）。
 #[test]
 fn asymmetric_tips_are_reflected_with_their_shape() {
     for mode in [
@@ -1743,7 +1747,7 @@ fn transparency_lock_preserves_each_channels_alpha_on_every_symmetry_copy() {
     assert_eq!(d.undo_count(), 1);
 }
 
-// ───────── 層への勾配（C# の RegionToolTests） ─────────
+// ───────── レイヤーへの勾配（C# の RegionToolTests） ─────────
 
 /// C# の RegionToolTests.GradientsRunBetweenTheirEndsAndFadeWithoutDarkening: 線形は両端の色へ走り、列に沿って一定。透明へ消える
 /// 勾配は乗算済みアルファで補間するので色（緑 200）を保ったままアルファだけが半分になり、暗くならない。放射状は中心の画素がほぼ
@@ -1875,7 +1879,7 @@ fn selection_changes_over_the_working_budget_are_refused_before_allocating() {
 fn stored_tiles_that_could_not_have_been_written_are_refused() {
     let tile = |fill: u8| vec![fill; 16 * 16];
     let ok = |tiles: Vec<(TileCoord, Vec<u8>)>| SelectionMask::from_amount_tiles(20, 20, 16, tiles);
-    // 正しいタイル（20×20 の右上のタイルは 4×4 だけが画布）
+    // 正しいタイル（20×20 の右上のタイルは 4×4 だけがキャンバス）
     let mut corner = vec![0u8; 256];
     for y in 0..4 {
         for x in 0..4 {
@@ -1890,7 +1894,7 @@ fn stored_tiles_that_could_not_have_been_written_are_refused() {
     assert_eq!(good.amount(3, 3), 255);
     assert_eq!(good.amount(19, 19), 200);
     assert_eq!(good.amount(16, 0), 0);
-    // 画布の外のタイル、長さの違うタイル、全部 0 のタイル、重なり、画布の外の余白の量
+    // キャンバスの外のタイル、長さの違うタイル、全部 0 のタイル、重なり、キャンバスの外の余白の量
     assert!(ok(vec![(TileCoord::new(2, 0), tile(1))]).is_err());
     assert!(ok(vec![(TileCoord::new(0, 2), tile(1))]).is_err());
     assert!(ok(vec![(TileCoord::new(0, 0), vec![1; 255])]).is_err());
@@ -1924,7 +1928,11 @@ fn reading_a_selection_reports_its_size_and_tiles() {
     assert_eq!(one.tile_bounds(), Some((0, 0, 16, 16)));
     assert_eq!(SelectionMask::none(&d).tile_bounds(), None);
     let edge = SelectionMask::rectangle(&d, 35, 35, 40, 40);
-    assert_eq!(edge.tile_bounds(), Some((32, 32, 40, 40)), "画布で切る");
+    assert_eq!(
+        edge.tile_bounds(),
+        Some((32, 32, 40, 40)),
+        "キャンバスで切る"
+    );
     // 一様なタイルは 1 バイト、履歴の重さは C# の RGBA のタイルでの大きさ
     let all = SelectionMask::all(&d);
     assert_eq!(all.tile_coords().len(), 9);
@@ -1938,13 +1946,13 @@ fn reading_a_selection_reports_its_size_and_tiles() {
     assert!(out.iter().all(|&a| a == 0), "無いタイルは 0 で埋める");
     assert!(
         one.copy_tile(TileCoord::new(3, 0), &mut out).is_err(),
-        "画布の外のタイル"
+        "キャンバスの外のタイル"
     );
     assert!(
         one.copy_tile(TileCoord::new(0, 0), &mut out[..10]).is_err(),
         "長さが違う"
     );
-    assert_eq!(one.amount(1000, 1000), 0, "画布の外は 0");
+    assert_eq!(one.amount(1000, 1000), 0, "キャンバスの外は 0");
 }
 
 #[test]
@@ -2020,7 +2028,7 @@ fn replacing_tiles_refuses_what_a_stored_file_could_not_hold() {
             .is_err(),
         "長さ"
     );
-    // 右上のタイルは 4×4 だけが画布: 余白に量があれば断る
+    // 右上のタイルは 4×4 だけがキャンバス: 余白に量があれば断る
     assert!(base
         .with_tiles([(TileCoord::new(1, 1), tile(255))])
         .is_err());

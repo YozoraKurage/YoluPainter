@@ -1,11 +1,11 @@
-//! 層の行の下の効果の行（Substance Painter の効果の行。Unity 版の `EffectRows`）: 層の行の下に、対象の側のスタックだけを字下げした
-//! 子の行で並べる。選んだ層でマスクが対象ならマスクの Anchor（そこまでの結果）とマスクの効果の段、それ以外（選んでいない層も）は層の
+//! レイヤーの行の下の効果の行（Substance Painter の効果の行。Unity 版の `EffectRows`）: レイヤーの行の下に、対象の側のスタックだけを字下げした
+//! 子の行で並べる。選んだレイヤーでマスクが対象ならマスクの Anchor（そこまでの結果）とマスクの効果の段、それ以外（選んでいないレイヤーも）はレイヤーの
 //! Anchor と画素の効果の段（どちらも上が後に掛かる）。行は目（有効の切り替え）・アイコン・
 //! 名前と主な値で、押すとその段を選び、プロパティの欄にその段の設定が出る。マウスの乗った行と選んだ行に上へ・下へ・消すのボタン、
 //! 右クリックで同じ操作。効いていない Generator には印（理由はツールチップ）。
 //!
-//! 一覧の行の高さが層と効果で違うので、行の位置・落とす先は `Layout` で数える（レイヤーの並べ替えのドラッグとスマートマテリアルの
-//! ドロップも、層の行の番号に直してから `m2::drop_target_at` へ渡す）。
+//! 一覧の行の高さがレイヤーと効果で違うので、行の位置・落とす先は `Layout` で数える（レイヤーの並べ替えのドラッグとスマートマテリアルの
+//! ドロップも、レイヤーの行の番号に直してから `m2::drop_target_at` へ渡す）。
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
 use yolu_core::{
@@ -22,10 +22,10 @@ use crate::ui::widgets as w;
 
 /// 効果の行の高さ。
 pub const EFFECT_ROW_HEIGHT: f32 = 22.0;
-/// 層の字下げ 1 段（`layers::INDENT` と同じ）。
+/// レイヤーの字下げ 1 段（`layers::INDENT` と同じ）。
 const INDENT: f32 = 14.0;
 
-/// 層の行の下の子の行。
+/// レイヤーの行の下の子の行。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Child {
     Anchor {
@@ -45,7 +45,7 @@ pub enum Child {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// 層の行（`rows` の番号）。
+    /// レイヤーの行（`rows` の番号）。
     Layer(usize),
     Child(Child),
 }
@@ -56,9 +56,9 @@ pub struct Entry {
     pub kind: Kind,
     pub y: f32,
     pub height: f32,
-    /// 層の字下げの段（子の行はその層と同じ）。
+    /// レイヤーの字下げの段（子の行はそのレイヤーと同じ）。
     pub depth: usize,
-    /// その層の子の行の最後（つなぎの線をここで止める）。
+    /// そのレイヤーの子の行の最後（つなぎの線をここで止める）。
     pub last_child: bool,
 }
 
@@ -71,8 +71,8 @@ pub struct Layout {
     layer_tops: Vec<f32>,
 }
 
-/// 層の行の下に並べる子の行（上から）。`mask_target` はマスクが対象の層（`crate::fx::mask_target`）で、その層の下にはマスクの Anchor と
-/// マスクの効果の段だけ、ほかの層の下には層の Anchor と画素の効果の段だけを出す。
+/// レイヤーの行の下に並べる子の行（上から）。`mask_target` はマスクが対象のレイヤー（`crate::fx::mask_target`）で、そのレイヤーの下にはマスクの Anchor と
+/// マスクの効果の段だけ、ほかのレイヤーの下にはレイヤーの Anchor と画素の効果の段だけを出す。
 fn children_of(doc: &Document, layer: LayerId, mask_target: Option<LayerId>) -> Vec<Child> {
     let Some(l) = doc.layer(layer) else {
         return Vec::new();
@@ -105,8 +105,8 @@ fn children_of(doc: &Document, layer: LayerId, mask_target: Option<LayerId>) -> 
     v
 }
 
-/// 一覧の行を数える。`rows` は層の行（上から。閉じたグループの中身は含まない）、`layer_height` は層の行の高さ、`mask_target` は
-/// マスクが対象の層（`crate::fx::mask_target`）。対象で子の行の数が変わるので、一覧を描く・ドラッグの落とす先を数える・棚の素材を
+/// 一覧の行を数える。`rows` はレイヤーの行（上から。閉じたグループの中身は含まない）、`layer_height` はレイヤーの行の高さ、`mask_target` は
+/// マスクが対象のレイヤー（`crate::fx::mask_target`）。対象で子の行の数が変わるので、一覧を描く・ドラッグの落とす先を数える・棚の素材を
 /// 落とす先を数えるのは、同じフレームの同じ `Layout` で行う。
 pub fn layout(
     doc: &Document,
@@ -149,12 +149,12 @@ pub fn layout(
 }
 
 impl Layout {
-    /// 層の行（`rows` の番号）の上の端。
+    /// レイヤーの行（`rows` の番号）の上の端。
     pub fn layer_y(&self, row: usize) -> f32 {
         self.layer_tops.get(row).copied().unwrap_or(self.height)
     }
 
-    /// `gap` 番目の層の行のすぐ上の線の高さ（層の数なら一覧の下の端）。
+    /// `gap` 番目のレイヤーの行のすぐ上の線の高さ（レイヤーの数なら一覧の下の端）。
     pub fn gap_y(&self, gap: usize) -> f32 {
         if gap >= self.layer_tops.len() {
             self.height
@@ -163,7 +163,7 @@ impl Layout {
         }
     }
 
-    /// 一覧の中の高さ `y` にある層の行（層の行か、その層の効果の行。どこにも当たらなければ None）。
+    /// 一覧の中の高さ `y` にあるレイヤーの行（レイヤーの行か、そのレイヤーの効果の行。どこにも当たらなければ None）。
     pub fn row_at(&self, y: f32) -> Option<usize> {
         if y < 0.0 || y >= self.height {
             return None;
@@ -175,7 +175,7 @@ impl Layout {
         )
     }
 
-    /// 一覧の中の高さ `y` を、層の行の単位（0 が一番上の層の行の上の端。1 行 = 1）に直す。効果の行の上は、その層の下の隙間（次の層の上の端）。
+    /// 一覧の中の高さ `y` を、レイヤーの行の単位（0 が一番上のレイヤーの行の上の端。1 行 = 1）に直す。効果の行の上は、そのレイヤーの下の隙間（次のレイヤーの上の端）。
     pub fn position_at(&self, y: f32) -> f32 {
         let n = self.layer_tops.len();
         if n == 0 || y < 0.0 {
@@ -184,7 +184,7 @@ impl Layout {
         if y >= self.height {
             return n as f32;
         }
-        // y を含む層の行（その行の top ≤ y < 次の行の top）
+        // y を含むレイヤーの行（その行の top ≤ y < 次の行の top）
         let i = self
             .layer_tops
             .partition_point(|top| *top <= y)
@@ -198,7 +198,7 @@ impl Layout {
     }
 }
 
-/// Anchor を読んでいる段（層と、どちらのスタックか）。
+/// Anchor を読んでいる段（レイヤーと、どちらのスタックか）。
 pub fn anchor_readers(doc: &Document, anchor: AnchorId) -> Vec<(LayerId, FilterTarget)> {
     let mut v = Vec::new();
     for layer in doc.layers() {
@@ -243,7 +243,7 @@ pub fn child_row(
     }
 }
 
-/// つなぎの線（層の名前の下から、最後の子の行で止める）。
+/// つなぎの線（レイヤーの名前の下から、最後の子の行で止める）。
 fn guide(painter: &egui::Painter, row: Rect, x: f32, last: bool) {
     w::vline(
         painter,
@@ -329,7 +329,7 @@ fn effect_row(
         row.bottom() - 1.0,
         t::SEPARATOR,
     );
-    // 目（有効の切り替え。層の目と同じ列）
+    // 目（有効の切り替え。レイヤーの目と同じ列）
     let eye = Rect::from_min_size(
         pos2(row.left() + 4.0, row.top() + 2.0),
         vec2(24.0, row.height() - 4.0),
@@ -361,7 +361,7 @@ fn effect_row(
             enabled: !enabled_stage,
         }));
     }
-    // 層の名前の位置から一段下げ、つなぎの線とアイコン
+    // レイヤーの名前の位置から一段下げ、つなぎの線とアイコン
     let painter = ui.painter_at(list);
     let mut x = eye.right() + 4.0 + INDENT * entry.depth as f32 + 10.0;
     guide(&painter, row, x, entry.last_child);
@@ -642,7 +642,7 @@ mod tests {
         crate::m2::visible_rows(&app.doc, &app.m2.collapsed)
     }
 
-    /// 層の効果（アンカー・ぼかし・反転）とマスクの効果（アンカー・ぼかし）を両方持つ層。
+    /// レイヤーの効果（アンカー・ぼかし・反転）とマスクの効果（アンカー・ぼかし）を両方持つレイヤー。
     fn both_stacks(app: &mut AppState) -> (LayerId, AnchorId, AnchorId) {
         let layer = app.selected_layer.unwrap();
         app.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
@@ -673,7 +673,7 @@ mod tests {
         let mut app = AppState::new(32, 32);
         let (layer, layer_anchor, mask_anchor) = both_stacks(&mut app);
         let rows = rows(&app);
-        // 層の画素が対象（マスクは対象でない）: 層のアンカーと画素の段だけ。上（後に掛かる）から反転（index 1）、ぼかし（index 0）
+        // レイヤーの画素が対象（マスクは対象でない）: レイヤーのアンカーと画素の段だけ。上（後に掛かる）から反転（index 1）、ぼかし（index 0）
         let l = layout(&app.doc, &rows, 30.0, None);
         let kinds: Vec<Kind> = l.entries.iter().map(|e| e.kind).collect();
         assert_eq!(kinds.len(), 1 + 1 + 2);
@@ -726,7 +726,7 @@ mod tests {
     fn the_mask_target_changes_only_that_layers_children() {
         let mut app = AppState::new(32, 32);
         let (layer, _, _) = both_stacks(&mut app);
-        // 上の層（選んでいない。マスクの効果も持つ）の下には、マスクが対象の層があっても層の効果を出す
+        // 上のレイヤー（選んでいない。マスクの効果も持つ）の下には、マスクが対象のレイヤーがあってもレイヤーの効果を出す
         app.apply(Action::NewLayer);
         let upper = app.selected_layer.unwrap();
         assert_ne!(upper, layer);
@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(
             l.entries.len(),
             2,
-            "マスクの無い層は、対象を渡されても層の効果"
+            "マスクの無いレイヤーは、対象を渡されてもレイヤーの効果"
         );
         assert!(matches!(
             l.entries[1].kind,
@@ -810,14 +810,14 @@ mod tests {
         }));
         let rows = rows(&app);
         assert_eq!(rows.len(), 2);
-        // 上の行: 新しい層（効果なし）、下の行: 下の層（アンカーの行が続く）
+        // 上の行: 新しいレイヤー（効果なし）、下の行: 下のレイヤー（アンカーの行が続く）
         let l = layout(&app.doc, &rows, 30.0, None);
         assert_eq!(l.layer_y(0), 0.0);
         assert_eq!(l.layer_y(1), 30.0);
         assert_eq!(l.gap_y(2), 30.0 + 30.0 + EFFECT_ROW_HEIGHT);
         assert_eq!(l.position_at(15.0), 0.5);
         assert_eq!(l.position_at(45.0), 1.5);
-        // アンカーの行の上は、その層の下の隙間
+        // アンカーの行の上は、そのレイヤーの下の隙間
         assert_eq!(l.position_at(62.0), 2.0);
         assert_eq!(l.position_at(-3.0), -1.0);
         assert_eq!(l.position_at(10_000.0), 2.0);

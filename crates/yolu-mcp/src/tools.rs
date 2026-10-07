@@ -113,7 +113,7 @@ mod tests {
                 assert_eq!(a["readOnlyHint"], true);
                 assert!(
                     a.get("destructiveHint").is_none(),
-                    "{}: 読むだけの道具に壊す印は付けない",
+                    "{}: 読むだけのツールに壊す印は付けない",
                     spec.name
                 );
             } else {

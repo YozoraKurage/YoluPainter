@@ -1,4 +1,4 @@
-//! 層のフィルターが UV の継ぎ目をまたぐ（文書の設定 [`Document::filter_seams`]。既定は入）。
+//! レイヤーのフィルターが UV の継ぎ目をまたぐ（文書の設定 [`Document::filter_seams`]。既定は入）。
 //!
 //! 効果の入力にモデルの UV の位相（`EffectInputs::with_topology`）があり、設定が入のとき、近傍の段（`halo` > 0）のあるスタックは、
 //! スタックの近傍の段の半径の最大から決めた帯の幅（`geometry::seam_band_width`）の帯の写しで評価する（`filter::Options::seams`）。
@@ -18,23 +18,23 @@ use crate::filter;
 use crate::geometry::seam_band::TileDeps;
 use crate::geometry::{seam_band_width, SeamBand, UvTopologyError};
 
-/// 継ぎ目をまたぐはずの層が、またがずに 2D で評価されている理由（[`Document::seam_fallback`]）。
+/// 継ぎ目をまたぐはずのレイヤーが、またがずに 2D で評価されている理由（[`Document::seam_fallback`]）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SeamFallback {
-    /// 島の図・帯の写しを、予算（[`Document::seam_cache_budget_bytes`]）の中で作れない。
+    /// アイランドの図・帯の写しを、予算（[`Document::seam_cache_budget_bytes`]）の中で作れない。
     Tables(UvTopologyError),
     /// 帯の写しはあるが、使うと 1 ブロックの作業メモリが予算（[`Document::filter_working_budget_bytes`]）を超える。
     Working { needed: u64, budget: u64 },
 }
 
 impl Document {
-    /// 層のフィルターの近傍の段（ぼかし・シャープなど）が UV の継ぎ目をまたいで読むか（文書の設定。既定は入）。モデルの UV の位相が
+    /// レイヤーのフィルターの近傍の段（ぼかし・シャープなど）が UV の継ぎ目をまたいで読むか（文書の設定。既定は入）。モデルの UV の位相が
     /// 効果の入力に無いときは、入でも今までと同じ（2D の上で読む）。
     pub fn filter_seams(&self) -> bool {
         self.filter_seams
     }
 
-    /// 設定を変える（1 回の Undo。合成が変わる層に印を付ける）。
+    /// 設定を変える（1 回の Undo。合成が変わるレイヤーに印を付ける）。
     pub fn set_filter_seams(&mut self, on: bool) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if self.filter_seams == on {
@@ -55,7 +55,7 @@ impl Document {
         self.filter_seams = on;
     }
 
-    /// 今、層のフィルターが継ぎ目をまたぐか（設定が入で、モデルの UV の位相が効果の入力にある）。
+    /// 今、レイヤーのフィルターが継ぎ目をまたぐか（設定が入で、モデルの UV の位相が効果の入力にある）。
     pub fn seams_active(&self) -> bool {
         self.filter_seams && self.effects.inputs.topology.is_some()
     }
@@ -67,7 +67,7 @@ impl Document {
         self.mark_seam_readers();
     }
 
-    /// 近傍の段のある層（内容・マスク）を全部変わったことにする（設定・モデルの UV の位相が変わったとき）。またいでいなければ何もしない。
+    /// 近傍の段のあるレイヤー（内容・マスク）を全部変わったことにする（設定・モデルの UV の位相が変わったとき）。またいでいなければ何もしない。
     pub(super) fn mark_seam_readers(&mut self) {
         if !self.seams_active() {
             return;
@@ -119,7 +119,7 @@ impl Document {
         if band == 0 || !self.filter_seams {
             return None;
         }
-        // 覚えてあればそれ。無ければ、島の図・帯の写しの予算の中で作る（収まらなければ None で、またがずに 2D で評価する。
+        // 覚えてあればそれ。無ければ、アイランドの図・帯の写しの予算の中で作る（収まらなければ None で、またがずに 2D で評価する。
         // 断ったことは `seam_fallback` で分かる）
         let topology = self.effects.inputs.topology.as_ref()?;
         topology
@@ -151,13 +151,13 @@ impl Document {
         self.seam_block_need(stages, band) <= self.effects.working_budget
     }
 
-    /// 島の図・帯の写しの予算（バイト。既定 256 MiB）。覚えておく島の図と帯の写しの合計と、作る間の作業メモリがこれに収まる。
+    /// アイランドの図・帯の写しの予算（バイト。既定 256 MiB）。覚えておくアイランドの図と帯の写しの合計と、作る間の作業メモリがこれに収まる。
     /// ブロックの評価の作業メモリの予算（`filter_working_budget_bytes`）とは別。
     pub fn seam_cache_budget_bytes(&self) -> u64 {
         self.effects.seam_budget
     }
 
-    /// 島の図・帯の写しの予算を変える（保存しない設定。Undo にもならない）。またげるかが変わり得るので、またぐ層を描き直す。
+    /// アイランドの図・帯の写しの予算を変える（保存しない設定。Undo にもならない）。またげるかが変わり得るので、またぐレイヤーを描き直す。
     pub fn set_seam_cache_budget_bytes(&mut self, bytes: u64) {
         if bytes == self.effects.seam_budget {
             return;
@@ -169,20 +169,20 @@ impl Document {
             topology.shrink(bytes);
         }
         self.mark_seam_readers();
-        // アイランドごとのばらつきも、島の図を作れるかが変わり得る
+        // アイランドごとのばらつきも、アイランドの図を作れるかが変わり得る
         self.mark_island_readers();
         // 前の予算で断った・作れた帯の写しの上に評価を重ねない
         self.release_effect_cache();
     }
 
-    /// 継ぎ目をまたぐ設定が入で、モデルの UV の位相もあり、近傍の段のある層もあるのに、またがずに 2D で評価している理由。またげている・
+    /// 継ぎ目をまたぐ設定が入で、モデルの UV の位相もあり、近傍の段のあるレイヤーもあるのに、またがずに 2D で評価している理由。またげている・
     /// またがない・まだ帯の写しを作ろうとしていない（モデルを渡したときと評価のときに作る）ときは None。
     pub fn seam_fallback(&self) -> Option<SeamFallback> {
         if !self.seams_active() {
             return None;
         }
         let topology = self.effects.inputs.topology.as_ref()?;
-        // 評価と同じ並び: 層のチャンネルごとの有効な段の並びと、マスクの有効な段の並び
+        // 評価と同じ並び: レイヤーのチャンネルごとの有効な段の並びと、マスクの有効な段の並び
         let mut chains: Vec<Vec<&FilterEffect>> = Vec::new();
         for l in &self.layers {
             chains.extend(Channel::ALL.iter().map(|c| l.active_chain(*c)));

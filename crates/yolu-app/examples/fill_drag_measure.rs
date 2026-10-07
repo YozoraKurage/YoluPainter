@@ -1,5 +1,5 @@
-//! 塗りつぶしの層の投影の置き場をドラッグしている間（文書が変更をまとめている間）の、3D ビューの絵（`view3d::paint::Paint`）の
-//! 同期 1 回の時間を測る台。試しの立方体の位置と法線のマップを CPU で焼き、トライプラナーで画像を投げた塗りつぶしの層を 1 枚置いて、
+//! 塗りつぶしレイヤーの投影の置き場をドラッグしている間（文書が変更をまとめている間）の、3D ビューの絵（`view3d::paint::Paint`）の
+//! 同期 1 回の時間を測る台。試しの立方体の位置と法線のマップを CPU で焼き、トライプラナーで画像を投げた塗りつぶしレイヤーを 1 枚置いて、
 //! 置き場の中心を少しずつ動かしながら `Paint::sync`（合成・上げる・ミップ）を GPU の積みが終わるまで測る。離したあとの 1 回も測る。
 //!
 //! 使い方: `cargo run -p yolu-app --example fill_drag_measure -- [辺 4096] [回 8]`
@@ -84,13 +84,13 @@ fn main() {
         .expect("棚へ入る");
     let image = inputs::image_id(&rid).expect("GUID");
     s.apply(Action::M2(Edit::NewFill));
-    let layer = s.selected_layer.expect("足した層");
+    let layer = s.selected_layer.expect("足したレイヤー");
     s.apply(Action::Fill(FillOp::Image {
         layer,
         channel: Channel::Color,
         image: Some(image),
     }));
-    let mut p = *s.doc.layer(layer).expect("層").projection();
+    let mut p = *s.doc.layer(layer).expect("レイヤー").projection();
     p.mode = ProjectionMode::Triplanar;
     s.doc.set_fill_projection(layer, p, false).expect("投影");
 

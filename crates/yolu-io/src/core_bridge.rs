@@ -1,8 +1,8 @@
 //! 正本（`NativeDocument`）と core の文書の行き来。意味は Unity 版の `DocumentBinary.Read` / `Write` と同じにする（C# が書いた正本は
-//! core を通して書き戻すとバイト一致する）。範囲は M2 の層（層の種類・入れ子と通過・分離・ラスターマスク・クリッピング・層のロック（版 12）・
+//! core を通して書き戻すとバイト一致する）。範囲は M2 のレイヤー（レイヤーの種類・入れ子と通過・分離・ラスターマスク・クリッピング・レイヤーのロック（版 12）・
 //! チャンネルごとの有効と合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
-//! （版 8・10・18）、層の後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
+//! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
     ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION,
     MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
@@ -142,7 +142,7 @@ impl<'a> Fields<'a> {
     }
 }
 
-/// core に無い項目なら、知らせる単位（層の機能ごとのパス）と理由。知らないパスも断る（読み手に足した項目を黙って通さない）。
+/// core に無い項目なら、知らせる単位（レイヤーの機能ごとのパス）と理由。知らないパスも断る（読み手に足した項目を黙って通さない）。
 fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'static str)> {
     let Some(rest) = path.strip_prefix("layers[") else {
         let head = path.split(['.', '[']).next().unwrap_or(path);
@@ -221,19 +221,19 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
 }
 
 impl NativeDocument {
-    /// core へ渡すと失われる項目（層の機能ごとに 1 つ、`layers[2].filters（フィルター・Generator）` の形）。空なら変換の対象
-    /// （タイルの余白・画素の予算は変換時に検査する）。非表示・無効の層やマスクの中の項目も省略せずに断る。
+    /// core へ渡すと失われる項目（レイヤーの機能ごとに 1 つ、`layers[2].filters（フィルター・Generator）` の形）。空なら変換の対象
+    /// （タイルの余白・画素の予算は変換時に検査する）。非表示・無効のレイヤーやマスクの中の項目も省略せずに断る。
     pub fn core_issues(&self) -> Vec<String> {
         core_issues_of(self.fields())
     }
 
-    /// 編集用の core の文書にする（C# の `DocumentBinary.Read` と同じ意味）。文書と層の ID、透明の画素の RGB を保ち、読み込みを
+    /// 編集用の core の文書にする（C# の `DocumentBinary.Read` と同じ意味）。文書とレイヤーの ID、透明の画素の RGB を保ち、読み込みを
     /// Undo の履歴に残さない。元の `NativeDocument` は変えない。
     pub fn to_core(&self) -> Result<Document> {
         self.to_core_within(None)
     }
 
-    /// `to_core` の画素の予算を指定できる形（None は core の既定、`DEFAULT_SOURCE_BUDGET_BYTES`）。超えたら、どの層のどのタイルで
+    /// `to_core` の画素の予算を指定できる形（None は core の既定、`DEFAULT_SOURCE_BUDGET_BYTES`）。超えたら、どのレイヤーのどのタイルで
     /// 断ったかを添えて `Error::Budget` で断る（壊れたファイルとは区別できる）。
     pub fn to_core_within(&self, source_budget: Option<u64>) -> Result<Document> {
         check(!self.is_skeleton(), "骨組みの正本は core にできません")?;
@@ -256,7 +256,7 @@ impl NativeDocument {
     }
 
     /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
-    /// 版 22。履歴は保存しない。手動の ID の色は層の後の塊（版 19）に書く（空なら塊を書かず、版も変わらない）。正本の範囲外の寸法・タイル寸法・層の数・名前と、
+    /// 版 22。履歴は保存しない。手動の ID の色はレイヤーの後の塊（版 19）に書く（空なら塊を書かず、版も変わらない）。正本の範囲外の寸法・タイル寸法・レイヤーの数・名前と、
     /// 進行中のストロークは断る。値の無い塗りつぶしのチャンネルとグループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
     pub fn from_core(doc: &Document) -> Result<Self> {
         check_writable(doc)?;
@@ -281,7 +281,7 @@ pub(crate) fn core_issues_of(fields: &[crate::NativeField]) -> Vec<String> {
     issues
 }
 
-/// 正本を core の文書へ層ごとに入れる（頭 → 層 → 終わり）。メモリの正本も、流して読む正本も同じ道を通る。
+/// 正本を core の文書へレイヤーごとに入れる（頭 → レイヤー → 終わり）。メモリの正本も、流して読む正本も同じ道を通る。
 pub(crate) struct CoreLoad {
     doc: Document,
     version: i32,
@@ -354,7 +354,7 @@ impl CoreLoad {
             locks: Vec::new(),
         })
     }
-    /// 層 `i` を足す（`f` はその層の項目を含む）。
+    /// レイヤー `i` を足す（`f` はそのレイヤーの項目を含む）。
     pub(crate) fn layer(&mut self, f: &Fields<'_>, i: usize) -> Result<()> {
         let p = format!("layers[{i}]");
         let version = self.version;
@@ -372,7 +372,7 @@ impl CoreLoad {
         Ok(())
     }
     /// 親・保存した ID・ロックと手動の ID の色を付けて終える（`head` は文書の ID を含む頭の項目、`tail` は読み終えた正本の項目で、
-    /// 層の後の手動の ID の色をここから読む。層ごとに流して読む道は、読み終えた `NativeDocument` の項目を渡す）。
+    /// レイヤーの後の手動の ID の色をここから読む。レイヤーごとに流して読む道は、読み終えた `NativeDocument` の項目を渡す）。
     pub(crate) fn finish(self, head: &Fields<'_>, tail: &[crate::NativeField]) -> Result<Document> {
         let Self {
             doc,
@@ -423,7 +423,7 @@ impl CoreLoad {
     }
 }
 
-/// 読み終えた正本の項目から、層の後の手動の ID の色（版 19）。塊が無ければ空。塊は項目の並びの最後にある。
+/// 読み終えた正本の項目から、レイヤーの後の手動の ID の色（版 19）。塊が無ければ空。塊は項目の並びの最後にある。
 pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssignments> {
     const BLOCK: &str = "manual_id_colors.";
     let start = fields
@@ -469,11 +469,11 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
 }
 
 /// 文書の正本の版（使う機能で決まる）: 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
-/// 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
+/// レイヤーのフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
 /// テキストレイヤーがあれば 30（版 27〜29 の中身も読み書きできる）、
 /// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
 /// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28（版 27 の中身も読み書きできる）、パスの一覧の形で書くパス
-/// （塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
+/// （塗りつぶしレイヤーのパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
 /// Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
@@ -505,10 +505,10 @@ pub(crate) fn version_of(doc: &Document) -> i32 {
 /// .ylp の正本（テクスチャセット 1 枚の文書）の辺の上限（画素）。読み手も書き手も同じ値。PSD などの取り込みは、保存できない大きさの
 /// 文書を作らないよう、この値で断る。
 pub const MAX_DOCUMENT_EDGE: u32 = 8192;
-/// .ylp の正本の層の数の上限（グループも数える）。
+/// .ylp の正本のレイヤーの数の上限（グループも数える）。
 pub const MAX_DOCUMENT_LAYERS: usize = 2048;
 
-/// 層の入れ子が `yolu_core::MAX_GROUP_DEPTH` 以内か（1 回なめる）。
+/// レイヤーの入れ子が `yolu_core::MAX_GROUP_DEPTH` 以内か（1 回なめる）。
 fn nesting_within_limit(doc: &Document) -> bool {
     let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(doc.layers().len());
     for l in doc.layers().iter().rev() {
@@ -544,7 +544,7 @@ pub(crate) fn check_writable(doc: &Document) -> Result<()> {
         ),
     )
 }
-/// 文書を正本の並び（中の版 `version`。C# の `DocumentBinary.Write` と同じ並び）で `sink` へ書く。層の始まりごとに `Sink::layer` を呼ぶ。
+/// 文書を正本の並び（中の版 `version`。C# の `DocumentBinary.Write` と同じ並び）で `sink` へ書く。レイヤーの始まりごとに `Sink::layer` を呼ぶ。
 pub(crate) fn write_document(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
     write_head(sink, doc, version)?;
     for (i, layer) in doc.layers().iter().enumerate() {
@@ -553,7 +553,7 @@ pub(crate) fn write_document(sink: &mut dyn Sink, doc: &Document, version: i32) 
     }
     write_tail(sink, doc, version)
 }
-/// 層の後（手動の ID の色）。空なら何も書かず、塊の無い今の版のままにする。空でなければ版 19 の末尾の塊 `YLID`（`tag` は `Bytes` の値、
+/// レイヤーの後（手動の ID の色）。空なら何も書かず、塊の無い今の版のままにする。空でなければ版 19 の末尾の塊 `YLID`（`tag` は `Bytes` の値、
 /// 残りは平の値。版 26 では `tag` が部分の側に入る）。版 21 以上の書き手の版はどれも 19 以上なので、色のために版を上げることは無い。
 /// 色は `IdColorAssignments` が数・番号・色・指紋を検査済みで、番号は狭義の昇順で並ぶ。
 pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
@@ -580,7 +580,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     }
     Ok(())
 }
-/// 識別子から層の数まで（層より前）。
+/// 識別子からレイヤーの数まで（レイヤーより前）。
 pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
     let mut w = Out {
         sink,
@@ -592,7 +592,7 @@ pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     w.int(version)?;
     write_head_after_version(&mut w, doc, version)
 }
-/// 1 つの層。
+/// 1 つのレイヤー。
 pub(crate) fn write_layer_to(
     sink: &mut dyn Sink,
     layer: &yolu_core::Layer,
@@ -606,7 +606,7 @@ pub(crate) fn write_layer_to(
     };
     write_layer(&mut w, layer)
 }
-/// 版の後ろから層の数まで（ID・寸法・Normal の設定・ユーザーチャンネル・層の数）。
+/// 版の後ろからレイヤーの数まで（ID・寸法・Normal の設定・ユーザーチャンネル・レイヤーの数）。
 fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Result<()> {
     let user: Vec<Channel> = doc
         .channels()
@@ -659,22 +659,22 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
     w.int(doc.layers().len() as i32)
 }
 
-/// 層のパスを一覧の形（版 27 の属性のビット 6）で書くか: 塗りつぶしの層のパス、2 本以上、名前を付けた・隠したパス、1 本のパスの
+/// レイヤーのパスを一覧の形（版 27 の属性のビット 6）で書くか: 塗りつぶしレイヤーのパス、2 本以上、名前を付けた・隠したパス、1 本のパスの
 /// 並びで表せない設定（種類・筆先・深さ・対称・角・取っ手の点）を持つパス。
 pub(crate) fn writes_path_list(layer: &yolu_core::Layer) -> bool {
     match layer.paths() {
         [] => false,
-        // 塗りつぶしの層のパスは、1 本の欄（ラスターの層だけ）では書けない
+        // 塗りつぶしレイヤーのパスは、1 本の欄（ラスターレイヤーだけ）では書けない
         _ if layer.kind() == LayerKind::Fill => true,
         [one] => !one.name.is_empty() || !one.visible || needs_extra(&one.path),
         _ => true,
     }
 }
-/// 文書がパスの一覧の形で書く層を持つか（持っていれば正本の版は 27 になり、Unity 版は開けない）。
+/// 文書がパスの一覧の形で書くレイヤーを持つか（持っていれば正本の版は 27 になり、Unity 版は開けない）。
 pub(crate) fn uses_path_lists(doc: &Document) -> bool {
     doc.layers().iter().any(writes_path_list)
 }
-/// 文書が Rust 版だけの Generator の種類（ノイズ・グランジ）の段を持つか（層の内容とマスクのスタック。無効な段も数える。
+/// 文書が Rust 版だけの Generator の種類（ノイズ・グランジ）の段を持つか（レイヤーの内容とマスクのスタック。無効な段も数える。
 /// 持っていれば正本の版は 23 になり、Unity 版は開けない）。
 pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -688,7 +688,7 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
             })
     })
 }
-/// 文書が画像の Generator（種類 70）の段を持つか（層の内容とマスクのスタック。無効な段も数える）。持っていれば正本の版は 28 になり、
+/// 文書が画像の Generator（種類 70）の段を持つか（レイヤーの内容とマスクのスタック。無効な段も数える）。持っていれば正本の版は 28 になり、
 /// 版 25 までの読み手と Unity 版は開けない。
 pub(crate) fn uses_image_generators(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -702,7 +702,7 @@ pub(crate) fn uses_image_generators(doc: &Document) -> bool {
             })
     })
 }
-/// 版 29 の機能（塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像）を使う層があるか。
+/// 版 29 の機能（塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像）を使うレイヤーがあるか。
 pub(crate) fn uses_point_gradient_version(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
         l.kind() == LayerKind::Fill
@@ -710,7 +710,7 @@ pub(crate) fn uses_point_gradient_version(doc: &Document) -> bool {
                 || l.fill_images().any(|(c, _)| !l.fill_anisotropic(c)))
     })
 }
-/// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整の層か、層の内容・マスクのフィルターの段。無効な段も数える）を
+/// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整レイヤーか、レイヤーの内容・マスクのフィルターの段。無効な段も数える）を
 /// 持つか。持っていれば正本の版は 25 になり、Unity 版は開けない。
 pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
     let mixes = |c: Option<ColorAdjust>| matches!(c, Some(ColorAdjust::GradientMap(g)) if g.ramp().uses_mixing());
@@ -722,7 +722,7 @@ pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
                 .any(|e| mixes(e.settings().color_adjust()))
     })
 }
-/// 文書が 0.5.0 の効果（層の内容とマスクのフィルターの段の種類 70〜79、Generator の種類 66〜69。無効な段も数える）を持つか。
+/// 文書が 0.5.0 の効果（レイヤーの内容とマスクのフィルターの段の種類 70〜79、Generator の種類 66〜69。無効な段も数える）を持つか。
 /// 持っていれば正本の版は 28 になり、版 25 までの読み手と Unity 版は開けない。
 pub(crate) fn uses_new_filters(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -737,7 +737,7 @@ pub(crate) fn uses_new_filters(doc: &Document) -> bool {
             })
     })
 }
-/// 文書が Rust 版だけの色調補正（調整の層の種類 64〜69、層の内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
+/// 文書が Rust 版だけの色調補正（調整レイヤーの種類 64〜69、レイヤーの内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
 /// 持っていれば正本の版は 24 になり、Unity 版は開けない。
 pub(crate) fn uses_rust_only_adjustments(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -748,7 +748,7 @@ pub(crate) fn uses_rust_only_adjustments(doc: &Document) -> bool {
                 .any(|e| e.settings().color_adjust().is_some())
     })
 }
-/// 1 つの層を core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
+/// 1 つのレイヤーを core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
 /// 付けるロック（属性の印のビット 1 が立っていれば、直後の int）。
 fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
     let name = f.text(&format!("{p}.name"))?;
@@ -857,7 +857,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             )?;
         }
     }
-    // 塗りつぶしの層の画素は、パスの一覧の画素（版 27 の属性のビット 6 のときだけ）
+    // 塗りつぶしレイヤーの画素は、パスの一覧の画素（版 27 の属性のビット 6 のときだけ）
     let fill_paths = kind == 1 && attributes & 64 != 0;
     let channel_count = if kind == 0 || fill_paths {
         f.int(&format!("{p}.channel_count"))?
@@ -2146,9 +2146,9 @@ impl Out<'_> {
     }
 }
 
-/// 1 つの層（C# の `DocumentBinary.Write` の層の並び）。
+/// 1 つのレイヤー（C# の `DocumentBinary.Write` のレイヤーの並び）。
 fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
-    let named = |why: &str| format!("層「{}」の{why}", layer.name());
+    let named = |why: &str| format!("レイヤー「{}」の{why}", layer.name());
     w.raw(&native_id(layer.id().0))?;
     w.text(layer.name())
         .map_err(|e| e.in_context(named("名前")))?;
@@ -2282,7 +2282,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     }
     let surfaces = layer.surface_channels();
     if layer.kind() == LayerKind::Fill && list {
-        // 塗りつぶしの層のパスの画素（パスの一覧と一緒に読む）
+        // 塗りつぶしレイヤーのパスの画素（パスの一覧と一緒に読む）
     } else if layer.kind() == LayerKind::Raster {
         let orphan = layer
             .enabled_channels()
@@ -2295,7 +2295,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     } else {
         check(
             surfaces.is_empty(),
-            named("画素はラスターの層だけが持てます"),
+            named("画素はラスターレイヤーだけが持てます"),
         )?;
     }
     w.int(surfaces.len() as i32)?;

@@ -1,6 +1,6 @@
 //! 復旧用の世代の書き置きと起動時の復旧（アプリの状態だけ。画面を描かないので Wine でも回る）: 書く頃合い・ストロークの最中に
 //! 取らない・失敗しても描ける・落ちた体の起動・開く（名称未設定（復旧）で、元の .ylp には書かない）・捨てる・整理。
-//! 復旧の窓の画面は `recovery_ui.rs`。
+//! 復旧のウィンドウの画面は `recovery_ui.rs`。
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -491,7 +491,7 @@ fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
     assert!(s.message.contains("混色"), "{}", s.message);
     assert_eq!(s.recovery.checkpoints(), 0);
     assert!(s.recovery.is_idle());
-    // 層のロックは .ylp に書けるようになったので、ロックのある文書は世代に書ける
+    // レイヤーのロックは .ylp に書けるようになったので、ロックのある文書は世代に書ける
     let dir = TempDir::new("locked-ok");
     let mut s = session(&dir.root());
     let layer = s.selected_layer.unwrap();
@@ -560,13 +560,13 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     write_after(&mut s, Instant::now());
     let expected = pixel_in(&s.doc, 10);
     crash(s);
-    // 次の起動: 落ちていたので窓が開き、世代の一覧がある（時刻・セットの数・名前）
+    // 次の起動: 落ちていたのでウィンドウが開き、世代の一覧がある（時刻・セットの数・名前）
     let s2 = session(&dir.root());
     let window = s2
         .recovery
         .window
         .as_ref()
-        .expect("落ちた体の起動で窓が出る");
+        .expect("落ちた体の起動でウィンドウが出る");
     assert_eq!(window.rows.len(), 1);
     let row = &window.rows[0];
     assert!(row.crashed && !row.own && row.problem.is_none());
@@ -632,7 +632,10 @@ fn headless_a_crash_with_everything_saved_or_nothing_written_is_not_announced() 
     s.recovery_tick_at(t + Duration::from_secs(1));
     crash(s);
     let mut s2 = session(&dir.root());
-    assert!(s2.recovery.window.is_none(), "保存済みなので窓は出さない");
+    assert!(
+        s2.recovery.window.is_none(),
+        "保存済みなのでウィンドウは出さない"
+    );
     s2.recovery_apply(RecoveryAction::OpenWindow);
     let rows = &s2.recovery.window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1, "でも一覧には残り、手で開ける");
@@ -670,7 +673,7 @@ fn headless_opening_a_generation_is_untitled_recovered_and_never_writes_the_orig
     assert!(s2.modified, "保存していない");
     let project = s2.project.as_ref().unwrap();
     assert!(!project.is_file(), "元の .ylp にはつながない");
-    assert!(s2.recovery.window.is_none(), "開いたら窓を閉じる");
+    assert!(s2.recovery.window.is_none(), "開いたらウィンドウを閉じる");
     assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
     assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
     assert_ne!(
@@ -787,7 +790,7 @@ fn headless_a_generation_missing_its_content_is_listed_as_unreadable_and_can_be_
     std::fs::remove_dir_all(pool.join("contents")).unwrap();
     crash(s);
     let mut s2 = session(&dir.root());
-    // 落ちた体でも、読める世代が 1 つも無ければ窓は出さない…ことはなく、読めない世代を理由つきで見せる
+    // 落ちた体でも、読める世代が 1 つも無ければウィンドウは出さない…ことはなく、読めない世代を理由つきで見せる
     let window = s2.recovery.window.as_ref().expect("世代は残っている");
     assert_eq!(window.rows.len(), 1);
     assert!(window.rows[0].problem.is_some());
@@ -1188,7 +1191,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             if !s.message.starts_with("保存しました") {
                 // .ylp の予算（768 MiB）を超える大きさ。基になるファイルが作れないので、この構成は測れない
                 println!(
-                    "基の .ylp あり {size}² × {layers} 層 × {count} セット: 測れない（{}）",
+                    "基の .ylp あり {size}² × {layers} レイヤー × {count} セット: 測れない（{}）",
                     s.message
                 );
                 continue;
@@ -1209,7 +1212,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             let main = began.elapsed();
             s.recovery_wait();
             println!(
-                "基の .ylp あり {size}² × {layers} 層 × {count} セット: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
+                "基の .ylp あり {size}² × {layers} レイヤー × {count} セット: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
                 main.as_secs_f64() * 1000.0,
                 s.recovery.last_write_millis()
             );
@@ -1234,7 +1237,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
         let main = began.elapsed();
         s.recovery_wait();
         println!(
-            "{size}² × {layers} 層（{} MiB）: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
+            "{size}² × {layers} レイヤー（{} MiB）: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
             s.doc.allocated_bytes() >> 20,
             main.as_secs_f64() * 1000.0,
             s.recovery.last_write_millis()
@@ -1372,7 +1375,7 @@ fn headless_an_open_window_gains_new_generations_and_its_confirm_blocks_the_keys
         Some(window.rows[1].id.clone()),
         "選んでいた世代はそのまま"
     );
-    // 捨てる前の確かめが出ている間は、キーを窓の下へ渡さない
+    // 捨てる前の確かめが出ている間は、キーをウィンドウの下へ渡さない
     assert!(!yolu_app::windows::modal_open(&s));
     s.recovery_apply(RecoveryAction::Discard);
     assert!(yolu_app::windows::modal_open(&s));
@@ -1555,7 +1558,7 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
             5,
             "起動で整理しない"
         );
-        // 窓で間隔を選んでも、読めない設定のファイルは既定で上書きしない（書けなかったことを帯に出す）
+        // ウィンドウで間隔を選んでも、読めない設定のファイルは既定で上書きしない（書けなかったことを帯に出す）
         s.recovery_apply(RecoveryAction::SetInterval(30));
         assert_eq!(
             s.recovery.settings().interval_seconds,
@@ -1680,12 +1683,12 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
         en.starts_with("Cannot settle the previous recovery marker (") && en.is_ascii(),
         "{en}"
     );
-    // 世代を見せない方へは倒さない: 窓が出て、世代を開ける
+    // 世代を見せない方へは倒さない: ウィンドウが出て、世代を開ける
     let window = s2
         .recovery
         .window
         .as_ref()
-        .expect("落ちた実行の世代があるので窓を出す");
+        .expect("落ちた実行の世代があるのでウィンドウを出す");
     assert_eq!(window.rows.len(), 1);
     s2.recovery_apply(RecoveryAction::Open);
     assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
@@ -1693,7 +1696,7 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     assert!(pool.join("session.lock").is_file());
 }
 
-/// 描ける 2 つのセット（層の名前・不透明度・マスク・選択範囲つき）の .ylp。返すのは、ファイル・1 つ目と 2 つ目のセットの ID。
+/// 描ける 2 つのセット（レイヤーの名前・不透明度・マスク・選択範囲つき）の .ylp。返すのは、ファイル・1 つ目と 2 つ目のセットの ID。
 fn two_set_file(dir: &TempDir) -> (PathBuf, String, String) {
     use yolu_io::{MaterialRef, NativeDocument, SaveTarget, Selection, SetSpec, WriterInfo};
     let make = |name: &str, opacity: f64, selection: (i64, i64, i64, i64)| {
@@ -1707,8 +1710,8 @@ fn two_set_file(dir: &TempDir) -> (PathBuf, String, String) {
             SelectionMask::rectangle(&doc, selection.0, selection.1, selection.2, selection.3);
         (doc, mask)
     };
-    let (doc_a, mask_a) = make("A の層", 0.5, (0, 0, 30, 30));
-    let (doc_b, mask_b) = make("B の層", 0.6, (20, 20, 40, 40));
+    let (doc_a, mask_a) = make("A のレイヤー", 0.5, (0, 0, 30, 30));
+    let (doc_b, mask_b) = make("B のレイヤー", 0.6, (20, 20, 40, 40));
     let (id_a, id_b) = (
         yolu_app::sets::guid_string(doc_a.id()),
         yolu_app::sets::guid_string(doc_b.id()),
@@ -1807,10 +1810,10 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
     s2.recovery_apply(RecoveryAction::Open);
     assert_eq!(s2.sets.len(), 2, "{}", s2.message);
     assert_eq!(s2.sets.current().id, id_a);
-    // 1 つ目: 絵・層の属性・選択範囲
+    // 1 つ目: 絵・レイヤーの属性・選択範囲
     assert_ne!(pixel_in(s2.set_doc(0), 10), [0, 0, 0, 0]);
     let layer = &s2.set_doc(0).layers()[0];
-    assert_eq!((layer.name(), layer.opacity()), ("A の層", 0.5));
+    assert_eq!((layer.name(), layer.opacity()), ("A のレイヤー", 0.5));
     assert_eq!(layer.mask().unwrap().density(), 0.3);
     let selection = s2.set_doc(0).selection().expect("選択範囲が戻る");
     assert_eq!(
@@ -1819,7 +1822,7 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
     );
     // 2 つ目: 変えていないので、開いた時のまま
     let layer = &s2.set_doc(1).layers()[0];
-    assert_eq!((layer.name(), layer.opacity()), ("B の層", 0.6));
+    assert_eq!((layer.name(), layer.opacity()), ("B のレイヤー", 0.6));
     assert_eq!(layer.mask().unwrap().density(), 0.3);
     let selection = s2
         .set_doc(1)
@@ -2187,7 +2190,7 @@ fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_eac
     for newest in &crashed_newest {
         assert!(after.contains(newest), "{newest:?}");
     }
-    // 選んだ量は設定のファイルに書かれ、窓の表示が数え直される
+    // 選んだ量は設定のファイルに書かれ、ウィンドウの表示が数え直される
     assert_eq!(
         RecoverySettings::load(&conf).unwrap().0.disk,
         DiskBudget::Low
@@ -2226,7 +2229,7 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     assert_eq!(rows.len(), 1, "落ちた実行の最新だけが残る");
     assert!(rows[0].crashed);
     s.recovery_shutdown();
-    // 設定を読めない: 利用者が選んだ量が分からないので、上限では消さない。窓で量を選べば、その量で整理する
+    // 設定を読めない: 利用者が選んだ量が分からないので、上限では消さない。ウィンドウで量を選べば、その量で整理する
     let dir = TempDir::new("limit-unreadable");
     let root = dir.root();
     seed_closed_generations(&root, 4);
@@ -2293,7 +2296,7 @@ fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
             "ほかの設定は変わらない"
         );
     }
-    // 「詳しく」の開け閉めは設定に書かない（窓の中だけ）
+    // 「詳しく」の開け閉めは設定に書かない（ウィンドウの中だけ）
     s.recovery_apply(RecoveryAction::OpenWindow);
     s.recovery_apply(RecoveryAction::DiskDetails(true));
     assert!(s.recovery.window.as_ref().unwrap().details);
@@ -2329,10 +2332,10 @@ fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
     assert_eq!(
         usage.total(),
         used(&root),
-        "窓の数と、置き場のファイルの合計は同じ"
+        "ウィンドウの数と、置き場のファイルの合計は同じ"
     );
     assert!(window.free.is_some() && window.cap > 0);
-    // 書き置きが増えれば、窓の数も増える（開いたまま）
+    // 書き置きが増えれば、ウィンドウの数も増える（開いたまま）
     let before = usage.total();
     paint(&mut s, 30.0);
     write_after(&mut s, Instant::now() + Duration::from_secs(1000));

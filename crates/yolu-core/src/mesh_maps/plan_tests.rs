@@ -16,7 +16,7 @@ fn unit(seed: u32) -> f32 {
     (hash(seed) >> 8) as f32 / 16_777_216.0
 }
 
-/// 6 面の分割立方体（頂点法線つき）。UV は 3×2 の格子に面ごとの島で、テクセルの中心が対角線に乗らないようにずらす。
+/// 6 面の分割立方体（頂点法線つき）。UV は 3×2 の格子に面ごとのアイランドで、テクセルの中心が対角線に乗らないようにずらす。
 /// `bulge` は球に近づける割合、`noise` は頂点ごとの凹凸（同じ位置の頂点は同じ凹凸）。
 fn cube(divisions: usize, bulge: f32, noise: f32, seed: u32) -> MeshBakeInput {
     let triangles = 12 * divisions * divisions;

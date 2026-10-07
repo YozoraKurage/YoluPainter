@@ -1,5 +1,5 @@
 //! 名前を付けて残した選択範囲の保存と読み込み（.ylp の形式 8。使う文書だけ）・復旧の書き置き・読めない項目の扱い。
-//! 画面を描かないので Wine でも回る。残す・名前を変える・消す・呼び戻すの操作と窓は `gui_canvas/selection_build.rs`。
+//! 画面を描かないので Wine でも回る。残す・名前を変える・消す・呼び戻すの操作とウィンドウは `gui_canvas/selection_build.rs`。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -490,7 +490,7 @@ fn headless_a_broken_index_opens_the_document_with_a_reason_in_both_languages() 
         assert_eq!(s.doc.width(), 64, "文書は開く: {}", s.message);
         let want = lang.pick("索引を読めません", "the index cannot be read");
         assert!(s.message.contains(want), "{}", s.message);
-        // 英語の窓に、日本語の理由は出ない（セットの名前は文書が持つ名前のまま）
+        // 英語のウィンドウに、日本語の理由は出ない（セットの名前は文書が持つ名前のまま）
         assert_eq!(
             s.message.contains("索引"),
             lang == Lang::Ja,

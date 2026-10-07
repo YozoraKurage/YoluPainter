@@ -1,5 +1,5 @@
-//! テキストレイヤー（あとから編集できる文字）: 層の Color の画素は文字の値とフォントから描いた結果で、値と画素は 1 回の Undo で一緒に変わる。
-//! 手で塗る・画素を動かすのは断り、値を外す（ラスタライズ）と普通の層になる。フォントは同梱の BIZ UDPGothic（OFL）。
+//! テキストレイヤー（あとから編集できる文字）: レイヤーの Color の画素は文字の値とフォントから描いた結果で、値と画素は 1 回の Undo で一緒に変わる。
+//! 手で塗る・画素を動かすのは断り、値を外す（ラスタライズ）と普通のレイヤーになる。フォントは同梱の BIZ UDPGothic（OFL）。
 
 use yolu_core::text::{self, TextAlign, TextFont, TextSettings};
 use yolu_core::{
@@ -149,7 +149,7 @@ fn hand_painting_paths_and_disabling_color_are_refused() {
             "テキストレイヤーの Color は無効にできない"
         ))
     );
-    // テキストレイヤーでない層の値は変えられない
+    // テキストレイヤーでないレイヤーの値は変えられない
     let plain = d.add_layer("普通").unwrap();
     assert_eq!(
         d.set_text(plain, hello(0.0, 50.0), FONT, false),
@@ -294,7 +294,7 @@ fn loading_attaches_the_value_without_history() {
 
 #[test]
 fn typing_is_coalesced_into_one_undo_step_for_a_new_and_an_existing_layer() {
-    // 新しい層: 追加の段へ、打った分がまとまる
+    // 新しいレイヤー: 追加の段へ、打った分がまとまる
     let mut d = Document::new(160, 96).unwrap();
     let mut t = hello(8.0, 80.0);
     t.text = "H".into();
@@ -314,7 +314,7 @@ fn typing_is_coalesced_into_one_undo_step_for_a_new_and_an_existing_layer() {
     d.redo().unwrap();
     assert_eq!(d.layer(id).unwrap().text(), Some(&t));
     assert_eq!(color_bytes(&d, id), rendered(&d, &t));
-    // 今ある層: 値の段へまとまり、取り消すと最初の値と画素へ戻る
+    // 今あるレイヤー: 値の段へまとまり、取り消すと最初の値と画素へ戻る
     let before = color_bytes(&d, id);
     let first = t.clone();
     for text in ["Hello!", "Hello!!", "Hi"] {

@@ -1,4 +1,4 @@
-//! 画面の試験の共通の道具（egui_kittest。描画は wgpu のソフトの描画で、コンテナでも回る）。
+//! 画面の試験の共通のツール（egui_kittest。描画は wgpu のソフトの描画で、コンテナでも回る）。
 #![allow(dead_code)]
 
 pub mod canvas_device;
@@ -17,7 +17,7 @@ use yolu_app::pen::PenInput;
 use yolu_app::state::AppState;
 use yolu_app::YoluApp;
 
-/// 描画の設定: 実際の窓（eframe）と同じくテクスチャの補間を GPU のサンプラーに任せる（kittest の既定の「予測できる補間」は
+/// 描画の設定: 実際のウィンドウ（eframe）と同じくテクスチャの補間を GPU のサンプラーに任せる（kittest の既定の「予測できる補間」は
 /// シェーダーの中の双線形と端の切り詰めで、Nearest と Repeat が効かず、拡大したキャンバスと市松が実際と違って見える）。
 /// ディザは切る（撮るたびに同じ画素になるように）。`wgpu()` より前に渡すこと（後では効かない）。
 pub fn render_options() -> eframe::egui_wgpu::RendererOptions {
@@ -28,7 +28,7 @@ pub fn render_options() -> eframe::egui_wgpu::RendererOptions {
 }
 
 /// 描画の状態をつなぐ（3D ビューを wgpu で描く）。キャンバスは CPU の表示に固定する（実 GPU の機材でも同じ絵・同じ頁の数に
-/// なるように）。窓を作る試験の builder は、`with_render_state` を直に呼ばずにこれを通すこと。GPU の表示は canvas_gpu.rs が確かめる。
+/// なるように）。ウィンドウを作る試験の builder は、`with_render_state` を直に呼ばずにこれを通すこと。GPU の表示は canvas_gpu.rs が確かめる。
 pub fn with_render_state_cpu_canvas(
     app: YoluApp,
     rs: Option<&eframe::egui_wgpu::RenderState>,
@@ -38,12 +38,12 @@ pub fn with_render_state_cpu_canvas(
     app
 }
 
-/// 窓の全体（eframe の App として）。文書は size × size。
+/// ウィンドウの全体（eframe の App として）。文書は size × size。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
     let mut h = gpu_thread::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(1.0)
-        .with_step_dt(1.0 / 60.0) // 実際の窓に近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）
+        .with_step_dt(1.0 / 60.0) // 実際のウィンドウに近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）
         .with_max_steps(120)
         .renderer(shared_gpu::renderer())
         .build_eframe(move |cc| {
@@ -200,7 +200,7 @@ pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {
     });
 }
 
-/// ドックのタブのボタンを押す（外へ出した窓のタブも。試験の窓では、外の窓は主の窓の中の egui の窓）。
+/// ドックのタブのボタンを押す（外へ出したウィンドウのタブも。試験のウィンドウでは、別ウィンドウはメインウィンドウの中の egui のウィンドウ）。
 pub fn click_tab(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
     let app = h.state();
     let at = app

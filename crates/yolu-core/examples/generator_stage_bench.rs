@@ -1,5 +1,5 @@
 //! フィルターのスタックの Generator の段の速さ。4096² の人工の文書（全面の Color と Roughness・人工のメッシュマップ）で、Generator の段を
-//! 1 つ・3 つ積んだ層と、ランプの混色（通常・リニア・知覚的）の段の、キャッシュを捨てた合成の時間を測る。
+//! 1 つ・3 つ積んだレイヤーと、ランプの混色（通常・リニア・知覚的）の段の、キャッシュを捨てた合成の時間を測る。
 //!
 //! `cargo run --release -p yolu-core --example generator_stage_bench`。環境変数: `STAGE_SIZE`（既定 4096）・`STAGE_THREADS`（既定 8）・
 //! `STAGE_RUNS`（既定 3。表の値は最良）・`STAGE_CASES`（名前の部分一致で絞る。カンマ区切り）・`STAGE_COARSE`（歩幅。粗い合成
@@ -197,7 +197,7 @@ fn run() {
         }
         let mut doc = Document::new(n, n).unwrap();
         doc.set_source_budget_bytes(1 << 30).unwrap();
-        let layer = doc.add_layer("層").unwrap();
+        let layer = doc.add_layer("レイヤー").unwrap();
         doc.set_channel_enabled(layer, channel, true).unwrap();
         let tile = doc.tile_size();
         let mut bytes = vec![0u8; (tile * tile * 4) as usize];

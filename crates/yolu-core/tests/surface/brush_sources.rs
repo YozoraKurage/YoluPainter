@@ -1,8 +1,8 @@
 //! 合成済みの参照元と、写像されたダブ（Unity 版の C# の Core の BrushSourceTests。値は C# の試験の期待値そのもの）。
 //!
 //! 移していないもの: アンカーが作るマスクを、自分のマテリアルの書き込みの前に凍結する試験（CompositeCloneFreezesAnchorDrivenMasks…）。
-//! 層に付く Filter・Generator・Anchor が `Document` にまだ無いので、合成を変える相手がいない（評価器は `filter`・`generator` に
-//! ある）。層に付けられるようになったら、ここへ足す。
+//! レイヤーに付く Filter・Generator・Anchor が `Document` にまだ無いので、合成を変える相手がいない（評価器は `filter`・`generator` に
+//! ある）。レイヤーに付けられるようになったら、ここへ足す。
 
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ fn m(x: i64, source: i64) -> BrushMappedPixel {
         0,
     )
 }
-/// 8 × 4 の画布の 1 行目に、R が 20 ずつ増える画素を置いた「paint」層。
+/// 8 × 4 のキャンバスの 1 行目に、R が 20 ずつ増える画素を置いた「paint」レイヤー。
 fn make(tile: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(8, 4, tile).unwrap();
     let layer = d.add_layer("paint").unwrap();
@@ -57,7 +57,7 @@ fn make(tile: u32) -> (Document, LayerId) {
     d.clear_history().unwrap();
     (d, layer)
 }
-/// 文書の全層・全チャンネルの有効の印と画素（C# の DocumentBinary.Write の代わり）。
+/// 文書の全レイヤー・全チャンネルの有効の印と画素（C# の DocumentBinary.Write の代わり）。
 fn state(d: &Document) -> Vec<(u128, Channel, bool, Option<Vec<u8>>)> {
     let mut v = Vec::new();
     for layer in d.layers() {
@@ -250,7 +250,7 @@ fn mapped_taps_use_independent_premultiplied_equation_and_selection() {
     );
 }
 
-/// 1 つの面に Color と Height を持つ層へ、クローンの複数チャンネルのストロークを始める。
+/// 1 つの面に Color と Height を持つレイヤーへ、クローンの複数チャンネルのストロークを始める。
 fn material_stroke(d: &mut Document, l: LayerId) -> yolu_core::Stroke {
     d.begin_material_brush_stroke(
         l,
@@ -351,7 +351,7 @@ fn wrong_source_types_and_late_composite_setup_refuse_without_leaving_a_stroke()
         Err(CoreError::Unsupported(_))
     ));
     assert!(!d.has_active_stroke());
-    // 色を塗るブラシ（混ぜない）は写像されたダブを受けない（ぼかしは 3D の島の縁で受ける）
+    // 色を塗るブラシ（混ぜない）は写像されたダブを受けない（ぼかしは 3D のアイランドの縁で受ける）
     let mut s = d
         .begin_brush_stroke(layer, &effect_brush(BrushEffect::Paint))
         .unwrap();
@@ -451,7 +451,7 @@ fn sparse_composite_clone_snapshot_scales_with_content_tiles_and_releases_its_pa
     assert_eq!(
         d.clone_source_bytes(),
         0,
-        "画素のある層が無ければ何も写さない"
+        "画素のあるレイヤーが無ければ何も写さない"
     );
     d.cancel_stroke(s);
     d.set_pixel(layer, 2048, 2048, Rgba8::new(210, 30, 70, 255))
@@ -578,7 +578,7 @@ fn mapped_dabs_and_composite_sources_are_identical_across_tile_sizes_and_thread_
                     )
                     .unwrap();
                 d.set_layer_opacity(fill, 0.5, false).unwrap();
-                // 合成の参照元は、別の層（空）へ見えている重なりを写す。そうでなければ、模様のある層そのものを読む
+                // 合成の参照元は、別のレイヤー（空）へ見えている重なりを写す。そうでなければ、模様のあるレイヤーそのものを読む
                 let target = if composite {
                     d.add_layer("target").unwrap()
                 } else {

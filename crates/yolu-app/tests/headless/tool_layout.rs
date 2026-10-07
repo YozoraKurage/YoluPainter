@@ -107,7 +107,7 @@ fn headless_a_new_brush_tool_holds_its_own_groups_and_remembers_its_brush() {
     assert!(keys(&s, group).is_empty());
     // ブラシの無いツールに替えても、今のブラシのまま描ける
     assert_eq!(s.brushes.lib.current(), b(builtin::STANDARD));
-    // 「＋」の窓から組み込みを置く: 並びにある物は写しのファイルになる
+    // 「＋」のウィンドウから組み込みを置く: 並びにある物は写しのファイルになる
     brush_op(
         &mut s,
         BrushAction::AddFrom(vec![
@@ -305,7 +305,7 @@ fn headless_groups_are_added_renamed_duplicated_moved_and_removed_without_deleti
         moved,
         "今のブラシは今のツールのブラシへ"
     );
-    // 外したファイルは「＋」の窓の自分のブラシに出て、並びにない物はそのまま戻る（写しを作らない）
+    // 外したファイルは「＋」のウィンドウの自分のブラシに出て、並びにない物はそのまま戻る（写しを作らない）
     let mine = catalog::rows(&s, Kind::Mine, "");
     let row = mine
         .iter()

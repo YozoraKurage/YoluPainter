@@ -158,7 +158,7 @@ impl RegionIndex {
     }
 
     /// 範囲の UV の輪郭（範囲の中で 1 つの三角形にしか属さない辺。UV の座標。三角形・UV アイランドは UV 上の外周、
-    /// メッシュの塊・マテリアルは複数の島の外周）。
+    /// メッシュの塊・マテリアルは複数のアイランドの外周）。
     pub fn outline(&self, region: &[u32]) -> Vec<[Vec2; 2]> {
         let triangles = self.geometry.triangles();
         let mut count: HashMap<(UvPoint, UvPoint), (u32, [Vec2; 2])> = HashMap::new();

@@ -1,5 +1,5 @@
 //! 効果のメニューの項目（メニューバーの「フィルター」・レイヤーのパネルの効果のボタン・プロパティの欄のドロップダウン・マスクの右クリック）。
-//! 断られる項目は黙って隠さず、押せない項目にして理由をツールチップに置く（チャンネルの型・層の種類・マスクの有無・読める Anchor が無い。
+//! 断られる項目は黙って隠さず、押せない項目にして理由をツールチップに置く（チャンネルの型・レイヤーの種類・マスクの有無・読める Anchor が無い。
 //! ラベルは名前だけで、理由は続けない）。フィルターとジェネレーターは入り口を分ける（「フィルターを追加」と「ジェネレーターを追加」の
 //! 別々のボタン・入れ子。どちらも同じスタックに積む）。
 
@@ -14,7 +14,7 @@ use crate::m2::Edit;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 
-/// 効果を足す先: マスクに描いているあいだはマスク、そうでなければ層の画素。
+/// 効果を足す先: マスクに描いているあいだはマスク、そうでなければレイヤーの画素。
 pub fn target(app: &AppState) -> FilterTarget {
     match app.selected_layer {
         Some(id) => target_for(app, id),
@@ -22,7 +22,7 @@ pub fn target(app: &AppState) -> FilterTarget {
     }
 }
 
-/// `layer` に効果を足す先（その層を選んでマスクに描いているあいだはマスク、そうでなければ層の画素）。
+/// `layer` に効果を足す先（そのレイヤーを選んでマスクに描いているあいだはマスク、そうでなければレイヤーの画素）。
 pub fn target_for(app: &AppState, layer: LayerId) -> FilterTarget {
     if super::mask_target(app) == Some(layer) {
         FilterTarget::Mask
@@ -99,24 +99,27 @@ pub fn generator_entries(
             (Some(why), _) => v.push(refused(label, lang.core_error(&why))),
             (None, true) => v.push(refused(
                 label,
-                lang.pick("この層より下にアンカーが無い", "no anchor below this layer"),
+                lang.pick(
+                    "このレイヤーより下にアンカーが無い",
+                    "no anchor below this layer",
+                ),
             )),
         }
     }
     v
 }
 
-/// 選んでいる層の、足せる層（無ければ None）。
+/// 選んでいるレイヤーの、足せるレイヤー（無ければ None）。
 fn selected_layer(app: &AppState) -> Option<LayerId> {
     app.selected_layer.filter(|id| app.doc.layer(*id).is_some())
 }
 
-/// 「フィルターを追加」のボタンのポップアップ（フィルターだけ。足す先は `target`）。選んでいる層が無ければ空。
+/// 「フィルターを追加」のボタンのポップアップ（フィルターだけ。足す先は `target`）。選んでいるレイヤーが無ければ空。
 pub fn add_filter_entries(app: &AppState, target: FilterTarget) -> Vec<Entry<Action>> {
     selected_layer(app).map_or_else(Vec::new, |layer| filter_entries(app, layer, target))
 }
 
-/// 「ジェネレーターを追加」のボタンのポップアップ（ジェネレーターだけ。足す先は `target`）。選んでいる層が無ければ空。
+/// 「ジェネレーターを追加」のボタンのポップアップ（ジェネレーターだけ。足す先は `target`）。選んでいるレイヤーが無ければ空。
 pub fn add_generator_entries(app: &AppState, target: FilterTarget) -> Vec<Entry<Action>> {
     selected_layer(app).map_or_else(Vec::new, |layer| generator_entries(app, layer, target))
 }
@@ -176,7 +179,7 @@ pub fn mask_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
     ]
 }
 
-/// アンカーを置く・外す項目（選んでいる層とそのマスク）。
+/// アンカーを置く・外す項目（選んでいるレイヤーとそのマスク）。
 pub fn anchor_entries(app: &AppState) -> Vec<Entry<Action>> {
     match app.selected_layer {
         Some(id) => anchor_entries_for(app, id),
@@ -184,7 +187,7 @@ pub fn anchor_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
 }
 
-/// アンカーを置く・外す項目（`id` の層とそのマスク）。
+/// アンカーを置く・外す項目（`id` のレイヤーとそのマスク）。
 pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -540,7 +543,7 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .map(|mode| {
                 let mut next = g.clone();
                 let p = &mut next.image.projection;
-                // UV から型の上の投影へ替えたとき、置き場が初めのままならモデルの外形に合わせる（塗りつぶしの層と同じ）
+                // UV から型の上の投影へ替えたとき、置き場が初めのままならモデルの外形に合わせる（塗りつぶしレイヤーと同じ）
                 if p.mode == ProjectionMode::Uv
                     && *mode != ProjectionMode::Uv
                     && p.placement == yolu_core::fill_image::Placement::default()

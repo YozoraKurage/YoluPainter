@@ -1,4 +1,4 @@
-//! 窓の外枠（Unity 版の Shell）: メニューの中身、オプションバー（今のツールの設定を 1 行で）、ツールの帯、ステータスバー、
+//! ウィンドウの外枠（Unity 版の Shell）: メニューの中身、オプションバー（今のツールの設定を 1 行で）、ツールの帯、ステータスバー、
 //! キーの割り当て。
 
 use egui::{pos2, vec2, Modifiers, Rect, Sense, Ui};
@@ -186,7 +186,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             entries.extend(crate::clipboard::menu_entries(app));
             entries.extend(crate::screen_pick::menu_entries(app));
             entries.push(Entry::Separator);
-            // 道具の項目は、名前もキーも道具の表（`tools`）のとおり（メニューにキーを重ねて書かない）
+            // ツールの項目は、名前もキーもツールの表（`tools`）のとおり（メニューにキーを重ねて書かない）
             let tool_entry = |tool: Tool| {
                 Entry::item(tool.name_in(l), Action::SelectTool(tool))
                     .shortcut(tool.key())
@@ -382,13 +382,13 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
     match kind {
         PopupKind::MenuBar(i) => menu_entries(app, i),
         PopupKind::BlendMode(id) => {
-            // 描くチャンネルが自分の合成を持っていれば、そのチャンネルの値を替える（層の値は変えない）
+            // 描くチャンネルが自分の合成を持っていれば、そのチャンネルの値を替える（レイヤーの値は変えない）
             let channel = app.m2.paint_channel;
             let layer = app.doc.layer(id);
             let own = layer.is_some_and(|l| !l.channel_blend(channel).is_empty());
             let current = layer.map(|l| l.blend_mode_in(channel));
             let group = layer.is_some_and(|l| l.is_group());
-            // 頭: 描くチャンネルだけの合成モードと不透明度にする・層の値に戻す
+            // 頭: 描くチャンネルだけの合成モードと不透明度にする・レイヤーの値に戻す
             let name = crate::m2::channel_name(app.lang, &app.doc, channel);
             let lang = app.lang;
             let own_item = Entry::item(
@@ -402,14 +402,14 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             .checked(own)
             .tooltip(if own {
                 lang.pick(
-                    format!("{name} だけの合成モードと不透明度（押すと層の値に戻す）"),
+                    format!("{name} だけの合成モードと不透明度（押すとレイヤーの値に戻す）"),
                     format!(
                         "{name} only: its own blend mode and opacity (click to follow the layer)"
                     ),
                 )
             } else {
                 lang.pick(
-                    format!("層の合成モードと不透明度（押すと {name} 専用にする）"),
+                    format!("レイヤーの合成モードと不透明度（押すと {name} 専用にする）"),
                     format!("The layer's blend mode and opacity (click to give {name} its own)"),
                 )
             });
@@ -478,14 +478,14 @@ fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
     Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
 }
 
-/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだ層の全部に効く）。
+/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだレイヤーの全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
     layer_menu(app, Some(id))
 }
 
 /// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
 /// 並びは 足す（新規レイヤー・塗りつぶし ▸・調整 ▸）→ 効果（フィルター ▸・ジェネレーター ▸・アンカー）→ グループ → 複製・結合など →
-/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 変形 → 名前・表示 → 順序・削除。選んだ層が無い（`None`）ときは、層に要らない
+/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 変形 → 名前・表示 → 順序・削除。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
 /// 先頭の足す項目とグループだけ。
 pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Entry<Action>> {
     use crate::m2::{self, UiOp};
@@ -511,10 +511,10 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     let selected = app.selected_layers();
     let multi = selected.len() > 1 && selected.contains(&id);
     let members = app.doc.topmost_of(&selected).unwrap_or_default();
-    // 効果（選んでいる層に足す。アンカーを置く・外す）
+    // 効果（選んでいるレイヤーに足す。アンカーを置く・外す）
     v.push(Entry::Separator);
     v.extend(crate::fx::menu::layer_entries(app, id));
-    // グループ（新規グループは層ではないので、足す組でなくここ）
+    // グループ（新規グループはレイヤーではないので、足す組でなくここ）
     v.push(Entry::Separator);
     v.push(new_group);
     if group && !multi {
@@ -548,7 +548,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     } else {
         duplicate.shortcut("Ctrl+J")
     });
-    // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればその層を、グループならグループを、そうでなければ下の層と）
+    // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと）
     let merge_label = if members.len() > 1 {
         lang.pick("レイヤーを結合", "Merge Layers")
     } else if group {
@@ -570,7 +570,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         .enabled(free),
     );
     if layer.is_some_and(|l| l.path().is_some()) {
-        // 塗りつぶしの層のパスは画素にできない（パスの欄のボタンと同じ条件）
+        // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）
         let can = app.path_can_rasterize(id);
         let mut entry = Entry::item(
             lang.pick("パスをラスタライズ", "Rasterize Path"),
@@ -579,7 +579,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         .enabled(free && can);
         if !can {
             entry = entry.tooltip(lang.pick(
-                "塗りつぶしの層のパスは画素にできません",
+                "塗りつぶしレイヤーのパスは画素にできません",
                 "A path on a fill layer cannot become pixels",
             ));
         }
@@ -594,7 +594,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             .enabled(free),
         );
     }
-    // アセットの棚へ（層のまとまり・マスク）
+    // アセットの棚へ（レイヤーのまとまり・マスク）
     v.push(
         Entry::item(
             lang.pick("スマートマテリアルとして保存", "Save as Smart Material"),
@@ -602,7 +602,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         )
         .enabled(free),
     );
-    // 塗りつぶしの層だけ、マテリアルとしてライブラリへ（ほかの種類には出さない。保存できない塗りつぶしは押せなくし、理由はツールチップ）
+    // 塗りつぶしレイヤーだけ、マテリアルとしてライブラリへ（ほかの種類には出さない。保存できない塗りつぶしは押せなくし、理由はツールチップ）
     if let Some(l) = layer.filter(|l| l.kind() == crate::engine::LayerKind::Fill) {
         let refusal = crate::library::ops::material_refusal(lang, l);
         let entry = Entry::item(
@@ -687,7 +687,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             .enabled(free),
         );
     }
-    // ロック（選んでいる層の全部に効く。持っているロックにチェック）
+    // ロック（選んでいるレイヤーの全部に効く。持っているロックにチェック）
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     v.push(Entry::Heading(lang.pick("ロック", "Lock").to_owned()));
@@ -786,7 +786,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let mut actions = Vec::new();
-    // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
+    // 移動・変形のツール: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
     let canvas_shown = app.ui.canvas_frame.is_some_and(|f| {
         ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
@@ -842,7 +842,7 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     );
     x += 30.0;
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
-    // 道具ごとの項目は道具の表（`tools`）が持つ
+    // ツールごとの項目はツールの表（`tools`）が持つ
     (app.tool.def().options)(ui, app, r, x);
 }
 
@@ -862,7 +862,7 @@ pub fn status_text(app: &AppState) -> &str {
     &app.message
 }
 
-/// 状態の帯: 左は何も出さない。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。実際の窓だけで、測れない値は出さない）。
+/// 状態の帯: 左は何も出さない。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。実際のウィンドウだけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
@@ -925,7 +925,7 @@ pub fn link_indicator_color(indicator: LinkIndicator) -> egui::Color32 {
 #[derive(Clone, Copy, Debug)]
 pub struct LinkIcon {
     pub rect: Rect,
-    /// このフレームで押された（窓を開いているあいだは受け皿が上にあるので、生の入力で見る）。
+    /// このフレームで押された（ウィンドウを開いているあいだは受け皿が上にあるので、生の入力で見る）。
     pub pressed: bool,
 }
 
@@ -956,7 +956,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
     LinkIcon { rect, pressed }
 }
 
-/// Live Link の窓（入口の印を押すと開く）の中身: 「Live Link: 状態」・開いている Unity のオブジェクト（「Unity: 名前」）と、受け付ける／
+/// Live Link のウィンドウ（入口の印を押すと開く）の中身: 「Live Link: 状態」・開いている Unity のオブジェクト（「Unity: 名前」）と、受け付ける／
 /// 受け付けないの切り替え。文は名前と状態だけ（合わなかった物の理由は入口の印のツールチップ）。
 pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;

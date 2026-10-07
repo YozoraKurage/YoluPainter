@@ -1,4 +1,4 @@
-//! 移動・変形の道具のキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
+//! 移動・変形のツールのキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
 //! ドラッグ中の変形後の外枠）。ドラッグの間は文書を変えず、離したところ（か Enter）で `Edit::Transform` を 1 回当てる。
 
 use egui::{Color32, CursorIcon, Modifiers, Painter, Pos2, Rect, Shape, Stroke, Vec2};
@@ -11,7 +11,7 @@ use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 impl AppState {
-    /// 動かすものの範囲（文書の版・動かす層が変わるまで覚える）。
+    /// 動かすものの範囲（文書の版・動かすレイヤーが変わるまで覚える）。
     pub fn transform_bounds_cached(&mut self) -> Option<Bounds> {
         let ids = self.transform_targets();
         let revision = self.doc.revision();
@@ -25,7 +25,7 @@ impl AppState {
         bounds
     }
 
-    /// 道具を替えたとき・窓がフォーカスを失ったとき: 途中のドラッグは何も変えずに捨てる。
+    /// ツールを替えたとき・ウィンドウがフォーカスを失ったとき: 途中のドラッグは何も変えずに捨てる。
     pub fn transform_cancel_drag(&mut self) -> bool {
         self.transform.advanced.draft = None;
         self.transform.advanced.session = None;
@@ -259,7 +259,7 @@ fn corners(view: &CanvasView, b: Bounds, map: impl Fn((f64, f64)) -> (f64, f64))
         .collect()
 }
 
-/// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動の道具のときだけ。
+/// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動のツールのときだけ。
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &mut AppState) {
     if super::advanced::paint(painter, view, app) {
         return;

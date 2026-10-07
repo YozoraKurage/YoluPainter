@@ -1,9 +1,9 @@
 //! 知らせ（直前の操作の結果・断り・注意・失敗）。どの機能も `AppState::notify`（短い形は `info`・`refuse`・`warn`・`fail`）で知らせ、
 //! `AppState::message` は ここでだけ書く（試験と `shell::status_text` は今までどおり `message` を読む）。
 //!
-//! - 種類（`Kind`）はトーストの出し方を決める（`toast`。文の中身では決めない）。注意と失敗は、起動してからの分をログの窓（`panels::log`）に
+//! - 種類（`Kind`）はトーストの出し方を決める（`toast`。文の中身では決めない）。注意と失敗は、起動してからの分をログのウィンドウ（`panels::log`）に
 //!   残し、診断の記録（`crash` の `session-*.log`）へも 1 行ずつ書く（伏せ字の決まりは `crash` のまま。名前の付かない理由の部分だけ）。
-//! - 出どころ（`Source`）は機能の単位。ログの窓に名前を出し、記録には言語によらない名前（`key`）を書く。
+//! - 出どころ（`Source`）は機能の単位。ログのウィンドウに名前を出し、記録には言語によらない名前（`key`）を書く。
 //! - 断りの文は `lang::refusals`、エラーを文にする関数は `lang::errors` に置く。
 
 use std::collections::VecDeque;
@@ -30,7 +30,7 @@ pub enum Kind {
 impl Kind {
     pub const ALL: [Kind; 4] = [Kind::Info, Kind::Refusal, Kind::Warning, Kind::Error];
 
-    /// ログの窓と診断の記録に残す種類か（注意と失敗）。
+    /// ログのウィンドウと診断の記録に残す種類か（注意と失敗）。
     pub fn is_logged(self) -> bool {
         matches!(self, Kind::Warning | Kind::Error)
     }
@@ -75,7 +75,7 @@ impl Kind {
         }
     }
 
-    /// 画面の名前（ログの窓の印のツールチップ・写した文）。
+    /// 画面の名前（ログのウィンドウの印のツールチップ・写した文）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
             Kind::Info => lang.pick("情報", "Info"),
@@ -108,11 +108,11 @@ pub enum Source {
     TextureSet,
     Layer,
     Channel,
-    /// 効果の層（フィルター・ジェネレーター）。
+    /// 効果のレイヤー（フィルター・ジェネレーター）。
     Effect,
-    /// 塗りつぶしの層（画像と投影・デカール・グラデーションデカール）。
+    /// 塗りつぶしレイヤー（画像と投影・デカール・グラデーションデカール）。
     FillLayer,
-    /// 塗りつぶし・ポリゴン塗りつぶしの道具。
+    /// 塗りつぶし・ポリゴン塗りつぶしのツール。
     Fill,
     Material,
     /// ブラシ・消しゴム・サブツール。
@@ -197,7 +197,7 @@ impl Source {
         Source::Text,
     ];
 
-    /// 画面の名前（ログの窓の列）。
+    /// 画面の名前（ログのウィンドウの列）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
             Source::Edit => lang.pick("編集", "Edit"),
@@ -295,7 +295,7 @@ pub struct Notice {
     pub at: SystemTime,
 }
 
-/// ログの窓が持つ行の上限（起動の間。超えたら古い物から捨てる）。
+/// ログのウィンドウが持つ行の上限（起動の間。超えたら古い物から捨てる）。
 pub const LOG_LIMIT: usize = 1000;
 
 /// ログの 1 行。同じ知らせ（種類・出どころ・文が同じ）が続いたら 1 行にまとめ、回数を数える（時刻は最後の分）。
@@ -307,7 +307,7 @@ pub struct Entry {
     pub count: u32,
 }
 
-/// 起動してからの注意と失敗の知らせ（ログの窓が読む。ファイルは読まない）。
+/// 起動してからの注意と失敗の知らせ（ログのウィンドウが読む。ファイルは読まない）。
 #[derive(Clone, Debug, Default)]
 pub struct NoticeLog {
     entries: VecDeque<Entry>,
@@ -380,7 +380,7 @@ impl NoticeLog {
 }
 
 impl AppState {
-    /// 知らせる: `message` に文を入れ（トーストと試験が読む）、種類を `last_notice` に残す。注意と失敗はログの窓と診断の記録へも（断りは、印を付けた部分だけ診断の記録へ）。
+    /// 知らせる: `message` に文を入れ（トーストと試験が読む）、種類を `last_notice` に残す。注意と失敗はログのウィンドウと診断の記録へも（断りは、印を付けた部分だけ診断の記録へ）。
     /// 空の文は知らせではない（`message` を空にする）。
     pub fn notify(&mut self, kind: Kind, source: Source, text: impl Into<String>) {
         let text = text.into();
@@ -400,7 +400,7 @@ impl AppState {
             crate::crash::notice(kind.key(), source.key(), &notice.text);
             self.notice_log.push(notice.clone());
         } else {
-            // 断りと済んだ知らせはログの窓に入れない。診断の記録へは、失敗・断りの文として印を付けた部分だけ（前と同じ）。
+            // 断りと済んだ知らせはログのウィンドウに入れない。診断の記録へは、失敗・断りの文として印を付けた部分だけ（前と同じ）。
             crate::crash::message(&notice.text);
         }
         self.last_notice = Some(notice);
@@ -566,7 +566,7 @@ fn measure_utc_offset() -> i64 {
     0
 }
 
-/// 地方時の時:分:秒（ログの窓の列・写した文）。
+/// 地方時の時:分:秒（ログのウィンドウの列・写した文）。
 pub fn clock_text(at: SystemTime) -> String {
     clock_at(at, utc_offset())
 }

@@ -2,9 +2,9 @@
 //! レイヤーのパネルの下の帯のボタンが同じものを使う）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
 //!
 //! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
-//! 入れ子に開き、選んだ形で新しい塗りつぶしの層を作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
-//! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしの層を作る（デカールは投影を Decal に）。選ばずに閉じれば
-//! 何も作らず、Undo の段も増えない。層の作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしの層の画像・投影・グラデーション）。
+//! 入れ子に開き、選んだ形で新しい塗りつぶしレイヤーを作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
+//! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしレイヤーを作る（デカールは投影を Decal に）。選ばずに閉じれば
+//! 何も作らず、Undo の段も増えない。レイヤーの作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしレイヤーの画像・投影・グラデーション）。
 
 use std::path::PathBuf;
 
@@ -19,19 +19,19 @@ use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
 use crate::ui::menu::Entry;
 
-/// 新しい塗りつぶしの層を作る操作（メニューの項目）。
+/// 新しい塗りつぶしレイヤーを作る操作（メニューの項目）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
-    /// 棚の画像で、投影が `mode`（UV・デカールなど）の塗りつぶしの層を作る。
+    /// 棚の画像で、投影が `mode`（UV・デカールなど）の塗りつぶしレイヤーを作る。
     FillImage {
         image: ImageId,
         mode: ProjectionMode,
     },
-    /// PNG を選ぶ窓を開く（選んだら棚へ取り込み、その画像で `FillImage` と同じ層を作る。選ばずに閉じたら何もしない）。
+    /// PNG を選ぶウィンドウを開く（選んだら棚へ取り込み、その画像で `FillImage` と同じレイヤーを作る。選ばずに閉じたら何もしない）。
     FillImageDialog(ProjectionMode),
-    /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしの層を作る（窓の結果）。
+    /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしレイヤーを作る（ウィンドウの結果）。
     FillImageFile { path: PathBuf, mode: ProjectionMode },
-    /// グラデーションデカール（モデルの外形に合わせた、その形の置き場）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
+    /// グラデーションデカール（モデルの外形に合わせた、その形の置き場）の塗りつぶしレイヤーを作り、3D ビューで形を編集できるようにする。
     FillGradient(Shape),
 }
 
@@ -91,7 +91,7 @@ pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     ]
 }
 
-/// グラデーションデカールの形の一覧（選ぶと、その形の塗りつぶしの層を作る）。名前と順は塗りつぶしの欄の「形」と同じ。
+/// グラデーションデカールの形の一覧（選ぶと、その形の塗りつぶしレイヤーを作る）。名前と順は塗りつぶしの欄の「形」と同じ。
 fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -108,7 +108,7 @@ fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 棚の画像の一覧（選ぶと、その画像と投影 `mode` の塗りつぶしの層を作る）と、「ファイルから取り込む…」。
+/// 棚の画像の一覧（選ぶと、その画像と投影 `mode` の塗りつぶしレイヤーを作る）と、「ファイルから取り込む…」。
 fn image_entries(app: &AppState, mode: ProjectionMode) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -145,7 +145,7 @@ fn image_entries(app: &AppState, mode: ProjectionMode) -> Vec<Entry<Action>> {
 }
 
 impl AppState {
-    /// 新しい塗りつぶしの層を作る操作を当てる。断られたら何も変えず、理由を状態の帯へ。
+    /// 新しい塗りつぶしレイヤーを作る操作を当てる。断られたら何も変えず、理由を状態の帯へ。
     pub fn layer_menu_apply(&mut self, op: Op) {
         match op {
             Op::FillImage { image, mode } => self.new_image_fill(image, mode),
@@ -181,7 +181,7 @@ impl AppState {
         }
     }
 
-    /// 選んでいる層の上に、塗りつぶしの層を 1 回の Undo で足す（`fill` が層を作ってから中身を入れる）。作れたら選んで、マスクを描く状態をやめる。
+    /// 選んでいるレイヤーの上に、塗りつぶしレイヤーを 1 回の Undo で足す（`fill` がレイヤーを作ってから中身を入れる）。作れたら選んで、マスクを描く状態をやめる。
     fn add_fill_layer_with(
         &mut self,
         name: &str,
@@ -223,7 +223,7 @@ impl AppState {
         }
     }
 
-    /// 棚の画像と投影 `mode` で、新しい塗りつぶしの層を作る。画像を使えない（棚に無い・読めない・予算）ときは何も作らず理由を出す。
+    /// 棚の画像と投影 `mode` で、新しい塗りつぶしレイヤーを作る。画像を使えない（棚に無い・読めない・予算）ときは何も作らず理由を出す。
     fn new_image_fill(&mut self, image: ImageId, mode: ProjectionMode) {
         let lang = self.lang;
         if self.is_stroking() {
@@ -293,12 +293,12 @@ impl AppState {
                     );
                 }
             }
-            // 作れなかった画像は手放す（どの層も指さない画像を、予算に残さない）
+            // 作れなかった画像は手放す（どのレイヤーも指さない画像を、予算に残さない）
             None => self.release_shelf_image(image),
         }
     }
 
-    /// グラデーションデカールの新しい塗りつぶしの層（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
+    /// グラデーションデカールの新しい塗りつぶしレイヤー（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
     fn new_gradient_fill(&mut self, shape: Shape) {
         let lang = self.lang;
         if self.is_stroking() {

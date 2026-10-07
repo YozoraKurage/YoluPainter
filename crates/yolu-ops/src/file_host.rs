@@ -42,7 +42,7 @@ pub fn writer() -> WriterInfo {
 pub struct FileHostConfig {
     /// .ylp を開く上限（既定の予算）。
     pub limits: Limits,
-    /// セット 1 つを core の文書にするときの、層の画素に許すバイト数。
+    /// セット 1 つを core の文書にするときの、レイヤーの画素に許すバイト数。
     pub source_budget: u64,
     /// 上書き保存で前の版（退避）をいくつ残すか。既定はすべて残す（消さない）。
     pub backups: BackupKeep,
@@ -397,7 +397,7 @@ impl OpHost for FileHost {
         &self.policy
     }
 
-    /// .ylp には選んでいた層が入っていないので、`$selected` はいつも断る（理由を言う）。
+    /// .ylp には選んでいたレイヤーが入っていないので、`$selected` はいつも断る（理由を言う）。
     fn selected_layer(&mut self, set: Option<&str>) -> Result<String, OpError> {
         self.opened_mut()?.resolve_set(set)?;
         Err(crate::refs::no_selection(Some((
@@ -671,7 +671,7 @@ mod tests {
     }
 
     /// yolu-io は名前の重なるセットのファイルを開かせないので、名前で引いて重なることは今は無い。それでも、重なったら候補を
-    /// 層・チャンネルと同じ鍵（`candidates`）で返す。
+    /// レイヤー・チャンネルと同じ鍵（`candidates`）で返す。
     #[test]
     fn ambiguous_set_names_list_their_candidates_under_the_same_key_as_layers() {
         let dir = std::env::temp_dir();

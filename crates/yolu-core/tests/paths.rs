@@ -695,7 +695,7 @@ fn painted(r: &Rendered) -> usize {
 #[test]
 fn surface_dabs_are_identical_for_one_two_and_four_workers_when_rays_are_sharded() {
     // 遮蔽のレイは 1 ダブの候補が 1024 本以上（MIN_RAYS_PER_TASK = 512 の 2 倍）になって初めて複数のワーカーへ分かれる。
-    // 64² の画布の小さな筆は 1 本の逐次の経路しか通らないので、256² の画布と大きな筆で、並ぶ経路を通す。
+    // 64² のキャンバスの小さな筆は 1 本の逐次の経路しか通らないので、256² のキャンバスと大きな筆で、並ぶ経路を通す。
     // 板の上の一部を覆う板を置き、レイの結果が画素の有無に効く（並びの取り違えが見える）面にする。
     let free = plane();
     let mut ts = free.triangles().to_vec();

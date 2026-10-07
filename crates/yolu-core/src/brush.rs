@@ -20,10 +20,10 @@
 //!   色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式）。どの道も同じ式なので、結果のバイトは道と
 //!   スレッド数によらず、画素ごとの式（[`apply_at`]）とも同じ。ワーカーで描くかは、箱の大きさに画素ごとの時間の見積もりを掛けて決める。
 //!
-//! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
+//! 1 つのストロークは 1 つの面（レイヤーの 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
 //! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。透明部分の
 //! ロックは `keep_alpha`（ストロークを作るときに必ず決める）で、描く画素のアルファと透明画素の RGB を守る。C# の
-//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンは、見えている層の重なりを凍結した参照元（`sources`）も読め、
+//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンは、見えているレイヤーの重なりを凍結した参照元（`sources`）も読め、
 //! 3D の面のクローン・指先は、画素ごとの参照を呼び手が決める写像されたダブ（`sources`）で塗る。
 //!
 //! ```
@@ -170,7 +170,7 @@ impl BrushSettings {
 }
 
 /// ペンの入力 1 つ。画素の座標（左下原点、画素の中心は n + 0.5）。時刻は減ってはならない（速さの制御は秒を勧める）。
-/// 傾きはペンの直立からの角度（ラジアン、画布の X・Y 軸に沿って。0 は直立か傾きの情報なし）。[`Controls`] の傾きで使う。
+/// 傾きはペンの直立からの角度（ラジアン、キャンバスの X・Y 軸に沿って。0 は直立か傾きの情報なし）。[`Controls`] の傾きで使う。
 /// 作るときは [`BrushSample::new`]（回転は [`BrushSample::with_rotation`]）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSample {
@@ -179,7 +179,7 @@ pub struct BrushSample {
     pub pressure: f64,
     pub time: f64,
     pub tilt: DVec2,
-    /// ペンの軸の回転（ラジアン、画布で反時計回り。0 は回転なしか情報なし）。拡張（C# に無い）: [`Controls::rotation_angle`] で使う。
+    /// ペンの軸の回転（ラジアン、キャンバスで反時計回り。0 は回転なしか情報なし）。拡張（C# に無い）: [`Controls::rotation_angle`] で使う。
     pub rotation: f64,
     /// 筆の速さ（画素 / 時刻の単位）。ストロークが手ぶれ補正の後の点の間から求めて入れる（渡した値は使わない）。
     pub(crate) speed: f64,
@@ -205,7 +205,7 @@ impl BrushSample {
             speed: 0.0,
         })
     }
-    /// ペンの軸の回転（ラジアン、画布で反時計回り）を付けた写し。有限でない値は断る。
+    /// ペンの軸の回転（ラジアン、キャンバスで反時計回り）を付けた写し。有限でない値は断る。
     pub fn with_rotation(self, rotation: f64) -> Result<Self, CoreError> {
         require_finite(rotation, "rotation")?;
         Ok(BrushSample { rotation, ..self })
@@ -369,7 +369,7 @@ pub(crate) struct StrokeState {
     curve_from: BrushSample,
     curve_to: BrushSample,
     effect: EffectState,
-    /// クローンが読む合成（見えている層の重なりを、最初のダブの前に凍結したもの。None は今の層から読む）。
+    /// クローンが読む合成（見えているレイヤーの重なりを、最初のダブの前に凍結したもの。None は今のレイヤーから読む）。
     source: Option<sources::CloneSource>,
     /// 効果の読み元の枠の領域（ダブの間で使い回す。予算に数えるのはダブの間だけ、C# と同じ）。
     frame_cache: Option<EffectFrame>,
@@ -1123,7 +1123,7 @@ impl StrokeState {
             tip: dual.tip.as_deref(),
         };
         if self.brush.symmetry.enabled() {
-            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
             return self.symmetric_dual_dab(&shape, extent);
         }
         if min_x > max_x || min_y > max_y {
@@ -1193,7 +1193,7 @@ impl StrokeState {
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
         if brush.symmetry.enabled() {
-            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
             return self.symmetric_dab(surface, brush, shape, extent, changed);
         }
         if min_x > max_x || min_y > max_y {
@@ -1586,7 +1586,7 @@ impl StrokeState {
     }
 
     /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。ストロークに 1 色）。
-    /// 画布の外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
+    /// キャンバスの外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_pixel(
         &mut self,
@@ -1642,7 +1642,7 @@ impl StrokeState {
         Ok(done)
     }
 
-    /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心は画布の画素の座標で、
+    /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心はキャンバスの画素の座標で、
     /// 継ぎ目をまたぐときは呼び手が [`StrokeState::reset_effect_direction`] する。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dab(
@@ -1721,7 +1721,7 @@ impl StrokeState {
         result
     }
 
-    /// 面のダブの画素のうち `order` の番号のものを、この順に塗る（画布の外は飛ばす）。
+    /// 面のダブの画素のうち `order` の番号のものを、この順に塗る（キャンバスの外は飛ばす）。
     #[allow(clippy::too_many_arguments)]
     fn paint_listed_pixels(
         &mut self,
@@ -1941,7 +1941,7 @@ impl DualShape<'_> {
 
 /// prepare_effect_dab の結果。
 enum Prepared {
-    /// このダブは何も塗らない（指先の最初のダブ、読み元が画布の外）。
+    /// このダブは何も塗らない（指先の最初のダブ、読み元がキャンバスの外）。
     Skip,
     /// 色を塗る（読み元は要らない）。
     Paint,
@@ -2083,17 +2083,17 @@ fn worth_parallel_for(limit: i64, box_pixels: i64, cost: i64) -> bool {
 }
 
 /// 試験のための口（C# の BrushStroke.ParallelDabPixels と同じ役目）: ワーカーで描くダブの外接の箱の下限（既定の 128² 以上の値は、
-/// 画素ごとの式で描く箱の大きさへ換算した下限）を変え、前の値を返す。小さな画布でもワーカーの経路を通すために使う。
+/// 画素ごとの式で描く箱の大きさへ換算した下限）を変え、前の値を返す。小さなキャンバスでもワーカーの経路を通すために使う。
 /// どの値でも画素の結果は同じ（経路の選び方だけが変わる）。
 #[doc(hidden)]
 pub fn set_parallel_dab_pixels(pixels: i64) -> i64 {
     PARALLEL_THRESHOLD.swap(pixels, Ordering::Relaxed)
 }
 
-/// ダブが触るタイルと、その中の画布の画素の範囲（x の両端、y の両端）。
+/// ダブが触るタイルと、その中のキャンバスの画素の範囲（x の両端、y の両端）。
 type TileSpan = (TileCoord, (i64, i64), (i64, i64));
 
-/// 1 枚のタイルの中のダブの画素（C# の DabPixels。xs・ys は画布の画素の範囲、両端を含む）。ステンシルを使わないブラシの多くは
+/// 1 枚のタイルの中のダブの画素（C# の DabPixels。xs・ys はキャンバスの画素の範囲、両端を含む）。ステンシルを使わないブラシの多くは
 /// 行の核（[`rows`]、どの道でも）で、ほかは画素ごとの式（[`dab_tile_with`]）で描く。
 #[allow(clippy::too_many_arguments)]
 fn dab_tile(
@@ -2432,7 +2432,7 @@ fn apply_at<const SIMPLE: bool>(
             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
             let sampled = match (effect, p.mapped) {
-                // 面のダブ: 参照は書く前にまとめて読んで混ぜてある（画布の外の判定も、そのとき済んでいる）
+                // 面のダブ: 参照は書く前にまとめて読んで混ぜてある（キャンバスの外の判定も、そのとき済んでいる）
                 (_, Some(mapped)) => mapped.get(p.width, px, py),
                 (EffectKind::Blur(radius), None) => rows::blur32(
                     p.frame.expect("効果の読み元"),

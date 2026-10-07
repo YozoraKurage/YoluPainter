@@ -1,14 +1,14 @@
 //! CPU の合成（C# の CpuCompositor の Plan・EvaluatePixel と、タイルの経路の Node.Load・EvaluateRect・BlendRect・ClipRect）。
 //!
-//! - 層は下から上へ、透明から始めて 1 段ずつ重ね、段ごとに RGBA8 へ丸める。
-//! - 計画（[`plan`]）: 兄弟の中で一番下でなくクリッピングの印のある層は、すぐ下の印の無い兄弟（下地）の組に入る。見えない下地
-//!   （非表示・そのチャンネルの不透明度 0・中身が無い）は組ごと落とす。調整の層は下地にならない（その上のクリッピングは描かない）。
+//! - レイヤーは下から上へ、透明から始めて 1 段ずつ重ね、段ごとに RGBA8 へ丸める。
+//! - 計画（[`plan`]）: 兄弟の中で一番下でなくクリッピングの印のあるレイヤーは、すぐ下の印の無い兄弟（下地）の組に入る。見えない下地
+//!   （非表示・そのチャンネルの不透明度 0・中身が無い）は組ごと落とす。調整レイヤーは下地にならない（その上のクリッピングは描かない）。
 //!   グループは中身の計画を持ち、見えないグループ・中身の無いグループは落とす。
 //! - 通過のグループ（PassThrough でクリッピングの組を持たない）は中身を下の結果へ重ね、不透明度 × マスクで下とフェードする
 //!   （不透明度 1 でマスクが効かなければ、フェードは中身そのものなので下へそのまま重ねる）。ほかのグループは中身を透明から
-//!   合成して、層と同じように重ねる（クリッピングされたグループは通過の指定でも透明から）。
-//! - マスクの量は層のアルファに掛ける（不透明度 × マスクの値）。何も変えないマスク（無効・濃度 0・空）は掛けない（値はちょうど 1）。
-//! - タイルの経路は、そのタイルに何も無い層（グループは中身に画素も調整も無いもの）を飛ばす（C# と同じ）。
+//!   合成して、レイヤーと同じように重ねる（クリッピングされたグループは通過の指定でも透明から）。
+//! - マスクの量はレイヤーのアルファに掛ける（不透明度 × マスクの値）。何も変えないマスク（無効・濃度 0・空）は掛けない（値はちょうど 1）。
+//! - タイルの経路は、そのタイルに何も無いレイヤー（グループは中身に画素も調整も無いもの）を飛ばす（C# と同じ）。
 //! - Normal の種類のチャンネルは [`crate::normal`] のベクトルの式で、ほかは色の式で重ねる。調整はどちらも色の式。
 //! - 画素の値は自分の入力だけで決まるので、どのスレッドがどの行を受け持っても同じバイトになる。
 //! - タイルの経路は行ごとの核（[`crate::blend::blend_row`] など。実行時に AVX2・SSE4.1・スカラーを選ぶ）で重ねる。画素ごとの参照
@@ -31,7 +31,7 @@ use crate::normal;
 use crate::surface::{Readers, Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
 
-/// 合成の 1 段: 層（またはグループ）と、その組に入るクリッピングされた層（下から上）。グループは中身の計画を持つ。
+/// 合成の 1 段: レイヤー（またはグループ）と、その組に入るクリッピングされたレイヤー（下から上）。グループは中身の計画を持つ。
 #[derive(Clone, Debug)]
 pub(crate) struct Entry {
     pub layer: usize,
@@ -60,7 +60,7 @@ impl Entry {
     }
 }
 
-/// 層そのものの画素（`Layer::pixel` の、面を readers で読む形。ディスクから読めない画素は透明で、readers が誤りを覚える）。
+/// レイヤーそのものの画素（`Layer::pixel` の、面を readers で読む形。ディスクから読めない画素は透明で、readers が誤りを覚える）。
 pub(crate) fn raw_layer_pixel<'a>(
     readers: &mut Readers<'a>,
     layer: &'a Layer,
@@ -77,13 +77,13 @@ pub(crate) fn raw_layer_pixel<'a>(
     }
 }
 
-/// 層の並びと、親ごとの子の並び（下から上）。
+/// レイヤーの並びと、親ごとの子の並び（下から上）。
 pub(crate) struct Stack<'a> {
     pub layers: &'a [Layer],
     children: std::collections::HashMap<Option<LayerId>, Vec<usize>>,
     channel: Channel,
     kind: ChannelKind,
-    /// 評価した層の出力（フィルター・Generator・画像・グラデーションを通したもの）。あれば、元の画素の代わりに読む。
+    /// 評価したレイヤーの出力（フィルター・Generator・画像・グラデーションを通したもの）。あれば、元の画素の代わりに読む。
     eval: Option<&'a EvalSet>,
 }
 
@@ -113,15 +113,15 @@ impl<'a> Stack<'a> {
         self.eval.and_then(|e| e.reduced).map(|s| s as usize)
     }
 
-    /// 層（番号）の評価済みの出力の面（評価が要らない層は None）。
+    /// レイヤー（番号）の評価済みの出力の面（評価が要らないレイヤーは None）。
     fn evaluated_content(&self, layer: usize) -> Option<&'a Surface> {
         self.eval.and_then(|e| e.content.get(&layer))
     }
-    /// 層のマスクの評価済みの隠す量の面（マスクにフィルターが無ければ None）。
+    /// レイヤーのマスクの評価済みの隠す量の面（マスクにフィルターが無ければ None）。
     fn evaluated_mask(&self, layer: usize) -> Option<&'a Surface> {
         self.eval.and_then(|e| e.masks.get(&layer))
     }
-    /// 層の画素（マスク・不透明度・合成の前。評価した出力があればそれ。中身の無い所・調整・グループは透明）。面は readers で読む
+    /// レイヤーの画素（マスク・不透明度・合成の前。評価した出力があればそれ。中身の無い所・調整・グループは透明）。面は readers で読む
     /// （ディスクから読めない画素は透明で、readers が誤りを覚える）。
     pub(crate) fn layer_pixel(
         &self,
@@ -135,7 +135,7 @@ impl<'a> Stack<'a> {
             None => raw_layer_pixel(readers, &self.layers[layer], self.channel, x, y),
         }
     }
-    /// 層のマスクが層のアルファに掛ける値。
+    /// レイヤーのマスクがレイヤーのアルファに掛ける値。
     pub(crate) fn mask_factor(
         &self,
         readers: &mut Readers<'a>,
@@ -156,7 +156,7 @@ impl<'a> Stack<'a> {
         self.children.get(&parent).map_or(&[], |v| v.as_slice())
     }
 
-    /// その層がこのチャンネルで何かを出せるか（C# の Active）。
+    /// そのレイヤーがこのチャンネルで何かを出せるか（C# の Active）。
     fn active(&self, layer: &Layer) -> bool {
         let applies = layer
             .adjustment
@@ -294,7 +294,7 @@ pub(crate) fn evaluate_pixel<'a>(
         let layer = &layers[entry.layer];
         let amount = entry.opacity * stack.mask_factor(readers, entry.layer, x, y);
         if layer.kind == LayerKind::Adjustment {
-            let a = layer.adjustment.as_ref().expect("調整の層は設定を持つ");
+            let a = layer.adjustment.as_ref().expect("調整レイヤーは設定を持つ");
             result = a.composite_in(stack.kind, result, amount, entry.mode);
             continue;
         }
@@ -312,7 +312,7 @@ pub(crate) fn evaluate_pixel<'a>(
             let c = &layers[clip.layer];
             let clip_amount = clip.opacity * stack.mask_factor(readers, clip.layer, x, y);
             if c.kind == LayerKind::Adjustment {
-                let a = c.adjustment.as_ref().expect("調整の層は設定を持つ");
+                let a = c.adjustment.as_ref().expect("調整レイヤーは設定を持つ");
                 group = a.composite_in(stack.kind, group, clip_amount, clip.mode);
             } else {
                 let over = if c.is_group() {
@@ -439,8 +439,8 @@ struct Plan<'a> {
 }
 
 impl Node<'_> {
-    /// 1 画素あたりの仕事の重み: 不透明で 1 つ上書きするだけの層は 1、重ね方の計算が要る層・調整・グループは 6（実測で、128² のタイル 1 枚が
-    /// 通常モードの不透明な層 24 枚で 0.4 ms 前後、モードや不透明度の違う層 24 枚で 2.7 ms 前後）。
+    /// 1 画素あたりの仕事の重み: 不透明で 1 つ上書きするだけのレイヤーは 1、重ね方の計算が要るレイヤー・調整・グループは 6（実測で、128² のタイル 1 枚が
+    /// 通常モードの不透明なレイヤー 24 枚で 0.4 ms 前後、モードや不透明度の違うレイヤー 24 枚で 2.7 ms 前後）。
     fn weight(&self) -> u64 {
         let copy = matches!(self.content, Content::Raster(_) | Content::Fill(_))
             && self.mode == BlendMode::Normal
@@ -483,7 +483,7 @@ impl<'a> Plan<'a> {
     fn add(&mut self, stack: &Stack<'a>, e: &Entry) -> usize {
         let layers: &'a [Layer] = stack.layers;
         let layer: &'a Layer = &layers[e.layer];
-        // 評価した出力の面（粗く評価したものは、タイルの一辺が歩幅の分だけ小さく、全画素を読む）か、層の保存した画素の面
+        // 評価した出力の面（粗く評価したものは、タイルの一辺が歩幅の分だけ小さく、全画素を読む）か、レイヤーの保存した画素の面
         let reduced = stack.reduced_by();
         let geo_of = |evaluated: bool, this: &Self| -> Geo {
             match reduced {
@@ -504,7 +504,11 @@ impl<'a> Plan<'a> {
                     px = geo_of(true, self);
                     Content::Raster(surface)
                 }
-                None => Content::Raster(layer.surface(stack.channel).expect("計画の層は面を持つ")),
+                None => Content::Raster(
+                    layer
+                        .surface(stack.channel)
+                        .expect("計画のレイヤーは面を持つ"),
+                ),
             },
             LayerKind::Fill => match stack.evaluated_content(e.layer) {
                 Some(surface) => {
@@ -521,7 +525,7 @@ impl<'a> Plan<'a> {
                 layer
                     .adjustment
                     .as_ref()
-                    .expect("調整の層は設定を持つ")
+                    .expect("調整レイヤーは設定を持つ")
                     .kernel(stack.kind),
             ),
             LayerKind::Group => Content::Group,
@@ -556,7 +560,7 @@ impl<'a> Plan<'a> {
     }
 }
 
-/// あるタイルでの層の画素・マスクの読み元（全画素のタイルは読んだ中身を持つ。持っている間はディスクへ逃がさない）。
+/// あるタイルでのレイヤーの画素・マスクの読み元（全画素のタイルは読んだ中身を持つ。持っている間はディスクへ逃がさない）。
 #[derive(Clone)]
 enum Src {
     Absent,
@@ -564,7 +568,7 @@ enum Src {
     Data(Arc<Vec<u8>>),
 }
 
-/// 1 つのタイルの、層ごとの有無と読み元（ワーカーごとに 1 つ）。
+/// 1 つのタイルの、レイヤーごとの有無と読み元（ワーカーごとに 1 つ）。
 struct TileState {
     present: Vec<bool>,
     pixels: Vec<Src>,
@@ -659,7 +663,7 @@ impl<'a> Plan<'a> {
         any
     }
 
-    /// 矩形の仕事の見積り（画素 × そのタイルで画素のある層・調整の重みの和）。タイルが少ない矩形は、タイルごとに読んで本当に画素のある層を数える
+    /// 矩形の仕事の見積り（画素 × そのタイルで画素のあるレイヤー・調整の重みの和）。タイルが少ない矩形は、タイルごとに読んで本当に画素のあるレイヤーを数える
     /// （空のタイルの多い文書で、小さな合成を分けて高くつくのを避ける）。多い矩形はどのタイルも詰まっているとみなす（`layer_count` 枚）。
     fn work(&self, rect: Rect, layer_count: u64, run: Option<&memo::MemoRun>) -> u64 {
         let ts = self.tile_size as u32;
@@ -685,7 +689,7 @@ impl<'a> Plan<'a> {
                 }
                 let w = ((tx + 1) * ts).min(rx1) - (tx * ts).max(rect.x);
                 let h = ((ty + 1) * ts).min(ry1) - (ty * ts).max(rect.y);
-                // 覚えから続けるタイルは、描く層以降の段だけが仕事
+                // 覚えから続けるタイルは、描くレイヤー以降の段だけが仕事
                 let only = run.and_then(|r| r.suffix_of(TileCoord::new(tx, ty)));
                 let weight: u64 = st
                     .present
@@ -745,7 +749,7 @@ impl<'a> Plan<'a> {
         }
     }
 
-    /// 段の子の並びを重ねる。描いている層への道をたどるとき（`resume` がある）は、その段の手前までの覚えから続ける。
+    /// 段の子の並びを重ねる。描いているレイヤーへの道をたどるとき（`resume` がある）は、その段の手前までの覚えから続ける。
     #[allow(clippy::too_many_arguments)]
     fn eval_children(
         &self,
@@ -763,7 +767,7 @@ impl<'a> Plan<'a> {
         }
     }
 
-    /// 段 1 つを res へ重ねる。`resume` は、この段が描いている層への道の途中の段（グループ）のとき、その中身の評価を覚えから続ける印。
+    /// 段 1 つを res へ重ねる。`resume` は、この段が描いているレイヤーへの道の途中の段（グループ）のとき、その中身の評価を覚えから続ける印。
     #[allow(clippy::too_many_arguments)]
     fn eval_node(
         &self,
@@ -810,7 +814,7 @@ impl<'a> Plan<'a> {
             fade_rows(res, out, inner, g, amount, self.normal);
             return;
         }
-        // 下地: グループは中身を透明から、クリッピングの組は層の画素の写し、ほかは層の画素をそのまま読む
+        // 下地: グループは中身を透明から、クリッピングの組はレイヤーの画素の写し、ほかはレイヤーの画素をそのまま読む
         let base: &mut [u8] = match &n.content {
             Content::Group => {
                 let gb = grow(&mut level.group, area);
@@ -1000,8 +1004,8 @@ fn fade_rows(res: &mut [u8], out: Out, inner: &[u8], g: Geom, amount: Amount<'_>
     }
 }
 
-/// これより仕事（画素 × 画素のある層）が少ない合成は、呼んだスレッドだけで行う（ワーカーを起こす・分けたタイルを読み直す費用が、
-/// 計算より高くつく。1 タイル 128² を 7 層で 0.1 ms 足らずの計算に、8 本へ分ける費用が 0.4 ms 前後かかる）。
+/// これより仕事（画素 × 画素のあるレイヤー）が少ない合成は、呼んだスレッドだけで行う（ワーカーを起こす・分けたタイルを読み直す費用が、
+/// 計算より高くつく。1 タイル 128² を 7 レイヤーで 0.1 ms 足らずの計算に、8 本へ分ける費用が 0.4 ms 前後かかる）。
 const PARALLEL_MINIMUM_WORK: u64 = 1 << 19;
 
 /// 1 つの帯に持たせる仕事の下限（これより小さく割らない）。
@@ -1010,7 +1014,7 @@ const MINIMUM_BAND_WORK: u64 = 1 << 18;
 /// 仕事を数えるためにタイルを読んで見る上限の枚数（これより多い矩形は、どのタイルも詰まっているとみなす）。
 const WORK_SCAN_TILES: u64 = 256;
 
-/// ワーカーごとの道具（タイルの状態と深さごとの作業の矩形）。
+/// ワーカーごとのツール（タイルの状態と深さごとの作業の矩形）。
 struct Worker {
     st: TileState,
     scratch: Vec<Level>,
@@ -1041,7 +1045,7 @@ pub(crate) fn composite_into(
     composite_entries_into(stack, &stack.plan(), tile_size, rect, out, order)
 }
 
-/// `composite_into` の、描いている間の下の覚えを使える形（覚えが使えない・描く層が計画に無いときは `composite_into` と同じ道）。
+/// `composite_into` の、描いている間の下の覚えを使える形（覚えが使えない・描くレイヤーが計画に無いときは `composite_into` と同じ道）。
 pub(crate) fn composite_into_memo(
     stack: &Stack<'_>,
     tile_size: u32,
@@ -1391,7 +1395,7 @@ fn composite_band<'a>(
             flip: (order == RowOrder::TopDown).then_some(rows - 1),
         };
         match memo.and_then(|m| m.resume(coord)) {
-            // 描く層より下は覚えから、描く層と上の層だけを重ねる
+            // 描くレイヤーより下は覚えから、描くレイヤーと上のレイヤーだけを重ねる
             Some(r) => plan.eval_resume(&plan.roots, r, res, out, g, &w.st, &mut w.scratch),
             None => plan.eval_rect(&plan.roots, res, out, g, &w.st, &mut w.scratch),
         }

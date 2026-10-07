@@ -1,8 +1,8 @@
 //! 選択範囲と対称の、オプションバーとツールプロパティの部品。
-//! - 選択の道具のオプションバー: 作成方法（新規・追加・削除・共通。選択ペンは選択ペン・選択消し）、選択ペンの直径、自動選択の許容値
+//! - 選択のツールのオプションバー: 作成方法（新規・追加・削除・共通。選択ペンは選択ペン・選択消し）、選択ペンの直径、自動選択の許容値
 //! - ブラシ・消しゴムのオプションバーの右端: 対称の切り替えとモードの選び（▾）
-//! - 左のドックのツールプロパティ: 選択の道具の作成方法・すべて・解除・反転・クイックマスク、道具ごとの設定（自動選択の許容値・隣接・全レイヤー、
-//!   形の道具のアンチエイリアス・縦横比・中心から・角の丸め、選択ペンの直径・硬さ・不透明度）、選択範囲を変更。対称の欄は、ブラシの詳細の窓の
+//! - 左のドックのツールプロパティ: 選択のツールの作成方法・すべて・解除・反転・クイックマスク、ツールごとの設定（自動選択の許容値・隣接・全レイヤー、
+//!   形のツールのアンチエイリアス・縦横比・中心から・角の丸め、選択ペンの直径・硬さ・不透明度）、選択範囲を変更。対称の欄は、ブラシの詳細のウィンドウの
 //!   「対称」のカテゴリ（`symmetry_fields`）
 //!
 //! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
@@ -136,7 +136,7 @@ fn creation_group(
     x + width
 }
 
-/// 選択ペン・選択消しの切り替え（選択ペンの道具のオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
+/// 選択ペン・選択消しの切り替え（選択ペンのツールのオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
 fn pen_group(
     ui: &mut Ui,
     app: &mut AppState,
@@ -194,8 +194,8 @@ fn pen_group(
     x + width
 }
 
-/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。作成方法（選択ペンは選択ペンと選択消し）に、
-/// 選択ペンは直径、自動選択は許容値。すべて・解除・反転・クイックマスクと、道具ごとのほかの設定はツールプロパティ。
+/// 選択のツールのオプションバーの中身。`x` は次の部品を置く左端（ツールのアイコンと区切りの右）。作成方法（選択ペンは選択ペンと選択消し）に、
+/// 選択ペンは直径、自動選択は許容値。すべて・解除・反転・クイックマスクと、ツールごとのほかの設定はツールプロパティ。
 pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     let mut x = x + 4.0;
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
@@ -207,7 +207,7 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     } else {
         creation_group(ui, app, y, h, x, held)
     };
-    // 窓が狭いときは、入りきらない部品を出さない
+    // ウィンドウが狭いときは、入りきらない部品を出さない
     let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
     if app.tool == Tool::SelectPen {
         x += 8.0;
@@ -280,7 +280,7 @@ pub fn symmetry_options(ui: &mut Ui, app: &mut AppState, r: Rect, left: f32) {
         None
     };
     let text_w = mode_text.map_or(0.0, |t| w::text_width(&p, t, t::LABEL) + 8.0);
-    // モード名が入らないほど狭い（窓の最小の幅で、英語の長い名前）ときは、名前を落としてトグルと ▾ を残す
+    // モード名が入らないほど狭い（ウィンドウの最小の幅で、英語の長い名前）ときは、名前を落としてトグルと ▾ を残す
     let fixed = 28.0 + 20.0 + 14.0;
     let (mode_text, text_w) = if r.right() - 8.0 - (fixed + text_w) >= left {
         (mode_text, text_w)
@@ -502,7 +502,7 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// ツールプロパティの中身（選択の道具のもの。ID の色で選択は範囲の道具の欄 `region_props`）。
+/// ツールプロパティの中身（選択のツールのもの。ID の色で選択は範囲のツールの欄 `region_props`）。
 pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     if app.tool == Tool::SelectPen {
         pen_row(ui, app, rows);
@@ -582,7 +582,7 @@ fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// 道具ごとの設定（自動選択: 許容値・隣接・全レイヤー。形の道具: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 直径・硬さ・不透明度）。
+/// ツールごとの設定（自動選択: 許容値・隣接・全レイヤー。形のツール: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 直径・硬さ・不透明度）。
 fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     let tool = app.tool;
@@ -752,7 +752,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// ブラシの詳細の窓の「対称」の欄（見出しと既定に戻すは窓が出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
+/// ブラシの詳細のウィンドウの「対称」の欄（見出しと既定に戻すはウィンドウが出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
 /// 指先・クローンは対称と組めないので、対称のモードは「なし」のほかを無効にする。
 pub fn symmetry_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     rows.indent = 0.0;

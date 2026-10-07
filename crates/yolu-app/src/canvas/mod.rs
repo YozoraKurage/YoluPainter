@@ -1,7 +1,7 @@
 //! 2D キャンバスのタブ: 合成の絵（`display`）、表示（拡大・パン・回転・反転。写しは `view`）、ブラシのカーソル、入力。
 //! 入力はフレームの中の生のイベントを順に見る（1 フレームに来たマウスの移動を全部ストロークの点にする）。ペン（Windows Ink）の
 //! 点が来ていれば、そのフレームのストロークはペンの点だけで描き、同じペンから egui が作るマウスの代わりの入力は使わない。
-//! ストロークを取り残さない: ボタンを離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）で必ず終える。
+//! ストロークを取り残さない: ボタンを離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）で必ず終える。
 
 pub mod cpu;
 pub mod display;
@@ -36,7 +36,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     app.ui.canvas_rect = Some(rect);
     app.ui.canvas_drawn = true;
-    // 主の窓のフレームの番号（キャンバスを外の窓へ出しても、キーを見る主の窓の番号と比べられるように）
+    // メインウィンドウのフレームの番号（キャンバスを別ウィンドウへ出しても、キーを見るメインウィンドウの番号と比べられるように）
     app.ui.canvas_frame = Some(ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ui.advance_cursor_after_rect(rect);
     handle_input(
@@ -63,9 +63,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     display.paint(&painter, &view);
     // 選択の縁・ドラッグ中の形・対称の軸
     crate::selection::canvas::paint_overlay(ui.ctx(), &painter, &view, app);
-    // 移動・変形の道具: 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠）
+    // 移動・変形のツール: 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠）
     crate::transform::canvas::paint_overlay(&painter, &view, app);
-    // グラデーションの道具: ドラッグ中の線
+    // グラデーションのツール: ドラッグ中の線
     crate::gradient::canvas::paint_overlay(&painter, &view, app);
     crate::drafting::canvas::paint_overlay(&painter, &view, app);
     // テキストツール: 打っている文字の枠・カーソルと入力欄
@@ -77,7 +77,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     crate::uv_wireframe::show(ui, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。Y を押しているあいだは枠も）
     crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
-    // パスの道具: 選んでいる層の 2D のパスの線と点
+    // パスのツール: 選んでいるレイヤーの 2D のパスの線と点
     let hover_for_path = ui.input(|i| i.pointer.hover_pos());
     crate::pathtool::canvas::paint_overlay(
         &painter,
@@ -96,7 +96,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     // ブラシのカーソル（回している・回すキーを押している・パンしている・ステンシルを動かしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
     let pointer_on_canvas = hover.is_some_and(|p| rect.contains(p)) && response.contains_pointer();
-    // 範囲の道具: ポインタの下の範囲の UV の輪郭（回している・パンしているあいだは出さない）
+    // 範囲のツール: ポインタの下の範囲の UV の輪郭（回している・パンしているあいだは出さない）
     {
         let navigating = app.canvas.rotate_key_held
             || app.canvas.rotating.is_some()
@@ -245,7 +245,7 @@ fn delta_angle(from: f32, to: f32) -> f32 {
     }
 }
 
-/// この点で一番上にあるのがキャンバスの層か（ポップアップ・浮いた窓が上にあれば描かない）。
+/// この点で一番上にあるのがキャンバスのレイヤーか（ポップアップ・浮いたウィンドウが上にあれば描かない）。
 fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
     rect.contains(p)
         && ui
@@ -254,7 +254,7 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
             .is_none_or(|layer| layer == ui.layer_id())
 }
 
-/// スポイト（Alt を押した描く道具も）は押した所の値を取るだけで、始めない。ストロークかドラッグを始めたら true。
+/// スポイト（Alt を押した描くツールも）は押した所の値を取るだけで、始めない。ストロークかドラッグを始めたら true。
 #[allow(clippy::too_many_arguments)]
 fn begin_any(
     app: &mut AppState,
@@ -270,7 +270,7 @@ fn begin_any(
         crate::eyedrop::pick_canvas(app, view, p);
         return false;
     }
-    // ベイクの窓で島を選んでいる間は、押した所の島を選ぶだけ（道具を使わない）
+    // ベイクのウィンドウでアイランドを選んでいる間は、押した所のアイランドを選ぶだけ（ツールを使わない）
     if crate::bake::overlap::press(app, crate::region::tools::Where::Canvas(view), p) {
         return false;
     }
@@ -613,7 +613,7 @@ impl MouseClock {
 
 /// このフレームの入力の前提（押しを始めてよいか・修飾キー・時刻）。
 struct Frame {
-    /// 押しを始めてはいけない（ポップアップ・窓・ドックのタブの見出しをつかんでいる・押しがほかの部品のもの）。
+    /// 押しを始めてはいけない（ポップアップ・ウィンドウ・ドックのタブの見出しをつかんでいる・押しがほかの部品のもの）。
     no_press: bool,
     modifiers: Modifiers,
     now: f64,
@@ -679,7 +679,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
             PressKind::Ignored => {}
             PressKind::View => nav::moved(app, rect, p, press.last, frame.modifiers.shift),
             PressKind::Tool => {
-                // 描いている・選択の形を作っているときだけ続ける（道具を途中で替えても、始めた側を終わらせる）
+                // 描いている・選択の形を作っているときだけ続ける（ツールを途中で替えても、始めた側を終わらせる）
                 if app.canvas.stroke == Some(source) {
                     add_point(
                         app,
@@ -711,13 +711,13 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
     }
 }
 
-/// ペンを押す・動く・離すとして渡す道具（ドラッグの札を持つ道具。道具の表の `canvas`）。
+/// ペンを押す・動く・離すとして渡すツール（ドラッグの札を持つツール。ツールの表の `canvas`）。
 fn drives_pen(app: &AppState) -> bool {
     app.tool.def().canvas.is_some()
 }
 
-/// ドラッグの札を持つ道具（選択・移動と変形・グラデーション・図形と定規・パス）のペン（触れる・動く・離すを、押す・動く・離すにする）。押しの始めは今の道具へ、
-/// 続きと離すは始めた側へ（途中で道具を替えても、始めた側を終わらせる）。
+/// ドラッグの札を持つツール（選択・移動と変形・グラデーション・図形と定規・パス）のペン（触れる・動く・離すを、押す・動く・離すにする）。押しの始めは今のツールへ、
+/// 続きと離すは始めた側へ（途中でツールを替えても、始めた側を終わらせる）。
 fn drive_pen(
     app: &mut AppState,
     view: &CanvasView,
@@ -746,7 +746,7 @@ fn drive_pen(
 }
 
 /// ペンが触れた最初の点の行き先。ビューを動かす（R・Space・Ctrl+Space）・何もしない（押した所が別の部品・ステンシルを動かしている間・
-/// サイドボタン・Ctrl を押したブラシと消しゴム）・道具。Alt を押した道具は道具のまま（`begin_any` が、Alt のスポイトとして値を取って、
+/// サイドボタン・Ctrl を押したブラシと消しゴム）・ツール。Alt を押したツールはツールのまま（`begin_any` が、Alt のスポイトとして値を取って、
 /// 描き始めない）。ステンシルを動かす押しは、同じ押しの egui のポインタの代わりの入力をステンシルが取るので、ビューを動かす判定より先に
 /// 手放す（マウスの押しと同じく、ステンシルだけが動く）。
 fn press_kind(
@@ -780,7 +780,7 @@ fn typing_id() -> egui::Id {
 }
 
 /// 選択範囲を持っていて、Esc を使うものが無いか（Esc で選択を解除してよいか）。Esc を自分の操作に使うものを優先する: メニューなどの
-/// ポップアップ・確かめの窓・開いている浮いた窓・つまみやドラッグの途中（ボタンを押している間）・塗りつぶしの仕事・色の名前の変更。
+/// ポップアップ・確認のウィンドウ・開いている浮いたウィンドウ・つまみやドラッグの途中（ボタンを押している間）・塗りつぶしの仕事・色の名前の変更。
 /// キャンバスより前に描く部品やフレームの頭の処理が、このフレームの Esc でもうやめた（状態がもう空になっている）ものは、
 /// `note_escape_taken` の印で見る。
 /// 文字の入力中と、描く・形を作る・移動と変形・グラデーション・図形・パスなどの途中は、呼ぶ側が先に見る（やめるものがあればそちらが先）。
@@ -883,7 +883,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         if !app.is_stroking() && nav::press(app, rect, pos, event_modifiers) {
                             // R・Space・Ctrl+Space を押しながらの左ドラッグ: 回す・パン・拡縮
                         } else if let Some(kind) = app.tool.def().canvas {
-                            // ドラッグの札を持つ道具（選択・移動と変形・グラデーション・図形と定規・パス）
+                            // ドラッグの札を持つツール（選択・移動と変形・グラデーション・図形と定規・パス）
                             let handler = kind.handler();
                             if !handler.respects_stencil() || !app.stencil.handling() {
                                 let view = app.view.view(rect, w_px, h_px);
@@ -922,7 +922,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         }
                     }
                     (PointerButton::Primary, false) => {
-                        // 離した: ドラッグを始めた側が終わらせる（道具を替えていても）
+                        // 離した: ドラッグを始めた側が終わらせる（ツールを替えていても）
                         let ctx = InputCtx {
                             modifiers: *event_modifiers,
                             now,
@@ -963,10 +963,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         app.canvas.panning = false;
                         app.canvas.middle_rotating = false;
                     }
-                    // ポリゴン塗りつぶしの右クリック: 島の優先・焼かないのメニュー（開いている島のメニューの外の右クリックは、重なった
-                    // 次の島のメニュー）
+                    // ポリゴン塗りつぶしの右クリック: アイランドの優先・焼かないのメニュー（開いているアイランドのメニューの外の右クリックは、重なった
+                    // 次のアイランドのメニュー）
                     (PointerButton::Secondary, true) => {
-                        // 開いている島のメニューの受け皿が上にあるので、そのときはメニューの本体の外かだけを見る
+                        // 開いているアイランドのメニューの受け皿が上にあるので、そのときはメニューの本体の外かだけを見る
                         let menu = app.popup.as_ref().is_some_and(|p| {
                             matches!(
                                 p.kind,
@@ -1121,8 +1121,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     for kind in CanvasKind::ALL {
         kind.handler().each_frame(app, &frame_ctx);
     }
-    // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える。ストローク・ドラッグの札を持つ道具のドラッグは、
-    // 最後の位置で終える（道具ごとの終わらせ方は受け口が決める）
+    // ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）も、押していなければ終える。ストローク・ドラッグの札を持つツールのドラッグは、
+    // 最後の位置で終える（ツールごとの終わらせ方は受け口が決める）
     let released = !ui.input(|i| i.pointer.primary_down())
         && !events
             .iter()

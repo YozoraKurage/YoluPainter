@@ -97,7 +97,7 @@ fn odd(kind: &str) -> EffectSettings {
     })
 }
 
-/// 種類を層の内容（色の種類は Color、スカラーだけの種類は Roughness）と、置けるならマスクに 1 つずつ置いた文書。
+/// 種類をレイヤーの内容（色の種類は Color、スカラーだけの種類は Roughness）と、置けるならマスクに 1 つずつ置いた文書。
 fn document_with(kind: &str, settings: &EffectSettings) -> Document {
     let (mut doc, id) = plain();
     let channel = if SCALAR_ONLY.contains(&kind) {
@@ -119,7 +119,7 @@ fn document_with(kind: &str, settings: &EffectSettings) -> Document {
     doc
 }
 
-/// 文書の全部の段（層の内容とマスク）の設定・有効・強さ・チャンネル。
+/// 文書の全部の段（レイヤーの内容とマスク）の設定・有効・強さ・チャンネル。
 fn stages(doc: &Document) -> Vec<(EffectSettings, bool, f64, Vec<Channel>)> {
     doc.layers()
         .iter()

@@ -1,7 +1,7 @@
-//! lilToon の見た目が読むユーザーチャンネルの絵（GPU の 2D テクスチャの配列。層 1 つがチャンネル 1 つ）。
+//! lilToon の見た目が読むユーザーチャンネルの絵（GPU の 2D テクスチャの配列。レイヤー 1 つがチャンネル 1 つ）。
 //!
 //! 標準の 6 チャンネルは `paint::Paint` が持つ。ユーザーチャンネルは、見た目の設定（`MaterialLook`）がスロットに割り当てたものだけを、
-//! ここで配列に持つ（最大 [`MAX_LAYERS`]。GL のために 1 つでも 2 層で作る）。値は合成の straight RGBA を乗算済みにしたもの（シェーダーが、何も描いていない所の値
+//! ここで配列に持つ（最大 [`MAX_LAYERS`]。GL のために 1 つでも 2 レイヤーで作る）。値は合成の straight RGBA を乗算済みにしたもの（シェーダーが、何も描いていない所の値
 //! （チャンネルの既定）に重ねて読む）。行は文書と同じ下から上。
 //!
 //! - 初めと、チャンネルの並び・文書・縮めが替わったときは全部を作り直し、ほかは core が「変わった」と言うタイルだけを合成して上げる
@@ -17,16 +17,16 @@ use yolu_core::{Channel, Document, LayerKind, Rect as DocRect, RowOrder, TileCoo
 
 use super::paint::{align, choose_shift, mip_bytes, plan_regions, reduce_premultiplied};
 
-/// 1 つのセットが持てるユーザーチャンネルの層の数（シェーダーの `NU` と同じ）。
+/// 1 つのセットが持てるユーザーチャンネルのレイヤーの数（シェーダーの `NU` と同じ）。
 pub const MAX_LAYERS: usize = 16;
-/// 1 つのセットのユーザーチャンネルの層の全部（ミップ込み）の GPU のバイト数の上限（全体の予算の残りがもっと少なければそれ）。
+/// 1 つのセットのユーザーチャンネルのレイヤーの全部（ミップ込み）の GPU のバイト数の上限（全体の予算の残りがもっと少なければそれ）。
 pub const USER_BUDGET_BYTES: u64 = 256 << 20;
-/// 配列の層の数の下限。GL は層が 1 つのテクスチャを 2D として作り、配列として読めないので、1 つでも 2 層で作る。
+/// 配列のレイヤーの数の下限。GL はレイヤーが 1 つのテクスチャを 2D として作り、配列として読めないので、1 つでも 2 レイヤーで作る。
 const MIN_LAYERS: usize = 2;
 /// `layer_index` の 1 つ分のずらし（一様バッファの動的なずらしの揃え）。
 const LAYER_STRIDE: u64 = 256;
 
-/// 持つ層の数（チャンネルの数、ただし [`MIN_LAYERS`] 以上）。
+/// 持つレイヤーの数（チャンネルの数、ただし [`MIN_LAYERS`] 以上）。
 fn layer_count(channels: usize) -> usize {
     channels.max(MIN_LAYERS)
 }
@@ -57,9 +57,9 @@ struct State {
     levels: u32,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    /// [層][段] の 1 段・1 層だけの見え方（ミップを作るときの描き先）。
+    /// [レイヤー][段] の 1 段・1 レイヤーだけの見え方（ミップを作るときの描き先）。
     level_views: Vec<Vec<wgpu::TextureView>>,
-    /// [段] の、その段だけ・全部の層の配列の見え方（ミップを作るときの読む元）。
+    /// [段] の、その段だけ・全部のレイヤーの配列の見え方（ミップを作るときの読む元）。
     level_arrays: Vec<wgpu::TextureView>,
     serial: u64,
 }
@@ -71,7 +71,7 @@ pub struct UserLayers {
     mip_pipeline: wgpu::RenderPipeline,
     mip_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    /// 層の番号（`LAYER_STRIDE` ごとに 1 つ。ミップを作るシェーダーが動的なずらしで読む）。
+    /// レイヤーの番号（`LAYER_STRIDE` ごとに 1 つ。ミップを作るシェーダーが動的なずらしで読む）。
     layer_index: wgpu::Buffer,
     /// 何も持たないときに束ねる 1 × 1 × 2（透明）。
     blank: wgpu::TextureView,
@@ -222,7 +222,7 @@ impl UserLayers {
         }
     }
 
-    /// 同じ道具の、まっさらな別の配列（ほかのセット用）。
+    /// 同じツールの、まっさらな別の配列（ほかのセット用）。
     pub fn sibling(&self) -> UserLayers {
         UserLayers {
             device: self.device.clone(),
@@ -245,7 +245,7 @@ impl UserLayers {
         self.state.as_ref().map_or(&self.blank, |s| &s.view)
     }
 
-    /// 持っているチャンネルの並び（層の番号の順）。
+    /// 持っているチャンネルの並び（レイヤーの番号の順）。
     pub fn channels(&self) -> &[Channel] {
         self.state.as_ref().map_or(&[], |s| &s.channels)
     }
@@ -399,7 +399,7 @@ impl UserLayers {
         self.layout_version += 1;
     }
 
-    /// 矩形ごとに合成して層へ上げる。段 0 の変わった範囲（x0 y0 x1 y1）。
+    /// 矩形ごとに合成してレイヤーへ上げる。段 0 の変わった範囲（x0 y0 x1 y1）。
     fn upload(
         &mut self,
         doc: &Document,
@@ -522,7 +522,7 @@ impl UserLayers {
     }
 }
 
-/// 全部を作るときに合成するタイル（画布全体に効く層・効果があれば全タイル、無ければ層が面を持つタイル。`paint` と同じ決まり）。
+/// 全部を作るときに合成するタイル（キャンバス全体に効くレイヤー・効果があれば全タイル、無ければレイヤーが面を持つタイル。`paint` と同じ決まり）。
 fn full_rects(doc: &Document, channel: Channel, shift: u32) -> Vec<(DocRect, usize)> {
     let whole = doc.layers().iter().any(|l| {
         (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment)
@@ -572,18 +572,18 @@ mod tests {
 
     #[test]
     fn the_plan_shrinks_to_the_budget_and_caps_the_layers() {
-        // 1024² の 16 層（ミップ込み約 85 MiB）はセットごとの上限に収まる
+        // 1024² の 16 レイヤー（ミップ込み約 85 MiB）はセットごとの上限に収まる
         let (shift, bytes) = plan([1024, 1024], 16, 0, 8192, u64::MAX);
         assert_eq!(shift, 0);
         assert_eq!(bytes, mip_bytes([1024, 1024], 64));
-        // 17 個目からは持たない（16 層と同じ）
+        // 17 個目からは持たない（16 レイヤーと同じ）
         assert_eq!(plan([1024, 1024], 17, 0, 8192, u64::MAX), (shift, bytes));
         // 予算が少なければ 2 の累乗で縮める。標準のチャンネルの縮めより細かくはしない
         let (shift, bytes) = plan([1024, 1024], 2, 0, 8192, 1 << 20);
-        assert_eq!(shift, 2, "256² × 2 層 × 4 B ≈ 0.67 MiB");
+        assert_eq!(shift, 2, "256² × 2 レイヤー × 4 B ≈ 0.67 MiB");
         assert!(bytes <= 1 << 20);
         assert_eq!(plan([1024, 1024], 2, 3, 8192, u64::MAX).0, 3);
-        // 1 つでも 2 層で作る（GL）。0 個は持たない
+        // 1 つでも 2 レイヤーで作る（GL）。0 個は持たない
         assert_eq!(
             plan([64, 64], 1, 0, 8192, u64::MAX).1,
             mip_bytes([64, 64], 8)
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(plan([64, 64], 0, 0, 8192, u64::MAX), (0, 0));
         // 全体の残りが 0 でも、縮めの下限（1 × 1）で止まる（標準のチャンネルの絵と同じ決まり）
         assert_eq!(plan([1024, 1024], 2, 0, 8192, 0), (10, 8));
-        // 8192² の 16 層はセットごとの上限（256 MiB）に収まる 1024² まで縮める（2048² は約 341 MiB）
+        // 8192² の 16 レイヤーはセットごとの上限（256 MiB）に収まる 1024² まで縮める（2048² は約 341 MiB）
         let (shift, bytes) = plan([8192, 8192], 16, 0, 8192, u64::MAX);
         assert_eq!(shift, 3);
         assert!(bytes <= USER_BUDGET_BYTES);

@@ -33,7 +33,7 @@ pub const LIST_TOP: f32 = 6.0 + 24.0 + 6.0;
 pub const STACKED_LIST_TOP: f32 = LIST_TOP + 24.0 + 4.0;
 /// 1 段の字下げ。
 const INDENT: f32 = 14.0;
-/// 行の右端の印（描くチャンネルを使っていない層・パスの層）の幅。
+/// 行の右端の印（描くチャンネルを使っていないレイヤー・パスレイヤー）の幅。
 const MARK_WIDTH: f32 = 20.0;
 
 /// 右から `slot` 番目（0 が右端）の印の左端が、行の右端から内へどれだけか。
@@ -41,7 +41,7 @@ fn mark_inset(slot: usize) -> f32 {
     24.0 + MARK_WIDTH * slot as f32
 }
 
-/// マスクのサムネイルの印のツールチップの 1 行（マスクの効果の数。層が対象のあいだ、それらの行は一覧に出ない）。
+/// マスクのサムネイルの印のツールチップの 1 行（マスクの効果の数。レイヤーが対象のあいだ、それらの行は一覧に出ない）。
 pub fn mask_effects_tip(lang: crate::lang::Lang, count: usize) -> String {
     match (count, lang) {
         (1, crate::lang::Lang::En) => "1 effect on the mask".to_owned(),
@@ -65,7 +65,7 @@ pub enum ThumbSource {
     Mask,
 }
 
-/// レイヤーのサムネイル（文書の版が変わったら作り直す。core は層ごとの版を持たないので文書の版で見る。描いている間は毎フレーム）。
+/// レイヤーのサムネイル（文書の版が変わったら作り直す。core はレイヤーごとの版を持たないので文書の版で見る。描いている間は毎フレーム）。
 #[derive(Default)]
 pub struct Thumbnails {
     map: HashMap<(LayerId, ThumbSource), (u64, TextureHandle)>,
@@ -73,7 +73,7 @@ pub struct Thumbnails {
     pub rebuilt: usize,
 }
 
-/// 層の 1 画素（straight RGBA8）。マスクは見せる量の灰色。
+/// レイヤーの 1 画素（straight RGBA8）。マスクは見せる量の灰色。
 fn thumb_pixel(doc: &Document, id: LayerId, source: ThumbSource, x: u32, y: u32) -> [u8; 4] {
     let Some(layer) = doc.layer(id) else {
         return [0; 4];
@@ -314,7 +314,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let rows = m2::visible_rows(&app.doc, &app.m2.collapsed);
-    // 層の行の下に効果の行（高さが違う。マスクが対象の層はマスクの効果、それ以外は層の効果）が続くので、行の位置は配置を数えて決める。
+    // レイヤーの行の下に効果の行（高さが違う。マスクが対象のレイヤーはマスクの効果、それ以外はレイヤーの効果）が続くので、行の位置は配置を数えて決める。
     // ドラッグの落とす先の数え方も、このフレームで描いた配置と同じ物を使う（途中で対象が替わっても、見えている行とずれない）
     let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT, crate::fx::mask_target(app));
     let content = layout.height;
@@ -550,7 +550,7 @@ fn toolbar(
     if response.clicked() {
         open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
     }
-    // フィルター・ジェネレーターを選んでいる層の今の対象（画素かマスク）に足す。入り口は別々
+    // フィルター・ジェネレーターを選んでいるレイヤーの今の対象（画素かマスク）に足す。入り口は別々
     let b = next();
     if w::icon_button(
         ui,
@@ -686,7 +686,7 @@ fn toolbar(
     }
 }
 
-/// 層の種類の見た目（サムネイルの位置）。ラスターは絵、塗りつぶしは色（無ければアイコン）、調整・グループはアイコン。
+/// レイヤーの種類の見た目（サムネイルの位置）。ラスターは絵、塗りつぶしは色（無ければアイコン）、調整・グループはアイコン。
 #[allow(clippy::too_many_arguments)]
 fn kind_thumb(
     ui: &mut Ui,
@@ -765,7 +765,7 @@ fn kind_thumb(
     }
 }
 
-/// ドラッグで運ぶ層: つかんだ層が複数選択の中にあれば選んだ層の全部、なければそれだけ。
+/// ドラッグで運ぶレイヤー: つかんだレイヤーが複数選択の中にあれば選んだレイヤーの全部、なければそれだけ。
 fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
     let chosen = app.selected_layers();
     if chosen.len() > 1 && chosen.contains(&id) {
@@ -791,7 +791,7 @@ fn update_drag(
     }
 }
 
-/// ドラッグを終える（落とす先があれば落とす。複数選んでいれば選んだ層をまとめて、1 回の Undo）。
+/// ドラッグを終える（落とす先があれば落とす。複数選んでいれば選んだレイヤーをまとめて、1 回の Undo）。
 fn drop_drag(app: &mut AppState, rows: &[Row]) {
     if let Some(LayerDrag {
         id: dragged,
@@ -845,8 +845,8 @@ fn click_modifiers(ui: &Ui) -> egui::Modifiers {
     })
 }
 
-/// 行を押したとき（修飾キー無しならその層だけを選ぶ。別の層なら画素が対象、同じ層なら今の対象のまま。Ctrl・Cmd で足し引き、
-/// Shift で範囲、Ctrl + Shift で範囲を足す）。選んでいた効果の欄は層の欄へ戻る。
+/// 行を押したとき（修飾キー無しならそのレイヤーだけを選ぶ。別のレイヤーなら画素が対象、同じレイヤーなら今の対象のまま。Ctrl・Cmd で足し引き、
+/// Shift で範囲、Ctrl + Shift で範囲を足す）。選んでいた効果の欄はレイヤーの欄へ戻る。
 fn click_row(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row]) {
     app.fx.selected = None;
     let modifiers = click_modifiers(ui);
@@ -865,7 +865,7 @@ fn click_row(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row]) {
     }
 }
 
-/// 層かマスクのサムネイルを押したとき: 修飾キー無しなら、その層を選んで（今選んでいる層ならそのまま）`mask` の側を対象にする
+/// レイヤーかマスクのサムネイルを押したとき: 修飾キー無しなら、そのレイヤーを選んで（今選んでいるレイヤーならそのまま）`mask` の側を対象にする
 /// （切り替えではなく、もう一度押しても同じ側）。修飾キーつきは行を押したのと同じ（選び方だけを変える）。
 fn click_thumb(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row], mask: bool) {
     let modifiers = click_modifiers(ui);
@@ -885,7 +885,7 @@ fn click_thumb(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row], mask: boo
     }
 }
 
-/// 層の右クリックのメニュー（行と層のサムネイルで同じ）。押した層を選んでから開く。
+/// レイヤーの右クリックのメニュー（行とレイヤーのサムネイルで同じ）。押したレイヤーを選んでから開く。
 fn open_layer_menu(
     app: &mut AppState,
     ctx: &egui::Context,
@@ -905,7 +905,7 @@ fn open_layer_menu(
     }
 }
 
-/// 右クリックで選ぶ: 選んだ層の中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
+/// 右クリックで選ぶ: 選んだレイヤーの中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
 fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
     if in_selection && app.has_multiple_layers_selected() {
         let chosen = app.selected_layers();
@@ -915,7 +915,7 @@ fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
     }
 }
 
-/// 行の右端のロックの印。自分のロックなら押すと外す（選んだ層の中の行なら選んだ全部の自分のロックを外す）。
+/// 行の右端のロックの印。自分のロックなら押すと外す（選んだレイヤーの中の行なら選んだ全部の自分のロックを外す）。
 fn lock_mark(
     ui: &mut Ui,
     app: &mut AppState,
@@ -1100,7 +1100,7 @@ fn layer_row(
         if !in_selection {
             app.select_single_layer(id);
         }
-        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
+        app.fx.selected = None; // レイヤーを選ぶと、選んでいた効果の欄はレイヤーの欄へ戻る
         if app.ui.renaming != Some(id) {
             app.ui.renaming = None;
         }
@@ -1175,7 +1175,7 @@ fn layer_row(
         w::icon(&painter, fold, "keyboard_arrow_down", t::TEXT_DIM, 14.0);
     }
     kind_thumb(ui, app, thumbs, ctx, list, thumb, id, !collapsed);
-    // 層のサムネイル（押すと層の画素が対象。選んだ層で画素が対象なら、マスクの有無によらずマスクと同じ青い枠）
+    // レイヤーのサムネイル（押すとレイヤーの画素が対象。選んだレイヤーで画素が対象なら、マスクの有無によらずマスクと同じ青い枠）
     let pixels_target = selected && !editing_mask;
     if pixels_target {
         w::outline(&painter, thumb.expand(2.0), t::ACCENT, 2.0, 2.0);
@@ -1196,7 +1196,7 @@ fn layer_row(
     if thumbr.clicked() {
         click_thumb(ui, app, id, rows, false);
     }
-    // 層のサムネイルは行の上で click を取るので、右クリックも行と同じメニューにつなぐ
+    // レイヤーのサムネイルは行の上で click を取るので、右クリックも行と同じメニューにつなぐ
     if thumbr.secondary_clicked() {
         open_layer_menu(app, ctx, id, in_selection, thumbr.interact_pointer_pos());
     }
@@ -1334,7 +1334,7 @@ fn layer_row(
         );
     }
     // 右端の印: ロック（すべては塗った錠、ほかの自分のロックは線の錠、グループから効いているだけなら薄い線の錠。自分のロックは押すと外す）と、
-    // 描くチャンネルを使っていないラスターの層
+    // 描くチャンネルを使っていないラスターレイヤー
     if locked {
         lock_mark(ui, app, row, id, effective_locks, chosen);
     }
@@ -1354,7 +1354,7 @@ fn layer_row(
             "This layer does not use the paint channel",
         ));
     }
-    // 右端の印: パスで描かれた層（手では描けない。ラスタライズで普通の層になる）
+    // 右端の印: パスで描かれたレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
     if has_path {
         let at = row.right() - mark_inset(usize::from(locked) + usize::from(no_pixels));
         let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));

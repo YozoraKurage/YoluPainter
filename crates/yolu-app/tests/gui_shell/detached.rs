@@ -1,9 +1,9 @@
-//! 外へ出した窓（ドックの欄を、アプリの窓の外の OS の窓へ）: タブの右クリックの「別ウィンドウで開く」・「ドックに戻す」、窓の外で離す・ドックへ
-//! 落として戻す、egui_dock の浮いた窓が外の窓になる、閉じると戻る、メニューの「ウィンドウ」、`layout.json` に覚えて起動で戻す、前の版の
-//! 浮いた欄、画面が外れたら主の窓の上、外の窓でキー・メニュー・ドロップ・キャンバスが効く。
+//! 外へ出したウィンドウ（ドックの欄を、アプリのウィンドウの外の OS のウィンドウへ）: タブの右クリックの「別ウィンドウで開く」・「ドックに戻す」、ウィンドウの外で離す・ドックへ
+//! 落として戻す、egui_dock の浮いたウィンドウが別ウィンドウになる、閉じると戻る、メニューの「ウィンドウ」、`layout.json` に覚えて起動で戻す、前の版の
+//! 浮いた欄、画面が外れたらメインウィンドウの上、別ウィンドウでキー・メニュー・ドロップ・キャンバスが効く。
 //!
-//! 外の窓は、試験の既定（kittest は子の viewport を根の中の egui の窓に埋める）では主の窓の中の egui の窓に描かれる。外の窓の入力は
-//! `common::viewports` の口で子の viewport を本物の別のパスとして回して確かめる（子の窓の絵は撮らない）。
+//! 別ウィンドウは、試験の既定（kittest は子の viewport を根の中の egui のウィンドウに埋める）ではメインウィンドウの中の egui のウィンドウに描かれる。別ウィンドウの入力は
+//! `common::viewports` の口で子の viewport を本物の別のパスとして回して確かめる（子ウィンドウの絵は撮らない）。
 use crate::common;
 
 use std::path::{Path, PathBuf};
@@ -61,7 +61,7 @@ fn mates(dock: &DockState<Tab>, tab: Tab) -> Vec<Tab> {
     }
 }
 
-/// 主のドックと外の窓を合わせて、どのタブも 1 つずつ（ポーズは無い）。
+/// 主のドックと別ウィンドウを合わせて、どのタブも 1 つずつ（ポーズは無い）。
 fn assert_every_tab_once(main: &DockState<Tab>, outside: &[&DockState<Tab>]) {
     layout::validate_all(main, outside).expect("どのタブも 1 つずつ");
 }
@@ -90,7 +90,7 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
         Tab::Navigator,
         Place::Record(record(-1500.0, 80.0, 300.0, 260.0))
     ));
-    // ナビゲーターの窓へログも入れる（前はログ）
+    // ナビゲーターのウィンドウへログも入れる（前はログ）
     let serial = outside.windows[1].serial;
     assert!(outside.move_into(&mut main, Tab::Log, serial, None));
     assert_every_tab_once(&main, &[&outside.windows[0].dock, &outside.windows[1].dock]);
@@ -120,7 +120,7 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
     // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、ナビゲーターはテクスチャセットの組）
     assert_eq!(loaded.detached[0].home, vec![Tab::Properties]);
     assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets]);
-    // 外の窓の無いファイルは、前の版と同じ中身（`detached` を書かない）
+    // 別ウィンドウの無いファイルは、前の版と同じ中身（`detached` を書かない）
     let plain = default_dock();
     assert_eq!(
         layout::render_all(&plain, None, &[], &[]),
@@ -132,26 +132,26 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
 #[test]
 fn headless_tabs_are_counted_across_the_main_dock_and_the_outside_windows() {
     let main = default_dock();
-    // 主のドックにあるタブを、外の窓にも持つと重なる
+    // 主のドックにあるタブを、別ウィンドウにも持つと重なる
     let twice = DockState::new(vec![Tab::History]);
     let reason = layout::validate_all(&main, &[&twice]).unwrap_err();
     assert!(
         reason.contains("history") && reason.contains("2"),
         "{reason}"
     );
-    // 主のドックから出したタブは、外の窓に無ければ足りない
+    // 主のドックから出したタブは、別ウィンドウに無ければ足りない
     let mut without = default_dock();
     let path = without.find_tab(&Tab::History).unwrap();
     without.remove_tab(path);
     let reason = layout::validate_all(&without, &[]).unwrap_err();
     assert!(reason.contains("history"), "{reason}");
     assert!(layout::validate_all(&without, &[&twice]).is_ok());
-    // 外の窓の中に、さらに浮いた窓の面があるのは使わない
+    // 別ウィンドウの中に、さらに浮いたウィンドウの面があるのは使わない
     let mut nested = DockState::new(vec![Tab::History]);
     nested.add_window(vec![Tab::Pose]);
     let reason = layout::validate_all(&without, &[&nested]).unwrap_err();
     assert!(reason.contains("浮いたウィンドウ"), "{reason}");
-    // 前の版（外の窓を知らない読み手）が読むと、主のドックのタブが足りないので並び全体を既定へ戻す（落ちない）
+    // 前の版（別ウィンドウを知らない読み手）が読むと、主のドックのタブが足りないので並び全体を既定へ戻す（落ちない）
     let text = layout::render_all(
         &without,
         None,
@@ -184,7 +184,7 @@ fn headless_an_outside_window_with_a_broken_place_keeps_its_tabs_and_an_unreadab
             home: vec![Tab::Properties],
         }],
     );
-    // 位置の値が壊れている: 窓は位置なし（主の窓の上に開く）、タブはそのまま
+    // 位置の値が壊れている: ウィンドウは位置なし（メインウィンドウの上に開く）、タブはそのまま
     let mut value: serde_json::Value = serde_json::from_str(&good).unwrap();
     value["detached"][0]["window"]["x"] = serde_json::json!(1e9);
     let loaded = layout::parse(&value.to_string());
@@ -192,7 +192,7 @@ fn headless_an_outside_window_with_a_broken_place_keeps_its_tabs_and_an_unreadab
     assert_eq!(loaded.detached[0].window, None);
     assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
     assert!(loaded.dock.is_some());
-    // 小さすぎる窓は、外の窓の最小の大きさまで広げる
+    // 小さすぎるウィンドウは、別ウィンドウの最小の大きさまで広げる
     let mut value: serde_json::Value = serde_json::from_str(&good).unwrap();
     value["detached"][0]["window"]["width"] = serde_json::json!(20.0);
     let loaded = layout::parse(&value.to_string());
@@ -205,7 +205,7 @@ fn headless_an_outside_window_with_a_broken_place_keeps_its_tabs_and_an_unreadab
     value["detached"][0]["home"] = serde_json::json!(["nothing", "layers"]);
     let loaded = layout::parse(&value.to_string());
     assert_eq!(loaded.detached[0].home, vec![Tab::Layers]);
-    // 中のドックが読めない・外の窓が配列でない: 主のドックも一緒に捨てて既定の並び（理由は診断のログだけ）
+    // 中のドックが読めない・別ウィンドウが配列でない: 主のドックも一緒に捨てて既定の並び（理由は診断のログだけ）
     for broken in [
         serde_json::json!([{"dock": 3}]),
         serde_json::json!([{"window": null}]),
@@ -243,7 +243,7 @@ fn headless_an_outside_window_stays_on_a_screen_and_moves_over_the_main_window_w
         place::plan(&record(5000.0, 0.0, 300.0, 200.0), &[], main),
         None
     );
-    // 右の画面（拡大率 1.5）にいた窓: 位置は画素のまま、大きさはその画面の拡大率で
+    // 右の画面（拡大率 1.5）にいたウィンドウ: 位置は画素のまま、大きさはその画面の拡大率で
     let on_right = FloatRecord {
         position: [2400.0 / 1.5, 300.0 / 1.5],
         size: [320.0, 400.0],
@@ -253,7 +253,7 @@ fn headless_an_outside_window_stays_on_a_screen_and_moves_over_the_main_window_w
     assert_eq!((p.rect.left, p.rect.top), (2400, 300));
     assert_eq!((p.rect.width(), p.rect.height()), (480, 600));
     assert_eq!(p.scale, 1.5);
-    // 右の画面を外した: 主の窓の上の中央へ（主の窓の画面の拡大率で）
+    // 右の画面を外した: メインウィンドウの上の中央へ（メインウィンドウの画面の拡大率で）
     let p = place::plan(&on_right, &[left], main).unwrap();
     assert_eq!((p.rect.width(), p.rect.height()), (320, 400));
     assert_eq!(
@@ -264,10 +264,10 @@ fn headless_an_outside_window_stays_on_a_screen_and_moves_over_the_main_window_w
         (900, 550)
     );
     assert_eq!(p.scale, 1.0);
-    // 上の帯は見えているが、窓が画面からはみ出す: 作業領域の中へ寄せる
+    // 上の帯は見えているが、ウィンドウが画面からはみ出す: 作業領域の中へ寄せる
     let p = place::plan(&record(1600.0, 900.0, 400.0, 300.0), &[left], main).unwrap();
     assert_eq!((p.rect.right, p.rect.bottom), (1920, 1040));
-    // 主の窓も分からなければ、主の画面の中央
+    // メインウィンドウも分からなければ、主の画面の中央
     let p = place::plan(
         &record(-9000.0, -9000.0, 400.0, 300.0),
         &[left, right],
@@ -282,7 +282,7 @@ fn headless_taking_out_and_returning_tabs_keeps_every_tab_once_and_goes_back_to_
     let mut main = default_dock();
     let mut outside = detach::Detached::new();
     let at = Place::Record(record(0.0, 0.0, 300.0, 300.0));
-    // 出すと主のドックから消え、外の窓に入る（戻る先は同じ組にいたタブ）
+    // 出すと主のドックから消え、別ウィンドウに入る（戻る先は同じ組にいたタブ）
     assert!(outside.detach(&mut main, Tab::Layers, at));
     assert!(main.find_tab(&Tab::Layers).is_none());
     assert_eq!(outside.windows.len(), 1);
@@ -296,7 +296,7 @@ fn headless_taking_out_and_returning_tabs_keeps_every_tab_once_and_goes_back_to_
     assert!(!detach::Detached::new().detach(&mut gone, Tab::Log, at));
     // 戻すと、戻る先の組（ログの組）へ入って前になる
     assert!(outside.return_tab(&mut main, Tab::Layers, None));
-    assert!(outside.windows.is_empty(), "空になった窓は消える");
+    assert!(outside.windows.is_empty(), "空になったウィンドウは消える");
     assert_eq!(mates(&main, Tab::Layers), vec![Tab::Log, Tab::Layers]);
     let (node, index) = main.find_main_surface_tab(&Tab::Layers).unwrap();
     assert_eq!(
@@ -339,7 +339,7 @@ fn headless_taking_out_and_returning_tabs_keeps_every_tab_once_and_goes_back_to_
         "{:?}",
         mates(&main, Tab::History)
     );
-    // 前に出す: 外の窓のタブはその窓の viewport を返し、無いタブ（ポーズ）は既定の組（レイヤーの組）へ開く
+    // 前に出す: 別ウィンドウのタブはそのウィンドウの viewport を返し、無いタブ（ポーズ）は既定の組（レイヤーの組）へ開く
     let properties_window = outside.windows[0].viewport_id();
     assert_eq!(
         outside.show(&mut main, Tab::Properties),
@@ -428,7 +428,7 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         .collect();
     assert!(!view.iter().any(|l| l.contains("パネルの並び")), "{view:?}");
     assert!(view.iter().any(|l| l.contains("筆圧の調整")));
-    // タブの右クリック: 主の窓のタブは「別ウィンドウで開く」、外の窓のただ 1 つのタブは「ドックに戻す」、ほかのタブもある窓なら両方
+    // タブの右クリック: メインウィンドウのタブは「別ウィンドウで開く」、別ウィンドウのただ 1 つのタブは「ドックに戻す」、ほかのタブもあるウィンドウなら両方
     let names = |app: &AppState, tab: Tab| -> Vec<String> {
         shell::popup_entries(app, yolu_app::state::PopupKind::DockTab(tab))
             .iter()
@@ -480,13 +480,13 @@ fn headless_one_of_several_windows_on_the_same_rect_is_picked_by_its_title_or_no
     let found = |items: &[(isize, &str)]| -> Vec<(isize, String)> {
         items.iter().map(|(h, t)| (*h, t.to_string())).collect()
     };
-    // 1 つだけ合ったなら、それ（題名が違っても。ほかに重なった窓が無い）
+    // 1 つだけ合ったなら、それ（題名が違っても。ほかに重なったウィンドウが無い）
     assert_eq!(
         detach::pick_window(&found(&[(7, "x")]), "ヒストリー"),
         Some(7)
     );
     assert_eq!(detach::pick_window(&[], "ヒストリー"), None);
-    // 同じ矩形に重なった窓が複数あるなら、題名が同じ 1 つ（列挙の順に依らない）
+    // 同じ矩形に重なったウィンドウが複数あるなら、題名が同じ 1 つ（列挙の順に依らない）
     let two = found(&[(7, "ログ"), (9, "ヒストリー · プロパティ")]);
     assert_eq!(
         detach::pick_window(&two, "ヒストリー · プロパティ"),
@@ -499,16 +499,16 @@ fn headless_one_of_several_windows_on_the_same_rect_is_picked_by_its_title_or_no
     assert_eq!(detach::pick_window(&same, "ログ"), None);
 }
 
-// ───────── 画面（外の窓は主の窓の中の egui の窓） ─────────
+// ───────── 画面（別ウィンドウはメインウィンドウの中の egui のウィンドウ） ─────────
 
-/// 外の窓の中のタブの見出しの矩形（外の窓は主の窓の中の egui の窓なので、主の窓の点）。
+/// 別ウィンドウの中のタブの見出しの矩形（別ウィンドウはメインウィンドウの中の egui のウィンドウなので、メインウィンドウの点）。
 fn outside_tab(h: &Harness<'static, YoluApp>, tab: Tab) -> Rect {
     h.state()
         .detached
         .windows
         .iter()
         .find_map(|w| w.tab_rects.get(&tab).copied())
-        .expect("外の窓のタブ")
+        .expect("別ウィンドウのタブ")
 }
 
 fn right_click(h: &mut Harness<'static, YoluApp>, at: Pos2) {
@@ -557,7 +557,7 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
         "{size:?}"
     );
     assert_every_tab_once(&app.dock, &[&app.detached.windows[0].dock]);
-    // 外の窓（試験では主の窓の中の egui の窓）に、ヒストリーの欄が描かれる
+    // 別ウィンドウ（試験ではメインウィンドウの中の egui のウィンドウ）に、ヒストリーの欄が描かれる
     let in_window = outside_tab(&h, Tab::History);
     right_click(&mut h, in_window.center());
     let item = popup_item(&h, "ドックに戻す");
@@ -576,10 +576,10 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
 ) {
     let mut h = app(1280.0, 800.0, 64);
     let tab = h.state().tab_rects[&Tab::Navigator];
-    // 主の窓の外（右）で離す
+    // メインウィンドウの外（右）で離す
     drag_tab(&mut h, tab.center(), pos2(1500.0, 300.0));
     let app = h.state();
-    assert_eq!(app.detached.windows.len(), 1, "外の窓ができる");
+    assert_eq!(app.detached.windows.len(), 1, "別ウィンドウができる");
     assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Navigator]);
     // 離した点がタブの帯の下に来る置き場所（外枠の左上は、離した点から少し左上）
     let at = app.detached.windows[0].record.unwrap().position;
@@ -591,7 +591,7 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
         ]
     );
     assert!(app.dock.find_tab(&Tab::Navigator).is_none());
-    // 外の窓のタブを、主の窓のキャンバスの組の上で離すと、その組へ戻る
+    // 別ウィンドウのタブを、メインウィンドウのキャンバスの組の上で離すと、その組へ戻る
     let canvas_leaf = detach::leaf_rect(&h.state().dock, Tab::Canvas).unwrap();
     let from = outside_tab(&h, Tab::Navigator).center();
     let to = canvas_leaf.center() + vec2(0.0, 80.0);
@@ -612,7 +612,7 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
 #[test]
 fn a_floating_window_made_by_the_dock_becomes_an_outside_window_with_its_group() {
     let mut h = app(1280.0, 800.0, 64);
-    // egui_dock がタブを浮いた窓へ動かした（組の中ほどで離したときと同じ形）
+    // egui_dock がタブを浮いたウィンドウへ動かした（組の中ほどで離したときと同じ形）
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&Tab::Color).unwrap();
@@ -626,7 +626,7 @@ fn a_floating_window_made_by_the_dock_becomes_an_outside_window_with_its_group()
     assert_eq!(
         app.dock.surfaces_count(),
         1,
-        "主のドックに浮いた窓の面が残らない"
+        "主のドックに浮いたウィンドウの面が残らない"
     );
     assert_eq!(app.detached.windows.len(), 1);
     assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Color]);
@@ -643,7 +643,7 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     h.state_mut()
         .apply(Action::Dock(DockOp::Show(Tab::History)));
     h.run();
-    // 「ウィンドウ」を開いて、ログ（外の窓）を選ぶと、その窓のタブが前に（窓を前へ出す頼みも送る）
+    // 「ウィンドウ」を開いて、ログ（別ウィンドウ）を選ぶと、そのウィンドウのタブが前に（ウィンドウを前へ出す頼みも送る）
     let at = menu_title(&h, "ウィンドウ").center();
     click(&mut h, at);
     let item = popup_item(&h, "ログ");
@@ -671,7 +671,7 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
         .active,
         index
     );
-    // パネルの並びを戻すと、外の窓を閉じて既定の並び
+    // パネルの並びを戻すと、別ウィンドウを閉じて既定の並び
     let at = menu_title(&h, "ウィンドウ").center();
     click(&mut h, at);
     let item = popup_item(&h, "パネルの並びを戻す");
@@ -709,7 +709,7 @@ fn snapshot_the_window_menu_and_the_tab_menu_in_english() {
     snapshot_menus(yolu_app::lang::Lang::En, "_english");
 }
 
-/// 設定のフォルダ（`layout.json` の置き場）を持つ窓（外の窓は主の窓の中の egui の窓）。
+/// 設定のフォルダ（`layout.json` の置き場）を持つウィンドウ（別ウィンドウはメインウィンドウの中の egui のウィンドウ）。
 fn app_with_settings(settings: &Path) -> Harness<'static, YoluApp> {
     let settings = settings.to_path_buf();
     let mut h = common::gpu_thread::builder()
@@ -742,7 +742,7 @@ fn outside_windows_are_remembered_and_come_back_at_the_next_start() {
     h.state_mut()
         .apply(Action::Dock(DockOp::Detach(Tab::History)));
     h.run();
-    // 窓の置き場所（OS の窓なら利用者が動かした所）
+    // ウィンドウの置き場所（OS のウィンドウなら利用者が動かした所）
     h.state_mut().detached.windows[0].record = Some(record(1650.0, 140.0, 420.0, 360.0));
     h.state_mut().on_exit();
     drop(h);
@@ -821,11 +821,11 @@ fn a_window_left_without_tabs_is_dropped_and_never_written_to_the_layout_file() 
     assert!(h.state().detached.windows.is_empty());
 }
 
-// ───────── 外の窓を本物の別のパスとして回す ─────────
+// ───────── 別ウィンドウを本物の別のパスとして回す ─────────
 
 const ROOT_SIZE: [f32; 2] = [1280.0, 800.0];
 
-/// 子の viewport を別のパスとして回す窓。主の窓の内側は (0, 0) から。
+/// 子の viewport を別のパスとして回すウィンドウ。メインウィンドウの内側は (0, 0) から。
 fn app_with_viewports() -> (Harness<'static, YoluApp>, Driver) {
     let driver = Driver::default();
     let mut h = common::gpu_thread::builder()
@@ -851,7 +851,7 @@ fn app_with_viewports() -> (Harness<'static, YoluApp>, Driver) {
     (h, driver)
 }
 
-/// タブを外の窓へ出し、子の窓を `inner`（仮想スクリーンの点）に置く。子の viewport を返す。
+/// タブを別ウィンドウへ出し、子ウィンドウを `inner`（仮想スクリーンの点）に置く。子の viewport を返す。
 fn detach_to(
     h: &mut Harness<'static, YoluApp>,
     driver: &Driver,
@@ -866,7 +866,7 @@ fn detach_to(
         .windows
         .iter()
         .find(|w| w.dock.find_tab(&tab).is_some())
-        .expect("外の窓")
+        .expect("別ウィンドウ")
         .viewport_id();
     driver.child(id, |c| {
         c.inner = Some(inner);
@@ -877,7 +877,7 @@ fn detach_to(
     id
 }
 
-/// 根の入力に、子の窓の情報を写す（根のパスが窓の位置とフォーカスを読む）。
+/// 根の入力に、子ウィンドウの情報を写す（根のパスがウィンドウの位置とフォーカスを読む）。
 fn sync(h: &mut Harness<'static, YoluApp>, driver: &Driver) {
     for (id, info) in driver.infos() {
         h.input_mut().viewports.insert(id, info);
@@ -908,13 +908,13 @@ fn an_outside_window_runs_its_own_pass_and_takes_the_same_shortcuts() {
     );
     driver.take_ran();
     h.run();
-    assert!(driver.take_ran().contains(&id), "子の窓のパスが回る");
+    assert!(driver.take_ran().contains(&id), "子ウィンドウのパスが回る");
     assert_eq!(h.state().state.tool, yolu_app::state::Tool::Brush);
-    // 外の窓に打ったキーは、主の窓と同じ表で効く（E は消しゴム）
+    // 別ウィンドウに打ったキーは、メインウィンドウと同じ表で効く（E は消しゴム）
     driver.child(id, |c| c.events.extend(key_events(Key::E)));
     h.run();
     assert_eq!(h.state().state.tool, yolu_app::state::Tool::Eraser);
-    // 外の窓の中のタブの見出し（子の窓の点）も控える
+    // 別ウィンドウの中のタブの見出し（子ウィンドウの点）も控える
     assert!(h.state().detached.windows[0]
         .tab_rects
         .contains_key(&Tab::Layers));
@@ -963,9 +963,9 @@ fn a_menu_opened_in_an_outside_window_is_drawn_and_chosen_there() {
     });
     h.run();
     let popup = h.state().state.popup.as_ref().expect("メニューが開く");
-    assert_eq!(popup.state.viewport, id, "外の窓に開く");
-    assert!(popup.state.rect.is_positive(), "外の窓のパスが描いた");
-    // 外の窓のキーで選ぶ（ただ 1 つのタブなので「ドックに戻す」だけ）
+    assert_eq!(popup.state.viewport, id, "別ウィンドウに開く");
+    assert!(popup.state.rect.is_positive(), "別ウィンドウのパスが描いた");
+    // 別ウィンドウのキーで選ぶ（ただ 1 つのタブなので「ドックに戻す」だけ）
     driver.child(id, |c| {
         c.events.extend(key_events(Key::ArrowDown));
         c.events.extend(key_events(Key::Enter));
@@ -1027,7 +1027,7 @@ fn an_unfocused_outside_window_does_not_lose_the_shift_of_the_focused_main_windo
         Tab::History,
         Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
     );
-    // フォーカスは主の窓にある
+    // フォーカスはメインウィンドウにある
     driver.child(id, |c| c.focused = false);
     sync(&mut h, &driver);
     h.run();
@@ -1059,7 +1059,7 @@ fn a_tab_dropped_from_an_outside_window_onto_the_main_window_joins_the_group_und
     let inner = Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0));
     let id = detach_to(&mut h, &driver, Tab::Navigator, inner);
     let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
-    // 主の窓のキャンバスの組（主の窓の点）を、子の窓の点で言う
+    // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
         .center();
@@ -1109,10 +1109,10 @@ fn the_canvas_in_an_outside_window_still_draws() {
     let rect = h
         .state()
         .canvas_view_rect()
-        .expect("外の窓でキャンバスを描いた");
+        .expect("別ウィンドウでキャンバスを描いた");
     assert!(
         rect.max.x <= 700.0 && rect.max.y <= 600.0,
-        "子の窓の点: {rect:?}"
+        "子ウィンドウの点: {rect:?}"
     );
     let c = rect.center();
     let before = h.state().state.can_undo();
@@ -1143,13 +1143,13 @@ fn the_canvas_in_an_outside_window_still_draws() {
     h.run();
     assert!(
         !before && h.state().state.can_undo(),
-        "外の窓のキャンバスに描けた"
+        "別ウィンドウのキャンバスに描けた"
     );
 }
 
 // ───────── 自前の枠（Windows。Linux でも `set_custom_frame(true)` で描いて確かめる） ─────────
 
-/// 自前の枠の窓に、外の窓を 1 つ（子の窓の内側は `OUTSIDE`）。
+/// 自前の枠のウィンドウに、別ウィンドウを 1 つ（子ウィンドウの内側は `OUTSIDE`）。
 const OUTSIDE: Rect = Rect {
     min: pos2(1400.0, 100.0),
     max: pos2(1760.0, 580.0),
@@ -1167,7 +1167,7 @@ fn framed_with_viewports(
     (h, driver, id)
 }
 
-/// 子の窓に入力を 1 つずつ 1 フレームで渡し、そのフレームごとに子の窓と主の窓へ送った頼みを集める。
+/// 子ウィンドウに入力を 1 つずつ 1 フレームで渡し、そのフレームごとに子ウィンドウとメインウィンドウへ送った頼みを集める。
 fn play_child(
     h: &mut Harness<'static, YoluApp>,
     driver: &Driver,
@@ -1220,7 +1220,7 @@ fn child_double_click(at: Pos2) -> Vec<Event> {
     ]
 }
 
-/// 外の窓のタブの行の、何も無い所（タブの右、閉じるの左。子の窓の点）。
+/// 別ウィンドウのタブの行の、何も無い所（タブの右、閉じるの左。子ウィンドウの点）。
 fn empty_row_point(h: &Harness<'static, YoluApp>, tab: Tab) -> Pos2 {
     let tab = h.state().detached.windows[0].tab_rects[&tab];
     let x = tab.right() + 40.0;
@@ -1231,7 +1231,7 @@ fn empty_row_point(h: &Harness<'static, YoluApp>, tab: Tab) -> Pos2 {
     pos2(x, tab.center().y)
 }
 
-/// 外の窓の行の右端の閉じる（子の窓の点）。
+/// 別ウィンドウの行の右端の閉じる（子ウィンドウの点）。
 fn close_point() -> Pos2 {
     yolu_app::titlebar::close_rect(Rect::from_min_size(
         Pos2::ZERO,
@@ -1256,7 +1256,7 @@ fn with_the_custom_frame_the_empty_tab_row_moves_and_maximizes_the_outside_windo
     );
     assert!(
         !root.iter().any(starts_drag),
-        "主の窓は動かさない: {root:?}"
+        "メインウィンドウは動かさない: {root:?}"
     );
     let (child, _) = play_child(&mut h, &driver, id, child_double_click(at));
     assert!(
@@ -1266,14 +1266,14 @@ fn with_the_custom_frame_the_empty_tab_row_moves_and_maximizes_the_outside_windo
         "{child:?}"
     );
     assert!(!child.iter().any(starts_drag), "ダブルクリックは動かさない");
-    assert_eq!(h.state().detached.windows.len(), 1, "窓はそのまま");
+    assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
 }
 
 #[test]
 fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
     let (mut h, driver, id) = framed_with_viewports(true, Tab::Navigator);
     let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
-    // 主の窓のキャンバスの組（主の窓の点）を、子の窓の点で言う
+    // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
         .center();
@@ -1282,7 +1282,10 @@ fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
     h.run();
     assert!(!child.iter().any(starts_drag), "{child:?}");
     let app = h.state();
-    assert!(app.detached.windows.is_empty(), "タブは主の窓へ戻る");
+    assert!(
+        app.detached.windows.is_empty(),
+        "タブはメインウィンドウへ戻る"
+    );
     assert_eq!(
         mates(&app.dock, Tab::Navigator),
         vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
@@ -1352,7 +1355,7 @@ fn with_the_custom_frame_the_edges_of_the_outside_window_begin_a_resize() {
             !root
                 .iter()
                 .any(|c| matches!(c, ViewportCommand::BeginResize(_))),
-            "主の窓の大きさは変えない"
+            "メインウィンドウの大きさは変えない"
         );
     }
     // 最大化中は縁が無く、行のダブルクリックは元に戻す
@@ -1417,7 +1420,7 @@ fn without_the_custom_frame_the_tab_row_and_the_right_end_do_nothing_to_the_wind
     assert_eq!(h.state().detached.windows.len(), 1, "閉じるは無い");
 }
 
-/// 絵: 自前の枠の外の窓（試験の窓では主の窓の中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
+/// 絵: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
 fn snapshot_frame(lang: yolu_app::lang::Lang, suffix: &str) {
     let mut h = app(1280.0, 800.0, 64);
     h.state_mut().state.lang = lang;

@@ -96,7 +96,7 @@ pub fn usage(root: &Path, own: Option<&Path>) -> Usage {
 pub struct Trimmed {
     /// 消した世代の数。
     pub generations: usize,
-    /// 整理のあとも上限を超えているか（守る世代だけで超えている・別の窓が使っている・消せなかった）。
+    /// 整理のあとも上限を超えているか（守る世代だけで超えている・別のウィンドウが使っている・消せなかった）。
     pub over: bool,
 }
 

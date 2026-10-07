@@ -37,7 +37,7 @@ pub(crate) fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
-/// 立方体の UV の島（3 × 2）。文書の画素 → (列, 行)。
+/// 立方体の UV アイランド（3 × 2）。文書の画素 → (列, 行)。
 fn island(x: u32, y: u32) -> (u32, u32) {
     (x * 3 / SIZE, y * 2 / SIZE)
 }
@@ -64,7 +64,7 @@ fn snapshot(h: &Harness<'_, YoluApp>) -> Vec<u8> {
     doc.composite(doc.bounds()).unwrap()
 }
 
-/// 選んでいるレイヤーの、島の中（縁を除く）を f で塗る。履歴は消える（準備なので）。
+/// 選んでいるレイヤーの、アイランドの中（縁を除く）を f で塗る。履歴は消える（準備なので）。
 fn fill_island(h: &mut Harness<'_, YoluApp>, col: u32, row: u32, f: impl Fn(u32, u32) -> Rgba8) {
     let layer = h.state().state.selected_layer.expect("レイヤー");
     let (w, hh) = (SIZE / 3, SIZE / 2);
@@ -262,7 +262,7 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
     let at = screen_of(&h, rect, Vec3::new(0.25, 0.0, -0.5));
     click(&mut h, at);
     assert!(message(&h).is_empty(), "{}", message(&h));
-    // 手前の面の島の、左右の半分の画素
+    // 手前の面のアイランドの、左右の半分の画素
     let (mid, w) = ((10 + SIZE / 3 - 10) / 2, SIZE / 3);
     let count = |h: &Harness<'_, YoluApp>, range: std::ops::Range<u32>| -> usize {
         (0..SIZE / 2)
@@ -352,7 +352,7 @@ fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
 #[test]
 fn the_symmetry_panel_offers_the_3d_items_beside_the_2d_ones() {
     use egui_kittest::kittest::Queryable;
-    // 対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ
+    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
     let (mut h, _rect) = cube_view();
     open_detail(&mut h, yolu_app::brushes::Category::Symmetry);
     // 3D のビューを出しているので、2D と 3D の両方の項目
@@ -516,7 +516,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
             offset: Default::default(),
         },
     );
-    // クローンの欄は、ブラシの詳細の窓の「効果」のカテゴリ
+    // クローンの欄は、ブラシの詳細のウィンドウの「効果」のカテゴリ
     open_detail(&mut h, yolu_app::brushes::Category::Effect);
     let disabled = |h: &Harness<'_, YoluApp>, label: &str| {
         h.get_by_role_and_label(Role::CheckBox, label)
@@ -528,7 +528,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     assert!(!disabled(&h, "全レイヤーから"));
     assert!(h.query_by_label("元がありません").is_none());
     assert!(h.query_by_label("元を決めました").is_none());
-    // Alt クリックで元を決めると、揃えるが使える（詳細の窓がモデルに重ならないよう、押す間は閉じる）
+    // Alt クリックで元を決めると、揃えるが使える（詳細のウィンドウがモデルに重ならないよう、押す間は閉じる）
     h.state_mut().state.brushes.ui.detail.open = false;
     h.run();
     let source = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
@@ -561,7 +561,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     );
 }
 
-/// ブラシの詳細の窓を、そのカテゴリで開く。
+/// ブラシの詳細のウィンドウを、そのカテゴリで開く。
 fn open_detail(h: &mut Harness<'_, YoluApp>, category: yolu_app::brushes::Category) {
     let ui = &mut h.state_mut().state.brushes.ui;
     ui.detail.open = true;
@@ -623,7 +623,7 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
 
 /// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力ごと・
 /// フレームごとに決まった数までダブを塗り、残りを持ち越して後のフレームで塗る。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを
-/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間に窓のフォーカスを
+/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを
 /// 失っても、同じ画素の 1 本の線になる（終える時に持ち越しを塗ってから確定する）。
 #[test]
 fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_in() {

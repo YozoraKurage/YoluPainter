@@ -1,14 +1,14 @@
-//! ドックの欄を、アプリの窓の外の OS の窓（egui の immediate の viewport）へ出す。
+//! ドックの欄を、アプリのウィンドウの外の OS のウィンドウ（egui の immediate の viewport）へ出す。
 //!
-//! 浮かせた欄はいつも OS の窓で、アプリの窓の上にも外（別の画面）にも置ける。egui_dock は窓を viewport に出す仕組みを持たず、浮いた窓は
-//! アプリの窓の中の `egui::Window` なので、外の窓ごとに `DockState<Tab>`（主の面だけ）を 1 つ持ち、その窓の viewport の中で `DockArea` を
-//! 描く。egui_dock が浮いた窓の面（`Surface::Window`）を作ったら、そのフレームのうちに外の窓へ替える（`take_floats`）。
+//! 浮かせた欄はいつも OS のウィンドウで、アプリのウィンドウの上にも外（別の画面）にも置ける。egui_dock はウィンドウを viewport に出す仕組みを持たず、浮いたウィンドウは
+//! アプリのウィンドウの中の `egui::Window` なので、別ウィンドウごとに `DockState<Tab>`（主の面だけ）を 1 つ持ち、そのウィンドウの viewport の中で `DockArea` を
+//! 描く。egui_dock が浮いたウィンドウの面（`Surface::Window`）を作ったら、そのフレームのうちに別ウィンドウへ替える（`take_floats`）。
 //!
-//! 出し方: タブの右クリックの「別ウィンドウで開く」、タブを窓の外で離す、egui_dock の窓の落とし先（組の中ほど）で離す。戻し方: 外の窓のタブを
-//! アプリの窓の中で離す（その点の下の組へ）、右クリックの「ドックに戻す」、OS の窓を閉じる（中のタブを全部、戻る先の組へ）。
-//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、それも無ければ主の窓の右の組。
+//! 出し方: タブの右クリックの「別ウィンドウで開く」、タブをウィンドウの外で離す、egui_dock のウィンドウの落とし先（組の中ほど）で離す。戻し方: 別ウィンドウのタブを
+//! アプリのウィンドウの中で離す（その点の下の組へ）、右クリックの「ドックに戻す」、OS のウィンドウを閉じる（中のタブを全部、戻る先の組へ）。
+//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、それも無ければメインウィンドウの右の組。
 //!
-//! ここは並びの操作（どの窓のどの組にどのタブがあるか）と置き場所の計算だけで、描くのは `app` の `detached`。
+//! ここは並びの操作（どのウィンドウのどの組にどのタブがあるか）と置き場所の計算だけで、描くのは `app` の `detached`。
 
 pub mod menu;
 #[cfg(windows)]
@@ -24,45 +24,45 @@ use crate::layout::FloatRecord;
 use crate::pen::PenInput;
 use crate::Tab;
 
-/// 外の窓の内側の最小の大きさ（点）。
+/// 別ウィンドウの内側の最小の大きさ（点）。
 pub const MIN_SIZE: [f32; 2] = [200.0, 150.0];
-/// 新しく出す窓の内側の大きさの上限（点。出す元の組が大きいとき）。
+/// 新しく出すウィンドウの内側の大きさの上限（点。出す元の組が大きいとき）。
 pub const MAX_NEW_SIZE: [f32; 2] = [900.0, 1000.0];
 /// 出す元の組の大きさが分からないときの、内側の大きさ（点）。
 pub const DEFAULT_SIZE: [f32; 2] = [360.0, 480.0];
-/// タブを窓の外で離したとき、新しい窓の外枠の左上を、離した点からどれだけ左上へずらすか（点。タブの帯がポインタの下に来るように）。
+/// タブをウィンドウの外で離したとき、新しいウィンドウの外枠の左上を、離した点からどれだけ左上へずらすか（点。タブの帯がポインタの下に来るように）。
 pub const GRAB_OFFSET: [f32; 2] = [40.0, 12.0];
 
 /// ドックの操作（メニュー・右クリックから。`YoluApp` が同じフレームのうちに当てる）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockOp {
-    /// タブを新しい外の窓へ出す。
+    /// タブを新しい別ウィンドウへ出す。
     Detach(Tab),
-    /// 外の窓のタブを、アプリの窓のドックへ戻す。
+    /// 別ウィンドウのタブを、アプリのウィンドウのドックへ戻す。
     Return(Tab),
-    /// パネルを前に出す（タブを選び、外の窓にあればその窓を前へ。どこにも無ければ、既定の並びでいた組へ開く）。
+    /// パネルを前に出す（タブを選び、別ウィンドウにあればそのウィンドウを前へ。どこにも無ければ、既定の並びでいた組へ開く）。
     Show(Tab),
 }
 
 /// 画面のメニューが読む、タブのありか（毎フレーム `YoluApp` が入れる）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PanelIndex {
-    /// どこかに開いているタブ（主の窓・外の窓）。
+    /// どこかに開いているタブ（メインウィンドウ・別ウィンドウ）。
     pub open: Vec<Tab>,
-    /// 外の窓にあるタブ。
+    /// 別ウィンドウにあるタブ。
     pub outside: Vec<Tab>,
-    /// 外の窓の中の、ただ 1 つのタブ（「別ウィンドウで開く」は出さない）。
+    /// 別ウィンドウの中の、ただ 1 つのタブ（「別ウィンドウで開く」は出さない）。
     pub alone: Vec<Tab>,
 }
 
-/// 外の窓の最初の置き場所（作るときに 1 度だけ使う。作った後は利用者が動かした所）。
+/// 別ウィンドウの最初の置き場所（作るときに 1 度だけ使う。作った後は利用者が動かした所）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Place {
     /// 外枠の左上と内側の大きさ（点）と、その点を書いたときの拡大率（画素 = 点 × 拡大率）。
     Record(FloatRecord),
-    /// 主の窓の内側の左上からの点（前の版の、アプリの中の浮いた欄）。最初に描くときに、主の窓の今の位置で決める。
+    /// メインウィンドウの内側の左上からの点（前の版の、アプリの中の浮いた欄）。最初に描くときに、メインウィンドウの今の位置で決める。
     OverMain { offset: [f32; 2], size: [f32; 2] },
-    /// 主の窓の上の中央（覚えた位置が読めなかった窓）。
+    /// メインウィンドウの上の中央（覚えた位置が読めなかったウィンドウ）。
     Center { size: [f32; 2] },
 }
 
@@ -74,18 +74,18 @@ pub(crate) struct Resolved {
     pub settle: Option<crate::windowpos::Settle>,
 }
 
-/// 窓に落としたファイルの行き先の矩形（その窓で描いたもの）。ブラシの一覧（PNG を筆先として取り込む）とライブラリの格子。
+/// ウィンドウに落としたファイルの行き先の矩形（そのウィンドウで描いたもの）。ブラシの一覧（PNG を筆先として取り込む）とライブラリの格子。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DropRects {
     pub brush_list: Option<Rect>,
     pub library_grid: Option<Rect>,
 }
 
-/// 外の窓 1 つ。
+/// 別ウィンドウ 1 つ。
 pub struct OsWindow {
     /// 起動してからの通し番号（viewport の名前のもと。保存しない）。
     pub serial: u64,
-    /// 中のドック（主の面だけ。浮いた窓の面ができたら、そのフレームで別の外の窓へ替える）。
+    /// 中のドック（主の面だけ。浮いたウィンドウの面ができたら、そのフレームで別の別ウィンドウへ替える）。
     pub dock: DockState<Tab>,
     /// 戻る先: 出したときに同じ組にいたタブ（並びの順）。
     pub home: Vec<Tab>,
@@ -95,22 +95,22 @@ pub struct OsWindow {
     pub record: Option<FloatRecord>,
     /// 作るときに渡す値（最初に描くときに `place` から決める）。
     pub(crate) resolved: Option<Resolved>,
-    /// 最後のフレームのタブの見出しの矩形（試験用。この窓の点）。
+    /// 最後のフレームのタブの見出しの矩形（試験用。このウィンドウの点）。
     pub tab_rects: HashMap<Tab, Rect>,
-    /// この窓のペンの点（Windows Ink を窓に繋いだら入る。位置はこの窓の内側の画素）。
+    /// このウィンドウのペンの点（Windows Ink をウィンドウに繋いだら入る。位置はこのウィンドウの内側の画素）。
     pub(crate) pen: PenInput,
-    /// 見つけた OS の窓（Windows の HWND の値。持ち主とペンを繋いだ窓）。
+    /// 見つけた OS のウィンドウ（Windows の HWND の値。持ち主とペンを繋いだウィンドウ）。
     #[cfg(windows)]
     pub(crate) hwnd: Option<isize>,
-    /// OS の窓を探した回数（Windows。上限で諦める）。
+    /// OS のウィンドウを探した回数（Windows。上限で諦める）。
     #[cfg(windows)]
     pub(crate) attach_tries: u32,
-    /// この窓で描いた、落としたファイルの行き先。
+    /// このウィンドウで描いた、落としたファイルの行き先。
     pub(crate) drops: DropRects,
 }
 
 impl OsWindow {
-    /// この窓の viewport。
+    /// このウィンドウの viewport。
     pub fn viewport_id(&self) -> ViewportId {
         viewport_of(self.serial)
     }
@@ -120,7 +120,7 @@ impl OsWindow {
         self.dock.iter_all_tabs().map(|(_, t)| *t).collect()
     }
 
-    /// 窓の題名（中のタブの名前を「 · 」でつなぐ。前のタブが先）。
+    /// ウィンドウの題名（中のタブの名前を「 · 」でつなぐ。前のタブが先）。
     pub fn title(&self, lang: crate::lang::Lang) -> String {
         let mut tabs = Vec::new();
         for (_, node) in self.dock.iter_all_nodes() {
@@ -144,8 +144,8 @@ impl OsWindow {
     }
 }
 
-/// 内側の矩形が合った OS の窓（ハンドル・題名。列挙の順）から、外の窓のものを決める（Windows の `native::find_window` が使う）。1 つだけならそれ。
-/// 同じ矩形に別の窓が重なっていて複数あるときは、題名が `title` と同じ 1 つ（題名は中のタブの名前で、窓ごとに違う）。1 つに決まらなければ
+/// 内側の矩形が合った OS のウィンドウ（ハンドル・題名。列挙の順）から、別ウィンドウのものを決める（Windows の `native::find_window` が使う）。1 つだけならそれ。
+/// 同じ矩形に別のウィンドウが重なっていて複数あるときは、題名が `title` と同じ 1 つ（題名は中のタブの名前で、ウィンドウごとに違う）。1 つに決まらなければ
 /// None（繋がずに、次のフレームで探し直す）。
 pub fn pick_window(found: &[(isize, String)], title: &str) -> Option<isize> {
     match found {
@@ -161,12 +161,12 @@ pub fn pick_window(found: &[(isize, String)], title: &str) -> Option<isize> {
     }
 }
 
-/// 外の窓の viewport（通し番号から）。
+/// 別ウィンドウの viewport（通し番号から）。
 pub fn viewport_of(serial: u64) -> ViewportId {
     ViewportId::from_hash_of(("yolu.detached", serial))
 }
 
-/// 外の窓の全部。
+/// 別ウィンドウの全部。
 #[derive(Default)]
 pub struct Detached {
     pub windows: Vec<OsWindow>,
@@ -178,7 +178,7 @@ impl Detached {
         Detached::default()
     }
 
-    /// 新しい外の窓を足す（中身は `dock` の主の面）。通し番号を返す。
+    /// 新しい別ウィンドウを足す（中身は `dock` の主の面）。通し番号を返す。
     pub fn open(&mut self, dock: DockState<Tab>, home: Vec<Tab>, place: Place) -> u64 {
         self.next_serial += 1;
         let serial = self.next_serial;
@@ -204,24 +204,24 @@ impl Detached {
         serial
     }
 
-    /// 通し番号の窓。
+    /// 通し番号のウィンドウ。
     pub fn get(&self, serial: u64) -> Option<&OsWindow> {
         self.windows.iter().find(|w| w.serial == serial)
     }
 
-    /// viewport の窓の番号（並びの中の位置）。
+    /// viewport のウィンドウの番号（並びの中の位置）。
     pub fn index_of_viewport(&self, id: ViewportId) -> Option<usize> {
         self.windows.iter().position(|w| w.viewport_id() == id)
     }
 
-    /// タブがある外の窓（並びの中の位置）。
+    /// タブがある別ウィンドウ（並びの中の位置）。
     pub fn window_of(&self, tab: Tab) -> Option<usize> {
         self.windows
             .iter()
             .position(|w| w.dock.find_main_surface_tab(&tab).is_some())
     }
 
-    /// タブが外の窓にあるか。
+    /// タブが別ウィンドウにあるか。
     pub fn contains(&self, tab: Tab) -> bool {
         self.window_of(tab).is_some()
     }
@@ -241,14 +241,14 @@ impl Detached {
         out
     }
 
-    /// 空になった窓を除く。
+    /// 空になったウィンドウを除く。
     pub fn drop_empty(&mut self) {
         self.windows
             .retain(|w| w.dock.main_surface().num_tabs() > 0);
     }
 
-    /// タブを、今ある所（主の窓・外の窓）から外す。外した所が主の窓なら、同じ組に残ったタブを戻る先として返す（外の窓なら、その窓の
-    /// 戻る先）。どこにも無ければ None。空になった外の窓は消す。
+    /// タブを、今ある所（メインウィンドウ・別ウィンドウ）から外す。外した所がメインウィンドウなら、同じ組に残ったタブを戻る先として返す（別ウィンドウなら、そのウィンドウの
+    /// 戻る先）。どこにも無ければ None。空になった別ウィンドウは消す。
     fn take(&mut self, main: &mut DockState<Tab>, tab: Tab) -> Option<Vec<Tab>> {
         if let Some((node, index)) = main.find_main_surface_tab(&tab) {
             let path = egui_dock::TabPath::new(SurfaceIndex::main(), node, index);
@@ -270,7 +270,7 @@ impl Detached {
         Some(home)
     }
 
-    /// タブを新しい外の窓へ出す（`place` の置き場所）。どこにも無いタブは出さない（false）。
+    /// タブを新しい別ウィンドウへ出す（`place` の置き場所）。どこにも無いタブは出さない（false）。
     pub fn detach(&mut self, main: &mut DockState<Tab>, tab: Tab, place: Place) -> bool {
         let Some(home) = self.take(main, tab) else {
             return false;
@@ -279,7 +279,7 @@ impl Detached {
         true
     }
 
-    /// 外の窓のタブを主の窓のドックへ戻す。`at` は主の窓の点（その点の下の組へ。無ければ戻る先の組）。主の窓にあるタブは何もしない。
+    /// 別ウィンドウのタブをメインウィンドウのドックへ戻す。`at` はメインウィンドウの点（その点の下の組へ。無ければ戻る先の組）。メインウィンドウにあるタブは何もしない。
     pub fn return_tab(&mut self, main: &mut DockState<Tab>, tab: Tab, at: Option<Pos2>) -> bool {
         if self.window_of(tab).is_none() {
             return false;
@@ -291,7 +291,7 @@ impl Detached {
         true
     }
 
-    /// タブを外の窓 `serial` の、`at`（その窓の点）の下の組へ移す（無ければ最初の組）。
+    /// タブを別ウィンドウ `serial` の、`at`（そのウィンドウの点）の下の組へ移す（無ければ最初の組）。
     pub fn move_into(
         &mut self,
         main: &mut DockState<Tab>,
@@ -308,7 +308,7 @@ impl Detached {
         let Some(home) = self.take(main, tab) else {
             return false;
         };
-        // （外した窓が空になって消えても、行き先の窓は別の窓なので残っている）
+        // （外したウィンドウが空になって消えても、行き先のウィンドウは別のウィンドウなので残っている）
         match self.windows.iter_mut().find(|w| w.serial == serial) {
             Some(window) => {
                 dock_into(&mut window.dock, tab, &[], at);
@@ -324,7 +324,7 @@ impl Detached {
         }
     }
 
-    /// 外の窓を閉じる: 中のタブを全部、戻る先の組へ戻す（組の分け方は捨てる）。前だったタブは戻した先でも前にする。
+    /// 別ウィンドウを閉じる: 中のタブを全部、戻る先の組へ戻す（組の分け方は捨てる）。前だったタブは戻した先でも前にする。
     pub fn close(&mut self, main: &mut DockState<Tab>, serial: u64) {
         let Some(at) = self.windows.iter().position(|w| w.serial == serial) else {
             return;
@@ -346,8 +346,8 @@ impl Detached {
         }
     }
 
-    /// パネルを前に出す: タブを選ぶ。外の窓にあれば、その窓の viewport を返す（呼ぶ側が窓を前へ）。どこにも無ければ、既定の並びで
-    /// いた組（無ければ主の窓の右の組）へ開いて選ぶ。
+    /// パネルを前に出す: タブを選ぶ。別ウィンドウにあれば、そのウィンドウの viewport を返す（呼ぶ側がウィンドウを前へ）。どこにも無ければ、既定の並びで
+    /// いた組（無ければメインウィンドウの右の組）へ開いて選ぶ。
     pub fn show(&mut self, main: &mut DockState<Tab>, tab: Tab) -> Option<ViewportId> {
         if let Some(path) = main.find_tab(&tab) {
             let _ = main.set_active_tab(path);
@@ -364,7 +364,7 @@ impl Detached {
         None
     }
 
-    /// 外の窓を全部閉じる（並びを既定へ戻すとき。タブは呼ぶ側が既定の並びで持つ）。
+    /// 別ウィンドウを全部閉じる（並びを既定へ戻すとき。タブは呼ぶ側が既定の並びで持つ）。
     pub fn clear(&mut self) {
         self.windows.clear();
     }
@@ -441,7 +441,7 @@ fn rightmost_leaf(tree: &Tree<Tab>) -> Option<NodeIndex> {
     drawn.or_else(|| leaves.first().map(|(i, _)| NodeIndex(*i)))
 }
 
-/// 主の面の、タブごとの同じ組のタブ（自分を除く）。フレームの頭に控え、egui_dock がタブを浮いた窓へ動かしたあとで戻る先に使う。
+/// 主の面の、タブごとの同じ組のタブ（自分を除く）。フレームの頭に控え、egui_dock がタブを浮いたウィンドウへ動かしたあとで戻る先に使う。
 pub fn leaf_mates(dock: &DockState<Tab>) -> HashMap<Tab, Vec<Tab>> {
     let mut out = HashMap::new();
     for node in dock.main_surface().iter() {
@@ -457,16 +457,16 @@ pub fn leaf_mates(dock: &DockState<Tab>) -> HashMap<Tab, Vec<Tab>> {
     out
 }
 
-/// egui_dock の浮いた窓 1 つ（外の窓へ替える前）。
+/// egui_dock の浮いたウィンドウ 1 つ（別ウィンドウへ替える前）。
 #[derive(Debug)]
 pub struct Float {
     pub dock: DockState<Tab>,
-    /// その窓の矩形（描いた viewport の点。まだ描いていなければ、最初に描くときの位置と大きさ）。
+    /// そのウィンドウの矩形（描いた viewport の点。まだ描いていなければ、最初に描くときの位置と大きさ）。
     pub rect: Rect,
 }
 
-/// `dock` の浮いた窓の面を全部外し、外の窓の中身にする形で返す（面の番号の順）。`drawn` は、描いた窓の矩形（egui が覚えている
-/// 窓の矩形。egui_dock は最初に描くときに位置と大きさの頼みを使い切り、窓の矩形を自分では持たないので、描いた後はこちらから読む）。
+/// `dock` の浮いたウィンドウの面を全部外し、別ウィンドウの中身にする形で返す（面の番号の順）。`drawn` は、描いたウィンドウの矩形（egui が覚えている
+/// ウィンドウの矩形。egui_dock は最初に描くときに位置と大きさの頼みを使い切り、ウィンドウの矩形を自分では持たないので、描いた後はこちらから読む）。
 pub fn take_floats(
     dock: &mut DockState<Tab>,
     drawn: impl Fn(SurfaceIndex) -> Option<Rect>,
@@ -500,18 +500,18 @@ pub fn take_floats(
     out
 }
 
-/// egui_dock が浮いた窓に付ける egui の窓の名前（`window {面の番号}`）。
+/// egui_dock が浮いたウィンドウに付ける egui のウィンドウの名前（`window {面の番号}`）。
 pub fn float_area_id(index: SurfaceIndex) -> egui::Id {
     egui::Id::new(format!("window {index:?}"))
 }
 
-/// 外の窓の中身のドックのフォーカスを外す（窓の木を移したとき、元の木のフォーカスの番号が残らないように）。
+/// 別ウィンドウの中身のドックのフォーカスを外す（ウィンドウの木を移したとき、元の木のフォーカスの番号が残らないように）。
 fn clear_focus(dock: &mut DockState<Tab>) {
     dock.main_surface_mut()
         .set_focused_node(NodeIndex(usize::MAX));
 }
 
-/// egui_dock の浮いた窓の、最初に描くときの位置と大きさ（読み口が無いので、書き出した形から）。
+/// egui_dock の浮いたウィンドウの、最初に描くときの位置と大きさ（読み口が無いので、書き出した形から）。
 fn window_rect(state: &egui_dock::WindowState) -> Rect {
     let value = serde_json::to_value(state).unwrap_or(serde_json::Value::Null);
     let pair = |key: &str| -> Option<[f32; 2]> {
@@ -528,7 +528,7 @@ fn window_rect(state: &egui_dock::WindowState) -> Rect {
     Rect::from_min_size(position.into(), size.into())
 }
 
-/// 新しく出す窓の内側の大きさ（点）: 出す元の組の大きさを、最小と上限の間へ。分からなければ既定。
+/// 新しく出すウィンドウの内側の大きさ（点）: 出す元の組の大きさを、最小と上限の間へ。分からなければ既定。
 pub fn new_window_size(leaf: Option<Rect>) -> [f32; 2] {
     match leaf.filter(|r| r.is_finite() && r.width() > 1.0 && r.height() > 1.0) {
         Some(r) => [
@@ -559,7 +559,7 @@ pub fn activate(dock: &mut DockState<Tab>, tab: Tab) {
     }
 }
 
-/// 外の窓のアイコン（主の窓と同じロゴ。1 度だけ読む）。
+/// 別ウィンドウのアイコン（メインウィンドウと同じロゴ。1 度だけ読む）。
 pub fn app_icon() -> std::sync::Arc<egui::IconData> {
     static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
     ICON.get_or_init(|| {

@@ -128,16 +128,16 @@ pub fn fit_side(longest: u32) -> u32 {
 /// 今の文書を替えるときに、呼ぶ側が決める物（`AppState::install_document`）。
 #[derive(Clone, Debug, Default)]
 pub struct Keep {
-    /// 選ぶ層（None は選ばない。`ensure_selection` が決め直す）。
+    /// 選ぶレイヤー（None は選ばない。`ensure_selection` が決め直す）。
     pub selected_layer: Option<LayerId>,
     /// 表示（拡大・位置。None は今の表示のまま）。
     pub view: Option<ViewState>,
-    /// 層の欄のスクロール（None は今のまま）。
+    /// レイヤーの欄のスクロール（None は今のまま）。
     pub layer_scroll: Option<f32>,
 }
 
 impl Keep {
-    /// 層を選ばず、表示を既定に、層の欄を先頭に戻す（大きさの変わりうる別の文書）。
+    /// レイヤーを選ばず、表示を既定に、レイヤーの欄を先頭に戻す（大きさの変わりうる別の文書）。
     pub fn reset() -> Keep {
         Keep {
             selected_layer: None,
@@ -315,7 +315,7 @@ impl TextureSets {
         self.list.get_mut(index)?.stash.as_mut().map(|s| &mut s.doc)
     }
 
-    /// 今でないセットの文書を入れ替える（選んでいる層は新しい文書の一番上にする）。
+    /// 今でないセットの文書を入れ替える（選んでいるレイヤーは新しい文書の一番上にする）。
     pub fn replace_stashed_doc(&mut self, index: usize, doc: Document) {
         if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
             stash.selected_layer = doc.layers().last().map(|l| l.id());
@@ -323,7 +323,7 @@ impl TextureSets {
         }
     }
 
-    /// 何も触っていない、今でないセットの文書を、同じセットのまま別の文書（別の大きさ）に替える（表示と選んでいる層は新しい文書に合わせて既定へ）。
+    /// 何も触っていない、今でないセットの文書を、同じセットのまま別の文書（別の大きさ）に替える（表示と選んでいるレイヤーは新しい文書に合わせて既定へ）。
     pub(crate) fn replace_untouched_stashed_doc(&mut self, index: usize, doc: Document) {
         if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
             *stash = Stash::new(doc);
@@ -637,8 +637,8 @@ impl AppState {
         Ok(())
     }
 
-    /// 今の文書を `doc` に替える（今の文書を替える口はすべてここを通る）。前の文書を指す画面の途中の状態（名前の変更・層のドラッグ・
-    /// ポップアップ・選んだ効果）はいつも戻し、選択・3D ビュー・予算を新しい文書に合わせる。選んだ層・表示・層のスクロールは `keep` の
+    /// 今の文書を `doc` に替える（今の文書を替える口はすべてここを通る）。前の文書を指す画面の途中の状態（名前の変更・レイヤーのドラッグ・
+    /// ポップアップ・選んだ効果）はいつも戻し、選択・3D ビュー・予算を新しい文書に合わせる。選んだレイヤー・表示・レイヤーのスクロールは `keep` の
     /// とおり。
     pub fn install_document(&mut self, doc: Document, keep: Keep) {
         self.doc = doc;
@@ -669,7 +669,7 @@ impl AppState {
         self.text.forget_fonts();
         self.text.check_fonts = true;
         self.fx.selected = None;
-        // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
+        // 前の文書の座標で打った多角形の点・量を聞くウィンドウは、新しい文書へ持ち越さない
         self.sel_doc_changed();
         self.ensure_selection();
         self.sync_view3d();
@@ -690,7 +690,7 @@ impl AppState {
     }
 
     /// 何も触っていないセット（`index`）の文書を、同じセット（uid・名前・鍵はそのまま）のまま別の文書に替える。履歴は持ち越さない。
-    /// 表示（拡大・位置）と選んでいる層は、新しい文書の大きさに合わせて既定に戻す。Live Link が、何も触っていない最初のセットを元の絵の
+    /// 表示（拡大・位置）と選んでいるレイヤーは、新しい文書の大きさに合わせて既定に戻す。Live Link が、何も触っていない最初のセットを元の絵の
     /// 大きさで作り直すときに使う（触っていないことは呼ぶ側が確かめる）。
     pub(crate) fn swap_untouched_set_document(&mut self, index: usize, doc: Document) {
         if let Some(set) = self.sets.get_mut(index) {
@@ -723,7 +723,7 @@ impl AppState {
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();
         self.fx.inputs.image_limit = image_limit;
-        // 新規プロジェクトの窓で作ったときだけ、作ったあとで立てる（窓で選んだ解像度）
+        // 新規プロジェクトのウィンドウで作ったときだけ、作ったあとで立てる（ウィンドウで選んだ解像度）
         self.resolution_chosen = false;
         self.ui.renaming_set = None;
         // モデルのマテリアルに結び付けてから文書を入れる（3D ビューの同期は、描くマテリアルが決まったあとの 1 回）。結び付けは
@@ -785,7 +785,7 @@ impl AppState {
             if si.is_some() || !create {
                 continue;
             }
-            // .ylp は 64 セットまで。超えるマテリアルにはセットを作らず、数だけ知らせる（新規プロジェクトの窓と同じ扱い）
+            // .ylp は 64 セットまで。超えるマテリアルにはセットを作らず、数だけ知らせる（新規プロジェクトのウィンドウと同じ扱い）
             if self.sets.list.len() >= crate::newproject::MAX_SETS {
                 report.skipped += 1;
                 continue;
@@ -866,7 +866,7 @@ impl AppState {
     }
 
     /// 空のテクスチャセットを足して今のセットにする（テクスチャセットのパネルの足すボタン）: 今のセットと同じ大きさ・使うチャンネル・
-    /// Normal の設定の、空の層 1 枚。モデルにセットの無いマテリアルがあれば最初のそれに付け、無ければモデルのどのマテリアルにも付けない
+    /// Normal の設定の、空のレイヤー 1 枚。モデルにセットの無いマテリアルがあれば最初のそれに付け、無ければモデルのどのマテリアルにも付けない
     /// （鍵は空いている仮のスロットの番号。プロジェクトの構成でマテリアルを選ぶ）。足したセットの uid を返す。
     pub fn add_texture_set(&mut self) -> Result<u32, String> {
         let lang = self.lang;
@@ -1062,12 +1062,12 @@ impl AppState {
 pub(crate) mod install_testing {
     use crate::state::{AppState, OpenPopup, PopupKind};
 
-    /// 名前の変更・層のドラッグ・ポップアップ・効果の選びを、今の文書の層に向けて立て、層の欄をずらす。
+    /// 名前の変更・レイヤーのドラッグ・ポップアップ・効果の選びを、今の文書のレイヤーに向けて立て、レイヤーの欄をずらす。
     pub(crate) fn stir(app: &mut AppState) {
         let layer = app
             .selected_layer
             .or_else(|| app.doc.layers().first().map(|l| l.id()))
-            .expect("層がある");
+            .expect("レイヤーがある");
         app.ui.renaming = Some(layer);
         app.ui.layer_drag = Some(crate::m2::LayerDrag {
             id: layer,
@@ -1086,7 +1086,7 @@ pub(crate) mod install_testing {
     /// 前の文書を指す途中の状態が戻った。
     pub(crate) fn assert_settled(app: &AppState, what: &str) {
         assert!(app.ui.renaming.is_none(), "{what}: 名前の変更");
-        assert!(app.ui.layer_drag.is_none(), "{what}: 層のドラッグ");
+        assert!(app.ui.layer_drag.is_none(), "{what}: レイヤーのドラッグ");
         assert!(app.popup.is_none(), "{what}: ポップアップ");
         assert!(app.fx.selected.is_none(), "{what}: 効果の選び");
     }

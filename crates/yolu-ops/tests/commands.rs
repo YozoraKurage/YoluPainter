@@ -271,7 +271,7 @@ fn layer_set_changes_many_attributes_as_one_undo_step() {
             "channels": {"Roughness": false, "Metallic": false, "Height": false, "Normal": false}
         }}),
     );
-    // 逆向き: 色のチャンネルだけに使える調整の層を、どのチャンネルにも使える調整へ替えながら、使えなかったチャンネルを有効にする
+    // 逆向き: 色のチャンネルだけに使える調整レイヤーを、どのチャンネルにも使える調整へ替えながら、使えなかったチャンネルを有効にする
     // （核は有効にするチャンネルに今の調整が使えるかを段ごとに見るので、調整を替えたあとで有効にする順で 1 段になる）
     check_one_command(
         &fx,
@@ -557,7 +557,7 @@ fn doc_info_and_set_info_describe_the_file() {
         panic!()
     };
     assert_eq!(face, same);
-    // 層の並びは上から下で、グループが中身の前に来る
+    // レイヤーの並びは上から下で、グループが中身の前に来る
     let Reply::Set(body) = ok(&mut host, json!({"command": "set.info"})) else {
         panic!()
     };
@@ -1053,7 +1053,7 @@ fn text_layers_are_added_and_redrawn_in_one_undo_step_with_a_font_file() {
     assert_eq!(text.color, "#204080");
     assert!(text.font.is_none());
     assert!(text.font_file.unwrap().ends_with("font.ttf"));
-    // 値を変えると描き直す（フォントは層が覚えたファイルから読む）
+    // 値を変えると描き直す（フォントはレイヤーが覚えたファイルから読む）
     check_one_command(
         &fx,
         &mut host,
@@ -1110,7 +1110,7 @@ fn text_layers_refuse_unavailable_fonts_and_misplaced_values_without_changes() {
         assert_eq!(e.code, code, "{command}");
     }
     assert_eq!(state(&mut host), before);
-    // 層が覚えたフォントのファイルの中身が変わったら、見つからない扱いで描き直さない
+    // レイヤーが覚えたフォントのファイルの中身が変わったら、見つからない扱いで描き直さない
     ok(
         &mut host,
         json!({"command": "layer.add", "args": {"kind": "text", "name": "Label", "text": {"content": "x", "font_file": file}}}),
@@ -1373,7 +1373,7 @@ fn installed_fonts_are_chosen_by_name_and_found_again_after_moving() {
     assert_eq!(e.code, yolu_ops::ErrorCode::NotFound);
 }
 
-/// アイランドごとのばらつきはモデルの UV の島を読む: 画面なしのホストにはモデルが無いので、足せるが入力のまま通し、`inactive_effects` に
+/// アイランドごとのばらつきはモデルの UV アイランドを読む: 画面なしのホストにはモデルが無いので、足せるが入力のまま通し、`inactive_effects` に
 /// モデルが無いことを言う（`needs_baked_maps` の印も立つ）。
 #[test]
 fn the_uv_island_variation_needs_a_model_and_is_listed_as_inactive_without_one() {

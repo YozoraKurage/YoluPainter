@@ -1,6 +1,6 @@
 //! .ylp に保存できる上限（セット 64・辺 8192）と Live Link・PSD の取り込み、キーボードでの画面全体の拡大縮小、画面の文。
 //! 取り込めても保存だけが止まる文書・セットを作らない（保存の途中で断られると、復旧の書き置きも同じ理由で止まる）。
-//! 層の数・入れ子の上限は yolu-io（`psd_import.rs`・`nesting_native.rs`）と yolu-core（`nesting.rs`）が確かめる。
+//! レイヤーの数・入れ子の上限は yolu-io（`psd_import.rs`・`nesting_native.rs`）と yolu-core（`nesting.rs`）が確かめる。
 
 use crate::common;
 
@@ -58,7 +58,7 @@ fn write_psd(path: &std::path::Path) -> Vec<u8> {
 }
 
 fn report_text(s: &AppState) -> String {
-    let r = s.psd.report.as_ref().expect("理由の窓");
+    let r = s.psd.report.as_ref().expect("理由のウィンドウ");
     let mut text = r.summary.clone();
     for line in &r.lines {
         text.push('\n');
@@ -225,7 +225,7 @@ fn zoom_after_keys(setup: bool) -> f32 {
 
 #[test]
 fn ctrl_minus_and_plus_do_not_zoom_the_whole_interface() {
-    // 切っていない（egui の既定）窓では、Ctrl+- で画面全体が縮む（この試験が効くことの確かめ）
+    // 切っていない（egui の既定）ウィンドウでは、Ctrl+- で画面全体が縮む（この試験が効くことの確かめ）
     assert!(zoom_after_keys(false) < 1.0, "既定では拡大率が変わる");
     // アプリの文脈では、画面全体の拡大率は動かない（キャンバスの拡大縮小はアプリのキーが受ける）
     assert_eq!(zoom_after_keys(true), 1.0);

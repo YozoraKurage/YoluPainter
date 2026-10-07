@@ -1,5 +1,5 @@
-//! 重なった UV の画面: ベイクの窓の「重なった UV」の欄（決め方・0〜1 の外の島・手で選んだ島の一覧・UV の見取り図と島のメニュー）、
-//! ポリゴン塗りつぶしの右クリックの島のメニュー（2D・3D）、2D のキャンバスの重なりの色と島の縁、表示のメニューの入切、設定の色の並び、
+//! 重なった UV の画面: ベイクのウィンドウの「重なった UV」の欄（決め方・0〜1 の外のアイランド・手で選んだアイランドの一覧・UV の見取り図とアイランドのメニュー）、
+//! ポリゴン塗りつぶしの右クリックのアイランドのメニュー（2D・3D）、2D のキャンバスの重なりの色とアイランドの縁、表示のメニューの入切、設定の色の並び、
 //! 描いたときの知らせ。日本語と英語の絵。操作の中身（焼いた値・保存・選び替え）は `headless/overlap_uv.rs`。
 use crate::common;
 
@@ -38,7 +38,7 @@ fn quad(name: &str, x: [f32; 2], y: [f32; 2], uv: [f32; 4]) -> ModelMesh {
     }
 }
 
-/// ミラーの両側を同じ UV に重ね（左右の四角）、離れた島を足したモデル。
+/// ミラーの両側を同じ UV に重ね（左右の四角）、離れたアイランドを足したモデル。
 fn mirrored() -> ViewModel {
     let square = [0.25, 0.25, 0.75, 0.75];
     ViewModel::new(
@@ -85,7 +85,7 @@ fn counted(h: &mut Harness<'_, YoluApp>) {
     h.run();
 }
 
-/// 窓の中だけを撮る。
+/// ウィンドウの中だけを撮る。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     let rect = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
@@ -118,13 +118,16 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
             MeshOverlapRule::PositiveX
         );
         assert_eq!(h.state().state.doc.undo_count(), 1);
-        let outside = lang.pick("0〜1 の外の島を焼かない", "Skip islands outside 0–1");
+        let outside = lang.pick(
+            "0〜1 の外のアイランドを焼かない",
+            "Skip islands outside 0–1",
+        );
         h.get_by_role_and_label(Role::CheckBox, outside).click();
         h.run();
         assert!(h.state().state.doc.bake_priority().skip_outside);
-        // 手で選ぶ: 「追加」で選び始め、2D・3D で押した島が一覧に入る
+        // 手で選ぶ: 「追加」で選び始め、2D・3D で押したアイランドが一覧に入る
         let add = lang.pick(
-            "2D か 3D で押した島を「焼かない島」に追加する（入っている島を押すと外す・Esc でやめる）",
+            "2D か 3D で押したアイランドを「焼かないアイランド」に追加する（入っているアイランドを押すと外す・Esc でやめる）",
             "Add the island you click in 2D or 3D to \"Islands Not Baked\" (clicking one already listed removes it; Esc stops)",
         );
         h.get_by_label(add).click();
@@ -164,7 +167,7 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
             "bake",
             &format!("bake_overlap_page_{}", lang.pick("ja", "en")),
         );
-        // 一覧から外す（並びは「優先する島」・「焼かない島」の順。焼かない島の行のボタン）
+        // 一覧から外す（並びは「優先するアイランド」・「焼かないアイランド」の順。焼かないアイランドの行のボタン）
         h.query_all_by_label(lang.pick("一覧から外す", "Remove from the list"))
             .last()
             .expect("外すボタン")
@@ -172,7 +175,7 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
         h.run();
         assert!(h.state().state.doc.bake_priority().skipped().is_empty());
         assert_eq!(h.state().state.doc.bake_priority().preferred().len(), 1);
-        // Esc は選ぶのをやめるだけ（窓は閉じない）
+        // Esc は選ぶのをやめるだけ（ウィンドウは閉じない）
         apply(
             &mut h,
             Action::Bake(BakeAction::Priority(PriorityOp::Pick(Some(
@@ -280,7 +283,7 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
     }
 }
 
-/// 窓と開いているポップアップを合わせた所だけを撮る。
+/// ウィンドウと開いているポップアップを合わせた所だけを撮る。
 fn shot_with_popup(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     let mut rect = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
@@ -303,7 +306,7 @@ fn shot_with_popup(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     egui_kittest::image_snapshot(&cropped, name);
 }
 
-/// 開いている島のメニュー（セット・島・見取り図からか・3D からか）。
+/// 開いているアイランドのメニュー（セット・アイランド・見取り図からか・3D からか）。
 fn island_menu(h: &Harness<'_, YoluApp>) -> Option<(usize, bool, bool)> {
     match h.state().state.popup.as_ref().map(|p| p.kind) {
         Some(yolu_app::state::PopupKind::BakeIsland {
@@ -316,7 +319,7 @@ fn island_menu(h: &Harness<'_, YoluApp>) -> Option<(usize, bool, bool)> {
     }
 }
 
-/// 窓の「重なった UV」の項目を出し、モデルの入力（島）を作り終えるまで回す。
+/// ウィンドウの「重なった UV」の項目を出し、モデルの入力（アイランド）を作り終えるまで回す。
 fn overlap_page(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = with_model(lang);
     counted(&mut h);
@@ -351,15 +354,15 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
             r.width() >= 160.0 && (r.width() - r.height()).abs() < 0.5,
             "{r:?}"
         );
-        // 重ならない島を優先に、片側を焼かないにしておく（絵に優先の縁と斜線が出る）
+        // 重ならないアイランドを優先に、片側を焼かないにしておく（絵に優先の縁と斜線が出る）
         let apart = map_point(&h, 0.1, 0.1);
         click(&mut h, apart);
-        assert_eq!(island_menu(&h), Some((4, true, false)), "離れた島");
+        assert_eq!(island_menu(&h), Some((4, true, false)), "離れたアイランド");
         let item = popup_item(&h, lang.pick("優先する", "Prefer")).center();
         click(&mut h, item);
         assert!(h.state().state.doc.bake_priority().preferred().contains(&4));
         assert_eq!(h.state().state.doc.undo_count(), 1, "1 回の Undo");
-        // 重なった所: 押すと番号の小さい側の島、続けて押すと次の島
+        // 重なった所: 押すと番号の小さい側のアイランド、続けて押すと次のアイランド
         let at = map_point(&h, 0.5, 0.4);
         click(&mut h, at);
         assert_eq!(island_menu(&h), Some((0, true, false)));
@@ -367,9 +370,9 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
         assert_eq!(
             island_menu(&h),
             Some((2, true, false)),
-            "続けて押すと次の島"
+            "続けて押すと次のアイランド"
         );
-        // メニューを開いている島は、キャンバスでも強調する（同じ島の UV の輪郭）
+        // メニューを開いているアイランドは、キャンバスでも強調する（同じアイランドの UV の輪郭）
         assert!(h.state().state.region_hover_len().is_some());
         let skip = popup_item(&h, lang.pick("焼かない", "Skip"));
         h.event(egui::Event::PointerMoved(skip.center()));
@@ -381,7 +384,7 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
         );
         click(&mut h, skip.center());
         assert!(h.state().state.doc.bake_priority().skipped().contains(&2));
-        // もう一度押すと最初の島へ戻る。「外す」は一覧に無い島では選べない
+        // もう一度押すと最初のアイランドへ戻る。「外す」は一覧に無いアイランドでは選べない
         click(&mut h, at);
         assert_eq!(island_menu(&h), Some((0, true, false)));
         let entries = yolu_app::shell::popup_entries(
@@ -398,13 +401,13 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
         ));
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
-        // 焼かない島を外す（続けて押した次の島）
+        // 焼かないアイランドを外す（続けて押した次のアイランド）
         click(&mut h, at);
         assert_eq!(island_menu(&h), Some((2, true, false)));
         let item = popup_item(&h, lang.pick("外す", "Remove")).center();
         click(&mut h, item);
         assert!(h.state().state.doc.bake_priority().skipped().is_empty());
-        // ポインタを置いた島は、窓の外でも強調する島
+        // ポインタを置いたアイランドは、ウィンドウの外でも強調するアイランド
         move_to(&h, apart);
         h.run();
         assert_eq!(h.state().state.bake.map_hover, Some(4));
@@ -423,7 +426,7 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
             Some(4),
             "ポインタの下の UV は動かない"
         );
-        // 窓を閉じると、強調する島も無くなる
+        // ウィンドウを閉じると、強調するアイランドも無くなる
         apply(&mut h, Action::Bake(BakeAction::CloseWindow));
         assert_eq!(h.state().state.bake.map_hover, None);
     }
@@ -448,7 +451,7 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
             })));
         }
         h.run();
-        // 重なった所にポインタを置く（重なった片側の島の強調）
+        // 重なった所にポインタを置く（重なった片側のアイランドの強調）
         let at = map_point(&h, 0.5, 0.4);
         move_to(&h, at);
         h.run();
@@ -497,9 +500,9 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
             "polygon_fill_island_menu_{}",
             lang.pick("ja", "en")
         ));
-        // 開いているメニューの外で、同じ所をもう一度右クリックすると次の島（重なった片側）
+        // 開いているメニューの外で、同じ所をもう一度右クリックすると次のアイランド（重なった片側）
         right(&mut h, at);
-        assert_eq!(island_menu(&h), Some((2, false, false)), "次の島");
+        assert_eq!(island_menu(&h), Some((2, false, false)), "次のアイランド");
         let item = popup_item(&h, lang.pick("優先して焼く", "Prefer in Bake")).center();
         click(&mut h, item);
         assert!(h.state().state.doc.bake_priority().preferred().contains(&2));
@@ -515,12 +518,12 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         let empty = view.to_screen(60.0, 60.0);
         right(&mut h, empty);
         assert_eq!(island_menu(&h), None);
-        // ほかの道具では開かない
+        // ほかのツールでは開かない
         h.state_mut().state.tool = Tool::Brush;
         h.run();
         right(&mut h, at);
         assert_eq!(island_menu(&h), None);
-        // 3D: 動かさずに離した右クリックは当たった面の島（+X の四角）のメニュー、3D の面を強調する。右ドラッグは回すだけ
+        // 3D: 動かさずに離した右クリックは当たった面のアイランド（+X の四角）のメニュー、3D の面を強調する。右ドラッグは回すだけ
         h.state_mut().state.tool = Tool::PolygonFill;
         {
             let s = &mut h.state_mut().state;

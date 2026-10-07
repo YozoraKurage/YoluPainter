@@ -1,4 +1,4 @@
-//! 範囲の道具の動き: バケツ（範囲を 1 回で塗る）、ポリゴン塗りつぶし（押したまま通った範囲を足し、離して 1 回の Undo）、ID の色で選択、
+//! 範囲のツールの動き: バケツ（範囲を 1 回で塗る）、ポリゴン塗りつぶし（押したまま通った範囲を足し、離して 1 回の Undo）、ID の色で選択、
 //! ポインタの下の範囲の求め方（強調）。入力の道（2D キャンバスと 3D ビュー）は `Where` で分け、範囲の求め方は同じ。
 
 use std::collections::HashSet;
@@ -55,7 +55,7 @@ pub struct Hover {
     pub geometry: Arc<SurfaceGeometry>,
     /// 消すときの色（桃色）で出すか。
     pub erase: bool,
-    /// ID の色の強調なら、作ったときの条件（マップ・ジオメトリ・色・許し幅）。ほかの道具が作った強調は None
+    /// ID の色の強調なら、作ったときの条件（マップ・ジオメトリ・色・許し幅）。ほかのツールが作った強調は None
     /// （強調の持ち主の印は強調と一緒に入れ替わる）。
     pub id_key: Option<(usize, usize, u32, u8)>,
     /// 3D: 今のカメラで手前に見える三角形（`overlay` が求める）。
@@ -86,9 +86,9 @@ impl PolygonDrag {
 pub enum CycleKind {
     /// ポリゴン塗りつぶし（範囲の種類の鍵ごと）。
     Fill,
-    /// ベイクの島を手で選ぶ（ベイクの島ごと）。
+    /// ベイクのアイランドを手で選ぶ（ベイクのアイランドごと）。
     BakeIsland,
-    /// ポリゴン塗りつぶしの右クリックの、島の優先・焼かないのメニュー（ベイクの島ごと。文書は変えない）。
+    /// ポリゴン塗りつぶしの右クリックの、アイランドの優先・焼かないのメニュー（ベイクのアイランドごと。文書は変えない）。
     Menu,
 }
 
@@ -244,13 +244,13 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
     }
 }
 
-/// 読むだけのテクスチャセットなら、その短い理由（文書を変える道具の入口で断る文。ステータスバーへ）。
+/// 読むだけのテクスチャセットなら、その短い理由（文書を変えるツールの入口で断る文。ステータスバーへ）。
 pub(super) fn read_only_message(app: &AppState) -> Option<String> {
     app.read_only_reason()
         .map(|reason| crate::lang::refusals::read_only_set(app.lang, reason))
 }
 
-/// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗る層。
+/// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗るレイヤー。
 pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
     let lang = app.lang;
     if let Some(message) = read_only_message(app) {
@@ -685,7 +685,7 @@ pub fn surface_press(app: &mut AppState, rect: Rect, at: Pos2, _source: StrokeSo
 
 /// この画面（`w`）のポインタの下の範囲を求め直す（範囲が変わったときだけ引き直す）。`at` が None（ポインタがこの画面に無い）なら、
 /// この画面が作った強調だけを消す。2D と 3D を並べて出していると、ポインタの無い側が毎フレーム呼ぶので、ポインタのある側の強調を
-/// 消してしまうと、その側は毎フレーム範囲と輪郭を作り直すことになる。道具が範囲を出さないときは、どの画面のものも消す。
+/// 消してしまうと、その側は毎フレーム範囲と輪郭を作り直すことになる。ツールが範囲を出さないときは、どの画面のものも消す。
 pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
     let tool = app.tool;
     let active = tool.is_region() && !(tool == Tool::Fill && app.region.by_color);
@@ -758,7 +758,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
     });
 }
 
-/// 範囲の道具の強調と、ID の色の強調を試験で読む口。
+/// 範囲のツールの強調と、ID の色の強調を試験で読む口。
 impl AppState {
     pub fn region_hover_len(&self) -> Option<usize> {
         self.region.hover.as_ref().map(|h| h.tris.len())

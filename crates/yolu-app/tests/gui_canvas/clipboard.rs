@@ -1,4 +1,4 @@
-//! 層の画素のコピー・カット・結合してコピー・ペースト（編集メニューとキー）と、OS のクリップボードの画像のやり取り。OS 側は
+//! レイヤーの画素のコピー・カット・結合してコピー・ペースト（編集メニューとキー）と、OS のクリップボードの画像のやり取り。OS 側は
 //! メモリ上の差し替え（`MemoryClipboard`）で、本物の OS のクリップボードには触れない。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
@@ -17,9 +17,9 @@ use yolu_core::LayerLocks;
 
 type H = Harness<'static, YoluApp>;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
-/// 64 × 64 の文書。最初の層に (8..40, 10..30) の不透明な画素と、透明だが RGB のある画素 (9, 11) がある。履歴は空。OS は差し替え。
+/// 64 × 64 の文書。最初のレイヤーに (8..40, 10..30) の不透明な画素と、透明だが RGB のある画素 (9, 11) がある。履歴は空。OS は差し替え。
 fn painted() -> (AppState, MemoryClipboard, LayerId) {
     let mut s = AppState::new(64, 64);
     let os = MemoryClipboard::new();
@@ -130,22 +130,30 @@ fn headless_cut_is_one_undo_and_a_paste_puts_it_back_as_a_new_layer_above() {
     run(&mut s, ClipAction::Paste);
     assert_eq!(s.doc.layers().len(), 2);
     let pasted = s.selected_layer.unwrap();
-    assert_ne!(pasted, id, "貼った層を選ぶ");
-    assert_eq!(s.doc.layer_index(pasted), Some(1), "選んでいた層のすぐ上");
+    assert_ne!(pasted, id, "貼ったレイヤーを選ぶ");
+    assert_eq!(
+        s.doc.layer_index(pasted),
+        Some(1),
+        "選んでいたレイヤーのすぐ上"
+    );
     assert_eq!(px(&s, pasted, 12, 15), original, "元の位置に戻る");
     assert_eq!(s.doc.layer(pasted).unwrap().name(), "レイヤー 2");
     assert!(s.doc.selection().is_none(), "貼ると選択を外す");
     assert_eq!(
         s.doc.undo_count(),
         2,
-        "貼り付けは層を足すことと選択を外すことで 1 回"
+        "貼り付けはレイヤーを足すことと選択を外すことで 1 回"
     );
     assert!(s.message.contains("ペースト"), "{}", s.message);
 
     s.apply(Action::Undo);
     assert_eq!(s.doc.layers().len(), 1);
     assert!(s.doc.selection().is_some(), "Undo で選択も戻る");
-    assert_eq!(s.selected_layer, Some(id), "消えた層の選択は一番上へ戻る");
+    assert_eq!(
+        s.selected_layer,
+        Some(id),
+        "消えたレイヤーの選択は一番上へ戻る"
+    );
     s.apply(Action::Undo);
     assert_eq!(px(&s, id, 12, 15), original);
 }
@@ -303,7 +311,7 @@ fn headless_copy_merged_takes_the_composite_of_the_paint_channel() {
         }
     }
     assert!(s.message.contains("結合してコピー"), "{}", s.message);
-    // 選択範囲があっても、合成を写す（層は選ばなくてよい）
+    // 選択範囲があっても、合成を写す（レイヤーは選ばなくてよい）
     s.selected_layer = None;
     run(&mut s, ClipAction::CopyMerged);
     assert!(s.message.contains("結合してコピー"), "{}", s.message);
@@ -339,9 +347,9 @@ fn headless_mask_editing_copies_and_cuts_the_mask() {
             .a,
         0
     );
-    assert_eq!(px(&s, id, 12, 12).a, 255, "層の画素はそのまま");
+    assert_eq!(px(&s, id, 12, 12).a, 255, "レイヤーの画素はそのまま");
     assert_eq!(s.doc.undo_count(), 1);
-    // 貼ると灰色の画素の新しい層になり、マスクを描く状態は終わる
+    // 貼ると灰色の画素の新しいレイヤーになり、マスクを描く状態は終わる
     run(&mut s, ClipAction::Paste);
     assert!(!s.m2.edit_mask);
     assert_eq!(
@@ -377,7 +385,7 @@ fn headless_the_paint_channel_decides_what_is_copied_and_where_it_is_pasted() {
         pasted.pixel(Channel::Roughness, 15, 15).unwrap(),
         Rgba8::new(90, 90, 90, 255)
     );
-    // Color の層を Roughness のままカットしようとしても、無効のチャンネルは断る
+    // Color のレイヤーを Roughness のままカットしようとしても、無効のチャンネルは断る
     s.selected_layer = Some(id);
     s.doc
         .set_channel_enabled(id, Channel::Roughness, false)
@@ -402,22 +410,27 @@ fn headless_refusals_say_why_in_both_languages_and_change_nothing() {
         (
             group,
             ClipAction::Copy,
-            "この層には画素が無い",
+            "このレイヤーには画素が無い",
             "This layer has no pixels",
         ),
         (
             group,
             ClipAction::Cut,
-            "この層には画素が無い",
+            "このレイヤーには画素が無い",
             "This layer has no pixels",
         ),
         (
             fill,
             ClipAction::Cut,
-            "塗りつぶしの層は切り取れない",
+            "塗りつぶしレイヤーは切り取れない",
             "A fill layer cannot be cut",
         ),
-        (empty, ClipAction::Copy, "層が空", "The layer is empty"),
+        (
+            empty,
+            ClipAction::Copy,
+            "レイヤーが空",
+            "The layer is empty",
+        ),
         (
             LayerId(99),
             ClipAction::Copy,
@@ -474,13 +487,13 @@ fn headless_refusals_say_why_in_both_languages_and_change_nothing() {
     s.lang = Lang::En;
     run(&mut s, ClipAction::Copy);
     assert_eq!(s.message, "The area to copy is too large");
-    // 貼る層が上限を超える（貼る側の話なので、「コピーする範囲」ではなく、貼る層の予算の断りで言う）
+    // 貼るレイヤーが上限を超える（貼る側の話なので、「コピーする範囲」ではなく、貼るレイヤーの予算の断りで言う）
     s.doc.set_stroke_budget_bytes(64 << 20).unwrap();
     s.lang = Lang::Ja;
     run(&mut s, ClipAction::Copy);
     s.doc.set_stroke_budget_bytes(1024).unwrap();
     run(&mut s, ClipAction::Paste);
-    assert_eq!(s.message, "貼る層が一回の操作の予算を超える");
+    assert_eq!(s.message, "貼るレイヤーが一回の操作の予算を超える");
     s.lang = Lang::En;
     run(&mut s, ClipAction::Paste);
     assert_eq!(s.message, "The pasted layer exceeds the operation budget");
@@ -488,7 +501,7 @@ fn headless_refusals_say_why_in_both_languages_and_change_nothing() {
     assert_eq!(s.doc.undo_count(), 0);
 }
 
-/// 上限は貼る層の実際の大きさ（0 でないタイル）で決まる: 矩形が上限より大きくても、まばらな画像は貼れる。密な画像は断る。
+/// 上限は貼るレイヤーの実際の大きさ（0 でないタイル）で決まる: 矩形が上限より大きくても、まばらな画像は貼れる。密な画像は断る。
 #[test]
 fn headless_paste_is_limited_by_the_pasted_layer_not_by_the_size_of_the_rectangle() {
     let mut s = AppState::new(256, 256);
@@ -534,7 +547,7 @@ fn headless_paste_is_limited_by_the_pasted_layer_not_by_the_size_of_the_rectangl
     os.set(Some(image(true)));
     run(&mut s, ClipAction::Paste);
     assert_eq!(s.doc.layers().len(), 2, "密な画像は断る");
-    assert_eq!(s.message, "貼る層が一回の操作の予算を超える");
+    assert_eq!(s.message, "貼るレイヤーが一回の操作の予算を超える");
 }
 
 #[test]
@@ -783,7 +796,7 @@ fn headless_when_the_os_image_was_unreadable_at_the_failure_the_next_one_read_is
     );
 }
 
-/// 自分が書いた画像が画布より大きいとき（大きな画布から写した写しを小さな画布へ）は、外の画像でなく自分の写しなので、断らず中央に貼る。
+/// 自分が書いた画像がキャンバスより大きいとき（大きなキャンバスから写した写しを小さなキャンバスへ）は、外の画像でなく自分の写しなので、断らず中央に貼る。
 /// 同じ大きさの外の画像は断る。
 #[test]
 fn headless_a_copy_from_a_bigger_canvas_is_pasted_but_an_external_image_of_that_size_is_refused() {
@@ -839,7 +852,7 @@ fn headless_clipboard_notices_do_not_end_in_a_full_stop_and_use_the_language_s_b
         os.fail_reads(Some(OsClipboardError::Busy));
         step(&mut s, ClipAction::Paste, &mut notices); // OS を読めなかった理由
         os.fail_reads(None);
-        // 大きな画布から写した写し: 中央に貼り、はみ出しを切り落とす
+        // 大きなキャンバスから写した写し: 中央に貼り、はみ出しを切り落とす
         os.set(None);
         let mut rgba = Vec::new();
         for _ in 0..100 * 20 {
@@ -915,7 +928,11 @@ fn headless_the_edit_menu_entries_follow_the_layer_kind_and_the_mask_state() {
     s.selected_layer = Some(group);
     s.doc.add_layer_mask(group).unwrap();
     s.set_edit_mask(true);
-    assert_eq!(enabled(&s), [true; 4], "マスクはどの層でも写せて切れる");
+    assert_eq!(
+        enabled(&s),
+        [true; 4],
+        "マスクはどのレイヤーでも写せて切れる"
+    );
     s.set_edit_mask(false);
     s.selected_layer = Some(LayerId(99));
     assert_eq!(enabled(&s), [false, false, true, true]);

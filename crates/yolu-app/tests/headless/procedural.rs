@@ -140,7 +140,7 @@ fn headless_every_bundled_material_places_into_documents_of_other_sizes() {
             place(&mut s, &id);
             assert!(s.doc.layers().len() > before, "{id} {w}x{h}: {}", s.message);
             assert!(s.message.starts_with("Placed"), "{}", s.message);
-            // 層は画素を持たず（値とマスクの Generator）、どの大きさでも保存の予算を使わない
+            // レイヤーは画素を持たず（値とマスクの Generator）、どの大きさでも保存の予算を使わない
             assert!(
                 s.doc
                     .layers()

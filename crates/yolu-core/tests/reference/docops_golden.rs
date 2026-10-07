@@ -157,7 +157,7 @@ enum Merge {
     Group(LayerId),
 }
 /// 結合がロックで断られる・断られない（DocOpsGolden.cs の MergeLock と同じ番号）。結果の型（0 成功・1 ロック・2 そのほかの拒否）、
-/// 断った層・持ち主・ロック、断ったあとの文書を書く。
+/// 断ったレイヤー・持ち主・ロック、断ったあとの文書を書く。
 fn merge_lock(d: &mut Document, n: u32) -> Vec<u8> {
     let (a, b) = (d.layers()[0].id(), d.layers()[1].id());
     let lock = |d: &mut Document, id, locks| d.set_layer_locks(id, locks).unwrap();

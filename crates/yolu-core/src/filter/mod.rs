@@ -1,6 +1,6 @@
 //! 非破壊フィルター。入力は左下原点の straight RGBA8、マスクは隠す量。
 //! 文書・履歴・キャッシュに依存せず、成功時だけ完成した領域を返す。
-//! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整層の責務。
+//! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整レイヤーの責務。
 //! Normalize の全域統計は `statistics` で単独に求められ、`Options::statistics` で評価へ渡せる（タイルごとの再走査を避けられる）。
 
 mod generated;
@@ -71,7 +71,7 @@ pub enum SlopeMode {
     Min,
     Max,
 }
-/// モルフォロジーの向き（丸い窓の最大で太らせる・最小で細らせる）。
+/// モルフォロジーの向き（丸いウィンドウの最大で太らせる・最小で細らせる）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MorphologyMode {
     Dilate,
@@ -107,7 +107,7 @@ pub enum Settings {
         slot: u32,
         blend: GeneratorBlend,
     },
-    // 色調補正の 6 種（調整の層と同じ値と式。Rust 版だけの種類で、段の種類の番号は 64 から。画素ごとの点の処理で、強さは元との混ぜ）。
+    // 色調補正の 6 種（調整レイヤーと同じ値と式。Rust 版だけの種類で、段の種類の番号は 64 から。画素ごとの点の処理で、強さは元との混ぜ）。
     /// グラデーションマップ。色のチャンネルだけ。
     GradientMap(GradientMap),
     /// トーンカーブ。スカラーとマスクでは RGB 全体の曲線だけが効く。
@@ -147,7 +147,7 @@ pub enum Settings {
         scale: f64,
         seed: i32,
     },
-    /// モルフォロジー（75）: 丸い窓の最大（dilate）・最小（erode）。スカラーとマスクだけ。
+    /// モルフォロジー（75）: 丸いウィンドウの最大（dilate）・最小（erode）。スカラーとマスクだけ。
     Morphology {
         mode: MorphologyMode,
         radius: u32,
@@ -161,7 +161,7 @@ pub enum Settings {
     HighPass {
         radius: u32,
     },
-    /// メディアン（78）: 正方形の窓の中央値（チャンネルごと）。
+    /// メディアン（78）: 正方形のウィンドウの中央値（チャンネルごと）。
     Median {
         radius: u32,
     },
@@ -504,8 +504,8 @@ pub struct Options<'a> {
     /// `statistics` が返した値（段と同じ並び）。Some の段は走査せずその値を使う。None の段は評価の中で求める。
     /// 入力・スタック・Generator の値が変わったら取り直すのは呼び出し側。長さと段の種類だけ検証する。
     pub statistics: Option<&'a [Option<Statistics>]>,
-    /// UV の継ぎ目をまたいで読む帯の写し（大きさは読み元と同じこと）。Some なら、近傍の段（`halo` > 0）は、段の入力の島の外の帯を
-    /// 継ぎ目の相手の島の画素で埋めてからかけ、島の外は段の入力のまま戻す（`seams.rs`）。None は今までと同じバイト。
+    /// UV の継ぎ目をまたいで読む帯の写し（大きさは読み元と同じこと）。Some なら、近傍の段（`halo` > 0）は、段の入力のアイランドの外の帯を
+    /// 継ぎ目の相手のアイランドの画素で埋めてからかけ、アイランドの外は段の入力のまま戻す（`seams.rs`）。None は今までと同じバイト。
     pub seams: Option<&'a crate::geometry::SeamBand>,
 }
 impl Default for Options<'_> {
@@ -797,7 +797,7 @@ pub fn evaluate(
     }
     Ok(output)
 }
-/// 色調補正の段（調整の層と同じ式）の 1 画素の結果。トーンカーブはスカラーとマスクでは RGB 全体の曲線だけ。
+/// 色調補正の段（調整レイヤーと同じ式）の 1 画素の結果。トーンカーブはスカラーとマスクでは RGB 全体の曲線だけ。
 fn adjust_pixel(settings: &Settings, value_type: ValueType, c: Rgba8) -> Rgba8 {
     match settings {
         Settings::GradientMap(v) => v.apply(c),

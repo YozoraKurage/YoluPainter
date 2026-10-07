@@ -1,4 +1,4 @@
-//! ポーズの欄（ドックのタブ「ポーズ」）の試験（egui_kittest。描画は wgpu のソフトの描画）: タブの置き場・別の窓・節の開閉・日英
+//! ポーズの欄（ドックのタブ「ポーズ」）の試験（egui_kittest。描画は wgpu のソフトの描画）: タブの置き場・別のウィンドウ・節の開閉・日英
 //! （英語に日本語が残らない・文字が切れない・「…」に詰められない）、ボーンのインスペクター（数値・項目ごと・ボーン・ボーンと子・全部の戻し・
 //! 取り消しの段・描いている間は断る）、BlendShape の戻し、ボーンの影響で面を隠す（ボタン・描かれず当たらない・項目の外し・保存したプリセットを
 //! 入れる/外す・消す・合わないボーンの理由）。試験のモデルは試しの人形（ユーザーの FBX は使わない）。
@@ -23,7 +23,7 @@ use yolu_core::glam::{Quat, Vec3};
 
 type H = Harness<'static, YoluApp>;
 
-/// 試しの人形を読んだ窓（ポーズのタブはドックの隅のまま）。
+/// 試しの人形を読んだウィンドウ（ポーズのタブはドックの隅のまま）。
 fn figure(doc: u32) -> H {
     let mut h = app(1280.0, 860.0, doc);
     h.state_mut().apply(Action::Pose(PoseAction::LoadFigure));
@@ -31,7 +31,7 @@ fn figure(doc: u32) -> H {
     h
 }
 
-/// ポーズのタブをドックから外して、左の上に浮いた窓にする（egui_dock は外した窓の大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
+/// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする（egui_dock は外したウィンドウの大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
 fn float_pose_tab(h: &mut H) {
     {
         let dock = &mut h.state_mut().dock;
@@ -210,9 +210,9 @@ fn the_pose_tab_floats_in_its_own_window_and_keeps_working() {
     float_pose_tab(&mut h);
     assert!(
         h.state().dock.find_tab(&Tab::Pose).is_none() && h.state().detached.contains(Tab::Pose),
-        "ドックから外れて別の窓にいる"
+        "ドックから外れて別のウィンドウにいる"
     );
-    // 窓の中で、木も節も使える
+    // ウィンドウの中で、木も節も使える
     for label in ["ボーン", "腰", "背骨", "面を隠す", "BlendShape", "おなか"] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }

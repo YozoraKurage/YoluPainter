@@ -80,8 +80,8 @@ impl Document {
         self.end_coalescing();
     }
 
-    /// 複数の段を 1 回の Undo にして実行する（貼り付けの「層を足す」と「選択を外す」）。1 つでも `Compound` に包み、費用は段の
-    /// 合計に 32 を足す（C# の `CompositeCommand` の段の分。層を 1 つだけ足す貼り付けも同じ）。途中で断ったら済んだ分を戻して、
+    /// 複数の段を 1 回の Undo にして実行する（貼り付けの「レイヤーを足す」と「選択を外す」）。1 つでも `Compound` に包み、費用は段の
+    /// 合計に 32 を足す（C# の `CompositeCommand` の段の分。レイヤーを 1 つだけ足す貼り付けも同じ）。途中で断ったら済んだ分を戻して、
     /// 何も積まない。`batch` がまとめる段（費用は合計のまま。C# の `CompoundCommand`）とは別。
     pub(super) fn execute_group(&mut self, steps: Vec<Entry>) -> Result<(), CoreError> {
         let cost = 32 + steps.iter().map(|e| e.cost).sum::<u64>();

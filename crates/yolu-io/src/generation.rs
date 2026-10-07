@@ -23,7 +23,7 @@
 //! 実際に Unity 版に読ませた結果は `tests/fixtures/rust-generation.unity.txt`。
 //!
 //! 保証の射程: 確定の前に世代の中身を読み直してハッシュを確かめ、確定の直前にも `current` が期待した世代のままか確かめる。
-//! ファイルは `sync_all` で書き出す。ディレクトリの fsync と電源断の耐久性は OS に依り、約束しない。ロックはこの道具どうしの
+//! ファイルは `sync_all` で書き出す。ディレクトリの fsync と電源断の耐久性は OS に依り、約束しない。ロックはこのツールどうしの
 //! 排他で、ロックしない外部の書き手はハッシュで見つける（止めない）。
 
 use std::collections::{BTreeSet, HashSet};
@@ -207,7 +207,7 @@ pub struct GenerationStore {
     budget: Option<(u64, u64)>,
     /// 読み書きの量の上限（設定の予算から。`None` は形の上限だけ）。
     limits: Option<Limits>,
-    /// この道具が流して確かめた共有の中身と、そのときの長さ・更新時刻（同じなら、次の確定でハッシュを数え直さない。複製の間で共有）。
+    /// このツールが流して確かめた共有の中身と、そのときの長さ・更新時刻（同じなら、次の確定でハッシュを数え直さない。複製の間で共有）。
     good: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, (u64, SystemTime)>>>,
     /// 書く前の空きの確かめ。`None` は確かめない。
     space: Option<SpaceGuard>,
@@ -248,7 +248,7 @@ impl GenerationStore {
             good: Arc::default(),
         }
     }
-    /// この道具が確かめた後、長さと更新時刻の変わっていない共有の中身か（ハッシュを数え直さない。保証の射程: 更新時刻を変えずに
+    /// このツールが確かめた後、長さと更新時刻の変わっていない共有の中身か（ハッシュを数え直さない。保証の射程: 更新時刻を変えずに
     /// 同じ長さで書き換える外の書き手は、ここでは見つけない。開くとき（`load`）はいつも全部を数える）。
     fn known_good(&self, path: &Path, len: u64) -> bool {
         let Ok(meta) = fs::symlink_metadata(path) else {
@@ -565,7 +565,9 @@ impl GenerationStore {
                 match fs::symlink_metadata(&path) {
                     Ok(_) => {
                         let changed = || {
-                            StoreError::Corrupt("共有の中身が、この道具の外で変わっています".into())
+                            StoreError::Corrupt(
+                                "共有の中身が、このツールの外で変わっています".into(),
+                            )
                         };
                         if fs::symlink_metadata(&path)?.len() != data.len() {
                             return Err(changed());
@@ -893,7 +895,7 @@ impl GenerationStore {
         Ok(())
     }
 
-    /// 落ちた書き込みの残りを片付ける。`.save.lock` を取れたとき（この置き場へ書いている道具が今は無いとき）だけ、世代にならなかった
+    /// 落ちた書き込みの残りを片付ける。`.save.lock` を取れたとき（この置き場へ書いているツールが今は無いとき）だけ、世代にならなかった
     /// `.staging-*` フォルダ（作りかけの世代。`<札>.pending` を含む）を消し、そのあと、どの世代も使わない共有の中身を消す。
     /// 書き込みは確定の間ずっとロックを持つので、ロックが取れて残っている `.staging-*` は、落ちた・パニックした書き込みの残り。
     /// 世代（`current`・`previous` が指すものを含む）には触れない。ロックを持たれていれば `Busy`。返すのは減ったバイト数。

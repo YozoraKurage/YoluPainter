@@ -1,10 +1,10 @@
 //! 主の wgpu の装置を失ったとき: 描いていた絵（文書）は触らず、復旧の書き置きを急いで取り、GPU の道（3D ビュー・キャンバスの GPU の表示）を
-//! 手放して CPU の表示へ落とし、理由を出して、終わる。書き置きの「保存していない作業」の印は残る（次の起動の復旧の窓から開ける）。
+//! 手放して CPU の表示へ落とし、理由を出して、終わる。書き置きの「保存していない作業」の印は残る（次の起動の復旧のウィンドウから開ける）。
 //! 受け手の無い誤りは panic にせず記録する。失った知らせを入れる口（`GpuWatch::inject_loss`）と、本物の装置の破棄（`Device::destroy`）の
 //! 両方で、受ける側の流れを通す。
 //!
-//! 窓ごとに自分の装置を作る（`.wgpu()`。共用の接続 `common::shared_gpu` は使わない）: 装置を破棄する試験・見張りの受け口を付ける試験が、
-//! 共用の装置を壊したり、ほかの試験の誤りの受け口を取り替えたりしないため。窓は `gpu_thread::builder` の貸し出しで 1 つずつ作る。
+//! ウィンドウごとに自分の装置を作る（`.wgpu()`。共用の接続 `common::shared_gpu` は使わない）: 装置を破棄する試験・見張りの受け口を付ける試験が、
+//! 共用の装置を壊したり、ほかの試験の誤りの受け口を取り替えたりしないため。ウィンドウは `gpu_thread::builder` の貸し出しで 1 つずつ作る。
 use crate::common;
 
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ impl Drop for TempDir {
     }
 }
 
-/// 復旧を動かし、見張りを付けた窓（描いて、保存していない印を付けてある）。装置は `device` へ控える。
+/// 復旧を動かし、見張りを付けたウィンドウ（描いて、保存していない印を付けてある）。装置は `device` へ控える。
 fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>) -> H {
     let mut state = AppState::new_in(64, 64, lang);
     let probe: SpaceProbe = Arc::new(|_| {
@@ -161,7 +161,7 @@ fn losing_the_device_saves_a_checkpoint_keeps_the_document_and_closes_with_the_r
     assert_eq!(generations(&h), 1, "復旧の書き置きを急いで取る");
     assert!(
         app.state.recovery.is_marked_dirty(),
-        "保存していない作業の印が残る（次の起動の復旧の窓から開ける）"
+        "保存していない作業の印が残る（次の起動の復旧のウィンドウから開ける）"
     );
     let s = &app.state;
     assert_eq!(s.doc.revision(), revision, "文書は触らない");
@@ -333,7 +333,7 @@ fn a_real_validation_error_is_recorded_instead_of_panicking() {
     );
 }
 
-/// 装置を失って終わっても、書き置きの「保存していない作業」の印は消えない: 次の起動に復旧の窓が開き、書いた世代が絵と同じ。
+/// 装置を失って終わっても、書き置きの「保存していない作業」の印は消えない: 次の起動に復旧のウィンドウが開き、書いた世代が絵と同じ。
 /// 変更が無く終わるときは、今までどおり正しく閉じる（印を消す）。
 #[test]
 fn the_next_start_offers_the_checkpoint_taken_when_the_device_was_lost() {
@@ -361,7 +361,7 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_device_was_lost() {
         .recovery
         .window
         .as_ref()
-        .expect("落ちた体と同じに、復旧の窓が開く");
+        .expect("落ちた体と同じに、復旧のウィンドウが開く");
     assert_eq!(offered.rows.len(), 1);
     assert!(offered.rows[0].crashed && offered.rows[0].problem.is_none());
     // 開くと、描いた絵が戻る
@@ -372,7 +372,7 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_device_was_lost() {
     next.recovery_open(request);
     assert_eq!(composite_pixel(&next.doc, 20, 20), expected);
 
-    // 変更が無いまま装置を失った: 正しく閉じる（次の起動に窓は出ない）
+    // 変更が無いまま装置を失った: 正しく閉じる（次の起動にウィンドウは出ない）
     let clean_root = dir.0.join("clean");
     let mut h = window(Lang::Ja, &clean_root, Arc::default());
     lose(&mut h);

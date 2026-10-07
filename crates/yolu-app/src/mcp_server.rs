@@ -125,7 +125,7 @@ impl Backend for AppBackend {
         if sent.is_ok() {
             self.counters.sent.fetch_add(1, Ordering::AcqRel);
         }
-        // 隠れた窓でも、描き直しの頼みで `logic` が回る
+        // 隠れたウィンドウでも、描き直しの頼みで `logic` が回る
         self.ctx.request_repaint();
         Box::pin(async move {
             match sent {

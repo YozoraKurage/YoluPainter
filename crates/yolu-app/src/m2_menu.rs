@@ -56,13 +56,13 @@ pub enum Popup {
     NormalEdges,
     /// Normal の設定のファイルの Y の向き（OpenGL・DirectX）。
     NormalDirection,
-    /// 設定の窓の選択肢。
+    /// 設定のウィンドウの選択肢。
     Pref(crate::prefs::PrefChoice),
-    /// 塗りつぶしの層のチャンネルの画像（棚の画像の一覧・ファイルから取り込む・外す）。
+    /// 塗りつぶしレイヤーのチャンネルの画像（棚の画像の一覧・ファイルから取り込む・外す）。
     FillImage(crate::engine::LayerId, Channel),
     /// 棚の画像の読み方（色空間）。
     ImageSpace(yolu_core::ImageId),
-    /// 塗りつぶしの層の投影の種類・外側。
+    /// 塗りつぶしレイヤーの投影の種類・外側。
     ProjectionMode(crate::engine::LayerId),
     ProjectionWrap(crate::engine::LayerId),
     /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。階調と値のカーブのプリセットは、欄では `ramp_rows` のグラデーションセットの
@@ -72,7 +72,7 @@ pub enum Popup {
     CurvePresets(crate::engine::LayerId, Channel),
     /// 見た目の設定の欄のドロップダウン（種類・描画モード・選ぶ値・テクスチャのスロット）。
     Look(crate::look::panel::LookChoice),
-    /// レイヤーの一覧のマスクのサムネイルの右クリック（その層のマスク）。
+    /// レイヤーの一覧のマスクのサムネイルの右クリック（そのレイヤーのマスク）。
     MaskContext(crate::engine::LayerId),
     /// パスの一覧の行の右クリック（パスの ID）。
     PathContext(u128),
@@ -88,7 +88,7 @@ pub enum Popup {
     ToolStripContext,
     /// ブラシのグループのタブの右クリック（対象は `toolset.ui.context_group`）。
     GroupContext,
-    /// 「＋」の窓の行の右クリック（対象は `toolset.catalog.context`）。
+    /// 「＋」のウィンドウの行の右クリック（対象は `toolset.catalog.context`）。
     CatalogContext,
     /// ポーズの欄のテイク（FBX の中のアニメ）。
     Take,
@@ -138,7 +138,7 @@ pub fn patterns(
         .collect()
 }
 
-/// Normal の設定の端の名前（Height の微分が画布の外で読むもの）。
+/// Normal の設定の端の名前（Height の微分がキャンバスの外で読むもの）。
 pub fn edges_name(lang: Lang, mode: HeightEdgeMode) -> &'static str {
     match mode {
         HeightEdgeMode::Clamp => lang.pick("クランプ", "Clamp"),
@@ -244,13 +244,13 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         }
         Popup::NewAdjustment => crate::layermenu::adjustment_entries(app),
         Popup::NewFill => crate::layermenu::fill_entries(app),
-        // 選んだ層が無いときのメニューバーの「レイヤー」と同じ並び
+        // 選んだレイヤーが無いときのメニューバーの「レイヤー」と同じ並び
         Popup::LayerBlank => crate::shell::layer_menu(app, None),
         Popup::BrushContext => {
             let Some(key) = app.brushes.ui.context else {
                 return Vec::new();
             };
-            // 組み込みも、名前を変える・登録するとその場でファイルの写しになる。削除は並びから外すだけ（ファイルは「＋」の窓から戻せる）
+            // 組み込みも、名前を変える・登録するとその場でファイルの写しになる。削除は並びから外すだけ（ファイルは「＋」のウィンドウから戻せる）
             let user = key.is_user();
             let layout = app.toolset.set.locked.is_none() && app.toolset.set.contains(key);
             vec![

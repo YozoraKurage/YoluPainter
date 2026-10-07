@@ -1,4 +1,4 @@
-//! 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の欄: オプションバー（塗る/消す・不透明度・許容。ID の色で選択は作成方法と許容）と、
+//! 範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）の欄: オプションバー（塗る/消す・不透明度・許容。ID の色で選択は作成方法と許容）と、
 //! 左のドックのツールプロパティ（バケツの許容・隣接・参照・色差・隙間閉じ・領域の拡縮・塗り残し、ID の色で選択の ID マップ）。範囲の種類
 //! （近い色・三角形・メッシュの塊・UV アイランド・マテリアル）はサブツールの一覧（`subtool`）で選ぶ。値は `AppState::region` で、操作は
 //! `Action::Region` を通す（キー・試験と同じ道）。画面には名前と値だけを出し、説明はツールチップ。
@@ -147,7 +147,7 @@ fn tolerance_slider(
     out.changed.then(|| out.value.round().clamp(0.0, max))
 }
 
-/// 選択範囲の組み合わせ方（置き換え・足す・引く・重ねる）。選択の道具のオプションバーと同じ値（`AppState::sel`）を切り替える。
+/// 選択範囲の組み合わせ方（置き換え・足す・引く・重ねる）。選択のツールのオプションバーと同じ値（`AppState::sel`）を切り替える。
 /// 入りきらないぶんは出さない（`right` は使える右端）。
 fn combine_buttons(ui: &mut Ui, app: &mut AppState, cursor: &mut Cursor, right: f32) {
     let lang = app.lang;
@@ -408,7 +408,7 @@ fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if let Err(reason) = &usable {
         status_row(ui, rows, reason);
     }
-    // ベイクの窓を、ID マップにチェックを入れて開く
+    // ベイクのウィンドウを、ID マップにチェックを入れて開く
     let row = rows.row(24.0, 4.0);
     let label = if usable.is_ok() {
         lang.pick("ID マップをベイクし直す…", "Bake ID Map Again…")
@@ -617,8 +617,8 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// 部品の ID の色の見本。押すと色の窓（相手は文書と部品ごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる。
-/// 窓がこの文書の部品の色を相手にしている間に部品を替えたら、窓はそのままで相手を新しい部品へ替える。自動の色を見せているときに
+/// 部品の ID の色の見本。押すと色のウィンドウ（相手は文書と部品ごと）。ウィンドウの変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる。
+/// ウィンドウがこの文書の部品の色を相手にしている間に部品を替えたら、ウィンドウはそのままで相手を新しい部品へ替える。自動の色を見せているときに
 /// 開いて Esc で戻したら、自動へ戻す。
 fn part_color(
     ui: &mut Ui,
@@ -686,8 +686,8 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     use crate::region::color::{Distance, Reference};
     let lang = app.lang;
     for (value, ja, en) in [
-        (Reference::Editing, "編集している層", "Editing layer"),
-        (Reference::Visible, "全部の層", "All visible layers"),
+        (Reference::Editing, "編集しているレイヤー", "Editing layer"),
+        (Reference::Visible, "全部のレイヤー", "All visible layers"),
         (Reference::Marked, "参照レイヤー", "Reference layers"),
     ] {
         let current = if app.region.sample_all {

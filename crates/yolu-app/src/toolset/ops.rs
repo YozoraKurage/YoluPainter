@@ -47,7 +47,7 @@ pub enum ToolsetAction {
         to: SlotId,
         before: Option<GroupId>,
     },
-    /// 最初の並びに戻す前に確かめる（窓の頼み）。
+    /// 最初の並びに戻す前に確かめる（ウィンドウの頼み）。
     ResetDialog,
     /// 最初の並びに戻す（利用者のブラシのファイルは消さず、元のグループへ並べ直す）。
     Reset,

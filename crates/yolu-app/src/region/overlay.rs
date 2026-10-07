@@ -40,7 +40,7 @@ pub fn paint_canvas(
     view: &CanvasView,
     pointer: Option<egui::Pos2>,
 ) {
-    // ベイクの窓で島を選んでいる・島のメニューを開いている間は、道具によらず、その島を同じ形で強調する
+    // ベイクのウィンドウでアイランドを選んでいる・アイランドのメニューを開いている間は、ツールによらず、そのアイランドを同じ形で強調する
     if !crate::bake::overlap::update_hover(app, Where::Canvas(view), pointer) {
         if !app.tool.is_region() {
             app.region.hover = None;
@@ -121,7 +121,7 @@ pub fn paint_surface(
         }
         return;
     }
-    // ベイクの窓で島を選んでいる・島のメニューを開いている間は、道具によらず、その島を同じ形で強調する
+    // ベイクのウィンドウでアイランドを選んでいる・アイランドのメニューを開いている間は、ツールによらず、そのアイランドを同じ形で強調する
     if !crate::bake::overlap::update_hover(app, Where::Surface(rect), pointer) {
         update_hover(app, Where::Surface(rect), pointer);
     }

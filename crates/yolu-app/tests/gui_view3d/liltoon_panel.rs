@@ -16,7 +16,7 @@ fn harness(lang: Lang) -> Harness<'static, YoluApp> {
     harness_sized(lang, 1600.0)
 }
 
-/// 欄の下の方の行まで窓に入る高さで（右の欄は窓の高さで切れる）。
+/// 欄の下の方の行までウィンドウに入る高さで（右の欄はウィンドウの高さで切れる）。
 fn harness_sized(lang: Lang, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(1500.0, height, 64);
     h.state_mut().state.lang = lang;
@@ -259,7 +259,7 @@ fn a_property_shown_in_two_sections_has_its_own_slider_in_each() {
     let r = lower(&h).rect();
     assert!(
         r.bottom() < h.ctx.content_rect().bottom(),
-        "窓に入っている: {r:?}"
+        "ウィンドウに入っている: {r:?}"
     );
     click(&mut h, egui::pos2(r.right() - 2.0, r.bottom() - 4.0));
     let value = yolu_app::look::liltoon::number(h.state().state.doc.look(), "_ShadowEnvStrength");
@@ -315,7 +315,7 @@ fn a_power_slider_spreads_the_small_values_like_unity() {
     let r = h.get_by_label("リムライトの細さ").rect();
     assert!(
         r.bottom() < h.ctx.content_rect().bottom(),
-        "窓に入っている: {r:?}"
+        "ウィンドウに入っている: {r:?}"
     );
     click(
         &mut h,
@@ -1181,7 +1181,7 @@ fn every_section_with_every_feature_on_shows_names_only_in_both_languages() {
         .map(|(ja, en)| lang.pick(*ja, *en))
         .collect();
         let mut seen = std::collections::BTreeSet::new();
-        // 1 つずつ開いて、その節の文言を見る（全部を開くと窓に入らない）
+        // 1 つずつ開いて、その節の文言を見る（全部を開くとウィンドウに入らない）
         for name in &sections {
             let header = h
                 .get_all_by_label(name)

@@ -1,11 +1,11 @@
-//! 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）を画面につなぐ。範囲は、2D キャンバスなら UV の点の下の三角形、3D ビューなら
+//! 範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）を画面につなぐ。範囲は、2D キャンバスなら UV の点の下の三角形、3D ビューなら
 //! 当たった面の三角形から、三角形・メッシュの塊・UV アイランド・マテリアルのどれかに辿る（`index`。core の `region` と同じ範囲）。
 //! バケツは範囲を 1 回で塗り（今の選択範囲の内側だけ。マテリアルがオンなら組の全部のチャンネルを 1 回の Undo で）、ポリゴン塗りつぶしは
 //! 押したまま通った範囲を足していき、離して 1 回の Undo にする（`tools`）。ID の色で選択は焼いた ID マップの色から選択範囲を作る
 //! （`idcolor`。手動の ID の色の編集もここ）。ポインタの下の範囲は 3D では薄い面、2D では UV の輪郭で強調する（`overlay`）。
 //!
 //! 入力は `canvas`・`view3d::input` が、始める・動く・終える・Esc・フォーカスを失うの同じ道（ストロークと同じ）から呼ぶ。ドラッグは
-//! `AppState::region.drag` の札で持ち、離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・離したのを取りこぼす で必ず終える。
+//! `AppState::region.drag` の札で持ち、離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・離したのを取りこぼす で必ず終える。
 
 pub mod bucket;
 pub mod color;
@@ -26,7 +26,7 @@ use crate::state::AppState;
 pub use self::idcolor::IdColorOp;
 pub use self::tools::{Cycle, CycleKind, Hover, PolygonDrag};
 
-/// 範囲の道具の設定と途中の状態。
+/// 範囲のツールの設定と途中の状態。
 pub struct RegionState {
     /// クリックした三角形から辿る範囲（バケツとポリゴン塗りつぶしで共有。Unity 版の「3D Pick」の既定は UV アイランド）。
     pub kind: SurfaceRegionKind,
@@ -36,7 +36,7 @@ pub struct RegionState {
     pub tolerance: u8,
     /// 近い色: 押した画素から 4 近傍でつながる所だけ。
     pub contiguous: bool,
-    /// 近い色: 層でなくチャンネルの合成を見る。
+    /// 近い色: レイヤーでなくチャンネルの合成を見る。
     pub sample_all: bool,
     pub color: color::Options,
     pub references: std::collections::HashSet<(u128, yolu_core::LayerId)>,
@@ -52,7 +52,7 @@ pub struct RegionState {
     pub drag: Option<PolygonDrag>,
     /// ポインタの下の範囲（強調）。
     pub hover: Option<Hover>,
-    /// 2D で重なった UV の同じ所を続けて押したときの選び替え（ポリゴン塗りつぶしとベイクの島を選ぶ）。
+    /// 2D で重なった UV の同じ所を続けて押したときの選び替え（ポリゴン塗りつぶしとベイクのアイランドを選ぶ）。
     pub cycle: Option<tools::Cycle>,
     index: Option<Arc<RegionIndex>>,
     grid: Option<Arc<UvGrid>>,
@@ -85,7 +85,7 @@ impl Default for RegionState {
     }
 }
 
-/// 範囲の道具の操作。
+/// 範囲のツールの操作。
 #[derive(Clone, Debug, PartialEq)]
 pub enum RegionAction {
     Kind(SurfaceRegionKind),
@@ -121,7 +121,7 @@ pub fn kind_name(lang: Lang, kind: SurfaceRegionKind) -> &'static str {
 }
 
 impl AppState {
-    /// 範囲の道具の操作を当てる（描いている間は断る）。
+    /// 範囲のツールの操作を当てる（描いている間は断る）。
     pub fn region_apply(&mut self, action: RegionAction) {
         if self.is_stroking() {
             self.refuse(

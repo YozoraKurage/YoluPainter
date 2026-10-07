@@ -1,4 +1,4 @@
-//! 層のロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs` の
+//! レイヤーのロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs` の
 //! `--locks`）が作った `locks-v21.utpaint` と、Rust が書いて C# の読み手に読ませた `rust-written-locks-v21.*`。ロックは合成を変えない。
 use yolu_core::{
     BlendMode, Channel, ChannelBlend, CoreError, Document, LayerId, LayerKind, LayerLocks, Rect,
@@ -17,7 +17,7 @@ fn id_of(doc: &Document, name: &str) -> LayerId {
     doc.layers()
         .iter()
         .find(|l| l.name() == name)
-        .unwrap_or_else(|| panic!("層「{name}」がありません"))
+        .unwrap_or_else(|| panic!("レイヤー「{name}」がありません"))
         .id()
 }
 
@@ -41,7 +41,7 @@ fn bits(n: u8) -> LayerLocks {
     LayerLocks::from_bits(n).unwrap()
 }
 
-/// （層の名前, 自分のロック）。`M2Fixture.LockedLayers` の並び。
+/// （レイヤーの名前, 自分のロック）。`M2Fixture.LockedLayers` の並び。
 fn expected() -> Vec<(&'static str, LayerLocks)> {
     vec![
         ("ロック無し", LayerLocks::NONE),
@@ -64,14 +64,14 @@ fn a_native_document_written_by_csharp_with_locks_reads_into_core_and_writes_bac
     let original = read("locks-v21.utpaint");
     let native = NativeDocument::read(&original).unwrap();
     assert_eq!(native.version(), 21);
-    // ロックを持つ層が正本の中にいる（読み手が通した項目）
+    // ロックを持つレイヤーが正本の中にいる（読み手が通した項目）
     let locked: Vec<_> = (0..native.layer_count())
         .filter(|i| native.field(&format!("layers[{i}].locks")).is_some())
         .collect();
     assert_eq!(
         locked.len(),
         9,
-        "ロックを持つ層の数（グループと塗り・調整を含む）"
+        "ロックを持つレイヤーの数（グループと塗り・調整を含む）"
     );
     assert!(
         native.core_issues().is_empty(),
@@ -91,7 +91,7 @@ fn a_native_document_written_by_csharp_with_locks_reads_into_core_and_writes_bac
         );
     }
     assert_eq!(core.layers().len(), expected().len());
-    // 属性の印のビット 1 と 2 が両方立つ層は、クリッピングもチャンネルごとの合成もロックと一緒に戻る
+    // 属性の印のビット 1 と 2 が両方立つレイヤーは、クリッピングもチャンネルごとの合成もロックと一緒に戻る
     let mixed = core
         .layer(id_of(&core, "透明部分と位置（クリップ）"))
         .unwrap();
@@ -115,7 +115,7 @@ fn a_native_document_written_by_csharp_with_locks_reads_into_core_and_writes_bac
         core.effective_locks(id_of(&core, "すべて")).unwrap(),
         bits(15)
     );
-    // ロックが効いているのは、ロックの無い層と違って画素を書く入口が断るから
+    // ロックが効いているのは、ロックの無いレイヤーと違って画素を書く入口が断るから
     assert!(core
         .ensure_pixels_editable(id_of(&core, "ロック無し"), true)
         .is_ok());
@@ -160,14 +160,14 @@ fn edited_locked_document() -> Document {
     let pixels = id_of(&core, "画素");
     let group = id_of(&core, "ロックしたグループ");
     let fill = id_of(&core, "ロックした塗り");
-    // 付ける・外す・変える・複数の層へまとめて（ロックは 1 回の Undo。履歴に残るので、読み込んだ直後の文書とは別の文書になる）
+    // 付ける・外す・変える・複数のレイヤーへまとめて（ロックは 1 回の Undo。履歴に残るので、読み込んだ直後の文書とは別の文書になる）
     core.set_layer_locks(plain, bits(1 | 2)).unwrap();
     core.set_layer_locks(pixels, LayerLocks::NONE).unwrap();
     core.change_layer_locks(&[fill, group], LayerLocks::TRANSPARENCY, true)
         .unwrap();
     core.change_layer_locks(&[group], LayerLocks::POSITION, false)
         .unwrap();
-    // 新しい層と、ロックしたグループの複製（複製もロックを持つ）
+    // 新しいレイヤーと、ロックしたグループの複製（複製もロックを持つ）
     let added = core.add_layer("新しい層").unwrap();
     core.set_layer_locks(added, LayerLocks::ALL).unwrap();
     core.duplicate_layer(group, Some("グループの写し")).unwrap();
@@ -270,10 +270,10 @@ fn a_lock_value_of_zero_or_with_an_unknown_bit_is_refused_and_a_lockless_layer_h
         assert_eq!(
             core.layers()[locked].locks().bits(),
             good as u8,
-            "{good}: 層の並びのとおりに入る"
+            "{good}: レイヤーの並びのとおりに入る"
         );
     }
-    // ロックの無い層には locks の項目が無い（属性の印は 0 か 1 だけ）
+    // ロックの無いレイヤーには locks の項目が無い（属性の印は 0 か 1 だけ）
     let unlocked = (0..native.layer_count())
         .find(|i| native.field(&format!("layers[{i}].locks")).is_none())
         .unwrap();
@@ -301,7 +301,7 @@ fn an_unlocked_document_writes_the_same_bytes_and_locking_then_unlocking_returns
     let locked = NativeDocument::from_core(&core).unwrap();
     assert_ne!(locked.to_bytes(), original);
     assert!(locked.core_issues().is_empty());
-    // 全部の層のロックは、元と同じ画素・属性の上に付く
+    // 全部のレイヤーのロックは、元と同じ画素・属性の上に付く
     let back = locked.to_core().unwrap();
     for (i, id) in ids.iter().enumerate() {
         assert_eq!(back.layer(*id).unwrap().locks().bits(), 1 + (i % 15) as u8);
@@ -411,7 +411,7 @@ fn locks_survive_a_project_save_and_open() {
     ));
 }
 
-/// ロックのある層を .ylsmart（スマートマテリアル）に保存でき、開くとロックも戻る（C# の `CloneLayer` が `Locks` を写すのと同じ）。
+/// ロックのあるレイヤーを .ylsmart（スマートマテリアル）に保存でき、開くとロックも戻る（C# の `CloneLayer` が `Locks` を写すのと同じ）。
 #[test]
 fn a_smart_material_keeps_the_locks_of_its_layers() {
     use yolu_io::smart::SmartFile;
@@ -514,7 +514,7 @@ fn psd_locks_come_back_into_core_and_write_the_same_bytes_again() {
     assert_eq!(second, first, "取り込んで書き出し直しても全バイト同じ");
 }
 
-/// Photoshop の書き方（すべてに個別のビットを重ねた 0x80000007、層の記録の印のビット 0 だけの透明部分）も取り込む。
+/// Photoshop の書き方（すべてに個別のビットを重ねた 0x80000007、レイヤーの記録の印のビット 0 だけの透明部分）も取り込む。
 /// lspf のビット 3（アートボードへの入れ子の禁止）は core のロックに無いので、取り込みを断らずロックを足さない（読み込みの通知は psd の側）。
 #[test]
 fn photoshop_style_lspf_bits_import_as_the_matching_core_locks() {

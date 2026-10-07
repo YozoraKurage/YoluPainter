@@ -192,9 +192,9 @@ pub struct Settings {
     pub library_folder: Option<PathBuf>,
     /// 上書き保存で置き換えた前の版（退避）をいくつ残すか。
     pub backups: BackupKeep,
-    /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定の窓には無い）。
+    /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定のウィンドウには無い）。
     pub selection_bar: bool,
-    /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」の窓）。
+    /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」のウィンドウ）。
     pub pressure: PressureAdjust,
     pub navigation: crate::view3d::navigation::Preferences,
     /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
@@ -203,7 +203,7 @@ pub struct Settings {
     pub view3d_paint: yolu_core::geometry::ProjectionSettings,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
-    /// 重なった UV のテクセルと島の縁を 2D のキャンバスに出すか（表示のメニュー）と、その色。
+    /// 重なった UV のテクセルとアイランドの縁を 2D のキャンバスに出すか（表示のメニュー）と、その色。
     pub uv_overlap: bool,
     pub uv_overlap_color: [u8; 4],
     /// Unity からの Live Link の頼みを受けるか（設定のファイルのキーは前の版と同じ `livelink_on_startup`。--livelink で起動すると、
@@ -297,7 +297,7 @@ impl Settings {
         }
     }
 
-    /// 読み込み（.ylp を開く・書き出しが写した文書を戻す）で 1 つの文書に許す層の画素のバイト数: 設定の予算と core の既定の大きい方。
+    /// 読み込み（.ylp を開く・書き出しが写した文書を戻す）で 1 つの文書に許すレイヤーの画素のバイト数: 設定の予算と core の既定の大きい方。
     /// 設定を上げれば大きな文書も読める。設定を下げても、読めていた文書は読める（今の画素が予算を超えるときは `sync_budgets` が
     /// 予算をその量まで広げて知らせる）。
     pub fn load_source_bytes(&self, ram_mib: u64) -> u64 {

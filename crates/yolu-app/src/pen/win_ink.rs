@@ -1,4 +1,4 @@
-//! Windows Ink（WM_POINTER）。窓のプロシージャを差し替え（GWLP_WNDPROC）、ペンの WM_POINTERDOWN・UPDATE・UP で
+//! Windows Ink（WM_POINTER）。ウィンドウのプロシージャを差し替え（GWLP_WNDPROC）、ペンの WM_POINTERDOWN・UPDATE・UP で
 //! GetPointerPenInfoHistory を読んでから、元のプロシージャ（winit）へ渡す。位置は himetric から画面の画素へ直してから
 //! クライアント領域へ（winit と同じ求め方で、整数の画素より細かい）。履歴は新しい順に来るので、古い順に並べ直して詰める。
 
@@ -32,7 +32,7 @@ fn table() -> &'static Mutex<HashMap<isize, Hooked>> {
     TABLE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 窓のプロシージャを差し替える。同じ窓に二度は差し替えない。差し替えは表のロックを持たずに行う（窓のプロシージャが
+/// ウィンドウのプロシージャを差し替える。同じウィンドウに二度は差し替えない。差し替えは表のロックを持たずに行う（ウィンドウのプロシージャが
 /// 同じ表を引くので、もし差し替えの途中にメッセージが来ても止まらないように）。
 pub(super) fn hook(hwnd: isize, queue: Arc<Mutex<Vec<PenSample>>>, ctx: egui::Context) -> bool {
     if table()

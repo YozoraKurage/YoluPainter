@@ -1,4 +1,4 @@
-//! 手動の ID の色（正本の版 19 の末尾の塊 `YLID`）の書き込みと読み込み。層の後に、`tag`（`Bytes` の値）・`count`・`binding`・色の並びを書き、
+//! 手動の ID の色（正本の版 19 の末尾の塊 `YLID`）の書き込みと読み込み。レイヤーの後に、`tag`（`Bytes` の値）・`count`・`binding`・色の並びを書き、
 //! 空なら塊を書かず、色のために版を上げない。読むときは文書へ戻す（指紋が今のモデルと合うかは使う側が見る）。正解の 1 つは C# の書き手が作った
 //! `native-rich-v21.utpaint`（`m2_bridge.rs` が、読んで書き戻して同じバイト列になることを確かめる）。
 use std::collections::BTreeMap;
@@ -57,7 +57,7 @@ fn colors_are_written_after_the_layers_as_a_ylid_block_and_read_back_the_same() 
     doc.set_id_colors(colors.clone(), false).unwrap();
     let native = NativeDocument::from_core(&doc).unwrap();
     let bytes = native.to_bytes();
-    // 層の後ろにだけ足す。前の並びは変わらず、版も変わらない（版 19 以上のどの版でも塊を置ける）
+    // レイヤーの後ろにだけ足す。前の並びは変わらず、版も変わらない（版 19 以上のどの版でも塊を置ける）
     assert!(bytes.starts_with(&plain));
     let mut tail = b"YLID".to_vec();
     tail.extend(block_after_tag(
@@ -93,7 +93,7 @@ fn colors_are_written_after_the_layers_as_a_ylid_block_and_read_back_the_same() 
 fn an_empty_assignment_writes_no_block_and_only_the_other_features_decide_the_version() {
     for user_channel in [false, true] {
         let mut doc = Document::new(16, 16).unwrap();
-        doc.add_layer("層").unwrap();
+        doc.add_layer("レイヤー").unwrap();
         if user_channel {
             doc.add_channel(ChannelInfo {
                 name: "Extra".into(),
@@ -127,7 +127,7 @@ fn an_empty_assignment_writes_no_block_and_only_the_other_features_decide_the_ve
 #[test]
 fn a_project_with_colors_keeps_the_outer_format_and_the_version_the_unity_reader_reads() {
     let mut doc = Document::new(32, 32).unwrap();
-    doc.add_layer("層").unwrap();
+    doc.add_layer("レイヤー").unwrap();
     doc.set_id_colors(assigned(&[(0, 0x112233), (5, 0x445566)]), false)
         .unwrap();
     let project = project_of(&[(A, &doc)]);
@@ -252,12 +252,12 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 
 const TILE: u32 = 32;
 
-/// 層ごとに違う画素のある文書（小さな閾値で分けられる大きさ）。手動の ID の色つき。
+/// レイヤーごとに違う画素のある文書（小さな閾値で分けられる大きさ）。手動の ID の色つき。
 fn painted_with_colors(layers: usize) -> Document {
     let mut doc = Document::with_tile_size(128, 128, TILE).unwrap();
     doc.set_source_budget_bytes(1 << 30).unwrap();
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..4u32 {
             for tx in 0..4u32 {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
@@ -382,7 +382,7 @@ fn colors_survive_save_open_and_an_unchanged_save_again() {
     let dir = Dir::new();
     let colored = painted_with_colors(2);
     let mut plain = Document::new(32, 32).unwrap();
-    plain.add_layer("層").unwrap();
+    plain.add_layer("レイヤー").unwrap();
     let project = project_of(&[(A, &colored), (B, &plain)]);
     let path = dir.path("colors.ylp");
     let mut target = SaveTarget::create(&path).unwrap();

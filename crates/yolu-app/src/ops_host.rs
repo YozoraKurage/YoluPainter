@@ -132,7 +132,7 @@ impl<'a> AppHost<'a> {
             .is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
     }
 
-    /// セットの大きさと層の数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
+    /// セットの大きさとレイヤーの数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
     fn size_of(&self, index: usize) -> (u32, u32, u32) {
         let doc = self.state.set_doc(index);
         let set = &self.state.sets.get(index).expect("範囲内");
@@ -359,7 +359,7 @@ impl OpHost for AppHost<'_> {
         if (doc.id(), doc.revision()) != before {
             state.modified = true;
             if current {
-                // 消した層を選んだままにしない（画面の取り消しと同じ後始末）
+                // 消したレイヤーを選んだままにしない（画面の取り消しと同じ後始末）
                 state.ensure_selection();
             }
         }

@@ -1,10 +1,10 @@
-//! 3D ビューのタブ: 自前の wgpu の 3D（`crate::view3d`。モデル・カメラ・面に描く）と、後で差し込む外の窓（埋め込んだ Unity の
-//! プレイヤー（UaaL）。Windows では子の窓の HWND をこのタブの矩形に合わせて動かす）への知らせ。
+//! 3D ビューのタブ: 自前の wgpu の 3D（`crate::view3d`。モデル・カメラ・面に描く）と、後で差し込む別ウィンドウ（埋め込んだ Unity の
+//! プレイヤー（UaaL）。Windows では子ウィンドウの HWND をこのタブの矩形に合わせて動かす）への知らせ。
 //!
-//! 外の窓へ知らせる口: `View3dHost` を渡すと、タブの中身の矩形（物理の画素、ネイティブの窓のクライアント領域の左上が原点）が
-//! 決まった・変わったとき（`Placed`）、隠れたとき（別のタブの裏・閉じた。`Hidden`）、別の窓に出したとき（`Placed` の viewport・
-//! floating が変わる）、メニューが重なった・外れたとき（`Covered`。子の窓は egui の絵より上に出るので、重なるあいだは隠すなど）に
-//! 呼ばれる。入力は Rust の側で受け、タブの中のポインタ・ボタン・ホイールを `Input` で渡す（子の窓には入力を持たせない前提）。
+//! 別ウィンドウへ知らせる口: `View3dHost` を渡すと、タブの中身の矩形（物理の画素、ネイティブのウィンドウのクライアント領域の左上が原点）が
+//! 決まった・変わったとき（`Placed`）、隠れたとき（別のタブの裏・閉じた。`Hidden`）、別のウィンドウに出したとき（`Placed` の viewport・
+//! floating が変わる）、メニューが重なった・外れたとき（`Covered`。子ウィンドウは egui の絵より上に出るので、重なるあいだは隠すなど）に
+//! 呼ばれる。入力は Rust の側で受け、タブの中のポインタ・ボタン・ホイールを `Input` で渡す（子ウィンドウには入力を持たせない前提）。
 
 use std::sync::{Arc, Mutex};
 
@@ -28,7 +28,7 @@ pub struct Placement {
     /// x・y・幅・高さ（物理の画素）。
     pub rect_px: [i32; 4],
     pub pixels_per_point: f32,
-    /// ドックから外して浮かせた窓の中か。
+    /// ドックから外して浮かせたウィンドウの中か。
     pub floating: bool,
 }
 
@@ -51,7 +51,7 @@ pub enum View3dEvent {
     Input(View3dInput),
 }
 
-/// 3D ビューの中身を描く外の窓（Unity のプレイヤーなど）が受ける口。
+/// 3D ビューの中身を描く別ウィンドウ（Unity のプレイヤーなど）が受ける口。
 pub trait View3dHost {
     fn on_event(&mut self, event: &View3dEvent);
 }
@@ -199,7 +199,7 @@ impl View3dSlot {
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
         }
-        // 塗りつぶしの層の置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
+        // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;
         if drawn && !app.view3d.pose.mode {
             let pointer = ui
@@ -233,7 +233,7 @@ impl View3dSlot {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
         } else if app.tool.def().surface == Surface::Path {
-            // パスの道具: 選んでいる層のパスの線と点を重ねる（ブラシの円は出さない）
+            // パスのツール: 選んでいるレイヤーのパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
@@ -246,7 +246,7 @@ impl View3dSlot {
                 });
             }
         } else if app.tool.def().surface == Surface::Region {
-            // 範囲の道具: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
+            // 範囲のツール: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));

@@ -1,4 +1,4 @@
-//! 利用者のサブツールのプリセットの保存（設定のフォルダの `subtools/`）。道具ごとに 1 ファイル（`<道具>.ylsubtool`。道具は `fill`・
+//! 利用者のサブツールのプリセットの保存（設定のフォルダの `subtools/`）。ツールごとに 1 ファイル（`<ツール>.ylsubtool`。ツールは `fill`・
 //! `polygon-fill`・`gradient`・`shape`・`ruler`・`eyedropper`・`move`・`liquify`）。ブラシと消しゴムは `.ylbrush`（`brushes::store`）で、ここには入れない。
 //!
 //! 形式は 1 行目が `yolupainter-subtools 1`、あとは `key=value` の行（UTF-8、512 KiB まで、空行は読み飛ばす）。
@@ -9,10 +9,10 @@
 //! preset.1.by_color=true
 //! preset.1.tolerance=48
 //! ```
-//! `tool` は 2 行目で、ファイルの名前の道具と同じこと。`preset.<番号>.name` は名前（40 文字まで）、ほかは道具の欄（`fields`）の名前。
+//! `tool` は 2 行目で、ファイルの名前のツールと同じこと。`preset.<番号>.name` は名前（40 文字まで）、ほかはツールの欄（`fields`）の名前。
 //! 数は Rust の表記のまま書き（読み戻しても同じ値）、選びは名前（`kind=triangle` など）。書かれていない欄は既定で読む（欄が増えても
 //! 古いファイルを読める）。番号は 1 から、プリセットは番号の順。知らない項目・重なった項目・範囲を外れた値・名前のないプリセット・
-//! 別の道具のファイル・多すぎるプリセットは、そのファイルを読み飛ばして理由を残す（ほかの道具のファイルは読む）。版が新しいファイルは
+//! 別のツールのファイル・多すぎるプリセットは、そのファイルを読み飛ばして理由を残す（ほかのツールのファイルは読む）。版が新しいファイルは
 //! 触らずに読み飛ばす。書き込みは、一時ファイルへ書いて読み戻して確かめてから、最後の 1 回の置換で確定する（途中で落ちても前の版が残る）。
 //! 一覧の並び（組み込みが先、利用者のものが番号の順）と「変えたままの設定」は保存しない。
 
@@ -28,10 +28,10 @@ use crate::state::Tool;
 
 pub const HEADER: &str = "yolupainter-subtools 1";
 const EXTENSION: &str = "ylsubtool";
-/// 1 ファイルの大きさの上限。プリセットの数の上限（`MAX_USER_PRESETS`）まで、どの道具のどんな値でも収まる大きさ（試験が、いちばん長い書き方で確かめる）。
+/// 1 ファイルの大きさの上限。プリセットの数の上限（`MAX_USER_PRESETS`）まで、どのツールのどんな値でも収まる大きさ（試験が、いちばん長い書き方で確かめる）。
 /// 数の上限に先に当たるので、足したプリセットだけがメモリに残って保存できない、ということが起きない。
 pub const MAX_FILE_BYTES: u64 = 512 * 1024;
-/// 1 つの道具の利用者のプリセットの数の上限。
+/// 1 つのツールの利用者のプリセットの数の上限。
 pub const MAX_USER_PRESETS: usize = 256;
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub enum StoreError {
     UnknownKey(String),
     DuplicateKey(String),
     BadValue(String),
-    /// 別の道具のファイル。
+    /// 別のツールのファイル。
     WrongTool,
     TooMany,
     /// 書いたファイルを読み戻したら、書いた設定と違った。
@@ -188,7 +188,7 @@ pub fn encode(tool: Tool, presets: &[UserPreset]) -> String {
     text
 }
 
-/// 文を読む。ファイルの道具が `tool` と違えば断る。
+/// 文を読む。ファイルのツールが `tool` と違えば断る。
 pub fn decode(tool: Tool, text: &str) -> Result<Vec<UserPreset>, StoreError> {
     let mut lines = text.lines().enumerate();
     let first = lines.next().map(|(_, l)| l.trim_end()).unwrap_or("");
@@ -219,7 +219,7 @@ pub fn decode(tool: Tool, text: &str) -> Result<Vec<UserPreset>, StoreError> {
             continue;
         }
         if !seen_tool {
-            // 道具の行が先でないファイルは、どの道具のものか決められない
+            // ツールの行が先でないファイルは、どのツールのものか決められない
             return Err(StoreError::Syntax(index + 1));
         }
         let rest = key
@@ -306,7 +306,7 @@ impl SubToolStore {
         self.dir.join(file_name(tool))
     }
 
-    /// 道具の利用者のプリセットを置く（一時ファイルへ書き、読み戻して確かめてから置換）。プリセットが 1 つも無ければファイルを消す。
+    /// ツールの利用者のプリセットを置く（一時ファイルへ書き、読み戻して確かめてから置換）。プリセットが 1 つも無ければファイルを消す。
     pub fn save(&self, tool: Tool, presets: &[UserPreset]) -> Result<(), StoreError> {
         let path = self.path_of(tool);
         if presets.is_empty() {
@@ -336,7 +336,7 @@ impl SubToolStore {
     }
 }
 
-/// フォルダの道具ごとのファイルを全部読む。読めないファイルは読み飛ばして `problems` に残す。フォルダが無ければ空。
+/// フォルダのツールごとのファイルを全部読む。読めないファイルは読み飛ばして `problems` に残す。フォルダが無ければ空。
 pub fn load_all(dir: &Path) -> LoadReport {
     let mut report = LoadReport::default();
     for tool in TOOLS {

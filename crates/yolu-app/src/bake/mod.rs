@@ -2,21 +2,21 @@
 //! マテリアルを使うスロットと文書の大きさで、法線・位置・AO・曲率・厚みなどを焼き、セットのメッシュマップ（`MeshMapSet`）に入れる。
 //!
 //! - **別のスレッドで焼く**: 始めるときに入力（モデルの写し）・設定・スロット・文書の ID と大きさを固定し、焼くのは `yolu_gpu::bake_mesh_maps`
-//!   （窓で選んだ「自動・GPU・CPU」。自動は使えるハードウェアの GPU があれば GPU、なければ CPU。GPU が使えない・壊れた・予算を超えたときは
+//!   （ウィンドウで選んだ「自動・GPU・CPU」。自動は使えるハードウェアの GPU があれば GPU、なければ CPU。GPU が使えない・壊れた・予算を超えたときは
 //!   理由つきで CPU の `yolu_core::mesh_maps::bake`（rayon で並列）に戻る。進み具合は共有の値、取消は `AtomicBool`）。画面は毎フレーム
 //!   `poll_bake` で終わりを見る。使った場所と戻った理由はセットの記録（`MeshMapSet::run`）と結果の一文に出る。
 //! - **結果を使う前に確かめる**: 終わったとき、セット・文書（ID と大きさ）・スロット・モデルの形（ポーズを含む）が始めたときと同じなら
 //!   マップを入れ、違えば捨てる。取消・時間切れ・拒否・捨てた結果では、前のマップは変えない。残りのセットも焼かない。
-//! - **セットごとに焼く**: 窓でチェックしたセットを並びの順に 1 つずつ。モデルに無いマテリアルのセットは焼かない。
+//! - **セットごとに焼く**: ウィンドウでチェックしたセットを並びの順に 1 つずつ。モデルに無いマテリアルのセットは焼かない。
 //! - **古いマップを黙って使わない**: 由来（モデルの指紋・大きさ・スロット・設定・エンジンの版）が今と違うマップは `Stale`、モデルが無ければ
 //!   `Unverified` と言い、書き出しの AO にも使わない（`occlusion_for_export`）。
 //! - 描いている間は始めない。焼いている間の描画は許す（結果の意味を変えない）。ポーズやモデルが変われば結果を捨てる。
 //! - **モデルの同一性は `Arc` の弱い参照で見る**（`ModelId`）。アドレスだけを覚えると、旧モデルが解放されたあとに別のモデルが同じ
 //!   アドレスに置かれて同じと取り違える（ポーズを変えるたびにモデルは作り直される）。
-//! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。窓の状態表示は毎フレーム
+//! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。ウィンドウの状態表示は毎フレーム
 //!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。
 //!
-//! 高ポリからの投影（参照）は、窓で選べるようになるまで使わない（参照なしで焼く）。
+//! 高ポリからの投影（参照）は、ウィンドウで選べるようになるまで使わない（参照なしで焼く）。
 
 pub mod adopt;
 pub mod input;
@@ -66,7 +66,7 @@ pub enum BakeAction {
     View(MeshMapView),
     /// 焼く場所（自動・GPU・CPU）。次のベイクから効く。
     Backend(BakeBackend),
-    /// 重なった UV のテクセルの持ち主の決め方（今のセットの文書。1 回の Undo）と、手で島を選ぶ。
+    /// 重なった UV のテクセルの持ち主の決め方（今のセットの文書。1 回の Undo）と、手でアイランドを選ぶ。
     Priority(overlap::PriorityOp),
 }
 
@@ -84,7 +84,7 @@ struct Job {
     model: ModelId,
 }
 
-/// GPU が使えるかの確認（窓の状態表示のために、別のスレッドで 1 回だけ作ってみる）。
+/// GPU が使えるかの確認（ウィンドウの状態表示のために、別のスレッドで 1 回だけ作ってみる）。
 #[derive(Clone, Debug, Default)]
 pub enum GpuProbe {
     /// まだ確かめていない。
@@ -123,7 +123,7 @@ struct CachedInput {
     input: Result<Arc<MeshBakeInput>, String>,
 }
 
-/// 別のスレッドで作っている入力（窓の状態表示のため。モデルが替わるたびに UI のスレッドで作り直さない）。
+/// 別のスレッドで作っている入力（ウィンドウの状態表示のため。モデルが替わるたびに UI のスレッドで作り直さない）。
 struct PendingInput {
     model: ModelId,
     rx: Receiver<Result<MeshBakeInput, String>>,
@@ -140,7 +140,7 @@ pub struct BakeState {
     /// 2D のキャンバスに重ねて見るもの。
     pub view: MeshMapView,
     pub overlay: Overlay,
-    /// 最後のベイクの結果の一文と、成功か（窓の下に出す）。
+    /// 最後のベイクの結果の一文と、成功か（ウィンドウの下に出す）。
     pub outcome: Option<(String, bool)>,
     /// 今の並びでここまでに焼いたセットの UV の注意（`uv_warning`。同じ文は 1 つ）。複数のセットの最後のまとめの知らせに添える。
     uv_notes: Vec<String>,
@@ -155,19 +155,19 @@ pub struct BakeState {
     finished: usize,
     input: Option<CachedInput>,
     pending: Option<PendingInput>,
-    /// 手で島を選んでいる（次に 2D・3D で押した島をこの一覧へ入れる）。
+    /// 手でアイランドを選んでいる（次に 2D・3D で押したアイランドをこの一覧へ入れる）。
     pub pick: Option<overlap::Picking>,
-    /// 手で選ぶ島の索引（モデルの入力ごと）。
+    /// 手で選ぶアイランドの索引（モデルの入力ごと）。
     islands: Option<Arc<overlap::Islands>>,
-    /// 別のスレッドで作っている島の索引（入力ごとに 1 つ。UI のスレッドを止めない）。
+    /// 別のスレッドで作っているアイランドの索引（入力ごとに 1 つ。UI のスレッドを止めない）。
     pending_islands: Option<overlap::PendingIslands>,
-    /// ポリゴン塗りつぶしの右クリックで、島の索引ができるのを待っているメニュー（できたフレームで開く）。
+    /// ポリゴン塗りつぶしの右クリックで、アイランドの索引ができるのを待っているメニュー（できたフレームで開く）。
     pub(crate) menu_wait: Option<overlap::MenuWait>,
-    /// ポリゴン塗りつぶしの右ボタンを押した所（3D か）。離した所が近ければ島のメニューを開く。
+    /// ポリゴン塗りつぶしの右ボタンを押した所（3D か）。離した所が近ければアイランドのメニューを開く。
     pub(crate) menu_press: Option<(egui::Pos2, bool, std::time::Instant)>,
-    /// 窓の UV の見取り図か一覧の行でポインタを置いている島（キャンバスと 3D ビューでも同じ島を強調する）。
+    /// ウィンドウの UV の見取り図か一覧の行でポインタを置いているアイランド（キャンバスと 3D ビューでも同じアイランドを強調する）。
     pub map_hover: Option<usize>,
-    /// 窓の UV の見取り図の中身（モデル・マテリアル・島ごと）。
+    /// ウィンドウの UV の見取り図の中身（モデル・マテリアル・アイランドごと）。
     map: Option<Arc<uvmap::MapData>>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
@@ -178,7 +178,7 @@ pub struct BakeState {
     pub park_mid_bake: bool,
 }
 
-/// 進み具合（窓・仕事の札が出す）。
+/// 進み具合（ウィンドウ・仕事の札が出す）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Progress {
     pub fraction: f64,
@@ -255,7 +255,7 @@ impl BakeState {
         matches!(self.gpu_probe(), GpuProbe::Probing { .. })
     }
 
-    /// 窓の状態表示のために、モデルの入力を別のスレッドで作っている（島の索引を作っている・右クリックのメニューが待っているときも、
+    /// ウィンドウの状態表示のために、モデルの入力を別のスレッドで作っている（アイランドの索引を作っている・右クリックのメニューが待っているときも、
     /// 描き直しを続けるために真）。
     pub fn is_checking(&self) -> bool {
         self.pending.is_some() || self.pending_islands.is_some() || self.menu_wait.is_some()
@@ -277,7 +277,7 @@ impl BakeState {
 
 // ───────── 仕事の表 ─────────
 
-/// ベイク（窓を閉じているあいだは札を出す）。
+/// ベイク（ウィンドウを閉じているあいだは札を出す）。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     card: Some(card),
@@ -287,7 +287,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
     ..JobSpec::new("bake", |app| app.bake.is_baking())
 };
 
-/// 窓の状態表示のための確かめ（モデルの入力を作る・GPU が使えるかを見る）。描き直すだけ（止めて待たない）。
+/// ウィンドウの状態表示のための確かめ（モデルの入力を作る・GPU が使えるかを見る）。描き直すだけ（止めて待たない）。
 pub(crate) const CHECK_JOB: JobSpec = JobSpec {
     repaint: true,
     ..JobSpec::new("bake.check", |app| {
@@ -412,7 +412,7 @@ pub fn backend_help(lang: Lang, backend: BakeBackend) -> &'static str {
     }
 }
 
-/// アダプターの名前（窓の状態・結果の一文）。
+/// アダプターの名前（ウィンドウの状態・結果の一文）。
 fn adapter_text(lang: Lang, a: &BakeAdapter) -> String {
     let software = if a.software {
         lang.pick("ソフトウェア", "software")
@@ -443,7 +443,7 @@ pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
     }
 }
 
-/// 焼く場所の一行（窓の状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
+/// 焼く場所の一行（ウィンドウの状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceLine {
     pub text: String,
@@ -545,7 +545,7 @@ pub fn id_source_label(lang: Lang, source: MeshIdSource) -> &'static str {
     }
 }
 
-/// 窓で選べる ID の分け方（頂点カラーと素材の識別は、入力に渡さないので選べない）。
+/// ウィンドウで選べる ID の分け方（頂点カラーと素材の識別は、入力に渡さないので選べない）。
 pub const ID_SOURCES: [MeshIdSource; 4] = [
     MeshIdSource::MaterialSlot,
     MeshIdSource::Mesh,
@@ -649,7 +649,7 @@ impl AppState {
         self.cache_input(&model, built)
     }
 
-    /// 窓の状態表示のための入力。作ってあればそれ。モデルが替わっていれば別のスレッドで作り直し（UI のスレッドを止めない。
+    /// ウィンドウの状態表示のための入力。作ってあればそれ。モデルが替わっていれば別のスレッドで作り直し（UI のスレッドを止めない。
     /// 作っているのは 1 つだけで、モデルがまた替われば終わってから最新のものを作る）、できるまでは None。ポーズを変えている間は
     /// 始めない（毎フレーム別の形になる）。
     pub fn bake_input_nowait(&mut self) -> Option<Result<Arc<MeshBakeInput>, String>> {
@@ -702,7 +702,7 @@ impl AppState {
         }
     }
 
-    /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクの窓が入力を作っている
+    /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクのウィンドウが入力を作っている
     /// あいだ、効果の入力が毎フレーム横から見る）。
     pub(crate) fn bake_input_ready(&self) -> Option<Result<Arc<MeshBakeInput>, String>> {
         let model = self.view3d.full_model()?;
@@ -749,7 +749,7 @@ impl AppState {
         let mut settings = self.bake.settings.clone();
         // 手動の ID の色はセットの文書の状態（ID マップに入る。別のモデルのものなら core が焼く前に断る）
         settings.manual_id_colors = doc.id_colors().clone();
-        // 重なった UV の持ち主の決め方もセットの文書の状態（手で選んだ島が別のモデルのものなら core が焼く前に断る）
+        // 重なった UV の持ち主の決め方もセットの文書の状態（手で選んだアイランドが別のモデルのものなら core が焼く前に断る）
         settings.overlap = doc.bake_priority().clone();
         settings.width = doc.width() as i32;
         settings.height = doc.height() as i32;
@@ -763,7 +763,7 @@ impl AppState {
         Ok((settings, slots))
     }
 
-    /// マップを使う側の今の条件（モデル・セットの文書の大きさ・スロット・窓の設定）。入力が None ならモデルが無い。
+    /// マップを使う側の今の条件（モデル・セットの文書の大きさ・スロット・ウィンドウの設定）。入力が None ならモデルが無い。
     pub fn mesh_map_expectation(
         &self,
         index: usize,
@@ -823,13 +823,13 @@ impl AppState {
             .collect()
     }
 
-    /// 今ベイクを始められない理由（始められれば None）。窓のボタンと `Start` が同じ理由で断る。入力を作る必要があればここで作る。
+    /// 今ベイクを始められない理由（始められれば None）。ウィンドウのボタンと `Start` が同じ理由で断る。入力を作る必要があればここで作る。
     pub fn bake_refusal(&mut self) -> Option<String> {
         self.refusal(true)
     }
 
-    /// 窓に出す理由。`bake_refusal` と同じ順で、入力を作っている最中は入力の理由を出さない（押せば `Start` が作るか、作り終えるのを
-    /// 待って断る。窓を描くたびに UI のスレッドで作らない）。
+    /// ウィンドウに出す理由。`bake_refusal` と同じ順で、入力を作っている最中は入力の理由を出さない（押せば `Start` が作るか、作り終えるのを
+    /// 待って断る。ウィンドウを描くたびに UI のスレッドで作らない）。
     pub fn bake_refusal_nowait(&mut self) -> Option<String> {
         self.refusal(false)
     }
@@ -930,13 +930,13 @@ impl AppState {
         Occlusion::Bytes(bytes)
     }
 
-    /// 窓を閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。作っている最中のものも、窓を閉じていれば手放す（ID の色の道具を選んでいるときを除く）。毎フレーム呼ぶ。
+    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
+    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるときを除く）。毎フレーム呼ぶ。
     pub fn release_idle_bake_input(&mut self) {
-        // ID の色の道具（強調・部品の欄）は、窓が無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
+        // ID の色のツール（強調・部品の欄）は、ウィンドウが無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
         // 始まって終わらない
-        // 島のメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、島の強調と選んだ項目が入力を使う
-        // （右クリックを押してから離すまで・離したメニューが島の索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）
+        // アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
+        // （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）
         let island_menu = matches!(
             self.popup.as_ref().map(|p| p.kind),
             Some(crate::state::PopupKind::BakeIsland { .. })
@@ -956,9 +956,9 @@ impl AppState {
         self.release_overlap_caches();
     }
 
-    /// 手で選ぶ島の索引（`Islands`）と窓の見取り図（`MapData`）は、ベイクの入力・モデルの形を握る。入力を手放したあと・別の入力に
-    /// 替わったあとに残すと、入力の写しも古いモデル・ポーズの形も解放されない。索引は今の入力の物だけ、見取り図は窓を開いている間の
-    /// 今の索引の上の物だけ持つ（島のメニューを開いている間も、メニューが使うのは索引で、見取り図ではない）。毎フレーム呼ぶ。
+    /// 手で選ぶアイランドの索引（`Islands`）とウィンドウの見取り図（`MapData`）は、ベイクの入力・モデルの形を握る。入力を手放したあと・別の入力に
+    /// 替わったあとに残すと、入力の写しも古いモデル・ポーズの形も解放されない。索引は今の入力の物だけ、見取り図はウィンドウを開いている間の
+    /// 今の索引の上の物だけ持つ（アイランドのメニューを開いている間も、メニューが使うのは索引で、見取り図ではない）。毎フレーム呼ぶ。
     fn release_overlap_caches(&mut self) {
         let input = self.bake.input.as_ref().and_then(|c| c.input.as_ref().ok());
         if !self
@@ -1006,7 +1006,7 @@ impl AppState {
                 self.bake.window = None;
                 self.bake.pick = None;
                 self.bake.map_hover = None;
-                // 見取り図は窓の物（形を握り続けない）。島のメニューが使うのは島の索引で、見取り図ではない
+                // 見取り図はウィンドウの物（形を握り続けない）。アイランドのメニューが使うのはアイランドの索引で、見取り図ではない
                 self.bake.map = None;
             }
             BakeAction::Priority(op) => self.bake_priority_apply(op),

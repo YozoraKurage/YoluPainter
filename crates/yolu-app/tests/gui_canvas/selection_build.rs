@@ -1,4 +1,4 @@
-//! 選択範囲の作り方（CLIP STUDIO の「作成方法」に当たるもの）: 作成方法のアイコンの組と修飾キーの一時表示・選択の道具の設定
+//! 選択範囲の作り方（CLIP STUDIO の「作成方法」に当たるもの）: 作成方法のアイコンの組と修飾キーの一時表示・選択のツールの設定
 //! （アンチエイリアス・縦横比・中心から・角の丸め）・選択ペンと選択消し・境界をぼかす・保存と読み込み・クイックマスク。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
@@ -24,7 +24,7 @@ use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
 fn st(h: &H) -> &AppState {
     &h.state().state
@@ -53,7 +53,7 @@ fn at(h: &H, dx: f32, dy: f32) -> Pos2 {
     offset(canvas_rect(h).center(), dx, dy)
 }
 
-/// 画面の点を画布の座標へ。
+/// 画面の点をキャンバスの座標へ。
 fn to_canvas(h: &H, p: Pos2) -> (f64, f64) {
     let s = st(h);
     s.view
@@ -297,7 +297,7 @@ fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes
     assert!(lit(&h, eraser));
 }
 
-// ───────── 選択の道具の設定 ─────────
+// ───────── 選択のツールの設定 ─────────
 
 #[test]
 fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
@@ -1253,7 +1253,7 @@ fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert_eq!(saved_names(&s), ["A"]);
     assert_eq!(s.doc.undo_count(), steps);
-    // 窓を開く・閉じるは、読むだけのセットでもできる
+    // ウィンドウを開く・閉じるは、読むだけのセットでもできる
     s.apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
     assert!(s.sel.saved_window.is_some());
 }
@@ -1297,7 +1297,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     let item = popup_item(&h, "覚えた選択範囲…").center();
     click(&mut h, item);
     assert!(st(&h).sel.saved_window.is_some());
-    // 窓はキャンバスの真ん中を覆うので、下へ寄せる
+    // ウィンドウはキャンバスの真ん中を覆うので、下へ寄せる
     h.state_mut()
         .state
         .sel
@@ -1358,7 +1358,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     h.run();
     assert!(
         st(&h).sel.saved_window.is_some(),
-        "名前の欄の Esc では、窓は閉じない"
+        "名前の欄の Esc では、ウィンドウは閉じない"
     );
     assert_eq!(
         st(&h).sel.saved_window.as_ref().unwrap().rename,
@@ -1398,9 +1398,12 @@ fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
         move_to(&h, egui::pos2(2.0, 2.0));
         h.run();
         h.get_by_label(&format!("{}: Alpha", lang.pick("共通", "Intersect")));
-        let w = yolu_app::selection::saved::last_rect(&h.ctx).expect("窓が開いている");
+        let w = yolu_app::selection::saved::last_rect(&h.ctx).expect("ウィンドウが開いている");
         assert!(w.width() > 100.0);
-        assert_plain("窓の見出し", yolu_app::selection::saved::window_title(lang));
+        assert_plain(
+            "ウィンドウの見出し",
+            yolu_app::selection::saved::window_title(lang),
+        );
     }
 }
 
@@ -1627,7 +1630,7 @@ fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
     assert!(!st(&h).sel.quick && !lit(&h, label));
 }
 
-// ───────── 道具の帯とキー・スナップショット ─────────
+// ───────── ツールの帯とキー・スナップショット ─────────
 
 #[test]
 fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() {
@@ -1644,7 +1647,7 @@ fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() 
     let at = all.iter().position(|t| *t == Tool::SelectPen).unwrap();
     assert_eq!(all[at - 1], Tool::IdSelect);
     assert_eq!(all[at + 1], Tool::Move);
-    // ペンが触れるのは「描く道具」ではない
+    // ペンが触れるのは「描くツール」ではない
     assert!(!Tool::SelectPen.paints());
     assert_ne!(
         Tool::SelectPen.name_in(Lang::Ja),
@@ -1701,7 +1704,7 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
-    // 覚えた選択範囲の窓
+    // 覚えた選択範囲のウィンドウ
     save(&mut h.state_mut().state, "選択範囲 1");
     save(&mut h.state_mut().state, "顔まわり");
     h.state_mut()
@@ -1857,10 +1860,10 @@ fn switching_the_tool_during_a_selection_pen_stroke_drops_it_and_releasing_selec
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
         st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none(),
-        "道具を替えたら捨てる"
+        "ツールを替えたら捨てる"
     );
     let_go(&mut h, line[2]);
-    assert_nothing_left(&h, "道具の切り替え");
+    assert_nothing_left(&h, "ツールの切り替え");
     for p in line {
         assert_eq!(canvas_pixel(&h, p)[3], 0, "レイヤーにも描かない");
     }
@@ -1907,11 +1910,11 @@ fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_too
     h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
     assert_eq!(st(&h).tool, Tool::Brush);
     assert!(st(&h).sel.pen.is_some(), "ストロークは続く");
-    // 選択の道具へは替わるが、始めたストロークは離しで終わる（取り残さない）
+    // 選択のツールへは替わるが、始めたストロークは離しで終わる（取り残さない）
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
         st(&h).sel.pen.is_some(),
-        "クイックマスクのストロークは道具では捨てない"
+        "クイックマスクのストロークはツールでは捨てない"
     );
     let_go(&mut h, line[2]);
     assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
@@ -1955,7 +1958,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     // 選択範囲は描いた側だけで、映した側には付かない
     assert_eq!(amount_at(&h, at(&h, -80.0, 0.0)), 255);
     assert_eq!(amount_at(&h, at(&h, 80.0, 0.0)), 0, "映さない");
-    // 選択ペンの道具も対称を使わない。ブラシに戻れば軸が戻る
+    // 選択ペンのツールも対称を使わない。ブラシに戻れば軸が戻る
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));

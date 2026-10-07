@@ -395,7 +395,7 @@ fn effect_get(doc: &Document, args: &EffectGetArgs) -> Result<Reply, OpError> {
     }))
 }
 
-/// 効果の ID を、その層の中から探す（別の層の効果は「無い」）。ID・スタック・位置を返す。
+/// 効果の ID を、そのレイヤーの中から探す（別のレイヤーの効果は「無い」）。ID・スタック・位置を返す。
 fn find_effect(
     doc: &Document,
     layer: LayerId,
@@ -495,7 +495,7 @@ fn inactive_text(e: &InactiveEffect) -> Text {
     )
 }
 
-// ───────── 層 ─────────
+// ───────── レイヤー ─────────
 
 fn color_of(text: &str) -> Result<Rgba8, OpError> {
     parse_color(text).ok_or_else(|| {
@@ -875,7 +875,7 @@ fn layer_set(
         if let Some(locks) = locks {
             d.set_layer_locks(id, locks)?;
         }
-        // 調整の層は、「新しい調整が有効なチャンネルに使えること」と「有効にするチャンネルに今の調整が使えること」を核が段ごとに見る。
+        // 調整レイヤーは、「新しい調整が有効なチャンネルに使えること」と「有効にするチャンネルに今の調整が使えること」を核が段ごとに見る。
         // 無効にする → 調整を替える → 有効にする、の順なら、どの途中の状態も両方を満たす（事前の検査が、最後の状態を通している）
         for (channel, _) in channels.iter().filter(|(_, on)| !*on) {
             d.set_channel_enabled(id, *channel, false)?;

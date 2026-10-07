@@ -1,13 +1,13 @@
-//! 大きな文書（既定 4096² × 20 層、全タイルが画素あり）の合成・ストローク・取り消し・やり直しの時間。
+//! 大きな文書（既定 4096² × 20 レイヤー、全タイルが画素あり）の合成・ストローク・取り消し・やり直しの時間。
 //!   cargo run --release -p yolu-core --example diskcache_bench -- [--size 4096] [--layers 20] [--runs 3]
 //!       [--only composite,stroke,merge,transform] [--cache-mib N] [--cold]
 //! `--cache-mib N` はディスクキャッシュを入にし、メモリの上限を N MiB にする（超えた分を裏の書き手が一時フォルダのファイルへ逃がす）。
 //! `--cold` は、測る操作の前ごとに読んでいない中身を全部ディスクへ逃がす（全部を読み戻す最悪の形）。
-//! 準備（層を埋める）は計測の外。各操作は `--runs` 回の中央値（ミリ秒、壁時計）。
-//! - composite: 画布の全面の Color の合成。
-//! - stroke_small / stroke_large: 一番上の層への硬い丸筆（半径 32・256）の 1 本（始め・点・確定）。
+//! 準備（レイヤーを埋める）は計測の外。各操作は `--runs` 回の中央値（ミリ秒、壁時計）。
+//! - composite: キャンバスの全面の Color の合成。
+//! - stroke_small / stroke_large: 一番上のレイヤーへの硬い丸筆（半径 32・256）の 1 本（始め・点・確定）。
 //! - undo / redo: その 1 本の取り消し・やり直し。
-//! - merge_down: 一番上の層を下の層へ結合（画素ごとの式の道）。transform: 一番上の層を 10° 回す（双線形）。どちらも直後に取り消す。
+//! - merge_down: 一番上のレイヤーを下のレイヤーへ結合（画素ごとの式の道）。transform: 一番上のレイヤーを 10° 回す（双線形）。どちらも直後に取り消す。
 use std::time::Instant;
 
 use yolu_core::glam::DVec2;
@@ -34,7 +34,7 @@ fn document(side: u32, layers: u32) -> (Document, LayerId) {
     let tiles = side / 128;
     let mut bytes = vec![0u8; 128 * 128 * 4];
     for l in 0..layers {
-        last = d.add_layer("層").unwrap();
+        last = d.add_layer("レイヤー").unwrap();
         for ty in 0..tiles {
             for tx in 0..tiles {
                 for (i, p) in bytes.as_chunks_mut::<4>().0.iter_mut().enumerate() {
@@ -105,7 +105,7 @@ fn main() {
     let start = Instant::now();
     let (mut d, top) = document(side, layers);
     eprintln!(
-        "準備: {side}² × {layers} 層・{} MiB・{:.0} ms",
+        "準備: {side}² × {layers} レイヤー・{} MiB・{:.0} ms",
         d.allocated_bytes() >> 20,
         start.elapsed().as_secs_f64() * 1000.0
     );

@@ -55,14 +55,14 @@ pub enum MergeRefusal {
 impl std::fmt::Display for MergeRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            MergeRefusal::NoLayerBelow => "下に層が無い",
+            MergeRefusal::NoLayerBelow => "下にレイヤーが無い",
             MergeRefusal::LayerBelowIsGroup => "下がグループ",
-            MergeRefusal::LayerBelowIsAdjustment => "下が調整層",
-            MergeRefusal::HiddenLayer => "非表示の層がある",
+            MergeRefusal::LayerBelowIsAdjustment => "下が調整レイヤー",
+            MergeRefusal::HiddenLayer => "非表示のレイヤーがある",
             MergeRefusal::IsGroup => "対象がグループ",
             MergeRefusal::NotGroup => "グループではない",
             MergeRefusal::EmptyGroup => "グループが空",
-            MergeRefusal::NothingVisible => "表示している層が無い",
+            MergeRefusal::NothingVisible => "表示中のレイヤーが無い",
             MergeRefusal::DifferentGroups => "親のグループが違う",
         })
     }
@@ -105,7 +105,7 @@ impl Difference {
     }
 }
 
-/// 層そのものの画素（`Layer::pixel` と同じ値）の、キャンバスの中の矩形（1 枚のタイルの中）。行は下から、行ごとに面から写す。
+/// レイヤーそのものの画素（`Layer::pixel` と同じ値）の、キャンバスの中の矩形（1 枚のタイルの中）。行は下から、行ごとに面から写す。
 fn layer_rect(l: &Layer, c: Channel, rect: crate::Rect) -> Result<Vec<u8>, CoreError> {
     let row = rect.width as usize * 4;
     let mut out = vec![0u8; row * rect.height as usize];
@@ -132,7 +132,7 @@ fn has_stack(stack: &[crate::FilterEffect]) -> bool {
     !stack.is_empty()
 }
 
-/// 結合が焼いた効果とパスの印（C# の MergeNotes: 1 はフィルター・Generator、2 はパス。層の画素とマスクのスタックを数える）。
+/// 結合が焼いた効果とパスの印（C# の MergeNotes: 1 はフィルター・Generator、2 はパス。レイヤーの画素とマスクのスタックを数える）。
 fn effect_notes(l: &Layer) -> u8 {
     let mut notes = 0;
     if has_stack(&l.filters) || l.mask.as_ref().is_some_and(|m| has_stack(&m.filters)) {
@@ -168,7 +168,7 @@ impl Document {
             None
         })
     }
-    /// 層がそのチャンネルに出し得るタイル。ぼかしは元のタイルの外へ届く分だけ広げる（C# の OutputContentTiles）。Generator など
+    /// レイヤーがそのチャンネルに出し得るタイル。ぼかしは元のタイルの外へ届く分だけ広げる（C# の OutputContentTiles）。Generator など
     /// 元の画素が無い所へ出す効果のタイルは、評価した出力の面（`merge_eval`）が持つので、結合は面のタイルも足す。
     fn content_coords(&self, l: &Layer, c: Channel) -> Vec<TileCoord> {
         match l.kind {
@@ -199,7 +199,7 @@ impl Document {
             _ => Vec::new(),
         }
     }
-    /// タイルの並びを、画素の距離 `reach` が届く分だけ周りへ広げる（画布の外へは出ない。並びは Y・X の順）。
+    /// タイルの並びを、画素の距離 `reach` が届く分だけ周りへ広げる（キャンバスの外へは出ない。並びは Y・X の順）。
     fn grown_tiles(&self, tiles: &[TileCoord], reach: u32) -> Vec<TileCoord> {
         let ts = self.tile_size;
         let m = reach.div_ceil(ts);
@@ -215,7 +215,7 @@ impl Document {
             .collect();
         set.into_iter().collect()
     }
-    /// 結合で読む層（`layers`。準備のために並べ直した写しでよい）の、チャンネルの評価した出力。`doc_index[k]` は `layers[k]` の文書での
+    /// 結合で読むレイヤー（`layers`。準備のために並べ直した写しでよい）の、チャンネルの評価した出力。`doc_index[k]` は `layers[k]` の文書での
     /// 番号。効果が無ければ空（結合は保存している画素をそのまま読む）。評価した面のタイル（効果が元の画素の無い所へ出したものも）を
     /// 結合が読むタイルに足せるよう、面のタイルの並びも返す。
     fn merge_eval(
@@ -234,7 +234,7 @@ impl Document {
         Ok((eval, tiles))
     }
     /// 効果を焼き込む結合の前に、効いていない効果（使えるマップが無い Generator・出ていないデカール）が無いか確かめる。焼き込むと
-    /// その効果が落ちるので断る（C# の RefuseInactiveGenerators）。`content` は層の画素のスタックとデカール、`mask` はマスクのスタック。
+    /// その効果が落ちるので断る（C# の RefuseInactiveGenerators）。`content` はレイヤーの画素のスタックとデカール、`mask` はマスクのスタック。
     fn refuse_inactive_effects(
         &self,
         index: usize,
@@ -307,7 +307,7 @@ impl Document {
                 .collect()
         })
     }
-    /// 計画（plan）の合成だけを焼く面（表示に寄与する層・複数の層・グループの結合）。バッチ（`merge_surface_tiles`）ごとに計画を 1 回組み、
+    /// 計画（plan）の合成だけを焼く面（表示に寄与するレイヤー・複数のレイヤー・グループの結合）。バッチ（`merge_surface_tiles`）ごとに計画を 1 回組み、
     /// バッチのタイルをまとめてワーカーへ分ける（`composite::composite_tiles_with`。タイルごとに計画を組み直さない。組む回数はバッチの数）。
     /// 合成・アルファ 0 の画素の RGB の 0 揃え・タイルの圧縮は、タイルを合成したワーカーが続けて行う（並列の段は 1 つ）。
     /// 画素は、画素ごとの `composite::evaluate_pixel` と同じバイトになる。
@@ -321,7 +321,10 @@ impl Document {
         self.merge_surface_tiles(coords, budget, |batch| {
             let regions: Vec<crate::Rect> = batch
                 .iter()
-                .map(|&c| self.tile_rect(c).expect("結合が読むタイルは画布の中にある"))
+                .map(|&c| {
+                    self.tile_rect(c)
+                        .expect("結合が読むタイルはキャンバスの中にある")
+                })
                 .collect();
             composite::composite_tiles_with(stack, self.tile_size, &regions, None, |i, image| {
                 // 矩形の画素を、ts × ts の 0 埋めの行（下から）に置く
@@ -409,11 +412,11 @@ impl Document {
         let li = (0..ui)
             .rev()
             .find(|&i| self.layers[i].parent == upper.parent)
-            .expect("下の層");
+            .expect("下のレイヤー");
         let lower = &self.layers[li];
         self.ensure_pixels_editable(id, false)?;
         self.ensure_pixels_editable(lower.id, false)?;
-        // 効果は焼き込まれる（結果は効果を持たない）ので、効いていない効果があれば落とさず断る。下の層のマスクは、残すとき
+        // 効果は焼き込まれる（結果は効果を持たない）ので、効いていない効果があれば落とさず断る。下のレイヤーのマスクは、残すとき
         // （分離の結合でないとき）は効果ごと結果へ写るので、ここでは見ない（C# の RefuseInactiveGenerators(upper, 内容, マスク)・(lower, 内容)）。
         // 分離の結合のときだけ、方法が決まったあとで見る（下）
         self.refuse_inactive_effects(ui, true, true)?;
@@ -427,7 +430,7 @@ impl Document {
         } else {
             MergeMethod::OntoLowerLayer
         };
-        // 分離の結合は下の層のマスクのフィルターも画素へ焼き（結果はマスクを持たない）、焼けば効いていない Generator の設定が落ちる。
+        // 分離の結合は下のレイヤーのマスクのフィルターも画素へ焼き（結果はマスクを持たない）、焼けば効いていない Generator の設定が落ちる。
         // C# はこの検査を持たず入力のまま通して黙って落とす。Rust は意図して断る（OntoLowerLayer・IntoClippingBase はマスクが効果ごと残る）
         if method == MergeMethod::Isolated {
             self.refuse_inactive_effects(li, false, true)?;
@@ -477,7 +480,7 @@ impl Document {
             upper_shell.parent = None;
             upper_shell.clipping = false;
             let upper_layers = [upper_shell];
-            // 計画（どの層が出るか）は評価に依らない。評価した出力は、効果を使う所で（下で）作る
+            // 計画（どのレイヤーが出るか）は評価に依らない。評価した出力は、効果を使う所で（下で）作る
             let upper_plan = Stack::new(&upper_layers, c, kind, None).plan();
             let upper_on = !upper_plan.is_empty()
                 && (method != MergeMethod::IntoClippingBase || on && lower.opacity_in(c) > 0.);
@@ -518,7 +521,7 @@ impl Document {
                 l.parent = None;
                 l.clipping = false;
             }
-            // 下の層（0）と上の層（1）の評価した出力。結合は保存している画素でなく、合成が読む出力を焼く
+            // 下のレイヤー（0）と上のレイヤー（1）の評価した出力。結合は保存している画素でなく、合成が読む出力を焼く
             let (eval, evaluated_tiles) = self.merge_eval(&isolated, &[li, ui], c, kind)?;
             if upper_on {
                 coords.extend(
@@ -540,7 +543,7 @@ impl Document {
             let isolated_stack = Stack::new(&isolated, c, kind, Some(&eval));
             let isolated_plan = isolated_stack.plan();
             let surface = self.merge_surface(&coords, &mut budget, |readers, x, y| {
-                // 保存している画素（透明の下に残る RGB を守る所で使う）と、層の出力（効果を通した画素）
+                // 保存している画素（透明の下に残る RGB を守る所で使う）と、レイヤーの出力（効果を通した画素）
                 let raw = composite::raw_layer_pixel(readers, lower, c, x, y);
                 let below = if on {
                     isolated_stack.layer_pixel(readers, 0, x, y)
@@ -608,8 +611,8 @@ impl Document {
             result.put_surface(c, Some(surface));
             result.set_enabled(c, on || upper_on);
         }
-        // Anchor: 結果までの合成は上の層までの合成と同じなので、上の層の Anchor を結果へ移す（読む段はそのまま使える）。残したマスクの
-        // Anchor は、マスクごと写っている（lower.mask の複製）。下の層の Anchor（上の層を含まない合成）は表せないので無くなり、
+        // Anchor: 結果までの合成は上のレイヤーまでの合成と同じなので、上のレイヤーの Anchor を結果へ移す（読む段はそのまま使える）。残したマスクの
+        // Anchor は、マスクごと写っている（lower.mask の複製）。下のレイヤーの Anchor（上のレイヤーを含まない合成）は表せないので無くなり、
         // 読む段は理由を出して入力のまま通す
         result.anchor = upper.anchor.clone();
         let removed = vec![lower.id, upper.id];
@@ -619,7 +622,7 @@ impl Document {
         copy.layers[li] = result;
         self.finish_merge(copy, &removed, method, notes, tolerance, &output_tiles)
     }
-    /// 表示に寄与する層を結合。非表示・不透明度ゼロの層と、それを持つグループは残す。
+    /// 表示に寄与するレイヤーを結合。非表示・不透明度ゼロのレイヤーと、それを持つグループは残す。
     pub fn merge_visible(
         &mut self,
         name: &str,
@@ -644,7 +647,7 @@ impl Document {
         if removed.is_empty() {
             return Err(CoreError::MergeRefused(MergeRefusal::NothingVisible));
         }
-        removed.retain(|id| !self.layer(*id).expect("層").is_group());
+        removed.retain(|id| !self.layer(*id).expect("レイヤー").is_group());
         self.ensure_members_editable(&removed)?;
         let mut notes = self.disabled_notes(&removed);
         for (i, l) in self.layers.iter().enumerate() {
@@ -679,7 +682,7 @@ impl Document {
             if Stack::new(&self.layers, c, kind, None).plan().is_empty() {
                 continue;
             }
-            // 全部の層の評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
+            // 全部のレイヤーの評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
             let (eval, evaluated_tiles) = self.merge_eval(&self.layers, &in_place, c, kind)?;
             let mut coords: BTreeSet<_> = self
                 .layers
@@ -721,7 +724,7 @@ impl Document {
             &output_tiles,
         )
     }
-    /// 外す層の画素が編集できるか（ロック）を、文書の並びの順（下から）に確かめる。最初に断った層を返すので、どの層を名指すかは
+    /// 外すレイヤーの画素が編集できるか（ロック）を、文書の並びの順（下から）に確かめる。最初に断ったレイヤーを返すので、どのレイヤーを名指すかは
     /// 集合の並びで変わらない。
     fn ensure_members_editable(&self, removed: &HashSet<LayerId>) -> Result<(), CoreError> {
         self.layers
@@ -753,7 +756,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let members = self.topmost_of(ids)?;
         if members.len() < 2 {
-            return Err(CoreError::InvalidArgument("結合は 2 層以上"));
+            return Err(CoreError::InvalidArgument("結合は 2 レイヤー以上"));
         }
         let parent = self.layer(members[0]).expect("対象").parent;
         if members
@@ -823,7 +826,7 @@ impl Document {
             .collect();
         self.ensure_members_editable(&removed)?;
         // 効果は焼き込まれる: 効いていない効果は落とさず断る。グループの結合では、グループ自身のマスクは結果へ効果ごと写るので
-        // 焼かない（見ない）。選んだ層の結合では、選んだグループのマスクも焼かれる（C# の MergeGroup・MergeLayers）
+        // 焼かない（見ない）。選んだレイヤーの結合では、選んだグループのマスクも焼かれる（C# の MergeGroup・MergeLayers）
         let mut effect_bits = 0;
         for (i, l) in self.layers.iter().enumerate() {
             if !removed.contains(&l.id) || Some(l.id) == group {
@@ -832,7 +835,9 @@ impl Document {
             self.refuse_inactive_effects(i, group.is_some() || !l.is_group(), true)?;
             effect_bits |= effect_notes(l);
         }
-        let top = self.layer(*members.last().expect("対象")).expect("層");
+        let top = self
+            .layer(*members.last().expect("対象"))
+            .expect("レイヤー");
         let mut result = Layer::new(
             LayerId(super::random_id(self.id_counter)),
             &top.name,
@@ -852,7 +857,7 @@ impl Document {
             result.mask = top.mask.clone();
             result.locks = top.locks;
             // Anchor: 結果までの合成はグループまでの合成と同じなので、グループの Anchor を結果へ移す（マスクの Anchor はマスクごと写る）。
-            // 中の層の Anchor は無くなる
+            // 中のレイヤーの Anchor は無くなる
             result.anchor = top.anchor.clone();
             result.blends = top.blends.clone();
             for b in result.blends.values_mut() {
@@ -938,7 +943,7 @@ impl Document {
         tolerance: u8,
         output_tiles: &BTreeMap<Channel, BTreeSet<TileCoord>>,
     ) -> Result<LayerMergeReport, CoreError> {
-        // 表示に寄与する層の結合だけは、結合前の合成でなく結果の層の画素と比べる（結合した層が全部の見た目を持つ）
+        // 表示に寄与するレイヤーの結合だけは、結合前の合成でなく結果のレイヤーの画素と比べる（結合したレイヤーが全部の見た目を持つ）
         let visible = method == MergeMethod::Visible;
         let result = copy
             .layers
@@ -968,7 +973,7 @@ impl Document {
                 .flat_map(|l| self.content_coords(l, c))
                 .collect();
             coords.extend(self.content_coords(result, c));
-            // 結合した層の出力は、元の画素の無いタイルへも届く（Generator など）。比べる所に足す
+            // 結合したレイヤーの出力は、元の画素の無いタイルへも届く（Generator など）。比べる所に足す
             if let Some(tiles) = output_tiles.get(&c) {
                 coords.extend(tiles.iter().copied());
             }
@@ -1029,7 +1034,7 @@ impl Document {
                 .filter(|l| removed.contains(&l.id))
                 .map(Layer::allocated_bytes)
                 .sum::<u64>();
-        // 変わり得るのは外した層と結果の層（結果の見た目の差は許容差の内で、外から見える所は変えない）
+        // 変わり得るのは外したレイヤーと結果のレイヤー（結果の見た目の差は許容差の内で、外から見える所は変えない）
         let mut dirty = removed.to_vec();
         dirty.push(report.result_id);
         self.commit_copy(copy, cost, Dirty::Layers(dirty))?;

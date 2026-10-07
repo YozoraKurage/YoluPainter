@@ -53,13 +53,13 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 }
 const SIZE: u32 = 128;
 const TILE: u32 = 32;
-/// 層ごとに違う画素の文書（ラスター・マスク・塗りつぶし）。
+/// レイヤーごとに違う画素の文書（ラスター・マスク・塗りつぶし）。
 fn painted(seed: u64, layers: usize) -> Document {
     let mut doc = Document::with_tile_size(SIZE, SIZE, TILE).unwrap();
     doc.set_source_budget_bytes(1 << 30).unwrap();
     let n = SIZE / TILE;
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
@@ -106,7 +106,7 @@ fn spec(id: &str, name: &str, slot: u16, doc: &Document) -> SetSpec {
         composites: Vec::new(),
     }
 }
-/// 今の形に収まらない扱い（合計 64 KiB 超えで `YLP-4`）、正本は 64 KiB を超えたら分け、部分は 16 KiB まで、小さな層は 8 KiB までまとめる。
+/// 今の形に収まらない扱い（合計 64 KiB 超えで `YLP-4`）、正本は 64 KiB を超えたら分け、部分は 16 KiB まで、小さなレイヤーは 8 KiB までまとめる。
 fn small() -> Thresholds {
     Thresholds {
         classic_total_bytes: 64 << 10,
@@ -181,7 +181,7 @@ fn a_big_project_is_split_saved_as_ylp_4_and_opens_back_with_every_pixel() {
         assert_eq!(set_a.document.version(), 21);
         assert_eq!(bytes_of(&set_a.document.to_core().unwrap()), bytes_of(&a));
         assert_eq!(bytes_of(&set_b.document.to_core().unwrap()), bytes_of(&b));
-        // 予算（1 層ずつ止める）
+        // 予算（1 レイヤーずつ止める）
         let Err(e) = set_a.document.to_core_within(Some(1)) else {
             panic!("予算で止まらない")
         };
@@ -295,7 +295,7 @@ fn recovery_shares_the_parts_of_unchanged_layers_between_generations() {
                 },
             )
             .unwrap();
-        // 1 つの層の 1 タイルだけを変える
+        // 1 つのレイヤーの 1 タイルだけを変える
         let last = a.layers()[5].id();
         a.import_tile(
             last,
@@ -322,7 +322,7 @@ fn recovery_shares_the_parts_of_unchanged_layers_between_generations() {
                 },
             )
             .unwrap();
-        // 変わった層の部分と小さなエントリ（ヘッダー・project.json など）だけを書いた
+        // 変わったレイヤーの部分と小さなエントリ（ヘッダー・project.json など）だけを書いた
         assert!(second.reused_files >= 2, "{second:?}");
         assert!(
             second.written_bytes < parts_total / 2,
@@ -392,7 +392,7 @@ fn saving_again_copies_unchanged_sets_from_the_file_and_drops_old_parts() {
             .unwrap()
             .project
             .unwrap();
-        // セット A の層を減らして保存し直す: 部分は減り、古い部分は残らない。セット B はファイルから写す
+        // セット A のレイヤーを減らして保存し直す: 部分は減り、古い部分は残らない。セット B はファイルから写す
         let mut fewer = a.capture_snapshot().unwrap();
         let ids: Vec<_> = fewer.layers().iter().map(|l| l.id()).collect();
         for id in &ids[..4] {
@@ -463,11 +463,11 @@ fn an_opened_file_moved_deleted_or_replaced_outside_still_saves_under_another_na
                 }
                 "deleted" => fs::remove_file(&path).unwrap(),
                 _ => {
-                    // 同期の道具のように、別のファイルを同じ名前へ置き換える（同じ inode を書き換えるのではない）
+                    // 同期のツールのように、別のファイルを同じ名前へ置き換える（同じ inode を書き換えるのではない）
                     let elsewhere = project_of(&[(SET_A, &other)]);
                     let temp = dir.path("elsewhere.ylp");
                     SaveTarget::create(&temp).unwrap().save(&elsewhere).unwrap();
-                    // 開いているファイルを置き換えられない OS（POSIX の置換の無い Windows・古い Wine）では、外の道具もこの置き換えができない:
+                    // 開いているファイルを置き換えられない OS（POSIX の置換の無い Windows・古い Wine）では、外のツールもこの置き換えができない:
                     // 確かめることが無い（Unix は必ず通る）
                     if let Err(e) = fs::rename(&temp, &path) {
                         if cfg!(unix) {
@@ -552,7 +552,7 @@ fn a_document_source_written_into_a_package_from_memory_round_trips() {
     });
 }
 
-/// 測る（手で回す: `cargo test -p yolu-io --release --test projects bigdoc::measure -- --ignored --nocapture`）。4096²・60 層の合成の文書で、
+/// 測る（手で回す: `cargo test -p yolu-io --release --test projects bigdoc::measure -- --ignored --nocapture`）。4096²・60 レイヤーの合成の文書で、
 /// 保存・開く・書き置きの時間と、最大 RSS の増え方。
 #[test]
 #[ignore]
@@ -565,9 +565,9 @@ fn measure_a_large_document() {
     doc.set_source_budget_bytes(64 << 30).unwrap();
     let n = size / tile;
     let started = Instant::now();
-    // 層の種類: 塗り（ゆるやかな色の変化と小さな揺らぎ。画素の大半）、線画（透明の上の細い線。疎）、雑音（縮まない最悪の場合）
+    // レイヤーの種類: 塗り（ゆるやかな色の変化と小さな揺らぎ。画素の大半）、線画（透明の上の細い線。疎）、雑音（縮まない最悪の場合）
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         let kind = match i % 12 {
             0 => "雑音",
             1..=3 => "線画",
@@ -603,7 +603,7 @@ fn measure_a_large_document() {
                 .map(move |c| l.surface(c).unwrap().allocated_bytes())
         })
         .sum();
-    println!("層の画素 {} MiB", pixels >> 20);
+    println!("レイヤーの画素 {} MiB", pixels >> 20);
     let dir = Dir::new();
     let path = dir.path("measure.ylp");
     let rss = Rss::new();
@@ -645,7 +645,7 @@ fn measure_a_large_document() {
         t.elapsed() - opened_in,
         rss.grew() >> 20
     );
-    // 1 つの層を変えて保存し直す（変わらないセットの写し・変わった正本の作り直し）
+    // 1 つのレイヤーを変えて保存し直す（変わらないセットの写し・変わった正本の作り直し）
     let mut edited = core;
     let id = edited.layers()[10].id();
     edited
@@ -677,7 +677,7 @@ fn measure_a_large_document() {
         t.elapsed(),
         rss.grew() >> 20
     );
-    // 書き置き（1 回目は全部、2 回目は 1 つの層だけ違う）
+    // 書き置き（1 回目は全部、2 回目は 1 つのレイヤーだけ違う）
     let store = GenerationStore::new(dir.path("store"));
     rss.reset();
     let t = Instant::now();

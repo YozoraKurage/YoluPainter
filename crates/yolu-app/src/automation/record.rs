@@ -2,9 +2,9 @@
 //!
 //! - 写せる操作の表は [`plan`]。写し方は、その操作が画面でした事と同じ結果になる命令（起動中のアプリのホストに当てて同じ文書になることを
 //!   試験が確かめる）。写せない操作（描く・選択範囲・変形・結合・複製・チャンネルの構成など、命令の無い物）は記録せず、文書を変えたら
-//!   記録の窓に印を出す（[`Recorder::skipped`]。数は出さない）。画面だけの操作（表示・ツール・色など）は記録も印もしない。
-//! - 相手の指し方: 記録を始めた時に選んでいた層は `$selected`、記録の中で作った層・効果は `$created:<n>`（作った順の通し番号）、
-//!   ほかの層は、そのときに名前が 1 つに決まるときだけ名前。どれにも当たらない（同じ名前が複数・記録の前からある効果）操作は写さない。
+//!   記録のウィンドウに印を出す（[`Recorder::skipped`]。数は出さない）。画面だけの操作（表示・ツール・色など）は記録も印もしない。
+//! - 相手の指し方: 記録を始めた時に選んでいたレイヤーは `$selected`、記録の中で作ったレイヤー・効果は `$created:<n>`（作った順の通し番号）、
+//!   ほかのレイヤーは、そのときに名前が 1 つに決まるときだけ名前。どれにも当たらない（同じ名前が複数・記録の前からある効果）操作は写さない。
 //! - 1 つの操作が 1 段（`Entry`）。取り消し・やり直しは、記録した段が文書の履歴の一番上にあるとき（文書の変更番号で見る）だけ段を外す・戻す。
 //!   スライダーのドラッグ（core が 1 段にまとめる変更）は、同じ相手・同じ欄なら 1 つの命令にまとめ、Esc で止めたドラッグは段ごと外す。
 //! - 記録は、始めた時の文書（テクスチャセット）だけ。ほかのセット・開き直した文書での操作は記録しない。
@@ -45,7 +45,7 @@ enum MergeKey {
 #[derive(Clone, Debug)]
 struct Entry {
     commands: Vec<Command>,
-    /// この操作で作った層・効果（`$created:<n>` の番号は、段の並びでこれを数える）。
+    /// この操作で作ったレイヤー・効果（`$created:<n>` の番号は、段の並びでこれを数える）。
     created: Vec<(Made, u128)>,
     /// 操作の前と後の文書の変更番号。
     rev_before: u64,
@@ -61,7 +61,7 @@ pub struct Recorder {
     undone: Vec<(Entry, bool)>,
     /// 記録を始めた文書。
     doc_id: u128,
-    /// 記録を始めた時に選んでいた層（`$selected`）。
+    /// 記録を始めた時に選んでいたレイヤー（`$selected`）。
     start_selected: Option<LayerId>,
     /// 最後の段が文書の履歴の一番上にあるときの変更番号。
     top: Option<u64>,
@@ -137,7 +137,7 @@ impl Recorder {
     }
 }
 
-/// 記録の外で文書が変わったか（記録の窓が毎フレーム見る）。
+/// 記録の外で文書が変わったか（記録のウィンドウが毎フレーム見る）。
 pub fn sync(app: &mut AppState) {
     let doc_rev = (app.doc.id(), app.doc.revision());
     if let Some(rec) = app.automation.recorder.as_mut() {
@@ -171,7 +171,7 @@ pub struct Pending {
     rev_before: u64,
     undo_before: usize,
     trims_before: u64,
-    /// 作る操作のときだけ、前からあった層・効果。
+    /// 作る操作のときだけ、前からあったレイヤー・効果。
     before_ids: Option<(HashSet<u128>, HashSet<u128>)>,
 }
 
@@ -380,7 +380,7 @@ fn effect_ids(doc: &Document) -> HashSet<u128> {
 
 // ───────── 相手の指し方 ─────────
 
-/// 層を指す文字列（`$selected`・`$created:<n>`・名前が 1 つに決まるときだけ名前）。指せなければ None。
+/// レイヤーを指す文字列（`$selected`・`$created:<n>`・名前が 1 つに決まるときだけ名前）。指せなければ None。
 fn layer_ref(app: &AppState, rec: &Recorder, id: LayerId) -> Option<String> {
     if rec.start_selected == Some(id) {
         return Some(SELECTED.to_owned());
@@ -521,12 +521,12 @@ fn adjustment_spec(settings: &AdjustmentSettings) -> Option<EffectSpec> {
     })
 }
 
-/// 選んでいる層（まだある物）。
+/// 選んでいるレイヤー（まだある物）。
 fn selected(app: &AppState) -> Option<LayerId> {
     app.selected_layer.filter(|id| app.doc.layer(*id).is_some())
 }
 
-/// 選んでいる層の上に足す、の `above`（選んでいなければ一番上で None）。指せなければ Err。
+/// 選んでいるレイヤーの上に足す、の `above`（選んでいなければ一番上で None）。指せなければ Err。
 fn above(app: &AppState, rec: &Recorder) -> Result<Option<String>, ()> {
     match selected(app) {
         None => Ok(None),

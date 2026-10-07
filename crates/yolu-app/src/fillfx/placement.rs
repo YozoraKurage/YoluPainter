@@ -40,8 +40,8 @@ pub fn fit_to_bounds(bounds: &Bounds, mode: ProjectionMode) -> Placement {
     }
 }
 
-/// 新しく作る塗りつぶしの層の投影: 種類を `mode` にし、置き場があればそれにする（無ければ初めのまま）。デカールは画像を 1 回だけ置く
-/// （繰り返さない）。デカールを置く道とメニューが画像・デカールの層を作る道が、同じ投影を作るための 1 か所。
+/// 新しく作る塗りつぶしレイヤーの投影: 種類を `mode` にし、置き場があればそれにする（無ければ初めのまま）。デカールは画像を 1 回だけ置く
+/// （繰り返さない）。デカールを置く道とメニューが画像・デカールのレイヤーを作る道が、同じ投影を作るための 1 か所。
 pub fn new_projection(mode: ProjectionMode, placement: Option<Placement>) -> Projection {
     let mut projection = Projection {
         mode,

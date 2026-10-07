@@ -57,7 +57,7 @@ pub struct SceneModel {
     /// スロット（メッシュ × サブメッシュを並びの順に平らにしたもの）ごとのマテリアルの番号。Unity 版の `{"slot": n}` の鍵を読み替える。
     pub slots: Vec<u32>,
     pub meshes: usize,
-    /// マテリアルごとの、それを使うメッシュの名前（メッシュの並びの順。同じ名前は 1 回）。新規プロジェクト・プロジェクトの構成の窓が
+    /// マテリアルごとの、それを使うメッシュの名前（メッシュの並びの順。同じ名前は 1 回）。新規プロジェクト・プロジェクトの構成のウィンドウが
     /// マテリアルの一覧に添える。
     pub material_meshes: Vec<Vec<String>>,
     pub vertices: usize,
@@ -136,7 +136,7 @@ impl SceneModel {
     }
 
     /// `from_rig` の、モデルの同一性（`rig_id`）を呼び手が決めるもの。まだ 3D ビューに入れていないモデル（`Arc` にする前）の
-    /// マテリアルの組を窓が読むとき、同一性は要らないので 0 を渡す。
+    /// マテリアルの組をウィンドウが読むとき、同一性は要らないので 0 を渡す。
     pub fn from_rig_as(rig: &Rig, id: usize) -> SceneModel {
         SceneModel {
             source: ModelSource::Rig { rig: id },

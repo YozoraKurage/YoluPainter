@@ -1,6 +1,6 @@
-//! 層のフィルターが UV の継ぎ目をまたぐときの速さと大きさ。人工のモデル（立方体の 6 面を n × n に分けて球へ膨らませ、面を k × k の島に
-//! 切って 4096² の UV に並べる。島の間は `SEAM_GAP` 画素、既定 8）と、全面を描いた 4096² の層のガウスぼかし（半径 8・64）を、またがない・またぐで測る。
-//! 島の図・帯の写しを作る時間と大きさも出す。
+//! レイヤーのフィルターが UV の継ぎ目をまたぐときの速さと大きさ。人工のモデル（立方体の 6 面を n × n に分けて球へ膨らませ、面を k × k のアイランドに
+//! 切って 4096² の UV に並べる。アイランドの間は `SEAM_GAP` 画素、既定 8）と、全面を描いた 4096² のレイヤーのガウスぼかし（半径 8・64）を、またがない・またぐで測る。
+//! アイランドの図・帯の写しを作る時間と大きさも出す。
 //!
 //! `cargo run --release -p yolu-core --example seam_bench`（`SEAM_N`・`SEAM_K`・`SEAM_GAP`・`SEAM_SIZE`・`EFFECT_THREADS` で変えられる）
 use std::sync::Arc;
@@ -99,7 +99,7 @@ fn run() {
     let gap = env("SEAM_GAP", 8);
     let triangles = model(n, k, size, gap);
     println!(
-        "モデル: 三角形 {}、島 {}（面 {} × {}）、島の間 {gap} 画素",
+        "モデル: 三角形 {}、アイランド {}（面 {} × {}）、アイランドの間 {gap} 画素",
         triangles.len(),
         6 * k * k,
         k,
@@ -107,13 +107,15 @@ fn run() {
     );
     let geometry = Arc::new(SurfaceGeometry::new(triangles, 1, DEFAULT_WELD_TOLERANCE).unwrap());
     let topology = Arc::new(UvTopology::new(geometry.clone(), None));
-    let (_, _) = time("島と縁の対応", || topology.seam_edge_count());
+    let (_, _) = time("アイランドと縁の対応", || {
+        topology.seam_edge_count()
+    });
     println!("継ぎ目の縁 {}", topology.seam_edge_count());
-    let (map, _) = time("島の図 4096²", || {
+    let (map, _) = time("アイランドの図 4096²", || {
         topology.island_map(size, size).unwrap()
     });
     println!(
-        "島の図: {:.2} MiB、島の中のテクセル {:.1} %",
+        "アイランドの図: {:.2} MiB、アイランドの中のテクセル {:.1} %",
         mib(map.bytes()),
         map.covered_texels() as f64 * 100.0 / (size as f64 * size as f64)
     );
@@ -136,10 +138,10 @@ fn run() {
         );
     }
 
-    // 全面を描いた層（タイルごとに縞）
+    // 全面を描いたレイヤー（タイルごとに縞）
     let mut doc = Document::new(size, size).unwrap();
     doc.set_source_budget_bytes(1 << 30).unwrap();
-    let layer = doc.add_layer("層").unwrap();
+    let layer = doc.add_layer("レイヤー").unwrap();
     let tile = doc.tile_size();
     let mut bytes = vec![0u8; (tile * tile * 4) as usize];
     for ty in 0..size / tile {
@@ -188,7 +190,7 @@ fn run() {
         );
     }
     println!(
-        "覚えている島の図と帯の写し: {:.1} MiB",
+        "覚えているアイランドの図と帯の写し: {:.1} MiB",
         mib(topology.cached_bytes())
     );
 }

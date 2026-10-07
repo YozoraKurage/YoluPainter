@@ -3,7 +3,7 @@
 //! 値が変わったときだけ書き直す。
 //!
 //! 値の約束（lilToon と Unity のリニアの色空間と同じ）: 色のプロパティは sRGB からリニアへ（Unity がマテリアルの色をシェーダーへ渡すときと
-//! 同じ）、数とベクトルはそのまま。スロットの元は、標準のチャンネルは 3D ビューの絵（`paint`）、ユーザーチャンネルは配列の層、画像は
+//! 同じ）、数とベクトルはそのまま。スロットの元は、標準のチャンネルは 3D ビューの絵（`paint`）、ユーザーチャンネルは配列のレイヤー、画像は
 //! 束ねの 9・10。色空間が sRGB の元を 1 つだけ読むスロットは、読んだ RGB をリニアへ直す（Unity が sRGB のテクスチャを読むときと同じ）。
 //! 成分ごとの詰め合わせはリニアのまま（書き出しの詰めた画像はリニアで取り込む）。
 
@@ -195,7 +195,7 @@ pub fn wanted_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     all
 }
 
-/// スロットが読むユーザーチャンネルのうち、配列の層の上限（[`MAX_LAYERS`]）を超えて持たないもの（17 個目から。そのスロットは
+/// スロットが読むユーザーチャンネルのうち、配列のレイヤーの上限（[`MAX_LAYERS`]）を超えて持たないもの（17 個目から。そのスロットは
 /// 割り当てのない既定で描く。欄が理由を出す）。
 pub fn dropped_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     let all = all_users(doc, look);
@@ -238,13 +238,13 @@ pub fn follows_unity_texture(doc: &Document, slot: &str) -> bool {
 
 /// スロットの割り当てが、Unity の元のテクスチャに譲るものか: 受けた見た目があり、流し込み先でないスロットが、使っていない標準のチャンネルを
 /// 読むとき。Unity はそのスロットを元のテクスチャで、空なら既定のテクスチャで読むので、受けた絵が来ない間（空と知らせた・読めない・
-/// まだ届かない・層の上限を超えた）も、使っていないチャンネルの値（発光なら黒）ではなく、スロットの既定のテクスチャで描く。
+/// まだ届かない・レイヤーの上限を超えた）も、使っていないチャンネルの値（発光なら黒）ではなく、スロットの既定のテクスチャで描く。
 pub fn yields_to_unity_texture(doc: &Document, slot: &str, source: Option<&TextureSource>) -> bool {
     yields_to_received(doc, source) && follows_unity_texture(doc, slot)
 }
 
 /// 描く見た目で割り当てていない（か、受けた絵に譲る割り当ての）スロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。
-/// 層の上限を超えたものも含む）。
+/// レイヤーの上限を超えたものも含む）。
 pub fn received_images(
     doc: &Document,
     look: &MaterialLook,
@@ -280,7 +280,7 @@ pub fn received_layered(
     all
 }
 
-/// Unity から受けた絵のあるスロットのうち、配列の層の上限（[`MAX_RECEIVED_LAYERS`]）を超えて持たないもの（17 枚目から。そのスロットは
+/// Unity から受けた絵のあるスロットのうち、配列のレイヤーの上限（[`MAX_RECEIVED_LAYERS`]）を超えて持たないもの（17 枚目から。そのスロットは
 /// 割り当てのない既定で描く。欄が理由を出す）。
 pub fn dropped_received(doc: &Document, look: &MaterialLook) -> Vec<String> {
     received_images(doc, look)
@@ -330,7 +330,7 @@ fn paint_source(channel: Channel) -> Option<i32> {
     PaintSlot::of(channel).map(|s| s.index() as i32)
 }
 
-/// lilToon の値の一様バッファの中身（f32 の並び。整数の並びはビットのまま）。`users` は配列の層の並び、`images` は画像の元の
+/// lilToon の値の一様バッファの中身（f32 の並び。整数の並びはビットのまま）。`users` は配列のレイヤーの並び、`images` は画像の元の
 /// 色空間（スロット `_MatCapTex`・`_MatCap2ndTex` の順。持っていなければ None）。
 pub fn params(
     doc: &Document,
@@ -341,7 +341,7 @@ pub fn params(
     params_with(doc, look, users, images, &[])
 }
 
-/// `params` に、Unity から受けた絵（`received`: スロットの名前・配列の層・sRGB か）を足したもの。受けた絵は、割り当てていない
+/// `params` に、Unity から受けた絵（`received`: スロットの名前・配列のレイヤー・sRGB か）を足したもの。受けた絵は、割り当てていない
 /// スロットだけが読む（割り当てたチャンネル・画像が勝つ）。
 pub fn params_with(
     doc: &Document,
@@ -935,9 +935,9 @@ pub struct LookGpu {
     pub draw: SetDraw,
     /// 法線マップを使う（lilToon のノーマルマップが入）。接線を作るかの決めに使う。
     pub wants_tangents: bool,
-    /// 最後に値を作ったときの鍵（文書・版・見た目の設定の入れ物・層の並び・画像の色空間）。同じなら値を作り直さない。
+    /// 最後に値を作ったときの鍵（文書・版・見た目の設定の入れ物・レイヤーの並び・画像の色空間）。同じなら値を作り直さない。
     params_key: Option<ParamsKey>,
-    /// 値（`params`）を作った回数（試験・計測用。同じ道具の兄弟の持ち物（ほかのセット）と共有する）。
+    /// 値（`params`）を作った回数（試験・計測用。同じツールの兄弟の持ち物（ほかのセット）と共有する）。
     builds: Arc<AtomicU64>,
 }
 
@@ -947,7 +947,7 @@ struct ParamsKey {
     revision: u64,
     /// 描く見た目の番号（利用者の設定・受けた見た目のどちらが変わっても進む）。
     look_serial: u64,
-    /// 受けた絵の層の並び（スロットの名前と sRGB か）。
+    /// 受けた絵のレイヤーの並び（スロットの名前と sRGB か）。
     received: Vec<(String, bool)>,
     /// 見た目の設定の入れ物の番地（文書は設定を替えるたびに新しい入れ物にする。番地の使い回しは版で分ける）。
     look: usize,
@@ -986,7 +986,7 @@ impl LookGpu {
         }
     }
 
-    /// 同じ道具の、まっさらな別の持ち物（ほかのセット用）。
+    /// 同じツールの、まっさらな別の持ち物（ほかのセット用）。
     pub fn sibling(&self, device: &wgpu::Device) -> LookGpu {
         let mut look = LookGpu::with_users(device, self.users.sibling(), self.received.sibling());
         look.builds = self.builds.clone();
@@ -1116,7 +1116,7 @@ impl LookGpu {
             }
             spaces[which] = self.images[which].as_ref().map(|h| h.space);
         }
-        // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、層の上限まで）
+        // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、レイヤーの上限まで）
         let wanted = received_layered(doc, look);
         if self.received.sync(&wanted, limit, received_budget) {
             self.image_version += 1;
@@ -1286,12 +1286,12 @@ mod tests {
         // _MainTex: Color（絵の束ね 0）を全部。sRGB の形式のテクスチャで GPU がリニアにして読むので、シェーダーでは直さない
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
         assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
-        // スカラーのユーザーチャンネル（層 0 = 元 6）は値を RGB に
+        // スカラーのユーザーチャンネル（レイヤー 0 = 元 6）は値を RGB に
         assert_eq!(slot_src(&v, 4), [24, 24, 24, -3]);
-        // 色のユーザーチャンネル（層 1 = 元 7）は全部、sRGB
+        // 色のユーザーチャンネル（レイヤー 1 = 元 7）は全部、sRGB
         assert_eq!(slot_src(&v, 7), [28, 29, 30, 31]);
         assert_eq!(slot_flags(&v, 7)[0], 1.0);
-        // 詰め合わせ: R ← 層 0 の R、G ← 1、B ← 0、A ← Roughness（絵の束ね 2）の R
+        // 詰め合わせ: R ← レイヤー 0 の R、G ← 1、B ← 0、A ← Roughness（絵の束ね 2）の R
         assert_eq!(slot_src(&v, 5), [24, -3, -2, 8]);
         // 割り当てていないスロットは既定（_ShadowColorTex 2nd は黒）
         assert_eq!(slot_src(&v, 8), [-1; 4]);
@@ -1351,7 +1351,7 @@ mod tests {
         );
         let layered = received_layered(&doc, &drawn);
         assert_eq!(layered.len(), MAX_RECEIVED_LAYERS);
-        // スロットの並びで先の 16 枚が層、17 枚目からは持たない
+        // スロットの並びで先の 16 枚がレイヤー、17 枚目からは持たない
         assert_eq!(
             dropped_received(&doc, &drawn),
             SLOTS[1 + MAX_RECEIVED_LAYERS..]
@@ -1359,7 +1359,7 @@ mod tests {
                 .map(|s| s.name.to_owned())
                 .collect::<Vec<_>>()
         );
-        // LookGpu と同じく、層の番号は並びの順
+        // LookGpu と同じく、レイヤーの番号は並びの順
         let layers: Vec<(&str, usize, bool)> = layered
             .iter()
             .enumerate()
@@ -1369,16 +1369,16 @@ mod tests {
         // 流し込み先は 3D ビューの絵（Color。GPU がリニアにして読む）
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
         assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
-        // 色調補正マスク（層 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
+        // 色調補正マスク（レイヤー 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
         assert_eq!(slot_src(&v, 1), [160, 161, 162, 163]);
         assert_eq!(slot_flags(&v, 1), [0.0, 1.0, 40.0, 0.0]);
-        // ノーマルマップ（層 2 = 元 42）: シェーダーは元が 40 以上なら X を A × R で読む
+        // ノーマルマップ（レイヤー 2 = 元 42）: シェーダーは元が 40 以上なら X を A × R で読む
         assert_eq!(slot_flags(&v, 3), [0.0, 1.0, 42.0, 0.0]);
-        // 影色（層 6 = 元 46）は sRGB
+        // 影色（レイヤー 6 = 元 46）は sRGB
         assert_eq!(slot_flags(&v, 7), [1.0, 1.0, 46.0, 0.0]);
-        // マットキャップの絵のスロットも受けた絵で描く（層 13 = 元 53）
+        // マットキャップの絵のスロットも受けた絵で描く（レイヤー 13 = 元 53）
         assert_eq!(slot_flags(&v, 14), [1.0, 1.0, 53.0, 0.0]);
-        // 16 枚目（マットキャップ 2nd、層 15 = 元 55）まで
+        // 16 枚目（マットキャップ 2nd、レイヤー 15 = 元 55）まで
         assert_eq!(slot_flags(&v, 16), [1.0, 1.0, 55.0, 0.0]);
         // 17 枚目からは割り当てのない既定
         for (i, slot) in SLOTS.iter().enumerate().skip(1 + MAX_RECEIVED_LAYERS) {
@@ -1402,7 +1402,7 @@ mod tests {
         let drawn = doc.drawn_look().clone();
         let layered = received_layered(&doc, &drawn);
         assert!(layered.iter().all(|(slot, _)| slot != "_ShadowColorTex"));
-        // 影色が抜けた分、17 枚目（マットキャップ 2nd のマスク）が層に入る
+        // 影色が抜けた分、17 枚目（マットキャップ 2nd のマスク）がレイヤーに入る
         assert!(layered
             .iter()
             .any(|(slot, _)| slot == "_MatCap2ndBlendMask"));
@@ -1634,7 +1634,7 @@ mod tests {
 
     #[test]
     fn every_template_mask_fits_the_layers() {
-        // 全部の機能を入にしてひな形を当てると、マスクのチャンネルが 9 つ（影の SDF なら 10）。どれも GPU の層に入る
+        // 全部の機能を入にしてひな形を当てると、マスクのチャンネルが 9 つ（影の SDF なら 10）。どれも GPU のレイヤーに入る
         let mut doc = Document::new(8, 8).unwrap();
         let mut look = lil();
         for t in [
@@ -1700,9 +1700,9 @@ mod tests {
         let users = wanted_users(&doc, &look);
         assert_eq!(users, channels[..16].to_vec());
         assert_eq!(dropped_users(&doc, &look), channels[16..].to_vec());
-        // 層に無いチャンネルのスロットは、割り当てのない既定で描く
+        // レイヤーに無いチャンネルのスロットは、割り当てのない既定で描く
         let v = params(&doc, &look, &users, [None, None]);
-        // 詰め合わせの成分の元は（層の元の番号 × 4 + 成分）。層 12〜15 = 元 18〜21
+        // 詰め合わせの成分の元は（レイヤーの元の番号 × 4 + 成分）。レイヤー 12〜15 = 元 18〜21
         assert_eq!(slot_src(&v, 7), [18 * 4, 19 * 4, 20 * 4, 21 * 4]);
         assert_eq!(slot_src(&v, 8), [-1; 4]);
         assert_eq!(slot_src(&v, 9), [-1; 4]);

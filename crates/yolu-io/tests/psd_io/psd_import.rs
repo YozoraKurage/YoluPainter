@@ -1,7 +1,7 @@
 //! PSD の「写しとしての取り込み」（`psd::import_copy`）。実物の PSD は使わず、この試験が組み立てる PSD で確かめる。
 //! 原本を保つ読み（`psd::read`）が PreserveOnly・Rejected にする PSD を、写しとしては取り込めること、
 //! 取り込めないもの（PSB・RGB8 以外・予算を超える・壊れている）は理由つきで断ること、
-//! 無視・落とした・変わるものが層の名前と機能の名前で知らされること。
+//! 無視・落とした・変わるものがレイヤーの名前と機能の名前で知らされること。
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use yolu_core::{Channel, Rect};
@@ -165,7 +165,7 @@ struct Psd {
     merged_compression: u16,
     /// RGB のあとに足すアルファチャンネル（選択範囲など）の数。統合画像のチャンネルが増える。
     extra_channels: usize,
-    /// 統合透明度を持つ（層の数を負にして、統合画像の 4 つ目のチャンネルを透明度にする。RGB は白へ寄せる）。
+    /// 統合透明度を持つ（レイヤーの数を負にして、統合画像の 4 つ目のチャンネルを透明度にする。RGB は白へ寄せる）。
     merged_alpha: bool,
     /// 統合画像の透明度を、わざとこの一様な値にする（`merged_alpha` のとき）。
     merged_alpha_override: Option<u8>,
@@ -251,7 +251,7 @@ impl Psd {
     }
     fn build(&self) -> Vec<u8> {
         let mut info = Vec::new();
-        // 層の数。統合透明度があるときは負（2 の補数）
+        // レイヤーの数。統合透明度があるときは負（2 の補数）
         let count = self.layers.len() as i16;
         info.extend(be16(
             (if self.merged_alpha { -count } else { count }) as u16,
@@ -483,7 +483,7 @@ fn layer_by_name<'a>(d: &'a yolu_core::Document, name: &str) -> &'a yolu_core::L
 fn composite(d: &yolu_core::Document) -> Vec<u8> {
     d.composite(Rect::new(0, 0, d.width(), d.height())).unwrap()
 }
-/// 層の左上の画素（PSD の上の行から）。
+/// レイヤーの左上の画素（PSD の上の行から）。
 fn pixel(d: &yolu_core::Document, name: &str, x: u32, y: u32) -> [u8; 4] {
     let l = layer_by_name(d, name);
     let p = l.pixel(Channel::Color, x, d.height() - 1 - y).unwrap();
@@ -509,7 +509,7 @@ fn what_the_preserving_reader_refuses_imports_as_a_copy_with_each_thing_told() {
             L::new("上", (2, 2, 6, 6), [0, 0, 255, 255]).tag(b"lclr", &[0, 1, 0, 0, 0, 0, 0, 0]),
         ],
     );
-    // lyid を持たない 2 層。全体マスク・画像リソース（チャンネル名と解像度）
+    // lyid を持たない 2 レイヤー。全体マスク・画像リソース（チャンネル名と解像度）
     psd.global_mask = vec![0; 14];
     psd.resources = vec![(1006, b"\x04abcd".to_vec()), (1005, vec![0; 16])];
     let bytes = psd.build();
@@ -529,7 +529,7 @@ fn what_the_preserving_reader_refuses_imports_as_a_copy_with_each_thing_told() {
     ] {
         assert!(codes.contains(&code), "{code}: {codes:?}");
     }
-    // 写しとしては取り込める。無視したものが、機能の名前と層の名前で並ぶ
+    // 写しとしては取り込める。無視したものが、機能の名前とレイヤーの名前で並ぶ
     let (d, notes) = imported(&bytes);
     assert_eq!(d.layers().len(), 2);
     assert_eq!(
@@ -564,7 +564,7 @@ fn what_the_preserving_reader_refuses_imports_as_a_copy_with_each_thing_told() {
 
 #[test]
 fn missing_and_duplicate_layer_ids_get_new_ids_and_are_never_repaired_by_name() {
-    // 同じ名前の 2 層（名前で対応付けたら取り違える）、lyid が欠落・重複・0・負の層
+    // 同じ名前の 2 レイヤー（名前で対応付けたら取り違える）、lyid が欠落・重複・0・負のレイヤー
     let psd = Psd::new(
         4,
         4,
@@ -583,7 +583,7 @@ fn missing_and_duplicate_layer_ids_get_new_ids_and_are_never_repaired_by_name() 
     );
     let (d, notes) = imported(&bytes);
     assert_eq!(d.layers().len(), 5);
-    // 層 ID（上位 32 bit）は正で、すべて違う
+    // レイヤー ID（上位 32 bit）は正で、すべて違う
     let ids: Vec<u128> = d.layers().iter().map(|l| l.id().0 >> 96).collect();
     assert!(ids.iter().all(|i| *i > 0), "{ids:?}");
     let mut sorted = ids.clone();
@@ -593,11 +593,11 @@ fn missing_and_duplicate_layer_ids_get_new_ids_and_are_never_repaired_by_name() 
     // 最初に出てきた lyid 5 はそのまま。重複・欠落・0・負だけが振り直された
     assert_eq!(ids[0], 5);
     let n = note(&notes, ImportFeature::LayerIds).unwrap();
-    // 写しとして取り込むので、ID の振り直しは見え方にも内容にも効かない（無視。確かめの窓は出さない）
+    // 写しとして取り込むので、ID の振り直しは見え方にも内容にも効かない（無視。確認のウィンドウは出さない）
     assert_eq!(n.action, ImportAction::Ignored);
     assert_eq!(n.count, 4);
     assert_eq!(n.layers, ["同じ名前", "欠落", "ゼロ", "負"]);
-    // 同じ名前の 2 層は、位置で区別されたまま（画素が入れ替わらない）
+    // 同じ名前の 2 レイヤーは、位置で区別されたまま（画素が入れ替わらない）
     assert_eq!(pixel(&d, "同じ名前", 0, 0), [255, 0, 0, 255]);
     let second = &d.layers()[1];
     assert_eq!(second.name(), "同じ名前");
@@ -607,7 +607,7 @@ fn missing_and_duplicate_layer_ids_get_new_ids_and_are_never_repaired_by_name() 
 
 #[test]
 fn only_missing_duplicate_and_invalid_ids_are_renumbered_even_when_valid_ones_follow() {
-    // 下から [欠落, 1, 2, 2（重複）, 4]。欠落の層に 1 から振ると、あとにある有効な 1・2 とぶつかる
+    // 下から [欠落, 1, 2, 2（重複）, 4]。欠落のレイヤーに 1 から振ると、あとにある有効な 1・2 とぶつかる
     let psd = Psd::new(
         4,
         4,
@@ -621,7 +621,7 @@ fn only_missing_duplicate_and_invalid_ids_are_renumbered_even_when_valid_ones_fo
     );
     let (d, notes) = imported(&psd.build());
     let ids: Vec<u128> = d.layers().iter().map(|l| l.id().0 >> 96).collect();
-    // 有効で一意な 1・2・4 は変わらない。振り直されたのは欠落と重複の 2 層だけ（使われていない 3・5 を振る）
+    // 有効で一意な 1・2・4 は変わらない。振り直されたのは欠落と重複の 2 レイヤーだけ（使われていない 3・5 を振る）
     assert_eq!([ids[1], ids[2], ids[4]], [1, 2, 4], "{ids:?}");
     assert_eq!([ids[0], ids[3]], [3, 5], "{ids:?}");
     let n = note(&notes, ImportFeature::LayerIds).unwrap();
@@ -629,7 +629,7 @@ fn only_missing_duplicate_and_invalid_ids_are_renumbered_even_when_valid_ones_fo
         (n.count, n.layers.clone()),
         (2, vec!["欠落".to_string(), "二の重複".to_string()])
     );
-    // 区切りの ID とも重ならない（区切りが 1 を使うので、欠落の層は 1 を避ける）
+    // 区切りの ID とも重ならない（区切りが 1 を使うので、欠落のレイヤーは 1 を避ける）
     let psd = Psd::new(
         4,
         4,
@@ -671,7 +671,7 @@ fn effects_that_cannot_be_evaluated_keep_the_layer_pixels_and_say_what_changes()
         CompatibilityMode::PreserveOnly
     );
     let (d, notes) = imported(&bytes);
-    assert_eq!(d.layers().len(), 6, "どの層も残る");
+    assert_eq!(d.layers().len(), 6, "どのレイヤーも残る");
     for (feature, action, layer, at) in [
         (
             ImportFeature::LayerEffects,
@@ -709,7 +709,7 @@ fn effects_that_cannot_be_evaluated_keep_the_layer_pixels_and_say_what_changes()
             (n.action, n.layers.as_slice()),
             (action, [layer.to_string()].as_slice())
         );
-        // 層の画素は PSD のまま
+        // レイヤーの画素は PSD のまま
         assert_eq!(pixel(&d, layer, at.0, at.1), [255, 0, 0, 255], "{layer}");
     }
     // 未知のタグは、持たないだけとしてキーつきで知らせる
@@ -727,7 +727,7 @@ fn an_unsupported_adjustment_drops_the_layer_but_a_supported_one_stays() {
     let psd = Psd::new(4, 4, vec![red("下", (0, 0, 4, 4)), selective, inv]);
     let (d, notes) = imported(&psd.build());
     let names: Vec<&str> = d.layers().iter().map(|l| l.name()).collect();
-    assert_eq!(names, ["下", "反転"], "未対応の調整は層ごと落とす");
+    assert_eq!(names, ["下", "反転"], "未対応の調整はレイヤーごと落とす");
     let n = note(&notes, ImportFeature::UnsupportedAdjustment).unwrap();
     assert_eq!(
         (n.action, n.layers.clone(), n.details.clone()),
@@ -741,7 +741,7 @@ fn an_unsupported_adjustment_drops_the_layer_but_a_supported_one_stays() {
 
 #[test]
 fn a_legacy_brightness_contrast_alone_is_an_adjustment_that_cannot_be_kept_and_is_dropped() {
-    // 旧式の brit だけ（新しい式の CgEd が無い）: 原本を保つ読みは保つだけ。写しとしては層ごと落として、そのキーを知らせる
+    // 旧式の brit だけ（新しい式の CgEd が無い）: 原本を保つ読みは保つだけ。写しとしてはレイヤーごと落として、そのキーを知らせる
     let mut legacy = L::new("旧式", (0, 0, 0, 0), [0; 4]);
     legacy.tags.push((*b"brit", vec![0, 10, 0, 10, 0, 0, 0, 0]));
     let psd = Psd::new(4, 4, vec![red("下", (0, 0, 4, 4)), legacy]);
@@ -840,7 +840,7 @@ fn unsupported_blend_modes_become_normal_and_fill_opacity_multiplies_into_opacit
 #[test]
 fn a_blend_if_range_and_mask_extras_change_the_look_and_are_listed() {
     let mut l = red("条件", (0, 0, 4, 4));
-    // 既定でないブレンド範囲（下の層の側を 10〜200 だけ）
+    // 既定でないブレンド範囲（下のレイヤーの側を 10〜200 だけ）
     l.ranges = vec![
         0, 0, 255, 255, 10, 20, 200, 210, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
         255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
@@ -869,7 +869,7 @@ fn a_blend_if_range_and_mask_extras_change_the_look_and_are_listed() {
     assert!(layer_by_name(&d, "マスク").mask().is_some());
 }
 
-// ───────── 画布の外・マスク・構造 ─────────
+// ───────── キャンバスの外・マスク・構造 ─────────
 
 #[test]
 fn blend_settings_collapsed_groups_and_lock_bits_are_each_told() {
@@ -918,7 +918,7 @@ fn blend_settings_collapsed_groups_and_lock_bits_are_each_told() {
 
 #[test]
 fn inconsistent_masks_and_sloppy_padding_do_not_refuse_the_file() {
-    // マスクの定義だけでチャンネルが無い層（値は分からないので既定値だけ）・既定値が 0・255 以外のマスク
+    // マスクの定義だけでチャンネルが無いレイヤー（値は分からないので既定値だけ）・既定値が 0・255 以外のマスク
     let mut no_channel = red("定義だけ", (0, 0, 4, 4));
     no_channel.mask = Some(MaskSpec {
         rect: (0, 0, 4, 4),
@@ -959,7 +959,7 @@ fn inconsistent_masks_and_sloppy_padding_do_not_refuse_the_file() {
     );
     let (d, notes) = imported(&bytes);
     assert_eq!(d.layers().len(), 4);
-    // 見え方が変わる 2 つは、機能と層の名前で知らされる（黙って寄せない）
+    // 見え方が変わる 2 つは、機能とレイヤーの名前で知らされる（黙って寄せない）
     let n = note(&notes, ImportFeature::MaskWithoutPixels).unwrap_or_else(|| panic!("{notes:?}"));
     assert_eq!(
         (n.action, n.layers.clone(), n.count),
@@ -1008,7 +1008,7 @@ fn inconsistent_masks_and_sloppy_padding_do_not_refuse_the_file() {
         note(&notes, ImportFeature::MaskDefault).unwrap().layers,
         ["明るめ"]
     );
-    // 余白（ゼロであるべき所）がゼロでない PSD。層名の Pascal 文字列の余白（"a" の後ろ）を 0 でない値にする
+    // 余白（ゼロであるべき所）がゼロでない PSD。レイヤー名の Pascal 文字列の余白（"a" の後ろ）を 0 でない値にする
     let mut sloppy = Psd::new(4, 4, vec![red("a", (0, 0, 4, 4))]).build();
     let at = sloppy.windows(2).position(|w| w == [1, b'a']).unwrap() + 2;
     sloppy[at] = 0x7f;
@@ -1023,7 +1023,7 @@ fn inconsistent_masks_and_sloppy_padding_do_not_refuse_the_file() {
 #[test]
 fn pixels_outside_the_canvas_are_cut_and_only_a_real_loss_is_told() {
     let mut wide = red("はみ出す", (-2, -2, 6, 6));
-    // 画布の外の画素は透明にして、左上の 4×4（画布の内側）だけ赤にする
+    // キャンバスの外の画素は透明にして、左上の 4×4（キャンバスの内側）だけ赤にする
     for y in 0..8usize {
         for x in 0..8usize {
             let inside = x >= 2 && y >= 2 && x < 6 && y < 6;
@@ -1042,7 +1042,7 @@ fn pixels_outside_the_canvas_are_cut_and_only_a_real_loss_is_told() {
     );
     assert_eq!(pixel(&d, "はみ出す", 0, 0), [255, 0, 0, 255]);
     assert_eq!(pixel(&d, "はみ出す", 3, 3), [255, 0, 0, 255]);
-    // 外にも見える画素があれば、落としたものとして層の名前つきで知らせる
+    // 外にも見える画素があれば、落としたものとしてレイヤーの名前つきで知らせる
     let mut visible = wide;
     visible.rgba[3] = 255;
     let (_, notes) = imported(&Psd::new(4, 4, vec![visible]).build());
@@ -1095,7 +1095,7 @@ fn groups_masks_clipping_locks_and_empty_layers_come_across() {
     assert!(layer_by_name(&d, "クリップ")
         .locks()
         .contains(yolu_core::LayerLocks::TRANSPARENCY));
-    // 組の区切りの ID は層 ID に持ち、書き出し直すと同じ区切りになる
+    // 組の区切りの ID はレイヤー ID に持ち、書き出し直すと同じ区切りになる
     let divider = (((g.id().0 >> 80) & 0xffff) | (((g.id().0 >> 64) & 0xffff) << 16)) as u32;
     assert_eq!(divider, 90);
     let mask = layer_by_name(&d, "マスク").mask().unwrap();
@@ -1155,7 +1155,7 @@ fn a_clean_psd_matches_its_merged_image_and_a_wrong_one_reports_the_difference()
         "{notes:?}"
     );
     assert_eq!(composite(&d).len(), 8 * 8 * 4);
-    // 統合画像と合成が違う PSD（上の層を隠してから統合画像だけ元のまま）
+    // 統合画像と合成が違う PSD（上のレイヤーを隠してから統合画像だけ元のまま）
     psd.layers[1].flags = 2;
     let mut bytes = psd.build();
     // 隠す前の統合画像へ差し替える
@@ -1178,7 +1178,7 @@ fn a_clean_psd_matches_its_merged_image_and_a_wrong_one_reports_the_difference()
             _ => None,
         })
         .unwrap_or_else(|| panic!("{notes:?}"));
-    // 上の層の 4×4 が、青から赤へ
+    // 上のレイヤーの 4×4 が、青から赤へ
     assert_eq!((n.0, n.1, n.2, n.3), (ImportAction::Changed, 255, 16, 64));
 }
 
@@ -1244,7 +1244,7 @@ fn a_missing_or_unreadable_merged_image_is_told_not_refused() {
         .is_some(),
         "{notes:?}"
     );
-    // 画布が予算に比べて大きいときは、照らさずに知らせる
+    // キャンバスが予算に比べて大きいときは、照らさずに知らせる
     let wide = Psd::new(256, 256, vec![red("a", (0, 0, 1, 1))]).build();
     let notes = match run(&wide, 300 * 1024) {
         CopyOutcome::Imported(i) => i.notes,
@@ -1258,12 +1258,12 @@ fn a_missing_or_unreadable_merged_image_is_told_not_refused() {
 
 #[test]
 fn a_merged_image_cut_short_is_unreadable_for_every_compression_and_the_layers_still_come() {
-    // 層のデータは完全で、末尾の統合画像だけが切れている PSD。RAW・RLE・ZIP のどれでも、層は取り込まれ、照合を省略と知らされる
+    // レイヤーのデータは完全で、末尾の統合画像だけが切れている PSD。RAW・RLE・ZIP のどれでも、レイヤーは取り込まれ、照合を省略と知らされる
     for compression in [0u16, 1, 2, 3] {
         let mut psd = Psd::new(4, 4, vec![red("a", (0, 0, 4, 4))]);
         psd.merged_compression = compression;
         let whole = psd.build();
-        // 統合画像の始まり（圧縮の種類の前）は、同じ層で組んだ RAW の PSD の終わりから 2 + 3 面ぶんを引いた所
+        // 統合画像の始まり（圧縮の種類の前）は、同じレイヤーで組んだ RAW の PSD の終わりから 2 + 3 面ぶんを引いた所
         let mut raw = Psd::new(4, 4, vec![red("a", (0, 0, 4, 4))]);
         raw.merged_compression = 0;
         let start = raw.build().len() - (2 + 3 * 16);
@@ -1280,7 +1280,7 @@ fn a_merged_image_cut_short_is_unreadable_for_every_compression_and_the_layers_s
             assert_eq!(
                 d.layers().len(),
                 1,
-                "圧縮 {compression}・{cut} バイト: 層が取り込まれない"
+                "圧縮 {compression}・{cut} バイト: レイヤーが取り込まれない"
             );
             assert!(
                 note(
@@ -1406,7 +1406,7 @@ fn a_wrong_alpha_plane_in_the_merged_image_is_reported_with_the_largest_differen
             "圧縮 {compression}"
         );
     }
-    // 透明度を持たない宣言（層の数が正）の 4 チャンネルは、透明度として比べない（追加のチャンネルとして飛ばす）
+    // 透明度を持たない宣言（レイヤーの数が正）の 4 チャンネルは、透明度として比べない（追加のチャンネルとして飛ばす）
     let mut psd = transparent_background(0);
     psd.merged_alpha = false;
     psd.extra_channels = 1;
@@ -1466,7 +1466,7 @@ fn what_cannot_be_imported_is_refused_with_a_reason() {
 
 #[test]
 fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
-    // 層の数: 予算 256 MiB では 256 枚まで（原本を保つ読みの既定と同じ）。300 枚の PSD は、予算を上げれば取り込める
+    // レイヤーの数: 予算 256 MiB では 256 枚まで（原本を保つ読みの既定と同じ）。300 枚の PSD は、予算を上げれば取り込める
     let layers: Vec<L> = (0..300)
         .map(|i| L::new(&format!("L{i}"), (0, 0, 1, 1), [i as u8, 0, 0, 255]).id(i + 1))
         .collect();
@@ -1491,7 +1491,7 @@ fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
         CopyOutcome::Imported(i) => assert_eq!(i.document.layers().len(), 300),
         CopyOutcome::Refused(why) => panic!("{}", why.message()),
     }
-    // 画布: 1 枚ぶんの画素が予算を超える
+    // キャンバス: 1 枚ぶんの画素が予算を超える
     let big = Psd::new(512, 512, vec![red("a", (0, 0, 1, 1))]).build();
     assert_eq!(
         refused(&big, 512 * 1024),
@@ -1500,7 +1500,7 @@ fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
             height: 512
         }
     );
-    // 層の画素: 文書の予算を超える層で止まる（層の名前つき）
+    // レイヤーの画素: 文書の予算を超えるレイヤーで止まる（レイヤーの名前つき）
     let layers: Vec<L> = (0..3)
         .map(|i| {
             let mut l = L::new(&format!("面{i}"), (0, 0, 256, 256), [0; 4]).id(i + 1);
@@ -1517,7 +1517,7 @@ fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
         })
         .collect();
     let bytes = Psd::new(256, 256, layers).build();
-    // 256×256×4 = 256 KiB の層が 3 枚。予算 600 KiB には 2 枚まで入る
+    // 256×256×4 = 256 KiB のレイヤーが 3 枚。予算 600 KiB には 2 枚まで入る
     assert_eq!(
         refused(&bytes, 600 * 1024),
         CopyRefusal::BudgetExceeded {
@@ -1525,7 +1525,7 @@ fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
         }
     );
     assert!(matches!(run(&bytes, 4 * MIB), CopyOutcome::Imported(_)));
-    // 1 枚の層が予算に入らない
+    // 1 枚のレイヤーが予算に入らない
     let one = Psd::new(
         256,
         256,
@@ -1540,7 +1540,7 @@ fn the_layer_count_the_canvas_and_the_pixels_follow_the_source_budget() {
 
 #[test]
 fn a_layers_extra_data_follows_the_source_budget_and_can_be_raised() {
-    // 層 1 枚の付加情報（効果・スマートオブジェクトの中身など）が予算より大きい PSD は、固定の上限でなく予算で断る
+    // レイヤー 1 枚の付加情報（効果・スマートオブジェクトの中身など）が予算より大きい PSD は、固定の上限でなく予算で断る
     let big = vec![7u8; 2 * MIB as usize];
     let bytes = Psd::new(
         4,
@@ -1570,7 +1570,7 @@ fn a_layers_extra_data_follows_the_source_budget_and_can_be_raised() {
         }
         CopyOutcome::Refused(why) => panic!("{}", why.message()),
     }
-    // 付加情報が層の区間を超える PSD は、大きさでなく壊れているとして断る
+    // 付加情報がレイヤーの区間を超える PSD は、大きさでなく壊れているとして断る
     let mut cut = Psd::new(4, 4, vec![red("a", (0, 0, 4, 4))]).build();
     let name = cut
         .windows(8)
@@ -1723,7 +1723,7 @@ fn a_file_over_the_preserving_reader_limit_imports_without_reading_it_all() {
         note(&i.notes, ImportFeature::ImageResources).unwrap().count,
         1
     );
-    // 200 MiB は読み飛ばした（読んだのは、層の記録と画素と統合画像だけ）
+    // 200 MiB は読み飛ばした（読んだのは、レイヤーの記録と画素と統合画像だけ）
     assert!(file.read < MIB, "読んだバイト数 {}", file.read);
 }
 
@@ -1846,7 +1846,7 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
         }
     );
     assert!(!why.raised_by_budget());
-    // グループは層に数える。区切りの記録は数えない: 1024 個のグループ（各 1 枚入り）は層 2048 枚（記録は 3072）で取り込め、
+    // グループはレイヤーに数える。区切りの記録は数えない: 1024 個のグループ（各 1 枚入り）はレイヤー 2048 枚（記録は 3072）で取り込め、
     // 1 枚足すと断る
     let groups = |extra: bool| {
         let mut layers = Vec::new();
@@ -1873,7 +1873,7 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
     );
 }
 
-/// `n` 個のグループを入れ子にして、一番内側に層 1 枚を置いた PSD。
+/// `n` 個のグループを入れ子にして、一番内側にレイヤー 1 枚を置いた PSD。
 fn nested_groups(n: usize) -> Vec<u8> {
     let mut layers = Vec::new();
     for k in 0..n {

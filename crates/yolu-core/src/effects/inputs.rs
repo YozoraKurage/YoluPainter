@@ -1,5 +1,5 @@
 //! 文書の外から渡す効果の入力: 焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像。
-//! 保存も Undo もしない（派生の入力）。渡し直すと、それを読む層の合成が作り直される。
+//! 保存も Undo もしない（派生の入力）。渡し直すと、それを読むレイヤーの合成が作り直される。
 //!
 //! 使えないマップ（無い・古い・条件を照合できない・大きさが違う）は、使う段が入力をそのまま通して理由を出す。黒として読まない。
 
@@ -244,7 +244,7 @@ pub struct EffectInputs {
     /// None はモデルのルートの位置が分からない（形のグラデーション・位置を読む投影は入力のまま通す）。
     pub(crate) frame: Option<ModelFrame>,
     pub(crate) images: HashMap<ImageId, ImageInput>,
-    /// モデルのこのテクスチャセットの UV の位相（島・継ぎ目の対応）。層のフィルターが UV の継ぎ目をまたぐのに使う（None はモデルが無い）。
+    /// モデルのこのテクスチャセットの UV の位相（アイランド・継ぎ目の対応）。レイヤーのフィルターが UV の継ぎ目をまたぐのに使う（None はモデルが無い）。
     pub(crate) topology: Option<Arc<crate::geometry::UvTopology>>,
 }
 
@@ -284,12 +284,12 @@ impl EffectInputs {
         self.topology = topology;
         self
     }
-    /// モデルの UV の位相（島の図・継ぎ目の対応）。
+    /// モデルの UV の位相（アイランドの図・継ぎ目の対応）。
     pub fn topology(&self) -> Option<&Arc<crate::geometry::UvTopology>> {
         self.topology.as_ref()
     }
     /// 同じ UV の位相か（同じ物を共有している、または同じモデルの組・三角形の並び・UV・スロット・隣り合わせ。位置は見ない）。
-    /// 島の図・帯の写しは UV だけで決まるので、位相の同じさにベイクの条件（余白など）・マップ・画像は関わらない。
+    /// アイランドの図・帯の写しは UV だけで決まるので、位相の同じさにベイクの条件（余白など）・マップ・画像は関わらない。
     pub(crate) fn same_topology(&self, other: &EffectInputs) -> bool {
         match (&self.topology, &other.topology) {
             (None, None) => true,

@@ -14,7 +14,7 @@ const FLAT: Rgba8 = Rgba8::new(128, 128, 255, 255);
 const TILT_X: Rgba8 = Rgba8::new(255, 128, 128, 255);
 const TILT45: Rgba8 = Rgba8::new(218, 128, 218, 255);
 
-/// 層を足し、チャンネルを有効にして value で埋める（全部 0 の画素は書かない）。
+/// レイヤーを足し、チャンネルを有効にして value で埋める（全部 0 の画素は書かない）。
 fn fill_layer(
     d: &mut Document,
     name: &str,
@@ -90,8 +90,8 @@ fn paint_all(d: &mut Document, id: LayerId, pixel: &dyn Fn(u32, u32, Channel) ->
     }
 }
 
-/// 下地・通過のグループ（Screen の a、b）・グループにクリッピングした層・レベル補正・マスク付きの上の層。with なら層の値に
-/// チャンネルごとの設定を足す。flatten なら設定を付けず、そのチャンネルでの値を層の値にする（比べる相手）。
+/// 下地・通過のグループ（Screen の a、b）・グループにクリッピングしたレイヤー・レベル補正・マスク付きの上のレイヤー。with ならレイヤーの値に
+/// チャンネルごとの設定を足す。flatten なら設定を付けず、そのチャンネルでの値をレイヤーの値にする（比べる相手）。
 fn build(with: bool, flatten: Option<Channel>) -> (Document, HashMap<&'static str, LayerId>) {
     let mut d = Document::with_tile_size(W, H, 16).unwrap();
     let back = d.add_layer("back").unwrap();
@@ -199,7 +199,7 @@ fn each_channel_composites_with_its_own_setting_and_the_others_with_the_layers()
         assert_eq!(
             with.composite_channel(c, with.bounds()).unwrap(),
             expected,
-            "{c:?}: そのチャンネルの値を層の値にした文書と同じバイト"
+            "{c:?}: そのチャンネルの値をレイヤーの値にした文書と同じバイト"
         );
         for y in (0..H).step_by(3) {
             for x in (0..W).step_by(5) {
@@ -264,7 +264,11 @@ fn channel_blend_changes_are_one_undo_step_and_clearing_follows_the_layer() {
     assert_eq!(d.undo_count(), 1);
     let l = d.layer(top).unwrap();
     assert_eq!(l.blend_mode_in(Channel::Roughness), BlendMode::Multiply);
-    assert_eq!(l.opacity_in(Channel::Roughness), 1.0, "不透明度は層に従う");
+    assert_eq!(
+        l.opacity_in(Channel::Roughness),
+        1.0,
+        "不透明度はレイヤーに従う"
+    );
     assert_eq!(l.blend_mode(), BlendMode::Normal);
     for o in [0.9, 0.7, 0.5] {
         d.set_channel_opacity(top, Channel::Roughness, Some(o), true)
@@ -282,7 +286,7 @@ fn channel_blend_changes_are_one_undo_step_and_clearing_follows_the_layer() {
     assert_eq!(
         d.layer(top).unwrap().channel_blends().count(),
         0,
-        "空の設定は層に従う"
+        "空の設定はレイヤーに従う"
     );
     d.undo().unwrap();
     assert_eq!(
@@ -350,7 +354,7 @@ fn only_that_channels_tiles_are_reported_changed() {
         .changed_tiles(Channel::Roughness, since)
         .unwrap()
         .is_empty());
-    // ほかのチャンネルは、どの層の設定でもそうであるようにクリッピングの層だけ
+    // ほかのチャンネルは、どのレイヤーの設定でもそうであるようにクリッピングのレイヤーだけ
     let clip = d.layer(ids["clip"]).unwrap();
     for c in [Channel::Color, Channel::Height, Channel::Normal] {
         let clipped = clip.surface(c).map(|s| s.tile_coords()).unwrap_or_default();
@@ -447,7 +451,7 @@ fn partial_normal_coverage_is_a_renormalized_average_not_a_byte_lerp() {
     assert_eq!(
         d.composite_pixel(Channel::Color, 1, 1).unwrap(),
         Rgba8::new(192, 128, 192, 255),
-        "同じ層の Color は色の式"
+        "同じレイヤーの Color は色の式"
     );
     let mut single = Document::with_tile_size(8, 8, 8).unwrap();
     fill_layer(&mut single, "One", Channel::Normal, |_, _| {
@@ -526,7 +530,7 @@ fn a_height_ramp_derives_the_expected_slope_and_y_direction() {
         d.derive_normal_from_height(Channel::Height, &d.normal_settings(), BUDGET)
             .unwrap(),
         out,
-        "Normal の層が無ければ出力は作った法線"
+        "Normal のレイヤーが無ければ出力は作った法線"
     );
     let mut up = Document::with_tile_size(16, 16, 8).unwrap();
     fill_layer(&mut up, "RampY", Channel::Height, |_, y| {
@@ -705,7 +709,7 @@ fn normal_settings_are_one_undo_step_and_slider_drags_coalesce() {
     assert!(d.revision() > revision);
     assert!(
         d.changed_tiles(Channel::Normal, serial).unwrap().is_empty(),
-        "層の合成は変えない（出力だけ）"
+        "レイヤーの合成は変えない（出力だけ）"
     );
     d.set_normal_settings(on, false).unwrap();
     assert_eq!(d.undo_count(), 1, "同じ値は段を足さない");
@@ -801,7 +805,7 @@ fn the_standard_channels_carry_unitys_numbers_and_kinds() {
     assert_eq!(format!("{:?}", Channel::from_index(9).unwrap()), "User(9)");
 }
 
-/// 同じ中身・同じ設定の層を、標準のチャンネルとユーザーチャンネルの両方に描いた文書。
+/// 同じ中身・同じ設定のレイヤーを、標準のチャンネルとユーザーチャンネルの両方に描いた文書。
 fn twin(user_kind: ChannelKind, standard: Channel) -> (Document, Channel) {
     let mut d = Document::with_tile_size(37, 29, 8).unwrap();
     let u = d.add_channel(user("Mask A", user_kind)).unwrap();
@@ -914,7 +918,7 @@ fn user_channels_can_be_added_changed_and_removed_with_undo() {
     assert!(d
         .set_channel_info(Channel::Color, user("X", ChannelKind::Color))
         .is_err());
-    // 色相/彩度の層が有効なまま種類を変えるのは断る（その調整が使えない種類になる）
+    // 色相/彩度のレイヤーが有効なまま種類を変えるのは断る（その調整が使えない種類になる）
     let hsl = d.layers().iter().find(|l| l.name() == "hsl").unwrap().id();
     assert!(d
         .set_channel_info(u, user("Mask A", ChannelKind::Normal))
@@ -934,7 +938,7 @@ fn user_channels_can_be_added_changed_and_removed_with_undo() {
     assert!(!d.changed_tiles(u, since).unwrap().is_empty());
     d.undo().unwrap();
     assert_eq!(d.composite_channel(u, d.bounds()).unwrap(), before);
-    // 消すと層の中身も消え、1 回の Undo で戻る
+    // 消すとレイヤーの中身も消え、1 回の Undo で戻る
     d.remove_channel(u).unwrap();
     assert_eq!(
         d.composite_channel(u, d.bounds()),

@@ -1,4 +1,4 @@
-//! スポイト（I と、2D のブラシ中の Alt）: 2D・3D・層だけ・全体・描くチャンネル・マテリアルで塗るの 6 チャンネル、断り、キー・ボタン・
+//! スポイト（I と、2D のブラシ中の Alt）: 2D・3D・レイヤーだけ・全体・描くチャンネル・マテリアルで塗るの 6 チャンネル、断り、キー・ボタン・
 //! オプションバー、日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -21,7 +21,7 @@ fn rect() -> Rect {
     Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0))
 }
 
-/// 画面を使わない 2D の状態（文書は 64 × 64、スポイトの道具）。
+/// 画面を使わない 2D の状態（文書は 64 × 64、スポイトのツール）。
 fn state() -> AppState {
     let mut s = AppState::new(64, 64);
     s.tool = Tool::Eyedropper;
@@ -65,23 +65,23 @@ fn headless_picks_the_selected_layer_or_the_whole_composite() {
     put(&mut s, bottom, Channel::Color, 10, 10, [200, 0, 0, 255]);
     put(&mut s, top, Channel::Color, 10, 10, [0, 0, 200, 128]);
     let (revision, modified) = (s.doc.revision(), s.modified);
-    // 選んでいる層（上）だけ。アルファは描画色に持ち込まない
+    // 選んでいるレイヤー（上）だけ。アルファは描画色に持ち込まない
     assert!(pick2d(&mut s, 10, 10), "{}", s.message);
     assert_eq!(main_rgb(&s), [0, 0, 200]);
     assert_eq!(s.color.main[3], 1.0);
     assert_eq!(s.message, "取得: R 0 G 0 B 200");
-    // 下の層を選べば下の色
+    // 下のレイヤーを選べば下の色
     s.selected_layer = Some(bottom);
     assert!(pick2d(&mut s, 10, 10));
     assert_eq!(main_rgb(&s), [200, 0, 0]);
-    // 全レイヤーなら合成（下の層を選んでいても）
+    // 全レイヤーなら合成（下のレイヤーを選んでいても）
     s.eyedrop.all_layers = true;
     assert!(pick2d(&mut s, 10, 10));
     let composite = s.doc.composite_pixel(Channel::Color, 10, 10).unwrap();
     assert_eq!(main_rgb(&s), [composite.r, composite.g, composite.b]);
-    assert_ne!(main_rgb(&s), [200, 0, 0], "上の層が混ざっている");
+    assert_ne!(main_rgb(&s), [200, 0, 0], "上のレイヤーが混ざっている");
     assert_ne!(main_rgb(&s), [0, 0, 200]);
-    // グループを選んでいれば、層だけにしていても合成
+    // グループを選んでいれば、レイヤーだけにしていても合成
     s.eyedrop.all_layers = false;
     assert_eq!(s.doc.revision(), revision, "取るだけで文書は変わらない");
     assert_eq!(s.modified, modified);
@@ -197,7 +197,7 @@ fn headless_material_mode_reads_all_six_channels_and_keeps_what_it_cannot_read()
     let (mat, color) = (s.mat.clone(), s.color.clone());
     assert!(!pick2d(&mut s, 50, 50));
     assert_eq!((s.mat.clone(), s.color.clone()), (mat, color));
-    // 層だけ・全体: 層だけのとき別の層の値は読まない
+    // レイヤーだけ・全体: レイヤーだけのとき別のレイヤーの値は読まない
     let other = {
         s.apply(Action::NewLayer);
         s.selected_layer.unwrap()
@@ -211,11 +211,14 @@ fn headless_material_mode_reads_all_six_channels_and_keeps_what_it_cannot_read()
         [250, 250, 250, 255],
     );
     assert!(pick2d(&mut s, 12, 34));
-    assert!((s.mat.roughness - byte(250)).abs() < 1e-6, "選んだ層の値");
+    assert!(
+        (s.mat.roughness - byte(250)).abs() < 1e-6,
+        "選んだレイヤーの値"
+    );
     assert_eq!(
         main_rgb(&s),
         [10, 20, 30],
-        "選んだ層に Color は無いので変えない"
+        "選んだレイヤーに Color は無いので変えない"
     );
 }
 
@@ -314,7 +317,7 @@ fn headless_3d_reads_the_texel_under_the_surface_uv() {
     assert!(pick_surface(&mut s, rect(), at), "{}", s.message);
     assert_eq!(main_rgb(&s), [10, 200, 30]);
     assert_eq!(s.message, "取得: R 10 G 200 B 30");
-    // 層だけ・全体は 2D と同じ
+    // レイヤーだけ・全体は 2D と同じ
     let top = {
         s.apply(Action::NewLayer);
         s.selected_layer.unwrap()
@@ -327,7 +330,11 @@ fn headless_3d_reads_the_texel_under_the_surface_uv() {
     assert_eq!(main_rgb(&s), [10, 200, 30]);
     s.eyedrop.all_layers = true;
     assert!(pick_surface(&mut s, rect(), at));
-    assert_eq!(main_rgb(&s), [0, 0, 255], "上の不透明な層が合成の結果");
+    assert_eq!(
+        main_rgb(&s),
+        [0, 0, 255],
+        "上の不透明なレイヤーが合成の結果"
+    );
     // モデルの外・板の外
     s.message.clear();
     let before = s.color.clone();
@@ -633,7 +640,7 @@ fn alt_with_a_paint_tool_picks_instead_of_painting_in_2d() {
     h.run();
     let s = &h.state().state;
     assert_eq!(main_rgb(s), [30, 90, 150], "{}", s.message);
-    assert_eq!(s.tool, Tool::Brush, "道具は替わらない");
+    assert_eq!(s.tool, Tool::Brush, "ツールは替わらない");
     assert_eq!(s.doc.revision(), revision);
     assert!(!s.modified);
     assert!(!s.is_stroking());
@@ -655,7 +662,7 @@ fn alt_with_a_paint_tool_picks_instead_of_painting_in_2d() {
         assert_eq!(main_rgb(s), [30, 90, 150], "{tool:?}");
         assert_eq!(s.doc.revision(), revision, "{tool:?} は描かない");
     }
-    // 選択の道具では、Alt は引く（スポイトにしない）
+    // 選択のツールでは、Alt は引く（スポイトにしない）
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     h.state_mut().state.apply(Action::SelectTool(Tool::Lasso));
     h.run();
@@ -679,7 +686,7 @@ fn headless_the_selected_layer_is_read_through_its_effects() {
             FilterSpec::new(EffectSettings::invert()).channels(&[Channel::Color]),
         )
         .unwrap();
-    // 層の画素そのものは (10, 20, 30)。層だけで取るのは、反転を通した出力（表示と同じ）
+    // レイヤーの画素そのものは (10, 20, 30)。レイヤーだけで取るのは、反転を通した出力（表示と同じ）
     assert_eq!(
         s.doc
             .layer(id)
@@ -702,7 +709,7 @@ fn headless_the_selected_layer_is_read_through_its_effects() {
     assert_eq!(main_rgb(&s), [245, 235, 225]);
 }
 
-// ───────── ペンの押しっぱなし（押した瞬間に終わる道具。滑らせた先を取り直さない） ─────────
+// ───────── ペンの押しっぱなし（押した瞬間に終わるツール。滑らせた先を取り直さない） ─────────
 
 fn pen_sample(at: Pos2, contact: bool) -> yolu_app::pen::PenSample {
     yolu_app::pen::PenSample {
@@ -803,7 +810,7 @@ fn a_pen_held_with_alt_on_a_paint_tool_picks_once_instead_of_following_the_slide
     );
     let s = &h.state().state;
     assert_eq!(main_rgb(s), RED, "最初に押した所の色のまま: {}", s.message);
-    assert_eq!(s.tool, Tool::Brush, "道具は替わらない");
+    assert_eq!(s.tool, Tool::Brush, "ツールは替わらない");
     assert_eq!(s.doc.revision(), revision, "描かない");
     assert!(!s.is_stroking());
     // Alt を離してペンで押せば、ふつうに描く

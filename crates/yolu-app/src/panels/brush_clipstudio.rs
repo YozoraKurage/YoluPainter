@@ -1,6 +1,6 @@
-//! 取り込みの窓の「CLIP STUDIO から」: 見つけた `.sut` の一覧（選ぶ印・筆先の見本・名前）、下の帯にフォルダを手で選ぶ・探し直す・
+//! 取り込みのウィンドウの「CLIP STUDIO から」: 見つけた `.sut` の一覧（選ぶ印・筆先の見本・名前）、下の帯にフォルダを手で選ぶ・探し直す・
 //! 全部選ぶ・取り込む。文字は名前・状態・短い理由だけで、説明はツールチップ（探したフォルダ・ファイル名・読めなかった理由）。
-//! 窓は下の部品へ入力を渡さない（モーダル）。探す・中身を覗く仕事は別のスレッド（`brushes::clipstudio`）。
+//! ウィンドウは下の部品へ入力を渡さない（モーダル）。探す・中身を覗く仕事は別のスレッド（`brushes::clipstudio`）。
 
 use egui::{
     pos2, vec2, Color32, Id, Key, Rect, Sense, TextureOptions, UiBuilder, Vec2, WidgetInfo,
@@ -22,7 +22,7 @@ const MAX_ROWS: usize = 7;
 const FOOTER: f32 = 48.0;
 const THUMB: f32 = 36.0;
 
-/// 窓の名前（`windows::window_rect` で矩形を引く）。
+/// ウィンドウの名前（`windows::window_rect` で矩形を引く）。
 pub const NAME: &str = "brush-clipstudio";
 
 fn id() -> Id {
@@ -109,7 +109,7 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
     (text, false, tip)
 }
 
-/// 窓を描く（開いていなければ何もしない）。
+/// ウィンドウを描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.csp.open {
         return;

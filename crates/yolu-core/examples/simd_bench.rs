@@ -1,8 +1,8 @@
 //! 合成・調整・フィルターの画素の計算の速さ（SIMD の前後を同じ表で比べる）。
 //!   cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|normal|all] [回数]
 //! 1 タイル（256²）と 4096² を、合成モードごと・調整の種類ごと・フィルターの種類ごとに測る。`normal` は Normal のチャンネルの
-//! 合成（4096²・層 10。Normal と Overlay（RNM）を交互に、不透明度 0.45〜1）。スレッドは環境変数 SIMD_THREADS（既定 1。
-//! 1 は 1 コアあたりの時間）。下の層の違い（不透明 / アルファ入り）も分ける。時間は最小の回の CPU 時間（ほかの負荷で待たされた分を除く。
+//! 合成（4096²・レイヤー 10。Normal と Overlay（RNM）を交互に、不透明度 0.45〜1）。スレッドは環境変数 SIMD_THREADS（既定 1。
+//! 1 は 1 コアあたりの時間）。下のレイヤーの違い（不透明 / アルファ入り）も分ける。時間は最小の回の CPU 時間（ほかの負荷で待たされた分を除く。
 //! スレッドが 1 本のときだけ意味がある）。
 //! 道の切り替え: 環境変数 YOLU_SIMD=scalar|sse41|avx2（SIMD の道を持つ版だけ。無ければ無視）。`kernel` は行の核だけの時間
 //! （ns / 画素）。
@@ -169,7 +169,7 @@ fn blend_section(runs: usize) {
         let tile = Rect::new(0, 0, 256, 256);
         let full = doc.bounds();
         if wanted("基準") {
-            // 上の層を隠して下の層だけ（合成の枠組みそのものの時間）
+            // 上のレイヤーを隠して下のレイヤーだけ（合成の枠組みそのものの時間）
             doc.set_layer_visible(b, false).unwrap();
             let t = min_batch_ms(runs, 60, || {
                 black_box(doc.composite(tile).unwrap());
@@ -177,7 +177,7 @@ fn blend_section(runs: usize) {
             let f = min_ms(runs, || {
                 black_box(doc.composite(full).unwrap());
             });
-            row(&format!("合成 {label}"), "基準（下の層だけ）", t, f);
+            row(&format!("合成 {label}"), "基準（下のレイヤーだけ）", t, f);
             doc.set_layer_visible(b, true).unwrap();
         }
         let mut modes: Vec<BlendMode> = BlendMode::LAYER_MODES.to_vec();
@@ -198,7 +198,7 @@ fn blend_section(runs: usize) {
     }
 }
 
-/// 法線の画素の層（上向きに寄った乱数の向き。アルファは opaque なら 255、ほかは 0・255・中間が混ざる）。
+/// 法線の画素のレイヤー（上向きに寄った乱数の向き。アルファは opaque なら 255、ほかは 0・255・中間が混ざる）。
 fn fill_normals(doc: &mut Document, layer: LayerId, seed: u64, opaque: bool) {
     let ts = doc.tile_size() as usize;
     let mut rng = SplitMix(seed);
@@ -221,7 +221,7 @@ fn fill_normals(doc: &mut Document, layer: LayerId, seed: u64, opaque: bool) {
     doc.clear_history().unwrap();
 }
 
-/// Normal のチャンネルの合成（4096²・層 10）。
+/// Normal のチャンネルの合成（4096²・レイヤー 10）。
 fn normal_section(runs: usize) {
     let mut doc = Document::new(4096, 4096).unwrap();
     doc.set_source_budget_bytes(4 << 30).unwrap();
@@ -247,7 +247,12 @@ fn normal_section(runs: usize) {
     let f = min_ms(runs, || {
         black_box(doc.composite_channel(Channel::Normal, full).unwrap());
     });
-    row("Normal のチャンネル", "層 10（Normal・Overlay）", t, f);
+    row(
+        "Normal のチャンネル",
+        "レイヤー 10（Normal・Overlay）",
+        t,
+        f,
+    );
 }
 
 fn adjust_kinds() -> Vec<(&'static str, AdjustmentSettings)> {

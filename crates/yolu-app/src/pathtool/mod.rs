@@ -1,9 +1,9 @@
-//! パスの道具（P）: 2D のキャンバスと 3D のモデルの面の上に、編集できるパス（制御点を通る曲線）を引く。層はパスから描いた画素を持ち、
+//! パスのツール（P）: 2D のキャンバスと 3D のモデルの面の上に、編集できるパス（制御点を通る曲線）を引く。レイヤーはパスから描いた画素を持ち、
 //! パスと画素はいつも一緒に変わる（点を足す・差し込む・動かす・消す・閉じる・開く・太さを変える・ブラシや組を変える、どれも描き直して
-//! 1 回の Undo）。パスの層には手で描けず、ラスタライズでパスを外すと今の画素だけが残る。
+//! 1 回の Undo）。パスレイヤーには手で描けず、ラスタライズでパスを外すと今の画素だけが残る。
 //!
 //! - 2D のパスは画素の座標に、3D のパスはモデルの三角形と重心座標に結び付く（指紋が違うモデルでは編集せず、`rebind` で付け直す）。
-//!   1 つの層はどちらか一方だけを持つ。曲線は core が点を順に通る centripetal Catmull-Rom で描き、`curve` が同じ式で画面に見せる。
+//!   1 つのレイヤーはどちらか一方だけを持つ。曲線は core が点を順に通る centripetal Catmull-Rom で描き、`curve` が同じ式で画面に見せる。
 //! - 点の操作は `edit`（点の並びだけの純粋な関数）、入力と重ね表示は 2D が `canvas`、3D が `surface`。入力は
 //!   ストロークと同じ道（押す・動く・離す・Esc・フォーカスを失う・取りこぼし）から呼び、点のドラッグは離したとき 1 回で当てる。
 //! - 組（マテリアル）がオンなら、パスは組のチャンネルの全部を 1 回で描く。
@@ -41,7 +41,7 @@ pub const CLICK_RADIUS: f32 = 4.0;
 /// パスの線と点の色（Unity 版と同じ橙）。
 pub const PATH_COLOR: Color32 = Color32::from_rgb(255, 204, 51);
 
-/// 選んでいる点（層とパスの ID で確かめる。層・パスが替わったら無効）。
+/// 選んでいる点（レイヤーとパスの ID で確かめる。レイヤー・パスが替わったら無効）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PointRef {
     pub layer: LayerId,
@@ -124,28 +124,28 @@ pub struct PenDown {
     pub surface: bool,
 }
 
-/// 編集しているパス（層と、その層の一覧のパスの ID）。
+/// 編集しているパス（レイヤーと、そのレイヤーの一覧のパスの ID）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActivePath {
     pub layer: LayerId,
     pub path: u128,
 }
 
-/// パスの道具の状態（パスそのものは文書が持つ）。
+/// パスのツールの状態（パスそのものは文書が持つ）。
 #[derive(Default)]
 pub struct PathState {
     pub selected: Option<PointRef>,
-    /// 一覧で選んだパス（無い・層が替わったら、層の一覧のいちばん上のパス）。
+    /// 一覧で選んだパス（無い・レイヤーが替わったら、レイヤーの一覧のいちばん上のパス）。
     pub active: Option<ActivePath>,
     /// 矩形・全部で選んだ点（`selected` の点と一緒に、太さ・角・取っ手・消すを当てる）。パスが替わったら効かない。
     pub marked: Option<(ActivePath, Vec<usize>)>,
     /// 点を矩形で選んでいるドラッグ（Shift を押して押した所から）。
     pub rect: Option<RectDrag>,
-    /// パスの編集を抜けた層（Esc・Enter・「新しいパス」）。次に置く点は、その層の一覧に新しいパスを始める。
+    /// パスの編集を抜けたレイヤー（Esc・Enter・「新しいパス」）。次に置く点は、そのレイヤーの一覧に新しいパスを始める。
     pub fresh: Option<LayerId>,
     /// 写したパス（貼り付け・設定や位置の貼り付けに使う）。
     pub clipboard: Option<LayerPathEntry>,
-    /// 名前を変えている一覧の行（層とパスの ID）。
+    /// 名前を変えている一覧の行（レイヤーとパスの ID）。
     pub renaming: Option<ActivePath>,
     /// 名前の入力欄を開いたあとのフレームか（開いたフレームだけ入力欄に移る）。
     pub rename_started: bool,
@@ -205,7 +205,7 @@ pub enum BrushEdit {
 pub enum PathAction {
     /// 選んでいる点を替える（None で外す）。文書は変えない。
     Select(Option<usize>),
-    /// 点の操作。選んでいる層にパスが無く、足す操作なら、その上に新しいパスの層を作る。
+    /// 点の操作。選んでいるレイヤーにパスが無く、足す操作なら、その上に新しいパスレイヤーを作る。
     Point(PointOp),
     /// 選んでいる点（無ければ最後の点）を消す。
     DeleteSelected,
@@ -231,7 +231,7 @@ pub enum PathAction {
     Kind(PathKind),
     /// 筆先・角度・向き・投影の深さ。パスが無いときは、次に作るパスの設定。
     Style(StyleEdit),
-    /// パスの対称（入れると、今の対称の設定で映したパスも描く。2D は画布の対称、3D はモデルの鏡の面）。
+    /// パスの対称（入れると、今の対称の設定で映したパスも描く。2D はキャンバスの対称、3D はモデルの鏡の面）。
     Symmetry(bool),
     /// パスの向きを逆にする（点の並びを逆に）。
     Reverse,
@@ -295,7 +295,7 @@ fn random_id() -> u128 {
     ((a.finish() as u128) << 64) | b.finish() as u128
 }
 
-/// パスを持つ層の名前。
+/// パスを持つレイヤーの名前。
 fn layer_name(lang: Lang, n: usize) -> String {
     format!("{} {n}", lang.pick("パス", "Path"))
 }
@@ -348,13 +348,13 @@ fn to_path_paints(paints: Vec<yolu_core::material::ChannelPaint>) -> Vec<Channel
 }
 
 impl AppState {
-    /// 選んでいる層と、編集しているパス（無い・編集を抜けたときは None）。
+    /// 選んでいるレイヤーと、編集しているパス（無い・編集を抜けたときは None）。
     pub fn path_layer(&self) -> Option<(LayerId, &LayerPath)> {
         let (layer, index) = self.path_active_index()?;
         Some((layer, &self.doc.layer(layer)?.paths().get(index)?.path))
     }
 
-    /// 層のパスを画素にできるか（パスがあり、塗りつぶしの層でない。塗りつぶしの層は画素を持たず、パスを外すと絵が消えるので、
+    /// レイヤーのパスを画素にできるか（パスがあり、塗りつぶしレイヤーでない。塗りつぶしレイヤーは画素を持たず、パスを外すと絵が消えるので、
     /// core が断る）。ボタン・メニューの有効の条件。
     pub fn path_can_rasterize(&self, id: LayerId) -> bool {
         self.doc
@@ -362,8 +362,8 @@ impl AppState {
             .is_some_and(|l| l.has_paths() && l.kind() != yolu_core::LayerKind::Fill)
     }
 
-    /// 選んでいる層と、編集しているパスの一覧の中の番号（下から）。一覧で選んだパスが無ければ、一覧のいちばん上のパス。
-    /// 編集を抜けた層（`fresh`）では None（次の点は新しいパスを始める）。
+    /// 選んでいるレイヤーと、編集しているパスの一覧の中の番号（下から）。一覧で選んだパスが無ければ、一覧のいちばん上のパス。
+    /// 編集を抜けたレイヤー（`fresh`）では None（次の点は新しいパスを始める）。
     pub fn path_active_index(&self) -> Option<(LayerId, usize)> {
         let layer = self.selected_layer?;
         let entries = self.doc.layer(layer)?.paths();
@@ -381,14 +381,14 @@ impl AppState {
         Some((layer, entries.len() - 1))
     }
 
-    /// 選んでいる層のパスの一覧（無ければ空）。
+    /// 選んでいるレイヤーのパスの一覧（無ければ空）。
     pub fn path_entries(&self) -> &[LayerPathEntry] {
         self.selected_layer
             .and_then(|id| self.doc.layer(id))
             .map_or(&[], |l| l.paths())
     }
 
-    /// 選んでいる点の番号（層・パスが替わっていたり、点が無くなっていたら None）。
+    /// 選んでいる点の番号（レイヤー・パスが替わっていたり、点が無くなっていたら None）。
     pub fn path_selected_index(&self) -> Option<usize> {
         let r = self.path.selected?;
         let (layer, path) = self.path_layer()?;
@@ -447,7 +447,7 @@ impl AppState {
         self.path_commit(Some(layer), next, select);
     }
 
-    /// パスの層が描くときの予算（文書のもの）と、リボンが読むアセットの画像（文書へ渡してある入力）。
+    /// パスレイヤーが描くときの予算（文書のもの）と、リボンが読むアセットの画像（文書へ渡してある入力）。
     fn path_options(&self) -> Options<'static> {
         Options {
             width: self.doc.width(),
@@ -525,7 +525,7 @@ impl AppState {
         })
     }
 
-    /// 点を 1 つ持つ新しいパス（今のブラシ・描くチャンネル・組で）。`channel` は層の一覧の基準のチャンネル（一覧に加えるとき。
+    /// 点を 1 つ持つ新しいパス（今のブラシ・描くチャンネル・組で）。`channel` はレイヤーの一覧の基準のチャンネル（一覧に加えるとき。
     /// 一覧のパスはどれも同じ基準のチャンネル）。
     fn path_new(
         &self,
@@ -565,7 +565,7 @@ impl AppState {
             .map_err(|r| crate::lang::refusals::path_edit(self.lang, r))
     }
 
-    /// 編集する前の確かめ: 描ける状態か、選んでいる層とそのパス。`surface` は編集するのが 3D のパスか（None なら、あるパスのまま）。
+    /// 編集する前の確かめ: 描ける状態か、選んでいるレイヤーとそのパス。`surface` は編集するのが 3D のパスか（None なら、あるパスのまま）。
     fn path_target(&mut self, surface: Option<bool>) -> Option<(LayerId, Option<LayerPath>)> {
         let lang = self.lang;
         if self.is_stroking() {
@@ -600,7 +600,7 @@ impl AppState {
             return None;
         };
         let existing = self.path_layer().map(|(_, p)| p.clone());
-        // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、層の一覧の側で断る
+        // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、レイヤーの一覧の側で断る
         let side = self
             .doc
             .layer(layer)
@@ -631,8 +631,8 @@ impl AppState {
         }
     }
 
-    /// パスを描いて層へ入れる（1 回の Undo）。`layer` が None なら、選んでいる層の上に新しいパスの層を足す。層の一覧に同じ ID の
-    /// パスがあれば置き換え、無ければ一覧の上に加える。入れた層と、面に投影できなかった標本の数。
+    /// パスを描いてレイヤーへ入れる（1 回の Undo）。`layer` が None なら、選んでいるレイヤーの上に新しいパスレイヤーを足す。レイヤーの一覧に同じ ID の
+    /// パスがあれば置き換え、無ければ一覧の上に加える。入れたレイヤーと、面に投影できなかった標本の数。
     fn path_write(
         &mut self,
         layer: Option<LayerId>,
@@ -694,7 +694,7 @@ impl AppState {
         Ok(ctx)
     }
 
-    /// 層のパスの一覧を描いて入れ替える（1 回の Undo）。空の一覧はパスを外して、そのチャンネルを空にする。面に投影できなかった
+    /// レイヤーのパスの一覧を描いて入れ替える（1 回の Undo）。空の一覧はパスを外して、そのチャンネルを空にする。面に投影できなかった
     /// 標本の数を返す。
     pub(crate) fn path_write_list(
         &mut self,
@@ -721,7 +721,7 @@ impl AppState {
         Ok(gaps)
     }
 
-    /// パスを層へ入れ、選ぶ点を決める。入れたら true。断られたら理由を知らせて何も変えない。
+    /// パスをレイヤーへ入れ、選ぶ点を決める。入れたら true。断られたら理由を知らせて何も変えない。
     fn path_commit(
         &mut self,
         layer: Option<LayerId>,
@@ -758,7 +758,7 @@ impl AppState {
         }
     }
 
-    /// 道具が替わった（途中のドラッグ・スライダーの値・名前の入力を捨てる。選んだ点も外す）。
+    /// ツールが替わった（途中のドラッグ・スライダーの値・名前の入力を捨てる。選んだ点も外す）。
     pub fn path_tool_changed(&mut self) {
         self.path.drag = None;
         self.path.pen_down = None;
@@ -770,7 +770,7 @@ impl AppState {
         self.path.preset_renaming = None;
     }
 
-    /// パスの編集を抜ける（Esc・Enter・「新しいパス」）: 選んだ点と一覧で選んだパスを外し、次に置く点は、選んでいる層の一覧に新しい
+    /// パスの編集を抜ける（Esc・Enter・「新しいパス」）: 選んだ点と一覧で選んだパスを外し、次に置く点は、選んでいるレイヤーの一覧に新しい
     /// パスを始める。抜けたか（編集しているパスが無ければ何もしない）。
     pub fn path_exit(&mut self) -> bool {
         let Some((layer, _)) = self.path_active_index() else {
@@ -916,7 +916,7 @@ impl AppState {
         let Some(place) = d.target else {
             return;
         };
-        // 押している間に層・パスが替わっていたら当てない
+        // 押している間にレイヤー・パスが替わっていたら当てない
         let same = self.selected_layer == Some(d.layer)
             && self
                 .path_layer()
@@ -1129,7 +1129,7 @@ impl AppState {
                 }
             },
             None => match op {
-                // 編集を抜けたパスの層なら、その一覧に新しいパスを始める（パスの無い層なら、新しいパスの層）
+                // 編集を抜けたパスレイヤーなら、その一覧に新しいパスを始める（パスの無いレイヤーなら、新しいパスレイヤー）
                 PointOp::Add(place) => match self.path_new(
                     place,
                     self.doc
@@ -1137,7 +1137,7 @@ impl AppState {
                         .and_then(|l| l.paths().first())
                         .map(|e| e.path.channel()),
                 ) {
-                    // パスの層・塗りつぶしの層なら、その層の一覧に加える（塗りつぶしの層のパスは塗りつぶしの上に重なる）
+                    // パスレイヤー・塗りつぶしレイヤーなら、そのレイヤーの一覧に加える（塗りつぶしレイヤーのパスは塗りつぶしの上に重なる）
                     Ok(p) => (
                         p,
                         Some(0),
@@ -1185,7 +1185,7 @@ impl AppState {
         self.path_commit(Some(layer), with_style(&path, style), keep);
     }
 
-    /// パスの対称を入れる・切る（1 回の Undo）。入れるときは今の対称の設定（2D は画布の対称・切っていれば最後のモードで中心は
+    /// パスの対称を入れる・切る（1 回の Undo）。入れるときは今の対称の設定（2D はキャンバスの対称・切っていれば最後のモードで中心は
     /// 今の中心、3D はミラーの軸と面のずれ）。
     fn path_set_symmetry(&mut self, on: bool) {
         let Some(path) = self.path_layer().map(|(_, p)| p.clone()) else {
@@ -1309,7 +1309,7 @@ impl AppState {
 
     /// 3D のモデルが差し替わった（`view3d` が前のモデルを渡す）: 前のモデルに結び付いたパスを、すべてのテクスチャセットの文書で
     /// 新しいモデルへ付け直す。描き直せないものは画素にし（画素・透明度のロックで描き直せないものも）、すべてのロックのものだけ
-    /// 前のモデルに結び付けたまま残す。短い知らせ（件数と、最初の 1 件の理由）を出し、層ごとの結果を返す。
+    /// 前のモデルに結び付けたまま残す。短い知らせ（件数と、最初の 1 件の理由）を出し、レイヤーごとの結果を返す。
     ///
     /// 3D の点を掴んでいる最中なら、そのドラッグは捨てる。置き場所の三角形の番号は前のモデルのもので、付け直したパスには当てられない
     /// （範囲外なら断られ、範囲内なら無関係の三角形へ動いてしまう）。

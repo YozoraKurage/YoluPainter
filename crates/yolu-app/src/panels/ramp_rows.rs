@@ -1,9 +1,9 @@
-//! ランプの欄（グラデーションマップの調整・フィルターと、塗りつぶしのグラデーションが共通で使う。CLIP STUDIO のグラデーションマップの窓の並びを手本に、
+//! ランプの欄（グラデーションマップの調整・フィルターと、塗りつぶしのグラデーションが共通で使う。CLIP STUDIO のグラデーションマップのウィンドウの並びを手本に、
 //! このアプリの欄の部品で組む）。上から順に:
 //!
 //! 1. 混色モード（通常・知覚的・リニア）と輝度の補正（知覚的のときだけ）。`features.mixing` のとき（グラデーションマップ）。
 //! 2. グラデーションセット: 組の切り替え、見本の一覧（押すと当てる。利用者の組は名前を変える・消す・今のランプを足す）。
-//! 3. 分岐点の編集（ダブルクリックか色の見本の押しで、色の窓 `color_window` がその分岐点を相手に開く）。
+//! 3. 分岐点の編集（ダブルクリックか色の見本の押しで、色のウィンドウ `color_window` がその分岐点を相手に開く）。
 //! 4. 選んでいる分岐点: 前後へ移る・消す、位置、色（メイン・サブ・指定。メイン・サブは描画色に付いていく。スポイト）または不透明度、区間の中点、
 //!    区間の混合率曲線（`features.mixing`）。
 //! 5. 値のカーブ（`features.value_curve`。塗りつぶしのグラデーション）。
@@ -39,7 +39,7 @@ pub struct Features {
 
 /// 欄を出すときの文脈。
 pub struct Params<'a> {
-    /// 選びを覚える置き場の名前（層・段・チャンネルごと）。
+    /// 選びを覚える置き場の名前（レイヤー・段・チャンネルごと）。
     pub key: (&'static str, u128),
     pub enabled: bool,
     pub lang: Lang,
@@ -216,18 +216,18 @@ fn remembered<T: Clone + Send + Sync + 'static>(
     (id, value)
 }
 
-/// 色の分岐点 `index` を色の窓の相手にするときの名前（試験が窓の相手を確かめる）。画面の部品の並びによらず、`key` と番号だけで決まる。
+/// 色の分岐点 `index` を色のウィンドウの相手にするときの名前（試験がウィンドウの相手を確かめる）。画面の部品の並びによらず、`key` と番号だけで決まる。
 pub fn stop_target(key: (&'static str, u128), index: usize) -> egui::Id {
     egui::Id::new(("ramp_rows", "color-window", key)).with(index)
 }
 
-/// 色の窓の相手が、このランプの色の分岐点（`count` 個）のどれかなら、その番号。
+/// 色のウィンドウの相手が、このランプの色の分岐点（`count` 個）のどれかなら、その番号。
 fn targeted_stop(ctx: &egui::Context, key: (&'static str, u128), count: usize) -> Option<usize> {
     let target = color_window::target(ctx)?;
     (0..count).find(|i| stop_target(key, *i) == target)
 }
 
-/// 色の分岐点が減る変更（消す）で、色の窓がこのランプの分岐点を相手にしていたら閉じる（番号が別の分岐点を指さないように）。
+/// 色の分岐点が減る変更（消す）で、色のウィンドウがこのランプの分岐点を相手にしていたら閉じる（番号が別の分岐点を指さないように）。
 fn close_if_removed(ctx: &egui::Context, key: (&'static str, u128), before: &Ramp, after: &Ramp) {
     let count = before.colors().len();
     if after.colors().len() < count && targeted_stop(ctx, key, count).is_some() {
@@ -235,7 +235,7 @@ fn close_if_removed(ctx: &egui::Context, key: (&'static str, u128), before: &Ram
     }
 }
 
-/// 色の窓の見出しに出す名前。
+/// 色のウィンドウの見出しに出す名前。
 fn stop_name(lang: Lang) -> &'static str {
     lang.pick("分岐点の色", "Stop Color")
 }
@@ -623,7 +623,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     let mut result: Option<Change> = None;
     let (selection_id, mut selection) = remembered(ui, p, "selection", Selection::default());
     let (link_id, mut links) = remembered::<Links>(ui, p, "link", Links::default());
-    // 欄が何フレームも描かれなかった（別の層・段を選んでいた）なら、付いていくのをやめる（見ているだけで文書が変わらないように）
+    // 欄が何フレームも描かれなかった（別のレイヤー・段を選んでいた）なら、付いていくのをやめる（見ているだけで文書が変わらないように）
     let (seen_id, seen) = remembered::<u64>(ui, p, "seen", 0);
     let frame = ctx.cumulative_frame_nr();
     if frame > seen + 3 {
@@ -646,7 +646,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
     }
     // 3. 分岐点
     let r = rows.row(ramp::STOPS_HEIGHT, 4.0);
-    // 色の窓を初めて置く目安の列（欄の見える範囲。窓は入ればその左）
+    // 色のウィンドウを初めて置く目安の列（欄の見える範囲。ウィンドウは入ればその左）
     let column = ui.clip_rect();
     let salt = stops_salt(p.key);
     if let Some(next) = ramp::stops_editor(
@@ -858,7 +858,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
                 }
             }
         } else {
-            // 色の窓がこのランプの別の分岐点を相手にしていたら、窓はそのままで、選んだ分岐点へ相手を替える
+            // 色のウィンドウがこのランプの別の分岐点を相手にしていたら、ウィンドウはそのままで、選んだ分岐点へ相手を替える
             if enabled {
                 let count = ramp.colors().len();
                 if targeted_stop(&ctx, p.key, count).is_some_and(|i| i != selection.index) {
@@ -976,7 +976,7 @@ fn color_rows(
             row.bottom() - 1.0,
         ),
     );
-    // 見本（押すと色の窓。分岐点をダブルクリックしても開く）と、窓からの変更
+    // 見本（押すと色のウィンドウ。分岐点をダブルクリックしても開く）と、ウィンドウからの変更
     let target = stop_target(p.key, selection.index);
     let was_target = color_window::is_target(ui.ctx(), target);
     let update = color_window::field(
@@ -989,7 +989,7 @@ fn color_rows(
         enabled,
     );
     if !was_target && color_window::is_target(ui.ctx(), target) {
-        // 押して開いた: 窓が決める色なので、メイン・サブに付いていくのをやめる
+        // 押して開いた: ウィンドウが決める色なので、メイン・サブに付いていくのをやめる
         links.unfollow(selection.index);
     }
     if let Some(u) = update {

@@ -435,7 +435,7 @@ pub(crate) fn blend_row_at(
     }
 }
 
-/// Normal のチャンネルで、クリッピングの下地（g）へクリッピングされた層（cb、刻みは [`blend_row`] と同じ）を重ねる。
+/// Normal のチャンネルで、クリッピングの下地（g）へクリッピングされたレイヤー（cb、刻みは [`blend_row`] と同じ）を重ねる。
 /// 各画素は [`super::clip_onto`] と同じバイト。
 #[inline]
 pub fn clip_row(g: &mut [u8], cb: &[u8], step: usize, amount: RowAmount<'_>, mode: BlendMode) {

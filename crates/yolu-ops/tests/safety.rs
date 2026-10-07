@@ -398,7 +398,7 @@ fn an_ambiguous_layer_name_is_refused_with_candidates_and_an_id_still_works() {
 }
 
 /// ユーザーチャンネルの名前は大文字小文字を区別して重ならなければよいので、「Mask」と「mask」は両方あり得る。
-/// 大文字小文字の違う指定は、どちらか決められないので断り、候補を層と同じ鍵（`candidates`）で返す。
+/// 大文字小文字の違う指定は、どちらか決められないので断り、候補をレイヤーと同じ鍵（`candidates`）で返す。
 #[test]
 fn an_ambiguous_channel_name_is_refused_with_candidates_and_an_exact_name_still_works() {
     let fx = Fixture::new("ambiguous-channel");

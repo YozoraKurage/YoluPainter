@@ -1,5 +1,5 @@
-//! .ylp の正本の読み手が見る入れ子: 親子の確かめは層の数に対して線形で、グループの入れ子の上限（`yolu_core::MAX_GROUP_DEPTH`）を超える
-//! 既存のファイルは、壊れたファイルでなく上限として断る。core の編集は上限を超える入れ子を作らせないので、深い正本は、層の親の欄を
+//! .ylp の正本の読み手が見る入れ子: 親子の確かめはレイヤーの数に対して線形で、グループの入れ子の上限（`yolu_core::MAX_GROUP_DEPTH`）を超える
+//! 既存のファイルは、壊れたファイルでなく上限として断る。core の編集は上限を超える入れ子を作らせないので、深い正本は、レイヤーの親の欄を
 //! 書き換えたバイト列で作る。
 
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ fn write(fields: &[NativeField]) -> Vec<u8> {
     out
 }
 
-/// 平らな文書（層の種類は `kinds`: true はグループ）の正本。
+/// 平らな文書（レイヤーの種類は `kinds`: true はグループ）の正本。
 fn flat(kinds: &[bool]) -> NativeDocument {
     let mut d = Document::with_tile_size(8, 8, 8).unwrap();
     for (i, &group) in kinds.iter().enumerate() {
@@ -38,7 +38,7 @@ fn flat(kinds: &[bool]) -> NativeDocument {
     NativeDocument::from_core(&d).unwrap()
 }
 
-/// `layers[i].parent` を `parents[i]`（層の番号。None は一番上の段）に書き換えたバイト列を読む。
+/// `layers[i].parent` を `parents[i]`（レイヤーの番号。None は一番上の段）に書き換えたバイト列を読む。
 fn read_with_parents(
     native: &NativeDocument,
     parents: &[Option<usize>],
@@ -103,7 +103,7 @@ fn the_parent_rules_still_hold_after_the_one_pass_rewrite() {
             other.map(|d| d.layer_count())
         ),
     };
-    // 親が子より下にある・自分が親・グループでない層が親
+    // 親が子より下にある・自分が親・グループでないレイヤーが親
     invalid(&[true, false], &[None, Some(0)]);
     invalid(&[true], &[Some(0)]);
     invalid(&[false, false], &[Some(1), None]);
@@ -130,7 +130,7 @@ fn the_parent_rules_still_hold_after_the_one_pass_rewrite() {
 
 #[test]
 fn the_parent_check_reads_2000_layers_in_a_deep_chain_in_one_pass() {
-    // 64 段の鎖で、各グループが 30 枚ほどのラスターを持つ（約 2000 層）。親の鎖を層ごとにたどり、さらに間の層を全部調べる確かめは、
+    // 64 段の鎖で、各グループが 30 枚ほどのラスターを持つ（約 2000 レイヤー）。親の鎖をレイヤーごとにたどり、さらに間のレイヤーを全部調べる確かめは、
     // この形で数十億回の比較になり事実上止まる
     let per_group = 30;
     let mut kinds = Vec::new();
@@ -152,7 +152,7 @@ fn the_parent_check_reads_2000_layers_in_a_deep_chain_in_one_pass() {
     assert!(read.layer_count() > 1900);
     assert!(
         took < Duration::from_secs(5),
-        "{} 層の読みに {took:?}",
+        "{} レイヤーの読みに {took:?}",
         read.layer_count()
     );
 }

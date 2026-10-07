@@ -449,7 +449,7 @@ fn filter_body(
             lang.pick("UV の継ぎ目をまたぐ", "Across UV seams"),
             app.doc.filter_seams(),
             Some(lang.pick(
-                "このテクスチャセットのすべてのフィルターに効く設定。ぼかしなどが、UV の島の縁の向こう（3D で隣の面）の画素を読む",
+                "このテクスチャセットのすべてのフィルターに効く設定。ぼかしなどが、UV アイランドの縁の向こう（3D で隣の面）の画素を読む",
                 "A setting for every filter in this texture set: blurs and the like read the pixels across UV island borders (the neighbouring faces in 3D)",
             )),
             enabled,
@@ -693,7 +693,7 @@ fn warning_row(ui: &mut Ui, rows: &mut Rows, text: &str) {
     }
 }
 
-/// Anchor を読む段の行（Anchor・チャンネル・読み方・置いた層へ移る）。
+/// Anchor を読む段の行（Anchor・チャンネル・読み方・置いたレイヤーへ移る）。
 #[allow(clippy::too_many_arguments)]
 fn anchor_reading_rows(
     ui: &mut Ui,
@@ -715,7 +715,7 @@ fn anchor_reading_rows(
         })
     });
     let tip = lang.pick(
-        "この段が読むアンカー（この層より下の層のもの、または下の層のマスクのもの）",
+        "この段が読むアンカー（このレイヤーより下のレイヤーのもの、または下のレイヤーのマスクのもの）",
         "The anchor this stage reads (one on a layer below, or on a lower layer's mask)",
     );
     if let Some(rect) = choice_row(
@@ -728,7 +728,7 @@ fn anchor_reading_rows(
             Some((_, _, Some(name))) => format!(
                 "{tip}\n{}",
                 lang.pick(
-                    format!("層「{name}」にあります"),
+                    format!("レイヤー「{name}」にあります"),
                     format!("On the layer \"{name}\"")
                 )
             ),
@@ -750,7 +750,7 @@ fn anchor_reading_rows(
         &channel_name,
         Some(if mask {
             lang.pick(
-                "マスクのアンカーの値は 1 つ（その層の見える度合い）",
+                "マスクのアンカーの値は 1 つ（そのレイヤーの見える度合い）",
                 "A mask anchor has one value: how much its layer shows",
             )
         } else {
@@ -789,11 +789,11 @@ fn anchor_reading_rows(
             ui,
             r,
             "fx.anchor.go",
-            lang.pick("アンカーの層を選ぶ", "Select the Anchor's Layer"),
+            lang.pick("アンカーのレイヤーを選ぶ", "Select the Anchor's Layer"),
             false,
             enabled,
             Some(lang.pick(
-                "アンカーを置いた層を選びます",
+                "アンカーを置いたレイヤーを選びます",
                 "Select the layer the anchor is on",
             )),
             Some("anchor"),
@@ -845,7 +845,7 @@ fn generator_rows(
             map_row(ui, app, rows, *kind, !g.pins.is_empty());
         }
     }
-    // 効かない理由と、ベイクの窓へ
+    // 効かない理由と、ベイクのウィンドウへ
     let inactive = if effect.is_active() {
         app.doc.generator_inactive(layer, id).ok().flatten()
     } else {
@@ -872,7 +872,7 @@ fn generator_rows(
                 lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
                 false,
                 enabled,
-                Some(lang.pick("ベイクの窓を開く", "Open the bake window")),
+                Some(lang.pick("ベイクのウィンドウを開く", "Open the bake window")),
                 Some("data_scatter"),
             )
             .clicked()
@@ -881,7 +881,7 @@ fn generator_rows(
             }
         }
     }
-    // このベイクだけを読む（画像の段は塗りつぶしの層の投影と同じく、いつも最新のベイクを読む）
+    // このベイクだけを読む（画像の段は塗りつぶしレイヤーの投影と同じく、いつも最新のベイクを読む）
     if !used.is_empty() && !g.candidate_maps().is_empty() {
         let pinned = !g.pins.is_empty();
         let all_usable = used
@@ -1196,7 +1196,7 @@ fn generator_rows(
     (next != *g).then_some(next)
 }
 
-/// 画像の段の画像（箱・読み方）・成分・投影（塗りつぶしの層の画像と投影の欄と同じ並びと部品）。`values` は成分を使うか
+/// 画像の段の画像（箱・読み方）・成分・投影（塗りつぶしレイヤーの画像と投影の欄と同じ並びと部品）。`values` は成分を使うか
 /// （マスクかスカラーのチャンネルに掛かる）。
 #[allow(clippy::too_many_arguments)]
 fn image_source_rows(
@@ -1534,7 +1534,7 @@ fn anchor_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId, n
     anchor_fields(ui, app, rows, id, name, "fx");
 }
 
-/// Anchor の名前の欄・読んでいる段の数・外すボタン（プロパティの「層」と「レイヤーマスク」の欄と、Anchor の行の欄で共有）。
+/// Anchor の名前の欄・読んでいる段の数・外すボタン（プロパティの「レイヤー」と「レイヤーマスク」の欄と、Anchor の行の欄で共有）。
 fn anchor_fields(
     ui: &mut Ui,
     app: &mut AppState,
@@ -1572,7 +1572,7 @@ fn anchor_fields(
         (key, "anchor.name", id.0),
         name,
         Some(lang.pick(
-            "アンカーの名前（上の層のジェネレーターはこの名前で選びます）",
+            "アンカーの名前（上のレイヤーのジェネレーターはこの名前で選びます）",
             "The anchor's name: generators above list it by this name",
         )),
         false,
@@ -1649,7 +1649,7 @@ fn anchor_fields(
     }
 }
 
-/// プロパティの「層」と「レイヤーマスク」の欄の「フィルターを追加」と「ジェネレーターを追加」の 2 行（押すと、画素かマスクへ足す
+/// プロパティの「レイヤー」と「レイヤーマスク」の欄の「フィルターを追加」と「ジェネレーターを追加」の 2 行（押すと、画素かマスクへ足す
 /// フィルター・ジェネレーターの一覧。どちらも同じスタックに積む）。
 pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: FilterTarget) {
     let lang: Lang = app.lang;
@@ -1712,7 +1712,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
     }
 }
 
-/// プロパティの「層」（placement が Layer）と「レイヤーマスク」（Mask）の欄の Anchor の行: 無ければ置くボタン、あれば名前の欄。
+/// プロパティの「レイヤー」（placement が Layer）と「レイヤーマスク」（Mask）の欄の Anchor の行: 無ければ置くボタン、あれば名前の欄。
 pub fn anchor_row(
     ui: &mut Ui,
     app: &mut AppState,
@@ -1733,14 +1733,14 @@ pub fn anchor_row(
                 AnchorPlacement::Layer => (
                     lang.pick("アンカーを置く", "Add Anchor"),
                     lang.pick(
-                        "この層までの合成の結果に名前を付けて、上の層のジェネレーターが読めるようにします（下の層の Height で上の層の摩耗を決める、など）",
+                        "このレイヤーまでの合成の結果に名前を付けて、上のレイヤーのジェネレーターが読めるようにします（下のレイヤーの Height で上のレイヤーの摩耗を決める、など）",
                         "Name the stack's result up to this layer, so generators on the layers above can read it (a lower layer's Height can drive an upper layer's wear, for example)",
                     ),
                 ),
                 AnchorPlacement::Mask => (
                     lang.pick("マスクにアンカーを置く", "Add Anchor to Mask"),
                     lang.pick(
-                        "このマスクに名前を付けて、上の層のジェネレーターが「この層がどれだけ見えるか」を読めるようにします",
+                        "このマスクに名前を付けて、上のレイヤーのジェネレーターが「このレイヤーがどれだけ見えるか」を読めるようにします",
                         "Name this mask, so generators on the layers above can read how much this layer shows",
                     ),
                 ),

@@ -1,4 +1,4 @@
-//! 層のパスの一覧（1 つの層に何本ものパス）。層の対象チャンネルの画素は、一覧の見せるパスを下から順に同じ作業面へ描いた結果
+//! レイヤーのパスの一覧（1 つのレイヤーに何本ものパス）。レイヤーの対象チャンネルの画素は、一覧の見せるパスを下から順に同じ作業面へ描いた結果
 //! （後のパスが前のパスの上に重なる。消しゴムのパスは前のパスの画素を消す）。隠したパスは描かないが、点と設定は残る。
 //!
 //! 一覧のパスはどれも同じ側（2D のキャンバスか 3D のモデルの上）で、基準のチャンネルが同じ。3D のパスは同じモデル（指紋）に
@@ -10,7 +10,7 @@ use crate::effects::LayerPath;
 use crate::geometry::SurfaceGeometry;
 use crate::Channel;
 
-/// 1 つの層のパスの数の上限。
+/// 1 つのレイヤーのパスの数の上限。
 pub const MAX_LAYER_PATHS: usize = 256;
 /// パスの名前の長さの上限（UTF-16 の単位）。
 pub const MAX_PATH_NAME: usize = 128;
@@ -60,7 +60,7 @@ impl LayerPathEntry {
 /// 一覧を確かめる: 256 本まで、どれも正しい、同じ側・同じ基準のチャンネル・3D は同じモデルの指紋、ID が重ならない。
 pub fn validate_list(entries: &[LayerPathEntry]) -> Result<(), Error> {
     if entries.len() > MAX_LAYER_PATHS {
-        return Err(Error::Invalid("1 つの層のパスは 256 本までです"));
+        return Err(Error::Invalid("1 つのレイヤーのパスは 256 本までです"));
     }
     for e in entries {
         e.validate()?;
@@ -71,23 +71,23 @@ pub fn validate_list(entries: &[LayerPathEntry]) -> Result<(), Error> {
     for (i, e) in entries.iter().enumerate() {
         if e.path.is_canvas() != first.path.is_canvas() {
             return Err(Error::Invalid(
-                "1 つの層のパスは、どれもキャンバスの上か、どれもモデルの上です",
+                "1 つのレイヤーのパスは、どれもキャンバスの上か、どれもモデルの上です",
             ));
         }
         if e.path.channel() != first.path.channel() {
             return Err(Error::Invalid(
-                "1 つの層のパスは、同じ基準のチャンネルを使います",
+                "1 つのレイヤーのパスは、同じ基準のチャンネルを使います",
             ));
         }
         if let (LayerPath::Surface(a), LayerPath::Surface(b)) = (&e.path, &first.path) {
             if a.model_fingerprint != b.model_fingerprint {
                 return Err(Error::Invalid(
-                    "1 つの層の 3D のパスは、同じモデルに結び付きます",
+                    "1 つのレイヤーの 3D のパスは、同じモデルに結び付きます",
                 ));
             }
         }
         if entries[..i].iter().any(|o| o.id() == e.id()) {
-            return Err(Error::Invalid("1 つの層のパスの ID が重なっています"));
+            return Err(Error::Invalid("1 つのレイヤーのパスの ID が重なっています"));
         }
     }
     Ok(())
@@ -106,7 +106,7 @@ pub fn list_images(entries: &[LayerPathEntry]) -> Vec<crate::ImageId> {
     out
 }
 
-/// 一覧が描くチャンネル（見せないパスのものも。初めて出た順）。層の画素はこのチャンネルを描き直す。
+/// 一覧が描くチャンネル（見せないパスのものも。初めて出た順）。レイヤーの画素はこのチャンネルを描き直す。
 pub fn list_channels(entries: &[LayerPathEntry]) -> Vec<Channel> {
     let mut out: Vec<Channel> = Vec::new();
     for e in entries {

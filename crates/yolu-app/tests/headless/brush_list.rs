@@ -1,4 +1,4 @@
-//! ブラシの一覧の操作・道具ごとの覚え・保存と読み戻し・見本の描き直しの条件。画面を描かないので Wine でも回る（`headless_`）。
+//! ブラシの一覧の操作・ツールごとの覚え・保存と読み戻し・見本の描き直しの条件。画面を描かないので Wine でも回る（`headless_`）。
 use std::path::PathBuf;
 
 use yolu_app::brushes::sample::{SampleCache, SampleSpec, RENDERS_PER_FRAME};
@@ -110,17 +110,17 @@ fn headless_selecting_a_brush_loads_its_settings_and_follows_the_tool() {
         "手ぶれ補正は描き手の設定"
     );
     assert_eq!(s.color.main, [0.2, 0.4, 0.6, 1.0], "描画色は替わらない");
-    // 消しゴムのグループのブラシは、道具も消しゴムにする
+    // 消しゴムのグループのブラシは、ツールも消しゴムにする
     select(&mut s, b("soft-eraser"));
     assert_eq!(s.tool, Tool::Eraser);
     assert_eq!(s.shown_brush_group(), Some(Group::Eraser));
     assert_eq!((s.brush.radius, s.brush.hardness), (24.0, 0.0));
-    // 効果のブラシは描く道具
+    // 効果のブラシは描くツール
     select(&mut s, b("blur"));
     assert_eq!(s.tool, Tool::Brush);
     assert!(matches!(s.m2.brush.effect, BrushEffect::Blur { .. }));
     assert_eq!(s.shown_brush_group(), Some(Group::Effect));
-    // 選択の道具のときに選べば、描く道具になる
+    // 選択のツールのときに選べば、描くツールになる
     s.apply(Action::SelectTool(Tool::Lasso));
     select(&mut s, b("marker"));
     assert_eq!(s.tool, Tool::Brush);
@@ -156,7 +156,7 @@ fn headless_each_tool_remembers_its_last_brush() {
     s.brush.radius = 33.0;
     s.apply(Action::SelectTool(Tool::Eraser)); // もう消しゴムなので何も変わらない
     assert_eq!(s.brush.radius, 33.0);
-    // B: 描く道具の最後のブラシ（チョーク）
+    // B: 描くツールの最後のブラシ（チョーク）
     s.apply(Action::SelectTool(Tool::Brush));
     assert_eq!(s.brushes.lib.current(), b("chalk"));
     assert_eq!(s.brush.radius, 18.0, "チョークの設定");
@@ -164,10 +164,10 @@ fn headless_each_tool_remembers_its_last_brush() {
     assert_eq!(s.brushes.lib.current(), b("hard-eraser"));
     assert_eq!(s.brush.radius, 33.0, "消しゴムの変えた設定も覚えている");
     assert!(s.brush_is_modified(b("hard-eraser")));
-    // 選択の道具へ替えても、ブラシは替わらない
+    // 選択のツールへ替えても、ブラシは替わらない
     s.apply(Action::SelectTool(Tool::SelectRect));
     assert_eq!(s.brushes.lib.current(), b("hard-eraser"));
-    // 選択の道具から B を押すと、描く道具の最後のブラシへ
+    // 選択のツールから B を押すと、描くツールの最後のブラシへ
     s.apply(Action::SelectTool(Tool::Brush));
     assert_eq!(s.brushes.lib.current(), b("chalk"));
     // 消した利用者のブラシを覚えたままにしない
@@ -243,7 +243,7 @@ fn headless_switching_brushes_is_refused_while_stroking() {
         assert_eq!(s.message, "描いている間はできません。", "{action:?}");
         assert_eq!(s.brushes.lib.current(), b("pencil"));
     }
-    // 道具をブラシから消しゴムへ替えるのも断る
+    // ツールをブラシから消しゴムへ替えるのも断る
     s.message.clear();
     s.apply(Action::SelectTool(Tool::Eraser));
     assert_eq!(s.tool, Tool::Brush);
@@ -291,7 +291,7 @@ fn headless_add_duplicate_rename_delete_and_reorder_user_brushes() {
     let at = pen.iter().position(|k| *k == first).unwrap();
     assert_eq!(pen[at + 1], third, "元のすぐ後ろ");
     assert_eq!(pen[at + 2], second);
-    // 組み込みも複製できる（利用者のブラシになる）。消しゴムの複製は消しゴムのグループで、道具も消しゴム
+    // 組み込みも複製できる（利用者のブラシになる）。消しゴムの複製は消しゴムのグループで、ツールも消しゴム
     s.apply(Action::Brush(BrushAction::Duplicate(b("soft-eraser"))));
     let eraser_copy = s.brushes.lib.current();
     assert!(eraser_copy.is_user());
@@ -364,7 +364,7 @@ fn headless_built_in_brushes_are_taken_out_of_the_layout_and_become_copies_when_
 ) {
     let mut s = AppState::new(64, 64);
     let count = s.brushes.lib.entries().len();
-    // 削除は並びから外すだけ（組み込みの元は残り、「＋」の窓から戻せる）
+    // 削除は並びから外すだけ（組み込みの元は残り、「＋」のウィンドウから戻せる）
     s.apply(Action::Brush(BrushAction::Delete(b("chalk"))));
     assert_eq!(s.message, "ブラシを削除しました: チョーク");
     assert!(!s.toolset.set.contains(b("chalk")));

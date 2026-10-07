@@ -1,15 +1,15 @@
-//! 外へ出した窓（`detach`）を描く: 窓ごとに immediate の viewport を回し、その中で、その窓のドックを主の窓と同じタブの中身で描く。
+//! 外へ出したウィンドウ（`detach`）を描く: ウィンドウごとに immediate の viewport を回し、その中で、そのウィンドウのドックをメインウィンドウと同じタブの中身で描く。
 //!
-//! immediate の viewport は主の窓のパスの中で描くので、`AppState` を同じフレームのまま借りられる（deferred の viewport は閉包が
-//! `Send + Sync + 'static` で、状態を共有の錠に包み直す必要がある）。代わりに、どちらの窓に入力が来ても、主の窓と外の窓を全部描き直す。
+//! immediate の viewport はメインウィンドウのパスの中で描くので、`AppState` を同じフレームのまま借りられる（deferred の viewport は閉包が
+//! `Send + Sync + 'static` で、状態を共有の錠に包み直す必要がある）。代わりに、どちらのウィンドウに入力が来ても、メインウィンドウと別ウィンドウを全部描き直す。
 //!
-//! 外の窓のパス（OS の別の窓。`ViewportClass::Immediate`）は、主の窓と同じ入力の道を通す: キーの割り当て（同じ表。キーはフォーカスの
-//! ある窓だけに来る）・落としたファイル・スライダーの Esc・ペンの点（Windows はその窓に繋いだ Windows Ink）。egui が viewport を窓に出せない
-//! とき（試験の窓。`EmbeddedWindow`）は主の窓の中の egui の窓に描き、入力は主の窓のパスが受ける。
+//! 別ウィンドウのパス（OS の別のウィンドウ。`ViewportClass::Immediate`）は、メインウィンドウと同じ入力の道を通す: キーの割り当て（同じ表。キーはフォーカスの
+//! あるウィンドウだけに来る）・落としたファイル・スライダーの Esc・ペンの点（Windows はそのウィンドウに繋いだ Windows Ink）。egui が viewport をウィンドウに出せない
+//! とき（試験のウィンドウ。`EmbeddedWindow`）はメインウィンドウの中の egui のウィンドウに描き、入力はメインウィンドウのパスが受ける。
 //!
-//! タブの出し入れは、パスの中では起きたことを控えるだけ（`DockEvent`）で、全部の窓を描いた後に当てる（窓をまたいで動かすので）。
+//! タブの出し入れは、パスの中では起きたことを控えるだけ（`DockEvent`）で、全部のウィンドウを描いた後に当てる（ウィンドウをまたいで動かすので）。
 //!
-//! 自前の枠（Windows。主の窓と同じ `custom_frame`）では OS の枠を外し、タブの並ぶ行の何も無い所を帯の代わりにする（引くと
+//! 自前の枠（Windows。メインウィンドウと同じ `custom_frame`）では OS の枠を外し、タブの並ぶ行の何も無い所を帯の代わりにする（引くと
 //! `StartDrag`、ダブルクリックで最大化と元に戻す）。行の右端に閉じる（OS の閉じると同じく、出す前の組へ戻す）、縁で大きさを変える
 //! （`titlebar`）。行の右端の閉じるの分は、どの組のタブの行も右を空ける（egui_dock の見た目はドック全体で 1 つ）。
 
@@ -28,11 +28,11 @@ use crate::titlebar;
 use crate::ui::menu::{self, PopupOutcome, PopupState};
 use crate::ui::theme as t;
 
-/// パスの中で起きた、タブの出し入れ（全部の窓を描いた後に当てる）。
+/// パスの中で起きた、タブの出し入れ（全部のウィンドウを描いた後に当てる）。
 #[derive(Debug)]
 pub(super) enum DockEvent {
-    /// タブの見出しを、その窓の外で離した。`px` は離した点（仮想スクリーンの画素）、`size` は新しい窓にするときの内側の大きさ（点）、
-    /// `ppp` は離した窓の拡大率。
+    /// タブの見出しを、そのウィンドウの外で離した。`px` は離した点（仮想スクリーンの画素）、`size` は新しいウィンドウにするときの内側の大きさ（点）、
+    /// `ppp` は離したウィンドウの拡大率。
     Released {
         tab: Tab,
         from: ViewportId,
@@ -40,7 +40,7 @@ pub(super) enum DockEvent {
         size: [f32; 2],
         ppp: f32,
     },
-    /// egui_dock が浮いた窓の面を作った（外の窓へ替える）。`origin` は描いた窓の内側の左上（点）、`mates` は描く前のタブの組。
+    /// egui_dock が浮いたウィンドウの面を作った（別ウィンドウへ替える）。`origin` は描いたウィンドウの内側の左上（点）、`mates` は描く前のタブの組。
     Floats {
         floats: Vec<Float>,
         origin: Option<Rect>,
@@ -51,19 +51,19 @@ pub(super) enum DockEvent {
     Closed(u64),
 }
 
-/// 1 つの窓のドックを描いた結果。
+/// 1 つのウィンドウのドックを描いた結果。
 pub(super) struct DockPass {
     pub grabbed: bool,
     pub released: Option<Tab>,
     pub context: Option<(Tab, Pos2)>,
 }
 
-/// 窓 1 つの見える様子（主の窓のパスが受けた、全部の viewport の情報から）。
+/// ウィンドウ 1 つの見える様子（メインウィンドウのパスが受けた、全部の viewport の情報から）。
 fn info_of(ctx: &egui::Context, id: ViewportId) -> Option<ViewportInfo> {
     ctx.input(|i| i.raw.viewports.get(&id).cloned())
 }
 
-/// 主の窓の内側の矩形（点）。分からなければ（試験の窓）画面の矩形。
+/// メインウィンドウの内側の矩形（点）。分からなければ（試験のウィンドウ）画面の矩形。
 fn root_inner(ctx: &egui::Context) -> Option<Rect> {
     info_of(ctx, ViewportId::ROOT)
         .and_then(|i| i.inner_rect)
@@ -71,7 +71,7 @@ fn root_inner(ctx: &egui::Context) -> Option<Rect> {
 }
 
 impl YoluApp {
-    /// 外の窓を全部描く（主の窓のドックの後で）。タブの見出しをつかんでいる窓があれば true。
+    /// 別ウィンドウを全部描く（メインウィンドウのドックの後で）。タブの見出しをつかんでいるウィンドウがあれば true。
     pub(super) fn show_detached(
         &mut self,
         ctx: &egui::Context,
@@ -107,7 +107,7 @@ impl YoluApp {
             }
             let id = win.viewport_id();
             if ctx.embed_viewports() {
-                // egui が窓を OS の窓に出せない（試験の窓）: 主の窓の中の egui の窓に、記録の位置と大きさで描く（egui_dock の浮いた窓と
+                // egui がウィンドウを OS のウィンドウに出せない（試験のウィンドウ）: メインウィンドウの中の egui のウィンドウに、記録の位置と大きさで描く（egui_dock の浮いたウィンドウと
                 // 同じ枠。動かすのは記録を変えたときだけ）
                 let origin = root_inner(ctx).map_or(Pos2::ZERO, |r| r.min);
                 let record = win.record.unwrap_or(FloatRecord {
@@ -133,16 +133,16 @@ impl YoluApp {
                 self.detached_pass(ui, class, win, events)
             });
         }
-        // （パスの中では窓を足さない。足したのは当てる側だけ）
+        // （パスの中ではウィンドウを足さない。足したのは当てる側だけ）
         windows.append(&mut self.detached.windows);
         self.detached.windows = windows;
-        // 落としたファイルの行き先の矩形は、主の窓で描いた物に戻す（外の窓の分は窓ごとに控えた）
+        // 落としたファイルの行き先の矩形は、メインウィンドウで描いた物に戻す（別ウィンドウの分はウィンドウごとに控えた）
         self.state.brushes.ui.list_rect = self.root_drops.brush_list;
         self.state.library.grid_rect = self.root_drops.library_grid;
         grabbed
     }
 
-    /// 外の窓 1 つのパス。タブの見出しをつかんでいれば true。
+    /// 別ウィンドウ 1 つのパス。タブの見出しをつかんでいれば true。
     fn detached_pass(
         &mut self,
         ui: &mut Ui,
@@ -151,7 +151,7 @@ impl YoluApp {
         events: &mut Vec<DockEvent>,
     ) -> bool {
         let ctx = ui.ctx().clone();
-        // OS の別の窓か（試験の窓は主の窓の中の egui の窓で、入力は主の窓が受ける）
+        // OS の別のウィンドウか（試験のウィンドウはメインウィンドウの中の egui のウィンドウで、入力はメインウィンドウが受ける）
         let own = matches!(class, ViewportClass::Immediate | ViewportClass::Deferred);
         let id = ctx.viewport_id();
         let custom = self.custom_frame;
@@ -171,26 +171,26 @@ impl YoluApp {
             for sample in &mut pen {
                 sample.pressure = self.state.adjust_pressure(sample.pressure);
             }
-            // 自前の枠: 縁を押したら大きさを変える（描いている最中・ペンが触れている最中は受けない。主の窓と同じ）
+            // 自前の枠: 縁を押したら大きさを変える（描いている最中・ペンが触れている最中は受けない。メインウィンドウと同じ）
             if custom {
                 let busy = self.state.is_stroking() || pen.iter().any(|s| s.contact);
                 edge = titlebar::edges_with(&ctx, busy, &[], &frame_ids);
             }
-            // 主の窓と同じ表のキー（キーはフォーカスのある窓にだけ来る）。フォーカスのある窓のパスだけが見る: クリップボードのキーの
-            // 「前のフレームの修飾」は窓をまたいで 1 つなので、フォーカスの無い窓のパスが（押していない）修飾で上書きすると、
+            // メインウィンドウと同じ表のキー（キーはフォーカスのあるウィンドウにだけ来る）。フォーカスのあるウィンドウのパスだけが見る: クリップボードのキーの
+            // 「前のフレームの修飾」はウィンドウをまたいで 1 つなので、フォーカスの無いウィンドウのパスが（押していない）修飾で上書きすると、
             // Shift を押してから C を押した Ctrl+Shift+C（修飾の変化が無いまま `Copy` だけ来る）が普通のコピーになる
             if info.focused == Some(true) {
                 crate::shell::handle_shortcuts(&ctx, &mut self.state);
                 crate::stencil::update_keys(&ctx, &mut self.state);
             }
-            // 落としたファイル（ブラシの一覧・ライブラリの格子は、この窓で描いたときだけ）
+            // 落としたファイル（ブラシの一覧・ライブラリの格子は、このウィンドウで描いたときだけ）
             self.state.brushes.ui.list_rect = win.drops.brush_list;
             self.open_dropped(&ctx);
             crate::panels::assets::import_dropped(&ctx, &mut self.state, win.drops.library_grid);
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
                 self.state.m2_cancel_drag();
             }
-            // ほかの窓で開いたポップアップは、この窓を押したら閉じる
+            // ほかのウィンドウで開いたポップアップは、このウィンドウを押したら閉じる
             close_foreign_popup(&ctx, &mut self.state);
         }
         self.state.brushes.ui.list_rect = None;
@@ -267,7 +267,7 @@ impl YoluApp {
             brush_list: self.state.brushes.ui.list_rect.take(),
             library_grid: self.state.library.grid_rect.take(),
         };
-        // 自分の窓なら窓の全体、egui の窓（試験）ならドックの矩形の外で離したタブ
+        // 自分のウィンドウならウィンドウの全体、egui のウィンドウ（試験）ならドックの矩形の外で離したタブ
         let inside = if own { ctx.content_rect() } else { area };
         tab_events(
             &ctx,
@@ -295,7 +295,7 @@ impl YoluApp {
         pass.grabbed
     }
 
-    /// 外の窓・主の窓のタブを前にする（外の窓なら、その窓の中で）。
+    /// 別ウィンドウ・メインウィンドウのタブを前にする（別ウィンドウなら、そのウィンドウの中で）。
     pub(super) fn bring_forward(&mut self, tab: Tab) {
         if let Some(path) = self.dock.find_tab(&tab) {
             let _ = self.dock.set_active_tab(path);
@@ -304,8 +304,8 @@ impl YoluApp {
         }
     }
 
-    /// スキンのあるモデルを読んでいて、ポーズのタブがどこにも無ければ足す: レイヤーが外の窓にあればその組へ（前へは出さない）、
-    /// 無ければ主の窓（`panels::pose::ensure_tab`）。
+    /// スキンのあるモデルを読んでいて、ポーズのタブがどこにも無ければ足す: レイヤーが別ウィンドウにあればその組へ（前へは出さない）、
+    /// 無ければメインウィンドウ（`panels::pose::ensure_tab`）。
     pub(super) fn ensure_pose_tab(&mut self) {
         if self.state.view3d.pose.session.is_none() || self.detached.contains(Tab::Pose) {
             return;
@@ -352,7 +352,7 @@ fn close_gap_lines(ui: &Ui, dock: &egui_dock::DockState<Tab>, color: egui::Color
     }
 }
 
-/// 1 つの窓のドックを描いた後: 外で離したタブを控え、右クリックならその窓にメニューを開く。
+/// 1 つのウィンドウのドックを描いた後: 外で離したタブを控え、右クリックならそのウィンドウにメニューを開く。
 pub(super) fn tab_events(
     ctx: &egui::Context,
     state: &mut crate::state::AppState,
@@ -392,7 +392,7 @@ pub(super) fn tab_events(
 }
 
 impl YoluApp {
-    /// 外の窓で開いたポップアップを、その窓で描く（ほかの窓のポップアップは描かない）。
+    /// 別ウィンドウで開いたポップアップを、そのウィンドウで描く（ほかのウィンドウのポップアップは描かない）。
     fn popup_in(&mut self, ctx: &egui::Context, id: ViewportId) {
         let Some(mut open) = self.state.popup.take() else {
             return;
@@ -409,7 +409,7 @@ impl YoluApp {
         }
     }
 
-    /// ポップアップが開いている窓がもう無ければ閉じる（外の窓を閉じた・戻した）。
+    /// ポップアップが開いているウィンドウがもう無ければ閉じる（別ウィンドウを閉じた・戻した）。
     pub(super) fn drop_orphan_popup(&mut self) {
         let alive = |id: ViewportId| {
             id == ViewportId::ROOT || self.detached.index_of_viewport(id).is_some()
@@ -424,7 +424,7 @@ impl YoluApp {
         }
     }
 
-    /// 控えたタブの出し入れを当てる（全部の窓を描いた後。主の窓のパスの中）。
+    /// 控えたタブの出し入れを当てる（全部のウィンドウを描いた後。メインウィンドウのパスの中）。
     pub(super) fn apply_dock_events(&mut self, ctx: &egui::Context, events: Vec<DockEvent>) {
         for event in events {
             match event {
@@ -456,12 +456,12 @@ impl YoluApp {
                 }
             }
         }
-        // タブを全部出した外の窓（egui_dock の浮いた窓へ出したあとの元の窓など）は残さない
+        // タブを全部出した別ウィンドウ（egui_dock の浮いたウィンドウへ出したあとの元のウィンドウなど）は残さない
         self.detached.drop_empty();
         self.drop_orphan_popup();
     }
 
-    /// タブを窓の外で離した: 別の外の窓の上ならその窓の組へ、主の窓の上ならその点の下の組へ、どの窓の上でもなければ新しい外の窓へ。
+    /// タブをウィンドウの外で離した: 別の別ウィンドウの上ならそのウィンドウの組へ、メインウィンドウの上ならその点の下の組へ、どのウィンドウの上でもなければ新しい別ウィンドウへ。
     fn drop_tab(
         &mut self,
         ctx: &egui::Context,
@@ -504,7 +504,7 @@ impl YoluApp {
         );
     }
 
-    /// メニュー・右クリックのドックの操作を当てる（ポップアップの後。主の窓のパスの中）。
+    /// メニュー・右クリックのドックの操作を当てる（ポップアップの後。メインウィンドウのパスの中）。
     pub(super) fn apply_dock_ops(&mut self, ctx: &egui::Context) {
         let ops = std::mem::take(&mut self.state.ui.dock_ops);
         for op in ops {
@@ -549,7 +549,7 @@ impl YoluApp {
         Place::Record(place::record_at(px, size, wppp))
     }
 
-    /// Windows: 外の窓の OS の窓を見つけたら、主の窓を持ち主にし、最大化を自動で隠すタスクバーに合わせ、ペンの入力を繋ぐ（見つかるまで、数十フレーム探す）。
+    /// Windows: 別ウィンドウの OS のウィンドウを見つけたら、メインウィンドウを持ち主にし、最大化を自動で隠すタスクバーに合わせ、ペンの入力を繋ぐ（見つかるまで、数十フレーム探す）。
     #[cfg(windows)]
     fn attach_native(&mut self, ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInfo) {
         const TRIES: u32 = 120;
@@ -584,7 +584,7 @@ impl YoluApp {
         }
     }
 
-    /// 見えている外の窓があるか（主の窓が最小化・隠れていても、eframe は外の窓のために主の窓のパスを回す）。
+    /// 見えている別ウィンドウがあるか（メインウィンドウが最小化・隠れていても、eframe は別ウィンドウのためにメインウィンドウのパスを回す）。
     pub(super) fn any_detached_visible(&self, ctx: &egui::Context) -> bool {
         self.detached
             .windows
@@ -592,7 +592,7 @@ impl YoluApp {
             .any(|w| info_of(ctx, w.viewport_id()).is_some_and(|i| i.visible().unwrap_or(true)))
     }
 
-    /// 外の窓のどれかにフォーカスがあるか。
+    /// 別ウィンドウのどれかにフォーカスがあるか。
     pub(super) fn detached_focused(&self, ctx: &egui::Context) -> bool {
         self.detached
             .windows
@@ -601,7 +601,7 @@ impl YoluApp {
     }
 }
 
-/// egui_dock の浮いた窓（このパスの窓の点）を、外の窓へ替える頼みにする。
+/// egui_dock の浮いたウィンドウ（このパスのウィンドウの点）を、別ウィンドウへ替える頼みにする。
 pub(super) fn floats_event(
     ctx: &egui::Context,
     floats: Vec<Float>,
@@ -708,7 +708,7 @@ fn settle_and_record(ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInf
     }
 }
 
-/// ほかの窓で開いたポップアップは、この窓を押したら閉じる（`ctx` の窓のパスで）。
+/// ほかのウィンドウで開いたポップアップは、このウィンドウを押したら閉じる（`ctx` のウィンドウのパスで）。
 pub(super) fn close_foreign_popup(ctx: &egui::Context, state: &mut crate::state::AppState) {
     let here = ctx.viewport_id();
     if state
@@ -721,7 +721,7 @@ pub(super) fn close_foreign_popup(ctx: &egui::Context, state: &mut crate::state:
     }
 }
 
-/// アセットの品などを引いたまま、引き始めた窓の外へ出たら、ポインタを「落とせない」にする（窓をまたいで落とす道は無い）。
+/// アセットの品などを引いたまま、引き始めたウィンドウの外へ出たら、ポインタを「落とせない」にする（ウィンドウをまたいで落とす道は無い）。
 pub(super) fn refuse_foreign_drop(ctx: &egui::Context) {
     if !egui::DragAndDrop::has_any_payload(ctx) {
         return;

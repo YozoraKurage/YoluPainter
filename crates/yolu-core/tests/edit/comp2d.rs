@@ -1,5 +1,5 @@
 //! 2D の合成を速くする仕組み（散らばったタイルの合成・描いている間の下と上の覚え・歩幅つきの粗い合成）の、
-//! 全層を下から重ねた今までの合成とバイトで同じことの試験。
+//! 全レイヤーを下から重ねた今までの合成とバイトで同じことの試験。
 
 use crate::comp2d_support;
 
@@ -103,7 +103,7 @@ fn assert_same(a: &Document, b: &Document, what: &str) {
     }
 }
 
-/// seed の文書で、`pick` 番目に描ける層へストロークを描き、途中・確定・Undo のどこでも、覚えを使う文書が使わない文書と同じ合成か。
+/// seed の文書で、`pick` 番目に描けるレイヤーへストロークを描き、途中・確定・Undo のどこでも、覚えを使う文書が使わない文書と同じ合成か。
 /// 戻り値は覚えの状況（使った・作った・予算で飛ばした数）。
 fn memo_case(seed: u64, pick: usize, budget: Option<u64>) -> Option<yolu_core::MemoStats> {
     memo_case_in(seed, pick, budget, (70, 50, 16))
@@ -185,7 +185,7 @@ fn the_remembered_composite_matches_the_full_composite_through_a_stroke() {
 
 #[test]
 fn the_remembered_composite_matches_when_the_work_is_split_into_bands_across_threads() {
-    // 128² のタイルに詰まった層: 仕事が大きく、タイルが行の帯に割れてワーカーへ分かれる（帯ごとに覚えの切り出しの位置が違う）
+    // 128² のタイルに詰まったレイヤー: 仕事が大きく、タイルが行の帯に割れてワーカーへ分かれる（帯ごとに覚えの切り出しの位置が違う）
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(4)
         .build()

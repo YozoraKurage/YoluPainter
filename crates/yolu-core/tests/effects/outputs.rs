@@ -1,4 +1,4 @@
-//! 層・マスク・グループの領域の出力（`layer_output`・`mask_output`・`group_output`）: 合成と同じ評価の道を通り、1 画素ずつの読み
+//! レイヤー・マスク・グループの領域の出力（`layer_output`・`mask_output`・`group_output`）: 合成と同じ評価の道を通り、1 画素ずつの読み
 //! （`layer_output_pixel`・`mask_output_hide`）と矩形・行の並びによらず同じ値になる。文書は変えない。
 use crate::attach_support;
 use attach_support::*;
@@ -93,7 +93,7 @@ fn a_layer_output_is_the_pixel_reads_in_any_rect_and_row_order() {
     }
 }
 
-/// 層が 1 枚だけの文書では、層の出力は合成そのもの（同じ評価・同じキャッシュを通る）。
+/// レイヤーが 1 枚だけの文書では、レイヤーの出力は合成そのもの（同じ評価・同じキャッシュを通る）。
 #[test]
 fn a_lone_layers_output_is_the_composite() {
     for filtered in [false, true] {
@@ -242,7 +242,7 @@ fn a_nested_group_output_matches_the_composite_of_the_same_stack() {
     let outer = doc.group_layers(&[base, inner], "outer").unwrap();
     let fill = l[3];
     let expected = {
-        // 同じ層だけの文書（塗りつぶしを外した文書）の合成
+        // 同じレイヤーだけの文書（塗りつぶしを外した文書）の合成
         let mut only = doc.capture_snapshot().unwrap();
         only.remove_layer(fill).unwrap();
         whole(&only, Channel::Color)
@@ -347,7 +347,7 @@ fn outputs_leave_the_document_alone_and_refuse_what_they_cannot_read() {
         .is_empty());
 }
 
-/// 調整の設定だけを替えた読むだけの写し: 写しの合成は替えた設定で、元の文書（設定・版・合成）は変わらない。調整でない層・無い層・描いている最中は断る。
+/// 調整の設定だけを替えた読むだけの写し: 写しの合成は替えた設定で、元の文書（設定・版・合成）は変わらない。調整でないレイヤー・無いレイヤー・描いている最中は断る。
 #[test]
 fn a_copy_with_replaced_adjustments_composites_with_the_new_settings_and_leaves_the_original() {
     let (mut doc, l) = world();
@@ -412,7 +412,7 @@ fn a_copy_with_replaced_adjustments_composites_with_the_new_settings_and_leaves_
     doc.cancel_stroke(stroke);
 }
 
-/// `contributes`: 合成の計画に出る層か。見えない・不透明度 0・そのチャンネルに中身が無い層と、子の計画が空のグループは出ない。
+/// `contributes`: 合成の計画に出るレイヤーか。見えない・不透明度 0・そのチャンネルに中身が無いレイヤーと、子の計画が空のグループは出ない。
 #[test]
 fn contributes_says_whether_the_composite_keeps_the_layer() {
     let (mut doc, l) = world();

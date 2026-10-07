@@ -1,17 +1,17 @@
-//! UV の位相（[`UvTopology`]）: テクスチャセットの三角形の UV の島・島の図（テクセル → 島。[`IslandMap`]）・島の縁の 3D の相手
-//! （UV の継ぎ目）。層のフィルターが継ぎ目をまたいで読む帯の写し（[`SeamBand`](super::SeamBand)）と、UV の島ごとの効果が読む島の番号の元。
+//! UV の位相（[`UvTopology`]）: テクスチャセットの三角形の UV アイランド・アイランドの図（テクセル → アイランド。[`IslandMap`]）・アイランドの縁の 3D の相手
+//! （UV の継ぎ目）。レイヤーのフィルターが継ぎ目をまたいで読む帯の写し（[`SeamBand`](super::SeamBand)）と、UV アイランドごとの効果が読むアイランドの番号の元。
 //!
-//! - **島**は、UV で辺を共有してつながる三角形（`regions` の UV アイランドと同じ決まり: UV を 1e-6 で量子化し、同じスロットの中だけ）。
-//!   番号は 1 から、島のいちばん小さい三角形の番号の順（モデルが同じなら、解像度によらず同じ番号）。0 は島の外。UV が重なった島
-//!   （ミラーで両側が同じ UV を使うなど）は、辺を共有していれば 1 つの島になる。
-//! - **島の図**は、テクセルの中心を、ベイクの割り当て（`mesh_maps` の行の割り当てを 1 テクセル 1 点で）で三角形に割り当て、その三角形の島に
+//! - **アイランド**は、UV で辺を共有してつながる三角形（`regions` の UV アイランドと同じ決まり: UV を 1e-6 で量子化し、同じスロットの中だけ）。
+//!   番号は 1 から、アイランドのいちばん小さい三角形の番号の順（モデルが同じなら、解像度によらず同じ番号）。0 はアイランドの外。UV が重なったアイランド
+//!   （ミラーで両側が同じ UV を使うなど）は、辺を共有していれば 1 つのアイランドになる。
+//! - **アイランドの図**は、テクセルの中心を、ベイクの割り当て（`mesh_maps` の行の割り当てを 1 テクセル 1 点で）で三角形に割り当て、その三角形のアイランドに
 //!   したもの。2 つ以上の三角形の内側が覆うテクセルは「重なり」の印（ベイクの重なりと同じ見つけ方）。行ごとの連なりで持つ。
 //! - **継ぎ目の縁**は、3D で辺を共有する（溶接した位置が同じ 2 頂点。`SurfaceGeometry` の隣り合わせ）のに UV が違う辺。相手の無い縁
 //!   （開いた縁・3 つ以上の三角形が使う辺）は継ぎ目にしない。
-//! - 島・縁の対応・島の図・帯の写しは、初めて要るときに作る。島の図は解像度ごと、帯の写しは解像度と帯の幅ごとに覚える（新しい 2 つずつ）。
+//! - アイランド・縁の対応・アイランドの図・帯の写しは、初めて要るときに作る。アイランドの図は解像度ごと、帯の写しは解像度と帯の幅ごとに覚える（新しい 2 つずつ）。
 //!   位置は作ったときのスナップショットのもの。
-//! - 島の図・帯の写しは、呼ぶ側が渡す**作業予算**（バイト）の中で作る（`island_map_within`・`seam_band_within`）: 作る途中の確保の見積りが予算を
-//!   超えれば作らずに断り（[`UvTopologyError::Budget`]）、作ったら、覚えている島の図と帯の写しの合計が予算に収まるよう古いものから捨てる
+//! - アイランドの図・帯の写しは、呼ぶ側が渡す**作業予算**（バイト）の中で作る（`island_map_within`・`seam_band_within`）: 作る途中の確保の見積りが予算を
+//!   超えれば作らずに断り（[`UvTopologyError::Budget`]）、作ったら、覚えているアイランドの図と帯の写しの合計が予算に収まるよう古いものから捨てる
 //!   （直近の 1 つずつは残す）。断った大きさと予算は覚え、同じか小さい予算での頼みは作り直さずに断る（[`UvTopology::refusal`]）。同じ大きさを
 //!   別のスレッドが同時に頼んでも、作るのは 1 回（待たせる）。
 
@@ -26,34 +26,34 @@ use super::seam_band::SeamBand;
 use super::SurfaceGeometry;
 use crate::mesh_maps::raster::Raster;
 
-/// 島の図・帯の写しの辺の上限（文書の辺の上限と同じ）。
+/// アイランドの図・帯の写しの辺の上限（文書の辺の上限と同じ）。
 pub const MAX_TOPOLOGY_EDGE: u32 = 8192;
 /// 帯の幅の上限（フィルターのスタックの半径の合計の上限と同じ）。
 pub const MAX_SEAM_BAND: u32 = crate::filter::MAX_HALO;
-/// 覚えておく島の図・帯の写しの数（それぞれ）。
+/// 覚えておくアイランドの図・帯の写しの数（それぞれ）。
 const KEEP: usize = 2;
-/// 作業予算を渡さない `island_map`・`seam_band` と、文書の島の図・帯の写しの予算の既定（1 GiB）。島の図と帯の写しの大きさは、モデルの
-/// 三角形の数・島の間の隙間・解像度で決まる（4096² で数十 MiB、8192² の密な並びで数百 MiB）。上限は、それを超える並びで確保を止めるためのもの。
+/// 作業予算を渡さない `island_map`・`seam_band` と、文書のアイランドの図・帯の写しの予算の既定（1 GiB）。アイランドの図と帯の写しの大きさは、モデルの
+/// 三角形の数・アイランドの間の隙間・解像度で決まる（4096² で数十 MiB、8192² の密な並びで数百 MiB）。上限は、それを超える並びで確保を止めるためのもの。
 pub const DEFAULT_BUDGET: u64 = 1024 * 1024 * 1024;
 /// 断った作り方として覚える数。
 const REFUSALS: usize = 8;
 
-/// 島の図・帯の写しを作れなかった理由。
+/// アイランドの図・帯の写しを作れなかった理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UvTopologyError {
     /// 解像度か帯の幅が範囲の外。
     InvalidSize,
     /// 行の割り当てが断った（理由）。
     Raster(String),
-    /// 島の図・帯の写しを作る作業メモリが、渡された予算（バイト）に収まらない。
+    /// アイランドの図・帯の写しを作る作業メモリが、渡された予算（バイト）に収まらない。
     Budget { budget: u64 },
 }
 
 impl std::fmt::Display for UvTopologyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UvTopologyError::InvalidSize => f.write_str("UV の島の図の大きさが範囲の外です"),
-            UvTopologyError::Raster(why) => write!(f, "UV の島の図を作れません（{why}）"),
+            UvTopologyError::InvalidSize => f.write_str("UV アイランドの図の大きさが範囲の外です"),
+            UvTopologyError::Raster(why) => write!(f, "UV アイランドの図を作れません（{why}）"),
             UvTopologyError::Budget { budget } => {
                 let size = if *budget >= 1 << 20 {
                     format!("{} MiB", budget.div_ceil(1 << 20))
@@ -64,7 +64,7 @@ impl std::fmt::Display for UvTopologyError {
                 };
                 write!(
                     f,
-                    "UV の島の図・帯の写しを作る作業メモリが予算（{size}）に収まりません"
+                    "UV アイランドの図・帯の写しを作る作業メモリが予算（{size}）に収まりません"
                 )
             }
         }
@@ -73,18 +73,18 @@ impl std::fmt::Display for UvTopologyError {
 
 impl std::error::Error for UvTopologyError {}
 
-/// 島の図の、行の中の連なり 1 つ（`start..end` のテクセルが同じ島）。
+/// アイランドの図の、行の中の連なり 1 つ（`start..end` のテクセルが同じアイランド）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IslandRun {
     pub start: u32,
     pub end: u32,
-    /// 島の番号（1 から）。
+    /// アイランドの番号（1 から）。
     pub island: u32,
-    /// 2 つ以上の三角形の内側が覆う（重なった UV）。`island` は番号の小さい三角形の島。
+    /// 2 つ以上の三角形の内側が覆う（重なった UV）。`island` は番号の小さい三角形のアイランド。
     pub overlap: bool,
 }
 
-/// 島の図: テクセル → UV の島の番号（左下原点）。行ごとの連なりで持つ。
+/// アイランドの図: テクセル → UV アイランドの番号（左下原点）。行ごとの連なりで持つ。
 #[derive(Debug)]
 pub struct IslandMap {
     width: u32,
@@ -102,11 +102,11 @@ impl IslandMap {
     pub fn height(&self) -> u32 {
         self.height
     }
-    /// モデルのそのセットの島の数（番号は 1..=数）。図に出ない小さな島も数える。
+    /// モデルのそのセットのアイランドの数（番号は 1..=数）。図に出ない小さなアイランドも数える。
     pub fn island_count(&self) -> u32 {
         self.island_count
     }
-    /// 行 y の連なり（x の順。間のテクセルは島の外）。
+    /// 行 y の連なり（x の順。間のテクセルはアイランドの外）。
     pub fn row(&self, y: u32) -> &[IslandRun] {
         let y = y as usize;
         &self.runs[self.rows[y] as usize..self.rows[y + 1] as usize]
@@ -119,7 +119,7 @@ impl IslandMap {
         let i = row.partition_point(|r| r.end <= x);
         row.get(i).filter(|r| r.start <= x)
     }
-    /// テクセル (x, y) の島の番号（島の外・図の外は 0）。
+    /// テクセル (x, y) のアイランドの番号（アイランドの外・図の外は 0）。
     pub fn island(&self, x: u32, y: u32) -> u32 {
         self.run(x, y).map_or(0, |r| r.island)
     }
@@ -127,7 +127,7 @@ impl IslandMap {
     pub fn overlapped(&self, x: u32, y: u32) -> bool {
         self.run(x, y).is_some_and(|r| r.overlap)
     }
-    /// 島の中のテクセルの数。
+    /// アイランドの中のテクセルの数。
     pub fn covered_texels(&self) -> u64 {
         self.runs.iter().map(|r| u64::from(r.end - r.start)).sum()
     }
@@ -147,7 +147,7 @@ pub(crate) struct SeamEdge {
     /// 相手の三角形の頂点のうち、こちらの `edge`・`edge + 1` と同じ位置のもの。
     pub partner_a: u8,
     pub partner_b: u8,
-    /// 島の縁をたどって、この辺の前の縁の始まりと、後の縁の終わり（UV）。縁が一筋にたどれない所（重なった UV・向きの揃わない島）は None。
+    /// アイランドの縁をたどって、この辺の前の縁の始まりと、後の縁の終わり（UV）。縁が一筋にたどれない所（重なった UV・向きの揃わないアイランド）は None。
     pub prev: Option<Vec2>,
     pub next: Option<Vec2>,
 }
@@ -160,7 +160,7 @@ pub(crate) struct Link {
     /// 隣の三角形の頂点のうち、こちらの辺の始まり・終わりと同じ位置のもの。
     pub a: u8,
     pub b: u8,
-    /// UV もつながる（島の中の辺）。
+    /// UV もつながる（アイランドの中の辺）。
     pub continuous: bool,
 }
 
@@ -173,9 +173,9 @@ impl Link {
     };
 }
 
-/// 島と縁の対応（解像度によらない）。
+/// アイランドと縁の対応（解像度によらない）。
 pub(crate) struct Parts {
-    /// 三角形の番号ごとの島（セットの外は 0）。
+    /// 三角形の番号ごとのアイランド（セットの外は 0）。
     pub island_of: Vec<u32>,
     pub island_count: u32,
     /// 継ぎ目の縁（三角形の番号・辺の順）。
@@ -193,12 +193,12 @@ pub struct UvTopology {
     bands: Mutex<Vec<Arc<SeamBand>>>,
     /// 作業予算で断った作り方（新しいものが後ろ）。
     refused: Mutex<Vec<Refusal>>,
-    /// 島の図・帯の写しを作る間の門（同じものを同時に作らない）。帯の写しの門を持ってから島の図の門を取る。
+    /// アイランドの図・帯の写しを作る間の門（同じものを同時に作らない）。帯の写しの門を持ってからアイランドの図の門を取る。
     map_gate: Mutex<()>,
     band_gate: Mutex<()>,
 }
 
-/// 作業予算で断った作り方: 大きさ・帯の幅（0 は島の図）と、そのときの予算。
+/// 作業予算で断った作り方: 大きさ・帯の幅（0 はアイランドの図）と、そのときの予算。
 #[derive(Clone, Copy, Debug)]
 struct Refusal {
     width: u32,
@@ -237,7 +237,7 @@ impl UvTopology {
     }
 
     /// 別のスナップショットが、同じ UV の位相か（三角形の並び・UV・スロット・マテリアルの組・隣り合わせが同じ。位置は見ない）。
-    /// ポーズで位置だけが変わったモデルでは true（島・継ぎ目・帯の写しを作り直さずに使い続けられる。展開は作ったときの位置のまま）。
+    /// ポーズで位置だけが変わったモデルでは true（アイランド・継ぎ目・帯の写しを作り直さずに使い続けられる。展開は作ったときの位置のまま）。
     pub fn same_layout(&self, other: &SurfaceGeometry) -> bool {
         let g = &*self.geometry;
         g.triangles.len() == other.triangles.len()
@@ -261,11 +261,11 @@ impl UvTopology {
             .get_or_init(|| Parts::new(&self.geometry, self.material))
     }
 
-    /// 島の数（番号は 1..=数）。
+    /// アイランドの数（番号は 1..=数）。
     pub fn island_count(&self) -> u32 {
         self.parts().island_count
     }
-    /// 三角形の島の番号（セットの外・範囲外は 0）。
+    /// 三角形のアイランドの番号（セットの外・範囲外は 0）。
     pub fn triangle_island(&self, triangle: u32) -> u32 {
         self.parts()
             .island_of
@@ -273,17 +273,17 @@ impl UvTopology {
             .copied()
             .unwrap_or(0)
     }
-    /// 継ぎ目の縁の数（相手のある島の縁。両側を別に数える）。
+    /// 継ぎ目の縁の数（相手のあるアイランドの縁。両側を別に数える）。
     pub fn seam_edge_count(&self) -> usize {
         self.parts().seams.len()
     }
 
-    /// 解像度 width × height の島の図（覚えていればそれ）。作業予算は既定（[`DEFAULT_BUDGET`]）。
+    /// 解像度 width × height のアイランドの図（覚えていればそれ）。作業予算は既定（[`DEFAULT_BUDGET`]）。
     pub fn island_map(&self, width: u32, height: u32) -> Result<Arc<IslandMap>, UvTopologyError> {
         self.island_map_within(width, height, DEFAULT_BUDGET)
     }
 
-    /// 解像度 width × height の島の図（覚えていればそれ。覚えているものは予算を問わず返す）。作るときは、作る途中の確保（行ごとの連なりと、
+    /// 解像度 width × height のアイランドの図（覚えていればそれ。覚えているものは予算を問わず返す）。作るときは、作る途中の確保（行ごとの連なりと、
     /// それを 1 本にまとめる写し）が `budget` バイトに収まらなければ断る。
     pub fn island_map_within(
         &self,
@@ -343,8 +343,8 @@ impl UvTopology {
         self.seam_band_within(width, height, band, DEFAULT_BUDGET)
     }
 
-    /// 解像度 width × height、帯の幅 band（テクセル）の帯の写し（覚えていればそれ。覚えているものは予算を問わず返す）。作るときは、島の図と
-    /// 作る途中の確保（島の中のビット・展開した三角形・行の帯ごとの作業・帯のテクセル）が `budget` バイトに収まらなければ断る。
+    /// 解像度 width × height、帯の幅 band（テクセル）の帯の写し（覚えていればそれ。覚えているものは予算を問わず返す）。作るときは、アイランドの図と
+    /// 作る途中の確保（アイランドの中のビット・展開した三角形・行の帯ごとの作業・帯のテクセル）が `budget` バイトに収まらなければ断る。
     pub fn seam_band_within(
         &self,
         width: u32,
@@ -405,7 +405,7 @@ impl UvTopology {
             .cloned()
     }
 
-    /// 覚えている島の図（作らない。無ければ None）。
+    /// 覚えているアイランドの図（作らない。無ければ None）。
     fn cached_map(&self, width: u32, height: u32) -> Option<Arc<IslandMap>> {
         lock(&self.maps)
             .iter()
@@ -413,13 +413,13 @@ impl UvTopology {
             .cloned()
     }
 
-    /// 覚えている島の図と帯の写しのバイト数（名目。帯の写しが持つ島の図も、島の図の覚えから外れていれば数える）。
+    /// 覚えているアイランドの図と帯の写しのバイト数（名目。帯の写しが持つアイランドの図も、アイランドの図の覚えから外れていれば数える）。
     pub fn cached_bytes(&self) -> u64 {
         unique_bytes(&lock(&self.maps), &lock(&self.bands))
     }
 
     /// 解像度 width × height・帯の幅 band の帯の写しを、作業予算で断ったままか（作らずに調べるだけ。断ったことが無ければ、成功して
-    /// 覚えているときも None）。島の図を断ったときも、その大きさの帯の写しは断ったことになる。
+    /// 覚えているときも None）。アイランドの図を断ったときも、その大きさの帯の写しは断ったことになる。
     pub fn refusal(&self, width: u32, height: u32, band: u32) -> Option<UvTopologyError> {
         lock(&self.refused)
             .iter()
@@ -453,12 +453,12 @@ impl UvTopology {
         lock(&self.refused).retain(|r| !(r.width == width && r.height == height && r.band == band));
     }
 
-    /// 覚えている島の図と帯の写しの合計を、予算に収まるまで古いものから捨てる（直近の 1 つずつは残す）。
+    /// 覚えているアイランドの図と帯の写しの合計を、予算に収まるまで古いものから捨てる（直近の 1 つずつは残す）。
     fn trim(&self, budget: u64) {
         self.evict(budget, 1);
     }
 
-    /// 覚えている島の図と帯の写しの合計が `budget` を超えていれば、収まるまで古いものから捨てる（直近のものも。予算を小さくしたとき）。
+    /// 覚えているアイランドの図と帯の写しの合計が `budget` を超えていれば、収まるまで古いものから捨てる（直近のものも。予算を小さくしたとき）。
     pub fn shrink(&self, budget: u64) {
         self.evict(budget, 0);
     }
@@ -478,7 +478,7 @@ impl UvTopology {
     }
 }
 
-/// 島の図と帯の写しの合計のバイト数（帯の写しが持つ島の図は、覚えにあるものと同じなら 1 度だけ数える）。
+/// アイランドの図と帯の写しの合計のバイト数（帯の写しが持つアイランドの図は、覚えにあるものと同じなら 1 度だけ数える）。
 fn unique_bytes(maps: &[Arc<IslandMap>], bands: &[Arc<SeamBand>]) -> u64 {
     let mut seen: Vec<*const IslandMap> = maps.iter().map(Arc::as_ptr).collect();
     let mut total: u64 = maps.iter().map(|m| m.bytes()).sum();
@@ -507,7 +507,7 @@ impl Parts {
         let tris = g.triangles();
         let n = tris.len();
         let member = |i: usize| material.is_none_or(|m| tris[i].material == m);
-        // 島: UV の辺を共有する（同じスロットの）三角形をつなぐ
+        // アイランド: UV の辺を共有する（同じスロットの）三角形をつなぐ
         let key = |uv: Vec2| {
             (
                 (uv.x as f64 * 1e6).round_ties_even() as i64,
@@ -541,7 +541,7 @@ impl Parts {
                     Entry::Occupied(o) => {
                         let (x, y) = (find(&mut parent, i as u32), find(&mut parent, *o.get()));
                         if x != y {
-                            // 小さい番号を根にする（島の番号を一番小さい三角形の順にしやすく）
+                            // 小さい番号を根にする（アイランドの番号を一番小さい三角形の順にしやすく）
                             let (lo, hi) = (x.min(y), x.max(y));
                             parent[hi as usize] = lo;
                         }
@@ -578,7 +578,7 @@ impl Parts {
                 }
             })
             .collect();
-        // 島の縁（継ぎ目と相手の無い辺）を、始まり・終わりの UV でつなぐ（向きの揃った島では、縁の頂点ごとに出る縁と入る縁が 1 つずつ）
+        // アイランドの縁（継ぎ目と相手の無い辺）を、始まり・終わりの UV でつなぐ（向きの揃ったアイランドでは、縁の頂点ごとに出る縁と入る縁が 1 つずつ）
         let uv_of = |i: usize, j: usize| {
             let t = &tris[i];
             [t.uv_a, t.uv_b, t.uv_c][j % 3]
@@ -635,7 +635,7 @@ impl Parts {
     }
 }
 
-/// 三角形 i の辺ごとの向こう。隣の三角形が同じ 2 頂点（溶接の鍵）で UV も同じなら島の中の辺、同じ 2 頂点で UV が違えば継ぎ目。
+/// 三角形 i の辺ごとの向こう。隣の三角形が同じ 2 頂点（溶接の鍵）で UV も同じならアイランドの中の辺、同じ 2 頂点で UV が違えば継ぎ目。
 fn links_of(
     g: &SurfaceGeometry,
     i: usize,
@@ -699,7 +699,7 @@ fn links_of(
     out
 }
 
-/// 島の図を作る（ベイクの行の割り当てを 1 テクセル 1 点で）。作る途中の確保（行ごとの連なり、それを 1 本にまとめる写しとの 2 つ分と、
+/// アイランドの図を作る（ベイクの行の割り当てを 1 テクセル 1 点で）。作る途中の確保（行ごとの連なり、それを 1 本にまとめる写しとの 2 つ分と、
 /// 行ごとの入れ物）が `budget` に収まらなければ、行の連なりを数えながら途中で断る。
 fn build_island_map(
     g: &SurfaceGeometry,

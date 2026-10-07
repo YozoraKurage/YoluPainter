@@ -310,7 +310,7 @@ fn psd_file(
         let issues: Vec<String> = plan.blockers.iter().map(|b| b.message()).collect();
         return Err(OpError::new(
             ErrorCode::Unsupported,
-            format!("PSD に書けない層があります: {}", issues.join(" / ")),
+            format!("PSD に書けないレイヤーがあります: {}", issues.join(" / ")),
             format!(
                 "{} layer(s) cannot be written to a PSD without losing information",
                 issues.len()

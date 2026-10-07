@@ -1,8 +1,8 @@
-//! 取り込みの窓の「CLIP STUDIO から」: CLIP STUDIO PAINT のサブツールのフォルダを探して `.sut` を一覧にし（名前と筆先の見本）、
+//! 取り込みのウィンドウの「CLIP STUDIO から」: CLIP STUDIO PAINT のサブツールのフォルダを探して `.sut` を一覧にし（名前と筆先の見本）、
 //! 選んだものだけを、ふつうの `.sut` の取り込み（`BrushAction::Import`）と同じ道で取り込む。
 //!
 //! 探す・中身を覗く仕事は別のスレッド（`yolu_io::brushes::clipstudio`。**読むだけ**で、CLIP STUDIO のフォルダへ何も書かず、
-//! ロックもしない）。窓を閉じる・探し直す・フォルダを替えると、走っている仕事は取り消す。フォルダの場所の見つけ方と、読んでいる間の
+//! ロックもしない）。ウィンドウを閉じる・探し直す・フォルダを替えると、走っている仕事は取り消す。フォルダの場所の見つけ方と、読んでいる間の
 //! 書き込みへの備えは `yolu_io::brushes::clipstudio` と docs/BRUSH_IMPORT.md を参照。
 
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ pub struct Row {
     pub size: u64,
     pub state: RowState,
     pub selected: bool,
-    /// 筆先の見本の絵（描くときに作る。窓を閉じると捨てる）。
+    /// 筆先の見本の絵（描くときに作る。ウィンドウを閉じると捨てる）。
     pub texture: Option<egui::TextureHandle>,
 }
 
@@ -81,11 +81,11 @@ enum Msg {
     Done,
 }
 
-/// 「CLIP STUDIO から」の窓の状態。
+/// 「CLIP STUDIO から」のウィンドウの状態。
 #[derive(Default)]
 pub struct CspState {
     pub open: bool,
-    /// 窓の位置（見出しのドラッグでずれた量）と、一覧のずらした量。
+    /// ウィンドウの位置（見出しのドラッグでずれた量）と、一覧のずらした量。
     pub offset: Vec2,
     pub scroll: f32,
     /// 手で選んだフォルダ（None は既定の場所）。
@@ -115,7 +115,7 @@ impl CspState {
     }
 }
 
-/// 「CLIP STUDIO から」の探す仕事（描き直すだけ。読むだけなので止めない）。窓はキーの割り当てを止める。
+/// 「CLIP STUDIO から」の探す仕事（描き直すだけ。読むだけなので止めない）。ウィンドウはキーの割り当てを止める。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     modal: Some(|app| app.brushes.csp.open),
@@ -158,14 +158,14 @@ fn run(source: Source, cancel: &AtomicBool, tx: &std::sync::mpsc::Sender<Msg>, p
 }
 
 impl AppState {
-    /// 窓を開いて、既定の場所を探す。
+    /// ウィンドウを開いて、既定の場所を探す。
     pub(super) fn brush_csp_open(&mut self) {
         self.brushes.csp.open = true;
         self.brushes.csp.folder = None;
         self.brush_csp_scan();
     }
 
-    /// 窓を閉じる（走っている仕事は取り消し、一覧は捨てる）。
+    /// ウィンドウを閉じる（走っている仕事は取り消し、一覧は捨てる）。
     pub(super) fn brush_csp_close(&mut self) {
         let csp = &mut self.brushes.csp;
         csp.open = false;
@@ -287,7 +287,7 @@ impl AppState {
         }
     }
 
-    /// 選んだ行だけを取り込み、窓を閉じる（取り込みは裏で進み、結果は状態の帯に出る）。何も選んでいなければ何もしない。
+    /// 選んだ行だけを取り込み、ウィンドウを閉じる（取り込みは裏で進み、結果は状態の帯に出る）。何も選んでいなければ何もしない。
     pub(super) fn brush_csp_import(&mut self) {
         let paths: Vec<PathBuf> = self
             .brushes
@@ -313,7 +313,7 @@ impl AppState {
         self.brush_import_start(paths);
     }
 
-    /// フォルダを手で選ぶ窓を頼む。
+    /// フォルダを手で選ぶウィンドウを頼む。
     pub(super) fn brush_csp_pick_folder(&mut self) {
         self.dialog_request = Some(DialogRequest::ClipStudioFolder);
     }

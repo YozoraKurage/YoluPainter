@@ -1,5 +1,5 @@
 //! 調整レイヤーの式（C# の Adjustments.cs、AlgorithmVersion 1）。画素ごとの点の調整で、保存したままの（符号化した）RGB に
-//! この道具の定義の式を当てる。Photoshop・CLIP STUDIO の同じ名前の調整と一致するとは言わない。アルファは変えない。
+//! このツールの定義の式を当てる。Photoshop・CLIP STUDIO の同じ名前の調整と一致するとは言わない。アルファは変えない。
 //!
 //! 種類 0〜2（反転・レベル補正・色相/彩度）は C# と同じ式で、反転・レベル補正は C# と全バイト一致。色相/彩度は同じ式を f32 で
 //! 計算する（`rows`。f64 の式とは 1 段ずれる値がある）。64 からは Rust 版だけの種類（グラデーションマップ・トーンカーブ・
@@ -58,7 +58,7 @@ impl AdjustmentType {
     }
 }
 
-/// Rust 版だけの色調補正 6 種のどれか 1 つの値（調整の層とフィルターの段で共通の入れ物。保存・画面が種類ごとの分岐を 1 か所で持てる）。
+/// Rust 版だけの色調補正 6 種のどれか 1 つの値（調整レイヤーとフィルターの段で共通の入れ物。保存・画面が種類ごとの分岐を 1 か所で持てる）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ColorAdjust {
     GradientMap(GradientMap),
@@ -105,7 +105,7 @@ impl ColorAdjust {
     pub fn applies_to(&self, kind: ChannelKind) -> bool {
         self.clone().into_settings().applies_to(kind)
     }
-    /// 調整の層の設定にする。
+    /// 調整レイヤーの設定にする。
     pub fn into_settings(self) -> AdjustmentSettings {
         match self {
             Self::GradientMap(v) => AdjustmentSettings::gradient_map(v),
@@ -341,7 +341,7 @@ impl AdjustmentSettings {
             _ => None,
         }
     }
-    /// 64 からの種類なら、その値（調整の層の設定から取り出す）。反転・レベル補正・色相/彩度は None。
+    /// 64 からの種類なら、その値（調整レイヤーの設定から取り出す）。反転・レベル補正・色相/彩度は None。
     pub fn color_adjust(&self) -> Option<ColorAdjust> {
         Some(match &self.more {
             More::None => return None,
@@ -495,7 +495,7 @@ impl AdjustmentSettings {
         mix_rgb(below, self.apply_in(channel, below), amount, mode)
     }
 
-    /// 1 行（RGBA）に調整の層を重ねる（各画素は `composite_in` と同じバイト。行の途中の量は `amount` が持つ）。表を使う種類は呼ぶたびに
+    /// 1 行（RGBA）に調整レイヤーを重ねる（各画素は `composite_in` と同じバイト。行の途中の量は `amount` が持つ）。表を使う種類は呼ぶたびに
     /// 表を作るので、細かく刻まず行や塊でまとめて呼ぶ。
     pub fn composite_row(
         &self,

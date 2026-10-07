@@ -2,7 +2,7 @@
 //! 画素ごとの色の積み・ストロークの覆いへの寄せ・合成・面への書き込みをレーンで行う（`apply_at` の画素ごとの色の道と同じバイト）。
 //!
 //! 画素ごとの色は R・G・B・A の面（`StrokeTile::paint`）に f32 で持つ。下地の合計（荷の更新の元）は、画素の順に足す今までの
-//! 足し算の列を保つため、レーンで積を求めてから 1 画素ずつ f64 へ足す。下地を読めないブロックと、N 画素の窓にできない余りの画素は、
+//! 足し算の列を保つため、レーンで積を求めてから 1 画素ずつ f64 へ足す。下地を読めないブロックと、N 画素のウィンドウにできない余りの画素は、
 //! 1 本のレーンで同じ式を通る（下地は画素ごとの `MixDab::ground_at`。端でない画素はレーンの読みと同じ値）。
 
 use super::effect::{blur_at_lanes, byte255, load_run};
@@ -164,7 +164,7 @@ pub(super) unsafe fn apply_color_range<V: Slice32>(
     let mut i = lo;
     let n = if V::N > 1 { cov.len() } else { 0 };
     while let Some(b) = next_block(i, hi, n, V::N) {
-        // このブロックが受け持つ画素（窓なら生かす画素）
+        // このブロックが受け持つ画素（ウィンドウなら生かす画素）
         let part = b.live.unwrap_or((i, i + V::N));
         i = part.1;
         let local = row + x0 + b.at;

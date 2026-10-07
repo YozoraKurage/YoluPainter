@@ -36,7 +36,7 @@ pub enum Error {
     Dab(DabRefusal),
     /// リボンの画像が [`Options::images`] に無い（アセットに無い・まだ読んでいない）。
     MissingImage,
-    /// 3D の塗りのパスの点・曲線が、1 つの UV の島に収まらない。
+    /// 3D の塗りのパスの点・曲線が、1 つの UV アイランドに収まらない。
     FillIslands,
 }
 impl From<CoreError> for Error {
@@ -57,7 +57,7 @@ impl std::fmt::Display for Error {
             Self::Core(e) => e.fmt(f),
             Self::Dab(e) => e.fmt(f),
             Self::MissingImage => f.write_str("リボンの画像がありません"),
-            Self::FillIslands => f.write_str("塗りのパスが 1 つの UV の島に収まっていません"),
+            Self::FillIslands => f.write_str("塗りのパスが 1 つの UV アイランドに収まっていません"),
         }
     }
 }
@@ -249,7 +249,7 @@ pub enum PathKind {
     Stroke,
     /// アセットの画像を、パスの向きに回した画像のダブとして並べる。
     Ribbon(Ribbon),
-    /// 閉じたパスの内側を塗る（開いたパスは終わりから始めへ閉じて塗る）。3D は点が全部 1 つの UV の島にあるときだけ。
+    /// 閉じたパスの内側を塗る（開いたパスは終わりから始めへ閉じて塗る）。3D は点が全部 1 つの UV アイランドにあるときだけ。
     Fill,
     /// 指先: 前の画素をパスに沿って引きずる（強さ 0〜1）。
     Smudge { strength: f64 },
@@ -295,7 +295,7 @@ pub const DEPTH: std::ops::RangeInclusive<f64> = 0.05..=64.0;
 pub enum PathSymmetry {
     #[default]
     None,
-    /// 2D: 画布の対称（鏡映・放射状。最初の恒等の写しは元のパス）。
+    /// 2D: キャンバスの対称（鏡映・放射状。最初の恒等の写しは元のパス）。
     Canvas(crate::CanvasSymmetry),
     /// 3D: 休みの形のモデルの空間の鏡の面（面の上の点と法線）。映した点は、映した位置のいちばん近い面（同じマテリアル、
     /// 向きの合う面、許す距離の内側）へ置く。
@@ -311,7 +311,7 @@ pub struct PathStyle {
     pub kind: PathKind,
     /// 筆先の画像（None は丸。ストローク・消しゴム・指先に効く）。画像の長い辺が直径にかかる。
     pub tip: Option<std::sync::Arc<crate::BrushTip>>,
-    /// 筆先の角度（度、反時計回り）。`follow` ならパスの進む向きからの角度、そうでなければ 2D は画布の向き、3D はモデルの上（+Y を
+    /// 筆先の角度（度、反時計回り）。`follow` ならパスの進む向きからの角度、そうでなければ 2D はキャンバスの向き、3D はモデルの上（+Y を
     /// 面に落とした向き）からの角度。
     pub angle: f64,
     /// 筆先をパスの進む向きに回す。
@@ -429,7 +429,7 @@ impl CanvasPath {
         self.brush.validate(true)?;
         self.style.validate()?;
         if matches!(self.style.symmetry, PathSymmetry::Mirror { .. }) {
-            return Err(Error::Invalid("2D のパスの対称は画布の対称です"));
+            return Err(Error::Invalid("2D のパスの対称はキャンバスの対称です"));
         }
         paints(self.channel, self.brush, &self.material)?;
         if self.points.len() > MAX_POINTS {

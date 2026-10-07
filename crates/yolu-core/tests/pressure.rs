@@ -112,7 +112,7 @@ fn fnv(bytes: &[u8]) -> u64 {
     h
 }
 
-/// 応えを足す前のコード（8ac0a3d の親）が、同じ線・同じブラシで描いた画素のハッシュ。同じ試験の道具立て（`canvas`・`round`・`wavy`・`draw`）を
+/// 応えを足す前のコード（8ac0a3d の親）が、同じ線・同じブラシで描いた画素のハッシュ。同じ試験の補助関数（`canvas`・`round`・`wavy`・`draw`）を
 /// そのコードに写して測った。筆圧が行ったり来たりする線なので、ダブごとに大きさ・不透明度・流量が筆圧そのものに従う道が効く。
 #[test]
 fn the_default_response_paints_the_bytes_the_code_painted_before_responses_existed() {

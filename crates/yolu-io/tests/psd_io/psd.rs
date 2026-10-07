@@ -256,7 +256,7 @@ fn m2_layers_are_carried_into_core_and_off_canvas_pixels_are_refused_even_when_h
     });
     d.to_core().unwrap();
     d.layers[0].mask = None;
-    // ロックは core の層へ入る（断らない）。透明部分のロックの lspf のビット 0 は core の透明部分のロック
+    // ロックは core のレイヤーへ入る（断らない）。透明部分のロックの lspf のビット 0 は core の透明部分のロック
     d.layers[0].locks = 1;
     assert_eq!(
         d.to_core().unwrap().layers()[0].locks(),

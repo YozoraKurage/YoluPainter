@@ -1,5 +1,5 @@
-//! 面の上の参照の写像（Unity 版の SurfaceBrushSamplingTests。値は C# の試験の期待値そのもの）: 展開の図が UV の島をまたいで画素を
-//! 読み、クローン・指先が離れた島・鏡映した島・折れた面の間でも同じ模様を運ぶ。余白・別のスロット・つながらない辺・非多様体の辺は
+//! 面の上の参照の写像（Unity 版の SurfaceBrushSamplingTests。値は C# の試験の期待値そのもの）: 展開の図が UV アイランドをまたいで画素を
+//! 読み、クローン・指先が離れたアイランド・鏡映したアイランド・折れた面の間でも同じ模様を運ぶ。余白・別のスロット・つながらない辺・非多様体の辺は
 //! 越えず、図の予算は部分の図を返さずに断る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
@@ -20,8 +20,8 @@ fn p(x: f32, y: f32) -> Vec3 {
     Vec3::new(x, y, 0.0)
 }
 
-/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2 で、辺 x = 1 を共有する）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れた島。
-/// mirrored は右の島の UV の向きを反転し、mirrored_v は上下を反転する。folded は右の板を辺のところで手前へ折る。
+/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2 で、辺 x = 1 を共有する）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れたアイランド。
+/// mirrored は右のアイランドの UV の向きを反転し、mirrored_v は上下を反転する。folded は右の板を辺のところで手前へ折る。
 fn faces(
     mirrored: bool,
     folded: bool,
@@ -293,7 +293,7 @@ fn smudge_pulls_across_a_seam_without_sampling_the_atlas_gap() {
             let c = color(&d, layer, px.x, px.y);
             assert!(
                 c.g <= 30,
-                "離れた島の間の緑を読まない: {c:?} at {},{}",
+                "離れたアイランドの間の緑を読まない: {c:?} at {},{}",
                 px.x,
                 px.y
             );

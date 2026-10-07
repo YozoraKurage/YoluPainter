@@ -1,6 +1,6 @@
 //! アプリの本体: 外枠（メニューバー・オプションバー・ツールの帯・ステータスバー）と、egui_dock のドッキング（Substance の並び。
 //! 左: アセットとカラー、中央: キャンバスと 3D ビュー、右: テクスチャセットとレイヤーとプロパティ）、ポップアップ、3D ビューの知らせ、
-//! Live Link（フレームの頭で受け、終わりに変わったタイルを出す）、ファイルの窓。
+//! Live Link（フレームの頭で受け、終わりに変わったタイルを出す）、ファイルのウィンドウ。
 
 use std::collections::HashMap;
 
@@ -28,7 +28,7 @@ use crate::view3d::render::{View3dRenderer, View3dStats};
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
-    /// サブツールの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭。中身は今の道具に合わせて替わる）。
+    /// サブツールの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭。中身は今のツールに合わせて替わる）。
     SubTools,
     Assets,
     Color,
@@ -43,7 +43,7 @@ pub enum Tab {
     History,
     ColorSets,
     Navigator,
-    /// 起動してからの注意と失敗の知らせ（既定の並びではレイヤーと同じ組の後ろ。プロパティ・ヒストリーの組に 3 つ並べると、いちばん小さい窓で
+    /// 起動してからの注意と失敗の知らせ（既定の並びではレイヤーと同じ組の後ろ。プロパティ・ヒストリーの組に 3 つ並べると、いちばん小さいウィンドウで
     /// 英語の名前が欠ける。古い並びに無ければ、読んだときにレイヤーの組へ足す）。
     Log,
     /// アクション（操作の記録と再生）。既定の並びには無く、「ウィンドウ」のメニューから開くと（`DockOp::Show`）レイヤーと同じ組の後ろへ入る。
@@ -139,8 +139,8 @@ impl<'de> serde::Deserialize<'de> for Tab {
 
 /// Substance Painter の並び（左: サブツールとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
 /// プロパティ）。サブツールのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
-/// 左の列は、いちばん小さい窓（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点の窓で約 330 点）。
-/// 右の列は 1600 点の幅の窓で約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+/// 左の列は、いちばん小さいウィンドウ（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点のウィンドウで約 330 点）。
+/// 右の列は 1600 点の幅のウィンドウで約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
@@ -149,7 +149,7 @@ pub fn default_dock() -> DockState<Tab> {
         0.21,
         vec![Tab::SubTools, Tab::Assets, Tab::Channels],
     );
-    // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小の窓で名前が欠ける）
+    // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小のウィンドウで名前が欠ける）
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
     surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
@@ -195,10 +195,10 @@ fn dock_style(style: &egui::Style) -> egui_dock::Style {
     s
 }
 
-/// ドックの描き方（主の窓と外の窓で同じ）。タブは閉じない（閉じるとキャンバスを失う）・足すボタンを出さない・右クリックは
+/// ドックの描き方（メインウィンドウと別ウィンドウで同じ）。タブは閉じない（閉じるとキャンバスを失う）・足すボタンを出さない・右クリックは
 /// アプリのメニュー（egui_dock の組み込みのメニューは切る）。
 fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> DockArea<'_, Tab> {
-    // 浮かせた窓の閉じるボタンは出さない。egui_dock 0.21 は代わりの名前を案内するが、その名前の関数はまだ無いので、古い名前を使う
+    // 浮かせたウィンドウの閉じるボタンは出さない。egui_dock 0.21 は代わりの名前を案内するが、その名前の関数はまだ無いので、古い名前を使う
     #[allow(deprecated)]
     let area = DockArea::new(dock).show_window_close_buttons(false);
     area.id(id)
@@ -221,7 +221,7 @@ struct Tabs<'a> {
     tab_rects: HashMap<Tab, Rect>,
     /// このフレームにタブの見出しをつかんでいる（押している・動かしている・離した）か。
     grabbed: bool,
-    /// このフレームに見出しを引いて離したタブ（離した所が窓の外なら、外の窓へ出す・別の窓へ移す）。
+    /// このフレームに見出しを引いて離したタブ（離した所がウィンドウの外なら、別ウィンドウへ出す・別のウィンドウへ移す）。
     released: Option<Tab>,
     /// このフレームに見出しを右クリックしたタブと、押した点。
     context: Option<(Tab, egui::Pos2)>,
@@ -305,7 +305,7 @@ impl TabViewer for Tabs<'_> {
     }
 }
 
-/// 終わってよいかの問いへの答え（試験が窓を開かずに答える口）。
+/// 終わってよいかの問いへの答え（試験がウィンドウを開かずに答える口）。
 type CloseAnswer = Box<dyn FnMut(&AppState) -> bool>;
 
 /// アプリ。
@@ -321,7 +321,7 @@ pub struct YoluApp {
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
-    /// 主の wgpu の装置の見張り（実際の窓だけ。`watch_gpu`）。装置を失ったときの流れは `gpu_lost`。
+    /// 主の wgpu の装置の見張り（実際のウィンドウだけ。`watch_gpu`）。装置を失ったときの流れは `gpu_lost`。
     gpu_watch: Option<crate::gpu_watch::GpuWatch>,
     /// 主の wgpu の装置を失った（このあと終わる）。
     gpu_lost: Option<crate::gpu_watch::Lost>,
@@ -332,19 +332,19 @@ pub struct YoluApp {
     link: LiveLink,
     /// 外からの操作（MCP のクライアント・コマンドライン）を受ける（設定「外からの操作を受ける」が入っている間だけ 127.0.0.1 で待つ）。
     ops: McpServer,
-    /// ファイルの窓・確かめの窓を開くか（eframe の窓だけ。試験では開かず、頼みを `state.dialog_request` に残す）。
+    /// ファイルのウィンドウ・確認のウィンドウを開くか（eframe のウィンドウだけ。試験では開かず、頼みを `state.dialog_request` に残す）。
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
-    /// OS の終了を待たせる印（`session_end::set_saving`）に最後に伝えた「保存の間か」。窓が見えている間は `ui`、隠れている間は `logic` が
+    /// OS の終了を待たせる印（`session_end::set_saving`）に最後に伝えた「保存の間か」。ウィンドウが見えている間は `ui`、隠れている間は `logic` が
     /// 保存の結果を受けるたびに合わせる。
     saving_marked: bool,
-    /// 試験用: 保存していない変更のまま終わってよいかの問いに、窓を開かずに答える（窓を開かない試験が、保存の後に問われるかを見る）。
+    /// 試験用: 保存していない変更のまま終わってよいかの問いに、ウィンドウを開かずに答える（ウィンドウを開かない試験が、保存の後に問われるかを見る）。
     close_answer: Option<CloseAnswer>,
-    /// OS の枠を外した窓か（Windows の実際の窓だけ true。帯の右端に最小化・最大化・閉じるを置き、窓の縁で大きさを変える）。
+    /// OS の枠を外したウィンドウか（Windows の実際のウィンドウだけ true。帯の右端に最小化・最大化・閉じるを置き、ウィンドウの縁で大きさを変える）。
     /// 設定には出さない。試験は `set_custom_frame` で選ぶ。
     custom_frame: bool,
-    /// 前のフレームの帯で、egui の押しを持たずに生の押しで動く部品（Live Link の印）の矩形。窓の縁は、この上の押しを譲る
+    /// 前のフレームの帯で、egui の押しを持たずに生の押しで動く部品（Live Link の印）の矩形。ウィンドウの縁は、この上の押しを譲る
     /// （egui の当たり判定には出ないので、縁の側へ矩形で渡す）。
     bar_press_rects: Vec<Rect>,
     settings: Option<(std::path::PathBuf, Settings)>,
@@ -358,23 +358,23 @@ pub struct YoluApp {
     gpu_budgets_applied: crate::gpu_memory::Budgets,
     /// GPU の確保済みのメモリを測る wgpu の装置（状態の帯の右端のメモリ。装置が無い試験は None）。
     gpu_device: Option<eframe::egui_wgpu::wgpu::Device>,
-    /// ドックの並びと窓の大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
+    /// ドックの並びとウィンドウの大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
     layout_path: Option<std::path::PathBuf>,
     /// 最後に書いた（または読んだ）ファイルの中身。変わったときだけ書く。
     layout_saved: String,
     /// 最後に「書くか」を見た時刻（egui の時刻。1 秒おきに見る）。
     layout_checked_at: f64,
-    /// 最後に見た、最大化していない窓の大きさと位置（終わるときに書く）。
+    /// 最後に見た、最大化していないウィンドウの大きさと位置（終わるときに書く）。
     window_record: Option<crate::layout::WindowRecord>,
-    /// 起動のあと、窓が画面より大きくないか確かめたか。
+    /// 起動のあと、ウィンドウが画面より大きくないか確かめたか。
     window_checked: bool,
-    /// 起動のあと、窓が画面より大きければ収めるか（実際の窓だけ。試験は `fit_to_screen` で選ぶ）。
+    /// 起動のあと、ウィンドウが画面より大きければ収めるか（実際のウィンドウだけ。試験は `fit_to_screen` で選ぶ）。
     fit_window: bool,
-    /// 外へ出した窓（OS の窓。中のドック・置き場所）。
+    /// 外へ出したウィンドウ（OS のウィンドウ。中のドック・置き場所）。
     pub detached: crate::detach::Detached,
-    /// 主の窓で描いた、落としたファイルの行き先（ブラシの一覧・ライブラリの格子）。
+    /// メインウィンドウで描いた、落としたファイルの行き先（ブラシの一覧・ライブラリの格子）。
     root_drops: crate::detach::DropRects,
-    /// 主の窓の HWND の値（Windows。外の窓の持ち主にする）。
+    /// メインウィンドウの HWND の値（Windows。別ウィンドウの持ち主にする）。
     #[cfg(windows)]
     main_hwnd: Option<isize>,
     /// 落とした PSD のうち、取り込まなかった数（取り込みの仕事が終わったときの文に、理由として足す。0 なら無い）。
@@ -385,7 +385,7 @@ mod detached;
 mod gpu_lost;
 
 impl YoluApp {
-    /// 文脈に配色・書体・アイコンを入れる（窓を作るときに 1 度）。
+    /// 文脈に配色・書体・アイコンを入れる（ウィンドウを作るときに 1 度）。
     pub fn setup(ctx: &egui::Context) {
         // egui の既定は、Ctrl+-・Ctrl++・Ctrl+0 で画面全体（文字も部品も）の拡大率を変える。アプリのキーはこの組み合わせを
         // キャンバスの拡大・縮小に使うので、同じキーで画面全体まで縮んで戻せなくなる。画面全体の拡大縮小は切る
@@ -395,7 +395,7 @@ impl YoluApp {
         icons::install(ctx);
     }
 
-    /// eframe の窓から作る（Windows ではペンの入力を窓に繋ぐ）。
+    /// eframe のウィンドウから作る（Windows ではペンの入力をウィンドウに繋ぐ）。
     pub fn new(cc: &eframe::CreationContext<'_>) -> YoluApp {
         if let Some(rs) = &cc.wgpu_render_state {
             let info = rs.adapter.get_info();
@@ -427,23 +427,23 @@ impl YoluApp {
         app.fit_window = true;
         // Windows は OS の枠を外している（main.rs）ので、帯と縁は自前
         app.custom_frame = titlebar::CUSTOM_FRAME;
-        // 状態の帯の右端に版とビルドを出す（実際の窓だけ。試験の画像がコミットごとに変わらないように）
+        // 状態の帯の右端に版とビルドを出す（実際のウィンドウだけ。試験の画像がコミットごとに変わらないように）
         app.state.usage.build = Some(crate::usage::build_label());
         if let Some(dir) = crate::crash::directory() {
             app.state.crash = crate::crash::window::Report::load(dir);
         }
-        // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験の窓は画面のスレッドで描く
+        // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験のウィンドウは画面のスレッドで描く
         app.state.brushes.samples.render_in_background(&cc.egui_ctx);
         app.state.brushes.krita.load_in_background();
-        // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験の窓は繋がない
+        // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験のウィンドウは繋がない
         app.state.clip.use_system();
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
-        // 落ちた前の実行があれば復旧の窓を開く（起動の引数のプロジェクトより先に。どちらも開ける）
+        // 落ちた前の実行があれば復旧のウィンドウを開く（起動の引数のプロジェクトより先に。どちらも開ける）
         app.start_recovery();
         // 関連付け（.ylp のダブルクリック）で起動されたら、そのプロジェクトを開く
         app.open_startup_project(std::env::args_os());
-        // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際の窓だけ。試験は呼ばない）
+        // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際のウィンドウだけ。試験は呼ばない）
         app.state.update_startup();
         app.start_live_link(&cc.egui_ctx, std::env::args_os());
         // 外からの操作を受ける設定が入っていれば、起動のうちに待ち受ける
@@ -467,7 +467,7 @@ impl YoluApp {
         self.state.link = self.link.view(&self.state);
     }
 
-    /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧の窓が開く）。始められなければ使わず、理由を状態の帯に出す。
+    /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧のウィンドウが開く）。始められなければ使わず、理由を状態の帯に出す。
     pub fn start_recovery(&mut self) {
         self.start_recovery_with(crate::recovery::RecoverySettings::path());
     }
@@ -600,7 +600,7 @@ impl YoluApp {
             app.display.set_backend(canvas_backend(loaded.compositing));
         }
 
-        // ドックの並びと窓の大きさ・位置は、設定のフォルダの layout.json から戻す（読めない・古い・知らないタブは捨てて既定の並び。
+        // ドックの並びとウィンドウの大きさ・位置は、設定のフォルダの layout.json から戻す（読めない・古い・知らないタブは捨てて既定の並び。
         // 理由は診断のログだけ）
         if let Some(path) = settings.as_deref().and_then(crate::layout::path_for) {
             let layout = crate::layout::load(&path);
@@ -608,7 +608,7 @@ impl YoluApp {
                 crate::crash::problem(reason.clone());
             }
             if let Some(mut dock) = layout.dock {
-                // 前の版の、アプリの中の浮いた窓は、外の窓にする（主の窓の内側の左上からの位置のまま、主の窓の上へ）
+                // 前の版の、アプリの中の浮いたウィンドウは、別ウィンドウにする（メインウィンドウの内側の左上からの位置のまま、メインウィンドウの上へ）
                 for float in crate::detach::take_floats(&mut dock, |_| None) {
                     app.detached.open(
                         float.dock,
@@ -640,7 +640,7 @@ impl YoluApp {
         app
     }
 
-    /// 設定の窓で表示の合成が変わっていれば、キャンバスの表示に入れる（次の合成から効く。保存・書き出しの合成は変わらず CPU）。
+    /// 設定のウィンドウで表示の合成が変わっていれば、キャンバスの表示に入れる（次の合成から効く。保存・書き出しの合成は変わらず CPU）。
     fn apply_compositing(&mut self) {
         let now = self.state.prefs.settings.compositing;
         if now != self.compositing_applied {
@@ -725,11 +725,11 @@ impl YoluApp {
         }
     }
 
-    /// ドックの並びと窓の大きさ・位置を、変わっていれば `layout.json` へ書く（毎フレーム呼び、1 秒おきに見る。区切りを動かしている間も
-    /// 1 秒おきに 1 回までなので、書き込みが続かない。タブの見出しをつかんでいる間は並びが変わらない）。窓の大きさと位置は、最大化していない
+    /// ドックの並びとウィンドウの大きさ・位置を、変わっていれば `layout.json` へ書く（毎フレーム呼び、1 秒おきに見る。区切りを動かしている間も
+    /// 1 秒おきに 1 回までなので、書き込みが続かない。タブの見出しをつかんでいる間は並びが変わらない）。ウィンドウの大きさと位置は、最大化していない
     /// 間の値を覚える（最大化したまま終わっても、戻したときの大きさを書く）。書けなくても動作は変えない（診断のログへ。同じ中身では書き直さない）。
     fn persist_layout(&mut self, ctx: &egui::Context) {
-        // 起動の窓の置き場所を合わせている間（最初の数フレーム）は、途中の位置を記録・保存しない
+        // 起動のウィンドウの置き場所を合わせている間（最初の数フレーム）は、途中の位置を記録・保存しない
         if crate::windowpos::settle(ctx) {
             return;
         }
@@ -748,7 +748,7 @@ impl YoluApp {
         if let Some(record) = &mut self.window_record {
             record.maximized = maximized;
         }
-        // 起動のあと 1 度、窓が画面より大きければ画面に収める（保存したあとで画面が小さくなったとき）
+        // 起動のあと 1 度、ウィンドウが画面より大きければ画面に収める（保存したあとで画面が小さくなったとき）
         if self.fit_window && !self.window_checked {
             if let (Some(monitor), Some(inner)) = (info.monitor_size, info.inner_rect) {
                 self.window_checked = true;
@@ -768,7 +768,7 @@ impl YoluApp {
         self.save_layout(false);
     }
 
-    /// 並びのファイルの中身（主のドック・主の窓・外の窓）。
+    /// 並びのファイルの中身（主のドック・メインウィンドウ・別ウィンドウ）。
     fn render_layout(&self) -> String {
         let window = self
             .window_record
@@ -856,13 +856,13 @@ impl YoluApp {
         }
     }
 
-    /// 起動のあと 1 度、窓が画面より大きければ画面に収める（実際の窓だけ。保存したあとで画面が小さくなったときのため）。
+    /// 起動のあと 1 度、ウィンドウが画面より大きければ画面に収める（実際のウィンドウだけ。保存したあとで画面が小さくなったときのため）。
     pub fn fit_to_screen(mut self, on: bool) -> YoluApp {
         self.fit_window = on;
         self
     }
 
-    /// 試験用: 保存していない変更のまま終わってよいかの問いに、窓を開かずに答える（問われるたびに呼ぶ。保存の後の状態で問われること・
+    /// 試験用: 保存していない変更のまま終わってよいかの問いに、ウィンドウを開かずに答える（問われるたびに呼ぶ。保存の後の状態で問われること・
     /// 問われないことを確かめる）。
     #[doc(hidden)]
     pub fn answer_close_question(&mut self, answer: impl FnMut(&AppState) -> bool + 'static) {
@@ -874,13 +874,13 @@ impl YoluApp {
         self.closing
     }
 
-    /// 試験用: OS の終了を待たせる印に、最後に「保存の間」と伝えたか（Windows の実際の窓でなくても、伝える側の状態を確かめる）。
+    /// 試験用: OS の終了を待たせる印に、最後に「保存の間」と伝えたか（Windows の実際のウィンドウでなくても、伝える側の状態を確かめる）。
     #[doc(hidden)]
     pub fn saving_marked(&self) -> bool {
         self.saving_marked
     }
 
-    /// 帯の右端のボタンと窓の縁を自前にするか（Windows の実際の窓は true。試験は Linux でも Windows の帯を描いて確かめる）。
+    /// 帯の右端のボタンとウィンドウの縁を自前にするか（Windows の実際のウィンドウは true。試験は Linux でも Windows の帯を描いて確かめる）。
     pub fn set_custom_frame(&mut self, on: bool) {
         self.custom_frame = on;
     }
@@ -905,7 +905,7 @@ impl YoluApp {
         &mut self.ops
     }
 
-    /// Live Link を始める・やめるの頼みと、ファイルの窓の頼みを当てる。
+    /// Live Link を始める・やめるの頼みと、ファイルのウィンドウの頼みを当てる。
     fn handle_requests(&mut self) {
         if let Some(request) = self.state.link_request.take() {
             self.link.request(request, &mut self.state);
@@ -916,7 +916,7 @@ impl YoluApp {
             let discard = self.confirm_discard();
             self.link.answer_discard(discard);
         }
-        // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。窓を開かない試験では聞かない）
+        // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。ウィンドウを開かない試験では聞かない）
         if let Some(open) = self.state.recovery.take_open_request() {
             if self.confirm_discard() {
                 self.state.recovery_open(open);
@@ -927,7 +927,7 @@ impl YoluApp {
         }
         match self.state.dialog_request.take() {
             Some(DialogRequest::New) => {
-                // 保存していない変更は先に聞く（窓を開いてから聞くと、作業を捨てる前に窓の設定が無駄になる）
+                // 保存していない変更は先に聞く（ウィンドウを開いてから聞くと、作業を捨てる前にウィンドウの設定が無駄になる）
                 if self.confirm_discard() {
                     self.state
                         .apply(Action::Project(crate::newproject::NpAction::OpenNew));
@@ -1000,7 +1000,7 @@ impl YoluApp {
                     lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
                 );
                 // Live Link の相手の文書は、Unity が知らせた置き場（利用者が選び直したらそちら）から。無ければ、ある一番近い親から
-                // （窓を取り消しても、Unity のプロジェクトにフォルダを残さないよう、ここでは作らない）
+                // （ウィンドウを取り消しても、Unity のプロジェクトにフォルダを残さないよう、ここでは作らない）
                 if let Some(start) = self.state.link_export_start() {
                     dialog = dialog.set_directory(start);
                 }
@@ -1031,7 +1031,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(dir);
                 }
                 if let Some(path) = dialog.save_file() {
-                    // 拡張子が無ければ .png を足す（窓の種類で付かない環境がある）。足した名前は窓が確かめていない
+                    // 拡張子が無ければ .png を足す（ウィンドウの種類で付かない環境がある）。足した名前はウィンドウが確かめていない
                     self.state
                         .apply(Action::Export(crate::export::channel_action(path)));
                 }
@@ -1251,10 +1251,10 @@ impl YoluApp {
         }
     }
 
-    /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
+    /// 保存していない変更があっても終わってよいか（ウィンドウを開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
     /// 状態で聞く）。
     fn confirm_close(&mut self) -> bool {
-        // 更新のために終わるときは、保存するか捨てるかを更新の窓で選び済み。GPU の装置を失って終わるときは、復旧の書き置きに任せる
+        // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU の装置を失って終わるときは、復旧の書き置きに任せる
         if self.state.update.is_quitting() || self.gpu_lost.is_some() {
             return true;
         }
@@ -1263,7 +1263,7 @@ impl YoluApp {
         if !self.state.modified && jobs.is_empty() {
             return true;
         }
-        // 試験が、窓を開かずに答える口
+        // 試験が、ウィンドウを開かずに答える口
         if let Some(answer) = self.close_answer.as_mut() {
             return answer(&self.state);
         }
@@ -1283,7 +1283,7 @@ impl YoluApp {
             == rfd::MessageDialogResult::Yes
     }
 
-    /// 保存していない変更を捨ててよいか（窓を開かない試験では、聞かずに捨てる）。保存の途中は、保存の結果が出るまで、頼む前の印のまま
+    /// 保存していない変更を捨ててよいか（ウィンドウを開かない試験では、聞かずに捨てる）。保存の途中は、保存の結果が出るまで、頼む前の印のまま
     /// 聞く（保存の頼みは「変更あり」を下ろすが、保存が失敗すれば戻る。その変更を黙って捨てない）。
     fn confirm_discard(&self) -> bool {
         if !self.state.shows_modified() || !self.dialogs {
@@ -1301,7 +1301,7 @@ impl YoluApp {
             == rfd::MessageDialogResult::Yes
     }
 
-    /// 窓に落としたファイル（.ylp なら開く。.psd なら新しいテクスチャセットとして取り込む。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら
+    /// ウィンドウに落としたファイル（.ylp なら開く。.psd なら新しいテクスチャセットとして取り込む。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら
     /// 取り込む。PNG はブラシの一覧の上に落としたときだけブラシの筆先として取り込む）。
     fn open_dropped(&mut self, ctx: &egui::Context) {
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
@@ -1344,8 +1344,8 @@ impl YoluApp {
         }
     }
 
-    /// 落とした .psd を、「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込み（読み込み → 取り込みの確かめの窓）へ回す。
-    /// 取り込むのは最初の 1 つだけ（取り込みの確かめの窓は 1 つずつ。ほかは取り込まず、数を知らせる）。描いている最中は、取り込み側が断る。
+    /// 落とした .psd を、「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込み（読み込み → 取り込みの確認のウィンドウ）へ回す。
+    /// 取り込むのは最初の 1 つだけ（取り込みの確認のウィンドウは 1 つずつ。ほかは取り込まず、数を知らせる）。描いている最中は、取り込み側が断る。
     /// 行き先は新しいセット: 今のセットの文書を替えると取り消せないので、落としただけでは今の絵に触れない
     /// （文書を替えるときの、保存していない変更の確認はいらない）。
     fn import_dropped_psd(&mut self, dropped: &[std::path::PathBuf]) {
@@ -1473,7 +1473,7 @@ impl YoluApp {
         self.renderer3d.as_ref().map(|r| r.adapter_name())
     }
 
-    /// 3D が次のフレームも求めているか（接線を作っている最中など。窓の描き直しの要求と同じ）。
+    /// 3D が次のフレームも求めているか（接線を作っている最中など。ウィンドウの描き直しの要求と同じ）。
     pub fn view3d_wants_repaint(&self) -> bool {
         self.renderer3d.as_ref().is_some_and(|r| r.wants_repaint())
     }
@@ -1613,7 +1613,7 @@ impl YoluApp {
         &self.thumbs
     }
 
-    /// 3D ビューの中身を描く外の窓の口を渡す。
+    /// 3D ビューの中身を描く別ウィンドウの口を渡す。
     pub fn set_view3d_host(&mut self, host: Box<dyn View3dHost>) {
         self.view3d.set_host(host);
     }
@@ -1641,7 +1641,7 @@ impl YoluApp {
         self.state.ui.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
         let mut pen = self.pen.drain();
-        // 窓の縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
+        // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
         let edge = self.custom_frame.then(|| {
             titlebar::edges(
@@ -1650,25 +1650,25 @@ impl YoluApp {
                 &self.bar_press_rects,
             )
         });
-        // 筆圧の調整の窓: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
+        // 筆圧の調整のウィンドウ: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
         self.state.pressure_observe(ctx.pixels_per_point(), &pen);
-        // 窓が開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
+        // ウィンドウが開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
         if self.state.pressure.open && !self.pen.is_hooked() {
             ctx.input(|i| self.state.pressure_observe_touch(&i.events));
         }
         for sample in &mut pen {
             sample.pressure = self.state.adjust_pressure(sample.pressure);
         }
-        // 外の窓で開いたポップアップは、主の窓を押したら閉じる
+        // 別ウィンドウで開いたポップアップは、メインウィンドウを押したら閉じる
         detached::close_foreign_popup(&ctx, &mut self.state);
-        // キーの割り当てとステンシルのキーの押しは、フォーカスのある窓の入力で決める（外の窓にフォーカスがあれば、その窓のパスが決める。
-        // フォーカスの無い窓のパスが見ると、クリップボードのキーの「前のフレームの修飾」を押していない修飾で上書きする）
+        // キーの割り当てとステンシルのキーの押しは、フォーカスのあるウィンドウの入力で決める（別ウィンドウにフォーカスがあれば、そのウィンドウのパスが決める。
+        // フォーカスの無いウィンドウのパスが見ると、クリップボードのキーの「前のフレームの修飾」を押していない修飾で上書きする）
         if !self.detached_focused(&ctx) {
             shell::handle_shortcuts(&ctx, &mut self.state);
             crate::stencil::update_keys(&ctx, &mut self.state);
         }
-        // 落としたファイル。ブラシの一覧とライブラリの格子の範囲は、前のフレームに主の窓で描いたときだけ入る（棚・チャンネルのタブを
-        // 開いている間や、欄を外の窓へ出した後に、前の位置へ落とした PNG を取り込まない。外の窓へ落とした分は、その窓のパスが受ける）
+        // 落としたファイル。ブラシの一覧とライブラリの格子の範囲は、前のフレームにメインウィンドウで描いたときだけ入る（棚・チャンネルのタブを
+        // 開いている間や、欄を別ウィンドウへ出した後に、前の位置へ落とした PNG を取り込まない。別ウィンドウへ落とした分は、そのウィンドウのパスが受ける）
         self.state.brushes.ui.list_rect = self.root_drops.brush_list;
         self.open_dropped(&ctx);
         self.state.brushes.ui.list_rect = None;
@@ -1697,13 +1697,13 @@ impl YoluApp {
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
         self.state.sync_effects();
         self.state.poll_newproject();
-        // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
+        // 更新の確かめ・ダウンロードの終わり（準備のウィンドウは、描いている最中は開かない）
         self.state.poll_update();
         self.state.poll_clipboard();
         // OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる
         self.state.text_poll();
         // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
-        // （主の窓から外の窓へフォーカスが移っても、アプリはフォーカスを失っていない）
+        // （メインウィンドウから別ウィンドウへフォーカスが移っても、アプリはフォーカスを失っていない）
         let focused = if self.detached_focused(&ctx) {
             Some(true)
         } else {
@@ -1732,7 +1732,7 @@ impl YoluApp {
         }
         self.state.ui.panels = self.detached.index(&self.dock);
 
-        // 状態の帯の右端のメモリ（実際の窓だけ。1.5 秒おきに測り、止まっていても同じ間隔で描き直す）
+        // 状態の帯の右端のメモリ（実際のウィンドウだけ。1.5 秒おきに測り、止まっていても同じ間隔で描き直す）
         if self.dialogs {
             let now = ctx.input(|i| i.time);
             let device = self.gpu_device.clone();
@@ -1756,7 +1756,7 @@ impl YoluApp {
             .frame(Frame::NONE)
             .show(ui, |ui| {
                 let r = ui.max_rect();
-                // 自前の枠: 右端の 3 つのボタンの左までが帯の中身。何も無い所は、窓を動かす・最大化する部品（メニューの見出しなどより先に作る）
+                // 自前の枠: 右端の 3 つのボタンの左までが帯の中身。何も無い所は、ウィンドウを動かす・最大化する部品（メニューの見出しなどより先に作る）
                 let content = titlebar::content_rect(r, custom_frame);
                 let drag = custom_frame.then(|| titlebar::drag_zone(ui, content));
                 let open_menu = match self.state.popup.as_ref().map(|p| p.kind) {
@@ -1771,7 +1771,7 @@ impl YoluApp {
                     // 新しい版があるあいだ、ヘルプの見出しに印を付ける
                     self.state.update.offer().map(|_| shell::HELP_MENU),
                 ));
-                // 右端: プロジェクトの名前と保存の状態。その左に Live Link の入口（Unity の印）。名前は、メニューの見出しの右から窓の右の縁までの
+                // 右端: プロジェクトの名前と保存の状態。その左に Live Link の入口（Unity の印）。名前は、メニューの見出しの右からウィンドウの右の縁までの
                 // 幅（最大 352）に収まるように後ろを詰め、印は「見えている名前」の左に置く（長い名前でも、印がメニューの見出しに重ならない）
                 let menu_end = bar
                     .as_ref()
@@ -1877,7 +1877,7 @@ impl YoluApp {
                 shell::tool_strip(ui, &mut self.state, r);
             });
         self.view3d.begin_frame();
-        // 描く前のタブの組（egui_dock がタブを浮いた窓へ動かしたとき、戻る先にする）
+        // 描く前のタブの組（egui_dock がタブを浮いたウィンドウへ動かしたとき、戻る先にする）
         let mates = crate::detach::leaf_mates(&self.dock);
         let pass = egui::CentralPanel::default()
             .frame(Frame::NONE.fill(t::WINDOW_BG))
@@ -1906,12 +1906,12 @@ impl YoluApp {
                 }
             })
             .inner;
-        // （写すだけ。外の窓が無ければ、このフレームに描いた矩形がそのまま残る）
+        // （写すだけ。別ウィンドウが無ければ、このフレームに描いた矩形がそのまま残る）
         self.root_drops = crate::detach::DropRects {
             brush_list: self.state.brushes.ui.list_rect,
             library_grid: self.state.library.grid_rect,
         };
-        // タブの出し入れ（主の窓の外で離したタブ・右クリック・egui_dock が作った浮いた窓）と、外の窓。当てるのは全部の窓を描いた後
+        // タブの出し入れ（メインウィンドウの外で離したタブ・右クリック・egui_dock が作った浮いたウィンドウ）と、別ウィンドウ。当てるのは全部のウィンドウを描いた後
         let mut events = Vec::new();
         detached::tab_events(
             &ctx,
@@ -1928,7 +1928,7 @@ impl YoluApp {
         if !floats.is_empty() {
             events.push(detached::floats_event(&ctx, floats, mates));
         }
-        // ドックのあとに描く窓（外の窓も）は、描き始めた・終わった今の状態から
+        // ドックのあとに描くウィンドウ（別ウィンドウも）は、描き始めた・終わった今の状態から
         w::update_stroke_hold(&ctx, self.state.holds_panel_look());
         let grabbed_outside = self.show_detached(&ctx, &mut events);
         self.state.ui.dock_grab = [pass.grabbed || grabbed_outside, self.state.ui.dock_grab[0]];
@@ -1962,10 +1962,10 @@ impl YoluApp {
             self.state.m2_cancel_drag();
         }
         self.popups(&ctx, &bar, link_icon);
-        // メニュー・タブの右クリックで選んだドックの操作（外の窓へ出す・戻す・前に出す）
+        // メニュー・タブの右クリックで選んだドックの操作（別ウィンドウへ出す・戻す・前に出す）
         self.apply_dock_ops(&ctx);
         self.state.ui.panels = self.detached.index(&self.dock);
-        // 窓の縁の上のポインタの形（キャンバスなどが決めた形を上書きする）
+        // ウィンドウの縁の上のポインタの形（キャンバスなどが決めた形を上書きする）
         if let Some(direction) = edge.flatten() {
             titlebar::edge_cursor(&ctx, direction);
         }
@@ -1974,7 +1974,7 @@ impl YoluApp {
         crate::prefs::show(&ctx, &mut self.state);
         crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
-        // 色の窓（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
+        // 色のウィンドウ（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
         crate::panels::color_window::show_in_app(&ctx, &mut self.state);
         self.state.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
@@ -1982,7 +1982,7 @@ impl YoluApp {
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }
-        // ポップアップが 3D ビューに重なっているか（同じ窓に開いたときだけ）
+        // ポップアップが 3D ビューに重なっているか（同じウィンドウに開いたときだけ）
         let view3d_window = self
             .detached
             .window_of(Tab::View3d)
@@ -2000,14 +2000,14 @@ impl YoluApp {
         self.handle_requests();
         self.link_exported();
         self.state.link = self.link.view(&self.state);
-        // 「保存して更新」: 保存先を選ぶ窓も済んだこのフレームの終わりに、保存の結果を見て入れる
+        // 「保存して更新」: 保存先を選ぶウィンドウも済んだこのフレームの終わりに、保存の結果を見て入れる
         self.state.update_finish_save();
-        // 終了・窓を閉じる: 保存していない変更があれば聞く（窓を開かない試験では聞かない）
+        // 終了・ウィンドウを閉じる: 保存していない変更があれば聞く（ウィンドウを開かない試験では聞かない）
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         self.close_flow(&ctx, close_requested);
     }
 
-    /// 保存の結果を受けて（フレームの初め）、OS の終了を待たせる印を今の保存の有無に合わせる。窓が見えている間（`ui`）も隠れている間
+    /// 保存の結果を受けて（フレームの初め）、OS の終了を待たせる印を今の保存の有無に合わせる。ウィンドウが見えている間（`ui`）も隠れている間
     /// （`logic`）も、保存の結果を受ける所はこれを通す。
     fn poll_saving(&mut self) {
         self.state.poll_save();
@@ -2026,14 +2026,14 @@ impl YoluApp {
         );
     }
 
-    /// 終了・窓を閉じる頼みを進める。保存の途中は閉じず（保存を捨てない）、終わるまで待つ。保存が終わったら、その結果の後の状態で、
+    /// 終了・ウィンドウを閉じる頼みを進める。保存の途中は閉じず（保存を捨てない）、終わるまで待つ。保存が終わったら、その結果の後の状態で、
     /// 保存していない変更があれば聞き、走っている仕事の後始末をして閉じる。
     fn close_flow(&mut self, ctx: &egui::Context, close_requested: bool) {
         if (!self.state.quit && !close_requested) || self.closing {
             return;
         }
         if self.state.is_saving() {
-            // 窓を閉じる頼みは止めて、終わるまで待つ（`quit` に覚える）。画面のスレッドは回し続ける（「応答なし」にならない）
+            // ウィンドウを閉じる頼みは止めて、終わるまで待つ（`quit` に覚える）。画面のスレッドは回し続ける（「応答なし」にならない）
             if close_requested {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.state.quit = true;
@@ -2086,7 +2086,7 @@ impl YoluApp {
                 self.open_bar_menu(ctx, bar, hover);
             }
         }
-        // Live Link の入口: 押したら窓を開く（開いていれば閉じる）
+        // Live Link の入口: 押したらウィンドウを開く（開いていれば閉じる）
         if let Some(icon) = link_icon.filter(|i| i.pressed) {
             if matches!(
                 self.state.popup.as_ref().map(|p| p.kind),
@@ -2103,7 +2103,7 @@ impl YoluApp {
         let Some(mut open) = self.state.popup.take() else {
             return;
         };
-        // 外の窓で開いたポップアップは、その窓のパスが描く
+        // 別ウィンドウで開いたポップアップは、そのウィンドウのパスが描く
         if open.state.viewport != egui::ViewportId::ROOT {
             self.state.popup = Some(open);
             return;
@@ -2162,8 +2162,8 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<Stri
 }
 
 impl YoluApp {
-    /// Live Link を 1 回まわす: Unity からの頼みを拾って当て、書き出しの返事を書く。窓が見えている間はフレームの中（`frame_body`）が
-    /// 同じことをするので、これを呼ぶのは窓が隠れている間だけ（`eframe::App::logic`）。
+    /// Live Link を 1 回まわす: Unity からの頼みを拾って当て、書き出しの返事を書く。ウィンドウが見えている間はフレームの中（`frame_body`）が
+    /// 同じことをするので、これを呼ぶのはウィンドウが隠れている間だけ（`eframe::App::logic`）。
     fn tick_link(&mut self) {
         self.link.poll(&mut self.state);
         self.link_exported();
@@ -2186,21 +2186,21 @@ impl YoluApp {
         self.state.ops = self.ops.view();
     }
 
-    /// 窓が隠れている間の 1 回（`eframe::App::logic` が、見えていないときに呼ぶ。試験は、`ui` を回さずにこれを呼んで、隠れた窓の道を
+    /// ウィンドウが隠れている間の 1 回（`eframe::App::logic` が、見えていないときに呼ぶ。試験は、`ui` を回さずにこれを呼んで、隠れたウィンドウの道を
     /// 通す）。
     #[doc(hidden)]
     pub fn tick_hidden(&mut self, ctx: &egui::Context) {
         // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
-        // 見えない窓を知らせのために回し続けない）
+        // 見えないウィンドウを知らせのために回し続けない）
         let prior = self.state.message_begin();
         self.poll_gpu_watch(ctx);
         self.tick_link();
-        // 見えない窓でも、Live Link の頼みを拾う間隔で回す（受け付けている間だけ）
+        // 見えないウィンドウでも、Live Link の頼みを拾う間隔で回す（受け付けている間だけ）
         if let Some(wake) = self.link.next_wake() {
             ctx.request_repaint_after(wake);
         }
-        // 保存の途中は、隠れていても保存を捨てて閉じない。窓を閉じる頼み（タスクバーの「閉じる」など）は止めて待ち、終わりを受け、
-        // 保存が終わって終了の頼みが残っていれば閉じる流れを進める（見えない窓の保存を、知らせのために回し続けはしない: 保存の間だけ）
+        // 保存の途中は、隠れていても保存を捨てて閉じない。ウィンドウを閉じる頼み（タスクバーの「閉じる」など）は止めて待ち、終わりを受け、
+        // 保存が終わって終了の頼みが残っていれば閉じる流れを進める（見えないウィンドウの保存を、知らせのために回し続けはしない: 保存の間だけ）
         if self.state.is_saving() {
             let close_requested = ctx.input(|i| i.viewport().close_requested());
             self.close_flow(ctx, close_requested);
@@ -2209,7 +2209,7 @@ impl YoluApp {
         } else if self.state.quit {
             self.close_flow(ctx, false);
         }
-        // 見えない窓でも、受けた要求は実行する（保存の結果を受けた後に）
+        // 見えないウィンドウでも、受けた要求は実行する（保存の結果を受けた後に）
         self.tick_ops(ctx);
         self.state.message_end(prior);
         self.state.record_message();
@@ -2217,12 +2217,12 @@ impl YoluApp {
 }
 
 impl eframe::App for YoluApp {
-    /// 窓が隠れている間（Windows の最小化・macOS の覆われた窓・隠した窓）は、eframe は egui のパスを回さず `ui` を呼ばない。代わりに、
+    /// ウィンドウが隠れている間（Windows の最小化・macOS の覆われたウィンドウ・隠したウィンドウ）は、eframe は egui のパスを回さず `ui` を呼ばない。代わりに、
     /// 描き直しの頼みがあるときだけ（百ミリ秒より速くならない）この `logic` を呼ぶ（eframe 0.36 の `App::logic`）。Live Link の裏のスレッドは
     /// Unity からの知らせのたびに描き直しを頼むので、ここで受け取り・返事をすれば、最小化したまま Unity で Play に入る・スクリプトを
     /// リロードしても、再接続と絵の受け渡しが続く。画面に触れる処理（描く・並べる）は `ui` のまま。見えている間は `ui` がするので何もしない。
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 外の窓が見えている間は、主の窓が隠れていても eframe が `ui` を回す（外の窓は主の窓のパスの中で描く）
+        // 別ウィンドウが見えている間は、メインウィンドウが隠れていても eframe が `ui` を回す（別ウィンドウはメインウィンドウのパスの中で描く）
         if ctx.input(|i| i.viewport().visible()) != Some(false) || self.any_detached_visible(ctx) {
             return;
         }
@@ -2256,12 +2256,12 @@ impl eframe::App for YoluApp {
     fn on_exit(&mut self) {
         if self.gpu_lost.is_some() && self.state.modified {
             // 装置を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ）、書き込み中の分だけ、期限まで待つ。
-            // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧の窓から開ける
+            // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧のウィンドウから開ける
             self.state.recovery_wait_within(self.gpu_lost_wait);
         } else {
             self.state.recovery_shutdown();
         }
-        // 並びと窓の大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
+        // 並びとウィンドウの大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
         self.save_layout(false);
     }
 

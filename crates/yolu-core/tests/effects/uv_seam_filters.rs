@@ -1,6 +1,6 @@
-//! 層のフィルターが UV の継ぎ目をまたぐ（文書の設定、モデルの UV の位相が効果の入力にあるときだけ）: 縁の向こうの島の色が入る・
-//! 島の外は段の入力のまま・設定を切ると（モデルが無いのと）同じバイト・1 回の Undo・相手の島に描くと縁の向こうの出力と変化の印が
-//! 変わる・ブロックやタイルの大きさによらない・接空間の法線は継ぎ目の向きで回る・作業メモリの予算で断る・取り消せる・島の図と帯の写しが
+//! レイヤーのフィルターが UV の継ぎ目をまたぐ（文書の設定、モデルの UV の位相が効果の入力にあるときだけ）: 縁の向こうのアイランドの色が入る・
+//! アイランドの外は段の入力のまま・設定を切ると（モデルが無いのと）同じバイト・1 回の Undo・相手のアイランドに描くと縁の向こうの出力と変化の印が
+//! 変わる・ブロックやタイルの大きさによらない・接空間の法線は継ぎ目の向きで回る・作業メモリの予算で断る・取り消せる・アイランドの図と帯の写しが
 //! 予算に収まらなければ 2D のまま評価して、それが分かる。
 //!
 //! モデルは試験で組む: 3D で 1 辺を共有する 2 つの四角（A は x 0..1、B は x 1..2）を、64² の UV の別の所に置く。A は赤、B は青で塗る。
@@ -56,7 +56,7 @@ fn straight() -> Arc<UvTopology> {
     model(|x, y| Vec2::new(0.6 + 0.3 * x, 0.1 + 0.3 * y))
 }
 
-/// A（島 1）を赤、B（島 2）を青で塗った層（tile はタイルの大きさ）。
+/// A（アイランド 1）を赤、B（アイランド 2）を青で塗ったレイヤー（tile はタイルの大きさ）。
 fn painted(topology: &UvTopology, tile: u32) -> (Document, LayerId) {
     let mut doc = Document::with_tile_size(SIZE, SIZE, tile).unwrap();
     let layer = doc.add_layer("塗り").unwrap();
@@ -112,12 +112,16 @@ fn a_blur_reads_the_other_island_across_the_seam() {
     assert!(a[3] == 255 && a[2] > 40, "またぐ: {a:?}");
     // B の左の縁の内側にも A の赤が入る
     assert!(at(&across, 38, 16)[0] > 40);
-    // 島の外は段の入力（塗っていない透明）のまま
+    // アイランドの外は段の入力（塗っていない透明）のまま
     for x in 26..38 {
         assert_eq!(at(&across, x, 16), [0, 0, 0, 0], "x {x}");
     }
-    assert_ne!(at(&flat, 26, 16)[3], 0, "2D のぼかしは島の外へも広がる");
-    // 継ぎ目から半径より遠い島の中は 2D と同じ（A の左は開いた縁）
+    assert_ne!(
+        at(&flat, 26, 16)[3],
+        0,
+        "2D のぼかしはアイランドの外へも広がる"
+    );
+    // 継ぎ目から半径より遠いアイランドの中は 2D と同じ（A の左は開いた縁）
     for y in 7..26 {
         for x in 6..20 {
             assert_eq!(at(&across, x, y), at(&flat, x, y), "({x}, {y})");
@@ -191,7 +195,7 @@ fn blocks_tiles_and_stacked_neighbourhoods_do_not_change_the_bytes() {
     let run = |tile: u32, block: u32| {
         let (mut doc, layer) = painted(&topology, tile);
         doc.set_filter_block_pixels(block).unwrap();
-        // 近傍の段を 2 つ重ねる（後の段の帯は、前の段の出力を相手の島で読み直す）
+        // 近傍の段を 2 つ重ねる（後の段の帯は、前の段の出力を相手のアイランドで読み直す）
         blur(&mut doc, layer, 3);
         doc.add_filter(
             layer,
@@ -221,7 +225,7 @@ fn another_model_gives_another_result() {
     assert!(!doc.changed_tiles(Channel::Color, since).unwrap().is_empty());
     let second = whole(&doc);
     assert_ne!(first, second);
-    // 回した B は塗った所が違う（B の青は右の島の矩形）ので、縁の向こうは島の外の透明も読む
+    // 回した B は塗った所が違う（B の青は右のアイランドの矩形）ので、縁の向こうはアイランドの外の透明も読む
     assert_eq!(at(&second, 30, 16), [0, 0, 0, 0]);
     // 同じ位相を渡し直しても何も変わらない
     let since = doc.change_serial();
@@ -264,7 +268,7 @@ fn a_mask_blur_crosses_the_seam_too() {
 
 #[test]
 fn tangent_normals_turn_with_a_mirrored_seam() {
-    // B は左右を返した島。B の法線は B の接空間で +X に傾く → A の側から見ると −X
+    // B は左右を返したアイランド。B の法線は B の接空間で +X に傾く → A の側から見ると −X
     let topology = model(|x, y| Vec2::new(0.9 - 0.3 * x, 0.1 + 0.3 * y));
     let map = topology.island_map(SIZE, SIZE).unwrap();
     let band = topology.seam_band(SIZE, SIZE, 8).unwrap();
@@ -505,7 +509,7 @@ fn a_table_that_does_not_fit_the_budget_is_evaluated_in_2d_and_says_so() {
     doc.set_seam_cache_budget_bytes(100);
     assert_eq!(whole(&doc), flat);
     assert!(doc.seam_fallback().is_some());
-    // またがない設定・近傍の段が無い層だけなら、断った印は出ない
+    // またがない設定・近傍の段が無いレイヤーだけなら、断った印は出ない
     doc.set_filter_seams(false).unwrap();
     assert_eq!(doc.seam_fallback(), None);
 }
@@ -628,7 +632,7 @@ fn inputs_with(topology: &Arc<UvTopology>, seed: u32) -> EffectInputs {
         .with_topology(Some(topology.clone()))
 }
 
-/// 位置のマップを読む層（全面を塗り、位置のグラデーションを色に足す）。
+/// 位置のマップを読むレイヤー（全面を塗り、位置のグラデーションを色に足す）。
 fn map_reader(doc: &mut Document) -> LayerId {
     let layer = doc.add_layer("マップを読む").unwrap();
     for y in 0..SIZE {
@@ -663,7 +667,7 @@ fn assert_cache_is_honest(doc: &Document, what: &str) {
     );
 }
 
-/// ぼかしの層（継ぎ目をまたぐ）と、マップを読む層の 2 層の文書（どちらも 1 ブロック）。
+/// ぼかしのレイヤー（継ぎ目をまたぐ）と、マップを読むレイヤーの 2 レイヤーの文書（どちらも 1 ブロック）。
 fn blur_and_reader(topology: &Arc<UvTopology>) -> Document {
     let (mut doc, layer) = painted(topology, 16);
     blur(&mut doc, layer, 4);
@@ -679,13 +683,13 @@ fn replacing_the_maps_redraws_the_map_reader_and_not_the_seam_crossing_blur() {
     assert!(doc.seams_active());
     let first = whole(&doc);
     let settled = evaluated(&doc);
-    assert_eq!(settled, 2, "2 層が 1 ブロックずつ");
+    assert_eq!(settled, 2, "2 レイヤーが 1 ブロックずつ");
     assert_eq!(whole(&doc), first);
     assert_eq!(evaluated(&doc), settled, "入力が同じなら評価し直さない");
-    // マップだけ差し替える（位相は同じ物のまま）: 読む層の 1 ブロックだけ。ぼかしは位相にだけ依るので前の評価を使う
+    // マップだけ差し替える（位相は同じ物のまま）: 読むレイヤーの 1 ブロックだけ。ぼかしは位相にだけ依るので前の評価を使う
     doc.set_effect_inputs(inputs_with(&topology, 2)).unwrap();
     let second = whole(&doc);
-    assert_ne!(second, first, "マップを読む層は変わる");
+    assert_ne!(second, first, "マップを読むレイヤーは変わる");
     assert_eq!(evaluated(&doc) - settled, 1);
     assert_cache_is_honest(&doc, "マップの差し替え");
     // 何度差し替えても同じ
@@ -693,7 +697,7 @@ fn replacing_the_maps_redraws_the_map_reader_and_not_the_seam_crossing_blur() {
     doc.set_effect_inputs(inputs_with(&topology, 3)).unwrap();
     whole(&doc);
     assert_eq!(evaluated(&doc) - settled, 1);
-    // 位相も要らなくなる（モデルを外す）と、またがない評価になるので、ぼかしの層も評価し直す
+    // 位相も要らなくなる（モデルを外す）と、またがない評価になるので、ぼかしのレイヤーも評価し直す
     let settled = evaluated(&doc);
     doc.set_effect_inputs(EffectInputs::new().with_map(position_map(3)).unwrap())
         .unwrap();
@@ -702,7 +706,7 @@ fn replacing_the_maps_redraws_the_map_reader_and_not_the_seam_crossing_blur() {
     assert_eq!(
         evaluated(&doc) - settled,
         1,
-        "ぼかしの層だけ（マップは同じ）"
+        "ぼかしのレイヤーだけ（マップは同じ）"
     );
     assert_cache_is_honest(&doc, "モデルを外す");
 }
@@ -741,7 +745,7 @@ fn the_same_layout_as_another_object_keeps_the_topology_and_evaluates_nothing_ag
     ));
     assert_eq!(whole(&doc), first);
     assert_eq!(evaluated(&doc), settled);
-    // マップも一緒に替わっても、ぼかしの層は評価し直さない（読む層の 1 ブロックだけ）
+    // マップも一緒に替わっても、ぼかしのレイヤーは評価し直さない（読むレイヤーの 1 ブロックだけ）
     doc.set_effect_inputs(inputs_with(&twin, 2)).unwrap();
     whole(&doc);
     assert!(Arc::ptr_eq(
@@ -758,7 +762,7 @@ fn another_uv_layout_redraws_the_seam_crossing_blur_and_not_the_map_reader() {
     let mut doc = blur_and_reader(&topology);
     whole(&doc);
     let settled = evaluated(&doc);
-    // 別の UV（B を回した）: 縁の向こうの対応が変わるので、ぼかしの層は評価し直す。マップは同じなので読む層は前のまま
+    // 別の UV（B を回した）: 縁の向こうの対応が変わるので、ぼかしのレイヤーは評価し直す。マップは同じなので読むレイヤーは前のまま
     let rotated = model(|x, y| Vec2::new(0.6 + 0.3 * y, 0.7 - 0.3 * x));
     let since = doc.change_serial();
     doc.set_effect_inputs(inputs_with(&rotated, 1)).unwrap();
@@ -768,7 +772,11 @@ fn another_uv_layout_redraws_the_seam_crossing_blur_and_not_the_map_reader() {
     ));
     assert!(!doc.changed_tiles(Channel::Color, since).unwrap().is_empty());
     whole(&doc);
-    assert_eq!(evaluated(&doc) - settled, 1, "ぼかしの層の 1 ブロックだけ");
+    assert_eq!(
+        evaluated(&doc) - settled,
+        1,
+        "ぼかしのレイヤーの 1 ブロックだけ"
+    );
     assert_cache_is_honest(&doc, "別の UV");
     // ぼかしだけの文書では、出力も変わる
     let (mut alone, layer) = painted(&topology, 16);
@@ -798,7 +806,7 @@ fn another_resolution_redraws_the_seam_crossing_blur() {
     with_model(&mut doc, &topology);
     let first = whole(&doc);
     let settled = evaluated(&doc);
-    // 画布を広げる（画素は同じ位置）。UV の同じ点は別の画素に当たるので、帯の写しも島の図も大きさごとに作り直す
+    // キャンバスを広げる（画素は同じ位置）。UV の同じ点は別の画素に当たるので、帯の写しもアイランドの図も大きさごとに作り直す
     doc.resize_canvas(96, 80, (0, 0)).unwrap();
     assert!(doc.seams_active());
     let grown = doc

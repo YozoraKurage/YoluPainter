@@ -1,5 +1,5 @@
-//! 窓に落とした .psd（egui_kittest）: 「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込みの流れ（読み込み →
-//! 落とす・変わるものがあれば取り込みの確かめの窓 → 取り込む）に入る、描いている最中は断る、複数を落としたときは最初の 1 つだけ（理由を出す）、
+//! ウィンドウに落とした .psd（egui_kittest）: 「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込みの流れ（読み込み →
+//! 落とす・変わるものがあれば取り込みの確認のウィンドウ → 取り込む）に入る、描いている最中は断る、複数を落としたときは最初の 1 つだけ（理由を出す）、
 //! ブラシのファイル・PNG の決まり（ブラシのファイルはブラシとして取り込む・PNG はブラシの一覧の上だけ）と .ylp が前と変わらない。
 //! 試験の PSD・ブラシのファイルは試験の中で組む。
 #[path = "../brush_import_files/mod.rs"]
@@ -30,8 +30,8 @@ fn temp_dir(tag: &str) -> PathBuf {
     common::tmp::test_dir(&format!("psd-drop-{tag}"))
 }
 
-/// 2 層の PSD を書く。`dissolve` のとき、下の層の合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になる＝変わる。
-/// 取り込みの確かめの窓が出る）。
+/// 2 レイヤーの PSD を書く。`dissolve` のとき、下のレイヤーの合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になる＝変わる。
+/// 取り込みの確認のウィンドウが出る）。
 fn psd_file(dir: &Path, name: &str, dissolve: bool) -> PathBuf {
     use yolu_io::psd::{self, Document, Layer, Limits};
     let layer = |id: i32, name: &str, rgba: [u8; 4]| Layer {
@@ -56,7 +56,7 @@ fn psd_file(dir: &Path, name: &str, dissolve: bool) -> PathBuf {
         let i = bytes
             .windows(8)
             .position(|w| w == b"8BIMnorm")
-            .expect("層の記録の合成モード");
+            .expect("レイヤーの記録の合成モード");
         bytes[i + 4..i + 8].copy_from_slice(b"diss");
     }
     let path = dir.join(name);
@@ -76,7 +76,7 @@ impl egui::DroppedFile for Dropped {
     }
 }
 
-/// 窓の外（ブラシの一覧の外）にポインタを置いて、ファイルを落とす（落とした 1 フレームだけ進める）。
+/// ウィンドウの外（ブラシの一覧の外）にポインタを置いて、ファイルを落とす（落とした 1 フレームだけ進める）。
 fn drop_files(h: &mut H, files: &[&Path]) {
     move_to(h, pos2(900.0, 500.0));
     h.step();
@@ -125,7 +125,7 @@ fn a_dropped_psd_goes_through_the_import_check_and_becomes_a_new_texture_set() {
         st(&h).message
     );
     settle(&mut h);
-    // 変わるものがあるので、取り込みの確かめの窓が出て、取り込むまで何も入れない
+    // 変わるものがあるので、取り込みの確認のウィンドウが出て、取り込むまで何も入れない
     let check = st(&h).psd.import_check.as_ref().expect("取り込みの確かめ");
     assert_eq!(check.file(), "Ids.psd");
     assert!(yolu_app::windows::window_rect(&h.ctx, "psd-import").is_some());
@@ -151,11 +151,14 @@ fn a_dropped_psd_goes_through_the_import_check_and_becomes_a_new_texture_set() {
     h.run();
     assert!(st(&h).psd.import_check.is_none());
     assert_eq!(st(&h).sets.len(), 2);
-    // 確かめの要らない PSD（落とす・変わるものが無い）は、拡張子が大文字でも、窓を出さずにそのまま入る
+    // 確かめの要らない PSD（落とす・変わるものが無い）は、拡張子が大文字でも、ウィンドウを出さずにそのまま入る
     let plain = psd_file(&dir, "Plain.PSD", false);
     drop_files(&mut h, &[&plain]);
     settle(&mut h);
-    assert!(st(&h).psd.import_check.is_none(), "確かめの窓は出ない");
+    assert!(
+        st(&h).psd.import_check.is_none(),
+        "確認のウィンドウは出ない"
+    );
     assert_eq!(st(&h).sets.len(), 3);
     assert_eq!(st(&h).sets.current().name, "Plain");
     std::fs::remove_dir_all(dir).unwrap();

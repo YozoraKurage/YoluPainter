@@ -367,7 +367,7 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
     true
 }
 
-/// 中身を書く先: 層のチャンネルか、層のマスク（アルファだけ）。
+/// 中身を書く先: レイヤーのチャンネルか、レイヤーのマスク（アルファだけ）。
 #[derive(Clone, Copy)]
 enum Into {
     Channel(LayerId, Channel),
@@ -460,14 +460,14 @@ fn surface_bytes(surface: &yolu_core::Surface) -> Vec<u8> {
     surface.to_canvas_bytes()
 }
 
-/// 層の番号（今の並び、下から 0）か @名前。
+/// レイヤーの番号（今の並び、下から 0）か @名前。
 fn layer_index(doc: &Document, s: &str) -> usize {
     match s.strip_prefix('@') {
         Some(name) => doc
             .layers()
             .iter()
             .position(|l| l.name() == name)
-            .unwrap_or_else(|| panic!("層の名前: {s}")),
+            .unwrap_or_else(|| panic!("レイヤーの名前: {s}")),
         None => int(s) as usize,
     }
 }

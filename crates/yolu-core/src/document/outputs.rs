@@ -1,12 +1,12 @@
-//! 層・マスク・グループの出力を、領域でまとめて読む（PSD の書き出しが、PSD に形の無い効果を画素にして書くときに読む）。
+//! レイヤー・マスク・グループの出力を、領域でまとめて読む（PSD の書き出しが、PSD に形の無い効果を画素にして書くときに読む）。
 //!
 //! 合成と同じ評価の道を通る（別の式を書かない）:
-//! - 層の出力は、評価が要る層（有効なフィルター・グラデーション・投影）なら合成と同じブロックの評価（[`Document::layer_output_pixel`] と
-//!   同じキャッシュ・予算・取消）、要らなければ保存した画素（塗りつぶしは値）。マスク・不透明度・合成の前の値で、層の有効の印は見ない。
+//! - レイヤーの出力は、評価が要るレイヤー（有効なフィルター・グラデーション・投影）なら合成と同じブロックの評価（[`Document::layer_output_pixel`] と
+//!   同じキャッシュ・予算・取消）、要らなければ保存した画素（塗りつぶしは値）。マスク・不透明度・合成の前の値で、レイヤーの有効の印は見ない。
 //! - マスクの出力は、フィルターを通した隠す量（0〜255）。有効・反転・濃度の前の値（[`Document::mask_output_hide`] と同じ）。
 //! - グループの出力は、グループの子の計画を透明から重ねた合成（グループ自身の不透明度・モード・マスクの前）。クリッピングされたグループを
 //!   1 枚の画素にするときに読む。合成と同じ `composite_entries_into` と、同じ評価（[`Document::evaluate_entries`]）を通る。
-//! - どれも文書を変えない（評価のキャッシュを埋めるだけ）。矩形は画布の中、行の並びは `order`（合成と同じ。`BottomUp` が文書の並び）。
+//! - どれも文書を変えない（評価のキャッシュを埋めるだけ）。矩形はキャンバスの中、行の並びは `order`（合成と同じ。`BottomUp` が文書の並び）。
 //!   取消の旗が立てば `Cancelled` で戻り、出力は不定（呼び手が捨てる）。
 
 use std::sync::atomic::AtomicBool;
@@ -105,7 +105,7 @@ impl Document {
         Ok(())
     }
 
-    /// 層の出力（straight RGBA8、行は下から上）。ラスターと塗りつぶしだけ。`layer_output_pixel` を矩形でまとめて読むのと同じ値。
+    /// レイヤーの出力（straight RGBA8、行は下から上）。ラスターと塗りつぶしだけ。`layer_output_pixel` を矩形でまとめて読むのと同じ値。
     pub fn layer_output(
         &self,
         id: LayerId,
@@ -133,7 +133,7 @@ impl Document {
         let l = &self.layers[index];
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
             return Err(CoreError::Unsupported(
-                "ラスターと塗りつぶし以外には、層の出力の画素が無い",
+                "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い",
             ));
         }
         cancelled(cancel)?;
@@ -184,7 +184,7 @@ impl Document {
         let index = self.index_of(id)?;
         self.check_output_rect(rect, out.len(), 1)?;
         let Some(mask) = &self.layers[index].mask else {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         };
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -254,8 +254,8 @@ impl Document {
 }
 
 impl Document {
-    /// 調整の層の設定だけを替えた、履歴の無い読むだけの写し（`capture_snapshot` と同じ写しで、タイルは共有する）。書き出しが「刻みへ丸めたら
-    /// 合成がどれだけ変わるか」を、丸めた設定と元の合成を比べて測るために使う。元は変えない。調整でない層・文書に無い層は断る。
+    /// 調整レイヤーの設定だけを替えた、履歴の無い読むだけの写し（`capture_snapshot` と同じ写しで、タイルは共有する）。書き出しが「刻みへ丸めたら
+    /// 合成がどれだけ変わるか」を、丸めた設定と元の合成を比べて測るために使う。元は変えない。調整でないレイヤー・文書に無いレイヤーは断る。
     pub fn with_adjustments_replaced(
         &self,
         changes: &[(LayerId, AdjustmentSettings)],
@@ -266,7 +266,7 @@ impl Document {
             let index = copy.index_of(*id)?;
             let layer = &mut copy.layers[index];
             if layer.adjustment.is_none() {
-                return Err(CoreError::Unsupported("調整の層ではない"));
+                return Err(CoreError::Unsupported("調整レイヤーではない"));
             }
             layer.adjustment = Some(settings.clone());
         }
@@ -275,9 +275,9 @@ impl Document {
 }
 
 impl Document {
-    /// 層（グループも）が、そのチャンネルの合成の計画に出るか: 表示・不透明度・有効の印・中身があり、グループは子の計画が空でない。出ない層は合成が落とす
-    /// ので、クリッピングの組にも入らない（下地のグループの通過を妨げない）。PSD の書き出しが、層を別の形（グループの画素化）で書くときに、
-    /// 合成が落とす層を隠した層にして、重なりの意味を変えないために使う。
+    /// レイヤー（グループも）が、そのチャンネルの合成の計画に出るか: 表示・不透明度・有効の印・中身があり、グループは子の計画が空でない。出ないレイヤーは合成が落とす
+    /// ので、クリッピングの組にも入らない（下地のグループの通過を妨げない）。PSD の書き出しが、レイヤーを別の形（グループの画素化）で書くときに、
+    /// 合成が落とすレイヤーを隠したレイヤーにして、重なりの意味を変えないために使う。
     pub fn contributes(&self, id: LayerId, channel: Channel) -> Result<bool, CoreError> {
         let index = self.index_of(id)?;
         let kind = self.channel_kind(channel)?;

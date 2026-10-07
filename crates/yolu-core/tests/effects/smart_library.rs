@@ -1,4 +1,4 @@
-//! 同梱のスマートマテリアル（`yolu_core::smart_library`）。置ける・大きさに依らない・1 回の Undo・層の上限で断る。
+//! 同梱のスマートマテリアル（`yolu_core::smart_library`）。置ける・大きさに依らない・1 回の Undo・レイヤーの上限で断る。
 //! 見た目の良し悪しは試験で決めない（書き出して人が見る）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use yolu_core::smart_library::{self, SIZE};
@@ -145,7 +145,7 @@ fn materials_are_not_pixel_data_and_survive_resizing_the_canvas() {
         assert_eq!(m.pixel_bytes(), 0, "{}", e.id);
         let mut doc = Document::with_tile_size(48, 40, 16).unwrap();
         let id = placed(&mut doc, i);
-        // 層は値と効果だけなので、ブレンドの上書きなど後から直せる
+        // レイヤーは値と効果だけなので、ブレンドの上書きなど後から直せる
         doc.set_layer_blend_mode(id, BlendMode::Multiply).unwrap();
         doc.set_layer_opacity(id, 0.5, false).unwrap();
         assert!(doc.undo().unwrap() && doc.undo().unwrap());
@@ -153,7 +153,7 @@ fn materials_are_not_pixel_data_and_survive_resizing_the_canvas() {
 }
 
 /// 塗装の剥げは、場の値をレベルで切って剥げの割合を決める。同梱の「塗装の剥げた金属」のレベルでは、正方形の文書で剥げ（地金の色）が出る
-/// 画素の割合が約 3 割（測った値は 0.32。解像度に依らない）。傷の層を隠して、塗装の赤と地金の灰色のどちらかで数える。
+/// 画素の割合が約 3 割（測った値は 0.32。解像度に依らない）。傷のレイヤーを隠して、塗装の赤と地金の灰色のどちらかで数える。
 /// 正方形でない文書は、模様のセルの数（長い辺に 1/scale 個、短い辺は同じ大きさになる個数）が変わるので割合も動く
 /// （200×96 で測った値は 0.49。保証ではなく、どちらの色も出ることだけを見る）。
 #[test]

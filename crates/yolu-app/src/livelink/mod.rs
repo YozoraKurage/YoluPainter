@@ -113,7 +113,7 @@ impl LinkView {
         }
     }
 
-    /// 窓の先頭に出す状態の名前（名前だけ）。
+    /// ウィンドウの先頭に出す状態の名前（名前だけ）。
     pub fn state_label(&self, lang: Lang) -> &'static str {
         match &self.status {
             LinkStatus::Off => lang.pick("受け付けていない", "Not accepting"),
@@ -123,7 +123,7 @@ impl LinkView {
         }
     }
 
-    /// 窓の先頭とツールチップの 1 行目（「Live Link: 受付中」）。
+    /// ウィンドウの先頭とツールチップの 1 行目（「Live Link: 受付中」）。
     pub fn heading(&self, lang: Lang) -> String {
         format!("Live Link: {}", self.state_label(lang))
     }
@@ -193,7 +193,7 @@ pub struct LinkTarget {
     pub layout: Arc<Layout>,
     /// ポーズのセッションの `Rig` の同一性（`SceneModel::rig_id`）。
     pub rig: usize,
-    /// 利用者が書き出しの窓で選んだ置き場（無ければ頼みの `export_dir`）。
+    /// 利用者が書き出しのウィンドウで選んだ置き場（無ければ頼みの `export_dir`）。
     pub export_dir: Option<PathBuf>,
 }
 
@@ -208,19 +208,19 @@ impl LinkTarget {
 }
 
 impl AppState {
-    /// 書き出しの窓の置き場の既定（Live Link の相手の文書なら、利用者が選んだ置き場か頼みの `export_dir`）。
+    /// 書き出しのウィンドウの置き場の既定（Live Link の相手の文書なら、利用者が選んだ置き場か頼みの `export_dir`）。
     pub fn link_export_dir(&self) -> Option<PathBuf> {
         self.link_target.as_ref()?.export_folder()
     }
 
-    /// 書き出しの窓が最初に開く場所（`link_export_dir` のうち、今ある一番近いフォルダ。作らない: 窓を取り消しても、Unity のプロジェクトに
+    /// 書き出しのウィンドウが最初に開く場所（`link_export_dir` のうち、今ある一番近いフォルダ。作らない: ウィンドウを取り消しても、Unity のプロジェクトに
     /// 空のフォルダを残さない）。
     pub fn link_export_start(&self) -> Option<PathBuf> {
         let dir = self.link_export_dir()?;
         dir.ancestors().find(|d| d.is_dir()).map(PathBuf::from)
     }
 
-    /// 書き出しの窓で置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
+    /// 書き出しのウィンドウで置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
     pub fn note_export_dir(&mut self, dir: &std::path::Path) {
         if let Some(t) = self.link_target.as_mut() {
             t.export_dir = Some(dir.to_path_buf());
@@ -237,7 +237,7 @@ struct SetOriginal {
     untouched: Option<(u128, u64)>,
     /// 最後に見た元の絵のファイルの身元（変わったと知らせたら、新しい身元にする: 同じ変化を送り直しのたびに知らせない）。
     source: OriginalSource,
-    /// 入れ直してもセットの大きさを変えない（新規プロジェクトの窓で解像度を選んだ最初のセット）。
+    /// 入れ直してもセットの大きさを変えない（新規プロジェクトのウィンドウで解像度を選んだ最初のセット）。
     keep_size: bool,
 }
 
@@ -300,7 +300,7 @@ impl Running {
 
 /// Live Link（`YoluApp` が 1 つ持つ）。
 pub struct LiveLink {
-    /// 受け付けを設定に合わせて始めてよい（実際の窓の起動・メニュー・試験がフォルダを決めたとき）。窓を作るだけの試験は、利用者の
+    /// 受け付けを設定に合わせて始めてよい（実際のウィンドウの起動・メニュー・試験がフォルダを決めたとき）。ウィンドウを作るだけの試験は、利用者の
     /// フォルダに触らない。
     armed: bool,
     /// 受け渡しのフォルダ（試験が差し替える。None は OS の既定）。
@@ -308,9 +308,9 @@ pub struct LiveLink {
     /// `--livelink` で起動した（設定が切れていても受ける。メニューで切ると下ろす）。
     forced: bool,
     folder: Option<Folder>,
-    /// 窓を起こす口（実際の窓。試験は無し）。あれば、受け付けている間の見張り（`Watcher`）を立てる。
+    /// ウィンドウを起こす口（実際のウィンドウ。試験は無し）。あれば、受け付けている間の見張り（`Watcher`）を立てる。
     waker: Option<egui::Context>,
-    /// 起きている印を書き直し、`inbox/` に頼みが来たら窓を起こす裏のスレッド（窓が描き直しを頼まない間も、印は古くならない）。
+    /// 起きている印を書き直し、`inbox/` に頼みが来たらウィンドウを起こす裏のスレッド（ウィンドウが描き直しを頼まない間も、印は古くならない）。
     watcher: Option<Watcher>,
     status: LinkStatus,
     retry_at: Option<Instant>,
@@ -350,7 +350,7 @@ impl Drop for LiveLink {
 }
 
 /// 受け付けている間の見張りのスレッド: [`PRESENCE_EVERY`] ごとに起きている印を書き直し、[`INBOX_EVERY`] ごとに `inbox/` を見て、頼みが
-/// あれば窓を起こす（拾うのは画面のスレッド）。落とすと止まる。
+/// あればウィンドウを起こす（拾うのは画面のスレッド）。落とすと止まる。
 struct Watcher {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -426,7 +426,7 @@ impl LiveLink {
         Ok(())
     }
 
-    /// 受け付けを設定に合わせて始めてよいことにする（実際の窓の起動）。`ctx` は、頼みが来たときに窓を起こす口。
+    /// 受け付けを設定に合わせて始めてよいことにする（実際のウィンドウの起動）。`ctx` は、頼みが来たときにウィンドウを起こす口。
     pub fn arm(&mut self, ctx: &egui::Context) {
         self.armed = true;
         self.waker = Some(ctx.clone());
@@ -503,7 +503,7 @@ impl LiveLink {
         self.sync(state, Instant::now());
     }
 
-    /// 保存していない変更を捨ててよいかを聞きたい頼みがあるか（`YoluApp` が窓で聞いて `answer_discard` を呼ぶ）。
+    /// 保存していない変更を捨ててよいかを聞きたい頼みがあるか（`YoluApp` がウィンドウで聞いて `answer_discard` を呼ぶ）。
     pub fn wants_discard(&self) -> bool {
         self.asking.is_some() && self.answer.is_none()
     }

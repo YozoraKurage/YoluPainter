@@ -1,5 +1,5 @@
-//! 塗りつぶしの層の画像と投影・デカール・グラデーションデカールと、グラデーションの道具（Shift+G）の試験。`headless_` で始まる試験は
-//! 画面を描かず、Wine でも回る。どれも「操作 → 文書が変わる → 取り消し 1 回で戻る」（ロックの層は断って何も変えない・保存して開き直すと同じ）。
+//! 塗りつぶしレイヤーの画像と投影・デカール・グラデーションデカールと、グラデーションのツール（Shift+G）の試験。`headless_` で始まる試験は
+//! 画面を描かず、Wine でも回る。どれも「操作 → 文書が変わる → 取り消し 1 回で戻る」（ロックのレイヤーは断って何も変えない・保存して開き直すと同じ）。
 //! マップ（位置・法線）は、試しの立方体を CPU で焼いた結果を文書の効果の入力へ足して使う（入力を渡す側は別の部品。ここは渡された後の振る舞い）。
 use crate::common;
 
@@ -48,7 +48,7 @@ fn shelf_image(s: &mut AppState, name: &str) -> (String, ImageId) {
 
 fn new_fill(s: &mut AppState) -> LayerId {
     s.apply(Action::M2(Edit::NewFill));
-    s.selected_layer.expect("足した層を選ぶ")
+    s.selected_layer.expect("足したレイヤーを選ぶ")
 }
 
 fn fill(s: &mut AppState, op: FillOp) {
@@ -232,7 +232,7 @@ fn headless_an_image_missing_from_the_shelf_is_refused_and_a_missing_one_in_a_fi
         },
     );
     assert!(s.message.is_ascii(), "{}", s.message);
-    // 画像を持つ層が棚に画像の無い文書へ入ったら（読み込みの形）、値を見せ、理由を言う
+    // 画像を持つレイヤーが棚に画像の無い文書へ入ったら（読み込みの形）、値を見せ、理由を言う
     s.lang = Lang::Ja;
     let (rid, image) = shelf_image(&mut s, "四色");
     fill(
@@ -569,7 +569,7 @@ fn headless_projected_values_are_the_cores_values() {
             composite(&t.doc)
         };
         assert_ne!(ours, uv_side, "{mode:?} は UV の敷き方と違う");
-        // 次の種類のために層を消す
+        // 次の種類のためにレイヤーを消す
         for s in [&mut app_side, &mut core_side] {
             let id = s.selected_layer.unwrap();
             s.doc.remove_layer(id).unwrap();
@@ -630,7 +630,7 @@ fn headless_dropping_an_image_on_the_model_places_a_decal_layer_in_one_undo() {
     assert_eq!(
         s.doc.undo_count(),
         steps + 1,
-        "層・画像・投影が 1 回の Undo"
+        "レイヤー・画像・投影が 1 回の Undo"
     );
     let id = s.selected_layer.unwrap();
     assert_ne!(id, base);
@@ -659,7 +659,7 @@ fn headless_dropping_an_image_on_the_model_places_a_decal_layer_in_one_undo() {
         .filter(|c| c[3] > 0 && *c != &[255, 255, 255, 255])
         .count();
     assert!(shown > 0, "デカールの色が出る");
-    // 1 回の Undo で層ごと戻る
+    // 1 回の Undo でレイヤーごと戻る
     assert!(s.doc.undo().unwrap());
     assert_eq!(s.doc.layers().len(), layers);
     assert!(s.doc.layer(id).is_none());
@@ -712,7 +712,7 @@ fn headless_dropping_an_image_on_the_model_places_a_decal_layer_in_one_undo() {
         },
     );
     assert!(bare.message.contains("モデル"), "{}", bare.message);
-    // ロックされた層の上へも置ける（新しい層を足すだけ）。読むだけのセットは断る
+    // ロックされたレイヤーの上へも置ける（新しいレイヤーを足すだけ）。読むだけのセットは断る
     s.sets.get_mut(0).unwrap().read_only = Some("理由".into());
     let layers = s.doc.layers().len();
     s.apply(Action::Fill(FillOp::PlaceDecal {
@@ -875,7 +875,7 @@ fn headless_the_gizmo_hides_with_q_and_the_gradient_being_edited_comes_first() {
         },
     );
     assert!(gizmo::target(&s).is_none());
-    // 塗りつぶしでない層・モデルの無い状態でも出ない
+    // 塗りつぶしでないレイヤー・モデルの無い状態でも出ない
     s.apply(Action::NewLayer);
     assert!(gizmo::target(&s).is_none());
 }
@@ -885,7 +885,7 @@ fn headless_a_locked_layer_refuses_the_gizmo_and_a_hidden_handle_cancels_a_runni
     let (mut s, layer) = planar_cube();
     let rect = view_rect();
     let from = gizmo::handle_point(&s, rect, Handle::MoveX).unwrap();
-    // ロックされた層: ハンドルを押しても何も変わらず、理由を言う（描き始めない = 押下は受け取る）
+    // ロックされたレイヤー: ハンドルを押しても何も変わらず、理由を言う（描き始めない = 押下は受け取る）
     s.doc.set_layer_locks(layer, LayerLocks::ALL).unwrap();
     let start = layer_projection(&s, layer);
     let steps = s.doc.undo_count();
@@ -1312,7 +1312,7 @@ fn headless_images_projections_gradients_and_decals_survive_saving_and_opening()
     let decal = layer_projection(&s, c);
     s.apply(Action::SaveProjectAs(path.clone()));
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    // 保存した正本を core の文書へ戻して、同じ並びの層が同じ設定を持つ（画像の参照・投影・グラデーション・デカール）。
+    // 保存した正本を core の文書へ戻して、同じ並びのレイヤーが同じ設定を持つ（画像の参照・投影・グラデーション・デカール）。
     // 開く道（アプリ）は、画像・マップを文書へ渡す前の文書を「効かない効果がある」として読むだけにするので、ここでは正本を直に戻す
     let bytes = std::fs::read(&path).unwrap();
     let project = yolu_io::Project::read(&bytes).expect("読める");
@@ -1382,7 +1382,7 @@ fn headless_importing_a_png_adds_one_shelf_image_and_refuses_what_it_cannot_read
     // 同じ中身は足さない
     fill(&mut s, FillOp::ImportImage(path.clone()));
     assert_eq!(s.shelf.resources().len(), before + 1);
-    // 読み込んだ画像を層へ差せる
+    // 読み込んだ画像をレイヤーへ差せる
     let id = inputs::image_id(&r.id).unwrap();
     let layer = new_fill(&mut s);
     fill(
@@ -1408,7 +1408,7 @@ fn headless_importing_a_png_adds_one_shelf_image_and_refuses_what_it_cannot_read
     s.lang = Lang::En;
     fill(&mut s, FillOp::ImportImage(dir.join("junk.png")));
     assert!(s.message.contains("Not a readable PNG"), "{}", s.message);
-    // 窓を開く頼み
+    // ウィンドウを開く頼み
     fill(&mut s, FillOp::ImportImageDialog);
     assert_eq!(
         s.dialog_request,
@@ -1419,7 +1419,7 @@ fn headless_importing_a_png_adds_one_shelf_image_and_refuses_what_it_cannot_read
 
 // ───────── 棚への取り込みの断り ─────────
 
-/// 左下のタイルの画布を単色にした 1 層の文書（棚へ「層を保存」できる中身）。
+/// 左下のタイルのキャンバスを単色にした 1 レイヤーの文書（棚へ「レイヤーを保存」できる中身）。
 fn painted(size: u32) -> (AppState, LayerId) {
     let mut s = AppState::new(size, size);
     let id = s.selected_layer.unwrap();
@@ -1496,7 +1496,7 @@ fn headless_importing_or_changing_the_reading_while_a_shelf_save_runs_is_refused
     let resources = s.shelf.resources().len();
     let revision = s.doc.revision();
     s.modified = false;
-    // 取り込み・読み方・取り込みの窓は、保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
+    // 取り込み・読み方・取り込みのウィンドウは、保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
     // その間に変えると変えた分が黙って消える）
     fill(&mut s, FillOp::ImportImage(path.clone()));
     assert!(s.message.contains("保存中です"), "{}", s.message);
@@ -1511,7 +1511,7 @@ fn headless_importing_or_changing_the_reading_while_a_shelf_save_runs_is_refused
     s.message.clear();
     fill(&mut s, FillOp::ImportImageDialog);
     assert!(s.message.contains("保存中です"), "{}", s.message);
-    assert!(s.dialog_request.is_none(), "窓も開かない");
+    assert!(s.dialog_request.is_none(), "ウィンドウも開かない");
     assert_eq!(s.shelf.resources().len(), resources, "棚は変わらない");
     assert_eq!(space(&s), "srgb", "読み方も変わらない");
     assert!(!s.modified, "文書は変わらない扱いのまま");
@@ -1651,7 +1651,7 @@ fn headless_an_image_over_the_core_budget_or_a_layer_that_is_not_a_fill_is_refus
         .find(|l| l.kind() != yolu_app::engine::LayerKind::Fill)
         .unwrap()
         .id();
-    // core の画像の予算（ミップマップを持つ量）に収まらない画像は、層へ差さない
+    // core の画像の予算（ミップマップを持つ量）に収まらない画像は、レイヤーへ差さない
     let steps = s.doc.undo_count();
     s.doc.set_fill_image_cache_budget_bytes(3); // 2 × 2 のミップマップは 4 バイト要る
     fill(
@@ -1704,7 +1704,7 @@ fn headless_an_image_over_the_core_budget_or_a_layer_that_is_not_a_fill_is_refus
         "{}",
         s.message
     );
-    // 塗りつぶしでない層には差せない
+    // 塗りつぶしでないレイヤーには差せない
     let steps = s.doc.undo_count();
     s.lang = Lang::Ja;
     fill(
@@ -1761,7 +1761,7 @@ fn headless_an_image_that_is_refused_is_not_left_decoded_in_the_shared_budget() 
         s.fx.inputs.decoded_image_bytes(),
     );
     assert_eq!(count, 1);
-    // ロック中の層への差し替え: 断られ、差そうとした画像は文書にも予算にも残らない（フレームを回しても増えない）
+    // ロック中のレイヤーへの差し替え: 断られ、差そうとした画像は文書にも予算にも残らない（フレームを回しても増えない）
     s.doc.set_layer_locks(layer, LayerLocks::ALL).unwrap();
     let steps = s.doc.undo_count();
     s.message.clear();
@@ -1788,7 +1788,7 @@ fn headless_an_image_that_is_refused_is_not_left_decoded_in_the_shared_budget() 
             "文書の入力にも残さない"
         );
     }
-    // 断られた画像が別の層の指している画像でもあるなら、その層のためにそのまま持つ
+    // 断られた画像が別のレイヤーの指している画像でもあるなら、そのレイヤーのためにそのまま持つ
     let other = new_fill(&mut s);
     fill(
         &mut s,
@@ -1810,7 +1810,7 @@ fn headless_an_image_that_is_refused_is_not_left_decoded_in_the_shared_budget() 
     assert_eq!(
         s.fx.inputs.decoded_image_count(),
         2,
-        "別の層が指している画像は手放さない"
+        "別のレイヤーが指している画像は手放さない"
     );
     assert!(s.doc.effect_inputs().image(image_b).is_some());
     // ロックを外せば同じ操作が通る（断りの理由がロックだったこと）
@@ -1906,7 +1906,7 @@ fn headless_syncing_images_each_frame_keeps_the_shared_budget_and_inputs() {
 
 #[test]
 fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_image_is_passed() {
-    // 画像を使う層は、開いたあと棚の画像を効果の入力へ渡すと（毎フレームの sync_effects）編集できる。画像は棚から戻る
+    // 画像を使うレイヤーは、開いたあと棚の画像を効果の入力へ渡すと（毎フレームの sync_effects）編集できる。画像は棚から戻る
     let dir = temp_dir("reopen-image");
     let path = dir.join("image.ylp");
     let again = dir.join("image-again.ylp");
@@ -1933,7 +1933,7 @@ fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_i
         .layers()
         .iter()
         .find(|l| l.kind() == yolu_app::engine::LayerKind::Fill)
-        .expect("塗りつぶしの層が戻る")
+        .expect("塗りつぶしレイヤーが戻る")
         .id();
     assert_eq!(
         t.doc.layer(layer).unwrap().fill_image(Channel::Color),
@@ -1972,7 +1972,7 @@ fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_i
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// ───────── グラデーションの道具 ─────────
+// ───────── グラデーションのツール ─────────
 
 fn paint_layer_pixels(s: &AppState, id: LayerId, channel: Channel, x: u32, y: u32) -> Rgba8 {
     s.doc
@@ -2154,7 +2154,7 @@ fn headless_the_gradient_tool_is_refused_by_locks_fill_layers_and_read_only_sets
     assert!(s.message.contains("locked"), "{}", s.message);
     s.lang = Lang::Ja;
     s.doc.set_layer_locks(layer, LayerLocks::NONE).unwrap();
-    // 塗りつぶしの層・グループには塗れない
+    // 塗りつぶしレイヤー・グループには塗れない
     let fill_layer = new_fill(&mut s);
     let revision = s.doc.revision();
     apply_gradient(&mut s, (4.0, 32.0), (60.0, 32.0));
@@ -2215,7 +2215,7 @@ fn headless_the_gradient_drag_is_dropped_by_escape_a_tool_change_and_focus_loss(
     assert!(yolu_app::gradient::canvas::cancel(&mut s));
     assert!(s.gradient.drag.is_none());
     assert!(s.message.contains("やめ"), "{}", s.message);
-    // 道具を替えると捨てる
+    // ツールを替えると捨てる
     yolu_app::gradient::canvas::press(
         &mut s,
         &view,
@@ -2276,7 +2276,7 @@ fn headless_every_new_name_and_notice_is_short_in_both_languages_with_no_how_to_
                 yolu_app::panels::fill_props::shape_name(lang, shape).into(),
             ));
         }
-        texts.push(("道具".into(), Tool::Gradient.name_in(lang).into()));
+        texts.push(("ツール".into(), Tool::Gradient.name_in(lang).into()));
         for end in [End::Transparent, End::Sub] {
             texts.push((
                 "グラデーションの終点".into(),
@@ -2311,7 +2311,7 @@ fn headless_every_new_name_and_notice_is_short_in_both_languages_with_no_how_to_
                 image: Some(image),
             },
         );
-        note(&s, "塗りつぶしでない層");
+        note(&s, "塗りつぶしでないレイヤー");
         let layer = new_fill(&mut s);
         fill(
             &mut s,
@@ -2506,11 +2506,11 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
         .collect();
     assert_eq!(
         users, names,
-        "読んでいる層の名前（セットが 1 つなら、そのまま）"
+        "読んでいるレイヤーの名前（セットが 1 つなら、そのまま）"
     );
     assert!(yolu_app::fillfx::image_users(&s, "not-a-guid").is_empty());
     let shown = composite(&s.doc);
-    // 消す確かめの窓を出す前に断る。層は画像を見せ続け、棚も文書も変わらない
+    // 消す確認のウィンドウを出す前に断る。レイヤーは画像を見せ続け、棚も文書も変わらない
     s.modified = false;
     let steps = s.doc.undo_count();
     s.apply(Action::Shelf(ShelfOp::AskRemove(rid.clone())));
@@ -2530,7 +2530,7 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
         Some(image)
     );
     s.sync_effects();
-    assert_eq!(composite(&s.doc), shown, "層は画像を見せ続ける");
+    assert_eq!(composite(&s.doc), shown, "レイヤーは画像を見せ続ける");
     s.lang = Lang::En;
     s.apply(Action::Shelf(ShelfOp::Remove(rid.clone())));
     assert!(
@@ -2539,7 +2539,7 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
         s.message
     );
     s.lang = Lang::Ja;
-    // 1 つの層が外しても、もう 1 つが読んでいる間は消せない
+    // 1 つのレイヤーが外しても、もう 1 つが読んでいる間は消せない
     fill(
         &mut s,
         FillOp::Image {
@@ -2551,7 +2551,7 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
     s.apply(Action::Shelf(ShelfOp::Remove(rid.clone())));
     assert!(s.shelf.get(&rid).is_some());
     assert!(s.message.contains(&names[1]), "{}", s.message);
-    // 読む層がなくなれば、確かめの窓を出し、消せる
+    // 読むレイヤーがなくなれば、確認のウィンドウを出し、消せる
     fill(
         &mut s,
         FillOp::Image {
@@ -2585,7 +2585,7 @@ fn headless_with_two_texture_sets_the_users_carry_the_set_name_and_the_other_set
     let names: Vec<String> = s.sets.iter().map(|x| x.name.clone()).collect();
     assert_eq!(names, ["Skin", "Hair"]);
     let uids: Vec<u32> = s.sets.iter().map(|x| x.uid).collect();
-    // どちらのセットにも、その画像を読む塗りつぶしの層を 1 つずつ
+    // どちらのセットにも、その画像を読む塗りつぶしレイヤーを 1 つずつ
     let mut layer_names = Vec::new();
     for uid in &uids {
         s.apply(Action::SelectSet(*uid));
@@ -2615,7 +2615,7 @@ fn headless_with_two_texture_sets_the_users_carry_the_set_name_and_the_other_set
         ],
         "セットが 2 つ以上なら、セットの名前を前に付ける"
     );
-    // 今のセット（Hair）の層が外しても、別のセット（Skin）の層が読んでいる間は消せず、断りにそのセットの名前が出る
+    // 今のセット（Hair）のレイヤーが外しても、別のセット（Skin）のレイヤーが読んでいる間は消せず、断りにそのセットの名前が出る
     fill(
         &mut s,
         FillOp::Image {
@@ -2794,7 +2794,7 @@ fn headless_the_gizmo_edits_a_shape_gradient_generator_in_the_filter_stack_in_on
     s.view3d.camera.yaw = -40.0;
     s.view3d.camera.pitch = 15.0;
     let rect = view_rect();
-    let layer = s.selected_layer.unwrap(); // 描く層（塗りつぶしでない層にも、スタックの Generator のギズモは出る）
+    let layer = s.selected_layer.unwrap(); // 描くレイヤー（塗りつぶしでないレイヤーにも、スタックの Generator のギズモは出る）
     let filter = s
         .doc
         .add_filter(
@@ -2840,7 +2840,7 @@ fn headless_the_gizmo_edits_a_shape_gradient_generator_in_the_filter_stack_in_on
     gizmo::release(&mut s, false);
     assert_eq!(volume(&s), start);
     assert_eq!(s.doc.undo_count(), steps);
-    // マスクを編集している間も出る（マスクの Generator を編集するため）。別の層を選ぶと出ない。やめるとなくなる
+    // マスクを編集している間も出る（マスクの Generator を編集するため）。別のレイヤーを選ぶと出ない。やめるとなくなる
     s.apply(Action::M2(Edit::AddMask(layer)));
     assert!(s.m2.edit_mask && gizmo::target(&s).is_some());
     s.m2.edit_mask = false;
@@ -3003,7 +3003,7 @@ fn headless_pressing_the_model_adds_a_point_dragging_moves_it_in_one_undo_and_es
     ));
     assert_eq!(s.fillfx.point_selected, None);
     assert_eq!(points_of(&s, layer).unwrap(), before);
-    // 編集をやめると、押しは今の道具へ
+    // 編集をやめると、押しは今のツールへ
     fill(&mut s, FillOp::EditPoints(None));
     assert!(!points::press(&mut s, rect, at, Source::Mouse));
 }

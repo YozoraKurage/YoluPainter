@@ -1,4 +1,4 @@
-//! 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（正本の版 32、頭の `filter_seams`）。既定の入の文書は前の版のまま欄を書かず、切った文書
+//! レイヤーのフィルターが UV の継ぎ目をまたぐかの文書の設定（正本の版 32、頭の `filter_seams`）。既定の入の文書は前の版のまま欄を書かず、切った文書
 //! だけが版 32 になる。往復・版の選び方・古い版の並びとの食い違いの拒否・.ylp への保存を試す。
 use yolu_core::{Channel, Document, EffectSettings, FilterSpec, FilterTarget, Rgba8};
 use yolu_io::{

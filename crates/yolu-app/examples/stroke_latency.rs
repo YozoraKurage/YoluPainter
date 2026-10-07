@@ -3,12 +3,12 @@
 //!   cargo run -p yolu-app --release --example stroke_latency -- [--kinds hard,soft,tip,smudge] [--sizes 8,64,256,1000]
 //!       [--view fit|z100] [--spacing 0.15] [--doc 4096] [--repeat 3]
 //!
-//! 文書は `--doc` の正方形（既定 4096²）: 下に塗りつぶし、その上に大きな柔らかい筆で塗った層、その上に描く層。入力は決まった点の列
+//! 文書は `--doc` の正方形（既定 4096²）: 下に塗りつぶし、その上に大きな柔らかい筆で塗ったレイヤー、その上に描くレイヤー。入力は決まった点の列
 //! （約 12 画素ごと）で、点を足すたびに、アプリの表示と同じ手順（`CanvasDisplay` の CPU の頁へ、変わったタイルを合成して上げる）を、
 //! 見えている所が全部示されるまで回す。1 つの入力ごとに、次の区間の時間（ミリ秒）の中央値・p95・最長を TSV で出す:
 //!   点の追加（入力 → ダブ → 文書。`Stroke::add_sample`）、最初の同期（合成 → 上げる）、見える所が済むまでの同期の合計、
 //!   全体（点の追加 + 見える所が済むまで）、見える所が済むまでのフレーム数。
-//! 測れないもの: 窓の枠・egui の描画・GPU への転送と画面の更新の待ち（描画器の側）、OS のペン入力のイベントが来るまでの時間。
+//! 測れないもの: ウィンドウの枠・egui の描画・GPU への転送と画面の更新の待ち（描画器の側）、OS のペン入力のイベントが来るまでの時間。
 //! 出力は `ブラシ<TAB>大きさ<TAB>表示<TAB>測るもの<TAB>p50<TAB>p95<TAB>最長`。
 
 use std::time::Instant;
@@ -36,7 +36,7 @@ fn percentile(v: &[f64], p: f64) -> f64 {
     s[(((s.len() - 1) as f64) * p).round() as usize]
 }
 
-/// 文書: 塗りつぶし → 大きな柔らかい筆で塗った層（合成が空でないように）→ 描く層。
+/// 文書: 塗りつぶし → 大きな柔らかい筆で塗ったレイヤー（合成が空でないように）→ 描くレイヤー。
 fn document(size: u32) -> (Document, LayerId) {
     let mut doc = Document::with_tile_size(size, size, 128).unwrap();
     doc.set_stroke_budget_bytes(512 << 20).unwrap();
@@ -70,8 +70,8 @@ fn document(size: u32) -> (Document, LayerId) {
         .unwrap();
     }
     doc.end_stroke(s).unwrap();
-    // 効果のブラシが読む絵がある層
-    let target = doc.add_layer("描く層").unwrap();
+    // 効果のブラシが読む絵があるレイヤー
+    let target = doc.add_layer("描くレイヤー").unwrap();
     let texture = BrushSettings {
         radius: size as f64 / 20.0,
         hardness: 0.6,
@@ -157,7 +157,7 @@ fn brush_for(kind: &str, size: f64, spacing: f64) -> Option<Brush> {
     Some(b)
 }
 
-/// 入力の点の列（文書の中央の窓に収まる。約 12 画素ごと）。
+/// 入力の点の列（文書の中央のウィンドウに収まる。約 12 画素ごと）。
 fn path(doc: u32) -> Vec<(f64, f64)> {
     let c = doc as f64 / 2.0;
     let n = 108;

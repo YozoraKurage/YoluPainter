@@ -2,7 +2,7 @@
 //!
 //! 守ること:
 //! - 聞かずに通信しない。起動時の確かめは、初回の問い（`window`）で「はい」を選んだあとだけ。手で確かめる（ヘルプのメニュー）は、押したときだけ。
-//! - 公開鍵は組み込んだ物だけを信じる（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。組み込んでいないビルドは、更新の項目も窓も出さない。
+//! - 公開鍵は組み込んだ物だけを信じる（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。組み込んでいないビルドは、更新の項目もウィンドウも出さない。
 //! - 試験版は、設定「試験版を使う」を入れたときだけ、stable の更新情報に加えて試験版の置き場（`BETA_UPDATER_URL`）を見て、新しい方を勧める。
 //!   切のときは stable だけ（stable が載せない試験版は受けない）。版を下げる更新はしないので、試験版を入れていた人が設定を切っても、
 //!   次の stable が今の版より新しくなるまで何も勧めない。どちらの置き場も同じ鍵・同じ検証（`yolu_update::UpdateClient::check_channels`）。
@@ -11,12 +11,12 @@
 //! - 新しい版が見つかっても、利用者が押すまでダウンロードしない。落としたファイルは、署名つきの更新情報の SHA-256・大きさで確かめた
 //!   ものだけを置き、走らせる直前にもう一度確かめる。
 //! - 描いている最中は入れない。保存していない変更があるときは、保存してから入れるか聞く。
-//! - 同じ実行ファイルの別の起動（別の窓）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じた窓だけが戻らないので、
-//!   始める前に断る。落としたインストーラーは残し、別の窓を閉じてからもう一度押せばすぐ入る。
+//! - 同じ実行ファイルの別の起動（別のウィンドウ）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じたウィンドウだけが戻らないので、
+//!   始める前に断る。落としたインストーラーは残し、別のウィンドウを閉じてからもう一度押せばすぐ入る。
 //! - インストールした Windows は、インストーラーを無音で走らせてアプリを閉じ、インストーラーが終わったらアプリを起こし直す。
 //!   それ以外（Linux・zip で展開した Windows）は、その版のリリースのページを開くだけ（自分で入れ替えない）。
 //!
-//! 通信・ダウンロードは別のスレッドで、取消ができる（`Link`）。状態は `UpdateState`、操作は `UpdateAction`（メニュー・窓から）。
+//! 通信・ダウンロードは別のスレッドで、取消ができる（`Link`）。状態は `UpdateState`、操作は `UpdateAction`（メニュー・ウィンドウから）。
 
 pub mod config;
 pub mod http;
@@ -52,7 +52,7 @@ pub enum Mode {
     Page,
 }
 
-/// 更新の操作（メニュー・窓から）。
+/// 更新の操作（メニュー・ウィンドウから）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateAction {
     /// 初回の問い「起動時に更新を確かめる」への答え。
@@ -63,13 +63,13 @@ pub enum UpdateAction {
     SetBeta(bool),
     /// 手で確かめる。
     Check,
-    /// 見つかった版へ更新する（Installer はダウンロードを始める。落とし済みなら準備の窓を出す。Page はリリースのページを開く）。
+    /// 見つかった版へ更新する（Installer はダウンロードを始める。落とし済みなら準備のウィンドウを出す。Page はリリースのページを開く）。
     Install,
     /// ダウンロードを取り消す。
     Cancel,
-    /// 準備の窓: 更新して再起動する。`save` なら、先に保存する。
+    /// 準備のウィンドウ: 更新して再起動する。`save` なら、先に保存する。
     Run { save: bool },
-    /// 準備の窓: あとで。
+    /// 準備のウィンドウ: あとで。
     Later,
 }
 
@@ -158,7 +158,7 @@ pub struct Progress {
     pub canceling: bool,
 }
 
-/// 更新の確かめとダウンロード（ダウンロードだけが札と閉じる前の確かめに出る。起動時の確かめは利用者が待っていない）。更新の窓は、
+/// 更新の確かめとダウンロード（ダウンロードだけが札と閉じる前の確かめに出る。起動時の確かめは利用者が待っていない）。更新のウィンドウは、
 /// キーの割り当てを止める。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
@@ -208,10 +208,10 @@ pub struct UpdateState {
     job: Option<Job>,
     offer: Option<Offer>,
     ready: Option<Ready>,
-    /// 準備の窓を出したい（描いている最中は、描き終わるまで待つ）。
+    /// 準備のウィンドウを出したい（描いている最中は、描き終わるまで待つ）。
     ready_wanted: bool,
     ready_open: bool,
-    /// 別の起動が動いていて、更新を始められなかった（準備の窓が理由を出す。押し直すか「あとで」で消える）。
+    /// 別の起動が動いていて、更新を始められなかった（準備のウィンドウが理由を出す。押し直すか「あとで」で消える）。
     pub(crate) ready_blocked: bool,
     pub(crate) ready_offset: Vec2,
     /// 保存してから入れる、の保存の結果待ち。
@@ -269,7 +269,7 @@ impl UpdateState {
         }
     }
 
-    /// 更新の項目・窓を出すビルドか（公開鍵が組み込まれ、この OS で更新できる）。
+    /// 更新の項目・ウィンドウを出すビルドか（公開鍵が組み込まれ、この OS で更新できる）。
     pub fn enabled(&self) -> bool {
         self.key.is_some() && self.target.is_some()
     }
@@ -308,12 +308,12 @@ impl UpdateState {
         self.ready_open
     }
 
-    /// 別の起動が動いているので、更新を始められなかった（準備の窓が理由を出している）。
+    /// 別の起動が動いているので、更新を始められなかった（準備のウィンドウが理由を出している）。
     pub fn is_blocked(&self) -> bool {
         self.ready_blocked
     }
 
-    /// 更新の窓（初回の問い・準備）が開いている（キーの割り当てを止める）。
+    /// 更新のウィンドウ（初回の問い・準備）が開いている（キーの割り当てを止める）。
     pub fn window_open(&self) -> bool {
         self.asking || self.ready_open
     }
@@ -549,7 +549,7 @@ fn staged_file_is_intact(ready: &Ready) -> bool {
     bytes.len() as u64 == ready.asset.size && sha256(&bytes) == ready.asset.sha256
 }
 
-/// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備の窓が同じ文を出す）。
+/// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備のウィンドウが同じ文を出す）。
 pub(crate) fn blocked_text(lang: Lang) -> &'static str {
     lang.pick(
         "ほかの YoluPainter が開いています",
@@ -566,7 +566,7 @@ fn failure_kind(failure: &Failure) -> crate::notice::Kind {
 }
 
 impl AppState {
-    /// 起動時に 1 度（実際の窓だけ。試験は呼ばない）: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる。
+    /// 起動時に 1 度（実際のウィンドウだけ。試験は呼ばない）: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる。
     pub fn update_startup(&mut self) {
         if !self.update.enabled() {
             return;
@@ -742,7 +742,7 @@ impl AppState {
                 }
             }
             Mode::Installer => {
-                // 落とし済みで、まだ変わっていなければ、落とし直さずに準備の窓へ。
+                // 落とし済みで、まだ変わっていなければ、落とし直さずに準備のウィンドウへ。
                 if let Some(ready) = &self.update.ready {
                     if ready.version == offer.version && staged_file_is_intact(ready) {
                         self.update.ready_wanted = true;
@@ -798,7 +798,7 @@ impl AppState {
         }
     }
 
-    /// 毎フレームの初め: 終わった通信・ダウンロードを受ける。準備の窓は、描いている最中は開かない。
+    /// 毎フレームの初め: 終わった通信・ダウンロードを受ける。準備のウィンドウは、描いている最中は開かない。
     pub fn poll_update(&mut self) {
         let lang = self.lang;
         if let Some(job) = &self.update.job {
@@ -893,7 +893,7 @@ impl AppState {
             return;
         }
         // 保存の途中は入れ替えない（保存の頼みは「変更あり」を下ろすので、いま入れ替えると、保存が失敗して変更が残っても、更新のために
-        // 終わる流れは確認なしで閉じてしまう）。更新の窓と落としたインストーラーは残し、保存が終わってからやり直せる
+        // 終わる流れは確認なしで閉じてしまう）。更新のウィンドウと落としたインストーラーは残し、保存が終わってからやり直せる
         if self.is_saving() {
             self.refuse(
                 Source::Update,
@@ -904,12 +904,12 @@ impl AppState {
             );
             return;
         }
-        // 保存する前に断る（更新が始まらないのに、保存の窓を出さない）。落としたインストーラーは残す。
+        // 保存する前に断る（更新が始まらないのに、保存のウィンドウを出さない）。落としたインストーラーは残す。
         if self.update_blocked_by_another_instance() {
             return;
         }
         if save && self.modified {
-            // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先の窓を取り消した
+            // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先のウィンドウを取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
             self.clear_message();
             self.apply(crate::state::Action::SaveProject);
@@ -920,8 +920,8 @@ impl AppState {
         }
     }
 
-    /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶ窓が開いている間は待つ）。保存されていなければ入れない。
-    /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先の窓を取り消したときだけ。
+    /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶウィンドウが開いている間は待つ）。保存されていなければ入れない。
+    /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先のウィンドウを取り消したときだけ。
     pub fn update_finish_save(&mut self) {
         // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
         if !self.update.after_save || self.dialog_request.is_some() || self.is_saving() {
@@ -943,8 +943,8 @@ impl AppState {
         self.update_launch();
     }
 
-    /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備の窓も開いたまま。
-    /// 別の窓を閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
+    /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備のウィンドウも開いたまま。
+    /// 別のウィンドウを閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
     fn update_blocked_by_another_instance(&mut self) -> bool {
         let blocked = (self.update.other_instance)();
         self.update.ready_blocked = blocked;
@@ -963,7 +963,7 @@ impl AppState {
         if self.is_saving() {
             return;
         }
-        // 保存の窓を待つ間に別の窓が開いたかもしれないので、走らせる直前にもう一度確かめる。
+        // 保存のウィンドウを待つ間に別のウィンドウが開いたかもしれないので、走らせる直前にもう一度確かめる。
         if self.update_blocked_by_another_instance() {
             return;
         }

@@ -45,7 +45,7 @@ impl Document {
         self.set_selection(None)
     }
 
-    /// 新しい形を今の選択範囲と組み合わせて選択範囲にする（画面の選択の道具: Shift で足す・Ctrl で引く・両方で重ねる）。
+    /// 新しい形を今の選択範囲と組み合わせて選択範囲にする（画面の選択のツール: Shift で足す・Ctrl で引く・両方で重ねる）。
     /// 置き換えか選択が無いときは形そのもの（引くなら選択なし）。1 回の Undo。
     pub fn combine_selection(
         &mut self,
@@ -88,8 +88,8 @@ impl Document {
         }
     }
 
-    /// 層のチャンネルを色で塗る（バケツ）: region（無ければ選択範囲、それも無ければ全体）の量 × 不透明度だけ Normal で重ねる。
-    /// erase なら色のアルファ × 量だけアルファを減らす。ラスターの層の有効なチャンネルだけ。画素が変わらなければ false
+    /// レイヤーのチャンネルを色で塗る（バケツ）: region（無ければ選択範囲、それも無ければ全体）の量 × 不透明度だけ Normal で重ねる。
+    /// erase なら色のアルファ × 量だけアルファを減らす。ラスターレイヤーの有効なチャンネルだけ。画素が変わらなければ false
     /// （履歴に積まない）。
     #[allow(clippy::too_many_arguments)]
     pub fn fill(
@@ -109,13 +109,13 @@ impl Document {
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Raster {
-            return Err(CoreError::Unsupported("塗りつぶしはラスターの層だけ"));
+            return Err(CoreError::Unsupported("塗りつぶしはラスターレイヤーだけ"));
         }
         if !self.layers[index].is_channel_enabled(channel) {
             return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
         }
         let keep_alpha = self.pixel_write_guard(layer, erase)?;
-        // パスの層の断りはロックのあと（C# の PaintableSurface は RefuseLockedPixels → RefusePathLayer の順）
+        // パスレイヤーの断りはロックのあと（C# の PaintableSurface は RefuseLockedPixels → RefusePathLayer の順）
         self.refuse_path_layer(index)?;
         let created = self.ensure_surface(index, channel);
         let r = self.edit_region(
@@ -130,7 +130,7 @@ impl Document {
         r
     }
 
-    /// 層のマスクを塗る（バケツ）: 隠す量を、amount × 範囲の量の割合だけ 255 へ（reveal なら 0 へ）寄せる。どの種類の層の
+    /// レイヤーのマスクを塗る（バケツ）: 隠す量を、amount × 範囲の量の割合だけ 255 へ（reveal なら 0 へ）寄せる。どの種類のレイヤーの
     /// マスクにも塗れる。
     pub fn fill_mask(
         &mut self,
@@ -147,7 +147,7 @@ impl Document {
         let index = self.index_of(layer)?;
         // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         self.refuse_lock(layer, super::LayerLocks::ALL)?;
         self.edit_region(index, Target::Mask, region, move |start, coverage| {

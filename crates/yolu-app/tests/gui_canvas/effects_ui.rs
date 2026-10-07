@@ -1,4 +1,4 @@
-//! 効果の行（層の行の下）と、選んだ効果の欄・メニューの画面（egui_kittest）。行を押す・目・上へ・下へ・消す・右クリック・メニュー、
+//! 効果の行（レイヤーの行の下）と、選んだ効果の欄・メニューの画面（egui_kittest）。行を押す・目・上へ・下へ・消す・右クリック・メニュー、
 //! 日英の見た目（説明の文を置かない）、スナップショット。文書の操作そのものは `headless/effects.rs`（画面なし）。
 use crate::common;
 
@@ -24,7 +24,7 @@ fn fx(h: &mut Harness<'_, YoluApp>, op: FxOp) {
     apply(h, Action::Fx(op));
 }
 
-/// 効果の行を並べた文書: 下地の層（ぼかし・階調の反転・アンカー）と、マスクにマップを読む Generator。
+/// 効果の行を並べた文書: 下地のレイヤー（ぼかし・階調の反転・アンカー）と、マスクにマップを読む Generator。
 fn effect_document(h: &mut Harness<'_, YoluApp>) {
     apply(h, Action::M2(Edit::NewFill));
     let layer = h.state().state.selected_layer.unwrap();
@@ -125,7 +125,7 @@ fn snapshot_the_add_menu() {
     h.snapshot("fx_add_menu");
 }
 
-// ───────── 層とマスクの対象の選び分け ─────────
+// ───────── レイヤーとマスクの対象の選び分け ─────────
 
 /// マスクのサムネイル（一覧に 1 つだけ）。
 fn mask_thumb(h: &Harness<'_, YoluApp>) -> Rect {
@@ -137,7 +137,7 @@ fn mask_thumb(h: &Harness<'_, YoluApp>) -> Rect {
     .rect()
 }
 
-/// マスクのある層の、層のサムネイル（マスクと同じ行）。
+/// マスクのあるレイヤーの、レイヤーのサムネイル（マスクと同じ行）。
 fn pixels_thumb(h: &Harness<'_, YoluApp>) -> Rect {
     let lang = h.state().state.lang;
     let mask = mask_thumb(h);
@@ -146,7 +146,7 @@ fn pixels_thumb(h: &Harness<'_, YoluApp>) -> Rect {
     })
 }
 
-/// 層の行の名前の所（行の真ん中）。
+/// レイヤーの行の名前の所（行の真ん中）。
 fn name_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> egui::Pos2 {
     let name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
     rect_of(h, &name, |r| r.width() > 100.0 && r.left() > 1000.0).center()
@@ -156,7 +156,7 @@ fn editing_mask(h: &Harness<'_, YoluApp>) -> bool {
     h.state().state.m2.edit_mask
 }
 
-/// 青い枠の付いた層のサムネイル（選んだ状態の「レイヤーの画素」）。
+/// 青い枠の付いたレイヤーのサムネイル（選んだ状態の「レイヤーの画素」）。
 fn framed_pixels_thumbs(h: &Harness<'_, YoluApp>) -> Vec<Rect> {
     let lang = h.state().state.lang;
     h.get_all_by_label(lang.pick("レイヤーの画素", "Layer pixels"))
@@ -172,7 +172,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
     effect_document(&mut h);
     let layer = h.state().state.selected_layer.unwrap();
     assert_ne!(base, layer);
-    // 層のサムネイル: 層の画素が対象（もう一度押しても同じ）。選んでいた効果の欄は閉じる
+    // レイヤーのサムネイル: レイヤーの画素が対象（もう一度押しても同じ）。選んでいた効果の欄は閉じる
     for _ in 0..2 {
         let at = pixels_thumb(&h).center();
         click(&mut h, at);
@@ -185,7 +185,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
         );
         assert_eq!(framed_pixels_thumbs(&h), vec![pixels_thumb(&h)]);
     }
-    // マスクのサムネイル: マスクが対象（切り替えではないので、もう一度押してもマスクのまま）。層のサムネイルの枠は消える
+    // マスクのサムネイル: マスクが対象（切り替えではないので、もう一度押してもマスクのまま）。レイヤーのサムネイルの枠は消える
     for _ in 0..2 {
         let at = mask_thumb(&h).center();
         click(&mut h, at);
@@ -196,25 +196,25 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
         );
         assert!(framed_pixels_thumbs(&h).is_empty());
     }
-    // 同じ層の名前を押しても対象はそのまま
+    // 同じレイヤーの名前を押しても対象はそのまま
     let at = name_of(&h, layer);
     click(&mut h, at);
-    assert!(editing_mask(&h), "同じ層の名前は今の対象のまま");
-    // 別の層の名前は、その層の画素
+    assert!(editing_mask(&h), "同じレイヤーの名前は今の対象のまま");
+    // 別のレイヤーの名前は、そのレイヤーの画素
     let at = name_of(&h, base);
     click(&mut h, at);
     assert_eq!(h.state().state.selected_layer, Some(base));
     assert!(!editing_mask(&h));
-    // マスクの無い層でも、画素が対象なら層のサムネイルに枠（選んだ層の 1 つだけ）
+    // マスクの無いレイヤーでも、画素が対象ならレイヤーのサムネイルに枠（選んだレイヤーの 1 つだけ）
     let framed = framed_pixels_thumbs(&h);
     assert_eq!(framed.len(), 1, "{framed:?}");
     assert!((framed[0].center().y - name_of(&h, base).y).abs() < 2.0);
-    // 選んでいない層のマスクのサムネイルは、その層を選んでマスクを対象にする
+    // 選んでいないレイヤーのマスクのサムネイルは、そのレイヤーを選んでマスクを対象にする
     let at = mask_thumb(&h).center();
     click(&mut h, at);
     assert_eq!(h.state().state.selected_layer, Some(layer));
     assert!(editing_mask(&h));
-    // 選んでいない層の、層のサムネイルは、その層を選んで画素を対象にする
+    // 選んでいないレイヤーの、レイヤーのサムネイルは、そのレイヤーを選んで画素を対象にする
     let at = name_of(&h, base);
     click(&mut h, at);
     let at = pixels_thumb(&h).center();
@@ -272,7 +272,7 @@ fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
             .unwrap()
             .len(),
         before + 1,
-        "層の画素が対象でも、マスクのメニューはマスクへ足す"
+        "レイヤーの画素が対象でも、マスクのメニューはマスクへ足す"
     );
     assert_eq!(
         h.state()
@@ -309,9 +309,9 @@ fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
         .inverted());
 }
 
-// ───────── 効果の行は、選んだ層では対象の側だけ ─────────
+// ───────── 効果の行は、選んだレイヤーでは対象の側だけ ─────────
 
-/// 層のサムネイルと同じ行の、その層のマスクのサムネイル（マスクのある層が複数あるときの取り分け）。
+/// レイヤーのサムネイルと同じ行の、そのレイヤーのマスクのサムネイル（マスクのあるレイヤーが複数あるときの取り分け）。
 fn mask_thumb_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> Rect {
     let lang = h.state().state.lang;
     let y = name_of(h, layer).y;
@@ -382,8 +382,8 @@ fn ids_of(
         .collect()
 }
 
-/// 下の層（画素にシャープ、マスクにノイズ）と、上の層（画素にぼかし・反転とアンカー、マスクにエッジの摩耗とレベル補正）。
-/// 上の層を選んでいて、マスクの効果の行を選んだ状態（マスクが対象）で返る。
+/// 下のレイヤー（画素にシャープ、マスクにノイズ）と、上のレイヤー（画素にぼかし・反転とアンカー、マスクにエッジの摩耗とレベル補正）。
+/// 上のレイヤーを選んでいて、マスクの効果の行を選んだ状態（マスクが対象）で返る。
 fn both_stacks(
     h: &mut Harness<'_, YoluApp>,
 ) -> (yolu_app::engine::LayerId, yolu_app::engine::LayerId) {
@@ -436,16 +436,16 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     assert_eq!(selected(&h), Some(Selected::Filter { layer, id: mask[1] }));
     assert_eq!(shown(&h, &mask), [true, true]);
     assert_eq!(shown(&h, &content), [false, false]);
-    // 層の画素が対象: 層の効果だけ
+    // レイヤーの画素が対象: レイヤーの効果だけ
     let at = pixels_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert!(!editing_mask(&h));
     assert_eq!(shown(&h, &content), [true, true]);
     assert_eq!(shown(&h, &mask), [false, false]);
-    // 選んでいない層の下は、層の効果（マスクの効果は出ない）
+    // 選んでいないレイヤーの下は、レイヤーの効果（マスクの効果は出ない）
     assert_eq!(shown(&h, &base_content), [true]);
     assert_eq!(shown(&h, &base_mask), [false]);
-    // マスクが対象: マスクの効果だけ。ほかの層の下は変わらない
+    // マスクが対象: マスクの効果だけ。ほかのレイヤーの下は変わらない
     let at = mask_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert!(editing_mask(&h));
@@ -453,12 +453,12 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     assert_eq!(shown(&h, &content), [false, false]);
     assert_eq!(shown(&h, &base_content), [true]);
     assert_eq!(shown(&h, &base_mask), [false]);
-    // 層の画素へ戻る
+    // レイヤーの画素へ戻る
     let at = pixels_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert_eq!(shown(&h, &content), [true, true]);
     assert_eq!(shown(&h, &mask), [false, false]);
-    // 層の効果の行を押すと選ぶ（層の画素が対象のまま）
+    // レイヤーの効果の行を押すと選ぶ（レイヤーの画素が対象のまま）
     let at = row_rect(&h, content[0]).center();
     click(&mut h, at);
     assert_eq!(
@@ -471,7 +471,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     assert!(!editing_mask(&h));
     assert!(yolu_app::fx::props_visible(&h.state().state));
     assert_eq!(shown(&h, &content), [true, true]);
-    // マスクへ移ってマスクの効果の行を押すと、選んだ行は残り、マスクが対象のまま（層の効果の行へ戻らない）
+    // マスクへ移ってマスクの効果の行を押すと、選んだ行は残り、マスクが対象のまま（レイヤーの効果の行へ戻らない）
     let at = mask_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert_eq!(selected(&h), None);
@@ -507,7 +507,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     assert_eq!(selected(&h), None, "消した行の選びは外れる");
     assert!(
         editing_mask(&h),
-        "消してもマスクが対象のまま（一覧が層の効果へ替わらない）"
+        "消してもマスクが対象のまま（一覧がレイヤーの効果へ替わらない）"
     );
     assert_eq!(shown(&h, &[mask[1]]), [true]);
     assert_eq!(shown(&h, &content), [false, false]);
@@ -518,7 +518,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     );
     assert!(editing_mask(&h));
     assert_eq!(shown(&h, &mask), [true, true]);
-    // 別の層の名前を押すと、その層の画素が対象。前の層（マスクの効果を選んでいた）の下は層の効果
+    // 別のレイヤーの名前を押すと、そのレイヤーの画素が対象。前のレイヤー（マスクの効果を選んでいた）の下はレイヤーの効果
     let at = name_of(&h, base);
     click(&mut h, at);
     assert_eq!(h.state().state.selected_layer, Some(base));
@@ -528,7 +528,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     assert_eq!(shown(&h, &mask), [false, false]);
     assert_eq!(shown(&h, &base_content), [true]);
     assert_eq!(shown(&h, &base_mask), [false]);
-    // 選んでいない層のマスクのサムネイル: その層を選んでマスクが対象（もう一方の層は層の効果）
+    // 選んでいないレイヤーのマスクのサムネイル: そのレイヤーを選んでマスクが対象（もう一方のレイヤーはレイヤーの効果）
     let at = mask_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert_eq!(h.state().state.selected_layer, Some(layer));
@@ -563,7 +563,7 @@ fn adding_to_the_mask_keeps_the_mask_as_the_target_and_the_new_row_in_view() {
     assert!(editing_mask(&h));
     assert_eq!(selected(&h), Some(Selected::Filter { layer, id: mask[2] }));
     assert!(row_shown(&h, mask[2]));
-    // 層の画素が対象で足すと、層の画素が対象のまま
+    // レイヤーの画素が対象で足すと、レイヤーの画素が対象のまま
     let at = pixels_thumb_of(&h, layer).center();
     click(&mut h, at);
     fx(
@@ -583,7 +583,7 @@ fn adding_to_the_mask_keeps_the_mask_as_the_target_and_the_new_row_in_view() {
 fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
     let mut h = app(1280.0, 1000.0, 128);
     let (base, layer) = both_stacks(&mut h);
-    // マスクはあるが効果の無い層（印は出ない）
+    // マスクはあるが効果の無いレイヤー（印は出ない）
     apply(&mut h, Action::NewLayer);
     let empty = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(empty)));
@@ -600,7 +600,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
             h.query_all_by_label_contains(lang.pick("マスクに効果", "on the mask"))
                 .count()
         };
-        // 層の画素が対象: マスクの効果のある層の、マスクのサムネイルの角に印（数は 2 つと 1 つ。効果の無いマスクには出ない）
+        // レイヤーの画素が対象: マスクの効果のあるレイヤーの、マスクのサムネイルの角に印（数は 2 つと 1 つ。効果の無いマスクには出ない）
         let at = pixels_thumb_of(&h, layer).center();
         click(&mut h, at);
         assert_eq!(any_mark(&h), 2, "{lang:?}");
@@ -611,7 +611,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
             two[0].center().x > thumb.center().x
                 && two[0].center().y > thumb.center().y
                 && thumb.expand(8.0).contains_rect(two[0]),
-            "{lang:?}: 印は上の層のマスクのサムネイルの右下の角: {:?} {thumb:?}",
+            "{lang:?}: 印は上のレイヤーのマスクのサムネイルの右下の角: {:?} {thumb:?}",
             two[0]
         );
         let one = marks(&h, 1);
@@ -637,11 +637,11 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
         click(&mut h, two[0].center());
         assert!(editing_mask(&h), "{lang:?}");
         assert_eq!(h.state().state.selected_layer, Some(layer));
-        // マスクが対象: その層の印は消える（行が出ている）。ほかの層（層の効果を出している）の印は残る
+        // マスクが対象: そのレイヤーの印は消える（行が出ている）。ほかのレイヤー（レイヤーの効果を出している）の印は残る
         assert!(marks(&h, 2).is_empty(), "{lang:?}");
         assert_eq!(marks(&h, 1).len(), 1, "{lang:?}");
         assert_eq!(any_mark(&h), 1, "{lang:?}");
-        // 層の画素へ戻すと、また出る
+        // レイヤーの画素へ戻すと、また出る
         let at = pixels_thumb_of(&h, layer).center();
         click(&mut h, at);
         assert_eq!(marks(&h, 2).len(), 1, "{lang:?}");
@@ -662,7 +662,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
         h.query_all_by_label_contains(lang.pick("マスクに効果", "on the mask"))
             .count(),
         1,
-        "上の層のマスクが空になって、下の層の印だけが残る"
+        "上のレイヤーのマスクが空になって、下のレイヤーの印だけが残る"
     );
     let _ = empty;
 }
@@ -682,11 +682,11 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         let what = if mask_side {
             "マスクが対象"
         } else {
-            "層の画素が対象"
+            "レイヤーの画素が対象"
         };
         let mut h = app(1280.0, 1000.0, 128);
         let (base, layer) = both_stacks(&mut h);
-        // 下の層と上の層の間に、層の効果を持つ層を 1 つ挟む（選んでいない層の下は層の効果）
+        // 下のレイヤーと上のレイヤーの間に、レイヤーの効果を持つレイヤーを 1 つ挟む（選んでいないレイヤーの下はレイヤーの効果）
         let at = name_of(&h, base);
         click(&mut h, at);
         apply(&mut h, Action::NewLayer);
@@ -708,8 +708,8 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         };
         click(&mut h, at);
         assert_eq!(editing_mask(&h), mask_side, "{what}");
-        // 選んでいる層（効果の行が下に並ぶ）をつかんで、真ん中の層の行の下半分（その下の線）へ運ぶ。落とす先は、見えている行の位置で
-        // 決まる（マスクが対象のときは、層の効果の行を数えた配置で決めると、1 つ上の線になる）
+        // 選んでいるレイヤー（効果の行が下に並ぶ）をつかんで、真ん中のレイヤーの行の下半分（その下の線）へ運ぶ。落とす先は、見えている行の位置で
+        // 決まる（マスクが対象のときは、レイヤーの効果の行を数えた配置で決めると、1 つ上の線になる）
         let from = name_of(&h, layer);
         let to = pos2(from.x, name_of(&h, middle).y + 11.0);
         drag(&mut h, &[from, offset(from, 0.0, 12.0), to]);
@@ -718,11 +718,11 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         assert_eq!(
             editing_mask(&h),
             mask_side,
-            "{what}: 運んだ層が選んでいる層なら対象はそのまま"
+            "{what}: 運んだレイヤーが選んでいるレイヤーなら対象はそのまま"
         );
         apply(&mut h, Action::Undo);
         assert_eq!(order(&h), vec![base, middle, layer], "{what}");
-        // 選んでいない層をつかんで一番上へ運ぶ。つかんだ瞬間に対象が層の画素へ替わって効果の行が並び替わるので、
+        // 選んでいないレイヤーをつかんで一番上へ運ぶ。つかんだ瞬間に対象がレイヤーの画素へ替わって効果の行が並び替わるので、
         // 並び替わった後の配置を見て落とす先へ動かす
         let from = name_of(&h, middle);
         press(&h, from, PointerButton::Primary);
@@ -738,9 +738,12 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         assert_eq!(
             order(&h),
             vec![base, layer, middle],
-            "{what}: 選んでいない層を運ぶ"
+            "{what}: 選んでいないレイヤーを運ぶ"
         );
-        assert!(!editing_mask(&h), "{what}: つかんだ層の画素が対象になる");
+        assert!(
+            !editing_mask(&h),
+            "{what}: つかんだレイヤーの画素が対象になる"
+        );
         assert_eq!(h.state().state.selected_layer, Some(middle));
     }
 }
@@ -761,7 +764,7 @@ fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
     let layer = h.state().state.selected_layer.unwrap();
     assert_ne!(base, layer);
     let layer_menu = PopupKind::LayerContext(layer);
-    // 選んでいない層（下地）を選んだ状態から、マスクのある層の層のサムネイルを右クリック: その層を選んでレイヤーのメニュー
+    // 選んでいないレイヤー（下地）を選んだ状態から、マスクのあるレイヤーの本体のサムネイルを右クリック: そのレイヤーを選んでレイヤーのメニュー
     let at = name_of(&h, base);
     click(&mut h, at);
     assert_eq!(h.state().state.selected_layer, Some(base));
@@ -774,7 +777,7 @@ fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
     assert_eq!(h.state().state.selected_layer, Some(layer));
     // メニューにはレイヤーのメニューの項目（フィルターを追加 ▸）が並ぶ
     let _ = popup_item(&h, "フィルターを追加");
-    // 選んだ層の層のサムネイルでも同じ（開くだけでマスクの対象は変えない）
+    // 選んだレイヤーの本体のサムネイルでも同じ（開くだけでマスクの対象は変えない）
     h.state_mut().state.popup = None;
     h.run();
     let at = pixels_thumb(&h).center();
@@ -810,8 +813,8 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
                 kind: FilterKind::Levels,
             },
         );
-        // 層の画素が対象（層のサムネイルに青い枠）。プロパティはレイヤーのタブ（フィルターとジェネレーターの 2 つの入り口）。
-        // 層の効果の行が並び、効果の付いたマスクのサムネイルの角に印
+        // レイヤーの画素が対象（レイヤーのサムネイルに青い枠）。プロパティはレイヤーのタブ（フィルターとジェネレーターの 2 つの入り口）。
+        // レイヤーの効果の行が並び、効果の付いたマスクのサムネイルの角に印
         let at = pixels_thumb(&h).center();
         click(&mut h, at);
         h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
@@ -882,12 +885,12 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
         .iter()
         .map(|e| e.id())
         .collect();
-    // 層の行を押すと、選んでいた効果は外れる
+    // レイヤーの行を押すと、選んでいた効果は外れる
     let layer_name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
     h.get_by_label(&layer_name).click();
     h.run();
     assert_eq!(selected(&h), None);
-    // 効果の行を押すと選ぶ（その層のまま）
+    // 効果の行を押すと選ぶ（そのレイヤーのまま）
     let blur_label = "ぼかし（ガウス）  4 px";
     h.get_by_label(blur_label).click();
     h.run();
@@ -1089,7 +1092,7 @@ const NEW_FILTERS: [FilterKind; 10] = [
     FilterKind::Glow,
 ];
 
-/// `kind` を描くチャンネル（スカラーだけの種類は Roughness）の画素に足して選んだ窓。
+/// `kind` を描くチャンネル（スカラーだけの種類は Roughness）の画素に足して選んだウィンドウ。
 fn with_new_filter(lang: Lang, kind: FilterKind) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, 1000.0, 128);
     h.state_mut().state.set_language(lang);
@@ -1214,7 +1217,7 @@ fn snapshot_three_new_filter_panels_in_both_languages() {
     }
 }
 
-/// 0.5.0 の Generator（模様・ライト・マスクの組み立て）を画素に足して選んだ窓。
+/// 0.5.0 の Generator（模様・ライト・マスクの組み立て）を画素に足して選んだウィンドウ。
 fn with_new_generator(lang: Lang, kind: Kind, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, height, 128);
     h.state_mut().state.set_language(lang);
@@ -1237,7 +1240,7 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
             (Kind::MaskBuilder, "mask_builder"),
             (Kind::UvIslandVariation, "uv_island_variation"),
         ] {
-            // 欄の全部が窓に収まる高さ
+            // 欄の全部がウィンドウに収まる高さ
             let h = with_new_generator(lang, kind, 2400.0);
             assert!(selected(&h).is_some(), "{kind:?}");
             let settings = selected_settings(&h);
@@ -1318,7 +1321,7 @@ fn snapshot_the_pattern_and_mask_builder_panels_in_both_languages() {
     }
 }
 
-/// 2×2 の 4 枚の板（3D で離れていて、UV の別の所。島は 4 つ）。
+/// 2×2 の 4 枚の板（3D で離れていて、UV の別の所。アイランドは 4 つ）。
 fn four_plates() -> yolu_app::view3d::model::ViewModel {
     use yolu_core::geometry::{ModelMesh, Submesh};
     use yolu_core::glam::{Vec2, Vec3};
@@ -1353,7 +1356,7 @@ fn four_plates() -> yolu_app::view3d::model::ViewModel {
     yolu_app::view3d::model::ViewModel::new("板", vec![mesh], vec![Some("材".into())], 1).unwrap()
 }
 
-/// アイランドごとのばらつきの欄と、島ごとに違う値の 2D の絵（4 つの島のモデルを読み、塗った層に置き換えで足す）。
+/// アイランドごとのばらつきの欄と、アイランドごとに違う値の 2D の絵（4 つのアイランドのモデルを読み、塗ったレイヤーに置き換えで足す）。
 #[test]
 fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
     let mut results = SnapshotResults::new();
@@ -1399,7 +1402,7 @@ fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
             None,
             "{lang:?}: モデルを読んでいる"
         );
-        // ブラシの円を島に重ねない（指はキャンバスの外）
+        // ブラシの円をアイランドに重ねない（指はキャンバスの外）
         move_to(&h, pos2(1270.0, 990.0));
         h.run();
         h.snapshot(format!(
@@ -1464,7 +1467,7 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
             }
             // 開いたメニューも
             let texts = shown_texts(&h);
-            // 層の一覧とプロパティの欄（右の列。状態の帯の知らせは状態なので除く）
+            // レイヤーの一覧とプロパティの欄（右の列。状態の帯の知らせは状態なので除く）
             for (text, rect) in texts
                 .iter()
                 .filter(|(_, r)| r.left() > 1050.0 && r.top() > 280.0 && r.bottom() < 976.0)

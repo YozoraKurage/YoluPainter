@@ -63,7 +63,7 @@ pub fn dir_for(settings: &Path) -> Option<PathBuf> {
     }
 }
 
-/// 覚える絵 1 枚。`info` は呼び出し側が決める短い説明（寸法や層の数など。`key=value` の行）。
+/// 覚える絵 1 枚。`info` は呼び出し側が決める短い説明（寸法やレイヤーの数など。`key=value` の行）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cached {
     pub info: String,

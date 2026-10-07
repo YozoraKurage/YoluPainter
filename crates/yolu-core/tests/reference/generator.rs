@@ -689,7 +689,7 @@ fn plan_rejects_each_invalid_layer_setting() {
     let fill = || Layer::new(Content::Fill(Rgba8::new(1, 2, 3, 255)));
     let group = || Layer::new(Content::Group);
     assert!(plan(&[fill()], 0).is_ok());
-    // 層の番号と画像の大きさ
+    // レイヤーの番号と画像の大きさ
     assert!(invalid(plan(&[fill()], 1)));
     assert!(invalid(plan(&[], 0)));
     for dims in [(0, 1), (1, 0)] {
@@ -697,7 +697,7 @@ fn plan_rejects_each_invalid_layer_setting() {
             Plan::new(&[fill()], 0, dims, ChannelKind::Color).map(|_| ())
         ));
     }
-    // 親: グループなら通り、グループでない層・範囲外・自分自身は断る。
+    // 親: グループなら通り、グループでないレイヤー・範囲外・自分自身は断る。
     let mut layers = vec![group(), fill()];
     layers[1].parent = Some(0);
     assert!(plan(&layers, 1).is_ok());
@@ -1162,7 +1162,7 @@ fn settings_hold_the_anchor_reference_and_check_it_like_csharp() {
     );
     assert!(invalid(by(ReadMode::Value, ChannelKind::Normal)));
     assert!(invalid(by(ReadMode::Coverage, ChannelKind::Normal)));
-    // 参照先の解決は anchor::resolve と同じ（未選択・欠損・同じ層／上の層）。
+    // 参照先の解決は anchor::resolve と同じ（未選択・欠損・同じレイヤー／上のレイヤー）。
     let points = [Point {
         id: 7,
         host: 0,
@@ -1291,9 +1291,9 @@ fn generated_scalars_are_finite_unit_values_and_ramps_give_mapped() {
     }
 }
 
-/// C# の AnchorTests.ChainsOfAnchorsAreFollowed: Anchor が別の Anchor の読む層を読む連鎖。L1（描いた Height）の Anchor 1 を、
+/// C# の AnchorTests.ChainsOfAnchorsAreFollowed: Anchor が別の Anchor の読むレイヤーを読む連鎖。L1（描いた Height）の Anchor 1 を、
 /// L2（Height 10 の塗りつぶし）のフィルターが Add で読み、L2 の Anchor 2 を L3 のフィルターが読み、…と 4 段つなぎ、最後の
-/// Anchor をプローブ層のマスクが読む。どの段の値も「その層までの合成」を読んだ値で、L1 に 1 画素描くと、どの段の出力にも
+/// Anchor をプローブレイヤーのマスクが読む。どの段の値も「そのレイヤーまでの合成」を読んだ値で、L1 に 1 画素描くと、どの段の出力にも
 /// プローブのマスクにも、その 1 画素だけが（段ごとに 10 ずつ足されて）現れる。
 #[test]
 fn chains_of_anchors_are_followed() {
@@ -1303,7 +1303,7 @@ fn chains_of_anchors_are_followed() {
     const LINKS: usize = 4;
     let grey = |v: u8| Rgba8::new(v, v, v, 255);
     let solid = |v: u8| -> Vec<u8> { (0..AW * AH).flat_map(|_| grey(v).to_array()).collect() };
-    // 層の番号（下から）: 0 下地、1 L1、2.. 連鎖の層、最後がプローブ。Anchor の ID は置かれた層の番号 + 1。
+    // レイヤーの番号（下から）: 0 下地、1 L1、2.. 連鎖のレイヤー、最後がプローブ。Anchor の ID は置かれたレイヤーの番号 + 1。
     let points: Vec<Point> = (1..=LINKS + 1)
         .map(|host| Point {
             id: host as u128 + 1,
@@ -1331,7 +1331,7 @@ fn chains_of_anchors_are_followed() {
             s
         };
         let mut outputs: Vec<Vec<u8>> = Vec::new();
-        // 連鎖の層 k（2 から）は、その下の Anchor（層 k − 1 の Anchor）を Add で読む
+        // 連鎖のレイヤー k（2 から）は、その下の Anchor（レイヤー k − 1 の Anchor）を Add で読む
         for k in 2..2 + LINKS {
             let next = {
                 let images: Vec<Image> = outputs
@@ -1343,7 +1343,7 @@ fn chains_of_anchors_are_followed() {
                     Layer::new(Content::Pixels(&l1_image)),
                 ];
                 layers.extend(images.iter().map(|i| Layer::new(Content::Pixels(i))));
-                assert_eq!(layers.len(), k, "下の層だけで Anchor の面を作る");
+                assert_eq!(layers.len(), k, "下のレイヤーだけで Anchor の面を作る");
                 let host = k - 1;
                 let plan = Plan::new(&layers, host, (AW, AH), ChannelKind::Scalar).unwrap();
                 let sample = LayerSample {
@@ -1371,7 +1371,7 @@ fn chains_of_anchors_are_followed() {
             };
             outputs.push(next);
         }
-        // プローブ: マスクが最後の連鎖の層の Anchor を読む（置換）
+        // プローブ: マスクが最後の連鎖のレイヤーの Anchor を読む（置換）
         let images: Vec<Image> = outputs
             .iter()
             .map(|o| Image::new(o, AW, AH).unwrap())

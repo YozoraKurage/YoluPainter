@@ -1,4 +1,4 @@
-//! ブラシの欄。詳細の窓（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧・入り抜きとペン・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
+//! ブラシの欄。詳細のウィンドウ（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧・入り抜きとペン・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
 //! 効果・対称）ごとにここの欄を出す。筆先の形（画像・硬さ・真円率・角度・反転・組み込みの一覧）は「形状」の欄。
 //! 値は全部入りのブラシ（`AppState::m2.brush`）と基本の値（`AppState::brush`）を直に変え、ストロークを始めたときに写して固定する
 //! （途中で変えても、そのストロークには効かない）。3D のビューが出ているあいだ面のダブが使わない欄は、注記を出さずに無効にして、
@@ -100,7 +100,7 @@ fn toggle_pair(
     ((a != left.2).then_some(a), b)
 }
 
-/// カテゴリの欄を縦に積む（見出しはここに無い。窓が出す）。
+/// カテゴリの欄を縦に積む（見出しはここに無い。ウィンドウが出す）。
 pub fn category_body(
     ui: &mut Ui,
     app: &mut AppState,
@@ -379,7 +379,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         (0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32),
         NumberFormat::int(" px"),
         Some(lang.pick(
-            "UV の島の縁から外へ塗る幅。継ぎ目に線が出ないように",
+            "UV アイランドの縁から外へ塗る幅。継ぎ目に線が出ないように",
             "Paints this far outside the edges of UV islands so seams do not show",
         )),
         free,
@@ -1222,7 +1222,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
 
 // ───────── 色の混ぜ ─────────
 
-/// 色の混ぜが、今の道具・ブラシ・描く先では効かない理由（効くなら None）。
+/// 色の混ぜが、今のツール・ブラシ・描く先では効かない理由（効くなら None）。
 fn mix_unavailable(app: &AppState, lang: Lang) -> Option<&'static str> {
     if app.tool == Tool::Eraser {
         return Some(lang.pick("消しゴムでは効きません", "No effect with the eraser"));

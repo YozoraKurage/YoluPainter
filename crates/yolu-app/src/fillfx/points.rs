@@ -2,7 +2,7 @@
 //!
 //! - 編集に入っている間（欄の「点を編集」・点のグラデーションを追加した直後）だけ、左ボタン（ペンの接触）を受け取る。点の印の上なら選んで
 //!   ドラッグ、モデルの面（2D ならその画素）の上なら点を追加して選び、そのままドラッグできる。押してから離すまでの変更は 1 回の Undo
-//!   （`coalesce`）。Esc・窓のフォーカスの喪失では押す前に戻して履歴にも残さない。モデルの外・ほかのテクスチャセットの面は選びを外すだけ。
+//!   （`coalesce`）。Esc・ウィンドウのフォーカスの喪失では押す前に戻して履歴にも残さない。モデルの外・ほかのテクスチャセットの面は選びを外すだけ。
 //! - モデルの空間の点は面の上の位置（3D ビューは当てた面の位置、2D は位置のマップのその画素）、UV の空間の点はその UV。
 //! - 印は 3D ビューと 2D のキャンバスの両方に描く: モデルの空間の点の 2D の位置は面の上のいちばん近い点の UV、UV の空間の点の 3D の位置は
 //!   位置のマップのその画素（無ければ 3D には描かない）。
@@ -37,7 +37,7 @@ pub struct PointDrag {
     pub added: bool,
 }
 
-/// 点を編集している層とチャンネル（選んでいる層で、そのチャンネルに点のグラデーションがあるときだけ）。
+/// 点を編集しているレイヤーとチャンネル（選んでいるレイヤーで、そのチャンネルに点のグラデーションがあるときだけ）。
 pub fn target(app: &AppState) -> Option<(LayerId, Channel)> {
     let (layer, channel) = app.fillfx.edit_points?;
     if app.selected_layer != Some(layer) || app.m2.edit_mask {
@@ -185,7 +185,7 @@ fn nearest(points: &[Option<Pos2>], at: Pos2) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// 左ボタン（ペンの接触）を押した（3D ビュー）。点の編集に入っていれば受け取って true（下の道具へ渡さない）。
+/// 左ボタン（ペンの接触）を押した（3D ビュー）。点の編集に入っていれば受け取って true（下のツールへ渡さない）。
 pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     let Some((layer, channel)) = target(app) else {
         return false;
@@ -417,7 +417,7 @@ fn paint_marks(
 /// 3D ビューに印を重ねる。
 pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
     let Some((layer, channel)) = target(app) else {
-        // 編集が終わった（層を替えた・隠した）ドラッグは取り残さない
+        // 編集が終わった（レイヤーを替えた・隠した）ドラッグは取り残さない
         release(app, true);
         return;
     };

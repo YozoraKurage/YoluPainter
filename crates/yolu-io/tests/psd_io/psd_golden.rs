@@ -1,10 +1,10 @@
 //! PSD の写しを、実 C# Core の `PsdBridge.Export`・`Import` と `PsdCodec` に通した正解（`tests/golden/psd/`、`tools/csharp-golden/run.sh psd` で作る）と照らす。
 //! - 書き出し事例: 同じ台本の文書を core で組み、`from_core` → `write` のバイト列が C# の書き出しと全バイト一致する。
-//! - その PSD を読み、core にした文書の中身（層の並び・属性・マスク・調整・塗りつぶし・画素・合成）が C# の取り込みと同じ。
-//! - 取り込み事例: C# が組んだ PSD（マスクの既定 0・画布からはみ出す矩形・区切りの ID の無いグループ・入れ子）を core にした中身が C# の取り込みと同じ。
+//! - その PSD を読み、core にした文書の中身（レイヤーの並び・属性・マスク・調整・塗りつぶし・画素・合成）が C# の取り込みと同じ。
+//! - 取り込み事例: C# が組んだ PSD（マスクの既定 0・キャンバスからはみ出す矩形・区切りの ID の無いグループ・入れ子）を core にした中身が C# の取り込みと同じ。
 //! - 断る事例: C# が断る書き出しを Rust も断る。
 //!
-//! 台本は `tools/csharp-golden/PsdBridgeGolden.cs` と同じ（層の ID は作った順に 100 + n、区切りの ID は 300 + n）。
+//! 台本は `tools/csharp-golden/PsdBridgeGolden.cs` と同じ（レイヤーの ID は作った順に 100 + n、区切りの ID は 300 + n）。
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use yolu_core::{
@@ -56,7 +56,7 @@ fn exact() -> [AdjustmentSettings; 3] {
     ]
 }
 
-/// 層 n 番目（作った順、1 から）の ID。上位 32 bit が PSD の層 ID（100 + n）、続く 32 bit が区切りの ID（300 + n、Guid の Data2・Data3）、
+/// レイヤー n 番目（作った順、1 から）の ID。上位 32 bit が PSD のレイヤー ID（100 + n）、続く 32 bit が区切りの ID（300 + n、Guid の Data2・Data3）、
 /// 残りは固定（Guid の 8〜15 バイト目）。
 fn id(n: usize) -> LayerId {
     let divider = (300 + n) as u32;
@@ -451,7 +451,7 @@ const EXPORT_CASES: [Case; 7] = [
 /// C# が組んだ PSD を取り込む事例。
 const IMPORT_CASES: [&str; 2] = ["import_masks", "import_groups"];
 
-/// 断る事例: 名前・文書・Rust の理由・断る層の名前・C# の断りの文に入っているはずの語。
+/// 断る事例: 名前・文書・Rust の理由・断るレイヤーの名前・C# の断りの文に入っているはずの語。
 struct Refused {
     name: &'static str,
     doc: Document,
@@ -624,7 +624,7 @@ fn what_csharp_refuses_to_export_rust_refuses_too_for_the_same_reason() {
         // C# が断った理由（保存してある文）と、事例が作りたかった理由が合っている
         let csharp = String::from_utf8(read(&format!("{name}.refused"))).unwrap();
         assert!(csharp.contains(case.csharp), "{name}: {csharp}");
-        // Rust は同じ理由で、同じ層について断る（ほかの検査が代わりに断ったのでは通らない）
+        // Rust は同じ理由で、同じレイヤーについて断る（ほかの検査が代わりに断ったのでは通らない）
         let blockers = psd::export_blockers(&case.doc);
         assert_eq!(
             blockers,

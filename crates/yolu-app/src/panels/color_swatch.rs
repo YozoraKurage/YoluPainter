@@ -1,5 +1,5 @@
 //! メインの色（描画色）とサブの色（背景色）の 2 枚。左のツールの帯の一番下の端（最後のツールのすぐ下ではなく、帯の下に付ける。
-//! Photoshop の道具の帯の色と同じ位置）に置き、描画色が左上・背景色が右下に重なる。右上に入れ替え（X）、左下に初期設定（D）の小さなボタン。
+//! Photoshop のツールの帯の色と同じ位置）に置き、描画色が左上・背景色が右下に重なる。右上に入れ替え（X）、左下に初期設定（D）の小さなボタン。
 //! 背景色の四角を押しても入れ替わる。帯の幅（アイコンの幅）に収め、ツールチップと X・D のキーは変えない。
 
 use egui::{pos2, vec2, Rect, Ui};
@@ -16,7 +16,7 @@ const BOTTOM_GAP: f32 = 6.0;
 /// 組の上と最後のツールの間に空ける高さ。
 const TOP_GAP: f32 = 4.0;
 
-/// 2 枚の組が帯の下の端に付くとき、道具のボタンの並びから先に取っておく高さ。
+/// 2 枚の組が帯の下の端に付くとき、ツールのボタンの並びから先に取っておく高さ。
 pub fn reserved_height() -> f32 {
     BLOCK_HEIGHT + BOTTOM_GAP + TOP_GAP
 }
@@ -153,7 +153,7 @@ mod tests {
             assert!(!overlap(button, p.main) && !overlap(button, p.sub));
         }
         assert!(!overlap(p.swap, p.default));
-        // 道具のボタンの並びから先に取る高さは、組と下の余白と上の間の合計
+        // ツールのボタンの並びから先に取る高さは、組と下の余白と上の間の合計
         assert_eq!(reserved_height(), BLOCK_HEIGHT + BOTTOM_GAP + TOP_GAP);
     }
 }

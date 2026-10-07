@@ -1,5 +1,5 @@
-//! 浮いた窓（ベイクの窓・書き出しの確かめと結果・PSD の結果と確かめ）と、長い仕事の札（進み具合と取消）を毎フレーム描く。
-//! 窓の中身は `bake::window`・ここの一覧の窓。状態は `AppState` の `bake`・`export`・`psd`。
+//! 浮いたウィンドウ（ベイクのウィンドウ・書き出しの確かめと結果・PSD の結果と確かめ）と、長い仕事の札（進み具合と取消）を毎フレーム描く。
+//! ウィンドウの中身は `bake::window`・ここの一覧のウィンドウ。状態は `AppState` の `bake`・`export`・`psd`。
 
 use egui::{pos2, vec2, Id, Key, Order, Rect, Sense, UiBuilder, Vec2};
 
@@ -32,7 +32,7 @@ impl Row {
     }
 }
 
-/// 一覧の窓の下の帯のボタン。
+/// 一覧のウィンドウの下の帯のボタン。
 pub struct Button {
     pub label: String,
     pub primary: bool,
@@ -52,7 +52,7 @@ pub struct ListSpec {
     pub close_label: String,
 }
 
-/// 名前の窓（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験が窓の中だけを撮る）。
+/// 名前のウィンドウ（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験がウィンドウの中だけを撮る）。
 pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     let id = if name == "bake" {
         Id::new("yolu.bake-window")
@@ -62,7 +62,7 @@ pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     window::last_rect(ctx, id)
 }
 
-/// 一覧の窓の返事。
+/// 一覧のウィンドウの返事。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reply {
     Button(usize),
@@ -74,7 +74,7 @@ const ROW_HEIGHT: f32 = 22.0;
 const MAX_ROWS: usize = 12;
 const FOOTER: f32 = 48.0;
 
-/// 一覧の窓を描く。押されたボタン・閉じたを返す。
+/// 一覧のウィンドウを描く。押されたボタン・閉じたを返す。
 pub fn show_list(
     ctx: &egui::Context,
     spec: &ListSpec,
@@ -104,7 +104,7 @@ pub fn show_list_with(
     };
     let mut reply = None;
     let id = Id::new(("yolu.window", spec.id));
-    // ずらした量は窓の id で覚える（呼ぶ側が毎回 0 から渡しても、ホイールとつまみが効く）。窓を出していなかった後は、渡された値から
+    // ずらした量はウィンドウの id で覚える（呼ぶ側が毎回 0 から渡しても、ホイールとつまみが効く）。ウィンドウを出していなかった後は、渡された値から
     let scroll_key = id.with("scroll");
     let frame_now = ctx.cumulative_frame_nr();
     if let Some((value, at)) = ctx.data(|d| d.get_temp::<(f32, u64)>(scroll_key)) {
@@ -237,7 +237,7 @@ pub fn show_list_with(
     reply
 }
 
-/// 毎フレーム: 窓と仕事の札を描き、押された操作を当てる。
+/// 毎フレーム: ウィンドウと仕事の札を描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::shortcuts::show(ctx, app);
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
@@ -266,7 +266,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     app.release_idle_bake_input();
 }
 
-/// 確かめの窓や結果の窓が開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal`）。
+/// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal`）。
 pub fn modal_open(app: &AppState) -> bool {
     crate::jobs::modal_open(app)
 }
@@ -517,7 +517,7 @@ fn merge_confirm(ctx: &egui::Context, app: &mut AppState) {
                 primary: true,
                 tooltip: Some(
                     lang.pick(
-                        "見た目が変わっても結合します（取り消しで層が戻ります）",
+                        "見た目が変わっても結合します（取り消しでレイヤーが戻ります）",
                         "Merges even though the look changes (Undo brings the layers back)",
                     )
                     .into(),
@@ -576,7 +576,7 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
     }
 }
 
-/// 長い仕事（ベイクの窓を閉じているあいだのベイク・書き出し・PSD など。仕事の表 `jobs::JOBS` の `card`）の札。右下に出し、
+/// 長い仕事（ベイクのウィンドウを閉じているあいだのベイク・書き出し・PSD など。仕事の表 `jobs::JOBS` の `card`）の札。右下に出し、
 /// 進み具合と取消を見せる。
 fn job_card(ctx: &egui::Context, app: &mut AppState) {
     let lang: Lang = app.lang;
@@ -656,7 +656,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
     }
 }
 
-/// 終わる頼みを待たせているあいだの小さな窓（取り消しのボタンは無い）。保存が終わると消え、その結果の後の状態で終わる（保存していない
+/// 終わる頼みを待たせているあいだの小さなウィンドウ（取り消しのボタンは無い）。保存が終わると消え、その結果の後の状態で終わる（保存していない
 /// 変更が残っていれば、そのとき聞く）。下の部品へは入力を渡さない。
 fn saving_before_close(ctx: &egui::Context, app: &AppState) {
     if !waiting_to_close(app) {
@@ -679,7 +679,7 @@ fn saving_before_close(ctx: &egui::Context, app: &AppState) {
                 .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
         });
     let rect = Rect::from_center_size(screen.center(), vec2(320.0, 84.0));
-    // 最後に描いた窓の矩形（試験が位置を知るために読む。`window::last_rect`）
+    // 最後に描いたウィンドウの矩形（試験が位置を知るために読む。`window::last_rect`）
     ctx.data_mut(|d| d.insert_temp(id.with("rect"), rect));
     window::note_open(ctx);
     egui::Area::new(id)
@@ -719,7 +719,7 @@ fn saving_before_close(ctx: &egui::Context, app: &AppState) {
         });
 }
 
-/// 終わる頼みを待たせている小さな窓の、最後に描いた矩形（試験が読む）。
+/// 終わる頼みを待たせている小さなウィンドウの、最後に描いた矩形（試験が読む）。
 pub fn saving_window_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, Id::new("yolu.window.saving-before-close"))
 }
@@ -747,7 +747,7 @@ pub enum CloseJob {
     BrushImport,
     /// ライブラリのフォルダへの書き込み（ライブラリへ入れる・ファイルを足す）。
     LibraryWrite,
-    /// 層の素材（スマートマテリアル・マスク）の保存。
+    /// レイヤーの素材（スマートマテリアル・マスク）の保存。
     ShelfSave,
     /// 個人のライブラリのファイルのプロジェクトへの取り込み。
     ShelfImport,

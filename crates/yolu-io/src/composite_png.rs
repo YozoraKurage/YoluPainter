@@ -20,8 +20,8 @@ pub fn composite_png(doc: &Document) -> Result<Vec<u8>> {
     encode_export(&rgba, doc.width(), doc.height())
 }
 /// 使っている標準チャンネルごとの合成の PNG（`composite/<チャンネル>.png` の中身。番号の順）。Unity 版の `YlpContent.Composites` と
-/// 同じ選び方で、どれかの層が有効にしているチャンネルと、Height → Normal が有効で Height を使っているときの Normal。Normal は
-/// Unity 向けの出力（OpenGL の向き・不透明・塗っていない所は平ら）。Color は使う層が無くても必ず含める。ユーザーチャンネルの
+/// 同じ選び方で、どれかのレイヤーが有効にしているチャンネルと、Height → Normal が有効で Height を使っているときの Normal。Normal は
+/// Unity 向けの出力（OpenGL の向き・不透明・塗っていない所は平ら）。Color は使うレイヤーが無くても必ず含める。ユーザーチャンネルの
 /// PNG は作らない（Unity 版のインポーターが名前を知らない）。
 pub fn composite_pngs(doc: &Document) -> Result<Vec<(Channel, Vec<u8>)>> {
     check_budget(
@@ -113,7 +113,7 @@ fn zlib_in_blocks(
     const BLOCK: usize = ParallelDeflate::BLOCK;
     const DICT: usize = ParallelDeflate::DICT;
     let group_rows = ((rayon::current_num_threads() * 2).max(8) * BLOCK / line).max(1);
-    // 水準 6・32 KiB の窓の zlib の頭（`ZlibEncoder` の既定と同じ）
+    // 水準 6・32 KiB のウィンドウの zlib の頭（`ZlibEncoder` の既定と同じ）
     let mut zlib = vec![0x78, 0x9c];
     let mut adler = 1u32;
     // buf: [辞書（前のかたまりの終わり。最初は空）][まだ圧縮していない行（かたまりの境目から）]

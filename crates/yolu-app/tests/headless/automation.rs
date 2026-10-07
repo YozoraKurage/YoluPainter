@@ -58,7 +58,7 @@ fn layer(s: &AppState, name: &str) -> LayerId {
     found[0]
 }
 
-/// 文書の比べ: 全部の層の全部（属性・チャンネル・マスク・効果・調整）と並び。ID は文書ごとに違うので、並びの番号に替える。
+/// 文書の比べ: 全部のレイヤーの全部（属性・チャンネル・マスク・効果・調整）と並び。ID は文書ごとに違うので、並びの番号に替える。
 fn fingerprint(doc: &Document) -> Value {
     let facts = SetFacts {
         id: "set",

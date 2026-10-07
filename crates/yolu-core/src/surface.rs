@@ -2,7 +2,7 @@
 //!
 //! - 原点は左下。タイルの中も行優先で、一番下の行が先。
 //! - 無いタイルは全画素 0（透明・RGB も 0）。一様なタイルは 4 バイトだけ持つ。ほかは TileSize² × 4 バイト。
-//! - 画布の外にはみ出すタイルの余白は必ず 0。
+//! - キャンバスの外にはみ出すタイルの余白は必ず 0。
 //! - 写し（Undo・ストロークの巻き戻し）は `Arc` を共有し、最初の書き込みでだけ複製する（copy-on-write）。
 //! - アルファ 0 の画素の RGB も、明示して消すまでそのまま保つ。
 
@@ -285,7 +285,7 @@ impl Surface {
         self.height.div_ceil(self.tile_size)
     }
 
-    /// 画素（画布の外は Err）。無いタイルは透明。
+    /// 画素（キャンバスの外は Err）。無いタイルは透明。
     pub fn pixel(&self, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
             return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
@@ -297,7 +297,7 @@ impl Surface {
         }
     }
 
-    /// 1 行の画素（x から out.len() / 4 画素、straight RGBA8）。無いタイルと画布の外は 0。
+    /// 1 行の画素（x から out.len() / 4 画素、straight RGBA8）。無いタイルとキャンバスの外は 0。
     pub fn read_row(&self, x: u32, y: u32, out: &mut [u8]) -> Result<(), CoreError> {
         let n = out.len() / 4;
         let ts = self.tile_size;
@@ -337,13 +337,13 @@ impl Surface {
         }
     }
 
-    /// 画布の大きさの straight RGBA8（行は下から）。試験向け（ディスクから読めない中身があれば止まる）。
+    /// キャンバスの大きさの straight RGBA8（行は下から）。試験向け（ディスクから読めない中身があれば止まる）。
     pub fn to_canvas_bytes(&self) -> Vec<u8> {
         self.canvas_bytes()
             .expect("ディスクのキャッシュからタイルを読めない")
     }
 
-    /// 画布の大きさの straight RGBA8（行は下から）。ディスクから読めない中身があれば誤り。
+    /// キャンバスの大きさの straight RGBA8（行は下から）。ディスクから読めない中身があれば誤り。
     pub fn canvas_bytes(&self) -> Result<Vec<u8>, CoreError> {
         let (w, h, ts) = (
             self.width as usize,
@@ -574,7 +574,7 @@ impl<'a> PixelReader<'a> {
     pub(crate) fn surface(&self) -> &'a Surface {
         self.surface
     }
-    /// 画素（画布の外は透明）。
+    /// 画素（キャンバスの外は透明）。
     #[inline]
     pub(crate) fn pixel(&mut self, x: i64, y: i64) -> Rgba8 {
         let s = self.surface;
@@ -617,7 +617,7 @@ pub(crate) struct Readers<'a> {
 }
 
 impl<'a> Readers<'a> {
-    /// 面の画素（画布の外は透明）。ディスクから読めない画素は透明で、`finish` が誤りを返す。
+    /// 面の画素（キャンバスの外は透明）。ディスクから読めない画素は透明で、`finish` が誤りを返す。
     #[inline]
     pub(crate) fn pixel(&mut self, surface: &'a Surface, x: u32, y: u32) -> Rgba8 {
         let i = match self
@@ -843,10 +843,10 @@ mod tests {
 
     #[test]
     fn edge_padding_must_be_zero() {
-        // C# CoreTests: 5×5・タイル 4 の (1,1) で画布の外の画素に値があると断り、何も持たない
+        // C# CoreTests: 5×5・タイル 4 の (1,1) でキャンバスの外の画素に値があると断り、何も持たない
         let mut s = Surface::new(5, 5, 4);
         let mut bytes = vec![0u8; 64];
-        bytes[7] = 255; // 画素 (1,0) のアルファ = 画布の (5,4)、外
+        bytes[7] = 255; // 画素 (1,0) のアルファ = キャンバスの (5,4)、外
         assert!(s
             .import_tile(TileCoord::new(1, 1), &bytes, Growth::UNLIMITED)
             .is_err());
@@ -899,7 +899,7 @@ mod tests {
         assert!(s.copy_tile(TileCoord::new(2, 2), &mut buf).unwrap());
         let p = ((18 - 16) * 8 + (17 - 16)) * 4;
         assert_eq!(&buf[p..p + 4], &[10, 20, 30, 40]);
-        assert!(buf[(4 * 8 * 4)..].iter().all(|&b| b == 0)); // 画布の外（行 20〜23）は 0
+        assert!(buf[(4 * 8 * 4)..].iter().all(|&b| b == 0)); // キャンバスの外（行 20〜23）は 0
         assert!(s.copy_tile(TileCoord::new(0, 0), &mut buf).unwrap());
         assert!(buf.iter().all(|&b| b == 7));
         buf.fill(0xAB);

@@ -1383,7 +1383,7 @@ fn an_oversized_curved_segment_is_refused_without_partial_edits() {
 const W: usize = 19;
 const H: usize = 13;
 
-/// 19×13 の層に決まった模様（アルファ 0・120・255 が混ざる）を置いた文書（C# の BrushEffectTests.Make の Color）。
+/// 19×13 のレイヤーに決まった模様（アルファ 0・120・255 が混ざる）を置いた文書（C# の BrushEffectTests.Make の Color）。
 fn effect_doc(tile: u32, w: usize, h: usize) -> (Document, LayerId) {
     let (mut d, l) = doc(w as u32, h as u32, tile);
     for y in 0..h {
@@ -1441,7 +1441,7 @@ const CLONE: BrushEffect = BrushEffect::Clone {
 fn b255(v: f64) -> u8 {
     (v + 0.5).floor().clamp(0.0, 255.0) as u8
 }
-// 独立した参照: 全画面の配列、窓の中を直接足すぼかし、4 点の補間。core のフィルター・合成を呼ばない。
+// 独立した参照: 全画面の配列、ウィンドウの中を直接足すぼかし、4 点の補間。core のフィルター・合成を呼ばない。
 fn weighted(p: &[Rgba8], weights: &[f64]) -> Rgba8 {
     let (mut a, mut r, mut g, mut b) = (0.0, 0.0, 0.0, 0.0);
     for (c, w) in p.iter().zip(weights) {

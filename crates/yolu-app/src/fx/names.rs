@@ -84,7 +84,7 @@ impl FilterKind {
         })
     }
 
-    /// 色調補正の 6 種（調整の層と同じ値。Rust 版だけの種類）なら、その種類。
+    /// 色調補正の 6 種（調整レイヤーと同じ値。Rust 版だけの種類）なら、その種類。
     fn color_adjust(self) -> Option<yolu_core::AdjustmentType> {
         use yolu_core::AdjustmentType as T;
         Some(match self {
@@ -318,9 +318,10 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
             "片側の長さ（画素。両側へぼかす）",
             "Length to each side (pixels)",
         ),
-        ("morphology", "radius") => {
-            lang.pick("丸い窓の半径（画素）", "Round window radius (pixels)")
-        }
+        ("morphology", "radius") => lang.pick(
+            "丸いウィンドウの半径（画素）",
+            "Round window radius (pixels)",
+        ),
         ("edge_detect", "width") => lang.pick(
             "輪郭を探す前にぼかす幅（画素）",
             "Blur before finding edges (pixels)",
@@ -332,9 +333,10 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
             "これより明るい所だけ光る",
             "Only parts brighter than this glow",
         ),
-        ("median", "radius") => {
-            lang.pick("正方形の窓の半径（画素）", "Square window radius (pixels)")
-        }
+        ("median", "radius") => lang.pick(
+            "正方形のウィンドウの半径（画素）",
+            "Square window radius (pixels)",
+        ),
         (_, "seed") => lang.pick(
             "同じシードなら同じノイズ",
             "The same seed gives the same noise.",
@@ -381,7 +383,7 @@ pub const GENERATOR_KINDS: [Kind; 15] = [
     Kind::Image,
 ];
 
-/// 画像の段の投影の種類（塗りつぶしの層の投影の、デカールを除いたもの。並びも同じ）。
+/// 画像の段の投影の種類（塗りつぶしレイヤーの投影の、デカールを除いたもの。並びも同じ）。
 pub const IMAGE_PROJECTIONS: [ProjectionMode; 5] = [
     ProjectionMode::Uv,
     ProjectionMode::Triplanar,
@@ -390,7 +392,7 @@ pub const IMAGE_PROJECTIONS: [ProjectionMode; 5] = [
     ProjectionMode::Cylindrical,
 ];
 
-/// 画像の段の投影の外側（塗りつぶしの層と同じ並び）。
+/// 画像の段の投影の外側（塗りつぶしレイヤーと同じ並び）。
 pub const IMAGE_WRAPS: [Wrap; 3] = [Wrap::Repeat, Wrap::Clamp, Wrap::None];
 
 /// 画像の段がマスク・スカラーで値にする成分の名前。

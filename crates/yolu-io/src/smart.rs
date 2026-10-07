@@ -24,7 +24,7 @@ pub const REFUSAL_IMAGE_GENERATORS: &str =
 pub const REFUSAL_NEW_FILTERS: &str =
     ".ylsmart 形式1は Unity 版にもある効果の種類だけです（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グローのフィルターと、模様・ライト・マスクの組み立て・アイランドごとのばらつきのジェネレーターは入れられません）";
 pub const REFUSAL_PATH_LISTS: &str =
-    ".ylsmart 形式1に入るパスは、名前の無い見せる 1 本の、角・取っ手の無いストロークか消しゴムだけです（塗りつぶしの層のパス、2 本以上の一覧、名前を付けた・隠したパス、リボン・塗り・指先の種類、筆先・角度・深さ・対称の設定は入れられません）";
+    ".ylsmart 形式1に入るパスは、名前の無い見せる 1 本の、角・取っ手の無いストロークか消しゴムだけです（塗りつぶしレイヤーのパス、2 本以上の一覧、名前を付けた・隠したパス、リボン・塗り・指先の種類、筆先・角度・深さ・対称の設定は入れられません）";
 pub const REFUSAL_POINT_GRADIENTS: &str =
     ".ylsmart 形式1は Unity 版にもある塗りつぶしの作り方だけです（点のグラデーション・異方性のフィルターを切った画像は入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
@@ -56,7 +56,7 @@ impl SmartFile {
             project::number(&info, "width", 1, 8192)? == fragment.width() as i64
                 && project::number(&info, "height", 1, 8192)? == fragment.height() as i64
                 && project::number(&info, "layers", 1, 2048)? == fragment.layer_count() as i64,
-            "スマート素材の寸法・層数が一致しません",
+            "スマート素材の寸法・レイヤー数が一致しません",
         )?;
         project::validate_smart(&info, &fragment)?;
         project::load_resources(archive.entries(), &mut 0, 1, &mut vec![])?;
@@ -92,7 +92,7 @@ impl SmartFile {
     pub fn to_core(&self) -> Result<SmartMaterial> {
         self.to_core_within(u64::MAX)
     }
-    /// 画素の予算を指定して core の素材にする。超えたら、どの層のどのタイルで断ったかを添えて断る。
+    /// 画素の予算を指定して core の素材にする。超えたら、どのレイヤーのどのタイルで断ったかを添えて断る。
     pub fn to_core_within(&self, budget: u64) -> Result<SmartMaterial> {
         check(
             self.archive
@@ -115,7 +115,7 @@ impl SmartFile {
     }
     pub fn from_core(material: &SmartMaterial, writer: &WriterInfo) -> Result<Self> {
         let doc: Document = material.fragment_document()?;
-        // 断片が持つチャンネル定義は、層が何かを持つものだけ。ユーザーチャンネルを使う素材は、Unity 版が読めない版で書くことになる
+        // 断片が持つチャンネル定義は、レイヤーが何かを持つものだけ。ユーザーチャンネルを使う素材は、Unity 版が読めない版で書くことになる
         check(
             doc.channels().iter().all(|c| c.is_standard()),
             REFUSAL_USER_CHANNELS,
@@ -140,7 +140,7 @@ impl SmartFile {
             !crate::core_bridge::uses_new_filters(&doc),
             REFUSAL_NEW_FILTERS,
         )?;
-        // パスの一覧の形で書くもの（塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）は正本の版 27 になり、
+        // パスの一覧の形で書くもの（塗りつぶしレイヤーのパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）は正本の版 27 になり、
         // Unity 版も .ylsmart の読み手（版 21 まで）も読めない
         check(
             !crate::core_bridge::uses_path_lists(&doc),

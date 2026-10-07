@@ -1,4 +1,4 @@
-//! 調整の層の行の核が、画素ごとの式（`AdjustKernel::composite`・`AdjustmentSettings::composite_in`）と同じバイトを出すことの試験。
+//! 調整レイヤーの行の核が、画素ごとの式（`AdjustKernel::composite`・`AdjustmentSettings::composite_in`）と同じバイトを出すことの試験。
 #![allow(clippy::needless_range_loop)]
 
 use super::*;

@@ -2,7 +2,7 @@ use yolu_core::material::{ChannelPaint, GradientSettings};
 use yolu_core::*;
 fn patterned() -> (Document, LayerId) {
     let mut d = Document::with_tile_size(9, 7, 4).unwrap();
-    let id = d.add_layer("層").unwrap();
+    let id = d.add_layer("レイヤー").unwrap();
     for y in 0..7 {
         for x in 0..9 {
             d.set_pixel(
@@ -745,7 +745,7 @@ fn cancelled_transform_after_prepared_tiles_leaves_selection_and_redo() {
 
 // ───────── ロックによる結合の拒否・結合の型と組の拒否 ─────────
 
-/// 断った操作の前後で変わってはいけない、文書の見える状態（変更番号・記録の番号・履歴・層の並びと画素・合成）。
+/// 断った操作の前後で変わってはいけない、文書の見える状態（変更番号・記録の番号・履歴・レイヤーの並びと画素・合成）。
 #[derive(Debug, PartialEq)]
 struct Fingerprint {
     revision: u64,
@@ -775,7 +775,7 @@ fn locked(layer: LayerId, holder: LayerId, lock: LayerLocks) -> CoreError {
         lock,
     }
 }
-/// 下の層 a の上に写しの b。取り消した操作を 1 つ残してあるので、Redo が残ることも確かめられる。
+/// 下のレイヤー a の上に写しの b。取り消した操作を 1 つ残してあるので、Redo が残ることも確かめられる。
 fn two_layers() -> (Document, LayerId, LayerId) {
     let (mut d, a) = patterned();
     let b = d.duplicate_layer(a, None).unwrap();
@@ -787,7 +787,7 @@ fn two_layers() -> (Document, LayerId, LayerId) {
 
 #[test]
 fn merge_down_refuses_locks_of_either_layer_and_changes_nothing() {
-    // (ロックを付けるのは下の層か, ロック, 断られたときに名指すロック。None は結合できる)
+    // (ロックを付けるのは下のレイヤーか, ロック, 断られたときに名指すロック。None は結合できる)
     let cases = [
         (false, LayerLocks::PIXELS, Some(LayerLocks::PIXELS)),
         (false, LayerLocks::ALL, Some(LayerLocks::ALL)),
@@ -831,7 +831,7 @@ fn merge_down_inherits_group_locks_and_names_the_holder() {
     for (locks, layer_is_lower, lock) in [
         (LayerLocks::ALL, false, LayerLocks::ALL),
         (LayerLocks::PIXELS, false, LayerLocks::PIXELS),
-        // 透明部分のロックは下の層への結合だけを断る（クリッピングの下地への結合は断らない）
+        // 透明部分のロックは下のレイヤーへの結合だけを断る（クリッピングの下地への結合は断らない）
         (LayerLocks::TRANSPARENCY, true, LayerLocks::TRANSPARENCY),
     ] {
         let (mut d, a, b) = two_layers();
@@ -853,11 +853,11 @@ fn merge_visible_refuses_a_locked_contributor_but_not_a_hidden_one() {
         Err(locked(b, b, LayerLocks::PIXELS))
     );
     assert_eq!(fingerprint(&d), before);
-    // 隠した層は結合に入らないので、そのロックは数えない（隠した層は残る）
+    // 隠したレイヤーは結合に入らないので、そのロックは数えない（隠したレイヤーは残る）
     d.set_layer_visible(b, false).unwrap();
     d.merge_visible("結合", 255).unwrap();
     assert!(d.layer(b).is_some() && d.layer(a).is_none());
-    // 親のすべてのロックは、どの子も断る。名指すのは並びの最初（下）の層
+    // 親のすべてのロックは、どの子も断る。名指すのは並びの最初（下）のレイヤー
     let (mut d, a, b) = two_layers();
     let g = d.group_layers(&[a, b], "親").unwrap();
     d.set_layer_locks(g, LayerLocks::ALL).unwrap();
@@ -880,7 +880,7 @@ fn merge_visible_refuses_a_locked_contributor_but_not_a_hidden_one() {
 }
 #[test]
 fn merge_layers_and_group_refuse_own_and_inherited_locks_and_change_nothing() {
-    // merge_layers: 選んだ層の画像・すべて、親グループのすべて
+    // merge_layers: 選んだレイヤーの画像・すべて、親グループのすべて
     for (lock_on, locks, layer, holder_is_group, lock) in [
         ("a", LayerLocks::PIXELS, "a", false, LayerLocks::PIXELS),
         ("b", LayerLocks::ALL, "b", false, LayerLocks::ALL),
@@ -903,7 +903,7 @@ fn merge_layers_and_group_refuse_own_and_inherited_locks_and_change_nothing() {
             "{lock_on} {locks:?}"
         );
         assert_eq!(fingerprint(&d), before);
-        // merge_group も同じ層を同じロックで断る
+        // merge_group も同じレイヤーを同じロックで断る
         assert_eq!(
             d.merge_group(g, 255),
             Err(locked(pick(layer), holder, lock)),
@@ -911,7 +911,7 @@ fn merge_layers_and_group_refuse_own_and_inherited_locks_and_change_nothing() {
         );
         assert_eq!(fingerprint(&d), before);
     }
-    // 透明部分・位置のロックは結合を断らない。グループのロックは結果の層へ引き継ぐ
+    // 透明部分・位置のロックは結合を断らない。グループのロックは結果のレイヤーへ引き継ぐ
     let (mut d, a, b) = two_layers();
     let g = d.group_layers(&[a, b], "親").unwrap();
     d.set_layer_locks(g, LayerLocks::TRANSPARENCY | LayerLocks::POSITION)
@@ -941,7 +941,7 @@ fn merge_refuses_wrong_kinds_pairs_and_unknown_layers_without_changes() {
         d.merge_group(LayerId(0), 255),
         Err(CoreError::LayerNotFound)
     );
-    // 2 層に満たない（重複と、選んだグループに含まれる子は 1 つに数える）
+    // 2 レイヤーに満たない（重複と、選んだグループに含まれる子は 1 つに数える）
     for ids in [vec![a], vec![a, a], vec![], vec![g, b]] {
         assert!(
             matches!(
@@ -956,7 +956,7 @@ fn merge_refuses_wrong_kinds_pairs_and_unknown_layers_without_changes() {
         d.merge_layers(&[a, b], 255),
         refused(MergeRefusal::DifferentGroups)
     );
-    // 隠した層
+    // 隠したレイヤー
     assert_eq!(
         d.merge_layers(&[a, other], 255),
         refused(MergeRefusal::HiddenLayer)
@@ -965,7 +965,7 @@ fn merge_refuses_wrong_kinds_pairs_and_unknown_layers_without_changes() {
         d.merge_layers(&[a, LayerId(0)], 255),
         Err(CoreError::LayerNotFound)
     );
-    // merge_down の拒否: グループ・下が無い・下がグループ（隠した層より先に断る）
+    // merge_down の拒否: グループ・下が無い・下がグループ（隠したレイヤーより先に断る）
     assert_eq!(d.merge_down(g, 255), refused(MergeRefusal::IsGroup));
     assert_eq!(d.merge_down(a, 255), refused(MergeRefusal::NoLayerBelow));
     assert_eq!(
@@ -1022,7 +1022,7 @@ fn merge_refusals_read_as_short_japanese_states() {
     }
     assert_eq!(
         CoreError::MergeRefused(MergeRefusal::NoLayerBelow).to_string(),
-        "結合できない: 下に層が無い"
+        "結合できない: 下にレイヤーが無い"
     );
 }
 
@@ -1046,7 +1046,7 @@ fn set_locks_for_load_clears_history_and_refuses_during_a_stroke_and_unknown_lay
     );
     assert_eq!((d.undo_count(), d.redo_count()), (0, 0));
     assert!(d.revision() > revision);
-    // 検査なしで置ける（ロック済みの層にも。読み込みの途中の編集を断らないため）
+    // 検査なしで置ける（ロック済みのレイヤーにも。読み込みの途中の編集を断らないため）
     d.set_locks_for_load(a, LayerLocks::NONE).unwrap();
     assert_eq!(
         d.set_locks_for_load(LayerId(0), LayerLocks::NONE),
@@ -1097,7 +1097,7 @@ fn transform_bounds_covers_alpha_pixels_masks_regions_and_the_document_selection
     let far = SelectionMask::rectangle(&d, 0, 5, 1, 7);
     assert_eq!(d.transform_bounds(id, Some(&far)), Ok(None));
     d.clear_selection().unwrap();
-    // マスクの隠す量も数える（0 は数えない）。画素の無い層・アルファ 0 だけの層は無し
+    // マスクの隠す量も数える（0 は数えない）。画素の無いレイヤー・アルファ 0 だけのレイヤーは無し
     let only_mask = d.add_layer("マスクだけ").unwrap();
     d.add_layer_mask(only_mask).unwrap();
     assert_eq!(d.transform_bounds(only_mask, None), Ok(None));
@@ -1122,7 +1122,7 @@ fn transform_budget_counts_every_layer_together() {
     let b = d.duplicate_layer(a, None).unwrap();
     d.clear_history().unwrap();
     let shift = Affine2D::translation(1., 0.);
-    // 1 層が通る一番小さい予算（見積りは層の元のタイル + タイルごとの 64 バイト）
+    // 1 レイヤーが通る一番小さい予算（見積りはレイヤーの元のタイル + タイルごとの 64 バイト）
     let one = (0..4096)
         .find(|&budget| {
             d.set_stroke_budget_bytes(budget).unwrap();
@@ -1138,7 +1138,7 @@ fn transform_budget_counts_every_layer_together() {
     d.clear_history().unwrap();
     d.set_stroke_budget_bytes(one).unwrap();
     let before = fingerprint(&d);
-    // 2 層は、層ごとには通っても合計で超えるので断る。1 層も変わらない
+    // 2 レイヤーは、レイヤーごとには通っても合計で超えるので断る。1 レイヤーも変わらない
     assert_eq!(
         d.transform_layers(&[a, b], shift, Resampling::Nearest),
         Err(CoreError::StrokeBudgetExceeded)
@@ -1162,7 +1162,7 @@ fn transform_refuses_non_raster_layers_and_inherits_group_locks() {
     d.clear_history().unwrap();
     let shift = Affine2D::translation(1., 0.);
     let before = fingerprint(&d);
-    // ラスター以外は 1 層を指しても、グループや塗りつぶしだけを選んでも動かせない
+    // ラスター以外は 1 レイヤーを指しても、グループや塗りつぶしだけを選んでも動かせない
     assert!(matches!(
         d.transform_layer(fill, shift, Resampling::Nearest, true),
         Err(CoreError::Unsupported(_))
@@ -1334,11 +1334,11 @@ fn resize_history_respects_minimum_steps_and_a_roomy_budget_and_refusals_keep_hi
     let _ = id;
 }
 
-/// 3 層（それぞれ別のタイルに画素が 1 つ）の 64×64、タイルは 8。
+/// 3 レイヤー（それぞれ別のタイルに画素が 1 つ）の 64×64、タイルは 8。
 fn three_tiles() -> (Document, [LayerId; 3]) {
     let mut d = Document::with_tile_size(64, 64, 8).unwrap();
     let ids = [(1, 1), (20, 20), (50, 50)].map(|(x, y)| {
-        let id = d.add_layer("層").unwrap();
+        let id = d.add_layer("レイヤー").unwrap();
         d.set_pixel(id, x, y, Rgba8::new(200, 100, 50, 255))
             .unwrap();
         id
@@ -1369,7 +1369,7 @@ fn multi_layer_operations_mark_only_the_layers_they_change() {
     d.redo().unwrap();
     assert_eq!(d.change_serial(), since);
 
-    // 層の削除・複製・表示・一段移動・結合・変形は、動いた層のタイルだけ（元に戻したときも）
+    // レイヤーの削除・複製・表示・一段移動・結合・変形は、動いたレイヤーのタイルだけ（元に戻したときも）
     let (mut d, [_, b, _]) = three_tiles();
     let since = d.change_serial();
     d.remove_layers(&[b]).unwrap();
@@ -1407,7 +1407,7 @@ fn multi_layer_operations_mark_only_the_layers_they_change() {
         .unwrap();
     assert_eq!(changed(&d, since), [(6, 6), (7, 6)]);
 
-    // 全部の層を外しても（文書に層が無くなっても）印を付けられる
+    // 全部のレイヤーを外しても（文書にレイヤーが無くなっても）印を付けられる
     let (mut d, ids) = three_tiles();
     let since = d.change_serial();
     d.remove_layers(&ids).unwrap();
@@ -1416,7 +1416,7 @@ fn multi_layer_operations_mark_only_the_layers_they_change() {
     d.undo().unwrap();
     assert_eq!(changed(&d, since), [(0, 0), (2, 2), (6, 6)]);
 
-    // サイズ変更は寸法が変わるので、どの層も変わり得る
+    // サイズ変更は寸法が変わるので、どのレイヤーも変わり得る
     let (mut d, _) = three_tiles();
     let since = d.change_serial();
     d.resize_canvas(70, 70, (0, 0)).unwrap();
@@ -1463,7 +1463,7 @@ fn deep_fingerprint(d: &Document) -> DeepFingerprint {
         active: d.has_active_stroke() || d.active_stroke_stats().is_some(),
     }
 }
-/// ロックの検査の試験の層: 画素のある Color に、マスク。ほかのチャンネルは無効で面が無い（マテリアルで塗ると有効にする）。
+/// ロックの検査の試験のレイヤー: 画素のある Color に、マスク。ほかのチャンネルは無効で面が無い（マテリアルで塗ると有効にする）。
 fn locked_target() -> (Document, LayerId) {
     let (mut d, id) = patterned();
     d.add_layer_mask(id).unwrap();
@@ -1681,7 +1681,7 @@ fn every_pixel_write_entry_goes_through_the_layer_locks() {
         LayerLocks::ALL,
     ] {
         for e in &entries {
-            // 層自身のロックと、親のグループのロック（持ち主はグループ）
+            // レイヤー自身のロックと、親のグループのロック（持ち主はグループ）
             for grouped in [false, true] {
                 let (mut d, id) = locked_target();
                 let holder = if grouped {
@@ -1721,7 +1721,7 @@ fn every_pixel_write_entry_goes_through_the_layer_locks() {
             }
         }
     }
-    // 事例の数は規則から数えた値で固定する（規則が崩れて数がずれたら落ちる）。26 入口 × ロック 5 種 × 層/親グループ 2 = 260 事例のうち、
+    // 事例の数は規則から数えた値で固定する（規則が崩れて数がずれたら落ちる）。26 入口 × ロック 5 種 × レイヤー/親グループ 2 = 260 事例のうち、
     // 断るのは すべて 26 入口 × 2 = 52、画像 画素の 20 入口 × 2 = 40、透明部分 消す 8 入口 × 2 = 16 の計 108、通るのは残りの 152
     assert_eq!(entries.len(), 26);
     assert_eq!((refused, passed), (108, 152));
@@ -1752,10 +1752,10 @@ fn refused_material_writes_leave_no_channel_enabled_and_no_surface() {
     }
 }
 
-/// 3 チャンネルに画素のある層（透明な画素と、透明なのに RGB が残る画素を含む）。
+/// 3 チャンネルに画素のあるレイヤー（透明な画素と、透明なのに RGB が残る画素を含む）。
 fn three_channels() -> (Document, LayerId, Vec<ChannelPaint>) {
     let mut d = Document::with_tile_size(9, 7, 4).unwrap();
-    let id = d.add_layer("層").unwrap();
+    let id = d.add_layer("レイヤー").unwrap();
     let material = vec![
         ChannelPaint::new(Channel::Color, Rgba8::new(240, 20, 30, 220)),
         ChannelPaint::new(Channel::Emission, Rgba8::new(10, 220, 40, 200)),
@@ -1790,7 +1790,7 @@ fn channel_pixels(d: &Document, id: LayerId, channel: Channel) -> Vec<Rgba8> {
         })
         .collect()
 }
-/// 透明部分のロック（層か親のグループ）の下で、マテリアルの塗り 4 種と単チャンネルの 2 種（グラデーション・三角形の塗り）が、
+/// 透明部分のロック（レイヤーか親のグループ）の下で、マテリアルの塗り 4 種と単チャンネルの 2 種（グラデーション・三角形の塗り）が、
 /// 塗った全チャンネルのアルファを変えず、透明画素の RGB も保つ。色は実際に変わる（空振りでない）。Undo で元の画素へ、Redo で同じ結果へ。
 #[test]
 fn transparency_lock_keeps_alpha_and_hidden_rgb_in_every_channel_of_every_material_write() {
@@ -1997,7 +1997,7 @@ fn cancelled_locked_triangle_fill_restores_pixels_history_and_channels() {
 
 // ───────── 型の拒否とロックの拒否の順・マスクの有無・予算の拒否・手動の ID 色 ─────────
 
-/// 塗りつぶし・調整・グループの層（全体のマスク付き）。kind: 0 塗りつぶし・1 調整・2 グループ。
+/// 塗りつぶし・調整・グループのレイヤー（全体のマスク付き）。kind: 0 塗りつぶし・1 調整・2 グループ。
 fn non_raster_target(kind: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(9, 7, 4).unwrap();
     let id = match kind {
@@ -2020,10 +2020,10 @@ fn non_raster_target(kind: u32) -> (Document, LayerId) {
 fn is_type_refusal(r: &Result<(), CoreError>) -> bool {
     matches!(r, Err(CoreError::Unsupported(_)))
 }
-/// 塗りつぶし・調整・グループの層への書き込みは、型で断るのとロックで断るのとで順が決まっている（C# と同じ。tests/reference/material_golden.rs の
+/// 塗りつぶし・調整・グループのレイヤーへの書き込みは、型で断るのとロックで断るのとで順が決まっている（C# と同じ。tests/reference/material_golden.rs の
 /// locknr が全バイトで照らす）。画素の入口は型が先で、ロックの名指しは出ない。ただし単チャンネルのストローク（begin_stroke の 4 入口）は
 /// 調整・グループではロックが先（C# の BeginStroke は面を取る GetChannel が型で断るのをロックの検査のあとに置く）で、塗りつぶしだけ型が先。
-/// マスクへの書き込みはどの種類の層にも通り、すべてのロックでだけ断る。断ったあとは何も変わらない。
+/// マスクへの書き込みはどの種類のレイヤーにも通り、すべてのロックでだけ断る。断ったあとは何も変わらない。
 #[test]
 fn non_raster_layers_refuse_by_type_before_the_lock_except_begin_stroke_on_adjustments_and_groups()
 {
@@ -2085,16 +2085,16 @@ fn non_raster_layers_refuse_by_type_before_the_lock_except_begin_stroke_on_adjus
             }
         }
     }
-    // 26 入口 × ロック 5 種 × 層/親グループ 2 × 層の種類 3 = 780 事例。ロックで断る 72（マスクの 6 入口 × すべて 2 × 3 種 = 36 と、
+    // 26 入口 × ロック 5 種 × レイヤー/親グループ 2 × レイヤーの種類 3 = 780 事例。ロックで断る 72（マスクの 6 入口 × すべて 2 × 3 種 = 36 と、
     // 調整・グループの begin_stroke の 4 入口 × すべて・画像 2 種 × 2 × 2 種 = 32 に、消す 1 入口 × 透明部分 × 2 × 2 種 = 4）、
     // 通る 144（マスクの 6 入口 × 通る 4 種 × 2 × 3 種）、残りは型で断る
     assert_eq!((by_lock, written, by_type), (72, 144, 780 - 72 - 144));
 }
-/// マスクの無い層は、マスクへ書く入口もマスクを変える入口も、ロックに関わらず「マスクが無い」で断る（C# は RequireMask がロックの検査より先。
-/// すべてのロックは、マスクの有無を確かめたあとにだけ効く）。断ったあとは何も変わらない。スマートマスクの適用は、マスクの無い層へ新しく付けるので対象外。
+/// マスクの無いレイヤーは、マスクへ書く入口もマスクを変える入口も、ロックに関わらず「マスクが無い」で断る（C# は RequireMask がロックの検査より先。
+/// すべてのロックは、マスクの有無を確かめたあとにだけ効く）。断ったあとは何も変わらない。スマートマスクの適用は、マスクの無いレイヤーへ新しく付けるので対象外。
 #[test]
 fn mask_entries_refuse_a_layer_without_a_mask_before_the_lock() {
-    let no_mask = Err(CoreError::Unsupported("層にマスクが無い"));
+    let no_mask = Err(CoreError::Unsupported("レイヤーにマスクが無い"));
     type Edit = Box<dyn Fn(&mut Document, LayerId) -> Result<(), CoreError>>;
     let mut edits: Vec<(&str, Edit)> = Vec::new();
     for e in write_entries()
@@ -2147,14 +2147,14 @@ fn mask_entries_refuse_a_layer_without_a_mask_before_the_lock() {
         }
     }
     assert_eq!(refused, 9 * 5 * 2);
-    // マスクを足すほうは逆で、もうマスクのある層はロックに関わらず「もうマスクを持っている」で断る（C# の AddLayerMask）
+    // マスクを足すほうは逆で、もうマスクのあるレイヤーはロックに関わらず「もうマスクを持っている」で断る（C# の AddLayerMask）
     for lock in [LayerLocks::NONE, LayerLocks::ALL] {
         let (mut d, id) = locked_target();
         d.set_layer_locks(id, lock).unwrap();
         d.clear_history().unwrap();
         assert_eq!(
             d.add_layer_mask(id),
-            Err(CoreError::Unsupported("層はもうマスクを持っている")),
+            Err(CoreError::Unsupported("レイヤーはもうマスクを持っている")),
             "{lock:?}"
         );
     }
@@ -2172,7 +2172,7 @@ fn mask_entries_refuse_a_layer_without_a_mask_before_the_lock() {
     }
 }
 
-/// 透明部分のロックを立てた、チャンネルに画素のある層への、予算を超えうるマテリアルの書き込み（ストロークは点を足して確定、
+/// 透明部分のロックを立てた、チャンネルに画素のあるレイヤーへの、予算を超えうるマテリアルの書き込み（ストロークは点を足して確定、
 /// 範囲の塗りは 1 回、三角形の塗りは三角形を足して確定）。
 fn budgeted_writes() -> Vec<(&'static str, WriteEntry)> {
     vec![
@@ -2208,7 +2208,7 @@ fn budgeted_writes() -> Vec<(&'static str, WriteEntry)> {
         ),
     ]
 }
-/// 断ったあとも変わらないもの（変更番号と変化の記録は、取り消しで進むので除く）: 履歴・層・全チャンネルの有効と画素・マスク・進行中のストローク。
+/// 断ったあとも変わらないもの（変更番号と変化の記録は、取り消しで進むので除く）: 履歴・レイヤー・全チャンネルの有効と画素・マスク・進行中のストローク。
 fn assert_restored(after: &DeepFingerprint, before: &DeepFingerprint, context: &str) {
     assert_eq!(after.base.undo, before.base.undo, "{context}: undo");
     assert_eq!(after.base.redo, before.base.redo, "{context}: redo");
@@ -2305,7 +2305,7 @@ fn transparency_lock_writes_need_no_pixel_budget_and_the_unlocked_refusal_restor
     }
 }
 
-/// 手動の ID 色（塊の番号と色の結び付け）は画素でも層でもないので、層の操作・変形・サイズ変更では変わらない（準備用の文書へ写さず・交換しない）。
+/// 手動の ID 色（塊の番号と色の結び付け）は画素でもレイヤーでもないので、レイヤーの操作・変形・サイズ変更では変わらない（準備用の文書へ写さず・交換しない）。
 /// 実行の前後も、Undo・Redo のあとも同じ。C# の Resampled は別の文書を返すので ID 色を持ち越さないが、Rust は同じ文書の中で交換するので値が
 /// そのまま残る（意図した違い）。
 #[test]

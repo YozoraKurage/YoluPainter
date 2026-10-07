@@ -2,7 +2,7 @@
 //! 領域の編集（塗りつぶし・グラデーション・マテリアルの塗り・マスクの塗り）が、スレッド数 1・2・3・既定のどれでも同じバイトで、
 //! 取消・予算の拒否では画素・確保量・履歴・版が元のまま。合成そのものは document.rs（`compositing_does_not_depend_on_the_thread_count`）、
 //! 1 本のストロークは同（`big_dabs_give_the_same_bytes_with_any_thread_count`）、ロック下の塗りと 1・4 スレッドの C# との一致は
-//! material_golden.rs が見る。層の操作のうち、変形（任意の角度・拡大縮小・反転・90° 回転・選択範囲の持ち上げ・マスクと全チャンネル）と
+//! material_golden.rs が見る。レイヤーの操作のうち、変形（任意の角度・拡大縮小・反転・90° 回転・選択範囲の持ち上げ・マスクと全チャンネル）と
 //! 結合のスレッド数は末尾の試験が見る（変形の取消・予算の拒否は元のバイトのまま）。サイズ変更は docops.rs・resize.rs に任せる。
 //! 結果は画素のバイトを SHA-256 に、確保量・タイルの数・変更の記録・履歴のバイト数・ストロークの統計を添えて比べる。
 //! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最初の試験で 1 にして戻さない。束のほかの試験のダブの経路を変える。
@@ -101,7 +101,7 @@ impl Rnd {
         }
     }
 }
-/// share の割合のタイルへ乱数の画素を置く（透明でも RGB を持つ画素を含める。画布の外は 0）。
+/// share の割合のタイルへ乱数の画素を置く（透明でも RGB を持つ画素を含める。キャンバスの外は 0）。
 #[allow(clippy::too_many_arguments)]
 fn import(
     d: &mut Document,
@@ -137,7 +137,7 @@ fn import(
         }
     }
 }
-/// 600×360・タイル 64。不透明な背景と、画素が既にある層（一部のタイルは一様、一部は全画素）。selection ならぼかした楕円の選択範囲。
+/// 600×360・タイル 64。不透明な背景と、画素が既にあるレイヤー（一部のタイルは一様、一部は全画素）。selection ならぼかした楕円の選択範囲。
 fn canvas(selection: bool) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(600, 360, 64).unwrap();
     let mut rnd = Rnd(0x9E37_79B9_7F4A_7C15);
@@ -466,7 +466,7 @@ fn region_edits_are_the_same_with_any_number_of_threads() {
     assert_eq!(stages.len(), 6); // 元・塗り 4 段・全部を戻したあと
 }
 
-/// 層に全チャンネルを持たせるマテリアルの塗りつぶし・グラデーションも、どのスレッド数でも全チャンネルが同じバイト。
+/// レイヤーに全チャンネルを持たせるマテリアルの塗りつぶし・グラデーションも、どのスレッド数でも全チャンネルが同じバイト。
 #[test]
 fn material_region_edits_are_the_same_with_any_number_of_threads() {
     let material = |seed: u8| -> Vec<ChannelPaint> {
@@ -717,11 +717,11 @@ fn large_effect_dabs_on_every_channel_and_a_mask_are_the_same_with_any_number_of
     }
 }
 
-// ───────── 層の操作（変形・結合）: 画面の移動・変形の道具と結合が頼る ─────────
+// ───────── レイヤーの操作（変形・結合）: 画面の移動・変形のツールと結合が頼る ─────────
 
 use yolu_core::{Affine2D, LayerLocks, Resampling};
 
-/// 600×360 の canvas に、Height も持ち、マスクのある層を足したもの。層は下から bg・paint・heights（Color と Height・マスク）。
+/// 600×360 の canvas に、Height も持ち、マスクのあるレイヤーを足したもの。レイヤーは下から bg・paint・heights（Color と Height・マスク）。
 fn operation_canvas(selection: bool) -> (Document, LayerId, LayerId) {
     let (mut d, paint) = canvas(selection);
     let mut rnd = Rnd(0xD1B5_4A32_D192_ED03);
@@ -830,11 +830,11 @@ fn layer_transforms_are_the_same_with_any_number_of_threads() {
                 let (mut d, paint, heights) = operation_canvas(selection);
                 let ids = [paint, heights];
                 let original = operation_fingerprint(&d, &ids);
-                // 2 つの層をまとめて 1 回で（グループなら中身ごとの経路と同じ transform_layers）
+                // 2 つのレイヤーをまとめて 1 回で（グループなら中身ごとの経路と同じ transform_layers）
                 assert!(d.transform_layers(&ids, t, resampling).unwrap(), "{name}");
                 let moved = operation_fingerprint(&d, &ids);
                 assert_ne!(moved, original, "{name}: 変形が画素を変えている");
-                // 続けて 1 つの層だけ（マスク込み）を、同じ変形で
+                // 続けて 1 つのレイヤーだけ（マスク込み）を、同じ変形で
                 d.transform_layer(heights, t, resampling, true).unwrap();
                 let twice = operation_fingerprint(&d, &ids);
                 while d.undo().unwrap() {}
@@ -922,7 +922,7 @@ fn color_difference(before: &[u8], after: &[u8]) -> (u64, u8) {
     (changed, largest)
 }
 
-/// 結合（下の層・複数の層・表示している層）は、どのスレッド数でも同じバイトで、Undo で元に戻る。
+/// 結合（下のレイヤー・複数のレイヤー・表示しているレイヤー）は、どのスレッド数でも同じバイトで、Undo で元に戻る。
 #[test]
 fn layer_merges_are_the_same_with_any_number_of_threads() {
     for kind in ["down", "layers", "visible"] {

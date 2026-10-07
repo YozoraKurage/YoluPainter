@@ -63,12 +63,12 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
         .collect()
 }
 
-/// 層を 2 枚足して、全タイルに違う画素を入れる。
+/// レイヤーを 2 枚足して、全タイルに違う画素を入れる。
 pub(crate) fn fill(doc: &mut Document, seed: u64) {
     let ts = doc.tile_size();
     let (nx, ny) = (doc.width().div_ceil(ts), doc.height().div_ceil(ts));
     for i in 0..2u64 {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..ny {
             for tx in 0..nx {
                 let s = seed * 1000 + i * 101 + (ty * nx + tx) as u64;
@@ -276,7 +276,7 @@ fn checkpoint_from(s: &mut AppState, from: Instant) {
     s.recovery_wait();
 }
 
-/// そのセットの全層をディスクへ逃がし、読めなくして、読もうとして失敗させる（読めないタイルを持つ印が付く）。
+/// そのセットの全レイヤーをディスクへ逃がし、読めなくして、読もうとして失敗させる（読めないタイルを持つ印が付く）。
 pub(crate) fn make_unreadable(s: &AppState, set: usize, cache: &Path) {
     evict_all(cache);
     for l in s.set_doc(set).layers() {
@@ -604,7 +604,10 @@ fn a_checkpoint_leaves_out_a_never_saved_unreadable_set_and_restores_the_readabl
     assert!(s.recovery.is_idle());
     drop(s);
     let mut next = with_recovery(root, Lang::Ja);
-    assert!(next.recovery.window.is_some(), "落ちた体の起動で窓が出る");
+    assert!(
+        next.recovery.window.is_some(),
+        "落ちた体の起動でウィンドウが出る"
+    );
     next.recovery_apply(RecoveryAction::Open);
     assert_eq!(next.sets.len(), 1, "{}", next.message);
     assert_eq!(next.sets.get(0).unwrap().id, id);

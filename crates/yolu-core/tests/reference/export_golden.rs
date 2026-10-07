@@ -136,7 +136,7 @@ fn layer_at(doc: &Document, s: &str) -> LayerId {
             .layers()
             .iter()
             .find(|l| l.name() == name)
-            .unwrap_or_else(|| panic!("層の名前: {s}"))
+            .unwrap_or_else(|| panic!("レイヤーの名前: {s}"))
             .id(),
         None => doc.layers()[int(s) as usize].id(),
     }
@@ -180,7 +180,7 @@ fn flag(doc: &mut Document, id: LayerId, flag: &str) -> Result<(), Refused> {
     Ok(())
 }
 
-/// 層の中身: empty | random:種（画布の全画素を下の行から）| sparse:種（タイルごとに 無し・一様・画素）| solid:R,G,B,A。
+/// レイヤーの中身: empty | random:種（キャンバスの全画素を下の行から）| sparse:種（タイルごとに 無し・一様・画素）| solid:R,G,B,A。
 fn fill(doc: &mut Document, id: LayerId, ch: Channel, spec: &str) {
     let (w, h, ts) = (
         doc.width() as usize,

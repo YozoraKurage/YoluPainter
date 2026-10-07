@@ -12,7 +12,7 @@ pub fn unit(seed: u32) -> f32 {
     (hash(seed) >> 8) as f32 / 16_777_216.0
 }
 
-/// 6 面の分割立方体（C# の MeshGolden と同じ並び）。UV は 3×2 の格子に面ごとの島。`bulge` は球に近づける割合、
+/// 6 面の分割立方体（C# の MeshGolden と同じ並び）。UV は 3×2 の格子に面ごとのアイランド。`bulge` は球に近づける割合、
 /// `noise` は頂点ごとの凹凸。面（スロット）は面ごとに 1 つ。
 pub struct Cube {
     pub corners: Vec<f32>,

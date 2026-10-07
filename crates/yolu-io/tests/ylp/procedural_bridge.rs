@@ -55,7 +55,7 @@ fn busy_grunge() -> Settings {
     g
 }
 
-/// 40×28 の文書: 塗りつぶしの層の内容にノイズ（Color）、マスクにグランジ。UV の設定にして、入力なしでも合成が決まる。
+/// 40×28 の文書: 塗りつぶしレイヤーの内容にノイズ（Color）、マスクにグランジ。UV の設定にして、入力なしでも合成が決まる。
 fn document(uv_only: bool) -> Document {
     let mut doc = Document::with_tile_size(40, 28, 8).unwrap();
     let fill = doc
@@ -421,7 +421,7 @@ fn unity_0_2_0_reader_refuses_version_23_before_touching_the_file() {
     );
 }
 
-/// 同梱のスマートマテリアルを置いた文書は、保存して読み直すと、層・Generator の設定・全チャンネルの合成が同じ（版 23）。
+/// 同梱のスマートマテリアルを置いた文書は、保存して読み直すと、レイヤー・Generator の設定・全チャンネルの合成が同じ（版 23）。
 #[test]
 fn bundled_materials_survive_save_and_reopen() {
     use yolu_core::smart::SmartPlacement;

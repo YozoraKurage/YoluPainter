@@ -166,9 +166,9 @@ fn a_core_document_streams_the_same_bytes_as_from_core() {
     }
 }
 
-/// 層の後の手動の ID の色の `tag`（`Bytes` の値）は最後の層の値として数える。区切りは層の始まりで、その層の値の合計を閾値と比べて決めるので、
-/// 数え方が 2 つの作り方（core の文書から流す・メモリの正本を分ける）で違うと、閾値によって区切りが食い違う（`tag` だけを別の層の始まりと
-/// 見る・最後の層の合計が境目で変わる）。閾値を細かく動かして、どちらも同じバイト列になることを見る。
+/// レイヤーの後の手動の ID の色の `tag`（`Bytes` の値）は最後のレイヤーの値として数える。区切りはレイヤーの始まりで、そのレイヤーの値の合計を閾値と比べて決めるので、
+/// 数え方が 2 つの作り方（core の文書から流す・メモリの正本を分ける）で違うと、閾値によって区切りが食い違う（`tag` だけを別のレイヤーの始まりと
+/// 見る・最後のレイヤーの合計が境目で変わる）。閾値を細かく動かして、どちらも同じバイト列になることを見る。
 #[test]
 fn the_tag_after_the_layers_counts_for_the_last_layer_in_both_ways_of_splitting() {
     let native = fixture("native-rich-v21.utpaint");
@@ -355,7 +355,7 @@ fn cut_groups_small_layers_keeps_big_layers_apart_and_never_splits_a_value() {
         part_min: 30,
         ..Thresholds::REAL
     };
-    // 層の前の値は層 0 と同じ部分。小さな層（10）は 30 になるまでまとめる。大きな層（40）はひとりで。100 を超える手前で区切る
+    // レイヤーの前の値はレイヤー 0 と同じ部分。小さなレイヤー（10）は 30 になるまでまとめる。大きなレイヤー（40）はひとりで。100 を超える手前で区切る
     let values = [
         (0, 4),
         (0, 10),
@@ -398,13 +398,13 @@ fn cut_groups_small_layers_keeps_big_layers_apart_and_never_splits_a_value() {
 
 #[test]
 fn a_document_with_nothing_but_plain_values_has_one_part_or_none() {
-    // 値の無い文書（層 0・ユーザーチャンネル無し）は分ける理由が無い（閾値を超えないので分けない）
+    // 値の無い文書（レイヤー 0・ユーザーチャンネル無し）は分ける理由が無い（閾値を超えないので分けない）
     let doc = Arc::new(yolu_core::Document::new(16, 16).unwrap());
     let made = tiny(1 << 20, 0).scoped(|| CoreDoc::new(doc).unwrap());
     assert!(made.plan().split.is_none());
 }
 
-/// 一様なタイル（core では 4 バイト、正本では全画素）だけの層を `layers` 枚持つ文書。
+/// 一様なタイル（core では 4 バイト、正本では全画素）だけのレイヤーを `layers` 枚持つ文書。
 fn uniform_layers(size: u32, tile: u32, layers: usize) -> yolu_core::Document {
     let mut doc = yolu_core::Document::with_tile_size(size, size, tile).unwrap();
     let bytes = [10u8, 20, 30, 255].repeat((tile * tile) as usize);
@@ -450,7 +450,7 @@ fn a_document_too_big_for_memory_is_refused_before_reading() {
         matches!(&e, Error::Budget(why) if why == TOO_BIG_FOR_MEMORY),
         "{e:?}"
     );
-    // core の文書から作る正本: 一様なタイルの層で正本だけが 512 MiB を超える（core の画素は小さい）
+    // core の文書から作る正本: 一様なタイルのレイヤーで正本だけが 512 MiB を超える（core の画素は小さい）
     let doc = uniform_layers(1024, 512, 130);
     assert!(doc.allocated_bytes() < 1 << 20);
     let made = CoreDoc::new(Arc::new(doc)).unwrap();

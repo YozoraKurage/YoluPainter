@@ -41,7 +41,7 @@ pub fn window_entries(app: &AppState) -> Vec<Entry<Action>> {
     entries
 }
 
-/// タブの右クリック: 主の窓のタブは「別ウィンドウで開く」。外の窓のタブは「ドックに戻す」と、窓にほかのタブもあれば「別ウィンドウで開く」。
+/// タブの右クリック: メインウィンドウのタブは「別ウィンドウで開く」。別ウィンドウのタブは「ドックに戻す」と、ウィンドウにほかのタブもあれば「別ウィンドウで開く」。
 pub fn tab_entries(app: &AppState, tab: Tab) -> Vec<Entry<Action>> {
     let l = app.lang;
     let open = Entry::item(

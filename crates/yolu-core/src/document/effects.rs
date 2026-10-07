@@ -2,7 +2,7 @@
 //! （C# の `PaintDocument.Filters / Generators / Anchors / FillImages / FillGradients` の編集の口）。
 //!
 //! どれも 1 回の Undo で、断ったら何も変えない。スライダーのドラッグ（強さ・設定・投影・グラデーション）はまとめられる。
-//! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（その層が出す所を作り直させる）まで。
+//! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（そのレイヤーが出す所を作り直させる）まで。
 
 use std::collections::BTreeMap;
 
@@ -118,7 +118,7 @@ pub(crate) fn generator_blend(b: generator::Blend) -> filter::GeneratorBlend {
 impl Document {
     // ───────── 参照 ─────────
 
-    /// ID の段と、それがある層・スタック（内容・マスクの順に探す）。
+    /// ID の段と、それがあるレイヤー・スタック（内容・マスクの順に探す）。
     pub fn find_filter(&self, id: FilterId) -> Option<(LayerId, &FilterEffect, FilterTarget)> {
         for l in &self.layers {
             if let Some(e) = l.filters.iter().find(|e| e.id == id) {
@@ -135,7 +135,7 @@ impl Document {
         None
     }
 
-    /// 層の、そのスタック（内容・マスク）の段。マスクのスタックはマスクが無ければ空。
+    /// レイヤーの、そのスタック（内容・マスク）の段。マスクのスタックはマスクが無ければ空。
     pub fn filters_of(
         &self,
         layer: LayerId,
@@ -160,7 +160,7 @@ impl Document {
                 .mask
                 .as_ref()
                 .map(|m| &m.filters)
-                .ok_or(CoreError::Unsupported("層にマスクが無い")),
+                .ok_or(CoreError::Unsupported("レイヤーにマスクが無い")),
         }
     }
 
@@ -186,7 +186,7 @@ impl Document {
     // ───────── 写し ─────────
 
     /// 結合の結果へ写した、残すマスクの段に新しい ID を付ける（C# の `CloneMask` は段に新しい ID を付ける。マスクの Anchor は同じものを
-    /// 保つので触らない）。段の ID を持つ層は文書に無いまま、`self`（準備用の文書）の数で決める。
+    /// 保つので触らない）。段の ID を持つレイヤーは文書に無いまま、`self`（準備用の文書）の数で決める。
     pub(super) fn renew_kept_mask_filter_ids(&mut self, result: &mut Layer) {
         if let Some(m) = &mut result.mask {
             for e in &mut m.filters {
@@ -195,8 +195,8 @@ impl Document {
         }
     }
 
-    /// 層の写し（まだ文書に入れていない）の段・Anchor に新しい ID を付ける。写しの中の Anchor を読む段は写しの Anchor を読む（外の Anchor
-    /// への参照はそのまま）。層を写す操作（複製・グループの写し）が、写しを文書へ入れる前に呼ぶ。
+    /// レイヤーの写し（まだ文書に入れていない）の段・Anchor に新しい ID を付ける。写しの中の Anchor を読む段は写しの Anchor を読む（外の Anchor
+    /// への参照はそのまま）。レイヤーを写す操作（複製・グループの写し）が、写しを文書へ入れる前に呼ぶ。
     pub(super) fn renew_effect_ids(&mut self, copies: &mut [Layer]) {
         let mut anchors: std::collections::HashMap<u128, u128> = std::collections::HashMap::new();
         for l in copies.iter_mut() {
@@ -207,7 +207,7 @@ impl Document {
             for stack in stacks {
                 for e in stack.iter_mut() {
                     e.id = self.new_filter_id();
-                    // 次の ID が同じにならないよう、この段の ID を持つ層は文書に無いので、数の進みで分ける（new_filter_id は進める）
+                    // 次の ID が同じにならないよう、この段の ID を持つレイヤーは文書に無いので、数の進みで分ける（new_filter_id は進める）
                 }
             }
             let mut renew = |a: &mut Option<Anchor>| {
@@ -255,7 +255,7 @@ impl Document {
         }
     }
 
-    /// 大きさを変えて写した層（画素の大きさを変える操作の結果）の、ぼかし・シャープの半径を倍率に合わせる（C# の `Resampled` と同じ:
+    /// 大きさを変えて写したレイヤー（画素の大きさを変える操作の結果）の、ぼかし・シャープの半径を倍率に合わせる（C# の `Resampled` と同じ:
     /// 半径 × 倍率を 0 から遠い向きへ丸め、1 以上・段の最大以下。変えたものは理由を返す）。段の ID・並び・有効・強さ・チャンネルは
     /// そのまま。縦横の倍率が違うときは、呼び手が幾何平均を渡す。
     pub(crate) fn scale_effect_radii(layers: &mut [Layer], scale: f64) -> Vec<String> {
@@ -350,7 +350,7 @@ impl Document {
         notes
     }
 
-    /// 文書へ入れる前の層（読み込み・スマートマテリアルの配置など）の段が、今の文書の決まり（段の数・到達半径・作業メモリ・
+    /// 文書へ入れる前のレイヤー（読み込み・スマートマテリアルの配置など）の段が、今の文書の決まり（段の数・到達半径・作業メモリ・
     /// ID の重ならなさ・標準のチャンネル）に収まるか。収まらなければ何も変えずに断る。
     pub(crate) fn check_layer_effects(&self, layers: &[Layer]) -> Result<(), CoreError> {
         let mut seen = std::collections::HashSet::new();
@@ -370,8 +370,8 @@ impl Document {
         self.check_layer_stacks(layers)
     }
 
-    /// 層の段が、今の文書の大きさ・予算で収まるか（標準のチャンネル・段の数・到達半径・作業メモリ）。ID は見ない。大きさを変えた写しの
-    /// 検査にも使う（同じ ID の層が文書の中にあってよい）。
+    /// レイヤーの段が、今の文書の大きさ・予算で収まるか（標準のチャンネル・段の数・到達半径・作業メモリ）。ID は見ない。大きさを変えた写しの
+    /// 検査にも使う（同じ ID のレイヤーが文書の中にあってよい）。
     pub(crate) fn check_layer_stacks(&self, layers: &[Layer]) -> Result<(), CoreError> {
         for l in layers {
             for c in l.filters.iter().flat_map(|e| e.channels.iter()) {
@@ -387,7 +387,7 @@ impl Document {
 
     // ───────── フィルターのスタックの編集 ─────────
 
-    /// 段を足せない理由（足せるなら Ok）。内容のスタックは層の種類（調整・グループにはかけられない）と、設定を受け付けるチャンネル、
+    /// 段を足せない理由（足せるなら Ok）。内容のスタックはレイヤーの種類（調整・グループにはかけられない）と、設定を受け付けるチャンネル、
     /// マスクのスタックはマスクがあることと、設定が 1 つのスカラーに使えること。
     pub fn filter_refusal(
         &self,
@@ -412,13 +412,13 @@ impl Document {
 
     fn content_kind_refusal(layer: &Layer) -> Result<(), CoreError> {
         match layer.kind {
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整の層には画素が無い")),
+            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには画素が無い")),
             LayerKind::Group => Err(CoreError::Unsupported("グループの合成へのフィルターは無い")),
             _ => Ok(()),
         }
     }
 
-    /// 層のスタックの上（既定）か `spec.index` へ段を足す（1 回の Undo）。内容のスタックは適用するチャンネルを選ぶ
+    /// レイヤーのスタックの上（既定）か `spec.index` へ段を足す（1 回の Undo）。内容のスタックは適用するチャンネルを選ぶ
     /// （指定が無ければ設定を受け付ける標準のチャンネル全部）。段の数・到達半径・作業メモリの上限を超えるなら断る。
     pub fn add_filter(
         &mut self,
@@ -672,7 +672,7 @@ impl Document {
         {
             return Ok((index, FilterTarget::Mask, at));
         }
-        Err(CoreError::Unsupported("その層にそのフィルターが無い"))
+        Err(CoreError::Unsupported("そのレイヤーにそのフィルターが無い"))
     }
 
     /// スタックの検査（段の数・到達半径・ブロックの作業メモリ）。チャンネルごと・マスクの有効な段の並びで見る。
@@ -744,7 +744,7 @@ impl Document {
         Ok(working.saturating_add(u64::from(w) * u64::from(h) * 4))
     }
 
-    /// 新しいスタックを検査して、1 つの Undo として入れ替える。層が出す所（前・後）を作り直させる。
+    /// 新しいスタックを検査して、1 つの Undo として入れ替える。レイヤーが出す所（前・後）を作り直させる。
     fn execute_stack(
         &mut self,
         index: usize,
@@ -785,7 +785,7 @@ impl Document {
         )
     }
 
-    /// 段の入れ替え（Undo・Redo・最初の実行）。前後の層が出す所に印を付ける。
+    /// 段の入れ替え（Undo・Redo・最初の実行）。前後のレイヤーが出す所に印を付ける。
     pub(super) fn switch_stack(
         &mut self,
         id: LayerId,
@@ -800,7 +800,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("層にマスクが無い"))?
+                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
                     .filters = stack.to_vec()
             }
         }
@@ -811,7 +811,7 @@ impl Document {
 
     // ───────── Anchor ─────────
 
-    /// 層の Anchor（下から上。層の Anchor、次にそのマスクの Anchor）。
+    /// レイヤーの Anchor（下から上。レイヤーの Anchor、次にそのマスクの Anchor）。
     pub fn anchors(&self) -> Vec<AnchorInfo<'_>> {
         let mut v = Vec::new();
         for l in &self.layers {
@@ -837,8 +837,8 @@ impl Document {
         self.anchors().into_iter().find(|a| a.anchor.id == id)
     }
 
-    /// 層（またはそのマスク）に Anchor を置く（1 回の Undo）。層ごとに、置き場ごとに 1 つまで。マスクの Anchor はマスクが要る。
-    /// 名前の既定は層の名前（マスクは「（マスク）」を付ける）。
+    /// レイヤー（またはそのマスク）に Anchor を置く（1 回の Undo）。レイヤーごとに、置き場ごとに 1 つまで。マスクの Anchor はマスクが要る。
+    /// 名前の既定はレイヤーの名前（マスクは「（マスク）」を付ける）。
     pub fn add_anchor(
         &mut self,
         layer: LayerId,
@@ -852,7 +852,7 @@ impl Document {
         match placement {
             AnchorPlacement::Mask => {
                 let m = l.mask.as_ref().ok_or(CoreError::Unsupported(
-                    "マスクの無い層のマスクには Anchor を置けない",
+                    "マスクの無いレイヤーのマスクには Anchor を置けない",
                 ))?;
                 if m.anchor.is_some() {
                     return Err(CoreError::Unsupported("このマスクにはもう Anchor がある"));
@@ -860,7 +860,7 @@ impl Document {
             }
             AnchorPlacement::Layer => {
                 if l.anchor.is_some() {
-                    return Err(CoreError::Unsupported("この層にはもう Anchor がある"));
+                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
                 }
             }
         }
@@ -960,7 +960,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("層にマスクが無い"))?
+                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
                     .anchor = value.cloned()
             }
         }
@@ -968,7 +968,7 @@ impl Document {
         Ok(())
     }
 
-    /// 層の上の Generator が読める Anchor かの確かめ（読めるなら None）。選ばない（None）は断らない。
+    /// レイヤーの上の Generator が読める Anchor かの確かめ（読めるなら None）。選ばない（None）は断らない。
     pub fn anchor_reference_refusal(
         &self,
         layer: LayerId,
@@ -989,7 +989,7 @@ impl Document {
         )
     }
 
-    /// 層の Generator が読める Anchor（その層より下にあるもの）。
+    /// レイヤーの Generator が読める Anchor（そのレイヤーより下にあるもの）。
     pub fn anchors_readable_from(&self, layer: LayerId) -> Result<Vec<AnchorInfo<'_>>, CoreError> {
         self.index_of(layer)?;
         let mut v = Vec::new();
@@ -1031,7 +1031,7 @@ impl Document {
         if let Some(why) = self.anchor_reference_refusal(layer, anchor)? {
             return Err(CoreError::Unsupported(match why {
                 AnchorIssueKind::NotBelow => {
-                    "Anchor が層より下に無い（自分の層の Anchor は読めない）"
+                    "Anchor がレイヤーより下に無い（自分のレイヤーの Anchor は読めない）"
                 }
                 _ => "その Anchor が無い",
             }));
@@ -1045,7 +1045,7 @@ impl Document {
         self.set_filter_settings(layer, filter, EffectSettings::generator(next), coalesce)
     }
 
-    /// 入力のまま通している Anchor の Generator（読む Anchor を選んでいない・無い・層より下に無い）。下から上の順。
+    /// 入力のまま通している Anchor の Generator（読む Anchor を選んでいない・無い・レイヤーより下に無い）。下から上の順。
     pub fn anchor_issues(&self) -> Vec<AnchorIssue> {
         let points = self.anchor_points();
         let mut v = Vec::new();
@@ -1084,7 +1084,7 @@ impl Document {
         v
     }
 
-    /// 文書の Anchor を、評価器の点（層の番号と置き場）の並びにする。
+    /// 文書の Anchor を、評価器の点（レイヤーの番号と置き場）の並びにする。
     pub(crate) fn anchor_points(&self) -> Vec<anchor::Point> {
         let mut v = Vec::new();
         for (i, l) in self.layers.iter().enumerate() {
@@ -1106,7 +1106,7 @@ impl Document {
         v
     }
 
-    /// 読み込み用: 履歴なしで層・マスクに Anchor を置く（検査は編集と同じ。読み込みなので履歴を消す）。
+    /// 読み込み用: 履歴なしでレイヤー・マスクに Anchor を置く（検査は編集と同じ。読み込みなので履歴を消す）。
     pub fn set_anchor_for_load(
         &mut self,
         layer: LayerId,
@@ -1129,7 +1129,7 @@ impl Document {
         match placement {
             AnchorPlacement::Layer => {
                 if self.layers[index].anchor.is_some() {
-                    return Err(CoreError::Unsupported("この層にはもう Anchor がある"));
+                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
                 }
                 self.layers[index].anchor = Some(anchor);
             }
@@ -1148,7 +1148,7 @@ impl Document {
         Ok(())
     }
 
-    /// 読み込みの最後に: 自分の層の Anchor を読む段（値が自分に戻る参照。どの編集でも作れない）があれば断る。消えた Anchor・上の層の
+    /// 読み込みの最後に: 自分のレイヤーの Anchor を読む段（値が自分に戻る参照。どの編集でも作れない）があれば断る。消えた Anchor・上のレイヤーの
     /// Anchor を指す参照は、保存されたまま読み込む（入力のまま通し、保存しても参照は残る）。
     pub fn check_anchor_references_for_load(&self) -> Result<(), CoreError> {
         let points = self.anchor_points();
@@ -1164,7 +1164,7 @@ impl Document {
                             if let Some(p) = points.iter().find(|p| p.id == g.anchor.id) {
                                 if p.host == i && g.anchor.id != 0 {
                                     return Err(CoreError::InvalidArgument(
-                                        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）",
+                                        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）",
                                     ));
                                 }
                             }
@@ -1181,7 +1181,7 @@ impl Document {
     fn fill_layer_index(&self, layer: LayerId) -> Result<usize, CoreError> {
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported("塗りつぶしの層だけが持つ"));
+            return Err(CoreError::Unsupported("塗りつぶしレイヤーだけが持つ"));
         }
         Ok(index)
     }
@@ -1298,7 +1298,7 @@ impl Document {
         Ok(())
     }
 
-    /// 塗りつぶしの投影（層で 1 つ。UV・トライプラナー・平面・球・円柱・デカール）を置き換える（1 回の Undo。coalesce ならドラッグをまとめる）。
+    /// 塗りつぶしの投影（レイヤーで 1 つ。UV・トライプラナー・平面・球・円柱・デカール）を置き換える（1 回の Undo。coalesce ならドラッグをまとめる）。
     pub fn set_fill_projection(
         &mut self,
         layer: LayerId,
@@ -1314,7 +1314,7 @@ impl Document {
         if old == projection {
             return Ok(());
         }
-        // 画像のある層・デカール（前か後）は画素を変えるので、画像・透明部分のロックでも断る。それ以外は、すべてのロックだけ
+        // 画像のあるレイヤー・デカール（前か後）は画素を変えるので、画像・透明部分のロックでも断る。それ以外は、すべてのロックだけ
         // （C# の SetFillProjection）
         if !self.layers[index].fill_images.is_empty()
             || old.mode == ProjectionMode::Decal
@@ -1672,8 +1672,8 @@ impl Document {
     // ───────── 外から渡す入力 ─────────
 
     /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像・モデルの UV の位相）を置く。保存も Undo もしない。
-    /// 今までと違えば、それを読む層の合成を作り直させる。マップ・画像・モデルのルートが替われば、それを読む層（Generator・画像・デカール・
-    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐ層（近傍の段のある層）と アイランドごとのばらつきの段のある層。
+    /// 今までと違えば、それを読むレイヤーの合成を作り直させる。マップ・画像・モデルのルートが替われば、それを読むレイヤー（Generator・画像・デカール・
+    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐレイヤー（近傍の段のあるレイヤー）と アイランドごとのばらつきの段のあるレイヤー。
     /// ほかの読み手は評価し直さない。
     pub fn set_effect_inputs(&mut self, mut inputs: EffectInputs) -> Result<(), CoreError> {
         for m in &inputs.maps {
@@ -1685,10 +1685,10 @@ impl Document {
             return Ok(());
         }
         if topology {
-            // UV の位相が替わると、継ぎ目をまたぐ層の出力も変わる（前と後の両方で、またぐ所に印を付ける）
+            // UV の位相が替わると、継ぎ目をまたぐレイヤーの出力も変わる（前と後の両方で、またぐ所に印を付ける）
             self.mark_seam_readers();
         } else {
-            // 同じ UV の位相なら今の物を使い続ける（覚えた島の図・帯の写しを捨てない）
+            // 同じ UV の位相なら今の物を使い続ける（覚えたアイランドの図・帯の写しを捨てない）
             inputs.topology = self.effects.inputs.topology.clone();
         }
         self.effects.inputs = inputs;
@@ -1706,7 +1706,7 @@ impl Document {
         Ok(())
     }
 
-    /// アイランドごとのばらつきの段のある層（内容・マスク）が出す所に印を付ける（モデルの UV の位相・島の図の予算が替わったとき）。
+    /// アイランドごとのばらつきの段のあるレイヤー（内容・マスク）が出す所に印を付ける（モデルの UV の位相・アイランドの図の予算が替わったとき）。
     pub(super) fn mark_island_readers(&mut self) {
         let readers: Vec<usize> = (0..self.layers.len())
             .filter(|&i| {
@@ -1730,7 +1730,7 @@ impl Document {
         &self.effects.inputs
     }
 
-    /// 入力を読む層（Generator の段のある層・画像やグラデーションやデカールの塗りつぶし）が出す所に印を付ける。
+    /// 入力を読むレイヤー（Generator の段のあるレイヤー・画像やグラデーションやデカールの塗りつぶし）が出す所に印を付ける。
     fn mark_input_readers(&mut self) {
         let mut any = false;
         for i in 0..self.layers.len() {
@@ -1766,7 +1766,7 @@ impl Document {
         }
         if bytes != self.effects.working_budget {
             self.effects.working_budget = bytes;
-            // 継ぎ目をまたげるか（使うとブロックの作業メモリが予算を超えるか）が変わり得る: またぐ層を描き直す
+            // 継ぎ目をまたげるか（使うとブロックの作業メモリが予算を超えるか）が変わり得る: またぐレイヤーを描き直す
             self.mark_seam_readers();
             self.release_effect_cache();
         }
@@ -1785,7 +1785,7 @@ impl Document {
             return Err(CoreError::WorkingBudgetExceeded);
         }
         if pixels != self.effects.block_pixels {
-            // 評価済みのブロックの鍵（層・元・ブロックの番号）はブロックの大きさを含まない: 大きさを替えたら、前の大きさのブロックを返さない
+            // 評価済みのブロックの鍵（レイヤー・元・ブロックの番号）はブロックの大きさを含まない: 大きさを替えたら、前の大きさのブロックを返さない
             self.effects.block_pixels = pixels;
             self.release_effect_cache();
         }
@@ -1827,7 +1827,7 @@ impl Document {
             return;
         }
         self.effects.image_cache_budget = bytes;
-        // 予算で使えなかった（使えるようになった）画像があり得るので、画像の層を描き直す
+        // 予算で使えなかった（使えるようになった）画像があり得るので、画像のレイヤーを描き直す
         self.effects.inputs_revision += 1;
         self.mark_input_readers();
         self.trim_effect_cache();

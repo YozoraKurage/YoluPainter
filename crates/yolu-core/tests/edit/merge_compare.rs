@@ -14,8 +14,8 @@ fn rng(seed: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// 全面を塗った層を 4 枚（下から: 不透明・半透明の乗算・半透明のスクリーン・半透明の通常）。上の 3 枚は合成のモードと不透明度で
-/// 結合の丸めの差が出る。真ん中の 2 枚はグループにまとめる。返すのは層（下から）とグループ。
+/// 全面を塗ったレイヤーを 4 枚（下から: 不透明・半透明の乗算・半透明のスクリーン・半透明の通常）。上の 3 枚は合成のモードと不透明度で
+/// 結合の丸めの差が出る。真ん中の 2 枚はグループにまとめる。返すのはレイヤー（下から）とグループ。
 fn layered(seed: u64) -> (Document, Vec<LayerId>, LayerId) {
     let mut s = seed;
     let mut d = Document::with_tile_size(W, H, 16).unwrap();
@@ -105,7 +105,7 @@ fn merge(kind: &str, seed: u64) -> (LayerMergeReport, (u64, u64, u8, u8)) {
     }
     .unwrap();
     let after = d.composite(d.bounds()).unwrap();
-    // 表示に寄与する層の結合は、結合前の合成でなく、結果の層の画素と比べる
+    // 表示に寄与するレイヤーの結合は、結合前の合成でなく、結果のレイヤーの画素と比べる
     let before = if kind == "visible" {
         d.layer(report.result_id)
             .unwrap()

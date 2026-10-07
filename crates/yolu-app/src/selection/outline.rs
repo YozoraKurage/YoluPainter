@@ -55,7 +55,7 @@ fn raw_runs(mask: &SelectionMask, limit: usize) -> (Vec<Run>, bool) {
     let mut amounts = vec![0u8; n * n];
     let mut coords = mask.tile_coords();
     coords.sort_by_key(|c| (c.y, c.x));
-    // 画布の画素が選ばれているか（画布の外は選ばれていない）
+    // キャンバスの画素が選ばれているか（キャンバスの外は選ばれていない）
     let on_at = |x: i64, y: i64| -> bool {
         x >= 0
             && y >= 0
@@ -190,7 +190,7 @@ mod tests {
         let mask = SelectionMask::rectangle(&d, 100, 50, 300, 200);
         let (runs, _) = outline(&mask);
         assert_eq!(runs.len(), 4, "{runs:?}");
-        // 全面の選択は、画布の縁（4 辺）だけ
+        // 全面の選択は、キャンバスの縁（4 辺）だけ
         let all = SelectionMask::all(&d);
         let (runs, _) = outline(&all);
         assert_eq!(runs.len(), 4, "{runs:?}");
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn raw_runs_stop_at_the_limit_before_merging_on_a_large_canvas() {
-        // 8192 × 8192 の画布に、1 画素おきの孤立した点のタイルを 200 枚。上限が無ければ 200 × 16384 = 328 万本（52 MB）を
+        // 8192 × 8192 のキャンバスに、1 画素おきの孤立した点のタイルを 200 枚。上限が無ければ 200 × 16384 = 328 万本（52 MB）を
         // 作ってからつなげる。作る段階で止まるので、確保は上限（80 万本）に 1 行ぶんを足した所までで頭打ちになる
         let d = doc(8192, 8192);
         let ts = d.tile_size();

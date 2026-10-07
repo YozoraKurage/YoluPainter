@@ -1,4 +1,4 @@
-//! 塗りつぶしのレイヤーのプロパティ（Unity 版の FillImages・Decals・FillGradients・GradientRamp・ShapeGradient の欄）: 描くチャンネルの画像、層の投影
+//! 塗りつぶしのレイヤーのプロパティ（Unity 版の FillImages・Decals・FillGradients・GradientRamp・ShapeGradient の欄）: 描くチャンネルの画像、レイヤーの投影
 //! （UV・トライプラナー・平面・球・円柱・デカール、タイル・オフセット・回転、トライプラナーのぼかし、デカールの間引き、モデルの上の置き場）、描くチャンネルの
 //! グラデーションデカール（形・置き場・減衰・色と不透明度の分岐点・値のカーブ）。値は `Action::Fill` を通る（1 回の Undo。数値とスライダーの
 //! ドラッグは離したところで区切る）。画面には名前と値と短い理由だけを出し、使い方の説明はツールチップ。
@@ -176,7 +176,7 @@ fn vec2_row(
 
 // ───────── 全体 ─────────
 
-/// 塗りつぶしの層の画像・投影・グラデーションの欄（値の欄のあとに並べる）。
+/// 塗りつぶしレイヤーの画像・投影・グラデーションの欄（値の欄のあとに並べる）。
 pub fn sections(
     ui: &mut Ui,
     app: &mut AppState,
@@ -349,7 +349,7 @@ pub fn image_row<K: egui::AsIdSalt>(
     {
         app.apply(set(None));
     }
-    // 読み方（棚の画像の色空間。この画像を読む全部の層に効く）
+    // 読み方（棚の画像の色空間。この画像を読む全部のレイヤーに効く）
     if let Some(space) = app
         .shelf
         .get(&inputs::resource_id(image))
@@ -363,7 +363,7 @@ pub fn image_row<K: egui::AsIdSalt>(
             Some(lang.pick("読み方", "Read as")),
             space_name(lang, space),
             Some(lang.pick(
-                "画像の値が何か（アセットの画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
+                "画像の値が何か（アセットの画像の色空間。この画像を読む全部のレイヤーに効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
                 "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
             )),
             enabled,
@@ -1373,7 +1373,7 @@ fn ramp_rows(
     enabled: bool,
     lang: Lang,
 ) -> Option<(Ramp, bool)> {
-    // 層・チャンネルごとに、分岐点の選びなどを別に覚える
+    // レイヤー・チャンネルごとに、分岐点の選びなどを別に覚える
     let key = (
         "fill-gradient",
         id.0 ^ (channel.index() as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15),
@@ -1794,8 +1794,8 @@ fn points_section(
     }
 }
 
-/// 選んだ点の色の欄。押すと色の窓（相手は文書・層・チャンネル・点ごと）。窓がこのグラデーションの前に選んだ点の色を相手にしている
-/// 間に点を選び替えたら、窓はそのままで相手を新しい点へ替える。不透明度は欄の「不透明度」で決める（窓は RGB だけ）。
+/// 選んだ点の色の欄。押すと色のウィンドウ（相手は文書・レイヤー・チャンネル・点ごと）。ウィンドウがこのグラデーションの前に選んだ点の色を相手にしている
+/// 間に点を選び替えたら、ウィンドウはそのままで相手を新しい点へ替える。不透明度は欄の「不透明度」で決める（ウィンドウは RGB だけ）。
 fn point_color(
     ui: &mut Ui,
     app: &AppState,

@@ -23,7 +23,7 @@ pub enum ErrorCode {
     UnsupportedVersion,
     /// 開いている文書が無い。
     NoDocument,
-    /// セット・層・効果・チャンネル・効果の種類が無い。
+    /// セット・レイヤー・効果・チャンネル・効果の種類が無い。
     NotFound,
     /// 名前が複数に当たる（IDで指定する）。
     Ambiguous,
@@ -31,7 +31,7 @@ pub enum ErrorCode {
     InvalidValue,
     /// 読むだけのセット（編集できない中身がある）。
     ReadOnly,
-    /// その層・チャンネル・種類にはできない操作、この版では扱わないもの。
+    /// そのレイヤー・チャンネル・種類にはできない操作、この版では扱わないもの。
     Unsupported,
     /// 壊す操作に `confirm: true` が無い。
     ConfirmRequired,

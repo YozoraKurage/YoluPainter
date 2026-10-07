@@ -7,7 +7,7 @@ use super::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
 use crate::state::{Action, AppState, Tool};
 use crate::ui::menu::Entry;
 
-/// 選択の道具（メニューとツールの帯の順）。
+/// 選択のツール（メニューとツールの帯の順）。
 pub const SELECT_TOOLS: [Tool; 6] = [
     Tool::SelectRect,
     Tool::SelectEllipse,
@@ -57,7 +57,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         v.push(item.enabled(free && any));
     }
     v.push(Entry::Separator);
-    // 選択範囲を使う操作（選択範囲の下のボタンの帯と同じ。塗る・コピーできる層でなければ押せない）
+    // 選択範囲を使う操作（選択範囲の下のボタンの帯と同じ。塗る・コピーできるレイヤーでなければ押せない）
     let paintable = free && any && app.paint_blocker().is_none();
     let copyable = free
         && any
@@ -113,7 +113,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         .checked(app.sel.quick)
         .enabled(app.sel.quick || !app.is_stroking()),
     );
-    // 覚えた選択範囲の窓（保存も呼び出しもここ）。選択範囲も覚えたものも無ければ開く意味が無い
+    // 覚えた選択範囲のウィンドウ（保存も呼び出しもここ）。選択範囲も覚えたものも無ければ開く意味が無い
     v.push(
         Entry::item(
             format!("{}…", super::saved::window_title(l)),
@@ -141,7 +141,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
                 .radio(app.tool == tool),
         );
     }
-    // ID の色で選択（範囲の道具。焼いた ID マップの色から選択範囲を作る）も選ぶ道具に並べる
+    // ID の色で選択（範囲のツール。焼いた ID マップの色から選択範囲を作る）も選ぶツールに並べる
     v.push(
         Entry::item(
             Tool::IdSelect.name_in(l),

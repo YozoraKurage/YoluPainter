@@ -1,4 +1,4 @@
-//! ライブラリのファイル 1 つを見る（別のスレッドで走る）: 中身の札（SHA-256）・画像の画素の札・寸法・層の数・チャンネル・置けない理由・
+//! ライブラリのファイル 1 つを見る（別のスレッドで走る）: 中身の札（SHA-256）・画像の画素の札・寸法・レイヤーの数・チャンネル・置けない理由・
 //! サムネイル。同じ中身の絵はディスクのキャッシュから読み、作った絵はそこへ覚える。読めないファイルは、止まらずに理由を返す。
 use std::path::PathBuf;
 
@@ -156,7 +156,7 @@ fn probe_image(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &
     }
 }
 
-/// .ylsmart と .ylmaterial（塗りつぶしの層を持つ .ylsmart と同じ形）を見る。マテリアルのファイルの中身がスマートマスクなら、
+/// .ylsmart と .ylmaterial（塗りつぶしレイヤーを持つ .ylsmart と同じ形）を見る。マテリアルのファイルの中身がスマートマスクなら、
 /// 形式が合わないとして置かない（プロジェクトのアセットの索引も、マテリアルにはスマートマテリアルの中身を求める）。
 fn probe_smart(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &Cancel) -> LibInfo {
     let material = target.kind == files::Kind::Material;

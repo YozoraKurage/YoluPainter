@@ -1,5 +1,5 @@
 //! テキストツール（テキストレイヤー）: 押して打つ・打ち直す・打った分が 1 回の取り消し・値の欄・移動・変形で値が動く・フォントが無いときの断り・日英。
-//! `headless_` で始まる試験は画面を描かない。画面の試験は窓で打つ。`YOLU_TEXT_SHOTS=<フォルダ>` を付けると、打っている所と欄の絵（日英）を
+//! `headless_` で始まる試験は画面を描かない。画面の試験はウィンドウで打つ。`YOLU_TEXT_SHOTS=<フォルダ>` を付けると、打っている所と欄の絵（日英）を
 //! そのフォルダへ書く（確かめ用。試験の結果には使わない）。
 use crate::common;
 
@@ -33,7 +33,7 @@ fn headless_typing_a_new_text_is_one_undo_and_an_empty_text_leaves_nothing() {
     let undo = s.doc.undo_count();
     s.apply(Action::Text(TextAction::Begin { x: 20.0, y: 200.0 }));
     assert!(s.text.editing.is_some());
-    // 何も打たないうちは層を作らない
+    // 何も打たないうちはレイヤーを作らない
     assert_eq!(s.doc.layers().len(), layers);
     for text in ["H", "He", "Hello", "Hello\n文字"] {
         s.text_typed(text.into());
@@ -50,7 +50,7 @@ fn headless_typing_a_new_text_is_one_undo_and_an_empty_text_leaves_nothing() {
     assert!(s.doc.layer(id).is_none());
     s.apply(Action::Redo);
     assert_eq!(text_of(&s, id).unwrap().text, "Hello\n文字");
-    // 打って全部消してから終えると、層は残らない
+    // 打って全部消してから終えると、レイヤーは残らない
     let undo = s.doc.undo_count();
     let layers = s.doc.layers().len();
     s.apply(Action::Text(TextAction::Begin { x: 5.0, y: 50.0 }));
@@ -339,7 +339,7 @@ fn headless_installed_fonts_are_picked_from_the_list() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 窓で打つ: テキストツールでキャンバスを押して離し、打って Esc で終える。
+/// ウィンドウで打つ: テキストツールでキャンバスを押して離し、打って Esc で終える。
 #[test]
 fn typing_on_the_canvas_makes_a_text_layer_in_one_undo_step() {
     gpu_thread::run(typing_on_the_canvas_gpu);

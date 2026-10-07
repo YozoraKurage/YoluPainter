@@ -61,7 +61,7 @@ impl Document {
         for state in states {
             let channel = state.channel;
             let kind = self.channel_kind(channel)?;
-            // 層が画素を持ち得るタイル（見えていて、そのチャンネルが有効な層。塗りつぶし・調整は画布全体）
+            // レイヤーが画素を持ち得るタイル（見えていて、そのチャンネルが有効なレイヤー。塗りつぶし・調整はキャンバス全体）
             let mut coords: BTreeSet<TileCoord> = BTreeSet::new();
             for layer in &self.layers {
                 if !layer.visible || !layer.is_channel_enabled(channel) {

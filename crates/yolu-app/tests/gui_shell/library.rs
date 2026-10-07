@@ -293,7 +293,7 @@ fn headless_the_library_lists_files_by_kind_and_looks_at_each_one() {
             .info(rel)
             .unwrap_or_else(|| panic!("{rel} を見ていない"))
     };
-    // スマートマテリアル: 層の数・大きさ・チャンネル・絵。中身の札はファイルの札
+    // スマートマテリアル: レイヤーの数・大きさ・チャンネル・絵。中身の札はファイルの札
     let raster = info("Smart/raster.ylsmart");
     let bytes = fixture("raster.ylsmart");
     assert_eq!(
@@ -1298,7 +1298,7 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
         target: PlaceTarget::Selected,
     }));
     let layers = s.doc.layers().len();
-    // 確かめの窓を頼む（まだ消さない）
+    // 確認のウィンドウを頼む（まだ消さない）
     s.apply(Action::Shelf(ShelfOp::LibraryAskRemove(
         "Smart/raster.ylsmart".into(),
     )));
@@ -1326,7 +1326,7 @@ fn headless_removing_takes_only_the_file_after_asking_and_keeps_the_projects_cop
     );
     assert_eq!(dir.files(), ["Smart/mask.ylsmart"]);
     assert!(s.library.pending_remove.is_none() && s.library.selected.is_none());
-    // プロジェクトの写しと、置いた層は変わらない
+    // プロジェクトの写しと、置いたレイヤーは変わらない
     assert_eq!(s.shelf.resources().len(), 1);
     assert_eq!(s.doc.layers().len(), layers);
     // ライブラリの外のファイルは消せない
@@ -1373,11 +1373,11 @@ fn headless_a_library_file_is_placed_without_going_through_the_shelf_in_one_undo
     assert!(s.shelf.resources().is_empty(), "棚へは入れない");
     s.apply(Action::Undo);
     assert_eq!(s.doc.layers().len(), before);
-    // 画像は 1 枚の層
+    // 画像は 1 枚のレイヤー
     place(&mut s, "Images/pic.png");
     assert_eq!(s.doc.layers().len(), before + 1, "{}", s.message);
     s.apply(Action::Undo);
-    // スマートマスクは選んだ層のマスクへ
+    // スマートマスクは選んだレイヤーのマスクへ
     s.selected_layer = Some(base);
     place(&mut s, "Smart/mask.ylsmart");
     assert!(s.doc.layer(base).unwrap().mask().is_some(), "{}", s.message);
@@ -1695,7 +1695,7 @@ fn headless_an_item_removed_from_the_shelf_while_being_looked_at_is_not_brought_
 
 #[test]
 fn headless_the_documents_pixels_survive_a_library_round_trip_of_a_saved_layer() {
-    // 層をスマートマテリアルとして棚へ保存し、ライブラリへ入れ、別のプロジェクトで使って置くと、同じ画素になる
+    // レイヤーをスマートマテリアルとして棚へ保存し、ライブラリへ入れ、別のプロジェクトで使って置くと、同じ画素になる
     let dir = Dir::new("journey");
     let mut a = state(&dir);
     let base = a.selected_layer.unwrap();
@@ -1729,12 +1729,12 @@ fn headless_the_documents_pixels_survive_a_library_round_trip_of_a_saved_layer()
     assert_eq!(pixel, [200, 40, 30, 255]);
 }
 
-// ───────── マテリアル（塗りつぶしの層） ─────────
+// ───────── マテリアル（塗りつぶしレイヤー） ─────────
 
 const IRON: Rgba8 = Rgba8::new(90, 80, 70, 255);
 const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
 
-/// Color と Metallic の値を持ち、マスクの付いた塗りつぶしの層を 1 つ足して選ぶ。
+/// Color と Metallic の値を持ち、マスクの付いた塗りつぶしレイヤーを 1 つ足して選ぶ。
 fn fill_layer(s: &mut AppState, name: &str) -> LayerId {
     let id = s
         .doc
@@ -1754,7 +1754,7 @@ fn save_as_material(s: &mut AppState, id: LayerId) {
     s.library_wait();
 }
 
-/// 層の種類・Color と Metallic の値・マスクの有無。
+/// レイヤーの種類・Color と Metallic の値・マスクの有無。
 fn fill_of(s: &AppState, id: LayerId) -> (LayerKind, Option<Rgba8>, Option<Rgba8>, bool) {
     let l = s.doc.layer(id).unwrap();
     (
@@ -1787,7 +1787,7 @@ fn headless_a_fill_layer_saved_as_a_material_is_placed_as_a_fill_layer_and_kept_
     // 文書とプロジェクトのアセットは変えない
     assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
     assert!(s.shelf.resources().is_empty() && !s.shelf.changed && !s.modified);
-    // 中身は塗りつぶしの層 1 つの .ylsmart と同じ形で、Unity 版（0.2.0）が読む範囲（smart.json の形式 1・種類 smartMaterial・正本の版 21 まで）
+    // 中身は塗りつぶしレイヤー 1 つの .ylsmart と同じ形で、Unity 版（0.2.0）が読む範囲（smart.json の形式 1・種類 smartMaterial・正本の版 21 まで）
     let bytes = dir.read("Materials/鉄.ylmaterial");
     let file = SmartFile::read(&bytes).unwrap();
     assert_eq!(file.info()["format"], 1);
@@ -1825,7 +1825,7 @@ fn headless_a_fill_layer_saved_as_a_material_is_placed_as_a_fill_layer_and_kept_
         .map(|i| i.rel)
         .collect();
     assert_eq!(listed, [rel]);
-    // ライブラリから置く: 選んだ層の上に、マスクの無い塗りつぶしの層が 1 つ。1 回の取り消しで戻る
+    // ライブラリから置く: 選んだレイヤーの上に、マスクの無い塗りつぶしレイヤーが 1 つ。1 回の取り消しで戻る
     let layers = s.doc.layers().len();
     place_here(&mut s, library::library_id(rel));
     assert_eq!(s.doc.layers().len(), layers + 1, "{}", s.message);
@@ -1848,7 +1848,7 @@ fn headless_a_fill_layer_saved_as_a_material_is_placed_as_a_fill_layer_and_kept_
     place_here(&mut s, res.id.clone());
     assert_eq!(s.doc.layers().len(), layers + 1, "{}", s.message);
     let placed = s.selected_layer.unwrap();
-    // 保存して開き直す: アセットのマテリアルと置いた層が同じに戻る。.ylp の中身の形式は上げない（形式 6 の種類）
+    // 保存して開き直す: アセットのマテリアルと置いたレイヤーが同じに戻る。.ylp の中身の形式は上げない（形式 6 の種類）
     let path = dir.0.join("material.ylp");
     s.apply(Action::SaveProjectAs(path.clone()));
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
@@ -1981,7 +1981,7 @@ fn headless_only_a_fill_layer_is_saved_as_a_material_and_offered_in_its_menu() {
     );
 }
 
-/// 書き込みのスレッドで `.ylsmart` にできないと断られる層（画素のフィルターのノイズ・グランジ、ユーザーチャンネルの値）は、
+/// 書き込みのスレッドで `.ylsmart` にできないと断られるレイヤー（画素のフィルターのノイズ・グランジ、ユーザーチャンネルの値）は、
 /// 押した操作の名前（「マテリアルとして保存できません」）で理由を知らせ、ライブラリにも文書にも何も残さない。
 #[test]
 fn headless_a_fill_layer_the_writer_cannot_hold_is_refused_as_a_material_not_as_a_library_add() {
@@ -2078,7 +2078,7 @@ fn headless_a_material_file_that_cannot_be_placed_says_why_and_changes_nothing()
     );
     place(&mut s, "Materials/mask.ylmaterial");
     assert_eq!(s.message, "「mask」を置けません（形式が合いません）。");
-    // 層の画素の予算を超える: 置く前に断る
+    // レイヤーの画素の予算を超える: 置く前に断る
     s.doc
         .set_source_budget_bytes(s.doc.allocated_bytes() + 16)
         .unwrap();
@@ -2124,7 +2124,7 @@ mod ui {
     use yolu_app::state::PopupKind;
     use yolu_app::YoluApp;
 
-    /// 窓に落としたファイル（パスだけ持つ）。
+    /// ウィンドウに落としたファイル（パスだけ持つ）。
     #[derive(Debug)]
     struct Dropped(PathBuf);
     impl egui::DroppedFile for Dropped {
@@ -2180,7 +2180,7 @@ mod ui {
         h.run();
     }
 
-    /// 人工のライブラリ（スマートマテリアル 2・スマートマスク・画像・ブラシのファイル・読めないファイル）を見せている窓。
+    /// 人工のライブラリ（スマートマテリアル 2・スマートマスク・画像・ブラシのファイル・読めないファイル）を見せているウィンドウ。
     fn window(dir: &Dir) -> Harness<'static, YoluApp> {
         dir.put("Smart/raster.ylsmart", &fixture("raster.ylsmart"));
         dir.put("Smart/multi.ylsmart", &fixture("multi.ylsmart"));
@@ -2218,13 +2218,13 @@ mod ui {
         for name in ["raster", "multi", "mask", "pic", "broken"] {
             assert!(card_shown(&h, name), "{name}");
         }
-        // 「層を保存」はプロジェクトの棚のもの。ライブラリでは出ない
-        assert!(h.query_by_label("層を保存").is_none());
+        // 「レイヤーを保存」はプロジェクトの棚のもの。ライブラリでは出ない
+        assert!(h.query_by_label("レイヤーを保存").is_none());
         h.get_by_label("プロジェクト").click();
         settle(&mut h);
         assert_eq!(st(&h).library.source, Source::Project);
         assert!(!card_shown(&h, "raster"));
-        assert!(h.query_by_label("層を保存").is_some());
+        assert!(h.query_by_label("レイヤーを保存").is_some());
         // 英語の画面
         h.state_mut().state.lang = Lang::En;
         h.run();
@@ -2278,7 +2278,7 @@ mod ui {
             .is_disabled());
         // 消すことはできる
         assert!(!h
-            .get_by_label("ライブラリから消す（プロジェクトの写しと置いた層はそのまま）")
+            .get_by_label("ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）")
             .accesskit_node()
             .is_disabled());
         let info = st(&h).library.info("broken.ylsmart").unwrap();
@@ -2304,7 +2304,7 @@ mod ui {
             .library
             .in_project(st(&h).shelf.shelf(), "Smart/raster.ylsmart"));
         // 消す前に確かめる
-        h.get_by_label("ライブラリから消す（プロジェクトの写しと置いた層はそのまま）")
+        h.get_by_label("ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）")
             .click();
         h.run();
         assert_eq!(st(&h).dialog_request, Some(DialogRequest::LibraryRemove));
@@ -2314,7 +2314,7 @@ mod ui {
         );
         assert!(dir.exists("Smart/raster.ylsmart"), "確かめる前は消さない");
         h.state_mut().state.dialog_request = None;
-        // フォルダを開く（窓を頼む。上の帯と下の帯の 2 か所にある）
+        // フォルダを開く（ウィンドウを頼む。上の帯と下の帯の 2 か所にある）
         let nodes: Vec<_> = h.get_all_by_label("ライブラリのフォルダを開く").collect();
         assert_eq!(nodes.len(), 2);
         nodes
@@ -2549,7 +2549,7 @@ mod ui {
         );
     }
 
-    /// ポインタを `at` に置いてから、ファイルを窓に落とす（落とした時点のポインタの位置で、落とし先が決まる）。
+    /// ポインタを `at` に置いてから、ファイルをウィンドウに落とす（落とした時点のポインタの位置で、落とし先が決まる）。
     fn drop_at(h: &mut Harness<'_, YoluApp>, at: egui::Pos2, files: &[&Path]) {
         move_to(h, at);
         h.step();
@@ -2561,7 +2561,7 @@ mod ui {
         h.run();
     }
 
-    /// 窓に落とす PNG と、PNG でないファイル。
+    /// ウィンドウに落とす PNG と、PNG でないファイル。
     fn files_to_drop(dir: &Dir, png_name: &str) -> (PathBuf, PathBuf) {
         let outside = dir.0.join("outside");
         std::fs::create_dir_all(&outside).unwrap();
@@ -2606,7 +2606,7 @@ mod ui {
         let grid = st(&h).library.grid_rect.expect("格子を描いている");
         let before = dir.files();
         let (png_path, _) = files_to_drop(&dir, "tip.png");
-        // 窓のほかの場所（格子の外）へ落とした PNG は、筆先・ステンシルなどほかの落とし先のもの
+        // ウィンドウのほかの場所（格子の外）へ落とした PNG は、筆先・ステンシルなどほかの落とし先のもの
         for at in [
             pos2(grid.right() + 40.0, grid.center().y),
             pos2(grid.center().x, grid.top() - 8.0),
@@ -2735,7 +2735,7 @@ mod ui {
         h.run();
         assert_eq!(st(&h).library.writing_name(), Some("raster"));
         assert!(
-            h.query_by_label("層を保存").is_none(),
+            h.query_by_label("レイヤーを保存").is_none(),
             "保存のボタンは名前とやめるに替わる"
         );
         h.get_by_label("やめる").click();
@@ -2745,7 +2745,7 @@ mod ui {
         h.state_mut().state.library.wait_idle();
         h.run();
         assert_eq!(dir.files(), before, "やめた書き込みは何も残さない");
-        assert!(h.query_by_label("層を保存").is_some());
+        assert!(h.query_by_label("レイヤーを保存").is_some());
     }
 
     #[test]
@@ -2786,7 +2786,7 @@ mod ui {
         h.snapshot("assets_library_english");
     }
 
-    /// 塗りつぶしの層を「マテリアルとして保存」したあと: ライブラリのマテリアルのカードを選び、その層の右クリックのメニューを開いた所。
+    /// 塗りつぶしレイヤーを「マテリアルとして保存」したあと: ライブラリのマテリアルのカードを選び、そのレイヤーの右クリックのメニューを開いた所。
     /// アセットの画像を使う塗りつぶしでは、項目を押せず、理由がツールチップに出る（日英）。
     #[test]
     fn snapshot_material_menu_and_card() {

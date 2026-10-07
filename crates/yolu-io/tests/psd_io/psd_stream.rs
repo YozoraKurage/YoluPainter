@@ -1,6 +1,6 @@
-//! PSD を実物の大きさで書く: 予算は呼び手（設定）から決まり、層・マスク・統合画像のチャンネルは RLE（PackBits）で、層は 1 枚ずつ流して書く。
+//! PSD を実物の大きさで書く: 予算は呼び手（設定）から決まり、レイヤー・マスク・統合画像のチャンネルは RLE（PackBits）で、レイヤーは 1 枚ずつ流して書く。
 //! RLE は今の読み手（`read`・`import_copy`・`verify_stream`）で読み直せること、チャンネルごとに圧縮の有無を選ぶこと、流して書いたバイト列が
-//! メモリに組んで書いたものと同じであること、予算・ファイルの上限で層の名前つきで断ること、取消で止まることを固定する。
+//! メモリに組んで書いたものと同じであること、予算・ファイルの上限でレイヤーの名前つきで断ること、取消で止まることを固定する。
 //! 無圧縮の書き方（Unity 版とバイト一致）は `psd_golden.rs` が固定する。Photoshop・CLIP STUDIO の実物では確かめていない。
 use std::io::Cursor;
 use std::sync::atomic::AtomicBool;
@@ -15,14 +15,14 @@ use yolu_io::psd::{
 
 const MIB: u64 = 1024 * 1024;
 
-// ───────── 道具 ─────────
+// ───────── ツール ─────────
 
 fn noise(seed: &mut u32) -> u8 {
     *seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
     (*seed >> 24) as u8
 }
 
-/// 層の左下の `w` × `h` を、`pixel(x, y)`（core の座標。下から）で塗る。
+/// レイヤーの左下の `w` × `h` を、`pixel(x, y)`（core の座標。下から）で塗る。
 fn paint(d: &mut Document, layer: LayerId, w: u32, h: u32, pixel: impl Fn(u32, u32) -> [u8; 4]) {
     paint_channel(d, layer, Channel::Color, w, h, pixel)
 }
@@ -74,7 +74,7 @@ fn budget(mib: u64) -> ExportControl<'static> {
     }
 }
 
-/// 書いた PSD の、層ごと・チャンネルごとの (ID, 長さ, 圧縮の印) と層の矩形の高さ。
+/// 書いた PSD の、レイヤーごと・チャンネルごとの (ID, 長さ, 圧縮の印) とレイヤーの矩形の高さ。
 struct Chan {
     id: i16,
     len: u32,
@@ -149,7 +149,7 @@ fn layer(name: &str, id: i32, w: u32, h: u32, pixel: impl Fn(u32, u32) -> [u8; 4
     }
 }
 
-/// 圧縮に向く層・向かない層・全部透明・単色・マスクつき・グループ・調整・塗りつぶしを持つ PSD の文書（上から下の並び）。
+/// 圧縮に向くレイヤー・向かないレイヤー・全部透明・単色・マスクつき・グループ・調整・塗りつぶしを持つ PSD の文書（上から下の並び）。
 fn mixed() -> Psd {
     let mut seed = 7;
     let random: Vec<[u8; 4]> = (0..300 * 40)
@@ -279,7 +279,7 @@ fn an_rle_psd_reads_back_the_same_through_every_reader_and_is_smaller() {
     );
     // 流して確かめる読み
     let verified = psd::verify_stream(&mut Cursor::new(&rle), None).unwrap();
-    assert_eq!(verified.layers, 9, "グループの区切りを除く層の数");
+    assert_eq!(verified.layers, 9, "グループの区切りを除くレイヤーの数");
     assert_eq!(verified.bytes, rle.len() as u64);
     assert_eq!(
         psd::verify_stream(&mut Cursor::new(&raw), None)
@@ -321,7 +321,7 @@ fn each_channel_picks_rle_or_raw_and_the_row_table_adds_up() {
             }
         }
     }
-    // 全部透明の層・単色は RLE で小さい（4 チャンネルすべて）
+    // 全部透明のレイヤー・単色は RLE で小さい（4 チャンネルすべて）
     let transparent = &records[records.len() - 3];
     assert!(
         transparent
@@ -387,12 +387,12 @@ fn the_merged_image_is_rle_only_when_it_gets_smaller() {
 
 #[test]
 fn rows_wider_than_a_run_and_odd_widths_round_trip() {
-    // 幅 1・2・127・128・129・255・1000 の層（繰り返しと並びの境目）
+    // 幅 1・2・127・128・129・255・1000 のレイヤー（繰り返しと並びの境目）
     for width in [1u32, 2, 3, 127, 128, 129, 255, 1000] {
         let doc = Psd {
             width: width + 3,
             height: 6,
-            layers: vec![layer("層", 1, width, 4, |x, y| {
+            layers: vec![layer("レイヤー", 1, width, 4, |x, y| {
                 let v = if (x / 3 + y) % 2 == 0 {
                     40
                 } else {
@@ -415,7 +415,7 @@ fn rows_wider_than_a_run_and_odd_widths_round_trip() {
 
 // ───────── 流して書く ─────────
 
-/// 保存した画素は、タイルごとに行を写して書く。タイルの大きさで割り切れない画布・まばらなタイル・透明の画素の RGB も、1 画素ずつ引いたものと同じ。
+/// 保存した画素は、タイルごとに行を写して書く。タイルの大きさで割り切れないキャンバス・まばらなタイル・透明の画素の RGB も、1 画素ずつ引いたものと同じ。
 #[test]
 fn a_stored_layer_is_copied_tile_by_tile_exactly_as_pixel_by_pixel() {
     let (w, h) = (50u32, 37u32);
@@ -438,7 +438,7 @@ fn a_stored_layer_is_copied_tile_by_tile_exactly_as_pixel_by_pixel() {
     let psd_layer = &out.document.layers[0];
     assert_eq!(psd_layer.name, "まばら");
     let surface = d.layer(id).unwrap().surface(Channel::Color).unwrap();
-    // 矩形は、面のあるタイルの外接矩形（画布の端で切る）。層の行は上から
+    // 矩形は、面のあるタイルの外接矩形（キャンバスの端で切る）。レイヤーの行は上から
     let (left, top, width, height) = (
         psd_layer.left as u32,
         psd_layer.top as u32,
@@ -459,7 +459,7 @@ fn a_stored_layer_is_copied_tile_by_tile_exactly_as_pixel_by_pixel() {
             assert_eq!(psd_layer.pixels_rgba[at..at + 4], want, "({x}, {y})");
         }
     }
-    // 1 つのタイルだけのとき: 矩形はそのタイル（画布の端で切れる）
+    // 1 つのタイルだけのとき: 矩形はそのタイル（キャンバスの端で切れる）
     let mut e = Document::with_tile_size(w, h, 16).unwrap();
     let one = e.add_layer("端").unwrap();
     e.set_channel_pixel(one, Channel::Color, 49, 36, Rgba8::new(1, 2, 3, 255))
@@ -519,7 +519,7 @@ fn busy_document() -> Document {
         FilterSpec::new(EffectSettings::invert()),
     )
     .unwrap();
-    // マスクのあるグループ・クリッピングされたグループ（1 枚の画素の層に焼く）
+    // マスクのあるグループ・クリッピングされたグループ（1 枚の画素のレイヤーに焼く）
     let inner = d.add_layer("中身").unwrap();
     paint(&mut d, inner, 40, 40, |x, _| [200, x as u8 * 6, 40, 220]);
     let clipped = d.group_layers(&[inner], "クリップ群").unwrap();
@@ -543,7 +543,7 @@ fn streaming_writes_the_same_bytes_as_building_in_memory_and_writing() {
         let (streamed, written) = stream(&d, &ctl, compression).unwrap();
         assert_eq!(streamed, in_memory, "{compression:?}");
         assert_eq!(written.bytes, streamed.len() as u64);
-        // クリッピングされたグループは 1 枚の層になり、中身の層は PSD に書かれない
+        // クリッピングされたグループは 1 枚のレイヤーになり、中身のレイヤーは PSD に書かれない
         assert_eq!(written.layers, d.layers().len() - 1);
         let verified = psd::verify_stream(&mut Cursor::new(&streamed), None).unwrap();
         assert_eq!(verified.layers, written.layers);
@@ -569,7 +569,7 @@ fn a_streamed_psd_imports_with_the_composite_of_the_document() {
     assert_eq!(
         imported.document.layers().len(),
         d.layers().len() - 1,
-        "クリッピングされたグループは 1 枚の層になる"
+        "クリッピングされたグループは 1 枚のレイヤーになる"
     );
     let want = d.composite_channel(Channel::Color, d.bounds()).unwrap();
     let got = imported
@@ -598,7 +598,7 @@ fn the_export_limits_follow_the_budget_like_the_import() {
     assert_eq!(
         Limits::for_export(8192 * MIB).max_layers,
         8192,
-        "層の記録は予算 1 MiB につき 1 件"
+        "レイヤーの記録は予算 1 MiB につき 1 件"
     );
     assert_eq!(
         Limits::for_export(64 * 1024 * MIB).max_layers,
@@ -615,7 +615,7 @@ fn the_export_limits_follow_the_budget_like_the_import() {
 #[test]
 fn a_canvas_over_the_budget_is_refused_with_the_size_and_a_hint_it_can_be_raised() {
     let mut d = Document::new(2048, 2048).unwrap();
-    d.add_layer("層").unwrap();
+    d.add_layer("レイヤー").unwrap();
     // 2048² の画素は 16 MiB。予算 8 MiB には入らない
     let err = psd::check_exportable(&d, Channel::Color, &budget(8)).unwrap_err();
     let ExportError::Overrun(over) = err else {
@@ -639,17 +639,17 @@ fn a_canvas_over_the_budget_is_refused_with_the_size_and_a_hint_it_can_be_raised
     assert!(matches!(err, yolu_io::Error::Budget(_)), "{err}");
     // 予算を決めない呼び方は、従来の固定の上限（4096²）
     let mut big = Document::new(5000, 5000).unwrap();
-    big.add_layer("層").unwrap();
+    big.add_layer("レイヤー").unwrap();
     assert!(psd::check_exportable(&big, Channel::Color, &ExportControl::default()).is_err());
     assert!(psd::check_exportable(&big, Channel::Color, &budget(256)).is_ok());
 }
 
 #[test]
 fn layer_records_over_the_budget_count_group_dividers_and_name_the_numbers() {
-    // 予算 64 MiB の層の記録は 256 件まで。層 300 枚は、文書の確かめで断る
+    // 予算 64 MiB のレイヤーの記録は 256 件まで。レイヤー 300 枚は、文書の確かめで断る
     let mut d = Document::with_tile_size(16, 16, 16).unwrap();
     for n in 0..300 {
-        d.add_layer(&format!("層{n}")).unwrap();
+        d.add_layer(&format!("レイヤー{n}")).unwrap();
     }
     let err = psd::check_exportable(&d, Channel::Color, &budget(64)).unwrap_err();
     let ExportError::Overrun(over) = err else {
@@ -662,7 +662,7 @@ fn layer_records_over_the_budget_count_group_dividers_and_name_the_numbers() {
             limit: 256
         }
     );
-    // 層 130 枚はグループの区切りも数えて 260 件になる。書く前の層の構造で断る
+    // レイヤー 130 枚はグループの区切りも数えて 260 件になる。書く前のレイヤーの構造で断る
     let mut d = Document::with_tile_size(16, 16, 16).unwrap();
     for n in 0..130 {
         d.add_group(&format!("グループ{n}"), None).unwrap();
@@ -685,7 +685,7 @@ fn layer_records_over_the_budget_count_group_dividers_and_name_the_numbers() {
     psd::verify_stream(&mut Cursor::new(bytes), None).unwrap();
 }
 
-/// 4096² 級でなくても、層の画素の合計が予算を超える文書（焼く層 6 枚 × 16 MiB = 96 MiB を、予算 64 MiB で）。
+/// 4096² 級でなくても、レイヤーの画素の合計が予算を超える文書（焼くレイヤー 6 枚 × 16 MiB = 96 MiB を、予算 64 MiB で）。
 fn over_the_total() -> Document {
     let mut d = Document::new(2048, 2048).unwrap();
     for n in 0..6 {
@@ -705,7 +705,7 @@ fn streaming_has_no_cap_on_the_total_of_the_layers_but_building_in_memory_stops_
     let ctl = budget(64);
     let plan = psd::plan_export(&d, &bake(), &ctl).unwrap();
     assert_eq!(plan.notes.len(), 6);
-    // メモリに組む道は、全層の合計を予算で止める（層の名前つき）
+    // メモリに組む道は、全レイヤーの合計を予算で止める（レイヤーの名前つき）
     let err = plan.build(&d, &ctl).unwrap_err();
     assert!(
         matches!(err, yolu_io::Error::Budget(_))
@@ -713,7 +713,7 @@ fn streaming_has_no_cap_on_the_total_of_the_layers_but_building_in_memory_stops_
             && err.to_string().contains("ガラス"),
         "{err}"
     );
-    // 流す道は、層 1 枚ぶんしか持たないので書ける。画素は圧縮されて小さい
+    // 流す道は、レイヤー 1 枚ぶんしか持たないので書ける。画素は圧縮されて小さい
     let (bytes, written) = stream(&d, &ctl, Compression::Rle).unwrap();
     assert_eq!(written.layers, 6);
     assert!(bytes.len() < 2 * MIB as usize, "{}", bytes.len());
@@ -731,9 +731,9 @@ fn streaming_has_no_cap_on_the_total_of_the_layers_but_building_in_memory_stops_
 
 #[test]
 fn the_flat_export_and_a_normal_bake_build_in_memory_and_stop_at_the_budget_by_layer_name() {
-    // 平らの 1 枚（全層をメモリに組む道）。画布が予算に入れば書ける
+    // 平らの 1 枚（全レイヤーをメモリに組む道）。キャンバスが予算に入れば書ける
     let mut d = Document::new(512, 512).unwrap();
-    d.add_layer("層").unwrap();
+    d.add_layer("レイヤー").unwrap();
     let flat = ExportOptions::new(Channel::Color, ExportMode::Flat);
     let ctl = budget(2);
     let plan = psd::plan_export(&d, &flat, &ctl).unwrap();
@@ -741,7 +741,7 @@ fn the_flat_export_and_a_normal_bake_build_in_memory_and_stop_at_the_budget_by_l
     plan.write_psd(&d, &ctl, &mut out, Compression::Rle)
         .unwrap();
     psd::verify_stream(&mut Cursor::new(out.into_inner()), None).unwrap();
-    // Normal の焼き込みは、統合画像を書いた層から作るので全層をメモリに組む。層（512² = 1 MiB）の合計が予算 2 MiB を超える 3 枚目で、層の名前で断る
+    // Normal の焼き込みは、統合画像を書いたレイヤーから作るので全レイヤーをメモリに組む。レイヤー（512² = 1 MiB）の合計が予算 2 MiB を超える 3 枚目で、レイヤーの名前で断る
     let mut n = Document::new(512, 512).unwrap();
     for i in 0..3 {
         let l = n.add_layer(&format!("法線{i}")).unwrap();
@@ -782,7 +782,7 @@ fn the_flat_export_and_a_normal_bake_build_in_memory_and_stop_at_the_budget_by_l
 
 #[test]
 fn a_file_over_the_size_limit_is_refused_naming_the_layer_that_crosses_it() {
-    // 乱数の層は圧縮できない。ファイルの上限を 300 KB にすると、書いている途中の層の名前で断る
+    // 乱数のレイヤーは圧縮できない。ファイルの上限を 300 KB にすると、書いている途中のレイヤーの名前で断る
     let mut d = Document::with_tile_size(128, 128, 16).unwrap();
     let mut seed = 1;
     for n in 0..4 {
@@ -802,7 +802,7 @@ fn a_file_over_the_size_limit_is_refused_naming_the_layer_that_crosses_it() {
     let ExportError::Overrun(over) = err else {
         panic!("{err:?}")
     };
-    // 1 枚 = RGB が無圧縮 48 KB + A が RLE。記録の層は下から（乱数0 が先）、書いた合計が 160 KB を超えるのは 4 枚目より前
+    // 1 枚 = RGB が無圧縮 48 KB + A が RLE。記録のレイヤーは下から（乱数0 が先）、書いた合計が 160 KB を超えるのは 4 枚目より前
     match &over {
         Overrun::FileSize { layer } => assert!(layer.starts_with("乱数"), "{layer}"),
         other => panic!("{other:?}"),
@@ -886,7 +886,7 @@ impl<F: FnMut(usize, usize) -> bool> std::io::Seek for Trip<'_, F> {
     }
 }
 
-/// 無圧縮で書く、`h` 行のラスター層 1 枚（行は 64 バイト）の文書。
+/// 無圧縮で書く、`h` 行のラスターレイヤー 1 枚（行は 64 バイト）の文書。
 fn tall() -> Document {
     let mut d = Document::with_tile_size(64, 300, 16).unwrap();
     let l = d.add_layer("縦長").unwrap();
@@ -921,7 +921,7 @@ fn a_cancel_raised_while_streaming_stops_at_the_next_check_and_writes_nothing_mo
         .unwrap_err();
     assert!(cancelled(&err), "{err:?}");
     assert_eq!(out.after_trip, 0, "記録の先頭の確かめで止まる");
-    // チャンネルの 128 行ごと: 1 行目のあとで旗が立つ。次の確かめは 128 行目で、その手前の 127 行（64 バイト）は書かれる。確かめが無ければ層の終わりまで書く
+    // チャンネルの 128 行ごと: 1 行目のあとで旗が立つ。次の確かめは 128 行目で、その手前の 127 行（64 バイト）は書かれる。確かめが無ければレイヤーの終わりまで書く
     let d = tall();
     stop.store(false, Ordering::Relaxed);
     let ctl = ExportControl {
@@ -936,7 +936,7 @@ fn a_cancel_raised_while_streaming_stops_at_the_next_check_and_writes_nothing_mo
         .unwrap_err();
     assert!(cancelled(&err), "{err:?}");
     assert_eq!(out.after_trip, 127 * 64, "128 行ごとの確かめで止まる");
-    // 統合画像の前: 層を書き終えた最後の 4 バイト（全体のレイヤーマスク情報）のあとで旗が立つ。確かめが無ければ統合画像の印が書かれる
+    // 統合画像の前: レイヤーを書き終えた最後の 4 バイト（全体のレイヤーマスク情報）のあとで旗が立つ。確かめが無ければ統合画像の印が書かれる
     stop.store(false, Ordering::Relaxed);
     let mut out = Trip::new(&stop, |_, len| len == 4);
     let err = plan
@@ -952,7 +952,7 @@ fn a_cancel_raised_while_streaming_stops_at_the_next_check_and_writes_nothing_mo
     psd::verify_stream(&mut Cursor::new(out.inner.into_inner()), None).unwrap();
 }
 
-/// 全層をメモリに組む道（Normal の焼き込み・平らの 1 枚）も、呼び手が小さくしたファイルの上限で断る（流す道と同じ）。
+/// 全レイヤーをメモリに組む道（Normal の焼き込み・平らの 1 枚）も、呼び手が小さくしたファイルの上限で断る（流す道と同じ）。
 #[test]
 fn the_memory_path_honors_the_callers_file_limit_too() {
     let limited = |bytes| ExportControl {
@@ -969,7 +969,7 @@ fn the_memory_path_honors_the_callers_file_limit_too() {
     }
     // 平らの 1 枚
     let mut f = Document::new(512, 512).unwrap();
-    f.add_layer("層").unwrap();
+    f.add_layer("レイヤー").unwrap();
     for (name, doc, options) in [
         (
             "Normal",
@@ -1014,7 +1014,7 @@ fn the_file_limit_counts_the_compressed_size_so_a_document_that_only_fits_compre
         layers: vec![layer("単色", 1, 200, 200, |_, _| [10, 20, 30, 255])],
         composite_rgba: None,
     };
-    // 無圧縮は層と統合画像で 300 KB 超。RLE は数 KB
+    // 無圧縮はレイヤーと統合画像で 300 KB 超。RLE は数 KB
     let limits = Limits {
         max_output_bytes: 20_000,
         ..Limits::default()
@@ -1046,12 +1046,12 @@ fn the_file_limit_counts_the_compressed_size_so_a_document_that_only_fits_compre
     );
 }
 
-/// 統合画像を書いて上限を超えるときは、層の名前が空。画面の文は「統合画像」と言う（「層「」」と言わない）。
+/// 統合画像を書いて上限を超えるときは、レイヤーの名前が空。画面の文は「統合画像」と言う（「レイヤー「」」と言わない）。
 #[test]
 fn a_file_over_the_limit_at_the_merged_image_says_so_instead_of_naming_an_empty_layer() {
     let d = busy_document();
     let (bytes, _) = stream(&d, &budget(256), Compression::Raw).unwrap();
-    // 層を書き終えても収まるが、統合画像まで書くと超える上限（1 バイト足りない）
+    // レイヤーを書き終えても収まるが、統合画像まで書くと超える上限（1 バイト足りない）
     let ctl = ExportControl {
         max_file_bytes: Some(bytes.len() as u64 - 1),
         ..budget(256)
@@ -1086,7 +1086,7 @@ fn a_file_over_the_limit_at_the_merged_image_says_so_instead_of_naming_an_empty_
 fn a_side_over_the_format_limit_is_told_apart_from_a_canvas_over_the_budget() {
     // 32768 × 16 は画素は少ないが、PSD の辺の上限を超える。予算を上げても書けない
     let mut wide = Document::new(32768, 16).unwrap();
-    wide.add_layer("層").unwrap();
+    wide.add_layer("レイヤー").unwrap();
     let err = psd::check_exportable(&wide, Channel::Color, &budget(8192)).unwrap_err();
     let ExportError::Overrun(over) = err else {
         panic!("{err:?}")
@@ -1106,7 +1106,7 @@ fn a_side_over_the_format_limit_is_told_apart_from_a_canvas_over_the_budget() {
     );
     // 予算を決めない既定の上限（辺 8192）の断りは、予算を決めれば書ける
     let mut mid = Document::new(9000, 100).unwrap();
-    mid.add_layer("層").unwrap();
+    mid.add_layer("レイヤー").unwrap();
     let err = psd::check_exportable(&mid, Channel::Color, &ExportControl::default()).unwrap_err();
     let ExportError::Overrun(over) = err else {
         panic!("{err:?}")
@@ -1123,7 +1123,7 @@ fn a_side_over_the_format_limit_is_told_apart_from_a_canvas_over_the_budget() {
     assert!(psd::check_exportable(&mid, Channel::Color, &budget(256)).is_ok());
     // 辺が収まって画素の数が予算を超えるのは、従来どおりのキャンバスの断り
     let mut big = Document::new(8000, 8000).unwrap();
-    big.add_layer("層").unwrap();
+    big.add_layer("レイヤー").unwrap();
     let err = psd::check_exportable(&big, Channel::Color, &budget(64)).unwrap_err();
     let ExportError::Overrun(over) = err else {
         panic!("{err:?}")
@@ -1168,12 +1168,12 @@ fn the_checksum_matches_what_was_written_and_finds_changes_the_structure_check_c
             "{compression:?}: 構造は壊れない"
         );
         assert!(!matches(&flipped), "{compression:?}: 画素の化け");
-        // 層の画素の途中の化け（先頭と最後のあいだ）
+        // レイヤーの画素の途中の化け（先頭と最後のあいだ）
         let mut inner = bytes.clone();
         let at = bytes.len() * 3 / 4;
         inner[at] ^= 0x40;
         assert!(!matches(&inner), "{compression:?}: 途中の化け");
-        // 先頭（ヘッダーと層の記録の表）の化け
+        // 先頭（ヘッダーとレイヤーの記録の表）の化け
         let mut head = bytes.clone();
         head[40] ^= 1;
         assert!(!matches(&head), "{compression:?}: 先頭の化け");
@@ -1200,7 +1200,7 @@ fn the_verifying_read_refusal_for_things_the_import_would_change_names_no_intern
     let good = psd::write_with(&mixed(), &Limits::default(), Compression::Rle).unwrap();
     let u16_at = |b: &[u8], p: usize| u16::from_be_bytes(b[p..p + 2].try_into().unwrap()) as usize;
     let u32_at = |b: &[u8], p: usize| u32::from_be_bytes(b[p..p + 4].try_into().unwrap());
-    // 最初の層の付加情報の終わりに、レイヤー効果（取り込みで落とす）の印を足す
+    // 最初のレイヤーの付加情報の終わりに、レイヤー効果（取り込みで落とす）の印を足す
     let mut p = 26;
     p += 4 + u32_at(&good, p) as usize;
     p += 4 + u32_at(&good, p) as usize;
@@ -1233,7 +1233,7 @@ fn the_verifying_read_refusal_for_things_the_import_would_change_names_no_intern
     );
 }
 
-/// 層の下に `depth` 段のグループを入れ子にした文書。
+/// レイヤーの下に `depth` 段のグループを入れ子にした文書。
 fn nested(depth: usize) -> Document {
     let mut d = Document::with_tile_size(16, 16, 16).unwrap();
     let mut current = d.add_layer("葉").unwrap();
@@ -1322,7 +1322,7 @@ fn nested_groups_stream_to_the_document_limit_without_overflowing_a_small_stack_
 /// 厳密な書き出し（`from_core`）の断り方は変わらず、使う上限の値だけ呼び手から決められる。
 #[test]
 fn the_strict_export_keeps_its_refusals_and_takes_only_the_limits_from_the_caller() {
-    // 4096² のキャンバスに 9 枚のマスク: 画布 1 枚ぶん（16 MiB）を数えるので、既定の 128 MiB は超える。予算 256 MiB を渡せば書ける
+    // 4096² のキャンバスに 9 枚のマスク: キャンバス 1 枚ぶん（16 MiB）を数えるので、既定の 128 MiB は超える。予算 256 MiB を渡せば書ける
     let mut d = Document::new(4096, 4096).unwrap();
     for n in 0..9 {
         let a = d.add_layer(&format!("m{n}")).unwrap();
@@ -1335,7 +1335,7 @@ fn the_strict_export_keeps_its_refusals_and_takes_only_the_limits_from_the_calle
     );
     let doc = Psd::from_core_with(&d, &budget(256)).unwrap();
     assert_eq!(doc.layers.len(), 9);
-    // 何を断るかは同じ（焼かないと書けないものは、予算を渡しても層の名前つきで断る）
+    // 何を断るかは同じ（焼かないと書けないものは、予算を渡してもレイヤーの名前つきで断る）
     let mut blur = Document::new(32, 32).unwrap();
     let layer = blur.add_layer("ぼかし").unwrap();
     blur.add_filter(
@@ -1773,7 +1773,7 @@ fn measure_a_real_size_document() {
     let d = big_document(n);
     let layers = d.layers().len();
     println!(
-        "文書: {n}² / 層 {layers} / 作成 {:.1} s / 文書を持つメモリ {} MiB",
+        "文書: {n}² / レイヤー {layers} / 作成 {:.1} s / 文書を持つメモリ {} MiB",
         t.elapsed().as_secs_f64(),
         proc_kib("VmRSS:") / 1024
     );
@@ -1841,7 +1841,7 @@ fn measure_a_real_size_document() {
     )
     .unwrap();
     println!(
-        "流して確かめる: {:.1} s / メモリの山 {} MiB / 層 {}",
+        "流して確かめる: {:.1} s / メモリの山 {} MiB / レイヤー {}",
         t.elapsed().as_secs_f64(),
         proc_kib("VmHWM:") / 1024,
         verified.layers
@@ -1870,7 +1870,7 @@ fn measure_a_real_size_document() {
         psd::CopyOutcome::Refused(why) => panic!("{}", why.message()),
     };
     println!(
-        "取り込み直す: {:.1} s / 層 {}",
+        "取り込み直す: {:.1} s / レイヤー {}",
         t.elapsed().as_secs_f64(),
         imported.document.layers().len()
     );

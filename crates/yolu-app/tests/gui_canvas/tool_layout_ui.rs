@@ -1,4 +1,4 @@
-//! ツールの並びの画面（左のツールの列の右クリック・ドラッグ、ブラシのグループのタブ、「＋」の窓）の操作と見た目（egui_kittest）。
+//! ツールの並びの画面（左のツールの列の右クリック・ドラッグ、ブラシのグループのタブ、「＋」のウィンドウ）の操作と見た目（egui_kittest）。
 //! 並びの操作そのもの（画面を描かない）は `headless/tool_layout.rs`。
 use crate::common;
 
@@ -55,7 +55,7 @@ fn right_click(h: &mut H, at: egui::Pos2) {
     h.run();
 }
 
-/// 窓の全体を撮る（直前に押した所のポインタが絵に残らないように）。
+/// ウィンドウの全体を撮る（直前に押した所のポインタが絵に残らないように）。
 fn shot(h: &mut H, name: &str) {
     h.event(Event::PointerGone);
     h.step();
@@ -240,10 +240,10 @@ fn the_catalog_window_lists_kinds_searches_and_adds_the_selected_brushes() {
     let _ = in_catalog(&h, "チョーク");
 }
 
-/// 「＋」の窓の中の、この名前の部品。
+/// 「＋」のウィンドウの中の、この名前の部品。
 fn in_catalog(h: &H, label: &str) -> Rect {
     let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_catalog::id())
-        .expect("「＋」の窓");
+        .expect("「＋」のウィンドウ");
     rect_of(h, label, |r| window.contains(r.center()))
 }
 

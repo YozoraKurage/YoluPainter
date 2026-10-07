@@ -119,7 +119,7 @@ fn random_tiles(ts: usize) -> &'static Vec<Vec<u8>> {
     })
 }
 
-/// 4096² の文書と描く層。filled なら全タイルが乱数の画素。
+/// 4096² の文書と描くレイヤー。filled なら全タイルが乱数の画素。
 pub fn new_document(filled: bool) -> (Document, yolu_core::LayerId) {
     let mut doc = Document::new(CANVAS, CANVAS).unwrap();
     // 既定（64 MiB）では、1000 画素の筆の混ぜる・指先が読み元の枠で予算を超える。測るのは時間なので、予算は広げる
@@ -246,7 +246,7 @@ pub fn percentile(v: &[f64], p: f64) -> f64 {
 
 /// 表の 1 行（TSV）の見出し。
 pub fn header() -> &'static str {
-    "ブラシ\t大きさ\t間隔\t層\tダブ\t入力\t全体ms\t中央ms\t1ダブus\t1入力us\t入力p95us\t入力最長us\t確定ms\t並列ダブ\t回数"
+    "ブラシ\t大きさ\t間隔\tレイヤー\tダブ\t入力\t全体ms\t中央ms\t1ダブus\t1入力us\t入力p95us\t入力最長us\t確定ms\t並列ダブ\t回数"
 }
 
 pub fn row(label: &str, size: f64, spacing: f64, filled: bool, s: &Stats) -> String {

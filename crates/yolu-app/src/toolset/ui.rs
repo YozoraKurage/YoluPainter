@@ -244,7 +244,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let n = rows.len().max(1) as f32;
     let separators = rows.iter().filter(|r| r.gap).count() as f32;
     let area = Rect::from_min_max(pos2(r.left(), r.top()), pos2(r.right(), bottom));
-    // ツールが増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
+    // ツールが増えても、ウィンドウの最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
     // それでも入りきらなければ、ホイールで送る
     let step = ((area.height() - 6.0 - 4.0 - separators * 9.0) / n).clamp(24.0, 34.0);
     let content = 6.0 + 4.0 + separators * 9.0 + n * step;

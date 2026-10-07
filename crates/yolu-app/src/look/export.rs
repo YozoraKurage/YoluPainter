@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn the_slots_added_for_the_new_features_are_packed_too() {
-        // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色の層）も、書き出しの lilToon の詰め方に入る
+        // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色のレイヤー）も、書き出しの lilToon の詰め方に入る
         let mut doc = Document::new(4, 2).unwrap();
         crate::look::apply_new_set_look(&mut doc);
         let layer = doc.add_layer("a").unwrap();
@@ -402,9 +402,9 @@ mod tests {
                 ("_RimShadeMask", "RimShadeMask")
             ]
         );
-        assert!(extra[0].1.srgb(), "色の層は sRGB");
+        assert!(extra[0].1.srgb(), "色のレイヤーは sRGB");
         assert!(!extra[1].1.srgb());
-        // 色の層は何も描いていない所が透明
+        // 色のレイヤーは何も描いていない所が透明
         let px = slot_image(&doc, "_Main2ndTex", u64::MAX).unwrap();
         assert_eq!(&px[0..4], &[255, 0, 0, 255]);
         assert_eq!(&px[4..8], &[0, 0, 0, 0]);

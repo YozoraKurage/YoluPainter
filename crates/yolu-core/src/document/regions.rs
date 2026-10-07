@@ -109,7 +109,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("層にマスクが無い"));
+            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
         }
         self.refuse_lock(layer, LayerLocks::ALL)?;
         let effective = self.effective_region(region)?;

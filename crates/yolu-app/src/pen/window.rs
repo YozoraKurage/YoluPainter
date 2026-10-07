@@ -1,7 +1,7 @@
-//! 筆圧の調整の窓（表示 → 筆圧の調整…）: 枠の中で普段の強さで何本か描くと、描いた線の筆圧の分布から下限・上限と曲線を自動で決める
+//! 筆圧の調整のウィンドウ（表示 → 筆圧の調整…）: 枠の中で普段の強さで何本か描くと、描いた線の筆圧の分布から下限・上限と曲線を自動で決める
 //! （式は [`super::adjust`]）。下限・上限は 2 本のスライダーで直し、曲線は共通の編集の部品（`ui::curve::curve_editor`）で手で直す。
-//! 曲線の枠には、描いた線の筆圧の分布を薄い棒で重ねる。「元に戻す」は窓を開いたときの調整へ、「既定」は直線へ戻す。
-//! 描いた線は枠の中だけに持ち（文書には入らない）、窓を閉じると捨てる。決めた調整は設定（端末ごと）へ入り、ペンの筆圧をブラシへ渡す前に
+//! 曲線の枠には、描いた線の筆圧の分布を薄い棒で重ねる。「元に戻す」はウィンドウを開いたときの調整へ、「既定」は直線へ戻す。
+//! 描いた線は枠の中だけに持ち（文書には入らない）、ウィンドウを閉じると捨てる。決めた調整は設定（端末ごと）へ入り、ペンの筆圧をブラシへ渡す前に
 //! 直す（`AppState::adjust_pressure`）。マウスの筆圧は 1 のまま、調整を通らない。
 //!
 //! 枠の中の筆圧は、Windows Ink（`PenSample`）か、ペンが egui の Touch の力として来る環境のどちらか（Windows Ink が使える間は
@@ -24,7 +24,7 @@ const GAP: f32 = 6.0;
 const CURVE_HEIGHT: f32 = 190.0;
 /// 描く枠の高さ。
 const DRAW_HEIGHT: f32 = 96.0;
-/// 描いた線の本数・点の数の上限（古いものから捨てる。窓を開いたままの長い試しでメモリを増やさない）。点の数は、線をまたいで古い線から捨て、
+/// 描いた線の本数・点の数の上限（古いものから捨てる。ウィンドウを開いたままの長い試しでメモリを増やさない）。点の数は、線をまたいで古い線から捨て、
 /// 1 本が上限を超えて続くときはその線の古い点から捨てる。
 pub const MAX_STROKES: usize = 64;
 pub const MAX_DOTS: usize = 20_000;
@@ -35,7 +35,7 @@ fn window_id() -> Id {
     Id::new("yolu.pressure")
 }
 
-/// 最後に描いた窓の矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
+/// 最後に描いたウィンドウの矩形（画面の点。開いていなければ None）。試験が位置を知るために読む。
 pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, window_id())
 }
@@ -49,7 +49,7 @@ pub struct Dot {
     pub pressure: f32,
 }
 
-/// 窓の操作（`Action::Pressure`）。
+/// ウィンドウの操作（`Action::Pressure`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PressureAction {
     Open,
@@ -66,13 +66,13 @@ pub enum PressureAction {
     Fit,
     /// 描いた線を消す。
     Clear,
-    /// 窓を開いたときの調整へ。
+    /// ウィンドウを開いたときの調整へ。
     Revert,
     /// 下限 0・上限 1・直線へ。
     Reset,
 }
 
-/// 窓の状態（描いた線・開いたときの調整・自動で決められなかった理由）。
+/// ウィンドウの状態（描いた線・開いたときの調整・自動で決められなかった理由）。
 #[derive(Debug, Default)]
 pub struct PressureWindow {
     pub open: bool,
@@ -80,15 +80,15 @@ pub struct PressureWindow {
     opened_with: PressureAdjust,
     /// 描いた線（古い順）。
     pub strokes: Vec<Vec<Dot>>,
-    /// 最後に描いた枠（画面の点）。ペンの点はこの中だけ集める（窓が毎フレーム決める。試験が決めてもよい）。
+    /// 最後に描いた枠（画面の点）。ペンの点はこの中だけ集める（ウィンドウが毎フレーム決める。試験が決めてもよい）。
     pub frame: Option<Rect>,
-    /// 最後に描いた曲線の枠（画面の点。窓が毎フレーム決める。試験が曲線を操作する位置を知るために読む）。
+    /// 最後に描いた曲線の枠（画面の点。ウィンドウが毎フレーム決める。試験が曲線を操作する位置を知るために読む）。
     pub curve_frame: Option<Rect>,
     /// 今描いている線のペン。
     drawing: Option<u32>,
     /// 自動で決められなかった理由（次に決められる・線を消すと消える）。
     pub note: Option<FitError>,
-    /// 下限・上限のスライダーをドラッグしている最中。設定のファイルへは、離す（か窓を閉じる）まで調整を書かない（ドラッグの間じゅう
+    /// 下限・上限のスライダーをドラッグしている最中。設定のファイルへは、離す（かウィンドウを閉じる）まで調整を書かない（ドラッグの間じゅう
     /// フレームごとに同期付きの書き込みをしない。退避の数の `PrefsState::dragging` と同じ扱い）。
     pub dragging: bool,
 }
@@ -148,7 +148,7 @@ impl PressureWindow {
         }
     }
 
-    /// ペンを離した・窓を閉じた: 次の接触は新しい線にする。
+    /// ペンを離した・ウィンドウを閉じた: 次の接触は新しい線にする。
     fn lift(&mut self) {
         self.drawing = None;
     }
@@ -160,7 +160,7 @@ impl AppState {
         self.prefs.settings.pressure.apply(pressure)
     }
 
-    /// このフレームのペンの点（調整を通す前）を、窓が開いていれば枠の中の線として集める。
+    /// このフレームのペンの点（調整を通す前）を、ウィンドウが開いていれば枠の中の線として集める。
     pub fn pressure_observe(&mut self, pixels_per_point: f32, samples: &[PenSample]) {
         let window = &mut self.pressure;
         if !window.open {
@@ -263,7 +263,7 @@ fn why_text(lang: crate::lang::Lang, why: FitError) -> &'static str {
     }
 }
 
-/// 窓の高さ。
+/// ウィンドウの高さ。
 fn window_height() -> f32 {
     window::HEADER_HEIGHT
         + 8.0
@@ -342,7 +342,7 @@ fn draw_frame(ui: &mut egui::Ui, rect: Rect, window: &PressureWindow, adjust: &P
     }
 }
 
-/// 開いていれば窓を描き、選んだ値を `Action` として当てる。
+/// 開いていればウィンドウを描き、選んだ値を `Action` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.pressure.open {
         app.pressure.dragging = false;
@@ -466,7 +466,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 lang.pick("元に戻す", "Revert"),
                 !reverted,
                 lang.pick(
-                    "窓を開いたときの調整に戻す",
+                    "ウィンドウを開いたときの調整に戻す",
                     "Goes back to the adjustment from when the window opened",
                 ),
                 PressureAction::Revert,

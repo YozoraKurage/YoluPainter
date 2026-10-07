@@ -1,8 +1,8 @@
 //! アセットのパネル（Substance のシェルフ）: 置き場（このプロジェクトの棚・個人のライブラリ）を切り替えて、素材（画像・ブラシ・マテリアル・
 //! スマートマテリアル・スマートマスク）をサムネイルの格子で並べる。上に置き場の切り替え、種類の絞り込み（すべて・5 種類のアイコン）と
-//! ファイルの読み込み、名前の検索、選んだ層の保存（層・マスク。棚のとき）、下に選んだ素材の状態（置けないときは短い理由）と操作
+//! ファイルの読み込み、名前の検索、選んだレイヤーの保存（レイヤー・マスク。棚のとき）、下に選んだ素材の状態（置けないときは短い理由）と操作
 //! （置く・書き出す・ライブラリへ入れる・プロジェクトで使う・消す）。格子の素材はダブルクリック・右クリック・ドラッグでレイヤーの
-//! パネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行の層のマスク）。
+//! パネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行のレイヤーのマスク）。
 //! サムネイルと項目の情報は別のスレッドで作り（見えている項目だけ頼み、できた分から出す）、描いている間も画面を止めない。
 //! 画面には名前と状態と短い理由だけを出し、説明はツールチップに置く。
 
@@ -231,8 +231,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ) {
         app.shelf.scroll = 0.0;
     }
-    // 別のスレッドで走っている仕事（層の保存・ライブラリのファイルの取り込み・ライブラリへの書き込み）の名前と「やめる」。
-    // 走っていないときは、棚では選んだ層の保存
+    // 別のスレッドで走っている仕事（レイヤーの保存・ライブラリのファイルの取り込み・ライブラリへの書き込み）の名前と「やめる」。
+    // 走っていないときは、棚では選んだレイヤーの保存
     let pending = pending_label(app);
     if pending.is_some() || source == Source::Project {
         let row = rows.row(24.0, 6.0);
@@ -287,7 +287,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ghost(&ctx);
 }
 
-/// 選んだ層の保存のボタン（層・マスク）。
+/// 選んだレイヤーの保存のボタン（レイヤー・マスク）。
 fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
     let lang = app.lang;
     let halves = w::Rows::split(row, 2, 6.0);
@@ -299,7 +299,7 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         ui,
         halves[0],
         "shelf.save.material",
-        lang.pick("層を保存", "Save Layer"),
+        lang.pick("レイヤーを保存", "Save Layer"),
         false,
         can_save,
         Some(lang.pick(
@@ -972,7 +972,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "shelf.remove",
         "delete",
         lang.pick(
-            "アセットから消す（置いた層はそのまま）",
+            "アセットから消す（置いたレイヤーはそのまま）",
             "Remove from the project's assets (placed layers stay)",
         ),
         false,
@@ -1164,7 +1164,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "shelf.library.remove",
         "delete",
         lang.pick(
-            "ライブラリから消す（プロジェクトの写しと置いた層はそのまま）",
+            "ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）",
             "Remove from the library (project copies and placed layers stay)",
         ),
         false,
@@ -1269,7 +1269,7 @@ pub fn gap_or_group(rows: &[Row], position: f32) -> DropTarget {
     }
 }
 
-/// 落とす先の置き場所（親のグループと、その子の中の位置）。線は、その下の行の層のすぐ上（同じグループの中）。一番下の線は最上位の
+/// 落とす先の置き場所（親のグループと、その子の中の位置）。線は、その下の行のレイヤーのすぐ上（同じグループの中）。一番下の線は最上位の
 /// 一番下。グループの枠はその中の一番上。
 pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceTarget {
     match target {
@@ -1298,7 +1298,7 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
 }
 
 /// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアル・マテリアル・画像は行の間・
-/// グループの中、スマートマスクは行の層のマスク、それ以外は断る理由をステータスバーへ）。
+/// グループの中、スマートマスクは行のレイヤーのマスク、それ以外は断る理由をステータスバーへ）。
 pub fn layer_list_drop(
     ui: &Ui,
     app: &mut AppState,
@@ -1314,7 +1314,7 @@ pub fn layer_list_drop(
         return;
     };
     let released = ui.input(|i| i.pointer.any_released());
-    // 一覧の行の高さは層と効果で違うので、行の数え方は一覧を描いた効果の行の配置から（層の行の単位に直す）
+    // 一覧の行の高さはレイヤーと効果で違うので、行の数え方は一覧を描いた効果の行の配置から（レイヤーの行の単位に直す）
     let at = p.y - list.top() + app.ui.layer_scroll;
     let position = layout.position_at(at);
     let painter = ui.painter_at(list);
@@ -1333,7 +1333,7 @@ pub fn layer_list_drop(
                 PlaceTarget::Mask(row.id)
             })
         }
-        // 画像は 1 枚のペイントの層、マテリアルは塗りつぶしの層として、スマートマテリアルと同じ所へ置く
+        // 画像は 1 枚のペイントのレイヤー、マテリアルは塗りつぶしレイヤーとして、スマートマテリアルと同じ所へ置く
         ItemKind::SmartMaterial | ItemKind::Material | ItemKind::Image => {
             let target = gap_or_group(rows, position);
             match target {
@@ -1371,7 +1371,7 @@ pub fn layer_list_drop(
     }
 }
 
-// ───────── メニュー・ファイルの窓 ─────────
+// ───────── メニュー・ファイルのウィンドウ ─────────
 
 /// 棚の素材の右クリックのメニュー（選んでいる素材）。
 pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
@@ -1500,7 +1500,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     items
 }
 
-/// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、窓に落としたファイルを入れる
+/// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、ウィンドウに落としたファイルを入れる
 /// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
 /// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
 pub fn frame(ctx: &egui::Context, state: &mut AppState) {
@@ -1563,7 +1563,7 @@ fn file_stem(name: &str) -> String {
     }
 }
 
-/// 棚のファイルの窓・確かめの窓（窓を開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
+/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
 pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {
@@ -1616,7 +1616,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 .set_title("YoluPainter")
                 .set_description(match lang {
                     Lang::Ja => format!(
-                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いた層は残ります）"
+                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いたレイヤーは残ります）"
                     ),
                     Lang::En => format!(
                         "Remove \"{name}\" from the library folder? (Copies inside projects and placed layers stay.)"

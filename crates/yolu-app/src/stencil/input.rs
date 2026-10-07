@@ -243,7 +243,7 @@ pub fn handle_event(
     true
 }
 
-/// ボタンを離したのを取りこぼしたとき（窓の外で離したなど）に、押していなければドラッグを終える（イベントを全部見た後で）。
+/// ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）に、押していなければドラッグを終える（イベントを全部見た後で）。
 pub fn settle(app: &mut AppState, any_button_down: bool) {
     if app.stencil.drag.is_some() && !any_button_down {
         app.stencil.end_drag(false);

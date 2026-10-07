@@ -1,7 +1,7 @@
 //! マテリアルで塗る（Substance Painter のように、1 回のストロークで複数のチャンネル）: 塗るチャンネルの組と、チャンネルごとの値
 //! （Color は描画色、Emission は色、Roughness・Metallic・Height は 0〜1 の値、Normal は傾き）。オンなら、ブラシのストロークも
 //! バケツ・ポリゴン塗りつぶしも組の全部を 1 回の Undo で塗る（core の `begin_material_brush_stroke`・`fill_material`・
-//! `begin_material_triangle_fill`。層で無効のチャンネルは有効にする）。オフ（既定）なら描くチャンネル 1 つを描画色で塗る。
+//! `begin_material_triangle_fill`。レイヤーで無効のチャンネルは有効にする）。オフ（既定）なら描くチャンネル 1 つを描画色で塗る。
 //! マスクの編集中は、どちらでもマスクだけを塗る。値は画面の状態で、文書には入らない（Unity 版の BrushState と同じ持ち方）。
 //!
 //! 組の最後の 1 つは外せない（何も塗らないストロークにしない）。初めてオンにしたときは、描くチャンネル 1 つの組で始める。

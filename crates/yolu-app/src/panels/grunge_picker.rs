@@ -82,14 +82,14 @@ fn images(ctx: &Context) -> Option<Images> {
             ctx.request_repaint();
         });
     }
-    // 別の窓（コンテキスト）からも、できるまで見に来る
+    // 別のウィンドウ（コンテキスト）からも、できるまで見に来る
     ctx.request_repaint_after(std::time::Duration::from_millis(30));
     None
 }
 
 type Textures = Arc<Mutex<HashMap<GrungePreset, TextureHandle>>>;
 
-/// プリセットの見本のテクスチャ（できていれば。初めて使うときにこの窓の GPU へ上げる）。
+/// プリセットの見本のテクスチャ（できていれば。初めて使うときにこのウィンドウの GPU へ上げる）。
 pub fn texture(ctx: &Context, preset: GrungePreset) -> Option<TextureHandle> {
     let images = images(ctx)?;
     let textures: Textures = ctx.data_mut(|d| {
@@ -110,7 +110,7 @@ pub fn texture(ctx: &Context, preset: GrungePreset) -> Option<TextureHandle> {
     Some(handle)
 }
 
-/// 見本が全部できているか（この窓のテクスチャに上げたかは問わない）。
+/// 見本が全部できているか（このウィンドウのテクスチャに上げたかは問わない）。
 pub fn ready() -> bool {
     store().lock().unwrap().images.is_some()
 }

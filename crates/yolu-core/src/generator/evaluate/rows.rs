@@ -257,7 +257,7 @@ impl BoundGenerator<'_> {
         }
     }
 
-    /// アイランドごとのばらつきの行の基底の値。島の図の行の連なりを歩き、連なりごとに 1 回だけ値を求めて埋める（`island_value` と同じ式）。
+    /// アイランドごとのばらつきの行の基底の値。アイランドの図の行の連なりを歩き、連なりごとに 1 回だけ値を求めて埋める（`island_value` と同じ式）。
     fn island_row(&self, x0: u32, y: u32, out: &mut [f64]) {
         out.fill(none());
         let Some(map) = &self.islands else {

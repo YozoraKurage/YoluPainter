@@ -1,12 +1,12 @@
 //! 配布用に保存（ファイルのメニュー）: 今のプロジェクトの写しを、作った人が気づかないまま残る物（取り込んだ PSD の原本・使っていない棚の素材・
-//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。除く物は書く前の窓
+//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。除く物は書く前のウィンドウ
 //! （`window`）に種類ごとに並べ、種類ごとに外せる（既定は全部除く）。何を除くかの判断と写しの組み立ては `yolu_io::Project::for_distribution`
-//! （ここは仕事の運びと窓の状態だけ）。
+//! （ここは仕事の運びとウィンドウの状態だけ）。
 //!
 //! - **開いているものは変えない**: 文書・プロジェクト・未保存の印・Undo・開いているファイルのどれも変えない。始めるときに、描いていない区切りで
 //!   変わったセットの文書の写し（`Document::capture_snapshot`。タイルは共有）と小さな値だけを取り、写しの組み立て（正本・合成の PNG・選択範囲・
 //!   見た目・メッシュマップ・棚。保存と同じ並び）と書き込みは別のスレッドで行う。描いている最中は始めない・書かない。
-//! - **流れ**: 準備（別のスレッドで、今の状態の完全な写しの `Project` を組む）→ 窓（除く種類の切り替え。当たる物が無ければ窓を出さない）→
+//! - **流れ**: 準備（別のスレッドで、今の状態の完全な写しの `Project` を組む）→ ウィンドウ（除く種類の切り替え。当たる物が無ければウィンドウを出さない）→
 //!   保存先を選ぶ → 既にあるファイルなら置き換えを確かめる → 書き込み（別のスレッドで、種類を除いた写しを組み、検証した一時ファイルから 1 回の
 //!   置き換えで書く。`SaveTarget`）。取消・失敗は何も書かない（保存先は元のまま）。
 //! - **開いている作業用の .ylp へは書かない**: 同じファイルは選べない。配布用の写しの隣に `-backups~` は作らない（退避は作業用の .ylp の
@@ -45,11 +45,11 @@ fn thread(name: &str) -> std::thread::Builder {
 pub enum DistributeAction {
     /// ファイルのメニュー「配布用に保存…」: 準備を始める。
     Start,
-    /// 窓で、種類ごとに除く・残すを切り替える。
+    /// ウィンドウで、種類ごとに除く・残すを切り替える。
     Toggle(Removal),
-    /// 窓の「やめる」。
+    /// ウィンドウの「やめる」。
     CancelWindow,
-    /// 窓の「保存…」: 保存先を選ぶ窓を頼む。
+    /// ウィンドウの「保存…」: 保存先を選ぶウィンドウを頼む。
     ChooseFile,
     /// 保存先が決まった（既にあるファイルなら置き換えを確かめる）。
     Save(PathBuf),
@@ -69,12 +69,12 @@ pub struct Prepared {
     left_out: Vec<String>,
 }
 
-/// 書く前の窓の状態。
+/// 書く前のウィンドウの状態。
 pub struct Window {
     prepared: Arc<Prepared>,
     selected: Vec<Removal>,
     inventory: Inventory,
-    /// 窓を出しているか（書いている間・除く物が無いとき・保存先を選んでいる間の、窓なしの流れでは出さない）。
+    /// ウィンドウを出しているか（書いている間・除く物が無いとき・保存先を選んでいる間の、ウィンドウなしの流れでは出さない）。
     visible: bool,
 }
 
@@ -139,7 +139,7 @@ pub struct Progress {
 /// 配布用に保存の状態。
 #[derive(Default)]
 pub struct DistributeState {
-    /// 準備が済んだ写しと窓の選び（書き込みが済むか、やめるまで持つ）。
+    /// 準備が済んだ写しとウィンドウの選び（書き込みが済むか、やめるまで持つ）。
     window: Option<Window>,
     pub window_offset: Vec2,
     pub window_scroll: f32,
@@ -159,14 +159,14 @@ impl DistributeState {
     pub fn is_busy(&self) -> bool {
         self.job.is_some()
     }
-    /// 準備した写しがあるか（窓を出している・保存先を選んでいる・置き換えを確かめている間）。
+    /// 準備した写しがあるか（ウィンドウを出している・保存先を選んでいる・置き換えを確かめている間）。
     pub fn is_open(&self) -> bool {
         self.window.is_some()
     }
     pub fn window(&self) -> Option<&Window> {
         self.window.as_ref()
     }
-    /// 窓を描くか。
+    /// ウィンドウを描くか。
     pub fn window_visible(&self) -> bool {
         self.window.as_ref().is_some_and(|w| w.visible)
             && self.job.is_none()
@@ -182,7 +182,7 @@ impl DistributeState {
     }
 }
 
-/// 配布用に保存（札・閉じる前の確かめ・止める）。除く物の窓と置き換えの確かめは、キーの割り当てを止める。
+/// 配布用に保存（札・閉じる前の確かめ・止める）。除く物のウィンドウと置き換えの確かめは、キーの割り当てを止める。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     card: Some(|app, lang| {
@@ -212,12 +212,12 @@ pub(crate) const JOB: JobSpec = JobSpec {
     ..JobSpec::new("distribute", |app| app.distribute.is_busy())
 };
 
-/// 保存先を選ぶ窓に出す初めのファイル名（今の名前に短い接尾辞を付けて、開いている作業用のファイルと区別する）。
+/// 保存先を選ぶウィンドウに出す初めのファイル名（今の名前に短い接尾辞を付けて、開いている作業用のファイルと区別する）。
 pub fn default_name(state: &AppState) -> String {
     format!("{}-dist.ylp", state.project_name)
 }
 
-/// 保存先を選ぶ窓（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（窓は開いたまま）。
+/// 保存先を選ぶウィンドウ（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（ウィンドウは開いたまま）。
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
     let mut dialog = crate::dialog::file()
@@ -238,7 +238,7 @@ pub fn run_dialog(state: &mut AppState) {
     }
     match dialog.save_file() {
         Some(path) => state.apply(Action::Distribute(DistributeAction::Save(path))),
-        // 窓なしの流れ（除く物が無かった）で選ばなかったら、準備した写しを閉じる（窓があるときは窓に戻る）
+        // ウィンドウなしの流れ（除く物が無かった）で選ばなかったら、準備した写しを閉じる（ウィンドウがあるときはウィンドウに戻る）
         None => state.settle_distribute_window(),
     }
 }
@@ -250,7 +250,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// 名前が .ylp で終わっていなければ .ylp を足す（窓の種類で付かない環境がある）。
+/// 名前が .ylp で終わっていなければ .ylp を足す（ウィンドウの種類で付かない環境がある）。
 fn with_extension(path: PathBuf) -> PathBuf {
     let ends = path
         .extension()
@@ -323,7 +323,7 @@ impl AppState {
             DistributeAction::Save(path) => {
                 if stroking {
                     refuse(self);
-                    // 窓なしの流れ（除く物が無かった）で、断ったまま準備した写しを抱えて動かなくならないように
+                    // ウィンドウなしの流れ（除く物が無かった）で、断ったまま準備した写しを抱えて動かなくならないように
                     return self.settle_distribute_window();
                 }
                 self.distribute_save(with_extension(path));
@@ -364,7 +364,7 @@ impl AppState {
         }
     }
 
-    /// 書き込みが済まなかったとき（取消・失敗・置き換えをやめた）の窓: 除く物の窓があれば出し直し、窓なしの流れ（除く物が無かった）なら閉じる。
+    /// 書き込みが済まなかったとき（取消・失敗・置き換えをやめた）のウィンドウ: 除く物のウィンドウがあれば出し直し、ウィンドウなしの流れ（除く物が無かった）なら閉じる。
     fn settle_distribute_window(&mut self) {
         if self.distribute.job.is_some() || self.distribute.replace.is_some() {
             return;
@@ -478,7 +478,7 @@ impl AppState {
                     "Cannot write over the open file",
                 ),
             );
-            // 窓なしの流れなら閉じ、窓があれば除く物の窓に戻る（選び直せる）
+            // ウィンドウなしの流れなら閉じ、ウィンドウがあれば除く物のウィンドウに戻る（選び直せる）
             self.settle_distribute_window();
             return;
         }
@@ -489,7 +489,7 @@ impl AppState {
         self.start_distribute_write(path, false);
     }
 
-    /// 書き込みを始める: 窓の選びのまま、写しの組み立てと書き込みを別のスレッドで。
+    /// 書き込みを始める: ウィンドウの選びのまま、写しの組み立てと書き込みを別のスレッドで。
     fn start_distribute_write(&mut self, path: PathBuf, replacing: bool) {
         let lang = self.lang;
         let Some(window) = self.distribute.window.as_mut() else {
@@ -523,7 +523,7 @@ impl AppState {
                         lang.thread_error(&e),
                     ),
                 );
-                // 出さないと決めた窓を戻す（窓なしの流れなら閉じる）。仕事が無いまま、窓も出ない状態にしない
+                // 出さないと決めたウィンドウを戻す（ウィンドウなしの流れなら閉じる）。仕事が無いまま、ウィンドウも出ない状態にしない
                 self.settle_distribute_window();
                 return;
             }
@@ -558,7 +558,7 @@ impl AppState {
         match (result, job.kind) {
             (Ok(Output::Prepared(prepared)), Kind::Prepare) => {
                 let mut window = Window::new(*prepared);
-                // 除く物が無ければ窓を出さず、すぐ保存先を選ぶ
+                // 除く物が無ければウィンドウを出さず、すぐ保存先を選ぶ
                 if window.inventory.is_empty() {
                     self.dialog_request = Some(DialogRequest::DistributeSave);
                 } else {
@@ -591,7 +591,7 @@ impl AppState {
             }
             (Err(failure), kind) => {
                 let writing = matches!(kind, Kind::Write);
-                // 書けなかった（取消も）ときは、窓を戻して選び直せるようにする
+                // 書けなかった（取消も）ときは、ウィンドウを戻して選び直せるようにする
                 if writing {
                     self.settle_distribute_window();
                 }
@@ -666,7 +666,7 @@ fn build(
     })
 }
 
-/// 窓の選びで種類を除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
+/// ウィンドウの選びで種類を除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
 /// 書くのは検証した一時ファイルから 1 回の置き換え（退避は作らない）。置き換えるのは、確かめを終えた .ylp として読める既存のファイルだけ。
 fn write(
     prepared: &Prepared,

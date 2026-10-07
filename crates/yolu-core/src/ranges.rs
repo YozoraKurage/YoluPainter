@@ -53,13 +53,13 @@ pub const DIRECTIONAL_ANGLE: RangeInclusive<f64> = 0.0..=360.0;
 pub const DIRECTIONAL_DISTANCE: RangeInclusive<f64> = 0.0..=256.0;
 /// ゆがみのずらす長さ（画素）。
 pub const WARP_INTENSITY: RangeInclusive<f64> = 0.0..=128.0;
-/// モルフォロジーの丸い窓の半径（画素）。
+/// モルフォロジーの丸いウィンドウの半径（画素）。
 pub const MORPHOLOGY_RADIUS: RangeInclusive<u32> = 1..=64;
 /// エッジ検出の前にぼかす幅（画素）。
 pub const EDGE_WIDTH: RangeInclusive<u32> = 1..=16;
 /// ハイパスの半径（画素）。
 pub const HIGH_PASS_RADIUS: RangeInclusive<u32> = 1..=256;
-/// メディアンの正方形の窓の半径（画素）。
+/// メディアンの正方形のウィンドウの半径（画素）。
 pub const MEDIAN_RADIUS: RangeInclusive<u32> = 1..=16;
 /// グローの広がりの半径（画素）。
 pub const GLOW_RADIUS: RangeInclusive<u32> = 1..=256;

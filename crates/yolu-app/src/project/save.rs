@@ -8,7 +8,7 @@
 //! - **終わったら** 画面のスレッドで結果を受けて、`ProjectFile`・セットの保存済みの印・メッセージを更新する。失敗したら何も変えず、
 //!   保存の前の「変更あり」を戻して理由を出す（ファイルは yolu-io の安全な保存なので前の中身のまま）。
 //! - **閉じる**ときは、保存が終わるのを待ってから（`YoluApp`）。
-//! - 試験の状態（`AppState::new`）は、保存の頼みの中で同じ仕事を呼び手のスレッドで終えて結果を受ける（`background` が false）。実際の窓
+//! - 試験の状態（`AppState::new`）は、保存の頼みの中で同じ仕事を呼び手のスレッドで終えて結果を受ける（`background` が false）。実際のウィンドウ
 //!   （`YoluApp::new`）だけ裏のスレッドで動かす。
 
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ const WEIGHTS: [f32; STAGES] = [0.15, 0.2, 0.4, 0.2, 0.05];
 /// 裏の保存の状態。
 #[derive(Default)]
 pub struct SaveState {
-    /// 保存を裏のスレッドで動かすか（実際の窓は true）。false なら、保存の頼みの中で、同じ仕事を呼び手のスレッドで終えて結果を受ける。
+    /// 保存を裏のスレッドで動かすか（実際のウィンドウは true）。false なら、保存の頼みの中で、同じ仕事を呼び手のスレッドで終えて結果を受ける。
     pub background: bool,
     job: Option<Job>,
     /// 試験用: 次の保存の仕事を、手が離されるまで始めずに止めておく。
@@ -76,7 +76,7 @@ impl SaveHold {
     }
 }
 
-/// 保存の進み具合（仕事の札・閉じるのを待つ窓）。
+/// 保存の進み具合（仕事の札・閉じるのを待つウィンドウ）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveProgress {
     pub file: String,
@@ -209,7 +209,7 @@ impl AppState {
         self.modified || self.save.job.as_ref().is_some_and(|j| j.was_modified)
     }
 
-    /// 保存の進み具合（仕事の札・閉じるのを待つ窓）。
+    /// 保存の進み具合（仕事の札・閉じるのを待つウィンドウ）。
     pub fn save_progress(&self) -> Option<SaveProgress> {
         self.save.progress()
     }

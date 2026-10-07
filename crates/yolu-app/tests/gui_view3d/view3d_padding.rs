@@ -1,4 +1,4 @@
-//! 3D ビューの表示の写しの塗り広げ（UV の外へ。`view3d::paint` の `set_padding`）: 島の中は正本と同じバイト・島の外は書き出しと同じ式で
+//! 3D ビューの表示の写しの塗り広げ（UV の外へ。`view3d::paint` の `set_padding`）: アイランドの中は正本と同じバイト・アイランドの外は書き出しと同じ式で
 //! 塗り広がる・描いたタイルの周りだけの塗り広げ直しが全体の塗り広げと同じ・モデルの UV が替わると覆いを作り直す・離れて見たときの継ぎ目。
 use crate::common;
 
@@ -16,7 +16,7 @@ use yolu_core::{
     Channel, Document, HeightEdgeMode, LayerId, NormalSettings, NormalYDirection, Rect, Rgba8,
 };
 
-/// 立方体を膨らませた球（面ごとに 3 × 2 の UV の島）の島を、島の中心のまわりに `scale` 倍へ縮めたもの（島の外の隙間を広げる）。
+/// 立方体を膨らませた球（面ごとに 3 × 2 の UV アイランド）のアイランドを、アイランドの中心のまわりに `scale` 倍へ縮めたもの（アイランドの外の隙間を広げる）。
 fn islands(n: u32, scale: f32) -> ModelMesh {
     let mut mesh = cube_sphere(n, 0.5);
     let per_face = ((n + 1) * (n + 1)) as usize;
@@ -83,7 +83,7 @@ fn first_layer(h: &Harness<'_, YoluApp>) -> LayerId {
     h.state().state.doc.layers()[0].id()
 }
 
-/// 層のチャンネルに、`at` が返す画素を丸ごと読み込む（行は下から。タイルごと）。
+/// レイヤーのチャンネルに、`at` が返す画素を丸ごと読み込む（行は下から。タイルごと）。
 fn import(doc: &mut Document, layer: LayerId, channel: Channel, at: impl Fn(u32, u32) -> [u8; 4]) {
     let ts = doc.tile_size();
     let coords: Vec<_> = doc.canvas_tiles().collect();
@@ -100,7 +100,7 @@ fn import(doc: &mut Document, layer: LayerId, channel: Channel, at: impl Fn(u32,
     }
 }
 
-/// 島の中（覆うテクセル）だけを塗った文書: Color は島ごとに違う色（島の外は透明）、Roughness は島の中だけ 200。
+/// アイランドの中（覆うテクセル）だけを塗った文書: Color はアイランドごとに違う色（アイランドの外は透明）、Roughness はアイランドの中だけ 200。
 fn paint_inside(h: &mut Harness<'_, YoluApp>, keep: &[bool]) {
     let layer = first_layer(h);
     let doc = &mut h.state_mut().state.doc;
@@ -197,7 +197,7 @@ fn the_view_copy_keeps_island_texels_and_fills_outside_like_the_export() {
     look_at(&mut h, 2.5, 30.0, 20.0);
     let color = level0(&h, Slot::Color);
     let doc = &h.state().state.doc;
-    // 島の中は正本（合成）を塗り広げずに上げたのと同じバイト
+    // アイランドの中は正本（合成）を塗り広げずに上げたのと同じバイト
     let plain = reduce_srgb_premultiplied(
         &doc.composite_channel(Channel::Color, doc.bounds()).unwrap(),
         doc.bounds(),
@@ -208,19 +208,19 @@ fn the_view_copy_keeps_island_texels_and_fills_outside_like_the_export() {
     for (i, &k) in keep.iter().enumerate() {
         let (a, b) = (&color[i * 4..i * 4 + 4], &plain[i * 4..i * 4 + 4]);
         if k {
-            assert_eq!(a, b, "島の中のテクセル {i}");
+            assert_eq!(a, b, "アイランドの中のテクセル {i}");
         } else if b[3] == 0 && a[3] > 0 {
             filled += 1;
         }
     }
-    assert!(filled > 0, "島の外が塗り広がっている");
+    assert!(filled > 0, "アイランドの外が塗り広がっている");
     // 全体が、書き出しと同じ式（`padding::dilate`、同じ段数）で塗り広げたものと同じ
     assert!(color == expected_color(doc, &keep), "Color の段 0");
     assert!(
         level0(&h, Slot::Roughness) == expected_scalar(doc, Channel::Roughness, &keep),
         "Roughness の段 0"
     );
-    // 届く幅の外（島から DISPLAY_PAD_TEXELS より遠い所）は元のまま（透明）
+    // 届く幅の外（アイランドから DISPLAY_PAD_TEXELS より遠い所）は元のまま（透明）
     let rings = padding::Rings::new(size, size, &keep, DISPLAY_PAD_TEXELS).unwrap();
     let far = (0..size * size)
         .filter(|&i| rings.ring(i % size, i / size).is_none())
@@ -256,8 +256,8 @@ fn quad_island(lo: f32, hi: f32) -> ModelMesh {
 
 #[test]
 fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
-    // 1024² の文書（128² のタイル）に、UV の [0.1, 0.49]² の島 1 つ。タイルは 4 通りになる: 島の縁をまたぐ・島の奥（塗り広げる
-    // テクセルが届く幅の外）・島の外で塗り広げるテクセルがある・島から遠い
+    // 1024² の文書（128² のタイル）に、UV の [0.1, 0.49]² のアイランド 1 つ。タイルは 4 通りになる: アイランドの縁をまたぐ・アイランドの奥（塗り広げる
+    // テクセルが届く幅の外）・アイランドの外で塗り広げるテクセルがある・アイランドから遠い
     let size = 1024;
     let mut h = view(900.0, 700.0, size);
     let mesh = quad_island(0.1, 0.49);
@@ -281,13 +281,17 @@ fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
         )
     };
     let cases = [
-        ("島の縁をまたぐ", tile(0, 1), (true, true)),
-        ("島の奥", tile(1, 1), (true, false)),
-        ("島の外の塗り広げ", tile(4, 1), (false, true)),
-        ("島から遠い", tile(6, 6), (false, false)),
+        ("アイランドの縁をまたぐ", tile(0, 1), (true, true)),
+        ("アイランドの奥", tile(1, 1), (true, false)),
+        ("アイランドの外の塗り広げ", tile(4, 1), (false, true)),
+        ("アイランドから遠い", tile(6, 6), (false, false)),
     ];
     for (name, t, (has_keep, near)) in cases {
-        assert_eq!(rings.kinds_in(t).0, has_keep, "{name}: 島の中を含む");
+        assert_eq!(
+            rings.kinds_in(t).0,
+            has_keep,
+            "{name}: アイランドの中を含む"
+        );
         let near_filled = if has_keep {
             rings.kinds_in(grown(t)).1
         } else {
@@ -347,7 +351,7 @@ fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
     assert!(level0(&h, Slot::Roughness) == partial.1);
 }
 
-/// タイル（`size` の画布の中）の中に島の中のテクセルがあるか・塗り広げるテクセルが届く所にあるか（アプリと同じ見方: 島の中を含むなら、
+/// タイル（`size` のキャンバスの中）の中にアイランドの中のテクセルがあるか・塗り広げるテクセルが届く所にあるか（アプリと同じ見方: アイランドの中を含むなら、
 /// タイルを段数だけ広げた所の塗り広げるテクセル、含まないならタイルの中の塗り広げるテクセル）。
 fn tile_kinds(rings: &padding::Rings, tile: Rect, size: u32) -> (bool, bool) {
     let d = rings.reach();
@@ -384,11 +388,11 @@ fn touch(doc: &mut Document, layer: LayerId, tile: Rect, channels: &[(Channel, R
     }
 }
 
-/// (名前, タイルの番号, 島の中を含むか, 塗り広げるテクセルが届くか)
+/// (名前, タイルの番号, アイランドの中を含むか, 塗り広げるテクセルが届くか)
 type Cases<'a> = &'a [(&'a str, (u32, u32), (bool, bool))];
 
 /// 縮めて持つ今のセット（予算で縮める）: 1 タイルを描いたあとの段 0 が、文書の解像度で塗り広げてから縮めたものと同じ（塗り広げの幅は
-/// 文書の画素で `16 << shift`、段の地図の上限 254 で頭打ち）。島は UV の右上に寄せて、画布の端で切れる場合と、塗り広げの幅が縮めの境
+/// 文書の画素で `16 << shift`、段の地図の上限 254 で頭打ち）。アイランドは UV の右上に寄せて、キャンバスの端で切れる場合と、塗り広げの幅が縮めの境
 /// （2^shift）の倍数でなくなる場合（頭打ちの 254）の合わせ方も通す。
 fn check_shrunk_current(size: u32, shift: u32, budget: u64, cases: Cases<'_>) {
     let mut h = view(900.0, 700.0, size);
@@ -466,11 +470,11 @@ fn repadding_a_tile_of_a_shrunk_picture_matches_padding_the_document_then_shrink
         2,
         1 << 20,
         &[
-            ("島の縁をまたぐ", (4, 4), (true, true)),
-            ("島の縁と画布の端", (7, 4), (true, true)),
-            ("島の奥", (6, 6), (true, false)),
-            ("島の外の塗り広げ", (3, 6), (false, true)),
-            ("島から遠い", (0, 0), (false, false)),
+            ("アイランドの縁をまたぐ", (4, 4), (true, true)),
+            ("アイランドの縁とキャンバスの端", (7, 4), (true, true)),
+            ("アイランドの奥", (6, 6), (true, false)),
+            ("アイランドの外の塗り広げ", (3, 6), (false, true)),
+            ("アイランドから遠い", (0, 0), (false, false)),
         ],
     );
 }
@@ -485,11 +489,11 @@ fn repadding_a_tile_when_the_reach_is_capped_matches_padding_the_document_then_s
         4,
         200_000,
         &[
-            ("島の縁をまたぐ", (8, 8), (true, true)),
-            ("島の縁と画布の端", (15, 8), (true, true)),
-            ("島の奥", (12, 12), (true, false)),
-            ("島の外の塗り広げ", (6, 12), (false, true)),
-            ("島から遠い", (0, 0), (false, false)),
+            ("アイランドの縁をまたぐ", (8, 8), (true, true)),
+            ("アイランドの縁とキャンバスの端", (15, 8), (true, true)),
+            ("アイランドの奥", (12, 12), (true, false)),
+            ("アイランドの外の塗り広げ", (6, 12), (false, true)),
+            ("アイランドから遠い", (0, 0), (false, false)),
         ],
     );
 }
@@ -553,7 +557,7 @@ fn two_sets(size: u32, meshes: [ModelMesh; 2]) -> Harness<'static, YoluApp> {
     h
 }
 
-/// 文書 `set` の最初の層に、島の中だけを塗った Color と Roughness（`paint_inside` の、今のセット以外の文書向け）。
+/// 文書 `set` の最初のレイヤーに、アイランドの中だけを塗った Color と Roughness（`paint_inside` の、今のセット以外の文書向け）。
 fn paint_inside_set(h: &mut Harness<'_, YoluApp>, set: usize, keep: &[bool]) -> LayerId {
     let doc = h.state_mut().state.set_doc_mut(set);
     let layer = doc.layers()[0].id();
@@ -609,10 +613,10 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
     let ts = h.state().state.set_doc(1).tile_size();
     // 同じセットの文書を、何度か 1 タイルずつ変える（そのたびに同期して、絵は文書の解像度で塗り広げてから縮めたものと同じ）
     for (name, (tx, ty), kinds) in [
-        ("島の縁をまたぐ", (4, 4), (true, true)),
-        ("島の縁と画布の端", (7, 4), (true, true)),
-        ("島の外の塗り広げ", (3, 6), (false, true)),
-        ("島の奥", (6, 6), (true, false)),
+        ("アイランドの縁をまたぐ", (4, 4), (true, true)),
+        ("アイランドの縁とキャンバスの端", (7, 4), (true, true)),
+        ("アイランドの外の塗り広げ", (3, 6), (false, true)),
+        ("アイランドの奥", (6, 6), (true, false)),
     ] {
         let tile = Rect::new(tx * ts, ty * ts, ts, ts);
         assert_eq!(tile_kinds(&rings, tile, size), kinds, "{name}: 場合");
@@ -642,7 +646,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
 }
 
 /// Height から Normal を作る設定で、Height のタイルを描いたあとの Normal の段 0 が、Normal の出力を文書の解像度で塗り広げてから縮めた
-/// ものと同じ（Sobel のために外へ 1 画素広げた出力から切り出して塗り広げる道）。島は UV の左下に寄せて、画布の端で切れる場合も通す。
+/// ものと同じ（Sobel のために外へ 1 画素広げた出力から切り出して塗り広げる道）。アイランドは UV の左下に寄せて、キャンバスの端で切れる場合も通す。
 fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u64>) {
     let size = 1024;
     let mut h = view(900.0, 700.0, size);
@@ -651,7 +655,7 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
     let layer = first_layer(&h);
     {
         let doc = &mut h.state_mut().state.doc;
-        // 島の中だけに、緩い起伏の Height（島の外は透明）
+        // アイランドの中だけに、緩い起伏の Height（アイランドの外は透明）
         import(doc, layer, Channel::Height, |x, y| {
             if keep[(y * size + x) as usize] {
                 let v = (40 + (x * 3 + y * 5) % 160) as u8;
@@ -681,11 +685,11 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
     let rings = padding::Rings::new(size, size, &keep, reach_for(shift)).unwrap();
     let ts = h.state().state.doc.tile_size();
     let cases: Cases<'_> = &[
-        ("島の縁をまたぐ", (3, 3), (true, true)),
-        ("島の縁と画布の端", (3, 0), (true, true)),
-        ("島の奥", (1, 1), (true, false)),
-        ("島の外の塗り広げ", (4, 1), (false, true)),
-        ("島から遠い", (6, 6), (false, false)),
+        ("アイランドの縁をまたぐ", (3, 3), (true, true)),
+        ("アイランドの縁とキャンバスの端", (3, 0), (true, true)),
+        ("アイランドの奥", (1, 1), (true, false)),
+        ("アイランドの外の塗り広げ", (4, 1), (false, true)),
+        ("アイランドから遠い", (6, 6), (false, false)),
     ];
     for (name, (tx, ty), kinds) in cases {
         let tile = Rect::new(tx * ts, ty * ts, ts, ts);
@@ -757,14 +761,14 @@ fn a_model_with_other_uvs_rebuilds_the_coverage_and_a_new_pose_does_not() {
     set_model(&mut h, vec![moved]);
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.total_tiles, tiles, "UV が同じなら上げ直さない: {s:?}");
-    // UV が違うモデル: 覆いを作り直し、その覆いで塗り広げる（前の島の外の塗り広げは残らない）
+    // UV が違うモデル: 覆いを作り直し、その覆いで塗り広げる（前のアイランドの外の塗り広げは残らない）
     let b = islands(8, 0.8);
     let keep_b = keep_of(&b, size);
     assert_ne!(keep_a, keep_b);
     set_model(&mut h, vec![b]);
     assert!(h.state().view3d_stats().unwrap().last_rebuilt);
     assert!(level0(&h, Slot::Color) == expected_color(&h.state().state.doc, &keep_b));
-    // 塗り広げを切れば、前と同じ（島の外は透明のまま）
+    // 塗り広げを切れば、前と同じ（アイランドの外は透明のまま）
     h.state_mut().view3d_set_display_padding(0);
     h.run();
     let doc = &h.state().state.doc;
@@ -791,7 +795,7 @@ fn seam_count(inside: &image::RgbaImage, full: &image::RgbaImage) -> (usize, u8)
     (count, max)
 }
 
-/// 島の中だけを塗った球と、全面を塗った球を、同じカメラで撮る。
+/// アイランドの中だけを塗った球と、全面を塗った球を、同じカメラで撮る。
 fn seam_shots(
     h: &mut Harness<'_, YoluApp>,
     keep: &[bool],
@@ -867,7 +871,7 @@ fn far_away_the_island_borders_no_longer_bleed_the_transparent_outside() {
     let mesh = islands(16, 0.6);
     let keep = keep_of(&mesh, size);
     set_model(&mut h, vec![mesh]);
-    // 球が表示域の高さの約 1/4（島の 1 テクセルが画面の 1/4 画素ほど: ミップの段 2〜3）
+    // 球が表示域の高さの約 1/4（アイランドの 1 テクセルが画面の 1/4 画素ほど: ミップの段 2〜3）
     let distance = 6.0;
     h.state_mut().view3d_set_display_padding(0);
     h.state_mut().view3d_invalidate_paint();
@@ -884,9 +888,12 @@ fn far_away_the_island_borders_no_longer_bleed_the_transparent_outside() {
         full.save(dir.join("far_full.png")).unwrap();
     }
     println!("球の内側で差が 8 を超える画素: 塗り広げなし {before}・あり {after}");
-    assert!(before > 50, "塗り広げないと島の縁がにじむ（{before}）");
-    assert_eq!(after, 0, "塗り広げると島の縁がにじまない");
-    // 島の中だけを塗った絵（塗り広げあり）
+    assert!(
+        before > 50,
+        "塗り広げないとアイランドの縁がにじむ（{before}）"
+    );
+    assert_eq!(after, 0, "塗り広げるとアイランドの縁がにじまない");
+    // アイランドの中だけを塗った絵（塗り広げあり）
     let layer = first_layer(&h);
     import(
         &mut h.state_mut().state.doc,
@@ -999,7 +1006,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
     }
 }
 
-/// 計測: 塗り広げの幅ごとの、離れて見たときの継ぎ目のにじみ（島の中だけを塗った球と、全面を塗った球の差）。
+/// 計測: 塗り広げの幅ごとの、離れて見たときの継ぎ目のにじみ（アイランドの中だけを塗った球と、全面を塗った球の差）。
 #[test]
 #[ignore = "計測"]
 fn measure_seams_by_padding_width_and_distance() {

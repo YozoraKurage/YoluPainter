@@ -1,6 +1,6 @@
-//! 効果の層（フィルター・Generator・Anchor）の画面の操作（`Action::Fx`）と、効果の入力のつなぎ（焼いたメッシュマップ・モデル・画像）。
+//! 効果のレイヤー（フィルター・Generator・Anchor）の画面の操作（`Action::Fx`）と、効果の入力のつなぎ（焼いたメッシュマップ・モデル・画像）。
 //! 画面なしで `AppState` を叩く: 各操作の結果と Undo 1 回、ロックでの断り、断った理由の日英、入力がそろうまでの理由と焼いた後に効くこと、
-//! 焼き直しで読む層だけが描き直されること、保存復元（Unity 版が書いた効果入りの正本を開いて編集して保存）。
+//! 焼き直しで読むレイヤーだけが描き直されること、保存復元（Unity 版が書いた効果入りの正本を開いて編集して保存）。
 
 use yolu_app::bake::{BakeAction, BakeBackend};
 use yolu_app::fx::{FilterKind, FxOp, Selected};
@@ -165,7 +165,7 @@ fn mask_stacks_take_filters_and_generators_and_refuse_what_a_mask_cannot_use() {
     add_filter(&mut s, FilterTarget::Mask, FilterKind::NoiseColor);
     assert_eq!(s.doc.undo_count(), steps);
     assert_eq!(filters(&s, layer, FilterTarget::Mask), 2);
-    // マスクの無い層のマスクへは足せない
+    // マスクの無いレイヤーのマスクへは足せない
     s.apply(Action::NewLayer);
     let plain = s.selected_layer.unwrap();
     add_filter(&mut s, FilterTarget::Mask, FilterKind::Blur);
@@ -421,10 +421,10 @@ fn anchors_are_put_renamed_removed_and_read_by_a_generator() {
     assert_eq!(
         anchor.name(),
         s.doc.layer(bottom).unwrap().name(),
-        "名前の既定は層の名前"
+        "名前の既定はレイヤーの名前"
     );
     assert_eq!(s.fx.selected, Some(Selected::Anchor { id: anchor.id() }));
-    // 同じ層にもう 1 つは置けない
+    // 同じレイヤーにもう 1 つは置けない
     let steps = s.doc.undo_count();
     fx(
         &mut s,
@@ -458,7 +458,7 @@ fn anchors_are_put_renamed_removed_and_read_by_a_generator() {
         "下地",
         "空の名前は断る"
     );
-    // 上の層の Anchor の Generator は、すぐ下のアンカーを読む
+    // 上のレイヤーの Anchor の Generator は、すぐ下のアンカーを読む
     s.selected_layer = Some(top);
     add_generator(&mut s, FilterTarget::Content, Kind::Anchor);
     let stage = s.doc.filters_of(top, FilterTarget::Content).unwrap()[0].clone();
@@ -481,7 +481,7 @@ fn anchors_are_put_renamed_removed_and_read_by_a_generator() {
     s.sync_effects();
     assert!(s.doc.layer(bottom).unwrap().anchor().is_some());
     assert_eq!(s.doc.generator_inactive(top, stage.id()).unwrap(), None);
-    // 層を並べ替えて下になると読めない（知らせる。編集は断らない）
+    // レイヤーを並べ替えて下になると読めない（知らせる。編集は断らない）
     s.selected_layer = Some(top);
     s.apply(Action::LayerDown);
     s.sync_effects();
@@ -523,7 +523,7 @@ fn a_mask_anchor_needs_the_mask_and_an_anchor_generator_needs_an_anchor_below() 
         "{}",
         mask_anchor.name()
     );
-    // 自分の層の Anchor は読めない: メニュー（ジェネレーターを追加）の項目は押せない。ラベルは名前だけで、理由はツールチップ
+    // 自分のレイヤーの Anchor は読めない: メニュー（ジェネレーターを追加）の項目は押せない。ラベルは名前だけで、理由はツールチップ
     s.lang = Lang::En;
     let entries = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
     let anchor_entry = yolu_app::ui::menu::leaves(&entries)
@@ -674,7 +674,7 @@ fn bake(s: &mut AppState) {
     s.sync_effects();
 }
 
-/// 黒い塗りつぶしの層にマスクを付け、そのマスクへ Generator を足す。
+/// 黒い塗りつぶしレイヤーにマスクを付け、そのマスクへ Generator を足す。
 fn masked_fill(s: &mut AppState, kind: Kind) -> (LayerId, yolu_core::FilterId) {
     s.apply(Action::M2(Edit::NewFill));
     let layer = s.selected_layer.unwrap();
@@ -764,7 +764,7 @@ fn rebaking_redraws_only_the_layers_that_read_the_maps() {
     let redrawn = evaluated(&s) - settled;
     assert_eq!(
         redrawn, 1,
-        "マップを読む層の 1 ブロックだけ（ぼかしの層は評価し直さない）"
+        "マップを読むレイヤーの 1 ブロックだけ（ぼかしのレイヤーは評価し直さない）"
     );
 }
 
@@ -803,7 +803,7 @@ fn id_colors_are_picked_from_the_id_map_and_the_generator_then_works() {
         ),
         "{why:?}"
     );
-    // 選ぶのを始めると、「ID の色で選択」の道具の入力を使う（効果の欄は開いたまま）
+    // 選ぶのを始めると、「ID の色で選択」のツールの入力を使う（効果の欄は開いたまま）
     fx(
         &mut s,
         FxOp::PickIdColors {
@@ -869,7 +869,7 @@ fn id_colors_are_picked_from_the_id_map_and_the_generator_then_works() {
     s.region.modifiers.command = false;
     s.apply(Action::Undo);
     assert_eq!(colors(&s), vec![rgb]);
-    // 道具を替えると選ぶのをやめ、押しても選択の道具として働く
+    // ツールを替えると選ぶのをやめ、押しても選択のツールとして働く
     s.apply(Action::SelectTool(yolu_app::state::Tool::Brush));
     assert_eq!(s.fx.id_pick, None);
     assert!(!s.pick_id_color(rgb));
@@ -943,7 +943,7 @@ fn id_colors_come_in_through_the_id_select_press_without_making_a_selection() {
     s.region.modifiers.command = false;
     assert!(colors(&s).is_empty(), "{}", s.message);
     assert!(s.doc.selection().is_none());
-    // 選ぶのをやめると、同じ押下は選択の道具として働く（選択範囲ができ、ID の色は変わらない）
+    // 選ぶのをやめると、同じ押下は選択のツールとして働く（選択範囲ができ、ID の色は変わらない）
     fx(
         &mut s,
         FxOp::PickIdColors {
@@ -964,7 +964,7 @@ fn picking_id_colors_changes_the_tool_the_same_way_as_choosing_it_and_not_while_
     let mut s = cube();
     s.bake.settings.maps = vec![MeshMapKind::Id, MeshMapKind::Position];
     let (layer, id) = masked_fill(&mut s, Kind::IdColor);
-    // パスの道具で点を選び、スライダーの途中の値がある
+    // パスのツールで点を選び、スライダーの途中の値がある
     s.apply(Action::SelectTool(Tool::Path));
     s.path.selected = Some(PointRef {
         layer,
@@ -992,7 +992,7 @@ fn picking_id_colors_changes_the_tool_the_same_way_as_choosing_it_and_not_while_
         Some(Selected::Filter { layer, id }),
         "効果の欄は開いたまま"
     );
-    // 同じ道具のままもう一度押しても同じ
+    // 同じツールのままもう一度押しても同じ
     fx(
         &mut s,
         FxOp::PickIdColors {
@@ -1002,7 +1002,7 @@ fn picking_id_colors_changes_the_tool_the_same_way_as_choosing_it_and_not_while_
         },
     );
     assert_eq!(s.fx.id_pick, Some((layer, id)));
-    // 描いている間は道具を替えない（断って、何も変えない）
+    // 描いている間はツールを替えない（断って、何も変えない）
     fx(
         &mut s,
         FxOp::PickIdColors {
@@ -1606,7 +1606,7 @@ fn shelf_with(images: &[(&str, u32, u32, u8)]) -> yolu_app::shelf::ShelfState {
     yolu_app::shelf::ShelfState::with_shelf(shelf)
 }
 
-/// 塗りつぶしの層を足し、棚の画像（リソースの ID）を指させる（入力に入っているかは問わない）。
+/// 塗りつぶしレイヤーを足し、棚の画像（リソースの ID）を指させる（入力に入っているかは問わない）。
 fn fill_pointing_at(s: &mut AppState, resource: &str) -> LayerId {
     s.apply(Action::M2(Edit::NewFill));
     let layer = s.selected_layer.unwrap();
@@ -1650,7 +1650,7 @@ fn decoded_images_share_one_budget_and_a_refusal_is_tried_again_only_when_it_cou
     s.sync_effects();
     assert_eq!(s.fx.inputs.decoded_image_count(), 1);
     assert_eq!(s.fx.inputs.image_error(id_b), Some(why.as_str()));
-    // 持っている分が減る（1 枚目を指す層を消す）と、断っていた画像が通る
+    // 持っている分が減る（1 枚目を指すレイヤーを消す）と、断っていた画像が通る
     s.selected_layer = Some(first);
     s.apply(Action::DeleteLayer);
     s.sync_effects();

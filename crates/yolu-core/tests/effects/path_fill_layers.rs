@@ -1,4 +1,4 @@
-//! 塗りつぶしの層のパス: 合成は塗りつぶし → その層の効果のスタック → パスの画素の順（パスは効果の上に重なり、効果を受けない）。
+//! 塗りつぶしレイヤーのパス: 合成は塗りつぶし → そのレイヤーの効果のスタック → パスの画素の順（パスは効果の上に重なり、効果を受けない）。
 //! パスの付け外しは 1 回の Undo。塗りつぶしの値の無いチャンネルのパスも出る。画素にする（ラスタライズ）は断る。
 use yolu_core::effects::{EffectSettings, FilterSpec};
 use yolu_core::paths::{CanvasPath, CanvasPoint, LayerPathEntry, PathBrush};
@@ -70,7 +70,7 @@ fn a_fill_layer_path_lies_over_the_fill_and_its_effects() {
 #[test]
 fn a_fill_layer_path_shows_on_a_channel_without_a_fill_value_and_is_not_rasterized() {
     let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
-    // 色の値の無い塗りつぶしの層（Roughness だけ）
+    // 色の値の無い塗りつぶしレイヤー（Roughness だけ）
     let fill = doc
         .add_fill_layer("塗り", &[(Channel::Roughness, RED)], None)
         .unwrap();
@@ -80,7 +80,7 @@ fn a_fill_layer_path_shows_on_a_channel_without_a_fill_value_and_is_not_rasteriz
     assert_eq!(px(&doc, 30, 10).a, 0);
     assert!(
         doc.rasterize(fill).is_err(),
-        "塗りつぶしの層のパスは画素にしない"
+        "塗りつぶしレイヤーのパスは画素にしない"
     );
     assert!(doc.layer(fill).unwrap().has_paths());
 }

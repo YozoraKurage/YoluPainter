@@ -1,4 +1,4 @@
-//! 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）と層のロック・層の操作のつなぎ目を、実 C# の PaintDocument の結果と
+//! 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）とレイヤーのロック・レイヤーの操作のつなぎ目を、実 C# の PaintDocument の結果と
 //! 全バイトで照らす。台本・人工の文書・書き出しの並びは tools/csharp-golden/SeamGolden.cs と対（事例ごとに SHA-256 を 1 行、
 //! golden/seam.txt）。食い違ったときは `SEAM_DUMP_DIR=<dir>` で食い違った事例の生のバイト列を書き出し、
 //! `tools/csharp-golden/run-seam.sh dump <名前> <出力>` の結果と cmp で比べる。
@@ -165,7 +165,7 @@ fn report(o: &mut Vec<u8>, r: &LayerMergeReport) {
         u64b(o, r.changed_by_channel.get(&c).copied().unwrap_or(0));
     }
 }
-/// 結果の型: 0 成功、1 ロックで断られた（層・持ち主・ロック）、2 そのほか（理由の名前）。成功なら true。
+/// 結果の型: 0 成功、1 ロックで断られた（レイヤー・持ち主・ロック）、2 そのほか（理由の名前）。成功なら true。
 fn outcome<T>(o: &mut Vec<u8>, d: &Document, r: Result<T, CoreError>) -> bool {
     match r {
         Ok(_) => {
@@ -178,7 +178,7 @@ fn outcome<T>(o: &mut Vec<u8>, d: &Document, r: Result<T, CoreError>) -> bool {
             lock,
         }) => {
             o.push(1);
-            // 層が文書に無いこともある（結合や新しい層の追加が断られて、作りかけの層が消えた）。C# の FindIndex も -1
+            // レイヤーが文書に無いこともある（結合や新しいレイヤーの追加が断られて、作りかけのレイヤーが消えた）。C# の FindIndex も -1
             i32b(o, d.layer_index(layer).map_or(-1, |i| i as i32));
             i32b(o, d.layer_index(holder).map_or(-1, |i| i as i32));
             i32b(o, lock.bits() as i32);
@@ -635,7 +635,7 @@ fn fx_lock(en: &Entry, lock: LayerLocks, grouped: bool) -> Vec<u8> {
     o
 }
 
-// ───────── 手の書き込み × ロック × パスの層 ─────────
+// ───────── 手の書き込み × ロック × パスレイヤー ─────────
 
 fn hard() -> BrushSettings {
     BrushSettings {
@@ -762,7 +762,7 @@ fn group_path(lock: LayerLocks) -> Vec<u8> {
     o
 }
 
-// ───────── 層の操作と効果 ─────────
+// ───────── レイヤーの操作と効果 ─────────
 
 fn rotation() -> Affine2D {
     Affine2D::from_parts((20., 14.), (1., 0.), 17., (1.2, 0.8)).unwrap()
@@ -1182,7 +1182,7 @@ fn cases() -> Vec<Case> {
         );
     }
 
-    // 並べ替え・表示・不透明度・クリッピング・選択範囲の変形（効果を持つ層・Anchor を読む層との組み合わせ）
+    // 並べ替え・表示・不透明度・クリッピング・選択範囲の変形（効果を持つレイヤー・Anchor を読むレイヤーとの組み合わせ）
     add(
         "move-reader-below",
         Box::new(|| {
@@ -1398,7 +1398,7 @@ fn cases() -> Vec<Case> {
         "merge-visible-generator",
         Box::new(|| {
             let mut r = rig();
-            let layer = r.doc.add_layer("空の層").unwrap();
+            let layer = r.doc.add_layer("空のレイヤー").unwrap();
             let f = anchor_stage(&mut r.doc, layer);
             r.doc
                 .set_generator_anchor(
@@ -1485,7 +1485,7 @@ fn cases() -> Vec<Case> {
             op(d, Box::new(move |d| merged(d.merge_down(upper, 255))))
         }),
     );
-    // 下の層の下に見える層を置いて、分離の結合にしない（マスクが効果ごと結果に残る結合）。分離の結合は下のマスクのフィルターも焼くが、
+    // 下のレイヤーの下に見えるレイヤーを置いて、分離の結合にしない（マスクが効果ごと結果に残る結合）。分離の結合は下のマスクのフィルターも焼くが、
     // C# はそのマスクの効いていない Generator を見ずに黙って落とす。Rust は意図して断る（seam_ops.rs の
     // an_isolated_merge_refuses_an_inactive_generator_in_the_lower_mask で確かめる）
     add(

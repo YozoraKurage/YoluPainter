@@ -1,4 +1,4 @@
-//! M2 の層（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本と core の行き来。
+//! M2 のレイヤー（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本と core の行き来。
 //! 正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs`）が作った正本と、同じ文書の全チャンネルの合成。
 use yolu_core::{
     AdjustmentSettings, BlendMode, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
@@ -92,7 +92,7 @@ fn index_of(native: &NativeDocument, name: &str) -> usize {
         .find(|i| {
             native.field(&format!("layers[{i}].name")) == Some(&NativeValue::Text(name.into()))
         })
-        .unwrap_or_else(|| panic!("層「{name}」がありません"))
+        .unwrap_or_else(|| panic!("レイヤー「{name}」がありません"))
 }
 
 fn info(name: &str, kind: ChannelKind, color_space: ColorSpace, default: [u8; 4]) -> ChannelInfo {
@@ -104,7 +104,7 @@ fn info(name: &str, kind: ChannelKind, color_space: ColorSpace, default: [u8; 4]
     }
 }
 
-/// 文書と層の ID を決まった値にする（正解のファイルに同じバイト列を出すため）。
+/// 文書とレイヤーの ID を決まった値にする（正解のファイルに同じバイト列を出すため）。
 fn fixed(doc: Document) -> Document {
     let ids: Vec<LayerId> = (0..doc.layers().len())
         .map(|i| LayerId(0x7000 + i as u128))
@@ -125,7 +125,7 @@ fn paint(doc: &mut Document, id: LayerId, channel: Channel, seed: u32) {
     }
 }
 
-/// ユーザーチャンネル 3 つ（番号 6・8・9。7 は足してから消した歯抜け）と、それを使う全部の層の種類。
+/// ユーザーチャンネル 3 つ（番号 6・8・9。7 は足してから消した歯抜け）と、それを使う全部のレイヤーの種類。
 fn user_channel_document() -> Document {
     let mut doc = Document::with_tile_size(20, 12, 8).unwrap();
     let ao = doc
@@ -462,7 +462,7 @@ fn user_channels_are_written_as_version_22_and_round_trip() {
     assert_eq!(kinds[2].1.kind, ChannelKind::Normal);
     assert_eq!(kinds[1].1.default, Rgba8::new(10, 20, 30, 255));
     assert_eq!(kinds[0].1.color_space, ColorSpace::Linear);
-    // ユーザーチャンネルを使う層の中身（面・有効・塗りつぶしの値・調整の対象・チャンネルごとの合成・マスク）
+    // ユーザーチャンネルを使うレイヤーの中身（面・有効・塗りつぶしの値・調整の対象・チャンネルごとの合成・マスク）
     let by_name = |n: &str| restored.layers().iter().find(|l| l.name() == n).unwrap();
     let ao = Channel::from_index(6).unwrap();
     let tint = Channel::from_index(8).unwrap();
@@ -555,7 +555,7 @@ fn user_channel_limits_are_written_and_read() {
         NativeDocument::from_core(&back).unwrap().to_bytes(),
         native.to_bytes()
     );
-    // 層ごとのチャンネルの印（byte 1 つ）は標準を含む 64 まで数えられ、チャンネルごとの合成は 64 個でも byte に収まる
+    // レイヤーごとのチャンネルの印（byte 1 つ）は標準を含む 64 まで数えられ、チャンネルごとの合成は 64 個でも byte に収まる
     let mut many = back;
     let id = many.layers()[0].id();
     for c in many.channels() {
@@ -609,7 +609,7 @@ fn version_22_reader_rules() {
     assert_eq!(
         NativeDocument::from_core(&core).unwrap().to_bytes(),
         ok,
-        "層の使っていないチャンネルも往復する"
+        "レイヤーの使っていないチャンネルも往復する"
     );
     let full: Vec<_> = (6..64).map(|c| entry(c, &format!("C{c}"), 0, 0)).collect();
     assert!(NativeDocument::read(&with_user_list(58, &full)).is_ok());
@@ -705,7 +705,7 @@ fn version_22_reader_rules() {
         let message = NativeDocument::read(bytes).expect_err(what).to_string();
         assert!(message.contains(fragment), "{what}: {message}");
     }
-    // 版 21 以前の並びに一覧は無い（版を 22 にしないで一覧を差した正本は、層の数として読まれて断られる）
+    // 版 21 以前の並びに一覧は無い（版を 22 にしないで一覧を差した正本は、レイヤーの数として読まれて断られる）
     let mut stale = read("m2-tiny.utpaint");
     let at = 8 + 4 + 16 + 12 + 21;
     stale.splice(at..at, 1i32.to_le_bytes());
@@ -727,7 +727,7 @@ fn user_channel_references_must_be_in_the_documents_list() {
     let raster = index_of(&native, "ユーザーの面");
     let fill = index_of(&native, "ユーザーの塗り");
     let hue = index_of(&native, "色相");
-    // 一覧にある番号は 6・8・9（7 は消してある）。層の持つチャンネル・塗りつぶしの値は、一覧に無い番号を指せない
+    // 一覧にある番号は 6・8・9（7 は消してある）。レイヤーの持つチャンネル・塗りつぶしの値は、一覧に無い番号を指せない
     for path in [
         format!("layers[{raster}].channels[1].channel"),
         format!("layers[{fill}].fills[1].channel"),
@@ -961,7 +961,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
 #[test]
 fn the_rich_native_document_with_manual_id_colors_reads_into_core_and_writes_back_the_same_bytes() {
     let rich = NativeDocument::read(include_bytes!("../fixtures/native-rich-v21.utpaint")).unwrap();
-    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロック・手動の ID の色は core にあるので断らない
+    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・レイヤーのロック・手動の ID の色は core にあるので断らない
     let issues = rich.core_issues();
     assert!(issues.is_empty(), "{issues:?}");
     let core = rich.to_core().unwrap();
@@ -1031,15 +1031,15 @@ fn adjustment_values_the_kind_does_not_use_must_be_default_or_the_document_is_re
     }
 }
 
-/// 層ごとの断り（調整の種類が使わない値が既定ではない）は、層を非表示にしても、マスクを無効にしても変わらない。表示・有効を見て省くようになると、
-/// 描かれない層の値が黙って捨てられ、保存で変わる（`yolu-io/README.md` の「非表示の層・無効にしたマスクの中身でも断る」の裏付け）。
+/// レイヤーごとの断り（調整の種類が使わない値が既定ではない）は、レイヤーを非表示にしても、マスクを無効にしても変わらない。表示・有効を見て省くようになると、
+/// 描かれないレイヤーの値が黙って捨てられ、保存で変わる（`yolu-io/README.md` の「非表示のレイヤー・無効にしたマスクの中身でも断る」の裏付け）。
 #[test]
 fn adjustment_values_the_kind_does_not_use_are_refused_even_when_the_layer_is_hidden_or_its_mask_disabled(
 ) {
     for (fixture, name, param, value) in [
         ("m2-channels", "反転（チャンネルなし）", "gamma", 2.0),
         ("m2-channels", "色相", "gamma", 0.5),
-        // 有効なマスクのある調整の層（隠す・マスクを無効にするの両方を試す）
+        // 有効なマスクのある調整レイヤー（隠す・マスクを無効にするの両方を試す）
         ("m2-masks", "レベル・マスク", "hue", 30.0),
         ("m2-masks", "レベル・マスク", "lightness", 0.5),
     ] {
@@ -1055,7 +1055,7 @@ fn adjustment_values_the_kind_does_not_use_are_refused_even_when_the_layer_is_hi
             issues.iter().any(|i| i.contains(&path)),
             "{path}: {issues:?}"
         );
-        // 全部の層を非表示に、全部のマスクを無効にする
+        // 全部のレイヤーを非表示に、全部のマスクを無効にする
         let mut changed = refused.clone();
         let (mut hidden, mut disabled) = (0, 0);
         for i in 0..refused.layer_count() {
@@ -1071,7 +1071,7 @@ fn adjustment_values_the_kind_does_not_use_are_refused_even_when_the_layer_is_hi
                 }
             }
         }
-        // 断る値のある層が実際に非表示（マスクがあれば無効）へ変わっている（変える対象が空で素通りしていない）
+        // 断る値のあるレイヤーが実際に非表示（マスクがあれば無効）へ変わっている（変える対象が空で素通りしていない）
         assert!(hidden > 0, "{fixture}");
         assert_eq!(
             changed.field(&format!("layers[{layer}].visible")),
@@ -1114,7 +1114,7 @@ fn broken_layer_structure_is_refused_when_reading() {
         other => panic!("{other:?}"),
     };
     let parent_path = |i: usize| format!("layers[{i}].parent");
-    // 存在しない親・ラスターの層を親にする・自分を親にする・下の層を親にする
+    // 存在しない親・ラスターレイヤーを親にする・自分を親にする・下のレイヤーを親にする
     let unknown = native.with_value(&parent_path(child), NativeValue::Guid([9; 16]));
     assert!(unknown.err().unwrap().to_string().contains("親グループ"));
     let raster_parent = native.with_value(&parent_path(child), NativeValue::Guid(id_of(rasters)));
@@ -1123,7 +1123,7 @@ fn broken_layer_structure_is_refused_when_reading() {
     assert!(itself.is_err());
     let below = native.with_value(&parent_path(groups[1]), NativeValue::Guid(id_of(groups[0])));
     assert!(below.is_err());
-    // グループの外から入る層（子が連続していない）
+    // グループの外から入るレイヤー（子が連続していない）
     let gap = native.with_value(
         &parent_path(rasters),
         NativeValue::Guid(id_of(groups[groups.len() - 1])),
@@ -1131,7 +1131,7 @@ fn broken_layer_structure_is_refused_when_reading() {
     assert!(gap.is_err());
     // 版 5 以前は親の欄が無い。グループの種類も版 6 から
     assert!(native.with_value("version", NativeValue::Int(5)).is_err());
-    // 層の数・種類・合成モードの範囲
+    // レイヤーの数・種類・合成モードの範囲
     assert!(native
         .with_value(&format!("layers[{child}].kind"), NativeValue::Int(4))
         .is_err());
@@ -1212,7 +1212,7 @@ fn truncated_and_corrupted_documents_are_refused_without_panicking() {
 fn from_core_refuses_what_the_native_format_cannot_hold() {
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
     for i in 0..2049 {
-        doc.add_group(&format!("層 {i}"), None).unwrap();
+        doc.add_group(&format!("レイヤー {i}"), None).unwrap();
     }
     // 上限は壊れたデータではなく予算・上限の超過として返す（画面が言い分ける）
     let error = NativeDocument::from_core(&doc).err().unwrap();
@@ -1221,7 +1221,7 @@ fn from_core_refuses_what_the_native_format_cannot_hold() {
     assert!(message.contains("2048"), "{message}");
     // 名前は UTF-8 で 4096 バイトまで（C# の読み手の ReadString の上限）
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
-    let id = doc.add_layer("層").unwrap();
+    let id = doc.add_layer("レイヤー").unwrap();
     doc.set_layer_name(id, &"あ".repeat(1366)).unwrap();
     let error = NativeDocument::from_core(&doc).err().unwrap();
     assert!(matches!(error, yolu_io::Error::Budget(_)), "{error:?}");
@@ -1233,7 +1233,7 @@ fn from_core_refuses_what_the_native_format_cannot_hold() {
 
 // ───────── 編集・Undo・保存 ─────────
 
-/// m2-groups を開いた core に、新しい層の種類（塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成）まで 10 回の編集をする。
+/// m2-groups を開いた core に、新しいレイヤーの種類（塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成）まで 10 回の編集をする。
 fn edit_groups(core: &mut Document, native: &NativeDocument) {
     let ids: Vec<LayerId> = core.layers().iter().map(|l| l.id()).collect();
     let inner = ids[index_of(native, "中 1")];
@@ -1265,7 +1265,7 @@ fn edit_groups(core: &mut Document, native: &NativeDocument) {
         .unwrap();
 }
 
-/// 上の編集をした m2-groups（ID は決まった値）。C# の書き手に無い層の並びを Rust が書いた版 21 の正解の元。
+/// 上の編集をした m2-groups（ID は決まった値）。C# の書き手に無いレイヤーの並びを Rust が書いた版 21 の正解の元。
 fn edited_groups_document() -> Document {
     let native = native("m2-groups");
     let mut core = native.to_core().unwrap();
@@ -1394,7 +1394,7 @@ fn a_saved_set_carries_a_composite_png_for_every_channel_in_use() {
     let mut sorted = expected_names.clone();
     sorted.sort();
     assert_eq!(names, sorted);
-    // Height → Normal を作る設定なら、Normal の層が無くても Normal を書く。Color は使う層が無くても書く
+    // Height → Normal を作る設定なら、Normal のレイヤーが無くても Normal を書く。Color は使うレイヤーが無くても書く
     let mut derived = Document::with_tile_size(12, 9, 8).unwrap();
     let layer = derived.add_layer("高さ").unwrap();
     paint(&mut derived, layer, Channel::Height, 4);
@@ -1477,7 +1477,7 @@ fn an_active_stroke_blocks_saving_a_document_with_layers_of_every_kind() {
     );
 }
 
-/// 色の窓のドラッグでまとめた手動の ID の色は 1 段の取り消しで、保存すると最後の色が書かれ、開き直すと戻る。まとめた 1 段を戻すと
+/// 色のウィンドウのドラッグでまとめた手動の ID の色は 1 段の取り消しで、保存すると最後の色が書かれ、開き直すと戻る。まとめた 1 段を戻すと
 /// 手動の色の無い文書に戻り、色の無い文書と同じバイト列で保存できる。やり直すと、また最後の色で書ける。
 #[test]
 fn a_dragged_manual_id_color_is_one_step_and_saves_its_last_color() {
@@ -1513,13 +1513,13 @@ fn a_dragged_manual_id_color_is_one_step_and_saves_its_last_color() {
     last_color_round_trips(&doc);
 }
 
-/// 層のロック（正本の版 12）は黙って落とさず書き、読み戻せる。個別の 4 種・重ね・親のグループだけに掛けた場合のどれも、
+/// レイヤーのロック（正本の版 12）は黙って落とさず書き、読み戻せる。個別の 4 種・重ね・親のグループだけに掛けた場合のどれも、
 /// 書いて読んで同じ自分のロックと効くロックに戻る。ロックを外せば、ロックの無い文書と同じバイト列に戻る。
 #[test]
 fn layer_locks_are_written_and_read_back() {
     use yolu_core::LayerLocks;
     let mut doc = yolu_core::Document::new(16, 16).unwrap();
-    let id = doc.add_layer("層").unwrap();
+    let id = doc.add_layer("レイヤー").unwrap();
     let group = doc.add_group("g", None).unwrap();
     let unlocked = NativeDocument::from_core(&doc).unwrap().to_bytes();
     for lock in [
@@ -1565,7 +1565,7 @@ fn layer_locks_are_written_and_read_back() {
 
 use yolu_io::psd::{self, CompatibilityMode, Limits};
 
-/// 下から「下」「中」「上」の 3 層（すべてラスターの Color で、画素を持つ）。
+/// 下から「下」「中」「上」の 3 レイヤー（すべてラスターの Color で、画素を持つ）。
 fn psd_source() -> Document {
     let mut doc = Document::with_tile_size(16, 12, 8).unwrap();
     for (i, name) in ["下", "中", "上"].into_iter().enumerate() {
@@ -1579,7 +1579,7 @@ fn id_of(doc: &Document, name: &str) -> LayerId {
     doc.layers()
         .iter()
         .find(|l| l.name() == name)
-        .unwrap_or_else(|| panic!("層「{name}」がありません"))
+        .unwrap_or_else(|| panic!("レイヤー「{name}」がありません"))
         .id()
 }
 
@@ -1605,8 +1605,8 @@ fn lspf_values(bytes: &[u8]) -> Vec<u32> {
         .collect()
 }
 
-/// 層の記録の印（opacity・clipping の次の 1 バイト。ビット 1 が非表示、ビット 0 が透明部分のロック）を、合成モードの印・不透明度・
-/// クリッピングが一致する記録について、出てきた順（下から上）に。lspf を介さず、書き出したバイト列の層の記録そのものを見る。
+/// レイヤーの記録の印（opacity・clipping の次の 1 バイト。ビット 1 が非表示、ビット 0 が透明部分のロック）を、合成モードの印・不透明度・
+/// クリッピングが一致する記録について、出てきた順（下から上）に。lspf を介さず、書き出したバイト列のレイヤーの記録そのものを見る。
 fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) -> Vec<u8> {
     let mut head = b"8BIM".to_vec();
     head.extend(key);
@@ -1620,9 +1620,9 @@ fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) ->
 }
 
 /// 厳密な書き出し（`psd::Document::from_core`。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening と対）は、PSD に表せない中身を、
-/// 平らにも黙って落とすこともせず、機能ごとの理由で断る。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
+/// 平らにも黙って落とすこともせず、機能ごとの理由で断る。断る理由はレイヤーの名前と機能を言い、どの位置のレイヤーでも、非表示でも変わらない。
 /// 書くのは Color のチャンネルだけ（C# の PsdBridge.Export(document, channel) と同じ）なので、ほかのチャンネルの中身・有効の印・合成は Color の PSD を
-/// 変えず、Color を無効にした層は隠した層になる。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
+/// 変えず、Color を無効にしたレイヤーは隠したレイヤーになる。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
 #[test]
 fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
     type Setup = fn(&mut Document, LayerId);
@@ -1638,7 +1638,7 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
         }),
     ];
     // Color 以外のチャンネルの中身・有効の印は、Color の PSD には効かない（C# の PsdBridge.Export(document, channel) と同じく、書くのは
-    // そのチャンネルだけ。ほかのチャンネルは、書き出しの窓でチャンネルを選んで別の PSD に書く）。Color の PSD は何も足さない文書と同じバイト列
+    // そのチャンネルだけ。ほかのチャンネルは、書き出しのウィンドウでチャンネルを選んで別の PSD に書く）。Color の PSD は何も足さない文書と同じバイト列
     let others: [(&str, Setup); 6] = [
         ("Metallic の画素", |d, id| {
             d.set_channel_pixel(id, Channel::Metallic, 3, 3, Rgba8::new(9, 9, 9, 255))
@@ -1706,7 +1706,7 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             setup(&mut doc, id);
             let err = psd_refusal(&doc, &format!("{label}（{name}）"));
             assert!(
-                err.contains(word) && err.contains(&format!("層「{name}」")),
+                err.contains(word) && err.contains(&format!("レイヤー「{name}」")),
                 "{label}（{name}）: {err}"
             );
         }
@@ -1723,12 +1723,12 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             );
         }
     }
-    // Color を無効にした層は、Color の PSD では隠した層（C# と同じ。断らない）
+    // Color を無効にしたレイヤーは、Color の PSD では隠したレイヤー（C# と同じ。断らない）
     for name in ["下", "中", "上"] {
         let mut doc = psd_source();
         let id = id_of(&doc, name);
         doc.set_channel_enabled(id, Channel::Color, false).unwrap();
-        let back = psd::Document::from_core(&doc).expect("Color を無効にした層も書ける");
+        let back = psd::Document::from_core(&doc).expect("Color を無効にしたレイヤーも書ける");
         let layer = back.layers.iter().find(|l| l.name == name).expect(name);
         assert!(!layer.visible, "Color を無効（{name}）");
     }
@@ -1812,7 +1812,7 @@ fn psd_export_refuses_an_active_stroke_until_it_ends() {
 fn psd_export_writes_the_locks_a_psd_can_hold() {
     use yolu_core::LayerLocks;
     let all_four = LayerLocks::from_bits(15).unwrap();
-    // （ロック, 投影の locks, lspf に書く値, 層の記録の印のビット 0）。ビット 0 は透明部分のロックだけが立ち、すべてを重ねたときは立てない
+    // （ロック, 投影の locks, lspf に書く値, レイヤーの記録の印のビット 0）。ビット 0 は透明部分のロックだけが立ち、すべてを重ねたときは立てない
     // （読み手が印を lspf に足すので、立てるとすべてに透明部分が増えて戻る）
     let cases = [
         (LayerLocks::TRANSPARENCY, 1u32, 1u32, 1u8),
@@ -1855,13 +1855,13 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
         assert_eq!(
             lspf_values(&bytes),
             vec![on_disk],
-            "{lock:?}: ロックした層にだけ書く"
+            "{lock:?}: ロックしたレイヤーにだけ書く"
         );
-        // 層の記録の印のビット 0 も、下から「下」「中」「上」の順に、ロックした「中」だけ
+        // レイヤーの記録の印のビット 0 も、下から「下」「中」「上」の順に、ロックした「中」だけ
         assert_eq!(
             layer_record_flags(&bytes, b"norm", 255, 0),
             vec![0, record_bit, 0],
-            "{lock:?}: 層の記録の印のビット 0"
+            "{lock:?}: レイヤーの記録の印のビット 0"
         );
         let read = psd::read(&bytes, &Limits::default()).unwrap();
         assert_eq!(read.mode(), CompatibilityMode::EditableRaster, "{lock:?}");
@@ -1876,7 +1876,7 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
             vec![0, on_disk, 0],
             "{lock:?}"
         );
-        // 取り込み側は、ロックを core の層へ入れる（効くロックは書き出す前と同じ。すべては個別の下のビットを足さずに書くので、
+        // 取り込み側は、ロックを core のレイヤーへ入れる（効くロックは書き出す前と同じ。すべては個別の下のビットを足さずに書くので、
         // 自分のロックは「すべて」だけに畳まれるが、効くロックは変わらない）
         assert!(again.core_issues().is_empty(), "{lock:?}");
         let back = again.to_core().unwrap();
@@ -1920,7 +1920,7 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
     }
 }
 
-/// ロックは非表示・クリッピング・不透明度・合成モードと重ねても、層の属性として一緒に書かれて読み戻る。透明部分のロックだけは層の印のビット 0 にも書く。
+/// ロックは非表示・クリッピング・不透明度・合成モードと重ねても、レイヤーの属性として一緒に書かれて読み戻る。透明部分のロックだけはレイヤーの印のビット 0 にも書く。
 #[test]
 fn psd_locks_travel_with_the_other_layer_attributes() {
     use yolu_core::LayerLocks;
@@ -1933,13 +1933,13 @@ fn psd_locks_travel_with_the_other_layer_attributes() {
     doc.set_layer_blend_mode(mid, BlendMode::Multiply).unwrap();
     doc.set_layer_locks(top, LayerLocks::ALL).unwrap();
     let bytes = psd_bytes(&doc);
-    // PSD の層の記録は下から上の順（「中」、「上」の順に出る）
+    // PSD のレイヤーの記録は下から上の順（「中」、「上」の順に出る）
     assert_eq!(
         lspf_values(&bytes),
         vec![1, 0x8000_0000],
-        "ロックした 2 層にだけ"
+        "ロックした 2 レイヤーにだけ"
     );
-    // 層の記録の印は、「中」が非表示（ビット 1）と透明部分のロック（ビット 0）で 3。読み手は印を lspf に足して戻すので、書き手が
+    // レイヤーの記録の印は、「中」が非表示（ビット 1）と透明部分のロック（ビット 0）で 3。読み手は印を lspf に足して戻すので、書き手が
     // 印のビット 0 を書かなくなっても読み戻しは通る。そこを読み戻しに頼らず、バイト列の記録で見る。
     // 「下」「上」は通常・不透明・クリッピング無しで、「上」のすべては印のビット 0 を立てない
     assert_eq!(
@@ -1980,8 +1980,8 @@ fn psd_blend_modes_line_up_with_the_cores_stored_values() {
     assert_eq!(psd::BlendMode::ALL.len(), 27);
 }
 
-/// 通過は PSD でもグループだけ。ほかのモードに言い換えて書かず、書き手が断る（C# の「どの層でも、PSD に対応が無いモードは別のモードで書かない」）。
-/// core も、グループでない層に通過を付けるのを断る（だから `from_core` はこの断りに届かない）。
+/// 通過は PSD でもグループだけ。ほかのモードに言い換えて書かず、書き手が断る（C# の「どのレイヤーでも、PSD に対応が無いモードは別のモードで書かない」）。
+/// core も、グループでないレイヤーに通過を付けるのを断る（だから `from_core` はこの断りに届かない）。
 #[test]
 fn psd_never_writes_pass_through_as_another_mode_for_a_layer_that_is_not_a_group() {
     let mut core = psd_source();

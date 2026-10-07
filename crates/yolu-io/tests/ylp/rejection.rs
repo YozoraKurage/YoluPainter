@@ -296,7 +296,7 @@ fn a_native_mask_tile_with_colour_is_refused() {
         .filter(|f| f.path.contains(".mask.tiles[") && f.path.ends_with(".rgba"))
         .map(|f| f.path.clone())
         .collect();
-    assert!(paths.len() >= 10, "マスクのタイルのある層が 2 つ");
+    assert!(paths.len() >= 10, "マスクのタイルのあるレイヤーが 2 つ");
     let mut refused = 0;
     for path in &paths {
         let NativeValue::Bytes(bytes) = d.field(path).unwrap() else {
@@ -325,7 +325,7 @@ fn a_native_mask_tile_with_colour_is_refused() {
         }
         // アルファ（隠す量）は変えてよい: 読めて、core の文書になり、書き戻しも同じ
         let mut alpha = bytes.to_vec();
-        alpha[3] = 77; // 先頭の画素（画布の中。右と上の余白はアルファも 0 でなければならない）
+        alpha[3] = 77; // 先頭の画素（キャンバスの中。右と上の余白はアルファも 0 でなければならない）
         let changed = d
             .with_value(path, NativeValue::Bytes(alpha.into()))
             .unwrap();
@@ -359,7 +359,7 @@ fn selection_magic_truncation_tile_count_and_tile_order_are_refused() {
             b.extend(x.to_le_bytes());
             b.extend(y.to_le_bytes());
             let mut amounts = vec![0u8; 64];
-            // 画布の中（幅 9・高さ 10）の画素にだけ量を入れる
+            // キャンバスの中（幅 9・高さ 10）の画素にだけ量を入れる
             for (i, a) in amounts.iter_mut().enumerate() {
                 if x * 8 + (i as i32 % 8) < 9 && y * 8 + (i as i32 / 8) < 10 {
                     *a = 7 + i as u8;
@@ -393,7 +393,7 @@ fn selection_magic_truncation_tile_count_and_tile_order_are_refused() {
     refuse(&good[..10], "ヘッダーの途中", "途中で切れて");
     refuse(&good[..good.len() - 1], "最後の 1 バイトを欠く", "長さ");
     refuse(&good[..24 + 72], "2 枚目をまるごと欠く", "長さ");
-    // タイルの数: 画布のタイル数（2 × 2）より多い・負・宣言と中身が合わない
+    // タイルの数: キャンバスのタイル数（2 × 2）より多い・負・宣言と中身が合わない
     for count in [5i32, 21, i32::MAX, -1, i32::MIN] {
         let mut bad = good.clone();
         bad[20..24].copy_from_slice(&count.to_le_bytes());
@@ -441,7 +441,7 @@ fn refusal(bytes: &[u8], what: &str) -> String {
 }
 
 /// チャンネルごとの合成の設定が壊れていたら、黙って落とさず断る（C# の ChannelBlendTests.BrokenSettingsAreRefusedInsteadOfDropped）。
-/// 並び: 層の属性の 1 バイト（ビット 2 が設定あり）、設定の数 1 バイト、設定ごとに チャンネル 4・部品の印 1・モード 4・不透明度 8。
+/// 並び: レイヤーの属性の 1 バイト（ビット 2 が設定あり）、設定の数 1 バイト、設定ごとに チャンネル 4・部品の印 1・モード 4・不透明度 8。
 #[test]
 fn broken_channel_blend_settings_are_refused_instead_of_dropped() {
     let mut d = Document::with_tile_size(16, 16, 8).unwrap();
@@ -500,7 +500,7 @@ fn broken_channel_blend_settings_are_refused_instead_of_dropped() {
             "mode",
         ),
         (
-            "通過を層に",
+            "通過をレイヤーに",
             with(&|b| {
                 b[at + 7..at + 11].copy_from_slice(&(BlendMode::PassThrough as i32).to_le_bytes())
             }),
@@ -612,7 +612,7 @@ fn a_layout_older_than_what_the_document_holds_is_refused() {
             assert!(err.contains("属性"), "版 {version}: {err}");
         }
     }
-    // 調整の層は版 3 の並び（種類が塗りつぶしまで）では読めない
+    // 調整レイヤーは版 3 の並び（種類が塗りつぶしまで）では読めない
     let mut adjusted = Document::with_tile_size(16, 16, 8).unwrap();
     adjusted
         .add_adjustment_layer("A", AdjustmentSettings::invert(), None, None)
@@ -621,7 +621,7 @@ fn a_layout_older_than_what_the_document_holds_is_refused() {
     let bytes = save(&adjusted);
     NativeDocument::read(&bytes).unwrap();
     let v3 = as_version(&bytes, "A", 3);
-    assert!(refusal(&v3, "版 3 に調整の層").contains("kind"));
+    assert!(refusal(&v3, "版 3 に調整レイヤー").contains("kind"));
     // 4 以上なら調整を持てる
     NativeDocument::read(&as_version(&bytes, "A", 4)).unwrap();
     // 設定を持たない文書は、版の数だけ古くても読める（読み書きは compatibility.rs）

@@ -1,4 +1,4 @@
-//! 調整の層の行ごとの合成（[`AdjustKernel::composite_row`]）。各画素は [`AdjustKernel::composite`] と同じバイトになる。
+//! 調整レイヤーの行ごとの合成（[`AdjustKernel::composite_row`]）。各画素は [`AdjustKernel::composite`] と同じバイトになる。
 //!
 //! 2 段で処理する: (1) 調整した色を求める（値だけで決まる種類は表引き・整数の計算のまま、色相/彩度とカラーバランスは
 //! f32 の式をレーンで）、(2) 下とモードと量で混ぜる（`blend` の行の核と同じレーンの式）。段の間は 256 画素ずつの小さい作業の領域で
@@ -25,7 +25,7 @@ use crate::math::simd::{Avx2x8, Sse41x4};
 const CHUNK: usize = 256;
 
 impl AdjustKernel {
-    /// 1 行（RGBA）に調整の層を重ねる。量が 0 以下・下が完全に透明な画素はそのまま。
+    /// 1 行（RGBA）に調整レイヤーを重ねる。量が 0 以下・下が完全に透明な画素はそのまま。
     #[inline]
     pub(crate) fn composite_row(&self, row: &mut [u8], amount: RowAmount<'_>, mode: BlendMode) {
         self.composite_row_at(simd::level(), row, amount, mode)
@@ -79,7 +79,7 @@ impl AdjustKernel {
     /// レーンで計算する種類（浮動小数の式が重いもの）。
     fn lane_kind(&self) -> Option<LaneKind> {
         if self.channel != ChannelKind::Color {
-            return None; // 色相/彩度・カラーバランスは色のチャンネルだけ（ほかでは層が適用されない）
+            return None; // 色相/彩度・カラーバランスは色のチャンネルだけ（ほかではレイヤーが適用されない）
         }
         match (&self.settings.kind, &self.settings.more) {
             (AdjustmentType::HueSaturation, _) => Some(LaneKind::HueSaturation(HueSat32::new(

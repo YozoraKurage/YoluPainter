@@ -451,7 +451,7 @@ unsafe fn blend_row_sse41(
     dispatch_mode!(mode, blend_row_lanes::<Sse41x4>(res, sb, step, amount))
 }
 
-/// クリッピングの下地（g）へクリッピングされた層（cb、刻みは [`blend_row`] と同じ）を重ねる。各画素は [`super::clip_onto`] と同じバイト。
+/// クリッピングの下地（g）へクリッピングされたレイヤー（cb、刻みは [`blend_row`] と同じ）を重ねる。各画素は [`super::clip_onto`] と同じバイト。
 #[inline]
 pub fn clip_row(g: &mut [u8], cb: &[u8], step: usize, amount: RowAmount<'_>, mode: BlendMode) {
     clip_row_at(simd::level(), g, cb, step, amount, mode)

@@ -47,7 +47,7 @@ fn st(h: &H) -> &yolu_app::state::AppState {
 
 const GRIP: &str = "ボタンの帯を動かす";
 
-/// 帯の部品（キャンバスの中のもの。選択の道具のときはプロパティの欄にも同じ名前のボタンがある）。
+/// 帯の部品（キャンバスの中のもの。選択のツールのときはプロパティの欄にも同じ名前のボタンがある）。
 fn in_canvas(h: &H, label: &str) -> Option<Rect> {
     let canvas = canvas_rect(h);
     h.query_all_by_label(label)
@@ -159,7 +159,7 @@ fn the_bar_follows_zoom_rotation_flip_and_pan() {
 #[test]
 fn the_bar_goes_above_or_inside_when_there_is_no_room_below() {
     let mut h = app(1280.0, 800.0, 256);
-    // 画布の下端に近い選択範囲: 下に入らないので上
+    // キャンバスの下端に近い選択範囲: 下に入らないので上
     select_rect(&mut h, 100, 0, 160, 8);
     let (bar, bounds) = (bar_rect(&h), screen_bounds(&h));
     // （文書の y は画面の下から数える設定の場合もあるので、どちらかの側にあればよい）
@@ -468,7 +468,7 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
         st(&h).doc.selection().is_some(),
         "メニューの Esc で選択を外さない"
     );
-    // 浮いた窓が開いている間（設定の窓）: 窓を優先して、選択は残す
+    // 浮いたウィンドウが開いている間（設定のウィンドウ）: ウィンドウを優先して、選択は残す
     h.state_mut()
         .state
         .apply(Action::Prefs(yolu_app::prefs::PrefsAction::Open));
@@ -476,7 +476,7 @@ fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
     esc(&mut h);
     assert!(
         st(&h).doc.selection().is_some(),
-        "窓が開いている間の Esc で選択を外さない"
+        "ウィンドウが開いている間の Esc で選択を外さない"
     );
     h.state_mut()
         .state
@@ -551,7 +551,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
         .state
         .apply(Action::M2(Edit::NewAdjustment(AdjustmentKind::GradientMap)));
     h.run();
-    let id = st(&h).selected_layer.expect("足した層を選ぶ");
+    let id = st(&h).selected_layer.expect("足したレイヤーを選ぶ");
     select_rect(&mut h, 10, 10, 30, 30);
     // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
     let label = "分岐点の色";
@@ -567,7 +567,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
             &h.ctx,
             yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0)
         ),
-        "色の窓が開いた"
+        "色のウィンドウが開いた"
     );
     assert!(st(&h).doc.selection().is_some(), "開く押しで選択を外さない");
     // Esc は色の選びを（元の色へ戻して）閉じるだけ
@@ -575,7 +575,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
     h.run();
     assert!(
         !yolu_app::panels::color_window::is_open(&h.ctx),
-        "色の窓が閉じた"
+        "色のウィンドウが閉じた"
     );
     assert!(
         st(&h).doc.selection().is_some(),
@@ -602,7 +602,7 @@ fn escape_answers_a_confirm_window_before_the_selection() {
         }
         id
     };
-    // 下から 3 つの層。間をはさんだ 2 つを結合すると見た目が変わるので、確かめの窓が出る
+    // 下から 3 つのレイヤー。間をはさんだ 2 つを結合すると見た目が変わるので、確認のウィンドウが出る
     let a = paint(&mut h, (2, 2, 12, 12), Rgba8::new(255, 0, 0, 255));
     h.state_mut().state.apply(Action::NewLayer);
     paint(&mut h, (6, 6, 16, 16), Rgba8::new(0, 255, 0, 255));
@@ -613,14 +613,20 @@ fn escape_answers_a_confirm_window_before_the_selection() {
     h.state_mut().state.select_layers([a, c], c);
     h.state_mut().state.apply(Action::M2(Edit::MergeDown));
     h.run();
-    assert!(st(&h).layer_ops.merge_confirm.is_some(), "確かめの窓が出た");
+    assert!(
+        st(&h).layer_ops.merge_confirm.is_some(),
+        "確認のウィンドウが出た"
+    );
     let layers = st(&h).doc.layers().len();
-    // Esc は窓をやめるだけ
-    esc_keeps_the_selection(&mut h, "確かめの窓");
-    assert!(st(&h).layer_ops.merge_confirm.is_none(), "窓が閉じた");
+    // Esc はウィンドウをやめるだけ
+    esc_keeps_the_selection(&mut h, "確認のウィンドウ");
+    assert!(
+        st(&h).layer_ops.merge_confirm.is_none(),
+        "ウィンドウが閉じた"
+    );
     assert_eq!(st(&h).doc.layers().len(), layers, "結合していない");
     h.run();
-    esc_clears_the_selection(&mut h, "確かめの窓を閉じたあと");
+    esc_clears_the_selection(&mut h, "確認のウィンドウを閉じたあと");
 }
 
 #[test]
@@ -730,10 +736,10 @@ fn deselect_invert_grow_and_shrink_each_take_one_undo_step() {
     h.state_mut().state.apply(Action::Undo);
     h.run();
     assert_eq!(st(&h).doc.selection().unwrap().amount(120, 120), 255);
-    // 拡張: 量を聞く窓が開き、OK で 1 回の Undo
+    // 拡張: 量を聞くウィンドウが開き、OK で 1 回の Undo
     click_label(&mut h, GROW);
     assert_eq!(st(&h).sel.dialog.map(|d| d.kind), Some(ModifyKind::Grow));
-    assert!(!bar_shown(&h), "窓が開いている間は隠れる");
+    assert!(!bar_shown(&h), "ウィンドウが開いている間は隠れる");
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::ApplyAmount)));
@@ -826,7 +832,7 @@ fn copy_to_a_new_layer_keeps_the_selection_the_clipboard_and_takes_one_undo() {
     assert_eq!(
         st(&h).selected_layer,
         st(&h).doc.layers().last().map(|l| l.id()),
-        "足した層を選ぶ"
+        "足したレイヤーを選ぶ"
     );
     assert!(st(&h).doc.selection().is_some(), "選択範囲は残る");
     assert!(st(&h).clip.pixels.is_none(), "クリップボードは変えない");
@@ -835,7 +841,7 @@ fn copy_to_a_new_layer_keeps_the_selection_the_clipboard_and_takes_one_undo() {
         "{}",
         st(&h).message
     );
-    // 新しい層に同じ画素がある
+    // 新しいレイヤーに同じ画素がある
     let new = st(&h).selected_layer.unwrap();
     let top = st(&h)
         .doc
@@ -963,7 +969,11 @@ fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
         let label = in_canvas(&h, lang.pick(COPY, "Copy to a New Layer (Ctrl+J)"));
         let at = label.expect("コピーのボタン").center();
         click(&mut h, at);
-        assert_eq!(st(&h).doc.layers().len(), layers, "{lang:?}: 層は増えない");
+        assert_eq!(
+            st(&h).doc.layers().len(),
+            layers,
+            "{lang:?}: レイヤーは増えない"
+        );
         assert_eq!(st(&h).doc.undo_count(), steps, "{lang:?}: 1 段も積まれない");
         assert_eq!(
             st(&h).doc.revision(),
@@ -984,7 +994,7 @@ fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
     }
 }
 
-/// ロックされた層では、塗りつぶし・消去（画素のロック以上）とマスク（すべてのロック）を core が断る。理由を言って、文書は 1 段も変わらない。
+/// ロックされたレイヤーでは、塗りつぶし・消去（画素のロック以上）とマスク（すべてのロック）を core が断る。理由を言って、文書は 1 段も変わらない。
 #[test]
 fn fill_erase_and_mask_on_a_locked_layer_are_refused_and_change_nothing() {
     use yolu_core::LayerLocks;
@@ -1073,7 +1083,7 @@ fn buttons_that_cannot_work_say_why_and_do_nothing() {
     let at = h.get_by_label(&fill).rect().center();
     click(&mut h, at);
     assert_eq!(st(&h).doc.undo_count(), steps, "押せないボタンは何もしない");
-    // 解除・反転・拡張・縮小は層に依らず使える
+    // 解除・反転・拡張・縮小はレイヤーに依らず使える
     for label in [DESELECT, INVERT, GROW, SHRINK] {
         assert!(
             !h.get_by_label(label).accesskit_node().is_disabled(),
@@ -1203,7 +1213,7 @@ fn delete_erases_the_selection_and_ctrl_j_copies_it_to_a_new_layer_while_without
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -60.0, 0.0), offset(c, 60.0, 0.0)]);
     let steps = st(&h).doc.undo_count();
-    // 選択範囲が無いとき、Delete は何もしない。Ctrl+J はレイヤーの複製（層の操作）
+    // 選択範囲が無いとき、Delete は何もしない。Ctrl+J はレイヤーの複製（レイヤーの操作）
     key(&h, Key::Delete, Modifiers::NONE);
     h.run();
     assert_eq!(st(&h).doc.undo_count(), steps, "Delete は何もしない");
@@ -1250,7 +1260,7 @@ fn delete_erases_the_selection_and_ctrl_j_copies_it_to_a_new_layer_while_without
     assert_eq!(surface(&h, inside_x), 255, "選択範囲の中は写る");
     assert_eq!(surface(&h, outside_x), 0, "外は写らない（塗ってあっても）");
     assert!(st(&h).doc.selection().is_some(), "選択範囲は残る");
-    // Delete: 選んでいる層の選択範囲の中だけを消す（下の層はそのまま）
+    // Delete: 選んでいるレイヤーの選択範囲の中だけを消す（下のレイヤーはそのまま）
     let below = st(&h).doc.layers()[0].id();
     h.state_mut().state.selected_layer = Some(below);
     h.run();
@@ -1361,7 +1371,10 @@ fn the_remember_button_opens_the_remembered_selections_window_and_a_name_can_be_
     assert!(st(&h).sel.saved_window.is_none());
     click_label(&mut h, REMEMBER);
     h.run();
-    assert!(st(&h).sel.saved_window.is_some(), "帯のボタンで窓が開く");
+    assert!(
+        st(&h).sel.saved_window.is_some(),
+        "帯のボタンでウィンドウが開く"
+    );
     h.get_by_label("覚える").click();
     h.run();
     assert_eq!(st(&h).saved_selections().len(), 1);

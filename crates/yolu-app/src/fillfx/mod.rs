@@ -1,10 +1,10 @@
-//! 塗りつぶしの層の画像と投影・デカール・グラデーションデカール（Substance の Fill の画像と Projection、Decal）の画面の状態と操作。
+//! 塗りつぶしレイヤーの画像と投影・デカール・グラデーションデカール（Substance の Fill の画像と Projection、Decal）の画面の状態と操作。
 //!
-//! - 文書が持つもの（チャンネルごとの画像の参照・層ごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
+//! - 文書が持つもの（チャンネルごとの画像の参照・レイヤーごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
 //!   選ぶ・渡す・覚えるだけ。どの変更も `Action::Fill` を通る（欄・キー・試験と同じ道）。1 つの操作が 1 回の Undo で、スライダー・数値・ギズモの
 //!   ドラッグは `coalesce` で離すまでを 1 回にまとめる。断られたら何も変えず、理由を状態の帯へ。
 //! - 画像の画素は棚から、文書の効果の入力へ渡す。復号・予算・失敗の理由・文書への受け渡しは効果の画面と共通で、`fx::inputs` が持つ
-//!   （画像を差す操作が先に `use_shelf_image` で頼み、層が指したあとは毎フレームの `sync_effects` が保つ。差さなかった画像は
+//!   （画像を差す操作が先に `use_shelf_image` で頼み、レイヤーが指したあとは毎フレームの `sync_effects` が保つ。差さなかった画像は
 //!   `release_shelf_image` で手放す）。ここの `inputs` は棚の画像の ID と色空間の再公開だけ。マップ（位置・法線）とモデルのルートは、
 //!   入力を作る側（メッシュマップのベイク）が渡す。入力がそろわない間は、core が値を見せ、その理由を `inactive_effect_list` が言う
 //!   （欄は理由を短く出す）。
@@ -35,15 +35,15 @@ use crate::view3d::shape_gizmo::Handle;
 pub struct FillFxState {
     /// 投影の置き場のハンドルを隠している（Q・欄のボタン）。
     pub handles_hidden: bool,
-    /// 3D ビューで形を編集している塗りつぶしのグラデーション（層とチャンネル）。
+    /// 3D ビューで形を編集している塗りつぶしのグラデーション（レイヤーとチャンネル）。
     pub edit_gradient: Option<(LayerId, Channel)>,
-    /// 3D ビューで形を編集している、フィルターの欄の形のグラデーションの Generator（層とフィルターの段）。
+    /// 3D ビューで形を編集している、フィルターの欄の形のグラデーションの Generator（レイヤーとフィルターの段）。
     pub edit_filter: Option<(LayerId, yolu_core::FilterId)>,
     /// ギズモのドラッグの途中。
     pub drag: Option<gizmo::ShapeDrag>,
     /// ポインタの下のハンドル（カーソル用。描くたびに更新）。
     pub hover: Handle,
-    /// 点を置く・動かしている塗りつぶしの点のグラデーション（層とチャンネル）。
+    /// 点を置く・動かしている塗りつぶしの点のグラデーション（レイヤーとチャンネル）。
     pub edit_points: Option<(LayerId, Channel)>,
     /// 選んでいる点の番号。
     pub point_selected: Option<usize>,
@@ -121,7 +121,7 @@ pub enum FillOp {
     },
     /// 棚へ PNG を取り込む（棚の画像として入る。文書は変えない）。
     ImportImage(PathBuf),
-    /// PNG を選ぶ窓を開く。
+    /// PNG を選ぶウィンドウを開く。
     ImportImageDialog,
     // ── 画面だけ ──
     /// 置き場のハンドルを隠す・出す。
@@ -140,7 +140,7 @@ pub enum FillOp {
 impl FillOp {
     /// 文書を変える操作か（読むだけのセットでは断る）。
     pub fn edits_document(&self) -> bool {
-        // 画像の読み方は棚の索引を替えるだけで、文書の層は変えない（読むだけのセットでも替えられる）
+        // 画像の読み方は棚の索引を替えるだけで、文書のレイヤーは変えない（読むだけのセットでも替えられる）
         matches!(
             self,
             FillOp::Image { .. }
@@ -202,7 +202,7 @@ impl Lang {
     }
 }
 
-/// 層・チャンネルの効かない理由（無ければ `None`）。画像は `FillImage`、グラデーションは `FillGradient`、デカールは `Decal`。
+/// レイヤー・チャンネルの効かない理由（無ければ `None`）。画像は `FillImage`、グラデーションは `FillGradient`、デカールは `Decal`。
 fn inactive_reason(
     app: &AppState,
     layer: LayerId,
@@ -216,7 +216,7 @@ fn inactive_reason(
 }
 
 impl AppState {
-    /// 画像を使う層が、今は画像を投影できない理由（短い文。使えれば `None`）。
+    /// 画像を使うレイヤーが、今は画像を投影できない理由（短い文。使えれば `None`）。
     pub fn fill_image_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
         inactive_reason(self, layer, InactiveTarget::FillImage(channel))
             .map(|r| self.lang.inactive_reason(&r))
@@ -237,7 +237,7 @@ impl AppState {
         self.notify(crate::notice::Kind::of_core(e), Source::FillLayer, text);
     }
 
-    /// 塗りつぶしの層の id（塗りつぶしでなければ理由を出して `None`）。
+    /// 塗りつぶしレイヤーの id（塗りつぶしでなければ理由を出して `None`）。
     fn fill_layer(&mut self, layer: LayerId) -> Option<LayerId> {
         match self.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
@@ -444,7 +444,7 @@ impl AppState {
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
             FillOp::ImportImage(path) => {
                 // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
-                // その間に取り込むと取り込んだ画像が消え、その画像を差した層が棚に無い画像を指す）
+                // その間に取り込むと取り込んだ画像が消え、その画像を差したレイヤーが棚に無い画像を指す）
                 if self.shelf_refuse_while_saving() {
                     return;
                 }
@@ -604,7 +604,7 @@ impl AppState {
         self.fitted_placement_for(mode, image)
     }
 
-    /// `fitted_placement` の、まだ層が無い（これから作る）ときの形。`image` は差す画像の大きさ（デカールの縦横比に使う）。
+    /// `fitted_placement` の、まだレイヤーが無い（これから作る）ときの形。`image` は差す画像の大きさ（デカールの縦横比に使う）。
     pub fn fitted_placement_for(
         &self,
         mode: ProjectionMode,
@@ -623,8 +623,8 @@ impl AppState {
         ))
     }
 
-    /// 棚の画像を塗りつぶしの層が指すために取る: 名前と大きさ（デカールを置く道と、メニューが画像・デカールの層を作る道が同じに使う）。
-    /// 棚に無い・復号できない（予算など）ときは理由。取ったあとで読めなければ手放してから返す（どの層も指さない画像を予算に残さない）。
+    /// 棚の画像を塗りつぶしレイヤーが指すために取る: 名前と大きさ（デカールを置く道と、メニューが画像・デカールのレイヤーを作る道が同じに使う）。
+    /// 棚に無い・復号できない（予算など）ときは理由。取ったあとで読めなければ手放してから返す（どのレイヤーも指さない画像を予算に残さない）。
     pub(crate) fn take_shelf_image(
         &mut self,
         image: ImageId,
@@ -656,8 +656,8 @@ impl AppState {
         }
     }
 
-    /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだ層の上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
-    /// 塗りつぶしの層を作り、投影をデカールにして面に向ける（1 回の Undo）。置けない（モデルの外・ほかのテクスチャセットの面）ときは
+    /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだレイヤーの上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
+    /// 塗りつぶしレイヤーを作り、投影をデカールにして面に向ける（1 回の Undo）。置けない（モデルの外・ほかのテクスチャセットの面）ときは
     /// 何も変えずに理由を出す。
     fn place_decal(&mut self, image: ImageId, at: Pos2, rect: Rect) {
         let lang = self.lang;
@@ -853,7 +853,7 @@ fn flip_rows(raw: &mut [u8], stride: usize) {
     }
 }
 
-/// 棚の画像を読んでいる層の名前（全部のテクスチャセット。セットが 2 つ以上ならセットの名前を前に付ける）。棚から消す前の確かめに使う。
+/// 棚の画像を読んでいるレイヤーの名前（全部のテクスチャセット。セットが 2 つ以上ならセットの名前を前に付ける）。棚から消す前の確かめに使う。
 pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let Some(image) = inputs::image_id(resource_id) else {
         return Vec::new();

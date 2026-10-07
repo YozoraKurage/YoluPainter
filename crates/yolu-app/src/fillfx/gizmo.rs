@@ -1,11 +1,11 @@
-//! 3D ビューの形のギズモの操作と描画（Unity 版の `TexturePaintWindow.ShapeGizmo`）: 選んでいる塗りつぶしの層の、投影の置き場（型の上の
+//! 3D ビューの形のギズモの操作と描画（Unity 版の `TexturePaintWindow.ShapeGizmo`）: 選んでいる塗りつぶしレイヤーの、投影の置き場（型の上の
 //! 投影とデカールの箱）か、3D ビューで編集している塗りつぶしのグラデーションの形を、モデルの面の上で動かす・回す・大きさを変える。
 //!
-//! - 出る条件: 3D のモデルがあり、選んでいる層が塗りつぶしで、マスクを編集していない。グラデーションを「3D ビューで編集」にしていればその形
+//! - 出る条件: 3D のモデルがあり、選んでいるレイヤーが塗りつぶしで、マスクを編集していない。グラデーションを「3D ビューで編集」にしていればその形
 //!   （ギズモは 1 つなのでグラデーションが先）、そうでなければ投影が UV 以外のとき置き場を出す（Q で隠す。Substance の Show/Hide manipulator）。
-//!   フィルターの欄で形のグラデーション・画像の Generator のハンドルを出していれば、層の種類とマスクに依らず、それが一番先。
+//!   フィルターの欄で形のグラデーション・画像の Generator のハンドルを出していれば、レイヤーの種類とマスクに依らず、それが一番先。
 //! - ハンドルを押したときだけ受け取り（ハンドルの無い所の押下は今のツールへ）、離すまでの変更は 1 回の Undo にまとめる（`coalesce`）。
-//!   Esc・窓のフォーカスの喪失・描き始めでは、ドラッグの前に戻して履歴にも残さない（`cancel_coalescing`）。
+//!   Esc・ウィンドウのフォーカスの喪失・描き始めでは、ドラッグの前に戻して履歴にも残さない（`cancel_coalescing`）。
 //! - 計算は `view3d::shape_gizmo`（始まりの形とポインタから毎回計算する）。ここは文書への入れ方と、3D ビューへの重ね描きだけ。
 
 use egui::{pos2, vec2, Color32, Pos2, Rect, Shape as EguiShape, Stroke, Ui};
@@ -21,11 +21,11 @@ use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
 /// ギズモが動かしているもの。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// 塗りつぶしの層の投影の置き場。
+    /// 塗りつぶしレイヤーの投影の置き場。
     Projection(LayerId),
-    /// 塗りつぶしの層のチャンネルのグラデーションの形。
+    /// 塗りつぶしレイヤーのチャンネルのグラデーションの形。
     Gradient(LayerId, Channel),
-    /// 層（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形か、画像の Generator の投影の置き場。
+    /// レイヤー（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形か、画像の Generator の投影の置き場。
     Filter(LayerId, FilterId),
 }
 
@@ -53,7 +53,7 @@ pub struct ShapeDrag {
     pub from: Vec2,
     pub target: Target,
     pub source: Source,
-    /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号の層へ当てない）。
+    /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号のレイヤーへ当てない）。
     pub doc_id: u128,
 }
 
@@ -94,7 +94,7 @@ pub fn target(app: &AppState) -> Option<Target> {
     (layer.projection().mode != ProjectionMode::Uv).then_some(Target::Projection(id))
 }
 
-/// 層のフィルターのスタックの段が、形のグラデーションの Generator ならその形、UV 以外の投影の画像の Generator なら投影の置き場。
+/// レイヤーのフィルターのスタックの段が、形のグラデーションの Generator ならその形、UV 以外の投影の画像の Generator なら投影の置き場。
 fn filter_shape(app: &AppState, layer: LayerId, filter: FilterId) -> Option<Shape> {
     let (owner, effect, _) = app.doc.find_filter(filter)?;
     if owner != layer {
@@ -201,7 +201,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         app.fillfx.drag = None;
         return;
     }
-    // 層が替わった・無くなった: そこで終える
+    // レイヤーが替わった・無くなった: そこで終える
     if app.selected_layer != Some(d.target.layer()) || app.doc.layer(d.target.layer()).is_none() {
         release(app, true);
         return;
@@ -338,7 +338,7 @@ pub fn dragging(app: &AppState) -> bool {
 pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> Handle {
     let Some(t) = target(app) else {
         app.fillfx.hover = Handle::None;
-        // 出さなくなった（層を替えた・隠した）ドラッグは取り残さない
+        // 出さなくなった（レイヤーを替えた・隠した）ドラッグは取り残さない
         if app.fillfx.drag.is_some() {
             release(app, false);
         }

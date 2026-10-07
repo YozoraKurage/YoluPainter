@@ -66,7 +66,7 @@ pub struct Limits {
     pub other_bytes: u64,
 }
 impl Limits {
-    /// 設定の「レイヤーのメモリ」の予算（1 つの文書の層の画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
+    /// 設定の「レイヤーのメモリ」の予算（1 つの文書のレイヤーの画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
     pub fn from_layer_pixels(layer_pixels: u64) -> Self {
         let pixels = layer_pixels.max(yolu_core::DEFAULT_SOURCE_BUDGET_BYTES);
         Self {
@@ -220,7 +220,7 @@ pub(crate) struct OpenFile {
     path: Mutex<PathBuf>,
     /// ハンドル。`None` は、保存の置換のために手放した（置換できなかった形は掴み直す。置換できたなら、もう開いたときの中身ではない）。
     handle: RwLock<Option<Arc<File>>>,
-    /// 開いたときのファイルの長さ（掴み直すとき、同じファイルか見分ける目安。更新時刻は見ない: 同期の道具が中身を変えずに更新時刻だけを
+    /// 開いたときのファイルの長さ（掴み直すとき、同じファイルか見分ける目安。更新時刻は見ない: 同期のツールが中身を変えずに更新時刻だけを
     /// 変えることがある。違うファイルを掴んでも、読むたびの長さ・SHA-256・CRC の確かめで断る）。
     opened: u64,
 }
@@ -941,7 +941,7 @@ pub struct Thresholds {
     pub split_above: u64,
     /// 1 つの部分の上限（タイル 1 枚の値は分けない）。
     pub part_bytes: u64,
-    /// 小さな層をまとめる大きさ: 今の部分も次の層もこれに満たなければ、層の始まりで区切らずに続ける。
+    /// 小さなレイヤーをまとめる大きさ: 今の部分も次のレイヤーもこれに満たなければ、レイヤーの始まりで区切らずに続ける。
     pub part_min: u64,
     /// ファイルを開くとき、メモリに残すエントリの大きさ（これより大きなものはファイルの位置で持つ）。
     pub keep_in_memory: u64,
@@ -1266,7 +1266,7 @@ impl ZipWriter<'_> {
     fn entry(&mut self, name: &str, blob: &Blob) -> Result<()> {
         let offset = self.out.stream_position()?;
         let try_deflate = name != "mimetype" && !name.ends_with(".png");
-        // `YLP-4` は、同じ中身の圧縮したバイト列がファイルにあれば、そのまま写す（変わらないセット・変わらない層の部分を圧縮し直さない。
+        // `YLP-4` は、同じ中身の圧縮したバイト列がファイルにあれば、そのまま写す（変わらないセット・変わらないレイヤーの部分を圧縮し直さない。
         // 書いた後の読み直しで長さ・CRC・SHA-256 を確かめる）。今の形（`YLP-3`）は今の書き手とバイトまで同じにするため、いつも圧縮し直す
         if self.zip64 {
             let raw = match &blob.0 {

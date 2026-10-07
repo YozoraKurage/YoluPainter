@@ -286,7 +286,7 @@ fn headless_an_abr_gives_several_brushes_and_a_second_import_gets_new_names() {
         names,
         ["Old set 1", "Old set 2", "Old set 1 2", "Old set 2 2"]
     );
-    // 並びから外しても、ファイルは残る（「＋」の窓から戻せる）
+    // 並びから外しても、ファイルは残る（「＋」のウィンドウから戻せる）
     let key = imported(&s)[1].key;
     s.apply(Action::Brush(BrushAction::Delete(key)));
     assert!(!s.toolset.set.contains(key));
@@ -582,7 +582,7 @@ fn headless_a_failed_save_keeps_what_was_placed_stops_the_rest_and_says_so_in_bo
 fn headless_finishing_an_import_does_not_take_the_tool_from_a_selection_in_progress() {
     let dir = temp_dir("keeps-tool");
     let mut s = state(&dir);
-    // 多角形の選択の途中。取り込みが終わっても、道具も途中の形もそのまま。ブラシだけが取り込んだものに替わる
+    // 多角形の選択の途中。取り込みが終わっても、ツールも途中の形もそのまま。ブラシだけが取り込んだものに替わる
     s.tool = Tool::Polygon;
     s.sel.polygon.push((3.0, 4.0));
     s.sel.polygon.push((10.0, 4.0));
@@ -596,13 +596,13 @@ fn headless_finishing_an_import_does_not_take_the_tool_from_a_selection_in_progr
     assert_eq!(s.brushes.lib.current(), key);
     assert_eq!(s.shown_brush_group(), Some(Group::Imported));
     assert!(s.m2.brush.tip.image.is_some(), "今の設定も取り込んだ筆先");
-    // バケツなどほかの道具でも同じ
+    // バケツなどほかのツールでも同じ
     s.tool = Tool::Fill;
     let file = write(&dir, "second.gbr", &gbr_gray("Second"));
     import(&mut s, &[file]);
     assert_eq!(s.tool, Tool::Fill);
     assert_eq!(s.brushes.lib.current(), imported(&s)[1].key);
-    // ブラシ・消しゴムのときは従来どおり、ブラシに合わせて道具もブラシへ
+    // ブラシ・消しゴムのときは従来どおり、ブラシに合わせてツールもブラシへ
     s.tool = Tool::Eraser;
     let file = write(&dir, "third.gbr", &gbr_gray("Third"));
     import(&mut s, &[file]);
@@ -1445,7 +1445,7 @@ fn headless_the_clip_studio_window_lists_what_it_finds_and_imports_only_the_sele
         (2, 0),
         "初めは何も選んでいない"
     );
-    // 何も選ばずに取り込んでも何もしない・窓は開いたまま
+    // 何も選ばずに取り込んでも何もしない・ウィンドウは開いたまま
     s.apply(Action::Brush(BrushAction::ClipStudioImport));
     assert!(s.brushes.csp.open && !s.is_brush_importing());
     // 読めなかった行は選べない。全部選ぶも読めた行だけ
@@ -1455,7 +1455,7 @@ fn headless_the_clip_studio_window_lists_what_it_finds_and_imports_only_the_sele
     let l = s.brushes.csp.listing.as_ref().unwrap();
     assert_eq!((l.selected(), l.rows[2].selected), (2, false));
     s.apply(Action::Brush(BrushAction::ClipStudioSelectAll(false)));
-    // 選んだ行だけを取り込む（いつもの .sut の取り込みの道）。窓は閉じる
+    // 選んだ行だけを取り込む（いつもの .sut の取り込みの道）。ウィンドウは閉じる
     s.apply(Action::Brush(BrushAction::ClipStudioToggle(1)));
     s.apply(Action::Brush(BrushAction::ClipStudioImport));
     assert!(!s.brushes.csp.open && s.brushes.csp.listing.is_none());
@@ -1491,7 +1491,7 @@ fn headless_when_nothing_is_found_the_window_says_why_and_a_folder_can_be_chosen
     finish_csp(&mut s);
     let l = s.brushes.csp.listing.as_ref().unwrap();
     assert_eq!((l.rows.len(), l.missing), (0, Some(Missing::NoFolder)));
-    assert!(s.brushes.csp.open, "窓は開いたまま");
+    assert!(s.brushes.csp.open, "ウィンドウは開いたまま");
     // 場所はあるが .sut が無い
     std::fs::create_dir_all(dir.join("AppData/Roaming/CELSYSUserData/CELSYS")).unwrap();
     s.apply(Action::Brush(BrushAction::ClipStudioRescan));
@@ -1521,7 +1521,7 @@ fn headless_when_nothing_is_found_the_window_says_why_and_a_folder_can_be_chosen
         s.brushes.csp.listing.as_ref().unwrap().missing,
         Some(Missing::NoFolder)
     );
-    // 窓を開き直すと、既定の場所へ戻る
+    // ウィンドウを開き直すと、既定の場所へ戻る
     s.apply(Action::Brush(BrushAction::ClipStudioClose));
     s.apply(Action::Brush(BrushAction::ClipStudioOpen));
     assert_eq!(s.brushes.csp.folder, None);

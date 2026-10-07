@@ -1,4 +1,4 @@
-//! 保存の途中で窓を閉じる・終了するときは、閉じるのを待たせて、保存が終わってから（成功でも失敗でも結果を受けてから）閉じる。
+//! 保存の途中でウィンドウを閉じる・終了するときは、閉じるのを待たせて、保存が終わってから（成功でも失敗でも結果を受けてから）閉じる。
 //! 保存していない変更の確認は、保存の後の状態で聞く。画面のスレッドは回し続ける（待つあいだも 1 フレームずつ返る）。
 //! 保存の仕事そのものは `headless/save_background.rs`。
 use crate::common;
@@ -43,7 +43,7 @@ impl Drop for TempDir {
 
 type H = Harness<'static, YoluApp>;
 
-/// 裏のスレッドで保存する窓（描いて、保存していない印を付けてある）。
+/// 裏のスレッドで保存するウィンドウ（描いて、保存していない印を付けてある）。
 fn window() -> H {
     window_in(Lang::Ja)
 }
@@ -81,7 +81,7 @@ fn paint(s: &mut AppState, x: f64) {
     s.doc.end_stroke(stroke).unwrap();
     s.modified = true;
 }
-/// 直前のフレームが窓の外へ出した「閉じる」の頼み（`Close`・`CancelClose`）。
+/// 直前のフレームがウィンドウの外へ出した「閉じる」の頼み（`Close`・`CancelClose`）。
 fn close_commands(h: &H) -> Vec<&'static str> {
     h.output()
         .viewport_output
@@ -98,12 +98,12 @@ fn close_commands(h: &H) -> Vec<&'static str> {
         })
         .unwrap_or_default()
 }
-/// 窓の ×（OS が出す閉じる頼み）を、次のフレームへ入れる。
+/// ウィンドウの ×（OS が出す閉じる頼み）を、次のフレームへ入れる。
 fn press_window_close(h: &mut H) {
     h.input_mut()
         .viewports
         .get_mut(&ViewportId::ROOT)
-        .expect("根の窓")
+        .expect("根のウィンドウ")
         .events
         .push(ViewportEvent::Close);
 }
@@ -146,7 +146,7 @@ fn quitting_during_a_save_waits_for_the_save_and_then_closes() {
         .state
         .apply(Action::SaveProjectAs(path.clone()));
     assert!(h.state().state.is_saving());
-    // 終了を頼む。保存の間は、閉じない・聞かない・小さな窓を出す。フレームは返り続ける
+    // 終了を頼む。保存の間は、閉じない・聞かない・小さなウィンドウを出す。フレームは返り続ける
     h.state_mut().state.apply(Action::Quit);
     for _ in 0..5 {
         h.step();
@@ -161,7 +161,7 @@ fn quitting_during_a_save_waits_for_the_save_and_then_closes() {
     assert!(h.state().state.quit, "終了の頼みは覚えている");
     assert!(
         yolu_app::windows::saving_window_rect(&h.ctx).is_some(),
-        "「保存しています」の小さな窓"
+        "「保存しています」の小さなウィンドウ"
     );
     hold.release();
     let commands = step_until_saved(&mut h);
@@ -193,7 +193,7 @@ fn the_window_close_button_during_a_save_is_held_back_and_closes_after_the_save(
     assert_eq!(
         close_commands(&h),
         vec!["CancelClose"],
-        "窓の閉じるは止める"
+        "ウィンドウの閉じるは止める"
     );
     assert!(
         h.state().state.quit && !h.state().is_closing(),
@@ -210,7 +210,7 @@ fn the_window_close_button_during_a_save_is_held_back_and_closes_after_the_save(
     assert!(commands.contains(&"Close"), "{commands:?}");
 }
 
-/// 窓が隠れている間（最小化など）は、eframe は egui のパスを回さず `logic` だけを呼ぶ。そこでも保存の途中の閉じる頼みは止めて待ち、
+/// ウィンドウが隠れている間（最小化など）は、eframe は egui のパスを回さず `logic` だけを呼ぶ。そこでも保存の途中の閉じる頼みは止めて待ち、
 /// 保存が終わって終了の頼みが残っていれば閉じる。
 #[test]
 fn a_hidden_window_also_holds_back_the_close_during_a_save() {
@@ -224,7 +224,7 @@ fn a_hidden_window_also_holds_back_the_close_during_a_save() {
     h.input_mut()
         .viewports
         .get_mut(&ViewportId::ROOT)
-        .expect("根の窓")
+        .expect("根のウィンドウ")
         .minimized = Some(true);
     press_window_close(&mut h);
     h.step();
@@ -241,15 +241,15 @@ fn a_hidden_window_also_holds_back_the_close_during_a_save() {
     assert!(commands.contains(&"Close"), "{commands:?}");
 }
 
-/// 隠れた窓の 1 回（実際の窓が最小化されたときに eframe が `ui` の代わりに呼ぶ `logic` の中身）だけを回す。kittest は `logic` の後に必ず
-/// `ui` も回すので、`ui` が回らない隠れた窓の道は、これで通す。
+/// 隠れたウィンドウの 1 回（実際のウィンドウが最小化されたときに eframe が `ui` の代わりに呼ぶ `logic` の中身）だけを回す。kittest は `logic` の後に必ず
+/// `ui` も回すので、`ui` が回らない隠れたウィンドウの道は、これで通す。
 fn hidden_tick(h: &mut H) {
     let ctx = h.ctx.clone();
     h.state_mut().tick_hidden(&ctx);
 }
 
-/// OS の終了を待たせる印（Windows の「保存しています」の理由）は、保存の有無に合う。窓が隠れていて `ui` が回らなくても、保存を頼んだ後に
-/// 最小化すれば印が付き、最小化したまま保存が終われば印が消える（付いたままだと、窓を戻すまで OS の終了が止まる。付かないと、保存中でも
+/// OS の終了を待たせる印（Windows の「保存しています」の理由）は、保存の有無に合う。ウィンドウが隠れていて `ui` が回らなくても、保存を頼んだ後に
+/// 最小化すれば印が付き、最小化したまま保存が終われば印が消える（付いたままだと、ウィンドウを戻すまで OS の終了が止まる。付かないと、保存中でも
 /// OS の終了を待たせない）。
 #[test]
 fn the_shutdown_mark_follows_a_save_that_starts_while_the_window_gets_hidden() {
@@ -260,12 +260,12 @@ fn the_shutdown_mark_follows_a_save_that_starts_while_the_window_gets_hidden() {
     h.state_mut()
         .state
         .apply(Action::SaveProjectAs(dir.file("作品.ylp")));
-    // 次の `ui` のフレームが来る前に最小化した: 隠れた窓の 1 回だけが回る
+    // 次の `ui` のフレームが来る前に最小化した: 隠れたウィンドウの 1 回だけが回る
     hidden_tick(&mut h);
     assert!(h.state().state.is_saving());
     assert!(
         h.state().saving_marked(),
-        "隠れた窓でも、保存の間は OS の終了を待たせる印を付ける"
+        "隠れたウィンドウでも、保存の間は OS の終了を待たせる印を付ける"
     );
     hold.release();
     let start = Instant::now();
@@ -490,7 +490,7 @@ fn closing_without_a_save_is_as_before() {
     assert!(close_commands(&h).contains(&"Close"));
     assert!(
         yolu_app::windows::saving_window_rect(&h.ctx).is_none(),
-        "保存していないので、待つ窓は出さない"
+        "保存していないので、待つウィンドウは出さない"
     );
 }
 
@@ -523,9 +523,9 @@ fn stopping_jobs_before_quitting_neither_cancels_nor_waits_for_a_save() {
     assert!(path.exists());
 }
 
-// ───────── 画面（進み具合の札・待つ窓） ─────────
+// ───────── 画面（進み具合の札・待つウィンドウ） ─────────
 
-/// 保存の間の窓の全体（右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
+/// 保存の間のウィンドウの全体（右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
 #[test]
 fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
     let mut snapshots = egui_kittest::SnapshotResults::new();
@@ -559,7 +559,7 @@ fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
     }
 }
 
-/// 終わる頼みを待たせている小さな窓（取り消しのボタンは無い）。
+/// 終わる頼みを待たせている小さなウィンドウ（取り消しのボタンは無い）。
 #[test]
 fn the_waiting_window_before_closing_has_no_cancel_button() {
     for lang in [Lang::Ja, Lang::En] {
@@ -573,10 +573,10 @@ fn the_waiting_window_before_closing_has_no_cancel_button() {
         h.event(egui::Event::PointerGone);
         h.step();
         h.step();
-        let rect = yolu_app::windows::saving_window_rect(&h.ctx).expect("待つ窓を描いた");
+        let rect = yolu_app::windows::saving_window_rect(&h.ctx).expect("待つウィンドウを描いた");
         assert!(
             rect.width() < 400.0 && rect.height() < 120.0,
-            "小さな窓: {rect:?}"
+            "小さなウィンドウ: {rect:?}"
         );
         let cancels: Vec<_> = h
             .query_all_by_label_contains(lang.pick("取消", "Cancel"))

@@ -54,8 +54,8 @@ fn report(scene: &str, metric: &str, value: f64) {
     println!("{scene}\t{metric}\t{value:.2}");
 }
 
-/// 乱数の文書: 下地の塗りつぶし・ラスター層（合成モードと不透明度を替える）・通過のグループ（クリッピングと調整つき）・
-/// 分離のグループ（マスクつき）・上の層と調整。返す 2 つは描く層（入れ子の中と、一番上の近く）。
+/// 乱数の文書: 下地の塗りつぶし・ラスターレイヤー（合成モードと不透明度を替える）・通過のグループ（クリッピングと調整つき）・
+/// 分離のグループ（マスクつき）・上のレイヤーと調整。返す 2 つは描くレイヤー（入れ子の中と、一番上の近く）。
 fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     let mut rng = Rng(0xC0FFEE);
@@ -101,7 +101,7 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
             .unwrap();
         ids.push(id);
     }
-    // 通過のグループ（入れ子の描く層・クリッピング・調整）
+    // 通過のグループ（入れ子の描くレイヤー・クリッピング・調整）
     let g1a = d.add_layer("g1a").unwrap();
     blob(&mut d, &mut rng, g1a, 10);
     let g1b = d.add_layer("g1b").unwrap();
@@ -138,7 +138,7 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
         )
         .unwrap();
     }
-    // 上の層
+    // 上のレイヤー
     let mut top = Vec::new();
     for i in 0..4 {
         let id = d.add_layer(&format!("U{i}")).unwrap();
@@ -158,7 +158,7 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
     (d, g1b, top[1])
 }
 
-/// 詰まった文書: 全面を半透明の乱数で埋めた層を `layers` 枚（合成モードを替える）。どのタイルも全部の層に画素がある（覚えが一番効く形）。
+/// 詰まった文書: 全面を半透明の乱数で埋めたレイヤーを `layers` 枚（合成モードを替える）。どのタイルも全部のレイヤーに画素がある（覚えが一番効く形）。
 fn dense(size: u32, layers: usize) -> (Document, LayerId, LayerId) {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     d.set_source_budget_bytes(2 << 30).unwrap();
@@ -233,7 +233,7 @@ fn shown(doc: &Document, l: &yolu_app::engine::Layer) -> bool {
     true
 }
 
-/// 色の面のタイルが多い順の、描ける層（合成に出るラスター）の ID。
+/// 色の面のタイルが多い順の、描けるレイヤー（合成に出るラスター）の ID。
 fn rasters_by_tiles(doc: &Document) -> Vec<(LayerId, usize)> {
     let mut v: Vec<(LayerId, usize)> = doc
         .layers()
@@ -250,7 +250,7 @@ fn rasters_by_tiles(doc: &Document) -> Vec<(LayerId, usize)> {
     v
 }
 
-/// 描く層: 紙の中ほどの順で、タイルを十分持つ（なければ一番多い）層。
+/// 描くレイヤー: 紙の中ほどの順で、タイルを十分持つ（なければ一番多い）レイヤー。
 fn middle_raster(doc: &Document) -> LayerId {
     let list = rasters_by_tiles(doc);
     let max = list.first().map_or(0, |(_, n)| *n);
@@ -270,7 +270,9 @@ fn middle_raster(doc: &Document) -> LayerId {
         })
         .collect();
     if enough.is_empty() {
-        list.first().map(|(id, _)| *id).expect("ラスター層が無い")
+        list.first()
+            .map(|(id, _)| *id)
+            .expect("ラスターレイヤーが無い")
     } else {
         enough[enough.len() / 2]
     }
@@ -291,7 +293,7 @@ struct Settle {
     frames: usize,
 }
 
-/// 見る範囲: 窓に収めた全体（fit）と、等倍で中央（z100）。
+/// 見る範囲: ウィンドウに収めた全体（fit）と、等倍で中央（z100）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum View {
     /// 枠なしで全部を上げてから返る（前の同期と同じ形。比較用）。
@@ -535,7 +537,7 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
     let mut stroke_ms = Vec::new();
     let mut tiles = 0usize;
     let mut first = 0.0;
-    let mut s = doc.begin_stroke(layer, &brush).expect("描ける層");
+    let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
     let total = Instant::now();
     for i in 0..120 {
         let t = i as f64 / 119.0;
@@ -677,10 +679,10 @@ fn scene_zoom(b: &mut Bench, doc: &Document) {
     b.sync_ms(doc);
 }
 
-/// 結合（表示に寄与する層・上から最初に結合できる層を下へ）の時間と、結合したあとの合成の指紋（前後のコードで同じ値になること）。結合は Undo で戻す。
+/// 結合（表示に寄与するレイヤー・上から最初に結合できるレイヤーを下へ）の時間と、結合したあとの合成の指紋（前後のコードで同じ値になること）。結合は Undo で戻す。
 fn scene_merge(doc: &mut Document) {
     let whole = |d: &Document| fnv(&d.composite_channel(Channel::Color, d.bounds()).unwrap());
-    // 結合の 1 段は外した層と結果の層の分だけ大きく、既定の履歴の予算では Undo の段が残らない
+    // 結合の 1 段は外したレイヤーと結果のレイヤーの分だけ大きく、既定の履歴の予算では Undo の段が残らない
     doc.set_undo_budget_bytes(4 << 30).unwrap();
     let before = whole(doc);
     let mut run = |label: &str, f: &mut dyn FnMut(&mut Document) -> bool| {
@@ -694,12 +696,12 @@ fn scene_merge(doc: &mut Document) {
             println!("merge\t{label} は断られた\t-");
         }
     };
-    run("表示に寄与する層を結合", &mut |d| {
+    run("表示に寄与するレイヤーを結合", &mut |d| {
         d.merge_visible("merged", 255).is_ok()
     });
-    // 下の層へ: 上から順に、断られない最初の層（断られた層は文書を変えない）
+    // 下のレイヤーへ: 上から順に、断られない最初のレイヤー（断られたレイヤーは文書を変えない）
     run(
-        "上から最初に結合できる層を下へ結合",
+        "上から最初に結合できるレイヤーを下へ結合",
         &mut |d| {
             let ids: Vec<LayerId> = d.layers().iter().rev().map(|l| l.id()).collect();
             ids.iter().any(|id| d.merge_down(*id, 255).is_ok())
@@ -841,7 +843,7 @@ fn scene_call(doc: &Document) {
         "8×8 を 1 回の矩形・スレッド 1(1 タイル ms)",
         median(&mut v),
     );
-    // 画布全体を 1 回の矩形で（スレッド 1 / 既定）: 空のタイルが多い文書の、1 コアあたりの全体の費用
+    // キャンバス全体を 1 回の矩形で（スレッド 1 / 既定）: 空のタイルが多い文書の、1 コアあたりの全体の費用
     let whole = doc.bounds();
     let mut all_px = vec![0u8; (whole.width as usize) * (whole.height as usize) * 4];
     for (label, pool) in [("スレッド 1", Some(&one)), ("既定", None)] {
@@ -865,7 +867,7 @@ fn scene_call(doc: &Document) {
         }
         report(
             "call",
-            &format!("画布全体を 1 回の矩形・{label}(ms)"),
+            &format!("キャンバス全体を 1 回の矩形・{label}(ms)"),
             median(&mut v),
         );
     }
@@ -950,7 +952,7 @@ fn scene_hash(doc: &mut Document, layer: LayerId) {
             pressure_flow: false,
             erase: false,
         };
-        let mut s = doc.begin_stroke(layer, &brush).expect("描ける層");
+        let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
         for i in 0..60 {
             let t = i as f64 / 59.0;
             let x = w * (0.3 + 0.4 * t);
@@ -999,7 +1001,7 @@ fn main() {
                 }
             }
             "--dense" => {
-                // --dense 辺 層の数
+                // --dense 辺 レイヤーの数
                 dense_doc = Some((
                     args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(1024),
                     args.get(i + 2).and_then(|s| s.parse().ok()).unwrap_or(24),
@@ -1042,7 +1044,7 @@ fn main() {
         (None, size) => synthetic(size.unwrap_or(2048)),
     };
     eprintln!(
-        "{label}: {}×{} タイル{} 層{} 描く層の番号={:?}",
+        "{label}: {}×{} タイル{} レイヤー{} 描くレイヤーの番号={:?}",
         doc.width(),
         doc.height(),
         doc.tile_size(),
@@ -1052,7 +1054,7 @@ fn main() {
     let mut b = Bench::new(repeat);
     let want = |name: &str| only.as_deref().is_none_or(|o| o == name);
     println!(
-        "# {label}\t{}×{}\t層 {}",
+        "# {label}\t{}×{}\tレイヤー {}",
         doc.width(),
         doc.height(),
         doc.layers().len()

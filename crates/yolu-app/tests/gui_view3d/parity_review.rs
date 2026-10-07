@@ -201,10 +201,10 @@ fn opened_uv_color_window_has_no_internal_notation_and_is_localized() {
             yolu_app::uv_wireframe::color::window_target()
         ));
         assert_color_text(&h, lang);
-        // 色の窓に不透明度（アルファ）の欄がある
+        // 色のウィンドウに不透明度（アルファ）の欄がある
         assert!(
             h.query_by_role_and_label(Role::Slider, "A").is_some(),
-            "開いた色の窓に不透明度の欄がありません"
+            "開いた色のウィンドウに不透明度の欄がありません"
         );
         assert_eq!(before, h.state().prefs.settings.uv_wireframe_color);
     }
@@ -263,7 +263,7 @@ fn the_uv_color_window_changes_the_color_and_the_opacity_separately_in_the_right
         assert_ne!(after[3], previous[3]);
         assert_eq!(after[..3], previous[..3]);
         // 四角で色を変えても不透明度は変わらない
-        let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓");
+        let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウ");
         let sq =
             yolu_app::panels::color::wheel_square(yolu_app::panels::color_window::wheel_of(window));
         click(&mut h, sq.left_top() + vec2(6.0, 6.0));
@@ -393,7 +393,7 @@ fn canvas_gesture(binding: &Binding) {
             Operation::Rotate => {
                 assert!(s.canvas.middle_rotating && !s.canvas.panning, "{binding:?}")
             }
-            // 描く道具の Alt は、ストロークを始めずにスポイトとして働く
+            // 描くツールの Alt は、ストロークを始めずにスポイトとして働く
             Operation::Pick => {
                 assert!(yolu_app::eyedrop::picks(s, true), "{binding:?}");
                 assert!(!yolu_app::eyedrop::picks(s, false));
@@ -416,7 +416,7 @@ fn canvas_gesture(binding: &Binding) {
     assert!(!s.canvas.panning && !s.canvas.middle_rotating);
 }
 
-/// 選択範囲の道具の Shift・Ctrl を、実際の選択の入力で確かめる（先に左半分を選び、中ほどの帯をなぞる）。
+/// 選択範囲のツールの Shift・Ctrl を、実際の選択の入力で確かめる（先に左半分を選び、中ほどの帯をなぞる）。
 fn selection_gesture(binding: &Binding) {
     use egui::{Pos2, Rect};
     use yolu_app::{
@@ -500,7 +500,7 @@ fn the_eyedropper_row_covers_exactly_the_tools_where_alt_picks() {
             picking.push(tool);
         }
     }
-    // 一覧の「Alt+左ボタン」の行は、描く道具（ここに挙げた道具）のスポイト。道具の組が替わったら行の書き方を見直す
+    // 一覧の「Alt+左ボタン」の行は、描くツール（ここに挙げたツール）のスポイト。ツールの組が替わったら行の書き方を見直す
     assert_eq!(
         picking,
         [Tool::Brush, Tool::Eraser, Tool::Fill, Tool::PolygonFill]
@@ -583,7 +583,7 @@ fn app_with_settings(path: &std::path::Path) -> Harness<'static, YoluApp> {
     h
 }
 
-/// UV ワイヤーフレームの色は、色の窓でドラッグしている間は設定のファイルへ書かず、離したときに 1 回だけ書く（退避の数のスライダーと同じ）。
+/// UV ワイヤーフレームの色は、色のウィンドウでドラッグしている間は設定のファイルへ書かず、離したときに 1 回だけ書く（退避の数のスライダーと同じ）。
 #[test]
 fn dragging_in_the_uv_color_window_writes_the_settings_once_on_release() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -599,7 +599,7 @@ fn dragging_in_the_uv_color_window_writes_the_settings_once_on_release() {
     h.get_by_role_and_label(Role::ColorWell, "UV wireframe color and opacity")
         .click();
     h.run();
-    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓");
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウ");
     let sq =
         yolu_app::panels::color::wheel_square(yolu_app::panels::color_window::wheel_of(window));
     let color = |h: &Harness<'_, YoluApp>| h.state().state.prefs.settings.uv_wireframe_color;

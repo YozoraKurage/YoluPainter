@@ -105,7 +105,7 @@ fn rollback_for(channels: &[ChannelPaint]) -> u64 {
     bytes
 }
 /// ストロークの予算は全チャンネルの合計で守る（チャンネルごとに別々の予算を持たない）。1 チャンネルのストロークが通る予算でも、
-/// 6 チャンネルは合計で超えて断られ、層・チャンネル・履歴は元に戻る。境目は合計と同じ値で通り、1 バイト少なければ断る。
+/// 6 チャンネルは合計で超えて断られ、レイヤー・チャンネル・履歴は元に戻る。境目は合計と同じ値で通り、1 バイト少なければ断る。
 #[test]
 fn the_stroke_budget_is_shared_by_all_channels() {
     let one: Vec<_> = material().iter().map(|m| rollback_for(&[*m])).collect();
@@ -282,7 +282,7 @@ fn manual_id_colors_undo() {
     d.redo().unwrap();
     assert_eq!(d.id_colors().key(), key);
 }
-/// 色の窓のドラッグ: まとめた手動 ID 色の変更は 1 回の Undo（戻すと最初の変更の前＝自動、やり直すと最後の色）。まとめを切った後・ほかの
+/// 色のウィンドウのドラッグ: まとめた手動 ID 色の変更は 1 回の Undo（戻すと最初の変更の前＝自動、やり直すと最後の色）。まとめを切った後・ほかの
 /// 変更の後は別の段。ドラッグを Escape で止めると、その段ごと捨てる。保存用の写しは最後の色を持つ。
 #[test]
 fn dragged_manual_id_colors_coalesce_into_one_undo_step() {
@@ -449,7 +449,7 @@ fn region_budgets_and_redo_are_atomic() {
     assert_eq!(d.redo_count(), 1);
     assert!(d.layer(l).unwrap().surface(Channel::Normal).is_none());
 }
-/// C# の MaterialRegionTests.ARefusedUndoDoesNotRestoreAnyOfTheDenseChannels: 6 チャンネルとも画素が密な層を `fill_material` で
+/// C# の MaterialRegionTests.ARefusedUndoDoesNotRestoreAnyOfTheDenseChannels: 6 チャンネルとも画素が密なレイヤーを `fill_material` で
 /// 一様に塗ってから予算を縮めると、Undo は全チャンネルの増分を先にまとめて確かめて断る。最初のチャンネルの分（252）だけなら
 /// 入る予算でも、どのチャンネルも戻さない。予算が足りれば全チャンネルが元のバイトへ戻る。
 #[test]
@@ -699,7 +699,7 @@ fn geometry_regions_have_the_known_sizes_and_members() {
 fn surface_regions_map_uv_to_pixels_with_v_counted_from_the_bottom() {
     use geometry::SurfaceRegionKind::*;
     let g = two_part_geometry();
-    // 幅と高さが違う画布で、x = u × 幅、y = v × 高さ（v = 0 が下の行）
+    // 幅と高さが違うキャンバスで、x = u × 幅、y = v × 高さ（v = 0 が下の行）
     let d = Document::with_tile_size(32, 24, 8).unwrap();
     let corners = |t: &[DVec2; 3]| t.map(|p| (p.x, p.y));
     let a = material_triangles::surface_triangles(&d, &g, 12, Triangle).unwrap();
@@ -764,7 +764,7 @@ fn manual_id_assignment_is_immutable_and_bound_to_model() {
     assert_eq!(removed.key(), "");
 }
 fn ragged() -> Document {
-    // 端のタイルが欠ける画布（右の列は 5 画素・上の行は 5 画素だけ画布の中）
+    // 端のタイルが欠けるキャンバス（右の列は 5 画素・上の行は 5 画素だけキャンバスの中）
     Document::with_tile_size(37, 29, 8).unwrap()
 }
 fn tri(t: [(f64, f64); 3]) -> material_triangles::PixelTriangle {
@@ -782,7 +782,7 @@ fn pixel_amounts(m: &SelectionMask) -> Vec<u8> {
 #[test]
 fn triangle_union_known_answers_on_a_ragged_canvas() {
     let d = ragged();
-    // 画布ぴったりの 2 枚: 継ぎ目も二重もなく画布の全画素が 255。欠けたタイルも画布の中が全部
+    // キャンバスぴったりの 2 枚: 継ぎ目も二重もなくキャンバスの全画素が 255。欠けたタイルもキャンバスの中が全部
     let quad = SelectionMask::from_triangles(&d, &canvas_quad()).unwrap();
     assert!(pixel_amounts(&quad).iter().all(|a| *a == 255));
     assert_eq!(quad.tile_coords().len(), 5 * 4);
@@ -794,7 +794,7 @@ fn triangle_union_known_answers_on_a_ragged_canvas() {
     }
     assert_eq!(lower.amount(36, 0), pixel_amounts(&lower)[36]);
     assert!(lower.amount(36, 0) > 0 && upper.amount(0, 28) > 0);
-    // 画布の外・縮退・面積が極小: 何も選ばれない
+    // キャンバスの外・縮退・面積が極小: 何も選ばれない
     for t in [
         tri([(50.0, 5.0), (60.0, 5.0), (55.0, 20.0)]),
         tri([(5.0, -20.0), (15.0, -20.0), (10.0, -3.0)]),
@@ -808,14 +808,14 @@ fn triangle_union_known_answers_on_a_ragged_canvas() {
         assert!(m.is_empty(), "{t:?}");
         assert_eq!(m.allocated_bytes(), 0);
     }
-    // 一部が画布の外: 外は切り、中は普通に塗る。画布の角（左下の外へ延びる三角形）
+    // 一部がキャンバスの外: 外は切り、中は普通に塗る。キャンバスの角（左下の外へ延びる三角形）
     let partial =
         SelectionMask::from_triangles(&d, &[tri([(-6.2, 10.0), (14.1, -4.4), (20.3, 31.8)])])
             .unwrap();
     assert_eq!(partial.amount(10, 10), 255);
     assert_eq!(partial.amount(36, 28), 0);
     assert_eq!(partial.amount(0, 0), 0);
-    // 座標が巨大でも面積が溢れない大きさまでは、画布に切って画布の全画素を塗る（C# は int に収まらない座標を飛ばす差がある）
+    // 座標が巨大でも面積が溢れない大きさまでは、キャンバスに切ってキャンバスの全画素を塗る（C# は int に収まらない座標を飛ばす差がある）
     for r in [1e6, 1e9, 1e150] {
         let m = SelectionMask::from_triangles(&d, &[tri([(-r, -r), (r, -r), (0.0, r)])]).unwrap();
         assert!(pixel_amounts(&m).iter().all(|a| *a == 255), "{r}");
@@ -854,7 +854,7 @@ fn triangles_off_canvas_or_degenerate_leave_the_fill_and_setup_untouched() {
         assert_eq!(f.covered_tile_count(&d), Some(0));
         let stats = d.active_stroke_stats().unwrap();
         assert_eq!(stats.tiles, 0);
-        // 続けて画布の中の三角形を足せる（状態が汚れていない）
+        // 続けてキャンバスの中の三角形を足せる（状態が汚れていない）
         assert!(f.add(&mut d, &canvas_quad()).unwrap());
         assert_eq!(f.triangles_added(&d), Some(3));
         f.cancel(&mut d);
@@ -890,7 +890,7 @@ fn fills_on_a_ragged_canvas_paint_exactly_the_canvas() {
                 .unwrap();
             f.add(&mut d, &canvas_quad()[..1]).unwrap();
             f.add(&mut d, &canvas_quad()[1..]).unwrap();
-            // 全覆いのタイルは覆いの記録を持たず、タイルの数は画布のタイルの数（5×4）
+            // 全覆いのタイルは覆いの記録を持たず、タイルの数はキャンバスのタイルの数（5×4）
             assert_eq!(f.covered_tile_count(&d), Some(20));
             f.commit(&mut d).unwrap();
         }
@@ -915,13 +915,13 @@ fn a_full_cover_of_a_ragged_canvas_keeps_no_sample_memory() {
         .begin_material_triangle_fill(l, &material(), 0.5, false)
         .unwrap();
     f.add(&mut d, &canvas_quad()).unwrap();
-    // 端が欠けたタイルも画布の中が全部覆われていれば「全覆い」で、サンプルの記録（新しいタイルごとに 16 + 2 × タイルの画素数 バイト）を持たない。
+    // 端が欠けたタイルもキャンバスの中が全部覆われていれば「全覆い」で、サンプルの記録（新しいタイルごとに 16 + 2 × タイルの画素数 バイト）を持たない。
     // 巻き戻しは 6 チャンネル × 20 タイルの、元が空のタイルの記録（64 バイト）だけ
     assert_eq!(d.active_stroke_stats().unwrap().rollback_bytes, 6 * 20 * 64);
     assert_eq!(d.active_stroke_stats().unwrap().tiles, 6 * 20);
     f.cancel(&mut d);
 }
-/// 層の状態の写し: 各チャンネルの（有効か・面の画素）・マスクの画素・確保量・Undo の段・進行中のストロークの有無。
+/// レイヤーの状態の写し: 各チャンネルの（有効か・面の画素）・マスクの画素・確保量・Undo の段・進行中のストロークの有無。
 type Snapshot = (
     Vec<(Channel, bool, Option<Vec<u8>>)>,
     Option<Vec<u8>>,
@@ -948,7 +948,7 @@ fn snapshot(d: &Document, l: LayerId) -> Snapshot {
         d.has_active_stroke(),
     )
 }
-/// 描いたことのある無効のチャンネル（面が残る）と、一度も描いていない無効のチャンネルが混ざった層。
+/// 描いたことのある無効のチャンネル（面が残る）と、一度も描いていない無効のチャンネルが混ざったレイヤー。
 fn mixed_layer() -> (Document, LayerId) {
     let mut d = Document::with_tile_size(40, 32, 8).unwrap();
     let l = d.add_layer("塗り").unwrap();
@@ -1154,7 +1154,7 @@ fn effect_stroke(s: &mut Stroke, d: &mut Document) -> Result<(), CoreError> {
     s.add_sample(d, at(5.0, 5.0, 0.0))?;
     s.add_sample(d, at(12.0, 7.0, 1.0))
 }
-/// C# の BrushEffectTests.Make: 19×13 の層の全チャンネルに、チャンネルごとに違う決まった模様（アルファ 0・120・255 が混ざる）。
+/// C# の BrushEffectTests.Make: 19×13 のレイヤーの全チャンネルに、チャンネルごとに違う決まった模様（アルファ 0・120・255 が混ざる）。
 fn effect_layer(tile: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(EW as u32, EH as u32, tile).unwrap();
     let l = d.add_layer("塗り").unwrap();

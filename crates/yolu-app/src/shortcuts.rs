@@ -1,4 +1,4 @@
-//! キーの一覧の窓（読むだけ）。割り当ては `keymap` の表で、一覧と実際のキーの処理は同じ表を読む。名前はメニューと共有する。
+//! キーの一覧のウィンドウ（読むだけ）。割り当ては `keymap` の表で、一覧と実際のキーの処理は同じ表を読む。名前はメニューと共有する。
 pub mod gestures;
 
 use crate::{
@@ -31,7 +31,7 @@ pub fn bindings() -> Vec<Binding> {
         .collect()
 }
 
-/// 移動・変形の道具の矢印キー。
+/// 移動・変形のツールの矢印キー。
 pub fn movement_keys() -> [Key; 4] {
     keymap::MOVE_KEYS.map(|(key, _)| key)
 }
@@ -344,7 +344,7 @@ mod tests {
         }
     }
 
-    /// 割り当てが効く条件を満たした状態（道具は、道具の割り当てなら押す前と違うもの）。
+    /// 割り当てが効く条件を満たした状態（ツールは、ツールの割り当てなら押す前と違うもの）。
     fn state_for(binding: &Binding) -> AppState {
         let mut app = AppState::new(32, 32);
         app.tool = match (binding.when, &binding.action) {
@@ -357,7 +357,7 @@ mod tests {
         }
         if binding.when == When::PointSelected {
             app.apply(Action::M2(Edit::NewFill));
-            let layer = app.selected_layer.expect("足した層");
+            let layer = app.selected_layer.expect("足したレイヤー");
             app.apply(Action::Fill(crate::fillfx::FillOp::AddPoints {
                 layer,
                 channel: yolu_core::Channel::Color,
@@ -392,7 +392,7 @@ mod tests {
             });
             output.textures_delta.clear();
             assert_eq!(got, vec![binding.action.clone()], "{}", key_label(&binding));
-            // 道具のキーは、実際のキーの処理で道具が替わり、一覧の文字は道具の表のキーと同じ
+            // ツールのキーは、実際のキーの処理でツールが替わり、一覧の文字はツールの表のキーと同じ
             if let Action::SelectTool(tool) = binding.action {
                 let mut app = state_for(&binding);
                 press(&mut app, binding.key, binding.modifiers);
@@ -441,7 +441,7 @@ mod tests {
         assert!(app.doc.selection().is_some());
         assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
         assert_eq!(dispatched(&app, Key::Backspace), vec![point.clone()]);
-        // パスの道具でも、点を選んでいる間は点を消す（パスの点の削除に取られない）
+        // パスのツールでも、点を選んでいる間は点を消す（パスの点の削除に取られない）
         app.tool = Tool::Path;
         assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
         assert_eq!(dispatched(&app, Key::Backspace), vec![point]);
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn the_table_is_the_only_place_that_names_a_shortcut_key() {
-        // 文字・数字・記号のキー（ショートカット）を `consume_key` で直に読む所は、割り当ての表だけ。窓の Enter・Escape・Tab などの
+        // 文字・数字・記号のキー（ショートカット）を `consume_key` で直に読む所は、割り当ての表だけ。ウィンドウの Enter・Escape・Tab などの
         // 操作のキーは、その部品が持つ。ここに足すときは、表に足してから使う
         const UI_KEYS: [&str; 12] = [
             "Enter",
@@ -552,7 +552,7 @@ mod tests {
         let all = rows(&app);
         assert!(all.iter().any(|r| r.left.contains("Move (1 px / 10 px)")));
         assert!(all.iter().any(|r| r.right == "^"));
-        // 道具のキーは道具の表のとおり、ツールの帯の並びで一覧に出る
+        // ツールのキーはツールの表のとおり、ツールの帯の並びで一覧に出る
         let mut last = 0;
         for tool in Tool::ALL.iter().filter(|t| !t.key().is_empty()) {
             let at = all

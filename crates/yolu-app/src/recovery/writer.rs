@@ -51,7 +51,7 @@ struct Inner {
     token: Option<String>,
 }
 
-/// 窓ごとに 1 つの書き手。
+/// ウィンドウごとに 1 つの書き手。
 pub(crate) struct Writer {
     shared: Arc<(Mutex<Inner>, Condvar)>,
     fault: Option<Fault>,

@@ -3,7 +3,7 @@ use yolu_core::{
     BlendMode, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
     CoreError, Document, LayerId, LayerKind, LayerLocks, Rgba8,
 };
-/// 文書の変わったかどうかの目安: 層の数・画素のバイト数・版・Undo の有無。
+/// 文書の変わったかどうかの目安: レイヤーの数・画素のバイト数・版・Undo の有無。
 fn state(d: &Document) -> (usize, u64, u64, bool) {
     (
         d.layers().len(),
@@ -20,12 +20,12 @@ fn user(name: &str, kind: ChannelKind) -> ChannelInfo {
         default: Rgba8::TRANSPARENT,
     }
 }
-/// 画素を持つ層を `count` 枚。画素は層ごとに違う（再標本化の面が層ごとに数えられる）。
+/// 画素を持つレイヤーを `count` 枚。画素はレイヤーごとに違う（再標本化の面がレイヤーごとに数えられる）。
 fn painted(width: u32, height: u32, tile: u32, count: u32) -> (Document, Vec<LayerId>) {
     let mut d = Document::with_tile_size(width, height, tile).unwrap();
     let ids: Vec<_> = (0..count)
         .map(|i| {
-            let l = d.add_layer(&format!("層{i}")).unwrap();
+            let l = d.add_layer(&format!("レイヤー{i}")).unwrap();
             for y in 0..height {
                 for x in 0..width {
                     let p = Rgba8::new((x * 31 + i * 7) as u8, (y * 17) as u8, (x + y) as u8, 255);
@@ -272,7 +272,7 @@ fn disabled_user_channel_content_is_refused_without_the_same_channel() {
 fn unused_user_channel_definitions_are_not_carried_into_a_fragment() {
     let mut d = Document::with_tile_size(4, 4, 2).unwrap();
     let ch = d.add_channel(user("ユーザー", ChannelKind::Color)).unwrap();
-    d.add_channel(user("どの層も使わない", ChannelKind::Scalar))
+    d.add_channel(user("どのレイヤーも使わない", ChannelKind::Scalar))
         .unwrap();
     let used = d.add_layer("使う").unwrap();
     d.set_channel_pixel(used, ch, 0, 0, Rgba8::new(5, 5, 5, 255))
@@ -287,7 +287,7 @@ fn unused_user_channel_definitions_are_not_carried_into_a_fragment() {
             .filter(|c| !c.is_standard())
             .collect::<Vec<_>>()
     };
-    // 使っている層を含めるときだけ、その定義を持つ（使っていない定義は、どちらでも持たない）
+    // 使っているレイヤーを含めるときだけ、その定義を持つ（使っていない定義は、どちらでも持たない）
     assert_eq!(
         user_channels(&d.capture_smart_material(&[used], "a").unwrap()),
         vec![ch]
@@ -346,7 +346,7 @@ fn place_budget_is_exact_and_a_refusal_changes_nothing() {
         .place_smart_material(&material, &SmartPlacement::default())
         .unwrap();
     assert_eq!(exact.allocated_bytes(), resampled);
-    // 1 バイト足りない（最後の面の途中で超える）と、層を 1 つも入れず、Undo の段も作らない
+    // 1 バイト足りない（最後の面の途中で超える）と、レイヤーを 1 つも入れず、Undo の段も作らない
     let mut short = Document::with_tile_size(8, 6, 4).unwrap();
     short.set_source_budget_bytes(resampled - 1).unwrap();
     let before = state(&short);
@@ -356,7 +356,7 @@ fn place_budget_is_exact_and_a_refusal_changes_nothing() {
     ));
     assert_eq!(state(&short), before);
     assert!(!short.can_undo());
-    // 最初の層は入るが 2 つ目で超える予算でも、途中までの層を残さない
+    // 最初のレイヤーは入るが 2 つ目で超える予算でも、途中までのレイヤーを残さない
     let first_layer = resampled / 2;
     let mut middle = Document::with_tile_size(8, 6, 4).unwrap();
     middle.set_source_budget_bytes(first_layer).unwrap();
@@ -425,16 +425,16 @@ fn smart_mask_budget_counts_only_the_growth_over_the_mask_it_replaces() {
 fn layer_limit_counts_the_wrapping_group_and_refuses_before_changing_anything() {
     let mut one = Document::with_tile_size(2, 2, 2).unwrap();
     let a = one.add_layer("a").unwrap();
-    let single = one.capture_smart_material(&[a], "1層").unwrap();
+    let single = one.capture_smart_material(&[a], "1 レイヤー").unwrap();
     let mut pair = Document::with_tile_size(2, 2, 2).unwrap();
     let ids = [pair.add_layer("a").unwrap(), pair.add_layer("b").unwrap()];
-    let wrapped = pair.capture_smart_material(&ids, "2層").unwrap();
+    let wrapped = pair.capture_smart_material(&ids, "2 レイヤー").unwrap();
     let fill = |d: &mut Document, count: usize| {
         while d.layers().len() < count {
             d.add_layer("空").unwrap();
         }
     };
-    // 1 層は 2047 層の文書に入る（ちょうど 2048）。もう 1 層は断る
+    // 1 レイヤーは 2047 レイヤーの文書に入る（ちょうど 2048）。もう 1 レイヤーは断る
     let mut d = Document::with_tile_size(2, 2, 2).unwrap();
     fill(&mut d, 2047);
     d.place_smart_material(&single, &SmartPlacement::default())
@@ -445,7 +445,7 @@ fn layer_limit_counts_the_wrapping_group_and_refuses_before_changing_anything() 
         .place_smart_material(&single, &SmartPlacement::default())
         .is_err());
     assert_eq!(state(&d), before);
-    // 最上位が 2 つなら包むグループが 1 つ増える: 2 + 1 で、2045 層ならちょうど、2046 層なら断る
+    // 最上位が 2 つなら包むグループが 1 つ増える: 2 + 1 で、2045 レイヤーならちょうど、2046 レイヤーなら断る
     let mut d = Document::with_tile_size(2, 2, 2).unwrap();
     fill(&mut d, 2045);
     d.place_smart_material(&wrapped, &SmartPlacement::default())
@@ -468,7 +468,7 @@ fn parent_must_be_an_existing_group_and_a_far_position_goes_on_top() {
     let inside = d.add_layer("中").unwrap();
     let group = d.group_layers(&[inside], "組").unwrap();
     let before = state(&d);
-    // グループでない層・無い層は親にできない
+    // グループでないレイヤー・無いレイヤーは親にできない
     assert!(matches!(
         d.place_smart_material(
             &material,
@@ -559,7 +559,7 @@ fn a_smart_material_does_not_go_on_a_mask_and_a_smart_mask_not_on_a_layer() {
         .unwrap_err();
     assert!(matches!(on_layer, CoreError::InvalidArgument(_)));
     assert!(
-        on_layer.to_string().contains("層に置けません"),
+        on_layer.to_string().contains("レイヤーに置けません"),
         "{on_layer}"
     );
     assert_eq!(state(&d), before);
@@ -596,14 +596,14 @@ fn a_material_keeps_the_fill_and_drops_what_ties_it_to_its_place() {
     assert_eq!(material.kind(), SmartKind::Material);
     assert_eq!(material.name(), "鉄");
     let [l] = material.layers() else {
-        panic!("塗りつぶしの層 1 つ: {}", material.layers().len())
+        panic!("塗りつぶしレイヤー 1 つ: {}", material.layers().len())
     };
     // 見た目を決める物は残る
     assert_eq!(l.kind(), LayerKind::Fill);
     assert_eq!(l.fill_value(Channel::Color), Some(iron));
     assert_eq!(l.fill_value(Channel::Metallic), Some(metal));
     assert_eq!(material.channels(), [Channel::Color, Channel::Metallic]);
-    // 置き場に結び付く物は、新しい塗りつぶしの層の既定
+    // 置き場に結び付く物は、新しい塗りつぶしレイヤーの既定
     assert!(l.mask().is_none() && l.anchor().is_none());
     assert!(!l.clipping() && l.visible());
     assert_eq!((l.opacity(), l.blend_mode()), (1.0, BlendMode::Normal));
@@ -611,7 +611,7 @@ fn a_material_keeps_the_fill_and_drops_what_ties_it_to_its_place() {
     assert_eq!(l.locks(), LayerLocks::NONE);
     let source = d.layer(fill).unwrap();
     assert!(source.mask().is_some() && source.clipping() && !source.visible());
-    // 置くと塗りつぶしの層 1 つが 1 回の Undo で入る
+    // 置くと塗りつぶしレイヤー 1 つが 1 回の Undo で入る
     let mut target = Document::with_tile_size(4, 3, 2).unwrap();
     let placed = target
         .place_smart_material(&material, &SmartPlacement::default())
@@ -624,7 +624,7 @@ fn a_material_keeps_the_fill_and_drops_what_ties_it_to_its_place() {
     );
     target.undo().unwrap();
     assert!(target.layers().is_empty());
-    // 塗りつぶしの層でなければ断り、文書は変えない
+    // 塗りつぶしレイヤーでなければ断り、文書は変えない
     let group = d.add_group("組", None).unwrap();
     for id in [below, group] {
         let refused = d.capture_material(id, "x").unwrap_err();

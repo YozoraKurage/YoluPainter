@@ -103,7 +103,7 @@ fn the_default_keeps_the_lowest_triangle_and_the_same_keys_and_bytes() {
         .find(|m| m.kind() == MeshMapKind::WorldNormal)
         .unwrap();
     assert_eq!(normal.provenance().settings_key, "source=vertex-normals");
-    // 重ならない島（三角形 4・5）を優先して並べ替えの道を通しても、重なったテクセルの持ち主は変わらず、焼いた値と覆いは同じバイト
+    // 重ならないアイランド（三角形 4・5）を優先して並べ替えの道を通しても、重なったテクセルの持ち主は変わらず、焼いた値と覆いは同じバイト
     let apart = model(Some([0.0, 0.0, 0.2, 0.2]));
     let before = run(&apart, &settings(MeshOverlapPriority::default()));
     let prefer = MeshOverlapPriority::default()
@@ -152,7 +152,7 @@ fn each_rule_picks_its_owner_and_changes_the_condition_key() {
 fn hand_picked_islands_are_preferred_or_not_baked() {
     let input = model(None);
     let binding = input.topology_hash().to_owned();
-    // +X の四角（三角形 2 の島）を優先する
+    // +X の四角（三角形 2 のアイランド）を優先する
     let prefer = MeshOverlapPriority::default()
         .with_island(&binding, 2, Some(MeshOverlapList::Prefer))
         .unwrap();
@@ -162,7 +162,7 @@ fn hand_picked_islands_are_preferred_or_not_baked() {
     let mut both = prefer.clone();
     both.rule = MeshOverlapRule::NegativeX;
     assert!(!is_left(centre_x(&run(&input, &settings(both)))));
-    // −X の四角（三角形 1 の島。島のどの三角形でもよい）を焼かない: +X だけが焼かれ、重なりも無くなる
+    // −X の四角（三角形 1 のアイランド。アイランドのどの三角形でもよい）を焼かない: +X だけが焼かれ、重なりも無くなる
     let skip = MeshOverlapPriority::default()
         .with_island(&binding, 1, Some(MeshOverlapList::Skip))
         .unwrap();
@@ -170,7 +170,7 @@ fn hand_picked_islands_are_preferred_or_not_baked() {
     assert!(!is_left(centre_x(&r)));
     assert_eq!(r.report.overlap_texels, 0);
     assert_eq!(r.report.receiving_triangles, 2);
-    // 同じ島を反対の一覧に入れると、もう一方から外れる。None で両方から外れ、空になれば既定に戻る
+    // 同じアイランドを反対の一覧に入れると、もう一方から外れる。None で両方から外れ、空になれば既定に戻る
     let moved = skip
         .with_island(&binding, 1, Some(MeshOverlapList::Prefer))
         .unwrap();
@@ -192,7 +192,7 @@ fn hand_picked_islands_of_another_model_are_refused() {
         .unwrap();
     assert_eq!(
         bake_error(&input, &settings(skip.clone())),
-        "手で選んだ島が別のモデルに属しています"
+        "手で選んだアイランドが別のモデルに属しています"
     );
     // 別のモデルの一覧へ足すのも断る（外すのは受ける）
     assert!(skip
@@ -205,7 +205,7 @@ fn hand_picked_islands_of_another_model_are_refused() {
         .unwrap();
     assert_eq!(
         bake_error(&input, &settings(far)),
-        "手で選んだ島の番号がモデルにありません"
+        "手で選んだアイランドの番号がモデルにありません"
     );
     // 型・範囲の拒否
     assert!(MeshOverlapPriority::new(
@@ -241,7 +241,7 @@ fn hand_picked_islands_of_another_model_are_refused() {
 
 #[test]
 fn islands_moved_outside_the_unit_square_are_skipped_only_when_asked() {
-    // 0〜1 の外（u が 1.25〜1.75）へずらした島。今までどおり、既定では断る
+    // 0〜1 の外（u が 1.25〜1.75）へずらしたアイランド。今までどおり、既定では断る
     let input = model(Some([1.25, 0.25, 1.75, 0.75]));
     assert_eq!(
         bake_error(&input, &settings(MeshOverlapPriority::default())),
@@ -249,8 +249,11 @@ fn islands_moved_outside_the_unit_square_are_skipped_only_when_asked() {
     );
     let skip_outside = outside();
     let r = run(&input, &settings(skip_outside.clone()));
-    assert_eq!(r.report.receiving_triangles, 4, "外の島の 2 つを除く");
-    // 外の島を除いた結果は、外の島が無いモデルと同じ値（位置の正規化の箱は外の島の位置も含むので、法線で比べる）
+    assert_eq!(
+        r.report.receiving_triangles, 4,
+        "外のアイランドの 2 つを除く"
+    );
+    // 外のアイランドを除いた結果は、外のアイランドが無いモデルと同じ値（位置の正規化の箱は外のアイランドの位置も含むので、法線で比べる）
     let without = run(&model(None), &settings(skip_outside.clone()));
     let normal = |r: &MeshBakeResult| {
         r.maps
@@ -265,14 +268,14 @@ fn islands_moved_outside_the_unit_square_are_skipped_only_when_asked() {
         settings(skip_outside).kind_key(MeshMapKind::WorldNormal, ""),
         "source=vertex-normals;outside=skip"
     );
-    // 0〜1 をまたぐ島は外へずらした島ではないので、選んでいても断る
+    // 0〜1 をまたぐアイランドは外へずらしたアイランドではないので、選んでいても断る
     let straddle = model(Some([0.75, 0.25, 1.25, 0.75]));
     let s = settings(outside());
     assert_eq!(
         bake_error(&straddle, &s),
         "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません"
     );
-    // 負の側（v が −1〜0）へずらした島も外
+    // 負の側（v が −1〜0）へずらしたアイランドも外
     let below = model(Some([0.25, -0.75, 0.75, -0.25]));
     assert_eq!(run(&below, &s).report.receiving_triangles, 4);
 }
@@ -308,7 +311,11 @@ fn the_overlap_map_counts_the_same_texels_as_the_bake() {
     let all: Vec<usize> = (0..6).collect();
     let map = uv_overlap(&uvs, &all, 16, 16, None).unwrap().unwrap();
     assert_eq!(map.texel_count(), baked.report.overlap_texels);
-    assert_eq!(map.triangles(), &[0, 1, 2, 3], "重ならない島は入らない");
+    assert_eq!(
+        map.triangles(),
+        &[0, 1, 2, 3],
+        "重ならないアイランドは入らない"
+    );
     let coverage = baked.maps[0].coverage();
     for y in 0..16 {
         for x in 0..16 {
@@ -336,7 +343,7 @@ fn the_overlap_map_counts_the_same_texels_as_the_bake() {
 
 #[test]
 fn bake_islands_split_mirrored_halves_that_share_the_same_uvs() {
-    // UV だけでつなぐと（ID の UV アイランド）重なった 2 枚の四角は 1 つになるが、優先の島は 3D の位置でも分ける
+    // UV だけでつなぐと（ID の UV アイランド）重なった 2 枚の四角は 1 つになるが、優先のアイランドは 3D の位置でも分ける
     let input = model(Some([0.0, 0.0, 0.2, 0.2]));
     assert_eq!(bake_islands(&input), vec![0, 0, 1, 1, 2, 2]);
     // UV の継ぎ目（同じ位置で UV が違う辺）でも分かれる: 四角の 2 つ目の三角形だけ UV をずらす

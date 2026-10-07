@@ -4,7 +4,7 @@
 
 use crate::types::Rgba8;
 
-/// ダブ 1 つの読み元（画布の画素 [x, x + width) × [y, y + height)）。
+/// ダブ 1 つの読み元（キャンバスの画素 [x, x + width) × [y, y + height)）。
 pub(crate) struct EffectFrame {
     x: i64,
     y: i64,
@@ -44,14 +44,14 @@ impl EffectFrame {
         self.pixels[((py - self.y) * self.width + px - self.x) as usize] = c;
     }
 
-    /// 枠の行 py の、画布の x 座標 from から始まる区間（書き込み用）。
+    /// 枠の行 py の、キャンバスの x 座標 from から始まる区間（書き込み用）。
     #[inline]
     pub(crate) fn row_mut(&mut self, py: i64, from: i64, len: usize) -> &mut [Rgba8] {
         let start = ((py - self.y) * self.width + from - self.x) as usize;
         &mut self.pixels[start..start + len]
     }
 
-    /// 画布の画素 (px, py) から右へ n 画素（枠の中に全部あるとき）のバイト（RGBA の並び）を out の先頭へ写す。無ければ false。
+    /// キャンバスの画素 (px, py) から右へ n 画素（枠の中に全部あるとき）のバイト（RGBA の並び）を out の先頭へ写す。無ければ false。
     #[inline]
     pub(crate) fn run_bytes(&self, px: i64, py: i64, n: usize, out: &mut [u8]) -> bool {
         let (cx, cy) = (px - self.x, py - self.y);
@@ -65,7 +65,7 @@ impl EffectFrame {
         true
     }
 
-    /// 積分画像が、画布の箱 [x0, x1) × [y0, y1) を全部含むか。
+    /// 積分画像が、キャンバスの箱 [x0, x1) × [y0, y1) を全部含むか。
     #[inline]
     pub(crate) fn integral_covers(&self, x0: i64, y0: i64, x1: i64, y1: i64) -> bool {
         !self.integral.is_empty()
@@ -116,7 +116,7 @@ impl EffectFrame {
         self.integral = integral;
     }
 
-    /// (x, y) を中心に半径 radius の箱（画布 w × h の中だけ）の、積分画像からの和（R·A・G·A・B·A・A）と画素数。
+    /// (x, y) を中心に半径 radius の箱（キャンバス w × h の中だけ）の、積分画像からの和（R·A・G·A・B·A・A）と画素数。
     /// 平均の式は `rows::blur32`（プリマルチプライドの平均、アルファは箱の画素の平均）。
     #[inline]
     pub(crate) fn blur_box(&self, x: i64, y: i64, radius: i64, w: i64, h: i64) -> ([i64; 4], i64) {
@@ -134,7 +134,7 @@ impl EffectFrame {
         ([sum(0), sum(1), sum(2), sum(3)], (x1 - x0) * (y1 - y0))
     }
 
-    /// 積分画像の、画布の行 y0 と y1 の 2 つの行（箱の和の上と下の角。`blur_box` と同じ位置）。
+    /// 積分画像の、キャンバスの行 y0 と y1 の 2 つの行（箱の和の上と下の角。`blur_box` と同じ位置）。
     #[inline]
     pub(crate) fn integral_rows(&self, y0: i64, y1: i64) -> (&[i64], &[i64]) {
         let stride = ((self.width + 1) * 4) as usize;
@@ -146,7 +146,7 @@ impl EffectFrame {
         )
     }
 
-    /// 画布の列 x の、積分画像の行の中の位置（4 チャンネルの先頭）。
+    /// キャンバスの列 x の、積分画像の行の中の位置（4 チャンネルの先頭）。
     #[inline]
     pub(crate) fn integral_column(&self, x: i64) -> usize {
         ((x - self.x) * 4) as usize
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(sample32(&f, 2.0, 2.0, 4, 3), Rgba8::new(0, 0, 0, 255));
         assert_eq!(sample32(&f, 2.5, 2.0, 4, 3).r, 128);
         assert_eq!(sample32(&f, 3.5, 2.0, 4, 3), Rgba8::new(255, 255, 255, 255));
-        // 画布の端の外は端を延ばす
+        // キャンバスの端の外は端を延ばす
     }
 
     #[test]

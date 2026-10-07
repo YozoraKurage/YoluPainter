@@ -1,4 +1,4 @@
-//! グループの入れ子の上限（`MAX_GROUP_DEPTH`）と、親子の確かめが層の数に対して線形であること。
+//! グループの入れ子の上限（`MAX_GROUP_DEPTH`）と、親子の確かめがレイヤーの数に対して線形であること。
 //! 合成・書き出しはグループの入れ子を再帰でたどる（スタックの実測は `MAX_GROUP_DEPTH` の説明）ので、上限を超える入れ子は、読み込みでも編集でも作らせない。
 
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ fn doc() -> Document {
     Document::with_tile_size(8, 8, 8).unwrap()
 }
 
-/// ラスター層 1 枚を、`groups` 個のグループの鎖（外側ほど後）で包んだ文書。一番外側のグループの ID も返す。
+/// ラスターレイヤー 1 枚を、`groups` 個のグループの鎖（外側ほど後）で包んだ文書。一番外側のグループの ID も返す。
 fn chain(groups: usize) -> (Document, LayerId) {
     let mut d = doc();
     let mut top = d.add_layer("leaf").unwrap();
@@ -40,7 +40,7 @@ fn grouping_stops_at_the_depth_limit_and_changes_nothing() {
         (d.layers().len(), d.revision(), d.undo_count()),
         (layers, revision, 0)
     );
-    // 別の層をまとめるだけなら、深さは増えないので通る
+    // 別のレイヤーをまとめるだけなら、深さは増えないので通る
     let extra = d.add_layer("extra").unwrap();
     d.group_layers(&[extra], "side").unwrap();
     d.validate_structure().unwrap();
@@ -60,7 +60,7 @@ fn moving_a_group_into_a_deep_chain_is_refused_but_a_plain_layer_fits() {
     assert!(too_deep(&e), "{e:?}");
     let after: Vec<_> = d.layers().iter().map(|l| (l.id(), l.parent())).collect();
     assert_eq!(before, after, "断ったら何も変えない");
-    // ラスター層は 64 個のグループの中へ入れられる（層の深さは 65 になるが、鎖のグループは 64）
+    // ラスターレイヤーは 64 個のグループの中へ入れられる（レイヤーの深さは 65 になるが、鎖のグループは 64）
     let plain = d.add_layer("plain").unwrap();
     d.move_layer_to(plain, Some(innermost), 0).unwrap();
     assert_eq!(d.depth_of(plain).unwrap(), MAX_GROUP_DEPTH);
@@ -77,7 +77,7 @@ fn adding_a_group_next_to_a_layer_in_the_deepest_group_is_refused_and_changes_no
     let leaf = d.layers()[0].id();
     assert_eq!(d.depth_of(leaf).unwrap(), MAX_GROUP_DEPTH);
     let (layers, revision) = (d.layers().len(), d.revision());
-    // 一番内側のグループの中の層の隣へ足すと、グループが 65 段になる
+    // 一番内側のグループの中のレイヤーの隣へ足すと、グループが 65 段になる
     let e = d.add_group("one more", Some(leaf)).unwrap_err();
     assert!(too_deep(&e), "{e:?}");
     assert_eq!(
@@ -94,20 +94,20 @@ fn adding_a_group_next_to_a_layer_in_the_deepest_group_is_refused_and_changes_no
 
 #[test]
 fn adding_a_group_one_below_the_limit_is_allowed() {
-    // 鎖が 63 段の一番内側の層の隣へは、ちょうど 64 段になるので足せる
+    // 鎖が 63 段の一番内側のレイヤーの隣へは、ちょうど 64 段になるので足せる
     let (mut d, _) = chain(MAX_GROUP_DEPTH - 1);
     let leaf = d.layers()[0].id();
     let g = d.add_group("last allowed", Some(leaf)).unwrap();
     assert_eq!(d.depth_of(g).unwrap(), MAX_GROUP_DEPTH - 1);
     d.validate_structure().unwrap();
-    // その中の層の隣へはもう足せない
+    // その中のレイヤーの隣へはもう足せない
     let inner = d.add_layer("inner").unwrap();
     d.move_layer_to(inner, Some(g), 0).unwrap();
     let e = d.add_group("too deep", Some(inner)).unwrap_err();
     assert!(too_deep(&e), "{e:?}");
     // 取り消すと、足す前に戻って、また足せる
     d.undo().unwrap(); // 動かす
-    d.undo().unwrap(); // 層を足す
+    d.undo().unwrap(); // レイヤーを足す
     d.undo().unwrap(); // グループを足す
     d.add_group("again", Some(leaf)).unwrap();
 }
@@ -123,7 +123,7 @@ fn undo_back_into_a_valid_nesting_still_works_after_a_refusal() {
     d.validate_structure().unwrap();
 }
 
-/// 層を平らに足し、`parents`（下から上の並び。`None` は一番上の段）を `set_structure_for_load` で渡す。
+/// レイヤーを平らに足し、`parents`（下から上の並び。`None` は一番上の段）を `set_structure_for_load` で渡す。
 fn load(
     kinds: &[bool],
     parents: impl Fn(&[LayerId]) -> Vec<Option<LayerId>>,
@@ -171,15 +171,15 @@ fn loaders_refuse_a_chain_deeper_than_the_limit() {
 
 #[test]
 fn nesting_is_checked_in_one_pass_even_for_2000_layers_in_a_deep_chain() {
-    // 64 段の鎖で、各グループが 30 枚ほどのラスターを持つ（約 2000 層）。層ごとに親の鎖をたどって各段で並びを探す確かめは、層の数 n と
-    // 深さ d で n² d に比例して増える作りだが、以前の core の確かめの遅さは測っていない。今の確かめは 1 回なめるだけで、この形（層の
+    // 64 段の鎖で、各グループが 30 枚ほどのラスターを持つ（約 2000 レイヤー）。レイヤーごとに親の鎖をたどって各段で並びを探す確かめは、レイヤーの数 n と
+    // 深さ d で n² d に比例して増える作りだが、以前の core の確かめの遅さは測っていない。今の確かめは 1 回なめるだけで、この形（レイヤーの
     // 足し込みを含む）が Linux で dev 約 33ms・release 約 15ms だった。ここの 5 秒は形が崩れたときだけ落ちる大きな余裕
-    // （読み手の `nesting_native.rs` は、鎖の各段で間の層を全部調べる以前の確かめが 13 秒かかった形で、同じ上限を守る）
+    // （読み手の `nesting_native.rs` は、鎖の各段で間のレイヤーを全部調べる以前の確かめが 13 秒かかった形で、同じ上限を守る）
     let groups = MAX_GROUP_DEPTH;
     let per_group = 30;
     // 並び（下から上）: [g1 の中身の葉 × 30, g1, g2 の葉 × 30, g2, …]。g(k+1) の中身は g(k) と自分の葉
     let mut kinds = Vec::new();
-    let mut owner = Vec::new(); // 各層が入るグループの番号（0 始まり。最後のグループは None）
+    let mut owner = Vec::new(); // 各レイヤーが入るグループの番号（0 始まり。最後のグループは None）
     for k in 0..groups {
         for _ in 0..per_group {
             kinds.push(false);
@@ -201,7 +201,7 @@ fn nesting_is_checked_in_one_pass_even_for_2000_layers_in_a_deep_chain() {
     assert!(n > 1900, "{n}");
     assert!(
         took < Duration::from_secs(5),
-        "{n} 層の入れ子の確かめに {took:?}"
+        "{n} レイヤーの入れ子の確かめに {took:?}"
     );
 }
 

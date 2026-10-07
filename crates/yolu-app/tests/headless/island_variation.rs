@@ -1,5 +1,5 @@
 //! アイランドごとのばらつき（Generator の種類 67）の画面の操作: 「ジェネレーターを追加」のメニューに日英の名前で出て押せる・追加は 1 回の
-//! 取り消し・欄（シード・最小・最大）の変更が 1 回ずつの取り消し・モデルが無ければ理由を言って入力のまま、モデルを読むと島ごとに違う値・
+//! 取り消し・欄（シード・最小・最大）の変更が 1 回ずつの取り消し・モデルが無ければ理由を言って入力のまま、モデルを読むとアイランドごとに違う値・
 //! 保存して開き直すと同じ設定。
 use yolu_app::fx::FxOp;
 use yolu_app::lang::Lang;
@@ -12,7 +12,7 @@ use yolu_core::{EffectSettings, FilterTarget, InactiveReason, LayerId, Rect, Rgb
 
 const SIZE: u32 = 64;
 
-/// 3D で離れた 2 枚の板。UV は左下（0.1..0.4）と右下（0.6..0.9）の別の島。
+/// 3D で離れた 2 枚の板。UV は左下（0.1..0.4）と右下（0.6..0.9）の別のアイランド。
 fn two_plates() -> ViewModel {
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
@@ -39,7 +39,7 @@ fn two_plates() -> ViewModel {
     ViewModel::new("板", vec![mesh], vec![Some("材".into())], 1).unwrap()
 }
 
-/// 全面を塗った層を選んだ状態。
+/// 全面を塗ったレイヤーを選んだ状態。
 fn painted() -> (AppState, LayerId) {
     let mut s = AppState::new(SIZE, SIZE);
     let layer = s.selected_layer.unwrap();
@@ -162,7 +162,7 @@ fn without_a_model_it_says_why_and_with_one_each_island_gets_its_own_value() {
     assert_eq!(why, InactiveReason::Generator(Inactive::NoModel));
     assert_eq!(Lang::En.inactive_reason(&why), "No model");
     assert_eq!(Lang::Ja.inactive_reason(&why), "モデルがありません");
-    // モデルを読むと効く: 2 つの島は 1 つずつの灰色で、違う値。島の外は入力のまま
+    // モデルを読むと効く: 2 つのアイランドは 1 つずつの灰色で、違う値。アイランドの外は入力のまま
     s.view3d.set_model(two_plates());
     s.sync_effect_inputs_with(true);
     assert_eq!(s.doc.generator_inactive(layer, id).unwrap(), None);
@@ -178,7 +178,7 @@ fn without_a_model_it_says_why_and_with_one_each_island_gets_its_own_value() {
     assert_eq!(at(&pixels, 32, 48), [90, 140, 200, 255]);
 }
 
-/// 島ごとのばらつきの段を効かせた 2 枚の板の文書（Replace で塗る）を、モデルを読んだ状態で .ylp に保存する。
+/// アイランドごとのばらつきの段を効かせた 2 枚の板の文書（Replace で塗る）を、モデルを読んだ状態で .ylp に保存する。
 fn saved_with_the_model(path: &std::path::Path) -> (AppState, LayerId, yolu_core::FilterId) {
     let (mut s, layer) = painted();
     s.view3d.set_model(two_plates());
@@ -216,9 +216,13 @@ fn opening_without_the_model_keeps_the_saved_composite_read_only_until_the_model
     let path = dir.join("islands.ylp");
     let (saved, _, _) = saved_with_the_model(&path);
     let shown = composite_pixels(&saved);
-    assert_ne!(at(&shown, 16, 16), at(&shown, 48, 16), "島ごとに違う値");
+    assert_ne!(
+        at(&shown, 16, 16),
+        at(&shown, 48, 16),
+        "アイランドごとに違う値"
+    );
 
-    // モデルの無い状態で開く: 島ごとの値は評価できないので、読むだけにして、保存した合成を見せ、足りない入力（モデル）を言う
+    // モデルの無い状態で開く: アイランドごとの値は評価できないので、読むだけにして、保存した合成を見せ、足りない入力（モデル）を言う
     let mut again = AppState::new(SIZE, SIZE);
     again.apply(Action::OpenProject(path.clone()));
     let reason = again
@@ -231,9 +235,9 @@ fn opening_without_the_model_keeps_the_saved_composite_read_only_until_the_model
     assert_eq!(
         composite_pixels(&again),
         shown,
-        "保存した合成のまま（島の値を落とした絵にしない）"
+        "保存した合成のまま（アイランドの値を落とした絵にしない）"
     );
-    // 文書を変える操作は断る（保存で合成が島の値を落とした絵に書き直されない）
+    // 文書を変える操作は断る（保存で合成がアイランドの値を落とした絵に書き直されない）
     let steps = again.doc.undo_count();
     again.apply(Action::Fx(FxOp::AddGenerator {
         target: FilterTarget::Content,

@@ -163,7 +163,7 @@ fn out_of_range_values_are_refused_before_core() {
         ("bake_priority.rule", NativeValue::Int(-1)),
         ("bake_priority.binding", NativeValue::Text("nothex".into())),
         ("bake_priority.binding", NativeValue::Text(String::new())),
-        // 並びが昇順でない・両方の一覧に同じ島
+        // 並びが昇順でない・両方の一覧に同じアイランド
         ("bake_priority.skip[1]", NativeValue::Int(3)),
         ("bake_priority.prefer[0]", NativeValue::Int(90)),
         ("bake_priority.skip[0]", NativeValue::Int(4_000_000)),

@@ -111,7 +111,7 @@ pub enum Resampling {
     Nearest,
 }
 
-/// 画素（画布の外は透明）。ディスクから読めない画素は透明で、読み手が誤りを覚える（`PixelReader::finish`）。
+/// 画素（キャンバスの外は透明）。ディスクから読めない画素は透明で、読み手が誤りを覚える（`PixelReader::finish`）。
 #[inline]
 pub(super) fn read(source: &mut PixelReader<'_>, x: i64, y: i64) -> Rgba8 {
     source.pixel(x, y)
@@ -268,7 +268,7 @@ impl Document {
     ) -> Result<bool, CoreError> {
         self.transform_targets(&[id], transform, method, include_mask, None, &mut || false)
     }
-    /// 選んだグループ内のラスター層もまとめて変形する。
+    /// 選んだグループ内のラスターレイヤーもまとめて変形する。
     pub fn transform_layers(
         &mut self,
         ids: &[LayerId],
@@ -331,12 +331,12 @@ impl Document {
         self.ensure_no_stroke()?;
         transform.validate()?;
         if ids.is_empty() {
-            return Err(CoreError::Unsupported("動かすラスター層が無い"));
+            return Err(CoreError::Unsupported("動かすラスターレイヤーが無い"));
         }
         for &id in ids {
             let index = self.index_of(id)?;
             self.ensure_raster(index)?;
-            // パスで描かれた層を動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
+            // パスで描かれたレイヤーを動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
             self.refuse_path_layer(index)?;
         }
         if transform == Affine2D::IDENTITY {

@@ -1,8 +1,8 @@
-//! 外へ出した窓（immediate の viewport）を、試験の中で本物の別のパスとして回す。
+//! 外へ出したウィンドウ（immediate の viewport）を、試験の中で本物の別のパスとして回す。
 //!
-//! kittest は根の viewport だけを回し、既定では子の viewport を根の中の egui の窓に埋める。ここでは `Context::set_immediate_viewport_renderer`
-//! に「子の viewport を、試験が決めた入力で `run_ui` する」口を入れ、埋め込みを切る。子の窓の入力（キー・ポインタ・閉じる頼み）と、
-//! 窓の位置（内側の矩形）は試験が `Driver` に入れる。子の窓の絵は撮らない（根の絵だけ）。子のパスが出したテクスチャの差分は、根の描画器へ
+//! kittest は根の viewport だけを回し、既定では子の viewport を根の中の egui のウィンドウに埋める。ここでは `Context::set_immediate_viewport_renderer`
+//! に「子の viewport を、試験が決めた入力で `run_ui` する」口を入れ、埋め込みを切る。子ウィンドウの入力（キー・ポインタ・閉じる頼み）と、
+//! ウィンドウの位置（内側の矩形）は試験が `Driver` に入れる。子ウィンドウの絵は撮らない（根の絵だけ）。子のパスが出したテクスチャの差分は、根の描画器へ
 //! 先に渡す（子のパスが先に取った差分を、根の描画が使えるように）。
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use egui::{Event, Rect, TexturesDelta, ViewportId, ViewportInfo};
 use egui_kittest::TestRenderer;
 
-/// 子の窓 1 つの、試験が決める様子。
+/// 子ウィンドウ 1 つの、試験が決める様子。
 #[derive(Clone, Debug, Default)]
 pub struct Child {
-    /// 内側の矩形（仮想スクリーンの点。主の窓と同じ拡大率）。
+    /// 内側の矩形（仮想スクリーンの点。メインウィンドウと同じ拡大率）。
     pub inner: Option<Rect>,
     pub focused: bool,
     /// 次のパスで渡す入力。
@@ -33,7 +33,7 @@ struct State {
     deltas: Vec<TexturesDelta>,
 }
 
-/// 子の窓の入力と、回ったパスの記録。
+/// 子ウィンドウの入力と、回ったパスの記録。
 #[derive(Clone, Default)]
 pub struct Driver(Arc<Mutex<State>>);
 
@@ -52,7 +52,7 @@ impl Driver {
         });
     }
 
-    /// 子の窓の様子を変える。
+    /// 子ウィンドウの様子を変える。
     pub fn child(&self, id: ViewportId, change: impl FnOnce(&mut Child)) {
         let mut state = self.0.lock().unwrap();
         change(state.children.entry(id).or_default());
@@ -63,7 +63,7 @@ impl Driver {
         std::mem::take(&mut self.0.lock().unwrap().ran)
     }
 
-    /// 根の入力に、子の窓の情報を入れる形（根のパスが窓の位置を読む）。
+    /// 根の入力に、子ウィンドウの情報を入れる形（根のパスがウィンドウの位置を読む）。
     pub fn infos(&self) -> Vec<(ViewportId, ViewportInfo)> {
         let state = self.0.lock().unwrap();
         state

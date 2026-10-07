@@ -1,5 +1,5 @@
 //! FBX を読むスレッドの控えと進み具合。読み込みは別のスレッドで走り、画面のスレッドは結果の受け口（`Loading`・`PrepareJob`）しか持たない。
-//! 受け口が捨てられても（窓を閉じた・別のモデルを読み始めた）、スレッドは取消の旗を見て止まる。終わるときは、走っているスレッドが
+//! 受け口が捨てられても（ウィンドウを閉じた・別のモデルを読み始めた）、スレッドは取消の旗を見て止まる。終わるときは、走っているスレッドが
 //! 止まるのを待てるように、読み込みを始めるたびにここへ旗を登録する（結果の受け口とは別に持つ: 受け口を捨てたあとのスレッドも数える）。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -316,7 +316,7 @@ mod tests {
         held.release();
         assert!(
             app.view3d.pose.session.is_none(),
-            "窓で決めるまで 3D ビューには入れない"
+            "ウィンドウで決めるまで 3D ビューには入れない"
         );
     }
 
@@ -328,7 +328,7 @@ mod tests {
         let mut app = app_with_model();
         let revision = app.view3d.model.as_ref().unwrap().revision();
         app.np_apply(NpAction::OpenModel(path.clone()));
-        // 何も触っていないプロジェクトではないので、構成の窓で読む
+        // 何も触っていないプロジェクトではないので、構成のウィンドウで読む
         assert!(
             app.np.window.as_ref().unwrap().is_loading(),
             "{}",
@@ -437,7 +437,7 @@ mod tests {
         let held = Held::new(&path);
         let mut app = AppState::new(64, 64);
         app.np_apply(NpAction::OpenModel(path.clone()));
-        // 受け口を捨てる（窓の状態を空にする）。スレッドは登録で数えている
+        // 受け口を捨てる（ウィンドウの状態を空にする）。スレッドは登録で数えている
         app.np.window.as_mut().unwrap().prep = Prep::Idle;
         let started = Instant::now();
         stop_jobs(&mut app, Duration::from_secs(10));

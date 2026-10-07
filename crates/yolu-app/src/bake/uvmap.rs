@@ -1,9 +1,9 @@
-//! ベイクの窓の「重なった UV」の UV の見取り図: 今のセットの UV の配置（受けたままのモデルの形）を正方形に描き、島の上で押すと
-//! その島のメニュー（優先する・焼かない・外す）を出す。島はベイクと同じ `bake_islands`（ミラーで UV がぴったり重なった両側は別の島）。
+//! ベイクのウィンドウの「重なった UV」の UV の見取り図: 今のセットの UV の配置（受けたままのモデルの形）を正方形に描き、アイランドの上で押すと
+//! そのアイランドのメニュー（優先する・焼かない・外す）を出す。アイランドはベイクと同じ `bake_islands`（ミラーで UV がぴったり重なった両側は別のアイランド）。
 //!
-//! 島は薄く塗り、重なったテクセルはキャンバスと同じ重なりの色のテクスチャ（設定の色）、優先する島はアクセントの色の縁、焼かない島は
-//! 薄い塗りに斜線。ポインタを置いた島（メニューを開いている島）は白い縁で強調し、キャンバスと 3D ビューでも同じ島を強調する
-//! （ミラーの両側は UV では同じ所に見えるので、どちらの側かは 3D で見分ける）。重なった所を続けて押すと、重なった島を順に選ぶ。
+//! アイランドは薄く塗り、重なったテクセルはキャンバスと同じ重なりの色のテクスチャ（設定の色）、優先するアイランドはアクセントの色の縁、焼かないアイランドは
+//! 薄い塗りに斜線。ポインタを置いたアイランド（メニューを開いているアイランド）は白い縁で強調し、キャンバスと 3D ビューでも同じアイランドを強調する
+//! （ミラーの両側は UV では同じ所に見えるので、どちらの側かは 3D で見分ける）。重なった所を続けて押すと、重なったアイランドを順に選ぶ。
 //! ホイールで拡大、中ボタンか Space ＋ 左ドラッグで動かす（キャンバスと同じ）。0〜1 の外は見せない（拡大は 1 から）。
 
 use std::collections::{HashMap, HashSet};
@@ -24,7 +24,7 @@ use crate::region::index::UvGrid;
 use crate::state::AppState;
 use crate::ui::theme as t;
 
-/// 島の薄い塗り・焼かない島の塗りと斜線・縁の色。
+/// アイランドの薄い塗り・焼かないアイランドの塗りと斜線・縁の色。
 const FILL: Color32 = Color32::from_rgba_unmultiplied_const(217, 217, 220, 40);
 const SKIP_FILL: Color32 = Color32::from_rgba_unmultiplied_const(217, 217, 220, 10);
 const SKIP_HATCH: Color32 = Color32::from_rgba_unmultiplied_const(154, 154, 160, 120);
@@ -33,11 +33,11 @@ const SKIP_EDGE: Color32 = Color32::from_rgba_unmultiplied_const(154, 154, 160, 
 const HOVER_FILL: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 46);
 /// 1 つのメッシュの三角形の数。
 const CHUNK: usize = 20_000;
-/// 全部の島の縁の線の上限（これを超える図は、優先・焼かない・強調の島の縁だけを出す）。
+/// 全部のアイランドの縁の線の上限（これを超える図は、優先・焼かない・強調のアイランドの縁だけを出す）。
 const MAX_EDGES: usize = 1 << 18;
 /// 拡大の上限。
 const MAX_ZOOM: f32 = 64.0;
-/// 同じ所を続けて押したとみなす距離（px。範囲の道具の選び替えと同じ）。
+/// 同じ所を続けて押したとみなす距離（px。範囲のツールの選び替えと同じ）。
 const CYCLE_RADIUS: f32 = 4.0;
 /// 斜線のテクスチャの 1 辺（画面の点）。
 const HATCH: usize = 8;
@@ -46,7 +46,7 @@ const PAD: f32 = 10.0;
 /// 0〜1 の正方形の地の色。
 const SQUARE_BG: Color32 = Color32::from_rgb(0x1B, 0x1B, 0x1E);
 
-/// 見取り図の中身（モデル・マテリアル・島ごと。窓が出ている間に 1 回作る）。
+/// 見取り図の中身（モデル・マテリアル・アイランドごと。ウィンドウが出ている間に 1 回作る）。
 pub struct MapData {
     geometry: Arc<SurfaceGeometry>,
     material: i32,
@@ -54,10 +54,10 @@ pub struct MapData {
     grid: UvGrid,
     /// このセットの三角形（受けたままの形の番号の昇順）。
     tris: Vec<u32>,
-    /// 島ごとの縁（島の番号の昇順）と、島ごとの範囲。
+    /// アイランドごとの縁（アイランドの番号の昇順）と、アイランドごとの範囲。
     edges: Vec<[Vec2; 2]>,
     ranges: HashMap<usize, Range<usize>>,
-    /// 全部の島の縁を出すか（線が上限を超えたら出さない）。
+    /// 全部のアイランドの縁を出すか（線が上限を超えたら出さない）。
     all_edges: bool,
 }
 
@@ -98,7 +98,7 @@ impl MapData {
         }
     }
 
-    /// この島の索引の上に作った見取り図か（見取り図は索引を握る）。
+    /// このアイランドの索引の上に作った見取り図か（見取り図は索引を握る）。
     pub(super) fn is_on(&self, islands: &Arc<Islands>) -> bool {
         Arc::ptr_eq(&self.islands, islands)
     }
@@ -114,7 +114,7 @@ impl MapData {
             && Arc::ptr_eq(&self.islands, islands)
     }
 
-    /// UV の点の下の島（代表の三角形。点の下の一番小さい三角形の番号の順、同じ島は 1 つ）。0〜1 の外は空。
+    /// UV の点の下のアイランド（代表の三角形。点の下の一番小さい三角形の番号の順、同じアイランドは 1 つ）。0〜1 の外は空。
     pub fn islands_at(&self, uv: Vec2) -> Vec<usize> {
         let mut out: Vec<usize> = Vec::new();
         for t in self.grid.find_all(uv) {
@@ -127,7 +127,7 @@ impl MapData {
         out
     }
 
-    /// 島（代表）の縁。
+    /// アイランド（代表）の縁。
     fn edges_of(&self, representative: usize) -> &[[Vec2; 2]] {
         self.islands
             .island(representative)
@@ -137,7 +137,7 @@ impl MapData {
 }
 
 impl AppState {
-    /// ベイクの窓の見取り図の中身（今のモデル・セット。モデルの入力を別のスレッドで作っている間・モデルが無いときは None）。
+    /// ベイクのウィンドウの見取り図の中身（今のモデル・セット。モデルの入力を別のスレッドで作っている間・モデルが無いときは None）。
     pub fn overlap_map(&mut self) -> Option<Arc<MapData>> {
         let material = self.view3d.material;
         let geometry = self
@@ -169,16 +169,16 @@ pub struct MapFrame {
     pub priority: MeshOverlapPriority,
     /// 重なりの色のテクスチャと、それが覆う UV の幅・高さ。
     pub overlap: Option<(TextureId, [f32; 2])>,
-    /// 見取り図から開いたメニューの島（代表）。
+    /// 見取り図から開いたメニューのアイランド（代表）。
     pub menu: Option<usize>,
 }
 
 /// 見取り図の操作の結果。
 #[derive(Default)]
 pub struct MapOutcome {
-    /// ポインタを置いている島（代表）。
+    /// ポインタを置いているアイランド（代表）。
     pub hover: Option<usize>,
-    /// 押した島（代表）と、メニューを開く点。
+    /// 押したアイランド（代表）と、メニューを開く点。
     pub menu: Option<(usize, Pos2)>,
 }
 
@@ -211,7 +211,7 @@ pub struct MapUi {
     cycle: Option<Cycle>,
     /// 左ボタンを押した所（離したときに近ければ押下）。
     press: Option<Pos2>,
-    /// 前のフレームに、見取り図から開いた島のメニューがあった。
+    /// 前のフレームに、見取り図から開いたアイランドのメニューがあった。
     menu_open: bool,
     drawn: Option<Drawn>,
     hatch: Option<TextureHandle>,
@@ -289,7 +289,7 @@ impl MapUi {
         }
     }
 
-    /// 点の下の候補（`keys`）のうち選んでいる島: 続けて同じ所なら前の候補（`press` なら次へ進めて覚える）、そうでなければ先頭。
+    /// 点の下の候補（`keys`）のうち選んでいるアイランド: 続けて同じ所なら前の候補（`press` なら次へ進めて覚える）、そうでなければ先頭。
     fn choose(&mut self, at: Pos2, keys: Vec<usize>, press: bool) -> Option<usize> {
         if keys.is_empty() {
             if press {
@@ -340,7 +340,7 @@ impl MapUi {
     }
 }
 
-/// 島（代表）の三角形を 1 色で塗るメッシュ（`texture` があれば画面の点の位置で斜線を貼る）。
+/// アイランド（代表）の三角形を 1 色で塗るメッシュ（`texture` があれば画面の点の位置で斜線を貼る）。
 fn triangles_mesh(
     data: &MapData,
     tris: &[u32],
@@ -390,7 +390,7 @@ fn segments<'a>(
         .map(move |e| Shape::line_segment([f.to_screen(e[0]), f.to_screen(e[1])], stroke))
 }
 
-/// 島の塗り（重なりの色の下）と、焼かない島の斜線・縁（重なりの色の上）。優先・焼かないの状態で決まる（ポインタの強調は入れない）。
+/// アイランドの塗り（重なりの色の下）と、焼かないアイランドの斜線・縁（重なりの色の上）。優先・焼かないの状態で決まる（ポインタの強調は入れない）。
 fn base_shapes(
     ui: &mut MapUi,
     ctx: &egui::Context,
@@ -398,7 +398,7 @@ fn base_shapes(
     priority: &MeshOverlapPriority,
     frame: &Frame,
 ) -> (Vec<Shape>, Vec<Shape>) {
-    // 別のモデルの一覧は、ここでは使わない（窓に注意の行が出る）
+    // 別のモデルの一覧は、ここでは使わない（ウィンドウに注意の行が出る）
     let own = priority.binding() == data.islands.binding();
     let island_set = |set: &std::collections::BTreeSet<usize>| -> HashSet<usize> {
         if !own {
@@ -445,7 +445,7 @@ fn base_shapes(
     (under, shapes)
 }
 
-/// 見取り図を描いて、押下・ホイール・ドラッグを受ける。`list_hover` は一覧の行で指している島（代表）。
+/// 見取り図を描いて、押下・ホイール・ドラッグを受ける。`list_hover` は一覧の行で指しているアイランド（代表）。
 pub fn draw(
     ui: &mut Ui,
     rect: Rect,
@@ -513,10 +513,10 @@ pub fn draw(
         egui::StrokeKind::Outside,
     );
     if let Some(data) = &map.data {
-        // 点の下の島（押せば続けて押した所の次の島）
+        // 点の下のアイランド（押せば続けて押した所の次のアイランド）
         let under = |p: Pos2| data.islands_at(frame.to_uv(p));
         // 押下は生の入力で見る: 見取り図から開いたメニューの受け皿が上にあっても、メニューの外の見取り図を押せば、そのまま
-        // 次の島を選べる（受け皿の押しはメニューを閉じるだけで、見取り図の部品には届かない）
+        // 次のアイランドを選べる（受け皿の押しはメニューを閉じるだけで、見取り図の部品には届かない）
         let (pressed, released, origin, latest) = ui.input(|i| {
             (
                 i.pointer.primary_pressed(),
@@ -588,7 +588,7 @@ pub fn draw(
         if let Some(d) = &state.drawn {
             painter.extend(d.over.iter().cloned());
         }
-        // 強調（メニューを開いている島、無ければポインタか一覧の行の島）
+        // 強調（メニューを開いているアイランド、無ければポインタか一覧の行のアイランド）
         if let Some(island) = map.menu.or(out.hover).or(list_hover) {
             if let Some(i) = data.islands.island(island) {
                 let members: Vec<u32> = data

@@ -1,5 +1,5 @@
 //! 色調補正の追加の 6 種（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション。Rust 版だけの種類）を、
-//! 文書の調整の層とフィルターのスタックで使ったときの振る舞い: 合成の結果・使えるチャンネル・Undo・履歴の大きさ・領域の合成と 1 画素の参照の一致・
+//! 文書の調整レイヤーとフィルターのスタックで使ったときの振る舞い: 合成の結果・使えるチャンネル・Undo・履歴の大きさ・領域の合成と 1 画素の参照の一致・
 //! スレッド数に依らないこと・クリッピング・マスク・不透明度・Anchor。式そのものの固定は `adjust::ops` の単体の試験が持つ。
 
 use sha2::{Digest, Sha256};
@@ -54,7 +54,7 @@ fn kinds() -> Vec<(&'static str, AdjustmentSettings)> {
     ]
 }
 
-/// 調整の層の設定と同じ値のフィルターの段。
+/// 調整レイヤーの設定と同じ値のフィルターの段。
 fn effect_of(s: &AdjustmentSettings) -> EffectSettings {
     EffectSettings::from_color_adjust(s.color_adjust().expect("64 からの種類"))
 }
@@ -426,7 +426,7 @@ fn a_clipped_adjustment_changes_only_the_layer_it_clips_to() {
         d.set_layer_clipping(adj, true).unwrap();
         let c = Rgba8::new(200, 40, 90, 255);
         assert_eq!(at(&d, 3, 3), s.apply(c), "{name}: クリップ先は変わる");
-        assert_eq!(at(&d, 9, 9), c, "{name}: ほかの層は変わらない");
+        assert_eq!(at(&d, 9, 9), c, "{name}: ほかのレイヤーは変わらない");
     }
 }
 
@@ -444,7 +444,7 @@ fn the_anchor_plan_applies_the_new_kinds_per_channel_kind() {
     assert_eq!(color.pixel(0, 0), Rgba8::new(40, 215, 215, 255));
     let scalar = Plan::new(&layers, 1, (1, 1), ChannelKind::Scalar).unwrap();
     assert_eq!(scalar.pixel(0, 0), Rgba8::new(215, 215, 215, 255));
-    // 色だけの種類は、スカラーの計画では飛ばす（層ごと入らない）
+    // 色だけの種類は、スカラーの計画では飛ばす（レイヤーごと入らない）
     let layers = vec![
         Layer::new(Content::Fill(Rgba8::new(40, 40, 40, 255))),
         Layer::new(Content::Adjustment(AdjustmentSettings::gradient_map(
@@ -459,7 +459,7 @@ fn the_anchor_plan_applies_the_new_kinds_per_channel_kind() {
 
 #[test]
 fn filter_stages_of_the_new_kinds_follow_the_same_formulas_and_refuse_where_they_cannot_apply() {
-    // 層の内容のフィルターに置いた段は、同じ式で結果を変える
+    // レイヤーの内容のフィルターに置いた段は、同じ式で結果を変える
     for (name, s) in kinds() {
         let mut d = small();
         let l = d.add_layer("P").unwrap();
@@ -674,7 +674,7 @@ fn color_adjust_moves_between_layers_and_stages_without_loss() {
 fn composite_below_is_what_the_layers_under_an_adjustment_make() {
     let mut d = busy_document();
     let all = d.bounds();
-    // 一番上に足した調整の層の下の合成は、その層を足す前の文書の合成と同じ（全チャンネル）
+    // 一番上に足した調整レイヤーの下の合成は、そのレイヤーを足す前の文書の合成と同じ（全チャンネル）
     let before: Vec<Vec<u8>> = d
         .channels()
         .into_iter()
@@ -687,7 +687,7 @@ fn composite_below_is_what_the_layers_under_an_adjustment_make() {
     }
     // 調整を含む合成は、下だけの合成と違う（Color）
     assert_ne!(d.composite_channel(Channel::Color, all).unwrap(), before[0]);
-    // 一番下の層の下は何も無い（透明）。部分の領域も合成と同じ
+    // 一番下のレイヤーの下は何も無い（透明）。部分の領域も合成と同じ
     let bottom = d.layers()[0].id();
     assert!(d
         .composite_below(bottom, Channel::Color, all)

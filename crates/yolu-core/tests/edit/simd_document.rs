@@ -1,5 +1,5 @@
 //! タイルの合成が、画素ごとの参照（`composite_pixel`）と同じバイトになること。全合成モード・マスク・クリッピング・
-//! グループ（通過・独立）・調整の層（全種類）・Normal チャンネル（Normal・Overlay）を 1 つの文書に重ねて、全チャンネル・領域の端をまたぐ矩形で比べる。
+//! グループ（通過・独立）・調整レイヤー（全種類）・Normal チャンネル（Normal・Overlay）を 1 つの文書に重ねて、全チャンネル・領域の端をまたぐ矩形で比べる。
 //! 道の選びは環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で変えて同じ試験を回せる。
 //!
 //! 合成の本体（`composite.rs`）は行の核（`blend_row`・`clip_row`・`fade_row`・`composite_row`・Normal チャンネルの `normal::*_row`）で重ねるので、
@@ -252,7 +252,7 @@ fn a_coarse_composite_matches_the_pixel_reference_at_the_sample_points() {
     }
 }
 
-/// 表示に寄与する層の結合は、タイルの経路（行の核）で焼く。結果の層の画素が、結合前の画素ごとの参照（`composite_pixel`）と同じバイトか
+/// 表示に寄与するレイヤーの結合は、タイルの経路（行の核）で焼く。結果のレイヤーの画素が、結合前の画素ごとの参照（`composite_pixel`）と同じバイトか
 /// （アルファ 0 の画素は RGB も 0 に揃える）。端のタイル（部分）も含める。
 #[test]
 fn merging_visible_layers_bakes_the_pixel_reference() {
@@ -288,7 +288,7 @@ fn merging_visible_layers_bakes_the_pixel_reference() {
     }
 }
 
-/// グループの結合は、グループの中身だけを透明から重ねたものを、タイルの経路で焼く。結果の層の画素が、ほかの層を隠した文書の画素ごとの参照と
+/// グループの結合は、グループの中身だけを透明から重ねたものを、タイルの経路で焼く。結果のレイヤーの画素が、ほかのレイヤーを隠した文書の画素ごとの参照と
 /// 同じバイトか（全モード・マスク・クリッピングの組を含むグループ）。
 #[test]
 fn merging_a_group_bakes_the_pixel_reference_of_its_children() {
@@ -315,7 +315,7 @@ fn merging_a_group_bakes_the_pixel_reference_of_its_children() {
     }
     let group = doc.group_layers(&members, "G").unwrap();
     doc.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
-    // 参照: 下の層を隠すと、見えるのはグループの中身だけ
+    // 参照: 下のレイヤーを隠すと、見えるのはグループの中身だけ
     doc.set_layer_visible(under, false).unwrap();
     let (w, h) = (doc.width(), doc.height());
     let mut want = Vec::new();

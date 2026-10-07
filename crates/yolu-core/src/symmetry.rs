@@ -42,7 +42,7 @@ pub enum SymmetryMode {
     Radial,
 }
 
-/// 対称の設定（C# の CanvasSymmetrySettings）。中心は画布の画素の座標（画素の中心は整数 + 0.5）。
+/// 対称の設定（C# の CanvasSymmetrySettings）。中心はキャンバスの画素の座標（画素の中心は整数 + 0.5）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasSymmetry {
     pub mode: SymmetryMode,

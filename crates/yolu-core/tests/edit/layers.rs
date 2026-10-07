@@ -1,4 +1,4 @@
-//! 層の種類（グループ・マスク・塗りつぶし・調整・クリッピング）の振る舞い。C# の GroupTests・MaskTests・AdjustmentTests・
+//! レイヤーの種類（グループ・マスク・塗りつぶし・調整・クリッピング）の振る舞い。C# の GroupTests・MaskTests・AdjustmentTests・
 //! ClippingTests の確かめを移したもの（期待値は C# の試験と同じ）。合成のバイトそのものは golden.rs が C# と照らす。
 
 use std::collections::HashSet;
@@ -177,7 +177,7 @@ fn group_ungroup_and_delete_with_contents() {
     d.undo().unwrap();
     assert_eq!(shape(&d), "A B C Top");
     assert!(d.ungroup(a).is_err());
-    // 外したグループの層（ID・設定）は Redo で同じものが戻る
+    // 外したグループのレイヤー（ID・設定）は Redo で同じものが戻る
     d.redo().unwrap();
     assert_eq!(d.layer(g).unwrap().name(), "G");
 }
@@ -240,7 +240,7 @@ fn adjustments_inside_a_group_reach_out_only_when_it_passes_through() {
     assert_eq!(
         at(&d, 6, 1),
         Rgba8::new(55, 155, 205, 255),
-        "通過: 下の層も反転"
+        "通過: 下のレイヤーも反転"
     );
     assert_eq!(at(&d, 1, 1), Rgba8::new(245, 235, 225, 255));
     d.set_layer_blend_mode(g, BlendMode::Normal).unwrap();
@@ -263,7 +263,7 @@ fn clipping_stays_inside_the_group_and_groups_can_clip_and_be_clipped() {
     let fi = d.layer_index(first).unwrap();
     assert!(
         !d.is_effectively_clipped(fi),
-        "グループの一番下は、グループの下に層があってもクリッピングされない"
+        "グループの一番下は、グループの下にレイヤーがあってもクリッピングされない"
     );
     assert_eq!(at(&d, 1, 1), Rgba8::new(255, 0, 0, 255));
     d.set_layer_clipping(first, false).unwrap();
@@ -276,7 +276,7 @@ fn clipping_stays_inside_the_group_and_groups_can_clip_and_be_clipped() {
     );
     assert_eq!(at(&d, 6, 1), Rgba8::new(0, 0, 255, 255), "外には出ない");
     assert_tiles_match_reference(&d);
-    // グループ自身を下の層へクリッピングする
+    // グループ自身を下のレイヤーへクリッピングする
     let mut h = Document::with_tile_size(8, 8, 8).unwrap();
     solid(&mut h, "Base", Rgba8::new(0, 0, 255, 255), 0, 0, 8, 4);
     let inner = full(&mut h, "Inner", Rgba8::new(255, 255, 0, 255));
@@ -333,7 +333,7 @@ fn changing_a_group_invalidates_the_tiles_of_its_contents() {
     assert!(c.contains(&TileCoord::new(2, 2)), "中身のタイル");
     assert!(
         !c.contains(&TileCoord::new(0, 0)),
-        "下の層のタイルは変わらない"
+        "下のレイヤーのタイルは変わらない"
     );
     // 変わったタイルだけを描き直した画面が、全面の合成と同じ（表示の差分の更新）
     let mut shown = d.composite(d.bounds()).unwrap();
@@ -391,7 +391,7 @@ fn broken_nesting_is_refused_for_loaders() {
     for bad in [
         vec![Some(g), Some(g), None, Some(g)],     // 中身がグループの上
         vec![Some(g), None, None, None],           // A と G の間に外の B（続いていない）
-        vec![Some(a), None, None, None],           // グループでない層の中
+        vec![Some(a), None, None, None],           // グループでないレイヤーの中
         vec![Some(LayerId(99)), None, None, None], // 無いグループ
         vec![Some(g), Some(g), Some(g), None],     // 自分の中（輪）
         vec![None, None],                          // 数が違う
@@ -614,7 +614,7 @@ fn a_mask_tile_with_colour_is_refused_before_anything_is_written() {
     assert!(at(&d, 8, 0).a < 255);
     assert!(!d.can_undo(), "読み込みは履歴を消す");
     assert_eq!(d.import_mask_tile(l, coord, &tile(200)), Ok(false));
-    // 長さが違うタイルと、マスクの無い層も、書かずに断る
+    // 長さが違うタイルと、マスクの無いレイヤーも、書かずに断る
     assert!(d
         .import_mask_tile(l, TileCoord::new(0, 0), &tile(9)[..n * 4 - 4])
         .is_err());
@@ -742,7 +742,7 @@ fn adjustment_changes_are_undoable_and_cover_the_canvas() {
     assert_eq!(
         changed(&d, Channel::Color, since).len(),
         4,
-        "調整は画布の全タイル"
+        "調整はキャンバスの全タイル"
     );
     d.undo().unwrap();
     assert_eq!(at(&d, 2, 2), Rgba8::new(100, 100, 100, 255));
@@ -1094,7 +1094,7 @@ fn duplicating_copies_a_layer_or_a_group_with_its_contents_above_the_original() 
         bytes * 2 - d.layers()[0].allocated_bytes(),
         "写しも予算に数える"
     );
-    // 写しの中の層は別の ID で、画素・マスク・チャンネルは同じ
+    // 写しの中のレイヤーは別の ID で、画素・マスク・チャンネルは同じ
     let inner = d.children_of(Some(copy)).unwrap();
     let ca = d.layer(inner[0]).unwrap();
     assert_ne!(ca.id(), a);
@@ -1171,7 +1171,7 @@ fn removals_count_their_pixels_against_the_history_budget() {
     assert_eq!(
         d.history_bytes(),
         128 + color + mask,
-        "層を消す段は層の画素を持つ"
+        "レイヤーを消す段はレイヤーの画素を持つ"
     );
     // 予算を下げると古い段から落とす（守る段の数だけは残す）
     d.set_minimum_undo_steps(1).unwrap();
@@ -1200,7 +1200,7 @@ fn persistent_ids_carry_the_group_structure() {
 
 #[test]
 fn clipping_onto_a_group_switches_it_to_isolated_and_is_recorded() {
-    // 通過のグループにクリッピングの層が入ると、グループは分離で合成する: 中身のタイルが変わる
+    // 通過のグループにクリッピングのレイヤーが入ると、グループは分離で合成する: 中身のタイルが変わる
     let mut d = Document::with_tile_size(8, 8, 4).unwrap();
     let b = d.add_layer("b").unwrap();
     d.set_pixel(b, 0, 0, Rgba8::new(200, 100, 50, 255)).unwrap();
@@ -1294,8 +1294,8 @@ fn ungrouping_holds_the_groups_pixels_in_the_history_and_budget() {
     );
 }
 
-/// C# の CoreTests.SourceBudgetIsAlsoEnforcedByLayerRestore: ラスター層を消したあとで元画素の予算を縮めると、Undo は層の画素・
-/// 別のチャンネル・マスクをまとめて断る（一部だけ戻さない）。層は戻らず、履歴・版・通し番号も変わらない。予算を戻せば層ごと戻る。
+/// C# の CoreTests.SourceBudgetIsAlsoEnforcedByLayerRestore: ラスターレイヤーを消したあとで元画素の予算を縮めると、Undo はレイヤーの画素・
+/// 別のチャンネル・マスクをまとめて断る（一部だけ戻さない）。レイヤーは戻らず、履歴・版・通し番号も変わらない。予算を戻せばレイヤーごと戻る。
 #[test]
 fn removing_a_raster_layer_then_a_reduced_budget_refuses_the_undo_whole_until_it_is_restored() {
     let mut d = Document::with_tile_size(16, 16, 4).unwrap();
@@ -1327,7 +1327,7 @@ fn removing_a_raster_layer_then_a_reduced_budget_refuses_the_undo_whole_until_it
     };
     let before = state(&d);
     assert_eq!(before.2 .0, 1);
-    // 0 でも、層の分に 1 バイト足りなくても、断って何も変えない。3 面の分（192）あれば通る
+    // 0 でも、レイヤーの分に 1 バイト足りなくても、断って何も変えない。3 面の分（192）あれば通る
     for budget in [0, 64, 128, 191] {
         d.set_source_budget_bytes(budget).unwrap();
         assert_eq!(d.undo(), Err(CoreError::SourceBudgetExceeded), "{budget}");
@@ -1442,13 +1442,13 @@ fn deeply_nested_groups_mark_every_layer_once_and_do_not_take_exponential_time()
             groups.push(top);
         }
         assert_eq!(d.depth_of(leaf).unwrap(), 40);
-        // 途中のグループのマスクに画素を 1 つ（タイル (0, 0)）。中身の層のタイルは (1, 1)
+        // 途中のグループのマスクに画素を 1 つ（タイル (0, 0)）。中身のレイヤーのタイルは (1, 1)
         let mid = groups[20];
         d.add_layer_mask(mid).unwrap();
         d.set_mask_pixel(mid, 1, 1, 255).unwrap();
         let (mask_tile, leaf_tile) = (TileCoord::new(0, 0), TileCoord::new(1, 1));
 
-        // 一番外側のグループの変更は、中身の層と、入れ子の途中のグループのマスクのタイルを変わったことにする
+        // 一番外側のグループの変更は、中身のレイヤーと、入れ子の途中のグループのマスクのタイルを変わったことにする
         let since = d.change_serial();
         d.set_layer_visible(top, false).unwrap();
         let tiles = changed(&d, Channel::Color, since);
@@ -1464,7 +1464,7 @@ fn deeply_nested_groups_mark_every_layer_once_and_do_not_take_exponential_time()
         assert!(tiles.contains(&leaf_tile), "{tiles:?}");
         assert!(!tiles.contains(&mask_tile), "{tiles:?}");
         d.set_layer_visible(groups[10], true).unwrap();
-        // 読み込みの親の置き直しは、全部の層（入れ子の途中のグループのマスクも）に印を付ける
+        // 読み込みの親の置き直しは、全部のレイヤー（入れ子の途中のグループのマスクも）に印を付ける
         let parents: Vec<_> = d.layers().iter().map(|l| l.parent()).collect();
         let since = d.change_serial();
         d.set_structure_for_load(&parents).unwrap();

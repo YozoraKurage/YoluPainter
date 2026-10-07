@@ -1,5 +1,5 @@
 //! 画素の計算の SIMD の土台: 実行時の道の選び（[`Level`]）と、f64 の並び（レーン）の演算の型（[`Lanes`]）・f32 の並びの演算の型
-//! （[`Lanes32`]。層の合成の式が使う）。
+//! （[`Lanes32`]。レイヤーの合成の式が使う）。
 //!
 //! 道は x86_64 の AVX2（+ FMA）・SSE4.1・スカラーの 3 つ。`is_x86_feature_detected!` で CPU に合う一番広い道を選ぶ（Windows の配布物
 //! x86_64-pc-windows-msvc でも同じ）。x86_64 以外（aarch64 など）と、環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`、広げる向きには

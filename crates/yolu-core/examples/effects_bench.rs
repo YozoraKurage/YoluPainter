@@ -1,5 +1,5 @@
 //! 効果（フィルター・Generator・Anchor）を持つ文書の合成の速さ。4096² の人工の文書で、最初の合成・同じものの 2 回目（キャッシュ）・
-//! 1 タイルを描いたあと・Anchor を読む層の最初の合成を測る。`cargo run --release -p yolu-core --example effects_bench`
+//! 1 タイルを描いたあと・Anchor を読むレイヤーの最初の合成を測る。`cargo run --release -p yolu-core --example effects_bench`
 use std::time::Instant;
 use yolu_core::generator::{self, Settings};
 use yolu_core::{
@@ -106,7 +106,7 @@ fn run() {
         doc.effect_counters().blocks_evaluated
     );
 
-    // Anchor: 下の層の Color の Anchor を、上の層の Height（出力は別のチャンネル）が読む
+    // Anchor: 下のレイヤーの Color の Anchor を、上のレイヤーの Height（出力は別のチャンネル）が読む
     let a = doc
         .add_anchor(base, AnchorPlacement::Layer, None, None)
         .unwrap();
@@ -142,7 +142,7 @@ fn run() {
         }
     }
     time(
-        "Anchor を読む層（Height）の最初の合成（Anchor のタイルを合成して読む）",
+        "Anchor を読むレイヤー（Height）の最初の合成（Anchor のタイルを合成して読む）",
         || doc.composite_channel(Channel::Height, rect).unwrap(),
     );
     time("2 回目", || {

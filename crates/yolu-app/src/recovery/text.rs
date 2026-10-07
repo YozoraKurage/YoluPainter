@@ -130,7 +130,7 @@ impl Lang {
         )
     }
 
-    /// 窓の下の帯に出す、復旧が使っている量（短く。内訳はツールチップ）。
+    /// ウィンドウの下の帯に出す、復旧が使っている量（短く。内訳はツールチップ）。
     pub fn recovery_usage_text(self, usage: &Usage) -> String {
         let used = bytes_text(usage.total());
         self.pick(format!("使用中 {used}"), format!("{used} in use"))

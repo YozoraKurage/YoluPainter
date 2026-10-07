@@ -20,7 +20,7 @@ use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
 use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::{Channel, HeightEdgeMode, LayerId, NormalSettings, NormalYDirection, Rgba8};
 
-/// 3D のタブを出した窓（文書は doc × doc）。モデルは呼び手が入れる。
+/// 3D のタブを出したウィンドウ（文書は doc × doc）。モデルは呼び手が入れる。
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
     // この試験の場面は標準（PBR）の見た目を見る: 新しい文書の既定（lilToon）でなく標準を明示する
@@ -98,7 +98,7 @@ fn first_layer(h: &Harness<'_, YoluApp>) -> LayerId {
     h.state().state.doc.layers()[0].id()
 }
 
-/// 文書の全面を覆う塗りつぶしの層を足す（チャンネルごとの値）。
+/// 文書の全面を覆う塗りつぶしレイヤーを足す（チャンネルごとの値）。
 fn fill(h: &mut Harness<'_, YoluApp>, name: &str, values: &[(Channel, [u8; 4])]) -> LayerId {
     let values: Vec<(Channel, Rgba8)> = values
         .iter()
@@ -1188,7 +1188,7 @@ fn tangents_are_made_in_the_background_and_a_replaced_model_keeps_the_normal_map
     assert!((settled - from_right).abs() < 3.0, "{settled} {from_right}");
 }
 
-/// 法線マップを読む場面（接線を作っている最中）の窓: 接線の門を閉じたままモデルを入れ、Normal を塗った層を置いた絵。
+/// 法線マップを読む場面（接線を作っている最中）のウィンドウ: 接線の門を閉じたままモデルを入れ、Normal を塗ったレイヤーを置いた絵。
 fn tangents_in_flight() -> (Harness<'static, YoluApp>, Gate, LayerId) {
     let mut h = view(900.0, 640.0, 64);
     let gate = Gate::closed();
@@ -1215,9 +1215,9 @@ fn the_window_stops_asking_for_frames_when_the_tangents_are_no_longer_read() {
     let (mut h, gate, layer) = tangents_in_flight();
     assert!(
         h.state().view3d_wants_repaint(),
-        "法線マップを読むあいだは、接線を作っている最中の窓は次のフレームを求める"
+        "法線マップを読むあいだは、接線を作っている最中のウィンドウは次のフレームを求める"
     );
-    // 光なしの表示（チャンネルだけ）へ替えると、接線は読まれない: 作っている最中でも窓は描き直しを求めない
+    // 光なしの表示（チャンネルだけ）へ替えると、接線は読まれない: 作っている最中でもウィンドウは描き直しを求めない
     h.state_mut()
         .apply(Action::View3d(Op::Shading(Shading::Channel(
             Channel::Color,
@@ -1227,19 +1227,19 @@ fn the_window_stops_asking_for_frames_when_the_tangents_are_no_longer_read() {
         !h.state().view3d_wants_repaint(),
         "光なしの表示では求めない"
     );
-    // 求めないので、窓は回り続けずに静まる（`run` が返る）
+    // 求めないので、ウィンドウは回り続けずに静まる（`run` が返る）
     h.run();
     // マテリアルへ戻すと、読むので求める（作業は続いている）
     h.state_mut()
         .apply(Action::View3d(Op::Shading(Shading::Material)));
     h.step();
     assert!(h.state().view3d_wants_repaint());
-    // 法線マップを使う層が無くなっても同じ
+    // 法線マップを使うレイヤーが無くなっても同じ
     h.state_mut().state.doc.remove_layer(layer).unwrap();
     h.step();
     assert!(
         !h.state().view3d_wants_repaint(),
-        "Normal を使う層が無ければ読まないので求めない"
+        "Normal を使うレイヤーが無ければ読まないので求めない"
     );
     gate.open();
     h.run();
@@ -1275,10 +1275,10 @@ fn a_failed_tangent_worker_neither_keeps_the_window_repainting_nor_runs_again() 
     }
     assert!(
         !h.state().view3d_wants_repaint(),
-        "接線を残さずに終わったスレッドを待ち続けて窓を回さない"
+        "接線を残さずに終わったスレッドを待ち続けてウィンドウを回さない"
     );
     assert!(!h.state().view3d_stats().unwrap().tangents_exact);
-    // 窓は静まり、同じモデルでは作り直さない
+    // ウィンドウは静まり、同じモデルでは作り直さない
     h.run();
     for _ in 0..5 {
         h.step();
@@ -2143,7 +2143,7 @@ fn measure_painting_frames_with_seventy_thousand_triangles_and_six_channels() {
     use std::time::Instant;
     let mut h = view(1400.0, 900.0, 4096);
     let adapter = h.state().view3d_adapter().unwrap_or_default();
-    // 7 万三角形の球（面ごとの UV の島）。接線は先に作る
+    // 7 万三角形の球（面ごとの UV アイランド）。接線は先に作る
     let started = Instant::now();
     set_model(&mut h, vec![cube_sphere(77, 0.5)]);
     println!("GPU: {adapter}");

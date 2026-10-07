@@ -137,7 +137,7 @@ fn check_convex(g: &Arc<SurfaceGeometry>, view: &CameraView, center: Vec2, radiu
         let angle = view_angle(view, t, point);
         if !front || d > radius + 0.25 || angle > 85.5 {
             must_not += 1;
-            // 継ぎ目のにじみは、隣の島のテクセルへ出ない（塗るセットの UV が覆うテクセルは、その三角形が塗るときだけ）。裏の面・円の外は
+            // 継ぎ目のにじみは、隣のアイランドのテクセルへ出ない（塗るセットの UV が覆うテクセルは、その三角形が塗るときだけ）。裏の面・円の外は
             // 同じテクセルを表の面・円の中の三角形が覆う（UV の辺の上）ときだけ塗られる
             if got.contains(&(x, y)) {
                 let shared = texel_points(g, size, size, 0)
@@ -392,7 +392,7 @@ fn the_angle_falloff_is_monotone_in_the_angle_and_follows_its_range() {
     }
 }
 
-/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2、辺 x = 1 を共有）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れた島（32 × 16）。
+/// 左右に 1 枚ずつの板（世界の x が 0..1 と 1..2、辺 x = 1 を共有）。UV は左が x 0〜12 画素、右が 20〜32 画素の離れたアイランド（32 × 16）。
 fn two_islands() -> Arc<SurfaceGeometry> {
     let mut t = Vec::new();
     quad(
@@ -459,7 +459,7 @@ fn seam_bleed_paints_n_texels_outside_the_island_edges_and_no_further() {
 
 #[test]
 fn seam_bleed_never_writes_into_another_island_of_the_same_set() {
-    // 左の板は見え、右の板はカメラに背を向ける（塗らない）。右の島は左の島の 1 テクセル右から始まる
+    // 左の板は見え、右の板はカメラに背を向ける（塗らない）。右のアイランドは左のアイランドの 1 テクセル右から始まる
     let mut t = Vec::new();
     quad(
         &mut t,
@@ -496,7 +496,7 @@ fn seam_bleed_never_writes_into_another_island_of_the_same_set() {
         .collect();
     assert!(row.contains(&12), "隙間のテクセル（12）はにじむ");
     for x in 13..32 {
-        assert!(!row.contains(&x), "右の島の x {x} へ出ない");
+        assert!(!row.contains(&x), "右のアイランドの x {x} へ出ない");
     }
 }
 
@@ -515,7 +515,7 @@ fn layer_bytes(d: &Document, l: LayerId) -> Vec<u8> {
 }
 
 /// 重なった面の多いモデル: 球と、その手前で細かく折り返す蛇腹（全部つながった 1 つのメッシュ。同じマテリアル）。蛇腹の幅（x の 0.3）は
-/// ブラシの球より狭いので、前の作りの面を辿るダブは、折り返しを越えて奥の層まで進む。
+/// ブラシの球より狭いので、前の作りの面を辿るダブは、折り返しを越えて奥のレイヤーまで進む。
 fn crowded() -> Arc<SurfaceGeometry> {
     let mut t = model_triangles(&[cube_sphere(24, 0.5)]).unwrap();
     let folds = 40;
@@ -663,7 +663,11 @@ fn a_big_brush_over_overlapping_faces_paints_instead_of_cancelling() {
     // 前の作り（ダブごとに面を辿ってレイを撃つ）は、この場面のダブを上限で断っていた（ストロークを取り消していた）
     let at = view.to_screen(Vec3::new(0.0, 0.0, -0.99)).unwrap();
     let hit = pick(&g, &view, at).expect("当たる");
-    assert!(hit.position.z < -0.9, "蛇腹の手前の層: {}", hit.position);
+    assert!(
+        hit.position.z < -0.9,
+        "蛇腹の手前のレイヤー: {}",
+        hit.position
+    );
     let radius = yolu_core::geometry::world_radius(&g, 60.0, 512);
     let old = g.build_surface_dabs(
         &hit,
@@ -754,7 +758,7 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
             .unwrap();
         s.finish(d, &mut stroke).unwrap();
         d.end_stroke(stroke).unwrap();
-        // 塗られた面（UV の島 3 × 2）
+        // 塗られた面（UV アイランド 3 × 2）
         let mut faces = BTreeSet::new();
         for y in 0..128 {
             for x in 0..192 {
@@ -787,7 +791,7 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
     assert!(s.projection_stats().buckets_built > 0);
 }
 
-/// 左の島は黒、右の島は白（どちらも不透明。余白は透明）の 32 × 16 の文書で、継ぎ目（世界の x = 1）に沿ってぼかす。budget は文書の
+/// 左のアイランドは黒、右のアイランドは白（どちらも不透明。余白は透明）の 32 × 16 の文書で、継ぎ目（世界の x = 1）に沿ってぼかす。budget は文書の
 /// 1 回の操作の予算（投影の塗りのメモリは別に十分に取る）。通ったら確定し、断られたら取り消して、結果と文書を返す。
 fn blur_along_the_seam(
     budget: Option<u64>,
@@ -862,7 +866,7 @@ fn a_blur_across_a_seam_mixes_both_islands_and_leaves_no_line() {
     let value = |d: &Document, x: u32, y: u32| {
         d.layer(l).unwrap().pixel(Channel::Color, x, y).unwrap().r as i32
     };
-    // 継ぎ目の両側の縁のテクセルの差が小さい（線が出ない）。島の奥は元のまま
+    // 継ぎ目の両側の縁のテクセルの差が小さい（線が出ない）。アイランドの奥は元のまま
     for y in 5..11 {
         let (left, right) = (value(&d, 11, y), value(&d, 20, y));
         assert!((right - left).abs() <= 48, "行 {y}: 左 {left} 右 {right}");

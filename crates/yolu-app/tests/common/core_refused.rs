@@ -3,7 +3,7 @@ use std::path::Path;
 
 use yolu_io::{NativeDocument, NativeValue};
 
-/// 反転の調整の層が使わない値（gamma）を既定から変えた正本。C# の読み手は種類が使わない値を黙って既定に戻すので、core へ渡すと
+/// 反転の調整レイヤーが使わない値（gamma）を既定から変えた正本。C# の読み手は種類が使わない値を黙って既定に戻すので、core へ渡すと
 /// 保存で値が変わる。そのため `core_issues` が挙げて core は断り、アプリはそのセットを読むだけで開く（元のバイト列のまま保存する）。
 pub fn native_core_cannot_hold() -> NativeDocument {
     let path =
@@ -14,7 +14,7 @@ pub fn native_core_cannot_hold() -> NativeDocument {
             native.field(&format!("layers[{i}].name"))
                 == Some(&NativeValue::Text("反転（チャンネルなし）".into()))
         })
-        .expect("反転の調整の層");
+        .expect("反転の調整レイヤー");
     let refused = native
         .with_value(
             &format!("layers[{invert}].adjustment.gamma"),

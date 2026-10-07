@@ -93,7 +93,7 @@ impl Document {
         opacity: f64,
         erase: bool,
     ) -> Result<TriangleFill, CoreError> {
-        // まとめの中の断りは、チャンネルや層の確かめより先（C# の RefuseInBatch が ValidateChannel より先なのと同じ。
+        // まとめの中の断りは、チャンネルやレイヤーの確かめより先（C# の RefuseInBatch が ValidateChannel より先なのと同じ。
         // まとめの中で無効なチャンネルを渡しても、断る理由は BatchActive）
         self.ensure_loadable()?;
         self.require_channel(channel)?;

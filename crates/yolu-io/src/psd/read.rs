@@ -74,7 +74,7 @@ impl State<'_> {
     }
     fn metadata(&mut self, n: usize) -> Result<()> {
         if self.copy.is_some() {
-            // 写しとしての取り込みは、付加情報を持ち続けない（層ごと・タグごとに読んで捨てる）ので、合計の予算は掛けない
+            // 写しとしての取り込みは、付加情報を持ち続けない（レイヤーごと・タグごとに読んで捨てる）ので、合計の予算は掛けない
             return Ok(());
         }
         self.metadata = self
@@ -412,7 +412,7 @@ pub(super) struct Record {
     pub(super) adjustment_seen: bool,
     pub(super) fill_seen: bool,
     protection: u32,
-    /// 明るさ・コントラストの 2 つの記録（`brit` と `CgEd`）。層のタグを読み終えてから突き合わせる。
+    /// 明るさ・コントラストの 2 つの記録（`brit` と `CgEd`）。レイヤーのタグを読み終えてから突き合わせる。
     brightness: BrightnessRecords,
     /// 塗りの不透明度（`iOpa`。既定は 255）。写しとしての取り込みが不透明度に掛ける。
     pub(super) fill_opacity: u8,
@@ -1390,7 +1390,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                 if rec.brightness.at == (0, 0) {
                     rec.brightness.at = (start, length)
                 }
-                // 突き合わせは層のタグを読み終えてから（`resolve_brightness_contrast`）
+                // 突き合わせはレイヤーのタグを読み終えてから（`resolve_brightness_contrast`）
                 if &key == b"brit" {
                     match brit_record(b)? {
                         Ok(v) => rec.brightness.brit = Some(v),
@@ -1657,7 +1657,7 @@ fn brit_record(mut r: Reader) -> Parsed<BritRecord> {
     }))
 }
 /// 明るさ・コントラストの新しい式の記録（`CgEd`: 版 16 と、明るさ `Brgh`・コントラスト `Cntr`・平均値 `means`・Lab `Lab `・旧式 `useLegacy`・
-/// 自動 `auto`・版 `Vrsn` だけの平らな記述子）。ほかの項目や入れ子を持つものは、この道具の知らない内容なので対応しない。
+/// 自動 `auto`・版 `Vrsn` だけの平らな記述子）。ほかの項目や入れ子を持つものは、このツールの知らない内容なので対応しない。
 fn cged_record(mut r: Reader) -> Parsed<CgedRecord> {
     use super::descriptor::Scalar;
     if r.remaining() < 4 || r.u32()? != 16 {
@@ -1707,8 +1707,8 @@ fn cged_record(mut r: Reader) -> Parsed<CgedRecord> {
     }
     Ok(Ok(record))
 }
-/// 層のタグを読み終えてから、明るさ・コントラストの `brit` と `CgEd` を突き合わせて調整にする。編集できるのは、新しい式（`CgEd` があり、
-/// 旧式・自動・Lab でない）で、`brit` があれば同じ値のものだけ。`brit` だけ（旧式）・旧式の `CgEd`・範囲外・読めない記録は、この道具の式で
+/// レイヤーのタグを読み終えてから、明るさ・コントラストの `brit` と `CgEd` を突き合わせて調整にする。編集できるのは、新しい式（`CgEd` があり、
+/// 旧式・自動・Lab でない）で、`brit` があれば同じ値のものだけ。`brit` だけ（旧式）・旧式の `CgEd`・範囲外・読めない記録は、このツールの式で
 /// 表せないので、ほかの対応しないタグと同じく原本を保つ。
 fn resolve_brightness_contrast(rec: &mut Record, s: &mut State) {
     let BrightnessRecords {
@@ -1721,7 +1721,7 @@ fn resolve_brightness_contrast(rec: &mut Record, s: &mut State) {
         return;
     }
     let mut refuse = |why: &str| {
-        // 写しとしての取り込みが、この層を明るさ・コントラストの調整として仕分けられるように
+        // 写しとしての取り込みが、このレイヤーを明るさ・コントラストの調整として仕分けられるように
         s.key = *b"brit";
         s.preserve(
             "TaggedBlock",
@@ -1748,12 +1748,12 @@ fn resolve_brightness_contrast(rec: &mut Record, s: &mut State) {
                 || i64::from(b.brightness) != cged.brightness
                 || i64::from(b.contrast) != cged.contrast
         });
-    // コントラストの下限は −50（この道具の範囲。Photoshop は −100〜100）
+    // コントラストの下限は −50（このツールの範囲。Photoshop は −100〜100）
     if bad || !(-150..=150).contains(&cged.brightness) || !(-50..=100).contains(&cged.contrast) {
         return refuse("旧式・自動・Lab・範囲外・brit と CgEd の食い違い");
     }
     s.omitted(
-        "明るさ・コントラストの平均値（旧式の式の入力。この道具の式は使わない）",
+        "明るさ・コントラストの平均値（旧式の式の入力。このツールの式は使わない）",
         start,
         length,
     );
@@ -1831,8 +1831,8 @@ fn curves(mut r: Reader) -> Parsed {
         if !curve.windows(2).all(|w| w[0][0] < w[1][0]) {
             return unsupported("入力が昇順でありません");
         }
-        // PSD として正しくても、この道具が表せる曲線（core の `Curve`: 点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）でなければ
-        // 編集できる層にしない（Photoshop の「自動」は両端を動かすので、よくある形）。原本を保つ
+        // PSD として正しくても、このツールが表せる曲線（core の `Curve`: 点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）でなければ
+        // 編集できるレイヤーにしない（Photoshop の「自動」は両端を動かすので、よくある形）。原本を保つ
         let points = curve
             .iter()
             .map(|p| yolu_core::curve::CurvePoint {
@@ -1842,7 +1842,7 @@ fn curves(mut r: Reader) -> Parsed {
             .collect();
         if yolu_core::curve::Curve::new(points).is_err() {
             return unsupported(
-                "この道具が表せない曲線です（点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）",
+                "このツールが表せない曲線です（点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）",
             );
         }
     }
@@ -2093,7 +2093,7 @@ mod tests {
 
     #[test]
     fn brightness_and_contrast_need_the_new_record_and_agree_with_the_old_one() {
-        // 新しい式の記録だけ（Photoshop の新しい書き方）・両方が同じ値（この道具の書き方）は調整になる
+        // 新しい式の記録だけ（Photoshop の新しい書き方）・両方が同じ値（このツールの書き方）は調整になる
         for brit in [None, Some((-37, 81, false))] {
             let (a, unsupported) = resolved(record(brit, Some(cged(-37, 81))));
             assert_eq!(

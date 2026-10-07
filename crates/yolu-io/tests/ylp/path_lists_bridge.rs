@@ -1,4 +1,4 @@
-//! 層のパスの一覧の保存・復元（正本の版 27）。2 本以上・名前を付けた・隠したパスの層がある文書だけが版 27 になり、名前の無い見せる 1 本の
+//! レイヤーのパスの一覧の保存・復元（正本の版 27）。2 本以上・名前を付けた・隠したパスレイヤーがある文書だけが版 27 になり、名前の無い見せる 1 本の
 //! パスは今の欄のまま（前の版・同じバイト列）。往復・版の選び方・読み手の拒否（0.4.x の読み手の範囲・版の数だけの書き換え）・.ylsmart の断りを試す。
 use yolu_core::geometry::{SurfaceGeometry, SurfaceTriangle, DEFAULT_WELD_TOLERANCE};
 use yolu_core::glam::DVec2;
@@ -616,7 +616,7 @@ fn a_fill_layer_path_and_its_pixels_round_trip_in_version_27() {
     assert_eq!(
         native.version(),
         PATHS_VERSION,
-        "塗りつぶしの層のパスは 1 本でも一覧の形"
+        "塗りつぶしレイヤーのパスは 1 本でも一覧の形"
     );
     assert_eq!(native.field("layers[0].kind"), Some(&NativeValue::Int(1)));
     let back = native.to_core().unwrap();
@@ -685,13 +685,13 @@ fn a_fill_layer_3d_path_is_dropped_with_its_surface_before_it_is_put_on_the_shel
         "{:?}",
         material.notes()
     );
-    // 画素を持てない層の面が残っていれば、ここは「画素はラスターの層だけが持てます」で落ちる
+    // 画素を持てないレイヤーの面が残っていれば、ここは「画素はラスターレイヤーだけが持てます」で落ちる
     let file = SmartFile::from_core(&material, &writer()).unwrap();
     assert_eq!(
         file.fragment().to_core().unwrap().layers()[0].paths().len(),
         0
     );
-    // 塗りつぶしの層の 2D のパスは一覧の形になるので、棚には入れず、理由を言う
+    // 塗りつぶしレイヤーの 2D のパスは一覧の形になるので、棚には入れず、理由を言う
     let mut doc = Document::with_tile_size(32, 32, 16).unwrap();
     let fill = doc
         .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 9, 9, 255))], None)

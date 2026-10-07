@@ -1,4 +1,4 @@
-//! 層の足し引き・並べ替え・グループ（C# の PaintDocument の AddLayer・AddGroup・GroupLayers・Ungroup・MoveLayerTo・RemoveLayer・
+//! レイヤーの足し引き・並べ替え・グループ（C# の PaintDocument の AddLayer・AddGroup・GroupLayers・Ungroup・MoveLayerTo・RemoveLayer・
 //! ValidateStructure）と、チャンネルの一覧の編集。
 //!
 //! 並びの計算は ID と親の列（[`Tree`]）の上で行い、結果の前後を 1 つの段（Structure）にする。グループの中身はいつもグループの
@@ -13,7 +13,7 @@ use crate::layer::{ChannelBlend, Layer, LayerId};
 use crate::surface::Surface;
 use crate::types::{Channel, ChannelInfo, LayerKind, Rgba8};
 
-/// グループの入れ子の上限（1 本の鎖に重なるグループの数。層はこの数のグループの中まで入れられる）。
+/// グループの入れ子の上限（1 本の鎖に重なるグループの数。レイヤーはこの数のグループの中まで入れられる）。
 ///
 /// 合成・面の計算・書き出しはグループの入れ子を再帰でたどる。スタックの実測は合成だけ・Linux だけ（合成を別のスレッドで動かし、
 /// 足りる最小のスタックを 32KB 刻みで探した）: 64 段は dev（opt-level 1）も release も 288KB で溢れ 320KB で収まり、32 段は dev が
@@ -58,7 +58,7 @@ impl Tree {
         }
         false
     }
-    /// まとまり（top の層と、グループなら中身）の一番下の位置。
+    /// まとまり（top のレイヤーと、グループなら中身）の一番下の位置。
     pub(super) fn subtree_start(&self, top: usize) -> usize {
         let mut start = top;
         if self.is_group(self.order[top].0) {
@@ -96,7 +96,7 @@ impl Tree {
     }
 }
 
-/// チャンネルを消すときに段が持つ、層のそのチャンネルの中身。
+/// チャンネルを消すときに段が持つ、レイヤーのそのチャンネルの中身。
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ChannelContents {
     surface: Option<Surface>,
@@ -121,7 +121,7 @@ impl Document {
         self.layers.iter().map(|l| (l.id, l.parent)).collect()
     }
 
-    /// 並びの i 番の層がグループ group の中にあるか。
+    /// 並びの i 番のレイヤーがグループ group の中にあるか。
     pub(super) fn is_descendant(&self, i: usize, group: LayerId) -> bool {
         let mut parent = self.layers[i].parent;
         let mut hops = 0;
@@ -141,7 +141,7 @@ impl Document {
         false
     }
 
-    /// 並び・入れ子を order にする。order に無い層は spare へ、spare の層で order にあるものは文書へ。
+    /// 並び・入れ子を order にする。order に無いレイヤーは spare へ、spare のレイヤーで order にあるものは文書へ。
     pub(super) fn restore_structure(&mut self, order: &Order, spare: &mut Vec<Layer>) {
         let mut pool: std::collections::HashMap<LayerId, Layer> = self
             .layers
@@ -150,7 +150,7 @@ impl Document {
             .map(|l| (l.id, l))
             .collect();
         for (id, parent) in order {
-            let mut l = pool.remove(id).expect("並びの層は文書か段にある");
+            let mut l = pool.remove(id).expect("並びのレイヤーは文書か段にある");
             l.parent = *parent;
             self.layers.push(l);
         }
@@ -193,7 +193,7 @@ impl Document {
         Ok(())
     }
 
-    /// 新しい層を above のすぐ上（同じグループの中）へ、なければ一番上へ入れる（1 回の Undo）。
+    /// 新しいレイヤーを above のすぐ上（同じグループの中）へ、なければ一番上へ入れる（1 回の Undo）。
     pub(super) fn insert_new(
         &mut self,
         layer: Layer,
@@ -202,7 +202,7 @@ impl Document {
         self.insert_new_costed(layer, above, 128)
     }
 
-    /// `insert_new` の、履歴の費用を指定する形（層が画素やパスを持って入るとき、その分も費用に数える）。
+    /// `insert_new` の、履歴の費用を指定する形（レイヤーが画素やパスを持って入るとき、その分も費用に数える）。
     pub(super) fn insert_new_costed(
         &mut self,
         mut layer: Layer,
@@ -230,12 +230,12 @@ impl Document {
         Ok(id)
     }
 
-    /// 空の層を一番上に足す（Color のチャンネルを持つ）。1 回の Undo。
+    /// 空のレイヤーを一番上に足す（Color のチャンネルを持つ）。1 回の Undo。
     pub fn add_layer(&mut self, name: &str) -> Result<LayerId, CoreError> {
         self.add_layer_above(name, None)
     }
 
-    /// 空の層を above のすぐ上（above と同じグループの中。グループの上ならグループと中身の上）に足す（None なら一番上）。
+    /// 空のレイヤーを above のすぐ上（above と同じグループの中。グループの上ならグループと中身の上）に足す（None なら一番上）。
     pub fn add_layer_above(
         &mut self,
         name: &str,
@@ -265,7 +265,7 @@ impl Document {
         self.insert_new(Layer::new(id, name, LayerKind::Group), above)
     }
 
-    /// 塗りつぶしの層を足す。値はチャンネルごと（値のあるチャンネルは有効）で、値のあるチャンネルの画布全体を覆う。見せる所は
+    /// 塗りつぶしレイヤーを足す。値はチャンネルごと（値のあるチャンネルは有効）で、値のあるチャンネルのキャンバス全体を覆う。見せる所は
     /// マスクで絞る。
     pub fn add_fill_layer(
         &mut self,
@@ -286,7 +286,7 @@ impl Document {
         self.insert_new(layer, above)
     }
 
-    /// 調整の層を足す。channels のチャンネルで下の合成を変える（None なら、その調整を使えるチャンネル全部）。色相/彩度は
+    /// 調整レイヤーを足す。channels のチャンネルで下の合成を変える（None なら、その調整を使えるチャンネル全部）。色相/彩度は
     /// 色のチャンネルだけ（使えないチャンネルを名指ししたら断る）。
     pub fn add_adjustment_layer(
         &mut self,
@@ -314,7 +314,7 @@ impl Document {
         self.insert_new(layer, above)
     }
 
-    /// 層を取り除く。グループは中身ごと。1 回の Undo で、同じ層（ID・画素・属性）が同じ所へ戻る。
+    /// レイヤーを取り除く。グループは中身ごと。1 回の Undo で、同じレイヤー（ID・画素・属性）が同じ所へ戻る。
     pub fn remove_layer(&mut self, id: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let top = self.index_of(id)?;
@@ -334,7 +334,7 @@ impl Document {
         )
     }
 
-    /// 層を写す（グループなら中身ごと）: 属性・チャンネルの面と値・有効・合成の設定・マスクを、新しい ID で元のすぐ上（同じグループ）へ。
+    /// レイヤーを写す（グループなら中身ごと）: 属性・チャンネルの面と値・有効・合成の設定・マスクを、新しい ID で元のすぐ上（同じグループ）へ。
     /// タイルは写し元と共有し（書いたときに複製）、画素の予算には全部数える。name が None なら同じ名前。1 回の Undo。写しの ID を返す。
     pub fn duplicate_layer(
         &mut self,
@@ -378,13 +378,13 @@ impl Document {
         Ok(copy_id)
     }
 
-    /// 層（グループなら中身ごと）を、今のグループの兄弟の中の new_index（0 = 一番下）へ動かす。グループが無ければ並びの番号。
+    /// レイヤー（グループなら中身ごと）を、今のグループの兄弟の中の new_index（0 = 一番下）へ動かす。グループが無ければ並びの番号。
     pub fn move_layer(&mut self, id: LayerId, new_index: usize) -> Result<(), CoreError> {
         let parent = self.layer(id).ok_or(CoreError::LayerNotFound)?.parent;
         self.move_layer_to(id, parent, new_index)
     }
 
-    /// 層（グループなら中身ごと）をグループ parent（None は一番上の段）の子の position（0 = 一番下）へ動かす。
+    /// レイヤー（グループなら中身ごと）をグループ parent（None は一番上の段）の子の position（0 = 一番下）へ動かす。
     /// グループを自分の中へは入れられない。同じ所なら何もしない。
     pub fn move_layer_to(
         &mut self,
@@ -436,11 +436,11 @@ impl Document {
         )
     }
 
-    /// 兄弟の層をまとめて新しいグループ（通過）に入れる。グループは一番上の対象の所に置き、対象の並びは保つ。1 回の Undo。
+    /// 兄弟のレイヤーをまとめて新しいグループ（通過）に入れる。グループは一番上の対象の所に置き、対象の並びは保つ。1 回の Undo。
     pub fn group_layers(&mut self, ids: &[LayerId], name: &str) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
         if ids.is_empty() {
-            return Err(CoreError::InvalidArgument("まとめる層が無い"));
+            return Err(CoreError::InvalidArgument("まとめるレイヤーが無い"));
         }
         let mut members: Vec<usize> = Vec::new();
         for id in ids {
@@ -452,7 +452,7 @@ impl Document {
         let parent = self.layers[members[0]].parent;
         if members.iter().any(|&i| self.layers[i].parent != parent) {
             return Err(CoreError::InvalidArgument(
-                "同じグループの中の層だけをまとめられる",
+                "同じグループの中のレイヤーだけをまとめられる",
             ));
         }
         members.sort();
@@ -497,7 +497,7 @@ impl Document {
         let before = tree.order.clone();
         let moved = tree.block(id);
         let parent = self.layers[index].parent;
-        // 外したグループの層（マスクの画素も）は段が持つ
+        // 外したグループのレイヤー（マスクの画素も）は段が持つ
         let held = self.layers[index].allocated_bytes();
         // 子はもうグループのすぐ下にあるので、グループの記録を抜くだけで位置が保たれる
         let after: Order = before
@@ -516,8 +516,8 @@ impl Document {
         )
     }
 
-    /// 全部の層がラスターで、グループ・マスク・チャンネルごとの合成・結果を変えるフィルターが無いか（M1 の合成の形。これが偽なら、
-    /// 層の種類や評価済みの効果を知らない合成（GPU の M1 の経路など）では同じ絵にならない）。
+    /// 全部のレイヤーがラスターで、グループ・マスク・チャンネルごとの合成・結果を変えるフィルターが無いか（M1 の合成の形。これが偽なら、
+    /// レイヤーの種類や評価済みの効果を知らない合成（GPU の M1 の経路など）では同じ絵にならない）。
     pub fn is_plain_stack(&self) -> bool {
         self.layers.iter().all(|l| {
             l.kind == LayerKind::Raster
@@ -562,9 +562,9 @@ impl Document {
         Self::validate_order(&self.tree())
     }
 
-    /// 並びを 1 回なめて確かめる（上の層から下へ。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる）。
+    /// 並びを 1 回なめて確かめる（上のレイヤーから下へ。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる）。
     /// 親はあってグループ・親は子の上に並ぶ・閉じたグループへ戻らない（= 子が連続している）・グループの入れ子が上限以内。
-    /// 層の数 n に対して O(n)（親の鎖をたどる確かめを層ごとにしない）。
+    /// レイヤーの数 n に対して O(n)（親の鎖をたどる確かめをレイヤーごとにしない）。
     fn validate_order(tree: &Tree) -> Result<(), CoreError> {
         let order = &tree.order;
         let index_of: HashMap<LayerId, usize> =
@@ -580,7 +580,7 @@ impl Document {
                     };
                     if !tree.is_group(p) {
                         return Err(CoreError::InvalidArgument(
-                            "グループでない層の中に入っている",
+                            "グループでないレイヤーの中に入っている",
                         ));
                     }
                     if pi == i {
@@ -589,7 +589,7 @@ impl Document {
                         ));
                     }
                     if pi < i {
-                        return Err(CoreError::InvalidArgument("層はグループの下に並ぶ"));
+                        return Err(CoreError::InvalidArgument("レイヤーはグループの下に並ぶ"));
                     }
                     // p が開いていなければ、p の子が途切れてから戻ってきた（子が連続していない）
                     while open.last() != Some(&p) {
@@ -609,7 +609,7 @@ impl Document {
         Ok(())
     }
 
-    /// 並び（親は子の上に並ぶ）の入れ子が上限以内か。層の動かし方・まとめ方を決めたあと、段にする前に確かめる。
+    /// 並び（親は子の上に並ぶ）の入れ子が上限以内か。レイヤーの動かし方・まとめ方を決めたあと、段にする前に確かめる。
     pub(super) fn check_nesting(tree: &Tree) -> Result<(), CoreError> {
         let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(tree.order.len());
         for &(id, parent) in tree.order.iter().rev() {
@@ -643,11 +643,11 @@ impl Document {
         Ok(())
     }
 
-    /// 読み込み用: 層の親を今の並びの順にまとめて置く（履歴を消す）。入れ子が正しくなければ断って何も変えない。
+    /// 読み込み用: レイヤーの親を今の並びの順にまとめて置く（履歴を消す）。入れ子が正しくなければ断って何も変えない。
     pub fn set_structure_for_load(&mut self, parents: &[Option<LayerId>]) -> Result<(), CoreError> {
         self.ensure_loadable()?;
         if parents.len() != self.layers.len() {
-            return Err(CoreError::InvalidArgument("親の数が層の数と違う"));
+            return Err(CoreError::InvalidArgument("親の数がレイヤーの数と違う"));
         }
         let mut tree = self.tree();
         for (e, p) in tree.order.iter_mut().zip(parents) {
@@ -657,7 +657,7 @@ impl Document {
         for (l, p) in self.layers.iter_mut().zip(parents) {
             l.parent = *p;
         }
-        // 全部の層を 1 枚ずつ（グループの子孫もここで全部通るので、グループごとに子孫を数え直さない）
+        // 全部のレイヤーを 1 枚ずつ（グループの子孫もここで全部通るので、グループごとに子孫を数え直さない）
         for i in 0..self.layers.len() {
             self.mark_layer_alone(i, None);
         }
@@ -731,7 +731,7 @@ impl Document {
             return Ok(());
         }
         if info.kind != old.kind {
-            // 有効な調整がその種類に使えなくなる（色相/彩度は色だけ）なら断る: 先にその層のチャンネルを無効に
+            // 有効な調整がその種類に使えなくなる（色相/彩度は色だけ）なら断る: 先にそのレイヤーのチャンネルを無効に
             let stuck = self.layers.iter().any(|l| {
                 l.is_channel_enabled(channel)
                     && l.adjustment
@@ -739,7 +739,7 @@ impl Document {
                         .is_some_and(|a| !a.applies_to(info.kind))
             });
             if stuck {
-                return Err(CoreError::Unsupported("色相/彩度の層が有効"));
+                return Err(CoreError::Unsupported("色相/彩度のレイヤーが有効"));
             }
         }
         if self
@@ -762,7 +762,7 @@ impl Document {
         )
     }
 
-    /// ユーザーチャンネルを消す。層のそのチャンネルの中身（面・塗りつぶしの値・有効・合成の設定）も消え、1 回の Undo で戻る。
+    /// ユーザーチャンネルを消す。レイヤーのそのチャンネルの中身（面・塗りつぶしの値・有効・合成の設定）も消え、1 回の Undo で戻る。
     pub fn remove_channel(&mut self, channel: Channel) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let old = self.require_channel(channel)?.clone();
@@ -798,7 +798,7 @@ impl Document {
         let (from, to) = if backwards { (new, old) } else { (old, new) };
         let i = channel.index();
         if from.is_some() && to.is_none() {
-            // 消す: 層の中身を段へ
+            // 消す: レイヤーの中身を段へ
             for l in 0..self.layers.len() {
                 self.mark_layer(l, Some(channel));
             }
@@ -819,7 +819,7 @@ impl Document {
             }
             self.channels[i] = None;
         } else if from.is_none() && to.is_some() {
-            // 足す（消したのを戻すなら、層の中身も戻す）
+            // 足す（消したのを戻すなら、レイヤーの中身も戻す）
             let bytes: u64 = contents
                 .iter()
                 .filter_map(|(_, c)| c.surface.as_ref())
@@ -857,7 +857,7 @@ impl Document {
     }
 }
 
-/// 層の並び（親は子の上に並ぶ。スマート素材の断片など）の中で、グループが重なる鎖の一番長い数。
+/// レイヤーの並び（親は子の上に並ぶ。スマート素材の断片など）の中で、グループが重なる鎖の一番長い数。
 pub(super) fn group_chain_height(layers: &[Layer]) -> usize {
     let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(layers.len());
     let mut height = 0;

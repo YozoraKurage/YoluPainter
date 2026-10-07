@@ -1,22 +1,22 @@
-//! 上の帯と窓の枠（Windows だけ。Mac・Linux は OS の枠のまま）。Windows では OS のタイトルバーを外し、メニューの帯の右端に
-//! 小さな最小化・最大化（最大化中は元に戻す）・閉じるを置く。窓を動かす・大きさを変える・最大化を切り替えるのは、枠を外した窓が
+//! 上の帯とウィンドウの枠（Windows だけ。Mac・Linux は OS の枠のまま）。Windows では OS のタイトルバーを外し、メニューの帯の右端に
+//! 小さな最小化・最大化（最大化中は元に戻す）・閉じるを置く。ウィンドウを動かす・大きさを変える・最大化を切り替えるのは、枠を外したウィンドウが
 //! 自分で OS に頼む（`ViewportCommand`）。
 //!
 //! - 動かす: 帯の何も無い所を押して引くと `StartDrag`（OS の移動なので、画面の端へのスナップ・別のモニターへの移動が効く）。
 //!   ダブルクリックで最大化と元に戻すを切り替える。メニューの見出し・Live Link の印・クラッシュの印を押したときは動かさない。
-//! - 大きさ: 窓の縁（`EDGE`）を押すと `BeginResize`。最大化中・全画面中は無い。縁を押す前に、押した所の部品に譲る
+//! - 大きさ: ウィンドウの縁（`EDGE`）を押すと `BeginResize`。最大化中・全画面中は無い。縁を押す前に、押した所の部品に譲る
 //!   （メニューの見出し・スクロールのつまみなど、縁と同じ所にある細い部品。egui の押しを持たない Live Link の印は矩形で渡す）、
-//!   浮かせた窓・メニューが上にあれば何もしない、ペン・タッチの押しは受けない（ペンは `contact`）。縁の押しはビューの押しとして
+//!   浮かせたウィンドウ・メニューが上にあれば何もしない、ペン・タッチの押しは受けない（ペンは `contact`）。縁の押しはビューの押しとして
 //!   使わせない（`edge_press_held`）。
 //! - 閉じる: メニューの「終了」と同じ道（保存していない変更の確かめ）。
 //!
-//! 最大化中の内側は、自動で隠すタスクバーのある辺を 1 画素空ける（そうしないと、端へ寄せてもタスクバーが出てこない）。これは窓の
+//! 最大化中の内側は、自動で隠すタスクバーのある辺を 1 画素空ける（そうしないと、端へ寄せてもタスクバーが出てこない）。これはウィンドウの
 //! プロシージャの側（`windowpos::native`）で行い、ここの帯と縁の描き方は変わらない。
 //!
-//! 別ウィンドウ（`detach`。パネルを外へ出した窓）も同じ決まりで枠を外す: タブの並ぶ行の何も無い所が帯の代わり（`drag_zone_with`）、
-//! 行の右端に閉じるだけ（`close_button`。最小化・最大化は置かない）、縁は `edges_with`。縁の押しの印は窓ごとに持つ。
+//! 別ウィンドウ（`detach`。パネルを外へ出したウィンドウ）も同じ決まりで枠を外す: タブの並ぶ行の何も無い所が帯の代わり（`drag_zone_with`）、
+//! 行の右端に閉じるだけ（`close_button`。最小化・最大化は置かない）、縁は `edges_with`。縁の押しの印はウィンドウごとに持つ。
 //!
-//! 窓の枠を外すのは `main.rs` が `CUSTOM_FRAME`（Windows だけ true）を見て決める。ここの関数は OS に依らず動くので、試験は
+//! ウィンドウの枠を外すのは `main.rs` が `CUSTOM_FRAME`（Windows だけ true）を見て決める。ここの関数は OS に依らず動くので、試験は
 //! Linux でも Windows の帯を描いて確かめられる（アプリは `YoluApp::set_custom_frame` で帯を切り替える。設定には出さない）。
 
 use egui::{
@@ -28,7 +28,7 @@ use crate::lang::Lang;
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
-/// 実際の窓で OS の枠を外すか（Windows だけ）。
+/// 実際のウィンドウで OS の枠を外すか（Windows だけ）。
 pub const CUSTOM_FRAME: bool = cfg!(windows);
 
 /// ボタン 1 つの幅（高さは帯いっぱい）。
@@ -37,12 +37,12 @@ pub const BUTTON_WIDTH: f32 = 30.0;
 pub const BUTTONS_WIDTH: f32 = BUTTON_WIDTH * 3.0;
 /// ボタンのアイコンの大きさ（論理の点）。
 pub const ICON_SIZE: f32 = 14.0;
-/// 窓の縁の、大きさを変えられる幅（点）。
+/// ウィンドウの縁の、大きさを変えられる幅（点）。
 pub const EDGE: f32 = 5.0;
 /// 角の、2 方向に変えられる長さ（点）。
 pub const CORNER: f32 = 12.0;
 /// 縁の押しを譲る部品の、縁をまたぐ向きの大きさの上限（点）。メニューの見出し（高さ 20）・スクロールのつまみの溝（幅 10）が入り、
-/// 窓の端まで広がるキャンバス・一覧の行は入らない。
+/// ウィンドウの端まで広がるキャンバス・一覧の行は入らない。
 pub const YIELD_SIZE: f32 = 24.0;
 
 /// 帯の何も無い所（動かす・最大化）の部品の名前。
@@ -55,7 +55,7 @@ fn is_own(id: Id, own: &[Id]) -> bool {
 fn button_id(button: Button) -> Id {
     Id::new(("yolu.titlebar.button", button as u8))
 }
-/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。窓（viewport）ごと。
+/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。ウィンドウ（viewport）ごと。
 const EDGE_PRESS: &str = "yolu.titlebar.edge_press";
 
 fn edge_press_id(ctx: &Context) -> Id {
@@ -95,7 +95,7 @@ impl Button {
         }
     }
 
-    /// 押したときに窓へ送る頼み。閉じるは窓を直に閉じず、メニューの「終了」と同じ道（保存の確かめ）を通るので無い。
+    /// 押したときにウィンドウへ送る頼み。閉じるはウィンドウを直に閉じず、メニューの「終了」と同じ道（保存の確かめ）を通るので無い。
     pub fn command(self, maximized: bool) -> Option<ViewportCommand> {
         match self {
             Button::Minimize => Some(ViewportCommand::Minimized(true)),
@@ -194,7 +194,7 @@ pub fn drag_zone(ui: &mut Ui, zone: Rect) -> Response {
     drag_zone_with(ui, zone, Id::new(DRAG_ID))
 }
 
-/// 別ウィンドウ（`window` は窓ごとの番号）の、帯の代わりの部品の名前。
+/// 別ウィンドウ（`window` はウィンドウごとの番号）の、帯の代わりの部品の名前。
 pub fn drag_id(window: u64) -> Id {
     Id::new((DRAG_ID, window))
 }
@@ -204,7 +204,7 @@ pub fn drag_zone_with(ui: &mut Ui, zone: Rect, id: Id) -> Response {
     ui.interact(zone, id, Sense::click_and_drag())
 }
 
-/// 帯の何も無い所の操作が窓へ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
+/// 帯の何も無い所の操作がウィンドウへ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
 /// Live Link の印など、自分の押しを持つ部品の矩形）の上で押したものは、帯の操作にしない。
 pub fn drag_commands(
     response: &Response,
@@ -226,9 +226,9 @@ pub fn drag_commands(
     }
 }
 
-// ───────── 窓の縁 ─────────
+// ───────── ウィンドウの縁 ─────────
 
-/// 窓の縁（`window` の内側 `EDGE`）の位置 `at` が指す、大きさを変える向き。角は `CORNER` まで 2 方向。縁でなければ None。
+/// ウィンドウの縁（`window` の内側 `EDGE`）の位置 `at` が指す、大きさを変える向き。角は `CORNER` まで 2 方向。縁でなければ None。
 pub fn resize_direction(window: Rect, at: Pos2) -> Option<ResizeDirection> {
     if !window.contains(at) {
         return None;
@@ -303,7 +303,7 @@ fn control_under_pointer(ctx: &Context, direction: ResizeDirection, own: &[Id]) 
     })
 }
 
-/// 浮かせた窓・メニューなど、帯とパネルの上にある層が `at` を覆っているか。
+/// 浮かせたウィンドウ・メニューなど、帯とパネルの上にあるレイヤーが `at` を覆っているか。
 fn covered(ctx: &Context, at: Pos2) -> bool {
     ctx.layer_id_at(at)
         .is_some_and(|layer| layer.order != Order::Background)
@@ -322,7 +322,7 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
     edges_with(ctx, busy, press_rects, &[])
 }
 
-/// `edges` に、縁の押しを譲らない自分の部品（別ウィンドウの帯の代わりの部品と閉じる）を足したもの。`ctx` の窓（viewport）の縁を見る。
+/// `edges` に、縁の押しを譲らない自分の部品（別ウィンドウの帯の代わりの部品と閉じる）を足したもの。`ctx` のウィンドウ（viewport）の縁を見る。
 pub fn edges_with(
     ctx: &Context,
     busy: bool,

@@ -1426,7 +1426,7 @@ pub(crate) fn load_resources(
                         number(&info, "width", 1, 8192)? == d.width() as i64
                             && number(&info, "height", 1, 8192)? == d.height() as i64
                             && number(&info, "layers", 1, 2048)? == d.layer_count() as i64,
-                        "スマートリソースの寸法・層数が一致しません",
+                        "スマートリソースの寸法・レイヤー数が一致しません",
                     )?;
                     validate_smart(&info, &d)?;
                     load_resources(&a.files, budget, depth + 1, notes)?;
@@ -1736,7 +1736,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
                 && d.field("layers[0].has_mask") == Some(&NativeValue::Bool(true))
                 && d.field("layers[0].filters.count")
                     .is_none_or(|v| *v == NativeValue::Int(0)),
-            "スマートマスクは値を持たない塗りつぶし1層とマスクが必要です",
+            "スマートマスクは値を持たない塗りつぶし 1 レイヤーとマスクが必要です",
         )?;
     }
     let mut enabled = HashSet::new();

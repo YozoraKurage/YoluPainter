@@ -1,5 +1,5 @@
 //! クリッピングのボタン（レイヤーの欄の下の帯。CLIP STUDIO と同じ「下のレイヤーでクリッピング」の切り替え）: 押すと 1 回の Undo で入り切りし、
-//! 押している状態が分かり、押せない層（一番下・グループの中で下が無い）は理由つきで無効、プロパティのレイヤーの欄にクリッピングの項目は無い。
+//! 押している状態が分かり、押せないレイヤー（一番下・グループの中で下が無い）は理由つきで無効、プロパティのレイヤーの欄にクリッピングの項目は無い。
 use crate::common;
 
 use common::*;
@@ -94,12 +94,12 @@ fn the_bottom_layer_of_a_group_cannot_be_clipped_but_the_one_above_it_can() {
     h.run();
     let group = h.state().state.selected_layer.unwrap();
     assert_ne!(group, a);
-    // グループの中の 1 枚: 下に兄弟が無いので無効（グループの外の下の層には付けられない）
+    // グループの中の 1 枚: 下に兄弟が無いので無効（グループの外の下のレイヤーには付けられない）
     h.state_mut().state.selected_layer = Some(a);
     h.run();
     let tip = format!("{}（グループの中で一番下のレイヤーです）", name());
     assert!(is_disabled(&h, &tip));
-    // 兄弟を足すと、その上の層は有効
+    // 兄弟を足すと、その上のレイヤーは有効
     h.state_mut().state.apply(Action::NewLayer);
     h.run();
     let b = h.state().state.selected_layer.unwrap();

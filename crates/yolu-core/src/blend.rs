@@ -1,8 +1,8 @@
-//! 画素の合成の式: source-over と合成モード・クリッピング・調整の層の混ぜ・通過のグループのフェード。
+//! 画素の合成の式: source-over と合成モード・クリッピング・調整レイヤーの混ぜ・通過のグループのフェード。
 //!
 //! 保存したままの RGB の空間で、W3C の source-over（部分的なアルファの項を含む）に、分離できるモードは Photoshop の式
 //! （ソフトライトも Photoshop のもの）、色相・彩度・カラー・輝度は W3C の非分離の式（輝度 0.3/0.59/0.11）を使う。
-//! 計算は f32 で、結果は層ごとに RGBA8 へ丸める。式は 1 つ（[`lanes`] と行の核の `*_block`）で、画素ごとの関数（[`blend`] など）・
+//! 計算は f32 で、結果はレイヤーごとに RGBA8 へ丸める。式は 1 つ（[`lanes`] と行の核の `*_block`）で、画素ごとの関数（[`blend`] など）・
 //! 行の核（[`blend_row`] など）のスカラー・SSE4.1・AVX2 の道のどれも同じ関数を通るので、道とスレッド数によらず同じバイトになる
 //! （演算は IEEE の四則・平方根・floor・比較・選択だけ。積和の命令は使わない）。
 //!
@@ -39,14 +39,14 @@ pub fn blend(destination: Rgba8, source: Rgba8, opacity: f64, mode: BlendMode) -
     rows::blend_pixel(destination, source, opacity, mode)
 }
 
-/// クリッピングされた層の色をクリッピングの下地へ重ねる。下地のアルファはそのまま（下地の外へは描かない）。
+/// クリッピングされたレイヤーの色をクリッピングの下地へ重ねる。下地のアルファはそのまま（下地の外へは描かない）。
 #[inline]
 pub fn clip_onto(group: Rgba8, clipped: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
     rows::clip_pixel(group, clipped, amount, mode)
 }
 
 /// below + (B(below, over) − below) × amount を成分ごとに 1 回で丸める。アルファは below のもの。量が 0 以下・below が
-/// 完全に透明なら below のまま（調整の層の合成）。
+/// 完全に透明なら below のまま（調整レイヤーの合成）。
 #[inline]
 pub fn mix_rgb(below: Rgba8, over: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
     rows::mix_pixel(below, over, amount, mode)
@@ -253,13 +253,13 @@ mod tests {
             assert_eq!(BlendMode::from_index(value), Some(mode), "{name}");
             assert_eq!(BlendMode::from_name(name), Some(mode), "{name}");
         }
-        // 個数: 層に付けられる 26 と、グループだけの PassThrough。その先の番号は無い
+        // 個数: レイヤーに付けられる 26 と、グループだけの PassThrough。その先の番号は無い
         assert_eq!(stored.len(), 27);
         assert_eq!(BlendMode::LAYER_MODES.len(), 26);
         assert_eq!(
             BlendMode::LAYER_MODES.to_vec(),
             stored[..26].iter().map(|s| s.0).collect::<Vec<_>>(),
-            "層のモードは番号の順"
+            "レイヤーのモードは番号の順"
         );
         assert!(BlendMode::LAYER_MODES.iter().all(|m| *m != PassThrough));
         for value in 27..=255u8 {

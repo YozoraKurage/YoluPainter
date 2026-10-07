@@ -344,7 +344,7 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     s2.recovery.enable(root, settings()).unwrap();
     assert!(
         s2.recovery.window.is_some(),
-        "落ちた体の起動は復旧の窓を出す"
+        "落ちた体の起動は復旧のウィンドウを出す"
     );
     s2.recovery_apply(RecoveryAction::Open);
     assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
@@ -467,7 +467,7 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn a_read_only_set_says_why_its_look_cannot_be_read() {
-    // 最初のセットの正本を core で扱えない中身（反転の調整の層が使わない値 gamma を既定から変えたもの）にして読むだけで開かせ、
+    // 最初のセットの正本を core で扱えない中身（反転の調整レイヤーが使わない値 gamma を既定から変えたもの）にして読むだけで開かせ、
     // そのセットに読めない look.json を持たせる
     let dir = Dir::new("readonly");
     let path = dir.0.join("rich.ylp");

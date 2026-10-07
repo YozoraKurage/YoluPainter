@@ -1,6 +1,6 @@
 //! ランプの欄（`panels::ramp_rows`。グラデーションマップと塗りつぶしのグラデーションが共通で使う）: 混色・グラデーションセット・分岐点の編集・
-//! 分岐点の色の窓（`panels::color_window`）・メインとサブに付いていく色・スポイトの色・混合率曲線・値のカーブ・無効・日英・説明を置かないこと・画像。
-//! 欄だけを並べた見本の窓（左に色の窓の入る余白）で確かめる。アプリの中でのつなぎ（層・段の選び・1 回の Undo）は `color_adjust_app.rs`・`fillfx*.rs`。
+//! 分岐点の色のウィンドウ（`panels::color_window`）・メインとサブに付いていく色・スポイトの色・混合率曲線・値のカーブ・無効・日英・説明を置かないこと・画像。
+//! 欄だけを並べた見本のウィンドウ（左に色のウィンドウの入る余白）で確かめる。アプリの中でのつなぎ（レイヤー・段の選び・1 回の Undo）は `color_adjust_app.rs`・`fillfx*.rs`。
 use crate::common;
 
 use egui::{pos2, vec2, Key, Pos2, Rect, Ui};
@@ -21,7 +21,7 @@ use yolu_core::generator::{ColorStop, LuminanceCorrection, MixMode, OpacityStop,
 use yolu_core::Rgba8;
 
 const WIDTH: f32 = 320.0;
-/// 欄の左の余白（色の窓は欄の左に入る）。
+/// 欄の左の余白（色のウィンドウは欄の左に入る）。
 const LEFT: f32 = 230.0;
 const KEY: (&str, u128) = ("test", 7);
 const ROWS_WIDTH: f32 = WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT;
@@ -41,11 +41,11 @@ struct Panel {
     changes: Vec<Change>,
     height: f32,
     width: f32,
-    /// false の間は欄を描かない（別の層を選んでいる間）。
+    /// false の間は欄を描かない（別のレイヤーを選んでいる間）。
     shown: bool,
-    /// 色の窓の「今のカラーセット」。
+    /// 色のウィンドウの「今のカラーセット」。
     palette: Palette,
-    /// 色の窓が開いているか・その場所（描いたあとに読む）。
+    /// 色のウィンドウが開いているか・その場所（描いたあとに読む）。
     popup_open: bool,
     popup: Option<Rect>,
     selected: Selection,
@@ -64,7 +64,7 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
     } else {
         ui.ctx().request_repaint();
     }
-    // 色の窓はフレームの終わりに描く（アプリと同じ）
+    // 色のウィンドウはフレームの終わりに描く（アプリと同じ）
     let failure = color_window::show(
         ui.ctx(),
         &Sources {
@@ -108,7 +108,7 @@ fn rows_in(ui: &mut Ui, p: &mut Panel) {
     p.selected = ramp_rows::selected(ui, KEY);
 }
 
-/// 色の窓の「今のカラーセット」（試験用の 3 色）。
+/// 色のウィンドウの「今のカラーセット」（試験用の 3 色）。
 fn palette() -> Palette {
     Palette {
         name: "Test".into(),
@@ -690,9 +690,9 @@ fn removing_a_stop_keeps_two_and_the_position_field_moves_the_selected_stop() {
     assert_eq!(h.state().changes.len(), n);
 }
 
-// ───────── 分岐点の色の窓 ─────────
+// ───────── 分岐点の色のウィンドウ ─────────
 
-/// 色の窓の見出しの帯の、つかめる所（閉じるボタンの左）。
+/// 色のウィンドウの見出しの帯の、つかめる所（閉じるボタンの左）。
 fn window_title(window: Rect) -> Pos2 {
     pos2(window.left() + 60.0, window.top() + 12.0)
 }
@@ -703,14 +703,14 @@ fn double_clicking_a_stop_opens_the_colour_window_beside_the_panel_and_the_wheel
     let mut h = panel(three());
     assert!(!h.state().popup_open);
     double_click_stop(&mut h, 0.5);
-    assert!(h.state().popup_open, "ダブルクリックで色の窓が出る");
+    assert!(h.state().popup_open, "ダブルクリックで色のウィンドウが出る");
     assert_eq!(h.state().selected.index, 1);
     let ctx = h.ctx.clone();
     assert!(
         color_window::is_target(&ctx, ramp_rows::stop_target(KEY, 1)),
         "相手は分岐点 1"
     );
-    let window = h.state().popup.expect("窓の場所");
+    let window = h.state().popup.expect("ウィンドウの場所");
     assert!(
         window.right() <= LEFT,
         "欄の左に出る（欄を隠さない）: {window:?}"
@@ -763,7 +763,7 @@ fn escape_puts_the_colour_back_and_closes_the_window_and_a_click_outside_keeps_i
     assert_eq!(colour_of(&h, 1), original, "Esc で戻る");
     assert!(last(&h).discrete);
     assert!(!h.state().popup_open);
-    // もう 1 度開いて、色を変えてから外（欄の何も無い所と、窓の外の余白）を押す: 閉じず、今の色のまま
+    // もう 1 度開いて、色を変えてから外（欄の何も無い所と、ウィンドウの外の余白）を押す: 閉じず、今の色のまま
     double_click_stop(&mut h, 0.5);
     let window = h.state().popup.unwrap();
     let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(window));
@@ -790,10 +790,10 @@ fn the_window_follows_the_selected_stop_and_escape_restores_only_that_stop() {
     click_at(&mut h, sq.center());
     let changed = colour_of(&h, 1);
     let before = colour_of(&h, 2);
-    // 別の分岐点を選ぶ（矢印）と、窓はそのままで相手が替わる
+    // 別の分岐点を選ぶ（矢印）と、ウィンドウはそのままで相手が替わる
     click_label(&mut h, ">");
     assert!(h.state().popup_open);
-    assert_eq!(h.state().popup, Some(window), "窓は動かない");
+    assert_eq!(h.state().popup, Some(window), "ウィンドウは動かない");
     let ctx = h.ctx.clone();
     assert!(color_window::is_target(
         &ctx,
@@ -892,7 +892,7 @@ fn hex_paint_colour_and_set_colour_each_make_one_change_and_leave_the_paint_colo
     click_at(&mut h, green.center());
     assert_eq!(colour_of(&h, 1), (0, 255, 0));
     assert!(last(&h).discrete);
-    // 描画色は窓では変わらない
+    // 描画色はウィンドウでは変わらない
     assert_eq!(h.state().main, [0.9, 0.2, 0.1, 1.0]);
     assert!(h.state().popup_open);
 }
@@ -901,13 +901,13 @@ fn hex_paint_colour_and_set_colour_each_make_one_change_and_leave_the_paint_colo
 fn the_window_follows_a_colour_changed_from_outside() {
     let mut h = panel(three());
     double_click_stop(&mut h, 0.5);
-    // スポイトの色（外からの変更）が分岐点に入ると、窓の 16 進もその色になる。Esc は開いたときの色へ戻す
+    // スポイトの色（外からの変更）が分岐点に入ると、ウィンドウの 16 進もその色になる。Esc は開いたときの色へ戻す
     h.state_mut().eyedrop.ramp_stop_pick = Some([12, 200, 99]);
     h.run();
     assert_eq!(colour_of(&h, 1), (12, 200, 99));
     assert!(
         has(&h, "#0CC863"),
-        "窓の 16 進が外の色に合う: {:?}",
+        "ウィンドウの 16 進が外の色に合う: {:?}",
         shown_texts(&h)
     );
     h.key_press(Key::Escape);
@@ -1323,7 +1323,7 @@ fn a_picker_left_open_while_the_panel_was_not_shown_does_not_come_back() {
     let mut h = panel(three());
     double_click_stop(&mut h, 0.5);
     assert!(h.state().popup_open);
-    // 別の層を選んでいる間（この欄が描かれない）
+    // 別のレイヤーを選んでいる間（この欄が描かれない）
     h.state_mut().shown = false;
     h.run_steps(10);
     h.state_mut().shown = true;

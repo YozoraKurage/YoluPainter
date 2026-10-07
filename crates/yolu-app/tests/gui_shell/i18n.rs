@@ -55,7 +55,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                 state.apply(Action::ToggleSetVisible(uid));
             }
             state.sets.get_mut(0).unwrap().name = "Sample".into();
-            // 同梱の素材は行がパネルの下からはみ出して（スクロールで見る）、途中で切れた文字になるので、別の試験で背の高い窓に出す
+            // 同梱の素材は行がパネルの下からはみ出して（スクロールで見る）、途中で切れた文字になるので、別の試験で背の高いウィンドウに出す
             state.shelf.show_builtin = false;
             let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
@@ -92,7 +92,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                 0 => "#000000",
                 1 => "Sample",
                 // 空の棚は、空の状態の文字を置かない（上の操作の名前だけ）
-                _ => lang.pick("層を保存", "Save Layer"),
+                _ => lang.pick("レイヤーを保存", "Save Layer"),
             };
             assert!(labels.iter().any(|s| s.contains(expected)), "{labels:?}");
             if panel == 0 {
@@ -534,7 +534,7 @@ fn link_status_and_reasons_follow_the_language() {
 
 // ───────── 英語の画面に日本語が残っていない ─────────
 
-/// 英語で作った窓の全体（最初のレイヤー・テクスチャセット・プロジェクトの名前も英語）。
+/// 英語で作ったウィンドウの全体（最初のレイヤー・テクスチャセット・プロジェクトの名前も英語）。
 fn english_app() -> Harness<'static, YoluApp> {
     english_app_sized(1280.0, 800.0, Lang::En)
 }
@@ -586,7 +586,7 @@ fn japanese_left(h: &Harness<'_, YoluApp>, data: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// 矩形の中に収まっている文字だけ（窓の中身。順は描いた順）。
+/// 矩形の中に収まっている文字だけ（ウィンドウの中身。順は描いた順）。
 fn texts_inside(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
     fn walk(shape: &Shape, area: Rect, out: &mut Vec<String>) {
         match shape {
@@ -680,7 +680,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
-    // 層の種類・マスク・合成モード・ブラシの種類ごとのプロパティ
+    // レイヤーの種類・マスク・合成モード・ブラシの種類ごとのプロパティ
     let apply = |h: &mut Harness<'_, YoluApp>, action: Action| {
         h.state_mut().state.apply(action);
         h.run();
@@ -702,7 +702,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     assert_english(&h, "mask", &[]);
     apply(&mut h, Action::M2Ui(UiOp::EditMask(false)));
     apply(&mut h, Action::SetBlend(id, BlendMode::Multiply));
-    // ブラシの詳細の窓: 全カテゴリ・効果の種類・デュアルブラシ
+    // ブラシの詳細のウィンドウ: 全カテゴリ・効果の種類・デュアルブラシ
     h.state_mut().state.brushes.ui.detail.open = true;
     for category in Category::ALL {
         h.state_mut().state.brushes.ui.detail.category = category;
@@ -817,7 +817,7 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
         .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(names(&h), ("Work".into(), "Mine".into(), "Layer 1".into()));
-    // 編集した文書の層は、既定の名前のままでも変えない（Undo の履歴とずれる）
+    // 編集した文書のレイヤーは、既定の名前のままでも変えない（Undo の履歴とずれる）
     h.state_mut().state.apply(Action::M2(Edit::NewGroup));
     h.state_mut()
         .state
@@ -937,7 +937,7 @@ fn unwritable_settings_report_once_and_do_not_break_the_app_gpu() {
         h.run();
         h.run();
         assert_eq!(h.state().state.message, "");
-        // 窓の操作はそのまま動く
+        // ウィンドウの操作はそのまま動く
         h.state_mut().state.apply(Action::NewProject);
         assert_eq!(h.state().state.message, "New project created.");
     });
@@ -1204,14 +1204,14 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
         click(&mut h, at);
         assert!(h.state().state.prefs.open, "{lang:?}");
         h.run();
-        // 窓は画面の中にある
-        let rect = prefs::last_rect(&h.ctx).expect("窓を描いた");
+        // ウィンドウは画面の中にある
+        let rect = prefs::last_rect(&h.ctx).expect("ウィンドウを描いた");
         assert!(
             Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0)).contains_rect(rect),
             "{rect:?}"
         );
         // 退避の欄の文字は、欄の名前・チェックの名前・値だけ（説明文・注記・開発用の数を置かない。閉じるは絵とツールチップ）。
-        // 値は、画面に出している数（すべて残す間は、最後に選んだ数）。窓には、ほかの設定の欄もある
+        // 値は、画面に出している数（すべて残す間は、最後に選んだ数）。ウィンドウには、ほかの設定の欄もある
         let only = |h: &Harness<'_, YoluApp>, value: &str, what: &str| {
             let shown = texts_inside(h, rect);
             for want in [title, label, keep_all, value] {
@@ -1276,7 +1276,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             BackupKeep::Count(0),
             "{lang:?}: 最後に選んだ数に戻る"
         );
-        // 閉じるボタンで閉じる。窓の文字は画面から消える
+        // 閉じるボタンで閉じる。ウィンドウの文字は画面から消える
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
         assert!(!h.state().state.prefs.open);
@@ -1603,7 +1603,7 @@ fn english_texture_set_states_have_no_japanese_gpu() {
     assert_english(&h, "read-only set", &[]);
 }
 
-/// 窓の中の代表の状態を順に出して、そのつど `visit` に見せる（初めの画面・全部のタブ・試しのモデル・ポーズのパネル・メニュー）。
+/// ウィンドウの中の代表の状態を順に出して、そのつど `visit` に見せる（初めの画面・全部のタブ・試しのモデル・ポーズのパネル・メニュー）。
 fn walk_states(
     lang: Lang,
     width: f32,
@@ -1626,7 +1626,7 @@ fn walk_states(
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
-    // ブラシの一覧（全グループ）と詳細の窓（全カテゴリ）
+    // ブラシの一覧（全グループ）と詳細のウィンドウ（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
         h.state_mut().state.show_brush_group(group);
@@ -1752,7 +1752,7 @@ fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages() {
 
 fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages_gpu() {
     let truncations = Truncations::start();
-    // 既定の窓（main.rs の with_inner_size）と、ふつうのノート PC の大きさ
+    // 既定のウィンドウ（main.rs の with_inner_size）と、ふつうのノート PC の大きさ
     for (width, height) in [(1600.0, 960.0), (1280.0, 800.0)] {
         for lang in Lang::ALL {
             walk_states(lang, width, height, |h, what| {
@@ -1771,7 +1771,7 @@ fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages_gpu() 
     }
 }
 
-/// 窓の最小の大きさ（main.rs の with_min_inner_size）。ドックが狭く、日英どちらでも詰まる箱の値がある（チャンネルの名前・
+/// ウィンドウの最小の大きさ（main.rs の with_min_inner_size）。ドックが狭く、日英どちらでも詰まる箱の値がある（チャンネルの名前・
 /// プリセットなど。言語に依らない配置の積み残し）。`KNOWN` が詰まる文字の全部で、増えれば落ち、直せば一覧から消す。
 #[test]
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {

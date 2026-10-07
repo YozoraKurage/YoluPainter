@@ -45,7 +45,7 @@ struct Scene {
     name: &'static str,
     meshes: Vec<ModelMesh>,
     camera: OrbitCamera,
-    /// 文書を作る（層・チャンネル）。
+    /// 文書を作る（レイヤー・チャンネル）。
     paint: fn(&mut Document),
     look: fn(&Document) -> MaterialLook,
     /// Unity に渡すテクスチャ（スロット名 → 中身）。
@@ -1606,8 +1606,8 @@ fn camera_rotation(c: &OrbitCamera) -> Quat {
     c.rotation()
 }
 
-/// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだ窓も）。`view` を渡すと、3D の表示域がその大きさに
-/// なるように窓の大きさを合わせる（Unity の絵と同じ投影にする。窓の中の欄の幅が変わっても同じ場面になるように）。
+/// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだウィンドウも）。`view` を渡すと、3D の表示域がその大きさに
+/// なるようにウィンドウの大きさを合わせる（Unity の絵と同じ投影にする。ウィンドウの中の欄の幅が変わっても同じ場面になるように）。
 fn render(
     scene: &Scene,
     view: Option<(u32, u32)>,

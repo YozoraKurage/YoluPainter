@@ -1,5 +1,5 @@
 //! 外からの操作（MCP のクライアント・コマンドライン）を受ける、起動中のアプリの側（`mcp_server`・`ops_host`）。画面は描かず、アプリを
-//! 窓の無いフレーム（`tick_hidden`）で回し、本物の HTTP の受け口（127.0.0.1。番号は 0 にして OS に空いた番号を選ばせる）へ、
+//! ウィンドウの無いフレーム（`tick_hidden`）で回し、本物の HTTP の受け口（127.0.0.1。番号は 0 にして OS に空いた番号を選ばせる）へ、
 //! 本物の HTTP の客（`yolu_mcp::client`・コマンドラインの `yolu_cli::live`）でつなぐ。
 //!
 //! - 設定の入切で待ち受ける・やめる。番号が使われていれば理由を出し、毎フレームは試さない。Host・Origin が違えば断る。
@@ -26,7 +26,7 @@ use yolu_cli::live::LiveConfig;
 use yolu_ops::reply::{Reply, SetState};
 use yolu_ops::{parse_command, ErrorCode, FileHost, OpError, OpHost, PathPolicy};
 
-/// 窓の無いアプリ（フレームは `tick_hidden`）。
+/// ウィンドウの無いアプリ（フレームは `tick_hidden`）。
 struct Live {
     ctx: egui::Context,
     app: YoluApp,
@@ -438,7 +438,7 @@ fn deleting_a_selected_layer_keeps_the_screens_selection_valid() {
     let selected = live.app.state.selected_layer.expect("選び直される");
     assert!(
         live.app.state.doc.layer(selected).is_some(),
-        "消した層を選んだままにしない"
+        "消したレイヤーを選んだままにしない"
     );
 }
 
@@ -645,7 +645,7 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     live.app.state.apply(Action::SaveProjectAs(file.clone()));
     live.app.state.wait_save();
     live.frame();
-    live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "保存する層"}}));
+    live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "保存するレイヤー"}}));
     let e = live.err(json!({"command": "save"}));
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
     // 保存の仕事を止めておき、返事が保存の終わりまで来ないこと・その間の編集と保存が断られることを見る
@@ -684,7 +684,7 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
-    assert!(names.iter().any(|n| n == "保存する層"), "{names:?}");
+    assert!(names.iter().any(|n| n == "保存するレイヤー"), "{names:?}");
     assert_eq!(live.app.state.message, "外からの操作: 保存");
     live.app.state.message.clear();
     let Reply::Saved(again) = live.ok(json!({"command": "save", "args": {"confirm": true}})) else {

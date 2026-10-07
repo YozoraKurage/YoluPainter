@@ -18,7 +18,7 @@ impl Document {
     pub fn id_colors(&self) -> &crate::mesh_maps::IdColorAssignments {
         &self.id_colors
     }
-    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする（`coalesce` なら、間に何も無い手動 ID 色の変更へまとめる。色の窓のドラッグ。
+    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする（`coalesce` なら、間に何も無い手動 ID 色の変更へまとめる。色のウィンドウのドラッグ。
     /// まとめは `end_coalescing` まで。戻すと最初の変更の前へ）。同じ値なら何もしない。
     pub fn set_id_colors(
         &mut self,
@@ -347,7 +347,7 @@ impl Document {
         }
         for (c, had) in std::mem::take(&mut self.material.enabled).into_iter().rev() {
             self.switch_channel_enabled(layer, c, true, had, true)
-                .expect("進行中の層");
+                .expect("進行中のレイヤー");
         }
         self.material.started = false;
         self.revision += 1;

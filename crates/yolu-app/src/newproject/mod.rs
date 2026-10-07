@@ -1,15 +1,15 @@
-//! 新規プロジェクトの窓（Ctrl+N）と、プロジェクトの構成（ファイル ▸ プロジェクト設定）。Unity 版の `NewProjectWindow` と同じ 1 つの窓で、
+//! 新規プロジェクトのウィンドウ（Ctrl+N）と、プロジェクトの構成（ファイル ▸ プロジェクト設定）。Unity 版の `NewProjectWindow` と同じ 1 つのウィンドウで、
 //! 新規では「テンプレート・モデル・どのマテリアルをテクスチャセットにするか・解像度・法線の形式・作った後のメッシュマップのベイク」を、
 //! 構成では今のプロジェクトを直す（セットの追加・削除・名前・マテリアル・大きさ、モデルの差し替えと読み直し、法線の形式）。
 //!
-//! - モデル（FBX）は別のスレッドで読む（取消と「もう一度」つき）。読み終えたモデルは窓が持ち、決めたとき 3D ビューにそのまま入れる
-//!   （2 回読まない）。窓を閉じれば捨てる。元のファイルは読むだけで、書き換えない。
+//! - モデル（FBX）は別のスレッドで読む（取消と「もう一度」つき）。読み終えたモデルはウィンドウが持ち、決めたとき 3D ビューにそのまま入れる
+//!   （2 回読まない）。ウィンドウを閉じれば捨てる。元のファイルは読むだけで、書き換えない。
 //! - マテリアルの組は `model::SceneModel` の記録から決める（同じマテリアルを使うメッシュは 1 つの組 = 1 つのセット）。セットの
 //!   マテリアルの鍵と、モデルへの照合の順は `sets::match_materials`（識別子 → 未割り当て → 名前 → スロットの番号。.ylp と同じ）。
 //! - 構成の適用は、失敗しうる大きさの変更を先に全セット分準備し（1 つでも断られたら何も変えない）、そのあと失敗しない
 //!   モデルとセットの入れ替えをする。消すセット・大きさを変えるセット・モデルの差し替えは、適用の前に一覧で確かめる（取り消せない）。
 //! - 開いているプロジェクトのモデルのファイルは `NpState::model_file` に持ち、保存で .ylp の view.json に残して（`reopen`）、開くと
-//!   読み直す。Live Link のモデル（Unity のシーンのもの）は同じ照合で結び付くだけで、ここでは替えない（新規の窓は、モデルを選んでいなければ、
+//!   読み直す。Live Link のモデル（Unity のシーンのもの）は同じ照合で結び付くだけで、ここでは替えない（新規のウィンドウは、モデルを選んでいなければ、
 //!   そのマテリアルの組を出して、選んだ分のセットを作る）。
 //!
 //! 画面に説明文は置かない: 名前・状態・短い理由だけで、説明はツールチップ。
@@ -44,7 +44,7 @@ pub const MAX_NAME: usize = 256;
 /// 新規プロジェクトの解像度の初めの値。
 pub const DEFAULT_RESOLUTION: u32 = 2048;
 
-/// 新規プロジェクトの始め方（最初の層で使うチャンネル。Unity 版の `ProjectTemplate` と同じ並び）。
+/// 新規プロジェクトの始め方（最初のレイヤーで使うチャンネル。Unity 版の `ProjectTemplate` と同じ並び）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Template {
     #[default]
@@ -56,7 +56,7 @@ pub enum Template {
 impl Template {
     pub const ALL: [Template; 3] = [Template::Pbr, Template::LilToon, Template::ColorOnly];
 
-    /// 最初の層で有効にするチャンネル（列挙の順）。
+    /// 最初のレイヤーで有効にするチャンネル（列挙の順）。
     pub fn channels(self) -> &'static [Channel] {
         match self {
             Template::Pbr => &[
@@ -171,12 +171,12 @@ fn default_chosen(count: usize) -> Vec<usize> {
     (0..count.min(MAX_SETS)).collect()
 }
 
-/// 窓で編むテクスチャセット 1 つ（`uid` が None なら足すセット）。
+/// ウィンドウで編むテクスチャセット 1 つ（`uid` が None なら足すセット）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetDraft {
     pub uid: Option<u32>,
     pub name: String,
-    /// 描くマテリアル: 窓が見せるマテリアルの組の番号。None は今のモデルに無い（鍵のまま）。
+    /// 描くマテリアル: ウィンドウが見せるマテリアルの組の番号。None は今のモデルに無い（鍵のまま）。
     pub material: Option<usize>,
     /// セットのマテリアルの鍵（足すセットは選んだ組の鍵）。モデルを替えたとき、これで新しいモデルへ付け直す。
     pub key: MaterialRef,
@@ -194,7 +194,7 @@ impl SetDraft {
     }
 }
 
-/// 窓のモデルの読み込みの様子。
+/// ウィンドウのモデルの読み込みの様子。
 pub enum Prep {
     /// 読んでいない（モデルを決めていない）。
     Idle,
@@ -218,7 +218,7 @@ pub enum Prep {
     },
 }
 
-/// 窓の中で開いているドロップダウン。
+/// ウィンドウの中で開いているドロップダウン。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dropdown {
     Template,
@@ -230,7 +230,7 @@ pub enum Dropdown {
     DraftMaterial(usize),
 }
 
-/// 新規プロジェクト・プロジェクトの構成の窓の状態。
+/// 新規プロジェクト・プロジェクトの構成のウィンドウの状態。
 pub struct NpWindow {
     /// false なら新規プロジェクト。
     pub configure: bool,
@@ -242,7 +242,7 @@ pub struct NpWindow {
     // 共通
     pub resolution: u32,
     pub normal: NormalYDirection,
-    /// 窓を開いたときの法線の形式（構成。セットごとに持てるので、利用者が `normal` を変えたときだけ全セットへ当てる）。
+    /// ウィンドウを開いたときの法線の形式（構成。セットごとに持てるので、利用者が `normal` を変えたときだけ全セットへ当てる）。
     pub normal_opened: NormalYDirection,
     // モデル: 新規は選んだモデル。構成は替える・読み直すモデル（None なら今のまま）
     pub model: Option<PathBuf>,
@@ -251,10 +251,10 @@ pub struct NpWindow {
     pub reload: bool,
     // 構成
     pub drafts: Vec<SetDraft>,
-    /// 窓を開いたときのセットの並び（uid）。窓の外でセットが増減したら（Live Link のモデルが来たなど）、下書きが古いので窓を閉じる。
+    /// ウィンドウを開いたときのセットの並び（uid）。ウィンドウの外でセットが増減したら（Live Link のモデルが来たなど）、下書きが古いのでウィンドウを閉じる。
     pub sets_seen: Vec<u32>,
     pub resampling: Option<CanvasResampling>,
-    /// 適用の前の確かめ（あれば一覧の窓を出す）。
+    /// 適用の前の確かめ（あれば一覧のウィンドウを出す）。
     pub confirm: Option<Plan>,
     /// 決められない理由（下の帯の左に出す）。
     pub error: Option<String>,
@@ -290,7 +290,7 @@ impl NpWindow {
         }
     }
 
-    /// 窓が参照する今のモデル（読み終えたモデルの代わりに、窓の外のモデルを見せるとき）: 構成では今のモデル、新規ではモデルを選んで
+    /// ウィンドウが参照する今のモデル（読み終えたモデルの代わりに、ウィンドウの外のモデルを見せるとき）: 構成では今のモデル、新規ではモデルを選んで
     /// いないときの Live Link のモデル（Unity のシーンのもの。ここでは替えないが、そのマテリアルにセットを作れる）。
     fn app_model<'a>(&self, app: &'a AppState) -> Option<&'a SceneModel> {
         if self.configure {
@@ -302,7 +302,7 @@ impl NpWindow {
         }
     }
 
-    /// 窓が見せるマテリアルの組: 読み終えたモデルがあればそれ。なければ構成では今のモデル、新規では Live Link のモデル（選んでいなければ）。
+    /// ウィンドウが見せるマテリアルの組: 読み終えたモデルがあればそれ。なければ構成では今のモデル、新規では Live Link のモデル（選んでいなければ）。
     pub fn groups(&self, app: &AppState) -> Vec<Group> {
         match &self.prep {
             Prep::Ready { scene, .. } => groups_of(scene),
@@ -350,7 +350,7 @@ impl NpWindow {
         }
     }
 
-    /// 窓が読んでいる・読んだ・読めなかったモデルのファイル。
+    /// ウィンドウが読んでいる・読んだ・読めなかったモデルのファイル。
     pub fn model_path(&self) -> Option<&Path> {
         match &self.prep {
             Prep::Loading { path, .. }
@@ -371,7 +371,7 @@ impl NpWindow {
         self.model.is_none() || matches!(self.prep, Prep::Ready { .. })
     }
 
-    /// 構成: セットの下書きのマテリアルを、窓が見せるマテリアルの組に鍵で照合し直す（モデルを替えた・戻したとき）。
+    /// 構成: セットの下書きのマテリアルを、ウィンドウが見せるマテリアルの組に鍵で照合し直す（モデルを替えた・戻したとき）。
     fn rematch_drafts(&mut self, app: &AppState) {
         let groups = self.groups(app);
         let slots = self.slots(app);
@@ -383,7 +383,7 @@ impl NpWindow {
         self.error = None;
     }
 
-    /// 窓に落とした・選んだモデルを読み始める（前の読み込みは取り消す）。
+    /// ウィンドウに落とした・選んだモデルを読み始める（前の読み込みは取り消す）。
     fn start_loading(&mut self, app: &mut AppState, path: PathBuf) {
         if let Prep::Loading { job, .. } = &self.prep {
             job.cancel();
@@ -407,12 +407,12 @@ impl NpWindow {
 
 impl Drop for NpWindow {
     fn drop(&mut self) {
-        // 窓を閉じたら、読んでいる途中のモデルは止める（結果は捨てる）
+        // ウィンドウを閉じたら、読んでいる途中のモデルは止める（結果は捨てる）
         self.stop_loading();
     }
 }
 
-/// 開いている・保存するプロジェクトのモデルについての、窓の外の状態。
+/// 開いている・保存するプロジェクトのモデルについての、ウィンドウの外の状態。
 #[derive(Default)]
 pub struct NpState {
     pub window: Option<NpWindow>,
@@ -447,18 +447,18 @@ pub enum DraftOp {
     Remove,
 }
 
-/// 新規プロジェクト・プロジェクトの構成の操作（`Action::Project`）。窓の部品・メニュー・ボタンは同じ道を通す。
+/// 新規プロジェクト・プロジェクトの構成の操作（`Action::Project`）。ウィンドウの部品・メニュー・ボタンは同じ道を通す。
 #[derive(Clone, Debug, PartialEq)]
 pub enum NpAction {
-    /// 新規プロジェクトの窓を開く（保存していない変更の確かめは呼ぶ側）。
+    /// 新規プロジェクトのウィンドウを開く（保存していない変更の確かめは呼ぶ側）。
     OpenNew,
-    /// プロジェクトの構成の窓を開く。
+    /// プロジェクトの構成のウィンドウを開く。
     OpenConfigure,
-    /// FBX を開く（3D ビューの「FBX を開く」・窓に落としたファイル）。何も触っていないプロジェクトなら新規プロジェクトの窓に、
-    /// 作業のあるプロジェクトならプロジェクトの構成の窓で、そのモデルに替える。
+    /// FBX を開く（3D ビューの「FBX を開く」・ウィンドウに落としたファイル）。何も触っていないプロジェクトなら新規プロジェクトのウィンドウに、
+    /// 作業のあるプロジェクトならプロジェクトの構成のウィンドウで、そのモデルに替える。
     OpenModel(PathBuf),
     Close,
-    /// 窓のモデルを選ぶ（ファイルの窓の結果）。
+    /// ウィンドウのモデルを選ぶ（ファイルのウィンドウの結果）。
     ChooseModel(PathBuf),
     /// モデルを決めない（新規）／替えるのをやめる（構成）。
     ClearModel,
@@ -478,7 +478,7 @@ pub enum NpAction {
     /// 構成: セットの無いマテリアルの組に、空のセットを 1 つずつ下書きに足す。
     AddUnused,
     Resampling(Option<CanvasResampling>),
-    /// 作る（新規）・適用する（構成。確かめがいるなら一覧の窓が先に出る）。
+    /// 作る（新規）・適用する（構成。確かめがいるなら一覧のウィンドウが先に出る）。
     Submit,
     ConfirmApply,
     ConfirmCancel,
@@ -488,13 +488,13 @@ pub enum NpAction {
     RemoveSets(Vec<u32>),
     ConfirmRemove,
     CancelRemove,
-    /// 窓のモデルを選ぶファイルの窓を頼む（窓は `YoluApp` が開く）。
+    /// ウィンドウのモデルを選ぶファイルのウィンドウを頼む（ウィンドウは `YoluApp` が開く）。
     ChooseDialog,
     /// .ylp を開いたときに読んでいるモデルを取り消す。
     CancelReopen,
 }
 
-/// プロジェクトの構成の窓のモデルの読み込みと、開いたあとのモデルの読み直し（読み直しは札を出す）。構成の窓と、セットを消す確かめは、
+/// プロジェクトの構成のウィンドウのモデルの読み込みと、開いたあとのモデルの読み直し（読み直しは札を出す）。構成のウィンドウと、セットを消す確かめは、
 /// キーの割り当てを止める。読み込みは閉じる前の確かめに入れない（読むだけの仕事。止めるのは FBX の読み込みの行 `view3d::pose::JOB`）。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
@@ -580,7 +580,7 @@ impl AppState {
         }
     }
 
-    /// 窓を開いている間の操作（窓が無ければ何もしない）。
+    /// ウィンドウを開いている間の操作（ウィンドウが無ければ何もしない）。
     fn np_window_action(&mut self, action: NpAction) {
         let Some(mut win) = self.np.window.take() else {
             return;
@@ -591,7 +591,7 @@ impl AppState {
         }
     }
 
-    /// 窓 1 つへの操作。窓を残すなら true（作った・適用した・やめたなら false）。
+    /// ウィンドウ 1 つへの操作。ウィンドウを残すなら true（作った・適用した・やめたなら false）。
     fn np_window_step(&mut self, win: &mut NpWindow, action: NpAction) -> bool {
         match action {
             NpAction::ChooseModel(path) => {
@@ -676,7 +676,7 @@ impl AppState {
             NpAction::ConfirmCancel => win.confirm = None,
             NpAction::ConfirmApply => {
                 // 確かめの一覧が出ていないときの決定は何もしない（出さずに適用しない）。見せた一覧と今の計画が違うとき（確かめの間に
-                // 窓が変わった）は適用せず、今の計画の一覧を出し直す
+                // ウィンドウが変わった）は適用せず、今の計画の一覧を出し直す
                 if let Some(shown) = win.confirm.take() {
                     match configure::plan(self, win) {
                         Ok(now) if now == shown => return self.np_run(win),
@@ -686,7 +686,7 @@ impl AppState {
                 }
             }
             NpAction::Close => return false,
-            // 窓の外の操作はここへ来ない
+            // ウィンドウの外の操作はここへ来ない
             _ => {}
         }
         true
@@ -710,7 +710,7 @@ impl AppState {
         }
     }
 
-    /// 作る・適用する（確かめは済んだ）。うまくいけば窓を閉じ（false）、断られたら理由を窓に出して残す（true）。
+    /// 作る・適用する（確かめは済んだ）。うまくいけばウィンドウを閉じ（false）、断られたら理由をウィンドウに出して残す（true）。
     fn np_run(&mut self, win: &mut NpWindow) -> bool {
         let result = if win.configure {
             configure::apply(self, win)
@@ -741,7 +741,7 @@ impl AppState {
         self.np_open_new_with(model);
     }
 
-    /// 新規プロジェクトの窓を開く。`model` があれば初めのモデルとして読み始める。
+    /// 新規プロジェクトのウィンドウを開く。`model` があれば初めのモデルとして読み始める。
     fn np_open_new_with(&mut self, model: Option<PathBuf>) {
         let mut win = NpWindow::blank(false);
         if let Some(path) = model {
@@ -750,7 +750,7 @@ impl AppState {
         self.np.window = Some(win);
     }
 
-    /// 構成の窓を開く。`model` があればそのモデルに替える下書きで開く。
+    /// 構成のウィンドウを開く。`model` があればそのモデルに替える下書きで開く。
     fn np_open_configure(&mut self, model: Option<PathBuf>) {
         let mut win = NpWindow::blank(true);
         win.normal = self.doc.normal_settings().file_direction();
@@ -777,10 +777,10 @@ impl AppState {
         self.np.window = Some(win);
     }
 
-    /// FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作る窓。作業のあるプロジェクトなら、構成の窓で
-    /// そのモデルに替える下書き（Live Link のモデルが付いているときは、Unity のシーンのモデルを替えないので、新規の窓）。
+    /// FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作るウィンドウ。作業のあるプロジェクトなら、構成のウィンドウで
+    /// そのモデルに替える下書き（Live Link のモデルが付いているときは、Unity のシーンのモデルを替えないので、新規のウィンドウ）。
     fn np_open_model(&mut self, path: PathBuf) {
-        // 窓が開いていれば、その窓のモデルにする
+        // ウィンドウが開いていれば、そのウィンドウのモデルにする
         if self.np.window.is_some() {
             self.np_window_action(NpAction::ChooseModel(path));
             return;
@@ -806,9 +806,9 @@ impl AppState {
                 .any(crate::engine::layer_has_pixels)
     }
 
-    /// 毎フレーム: 窓・.ylp を開いたときのモデルの読み込みの終わりを受ける。
+    /// 毎フレーム: ウィンドウ・.ylp を開いたときのモデルの読み込みの終わりを受ける。
     pub fn poll_newproject(&mut self) {
-        // 構成の窓を開いている間に、窓の外でセットが増減した（Live Link のモデルが来た・開き直した）: 下書きが古いので閉じる
+        // 構成のウィンドウを開いている間に、ウィンドウの外でセットが増減した（Live Link のモデルが来た・開き直した）: 下書きが古いので閉じる
         if self.np.window.as_ref().is_some_and(|w| {
             w.configure
                 && !w
@@ -851,12 +851,12 @@ impl AppState {
         reopen::poll(self);
     }
 
-    /// 窓が裏の仕事（モデルの読み込み）をしているか（描き直しを続ける）。
+    /// ウィンドウが裏の仕事（モデルの読み込み）をしているか（描き直しを続ける）。
     pub fn np_is_busy(&self) -> bool {
         self.np.window.as_ref().is_some_and(NpWindow::is_loading) || self.np.reopening.is_some()
     }
 
-    /// テクスチャセットのパネルの「消す」: 確かめの窓を出す（最後の 1 つは消せない）。
+    /// テクスチャセットのパネルの「消す」: 確認のウィンドウを出す（最後の 1 つは消せない）。
     fn np_ask_remove(&mut self, uids: Vec<u32>) {
         let lang = self.lang;
         let uids: Vec<u32> = uids
@@ -928,7 +928,7 @@ pub fn size_text(size: (u32, u32)) -> String {
     }
 }
 
-/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空の層 1 枚（履歴なし）。
+/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空のレイヤー 1 枚（履歴なし）。
 pub fn new_set_document(
     width: u32,
     height: u32,
@@ -954,7 +954,7 @@ pub fn new_set_document(
     Ok(doc)
 }
 
-/// 文書のどれかの層が使っているチャンネル（番号の順。何も使っていなければ Color）。新しい空のセットが同じチャンネルを使う。
+/// 文書のどれかのレイヤーが使っているチャンネル（番号の順。何も使っていなければ Color）。新しい空のセットが同じチャンネルを使う。
 pub fn used_channels(doc: &Document) -> Vec<Channel> {
     let mut used: Vec<Channel> = doc
         .layers()
@@ -975,7 +975,7 @@ pub(crate) fn unique<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clon
     crate::sets::unique_name(base, taken)
 }
 
-/// 試験用: 窓が開いているか。
+/// 試験用: ウィンドウが開いているか。
 pub fn is_open(app: &AppState) -> bool {
     app.np.window.is_some()
 }

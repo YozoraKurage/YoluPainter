@@ -12,9 +12,9 @@ const BANNED: [(&str, &str); 20] = [
     ("M2 prototype", "試作の名残"),
     ("Rust 版", "実装の言語は利用者に関係ない"),
     ("(Rust)", "実装の言語は利用者に関係ない"),
-    ("core の", "内部の層の名前"),
-    ("core で", "内部の層の名前"),
-    ("core document", "内部の層の名前"),
+    ("core の", "内部の階層の名前"),
+    ("core で", "内部の階層の名前"),
+    ("core document", "内部の階層の名前"),
     ("スナップショット", "内部の仕組みの名前"),
     ("Model snapshot", "内部の仕組みの名前"),
     ("BVH", "内部の仕組みの名前"),
@@ -168,14 +168,22 @@ fn the_dab_refusal_texts_of_the_core_are_plain_words_too() {
 }
 
 /// どの crate の文でも使わない書き方（core の文はそのまま画面に出るものがあり、`lang/errors.rs` の表のキーにもなる）。
-const EVERYWHERE: [(&str, &str); 1] = [("画布", "「キャンバス」と書く")];
+/// 英語の直訳の言い回し（layer・island・window・tool・canvas・font）は、使う人の言葉で書く。
+const EVERYWHERE: [(&str, &str); 6] = [
+    ("画布", "「キャンバス」と書く"),
+    ("層", "「レイヤー」と書く"),
+    ("島", "「アイランド」と書く"),
+    ("窓", "「ウィンドウ」と書く"),
+    ("道具", "「ツール」と書く"),
+    ("字体", "「フォント」と書く"),
+];
 
 #[test]
-fn no_message_in_any_crate_writes_the_canvas_with_the_old_kanji() {
-    // core・io・gpu の文と、`lang/errors.rs` の表のキー（`=>` の左）も見る。core の文を直したら、表のキーも同じ文に直す
+fn no_message_in_any_crate_uses_a_literal_translation_word() {
+    // core・io・gpu・ops の文と、`lang/errors.rs` の表のキー（`=>` の左）も見る。core の文を直したら、表のキーも同じ文に直す
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut found = Vec::new();
-    for name in ["yolu-core", "yolu-io", "yolu-gpu", "yolu-app"] {
+    for name in ["yolu-core", "yolu-io", "yolu-gpu", "yolu-app", "yolu-ops", "yolu-mcp", "yolu-cli"] {
         let root = crates.join(name).join("src");
         found.extend(
             scan_words(&root, &EVERYWHERE, true)
@@ -183,7 +191,11 @@ fn no_message_in_any_crate_writes_the_canvas_with_the_old_kanji() {
                 .map(|f| format!("{name}/{f}")),
         );
     }
-    assert!(found.is_empty(), "文に「画布」:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）:\n{}",
+        found.join("\n")
+    );
 }
 
 /// 画面の言葉に「棚」（英語は shelf）を使わない。プロジェクトの品（.ylp に保存される画像・スマート素材・ブラシ）は「アセット」

@@ -1,4 +1,4 @@
-//! Rust 版だけの色調補正（調整の層とフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
+//! Rust 版だけの色調補正（調整レイヤーとフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
 //! 2 値化・ポスタリゼーション）の保存・復元（正本の版 24）。C# に対応する書き手は無いので、正解ファイルは無く、往復・版の選び方・読み手の拒否・
 //! .ylp への保存・.ylsmart の断り・Unity 0.2.0 の読み手の記録を試す。
 use yolu_core::curve::{Curve, CurvePoint};
@@ -105,7 +105,7 @@ fn effect(s: &AdjustmentSettings) -> EffectSettings {
     EffectSettings::from_color_adjust(s.color_adjust().unwrap())
 }
 
-/// 40×28 の文書: 下地の絵・6 種の調整の層（名前・不透明度・合成モードつき）・塗りつぶしの層の内容に 6 種のフィルターの段
+/// 40×28 の文書: 下地の絵・6 種の調整レイヤー（名前・不透明度・合成モードつき）・塗りつぶしレイヤーの内容に 6 種のフィルターの段
 /// （色のチャンネル）とマスクに明るさ/コントラストの段。固定の ID（正解の正本が毎回同じバイト列になる）。
 fn document() -> Document {
     let mut doc = Document::with_tile_size(40, 28, 8).unwrap();
@@ -171,7 +171,7 @@ fn user_channel(doc: &mut Document) {
     })
     .unwrap();
 }
-/// 調整の層の設定と、フィルターの段の設定を、層の順に集める（往復で変わらないことを見る）。
+/// 調整レイヤーの設定と、フィルターの段の設定を、レイヤーの順に集める（往復で変わらないことを見る）。
 fn settings(doc: &Document) -> (Vec<Option<AdjustmentSettings>>, Vec<(bool, EffectSettings)>) {
     let mut stages = Vec::new();
     for l in doc.layers() {
@@ -235,7 +235,7 @@ fn the_version_follows_the_features_used() {
         NativeDocument::from_core(&with_user).unwrap().version(),
         USER_CHANNELS_VERSION
     );
-    // 6 種のどれか 1 つでも、調整の層でもフィルターの段でも（マスクの段でも）あれば 24
+    // 6 種のどれか 1 つでも、調整レイヤーでもフィルターの段でも（マスクの段でも）あれば 24
     for (name, s) in adjustments() {
         let mut layered = plain();
         layered
@@ -244,7 +244,7 @@ fn the_version_follows_the_features_used() {
         assert_eq!(
             NativeDocument::from_core(&layered).unwrap().version(),
             ADJUST_VERSION,
-            "{name}: 調整の層"
+            "{name}: 調整レイヤー"
         );
         let mut staged = plain();
         let id = staged.layers()[0].id();
@@ -304,7 +304,7 @@ fn every_setting_survives_the_native_round_trip_byte_for_byte() {
     let reread = NativeDocument::read(&native.to_bytes()).unwrap();
     assert_eq!(reread.to_bytes(), native.to_bytes());
     assert_eq!(reread.version(), ADJUST_VERSION);
-    // 層の不透明度・段の強さ・有効・ID も残る
+    // レイヤーの不透明度・段の強さ・有効・ID も残る
     let mut edited = document();
     let fill = edited.layers().last().unwrap().id();
     let stage = edited.layers().last().unwrap().filters()[2].id();
@@ -335,7 +335,7 @@ fn composites_are_identical_after_a_round_trip_in_every_channel() {
             "{c:?}"
         );
     }
-    // 効果が入っている（調整の層と段を外した文書と違う）
+    // 効果が入っている（調整レイヤーと段を外した文書と違う）
     let mut bare = document();
     let fill = bare.layers().last().unwrap().id();
     let ids: Vec<_> = bare
@@ -358,7 +358,7 @@ fn composites_are_identical_after_a_round_trip_in_every_channel() {
 #[test]
 fn the_reader_refuses_what_the_format_does_not_allow() {
     let native = NativeDocument::from_core(&document()).unwrap();
-    // 調整の層の欄: 種類を入れ替える・空けてある番号・知らない番号は断る（欄の並びが合わなくなる）
+    // 調整レイヤーの欄: 種類を入れ替える・空けてある番号・知らない番号は断る（欄の並びが合わなくなる）
     let adjustment_types = field_paths(&native, "adjustment.type");
     assert_eq!(adjustment_types.len(), 6);
     for path in &adjustment_types {
@@ -381,7 +381,7 @@ fn the_reader_refuses_what_the_format_does_not_allow() {
         .is_err());
     let one = |tail: &str, nth: usize| field_paths(&native, tail).remove(nth);
     let edit = |path: &str, v: NativeValue| native.with_value(path, v);
-    // 範囲外の欄（調整の層）
+    // 範囲外の欄（調整レイヤー）
     for (tail, v) in [
         ("adjustment.detail.level", NativeValue::Int(0)),
         ("adjustment.detail.level", NativeValue::Int(256)),
@@ -466,7 +466,7 @@ fn the_reader_refuses_what_the_format_does_not_allow() {
         .collect();
     assert!(!adjustment_channels.is_empty());
     for (k, path) in adjustment_channels.iter().enumerate() {
-        // 層ごとの最初のチャンネル（Color = 0）を法線 4 に変えると、どの種類でも断る
+        // レイヤーごとの最初のチャンネル（Color = 0）を法線 4 に変えると、どの種類でも断る
         if path.ends_with("channels[0].channel") {
             assert!(
                 native.with_value(path, NativeValue::Int(4)).is_err(),
@@ -478,7 +478,7 @@ fn the_reader_refuses_what_the_format_does_not_allow() {
 
 #[test]
 fn colour_only_kinds_refuse_scalar_channels_in_the_format_too() {
-    // グラデーションマップだけを、色のチャンネルだけに効く層として書き、効くチャンネルを Roughness（1）に替えると断る
+    // グラデーションマップだけを、色のチャンネルだけに効くレイヤーとして書き、効くチャンネルを Roughness（1）に替えると断る
     let mut doc = plain();
     let s = AdjustmentSettings::gradient_map(GradientMap::new(Ramp::default(), false));
     doc.add_adjustment_layer("gm", s, Some(&[Channel::Color]), None)

@@ -74,7 +74,7 @@ fn text_rect(h: &Harness<'_, YoluApp>, text: &str) -> Option<Rect> {
     h.output().shapes.iter().find_map(|s| find(&s.shape, text))
 }
 
-/// 状態の帯（窓の下の端）の画素が、背景と上の縁の線だけか（左の部分。右端の版とメモリを避けて、幅の左の 2/3）。
+/// 状態の帯（ウィンドウの下の端）の画素が、背景と上の縁の線だけか（左の部分。右端の版とメモリを避けて、幅の左の 2/3）。
 fn assert_status_bar_left_is_empty(h: &mut Harness<'_, YoluApp>, what: &str) {
     let image = h.render().expect("描画");
     let (w, hh) = (image.width(), image.height());
@@ -369,14 +369,14 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
     }
 }
 
-/// 実際の窓の外では測らない（試験の画像が揺れないように）。測るときは間隔を空け、このプロセスの量は測れる（Linux・Windows）。
+/// 実際のウィンドウの外では測らない（試験の画像が揺れないように）。測るときは間隔を空け、このプロセスの量は測れる（Linux・Windows）。
 #[test]
 fn the_memory_is_measured_only_at_the_interval_and_the_process_size_is_available() {
     let mut s = yolu_app::state::AppState::new(64, 64);
     assert_eq!(
         s.usage,
         yolu_app::usage::Usage::default(),
-        "試験の窓は測らない"
+        "試験のウィンドウは測らない"
     );
     assert!(s.refresh_usage(100.0, || Some(5)));
     assert_eq!(s.usage.gpu, Some(5));
@@ -554,7 +554,7 @@ fn the_texts_the_user_named_never_appear_on_screen() {
     }
 }
 
-/// 窓の下の端（状態の帯と、そのすぐ上の知らせ）だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの下の端（状態の帯と、そのすぐ上の知らせ）だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn bottom_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);

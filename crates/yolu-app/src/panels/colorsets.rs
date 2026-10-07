@@ -145,7 +145,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         ))
                         .clicked()
                     {
-                        // 透明色を含む場合は保存先の窓を開く前に理由を返す。
+                        // 透明色を含む場合は保存先のウィンドウを開く前に理由を返す。
                         match colorsets::format::write_gpl(app.colorsets.palette()) {
                             Err(e) => report(app, Err(e)),
                             Ok(_) => {

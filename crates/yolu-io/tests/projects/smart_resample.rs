@@ -117,7 +117,7 @@ fn normal_channel_resampling_renormalises_like_csharp() {
 #[test]
 fn smart_mask_resampling_matches_csharp() {
     let mut d = Document::with_tile_size(5, 4, 2).unwrap();
-    let l = d.add_layer("マスクの層").unwrap();
+    let l = d.add_layer("マスクのレイヤー").unwrap();
     d.add_layer_mask(l).unwrap();
     for (x, y, hide) in [(0, 0, 120), (1, 1, 200), (3, 0, 77), (4, 3, 255)] {
         d.set_mask_pixel(l, x, y, hide).unwrap();

@@ -1,4 +1,4 @@
-//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細の窓の「色の混ぜ」の節（混ぜ方の排他の切り替え・スライダー・全レイヤーから・
+//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細のウィンドウの「色の混ぜ」の節（混ぜ方の排他の切り替え・スライダー・全レイヤーから・
 //! 筆圧・既定に戻す・効かない理由）、組み込みの厚塗りの筆 3 つ（筆のグループ・見本の線・版 3 で保存して読み戻す）、
 //! 「全レイヤーから」で下のレイヤーの色を拾う（アプリの入口から）、日英。
 use crate::common;
@@ -42,10 +42,10 @@ fn open_detail(h: &mut H, category: Category) {
 
 fn detail_rect(h: &H) -> Rect {
     yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-        .expect("ブラシの詳細の窓を描いている")
+        .expect("ブラシの詳細のウィンドウを描いている")
 }
 
-/// 窓の右側の欄の部品（左のカテゴリの同じ名前と区別する）。上から順に。
+/// ウィンドウの右側の欄の部品（左のカテゴリの同じ名前と区別する）。上から順に。
 fn pane_nodes(h: &H, label: &str) -> Vec<Rect> {
     let window = detail_rect(h);
     let mut nodes: Vec<Rect> = h
@@ -60,7 +60,7 @@ fn pane_nodes(h: &H, label: &str) -> Vec<Rect> {
 fn in_pane(h: &H, label: &str) -> Rect {
     *pane_nodes(h, label)
         .first()
-        .unwrap_or_else(|| panic!("窓の欄に {label} が無い"))
+        .unwrap_or_else(|| panic!("ウィンドウの欄に {label} が無い"))
 }
 
 fn disabled(h: &H, label: &str) -> bool {
@@ -208,7 +208,7 @@ fn the_thick_paint_samples_draw_over_a_picture_so_the_mixing_shows() {
     }
 }
 
-// ───────── 詳細の窓の節 ─────────
+// ───────── 詳細のウィンドウの節 ─────────
 
 #[test]
 fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
@@ -498,7 +498,7 @@ fn headless_all_layers_picks_up_the_layers_below_and_the_layer_alone_does_not() 
     let stroke = s.begin_paint_stroke(top, false).unwrap();
     assert!(
         s.doc.clone_source_bytes() > 0,
-        "混ぜる筆は見えている層の重なりを凍結する"
+        "混ぜる筆は見えているレイヤーの重なりを凍結する"
     );
     s.doc.cancel_stroke(stroke);
 }

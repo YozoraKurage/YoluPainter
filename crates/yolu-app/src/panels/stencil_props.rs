@@ -204,7 +204,7 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
         pos2(thumb.right() + 6.0, box_rect.top()),
         pos2(box_rect.right() - 22.0, box_rect.bottom()),
     );
-    // 画像が無いときは名前（「なし」）を書かない（空の欄の状態は印。名前は読み上げとツールチップ）。窓が最小のときも詰まらない
+    // 画像が無いときは名前（「なし」）を書かない（空の欄の状態は印。名前は読み上げとツールチップ）。ウィンドウが最小のときも詰まらない
     if has_image {
         let shown_name = w::fit(p, &name, label.width(), t::LABEL);
         w::text(

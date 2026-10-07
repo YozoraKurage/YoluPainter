@@ -1,5 +1,5 @@
 //! `Document::batch`（C# の `PaintDocument.Batch`）: 一続きの編集が 1 回の Undo になる・失敗は積んだ段を戻して何も残さない・何も記録しなければ履歴に
-//! 足さない。塗りつぶしの層の画面（デカールを置く）がこの動きに頼る。
+//! 足さない。塗りつぶしレイヤーの画面（デカールを置く）がこの動きに頼る。
 
 use yolu_core::fill_image::{Projection, ProjectionMode};
 use yolu_core::{Channel, CoreError, Document, LayerLocks, Rgba8};
@@ -38,11 +38,11 @@ fn a_batch_of_edits_is_one_undo_step() {
         ProjectionMode::Planar
     );
     assert_eq!(d.layer(id).unwrap().opacity(), 0.5);
-    // 1 回の Undo で、層ごと戻る
+    // 1 回の Undo で、レイヤーごと戻る
     assert!(d.undo().unwrap());
     assert_eq!(d.layers().len(), before_layers);
     assert!(d.layer(id).is_none());
-    // やり直しで同じ層（同じ ID・設定）が戻る
+    // やり直しで同じレイヤー（同じ ID・設定）が戻る
     assert!(d.redo().unwrap());
     assert_eq!(
         d.layer(id).unwrap().projection().mode,
@@ -63,7 +63,7 @@ fn a_failing_batch_changes_nothing_and_leaves_no_step() {
     let steps = d.undo_count();
     let layers = d.layers().len();
     let undo_before = d.can_undo();
-    // 2 つ目の編集がロックで断られる: 1 つ目（層を足す）も入らない
+    // 2 つ目の編集がロックで断られる: 1 つ目（レイヤーを足す）も入らない
     let err = d
         .batch(|d| {
             d.add_layer("never")?;

@@ -1,4 +1,4 @@
-//! CPU の表示の道: 文書を PAGE 画素の頁（テクスチャ）に分けて見せる。GPU で合成しないとき（効果・調整の層・独立のグループがある、
+//! CPU の表示の道: 文書を PAGE 画素の頁（テクスチャ）に分けて見せる。GPU で合成しないとき（効果・調整レイヤー・独立のグループがある、
 //! 予算を超える、装置が無い）の道で、タイルごとに状態を持ち、core が「変わった」と言うタイルを、見えている所から・時間の枠の中で
 //! 順に合成して頁へ上げる（egui の `set_partial`。egui-wgpu がその範囲だけ `write_texture` する）。
 //!
@@ -567,7 +567,7 @@ impl CpuCanvas {
             return 0;
         };
         for tile in &tiles {
-            let i = self.index(tile.coord).expect("画布の中のタイル");
+            let i = self.index(tile.coord).expect("キャンバスの中のタイル");
             // 頁に前の絵があるタイルは、頁のその所を透明にして、粗い絵が見えるようにする
             if matches!(self.state[i], TileState::Stale | TileState::Fresh) {
                 let zeros = vec![0u8; (tile.rect.width * tile.rect.height * 4) as usize];
@@ -1259,7 +1259,7 @@ mod tests {
             .pending
             > 0
         {}
-        // 効果の無い層の不透明度のドラッグ: 効果の出力は評価済みなので、粗くせず正確に
+        // 効果の無いレイヤーの不透明度のドラッグ: 効果の出力は評価済みなので、粗くせず正確に
         doc.set_layer_opacity(other, 0.3, true).unwrap();
         assert!(doc.is_coalescing());
         let r = canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)));

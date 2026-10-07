@@ -1,4 +1,4 @@
-//! パスの道具の欄: オプションバー（点の太さ・閉じる/開く・点を消す・ラスタライズ）と、左のドックのツールプロパティ（パスの節: 状態・点の操作・
+//! パスのツールの欄: オプションバー（点の太さ・閉じる/開く・点を消す・ラスタライズ）と、左のドックのツールプロパティ（パスの節: 状態・点の操作・
 //! 点の太さ・ブラシを使う・描き直す・ラスタライズ、ブラシの節: パスのブラシの値）。値の操作は
 //! `Action::Path`（キー・試験と同じ道）。パスのブラシや点の太さのスライダーは、離したとき 1 回で描き直す（動かしている間は値だけ）。
 //! 画面には名前と値だけを出し、説明はツールチップ。
@@ -152,7 +152,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         Some((_, p)) => (true, is_closed(p), p.point_count()),
         None => (false, false, 0),
     };
-    // 塗りつぶしの層のパスは画素にできない（パスの欄のボタンと同じ条件）
+    // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）
     let rasterizable = app
         .path_layer()
         .is_some_and(|(id, _)| app.path_can_rasterize(id));
@@ -331,15 +331,15 @@ fn button_grid(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, buttons: Vec<Bt
     }
 }
 
-/// ツールプロパティ（パスの道具）: パスの節とパスのブラシの節。塗るチャンネルの組はプロパティの欄のマテリアル。
+/// ツールプロパティ（パスのツール）: パスの節とパスのブラシの節。塗るチャンネルの組はプロパティの欄のマテリアル。
 pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     path_section(ui, app, rows);
     brush_section(ui, app, rows);
 }
 
-// ───────── 塗りつぶしの層のパス ─────────
+// ───────── 塗りつぶしレイヤーのパス ─────────
 
-/// 塗りつぶしの層の欄のパスの行（`fill_props` が呼ぶ）: パスの一覧（あれば）と、パスの道具でこの層にパスを追加するボタン。
+/// 塗りつぶしレイヤーの欄のパスの行（`fill_props` が呼ぶ）: パスの一覧（あれば）と、パスのツールでこのレイヤーにパスを追加するボタン。
 pub fn fill_layer_rows(
     ui: &mut Ui,
     app: &mut AppState,
@@ -374,7 +374,7 @@ pub fn fill_layer_rows(
         false,
         app.can_edit(),
         Some(lang.pick(
-            "パスツールにして、この塗りつぶしの層に新しいパスを始めます（パスは塗りつぶしと効果の上に重なります）",
+            "パスツールにして、この塗りつぶしレイヤーに新しいパスを始めます（パスは塗りつぶしと効果の上に重なります）",
             "Switch to the Path tool and start a new path on this fill layer (paths lie over the fill and its effects)",
         )),
         Some("add"),
@@ -628,7 +628,7 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 
 fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    // 選んでいる層にパスが無いあいだは、一覧と点の操作の欄は空なので出さない（次に作るパスのブラシは下の欄）
+    // 選んでいるレイヤーにパスが無いあいだは、一覧と点の操作の欄は空なので出さない（次に作るパスのブラシは下の欄）
     if app.path_entries().is_empty() {
         return;
     }
@@ -809,7 +809,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             on: false,
         });
     }
-    // 塗りつぶしの層のパスは画素にしない（塗りつぶしの層は画素を持たない）
+    // 塗りつぶしレイヤーのパスは画素にしない（塗りつぶしレイヤーは画素を持たない）
     buttons.push(Btn {
         id: "path.rasterize.panel",
         label: lang.pick("ラスタライズ", "Rasterize"),

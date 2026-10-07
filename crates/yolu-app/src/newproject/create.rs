@@ -1,5 +1,5 @@
-//! 新規プロジェクトを作る。窓の値を検めて文書を全部作ってから（ここまでが失敗しうる所）、モデルを 3D ビューに入れ、セットを入れ替える
-//! （失敗しない）。モデルは窓が別のスレッドで読んだものをそのまま入れる。
+//! 新規プロジェクトを作る。ウィンドウの値を検めて文書を全部作ってから（ここまでが失敗しうる所）、モデルを 3D ビューに入れ、セットを入れ替える
+//! （失敗しない）。モデルはウィンドウが別のスレッドで読んだものをそのまま入れる。
 
 use super::{new_set_document, unique, NpWindow, Prep, RESOLUTIONS};
 use crate::bake::BakeAction;
@@ -10,7 +10,7 @@ use crate::shelf::ShelfState;
 use crate::state::{Action, AppState};
 use crate::view3d::pose;
 
-/// 窓で選んだマテリアルの組（番号の順。選び直していなければ先頭から上限まで）。モデルが無ければ空。1 つも選んでいなければ断る。
+/// ウィンドウで選んだマテリアルの組（番号の順。選び直していなければ先頭から上限まで）。モデルが無ければ空。1 つも選んでいなければ断る。
 fn chosen_groups(
     win: &NpWindow,
     count: usize,
@@ -31,7 +31,7 @@ fn chosen_groups(
     Ok(chosen)
 }
 
-/// 窓の値で新しいプロジェクトを作る。断るときは何も変えず、理由を返す。
+/// ウィンドウの値で新しいプロジェクトを作る。断るときは何も変えず、理由を返す。
 /// 作った結果の知らせ（種類と文。続けてベイクを始めたなら、その知らせを後ろに添え、種類も重いほう）。
 pub(super) fn create_from_window(
     app: &mut AppState,
@@ -88,7 +88,7 @@ pub(super) fn create_from_window(
     let bake = win.bake;
     let sets_count = parts.len();
     let over_limit = win.over_limit(groups.len());
-    // 準備したモデルを窓から取り出す（以降は失敗しない）
+    // 準備したモデルをウィンドウから取り出す（以降は失敗しない）
     let model = match std::mem::replace(&mut win.prep, Prep::Idle) {
         Prep::Ready { path, model, .. } => Some((path, model)),
         _ => None,
@@ -132,7 +132,7 @@ fn install(
     }
     let (sets, doc) = TextureSets::from_new_parts(parts);
     app.replace_sets_with(sets, doc, false);
-    // 窓で選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
+    // ウィンドウで選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
     app.resolution_chosen = true;
     app.shelf = ShelfState::default().inherit_running_from(&app.shelf);
     app.project = None;

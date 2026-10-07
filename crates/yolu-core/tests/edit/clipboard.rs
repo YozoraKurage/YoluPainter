@@ -1,4 +1,4 @@
-//! 層の画素のコピー・カット・結合してコピー・ペースト・画像での置き換えと、複数の編集を 1 回の Undo にまとめる `batch`。
+//! レイヤーの画素のコピー・カット・結合してコピー・ペースト・画像での置き換えと、複数の編集を 1 回の Undo にまとめる `batch`。
 //! C# の LayerOpsTests のコピー系 7 件と DocumentBatchTests の 7 件の確かめを移し、ロック・チャンネル・予算・取消・保存前後の
 //! 一致・まとめの中の禁止を足したもの（実 C# Core との全バイトの照合は clipboard_golden.rs）。
 
@@ -62,10 +62,10 @@ fn refusal(result: Result<impl std::fmt::Debug, CoreError>) -> ClipboardRefusal 
     }
 }
 
-/// 層の 1 行（ID・名前・親・表示・不透明度の bit・合成モード・ロック）。
+/// レイヤーの 1 行（ID・名前・親・表示・不透明度の bit・合成モード・ロック）。
 type LayerRow = (LayerId, String, Option<LayerId>, bool, u64, BlendMode, u64);
 
-/// 文書の見える状態の全部（履歴・変更番号・層の並びと属性・全チャンネルの画素・マスク・選択範囲・合成）。断った操作の前後で
+/// 文書の見える状態の全部（履歴・変更番号・レイヤーの並びと属性・全チャンネルの画素・マスク・選択範囲・合成）。断った操作の前後で
 /// 変わってはいけないもの。
 #[derive(PartialEq)]
 struct State {
@@ -322,7 +322,11 @@ fn a_mask_copies_as_grey_and_cutting_it_reveals() {
         0,
         "マスクを切ると見える"
     );
-    assert_eq!(px(&d, l, Channel::Color, 3, 3).a, 255, "層の画素はそのまま");
+    assert_eq!(
+        px(&d, l, Channel::Color, 3, 3).a,
+        255,
+        "レイヤーの画素はそのまま"
+    );
     assert_eq!(d.undo_count(), 1);
     d.undo().unwrap();
     assert_eq!(
@@ -470,11 +474,11 @@ fn copy_cut_and_paste_refuse_with_a_reason_and_change_nothing() {
             .unwrap()
             .width(),
         W,
-        "塗りつぶしの層は値を画布の全体へ写す"
+        "塗りつぶしレイヤーは値をキャンバスの全体へ写す"
     );
     assert_eq!(
         d.copy_pixels(empty, Channel::Color, true, MAX),
-        Err(CoreError::Unsupported("層にマスクが無い"))
+        Err(CoreError::Unsupported("レイヤーにマスクが無い"))
     );
     assert_eq!(
         d.cut_pixels(empty, Channel::Roughness, false, MAX),
@@ -485,7 +489,7 @@ fn copy_cut_and_paste_refuse_with_a_reason_and_change_nothing() {
         Err(CoreError::ChannelNotFound)
     );
 
-    // 貼る層が一操作の予算を超える
+    // 貼るレイヤーが一操作の予算を超える
     let copy = d.copy_pixels(painted, Channel::Color, false, MAX).unwrap();
     d.set_stroke_budget_bytes(100).unwrap();
     assert!(matches!(
@@ -619,7 +623,7 @@ fn paste_makes_a_new_layer_in_place_and_one_undo_takes_it_away() {
     assert_eq!(
         d.undo_count(),
         1,
-        "層を足すことと選択を外すことは 1 回の Undo"
+        "レイヤーを足すことと選択を外すことは 1 回の Undo"
     );
     assert!(d.undo().unwrap());
     assert_eq!(shape(&d), before);
@@ -627,7 +631,7 @@ fn paste_makes_a_new_layer_in_place_and_one_undo_takes_it_away() {
     assert!(d.redo().unwrap());
     assert_eq!(d.layers().len(), 2);
     assert!(d.selection().is_none());
-    // 貼った層はふつうの層: 合成にも出て、全チャンネルの合成が参照の式と同じ
+    // 貼ったレイヤーはふつうのレイヤー: 合成にも出て、全チャンネルの合成が参照の式と同じ
     assert_eq!(
         d.composite_channel(Channel::Roughness, d.bounds())
             .unwrap()
@@ -924,7 +928,7 @@ fn a_mask_is_cut_under_the_image_lock_but_not_under_lock_all() {
         })
     );
     assert_eq!(state(&d), before);
-    // マスクの無い層は、ロックがあっても先にロックで断られる（C# の CutPixels の順）
+    // マスクの無いレイヤーは、ロックがあっても先にロックで断られる（C# の CutPixels の順）
     let bare = d.add_layer("bare").unwrap();
     d.set_layer_locks(bare, LayerLocks::ALL).unwrap();
     assert!(matches!(
@@ -934,7 +938,7 @@ fn a_mask_is_cut_under_the_image_lock_but_not_under_lock_all() {
     d.set_layer_locks(bare, LayerLocks::NONE).unwrap();
     assert_eq!(
         d.cut_pixels(bare, Channel::Color, true, MAX),
-        Err(CoreError::Unsupported("層にマスクが無い"))
+        Err(CoreError::Unsupported("レイヤーにマスクが無い"))
     );
 }
 
@@ -1372,7 +1376,7 @@ fn batches_refuse_nesting_strokes_undo_and_direct_writes() {
                 .map(drop)
         }),
         Box::new(move |d| d.begin_mask_triangle_fill(layer, 1.0, false).map(drop)),
-        // 三角形の塗りは、無効なチャンネル・無いチャンネル・無い層でも、まとめの中の断りが先
+        // 三角形の塗りは、無効なチャンネル・無いチャンネル・無いレイヤーでも、まとめの中の断りが先
         Box::new(move |d| {
             d.begin_triangle_fill(layer, Channel::Roughness, color, 1.0, false)
                 .map(drop)
@@ -1491,8 +1495,8 @@ fn a_document_taken_out_of_a_batch_cannot_get_persistent_ids() {
     assert!(!d.is_batching());
 }
 
-/// 層を足す段と、画素を持つ層を貼る段を 1 回にまとめた batch を Undo して、画素の予算を今の画素のすぐ上まで下げると、Redo は
-/// 2 段目で予算に断られる: 済んだ 1 段目（層を足す）は戻り、Redo の段は残り、文書も履歴も変わらない。
+/// レイヤーを足す段と、画素を持つレイヤーを貼る段を 1 回にまとめた batch を Undo して、画素の予算を今の画素のすぐ上まで下げると、Redo は
+/// 2 段目で予算に断られる: 済んだ 1 段目（レイヤーを足す）は戻り、Redo の段は残り、文書も履歴も変わらない。
 #[test]
 fn a_redo_refused_at_the_second_step_of_a_batch_puts_back_the_first() {
     let mut seed = 21;
@@ -1516,14 +1520,14 @@ fn a_redo_refused_at_the_second_step_of_a_batch_puts_back_the_first() {
     assert!(d.layer(first).is_none() && d.layer(pasted).is_none());
     let before = state(&d);
     let budget = d.source_budget_bytes();
-    // 1 段目の空の層は入り、2 段目の貼った層は 1 バイト足りない
+    // 1 段目の空のレイヤーは入り、2 段目の貼ったレイヤーは 1 バイト足りない
     d.set_source_budget_bytes(d.allocated_bytes() + first_bytes + pasted_bytes - 1)
         .unwrap();
     assert_eq!(d.redo(), Err(CoreError::SourceBudgetExceeded));
     assert_eq!(
         state(&d),
         before,
-        "層も画素も選択も、Undo の数・Redo の数・履歴のバイト数・変更番号も、断る前のまま"
+        "レイヤーも画素も選択も、Undo の数・Redo の数・履歴のバイト数・変更番号も、断る前のまま"
     );
     assert!(d.can_redo() && d.layer(first).is_none());
     // 予算を戻せば、同じ段がそのままやり直せる
@@ -1537,8 +1541,8 @@ fn a_redo_refused_at_the_second_step_of_a_batch_puts_back_the_first() {
     assert_eq!(d.undo_count(), 1);
 }
 
-/// 戻す向き: 画素を消す段と層を足す段をまとめた batch の Undo は、新しい方（層を足す段）から戻す。2 段目（消した画素を戻す）が
-/// 予算に断られたら、済んだ層を足す段をもう一度当て直して、文書は Undo の前のまま。
+/// 戻す向き: 画素を消す段とレイヤーを足す段をまとめた batch の Undo は、新しい方（レイヤーを足す段）から戻す。2 段目（消した画素を戻す）が
+/// 予算に断られたら、済んだレイヤーを足す段をもう一度当て直して、文書は Undo の前のまま。
 #[test]
 fn an_undo_refused_at_the_second_step_of_a_batch_applies_the_first_again() {
     let mut seed = 22;
@@ -1558,16 +1562,16 @@ fn an_undo_refused_at_the_second_step_of_a_batch_applies_the_first_again() {
         vec![0; (W * H * 4) as usize]
     );
     let before = state(&d);
-    // 画素を戻す分の予算が無い（層を取り除く段の分は空く）
+    // 画素を戻す分の予算が無い（レイヤーを取り除く段の分は空く）
     d.set_source_budget_bytes(d.allocated_bytes()).unwrap();
     assert_eq!(d.undo(), Err(CoreError::SourceBudgetExceeded));
     assert_eq!(
         state(&d),
         before,
-        "取り除いた層は戻り、消した画素は消えたまま、履歴も変わらない"
+        "取り除いたレイヤーは戻り、消した画素は消えたまま、履歴も変わらない"
     );
     assert!(d.layer(late).is_some() && d.can_undo() && !d.can_redo());
-    // 予算を戻せば Undo できて、画素も層も元へ戻る
+    // 予算を戻せば Undo できて、画素もレイヤーも元へ戻る
     d.set_source_budget_bytes(64 << 20).unwrap();
     assert!(d.undo().unwrap());
     assert!(d.layer(late).is_none());
@@ -1603,7 +1607,7 @@ fn a_batch_of_clipboard_operations_undoes_as_one() {
     assert_eq!(
         d.undo_count(),
         1,
-        "カット・貼り付け（層と選択）・不透明度が 1 回の Undo"
+        "カット・貼り付け（レイヤーと選択）・不透明度が 1 回の Undo"
     );
     assert_eq!(px(&d, l, Channel::Color, 2, 2), Rgba8::TRANSPARENT);
     assert_eq!(
@@ -1615,7 +1619,7 @@ fn a_batch_of_clipboard_operations_undoes_as_one() {
     assert!(d.redo().unwrap());
     assert_eq!(d.layer(pasted.layer).unwrap().opacity(), 0.5);
     assert!(d.selection().is_none());
-    // まとめの中で貼って失敗したら、貼った層も選択の解除も戻る
+    // まとめの中で貼って失敗したら、貼ったレイヤーも選択の解除も戻る
     d.undo().unwrap();
     let after_undo = content(&d);
     let result: Result<(), CoreError> = d.batch(|d| {

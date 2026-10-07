@@ -553,7 +553,7 @@ pub fn handled<R>(work: impl FnOnce() -> R + UnwindSafe) -> std::thread::Result<
     HANDLED.with(|depth| depth.set(depth.get() - 1));
     result
 }
-/// 起動の本体を守る。panic で止まったら、窓の知らせを出し、空のネイティブ記録先を片付けてから panic を渡し直す。
+/// 起動の本体を守る。panic で止まったら、ウィンドウの知らせを出し、空のネイティブ記録先を片付けてから panic を渡し直す。
 pub fn guard<R>(start: impl FnOnce() -> R + UnwindSafe, on_panic: impl FnOnce()) -> R {
     match std::panic::catch_unwind(start) {
         Ok(result) => result,
@@ -581,12 +581,12 @@ pub fn startup_failure(reason: &str) {
     failure_dialog_with(Some(reason));
 }
 
-/// panic hook の記録を上書きせず、窓が無い場合にも短い理由を見せる。
+/// panic hook の記録を上書きせず、ウィンドウが無い場合にも短い理由を見せる。
 pub fn failure_dialog() {
     failure_dialog_with(None);
 }
 
-/// 窓のボタンの文言を OS が受け付けるか。Windows の `MessageBoxW` は OK とキャンセルだけで、文言は捨てられる。
+/// ウィンドウのボタンの文言を OS が受け付けるか。Windows の `MessageBoxW` は OK とキャンセルだけで、文言は捨てられる。
 const LABELLED_BUTTONS: bool = cfg!(not(windows));
 
 fn failure_dialog_with(reason: Option<&str>) {
@@ -622,7 +622,7 @@ fn opens_folder(result: &rfd::MessageDialogResult, folder: &str) -> bool {
     }
 }
 
-/// 窓の文。ボタンの文言が出ない OS では、OK が何をするかを 1 行の問いで示す。
+/// ウィンドウの文。ボタンの文言が出ない OS では、OK が何をするかを 1 行の問いで示す。
 fn dialog_text(lang: crate::lang::Lang, reason: Option<&str>, labelled: bool) -> String {
     let reason = short_reason(lang, reason);
     if labelled {

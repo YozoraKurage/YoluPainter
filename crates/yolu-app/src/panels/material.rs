@@ -219,7 +219,7 @@ fn value_rows(
         Channel::Emission => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);
             let e = app.mat.emission;
-            // 押すと色の窓（ブラシの設定なので取り消しには積まない）
+            // 押すと色のウィンドウ（ブラシの設定なので取り消しには積まない）
             let current = color_window::Pick::from_floats([e[0], e[1], e[2], 1.0], false);
             w::text(
                 ui.painter(),

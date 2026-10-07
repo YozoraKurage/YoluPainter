@@ -4,7 +4,7 @@
 //! ステンシル・乗算でない紙の質感も画素ごとの式（[`usable`]）。
 //!
 //! 計算は f32 で、合成（`crate::blend`）と同じ形にしてある: 道ごとに同じレーンの式を通り、SIMD の道の端の画素（N で割った余り）と、
-//! 読む位置が画布の端にかかる効果・混ぜのブロックは、1 本のレーン（[`Scalar1`]）で同じ関数を呼ぶ。演算は IEEE の四則・平方根・floor・
+//! 読む位置がキャンバスの端にかかる効果・混ぜのブロックは、1 本のレーン（[`Scalar1`]）で同じ関数を呼ぶ。演算は IEEE の四則・平方根・floor・
 //! 比較・選択だけ（積和の命令・近似の逆数は使わない）で、判断はレーンごと（ブロックの全部・どれかを見るのは計算を省くためだけで、
 //! 結果を変えない）なので、各画素の結果は道とスレッド数によらず同じバイトになる。画素ごとの式（`apply_at`）も、ここの式を 1 本の
 //! レーンで通る（ステンシルのない同じブラシなら同じバイト）。
@@ -268,19 +268,19 @@ pub(super) fn unit32(b: u8) -> f32 {
 
 // ───────── ブロックの並べ方 ─────────
 
-/// 行の [lo, hi) を N 画素ずつ並べる。N 画素に満たない余り [i, hi) は、行の置き場（長さ n）に収まるなら、余りを含む N 画素の窓
-/// （始まり t = min(i, n − N)）を 1 つ、窓の中の [i, hi) だけを生かして（[`window`]）通す。窓の中の生かさない画素は、前の
+/// 行の [lo, hi) を N 画素ずつ並べる。N 画素に満たない余り [i, hi) は、行の置き場（長さ n）に収まるなら、余りを含む N 画素のウィンドウ
+/// （始まり t = min(i, n − N)）を 1 つ、ウィンドウの中の [i, hi) だけを生かして（[`window`]）通す。ウィンドウの中の生かさない画素は、前の
 /// ブロックがもう描いたか区間の外の画素で、覆いを 0 にして何も変えない（読み直した値をそのまま書き戻すだけ）。置き場が N 画素より
 /// 短い行は、余りを 1 本のレーンで描く。
 #[derive(Clone, Copy)]
 struct Block {
     /// ブロックの最初の画素（行の置き場の中の位置）。
     at: usize,
-    /// 生かす画素の範囲（窓のとき）。
+    /// 生かす画素の範囲（ウィンドウのとき）。
     live: Option<(usize, usize)>,
 }
 
-/// 画素 i から先の次のブロック（無ければ None。N 画素の窓にできない余りは呼び手が 1 本のレーンで描く）。
+/// 画素 i から先の次のブロック（無ければ None。N 画素のウィンドウにできない余りは呼び手が 1 本のレーンで描く）。
 #[inline(always)]
 fn next_block(i: usize, hi: usize, n: usize, lanes: usize) -> Option<Block> {
     if i + lanes <= hi {
@@ -295,7 +295,7 @@ fn next_block(i: usize, hi: usize, n: usize, lanes: usize) -> Option<Block> {
     }
 }
 
-/// 窓の中の生かす画素（[from, to)）のレーン。
+/// ウィンドウの中の生かす画素（[from, to)）のレーン。
 #[inline(always)]
 unsafe fn window<V: Lanes32>(at: usize, (from, to): (usize, usize)) -> V::M {
     unsafe {
@@ -307,7 +307,7 @@ unsafe fn window<V: Lanes32>(at: usize, (from, to): (usize, usize)) -> V::M {
     }
 }
 
-/// ブロックの覆い（窓なら生かさない画素を 0 に）。
+/// ブロックの覆い（ウィンドウなら生かさない画素を 0 に）。
 #[inline(always)]
 unsafe fn block_coverage<V: Slice32>(cov: &[f32], b: Block) -> V::F {
     unsafe {
@@ -781,7 +781,7 @@ unsafe fn rows<V: Slice32>(
 
 // ───────── 覆いの行 ─────────
 
-/// N 画素の覆い（0 以下は塗らない）。dx・dy は画素の中心と筆の中心のずれ。`live` が偽のレーン（窓の生かさない画素）の値は
+/// N 画素の覆い（0 以下は塗らない）。dx・dy は画素の中心と筆の中心のずれ。`live` が偽のレーン（ウィンドウの生かさない画素）の値は
 /// 使わない（筆先の画像の画素を読まない）。
 #[inline(always)]
 unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Option<V::M>) -> V::F {
@@ -1008,7 +1008,7 @@ pub(super) unsafe fn cover_row<V: Slice32>(
                 let dx = V::add(basev, index);
                 let v = match b.live {
                     None => cover_block::<V>(c, dx, dyv, None),
-                    // 窓では生かす画素だけを書く（前のブロックが書いた画素はそのまま）
+                    // ウィンドウでは生かす画素だけを書く（前のブロックが書いた画素はそのまま）
                     Some(live) => {
                         let live = window::<V>(b.at, live);
                         let v = cover_block::<V>(c, dx, dyv, Some(live));
@@ -1093,7 +1093,7 @@ pub(super) unsafe fn dual_row<V: Slice32>(
                     None => V::splat(0.0),
                 };
                 let combined = combine::<V>(mode, main, dual);
-                // 窓では、生かす画素だけを合わせる（前のブロックが合わせた画素に 2 度掛けない）
+                // ウィンドウでは、生かす画素だけを合わせる（前のブロックが合わせた画素に 2 度掛けない）
                 let v = match b.live {
                     None => combined,
                     Some(live) => V::select(window::<V>(b.at, live), combined, main),
@@ -1133,7 +1133,7 @@ impl<'a> Grain<'a> {
     }
 }
 
-/// 並べた紙の質感の N 画素（画布の画素 px の中心 (px + 0.5) / 倍率 の双線形、0〜1）。
+/// 並べた紙の質感の N 画素（キャンバスの画素 px の中心 (px + 0.5) / 倍率 の双線形、0〜1）。
 #[inline(always)]
 unsafe fn grain_block<V: Slice32>(g: &Grain<'_>, px: V::F) -> V::F {
     unsafe {
@@ -1218,7 +1218,7 @@ pub(super) unsafe fn texture_row<V: Slice32>(
     {
         unsafe {
             let zero = V::splat(0.0);
-            // 窓で前のブロックと重なる画素は、同じ係数を書き直し、0 にした覆いをもう一度 0 にするだけ（同じ結果）
+            // ウィンドウで前のブロックと重なる画素は、同じ係数を書き直し、0 にした覆いをもう一度 0 にするだけ（同じ結果）
             while let Some(b) = next_block(i, hi, cov.len(), V::N) {
                 // 画素の座標は整数なので f32 で正確（道によらず同じ値）
                 let px = V::from_fn(|k| (x_first + (b.at + k) as i64) as f32);
@@ -1298,7 +1298,7 @@ unsafe fn commit<V: Lanes32>(
             LiveTile::Owned(v) => V::store(&mut v[local * 4..], out),
             _ => {
                 // 一様・共有・無いタイルは、最初に変わる画素の書き込みで自分のものにする（予算の確かめも今までと同じ）。
-                // 変わらない画素（窓の生かさない画素を含む）は書かない
+                // 変わらない画素（ウィンドウの生かさない画素を含む）は書かない
                 let (mut bytes, mut was) = ([0u8; 32], [0u8; 32]);
                 V::store(&mut bytes, out);
                 V::store(&mut was, current);
@@ -1587,7 +1587,7 @@ unsafe fn dual_rows<V: Slice32>(
         // 1 本のレーンの道もこのループ（余りの 1 画素ずつの式は SIMD の道の短い行だけ）
         {
             unsafe {
-                // 大きい方を取るだけなので、窓で前のブロックと重なる画素をもう一度通しても同じ
+                // 大きい方を取るだけなので、ウィンドウで前のブロックと重なる画素をもう一度通しても同じ
                 while let Some(b) = next_block(i, hi, n, V::N) {
                     let coverage = block_coverage::<V>(cov, b);
                     let current = V::load_f32(&cells[row + b.at..]);

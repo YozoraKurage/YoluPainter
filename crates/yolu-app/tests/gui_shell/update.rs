@@ -836,7 +836,7 @@ fn headless_a_cancel_after_the_transfer_ended_still_wins_and_leaves_no_file() {
     assert!(state.update.ready().is_none() && !state.update.is_ready_open());
     assert_eq!(state.message, "ダウンロードを取り消しました。");
     assert!(rig.staging.files().is_empty(), "{:?}", rig.staging.files());
-    // 利用者の取消も同じ（stable。準備の窓を開かず、置いたファイルも消す）
+    // 利用者の取消も同じ（stable。準備のウィンドウを開かず、置いたファイルも消す）
     check_now(&mut state);
     assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
     rig.server.hold.store(true, Ordering::Relaxed);
@@ -847,7 +847,7 @@ fn headless_a_cancel_after_the_transfer_ended_still_wins_and_leaves_no_file() {
     assert!(state.update.ready().is_none() && !state.update.is_ready_open());
     assert_eq!(state.message, "ダウンロードを取り消しました。");
     assert!(rig.staging.files().is_empty(), "{:?}", rig.staging.files());
-    // 取り消さなければ、同じ道で準備の窓が開く
+    // 取り消さなければ、同じ道で準備のウィンドウが開く
     rig.server.ignore_cancel.store(false, Ordering::Relaxed);
     apply(&mut state, UpdateAction::Install);
     settle(&mut state);
@@ -1022,7 +1022,7 @@ fn headless_update_waits_for_the_user_then_downloads_verifies_and_runs_the_insta
             "yolupainter-0.2.0-x86_64-pc-windows-msvc-setup.exe"
         )
     );
-    // 検証を通ったファイルが置き場にあり、準備の窓が開く。まだ走らせない（アプリは閉じない）
+    // 検証を通ったファイルが置き場にあり、準備のウィンドウが開く。まだ走らせない（アプリは閉じない）
     let name = "yolupainter-0.2.0-x86_64-pc-windows-msvc-setup.exe";
     assert_eq!(rig.staging.files(), [name]);
     assert_eq!(std::fs::read(rig.staging.0.join(name)).unwrap(), INSTALLER);
@@ -1179,7 +1179,7 @@ fn headless_installing_is_refused_while_drawing_and_the_window_waits_for_the_str
         help_item(&state, "YoluPainter 0.2.0 に更新"),
         (true, _)
     ));
-    // ダウンロード中に描き始めた: 終わっても、描き終わるまで準備の窓を出さない
+    // ダウンロード中に描き始めた: 終わっても、描き終わるまで準備のウィンドウを出さない
     state.canvas.stroke = None;
     rig.server.hold.store(true, Ordering::Relaxed);
     apply(&mut state, UpdateAction::Install);
@@ -1209,7 +1209,7 @@ fn headless_later_keeps_the_download_and_pressing_update_again_reuses_it() {
     let calls = rig.calls();
     apply(&mut state, UpdateAction::Install);
     state.poll_update();
-    // 落とし直さずに、準備の窓がもう一度出る
+    // 落とし直さずに、準備のウィンドウがもう一度出る
     assert_eq!(rig.calls(), calls);
     assert!(state.update.is_ready_open());
 }
@@ -1224,18 +1224,24 @@ fn headless_unsaved_changes_are_saved_first_and_an_unsaved_project_stops_the_upd
     apply(&mut state, UpdateAction::Install);
     settle(&mut state);
     state.modified = true;
-    // まだ名前の無いプロジェクト: 保存先を選ぶ窓の頼みが出る。その窓をやめたら、更新しない
+    // まだ名前の無いプロジェクト: 保存先を選ぶウィンドウの頼みが出る。そのウィンドウをやめたら、更新しない
     apply(&mut state, UpdateAction::Run { save: true });
     assert_eq!(state.dialog_request, Some(DialogRequest::SaveAs));
     assert!(rig.launched().is_empty());
     state.update_finish_save();
-    assert!(rig.launched().is_empty(), "窓がまだ開いている間は待つ");
+    assert!(
+        rig.launched().is_empty(),
+        "ウィンドウがまだ開いている間は待つ"
+    );
     state.dialog_request = None; // やめた
     state.update_finish_save();
     assert!(rig.launched().is_empty());
     assert!(!state.quit);
     assert_eq!(state.message, "保存しなかったので、更新しません。");
-    assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
+    assert!(
+        state.update.is_ready_open(),
+        "更新のウィンドウは残り、やり直せる"
+    );
     // 保存先を選んで保存した: そのあとで更新する
     let dir = TempDir::new("save");
     apply(&mut state, UpdateAction::Run { save: true });
@@ -1315,7 +1321,10 @@ fn headless_a_failed_save_keeps_its_reason_and_stops_the_update() {
             state.message
         );
         assert!(state.modified && !state.quit && rig.launched().is_empty());
-        assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
+        assert!(
+            state.update.is_ready_open(),
+            "更新のウィンドウは残り、やり直せる"
+        );
         state.update_finish_save();
         assert!(
             state.message.contains("に保存できません（"),
@@ -1373,7 +1382,10 @@ fn headless_save_and_update_waits_for_a_background_save() {
                 state.message
             );
             assert!(state.modified && !state.quit && rig.launched().is_empty());
-            assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
+            assert!(
+                state.update.is_ready_open(),
+                "更新のウィンドウは残り、やり直せる"
+            );
         } else {
             assert!(!state.modified, "{}", state.message);
             assert_eq!(rig.launched().len(), 1);
@@ -1412,7 +1424,7 @@ fn headless_installing_is_refused_while_a_save_is_running() {
         assert!(!state.quit && !state.update.is_quitting());
         assert!(
             state.update.is_ready_open(),
-            "更新の窓は残り、保存の後にやり直せる"
+            "更新のウィンドウは残り、保存の後にやり直せる"
         );
         assert!(
             state.message.contains(if english {
@@ -1454,7 +1466,7 @@ fn headless_a_failed_launch_keeps_the_app_open() {
     assert_eq!(state.message, "インストーラーを起動できません。");
 }
 
-// ───────── 別の窓が開いている ─────────
+// ───────── 別のウィンドウが開いている ─────────
 
 const BLOCKED_JA: &str = "ほかの YoluPainter が開いています";
 
@@ -1472,7 +1484,7 @@ fn headless_another_running_window_stops_the_update_and_keeps_the_download() {
     settle(&mut state);
     let name = "yolupainter-0.2.0-x86_64-pc-windows-msvc-setup.exe";
     let calls = rig.calls();
-    // 断る: 走らせず、アプリは閉じず、落としたインストーラーも準備の窓も残る（短い理由だけ。使い方の説明にしない）
+    // 断る: 走らせず、アプリは閉じず、落としたインストーラーも準備のウィンドウも残る（短い理由だけ。使い方の説明にしない）
     apply(&mut state, UpdateAction::Run { save: false });
     assert!(rig.launched().is_empty());
     assert!(!state.quit && !state.update.is_quitting());
@@ -1502,7 +1514,7 @@ fn headless_the_refusal_comes_before_saving_and_is_told_in_english_too() {
     state.modified = true;
     // 更新時刻を前にしておく（書き直されたら今の時刻になって食い違う。時刻の粒度に頼って待たない）
     let before = common::tmp::backdate(&dir.0.join("a.ylp"));
-    // 更新が始まらないのに、保存はしない（保存先の窓も出さない）
+    // 更新が始まらないのに、保存はしない（保存先のウィンドウも出さない）
     apply(&mut state, UpdateAction::Run { save: true });
     assert!(state.modified, "保存していない変更は、そのまま");
     assert_eq!(
@@ -1534,7 +1546,7 @@ fn headless_a_window_opened_while_the_save_dialog_was_up_is_caught_before_launch
     apply(&mut state, UpdateAction::Install);
     settle(&mut state);
     state.modified = true;
-    // 名前の無いプロジェクト: 保存先を選ぶ窓が開いている間に、別の窓が開く
+    // 名前の無いプロジェクト: 保存先を選ぶウィンドウが開いている間に、別のウィンドウが開く
     apply(&mut state, UpdateAction::Run { save: true });
     assert_eq!(state.dialog_request, Some(DialogRequest::SaveAs));
     other.store(true, Ordering::Relaxed);
@@ -1542,7 +1554,7 @@ fn headless_a_window_opened_while_the_save_dialog_was_up_is_caught_before_launch
     state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
     assert!(!state.modified);
     state.update_finish_save();
-    // 保存は済んだが、走らせない。落としたインストーラーと準備の窓は残る
+    // 保存は済んだが、走らせない。落としたインストーラーと準備のウィンドウは残る
     assert!(rig.launched().is_empty() && !state.quit);
     assert_eq!(state.message, BLOCKED_JA);
     assert!(state.update.is_ready_open() && state.update.is_blocked());
@@ -1577,7 +1589,7 @@ fn the_ready_window_gives_the_reason_while_another_window_is_open() {
         h.get_by_label("更新して再起動");
     }
     assert!(rig.launched().is_empty() && !h.state().state.quit);
-    // 別の窓を閉じてからもう一度押すと入る
+    // 別のウィンドウを閉じてからもう一度押すと入る
     h.state_mut()
         .state
         .update
@@ -1612,9 +1624,9 @@ fn headless_where_it_cannot_replace_itself_it_only_opens_the_release_page() {
     );
 }
 
-// ───────── 画面（窓・メニュー・印） ─────────
+// ───────── 画面（ウィンドウ・メニュー・印） ─────────
 
-/// 窓の中だけを撮って、正解の絵と比べる。
+/// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     let rect = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
@@ -1772,14 +1784,14 @@ fn the_ready_window_asks_to_save_first_when_there_are_unsaved_changes() {
     assert!(h.state().state.quit);
 }
 
-/// 窓が出そろうまで数フレーム進める（保存の途中は描き直しを頼み続けるので、`run` は使えない）。
+/// ウィンドウが出そろうまで数フレーム進める（保存の途中は描き直しを頼み続けるので、`run` は使えない）。
 fn steps(h: &mut Harness<'_, YoluApp>, n: usize) {
     for _ in 0..n {
         h.step();
     }
 }
 
-/// 保存の途中は、保存を頼んだ後の「変更あり」の印が下りているが、更新の窓は頼む前の印のまま（保存していない変更がある形）で見せる。
+/// 保存の途中は、保存を頼んだ後の「変更あり」の印が下りているが、更新のウィンドウは頼む前の印のまま（保存していない変更がある形）で見せる。
 /// 保存が終わるまで、どのボタンもインストーラーを起動しない。
 #[test]
 fn the_ready_window_keeps_the_unsaved_form_while_a_save_runs_and_launches_nothing() {

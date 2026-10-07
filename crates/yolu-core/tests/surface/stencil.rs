@@ -63,7 +63,7 @@ fn stencil(
 fn identity() -> Option<StencilMapping> {
     Some(StencilMapping::translation(0.0, 0.0))
 }
-/// 画布全体を 1 つのダブで覆う硬いブラシ（覆いは全部 1、天井は不透明度）。
+/// キャンバス全体を 1 つのダブで覆う硬いブラシ（覆いは全部 1、天井は不透明度）。
 fn covering(opacity: f64, flow: f64, color: Rgba8) -> Brush {
     Brush {
         seed: 1,
@@ -642,7 +642,7 @@ fn large_dabs_on_worker_threads_give_the_same_bytes() {
 #[test]
 fn bad_input_and_budgets_are_refused_with_nothing_changed() {
     let img = stencil_image(64, 64, varied, ImageColorSpace::Srgb);
-    // 2D の写しの無いステンシルで画布に描くと断り、ストロークを取り消す（何も残さない）
+    // 2D の写しの無いステンシルでキャンバスに描くと断り、ストロークを取り消す（何も残さない）
     let (mut d, l) = document();
     let before = layer_bytes(&d, l);
     let mut b = covering(1.0, 1.0, Rgba8::new(30, 200, 90, 255));

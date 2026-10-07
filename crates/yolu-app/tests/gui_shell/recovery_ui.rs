@@ -1,4 +1,4 @@
-//! 復旧の窓の画面（egui_kittest）: 落ちた次の起動で出る・世代を選んで開く・捨てる（確かめてから）・設定を選ぶ・メニューから開く・
+//! 復旧のウィンドウの画面（egui_kittest）: 落ちた次の起動で出る・世代を選んで開く・捨てる（確かめてから）・設定を選ぶ・メニューから開く・
 //! 日本語と英語。書き置きの頃合い・失敗・落ちた体の起動の細かい振る舞いは `recovery.rs`（アプリの状態だけ）。
 use crate::common;
 
@@ -127,7 +127,7 @@ fn started_with(
 }
 
 fn window(h: &Harness<'_, YoluApp>) -> Rect {
-    yolu_app::windows::window_rect(&h.ctx, "recovery").expect("復旧の窓を描いた")
+    yolu_app::windows::window_rect(&h.ctx, "recovery").expect("復旧のウィンドウを描いた")
 }
 fn rows(h: &Harness<'_, YoluApp>) -> usize {
     h.state()
@@ -144,7 +144,7 @@ fn is_disabled(h: &Harness<'_, YoluApp>, label: &str) -> bool {
     h.get_by_label(label).accesskit_node().is_disabled()
 }
 
-/// 窓の中に描いた文字（アイコンも含む）。
+/// ウィンドウの中に描いた文字（アイコンも含む）。
 fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
     fn collect(shape: &Shape, area: Rect, out: &mut Vec<String>) {
         match shape {
@@ -159,7 +159,7 @@ fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
     }
     out
 }
-/// 窓の中だけを撮って、正解の絵と比べる。
+/// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     let rect = window(h);
     h.event(egui::Event::PointerGone);
@@ -236,7 +236,7 @@ fn opening_the_selected_generation_from_the_window_recovers_it_as_untitled() {
     let s = &h.state().state;
     assert_eq!(s.project_name, "名称未設定（復旧）");
     assert!(s.modified);
-    assert!(s.recovery.window.is_none(), "開いたら窓を閉じる");
+    assert!(s.recovery.window.is_none(), "開いたらウィンドウを閉じる");
     assert!(s.message.starts_with("復旧しました"), "{}", s.message);
     assert_eq!(
         std::fs::read(&original).unwrap(),
@@ -279,7 +279,8 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
         .unwrap()
         .confirm
         .is_some());
-    let modal = yolu_app::windows::window_rect(&h.ctx, "recovery-discard").expect("確かめの窓");
+    let modal =
+        yolu_app::windows::window_rect(&h.ctx, "recovery-discard").expect("確認のウィンドウ");
     assert_eq!(rows(&h), 2, "確かめるまで消さない");
     // やめる
     let cancel = button_in(&h, "やめる", modal).center();
@@ -507,7 +508,7 @@ fn the_window_is_in_english_without_japanese_text() {
     let s = &h.state().state;
     assert_eq!(s.project_name, "Untitled (Recovered)");
     assert!(s.message.starts_with("Recovered"), "{}", s.message);
-    // 確かめの窓も英語
+    // 確認のウィンドウも英語
     h.state_mut()
         .state
         .recovery_apply(RecoveryAction::OpenWindow);
@@ -807,7 +808,7 @@ fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_la
                 },
             )
             .unwrap();
-        // `enable` は窓を作り直さない（落ちた実行が無いので）。上で入れた窓がそのまま出る
+        // `enable` はウィンドウを作り直さない（落ちた実行が無いので）。上で入れたウィンドウがそのまま出る
         let mut h = app_with(state);
         shot(
             &mut h,
@@ -849,7 +850,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
             h.query_by_label(lang.pick("指定", "Custom")).is_none(),
             "指定した量でなければ、指定の印は出ない"
         );
-        // 詳しく: 開くと窓が高くなり、上限のスライダーが出る（まだ設定は変わらない）
+        // 詳しく: 開くとウィンドウが高くなり、上限のスライダーが出る（まだ設定は変わらない）
         assert!(h.query_by_label(lang.pick("上限", "Limit")).is_none());
         let details = rect_of(&h, lang.pick("詳しく", "Details"), |r| {
             area.contains(r.center())

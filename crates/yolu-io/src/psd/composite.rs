@@ -123,7 +123,7 @@ fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
     }
     below
 }
-/// 1 行ずつ重ねる。行の前に `before_row` を呼び、`Err` ならそこで止める（取消の確かめの間隔は画布の幅の画素。画素ごとの式は 1 つのスレッドで評価する）。
+/// 1 行ずつ重ねる。行の前に `before_row` を呼び、`Err` ならそこで止める（取消の確かめの間隔はキャンバスの幅の画素。画素ごとの式は 1 つのスレッドで評価する）。
 fn composite_with(d: &Document, mut before_row: impl FnMut() -> Result<()>) -> Result<Vec<u8>> {
     let p = plan(&d.layers);
     let mut out = vec![0; d.width as usize * d.height as usize * 4];
@@ -196,7 +196,7 @@ fn adjust(
         // ほかは上で core の式に任せて戻っている
         _ => [c.r, c.g, c.b],
     };
-    // 合成モードと量の混ぜは core の調整の層と同じ式
+    // 合成モードと量の混ぜは core の調整レイヤーと同じ式
     mix_rgb(c, Rgba8::new(rgb[0], rgb[1], rgb[2], c.a), amount, mode(m))
 }
 
@@ -218,7 +218,7 @@ mod tests {
         }
     }
 
-    /// 取消の確かめは 1 行ごと。止めた行より先は評価しない（大きな画布で、取消が効かない時間を作らない）。
+    /// 取消の確かめは 1 行ごと。止めた行より先は評価しない（大きなキャンバスで、取消が効かない時間を作らない）。
     #[test]
     fn the_cancel_check_runs_before_every_row_and_stops_the_work() {
         let d = solid(8, 20);

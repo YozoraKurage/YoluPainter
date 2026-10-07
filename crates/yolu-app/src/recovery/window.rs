@@ -1,4 +1,4 @@
-//! 復旧の窓: 世代の一覧（名前・セットの数・経過時間）から、開く・捨てる。起動したとき前回が正しく閉じていなければ自動で出し、
+//! 復旧のウィンドウ: 世代の一覧（名前・セットの数・経過時間）から、開く・捨てる。起動したとき前回が正しく閉じていなければ自動で出し、
 //! ファイル ▸ 復旧… からも開く。書き置きの間隔と残す世代の数もここで選ぶ（設定のファイルに書く）。
 //! 使うディスクの量（自動・少なめ・標準・多め。数は「詳しく」の中のスライダー）も選べ、下の帯の左に、いま使っている量を短く出す
 //! （内訳はツールチップ）。
@@ -31,7 +31,7 @@ const FOOTER: f32 = 48.0;
 const DETAILS_ROW: f32 = 24.0;
 const GIB: u64 = 1 << 30;
 
-/// 窓の状態。
+/// ウィンドウの状態。
 #[derive(Debug, Default)]
 pub struct WindowState {
     pub rows: Vec<Row>,
@@ -46,7 +46,7 @@ pub struct WindowState {
     pub usage: Usage,
     pub cap: u64,
     pub free: Option<u64>,
-    /// 「詳しく」を開いているか（窓の中だけの状態）。
+    /// 「詳しく」を開いているか（ウィンドウの中だけの状態）。
     pub details: bool,
     /// スライダーを動かしている最中の量（GB）。離したときに選びとして当てる（動かしている途中の量で世代を消さない）。
     pub drag_gib: Option<u32>,
@@ -108,7 +108,7 @@ pub fn row_name(lang: Lang, row: &Row) -> String {
     }
 }
 
-/// 窓を描く（開いていれば）。押されたものは `Action::Recovery` として当てる。
+/// ウィンドウを描く（開いていれば）。押されたものは `Action::Recovery` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if app.recovery.window.is_none() {
         return;
@@ -161,7 +161,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let can_discard = selected.is_some();
     let mut esc = false;
     let closed = window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
-        // 確かめの窓が上にあるあいだは、Esc はそちらへ
+        // 確認のウィンドウが上にあるあいだは、Esc はそちらへ
         esc = confirm.is_none()
             && ui.input(|i| i.key_pressed(Key::Escape))
             && ui
@@ -524,7 +524,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     discard_confirm(ctx, app);
 }
 
-/// 捨てる前の確かめ（開いている間は下の窓を触れない）。
+/// 捨てる前の確かめ（開いている間は下のウィンドウを触れない）。
 fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
     let Some(row) = app.recovery.window.as_ref().and_then(|w| w.confirm.clone()) else {
         return;

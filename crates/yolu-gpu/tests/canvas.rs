@@ -1,8 +1,8 @@
 //! キャンバスの表示に使う常駐の合成を、アプリの文書の機能（マスク・塗りつぶし・チャンネルごとの合成・クリッピング・グループ・
 //! 操作の列）で CPU の合成と照らす。GPU が扱えない文書は理由つきで断ることも確かめる。
-//! 許しの範囲: 層ごとに半段切り上げで丸める式は同じで、GPU も CPU も f32 だが、シェーダーの演算の丸め（積和へのまとめなど）は
+//! 許しの範囲: レイヤーごとに半段切り上げで丸める式は同じで、GPU も CPU も f32 だが、シェーダーの演算の丸め（積和へのまとめなど）は
 //! CPU の式（積和へまとめない）と同じとは限らないので、1 段ごとに最大 1 の差が出得る
-//! （単独の段は `tests/parity.rs` が 1 以内を確かめる）。重なった層の差は次の段の式で増幅し（Overlay・HardLight で最大 2 倍、
+//! （単独の段は `tests/parity.rs` が 1 以内を確かめる）。重なったレイヤーの差は次の段の式で増幅し（Overlay・HardLight で最大 2 倍、
 //! ColorDodge・ColorBurn・VividLight・Divide はもっと大きい）、ここの多段の文書では 2 以内だった。下の `TOLERANCE` までを
 //! 表示の許しとする。保存・書き出し・3D ビューの値は常に CPU の正本で、この差は載らない。
 use yolu_core::{
@@ -105,7 +105,7 @@ fn doc() -> Document {
     Document::with_tile_size(53, 37, 16).unwrap()
 }
 
-/// 入れ子 `levels` 段のグループ（一番内側に塗った層 1 枚）。グループは mode で重ねる（通過でなければ独立して合成する）。
+/// 入れ子 `levels` 段のグループ（一番内側に塗ったレイヤー 1 枚）。グループは mode で重ねる（通過でなければ独立して合成する）。
 fn nested(d: &mut Document, levels: usize, mode: BlendMode) -> LayerId {
     let leaf = d.add_layer("葉").unwrap();
     let mut inner = leaf;
@@ -123,7 +123,7 @@ fn only_unknown_channels_and_too_deep_groups_are_refused_with_a_reason() {
     let a = d.add_layer("a").unwrap();
     let b = d.add_layer("b").unwrap();
     assert_eq!(supports(&d, Channel::Color), Ok(()));
-    // 法線の種類のチャンネル・調整の層・独立して合成するグループは、GPU で合成できる
+    // 法線の種類のチャンネル・調整レイヤー・独立して合成するグループは、GPU で合成できる
     assert_eq!(supports(&d, Channel::Normal), Ok(()));
     let fill = d
         .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(1, 2, 3, 200))], None)
@@ -188,8 +188,8 @@ fn only_unknown_channels_and_too_deep_groups_are_refused_with_a_reason() {
     );
 }
 
-/// 通過のグループのすぐ上に並ぶクリッピングの層が何も描かない（隠す・不透明度 0・空のグループ）なら、core の計画は組を持たない
-/// 通過のグループのまま。描くクリッピングの層があるときだけ、独立して合成するグループになる。どちらも CPU と同じ画素になる。
+/// 通過のグループのすぐ上に並ぶクリッピングのレイヤーが何も描かない（隠す・不透明度 0・空のグループ）なら、core の計画は組を持たない
+/// 通過のグループのまま。描くクリッピングのレイヤーがあるときだけ、独立して合成するグループになる。どちらも CPU と同じ画素になる。
 #[test]
 fn clipping_layers_on_a_pass_through_group_follow_the_cpu_plan() {
     let Some(mut g) = gpu() else { return };
@@ -208,10 +208,10 @@ fn clipping_layers_on_a_pass_through_group_follow_the_cpu_plan() {
     check(
         &mut g,
         &d,
-        "描くクリッピングの層が下地のグループを独立にする",
+        "描くクリッピングのレイヤーが下地のグループを独立にする",
     );
     d.set_layer_visible(top, false).unwrap();
-    check(&mut g, &d, "隠したクリッピングの層");
+    check(&mut g, &d, "隠したクリッピングのレイヤー");
     d.set_layer_visible(top, true).unwrap();
     d.set_layer_opacity(top, 0.0, false).unwrap();
     check(&mut g, &d, "不透明度 0");
@@ -222,7 +222,7 @@ fn clipping_layers_on_a_pass_through_group_follow_the_cpu_plan() {
     let empty = d.add_group("空", None).unwrap();
     d.set_layer_clipping(empty, true).unwrap();
     check(&mut g, &d, "空のグループのクリッピング");
-    // 描く調整の層のクリッピングは組に入る（グループは独立になる）。隠せば入らない
+    // 描く調整レイヤーのクリッピングは組に入る（グループは独立になる）。隠せば入らない
     let adj = d
         .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
         .unwrap();
@@ -291,7 +291,7 @@ fn masks_match_cpu() {
         d.set_layer_blend_mode(top, mode).unwrap();
         check(&mut g, &d, &format!("マスク {mode:?}"));
     }
-    // 下地のマスクと、クリッピングされた層のマスク
+    // 下地のマスクと、クリッピングされたレイヤーのマスク
     d.set_layer_blend_mode(top, BlendMode::Normal).unwrap();
     d.add_layer_mask(base).unwrap();
     paint_mask(&mut d, base, &mut rng);
@@ -390,11 +390,15 @@ fn per_channel_blend_matches_cpu() {
     d.set_layer_opacity(b, 0.0, false).unwrap();
     d.set_channel_opacity(b, Channel::Color, Some(0.8), false)
         .unwrap();
-    check(&mut g, &d, "層の不透明度 0 でもチャンネルの不透明度が勝つ");
-    // ほかのチャンネルは層の設定のまま
+    check(
+        &mut g,
+        &d,
+        "レイヤーの不透明度 0 でもチャンネルの不透明度が勝つ",
+    );
+    // ほかのチャンネルはレイヤーの設定のまま
     d.set_channel_enabled(b, Channel::Roughness, true).unwrap();
     d.set_pixel(b, 3, 3, Rgba8::new(1, 1, 1, 255)).unwrap();
-    check_channel(&mut g, &d, Channel::Roughness, "Roughness は層の設定");
+    check_channel(&mut g, &d, Channel::Roughness, "Roughness はレイヤーの設定");
 }
 
 /// 平らにする: 通過で不透明度 1 のグループは、中身を下へそのまま重ねるのと同じ。
@@ -405,7 +409,7 @@ fn pass_through_groups_are_flattened_and_match_cpu() {
     let mut rng = Rng(19);
     let ids: Vec<LayerId> = (0..5)
         .map(|k| {
-            let l = d.add_layer("層").unwrap();
+            let l = d.add_layer("レイヤー").unwrap();
             paint(&mut d, l, &mut rng, &[255, 170, 60, 255][k % 4..]);
             l
         })
@@ -416,7 +420,7 @@ fn pass_through_groups_are_flattened_and_match_cpu() {
     check(&mut g, &d, "グループの前");
     let group = d.group_layers(&[ids[1], ids[2], ids[3]], "組").unwrap();
     check(&mut g, &d, "通過のグループ");
-    // グループの中のクリッピング（グループの一番下の層は、印があっても下地）
+    // グループの中のクリッピング（グループの一番下のレイヤーは、印があっても下地）
     d.set_layer_clipping(ids[2], true).unwrap();
     d.set_layer_clipping(ids[1], true).unwrap();
     check(&mut g, &d, "グループの中のクリッピング");
@@ -424,16 +428,16 @@ fn pass_through_groups_are_flattened_and_match_cpu() {
     check(&mut g, &d, "グループを隠す");
     d.set_layer_visible(group, true).unwrap();
     d.set_layer_visible(ids[2], false).unwrap();
-    check(&mut g, &d, "グループの中の層を隠す");
+    check(&mut g, &d, "グループの中のレイヤーを隠す");
     d.set_layer_visible(ids[2], true).unwrap();
-    // 入れ子と、グループの外の層をグループの中へ・外へ
+    // 入れ子と、グループの外のレイヤーをグループの中へ・外へ
     let outer = d.group_layers(&[group, ids[4]], "外").unwrap();
     check(&mut g, &d, "入れ子のグループ");
     d.move_layer_to(ids[0], Some(group), 1).unwrap();
-    check(&mut g, &d, "層をグループの中へ");
+    check(&mut g, &d, "レイヤーをグループの中へ");
     d.move_layer_to(ids[1], None, 0).unwrap();
-    check(&mut g, &d, "層をグループの外へ");
-    // グループの下地にクリッピングの層を重ねない通常のグループの上に、クリッピングされた通常の層
+    check(&mut g, &d, "レイヤーをグループの外へ");
+    // グループの下地にクリッピングのレイヤーを重ねない通常のグループの上に、クリッピングされた通常のレイヤー
     d.ungroup(group).unwrap();
     check(&mut g, &d, "グループを解く");
     d.undo().unwrap();
@@ -455,7 +459,7 @@ fn clipping_stacks_and_hidden_bases_match_cpu() {
     let mut rng = Rng(23);
     let mut ids = Vec::new();
     for k in 0..7 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         paint(&mut d, l, &mut rng, &[255, 130, 40, 200]);
         d.set_layer_clipping(l, k % 3 != 0).unwrap();
         d.set_layer_opacity(l, 0.45 + 0.08 * k as f64, false)
@@ -473,7 +477,7 @@ fn clipping_stacks_and_hidden_bases_match_cpu() {
     check(&mut g, &d, "全部戻す");
 }
 
-/// 変化の記録だけで更新する（途中の差分）。層の追加・削除・並べ替え・入れ子・Undo/Redo・プロパティ・マスク・塗りつぶしの操作の
+/// 変化の記録だけで更新する（途中の差分）。レイヤーの追加・削除・並べ替え・入れ子・Undo/Redo・プロパティ・マスク・塗りつぶしの操作の
 /// どれのあとでも、全面の合成と同じになる。
 #[test]
 fn incremental_updates_follow_every_kind_of_edit() {
@@ -486,9 +490,9 @@ fn incremental_updates_follow_every_kind_of_edit() {
     paint(&mut d, b, &mut rng, &[255, 100]);
     check(&mut g, &d, "初め");
     let c = d.add_layer("c").unwrap();
-    check(&mut g, &d, "空の層を足す");
+    check(&mut g, &d, "空のレイヤーを足す");
     paint(&mut d, c, &mut rng, &[200, 0, 255]);
-    check(&mut g, &d, "足した層に描く");
+    check(&mut g, &d, "足したレイヤーに描く");
     d.move_layer(c, 0).unwrap();
     check(&mut g, &d, "並べ替え");
     let group = d.group_layers(&[a, b], "組").unwrap();
@@ -568,7 +572,7 @@ fn step(g: &mut ResidentCompositor, d: &Document, what: &str) -> UpdateStats {
     g.stats()
 }
 
-/// 層の追加・削除・並べ替え・表示・不透明度・入れ子は、全面を合成し直さず、core の変更記録が名指す（その層の持つ）タイルだけを
+/// レイヤーの追加・削除・並べ替え・表示・不透明度・入れ子は、全面を合成し直さず、core の変更記録が名指す（そのレイヤーの持つ）タイルだけを
 /// 合成し直す。全面の再合成のままでも画素は合うので、`updated_tiles` で確かめる。
 #[test]
 fn structural_edits_update_only_the_tiles_the_change_record_names() {
@@ -587,11 +591,11 @@ fn structural_edits_update_only_the_tiles_the_change_record_names() {
     let same = g.update(&d, Channel::Color).unwrap();
     assert_eq!((same.updated_tiles, same.uploaded_tiles), (0, 0));
     let c = d.add_layer("c").unwrap();
-    let s = step(&mut g, &d, "空の層を足す");
-    assert_eq!(s.updated_tiles, 0, "空の層は何も変えない: {s:?}");
+    let s = step(&mut g, &d, "空のレイヤーを足す");
+    assert_eq!(s.updated_tiles, 0, "空のレイヤーは何も変えない: {s:?}");
     d.set_pixel(c, 60, 60, Rgba8::new(10, 220, 30, 255))
         .unwrap();
-    let s = step(&mut g, &d, "足した層に 1 画素");
+    let s = step(&mut g, &d, "足したレイヤーに 1 画素");
     assert_eq!(s.updated_tiles, 1, "{s:?}");
     d.move_layer(b, 2).unwrap();
     let s = step(&mut g, &d, "並べ替え");
@@ -610,14 +614,18 @@ fn structural_edits_update_only_the_tiles_the_change_record_names() {
     d.remove_layer(b).unwrap();
     let s = step(&mut g, &d, "削除");
     assert_eq!(s.updated_tiles, 3, "{s:?}");
-    assert_eq!(s.cached_tiles, before_remove - 3, "消えた層の常駐を手放す");
+    assert_eq!(
+        s.cached_tiles,
+        before_remove - 3,
+        "消えたレイヤーの常駐を手放す"
+    );
     d.undo().unwrap();
     let s = step(&mut g, &d, "削除の取消");
     assert_eq!(s.updated_tiles, 3, "{s:?}");
     d.group_layers(&[b, c], "組").unwrap();
     let s = step(&mut g, &d, "グループにする");
     assert_eq!(s.updated_tiles, 4, "中身（b の 3 と c の 1）だけ: {s:?}");
-    // 塗りつぶしは画布全体が変わる
+    // 塗りつぶしはキャンバス全体が変わる
     d.add_fill_layer(
         "塗り",
         &[(Channel::Color, Rgba8::new(9, 99, 199, 90))],
@@ -628,8 +636,8 @@ fn structural_edits_update_only_the_tiles_the_change_record_names() {
     assert_eq!(s.updated_tiles, 16, "{s:?}");
 }
 
-/// 隠した層・不透明度 0・外したマスクなど、計画から外れた面のタイルは常駐から手放す（GPU バッファと同量の CPU のコピーが
-/// 予算に数えられ続けて、見える層のタイルを追い出さないように）。常駐は見積もりへ戻り、戻したときは変更記録のタイルを上げ直す。
+/// 隠したレイヤー・不透明度 0・外したマスクなど、計画から外れた面のタイルは常駐から手放す（GPU バッファと同量の CPU のコピーが
+/// 予算に数えられ続けて、見えるレイヤーのタイルを追い出さないように）。常駐は見積もりへ戻り、戻したときは変更記録のタイルを上げ直す。
 #[test]
 fn faces_that_leave_the_plan_are_released_and_come_back_with_the_change_record() {
     let Some(mut g) = gpu() else { return };
@@ -653,7 +661,7 @@ fn faces_that_leave_the_plan_are_released_and_come_back_with_the_change_record()
     // a・b・b のマスク・c で 16 タイルずつ
     let s = step(&mut g, &d, "全部見える");
     assert_eq!((s.cached_tiles, s.resident_bytes), (64, estimate(&d)));
-    // 隠した層（面とマスクの両方）
+    // 隠したレイヤー（面とマスクの両方）
     d.set_layer_visible(b, false).unwrap();
     let s = step(&mut g, &d, "b を隠す");
     assert_eq!(s.cached_tiles, 32, "b の面とマスクを手放す: {s:?}");
@@ -679,7 +687,7 @@ fn faces_that_leave_the_plan_are_released_and_come_back_with_the_change_record()
     d.set_layer_mask_enabled(b, true).unwrap();
     let s = step(&mut g, &d, "b のマスクを有効に");
     assert_eq!((s.cached_tiles, s.uploaded_tiles), (64, 16), "{s:?}");
-    // 隠したグループの中の層
+    // 隠したグループの中のレイヤー
     let group = d.group_layers(&[a, b], "組").unwrap();
     d.set_layer_visible(group, false).unwrap();
     let s = step(&mut g, &d, "グループごと隠す");
@@ -888,7 +896,7 @@ fn budget_and_device_limits_refuse_with_a_reason() {
     let e = g.update(&wide, Channel::Color).unwrap_err();
     assert!(e.to_string().contains("上限"), "{e}");
 
-    // 面を増やして（層とマスク）予算が足りなくなる。常駐の予算は面の数に比例して束を小さくし、入らなければ断る
+    // 面を増やして（レイヤーとマスク）予算が足りなくなる。常駐の予算は面の数に比例して束を小さくし、入らなければ断る
     let options = ResidentOptions {
         resident_budget_bytes: 4 * 16 * 16 * 4 * 2 * 3 + 53 * 37 * 4 + 400,
         batch_tiles: 1,
@@ -932,7 +940,7 @@ fn eviction_under_a_small_budget_keeps_the_display_correct() {
     let mut d = doc();
     let mut rng = Rng(43);
     for k in 0..3 {
-        let l = d.add_layer("層").unwrap();
+        let l = d.add_layer("レイヤー").unwrap();
         paint(&mut d, l, &mut rng, &[255, 90, 200]);
         if k == 1 {
             d.add_layer_mask(l).unwrap();
@@ -957,7 +965,7 @@ fn merges_and_hidden_group_moves_follow_the_change_record() {
     let mut rng = Rng(47);
     let ids: Vec<LayerId> = (0..5)
         .map(|k| {
-            let l = d.add_layer("層").unwrap();
+            let l = d.add_layer("レイヤー").unwrap();
             paint(&mut d, l, &mut rng, &[255, 160, 60][k % 3..]);
             d.set_layer_opacity(l, 0.9 - 0.1 * k as f64, false).unwrap();
             l
@@ -980,13 +988,13 @@ fn merges_and_hidden_group_moves_follow_the_change_record() {
     d.merge_down(ids[1], 255).unwrap();
     check(&mut g, &d, "下へ結合");
     d.merge_layers(&[ids[3], ids[4]], 255).unwrap();
-    check(&mut g, &d, "選んだ層を結合");
+    check(&mut g, &d, "選んだレイヤーを結合");
     d.undo().unwrap();
     check(&mut g, &d, "結合の取消");
     d.redo().unwrap();
     check(&mut g, &d, "結合のやり直し");
     d.merge_visible("結合", 255).unwrap();
-    check(&mut g, &d, "表示している層を結合");
+    check(&mut g, &d, "表示しているレイヤーを結合");
     d.undo().unwrap();
     check(&mut g, &d, "取消");
 }
@@ -996,7 +1004,7 @@ fn merges_and_hidden_group_moves_follow_the_change_record() {
 fn requirements_match_what_update_counts_and_flag_documents_over_the_budget() {
     let limits = wgpu::Limits::default();
     let options = ResidentOptions::default();
-    // 疎な 4096²: 描いた 2 タイルの層と、マスクの 1 タイル
+    // 疎な 4096²: 描いた 2 タイルのレイヤーと、マスクの 1 タイル
     let mut d = Document::with_tile_size(4096, 4096, 128).unwrap();
     let l = d.add_layer("疎").unwrap();
     d.set_pixel(l, 130, 5, Rgba8::new(10, 20, 30, 255)).unwrap();
@@ -1008,7 +1016,7 @@ fn requirements_match_what_update_counts_and_flag_documents_over_the_budget() {
     assert_eq!(
         need.tile_bytes,
         3 * 128 * 128 * 4 * 2,
-        "層の 2 タイルとマスクの 1 タイル、GPU と CPU のコピー"
+        "レイヤーの 2 タイルとマスクの 1 タイル、GPU と CPU のコピー"
     );
     assert!(need.total_bytes() < options.resident_budget_bytes);
     if let Some(mut g) = gpu() {
@@ -1020,7 +1028,7 @@ fn requirements_match_what_update_counts_and_flag_documents_over_the_budget() {
             "見積もりと実際の数え方は同じ"
         );
     }
-    // 密な文書: 層を足すほど増える。見えない層・無いタイルは数えない
+    // 密な文書: レイヤーを足すほど増える。見えないレイヤー・無いタイルは数えない
     let mut dense = Document::with_tile_size(256, 128, 16).unwrap();
     let mut rng = Rng(5);
     for _ in 0..3 {
@@ -1035,10 +1043,10 @@ fn requirements_match_what_update_counts_and_flag_documents_over_the_budget() {
     assert_eq!(
         less.tile_bytes,
         all.tile_bytes / 3 * 2,
-        "見えない層は上げないので数えない"
+        "見えないレイヤーは上げないので数えない"
     );
     if let Some(mut g) = gpu() {
-        // 隠す前に常駐させてから隠しても、常駐は見積もり（見える層だけ）へ戻る（隠した層のタイルを抱え続けない）
+        // 隠す前に常駐させてから隠しても、常駐は見積もり（見えるレイヤーだけ）へ戻る（隠したレイヤーのタイルを抱え続けない）
         dense.set_layer_visible(hidden, true).unwrap();
         let stats = g.update(&dense, Channel::Color).unwrap();
         assert_eq!(stats.resident_bytes, all.total_bytes());

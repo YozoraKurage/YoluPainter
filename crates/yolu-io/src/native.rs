@@ -13,7 +13,7 @@ pub const USER_CHANNELS_VERSION: i32 = 22;
 /// Generator の種類 64・65 とその欄が加わる。これを使う文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る
 /// （形式と決めは docs/YLP_FORMAT.md）。
 pub const PROCEDURAL_VERSION: i32 = 23;
-/// Rust 版だけの色調補正（調整の層とフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
+/// Rust 版だけの色調補正（調整レイヤーとフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
 /// 2 値化・ポスタリゼーション）を足した版。版 23 の中身に、調整・フィルターの種類 64〜69 とその欄（`color_adjust` の並び）が加わる。これを使う
 /// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const ADJUST_VERSION: i32 = 24;
@@ -21,8 +21,8 @@ pub const ADJUST_VERSION: i32 = 24;
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
-/// 層のパスの一覧（1 つの層に何本ものパス、パスごとの名前・表示）を足した版。版 25 の中身に、層の属性のビット 6 とパスの一覧の塊
-/// （`paths`）が加わる。一覧を使う層（塗りつぶしの層のパス・2 本以上のパス・名前や隠すパス・ストローク／消しゴム以外の種類・筆先・
+/// レイヤーのパスの一覧（1 つのレイヤーに何本ものパス、パスごとの名前・表示）を足した版。版 25 の中身に、レイヤーの属性のビット 6 とパスの一覧の塊
+/// （`paths`）が加わる。一覧を使うレイヤー（塗りつぶしレイヤーのパス・2 本以上のパス・名前や隠すパス・ストローク／消しゴム以外の種類・筆先・
 /// 角度・深さ・対称の設定・角や取っ手の点を持つパス）のある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で
 /// 断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const PATHS_VERSION: i32 = 27;
@@ -31,27 +31,27 @@ pub const PATHS_VERSION: i32 = 27;
 /// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
 /// 「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const EFFECTS_VERSION: i32 = 28;
-/// 塗りつぶしの点のグラデーション（層の属性のビット 7 の続きの属性の印 `attributes_ext` のビット 0）と、塗りつぶしの画像ごとの異方性のフィルターの入・切（`images[i].anisotropic`）を
+/// 塗りつぶしの点のグラデーション（レイヤーの属性のビット 7 の続きの属性の印 `attributes_ext` のビット 0）と、塗りつぶしの画像ごとの異方性のフィルターの入・切（`images[i].anisotropic`）を
 /// 足した版。点のグラデーションか、異方性を切った画像のある文書だけがこの版になり、それより古い読み手は版の範囲の外として断る
 /// （形式と決めは docs/YLP_FORMAT.md）。
 pub const POINT_GRADIENT_VERSION: i32 = 29;
-/// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
+/// レイヤーのフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 /// この版の文書は版 27〜30 の中身も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
-/// テキストレイヤー（ラスターの層の文字の値。続きの属性の印のビット 1 と `text` の塊）を足した版。テキストレイヤーのある文書だけがこの版になり
+/// テキストレイヤー（ラスターレイヤーの文字の値。続きの属性の印のビット 1 と `text` の塊）を足した版。テキストレイヤーのある文書だけがこの版になり
 /// （版 27〜29 の中身も読み書きできる）、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は「Unsupported archive version」で
 /// 断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const TEXT_VERSION: i32 = 30;
 /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。頭の `bake_priority`）を足した版。決め方を既定（番号の小さい三角形・外さない・
-/// 手で選んだ島なし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
+/// 手で選んだアイランドなし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。この版の文書は版 27〜32 の中身も読み書きできる。
 pub const BAKE_PRIORITY_VERSION: i32 = 33;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）で、間の 31 は意味を
 /// 決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = BAKE_PRIORITY_VERSION;
-/// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
+/// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
@@ -188,7 +188,7 @@ impl NativeDocument {
         while parse.next_layer()?.is_some() {}
         parse.finish()
     }
-    /// 骨組み（`Bytes` の値を持たない項目。層の構造・名前・ID・効果の設定）だけを持つか。骨組みは `to_bytes`・`to_core` に使わない。
+    /// 骨組み（`Bytes` の値を持たない項目。レイヤーの構造・名前・ID・効果の設定）だけを持つか。骨組みは `to_bytes`・`to_core` に使わない。
     pub(crate) fn is_skeleton(&self) -> bool {
         self.skeleton
     }
@@ -432,7 +432,7 @@ fn is_known_version(version: i32) -> bool {
         || version == BAKE_PRIORITY_VERSION
 }
 
-/// 正本を層ごとに読む（頭 → 層 0, 1, … → 終わり）。層ごとに項目を取り出せる（流して core へ入れる読みが、層 1 枚ぶんだけ持つため）。
+/// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
 pub(crate) struct Parse<'a> {
     r: Reader<'a>,
     pub version: i32,
@@ -446,11 +446,11 @@ pub(crate) struct Parse<'a> {
     layers: Vec<Layer>,
     ids: HashSet<[u8; 16]>,
     anchor_ids: HashMap<[u8; 16], i32>,
-    /// 今の層の項目の始まり（`fields` の位置）。
+    /// 今のレイヤーの項目の始まり（`fields` の位置）。
     layer_start: usize,
 }
 impl<'a> Parse<'a> {
-    /// 識別子から層の数までを読む。版 26 なら `parts` が要る（部分の数がヘッダーと合うこと）、ほかの版なら要らない。
+    /// 識別子からレイヤーの数までを読む。版 26 なら `parts` が要る（部分の数がヘッダーと合うこと）、ほかの版なら要らない。
     pub fn begin(
         src: &'a mut dyn ByteSource,
         parts: Option<&'a mut PartStream>,
@@ -539,11 +539,11 @@ impl<'a> Parse<'a> {
             layer_start,
         })
     }
-    /// 頭の項目（層より前）。
+    /// 頭の項目（レイヤーより前）。
     pub fn head_fields(&self) -> &[NativeField] {
         &self.r.fields[..self.layer_start.min(self.r.fields.len())]
     }
-    /// 次の層を読む（無ければ None）。読んだ層の項目は `layer_fields` で見られる。
+    /// 次のレイヤーを読む（無ければ None）。読んだレイヤーの項目は `layer_fields` で見られる。
     pub fn next_layer(&mut self) -> Result<Option<usize>> {
         if self.next >= self.count {
             return Ok(None);
@@ -566,11 +566,11 @@ impl<'a> Parse<'a> {
         self.next += 1;
         Ok(Some(i as usize))
     }
-    /// 今読んだ層の項目。
+    /// 今読んだレイヤーの項目。
     pub fn layer_fields(&self) -> &[NativeField] {
         &self.r.fields[self.layer_start..]
     }
-    /// 今読んだ層の `Bytes` の値（画素）を手放す（骨組みだけ残す）。
+    /// 今読んだレイヤーの `Bytes` の値（画素）を手放す（骨組みだけ残す）。
     pub fn drop_layer_values(&mut self) {
         let start = self.layer_start;
         let mut kept = 0;
@@ -582,9 +582,12 @@ impl<'a> Parse<'a> {
         }
         self.r.fields.truncate(start + kept);
     }
-    /// 層の後（手動の ID の色）と終わり、層をまたぐ決まり（親のグループ・Anchor・フィルターの ID）を確かめて、文書にする。
+    /// レイヤーの後（手動の ID の色）と終わり、レイヤーをまたぐ決まり（親のグループ・Anchor・フィルターの ID）を確かめて、文書にする。
     pub fn finish(mut self) -> Result<NativeDocument> {
-        check(self.next == self.count, "正本の層を読み終えていません")?;
+        check(
+            self.next == self.count,
+            "正本のレイヤーを読み終えていません",
+        )?;
         let r = &mut self.r;
         if self.version >= MANUAL_ID_COLORS_VERSION && !r.at_end()? {
             r.block("manual_id_colors", |r| {
@@ -615,7 +618,7 @@ impl<'a> Parse<'a> {
         }
         let layers = &self.layers;
         let by_id: HashMap<_, _> = layers.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
-        // 親子の確かめは上の層から下へ 1 回なめる（層の数 n に対して O(n)）。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる。
+        // 親子の確かめは上のレイヤーから下へ 1 回なめる（レイヤーの数 n に対して O(n)）。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる。
         // 親は子の上にある（位置が増える向きなので循環は起きない）・グループである・子が連続している（閉じたグループへ戻らない）・
         // 入れ子が上限以内。
         let mut open: Vec<usize> = Vec::new();
@@ -816,7 +819,7 @@ struct Layer {
 }
 /// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
 /// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。
-/// 版 33 の頭の `bake_priority`: 決め方・0〜1 の外の島を焼かない・モデルの指紋・「焼かない」と「優先する」の島（三角形の番号、狭義の昇順、
+/// 版 33 の頭の `bake_priority`: 決め方・0〜1 の外のアイランドを焼かない・モデルの指紋・「焼かない」と「優先する」のアイランド（三角形の番号、狭義の昇順、
 /// 両方に同じ番号を置かない）。一覧が両方とも空なら指紋も空、どちらかにあれば小文字の SHA-256 の 64 桁。
 fn bake_priority(r: &mut Reader<'_>) -> Result<()> {
     r.int("rule", 0, 3)?;
@@ -833,14 +836,14 @@ fn bake_priority(r: &mut Reader<'_>) -> Result<()> {
             let t = r.int(&format!("{name}[{i}]"), 0, 3_999_999)?;
             check(
                 list.last().is_none_or(|p| *p < t),
-                "ベイクの優先の島の番号の並びが不正です",
+                "ベイクの優先のアイランドの番号の並びが不正です",
             )?;
             list.push(t);
         }
     }
     check(
         lists[0].iter().all(|t| lists[1].binary_search(t).is_err()),
-        "ベイクの優先の同じ島が「焼かない」と「優先する」の両方にあります",
+        "ベイクの優先の同じアイランドが「焼かない」と「優先する」の両方にあります",
     )?;
     check(
         if lists.iter().all(Vec::is_empty) {
@@ -1123,7 +1126,7 @@ fn layer(
             Ok(())
         })?;
     }
-    // 画素はラスターの層と、パスの一覧を持つ塗りつぶしの層（パスの画素。版 27）
+    // 画素はラスターレイヤーと、パスの一覧を持つ塗りつぶしレイヤー（パスの画素。版 27）
     let n = r.int(
         "channel_count",
         0,
@@ -1155,7 +1158,7 @@ fn layer(
     }
     let surface = v >= 8 && r.boolean("has_surface_path")?;
     if surface {
-        check(kind == 0, "パスはラスター層に限ります")?;
+        check(kind == 0, "パスはラスターレイヤーに限ります")?;
         r.block("surface_path", |r| path(r, v, true, &channels, &enabled))?;
     }
     if v >= 9 && r.boolean("has_filters")? {
@@ -1190,10 +1193,10 @@ fn layer(
         }
     }
     if flags & 64 != 0 {
-        // 一覧はラスターと塗りつぶしの層（塗りつぶしの層のパスは一覧の形だけ）
+        // 一覧はラスターと塗りつぶしレイヤー（塗りつぶしレイヤーのパスは一覧の形だけ）
         check(
             !surface && !canvas && (kind == 0 || kind == 1),
-            "パスの一覧と 1 本のパスは両方を持てません（パスはラスターか塗りつぶしの層に限ります）",
+            "パスの一覧と 1 本のパスは両方を持てません（パスはラスターか塗りつぶしレイヤーに限ります）",
         )?;
         r.block("paths", |r| path_list(r, v, &channels, &enabled))?;
     }
@@ -1647,7 +1650,7 @@ fn effect_filter(r: &mut Reader<'_>, t: i32) -> Result<i32> {
         }
     })
 }
-/// 64 からの調整・フィルターの種類ごとの欄（調整の層は `detail`、フィルターの段は `adjust` のブロックの中）。
+/// 64 からの調整・フィルターの種類ごとの欄（調整レイヤーは `detail`、フィルターの段は `adjust` のブロックの中）。
 /// 64: 逆向き・ランプ。65: 合成・R・G・B の 4 本のカーブ。66: 範囲ごとの 3 本のスライダーと輝度を保つ。
 /// 67: 明るさ・コントラスト。68: しきい値。69: 階調。
 fn color_adjust(r: &mut Reader<'_>, v: i32, t: i32) -> Result<()> {
@@ -1976,7 +1979,7 @@ fn path(
     Ok(n)
 }
 
-/// 層のパスの一覧（版 27）: 1〜256 本。1 本ごとに名前（128 文字（UTF-16）まで、制御文字なし）・表示・側（3D か）と、1 本のパスと
+/// レイヤーのパスの一覧（版 27）: 1〜256 本。1 本ごとに名前（128 文字（UTF-16）まで、制御文字なし）・表示・側（3D か）と、1 本のパスと
 /// 同じ並びのパス。側・基準のチャンネル・指紋・ID が揃うかは core が確かめる。
 fn path_list(
     r: &mut Reader<'_>,

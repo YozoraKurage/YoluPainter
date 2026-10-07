@@ -461,7 +461,7 @@ impl Acc {
     }
 }
 
-/// 画布の点がステンシルの画像のどこに来るか（C# の StencilMapping）: 画像 = (xx·x + xy·y + x0, yx·x + yy·y + y0)（画素 (i, j) の中心は
+/// キャンバスの点がステンシルの画像のどこに来るか（C# の StencilMapping）: 画像 = (xx·x + xy·y + x0, yx·x + yy·y + y0)（画素 (i, j) の中心は
 /// (i + 0.5, j + 0.5)）。画面は 2D の表示とステンシルの置き場所から作る。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StencilMapping {
@@ -488,7 +488,7 @@ impl StencilMapping {
             y0,
         })
     }
-    /// 画布の画素の格子を画像に 1 対 1 で重ね、(dx, dy) 画像の画素だけずらす。
+    /// キャンバスの画素の格子を画像に 1 対 1 で重ね、(dx, dy) 画像の画素だけずらす。
     pub fn translation(dx: f64, dy: f64) -> Self {
         StencilMapping {
             xx: 1.0,
@@ -499,7 +499,7 @@ impl StencilMapping {
             y0: dy,
         }
     }
-    /// 画布の 1 画素あたりの画像の画素（2 つの軸の像の長い方。ミップマップの段を選ぶ）。
+    /// キャンバスの 1 画素あたりの画像の画素（2 つの軸の像の長い方。ミップマップの段を選ぶ）。
     pub fn footprint(&self) -> f64 {
         let a = (self.xx * self.xx + self.yx * self.yx).sqrt();
         let b = (self.xy * self.xy + self.yy * self.yy).sqrt();
@@ -509,7 +509,7 @@ impl StencilMapping {
             b
         }
     }
-    /// 画布の画素 (px, py) の中心の、画像の点。
+    /// キャンバスの画素 (px, py) の中心の、画像の点。
     pub fn map(&self, px: i64, py: i64) -> (f64, f64) {
         self.map_point(px as f64 + 0.5, py as f64 + 0.5)
     }
@@ -556,7 +556,7 @@ pub struct StencilSample {
 }
 
 /// ストロークに付けたステンシル（C# の BrushStencil）: 画像、決まったモード（Auto は作るときに決める）、繰り返しと反転、2D のダブの
-/// 画布からの写し（3D のビューのように呼び手が画素ごとの点を渡すなら None）、色のモードで色を受けるチャンネル。
+/// キャンバスからの写し（3D のビューのように呼び手が画素ごとの点を渡すなら None）、色のモードで色を受けるチャンネル。
 #[derive(Clone, Debug)]
 pub struct BrushStencil {
     image: Arc<StencilImage>,
@@ -659,7 +659,7 @@ impl BrushStencil {
     pub fn sample_at(&self, at: StencilPoint) -> StencilSample {
         self.sample(at.x, at.y, at.footprint)
     }
-    /// 画布の画素 (px, py) のステンシル（画布からの写しで）。写しが無ければ None。
+    /// キャンバスの画素 (px, py) のステンシル（キャンバスからの写しで）。写しが無ければ None。
     pub fn sample_canvas(&self, px: i64, py: i64) -> Option<StencilSample> {
         let m = self.canvas_to_image?;
         let (x, y) = m.map(px, py);

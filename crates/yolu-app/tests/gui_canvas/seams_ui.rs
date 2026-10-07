@@ -1,4 +1,4 @@
-//! 層のフィルターが UV の継ぎ目をまたぐかの設定（効果の欄の切り替え）: モデルがあり、近傍の段を選んだときだけ出る・押すと文書の設定が
+//! レイヤーのフィルターが UV の継ぎ目をまたぐかの設定（効果の欄の切り替え）: モデルがあり、近傍の段を選んだときだけ出る・押すと文書の設定が
 //! 変わる（1 回の Undo）・日英の絵。継ぎ目をまたぐ評価そのものは yolu-core の `tests/effects/uv_seam_filters.rs`。
 use crate::common;
 
@@ -17,7 +17,7 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
     h.run();
 }
 
-/// 塗りつぶしの層にぼかしを足して選ぶ（`kind` の段）。
+/// 塗りつぶしレイヤーにぼかしを足して選ぶ（`kind` の段）。
 fn selected_filter(h: &mut Harness<'_, YoluApp>, kind: FilterKind) {
     apply(h, Action::M2(Edit::NewFill));
     let layer = h.state().state.selected_layer.unwrap();

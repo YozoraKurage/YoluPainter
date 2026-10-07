@@ -54,7 +54,7 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
     let id = core.layers()[1].id();
     core.set_pixel(id, 16, 10, Rgba8::new(17, 51, 93, 0))
         .unwrap();
-    core.set_layer_name(id, "変更した層").unwrap();
+    core.set_layer_name(id, "変更したレイヤー").unwrap();
     core.set_layer_opacity(id, 0.123456789, false).unwrap();
     core.set_layer_visible(id, false).unwrap();
     core.set_layer_clipping(id, true).unwrap();
@@ -65,7 +65,7 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
     let reopened = Project::read(&saved.to_bytes().unwrap()).unwrap();
     let restored = current(&reopened).to_core().unwrap();
     let layer = restored.layer(id).unwrap();
-    assert_eq!(layer.name(), "変更した層");
+    assert_eq!(layer.name(), "変更したレイヤー");
     assert_eq!(layer.opacity(), 0.123456789);
     assert!(!layer.visible());
     assert!(layer.clipping());
@@ -89,7 +89,7 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
 }
 #[test]
 fn the_document_with_every_feature_has_nothing_core_refuses_and_stays_writable() {
-    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロック・手動の ID の色は、
+    // M2 のレイヤーと効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・レイヤーのロック・手動の ID の色は、
     // どれも core にあるので断る項目に出ない
     let rich = NativeDocument::read(include_bytes!("../fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues();
@@ -160,7 +160,7 @@ fn edge_padding_is_refused_without_losing_original_bytes() {
 #[test]
 fn from_core_keeps_extra_channels_and_refuses_size_tile_size_and_active_stroke() {
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
-    let id = doc.add_layer("層").unwrap();
+    let id = doc.add_layer("レイヤー").unwrap();
     doc.import_tile(id, Channel::Height, TileCoord::new(0, 0), &[17; 256])
         .unwrap();
     let native = NativeDocument::from_core(&doc).unwrap();
@@ -182,7 +182,7 @@ fn from_core_keeps_extra_channels_and_refuses_size_tile_size_and_active_stroke()
 fn persistent_ids_validate_count_empty_duplicates_and_history() {
     for ids in [vec![], vec![LayerId(0)], vec![LayerId(1), LayerId(1)]] {
         let mut doc = Document::new(8, 8).unwrap();
-        doc.add_layer("層").unwrap();
+        doc.add_layer("レイヤー").unwrap();
         if ids.len() == 2 {
             doc.add_layer("2").unwrap();
         }
@@ -193,7 +193,7 @@ fn persistent_ids_validate_count_empty_duplicates_and_history() {
         .with_persistent_ids(0, &[])
         .is_err());
     let mut doc = Document::new(8, 8).unwrap();
-    let id = doc.add_layer("層").unwrap();
+    let id = doc.add_layer("レイヤー").unwrap();
     doc.set_layer_visible(id, false).unwrap();
     assert!(doc.can_undo());
     let mut restored = doc.with_persistent_ids(9, &[LayerId(17)]).unwrap();
@@ -201,7 +201,7 @@ fn persistent_ids_validate_count_empty_duplicates_and_history() {
     assert!(!restored.can_undo());
     restored.set_layer_name(LayerId(17), "復元後").unwrap();
     restored.undo().unwrap();
-    assert_eq!(restored.layer(LayerId(17)).unwrap().name(), "層");
+    assert_eq!(restored.layer(LayerId(17)).unwrap().name(), "レイヤー");
 }
 #[test]
 fn empty_document_and_legacy_v1_are_convertible() {
@@ -258,7 +258,7 @@ fn assert_snapshot_writes_the_same_bytes(doc: &Document, what: &str) {
 #[test]
 fn a_snapshot_writes_the_same_native_bytes_as_its_source() {
     use yolu_core::{ChannelInfo, ChannelKind, ColorSpace, SelectionMask};
-    // 層の属性・マスク・チャンネルごとの不透明度・グループ・塗りつぶし・ユーザーチャンネル・選択範囲を持つ文書
+    // レイヤーの属性・マスク・チャンネルごとの不透明度・グループ・塗りつぶし・ユーザーチャンネル・選択範囲を持つ文書
     let mut doc = Document::with_tile_size(32, 32, 16).unwrap();
     let paint = doc.add_layer("絵").unwrap();
     let brush = BrushSettings {
@@ -295,7 +295,7 @@ fn a_snapshot_writes_the_same_native_bytes_as_its_source() {
     .unwrap();
     doc.set_selection(Some(SelectionMask::rectangle(&doc, 0, 0, 9, 10)))
         .unwrap();
-    assert_snapshot_writes_the_same_bytes(&doc, "層・マスク・チャンネル・選択範囲");
+    assert_snapshot_writes_the_same_bytes(&doc, "レイヤー・マスク・チャンネル・選択範囲");
     // 手動の ID の色（正本の版 19 の塊）も写しが保ち、同じバイト列に書ける
     doc.set_id_colors(
         yolu_core::mesh_maps::IdColorAssignments::new(

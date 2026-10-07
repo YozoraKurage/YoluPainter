@@ -1,9 +1,9 @@
-//! アイランドごとのばらつき（Generator の種類 67）: 島の中は同じ値・島ごとに違う値・シードで変わる・最小と最大の範囲（等しいのも）・
-//! 島の外は入力のまま・重なったテクセルは番号の小さい三角形の島の値・1 画素の式と行の式が同じ・領域・スレッドの数・タイルの大きさ・
+//! アイランドごとのばらつき（Generator の種類 67）: アイランドの中は同じ値・アイランドごとに違う値・シードで変わる・最小と最大の範囲（等しいのも）・
+//! アイランドの外は入力のまま・重なったテクセルは番号の小さい三角形のアイランドの値・1 画素の式と行の式が同じ・領域・スレッドの数・タイルの大きさ・
 //! 解像度によらない・モデルが無い・予算で断られた・図を渡す前は理由つきで入力のまま・モデルを替えたら評価し直す・欄の検査・
 //! SIMD の道（`YOLU_SIMD`）によらないバイト。
 //!
-//! モデルは試験で組む: 3D で離れた 4 つの四角。A・B・C は UV の別の所、D は B と UV の一部が重なる（島の番号は三角形の順で A 1・B 2・C 3・D 4）。
+//! モデルは試験で組む: 3D で離れた 4 つの四角。A・B・C は UV の別の所、D は B と UV の一部が重なる（アイランドの番号は三角形の順で A 1・B 2・C 3・D 4）。
 use std::sync::Arc;
 
 use yolu_core::generator::*;
@@ -52,7 +52,7 @@ fn upper_left(x: f32, y: f32) -> Vec2 {
 /// 四角の中の (x, y) から UV へ。
 type UvOf = fn(f32, f32) -> Vec2;
 
-/// A・B・C・D の 4 つの島。`swapped` なら A と C の UV を入れ替える（A は島 1 のまま上に、C は島 3 のまま下に）。
+/// A・B・C・D の 4 つのアイランド。`swapped` なら A と C の UV を入れ替える（A はアイランド 1 のまま上に、C はアイランド 3 のまま下に）。
 fn islands(swapped: bool) -> Arc<UvTopology> {
     let (a, c): (UvOf, UvOf) = if swapped {
         (upper_left, lower_left)
@@ -67,7 +67,7 @@ fn islands(swapped: bool) -> Arc<UvTopology> {
     Arc::new(UvTopology::new(Arc::new(g), Some(0)))
 }
 
-/// 64² の島ごとの代表のテクセル（A・B・C・D の重ならない所）と、B と D が重なるテクセル・島の外のテクセル。
+/// 64² のアイランドごとの代表のテクセル（A・B・C・D の重ならない所）と、B と D が重なるテクセル・アイランドの外のテクセル。
 const A: (u32, u32) = (16, 16);
 const B: (u32, u32) = (45, 12);
 const C: (u32, u32) = (16, 48);
@@ -144,7 +144,7 @@ fn each_island_has_one_value_from_its_number_and_the_seed() {
             }
         }
     }
-    // 島ごとに違う値（既定の最小 0・最大 1）、シードを変えると全部の島で変わる
+    // アイランドごとに違う値（既定の最小 0・最大 1）、シードを変えると全部のアイランドで変わる
     let s = settings(0);
     let values: Vec<f64> = (1..=4).map(|i| s.island.value(i)).collect();
     for (i, v) in values.iter().enumerate() {
@@ -153,9 +153,9 @@ fn each_island_has_one_value_from_its_number_and_the_seed() {
     }
     let other = settings(1);
     for i in 1..=4 {
-        assert_ne!(other.island.value(i), s.island.value(i), "島 {i}");
+        assert_ne!(other.island.value(i), s.island.value(i), "アイランド {i}");
     }
-    // 最小・最大は u を線形に写す（同じシードの u から、丸めまで同じ式）。等しければ島によらず同じ値
+    // 最小・最大は u を線形に写す（同じシードの u から、丸めまで同じ式）。等しければアイランドによらず同じ値
     let mut narrow = settings(0);
     (narrow.island.min, narrow.island.max) = (0.2, 0.3);
     let mut flat = settings(0);
@@ -176,15 +176,15 @@ fn outside_texels_keep_the_input_and_overlaps_take_the_lower_triangles_island() 
     let map = islands(false).island_map(SIZE, SIZE).unwrap();
     let s = settings(42);
     let b = bound(&s, &map);
-    // 島の外は値を持たない
+    // アイランドの外は値を持たない
     assert_eq!(b.value(OUTSIDE.0, OUTSIDE.1), None);
     assert_eq!(b.value(0, 0), None);
-    // B と D が重なるテクセルは、番号の小さい三角形（B）の島の値
+    // B と D が重なるテクセルは、番号の小さい三角形（B）のアイランドの値
     assert!(map.overlapped(OVERLAP.0, OVERLAP.1));
     assert_eq!(map.island(OVERLAP.0, OVERLAP.1), 2);
     assert_eq!(b.value(OVERLAP.0, OVERLAP.1), b.value(B.0, B.1));
     assert_ne!(b.value(OVERLAP.0, OVERLAP.1), b.value(D.0, D.1));
-    // 評価しても島の外の画素は入力のバイトのまま
+    // 評価してもアイランドの外の画素は入力のバイトのまま
     let source = source_image();
     let image = Image::new(&source, SIZE, SIZE).unwrap();
     for target in [Target::Color, Target::Scalar, Target::Mask] {
@@ -295,7 +295,7 @@ fn island_values_do_not_depend_on_the_resolution() {
 #[test]
 fn before_the_map_is_given_and_when_it_cannot_be_used_the_stage_passes_its_input_through() {
     let s = settings(0);
-    // 島の図を渡す前は、モデルが無いのと同じ
+    // アイランドの図を渡す前は、モデルが無いのと同じ
     let b = BoundGenerator::bind(&s, &[], None, (SIZE, SIZE), no_anchor()).unwrap();
     assert_eq!(b.inactive(), Some(&Inactive::NoModel));
     assert_eq!(b.value(A.0, A.1), None);
@@ -319,7 +319,7 @@ fn before_the_map_is_given_and_when_it_cannot_be_used_the_stage_passes_its_input
     assert!(b.inactive().is_none());
 }
 
-/// 全面を BASE で塗った層に、アイランドごとのばらつきの段（色・置き換え）を足した文書。
+/// 全面を BASE で塗ったレイヤーに、アイランドごとのばらつきの段（色・置き換え）を足した文書。
 fn document(tile: u32, s: &Settings) -> (Document, LayerId, FilterId) {
     let mut doc = Document::with_tile_size(SIZE, SIZE, tile).unwrap();
     let layer = doc.add_layer("塗り").unwrap();
@@ -374,7 +374,7 @@ fn a_document_without_a_model_or_over_the_budget_keeps_the_input_and_says_why() 
     let list = doc.inactive_effect_list();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].reason, InactiveReason::Generator(Inactive::NoModel));
-    // 島の図の予算に収まらない: 入力のまま、理由は島の図
+    // アイランドの図の予算に収まらない: 入力のまま、理由はアイランドの図
     doc.set_seam_cache_budget_bytes(64);
     with_model(&mut doc, &islands(false));
     assert_eq!(whole(&doc), base);
@@ -389,7 +389,7 @@ fn a_document_without_a_model_or_over_the_budget_keeps_the_input_and_says_why() 
     let now = whole(&doc);
     assert_eq!(reason(&doc), None);
     assert!(doc.inactive_effect_list().is_empty());
-    // 島の中は島ごとに 1 つの灰色、島の外は入力のまま
+    // アイランドの中はアイランドごとに 1 つの灰色、アイランドの外は入力のまま
     let map = islands(false).island_map(SIZE, SIZE).unwrap();
     let mut colours = Vec::new();
     for y in 0..SIZE {
@@ -403,7 +403,11 @@ fn a_document_without_a_model_or_over_the_budget_keeps_the_input_and_says_why() 
                     if colours.len() <= slot {
                         colours.resize(slot + 1, None);
                     }
-                    assert_eq!(*colours[slot].get_or_insert(p), p, "島 {i} ({x}, {y})");
+                    assert_eq!(
+                        *colours[slot].get_or_insert(p),
+                        p,
+                        "アイランド {i} ({x}, {y})"
+                    );
                 }
             }
         }
@@ -417,7 +421,7 @@ fn another_model_re_evaluates_and_the_same_one_does_not() {
     let (mut doc, _, _) = document(16, &s);
     with_model(&mut doc, &islands(false));
     let first = whole(&doc);
-    // A と C の UV を入れ替えたモデル: 左下の島は C（島 3）になり、値が変わる
+    // A と C の UV を入れ替えたモデル: 左下のアイランドは C（アイランド 3）になり、値が変わる
     let since = doc.change_serial();
     with_model(&mut doc, &islands(true));
     assert!(!doc.changed_tiles(Channel::Color, since).unwrap().is_empty());
@@ -477,7 +481,7 @@ fn fields_outside_the_kind_are_refused() {
     let mut soft = settings(0);
     soft.softness = 0.5;
     soft.validate().unwrap();
-    // ピンは持たない、ほかの種類は島の設定を持たない
+    // ピンは持たない、ほかの種類はアイランドの設定を持たない
     assert!(Settings::new(Kind::UvIslandVariation)
         .candidate_maps()
         .is_empty());
@@ -490,7 +494,7 @@ fn fields_outside_the_kind_are_refused() {
 
 #[test]
 fn the_bytes_are_pinned_on_every_simd_path() {
-    // `YOLU_SIMD=scalar|sse41|avx2` で同じ値になる（レベル・減衰・反転は SIMD の道、島の値は整数の hash と丸めの無い掛け算）
+    // `YOLU_SIMD=scalar|sse41|avx2` で同じ値になる（レベル・減衰・反転は SIMD の道、アイランドの値は整数の hash と丸めの無い掛け算）
     let mut s = settings(77);
     s.low = 0.15;
     s.high = 0.85;

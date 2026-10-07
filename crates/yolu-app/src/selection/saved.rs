@@ -1,7 +1,7 @@
 //! 名前を付けて文書に残した選択範囲。今のテクスチャセット
 //! （文書）ごとに、名前と選択範囲の札を持ち、呼び出すときは新規・追加・削除・共通のどれかで今の選択範囲と組み合わせる（1 回の Undo）。
 //!
-//! 持ち主は core の `Document`（`save_selection`・`rename_saved_selection`・`delete_saved_selection`。どれも 1 回の Undo で、画布の大きさを
+//! 持ち主は core の `Document`（`save_selection`・`rename_saved_selection`・`delete_saved_selection`。どれも 1 回の Undo で、キャンバスの大きさを
 //! 変える操作は残した選択範囲も作り直す）。.ylp には使う文書だけを形式 8 で保存する（`sets/<ID>/selections.json`。`io`）。ここは画面と、
 //! 全体の予算（`SAVED_BUDGET_BYTES`。プロジェクト全体の合計）の確かめだけ。
 
@@ -20,7 +20,7 @@ use crate::ui::window::{self, Spec};
 pub use yolu_core::{SavedSelection, MAX_SAVED_SELECTIONS as MAX_SAVED};
 pub const SAVED_BUDGET_BYTES: u64 = 256 << 20;
 
-/// 窓（開いていれば）の状態。
+/// ウィンドウ（開いていれば）の状態。
 #[derive(Clone, Debug, Default)]
 pub struct SavedWindow {
     /// 名前の入力欄。
@@ -283,7 +283,7 @@ impl AppState {
     }
 }
 
-// ───────── 窓 ─────────
+// ───────── ウィンドウ ─────────
 
 const WIDTH: f32 = 420.0;
 const ROW: f32 = 28.0;
@@ -293,17 +293,17 @@ fn window_id() -> Id {
     Id::new("yolu.sel-saved")
 }
 
-/// 最後に描いた窓の矩形（開いていなければ None）。試験が位置を知るために読む。
+/// 最後に描いたウィンドウの矩形（開いていなければ None）。試験が位置を知るために読む。
 pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, window_id())
 }
 
-/// 窓の名前（見出し・メニュー）。
+/// ウィンドウの名前（見出し・メニュー）。
 pub fn window_title(lang: crate::lang::Lang) -> &'static str {
     lang.pick("覚えた選択範囲", "Remembered Selections")
 }
 
-/// 開いていれば窓を描き、押されたものを `Action` として当てる。
+/// 開いていればウィンドウを描き、押されたものを `Action` として当てる。
 pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
     let Some(mut win) = app.sel.saved_window.clone() else {
         return;
@@ -316,7 +316,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
     let list_h = if rows == 0 { 0.0 } else { shown as f32 * ROW };
     let height = window::HEADER_HEIGHT + 14.0 + 28.0 + 10.0 + list_h + 14.0;
     let keys_free = !ctx.egui_wants_keyboard_input();
-    // 名前を変えている間の Esc は名前の欄のもの（欄がやめて元の表示へ戻る。窓は閉じない）
+    // 名前を変えている間の Esc は名前の欄のもの（欄がやめて元の表示へ戻る。ウィンドウは閉じない）
     let esc_pressed =
         keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
     let esc = esc_pressed && win.rename.is_none();
@@ -509,7 +509,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             name,
         })));
     }
-    // 動かした窓の状態を戻す（操作で閉じた・窓を替えたあとは上書きしない）
+    // 動かしたウィンドウの状態を戻す（操作で閉じた・ウィンドウを替えたあとは上書きしない）
     if app.sel.saved_window.is_some() {
         app.sel.saved_window = Some(win);
     }

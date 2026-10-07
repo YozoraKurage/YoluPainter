@@ -6,7 +6,7 @@
 //! - ペンはマウスと同じ決まり: サイドボタンを押した接触は右ボタン、Alt・Space・Ctrl+Space を押した接触は左ボタンにそれらを足したもの。
 //!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて、離すまで変えない（`pen::PenPress`）。
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）は、面のストロークに通す（core の `SurfaceStrokeOptions`）。
-//! - ストロークを取り残さない: 離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
+//! - ストロークを取り残さない: 離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
 //! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てない: 面のストロークは、1 回の入力とフレームごとに決まった数までダブを
 //!   塗り、残りを持ち越す（`SurfaceStroke::paint_queued`）。持ち越しがあればフレームを続けて頼み、離したら残りを塗ってから確定する。
@@ -49,7 +49,7 @@ pub fn camera_view(app: &AppState, rect: Rect) -> CameraView {
 /// クリックとみなす、押してから離すまでに動いてよい距離（画面の点）。
 const CLICK_DISTANCE: f32 = 4.0;
 
-/// 今の道具がクローンのブラシか（元を決められる）。
+/// 今のツールがクローンのブラシか（元を決められる）。
 fn clone_active(app: &AppState) -> bool {
     app.tool.paints()
         && !app.tool.erases()
@@ -91,22 +91,22 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
-    // ベイクの窓で島を選んでいる間は、押した面の島を選ぶだけ（道具を使わない）
+    // ベイクのウィンドウでアイランドを選んでいる間は、押した面のアイランドを選ぶだけ（ツールを使わない）
     if crate::bake::overlap::press(app, crate::region::tools::Where::Surface(rect), at) {
         return;
     }
     match app.tool.def().surface {
-        // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描く道具の一時的なスポイトは 2D だけ）
+        // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描くツールの一時的なスポイトは 2D だけ）
         Surface::Pick => {
             crate::eyedrop::pick_surface(app, rect, at);
             return;
         }
-        // パスの道具は、押した面の点（掴む・差し込む・足す）。ストロークは持たず、点のドラッグだけが続く
+        // パスのツールは、押した面の点（掴む・差し込む・足す）。ストロークは持たず、点のドラッグだけが続く
         Surface::Path => {
             crate::pathtool::surface::press(app, rect, at, source);
             return;
         }
-        // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
+        // 範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
         Surface::Region => {
             if app.region.drag.is_none()
                 && crate::region::tools::surface_press(app, rect, at, source)
@@ -592,7 +592,7 @@ fn pen_sample(
                     if let Some(nav) = nav_of(button, &frame.modifiers, frame.space) {
                         nav_press(app, nav, button, p, &frame.modifiers, frame.space);
                     }
-                    // サイドボタン（右ボタン）を動かさずに離したら、ポリゴン塗りつぶしの島のメニュー
+                    // サイドボタン（右ボタン）を動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー
                     if s.barrel && !frame.modifiers.any() && !frame.space {
                         crate::bake::overlap::menu_press(
                             app,
@@ -615,7 +615,7 @@ fn pen_sample(
                     ) {
                         // 形のギズモのハンドルの上・点の編集: 描かずにドラッグを始める
                     } else if app.tool.def().surface == Surface::Path {
-                        // パスの道具: 押す・動く・離すを、点を足す・掴む・動かすにする
+                        // パスのツール: 押す・動く・離すを、点を足す・掴む・動かすにする
                         crate::pathtool::surface::pen_sample(
                             app,
                             rect,
@@ -675,7 +675,7 @@ fn pen_sample(
 }
 
 /// ペンが触れた最初の点の行き先。ビューを動かす（サイドボタン・Alt・Space・Ctrl+Space）・何もしない（押した所が別の部品・ビューを動かして
-/// いる最中・ステンシルを動かしている間・修飾を押したブラシと消しゴム）・道具。ステンシルを動かす押しは、同じ押しの egui のポインタの
+/// いる最中・ステンシルを動かしている間・修飾を押したブラシと消しゴム）・ツール。ステンシルを動かす押しは、同じ押しの egui のポインタの
 /// 代わりの入力をステンシルが取るので、ビューを動かす判定より先に手放す（マウスの押しと同じく、ステンシルだけが動く）。
 fn press_kind(
     ui: &Ui,
@@ -738,7 +738,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
-    // パスの道具の取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
+    // パスのツールの取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
     app.path.input = crate::pathtool::PathInputState {
         alt: modifiers.alt,
         ctrl: modifiers.command,
@@ -800,7 +800,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     }
                     if let Some(nav) = nav_of(*button, m, space) {
                         nav_press(app, nav, *button, pos, m, space);
-                        // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしの島のメニュー（動かせば回すだけ）
+                        // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（動かせば回すだけ）
                         if *button == PointerButton::Secondary && !m.any() && !space {
                             crate::bake::overlap::menu_press(
                                 app,
@@ -954,7 +954,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
     flush(app, &mut drag_at);
     paint_queued(app, &ctx);
-    // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える
+    // ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）も、押していなければ終える
     let (primary, any_down) = ui.input(|i| (i.pointer.primary_down(), i.pointer.any_down()));
     if app.view3d.input.stroke == Some(StrokeSource::Mouse)
         && !primary
@@ -975,7 +975,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     {
         app.path_finish_drag();
     }
-    // 点を矩形で選ぶドラッグも、取りこぼしたら最後の位置で確定する（2D の道具と同じ）。位置が無ければ捨てる
+    // 点を矩形で選ぶドラッグも、取りこぼしたら最後の位置で確定する（2D のツールと同じ）。位置が無ければ捨てる
     if app
         .path
         .rect

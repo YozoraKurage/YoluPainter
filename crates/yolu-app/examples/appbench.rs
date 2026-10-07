@@ -1,17 +1,17 @@
 //! 他の画像編集アプリと同じ文書・同じ操作で、core・io を直に呼んだ時間を測る台（CPU だけ。アプリの画面の時間とは別）。
 //!
 //! 使い方:
-//! - 合成の文書を PSD に書き出す: `appbench gen <sparse|dense> <辺> <層の数> <出力.psd>`
-//! - 文書の構成を出す（層の名前は出さない）: `appbench info <入力.psd>`
+//! - 合成の文書を PSD に書き出す: `appbench gen <sparse|dense> <辺> <レイヤーの数> <出力.psd>`
+//! - 文書の構成を出す（レイヤーの名前は出さない）: `appbench info <入力.psd>`
 //! - 測る: `appbench run <入力.psd> <ラベル> [--repeat 3] [--out-dir <作業のフォルダ>] [--dump <PNG の出力先>] [--only 操作,操作]`
 //!
 //! 出力は `ラベル<TAB>操作<TAB>中央値(ms)<TAB>各回(ms)` の TSV（標準出力）と、注記（標準エラー）。
 //! 操作（`OPERATIONS`）: open（どの操作にも要るので `--only` に関係なく測る）・composite・composite_warm・toggle・opacity・toggle2・
-//! opacity2（一番上の見た目に効く層）・blur_r8・blur_r40・levels・filter_doc_blur8（フィルターを層に付けて全体を合成）・png・
+//! opacity2（一番上の見た目に効くレイヤー）・blur_r8・blur_r40・levels・filter_doc_blur8（フィルターをレイヤーに付けて全体を合成）・png・
 //! psd_plan・psd_write・psd_verify（PSD の保存の計画・書き出し・書いた直後の確かめ。確かめはアプリの保存と同じ `psd::check_written`
 //! で、読み戻しと書いたバイト列との照合）・merge（許容差 255 は差があっても断らない設定）・
 //! merge_app（アプリの既定の許容差）。`--only` は名前ごとに選べて、選んだ操作の行だけ出す（知らない名前は断る）。
-//! 合成の文書は他の画像編集アプリでも開けるよう、層は Normal/Multiply/Screen/Overlay のラスターだけで作る。
+//! 合成の文書は他の画像編集アプリでも開けるよう、レイヤーは Normal/Multiply/Screen/Overlay のラスターだけで作る。
 
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -94,7 +94,7 @@ fn brush(rng: &mut Rng, radius: f64, opacity: f64) -> BrushSettings {
     }
 }
 
-/// 部分的な文書: 下地（全面を丸い大きな筆で埋める）と、層ごとに丸い筆の跡を何本か置いた層（絵に近い疎な形）。
+/// 部分的な文書: 下地（全面を丸い大きな筆で埋める）と、レイヤーごとに丸い筆の跡を何本か置いたレイヤー（絵に近い疎な形）。
 fn gen_sparse(size: u32, layers: usize) -> Document {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     d.set_source_budget_bytes(4 << 30).unwrap();
@@ -135,7 +135,7 @@ fn gen_sparse(size: u32, layers: usize) -> Document {
     d
 }
 
-/// 全面の文書: 全層が画布いっぱいに半透明の画素を持つ（合成が一番重い形）。
+/// 全面の文書: 全レイヤーがキャンバスいっぱいに半透明の画素を持つ（合成が一番重い形）。
 fn gen_dense(size: u32, layers: usize) -> Document {
     let mut d = Document::with_tile_size(size, size, 128).unwrap();
     d.set_source_budget_bytes(4 << 30).unwrap();
@@ -166,7 +166,7 @@ fn gen_dense(size: u32, layers: usize) -> Document {
 }
 
 fn write_psd(doc: &Document, path: &Path) -> Result<(u64, f64, f64, psd::Written), String> {
-    // アプリと同じく、層のメモリの予算を渡す（渡さないと、書くファイルの上限が固定の 128 MiB になる）
+    // アプリと同じく、レイヤーのメモリの予算を渡す（渡さないと、書くファイルの上限が固定の 128 MiB になる）
     let ctl = ExportControl {
         source_budget: Some(4 << 30),
         ..ExportControl::default()
@@ -217,7 +217,7 @@ fn shown(doc: &Document, l: &yolu_app::engine::Layer) -> bool {
     true
 }
 
-/// 層の色の面のタイルの外接矩形（画素の座標）。
+/// レイヤーの色の面のタイルの外接矩形（画素の座標）。
 fn tile_bbox(doc: &Document, id: LayerId) -> Rect {
     let Some(surface) = doc.layer(id).and_then(|l| l.surface(Channel::Color)) else {
         return Rect::new(0, 0, 0, 0);
@@ -237,7 +237,7 @@ fn tile_bbox(doc: &Document, id: LayerId) -> Rect {
     Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
 
-/// 描ける層（ラスター）の、下から数えた葉の番号（グループは数えない）。他のアプリの台本へ渡して、同じ層を選ぶ。
+/// 描けるレイヤー（ラスター）の、下から数えた葉の番号（グループは数えない）。他のアプリの台本へ渡して、同じレイヤーを選ぶ。
 fn leaf_order(doc: &Document) -> Vec<LayerId> {
     doc.layers()
         .iter()
@@ -246,7 +246,7 @@ fn leaf_order(doc: &Document) -> Vec<LayerId> {
         .collect()
 }
 
-/// 操作の対象の層: 合成に出るラスターのうち、タイルが一番多い層（同数なら下の層）。
+/// 操作の対象のレイヤー: 合成に出るラスターのうち、タイルが一番多いレイヤー（同数なら下のレイヤー）。
 fn target_layer(doc: &Document) -> LayerId {
     let mut best: Option<(usize, LayerId)> = None;
     for l in doc.layers() {
@@ -258,11 +258,11 @@ fn target_layer(doc: &Document) -> LayerId {
             best = Some((n, l.id()));
         }
     }
-    best.expect("ラスター層が無い").1
+    best.expect("ラスターレイヤーが無い").1
 }
 
-/// 2 つ目の対象の層: 合成に出るラスターのうち、タイルが一番多い層の 3 分の 1 以上持つ層で、一番上のもの（見た目に効く層。1 つ目は一番下の層に
-/// なりがちで、上の不透明な層に隠れていると切り替えても合成が変わらない）。
+/// 2 つ目の対象のレイヤー: 合成に出るラスターのうち、タイルが一番多いレイヤーの 3 分の 1 以上持つレイヤーで、一番上のもの（見た目に効くレイヤー。1 つ目は一番下のレイヤーに
+/// なりがちで、上の不透明なレイヤーに隠れていると切り替えても合成が変わらない）。
 fn target2_layer(doc: &Document) -> LayerId {
     let max = doc
         .layers()
@@ -280,7 +280,7 @@ fn target2_layer(doc: &Document) -> LayerId {
                 && l.surface(Channel::Color).map_or(0, |s| s.tile_count()) >= (max / 3).max(1)
         })
         .map(|l| l.id())
-        .expect("ラスター層が無い")
+        .expect("ラスターレイヤーが無い")
 }
 
 fn info(path: &Path) {
@@ -289,7 +289,7 @@ fn info(path: &Path) {
     let target = target_layer(&doc);
     let target2 = target2_layer(&doc);
     println!(
-        "# {}×{} 層 {}（葉 {}）対象の葉の番号(下から 0 始まり)={} 2 つ目の対象={}",
+        "# {}×{} レイヤー {}（葉 {}）対象の葉の番号(下から 0 始まり)={} 2 つ目の対象={}",
         doc.width(),
         doc.height(),
         doc.layers().len(),
@@ -359,7 +359,7 @@ fn fnv(bytes: &[u8]) -> u64 {
     h
 }
 
-/// 層の画素（straight RGBA8）を、外接矩形だけ取り出す。
+/// レイヤーの画素（straight RGBA8）を、外接矩形だけ取り出す。
 fn crop(canvas: &[u8], width: u32, r: Rect) -> Vec<u8> {
     let mut out = Vec::with_capacity(r.width as usize * r.height as usize * 4);
     for y in r.y..r.y + r.height {
@@ -395,7 +395,7 @@ fn run(
         if rep == 0 {
             let leaves = leaf_order(&doc);
             eprintln!(
-                "# {label}: {w}×{h} 層 {} 対象の葉={} 対象の外接={}×{}（{},{}）スレッド={}",
+                "# {label}: {w}×{h} レイヤー {} 対象の葉={} 対象の外接={}×{}（{},{}）スレッド={}",
                 doc.layers().len(),
                 leaves.iter().position(|i| *i == target).unwrap(),
                 bbox.width,
@@ -444,7 +444,7 @@ fn run(
             drop(c);
             doc.set_layer_visible(target, true).unwrap();
         }
-        // 2 つ目の対象（一番上の見た目に効く層）での切り替えと不透明度
+        // 2 つ目の対象（一番上の見た目に効くレイヤー）での切り替えと不透明度
         let target2 = target2_layer(&doc);
         if want("toggle2") {
             let t = Instant::now();
@@ -471,7 +471,7 @@ fn run(
             drop(c);
             doc.set_layer_opacity(target, 1.0, false).unwrap();
         }
-        // 層への破壊的な処理（ぼかし・レベル補正）に当たる、フィルターの計算。対象の層の外接矩形の画素へ
+        // レイヤーへの破壊的な処理（ぼかし・レベル補正）に当たる、フィルターの計算。対象のレイヤーの外接矩形の画素へ
         let layer_bytes = doc
             .layer(target)
             .and_then(|l| l.surface(Channel::Color))
@@ -568,7 +568,7 @@ fn run(
                 Err(e) => eprintln!("# PSD の保存は断られた: {e}"),
             }
         }
-        // 全層の結合（表示に寄与する層を 1 枚へ）。許容差 255 は、結果と元の合成に差があっても断らない設定（比べはどの許容差でも全部のタイルで走る。
+        // 全レイヤーの結合（表示に寄与するレイヤーを 1 枚へ）。許容差 255 は、結果と元の合成に差があっても断らない設定（比べはどの許容差でも全部のタイルで走る。
         // 許容差は比べたあとの断る判定にだけ効く）。アプリの既定（`MERGE_ROUNDING_TOLERANCE`）の結合は、255 の結合で変わった文書でなく、開き直した文書で測る
         if want("merge") {
             let t = Instant::now();
@@ -604,7 +604,10 @@ fn main() {
         Some("gen") => {
             let kind = args.get(1).expect("sparse か dense");
             let size: u32 = args.get(2).and_then(|s| s.parse().ok()).expect("辺");
-            let layers: usize = args.get(3).and_then(|s| s.parse().ok()).expect("層の数");
+            let layers: usize = args
+                .get(3)
+                .and_then(|s| s.parse().ok())
+                .expect("レイヤーの数");
             let out = PathBuf::from(args.get(4).expect("出力"));
             let doc = match kind.as_str() {
                 "sparse" => gen_sparse(size, layers),
@@ -667,7 +670,11 @@ mod tests {
             let (bytes, _, _, _) = write_psd(&doc, &path).unwrap();
             assert!(bytes > 0);
             let back = open_psd(&path);
-            assert_eq!(back.layers().len(), doc.layers().len(), "{name}: 層の数");
+            assert_eq!(
+                back.layers().len(),
+                doc.layers().len(),
+                "{name}: レイヤーの数"
+            );
             let a = doc.composite_channel(Channel::Color, doc.bounds()).unwrap();
             let b = back
                 .composite_channel(Channel::Color, back.bounds())
@@ -734,7 +741,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// 対象の層は、表示されているラスターの中でタイルが一番多い層。2 つ目は一番上の見た目に効く層。
+    /// 対象のレイヤーは、表示されているラスターの中でタイルが一番多いレイヤー。2 つ目は一番上の見た目に効くレイヤー。
     #[test]
     fn target_layers_are_chosen_from_shown_rasters() {
         let doc = gen_sparse(128, 6);

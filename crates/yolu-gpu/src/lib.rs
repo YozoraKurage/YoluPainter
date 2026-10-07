@@ -70,7 +70,7 @@ pub struct Dab {
     pub y: f64,
     pub pressure: f64,
 }
-/// 合成の 1 つの命令（シェーダーの `Layer` と同じ並び・32 バイト）。描かない層は計画に入れない。命令の種類と並びは `plan.rs`。
+/// 合成の 1 つの命令（シェーダーの `Layer` と同じ並び・32 バイト）。描かないレイヤーは計画に入れない。命令の種類と並びは `plan.rs`。
 /// 調整の命令は面も塗りつぶしの色も持たないので、`slot` に調整の式の種類（`plan::adj`）、`fill` に値・表の語の番号を置く。
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -166,7 +166,7 @@ fn work_bytes(
 }
 
 /// 合成の束（`tiles` タイル）を `run` に渡したときに数える量の上限。`composite_tiles` が予算から束のタイル数を決めるのに使い、`run` と
-/// 同じ式（`work_bytes`）で数える。命令の番号の列は、全部の層が描かれたタイルの最大（先頭の（始まり, 長さ）と命令の数）で数える。
+/// 同じ式（`work_bytes`）で数える。命令の番号の列は、全部のレイヤーが描かれたタイルの最大（先頭の（始まり, 長さ）と命令の数）で数える。
 fn composite_bytes(plan: &Plan, layer_count: usize, tile_bytes: u64, tiles: u64) -> u64 {
     let slots = plan.slots.len().max(1) as u64;
     work_bytes(
@@ -778,7 +778,7 @@ mod tests {
             .collect()
     }
 
-    /// 束の見積もり（`composite_bytes`）は、実際に `run` へ渡す量（全部の層が描かれたタイルの束）以上で、予算から束のタイル数を決めても
+    /// 束の見積もり（`composite_bytes`）は、実際に `run` へ渡す量（全部のレイヤーが描かれたタイルの束）以上で、予算から束のタイル数を決めても
     /// `run` の予算の検査に引っかからない。タイルごとの面の数・命令の数・調整の表を含めて数える。
     #[test]
     fn composite_batch_estimate_covers_what_run_counts() {

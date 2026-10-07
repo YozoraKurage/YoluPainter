@@ -1,8 +1,8 @@
-//! ブラシの一覧（クリスタのサブツールに当たる）と、道具ごとに最後に使ったブラシの覚え。
+//! ブラシの一覧（クリスタのサブツールに当たる）と、ツールごとに最後に使ったブラシの覚え。
 //!
 //! 一覧の 1 つ（`Entry`）は名前・グループ・設定の元（`baseline`）と、変えたままの設定（`edited`）を持つ。組み込みは消せない元で、
 //! 利用者のブラシは設定のフォルダに 1 つ 1 ファイルで保存する（`store`）。今のブラシの設定は、これまでどおり `AppState::brush` と
-//! `AppState::m2.brush`（スライダーやオプションバーがその場で変える）が持ち、一覧はそれとの差だけを見る: 別のブラシへ替える・道具を
+//! `AppState::m2.brush`（スライダーやオプションバーがその場で変える）が持ち、一覧はそれとの差だけを見る: 別のブラシへ替える・ツールを
 //! 替えるときに今の設定を一覧の側へ書き戻し（`brush_sync`）、替えた先の設定を今の設定へ写す（`brush_load`）。
 //! 手ぶれ補正と入り抜き（`assist`）・対称・ステンシル・背景色・乱数の種は描き手の設定なので、ブラシには入れない（替えても残る）。
 //! ブラシの設定は文書ではない（Undo に入れない）。ストロークの最中は、ブラシを替える操作を断る。
@@ -127,7 +127,7 @@ impl Group {
         }
     }
 
-    /// 消しゴムの道具（E）で使うグループ。
+    /// 消しゴムのツール（E）で使うグループ。
     pub fn is_eraser(self) -> bool {
         self == Group::Eraser
     }
@@ -339,7 +339,7 @@ impl IdSource {
 }
 
 /// 一覧の全体（組み込みの全部と、読んだ利用者のブラシのファイルの全部）。並び（どのツールのどのグループに、どの順で出すか）はツールの並び
-/// （`toolset`）が持ち、ここは中身と今のブラシだけ。並びから外したブラシのファイルもここに残る（「＋」の窓から戻せる）。
+/// （`toolset`）が持ち、ここは中身と今のブラシだけ。並びから外したブラシのファイルもここに残る（「＋」のウィンドウから戻せる）。
 pub struct BrushLibrary {
     entries: Vec<Entry>,
     current: BrushKey,
@@ -477,7 +477,7 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
+/// 詳細のウィンドウのカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     Shape,
@@ -544,7 +544,7 @@ impl Category {
     }
 }
 
-/// ブラシの詳細の窓の状態（開いているか・カテゴリ・位置・スクロール）。
+/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・位置・スクロール）。
 pub struct DetailWindow {
     pub open: bool,
     pub category: Category,
@@ -619,9 +619,9 @@ pub struct BrushesState {
     pub samples: sample::SampleCache,
     /// ファイルの取り込み（裏のスレッドの仕事）。
     pub import: import::ImportState,
-    /// 詳細の窓の筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
+    /// 詳細のウィンドウの筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
     pub krita: krita::KritaTips,
-    /// 取り込みの窓の「CLIP STUDIO から」。
+    /// 取り込みのウィンドウの「CLIP STUDIO から」。
     pub csp: clipstudio::CspState,
     /// 入り抜き・手ぶれ補正を持つブラシを選んでいる間、そのブラシへ替える前の描き手の設定を覚えておく場所（持たないブラシへ替えたら戻す）。
     pub drawer_assist: Option<StrokeAssist>,
@@ -654,7 +654,7 @@ pub enum BrushAction {
     Add,
     /// このブラシ（今のブラシなら今の設定）の写しを、すぐ後ろへ作る。
     Duplicate(BrushKey),
-    /// 並びから外す（利用者のブラシのファイルは消さない。「＋」の窓から戻せる）。
+    /// 並びから外す（利用者のブラシのファイルは消さない。「＋」のウィンドウから戻せる）。
     Delete(BrushKey),
     StartRename(BrushKey),
     /// 名前を変える（組み込みは、その場でファイルの写しに替えてから）。
@@ -671,9 +671,9 @@ pub enum BrushAction {
         at: DropAt,
         copy: bool,
     },
-    /// 「＋」の窓で選んだ物を、今のグループの後ろへ置く（並びにある物は写しを作る）。
+    /// 「＋」のウィンドウで選んだ物を、今のグループの後ろへ置く（並びにある物は写しを作る）。
     AddFrom(Vec<crate::toolset::catalog::CatalogItem>),
-    /// 利用者のブラシのファイルを消す前に確かめる（窓の頼み）。
+    /// 利用者のブラシのファイルを消す前に確かめる（ウィンドウの頼み）。
     DeleteFileDialog(BrushKey),
     /// 利用者のブラシのファイルを消す（並びからも外す）。
     DeleteFile(BrushKey),
@@ -681,16 +681,16 @@ pub enum BrushAction {
     Revert(BrushKey),
     /// 今の設定を、そのブラシの元として登録する（組み込みは、その場でファイルの写しに替えてから）。
     Register(BrushKey),
-    /// 取り込むファイルを選ぶ窓を開く。
+    /// 取り込むファイルを選ぶウィンドウを開く。
     ImportDialog,
     /// これらのファイルのブラシを取り込む（裏のスレッドで読んで置く）。
     Import(Vec<PathBuf>),
     /// 取り込みをやめる（置いた分は残る）。
     ImportCancel,
-    /// 「CLIP STUDIO から」の窓を開く（CLIP STUDIO のサブツールのフォルダを探す。読むだけ）。
+    /// 「CLIP STUDIO から」のウィンドウを開く（CLIP STUDIO のサブツールのフォルダを探す。読むだけ）。
     ClipStudioOpen,
     ClipStudioClose,
-    /// フォルダを手で選ぶ窓を頼む。
+    /// フォルダを手で選ぶウィンドウを頼む。
     ClipStudioPickFolder,
     /// 手で選んだフォルダを探す。
     ClipStudioFolder(PathBuf),
@@ -917,7 +917,7 @@ impl AppState {
         true
     }
 
-    /// `key` の設定を今の設定にして、今のブラシ・道具ごとの覚え・出すグループを替える（道具は替えない）。
+    /// `key` の設定を今の設定にして、今のブラシ・ツールごとの覚え・出すグループを替える（ツールは替えない）。
     fn brush_activate(&mut self, key: BrushKey) {
         let Some(entry) = self.brushes.lib.entry(key) else {
             return;
@@ -968,7 +968,7 @@ impl AppState {
         };
         if self.tool != tool {
             // `switch_tool` は `brush_for_slot` と互いに呼び合うので通らない。離れるツールの変えたままの設定を一覧へ書き戻す
-            // （入る道具はブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
+            // （入るツールはブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
             self.subtool_leave(self.tool);
             self.sel_tool_changed();
             self.tool = tool;
@@ -1342,7 +1342,7 @@ impl AppState {
         self.toolset_persist();
     }
 
-    /// 「＋」の窓で選んだ物を、今のグループの後ろへ置く（並びにある物・同梱の Krita は写しのファイルを作る）。最初に置いた物に替える。
+    /// 「＋」のウィンドウで選んだ物を、今のグループの後ろへ置く（並びにある物・同梱の Krita は写しのファイルを作る）。最初に置いた物に替える。
     pub(crate) fn brush_add_from(&mut self, items: Vec<crate::toolset::catalog::CatalogItem>) {
         use crate::toolset::catalog::CatalogItem;
         if items.is_empty() {

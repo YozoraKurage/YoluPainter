@@ -1,4 +1,4 @@
-//! パスの道具の 2D のキャンバス: 入力（押す・動く・離す・ペン）と、パスの線・点の重ね表示。
+//! パスのツールの 2D のキャンバス: 入力（押す・動く・離す・ペン）と、パスの線・点の重ね表示。
 //!
 //! 押した所に点があれば掴んで選び（動かして離すと 1 回で動く）、曲線の上なら、その区間に点を差し込み、どちらでもなければ終わりに足す。
 //! キャンバスの外には足さず、動かしてもキャンバスの中に収める。表示を回している・反転しているときも、点・線の当たりは画面の座標で測る。
@@ -85,7 +85,7 @@ fn canvas_size(app: &AppState) -> (f64, f64) {
     (app.doc.width() as f64, app.doc.height() as f64)
 }
 
-/// 選んでいる層の、編集していないほかの 2D のパス（一覧の上のものから）。
+/// 選んでいるレイヤーの、編集していないほかの 2D のパス（一覧の上のものから）。
 fn others(app: &AppState) -> Vec<(u128, &CanvasPath)> {
     let active = app.path_layer().map(|(_, p)| p.id());
     app.path_entries()
@@ -498,7 +498,7 @@ pub(super) fn draw_insert_ring(painter: &Painter, at: Pos2) {
     painter.circle_stroke(at, 5.5, Stroke::new(1.5, PATH_COLOR));
 }
 
-/// 選んでいる層の 2D のパスの線と点をキャンバスに重ねる（パスの道具のあいだだけ）。
+/// 選んでいるレイヤーの 2D のパスの線と点をキャンバスに重ねる（パスのツールのあいだだけ）。
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState, pointer: Option<Pos2>) {
     if !app.tool.is_path() {
         return;

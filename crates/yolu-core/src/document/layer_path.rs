@@ -1,8 +1,8 @@
-//! 編集できるパスを持つ層（C# の `PaintDocument.Paths`）。層の対象チャンネルの画素はパスの一覧から描いた結果で、一覧と画素は
+//! 編集できるパスを持つレイヤー（C# の `PaintDocument.Paths`）。レイヤーの対象チャンネルの画素はパスの一覧から描いた結果で、一覧と画素は
 //! いつも一緒に変わる（1 回の Undo）。3D のパスを描くのは呼び手（モデルの面が要る）で、ここは描いた結果の面と一覧を受け取って
 //! 入れ替える。2D のパスは [`Document::set_canvas_paths`] がここで描く。
 //!
-//! 手で塗る・塗りつぶす・マテリアルで塗ると次の描き直しで消えるので、パスの層には断る。パスを外す（[`Document::rasterize`]）と
+//! 手で塗る・塗りつぶす・マテリアルで塗ると次の描き直しで消えるので、パスレイヤーには断る。パスを外す（[`Document::rasterize`]）と
 //! 今の画素だけが残り、普通に塗れる。
 
 use std::collections::BTreeSet;
@@ -29,7 +29,7 @@ fn list_cost(entries: &[LayerPathEntry]) -> u64 {
     entries.iter().map(LayerPathEntry::state_cost).sum()
 }
 
-/// 1 本のパスを、層の今の一覧の 1 本目の名前と表示を引き継いで一覧にする（ID が同じときだけ引き継ぐ）。
+/// 1 本のパスを、レイヤーの今の一覧の 1 本目の名前と表示を引き継いで一覧にする（ID が同じときだけ引き継ぐ）。
 fn single(old: &[LayerPathEntry], path: LayerPath) -> Vec<LayerPathEntry> {
     let mut entry = LayerPathEntry::new(path);
     if let Some(first) = old.first().filter(|f| f.id() == entry.id()) {
@@ -40,10 +40,12 @@ fn single(old: &[LayerPathEntry], path: LayerPath) -> Vec<LayerPathEntry> {
 }
 
 impl Document {
-    /// パスを持つ層に手で描く・塗る操作を断る（次の描き直しで消える）。
+    /// パスを持つレイヤーに手で描く・塗る操作を断る（次の描き直しで消える）。
     pub(super) fn refuse_path_layer(&self, index: usize) -> Result<(), CoreError> {
         if self.layers[index].has_paths() {
-            Err(CoreError::Unsupported("パスで描かれた層には手で描けない"))
+            Err(CoreError::Unsupported(
+                "パスで描かれたレイヤーには手で描けない",
+            ))
         } else if self.layers[index].text.is_some() {
             Err(CoreError::Unsupported("テキストレイヤーには手で描けない"))
         } else {
@@ -57,10 +59,10 @@ impl Document {
         entries: &[LayerPathEntry],
     ) -> Result<(), CoreError> {
         let l = &self.layers[index];
-        // 塗りつぶしの層のパスは、塗りつぶしと効果のスタックの結果の上に重ねる（評価の最後）
+        // 塗りつぶしレイヤーのパスは、塗りつぶしと効果のスタックの結果の上に重ねる（評価の最後）
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
             return Err(CoreError::Unsupported(
-                "パスで描けるのはラスターと塗りつぶしの層だけ",
+                "パスで描けるのはラスターと塗りつぶしレイヤーだけ",
             ));
         }
         if l.text.is_some() {
@@ -73,31 +75,35 @@ impl Document {
             for c in e.path.channels() {
                 self.require_channel(c)?;
             }
-            // ラスターの層は、描くチャンネルを有効にしてから（C# と同じ）。塗りつぶしの層は値の無いチャンネルにも描くので、
+            // ラスターレイヤーは、描くチャンネルを有効にしてから（C# と同じ）。塗りつぶしレイヤーは値の無いチャンネルにも描くので、
             // パスを付けるときに有効にする
             if l.kind == LayerKind::Raster
                 && e.path.material().is_none()
                 && !l.is_channel_enabled(e.path.channel())
             {
-                return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
+                return Err(CoreError::Unsupported(
+                    "パスのチャンネルがレイヤーで有効でない",
+                ));
             }
         }
         if let (Some(old), Some(new)) = (l.paths.first(), entries.first()) {
             if old.path.channel() != new.path.channel() {
-                return Err(CoreError::Unsupported("層のパスはチャンネルを変えない"));
+                return Err(CoreError::Unsupported(
+                    "レイヤーのパスはチャンネルを変えない",
+                ));
             }
             if old.path.is_canvas() != new.path.is_canvas() {
                 return Err(CoreError::Unsupported(
-                    "層のパスは種類（モデルの上かキャンバスの上か）を変えない",
+                    "レイヤーのパスは種類（モデルの上かキャンバスの上か）を変えない",
                 ));
             }
         }
-        // パスは層の画素を描き直す（アルファも変わる）ので、画像・透明部分・すべてのロックで断る。型と状態の検査のあと（C# の
+        // パスはレイヤーの画素を描き直す（アルファも変わる）ので、画像・透明部分・すべてのロックで断る。型と状態の検査のあと（C# の
         // ValidatePathTarget の末尾）
         self.ensure_pixels_rewritable(l.id)
     }
 
-    /// 層にパスを 1 本だけ付ける（一覧をこの 1 本にする）。今の 1 本目と同じ ID なら名前と表示を引き継ぐ。ほかは [`Document::set_paths`]。
+    /// レイヤーにパスを 1 本だけ付ける（一覧をこの 1 本にする）。今の 1 本目と同じ ID なら名前と表示を引き継ぐ。ほかは [`Document::set_paths`]。
     pub fn set_path(
         &mut self,
         layer: LayerId,
@@ -109,9 +115,9 @@ impl Document {
         self.set_paths(layer, entries, rendered)
     }
 
-    /// 層のパスの一覧を入れ替える。層の一覧のチャンネル（[`list_channels`]。前の一覧のものも）の画素を、描いた結果 `rendered`（新しい
-    /// 一覧のチャンネルごとに 1 つ。画布と同じ大きさの面）へそっくり入れ替える。新しい一覧から外れたチャンネルは空にする。ほかの
-    /// チャンネルとマスクは変えない。層で有効でないチャンネルは有効にする。空の一覧はパスを外して、そのチャンネルを空にする。
+    /// レイヤーのパスの一覧を入れ替える。レイヤーの一覧のチャンネル（[`list_channels`]。前の一覧のものも）の画素を、描いた結果 `rendered`（新しい
+    /// 一覧のチャンネルごとに 1 つ。キャンバスと同じ大きさの面）へそっくり入れ替える。新しい一覧から外れたチャンネルは空にする。ほかの
+    /// チャンネルとマスクは変えない。レイヤーで有効でないチャンネルは有効にする。空の一覧はパスを外して、そのチャンネルを空にする。
     /// 1 回の Undo。予算（画素・巻き戻し）を超えるなら何も変えずに断る。
     pub fn set_paths(
         &mut self,
@@ -151,7 +157,7 @@ impl Document {
         let old_paths = self.layers[index].paths.clone();
         let old_channels: Vec<Channel> = list_channels(&old_paths);
         let channels: BTreeSet<Channel> = paints.iter().chain(&old_channels).copied().collect();
-        // 層で有効でないチャンネルを有効にする（取り消しで戻す）
+        // レイヤーで有効でないチャンネルを有効にする（取り消しで戻す）
         let mut enabled: Vec<(Channel, bool)> = Vec::new();
         for c in &paints {
             if !self.layers[index].is_channel_enabled(*c) && !old_channels.contains(c) {
@@ -264,8 +270,8 @@ impl Document {
         Ok(())
     }
 
-    /// 描いたパスの新しい層を、`above` のすぐ上（同じグループ）か一番上へ足す。層の作成・チャンネルの有効・画素・パスを 1 回の Undo にする。
-    /// 画素の予算を超えるなら層も作らない。
+    /// 描いたパスの新しいレイヤーを、`above` のすぐ上（同じグループ）か一番上へ足す。レイヤーの作成・チャンネルの有効・画素・パスを 1 回の Undo にする。
+    /// 画素の予算を超えるならレイヤーも作らない。
     pub fn add_path_layer(
         &mut self,
         name: &str,
@@ -276,7 +282,7 @@ impl Document {
         self.add_paths_layer(name, vec![LayerPathEntry::new(path)], rendered, above)
     }
 
-    /// パスの一覧（1 本以上）を描いた新しい層を足す（[`Document::add_path_layer`] の一覧の形）。
+    /// パスの一覧（1 本以上）を描いた新しいレイヤーを足す（[`Document::add_path_layer`] の一覧の形）。
     pub fn add_paths_layer(
         &mut self,
         name: &str,
@@ -287,7 +293,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if entries.is_empty() {
             return Err(CoreError::InvalidArgument(
-                "パスの層にはパスが 1 本以上要る",
+                "パスレイヤーにはパスが 1 本以上要る",
             ));
         }
         validate_list(&entries).map_err(paths_error)?;
@@ -311,7 +317,7 @@ impl Document {
             ));
         }
         let id = self.new_layer_id();
-        // 親のグループのロックは入る層にも効く（C# は層を作ってから SetPath の関門を通る）。画素の予算を先に確かめる点も同じ
+        // 親のグループのロックは入るレイヤーにも効く（C# はレイヤーを作ってから SetPath の関門を通る）。画素の予算を先に確かめる点も同じ
         let bytes: u64 = rendered.iter().map(|(_, s)| s.allocated_bytes()).sum();
         self.ensure_source_growth(bytes)?;
         let parent = match above {
@@ -319,8 +325,8 @@ impl Document {
             None => None,
         };
         self.ensure_new_layer_rewritable(id, parent)?;
-        // 履歴の費用は C# の AddPathLayer（層の追加 128 + Color 以外のチャンネルを有効にする 64 ずつ + パスの状態 + チャンネルごとの
-        // 面の変化）と同じ: 層が画素を持って入るので、元に戻したあとも履歴がその分を持つ
+        // 履歴の費用は C# の AddPathLayer（レイヤーの追加 128 + Color 以外のチャンネルを有効にする 64 ずつ + パスの状態 + チャンネルごとの
+        // 面の変化）と同じ: レイヤーが画素を持って入るので、元に戻したあとも履歴がその分を持つ
         let mut cost = 128 + list_cost(&entries);
         for (c, surface) in &rendered {
             if *c != Channel::Color {
@@ -348,7 +354,7 @@ impl Document {
         self.insert_new_costed(layer, above, cost)
     }
 
-    /// 2D のパスを描いて層に付ける（一覧をこの 1 本にする。描き直しも）。選択に依らない。評価は文書の予算で行い、1 回の Undo。
+    /// 2D のパスを描いてレイヤーに付ける（一覧をこの 1 本にする。描き直しも）。選択に依らない。評価は文書の予算で行い、1 回の Undo。
     pub fn set_canvas_path(
         &mut self,
         layer: LayerId,
@@ -369,7 +375,7 @@ impl Document {
         self.set_canvas_paths_cancellable(layer, entries, cancel)
     }
 
-    /// 2D のパスの一覧を描いて層に付ける（描き直しも）。1 回の Undo。
+    /// 2D のパスの一覧を描いてレイヤーに付ける（描き直しも）。1 回の Undo。
     pub fn set_canvas_paths(
         &mut self,
         layer: LayerId,
@@ -419,10 +425,10 @@ impl Document {
         if old.is_empty() {
             return Ok(());
         }
-        // 塗りつぶしの層は画素を持たない（パスの画素は評価の最後に重ねるだけ）ので、パスを外すと絵が消える。画素にはしない
+        // 塗りつぶしレイヤーは画素を持たない（パスの画素は評価の最後に重ねるだけ）ので、パスを外すと絵が消える。画素にはしない
         if self.layers[index].kind == LayerKind::Fill {
             return Err(CoreError::Unsupported(
-                "塗りつぶしの層のパスは画素にできない",
+                "塗りつぶしレイヤーのパスは画素にできない",
             ));
         }
         // 画素は変えないので、すべてのロックだけで断る（C# の Rasterize）
@@ -446,7 +452,9 @@ impl Document {
         let index = self.index_of(layer)?;
         let old = self.layers[index].paths.clone();
         let Some(i) = old.iter().position(|e| e.id() == path) else {
-            return Err(CoreError::InvalidArgument("名前を替えるパスが層に無い"));
+            return Err(CoreError::InvalidArgument(
+                "名前を替えるパスがレイヤーに無い",
+            ));
         };
         if old[i].name == name {
             return Ok(());
@@ -467,7 +475,7 @@ impl Document {
         )
     }
 
-    /// 読み込み用: 塗りつぶしの層のパスの画素の面を作る（タイルの無い面も。パスの一覧を付ける前に）。
+    /// 読み込み用: 塗りつぶしレイヤーのパスの画素の面を作る（タイルの無い面も。パスの一覧を付ける前に）。
     pub fn ensure_fill_path_surface(
         &mut self,
         id: LayerId,
@@ -478,7 +486,7 @@ impl Document {
         let index = self.index_of(id)?;
         if self.layers[index].kind != LayerKind::Fill {
             return Err(CoreError::Unsupported(
-                "塗りつぶしの層のパスの画素は塗りつぶしの層だけ",
+                "塗りつぶしレイヤーのパスの画素は塗りつぶしレイヤーだけ",
             ));
         }
         if self.ensure_surface(index, channel) {
@@ -487,7 +495,7 @@ impl Document {
         Ok(())
     }
 
-    /// 読み込み用: 塗りつぶしの層のパスの画素の 1 タイル（[`Document::import_tile`] の塗りつぶしの層の形。読み込みなので履歴を消す）。
+    /// 読み込み用: 塗りつぶしレイヤーのパスの画素の 1 タイル（[`Document::import_tile`] の塗りつぶしレイヤーの形。読み込みなので履歴を消す）。
     pub fn import_fill_path_tile(
         &mut self,
         id: LayerId,
@@ -530,17 +538,21 @@ impl Document {
             || entries.is_empty()
         {
             return Err(CoreError::Unsupported(
-                "パスを付けられるのはパスの無いラスターか塗りつぶしの層だけ",
+                "パスを付けられるのはパスの無いラスターか塗りつぶしレイヤーだけ",
             ));
         }
         for e in &entries {
             for c in e.path.channels() {
                 if l.surface(c).is_none() {
-                    return Err(CoreError::Unsupported("パスのチャンネルの面が層に無い"));
+                    return Err(CoreError::Unsupported(
+                        "パスのチャンネルの面がレイヤーに無い",
+                    ));
                 }
             }
             if e.path.material().is_none() && !l.is_channel_enabled(e.path.channel()) {
-                return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
+                return Err(CoreError::Unsupported(
+                    "パスのチャンネルがレイヤーで有効でない",
+                ));
             }
         }
         self.layers[index].paths = entries;
@@ -548,7 +560,7 @@ impl Document {
         Ok(())
     }
 
-    /// パスの作業面（`paths` の評価が持つ私の文書）の層のチャンネルへ、1 画素を「通常」で重ねる（straight のアルファで
+    /// パスの作業面（`paths` の評価が持つ私の文書）のレイヤーのチャンネルへ、1 画素を「通常」で重ねる（straight のアルファで
     /// `src · a + dst · da · (1 − a)`）。リボンの画素ごとの色に使う。履歴には積まない。
     pub(crate) fn paths_blend_pixel(
         &mut self,

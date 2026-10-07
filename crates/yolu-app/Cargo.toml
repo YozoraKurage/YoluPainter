@@ -27,7 +27,7 @@ tokio = { version = "1", default-features = false, features = ["sync"] }   # MIT
 yolu-protocol.workspace = true
 yolu-update.workspace = true   # 更新の確かめ（署名・版・SHA-256・大きさ）。通信は `update/http.rs`
 serde = "1"   # MIT OR Apache-2.0（ドックのタブの名前の保存。yolu-io・yolu-update が既に使っている）
-serde_json = "1"   # MIT OR Apache-2.0（ドックの並びと窓の位置の保存。yolu-io が既に使っている）
+serde_json = "1"   # MIT OR Apache-2.0（ドックの並びとウィンドウの位置の保存。yolu-io が既に使っている）
 half = "2.7"   # MIT OR Apache-2.0（環境のキューブを half float で上げる。wgpu の naga が既に使っている版）
 rayon = "1.12"   # MIT OR Apache-2.0（環境の畳み込みを並べる。yolu-core が既に使っている）
 bevy_mikktspace = "1.0"   # Zlib AND (MIT OR Apache-2.0)（接線。Unity の RecalculateTangents と同じ MikkTSpace。依存なし・unsafe なし）
@@ -35,10 +35,10 @@ image = { version = "0.25", default-features = false, features = ["png", "tga", 
 png = "0.18"   # MIT OR Apache-2.0（取り込んだ筆先の画像を、名前つきの灰色の PNG で置く。yolu-io が既に使っている版）
 sha2 = "0.10"   # MIT OR Apache-2.0（筆先の画像を内容の SHA-256 で名づける。yolu-io が既に使っている版）
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶ窓。Windows は OS の窓、Linux は xdg-desktop-portal）
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶウィンドウ。Windows は OS のウィンドウ、Linux は xdg-desktop-portal）
 
 [target.'cfg(target_os = "linux")'.dependencies]
-winit = { version = "0.30", default-features = false, features = ["x11"] }   # Apache-2.0（eframe が使う版と同じ。起動の窓を X11 に決めるため。新しい crate ではない）
+winit = { version = "0.30", default-features = false, features = ["x11"] }   # Apache-2.0（eframe が使う版と同じ。起動のウィンドウを X11 に決めるため。新しい crate ではない）
 libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの記録。新しい crate ではなく、yolu-protocol も使う）
 
 [target.'cfg(windows)'.dependencies]

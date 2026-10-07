@@ -1,4 +1,4 @@
-//! 画像の段（Generator の種類 70）: 塗りつぶしの層の画像と同じ投影で画像を読み、色のチャンネルでは画素の色、マスク・スカラーでは選んだ成分を
+//! 画像の段（Generator の種類 70）: 塗りつぶしレイヤーの画像と同じ投影で画像を読み、色のチャンネルでは画素の色、マスク・スカラーでは選んだ成分を
 //! 出す。画像が無い・読めない・投影のマップが無いときは入力のまま通して理由を言い、1 回の Undo で戻る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use crate::attach_support;
@@ -162,9 +162,9 @@ fn the_settings_check_refuses_what_the_stage_cannot_do() {
     assert_eq!(g.used_maps(), [MapKind::Position]);
 }
 
-/// 塗りつぶしの層（白）の上へ、同じ画像・同じ投影の塗りつぶしの画像を置いた層と、白い層に画像の段（置き換え）を置いた層は、
+/// 塗りつぶしレイヤー（白）の上へ、同じ画像・同じ投影の塗りつぶしの画像を置いたレイヤーと、白いレイヤーに画像の段（置き換え）を置いたレイヤーは、
 /// 全部の投影（UV・トライプラナー・平面・球・円柱）と外側（繰り返す・透明）・タイル・回転で同じ合成になる（色の画像とリニアの画像）。
-/// 比べるのは色のチャンネル。マスク・スカラーの輝度は補間の後に求めるので、塗りつぶしの層のスカラー（元の画素で丸めてから補間）とは比べない。
+/// 比べるのは色のチャンネル。マスク・スカラーの輝度は補間の後に求めるので、塗りつぶしレイヤーのスカラー（元の画素で丸めてから補間）とは比べない。
 #[test]
 fn every_projection_matches_a_fill_layer_with_the_same_image() {
     let white = Rgba8::new(255, 255, 255, 255);
@@ -272,7 +272,7 @@ fn scalar_channels_and_masks_take_the_component() {
     for (p, src) in out.chunks_exact(4).zip(data.chunks_exact(4)) {
         assert_eq!(p[..3], [255 - src[1]; 3], "{src:?}");
     }
-    // マスク: アルファの成分を置き換えで → 層の見える度合いは画像のアルファ
+    // マスク: アルファの成分を置き換えで → レイヤーの見える度合いは画像のアルファ
     let mut doc = Document::with_tile_size(IW, IH, 8).unwrap();
     doc.set_effect_inputs(image_inputs()).unwrap();
     let layer = opaque_layer(&mut doc, Channel::Color);

@@ -288,7 +288,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
 };
 
 impl AppState {
-    /// 取り込む窓を開く頼み。
+    /// 取り込むウィンドウを開く頼み。
     pub(super) fn brush_import_dialog(&mut self) {
         self.dialog_request = Some(DialogRequest::ImportBrushes);
     }
@@ -445,7 +445,7 @@ impl AppState {
                         assist: user.assist,
                     });
                     // 取り込んだブラシは、今のブラシのツールの「取り込み」のグループの後ろ（無ければそのツールの最後に作る。いっぱいなら
-                    // 次の「取り込み」のグループを作る。どこにも置けなければファイルだけ残り、「＋」の窓から戻せる）
+                    // 次の「取り込み」のグループを作る。どこにも置けなければファイルだけ残り、「＋」のウィンドウから戻せる）
                     if let Some(group) = self.brush_import_group() {
                         let _ = self.toolset.set.insert_brush(key, group, None);
                     }
@@ -462,7 +462,7 @@ impl AppState {
     /// 取り込んだブラシを置くグループ。今のブラシのツール（今のツールがブラシのツールならそれ、そうでなければ今のブラシがあるブラシの
     /// ツール、それも無ければ最初のブラシのツール）の「取り込み」のグループで、空きのある最初の物。無ければ、そのツールの最後に作る
     /// （いっぱいなら次を作る）。消しゴムのツールの中のグループは選ばない（取り込んだブラシが、描かずに消す筆になってしまうため）。
-    /// ツールのグループが上限なら None（ファイルだけ残り、「＋」の窓から戻せる）。
+    /// ツールのグループが上限なら None（ファイルだけ残り、「＋」のウィンドウから戻せる）。
     fn brush_import_group(&mut self) -> Option<crate::toolset::GroupId> {
         let set = &self.toolset.set;
         let is_brush_tool =
@@ -516,9 +516,9 @@ impl AppState {
         self.notify(kind, Source::Brush, text);
     }
 
-    /// 取り込みが終わったとき、取り込んだ最初のブラシに替える。道具は、描く道具（ブラシ・消しゴム）のときだけ従来どおりブラシに
-    /// 合わせて替える。ほかの道具（選択・バケツなど）は、裏の仕事の終わりという利用者の操作でない出来事で奪わない
-    /// （選択範囲の途中の形が消えるため）。そのときはブラシだけ替え、道具をブラシへ戻したときにそのブラシで描く。
+    /// 取り込みが終わったとき、取り込んだ最初のブラシに替える。ツールは、描くツール（ブラシ・消しゴム）のときだけ従来どおりブラシに
+    /// 合わせて替える。ほかのツール（選択・バケツなど）は、裏の仕事の終わりという利用者の操作でない出来事で奪わない
+    /// （選択範囲の途中の形が消えるため）。そのときはブラシだけ替え、ツールをブラシへ戻したときにそのブラシで描く。
     fn brush_import_select(&mut self, key: BrushKey) {
         if self.tool.paints() {
             self.brush_action(BrushAction::Select(key));

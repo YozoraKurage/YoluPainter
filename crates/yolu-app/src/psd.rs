@@ -2,22 +2,22 @@
 //!
 //! - **読み込み**（新しいテクスチャセットか、今のセットの文書として）: **写しとしての取り込み**。別のスレッドで、ファイルを流して読み
 //!   （`psd::import_copy`。原本のバイト列は持たない）、core の文書にする。グループ（入れ子・通過/分離）・塗りつぶし（単色）・調整・マスク・
-//!   クリッピングは core の層になり、層のロック（lspf）は core の層のロックとして入る。合成に効かない情報は持たず、評価できない効果などは層の
-//!   画素のまま取り込み、**無視・落とす・変わるものは、取り込む前に確かめの窓へ層の名前と機能の名前で並べる**（0 件なら窓を出さない。「取り込む」を
-//!   押すまで何も入れない）。取り込めない（PSB・RGB8 以外・予算を超える・壊れている）ものだけ、何も変えずに理由を結果の窓で見せる。層の数・
-//!   画素の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`）から決まる。層 ID は PSD のものを持つが、欠落・重複には新しい ID を振る
+//!   クリッピングは core のレイヤーになり、レイヤーのロック（lspf）は core のレイヤーのロックとして入る。合成に効かない情報は持たず、評価できない効果などはレイヤーの
+//!   画素のまま取り込み、**無視・落とす・変わるものは、取り込む前に確認のウィンドウへレイヤーの名前と機能の名前で並べる**（0 件ならウィンドウを出さない。「取り込む」を
+//!   押すまで何も入れない）。取り込めない（PSB・RGB8 以外・予算を超える・壊れている）ものだけ、何も変えずに理由を結果のウィンドウで見せる。レイヤーの数・
+//!   画素の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`）から決まる。レイヤー ID は PSD のものを持つが、欠落・重複には新しい ID を振る
 //!   （名前では結び付けない）。PSD の原本は書き換えない（取り込んだファイルへ書き出すときは置き換える前に確かめ、書き出しはいつも新しい PSD）。
 //!   今のセットの文書を替える読み込みは、確かめを終えて入れるときに描いている最中か、読んでいる間に文書が変わっていれば入れない
 //!   （描きかけのストロークを取り残さず、描いたものを黙って捨てない）。
-//! - **書き出し**（今の文書）: チャンネルごとに 1 つの PSD を書く（窓で方式とチャンネルを選ぶ。既定は Color だけを「焼き込んで書く」）。
-//!   ラスター・グループ・単色の塗りつぶし・調整・クリッピング・マスク（有効/無効・濃度）・層のロックは PSD の形で書き、PSD に形の無いもの
+//! - **書き出し**（今の文書）: チャンネルごとに 1 つの PSD を書く（ウィンドウで方式とチャンネルを選ぶ。既定は Color だけを「焼き込んで書く」）。
+//!   ラスター・グループ・単色の塗りつぶし・調整・クリッピング・マスク（有効/無効・濃度）・レイヤーのロックは PSD の形で書き、PSD に形の無いもの
 //!   （フィルター・Generator・画像・パス・反転したマスク・半透明の塗りつぶし・クリッピングされたグループなど）は、評価した画素にして書く・
-//!   刻みへ丸める・落とすのどれかにして、書く前の確かめの窓に層の名前つきで全部並べる（利用者が「書く」を押すまで何も書かない。黙って捨てない）。
+//!   刻みへ丸める・落とすのどれかにして、書く前の確認のウィンドウにレイヤーの名前つきで全部並べる（利用者が「書く」を押すまで何も書かない。黙って捨てない）。
 //!   文書は 1 バイトも変えない（効果は文書に残る。書き出しは写し）。始めるときに文書の写し（履歴の無い、タイルを共有する写し）を取り、
-//!   計画・焼き込み・書き込みは別のスレッドで行う: 計画（何を焼くか）→ 確かめ → 層を 1 枚ずつ評価して RLE で圧縮し、一時ファイルへ流して書く →
-//!   一時ファイルを流して読み戻して確かめる（`psd::verify_stream`）→ 最後に置き換え。メモリには層 1 枚ぶんだけを持つので、実物の大きさ（4096²・
-//!   数十層）の文書を書ける。キャンバス・層の記録の数の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`。取り込みと同じ）から決まり、
-//!   PSD の 2 GiB は圧縮したあとの大きさで書きながら見る。超えたら層の名前つきの理由（`Overrun`）で断り、一時ファイルは残さない。
+//!   計画・焼き込み・書き込みは別のスレッドで行う: 計画（何を焼くか）→ 確かめ → レイヤーを 1 枚ずつ評価して RLE で圧縮し、一時ファイルへ流して書く →
+//!   一時ファイルを流して読み戻して確かめる（`psd::verify_stream`）→ 最後に置き換え。メモリにはレイヤー 1 枚ぶんだけを持つので、実物の大きさ（4096²・
+//!   数十レイヤー）の文書を書ける。キャンバス・レイヤーの記録の数の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`。取り込みと同じ）から決まり、
+//!   PSD の 2 GiB は圧縮したあとの大きさで書きながら見る。超えたらレイヤーの名前つきの理由（`Overrun`）で断り、一時ファイルは残さない。
 //!   取り込んだ PSD と同じファイル・複数のチャンネルで名前が重なるファイルは、置き換える前に確かめる。
 
 use std::path::{Path, PathBuf};
@@ -63,19 +63,19 @@ pub enum PsdTarget {
 /// PSD の操作（`Action::Psd`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PsdAction {
-    /// 読み込む PSD を選ぶ窓を頼む。
+    /// 読み込む PSD を選ぶウィンドウを頼む。
     ImportDialog(PsdTarget),
     /// PSD を読み込む（別のスレッド）。
     Import { path: PathBuf, target: PsdTarget },
-    /// 書き出しの設定の窓（方式・チャンネル）を開く。
+    /// 書き出しの設定のウィンドウ（方式・チャンネル）を開く。
     ExportDialog,
-    /// 設定の窓で方式を選ぶ。
+    /// 設定のウィンドウで方式を選ぶ。
     SetExportMode(ExportMode),
-    /// 設定の窓でチャンネルを入れる・外す（最後の 1 つは外せない）。
+    /// 設定のウィンドウでチャンネルを入れる・外す（最後の 1 つは外せない）。
     ToggleExportChannel(Channel),
-    /// 設定の窓の「やめる」。
+    /// 設定のウィンドウの「やめる」。
     CancelExportOptions,
-    /// 設定の窓の「書き出し…」: 書き出す先を選ぶ窓を頼む（窓は閉じる）。
+    /// 設定のウィンドウの「書き出し…」: 書き出す先を選ぶウィンドウを頼む（ウィンドウは閉じる）。
     ChooseExportFile,
     /// 今の文書を、選んだ設定で PSD に書き出す（先のファイルが決まった）。複数のチャンネルでは `<名前>_<チャンネル>.psd` を並べて書く。
     Export(PathBuf),
@@ -93,11 +93,11 @@ pub enum PsdAction {
     CancelWrite,
     /// 読み書きの取消。
     Cancel,
-    /// 結果の窓を閉じる。
+    /// 結果のウィンドウを閉じる。
     DismissReport,
 }
 
-/// 結果の窓の 1 行。
+/// 結果のウィンドウの 1 行。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     /// 注意（読み込めない理由・見え方が変わる所）か、お知らせか。
@@ -116,14 +116,14 @@ impl Line {
     }
 }
 
-/// 読み書きの結果（窓に出す）。
+/// 読み書きの結果（ウィンドウに出す）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
     pub importing: bool,
     pub file: String,
     /// 読み込めた・書けた。
     pub ok: bool,
-    /// 窓の見出しの下の 1 行（名前・状態・短い理由）。
+    /// ウィンドウの見出しの下の 1 行（名前・状態・短い理由）。
     pub summary: String,
     pub lines: Vec<Line>,
 }
@@ -154,7 +154,7 @@ enum Failure {
     Export(yolu_io::Error),
     /// 書いた PSD を読み戻して確かめたが、読めなかった（壊れている・取り込みで落とすものがある・長さが合わない）。
     Unreadable(yolu_io::Error),
-    /// 予算・形式の上限（キャンバス・層の数・画素の合計・ファイルの 2 GiB）で書けない。層の名前つき。
+    /// 予算・形式の上限（キャンバス・レイヤーの数・画素の合計・ファイルの 2 GiB）で書けない。レイヤーの名前つき。
     Overrun(Overrun),
     /// 置き換えの途中で失敗した。先の `done` 個は置き換わっている。
     PartlyReplaced { done: usize, cause: std::io::Error },
@@ -170,7 +170,7 @@ impl Failure {
         }
     }
 
-    /// 窓と状態の帯に出す理由。`importing` は取消のとき「何も書いていません」を付けるかの違いだけ。
+    /// ウィンドウと状態の帯に出す理由。`importing` は取消のとき「何も書いていません」を付けるかの違いだけ。
     fn text(&self, lang: Lang, importing: bool) -> String {
         match self {
             Self::Canceled if importing => lang.pick("取り消しました", "Cancelled").into(),
@@ -217,7 +217,7 @@ impl Failure {
     }
 }
 
-/// 予算・形式の上限で書けない理由（層の名前つき。取り込みの断りと同じ言い回し）。
+/// 予算・形式の上限で書けない理由（レイヤーの名前つき。取り込みの断りと同じ言い回し）。
 fn overrun_text(lang: Lang, over: &Overrun) -> String {
     match over {
         Overrun::Canvas { width, height } => lang.pick(
@@ -295,7 +295,7 @@ struct Job {
     guard: Option<(u32, u128, u64)>,
 }
 
-/// 書き出しの設定（窓で選ぶ）。
+/// 書き出しの設定（ウィンドウで選ぶ）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportSettings {
     /// 方式。
@@ -329,9 +329,9 @@ pub struct Run {
     snapshot: Arc<Document>,
     targets: Vec<(Channel, PathBuf)>,
     plans: Vec<ExportPlan>,
-    /// 選んだファイルの名前（札・窓の見出しの下）。
+    /// 選んだファイルの名前（札・ウィンドウの見出しの下）。
     file: String,
-    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーのメモリ」。始めたときの値）。
+    /// 書き出しに許すレイヤーの画素のバイト数（設定の「レイヤーのメモリ」。始めたときの値）。
     budget: u64,
 }
 
@@ -374,7 +374,7 @@ pub struct PsdState {
     /// 取り込みの確かめ（無視・落とす・変わるもの）の待ち。読んだ文書をここに持ち、「取り込む」で入れる。
     pub import_check: Option<crate::psd_import::ImportCheck>,
     pub import_window: crate::psd_import::CheckWindow,
-    /// 書き出しの設定と、その窓。
+    /// 書き出しの設定と、そのウィンドウ。
     pub export: ExportSettings,
     pub options_open: bool,
     pub options_offset: Vec2,
@@ -420,7 +420,7 @@ impl PsdState {
     }
 }
 
-/// PSD の取り込み・書き出し（札・閉じる前の確かめ・止める）。置き換え・設定・書く前・取り込みの確かめの窓は、キーの割り当てを止める。
+/// PSD の取り込み・書き出し（札・閉じる前の確かめ・止める）。置き換え・設定・書く前・取り込みの確認のウィンドウは、キーの割り当てを止める。
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     card: Some(|app, lang| {
@@ -546,7 +546,7 @@ fn export_channels(doc: &Document, settings: &ExportSettings) -> Vec<Channel> {
     channels
 }
 
-/// 書き出す先を選ぶ窓に出す初めのファイル名（1 つのチャンネルが Color 以外なら末尾にチャンネルの名前）。
+/// 書き出す先を選ぶウィンドウに出す初めのファイル名（1 つのチャンネルが Color 以外なら末尾にチャンネルの名前）。
 pub fn default_export_name(state: &AppState) -> String {
     let stem = crate::export::stem(state);
     let base = if state.sets.len() > 1 {
@@ -721,7 +721,7 @@ impl AppState {
         }
         let path_owned = path.to_path_buf();
         let park = std::mem::take(&mut self.psd.park_next);
-        // 層の数・画素の上限は、設定の「レイヤーのメモリ」の予算から決める（.ylp を開くときと同じ）
+        // レイヤーの数・画素の上限は、設定の「レイヤーのメモリ」の予算から決める（.ylp を開くときと同じ）
         let budget = self.load_source_bytes();
         let spawned = Worker::spawn_on(
             psd_thread("yolu-psd-import"),
@@ -766,7 +766,7 @@ impl AppState {
         self.psd.imported.push(path.to_path_buf());
     }
 
-    /// 書き出せない理由を窓（結果の窓）に並べ、何も書かない。
+    /// 書き出せない理由をウィンドウ（結果のウィンドウ）に並べ、何も書かない。
     /// `kind` は知らせの種類（読むだけのセットは断り、名前の重なり・予算・書けない場所は失敗）。
     fn refuse_psd_export(&mut self, kind: NoticeKind, file: &str, why: Vec<String>) {
         let lines = why.into_iter().map(|text| Line::new(true, text)).collect();
@@ -821,7 +821,7 @@ impl AppState {
                 return self.refuse_psd_export(NoticeKind::Error, &file, why);
             }
         };
-        // 文書そのものが書き出せるか（画布・層の数の予算。設定の「レイヤーのメモリ」から決まる）を、何も作らずに断る
+        // 文書そのものが書き出せるか（キャンバス・レイヤーの数の予算。設定の「レイヤーのメモリ」から決まる）を、何も作らずに断る
         let budget = self.load_source_bytes();
         let ctl = ExportControl {
             source_budget: Some(budget),
@@ -838,7 +838,7 @@ impl AppState {
                 return self.refuse_psd_export_lines(NoticeKind::Error, &file, vec![line]);
             }
         }
-        // 置き換えるファイル: 取り込んだ PSD と、複数のチャンネルで書き分けた名前のうちもうあるもの（選ぶ窓が確かめたのは選んだ名前だけ）
+        // 置き換えるファイル: 取り込んだ PSD と、複数のチャンネルで書き分けた名前のうちもうあるもの（選ぶウィンドウが確かめたのは選んだ名前だけ）
         if !confirmed {
             let imported: Vec<&(Channel, PathBuf)> = targets
                 .iter()
@@ -1015,7 +1015,7 @@ impl AppState {
                     );
                     self.fail(Source::Psd, message);
                 } else {
-                    // 書き出せなかった理由（予算の超過・書けない場所など）は結果の窓にも出す（知らせは `refuse_psd_export_lines` の 1 回）。
+                    // 書き出せなかった理由（予算の超過・書けない場所など）は結果のウィンドウにも出す（知らせは `refuse_psd_export_lines` の 1 回）。
                     // 取消は利用者の操作なので出さない
                     let line = Line {
                         warning: true,
@@ -1056,7 +1056,7 @@ impl AppState {
                 });
             }
             (Output::Imported { doc, notes }, Kind::Import(target)) => {
-                // 無視だけ（見え方にも内容にも効かない）なら確かめずに取り込む。落とす・変わるものがあれば確かめの窓
+                // 無視だけ（見え方にも内容にも効かない）なら確かめずに取り込む。落とす・変わるものがあれば確認のウィンドウ
                 if notes
                     .iter()
                     .all(|n| n.action == yolu_io::psd::ImportAction::Ignored)
@@ -1226,7 +1226,7 @@ impl AppState {
 }
 
 /// 別のスレッドの読み込み: ファイルを流して読み（原本は持たない）、core の文書にする。取り込めなければ理由を `Refused` で返す（何も変えない）。
-/// `budget` は、この文書の層の画素に許すバイト数（設定の「レイヤーのメモリ」）。層の数・画布・層の画素の上限はここから決まる。
+/// `budget` は、この文書のレイヤーの画素に許すバイト数（設定の「レイヤーのメモリ」）。レイヤーの数・キャンバス・レイヤーの画素の上限はここから決まる。
 fn import_worker(path: &Path, budget: u64, cancel: &AtomicBool) -> Result<Output, Failure> {
     let outcome = read_copy(path, budget, cancel).map_err(|e| match e {
         ReadCopyError::File(io) => Failure::File(io),
@@ -1311,7 +1311,7 @@ fn export_error(e: yolu_io::Error) -> Failure {
     }
 }
 
-/// 書き出しの失敗: 予算・形式の上限は種類を保ち（層の名前つきの文とツールチップを作る）、ほかは取消かその文。
+/// 書き出しの失敗: 予算・形式の上限は種類を保ち（レイヤーの名前つきの文とツールチップを作る）、ほかは取消かその文。
 fn export_failure(e: ExportError) -> Failure {
     match e {
         ExportError::Overrun(over) => Failure::Overrun(over),
@@ -1355,7 +1355,7 @@ fn plan_worker(
     })))
 }
 
-/// 別のスレッドの書き出し: チャンネルごとに、PSD を一時ファイルへ層を 1 枚ずつ流して書き（焼く・圧縮する。メモリには層 1 枚ぶんだけ）、流して読み戻して
+/// 別のスレッドの書き出し: チャンネルごとに、PSD を一時ファイルへレイヤーを 1 枚ずつ流して書き（焼く・圧縮する。メモリにはレイヤー 1 枚ぶんだけ）、流して読み戻して
 /// 確かめ（`yolu_io::psd::stage_verified`）、全部が済んでから最後に置き換える。途中の失敗・取消では一時ファイルを消し、元のファイルは変えない。
 fn write_worker(run: Run, cancel: &AtomicBool) -> Result<Output, Failure> {
     let ctl = ExportControl {
@@ -1439,7 +1439,7 @@ fn stage(
     )
 }
 
-/// 書いた PSD を読み戻して確かめる（試験用: 書いた長さ・層の数・CRC を与えて、確かめの断り方を見る。`None` は書いた記録が無い）。
+/// 書いた PSD を読み戻して確かめる（試験用: 書いた長さ・レイヤーの数・CRC を与えて、確かめの断り方を見る。`None` は書いた記録が無い）。
 #[cfg(test)]
 fn verify_written(
     path: &Path,
@@ -1610,7 +1610,7 @@ mod tests {
         assert_eq!((b.set_doc(0).width(), b.set_doc(0).layers().len()), (32, 1));
     }
 
-    /// 層のロックは、書き出す PSD の lspf を通って、取り込んだ文書の層に戻る（断らず、黙って外しもしない）。
+    /// レイヤーのロックは、書き出す PSD の lspf を通って、取り込んだ文書のレイヤーに戻る（断らず、黙って外しもしない）。
     #[test]
     fn locks_come_back_through_a_psd_export_and_import() {
         use yolu_core::LayerLocks;
@@ -1747,7 +1747,7 @@ mod tests {
         );
     }
 
-    /// 書き出しはメニューで設定の窓を開き、「書き出し…」で書き出す先を選ぶ窓を頼む（読み込みは先のファイルを選ぶだけ）。
+    /// 書き出しはメニューで設定のウィンドウを開き、「書き出し…」で書き出す先を選ぶウィンドウを頼む（読み込みは先のファイルを選ぶだけ）。
     #[test]
     fn the_menu_opens_the_export_settings_and_only_import_asks_for_the_file_at_once() {
         let mut s = AppState::new(32, 32);
@@ -1817,7 +1817,10 @@ mod tests {
                 report.lines
             );
             assert!(report.lines[0].warning);
-            assert!(s.psd.import_check.is_none(), "{file}: 確かめの窓は出さない");
+            assert!(
+                s.psd.import_check.is_none(),
+                "{file}: 確認のウィンドウは出さない"
+            );
         }
         // 英語の文言
         s.lang = Lang::En;
@@ -1840,7 +1843,7 @@ mod tests {
         assert_eq!(s.sets.len(), 1);
     }
 
-    /// 層 ID を持たない 2 層の PSD（原本を保つ読みは編集できない内容として断る。写しとしては、新しい ID を振って取り込める）。
+    /// レイヤー ID を持たない 2 レイヤーの PSD（原本を保つ読みは編集できない内容として断る。写しとしては、新しい ID を振って取り込める）。
     fn without_layer_ids() -> Vec<u8> {
         let layer = |id: i32, name: &str, rgba: [u8; 4]| psd::Layer {
             id,
@@ -1860,7 +1863,7 @@ mod tests {
             composite_rgba: None,
         };
         let mut bytes = psd::write(&doc, &Limits::default()).unwrap();
-        // 書き手は層 ID を必ず書くので、lyid のタグを同じ長さの別のタグ（レイヤー名の元）に書き換えて、ID の無い PSD にする
+        // 書き手はレイヤー ID を必ず書くので、lyid のタグを同じ長さの別のタグ（レイヤー名の元）に書き換えて、ID の無い PSD にする
         let mut at = 0;
         while let Some(i) = bytes[at..].windows(4).position(|w| w == b"lyid") {
             bytes[at + i..at + i + 4].copy_from_slice(b"lnsr");
@@ -1869,19 +1872,19 @@ mod tests {
         bytes
     }
 
-    /// `without_layer_ids` に、確かめの要るもの（変わる）を 1 つ足した PSD: 下の層の合成モードを、取り込めない「ディゾルブ」にする
-    /// （取り込みでは通常になる。層 ID の振り直しとレイヤーのメタデータは無視なので、それだけでは確かめの窓を出さない）。
+    /// `without_layer_ids` に、確かめの要るもの（変わる）を 1 つ足した PSD: 下のレイヤーの合成モードを、取り込めない「ディゾルブ」にする
+    /// （取り込みでは通常になる。レイヤー ID の振り直しとレイヤーのメタデータは無視なので、それだけでは確認のウィンドウを出さない）。
     fn needing_a_check() -> Vec<u8> {
         let mut bytes = without_layer_ids();
         let i = bytes
             .windows(8)
             .position(|w| w == b"8BIMnorm")
-            .expect("層の記録の合成モード");
+            .expect("レイヤーの記録の合成モード");
         bytes[i + 4..i + 8].copy_from_slice(b"diss");
         bytes
     }
 
-    /// 無視だけ（層 ID の振り直し・知らないメタデータ）の PSD は、確かめずにそのまま入る。
+    /// 無視だけ（レイヤー ID の振り直し・知らないメタデータ）の PSD は、確かめずにそのまま入る。
     #[test]
     fn a_psd_with_only_ignored_information_is_imported_without_the_check() {
         let dir = Dir::new("ignored-only");
@@ -1893,7 +1896,7 @@ mod tests {
             target: PsdTarget::NewSet,
         }));
         s.wait_psd();
-        assert!(s.psd.import_check.is_none(), "確かめの窓を出さない");
+        assert!(s.psd.import_check.is_none(), "確認のウィンドウを出さない");
         assert_eq!(s.sets.len(), 2);
         let names: Vec<&str> = s.doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["下", "上"]);
@@ -1922,18 +1925,18 @@ mod tests {
             before,
             "確かめるまで入れない"
         );
-        let check = s.psd.import_check.as_ref().expect("確かめの窓");
+        let check = s.psd.import_check.as_ref().expect("確認のウィンドウ");
         assert_eq!(check.file(), "Ids.psd");
         let ids = check
             .notes()
             .iter()
             .find(|n| n.feature == yolu_io::psd::ImportFeature::LayerIds)
-            .expect("層 ID");
+            .expect("レイヤー ID");
         assert_eq!(ids.layers, ["下", "上"], "取り込みの順（下から上）");
         assert_eq!(
             check.notes().len(),
             3,
-            "層 ID・メタデータ（無視）と合成モード（変わる）: {:?}",
+            "レイヤー ID・メタデータ（無視）と合成モード（変わる）: {:?}",
             check.notes()
         );
         assert!(check
@@ -2005,7 +2008,7 @@ mod tests {
         assert!(s.psd.import_check.is_none());
     }
 
-    /// 取り消した読み込みは確かめの窓を出さず、何も入れない。
+    /// 取り消した読み込みは確認のウィンドウを出さず、何も入れない。
     #[test]
     fn canceling_a_read_before_the_check_leaves_no_check_window() {
         let dir = Dir::new("check-cancel");
@@ -2031,7 +2034,7 @@ mod tests {
     fn pixels_outside_the_canvas_are_cut_and_told_as_dropped() {
         let dir = Dir::new("outside");
         let mut wide = psd::Document::from_core(&painted().doc).unwrap();
-        // 一番下の層（画布いっぱいの赤）を右へずらして、画布の外へ画素を出す
+        // 一番下のレイヤー（キャンバスいっぱいの赤）を右へずらして、キャンバスの外へ画素を出す
         wide.layers.last_mut().unwrap().left = 20;
         wide.composite_rgba = None;
         std::fs::write(
@@ -2045,7 +2048,7 @@ mod tests {
             target: PsdTarget::NewSet,
         }));
         s.wait_psd();
-        let check = s.psd.import_check.as_ref().expect("確かめの窓");
+        let check = s.psd.import_check.as_ref().expect("確認のウィンドウ");
         let note = check
             .notes()
             .iter()
@@ -2056,9 +2059,9 @@ mod tests {
         assert_eq!(s.sets.len(), 2);
     }
 
-    /// 書き出しの確かめの窓の注記（機能と結果）を、チャンネルごとに日本語で。
+    /// 書き出しの確認のウィンドウの注記（機能と結果）を、チャンネルごとに日本語で。
     fn lines(s: &AppState) -> Vec<(String, String, String)> {
-        let confirm = s.psd.notes_confirm.as_ref().expect("確かめの窓");
+        let confirm = s.psd.notes_confirm.as_ref().expect("確認のウィンドウ");
         confirm
             .sections()
             .into_iter()
@@ -2070,7 +2073,7 @@ mod tests {
             .collect()
     }
 
-    /// PSD に形の無いもの（反転したマスク・クリッピングされたグループ・半透明の塗りつぶし）は、書く前に層の名前つきで確かめ、「書く」までは
+    /// PSD に形の無いもの（反転したマスク・クリッピングされたグループ・半透明の塗りつぶし）は、書く前にレイヤーの名前つきで確かめ、「書く」までは
     /// 何も書かない。書いたあとの取り込みは、書き出したチャンネルの今の合成と同じ。
     #[test]
     fn export_asks_before_baking_what_a_psd_cannot_hold_and_writes_nothing_until_then() {
@@ -2172,7 +2175,7 @@ mod tests {
         assert!(!dir.0.join("v.psd").exists());
     }
 
-    /// グループ・塗りつぶし・調整・マスクは PSD に書けて、取り込み直すと同じ層になる（画面の操作で作った文書で、書き出して取り込む）。
+    /// グループ・塗りつぶし・調整・マスクは PSD に書けて、取り込み直すと同じレイヤーになる（画面の操作で作った文書で、書き出して取り込む）。
     #[test]
     fn groups_fills_adjustments_and_masks_export_and_come_back_as_the_same_layers() {
         let dir = Dir::new("m2-round-trip");
@@ -2218,7 +2221,7 @@ mod tests {
         assert_eq!(t.doc.composite(t.doc.bounds()).unwrap(), composite);
     }
 
-    /// 厳密な `from_core` は PSD に形が無い中身を黙って落とさず、機能ごとの理由で断る（焼き込みの書き出しは別）。層のロックは PSD に書けるので断らない。
+    /// 厳密な `from_core` は PSD に形が無い中身を黙って落とさず、機能ごとの理由で断る（焼き込みの書き出しは別）。レイヤーのロックは PSD に書けるので断らない。
     /// Color の PSD は Color の合成を書き、ほかのチャンネルの合成の違いは断る理由にならない。
     #[test]
     fn from_core_refuses_what_it_cannot_write_as_it_is_and_writes_the_locks() {
@@ -2230,7 +2233,7 @@ mod tests {
         let err = psd::Document::from_core(&s.doc).unwrap_err().to_string();
         assert!(err.contains("反転"), "{err}");
         assert_eq!(psd::export_blockers(&s.doc).len(), 1);
-        // Color と違う、ほかのチャンネルの合成（Color の合成は PSD の層の合成として書け、ほかのチャンネルはそのチャンネルの PSD の値になる）
+        // Color と違う、ほかのチャンネルの合成（Color の合成は PSD のレイヤーの合成として書け、ほかのチャンネルはそのチャンネルの PSD の値になる）
         let mut t = painted();
         let layer = t.selected_layer.unwrap();
         t.doc
@@ -2251,7 +2254,7 @@ mod tests {
             .unwrap();
         assert!(psd::Document::from_core(&t.doc).is_ok());
         assert!(psd::export_blockers(&t.doc).is_empty());
-        // 層のロック: from_core は lspf のビットで書く
+        // レイヤーのロック: from_core は lspf のビットで書く
         let mut v = painted();
         let layer = v.selected_layer.unwrap();
         v.doc.set_layer_locks(layer, LayerLocks::PIXELS).unwrap();
@@ -2330,7 +2333,7 @@ mod tests {
         assert_eq!(dir.files(), ["a.psd", "folder.psd"]);
     }
 
-    /// 何にもクリッピングされないグループ（兄弟の一番下）のクリッピングの印は、外して書く。確かめの窓に、層の名前つきで「落とす」と出る。
+    /// 何にもクリッピングされないグループ（兄弟の一番下）のクリッピングの印は、外して書く。確認のウィンドウに、レイヤーの名前つきで「落とす」と出る。
     #[test]
     fn a_clipping_mark_that_clips_nothing_is_listed_as_dropped_and_not_written() {
         let dir = Dir::new("idle-mark");
@@ -2380,7 +2383,7 @@ mod tests {
         assert!(s.doc.layer(group).unwrap().clipping());
     }
 
-    /// 刻みの間のトーンカーブは最寄りの刻みへ丸め、グラデーションマップの値のカーブは停止点へ展開する。確かめの窓の注記に、層の名前つきで丸めた値
+    /// 刻みの間のトーンカーブは最寄りの刻みへ丸め、グラデーションマップの値のカーブは停止点へ展開する。確認のウィンドウの注記に、レイヤーの名前つきで丸めた値
     /// （多いときは先頭の数個とほか何個）・停止点の数・合成の最大の差が日英で出て、書いたあとの取り込みは注記の差の範囲に収まる。
     #[test]
     fn color_adjustments_between_steps_are_listed_with_their_values_and_differences() {
@@ -2438,7 +2441,7 @@ mod tests {
         s.wait_psd();
         assert!(dir.files().is_empty(), "確かめるまで何も書かない");
         let ja = lines(&s);
-        // 注記は上の層から
+        // 注記は上のレイヤーから
         let [(map, map_what, map_how), (tone, tone_what, tone_how)] = ja.as_slice() else {
             panic!("{ja:?}")
         };
@@ -2640,7 +2643,7 @@ mod tests {
                     &b,
                     |out| {
                         out.write_all(&vec![1u8; 3 << 20]).map_err(Failure::File)?;
-                        panic!("層の評価の途中の panic");
+                        panic!("レイヤーの評価の途中の panic");
                     },
                     |_| Ok(()),
                 )
@@ -2756,7 +2759,7 @@ mod tests {
         let raised = AtomicBool::new(true);
         let err = verify_written(&path, Some(written), &raised).unwrap_err();
         assert!(matches!(err, Failure::Canceled), "{err:?}");
-        // 書いた長さ・層の数と合わなければ、読み戻しが一致しない
+        // 書いた長さ・レイヤーの数と合わなければ、読み戻しが一致しない
         for wrong in [
             None,
             Some(psd::Written {
@@ -2839,7 +2842,7 @@ mod tests {
             .contains("アクセスが拒否されました"));
     }
 
-    /// 予算・形式の上限は、種類から日英の文（層の名前つき）とツールチップを作る。予算で断るものは設定で上げられることを、PSD の 2 GiB は形式の上限であることを言う。
+    /// 予算・形式の上限は、種類から日英の文（レイヤーの名前つき）とツールチップを作る。予算で断るものは設定で上げられることを、PSD の 2 GiB は形式の上限であることを言う。
     #[test]
     fn overruns_are_worded_in_both_languages_with_the_layer_name_and_a_tooltip() {
         let overruns = [
@@ -3197,7 +3200,7 @@ mod tests {
         assert_eq!(dir.files().len(), 4);
     }
 
-    /// 設定の窓の操作: 最後の 1 つのチャンネルは外せず、消えたチャンネルは次に開くときに外れる。複数チャンネルの確かめは、チャンネルごとに並ぶ。
+    /// 設定のウィンドウの操作: 最後の 1 つのチャンネルは外せず、消えたチャンネルは次に開くときに外れる。複数チャンネルの確かめは、チャンネルごとに並ぶ。
     #[test]
     fn the_export_settings_keep_one_channel_and_the_notes_are_listed_per_channel() {
         let dir = Dir::new("settings");
@@ -3234,7 +3237,7 @@ mod tests {
         s.doc.remove_channel(user).unwrap();
         s.apply(Action::Psd(PsdAction::ExportDialog));
         assert_eq!(s.psd.export.channels, [Channel::Color]);
-        // 平らに 1 枚: 確かめは出ず、1 枚の層の PSD
+        // 平らに 1 枚: 確かめは出ず、1 枚のレイヤーの PSD
         s.psd.options_open = false;
         s.psd.export.channels = vec![Channel::Color, Channel::Roughness];
         let layer = s.selected_layer.unwrap();
@@ -3291,8 +3294,8 @@ mod tests {
         assert_eq!(dir.files(), ["w.psd"]);
     }
 
-    /// 焼いた層の画素の合計が、以前の固定の上限（128 MiB）を超えても書ける。層は 1 枚ずつ流して書き、RLE で圧縮するので、メモリには層 1 枚ぶんだけで、
-    /// ファイルは小さい。書いたファイルを読み込み直すと、層の数も合成も同じ。
+    /// 焼いたレイヤーの画素の合計が、以前の固定の上限（128 MiB）を超えても書ける。レイヤーは 1 枚ずつ流して書き、RLE で圧縮するので、メモリにはレイヤー 1 枚ぶんだけで、
+    /// ファイルは小さい。書いたファイルを読み込み直すと、レイヤーの数も合成も同じ。
     #[test]
     fn baked_layers_beyond_the_old_fixed_budget_are_written_streamed_and_compressed() {
         let dir = Dir::new("bake-budget");
@@ -3322,10 +3325,10 @@ mod tests {
         assert!(s.message.contains("PSD に書き出しました"), "{}", s.message);
         assert!(s.psd.report.is_none());
         assert_eq!(dir.files(), ["big.psd"], "一時ファイルは残らない");
-        // 全面の 4096² の層 3 枚 + 統合画像は無圧縮なら 256 MiB。RLE で小さくなっている
+        // 全面の 4096² のレイヤー 3 枚 + 統合画像は無圧縮なら 256 MiB。RLE で小さくなっている
         let size = std::fs::metadata(&path).unwrap().len();
         assert!(size < 8 * 1024 * 1024, "{size}");
-        // 読み込み直すと、層の数も合成も同じ
+        // 読み込み直すと、レイヤーの数も合成も同じ
         let mut back = AppState::new(32, 32);
         back.apply(Action::Psd(PsdAction::Import {
             path,
@@ -3341,14 +3344,14 @@ mod tests {
         );
     }
 
-    /// 層の記録（グループは区切りも数える）が設定の予算から決まる上限を超えるときは、計画のあとの確かめでなく書き始めてから分かる。理由を結果の窓に出し
+    /// レイヤーの記録（グループは区切りも数える）が設定の予算から決まる上限を超えるときは、計画のあとの確かめでなく書き始めてから分かる。理由を結果のウィンドウに出し
     /// （日英・設定で上げられることはツールチップで）、何も書かず、一時ファイルも残さない。
     #[test]
     fn layer_records_over_the_budget_are_refused_with_the_reason_and_the_hint_and_nothing_is_left()
     {
         let dir = Dir::new("records");
         let mut s = AppState::new(16, 16);
-        // 設定の予算 256 MiB の層の記録は 256 件まで。初めの層 1 枚とグループ 130 個は、区切りの記録も数えて 261 件になる
+        // 設定の予算 256 MiB のレイヤーの記録は 256 件まで。初めのレイヤー 1 枚とグループ 130 個は、区切りの記録も数えて 261 件になる
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(256);
         for n in 0..130 {
             s.doc.add_group(&format!("グループ{n}"), None).unwrap();
@@ -3361,7 +3364,7 @@ mod tests {
             "{}",
             s.message
         );
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(!report.ok && !report.importing);
         assert!(report.lines[0].warning);
         assert!(
@@ -3399,7 +3402,7 @@ mod tests {
         assert_eq!(dir.files(), ["g.psd"], "{}", s.message);
     }
 
-    /// 書けないもの（Normal の DirectX 向きのレベル補正）は、確かめの窓でなく理由の窓に出し、何も書かない。複数チャンネルでは、チャンネルの名前つき。
+    /// 書けないもの（Normal の DirectX 向きのレベル補正）は、確認のウィンドウでなく理由のウィンドウに出し、何も書かない。複数チャンネルでは、チャンネルの名前つき。
     #[test]
     fn what_cannot_be_baked_is_refused_with_the_channel_and_nothing_is_written() {
         use yolu_core::{AdjustmentSettings, NormalSettings, NormalYDirection};
@@ -3423,7 +3426,7 @@ mod tests {
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("n.psd"))));
         s.wait_psd();
         assert!(s.psd.notes_confirm.is_none());
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(!report.ok);
         assert!(
             report.lines[0].text.contains("ノーマル") && report.lines[0].text.contains("レベル"),
@@ -3434,7 +3437,7 @@ mod tests {
         s.lang = Lang::En;
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("n.psd"))));
         s.wait_psd();
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(
             report.lines[0].text.starts_with("Normal: "),
             "{:?}",
@@ -3442,7 +3445,7 @@ mod tests {
         );
     }
 
-    /// 書けない場所（フォルダが無い・通常のファイルでない先）は、理由を結果の窓に出して何も変えない。複数のチャンネルの途中で書けなくても、
+    /// 書けない場所（フォルダが無い・通常のファイルでない先）は、理由を結果のウィンドウに出して何も変えない。複数のチャンネルの途中で書けなくても、
     /// 先に書いた分は置き換えず、一時ファイルも残さない。
     #[test]
     fn a_place_that_cannot_be_written_says_why_and_replaces_no_file() {
@@ -3453,7 +3456,7 @@ mod tests {
         )));
         s.wait_psd();
         assert!(s.message.contains("書き出せません"), "{}", s.message);
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(!report.ok && !report.importing && report.lines[0].warning);
         assert!(dir.files().is_empty());
         // 2 つ目の先がフォルダ: 1 つ目も置き換えない
@@ -3463,7 +3466,7 @@ mod tests {
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("Body.psd"))));
         s.apply(Action::Psd(PsdAction::ConfirmReplace));
         s.wait_psd();
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(
             report.lines[0]
                 .text
@@ -3480,7 +3483,7 @@ mod tests {
     ) {
         let dir = Dir::new("budget");
         let mut s = AppState::new(32, 32);
-        // 層の画素の予算（設定の「レイヤーのメモリ」）を下げる。読み込みは 256 MiB を下回らない
+        // レイヤーの画素の予算（設定の「レイヤーのメモリ」）を下げる。読み込みは 256 MiB を下回らない
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(16);
         let before = (s.sets.len(), s.doc.id(), s.modified);
         // ファイルの大きさだけでは断らない（原本を保たないので、保持の上限は掛けない）。PSD でなければ、その理由で断る
@@ -3515,7 +3518,7 @@ mod tests {
             "{}",
             s.message
         );
-        let report = s.psd.report.take().expect("理由の窓");
+        let report = s.psd.report.take().expect("理由のウィンドウ");
         assert!(!report.ok && report.importing);
         assert!(report.lines[0].warning && report.lines[0].text.contains("9000×9000"));
         // 辺が .ylp の上限（8192）を超える: 設定の予算を上げても取り込めないので、予算の案内は出さない
@@ -3555,7 +3558,7 @@ mod tests {
             "{}",
             big.message
         );
-        let report = big.psd.report.take().expect("理由の窓");
+        let report = big.psd.report.take().expect("理由のウィンドウ");
         assert!(!report.ok && !report.importing);
         assert!(report.lines[0].warning && report.lines[0].text.contains("9000×9000"));
         assert!(

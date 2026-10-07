@@ -55,7 +55,7 @@ impl Lang {
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
     }
-    /// core の誤りの文。同じ誤りはどの操作でも同じ文にする（前は、塗る道具・棚・覚えた選択範囲がそれぞれ別の文を持っていた）。
+    /// core の誤りの文。同じ誤りはどの操作でも同じ文にする（前は、塗るツール・棚・覚えた選択範囲がそれぞれ別の文を持っていた）。
     /// 下の個別の文の無い誤りは、日本語は core の文、英語は種類ごとの短い文。
     fn core_error_text(self, error: &CoreError) -> String {
         match error {
@@ -77,13 +77,14 @@ impl Lang {
             CoreError::NoActiveStroke => self
                 .pick("ストロークは終わっています", "Stroke already ended")
                 .into(),
-            CoreError::LayerNotFound | CoreError::InvalidArgument("保存する層がありません") => {
+            CoreError::LayerNotFound
+            | CoreError::InvalidArgument("保存するレイヤーがありません") => {
                 self.pick("レイヤーがありません", "Layer not found").into()
             }
             CoreError::ChannelNotFound => self
                 .pick("チャンネルがありません", "Channel not found")
                 .into(),
-            // 予算は設定の窓の名前（レイヤーのメモリ・1 回の操作）で言う
+            // 予算は設定のウィンドウの名前（レイヤーのメモリ・1 回の操作）で言う
             CoreError::SourceBudgetExceeded => self
                 .pick(
                     "レイヤーのメモリの予算を超えます",
@@ -106,8 +107,8 @@ impl Lang {
                 self.pick("チャンネルが合いません", "Channels do not match")
                     .into()
             }
-            CoreError::InvalidArgument("層は2048個までです") => {
-                self.pick("層が多すぎます", "Too many layers").into()
+            CoreError::InvalidArgument("レイヤーは2048個までです") => {
+                self.pick("レイヤーが多すぎます", "Too many layers").into()
             }
             CoreError::InvalidArgument("保存するマスクがありません") => {
                 self.pick("マスクがありません", "No mask").into()
@@ -168,7 +169,7 @@ impl Lang {
     }
 
     /// .ylp・ファイルの失敗の文。日本語は診断（どの項目か）をそのまま出し、英語は種類ごとの短い文にする
-    /// （診断の本文は日本語なので、英語の窓には出さない）。OS のエラーは番号を添える。
+    /// （診断の本文は日本語なので、英語のウィンドウには出さない）。OS のエラーは番号を添える。
     pub fn io_error(self, error: &yolu_io::Error) -> String {
         crate::crash::problem(self.io_error_text(error))
     }
@@ -308,7 +309,7 @@ impl Lang {
         })
     }
 
-    /// ステンシルの画像を読めない理由（core の断り・ファイルの失敗は他の窓と同じ文を通す）。
+    /// ステンシルの画像を読めない理由（core の断り・ファイルの失敗は他のウィンドウと同じ文を通す）。
     pub fn stencil_error(self, error: &StencilError) -> String {
         crate::crash::problem(self.stencil_error_text(error))
     }
@@ -411,7 +412,7 @@ impl Lang {
         }
     }
 
-    /// 効かない効果 1 件の 1 文（層の名前・種類が効いていないことと、その理由）。
+    /// 効かない効果 1 件の 1 文（レイヤーの名前・種類が効いていないことと、その理由）。
     pub fn inactive_effect(self, effect: &InactiveEffect) -> String {
         let name = self.quote(&effect.layer_name);
         let what = match (self, effect.target) {
@@ -448,7 +449,7 @@ impl Lang {
         self.with_reason(what, self.inactive_reason(&effect.reason))
     }
 
-    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件の 1 行（日本語は core の文、英語は層の名前・種類・理由）。
+    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件の 1 行（日本語は core の文、英語はレイヤーの名前・種類・理由）。
     pub fn fallback_effect(self, effect: &FallbackEffect) -> String {
         if self == Self::Ja {
             return effect.to_string();
@@ -485,7 +486,7 @@ impl Lang {
         format!(" {}", self.with_reason(what, first))
     }
 
-    /// 文書を core へ変換できない項目の一覧の文（初めの 3 つと数）。項目のキーは英数字なので、英語の窓にもそのまま出す。
+    /// 文書を core へ変換できない項目の一覧の文（初めの 3 つと数）。項目のキーは英数字なので、英語のウィンドウにもそのまま出す。
     pub fn unsupported_features(self, issues: &[String]) -> String {
         let shown = issues
             .iter()
@@ -578,23 +579,23 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
     Some(match reason {
         "手動ID色の数・番号・色が範囲外です" => "Manual ID colors are out of range",
         "リボンの画像が無い" => "The ribbon image is missing",
-        "パスの層にはパスが 1 本以上要る" => "A path layer needs at least one path",
-        "パスで描けるのはラスターと塗りつぶしの層だけ" => {
+        "パスレイヤーにはパスが 1 本以上要る" => "A path layer needs at least one path",
+        "パスで描けるのはラスターと塗りつぶしレイヤーだけ" => {
             "Paths draw only on raster and fill layers"
         }
-        "パスを付けられるのはパスの無いラスターか塗りつぶしの層だけ" => {
+        "パスを付けられるのはパスの無いラスターか塗りつぶしレイヤーだけ" => {
             "Paths can be attached only to a raster or fill layer without paths"
         }
-        "塗りつぶしの層のパスは画素にできない" => {
+        "塗りつぶしレイヤーのパスは画素にできない" => {
             "The paths of a fill layer cannot be rasterized"
         }
-        "塗りつぶしの層のパスの画素は塗りつぶしの層だけ" => {
+        "塗りつぶしレイヤーのパスの画素は塗りつぶしレイヤーだけ" => {
             "Fill-layer path pixels belong to a fill layer"
         }
         "3D のパスは呼び手が形で描いて set_paths へ渡す" => {
             "Paths on a model are drawn with the model and set with set_paths"
         }
-        "塗りのパスが 1 つの UV の島に収まらない" => {
+        "塗りのパスが 1 つの UV アイランドに収まらない" => {
             "The fill path does not stay on one UV island"
         }
         "手動ID色のモデル指紋が不正です" => {
@@ -603,19 +604,19 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "手動ID色が別のモデルに属しています" => {
             "The manual ID colors belong to another model"
         }
-        "手で選んだ島が別のモデルに属しています" => {
+        "手で選んだアイランドが別のモデルに属しています" => {
             "The chosen islands belong to another model"
         }
-        "手で選んだ島の番号がモデルにありません" => {
+        "手で選んだアイランドの番号がモデルにありません" => {
             "A chosen island is not in the model"
         }
-        "手で選んだ島の数か番号が範囲外です" => {
+        "手で選んだアイランドの数か番号が範囲外です" => {
             "Too many chosen islands, or an island out of range"
         }
-        "同じ島が「焼かない」と「優先する」の両方にあります" => {
+        "同じアイランドが「焼かない」と「優先する」の両方にあります" => {
             "The same island is both not baked and preferred"
         }
-        "手で選んだ島のモデル指紋が不正です" => {
+        "手で選んだアイランドのモデル指紋が不正です" => {
             "The model fingerprint of the chosen islands is invalid"
         }
         "ベイクの優先の値が範囲外です" => {
@@ -665,21 +666,21 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "texture scale（0.05〜64）" => "Texture scale (0.05–64)",
         "その番号のチャンネルはもうある" => "Channel ID already exists",
         "ぼかしの半径（1〜64）" => "Blur radius (1–64)",
-        "ラスターと塗りつぶし以外には、層の出力の画素が無い" => {
+        "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い" => {
             "Only raster and fill layers have layer output pixels"
         }
         "グループ以外には、グループの出力が無い" => {
             "Only groups have a group output"
         }
-        "調整の層ではない" => "Not an adjustment layer",
+        "調整レイヤーではない" => "Not an adjustment layer",
         "筆圧の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）" => {
             "Pen pressure curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)"
         }
         "筆圧の最小値（0〜1）" => "Pen pressure minimum (0–1)",
-        "まとめる層が無い" => "No layers to merge",
+        "まとめるレイヤーが無い" => "No layers to merge",
         "ガンマ（0.1〜9.99）" => "Gamma (0.1–9.99)",
         "クローンの位置（±1e7）" => "Clone position (±1e7)",
-        "グループでない層の中に入っている" => "Parent is not a group",
+        "グループでないレイヤーの中に入っている" => "Parent is not a group",
         "グループではない" => "Not a group",
         "グループにだけ入れられる" => "Parent must be a group",
         "グループには描けない" => "Cannot paint a group",
@@ -734,7 +735,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "写した矩形が文書の外" => "Copied rectangle lies outside the document",
         "写した矩形が空" => "Copied rectangle is empty",
         "画素が矩形の外" => "Pixel outside the rectangle",
-        "画素を置き換えられるのはラスターの層だけ" => {
+        "画素を置き換えられるのはラスターレイヤーだけ" => {
             "Only paint layers have pixels to replace"
         }
         "画像の大きさが文書と違う" => "Image size differs from the document",
@@ -751,22 +752,22 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Effect brushes require dab painting"
         }
         "半径（0〜200）" => "Radius (0–200)",
-        "同じグループの中の層だけをまとめられる" => {
+        "同じグループの中のレイヤーだけをまとめられる" => {
             "Merge requires layers in the same group"
         }
         "同じ名前のチャンネルがある" => "Channel name already exists",
-        "塗りつぶしの層だけが値を持つ" => "Values require a fill layer",
-        "塗りつぶしの層ではありません" => "Not a fill layer",
-        "塗りつぶしの層には描けない" => "Cannot paint a fill layer",
-        "塗りつぶしはラスターの層だけ" => "Fill requires a raster layer",
+        "塗りつぶしレイヤーだけが値を持つ" => "Values require a fill layer",
+        "塗りつぶしレイヤーではありません" => "Not a fill layer",
+        "塗りつぶしレイヤーには描けない" => "Cannot paint a fill layer",
+        "塗りつぶしはラスターレイヤーだけ" => "Fill requires a raster layer",
         "多角形の点が多すぎる（100000 まで）" => {
             "Too many polygon points (maximum 100000)"
         }
         "大きさ" => "Size",
         "対称の中心（±1e7）" => "Symmetry center (±1e7)",
-        "層にマスクが無い" => "Layer has no mask",
-        "層はもうマスクを持っている" => "Layer already has a mask",
-        "層はグループの下に並ぶ" => "Layers must follow their group",
+        "レイヤーにマスクが無い" => "Layer has no mask",
+        "レイヤーはもうマスクを持っている" => "Layer already has a mask",
+        "レイヤーはグループの下に並ぶ" => "Layers must follow their group",
         "手ぶれ補正・入り抜き（0〜10000）" => "Stabilizer and taper (0–10000)",
         "指先の強さ（0〜1）" => "Smudge strength (0–1)",
         "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）" => {
@@ -794,7 +795,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "範囲の大きさが文書と違う" => "Region size does not match document",
         "色のゆらぎ（0〜1）" => "Color dynamics (0–1)",
-        "色相/彩度の層が有効" => "Hue/Saturation layer enabled",
+        "色相/彩度のレイヤーが有効" => "Hue/Saturation layer enabled",
         "色相/彩度は色のチャンネルだけ" => "Hue/Saturation requires a color channel",
         "色相・彩度・明度" => "Hue, saturation and value",
         "この種類は 8 つの値では組み立てられない（種類ごとの組み立てを使う）" => {
@@ -819,11 +820,11 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "グローは色のチャンネルだけに適用できます" => {
             "Glow applies only to color channels"
         }
-        "親の数が層の数と違う" => "Parent count does not match layer count",
-        "調整の層だけが調整の設定を持つ" => {
+        "親の数がレイヤーの数と違う" => "Parent count does not match layer count",
+        "調整レイヤーだけが調整の設定を持つ" => {
             "Adjustment settings require an adjustment layer"
         }
-        "調整の層には描けない" => "Cannot paint an adjustment layer",
+        "調整レイヤーには描けない" => "Cannot paint an adjustment layer",
         "速さの上限（0 より大きい）" => "Maximum speed (greater than zero)",
         "選択範囲のタイルが文書の外" => "Selection tile outside document",
         "選択範囲のタイルが空" => "Empty selection tile",
@@ -863,15 +864,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "ID colors can only be restored right after loading"
         }
         "グラデーション両端のチャンネル" => "Channels at both ends of the gradient",
-        "保存する層がありません" => "No layers to save",
+        "保存するレイヤーがありません" => "No layers to save",
         "保存するマスクがありません" => "No mask to save",
         "空のスマート素材" => "Empty smart material",
         "スマートマスクの断片が不正" => "Invalid smart mask fragment",
-        "スマートマスクは層に置けません" => {
+        "スマートマスクはレイヤーに置けません" => {
             "A smart mask cannot be placed on a layer"
         }
         "配置先がグループではありません" => "The target is not a group",
-        "層は2048個までです" => "Maximum 2048 layers",
+        "レイヤーは2048個までです" => "Maximum 2048 layers",
         "スマートマテリアルはマスクに置けません" => {
             "A smart material cannot be placed on a mask"
         }
@@ -884,11 +885,11 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "スマート素材の名前" => "Smart material name",
         "変形は有限値" => "Transform must be finite",
         "変形が潰れる、または範囲外" => "Transform is degenerate or out of range",
-        "動かすラスター層が無い" => "No raster layer to move",
+        "動かすラスターレイヤーが無い" => "No raster layer to move",
         "画像の辺は 1〜8192" => "Image side (1–8192)",
         "移動先のグループ" => "Destination group",
         "未知のロック" => "Unknown lock",
-        "結合は 2 層以上" => "Merging requires at least two layers",
+        "結合は 2 レイヤー以上" => "Merging requires at least two layers",
         "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
         "Anchor のジェネレーターではない" => "Not an anchor generator",
         "Anchor の ID が空" => "Anchor ID is empty",
@@ -910,24 +911,24 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Groups have no filters on their composite"
         }
         "このマスクにはもう Anchor がある" => "This mask already has an anchor",
-        "この層にはもう Anchor がある" => "This layer already has an anchor",
+        "このレイヤーにはもう Anchor がある" => "This layer already has an anchor",
         "スタックの到達半径の合計が 512 画素を超える" => {
             "Total reach of the stack exceeds 512 pixels"
         }
         "その Anchor が無い" => "Anchor not found",
         "そのチャンネルにグラデーションが無い" => "The channel has no gradient",
-        "その層にそのフィルターが無い" => "The layer has no such filter",
+        "そのレイヤーにそのフィルターが無い" => "The layer has no such filter",
         "パスが参照する三角形が無い" => "The path refers to a missing triangle",
         "パスで描かれたチャンネルは無効にできない" => {
             "Cannot disable a channel drawn by a path"
         }
-        "パスで描かれた層には手で描けない" => {
+        "パスで描かれたレイヤーには手で描けない" => {
             "Cannot paint by hand on a path layer"
         }
-        "パスのチャンネルが層で有効でない" => {
+        "パスのチャンネルがレイヤーで有効でない" => {
             "The path channel is not enabled on the layer"
         }
-        "パスのチャンネルの面が層に無い" => {
+        "パスのチャンネルの面がレイヤーに無い" => {
             "The layer has no surface for the path channel"
         }
         "フィルターの ID" => "Filter ID",
@@ -952,7 +953,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "マスクのフィルターはチャンネルを持たない（マスクは全チャンネルで共有）" => {
             "Mask filters have no channels (a mask is shared by all channels)"
         }
-        "マスクの無い層のマスクには Anchor を置けない" => {
+        "マスクの無いレイヤーのマスクには Anchor を置けない" => {
             "Cannot place a mask anchor on a layer without a mask"
         }
         "マップの境界箱" => "Map bounding box",
@@ -989,15 +990,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "塗りつぶしのグラデーションは置き換え" => "A fill gradient replaces",
         "塗りつぶしの入力" => "Fill input",
-        "塗りつぶしの層だけが持つ" => "Only fill layers have this",
+        "塗りつぶしレイヤーだけが持つ" => "Only fill layers have this",
         "塗りつぶしの画像のチャンネルか ID" => "Fill image channel or ID",
-        "層のパスはチャンネルを変えない" => {
+        "レイヤーのパスはチャンネルを変えない" => {
             "A layer path does not change its channel"
         }
-        "層のパスは種類（モデルの上かキャンバスの上か）を変えない" => {
+        "レイヤーのパスは種類（モデルの上かキャンバスの上か）を変えない" => {
             "A layer path does not change its kind (model or canvas)"
         }
-        "名前を替えるパスが層に無い" => "The layer has no such path to rename",
+        "名前を替えるパスがレイヤーに無い" => "The layer has no such path to rename",
         "形のグラデーションは色かスカラーで、法線ではない" => {
             "A shape gradient is a color or scalar, not a normal"
         }
@@ -1011,10 +1012,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "画像の ID が空" => "Image ID is empty",
         "画像の大きさ" => "Image size",
         "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
-        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）" => {
+        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）" => {
             "A generator reading an anchor on its own layer (the value would feed back)"
         }
-        "調整の層には画素が無い" => "Adjustment layers have no pixels",
+        "調整レイヤーには画素が無い" => "Adjustment layers have no pixels",
         "面のダブを拒否した" => "The surface dab was refused",
         "見た目の設定の復元は読み込み直後だけ" => {
             "Look settings can only be restored right after loading"
@@ -1524,7 +1525,7 @@ pub fn path_error(lang: Lang, error: &paths::Error) -> String {
             .into(),
         Error::FillIslands => lang
             .pick(
-                "塗りのパスが 1 つの UV の島に収まっていません",
+                "塗りのパスが 1 つの UV アイランドに収まっていません",
                 "The fill path does not stay on one UV island",
             )
             .into(),
@@ -1555,7 +1556,7 @@ pub fn rebind_error(lang: Lang, error: RebindError) -> String {
     }
 }
 
-/// 取り込めない理由（画面の言語。層の名前は利用者の名前なのでそのまま）。
+/// 取り込めない理由（画面の言語。レイヤーの名前は利用者の名前なのでそのまま）。
 pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
     match why {
         CopyRefusal::Malformed(text) => lang.pick(
@@ -1853,7 +1854,7 @@ mod tests {
             Lang::En.core_error(&refused),
             "Cannot bake an inactive effect (No Thickness map)."
         );
-        // 1 行の文: 層の名前は利用者の文字列なのでそのまま、種類と理由は英語
+        // 1 行の文: レイヤーの名前は利用者の文字列なのでそのまま、種類と理由は英語
         let effects = [
             InactiveEffect {
                 layer: LayerId(1),
@@ -1941,7 +1942,7 @@ mod tests {
         );
     }
 
-    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの 1 行が、画面の言語で出る（層の名前はそのまま）。
+    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの 1 行が、画面の言語で出る（レイヤーの名前はそのまま）。
     #[test]
     fn fallback_effects_are_told_in_both_languages() {
         use yolu_core::generator::{Inactive as I, Kind, MapKind};
@@ -2001,12 +2002,12 @@ mod tests {
             CoreError::SourceBudgetExceeded,
             CoreError::StrokeBudgetExceeded,
             CoreError::WorkingBudgetExceeded,
-            CoreError::Unsupported("塗りつぶしの層には描けない"),
+            CoreError::Unsupported("塗りつぶしレイヤーには描けない"),
         ] {
             assert!(!Lang::Ja.core_error(&error).is_empty());
             assert!(Lang::En.core_error(&error).is_ascii());
         }
-        // 同じ誤りは、どの操作でも同じ文（塗る道具・棚・覚えた選択範囲の別の表は無くした）
+        // 同じ誤りは、どの操作でも同じ文（塗るツール・棚・覚えた選択範囲の別の表は無くした）
         assert_eq!(
             Lang::Ja.core_error(&CoreError::LayerNotFound),
             "レイヤーがありません"
@@ -2023,10 +2024,10 @@ mod tests {
         }
         // できない操作は、core の理由の文をそのまま 1 文に（「できない: 理由」のコロンでつないだ形にしない）
         assert_eq!(
-            Lang::Ja.core_error(&CoreError::Unsupported("塗りつぶしの層には描けない")),
-            "塗りつぶしの層には描けない。"
+            Lang::Ja.core_error(&CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
+            "塗りつぶしレイヤーには描けない。"
         );
-        let error = CoreError::Unsupported("塗りつぶしの層には描けない");
+        let error = CoreError::Unsupported("塗りつぶしレイヤーには描けない");
         assert_eq!(Lang::En.core_error(&error), "Cannot paint a fill layer.");
         assert_eq!(
             Lang::Ja.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
@@ -2407,7 +2408,7 @@ mod tests {
         }
     }
 
-    /// 保存が実際に返す「置き場の不具合」の理由が、英語の窓でも言い分けられる（理由の文を書き換えて、表の対応が外れても気づく）。
+    /// 保存が実際に返す「置き場の不具合」の理由が、英語のウィンドウでも言い分けられる（理由の文を書き換えて、表の対応が外れても気づく）。
     #[test]
     fn real_save_refusals_about_the_place_are_told_in_english() {
         use yolu_io::{Error, SaveTarget};

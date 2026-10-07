@@ -17,7 +17,7 @@ fn layer_id(fx: &Fixture, file: &str, name: &str) -> String {
         .unwrap()
         .iter()
         .find(|l| l["name"] == name)
-        .unwrap_or_else(|| panic!("層 {name}"))["id"]
+        .unwrap_or_else(|| panic!("レイヤー {name}"))["id"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -155,7 +155,7 @@ fn layer_and_effect_commands_edit_through_flags() {
     let path = fx.project("a.ylp");
     let base = layer_id(&fx, "a.ylp", "Base");
     let batch = format!(
-        "# 層と効果と値を足す\n{}\n{}\n{}\n{}\n",
+        "# レイヤーと効果と値を足す\n{}\n{}\n{}\n{}\n",
         json!({"command": "layer.add", "args": {"kind": "fill", "name": "Wash", "fill": {"Color": "#336699"}}}),
         json!({"command": "effect.add", "args": {"layer": base, "kind": "blur", "values": {"radius": 3}}}),
         json!({"command": "mask.add", "args": {"layer": "Tint"}}),
@@ -322,7 +322,7 @@ fn preview_embeds_the_png_or_writes_it_with_out() {
     let written = file_bytes(&fx.path("shot.png"));
     assert_eq!(written, png, "--out の PNG は埋め込みと同じ画素");
     assert_eq!(out["png_file"], fx.path("shot.png").display().to_string());
-    // 道具のほかの命令に --out は付けない
+    // ツールのほかの命令に --out は付けない
     let (code, _) = fx.fails(&["doc.info", "--file", "a.ylp", "--out", "x.png"]);
     assert_eq!(code, 2);
     // 画像の大きさの範囲は yolu-ops が断る

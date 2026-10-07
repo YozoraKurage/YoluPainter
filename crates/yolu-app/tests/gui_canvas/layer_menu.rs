@@ -3,7 +3,7 @@
 //!   押せない理由はラベルに続けずツールチップへ。
 //! - 「レイヤー」のメニューは、メニューバーと右クリックと一覧の空白で同じ関数。新規塗りつぶし ▸・新規調整 ▸ の入れ子、効果、グループ、属性。
 //! - 画像・デカールの塗りつぶしは、棚の画像（またはファイル）を選んで 1 回の Undo で作る。選ばずに閉じたら何も作らない。
-//! - 2 枚の色は、ツールの帯の下の端に付き、最小の窓でもアイコンと重ならない。
+//! - 2 枚の色は、ツールの帯の下の端に付き、最小のウィンドウでもアイコンと重ならない。
 use crate::common;
 
 use std::path::PathBuf;
@@ -159,7 +159,7 @@ fn the_filter_menu_has_only_filters_and_anchors_without_a_heading() {
                 "{lang:?}: フィルターのメニューにジェネレーターを置かない"
             );
             assert!(!entries.iter().any(|e| matches!(e, Entry::Submenu { .. })));
-            // 足す先は、今の編集の状態のまま（マスクを描いていればマスク、そうでなければ層の画素）
+            // 足す先は、今の編集の状態のまま（マスクを描いていればマスク、そうでなければレイヤーの画素）
             let target = if edit_mask {
                 FilterTarget::Mask
             } else {
@@ -209,7 +209,10 @@ fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() 
         let why = anchor.2.expect("理由はツールチップ");
         assert_eq!(
             why,
-            lang.pick("この層より下にアンカーが無い", "no anchor below this layer")
+            lang.pick(
+                "このレイヤーより下にアンカーが無い",
+                "no anchor below this layer"
+            )
         );
     }
 }
@@ -256,7 +259,7 @@ fn the_mask_menu_adds_to_the_mask_and_has_the_mask_switches() {
             "マスクが無ければ空"
         );
         s.apply(Action::M2(Edit::AddMask(layer)));
-        // 層の画素を対象にしていても、マスクのメニューの項目はマスクへ足す
+        // レイヤーの画素を対象にしていても、マスクのメニューの項目はマスクへ足す
         s.apply(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
         let v = shell::popup_entries(
             &s,
@@ -340,7 +343,7 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
         let bar = shell::menu_entries(&s, 2);
         let context = shell::popup_entries(&s, PopupKind::LayerContext(id));
         assert_eq!(shape(&bar), shape(&context), "{lang:?}: 同じ並び");
-        // 選んだ層が無いとき: メニューバーと一覧の空白の右クリックが同じ並び（足す項目とグループだけ）
+        // 選んだレイヤーが無いとき: メニューバーと一覧の空白の右クリックが同じ並び（足す項目とグループだけ）
         s.selected_layer = None;
         let bar = shell::menu_entries(&s, 2);
         let blank = shell::popup_entries(&s, PopupKind::M2(yolu_app::m2_menu::Popup::LayerBlank));
@@ -520,7 +523,7 @@ fn a_menu_image_fill_adds_one_fill_layer_with_the_image_and_one_undo_takes_it_ba
         image,
         mode: ProjectionMode::Uv,
     }));
-    let id = s.selected_layer.expect("足した層を選ぶ");
+    let id = s.selected_layer.expect("足したレイヤーを選ぶ");
     assert_ne!(id, below);
     assert_eq!(layer_count(&s), 2);
     let layer = s.doc.layer(id).unwrap();
@@ -534,10 +537,10 @@ fn a_menu_image_fill_adds_one_fill_layer_with_the_image_and_one_undo_takes_it_ba
         "{}",
         s.message
     );
-    // 選んでいた層の上に重なる
+    // 選んでいたレイヤーの上に重なる
     let order: Vec<_> = s.doc.layers().iter().map(|l| l.id()).collect();
     assert!(order.iter().position(|l| *l == id) > order.iter().position(|l| *l == below));
-    // 1 回の取り消しで層ごと戻り、やり直しで戻る
+    // 1 回の取り消しでレイヤーごと戻り、やり直しで戻る
     s.apply(Action::Undo);
     assert_eq!(layer_count(&s), 1);
     assert!(s.doc.layer(id).is_none());
@@ -592,7 +595,7 @@ fn a_menu_decal_is_a_fill_layer_with_the_decal_projection_fitted_to_the_model() 
     assert_eq!(
         s.doc.undo_count(),
         steps + 1,
-        "層・画像・投影が 1 回の Undo"
+        "レイヤー・画像・投影が 1 回の Undo"
     );
     s.apply(Action::Undo);
     assert!(s.doc.layer(id).is_none());
@@ -806,7 +809,7 @@ fn a_shape_gradient_from_the_menu_is_saved_with_its_shape_and_placement() {
             .iter()
             .find(|l| l.id() == id)
             .and_then(|l| l.fill_gradient(Channel::Color))
-            .unwrap_or_else(|| panic!("{shape:?}: 保存した層に無い"));
+            .unwrap_or_else(|| panic!("{shape:?}: 保存したレイヤーに無い"));
         assert_eq!(g.volume.shape, shape);
         assert_eq!(g, &settings, "{shape:?}: 置き場も同じ");
         let _ = std::fs::remove_dir_all(dir);
@@ -824,9 +827,9 @@ fn choosing_a_file_asks_for_it_and_changes_nothing_until_a_file_is_chosen() {
     assert_eq!(
         s.dialog_request,
         Some(DialogRequest::NewFillImage(ProjectionMode::Decal)),
-        "ファイルの窓を頼む"
+        "ファイルのウィンドウを頼む"
     );
-    // 選ばずに閉じる（窓の結果が来ない）と、何も作らず、履歴も増えない
+    // 選ばずに閉じる（ウィンドウの結果が来ない）と、何も作らず、履歴も増えない
     s.dialog_request = None;
     assert_eq!(layer_count(&s), 1);
     assert_eq!(s.doc.undo_count(), steps);
@@ -860,9 +863,9 @@ fn a_chosen_file_goes_to_the_shelf_and_makes_the_layer_and_a_bad_file_makes_noth
     assert_eq!(
         s.doc.undo_count(),
         steps + 1,
-        "文書の履歴は層を作った 1 回だけ"
+        "文書の履歴はレイヤーを作った 1 回だけ"
     );
-    // 同じファイルをもう一度選ぶと、棚には足さずにその画像で層を作る
+    // 同じファイルをもう一度選ぶと、棚には足さずにその画像でレイヤーを作る
     let before = s.shelf.resources().len();
     s.apply(Action::LayerMenu(Op::FillImageFile {
         path: ok,
@@ -924,7 +927,7 @@ fn an_image_that_cannot_be_used_makes_no_layer_and_says_why() {
     assert_eq!(s.fx.inputs.decoded_image_count(), 0);
 }
 
-/// 断られた操作が何も残していない: 層の数・Undo の段・復号している画像（断られた画像を予算に残さない）。
+/// 断られた操作が何も残していない: レイヤーの数・Undo の段・復号している画像（断られた画像を予算に残さない）。
 fn assert_nothing_made(s: &mut AppState, layers: usize, steps: usize, what: &str) {
     assert_eq!(layer_count(s), layers, "{what}: {}", s.message);
     assert_eq!(s.doc.undo_count(), steps, "{what}");
@@ -962,7 +965,7 @@ fn nothing_is_made_while_drawing() {
             mode: ProjectionMode::Decal,
         },
         Op::FillGradient(Shape::Box),
-        // ファイルの取り込みも、描いている間は棚へ入れず、層も作らない
+        // ファイルの取り込みも、描いている間は棚へ入れず、レイヤーも作らない
         Op::FillImageFile {
             path: file.clone(),
             mode: ProjectionMode::Decal,
@@ -1029,7 +1032,7 @@ fn nothing_is_made_inside_a_locked_group_and_the_image_is_let_go() {
                 "{what}: 変更の印 {}",
                 s.modified
             );
-            // 取り込んだファイルの画像は棚に残るが、どの層も指さず、復号したままにしない
+            // 取り込んだファイルの画像は棚に残るが、どのレイヤーも指さず、復号したままにしない
             assert_nothing_made(&mut s, layers, steps, &what);
         }
     }
@@ -1042,7 +1045,11 @@ fn a_gradient_fill_on_the_normal_channel_makes_no_layer_and_says_why() {
     let (layers, steps) = (layer_count(&s), s.doc.undo_count());
     s.apply(Action::LayerMenu(Op::FillGradient(Shape::Box)));
     assert_eq!(layer_count(&s), layers, "{}", s.message);
-    assert_eq!(s.doc.undo_count(), steps, "層は 1 回の Undo の中で戻る");
+    assert_eq!(
+        s.doc.undo_count(),
+        steps,
+        "レイヤーは 1 回の Undo の中で戻る"
+    );
     assert!(!s.modified, "変更の印を付けない");
     assert!(s.message.contains("法線"), "{}", s.message);
     assert!(s.fillfx.edit_gradient.is_none(), "形の編集を始めない");
@@ -1075,7 +1082,7 @@ fn a_file_over_the_image_budget_makes_no_layer_and_the_decal_is_the_same() {
         }));
         assert!(s.message.contains("予算"), "{mode:?}: {}", s.message);
         assert_nothing_made(&mut s, layers, steps, &format!("{mode:?}"));
-        // 取り込んだ画像は棚に残る（消えるのは層を作らなかったことだけ）。棚の画像から作り直しても、同じ断りで何も作らない
+        // 取り込んだ画像は棚に残る（消えるのはレイヤーを作らなかったことだけ）。棚の画像から作り直しても、同じ断りで何も作らない
         let image = s
             .shelf
             .selected
@@ -1106,19 +1113,23 @@ fn the_menu_the_image_fields_projection_switch_and_place_decal_make_the_same_pro
         ProjectionMode::Cylindrical,
         ProjectionMode::Decal,
     ] {
-        // メニューが作る層の投影
+        // メニューが作るレイヤーの投影
         s.apply(Action::LayerMenu(Op::FillImage { image, mode }));
         let from_menu = projection(&s);
         assert_eq!(from_menu.mode, mode);
         assert_ne!(from_menu.placement, Placement::default(), "{mode:?}");
-        // メニューで UV の画像の層を作り、画像の欄で投影の種類を替えた層（置き場は外形・今のビューに合わせる）
+        // メニューで UV の画像のレイヤーを作り、画像の欄で投影の種類を替えたレイヤー（置き場は外形・今のビューに合わせる）
         s.apply(Action::LayerMenu(Op::FillImage {
             image,
             mode: ProjectionMode::Uv,
         }));
         let layer = s.selected_layer.unwrap();
         s.apply(Action::Fill(FillOp::ProjectionMode { layer, mode }));
-        assert_eq!(projection(&s), from_menu, "{mode:?}: 欄で替えた層と同じ");
+        assert_eq!(
+            projection(&s),
+            from_menu,
+            "{mode:?}: 欄で替えたレイヤーと同じ"
+        );
     }
     // 3D ビューへ落として置くデカール: 置き場は当たった点で決まるので、置き場のほかは同じ（種類・繰り返さない・減衰）
     s.apply(Action::LayerMenu(Op::FillImage {
@@ -1143,7 +1154,7 @@ fn the_menu_the_image_fields_projection_switch_and_place_decal_make_the_same_pro
 #[test]
 fn image_and_decal_fills_survive_saving_and_opening_and_stay_editable() {
     let dir = temp_dir("save");
-    // 画像の塗りつぶし（UV）: アプリで開き直しても同じ層・同じ画像で、続けて編集できる
+    // 画像の塗りつぶし（UV）: アプリで開き直しても同じレイヤー・同じ画像で、続けて編集できる
     let path = dir.join("image.ylp");
     let mut s = AppState::new(64, 64);
     let (rid, image) = shelf_image(&mut s, "四色");
@@ -1184,7 +1195,7 @@ fn image_and_decal_fills_survive_saving_and_opening_and_stay_editable() {
     }));
     assert_eq!(t.doc.undo_count(), steps + 1, "{}", t.message);
 
-    // デカールとグラデーション: 保存した正本の層が、同じ画像・投影・グラデーションを持つ
+    // デカールとグラデーション: 保存した正本のレイヤーが、同じ画像・投影・グラデーションを持つ
     // （アプリで開く道は、デカールの位置のマップが無いので読むだけにする。ここでは正本を core の文書へ戻して見る）
     let path = dir.join("decal.ylp");
     let mut s = AppState::new(64, 64);
@@ -1439,7 +1450,7 @@ fn the_effect_buttons_need_a_selected_layer() {
         click(&mut h, at);
         assert!(
             h.state().state.popup.is_none(),
-            "層が無ければ効果は足せない"
+            "レイヤーが無ければ効果は足せない"
         );
     }
 }
@@ -1572,7 +1583,7 @@ fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tool
                 all.bottom() > strip_bottom - 16.0 && all.top() > strip_bottom - 60.0,
                 "帯の下の端に付く: {all:?}"
             );
-            // 最後のツールのすぐ下ではなく、窓が高ければ間が空く
+            // 最後のツールのすぐ下ではなく、ウィンドウが高ければ間が空く
             let last_tool = Tool::ALL[Tool::ALL.len() - 1];
             let last = h.get_by_label(&tool_label(lang, last_tool)).rect();
             let top_of_colors = rects.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
@@ -1583,7 +1594,7 @@ fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tool
             if height > 900.0 {
                 assert!(
                     top_of_colors - last.bottom() > 20.0,
-                    "高い窓では色は帯の下の端に付く（ツールの下に寄らない）: 高さ {height} 最後のツール {last:?} 色の上 {top_of_colors}"
+                    "高いウィンドウでは色は帯の下の端に付く（ツールの下に寄らない）: 高さ {height} 最後のツール {last:?} 色の上 {top_of_colors}"
                 );
             }
             // どのツールのボタンとも重ならない
@@ -1657,7 +1668,7 @@ fn the_keys_x_and_d_still_swap_and_reset_the_colors() {
     assert_eq!(h.state().state.color.main, [0.0, 0.0, 0.0, 1.0]);
 }
 
-/// 色のパネルだけを描く窓（`color::show`）。
+/// 色のパネルだけを描くウィンドウ（`color::show`）。
 fn color_panel(width: f32, height: f32, wheel: bool, lang: Lang) -> Harness<'static, AppState> {
     let mut state = AppState::new(64, 64);
     state.lang = lang;

@@ -4,14 +4,14 @@
 //!
 //! - 組み込み: 同梱のスマートマテリアル（`yolu_core::smart_library`）は、棚の項目の後ろに「組み込み」として並ぶ。プロジェクトの棚には入らず
 //!   （保存・書き出し・消すの対象外）、置くと文書へ写る。ID は `builtin:` で始まり、素材は項目を見るとき・置くときにコードから組む。
-//! - 層からの保存: 選んだ層（グループなら中身ごと）・層のマスクを core で捕まえ、.ylsmart（`SmartFile::from_core`）にして棚へ入れる。
-//!   文書は変えない。棚の変更は文書の Undo の履歴に入らず、未保存にはなる（Unity 版と同じ）。塗りつぶしの層は、マテリアル
+//! - レイヤーからの保存: 選んだレイヤー（グループなら中身ごと）・レイヤーのマスクを core で捕まえ、.ylsmart（`SmartFile::from_core`）にして棚へ入れる。
+//!   文書は変えない。棚の変更は文書の Undo の履歴に入らず、未保存にはなる（Unity 版と同じ）。塗りつぶしレイヤーは、マテリアル
 //!   （`Document::capture_material`。中身は .ylsmart と同じ形）として個人のライブラリへも書ける（`library::ops`）。
-//! - 置く: 棚の .ylsmart（マテリアルも同じ形）を core の素材へ戻し、`place_smart_material`（層の組。1 回の Undo）・`apply_smart_mask`（マスクの入れ替え。
+//! - 置く: 棚の .ylsmart（マテリアルも同じ形）を core の素材へ戻し、`place_smart_material`（レイヤーの組。1 回の Undo）・`apply_smart_mask`（マスクの入れ替え。
 //!   1 回の Undo）で今の文書へ。置けないときは何も変えず、理由を短く出す（画像入り・Generator の再固定・core が持てない中身・
 //!   チャンネルの不一致・予算）。
 //! - 画面のスレッドを止める時間: 棚へ足す・消す・読み込むは、yolu-io が棚全体を検証し直すので棚の大きさに比例する。大きな素材
-//!   （画素 8 MiB 以上）か大きな棚（素材と棚の使用量の合計が 8 MiB 以上）への「層を保存」は、変換・圧縮・サムネイルに加えて
+//!   （画素 8 MiB 以上）か大きな棚（素材と棚の使用量の合計が 8 MiB 以上）への「レイヤーを保存」は、変換・圧縮・サムネイルに加えて
 //!   棚の写しへの追加も別のスレッドで済ませ、画面のスレッドは足した後の棚に差し替えるだけにする（その間は消す・読み込むを断る）。
 //!   消す・読み込むは画面のスレッドで行い、棚が 240〜420 MiB だと、消すは 1.4〜2.8 秒、読み込みは 2〜4 秒止まる。サムネイルのための
 //!   展開は別のスレッドで行うので画面を止めない（1 項目 0.1 秒前後。画素 64 MiB の素材で 0.5 秒）。測定は tests/gui_shell/shelf.rs の `measure_`
@@ -139,7 +139,7 @@ impl ItemKind {
         matches!(self, ItemKind::SmartMaterial | ItemKind::SmartMask)
     }
 
-    /// 中身が .ylsmart の形の種類か（スマートマテリアル・スマートマスクと、塗りつぶしの層を持つマテリアル）。見る・置くは同じ道を通る。
+    /// 中身が .ylsmart の形の種類か（スマートマテリアル・スマートマスクと、塗りつぶしレイヤーを持つマテリアル）。見る・置くは同じ道を通る。
     pub fn is_smart_file(self) -> bool {
         self.is_smart() || self == ItemKind::Material
     }
@@ -156,7 +156,7 @@ impl ItemKind {
 /// 置けない理由（項目を見たときにわかる分。チャンネルの不一致や予算は置くときに core が断る）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    /// ブラシは、ここではまだ置けない（画像は 1 枚のペイント層、マテリアルは塗りつぶしの層として置ける）。
+    /// ブラシは、ここではまだ置けない（画像は 1 枚のペイントレイヤー、マテリアルは塗りつぶしレイヤーとして置ける）。
     Kind(ItemKind),
     /// 画像を同梱した素材（編集用に開けない）。
     Images,
@@ -435,7 +435,7 @@ pub(crate) fn from_cached(cached: Cached) -> (Inspected, Option<SmartKind>) {
     (out, kind)
 }
 
-/// 棚を読めなかった理由。日本語は yolu-io の診断のまま、英語は種類ごとの短い文（診断の本文は日本語なので、英語の窓には出さない）。
+/// 棚を読めなかった理由。日本語は yolu-io の診断のまま、英語は種類ごとの短い文（診断の本文は日本語なので、英語のウィンドウには出さない）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unreadable {
     ja: String,
@@ -485,9 +485,9 @@ pub struct ShelfState {
     /// 選んでいる素材の ID。
     pub selected: Option<String>,
     pub scroll: f32,
-    /// 消す確認の待ち（ファイルの窓と同じく `YoluApp` が確かめる）。
+    /// 消す確認の待ち（ファイルのウィンドウと同じく `YoluApp` が確かめる）。
     pub pending_remove: Option<String>,
-    /// 書き出す素材（ファイルを選ぶ窓の待ち）。
+    /// 書き出す素材（ファイルを選ぶウィンドウの待ち）。
     pub export_id: Option<String>,
     /// 別のスレッドで書き出している保存（1 つだけ。取り消すか、終わると外れる）。
     saving: Option<PendingSave>,
@@ -523,7 +523,7 @@ struct PendingSave {
     rx: std::sync::mpsc::Receiver<Result<Staged, yolu_io::Error>>,
     /// やめた・捨てたことをスレッドへ伝える旗（サムネイルを作らず切り上げる。変換と圧縮の途中では止められない）。
     cancel: Arc<AtomicBool>,
-    /// 個人のライブラリのファイルを取り込んでいる（層の保存ではない）。
+    /// 個人のライブラリのファイルを取り込んでいる（レイヤーの保存ではない）。
     from_library: bool,
 }
 
@@ -732,7 +732,7 @@ impl ShelfState {
         self.hold.store(hold, Ordering::SeqCst);
     }
 
-    /// 別のスレッドで素材を書き出している（`Some(true)` は個人のライブラリのファイルの取り込み、`Some(false)` は層の保存。無ければ None）。
+    /// 別のスレッドで素材を書き出している（`Some(true)` は個人のライブラリのファイルの取り込み、`Some(false)` はレイヤーの保存。無ければ None）。
     pub fn pending_save(&self) -> Option<bool> {
         self.saving.as_ref().map(|p| p.from_library)
     }
@@ -762,7 +762,7 @@ impl ShelfState {
         self.saving.as_ref().map(|p| p.name.as_str())
     }
 
-    /// 別のスレッドの仕事の呼び名（層の保存か、ライブラリのファイルの取り込みか）。
+    /// 別のスレッドの仕事の呼び名（レイヤーの保存か、ライブラリのファイルの取り込みか）。
     pub fn saving_label(&self, lang: Lang) -> &'static str {
         if self.saving.as_ref().is_some_and(|p| p.from_library) {
             lang.pick("取り込み中", "Importing")
@@ -1080,7 +1080,7 @@ impl ShelfState {
         info.texture(ctx, &format!("shelf:{id}"))
     }
 
-    /// 一覧に出す説明（層の数・大きさ・チャンネル）。
+    /// 一覧に出す説明（レイヤーの数・大きさ・チャンネル）。
     pub fn detail(&self, lang: Lang, r: &Resource) -> String {
         let Some(kind) = ItemKind::of(&r.kind) else {
             return String::new();
@@ -1104,7 +1104,7 @@ impl ShelfState {
             .is_some_and(|b| !matches!(b, Block::Kind(_)))
     }
 
-    /// 項目が文書の層から使われているか（読むだけのセットの塗りつぶし画像など）。使われている画像は消さない。
+    /// 項目が文書のレイヤーから使われているか（読むだけのセットの塗りつぶし画像など）。使われている画像は消さない。
     fn used_by(&self, project: Option<&Project>, id: &str) -> bool {
         let Some(project) = project else { return false };
         project.sets().iter().any(|s| {
@@ -1136,7 +1136,7 @@ impl ShelfState {
     }
 }
 
-/// 項目の説明（画像は大きさ、スマートマテリアルは層の数・大きさ・チャンネル、スマートマスクは大きさ。まだ見ていない項目は空）。
+/// 項目の説明（画像は大きさ、スマートマテリアルはレイヤーの数・大きさ・チャンネル、スマートマスクは大きさ。まだ見ていない項目は空）。
 /// 同梱の素材は大きさに依らない（値と Generator だけ）ので、大きさを出さない。
 pub(crate) fn describe(
     lang: Lang,
@@ -1152,7 +1152,7 @@ pub(crate) fn describe(
             let mut text = format!(
                 "{} {}",
                 i.layers,
-                lang.pick("層", if i.layers == 1 { "layer" } else { "layers" }),
+                lang.pick("レイヤー", if i.layers == 1 { "layer" } else { "layers" }),
             );
             if !builtin {
                 text += &format!(" · {}", size(i.width, i.height));
@@ -1467,9 +1467,9 @@ fn smart_picture(material: &SmartMaterial) -> Option<Picture> {
 /// 置く先。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceTarget {
-    /// 選んでいる層の上（スマートマスクは選んでいる層のマスク）。
+    /// 選んでいるレイヤーの上（スマートマスクは選んでいるレイヤーのマスク）。
     Selected,
-    /// 層の一覧の落とした所（親のグループと、その子の中の位置。0 が一番下。None の位置は一番上）。
+    /// レイヤーの一覧の落とした所（親のグループと、その子の中の位置。0 が一番下。None の位置は一番上）。
     At {
         parent: Option<LayerId>,
         position: Option<usize>,
@@ -1481,15 +1481,15 @@ pub enum PlaceTarget {
 /// 棚の操作（棚の中身を変えるもの・文書へ置くもの）。文書を変えるのは `Place` だけで、1 回の Undo。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShelfOp {
-    /// 層（グループなら中身ごと）をスマートマテリアルとして棚へ。
+    /// レイヤー（グループなら中身ごと）をスマートマテリアルとして棚へ。
     SaveMaterial(LayerId),
-    /// 層のマスクをスマートマスクとして棚へ。
+    /// レイヤーのマスクをスマートマスクとして棚へ。
     SaveMask(LayerId),
     Place {
         id: String,
         target: PlaceTarget,
     },
-    /// 棚から消す（消す前に確かめる窓は `AskRemove`）。
+    /// 棚から消す（消す前に確かめるウィンドウは `AskRemove`）。
     Remove(String),
     AskRemove(String),
     /// 別のスレッドで書き出している保存をやめる（できた素材は棚へ入れない）。
@@ -1509,17 +1509,17 @@ pub enum ShelfOp {
     ToLibrary(String),
     /// ライブラリのファイル（相対パス）をこのプロジェクトで使う＝写しを .ylp の棚へ入れる（別のスレッドで読んで検証する）。
     UseFromLibrary(String),
-    /// ライブラリのファイルを消してよいか確かめる／消す（ファイルだけ。プロジェクトの写しと置いた層は変わらない）。
+    /// ライブラリのファイルを消してよいか確かめる／消す（ファイルだけ。プロジェクトの写しと置いたレイヤーは変わらない）。
     LibraryAskRemove(String),
     LibraryRemove(String),
-    /// ライブラリへファイル（PNG・.ylsmart）を足す（別のスレッドで検証して書く）／足すファイルを選ぶ窓を開く。
+    /// ライブラリへファイル（PNG・.ylsmart）を足す（別のスレッドで検証して書く）／足すファイルを選ぶウィンドウを開く。
     LibraryAddFiles(Vec<PathBuf>),
     LibraryAddDialog,
-    /// ライブラリのフォルダを OS のファイルの窓で開く。
+    /// ライブラリのフォルダを OS のファイルのウィンドウで開く。
     LibraryReveal,
     /// ライブラリの一覧を読み直す。
     LibraryRefresh,
-    /// 塗りつぶしの層をマテリアルとして個人のライブラリへ書く（`.ylmaterial`。別のスレッドで書く。文書と棚は変えない）。
+    /// 塗りつぶしレイヤーをマテリアルとして個人のライブラリへ書く（`.ylmaterial`。別のスレッドで書く。文書と棚は変えない）。
     SaveAsMaterial(LayerId),
 }
 
@@ -1529,7 +1529,7 @@ enum Kept {
     Existing,
 }
 
-/// 層の一覧へ落としている棚の素材（egui のドラッグの荷物）。
+/// レイヤーの一覧へ落としている棚の素材（egui のドラッグの荷物）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShelfDrag {
     pub id: String,
@@ -1537,7 +1537,7 @@ pub struct ShelfDrag {
     pub name: String,
 }
 
-/// 棚の画像を、1 枚のペイントの層の素材にする（置くときに文書の大きさへ引き伸ばす。置くのは 1 回の Undo の層の挿入と同じ道）。
+/// 棚の画像を、1 枚のペイントのレイヤーの素材にする（置くときに文書の大きさへ引き伸ばす。置くのは 1 回の Undo のレイヤーの挿入と同じ道）。
 /// 画素は straight RGBA8 のまま（透明の画素の RGB も保つ）。読めない・大きさが索引と違うときの理由は棚の画像の言葉で言う。
 pub(crate) fn image_as_material(
     lang: Lang,
@@ -1684,7 +1684,7 @@ impl AppState {
             }
             ShelfOp::AskRemove(id) => {
                 if self.shelf.get(&id).is_some() && !self.shelf_refuse_while_saving() {
-                    // 使われている画像は、確かめの窓を出す前に断る（確かめても消せない）
+                    // 使われている画像は、確認のウィンドウを出す前に断る（確かめても消せない）
                     if let Some(why) = self.shelf_image_in_use(&id) {
                         self.refuse(Source::Assets, why);
                     } else {
@@ -2126,7 +2126,7 @@ impl AppState {
         self.place_material(&name, material, target, builtin);
     }
 
-    /// 組み上がった素材を文書へ置く（スマートマスクは層のマスクへ、スマートマテリアルは層の組として。1 回の Undo）。棚の項目も、
+    /// 組み上がった素材を文書へ置く（スマートマスクはレイヤーのマスクへ、スマートマテリアルはレイヤーの組として。1 回の Undo）。棚の項目も、
     /// ライブラリのファイルも、この道を通る。置けないときは何も変えず、理由を短く出す。
     pub(crate) fn place_material(
         &mut self,
@@ -2199,7 +2199,7 @@ impl AppState {
                 let mut text = format!(
                     "{}: {name}（{n} {}",
                     lang.pick("置きました", "Placed"),
-                    lang.pick("層", if n == 1 { "layer" } else { "layers" })
+                    lang.pick("レイヤー", if n == 1 { "layer" } else { "layers" })
                 );
                 // 同梱の素材は大きさに依らない（画素が無い）ので、変えたとは言わない
                 text += &resized_note(lang, &material, result.resampled && !builtin);
@@ -2217,7 +2217,7 @@ impl AppState {
         self.ensure_selection();
     }
 
-    /// 選んでいる層のすぐ上の置き場所（親と、その子の中の位置。選んだ層が無ければ一番上）。
+    /// 選んでいるレイヤーのすぐ上の置き場所（親と、その子の中の位置。選んだレイヤーが無ければ一番上）。
     fn above_selected_slot(&self) -> (Option<LayerId>, Option<usize>) {
         let Some((id, parent)) = self
             .selected_layer
@@ -2232,9 +2232,9 @@ impl AppState {
         )
     }
 
-    /// 棚の画像を層が読んでいれば、消せない理由の文（読んでいなければ None。画像でない素材も None）。読み込んだプロジェクトの
-    /// 原本の層と、いまのセッションの全部のテクスチャセットの層を見る。消すと、層は棚に無い画像を指し、保存して開き直すとそのセットは
-    /// 読むだけになる。取り消しの履歴の中にだけある層（消した層を Undo で戻す）は見ない。
+    /// 棚の画像をレイヤーが読んでいれば、消せない理由の文（読んでいなければ None。画像でない素材も None）。読み込んだプロジェクトの
+    /// 原本のレイヤーと、いまのセッションの全部のテクスチャセットのレイヤーを見る。消すと、レイヤーは棚に無い画像を指し、保存して開き直すとそのセットは
+    /// 読むだけになる。取り消しの履歴の中にだけあるレイヤー（消したレイヤーを Undo で戻す）は見ない。
     fn shelf_image_in_use(&self, id: &str) -> Option<String> {
         let res = self.shelf.get(id).filter(|r| r.kind == "image")?;
         let lang = self.lang;
@@ -2479,7 +2479,7 @@ fn refused(lang: Lang, file: &str, why: &str) -> String {
 /// 棚とライブラリの断り・失敗の文の「何が」（何をしようとしてできなかったか）。名前があれば「「名前」を〜できません」の形。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Attempt {
-    /// 層を棚へ保存する（スマートマテリアル・スマートマスク）。
+    /// レイヤーを棚へ保存する（スマートマテリアル・スマートマスク）。
     ShelfSave,
     /// 外の .ylsmart を棚へ読み込む。
     ShelfImport,
@@ -2495,7 +2495,7 @@ pub(crate) enum Attempt {
     LibraryAdd,
     /// ライブラリから消す。
     LibraryRemove,
-    /// 塗りつぶしの層をマテリアルとしてライブラリへ保存する。
+    /// 塗りつぶしレイヤーをマテリアルとしてライブラリへ保存する。
     MaterialSave,
 }
 

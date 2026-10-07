@@ -1,8 +1,8 @@
-//! 画面を描かない試験の束（窓・GPU の装置を作らない。CPU だけの文書・保存・取り込み・Live Link の通信・ソースの検査）。
+//! 画面を描かない試験の束（ウィンドウ・GPU の装置を作らない。CPU だけの文書・保存・取り込み・Live Link の通信・ソースの検査）。
 //!
 //! 1 本の実行ファイルに束ねて、試験の数だけリンクが増えないようにしている。ここの試験は同時に走ってよい（`RUST_TEST_THREADS` の分だけ並ぶ）。
-//! 窓・`egui_kittest` の harness・wgpu の装置を使う試験は `gui_*` の束に置く（`common::gpu_thread::builder` を通す。貸し出しで 1 つずつ走る）。
-//! プロセス全体の状態（rayon の全体のプール・窓の貸し出し・環境変数）を変える・数える試験は、束に入れず `tests/` の直下に 1 ファイル 1 本の
+//! ウィンドウ・`egui_kittest` の harness・wgpu の装置を使う試験は `gui_*` の束に置く（`common::gpu_thread::builder` を通す。貸し出しで 1 つずつ走る）。
+//! プロセス全体の状態（rayon の全体のプール・ウィンドウの貸し出し・環境変数）を変える・数える試験は、束に入れず `tests/` の直下に 1 ファイル 1 本の
 //! 実行ファイルで置く（`threads.rs`・`window_lease.rs`・`windowpos.rs`）。新しい試験は、該当する束のフォルダにファイルを足し、この `main.rs` に `mod` を 1 行足す（`bundle_layout` が足し忘れを見つける）。
 #[path = "../common/mod.rs"]
 mod common;

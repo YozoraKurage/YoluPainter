@@ -1,4 +1,4 @@
-//! 層の画素のコピー・カット・結合してコピー・ペースト・置き換えと、まとめ（batch）を、実 C# Core の出力と全バイトで照らす。
+//! レイヤーの画素のコピー・カット・結合してコピー・ペースト・置き換えと、まとめ（batch）を、実 C# Core の出力と全バイトで照らす。
 //! 台本・人工の文書・出力の並びは tools/csharp-golden/ClipboardGolden.cs と対。C# は事例ごとの出力の SHA-256 を index.txt に
 //! 書く（`tools/csharp-golden/run.sh clipboard`）。食い違ったときは `CLIPBOARD_GOLDEN_DUMP=フォルダ` で Rust の出力を書き出し、
 //! C# の `GOLDEN_FULL=フォルダ` の出力と比べる。並列度 1 と 4 の両方で同じ結果になる。
@@ -163,7 +163,7 @@ fn write_clip(out: &mut Vec<u8>, c: &PixelClipboard) {
     i32b(out, c.channel().index() as i32);
     out.extend_from_slice(c.pixels());
 }
-/// 断りの型（ClipboardGolden.cs の Fail）: 1 ロック、2 層の操作の断り、3 そのほかの InvalidOperation、4 引数の誤り。
+/// 断りの型（ClipboardGolden.cs の Fail）: 1 ロック、2 レイヤーの操作の断り、3 そのほかの InvalidOperation、4 引数の誤り。
 fn fail(out: &mut Vec<u8>, d: &Document, e: CoreError) {
     match e {
         CoreError::LayerLocked {
@@ -278,7 +278,7 @@ fn mask_copy(n: u32, seed: u32, o: &mut Vec<u8>) {
     }
     after(o, &mut d, false);
 }
-/// 写せる大きさの上限（上限を超えた時点の矩形の大きさ・タイルを読む順が出力に出る）。0〜23 は層、24〜47 は結合。
+/// 写せる大きさの上限（上限を超えた時点の矩形の大きさ・タイルを読む順が出力に出る）。0〜23 はレイヤー、24〜47 は結合。
 fn limit(n: u32, seed: u32, o: &mut Vec<u8>) {
     let mut d = make(seed);
     let layer = d.layers()[n as usize % 2].id();

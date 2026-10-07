@@ -2,7 +2,7 @@
 //! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
 //! - 対称は、描ける先が 3D だけのあいだと、指先・クローンのあいだだけ（ドックを分けてキャンバスも出ているあいだは 2D に描けるので有効）
 //! - ブラシの 2D だけの設定（手ぶれ補正・入り抜き・ゆらぎ・筆先の形・効果のブラシの値）も、描ける先が 3D だけのあいだだけ無効
-//! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（層の値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
+//! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（レイヤーの値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
 use crate::common;
 
 use common::*;
@@ -24,7 +24,7 @@ fn apply(h: &mut H, action: Action) {
     h.run();
 }
 
-/// 画面の右の方（ブラシの詳細の窓・プロパティの欄）にある、この名前の部品（同じ名前がほかにあっても、いちばん右のもの）。
+/// 画面の右の方（ブラシの詳細のウィンドウ・プロパティの欄）にある、この名前の部品（同じ名前がほかにあっても、いちばん右のもの）。
 fn rect_of_field(h: &H, label: &str) -> Rect {
     h.get_all_by_label(label)
         .map(|n| n.rect())
@@ -70,7 +70,7 @@ fn symmetry_app(lang: Lang) -> H {
         &mut h,
         Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.75))),
     );
-    // 対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ
+    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
     let ui = &mut h.state_mut().state.brushes.ui;
     ui.detail.open = true;
     ui.detail.category = yolu_app::brushes::Category::Symmetry;
@@ -377,7 +377,7 @@ fn modify_labels(lang: Lang) -> [&'static str; 7] {
 #[test]
 fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_and_come_back() {
     for lang in Lang::ALL {
-        // 選択の道具の設定の欄が上に付いたので、変更のボタンが全部見える高さにする
+        // 選択のツールの設定の欄が上に付いたので、変更のボタンが全部見える高さにする
         let mut h = app(1280.0, 1000.0, 256);
         h.state_mut().state.lang = lang;
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
@@ -449,7 +449,7 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
             format!("No effect on {name}"),
         );
         for label in adjustment_labels(lang) {
-            // 層の値はカラーのチャンネルの出力に効くので、描くチャンネルが違っても無効にはしない
+            // レイヤーの値はカラーのチャンネルの出力に効くので、描くチャンネルが違っても無効にはしない
             assert!(!is_disabled(&h, label), "{lang:?}: {label}");
             assert!(
                 tooltip_shows(&mut h, label, &reason),
@@ -460,7 +460,7 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
             h.query_by_label(&reason).is_none(),
             "{lang:?}: 注記の行は出さない"
         );
-        // 直せる: 色相のスライダーの右の方を押すと、層の値が変わる
+        // 直せる: 色相のスライダーの右の方を押すと、レイヤーの値が変わる
         let id = h.state().state.selected_layer.unwrap();
         let before = h
             .state()

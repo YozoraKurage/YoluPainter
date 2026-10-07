@@ -53,7 +53,7 @@ fn small() -> Thresholds {
         ..Thresholds::REAL
     }
 }
-/// 層を足して、層ごとに違う画素を入れる（文書が変わり、保存していない印が付く）。
+/// レイヤーを足して、レイヤーごとに違う画素を入れる（文書が変わり、保存していない印が付く）。
 fn paint_layers(s: &mut AppState, layers: usize, seed: u64) {
     fill_layers(&mut s.doc, layers, seed);
     s.modified = true;
@@ -62,7 +62,7 @@ fn fill_layers(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
     let ts = doc.tile_size();
     let n = SIZE / ts;
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
@@ -111,7 +111,7 @@ fn a_big_document_is_saved_split_reopened_and_saved_again() {
         again.apply(Action::OpenProject(path.clone()));
         assert!(again.message.starts_with("開きました"), "{}", again.message);
         assert_eq!(bytes_of(&again.doc), painted);
-        // 層を減らして保存し直す: 古い部分は残らない
+        // レイヤーを減らして保存し直す: 古い部分は残らない
         let ids: Vec<_> = again.doc.layers().iter().map(|l| l.id()).collect();
         again.doc.remove_layer(ids[0]).unwrap();
         again.doc.remove_layer(ids[1]).unwrap();
@@ -198,7 +198,7 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
             .map(|(k, b)| (k.clone(), b.sha256().unwrap()))
             .collect();
         assert!(first_parts.len() >= 3, "書き置きも分けた正本");
-        // 1 つの層の 1 タイルだけを変える: 変わらない層の部分は同じ中身（共有）
+        // 1 つのレイヤーの 1 タイルだけを変える: 変わらないレイヤーの部分は同じ中身（共有）
         let ts = s.doc.tile_size();
         let last = s.doc.layers()[s.doc.layers().len() - 1].id();
         s.doc
@@ -234,7 +234,7 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
             bytes_of(&project.sets()[0].document.to_core().unwrap()),
             painted
         );
-        // 落ちた体から、復旧の窓で開く
+        // 落ちた体から、復旧のウィンドウで開く
         drop(store);
         assert!(s.recovery.is_idle());
         drop(s);
@@ -252,7 +252,7 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
     });
 }
 
-/// 開いた .ylp を、外で動かす（`moved`）・消す（`deleted`）・別のファイルを同じ名前へ置き換える（`replaced`。同期の道具・もう 1 つの窓の
+/// 開いた .ylp を、外で動かす（`moved`）・消す（`deleted`）・別のファイルを同じ名前へ置き換える（`replaced`。同期のツール・もう 1 つのウィンドウの
 /// 保存のように、同じ inode を書き換えるのではない）。そのあと外に残っているファイル（動かした先・置き換えたもの）を返す。
 fn change_outside(dir: &TempDir, path: &Path, how: &str) -> Option<PathBuf> {
     match how {
@@ -427,7 +427,7 @@ fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
 }
 
 /// 復旧の世代から開いたあとで読むだけになったセット（効果の入力がそろわない）の正本は、世代の外に置き直してある: 開いた世代を復旧の
-/// 窓で捨ててから保存しても、正本は元のバイト列のまま書かれる。置き直した中身は、プロジェクトを手放すと片付く。
+/// ウィンドウで捨ててから保存しても、正本は元のバイト列のまま書かれる。置き直した中身は、プロジェクトを手放すと片付く。
 #[test]
 fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded() {
     let t = Thresholds {
@@ -499,7 +499,7 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         );
         let held = held_dirs(&root);
         assert_eq!(held.len(), 1, "{held:?}");
-        // 開いた世代を復旧の窓で捨てる（落ちた実行のプールごと消える）
+        // 開いた世代を復旧のウィンドウで捨てる（落ちた実行のプールごと消える）
         s2.recovery_apply(RecoveryAction::OpenWindow);
         let rows = &s2.recovery.window.as_ref().unwrap().rows;
         assert_eq!(rows.len(), 1);

@@ -1,4 +1,4 @@
-//! 層の操作の画面（結合・複数選択・ロック・移動と変形の道具・90° 回転と反転）。どれも「操作 → 文書が変わる（1 回の Undo）→ 断られたら何も変わらず
+//! レイヤーの操作の画面（結合・複数選択・ロック・移動と変形のツール・90° 回転と反転）。どれも「操作 → 文書が変わる（1 回の Undo）→ 断られたら何も変わらず
 //! 短い理由が日英で出る」を見る。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -83,7 +83,7 @@ fn rows(s: &AppState) -> Vec<LayerId> {
     layer_rows(s).iter().map(|r| r.id).collect()
 }
 
-/// 下から 3 つの層（赤・緑・青の矩形。重なる）。返すのは下から。
+/// 下から 3 つのレイヤー（赤・緑・青の矩形。重なる）。返すのは下から。
 fn three(s: &mut AppState) -> [LayerId; 3] {
     let a = s.selected_layer.unwrap();
     fill_rect(&mut s.doc, a, 2, 2, 12, 12, RED);
@@ -104,23 +104,23 @@ fn headless_ctrl_and_shift_select_layers_and_the_active_layer_stays_one() {
     assert_eq!(all, vec![d, c, b, a]);
     s.select_single_layer(a);
     assert_eq!(s.selected_layers(), vec![a]);
-    // Ctrl: 足して、足した層が描く先
+    // Ctrl: 足して、足したレイヤーが描く先
     s.toggle_layer_selected(c);
     assert_eq!(s.selected_layers(), vec![a, c]);
     assert_eq!(s.selected_layer, Some(c));
-    // Ctrl: 選んでいる層を外す。描く先を外したら、残りのいちばん上
+    // Ctrl: 選んでいるレイヤーを外す。描く先を外したら、残りのいちばん上
     s.toggle_layer_selected(c);
     assert_eq!(s.selected_layers(), vec![a]);
     assert_eq!(s.selected_layer, Some(a));
     // 最後の 1 つは外せない
     s.toggle_layer_selected(a);
     assert_eq!(s.selected_layers(), vec![a]);
-    // Shift: 起点（最後に押した層）から押した層までの行
+    // Shift: 起点（最後に押したレイヤー）から押したレイヤーまでの行
     s.select_single_layer(a);
     s.select_layer_range(c, false, &all);
     assert_eq!(s.selected_layers(), vec![a, b, c]);
     assert_eq!(s.selected_layer, Some(c));
-    // 起点は動かない: 別の層まで押し直すと範囲が替わる
+    // 起点は動かない: 別のレイヤーまで押し直すと範囲が替わる
     s.select_layer_range(b, false, &all);
     assert_eq!(s.selected_layers(), vec![a, b]);
     // Ctrl + Shift: 今の選択に範囲を足す
@@ -146,7 +146,7 @@ fn headless_a_multi_selection_collapses_when_the_active_layer_changes_elsewhere_
     s.apply(Action::NewLayer);
     let d = s.selected_layer.unwrap();
     assert_eq!(s.selected_layers(), vec![d]);
-    // 描く先が同じなら、消えた層は集合から外れる
+    // 描く先が同じなら、消えたレイヤーは集合から外れる
     s.select_layers([a, b, d], d);
     s.doc.remove_layer(b).unwrap();
     assert_eq!(s.selected_layers(), vec![a, d]);
@@ -170,7 +170,7 @@ fn headless_merge_down_makes_one_layer_with_the_same_look_and_one_undo() {
     edit(&mut s, Edit::MergeDown);
     assert_ne!(s.doc.revision(), revision);
     assert_eq!(s.doc.layers().len(), 2);
-    // 下の層に重なって 1 枚になり、結果の層を選ぶ。見た目は変わらない
+    // 下のレイヤーに重なって 1 枚になり、結果のレイヤーを選ぶ。見た目は変わらない
     let merged = s.selected_layer.unwrap();
     assert!(!ids(&s).contains(&b));
     assert!(s.doc.layers().iter().any(|l| l.id() == merged));
@@ -184,7 +184,7 @@ fn headless_merge_down_makes_one_layer_with_the_same_look_and_one_undo() {
         format!("結合しました: {}", s.doc.layer(merged).unwrap().name())
     );
     assert!(s.modified);
-    // 1 回の Undo で、2 つの層が元のとおりに戻る
+    // 1 回の Undo で、2 つのレイヤーが元のとおりに戻る
     undo(&mut s);
     assert_eq!(s.doc.layers().len(), 3);
     assert_eq!(pixel(&s, a, 3, 3), RED.to_array());
@@ -197,7 +197,7 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
     for lang in Lang::ALL {
         let mut s = AppState::new_in(32, 32, lang);
         let [a, b, _c] = three(&mut s);
-        // 一番下には、下の層が無い
+        // 一番下には、下のレイヤーが無い
         s.select_single_layer(a);
         let revision = s.doc.revision();
         edit(&mut s, Edit::MergeDown);
@@ -206,11 +206,11 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できません（下に層が無い）。",
+                "結合できません（下にレイヤーが無い）。",
                 "Cannot merge (No layer below)."
             ),
         );
-        // 隠した層は結合しない
+        // 隠したレイヤーは結合しない
         s.apply(Action::ToggleVisible(b));
         s.select_single_layer(b);
         let revision = s.doc.revision();
@@ -219,7 +219,7 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できません（非表示の層がある）。",
+                "結合できません（非表示のレイヤーがある）。",
                 "Cannot merge (A layer is hidden)."
             ),
         );
@@ -235,7 +235,7 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
             ),
             "{lang:?}"
         );
-        // 表示している層が無い
+        // 表示中のレイヤーが無い
         let all = ids(&s);
         for id in &all {
             if s.doc.layer(*id).unwrap().visible() {
@@ -246,7 +246,7 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
         assert_eq!(
             s.message,
             lang.pick(
-                "結合できません（表示している層が無い）。",
+                "結合できません（表示中のレイヤーが無い）。",
                 "Cannot merge (No visible layers)."
             ),
             "{lang:?}"
@@ -256,14 +256,14 @@ fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
 
 #[test]
 fn headless_merging_a_selection_of_layers_or_a_group_or_the_visible_layers_is_one_undo_each() {
-    // 複数選択（隣り合う層）を結合。間に別の層をはさむ選択は見た目が変わるので、結合する前に確かめる
+    // 複数選択（隣り合うレイヤー）を結合。間に別のレイヤーをはさむ選択は見た目が変わるので、結合する前に確かめる
     let mut s = state(32);
     let [a, b, c] = three(&mut s);
     s.select_layers([a, c], c);
     edit(&mut s, Edit::MergeDown);
     assert!(
         s.layer_ops.merge_confirm.is_some(),
-        "間に層があると見た目が変わる"
+        "間にレイヤーがあると見た目が変わる"
     );
     assert_eq!(s.doc.layers().len(), 3);
     edit(&mut s, Edit::CancelMerge);
@@ -291,14 +291,14 @@ fn headless_merging_a_selection_of_layers_or_a_group_or_the_visible_layers_is_on
         .all(|l| !l.is_group() && l.kind() == LayerKind::Raster));
     undo(&mut s);
     assert_eq!(s.doc.layers().len(), 4);
-    // 表示を結合（隠した層は残す）
+    // 表示を結合（隠したレイヤーは残す）
     let mut s = state(32);
     let [a, b, c] = three(&mut s);
     s.apply(Action::ToggleVisible(b));
     settle(&mut s);
     edit(&mut s, Edit::MergeVisible);
     assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-    assert!(ids(&s).contains(&b), "隠した層は残る");
+    assert!(ids(&s).contains(&b), "隠したレイヤーは残る");
     assert!(!ids(&s).contains(&a) && !ids(&s).contains(&c));
     undo(&mut s);
     assert_eq!(s.doc.layers().len(), 3);
@@ -336,7 +336,7 @@ fn headless_a_merge_that_changes_the_look_asks_first() {
         edit(&mut s, Edit::ConfirmMerge);
         assert!(s.layer_ops.merge_confirm.is_none());
         assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-        // 状態の文は結合した層の名前だけ（見た目が変わったのを承知した結合でも、画素数・差の数は載せない）
+        // 状態の文は結合したレイヤーの名前だけ（見た目が変わったのを承知した結合でも、画素数・差の数は載せない）
         let merged = s
             .doc
             .layer(s.selected_layer.unwrap())
@@ -356,7 +356,7 @@ fn headless_a_merge_that_changes_the_look_asks_first() {
     }
 }
 
-// ───────── 選んだ層への操作 ─────────
+// ───────── 選んだレイヤーへの操作 ─────────
 
 #[test]
 fn headless_delete_group_duplicate_visibility_and_step_act_on_every_selected_layer_in_one_undo() {
@@ -381,7 +381,7 @@ fn headless_delete_group_duplicate_visibility_and_step_act_on_every_selected_lay
     undo(&mut s);
     undo(&mut s);
     assert!(!s.doc.can_undo());
-    // 1 段上へ（選んだ層どうしは追い越さない）
+    // 1 段上へ（選んだレイヤーどうしは追い越さない）
     s.select_layers([a, b], b);
     s.apply(Action::LayerUp);
     assert_eq!(ids(&s), vec![c, a, b, d]);
@@ -452,7 +452,7 @@ fn headless_dragging_a_selection_of_layers_moves_them_together_around_the_layers
     edit(&mut s, Edit::NewGroup);
     let group = s.selected_layer.unwrap();
     settle(&mut s);
-    // 上から g d c b a。a と c を選んで、b と c の間 → 運ばれない最初の層（b）の上へ
+    // 上から g d c b a。a と c を選んで、b と c の間 → 運ばれない最初のレイヤー（b）の上へ
     let list = layer_rows(&s);
     assert_eq!(
         list.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -478,7 +478,7 @@ fn headless_dragging_a_selection_of_layers_moves_them_together_around_the_layers
     let bottom = m2::drop_edit_for(&s.doc, &list, &[a, c], DropTarget::Gap(list.len())).unwrap();
     edit(&mut s, bottom);
     assert_eq!(ids(&s)[..2], [a, c], "一番下へ（選んだ順を保つ）");
-    // ドラッグの落とす先の判定も、運ぶ層の全部で決める
+    // ドラッグの落とす先の判定も、運ぶレイヤーの全部で決める
     s.select_layers([a, c], c);
     let position = 2.5;
     let list = layer_rows(&s);
@@ -589,7 +589,7 @@ fn headless_a_locked_layer_refuses_with_the_existing_short_reason_and_nothing_ch
         let revision = s.doc.revision();
         edit(&mut s, Edit::Transform(Xform::Flip { horizontal: true }));
         assert_eq!(s.doc.revision(), revision);
-        // 結合も、画素のロックがあれば断る（どちらの層でも）
+        // 結合も、画素のロックがあれば断る（どちらのレイヤーでも）
         s.select_single_layer(c);
         s.doc.set_layer_locks(b, LayerLocks::PIXELS).unwrap();
         edit(&mut s, Edit::MergeDown);
@@ -599,7 +599,7 @@ fn headless_a_locked_layer_refuses_with_the_existing_short_reason_and_nothing_ch
     }
 }
 
-/// グループのロックが効いている層は、親のグループのロックだと言い（持ち主はグループ）、層の自分のロックならその層だと言う。
+/// グループのロックが効いているレイヤーは、親のグループのロックだと言い（持ち主はグループ）、レイヤーの自分のロックならそのレイヤーだと言う。
 #[test]
 fn headless_a_group_lock_is_named_as_the_parents_in_both_languages() {
     for lang in Lang::ALL {
@@ -655,7 +655,7 @@ fn headless_every_kind_of_lock_is_named_the_same_way_in_a_refusal_and_in_the_loc
             s.doc.set_layer_locks(b, flag).unwrap();
             settle(&mut s);
             let revision = s.doc.revision();
-            // 断られる操作はロックごとに違う（透明部分は下の層への結合、画素は反転、位置・すべては移動）
+            // 断られる操作はロックごとに違う（透明部分は下のレイヤーへの結合、画素は反転、位置・すべては移動）
             if flag == LayerLocks::TRANSPARENCY {
                 s.select_single_layer(c);
                 edit(&mut s, Edit::MergeDown);
@@ -801,11 +801,11 @@ fn headless_a_transform_moves_a_selection_with_its_pixels_and_every_selected_lay
     assert_eq!(
         pixel(&s, b, 7, 7),
         GREEN.to_array(),
-        "選んでいない層は動かない"
+        "選んでいないレイヤーは動かない"
     );
     undo(&mut s);
     assert!(!s.doc.can_undo());
-    // グループを選べば中身のラスター層が動く（塗りつぶしは動かさない）
+    // グループを選べば中身のラスターレイヤーが動く（塗りつぶしは動かさない）
     s.select_layers([a, b], b);
     edit(&mut s, Edit::GroupSelected);
     let group = s.selected_layer.unwrap();
@@ -816,7 +816,7 @@ fn headless_a_transform_moves_a_selection_with_its_pixels_and_every_selected_lay
     assert_eq!(pixel(&s, b, 8, 7), GREEN.to_array());
     assert_eq!(pixel(&s, c, 11, 11), BLUE.to_array());
     let _ = group;
-    // 塗りつぶしだけを選んでいれば、動かす層が無い
+    // 塗りつぶしだけを選んでいれば、動かすレイヤーが無い
     edit(&mut s, Edit::NewFill);
     let revision = s.doc.revision();
     edit(&mut s, Edit::Transform(Xform::Move { dx: 1, dy: 0 }));
@@ -829,7 +829,7 @@ fn headless_transform_messages_for_nothing_to_move_a_numeric_transform_and_the_b
 ) {
     for lang in Lang::ALL {
         let mut s = AppState::new_in(32, 32, lang);
-        // 画素の無い層
+        // 画素の無いレイヤー
         let revision = s.doc.revision();
         edit(&mut s, Edit::Transform(Xform::Flip { horizontal: true }));
         assert_eq!(s.doc.revision(), revision);
@@ -936,7 +936,7 @@ fn headless_the_transform_is_the_same_bytes_with_one_thread_and_many() {
     assert_eq!(one, run(rayon::current_num_threads()));
 }
 
-// ───────── 移動・変形の道具（キャンバス） ─────────
+// ───────── 移動・変形のツール（キャンバス） ─────────
 
 fn with_layer_painted() -> (Harness<'static, YoluApp>, LayerId) {
     let mut h = app(1280.0, 800.0, 128);
@@ -951,7 +951,7 @@ fn with_layer_painted() -> (Harness<'static, YoluApp>, LayerId) {
     (h, id)
 }
 
-/// 画布の座標の点（画素の座標）の画面の位置。
+/// キャンバスの座標の点（画素の座標）の画面の位置。
 fn screen_of(h: &Harness<'_, YoluApp>, x: f64, y: f64) -> egui::Pos2 {
     let app = h.state();
     let rect = canvas_rect(h);
@@ -1003,7 +1003,7 @@ fn escape_and_losing_focus_and_switching_tools_drop_a_drag_without_changing_anyt
     assert_eq!(h.state().state.doc.revision(), revision);
     assert_eq!(color_bytes(&h.state().state, id), before);
     assert_eq!(h.state().state.message, "変形をやめました。");
-    // 窓がフォーカスを失った
+    // ウィンドウがフォーカスを失った
     start(&mut h);
     h.event(Event::WindowFocused(false));
     h.step();
@@ -1011,7 +1011,7 @@ fn escape_and_losing_focus_and_switching_tools_drop_a_drag_without_changing_anyt
     release(&h, from, PointerButton::Primary);
     h.run();
     assert_eq!(h.state().state.doc.revision(), revision);
-    // ほかの道具へ替えた
+    // ほかのツールへ替えた
     start(&mut h);
     h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
     h.run();
@@ -1045,21 +1045,21 @@ fn arrow_keys_move_one_pixel_and_shift_arrows_ten_following_the_screen_direction
     assert_eq!(pixel(&h.state().state, id, 30, 40), [0; 4]);
     key(&h, Key::ArrowUp, Modifiers::SHIFT);
     h.run();
-    // 上向き（画布の y が増える）へ 10 画素
+    // 上向き（キャンバスの y が増える）へ 10 画素
     assert_eq!(pixel(&h.state().state, id, 31, 79), RED.to_array());
     assert_eq!(pixel(&h.state().state, id, 31, 30), [0; 4]);
     // 1 つずつ別の Undo
     undo(&mut h.state_mut().state);
     undo(&mut h.state_mut().state);
     assert_eq!(pixel(&h.state().state, id, 30, 30), RED.to_array());
-    // 表示を 90°（時計回り）に回すと、画面の右は画布の上向き（y が増える）になる
+    // 表示を 90°（時計回り）に回すと、画面の右はキャンバスの上向き（y が増える）になる
     h.state_mut().state.view.set_angle(90.0);
     h.run();
     key(&h, Key::ArrowRight, Modifiers::NONE);
     h.run();
     assert_eq!(pixel(&h.state().state, id, 30, 70), RED.to_array());
     assert_eq!(pixel(&h.state().state, id, 30, 30), [0; 4]);
-    // Ctrl + 矢印・ほかの道具では動かさない（文字を打っている間・3D ビューが前のときは下の別の試験）
+    // Ctrl + 矢印・ほかのツールでは動かさない（文字を打っている間・3D ビューが前のときは下の別の試験）
     let revision = h.state().state.doc.revision();
     key(&h, Key::ArrowLeft, Modifiers::COMMAND);
     h.run();
@@ -1071,7 +1071,7 @@ fn arrow_keys_move_one_pixel_and_shift_arrows_ten_following_the_screen_direction
     assert_eq!(h.state().state.doc.revision(), revision);
 }
 
-/// 矢印キーはキャンバスが見えているときだけ動かす: 3D ビューのタブが前にあるあいだ、見えていない 2D の層は動かない（タブを戻せば動く）。
+/// 矢印キーはキャンバスが見えているときだけ動かす: 3D ビューのタブが前にあるあいだ、見えていない 2D のレイヤーは動かない（タブを戻せば動く）。
 #[test]
 fn arrow_keys_do_not_move_the_layer_while_the_3d_view_tab_is_in_front() {
     let (mut h, id) = with_layer_painted();
@@ -1088,7 +1088,7 @@ fn arrow_keys_do_not_move_the_layer_while_the_3d_view_tab_is_in_front() {
         }
     }
     let s = &h.state().state;
-    assert_eq!(s.doc.revision(), revision, "見えていない層が動いた");
+    assert_eq!(s.doc.revision(), revision, "見えていないレイヤーが動いた");
     assert_eq!(color_bytes(s, id), before);
     assert!(!s.modified);
     assert!(!s.doc.can_undo());
@@ -1104,7 +1104,7 @@ fn arrow_keys_do_not_move_the_layer_while_the_3d_view_tab_is_in_front() {
     assert_eq!(s.doc.undo_count(), 1);
 }
 
-/// 文字を打っている間（レイヤーの名前の変更中）の矢印キーは、文字の入力のもので、層を動かさない。
+/// 文字を打っている間（レイヤーの名前の変更中）の矢印キーは、文字の入力のもので、レイヤーを動かさない。
 #[test]
 fn arrow_keys_while_typing_a_layer_name_edit_the_text_and_never_move_the_layer() {
     let (mut h, id) = with_layer_painted();
@@ -1133,7 +1133,11 @@ fn arrow_keys_while_typing_a_layer_name_edit_the_text_and_never_move_the_layer()
     }
     let s = &h.state().state;
     assert!(s.ui.renaming.is_some(), "入力は続いている");
-    assert_eq!(s.doc.revision(), revision, "文字を打っている間に層が動いた");
+    assert_eq!(
+        s.doc.revision(),
+        revision,
+        "文字を打っている間にレイヤーが動いた"
+    );
     assert_eq!(color_bytes(s, id), before);
     assert!(!s.modified);
     // 入力を終えると、同じキーで動く
@@ -1281,7 +1285,7 @@ fn a_small_layer_has_no_handles_and_any_press_moves_it_and_nothing_to_move_says_
         yolu_app::transform::hit(&view, b, corner),
         yolu_app::transform::Mode::Move
     );
-    // 画素の無い層では、短い理由を言って始めない
+    // 画素の無いレイヤーでは、短い理由を言って始めない
     let empty = {
         let s = &mut h.state_mut().state;
         s.apply(Action::NewLayer);
@@ -1301,7 +1305,7 @@ fn a_small_layer_has_no_handles_and_any_press_moves_it_and_nothing_to_move_says_
 #[test]
 fn the_move_tool_never_paints_and_pressing_outside_the_pixels_still_moves_the_layer() {
     let (mut h, id) = with_layer_painted();
-    // 範囲の外（画素の無い所）を押して動かしても、描かずに層を動かす（Unity 版と同じ。ハンドルでも範囲の中でもなければ移動）
+    // 範囲の外（画素の無い所）を押して動かしても、描かずにレイヤーを動かす（Unity 版と同じ。ハンドルでも範囲の中でもなければ移動）
     let at = screen_of(&h, 100.0, 100.0);
     let to = screen_of(&h, 105.0, 98.0);
     drag(&mut h, &[at, offset(at, 2.0, 0.0), to]);
@@ -1313,7 +1317,7 @@ fn the_move_tool_never_paints_and_pressing_outside_the_pixels_still_moves_the_la
     assert!(s.transform.pen_down.is_none());
 }
 
-// ───────── 移動・変形の道具（ペン） ─────────
+// ───────── 移動・変形のツール（ペン） ─────────
 
 fn pen_at(pos: egui::Pos2, contact: bool, pointer_id: u32) -> yolu_app::pen::PenSample {
     yolu_app::pen::PenSample {
@@ -1438,7 +1442,7 @@ fn escape_losing_focus_and_switching_tools_during_a_pen_drag_change_nothing_and_
         h.state().state.transform.pen_down.is_none(),
         "離したら外れる"
     );
-    // 窓がフォーカスを失った: 離したのを受け取れないので、ドラッグも押している印も捨てる
+    // ウィンドウがフォーカスを失った: 離したのを受け取れないので、ドラッグも押している印も捨てる
     start(&mut h);
     h.event(Event::WindowFocused(false));
     h.step();
@@ -1447,7 +1451,7 @@ fn escape_losing_focus_and_switching_tools_during_a_pen_drag_change_nothing_and_
     pen(&mut h, far, false, 3);
     h.run();
     settled(&h);
-    // ほかの道具へ替えた: 同じく何も変えずにやめる（ペンを離しても何も起きない）
+    // ほかのツールへ替えた: 同じく何も変えずにやめる（ペンを離しても何も起きない）
     start(&mut h);
     h.state_mut()
         .state
@@ -1520,7 +1524,7 @@ fn switching_to_the_move_tool_during_a_pen_brush_stroke_still_ends_the_stroke_wh
     pen(&mut h, a, true, 3);
     pen(&mut h, offset(a, 30.0, 10.0), true, 3);
     assert_eq!(h.state().state.canvas.stroke, Some(StrokeSource::Pen(3)));
-    // ペンを付けたまま V（移動・変形）。描いている間も道具は替えられる
+    // ペンを付けたまま V（移動・変形）。描いている間もツールは替えられる
     key(&h, Key::V, Modifiers::NONE);
     h.step();
     assert_eq!(h.state().state.tool, Tool::Move);
@@ -1563,7 +1567,7 @@ fn named_layers(h: &mut Harness<'_, YoluApp>, n: usize) -> Vec<LayerId> {
 fn clicking_rows_with_ctrl_and_shift_selects_several_layers() {
     let mut h = app(1280.0, 800.0, 64);
     let layers = named_layers(&mut h, 4); // 下から 1 2 3 4
-                                          // 今は一番上の「レイヤー 2」…名前は 2 つ目からの番号（最初が「レイヤー 1」、足すたびに層の数 + 1）
+                                          // 今は一番上の「レイヤー 2」…名前は 2 つ目からの番号（最初が「レイヤー 1」、足すたびにレイヤーの数 + 1）
     let name = |h: &Harness<'_, YoluApp>, id: LayerId| {
         h.state().state.doc.layer(id).unwrap().name().to_owned()
     };
@@ -1579,7 +1583,7 @@ fn clicking_rows_with_ctrl_and_shift_selects_several_layers() {
         vec![layers[0], layers[2]]
     );
     assert_eq!(h.state().state.selected_layer, Some(layers[2]));
-    // Shift: 起点（Ctrl で押した層）から押した層まで
+    // Shift: 起点（Ctrl で押したレイヤー）から押したレイヤーまで
     h.get_by_label(&names[3]).click_modifiers(Modifiers::SHIFT);
     h.run();
     assert_eq!(
@@ -1630,7 +1634,7 @@ fn the_row_shows_a_lock_mark_and_clicking_it_unlocks_the_layers_own_locks() {
         group
     };
     h.run();
-    // 自分のロックはロックの名前だけ、グループから効いているだけの層は、外せない薄い印
+    // 自分のロックはロックの名前だけ、グループから効いているだけのレイヤーは、外せない薄い印
     let own = "ロック: 透明部分、画素";
     let inherited = "ロック: 位置（グループから）";
     let group_own = "ロック: 位置";
@@ -1734,7 +1738,7 @@ fn ctrl_e_and_ctrl_shift_e_and_ctrl_j_and_ctrl_g_run_the_layer_operations() {
         "グループでなければ、まとめもしない"
     );
     assert_eq!(h.state().state.message, "グループではない。");
-    // V は移動・変形の道具
+    // V は移動・変形のツール
     undo(&mut h.state_mut().state);
     undo(&mut h.state_mut().state);
     h.run();
@@ -1785,7 +1789,7 @@ fn the_layer_menu_offers_merge_lock_and_transform_and_the_merge_confirmation_win
             .iter()
             .filter_map(label)
             .any(|l| l == lang.pick("レイヤーを結合", "Merge Layers")));
-        // ロックの項目は持っているロックにチェック、押すと全部の選んだ層へ
+        // ロックの項目は持っているロックにチェック、押すと全部の選んだレイヤーへ
         let both = s.selected_layers();
         edit(
             &mut s,
@@ -1833,8 +1837,8 @@ fn the_merge_confirmation_window_asks_and_merges_or_cancels_from_the_buttons() {
     }
     h.run();
     let window = yolu_app::windows::window_rect(&h.ctx, "merge-confirm");
-    assert!(window.is_some(), "確かめの窓が出る");
-    // 窓が開いているあいだは、キーの割り当てを止める（Ctrl+Z で文書を動かさない）
+    assert!(window.is_some(), "確認のウィンドウが出る");
+    // ウィンドウが開いているあいだは、キーの割り当てを止める（Ctrl+Z で文書を動かさない）
     assert!(yolu_app::windows::modal_open(&h.state().state));
     h.get_by_label("やめる").click();
     h.run();
@@ -1956,7 +1960,7 @@ fn headless_a_project_with_layer_locks_saves_and_opens_with_the_same_locks() {
 
 // ───────── 見た目（スナップショット） ─────────
 
-/// 4 つの層（下から 1 から 4）。2 と 3 を選び、1 は自分のロック、4 は上のグループのロックが効く。
+/// 4 つのレイヤー（下から 1 から 4）。2 と 3 を選び、1 は自分のロック、4 は上のグループのロックが効く。
 fn showcase(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, 800.0, 128);
     h.state_mut().state.set_language(lang);
@@ -2054,7 +2058,7 @@ fn snapshot_the_move_tool_with_its_handles_and_properties_in_both_languages() {
 fn snapshot_the_layer_menu_and_the_merge_confirmation() {
     let mut results = egui_kittest::SnapshotResults::new();
     let mut h = showcase(Lang::Ja);
-    // 選んだ層の行を右クリックしたメニュー
+    // 選んだレイヤーの行を右クリックしたメニュー
     let at = row_center(&h, "レイヤー 3");
     press(&h, at, PointerButton::Secondary);
     h.step();
@@ -2091,7 +2095,7 @@ fn snapshot_the_layer_menu_and_the_merge_confirmation() {
 
 // ───────── キャンバスの表示が編集に追いつく（CPU と GPU の道の両方） ─────────
 
-/// 窓の絵（描いた画面）の、画布の点（画素の中心）の色。
+/// ウィンドウの絵（描いた画面）の、キャンバスの点（画素の中心）の色。
 fn displayed(h: &mut Harness<'_, YoluApp>, x: f64, y: f64) -> [u8; 4] {
     let image = h.render().expect("描ける");
     let rect = canvas_rect(h);
@@ -2105,7 +2109,7 @@ fn is_red(p: [u8; 4]) -> bool {
     p[0] > 200 && p[1] < 60 && p[2] < 60
 }
 
-/// 移動・反転・90° 回転・結合・取り消しのあと、窓に描いたキャンバスの絵が文書の中身に追いつく（変わったタイルの記録が、空いた所と
+/// 移動・反転・90° 回転・結合・取り消しのあと、ウィンドウに描いたキャンバスの絵が文書の中身に追いつく（変わったタイルの記録が、空いた所と
 /// 埋まった所の両方を指している。CPU の表示と GPU の表示のどちらでも）。
 #[test]
 fn the_displayed_canvas_follows_moves_flips_merges_and_undo_on_both_canvas_paths() {
@@ -2155,7 +2159,7 @@ fn the_displayed_canvas_follows_moves_flips_merges_and_undo_on_both_canvas_paths
             })));
         h.run();
         assert!(is_red(displayed(&mut h, 20.0, 20.0)), "{policy:?}: 反転");
-        // 結合: 上の層（緑）を下の層へ。結合した絵が窓に出る
+        // 結合: 上のレイヤー（緑）を下のレイヤーへ。結合した絵がウィンドウに出る
         {
             let s = &mut h.state_mut().state;
             let top = add_painted(s, (30, 30, 60, 60), GREEN);

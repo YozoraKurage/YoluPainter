@@ -7,7 +7,7 @@
 use super::*;
 
 impl Document {
-    /// 履歴を持たない保存用の写しを取る。文書・層・チャンネルの ID と属性・マスク・選択範囲・残した選択範囲・Normal の設定・手動の ID 色・ベイクの優先・見た目の設定・
+    /// 履歴を持たない保存用の写しを取る。文書・レイヤー・チャンネルの ID と属性・マスク・選択範囲・残した選択範囲・Normal の設定・手動の ID 色・ベイクの優先・見た目の設定・
     /// `revision` を保ち、タイルは共有する（画素のコピーはしない）。呼んだあとは元を編集してよく、写しは別のスレッドへ
     /// 渡して読める。進行中のストロークがあれば断り、元は何も変えない。
     pub fn capture_snapshot(&self) -> Result<Document, CoreError> {
@@ -95,7 +95,7 @@ mod tests {
     use crate::{BrushSettings, ChannelInfo, ChannelKind, ColorSpace, Rgba8};
     use glam::DVec2;
 
-    /// 層の Color のタイルの画素の持ち主（共有しているかを `Arc` の同一性で見る）。
+    /// レイヤーの Color のタイルの画素の持ち主（共有しているかを `Arc` の同一性で見る）。
     fn buffer(
         doc: &Document,
         layer: LayerId,

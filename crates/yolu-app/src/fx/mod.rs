@@ -1,12 +1,12 @@
-//! 効果の層（フィルターのスタック・Generator・Anchor）の画面の状態と操作（Unity 版の `TexturePaintWindow.Filters / Generators / Anchors`）。
+//! 効果のレイヤー（フィルターのスタック・Generator・Anchor）の画面の状態と操作（Unity 版の `TexturePaintWindow.Filters / Generators / Anchors`）。
 //!
-//! - 一覧: 層の行の下に、対象の側のスタックだけを字下げした子の行で並べる（`panels::effect_rows`）。選んだ層でマスクが対象なら
-//!   マスクの Anchor・マスクの効果の段、それ以外（選んでいない層も）は層の Anchor・画素の効果の段（どちらも上が後に掛かる）。
+//! - 一覧: レイヤーの行の下に、対象の側のスタックだけを字下げした子の行で並べる（`panels::effect_rows`）。選んだレイヤーでマスクが対象なら
+//!   マスクの Anchor・マスクの効果の段、それ以外（選んでいないレイヤーも）はレイヤーの Anchor・画素の効果の段（どちらも上が後に掛かる）。
 //!   押すとその段を選び（`FxState::selected`。そのスタックの側が対象になる）、プロパティの欄にその段の設定が出る（`panels::effect_props`）。
 //! - 操作: どれも `Action::Fx(FxOp)` を通り、core の編集の口（`add_filter` ほか）を 1 つ呼ぶ。1 つが 1 回の Undo で、スライダーのドラッグは
 //!   core がまとめる。ロック・段の数・作業メモリの上限などの断りは core が決め、ここは理由を画面の言語で出すだけ。
 //! - 入力: Generator と塗りつぶしの画像が読むメッシュマップ・モデルのルート・画像は文書の外のもので、`inputs` が毎フレーム
-//!   セットごとに文書へ渡す（焼き直し・モデルの差し替えで読む層だけが描き直される）。入力がそろわない効果を持つ .ylp は読むだけにする。
+//!   セットごとに文書へ渡す（焼き直し・モデルの差し替えで読むレイヤーだけが描き直される）。入力がそろわない効果を持つ .ylp は読むだけにする。
 //! - Anchor を読む Generator が使えなくなる操作（並べ替え・削除・結合）のあとは、新しく使えなくなった参照を状態の帯で知らせる。
 //!   編集そのものは断らない（取り消せば戻る）。
 
@@ -28,7 +28,7 @@ use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
 
-/// 選んでいる行（層の行の下の子の行）。
+/// 選んでいる行（レイヤーの行の下の子の行）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selected {
     Filter { layer: LayerId, id: FilterId },
@@ -39,7 +39,7 @@ pub enum Selected {
 #[derive(Default)]
 pub struct FxState {
     pub selected: Option<Selected>,
-    /// 「ID の色」の Generator の色を、ID マップから選んでいる（押した所の ID の色をその段に足す）。段の層と ID。
+    /// 「ID の色」の Generator の色を、ID マップから選んでいる（押した所の ID の色をその段に足す）。段のレイヤーと ID。
     pub id_pick: Option<(LayerId, FilterId)>,
     pub inputs: inputs::InputsState,
     /// 前に見た文書の版と、そのとき使えなくなっていた Anchor の参照（新しく使えなくなったものだけを知らせる）。
@@ -55,7 +55,7 @@ struct AnchorIssuesSeen {
 /// 文書の効果を変える操作と、行を選ぶ操作。
 #[derive(Clone, Debug, PartialEq)]
 pub enum FxOp {
-    /// 選んでいる層のスタックにフィルターを足す（画素なら描くチャンネルだけに掛かる）。
+    /// 選んでいるレイヤーのスタックにフィルターを足す（画素なら描くチャンネルだけに掛かる）。
     AddFilter {
         target: FilterTarget,
         kind: FilterKind,
@@ -120,16 +120,16 @@ pub enum FxOp {
     },
     SelectAnchor(AnchorId),
     Deselect,
-    /// Anchor を置いた層（マスクの Anchor ならそのマスク）へ移る。
+    /// Anchor を置いたレイヤー（マスクの Anchor ならそのマスク）へ移る。
     GoToAnchor(AnchorId),
     /// 「ID の色」の Generator の色を、ID マップから選び始める・やめる（2D のキャンバスか 3D ビューを押すと、その所の ID の色を足す。
-    /// Ctrl を押していれば外す）。「ID の色で選択」の道具の入力をそのまま使う。
+    /// Ctrl を押していれば外す）。「ID の色で選択」のツールの入力をそのまま使う。
     PickIdColors {
         layer: LayerId,
         id: FilterId,
         on: bool,
     },
-    /// 層のフィルターが UV の継ぎ目をまたぐか（文書の設定。テクスチャセットのすべてのフィルターに効く）。
+    /// レイヤーのフィルターが UV の継ぎ目をまたぐか（文書の設定。テクスチャセットのすべてのフィルターに効く）。
     SetFilterSeams(bool),
     /// 画像の段が読むアセットの画像を差す・外す（差す前に復号して、読めなければ理由を添えて断る）。
     SetImage {
@@ -140,7 +140,7 @@ pub enum FxOp {
 }
 
 impl FxOp {
-    /// 道具を替える操作か（描いている間は断る。道具を替えると途中のストロークの前提が変わる）。
+    /// ツールを替える操作か（描いている間は断る。ツールを替えると途中のストロークの前提が変わる）。
     pub fn changes_tool(&self) -> bool {
         matches!(self, FxOp::PickIdColors { on: true, .. })
     }
@@ -159,7 +159,7 @@ impl FxOp {
 }
 
 impl FxState {
-    /// 選んでいる段（層・マスクにまだあるもの）。
+    /// 選んでいる段（レイヤー・マスクにまだあるもの）。
     pub fn filter<'a>(
         &self,
         doc: &'a Document,
@@ -190,16 +190,16 @@ impl FxState {
     }
 }
 
-/// マスクが対象の層（その層を選んでマスクに描いているあいだだけ。マスクの無い層は対象にならない）。層の行の下の効果の行・
-/// 効果の追加の先・層とマスクのサムネイルの青い枠が、同じこの結果を見る。
+/// マスクが対象のレイヤー（そのレイヤーを選んでマスクに描いているあいだだけ。マスクの無いレイヤーは対象にならない）。レイヤーの行の下の効果の行・
+/// 効果の追加の先・レイヤーとマスクのサムネイルの青い枠が、同じこの結果を見る。
 pub fn mask_target(app: &AppState) -> Option<LayerId> {
     let id = app.selected_layer?;
     let has_mask = app.doc.layer(id)?.mask().is_some();
     (app.m2.edit_mask && has_mask).then_some(id)
 }
 
-/// プロパティの欄に出す効果の行を選んでいるか（選んだ層が今の層で、選んだ行のスタックが今の対象の側）。マスクの効果の行を選ぶと
-/// マスクが対象になる（`select_effect`）ので、層の画素が対象のあいだはマスクの効果の行を選んだ状態は残らない。
+/// プロパティの欄に出す効果の行を選んでいるか（選んだレイヤーが今のレイヤーで、選んだ行のスタックが今の対象の側）。マスクの効果の行を選ぶと
+/// マスクが対象になる（`select_effect`）ので、レイヤーの画素が対象のあいだはマスクの効果の行を選んだ状態は残らない。
 pub fn props_visible(app: &AppState) -> bool {
     let mask_side = app.m2.edit_mask;
     if let Some((layer, _, target)) = app.fx.filter(&app.doc) {
@@ -212,7 +212,7 @@ pub fn props_visible(app: &AppState) -> bool {
     false
 }
 
-/// 新しい Anchor の名前（層の名前。同じ名前があれば番号を足す）。
+/// 新しい Anchor の名前（レイヤーの名前。同じ名前があれば番号を足す）。
 fn unique_anchor_name(doc: &Document, base: &str, lang: Lang) -> String {
     let base = base.trim();
     let mut name = if base.is_empty() {
@@ -270,7 +270,7 @@ impl AppState {
             .ok_or(CoreError::LayerNotFound)
     }
 
-    /// 段を選ぶ（その層を選び、その段のスタックの側を対象にする。画素の段なら層の画素、マスクの段ならマスク）。対象の側の効果の行だけが
+    /// 段を選ぶ（そのレイヤーを選び、その段のスタックの側を対象にする。画素の段ならレイヤーの画素、マスクの段ならマスク）。対象の側の効果の行だけが
     /// 一覧に出るので、選んだ行は選んだ直後も見えたまま残る。
     pub fn select_effect(&mut self, layer: LayerId, id: FilterId) {
         let mask = self
@@ -487,7 +487,7 @@ impl AppState {
                     self.fx.id_pick = None;
                     return Ok(None);
                 }
-                // 押した所の ID の色を読むのは「ID の色で選択」の入力（2D・3D の押す・強調）。道具の切り替えは「道具を選ぶ」と同じ口を通し
+                // 押した所の ID の色を読むのは「ID の色で選択」の入力（2D・3D の押す・強調）。ツールの切り替えは「ツールを選ぶ」と同じ口を通し
                 // （移動・パスの途中のドラッグと選んだ点を捨てる）、効果の欄は開いたまま・選ぶ状態は残す
                 if !self.switch_tool(crate::state::Tool::IdSelect, true) {
                     return Ok(None);
@@ -529,7 +529,7 @@ impl AppState {
     }
 
     /// 「ID の色」の Generator の色を選んでいる間に、2D のキャンバスか 3D ビューで押した所の ID の色（`rgb`）を、その段に足す
-    /// （Ctrl を押していれば外す）。選んでいなければ false（呼んだ側が選択の道具として扱う）。
+    /// （Ctrl を押していれば外す）。選んでいなければ false（呼んだ側が選択のツールとして扱う）。
     pub fn pick_id_color(&mut self, rgb: u32) -> bool {
         let Some((layer, id)) = self.fx.id_pick else {
             return false;
@@ -614,7 +614,7 @@ impl AppState {
         if self.is_stroking() {
             return; // 描いている間は入力を替えない（ストロークの途中で合成の意味を変えない）
         }
-        // ID の色を選ぶのは、その段の欄が開いていて「ID の色で選択」の道具のあいだだけ
+        // ID の色を選ぶのは、その段の欄が開いていて「ID の色で選択」のツールのあいだだけ
         if self.fx.id_pick.is_some()
             && (self.tool != crate::state::Tool::IdSelect
                 || !self.fx.id_pick.is_some_and(|(_, id)| {
@@ -657,7 +657,7 @@ impl AppState {
                     lang.pick("読むアンカーがありません", "The anchor to read is gone")
                 }
                 AnchorIssueKind::NotBelow => lang.pick(
-                    "アンカーが自分の層より下にありません",
+                    "アンカーが自分のレイヤーより下にありません",
                     "The anchor is not below its layer",
                 ),
                 AnchorIssueKind::NotChosen => "",

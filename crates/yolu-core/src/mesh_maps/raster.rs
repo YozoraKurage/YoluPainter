@@ -60,7 +60,7 @@ impl Raster {
         )
     }
 
-    /// 三角形ごとの UV（三角形の番号の順に a.x, a.y, b.x, b.y, c.x, c.y の 6 つ）から。ベイクの割り当てと同じ式で、UV の島の図
+    /// 三角形ごとの UV（三角形の番号の順に a.x, a.y, b.x, b.y, c.x, c.y の 6 つ）から。ベイクの割り当てと同じ式で、UV アイランドの図
     /// （`geometry::UvTopology`）もこれを使う（重なりの見つけ方を 1 つにする）。
     pub fn from_uvs(
         uvs: &[f32],

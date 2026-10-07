@@ -33,7 +33,7 @@ pub enum DiskBudget {
 }
 
 impl DiskBudget {
-    /// 窓の選択肢に並べる段（指定した量は並べない）。
+    /// ウィンドウの選択肢に並べる段（指定した量は並べない）。
     pub const LEVELS: [DiskBudget; 4] = [
         DiskBudget::Auto,
         DiskBudget::Low,
@@ -71,7 +71,7 @@ impl DiskBudget {
         }
     }
 
-    /// 窓に出す名前（数は出さない。指定した量は「指定」とだけ）。
+    /// ウィンドウに出す名前（数は出さない。指定した量は「指定」とだけ）。
     pub fn name(self, lang: crate::lang::Lang) -> &'static str {
         match self {
             DiskBudget::Auto => lang.pick("自動", "Automatic"),

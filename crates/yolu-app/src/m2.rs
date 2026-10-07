@@ -1,4 +1,4 @@
-//! M2 の画面の状態と文書の操作: 層の種類（グループ・塗りつぶし・調整）・マスク・クリッピング・チャンネルごとの合成・文書のチャンネルの一覧と、
+//! M2 の画面の状態と文書の操作: レイヤーの種類（グループ・塗りつぶし・調整）・マスク・クリッピング・チャンネルごとの合成・文書のチャンネルの一覧と、
 //! 全部入りのブラシ（`Brush`）の設定。計算・検証・履歴は core に任せ、ここは「どの操作をどの順で当てるか」と画面の覚えだけを持つ。
 //! 文書を変える操作は `Action::M2(Edit)`（1 つが 1 回の Undo。スライダーのドラッグは core がまとめる）、画面だけの操作は `Action::M2Ui(UiOp)`。
 
@@ -144,7 +144,7 @@ pub enum Edit {
         position: usize,
     },
     Clipping(LayerId, bool),
-    /// channel が None なら層の値、Some ならそのチャンネルだけの値。
+    /// channel が None ならレイヤーの値、Some ならそのチャンネルだけの値。
     Opacity {
         id: LayerId,
         channel: Option<Channel>,
@@ -155,7 +155,7 @@ pub enum Edit {
         channel: Option<Channel>,
         mode: BlendMode,
     },
-    /// そのチャンネルに層の自分の合成を持たせる（今の層の値から始める）・層の値に戻す。
+    /// そのチャンネルにレイヤーの自分の合成を持たせる（今のレイヤーの値から始める）・レイヤーの値に戻す。
     OwnBlend {
         id: LayerId,
         channel: Channel,
@@ -171,7 +171,7 @@ pub enum Edit {
     MaskEnabled(LayerId, bool),
     MaskInverted(LayerId, bool),
     MaskDensity(LayerId, f64),
-    /// 塗りつぶしの層のチャンネルの値（None で外す）。
+    /// 塗りつぶしレイヤーのチャンネルの値（None で外す）。
     FillValue {
         id: LayerId,
         channel: Channel,
@@ -187,33 +187,33 @@ pub enum Edit {
         info: ChannelInfo,
     },
     RemoveChannel(Channel),
-    /// Ctrl+E: 複数選んでいれば選んだ層を結合・グループならグループを結合・そうでなければ下の層と結合。
+    /// Ctrl+E: 複数選んでいれば選んだレイヤーを結合・グループならグループを結合・そうでなければ下のレイヤーと結合。
     MergeDown,
-    /// Ctrl+Shift+E: 見えている層を 1 枚にする。
+    /// Ctrl+Shift+E: 見えているレイヤーを 1 枚にする。
     MergeVisible,
     /// 見た目が変わると確かめた結合を、そのまま行う・やめる。
     ConfirmMerge,
     CancelMerge,
     /// 選んでいるグループをほどく（グループでなければ断る）。
     UngroupSelected,
-    /// 選んでいる層（グループなら中身ごと）の複製・表示の切り替え。
+    /// 選んでいるレイヤー（グループなら中身ごと）の複製・表示の切り替え。
     DuplicateSelected,
     ToggleSelectedVisible,
-    /// ドラッグで選んだ層をまとめて動かす（`position` は `parent` の子の中の位置。0 が一番下）。
+    /// ドラッグで選んだレイヤーをまとめて動かす（`position` は `parent` の子の中の位置。0 が一番下）。
     MoveLayers {
         ids: Vec<LayerId>,
         parent: Option<LayerId>,
         position: usize,
     },
-    /// 層のロックを付ける・外す（`flag` は個別の 1 種。全部をまとめて外すときは 15）。
+    /// レイヤーのロックを付ける・外す（`flag` は個別の 1 種。全部をまとめて外すときは 15）。
     Lock {
         ids: Vec<LayerId>,
         flag: LayerLocks,
         on: bool,
     },
-    /// 選んでいる層の移動・90° 回転・反転・数値と手のドラッグの変形。
+    /// 選んでいるレイヤーの移動・90° 回転・反転・数値と手のドラッグの変形。
     Transform(Xform),
-    /// 文書の Normal の出力の設定（Height → Normal・強さ・端・ファイルの Y の向き）。層の合成は変えない。`coalesce` はスライダーの
+    /// 文書の Normal の出力の設定（Height → Normal・強さ・端・ファイルの Y の向き）。レイヤーの合成は変えない。`coalesce` はスライダーの
     /// ドラッグ（離したとき 1 回の Undo にまとめる）。
     NormalSettings {
         settings: NormalSettings,
@@ -300,7 +300,7 @@ pub enum UiOp {
     ToggleCollapsed(LayerId),
     /// ユーザーチャンネルの名前を変え始める。
     RenameChannel(Channel),
-    /// マスクに描く・層に描く。
+    /// マスクに描く・レイヤーに描く。
     EditMask(bool),
     /// 組み込みのブラシ（番号は [`presets`] の並び）。
     Preset(usize),
@@ -310,7 +310,7 @@ pub enum UiOp {
     Resampling(yolu_core::Resampling),
 }
 
-/// 層の行の 1 つ（一覧の上から。閉じたグループの中身は含まない）。
+/// レイヤーの行の 1 つ（一覧の上から。閉じたグループの中身は含まない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Row {
     pub id: LayerId,
@@ -539,7 +539,7 @@ pub fn blend_label(lang: Lang, mode: BlendMode) -> &'static str {
     }
 }
 
-/// 層に選べる合成モード（PassThrough はグループだけ。グループでは先頭）。
+/// レイヤーに選べる合成モード（PassThrough はグループだけ。グループでは先頭）。
 pub fn blend_choices(group: bool) -> Vec<BlendMode> {
     let mut v = Vec::new();
     if group {
@@ -615,8 +615,8 @@ pub fn channel_format(info: &ChannelInfo) -> String {
     format!("{srgb}{components}{CHANNEL_BITS}")
 }
 
-/// 描画色（0〜1）から塗りつぶしの層の値へ（描画色のまま。アルファは 255）。バケツ・ポリゴン塗りつぶしの 1 チャンネルの値
-/// （`matpaint::single_value`）と同じ変換で、チャンネルの種類によらない（Unity 版の塗りつぶしの層も `GetBrush().Color`）。
+/// 描画色（0〜1）から塗りつぶしレイヤーの値へ（描画色のまま。アルファは 255）。バケツ・ポリゴン塗りつぶしの 1 チャンネルの値
+/// （`matpaint::single_value`）と同じ変換で、チャンネルの種類によらない（Unity 版の塗りつぶしレイヤーも `GetBrush().Color`）。
 pub fn fill_from_color(c: [f32; 4]) -> Rgba8 {
     crate::matpaint::single_value([c[0], c[1], c[2], 1.0])
 }
@@ -636,7 +636,7 @@ pub fn new_channel_info(name: String, kind: ChannelKind) -> ChannelInfo {
     }
 }
 
-/// 層の種類の名前とアイコン。
+/// レイヤーの種類の名前とアイコン。
 pub fn layer_kind_label(lang: Lang, kind: LayerKind) -> &'static str {
     match kind {
         LayerKind::Raster => lang.pick("レイヤー", "Layer"),
@@ -717,7 +717,7 @@ pub fn is_inside(doc: &Document, id: LayerId, ancestor: LayerId) -> bool {
     false
 }
 
-/// 層（グループなら中身ごと）の数。
+/// レイヤー（グループなら中身ごと）の数。
 pub fn subtree_len(doc: &Document, id: LayerId) -> usize {
     1 + doc
         .layers()
@@ -764,9 +764,9 @@ pub fn drop_edit(
     })
 }
 
-/// 複数の層のドラッグで落とした所の移動（Unity 版の `DropLayers` と同じ）。選んだ層（とグループの中身）が運ばれる層で、
-/// 落とす先は運ばれない層から数える: グループの中へなら、そのグループの運ばれない子の数の位置（自分たちの中へは落とせない）、
-/// 線の上なら、その線のすぐ下の運ばれない最初の層の上、無ければ一番下。1 つしか運ぶものが無ければ単独のドラッグと同じ。
+/// 複数のレイヤーのドラッグで落とした所の移動（Unity 版の `DropLayers` と同じ）。選んだレイヤー（とグループの中身）が運ばれるレイヤーで、
+/// 落とす先は運ばれないレイヤーから数える: グループの中へなら、そのグループの運ばれない子の数の位置（自分たちの中へは落とせない）、
+/// 線の上なら、その線のすぐ下の運ばれない最初のレイヤーの上、無ければ一番下。1 つしか運ぶものが無ければ単独のドラッグと同じ。
 pub fn drop_edit_for(
     doc: &Document,
     rows: &[Row],
@@ -831,7 +831,7 @@ pub fn drop_target_at(
     drop_target_for(doc, rows, &[dragged], position)
 }
 
-/// `drop_target_at` の、運ぶ層が複数の形（選んだ層）。
+/// `drop_target_at` の、運ぶレイヤーが複数の形（選んだレイヤー）。
 pub fn drop_target_for(
     doc: &Document,
     rows: &[Row],
@@ -918,7 +918,7 @@ impl AppState {
     /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
     /// 先頭のタブ（ステンシル）へ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
     /// 選んだ効果の行は、マスクを描き始めるとき閉じ、やめるときはマスクのスタックの行だけ閉じる（一覧に出ない行を選んだままにしない。
-    /// 画素の効果の行を選んだ状態は、層の画素が対象なので残す）。
+    /// 画素の効果の行を選んだ状態は、レイヤーの画素が対象なので残す）。
     pub fn set_edit_mask(&mut self, on: bool) {
         let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
@@ -976,7 +976,7 @@ impl AppState {
                 position,
             } => {
                 self.doc.move_layer_to(id, parent, position)?;
-                // 閉じたグループへ入れた層が見えなくならないよう、入れた先を開く
+                // 閉じたグループへ入れたレイヤーが見えなくならないよう、入れた先を開く
                 if let Some(p) = parent {
                     self.m2.collapsed.remove(&p);
                 }
@@ -1327,7 +1327,7 @@ impl AppState {
             return self.doc.begin_brush_mask_stroke(id, brush);
         }
         let mut stroke = if self.paints_material() {
-            // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（層で無効のチャンネルは有効にする）
+            // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（レイヤーで無効のチャンネルは有効にする）
             let channels = self.paint_channels();
             self.doc.begin_material_brush_stroke(id, &channels, brush)?
         } else {
@@ -1470,7 +1470,7 @@ mod tests {
         let group = s.selected_layer.unwrap();
         assert_eq!(s.doc.layers().len(), 2);
         assert!(s.doc.layer(group).unwrap().is_group());
-        // 層をグループへ入れる
+        // レイヤーをグループへ入れる
         s.apply(Action::M2(Edit::Move {
             id: first,
             parent: Some(group),
@@ -1536,7 +1536,7 @@ mod tests {
         }));
         s.m2_end_drag();
         assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
-        // 色以外のチャンネルが有効な層は、色相・彩度へ替えられない（断って、理由が出る）
+        // 色以外のチャンネルが有効なレイヤーは、色相・彩度へ替えられない（断って、理由が出る）
         s.message.clear();
         let hue = AdjustmentSettings::hue_saturation(30.0, 0.0, 0.0).unwrap();
         s.apply(Action::M2(Edit::Adjust {
@@ -1545,7 +1545,7 @@ mod tests {
         }));
         assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
         assert!(!s.message.is_empty());
-        // 色相・彩度は色のチャンネルだけに足した層なら使える
+        // 色相・彩度は色のチャンネルだけに足したレイヤーなら使える
         s.apply(Action::M2(Edit::NewAdjustment(
             AdjustmentKind::HueSaturation,
         )));
@@ -1620,7 +1620,7 @@ mod tests {
         assert_eq!(rows.len(), 2, "閉じたグループの中身は出ない");
         s.m2_ui(UiOp::ToggleCollapsed(group));
         let rows = visible_rows(&s.doc, &s.m2.collapsed);
-        // 一番上の層を、グループの行の中ほどへ → グループの一番上
+        // 一番上のレイヤーを、グループの行の中ほどへ → グループの一番上
         let edit = drop_edit(&s.doc, &rows, top, DropTarget::Into(group)).unwrap();
         assert_eq!(
             edit,
@@ -1735,7 +1735,11 @@ mod tests {
         }));
         s.m2_end_drag();
         let l = s.doc.layer(id).unwrap();
-        assert_eq!(l.blend_mode(), BlendMode::Multiply, "層の値は変わらない");
+        assert_eq!(
+            l.blend_mode(),
+            BlendMode::Multiply,
+            "レイヤーの値は変わらない"
+        );
         assert_eq!(l.blend_mode_in(Channel::Roughness), BlendMode::Screen);
         assert_eq!(l.opacity_in(Channel::Roughness), 0.5);
         assert_eq!(l.opacity_in(Channel::Color), 1.0);

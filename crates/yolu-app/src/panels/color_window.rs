@@ -1,23 +1,23 @@
-//! 色の窓: 色の値を決める欄（塗りつぶしの層の値・lilToon の色・グラデーションの分岐点の色・ブラシのエミッション・UV ワイヤーフレームの色・部品の ID の色など）を
-//! 押すと出る、動かせる窓。中身は色相の円とその中の四角（カラーのパネルと同じ見た目と操作）・16 進の欄（相手がアルファを持てばアルファも）・
+//! 色のウィンドウ: 色の値を決める欄（塗りつぶしレイヤーの値・lilToon の色・グラデーションの分岐点の色・ブラシのエミッション・UV ワイヤーフレームの色・部品の ID の色など）を
+//! 押すと出る、動かせるウィンドウ。中身は色相の円とその中の四角（カラーのパネルと同じ見た目と操作）・16 進の欄（相手がアルファを持てばアルファも）・
 //! 描画色を入れるボタン・今のカラーセットの色の列。
 //!
-//! - 窓は 1 つだけ。開いている間は、押した欄が「相手」で、欄には `t::ACCENT` の枠が出る（マスクを選んでいる枠と同じ形）。別の色の欄を押すと、
-//!   窓はそのままで相手が替わる。
+//! - ウィンドウは 1 つだけ。開いている間は、押した欄が「相手」で、欄には `t::ACCENT` の枠が出る（マスクを選んでいる枠と同じ形）。別の色の欄を押すと、
+//!   ウィンドウはそのままで相手が替わる。
 //! - 見出しの帯をドラッグして動かす。閉じるボタンか Esc で閉じる。外を押しても閉じない（ほかの欄を触りながら色を変えられる）。位置はこの
 //!   セッションの間覚え、次に開くときは前の位置（画面の外なら中へ戻す）。初めて開くときは、欄の列の左（入らなければ列の右、
 //!   どちらにも入らなければ欄の下か上）。
 //! - 色を変えると、相手の欄が毎フレーム [`take`]（[`field`] が呼ぶ）で受け取って値へ当てる。円・四角・アルファのドラッグ 1 回、16 進の 1 回の
 //!   入力、ボタン・色の列の 1 回の押しが、それぞれ 1 回の取り消しになるよう、[`Update`] が「前の変更とまとめてよいか」と「1 回の操作の終わり」を持つ。
 //! - Esc は、開いたとき（相手が替わったとき）の色へ戻して閉じる。ただし、ほかの物が使った Esc は使わない: 欄の文字（16 進の欄など）を
-//!   打っている途中の Esc はその入力をやめるだけで、窓も相手の値もそのまま。窓より先に描く部品が使った Esc（塗りつぶしの仕事の取消・
+//!   打っている途中の Esc はその入力をやめるだけで、ウィンドウも相手の値もそのまま。ウィンドウより先に描く部品が使った Esc（塗りつぶしの仕事の取消・
 //!   色の名前の変更をやめる）も同じ。色のほかに状態を持つ相手（部品の ID の色の「自動」）は、[`Update::reverted`] を見て開いたときの
 //!   状態へ戻す。
-//! - 相手の欄が描かれなくなった（層を消した・セットを替えた・欄が隠れた）ら閉じる。
+//! - 相手の欄が描かれなくなった（レイヤーを消した・セットを替えた・欄が隠れた）ら閉じる。
 //! - 描画色（`ColorState`）は動かさない（描画色は「入れる」ときの元に使うだけ）。
 //! - 色相は選びの途中で覚え、彩度や明度が 0 になっても失わない。外から値が変わった（Undo・スポイト）ときは、選びの表示を合わせる。
 //!
-//! 窓はフレームの終わりに 1 回描く（[`show`]。アプリの中では [`show_in_app`]）。相手の欄が変更を受け取るのは次のフレーム。
+//! ウィンドウはフレームの終わりに 1 回描く（[`show`]。アプリの中では [`show_in_app`]）。相手の欄が変更を受け取るのは次のフレーム。
 
 use std::sync::{Arc, Mutex};
 
@@ -32,7 +32,7 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::ui::window::HEADER_HEIGHT;
 
-/// 窓の幅。
+/// ウィンドウの幅。
 pub const WIDTH: f32 = 204.0;
 const PAD: f32 = 8.0;
 const WHEEL: f32 = WIDTH - 2.0 * PAD;
@@ -49,14 +49,14 @@ const SET_NAME: f32 = 16.0;
 const HEX_SHARE: f32 = 0.52;
 /// 相手の欄が描かれなくなってから閉じるまでのフレーム数。
 const GRACE: u64 = 2;
-/// 窓と画面の端の余白。
+/// ウィンドウと画面の端の余白。
 const SCREEN_MARGIN: f32 = 4.0;
 
 /// 欄の色（0〜255 の RGB と、相手が持っていればアルファ）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pick {
     pub rgb: [u8; 3],
-    /// 相手がアルファを持たなければ None（窓にアルファの欄を出さない）。
+    /// 相手がアルファを持たなければ None（ウィンドウにアルファの欄を出さない）。
     pub alpha: Option<u8>,
 }
 
@@ -91,7 +91,7 @@ impl Pick {
     }
 }
 
-/// 窓から相手の欄への変更（相手は値へ当てる）。
+/// ウィンドウから相手の欄への変更（相手は値へ当てる）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Update {
     pub pick: Pick,
@@ -145,7 +145,7 @@ impl State {
     }
 }
 
-/// 窓から出た、相手がまだ受け取っていない変更（相手・変更・出したフレーム）。
+/// ウィンドウから出た、相手がまだ受け取っていない変更（相手・変更・出したフレーム）。
 type Pending = Vec<(Id, Update, u64)>;
 
 fn state_id() -> Id {
@@ -164,7 +164,7 @@ fn pending_id() -> Id {
     state_id().with("pending")
 }
 
-/// どれかの欄がフォーカス（文字の入力）を持っていたかを、窓を描いた最後のフレームの番号つきで覚える場所。
+/// どれかの欄がフォーカス（文字の入力）を持っていたかを、ウィンドウを描いた最後のフレームの番号つきで覚える場所。
 fn focus_id() -> Id {
     state_id().with("focus")
 }
@@ -191,7 +191,7 @@ fn textures(ctx: &Context) -> Arc<Mutex<ColorTextures>> {
     made
 }
 
-/// 窓を `target` の欄へ向けて開く（開いていれば、窓はそのままで相手を替える）。`name` は見出しに出す欄の名前、`anchor` は押した欄、
+/// ウィンドウを `target` の欄へ向けて開く（開いていれば、ウィンドウはそのままで相手を替える）。`name` は見出しに出す欄の名前、`anchor` は押した欄、
 /// `column` は欄の列（初めて開くときに、入ればその左か右へ置く）、`current` は欄の今の色。同じ相手で呼び直しても何もしない（開いたときの色を残す）。
 pub fn open(ctx: &Context, target: Id, name: &str, anchor: Rect, column: Rect, current: Pick) {
     let frame = ctx.cumulative_frame_nr();
@@ -227,7 +227,7 @@ pub fn open(ctx: &Context, target: Id, name: &str, anchor: Rect, column: Rect, c
     ctx.request_repaint();
 }
 
-/// 窓を閉じる（今の色のまま）。
+/// ウィンドウを閉じる（今の色のまま）。
 pub fn close(ctx: &Context) {
     ctx.data_mut(|d| d.remove::<State>(state_id()));
 }
@@ -236,24 +236,24 @@ pub fn is_open(ctx: &Context) -> bool {
     target(ctx).is_some()
 }
 
-/// 窓の相手（開いていれば）。
+/// ウィンドウの相手（開いていれば）。
 pub fn target(ctx: &Context) -> Option<Id> {
     ctx.data(|d| d.get_temp::<State>(state_id()))
         .map(|s| s.target)
 }
 
-/// `id` の欄が窓の相手か（欄に印を出す）。
+/// `id` の欄がウィンドウの相手か（欄に印を出す）。
 pub fn is_target(ctx: &Context, id: Id) -> bool {
     target(ctx) == Some(id)
 }
 
-/// `id` の欄の色を、窓の円・四角・アルファでドラッグしている間 true（設定のファイルへ書くのを離すまで待つ欄が読む）。
+/// `id` の欄の色を、ウィンドウの円・四角・アルファでドラッグしている間 true（設定のファイルへ書くのを離すまで待つ欄が読む）。
 pub fn dragging(ctx: &Context, id: Id) -> bool {
     ctx.data(|d| d.get_temp::<State>(state_id()))
         .is_some_and(|s| s.target == id && s.dragging)
 }
 
-/// 最後に描いた窓の場所（開いていれば。試験が中の部品の場所を知るために読む）。
+/// 最後に描いたウィンドウの場所（開いていれば。試験が中の部品の場所を知るために読む）。
 pub fn rect(ctx: &Context) -> Option<Rect> {
     if !is_open(ctx) {
         return None;
@@ -261,7 +261,7 @@ pub fn rect(ctx: &Context) -> Option<Rect> {
     ctx.data(|d| d.get_temp::<Rect>(rect_id()))
 }
 
-/// 相手の欄が毎フレーム呼ぶ: 欄がまだあることを窓に知らせ、外から変わった色（`current`）に窓の表示を合わせ、窓からの変更があれば返す。
+/// 相手の欄が毎フレーム呼ぶ: 欄がまだあることをウィンドウに知らせ、外から変わった色（`current`）にウィンドウの表示を合わせ、ウィンドウからの変更があれば返す。
 /// 変更を当てたあとの色は、次のフレームの `current` で知らせる。
 pub fn take(ctx: &Context, id: Id, current: Pick) -> Option<Update> {
     let frame = ctx.cumulative_frame_nr();
@@ -284,10 +284,10 @@ pub fn take(ctx: &Context, id: Id, current: Pick) -> Option<Update> {
     pending
 }
 
-/// 色の値の欄（色の見本）。押すと、窓をこの欄へ向けて開く（開いていれば相手を替える）。窓の相手なら印を出す。窓からの変更があれば返す
-/// （呼び手は値へ当てる。`Update` の `dragging`・`done` で取り消しをまとめる）。`target` は欄の値ごとに違う名前（層・チャンネル・文書などを含める。
-/// 同じ名前のまま別の値を指すと、窓が別の値へ前の値の変更を当ててしまう）。`enabled` が false の間（描いている間・読むだけのセット）は押しても
-/// 開かず、窓からの変更は捨てる（窓は開いたままで、次のフレームに欄の値へ表示を戻す）。
+/// 色の値の欄（色の見本）。押すと、ウィンドウをこの欄へ向けて開く（開いていれば相手を替える）。ウィンドウの相手なら印を出す。ウィンドウからの変更があれば返す
+/// （呼び手は値へ当てる。`Update` の `dragging`・`done` で取り消しをまとめる）。`target` は欄の値ごとに違う名前（レイヤー・チャンネル・文書などを含める。
+/// 同じ名前のまま別の値を指すと、ウィンドウが別の値へ前の値の変更を当ててしまう）。`enabled` が false の間（描いている間・読むだけのセット）は押しても
+/// 開かず、ウィンドウからの変更は捨てる（ウィンドウは開いたままで、次のフレームに欄の値へ表示を戻す）。
 #[allow(clippy::too_many_arguments)]
 pub fn field(
     ui: &mut Ui,
@@ -310,7 +310,7 @@ pub fn field(
     update
 }
 
-/// 窓を初めて置く場所。欄の列 `column` の左に入ればそこ、入らなければ列の右（どちらも欄の操作を隠さない）に、`anchor` の高さのあたりへ。
+/// ウィンドウを初めて置く場所。欄の列 `column` の左に入ればそこ、入らなければ列の右（どちらも欄の操作を隠さない）に、`anchor` の高さのあたりへ。
 /// どちらにも入らなければ `anchor` の下（入らなければ上）へ、欄に重ねずに。どれも画面の中に収める。
 pub fn place(anchor: Rect, column: Rect, size: Vec2, screen: Rect) -> Rect {
     let gap = 8.0;
@@ -334,7 +334,7 @@ pub fn place(anchor: Rect, column: Rect, size: Vec2, screen: Rect) -> Rect {
     Rect::from_min_size(clamp_into(pos2(anchor.left(), y), size, screen), size)
 }
 
-/// 窓の左上を、窓が画面に収まる所へ寄せる（収まらないほど画面が小さければ左上を合わせる）。
+/// ウィンドウの左上を、ウィンドウが画面に収まる所へ寄せる（収まらないほど画面が小さければ左上を合わせる）。
 pub fn clamp_into(min: Pos2, size: Vec2, screen: Rect) -> Pos2 {
     let area = screen.shrink(SCREEN_MARGIN);
     let x = min
@@ -346,7 +346,7 @@ pub fn clamp_into(min: Pos2, size: Vec2, screen: Rect) -> Pos2 {
     pos2(x, y)
 }
 
-/// 円の外接の正方形（窓の場所から）。
+/// 円の外接の正方形（ウィンドウの場所から）。
 pub fn wheel_of(window: Rect) -> Rect {
     Rect::from_min_size(
         pos2(window.left() + PAD, window.top() + HEADER_HEIGHT + PAD),
@@ -354,7 +354,7 @@ pub fn wheel_of(window: Rect) -> Rect {
     )
 }
 
-/// 16 進とアルファの行（窓の場所から）。
+/// 16 進とアルファの行（ウィンドウの場所から）。
 fn value_row(window: Rect) -> Rect {
     Rect::from_min_size(
         pos2(window.left() + PAD, wheel_of(window).bottom() + GAP),
@@ -362,7 +362,7 @@ fn value_row(window: Rect) -> Rect {
     )
 }
 
-/// 16 進の欄の場所（窓の場所と、相手がアルファを持つか）。
+/// 16 進の欄の場所（ウィンドウの場所と、相手がアルファを持つか）。
 pub fn hex_of(window: Rect, alpha: bool) -> Rect {
     let row = value_row(window);
     if alpha {
@@ -406,7 +406,7 @@ fn grid_height(rows: usize) -> f32 {
     }
 }
 
-/// 窓の大きさ（カラーセットの色の数で高さが変わる）。
+/// ウィンドウの大きさ（カラーセットの色の数で高さが変わる）。
 fn size_for(colors: usize) -> Vec2 {
     let (shown, _) = set_rows(colors);
     let set = if shown == 0 {
@@ -420,7 +420,7 @@ fn size_for(colors: usize) -> Vec2 {
     )
 }
 
-/// 窓が描くときに読む物（描画色・今のカラーセット）。
+/// ウィンドウが描くときに読む物（描画色・今のカラーセット）。
 pub struct Sources<'a> {
     pub lang: Lang,
     /// 描画色（0〜1 の RGBA。「描画色を入れる」の元）。
@@ -454,9 +454,9 @@ fn push(ctx: &Context, target: Id, update: Update) {
     ctx.request_repaint();
 }
 
-/// アプリの中の窓（描画色と今のカラーセットを読む。16 進が読めなければ知らせる）。フレームの終わりに 1 回呼ぶ。
+/// アプリの中のウィンドウ（描画色と今のカラーセットを読む。16 進が読めなければ知らせる）。フレームの終わりに 1 回呼ぶ。
 pub fn show_in_app(ctx: &Context, app: &mut AppState) {
-    // 確かめの窓（モーダル）の間は描かない（その窓より上に出て、下の欄を変えられないように）
+    // 確認のウィンドウ（モーダル）の間は描かない（そのウィンドウより上に出て、下の欄を変えられないように）
     if crate::windows::modal_open(app) {
         if is_open(ctx) {
             // 欄はモーダルの下で描かれ続けるので、開いたまま待つ
@@ -477,7 +477,7 @@ pub fn show_in_app(ctx: &Context, app: &mut AppState) {
     }
 }
 
-/// 窓を描く（開いていなければ何もしない）。フレームの終わりに 1 回呼ぶ。16 進の欄に読めない文字を決めたときは、知らせの文を返す。
+/// ウィンドウを描く（開いていなければ何もしない）。フレームの終わりに 1 回呼ぶ。16 進の欄に読めない文字を決めたときは、知らせの文を返す。
 pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
     let frame = ctx.cumulative_frame_nr();
     // 受け取られないまま古くなった変更（相手が描かれなくなった）を捨てる
@@ -514,7 +514,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
         .fixed_pos(window.min)
         .constrain(false)
         .show(ctx, |ui| {
-            // 窓の上の押下は下へ通さない
+            // ウィンドウの上の押下は下へ通さない
             ui.allocate_exact_size(window.size(), Sense::click_and_drag());
             let p = ui.painter().clone();
             for i in (1..=6).rev() {
@@ -526,7 +526,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 );
             }
             w::rounded(&p, window, t::PANEL_BG, 6.0);
-            // 見出しの帯（浮いた窓と同じ形: アイコン・欄の名前・閉じる）
+            // 見出しの帯（浮いたウィンドウと同じ形: アイコン・欄の名前・閉じる）
             let header = Rect::from_min_size(window.min, vec2(window.width(), HEADER_HEIGHT));
             w::rounded(&p, header, t::PANEL_HEADER, 6.0);
             w::fill(
@@ -872,7 +872,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
     // 開いたときの状態へ戻せるように）。この Esc を、ほかの物が使ったときは使わない:
     // - 欄の文字を打っている途中の Esc は、その入力をやめるだけ。egui は Esc を受けたフレームの初めに欄のフォーカスを外すので、
     //   今のフォーカスでは分からない。前のフレームの終わりにフォーカスがあったかで見る（キャンバスの `typed_last` と同じ）
-    // - 窓より先に描く部品が使った Esc（塗りつぶしの仕事の取消・色の名前の変更をやめる）は、`escape_taken` の印で見る
+    // - ウィンドウより先に描く部品が使った Esc（塗りつぶしの仕事の取消・色の名前の変更をやめる）は、`escape_taken` の印で見る
     let focused_now = ctx.memory(|m| m.focused().is_some());
     let typed_last = ctx
         .data(|d| d.get_temp::<(u64, bool)>(focus_id()))
@@ -1083,7 +1083,7 @@ mod tests {
         assert_eq!(set_rows(columns * 9), (MAX_SET_ROWS, 9));
         assert!(size_for(0).y < size_for(1).y);
         assert_eq!(size_for(columns * 4), size_for(columns * 20));
-        // 中の部品は窓の中に収まる
+        // 中の部品はウィンドウの中に収まる
         let window = Rect::from_min_size(pos2(0.0, 0.0), size_for(columns * 20));
         for part in [
             wheel_of(window),

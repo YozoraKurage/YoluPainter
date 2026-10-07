@@ -1,4 +1,4 @@
-//! 「＋」の窓（ブラシを追加）の中身: 種類ごと（組み込み・同梱の Krita・Photoshop・CLIP STUDIO・そのほかの取り込み・自分のブラシ）の
+//! 「＋」のウィンドウ（ブラシを追加）の中身: 種類ごと（組み込み・同梱の Krita・Photoshop・CLIP STUDIO・そのほかの取り込み・自分のブラシ）の
 //! 一覧・名前の検索・選び。選んだ物は今のグループの後ろへ置く（`BrushAction::AddFrom`。並びにある物と同梱の Krita は写しのファイルを作る）。
 //! 利用者のブラシのファイル（取り込んだ物・自分で作った物・写し）は、並びから外した物もここに出る。画面は `panels::brush_catalog`。
 
@@ -8,7 +8,7 @@ use crate::brushes::{builtin, store, BrushKey, Entry};
 use crate::lang::Lang;
 use crate::state::AppState;
 
-/// 「＋」の窓の 1 つ。
+/// 「＋」のウィンドウの 1 つ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CatalogItem {
     /// 組み込み（`builtin` の id）。
@@ -30,7 +30,7 @@ impl CatalogItem {
     }
 }
 
-/// 窓の左の種類。
+/// ウィンドウの左の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     Builtin,
@@ -87,7 +87,7 @@ pub fn kind_of(entry: &Entry) -> Kind {
     }
 }
 
-/// 窓の状態（開いているか・種類・検索・選んだ物・位置・スクロール）。
+/// ウィンドウの状態（開いているか・種類・検索・選んだ物・位置・スクロール）。
 pub struct Catalog {
     pub open: bool,
     pub kind: Kind,

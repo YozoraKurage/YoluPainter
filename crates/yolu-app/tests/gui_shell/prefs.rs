@@ -1,5 +1,5 @@
-//! 設定の窓（言語・書き出しの余白・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
-//! 設定のファイルへの保存と起動での復元、壊れた値の理由、窓の操作と日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
+//! 設定のウィンドウ（言語・書き出しの余白・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
+//! 設定のファイルへの保存と起動での復元、壊れた値の理由、ウィンドウの操作と日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
 use std::path::{Path, PathBuf};
@@ -108,7 +108,7 @@ fn headless_choosing_a_budget_changes_the_current_document_and_new_documents_fol
     assert_eq!(s.doc.minimum_undo_steps(), 100);
 }
 
-/// 文書の層に、タイルを `count` 枚ぶん（先頭から）不透明に塗って、画素を確保する（1 タイル 128 × 128 × 4 バイト = 64 KiB）。
+/// 文書のレイヤーに、タイルを `count` 枚ぶん（先頭から）不透明に塗って、画素を確保する（1 タイル 128 × 128 × 4 バイト = 64 KiB）。
 fn fill_tiles(
     doc: &mut Document,
     layer: LayerId,
@@ -251,7 +251,7 @@ fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so
     let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     s.load_settings(without_cache());
-    // 1 つ目のセットが 20 MiB（2048 × 2048 の 1 層は 16 MiB なので 2 層）使っているところへ、全体の予算 16 MiB
+    // 1 つ目のセットが 20 MiB（2048 × 2048 の 1 レイヤーは 16 MiB なので 2 レイヤー）使っているところへ、全体の予算 16 MiB
     let first = s.sets.current_index();
     for _ in 0..2 {
         s.apply(Action::NewLayer);
@@ -425,10 +425,10 @@ fn headless_the_other_values_are_kept_clamped_or_refused() {
     assert_eq!(s.settings().lang, Lang::En);
     s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
     assert_eq!(s.settings().lang, Lang::Ja);
-    // 棚の場所を選ぶ窓を頼む
+    // 棚の場所を選ぶウィンドウを頼む
     s.apply(Action::Prefs(PrefsAction::ChooseLibraryFolder));
     assert_eq!(s.dialog_request, Some(DialogRequest::PrefsLibraryFolder));
-    // 窓の開け閉め
+    // ウィンドウの開け閉め
     s.apply(Action::Prefs(PrefsAction::Open));
     assert!(s.prefs.open);
     s.apply(Action::Prefs(PrefsAction::Close));
@@ -508,7 +508,7 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     );
 }
 
-// ───────── 窓と設定のファイル ─────────
+// ───────── ウィンドウと設定のファイル ─────────
 
 fn settings_dir(tag: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -520,7 +520,7 @@ fn settings_dir(tag: &str) -> PathBuf {
     dir
 }
 
-/// 機械によらないキャッシュの置き場所（窓の絵に出る）と、そこの空きとして見せる量（自動のディスクの上限はその半分の 50 GiB）。
+/// 機械によらないキャッシュの置き場所（ウィンドウの絵に出る）と、そこの空きとして見せる量（自動のディスクの上限はその半分の 50 GiB）。
 fn fixed_cache_folder() -> PathBuf {
     PathBuf::from(if cfg!(windows) { "C:\\Cache" } else { "/Cache" })
 }
@@ -564,10 +564,10 @@ fn lowest<'h>(h: &'h Harness<'_, YoluApp>, label: &'h str) -> egui_kittest::Node
 }
 
 fn window_rect(h: &Harness<'_, YoluApp>) -> Rect {
-    prefs::last_rect(&h.ctx).expect("設定の窓が開いている")
+    prefs::last_rect(&h.ctx).expect("設定のウィンドウが開いている")
 }
 
-/// 窓の中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     let rect = window_rect(h);
     // 直前に押した所のポインタが絵に残らないように
@@ -632,7 +632,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     assert_eq!(h.state().state.doc.stroke_budget_bytes(), 256 * MIB);
     pick(&mut h, "表示の合成: 自動", "CPU");
     assert_eq!(h.state().state.prefs.settings.compositing, Compositing::Cpu);
-    // CPU のスレッドは次の起動から効く（窓に出る）
+    // CPU のスレッドは次の起動から効く（ウィンドウに出る）
     pick(&mut h, "CPU のスレッド: 自動（8）", "4");
     assert_eq!(h.state().state.prefs.settings.cpu_threads, Some(4));
     let _ = h.get_by_label("CPU のスレッド: 4 ・ 再起動で反映");
@@ -640,13 +640,13 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     h.run();
     assert!(!h.state().state.settings().livelink_on_startup);
     shot(&mut h, "prefs_window_changed");
-    // 言語（選ぶと窓の文言も替わる）
+    // 言語（選ぶとウィンドウの文言も替わる）
     pick(&mut h, "言語: 日本語", "English");
     assert_eq!(h.state().state.lang, Lang::En);
     let _ = h.get_by_label("Language: English");
     let _ = h.get_by_label("CPU threads: 4 · applies after restart");
     shot(&mut h, "prefs_window_english");
-    // 窓の中に全部収まっている（最後の行の下も）
+    // ウィンドウの中に全部収まっている（最後の行の下も）
     let last = h.get_by_label("Keep all").rect();
     assert!(window.contains_rect(last), "{window:?} {last:?}");
     // ファイル: 変えた値だけが書かれている
@@ -710,7 +710,7 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         h.state().state.doc.minimum_undo_steps(),
         h.state().state.prefs.settings.min_undo_steps as usize
     );
-    // 棚の場所: 初めは既定（「既定に戻す」は押せない）。選ぶ窓を頼み、選んだ場所が出る。ボタンの名前はキャッシュの場所と同じなので、
+    // 棚の場所: 初めは既定（「既定に戻す」は押せない）。選ぶウィンドウを頼み、選んだ場所が出る。ボタンの名前はキャッシュの場所と同じなので、
     // 下の節（ファイル）の方を押す
     assert_eq!(h.state().state.prefs.settings.library_folder, None);
     lowest(&h, "選ぶ…").click();
@@ -813,7 +813,7 @@ fn the_compositing_setting_reaches_the_canvas_display_at_startup_and_when_chosen
     std::fs::write(&path, "language=ja\ncompositing=cpu\n").unwrap();
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     assert_eq!(h.state().canvas_backend(), CanvasBackend::Cpu);
-    // 窓で選ぶと、次のフレームから替わる（GPU・自動も）
+    // ウィンドウで選ぶと、次のフレームから替わる（GPU・自動も）
     for (choice, want) in [
         (Compositing::Gpu, CanvasBackend::Gpu),
         (Compositing::Cpu, CanvasBackend::Cpu),
@@ -847,7 +847,7 @@ fn headless_loading_allows_the_set_budget_but_never_less_than_the_core_default()
         yolu_app::engine::DEFAULT_SOURCE_BUDGET_BYTES,
         "256 MiB を下回らない"
     );
-    // 状態からも同じ値（設定の窓で選ぶと変わる）
+    // 状態からも同じ値（設定のウィンドウで選ぶと変わる）
     let mut state = state();
     assert_eq!(state.load_source_bytes(), 8192 * MIB);
     set(&mut state, Pref::DiskCache(false));
@@ -858,7 +858,7 @@ fn headless_loading_allows_the_set_budget_but_never_less_than_the_core_default()
     assert_eq!(state.load_source_bytes(), 4096 * MIB);
 }
 
-// ───────── 窓の収まり・メニューの位置とキー・3D ビューの視点の中心 ─────────
+// ───────── ウィンドウの収まり・メニューの位置とキー・3D ビューの視点の中心 ─────────
 
 fn drawn_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
     use egui::epaint::Shape;
@@ -885,7 +885,7 @@ fn english(h: &mut Harness<'static, YoluApp>, lang: Lang) {
     h.run();
 }
 
-/// 窓の高さの見積もり（描く行の数と合わせた表）が、実際に並べた高さと同じ（行を足して数え違えると、最後の行が窓からはみ出す）。
+/// ウィンドウの高さの見積もり（描く行の数と合わせた表）が、実際に並べた高さと同じ（行を足して数え違えると、最後の行がウィンドウからはみ出す）。
 /// GPU とディスクキャッシュの詳しくの開け閉め・外からの操作の入り切（入っている間だけポート番号の行が出る）のどれでも。
 #[test]
 fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_languages() {
@@ -913,7 +913,7 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
                 let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
                 assert!(
                     (body - drawn).abs() < 0.5,
-                    "{lang:?} 外からの操作={ops} 詳しく={details} キャッシュの詳しく={cache}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
+                    "{lang:?} 外からの操作={ops} 詳しく={details} キャッシュの詳しく={cache}: ウィンドウの中身 {body} と、並べた高さ {drawn} が違う"
                 );
             }
         }
@@ -922,15 +922,15 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
     h.run();
 }
 
-/// どの大きさの窓でも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
-/// 横にははみ出さない。日英・いちばん小さい窓（960 × 640）。
+/// どの大きさのウィンドウでも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
+/// 横にははみ出さない。日英・いちばん小さいウィンドウ（960 × 640）。
 #[test]
 fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both_languages() {
     let dir = settings_dir("small");
     let path = dir.join("YoluPainter").join("settings.conf");
     for lang in Lang::ALL {
         let mut h = app_with_settings(&path, vec2(960.0, 640.0));
-        // 小さい窓では編集のメニューも長くてポップアップの中で送るので、窓はキーで開く
+        // 小さいウィンドウでは編集のメニューも長くてポップアップの中で送るので、ウィンドウはキーで開く
         key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
         h.run();
         assert!(h.state().state.prefs.open);
@@ -938,24 +938,24 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
         let window = window_rect(&h);
         let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 640.0));
         assert!(screen.contains_rect(window), "{lang:?}: {window:?}");
-        // 横: どの文字も窓の幅に収まる（見える所だけ）
+        // 横: どの文字もウィンドウの幅に収まる（見える所だけ）
         for (text, r) in drawn_texts(&h)
             .into_iter()
             .filter(|(_, r)| r.height() > 0.0 && window.contains(r.center()))
         {
             assert!(
                 r.left() >= window.left() - 0.5 && r.right() <= window.right() + 0.5,
-                "{lang:?}: 窓の横からはみ出す「{text}」{r:?} {window:?}"
+                "{lang:?}: ウィンドウの横からはみ出す「{text}」{r:?} {window:?}"
             );
         }
-        // 縦: 低い画面では中身が窓に収まらないので、つまみがある。ホイールで一番下まで送ると、最後の行が窓の中に入る
+        // 縦: 低い画面では中身がウィンドウに収まらないので、つまみがある。ホイールで一番下まで送ると、最後の行がウィンドウの中に入る
         let bar_in = |h: &Harness<'static, YoluApp>| {
             h.query_all_by_role(egui::accesskit::Role::ScrollBar)
                 .map(|n| n.rect())
                 .find(|r| window.contains_rect(*r))
         };
-        let bar =
-            bar_in(&h).unwrap_or_else(|| panic!("{lang:?}: 収まらないのに、窓の中につまみが無い"));
+        let bar = bar_in(&h)
+            .unwrap_or_else(|| panic!("{lang:?}: 収まらないのに、ウィンドウの中につまみが無い"));
         assert!(bar.height() > 100.0, "{bar:?}");
         let keep_all = lang.pick("すべて残す", "Keep all");
         h.event(egui::Event::PointerMoved(
@@ -973,10 +973,10 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
         let last = h.get_by_label(keep_all).rect();
         assert!(
             window.contains_rect(last),
-            "{lang:?}: 一番下の行 {last:?} が窓 {window:?} の外"
+            "{lang:?}: 一番下の行 {last:?} がウィンドウ {window:?} の外"
         );
         // つまみを掴んで一番上へ戻せる
-        let bar = bar_in(&h).expect("窓のつまみ");
+        let bar = bar_in(&h).expect("ウィンドウのつまみ");
         let grab = egui::pos2(bar.center().x, bar.bottom() - 6.0);
         drag(&mut h, &[grab, egui::pos2(grab.x, bar.top() - 50.0)]);
         h.run();
@@ -1035,7 +1035,7 @@ fn settings_is_the_last_item_of_the_edit_menu_after_a_separator_and_not_in_the_v
     }
 }
 
-/// Ctrl+, で設定の窓が開き、キーの一覧にも出る（名前はメニューと同じ）。
+/// Ctrl+, で設定のウィンドウが開き、キーの一覧にも出る（名前はメニューと同じ）。
 #[test]
 fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     let dir = settings_dir("key");
@@ -1049,7 +1049,7 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
     h.run();
     assert!(h.state().state.prefs.open);
-    // キーの一覧（読むだけの窓）にある
+    // キーの一覧（読むだけのウィンドウ）にある
     let binding = yolu_app::shortcuts::bindings()
         .into_iter()
         .find(|b| b.action == Action::Prefs(PrefsAction::Open))
@@ -1068,7 +1068,7 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     );
 }
 
-/// 3D の視点の中心（回転・ズーム）を設定の窓の「3D ビュー」の節でも選べる。3D ビューの表示の設定の「視点」と同じ値で、設定のファイルに
+/// 3D の視点の中心（回転・ズーム）を設定のウィンドウの「3D ビュー」の節でも選べる。3D ビューの表示の設定の「視点」と同じ値で、設定のファイルに
 /// 書かれ、次の起動で戻る。
 #[test]
 fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_restart() {
@@ -1091,7 +1091,7 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
     assert_eq!(s.prefs.settings.navigation.orbit, OrbitCenter::TextureSet);
     assert_eq!(s.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
 
-    // 窓で選ぶ（節の見出しと値の箱）
+    // ウィンドウで選ぶ（節の見出しと値の箱）
     let dir = settings_dir("pivot");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
@@ -1304,7 +1304,7 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
         .contains("external_ops=on"));
 }
 
-/// ポート番号の行は、「外からの操作を受ける」を入れている間だけ、そのすぐ下に出る（切ると消え、窓も 1 行分低くなる）。日英の絵。
+/// ポート番号の行は、「外からの操作を受ける」を入れている間だけ、そのすぐ下に出る（切ると消え、ウィンドウも 1 行分低くなる）。日英の絵。
 #[test]
 fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
     let dir = settings_dir("ops-port");
@@ -1322,7 +1322,7 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
             shelf,
         )))));
     // 絵には既定の番号を出す。試験のアプリがその番号で外からの要求を受けないよう、先に取っておく（取れなければ、ほかのプログラムが
-    // 使っている。どちらでも試験のアプリは待てず、窓の中身は同じ）
+    // 使っている。どちらでも試験のアプリは待てず、ウィンドウの中身は同じ）
     let _held = std::net::TcpListener::bind(("127.0.0.1", yolu_mcp::DEFAULT_PORT));
     open_settings(&mut h);
     let has_port_row = |h: &Harness<'_, YoluApp>, label: &str| {
@@ -1353,7 +1353,7 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
     );
     let open = window_rect(&h);
     assert!(open.height() > closed.height(), "{closed:?} {open:?}");
-    // 待てなかった知らせは状態の帯の丸の試験が見る。ここでは窓だけを撮る
+    // 待てなかった知らせは状態の帯の丸の試験が見る。ここではウィンドウだけを撮る
     h.state_mut().state.clear_message();
     h.run();
     shot(&mut h, "prefs_window_external_ops");
@@ -1426,7 +1426,7 @@ fn headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_t
     set(&mut s, Pref::DiskCache(false));
     assert_eq!(s.doc.source_budget_bytes(), 8 * GIB);
     assert_eq!(s.load_source_bytes(), 8 * GIB);
-    // 場所を選ぶ窓・既定に戻す
+    // 場所を選ぶウィンドウ・既定に戻す
     s.apply(Action::Prefs(PrefsAction::ChooseCacheFolder));
     assert_eq!(s.dialog_request, Some(DialogRequest::PrefsCacheFolder));
     set(&mut s, Pref::DiskCacheFolder(None));
@@ -1448,7 +1448,7 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 1000.0));
     open_settings(&mut h);
-    // 窓に出る場所は、機械によらない場所にして撮る
+    // ウィンドウに出る場所は、機械によらない場所にして撮る
     let shelf = PathBuf::from(if cfg!(windows) {
         "C:\\Library"
     } else {
@@ -1488,7 +1488,7 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
         h.state().state.doc.source_budget_bytes(),
         10 * GIB + 16 * GIB
     );
-    // 置き場所を選ぶ窓を頼む（棚の場所の「選ぶ…」より上の方）
+    // 置き場所を選ぶウィンドウを頼む（棚の場所の「選ぶ…」より上の方）
     highest(&h, "選ぶ…").click();
     h.run();
     assert_eq!(

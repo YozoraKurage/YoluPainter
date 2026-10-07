@@ -628,8 +628,11 @@ fn the_built_input_is_released_when_nothing_needs_it() {
     assert!(s.bake_input().is_ok());
     assert!(s.bake.input.is_some());
     s.release_idle_bake_input();
-    assert!(s.bake.input.is_none(), "窓も焼いたマップも無ければ手放す");
-    // 窓を開いている間・マップがあるあいだは持つ
+    assert!(
+        s.bake.input.is_none(),
+        "ウィンドウも焼いたマップも無ければ手放す"
+    );
+    // ウィンドウを開いている間・マップがあるあいだは持つ
     s.apply(bake(BakeAction::OpenWindow));
     assert!(s.bake_input().is_ok());
     s.release_idle_bake_input();
@@ -644,7 +647,7 @@ fn the_built_input_is_released_when_nothing_needs_it() {
 
 #[test]
 fn closing_the_window_frees_the_input_the_overlap_caches_point_at() {
-    // 窓を閉じて、焼いたマップも走っているベイクも無ければ、島の索引・見取り図も入力と形を握り続けない
+    // ウィンドウを閉じて、焼いたマップも走っているベイクも無ければ、アイランドの索引・見取り図も入力と形を握り続けない
     let mut s = cube();
     let geometry_refs = |s: &AppState| Arc::strong_count(&s.view3d.full_model().unwrap().geometry);
     let baseline = geometry_refs(&s);
@@ -656,12 +659,16 @@ fn closing_the_window_frees_the_input_the_overlap_caches_point_at() {
     assert!(s.overlap_map().is_some(), "見取り図の中身ができる");
     assert!(s.bake.islands.is_some() && s.bake.map.is_some());
     assert!(geometry_refs(&s) > baseline, "見取り図が形を握っている");
-    // 窓を開いている間は、入力も索引も見取り図も持つ
+    // ウィンドウを開いている間は、入力も索引も見取り図も持つ
     s.release_idle_bake_input();
     assert!(s.bake.input.is_some() && s.bake.islands.is_some() && s.bake.map.is_some());
     s.apply(bake(BakeAction::CloseWindow));
-    assert!(s.bake.map.is_none(), "見取り図は窓の物");
-    assert_eq!(geometry_refs(&s), baseline, "窓を閉じたら形を握らない");
+    assert!(s.bake.map.is_none(), "見取り図はウィンドウの物");
+    assert_eq!(
+        geometry_refs(&s),
+        baseline,
+        "ウィンドウを閉じたら形を握らない"
+    );
     s.release_idle_bake_input();
     assert!(s.bake.input.is_none());
     assert!(s.bake.islands.is_none(), "手放した入力を索引が握っている");
@@ -671,7 +678,7 @@ fn closing_the_window_frees_the_input_the_overlap_caches_point_at() {
 
 #[test]
 fn the_island_index_of_the_polygon_fill_menu_does_not_outlive_the_input() {
-    // 窓を開かずに、ポリゴン塗りつぶしの右クリックだけで島の索引を作った場合
+    // ウィンドウを開かずに、ポリゴン塗りつぶしの右クリックだけでアイランドの索引を作った場合
     let mut s = cube();
     let islands = s.overlap_islands(true).unwrap().unwrap();
     let weak = Arc::downgrade(&s.bake_input().unwrap());
@@ -684,7 +691,7 @@ fn the_island_index_of_the_polygon_fill_menu_does_not_outlive_the_input() {
 
 #[test]
 fn an_island_index_of_a_replaced_input_is_dropped_while_the_window_is_open() {
-    // 窓を開いている間にモデルの形が替わって入力が作り直されたら、古い入力に結び付いた索引は残さない
+    // ウィンドウを開いている間にモデルの形が替わって入力が作り直されたら、古い入力に結び付いた索引は残さない
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0));
@@ -695,7 +702,10 @@ fn an_island_index_of_a_replaced_input_is_dropped_while_the_window_is_open() {
     let now = s.bake_input().unwrap();
     assert!(old.upgrade().is_some(), "索引がまだ古い入力を握っている");
     s.release_idle_bake_input();
-    assert!(s.bake.input.is_some(), "窓を開いている間は今の入力を持つ");
+    assert!(
+        s.bake.input.is_some(),
+        "ウィンドウを開いている間は今の入力を持つ"
+    );
     assert!(s.bake.islands.is_none());
     assert!(old.upgrade().is_none(), "古い入力が残っている");
     assert!(matches!(s.overlap_islands(true), Some(Ok(i)) if i.is_on(&now)));
@@ -719,7 +729,7 @@ fn lift(s: &mut AppState, z: f32) {
     .unwrap();
 }
 
-/// 窓の表示と同じ作り方（別のスレッド）で入力ができるまで待つ。
+/// ウィンドウの表示と同じ作り方（別のスレッド）で入力ができるまで待つ。
 fn wait_input(s: &mut AppState) -> Result<Arc<MeshBakeInput>, String> {
     let start = Instant::now();
     loop {
@@ -775,7 +785,7 @@ fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() 
             MeshMapState::Current,
             "{round} 回目"
         );
-        // 窓は閉じていて、マップがあるので入力は残っている。そのまま 2 回替わる
+        // ウィンドウは閉じていて、マップがあるので入力は残っている。そのまま 2 回替わる
         let z = 0.01 * (2 * round + 1) as f32;
         lift(&mut s, z);
         lift(&mut s, z + 0.01);
@@ -817,7 +827,7 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
     s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
-    // 作っている最中は None（窓は「確認中」）。入力の理由で断らない
+    // 作っている最中は None（ウィンドウは「確認中」）。入力の理由で断らない
     assert!(s.bake_input_nowait().is_none());
     assert!(s.bake.is_checking());
     assert_eq!(s.bake_refusal_nowait(), None);
@@ -830,7 +840,7 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
         "同じモデルなら作り直さない"
     );
 
-    // モデルが替わると、また別のスレッドで作り直す（その間も窓は止まらない）
+    // モデルが替わると、また別のスレッドで作り直す（その間もウィンドウは止まらない）
     lift(&mut s, 0.3);
     assert!(s.bake_input_nowait().is_none());
     assert!(s.bake.is_checking());
@@ -847,7 +857,7 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
     assert_eq!(waited.hash(), fresh_hash(&s));
     assert!(!s.bake.is_checking());
 
-    // 窓を閉じていれば、作っている最中のものは手放す
+    // ウィンドウを閉じていれば、作っている最中のものは手放す
     lift(&mut s, 0.6);
     assert!(s.bake_input_nowait().is_none());
     s.release_idle_bake_input();
@@ -1008,7 +1018,7 @@ fn choosing_a_backend_probes_the_gpu_in_another_thread_and_a_different_choice_pr
     if let Ok(a) = &second {
         assert!(!a.software, "自動はソフトウェアの描画を使わない: {a:?}");
     }
-    // 窓の一行は確かめた結果を言う
+    // ウィンドウの一行は確かめた結果を言う
     let line = probe_line(Lang::Ja, BakeBackend::Auto, &s.bake.gpu_probe()).unwrap();
     assert_eq!(line.warn, second.is_err());
     assert_eq!(line.detail.is_some(), second.is_err());
@@ -1422,7 +1432,7 @@ fn baked_two_sets(flat: &[usize]) -> AppState {
 }
 
 /// 複数のセットのまとめの知らせは、どれかのセットに UV の注意があれば注意のまま、その文も添える（最後のセットが無事でも、
-/// 最初のセットの注意をまとめの済んだ知らせで上書きして消さない。トーストと窓の下の帯の両方）。同じ注意は 1 回だけ。
+/// 最初のセットの注意をまとめの済んだ知らせで上書きして消さない。トーストとウィンドウの下の帯の両方）。同じ注意は 1 回だけ。
 #[test]
 fn the_summary_of_several_sets_keeps_the_uv_warning_of_any_set() {
     use crate::notice::Kind;
@@ -1447,9 +1457,9 @@ fn the_summary_of_several_sets_keeps_the_uv_warning_of_any_set() {
             Kind::Warning
         };
         assert_eq!(s.message_kind(), expected, "{flat:?}: {}", s.message);
-        let (outcome, ok) = s.bake.outcome.clone().expect("窓の下の結果");
+        let (outcome, ok) = s.bake.outcome.clone().expect("ウィンドウの下の結果");
         assert_eq!((outcome.as_str(), ok), (s.message.as_str(), true));
-        // ログの窓には、セットごとの注意とまとめの注意（種類は注意）が入る
+        // ログのウィンドウには、セットごとの注意とまとめの注意（種類は注意）が入る
         let logged = s
             .notice_log
             .entries()

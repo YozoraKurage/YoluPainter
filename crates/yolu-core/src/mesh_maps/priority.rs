@@ -2,7 +2,7 @@
 //!
 //! 同じテクセルを 2 つ以上の三角形が覆うとき、受け手の並び（`Raster::row`）で先の三角形が持ち主になる。ここはその並びを決める:
 //! 手で「焼かない」にした UV アイランドと、0〜1 の外へずらした UV アイランド（選んだときだけ）を受け手から外し、残りを「優先する」に
-//! した島 → 自動の決め方（番号・3D の面積・ミラーの片側）→ 三角形の番号の順に並べる。既定（番号の小さい方・外さない）は今までと
+//! したアイランド → 自動の決め方（番号・3D の面積・ミラーの片側）→ 三角形の番号の順に並べる。既定（番号の小さい方・外さない）は今までと
 //! 同じ並び（番号の昇順）で、焼いた値と由来の鍵もバイトまで同じ。
 use super::{
     check,
@@ -12,7 +12,7 @@ use super::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-/// 手で選んだ島の数の上限（それぞれの一覧で）。
+/// 手で選んだアイランドの数の上限（それぞれの一覧で）。
 pub const MAX_OVERLAP_ISLANDS: usize = 4096;
 
 /// 重なったテクセルの持ち主の自動の決め方。
@@ -50,7 +50,7 @@ impl MeshOverlapRule {
     }
 }
 
-/// 手で選んだ島をどちらの一覧に入れるか。
+/// 手で選んだアイランドをどちらの一覧に入れるか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeshOverlapList {
     /// 焼かない（受け手から外す。遮蔽には使う）。
@@ -59,13 +59,13 @@ pub enum MeshOverlapList {
     Prefer,
 }
 
-/// 重なった UV のテクセルの持ち主の決め方（テクスチャセットごと）。島は、その島の三角形の番号（モデルの全体の通し番号、
-/// `MeshBakeInput` の並び）の 1 つで覚え、焼くときに `bake_islands` で島に広げる。番号はモデルの形に結び付くので、結び付けたモデルの
+/// 重なった UV のテクセルの持ち主の決め方（テクスチャセットごと）。アイランドは、そのアイランドの三角形の番号（モデルの全体の通し番号、
+/// `MeshBakeInput` の並び）の 1 つで覚え、焼くときに `bake_islands` でアイランドに広げる。番号はモデルの形に結び付くので、結び付けたモデルの
 /// 指紋（`MeshBakeInput::topology_hash`）と一緒に持ち、違うモデルでは焼く前に断る。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshOverlapPriority {
     pub rule: MeshOverlapRule,
-    /// UV の外接矩形が 0〜1 の正方形と重ならない島（0〜1 の外へずらした島）を焼かない。切っているときは今までどおり、0〜1 の外の
+    /// UV の外接矩形が 0〜1 の正方形と重ならないアイランド（0〜1 の外へずらしたアイランド）を焼かない。切っているときは今までどおり、0〜1 の外の
     /// UV があれば焼く前に断る。
     pub skip_outside: bool,
     binding: String,
@@ -73,7 +73,7 @@ pub struct MeshOverlapPriority {
     prefer: BTreeSet<usize>,
 }
 impl MeshOverlapPriority {
-    /// 手で選んだ島を含めて作る。一覧が空なら指紋は持たない。
+    /// 手で選んだアイランドを含めて作る。一覧が空なら指紋は持たない。
     pub fn new(
         rule: MeshOverlapRule,
         skip_outside: bool,
@@ -99,11 +99,11 @@ impl MeshOverlapPriority {
             self.skip.len() <= MAX_OVERLAP_ISLANDS
                 && self.prefer.len() <= MAX_OVERLAP_ISLANDS
                 && self.skip.iter().chain(&self.prefer).all(|t| *t < 4_000_000),
-            "手で選んだ島の数か番号が範囲外です",
+            "手で選んだアイランドの数か番号が範囲外です",
         )?;
         check(
             self.skip.is_disjoint(&self.prefer),
-            "同じ島が「焼かない」と「優先する」の両方にあります",
+            "同じアイランドが「焼かない」と「優先する」の両方にあります",
         )?;
         check(
             (self.skip.is_empty() && self.prefer.is_empty() && self.binding.is_empty())
@@ -112,26 +112,26 @@ impl MeshOverlapPriority {
                         .binding
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "手で選んだ島のモデル指紋が不正です",
+            "手で選んだアイランドのモデル指紋が不正です",
         )
     }
-    /// 今までと同じ（番号の小さい方・外さない・手で選んだ島なし）か。
+    /// 今までと同じ（番号の小さい方・外さない・手で選んだアイランドなし）か。
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
-    /// 手で選んだ島を結び付けたモデルの指紋（一覧が空なら空）。
+    /// 手で選んだアイランドを結び付けたモデルの指紋（一覧が空なら空）。
     pub fn binding(&self) -> &str {
         &self.binding
     }
-    /// 「焼かない」の島（島の三角形の番号の 1 つ、昇順）。
+    /// 「焼かない」のアイランド（アイランドの三角形の番号の 1 つ、昇順）。
     pub fn skipped(&self) -> &BTreeSet<usize> {
         &self.skip
     }
-    /// 「優先する」の島。
+    /// 「優先する」のアイランド。
     pub fn preferred(&self) -> &BTreeSet<usize> {
         &self.prefer
     }
-    /// 島（その三角形の番号 `island`）をどちらかの一覧に入れる（もう一方からは外す）か、`None` なら両方から外す。別のモデルの一覧に
+    /// アイランド（その三角形の番号 `island`）をどちらかの一覧に入れる（もう一方からは外す）か、`None` なら両方から外す。別のモデルの一覧に
     /// 足すのは断る（外すのは指紋によらず受ける）。
     pub fn with_island(
         &self,
@@ -148,7 +148,7 @@ impl MeshOverlapPriority {
             Some(list) => {
                 check(
                     (self.skip.is_empty() && self.prefer.is_empty()) || self.binding == binding,
-                    "手で選んだ島が別のモデルに属しています",
+                    "手で選んだアイランドが別のモデルに属しています",
                 )?;
                 match list {
                     MeshOverlapList::Skip => skip.insert(island),
@@ -189,15 +189,15 @@ impl MeshOverlapPriority {
     }
 }
 
-/// 優先・焼かないの単位の島（三角形ごとの番号。番号は島の一番小さい三角形の順に 0 から）: UV でも 3D の位置でも同じ辺を共有して
-/// つながる三角形（同じスロットの中。UV は 1e-6、位置は 1e-5 に量子化した頂点で比べる）。範囲の道具の UV アイランド（UV だけで
-/// つなぐ）と違い、UV がぴったり重なったミラーの両側は別の島になる（両側を 1 つの島にすると、片側だけを選べない）。UV の継ぎ目では
+/// 優先・焼かないの単位のアイランド（三角形ごとの番号。番号はアイランドの一番小さい三角形の順に 0 から）: UV でも 3D の位置でも同じ辺を共有して
+/// つながる三角形（同じスロットの中。UV は 1e-6、位置は 1e-5 に量子化した頂点で比べる）。範囲のツールの UV アイランド（UV だけで
+/// つなぐ）と違い、UV がぴったり重なったミラーの両側は別のアイランドになる（両側を 1 つのアイランドにすると、片側だけを選べない）。UV の継ぎ目では
 /// UV アイランドと同じく分かれる。
 pub fn bake_islands(input: &MeshBakeInput) -> Vec<usize> {
     islands_of(&input.corners, &input.uvs, &input.slots)
 }
 
-/// `bake_islands` と同じ島を、三角形ごとの角の位置（9）・UV（6）・スロット（1）の並びから作る（モデルの表示の形からも同じ決まりで
+/// `bake_islands` と同じアイランドを、三角形ごとの角の位置（9）・UV（6）・スロット（1）の並びから作る（モデルの表示の形からも同じ決まりで
 /// 引けるように）。並びの長さが合わなければ、短い方の三角形の数まで。
 pub fn islands_of(corners: &[f32], uvs: &[f32], slots: &[i32]) -> Vec<usize> {
     let n = slots.len().min(corners.len() / 9).min(uvs.len() / 6);
@@ -237,7 +237,7 @@ pub fn islands_of(corners: &[f32], uvs: &[f32], slots: &[i32]) -> Vec<usize> {
         .collect()
 }
 
-/// 島ごとの集計（受け手の三角形だけ）。
+/// アイランドごとの集計（受け手の三角形だけ）。
 #[derive(Clone, Copy, Default)]
 struct Island {
     area: f64,
@@ -258,8 +258,8 @@ fn triangle_area_and_x(input: &MeshBakeInput, t: usize) -> (f64, f64) {
     (area, (a[0] + b[0] + c[0]) / 3.)
 }
 
-/// 受け手（`candidates`。元の番号の昇順）から焼かない島を外し、重なったテクセルを先に取る順に並べる。0〜1 の外の UV の拒否もここ
-/// （外へずらした島を外したあとの残りで見る）。
+/// 受け手（`candidates`。元の番号の昇順）から焼かないアイランドを外し、重なったテクセルを先に取る順に並べる。0〜1 の外の UV の拒否もここ
+/// （外へずらしたアイランドを外したあとの残りで見る）。
 pub(crate) fn arrange(
     input: &MeshBakeInput,
     p: &MeshOverlapPriority,
@@ -270,14 +270,14 @@ pub(crate) fn arrange(
     if manual {
         check(
             p.binding == input.topology_hash,
-            "手で選んだ島が別のモデルに属しています",
+            "手で選んだアイランドが別のモデルに属しています",
         )?;
         check(
             p.skip
                 .iter()
                 .chain(&p.prefer)
                 .all(|t| *t < input.triangle_count()),
-            "手で選んだ島の番号がモデルにありません",
+            "手で選んだアイランドの番号がモデルにありません",
         )?;
     }
     let needs_islands = manual || p.skip_outside || p.rule != MeshOverlapRule::LowestIndex;
@@ -310,7 +310,7 @@ pub(crate) fn arrange(
     }
     let skip: BTreeSet<usize> = p.skip.iter().map(|t| island_of[*t]).collect();
     let prefer: BTreeSet<usize> = p.prefer.iter().map(|t| island_of[*t]).collect();
-    // UV の外接矩形が 0〜1 の正方形と（拒否と同じ許し幅を超えて）重ならない島
+    // UV の外接矩形が 0〜1 の正方形と（拒否と同じ許し幅を超えて）重ならないアイランド
     const EPS: f64 = 1e-6;
     let outside = |i: &Island| {
         p.skip_outside
@@ -329,7 +329,7 @@ pub(crate) fn arrange(
     if p.rule == MeshOverlapRule::LowestIndex && prefer.is_empty() {
         return Ok(receivers);
     }
-    // 面積は全体の面積との比を 1e9 段に丸めて比べる（足し算の順だけで生じる差で、同じ形の島の順が入れ替わらないように）
+    // 面積は全体の面積との比を 1e9 段に丸めて比べる（足し算の順だけで生じる差で、同じ形のアイランドの順が入れ替わらないように）
     let total: f64 = islands
         .iter()
         .map(|i| i.area)

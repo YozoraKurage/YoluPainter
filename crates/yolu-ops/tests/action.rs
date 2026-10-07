@@ -254,7 +254,7 @@ fn selected_is_refused_without_a_screen_and_created_only_inside_a_run() {
     let fx = Fixture::new("action-relative");
     fx.project("a.ylp");
     let mut host = fx.host("a.ylp");
-    // .ylp には選んでいた層が入っていない
+    // .ylp には選んでいたレイヤーが入っていない
     let e = err(
         &mut host,
         json!({"command": "layer.set", "args": {"layer": "$selected", "visible": false}}),

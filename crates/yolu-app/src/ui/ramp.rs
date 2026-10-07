@@ -379,7 +379,7 @@ pub fn stops_editor(
     );
     let drag_id = id.with("drag");
     let mut drag: Option<StopDrag> = ui.data(|d| d.get_temp(drag_id));
-    // 別のランプのドラッグ（層を替えたなど）の下書きは、今のランプへ当てずに捨てる
+    // 別のランプのドラッグ（レイヤーを替えたなど）の下書きは、今のランプへ当てずに捨てる
     if drag.as_ref().is_some_and(|d| d.original != *ramp) {
         ui.data_mut(|data| data.remove::<StopDrag>(drag_id));
         drag = None;

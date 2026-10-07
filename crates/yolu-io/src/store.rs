@@ -429,14 +429,14 @@ fn show(path: &Path) -> Result<()> {
 fn show(_: &Path) -> Result<()> {
     Ok(())
 }
-/// 置換が共有違反のとき、自分のハンドルを手放す前に、手放さずに待つ合計（[`BUSY_BUDGET`] の内側）。NTFS では、外の道具（ウイルス対策・
-/// 同期の道具・Unity の取り込み）が掴んでいるのが普通の原因で、自分のハンドルは置換を妨げない。たいていはこの間に手放されるので、
+/// 置換が共有違反のとき、自分のハンドルを手放す前に、手放さずに待つ合計（[`BUSY_BUDGET`] の内側）。NTFS では、外のツール（ウイルス対策・
+/// 同期のツール・Unity の取り込み）が掴んでいるのが普通の原因で、自分のハンドルは置換を妨げない。たいていはこの間に手放されるので、
 /// 手放さずに通れば、保存前のプロジェクトの写しは読めたまま残る。
 const RELEASE_AFTER: Duration = Duration::from_millis(300);
 /// 一時ファイルを保存先へ置き換えて移す。共有違反・アクセス拒否のあいだは短くやり直す（[`retry_busy`]）。[`RELEASE_AFTER`] たっても通ら
 /// ないときだけ、このプロセスが開いている保存先のハンドル（開いた .ylp の位置読み）を手放して、残りの待ちでやり直す: 置き換えの規則が
 /// POSIX でないファイルシステム（FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、自分のハンドルが原因の
-/// ことがある（NTFS と Unix は開いたままでも通る）。外の道具が長く掴んでいるだけのときも、手放してから通れば同じ結果になる（原因を
+/// ことがある（NTFS と Unix は開いたままでも通る）。外のツールが長く掴んでいるだけのときも、手放してから通れば同じ結果になる（原因を
 /// 見分けられない）。置き換えられなければ掴み直す。置き換えられたら手放したまま（古い版の写しは、読もうとすると断る）。
 fn replace_file(from: &Path, to: &Path, seams: &mut Seams<'_>) -> io::Result<()> {
     let busy = seams.busy;
@@ -1189,7 +1189,7 @@ mod tests {
     fn project() -> Project {
         Project::read(ORIGINAL).unwrap()
     }
-    /// 層の名前だけを変えた別の版（保存するとバイト列が変わる）。
+    /// レイヤーの名前だけを変えた別の版（保存するとバイト列が変わる）。
     fn changed(p: &Project, name: &str) -> Project {
         let d = p.sets()[0]
             .document
@@ -1391,7 +1391,7 @@ mod tests {
             .document
             .with_value(
                 "layers[0].name",
-                crate::NativeValue::Text("変更した層".into()),
+                crate::NativeValue::Text("変更したレイヤー".into()),
             )
             .unwrap();
         let changed = p.with_document(&p.sets()[0].id, &d).unwrap();
@@ -1920,7 +1920,7 @@ mod tests {
 
     // ───────────── 退避の保持数 ─────────────
 
-    /// 初めの版（ORIGINAL）から `n` 回、層の名前を変えて保存し、保存のたびのファイルの中身を返す（先頭は ORIGINAL）。
+    /// 初めの版（ORIGINAL）から `n` 回、レイヤーの名前を変えて保存し、保存のたびのファイルの中身を返す（先頭は ORIGINAL）。
     fn save_versions(s: &Scratch, keep: BackupKeep, n: usize) -> Vec<Vec<u8>> {
         let (p, mut t) = open_original(s);
         let mut versions = vec![ORIGINAL.to_vec()];
@@ -3053,7 +3053,7 @@ mod tests {
     }
     #[test]
     fn a_replace_that_goes_through_within_the_wait_keeps_our_handles() {
-        // NTFS で外の道具（ウイルス対策・同期・Unity の取り込み）が一時的に掴んでいるだけなら、自分のハンドルは原因ではない: 手放さずに
+        // NTFS で外のツール（ウイルス対策・同期・Unity の取り込み）が一時的に掴んでいるだけなら、自分のハンドルは原因ではない: 手放さずに
         // 待って通り、保存前のプロジェクトの写しも読めたまま
         BY_HANDLE.scoped(|| {
             let s = Scratch::new();
@@ -3063,7 +3063,7 @@ mod tests {
             let (mut busy_left, mut slept, mut readable) = (3, Vec::new(), Vec::new());
             let report = t
                 .save_replacing_report(
-                    &changed(&p, "外の道具が掴んでいた"),
+                    &changed(&p, "外のツールが掴んでいた"),
                     |from, to| {
                         readable.push(blob.bytes().is_ok());
                         if busy_left > 0 {
@@ -3531,7 +3531,7 @@ mod tests {
             );
         }
     }
-    /// （Windows でだけ回る）外の道具が削除を共有せずに保存先を開いているあいだは置き換えが共有違反になる。手放されるまで待ってやり直し、通る。
+    /// （Windows でだけ回る）外のツールが削除を共有せずに保存先を開いているあいだは置き換えが共有違反になる。手放されるまで待ってやり直し、通る。
     #[cfg(windows)]
     #[test]
     fn a_real_sharing_violation_on_the_target_is_waited_out() {

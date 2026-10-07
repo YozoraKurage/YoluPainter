@@ -33,7 +33,10 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
 
 fn new_adjustment(h: &mut Harness<'_, YoluApp>, kind: AdjustmentKind) -> LayerId {
     apply(h, Action::M2(Edit::NewAdjustment(kind)));
-    h.state().state.selected_layer.expect("足した層を選ぶ")
+    h.state()
+        .state
+        .selected_layer
+        .expect("足したレイヤーを選ぶ")
 }
 
 fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
@@ -44,7 +47,7 @@ fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
         .unwrap()
         .adjustment()
         .and_then(|a| a.color_adjust())
-        .expect("色調補正の層")
+        .expect("色調補正のレイヤー")
 }
 
 fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
@@ -140,7 +143,7 @@ fn a_threshold_slider_drag_in_the_panel_is_one_undo_step_and_undo_restores_it() 
 
 #[test]
 fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
-    // 高い窓（カラーバランスの欄の下の行まで、ドックの内側に収める）
+    // 高いウィンドウ（カラーバランスの欄の下の行まで、ドックの内側に収める）
     let mut h = app(1280.0, 1300.0, 64);
     let id = new_adjustment(&mut h, AdjustmentKind::BrightnessContrast);
     let steps = undo_count(&h);
@@ -178,7 +181,7 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
     assert_eq!(undo_count(&h), steps + 2, "スライダーと切り替えは別の Undo");
 }
 
-/// 右の列を、その名前の部品が見える所（窓の中ほど）まで送る（欄は縦に長く、窓の外にはみ出す）。
+/// 右の列を、その名前の部品が見える所（ウィンドウの中ほど）まで送る（欄は縦に長く、ウィンドウの外にはみ出す）。
 fn scroll_panel_to(h: &mut Harness<'_, YoluApp>, label: &str) {
     let r = rect_of(h, label, |r| r.left() > 1000.0);
     let scroll = h.state().state.m2.props_scroll + (r.top() - 900.0);
@@ -223,7 +226,7 @@ fn the_gradient_map_panel_applies_a_preset_flips_and_undoes() {
 #[test]
 fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_what_lies_below() {
     let mut h = app(1280.0, 1000.0, 64);
-    // 下に絵のある調整の層（分布が出る）
+    // 下に絵のある調整レイヤー（分布が出る）
     apply(&mut h, Action::NewLayer);
     let paint = h.state().state.selected_layer.unwrap();
     for y in 0..64 {
@@ -266,7 +269,7 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
         panic!()
     };
     assert!(v.is_identity());
-    // 層の下の分布は、文書の合成の下半分（調整の層より下）から求め、文書が変わるまで同じ
+    // レイヤーの下の分布は、文書の合成の下半分（調整レイヤーより下）から求め、文書が変わるまで同じ
     let doc = &h.state().state.doc;
     let hist = yolu_app::panels::color_adjust::Histogram::below(doc, id, Channel::Color).unwrap();
     assert!(
@@ -335,7 +338,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
                 _ => AdjustmentType::Posterize,
             }
         );
-        // 段を選ぶと欄が出る（調整の層と同じ欄）
+        // 段を選ぶと欄が出る（調整レイヤーと同じ欄）
         apply(&mut h, Action::Fx(FxOp::SelectFilter { layer, id }));
         let probe = match kind {
             FilterKind::GradientMap => "逆向き",
@@ -575,7 +578,7 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
         .layers()
         .iter()
         .find_map(|l| l.adjustment().and_then(|a| a.color_adjust()))
-        .expect("調整の層");
+        .expect("調整レイヤー");
     assert_eq!(again, mixed);
     let _ = std::fs::remove_dir_all(dir);
     // 1 つずつ Undo で戻り、Redo で進む
@@ -602,7 +605,7 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
     click(&mut h, swatch.center());
     let target = yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0);
     assert!(yolu_app::panels::color_window::is_target(&h.ctx, target));
-    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓が開く");
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウが開く");
     let wheel = yolu_app::panels::color_window::wheel_of(window);
     let sq = yolu_app::panels::color::wheel_square(wheel);
     drag(

@@ -4,7 +4,7 @@
 //!
 //! - 再生は今のテクスチャセットの文書へ。描いている最中・保存の途中は断る（Refusal）。途中の命令が断ったら、そこまでを戻して、
 //!   何番目の命令が・なぜかを知らせる（Error。ログに残る）。記録中は再生しない。
-//! - 記録を止めると、命令が 1 つ以上あれば「アクション N」の名前で保存する（名前は窓で変えられる）。
+//! - 記録を止めると、命令が 1 つ以上あれば「アクション N」の名前で保存する（名前はウィンドウで変えられる）。
 
 pub mod record;
 pub mod store;
@@ -13,7 +13,7 @@ use crate::lang::Lang;
 use crate::notice::{Kind, Source};
 use crate::state::AppState;
 
-/// アクションの窓の操作。
+/// アクションのウィンドウの操作。
 #[derive(Clone, Debug, PartialEq)]
 pub enum AutomationOp {
     /// 記録を始める。
@@ -43,7 +43,7 @@ impl AutomationOp {
     }
 }
 
-/// アクションの状態（置き場・記録・窓の選び）。アプリの状態で、.ylp には入れない。
+/// アクションの状態（置き場・記録・ウィンドウの選び）。アプリの状態で、.ylp には入れない。
 #[derive(Debug, Default)]
 pub struct Automation {
     pub store: store::ActionStore,
@@ -63,7 +63,7 @@ impl Automation {
     pub fn is_recording(&self) -> bool {
         self.recorder.is_some()
     }
-    /// 記録しなかった、文書を変えた操作があったか（記録の窓の印）。
+    /// 記録しなかった、文書を変えた操作があったか（記録のウィンドウの印）。
     pub fn skipped(&self) -> bool {
         self.recorder.as_ref().is_some_and(|r| r.skipped)
     }
@@ -90,7 +90,7 @@ pub fn attach(app: &mut AppState, dir: std::path::PathBuf) -> Option<String> {
 }
 
 impl AppState {
-    /// アクションの窓の操作を当てる。
+    /// アクションのウィンドウの操作を当てる。
     pub fn automation_apply(&mut self, op: AutomationOp) {
         let lang = self.lang;
         match op {

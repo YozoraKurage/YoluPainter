@@ -1,5 +1,5 @@
 //! パスの種類: 消しゴム（ブラシの `erase` と同じ画素・一覧の前のパスを消す）、指先（前のパスの色を引きずる）、塗り（閉じた曲線の
-//! 内側。3D は 1 つの UV の島だけ、島をまたげば断る）、リボン（画像を向きに回したダブ。並べる・伸ばす。画像が無ければ断る）。
+//! 内側。3D は 1 つの UV アイランドだけ、アイランドをまたげば断る）、リボン（画像を向きに回したダブ。並べる・伸ばす。画像が無ければ断る）。
 //! ワーカーの数によらず同じ画素。
 use std::collections::HashMap;
 
@@ -230,7 +230,7 @@ fn a_ribbon_paints_its_image_colors_only_on_color_channels() {
     assert_eq!(rough.1.pixel(30, 32).unwrap(), Rgba8::new(90, 90, 90, 255));
 }
 
-/// 2 つの UV の島の板: 左（x 0〜1）は UV の左半分、右（x 1〜2）は UV の右半分で、間に UV の継ぎ目。
+/// 2 つの UV アイランドの板: 左（x 0〜1）は UV の左半分、右（x 1〜2）は UV の右半分で、間に UV の継ぎ目。
 fn two_islands() -> SurfaceGeometry {
     let quad = |x0: f32, u0: f32| {
         let (a, b, c, d) = (
@@ -255,7 +255,7 @@ fn two_islands() -> SurfaceGeometry {
     SurfaceGeometry::new(t, 1, DEFAULT_WELD_TOLERANCE).unwrap()
 }
 
-/// 板の (x, y) の点（左の島は三角形 0・1、右の島は 2・3）。
+/// 板の (x, y) の点（左のアイランドは三角形 0・1、右のアイランドは 2・3）。
 fn on(x: f64, y: f64) -> PathPoint {
     let (base, lx) = if x < 1.0 { (0, x) } else { (2, x - 1.0) };
     if lx >= y {
@@ -287,14 +287,14 @@ fn a_3d_fill_paints_one_uv_island_and_refuses_to_cross_islands() {
     let p = surface(&g, tri, PathKind::Fill);
     let r = render_surface(&p, &g, &options()).unwrap();
     let b = r.channels[0].1.to_canvas_bytes();
-    // 左の島の UV の内側（u = 0.45 × 0.5、v = 0.5）
+    // 左のアイランドの UV の内側（u = 0.45 × 0.5、v = 0.5）
     let x = (0.45 * 0.5 * SIZE as f64) as u32;
     assert_eq!(px(&b, x, SIZE / 2), [RED.r, RED.g, RED.b, 255]);
     assert_eq!(px(&b, x, 4)[3], 0, "曲線の外");
-    // 右の島には何も描かない
+    // 右のアイランドには何も描かない
     let right = (0.8 * SIZE as f64) as u32;
     assert_eq!(px(&b, right, SIZE / 2)[3], 0);
-    // 島をまたぐ点
+    // アイランドをまたぐ点
     let crossing = surface(
         &g,
         vec![on(0.5, 0.2), on(1.5, 0.2), on(1.5, 0.8), on(0.5, 0.8)],
@@ -604,7 +604,7 @@ fn a_canceled_list_of_every_kind_returns_nothing_and_leaves_the_layer_alone() {
             Error::Canceled
         );
     }
-    // 文書の層は、取り消された描き直しで何も変わらない（パスも画素も Undo の段も）
+    // 文書のレイヤーは、取り消された描き直しで何も変わらない（パスも画素も Undo の段も）
     let mut doc = yolu_core::Document::with_tile_size(SIZE, SIZE, 16).unwrap();
     doc.set_effect_inputs(yolu_core::EffectInputs::new().with_image(ImageId(7), img))
         .unwrap();

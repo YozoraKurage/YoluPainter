@@ -1,7 +1,7 @@
 //! 命令（`Command`）と、その引数の型。JSON は `{"command": "layer.set", "args": {...}}`（命令の名前と引数）。
 //!
 //! - 引数の知らない欄は断る（`deny_unknown_fields`。綴りの間違いを黙って無視しない）。省ける欄は `Option` か既定値。
-//! - セットは ID か名前で指す（`set`。省くと今のセット）。層は ID か名前（`layer`。名前が複数に当たれば断る）。チャンネルは名前（`Color` など。
+//! - セットは ID か名前で指す（`set`。省くと今のセット）。レイヤーは ID か名前（`layer`。名前が複数に当たれば断る）。チャンネルは名前（`Color` など。
 //!   大文字小文字は問わない）かチャンネルの番号。
 //! - 壊す操作（削除・上書き保存・PSD の書き戻し）は `confirm: true` が無ければ断る（[`crate::meta::Danger`]）。
 //! - 欄の説明は英語（スキーマの `description` になり、MCP のクライアントの AI が読む）。
@@ -233,7 +233,7 @@ pub struct PreviewArgs {
     pub max_edge: Option<u32>,
 }
 
-// ───────── 層 ─────────
+// ───────── レイヤー ─────────
 
 /// Kind of a new layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

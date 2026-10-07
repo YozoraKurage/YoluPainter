@@ -115,12 +115,12 @@ fn release_at(h: &mut Harness<'_, YoluApp>, at: Pos2, button: PointerButton) {
     h.step();
 }
 
-/// 回した重ね表示のテクスチャの補間は、GPU のドライバの層で数画素ゆれる（回したキャンバスの試験と同じ）。それ以外の差は落とす。
+/// 回した重ね表示のテクスチャの補間は、GPU のドライバのレイヤーで数画素ゆれる（回したキャンバスの試験と同じ）。それ以外の差は落とす。
 fn rotated_texture() -> egui_kittest::SnapshotOptions {
     egui_kittest::SnapshotOptions::new().max_failed_pixels(64)
 }
 
-/// 窓に落としたファイル（パスだけ）。
+/// ウィンドウに落としたファイル（パスだけ）。
 #[derive(Debug)]
 struct Dropped(PathBuf);
 
@@ -352,12 +352,12 @@ fn headless_ops_clamp_their_values_and_are_refused_while_stroking() {
     assert_eq!(s.dialog_request, Some(DialogRequest::OpenStencil));
 }
 
-/// 64 × 64 の画布の矩形（拡大 100% で画布にぴったり重なる）。
+/// 64 × 64 のキャンバスの矩形（拡大 100% でキャンバスにぴったり重なる）。
 fn exact_rect() -> Rect {
     Rect::from_min_size(pos2(0.0, 0.0), vec2(64.0, 64.0))
 }
 
-/// 画布の横線を、ステンシルを通して描く（ステンシルは画布と 1 対 1 で重ねる）。
+/// キャンバスの横線を、ステンシルを通して描く（ステンシルはキャンバスと 1 対 1 で重ねる）。
 fn stencil_line(s: &mut AppState, y: f32) {
     let layer = s.selected_layer.unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
@@ -378,7 +378,7 @@ fn stencil_line(s: &mut AppState, y: f32) {
 
 fn half_state(dir: &Path) -> AppState {
     let mut s = AppState::new(64, 64);
-    s.stencil.size = 1.0; // 画布にぴったり（画像は正方形）
+    s.stencil.size = 1.0; // キャンバスにぴったり（画像は正方形）
     s.brush.radius = 3.0;
     s.brush.hardness = 1.0;
     s.m2.random_seed = false;
@@ -432,8 +432,8 @@ fn headless_a_canvas_stroke_through_the_stencil_paints_only_where_it_is_open_and
 fn headless_the_stencil_stays_on_the_screen_when_the_canvas_view_changes() {
     let dir = temp_dir("screen");
     let mut s = half_state(&dir);
-    // 画面は 64 × 64 の矩形そのまま。画面を 90° 回すと、画布の左は画面の上へ回る。ステンシルは画面に貼り付いているので、
-    // 白い左半分は画面の左のまま（画布の上の位置が変わる）
+    // 画面は 64 × 64 の矩形そのまま。画面を 90° 回すと、キャンバスの左は画面の上へ回る。ステンシルは画面に貼り付いているので、
+    // 白い左半分は画面の左のまま（キャンバスの上の位置が変わる）
     s.view.set_angle(90.0);
     let rect = exact_rect();
     let stencil = s.canvas_stencil(rect).unwrap().unwrap();
@@ -473,7 +473,7 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
     let rect = exact_rect();
     let open_at = |s: &AppState, x: f32, y: f32| {
         let stencil = s.canvas_stencil(rect).unwrap().unwrap();
-        // 画面の点（y は下向き）→ 画布の画素（拡大 100% で、y が上向き）
+        // 画面の点（y は下向き）→ キャンバスの画素（拡大 100% で、y が上向き）
         stencil
             .sample_canvas(x.floor() as i64, (63.0 - y).floor() as i64)
             .unwrap()
@@ -514,7 +514,7 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 画布の点（x, y）をなぞる 1 本のストロークを、今のステンシルの設定で描く（試験の道具）。
+/// キャンバスの点（x, y）をなぞる 1 本のストロークを、今のステンシルの設定で描く（試験のツール）。
 fn run_stroke(s: &mut AppState, eraser: bool, points: &[(f64, f64)]) {
     let layer = s.selected_layer.unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
@@ -527,7 +527,7 @@ fn run_stroke(s: &mut AppState, eraser: bool, points: &[(f64, f64)]) {
     s.doc.end_stroke(stroke).unwrap();
 }
 
-/// 画布の 1 行の覆い（左から）。
+/// キャンバスの 1 行の覆い（左から）。
 fn alpha_row(s: &AppState, y: u32) -> Vec<u8> {
     (0..s.doc.width())
         .map(|x| composite_pixel(&s.doc, x, y)[3])
@@ -623,7 +623,7 @@ fn headless_the_top_of_the_image_is_the_top_of_the_screen() {
     });
     s.apply(Action::Stencil(StencilOp::Load(path)));
     let stencil = s.canvas_stencil(exact_rect()).unwrap().unwrap();
-    // 画面の点（y は下向き）→ 画布の画素（y は上向き）
+    // 画面の点（y は下向き）→ キャンバスの画素（y は上向き）
     let open =
         |x: i64, screen_y: i64| stencil.sample_canvas(x, 63 - screen_y).unwrap().amount > 0.5;
     assert!(open(32, 10) && !open(32, 54), "画面の上が白");
@@ -725,7 +725,7 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
     // 読み込み直したステンシルの置き場へ戻す（上で外したので、もう一度読んで、角度を戻す）
     s.apply(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
     s.apply(Action::Stencil(StencilOp::Angle(33.0)));
-    // 別のプロジェクトを開いても、新しいプロジェクトにしても、ステンシルはそのまま（窓の状態）
+    // 別のプロジェクトを開いても、新しいプロジェクトにしても、ステンシルはそのまま（ウィンドウの状態）
     s.apply(Action::NewProject);
     assert!(s.stencil.image.is_some() && s.stencil.angle == 33.0);
     s.apply(Action::OpenProject(path.clone()));
@@ -750,7 +750,7 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
     assert!(h.query_by_label("画像: なし").is_some());
-    // 画像の箱 → 「画像を読む…」: ファイルの窓の頼みが出る（試験では窓は開かない）
+    // 画像の箱 → 「画像を読む…」: ファイルのウィンドウの頼みが出る（試験ではウィンドウは開かない）
     h.get_by_label("画像: なし").click();
     h.run();
     assert_eq!(

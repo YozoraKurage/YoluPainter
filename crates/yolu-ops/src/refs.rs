@@ -1,10 +1,10 @@
-//! 文書の中の対象（層・チャンネル・効果・合成モード）を、命令の文字列から引く。名前が複数に当たるときは断る（IDで指す）。
+//! 文書の中の対象（レイヤー・チャンネル・効果・合成モード）を、命令の文字列から引く。名前が複数に当たるときは断る（IDで指す）。
 //!
 //! 相対の指し方（ID を持たない相手。記録したアクションが別の文書でも同じ相手を指せるように）:
-//! - `$selected`: 層の欄だけ。実行の時に選んでいる層（起動中のアプリの選んでいる層。画面なしの .ylp には選んでいた層が入っていないので断る）。
+//! - `$selected`: レイヤーの欄だけ。実行の時に選んでいるレイヤー（起動中のアプリの選んでいるレイヤー。画面なしの .ylp には選んでいたレイヤーが入っていないので断る）。
 //!   まとめて当てる実行（アクション・CLI の batch）では、始めた時の 1 つに決める。
-//! - `$created:<n>`: 同じ実行（アクション・CLI の batch）の中で n 番目（1 から）に作った層か効果（`layer.add`・`effect.add` の順の通し番号）。
-//!   1 つだけの命令では断る。層の欄に効果を、効果の欄に層を指すと断る。
+//! - `$created:<n>`: 同じ実行（アクション・CLI の batch）の中で n 番目（1 から）に作ったレイヤーか効果（`layer.add`・`effect.add` の順の通し番号）。
+//!   1 つだけの命令では断る。レイヤーの欄に効果を、効果の欄にレイヤーを指すと断る。
 //!
 //! `$` で始まるほかの文字列は名前として引く（`$created:` で始まる物だけは、番号が読めなければ断る）。
 
@@ -16,9 +16,9 @@ use crate::command::Command;
 use crate::error::{ErrorCode, Noun, OpError};
 use crate::reply::Reply;
 
-/// 実行の時に選んでいる層（層の欄だけ）。
+/// 実行の時に選んでいるレイヤー（レイヤーの欄だけ）。
 pub const SELECTED: &str = "$selected";
-/// 同じ実行の中で作った層・効果の番号の前置き（`$created:1` が最初）。
+/// 同じ実行の中で作ったレイヤー・効果の番号の前置き（`$created:1` が最初）。
 pub const CREATED_PREFIX: &str = "$created:";
 
 /// 相対の指し方。
@@ -66,14 +66,14 @@ pub enum CreatedKind {
     Effect,
 }
 
-/// 同じ実行の中で作った層・効果（作った順。`$created:<n>` が指す）。
+/// 同じ実行の中で作ったレイヤー・効果（作った順。`$created:<n>` が指す）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Created {
     items: Vec<(CreatedKind, String)>,
 }
 
 impl Created {
-    /// 命令の返事から、作った層・効果を覚える（`layer.add` の層・`effect.add` の効果）。
+    /// 命令の返事から、作ったレイヤー・効果を覚える（`layer.add` のレイヤー・`effect.add` の効果）。
     pub fn note(&mut self, command: &Command, reply: &Reply) {
         let Reply::Edited(edited) = reply else {
             return;
@@ -127,7 +127,7 @@ impl Created {
 /// 欄の中身を書き換える関数（替えないなら None）。
 pub type RefRewrite<'a> = dyn FnMut(RefSlot, &str) -> Result<Option<String>, OpError> + 'a;
 
-/// 命令の中の、層・効果を指す欄を `f` に渡し、`f` が Some を返した欄を書き換えた命令を作る（変えなければ None）。
+/// 命令の中の、レイヤー・効果を指す欄を `f` に渡し、`f` が Some を返した欄を書き換えた命令を作る（変えなければ None）。
 pub fn rewrite_refs(command: &Command, f: &mut RefRewrite<'_>) -> Result<Option<Command>, OpError> {
     let mut out = command.clone();
     let mut changed = false;
@@ -210,7 +210,7 @@ pub fn substitute_created(command: &Command, created: &Created) -> Result<Comman
 }
 
 /// 相対の指し方を全部、ID に替える（替える物が無ければ None）。`created` が None なら 1 つだけの命令（`$created` は断る）。
-/// `selected` は `$selected` が要るときだけ呼ぶ（選んでいる層の ID。無ければ理由つきの誤り）。
+/// `selected` は `$selected` が要るときだけ呼ぶ（選んでいるレイヤーの ID。無ければ理由つきの誤り）。
 pub fn resolve_relative(
     command: &Command,
     created: Option<&Created>,
@@ -243,7 +243,7 @@ pub fn resolve_relative(
     })
 }
 
-/// 選んでいる層が無いときの誤り（`why` は、無い理由。日英）。
+/// 選んでいるレイヤーが無いときの誤り（`why` は、無い理由。日英）。
 pub fn no_selection(why: Option<(&str, &str)>) -> OpError {
     let (ja, en) = match why {
         Some((ja, en)) => (
@@ -258,7 +258,7 @@ pub fn no_selection(why: Option<(&str, &str)>) -> OpError {
     OpError::new(ErrorCode::NotFound, ja, en).with_data(json!({"name": SELECTED}))
 }
 
-/// 32 桁の 16 進（層・効果の ID）から数へ。
+/// 32 桁の 16 進（レイヤー・効果の ID）から数へ。
 pub fn parse_id(text: &str) -> Option<u128> {
     if text.len() == 32 && text.bytes().all(|b| b.is_ascii_hexdigit()) {
         u128::from_str_radix(text, 16).ok().filter(|v| *v != 0)
@@ -267,7 +267,7 @@ pub fn parse_id(text: &str) -> Option<u128> {
     }
 }
 
-/// 層を ID か名前で引く。ID が先。名前が複数の層に当たれば `ambiguous`（候補の ID を `data` に）。
+/// レイヤーを ID か名前で引く。ID が先。名前が複数のレイヤーに当たれば `ambiguous`（候補の ID を `data` に）。
 pub fn resolve_layer(doc: &Document, text: &str) -> Result<LayerId, OpError> {
     if let Some(id) = parse_id(text) {
         let id = LayerId(id);
@@ -418,7 +418,7 @@ pub fn parse_filter_id(text: &str) -> Result<FilterId, OpError> {
     })
 }
 
-/// 層の名前の検査（1〜256 文字・制御文字なし。保存の上限に収める）。
+/// レイヤーの名前の検査（1〜256 文字・制御文字なし。保存の上限に収める）。
 pub fn check_layer_name(name: &str) -> Result<(), OpError> {
     let chars = name.chars().count();
     if chars == 0 || chars > 256 || name.chars().any(char::is_control) {
@@ -455,7 +455,7 @@ mod tests {
             resolve_layer(&doc, "zzz").unwrap_err().code,
             ErrorCode::NotFound
         );
-        // 32 桁の 16 進でも、その ID の層が無ければ名前として探す
+        // 32 桁の 16 進でも、その ID のレイヤーが無ければ名前として探す
         assert_eq!(
             resolve_layer(&doc, &"1".repeat(32)).unwrap_err().code,
             ErrorCode::NotFound

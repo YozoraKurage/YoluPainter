@@ -209,7 +209,7 @@ fn child_crash() {
         panic!("final panic");
     }
     if mode == "app" {
-        // AppState::apply の配線。層の名前は記録に入らず、操作の種類名と失敗の文（名前を除いた理由）だけが入る。
+        // AppState::apply の配線。レイヤーの名前は記録に入らず、操作の種類名と失敗の文（名前を除いた理由）だけが入る。
         let mut state = crate::state::AppState::new_in(32, 32, Lang::En);
         let id = state.selected_layer.unwrap();
         state.doc.set_layer_name(id, "SecretLayerName").unwrap();
@@ -585,7 +585,7 @@ fn apply_records_only_action_names_and_failure_reasons_without_names() {
         report.text
     );
     assert!(!report.text.contains("SecretLayerName"), "{}", report.text);
-    // 普段のログは、失敗の文の理由だけ（成功の知らせと、前に付いた層の名前は書かない）
+    // 普段のログは、失敗の文の理由だけ（成功の知らせと、前に付いたレイヤーの名前は書かない）
     let session = session_text(&dir.0);
     assert!(session.contains("Layer not found"), "{session}");
     assert!(!session.contains("Saved."), "{session}");

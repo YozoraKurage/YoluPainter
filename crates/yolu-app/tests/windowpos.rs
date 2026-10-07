@@ -1,5 +1,5 @@
-//! 窓の置き場所（`windowpos`）の試験。画面の拡大率が違う・画面が増減する・縮む場合の、画素での置き場所と、起動のあとの合わせ込み・
-//! 最大化の 1 画素。Windows の API に依らない純関数なので、Linux でも回る（Windows の画面の列挙・窓の手は `cargo check
+//! ウィンドウの置き場所（`windowpos`）の試験。画面の拡大率が違う・画面が増減する・縮む場合の、画素での置き場所と、起動のあとの合わせ込み・
+//! 最大化の 1 画素。Windows の API に依らない純関数なので、Linux でも回る（Windows の画面の列挙・ウィンドウの手は `cargo check
 //! --target x86_64-pc-windows-gnu` で組めることと、実機の確かめで見る）。
 //! 覚えた置き場所（`windowpos::remember`）はプロセスで 1 つなので、これを使う試験があるこのファイルは束に入れず、直下に 1 本で置く。
 use egui::{pos2, vec2, ViewportCommand};
@@ -38,7 +38,7 @@ fn farleft() -> Monitor {
     }
 }
 
-/// 窓の記録（点。画素 = 点 × `scale`）を、画素の位置・大きさから作る。
+/// ウィンドウの記録（点。画素 = 点 × `scale`）を、画素の位置・大きさから作る。
 fn record(px: PxRect, scale: f32, maximized: bool) -> WindowRecord {
     WindowRecord {
         position: [px.left as f32 / scale, px.top as f32 / scale],
@@ -59,7 +59,7 @@ fn inside(rect: PxRect, area: PxRect) -> bool {
 
 #[test]
 fn a_window_recorded_on_a_scaled_second_screen_comes_back_there_in_physical_pixels() {
-    // 150% の右の画面（仮想スクリーンの x=2220）にいた窓。記録の点は 1480.0・66.666664（画素 ÷ 1.5）。
+    // 150% の右の画面（仮想スクリーンの x=2220）にいたウィンドウ。記録の点は 1480.0・66.666664（画素 ÷ 1.5）。
     // 点を主の画面の拡大率（100%）で画素に直すと x=1480 になり、左の画面に出てしまう（点は画面をまたいで意味を持たない）
     let saved = record(PxRect::from_origin_size(2220, 100, 2100, 1350), 1.5, false);
     assert!((saved.position[0] - 1480.0).abs() < 1e-3);
@@ -72,7 +72,7 @@ fn a_window_recorded_on_a_scaled_second_screen_comes_back_there_in_physical_pixe
     assert_eq!(place.rect, PxRect::from_origin_size(2220, 100, 2100, 1350));
     assert_eq!(place.scale, 1.5);
     assert!(inside(place.rect, right().work));
-    // 窓を作るときの論理の大きさは、置く画面の拡大率で割った値（記録の点のまま）
+    // ウィンドウを作るときの論理の大きさは、置く画面の拡大率で割った値（記録の点のまま）
     let [w, h] = place.size_points();
     assert!(
         (w - 1400.0).abs() < 0.01 && (h - 900.0).abs() < 0.01,
@@ -128,7 +128,7 @@ fn a_shrunk_screen_pulls_the_window_inside_the_work_area_and_shrinks_it_to_fit()
     let saved = record(PxRect::from_origin_size(100, 80, 1600, 900), 1.0, false);
     let place = plan(Some(&saved), &[small]).unwrap();
     assert_eq!(place.rect, PxRect::from_origin_size(0, 0, 1366, 728));
-    // 下へはみ出す窓も、作業領域に収まる所まで上げる
+    // 下へはみ出すウィンドウも、作業領域に収まる所まで上げる
     let low = record(PxRect::from_origin_size(100, 900, 1200, 900), 1.0, false);
     let place = plan(Some(&low), &[left()]).unwrap();
     assert_eq!(place.rect, PxRect::from_origin_size(100, 140, 1200, 900));
@@ -136,7 +136,7 @@ fn a_shrunk_screen_pulls_the_window_inside_the_work_area_and_shrinks_it_to_fit()
 
 #[test]
 fn the_same_logical_size_gets_more_pixels_when_the_screen_scale_grew() {
-    // 100% の画面で記録した窓が、同じ場所の画面が 150% になって戻る。点（論理の大きさ）は変えず画素は増える
+    // 100% の画面で記録したウィンドウが、同じ場所の画面が 150% になって戻る。点（論理の大きさ）は変えず画素は増える
     let saved = record(PxRect::from_origin_size(0, 0, 1200, 800), 1.0, false);
     let grown = Monitor {
         bounds: PxRect::from_origin_size(0, 0, 2880, 1620),
@@ -182,7 +182,7 @@ fn the_first_start_fits_a_small_work_area_without_going_below_the_minimum_size()
     };
     let place = plan(None, &[small]).unwrap();
     assert_eq!(place.rect, PxRect::from_origin_size(0, 0, 1366, 728));
-    // 作業領域が窓の最小の大きさ（960×640）より小さい画面では、最小の大きさを割らない（OS が最小の大きさを守るので、目標もそれに合わせる）
+    // 作業領域がウィンドウの最小の大きさ（960×640）より小さい画面では、最小の大きさを割らない（OS が最小の大きさを守るので、目標もそれに合わせる）
     let tiny = Monitor {
         work: PxRect::from_origin_size(0, 0, 800, 560),
         ..small
@@ -194,7 +194,7 @@ fn the_first_start_fits_a_small_work_area_without_going_below_the_minimum_size()
         (0, 0),
         "作業領域の左上より外へは出さない"
     );
-    // 記録のある窓でも、寄せるときに落ちない（最小の大きさが作業領域より大きい）
+    // 記録のあるウィンドウでも、寄せるときに落ちない（最小の大きさが作業領域より大きい）
     let saved = record(PxRect::from_origin_size(200, 100, 1200, 800), 1.0, false);
     let place = plan(Some(&saved), &[tiny]).unwrap();
     assert_eq!((place.rect.left, place.rect.top), (0, 0));
@@ -240,7 +240,7 @@ fn actual(position: [i32; 2], size: [i32; 2], scale: f32) -> Option<Actual> {
 fn settling_moves_first_and_sizes_only_when_the_window_is_on_the_target_screen() {
     let want = target(PxRect::from_origin_size(2220, 100, 2100, 1350), 1.5, false);
     let mut settle = Settle::new(want);
-    // 作ったのは主の画面（100%）。拡大率の違う画面へ動かすと OS が窓の大きさを拡大率の比で変えるので、まず位置だけ
+    // 作ったのは主の画面（100%）。拡大率の違う画面へ動かすと OS がウィンドウの大きさを拡大率の比で変えるので、まず位置だけ
     let step = settle.step(actual([300, 200], [1400, 900], 1.0));
     assert_eq!(
         step.commands,
@@ -313,7 +313,7 @@ fn settling_tolerates_a_rounding_difference_but_not_more() {
 fn settling_waits_for_the_window_information_and_gives_up_after_a_limit() {
     let want = target(PxRect::from_origin_size(100, 100, 1000, 700), 1.0, true);
     let mut settle = Settle::new(want);
-    // 窓の情報がまだ無い間は、何も頼まずに待つ
+    // ウィンドウの情報がまだ無い間は、何も頼まずに待つ
     let step = settle.step(None);
     assert!(step.commands.is_empty() && step.settling);
     // 合わないまま上限のフレームを超えたら、今のまま終わる（利用者が動かしたときに争い続けない）。最大化の記録は最後に頼む
@@ -447,7 +447,7 @@ fn a_maximized_window_leaves_one_pixel_on_each_autohide_edge_only() {
     assert_eq!(maximized_client(tiny, all), tiny);
 }
 
-// ───────── 起動の手続き（窓の情報から頼みを送る） ─────────
+// ───────── 起動の手続き（ウィンドウの情報から頼みを送る） ─────────
 
 fn frame(ctx: &egui::Context, info: egui::ViewportInfo) -> (bool, Vec<ViewportCommand>) {
     let mut input = egui::RawInput::default();
@@ -495,7 +495,7 @@ fn info(position: [f32; 2], size: [f32; 2], scale: f32) -> egui::ViewportInfo {
 #[test]
 fn the_remembered_placement_is_driven_frame_by_frame_and_then_forgotten() {
     let ctx = egui::Context::default();
-    // 覚えが無ければ何もしない（普通のフレーム・試験の窓）
+    // 覚えが無ければ何もしない（普通のフレーム・試験のウィンドウ）
     assert_eq!(
         frame(&ctx, info([0.0, 0.0], [800.0, 600.0], 1.0)),
         (false, vec![])
@@ -505,7 +505,7 @@ fn the_remembered_placement_is_driven_frame_by_frame_and_then_forgotten() {
         1.5,
         false,
     ));
-    // 作った窓は主の画面（100%）の (300, 200)・1400×900 点。位置だけを頼む。その間は「合わせている」と返す
+    // 作ったウィンドウは主の画面（100%）の (300, 200)・1400×900 点。位置だけを頼む。その間は「合わせている」と返す
     let (settling, commands) = frame(&ctx, info([300.0, 200.0], [1400.0, 900.0], 1.0));
     assert!(settling);
     assert_eq!(

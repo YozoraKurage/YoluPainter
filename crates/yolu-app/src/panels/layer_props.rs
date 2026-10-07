@@ -116,9 +116,9 @@ fn layer_section(
             );
         }
     }
-    // この層までの合成に名前を付ける（上の層の Generator が読む）
+    // このレイヤーまでの合成に名前を付ける（上のレイヤーの Generator が読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
-    // 画素へのフィルター（調整・グループの層には画素が無い）
+    // 画素へのフィルター（調整・グループのレイヤーには画素が無い）
     if matches!(
         app.doc.layer(id).map(|l| l.kind()),
         Some(LayerKind::Raster | LayerKind::Fill)
@@ -127,7 +127,7 @@ fn layer_section(
     }
 }
 
-/// ロックの 4 種（選んでいる層の全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
+/// ロックの 4 種（選んでいるレイヤーの全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
 /// チェックせず、ツールチップで言う。1 回の Undo。
 pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     use crate::layerops::{lock_name, LOCK_FLAGS};
@@ -165,17 +165,17 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             )
         } else if flag == yolu_core::LayerLocks::PIXELS {
             lang.pick(
-                "層の画素は変えられない（移動とマスクへの描画はできる）",
+                "レイヤーの画素は変えられない（移動とマスクへの描画はできる）",
                 "The layer's pixels cannot be changed (it can still be moved and its mask painted)",
             )
         } else if flag == yolu_core::LayerLocks::POSITION {
             lang.pick(
-                "層を動かす・変形できない",
+                "レイヤーを動かす・変形できない",
                 "The layer cannot be moved or transformed",
             )
         } else {
             lang.pick(
-                "画素・位置・層の設定を変えられない",
+                "画素・位置・レイヤーの設定を変えられない",
                 "Pixels, position and the layer's settings cannot be changed",
             )
         };
@@ -306,7 +306,7 @@ fn fill_section(
                         pos2(main.left() + 84.0, main.top() + 1.0),
                         pos2(main.right(), main.bottom() - 1.0),
                     );
-                    // 押すと色の窓（相手は層とチャンネルごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+                    // 押すと色のウィンドウ（相手はレイヤーとチャンネルごと）。ウィンドウの変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
                     let target = egui::Id::new(("fill.value", id.0, channel.index()));
                     if let Some(u) = color_window::field(
                         ui,
@@ -393,7 +393,7 @@ fn adjustment_section(
     if !open {
         return;
     }
-    // 描くチャンネルに使えない調整は、注記の行を置かず、理由をツールチップに出す。欄は無効にしない: 層の値は効くチャンネル（色）の
+    // 描くチャンネルに使えない調整は、注記の行を置かず、理由をツールチップに出す。欄は無効にしない: レイヤーの値は効くチャンネル（色）の
     // 出力には今も効くので、直すためにチャンネルを替えさせない
     let paint = app.m2.paint_channel;
     let reason = app
@@ -615,7 +615,7 @@ fn adjustment_section(
     }
 }
 
-/// チャンネルごとの有効と、自分の合成（持っているチャンネルだけ。× で層の値に戻す）。
+/// チャンネルごとの有効と、自分の合成（持っているチャンネルだけ。× でレイヤーの値に戻す）。
 fn channels_section(
     ui: &mut Ui,
     app: &mut AppState,
@@ -694,7 +694,7 @@ fn channels_section(
                 ("layer.channel.clear", channel.index()),
                 "close",
                 &lang.pick(
-                    format!("{name} も層の合成モードと不透明度に戻す"),
+                    format!("{name} もレイヤーの合成モードと不透明度に戻す"),
                     format!("Use the layer's blend mode and opacity in {name} again"),
                 ),
                 false,
@@ -852,7 +852,7 @@ fn mask_section(
         edit(app, Edit::RemoveMask(id));
         return;
     }
-    // このマスクに名前を付ける（上の層の Generator が、この層の見える度合いを読む）
+    // このマスクに名前を付ける（上のレイヤーの Generator が、このレイヤーの見える度合いを読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Mask);
     super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Mask);
 }

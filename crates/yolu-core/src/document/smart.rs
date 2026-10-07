@@ -5,8 +5,8 @@ use crate::smart::{
 use crate::{Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// 層のパスの一覧を外す。ラスターの層は画素をそのまま残して true を返す。塗りつぶしの層のパスの画素は層の面にしか無く、一覧が
-/// 無いと評価で使われない（保存も、画素を持てない層として断られる）ので、パスのチャンネルの面も外し（値の無いチャンネルは
+/// レイヤーのパスの一覧を外す。ラスターレイヤーは画素をそのまま残して true を返す。塗りつぶしレイヤーのパスの画素はレイヤーの面にしか無く、一覧が
+/// 無いと評価で使われない（保存も、画素を持てないレイヤーとして断られる）ので、パスのチャンネルの面も外し（値の無いチャンネルは
 /// パスを付けるときに有効にしたものなので無効に戻し）、false を返す。
 fn detach_paths(layer: &mut Layer) -> bool {
     let entries = std::mem::take(&mut layer.paths);
@@ -32,7 +32,7 @@ impl Document {
         self.ensure_no_stroke()?;
         check_name(name)?;
         if ids.is_empty() {
-            return Err(CoreError::InvalidArgument("保存する層がありません"));
+            return Err(CoreError::InvalidArgument("保存するレイヤーがありません"));
         }
         for &id in ids {
             self.index_of(id)?;
@@ -53,8 +53,8 @@ impl Document {
             if l.parent.is_some_and(|p| !held.contains(&p)) {
                 l.parent = None;
             }
-            // モデルの上のパスは、そのモデルの三角形に結び付いている: ラスターの層は画素だけが残る（C# の SmartMaterials と同じ）。
-            // 塗りつぶしの層は画素を持たない（パスの画素は一覧が無いと評価で使われない）ので、パスごと外れる
+            // モデルの上のパスは、そのモデルの三角形に結び付いている: ラスターレイヤーは画素だけが残る（C# の SmartMaterials と同じ）。
+            // 塗りつぶしレイヤーは画素を持たない（パスの画素は一覧が無いと評価で使われない）ので、パスごと外れる
             if matches!(l.path(), Some(crate::LayerPath::Surface(_))) {
                 let kept = detach_paths(l);
                 notes.push(if kept {
@@ -64,7 +64,7 @@ impl Document {
                     )
                 } else {
                     format!(
-                        "「{}」のモデルの上のパスは外れました（パスはそのモデルの三角形に結び付き、塗りつぶしの層は画素を持たない）",
+                        "「{}」のモデルの上のパスは外れました（パスはそのモデルの三角形に結び付き、塗りつぶしレイヤーは画素を持たない）",
                         l.name
                     )
                 });
@@ -83,13 +83,15 @@ impl Document {
         material.notes = notes;
         Ok(material)
     }
-    /// 塗りつぶしの層 1 つを、マテリアル（置くと新しい塗りつぶしの層になる素材）として写す。持つのは塗りつぶしの見た目を決める物
-    /// （チャンネルの値と有効の印・画像と投影・グラデーション・層の画素のフィルター）で、層の並びの中の置き場に結び付く物（マスク・
-    /// Anchor・クリッピング・不透明度・合成モード・チャンネルごとの合成・隠した状態・ロック）は持たず、新しい塗りつぶしの層の既定にする。
-    /// 塗りつぶしの層でなければ断る。
+    /// 塗りつぶしレイヤー 1 つを、マテリアル（置くと新しい塗りつぶしレイヤーになる素材）として写す。持つのは塗りつぶしの見た目を決める物
+    /// （チャンネルの値と有効の印・画像と投影・グラデーション・レイヤーの画素のフィルター）で、レイヤーの並びの中の置き場に結び付く物（マスク・
+    /// Anchor・クリッピング・不透明度・合成モード・チャンネルごとの合成・隠した状態・ロック）は持たず、新しい塗りつぶしレイヤーの既定にする。
+    /// 塗りつぶしレイヤーでなければ断る。
     pub fn capture_material(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
         if self.layers[self.index_of(id)?].kind != LayerKind::Fill {
-            return Err(CoreError::InvalidArgument("塗りつぶしの層ではありません"));
+            return Err(CoreError::InvalidArgument(
+                "塗りつぶしレイヤーではありません",
+            ));
         }
         let mut material = self.capture_smart_material(&[id], name)?;
         for l in &mut material.layers {
@@ -117,7 +119,7 @@ impl Document {
             .smart_fragment(SmartKind::Mask, name, vec![holder])
             .with_fresh_ids())
     }
-    /// 断片が持つチャンネル定義は、標準の 6 つと、層が何かを持つユーザーチャンネルだけ（無効でも面・値・合成を持つものは含む）。
+    /// 断片が持つチャンネル定義は、標準の 6 つと、レイヤーが何かを持つユーザーチャンネルだけ（無効でも面・値・合成を持つものは含む）。
     /// 使っていない定義を持ち込むと、保存の版がユーザーチャンネルの版に上がって Unity 版が読めなくなる。
     fn smart_fragment(&self, kind: SmartKind, name: &str, layers: Vec<Layer>) -> SmartMaterial {
         let mut channel_info: Vec<_> = self
@@ -179,7 +181,9 @@ impl Document {
     ) -> Result<SmartPlaceResult, CoreError> {
         self.ensure_no_stroke()?;
         if material.kind != SmartKind::Material {
-            return Err(CoreError::InvalidArgument("スマートマスクは層に置けません"));
+            return Err(CoreError::InvalidArgument(
+                "スマートマスクはレイヤーに置けません",
+            ));
         }
         if let Some(p) = placement.parent {
             if !self.layers[self.index_of(p)?].is_group() {
@@ -194,7 +198,7 @@ impl Document {
             .count()
             > 1;
         if self.layers.len() + material.layers.len() + usize::from(wrap) > 2048 {
-            return Err(CoreError::InvalidArgument("層は2048個までです"));
+            return Err(CoreError::InvalidArgument("レイヤーは2048個までです"));
         }
         self.ensure_nesting_room(
             placement.parent,
@@ -257,7 +261,7 @@ impl Document {
             .iter()
             .rev()
             .find(|l| l.parent == placement.parent)
-            .expect("最上位の層")
+            .expect("最上位のレイヤー")
             .id;
         let result = SmartPlaceResult {
             layer_id,
@@ -278,7 +282,7 @@ impl Document {
         )?;
         Ok(result)
     }
-    /// ユーザーチャンネルは番号だけで別の意味へ結び付けない。層が何かを持つ（有効・面・塗りつぶしの値・チャンネルごとの合成。
+    /// ユーザーチャンネルは番号だけで別の意味へ結び付けない。レイヤーが何かを持つ（有効・面・塗りつぶしの値・チャンネルごとの合成。
     /// 無効にしても面・値・合成は残る）番号は、配置先に同じ番号で同じ情報のチャンネルが無ければ断る。落として配置はしない。
     fn check_user_channels(&self, material: &SmartMaterial) -> Result<(), CoreError> {
         for i in Channel::STANDARD_COUNT..Channel::MAX {
@@ -320,7 +324,7 @@ impl Document {
             self.source_budget
                 .saturating_sub(self.allocated_bytes() - old),
         )?;
-        // 置くたびに、段・Anchor は新しい ID（同じスマートマスクを何度置いても、元の層へ戻しても、文書の中で ID が重ならない）
+        // 置くたびに、段・Anchor は新しい ID（同じスマートマスクを何度置いても、元のレイヤーへ戻しても、文書の中で ID が重ならない）
         self.renew_effect_ids(&mut copies);
         self.check_layer_effects(&copies)?;
         let mask = copies[0].mask.take().expect("検証済みのマスク");
@@ -357,7 +361,7 @@ impl Document {
                 * (f64::from(self.height) / f64::from(material.height)))
             .sqrt();
             notes = Document::scale_effect_radii(&mut layers, scale);
-            // 大きさの違う画布のキャンバスのパスは、点が元の大きさのもの: ラスターの層は画素だけが残り、塗りつぶしの層はパスごと外れる
+            // 大きさの違うキャンバスでは、キャンバスの上のパスの点は元の大きさのまま: ラスターレイヤーは画素だけが残り、塗りつぶしレイヤーはパスごと外れる
             for l in &mut layers {
                 if l.has_paths() {
                     notes.push(if detach_paths(l) {
@@ -367,7 +371,7 @@ impl Document {
                         )
                     } else {
                         format!(
-                            "「{}」のパスは外れました（点は元のキャンバスの大きさのもので、塗りつぶしの層は画素を持たない）",
+                            "「{}」のパスは外れました（点は元のキャンバスの大きさのもので、塗りつぶしレイヤーは画素を持たない）",
                             l.name
                         )
                     });

@@ -1,15 +1,15 @@
-//! Normal チャンネルの計算: 層を単位ベクトルとして重ねる式と、Normal の出力（塗った法線を平らな法線へ載せ、Height から作った
+//! Normal チャンネルの計算: レイヤーを単位ベクトルとして重ねる式と、Normal の出力（塗った法線を平らな法線へ載せ、Height から作った
 //! 法線を下に敷く）。
 //!
 //! - バイトは c / 255 × 2 − 1 と読み、使う前に必ず正規化する。長さ² が 1e-12 より短いベクトルは平ら (0, 0, 1)。
-//! - 層の重ねは色の合成と同じ W3C の source-over の形で、色の代わりにベクトル: t = 上のアルファ × 不透明度 × マスク、
+//! - レイヤーの重ねは色の合成と同じ W3C の source-over の形で、色の代わりにベクトル: t = 上のアルファ × 不透明度 × マスク、
 //!   da = 下のアルファで normalize((1 − t)·da·下 + (1 − da)·t·上 + da·t·B(下, 上))、アルファは t + da(1 − t)。
 //! - B は Overlay で RNM（Reoriented Normal Mapping、上を細部として下の向きへ回す）、ほかのモードは上そのもの（置き換え）。
 //! - 調整レイヤーはこのチャンネルでも色の式のまま（出力で正規化する）。
 //! - 出力は合成をアルファで平らな法線へ載せ（塗っていない所は (128, 128, 255)）、Height から作った法線を土台に塗った法線を
 //!   細部として RNM で重ね、不透明。Height → Normal は高さ = R × A（0 の上）を Sobel 3×3 ÷ 8 で微分し（傾き s の坂はちょうど s）、
-//!   n = normalize(−強さ·∂h/∂x, −強さ·∂h/∂y, 1)。UV の歪み・島の境・余白は見ない。
-//! - 層の重ね（[`blend`]・[`clip_onto`]・[`fade`] と行の核）は f32 の式で、道（スカラー・SSE4.1・AVX2）とスレッド数によらず同じバイト
+//!   n = normalize(−強さ·∂h/∂x, −強さ·∂h/∂y, 1)。UV の歪み・アイランドの境・余白は見ない。
+//! - レイヤーの重ね（[`blend`]・[`clip_onto`]・[`fade`] と行の核）は f32 の式で、道（スカラー・SSE4.1・AVX2）とスレッド数によらず同じバイト
 //!   （`rows`）。出力の式と、ほかの計算が使う [`decode`]・[`encode`]・[`rnm`] は f64。
 
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ pub enum NormalYDirection {
     DirectX = 1,
 }
 
-/// 高さの微分が画布の外で読むもの: 端のテクセル（Clamp）か、反対側の端（Wrap、繰り返すテクスチャ向け）。
+/// 高さの微分がキャンバスの外で読むもの: 端のテクセル（Clamp）か、反対側の端（Wrap、繰り返すテクスチャ向け）。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(u8)]
 pub enum HeightEdgeMode {
@@ -125,7 +125,7 @@ impl NormalSettings {
     }
 }
 
-/// [`Document::normal_output`] の作業メモリの既定の上限（出力の画布と帯）。
+/// [`Document::normal_output`] の作業メモリの既定の上限（出力のキャンバスと帯）。
 pub const DEFAULT_WORKING_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 /// 向きを持たない長さ²（これより短いと平ら）。
 const DEGENERATE_LENGTH_SQUARED: f64 = 1e-12;
@@ -192,7 +192,7 @@ pub fn rnm(b: (f64, f64, f64), d: (f64, f64, f64)) -> (f64, f64, f64) {
     (tx * k - ux, ty * k - uy, tz * k - uz)
 }
 
-/// 1 つの層の画素を下へベクトルとして重ねる（不透明度 0〜1。f32 へ丸めて使う）。
+/// 1 つのレイヤーの画素を下へベクトルとして重ねる（不透明度 0〜1。f32 へ丸めて使う）。
 pub fn blend(below: Rgba8, over: Rgba8, opacity: f64, mode: BlendMode) -> Rgba8 {
     blend_unchecked(below, over, opacity, mode)
 }
@@ -203,7 +203,7 @@ pub(crate) fn blend_unchecked(below: Rgba8, over: Rgba8, opacity: f64, mode: Ble
     rows::blend_pixel(below, over, opacity, mode)
 }
 
-/// クリッピングされた層を下地へ: normalize((1 − t)·下地 + t·B(下地, 上))、t = 上のアルファ × 量。下地のアルファのまま。
+/// クリッピングされたレイヤーを下地へ: normalize((1 − t)·下地 + t·B(下地, 上))、t = 上のアルファ × 量。下地のアルファのまま。
 #[inline]
 pub fn clip_onto(group: Rgba8, clipped: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
     rows::clip_pixel(group, clipped, amount, mode)
@@ -397,7 +397,7 @@ impl Document {
         self.normal_settings
     }
 
-    /// Normal の層が無くても Normal の出力があるか: Height → Normal が有効で、Height を使う層がある。
+    /// Normal のレイヤーが無くても Normal の出力があるか: Height → Normal が有効で、Height を使うレイヤーがある。
     pub fn derives_normal(&self) -> bool {
         self.normal_settings.derive_from_height
             && self
@@ -406,7 +406,7 @@ impl Document {
                 .any(|l| l.is_channel_enabled(Channel::Height))
     }
 
-    /// [`Document::normal_output`] が確保するバイト数: 出力の画布、Normal の合成の帯 1 つ、作る設定なら上下に 1 行ずつの
+    /// [`Document::normal_output`] が確保するバイト数: 出力のキャンバス、Normal の合成の帯 1 つ、作る設定なら上下に 1 行ずつの
     /// 余白を持つ Height の帯（バイトと高さ）。
     pub fn normal_working_bytes(&self) -> u64 {
         let (w, h) = (self.width() as u64, self.height() as u64);
@@ -431,7 +431,7 @@ impl Document {
         )
     }
 
-    /// 他の道具へのファイル向け: 文書のファイルの Y の向き（DirectX なら緑を反転）。
+    /// 他のツールへのファイル向け: 文書のファイルの Y の向き（DirectX なら緑を反転）。
     pub fn normal_file_output(&self, max_working_bytes: u64) -> Result<Vec<u8>, CoreError> {
         let mut bytes = self.normal_output(max_working_bytes)?;
         if self.normal_settings.file_direction == NormalYDirection::DirectX {
@@ -462,7 +462,7 @@ impl Document {
         self.evaluate_normal(settings, false, true)
     }
 
-    /// 帯ごと: Normal と Height の合成を 1 帯ずつ（Height は上下に 1 行の余白）。出力のほかに画布全体を持たない。
+    /// 帯ごと: Normal と Height の合成を 1 帯ずつ（Height は上下に 1 行の余白）。出力のほかにキャンバス全体を持たない。
     fn evaluate_normal(
         &self,
         settings: &NormalSettings,

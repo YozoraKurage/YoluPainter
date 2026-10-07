@@ -1,4 +1,4 @@
-//! UV の位相: 島の番号・島の図（重なりの印）・継ぎ目の縁と、帯の写しが読む所（拡大率・向き・鏡映の違い、重なった UV、開いた縁、
+//! UV の位相: アイランドの番号・アイランドの図（重なりの印）・継ぎ目の縁と、帯の写しが読む所（拡大率・向き・鏡映の違い、重なった UV、開いた縁、
 //! 展開の届く所）。小さなモデルは試験で組む: 3D で 1 辺を共有する 2 つの四角（A は x 0..1、B は x 1..2）を、UV の別の所に置く。
 use std::sync::Arc;
 
@@ -68,7 +68,7 @@ fn two_islands_and_the_seam_between_them() {
     let map = t.island_map(64, 64).unwrap();
     assert_eq!(map.island(10, 10), 1);
     assert_eq!(map.island(45, 20), 2);
-    assert_eq!(map.island(32, 20), 0, "島の間");
+    assert_eq!(map.island(32, 20), 0, "アイランドの間");
     assert!(!map.overlapped(10, 10));
     // 行の連なり: A の 6..=25 と B の 38..=57
     let row = map.row(16);
@@ -91,7 +91,7 @@ fn the_band_reads_the_other_island_across_the_seam() {
     // B の左の縁の外 → A の右の縁の内
     let taps = band.taps(37, 20).unwrap();
     assert!(near(center(&taps), (24.7, 20.5)), "{taps:?}");
-    // 島の中は帯ではない
+    // アイランドの中は帯ではない
     assert!(band.taps(20, 16).is_none());
     // 開いた縁（A の左の辺）の外は埋めない
     assert!(band.taps(5, 16).is_none());
@@ -131,14 +131,14 @@ fn overlapped_islands_with_different_partners_are_left_alone() {
     t.extend(quad(0., 5., a));
     t.extend(quad(1., 5., |x, y| Vec2::new(0.6 + 0.3 * x, 0.6 + 0.3 * y)));
     let topo = topology(t);
-    // A と A' は UV の辺を共有するので 1 つの島
+    // A と A' は UV の辺を共有するので 1 つのアイランド
     assert_eq!(topo.island_count(), 3);
     let map = topo.island_map(64, 64).unwrap();
     assert!(map.overlapped(12, 18), "重なりの印");
     let band = topo.seam_band(64, 64, 8).unwrap();
     assert!(band.taps(26, 16).is_none());
     assert!(band.stats().conflicts > 0);
-    // 相手が同じ所（ミラーで相手の島も重なる）なら埋める
+    // 相手が同じ所（ミラーで相手のアイランドも重なる）なら埋める
     let b = |x: f32, y: f32| Vec2::new(0.6 + 0.3 * x, 0.1 + 0.3 * y);
     let mut t = quad(0., 0., a).to_vec();
     t.extend(quad(1., 0., b));
@@ -216,7 +216,7 @@ fn an_island_map_over_the_budget_is_refused_and_remembered() {
     );
     assert!(t.cached_seam_band(64, 64, 8).is_none());
     assert_eq!(t.cached_bytes(), 0);
-    // 島の図を断ると、その大きさの帯の写しも断ったことになる（調べるだけ。作らない）
+    // アイランドの図を断ると、その大きさの帯の写しも断ったことになる（調べるだけ。作らない）
     assert_eq!(
         t.refusal(64, 64, 8),
         Some(UvTopologyError::Budget { budget: 100 })
@@ -244,7 +244,7 @@ fn an_island_map_over_the_budget_is_refused_and_remembered() {
 #[test]
 fn a_refusal_is_not_retried_under_the_same_budget_but_under_a_larger_one() {
     let t = straight();
-    // 島の図は作れるが、帯の写しの作業は収まらない予算
+    // アイランドの図は作れるが、帯の写しの作業は収まらない予算
     let map = straight().island_map(64, 64).unwrap().bytes();
     let tight = map * 8;
     t.island_map_within(64, 64, tight).unwrap();
@@ -279,13 +279,13 @@ fn a_refusal_is_not_retried_under_the_same_budget_but_under_a_larger_one() {
 #[test]
 fn the_remembered_tables_stay_inside_the_budget() {
     let t = straight();
-    // 大きな島の図を先に作り、次に小さな島の図を、覚えている合計より 1 バイト小さい予算で作る: 古い大きな図が捨てられて収まる
+    // 大きなアイランドの図を先に作り、次に小さなアイランドの図を、覚えている合計より 1 バイト小さい予算で作る: 古い大きな図が捨てられて収まる
     let big = t.island_map_within(2048, 2048, 64 << 20).unwrap();
     let held = t.cached_bytes();
     let budget = held - 1;
     let small = t
         .island_map_within(256, 256, budget)
-        .expect("小さな島の図は、その予算で作れる");
+        .expect("小さなアイランドの図は、その予算で作れる");
     assert!(
         big.bytes() > small.bytes() * 4,
         "前提: 大きな図 {} は小さな図 {} よりずっと大きい",
@@ -302,7 +302,7 @@ fn the_remembered_tables_stay_inside_the_budget() {
         small.bytes(),
         "古い大きな図を捨て、直近の図は残す"
     );
-    // 帯の写しは、帯の写しが持つ島の図と合わせて数える: 予算を小さくして縮めると、収まるまで古いものから（直近のものも）捨てる
+    // 帯の写しは、帯の写しが持つアイランドの図と合わせて数える: 予算を小さくして縮めると、収まるまで古いものから（直近のものも）捨てる
     let t = straight();
     let wide = t.seam_band_within(128, 128, 32, 64 << 20).unwrap();
     let narrow = t.seam_band_within(128, 128, 8, 64 << 20).unwrap();
@@ -311,7 +311,7 @@ fn the_remembered_tables_stay_inside_the_budget() {
     assert_eq!(
         held,
         map + wide.bytes() + narrow.bytes(),
-        "島の図は 1 度だけ数える"
+        "アイランドの図は 1 度だけ数える"
     );
     t.shrink(held - 1);
     assert!(t.cached_bytes() < held);

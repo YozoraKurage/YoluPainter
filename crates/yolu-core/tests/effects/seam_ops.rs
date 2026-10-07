@@ -1,4 +1,4 @@
-//! 層の操作と効果・パスのつなぎ目: 複製・削除・変形・結合・大きさの変更が、効果の ID・半径・評価した出力・パスを C# と同じに扱う。
+//! レイヤーの操作と効果・パスのつなぎ目: 複製・削除・変形・結合・大きさの変更が、効果の ID・半径・評価した出力・パスを C# と同じに扱う。
 //! どれも 1 回の Undo で戻り、断ったら何も変えない。人工データだけ。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use crate::attach_support;
@@ -32,7 +32,7 @@ fn max_difference(a: &[u8], b: &[u8]) -> u8 {
         .unwrap_or(0)
 }
 
-/// 合成が同じ見た目か（アルファが 0 の画素は、RGB が違っても同じ。結合した層は完全に透明な画素の色を持たない）。
+/// 合成が同じ見た目か（アルファが 0 の画素は、RGB が違っても同じ。結合したレイヤーは完全に透明な画素の色を持たない）。
 fn assert_same_look(a: &[u8], b: &[u8], what: &str) {
     assert_eq!(a.len(), b.len());
     for (i, (p, q)) in a.chunks_exact(4).zip(b.chunks_exact(4)).enumerate() {
@@ -87,7 +87,7 @@ fn unique(v: &[u128]) -> bool {
 
 // ───────── 複製・削除 ─────────
 
-/// 複数の層の複製は 1 回の Undo で、写しの段・Anchor・パスは新しい ID を持つ（文書の中で重ならない）。Undo で写しが消える。
+/// 複数のレイヤーの複製は 1 回の Undo で、写しの段・Anchor・パスは新しい ID を持つ（文書の中で重ならない）。Undo で写しが消える。
 #[test]
 fn duplicating_layers_renews_every_effect_id_in_one_step() {
     let mut r = rig();
@@ -109,12 +109,12 @@ fn duplicating_layers_renews_every_effect_id_in_one_step() {
     assert_eq!(
         after.0.len(),
         before.0.len() * 2 - 1 + 1 - 1,
-        "段が倍（マスクの段・層の段とも）"
+        "段が倍（マスクの段・レイヤーの段とも）"
     );
     assert_eq!(
         after.1.len(),
         before.1.len() + 1,
-        "写した層の Anchor も別の ID で持つ"
+        "写したレイヤーの Anchor も別の ID で持つ"
     );
     assert_eq!(after.2.len(), before.2.len() * 2, "パスも別の ID");
     // 写しは元の効果を持つ（設定は同じ・ID だけ違う）
@@ -131,7 +131,7 @@ fn duplicating_layers_renews_every_effect_id_in_one_step() {
     assert_cache_is_honest(&r.doc, "複製のあと");
 }
 
-/// 層の削除（複数）: 効果の層を消しても、ほかの層の効果と ID はそのまま。消した Anchor を読む段は、理由を出して入力のまま通し、
+/// レイヤーの削除（複数）: 効果のレイヤーを消しても、ほかのレイヤーの効果と ID はそのまま。消した Anchor を読む段は、理由を出して入力のまま通し、
 /// Undo で戻る。
 #[test]
 fn removing_layers_with_effects_leaves_readers_passing_through_until_undone() {
@@ -227,7 +227,7 @@ fn painted_pair(doc: &mut Document) -> (LayerId, LayerId) {
     let lower = doc.add_layer("下").unwrap();
     paint(doc, lower, Channel::Color, 11);
     let upper = doc.add_layer("上").unwrap();
-    // 上の層は 1 つのタイルの隅だけ描く（ぼかしが隣のタイルへ届くように）
+    // 上のレイヤーは 1 つのタイルの隅だけ描く（ぼかしが隣のタイルへ届くように）
     for y in 5..8 {
         for x in 5..8 {
             doc.set_channel_pixel(upper, Channel::Color, x, y, Rgba8::new(240, 30, 60, 255))
@@ -244,7 +244,7 @@ fn plain_doc() -> Document {
     doc
 }
 
-/// 結合は、上の層のフィルターを画素へ焼く（結果は効果を持たない）。ぼかしが元の画素の無いタイルへ届く分も焼き、合成は変わらない
+/// 結合は、上のレイヤーのフィルターを画素へ焼く（結果は効果を持たない）。ぼかしが元の画素の無いタイルへ届く分も焼き、合成は変わらない
 /// （許容差の内）。Undo で段が戻り、評価の出力も戻る。
 #[test]
 fn merge_down_bakes_the_upper_layers_filters_including_the_halo_tiles() {
@@ -258,7 +258,7 @@ fn merge_down_bakes_the_upper_layers_filters_including_the_halo_tiles() {
     .unwrap();
     doc.clear_history().unwrap();
     let before = colour(&doc);
-    // 上の層の元の画素は 1 タイルの中だけ。ぼかしの出力は隣のタイルにも出ている
+    // 上のレイヤーの元の画素は 1 タイルの中だけ。ぼかしの出力は隣のタイルにも出ている
     assert_eq!(
         doc.layer(upper)
             .unwrap()
@@ -290,8 +290,8 @@ fn merge_down_bakes_the_upper_layers_filters_including_the_halo_tiles() {
     assert_eq!(colour(&doc), merged);
 }
 
-/// 下の層が 1 枚目で、ふつうの層でない（不透明度 50%）と、分離の結合になり、下の層のマスクも焼く: 厳密に同じ見た目（許容差 0）。
-/// 結合した層は 100% の Normal で、マスクを持たない。
+/// 下のレイヤーが 1 枚目で、ふつうのレイヤーでない（不透明度 50%）と、分離の結合になり、下のレイヤーのマスクも焼く: 厳密に同じ見た目（許容差 0）。
+/// 結合したレイヤーは 100% の Normal で、マスクを持たない。
 #[test]
 fn an_isolated_merge_bakes_the_lower_mask_filters_and_is_exact() {
     let mut doc = plain_doc();
@@ -330,13 +330,13 @@ fn an_isolated_merge_bakes_the_lower_mask_filters_and_is_exact() {
     assert_eq!(result.opacity(), 1.0);
 }
 
-/// 結合のあとも下の層のマスクを残すとき（分離でない）、マスクのフィルターは焼かずに結果へ写る（効果のまま）。
+/// 結合のあとも下のレイヤーのマスクを残すとき（分離でない）、マスクのフィルターは焼かずに結果へ写る（効果のまま）。
 #[test]
 fn a_kept_mask_keeps_its_filters() {
     let mut doc = plain_doc();
     let (lower, upper) = painted_pair(&mut doc);
     doc.add_layer_mask(lower).unwrap();
-    // マスクが隠すのは上の層の画素（左下の隅）から遠い所だけ（結合した層はマスクの下へ入るので、近いと見た目が変わる）
+    // マスクが隠すのは上のレイヤーの画素（左下の隅）から遠い所だけ（結合したレイヤーはマスクの下へ入るので、近いと見た目が変わる）
     for y in 0..H {
         for x in 28..W {
             doc.set_mask_pixel(lower, x, y, 200).unwrap();
@@ -351,7 +351,7 @@ fn a_kept_mask_keeps_its_filters() {
     let below = doc.add_layer("一番下").unwrap();
     doc.set_pixel(below, 3, 3, Rgba8::new(1, 2, 3, 255))
         .unwrap();
-    // 一番下を下へ送って、下の層（lower）の下に何かが見えるようにする（分離の結合にならない）
+    // 一番下を下へ送って、下のレイヤー（lower）の下に何かが見えるようにする（分離の結合にならない）
     doc.move_layers(&[below], None, 0).unwrap();
     doc.clear_history().unwrap();
     let before = colour(&doc);
@@ -367,11 +367,11 @@ fn a_kept_mask_keeps_its_filters() {
     assert!(max_difference(&before, &colour(&doc)) <= 2);
 }
 
-/// 元の画素が無いタイルへ出す効果（形のグラデーションの Generator）も、全部の層を結合するとき焼かれる（合成は同じ）。
+/// 元の画素が無いタイルへ出す効果（形のグラデーションの Generator）も、全部のレイヤーを結合するとき焼かれる（合成は同じ）。
 #[test]
 fn merge_visible_bakes_a_generator_into_tiles_that_have_no_pixels() {
     let (mut doc, _) = world();
-    let layer = doc.add_layer("空の層").unwrap();
+    let layer = doc.add_layer("空のレイヤー").unwrap();
     let mut g = Settings::new(generator::Kind::ShapeGradient);
     g.ramp = Some(generator::Ramp::default());
     g.blend = generator::Blend::Replace;
@@ -394,7 +394,7 @@ fn merge_visible_bakes_a_generator_into_tiles_that_have_no_pixels() {
     assert_cache_is_honest(&doc, "結合のあと");
 }
 
-/// 文書の見え方と履歴の状態（断ったあとに変わっていないことの確認用）: 版・層の数と ID・履歴の数・全チャンネルの合成。
+/// 文書の見え方と履歴の状態（断ったあとに変わっていないことの確認用）: 版・レイヤーの数と ID・履歴の数・全チャンネルの合成。
 fn state_of(doc: &Document) -> (u64, Vec<LayerId>, usize, usize, Vec<Vec<u8>>) {
     (
         doc.revision(),
@@ -405,7 +405,7 @@ fn state_of(doc: &Document) -> (u64, Vec<LayerId>, usize, usize, Vec<Vec<u8>>) {
     )
 }
 
-/// 効いていない効果（使えるマップが無い Generator）は焼き込めない: 落とさず断り、何も変えない。断るたびに、版・層・履歴・合成が
+/// 効いていない効果（使えるマップが無い Generator）は焼き込めない: 落とさず断り、何も変えない。断るたびに、版・レイヤー・履歴・合成が
 /// 最初のまま（途中で文書を変えてから断る退行を見逃さない）。
 #[test]
 fn merges_refuse_to_bake_an_inactive_generator_and_change_nothing() {
@@ -477,7 +477,7 @@ fn merges_refuse_to_bake_an_inactive_generator_and_change_nothing() {
     assert_eq!(doc.undo_count(), 0);
 }
 
-/// 下の層のマスクに効いていない Generator（Anchor を選んでいない）がある結合。分離の結合（下の層が 1 枚目でふつうの層でない）は
+/// 下のレイヤーのマスクに効いていない Generator（Anchor を選んでいない）がある結合。分離の結合（下のレイヤーが 1 枚目でふつうのレイヤーでない）は
 /// マスクのフィルターも画素へ焼くので、落とさず断って何も変えない。C# にはこの検査が無く黙って落とす（意図して変えた所）。
 /// 分離でない結合はマスクが効果ごと結果へ残るので通る（C# と同じ）。
 #[test]
@@ -503,7 +503,7 @@ fn an_isolated_merge_refuses_an_inactive_generator_in_the_lower_mask() {
         if isolated {
             doc.set_layer_opacity(lower, 0.5, false).unwrap();
         } else {
-            // 下の層の下に見える層があると、分離の結合にならない
+            // 下のレイヤーの下に見えるレイヤーがあると、分離の結合にならない
             let below = doc.add_layer("一番下").unwrap();
             doc.set_pixel(below, 3, 3, Rgba8::new(1, 2, 3, 255))
                 .unwrap();
@@ -513,7 +513,7 @@ fn an_isolated_merge_refuses_an_inactive_generator_in_the_lower_mask() {
         doc.clear_history().unwrap();
         (doc, lower, upper)
     };
-    // 分離の結合: 断る（持ち主は下の層のマスク）。何も変わらず、Undo の履歴も増えない
+    // 分離の結合: 断る（持ち主は下のレイヤーのマスク）。何も変わらず、Undo の履歴も増えない
     let (mut doc, lower, upper) = make(true);
     let before = state_of(&doc);
     match doc.merge_down(upper, 255) {
@@ -525,7 +525,7 @@ fn an_isolated_merge_refuses_an_inactive_generator_in_the_lower_mask() {
     }
     assert!(state_of(&doc) == before);
     assert_cache_is_honest(&doc, "断ったあと");
-    // 分離でない結合（下の層の下に見える層がある）: 通り、マスクの段は結果に残る
+    // 分離でない結合（下のレイヤーの下に見えるレイヤーがある）: 通り、マスクの段は結果に残る
     let (mut doc, _, upper) = make(false);
     let report = doc.merge_down(upper, 255).unwrap();
     assert_ne!(report.method, yolu_core::MergeMethod::Isolated);
@@ -540,7 +540,7 @@ fn an_isolated_merge_refuses_an_inactive_generator_in_the_lower_mask() {
     );
 }
 
-/// 結合した層は、上の層の Anchor を引き継ぐ（読む段はそのまま使える）。下の層の Anchor は無くなる。
+/// 結合したレイヤーは、上のレイヤーの Anchor を引き継ぐ（読む段はそのまま使える）。下のレイヤーの Anchor は無くなる。
 #[test]
 fn merge_down_moves_the_upper_anchor_to_the_result() {
     let mut doc = plain_doc();
@@ -585,12 +585,12 @@ fn merge_down_moves_the_upper_anchor_to_the_result() {
     assert_eq!(
         anchors[0].anchor.id(),
         upper_anchor,
-        "上の層の Anchor が結果に付く"
+        "上のレイヤーの Anchor が結果に付く"
     );
     assert_eq!(anchors[0].layer, report.result_id);
     assert!(
         doc.find_anchor(lower_anchor).is_none(),
-        "下の層の Anchor は無くなる"
+        "下のレイヤーの Anchor は無くなる"
     );
     assert!(doc.anchor_issues().is_empty(), "読む段はそのまま使える");
     assert!(max_difference(&before, &whole(&doc, Channel::Height)) <= 2);
@@ -665,11 +665,11 @@ fn merging_away_a_read_anchor_is_counted_as_a_change() {
     assert_eq!(whole(&doc, Channel::Height), before);
 }
 
-/// 層の組・グループの結合: 子の効果とパスを焼き、グループの Anchor を結果に移す。印はフィルター 1・パス 2。
+/// レイヤーの組・グループの結合: 子の効果とパスを焼き、グループの Anchor を結果に移す。印はフィルター 1・パス 2。
 #[test]
 fn merging_a_group_and_chosen_layers_bakes_effects_and_paths() {
     let mut r = rig();
-    // グループ: 土台（ぼかし・Anchor）とパスの層。グループにも Anchor
+    // グループ: 土台（ぼかし・Anchor）とパスレイヤー。グループにも Anchor
     let group = r
         .doc
         .group_layers(&[r.base, r.path_layer], "グループ")
@@ -680,7 +680,7 @@ fn merging_a_group_and_chosen_layers_bakes_effects_and_paths() {
         .unwrap();
     r.doc.clear_history().unwrap();
     let before = colour(&r.doc);
-    // Anchor を読む中の層（mid）が土台の Anchor を読む。グループの中の Anchor は無くなるので、読む段は入力のまま通す
+    // Anchor を読む中のレイヤー（mid）が土台の Anchor を読む。グループの中の Anchor は無くなるので、読む段は入力のまま通す
     let report = r.doc.merge_group(group, 255).unwrap();
     assert_eq!(report.notes & 3, 3, "フィルターを焼き、パスを画素にした");
     let result = r.doc.layer(report.result_id).unwrap();
@@ -693,7 +693,7 @@ fn merging_a_group_and_chosen_layers_bakes_effects_and_paths() {
     r.doc.undo().unwrap();
     assert_eq!(colour(&r.doc), before);
     assert!(r.doc.layer(r.path_layer).unwrap().path().is_some());
-    // 層の組（選んだ 2 層）の結合
+    // レイヤーの組（選んだ 2 レイヤー）の結合
     let report = r.doc.merge_layers(&[r.base, r.path_layer], 255).unwrap();
     assert_eq!(report.notes & 3, 3);
     let result = r.doc.layer(report.result_id).unwrap();
@@ -731,7 +731,7 @@ fn the_comparison_copy_reads_the_documents_inputs() {
     .unwrap();
     doc.clear_history().unwrap();
     let before = colour(&doc);
-    // 下 2 層を結合する（画像の層は結合に入らず、上に見える）。準備用の文書が入力を持たないと、画像の層が値に変わって違いが出る
+    // 下 2 レイヤーを結合する（画像のレイヤーは結合に入らず、上に見える）。準備用の文書が入力を持たないと、画像のレイヤーが値に変わって違いが出る
     let report = doc.merge_layers(&[lower, upper], 0).unwrap();
     assert!(report.exact(), "{report:?}");
     assert_eq!(colour(&doc), before);
@@ -872,7 +872,7 @@ fn canvas_path_of(doc: &Document, layer: LayerId) -> yolu_core::paths::CanvasPat
 }
 
 /// 画像のサイズ変更は、2D のパスの点とブラシの半径を倍率に合わせ、パスから描き直す（写した画素でなく）。モデルの上のパスは残り、
-/// 報告に層を挙げる（呼び手が描き直す）。Undo でパスも画素も戻る。
+/// 報告にレイヤーを挙げる（呼び手が描き直す）。Undo でパスも画素も戻る。
 #[test]
 fn resizing_redraws_2d_paths_from_the_scaled_path_and_lists_the_3d_ones() {
     let mut r = rig();
@@ -950,7 +950,7 @@ fn resizing_redraws_2d_paths_from_the_scaled_path_and_lists_the_3d_ones() {
     );
 }
 
-/// 画布だけを動かす（resize_canvas）ときも、2D のパスは点をずらして描き直し、層の画素と食い違わない。
+/// キャンバスだけを動かす（resize_canvas）ときも、2D のパスは点をずらして描き直し、レイヤーの画素と食い違わない。
 #[test]
 fn resizing_the_canvas_moves_2d_path_points_and_redraws() {
     let mut r = rig();
@@ -976,8 +976,8 @@ fn resizing_the_canvas_moves_2d_path_points_and_redraws() {
     assert_eq!(canvas_path_of(&r.doc, r.path_layer), old);
 }
 
-/// 対称のある 2D のパスは、拡大・縮小でも画布だけを動かすときでも、対称の中心を点と同じに動かして描き直す: 映した側の画素が、
-/// 新しい画布の中心に対して左右・上下に対称のまま残る。
+/// 対称のある 2D のパスは、拡大・縮小でもキャンバスだけを動かすときでも、対称の中心を点と同じに動かして描き直す: 映した側の画素が、
+/// 新しいキャンバスの中心に対して左右・上下に対称のまま残る。
 #[test]
 fn resizing_moves_the_symmetry_centre_of_a_2d_path_with_its_points() {
     use yolu_core::glam::DVec2;
@@ -1012,7 +1012,7 @@ fn resizing_moves_the_symmetry_centre_of_a_2d_path_with_its_points() {
         PathSymmetry::Canvas(s) => s.center,
         other => panic!("{other:?}"),
     };
-    // 左右・上下に対称な画素（画布の中心は画素の境目）
+    // 左右・上下に対称な画素（キャンバスの中心は画素の境目）
     let assert_symmetric = |doc: &Document, layer: LayerId, what: &str| {
         let surface = doc.layer(layer).unwrap().surface(Channel::Color).unwrap();
         let (w, h) = (surface.width(), surface.height());
@@ -1053,17 +1053,17 @@ fn resizing_moves_the_symmetry_centre_of_a_2d_path_with_its_points() {
         DVec2::new(W as f64 / 4.0, H as f64 / 4.0)
     );
     assert_symmetric(&doc, layer, "縮小のあと");
-    // 画布だけを広げる（点を画素と同じだけずらす）: 中心も同じだけずれる。新しい画布の中心になるよう左右・上下へ均等に
+    // キャンバスだけを広げる（点を画素と同じだけずらす）: 中心も同じだけずれる。新しいキャンバスの中心になるよう左右・上下へ均等に
     let (mut doc, layer) = build();
     doc.resize_canvas(W + 8, H + 6, (4, 3)).unwrap();
     assert_eq!(
         centre(&doc, layer),
         DVec2::new(W as f64 / 2.0 + 4.0, H as f64 / 2.0 + 3.0)
     );
-    assert_symmetric(&doc, layer, "画布を広げたあと");
+    assert_symmetric(&doc, layer, "キャンバスを広げたあと");
 }
 
-/// 大きさを変えると、元の画素の無い層（塗りつぶし＋フィルター）の出力も新しい大きさになる: 画布の端の欠けたタイルで評価した古い
+/// 大きさを変えると、元の画素の無いレイヤー（塗りつぶし＋フィルター）の出力も新しい大きさになる: キャンバスの端の欠けたタイルで評価した古い
 /// 出力を返さない。
 #[test]
 fn a_canvas_size_change_never_serves_the_old_sizes_output() {
@@ -1076,10 +1076,10 @@ fn a_canvas_size_change_never_serves_the_old_sizes_output() {
     )
     .unwrap();
     doc.clear_history().unwrap();
-    // 28 行 = 3.5 タイル: いちばん上のタイルは欠けている。評価してキャッシュへ入れてから、画布を 32 行へ
+    // 28 行 = 3.5 タイル: いちばん上のタイルは欠けている。評価してキャッシュへ入れてから、キャンバスを 32 行へ
     let _ = colour(&doc);
     doc.resize_canvas(40, 32, (0, 0)).unwrap();
-    assert_cache_is_honest(&doc, "画布を伸ばしたあと");
+    assert_cache_is_honest(&doc, "キャンバスを伸ばしたあと");
     let top_row = colour(&doc);
     let last = (31 * 40) * 4;
     assert!(top_row[last + 3] > 0, "伸ばした行にも塗りつぶしが出る");
@@ -1092,7 +1092,7 @@ fn a_canvas_size_change_never_serves_the_old_sizes_output() {
 #[test]
 fn a_material_path_layers_channels_can_be_disabled_but_a_plain_paths_cannot() {
     let mut r = rig();
-    // 組を持たないパス（rig の層）: 描くチャンネルは無効にできない
+    // 組を持たないパス（rig のレイヤー）: 描くチャンネルは無効にできない
     let before = state_of(&r.doc);
     assert!(matches!(
         r.doc
@@ -1141,8 +1141,8 @@ fn a_material_path_layers_channels_can_be_disabled_but_a_plain_paths_cannot() {
     }
 }
 
-/// 画素を変えない交換（複数の層の表示の切り替え・元に戻す・やり直す）は、評価したぼかしのキャッシュを捨てない: 再評価しない。
-/// 画素を変える交換（変形）は、変わった層だけ作り直す（古い出力を返さない）。
+/// 画素を変えない交換（複数のレイヤーの表示の切り替え・元に戻す・やり直す）は、評価したぼかしのキャッシュを捨てない: 再評価しない。
+/// 画素を変える交換（変形）は、変わったレイヤーだけ作り直す（古い出力を返さない）。
 #[test]
 fn swaps_that_leave_the_pixels_alone_keep_the_evaluation_cache() {
     let mut doc = plain_doc();
@@ -1157,7 +1157,7 @@ fn swaps_that_leave_the_pixels_alone_keep_the_evaluation_cache() {
     let shown = colour(&doc);
     let evaluated = doc.effect_counters().blocks_evaluated;
     assert!(evaluated > 0);
-    // 複数の層の表示を切り替える（ぼかしを持つ層も含む）と戻す。2 回の交換とその Undo・Redo
+    // 複数のレイヤーの表示を切り替える（ぼかしを持つレイヤーも含む）と戻す。2 回の交換とその Undo・Redo
     doc.set_layers_visibility(&[lower, upper], false).unwrap();
     doc.set_layers_visibility(&[lower, upper], true).unwrap();
     assert_eq!(colour(&doc), shown);
@@ -1174,7 +1174,7 @@ fn swaps_that_leave_the_pixels_alone_keep_the_evaluation_cache() {
         "画素を変えない交換で、評価のキャッシュを捨てて再評価した"
     );
     assert_cache_is_honest(&doc, "表示を切り替えたあと");
-    // 画素を変える交換は、変わった層の出力を作り直す
+    // 画素を変える交換は、変わったレイヤーの出力を作り直す
     doc.transform_layers(
         &[lower],
         Affine2D::translation(3., -2.),
@@ -1192,7 +1192,7 @@ fn swaps_that_leave_the_pixels_alone_keep_the_evaluation_cache() {
 
 #[test]
 fn cutting_pixels_from_a_path_layer_is_refused_and_changes_nothing() {
-    // パスの層の画素はパスが決めるので切り取らない（C# の CutPixels）。断ってもクリップボードの元・文書・履歴は変わらない
+    // パスレイヤーの画素はパスが決めるので切り取らない（C# の CutPixels）。断ってもクリップボードの元・文書・履歴は変わらない
     let Rig {
         mut doc,
         path_layer,

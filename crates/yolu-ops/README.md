@@ -32,7 +32,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 対象の指し方:
 
 - **セット**（`set`）: ID か名前。省くと今のセット。
-- **層**（`layer`、`above`、`parent`）: 32 桁の 16 進の ID か、名前（同じ名前が複数あれば `ambiguous` で、候補の ID を返します）。
+- **レイヤー**（`layer`、`above`、`parent`）: 32 桁の 16 進の ID か、名前（同じ名前が複数あれば `ambiguous` で、候補の ID を返します）。
 - **チャンネル**: `Color`・`Roughness`・`Metallic`・`Height`・`Normal`・`Emission`、またはユーザーチャンネルの名前（大文字小文字は問いません）。番号でも指せます。
 - **効果**: 効果の ID（`effect.add` の返事と `effect.get` に出ます）。
 - **色**: `#rrggbb` か `#rrggbbaa`。
@@ -127,7 +127,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 - `export.channels`: チャンネルごとの PNG。名前は `<名前>_<チャンネル>.png`（セットが複数のとき `<名前>_<セット>_<チャンネル>.png`）。既定の名前は `.ylp` の名前。
 - `export.textures`: テンプレート（`unity-standard`・`unity-hdrp`・`liltoon`）の画像のうち、読むものがある画像だけ。塗り広げ（UV の外）と焼いた AO は、モデルから作るもので、
   画面なしでは渡せないので使いません。
-- `export.psd`: 1 つのチャンネルを PSD に（`bake` は層を残して PSD に形の無いものを焼き、焼いた・丸めた・落としたものを `notes` に出す。`flat` は合成を 1 枚）。
+- `export.psd`: 1 つのチャンネルを PSD に（`bake` はレイヤーを残して PSD に形の無いものを焼き、焼いた・丸めた・落としたものを `notes` に出す。`flat` は合成を 1 枚）。
   書いたあと読み戻して確かめます。
 
 ## 保存
@@ -154,11 +154,11 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `unknown_command` | 知らない命令の名前（`data.commands` に一覧） |
 | `unsupported_version` | 命令の版が合わない（`data.supported`） |
 | `no_document` | 開いている文書が無い |
-| `not_found` | セット・層・効果・チャンネル・効果の種類・テンプレートが無い |
-| `ambiguous` | 名前が複数に当たる（`data.candidates`。層は `{id, kind}`・セットは `{id, name}`・チャンネルは `{index, name}` の並び） |
+| `not_found` | セット・レイヤー・効果・チャンネル・効果の種類・テンプレートが無い |
+| `ambiguous` | 名前が複数に当たる（`data.candidates`。レイヤーは `{id, kind}`・セットは `{id, name}`・チャンネルは `{index, name}` の並び） |
 | `invalid_value` | 値が範囲の外・選択肢に無い・組み合わせが断られた |
 | `read_only` | 読むだけのセット |
-| `unsupported` | その層・チャンネル・種類にはできない、この版では扱わない |
+| `unsupported` | そのレイヤー・チャンネル・種類にはできない、この版では扱わない |
 | `confirm_required` | 壊す操作に `confirm: true` が無い（`data.files` などに対象） |
 | `path_refused` | 道が使えない（作業のフォルダの外・名前の形・通常のファイルでない） |
 | `budget` | 予算・上限を超える |

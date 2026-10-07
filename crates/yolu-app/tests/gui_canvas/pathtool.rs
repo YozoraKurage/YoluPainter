@@ -1,4 +1,4 @@
-//! パスの道具（P）の振る舞い（2D のキャンバスと 3D のビュー）。どれも「操作 → 文書が変わる → 1 回の Undo で戻る」と、ロックでの断り、
+//! パスのツール（P）の振る舞い（2D のキャンバスと 3D のビュー）。どれも「操作 → 文書が変わる → 1 回の Undo で戻る」と、ロックでの断り、
 //! 保存して開き直しても同じ、Esc・フォーカス喪失・取りこぼしでドラッグを取り残さない、日本語と英語。`headless_` で始まる試験は画面を描かず、
 //! Wine でも回る。egui_kittest の試験は画面の操作と見た目。
 use crate::common;
@@ -22,7 +22,7 @@ use yolu_core::glam::{DVec2, Vec2, Vec3};
 use yolu_core::paths::{self as core_paths, PathKind};
 use yolu_core::{LayerId, LayerLocks, LayerPath};
 
-// ───────── 2D の道具 ─────────
+// ───────── 2D のツール ─────────
 
 const RECT: fn() -> Rect = || Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0));
 
@@ -92,14 +92,14 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
     assert_eq!(
         s.doc.layers().len(),
         2,
-        "パスの無い層には、その上に新しいパスの層を作る: {}",
+        "パスの無いレイヤーには、その上に新しいパスレイヤーを作る: {}",
         s.message
     );
     let layer = s.selected_layer.unwrap();
     assert_ne!(layer, base);
     assert!(
         s.doc.layer(base).unwrap().path().is_none(),
-        "元の層には触れない"
+        "元のレイヤーには触れない"
     );
     assert_eq!(s.doc.undo_count(), 1);
     click2d(&mut s, 120.0, 60.0);
@@ -115,7 +115,7 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
     assert_eq!(
         s.doc.layers().len(),
         2,
-        "2 点目からは同じ層のパスを描き直す"
+        "2 点目からは同じレイヤーのパスを描き直す"
     );
     assert_eq!(s.doc.undo_count(), 3, "点を足すたびに 1 回の Undo");
     // 点と点を結ぶ曲線が、画素になっている（点の所と、点の間）
@@ -129,7 +129,11 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
     assert_eq!(pixel(&s, 200, 180)[3], 0);
     s.apply(Action::Undo);
     s.apply(Action::Undo);
-    assert_eq!(s.doc.layers().len(), 1, "最初の点を戻すと層ごと消える");
+    assert_eq!(
+        s.doc.layers().len(),
+        1,
+        "最初の点を戻すとレイヤーごと消える"
+    );
     s.apply(Action::Redo);
     assert_eq!(s.doc.layers().len(), 2);
     let redone = s
@@ -137,7 +141,7 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
         .layers()
         .iter()
         .find(|l| l.path().is_some())
-        .expect("パスの層が戻る");
+        .expect("パスレイヤーが戻る");
     assert_eq!(redone.path().unwrap().point_count(), 1);
 }
 
@@ -206,7 +210,7 @@ fn headless_a_drag_shows_only_in_the_overlay_until_it_is_released() {
     move2d(&mut s, 130.0, 150.0);
     assert_eq!(s.doc.revision(), revision, "離すまで文書は変えない");
     s.apply(Action::NewLayer);
-    assert_eq!(s.doc.layers().len(), 2, "ドラッグの間は層を足せない");
+    assert_eq!(s.doc.layers().len(), 2, "ドラッグの間はレイヤーを足せない");
     s.apply(Action::Undo);
     assert_eq!(s.doc.revision(), revision, "ドラッグの間は Undo も断る");
     release2d(&mut s, 130.0, 150.0);
@@ -314,7 +318,7 @@ fn headless_removing_every_point_clears_the_pixels_and_keeps_the_path_layer() {
     assert_eq!(canvas_points(&s).len(), 0);
     assert_eq!(pixel(&s, 30, 30)[3], 0, "点が無ければ画素も無い");
     assert_eq!(s.selected_layer, Some(layer));
-    // 点の無いパスにも足せる（同じ層のまま）
+    // 点の無いパスにも足せる（同じレイヤーのまま）
     click2d(&mut s, 60.0, 60.0);
     assert_eq!(canvas_points(&s).len(), 1);
     assert_eq!(s.doc.layers().len(), 2);
@@ -369,14 +373,14 @@ fn headless_escape_cancels_a_drag_and_losing_focus_commits_up_to_the_last_positi
     assert!(s.path.drag.is_none() && !s.is_stroking());
     assert!((canvas_points(&s)[1].1 - 200.0).abs() < 1.0);
     assert_eq!(s.doc.undo_count(), undo + 1);
-    // ドラッグ中に道具を替えると捨てる
+    // ドラッグ中にツールを替えると捨てる
     press2d(&mut s, 150.0, 200.0);
     move2d(&mut s, 10.0, 10.0);
     s.apply(Action::SelectTool(Tool::Brush));
     assert!(s.path.drag.is_none() && s.path.selected.is_none());
     assert!(
         (canvas_points(&s)[1].0 - 150.0).abs() < 1.0,
-        "道具を替えると動かさない"
+        "ツールを替えると動かさない"
     );
     // Esc で、選んだ点も外せる（ドラッグが無いとき）
     s.apply(Action::SelectTool(Tool::Path));
@@ -470,7 +474,7 @@ fn headless_rasterize_keeps_the_pixels_and_makes_the_layer_paintable_in_one_undo
     click2d(&mut s, 40.0, 40.0);
     click2d(&mut s, 200.0, 180.0);
     let layer = s.selected_layer.unwrap();
-    // パスの層には手で描けない
+    // パスレイヤーには手で描けない
     let err = s.begin_paint_stroke(layer, false).map(|_| ()).unwrap_err();
     assert!(err.to_string().contains("パス"), "{err}");
     let painted = pixel(&s, 100, 100);
@@ -520,7 +524,7 @@ fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
         s.message
     );
     s.sets.get_mut(0).unwrap().read_only = None;
-    // 2D のパスの層に 3D の点（逆も）は足せない
+    // 2D のパスレイヤーに 3D の点（逆も）は足せない
     click2d(&mut s, 30.0, 30.0);
     s.apply(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface {
@@ -703,7 +707,7 @@ fn headless_a_path_survives_saving_and_opening() {
     assert!(file.exists(), "{}", s.message);
     let mut t = AppState::new(64, 64);
     t.apply(Action::OpenProject(file));
-    let opened = t.doc.layer(layer).expect("同じ層");
+    let opened = t.doc.layer(layer).expect("同じレイヤー");
     let Some(LayerPath::Canvas(c)) = opened.path() else {
         panic!("パスが戻らない: {}", t.message)
     };
@@ -720,7 +724,7 @@ fn headless_a_path_survives_saving_and_opening() {
     assert_eq!(c.brush.0.color.g, 179);
     let after_pixels: Vec<[u8; 4]> = (0..128).map(|x| pixel(&t, x, 64)).collect();
     assert_eq!(before_pixels, after_pixels, "画素も同じ");
-    // 開いたあとも、同じ道具で直せる
+    // 開いたあとも、同じツールで直せる
     t.apply(Action::SelectTool(Tool::Path));
     t.selected_layer = Some(layer);
     let undo = t.doc.undo_count();
@@ -866,7 +870,7 @@ fn headless_3d_clicks_add_points_on_the_face_and_paint_the_surface_one_undo_each
         .layers()
         .iter()
         .find(|l| l.path().is_some())
-        .expect("パスの層が戻る");
+        .expect("パスレイヤーが戻る");
     assert_eq!(redone.path().unwrap().point_count(), 2);
 }
 
@@ -895,7 +899,7 @@ fn headless_3d_refuses_other_texture_sets_the_outside_and_a_2d_path_layer() {
     pathtool::surface::release(&mut s, rect, a, StrokeSource::Mouse);
     assert_eq!(s.message, "Not on the model");
     assert_eq!(s.doc.layers().len(), 1);
-    // 2D のパスの層には 3D の点を足さない
+    // 2D のパスレイヤーには 3D の点を足さない
     click2d(&mut s, 30.0, 30.0);
     s.message.clear();
     click3d(&mut s, rect, Vec3::new(-0.5, 0.0, 0.0));
@@ -1356,7 +1360,7 @@ fn headless_posing_does_not_unbind_a_path_and_a_same_shape_model_is_not_a_replac
     assert!(alpha_at(&s, 0.15, 0.35) > 0);
 }
 
-/// 選んでいる層の Color の画素（文書の並び）。
+/// 選んでいるレイヤーの Color の画素（文書の並び）。
 fn layer_color_bytes(s: &AppState) -> Vec<u8> {
     let id = s.selected_layer.unwrap();
     s.doc
@@ -1665,7 +1669,7 @@ fn add_surface(s: &mut AppState, triangle: u32, u: f64, v: f64) {
     ))));
 }
 
-/// 文書の「何も変わらない」の確かめに使う（層の数・Undo の数・版・選んでいる層のパスと点）。
+/// 文書の「何も変わらない」の確かめに使う（レイヤーの数・Undo の数・版・選んでいるレイヤーのパスと点）。
 fn doc_state(
     s: &AppState,
 ) -> (
@@ -1704,7 +1708,7 @@ fn assert_refused_with(s: &mut AppState, words: [(Lang, &str); 2], op: impl Fn(&
 
 #[test]
 fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages() {
-    // 2D、パスのある層: 直径 1・間隔 1% の細かい標本が、幅の広いキャンバスの端から端で上限（400 万）を超える
+    // 2D、パスのあるレイヤー: 直径 1・間隔 1% の細かい標本が、幅の広いキャンバスの端から端で上限（400 万）を超える
     let mut s = AppState::new(12000, 16);
     s.apply(Action::SelectTool(Tool::Path));
     s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(1.0))));
@@ -1719,7 +1723,7 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
     );
     assert_eq!(canvas_points(&s).len(), 1);
 
-    // 2D、新しい層: 画素の予算が足りない（作りかけの層を残さない）
+    // 2D、新しいレイヤー: 画素の予算が足りない（作りかけのレイヤーを残さない）
     let mut t = state(128);
     t.doc.set_source_budget_bytes(0).unwrap();
     assert_refused_with(&mut t, [(Lang::Ja, "予算"), (Lang::En, "budget")], |t| {
@@ -1728,7 +1732,7 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
     assert_eq!(t.doc.layers().len(), 1);
     assert!(path(&t).is_none());
 
-    // 2D、パスのある層: 進行中のストロークの巻き戻しの予算が足りない
+    // 2D、パスのあるレイヤー: 進行中のストロークの巻き戻しの予算が足りない
     let mut u = state(128);
     add_canvas(&mut u, 30.0, 30.0);
     add_canvas(&mut u, 100.0, 60.0);
@@ -1741,14 +1745,14 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
         u.apply(Action::Path(PathAction::Redraw))
     });
 
-    // 3D: 三角形がモデルに無い点（パスのある層・新しい層）
+    // 3D: 三角形がモデルに無い点（パスのあるレイヤー・新しいレイヤー）
     let (mut v, rect) = state3d(two_material_plate());
     assert_refused_with(
         &mut v,
         [(Lang::Ja, "三角形"), (Lang::En, "triangle")],
         |v| add_surface(v, 99_999, 0.1, 0.1),
     );
-    assert_eq!(v.doc.layers().len(), 1, "新しい層を作らない");
+    assert_eq!(v.doc.layers().len(), 1, "新しいレイヤーを作らない");
     click3d(&mut v, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut v, rect, Vec3::new(-0.3, 0.4, 0.0));
     assert_eq!(surface_path(&v).points.len(), 2);
@@ -2075,7 +2079,7 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
             "Cannot redraw the path of layer \"Path 1\" (Point 1",
         ),
     ] {
-        // 付け直せないモデル（板から遠く離れたメッシュ）に入れ替わる: 画素にし、層の名前と最初の理由を知らせる
+        // 付け直せないモデル（板から遠く離れたメッシュ）に入れ替わる: 画素にし、レイヤーの名前と最初の理由を知らせる
         let (mut s, rect) = state3d(two_material_plate());
         s.lang = lang;
         click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
@@ -2109,7 +2113,7 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
     }
 }
 
-// ───────── パスの一覧（1 つの層に何本ものパス） ─────────
+// ───────── パスの一覧（1 つのレイヤーに何本ものパス） ─────────
 
 fn list_op(s: &mut AppState, op: ListOp) {
     s.apply(Action::Path(PathAction::List(op)));
@@ -2119,7 +2123,7 @@ fn entries(s: &AppState) -> Vec<core_paths::LayerPathEntry> {
     s.path_entries().to_vec()
 }
 
-/// 1 つの層に 2 本の横の線（y = 40 と y = 200）。(層, 下のパス, 上のパス)。
+/// 1 つのレイヤーに 2 本の横の線（y = 40 と y = 200）。(レイヤー, 下のパス, 上のパス)。
 fn two_lines(s: &mut AppState) -> (LayerId, u128, u128) {
     click2d(s, 40.0, 40.0);
     click2d(s, 120.0, 40.0);
@@ -2145,7 +2149,12 @@ fn headless_enter_finishes_a_path_and_the_next_clicks_start_another_in_the_same_
     assert_eq!(s.doc.undo_count(), undo);
     click2d(&mut s, 40.0, 200.0);
     click2d(&mut s, 120.0, 200.0);
-    assert_eq!(s.doc.layers().len(), 2, "同じ層に加える: {}", s.message);
+    assert_eq!(
+        s.doc.layers().len(),
+        2,
+        "同じレイヤーに加える: {}",
+        s.message
+    );
     assert_eq!(s.selected_layer, Some(layer));
     let list = entries(&s);
     assert_eq!(list.len(), 2);
@@ -2327,7 +2336,7 @@ fn headless_a_list_survives_saving_and_opening() {
         .layers()
         .iter()
         .find(|l| l.has_paths())
-        .expect("パスの層")
+        .expect("パスレイヤー")
         .id();
     t.selected_layer = Some(layer);
     assert_eq!(entries(&t), before);
@@ -2859,7 +2868,7 @@ fn headless_a_preset_rename_rewrites_its_file_numbers_a_taken_name_and_keeps_an_
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ───────── 塗りつぶしの層のパス ─────────
+// ───────── 塗りつぶしレイヤーのパス ─────────
 
 #[test]
 fn headless_a_path_on_a_fill_layer_stays_on_that_layer_over_the_fill() {
@@ -2876,7 +2885,7 @@ fn headless_a_path_on_a_fill_layer_stays_on_that_layer_over_the_fill() {
     assert_eq!(
         s.doc.layers().len(),
         layers,
-        "新しい層は作らない: {}",
+        "新しいレイヤーは作らない: {}",
         s.message
     );
     assert_eq!(s.selected_layer, Some(fill));
@@ -2884,7 +2893,7 @@ fn headless_a_path_on_a_fill_layer_stays_on_that_layer_over_the_fill() {
     let on = pixel(&s, 60, 60);
     assert!(on[2] > 200 && on[0] < 50, "パスは塗りつぶしの上: {on:?}");
     assert_eq!(pixel(&s, 60, 20), fill_px, "パスの外は塗りつぶしのまま");
-    // 塗りつぶしの層のパスは画素にしない
+    // 塗りつぶしレイヤーのパスは画素にしない
     s.apply(Action::Path(PathAction::Rasterize(fill)));
     assert!(s.doc.layer(fill).unwrap().has_paths());
     s.apply(Action::Undo);
@@ -3166,7 +3175,7 @@ fn rasterize_is_off_for_a_fill_layer_in_the_options_bar_the_panel_and_the_layer_
     );
     assert!(
         nodes.iter().all(|n| n.accesskit_node().is_disabled()),
-        "塗りつぶしの層のパスは画素にできない"
+        "塗りつぶしレイヤーのパスは画素にできない"
     );
     // レイヤーの右クリックのメニューも押せない（理由はツールチップ）
     let rasterize = |h: &Harness<'_, YoluApp>, layer| {
@@ -3185,9 +3194,9 @@ fn rasterize_is_off_for_a_fill_layer_in_the_options_bar_the_panel_and_the_layer_
             _ => None,
         })
     };
-    let (enabled, tooltip) = rasterize(&h, fill).expect("パスのある層には出る");
+    let (enabled, tooltip) = rasterize(&h, fill).expect("パスのあるレイヤーには出る");
     assert!(!enabled && tooltip.is_some_and(|t| t.contains("塗りつぶし")));
-    // ラスターの層のパスは、これまでどおり画素にできる
+    // ラスターレイヤーのパスは、これまでどおり画素にできる
     h.state_mut().state.selected_layer = Some(raster);
     h.state_mut().state.apply(Action::SelectTool(Tool::Path));
     h.run();
@@ -3197,7 +3206,7 @@ fn rasterize_is_off_for_a_fill_layer_in_the_options_bar_the_panel_and_the_layer_
     }
     let layer = h.state().state.selected_layer.unwrap();
     assert!(h.state().state.path_can_rasterize(layer));
-    let (enabled, _) = rasterize(&h, layer).expect("パスのある層には出る");
+    let (enabled, _) = rasterize(&h, layer).expect("パスのあるレイヤーには出る");
     assert!(enabled);
     assert!(h
         .get_all_by_label("ラスタライズ")
@@ -3236,7 +3245,7 @@ fn rasterizing_from_the_panel_and_the_layer_menu_removes_the_path() {
             ..
         }
     )));
-    // パスの無い層には出ない
+    // パスの無いレイヤーには出ない
     let other = h.state().state.doc.layers()[0].id();
     let entries = yolu_app::shell::popup_entries(
         &h.state().state,
@@ -3428,8 +3437,8 @@ fn the_instruction_text_check_tells_sentences_from_names() {
     }
 }
 
-/// パスの道具だけの画面（同じ状態で、道具をブラシにしたときに無い文字）に、説明の文が無い。見るのは、パスの道具の帯・プロパティ・
-/// オプションバーで増える文字だけ（状態の帯の知らせなど、道具に関係なく出るものは、別の試験が短さを確かめる）。
+/// パスのツールだけの画面（同じ状態で、ツールをブラシにしたときに無い文字）に、説明の文が無い。見るのは、パスのツールの帯・プロパティ・
+/// オプションバーで増える文字だけ（状態の帯の知らせなど、ツールに関係なく出るものは、別の試験が短さを確かめる）。
 fn no_instruction_text(h: &mut Harness<'static, YoluApp>, lang: Lang, what: &str) {
     let with_path = screen_texts(h);
     let selected = h.state().state.path.selected;
@@ -3442,7 +3451,7 @@ fn no_instruction_text(h: &mut Harness<'static, YoluApp>, lang: Lang, what: &str
     let only_path: Vec<&String> = with_path.difference(&without).collect();
     assert!(
         only_path.len() >= 4,
-        "{lang:?} {what}: パスの道具の画面の文字が見つからない: {only_path:?}"
+        "{lang:?} {what}: パスのツールの画面の文字が見つからない: {only_path:?}"
     );
     let sentences: Vec<&&String> = only_path
         .iter()
@@ -3454,7 +3463,7 @@ fn no_instruction_text(h: &mut Harness<'static, YoluApp>, lang: Lang, what: &str
     );
 }
 
-/// パスの道具の画面（2D のパス・3D のパス・点を選んだ状態）の文字が、日英どちらでも欄に収まり、詰められず、英語に日本語が残らない。
+/// パスのツールの画面（2D のパス・3D のパス・点を選んだ状態）の文字が、日英どちらでも欄に収まり、詰められず、英語に日本語が残らない。
 #[test]
 fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
     yolu_app::ui::widgets::record_truncations(true);
@@ -3466,7 +3475,7 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
             let check = |h: &mut Harness<'static, YoluApp>, what: &str| {
                 yolu_app::ui::widgets::take_truncations();
                 h.step();
-                // 最小の窓で詰まる、ほかのパネルの既知の文字（gui_shell/i18n.rs の一覧）は数えない
+                // 最小のウィンドウで詰まる、ほかのパネルの既知の文字（gui_shell/i18n.rs の一覧）は数えない
                 const KNOWN: [&str; 18] = [
                     "エミッション",
                     "カスタム",
@@ -3563,7 +3572,7 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
     yolu_app::ui::widgets::record_truncations(false);
 }
 
-// ───────── 確かめの絵（一覧・取っ手・右クリック・種類・筆先・プリセット・塗りつぶしの層。日英） ─────────
+// ───────── 確かめの絵（一覧・取っ手・右クリック・種類・筆先・プリセット・塗りつぶしレイヤー。日英） ─────────
 
 fn review_app(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, 1400.0, 256);
@@ -3829,7 +3838,7 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         act(&mut h, PathAction::Style(StyleEdit::Depth(Some(2.0))));
         h.snapshot(format!("path_review_3d_{tag}"));
         shots.extend_harness(&mut h);
-        // 塗りつぶしの層の欄のパスの節
+        // 塗りつぶしレイヤーの欄のパスの節
         let mut f = review_app(lang);
         f.state_mut().state.color.set_main([0.85, 0.75, 0.4, 1.0]);
         f.state_mut()
@@ -3844,7 +3853,7 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         }
         assert!(f.state().state.doc.layer(fill).unwrap().has_paths());
         f.state_mut().state.apply(Action::SelectTool(Tool::Brush));
-        // 塗りつぶしの層の欄の下（パスの節）まで送る
+        // 塗りつぶしレイヤーの欄の下（パスの節）まで送る
         f.state_mut().state.m2.props_scroll = 100_000.0;
         f.run();
         f.snapshot(format!("path_review_fill_layer_{tag}"));

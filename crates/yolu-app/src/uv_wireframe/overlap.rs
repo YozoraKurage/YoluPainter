@@ -1,9 +1,9 @@
-//! 重なった UV（同じテクセルを 2 つ以上の三角形が覆う所）の図: 2D のキャンバスに重なったテクセルを色で出し、重なりに関わる島の縁を
+//! 重なった UV（同じテクセルを 2 つ以上の三角形が覆う所）の図: 2D のキャンバスに重なったテクセルを色で出し、重なりに関わるアイランドの縁を
 //! 太く描く（表示のメニューの「重なった UV」、色は UV ワイヤーフレームの色の並び）。塗りの知らせ（`note_*`）も同じ図を読む。
 //!
 //! 図はベイクと同じ行の割り当て（core の `uv_overlap`。1 テクセルに中心の 1 点）で、受けたままのモデルの形・今のセットのマテリアル・
 //! 文書の大きさごとに 1 回、別のスレッドで数える（このマテリアルの UV と三角形の並びが同じなら、ポーズで位置だけ替わっても数え直さない）。
-//! 縁を描く島はベイクの優先と同じ島（UV と位置の両方でつながる三角形）なので、ミラーで UV がぴったり重なった両側も、それぞれの島の縁になる。
+//! 縁を描くアイランドはベイクの優先と同じアイランド（UV と位置の両方でつながる三角形）なので、ミラーで UV がぴったり重なった両側も、それぞれのアイランドの縁になる。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::state::{Action, AppState};
 
 /// 既定の色（警告の色 `t::WARNING` に近い橙。テクセルを塗る不透明度）。
 pub const DEFAULT_COLOR: [u8; 4] = [232, 176, 60, 120];
-/// 島の縁の線の上限（これを超える図は縁を出さない。テクセルの色は出す）。
+/// アイランドの縁の線の上限（これを超える図は縁を出さない。テクセルの色は出す）。
 const MAX_EDGES: usize = 1 << 20;
 
 /// 数えている間は描き直す（終わりを受ける）。
@@ -30,7 +30,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
     ..JobSpec::new("uv.overlap", |app| app.uv_overlap.is_counting())
 };
 
-/// 数えた図と、重なりに関わる島の縁（UV の線）。
+/// 数えた図と、重なりに関わるアイランドの縁（UV の線）。
 pub struct Built {
     pub map: UvOverlap,
     pub edges: Vec<[Vec2; 2]>,
@@ -139,8 +139,8 @@ fn count(
     Some(Ok(Built { map, edges }))
 }
 
-/// 島ごとの縁（島の中で 1 つの三角形にしか属さない UV の辺。島の番号と線）。島ごとに数えるので、UV がぴったり重なった 2 つの島も、
-/// それぞれの縁になる。`involved` の島だけ。線が `limit` を超えたら None。並びは島の番号の昇順、同じ島の中は座標の順（同じ図は同じ線の列）。
+/// アイランドごとの縁（アイランドの中で 1 つの三角形にしか属さない UV の辺。アイランドの番号と線）。アイランドごとに数えるので、UV がぴったり重なった 2 つのアイランドも、
+/// それぞれの縁になる。`involved` のアイランドだけ。線が `limit` を超えたら None。並びはアイランドの番号の昇順、同じアイランドの中は座標の順（同じ図は同じ線の列）。
 pub(crate) fn island_edges(
     geometry: &SurfaceGeometry,
     islands: &[usize],
@@ -326,7 +326,7 @@ pub fn menu_entry(app: &AppState) -> crate::ui::menu::Entry<Action> {
     .enabled(app.view3d.model.is_some())
 }
 
-/// 2D のキャンバスに描く（入のとき）: 重なったテクセルを色で、重なりに関わる島の縁を太い線で。
+/// 2D のキャンバスに描く（入のとき）: 重なったテクセルを色で、重なりに関わるアイランドの縁を太い線で。
 pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
     if !app.prefs.settings.uv_overlap {
         return;
@@ -379,7 +379,7 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
     painter.extend(s.screen.iter().map(|p| Shape::line_segment(*p, line)));
 }
 
-/// ベイクの窓の UV の見取り図に重ねる、重なりの色のテクスチャ（キャンバスと同じもの。設定の色）と、それが覆う UV の幅・高さ
+/// ベイクのウィンドウの UV の見取り図に重ねる、重なりの色のテクスチャ（キャンバスと同じもの。設定の色）と、それが覆う UV の幅・高さ
 /// （まとめた分だけ 1 を超えることがある）。図がまだ・重なりが無い・今の文書の大きさの図でなければ None。キャンバスが作った
 /// テクスチャがあれば補間によらずそれを使い、無ければ線形の補間で作る。
 pub fn texture_for_map(

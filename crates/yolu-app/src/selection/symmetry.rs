@@ -227,7 +227,7 @@ impl SymmetryState {
     }
 }
 
-/// 軸の線分（画布の座標。縦・横は画布の端から端まで、放射状は中心から画布の端までの放線）。
+/// 軸の線分（キャンバスの座標。縦・横はキャンバスの端から端まで、放射状は中心からキャンバスの端までの放線）。
 pub fn axis_lines(s: &CanvasSymmetry, width: u32, height: u32) -> Vec<((f64, f64), (f64, f64))> {
     let (w, h) = (width as f64, height as f64);
     let (cx, cy) = (s.center.x, s.center.y);
@@ -240,7 +240,7 @@ pub fn axis_lines(s: &CanvasSymmetry, width: u32, height: u32) -> Vec<((f64, f64
     }
     if s.mode == SymmetryMode::Radial {
         for t in s.transforms().unwrap_or_default() {
-            // 中心から右へ 1 だけ進んだ点の写り先の向きへ、画布の端まで
+            // 中心から右へ 1 だけ進んだ点の写り先の向きへ、キャンバスの端まで
             let (x, y) = t.map(cx + 1.0, cy);
             let (dx, dy) = (x - cx, y - cy);
             let mut length = f64::INFINITY;
@@ -262,7 +262,7 @@ pub fn axis_lines(s: &CanvasSymmetry, width: u32, height: u32) -> Vec<((f64, f64
     lines
 }
 
-/// 点（画布の座標）の、対称の写し（元の点を除く）。映した側のカーソルに使う。
+/// 点（キャンバスの座標）の、対称の写し（元の点を除く）。映した側のカーソルに使う。
 pub fn mirrored_points(s: &CanvasSymmetry, x: f64, y: f64) -> Vec<(f64, f64)> {
     s.transforms()
         .map(|ts| ts.iter().skip(1).map(|t| t.map(x, y)).collect())
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(axis_lines(&s(SymmetryMode::Both), 100, 40).len(), 2);
         let rays = axis_lines(&s(SymmetryMode::Radial), 100, 40);
         assert_eq!(rays.len(), 4);
-        // 右・上・左・下の放線が画布の端で終わる
+        // 右・上・左・下の放線がキャンバスの端で終わる
         for (a, b) in &rays {
             assert_eq!(*a, (50.0, 20.0));
             let on_edge = b.0.abs() < 1e-9

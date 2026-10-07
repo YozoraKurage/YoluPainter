@@ -169,7 +169,7 @@ pub fn err(host: &mut dyn OpHost, command: Value) -> OpError {
     }
 }
 
-/// 層の ID を名前から（上から数えて最初）。
+/// レイヤーの ID を名前から（上から数えて最初）。
 pub fn layer_id(host: &mut dyn OpHost, name: &str) -> String {
     let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else {
         panic!()
@@ -177,11 +177,11 @@ pub fn layer_id(host: &mut dyn OpHost, name: &str) -> String {
     info.layers
         .into_iter()
         .find(|l| l.name == name)
-        .unwrap_or_else(|| panic!("層 {name} が無い"))
+        .unwrap_or_else(|| panic!("レイヤー {name} が無い"))
         .id
 }
 
-/// 文書の見た目の全部（セットの層の並びと、層ごとの全部）を JSON にして、状態の比べに使う。
+/// 文書の見た目の全部（セットのレイヤーの並びと、レイヤーごとの全部）を JSON にして、状態の比べに使う。
 pub fn state(host: &mut dyn OpHost) -> Value {
     let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else {
         panic!()

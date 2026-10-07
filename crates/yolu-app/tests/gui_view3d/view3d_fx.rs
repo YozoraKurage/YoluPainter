@@ -6,8 +6,8 @@
 //! - 設定: 仕上げは設定のファイルへ書いて、次の起動で戻る。古いファイルはそのまま読める。
 //! - 描き先のメモリ: 見積もりの式と、上限を超えるときにサンプル数が下がること。
 //!
-//! 窓は `view3d_fx` の共有の装置（製品と同じ `wgpu_configuration` の装置の設定。2×・8× を調べる形式の機能つき）で作る。ほかの試験の
-//! 共用の接続（`common::shared_gpu`）とは別の装置だが、窓は `gpu_thread::builder` の貸し出しで 1 つずつ作るので、装置どうしは重ならない。
+//! ウィンドウは `view3d_fx` の共有の装置（製品と同じ `wgpu_configuration` の装置の設定。2×・8× を調べる形式の機能つき）で作る。ほかの試験の
+//! 共用の接続（`common::shared_gpu`）とは別の装置だが、ウィンドウは `gpu_thread::builder` の貸し出しで 1 つずつ作るので、装置どうしは重ならない。
 use crate::common;
 
 use std::sync::{Arc, OnceLock};
@@ -28,7 +28,7 @@ use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::look::{LookKind, LookValue, MaterialLook, TextureSource};
 use yolu_core::Channel;
 
-// ───────── 窓と場面 ─────────
+// ───────── ウィンドウと場面 ─────────
 
 /// 製品と同じ装置の設定（`wgpu_configuration`）で作った、試験どうしで共有する描画の接続。アダプターは kittest の選び（ソフトの描画を優先）。
 fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
@@ -73,7 +73,7 @@ fn build(
     h
 }
 
-/// 3D のタブを出した窓（標準の見た目。文書は doc × doc）。
+/// 3D のタブを出したウィンドウ（標準の見た目。文書は doc × doc）。
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = build(width, height, move |ctx| {
         YoluApp::for_context(ctx, AppState::new(doc, doc), PenInput::detached())
@@ -146,7 +146,7 @@ fn op(h: &mut Harness<'_, YoluApp>, op: Op) {
     h.run();
 }
 
-/// 文書の全面を覆う塗りつぶしの層を足す。
+/// 文書の全面を覆う塗りつぶしレイヤーを足す。
 fn fill(h: &mut Harness<'_, YoluApp>, values: &[(Channel, [u8; 4])]) {
     let values: Vec<(Channel, yolu_core::Rgba8)> = values
         .iter()
@@ -416,7 +416,7 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     h.state_mut().view3d_set_target_budget(None);
     h.run();
     assert_eq!(h.state().view3d_stats().unwrap().samples, want);
-    // 窓が違う大きさでも、いつでも対応する数のどれか
+    // ウィンドウが違う大きさでも、いつでも対応する数のどれか
     for n in SAMPLE_CHOICES {
         op(&mut h, Op::Antialias(n));
         assert!(supported.contains(&h.state().view3d_stats().unwrap().samples));
@@ -905,7 +905,7 @@ fn the_default_light_lights_the_front_of_a_model_facing_plus_z_and_not_its_back(
     assert_eq!(
         h.state().state.view3d.display.light_direction(),
         to_light,
-        "新しい窓の光は既定のまま"
+        "新しいウィンドウの光は既定のまま"
     );
     let front = px(&h.render().unwrap(), center(&h));
     let want = (255.0 * (0.35 + 0.65 * to_light.dot(Vec3::Z).clamp(0.0, 1.0))).round() as u8;

@@ -1,4 +1,4 @@
-//! ロックと効果・パスのつなぎ目: 検査の順（ロック → パスの層）と、効果の設定の変更がどのロックで断られるかを、C# の
+//! ロックと効果・パスのつなぎ目: 検査の順（ロック → パスレイヤー）と、効果の設定の変更がどのロックで断られるかを、C# の
 //! PaintDocument と同じに保つ。断ったら何も変えず、ロックを外せば同じ操作が通る。
 //! C# との照合は `seam_golden.rs`（実 C# が出した断り方）。ここは Rust だけで確かめられる性質（何も変わらない・外せば通る・親のグループ）。
 use crate::attach_support;
@@ -15,7 +15,7 @@ use yolu_core::{
 
 type Op = Box<dyn Fn(&mut Rig) -> Result<(), CoreError>>;
 
-/// 設定を変える入口 1 つ。`target` はロックを掛ける層、`needs_pixels` は画像のロックでも断るか、`needs_transparency` は
+/// 設定を変える入口 1 つ。`target` はロックを掛けるレイヤー、`needs_pixels` は画像のロックでも断るか、`needs_transparency` は
 /// 透明部分のロックでも断るか（どちらも C# の入口に合わせた表）。
 struct Entry {
     name: &'static str,
@@ -208,9 +208,9 @@ fn entries() -> Vec<Entry> {
                     .set_fill_gradient(r.fill, Channel::Height, Some(gradient()), false)
             },
         ),
-        // 投影: 画像のある層は画素を変える
+        // 投影: 画像のあるレイヤーは画素を変える
         entry(
-            "set_fill_projection（画像のある層）",
+            "set_fill_projection（画像のあるレイヤー）",
             |r| r.fill,
             true,
             true,
@@ -243,9 +243,9 @@ fn entries() -> Vec<Entry> {
                 )
             },
         ),
-        // 画像もデカールも無い層の投影は画素を変えない（すべてのロックだけ）
+        // 画像もデカールも無いレイヤーの投影は画素を変えない（すべてのロックだけ）
         entry(
-            "set_fill_projection（素の層）",
+            "set_fill_projection（素のレイヤー）",
             |r| r.plain_fill,
             false,
             false,
@@ -346,7 +346,7 @@ fn fingerprint(r: &Rig) -> (u64, usize, Vec<u8>, Vec<u8>) {
 }
 
 /// 効果・パスの設定を変える入口が、ロックの種類ごとに C# と同じ表のとおり断り、断ったあとは何も変えない。ロックを外せば同じ入口が通る。
-/// ロックは層自身にも親のグループにも掛ける（持ち主はグループ）。
+/// ロックはレイヤー自身にも親のグループにも掛ける（持ち主はグループ）。
 #[test]
 fn effect_setters_obey_the_layer_locks_like_csharp() {
     let (mut refused, mut passed) = (0, 0);
@@ -395,16 +395,16 @@ fn effect_setters_obey_the_layer_locks_like_csharp() {
             }
         }
     }
-    // 入口の数 × ロック 5 種 × 層/親グループ 2。断る数は表から数えた値で固定する（表が崩れて数がずれたら落ちる）
+    // 入口の数 × ロック 5 種 × レイヤー/親グループ 2。断る数は表から数えた値で固定する（表が崩れて数がずれたら落ちる）
     assert_eq!(entries().len(), 24);
-    // すべてのロック: 23 入口（Anchor の名前の変更を除く）、画像のロック: 9 入口、透明部分のロック: 8 入口（それぞれ 層 / 親グループの 2 通り）
+    // すべてのロック: 23 入口（Anchor の名前の変更を除く）、画像のロック: 9 入口、透明部分のロック: 8 入口（それぞれ レイヤー / 親グループの 2 通り）
     assert_eq!(
         (refused, passed),
         (2 * (23 + 9 + 8), 24 * 5 * 2 - 2 * (23 + 9 + 8))
     );
 }
 
-/// 新しい層が親のグループのロックで断られる（パスの層を、ロックされたグループの中へ足す）。層も作らず、外せば足せる。
+/// 新しいレイヤーが親のグループのロックで断られる（パスレイヤーを、ロックされたグループの中へ足す）。レイヤーも作らず、外せば足せる。
 #[test]
 fn a_path_layer_cannot_be_added_into_a_locked_group() {
     for lock in [
@@ -442,7 +442,7 @@ fn a_path_layer_cannot_be_added_into_a_locked_group() {
             }
             other => panic!("{lock:?}: {other:?}"),
         }
-        assert_eq!(r.doc.layers().len(), count, "{lock:?}: 層を作らない");
+        assert_eq!(r.doc.layers().len(), count, "{lock:?}: レイヤーを作らない");
         assert_eq!(r.doc.revision(), revision);
         assert_eq!(r.doc.undo_count(), 0);
         r.doc.set_layer_locks(group, LayerLocks::NONE).unwrap();
@@ -483,12 +483,12 @@ fn hard() -> BrushSettings {
     }
 }
 
-/// パスで描かれた層への手の書き込みは、先にロックで断り（C# の RefuseLockedPixels → RefusePathLayer）、ロックが通ればパスの層として断る。
-/// 動かす（transform）だけは、型・パスの層の検査がロックより先（C# の RequireTransformable → RefuseLockedTransform）で、ロックに
-/// 関わらずパスの層として断る。どれも断ったら何も変えない。
+/// パスで描かれたレイヤーへの手の書き込みは、先にロックで断り（C# の RefuseLockedPixels → RefusePathLayer）、ロックが通ればパスレイヤーとして断る。
+/// 動かす（transform）だけは、型・パスレイヤーの検査がロックより先（C# の RequireTransformable → RefuseLockedTransform）で、ロックに
+/// 関わらずパスレイヤーとして断る。どれも断ったら何も変えない。
 #[test]
 fn hand_writes_to_a_path_layer_check_the_locks_first_and_transforms_check_the_path_first() {
-    let path_error = CoreError::Unsupported("パスで描かれた層には手で描けない");
+    let path_error = CoreError::Unsupported("パスで描かれたレイヤーには手で描けない");
     let writes: Vec<(&str, bool, bool, Write)> = vec![
         p_entry("begin_stroke", true, false, |d, id| {
             d.begin_stroke(id, &hard()).map(|s| d.cancel_stroke(s))
@@ -573,7 +573,7 @@ fn hand_writes_to_a_path_layer_check_the_locks_first_and_transforms_check_the_pa
                 assert!(!doc.has_active_stroke(), "{name}");
             }
         }
-        // 動かす: ロックに関わらずパスの層の断り（型・パスの検査が先）
+        // 動かす: ロックに関わらずパスレイヤーの断り（型・パスの検査が先）
         for grouped in [false, true] {
             let r = rig();
             let (mut doc, id) = (r.doc, r.path_layer);
@@ -590,7 +590,7 @@ fn hand_writes_to_a_path_layer_check_the_locks_first_and_transforms_check_the_pa
                 Err(path_error.clone()),
                 "transform_layer / {lock:?} / grouped={grouped}"
             );
-            // グループごと動かすときも、中のパスの層を断る
+            // グループごと動かすときも、中のパスレイヤーを断る
             assert_eq!(
                 doc.transform_layers(
                     &[holder],

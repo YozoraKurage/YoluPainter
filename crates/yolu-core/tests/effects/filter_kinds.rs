@@ -303,7 +303,7 @@ fn morphology_grows_and_shrinks_a_round_window() {
 
 #[test]
 fn morphology_skips_transparent_pixels_and_keeps_their_rgb() {
-    // スカラーの層: 透明な画素（RGB 200）は窓に数えず、自分の RGB と A も変えない
+    // スカラーのレイヤー: 透明な画素（RGB 200）はウィンドウに数えず、自分の RGB と A も変えない
     let (w, h) = (5, 1);
     let mut data = Vec::new();
     for x in 0..w {
@@ -324,7 +324,7 @@ fn morphology_skips_transparent_pixels_and_keeps_their_rgb() {
         },
     );
     assert_eq!(&out[8..12], &[200, 200, 200, 0]);
-    // 画素 1 の窓は 0・1・(2 は透明)、画素 3 の窓は (2)・3・4
+    // 画素 1 のウィンドウは 0・1・(2 は透明)、画素 3 のウィンドウは (2)・3・4
     assert_eq!(out[4], 10);
     assert_eq!(out[12], 40);
 }
@@ -427,7 +427,7 @@ fn median_removes_a_lone_pixel_and_keeps_edges() {
 
 #[test]
 fn median_takes_rgb_only_from_visible_pixels() {
-    // 透明（RGB 255）に囲まれた見える画素 1 つ: 窓の A の中央値は 0 なので、RGB は入力のまま・A は 0
+    // 透明（RGB 255）に囲まれた見える画素 1 つ: ウィンドウの A の中央値は 0 なので、RGB は入力のまま・A は 0
     let (w, h) = (3, 3);
     let mut data = Vec::new();
     for i in 0..9 {
@@ -906,7 +906,7 @@ fn ranges_accept_their_limits_and_refuse_just_beyond() {
 
 // ───────── 文書の中 ─────────
 
-/// 文書（タイル 32、画素の層 1 つ）に段を置いて合成すると、同じ段を画像全体へ掛けた結果と同じ（タイルの境目・領域で変わらない）。
+/// 文書（タイル 32、画素のレイヤー 1 つ）に段を置いて合成すると、同じ段を画像全体へ掛けた結果と同じ（タイルの境目・領域で変わらない）。
 /// 拡大は長さ・半径を倍率に合わせ、範囲の端で止めたものは知らせる。取り消しで足す前へ戻る。
 #[test]
 fn in_a_document_the_stages_composite_like_the_whole_image_and_follow_resizes() {

@@ -1,9 +1,9 @@
-//! 道具の入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、道具ごとの枝を持たず、道具の表（`tools::TOOLS`）が
-//! 指す受け口を引く。2D は `CanvasTool`（押す・動く・離す・ペン・Esc・Enter・取りこぼした離し・フォーカスを失う）。ドラッグの札を持つ道具
+//! ツールの入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、ツールごとの枝を持たず、ツールの表（`tools::TOOLS`）が
+//! 指す受け口を引く。2D は `CanvasTool`（押す・動く・離す・ペン・Esc・Enter・取りこぼした離し・フォーカスを失う）。ドラッグの札を持つツール
 //! （移動・変形とゆがみ、図形と定規、グラデーション、パス、選択）がそれぞれ 1 つの実装で、ドラッグを始めた側が離す・Esc・フォーカスの喪失で終える
-//! （途中で道具を替えても、始めた側を終わらせる）ので、動き・離す・取りこぼしは、道具でなくドラッグの持ち主で振り分ける。ブラシ・消しゴム・範囲の道具・
+//! （途中でツールを替えても、始めた側を終わらせる）ので、動き・離す・取りこぼしは、ツールでなくドラッグの持ち主で振り分ける。ブラシ・消しゴム・範囲のツール・
 //! スポイトはストロークで描くので `CanvasTool` を持たず、キャンバスの入力が直に扱う。3D は `Surface`（面の上で押したときの行き先）。
-//! 各道具の実際の仕事は、道具のモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
+//! 各ツールの実際の仕事は、ツールのモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
 
 use egui::{CursorIcon, Key, Modifiers, Pos2, Rect};
 
@@ -20,9 +20,9 @@ pub struct InputCtx {
     pub pass: u64,
 }
 
-/// 2D のキャンバスの入力を受ける道具（ドラッグの札を持つもの）。
+/// 2D のキャンバスの入力を受けるツール（ドラッグの札を持つもの）。
 pub trait CanvasTool: Sync {
-    /// 押した（今の道具が自分のとき）。
+    /// 押した（今のツールが自分のとき）。
     fn press(
         &self,
         app: &mut AppState,
@@ -67,17 +67,17 @@ pub trait CanvasTool: Sync {
     fn wants_move(&self, app: &AppState) -> bool {
         self.dragging(app, None)
     }
-    /// マウスを離したのを取りこぼしたとき（窓の外で離したなど）の終わらせ方。既定は、最後の位置で離したことにする。
+    /// マウスを離したのを取りこぼしたとき（ウィンドウの外で離したなど）の終わらせ方。既定は、最後の位置で離したことにする。
     fn lost_release(&self, app: &mut AppState, view: &CanvasView, at: Pos2, ctx: &InputCtx) {
         self.release(app, view, at, StrokeSource::Mouse, ctx);
     }
     /// Esc: やめたら true。
     fn cancel(&self, app: &mut AppState, ctx: &InputCtx) -> bool;
-    /// Esc で、ストロークや表示の回転より先に聞く（あとから聞く道具は false）。
+    /// Esc で、ストロークや表示の回転より先に聞く（あとから聞くツールは false）。
     fn cancel_first(&self) -> bool {
         true
     }
-    /// 窓がフォーカスを失った: 途中の操作を取り残さない。
+    /// ウィンドウがフォーカスを失った: 途中の操作を取り残さない。
     fn focus_lost(&self, app: &mut AppState);
     /// 毎フレーム（そのフレームの修飾キーを、途中のドラッグへ渡す）。
     fn each_frame(&self, _app: &mut AppState, _ctx: &InputCtx) {}
@@ -85,13 +85,13 @@ pub trait CanvasTool: Sync {
     fn key(&self, _app: &mut AppState, _key: Key, _modifiers: Modifiers) -> bool {
         false
     }
-    /// ステンシルを動かしている間は押しを渡さない道具か。
+    /// ステンシルを動かしている間は押しを渡さないツールか。
     fn respects_stencil(&self) -> bool {
         true
     }
 }
 
-/// キャンバスの入力を受ける道具の種類（表が指す。受け口の実体は `handler`）。
+/// キャンバスの入力を受けるツールの種類（表が指す。受け口の実体は `handler`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasKind {
     Transform,
@@ -103,7 +103,7 @@ pub enum CanvasKind {
 }
 
 impl CanvasKind {
-    /// 全部（Esc などで聞く順。Esc は、ストロークと表示の回転より先に `cancel_first` の道具、あとに残りを聞く）。
+    /// 全部（Esc などで聞く順。Esc は、ストロークと表示の回転より先に `cancel_first` のツール、あとに残りを聞く）。
     pub const ALL: [CanvasKind; 6] = [
         CanvasKind::Drafting,
         CanvasKind::Transform,
@@ -369,7 +369,7 @@ impl CanvasTool for GradientInput {
 
 struct PathInput;
 
-/// パスの道具へ、修飾キー（取っ手の Alt・Ctrl）と時刻（点のダブルクリック）を渡す。
+/// パスのツールへ、修飾キー（取っ手の Alt・Ctrl）と時刻（点のダブルクリック）を渡す。
 fn path_input(app: &mut AppState, ctx: &InputCtx) {
     app.path.input = crate::pathtool::PathInputState {
         alt: ctx.modifiers.alt,
@@ -621,7 +621,7 @@ pub enum Surface {
     Region,
     /// 面に点を置く・掴む（パス）。
     Path,
-    /// 2D のキャンバスだけの道具（選択・移動・変形・図形・グラデーションなど）。
+    /// 2D のキャンバスだけのツール（選択・移動・変形・図形・グラデーションなど）。
     Unsupported,
 }
 

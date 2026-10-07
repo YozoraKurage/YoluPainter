@@ -350,7 +350,7 @@ fn anchor_stage(
     id
 }
 
-/// Anchor を読む段が決まっている文書で、元画素・マスク・層の属性・並びを動かす（Anchor の値の変化が、読む層の出力と変化の記録へ届く）。
+/// Anchor を読む段が決まっている文書で、元画素・マスク・レイヤーの属性・並びを動かす（Anchor の値の変化が、読むレイヤーの出力と変化の記録へ届く）。
 fn anchor_world() -> (Document, Vec<LayerId>) {
     let (mut doc, layers) = world();
     let (base, mid, top, fill) = (layers[0], layers[1], layers[2], layers[3]);
@@ -365,7 +365,7 @@ fn anchor_world() -> (Document, Vec<LayerId>) {
         .add_anchor(mid, AnchorPlacement::Layer, None, None)
         .unwrap();
     let stage = anchor_stage;
-    // 色の層が、土台の Height を読む（読むチャンネルと出すチャンネルが違う）。その後にぼかし
+    // 色のレイヤーが、土台の Height を読む（読むチャンネルと出すチャンネルが違う）。その後にぼかし
     stage(
         &mut doc,
         top,
@@ -402,7 +402,7 @@ fn anchor_world() -> (Document, Vec<LayerId>) {
         Channel::Height,
         generator::Blend::Min,
     );
-    // 連鎖: 色の層の Anchor（Color）を、塗りつぶしの Color が読む
+    // 連鎖: 色のレイヤーの Anchor（Color）を、塗りつぶしの Color が読む
     let a_top = doc
         .add_anchor(top, AnchorPlacement::Layer, None, None)
         .unwrap();
@@ -450,7 +450,7 @@ fn check_after_edit(
     deltas
 }
 
-/// Anchor を読む文書で、元画素・マスク（画素・有効・反転・濃度・付け外し・フィルター）・層の属性・並びを乱数で動かす。
+/// Anchor を読む文書で、元画素・マスク（画素・有効・反転・濃度・付け外し・フィルター）・レイヤーの属性・並びを乱数で動かす。
 fn walk_anchor_world(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps: usize) -> usize {
     let mut deltas = 0usize;
     for seed in 0..seeds {
@@ -542,7 +542,7 @@ fn walk_anchor_world(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps: 
                     }
                 }
                 _ => {
-                    // 色の層の段を有効・無効に
+                    // 色のレイヤーの段を有効・無効に
                     let stack: Vec<FilterId> = doc
                         .layer(layer)
                         .map(|l| l.filters().iter().map(|e| e.id()).collect())
@@ -573,7 +573,7 @@ fn anchor_readers_follow_what_they_read() {
     assert!(deltas > 1000, "試験が動かしていない: {deltas}");
 }
 
-/// グループの中: Anchor を置いた層と、それを読む層が同じグループにいる（読む層が host より上）。グループのマスクの Anchor も読む。
+/// グループの中: Anchor を置いたレイヤーと、それを読むレイヤーが同じグループにいる（読むレイヤーが host より上）。グループのマスクの Anchor も読む。
 fn grouped_anchor_world() -> (Document, Vec<LayerId>) {
     let (mut doc, layers) = world();
     let (base, mid, top, fill) = (layers[0], layers[1], layers[2], layers[3]);
@@ -589,8 +589,8 @@ fn grouped_anchor_world() -> (Document, Vec<LayerId>) {
     let a_base_mask = doc
         .add_anchor(base, AnchorPlacement::Mask, None, None)
         .unwrap();
-    // グループの中の上の層（top）が、同じグループの下の層（mid）の Anchor を、自分が出すのと同じチャンネル（Color）で読む。ぼかしが続く
-    // （読む層が host のスタックの結果に入る向きだと、host の Anchor が読む層を評価しに行って、読む層は host の Anchor へ戻る）
+    // グループの中の上のレイヤー（top）が、同じグループの下のレイヤー（mid）の Anchor を、自分が出すのと同じチャンネル（Color）で読む。ぼかしが続く
+    // （読むレイヤーが host のスタックの結果に入る向きだと、host の Anchor が読むレイヤーを評価しに行って、読むレイヤーは host の Anchor へ戻る）
     anchor_stage(
         &mut doc,
         top,
@@ -632,7 +632,7 @@ fn grouped_anchor_world() -> (Document, Vec<LayerId>) {
 
 #[test]
 fn a_layer_above_its_host_in_the_same_group_reads_the_anchor_without_recursing() {
-    // 昔の評価は host の一番外の祖先までの層を先に評価したので、host より上の読み手が host の Anchor へ戻って終わらなかった
+    // 昔の評価は host の一番外の祖先までのレイヤーを先に評価したので、host より上の読み手が host の Anchor へ戻って終わらなかった
     let (mut doc, layers) = grouped_anchor_world();
     let (mid, top) = (layers[1], layers[2]);
     let mut previous: Vec<Vec<u8>> = [Channel::Color, Channel::Height]
@@ -652,8 +652,11 @@ fn a_layer_above_its_host_in_the_same_group_reads_the_anchor_without_recursing()
         );
     }
     stroke(&mut doc, top, Channel::Color, &mut rng);
-    deltas += check_after_edit(&mut doc, &mut previous, &mut since, "読む層に描く");
-    assert!(deltas > 0, "host の画素の変化が読む層の出力へ届いている");
+    deltas += check_after_edit(&mut doc, &mut previous, &mut since, "読むレイヤーに描く");
+    assert!(
+        deltas > 0,
+        "host の画素の変化が読むレイヤーの出力へ届いている"
+    );
 }
 
 #[test]
@@ -662,7 +665,7 @@ fn anchors_inside_groups_follow_what_they_read() {
     assert!(deltas > 1000, "試験が動かしていない: {deltas}");
 }
 
-/// マスクを持つ層が host で、その上の層がマスクの Anchor を読む。host は画素のタイルを持たない（マスクだけを塗った空の層）か、持つ。
+/// マスクを持つレイヤーが host で、その上のレイヤーがマスクの Anchor を読む。host は画素のタイルを持たない（マスクだけを塗った空のレイヤー）か、持つ。
 fn mask_host(with_pixels: bool) -> (Document, LayerId, LayerId) {
     let mut doc = Document::with_tile_size(W, H, 8).unwrap();
     let host = doc.add_layer("host").unwrap();
@@ -695,7 +698,7 @@ fn mask_host(with_pixels: bool) -> (Document, LayerId, LayerId) {
     (doc, host, reader)
 }
 
-/// ホストのマスクの有効・反転・濃度・フィルター・付け外しは、ホストに画素のタイルが無くても、マスクの Anchor を読む層の出力
+/// ホストのマスクの有効・反転・濃度・フィルター・付け外しは、ホストに画素のタイルが無くても、マスクの Anchor を読むレイヤーの出力
 /// （評価のキャッシュ）と変化の記録へ届く。
 #[test]
 fn a_mask_anchor_reader_follows_every_change_of_the_hosts_mask() {
@@ -710,7 +713,7 @@ fn a_mask_anchor_reader_follows_every_change_of_the_hosts_mask() {
             edit(doc);
             let context = format!("host の画素 {with_pixels}: {what}");
             let deltas = check_after_edit(doc, &mut previous, &mut since, &context);
-            assert!(deltas > 0, "{context}: 読む層の出力が変わるはず");
+            assert!(deltas > 0, "{context}: 読むレイヤーの出力が変わるはず");
         };
         run(&mut doc, "濃度", &|d| {
             d.set_layer_mask_density(host, 0.3, false).unwrap()
@@ -744,7 +747,7 @@ fn a_mask_anchor_reader_follows_every_change_of_the_hosts_mask() {
     }
 }
 
-/// マスクのスタックが Anchor を読む host: 読む元の変化が、host のマスクを経て、host のマスクの Anchor を読む層の変化の記録へ届く。
+/// マスクのスタックが Anchor を読む host: 読む元の変化が、host のマスクを経て、host のマスクの Anchor を読むレイヤーの変化の記録へ届く。
 #[test]
 fn a_change_reaches_a_mask_anchor_reader_through_the_hosts_mask_filters() {
     let mut doc = Document::with_tile_size(W, H, 8).unwrap();
@@ -767,7 +770,7 @@ fn a_change_reaches_a_mask_anchor_reader_through_the_hosts_mask_filters() {
     let a_mask = doc
         .add_anchor(host, AnchorPlacement::Mask, None, None)
         .unwrap();
-    // 読む層は Height を出す（読まれる層の Color の変化の記録には入らない）
+    // 読むレイヤーは Height を出す（読まれるレイヤーの Color の変化の記録には入らない）
     let reader = doc.add_layer("reader").unwrap();
     paint(&mut doc, reader, Channel::Height, 9);
     anchor_stage(
@@ -793,13 +796,13 @@ fn a_change_reaches_a_mask_anchor_reader_through_the_hosts_mask_filters() {
             &mut doc,
             &mut previous,
             &mut since,
-            &format!("読まれる層に描く {step}"),
+            &format!("読まれるレイヤーに描く {step}"),
         );
     }
     assert!(deltas > 0);
 }
 
-/// Anchor を読む段の後ろに全域の段（正規化）がある: 読む Anchor の 1 タイルの変化が、読む層の全タイルの出力を変える。
+/// Anchor を読む段の後ろに全域の段（正規化）がある: 読む Anchor の 1 タイルの変化が、読むレイヤーの全タイルの出力を変える。
 #[test]
 fn a_global_stage_after_an_anchor_stage_changes_every_tile_of_the_reader() {
     let (mut doc, l) = world();
@@ -840,7 +843,7 @@ fn a_global_stage_after_an_anchor_stage_changes_every_tile_of_the_reader() {
             &mut doc,
             &mut previous,
             &mut since,
-            &format!("読まれる層に描く {step}"),
+            &format!("読まれるレイヤーに描く {step}"),
         );
     }
     assert!(

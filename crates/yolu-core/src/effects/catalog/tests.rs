@@ -243,7 +243,7 @@ fn combinations_the_core_check_refuses_are_reported_as_refused() {
         ]),
     );
     assert!(ok.is_ok(), "{ok:?}");
-    // アイランドごとのばらつきは最小が最大を超えられない（等しいのは島によらず同じ値）
+    // アイランドごとのばらつきは最小が最大を超えられない（等しいのはアイランドによらず同じ値）
     let island = |min: f64, max: f64| {
         EffectSettings::from_catalog(
             "uv_island_variation",
@@ -429,7 +429,7 @@ fn a_kind_table_row_exists_for_every_generator_kind_and_adjustment_type() {
         let row = super::kind(id).unwrap_or_else(|| panic!("{id} が表に無い"));
         assert!(row.generator && row.stack && !row.adjustment, "{id}");
         // マップを読まない（無くても値を出す）のはノイズ・グランジ・模様。画像の段は投影しだい（UV は読まない）。
-        // アイランドごとのばらつきはモデル（UV の島の図）を読み、無ければ入力のまま通す
+        // アイランドごとのばらつきはモデル（UV アイランドの図）を読み、無ければ入力のまま通す
         assert_eq!(
             row.needs_maps,
             !kind.is_procedural() && kind != G::Pattern && kind != G::Image,

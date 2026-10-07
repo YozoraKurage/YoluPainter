@@ -1,5 +1,5 @@
-//! ブラシの画面（左のブラシのパネルと、ブラシの詳細の窓）の操作と見た目（egui_kittest）。一覧の操作そのものの試験（画面を描かない）は
-//! `brush_list.rs`。見た目の試験は、パネルや窓の中だけを撮る（ほかのパネルの変更で壊れない）。
+//! ブラシの画面（左のブラシのパネルと、ブラシの詳細のウィンドウ）の操作と見た目（egui_kittest）。一覧の操作そのものの試験（画面を描かない）は
+//! `brush_list.rs`。見た目の試験は、パネルやウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 use crate::common;
 
 use common::*;
@@ -63,10 +63,10 @@ fn open_detail(h: &mut H, category: Category) {
 
 fn detail_rect(h: &H) -> Rect {
     yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-        .expect("ブラシの詳細の窓を描いている")
+        .expect("ブラシの詳細のウィンドウを描いている")
 }
 
-/// 窓の中の部品（窓と同じ名前の左のカテゴリと区別して、窓の右側の欄から探す）。
+/// ウィンドウの中の部品（ウィンドウと同じ名前の左のカテゴリと区別して、ウィンドウの右側の欄から探す）。
 fn in_pane(h: &H, label: &str) -> Rect {
     let window = detail_rect(h);
     rect_of(h, label, |r| {
@@ -123,7 +123,7 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
     );
     assert!(
         h.query_all_by_label("アルファ").next().is_none(),
-        "筆先の形は詳細の窓の「形状」にあり、プロパティにアルファのタブは無い"
+        "筆先の形は詳細のウィンドウの「形状」にあり、プロパティにアルファのタブは無い"
     );
     assert_eq!(st(&h).ui.property_tab, 0);
     // 英語
@@ -153,14 +153,14 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     click_row(&mut h, "チョーク");
     assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
     assert!(st(&h).m2.brush.texture.is_some());
-    // ブラシの道具の一覧に、消しゴムのグループのタブも行も無い（消しゴムは消しゴムの道具の一覧）
+    // ブラシのツールの一覧に、消しゴムのグループのタブも行も無い（消しゴムは消しゴムのツールの一覧）
     assert!(
         h.query_all_by_label("消しゴム")
             .all(|n| !(n.rect().left() < 340.0 && n.rect().top() > 80.0 && n.rect().top() < 120.0)),
         "グループのタブに消しゴムは無い"
     );
     assert!(h.query_all_by_label("ソフト消しゴム").next().is_none());
-    // 消しゴムの道具に替えると、一覧は消しゴムだけになる（グループのタブも無い）。行を押しても道具は消しゴムのまま
+    // 消しゴムのツールに替えると、一覧は消しゴムだけになる（グループのタブも無い）。行を押してもツールは消しゴムのまま
     h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
     h.run();
     assert!(
@@ -179,7 +179,7 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     click_row(&mut h, "ハード消しゴム");
     assert_eq!(st(&h).brushes.lib.current(), b("hard-eraser"));
     assert_eq!(st(&h).doc.undo_count(), steps);
-    // 選んだ行が青く、変更ありの印は無い。キーボードで道具を替えると、道具ごとのブラシに戻る
+    // 選んだ行が青く、変更ありの印は無い。キーボードでツールを替えると、ツールごとのブラシに戻る
     key(&h, Key::B, Modifiers::NONE);
     h.run();
     assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
@@ -212,7 +212,7 @@ fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     assert_eq!(
         st(&h).brush.radius,
         16.0,
-        "描く道具の大きさ（30）ではなく、消しゴムの設定"
+        "描くツールの大きさ（30）ではなく、消しゴムの設定"
     );
     h.state_mut().state.brush.radius = 4.0;
     let steps = st(&h).doc.undo_count();
@@ -223,7 +223,7 @@ fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     // 消しゴムの一覧のブラシを選び直す: ソフトな消しゴムは縁がなだらか
     click_row(&mut h, "ソフト消しゴム");
     assert_eq!(st(&h).tool, Tool::Eraser);
-    // B で描く道具へ戻ると、描く道具の最後のブラシ（変えた設定ごと）
+    // B で描くツールへ戻ると、描くツールの最後のブラシ（変えた設定ごと）
     key(&h, Key::B, Modifiers::NONE);
     h.run();
     assert_eq!(st(&h).brushes.lib.current(), b("hard-round"));
@@ -263,7 +263,7 @@ fn the_list_footer_adds_duplicates_reverts_and_deletes() {
     assert!(!st(&h).toolset.set.contains(copy));
     assert!(st(&h).brushes.lib.entry(copy).is_some());
     assert_eq!(st(&h).brushes.lib.current(), key, "前の行へ");
-    // 組み込みも並びから外せる（「＋」の窓から戻せる）
+    // 組み込みも並びから外せる（「＋」のウィンドウから戻せる）
     click_row(&mut h, "ハード円");
     h.get_by_label("ブラシを削除").click();
     h.run();
@@ -554,7 +554,7 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     assert!(h.query_by_label("Brush Size").is_some());
 }
 
-// ───────── ブラシの詳細の窓 ─────────
+// ───────── ブラシの詳細のウィンドウ ─────────
 
 #[test]
 fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
@@ -564,7 +564,7 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     h.run();
     assert!(st(&h).brushes.ui.detail.open);
     let window = detail_rect(&h);
-    // 窓はキャンバスの真ん中を空けた所に出る
+    // ウィンドウはキャンバスの真ん中を空けた所に出る
     assert!(window.left() > 340.0 && window.top() > 100.0, "{window:?}");
     // 左のカテゴリは 9 つ（今のブラシの欄の全部）
     for category in Category::ALL {
@@ -575,7 +575,7 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
             "{name}"
         );
     }
-    // もう一度押すと閉じる。窓の閉じるボタンでも閉じる
+    // もう一度押すと閉じる。ウィンドウの閉じるボタンでも閉じる
     h.get_by_label("ブラシの詳細").click();
     h.run();
     assert!(!st(&h).brushes.ui.detail.open);
@@ -694,7 +694,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert!(st(&h).brush.pressure_size);
 
     // 項目ごと: 2 番目（不透明度）の最小と曲線を直しても、サイズは今のまま。不透明度の側だけが変わる
-    // （不透明度の曲線の枠は窓の下の端にかかるので、少し送ってから触る）
+    // （不透明度の曲線の枠はウィンドウの下の端にかかるので、少し送ってから触る）
     h.state_mut().state.brushes.ui.detail.scroll = 120.0;
     h.run();
     let opacity_min = {
@@ -916,14 +916,14 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     })
     .center();
     click(&mut h, at);
-    // 同じ名前の箱は、右のプロパティのステンシルのタブにもある（窓の中の箱を押す）
+    // 同じ名前の箱は、右のプロパティのステンシルのタブにもある（ウィンドウの中の箱を押す）
     let image = rect_of(&h, "画像: なし", |r| window.contains(r.center()));
     click(&mut h, image.center());
     let at = popup_item(&h, "粒子").center();
     click(&mut h, at);
     assert!(st(&h).m2.brush.texture.is_some());
     in_pane(&h, "深さ");
-    // 効果: ぼかしを選ぶと描く道具のまま、ストロークは効果のブラシで始まる
+    // 効果: ぼかしを選ぶと描くツールのまま、ストロークは効果のブラシで始まる
     let at = rect_of(&h, "効果", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
     })
@@ -976,7 +976,7 @@ fn the_symmetry_category_sets_mode_center_and_count() {
         click(&mut h, at);
         assert_eq!(st(&h).sel.symmetry.mode, mode, "{label}");
     }
-    // 中心のスライダー: 画布の幅・高さの 1/4・3/4 を押すと、中心がそこへ動く（画布の座標では 64・192）
+    // 中心のスライダー: キャンバスの幅・高さの 1/4・3/4 を押すと、中心がそこへ動く（キャンバスの座標では 64・192）
     let x = in_pane(&h, "中心 X");
     click(&mut h, pos2(x.left() + x.width() * 0.25, x.center().y));
     let y = in_pane(&h, "中心 Y");
@@ -989,7 +989,7 @@ fn the_symmetry_category_sets_mode_center_and_count() {
     let c = st(&h).canvas_symmetry();
     assert!(
         (c.center.x - 64.0).abs() < 13.0 && (c.center.y - 192.0).abs() < 13.0,
-        "画布の座標: {} {}",
+        "キャンバスの座標: {} {}",
         c.center.x,
         c.center.y
     );
@@ -1058,7 +1058,7 @@ fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it
         "{before:?} {after:?}"
     );
     assert!((after.top() - before.top() - 40.0).abs() < 2.0);
-    // 窓を開いたまま、窓の外のキャンバスに描ける
+    // ウィンドウを開いたまま、ウィンドウの外のキャンバスに描ける
     let canvas = canvas_rect(&h);
     let spot = pos2(canvas.right() - 40.0, canvas.bottom() - 40.0);
     assert!(!after.contains(spot));
@@ -1066,7 +1066,7 @@ fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it
     drag(&mut h, &[spot, offset(spot, -20.0, 0.0)]);
     assert_eq!(st(&h).doc.undo_count(), steps + 1);
     assert!(st(&h).brushes.ui.detail.open);
-    // 窓の上の押下はキャンバスへ通さない
+    // ウィンドウの上の押下はキャンバスへ通さない
     let inside = after.center();
     let steps = st(&h).doc.undo_count();
     drag(
@@ -1089,7 +1089,7 @@ fn what_does_not_apply_in_3d_is_disabled_with_the_reason_instead_of_a_note() {
     for label in ["直径", "不透明度", "硬さ", "流量", "間隔"] {
         assert!(!rect_of_enabled(&h, label), "{label} は 3D でも効く");
     }
-    // 詳細の窓: 筆先・ゆらぎ・テクスチャ・デュアル・フェード・傾き・手ぶれ補正は無効。注記の行は出さない
+    // 詳細のウィンドウ: 筆先・ゆらぎ・テクスチャ・デュアル・フェード・傾き・手ぶれ補正は無効。注記の行は出さない
     for (category, disabled, enabled) in [
         (Category::Shape, vec!["真円率", "角度"], vec![]),
         (
@@ -1354,7 +1354,7 @@ fn snapshot_brush_detail_window_english_effect() {
 
 #[test]
 fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own() {
-    // 低い窓: 一覧・ツールプロパティ・ブラシサイズが入りきらないので、全体がスクロールする
+    // 低いウィンドウ: 一覧・ツールプロパティ・ブラシサイズが入りきらないので、全体がスクロールする
     let mut h = app(1280.0, 640.0, 128);
     let panel = panel_rect(&h);
     let content = st(&h).brushes.ui.panel_content;
@@ -1391,7 +1391,7 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
     // 逆向きに戻せて、先頭より前には行かない
     wheel(&mut h, band.center(), 100_000.0);
     assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
-    // 十分に高い窓では、全体は送れない
+    // 十分に高いウィンドウでは、全体は送れない
     let mut tall = app(1280.0, 1400.0, 128);
     let band = rect_of(&tall, "ツールプロパティ", |r| {
         r.left() < 340.0 && r.top() > 80.0
@@ -1548,7 +1548,7 @@ fn the_pen_button_beside_the_tool_hardness_toggles_the_pressure_and_is_off_for_a
 fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_the_category() {
     let mut h = app(1600.0, 1000.0, 128);
     open_detail(&mut h, Category::Pressure);
-    // 項目は上から サイズ・不透明度・流量・硬さ。窓の高さには 4 つ入らないので、いちばん下まで送り、
+    // 項目は上から サイズ・不透明度・流量・硬さ。ウィンドウの高さには 4 つ入らないので、いちばん下まで送り、
     // 同じ名前の行を上から並べて、最後が硬さ・その前が流量
     h.state_mut().state.brushes.ui.detail.scroll = f32::MAX;
     h.run();
@@ -1617,7 +1617,7 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
 // ───────── 見本の点滅 ─────────
 
 /// ツールのプロパティのつまみを動かした直後のフレームでも、ツールの見本は前の絵を出し続ける（紙だけになって点滅しない）。新しい見本が
-/// できたら替わる（見本は実際の窓と同じく別のスレッドで描く）。
+/// できたら替わる（見本は実際のウィンドウと同じく別のスレッドで描く）。
 #[test]
 fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     use yolu_app::brushes::sample::{key_of, SampleSpec};

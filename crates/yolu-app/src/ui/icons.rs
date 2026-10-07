@@ -171,7 +171,7 @@ impl Icons {
             }
             map.insert(*name, set);
         }
-        // 同梱の MIT アイコンを道具にも共用する。
+        // 同梱の MIT アイコンをツールにも共用する。
         for (alias, source) in [
             ("tools/shape", "shapes"),
             ("tools/shape_selected", "shapes"),

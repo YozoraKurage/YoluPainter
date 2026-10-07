@@ -1,6 +1,6 @@
-//! 画面の並びの保存と復元（設定のフォルダの `layout.json`）: ドックの並び（タブの組・分け方・大きさ・どのタブが前か）と、窓の大きさ・位置・
+//! 画面の並びの保存と復元（設定のフォルダの `layout.json`）: ドックの並び（タブの組・分け方・大きさ・どのタブが前か）と、ウィンドウの大きさ・位置・
 //! 最大化を、終わるときに書き、次の起動で戻す。読めない・古い版・知らないタブ・足りない／重なるタブは捨てて既定の並び（理由は画面に出さない）。
-//! 「ウィンドウ → パネルの並びを戻す」は既定へ。窓の大きさと位置は、ドックとは別に確かめる。
+//! 「ウィンドウ → パネルの並びを戻す」は既定へ。ウィンドウの大きさと位置は、ドックとは別に確かめる。
 use crate::common;
 
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ fn app_in(dir: &Path) -> Harness<'static, YoluApp> {
     app_in_with(dir, false)
 }
 
-/// `fit` は、起動のあと窓が画面より大きければ収める（実際の窓の動き）。
+/// `fit` は、起動のあとウィンドウが画面より大きければ収める（実際のウィンドウの動き）。
 fn app_in_with(dir: &Path, fit: bool) -> Harness<'static, YoluApp> {
     let settings = dir.join("settings.conf");
     let mut h = common::gpu_thread::builder()
@@ -102,7 +102,7 @@ fn changed_dock() -> DockState<Tab> {
     dock
 }
 
-/// 既定の並びから、履歴を浮かせた窓にして（面 1）、ナビゲーターもその窓へ入れ、前のタブをナビゲーターにした並び。
+/// 既定の並びから、履歴を浮かせたウィンドウにして（面 1）、ナビゲーターもそのウィンドウへ入れ、前のタブをナビゲーターにした並び。
 fn floating_dock() -> DockState<Tab> {
     let mut dock = default_dock();
     let history = dock.find_tab(&Tab::History).expect("履歴");
@@ -127,11 +127,11 @@ fn floating_dock() -> DockState<Tab> {
     dock
 }
 
-/// 浮かせた窓の状態（面の番号）を、書き出した形の JSON で。
+/// 浮かせたウィンドウの状態（面の番号）を、書き出した形の JSON で。
 fn window_state(dock: &mut DockState<Tab>, surface: usize) -> serde_json::Value {
     serde_json::to_value(
         dock.get_window_state(SurfaceIndex(surface))
-            .expect("浮かせた窓"),
+            .expect("浮かせたウィンドウ"),
     )
     .unwrap()
 }
@@ -168,7 +168,7 @@ fn headless_the_default_dock_and_a_changed_dock_survive_the_file_with_every_tab_
 
 #[test]
 fn headless_the_written_file_does_not_depend_on_the_drawn_sizes() {
-    // 描いた矩形（まだ描いていない部品は無限大）は、書く値にしない: 窓の大きさを変えても、同じ並びなら同じ中身
+    // 描いた矩形（まだ描いていない部品は無限大）は、書く値にしない: ウィンドウの大きさを変えても、同じ並びなら同じ中身
     let mut a = default_dock();
     let mut b = default_dock();
     for (_, node) in b.iter_all_nodes_mut() {
@@ -198,7 +198,7 @@ fn headless_the_written_file_does_not_depend_on_the_drawn_sizes() {
 #[test]
 fn headless_a_floating_window_survives_the_file_with_its_tabs_the_front_tab_and_its_place() {
     let mut dock = floating_dock();
-    // 浮かせた窓の中の組と前のタブ（履歴・ナビゲーターの 2 つ、前はナビゲーター）
+    // 浮かせたウィンドウの中の組と前のタブ（履歴・ナビゲーターの 2 つ、前はナビゲーター）
     let text = layout::render(&dock, None);
     let loaded = layout::parse(&text);
     assert_eq!(loaded.problems, Vec::<String>::new());
@@ -206,17 +206,17 @@ fn headless_a_floating_window_survives_the_file_with_its_tabs_the_front_tab_and_
     let floating = shape(&read)
         .into_iter()
         .find(|line| line.starts_with("1/"))
-        .expect("浮かせた窓の組");
+        .expect("浮かせたウィンドウの組");
     assert_eq!(floating, "1/0 leaf [\"history\", \"navigator\"] active=1");
     assert_eq!(shape(&read), shape(&dock));
     assert_eq!(read.surfaces_count(), 2);
-    // 窓の位置と大きさ（最初に描くときの値）も戻る
+    // ウィンドウの位置と大きさ（最初に描くときの値）も戻る
     assert_eq!(window_state(&mut read, 1), window_state(&mut dock, 1));
     assert_eq!(
         window_state(&mut read, 1)["next_position"],
         serde_json::json!({"x": 300.0, "y": 200.0})
     );
-    // 保存のとき、egui が覚えている窓の今の位置と大きさを入れる（egui_dock は窓の矩形を自分では更新しない）
+    // 保存のとき、egui が覚えているウィンドウの今の位置と大きさを入れる（egui_dock はウィンドウの矩形を自分では更新しない）
     let moved = Rect::from_min_size(pos2(512.0, 384.0), vec2(300.0, 200.0));
     let text = layout::render_with(&dock, None, &[(SurfaceIndex(1), moved)]);
     let mut read = layout::parse(&text).dock.expect("読めた");
@@ -257,19 +257,22 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     let w2 = dock.detach_tab(navigator, rect(400.0));
     check(&dock, "ナビゲーターも浮かせた");
     assert_ne!(w1, w2);
-    // 2 つ目の窓のタブを、1 つ目の窓の組へ移す: 2 つ目の窓は空になって消える
+    // 2 つ目のウィンドウのタブを、1 つ目のウィンドウの組へ移す: 2 つ目のウィンドウは空になって消える
     let navigator = dock.find_tab(&Tab::Navigator).unwrap();
     let target = dock.find_tab(&Tab::History).unwrap().node_path();
     dock.move_tab(navigator, TabDestination::Node(target, TabInsert::Append));
-    check(&dock, "窓から窓へ移して、空になった窓が消えた");
-    // 浮かせた窓の組を分ける
+    check(
+        &dock,
+        "ウィンドウからウィンドウへ移して、空になったウィンドウが消えた",
+    );
+    // 浮かせたウィンドウの組を分ける
     let color = dock.find_tab(&Tab::Color).unwrap();
     let target = dock.find_tab(&Tab::History).unwrap().node_path();
     dock.move_tab(
         color,
         TabDestination::Node(target, TabInsert::Split(Split::Right)),
     );
-    check(&dock, "浮かせた窓の組を分けた");
+    check(&dock, "浮かせたウィンドウの組を分けた");
     // メインの組を分けて、組を空にする（隣の組が上がる）
     let layers = dock.find_tab(&Tab::Layers).unwrap();
     let target = dock.find_tab(&Tab::Canvas).unwrap().node_path();
@@ -282,7 +285,7 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     let target = dock.find_tab(&Tab::Canvas).unwrap().node_path();
     dock.move_tab(properties, TabDestination::Node(target, TabInsert::Append));
     check(&dock, "メインの組が空になって消えた");
-    // 浮かせた窓のタブを、メインの組へ戻す
+    // 浮かせたウィンドウのタブを、メインの組へ戻す
     for tab in [Tab::History, Tab::Navigator, Tab::Color] {
         let from = dock.find_tab(&tab).unwrap();
         let to = dock.find_tab(&Tab::Canvas).unwrap().node_path();
@@ -304,7 +307,10 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
             check(&dock, &format!("{} を浮かせた", tab.key()));
         }
     }
-    assert!(dock.surfaces_count() > 3, "浮かせた窓がいくつもある");
+    assert!(
+        dock.surfaces_count() > 3,
+        "浮かせたウィンドウがいくつもある"
+    );
     // キャンバスも浮かせて、メインを空にする
     let canvas = dock.find_tab(&Tab::Canvas).unwrap();
     dock.detach_tab(canvas, rect(200.0));
@@ -312,7 +318,7 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
         dock.main_surface().is_empty() || dock.main_surface().num_tabs() == 0,
         "メインが空"
     );
-    check(&dock, "メインが空（全部が窓）");
+    check(&dock, "メインが空（全部がウィンドウ）");
 }
 
 #[test]
@@ -378,7 +384,7 @@ fn headless_a_file_that_cannot_be_used_is_dropped_with_a_reason_for_the_log_only
     assert!(layout::validate(&no_pose).is_err(), "ポーズが 2 つ");
 }
 
-/// egui_dock は、読んだ値をそのまま添字で引く（前のタブ・木の子・窓の組）ので、外れた値を渡すと起動のたびに落ちる。
+/// egui_dock は、読んだ値をそのまま添字で引く（前のタブ・木の子・ウィンドウの組）ので、外れた値を渡すと起動のたびに落ちる。
 /// 描く前の検査が、どれも理由つきで捨てることを確かめる（既定の並びで始め、ファイルは次の保存で置き換わる）。
 #[test]
 fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_reason() {
@@ -401,7 +407,7 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
     };
     let cases: Vec<(&str, String)> = vec![
         (
-            "浮かせた窓の前のタブが範囲の外",
+            "浮かせたウィンドウの前のタブが範囲の外",
             with(&|s| s[1]["Window"][0]["nodes"][0]["Leaf"]["active"] = 2.into()),
         ),
         (
@@ -419,7 +425,7 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
             }),
         ),
         (
-            "浮かせた窓の組が空",
+            "浮かせたウィンドウの組が空",
             with(&|s| s[1]["Window"][0]["nodes"][0]["Leaf"]["tabs"] = json!([])),
         ),
         (
@@ -457,7 +463,7 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
             }),
         ),
         (
-            "浮かせた窓の組が 1 つも無い",
+            "浮かせたウィンドウの組が 1 つも無い",
             with(&|s| s[1]["Window"][0]["nodes"] = json!([])),
         ),
         (
@@ -480,19 +486,19 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
             }),
         ),
         (
-            "窓の位置が範囲の外",
+            "ウィンドウの位置が範囲の外",
             with(&|s| s[1]["Window"][1]["next_position"] = json!({"x": 1e9, "y": 0.0})),
         ),
         (
-            "窓の位置が数でない",
+            "ウィンドウの位置が数でない",
             with(&|s| s[1]["Window"][1]["next_position"] = json!({"x": null, "y": 0.0})),
         ),
         (
-            "窓の大きさが負",
+            "ウィンドウの大きさが負",
             with(&|s| s[1]["Window"][1]["next_size"] = json!({"x": -10.0, "y": 100.0})),
         ),
         (
-            "窓の大きさが大きすぎる",
+            "ウィンドウの大きさが大きすぎる",
             with(&|s| s[1]["Window"][1]["next_size"] = json!({"x": 1e9, "y": 100.0})),
         ),
     ];
@@ -521,7 +527,7 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
     let loaded = layout::parse(&good);
     assert_eq!(loaded.problems, Vec::<String>::new());
     assert!(loaded.dock.is_some());
-    // フォーカスが無い組を指していても、読むときに外すので使える。浮かせた窓の木の中の、組でない所を指していれば（外し忘れ）検査が断る
+    // フォーカスが無い組を指していても、読むときに外すので使える。浮かせたウィンドウの木の中の、組でない所を指していれば（外し忘れ）検査が断る
     let bad_focus = with(&|s| s[1]["Window"][0]["focused_node"] = 5.into());
     let loaded = layout::parse(&bad_focus);
     assert!(
@@ -533,7 +539,7 @@ fn headless_a_dock_whose_values_egui_dock_would_index_blindly_is_dropped_with_a_
     let dock: DockState<Tab> = serde_json::from_value(raw["dock"].take()).unwrap();
     assert!(
         layout::validate(&dock).is_err(),
-        "外していない値は、浮かせた窓のフォーカスが組を指していないと断る"
+        "外していない値は、浮かせたウィンドウのフォーカスが組を指していないと断る"
     );
 }
 
@@ -563,7 +569,7 @@ fn headless_the_window_is_checked_separately_and_nonsense_values_are_dropped() {
         layout::parse(&text(small)).window.unwrap().size,
         layout::MIN_SIZE
     );
-    // 壊れた値の窓は捨てるが、ドックは生かす
+    // 壊れた値のウィンドウは捨てるが、ドックは生かす
     for bad in [
         serde_json::json!({"x": 1.0}),
         serde_json::json!({"x": 1e9, "y": 0.0, "width": 1000.0, "height": 800.0, "pixels_per_point": 1.0}),
@@ -574,10 +580,13 @@ fn headless_the_window_is_checked_separately_and_nonsense_values_are_dropped() {
     ] {
         let loaded = layout::parse(&text(bad.clone()));
         assert!(loaded.window.is_none(), "{bad}");
-        assert!(loaded.dock.is_some(), "窓が壊れてもドックは生かす: {bad}");
+        assert!(
+            loaded.dock.is_some(),
+            "ウィンドウが壊れてもドックは生かす: {bad}"
+        );
         assert_eq!(loaded.problems.len(), 1, "{bad}");
     }
-    // ドックが壊れても、窓は戻す
+    // ドックが壊れても、ウィンドウは戻す
     let mut v: serde_json::Value =
         serde_json::from_str(&layout::render(&default_dock(), Some(&window(false)))).unwrap();
     v["dock"] = serde_json::json!("junk");
@@ -643,7 +652,7 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
 }
 
 /// 前の版が保存した並び（ログのタブが無い）を読んでも、並び全部は捨てない: ログのタブだけを、既定の並びと同じくレイヤーと同じ組の後ろへ
-/// 足す（前へは出さない）。レイヤーを浮かせた並びなら、その窓の組へ。
+/// 足す（前へは出さない）。レイヤーを浮かせた並びなら、そのウィンドウの組へ。
 #[test]
 fn headless_a_saved_layout_without_the_log_tab_keeps_its_arrangement_and_gains_the_log_tab() {
     let without_log = |mut dock: DockState<Tab>| {
@@ -855,7 +864,7 @@ fn an_unreadable_file_starts_with_the_default_and_says_nothing_on_screen() {
             "missing-tab",
             layout::render(&changed_dock(), None).replacen("\"history\"", "\"navigator\"", 1),
         ),
-        // 浮かせた窓の前のタブが範囲の外（egui_dock が添字で引いて、起動のたびに落ちる値）
+        // 浮かせたウィンドウの前のタブが範囲の外（egui_dock が添字で引いて、起動のたびに落ちる値）
         ("window-active-out-of-range", {
             let mut v: serde_json::Value =
                 serde_json::from_str(&layout::render(&floating_dock(), None)).unwrap();
@@ -1014,7 +1023,7 @@ fn the_window_size_and_position_are_remembered_and_a_maximized_window_keeps_its_
             maximized: true
         })
     );
-    // 次の起動で読める（main がこの値で窓を作る）
+    // 次の起動で読める（main がこの値でウィンドウを作る）
     assert_eq!(layout::saved_window_at(&layout_file(&dir)), loaded.window);
     // 戻したら、最大化の印は外れ、新しい大きさと位置を書く
     let outer = Rect::from_min_size(pos2(200.0, 100.0), vec2(1112.0, 740.0));
@@ -1053,7 +1062,7 @@ fn the_window_size_and_position_are_remembered_and_a_maximized_window_keeps_its_
     );
 }
 
-/// 試験の窓（実際の窓ではない）は、窓の大きさを命じない。
+/// 試験のウィンドウ（実際のウィンドウではない）は、ウィンドウの大きさを命じない。
 #[test]
 fn a_test_window_never_commands_the_window_size() {
     let dir = settings_dir("fit-test");
@@ -1072,7 +1081,7 @@ fn a_test_window_never_commands_the_window_size() {
         !commands
             .iter()
             .any(|c| matches!(c, egui::ViewportCommand::InnerSize(_))),
-        "実際の窓だけが収める: {commands:?}"
+        "実際のウィンドウだけが収める: {commands:?}"
     );
 }
 
@@ -1099,12 +1108,12 @@ fn headless_a_file_over_the_size_budget_is_refused_and_one_at_the_budget_is_read
         "{:?}",
         loaded.problems
     );
-    // 窓の大きさだけを取る口も、同じ上限で読まない
+    // ウィンドウの大きさだけを取る口も、同じ上限で読まない
     assert_eq!(layout::saved_window_at(&file), None);
 }
 
-/// 前の版の、アプリの中の浮いた窓（egui_dock の窓の面）は、読んだあと外の窓になり、組・前のタブ・位置・大きさを保つ。次に書くときは
-/// 外の窓（`detached`）として書き、その次の起動でも同じに戻る。
+/// 前の版の、アプリの中の浮いたウィンドウ（egui_dock のウィンドウの面）は、読んだあと別ウィンドウになり、組・前のタブ・位置・大きさを保つ。次に書くときは
+/// 別ウィンドウ（`detached`）として書き、その次の起動でも同じに戻る。
 #[test]
 fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_back_the_same() {
     use eframe::App;
@@ -1120,14 +1129,14 @@ fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_
     assert_eq!(
         h.state().dock.surfaces_count(),
         1,
-        "主のドックに浮いた窓の面が残らない"
+        "主のドックに浮いたウィンドウの面が残らない"
     );
     assert_eq!(windows.len(), 1);
     assert_eq!(
         shape(&windows[0].dock),
         vec!["0/0 leaf [\"history\", \"navigator\"] active=1"]
     );
-    // 主の窓の内側の左上からの位置のまま（試験の窓は内側の左上が原点）
+    // メインウィンドウの内側の左上からの位置のまま（試験のウィンドウは内側の左上が原点）
     let record = windows[0].record.expect("置き場所");
     assert_eq!(record.position, [520.0, 330.0]);
     assert_eq!(record.size, [300.0, 210.0]);
@@ -1152,7 +1161,7 @@ fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_
     }
 }
 
-/// 窓が画面より大きければ、起動のあと 1 度だけ収める（実際の窓の動き。保存したあとで画面が小さくなったとき）。
+/// ウィンドウが画面より大きければ、起動のあと 1 度だけ収める（実際のウィンドウの動き。保存したあとで画面が小さくなったとき）。
 #[test]
 fn a_window_larger_than_the_screen_is_fitted_once_after_start_in_the_real_window() {
     let inner_size_commands = |h: &Harness<'static, YoluApp>| -> Vec<egui::Vec2> {
@@ -1167,7 +1176,7 @@ fn a_window_larger_than_the_screen_is_fitted_once_after_start_in_the_real_window
             .collect()
     };
     let monitor = vec2(1920.0, 1080.0);
-    // 画面より大きい窓: 画面の大きさへ 1 度だけ収める
+    // 画面より大きいウィンドウ: 画面の大きさへ 1 度だけ収める
     let mut h = app_in_with(&settings_dir("fit-real"), true);
     let big = Rect::from_min_size(pos2(0.0, 0.0), vec2(5000.0, 1000.0));
     set_viewport(&mut h, big, big, false, monitor);
@@ -1180,7 +1189,7 @@ fn a_window_larger_than_the_screen_is_fitted_once_after_start_in_the_real_window
     h.step();
     h.step();
     assert!(inner_size_commands(&h).is_empty(), "2 度目は命じない");
-    // 画面に収まっている窓・最大化している窓には命じない
+    // 画面に収まっているウィンドウ・最大化しているウィンドウには命じない
     for (what, rect, maximized) in [
         (
             "収まっている",

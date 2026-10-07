@@ -626,7 +626,7 @@ fn tool_strip_and_symmetry_toggle_fit_the_minimum_window_in_both_languages() {
         let mut h = common::app(960.0, 640.0, 64);
         h.state_mut().state.lang = lang;
         h.run();
-        // 窓の最小の大きさ（960x640）で、ツールの帯の全部のボタンが帯の中に収まる
+        // ウィンドウの最小の大きさ（960x640）で、ツールの帯の全部のボタンが帯の中に収まる
         let (top, bottom) = (24.0 + 36.0, 640.0 - 22.0);
         for tool in Tool::ALL {
             // キーの無いツール（ゆがみ）は名前だけ
@@ -655,7 +655,7 @@ fn tool_strip_and_symmetry_toggle_fit_the_minimum_window_in_both_languages() {
             assert!(t.is_some(), "{lang:?} {mode:?}");
             assert!(t.unwrap().rect().right() <= 960.0);
         }
-        // 図形・定規のオプションバーも、いちばん長い並び（長方形の角の丸み・2 点パース）で、スナップのボタンが窓の中に収まる
+        // 図形・定規のオプションバーも、いちばん長い並び（長方形の角の丸み・2 点パース）で、スナップのボタンがウィンドウの中に収まる
         let snap = lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)");
         for (tool, ruler_kind) in [
             (Tool::Shape, RulerKind::Line),
@@ -793,7 +793,7 @@ fn figure_strokes_ignore_speed_controls_whatever_the_vertex_spacing() {
     }
 }
 
-/// 入力の経路（マウス・ペン）で、図形の道具でなくブラシの 1 ストロークを (a → b) と動かして離す。
+/// 入力の経路（マウス・ペン）で、図形のツールでなくブラシの 1 ストロークを (a → b) と動かして離す。
 fn stroke(h: &mut Harness<'_, YoluApp>, is_pen: bool, a: Pos2, b: Pos2, m: Modifiers) {
     if is_pen {
         pen(h, a, true, 1.0, m);

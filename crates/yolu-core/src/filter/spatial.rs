@@ -370,7 +370,7 @@ fn morphology(
     check: Check<'_>,
 ) -> Result<Vec<u8>, Error> {
     let dilate = mode == MorphologyMode::Dilate;
-    // 透明な画素は窓に数えない（最大なら 0、最小なら 255 として引く）
+    // 透明な画素はウィンドウに数えない（最大なら 0、最小なら 255 として引く）
     let neutral = if dilate { 0u8 } else { 255 };
     let pick = |a: u8, b: u8| if dilate { a.max(b) } else { a.min(b) };
     let (cw, ch) = (image.r.width as usize, image.r.height as usize);
@@ -399,7 +399,7 @@ fn morphology(
             }
         }
     }
-    // 丸い窓の行ごとの半幅（整数の平方根）
+    // 丸いウィンドウの行ごとの半幅（整数の平方根）
     let r = i64::from(radius);
     let widths: Vec<i64> = (0..=r)
         .map(|dy| {
@@ -420,7 +420,7 @@ fn morphology(
         }
         let mut best = [neutral; 3];
         for dy in -r..=r {
-            // 画像の外の行は、端の行の（より広い）窓に含まれる
+            // 画像の外の行は、端の行の（より広い）ウィンドウに含まれる
             let yy = i64::from(y) + dy;
             if !(0..h).contains(&yy) {
                 continue;

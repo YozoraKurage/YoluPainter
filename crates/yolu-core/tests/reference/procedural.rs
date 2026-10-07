@@ -201,12 +201,12 @@ fn threads_and_regions_do_not_change_pixels() {
 
 #[test]
 fn position_space_gives_the_same_value_at_the_same_place_whatever_the_uv() {
-    // 2 つの UV の島が同じ位置を指す: 島ごとに別の座標だと継ぎ目に段が出る。位置で評価すれば同じ値になる
+    // 2 つの UV アイランドが同じ位置を指す: アイランドごとに別の座標だと継ぎ目に段が出る。位置で評価すれば同じ値になる
     let (w, h) = (40u32, 20u32);
     let mut position = Vec::new();
     for y in 0..h {
         for x in 0..w {
-            // 左半分と右半分は同じ位置の並び（右は上下を反転して並べた別の島）
+            // 左半分と右半分は同じ位置の並び（右は上下を反転して並べた別のアイランド）
             let (px, py) = if x < w / 2 {
                 (x, y)
             } else {

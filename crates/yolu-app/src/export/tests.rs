@@ -583,7 +583,7 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.bake.settings.ao_samples = 8;
     s.bake.settings.padding = 4;
     s.export.padding = 0; // 塗り広げの覆い（モデルの UV）を使わない
-                          // 黒の塗りつぶしの層のマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
+                          // 黒の塗りつぶしレイヤーのマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
     s.apply(Action::M2(crate::m2::Edit::NewFill));
     let layer = s.selected_layer.unwrap();
     s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
@@ -726,7 +726,7 @@ fn a_channel_png_is_the_same_bytes_as_the_template_and_the_composite() {
         std::fs::read(template.0.join("Texture_Albedo.png")).unwrap()
     );
     assert_eq!(png_bytes(&path), s.doc.composite(s.doc.bounds()).unwrap());
-    // 1 枚の書き出しは結果の窓を出さず、状態の帯に書いた場所を出す
+    // 1 枚の書き出しは結果のウィンドウを出さず、状態の帯に書いた場所を出す
     assert!(s.export.report.is_some(), "テンプレートの結果");
     s.export.report = None;
     // 描くチャンネルを替えると、そのチャンネルの合成そのまま（詰めない・色を掛けない）
@@ -797,7 +797,7 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
         b,
         s.doc.normal_file_output(s.export_working_bytes()).unwrap()
     );
-    // 選ぶ窓が置き換えを確かめているので、もうあるファイルは確かめずに置き換える
+    // 選ぶウィンドウが置き換えを確かめているので、もうあるファイルは確かめずに置き換える
     export_channel(&mut s, &opengl);
     assert!(s.export.confirm.is_none());
     s.wait_export();
@@ -812,7 +812,7 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
 #[test]
 fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_file_exists() {
     let dir = Dir::new("png-named");
-    // 拡張子が無い名前だけが、足した名前を確かめる道を通る（付いている名前は、選ぶ窓が確かめた）
+    // 拡張子が無い名前だけが、足した名前を確かめる道を通る（付いている名前は、選ぶウィンドウが確かめた）
     let bare = dir.0.join("foo");
     assert_eq!(
         channel_action(bare.clone()),
@@ -836,11 +836,11 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     s.wait_export();
     assert_eq!(dir.files(), ["foo.png"], "{}", s.message);
     let written = std::fs::read(dir.0.join("foo.png")).unwrap();
-    // 足した名前がもうあれば、確かめの窓を出して何も書かない（無断で置き換えない）
+    // 足した名前がもうあれば、確認のウィンドウを出して何も書かない（無断で置き換えない）
     std::fs::write(dir.0.join("foo.png"), b"mine").unwrap();
     s.apply(Action::Export(channel_action(bare.clone())));
     assert!(!s.export.is_exporting());
-    let confirm = s.export.confirm.clone().expect("確かめの窓");
+    let confirm = s.export.confirm.clone().expect("確認のウィンドウ");
     assert_eq!(confirm.what, What::ChannelFile(dir.0.join("foo.png")));
     assert_eq!(
         (confirm.existing.clone(), confirm.total),
@@ -852,7 +852,7 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     s.apply(Action::Export(ExportAction::CancelConfirm));
     assert!(s.export.confirm.is_none() && !s.export.is_exporting());
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
-    // 「置き換える」で、新しい画像（結果の窓は出さない）
+    // 「置き換える」で、新しい画像（結果のウィンドウは出さない）
     s.apply(Action::Export(channel_action(bare.clone())));
     s.apply(Action::Export(ExportAction::ConfirmReplace));
     assert!(s.export.confirm.is_none());
@@ -865,7 +865,7 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     s.lang = crate::lang::Lang::En;
     s.apply(Action::Export(channel_action(bare.clone())));
     assert_eq!(s.message, "Confirm replacing 1 existing file.");
-    // 描いている間・書き出し中は、確かめの窓も出さない
+    // 描いている間・書き出し中は、確認のウィンドウも出さない
     s.apply(Action::Export(ExportAction::CancelConfirm));
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Export(channel_action(bare.clone())));
@@ -964,7 +964,7 @@ fn all_channels_are_written_per_set_with_english_names_and_only_the_used_ones() 
         [5, 6, 7, 128],
         "テンプレートの Emission と違い、アルファのまま"
     );
-    // 結果の窓: 種類（sRGB・リニア）
+    // 結果のウィンドウ: 種類（sRGB・リニア）
     let report = s.export.report.as_ref().unwrap();
     assert_eq!(report.images.len(), 4);
     for image in &report.images {
@@ -981,7 +981,7 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
     let layer = s.selected_layer.unwrap();
-    // Height だけ使い、Height → Normal を有効にすると、Normal の画像も出る（塗った Normal の層が無くても）
+    // Height だけ使い、Height → Normal を有効にすると、Normal の画像も出る（塗った Normal のレイヤーが無くても）
     paint_left_half(&mut s.doc, layer, Channel::Height, [200, 200, 200, 255]);
     s.doc
         .set_channel_enabled(layer, Channel::Color, false)
@@ -1061,7 +1061,7 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
         original,
         "やめたら元のまま"
     );
-    // 置き換える: 確かめの窓の「置き換える」が、同じ全チャンネルをもう一度計画する
+    // 置き換える: 確認のウィンドウの「置き換える」が、同じ全チャンネルをもう一度計画する
     export_channels(&mut s, &dir.0);
     s.apply(Action::Export(ExportAction::ConfirmReplace));
     assert!(s.export.is_exporting());
@@ -1112,7 +1112,7 @@ fn all_channels_skip_a_read_only_set_and_say_so_and_cancel_leaves_nothing() {
     assert!(cancel.files().is_empty(), "{:?}", cancel.files());
 }
 
-/// 正本にすると 512 MiB を超える文書（一様なタイルの層は core では小さいが、正本では全画素を書く）も書き出せる: 書き出しは文書の写し
+/// 正本にすると 512 MiB を超える文書（一様なタイルのレイヤーは core では小さいが、正本では全画素を書く）も書き出せる: 書き出しは文書の写し
 /// （タイルを共有）から作り、正本を経ない。
 #[test]
 fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {

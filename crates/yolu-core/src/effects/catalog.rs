@@ -66,7 +66,7 @@ pub struct EffectKind {
     pub id: &'static str,
     /// フィルターのスタックの段にできる（フィルターと Generator）。
     pub stack: bool,
-    /// 調整の層の設定にできる。
+    /// 調整レイヤーの設定にできる。
     pub adjustment: bool,
     /// Generator（フィルターのスタックの Generator の段）。
     pub generator: bool,
@@ -92,7 +92,7 @@ impl EffectKind {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamError {
     UnknownKind(String),
-    /// その使い方（フィルターの段・調整の層）にできない種類。
+    /// その使い方（フィルターの段・調整レイヤー）にできない種類。
     WrongTarget {
         kind: &'static str,
         adjustment: bool,
@@ -133,7 +133,7 @@ impl std::fmt::Display for ParamError {
                 f,
                 "{kind} は{}にできない",
                 if *adjustment {
-                    "調整の層の設定"
+                    "調整レイヤーの設定"
                 } else {
                     "フィルターの段"
                 }
@@ -482,7 +482,7 @@ fn mask_param(map: &str, field: &str) -> &'static str {
     NAMES[m][f]
 }
 
-/// 一覧の 1 行の元: (id, フィルターのスタック, 調整の層, Generator, 足せる, 値の欄で変えられない中身)。
+/// 一覧の 1 行の元: (id, フィルターのスタック, 調整レイヤー, Generator, 足せる, 値の欄で変えられない中身)。
 type Row = (
     &'static str,
     bool,
@@ -1097,7 +1097,7 @@ fn read_stack(s: &EffectSettings) -> Option<(&'static str, Bag)> {
     Some((id, b))
 }
 
-/// 調整の層の設定の、種類と値。
+/// 調整レイヤーの設定の、種類と値。
 fn read_adjustment(a: &AdjustmentSettings) -> (&'static str, Bag) {
     let mut b = Bag::new();
     if let Some(ca) = a.color_adjust() {

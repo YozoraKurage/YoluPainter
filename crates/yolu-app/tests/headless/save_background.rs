@@ -71,12 +71,12 @@ fn painted(len: usize, seed: u64) -> Vec<u8> {
         })
         .collect()
 }
-/// 層を足して、層ごとに違う画素を入れる。縮まない層と縮む層を交互に（描いた絵に近い）。
+/// レイヤーを足して、レイヤーごとに違う画素を入れる。縮まないレイヤーと縮むレイヤーを交互に（描いた絵に近い）。
 fn fill_layers(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
     let ts = doc.tile_size();
     let (nx, ny) = (doc.width().div_ceil(ts), doc.height().div_ceil(ts));
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..ny {
             for tx in 0..nx {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
@@ -94,14 +94,14 @@ fn fill_layers(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
         }
     }
 }
-/// 描いた絵に近い層の組（4 枚に 1 枚は全面の一色の塗り＝一様なタイル、描き込んだ層・縮まない層・数タイルだけの層）。実データの代わりの
-/// 疑似の画素で、正本は一様なタイルを全画素に広げて書くので、層の数が多いほど書く量が大きくなる。
+/// 描いた絵に近いレイヤーの組（4 枚に 1 枚は全面の一色の塗り＝一様なタイル、描き込んだレイヤー・縮まないレイヤー・数タイルだけのレイヤー）。実データの代わりの
+/// 疑似の画素で、正本は一様なタイルを全画素に広げて書くので、レイヤーの数が多いほど書く量が大きくなる。
 fn fill_like_art(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
     let ts = doc.tile_size();
     let (nx, ny) = (doc.width().div_ceil(ts), doc.height().div_ceil(ts));
     let len = (ts * ts * 4) as usize;
     for i in 0..layers {
-        let id = doc.add_layer(&format!("層 {i}")).unwrap();
+        let id = doc.add_layer(&format!("レイヤー {i}")).unwrap();
         for ty in 0..ny {
             for tx in 0..nx {
                 let n = ty * nx + tx;
@@ -832,7 +832,7 @@ fn timing_of_a_big_document() {
     fill_like_art(&mut s.doc, layers, 7);
     s.modified = true;
     println!(
-        "{size}²・{layers} 層、層の画素 {} MiB",
+        "{size}²・{layers} レイヤー、レイヤーの画素 {} MiB",
         s.doc.allocated_bytes() >> 20
     );
     // 段ごと（yolu-io を直に呼んで測る）

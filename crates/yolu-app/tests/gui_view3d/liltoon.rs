@@ -384,7 +384,7 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
             .unwrap(),
         );
     }
-    // 2 つ目の層（配列の層 1）の左半分に 0 を塗る
+    // 2 つ目のレイヤー（配列のレイヤー 1）の左半分に 0 を塗る
     let layer = doc.add_layer("マスク").unwrap();
     doc.set_channel_enabled(layer, masks[1], true).unwrap();
     for y in 0..512 {
@@ -832,7 +832,7 @@ fn the_pipelines_per_feature_set_are_reused_and_kept_under_the_cap() {
 // ───────── ユーザーチャンネルの配列と 3D ビューの予算・ほかのセットの lilToon ─────────
 
 /// 文書に影の強度のマスク（スカラーのユーザーチャンネル。左半分に 0）を足し、lilToon（影を入）でそれを読む見た目を返す。
-/// `extra` 個のユーザーチャンネルも、影のぼかしのマスクなどに割り当てる（配列の層を増やす）。
+/// `extra` 個のユーザーチャンネルも、影のぼかしのマスクなどに割り当てる（配列のレイヤーを増やす）。
 fn masked_shadow(doc: &mut yolu_core::Document, extra: usize) -> MaterialLook {
     let size = doc.width();
     let mask = doc
@@ -908,7 +908,7 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     assert_eq!(
         (s.user_level, s.user_bytes),
         (0, mip_bytes(256, 8)),
-        "2 層の配列を文書の大きさで: {s:?}"
+        "2 レイヤーの配列を文書の大きさで: {s:?}"
     );
     assert!(
         s.peak_bytes >= s.paint_bytes + s.user_bytes,
@@ -1135,7 +1135,7 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
         .set_look(look, false)
         .unwrap();
     h.run();
-    // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 層の配列
+    // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 レイヤーの配列
     let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
     let need = mip_bytes(side0, 4) + mip_bytes(side1, 4) + mip_bytes(side1, 8);
     h.state_mut().view3d_set_paint_budget(need - 1);
@@ -1238,7 +1238,7 @@ fn a_texture_received_from_unity_draws_its_slot_and_a_channel_assigned_here_wins
     assert_eq!(
         (s.received_bytes, s.received_size),
         (mip_bytes(4, 8), [4, 4]),
-        "2 層（GL）で持つ: {s:?}"
+        "2 レイヤー（GL）で持つ: {s:?}"
     );
     // 欄で Color を割り当てると、チャンネルが勝つ（受けた絵の配列は手放す）
     let green = [60u8, 180, 90, 255];
@@ -1421,7 +1421,7 @@ fn a_unity_texture_past_the_layer_limit_draws_the_slot_default() {
     assert_eq!(
         s.received_bytes,
         mip_bytes(2, 4 * 16),
-        "層は 16 まで: {s:?}"
+        "レイヤーは 16 まで: {s:?}"
     );
 }
 
@@ -1601,7 +1601,7 @@ fn measure_frames_standard_and_liltoon() {
         }
         state.apply(Action::Look(LookOp::Outline(true)));
         state.apply(Action::Look(LookOp::Template));
-        // マスクのチャンネルにも絵を置く（GPU に層を持たせる）
+        // マスクのチャンネルにも絵を置く（GPU にレイヤーを持たせる）
         let users: Vec<Channel> = state
             .doc
             .channels()
