@@ -118,6 +118,8 @@ pub struct Report {
 struct Job {
     /// 画面に出す名前（テンプレートの名前・「チャンネル」）。
     template: String,
+    /// 書く画像ごとの（ファイルの名前・セットの uid・lilToon のプロパティ）。Live Link の `exported` の返事にする。
+    targets: Vec<(String, u32, Option<String>)>,
     dir: PathBuf,
     /// 結果の窓を出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
     report: bool,
@@ -136,9 +138,30 @@ pub struct ExportState {
     pub confirm_offset: Vec2,
     pub report_offset: Vec2,
     job: Option<Job>,
+    /// 終わった書き出しの、書いた画像（ファイル・セットの uid・lilToon のプロパティ）。Live Link が受ける（`take_finished`）。
+    finished: Option<Vec<(WrittenImage, u32, Option<String>)>>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
     pub park_next: bool,
+}
+
+impl ExportState {
+    /// 終わった書き出しの、書いた画像を受け取る（Live Link の返事）。
+    pub fn take_finished(&mut self) -> Option<Vec<(WrittenImage, u32, Option<String>)>> {
+        self.finished.take()
+    }
+}
+
+/// lilToon のテンプレートの画像（接尾辞）が入るマテリアルのプロパティ（Unity 版の `LilToonVerified` の対応と同じ）。
+pub fn liltoon_property(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "Main" => Some("_MainTex"),
+        "Normal" => Some("_BumpMap"),
+        "Smoothness" => Some("_SmoothnessTex"),
+        "Metallic" => Some("_MetallicGlossMap"),
+        "Emission" => Some("_EmissionMap"),
+        _ => None,
+    }
 }
 
 impl Default for ExportState {
@@ -150,6 +173,7 @@ impl Default for ExportState {
             confirm_offset: Vec2::ZERO,
             report_offset: Vec2::ZERO,
             job: None,
+            finished: None,
             park_next: false,
         }
     }
@@ -254,6 +278,8 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
 
 /// 1 セットぶんの書き出しの入力（始めるときに写す）。
 struct SetInput {
+    /// セット（uid。Live Link の返事が、書いた画像をマテリアルに結ぶ）。
+    uid: u32,
     /// 文書の写し（`capture_snapshot`。タイルは元と共有し、効果の入力・見た目の設定も持つ）。
     doc: Document,
     occlusion: Option<Vec<u8>>,
@@ -454,6 +480,7 @@ impl AppState {
                 }
             };
             sets.push(SetInput {
+                uid: self.sets.get(index).expect("範囲内").uid,
                 doc: snapshot,
                 occlusion: occlusions[p].clone(),
                 uv,
@@ -905,6 +932,24 @@ impl AppState {
         let lang = self.lang;
         let reach = Reach::from_setting(self.export.padding).unwrap_or(Reach::Fill);
         let total = plan.files.len();
+        let liltoon = plan.template.id == "liltoon";
+        let targets: Vec<(String, u32, Option<String>)> = plan
+            .files
+            .iter()
+            .map(|f| {
+                let property = match f.look_slot {
+                    Some(slot) => Some(slot.to_owned()),
+                    None if liltoon && f.channel.is_none() => plan
+                        .template
+                        .images
+                        .get(f.image)
+                        .and_then(|i| liltoon_property(i.suffix()))
+                        .map(str::to_owned),
+                    None => None,
+                };
+                (f.name.clone(), plan.sets[f.set].uid, property)
+            })
+            .collect();
         let done = Arc::new(AtomicUsize::new(0));
         let input = WorkerInput {
             dir: dir.to_path_buf(),
@@ -943,6 +988,7 @@ impl AppState {
         };
         self.export.job = Some(Job {
             template: label,
+            targets,
             dir: dir.to_path_buf(),
             report,
             total,
@@ -969,6 +1015,18 @@ impl AppState {
         let job = self.export.job.take().expect("上で見た");
         match result {
             Ok(images) => {
+                self.export.finished = Some(
+                    images
+                        .iter()
+                        .filter_map(|i| {
+                            let (_, uid, property) = job
+                                .targets
+                                .iter()
+                                .find(|(name, _, _)| *name == i.file_name)?;
+                            Some((i.clone(), *uid, property.clone()))
+                        })
+                        .collect(),
+                );
                 let mut text = if job.report {
                     lang.pick(
                         format!(

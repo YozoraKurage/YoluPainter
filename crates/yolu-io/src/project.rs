@@ -580,6 +580,34 @@ impl Project {
         }
         self.rebuild(files, self.original.level, &[])
     }
+    /// Live Link の相手の文書（根の `livelink.json`。状態のエントリ）のバイト列。無ければ None。形の確かめ（大きさ・オブジェクト・版）に
+    /// 合わないものはエラーを返し、エントリはバイト列のまま残る。
+    pub fn livelink(&self) -> Result<Option<Vec<u8>>> {
+        let Some(blob) = self.files.get(crate::livelink::ENTRY) else {
+            return Ok(None);
+        };
+        let bytes = blob.bytes()?.to_vec();
+        crate::livelink::validate(&bytes)?;
+        Ok(Some(bytes))
+    }
+    /// 根の `livelink.json` だけを置き換える（None はエントリを消す）。形式 7 以上だけ。形式も正本の版も変えない。
+    pub fn with_livelink(&self, bytes: Option<&[u8]>) -> Result<Self> {
+        check(
+            self.is_current(),
+            "Live Link の記録を書く前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        match bytes {
+            Some(b) => {
+                crate::livelink::validate(b)?;
+                files.insert(crate::livelink::ENTRY.into(), Blob::from(b.to_vec()));
+            }
+            None => {
+                files.remove(crate::livelink::ENTRY);
+            }
+        }
+        self.rebuild(files, self.original.level, &[])
+    }
     /// セットの見た目の設定（`sets/<ID>/look.json`）。無ければ None。読めない（壊れた・新しい形式の）ものはエラーを返し、元のエントリは
     /// バイト列のまま残る（呼び手は標準の見た目で開いて知らせる）。
     pub fn look(&self, set_id: &str) -> Result<Option<yolu_core::look::MaterialLook>> {
@@ -1117,7 +1145,7 @@ fn set_document(
 }
 /// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリ」の表）と同じ一覧で、
 /// `tests/ylp/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
-pub const ROOT_ENTRIES: [&str; 8] = [
+pub const ROOT_ENTRIES: [&str; 9] = [
     "ylp.json",
     "project.json",
     "resources.json",
@@ -1126,6 +1154,7 @@ pub const ROOT_ENTRIES: [&str; 8] = [
     "brush.json",
     "thumbnail.png",
     "model.json",
+    crate::livelink::ENTRY,
 ];
 /// 棚の中身のエントリの形（`resources.json` の並びにあるもの。`<content>` は中身のハッシュ）。
 pub const RESOURCE_ENTRIES: [&str; 3] = [

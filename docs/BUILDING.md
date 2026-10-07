@@ -28,7 +28,7 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
-Windows Ink に相当する専用のペン入力処理はありません。マウス操作を基本とし、筆圧の取得は OS と入力機器に依存します。現在の Unity 用ブリッジの作成ツールは Mac 用ライブラリを生成しません。
+Windows Ink に相当する専用のペン入力処理はありません。マウス操作を基本とし、筆圧の取得は OS と入力機器に依存します。
 
 ## Linux（試用）
 

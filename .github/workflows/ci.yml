@@ -53,7 +53,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           python3 tools/test-dist.py
-          python3 tools/test-gen-livelink-native.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -141,14 +140,11 @@ jobs:
         run: cargo build -p yolu-app -p yolu-cli --locked
       - name: 描画を使わないクレートの試験
         if: ${{ !cancelled() }}
-        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-ops -p yolu-cli -- --test-threads=1
       - name: アプリの単体試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
       # 結合試験は束（tests/<束>/main.rs）の中にあり、試験の名前は `<ファイル名>::<試験名>`。画面なしの試験は名前が `headless_` で始まる
-      - name: Live Link の統合試験（画面なし）
-        if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test gui_shell --locked -- livelink::headless_ --test-threads=1
       - name: 自動更新の統合試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test gui_shell --locked -- update::headless_ --test-threads=1
@@ -158,9 +154,9 @@ jobs:
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ --test-threads=1
-      - name: Live Link の頼みと .ylp の選択範囲・ポーズの試験（画面なし。名前付きパイプ・ファイルの置換）
+      - name: Live Link のファイルの受け渡しと .ylp の選択範囲・ポーズの試験（画面なし。自分だけのフォルダ・ファイルの置換）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test headless --locked -- livelink_request::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
+        run: cargo test -p yolu-app --test headless --locked -- livelink_files::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
   # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
   # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。

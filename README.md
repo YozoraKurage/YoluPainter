@@ -17,7 +17,7 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 - Color・Roughness・Metallic・Height・Normal・Emission とユーザーチャンネルを 1 回のストロークでまとめて描くマテリアルのペイント
 - フィルター、焼いたメッシュマップ（AO・曲率・厚み・ID など）を読む Generator、ノイズとグランジ、スマートマテリアル
 - 3D ビューでの lilToon の見た目
-- Unity との Live Link。モデルを 1 回の操作で開き、描いた色をシーンのマテリアルに映します（元のアセットは変えません）
+- Unity との Live Link。シーンのモデルを 1 回の操作で開き、書き出した絵を Unity へ返します（マテリアルに当てるのは、Unity で確かめたときだけ）
 - PSD のレイヤー・グループ・マスク・調整の読み書き、ABR のブラシと CLIP STUDIO のブラシ（.sut）の取り込み
 - チャンネルごとの PNG と、Unity Standard・URP・HDRP・lilToon 向けのテンプレートの書き出し
 - 落ちたときの自動の復旧
@@ -35,7 +35,7 @@ Rust の stable と C/C++ のビルド環境が要ります。
 cargo build --release -p yolu-app --locked
 ```
 
-OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
+OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験は [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
 
 ## 文書
 

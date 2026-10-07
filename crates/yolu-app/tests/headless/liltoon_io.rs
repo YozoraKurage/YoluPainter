@@ -384,11 +384,11 @@ fn received_from_unity() -> ReceivedLook {
     r
 }
 
-/// 保存した形（絵の画素は持たず、絵のあったスロットは「届いていない」）。
+/// 保存した形（絵の画素は持たず、絵のあったスロットは絵も理由も無い。絵は Live Link の相手の絵のファイルから読み直す）。
 fn as_stored(r: &ReceivedLook) -> ReceivedLook {
     let mut out = r.clone();
     for slot in std::mem::take(&mut out.images).into_keys() {
-        out.missing.insert(slot, MissingImage::Pending);
+        out.missing.remove(&slot);
     }
     out
 }
@@ -435,10 +435,9 @@ fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_
     assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
     let r = s2.doc.received_look().expect("受けた値が戻る");
     assert_eq!(r, &as_stored(&received_from_unity()));
-    assert_eq!(
-        r.missing["_MatCapTex"],
-        MissingImage::Pending,
-        "絵はつなぎ直すまで届いていない"
+    assert!(
+        !r.missing.contains_key("_MatCapTex") && !r.images.contains_key("_MatCapTex"),
+        "絵は持たず、理由も付けない（絵のファイルから読み直す）"
     );
     assert_eq!(s2.doc.drawn_look().float("_ShadowBorder", 0.5), 0.8);
     assert_eq!(s2.doc.drawn_look().kind, LookKind::LilToon);

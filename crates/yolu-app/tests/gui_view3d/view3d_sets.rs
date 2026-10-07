@@ -1282,14 +1282,10 @@ fn sixty_four_sets_each_show_their_own_picture() {
 }
 
 #[test]
-fn the_list_mark_for_a_set_left_out_of_the_budget_does_not_hide_the_unity_state() {
+fn the_list_mark_for_a_set_left_out_of_the_budget_says_why_in_both_languages() {
     use yolu_app::lang::Lang;
     use yolu_app::panels::texture_sets::set_state;
     let mut h = scene(3, 256);
-    // 3 つ目のマテリアルは Unity に Color の流し込み先が無い（Live Link のモデルだけの警告）
-    let mut unrouted = model_with(3, 256, 3, &[0, 1, 2], 2);
-    unrouted.materials[2].routes.clear();
-    h.state_mut().load_live_link_model(&unrouted).unwrap();
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
@@ -1297,67 +1293,23 @@ fn the_list_mark_for_a_set_left_out_of_the_budget_does_not_hide_the_unity_state(
     h.run();
     assert_eq!(h.state().state.view3d.unpainted, vec![2]);
     let look = |h: &Harness<'_, YoluApp>, i| set_state(&h.state().state, i);
-
-    // 予算の警告と Unity の流し込み先の警告は別の事実: どちらもツールチップに出る（印は 1 つ）
-    let both = look(&h, 2).expect("印が出る");
-    assert_eq!(both.icon, "warning");
-    assert!(
-        both.tooltip.contains("GPU") && both.tooltip.contains("Unity"),
-        "{}",
-        both.tooltip
-    );
-    assert!(both.tooltip.contains("流し込み先"), "{}", both.tooltip);
-    both.tooltip
-        .lines()
-        .for_each(|line| assert_plain("予算と流し込み先の印", line));
-    h.state_mut().state.lang = Lang::En;
-    let en = look(&h, 2).unwrap();
-    assert!(
-        en.tooltip.contains("GPU memory budget") && en.tooltip.contains("no Color route"),
-        "{}",
-        en.tooltip
-    );
-    assert!(!has_japanese(&en.tooltip), "{}", en.tooltip);
-    h.state_mut().state.lang = Lang::Ja;
-
-    // 流し込み先がある（Unity に見せている）セットが予算で外れても、「Unity に見せている」を隠さない
-    h.state_mut()
-        .load_live_link_model(&model_with(3, 256, 3, &[0, 1, 2], 3))
-        .unwrap();
-    h.run();
-    let uid2 = h.state().state.sets.get(2).unwrap().uid;
-    let uid1 = h.state().state.sets.get(1).unwrap().uid;
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
-    // 見せているセットの一覧は毎フレーム Live Link の側から入るので、入れてすぐ見る
-    h.state_mut().state.link.published = vec![uid1, uid2];
-    let shown = look(&h, 2).expect("印が出る");
-    assert_eq!(shown.icon, "warning");
-    assert!(shown.tooltip.contains("GPU"), "{}", shown.tooltip);
-    assert!(
-        shown.tooltip.contains("Unity に見せている"),
-        "{}",
-        shown.tooltip
-    );
-    assert!(!shown.tooltip.contains("見えない"), "{}", shown.tooltip);
-    shown
+    let left_out = look(&h, 2).expect("印が出る");
+    assert_eq!(left_out.icon, "warning");
+    assert!(left_out.tooltip.contains("GPU"), "{}", left_out.tooltip);
+    left_out
         .tooltip
         .lines()
-        .for_each(|line| assert_plain("予算と Unity に見せている印", line));
-    // 予算に収まるセットは、今までどおり「Unity に見せている」
-    let ok = look(&h, 1).expect("印が出る");
-    assert_eq!(
-        (ok.icon, ok.tooltip.as_str()),
-        ("sync", "Unity に見せている")
-    );
-    // 予算を戻すと、予算の警告だけが消えて「Unity に見せている」に戻る
+        .for_each(|line| assert_plain("予算の印", line));
+    assert!(look(&h, 1).is_none(), "予算に収まるセットに印は無い");
+    h.state_mut().state.lang = Lang::En;
+    let en = look(&h, 2).unwrap();
+    assert!(en.tooltip.contains("GPU memory budget"), "{}", en.tooltip);
+    assert!(!has_japanese(&en.tooltip), "{}", en.tooltip);
+    h.state_mut().state.lang = Lang::Ja;
+    // 予算を戻すと、印が消える
     h.state_mut().view3d_set_paint_budget(512 << 20);
     h.run();
-    h.state_mut().state.link.published = vec![uid1, uid2];
-    let back = look(&h, 2).expect("印が出る");
-    assert_eq!(
-        (back.icon, back.tooltip.as_str()),
-        ("sync", "Unity に見せている")
-    );
+    assert!(look(&h, 2).is_none());
 }
 
 #[test]

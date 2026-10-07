@@ -488,6 +488,7 @@ fn open_project(
         );
     }
     let view_model = project.view_model();
+    let livelink = project.livelink();
     state.message = text;
     let (path, target) = match file {
         Some((path, target)) => (path, Some(target)),
@@ -518,7 +519,28 @@ fn open_project(
     // モデルのファイルの参照（view.json）があれば、別のスレッドで読み直す（読み終えたら結び付ける）。参照は .ylp からの相対の
     // パスなので、ファイルの無いプロジェクト（復旧した世代）では読み直さない（保存し直した後に開けば読む）
     let base = state.message.clone();
+    // Live Link の相手の文書（livelink.json）なら、Unity なしで同じモデルとポーズに開き直す（モデルのファイルの参照は残すだけ）
+    let link_note = match livelink.map(|b| b.map(|b| crate::livelink::store::restore(&b))) {
+        Ok(Some(Ok(request))) => {
+            state.link_reopen = Some(request);
+            None
+        }
+        Ok(Some(Err(_))) | Err(_) => Some(state.lang.pick(
+            "Live Link のモデルは自動では開きません（ファイルには残っています）。",
+            "The Live Link model is not reopened automatically (kept in the file).",
+        )),
+        Ok(None) => None,
+    };
+    if let Some(note) = link_note {
+        state.message += &format!(" {note}");
+    }
     let note = match view_model {
+        Ok(Some(stored)) if state.link_reopen.is_some() => {
+            state.np.model_file = Some(crate::newproject::reopen::resolve_model_path(
+                &stored, &file_path,
+            ));
+            None
+        }
         Ok(Some(_)) if file_path.as_os_str().is_empty() => None,
         Ok(Some(stored)) => crate::newproject::reopen::start(state, &file_path, &stored, &base),
         Ok(None) => None,

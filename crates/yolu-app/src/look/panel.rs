@@ -230,26 +230,26 @@ fn received_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
 fn missing_short(lang: Lang, why: yolu_core::look::MissingImage) -> &'static str {
     use yolu_core::look::MissingImage;
     match why {
-        MissingImage::Pending => lang.pick("Unity（届いていない）", "Unity (not here yet)"),
-        MissingImage::OverBudget => lang.pick("Unity（送らない）", "Unity (not sent)"),
+        MissingImage::OverBudget => lang.pick("Unity（予算を超える）", "Unity (over budget)"),
         MissingImage::Unreadable => lang.pick("Unity（読めない）", "Unity (unreadable)"),
+        MissingImage::NotAFile => lang.pick("Unity（ファイルなし）", "Unity (no file)"),
     }
 }
 
 fn missing_text(lang: Lang, why: yolu_core::look::MissingImage) -> &'static str {
     use yolu_core::look::MissingImage;
     match why {
-        MissingImage::Pending => lang.pick(
-            "Unity のテクスチャ（届いていない）",
-            "Unity texture (not here yet)",
-        ),
         MissingImage::OverBudget => lang.pick(
-            "Unity のテクスチャ（予算を超えたので送らない）",
-            "Unity texture (over the budget, not sent)",
+            "Unity のテクスチャ（受けたテクスチャの予算を超えるので読まない）",
+            "Unity texture (over the budget for received textures, not read)",
         ),
         MissingImage::Unreadable => lang.pick(
-            "Unity のテクスチャ（読めない）",
-            "Unity texture (unreadable)",
+            "Unity のテクスチャ（ファイルを読めない）",
+            "Unity texture (the file cannot be read)",
+        ),
+        MissingImage::NotAFile => lang.pick(
+            "Unity のテクスチャ（Unity の中にしかなく、ファイルが無い）",
+            "Unity texture (only inside Unity, no file)",
         ),
     }
 }

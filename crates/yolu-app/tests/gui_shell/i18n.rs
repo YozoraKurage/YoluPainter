@@ -50,10 +50,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
             state.lang = lang;
             if panel == 1 {
                 // モデルを入れて最初のセットを隠す（行の右に状態のアイコンが付き、その理由がツールチップに言語ごとに出る）
-                state
-                    .receive_link_model(&three_material_model(), 0)
-                    .1
-                    .unwrap();
+                state.receive_link_model(&three_material_model()).1.unwrap();
                 let uid = state.sets.get(0).unwrap().uid;
                 state.apply(Action::ToggleSetVisible(uid));
             }
@@ -108,10 +105,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
             snapshots.extend_harness(&mut h);
             if panel == 1 {
                 // セットの名前は言語に依らないので、言語の確認は状態のアイコン: 隠したセットの理由が、その言語の文で、行のアイコンの上に出る
-                let tooltip = lang.pick(
-                    "3D ビューと Unity に見せていない",
-                    "Hidden in the 3D View and Unity",
-                );
+                let tooltip = lang.pick("3D ビューに見せていない", "Hidden in the 3D View");
                 let look = look.expect("隠したセットには状態のアイコンが付く");
                 assert_eq!(
                     (look.icon, look.tooltip.as_str()),
@@ -465,32 +459,28 @@ fn opening_an_old_format_reports_what_io_noted_in_both_languages() {
 }
 
 #[test]
-fn link_status_and_stop_notice_follow_the_language() {
-    use yolu_app::livelink::{LinkStatus, LinkView, LiveLink};
+fn link_status_and_reasons_follow_the_language() {
+    use yolu_app::livelink::{reason_text, LinkStatus, LinkView};
+    use yolu_protocol::files::{Problem, Reason};
     for lang in Lang::ALL {
-        let mut state = AppState::new(32, 32);
-        state.lang = lang;
-        let mut link = LiveLink::new();
-        link.stop(&mut state);
-        assert_eq!(
-            state.message,
-            lang.pick("Live Link の待ち受けをやめました。", "Live Link stopped.")
-        );
         for status in [
             LinkStatus::Off,
-            LinkStatus::Listening,
-            LinkStatus::Connected {
-                agent: "Unity".into(),
-                version: 1,
-                session: 1,
-            },
-            LinkStatus::Failed("test".into()),
+            LinkStatus::Accepting,
+            LinkStatus::Failed(lang.pick("理由", "reason").into()),
         ] {
             let view = LinkView {
                 status,
+                target: Some("Avatar".into()),
+                problems: vec![Problem::new("Accessory", Reason::BoneNotFound)],
                 ..Default::default()
             };
-            let text = view.summary_in(lang);
+            let text = view.tooltip(lang);
+            assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
+            let label = view.state_label(lang);
+            assert_eq!(has_japanese(label), lang == Lang::Ja, "{label}");
+        }
+        for reason in Reason::ALL {
+            let text = reason_text(lang, reason.as_str());
             assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
         }
     }
@@ -1696,15 +1686,15 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu
 }
 
 #[test]
-fn live_link_startup_can_be_toggled_in_both_languages() {
+fn live_link_accepting_can_be_toggled_in_both_languages() {
     use yolu_app::prefs::PrefsAction;
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
         h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
         h.run();
         let label = lang.pick(
-            "起動時に Live Link を待ち受ける",
-            "Start Live Link on launch",
+            "Unity の Live Link を受け付ける",
+            "Accept Live Link from Unity",
         );
         assert!(h.state().state.settings().livelink_on_startup);
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, label)

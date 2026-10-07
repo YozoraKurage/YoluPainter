@@ -203,7 +203,8 @@ pub struct Settings {
     pub view3d_paint: yolu_core::geometry::ProjectionSettings,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
-    /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
+    /// Unity からの Live Link の頼みを受けるか（設定のファイルのキーは前の版と同じ `livelink_on_startup`。--livelink で起動すると、
+    /// この設定によらず受ける）。
     pub livelink_on_startup: bool,
     /// Live Link で Unity から受けたマテリアルの値を .ylp に保存するか（`look.json` の `received`。既定は保存する）。
     pub livelink_keep_values: bool,

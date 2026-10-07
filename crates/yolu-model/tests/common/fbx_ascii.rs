@@ -138,6 +138,48 @@ impl Scene {
         }
     }
 
+    /// `Definitions` の節（種類ごとの数）。ufbx は無くても読むが、Unity（Autodesk の FBX SDK）は無いと中身を取り込まない
+    /// （Unity 2022.3.22f1 で、節の無い ASCII の FBX は子の無い GameObject 1 つになった）。
+    fn definitions(&self) -> String {
+        let limbs = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| n.limb && !self.meshes.iter().any(|m| m.node == *i))
+            .count();
+        let deformers: usize = self
+            .meshes
+            .iter()
+            .map(|m| {
+                usize::from(!m.clusters.is_empty())
+                    + m.clusters.len()
+                    + usize::from(!m.channels.is_empty())
+                    + m.channels.len()
+            })
+            .sum();
+        let shapes: usize = self
+            .meshes
+            .iter()
+            .flat_map(|m| &m.channels)
+            .map(|c| c.shapes.len())
+            .sum();
+        let counts = [
+            ("GlobalSettings", 1),
+            ("Model", self.nodes.len()),
+            ("NodeAttribute", limbs),
+            ("Geometry", self.meshes.len() + shapes),
+            ("Material", self.materials.len()),
+            ("Deformer", deformers),
+        ];
+        let total: usize = counts.iter().map(|(_, n)| n).sum();
+        let mut o = format!("Definitions:  {{\n\tVersion: 100\n\tCount: {total}\n");
+        for (kind, n) in counts.into_iter().filter(|(_, n)| *n > 0) {
+            let _ = writeln!(o, "\tObjectType: \"{kind}\" {{\n\t\tCount: {n}\n\t}}");
+        }
+        o.push_str("}\n");
+        o
+    }
+
     pub fn to_ascii(&self) -> String {
         let mut o = String::new();
         o.push_str("; FBX 7.4.0 project file\n");
@@ -160,6 +202,7 @@ impl Scene {
             "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",{unit}"
         );
         o.push_str("\t}\n}\n");
+        o.push_str(&self.definitions());
         o.push_str("Objects:  {\n");
         let mut c = String::new(); // Connections
         let model_id = |i: usize| 100_000 + i as i64;

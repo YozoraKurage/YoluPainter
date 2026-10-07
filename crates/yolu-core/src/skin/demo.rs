@@ -203,6 +203,7 @@ pub fn demo_figure(detail: FigureDetail) -> Rig {
         mesh: sphere,
         skin: Skin::rigid(head, world_inverse(head), n),
         blend_shapes: vec![stretch],
+        node: Some(head),
     });
     Rig::new(
         "試しの人形",
@@ -323,5 +324,6 @@ fn tube(
             fallback: None,
         },
         blend_shapes: Vec::new(),
+        node: None,
     }
 }

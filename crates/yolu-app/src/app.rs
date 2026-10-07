@@ -385,20 +385,21 @@ impl YoluApp {
         app
     }
 
-    /// 実アプリ起動時の待ち受け。試験は接続名と引数を差し替えて同じ経路を通す。
+    /// 実アプリ起動時の受け付け（設定「Unity の Live Link を受け付ける」、または `--livelink`）。試験はフォルダと引数を差し替えて同じ経路を通す。
     pub fn start_live_link(
         &mut self,
         ctx: &egui::Context,
         args: impl Iterator<Item = std::ffi::OsString>,
     ) {
-        let forced = args.skip(1).any(|arg| arg == "--livelink");
-        if self.state.prefs.settings.livelink_on_startup || forced {
-            // 起動時の知らせを待機の文で上書きしない。状態は右端の印とツールチップに出す。
-            let message = self.state.message.clone();
-            self.link.start(ctx, &mut self.state);
-            self.state.message = message;
-            self.state.link = self.link.view();
+        self.link.arm(ctx);
+        if args.skip(1).any(|arg| arg == "--livelink") {
+            self.link.force();
         }
+        // 起動時の知らせを受け付けの文で上書きしない。状態は右端の印とツールチップに出す。
+        let message = self.state.message.clone();
+        self.link.poll(&mut self.state);
+        self.state.message = message;
+        self.state.link = self.link.view(&self.state);
     }
 
     /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧の窓が開く）。始められなければ使わず、理由を状態の帯に出す。
@@ -747,7 +748,7 @@ impl YoluApp {
         &self.link
     }
 
-    /// Live Link（試験でつなぎ先の名前を替える）。
+    /// Live Link（試験で受け渡しのフォルダを替える）。
     pub fn link_mut(&mut self) -> &mut LiveLink {
         &mut self.link
     }
@@ -764,10 +765,15 @@ impl YoluApp {
     }
 
     /// Live Link を始める・やめるの頼みと、ファイルの窓の頼みを当てる。
-    fn handle_requests(&mut self, ctx: &egui::Context) {
+    fn handle_requests(&mut self) {
         if let Some(request) = self.state.link_request.take() {
-            self.link.request(request, ctx, &mut self.state);
-            self.state.link = self.link.view();
+            self.link.request(request, &mut self.state);
+            self.state.link = self.link.view(&self.state);
+        }
+        // Live Link の違う相手の頼み: 保存していない変更を捨ててよいか（「開く」と同じ確かめ）
+        if self.link.wants_discard() {
+            let discard = self.confirm_discard();
+            self.link.answer_discard(discard);
         }
         // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。窓を開かない試験では聞かない）
         if let Some(open) = self.state.recovery.take_open_request() {
@@ -849,12 +855,16 @@ impl YoluApp {
             ) => assets::run_dialog(&mut self.state, request),
             Some(DialogRequest::ExportFolder(id)) => {
                 let lang = self.state.lang;
-                if let Some(dir) = crate::dialog::file()
-                    .set_title(
-                        lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
-                    )
-                    .pick_folder()
-                {
+                let mut dialog = crate::dialog::file().set_title(
+                    lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
+                );
+                // Live Link の相手の文書は、Unity が知らせた置き場（利用者が選び直したらそちら）から。無ければ、ある一番近い親から
+                // （窓を取り消しても、Unity のプロジェクトにフォルダを残さないよう、ここでは作らない）
+                if let Some(start) = self.state.link_export_start() {
+                    dialog = dialog.set_directory(start);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_export_dir(&dir);
                     self.state
                         .apply(Action::Export(crate::export::ExportAction::TemplateTo {
                             id,
@@ -1356,7 +1366,7 @@ impl YoluApp {
     /// 最中なら、3D の形は終わってから入れ替わる）。つながりの外から読んだものなので Unity には出さない。
     pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
         self.state
-            .receive_link_model(model, 0)
+            .receive_link_model(model)
             .1
             .map_err(|e| e.to_string())
     }
@@ -1443,9 +1453,13 @@ impl YoluApp {
         // 一覧の範囲はこのフレームで描いたときだけ入る（棚・チャンネルのタブを開いている間に、前の位置へ落とした PNG を取り込まない）
         self.state.brushes.ui.list_rect = None;
         assets::frame(&ctx, &mut self.state);
-        self.handle_requests(&ctx);
+        self.handle_requests();
         self.link.poll(&mut self.state);
-        self.state.link = self.link.view();
+        self.state.link = self.link.view(&self.state);
+        // Live Link の頼みは描き直しの頼みが無くても拾う（受け付けている間は inbox を見る間隔で回す）
+        if let Some(wake) = self.link.next_wake() {
+            ctx.request_repaint_after(wake);
+        }
         // 別のスレッドの仕事（ベイク・書き出し・PSD）の終わりを受ける
         self.state.poll_bake();
         self.state.poll_export();
@@ -1705,10 +1719,10 @@ impl YoluApp {
         }
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
-        // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す
-        self.handle_requests(&ctx);
-        self.link.publish(&mut self.state);
-        self.state.link = self.link.view();
+        // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
+        self.handle_requests();
+        self.link_exported();
+        self.state.link = self.link.view(&self.state);
         // 「保存して更新」: 保存先を選ぶ窓も済んだこのフレームの終わりに、保存の結果を見て入れる
         self.state.update_finish_save();
         // 終了・窓を閉じる: 保存していない変更があれば聞く（窓を開かない試験では聞かない）
@@ -1866,12 +1880,19 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<Stri
 }
 
 impl YoluApp {
-    /// Live Link を 1 回まわす: Unity からの知らせを読んで状態に当て、変わったタイルを共有メモリへ出して知らせる。窓が見えている間は
-    /// フレームの中（`frame_body`）が同じことをするので、これを呼ぶのは窓が隠れている間だけ（`eframe::App::logic`）。
+    /// Live Link を 1 回まわす: Unity からの頼みを拾って当て、書き出しの返事を書く。窓が見えている間はフレームの中（`frame_body`）が
+    /// 同じことをするので、これを呼ぶのは窓が隠れている間だけ（`eframe::App::logic`）。
     fn tick_link(&mut self) {
         self.link.poll(&mut self.state);
-        self.link.publish(&mut self.state);
-        self.state.link = self.link.view();
+        self.link_exported();
+        self.state.link = self.link.view(&self.state);
+    }
+
+    /// 書き出しが終わっていれば、Live Link の相手へ `exported` の返事を書く。
+    fn link_exported(&mut self) {
+        if let Some(files) = self.state.export.take_finished() {
+            self.link.exported(&mut self.state, &files);
+        }
     }
 
     /// 外からの操作を 1 回まわす: 設定（外からの操作を受ける）に合わせて待ち受けを始める・やめ、受けた要求を画面のスレッドで実行して返す。
@@ -1892,6 +1913,10 @@ impl YoluApp {
         let prior = self.state.message_begin();
         self.poll_gpu_watch(ctx);
         self.tick_link();
+        // 見えない窓でも、Live Link の頼みを拾う間隔で回す（受け付けている間だけ）
+        if let Some(wake) = self.link.next_wake() {
+            ctx.request_repaint_after(wake);
+        }
         // 保存の途中は、隠れていても保存を捨てて閉じない。窓を閉じる頼み（タスクバーの「閉じる」など）は止めて待ち、終わりを受け、
         // 保存が終わって終了の頼みが残っていれば閉じる流れを進める（見えない窓の保存を、知らせのために回し続けはしない: 保存の間だけ）
         if self.state.is_saving() {
@@ -1967,6 +1992,12 @@ mod tests {
     use super::*;
     use crate::lang::Lang;
 
+    fn exchange_folder(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("yl-start-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("LiveLink")
+    }
+
     #[test]
     fn live_link_startup_obeys_settings_and_explicit_launch_flag() {
         let ctx = egui::Context::default();
@@ -1980,8 +2011,8 @@ mod tests {
         .enumerate()
         {
             let mut app = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
-            let name = format!("yl-start-{}-{i}", std::process::id());
-            app.link.set_name(&name).unwrap();
+            let root = exchange_folder(&i.to_string());
+            app.link.set_folder(root.clone()).unwrap();
             app.state.prefs.settings.livelink_on_startup = enabled;
             app.state.message = "起動時の知らせ".into();
             let mut args = vec![std::ffi::OsString::from("yolupainter")];
@@ -1991,36 +2022,32 @@ mod tests {
             app.start_live_link(&ctx, args.into_iter());
             assert_eq!(app.state.link.is_on(), expected);
             assert_eq!(app.state.message, "起動時の知らせ");
-            assert_eq!(yolu_protocol::link::connect(&name).is_ok(), expected);
-            if expected {
-                assert_eq!(
-                    app.state.link.status,
-                    crate::livelink::LinkStatus::Listening
-                );
-            }
+            assert_eq!(
+                root.join("presence.json").is_file(),
+                expected,
+                "起きている印"
+            );
+            drop(app);
+            assert!(!root.join("presence.json").exists(), "終わると印を消す");
+            let _ = std::fs::remove_dir_all(root.parent().unwrap());
         }
     }
 
     #[test]
-    fn live_link_startup_conflict_keeps_the_existing_listener_and_shows_failure() {
+    fn live_link_startup_with_an_unusable_folder_shows_failure() {
         let ctx = egui::Context::default();
-        let name = format!("yl-start-busy-{}", std::process::id());
-        let mut first = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
-        let mut second = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
-        for app in [&mut first, &mut second] {
-            app.link.set_name(&name).unwrap();
-            app.start_live_link(&ctx, ["yolupainter"].into_iter().map(Into::into));
-        }
-        assert_eq!(
-            first.state.link.status,
-            crate::livelink::LinkStatus::Listening
-        );
+        let root = exchange_folder("file");
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        std::fs::write(&root, b"not a folder").unwrap();
+        let mut app = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
+        app.link.set_folder(root.clone()).unwrap();
+        app.start_live_link(&ctx, ["yolupainter"].into_iter().map(Into::into));
         assert!(matches!(
-            second.state.link.status,
+            app.state.link.status,
             crate::livelink::LinkStatus::Failed(_)
         ));
-        assert!(!second.state.link.tooltip(Lang::Ja).is_empty());
-        assert!(yolu_protocol::link::connect(&name).is_ok());
+        assert!(app.state.link.tooltip(Lang::Ja).lines().count() >= 2);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[test]

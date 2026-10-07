@@ -284,14 +284,14 @@ def main():
     global TARGET
     use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'yolu-cli', 'xtask', 'all'], default='all')
+    parser.add_argument('--package', choices=['yolu-app', 'yolu-update', 'yolu-cli', 'xtask', 'all'], default='all')
     parser.add_argument('--audit-lock', action='store_true', help='3 対象の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'])
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
-    parser.add_argument('--built-with', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'yolu-cli'],
+    parser.add_argument('--built-with', choices=['yolu-app', 'yolu-update', 'yolu-cli'],
                         help='指した製品と同じ cargo の命令で組む物として、--package の依存を数える（機能が合わさって、単独の木に無い依存が入る。'
                              '`cargo build -p yolu-app -p yolu-cli` で組む yolupainter-cli の .mcpb 用）')
     args = parser.parse_args()
@@ -300,7 +300,7 @@ def main():
     TARGET = args.target or 'x86_64-pc-windows-gnu'
     output = OUT / TARGET if args.target else OUT
     output.mkdir(parents=True, exist_ok=True)
-    selected = ['yolu-app', 'yolu-bridge', 'yolu-cli'] if args.package == 'all' else [args.package]
+    selected = ['yolu-app', 'yolu-cli'] if args.package == 'all' else [args.package]
     if args.audit_lock:
         if args.bundle or args.target or args.package != 'all' or args.include_update or args.include_cli or args.built_with:
             parser.error('--audit-lock は --offline 以外と併用できません')

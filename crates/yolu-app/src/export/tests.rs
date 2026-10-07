@@ -105,7 +105,7 @@ fn two_quads() -> Model {
 fn two_sets() -> AppState {
     let mut s = AppState::new(64, 64);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let (_, shape) = s.receive_link_model(&two_quads(), 0);
+    let (_, shape) = s.receive_link_model(&two_quads());
     assert_eq!(shape, Ok(()));
     assert_eq!(s.sets.len(), 2);
     let layer = s.selected_layer.unwrap();
@@ -452,7 +452,7 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
     let dir = Dir::new("ao");
     let mut s = AppState::new(64, 64);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let (_, shape) = s.receive_link_model(&corner_model(0.0), 0);
+    let (_, shape) = s.receive_link_model(&corner_model(0.0));
     assert_eq!(shape, Ok(()));
     let layer = s.selected_layer.unwrap();
     paint_left_half(&mut s.doc, layer, Channel::Color, [200, 100, 50, 255]);

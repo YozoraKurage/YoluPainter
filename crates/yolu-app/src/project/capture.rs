@@ -53,6 +53,8 @@ pub(crate) struct Capture {
     /// プロジェクトのモデルのポーズ（`pose.json` へ書く材料）と、保存できなかった項目（骨・BlendShape の名前）。
     pub pose: crate::view3d::pose::stored::PoseCapture,
     pub pose_unsaved: Vec<String>,
+    /// Live Link の相手の文書（`livelink.json` へ書く材料）。
+    pub livelink: crate::livelink::store::Stored,
     /// モデルの相対のパスの基準にする .ylp の場所。
     pub anchor: PathBuf,
     /// Unity から受けた値を書くか（設定。切っていれば外す）。
@@ -113,7 +115,9 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             mark: (doc.id(), doc.revision()),
         });
     }
-    let (pose, pose_unsaved) = crate::view3d::pose::stored::capture(state);
+    let (pose, mut pose_unsaved) = crate::view3d::pose::stored::capture(state);
+    let (livelink, link_unsaved) = crate::livelink::store::capture(state);
+    pose_unsaved.extend(link_unsaved);
     let replaced = super::replaced_sets(
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
@@ -135,6 +139,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         model: state.np.model_file.clone(),
         pose,
         pose_unsaved,
+        livelink,
         anchor,
         keep_received: state.prefs.settings.livelink_keep_values,
         lang,
@@ -307,6 +312,8 @@ pub(crate) fn build(
     let (written, pose_overwritten) =
         crate::view3d::pose::stored::write_into(project, &capture.pose, lang).map_err(text)?;
     project = written;
+    // Live Link の相手の文書（livelink.json。状態のエントリで、形式は上げない。違うときだけ書く）
+    project = crate::livelink::store::write_into(project, &capture.livelink).map_err(io)?;
     // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
     for (id, name, maps) in &capture.maps {
         for map in maps {

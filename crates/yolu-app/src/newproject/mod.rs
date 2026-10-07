@@ -891,8 +891,10 @@ impl AppState {
         self.np.remove_confirm = Some(uids);
     }
 
-    /// 今のプロジェクトを替えるとき（新規・開く・作る）: 前のプロジェクトのモデルの読み込みを止め、世代を進める。
+    /// 今のプロジェクトを替えるとき（新規・開く・作る）: 前のプロジェクトのモデルの読み込みを止め、世代を進める。Live Link の裏の仕事は、
+    /// `project_epoch` の違いで見分けて止める（`LiveLink::poll`）。
     pub fn np_project_replaced(&mut self) {
+        self.project_epoch += 1;
         self.np.generation += 1;
         self.np.reopening = None;
         self.np.window = None;
@@ -900,7 +902,7 @@ impl AppState {
     }
 
     /// ポーズを付けられるモデル（FBX・試しの人形）を外し、3D ビューを試しの立方体に戻す（新しい・開いたプロジェクトが、前のプロジェクトの
-    /// モデルを引きずらないように）。Live Link のモデルは Unity のシーンのものなので触らない。
+    /// モデルを引きずらないように）。Live Link のモデルも、ポーズのセッションごと外れる（相手は `LiveLink::poll` が忘れる）。
     pub fn drop_project_model(&mut self) {
         self.np.model_file = None;
         let rig_model = self
@@ -1009,32 +1011,29 @@ mod tests {
     }
 
     fn scene(materials: Vec<LinkKey>, meshes: &[(&str, &[u32])]) -> SceneModel {
-        SceneModel::from_link(
-            &Model {
-                generation: 1,
-                name: "試し".into(),
-                materials: materials.into_iter().map(info).collect(),
-                meshes: meshes
-                    .iter()
-                    .map(|(name, mats)| MeshData {
-                        key: (*name).into(),
-                        name: (*name).into(),
-                        skinned: false,
-                        positions: vec![[0.0; 3]; 3],
-                        normals: vec![],
-                        uv0: vec![],
-                        submeshes: mats
-                            .iter()
-                            .map(|m| Submesh {
-                                material: *m,
-                                indices: vec![0, 1, 2],
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            },
-            1,
-        )
+        SceneModel::from_link(&Model {
+            generation: 1,
+            name: "試し".into(),
+            materials: materials.into_iter().map(info).collect(),
+            meshes: meshes
+                .iter()
+                .map(|(name, mats)| MeshData {
+                    key: (*name).into(),
+                    name: (*name).into(),
+                    skinned: false,
+                    positions: vec![[0.0; 3]; 3],
+                    normals: vec![],
+                    uv0: vec![],
+                    submeshes: mats
+                        .iter()
+                        .map(|m| Submesh {
+                            material: *m,
+                            indices: vec![0, 1, 2],
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
     }
 
     #[test]

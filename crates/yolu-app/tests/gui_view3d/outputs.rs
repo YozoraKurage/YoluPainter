@@ -1462,7 +1462,7 @@ fn headless_each_sets_mesh_maps_are_saved_under_its_own_set() {
     let path = dir.0.join("two.ylp");
     let mut s = AppState::new(64, 64);
     s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
-    s.receive_link_model(&two_quads(), 0).1.unwrap();
+    s.receive_link_model(&two_quads()).1.unwrap();
     s.bake.settings.maps = vec![MeshMapKind::Position];
     s.bake.settings.padding = 2;
     s.apply(Action::Bake(BakeAction::Start));

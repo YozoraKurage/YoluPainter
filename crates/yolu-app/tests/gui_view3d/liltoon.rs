@@ -1296,11 +1296,11 @@ fn an_emission_texture_unity_left_empty_glows_from_the_default_white_not_the_unu
         empty[0] > 200 && empty[0] > empty[1] && empty[1] > empty[2],
         "発光の色（1, 0.5, 0.2）で光る: {empty:?}"
     );
-    // まだ届いていない絵（理由つき）の間も同じ
+    // 読めない絵（理由つき）の間も同じ
     let mut pending = received_with(received_look, &[]);
     pending.missing.insert(
         "_EmissionMap".into(),
-        yolu_core::look::MissingImage::Pending,
+        yolu_core::look::MissingImage::Unreadable,
     );
     set_received(&mut h, 0, Some(pending));
     assert_close(

@@ -295,7 +295,7 @@ fn checks_keep_one_map_and_one_set() {
 fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let (report, shape) = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let (report, shape) = s.receive_link_model(&two_quads(1, 0.0));
     assert_eq!(shape, Ok(()));
     assert_eq!(report.created, ["Hair"]);
     quick(&mut s);
@@ -354,7 +354,7 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
 fn a_moved_vertex_or_a_new_model_makes_the_maps_stale_for_their_reason() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
@@ -432,7 +432,7 @@ fn corner_model() -> Model {
 fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&corner_model(), 0);
+    let _ = s.receive_link_model(&corner_model());
     quick(&mut s);
     s.bake.settings.ao_samples = 32;
     assert_eq!(s.occlusion_for_export(0), Occlusion::None);
@@ -573,7 +573,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     model.meshes[0].uv0[3] = [1.5, 1.0];
     let mut t = AppState::new(64, 64);
     t.bake.backend = BakeBackend::Cpu;
-    t.receive_link_model(&model, 0).1.unwrap();
+    t.receive_link_model(&model).1.unwrap();
     quick(&mut t);
     t.apply(bake(BakeAction::Start));
     t.wait_bake();
@@ -613,7 +613,7 @@ fn a_refusal_is_the_same_whichever_place_is_chosen_and_the_cpu_is_not_retried() 
         model.meshes[0].uv0[3] = [1.5, 1.0];
         let mut t = AppState::new(64, 64);
         t.bake.backend = backend;
-        t.receive_link_model(&model, 0).1.unwrap();
+        t.receive_link_model(&model).1.unwrap();
         quick(&mut t);
         t.apply(bake(BakeAction::Start));
         t.wait_bake();
@@ -683,7 +683,7 @@ fn fresh_hash(s: &AppState) -> String {
 fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     for round in 0..60 {
         let z = 0.001 * (3 * round + 1) as f32;
         lift(&mut s, z);
@@ -706,7 +706,7 @@ fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
 fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
     for round in 0..12 {
         s.apply(bake(BakeAction::Start));
@@ -735,7 +735,7 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
     for round in 0..20 {
         let mut s = AppState::new(64, 64);
         s.bake.backend = BakeBackend::Cpu;
-        let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+        let _ = s.receive_link_model(&two_quads(1, 0.0));
         quick(&mut s);
         s.apply(bake(BakeAction::Start));
         assert!(s.bake.is_baking());
@@ -756,7 +756,7 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
 fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model() {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
-    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
     quick(&mut s);
     // 作っている最中は None（窓は「確認中」）。入力の理由で断らない
     assert!(s.bake_input_nowait().is_none());
@@ -851,7 +851,7 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     // 2 枚の板（同じマテリアルでも別のスロット）: 高ポリが無くても板ごとに別の色。1 色とは言わない
     let mut t = AppState::new(64, 64);
     t.bake.backend = BakeBackend::Cpu;
-    let _ = t.receive_link_model(&corner_model(), 0);
+    let _ = t.receive_link_model(&corner_model());
     quick(&mut t);
     t.bake.settings.maps = vec![MeshMapKind::Id];
     for source in [MeshIdSource::MaterialSlot, MeshIdSource::UvIsland] {

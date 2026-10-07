@@ -2568,7 +2568,7 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
 #[test]
 fn headless_with_two_texture_sets_the_users_carry_the_set_name_and_the_other_set_keeps_the_image() {
     let mut s = AppState::new(64, 64);
-    s.receive_link_model(&two_set_model(), 0).1.expect("モデル");
+    s.receive_link_model(&two_set_model()).1.expect("モデル");
     assert_eq!(s.sets.len(), 2);
     let (rid, image) = shelf_image(&mut s, "四色");
     let names: Vec<String> = s.sets.iter().map(|x| x.name.clone()).collect();

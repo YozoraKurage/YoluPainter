@@ -1,11 +1,12 @@
-//! Live Link の入口（メニューバーの右端、プロジェクトの名前の左の Unity の印）: 切断は灰・待機中は薄い色・接続は緑・版の不一致は
-//! 警告の色。押すと小さな窓（状態・つながっている Unity・受け取ったモデルの名前と、待つ／切る）。モデルが届いたら 3D ビューを前に出す。
-//! 文は名前と状態だけで、案内は書かない。
+//! Live Link の入口（メニューバーの右端、プロジェクトの名前の左の Unity の印）: 受け付けていないは灰・受付中は薄い色・相手の文書は緑・
+//! 合わない物があれば警告の色・フォルダを使えなければ赤。押すと小さな窓（「Live Link: 状態」・「Unity: 名前」と、受け付ける／受け付けない）。
+//! 頼みを開いたら 3D ビューを前に出す（送り直しでは出し直さない）。文は名前と状態だけで、案内は書かない。
 use crate::common;
 use crate::common::wait;
 
 use std::time::{Duration, Instant};
 
+use common::livelink::{arm_request, Exchange};
 use common::*;
 use egui::{Color32, Rect};
 use egui_kittest::kittest::Queryable;
@@ -13,18 +14,9 @@ use egui_kittest::Harness;
 use wait::WATCHDOG;
 use yolu_app::lang::Lang;
 use yolu_app::livelink::{LinkIndicator, LinkStatus};
-use yolu_app::state::{Action, PopupKind};
+use yolu_app::state::PopupKind;
 use yolu_app::ui::theme as t;
 use yolu_app::{shell, Tab, YoluApp};
-use yolu_protocol::link::connect_and_greet_as;
-use yolu_protocol::{
-    channel, AppVersion, ChannelRoute, Connection, Identity, MaterialInfo, MaterialKey, MeshData,
-    Message, Model, Received, Submesh, TextureProperty,
-};
-
-fn unique_name(tag: &str) -> String {
-    crate::common::names::unique_name("ylent", tag)
-}
 
 fn step_until(h: &mut Harness<'_, YoluApp>, what: &str, mut cond: impl FnMut(&YoluApp) -> bool) {
     let deadline = Instant::now() + WATCHDOG;
@@ -35,71 +27,40 @@ fn step_until(h: &mut Harness<'_, YoluApp>, what: &str, mut cond: impl FnMut(&Yo
         }
         assert!(
             Instant::now() < deadline,
-            "{what} を待ったが来ない: {:?}",
-            h.state().state.link.status
+            "{what} を待ったが来ない: {:?} {}",
+            h.state().state.link.status,
+            h.state().state.message
         );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 
-/// Unity の役（挨拶の名乗りを選べる）。
-struct FakeUnity {
-    conn: Connection,
+/// 受け渡しのフォルダを試しのフォルダにして、受け付けを始める。
+fn accept(h: &mut Harness<'_, YoluApp>, ex: &Exchange) {
+    h.state_mut()
+        .link_mut()
+        .set_folder(ex.root.clone())
+        .unwrap();
+    h.state_mut().state.prefs.settings.livelink_on_startup = true;
+    step_until(h, "受付", |a| {
+        a.state.link.status == LinkStatus::Accepting
+    });
 }
 
-impl FakeUnity {
-    fn connect(name: &str, agent: &str) -> FakeUnity {
-        // 版を名乗る Unity（名乗らない古いブリッジだと、入口の印は版のずれの警告の色になる。link_version.rs）
-        // 機能の印もスタンドアロンと同じにする（印のずれも警告になる）
-        let identity = Identity::unity(agent)
-            .with_version(Some(AppVersion::new(0, 3, 0)))
-            .with_features(yolu_app::livelink::FEATURES);
-        let (conn, mut reader, _) = connect_and_greet_as(name, &identity).unwrap();
-        let reply = conn.clone();
-        // 来たものは読み捨てる（Unity の役は返事を見ない）。つながりが終われば止まる
-        std::thread::spawn(move || {
-            while let Ok(Received::Idle | Received::Message(_)) = reader.next(&reply) {}
-        });
-        FakeUnity { conn }
+/// 腕の頼みを置いて、開くまで待つ。
+fn open_arm(h: &mut Harness<'_, YoluApp>, ex: &Exchange, id: &str, key: &str) {
+    let fbx = ex.dir.join("arm.fbx");
+    if !fbx.exists() {
+        ex.write_arm("arm.fbx");
     }
-
-    fn send(&self, m: Message) {
-        self.conn.send(&m).unwrap();
+    let png = ex.dir.join("skin.png");
+    if !png.exists() {
+        ex.write_png("skin.png", 32, [180, 90, 60, 255]);
     }
-}
-
-fn model(generation: u32, name: &str) -> Model {
-    Model {
-        generation,
-        name: name.into(),
-        materials: vec![MaterialInfo {
-            key: MaterialKey::Material {
-                name: "Skin".into(),
-                asset: None,
-            },
-            shader: "Standard".into(),
-            textures: vec![TextureProperty {
-                name: "_MainTex".into(),
-                width: 64,
-                height: 64,
-            }],
-            routes: vec![ChannelRoute {
-                channel: channel::COLOR,
-                property: "_MainTex".into(),
-            }],
-        }],
-        meshes: vec![MeshData {
-            key: "0".into(),
-            name: "Quad".into(),
-            skinned: false,
-            positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
-            normals: vec![],
-            uv0: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-            submeshes: vec![Submesh {
-                material: 0,
-                indices: vec![0, 2, 1, 1, 2, 3],
-            }],
-        }],
+    ex.put(&arm_request(id, key, &fbx, &png, &ex.dir.join("export")));
+    step_until(h, "返事", |_| !ex.folder().replies().unwrap().is_empty());
+    for r in ex.take_replies() {
+        assert_eq!(r.kind, yolu_protocol::files::ReplyKind::Opened);
     }
 }
 
@@ -107,10 +68,11 @@ fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
     h.state().state.popup.as_ref().map(|p| p.kind)
 }
 
-/// 入口の印の矩形（名前はツールチップの文）。
+/// 入口の印の矩形（ボタンで、名前はツールチップの文。窓の見出し「Live Link: 状態」と同じ文になることがあるので、役でも絞る）。
 fn icon_rect(h: &Harness<'_, YoluApp>) -> Rect {
     let tip = h.state().state.link.tooltip(h.state().state.lang);
-    h.get_by_label(&tip).rect()
+    h.get_by_role_and_label(egui::accesskit::Role::Button, &tip)
+        .rect()
 }
 
 /// 印の矩形の中の、この色（に近い）画素の数。
@@ -131,10 +93,31 @@ fn pixels_near(h: &mut Harness<'_, YoluApp>, rect: Rect, color: Color32) -> usiz
     count
 }
 
+/// 開いている窓（ポップアップ）と入口の印のあたりを撮る。
+fn shot_popup(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let body = h.state().state.popup.as_ref().expect("窓").state.rect;
+    let icon = icon_rect(h);
+    let area = body.union(icon).expand(6.0);
+    h.event(egui::Event::PointerGone);
+    h.step();
+    let image = h.render().expect("描画");
+    let cropped = image::imageops::crop_imm(
+        &image,
+        area.left().max(0.0) as u32,
+        area.top().max(0.0) as u32,
+        area.width() as u32,
+        area.height() as u32,
+    )
+    .to_image();
+    egui_kittest::image_snapshot(&cropped, name);
+}
+
+const KEY: &str = "GlobalObjectId_V1-2-0123-4567-0";
+
 #[test]
 fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
     let mut h = app(1280.0, 800.0, 256);
-    // 切断は灰
+    // 窓を作っただけでは受け付けない（利用者のフォルダに触らない）。受けないは灰
     assert_eq!(h.state().state.link.indicator(), LinkIndicator::Off);
     let rect = icon_rect(&h);
     assert!(
@@ -142,31 +125,26 @@ fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
         "メニューバーの右の方: {rect:?}"
     );
     assert!(pixels_near(&mut h, rect, t::TEXT_DISABLED) > 8);
-    // 待機中は薄い色
-    let name = unique_name("mark");
-    h.state_mut().link_mut().set_name(&name).unwrap();
-    h.state_mut().state.apply(Action::ToggleLiveLink);
+    // 受付中は薄い色
+    let ex = Exchange::new("mark");
+    accept(&mut h, &ex);
     h.run();
-    assert_eq!(h.state().state.link.status, LinkStatus::Listening);
     assert_eq!(h.state().state.link.indicator(), LinkIndicator::Waiting);
     let rect = icon_rect(&h);
     assert!(pixels_near(&mut h, rect, t::ACCENT_DIM) > 8);
-    // つながると緑
-    let _unity = FakeUnity::connect(
-        &name,
-        "YoluPainter 0.3.0 (Unity 2022.3.22f1) (yolu-bridge abi 1)",
-    );
-    step_until(&mut h, "つながる", |a| {
-        matches!(a.state.link.status, LinkStatus::Connected { .. })
-    });
+    // 相手の文書は緑（Unity が送れなかった物があれば警告の色）
+    open_arm(&mut h, &ex, "r1", KEY);
     h.run();
-    assert_eq!(h.state().state.link.indicator(), LinkIndicator::Connected);
+    assert_eq!(h.state().state.link.indicator(), LinkIndicator::Problems);
     let rect = icon_rect(&h);
-    assert!(pixels_near(&mut h, rect, t::OK) > 8);
-    assert_eq!(
-        shell::link_indicator_color(LinkIndicator::Mismatch),
-        t::WARNING
-    );
+    assert!(pixels_near(&mut h, rect, t::WARNING) > 8);
+    assert!(h
+        .state()
+        .state
+        .link
+        .tooltip(Lang::Ja)
+        .contains("Accessory: FBX のメッシュではありません"));
+    assert_eq!(shell::link_indicator_color(LinkIndicator::Linked), t::OK);
     assert_eq!(shell::link_indicator_color(LinkIndicator::Failed), t::ERROR);
     // 状態の帯には Live Link の文字を出さない（直前の操作の結果の message だけ）
     assert_eq!(
@@ -176,29 +154,31 @@ fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
 }
 
 #[test]
-fn pressing_the_mark_opens_a_small_window_that_waits_and_stops() {
+fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
         h.state_mut().state.lang = lang;
-        let name = unique_name("window");
-        h.state_mut().link_mut().set_name(&name).unwrap();
+        let ex = Exchange::new("window");
+        h.state_mut()
+            .link_mut()
+            .set_folder(ex.root.clone())
+            .unwrap();
+        h.state_mut().state.prefs.settings.livelink_on_startup = false;
         h.run();
         let at = icon_rect(&h).center();
         click(&mut h, at);
         assert_eq!(popup_kind(&h), Some(PopupKind::LiveLink), "{lang:?}");
-        // 状態の名前。つながっていないので Unity とモデルの行は無い
-        h.get_by_label(lang.pick("待つ", "Wait"));
-        h.get_by_label(lang.pick("切る", "Stop"));
-        assert!(h.query_by_label_contains("Unity 2022").is_none());
-        // 切断中は「切る」を選べず、「待つ」で待ち受けを始める
-        let at = popup_item(&h, lang.pick("待つ", "Wait")).center();
+        h.get_by_label(lang.pick("受け付ける", "Accept"));
+        h.get_by_label(lang.pick("受け付けない", "Don't accept"));
+        // 受け付けていないときは「受け付ける」で受け付けを始める（設定も入る）
+        let at = popup_item(&h, lang.pick("受け付ける", "Accept")).center();
         click(&mut h, at);
-        assert_eq!(
-            h.state().state.link.status,
-            LinkStatus::Listening,
-            "{lang:?}"
-        );
+        step_until(&mut h, "受付", |a| {
+            a.state.link.status == LinkStatus::Accepting
+        });
+        assert!(h.state().state.prefs.settings.livelink_on_startup);
         assert_eq!(popup_kind(&h), None);
+        assert!(ex.root.join("presence.json").is_file());
         // もう一度押すと窓が開き、押した印をもう一度押すと閉じる
         let at = icon_rect(&h).center();
         click(&mut h, at);
@@ -206,12 +186,13 @@ fn pressing_the_mark_opens_a_small_window_that_waits_and_stops() {
         let at = icon_rect(&h).center();
         click(&mut h, at);
         assert_eq!(popup_kind(&h), None);
-        // 「切る」で待ち受けをやめる
+        // 「受け付けない」でやめる（起きている印も消す）
         let at = icon_rect(&h).center();
         click(&mut h, at);
-        let at = popup_item(&h, lang.pick("切る", "Stop")).center();
+        let at = popup_item(&h, lang.pick("受け付けない", "Don't accept")).center();
         click(&mut h, at);
         assert_eq!(h.state().state.link.status, LinkStatus::Off, "{lang:?}");
+        assert!(!ex.root.join("presence.json").exists());
         // Esc でも閉じる
         let at = icon_rect(&h).center();
         click(&mut h, at);
@@ -222,74 +203,49 @@ fn pressing_the_mark_opens_a_small_window_that_waits_and_stops() {
 }
 
 #[test]
-fn the_window_names_the_unity_and_the_model_and_the_3d_view_comes_forward_once() {
-    let mut h = app(1280.0, 800.0, 256);
-    let name = unique_name("model");
-    h.state_mut().link_mut().set_name(&name).unwrap();
-    h.state_mut().state.apply(Action::ToggleLiveLink);
-    h.run();
-    assert!(h.state().view3d_rect().is_none(), "初めはキャンバスが前");
-    let unity = FakeUnity::connect(
-        &name,
-        "YoluPainter 0.3.0 (Unity 2022.3.22f1) (yolu-bridge abi 1)",
-    );
-    step_until(&mut h, "つながる", |a| {
-        matches!(a.state.link.status, LinkStatus::Connected { .. })
-    });
-    // つないだだけでは 3D ビューを前に出さない（モデルが届いたとき）
-    h.run();
-    assert!(h.state().view3d_rect().is_none());
-    unity.send(Message::Model(model(1, "試しの四角")));
-    step_until(&mut h, "モデル", |a| a.state.model.is_some());
-    h.run();
-    assert!(
-        h.state().view3d_rect().is_some(),
-        "モデルが届いたら 3D ビューに出す"
-    );
-    // 窓: 状態・Unity の名前（版の名前だけ）・モデルの名前
-    let at = icon_rect(&h).center();
-    click(&mut h, at);
-    assert_eq!(popup_kind(&h), Some(PopupKind::LiveLink));
-    h.get_by_label("Unity 2022.3.22f1");
-    h.get_by_label("モデル: 試しの四角");
-    // 接続中は「待つ」を選べず「切る」を選べる
-    let at = popup_item(&h, "切る").center();
-    click(&mut h, at);
-    assert_eq!(h.state().state.link.status, LinkStatus::Off);
-    // 切ったあとも 3D の形は残るが、記録は出どころと切れる（窓にモデルの名前は出ない）
-    let at = icon_rect(&h).center();
-    click(&mut h, at);
-    assert!(h.query_by_label("モデル: 試しの四角").is_none());
-    key(&h, egui::Key::Escape, egui::Modifiers::NONE);
-    h.run();
-
-    // 同じつながりで送り直しても、キャンバスへ戻した画面を 3D に取り上げない
-    h.state_mut().state.apply(Action::ToggleLiveLink);
-    h.run();
-    let unity = FakeUnity::connect(&name, "試験の Unity");
-    step_until(&mut h, "つながる", |a| {
-        matches!(a.state.link.status, LinkStatus::Connected { .. })
-    });
-    unity.send(Message::Model(model(2, "二つ目")));
-    step_until(&mut h, "モデル", |a| {
-        a.state.model.as_ref().is_some_and(|m| m.name == "二つ目")
-    });
-    h.run();
-    click_tab(&mut h, Tab::Canvas);
-    assert!(h.state().view3d_rect().is_none());
-    unity.send(Message::Model(model(3, "二つ目")));
-    step_until(&mut h, "モデル", |a| {
-        a.state.model.as_ref().is_some_and(|m| m.generation == 3)
-    });
-    h.run();
-    assert!(
-        h.state().view3d_rect().is_none(),
-        "送り直しでは 3D ビューを前に出し直さない"
-    );
-    // つないだ相手の名乗りが版の形でなければ、名乗りをそのまま出す
-    let at = icon_rect(&h).center();
-    click(&mut h, at);
-    h.get_by_label("試験の Unity");
+fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 256);
+        h.state_mut().state.lang = lang;
+        let ex = Exchange::new("target");
+        accept(&mut h, &ex);
+        h.run();
+        assert!(h.state().view3d_rect().is_none(), "初めはキャンバスが前");
+        let at = icon_rect(&h).center();
+        click(&mut h, at);
+        shot_popup(
+            &mut h,
+            &format!("livelink_popup_waiting_{}", lang.pick("ja", "en")),
+        );
+        key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        open_arm(&mut h, &ex, "r1", KEY);
+        h.run();
+        assert!(
+            h.state().view3d_rect().is_some(),
+            "開いたら 3D ビューに出す"
+        );
+        // 窓: 「Live Link: 受付中」と、開いている Unity のオブジェクトの名前
+        let at = icon_rect(&h).center();
+        click(&mut h, at);
+        h.get_by_label(&format!("Live Link: {}", lang.pick("受付中", "Accepting")));
+        h.get_by_label("Unity: Arm");
+        shot_popup(
+            &mut h,
+            &format!("livelink_popup_target_{}", lang.pick("ja", "en")),
+        );
+        key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        // 送り直しでは、キャンバスへ戻した画面を 3D に取り上げない
+        click_tab(&mut h, Tab::Canvas);
+        assert!(h.state().view3d_rect().is_none());
+        open_arm(&mut h, &ex, "r2", KEY);
+        h.run();
+        assert!(
+            h.state().view3d_rect().is_none(),
+            "送り直しでは 3D ビューを前に出し直さない"
+        );
+    }
 }
 
 /// プロジェクトの名前が長くても、印は見えている名前の左に付き、メニューの見出しに重ならない。名前は後ろを詰め、全体はツールチップに出す。

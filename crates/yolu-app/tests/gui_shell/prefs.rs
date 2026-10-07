@@ -131,7 +131,7 @@ fn fill_tiles(
 fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_the_texture_sets() {
     let mut s = AppState::new(2048, 2048);
     s.prefs.ram_mib = 16384;
-    let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     assert_eq!(s.sets.len(), 2);
     s.load_settings(without_cache());
@@ -205,7 +205,7 @@ fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
     // 自動の最大（物理メモリが十分にあるとき）: レイヤーのメモリ 64 GiB・取り消し 16 GiB・1 回の操作 4 GiB
     let mut s = AppState::new(2048, 2048);
     s.prefs.ram_mib = 1 << 20;
-    let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     s.load_settings(without_cache());
     s.sync_budgets();
@@ -248,7 +248,7 @@ fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
 fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so_once() {
     let mut s = AppState::new(2048, 2048);
     s.prefs.ram_mib = 16384;
-    let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     s.load_settings(without_cache());
     // 1 つ目のセットが 20 MiB（2048 × 2048 の 1 層は 16 MiB なので 2 層）使っているところへ、全体の予算 16 MiB
@@ -632,7 +632,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     pick(&mut h, "CPU のスレッド: 自動（8）", "4");
     assert_eq!(h.state().state.prefs.settings.cpu_threads, Some(4));
     let _ = h.get_by_label("CPU のスレッド: 4 ・ 再起動で反映");
-    h.get_by_label("起動時に Live Link を待ち受ける").click();
+    h.get_by_label("Unity の Live Link を受け付ける").click();
     h.run();
     assert!(!h.state().state.settings().livelink_on_startup);
     shot(&mut h, "prefs_window_changed");

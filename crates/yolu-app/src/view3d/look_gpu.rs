@@ -1555,7 +1555,7 @@ mod tests {
         pending.images.clear();
         pending.missing.insert(
             "_EmissionMap".into(),
-            yolu_core::look::MissingImage::Pending,
+            yolu_core::look::MissingImage::Unreadable,
         );
         doc.set_received_look(Some(pending)).unwrap();
         let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);

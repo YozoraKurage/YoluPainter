@@ -1316,7 +1316,7 @@ fn a_live_link_model_is_never_replaced_from_the_window() {
     let dir = temp_dir("link");
     let path = character(&dir, "c.fbx");
     let mut s = S::new(64, 64);
-    let (report, shape) = s.receive_link_model(&link, 0);
+    let (report, shape) = s.receive_link_model(&link);
     assert!(shape.is_ok());
     assert_eq!(report.created, ["Hair"]);
     np(&mut s, NpAction::OpenConfigure);
@@ -1345,7 +1345,7 @@ fn a_live_link_model_is_never_replaced_from_the_window() {
 #[test]
 fn a_new_project_with_a_live_link_model_makes_a_set_for_each_chosen_material() {
     let mut s = S::new(64, 64);
-    let (_, shape) = s.receive_link_model(&link_model(), 0);
+    let (_, shape) = s.receive_link_model(&link_model());
     assert!(shape.is_ok());
     // Ctrl+N の窓は、Live Link のモデルのマテリアルの組を出し、前と同じく全部を初めから選ぶ
     np(&mut s, NpAction::OpenNew);
@@ -1532,7 +1532,7 @@ fn a_configuration_window_closes_when_the_sets_change_underneath_it() {
                 .collect(),
         }],
     };
-    let _ = s.receive_link_model(&model, 0);
+    let _ = s.receive_link_model(&model);
     s.poll_newproject();
     assert!(s.np.window.is_none());
     assert!(
@@ -1542,13 +1542,10 @@ fn a_configuration_window_closes_when_the_sets_change_underneath_it() {
     );
     // 新規プロジェクトの窓は、窓の外の変更に影響されない
     np(&mut s, NpAction::OpenNew);
-    let _ = s.receive_link_model(
-        &Model {
-            generation: 2,
-            ..model
-        },
-        0,
-    );
+    let _ = s.receive_link_model(&Model {
+        generation: 2,
+        ..model
+    });
     s.poll_newproject();
     assert!(s.np.window.is_some());
 }

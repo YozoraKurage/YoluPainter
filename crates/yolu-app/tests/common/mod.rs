@@ -4,6 +4,7 @@
 pub mod canvas_device;
 pub mod fbx;
 pub mod gpu_thread;
+pub mod livelink;
 #[path = "../../../yolu-protocol/tests/support/names.rs"]
 pub mod names;
 pub mod shared_gpu;

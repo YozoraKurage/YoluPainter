@@ -14,6 +14,7 @@
 
 pub mod auth;
 pub mod compat;
+pub mod files;
 pub mod frame;
 pub mod host;
 pub mod link;

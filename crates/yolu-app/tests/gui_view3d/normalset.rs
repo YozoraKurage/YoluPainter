@@ -171,7 +171,7 @@ fn headless_each_texture_set_keeps_its_own_normal_settings_through_save_and_open
     let dir = TempDir::new("two-sets");
     let path = dir.0.join("two.ylp");
     let mut s = AppState::new(64, 64);
-    let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     assert_eq!(s.sets.len(), 2);
     let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());

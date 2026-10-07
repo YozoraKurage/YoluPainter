@@ -935,14 +935,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             rows.row(t::ROW_HEIGHT, GAP),
             id.with("livelink-on-startup"),
-            lang.pick(
-                "起動時に Live Link を待ち受ける",
-                "Start Live Link on launch",
-            ),
+            lang.pick("Unity の Live Link を受け付ける", "Accept Live Link from Unity"),
             s.livelink_on_startup,
             Some(lang.pick(
-                "次の起動から反映。--livelink を付けて起動すると、この設定によらず待ち受けます",
-                "Applies on the next launch. Launching with --livelink always starts listening",
+                "Unity のエディタの「YoluPainter で開く」で送ったモデルとマテリアルを開く。--livelink を付けて起動すると、この設定によらず受け付ける",
+                "Opens the model and materials sent with Open in YoluPainter in the Unity Editor. Launching with --livelink always accepts them",
             )),
             enabled,
         );
@@ -956,8 +953,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             lang.pick("Unity から受けたマテリアルの値を保存する", "Save material values received from Unity"),
             s.livelink_keep_values,
             Some(lang.pick(
-                "Live Link で受けた lilToon の値を .ylp に入れる（受けたテクスチャの画素は入れない）。切ると、次に保存するときに外す",
-                "Stores the lilToon values received through Live Link in the .ylp (not the pixels of received textures). When off, they are removed on the next save",
+                "Live Link で受けた lilToon の値を .ylp に入れる（テクスチャの画素は入れず、開き直すとファイルから読む）。切ると、次に保存するときに外す",
+                "Stores the lilToon values received through Live Link in the .ylp (not the pixels of textures; they are read from their files on reopening). When off, they are removed on the next save",
             )),
             enabled,
         );

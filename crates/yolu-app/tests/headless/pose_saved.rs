@@ -447,7 +447,7 @@ fn headless_a_live_link_model_neither_restores_nor_removes_the_saved_pose_and_it
     assert_eq!(note.as_deref(), Some("ポーズを戻しました。"));
     // Unity のモデルが来る: ポーズのセッションは終わる（Live Link のモデルは骨を持たない）。受けたポーズは頂点の位置
     let model = link_model();
-    let (_, loaded) = open.receive_link_model(&model, 0);
+    let (_, loaded) = open.receive_link_model(&model);
     loaded.unwrap();
     pose::poll(&mut open.view3d);
     open.sync_rig_model();

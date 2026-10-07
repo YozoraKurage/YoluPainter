@@ -246,10 +246,9 @@ fn received_values_are_kept_beside_the_users_look_and_images_are_not_written() {
     assert_eq!(back.look, received().look);
     assert_eq!(back.source, received().source);
     assert!(back.images.is_empty(), "絵の画素は書かない");
-    assert_eq!(
-        back.missing["_MatCapTex"],
-        MissingImage::Pending,
-        "絵のあったスロットは届いていない"
+    assert!(
+        !back.missing.contains_key("_MatCapTex"),
+        "絵のあったスロットは理由も書かない（絵のファイルから読み直す）"
     );
     assert_eq!(back.missing["_ShadowColorTex"], MissingImage::OverBudget);
     assert!(q.look(A).unwrap().is_none_or(|l| l.is_default()));
@@ -295,4 +294,47 @@ fn a_broken_received_section_is_refused_and_kept() {
         yolu_io::look::read_received(&yolu_io::look::write(&lil(), None).unwrap()).unwrap(),
         None
     );
+}
+
+#[test]
+fn the_shader_identity_and_render_queue_round_trip_and_an_old_pending_reads_as_unreadable() {
+    use yolu_core::look::MissingImage;
+    let mut look = lil();
+    look.shader_guid = "fedcba9876543210fedcba9876543210".into();
+    look.shader_version = "2.3.4".into();
+    look.render_queue = Some(2450);
+    let bytes = yolu_io::look::write(&look, None).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(
+        text.contains("\"shaderGuid\"") && text.contains("\"renderQueue\": 2450"),
+        "{text}"
+    );
+    assert_eq!(yolu_io::look::read(&bytes).unwrap(), look);
+    // 受けた見た目にも同じ欄
+    let mut r = received();
+    r.look.shader_version = "2.3.4".into();
+    r.look.render_queue = Some(3000);
+    r.missing
+        .insert("_Main2ndTex".into(), MissingImage::NotAFile);
+    let p = project().with_received_look(A, Some(&r)).unwrap();
+    let back = p.received_look(A).unwrap().unwrap();
+    assert_eq!(back.look.render_queue, Some(3000));
+    assert_eq!(back.look.shader_version, "2.3.4");
+    assert_eq!(back.missing["_Main2ndTex"], MissingImage::NotAFile);
+    // 0.4 までの書き手の pending は、読めないとして読む
+    let mut v: serde_json::Value = serde_json::from_slice(
+        &yolu_io::look::write_received(Some(&received()), None)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    v["received"]["missing"]["_MatCapTex"] = serde_json::json!("pending");
+    let old = yolu_io::look::read_received(&serde_json::to_vec(&v).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.missing["_MatCapTex"], MissingImage::Unreadable);
+    // 整数でない描画の順は断る
+    let mut bad: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    bad["renderQueue"] = serde_json::json!("x");
+    assert!(yolu_io::look::read(&serde_json::to_vec(&bad).unwrap()).is_err());
 }

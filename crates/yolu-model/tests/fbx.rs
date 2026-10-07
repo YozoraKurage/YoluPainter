@@ -817,3 +817,35 @@ fn a_panic_in_the_progress_callback_reaches_the_caller_after_the_parse_unwinds()
     let payload = outcome.expect_err("panic が出る");
     assert_eq!(payload.downcast_ref::<&str>(), Some(&"試験の panic"));
 }
+
+// ---- Live Link が使う情報（ファイルの単位・メッシュのノード） ----
+
+/// ファイルの単位は、読んだ形をメートルに直す前の単位（Unity の `useFileScale` を切ったときの大きさに使う）。cm でも m でも、骨の
+/// ローカルの移動はメートル（Unity の既定の取り込みと同じ: m と cm の FBX の Upper は (0, 1, 0)、Lower は (−1, 0, 0)）。
+#[test]
+fn the_file_unit_is_reported_and_bone_translations_are_metres() {
+    let base = arm_scene();
+    let m = load(&base);
+    assert_eq!(m.report.file_unit_meters, 1.0);
+    let mut cm = base.transformed(|p| p, 100.0);
+    cm.centimeters = true;
+    let c = load(&cm);
+    assert!((c.report.file_unit_meters - 0.01).abs() < 1e-12);
+    for rig in [&m.rig, &c.rig] {
+        let upper = rig.bones().iter().find(|b| b.name == "Upper").unwrap();
+        let lower = rig.bones().iter().find(|b| b.name == "Lower").unwrap();
+        assert!((upper.rest.translation - Vec3::new(0.0, 1.0, 0.0)).length() < 1e-6);
+        assert!((lower.rest.translation - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-6);
+        assert_eq!(upper.rest.scale, Vec3::ONE);
+    }
+}
+
+/// メッシュはそれが付いたノードの骨を知っている（Unity のレンダラーの道から、メッシュを引くため）。
+#[test]
+fn each_mesh_knows_the_bone_of_its_node() {
+    let m = load(&arm_scene());
+    for mesh in m.rig.meshes() {
+        let node = mesh.node.expect("ノード") as usize;
+        assert_eq!(m.rig.bones()[node].name, mesh.mesh.name);
+    }
+}

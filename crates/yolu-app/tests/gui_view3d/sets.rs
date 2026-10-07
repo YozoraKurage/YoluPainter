@@ -247,7 +247,7 @@ fn every_state_of_a_set_has_its_icon() {
     assert_eq!(icons(0), Some("visibility_off"));
     assert_eq!(icons(1), Some("lock"));
     assert_eq!(icons(2), Some("link_off"));
-    assert_eq!(icons(3), Some("warning"));
+    assert_eq!(icons(3), None, "付いて見えているセットに印は無い");
     h.snapshot("texture_sets_states");
 }
 

@@ -202,6 +202,8 @@ FunctionEnd
   !insertmacro ${ACTION} "docs\en" "UNITY.md"
   !insertmacro ${ACTION} "docs\en" "INSTALL.md"
   !insertmacro ${ACTION} "docs\en" "BUILDING.md"
+  !insertmacro ${ACTION} "docs" "LIVELINK.md"
+  !insertmacro ${ACTION} "docs\en" "LIVELINK.md"
 !macroend
 !macro InstallDoc DIR NAME
   SetOutPath "$INSTDIR\${DIR}"

@@ -28,19 +28,24 @@
 //!   "received": {
 //!     "kind": "lilToon",
 //!     "shader": "Hidden/lilToonTransparent",
-//!     "source": "lilToon 2.3.4 · Standard/Transparent",
+//!     "shaderGuid": "<32 桁の 16 進>",
+//!     "shaderVersion": "2.3.4",
+//!     "renderQueue": 3000,
+//!     "source": "lilToon 2.3.4",
 //!     "properties": { "_ShadowBorder": { "float": 0.3 } },
 //!     "textures": { "_MainTex": { "channel": 0 } },
 //!     "keywords": [],
-//!     "missing": { "_MatCapTex": "pending", "_ShadowColorTex": "overBudget" }
+//!     "missing": { "_MatCapTex": "notAFile", "_ShadowColorTex": "overBudget" }
 //!   }
 //! }
 //! ```
 //!
-//! - 根の本体（`kind`〜`keywords`）は利用者の設定。`kindChosen` は利用者が欄で描き方を選んだか（無ければ偽）。
+//! - 根の本体（`kind`〜`keywords`・`shaderGuid`・`shaderVersion`・`renderQueue`）は利用者の設定。`kindChosen` は利用者が欄で描き方を
+//!   選んだか（無ければ偽）。`shaderGuid`・`shaderVersion`（Unity のシェーダーの身元）と `renderQueue`（描画の順）は無ければ不明・既定。
 //! - `received` は Live Link で Unity のマテリアルから受けた値（`yolu_core::look::ReceivedLook`。本体と同じ形と、出どころの文 `source`、
-//!   絵の無いスロットの理由 `missing`）。描くときは受けた値の上に利用者の設定を重ねる。受けた絵の画素は書かない（Unity のアセットで、
-//!   つなぎ直せば届く）。絵のあったスロットは `missing` の `pending`（届いていない）として書く。理由は `pending`・`overBudget`・`unreadable`。
+//!   絵の無いスロットの理由 `missing`）。描くときは受けた値の上に利用者の設定を重ねる。受けた絵の画素は書かない（絵はファイルから
+//!   読み直す）。絵のあったスロットは `missing` に書かない。理由は `overBudget`・`unreadable`・`notAFile`（Unity の中にしかない絵）。
+//!   0.4 までの書き手の `pending` は `unreadable` として読む。
 //!   利用者の設定と受けた見た目は別々に書き換える（[`write`] は `received` を前のエントリのまま、[`write_received`] は本体を前のまま）。
 //! - `format` は 1。2 以上は読まずに断る（エントリはバイト列のまま残る）。
 //! - `kind` は `standard`・`lilToon`。知らない値は断る。
@@ -82,7 +87,7 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
 }
 
 /// 受けた見た目（`received`。Live Link で Unity のマテリアルから受けた値）を読む。無ければ None。絵の画素は保存しないので、
-/// 絵のあったスロットは「届いていない」（`missing` の `pending`）として戻る。
+/// 絵のあったスロットは絵も理由も無いまま戻る（絵は Live Link の相手の絵のファイルから読み直す）。
 pub fn read_received(bytes: &[u8]) -> Result<Option<ReceivedLook>> {
     let obj = root_object(bytes)?;
     let Some(received) = obj.get("received").filter(|v| !v.is_null()) else {
@@ -167,9 +172,29 @@ fn read_body(obj: &Map<String, Value>, at: &str) -> Result<MaterialLook> {
             .ok_or_else(|| invalid(format!("{at} の shader が文字列ではありません")))?
             .to_owned(),
     };
+    let text = |key: &str| -> Result<String> {
+        match obj.get(key) {
+            None | Some(Value::Null) => Ok(String::new()),
+            Some(v) => Ok(v
+                .as_str()
+                .ok_or_else(|| invalid(format!("{at} の {key} が文字列ではありません")))?
+                .to_owned()),
+        }
+    };
+    let render_queue = match obj.get("renderQueue") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_i64()
+                .and_then(|q| i32::try_from(q).ok())
+                .ok_or_else(|| invalid(format!("{at} の renderQueue が整数ではありません")))?,
+        ),
+    };
     let mut look = MaterialLook {
         kind,
         shader,
+        shader_guid: text("shaderGuid")?,
+        shader_version: text("shaderVersion")?,
+        render_queue,
         ..MaterialLook::default()
     };
     if let Some(props) = obj.get("properties") {
@@ -257,6 +282,24 @@ fn write_body(root: &mut Map<String, Value>, look: &MaterialLook) {
                 .collect(),
         ),
     );
+    for (key, text) in [
+        ("shaderGuid", &look.shader_guid),
+        ("shaderVersion", &look.shader_version),
+    ] {
+        if text.is_empty() {
+            root.remove(key);
+        } else {
+            root.insert(key.into(), Value::from(text.as_str()));
+        }
+    }
+    match look.render_queue {
+        Some(q) => {
+            root.insert("renderQueue".into(), Value::from(q));
+        }
+        None => {
+            root.remove("renderQueue");
+        }
+    }
 }
 
 fn finish(root: Map<String, Value>) -> Result<Vec<u8>> {
@@ -317,14 +360,13 @@ pub fn write_received(
             if !r.source.is_empty() {
                 body.insert("source".into(), Value::from(r.source.as_str()));
             }
-            let mut missing: Map<String, Value> = r
+            // 絵のあったスロットは書かない（絵はファイルから読み直す）
+            let missing: Map<String, Value> = r
                 .missing
                 .iter()
+                .filter(|(k, _)| !r.images.contains_key(*k))
                 .map(|(k, why)| (k.clone(), Value::from(why.key())))
                 .collect();
-            for slot in r.images.keys() {
-                missing.insert(slot.clone(), Value::from(MissingImage::Pending.key()));
-            }
             if !missing.is_empty() {
                 body.insert("missing".into(), Value::Object(missing));
             }
@@ -335,7 +377,7 @@ pub fn write_received(
 }
 
 /// 利用者の設定の本体のキー（これだけのエントリは、既定なら消してよい）。
-const BODY_KEYS: [&str; 7] = [
+const BODY_KEYS: [&str; 10] = [
     "format",
     "kind",
     "shader",
@@ -343,6 +385,9 @@ const BODY_KEYS: [&str; 7] = [
     "textures",
     "keywords",
     "kindChosen",
+    "shaderGuid",
+    "shaderVersion",
+    "renderQueue",
 ];
 
 /// 前のエントリに受けた見た目（`received`）があるか（読めなくても、キーがあれば true）。

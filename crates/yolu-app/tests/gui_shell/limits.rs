@@ -165,7 +165,7 @@ fn a_psd_read_while_the_sets_filled_up_is_not_installed() {
 #[test]
 fn a_live_link_model_with_more_materials_than_a_project_holds_gets_sets_up_to_the_limit() {
     let mut s = AppState::new(64, 64);
-    let (report, _) = s.receive_link_model(&model_with(MAX_SETS + 1), 1);
+    let (report, _) = s.receive_link_model(&model_with(MAX_SETS + 1));
     assert_eq!(
         s.sets.len(),
         MAX_SETS,
@@ -188,7 +188,7 @@ fn a_live_link_model_with_more_materials_than_a_project_holds_gets_sets_up_to_th
     let _ = std::fs::remove_dir_all(dir);
     // 上限に収まるモデルは今までどおり、知らせない
     let mut t = AppState::new(64, 64);
-    let (report, _) = t.receive_link_model(&model_with(5), 1);
+    let (report, _) = t.receive_link_model(&model_with(5));
     assert_eq!((t.sets.len(), report.skipped), (5, 0));
     assert!(report.limit_text(Lang::Ja).is_none());
 }

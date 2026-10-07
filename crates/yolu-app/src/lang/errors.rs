@@ -800,6 +800,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Look settings can only be restored right after loading"
         }
         "見た目のシェーダーの名前" => "Look shader name",
+        "見た目のシェーダーの身元" => "Look shader identity",
         "見た目のプロパティの数" => "Number of look properties",
         "見た目のテクスチャの数" => "Number of look textures",
         "見た目のキーワードの数" => "Number of look keywords",

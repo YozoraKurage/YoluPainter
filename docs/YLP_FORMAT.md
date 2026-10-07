@@ -16,13 +16,13 @@ YoluPainter の作業ファイル `.ylp` の仕様です。外の道具（変換
 | テクスチャセットの正本 `document.utpaint` | `DOTPAINT` の後の版、1〜26 | 使う機能で決まる 21〜25。512 MiB を超える正本だけ 26 |
 | `meshmap-<種類>.bin` | `YLPMMAP` の後の版 1〜3、エンジンの版 2 | 3 |
 | `selection.bin`・`selection-<印>.bin` | `YLSL` の後の版 1 | 1 |
-| `look.json`・`pose.json`・`selections.json` | 各 JSON の `format` 1 | 1 |
+| `look.json`・`pose.json`・`selections.json`・`livelink.json` | 各 JSON の `format` 1 | 1 |
 | `.ylsmart`（棚のスマートマテリアル・スマートマスク） | manifest `YOLUPAINTER-SMART-1`、`smart.json` の `format` 1 | 1 |
 | `.ylbrush`（棚の携帯ブラシ） | manifest `YOLUPAINTER-BRUSH-1`、`state.json` の `schema` 1〜3 | 書かない（読んでバイト列のまま残す） |
 
 コードの定数: `project::MAX_FORMAT`（8）・`SAVED_SELECTIONS_FORMAT`（8）、`native::UNITY_NATIVE_VERSION`（21）・`USER_CHANNELS_VERSION`（22）・
 `PROCEDURAL_VERSION`（23）・`ADJUST_VERSION`（24）・`MIXING_VERSION`（25）・`MAX_NATIVE_VERSION`（25）・`SPLIT_VERSION`（26）、`mesh_map::FORMAT_VERSION`（3）、
-`look::FORMAT`・`pose::FORMAT`・`saved_selections::FORMAT`（どれも 1）。
+`look::FORMAT`・`pose::FORMAT`・`saved_selections::FORMAT`・`livelink::FORMAT`（どれも 1）。
 
 ### 読み手ごとの範囲
 
@@ -81,6 +81,7 @@ YoluPainter の作業ファイル `.ylp` の仕様です。外の道具（変換
 | `brush.json` | 状態 | | Unity 版のブラシの設定（`schema` 1〜3） | 書かない（残す） |
 | `thumbnail.png` | 派生 | | Unity 版のインポーターが見る見本（長辺 256 px 以下） | 書かない（残す） |
 | `model.json` | 状態 | | 古い書き手の状態。今の書き手は書かない | 書かない（残す） |
+| `livelink.json` | 状態 | 7 から（形式は上げない） | Live Link の相手の文書（FBX の並び・レンダラーとマテリアルの結び・ポーズ・相手。下） | 書く |
 
 テクスチャセットごと（`sets/<ID>/` の下。形式 2 までは同じ名前で根にあった。コードの一覧は `project::SET_ENTRIES`）:
 
@@ -274,15 +275,37 @@ YoluPainter の作業ファイル `.ylp` の仕様です。外の道具（変換
   今の設定で上書きし、保存の知らせで言う）。
 - `kind`: `standard` か `lilToon`。`shader` は lilToon のシェーダーの名前（描画モードと輪郭線はここから読む）。
 - `properties`: lilToon のプロパティの名前と型（`float`・`int`・`color`・`vector`）。色はガンマの空間（Unity のマテリアルの値と同じ）。知らないプロパティも残す。
+- `shaderGuid`・`shaderVersion`（任意。Unity のシェーダーのアセットの GUID と版。1〜128 文字）と `renderQueue`（任意。Unity のマテリアルの描画の順、
+  符号付き 32 bit の整数）: 持つだけ（無ければ不明・シェーダーの既定）。`received` にも同じ欄を書く。
 - `textures`: スロット（テクスチャのプロパティの名前）ごとの元。`channel`（標準 0〜5・ユーザーチャンネル 6〜63）、`packed`（R・G・B・A の 4 つを `zero`・`one`・
   `{ "channel", "component" }` から）、`image`（棚の画像）。文書に無いチャンネルは割り当てなしとして扱う。
 - `kindChosen`（真偽、無ければ偽）: 利用者が描き方を選んだか。選んでいなければ、Unity から受けた値があるとき受けた描き方で描く。
-- `received`（任意）: Live Link で Unity のマテリアルから受けた値。本体と同じ形の `kind`・`shader`・`properties`・`textures`・`keywords` と、出どころの文 `source`、
-  絵の無いスロットの理由 `missing`（`pending`: 届いていない。受けた絵の画素は書かないので、絵のあったスロットもこれ。`overBudget`・`unreadable`）。描くときは受けた値の
-  上に本体を重ねる。
+- `received`（任意）: Live Link で Unity のマテリアルから受けた値。本体と同じ形の `kind`・`shader`・`shaderGuid`・`shaderVersion`・`renderQueue`・`properties`・
+  `textures`・`keywords` と、出どころの文 `source`、絵の無いスロットの理由 `missing`（`overBudget`: 受けた絵の予算を超えた・`unreadable`: 絵のファイルを読めない・
+  `notAFile`: Unity の中にしかない絵）。受けた絵の画素は書かず、絵のあったスロットは `missing` にも書かない（開き直すと `livelink.json` の絵のファイルから読み直す）。
+  0.4 までの書き手の `pending`（届いていない）は `unreadable` として読む。描くときは受けた値の上に本体を重ねる。
 - 上限: プロパティ 2048・スロット 256・キーワード 256、名前は 1〜128 文字（UTF-16。シェーダーの名前は 256）で制御文字なし、値は有限の数だけ。
 - 書き直すとき、前のエントリが同じ `format` なら知らないキーを残します。
 - 形式も正本の版も上げない状態のエントリです。Unity 版は知らないエントリとして知らせて保存で落とします（失うのは見た目の設定だけ）。
+
+## livelink.json（状態。根）
+
+Live Link の相手の文書（Unity のシーンのオブジェクトを開いた文書）。16 MiB まで。Unity なしで開き直したとき、同じモデル（FBX の並び・レンダラーとマテリアルの
+結び）とポーズになるように残す。中身は Live Link の頼み（`docs/LIVELINK.md` の「頼み」）と同じ形で、`format` 1・`kind` `"open"`。
+
+- `target`（相手の身元 `key`・名前・書き出しの置き場）、`models`（FBX の絶対の道・GUID・取り込みの設定）、`renderers`（レンダラーの道・FBX の中のメッシュの道・
+  入切・サブメッシュごとのマテリアルの番号・**今の** BlendShape の重み）、`bones`（**今の**ポーズで休みと違う骨の、FBX の親の骨に対するローカル）、`materials`
+  （鍵・名前・シェーダーの身元・テクスチャの道。**値は書かない**: 値は各セットの `look.json` の `received`。lilToon の印の値 `_lilToonVersion` だけは残し、
+  開き直したとき lilToon のスロットの絵をファイルから読むかを決める）、`refused`（Unity が送れなかったレンダラー）。
+- 骨の道は Unity の根から名前で下る。道で指せない骨（畳んだ FBX の根の骨のような Unity の根の外の骨・同じ名前の兄弟）の値は書けないので、保存の知らせに骨の名前を出す
+  （開き直すと休みに戻る）。
+- 読み手は大きさ・JSON のオブジェクト・`format` 1 を確かめ（`livelink::validate`）、中身は Live Link の頼みと同じ決まりで読む（数の上限・有限の数・番号の範囲）。
+  読めないものは、モデルを開き直さずにエントリをバイト列のまま残す。FBX・絵の道がネットワークの道（`\\host\share`）なら、開いたときに自動では読まない。
+- 開き直すとき、テクスチャセットは鍵で結ぶだけで増やさない。元の絵は入れ直さない（層に入っている）。スロットの絵は道から読み直す。
+- モデルを FBX・形ごと渡されたメッシュに替えて保存すると、エントリを外す。モデルがまだ無い（開き直している最中・開き直せなかった）間の保存は、
+  エントリに触れない。
+- 形式も正本の版も上げない状態のエントリです。スタンドアロン 0.4.x は知らないエントリとして知らせ、保存し直してもバイト列のまま残します（モデルは開かない。
+  テクスチャセットは開ける）。Unity 版は知らせて保存で落とします（失うのは相手の記録とポーズだけ）。
 
 ## 選択範囲
 
@@ -691,6 +714,16 @@ Unity 版の `Runtime/Core` の読み手に読ませた記録がある: `crates/
 ## 決めたことの理由
 
 形を選んだ理由・採らなかった案・保証の射程。Unity 版の読み手に実際に読ませた記録は `crates/yolu-io/tests/fixtures/*.unity.txt`。
+
+### Live Link の相手を別のエントリにした（`livelink.json`）
+
+- **状態のエントリ（採用）。** 相手の記録は画素の意味を変えないので、形式を上げると Live Link を使っただけで古い読み手がファイル全体を開けなくなる。
+  別のエントリなら、0.4.x は知らないエントリとしてバイト列のまま残し（`Note::UnknownEntryKept`）、テクスチャセットは鍵（Unity のマテリアルの GUID と
+  localFileId）のまま開ける。失うのは、0.4.x で開いている間のモデルの表示だけ。
+- **ポーズを `pose.json` に書く案（採らない）。** `pose.json` はプロジェクトのモデルのファイル（`view.json` の `standaloneModel`）のポーズで、0.4.x は
+  モデルのファイルの無い文書を保存するとき `pose.json` を外す。相手のポーズを `livelink.json` の中に持てば、0.4.x で保存し直しても失わない。
+- **値（lilToon のマテリアルの値）は書かない。** 値は `look.json` の `received` にあり、保存するかは利用者の設定で決まる。同じ値を 2 か所に持つと、
+  設定で外したのに残る・食い違う。
 
 ### 見た目の設定を別のエントリにした（`look.json`）
 

@@ -28,6 +28,26 @@ pub use write::{
     write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written,
 };
 
+/// PSD を読み、層を重ねた 1 枚にする（幅・高さ・straight RGBA8、上の行から）。層を持たない（読めない・原本を残すだけの）PSD は断る。
+/// 重ね方は取り込みの見本と同じ（`composite`）。取消の旗は読み込みと行ごとに見る。
+pub fn read_flattened(
+    bytes: &[u8],
+    limits: &Limits,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<(u32, u32, Vec<u8>)> {
+    let read = read_cancellable(bytes, limits, cancel)?;
+    let Some(document) = read.document() else {
+        let why = read
+            .diagnostics()
+            .iter()
+            .find(|d| !d.is_informational())
+            .map_or_else(|| "読めない PSD です".to_owned(), |d| d.message.clone());
+        return Err(crate::Error::InvalidData(why));
+    };
+    let rgba = composite::composite_cancellable(document, cancel)?;
+    Ok((document.width, document.height, rgba))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompatibilityMode {
     EditableRaster,

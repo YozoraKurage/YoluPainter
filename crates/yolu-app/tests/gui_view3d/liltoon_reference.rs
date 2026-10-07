@@ -1815,69 +1815,68 @@ fn compare() {
     }
 }
 
-/// Live Link が送る値（`tools/liltoon-reference.cs` が Unity のパッケージの `LiveLinkMaterialValues` で読んで書いた `link_<名前>.txt`
-/// と絵）から、スタンドアロンが受けたときと同じ受けた見た目（`look::link::received_look`）を作る。lilToon と判定されなければ None。
+/// Live Link が送る値（`tools/liltoon-reference.cs` が Unity のパッケージで読んで書いた `link_<名前>.txt` と絵）から、スタンドアロンが
+/// 頼みを受けたときと同じ受けた見た目（`look::link::received_look`）を作る。lilToon と判定されなければ None。
 fn link_received(dir: &Path, name: &str) -> Option<yolu_core::look::ReceivedLook> {
-    use yolu_protocol::{
-        ChannelRoute, MaterialValues, PropertyEntry, PropertyValue, SlotState, SlotTexture,
-        ValuesKind,
-    };
+    use yolu_protocol::files::{Material, TextureRef};
     let text = std::fs::read_to_string(dir.join(format!("link_{name}.txt"))).ok()?;
-    let mut values = MaterialValues {
-        generation: 1,
-        material: 0,
-        kind: ValuesKind::LilToon,
-        shader: String::new(),
-        source: String::new(),
-        properties: Vec::new(),
-        keywords: Vec::new(),
-        slots: Vec::new(),
+    let mut material = Material {
+        key: String::new(),
+        name: name.to_owned(),
+        shader: Default::default(),
+        values: Default::default(),
+        textures: Vec::new(),
     };
-    let mut routes = Vec::new();
     let mut images = std::collections::BTreeMap::new();
+    let mut missing = std::collections::BTreeMap::new();
+    let slot = |property: &str| TextureRef {
+        property: property.to_owned(),
+        path: None,
+        guid: String::new(),
+        srgb: true,
+        normal_map: false,
+        scale: [1.0, 1.0],
+        offset: [0.0, 0.0],
+    };
     for line in text.lines() {
         let p: Vec<&str> = line.split(' ').collect();
         let f = |i: usize| p[i].parse::<f32>().unwrap();
         match p[0] {
             "none" => return None,
-            "shader" => values.shader = line["shader ".len()..].to_owned(),
-            "source" => values.source = line["source ".len()..].to_owned(),
-            "route" => routes.push(ChannelRoute {
-                channel: p[1].parse().unwrap(),
-                property: p[2].to_owned(),
-            }),
+            "shader" => {
+                material.shader.name = line["shader ".len()..].to_owned();
+                // 値を書くのは Unity の側で lilToon と確かめたマテリアルだけ（確かめられなければ none）
+                material.shader.package = yolu_app::look::link::LILTOON_PACKAGE.to_owned();
+            }
             "prop" => {
                 let v = [f(3), f(4), f(5), f(6)];
-                let value = match p[1] {
-                    "0" => PropertyValue::Float(v[0]),
-                    "1" => PropertyValue::Int(v[0] as i32),
-                    "2" => PropertyValue::Color(v),
-                    _ => PropertyValue::Vector(v),
-                };
-                values.properties.push(PropertyEntry {
-                    name: p[2].to_owned(),
-                    value,
-                });
+                let name = p[2].to_owned();
+                let values = &mut material.values;
+                match p[1] {
+                    "0" => {
+                        values.floats.insert(name, v[0]);
+                    }
+                    "1" => {
+                        values.ints.insert(name, v[0] as i32);
+                    }
+                    "2" => {
+                        values.colors.insert(name, v);
+                    }
+                    _ => {
+                        values.vectors.insert(name, v);
+                    }
+                }
             }
-            "keyword" => values.keywords.push(p[1].to_owned()),
-            "slot" if p.len() == 3 => values.slots.push(SlotTexture {
-                name: p[1].to_owned(),
-                state: if p[2] == "empty" {
-                    SlotState::Empty
-                } else {
-                    SlotState::Unreadable
-                },
-                width: 0,
-                height: 0,
-            }),
+            "keyword" => material.shader.keywords.push(p[1].to_owned()),
+            "slot" if p.len() == 3 => {
+                material.textures.push(slot(p[1]));
+                if p[2] != "empty" {
+                    missing.insert(p[1].to_owned(), yolu_core::look::MissingImage::Unreadable);
+                }
+            }
             "slot" => {
                 let (w, h) = (p[2].parse().unwrap(), p[3].parse().unwrap());
-                values.slots.push(SlotTexture {
-                    name: p[1].to_owned(),
-                    state: SlotState::Follows,
-                    width: w,
-                    height: h,
-                });
+                material.textures.push(slot(p[1]));
                 let pixels = std::fs::read(dir.join(p[5])).unwrap();
                 images.insert(
                     p[1].to_owned(),
@@ -1892,12 +1891,7 @@ fn link_received(dir: &Path, name: &str) -> Option<yolu_core::look::ReceivedLook
             _ => {}
         }
     }
-    Some(yolu_app::look::link::received_look(
-        &values,
-        &routes,
-        &images,
-        &Default::default(),
-    ))
+    yolu_app::look::link::received_look(&material, &images, &missing)
 }
 
 #[test]

@@ -719,10 +719,16 @@ pub struct AppState {
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
     pub link_request: Option<LinkRequest>,
+    /// 今の文書の Live Link の相手（当てた頼み・まとめた Rig との対応。保存・送り直し・書き出しの返事が読む）。
+    pub link_target: Option<crate::livelink::LinkTarget>,
+    /// 開いた .ylp に残っていた Live Link の相手（`livelink.json`）。`LiveLink` が次のフレームで開き直す。
+    pub link_reopen: Option<yolu_protocol::files::Request>,
+    /// プロジェクトを替えた回数（新規・開く・作る。`np_project_replaced` が進める）。Live Link の裏の仕事が、始めた時のプロジェクトへだけ入るための目印。
+    pub project_epoch: u64,
     /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
     pub ops: crate::mcp_server::OpsView,
     /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
-    pub link_originals: crate::livelink_base::OriginalMarks,
+    pub link_originals: crate::livelink::OriginalMarks,
     /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
     /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
     pub resolution_chosen: bool,
@@ -925,6 +931,9 @@ impl AppState {
             model: None,
             link: LinkView::default(),
             link_request: None,
+            link_target: None,
+            link_reopen: None,
+            project_epoch: 0,
             ops: Default::default(),
             link_originals: Default::default(),
             resolution_chosen: false,

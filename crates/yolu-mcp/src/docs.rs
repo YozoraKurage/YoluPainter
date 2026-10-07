@@ -123,6 +123,11 @@ pub fn all() -> &'static [Doc] {
             ja: ja!("YLP_FORMAT.md"),
             en: None,
         },
+        Doc {
+            name: "livelink",
+            ja: ja!("LIVELINK.md"),
+            en: en!("LIVELINK.md"),
+        },
     ];
     DOCS
 }

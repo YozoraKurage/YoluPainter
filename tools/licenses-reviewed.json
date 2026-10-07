@@ -119,19 +119,6 @@
         }
       ]
     },
-    "aho-corasick@1.1.5": {
-      "declared": "Unlicense OR MIT",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
-        }
-      ]
-    },
     "allocator-api2@0.2.21": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -818,19 +805,6 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897"
-        }
-      ]
-    },
-    "csbindgen@1.9.8": {
-      "declared": "MIT",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "url": "https://raw.githubusercontent.com/Cysharp/csbindgen/24bcf088fd6ae06a61f7c929f3fe203cdc055482/LICENSE",
-          "sha256": "691fea33753bb047e3d6380e4ec078275d6732c13be736fb0a248efd464dd6b8"
         }
       ]
     },
@@ -2687,50 +2661,6 @@
         {
           "path": "LICENSE.txt",
           "sha256": "612938d4e581d578f2377fdaa2978ff9b79e2dd978f6b1ea45418af475258bbb"
-        }
-      ]
-    },
-    "regex-automata@0.4.18": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
-        }
-      ]
-    },
-    "regex-syntax@0.8.11": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT",
-        "Unicode-DFS-2016"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
-        },
-        {
-          "path": "src/unicode_tables/LICENSE-UNICODE",
-          "sha256": "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"
-        }
-      ]
-    },
-    "regex@1.13.1": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
         }
       ]
     },
@@ -4931,6 +4861,32 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "zune-core@0.5.3": {
+      "declared": "MIT OR Apache-2.0 OR Zlib",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
+        }
+      ]
+    },
+    "zune-jpeg@0.5.15": {
+      "declared": "MIT OR Apache-2.0 OR Zlib",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
         }
       ]
     }

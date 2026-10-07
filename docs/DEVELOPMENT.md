@@ -88,7 +88,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
-- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・bridge・link-demo・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 `cargo fmt --check` は既存の `crates/yolu-core/src/geometry/query.rs` に整形差分があるため、まだ必須検査にしていません。コードの整形を別途済ませてから追加してください。
@@ -97,17 +97,11 @@ Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソー�
 
 CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査できます。初回の実行では、clippy の既存警告、Ubuntu の Mesa の版による画面の正解との差、GPU 試験が省かれていないかを確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
 
-## Unity 用ブリッジ
-
-Linux 上で Bash、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意します。`tools/build-bridge.sh` を引数なしで実行すると、Linux と Windows のブリッジと C# 宣言を `target/bridge-out/` に作ります。C# 宣言は、csbindgen の出力（`crates/yolu-bridge/generated/`）を `tools/gen-livelink-native.py` で関数ポインターの形に書き換えたもので、Unity 版はライブラリをパッケージの中のファイルでなく、そのコピーから読みます（読み込み中のファイルを差し替えられない Windows でも、パッケージを更新できるように）。Mac 用は生成しません。
-
-Unity 版へ組み込む場合は、対応する Unity パッケージのルートをスクリプトの引数に指定します。`Plugins/LiveLink/` と `Editor/LiveLink/Native/` の既存の配置先へコピーするので、変更先を確認してから実行してください。Unity 版は、更新されたライブラリを次のドメインの読み直しで新しいコピーから読み、前のコピーのつながりを切るので、Unity の再起動は要りません。ブリッジの ABI を変えるときは Rust の `ABI_VERSION` と Unity の `LiveLinkBridge.ExpectedAbi` を合わせます。
-
 ## Windows 向けの画面なし試験（Wine）
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
 
-core・io・protocol・bridge・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+core・io・protocol・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-ops` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
 
 Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 
@@ -119,7 +113,6 @@ Python 3.10 以降と Cargo を使います。
 
 ```sh
 python3 tools/third-party.py --bundle --offline
-python3 tools/third-party.py --package yolu-bridge --bundle --offline
 ```
 
 初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。

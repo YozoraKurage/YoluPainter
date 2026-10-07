@@ -257,6 +257,8 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/en/UNITY.md",
     "docs/en/INSTALL.md",
     "docs/en/BUILDING.md",
+    "docs/LIVELINK.md",
+    "docs/en/LIVELINK.md",
 ];
 /// docs/ にあって配布物へは入れないファイル（開発・リリースの手順）。docs/ に足したファイルは、入れるか外すかのどちらかに必ず載せる（試験が確かめる）。
 const LEFT_OUT_DOCS: &[&str] = &["docs/DEVELOPMENT.md", "docs/RELEASING.md"];

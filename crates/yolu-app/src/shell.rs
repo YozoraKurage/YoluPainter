@@ -880,8 +880,8 @@ pub fn link_indicator_color(indicator: LinkIndicator) -> egui::Color32 {
     match indicator {
         LinkIndicator::Off => t::TEXT_DISABLED,
         LinkIndicator::Waiting => t::ACCENT_DIM,
-        LinkIndicator::Connected => t::OK,
-        LinkIndicator::Mismatch | LinkIndicator::Skewed => t::WARNING,
+        LinkIndicator::Linked => t::OK,
+        LinkIndicator::Problems => t::WARNING,
         LinkIndicator::Failed => t::ERROR,
     }
 }
@@ -921,33 +921,29 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
     LinkIcon { rect, pressed }
 }
 
-/// Live Link の窓（入口の印を押すと開く）の中身: 状態・つながっている Unity・受け取ったモデルの名前と、待つ／切るの切り替え。
-/// 文は名前と状態だけ（手順は README）。
+/// Live Link の窓（入口の印を押すと開く）の中身: 「Live Link: 状態」・開いている Unity のオブジェクト（「Unity: 名前」）と、受け付ける／
+/// 受け付けないの切り替え。文は名前と状態だけ（合わなかった物の理由は入口の印のツールチップ）。
 pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     let link = &app.link;
     let on = link.is_on();
-    let mut entries = vec![Entry::Heading(link.state_label(l).to_owned())];
-    if let Some(unity) = link.unity_name() {
-        entries.push(Entry::Heading(unity));
-    }
-    if let Some(model) = app.model.as_ref().filter(|m| m.is_link() && m.live) {
-        entries.push(Entry::Heading(format!(
-            "{}: {}",
-            l.pick("モデル", "Model"),
-            model.name
-        )));
+    let mut entries = vec![Entry::Heading(link.heading(l))];
+    if let Some(target) = link.target_line() {
+        entries.push(Entry::Heading(target));
     }
     entries.push(Entry::Separator);
     entries.push(
-        Entry::item(l.pick("待つ", "Wait"), Action::ToggleLiveLink)
+        Entry::item(l.pick("受け付ける", "Accept"), Action::ToggleLiveLink)
             .radio(on)
             .enabled(!on),
     );
     entries.push(
-        Entry::item(l.pick("切る", "Stop"), Action::ToggleLiveLink)
-            .radio(!on)
-            .enabled(on),
+        Entry::item(
+            l.pick("受け付けない", "Don't accept"),
+            Action::ToggleLiveLink,
+        )
+        .radio(!on)
+        .enabled(on),
     );
     entries
 }

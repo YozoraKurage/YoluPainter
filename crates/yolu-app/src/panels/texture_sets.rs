@@ -64,55 +64,28 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         };
         return look("link_off", t::TEXT_DIM, tooltip.into());
     };
-    // 流し込み先は Live Link のモデルだけの話（FBX・試しの人形は Unity に出さないので、無くても警告しない）
-    let routed = !model.is_link()
-        || model.materials.get(material as usize).is_some_and(|m| {
-            m.routes
-                .iter()
-                .any(|r| r.channel == yolu_protocol::channel::COLOR)
-        });
     if !set.visible {
         return look(
             "visibility_off",
             t::TEXT_DIM,
             app.lang
+                .pick("3D ビューに見せていない", "Hidden in the 3D View")
+                .into(),
+        );
+    }
+    if app.view3d.unpainted.contains(&(material as i32)) {
+        return look(
+            "warning",
+            t::WARNING,
+            app.lang
                 .pick(
-                    "3D ビューと Unity に見せていない",
-                    "Hidden in the 3D View and Unity",
+                    "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
+                    "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
                 )
                 .into(),
         );
     }
-    let published = app.link.published.contains(&set.uid);
-    let unpainted = app.view3d.unpainted.contains(&(material as i32));
-    if !routed || unpainted {
-        // 行の印は 1 つ。Unity の流し込み先が無いことと、3D ビューの予算で絵を見せていないことは別の事実なので、どちらもツールチップで言う
-        // （予算の警告が、Unity に見えない警告や「Unity に見せている」の印を隠さない）
-        let mut lines: Vec<&str> = Vec::new();
-        if !routed {
-            lines.push(app.lang.pick(
-                "Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）",
-                "This material has no Color route in Unity (not shown in Unity).",
-            ));
-        }
-        if unpainted {
-            lines.push(app.lang.pick(
-                "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
-                "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
-            ));
-            if published && routed {
-                lines.push(app.lang.pick("Unity に見せている", "Shown in Unity"));
-            }
-        }
-        return look("warning", t::WARNING, lines.join("\n"));
-    }
-    if published {
-        return look(
-            "sync",
-            t::ACCENT,
-            app.lang.pick("Unity に見せている", "Shown in Unity").into(),
-        );
-    }
+    let _ = model;
     None
 }
 

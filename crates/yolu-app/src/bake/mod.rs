@@ -561,8 +561,8 @@ impl AppState {
         let set = self.sets.get(index)?;
         match &self.model {
             Some(record) => {
-                // 3D が指しているモデルが記録と同じものか（Live Link の世代）
-                if record.is_link() && self.view3d.link_generation() != Some(record.generation) {
+                // 3D が指しているモデルが記録と同じものか（形ごと渡されたメッシュの世代）
+                if record.is_mesh() && self.view3d.link_generation() != Some(record.generation) {
                     return None;
                 }
                 let _ = model;

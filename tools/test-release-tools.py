@@ -190,19 +190,19 @@ class LicenseChecks(unittest.TestCase):
         self.assertTrue(other.exists())
 
     def test_stale_bundle_removed_before_config_failure(self):
-        bundle = self.root / 'yolu-bridge/THIRD_PARTY_LICENSES.txt'
+        bundle = self.root / 'yolu-cli/THIRD_PARTY_LICENSES.txt'
         bundle.parent.mkdir()
         bundle.write_text('前回の成功')
-        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'CONFIG', self.root / 'missing.json'), patch('sys.argv', ['third-party.py', '--package', 'yolu-bridge', '--bundle']):
+        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'CONFIG', self.root / 'missing.json'), patch('sys.argv', ['third-party.py', '--package', 'yolu-cli', '--bundle']):
             with self.assertRaises(OSError):
                 licenses.main()
         self.assertFalse(bundle.exists())
 
     def test_stale_bundle_removed_before_metadata_failure(self):
-        bundle = self.root / 'yolu-bridge/THIRD_PARTY_LICENSES.txt'
+        bundle = self.root / 'yolu-cli/THIRD_PARTY_LICENSES.txt'
         bundle.parent.mkdir()
         bundle.write_text('前回の成功')
-        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'cargo', side_effect=OSError('失敗')), patch('sys.argv', ['third-party.py', '--package', 'yolu-bridge', '--bundle']):
+        with patch.object(licenses, 'OUT', self.root), patch.object(licenses, 'cargo', side_effect=OSError('失敗')), patch('sys.argv', ['third-party.py', '--package', 'yolu-cli', '--bundle']):
             with self.assertRaises(OSError):
                 licenses.main()
         self.assertFalse(bundle.exists())

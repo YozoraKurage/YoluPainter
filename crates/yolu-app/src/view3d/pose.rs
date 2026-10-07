@@ -441,6 +441,72 @@ impl PrepareJob {
     }
 }
 
+/// 別のスレッドで組んだスキン（Live Link の相手: FBX を並べたもの）と、呼び手の残りの結果。受け口を捨てたら、組むのも止める。
+pub struct RigJob<T> {
+    worker: Worker<Result<(PreparedModel, T), ViewError>>,
+}
+
+impl<T> RigJob<T> {
+    /// 終わっていれば結果（まだなら None。スレッドが落ちたら読み込みが止まったとして返す）。
+    pub fn poll(&self) -> Option<Result<(PreparedModel, T), ViewError>> {
+        match self.worker.poll() {
+            Polled::Message(r) => Some(r),
+            Polled::Empty => None,
+            Polled::Lost => Some(Err(ViewError::LoadStopped)),
+        }
+    }
+    /// 取り消す。
+    pub fn cancel(&self) {
+        self.worker.cancel();
+    }
+    /// 試験用: 終わるまで待つ（上限 120 秒）。
+    #[doc(hidden)]
+    pub fn wait(&self) -> Result<(PreparedModel, T), ViewError> {
+        match self.worker.wait(std::time::Duration::from_secs(120)) {
+            Polled::Message(r) => r,
+            Polled::Empty | Polled::Lost => Err(ViewError::LoadStopped),
+        }
+    }
+}
+
+/// スキンを別のスレッドで組み（`work` が読む・並べる。取消の旗を区切りで見る）、休みの形まで作る（3D ビューには入れない。入れるのは
+/// `install_prepared`）。`work` はスキン・読み込みの知らせ・呼び手の残りの結果を返す。スレッドは `view3d` に登録する（終わるときに止まるのを待つ）。
+pub fn prepare_rig_with<T: Send + 'static>(
+    view3d: &mut View3dState,
+    work: impl FnOnce(&AtomicBool) -> Result<(Rig, Vec<String>, T), ViewError> + Send + 'static,
+) -> RigJob<T> {
+    let revision = view3d.next_revision();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let finished = view3d.pose.loads.register(&cancel);
+    let worker = Worker::spawn_on(
+        std::thread::Builder::new().name("yolu-livelink-rig".into()),
+        cancel,
+        move |tx, flag| {
+            let _finished = finished;
+            let flag = flag.flag();
+            let result = work(flag).and_then(|(rig, warnings, rest)| {
+                if flag.load(Ordering::Relaxed) {
+                    return Err(ViewError::Cancelled);
+                }
+                let (meshes, geometry) = build_rest(&rig, revision, Some(flag))?;
+                Ok((
+                    PreparedModel(Loaded {
+                        rig,
+                        rest: geometry,
+                        meshes,
+                        warnings,
+                    }),
+                    rest,
+                ))
+            });
+            let _ = tx.send(result);
+        },
+    )
+    .expect("failed to spawn thread")
+    .cancel_on_drop();
+    RigJob { worker }
+}
+
 /// FBX を別のスレッドで読み始める（3D ビューには入れない）。`view3d` は世代の番号を取るためだけに借りる。
 pub fn prepare_fbx(view3d: &mut View3dState, path: &Path, limits: ModelLimits) -> PrepareJob {
     let revision = view3d.next_revision();
@@ -828,15 +894,15 @@ pub fn owns_undo(app: &AppState) -> bool {
     app.view3d.pose.mode && app.view3d.pose.session.is_some() && app.view3d.visible
 }
 
-/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデルが無い試しの人形のポーズは残らないので数えない）。
-/// 開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
+/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデル・Live Link の相手の無い試しの人形のポーズは
+/// 残らないので数えない）。開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
 pub fn sync_modified(app: &mut AppState) {
     let Some(edits) = app.view3d.pose.session.as_ref().map(|s| s.edits) else {
         return;
     };
     if edits != app.view3d.pose.seen_edits {
         app.view3d.pose.seen_edits = edits;
-        if app.np.model_file.is_some() {
+        if app.np.model_file.is_some() || app.link_target.is_some() {
             app.modified = true;
         }
     }

@@ -25,10 +25,3 @@ debug = "line-tables-only"  # 行番号だけ（全部のデバッグ情報だ�
 [profile.dev.package."*"]
 opt-level = 3            # 依存のクレートは最適化して組む（初回だけ時間がかかる）
 debug = false
-
-# Unity へ入れるブリッジの DLL（cargo build -p yolu-bridge --profile bridge）。小さく、記号を除く。パニックは関数ごとに受け止めるので unwind のまま
-[profile.bridge]
-inherits = "release"
-lto = true
-codegen-units = 1
-strip = true

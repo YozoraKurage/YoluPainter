@@ -106,6 +106,9 @@ pub struct LoadReport {
     pub convert_ms: f64,
     /// 骨のワールドを 親 × ローカル で求め直したときの、ufbx の node_to_world との差の最大（メートル。行列の成分の差）。
     pub max_transform_error: f64,
+    /// ファイルの単位（1 単位が何メートルか。FBX の UnitScaleFactor ÷ 100）。読んだ形は単位によらずメートルに直してある。
+    /// Unity の取り込みで `useFileScale` を切ったときの大きさ（ファイルの数をそのまま 1 とする）は、メートル ÷ この値。
+    pub file_unit_meters: f64,
 }
 
 /// 読んだモデル。
@@ -398,7 +401,10 @@ fn convert(
     gate: &Gate<'_>,
 ) -> Result<LoadedModel, ModelError> {
     let budget = &limits.rig;
-    let mut report = LoadReport::default();
+    let mut report = LoadReport {
+        file_unit_meters: scene.settings.original_unit_meters,
+        ..LoadReport::default()
+    };
     let too_large = |what, value: usize, limit: usize| {
         ModelError::Rig(RigError::TooLarge { what, value, limit })
     };
@@ -832,6 +838,7 @@ fn convert(
             },
             skin,
             blend_shapes: shapes,
+            node: Some(node_bone),
         });
         rest_weights.push(weights);
         if meshes.len() > budget.max_meshes {

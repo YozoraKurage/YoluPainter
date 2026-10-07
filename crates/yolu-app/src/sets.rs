@@ -1189,28 +1189,25 @@ mod tests {
 
     fn scene(materials: Vec<MaterialInfo>) -> SceneModel {
         let n = materials.len() as u32;
-        SceneModel::from_link(
-            &Model {
-                generation: 1,
-                name: "試し".into(),
-                materials,
-                meshes: vec![MeshData {
-                    key: "0".into(),
-                    name: "Body".into(),
-                    skinned: false,
-                    positions: vec![[0.0; 3]; 3],
-                    normals: vec![],
-                    uv0: vec![],
-                    submeshes: (0..n)
-                        .map(|m| Submesh {
-                            material: m,
-                            indices: vec![0, 1, 2],
-                        })
-                        .collect(),
-                }],
-            },
-            1,
-        )
+        SceneModel::from_link(&Model {
+            generation: 1,
+            name: "試し".into(),
+            materials,
+            meshes: vec![MeshData {
+                key: "0".into(),
+                name: "Body".into(),
+                skinned: false,
+                positions: vec![[0.0; 3]; 3],
+                normals: vec![],
+                uv0: vec![],
+                submeshes: (0..n)
+                    .map(|m| Submesh {
+                        material: m,
+                        indices: vec![0, 1, 2],
+                    })
+                    .collect(),
+            }],
+        })
     }
 
     #[test]

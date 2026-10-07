@@ -665,7 +665,7 @@ fn two_materials_link_model() -> yolu_protocol::Model {
 /// そのモデルを読み、2 つ目のテクスチャセットを今のセットにした状態（画面を使わない）。
 fn second_set_state() -> AppState {
     let mut s = AppState::new(64, 64);
-    let (_, shape) = s.receive_link_model(&two_materials_link_model(), 0);
+    let (_, shape) = s.receive_link_model(&two_materials_link_model());
     shape.expect("3D に読める");
     let uid = s.sets.iter().nth(1).expect("2 つ目のセット").uid;
     s.apply(Action::SelectSet(uid));

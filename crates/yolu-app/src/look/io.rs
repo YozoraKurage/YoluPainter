@@ -6,7 +6,7 @@
 //! 入のときだけ書く（切っていれば外す）。受けた絵の画素は書かない。開くと受けた見た目として戻り（Undo の段も版も増やさない）、
 //! つないで新しい値が来れば置き換わる。
 
-use yolu_core::look::{MaterialLook, MissingImage, ReceivedLook};
+use yolu_core::look::{MaterialLook, ReceivedLook};
 use yolu_io::Project;
 
 use crate::engine::Document;
@@ -63,11 +63,11 @@ pub fn restore_received_from(
     })
 }
 
-/// 保存する形の受けた見た目（絵の画素は書かず、絵のあったスロットは「届いていない」）。読み直したものと比べる。
+/// 保存する形の受けた見た目（絵の画素は書かず、絵のあったスロットは絵も理由も無い）。読み直したものと比べる。
 fn as_stored(received: &ReceivedLook) -> ReceivedLook {
     let mut out = received.clone();
     for slot in std::mem::take(&mut out.images).into_keys() {
-        out.missing.insert(slot, MissingImage::Pending);
+        out.missing.remove(&slot);
     }
     out
 }

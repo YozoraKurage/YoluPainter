@@ -1255,7 +1255,7 @@ fn link_plate(generation: u32, flip: bool) -> yolu_protocol::Model {
 fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set() {
     let mut s = state(256);
     let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0));
-    let (_, shape) = s.receive_link_model(&link_plate(1, false), 0);
+    let (_, shape) = s.receive_link_model(&link_plate(1, false));
     shape.unwrap();
     // 最初のモデルを受けるとカメラはそのモデルの既定の位置になるので、板（外向きの法線は −Z）を正面から見る向きは受けたあとに決める
     // （同じ名前・同じ三角形のモデルを受け直してもカメラは動かない）
@@ -1275,7 +1275,7 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     let old_print = surface_path(&s).model_fingerprint;
     assert!(alpha_at(&s, 0.65, 0.35) > 0, "右の板の最初の点（u = 0.65）");
     // UV の左右が入れ替わった新しいモデルを受ける: どちらのセットのパスも描き直す
-    let (_, shape) = s.receive_link_model(&link_plate(2, true), 0);
+    let (_, shape) = s.receive_link_model(&link_plate(2, true));
     shape.unwrap();
     let new_print = core_paths::fingerprint(&s.view3d.full_model().unwrap().geometry);
     assert_ne!(old_print, new_print);
@@ -1305,10 +1305,10 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     s.apply(Action::Undo);
     assert_eq!(surface_path(&s).model_fingerprint, old_print);
     // 同じ形のモデルをもう 1 度受けても、何もしない
-    let (_, shape) = s.receive_link_model(&link_plate(3, true), 0);
+    let (_, shape) = s.receive_link_model(&link_plate(3, true));
     shape.unwrap();
     let undo = s.doc.undo_count();
-    let (_, shape) = s.receive_link_model(&link_plate(4, true), 0);
+    let (_, shape) = s.receive_link_model(&link_plate(4, true));
     shape.unwrap();
     assert_eq!(s.doc.undo_count(), undo, "指紋が同じなら付け直さない");
 }
