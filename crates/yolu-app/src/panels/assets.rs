@@ -657,8 +657,8 @@ fn primary_action(card: &Card) -> Option<Action> {
     if let Some(key) = card.brush {
         return Some(Action::Brush(BrushAction::Select(key)));
     }
-    if card.library && matches!(card.kind, ItemKind::Brush | ItemKind::Material) {
-        // ブラシ・マテリアルのファイルは、まだ置けない種類。プロジェクトの棚へ入れる
+    if card.library && card.kind == ItemKind::Brush {
+        // ブラシのファイルは、まだ置けない種類。プロジェクトの棚へ入れる
         let rel = library::rel_of(&card.id)?;
         return Some(Action::Shelf(ShelfOp::UseFromLibrary(rel.to_owned())));
     }
@@ -1035,8 +1035,8 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let free = !app.is_stroking();
     let mask = kind == Some(ItemKind::SmartMask);
     let file_kind = rel.is_some().then_some(kind).flatten();
-    // 主の操作: 置く（画像・スマート素材）・使う（ブラシ・マテリアルのファイルは棚へ入れる。利用者のブラシは今のブラシにする）
-    let uses = matches!(kind, Some(ItemKind::Brush | ItemKind::Material));
+    // 主の操作: 置く（画像・スマート素材・マテリアル）・使う（ブラシのファイルは棚へ入れる。利用者のブラシは今のブラシにする）
+    let uses = kind == Some(ItemKind::Brush);
     let (label, tip, enabled, action) = match (&rel, brush_key, kind) {
         (_, Some(key), _) if rel.is_none() => (
             lang.pick("使う", "Use"),
@@ -1297,8 +1297,8 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
     }
 }
 
-/// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアルは行の間・グループの中、
-/// スマートマスクは行の層のマスク、それ以外は断る理由をステータスバーへ）。
+/// レイヤーの一覧の上で棚の素材を引いているとき、落とす先の印を描き、離したら置く（スマートマテリアル・マテリアル・画像は行の間・
+/// グループの中、スマートマスクは行の層のマスク、それ以外は断る理由をステータスバーへ）。
 pub fn layer_list_drop(
     ui: &Ui,
     app: &mut AppState,
@@ -1333,8 +1333,8 @@ pub fn layer_list_drop(
                 PlaceTarget::Mask(row.id)
             })
         }
-        // 画像は 1 枚のペイントの層として、スマートマテリアルと同じ所へ置く
-        ItemKind::SmartMaterial | ItemKind::Image => {
+        // 画像は 1 枚のペイントの層、マテリアルは塗りつぶしの層として、スマートマテリアルと同じ所へ置く
+        ItemKind::SmartMaterial | ItemKind::Material | ItemKind::Image => {
             let target = gap_or_group(rows, position);
             match target {
                 DropTarget::Gap(gap) => {
@@ -1452,7 +1452,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .info(&rel)
         .and_then(|i| i.inspected.block.clone());
     let unreadable = matches!(block, Some(shelf::Block::Unreadable(_)));
-    let uses = matches!(kind, ItemKind::Brush | ItemKind::Material);
+    let uses = kind == ItemKind::Brush;
     let mut items = Vec::new();
     if uses {
         items.push(

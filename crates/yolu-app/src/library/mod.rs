@@ -45,7 +45,7 @@ use self::service::{Service, Work};
 use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::shelf::{
-    Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
+    Attempt, Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
 use crate::state::AppState;
 use crate::windows::CloseJob;
@@ -207,9 +207,11 @@ impl Drop for ListingRun {
     }
 }
 
-/// 別のスレッドで走っているライブラリへの書き込み（ライブラリへ入れる・ファイルを足す）。
+/// 別のスレッドで走っているライブラリへの書き込み（ライブラリへ入れる・ファイルを足す・マテリアルとして保存する）。
 pub(crate) struct PendingWrite {
     pub(crate) name: String,
+    /// 押された操作。断られたときの知らせの「何が」をこれで決める（書き込みが途中で止まったときも）。
+    pub(crate) attempt: Attempt,
     pub(crate) rx: Receiver<ops::WriteDone>,
     /// やめたことをスレッドへ伝える旗（書き込みの区切りで切り上げる）。
     pub(crate) cancel: Arc<AtomicBool>,
@@ -552,7 +554,7 @@ impl LibraryState {
         known.info.inspected.texture(ctx, &format!("library:{rel}"))
     }
 
-    /// 見えている項目のうちまだ見ていないものを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。ブラシ・マテリアルはその場で決める。
+    /// 見えている項目のうちまだ見ていないものを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。ブラシはその場で決める。
     pub fn request_probes(&mut self, rels: &[String]) {
         self.clock += 1;
         self.visible_now = rels.iter().cloned().collect();
@@ -575,7 +577,7 @@ impl LibraryState {
                 len: entry.len,
             };
             let limits = self.limits;
-            if matches!(entry.kind, files::Kind::Brush | files::Kind::Material) {
+            if entry.kind == files::Kind::Brush {
                 let info = probe::probe(&target, limits, None, &service::Cancel::default());
                 self.known.insert(
                     rel.clone(),

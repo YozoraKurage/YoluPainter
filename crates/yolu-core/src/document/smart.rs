@@ -76,6 +76,27 @@ impl Document {
         material.notes = notes;
         Ok(material)
     }
+    /// 塗りつぶしの層 1 つを、マテリアル（置くと新しい塗りつぶしの層になる素材）として写す。持つのは塗りつぶしの見た目を決める物
+    /// （チャンネルの値と有効の印・画像と投影・グラデーション・層の画素のフィルター）で、層の並びの中の置き場に結び付く物（マスク・
+    /// Anchor・クリッピング・不透明度・合成モード・チャンネルごとの合成・隠した状態・ロック）は持たず、新しい塗りつぶしの層の既定にする。
+    /// 塗りつぶしの層でなければ断る。
+    pub fn capture_material(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
+        if self.layers[self.index_of(id)?].kind != LayerKind::Fill {
+            return Err(CoreError::InvalidArgument("塗りつぶしの層ではありません"));
+        }
+        let mut material = self.capture_smart_material(&[id], name)?;
+        for l in &mut material.layers {
+            l.mask = None;
+            l.anchor = None;
+            l.clipping = false;
+            l.opacity = 1.0;
+            l.blend_mode = crate::BlendMode::Normal;
+            l.blends.clear();
+            l.visible = true;
+            l.locks = crate::LayerLocks::NONE;
+        }
+        Ok(material)
+    }
     pub fn capture_smart_mask(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
         self.ensure_no_stroke()?;
         check_name(name)?;

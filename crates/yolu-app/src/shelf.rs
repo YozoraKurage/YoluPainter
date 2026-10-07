@@ -5,8 +5,9 @@
 //! - 組み込み: 同梱のスマートマテリアル（`yolu_core::smart_library`）は、棚の項目の後ろに「組み込み」として並ぶ。プロジェクトの棚には入らず
 //!   （保存・書き出し・消すの対象外）、置くと文書へ写る。ID は `builtin:` で始まり、素材は項目を見るとき・置くときにコードから組む。
 //! - 層からの保存: 選んだ層（グループなら中身ごと）・層のマスクを core で捕まえ、.ylsmart（`SmartFile::from_core`）にして棚へ入れる。
-//!   文書は変えない。棚の変更は文書の Undo の履歴に入らず、未保存にはなる（Unity 版と同じ）。
-//! - 置く: 棚の .ylsmart を core の素材へ戻し、`place_smart_material`（層の組。1 回の Undo）・`apply_smart_mask`（マスクの入れ替え。
+//!   文書は変えない。棚の変更は文書の Undo の履歴に入らず、未保存にはなる（Unity 版と同じ）。塗りつぶしの層は、マテリアル
+//!   （`Document::capture_material`。中身は .ylsmart と同じ形）として個人のライブラリへも書ける（`library::ops`）。
+//! - 置く: 棚の .ylsmart（マテリアルも同じ形）を core の素材へ戻し、`place_smart_material`（層の組。1 回の Undo）・`apply_smart_mask`（マスクの入れ替え。
 //!   1 回の Undo）で今の文書へ。置けないときは何も変えず、理由を短く出す（画像入り・Generator の再固定・core が持てない中身・
 //!   チャンネルの不一致・予算）。
 //! - 画面のスレッドを止める時間: 棚へ足す・消す・読み込むは、yolu-io が棚全体を検証し直すので棚の大きさに比例する。大きな素材
@@ -138,6 +139,11 @@ impl ItemKind {
         matches!(self, ItemKind::SmartMaterial | ItemKind::SmartMask)
     }
 
+    /// 中身が .ylsmart の形の種類か（スマートマテリアル・スマートマスクと、塗りつぶしの層を持つマテリアル）。見る・置くは同じ道を通る。
+    pub fn is_smart_file(self) -> bool {
+        self.is_smart() || self == ItemKind::Material
+    }
+
     fn resource_kind(self) -> Option<ResourceKind> {
         match self {
             ItemKind::SmartMaterial => Some(ResourceKind::SmartMaterial),
@@ -150,7 +156,7 @@ impl ItemKind {
 /// 置けない理由（項目を見たときにわかる分。チャンネルの不一致や予算は置くときに core が断る）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    /// ブラシ・マテリアルは、ここではまだ置けない（画像は 1 枚のペイント層として置ける）。
+    /// ブラシは、ここではまだ置けない（画像は 1 枚のペイント層、マテリアルは塗りつぶしの層として置ける）。
     Kind(ItemKind),
     /// 画像を同梱した素材（編集用に開けない）。
     Images,
@@ -336,14 +342,14 @@ impl Input {
                 })
                 .0
             }
-            ItemKind::SmartMaterial | ItemKind::SmartMask => {
+            ItemKind::SmartMaterial | ItemKind::SmartMask | ItemKind::Material => {
                 let key = Cache::key("smart", &self.content);
                 remembered(cache, &key, stopped, || {
                     inspect_smart_kind(bytes, self.preview_budget)
                 })
                 .0
             }
-            ItemKind::Brush | ItemKind::Material => Inspected::bare(Some(Block::Kind(self.kind))),
+            ItemKind::Brush => Inspected::bare(Some(Block::Kind(self.kind))),
         }
     }
 }
@@ -950,7 +956,7 @@ impl ShelfState {
             id: id.to_owned(),
             kind,
             content: r.content.clone(),
-            bytes: if is_builtin(id) || matches!(kind, ItemKind::Brush | ItemKind::Material) {
+            bytes: if is_builtin(id) || kind == ItemKind::Brush {
                 None
             } else {
                 self.shelf.content_arc(id)
@@ -988,7 +994,7 @@ impl ShelfState {
     }
 
     /// 見えている項目のうち、まだ見ていないものの情報とサムネイルを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。
-    /// 置けるか・読めるかの判定が要らない種類（ブラシ・マテリアル）はその場で決める。`cache` はディスクのキャッシュ。
+    /// 置けるか・読めるかの判定が要らない種類（ブラシ）はその場で決める。`cache` はディスクのキャッシュ。
     pub fn request_inspections(&mut self, ids: &[String], cache: Option<&Arc<Cache>>) {
         for id in ids {
             if self.inspected.contains_key(id) {
@@ -997,7 +1003,7 @@ impl ShelfState {
             let Some(input) = self.input_of(id) else {
                 continue;
             };
-            if matches!(input.kind, ItemKind::Brush | ItemKind::Material) {
+            if input.kind == ItemKind::Brush {
                 let info = input.run(None, None);
                 self.inspected.insert(id.clone(), info);
                 continue;
@@ -1091,7 +1097,7 @@ impl ShelfState {
         self.info(id)?.block.as_ref()
     }
 
-    /// 一覧に置けないしるし（警告の印）を出す素材か。素材の中身で置けないものだけで、種類で置けないもの（ブラシ・マテリアル）は
+    /// 一覧に置けないしるし（警告の印）を出す素材か。素材の中身で置けないものだけで、種類で置けないもの（ブラシ）は
     /// 印を付けず、名前の帯に理由を出す。
     pub fn warns(&self, id: &str) -> bool {
         self.block_of(id)
@@ -1513,6 +1519,8 @@ pub enum ShelfOp {
     LibraryReveal,
     /// ライブラリの一覧を読み直す。
     LibraryRefresh,
+    /// 塗りつぶしの層をマテリアルとして個人のライブラリへ書く（`.ylmaterial`。別のスレッドで書く。文書と棚は変えない）。
+    SaveAsMaterial(LayerId),
 }
 
 /// 棚へ入れた結果（新しく入ったか、同じ中身が既にあったか）。
@@ -1719,6 +1727,7 @@ impl AppState {
             }
             ShelfOp::LibraryReveal => self.dialog_request = Some(DialogRequest::LibraryReveal),
             ShelfOp::LibraryRefresh => self.library.refresh(),
+            ShelfOp::SaveAsMaterial(id) => self.library_save_material(id),
         }
     }
 
@@ -2075,7 +2084,7 @@ impl AppState {
             res.metadata["width"].as_u64().unwrap_or(0) as u32,
             res.metadata["height"].as_u64().unwrap_or(0) as u32,
         );
-        if !kind.is_some_and(|k| k.is_smart() || k == ItemKind::Image) {
+        if !kind.is_some_and(|k| k.is_smart_file() || k == ItemKind::Image) {
             let block = Block::Kind(kind.unwrap_or(ItemKind::Brush));
             return self.refuse(Source::Assets, lang.with_reason(block.reason(lang), ""));
         }
@@ -2486,6 +2495,8 @@ pub(crate) enum Attempt {
     LibraryAdd,
     /// ライブラリから消す。
     LibraryRemove,
+    /// 塗りつぶしの層をマテリアルとしてライブラリへ保存する。
+    MaterialSave,
 }
 
 impl Attempt {
@@ -2503,6 +2514,7 @@ impl Attempt {
                         Attempt::LibraryUse => "ライブラリから取り込めません",
                         Attempt::LibraryAdd => "ライブラリに入れられません",
                         Attempt::LibraryRemove => "ライブラリから消せません",
+                        Attempt::MaterialSave => "マテリアルとして保存できません",
                     },
                     match self {
                         Attempt::ShelfSave => "Cannot save to the project's assets",
@@ -2513,6 +2525,7 @@ impl Attempt {
                         Attempt::LibraryUse => "Cannot import from the library",
                         Attempt::LibraryAdd => "Cannot add to the library",
                         Attempt::LibraryRemove => "Cannot remove from the library",
+                        Attempt::MaterialSave => "Cannot save as a material",
                     },
                 )
                 .to_owned();
@@ -2528,6 +2541,7 @@ impl Attempt {
                 Attempt::LibraryUse => format!("{q}をライブラリから取り込めません"),
                 Attempt::LibraryAdd => format!("{q}をライブラリに入れられません"),
                 Attempt::LibraryRemove => format!("{q}をライブラリから消せません"),
+                Attempt::MaterialSave => format!("{q}をマテリアルとして保存できません"),
             },
             Lang::En => match self {
                 Attempt::ShelfSave => format!("Cannot save {q} to the project's assets"),
@@ -2538,6 +2552,7 @@ impl Attempt {
                 Attempt::LibraryUse => format!("Cannot import {q} from the library"),
                 Attempt::LibraryAdd => format!("Cannot add {q} to the library"),
                 Attempt::LibraryRemove => format!("Cannot remove {q} from the library"),
+                Attempt::MaterialSave => format!("Cannot save {q} as a material"),
             },
         }
     }

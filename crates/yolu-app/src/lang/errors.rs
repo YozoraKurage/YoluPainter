@@ -751,6 +751,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "同じ名前のチャンネルがある" => "Channel name already exists",
         "塗りつぶしの層だけが値を持つ" => "Values require a fill layer",
+        "塗りつぶしの層ではありません" => "Not a fill layer",
         "塗りつぶしの層には描けない" => "Cannot paint a fill layer",
         "塗りつぶしはラスターの層だけ" => "Fill requires a raster layer",
         "多角形の点が多すぎる（100000 まで）" => {

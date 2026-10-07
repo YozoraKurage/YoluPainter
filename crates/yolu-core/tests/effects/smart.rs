@@ -1,7 +1,7 @@
 use yolu_core::smart::{SmartKind, SmartMaterial, SmartPlacement, SmartResampling};
 use yolu_core::{
-    BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace, CoreError,
-    Document, LayerId, Rgba8,
+    BlendMode, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
+    CoreError, Document, LayerId, LayerKind, LayerLocks, Rgba8,
 };
 /// 文書の変わったかどうかの目安: 層の数・画素のバイト数・版・Undo の有無。
 fn state(d: &Document) -> (usize, u64, u64, bool) {
@@ -563,4 +563,78 @@ fn a_smart_material_does_not_go_on_a_mask_and_a_smart_mask_not_on_a_layer() {
         "{on_layer}"
     );
     assert_eq!(state(&d), before);
+}
+#[test]
+fn a_material_keeps_the_fill_and_drops_what_ties_it_to_its_place() {
+    let mut d = Document::with_tile_size(4, 3, 2).unwrap();
+    let below = d.add_layer("下").unwrap();
+    let iron = Rgba8::new(90, 80, 70, 255);
+    let metal = Rgba8::new(255, 255, 255, 255);
+    let fill = d
+        .add_fill_layer(
+            "鉄",
+            &[(Channel::Color, iron), (Channel::Metallic, metal)],
+            None,
+        )
+        .unwrap();
+    d.set_layer_opacity(fill, 0.5, false).unwrap();
+    d.set_layer_blend_mode(fill, BlendMode::Multiply).unwrap();
+    d.set_channel_blend(
+        fill,
+        Channel::Color,
+        ChannelBlend::new(Some(BlendMode::Screen), Some(0.3)),
+        false,
+    )
+    .unwrap();
+    d.set_layer_clipping(fill, true).unwrap();
+    d.add_layer_mask(fill).unwrap();
+    d.set_layer_visible(fill, false).unwrap();
+    d.set_layer_locks(fill, LayerLocks::TRANSPARENCY).unwrap();
+    let before = state(&d);
+    let material = d.capture_material(fill, "鉄").unwrap();
+    assert_eq!(state(&d), before, "写しても文書は変わらない");
+    assert_eq!(material.kind(), SmartKind::Material);
+    assert_eq!(material.name(), "鉄");
+    let [l] = material.layers() else {
+        panic!("塗りつぶしの層 1 つ: {}", material.layers().len())
+    };
+    // 見た目を決める物は残る
+    assert_eq!(l.kind(), LayerKind::Fill);
+    assert_eq!(l.fill_value(Channel::Color), Some(iron));
+    assert_eq!(l.fill_value(Channel::Metallic), Some(metal));
+    assert_eq!(material.channels(), [Channel::Color, Channel::Metallic]);
+    // 置き場に結び付く物は、新しい塗りつぶしの層の既定
+    assert!(l.mask().is_none() && l.anchor().is_none());
+    assert!(!l.clipping() && l.visible());
+    assert_eq!((l.opacity(), l.blend_mode()), (1.0, BlendMode::Normal));
+    assert!(l.channel_blend(Channel::Color).is_empty());
+    assert_eq!(l.locks(), LayerLocks::NONE);
+    let source = d.layer(fill).unwrap();
+    assert!(source.mask().is_some() && source.clipping() && !source.visible());
+    // 置くと塗りつぶしの層 1 つが 1 回の Undo で入る
+    let mut target = Document::with_tile_size(4, 3, 2).unwrap();
+    let placed = target
+        .place_smart_material(&material, &SmartPlacement::default())
+        .unwrap();
+    assert_eq!(target.layers().len(), 1);
+    let layer = target.layer(placed.layer_id).unwrap();
+    assert_eq!(
+        (layer.kind(), layer.fill_value(Channel::Color)),
+        (LayerKind::Fill, Some(iron))
+    );
+    target.undo().unwrap();
+    assert!(target.layers().is_empty());
+    // 塗りつぶしの層でなければ断り、文書は変えない
+    let group = d.add_group("組", None).unwrap();
+    for id in [below, group] {
+        let refused = d.capture_material(id, "x").unwrap_err();
+        assert!(
+            matches!(refused, CoreError::InvalidArgument(m) if m.contains("塗りつぶし")),
+            "{refused}"
+        );
+    }
+    assert!(matches!(
+        d.capture_material(LayerId(u128::MAX), "x"),
+        Err(CoreError::LayerNotFound)
+    ));
 }

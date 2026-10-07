@@ -388,25 +388,28 @@ fn headless_a_placement_over_the_pixel_budget_is_refused_whole() {
 }
 
 #[test]
-fn headless_brushes_and_materials_are_listed_but_not_placed_yet() {
+fn headless_brushes_are_listed_but_not_placed_yet_and_materials_are_placed_in_one_undo() {
     let mut s = AppState::new(16, 16);
     s.shelf = ShelfState::with_shelf(fixture_shelf());
     s.shelf.inspect_pending(100);
     let before = fingerprint(&s);
-    for (kind, word) in [("brush", "ブラシ"), ("material", "マテリアル")] {
-        for id in ids(&s, kind) {
-            place(&mut s, &id);
-            assert!(
-                s.message.contains(word) && s.message.contains("置けません"),
-                "{kind}: {}",
-                s.message
-            );
-            assert_eq!(
-                s.shelf.block_of(&id),
-                Some(&Block::Kind(ItemKind::of(kind).unwrap()))
-            );
-        }
+    for id in ids(&s, "brush") {
+        place(&mut s, &id);
+        assert!(
+            s.message.contains("ブラシ") && s.message.contains("置けません"),
+            "{}",
+            s.message
+        );
+        assert_eq!(s.shelf.block_of(&id), Some(&Block::Kind(ItemKind::Brush)));
     }
+    assert_eq!(fingerprint(&s), before);
+    // マテリアル（中身は .ylsmart と同じ形。人工データは 2 層）は、スマートマテリアルと同じ道で置ける
+    let material = ids(&s, "material").pop().unwrap();
+    assert_eq!(s.shelf.block_of(&material), None);
+    place(&mut s, &material);
+    assert!(s.doc.layers().len() >= 3, "{}", s.message);
+    assert!(s.message.starts_with("置きました: multi"), "{}", s.message);
+    s.apply(Action::Undo);
     assert_eq!(fingerprint(&s), before);
     s.lang = Lang::En;
     let brush = ids(&s, "brush").pop().unwrap();
@@ -492,17 +495,13 @@ fn headless_items_are_inspected_once_for_thumbnails_details_and_blocks() {
         let kind = ItemKind::of(&r.kind).unwrap();
         let thumb = shelf.texture(&ctx, &r.id);
         match kind {
-            ItemKind::Image | ItemKind::SmartMaterial | ItemKind::SmartMask => {
-                assert!(thumb.is_some(), "{}: サムネイルがある", r.name)
-            }
-            _ => assert!(thumb.is_none(), "{}", r.name),
+            ItemKind::Brush => assert!(thumb.is_none(), "{}", r.name),
+            _ => assert!(thumb.is_some(), "{}: サムネイルがある", r.name),
         }
         let block = shelf.block_of(&r.id);
         match kind {
-            ItemKind::Image | ItemKind::SmartMaterial | ItemKind::SmartMask => {
-                assert!(block.is_none(), "{}: {block:?}", r.name)
-            }
-            _ => assert_eq!(block, Some(&Block::Kind(kind))),
+            ItemKind::Brush => assert_eq!(block, Some(&Block::Kind(kind))),
+            _ => assert!(block.is_none(), "{}: {block:?}", r.name),
         }
     }
     let raster = shelf

@@ -589,6 +589,19 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         )
         .enabled(free),
     );
+    // 塗りつぶしの層だけ、マテリアルとしてライブラリへ（ほかの種類には出さない。保存できない塗りつぶしは押せなくし、理由はツールチップ）
+    if let Some(l) = layer.filter(|l| l.kind() == crate::engine::LayerKind::Fill) {
+        let refusal = crate::library::ops::material_refusal(lang, l);
+        let entry = Entry::item(
+            lang.pick("マテリアルとして保存", "Save as Material"),
+            Action::Shelf(ShelfOp::SaveAsMaterial(id)),
+        )
+        .enabled(free && refusal.is_none());
+        v.push(match refusal {
+            Some(reason) => entry.tooltip(reason),
+            None => entry,
+        });
+    }
     if has_mask {
         v.push(
             Entry::item(

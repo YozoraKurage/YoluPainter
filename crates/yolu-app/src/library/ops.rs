@@ -1,4 +1,5 @@
-//! 個人のライブラリの操作（`AppState` の側）: プロジェクトで使う・ライブラリへ入れる・ファイルを足す・消す・置く。
+//! 個人のライブラリの操作（`AppState` の側）: プロジェクトで使う・ライブラリへ入れる・ファイルを足す・消す・置く・
+//! 塗りつぶしの層をマテリアルとして保存する。
 //!
 //! 時間のかかる読み書き（ファイルの読み込み・検証・書き込み）は別のスレッドで走り、やめられる。結果は毎フレーム `library_poll` が受け取る。
 //! 断られたら何も変えず、理由を短くステータスバーへ出す。ライブラリのフォルダの外は読まない・書かない・消さない
@@ -16,6 +17,7 @@ use yolu_io::smart::SmartFile;
 
 use super::image as png;
 use super::{PendingWrite, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
+use crate::engine::{LayerId, LayerKind};
 use crate::lang::Lang;
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::shelf::{
@@ -78,6 +80,17 @@ fn stem_of(rel: &str) -> String {
     leaf.rsplit_once('.')
         .map_or(leaf, |(stem, _)| stem)
         .to_owned()
+}
+
+/// 1 つのファイルをライブラリへ入れた結果の文（「「Images/a.png」をライブラリに入れました。」・すでにあったとき）。
+fn put_note(lang: Lang, rel: &str, existed: bool) -> String {
+    let name = lang.quote(rel);
+    match (lang, existed) {
+        (Lang::Ja, false) => format!("{name}をライブラリに入れました。"),
+        (Lang::Ja, true) => format!("{name}はすでにライブラリにあります。"),
+        (Lang::En, false) => format!("Added {name} to the library."),
+        (Lang::En, true) => format!("{name} is already in the library."),
+    }
 }
 
 /// 読み込みの結果の件数（入れた分とすでにあった分。0 の分は出さない）。
@@ -144,10 +157,11 @@ impl AppState {
         }
     }
 
-    /// 別のスレッドでライブラリへ書く仕事を始める。`job` は取り消しの旗と言語をもらって結果を返す。
+    /// 別のスレッドでライブラリへ書く仕事を始める。`job` は取り消しの旗と言語をもらって結果を返す。`attempt` は断られたときの知らせの「何が」。
     fn library_spawn_write(
         &mut self,
         name: String,
+        attempt: Attempt,
         job: impl FnOnce(&AtomicBool, Lang) -> WriteDone + Send + 'static,
     ) {
         let lang = self.lang;
@@ -175,7 +189,12 @@ impl AppState {
                 lang.pick("ライブラリへ書き込み中", "Writing to the library")
             ),
         );
-        self.library.write = Some(PendingWrite { name, rx, cancel });
+        self.library.write = Some(PendingWrite {
+            name,
+            attempt,
+            rx,
+            cancel,
+        });
     }
 
     /// 別のスレッドの書き込みが終わるまで待って結果を入れる（試験用）。
@@ -200,30 +219,19 @@ impl AppState {
         };
         let Some(done) = done else { return };
         // 止まった書き込みの名前（まとめて入れるときは件数）は、断りの文に添えない
-        self.library.write.take().expect("上で確かめた");
+        let attempt = self.library.write.take().expect("上で確かめた").attempt;
         self.library.refresh();
         match done {
             Some(WriteDone::Put { name, result }) => match result {
                 Ok(added) => {
-                    self.info(
-                        Source::Library,
-                        format!(
-                            "{}: {}",
-                            if added.existed {
-                                lang.pick("すでにライブラリにあります", "Already in the library")
-                            } else {
-                                lang.pick("ライブラリに入れました", "Added to the library")
-                            },
-                            added.rel
-                        ),
-                    );
+                    self.info(Source::Library, put_note(lang, &added.rel, added.existed));
                 }
                 Err(e) => {
                     let why = crate::lang::library_io_error(lang, &e);
                     self.cannot(
                         NoticeKind::Error,
                         Source::Library,
-                        Attempt::LibraryAdd,
+                        attempt,
                         Some(&name),
                         &why,
                     );
@@ -239,14 +247,8 @@ impl AppState {
                     self.info(
                         Source::Library,
                         match (added.as_slice(), existing.as_slice()) {
-                            ([name], []) => format!(
-                                "{}: {name}",
-                                lang.pick("ライブラリに入れました", "Added to the library")
-                            ),
-                            ([], [name]) => format!(
-                                "{}: {name}",
-                                lang.pick("すでにライブラリにあります", "Already in the library")
-                            ),
+                            ([name], []) => put_note(lang, name, false),
+                            ([], [name]) => put_note(lang, name, true),
                             _ => count_note(lang, new, old),
                         },
                     );
@@ -264,13 +266,7 @@ impl AppState {
             }
             None => {
                 let why = lang.pick("書き込みが途中で止まりました", "The write stopped midway");
-                self.cannot(
-                    NoticeKind::Error,
-                    Source::Library,
-                    Attempt::LibraryAdd,
-                    None,
-                    why,
-                );
+                self.cannot(NoticeKind::Error, Source::Library, attempt, None, why);
             }
         }
     }
@@ -333,28 +329,84 @@ impl AppState {
                     })
                 });
             if let Some(rel) = same {
-                self.info(
-                    Source::Library,
-                    format!(
-                        "{}: {rel}",
-                        lang.pick("すでにライブラリにあります", "Already in the library")
-                    ),
-                );
+                self.info(Source::Library, put_note(lang, &rel, true));
                 return;
             }
         }
         let shown = name.clone();
-        self.library_spawn_write(shown, move |cancel, _| WriteDone::Put {
-            result: files::add(
-                &root,
-                file_kind.folder(),
-                &name,
-                file_kind,
-                &bytes,
-                Some(cancel),
-            ),
-            name,
+        self.library_spawn_write(shown, Attempt::LibraryAdd, move |cancel, _| {
+            WriteDone::Put {
+                result: files::add(
+                    &root,
+                    file_kind.folder(),
+                    &name,
+                    file_kind,
+                    &bytes,
+                    Some(cancel),
+                ),
+                name,
+            }
         });
+    }
+
+    // ───────── マテリアルとして保存 ─────────
+
+    /// 塗りつぶしの層をマテリアル（`.ylmaterial`。中身は塗りつぶしの層 1 つの .ylsmart）として、ライブラリの種類のフォルダへ書く。
+    /// 名前は層の名前で、同じ名前のファイルがあれば番号を付ける。保存のたびに層の ID を新しくするので、同じ層でもバイト列は毎回違い、
+    /// 「同じバイト列は書かない」には当たらない。正本への変換と書き込みは別のスレッドで、やめられる。文書とプロジェクトのアセットは変えない。
+    pub(crate) fn library_save_material(&mut self, id: LayerId) {
+        let lang = self.lang;
+        let Some(layer) = self.doc.layer(id) else {
+            let reason = lang.pick("レイヤーがありません", "Layer not found");
+            return self.refuse_material(None, reason);
+        };
+        let name = layer.name().to_owned();
+        if let Some(reason) = material_refusal(lang, layer) {
+            return self.refuse_material(Some(&name), reason);
+        }
+        let Some(root) = self.library_root() else {
+            return self.refuse_material(Some(&name), no_location(lang));
+        };
+        if let Some(reason) = self.library.busy_reason(lang) {
+            return self.refuse_material(Some(&name), reason);
+        }
+        let material = match self.doc.capture_material(id, &name) {
+            Ok(m) => m,
+            Err(e) => {
+                return self.cannot(
+                    NoticeKind::of_core(&e),
+                    Source::Library,
+                    Attempt::MaterialSave,
+                    Some(&name),
+                    &lang.core_error(&e),
+                )
+            }
+        };
+        let writer = crate::project::writer();
+        self.library_spawn_write(name.clone(), Attempt::MaterialSave, move |cancel, _| {
+            let kind = files::Kind::Material;
+            let result = SmartFile::from_core(&material, &writer).and_then(|file| {
+                files::add(
+                    &root,
+                    kind.folder(),
+                    &name,
+                    kind,
+                    file.file_bytes(),
+                    Some(cancel),
+                )
+            });
+            WriteDone::Put { name, result }
+        });
+    }
+
+    fn refuse_material(&mut self, name: Option<&str>, reason: &str) {
+        self.cannot(
+            NoticeKind::Refusal,
+            Source::Library,
+            Attempt::MaterialSave,
+            name,
+            reason,
+        );
     }
 
     /// 外のファイル（PNG・.ylsmart）を検証して、ライブラリへ足す（まとめて 1 つの知らせ。断ったファイルは名前と理由を残す）。
@@ -387,7 +439,7 @@ impl AppState {
                 Lang::En => format!("{} files", many.len()),
             },
         };
-        self.library_spawn_write(name, move |cancel, lang| {
+        self.library_spawn_write(name, Attempt::LibraryAdd, move |cancel, lang| {
             let (mut added, mut existing, mut refused) = (Vec::new(), Vec::new(), Vec::new());
             for path in &paths {
                 if cancel.load(Ordering::SeqCst) {
@@ -520,7 +572,7 @@ impl AppState {
         );
     }
 
-    /// ライブラリのファイルを、棚へ入れずに、読んで文書へ置く（スマート素材と画像。層の組・マスクの入れ替えは 1 回の Undo）。
+    /// ライブラリのファイルを、棚へ入れずに、読んで文書へ置く（スマート素材・マテリアルと画像。層の組・マスクの入れ替えは 1 回の Undo）。
     pub(crate) fn library_place(&mut self, rel: &str, target: PlaceTarget) {
         let lang = self.lang;
         let Some(root) = self.library_root() else {
@@ -536,12 +588,8 @@ impl AppState {
             return;
         };
         let name = stem_of(rel);
-        if matches!(kind, files::Kind::Brush | files::Kind::Material) {
-            let block = Block::Kind(if kind == files::Kind::Brush {
-                ItemKind::Brush
-            } else {
-                ItemKind::Material
-            });
+        if kind == files::Kind::Brush {
+            let block = Block::Kind(ItemKind::Brush);
             return self.refuse(Source::Library, lang.with_reason(block.reason(lang), ""));
         }
         let limit = self.library.limits.read;
@@ -561,6 +609,7 @@ impl AppState {
             files::Kind::Image => png::dimensions(&bytes)
                 .map_err(|p| crate::lang::library_io_error(lang, &png_error(p)))
                 .and_then(|(w, h)| image_as_material(lang, &bytes, w, h, &name)),
+            files::Kind::Material => material_from(lang, &bytes),
             _ => smart_material_from(lang, &bytes),
         };
         match made {
@@ -640,6 +689,28 @@ impl AppState {
             ),
         }
     }
+}
+
+/// 層をマテリアルとして保存できない理由（できるなら None）。塗りつぶしの層だけで、アセットの画像を使う層は断る（.ylsmart に画像を
+/// 入れると、今は置けない素材になる。画像の ID だけを持たせると、ほかのプロジェクトでは指す画像が無い）。
+pub(crate) fn material_refusal(lang: Lang, layer: &crate::engine::Layer) -> Option<&'static str> {
+    if layer.kind() != LayerKind::Fill {
+        Some(lang.pick("塗りつぶしのレイヤーではありません", "Not a fill layer"))
+    } else if layer.fill_images().next().is_some() {
+        Some(lang.pick("画像を使っています", "It uses images"))
+    } else {
+        None
+    }
+}
+
+/// マテリアルのファイル（`.ylmaterial`）のバイト列を、置ける core の素材にする。中身がスマートマスクのファイルは、プロジェクトの
+/// アセットへも入らない（索引の種類と中身の種類が合わない）ので、置かずに形式が合わないと断る。
+fn material_from(lang: Lang, bytes: &[u8]) -> Result<yolu_core::smart::SmartMaterial, String> {
+    let material = smart_material_from(lang, bytes)?;
+    if material.kind() == SmartKind::Mask {
+        return Err(super::probe::wrong_format().reason(lang).to_owned());
+    }
+    Ok(material)
 }
 
 /// 外のファイル 1 つを検証して、ライブラリへ足す（PNG は寸法、.ylsmart は読めるかを確かめる）。
