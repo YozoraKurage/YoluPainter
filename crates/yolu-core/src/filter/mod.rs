@@ -71,7 +71,7 @@ pub enum SlopeMode {
     Min,
     Max,
 }
-/// モルフォロジーの向き（丸いウィンドウの最大で太らせる・最小で細らせる）。
+/// モルフォロジーの向き（丸い範囲の最大で太らせる・最小で細らせる）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MorphologyMode {
     Dilate,
@@ -147,7 +147,7 @@ pub enum Settings {
         scale: f64,
         seed: i32,
     },
-    /// モルフォロジー（75）: 丸いウィンドウの最大（dilate）・最小（erode）。スカラーとマスクだけ。
+    /// モルフォロジー（75）: 丸い範囲の最大（dilate）・最小（erode）。スカラーとマスクだけ。
     Morphology {
         mode: MorphologyMode,
         radius: u32,
@@ -161,7 +161,7 @@ pub enum Settings {
     HighPass {
         radius: u32,
     },
-    /// メディアン（78）: 正方形のウィンドウの中央値（チャンネルごと）。
+    /// メディアン（78）: 正方形の範囲の中央値（チャンネルごと）。
     Median {
         radius: u32,
     },

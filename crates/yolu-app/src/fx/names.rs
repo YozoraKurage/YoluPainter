@@ -318,10 +318,9 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
             "片側の長さ（画素。両側へぼかす）",
             "Length to each side (pixels)",
         ),
-        ("morphology", "radius") => lang.pick(
-            "丸いウィンドウの半径（画素）",
-            "Round window radius (pixels)",
-        ),
+        ("morphology", "radius") => {
+            lang.pick("丸い範囲の半径（画素）", "Round window radius (pixels)")
+        }
         ("edge_detect", "width") => lang.pick(
             "輪郭を探す前にぼかす幅（画素）",
             "Blur before finding edges (pixels)",
@@ -334,7 +333,7 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
             "Only parts brighter than this glow",
         ),
         ("median", "radius") => lang.pick(
-            "正方形のウィンドウの半径（画素）",
+            "正方形の範囲の半径（画素）",
             "Square window radius (pixels)",
         ),
         (_, "seed") => lang.pick(

@@ -399,7 +399,7 @@ fn morphology(
             }
         }
     }
-    // 丸いウィンドウの行ごとの半幅（整数の平方根）
+    // 丸い範囲の行ごとの半幅（整数の平方根）
     let r = i64::from(radius);
     let widths: Vec<i64> = (0..=r)
         .map(|dy| {

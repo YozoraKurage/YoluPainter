@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.5.0
+
+### 日本語
+
+- **テキストツール**（`T`）: キャンバスで打ってテキストレイヤーを作り、あとからフォント・サイズ・色・行間・字間・揃え・折り返しを直せます。フォントは同梱の 2 つ・PC に入っているフォント・ファイルから選べます。フォントは .ylp に入れず、見つからないときは描いた画素のまま見せます。ステンシルを押したまま動かすキーは `Y` に移りました。
+- **効果**: フィルターを 10 種（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グロー）、ジェネレーターを 5 種（模様・ライト・マスクの組み立て・画像・アイランドごとのばらつき）追加しました。「フィルターを追加」と「ジェネレーターを追加」の入り口を分け、レイヤーとマスクのどちらに付けるかはサムネイルで選びます。ぼかし・シャープは UV の継ぎ目をまたいで、3D で隣の面の画素を読みます。
+- **パス**: 1 つのレイヤーに何本ものパス・角と取っ手・種類（ストローク・塗り・指先・消しゴム・リボン）・筆先・対称。塗りつぶしレイヤーにもパスを置けます。
+- **塗りつぶし**: 点のグラデーション（3D ビューと 2D で点を置く）、画像の異方性のフィルター、移動・回転・大きさを 1 つにまとめたギズモ。
+- **ツールの並び**: 左のツールバーとブラシのグループを、追加・削除・名前の変更・並べ替え・ほかのツールへの移動で自由に組み替えられます。並びは設定のフォルダの `tools.json` に残ります（0.4.x の並びは初回に引き継ぎます）。
+- **別ウィンドウ**: ドックのパネルを OS の別ウィンドウへ出して、別のモニターに置けます。メニューバーに「ウィンドウ」を追加し、パネルの一覧と「パネルの並びを戻す」（「表示」から移しました）を置きました。
+- **アクション**: レイヤー・マスク・効果の操作を、コマンドライン・MCP と同じ命令の列として記録し、取り消し 1 回で戻せる形で再生します（「ウィンドウ」→「アクション」）。
+- **アセット**: 塗りつぶしレイヤーをマテリアルとしてライブラリへ保存し、置けます。プロジェクトの品は「アセット」、自分のフォルダは「ライブラリ」と呼ぶようにしました。
+- **ポーズ**: FBX の中のテイク（アニメ）とフレームを選んで、そのポーズにできます。
+- **重なった UV**: ベイクで重なったテクセルにどのアイランドの値を焼くかを選べます。重なりを 2D のキャンバスとベイクのウィンドウで見られます。
+- **Live Link**: ファイルの受け渡しに作り直しました。Unity は FBX の場所と値を渡し、スタンドアロンが FBX と絵を自分で読みます。Color の元の絵が PSD ならレイヤーのまま入れ、送り直しで元の絵が変わったら、触っていないテクスチャセットへ入れ直します。**Unity のブリッジも 0.5.0 に上げてください**（Unity の中で描く機能は外し、Live Link とマテリアルへの適用だけのパッケージになりました）。
+- **MCP**: アプリが `127.0.0.1` の HTTP で MCP を受けます（設定で入れたときだけ）。Claude Code・Codex のプラグインと .mcpb は、起動しているアプリへつなぎます。
+- **大きな文書**: メモリの上限を超えたタイルをディスクへ逃がして、続けて描けます。
+- **知らせとログ**: 知らせに種類と出どころを付け、断り・失敗は「何が（なぜ）」の 1 文にしました。注意と失敗は「ログ」のパネルに残ります。
+- **色のウィンドウ**: 色の値の欄を押すと、その場で色相の円・16 進・描画色・カラーセットから当てられます。
+- **速さ**: 全レイヤーの結合・PSD の取り込み・PNG の書き出し・PSD の保存の確かめ・合成（1 スレッドで 1.6〜2.2 倍）・Normal のチャンネル・カラーバランス・色相/彩度・ブラシを速くしました。
+- **描き心地**: 描いている間にパネルが灰色になってチカチカしないようにしました。キャンバスと 3D ビューを並べているときも、手ぶれ補正などの 2D の設定を変えられます。描いている線と画面の反応の遅れを少し縮めました。
+- **言語**: 初めての起動は OS の言語に合わせ、日本語でなければ英語で始めます。
+- **そのほか**: 3D ビューの表示のテクスチャを UV の外へ塗り広げ、離れて見てもアイランドの縁がにじまないようにしました。光の強さ 1 は Unity のディレクショナルライトと同じ明るさです。Linux では Wayland の机でも X11（XWayland）で開きます。手動の ID の色を .ylp に保存できるようになりました。
+- **互換**: 新しい機能（テキストレイヤー・パスの一覧・0.5.0 の効果・点のグラデーション・継ぎ目の設定・ベイクの優先）を使った .ylp は新しい版で保存され、0.4.x と Unity 版では開けません。使っていない文書は今までどおりの版で保存します。合成の計算を変えたので、保存済みの文書の合成モードを重ねた所で、ごく一部の画素が 1 段変わることがあります。大きな PNG の書き出し（おおよそ 512 × 512 以上）はバイト列が変わります（画素は同じ）。
+
+### English
+
+- **Text tool** (`T`): Type on the canvas to create a text layer, and change its font, size, color, line spacing, tracking, alignment and wrapping later. Pick a bundled font, a font installed on your PC, or a font file. Fonts are not stored in the .ylp; when a font cannot be found, the drawn pixels are kept. Holding the key to move the stencil is now `Y`.
+- **Effects**: 10 new filters (Histogram Scan, Histogram Range, Slope Blur, Directional Blur, Warp, Dilate / Erode, Edge Detect, High Pass, Median, Glow) and 5 new generators (Pattern, Light, Mask Builder, Image, UV Island Variation). Add Filter and Add Generator are separate entrances, and thumbnails choose whether an effect goes on the layer or its mask. Blur and sharpen read across UV seams from the neighboring faces in 3D.
+- **Paths**: Several paths per layer, corners and handles, kinds (stroke, fill, smudge, eraser, ribbon), tips and symmetry. Fill layers can have paths too.
+- **Fill layers**: Point gradients (place points in the 3D view or in 2D), anisotropic filtering for images, and one gizmo that moves, rotates and scales.
+- **Tool layout**: Freely add, remove, rename, reorder and move the tools on the left toolbar and the brush groups between tools. The layout is kept in `tools.json` in the settings folder (the 0.4.x order is carried over on first start).
+- **Separate windows**: Move dock panels into separate OS windows and place them on another monitor. A new Window menu lists the panels and holds Reset Panel Layout (moved from View).
+- **Actions**: Record layer, mask and effect operations as a list of the same commands as the command line and MCP, and play them back as one undo step (Window → Actions).
+- **Assets**: Save a fill layer as a material in the library and place it. Project items are now called Assets, and your own folder is the Library.
+- **Pose**: Pick a take (animation) and frame inside the FBX to use that pose.
+- **Overlapping UVs**: Choose which island's value bakes into overlapping texels, and see the overlaps on the 2D canvas and in the bake window.
+- **Live Link**: Rebuilt on file exchange. Unity passes the FBX location and values, and the standalone reads the FBX and images itself. A PSD as the Color source comes in with its layers, and when the source image changes on resend, untouched texture sets are refilled. **Update the Unity bridge to 0.5.0 as well** (painting inside Unity was removed; the package now only does Live Link and applying to materials).
+- **MCP**: The app serves MCP over HTTP on `127.0.0.1` (only when enabled in the settings). The Claude Code and Codex plugins and the .mcpb connect to the running app.
+- **Large documents**: Tiles beyond the memory limit move to disk, so you can keep painting.
+- **Notices and log**: Notices show their kind and source, refusals and failures are one sentence saying what and why, and warnings and failures stay in the Log panel.
+- **Color window**: Clicking a color value opens a color window right there, with the hue wheel, hex, the paint colors and color sets.
+- **Speed**: Faster merging of all layers, PSD import, PNG export, PSD save verification, compositing (1.6–2.2× on one thread), Normal channels, color balance, hue/saturation and brushes.
+- **Painting feel**: Panels no longer flicker gray while you paint. Stabilizer and other 2D settings can be changed while the canvas and the 3D view are side by side. The delay between your input and the stroke and UI on screen is a little shorter.
+- **Language**: The first start follows the OS language, and starts in English unless it is Japanese.
+- **Other**: The 3D view's display textures are padded beyond the UVs so island edges do not bleed from a distance. Light intensity 1 matches a Unity directional light. On Linux, the app opens through X11 (XWayland) on Wayland desktops. Manual ID colors are now saved in the .ylp.
+- **Compatibility**: A .ylp that uses the new features (text layers, path lists, 0.5.0 effects, point gradients, the seam setting, bake priority) is saved in a newer version that 0.4.x and the Unity version cannot open. Documents that do not use them keep their version. Because compositing changed, a very small number of pixels where blend modes stack in saved documents may change by one step. Large PNG exports (roughly 512 × 512 and up) have different bytes (the same pixels).
+
 ## 0.4.0
 
 ### 日本語
