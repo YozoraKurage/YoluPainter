@@ -1611,7 +1611,7 @@ mod tests {
         // 「何が」と合わせて 1 つの文
         assert_eq!(
             Lang::En.with_reason("Cannot export", &en),
-            "Cannot export (Not enough system resources (OS error 11))."
+            format!("Cannot export (Not enough system resources (OS error {code})).")
         );
     }
 
