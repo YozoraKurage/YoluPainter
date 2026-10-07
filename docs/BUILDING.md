@@ -6,7 +6,7 @@ Rust の stable ツールチェーンと C/C++ のビルド環境が必要です
 
 表示には GPU と対応ドライバーが必要です。描画基盤は [wgpu](https://docs.rs/wgpu/30.0.1/wgpu/struct.Backends.html) で、Windows は Direct3D 12 または Vulkan、Mac は Metal、Linux は Vulkan などを使います。アプリ単体の起動に Unity は必要ありません。
 
-コマンドラインと MCP サーバー（`yolupainter-cli`。[使い方](CLI.md)）も使うときは、同じ命令の `-p yolu-app` を `-p yolu-cli` にして組みます（画面のライブラリを使わないので、組みは短く済みます）。
+コマンドラインと MCP サーバー（`yolupainter-cli`。[使い方](CLI.md)）も使うときは、同じ命令の `-p yolu-app` を `-p yolu-cli` にしてビルドします（画面のライブラリを使わないので、ビルドは短く済みます）。
 
 ## Windows
 
@@ -32,7 +32,7 @@ Windows Ink に相当する専用のペン入力処理はありません。マ�
 
 ## Linux（試用）
 
-C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。確かめの窓（はい・いいえ。保存していない変更を捨てるかなど）には `zenity` が要ります（無いと、その確かめが要る操作は取りやめになります）。画面の書体（BIZ UDPGothic）は実行ファイルに含まれるので、システムの日本語フォントは要りません。
+C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。確認のウィンドウ（はい・いいえ。保存していない変更を捨てるかなど）には `zenity` が要ります（無いと、その確かめが要る操作は取りやめになります）。画面の書体（BIZ UDPGothic）は実行ファイルに含まれるので、システムの日本語フォントは要りません。
 
 Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk`、`zenity` です。GPU ドライバーは機器に合うものを使用してください。
 

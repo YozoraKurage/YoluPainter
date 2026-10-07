@@ -12,9 +12,9 @@ cargo test --workspace --locked
 
 GPU・画面の試験には動作する描画バックエンドが必要です。GPU 試験にはアダプターがないと処理を省くものがあるため、結果の passed だけで描画確認済みとは判断せず、標準エラーの理由も確認してください。環境変数 `YOLUPAINTER_REQUIRE_GPU=1` を付けると、省かずに落とします（CI の画面の試験は付けています）。詳しくは [yolu-gpu](../crates/yolu-gpu/README.md#検証と計測) を参照してください。
 
-層の合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
+レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
 
-Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果と層のロック・層の操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
 ### yolu-app の結合試験の置き方
 
@@ -22,11 +22,11 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 | 束（`cargo test -p yolu-app --test <束>`） | 中身 |
 | --- | --- |
-| `headless` | 窓・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link の通信と頼み・ソースの文言の検査）。同時に走る |
+| `headless` | ウィンドウ・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link の通信と頼み・ソースの文言の検査）。同時に走る |
 | `gui_canvas` | キャンバス・ツール・ブラシ・選択・色・効果の画面（`egui_kittest`） |
-| `gui_shell` | 窓の全体・メニュー・設定・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU の装置の喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・アセット・ライブラリ |
+| `gui_shell` | ウィンドウの全体・メニュー・設定・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU の装置の喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・アセット・ライブラリ |
 | `gui_view3d` | 3D ビュー（アンチエイリアス・ブルームを含む）・マテリアルの見た目（lilToon を含む）・ポーズ・テクスチャセット・出力 |
-| `threads`・`window_lease`・`windowpos`（直下の 1 ファイル 1 本） | プロセス全体の状態を持つ試験: rayon の全体のプール・窓の貸し出しの数え・覚えた窓の置き場所 |
+| `threads`・`window_lease`・`windowpos`（直下の 1 ファイル 1 本） | プロセス全体の状態を持つ試験: rayon の全体のプール・ウィンドウの貸し出しの数え・覚えたウィンドウの置き場所 |
 
 束の中のファイルは `tests/<束>/<名前>.rs`、束の入口は `tests/<束>/main.rs` の `mod` の並びです。試験の名前は `<ファイル名>::<試験名>` になるので、ファイルや試験名で絞れます。
 
@@ -40,8 +40,8 @@ cargo test -p yolu-app -- --list | grep layerops             # どの束にあ�
 
 - **新しい試験を足す**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行足します。足し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけではビルドされず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
 - 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を足し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
-- **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・窓の貸し出しの数え・覚えた窓の置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
-- **窓（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。窓を持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` は窓ごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵は窓ごとに作り直します。窓を作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
+- **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・ウィンドウの貸し出しの数え・覚えたウィンドウの置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
+- **ウィンドウ（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。ウィンドウを持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` はウィンドウごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵はウィンドウごとに作り直します。ウィンドウを作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
 - `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
 - **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。Live Link の受け渡しのフォルダは `common::livelink::Exchange::new(タグ)` が `common::tmp::test_dir` の下に作るので、置いた頼み・返事ごと試験の終わりに消えます。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
 - 「書き直さない」を更新時刻で確かめるときは、`common::tmp::backdate(&path)` で更新時刻を少し前にしてから比べます（時刻の粒度より早い書き直しを見逃さず、`sleep` を待たない）。
@@ -62,8 +62,8 @@ yolu-app と同じく、`crates/yolu-core/tests/`・`crates/yolu-io/tests/` の�
 
 | クレート | 束（`--test <束>`） | 中身 |
 | --- | --- | --- |
-| yolu-core | `edit` | 層・層の操作・選択範囲・コピーとペースト・履歴・チャンネル・色調補正・書き出し・2D の合成 |
-| | `effects` | フィルター・Generator・Anchor・パス・スマートマテリアルと、層のロック・層の操作とのつなぎ目 |
+| yolu-core | `edit` | レイヤー・レイヤーの操作・選択範囲・コピーとペースト・履歴・チャンネル・色調補正・書き出し・2D の合成 |
+| | `effects` | フィルター・Generator・Anchor・パス・スマートマテリアルと、レイヤーのロック・レイヤーの操作とのつなぎ目 |
 | | `reference` | 実 C# Core の正解・収録したハッシュとの全バイトの照合 |
 | | `surface` | 3D の面への投影・面のストローク・対称・メッシュのマップ・ブラシの参照元・ステンシル・チャンネルの塗り |
 | | `brush`・`document`・`golden`・`mix`・`parallelism`・`paths`・`pressure`（直下の 1 ファイル 1 本） | ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を変える、またはその値に頼ってダブの経路を確かめる試験 |
@@ -87,8 +87,8 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
-- Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物の道具の試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
-- Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（窓・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
+- Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
+- Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
@@ -127,17 +127,17 @@ Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存�
 
 ## 画素の計算の SIMD
 
-x86_64 では、合成（Normal チャンネルを含む）・調整の層・フィルターの画素の計算に AVX2（と FMA）・SSE4.1 を使い、実行時に CPU が持つ一番広い道を選ぶ
+x86_64 では、合成（Normal チャンネルを含む）・調整レイヤー・フィルターの画素の計算に AVX2（と FMA）・SSE4.1 を使い、実行時に CPU が持つ一番広い道を選ぶ
 （Windows の配布物も同じ）。それ以外の CPU（aarch64 など）は、今までの画素ごとの計算を使う。結果のバイトはどの道でも同じで、試験が道ごとに画素ごとの式と比べる。
 環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で狭い道へ下げられる（CPU が持たない広い道には上げない）。
-2D の合成（矩形・タイルの束・歩幅つきの粗い合成・グループの出力）はこの行の核で重ねる。参照の `composite_pixel`（画素ごとの式）とバイトが同じで、試験が全モード・マスク・クリッピング・グループ・調整の層・Normal チャンネルを道ごとに比べる。
-表示に寄与する層・複数の層・グループの結合も、タイルの合成で焼く（下の層へ結合する `merge_down` は、下の層の画素を下地にする方法があるので画素ごとの式のまま）。
+2D の合成（矩形・タイルの束・歩幅つきの粗い合成・グループの出力）はこの行の核で重ねる。参照の `composite_pixel`（画素ごとの式）とバイトが同じで、試験が全モード・マスク・クリッピング・グループ・調整レイヤー・Normal チャンネルを道ごとに比べる。
+表示に寄与するレイヤー・複数のレイヤー・グループの結合も、タイルの合成で焼く（下のレイヤーへ結合する `merge_down` は、下のレイヤーの画素を下地にする方法があるので画素ごとの式のまま）。
 
 `cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|kernel|all] [回数]` が、合成モード・調整の種類・フィルターごとの時間
 （1 タイルと 4096²。`kernel` は行の核だけの ns/画素）を測る。スレッドは `SIMD_THREADS`（既定 1）、名前の絞り込みは `SIMD_FILTER`（カンマ区切り）。
 
 2D のブラシのダブの画素（丸・筆先の画像・紙の質感・デュアル・指先・ぼかし・クローン・色の混ぜ・ダブごとの色）も同じ道で、行ごとにレーンで描く。
-参照は画素ごとの式（`YOLU_SIMD=scalar`）で、試験が乱数で振ったブラシ・層・タイルの大きさ・点の列を道ごとに描いて、層の全バイトとダブの数を比べる。
+参照は画素ごとの式（`YOLU_SIMD=scalar`）で、試験が乱数で振ったブラシ・レイヤー・タイルの大きさ・点の列を道ごとに描いて、レイヤーの全バイトとダブの数を比べる。
 選択範囲・透明部分のロックは、色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式。ステンシル・乗算でない紙の質感・3D の面のダブも画素ごとの式のまま。ダブをタイルごとにワーカーで描くかは、
 外接の箱の大きさに画素ごとの時間の見積もり（ブラシの種類で決まる）を掛けて決める。速いブラシの大きなダブは、ワーカーを起こす費用が勝つので直列で描く。
 
