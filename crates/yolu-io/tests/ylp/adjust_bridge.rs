@@ -205,7 +205,7 @@ fn the_version_follows_the_features_used() {
     assert_eq!(USER_CHANNELS_VERSION, 22);
     assert_eq!(PROCEDURAL_VERSION, 23);
     assert_eq!(ADJUST_VERSION, 24);
-    assert_eq!(MAX_NATIVE_VERSION, 25);
+    assert_eq!(MAX_NATIVE_VERSION, yolu_io::SEAMS_VERSION);
     // 使わない文書の版は変わらない: 今の 3 種の調整・フィルターだけなら Unity 版と同じ 21
     let mut old = plain();
     for s in [

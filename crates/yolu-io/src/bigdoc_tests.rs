@@ -78,8 +78,22 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 i32::from_le_bytes(header[12..16].try_into().unwrap()),
                 doc.version()
             );
-            // 古い読み手は版の数で断る（今の読み手の上限は 25、Unity 版 0.2.0 は 21）
-            const { assert!(26 > crate::MAX_NATIVE_VERSION) };
+            // 古い読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）
+            const { assert!(SPLIT_VERSION > crate::MIXING_VERSION) };
+            // 中の版は意味の決まった版だけ。分けた正本の識別（26）と、決めていない版（27〜31）は、中身を読む前に断る
+            for bad in [SPLIT_VERSION, 27, 31] {
+                let mut bytes = header.to_vec();
+                bytes[12..16].copy_from_slice(&bad.to_le_bytes());
+                let mut changed = stored(&entries);
+                changed.header = bytes.into();
+                let Err(e) = changed.to_native() else {
+                    panic!("{name}: 中の版 {bad} を読めた");
+                };
+                assert!(
+                    e.to_string().contains(&format!("中の版 {bad}")),
+                    "{name}: 中の版 {bad} の断り: {e}"
+                );
+            }
             let back = stored(&entries).to_native().unwrap();
             assert_eq!(back.fields(), doc.fields(), "{name}");
             assert_eq!(back.to_bytes(), doc.to_bytes(), "{name}");

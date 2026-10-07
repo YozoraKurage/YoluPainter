@@ -51,15 +51,30 @@ impl Raster {
         receivers: &[usize],
         remaining: u64,
     ) -> Result<Self> {
-        let width = s.width;
-        let height = s.height;
-        let n = s.antialiasing;
+        Self::from_uvs(
+            &input.uvs,
+            (s.width, s.height),
+            s.antialiasing,
+            receivers,
+            remaining,
+        )
+    }
+
+    /// 三角形ごとの UV（三角形の番号の順に a.x, a.y, b.x, b.y, c.x, c.y の 6 つ）から。ベイクの割り当てと同じ式で、UV の島の図
+    /// （`geometry::UvTopology`）もこれを使う（重なりの見つけ方を 1 つにする）。
+    pub fn from_uvs(
+        uvs: &[f32],
+        (width, height): (i32, i32),
+        n: i32,
+        receivers: &[usize],
+        remaining: u64,
+    ) -> Result<Self> {
         let first = 0.5 / n as f64;
         let last = 1. - first;
         let mut triangles = vec![];
         let mut items = 0usize;
         for &t in receivers {
-            let uv = &input.uvs[t * 6..];
+            let uv = &uvs[t * 6..];
             let ax = uv[0] as f64 * width as f64;
             let ay = uv[1] as f64 * height as f64;
             let bx = uv[2] as f64 * width as f64;

@@ -429,6 +429,23 @@ fn filter_body(
             coalesce: true,
         }));
     }
+    // 近傍の段は、モデルがあれば UV の継ぎ目をまたげる（文書の設定。どの段の欄からも同じ値）
+    if effect.settings().halo() > 0 && app.doc.effect_inputs().topology().is_some() {
+        if let Some(on) = toggle_row(
+            ui,
+            rows,
+            "fx.seams",
+            lang.pick("UV の継ぎ目をまたぐ", "Across UV seams"),
+            app.doc.filter_seams(),
+            Some(lang.pick(
+                "このテクスチャセットのすべてのフィルターに効く設定。ぼかしなどが、UV の島の縁の向こう（3D で隣の面）の画素を読む",
+                "A setting for every filter in this texture set: blurs and the like read the pixels across UV island borders (the neighbouring faces in 3D)",
+            )),
+            enabled,
+        ) {
+            app.apply(Action::Fx(FxOp::SetFilterSeams(on)));
+        }
+    }
     // 描くチャンネルに掛からない画素の段は短く知らせる
     let paint = app.m2.paint_channel;
     if target == FilterTarget::Content && !effect.applies_to(paint) {

@@ -31,6 +31,7 @@ mod pressure_adjust;
 mod ramp_editor;
 mod ramp_panel;
 mod region;
+mod seams_ui;
 mod selection;
 mod selection_bar;
 mod selection_build;

@@ -22,10 +22,12 @@ mod refit;
 mod regions;
 mod restrict;
 mod sampling;
+pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
 mod symmetry;
 pub(crate) mod unity;
+mod uv_topology;
 
 use std::sync::atomic::AtomicBool;
 
@@ -52,6 +54,7 @@ pub use regions::{region, SurfaceRegionKind};
 pub use sampling::{
     SamplingChart, SamplingError, SAMPLING_CHART_MAX_TRIANGLES, SAMPLING_CHART_TRIANGLE_BYTES,
 };
+pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
 pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
 pub use symmetry::{
@@ -61,6 +64,10 @@ pub use symmetry::{
     ON_PLANE_FRACTION,
 };
 pub use unity::{Bounds, Ray};
+pub use uv_topology::{
+    IslandMap, IslandRun, UvTopology, UvTopologyError, DEFAULT_BUDGET, MAX_SEAM_BAND,
+    MAX_TOPOLOGY_EDGE,
+};
 
 /// スナップショットの三角形 1 つ（位置はモデルの空間、UV は 0 番）。
 #[derive(Clone, Copy, Debug, PartialEq)]

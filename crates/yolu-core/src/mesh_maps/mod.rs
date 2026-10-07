@@ -258,7 +258,7 @@ pub use surface::reconstruct_normals;
 mod bake;
 mod curvature;
 mod plan;
-mod raster;
+pub(crate) mod raster;
 mod rays;
 pub use bake::{
     bake, base_name, condition_key, estimate_bytes, material_identity, MeshBakeRaw, ENGINE_VERSION,

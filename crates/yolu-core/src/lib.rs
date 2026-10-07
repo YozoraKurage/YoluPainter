@@ -87,9 +87,9 @@ pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
     CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport, LiquifyDab,
     LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, PreparedResize,
-    Resampling, ResizeReport, SavedSelection, Stroke, StrokeResult, StrokeStats, TriangleFill,
-    Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH, MAX_SAVED_NAME_CHARS,
-    MAX_SAVED_SELECTIONS,
+    Resampling, ResizeReport, SavedSelection, SeamFallback, Stroke, StrokeResult, StrokeStats,
+    TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
+    MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,

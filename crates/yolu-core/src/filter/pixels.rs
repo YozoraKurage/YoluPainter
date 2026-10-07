@@ -23,7 +23,7 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
         [v[0] / l, v[1] / l, v[2] / l]
     }
 }
-fn encode(v: [f64; 3], a: u8) -> [u8; 4] {
+pub(super) fn encode(v: [f64; 3], a: u8) -> [u8; 4] {
     let v = normalize(v);
     [
         to_byte(v[0] * 0.5 + 0.5),

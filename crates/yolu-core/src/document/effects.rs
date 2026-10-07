@@ -66,7 +66,7 @@ pub(crate) fn default_fill_fallback(kind: ChannelKind) -> Rgba8 {
 }
 
 /// 段の設定が使うブロックの作業バイト数の見積もり用の段の並び。
-fn stages_of(chain: &[&FilterEffect]) -> Vec<filter::Stage> {
+pub(super) fn stages_of(chain: &[&FilterEffect]) -> Vec<filter::Stage> {
     chain
         .iter()
         .map(|e| {
@@ -660,12 +660,24 @@ impl Document {
     fn block_need_with(&self, chain: &[&FilterEffect], block: u32) -> Result<u64, CoreError> {
         let side = (block / self.tile_size).max(1) * self.tile_size;
         let (w, h) = (side.min(self.width), side.min(self.height));
-        let working =
-            filter::block_working_bytes(&stages_of(chain), block, self.width, self.height)
-                .map_err(|e| match e {
-                    filter::Error::Invalid(why) => CoreError::InvalidArgument(why),
-                    _ => CoreError::WorkingBudgetExceeded,
-                })?;
+        let stages = stages_of(chain);
+        let mut working = filter::block_working_bytes(&stages, block, self.width, self.height)
+            .map_err(|e| match e {
+                filter::Error::Invalid(why) => CoreError::InvalidArgument(why),
+                _ => CoreError::WorkingBudgetExceeded,
+            })?;
+        // 継ぎ目をまたいで評価するなら、その分も（`filter::evaluate` が足すのと同じ見積り）
+        if self.seam_shape(chain.iter().map(|e| e.settings.halo())).0 > 0 {
+            // 帯の写しを作る前なので、帯のテクセルの数は分からない（最悪: 入力の画素ぜんぶ）。評価（`filter::evaluate`）は帯の写しの実際の数で
+            // 見積もるので、これより小さい
+            working = working.saturating_add(filter::seam_working_bytes(
+                &stages,
+                block,
+                self.width,
+                self.height,
+                u64::MAX,
+            ));
+        }
         Ok(working.saturating_add(u64::from(w) * u64::from(h) * 4))
     }
 
@@ -1416,18 +1428,36 @@ impl Document {
 
     // ───────── 外から渡す入力 ─────────
 
-    /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像）を置く。保存も Undo もしない。
-    /// 今までと違えば、それを読む層（Generator・画像・デカール・グラデーション）の合成を作り直させる。
-    pub fn set_effect_inputs(&mut self, inputs: EffectInputs) -> Result<(), CoreError> {
+    /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像・モデルの UV の位相）を置く。保存も Undo もしない。
+    /// 今までと違えば、それを読む層の合成を作り直させる。マップ・画像・モデルのルートが替われば、それを読む層（Generator・画像・デカール・
+    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐ層（近傍の段のある層）。ほかの読み手は評価し直さない。
+    pub fn set_effect_inputs(&mut self, mut inputs: EffectInputs) -> Result<(), CoreError> {
         for m in &inputs.maps {
             m.validate()?;
         }
-        if self.effects.inputs.same_as(&inputs) {
+        let topology = !self.effects.inputs.same_topology(&inputs);
+        let data = !self.effects.inputs.same_data(&inputs);
+        if !topology && !data {
             return Ok(());
         }
+        if topology {
+            // UV の位相が替わると、継ぎ目をまたぐ層の出力も変わる（前と後の両方で、またぐ所に印を付ける）
+            self.mark_seam_readers();
+        } else {
+            // 同じ UV の位相なら今の物を使い続ける（覚えた島の図・帯の写しを捨てない）
+            inputs.topology = self.effects.inputs.topology.clone();
+        }
         self.effects.inputs = inputs;
-        self.effects.inputs_revision += 1;
-        self.mark_input_readers();
+        if topology {
+            self.effects.topology_revision += 1;
+        }
+        if data {
+            self.effects.inputs_revision += 1;
+            self.mark_input_readers();
+        }
+        if topology {
+            self.mark_seam_readers();
+        }
         Ok(())
     }
 
@@ -1470,7 +1500,12 @@ impl Document {
                 "予算が今のフィルターの要る量より小さい",
             ));
         }
-        self.effects.working_budget = bytes;
+        if bytes != self.effects.working_budget {
+            self.effects.working_budget = bytes;
+            // 継ぎ目をまたげるか（使うとブロックの作業メモリが予算を超えるか）が変わり得る: またぐ層を描き直す
+            self.mark_seam_readers();
+            self.release_effect_cache();
+        }
         Ok(())
     }
     /// 評価のブロックの一辺（画素。1〜4096。タイルの大きさの倍数に切り下げ、最低 1 タイル）。結果はブロックの大きさによらない。

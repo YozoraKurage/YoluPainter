@@ -19,3 +19,4 @@ mod seam_locks;
 mod seam_ops;
 mod smart;
 mod smart_library;
+mod uv_seam_filters;

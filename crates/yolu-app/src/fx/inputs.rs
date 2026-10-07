@@ -17,6 +17,8 @@
 //!   呼び出しごとに 0 へ戻さない）。復号できなかった理由は画像の中身の鍵とともに覚え、中身が変わるか、持っている分が減れば試し直す。
 //! - **モデルのルートの位置と向き**: Live Link の `Model` はルートの変換を運ばず、スタンドアロンのモデルのルートは原点・回転なし。
 //!   モデルがあれば原点・回転なし、無ければ分からない（形のグラデーションと位置を読む投影は入力のまま通す）。
+//! - **モデルの UV の位相**（層のフィルターが UV の継ぎ目をまたぐのに使う）: セットのマテリアルの組ごとに 1 つ作って渡す。作るのは安く
+//!   （島・継ぎ目・帯の写しは core が初めて要るときに作る）、ポーズで位置だけ変わったモデルでは前の物を使い続ける（`UvTopology::same_layout`）。
 //! - **読むだけにする条件**: .ylp を開いたとき、入力がそろわない効果（マップが無い・古い・未確認・大きさ違い・ピンと違う・
 //!   ルートが分からない・画像が無い）を持つセットは、保存した合成を見せる読むだけにして、足りない入力を言う。
 //!   Anchor を選んでいない・ID の色が無いなど、文書の中で直せる設定の不備は理由にしない（直す画面が要るので編集させる）。
@@ -27,6 +29,7 @@ use std::sync::Arc;
 
 use yolu_core::effects::{ImageId, ImageInput};
 use yolu_core::generator::{self, MapKind, MapState};
+use yolu_core::geometry::UvTopology;
 use yolu_core::mesh_maps::{BakedMeshMap, MeshBakeInput, MeshMapKind, MeshMapState};
 use yolu_core::{
     Document, EffectInputs, InactiveEffect, InactiveReason, InactiveTarget, MapInput, ModelFrame,
@@ -35,6 +38,7 @@ use yolu_core::{
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
+use crate::view3d::model::ViewModel;
 
 /// Generator が読む種類から、焼いたマップの種類へ。
 pub fn mesh_kind(kind: MapKind) -> MeshMapKind {
@@ -64,6 +68,8 @@ fn map_state(state: MeshMapState) -> MapState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SetKey {
     frame: bool,
+    /// 渡した UV の位相（実体。無ければ 0）。
+    topology: usize,
     /// (マップの種類, 焼いたマップの実体, 状態)。
     maps: Vec<(i32, usize, u8)>,
     /// 渡した画像（ID と中身の鍵）。
@@ -104,6 +110,9 @@ pub struct InputsState {
     pub image_limit: Option<usize>,
     /// 試験用: 文書へ入力を渡した回数。
     pub passed: u64,
+    /// マテリアルの組ごとの UV の位相と、それを作った（または同じ位相と確かめた）モデル。モデルは持ち続ける: 番地や世代の数で比べると、
+    /// 解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは次の同期までの間（毎フレーム見る）。
+    topologies: HashMap<i32, (Arc<ViewModel>, Arc<UvTopology>)>,
 }
 
 impl InputsState {
@@ -461,6 +470,31 @@ impl AppState {
         }
     }
 
+    /// セットのマテリアルの組ごとの UV の位相を、今のモデルに合わせる（モデルが替わっても、UV と隣り合わせが同じなら前の物のまま）。
+    fn refresh_topologies(&mut self) {
+        let Some(model) = self.view3d.full_model().cloned() else {
+            self.fx.inputs.topologies.clear();
+            return;
+        };
+        let materials: HashSet<i32> = (0..self.sets.len())
+            .filter_map(|i| self.set_material(i))
+            .collect();
+        let held = &mut self.fx.inputs.topologies;
+        held.retain(|m, _| materials.contains(m));
+        for material in materials {
+            match held.get_mut(&material) {
+                Some((made_from, _)) if Arc::ptr_eq(made_from, &model) => {}
+                Some((made_from, topology)) if topology.same_layout(&model.geometry) => {
+                    *made_from = model.clone();
+                }
+                _ => {
+                    let topology = UvTopology::new(model.geometry.clone(), Some(material));
+                    held.insert(material, (model.clone(), Arc::new(topology)));
+                }
+            }
+        }
+    }
+
     /// 1 つのセットの今の鍵（モデルの入力と、渡す画像から）。`needed` は読むマップの種類（読むだけのセットは文書が無いので全部）。
     fn set_key(
         &self,
@@ -469,9 +503,14 @@ impl AppState {
         frame: bool,
         needed: &[MeshMapKind],
     ) -> SetKey {
+        let topology = self
+            .set_material(index)
+            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .map_or(0, |(_, t)| Arc::as_ptr(t) as usize);
         let Some(set) = self.sets.get(index) else {
             return SetKey {
                 frame,
+                topology,
                 maps: Vec::new(),
                 images: Vec::new(),
             };
@@ -504,6 +543,7 @@ impl AppState {
         images.sort();
         SetKey {
             frame,
+            topology,
             maps,
             images,
         }
@@ -517,7 +557,13 @@ impl AppState {
         frame: bool,
         needed: &[MeshMapKind],
     ) -> EffectInputs {
-        let mut inputs = EffectInputs::new().with_frame(frame.then(ModelFrame::default));
+        let topology = self
+            .set_material(index)
+            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .map(|(_, t)| t.clone());
+        let mut inputs = EffectInputs::new()
+            .with_frame(frame.then(ModelFrame::default))
+            .with_topology(topology);
         let Some(set) = self.sets.get(index) else {
             return inputs;
         };
@@ -567,6 +613,7 @@ impl AppState {
     /// `sync_effect_inputs` の、モデルの入力を作り終えるまで待つ版（.ylp を開いた直後など、結果をすぐ使うとき）。
     pub fn sync_effect_inputs_with(&mut self, wait: bool) {
         self.refresh_effect_images();
+        self.refresh_topologies();
         let Some(input) = self.effect_bake_input(wait) else {
             return; // モデルの入力を作っている最中（前の入力のまま）
         };

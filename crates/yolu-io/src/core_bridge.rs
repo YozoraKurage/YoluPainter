@@ -4,7 +4,8 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -143,7 +144,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         let head = path.split(['.', '[']).next().unwrap_or(path);
         return match head {
             "magic" | "version" | "id" | "width" | "height" | "tile_size" | "normal"
-            | "user_channel_count" | "user_channels" | "layer_count" => None,
+            | "user_channel_count" | "user_channels" | "filter_seams" | "layer_count" => None,
             "manual_id_colors" => Some(("manual_id_colors".into(), "手動の ID 色")),
             _ => Some((path.into(), "core に無い項目")),
         };
@@ -328,6 +329,9 @@ impl CoreLoad {
                     .map_err(|e| Error::from(e).in_context(format!("{p}をcoreにできません")))?;
             }
         }
+        if version >= SEAMS_VERSION {
+            doc.set_filter_seams_for_load(f.boolean("filter_seams")?);
+        }
         Ok(Self {
             doc,
             version,
@@ -398,11 +402,14 @@ impl CoreLoad {
     }
 }
 
-/// 文書の正本の版（使う機能で決まる）: グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正（種類 64〜69）が
-/// あれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
+/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32、グラデーションマップの混色（混色モード・
+/// 混合率曲線）があれば 25、Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら
+/// 22、どれも無ければ Unity 版と同じ 21。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if uses_gradient_mixing(doc) {
+    if !doc.filter_seams() {
+        SEAMS_VERSION
+    } else if uses_gradient_mixing(doc) {
         MIXING_VERSION
     } else if uses_rust_only_adjustments(doc) {
         ADJUST_VERSION
@@ -525,6 +532,9 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
             })?;
             w.value(&info.default.to_array())?;
         }
+    }
+    if version >= SEAMS_VERSION {
+        w.boolean(doc.filter_seams())?;
     }
     w.int(doc.layers().len() as i32)
 }

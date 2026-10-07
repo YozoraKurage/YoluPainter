@@ -21,8 +21,12 @@ pub const ADJUST_VERSION: i32 = 24;
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
-/// この読み手が読める一番新しい版。
-pub const MAX_NATIVE_VERSION: i32 = MIXING_VERSION;
+/// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
+/// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+pub const SEAMS_VERSION: i32 = 32;
+/// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`・`SEAMS_VERSION` で、間の 27〜31 は意味を決めておらず断る
+/// （版を割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
 /// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
@@ -389,6 +393,12 @@ impl ByteSource for PartStream {
 /// 版 26（分けた正本）の識別の版。ヘッダーは `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値を抜いたもの。
 pub const SPLIT_VERSION: i32 = 26;
 
+/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`SEAMS_VERSION` だけで、間の 27〜31 は読まない
+/// （`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+fn is_known_version(version: i32) -> bool {
+    (1..=MIXING_VERSION).contains(&version) || version == SPLIT_VERSION || version == SEAMS_VERSION
+}
+
 /// 正本を層ごとに読む（頭 → 層 0, 1, … → 終わり）。層ごとに項目を取り出せる（流して core へ入れる読みが、層 1 枚ぶんだけ持つため）。
 pub(crate) struct Parse<'a> {
     r: Reader<'a>,
@@ -427,7 +437,7 @@ impl<'a> Parse<'a> {
         let version = if stored == SPLIT_VERSION {
             let inner = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
             check(
-                (UNITY_NATIVE_VERSION..=MAX_NATIVE_VERSION).contains(&inner),
+                inner >= UNITY_NATIVE_VERSION && is_known_version(inner) && inner != SPLIT_VERSION,
                 format!("分けた正本の中の版 {inner} は未対応です"),
             )?;
             let count = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
@@ -441,9 +451,9 @@ impl<'a> Parse<'a> {
             inner
         } else {
             check(
-                (1..=MAX_NATIVE_VERSION).contains(&stored),
+                is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..{MAX_NATIVE_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{SEAMS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -471,6 +481,9 @@ impl<'a> Parse<'a> {
         } else {
             UserChannels::new()
         };
+        if version >= SEAMS_VERSION {
+            r.boolean("filter_seams")?;
+        }
         let count = r.int("layer_count", 0, crate::MAX_DOCUMENT_LAYERS as i32)?;
         let layer_start = r.fields.len();
         Ok(Self {

@@ -45,6 +45,7 @@ mod smart;
 mod smart_resample;
 mod snapshot;
 mod structure;
+mod uv_seams;
 
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -77,6 +78,7 @@ mod cache_tests;
 mod memo_tests;
 pub use eval::EffectCounters;
 pub(crate) use eval::EvalSet;
+pub use uv_seams::SeamFallback;
 
 /// 合成したタイル 1 枚（[`Document::composite_tiles`]・[`Document::composite_coarse_tiles`]）。
 #[derive(Clone, Debug)]
@@ -433,6 +435,11 @@ pub(crate) enum Command {
         old: saved_selections::SavedList,
         new: saved_selections::SavedList,
     },
+    /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（`uv_seams`）。
+    FilterSeams {
+        old: bool,
+        new: bool,
+    },
 }
 
 pub(crate) struct Entry {
@@ -537,6 +544,8 @@ pub struct Document {
     effects: eval::EffectState,
     /// `Document::batch` の編集を実行している間 true（ストローク・Undo・Redo・履歴を消す書き込みを断る）。
     batching: bool,
+    /// 層のフィルターの近傍の段が UV の継ぎ目をまたいで読むか（文書の設定。既定は入。`uv_seams`）。
+    filter_seams: bool,
 }
 
 /// 128 bit の新しい ID（std の RandomState の鍵と通し番号から）。
@@ -613,6 +622,7 @@ impl Document {
             id_counter: 0,
             effects: eval::EffectState::default(),
             batching: false,
+            filter_seams: true,
         })
     }
 
@@ -1431,6 +1441,7 @@ impl Document {
                     | Command::Selection { .. }
                     | Command::Look { .. }
                     | Command::SavedSelections { .. }
+                    | Command::FilterSeams { .. }
             )
         {
             self.refresh_anchor_readers();
@@ -1446,6 +1457,7 @@ impl Document {
                 | Command::Selection { .. }
                 | Command::Look { .. }
                 | Command::SavedSelections { .. }
+                | Command::FilterSeams { .. }
         ) {
             // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
             self.mark_clip_bases();
@@ -1579,6 +1591,10 @@ impl Document {
             Command::NormalSettings { old, new } => {
                 // 合成は変えない（出力だけ）ので、タイルの変化は記録しない
                 self.normal_settings = if backwards { *old } else { *new };
+                Ok(())
+            }
+            Command::FilterSeams { old, new } => {
+                self.switch_filter_seams(if backwards { *old } else { *new });
                 Ok(())
             }
             Command::ChannelInfo {
@@ -1757,7 +1773,16 @@ impl Document {
                     .map(|e| e.settings.halo())
                     .sum();
                 let m = expansion.div_ceil(self.tile_size);
-                for coord in layer.surface(c).expect("面").tile_coords() {
+                let coords = layer.surface(c).expect("面").tile_coords();
+                // 継ぎ目をまたぐぼかしは、相手の島の側へも広げる
+                if expansion > 0 {
+                    let chain = layer.active_chain(c);
+                    let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
+                    for t in self.seam_write_tiles(seam, expansion, coords.iter().copied()) {
+                        marks.push((c, t));
+                    }
+                }
+                for coord in coords {
                     if m == 0 {
                         marks.push((c, coord));
                         continue;
@@ -1851,7 +1876,11 @@ impl Document {
             if !chain.is_empty() {
                 let global = chain.iter().any(|e| e.settings.is_global());
                 let halo: u32 = chain.iter().map(|e| e.settings.halo()).sum();
+                let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
                 self.mark_reach(&channels, coord, halo, global);
+                if !global {
+                    self.mark_seam_reach(&channels, coord, seam, halo);
+                }
             }
         }
     }
@@ -1929,7 +1958,11 @@ impl Document {
                 if !chain.is_empty() {
                     let global = chain.iter().any(|e| e.settings.is_global());
                     let halo: u32 = chain.iter().map(|e| e.settings.halo()).sum();
+                    let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
                     self.mark_reach(&[c], coord, halo, global);
+                    if !global {
+                        self.mark_seam_reach(&[c], coord, seam, halo);
+                    }
                 }
             }
             Target::Mask => self.mark_mask_tile(index, coord),

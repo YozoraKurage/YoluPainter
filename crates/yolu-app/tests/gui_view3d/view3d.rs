@@ -119,22 +119,25 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     assert!(painted_islands(&h).is_empty());
 }
 
-/// 3D のタブを開いて絵を作り直すとき、効果の出力が元の画素の無いタイルへ広がった分も上げる（2D の表示と同じ見た目）:
-/// ぼかしが隣のタイルへ広げた分は、元の画素のあるタイルだけを上げると欠ける。
-#[test]
-fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pixels() {
+/// `open_3d_over_a_blurred_corner` の文書の一辺。
+const BLURRED_CORNER_DOC: u32 = 256;
+
+/// 一部の画素だけを置いた層にぼかしを掛け、試しの立方体を読んで 3D のタブを開く（`seams` は文書の「UV の継ぎ目をまたぐ」）。
+/// 開いたあとの 3D へ上がった絵（Color のアルファ）を、2D の合成と画素ごとに突き合わせ、元の画素のあるタイルの外に出力が上がった数と、
+/// 上がったアルファ（行は文書と同じ並び、一辺は文書の大きさ）を返す。
+fn open_3d_over_a_blurred_corner(seams: bool, source: &[(u32, u32)]) -> (usize, Vec<u8>) {
     use yolu_core::{Channel, EffectSettings, FilterSpec, FilterTarget, Rgba8};
-    let mut h = app(1100.0, 760.0, 256);
+    let mut h = app(1100.0, 760.0, BLURRED_CORNER_DOC);
     let ts = h.state().state.doc.tile_size();
     let layer = h.state().state.selected_layer.unwrap();
     {
         let doc = &mut h.state_mut().state.doc;
-        // 元の画素は 1 つのタイル（0, 0）の隅だけ。ぼかしは隣のタイルまで届く
-        for y in ts - 4..ts {
-            for x in ts - 4..ts {
-                doc.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(240, 30, 60, 255))
-                    .unwrap();
-            }
+        doc.set_filter_seams(seams).unwrap();
+        // 元の画素は 1 つのタイル（0, 0）の中だけ。ぼかしは隣のタイルまで届く
+        for &(x, y) in source {
+            assert!(x < ts && y < ts, "元の画素は 1 つのタイルの中");
+            doc.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(240, 30, 60, 255))
+                .unwrap();
         }
         doc.add_filter(
             layer,
@@ -154,6 +157,7 @@ fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pi
         1,
         "元の画素があるタイルは 1 つ"
     );
+    // モデルを読む前（2D の上）の合成で、ぼかしの出力は隣のタイルにも出ている
     let reached: Vec<_> = doc
         .canvas_tiles()
         .filter(|c| {
@@ -170,6 +174,12 @@ fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pi
     h.state_mut().state.view3d.load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
+    let doc = &h.state().state.doc;
+    assert_eq!(
+        doc.seams_active(),
+        seams,
+        "モデルを読んだあとの継ぎ目の設定"
+    );
     let stats = h.state().view3d_stats().expect("wgpu の 3D");
     assert_eq!(
         stats.total_slot_tiles[Slot::Color.index()],
@@ -182,8 +192,8 @@ fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pi
         .view3d_read_paint_level(Slot::Color, 0)
         .expect("Color を使っている");
     assert_eq!(size, [w, hh], "縮めていない");
-    let doc = &h.state().state.doc;
     let mut beyond = 0;
+    let mut alphas = Vec::with_capacity((w * hh) as usize);
     for y in 0..hh {
         for x in 0..w {
             let alpha = bytes[((y * w + x) * 4 + 3) as usize];
@@ -191,9 +201,50 @@ fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pi
             if alpha > 0 && (x >= ts || y >= ts) {
                 beyond += 1;
             }
+            alphas.push(alpha);
         }
     }
+    (beyond, alphas)
+}
+
+/// 立方体の UV（島 3 × 2）で、下の段と上の段の島のすきま（v 0.47〜0.53。島の外）にあたる 4 × 4 画素（タイル（0, 0）の右上の隅）。
+fn corner_outside_the_islands() -> Vec<(u32, u32)> {
+    (124..128)
+        .flat_map(|y| (124..128).map(move |x| (x, y)))
+        .collect()
+}
+
+/// 立方体の島の中（左から 2 つ目・下の段）の 4 × 4 画素。タイル（0, 0）の右の端で、同じ島はタイル（1, 0）へ続く。
+fn corner_inside_an_island() -> Vec<(u32, u32)> {
+    (60..64)
+        .flat_map(|y| (124..128).map(move |x| (x, y)))
+        .collect()
+}
+
+/// 3D のタブを開いて絵を作り直すとき、効果の出力が元の画素の無いタイルへ広がった分も上げる（2D の表示と同じ見た目）:
+/// ぼかしが隣のタイルへ広げた分は、元の画素のあるタイルだけを上げると欠ける。
+/// 継ぎ目をまたぐ設定（既定は入。モデルがあるときだけ効く）では、島の外のテクセルは段の入力のままでぼかしが広がらないので、
+/// ここでは切って、ぼかしが 2D の上で隣のタイルへ広がる形で確かめる（継ぎ目をまたぐ側は次の試験）。
+#[test]
+fn opening_the_3d_view_uploads_tiles_that_an_effect_reaches_beyond_the_source_pixels() {
+    let (beyond, _) = open_3d_over_a_blurred_corner(false, &corner_outside_the_islands());
     assert!(beyond > 0, "元の画素のあるタイルの外にも出力が上がっている");
+}
+
+/// 継ぎ目をまたぐ設定が入のとき、3D のタブを開いた作り直しで上がる絵も、2D の合成と同じ。
+/// 島の外の画素（すきま）はぼかしが広がらず元のまま、島の中の画素のぼかしは同じ島の隣のタイルへ広がる。
+#[test]
+fn opening_the_3d_view_uploads_the_same_picture_as_the_composite_across_uv_seams() {
+    let mut source = corner_outside_the_islands();
+    source.extend(corner_inside_an_island());
+    let (beyond, alphas) = open_3d_over_a_blurred_corner(true, &source);
+    assert!(beyond > 0, "島の中の画素のぼかしは隣のタイルへ広がる");
+    let at = |x: u32, y: u32| alphas[(y * BLURRED_CORNER_DOC + x) as usize];
+    for (x, y) in corner_outside_the_islands() {
+        assert_eq!(at(x, y), 255, "島の外の画素は元のまま ({x}, {y})");
+    }
+    // 島の外の画素のぼかしは広がらない（2D の上なら、すきまの 24 画素先も染まる）
+    assert_eq!(at(100, 127), 0, "島の外のすきまは段の入力のまま");
 }
 
 /// 塗りつぶしの層（元の画素が無く、画布全体に出る）も、3D のタブを開いた作り直しで画布全体が上がる。

@@ -5,6 +5,8 @@
 
 mod pixels;
 mod rows;
+mod seams;
+pub use seams::seam_working_bytes;
 #[cfg(test)]
 mod tests;
 use crate::{
@@ -274,6 +276,9 @@ pub struct Options<'a> {
     /// `statistics` が返した値（段と同じ並び）。Some の段は走査せずその値を使う。None の段は評価の中で求める。
     /// 入力・スタック・Generator の値が変わったら取り直すのは呼び出し側。長さと段の種類だけ検証する。
     pub statistics: Option<&'a [Option<Statistics>]>,
+    /// UV の継ぎ目をまたいで読む帯の写し（大きさは読み元と同じこと）。Some なら、近傍の段（`halo` > 0）は、段の入力の島の外の帯を
+    /// 継ぎ目の相手の島の画素で埋めてからかけ、島の外は段の入力のまま戻す（`seams.rs`）。None は今までと同じバイト。
+    pub seams: Option<&'a crate::geometry::SeamBand>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -283,6 +288,7 @@ impl Default for Options<'_> {
             cancel: None,
             generators: None,
             statistics: None,
+            seams: None,
         }
     }
 }
@@ -435,7 +441,20 @@ fn prepare(
             supplied.push(given);
         }
     }
-    let working = block_working_bytes(&chain, options.block_size, w, h)?;
+    let mut working = block_working_bytes(&chain, options.block_size, w, h)?;
+    if let Some(band) = options.seams {
+        if (band.width(), band.height()) != (w, h) {
+            return Err(Error::Invalid("継ぎ目の帯の写しの大きさが画像と合いません"));
+        }
+        // 帯の写しがあるので、帯のテクセルの数は分かる（文書が評価の前に見積もる最悪の数以下）
+        working = working.saturating_add(seam_working_bytes(
+            &chain,
+            options.block_size,
+            w,
+            h,
+            band.texel_count() as u64,
+        ));
+    }
     Ok(Plan {
         chain,
         supplied,
@@ -660,16 +679,7 @@ impl<'a> Engine<'a> {
             after -= s.settings.halo();
             let next = grow(target, after, self.width, self.height);
             if s.settings.halo() > 0 {
-                buf = pixels::neighborhood(
-                    &buf,
-                    cur,
-                    next,
-                    self.width,
-                    self.height,
-                    s,
-                    self.value_type,
-                    &|| self.options.check(),
-                )?;
+                buf = self.neighborhood_stage(k, s, buf, cur, next)?;
             } else {
                 self.point(&mut buf, cur, k, s)?;
             }

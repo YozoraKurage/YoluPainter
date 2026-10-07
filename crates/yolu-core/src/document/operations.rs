@@ -79,6 +79,8 @@ impl State {
             trimmed_bytes: _,
             // 交換しない: `batch` の編集の中かの印は本物の文書のもの（準備用の文書は自分の履歴を作るだけ）
             batching: _,
+            // 交換しない: 継ぎ目の設定は専用の段で変える（準備の操作は変えない）
+            filter_seams: _,
         } = doc;
         Self {
             layers: std::mem::take(layers),
@@ -109,6 +111,8 @@ impl Document {
             source_budget,
             stroke_budget,
             id_counter,
+            // 写す: 準備の中で合成して前後を比べるので、本物と同じく継ぎ目をまたいで評価する
+            filter_seams,
             // 効果は入力と予算・ブロックの大きさだけ写す（下で）。写さない: 評価のキャッシュ・元画素の時計・Anchor の解決の署名。準備用の
             // 文書は使い捨てで、時計は 0 から数え直す。本物のキャッシュや時計を共有すると、準備の中で進んだ時計の値が本物の別の編集と
             // 重なったとき、別の内容に同じ鍵が付いて古い出力を新しいものと取り違える
@@ -153,14 +157,17 @@ impl Document {
         d.stroke_budget = *stroke_budget;
         d.undo_budget = u64::MAX;
         d.id_counter = *id_counter;
+        d.filter_seams = *filter_seams;
         // 準備の中で段を足す・合成して前後を比べる（結合・変形・大きさの変更）ので、画像・メッシュマップ・モデルのルートが無いと、
         // 本物では効く Generator や画像が入力のまま通り、本物と違う見た目で比べてしまう。予算は、準備の中の段の検査（到達半径・
         // 作業メモリ）を本物と同じ決まりにする
         d.effects.inputs = effects.inputs.clone();
         d.effects.inputs_revision = effects.inputs_revision;
+        d.effects.topology_revision = effects.topology_revision;
         d.effects.working_budget = effects.working_budget;
         d.effects.cache_budget = effects.cache_budget;
         d.effects.image_cache_budget = effects.image_cache_budget;
+        d.effects.seam_budget = effects.seam_budget;
         d.effects.block_pixels = effects.block_pixels;
         Ok(d)
     }

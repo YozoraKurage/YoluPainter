@@ -35,6 +35,7 @@ impl Document {
             id_counter,
             revision,
             effects,
+            filter_seams,
             // 写さない: batch の最中の印（写しは batch の外）
             batching: _,
             // 写さない: 履歴とその予算の使用量・進行中のストロークの状態・変化の記録（写しは読むだけで、編集も Undo もしない。
@@ -70,13 +71,16 @@ impl Document {
         copy.minimum_undo_steps = *minimum_undo_steps;
         copy.id_counter = *id_counter;
         copy.revision = *revision;
+        copy.filter_seams = *filter_seams;
         // 効果の入力（メッシュマップ・モデル・画像）と予算は写す（写しで合成しても元と同じ値になる）。評価のキャッシュ・元画素の時計・
         // Anchor の署名は写さない（写しは空のキャッシュから評価し直す。持ち込むと別の内容に同じ鍵が付き得る — edit_copy と同じ決まり）
         copy.effects.inputs = effects.inputs.clone();
         copy.effects.inputs_revision = effects.inputs_revision;
+        copy.effects.topology_revision = effects.topology_revision;
         copy.effects.working_budget = effects.working_budget;
         copy.effects.cache_budget = effects.cache_budget;
         copy.effects.image_cache_budget = effects.image_cache_budget;
+        copy.effects.seam_budget = effects.seam_budget;
         copy.effects.block_pixels = effects.block_pixels;
         Ok(copy)
     }

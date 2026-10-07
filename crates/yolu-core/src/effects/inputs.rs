@@ -244,6 +244,8 @@ pub struct EffectInputs {
     /// None はモデルのルートの位置が分からない（形のグラデーション・位置を読む投影は入力のまま通す）。
     pub(crate) frame: Option<ModelFrame>,
     pub(crate) images: HashMap<ImageId, ImageInput>,
+    /// モデルのこのテクスチャセットの UV の位相（島・継ぎ目の対応）。層のフィルターが UV の継ぎ目をまたぐのに使う（None はモデルが無い）。
+    pub(crate) topology: Option<Arc<crate::geometry::UvTopology>>,
 }
 
 impl Default for EffectInputs {
@@ -252,6 +254,7 @@ impl Default for EffectInputs {
             maps: Vec::new(),
             frame: Some(ModelFrame::default()),
             images: HashMap::new(),
+            topology: None,
         }
     }
 }
@@ -276,8 +279,30 @@ impl EffectInputs {
         self.images.insert(id, image);
         self
     }
-    /// 同じ入力か（画素・画像は共有していれば中身を見ずに同じとする。渡し直しで合成を作り直すかの判断に使う）。
-    pub fn same_as(&self, other: &EffectInputs) -> bool {
+    /// モデルのこのテクスチャセットの UV の位相（None はモデルが無い）。
+    pub fn with_topology(mut self, topology: Option<Arc<crate::geometry::UvTopology>>) -> Self {
+        self.topology = topology;
+        self
+    }
+    /// モデルの UV の位相（島の図・継ぎ目の対応）。
+    pub fn topology(&self) -> Option<&Arc<crate::geometry::UvTopology>> {
+        self.topology.as_ref()
+    }
+    /// 同じ UV の位相か（同じ物を共有している、または同じモデルの組・三角形の並び・UV・スロット・隣り合わせ。位置は見ない）。
+    /// 島の図・帯の写しは UV だけで決まるので、位相の同じさにベイクの条件（余白など）・マップ・画像は関わらない。
+    pub(crate) fn same_topology(&self, other: &EffectInputs) -> bool {
+        match (&self.topology, &other.topology) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                Arc::ptr_eq(a, b)
+                    || (a.material() == b.material()
+                        && (Arc::ptr_eq(a.geometry(), b.geometry()) || a.same_layout(b.geometry())))
+            }
+            _ => false,
+        }
+    }
+    /// 位相以外の入力（マップ・モデルのルート・画像）が同じか（画素・画像は共有していれば中身を見ずに同じとする）。
+    pub(crate) fn same_data(&self, other: &EffectInputs) -> bool {
         self.frame == other.frame
             && self.maps.len() == other.maps.len()
             && self.maps.iter().all(|m| {
@@ -299,6 +324,10 @@ impl EffectInputs {
                     .get(id)
                     .is_some_and(|o| o.hash == i.hash && o.color_space == i.color_space)
             })
+    }
+    /// 同じ入力か（渡し直しで合成を作り直すかの判断に使う）。
+    pub fn same_as(&self, other: &EffectInputs) -> bool {
+        self.same_topology(other) && self.same_data(other)
     }
     pub fn map(&self, kind: MapKind) -> Option<&MapInput> {
         self.maps.iter().find(|m| m.kind == kind)

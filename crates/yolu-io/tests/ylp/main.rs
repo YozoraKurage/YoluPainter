@@ -22,4 +22,5 @@ mod nesting_native;
 mod procedural_bridge;
 mod rejection;
 mod saved_selections;
+mod seams_bridge;
 mod selection;

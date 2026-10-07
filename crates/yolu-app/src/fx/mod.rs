@@ -128,6 +128,8 @@ pub enum FxOp {
         id: FilterId,
         on: bool,
     },
+    /// 層のフィルターが UV の継ぎ目をまたぐか（文書の設定。テクスチャセットのすべてのフィルターに効く）。
+    SetFilterSeams(bool),
 }
 
 impl FxOp {
@@ -429,6 +431,10 @@ impl AppState {
                     self.fx.selected = None;
                     self.set_edit_mask(mask);
                 }
+                Ok(None)
+            }
+            FxOp::SetFilterSeams(on) => {
+                self.doc.set_filter_seams(on)?;
                 Ok(None)
             }
         }

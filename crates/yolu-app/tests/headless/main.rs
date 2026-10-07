@@ -29,3 +29,4 @@ mod recovery;
 mod save_background;
 mod saved_selections;
 mod tmp_cleanup;
+mod uv_topology;

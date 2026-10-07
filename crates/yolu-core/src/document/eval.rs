@@ -121,10 +121,32 @@ fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
         .collect()
 }
 
+/// 評価の仕様の段を、作業メモリの見積りに使うフィルターの段の並びへ（強さと有効は仕様のまま）。
+pub(super) fn spec_stages(spec: &Spec) -> Vec<filter::Stage> {
+    spec.config
+        .chain
+        .iter()
+        .map(|e| filter::Stage {
+            settings: match &e.settings {
+                EffectSettings::Filter(f) => f.clone(),
+                EffectSettings::Generator(g) => filter::Settings::Generator {
+                    slot: 0,
+                    blend: super::effects::generator_blend(g.blend),
+                },
+            },
+            enabled: true,
+            strength: e.strength,
+        })
+        .collect()
+}
+
 /// 評価の状態（文書の一部。保存も Undo もしない）。
 pub(crate) struct EffectState {
     pub inputs: EffectInputs,
+    /// マップ・モデルのルート・画像（位相以外の入力）が替わるたびに増える（それを読む段の評価の鍵）。
     pub inputs_revision: u64,
+    /// モデルの UV の位相が別の物に替わるたびに増える（継ぎ目をまたぐ段の評価の鍵。マップや画像の差し替えでは増えない）。
+    pub topology_revision: u64,
     /// 読み込み・直接の書き込みのたびに増える（キャッシュを全部無効にする）。
     pub generation: u64,
     /// 元画素の変化の時計（タイルが変わるたびに進む）。
@@ -139,6 +161,8 @@ pub(crate) struct EffectState {
     pub working_budget: u64,
     pub cache_budget: u64,
     pub image_cache_budget: u64,
+    /// モデルの UV の位相が覚える島の図・帯の写しと、それを作る間の作業メモリの予算（`uv_seams`）。
+    pub seam_budget: u64,
     pub block_pixels: u32,
 }
 
@@ -156,6 +180,7 @@ impl Default for EffectState {
         EffectState {
             inputs: EffectInputs::default(),
             inputs_revision: 1,
+            topology_revision: 1,
             generation: 1,
             clock: 0,
             source: HashMap::new(),
@@ -165,6 +190,7 @@ impl Default for EffectState {
             working_budget: 256 * 1024 * 1024,
             cache_budget: 256 * 1024 * 1024,
             image_cache_budget: 256 * 1024 * 1024,
+            seam_budget: crate::geometry::DEFAULT_BUDGET,
             block_pixels: 256,
         }
     }
@@ -237,6 +263,8 @@ struct Stamp {
     generation: u64,
     source: u64,
     inputs: u64,
+    /// 継ぎ目をまたぐ段が読むモデルの UV の位相の世代（またがない段は 0）。
+    topology: u64,
     anchors: u64,
 }
 
@@ -249,6 +277,8 @@ struct Config {
     fill: Option<FillConfig>,
     /// 段ごとの Anchor の解決（Anchor の Generator でない段は None）。
     anchors: Vec<Option<AnchorStage>>,
+    /// UV の継ぎ目をまたぐ帯の幅（0 はまたがない。`uv_seams`）。
+    seam_band: u32,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -278,7 +308,7 @@ struct AnchorRef {
 }
 
 /// 層・チャンネル（またはマスク）の評価の指定。
-struct Spec {
+pub(super) struct Spec {
     layer: usize,
     id: LayerId,
     key: SourceKey,
@@ -287,6 +317,8 @@ struct Spec {
     global: bool,
     reads_inputs: bool,
     reads_anchor: bool,
+    /// UV の継ぎ目をまたぐ帯の幅と近傍の段の数（帯の幅 0 はまたがない。`uv_seams`）。
+    pub(super) seam: (u32, usize),
 }
 
 /// 合成が読む評価済みの面（層の番号から）。内容とマスクは別。
@@ -787,6 +819,8 @@ impl Document {
             .collect();
         let halo = chain.iter().map(|e| e.settings.halo()).sum();
         let global = chain.iter().any(|e| e.settings.is_global());
+        let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
+        // 継ぎ目をまたぐ評価が読むモデルの UV の位相は、マップ・画像とは別の鍵（`Stamp::topology`）で見る
         let reads_inputs = chain.iter().any(|e| e.settings.is_generator())
             || fill
                 .as_ref()
@@ -801,11 +835,13 @@ impl Document {
                 value_type,
                 fill,
                 anchors,
+                seam_band: seam.0,
             }),
             halo,
             global,
             reads_inputs,
             reads_anchor,
+            seam,
         }
     }
 
@@ -835,7 +871,9 @@ impl Document {
         } else if spec.global {
             self.source_serial_window(spec.id, spec.key, self.whole_range())
         } else {
-            self.source_serial_window(spec.id, spec.key, self.grown_range(range, spec.halo))
+            let grown = self.grown_range(range, spec.halo);
+            self.source_serial_window(spec.id, spec.key, grown)
+                .max(self.seam_source_serial(spec.id, spec.key, spec.seam, spec.halo, grown.iter()))
         };
         Stamp {
             config: spec.config.clone(),
@@ -843,6 +881,11 @@ impl Document {
             source,
             inputs: if spec.reads_inputs {
                 self.effects.inputs_revision
+            } else {
+                0
+            },
+            topology: if spec.seam.0 > 0 {
+                self.effects.topology_revision
             } else {
                 0
             },
@@ -1090,6 +1133,7 @@ impl Document {
     ) -> Result<Arc<Vec<Option<filter::Statistics>>>, CoreError> {
         let full = (self.width, self.height);
         let coarse = (full.0.div_ceil(stride), full.1.div_ceil(stride));
+        let seams = self.coarse_seam_table(spec, stride, coarse);
         let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1109,11 +1153,35 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: None,
+                seams: seams.as_deref(),
             };
             filter::statistics(&strided, env.value_type, &stages, &options)
                 .map_err(map_filter_error)
         })?;
         Ok(Arc::new(stats))
+    }
+
+    /// 粗い評価の、縮めた画像の大きさの帯の写し（半径を歩幅で割った近傍の段の最大から。またがないなら None）。
+    fn coarse_seam_table(
+        &self,
+        spec: &Spec,
+        stride: u32,
+        (width, height): (u32, u32),
+    ) -> Option<Arc<crate::geometry::SeamBand>> {
+        if spec.seam.0 == 0 {
+            return None;
+        }
+        let max = spec
+            .config
+            .chain
+            .iter()
+            .map(|e| (e.settings.halo() + stride / 2) / stride)
+            .max()
+            .unwrap_or(0);
+        let table = self.seam_table_at(width, height, crate::geometry::seam_band_width(max))?;
+        // 使うと作業メモリの予算を超えるなら、またがずに 2D で評価する
+        let stages = coarse_stages(&spec_stages(spec), stride);
+        self.seams_fit(&stages, &table).then_some(table)
     }
 
     /// 粗い評価の 1 ブロックぶん（tiles は同じブロックの、出力を持ち得るタイル）。
@@ -1147,6 +1215,7 @@ impl Document {
             x1: bx1,
             y1: by1,
         };
+        let seams = self.coarse_seam_table(spec, stride, coarse);
         let output = self.with_env(spec, self.grown_range(range, spec.halo), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1166,6 +1235,7 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: statistics.map(Vec::as_slice),
+                seams: seams.as_deref(),
             };
             filter::evaluate(&strided, env.value_type, &stages, region, &options)
                 .map_err(map_filter_error)
@@ -1275,7 +1345,12 @@ impl Document {
         if !missing.is_empty() {
             self.prepare_shared(&spec, cancel)?;
         }
-        for batch in missing.chunks(self.parallel_blocks(&spec)) {
+        let parallel = if missing.is_empty() {
+            1
+        } else {
+            self.parallel_blocks(&spec)
+        };
+        for batch in missing.chunks(parallel) {
             cancelled(cancel)?;
             let done: Vec<Result<BlockTiles, CoreError>> = batch
                 .par_iter()
@@ -1307,6 +1382,8 @@ impl Document {
     /// 並べてから各ブロックが取りに行くと、キャッシュが空の最初のバッチでは全ブロックが同じものを同時に作り、作業メモリが予算の
     /// 並列数倍に届き（統計は呼ぶたびに予算いっぱいまで使う）、画像のミップマップも重複して作る。
     fn prepare_shared(&self, spec: &Spec, cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
+        // 継ぎ目をまたぐ帯の写しも、ブロックを並べる前に 1 回だけ作る（作れなければ、どのブロックも 2D で評価する）
+        let _ = self.seam_table(spec.seam.0);
         if spec.global {
             self.stage_statistics(spec, cancel)?;
         }
@@ -1325,31 +1402,26 @@ impl Document {
 
     /// 同時に評価してよいブロックの数: 作業メモリの予算に収まる数を、並列の数で頭打ちにする（最小 1）。
     fn parallel_blocks(&self, spec: &Spec) -> usize {
-        let stages: Vec<filter::Stage> = spec
-            .config
-            .chain
-            .iter()
-            .map(|e| filter::Stage {
-                settings: match &e.settings {
-                    EffectSettings::Filter(f) => f.clone(),
-                    EffectSettings::Generator(g) => filter::Settings::Generator {
-                        slot: 0,
-                        blend: super::effects::generator_blend(g.blend),
-                    },
-                },
-                enabled: true,
-                strength: e.strength,
-            })
-            .collect();
+        let stages = spec_stages(spec);
         let side = (self.effects.block_pixels / self.tile_size).max(1) * self.tile_size;
         let output = u64::from(side.min(self.width)) * u64::from(side.min(self.height)) * 4;
-        let working = filter::block_working_bytes(
+        let mut working = filter::block_working_bytes(
             &stages,
             self.effects.block_pixels,
             self.width,
             self.height,
         )
         .unwrap_or(0);
+        // 継ぎ目をまたいで評価する（帯の写しがあって、使っても予算に収まる）なら、その分も。帯の写しは `prepare_shared` が先に作ってある
+        if let Some(table) = self.seam_table_for(spec) {
+            working += filter::seam_working_bytes(
+                &stages,
+                self.effects.block_pixels,
+                self.width,
+                self.height,
+                table.texel_count() as u64,
+            );
+        }
         let need = working.saturating_add(output).max(1);
         ((self.effects.working_budget / need) as usize)
             .clamp(1, rayon::current_num_threads().max(1))
@@ -1568,6 +1640,7 @@ impl Document {
                     return true; // 反転・ノイズなどは、何も無い所にも値を作る
                 }
                 near(surface, spec.halo)
+                    || self.seam_reaches_content(spec.seam, spec.halo, coord, surface)
             }
             SourceKey::Channel(c) => {
                 if let Some(f) = &spec.config.fill {
@@ -1582,6 +1655,7 @@ impl Document {
                     .map(|e| e.settings.halo())
                     .sum();
                 near(layer.surface(c), expansion)
+                    || self.seam_reaches_content(spec.seam, expansion, coord, layer.surface(c))
             }
         }
     }
@@ -1625,6 +1699,7 @@ impl Document {
         } else {
             None
         };
+        let seams = self.seam_table_for(spec);
         let output = self.with_env(spec, self.grown_range(tiles, spec.halo), cancel, |env| {
             let options = filter::Options {
                 working_budget: self.effects.working_budget,
@@ -1632,6 +1707,7 @@ impl Document {
                 cancel,
                 generators: Some(env.generators),
                 statistics: statistics.as_deref().map(Vec::as_slice),
+                seams: seams.as_deref(),
             };
             filter::evaluate(env.source, env.value_type, env.stages, region, &options)
                 .map_err(map_filter_error)
@@ -1673,6 +1749,7 @@ impl Document {
                 }
             }
         }
+        let seams = self.seam_table_for(spec);
         let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
             let options = filter::Options {
                 working_budget: self.effects.working_budget,
@@ -1680,6 +1757,7 @@ impl Document {
                 cancel,
                 generators: Some(env.generators),
                 statistics: None,
+                seams: seams.as_deref(),
             };
             filter::statistics(env.source, env.value_type, env.stages, &options)
                 .map_err(map_filter_error)
@@ -2246,6 +2324,8 @@ impl Document {
             channels: Vec<Channel>,
             source: Source,
             halo: u32,
+            /// 段より後の近傍の段が UV の継ぎ目をまたぐときの帯の幅と段の数（`uv_seams`）。
+            seam: (u32, usize),
             /// 段より後に全域の段（正規化など）がある: 読む Anchor の 1 タイルの変化が、読む層の全タイルの出力を変える。
             global: bool,
             /// マスクのスタックの段なら、そのマスクを持つ層（読む元が変わると、そのマスクの出力が変わる）。
@@ -2276,6 +2356,7 @@ impl Document {
                         continue;
                     };
                     let halo: u32 = active[k..].iter().map(|e| e.settings.halo()).sum();
+                    let seam = self.seam_shape(active[k..].iter().map(|e| e.settings.halo()));
                     let global = active[k..].iter().any(|e| e.settings.is_global());
                     let channels = if target_mask {
                         self.covered_channels(i)
@@ -2289,6 +2370,7 @@ impl Document {
                             anchor::Placement::Mask => Source::Mask(self.layers[p.host].id),
                         },
                         halo,
+                        seam,
                         global,
                         mask_of: target_mask.then_some(l.id),
                     });
@@ -2322,6 +2404,12 @@ impl Document {
                     grew |= dirty_masks.insert(owner);
                 }
                 let m = r.halo.div_ceil(self.tile_size);
+                // 継ぎ目をまたいで届く所（全域の段があれば下で全部）
+                let across = if r.global {
+                    Vec::new()
+                } else {
+                    self.seam_write_tiles(r.seam, r.halo, source.iter().copied())
+                };
                 for c in &r.channels {
                     let set = sets.entry(*c).or_default();
                     if r.global {
@@ -2336,6 +2424,9 @@ impl Document {
                                 grew |= set.insert(TileCoord::new(x, y));
                             }
                         }
+                    }
+                    for t in &across {
+                        grew |= set.insert(*t);
                     }
                 }
             }

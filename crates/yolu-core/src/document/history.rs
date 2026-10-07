@@ -64,7 +64,7 @@ impl Command {
             Self::Stack { before, after, .. } if after.len() < before.len() => {
                 HistoryKind::RemoveEffect
             }
-            Self::Stack { .. } => HistoryKind::Effect,
+            Self::Stack { .. } | Self::FilterSeams { .. } => HistoryKind::Effect,
             Self::Anchor { .. } => HistoryKind::Anchor,
             Self::Path(_) => HistoryKind::Path,
             Self::Compound(_) => HistoryKind::Batch,

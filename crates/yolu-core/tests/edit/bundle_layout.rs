@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 const BUNDLES: [&str; 4] = ["edit", "effects", "reference", "surface"];
 
 /// 直下に 1 ファイル 1 本で置く試験（プロセス全体の状態を変える・数える。理由は各ファイルの頭）。ここに無いファイルが直下にあれば落とす。
-const STANDALONE: [&str; 7] = [
+const STANDALONE: [&str; 8] = [
     "brush",
     "document",
     "golden",
@@ -16,6 +16,7 @@ const STANDALONE: [&str; 7] = [
     "parallelism",
     "paths",
     "pressure",
+    "seam_memory",
 ];
 
 fn tests_dir() -> PathBuf {
