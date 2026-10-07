@@ -35,12 +35,6 @@ pub fn luminance(c: Rgba8) -> u8 {
     ((2126 * u32::from(c.r) + 7152 * u32::from(c.g) + 722 * u32::from(c.b) + 5000) / 10000) as u8
 }
 
-/// 0〜1 の浮動小数の輝度（カラーバランスの重みに使う）。
-#[inline]
-fn luminance_unit(r: f64, g: f64, b: f64) -> f64 {
-    0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
 // ───────── グラデーションマップ ─────────
 
 /// グラデーションマップ（輝度 → ランプ）。作るとき 256 の輝度ぶんの表（ランプの値のカーブと色・不透明度を引いた結果）を作る。
@@ -243,7 +237,7 @@ pub struct ColorBalance {
 
 impl ColorBalance {
     /// スライダー 100 が重み 1 の所で動かす量（0〜1 の値に対して）。
-    const SCALE: f64 = 0.3;
+    pub(super) const SCALE: f64 = 0.3;
     pub const RANGE: f64 = 100.0;
 
     pub fn new(
@@ -293,32 +287,12 @@ impl ColorBalance {
     pub fn is_neutral(&self) -> bool {
         self.values.iter().flatten().all(|v| *v == 0.0)
     }
-    /// 調整した色（アルファはそのまま）。
+    /// 調整した色（アルファはそのまま）。f32 の式（[`super::rows`]、行の核と同じ関数）。
     pub fn apply(&self, c: Rgba8) -> Rgba8 {
         if self.is_neutral() {
             return c;
         }
-        let (r, g, b) = (UNIT[c.r as usize], UNIT[c.g as usize], UNIT[c.b as usize]);
-        let y = luminance_unit(r, g, b);
-        let w = [(1.0 - y) * (1.0 - y), 4.0 * y * (1.0 - y), y * y];
-        let mut d = [0.0; 3];
-        for (k, delta) in d.iter_mut().enumerate() {
-            let sum: f64 = (0..3).map(|range| self.values[range][k] * w[range]).sum();
-            *delta = sum / Self::RANGE * Self::SCALE;
-        }
-        let (mut r2, mut g2, mut b2) = (r + d[0], g + d[1], b + d[2]);
-        if self.preserve_luminosity {
-            let back = y - luminance_unit(clamp01(r2), clamp01(g2), clamp01(b2));
-            r2 += back;
-            g2 += back;
-            b2 += back;
-        }
-        Rgba8::new(
-            to_byte(clamp01(r2)),
-            to_byte(clamp01(g2)),
-            to_byte(clamp01(b2)),
-            c.a,
-        )
+        super::rows::color_balance_pixel(&self.values, self.preserve_luminosity, c)
     }
     pub fn byte_size(&self) -> u64 {
         96

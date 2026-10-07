@@ -178,6 +178,7 @@ pub(crate) trait Lanes: Copy {
     unsafe fn eq(a: Self::F, b: Self::F) -> Self::M;
 
     unsafe fn and(a: Self::M, b: Self::M) -> Self::M;
+    #[cfg_attr(not(test), allow(dead_code))]
     unsafe fn or(a: Self::M, b: Self::M) -> Self::M;
     unsafe fn not(a: Self::M) -> Self::M;
     /// 真のレーンは a、偽のレーンは b。選ばれなかった方が NaN でも結果に影響しない。
@@ -207,6 +208,7 @@ pub(crate) trait Lanes: Copy {
     /// チャンネルごとのレーン（0〜65535 の整数の値）を、連続する N 画素の u16 の 4 チャンネル（4N 個以上のスライスの先頭、R・G・B・A の順）へ。
     unsafe fn store_u16x4(p: &mut [u16], v: [Self::F; 4]);
     /// 1 つの画素をすべてのレーンへ。
+    #[cfg_attr(not(test), allow(dead_code))]
     unsafe fn splat_px(px: [u8; 4]) -> [Self::F; 4];
     /// R・G・B・A のレーン（0〜255 の整数の値）を連続する N 画素の RGBA（4N バイト以上のスライスの先頭）へ。
     unsafe fn store(p: &mut [u8], v: [Self::F; 4]);

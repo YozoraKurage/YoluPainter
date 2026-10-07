@@ -41,9 +41,9 @@ impl RowAmount<'_> {
         }
     }
 
-    /// レーン k に画素 i + k の量（[`Self::at`] を f32 へ丸めた値）。
+    /// レーン k に画素 i + k の量（[`Self::at`] を f32 へ丸めた値）。Normal のチャンネルの合成（`crate::normal`）も同じ値を使う。
     #[inline(always)]
-    unsafe fn lanes<V: Lanes32>(&self, i: usize) -> V::F {
+    pub(crate) unsafe fn lanes<V: Lanes32>(&self, i: usize) -> V::F {
         match self.mask {
             None => V::splat(self.opacity as f32),
             Some((m, step, f)) => {
@@ -183,7 +183,11 @@ unsafe fn mix_block<V: Lanes32, const MODE: u8>(
 
 /// N 画素のフェード（下 backdrop と中身 inner をプリマルチプライドで補間。透明な側がもう片方を暗くしない）。
 #[inline(always)]
-unsafe fn fade_block<V: Lanes32>(backdrop: [V::F; 4], inner: [V::F; 4], amount: V::F) -> [V::F; 4] {
+pub(crate) unsafe fn fade_block<V: Lanes32>(
+    backdrop: [V::F; 4],
+    inner: [V::F; 4],
+    amount: V::F,
+) -> [V::F; 4] {
     let (zero, one) = (V::splat(0.0), V::splat(1.0));
     let ba = V::mul(V::unit(backdrop[3]), V::sub(one, amount));
     let ia = V::mul(V::unit(inner[3]), amount);

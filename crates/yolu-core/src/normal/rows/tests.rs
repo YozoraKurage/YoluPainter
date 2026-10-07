@@ -1,7 +1,7 @@
-//! Normal チャンネルの行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2）に比べる。
+//! Normal チャンネルの合成の行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2）に比べる。
 #![allow(clippy::needless_range_loop)]
 
-use super::super::{output_pixel, row, HeightEdgeMode, NormalSettings, NormalYDirection};
+use super::super::{blend_unchecked, clip_onto, fade};
 use super::*;
 use crate::math::simd::forced;
 use crate::math::simd::tests::Rng;
@@ -134,86 +134,112 @@ fn normal_fade_rows_match_the_pixel_formula_on_every_level() {
     }
 }
 
-/// 高さ（0〜1）: 端・段・乱数。
-fn heights(rng: &mut Rng, count: usize) -> Vec<f64> {
-    (0..count)
-        .map(|_| match rng.next() % 6 {
-            0 => 0.0,
-            1 => 1.0,
-            2 => f64::from(rng.byte()) / 255.0,
-            3 => height_of(rng.byte(), rng.byte()),
-            _ => rng.unit(),
-        })
-        .collect()
+// ───────── f64 の式との差（式を f32 にした変化の大きさ） ─────────
+
+/// f32 にする前の f64 の重ねの式（比べるためだけに残す）。
+fn blend_f64(below: Rgba8, over: Rgba8, opacity: f64, mode: BlendMode) -> Rgba8 {
+    use super::super::{decode, encode, rnm};
+    use crate::math::to_byte;
+    let t = UNIT[over.a as usize] * opacity;
+    let da = UNIT[below.a as usize];
+    if t <= 0.0 {
+        return below;
+    }
+    let b = decode(below);
+    let s = decode(over);
+    let c = if is_detail(mode) { rnm(b, s) } else { s };
+    let wb = (1.0 - t) * da;
+    let ws = (1.0 - da) * t;
+    let wc = da * t;
+    encode(
+        wb * b.0 + ws * s.0 + wc * c.0,
+        wb * b.1 + ws * s.1 + wc * c.1,
+        wb * b.2 + ws * s.2 + wc * c.2,
+        to_byte(t + da * (1.0 - t)),
+    )
 }
 
+fn clip_f64(group: Rgba8, clipped: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
+    use super::super::{decode, encode, rnm};
+    let t = UNIT[clipped.a as usize] * amount;
+    if t <= 0.0 || group.a == 0 {
+        return group;
+    }
+    let g = decode(group);
+    let s = decode(clipped);
+    let c = if is_detail(mode) { rnm(g, s) } else { s };
+    encode(
+        (1.0 - t) * g.0 + t * c.0,
+        (1.0 - t) * g.1 + t * c.1,
+        (1.0 - t) * g.2 + t * c.2,
+        group.a,
+    )
+}
+
+fn fade_f64(backdrop: Rgba8, inner: Rgba8, amount: f64) -> Rgba8 {
+    use super::super::{decode, encode};
+    use crate::math::to_byte;
+    if amount >= 1.0 {
+        return inner;
+    }
+    if amount <= 0.0 {
+        return backdrop;
+    }
+    let ba = UNIT[backdrop.a as usize] * (1.0 - amount);
+    let ia = UNIT[inner.a as usize] * amount;
+    let a = ba + ia;
+    if a <= 0.0 {
+        return Rgba8::TRANSPARENT;
+    }
+    let b = decode(backdrop);
+    let i = decode(inner);
+    encode(
+        ba * b.0 + ia * i.0,
+        ba * b.1 + ia * i.1,
+        ba * b.2 + ia * i.2,
+        to_byte(a),
+    )
+}
+
+/// 1 回の重ね・クリッピング・フェードの、f64 の式との差。乱数の画素（平ら・真逆・軸を混ぜる）で、どれも 1 段以内。
+/// 違うバイトの割合は `--nocapture` で出す。
 #[test]
-fn output_rows_match_the_pixel_formula_on_every_level() {
-    let mut rng = Rng(63);
-    for w in [1usize, 2, 3, 4, 5, 6, 7, 8, 9, 17, 33, 64] {
-        for edges in [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap] {
-            for strength in [4.0, -4.0, 0.5, 256.0, 0.0] {
-                let settings =
-                    NormalSettings::new(true, strength, edges, NormalYDirection::OpenGL).unwrap();
-                for (with_normal, with_heights) in
-                    [(true, true), (true, false), (false, true), (false, false)]
-                {
-                    let normal = pixels(&mut rng, w);
-                    let hs = heights(&mut rng, 3 * w);
-                    let n = with_normal.then_some(&normal[..]);
-                    let h = with_heights.then_some(&hs[..]);
-                    let mut want = vec![0u8; w * 4];
-                    let wrap = edges == HeightEdgeMode::Wrap;
-                    for x in 0..w {
-                        output_pixel(x, n, h, w, wrap, strength, &mut want);
-                    }
-                    for level in forced::supported() {
-                        let mut out = vec![0xEEu8; w * 4];
-                        forced::with_level(level, || row(n, h, w, &settings, &mut out));
-                        assert_eq!(
-                            out, want,
-                            "{level:?} w={w} {edges:?} strength={strength} normal={with_normal} heights={with_heights}"
-                        );
+fn one_composite_stays_within_one_step_of_the_f64_formula() {
+    let mut rng = Rng(65);
+    let n = 1 << 16;
+    for (name, opacity) in [("1", 1.0), ("0.6", 0.6), ("0.35", 0.35), ("乱数", -1.0)] {
+        for mode in [BlendMode::Normal, BlendMode::Overlay] {
+            let (mut worst, mut differ, mut total) = (0u8, 0usize, 0usize);
+            for _ in 0..4 {
+                let below = pixels(&mut rng, n);
+                let over = pixels(&mut rng, n);
+                for i in 0..n {
+                    let d = Rgba8::from_slice(&below[i * 4..]);
+                    let s = Rgba8::from_slice(&over[i * 4..]);
+                    let amount = if opacity < 0.0 { rng.unit() } else { opacity };
+                    let pairs = [
+                        (
+                            blend_unchecked(d, s, amount, mode),
+                            blend_f64(d, s, amount, mode),
+                        ),
+                        (clip_onto(d, s, amount, mode), clip_f64(d, s, amount, mode)),
+                        (fade(d, s, amount), fade_f64(d, s, amount)),
+                    ];
+                    for (got, want) in pairs {
+                        for (a, b) in got.to_array().into_iter().zip(want.to_array()) {
+                            let diff = a.abs_diff(b);
+                            worst = worst.max(diff);
+                            differ += usize::from(diff != 0);
+                            total += 1;
+                        }
                     }
                 }
             }
-        }
-    }
-}
-
-#[test]
-fn heights_from_rgba_matches_height_of() {
-    let mut rng = Rng(64);
-    for &n in &LENGTHS {
-        let src = pixels(&mut rng, n);
-        let want: Vec<f64> = (0..n)
-            .map(|x| height_of(src[x * 4], src[x * 4 + 3]))
-            .collect();
-        for level in forced::supported() {
-            let mut out = vec![-1.0; n];
-            heights_from_rgba(level, &src, &mut out);
-            assert_eq!(
-                out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                "{level:?} n={n}"
+            println!(
+                "{mode:?} 量 {name}: 最大 {worst} 段・違うバイト {differ} / {total}（{:.4}%）",
+                differ as f64 * 100.0 / total as f64
             );
+            assert!(worst <= 1, "{mode:?} 量 {name}: 最大 {worst} 段");
         }
-    }
-    // 取りうる (R, A) の全部
-    let all: Vec<u8> = (0..=255u32)
-        .flat_map(|r| (0..=255u32).flat_map(move |a| [r as u8, 0, 0, a as u8]))
-        .collect();
-    let want: Vec<f64> = (0..65536)
-        .map(|x| height_of(all[x * 4], all[x * 4 + 3]))
-        .collect();
-    for level in forced::supported() {
-        let mut out = vec![-1.0; 65536];
-        heights_from_rgba(level, &all, &mut out);
-        assert!(
-            out.iter()
-                .zip(&want)
-                .all(|(a, b)| a.to_bits() == b.to_bits()),
-            "{level:?}"
-        );
     }
 }

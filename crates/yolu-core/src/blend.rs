@@ -6,15 +6,15 @@
 //! 行の核（[`blend_row`] など）のスカラー・SSE4.1・AVX2 の道のどれも同じ関数を通るので、道とスレッド数によらず同じバイトになる
 //! （演算は IEEE の四則・平方根・floor・比較・選択だけ。積和の命令は使わない）。
 //!
-//! この式がこの crate の合成の正本。PSD の取り込みの照らし（yolu-io）もこの関数を呼ぶ。ブラシが描く画素の重ねは、ブラシの
-//! ほかの計算と同じ f64 の式（`brush::blend64`）を使う。
+//! この式がこの crate の合成の正本。PSD の取り込みの照らし（yolu-io）もこの関数を呼ぶ。ブラシが描く画素の重ね（Normal）と
+//! フェードも、同じ N 画素の式（`blend_block`・`fade_block`）を通る。
 
 use crate::types::{BlendMode, Rgba8};
 
 pub(crate) mod lanes;
 mod rows;
 
-pub(crate) use rows::mix_row_at;
+pub(crate) use rows::{blend_block, fade_block, mix_row_at};
 
 /// 画素の計算（合成・調整・フィルター・Normal チャンネル）が使っている SIMD の道の名前（`"avx2"`・`"sse41"`・`"scalar"`）。
 /// 診断と計測用。CPU が持つ一番広い道を選び、環境変数 `YOLU_SIMD` で下げられる。

@@ -245,11 +245,10 @@ impl StrokeState {
                             live,
                             coord,
                             local,
-                            coverage,
+                            coverage as f32,
                             s.pressure,
-                            ceiling,
-                            s.flow_scale,
-                            paper,
+                            (ceiling as f32, s.flow_scale as f32),
+                            paper.map(|(m, g, d)| (m, g as f32, d as f32)),
                             None,
                         )?;
                     }

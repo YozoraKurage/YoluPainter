@@ -1,7 +1,9 @@
 //! 正解の出力（tests/golden）とのバイト一致。台本（golden/cases.txt）を走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と
 //! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力（tools/csharp-golden/run.sh）で、合成の式が f32 のこの crate の
 //! 式になってから、合成を通る出力（.rgba と sweeps の行）はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1` で違った正解だけを
-//! 書き直す。撮り直したら差分を見て、意図した変化だけかを確かめる）。ブラシの画素と Normal のチャンネルの式は f64 のままで、今も C# と同じ値。
+//! 書き直す。撮り直したら差分を見て、意図した変化だけかを確かめる）。Normal のチャンネルの合成も f32 の式になってから撮り直した
+//! （normal_stack・channels・sweeps の nblend・nclip・nfade）。ブラシの画素も f32 の式になってから撮り直した（brush_*・dyn_texture・
+//! fx_blur・stencil_parallel の 1 段の差）。ダブの数・位置・Undo などの出来事の行は C# と同じ。
 //! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
 //! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
 //! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。

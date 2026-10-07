@@ -1,6 +1,6 @@
-//! 行の核（[`super`]）が、画素ごとの式（スカラーの道）と同じバイトを出すこと。ブラシ・層の中身・タイルの大きさ・点の列を
-//! 乱数で振って、同じ入力を 3 つの道（スカラー・SSE4.1・AVX2）で描き、層の全バイトとダブの数・変わったかが一致することを確かめる。
-//! スカラーの道は SIMD を入れる前と同じ画素ごとの式をそのまま使う（`YOLU_SIMD=scalar`）ので、これが参照になる。
+//! 行の核（[`super`]）が、道（スカラー・SSE4.1・AVX2）によらず、画素ごとの式（`apply_at`）と同じバイトを出すこと。ブラシ・層の中身・
+//! タイルの大きさ・点の列を乱数で振って、同じ入力を画素ごとの式（行の核を使わない）と 3 つの道の行の核で描き、層の全バイトと
+//! ダブの数・変わったかが一致することを確かめる。
 
 use super::*;
 use crate::math::simd::forced;
@@ -351,14 +351,28 @@ fn run(case: &Case) -> Option<Outcome> {
     Some(outcome)
 }
 
+/// 行の核を使わず画素ごとの式で描く間だけ f を走らせる。
+fn per_pixel<R>(f: impl FnOnce() -> R) -> R {
+    use std::sync::atomic::Ordering;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PER_PIXEL.store(false, Ordering::Relaxed);
+        }
+    }
+    PER_PIXEL.store(true, Ordering::Relaxed);
+    let _reset = Reset;
+    f()
+}
+
 #[test]
-fn every_level_paints_the_same_bytes_as_the_scalar_formula() {
+fn every_level_paints_the_same_bytes_as_the_per_pixel_formula() {
     let levels = forced::supported();
     let mut checked = 0;
     let mut refusals = 0;
     for seed in 0..300 {
         let case = random_case(seed);
-        let reference = forced::with_level(Level::Scalar, || run(&case));
+        let reference = forced::with_level(Level::Scalar, || per_pixel(|| run(&case)));
         let Some(reference) = reference else {
             for &level in &levels {
                 assert!(
@@ -374,9 +388,6 @@ fn every_level_paints_the_same_bytes_as_the_scalar_formula() {
         );
         refusals += usize::from(reference.refused.is_some());
         for &level in &levels {
-            if level == Level::Scalar {
-                continue;
-            }
             let got = forced::with_level(level, || run(&case)).expect("同じ入力は同じく始められる");
             assert_eq!(got.stamps, reference.stamps, "{level:?} seed {seed}");
             assert_eq!(got.changed, reference.changed, "{level:?} seed {seed}");

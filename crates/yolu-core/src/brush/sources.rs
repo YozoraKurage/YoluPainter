@@ -357,7 +357,16 @@ impl StrokeState {
             }
             let r = cursor.with(self, surface, &paint, |cx, held, live| {
                 apply_at::<false>(
-                    cx, held, live, coord, local, d.coverage, pressure, 1.0, 1.0, None, point,
+                    cx,
+                    held,
+                    live,
+                    coord,
+                    local,
+                    d.coverage as f32,
+                    pressure,
+                    (1.0, 1.0),
+                    None,
+                    point,
                 )
             });
             match r {

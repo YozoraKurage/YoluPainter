@@ -1,5 +1,6 @@
 //! 効果のブラシ（C# の BrushStroke.Effects）の読み元: ダブの前に、読む範囲の画素を凍結した枠。書いている間に面を読み返さないので、
-//! ワーカーやタイルの順によらない。ぼかしは枠の積分画像（プリマルチプライドの和）で箱の平均を、指先とクローンは双線形で読む。
+//! ワーカーやタイルの順によらない。ぼかしは枠の積分画像（プリマルチプライドの和）で箱の平均（`rows::blur32`）を、指先とクローンは
+//! 双線形（`rows::sample32`）で読む。平均・双線形の式は f32。
 
 use crate::types::Rgba8;
 
@@ -64,19 +65,6 @@ impl EffectFrame {
         true
     }
 
-    /// 積分画像の、画布の箱 [x0, x1) × [y0, y1)（枠の中。`blur` と同じ式）の 4 チャンネルの和。
-    #[inline]
-    pub(crate) fn box_sums(&self, x0: i64, y0: i64, x1: i64, y1: i64) -> [i64; 4] {
-        let stride = (self.width + 1) * 4;
-        let tl = ((y0 - self.y) * stride + (x0 - self.x) * 4) as usize;
-        let tr = ((y0 - self.y) * stride + (x1 - self.x) * 4) as usize;
-        let bl = ((y1 - self.y) * stride + (x0 - self.x) * 4) as usize;
-        let br = ((y1 - self.y) * stride + (x1 - self.x) * 4) as usize;
-        let s = &self.integral;
-        let sum = |c: usize| s[br + c] - s[bl + c] - s[tr + c] + s[tl + c];
-        [sum(0), sum(1), sum(2), sum(3)]
-    }
-
     /// 積分画像が、画布の箱 [x0, x1) × [y0, y1) を全部含むか。
     #[inline]
     pub(crate) fn integral_covers(&self, x0: i64, y0: i64, x1: i64, y1: i64) -> bool {
@@ -128,8 +116,10 @@ impl EffectFrame {
         self.integral = integral;
     }
 
-    /// (x, y) を中心に半径 radius の箱の平均（画布 w × h の中だけ。プリマルチプライドの平均、アルファは箱の画素の平均）。
-    pub(crate) fn blur(&self, x: i64, y: i64, radius: i64, w: i64, h: i64) -> Rgba8 {
+    /// (x, y) を中心に半径 radius の箱（画布 w × h の中だけ）の、積分画像からの和（R·A・G·A・B·A・A）と画素数。
+    /// 平均の式は `rows::blur32`（プリマルチプライドの平均、アルファは箱の画素の平均）。
+    #[inline]
+    pub(crate) fn blur_box(&self, x: i64, y: i64, radius: i64, w: i64, h: i64) -> ([i64; 4], i64) {
         let x0 = (x - radius).max(0);
         let y0 = (y - radius).max(0);
         let x1 = (x + radius).min(w - 1) + 1;
@@ -141,48 +131,25 @@ impl EffectFrame {
         let br = ((y1 - self.y) * stride + (x1 - self.x) * 4) as usize;
         let s = &self.integral;
         let sum = |c: usize| s[br + c] - s[bl + c] - s[tr + c] + s[tl + c];
-        let a = sum(3);
-        if a == 0 {
-            return Rgba8::TRANSPARENT;
-        }
-        let af = a as f64;
-        Rgba8::new(
-            byte255(sum(0) as f64 / af),
-            byte255(sum(1) as f64 / af),
-            byte255(sum(2) as f64 / af),
-            byte255(af / ((x1 - x0) * (y1 - y0)) as f64),
+        ([sum(0), sum(1), sum(2), sum(3)], (x1 - x0) * (y1 - y0))
+    }
+
+    /// 積分画像の、画布の行 y0 と y1 の 2 つの行（箱の和の上と下の角。`blur_box` と同じ位置）。
+    #[inline]
+    pub(crate) fn integral_rows(&self, y0: i64, y1: i64) -> (&[i64], &[i64]) {
+        let stride = ((self.width + 1) * 4) as usize;
+        let top = ((y0 - self.y) as usize) * stride;
+        let bottom = ((y1 - self.y) as usize) * stride;
+        (
+            &self.integral[top..top + stride],
+            &self.integral[bottom..bottom + stride],
         )
     }
 
-    /// 画素の座標 (x, y)（整数で画素そのもの）の双線形（プリマルチプライド）。画布の端の外は端の画素を延ばす。
-    pub(crate) fn sample(&self, x: f64, y: f64, w: i64, h: i64) -> Rgba8 {
-        let ix = x.floor() as i64;
-        let iy = y.floor() as i64;
-        let fx = x - ix as f64;
-        let fy = y - iy as f64;
-        let at = |px: i64, py: i64| {
-            self.pixels[((py.min(h - 1) - self.y) * self.width + px.min(w - 1) - self.x) as usize]
-        };
-        if fx == 0.0 && fy == 0.0 {
-            return at(ix, iy);
-        }
-        let (mut r, mut g, mut b, mut a) = (0.0, 0.0, 0.0, 0.0);
-        let mut add = |p: Rgba8, weight: f64| {
-            let v = p.a as f64 * weight;
-            r += p.r as f64 * v;
-            g += p.g as f64 * v;
-            b += p.b as f64 * v;
-            a += v;
-        };
-        add(at(ix, iy), (1.0 - fx) * (1.0 - fy));
-        add(at(ix + 1, iy), fx * (1.0 - fy));
-        add(at(ix, iy + 1), (1.0 - fx) * fy);
-        add(at(ix + 1, iy + 1), fx * fy);
-        if a <= 0.0 {
-            Rgba8::TRANSPARENT
-        } else {
-            Rgba8::new(byte255(r / a), byte255(g / a), byte255(b / a), byte255(a))
-        }
+    /// 画布の列 x の、積分画像の行の中の位置（4 チャンネルの先頭）。
+    #[inline]
+    pub(crate) fn integral_column(&self, x: i64) -> usize {
+        ((x - self.x) * 4) as usize
     }
 
     /// 枠が持つバイト（予算に数える分は呼び手が C# と同じ式で見積もる）。
@@ -190,23 +157,6 @@ impl EffectFrame {
     pub(crate) fn len(&self) -> usize {
         self.pixels.len()
     }
-}
-
-/// 指先・ぼかしの混ぜ方（C# の MixEffect の、透明部分のロックの無い経路）: アルファで重みを付けた補間。
-#[inline]
-pub(crate) fn mix_effect(start: Rgba8, sample: Rgba8, amount: f64) -> Rgba8 {
-    let a = start.a as f64 * (1.0 - amount);
-    let b = sample.a as f64 * amount;
-    let alpha = a + b;
-    if alpha <= 0.0 {
-        return Rgba8::new(start.r, start.g, start.b, 0);
-    }
-    Rgba8::new(
-        byte255((start.r as f64 * a + sample.r as f64 * b) / alpha),
-        byte255((start.g as f64 * a + sample.g as f64 * b) / alpha),
-        byte255((start.b as f64 * a + sample.b as f64 * b) / alpha),
-        byte255(alpha),
-    )
 }
 
 /// 0〜255 の値を四捨五入して収める（C# の Byte255: Math.Max(0, Math.Min(255, Math.Floor(v + .5)))）。
@@ -230,19 +180,21 @@ mod tests {
         f.set(1, 0, Rgba8::new(0, 255, 0, 0)); // 透明の RGB は平均に入らない
         f.set(2, 0, Rgba8::new(0, 0, 100, 255));
         f.build_integral();
-        let c = f.blur(1, 0, 1, 3, 1);
+        let c = super::super::rows::blur32(&f, 1, 0, 1, 3, 1);
         assert_eq!(c, Rgba8::new(100, 0, 50, 170));
         assert_eq!(f.len(), 3);
     }
 
     #[test]
     fn sample_is_bilinear_and_exact_on_pixels() {
+        use super::super::rows::sample32;
         let mut f = EffectFrame::new(2, 2, 2, 1);
         f.set(2, 2, Rgba8::new(0, 0, 0, 255));
         f.set(3, 2, Rgba8::new(255, 255, 255, 255));
-        assert_eq!(f.sample(2.0, 2.0, 4, 3), Rgba8::new(0, 0, 0, 255));
-        assert_eq!(f.sample(2.5, 2.0, 4, 3).r, 128);
-        assert_eq!(f.sample(3.5, 2.0, 4, 3), Rgba8::new(255, 255, 255, 255)); // 画布の端の外は端を延ばす
+        assert_eq!(sample32(&f, 2.0, 2.0, 4, 3), Rgba8::new(0, 0, 0, 255));
+        assert_eq!(sample32(&f, 2.5, 2.0, 4, 3).r, 128);
+        assert_eq!(sample32(&f, 3.5, 2.0, 4, 3), Rgba8::new(255, 255, 255, 255));
+        // 画布の端の外は端を延ばす
     }
 
     #[test]
@@ -256,7 +208,7 @@ mod tests {
     #[test]
     fn mix_effect_keeps_rgb_when_both_are_transparent() {
         assert_eq!(
-            mix_effect(Rgba8::new(9, 8, 7, 0), Rgba8::new(1, 2, 3, 0), 0.5),
+            super::super::rows::mix_effect32(Rgba8::new(9, 8, 7, 0), Rgba8::new(1, 2, 3, 0), 0.5),
             Rgba8::new(9, 8, 7, 0)
         );
     }

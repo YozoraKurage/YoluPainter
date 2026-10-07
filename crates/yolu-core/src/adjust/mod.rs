@@ -1,7 +1,8 @@
 //! 調整レイヤーの式（C# の Adjustments.cs、AlgorithmVersion 1）。画素ごとの点の調整で、保存したままの（符号化した）RGB に
 //! この道具の定義の式を当てる。Photoshop・CLIP STUDIO の同じ名前の調整と一致するとは言わない。アルファは変えない。
 //!
-//! 種類 0〜2（反転・レベル補正・色相/彩度）は C# と全バイト一致。64 からは Rust 版だけの種類（グラデーションマップ・トーンカーブ・
+//! 種類 0〜2（反転・レベル補正・色相/彩度）は C# と同じ式で、反転・レベル補正は C# と全バイト一致。色相/彩度は同じ式を f32 で
+//! 計算する（`rows`。f64 の式とは 1 段ずれる値がある）。64 からは Rust 版だけの種類（グラデーションマップ・トーンカーブ・
 //! カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション。値と式は [`ops`]）で、Unity 版は読めない。
 
 mod ops;
@@ -449,12 +450,7 @@ impl AdjustmentSettings {
                 Rgba8::new(self.level(c.r), self.level(c.g), self.level(c.b), c.a)
             }
             AdjustmentType::HueSaturation => {
-                let (r, g, b) = self.hue_saturation_lightness(
-                    UNIT[c.r as usize],
-                    UNIT[c.g as usize],
-                    UNIT[c.b as usize],
-                );
-                Rgba8::new(to_byte(r), to_byte(g), to_byte(b), c.a)
+                rows::hue_saturation_pixel(self.hue, self.saturation, self.lightness, c)
             }
             _ => match &self.more {
                 More::GradientMap(v) => v.apply(c),
@@ -475,54 +471,6 @@ impl AdjustmentSettings {
         v = max(0.0, min(1.0, v));
         v = v.powf(1.0 / self.gamma);
         to_byte(self.output_black + v * (self.output_white - self.output_black))
-    }
-
-    fn hue_saturation_lightness(&self, r: f64, g: f64, b: f64) -> (f64, f64, f64) {
-        // RGB → HSL
-        let mx = max(r, max(g, b));
-        let mn = min(r, min(g, b));
-        let mut l = (mx + mn) / 2.0;
-        let mut h = 0.0;
-        let mut s = 0.0;
-        let d = mx - mn;
-        if d > 1e-12 {
-            s = if l > 0.5 {
-                d / (2.0 - mx - mn)
-            } else {
-                d / (mx + mn)
-            };
-            h = if mx == r {
-                (g - b) / d + if g < b { 6.0 } else { 0.0 }
-            } else if mx == g {
-                (b - r) / d + 2.0
-            } else {
-                (r - g) / d + 4.0
-            };
-            h /= 6.0;
-        }
-        h += self.hue / 360.0;
-        h -= h.floor();
-        s = max(0.0, min(1.0, s * (1.0 + self.saturation)));
-        l = if self.lightness >= 0.0 {
-            l + (1.0 - l) * self.lightness
-        } else {
-            l * (1.0 + self.lightness)
-        };
-        // HSL → RGB
-        if s <= 0.0 {
-            return (l, l, l);
-        }
-        let q = if l < 0.5 {
-            l * (1.0 + s)
-        } else {
-            l + s - l * s
-        };
-        let p = 2.0 * l - q;
-        (
-            hue_to_rgb(p, q, h + 1.0 / 3.0),
-            hue_to_rgb(p, q, h),
-            hue_to_rgb(p, q, h - 1.0 / 3.0),
-        )
     }
 
     /// 調整レイヤーの合成の 1 段: 調整した色を下の色とモードで組み合わせ、量（不透明度 × マスク）で戻す。アルファは下のまま
@@ -597,25 +545,6 @@ fn min(a: f64, b: f64) -> f64 {
     } else {
         b
     }
-}
-
-fn hue_to_rgb(p: f64, q: f64, mut t: f64) -> f64 {
-    if t < 0.0 {
-        t += 1.0;
-    }
-    if t > 1.0 {
-        t -= 1.0;
-    }
-    if t < 1.0 / 6.0 {
-        return p + (q - p) * 6.0 * t;
-    }
-    if t < 0.5 {
-        return q;
-    }
-    if t < 2.0 / 3.0 {
-        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-    }
-    p
 }
 
 /// 合成で使う調整（レベル補正・ポスタリゼーションは表を引く。表の値は式そのもの）。

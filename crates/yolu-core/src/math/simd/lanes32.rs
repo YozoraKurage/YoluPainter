@@ -40,6 +40,8 @@ pub(crate) trait Lanes32: Copy {
     unsafe fn max(a: Self::F, b: Self::F) -> Self::F;
     unsafe fn floor(a: Self::F) -> Self::F;
     unsafe fn abs(a: Self::F) -> Self::F;
+    /// 符号の反転（`-a`。0 の符号も反転する）。
+    unsafe fn neg(a: Self::F) -> Self::F;
 
     unsafe fn lt(a: Self::F, b: Self::F) -> Self::M;
     unsafe fn le(a: Self::F, b: Self::F) -> Self::M;
@@ -149,6 +151,10 @@ impl Lanes32 for Scalar1 {
     #[inline(always)]
     unsafe fn abs(a: f32) -> f32 {
         a.abs()
+    }
+    #[inline(always)]
+    unsafe fn neg(a: f32) -> f32 {
+        -a
     }
     #[inline(always)]
     unsafe fn lt(a: f32, b: f32) -> bool {
@@ -292,6 +298,10 @@ impl Lanes32 for Avx2x8 {
     #[inline(always)]
     unsafe fn abs(a: __m256) -> __m256 {
         _mm256_andnot_ps(_mm256_set1_ps(-0.0), a)
+    }
+    #[inline(always)]
+    unsafe fn neg(a: __m256) -> __m256 {
+        _mm256_xor_ps(_mm256_set1_ps(-0.0), a)
     }
     #[inline(always)]
     unsafe fn lt(a: __m256, b: __m256) -> __m256 {
@@ -440,6 +450,10 @@ impl Lanes32 for Sse41x4 {
         _mm_andnot_ps(_mm_set1_ps(-0.0), a)
     }
     #[inline(always)]
+    unsafe fn neg(a: __m128) -> __m128 {
+        _mm_xor_ps(_mm_set1_ps(-0.0), a)
+    }
+    #[inline(always)]
     unsafe fn lt(a: __m128, b: __m128) -> __m128 {
         _mm_cmplt_ps(a, b)
     }
@@ -573,7 +587,7 @@ mod tests {
             let a = V::from_fn(|k| chunk[k].0);
             let b = V::from_fn(|k| chunk[k].1);
             let pick = |m: V::M| V::select(m, V::splat(1.0), V::splat(0.0));
-            let lanes: [(&str, V::F); 17] = [
+            let lanes: [(&str, V::F); 18] = [
                 ("add", V::add(a, b)),
                 ("sub", V::sub(a, b)),
                 ("mul", V::mul(a, b)),
@@ -583,6 +597,7 @@ mod tests {
                 ("max", V::max(a, b)),
                 ("floor", V::floor(a)),
                 ("abs", V::abs(a)),
+                ("neg", V::neg(a)),
                 ("lt", pick(V::lt(a, b))),
                 ("le", pick(V::le(a, b))),
                 ("gt", pick(V::gt(a, b))),
@@ -595,7 +610,7 @@ mod tests {
             for k in 0..V::N {
                 let (x, y) = chunk[k];
                 let s = |m: bool| if m { 1.0 } else { 0.0 };
-                let want: [f32; 17] = [
+                let want: [f32; 18] = [
                     Scalar1::add(x, y),
                     Scalar1::sub(x, y),
                     Scalar1::mul(x, y),
@@ -605,6 +620,7 @@ mod tests {
                     Scalar1::max(x, y),
                     Scalar1::floor(x),
                     Scalar1::abs(x),
+                    Scalar1::neg(x),
                     s(Scalar1::lt(x, y)),
                     s(Scalar1::le(x, y)),
                     s(Scalar1::gt(x, y)),

@@ -16,7 +16,7 @@ struct Entry<'a> {
     layer: &'a Layer,
     children: Vec<Entry<'a>>,
     clips: Vec<Entry<'a>>,
-    /// 色調補正の 6 種の調整は、core の式（表を 1 回だけ作る）で当てる。ほかの調整と変換できない値は None。
+    /// 反転・レベル補正のほかの調整は、core の式（表を 1 回だけ作る）で当てる。ほかの調整と変換できない値は None。
     core: Option<yolu_core::AdjustmentSettings>,
 }
 fn entry(l: &Layer) -> Option<Entry<'_>> {
@@ -44,12 +44,9 @@ fn entry(l: &Layer) -> Option<Entry<'_>> {
         core,
     })
 }
-/// core の式で当てる調整（C# 由来でない 6 種）か。
+/// core の式で当てる調整（反転・レベル補正のほか）か。色相/彩度も core の f32 の式で当て、文書の合成と同じ値にする。
 fn is_core_only(a: &Adjustment) -> bool {
-    !matches!(
-        a,
-        Adjustment::Invert | Adjustment::Levels { .. } | Adjustment::HueSaturation { .. }
-    )
+    !matches!(a, Adjustment::Invert | Adjustment::Levels { .. })
 }
 fn plan(layers: &[Layer]) -> Vec<Entry<'_>> {
     let bottom: Vec<_> = layers.iter().rev().collect();
@@ -175,7 +172,7 @@ fn adjust(
         return c;
     }
     if is_core_only(a) {
-        // 色調補正の 6 種: core の調整の式で当て、合成モードと量は同じ式で混ぜる（変換できない値は何も変えない）
+        // core の調整の式で当て、合成モードと量は同じ式で混ぜる（変換できない値は何も変えない）
         return core.map_or(c, |s| s.composite(c, amount, mode(m)));
     }
     let rgb = match *a {
@@ -196,73 +193,7 @@ fn adjust(
                 .powf(1.0 / (f64::from(gamma) / 100.0));
             byte(ob + t * (ow - ob))
         }),
-        Adjustment::HueSaturation {
-            hue,
-            saturation,
-            lightness,
-        } => {
-            let r = f64::from(c.r) / 255.0;
-            let g = f64::from(c.g) / 255.0;
-            let b = f64::from(c.b) / 255.0;
-            let max = r.max(g.max(b));
-            let min = r.min(g.min(b));
-            let mut l = (max + min) / 2.0;
-            let d = max - min;
-            let mut h = 0.0;
-            let mut s = 0.0;
-            if d > 1e-12 {
-                s = if l > 0.5 {
-                    d / (2.0 - max - min)
-                } else {
-                    d / (max + min)
-                };
-                h = if max == r {
-                    (g - b) / d + if g < b { 6.0 } else { 0.0 }
-                } else if max == g {
-                    (b - r) / d + 2.0
-                } else {
-                    (r - g) / d + 4.0
-                };
-                h /= 6.0
-            }
-            h += f64::from(hue) / 360.0;
-            h -= h.floor();
-            s = (s * (1.0 + f64::from(saturation) / 100.0)).clamp(0.0, 1.0);
-            let light = f64::from(lightness) / 100.0;
-            l = if light >= 0.0 {
-                l + (1.0 - l) * light
-            } else {
-                l * (1.0 + light)
-            };
-            if s <= 0.0 {
-                [byte(l); 3]
-            } else {
-                let q = if l < 0.5 {
-                    l * (1.0 + s)
-                } else {
-                    l + s - l * s
-                };
-                let p = 2.0 * l - q;
-                [h + 1.0 / 3.0, h, h - 1.0 / 3.0].map(|mut t| {
-                    if t < 0.0 {
-                        t += 1.0
-                    }
-                    if t > 1.0 {
-                        t -= 1.0
-                    }
-                    byte(if t < 1.0 / 6.0 {
-                        p + (q - p) * 6.0 * t
-                    } else if t < 0.5 {
-                        q
-                    } else if t < 2.0 / 3.0 {
-                        p + (q - p) * (2.0 / 3.0 - t) * 6.0
-                    } else {
-                        p
-                    })
-                })
-            }
-        }
-        // 6 種は上で core の式に任せて戻っている
+        // ほかは上で core の式に任せて戻っている
         _ => [c.r, c.g, c.b],
     };
     // 合成モードと量の混ぜは core の調整の層と同じ式

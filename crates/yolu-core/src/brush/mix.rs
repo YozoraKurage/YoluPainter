@@ -1,15 +1,17 @@
 //! 色の混ぜ（厚塗りのブラシ。CLIP STUDIO の混色・絵の具の量・絵の具の濃さ・色延びに当たる拡張）。
 //!
 //! 今までのブラシは描く色を置くだけで、下の色は拾わない。混ぜるブラシは、ダブごとに下地（打点の前に凍結した枠）の色を読み、
-//! 描く色と混ぜてから置く。式は `docs/BRUSH.md` の「色の混ぜ」にも書いてある。色はすべて straight RGBA（0〜255 の倍精度）で扱い、
-//! 置くときは今までと同じ道（ストロークの覆い `wash` ＋ 画素ごとの色 ＋ [`super::blend64::blend`]）を通す。
+//! 描く色と混ぜてから置く。式は `docs/BRUSH.md` の「色の混ぜ」にも書いてある。色は straight RGBA（0〜255）で、精度は式ごとに違う:
+//! 筆の荷とその更新（[`mix_colors`]・[`next_carry`]）は f64、荷の更新に使う下地の合計（[`MixTally`]）は画素ごとの積が f32・足し算が f64、
+//! 画素の混ぜた色 `M(p)` は f32 のレーンの式（`rows::mixed32`。画素ごとの式も 1 本のレーンで同じ関数を通る）。置くときは今までと同じ道
+//! （ストロークの覆い `wash` ＋ 画素ごとの色 ＋ 合成の核 [`crate::blend::blend_block`] の Normal の N 画素の式）を通る。
 //!
 //! - 筆の荷（ブラシが今持っている色）`C`: 最初の打点は描く色。次の打点からは `C = 荷 × 色延び + 描く色 × (1 − 色延び)`
 //!   （荷は、前の打点が下地から拾って混ぜた後の色）。色延び 0 なら毎回描く色から、1 なら拾った色を引きずったまま。
 //! - 画素の混ぜた色 `M(p)`: 下地の色 `U(p)`（混ぜるは同じ画素、伸ばすは打点の動きの分だけ後ろを小さい箱で平均した所）と荷 `C` を、
 //!   絵の具の量 `A` で `mix_colors(U, C, A)` する。**混ぜるはストロークを始める前の絵**を読むので、同じストロークが画素に何度重なっても
 //!   混ざり方は変わらない（画素に残るのは最後に覆った打点の `M`）。**伸ばすは今の面**（このストロークが先に置いた分を含む）を読み、
-//!   先に引きずった色を後の打点が運ぶ。アルファで重みを付けた補間（効果のブラシの [`super::effects::mix_effect`] と同じ重み）で、
+//!   先に引きずった色を後の打点が運ぶ。アルファで重みを付けた補間（効果のブラシの指先・ぼかしの混ぜ `rows::mix_effect32` と同じ重み）で、
 //!   透明な下地の色は混ざらない。アルファは描く色のまま（下地が透けていても薄まらない）。重みが 0 の画素は塗らない。
 //! - 打点の後、荷は「混ぜた色の平均」になる: 打点の下地の（被覆 × アルファで重みを付けた）平均色 `Ū` と `mix_colors(Ū, C, A)`。下地が
 //!   透明で何も拾えなければ荷は変わらない。
@@ -20,7 +22,7 @@
 //! - 並列に描くダブも順に描くダブも同じ画素になる: 読む枠は打点の前に凍結し、荷の更新に使う平均はタイルごとの合計を
 //!   タイルの順に足したもの（どの経路も同じ足し算の列）。
 
-use super::effects::{byte255, EffectFrame};
+use super::effects::EffectFrame;
 use super::pressure::PressureResponse;
 use crate::error::CoreError;
 use crate::math::require_finite;
@@ -196,17 +198,13 @@ fn straight(c: Rgba8) -> [f64; 4] {
     [c.r as f64, c.g as f64, c.b as f64, c.a as f64]
 }
 
-#[inline]
-fn to_rgba8(c: [f64; 4]) -> Rgba8 {
-    Rgba8::new(byte255(c[0]), byte255(c[1]), byte255(c[2]), byte255(c[3]))
-}
-
 impl MixDab {
     /// 画素 (px, py) の下地の読み（画布は w × h）: 混ぜるは同じ画素、伸ばすは動きの分だけずらした所の箱の平均（画布の端の外は端の画素）。
     #[inline]
     pub(crate) fn ground_at(&self, frame: &EffectFrame, px: i64, py: i64, w: i64, h: i64) -> Rgba8 {
         match self.mode {
-            MixMode::Smear => frame.blur(
+            MixMode::Smear => super::rows::blur32(
+                frame,
                 (px + self.shift.0).clamp(0, w - 1),
                 (py + self.shift.1).clamp(0, h - 1),
                 self.blur,
@@ -215,12 +213,6 @@ impl MixDab {
             ),
             _ => frame.pixel(px, py),
         }
-    }
-
-    /// 打点の画素の混ぜた色（`ground` は下地の読み。None は混ぜる色が無く、この画素は塗らない）。
-    #[inline]
-    pub(crate) fn pixel_color(&self, ground: Rgba8) -> Option<Rgba8> {
-        mix_colors(straight(ground), self.carry, self.paint).map(to_rgba8)
     }
 
     /// この打点が終わった後の荷: 下地の平均色と混ぜたもの。何も拾えなかった（下地が透明）なら今の荷のまま。
@@ -264,16 +256,6 @@ pub(crate) struct MixTally {
 }
 
 impl MixTally {
-    #[inline]
-    pub(crate) fn add(&mut self, coverage: f64, ground: Rgba8) {
-        self.cover += coverage;
-        let w = coverage * (ground.a as f64 / 255.0);
-        self.weight += w;
-        self.rgb[0] += w * ground.r as f64;
-        self.rgb[1] += w * ground.g as f64;
-        self.rgb[2] += w * ground.b as f64;
-    }
-
     /// 別のタイルの合計を足す（呼ぶ順は経路によらずタイルの順）。
     pub(crate) fn merge(&mut self, other: MixTally) {
         self.cover += other.cover;
@@ -307,7 +289,7 @@ impl MixRun {
 
 #[cfg(test)]
 mod tests {
-    use super::super::effects::mix_effect;
+    use super::super::rows::{mix_effect32, mixed32, tally32};
     use super::*;
 
     #[test]
@@ -406,8 +388,8 @@ mod tests {
                 shift: (0, 0),
                 blur: 0,
             };
-            let ours = dab.pixel_color(u).unwrap();
-            let theirs = mix_effect(u, c, amount);
+            let ours = mixed32(&dab, u).unwrap();
+            let theirs = mix_effect32(u, c, amount as f32);
             assert_eq!(ours, theirs, "{u:?} {c:?} {amount}");
         }
     }
@@ -436,19 +418,19 @@ mod tests {
         };
         // 何も拾えない（下地が透明）
         let mut empty = MixTally::default();
-        empty.add(1.0, Rgba8::new(9, 9, 9, 0));
-        empty.add(1.0, Rgba8::new(9, 9, 9, 0));
+        tally32(&mut empty, 1.0, Rgba8::new(9, 9, 9, 0));
+        tally32(&mut empty, 1.0, Rgba8::new(9, 9, 9, 0));
         assert_eq!(dab.loaded_after(&empty), dab.carry);
         assert_eq!(dab.loaded_after(&MixTally::default()), dab.carry);
         // 青い不透明な下地: 荷 = 赤と青の半々
         let mut blue = MixTally::default();
-        blue.add(1.0, Rgba8::new(0, 0, 255, 255));
-        blue.add(0.5, Rgba8::new(0, 0, 255, 255));
+        tally32(&mut blue, 1.0, Rgba8::new(0, 0, 255, 255));
+        tally32(&mut blue, 0.5, Rgba8::new(0, 0, 255, 255));
         assert_eq!(dab.loaded_after(&blue), [127.5, 0.0, 127.5, 255.0]);
         // 被覆の半分が透明なら、拾う重みも半分（青の重み 0.25、赤の重み 0.5）
         let mut half = MixTally::default();
-        half.add(1.0, Rgba8::new(0, 0, 255, 255));
-        half.add(1.0, Rgba8::new(0, 0, 0, 0));
+        tally32(&mut half, 1.0, Rgba8::new(0, 0, 255, 255));
+        tally32(&mut half, 1.0, Rgba8::new(0, 0, 0, 0));
         let l = dab.loaded_after(&half);
         assert!((l[0] - 255.0 * 0.5 / 0.75).abs() < 1e-9, "{l:?}");
         assert!((l[2] - 255.0 * 0.25 / 0.75).abs() < 1e-9, "{l:?}");
@@ -457,14 +439,18 @@ mod tests {
     #[test]
     fn tallies_merge_in_order_like_a_per_tile_sum() {
         let mut a = MixTally::default();
-        a.add(0.3, Rgba8::new(10, 20, 30, 200));
+        tally32(&mut a, 0.3, Rgba8::new(10, 20, 30, 200));
         let mut b = MixTally::default();
-        b.add(0.7, Rgba8::new(40, 50, 60, 255));
+        tally32(&mut b, 0.7, Rgba8::new(40, 50, 60, 255));
         let mut total = MixTally::default();
         total.merge(a);
         total.merge(b);
-        assert_eq!(total.cover, 0.3 + 0.7);
-        assert_eq!(total.weight, 0.3 * (200.0 / 255.0) + 0.7);
+        // 積は f32、合計は f64
+        assert_eq!(total.cover, f64::from(0.3f32) + f64::from(0.7f32));
+        assert_eq!(
+            total.weight,
+            f64::from(0.3f32 * (200.0f32 / 255.0)) + f64::from(0.7f32)
+        );
     }
 
     #[test]
@@ -479,7 +465,7 @@ mod tests {
             blur: 0,
         };
         run.dab = Some(dab);
-        run.tally.add(1.0, Rgba8::new(0, 255, 0, 255));
+        tally32(&mut run.tally, 1.0, Rgba8::new(0, 255, 0, 255));
         run.settle();
         assert_eq!(run.loaded, Some([0.0, 255.0, 0.0, 255.0]));
         assert_eq!(run.tally, MixTally::default());
