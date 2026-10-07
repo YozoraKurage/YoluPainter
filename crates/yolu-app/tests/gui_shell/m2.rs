@@ -2102,3 +2102,108 @@ fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
         h.state().state.message
     );
 }
+
+/// 開いている種類のメニューの 3 つの形式の行を上から並べる（文字・印）。欄の箱にも同じ文字があるので、メニューの中の行だけを数える。
+fn kind_menu_rows(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+    let body = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("popup open")
+        .state
+        .rect;
+    let mut rows: Vec<(f32, String, bool)> = Vec::new();
+    for label in ["sRGB8", "L8", "RGB8"] {
+        for node in h.query_all_by_label(label) {
+            let rect = node.rect();
+            if body.contains_rect(rect) {
+                let marked =
+                    node.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True);
+                rows.push((rect.top(), label.to_owned(), marked));
+            }
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, l, m)| (l, m)).collect()
+}
+
+/// 開いている種類のメニューの中の、この形式の行の箱。
+fn kind_menu_row(h: &Harness<'_, YoluApp>, label: &str) -> egui::Rect {
+    let body = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("popup open")
+        .state
+        .rect;
+    h.query_all_by_label(label)
+        .map(|n| n.rect())
+        .find(|r| body.contains_rect(*r))
+        .unwrap_or_else(|| panic!("メニューに {label} の行が無い"))
+}
+
+/// 種類のメニューの印は、欄が出す形式と同じ文字の項目に付く。ほかで作った文書にあるリニアのカラー（欄は RGB8）はノーマルの項目に付く。
+/// 印の付いた項目を押しても、種類も色空間も Undo の段も変わらず、ほかの項目を選ぶと 1 回の Undo で戻る。絵は日英。
+#[test]
+fn snapshot_channel_kind_menu_marks_the_row_format() {
+    use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
+    let mut h = app(1280.0, 800.0, 128);
+    click_tab(&mut h, Tab::Channels);
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(ChannelInfo {
+            name: "Tint".into(),
+            kind: ChannelKind::Color,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(255, 255, 255, 255),
+        })),
+    );
+    let tint = h.state().state.m2.paint_channel;
+    let before = h.state().state.doc.channel_info(tint).cloned();
+    let steps = h.state().state.doc.undo_count();
+    for (lang, name) in [
+        (Lang::Ja, "channel_kind_menu_ja"),
+        (Lang::En, "channel_kind_menu_en"),
+    ] {
+        apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+        h.get_by_label("RGB8").click();
+        h.run();
+        assert_eq!(
+            popup_kind(&h),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::ChannelKind(tint)))
+        );
+        assert_eq!(
+            kind_menu_rows(&h),
+            [
+                ("sRGB8".to_owned(), false),
+                ("L8".to_owned(), false),
+                ("RGB8".to_owned(), true),
+            ],
+            "{name}"
+        );
+        h.snapshot(name);
+        h.state_mut().state.popup = None;
+        h.run();
+    }
+    // 印の付いた項目（RGB8）を押しても何も変わらない
+    h.get_by_label("RGB8").click();
+    h.run();
+    let at = kind_menu_row(&h, "RGB8").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.doc.channel_info(tint).cloned(), before);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert!(h.state().state.popup.is_none());
+    // ほかの項目（sRGB8）を選ぶと、カラー（sRGB）になって 1 回の Undo で戻る
+    h.get_by_label("RGB8").click();
+    h.run();
+    let at = kind_menu_row(&h, "sRGB8").center();
+    click(&mut h, at);
+    let after = h.state().state.doc.channel_info(tint).cloned().unwrap();
+    assert_eq!(after.kind, ChannelKind::Color);
+    assert_eq!(after.color_space, ColorSpace::Srgb);
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    apply(&mut h, Action::Undo);
+    assert_eq!(h.state().state.doc.channel_info(tint).cloned(), before);
+}

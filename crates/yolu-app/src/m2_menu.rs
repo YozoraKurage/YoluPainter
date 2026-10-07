@@ -160,6 +160,32 @@ pub fn new_channel_name(app: &AppState, kind: ChannelKind) -> String {
         .expect("名前は尽きない")
 }
 
+/// ユーザーチャンネルの種類のメニュー。項目は種類ごとの形式（その種類で新しく作る情報の色空間）で、印は項目の文字が欄の文字
+/// （[`channel_format`]）と同じ項目に付く。ファイルから読んだリニアのカラー（欄は RGB8）はノーマルの項目に、sRGB のノーマル（欄は sRGB8）は
+/// カラーの項目に印が付く。sRGB のスカラー（欄は sL8）は同じ文字の項目が無く、印は付かない。印の付いた項目は今の形式なので、押しても
+/// 何もしない（今と同じ情報への `SetChannel` は何も変えず、Undo の段も作らない）。ほかの項目は、その種類で新しく作る情報への 1 回の `SetChannel`。
+fn channel_kind_entries(channel: Channel, info: &ChannelInfo, free: bool) -> Vec<Entry<Action>> {
+    let shown = channel_format(info);
+    [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
+        .into_iter()
+        .map(|kind| {
+            let next = new_channel_info(info.name.clone(), kind);
+            let label = channel_format(&next);
+            let marked = label == shown;
+            let target = if marked { info.clone() } else { next };
+            Entry::item(
+                label,
+                Action::M2(Edit::SetChannel {
+                    channel,
+                    info: target,
+                }),
+            )
+            .radio(marked)
+            .enabled(free)
+        })
+        .collect()
+}
+
 /// 項目の並び。
 pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
     let lang = app.lang;
@@ -368,29 +394,10 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
             })
             .collect(),
-        Popup::ChannelKind(channel) => {
-            let Some(info) = app.doc.channel_info(channel) else {
-                return Vec::new();
-            };
-            [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
-                .iter()
-                .map(|k| {
-                    let next = ChannelInfo {
-                        kind: *k,
-                        ..new_channel_info(info.name.clone(), *k)
-                    };
-                    Entry::item(
-                        channel_format(&next),
-                        Action::M2(Edit::SetChannel {
-                            channel,
-                            info: next,
-                        }),
-                    )
-                    .radio(info.kind == *k)
-                    .enabled(free)
-                })
-                .collect()
-        }
+        Popup::ChannelKind(channel) => match app.doc.channel_info(channel) {
+            Some(info) => channel_kind_entries(channel, info, free),
+            None => Vec::new(),
+        },
         Popup::FillImage(..)
         | Popup::ImageSpace(_)
         | Popup::ProjectionMode(_)
@@ -438,6 +445,246 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 )
                 .enabled(free && user),
             ]
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::ColorSpace;
+    use crate::ui::menu::Check;
+
+    const KINDS: [ChannelKind; 3] = [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal];
+    const SPACES: [ColorSpace; 2] = [ColorSpace::Srgb, ColorSpace::Linear];
+
+    /// 項目の見た目（名前・印・押せるか）。
+    fn rows(entries: &[Entry<Action>]) -> Vec<(String, bool, bool)> {
+        entries
+            .iter()
+            .map(|e| match e {
+                Entry::Item {
+                    label,
+                    check,
+                    enabled,
+                    ..
+                } => (label.clone(), *check == Check::Radio, *enabled),
+                other => panic!("項目だけのはず: {other:?}"),
+            })
+            .collect()
+    }
+
+    fn info_with(kind: ChannelKind, color_space: ColorSpace) -> ChannelInfo {
+        ChannelInfo {
+            color_space,
+            ..new_channel_info("x".into(), kind)
+        }
+    }
+
+    fn app_with(info: ChannelInfo, lang: Lang) -> (AppState, Channel) {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        s.apply(Action::M2(Edit::AddChannel(info)));
+        let channel = s.m2.paint_channel;
+        assert!(!channel.is_standard());
+        (s, channel)
+    }
+
+    fn kind_entries(s: &AppState, channel: Channel) -> Vec<Entry<Action>> {
+        entries(s, Popup::ChannelKind(channel))
+    }
+
+    /// 項目の文字から行動を取る（押せる項目だけ）。
+    fn action_of(entries: Vec<Entry<Action>>, label: &str) -> Option<Action> {
+        entries.into_iter().find_map(|e| match e {
+            Entry::Item {
+                label: l,
+                enabled: true,
+                action,
+                ..
+            } if l == label => Some(action),
+            _ => None,
+        })
+    }
+
+    /// 欄が出す形式（`channel_format`）と同じ文字の項目だけに印が付く。アプリが作る 3 通りは今までと同じ位置、ほかで作った文書にある
+    /// リニアのカラー（欄は RGB8）はノーマルの項目、sRGB のノーマル（欄は sRGB8）はカラーの項目に付く。項目はいつも 3 つで、全部押せる。
+    /// 日英で同じ（文字は形式だけ）。
+    #[test]
+    fn the_mark_names_the_format_the_row_shows() {
+        // （今のチャンネル, 欄の文字, 印の付く項目の位置）
+        let cases = [
+            (info_with(ChannelKind::Color, ColorSpace::Srgb), "sRGB8", 0),
+            (info_with(ChannelKind::Scalar, ColorSpace::Linear), "L8", 1),
+            (
+                info_with(ChannelKind::Normal, ColorSpace::Linear),
+                "RGB8",
+                2,
+            ),
+            (info_with(ChannelKind::Color, ColorSpace::Linear), "RGB8", 2),
+            (info_with(ChannelKind::Normal, ColorSpace::Srgb), "sRGB8", 0),
+        ];
+        for lang in [Lang::Ja, Lang::En] {
+            for (info, shown, at) in &cases {
+                let (s, channel) = app_with(info.clone(), lang);
+                assert_eq!(channel_format(info), *shown);
+                let expected: Vec<_> = ["sRGB8", "L8", "RGB8"]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, label)| ((*label).to_owned(), i == *at, true))
+                    .collect();
+                let got = rows(&kind_entries(&s, channel));
+                assert_eq!(got, expected, "{shown} ({:?}) {lang:?}", info.kind);
+                assert_eq!(got[*at].0, *shown);
+            }
+        }
+    }
+
+    /// 種類 3 つ × 色空間 2 つの全部で、印が付くなら、その項目の文字は欄の文字と同じ（印は欄と別物に付かない）。
+    /// 印の付くのは 1 つ以下で、項目は 3 つのまま。sRGB のスカラー（欄は sL8）は同じ文字の項目が無く、印が付かない。
+    #[test]
+    fn a_mark_never_names_anything_but_the_row_format() {
+        for kind in KINDS {
+            for color_space in SPACES {
+                let info = info_with(kind, color_space);
+                let (s, channel) = app_with(info.clone(), Lang::Ja);
+                let rows = rows(&kind_entries(&s, channel));
+                let shown = channel_format(&info);
+                let tag = format!("{shown} ({kind:?})");
+                assert_eq!(rows.len(), 3, "{tag}");
+                assert!(rows.iter().all(|r| r.2), "{tag}");
+                let marked: Vec<_> = rows.iter().filter(|r| r.1).collect();
+                if shown == "sL8" {
+                    assert!(marked.is_empty(), "{tag}");
+                } else {
+                    assert_eq!(marked.len(), 1, "{tag}");
+                    assert_eq!(marked[0].0, shown, "{tag}");
+                }
+            }
+        }
+    }
+
+    /// 印の付いた項目を押しても、文書も Undo の段も変わらず、知らせも出ない（Undo は、そのチャンネルを追加した 1 つ前の編集を戻す）。
+    /// アプリが作る 3 通りとほかで作った 2 通りのどれでも。
+    #[test]
+    fn pressing_the_marked_item_changes_nothing() {
+        let cases = [
+            info_with(ChannelKind::Color, ColorSpace::Srgb),
+            info_with(ChannelKind::Scalar, ColorSpace::Linear),
+            info_with(ChannelKind::Normal, ColorSpace::Linear),
+            info_with(ChannelKind::Color, ColorSpace::Linear),
+            info_with(ChannelKind::Normal, ColorSpace::Srgb),
+        ];
+        for info in cases {
+            let tag = channel_format(&info);
+            let (mut s, channel) = app_with(info.clone(), Lang::Ja);
+            let marked = kind_entries(&s, channel)
+                .into_iter()
+                .find_map(|e| match e {
+                    Entry::Item {
+                        check: Check::Radio,
+                        action,
+                        ..
+                    } => Some(action),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{tag}: 印の項目がない"));
+            let revision = s.doc.revision();
+            let steps = s.doc.undo_count();
+            let message = s.message.clone();
+            s.modified = false;
+            s.apply(marked);
+            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}");
+            assert_eq!(s.doc.revision(), revision, "{tag}: 文書の版");
+            assert_eq!(s.doc.undo_count(), steps, "{tag}: Undo の段");
+            assert_eq!(s.message, message, "{tag}: 知らせ");
+            assert!(!s.modified, "{tag}: 変更の印");
+            // 今の種類と色空間のまま、印の位置も変わらない
+            let now = rows(&kind_entries(&s, channel));
+            assert_eq!(now.iter().filter(|r| r.1).count(), 1, "{tag}");
+            // 最後の段はチャンネルを追加した編集のまま
+            s.apply(Action::Undo);
+            assert_eq!(
+                s.doc.channel_info(channel),
+                None,
+                "{tag}: Undo 1 回で追加する前"
+            );
+        }
+    }
+
+    /// 既定の値を変えたチャンネルでも、印の項目は何もしない。ほかの項目を選ぶと、その種類で新しく作る情報（既定の値も）になる。
+    #[test]
+    fn the_marked_item_keeps_a_changed_default() {
+        let info = ChannelInfo {
+            default: crate::engine::Rgba8::new(10, 20, 30, 255),
+            ..info_with(ChannelKind::Color, ColorSpace::Srgb)
+        };
+        let (mut s, channel) = app_with(info.clone(), Lang::Ja);
+        let steps = s.doc.undo_count();
+        let marked = action_of(kind_entries(&s, channel), "sRGB8").unwrap();
+        s.apply(marked);
+        assert_eq!(s.doc.channel_info(channel), Some(&info));
+        assert_eq!(s.doc.undo_count(), steps);
+        let other = action_of(kind_entries(&s, channel), "L8").unwrap();
+        s.apply(other);
+        let after = s.doc.channel_info(channel).unwrap();
+        assert_eq!(*after, new_channel_info("x".into(), ChannelKind::Scalar));
+        assert_eq!(s.doc.undo_count(), steps + 1);
+    }
+
+    /// 描いている間は 3 つとも押せなくなるが、印は変わらない。
+    #[test]
+    fn a_stroke_disables_every_item_and_keeps_the_mark() {
+        let info = info_with(ChannelKind::Color, ColorSpace::Linear);
+        for free in [true, false] {
+            let rows = rows(&channel_kind_entries(Channel::Color, &info, free));
+            assert_eq!(rows.len(), 3, "{free}");
+            assert!(rows.iter().all(|r| r.2 == free), "{free}");
+            assert_eq!(
+                rows.iter().filter(|r| r.1).collect::<Vec<_>>(),
+                [&("RGB8".to_owned(), true, free)],
+                "{free}"
+            );
+        }
+    }
+
+    /// ほかの項目を選ぶと 1 回の `SetChannel` で、Undo 1 回で元の種類と色空間に戻る。選んだ後のメニューは、選んだ項目に印が付く。
+    #[test]
+    fn choosing_another_item_is_one_undo() {
+        let cases = [
+            // （今のチャンネル, 選ぶ項目の文字）
+            (info_with(ChannelKind::Color, ColorSpace::Srgb), "L8"),
+            (info_with(ChannelKind::Scalar, ColorSpace::Linear), "RGB8"),
+            (info_with(ChannelKind::Normal, ColorSpace::Linear), "sRGB8"),
+            // 種類は同じで色空間だけが替わる（印の項目は別の種類の項目）
+            (info_with(ChannelKind::Color, ColorSpace::Linear), "sRGB8"),
+            (info_with(ChannelKind::Color, ColorSpace::Linear), "L8"),
+            (info_with(ChannelKind::Normal, ColorSpace::Srgb), "RGB8"),
+            (info_with(ChannelKind::Normal, ColorSpace::Srgb), "L8"),
+            // 欄は sL8 で印が無い。どの項目を選んでも替わる
+            (info_with(ChannelKind::Scalar, ColorSpace::Srgb), "L8"),
+            (info_with(ChannelKind::Scalar, ColorSpace::Srgb), "sRGB8"),
+            (info_with(ChannelKind::Scalar, ColorSpace::Srgb), "RGB8"),
+        ];
+        for (info, pick) in cases {
+            let (mut s, channel) = app_with(info.clone(), Lang::Ja);
+            let tag = format!("{} -> {pick}", channel_format(&info));
+            let chosen = action_of(kind_entries(&s, channel), pick)
+                .unwrap_or_else(|| panic!("{tag}: 項目がない"));
+            let steps = s.doc.undo_count();
+            s.apply(chosen);
+            let after = s.doc.channel_info(channel).unwrap().clone();
+            assert_eq!(s.doc.undo_count(), steps + 1, "{tag}: 1 回の編集");
+            assert_eq!(channel_format(&after), pick, "{tag}");
+            assert_eq!(after.name, info.name, "{tag}");
+            // 選んだ後は、選んだ項目だけに印が付く
+            let rows = rows(&kind_entries(&s, channel));
+            assert_eq!(rows.len(), 3, "{tag}");
+            let marked: Vec<_> = rows.iter().filter(|r| r.1).collect();
+            assert_eq!(marked.len(), 1, "{tag}");
+            assert_eq!(marked[0].0, pick, "{tag}");
+            s.apply(Action::Undo);
+            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}: Undo 1 回");
         }
     }
 }
