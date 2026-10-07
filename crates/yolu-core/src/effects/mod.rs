@@ -647,6 +647,20 @@ impl LayerPath {
             Self::Surface(p) => p.id,
         }
     }
+    /// 描き方の設定（種類など）。
+    pub fn style(&self) -> &crate::paths::PathStyle {
+        match self {
+            Self::Canvas(p) => &p.style,
+            Self::Surface(p) => &p.style,
+        }
+    }
+    /// ID だけを替えた写し（一覧へ写す・貼り付けるとき）。
+    pub fn with_id(&self, id: u128) -> LayerPath {
+        match self {
+            Self::Canvas(p) => Self::Canvas(crate::paths::CanvasPath { id, ..p.clone() }),
+            Self::Surface(p) => Self::Surface(crate::paths::SurfacePath { id, ..p.clone() }),
+        }
+    }
     /// 基準のチャンネル（組を持たないパスが描くチャンネル）。
     pub fn channel(&self) -> Channel {
         match self {
@@ -701,5 +715,7 @@ pub(crate) fn paths_error(e: crate::paths::Error) -> CoreError {
         E::Canceled => CoreError::Cancelled,
         E::Core(e) => e,
         E::Dab(_) => CoreError::Unsupported("面のダブを拒否した"),
+        E::MissingImage => CoreError::Unsupported("リボンの画像が無い"),
+        E::FillIslands => CoreError::Unsupported("塗りのパスが 1 つの UV の島に収まらない"),
     }
 }

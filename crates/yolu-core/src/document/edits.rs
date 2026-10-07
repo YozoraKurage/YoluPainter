@@ -199,9 +199,9 @@ impl Document {
         // チャンネルも組のチャンネルも無効にできる。validate_path_target も組があれば基準の有効を要らないとする）
         if !enabled
             && layer
-                .path
-                .as_ref()
-                .is_some_and(|p| p.material().is_none() && p.channel() == channel)
+                .paths
+                .iter()
+                .any(|e| e.path.material().is_none() && e.path.channel() == channel)
         {
             return Err(CoreError::Unsupported(
                 "パスで描かれたチャンネルは無効にできない",

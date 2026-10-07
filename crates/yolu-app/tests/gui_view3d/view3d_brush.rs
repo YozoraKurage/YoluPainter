@@ -15,7 +15,7 @@ use yolu_core::glam::Vec3;
 const SIZE: u32 = 256;
 
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
-fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
+pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1100.0, 760.0, SIZE);
     h.state_mut().state.view3d.load_demo();
     h.state_mut().state.view3d.camera.yaw = -40.0;
@@ -26,7 +26,7 @@ fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     (h, rect)
 }
 
-fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
+pub(crate) fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
     let view = h
         .state()
         .state
@@ -81,7 +81,7 @@ fn set_effect(h: &mut Harness<'_, YoluApp>, effect: BrushEffect) {
     h.state_mut().state.m2.brush.effect = effect;
 }
 
-fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
+pub(crate) fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
     h.event(Event::PointerMoved(at));
     h.event(Event::PointerButton {
         pos: at,
@@ -90,7 +90,7 @@ fn press_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
         modifiers,
     });
 }
-fn release_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
+pub(crate) fn release_with(h: &Harness<'_, YoluApp>, at: Pos2, modifiers: Modifiers) {
     h.event(Event::PointerButton {
         pos: at,
         button: PointerButton::Primary,

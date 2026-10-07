@@ -767,7 +767,9 @@ pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let mut users = Vec::new();
     for (i, set) in app.sets.iter().enumerate() {
         for layer in app.set_doc(i).layers() {
-            if layer.image_ids().any(|id| id == image) {
+            if layer.image_ids().any(|id| id == image)
+                || yolu_core::paths::list_images(layer.paths()).contains(&image)
+            {
                 users.push(if named {
                     format!("{}: {}", set.name, layer.name())
                 } else {

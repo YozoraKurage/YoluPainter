@@ -91,6 +91,7 @@ fn a_material_at_another_size_scales_blur_and_sharpen_radii_and_keeps_only_pixel
         )
         .unwrap();
     let path = CanvasPath {
+        style: Default::default(),
         id: 1,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {
@@ -276,6 +277,7 @@ fn a_surface_path_is_dropped_when_a_material_is_captured() {
         .unwrap()
     };
     let path = SurfacePath {
+        style: Default::default(),
         id: 3,
         channel: Channel::Height,
         brush: PathBrush(BrushSettings {
@@ -317,6 +319,160 @@ fn a_surface_path_is_dropped_when_a_material_is_captured() {
             .tile_count()
             > 0,
         "画素は残る"
+    );
+}
+
+/// 塗りつぶしの層（Color の値あり）にモデルの上のパス（Height。塗りつぶしの値は無い）を置く。
+fn fill_layer_with_surface_path(doc: &mut Document) -> yolu_core::LayerId {
+    use yolu_core::geometry::{SurfaceGeometry, SurfaceTriangle, DEFAULT_WELD_TOLERANCE};
+    use yolu_core::glam::{Vec2, Vec3};
+    use yolu_core::paths::{fingerprint, PathPoint, SurfacePath};
+    let g = SurfaceGeometry::new(
+        vec![SurfaceTriangle::new(
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec2::ZERO,
+            Vec2::X,
+            Vec2::ONE,
+        )],
+        1,
+        DEFAULT_WELD_TOLERANCE,
+    )
+    .unwrap();
+    let path = SurfacePath {
+        style: Default::default(),
+        id: 5,
+        channel: Channel::Height,
+        brush: PathBrush(BrushSettings {
+            radius: 0.1,
+            ..BrushSettings::default()
+        }),
+        points: vec![PathPoint::new(0, 0.3, 0.2, 1.0).unwrap()],
+        model_fingerprint: fingerprint(&g),
+        material: None,
+    };
+    let drawn = yolu_core::paths::render_surface(
+        &path,
+        &g,
+        &yolu_core::paths::Options {
+            width: W,
+            height: H,
+            tile_size: 8,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let layer = doc
+        .add_fill_layer(
+            "塗りのパス",
+            &[(Channel::Color, yolu_core::Rgba8::new(10, 20, 30, 255))],
+            None,
+        )
+        .unwrap();
+    doc.set_path(layer, LayerPath::Surface(path), drawn.channels)
+        .unwrap();
+    assert!(
+        doc.layer(layer).unwrap().surface(Channel::Height).is_some(),
+        "塗りつぶしの層のパスの画素は層の面にある"
+    );
+    layer
+}
+
+#[test]
+fn a_fill_layer_surface_path_leaves_the_material_without_its_hidden_surface() {
+    let mut doc = Document::with_tile_size(W, H, 8).unwrap();
+    let layer = fill_layer_with_surface_path(&mut doc);
+    let material = doc.capture_smart_material(&[layer], "塗りのパス").unwrap();
+    let held = &material.layers()[0];
+    assert!(!held.has_paths(), "パスは持ち出さない");
+    assert!(
+        held.surface_channels().is_empty(),
+        "パスの画素（見えない面）だけを残さない: {:?}",
+        held.surface_channels()
+    );
+    assert!(
+        !held.is_channel_enabled(Channel::Height),
+        "パスのために有効にしたチャンネルは戻す"
+    );
+    assert_eq!(
+        held.fill_value(Channel::Color),
+        Some(yolu_core::Rgba8::new(10, 20, 30, 255)),
+        "塗りつぶしの値は残る"
+    );
+    assert_eq!(material.notes().len(), 1, "{:?}", material.notes());
+    assert!(
+        material.notes()[0].contains("塗りのパス") && material.notes()[0].contains("外れ"),
+        "パスが外れたと言う（画素だけではない）: {:?}",
+        material.notes()
+    );
+    // 写しは文書として検証を通り、置いても層は塗りつぶしだけ
+    material.fragment_document().unwrap();
+    let mut target = Document::with_tile_size(W, H, 8).unwrap();
+    let placed = target
+        .place_smart_material(&material, &SmartPlacement::default())
+        .unwrap();
+    let layer = target.layer(placed.layer_id).unwrap();
+    assert!(!layer.has_paths() && layer.surface_channels().is_empty());
+}
+
+#[test]
+fn a_fill_layer_canvas_path_is_dropped_with_its_surface_in_a_different_sized_canvas() {
+    let mut source = Document::with_tile_size(W, H, 8).unwrap();
+    let layer = source
+        .add_fill_layer(
+            "塗りのパス",
+            &[(Channel::Color, yolu_core::Rgba8::new(10, 20, 30, 255))],
+            None,
+        )
+        .unwrap();
+    source
+        .set_canvas_path(
+            layer,
+            CanvasPath {
+                style: Default::default(),
+                id: 1,
+                channel: Channel::Height,
+                brush: PathBrush(BrushSettings {
+                    radius: 2.0,
+                    ..BrushSettings::default()
+                }),
+                points: vec![
+                    CanvasPoint::new(3.0, 3.0, 1.0).unwrap(),
+                    CanvasPoint::new(30.0, 20.0, 1.0).unwrap(),
+                ],
+                material: None,
+            },
+        )
+        .unwrap();
+    let material = source.capture_smart_material(&[layer], "素材").unwrap();
+    assert!(material.notes().is_empty(), "同じ大きさなら持ち出せる");
+    let mut same = Document::with_tile_size(W, H, 8).unwrap();
+    let placed = same
+        .place_smart_material(&material, &SmartPlacement::default())
+        .unwrap();
+    assert!(same.layer(placed.layer_id).unwrap().has_paths());
+    let mut bigger = Document::with_tile_size(W * 2, H * 2, 8).unwrap();
+    let placed = bigger
+        .place_smart_material(&material, &SmartPlacement::default())
+        .unwrap();
+    let layer = bigger.layer(placed.layer_id).unwrap();
+    assert!(!layer.has_paths());
+    assert!(
+        layer.surface_channels().is_empty(),
+        "見えない面だけを残さない"
+    );
+    assert!(
+        placed
+            .notes
+            .iter()
+            .any(|n| n.contains("塗りのパス") && n.contains("外れ")),
+        "{:?}",
+        placed.notes
+    );
+    assert_eq!(
+        layer.fill_value(Channel::Color),
+        Some(yolu_core::Rgba8::new(10, 20, 30, 255))
     );
 }
 

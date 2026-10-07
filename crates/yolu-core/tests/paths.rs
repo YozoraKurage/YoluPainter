@@ -48,6 +48,7 @@ fn canvas(i: usize) -> CanvasPath {
         _ => p,
     };
     CanvasPath {
+        style: Default::default(),
         id: 0,
         channel: Channel::Color,
         brush: brush(i, false),
@@ -224,6 +225,7 @@ fn scene(k: usize) -> (SurfaceGeometry, SurfacePath) {
         brush.0.radius = 0.15;
     }
     let path = SurfacePath {
+        style: Default::default(),
         id: 0,
         channel: Channel::Color,
         brush,
@@ -247,6 +249,7 @@ fn surface(i: usize, g: &SurfaceGeometry) -> SurfacePath {
         _ => p,
     };
     SurfacePath {
+        style: Default::default(),
         id: 0,
         channel: Channel::Color,
         brush: brush(i, true),

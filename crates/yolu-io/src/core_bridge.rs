@@ -4,8 +4,8 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、層の後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PROCEDURAL_VERSION,
-    SEAMS_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION,
+    PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -186,7 +186,8 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "images"
         | "projection"
         | "gradient_count"
-        | "gradients" => None,
+        | "gradients"
+        | "paths" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
                 "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
@@ -438,7 +439,8 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
 }
 
 /// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の中身も読み書きできる版）、
-/// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
+/// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28（版 27 の中身も読み書きできる）、パスの一覧の形で書くパス
+/// （塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
 /// Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
@@ -447,6 +449,8 @@ pub(crate) fn version_of(doc: &Document) -> i32 {
         SEAMS_VERSION
     } else if uses_image_generators(doc) || uses_new_filters(doc) {
         EFFECTS_VERSION
+    } else if uses_path_lists(doc) {
+        PATHS_VERSION
     } else if uses_gradient_mixing(doc) {
         MIXING_VERSION
     } else if uses_rust_only_adjustments(doc) {
@@ -598,6 +602,21 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
     w.int(doc.layers().len() as i32)
 }
 
+/// 層のパスを一覧の形（版 27 の属性のビット 6）で書くか: 塗りつぶしの層のパス、2 本以上、名前を付けた・隠したパス、1 本のパスの
+/// 並びで表せない設定（種類・筆先・深さ・対称・角・取っ手の点）を持つパス。
+pub(crate) fn writes_path_list(layer: &yolu_core::Layer) -> bool {
+    match layer.paths() {
+        [] => false,
+        // 塗りつぶしの層のパスは、1 本の欄（ラスターの層だけ）では書けない
+        _ if layer.kind() == LayerKind::Fill => true,
+        [one] => !one.name.is_empty() || !one.visible || needs_extra(&one.path),
+        _ => true,
+    }
+}
+/// 文書がパスの一覧の形で書く層を持つか（持っていれば正本の版は 27 になり、Unity 版は開けない）。
+pub(crate) fn uses_path_lists(doc: &Document) -> bool {
+    doc.layers().iter().any(writes_path_list)
+}
 /// 文書が Rust 版だけの Generator の種類（ノイズ・グランジ）の段を持つか（層の内容とマスクのスタック。無効な段も数える。
 /// 持っていれば正本の版は 23 になり、Unity 版は開けない）。
 pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
@@ -767,7 +786,9 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             )?;
         }
     }
-    let channel_count = if kind == 0 {
+    // 塗りつぶしの層の画素は、パスの一覧の画素（版 27 の属性のビット 6 のときだけ）
+    let fill_paths = kind == 1 && attributes & 64 != 0;
+    let channel_count = if kind == 0 || fill_paths {
         f.int(&format!("{p}.channel_count"))?
     } else {
         0
@@ -775,11 +796,19 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
     for k in 0..channel_count {
         let ch = format!("{p}.channels[{k}]");
         let c = f.channel(&format!("{ch}.channel"))?;
+        if fill_paths {
+            doc.ensure_fill_path_surface(id, c)?;
+        }
         for t in 0..f.int(&format!("{ch}.tile_count"))? {
             let tile = format!("{ch}.tiles[{t}]");
             let coord = tile_coord(f, &tile)?;
-            doc.import_tile(id, c, coord, f.bytes(&format!("{tile}.rgba"))?)
-                .map_err(|e| Error::from(e).in_context(format!("{tile}を変換できません")))?;
+            let bytes = f.bytes(&format!("{tile}.rgba"))?;
+            if fill_paths {
+                doc.import_fill_path_tile(id, c, coord, bytes)
+            } else {
+                doc.import_tile(id, c, coord, bytes)
+            }
+            .map_err(|e| Error::from(e).in_context(format!("{tile}を変換できません")))?;
         }
         // 画素の無いチャンネルも面を持つ（C# の GetChannel）。有効の印は保存した値に
         let has_surface = doc.layer(id).is_some_and(|l| l.surface(c).is_some());
@@ -828,7 +857,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             })?;
     }
     if version >= 8 && f.boolean(&format!("{p}.has_surface_path"))? {
-        let path = read_path(f, &format!("{p}.surface_path"), true, version)?;
+        let path = erase_kind(read_path(f, &format!("{p}.surface_path"), true, version)?);
         doc.set_path_for_load(id, path)
             .map_err(|e| Error::from(e).in_context("パスをcoreにできません"))?;
     }
@@ -843,7 +872,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         }
     }
     if version >= 10 && f.boolean(&format!("{p}.has_canvas_path"))? {
-        let path = read_path(f, &format!("{p}.canvas_path"), false, version)?;
+        let path = erase_kind(read_path(f, &format!("{p}.canvas_path"), false, version)?);
         doc.set_path_for_load(id, path)
             .map_err(|e| Error::from(e).in_context("パスをcoreにできません"))?;
     }
@@ -865,7 +894,40 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             }
         }
     }
+    if attributes & 64 != 0 {
+        let mut entries = Vec::new();
+        for k in 0..f.int(&format!("{p}.paths.count"))? {
+            let item = format!("{p}.paths.items[{k}]");
+            let mut path = read_path(
+                f,
+                &format!("{item}.path"),
+                f.boolean(&format!("{item}.surface"))?,
+                version,
+            )?;
+            read_path_extra(f, &format!("{item}.extra"), &mut path)?;
+            entries.push(paths::LayerPathEntry {
+                name: f.text(&format!("{item}.name"))?.to_owned(),
+                visible: f.boolean(&format!("{item}.visible"))?,
+                path,
+            });
+        }
+        doc.set_paths_for_load(id, entries)
+            .map_err(|e| Error::from(e).in_context("パスの一覧をcoreにできません"))?;
+    }
     Ok(locks)
+}
+
+/// 1 本の欄（版 8・10・18）のパスの消しゴムの印を、消しゴムの種類にする（書き手は消しゴムの種類をこの印で書く。往復で同じ値）。
+fn erase_kind(mut path: LayerPath) -> LayerPath {
+    let (brush, style) = match &mut path {
+        LayerPath::Canvas(c) => (&mut c.brush, &mut c.style),
+        LayerPath::Surface(s) => (&mut s.brush, &mut s.style),
+    };
+    if brush.0.erase {
+        brush.0.erase = false;
+        style.kind = paths::PathKind::Erase;
+    }
+    path
 }
 
 /// 2D・3D のパス（`{p}` の下の項目）。ブラシは丸いブラシの設定（半径は 2D では画素、3D ではモデルの空間）。
@@ -916,9 +978,11 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
                 u: f.float(&format!("{p}.points[{k}].u"))?,
                 v: f.float(&format!("{p}.points[{k}].v"))?,
                 pressure: pressure(k)?,
+                tangent: paths::Tangent::Smooth,
             });
         }
         let path = paths::SurfacePath {
+            style: Default::default(),
             id,
             channel,
             brush,
@@ -945,6 +1009,7 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
             );
         }
         LayerPath::Canvas(paths::CanvasPath {
+            style: Default::default(),
             id,
             channel,
             brush,
@@ -954,18 +1019,280 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
     })
 }
 
+/// 一覧の 1 本の、1 本のパスの並びに無い設定（版 27 の `extra`）を、読んだパスへ当てる: 種類と、角・取っ手の点。
+fn read_path_extra(f: &Fields<'_>, p: &str, path: &mut LayerPath) -> Result<()> {
+    let kind = match f.byte(&format!("{p}.kind"))? {
+        0 => paths::PathKind::Stroke,
+        1 => paths::PathKind::Ribbon(paths::Ribbon {
+            image: ImageId(core_id(f.guid(&format!("{p}.ribbon.image"))?)),
+            mode: match f.byte(&format!("{p}.ribbon.mode"))? {
+                0 => paths::RibbonMode::Tile,
+                _ => paths::RibbonMode::Stretch,
+            },
+            spacing: f.float(&format!("{p}.ribbon.spacing"))?,
+        }),
+        2 => paths::PathKind::Fill,
+        3 => paths::PathKind::Smudge {
+            strength: f.float(&format!("{p}.strength"))?,
+        },
+        _ => paths::PathKind::Erase,
+    };
+    let tip = if f.boolean(&format!("{p}.has_tip"))? {
+        let t = format!("{p}.tip");
+        let w = f.int(&format!("{t}.width"))? as u32;
+        let h = f.int(&format!("{t}.height"))? as u32;
+        Some(std::sync::Arc::new(
+            yolu_core::BrushTip::new(
+                f.text(&format!("{t}.name"))?,
+                w,
+                h,
+                f.bytes(&format!("{t}.alpha"))?.to_vec(),
+            )
+            .map_err(|e| Error::from(e).in_context("パスの筆先をcoreにできません"))?,
+        ))
+    } else {
+        None
+    };
+    let style = paths::PathStyle {
+        kind,
+        tip,
+        angle: f.float(&format!("{p}.angle"))?,
+        follow: f.boolean(&format!("{p}.follow"))?,
+        depth: if f.boolean(&format!("{p}.has_depth"))? {
+            Some(f.float(&format!("{p}.depth"))?)
+        } else {
+            None
+        },
+        symmetry: match f.byte(&format!("{p}.symmetry"))? {
+            1 => {
+                let c = format!("{p}.canvas_symmetry");
+                paths::PathSymmetry::Canvas(yolu_core::CanvasSymmetry {
+                    mode: match f.int(&format!("{c}.mode"))? {
+                        1 => yolu_core::SymmetryMode::Vertical,
+                        2 => yolu_core::SymmetryMode::Horizontal,
+                        3 => yolu_core::SymmetryMode::Both,
+                        _ => yolu_core::SymmetryMode::Radial,
+                    },
+                    center: yolu_core::glam::DVec2::new(
+                        f.float(&format!("{c}.center_x"))?,
+                        f.float(&format!("{c}.center_y"))?,
+                    ),
+                    count: f.int(&format!("{c}.count"))? as u32,
+                })
+            }
+            2 => {
+                let m =
+                    |k: &str| -> Result<f32> { Ok(f.float(&format!("{p}.mirror.{k}"))? as f32) };
+                paths::PathSymmetry::Mirror {
+                    point: yolu_core::glam::Vec3::new(m("point_x")?, m("point_y")?, m("point_z")?),
+                    normal: yolu_core::glam::Vec3::new(
+                        m("normal_x")?,
+                        m("normal_y")?,
+                        m("normal_z")?,
+                    ),
+                }
+            }
+            _ => paths::PathSymmetry::None,
+        },
+    };
+    // 一覧の形では種類をそのまま持つ（1 本の欄の消しゴムの印は、消しゴムの種類のときだけ書くので外す）
+    let erase = kind == paths::PathKind::Erase;
+    match path {
+        LayerPath::Canvas(c) => {
+            c.style = style;
+            if erase {
+                c.brush.0.erase = false;
+            }
+        }
+        LayerPath::Surface(s) => {
+            s.style = style;
+            if erase {
+                s.brush.0.erase = false;
+            }
+        }
+    }
+    let n = f.int(&format!("{p}.tangent_count"))?;
+    for i in 0..n {
+        let t = format!("{p}.tangents[{i}]");
+        let index = f.int(&format!("{t}.index"))? as usize;
+        let kind = f.byte(&format!("{t}.kind"))?;
+        let v = |side: &str, axis: &str| f.float(&format!("{t}.{side}.{axis}"));
+        match path {
+            LayerPath::Canvas(c) => {
+                let point = c
+                    .points
+                    .get_mut(index)
+                    .ok_or_else(|| Error::InvalidData("接線の点が無い".into()))?;
+                point.tangent = match kind {
+                    1 => paths::Tangent::Corner,
+                    _ => paths::Tangent::Handles {
+                        incoming: yolu_core::glam::DVec2::new(
+                            v("incoming", "x")?,
+                            v("incoming", "y")?,
+                        ),
+                        outgoing: yolu_core::glam::DVec2::new(
+                            v("outgoing", "x")?,
+                            v("outgoing", "y")?,
+                        ),
+                    },
+                };
+            }
+            LayerPath::Surface(s) => {
+                let point = s
+                    .points
+                    .get_mut(index)
+                    .ok_or_else(|| Error::InvalidData("接線の点が無い".into()))?;
+                let vec3 = |side: &str| -> Result<yolu_core::glam::Vec3> {
+                    Ok(yolu_core::glam::Vec3::new(
+                        v(side, "x")? as f32,
+                        v(side, "y")? as f32,
+                        v(side, "z")? as f32,
+                    ))
+                };
+                point.tangent = match kind {
+                    1 => paths::Tangent::Corner,
+                    _ => paths::Tangent::Handles {
+                        incoming: vec3("incoming")?,
+                        outgoing: vec3("outgoing")?,
+                    },
+                };
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 一覧の 1 本の拡張（版 27 の `extra`）を書く。
+fn write_path_extra(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
+    let style = match path {
+        LayerPath::Canvas(c) => &c.style,
+        LayerPath::Surface(s) => &s.style,
+    };
+    match style.kind {
+        paths::PathKind::Stroke => w.byte(0)?,
+        paths::PathKind::Ribbon(r) => {
+            w.byte(1)?;
+            w.raw(&native_id(r.image.0))?;
+            w.byte(match r.mode {
+                paths::RibbonMode::Tile => 0,
+                paths::RibbonMode::Stretch => 1,
+            })?;
+            w.float(r.spacing)?;
+        }
+        paths::PathKind::Fill => w.byte(2)?,
+        paths::PathKind::Smudge { strength } => {
+            w.byte(3)?;
+            w.float(strength)?;
+        }
+        paths::PathKind::Erase => w.byte(4)?,
+    }
+    w.boolean(style.tip.is_some())?;
+    if let Some(tip) = &style.tip {
+        w.text(tip.name())
+            .map_err(|e| e.in_context("パスの筆先の名前"))?;
+        w.int(tip.width() as i32)?;
+        w.int(tip.height() as i32)?;
+        w.value(tip.alpha())?;
+    }
+    w.float(style.angle)?;
+    w.boolean(style.follow)?;
+    w.boolean(style.depth.is_some())?;
+    if let Some(d) = style.depth {
+        w.float(d)?;
+    }
+    match style.symmetry {
+        paths::PathSymmetry::None => w.byte(0)?,
+        paths::PathSymmetry::Canvas(c) => {
+            w.byte(1)?;
+            w.int(match c.mode {
+                yolu_core::SymmetryMode::Vertical => 1,
+                yolu_core::SymmetryMode::Horizontal => 2,
+                yolu_core::SymmetryMode::Both => 3,
+                // 対称なし（None）はパスの検査が断るので、ここへは来ない
+                yolu_core::SymmetryMode::Radial | yolu_core::SymmetryMode::None => 4,
+            })?;
+            w.float(c.center.x)?;
+            w.float(c.center.y)?;
+            w.int(c.count as i32)?;
+        }
+        paths::PathSymmetry::Mirror { point, normal } => {
+            w.byte(2)?;
+            for v in [point.x, point.y, point.z, normal.x, normal.y, normal.z] {
+                w.float(f64::from(v))?;
+            }
+        }
+    }
+    // (番号, 種類, 取っ手の成分)
+    let tangents: Vec<(usize, u8, Vec<f64>)> = match path {
+        LayerPath::Canvas(c) => c
+            .points
+            .iter()
+            .enumerate()
+            .filter_map(|(i, q)| match q.tangent {
+                paths::Tangent::Smooth => None,
+                paths::Tangent::Corner => Some((i, 1, Vec::new())),
+                paths::Tangent::Handles { incoming, outgoing } => {
+                    Some((i, 2, vec![incoming.x, incoming.y, outgoing.x, outgoing.y]))
+                }
+            })
+            .collect(),
+        LayerPath::Surface(s) => s
+            .points
+            .iter()
+            .enumerate()
+            .filter_map(|(i, q)| match q.tangent {
+                paths::Tangent::Smooth => None,
+                paths::Tangent::Corner => Some((i, 1, Vec::new())),
+                paths::Tangent::Handles { incoming, outgoing } => Some((
+                    i,
+                    2,
+                    [incoming.to_array(), outgoing.to_array()]
+                        .concat()
+                        .into_iter()
+                        .map(f64::from)
+                        .collect(),
+                )),
+            })
+            .collect(),
+    };
+    w.int(tangents.len() as i32)?;
+    for (i, kind, values) in tangents {
+        w.int(i as i32)?;
+        w.byte(kind)?;
+        for v in values {
+            w.float(v)?;
+        }
+    }
+    Ok(())
+}
+
+/// パスが 1 本のパスの並び（版 8・10・18）で表せない設定を持つか（持っていれば一覧の形で書く）: 丸いブラシと消しゴム以外の種類、
+/// 滑らかでない点。
+fn needs_extra(path: &LayerPath) -> bool {
+    match path {
+        LayerPath::Canvas(c) => {
+            !c.style.is_plain() || c.points.iter().any(|q| !q.tangent.is_smooth())
+        }
+        LayerPath::Surface(s) => {
+            !s.style.is_plain() || s.points.iter().any(|q| !q.tangent.is_smooth())
+        }
+    }
+}
+
 /// 2D・3D のパス（C# の `WritePath`・`WriteCanvasPath`）。
 fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
     w.int(paths::ALGORITHM_VERSION as i32)?;
     w.raw(&native_id(path.id()))?;
     w.int(path.channel().index() as i32)?;
-    let (brush, material) = match path {
+    let (mut brush, material, kind) = match path {
         LayerPath::Surface(p) => {
             w.text(&p.model_fingerprint)?;
-            (p.brush.0, p.material.as_deref())
+            (p.brush.0, p.material.as_deref(), p.style.kind)
         }
-        LayerPath::Canvas(p) => (p.brush.0, p.material.as_deref()),
+        LayerPath::Canvas(p) => (p.brush.0, p.material.as_deref(), p.style.kind),
     };
+    // 消しゴムの種類は、1 本の欄（Unity 版と同じ並び）ではブラシの消しゴムの印で表す
+    brush.erase |= kind == paths::PathKind::Erase;
     for v in [
         brush.radius,
         brush.hardness,
@@ -1611,6 +1938,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     let mask_anchor = layer.mask().and_then(|m| m.anchor());
     let anchors = layer.anchor().is_some() || mask_anchor.is_some();
     let gradients: Vec<(Channel, &generator::Settings)> = layer.fill_gradients().collect();
+    let list = writes_path_list(layer);
     // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
     // ビット 5 塗りつぶしのグラデーション。ロックの印（int、0 は書かない）は属性の直後、チャンネルごとの設定より前
     w.byte(
@@ -1619,7 +1947,8 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
             | if blends.is_empty() { 0 } else { 4 }
             | if fill_images { 8 } else { 0 }
             | if anchors { 16 } else { 0 }
-            | if gradients.is_empty() { 0 } else { 32 },
+            | if gradients.is_empty() { 0 } else { 32 }
+            | if list { 64 } else { 0 },
     )?;
     if locks != LayerLocks::NONE {
         w.int(i32::from(locks.bits()))?;
@@ -1690,7 +2019,9 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         }
     }
     let surfaces = layer.surface_channels();
-    if layer.kind() == LayerKind::Raster {
+    if layer.kind() == LayerKind::Fill && list {
+        // 塗りつぶしの層のパスの画素（パスの一覧と一緒に読む）
+    } else if layer.kind() == LayerKind::Raster {
         let orphan = layer
             .enabled_channels()
             .into_iter()
@@ -1718,7 +2049,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         w.float(mask.density())?;
         w.tiles(mask.surface())?;
     }
-    let surface_path = layer.path().filter(|p| !p.is_canvas());
+    let surface_path = layer.path().filter(|p| !list && !p.is_canvas());
     w.boolean(surface_path.is_some())?;
     if let Some(path) = surface_path {
         write_path(w, path)?;
@@ -1732,7 +2063,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
             write_filters(w, mask_filters, false)?;
         }
     }
-    let canvas_path = layer.path().filter(|p| p.is_canvas());
+    let canvas_path = layer.path().filter(|p| !list && p.is_canvas());
     w.boolean(canvas_path.is_some())?;
     if let Some(path) = canvas_path {
         write_path(w, path)?;
@@ -1742,6 +2073,17 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         for a in [layer.anchor(), mask_anchor].into_iter().flatten() {
             w.raw(&native_id(a.id().0))?;
             w.text(a.name())?;
+        }
+    }
+    if list {
+        w.int(layer.paths().len() as i32)?;
+        for e in layer.paths() {
+            w.text(&e.name)
+                .map_err(|err| err.in_context(named("パスの名前")))?;
+            w.boolean(e.visible)?;
+            w.boolean(!e.path.is_canvas())?;
+            write_path(w, &e.path)?;
+            write_path_extra(w, &e.path)?;
         }
     }
     Ok(())

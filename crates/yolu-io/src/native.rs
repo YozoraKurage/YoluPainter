@@ -21,6 +21,11 @@ pub const ADJUST_VERSION: i32 = 24;
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
+/// 層のパスの一覧（1 つの層に何本ものパス、パスごとの名前・表示）を足した版。版 25 の中身に、層の属性のビット 6 とパスの一覧の塊
+/// （`paths`）が加わる。一覧を使う層（塗りつぶしの層のパス・2 本以上のパス・名前や隠すパス・ストローク／消しゴム以外の種類・筆先・
+/// 角度・深さ・対称の設定・角や取っ手の点を持つパス）のある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で
+/// 断る（形式と決めは docs/YLP_FORMAT.md）。
+pub const PATHS_VERSION: i32 = 27;
 /// 0.5.0 の新しい効果を足した版。版 25 の中身に、フィルターの段の種類 70〜79（ヒストグラムスキャン・ヒストグラムレンジ・スロープぼかし・方向のぼかし・
 /// ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、Generator の種類 66（模様）・68（光）・69（マスクの組み立て）・70（画像）が加わる
 /// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
@@ -30,8 +35,8 @@ pub const EFFECTS_VERSION: i32 = 28;
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 /// この版の文書は版 28 の中身（0.5.0 の効果）も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
-/// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`EFFECTS_VERSION`（28）・
-/// `SEAMS_VERSION`（32）で、間の 27・29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
+/// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
+/// `EFFECTS_VERSION`（28）・`SEAMS_VERSION`（32）で、間の 29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
 /// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
@@ -401,11 +406,12 @@ impl ByteSource for PartStream {
 /// 版 26（分けた正本）の識別の版。ヘッダーは `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値を抜いたもの。
 pub const SPLIT_VERSION: i32 = 26;
 
-/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`EFFECTS_VERSION`・`SEAMS_VERSION` だけで、
-/// 間の 27・29〜31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・`SEAMS_VERSION`
+/// だけで、間の 29〜31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
+        || version == PATHS_VERSION
         || version == EFFECTS_VERSION
         || version == SEAMS_VERSION
 }
@@ -447,6 +453,7 @@ impl<'a> Parse<'a> {
         let stored = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
         let version = if stored == SPLIT_VERSION {
             let inner = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
+            // 中の版は分けていない並びの版（26 は分けた正本の印で、中には入らない）
             check(
                 inner >= UNITY_NATIVE_VERSION && is_known_version(inner) && inner != SPLIT_VERSION,
                 format!("分けた正本の中の版 {inner} は未対応です"),
@@ -464,7 +471,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{EFFECTS_VERSION}・{SEAMS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{SEAMS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -853,7 +860,8 @@ fn layer(
             | if v >= 14 { 4 } else { 0 }
             | if v >= 16 { 8 } else { 0 }
             | if v >= 20 { 16 } else { 0 }
-            | if v >= 21 { 32 } else { 0 };
+            | if v >= 21 { 32 } else { 0 }
+            | if v >= PATHS_VERSION { 64 } else { 0 };
         check(flags & !known == 0, "未知のレイヤー属性ビットです")?;
         if flags & 2 != 0 {
             r.int("locks", 1, 15)?;
@@ -1019,10 +1027,15 @@ fn layer(
             Ok(())
         })?;
     }
+    // 画素はラスターの層と、パスの一覧を持つ塗りつぶしの層（パスの画素。版 27）
     let n = r.int(
         "channel_count",
         0,
-        if kind == 0 { channel_total } else { 0 },
+        if kind == 0 || (kind == 1 && flags & 64 != 0) {
+            channel_total
+        } else {
+            0
+        },
     )?;
     let mut channels = HashSet::new();
     let mut enabled = HashSet::new();
@@ -1055,7 +1068,8 @@ fn layer(
             r.block("mask.filters", |r| filters(r, v, false, &mut references))?;
         }
     }
-    if v >= 10 && r.boolean("has_canvas_path")? {
+    let canvas = v >= 10 && r.boolean("has_canvas_path")?;
+    if canvas {
         check(!surface && kind == 0, "パスの種類またはレイヤーが不正です")?;
         r.block("canvas_path", |r| path(r, v, false, &channels, &enabled))?;
     }
@@ -1078,6 +1092,14 @@ fn layer(
                 })?;
             }
         }
+    }
+    if flags & 64 != 0 {
+        // 一覧はラスターと塗りつぶしの層（塗りつぶしの層のパスは一覧の形だけ）
+        check(
+            !surface && !canvas && (kind == 0 || kind == 1),
+            "パスの一覧と 1 本のパスは両方を持てません（パスはラスターか塗りつぶしの層に限ります）",
+        )?;
+        r.block("paths", |r| path_list(r, v, &channels, &enabled))?;
     }
     Ok(Layer {
         id,
@@ -1695,13 +1717,14 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
     }
     Ok(())
 }
+/// 1 本のパス。点の数を返す（版 27 の一覧の拡張が点の番号を確かめるのに使う）。
 fn path(
     r: &mut Reader<'_>,
     v: i32,
     surface: bool,
     channels: &HashSet<i32>,
     enabled: &HashSet<i32>,
-) -> Result<()> {
+) -> Result<i32> {
     r.int("algorithm", 1, 1)?;
     r.id("id", true)?;
     let channel = r.int("channel", 0, 5)?;
@@ -1767,6 +1790,118 @@ fn path(
                 "パスのマテリアルのチャンネルがありません",
             )?;
             r.blob("rgba", 4)?;
+            Ok(())
+        })?;
+    }
+    Ok(n)
+}
+
+/// 層のパスの一覧（版 27）: 1〜256 本。1 本ごとに名前（128 文字（UTF-16）まで、制御文字なし）・表示・側（3D か）と、1 本のパスと
+/// 同じ並びのパス。側・基準のチャンネル・指紋・ID が揃うかは core が確かめる。
+fn path_list(
+    r: &mut Reader<'_>,
+    v: i32,
+    channels: &HashSet<i32>,
+    enabled: &HashSet<i32>,
+) -> Result<()> {
+    let n = r.int("count", 1, 256)?;
+    for i in 0..n {
+        r.block(&format!("items[{i}]"), |r| {
+            let name = r.string("name")?;
+            check(
+                name.encode_utf16().count() <= 128 && !name.chars().any(char::is_control),
+                "パスの名前が不正です",
+            )?;
+            r.boolean("visible")?;
+            let surface = r.boolean("surface")?;
+            let points = r.block("path", |r| path(r, v, surface, channels, enabled))?;
+            r.block("extra", |r| path_extra(r, surface, points))
+        })?;
+    }
+    Ok(())
+}
+
+/// 一覧の 1 本の、1 本のパスの並びに無い設定（版 27）: 種類（リボンの画像・並べ方・間隔、指先の強さ）、筆先の画像・角度・
+/// 向き、投影の深さ、対称と、角・取っ手の点（滑らかでない点だけ、番号の増える順）。
+fn path_extra(r: &mut Reader<'_>, surface: bool, points: i32) -> Result<()> {
+    let kind = r.byte("kind")?;
+    check(kind <= 4, "パスの種類が不正です")?;
+    match kind {
+        1 => r.block("ribbon", |r| {
+            r.id("image", false)?;
+            let mode = r.byte("mode")?;
+            check(mode <= 1, "リボンの並べ方が不正です")?;
+            r.float("spacing", 0.1, 4.0)?;
+            Ok(())
+        })?,
+        3 => {
+            r.unit("strength")?;
+        }
+        _ => {}
+    }
+    if r.boolean("has_tip")? {
+        r.block("tip", |r| {
+            let name = r.string("name")?;
+            check(name.len() <= 4096, "筆先の名前が長すぎます")?;
+            let w = r.int("width", 1, 2048)?;
+            let h = r.int("height", 1, 2048)?;
+            r.blob("alpha", (w * h) as usize)?;
+            Ok(())
+        })?;
+    }
+    r.float("angle", -360.0, 360.0)?;
+    r.boolean("follow")?;
+    if r.boolean("has_depth")? {
+        r.float("depth", 0.05, 64.0)?;
+    }
+    let symmetry = r.byte("symmetry")?;
+    check(
+        symmetry == 0 || (symmetry == 1 && !surface) || (symmetry == 2 && surface),
+        "パスの対称の種類が不正です",
+    )?;
+    if symmetry == 1 {
+        r.block("canvas_symmetry", |r| {
+            r.int("mode", 1, 4)?;
+            r.float("center_x", -1e7, 1e7)?;
+            r.float("center_y", -1e7, 1e7)?;
+            r.int("count", 2, 16)?;
+            Ok(())
+        })?;
+    }
+    if symmetry == 2 {
+        r.block("mirror", |r| {
+            for k in [
+                "point_x", "point_y", "point_z", "normal_x", "normal_y", "normal_z",
+            ] {
+                r.float(k, -1e6, 1e6)?;
+            }
+            Ok(())
+        })?;
+    }
+    let n = r.int("tangent_count", 0, points)?;
+    let mut last = -1;
+    for i in 0..n {
+        r.block(&format!("tangents[{i}]"), |r| {
+            let index = r.int("index", 0, points - 1)?;
+            check(index > last, "接線の点の番号が増える順ではありません")?;
+            last = index;
+            let kind = r.byte("kind")?;
+            check(kind == 1 || kind == 2, "接線の種類が不正です")?;
+            if kind == 2 {
+                let axes: &[&str] = if surface {
+                    &["x", "y", "z"]
+                } else {
+                    &["x", "y"]
+                };
+                for side in ["incoming", "outgoing"] {
+                    r.block(side, |r| {
+                        for a in axes {
+                            r.float(a, -1e6, 1e6)?;
+                        }
+                        Ok(())
+                    })?;
+                }
+            }
             Ok(())
         })?;
     }

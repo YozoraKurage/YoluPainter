@@ -165,6 +165,13 @@ pub fn bindings() -> Vec<KeyBinding> {
             When::Tool(Tool::Path),
             Action::Path(PathAction::DeleteSelected),
         ),
+        // パスの道具: パスの編集を抜ける（次の点は新しいパスを始める）
+        kb_when(
+            none,
+            Key::Enter,
+            When::Tool(Tool::Path),
+            Action::Path(PathAction::SelectPath(None)),
+        ),
         kb(
             none,
             Key::Q,

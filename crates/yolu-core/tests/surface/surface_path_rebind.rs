@@ -89,6 +89,7 @@ fn at(g: &SurfaceGeometry, x: f32, y: f32) -> PathPoint {
 }
 fn path_on(g: &SurfaceGeometry) -> SurfacePath {
     SurfacePath {
+        style: Default::default(),
         id: 0x1234_5678_9abc_def0,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {

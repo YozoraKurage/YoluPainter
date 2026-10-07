@@ -12,6 +12,8 @@
 pub mod canvas;
 pub mod curve;
 pub mod edit;
+pub mod list;
+pub mod presets;
 pub mod rebind;
 pub mod surface;
 
@@ -21,7 +23,8 @@ use std::sync::{Arc, Mutex};
 
 use egui::{Color32, Pos2};
 use yolu_core::paths::{
-    self, render_canvas, render_surface, CanvasPath, ChannelPaint, Options, PathBrush, SurfacePath,
+    self, render_canvas, render_list, render_surface, CanvasPath, ChannelPaint, LayerPathEntry,
+    Options, PathBrush, PathKind, PathStyle, SurfacePath,
 };
 use yolu_core::{CoreError, LayerId, LayerPath};
 
@@ -46,10 +49,21 @@ pub struct PointRef {
     pub index: usize,
 }
 
+/// 取っ手の側。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandleSide {
+    /// 前の区間からその点へ入る側。
+    In,
+    /// その点から次の区間へ出る側。
+    Out,
+}
+
 /// ポインタの下に何があるか。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Hover {
     None,
+    /// 選んでいる点の取っ手の先（点の番号と側）。
+    Handle(usize, HandleSide),
     /// 点（番号）。
     Point(usize),
     /// 曲線の区間（番号）と、そこでポインタにいちばん近い画面の点（差し込む位置の印）。
@@ -70,7 +84,36 @@ pub struct PointDrag {
     pub moved: f32,
     /// 今の置き場所（2D はキャンバスの中に収めた画素、3D はポインタの下の面。置けない所では前のまま）。
     pub target: Option<Place>,
+    /// 取っ手のドラッグなら、その側（点そのものを動かすなら None）。
+    pub handle: Option<HandleSide>,
+    /// 取っ手の今の向き（点から先まで。2D は画素、3D は休みの形のモデルの空間）。
+    pub vector: Option<[f64; 3]>,
 }
+
+/// 点を矩形で選ぶドラッグ（画面の点）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RectDrag {
+    pub source: StrokeSource,
+    /// 3D のビューか。
+    pub surface: bool,
+    pub start: Pos2,
+    pub now: Pos2,
+}
+
+/// 入力の修飾キーと時刻（ビューが入力のたびに入れる）。取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
+/// （角と滑らかの切り替え）に使う。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PathInputState {
+    pub alt: bool,
+    pub ctrl: bool,
+    /// Shift: 押した所からの矩形で点を選ぶ。
+    pub shift: bool,
+    /// 入力の時刻（秒）。None ならダブルクリックを見ない（画面の無い試験）。
+    pub now: Option<f64>,
+}
+
+/// ダブルクリックとみなす間（秒）。
+pub const DOUBLE_CLICK: f64 = 0.4;
 
 /// ペンが触れている間のペンの番号と、触れたビュー（2D のキャンバスと 3D のビューが並んで見えていても、離したのを受け取るのは
 /// 触れたビューだけ。相手のビューが離したサンプルで `pen_down` を下ろすと、触れたビューのドラッグが取り残される）。
@@ -81,10 +124,43 @@ pub struct PenDown {
     pub surface: bool,
 }
 
+/// 編集しているパス（層と、その層の一覧のパスの ID）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActivePath {
+    pub layer: LayerId,
+    pub path: u128,
+}
+
 /// パスの道具の状態（パスそのものは文書が持つ）。
 #[derive(Default)]
 pub struct PathState {
     pub selected: Option<PointRef>,
+    /// 一覧で選んだパス（無い・層が替わったら、層の一覧のいちばん上のパス）。
+    pub active: Option<ActivePath>,
+    /// 矩形・全部で選んだ点（`selected` の点と一緒に、太さ・角・取っ手・消すを当てる）。パスが替わったら効かない。
+    pub marked: Option<(ActivePath, Vec<usize>)>,
+    /// 点を矩形で選んでいるドラッグ（Shift を押して押した所から）。
+    pub rect: Option<RectDrag>,
+    /// パスの編集を抜けた層（Esc・Enter・「新しいパス」）。次に置く点は、その層の一覧に新しいパスを始める。
+    pub fresh: Option<LayerId>,
+    /// 写したパス（貼り付け・設定や位置の貼り付けに使う）。
+    pub clipboard: Option<LayerPathEntry>,
+    /// 名前を変えている一覧の行（層とパスの ID）。
+    pub renaming: Option<ActivePath>,
+    /// 名前の入力欄を開いたあとのフレームか（開いたフレームだけ入力欄に移る）。
+    pub rename_started: bool,
+    /// 修飾キーと時刻。
+    pub input: PathInputState,
+    /// 次に作るパスの描き方（パスを選んでいないときの種類・筆先・深さの欄）。
+    pub next_style: PathStyle,
+    /// パスのプリセット（設定のフォルダの `path_presets/`）。
+    pub presets: presets::PathPresets,
+    /// 名前を変えているプリセット（プリセットのボタンの所に入力欄）。
+    pub preset_renaming: Option<u32>,
+    /// プリセットの名前の入力欄を開いたあとのフレームか。
+    pub preset_rename_started: bool,
+    /// 最後に点を押した時刻と、その点（ダブルクリックを見る）。
+    pub last_press: Option<(f64, PointRef)>,
     pub drag: Option<PointDrag>,
     /// ペンが触れている間のペンの番号と触れたビュー。
     pub pen_down: Option<PenDown>,
@@ -92,11 +168,18 @@ pub struct PathState {
     pub pending: Option<(&'static str, f32)>,
     /// Esc を扱ったフレーム（2D と 3D の両方が見えていて、同じ Esc を 2 回扱わないため）。
     esc_frame: Option<u64>,
+    /// パスの欄の名前の入力欄が入力を受けていた最後のフレーム（その Esc は入力をやめるのに使い、点の選びやパスの編集には効かせない）。
+    typing_frame: Option<u64>,
     /// 3D の指紋（ポインタ・世代で覚える。三角形の数だけかかるので毎回は求めない）。
     fingerprint: Mutex<Option<(usize, u32, Arc<str>)>>,
 }
 
 impl PathState {
+    /// パスの欄の名前の入力欄が、このフレーム（`frame`）に入力を受けている。
+    pub fn note_typing(&mut self, frame: u64) {
+        self.typing_frame = Some(frame);
+    }
+
     /// ペンが、この種類のビュー（`surface` が 3D か）に触れているか。
     pub fn pen_in(&self, surface: bool) -> bool {
         self.pen_down.is_some_and(|p| p.surface == surface)
@@ -130,24 +213,73 @@ pub enum PathAction {
     Brush(BrushEdit),
     /// 今のブラシ・マテリアルで塗るチャンネルの組をパスに使う。
     UseBrush,
-    /// 今のモデル・ポーズで描き直す。
+    /// 今のモデルで描き直す（休みの形で描くので、ポーズによらない）。
     Redraw,
     /// パスを外して今の画素だけを残す。
     Rasterize(LayerId),
+    /// 一覧のパスを選ぶ（None でパスの編集を抜け、次の点は新しいパスを始める）。文書は変えない。
+    SelectPath(Option<u128>),
+    /// 一覧の操作（文書を変えるものは 1 つが 1 回の Undo）。
+    List(list::ListOp),
+    /// 一覧の行の名前を変え始める（入力欄を開く。文書は変えない）。
+    BeginRename(u128),
+    /// 選んでいる点を角にする（false で滑らかに戻す）。
+    SetCorner(bool),
+    /// 選んでいる点に取っ手を出す（今の曲がりのままの取っ手。false で滑らかに戻す）。
+    SetHandles(bool),
+    /// パスの種類（リボンの画像・並べ方・間隔、指先の強さを含む）。パスが無いときは、次に作るパスの種類。
+    Kind(PathKind),
+    /// 筆先・角度・向き・投影の深さ。パスが無いときは、次に作るパスの設定。
+    Style(StyleEdit),
+    /// パスの対称（入れると、今の対称の設定で映したパスも描く。2D は画布の対称、3D はモデルの鏡の面）。
+    Symmetry(bool),
+    /// パスの向きを逆にする（点の並びを逆に）。
+    Reverse,
+    /// パスの全部の点を選ぶ。
+    SelectAllPoints,
+    /// 選んでいる点の全部の太さ（0〜1。1 回の Undo）。
+    Widths(f64),
+    /// プリセット（保存・当てる・名前の変更・消す）。
+    Preset(presets::PresetOp),
+}
+
+/// 筆先と投影の深さの値の操作。
+#[derive(Clone, Debug, PartialEq)]
+pub enum StyleEdit {
+    /// 筆先の画像（None は丸）。
+    Tip(Option<Arc<yolu_core::BrushTip>>),
+    /// 筆先の角度（度）。
+    Angle(f64),
+    /// 筆先をパスの進む向きに回す。
+    Follow(bool),
+    /// 3D の投影の深さ（ブラシの半径の倍数。None は自動）。
+    Depth(Option<f64>),
 }
 
 impl PathAction {
     /// 文書を変える操作か（読むだけのセットでは断る）。
     pub fn edits_document(&self) -> bool {
-        !matches!(self, PathAction::Select(_))
+        match self {
+            PathAction::Select(_)
+            | PathAction::SelectPath(_)
+            | PathAction::BeginRename(_)
+            | PathAction::SelectAllPoints => false,
+            PathAction::List(op) => op.edits_document(),
+            // 保存・名前の変更・消すは設定のフォルダだけ（当てるのは文書を変える）
+            PathAction::Preset(op) => matches!(op, presets::PresetOp::Apply(_)),
+            _ => true,
+        }
     }
 }
 
-/// 3D の文脈（受けたままのモデル・その指紋・描くテクスチャセットのマテリアル）。
+/// 3D の文脈（受けたままのモデル・その指紋・描くテクスチャセットのマテリアル・描く形）。
 pub struct SurfaceCtx {
+    /// 編集する形（点を置く・動かす・重ね表示。ポーズを付けた形）。
     pub model: Arc<ViewModel>,
     pub fingerprint: Arc<str>,
     pub material: i32,
+    /// 描く形（休みの形）。ポーズを変えてもテクスチャのパスの絵が変わらないよう、描く・描き直す・ブラシの大きさの換算はこの形で。
+    pub render: Arc<yolu_core::geometry::SurfaceGeometry>,
 }
 
 /// 128 bit の新しい ID。
@@ -166,6 +298,14 @@ fn random_id() -> u128 {
 /// パスを持つ層の名前。
 fn layer_name(lang: Lang, n: usize) -> String {
     format!("{} {n}", lang.pick("パス", "Path"))
+}
+
+/// パスの描き方の設定を替えた新しいパス。
+pub fn with_style(path: &LayerPath, style: PathStyle) -> LayerPath {
+    match path {
+        LayerPath::Canvas(c) => LayerPath::Canvas(CanvasPath { style, ..c.clone() }),
+        LayerPath::Surface(s) => LayerPath::Surface(SurfacePath { style, ..s.clone() }),
+    }
 }
 
 /// パスのブラシを替えた新しいパス。
@@ -208,10 +348,44 @@ fn to_path_paints(paints: Vec<yolu_core::material::ChannelPaint>) -> Vec<Channel
 }
 
 impl AppState {
-    /// 選んでいる層とそのパス（無ければ None）。
+    /// 選んでいる層と、編集しているパス（無い・編集を抜けたときは None）。
     pub fn path_layer(&self) -> Option<(LayerId, &LayerPath)> {
-        let id = self.selected_layer?;
-        Some((id, self.doc.layer(id)?.path()?))
+        let (layer, index) = self.path_active_index()?;
+        Some((layer, &self.doc.layer(layer)?.paths().get(index)?.path))
+    }
+
+    /// 層のパスを画素にできるか（パスがあり、塗りつぶしの層でない。塗りつぶしの層は画素を持たず、パスを外すと絵が消えるので、
+    /// core が断る）。ボタン・メニューの有効の条件。
+    pub fn path_can_rasterize(&self, id: LayerId) -> bool {
+        self.doc
+            .layer(id)
+            .is_some_and(|l| l.has_paths() && l.kind() != yolu_core::LayerKind::Fill)
+    }
+
+    /// 選んでいる層と、編集しているパスの一覧の中の番号（下から）。一覧で選んだパスが無ければ、一覧のいちばん上のパス。
+    /// 編集を抜けた層（`fresh`）では None（次の点は新しいパスを始める）。
+    pub fn path_active_index(&self) -> Option<(LayerId, usize)> {
+        let layer = self.selected_layer?;
+        let entries = self.doc.layer(layer)?.paths();
+        if entries.is_empty() {
+            return None;
+        }
+        if let Some(a) = self.path.active.filter(|a| a.layer == layer) {
+            if let Some(i) = entries.iter().position(|e| e.id() == a.path) {
+                return Some((layer, i));
+            }
+        }
+        if self.path.fresh == Some(layer) {
+            return None;
+        }
+        Some((layer, entries.len() - 1))
+    }
+
+    /// 選んでいる層のパスの一覧（無ければ空）。
+    pub fn path_entries(&self) -> &[LayerPathEntry] {
+        self.selected_layer
+            .and_then(|id| self.doc.layer(id))
+            .map_or(&[], |l| l.paths())
     }
 
     /// 選んでいる点の番号（層・パスが替わっていたり、点が無くなっていたら None）。
@@ -221,7 +395,59 @@ impl AppState {
         (r.layer == layer && r.path == path.id() && r.index < path.point_count()).then_some(r.index)
     }
 
-    /// パスの層が描くときの予算（文書のもの）。
+    /// 選んでいる点の番号の全部（矩形・全部で選んだ点と、選んでいる点。昇順・重なりなし）。
+    pub fn path_selected_indices(&self) -> Vec<usize> {
+        let Some((layer, path)) = self.path_layer() else {
+            return Vec::new();
+        };
+        let mut out: Vec<usize> = match &self.path.marked {
+            Some((a, v)) if a.layer == layer && a.path == path.id() => v
+                .iter()
+                .copied()
+                .filter(|i| *i < path.point_count())
+                .collect(),
+            _ => Vec::new(),
+        };
+        out.extend(self.path_selected_index());
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// 選んだ点の全部に点の操作を順に当て、1 回で描き直す（消すときは後ろの点から）。
+    fn path_points_many(&mut self, ops: Vec<PointOp>) {
+        let lang = self.lang;
+        let Some((layer, Some(path))) = self.path_target(None) else {
+            return;
+        };
+        let mut next = path.clone();
+        let mut select = self.path_selected_index();
+        for op in &ops {
+            match edit::apply(&next, op) {
+                Ok((p, s)) => {
+                    next = p;
+                    if !matches!(op, PointOp::Remove(_)) {
+                        select = s;
+                    } else {
+                        select = None;
+                    }
+                }
+                Err(r) => {
+                    self.refuse(Source::Path, crate::lang::refusals::path_edit(lang, r));
+                    return;
+                }
+            }
+        }
+        if next == path {
+            return;
+        }
+        if ops.iter().any(|o| matches!(o, PointOp::Remove(_))) {
+            self.path.marked = None;
+        }
+        self.path_commit(Some(layer), next, select);
+    }
+
+    /// パスの層が描くときの予算（文書のもの）と、リボンが読むアセットの画像（文書へ渡してある入力）。
     fn path_options(&self) -> Options<'static> {
         Options {
             width: self.doc.width(),
@@ -229,6 +455,7 @@ impl AppState {
             tile_size: self.doc.tile_size(),
             source_budget_bytes: self.doc.source_budget_bytes(),
             stroke_budget_bytes: self.doc.stroke_budget_bytes(),
+            images: self.doc.effect_inputs().images().clone(),
             ..Options::default()
         }
     }
@@ -265,6 +492,7 @@ impl AppState {
         Ok(SurfaceCtx {
             fingerprint: self.path_fingerprint(&model.geometry),
             material: self.view3d.material,
+            render: model.rest_geometry().clone(),
             model,
         })
     }
@@ -282,7 +510,7 @@ impl AppState {
             None => b.radius.max(0.01),
             Some(ctx) => {
                 let r = yolu_core::geometry::world_radius(
-                    &ctx.model.geometry,
+                    &ctx.render,
                     self.brush.radius as f64,
                     self.doc.width(),
                 );
@@ -297,12 +525,22 @@ impl AppState {
         })
     }
 
-    /// 点を 1 つ持つ新しいパス（今のブラシ・描くチャンネル・組で）。
-    fn path_new(&self, place: Place) -> Result<LayerPath, String> {
-        let (id, channel, material) =
-            (random_id(), self.m2.paint_channel, self.path_new_material());
+    /// 点を 1 つ持つ新しいパス（今のブラシ・描くチャンネル・組で）。`channel` は層の一覧の基準のチャンネル（一覧に加えるとき。
+    /// 一覧のパスはどれも同じ基準のチャンネル）。
+    fn path_new(
+        &self,
+        place: Place,
+        channel: Option<yolu_core::Channel>,
+    ) -> Result<LayerPath, String> {
+        let (id, channel, material) = (
+            random_id(),
+            channel.unwrap_or(self.m2.paint_channel),
+            self.path_new_material(),
+        );
+        let style = self.path.next_style.clone();
         let empty = match place {
             Place::Canvas { .. } => LayerPath::Canvas(CanvasPath {
+                style: style.clone(),
                 id,
                 channel,
                 brush: self.path_new_brush(None),
@@ -312,6 +550,7 @@ impl AppState {
             Place::Surface { .. } => {
                 let ctx = self.path_surface_ctx()?;
                 LayerPath::Surface(SurfacePath {
+                    style,
                     id,
                     channel,
                     brush: self.path_new_brush(Some(&ctx)),
@@ -360,8 +599,14 @@ impl AppState {
             );
             return None;
         };
-        let existing = self.doc.layer(layer).and_then(|l| l.path().cloned());
-        match (&existing, surface) {
+        let existing = self.path_layer().map(|(_, p)| p.clone());
+        // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、層の一覧の側で断る
+        let side = self
+            .doc
+            .layer(layer)
+            .and_then(|l| l.paths().first())
+            .map(|e| e.path.clone());
+        match (&side, surface) {
             (Some(LayerPath::Surface(_)), Some(false)) => {
                 self.refuse(
                     Source::Path,
@@ -386,8 +631,8 @@ impl AppState {
         }
     }
 
-    /// パスを描いて層へ入れる（1 回の Undo）。`layer` が None なら、選んでいる層の上に新しいパスの層を足す。入れた層と、面に投影できなかった
-    /// 標本の数。
+    /// パスを描いて層へ入れる（1 回の Undo）。`layer` が None なら、選んでいる層の上に新しいパスの層を足す。層の一覧に同じ ID の
+    /// パスがあれば置き換え、無ければ一覧の上に加える。入れた層と、面に投影できなかった標本の数。
     fn path_write(
         &mut self,
         layer: Option<LayerId>,
@@ -396,65 +641,84 @@ impl AppState {
         let lang = self.lang;
         let core = |e: CoreError| lang.core_error(&e);
         let options = self.path_options();
-        let surface_ctx = |s: &SurfacePath, app: &AppState| -> Result<SurfaceCtx, String> {
-            let ctx = app.path_surface_ctx()?;
-            if s.model_fingerprint != *ctx.fingerprint {
-                return Err(lang
-                    .pick(
-                        "別のモデルで描かれたパスです",
-                        "The path was drawn on another model",
-                    )
-                    .into());
+        if let Some(l) = layer {
+            let mut entries = self
+                .doc
+                .layer(l)
+                .map(|x| x.paths().to_vec())
+                .unwrap_or_default();
+            match entries.iter_mut().find(|e| e.id() == path.id()) {
+                Some(e) => e.path = path.clone(),
+                None => entries.push(LayerPathEntry::new(path.clone())),
             }
-            Ok(ctx)
-        };
-        match (layer, path) {
-            (Some(l), LayerPath::Canvas(c)) => {
-                self.doc.set_canvas_path(l, c.clone()).map_err(core)?;
-                Ok((l, 0))
-            }
-            (Some(l), LayerPath::Surface(s)) => {
-                let ctx = surface_ctx(s, self)?;
-                let rendered = render_surface(s, &ctx.model.geometry, &options)
-                    .map_err(|e| crate::lang::path_error(lang, &e))?;
-                let gaps = rendered.gaps;
-                self.doc
-                    .set_path(l, path.clone(), rendered.channels)
-                    .map_err(core)?;
-                Ok((l, gaps))
-            }
-            (None, p) => {
-                let (channels, gaps) = match p {
-                    LayerPath::Canvas(c) => {
-                        let r = render_canvas(c, &options)
-                            .map_err(|e| crate::lang::path_error(lang, &e))?;
-                        (r.channels, 0)
-                    }
-                    LayerPath::Surface(s) => {
-                        let ctx = surface_ctx(s, self)?;
-                        let r = render_surface(s, &ctx.model.geometry, &options)
-                            .map_err(|e| crate::lang::path_error(lang, &e))?;
-                        let gaps = r.gaps;
-                        (r.channels, gaps)
-                    }
-                };
-                let n = self
-                    .doc
-                    .layers()
-                    .iter()
-                    .filter(|l| l.path().is_some())
-                    .count()
-                    + 1;
-                let above = self
-                    .selected_layer
-                    .filter(|id| self.doc.layer(*id).is_some());
-                let id = self
-                    .doc
-                    .add_path_layer(&layer_name(lang, n), p.clone(), channels, above)
-                    .map_err(core)?;
-                Ok((id, gaps))
-            }
+            let gaps = self.path_write_list(l, entries)?;
+            return Ok((l, gaps));
         }
+        let (channels, gaps) = match path {
+            LayerPath::Canvas(c) => {
+                let r =
+                    render_canvas(c, &options).map_err(|e| crate::lang::path_error(lang, &e))?;
+                (r.channels, 0)
+            }
+            LayerPath::Surface(s) => {
+                let ctx = self.path_surface_ctx_for(s)?;
+                let r = render_surface(s, &ctx.render, &options)
+                    .map_err(|e| crate::lang::path_error(lang, &e))?;
+                let gaps = r.gaps;
+                (r.channels, gaps)
+            }
+        };
+        let n = self.doc.layers().iter().filter(|l| l.has_paths()).count() + 1;
+        let above = self
+            .selected_layer
+            .filter(|id| self.doc.layer(*id).is_some());
+        let id = self
+            .doc
+            .add_path_layer(&layer_name(lang, n), path.clone(), channels, above)
+            .map_err(core)?;
+        Ok((id, gaps))
+    }
+
+    /// 3D のパスの文脈（パスが今のモデルで描かれていなければ、その理由）。
+    fn path_surface_ctx_for(&self, s: &SurfacePath) -> Result<SurfaceCtx, String> {
+        let ctx = self.path_surface_ctx()?;
+        if s.model_fingerprint != *ctx.fingerprint {
+            return Err(self
+                .lang
+                .pick(
+                    "別のモデルで描かれたパスです",
+                    "The path was drawn on another model",
+                )
+                .into());
+        }
+        Ok(ctx)
+    }
+
+    /// 層のパスの一覧を描いて入れ替える（1 回の Undo）。空の一覧はパスを外して、そのチャンネルを空にする。面に投影できなかった
+    /// 標本の数を返す。
+    pub(crate) fn path_write_list(
+        &mut self,
+        layer: LayerId,
+        entries: Vec<LayerPathEntry>,
+    ) -> Result<usize, String> {
+        let lang = self.lang;
+        let core = |e: CoreError| lang.core_error(&e);
+        let surface = entries.iter().find_map(|e| match &e.path {
+            LayerPath::Surface(s) => Some(s.clone()),
+            LayerPath::Canvas(_) => None,
+        });
+        let Some(first) = surface else {
+            self.doc.set_canvas_paths(layer, entries).map_err(core)?;
+            return Ok(0);
+        };
+        let ctx = self.path_surface_ctx_for(&first)?;
+        let rendered = render_list(&entries, Some(&ctx.render), &self.path_options())
+            .map_err(|e| crate::lang::path_error(lang, &e))?;
+        let gaps = rendered.gaps;
+        self.doc
+            .set_paths(layer, entries, rendered.channels)
+            .map_err(core)?;
+        Ok(gaps)
     }
 
     /// パスを層へ入れ、選ぶ点を決める。入れたら true。断られたら理由を知らせて何も変えない。
@@ -471,6 +735,11 @@ impl AppState {
                     self.selected_layer = Some(id);
                     self.set_edit_mask(false);
                 }
+                self.path.active = Some(ActivePath {
+                    layer: id,
+                    path: path.id(),
+                });
+                self.path.fresh = None;
                 self.path.selected = select.map(|index| PointRef {
                     layer: id,
                     path: path.id(),
@@ -478,13 +747,7 @@ impl AppState {
                 });
                 self.modified = true;
                 if gaps > 0 {
-                    self.warn(
-                        Source::Path,
-                        lang.pick(
-                            format!("{gaps} 個の標本が面から外れて、描いていません"),
-                            format!("{gaps} sample(s) were off the surface and skipped"),
-                        ),
-                    );
+                    self.warn(Source::Path, gaps_message(lang, gaps));
                 }
                 true
             }
@@ -495,15 +758,32 @@ impl AppState {
         }
     }
 
-    /// 道具が替わった（途中のドラッグ・スライダーの値を捨てる。選んだ点も外す）。
+    /// 道具が替わった（途中のドラッグ・スライダーの値・名前の入力を捨てる。選んだ点も外す）。
     pub fn path_tool_changed(&mut self) {
         self.path.drag = None;
         self.path.pen_down = None;
         self.path.pending = None;
         self.path.selected = None;
+        self.path.marked = None;
+        self.path.rect = None;
+        self.path.renaming = None;
+        self.path.preset_renaming = None;
     }
 
-    /// Esc: ドラッグを捨てる（そのフレームは選んだ点を残す）。ドラッグが無ければ選んだ点を外す。何かあったか。`frame` は今のフレームの
+    /// パスの編集を抜ける（Esc・Enter・「新しいパス」）: 選んだ点と一覧で選んだパスを外し、次に置く点は、選んでいる層の一覧に新しい
+    /// パスを始める。抜けたか（編集しているパスが無ければ何もしない）。
+    pub fn path_exit(&mut self) -> bool {
+        let Some((layer, _)) = self.path_active_index() else {
+            return false;
+        };
+        self.path.selected = None;
+        self.path.active = None;
+        self.path.fresh = Some(layer);
+        true
+    }
+
+    /// Esc: ドラッグを捨てる（そのフレームは選んだ点を残す）。ドラッグが無ければ選んだ点を外し、点も選んでいなければパスの編集を
+    /// 抜ける。何かあったか。`frame` は今のフレームの
     /// 番号（2D と 3D が両方見えていても、同じフレームの Esc は 1 回だけ扱う）。
     pub fn path_cancel(&mut self, frame: u64) -> bool {
         if !self.tool.is_path() {
@@ -511,6 +791,14 @@ impl AppState {
         }
         if self.path.esc_frame == Some(frame) {
             return true;
+        }
+        // 名前の入力欄が受けた Esc（欄が先に手放していても、1 つ前のフレームで入力中だったかで分かる）
+        if self
+            .path
+            .typing_frame
+            .is_some_and(|t| frame.saturating_sub(t) <= 1)
+        {
+            return false;
         }
         self.path.pending = None;
         let any = if self.path.drag.take().is_some() {
@@ -521,8 +809,14 @@ impl AppState {
                     .pick("点の移動をやめました。", "Point move cancelled."),
             );
             true
+        } else if self.path.rect.take().is_some() {
+            true
+        } else if self.path.selected.is_some() || self.path.marked.is_some() {
+            self.path.selected = None;
+            self.path.marked = None;
+            true
         } else {
-            self.path.selected.take().is_some()
+            self.path_exit()
         };
         if any {
             self.path.esc_frame = Some(frame);
@@ -530,14 +824,93 @@ impl AppState {
         any
     }
 
+    /// 点 `index` の、今の曲がりのままの取っ手（2D は画素、3D は休みの形のモデルの空間）。3D でモデルが無ければ理由。
+    pub fn path_initial_handles(&self, index: usize) -> Result<([f64; 3], [f64; 3]), String> {
+        let Some((_, path)) = self.path_layer() else {
+            return Err(String::new());
+        };
+        let points: Vec<curve::P3> = match path {
+            LayerPath::Canvas(c) => c.points.iter().map(|p| [p.x, p.y, 0.0]).collect(),
+            LayerPath::Surface(s) => {
+                let ctx = self.path_surface_ctx_for(s)?;
+                s.points
+                    .iter()
+                    .map(|p| {
+                        paths::point_position(&ctx.render, p)
+                            .map_or([0.0; 3], |(v, _)| v.as_dvec3().to_array())
+                    })
+                    .collect()
+            }
+        };
+        Ok(curve::initial_handles(&points, index))
+    }
+
+    /// 取っ手のドラッグを当てる新しい接線（`vector` は動かした側の新しい向き）。もう折れている取っ手と Alt はその側だけ、Ctrl は
+    /// 両方を同じ割合で伸ばし、それ以外は反対の側を向きだけ合わせる（長さは今のまま）。
+    pub fn path_handle_tangent(
+        old: edit::TangentValue,
+        side: HandleSide,
+        vector: [f64; 3],
+        input: PathInputState,
+    ) -> edit::TangentValue {
+        use yolu_core::glam::DVec3;
+        let (incoming, outgoing) = match old {
+            edit::TangentValue::Handles { incoming, outgoing } => {
+                (DVec3::from_array(incoming), DVec3::from_array(outgoing))
+            }
+            _ => (DVec3::ZERO, DVec3::ZERO),
+        };
+        let v = DVec3::from_array(vector);
+        let (moved_old, other) = match side {
+            HandleSide::In => (incoming, outgoing),
+            HandleSide::Out => (outgoing, incoming),
+        };
+        // 折れている: 反対の向きが -moved と 1° 以上ずれている
+        let broken = moved_old.length() > 1e-12
+            && other.length() > 1e-12
+            && (-moved_old.normalize()).dot(other.normalize()) < 1.0f64.to_radians().cos();
+        let other = if input.alt || broken || v.length() <= 1e-12 {
+            other
+        } else if input.ctrl && moved_old.length() > 1e-12 {
+            -v.normalize() * other.length() * (v.length() / moved_old.length())
+        } else {
+            -v.normalize() * other.length()
+        };
+        let (incoming, outgoing) = match side {
+            HandleSide::In => (v, other),
+            HandleSide::Out => (other, v),
+        };
+        edit::TangentValue::Handles {
+            incoming: incoming.to_array(),
+            outgoing: outgoing.to_array(),
+        }
+    }
+
     /// ドラッグを終える（離した・フォーカスを失った・離したのを取りこぼした）。ほとんど動かしていなければクリック（点を選ぶだけ）、
-    /// 動かしていれば、そこまでの置き場所へ 1 回で動かす。
+    /// 動かしていれば、そこまでの置き場所へ 1 回で動かす。取っ手のドラッグは、その点の接線を 1 回で替える。
     pub fn path_finish_drag(&mut self) {
         let Some(d) = self.path.drag.take() else {
             return;
         };
         self.path.pen_down = None;
         if d.moved < CLICK_RADIUS {
+            return;
+        }
+        if let Some(side) = d.handle {
+            let same = self.selected_layer == Some(d.layer)
+                && self
+                    .path_layer()
+                    .is_some_and(|(_, p)| p.id() == d.path && d.index < p.point_count());
+            let old = self
+                .path_layer()
+                .and_then(|(_, p)| edit::point_tangent(p, d.index));
+            if let (true, Some(old), Some(vector)) = (same, old, d.vector) {
+                let tangent = Self::path_handle_tangent(old, side, vector, self.path.input);
+                self.path_apply(PathAction::Point(PointOp::Tangent {
+                    index: d.index,
+                    tangent,
+                }));
+            }
             return;
         }
         let Some(place) = d.target else {
@@ -571,7 +944,90 @@ impl AppState {
                 };
             }
             PathAction::Point(op) => self.path_point(op),
+            PathAction::SelectPath(id) => self.path_select_path(id),
+            PathAction::List(op) => self.path_list(op),
+            PathAction::SetCorner(on) => {
+                let tangent = if on {
+                    edit::TangentValue::Corner
+                } else {
+                    edit::TangentValue::Smooth
+                };
+                let ops = self
+                    .path_selected_indices()
+                    .into_iter()
+                    .map(|index| PointOp::Tangent { index, tangent })
+                    .collect();
+                self.path_points_many(ops);
+            }
+            PathAction::SetHandles(on) => {
+                let mut ops = Vec::new();
+                for index in self.path_selected_indices() {
+                    let tangent = if on {
+                        match self.path_initial_handles(index) {
+                            Ok((incoming, outgoing)) => {
+                                edit::TangentValue::Handles { incoming, outgoing }
+                            }
+                            Err(m) => {
+                                self.refuse(Source::Path, m);
+                                return;
+                            }
+                        }
+                    } else {
+                        edit::TangentValue::Smooth
+                    };
+                    ops.push(PointOp::Tangent { index, tangent });
+                }
+                self.path_points_many(ops);
+            }
+            PathAction::Symmetry(on) => self.path_set_symmetry(on),
+            PathAction::Preset(op) => self.path_preset(op),
+            PathAction::Widths(pressure) => {
+                let ops = self
+                    .path_selected_indices()
+                    .into_iter()
+                    .map(|index| PointOp::Width { index, pressure })
+                    .collect();
+                self.path_points_many(ops);
+            }
+            PathAction::Reverse => {
+                let Some((layer, Some(path))) = self.path_target(None) else {
+                    return;
+                };
+                let n = path.point_count();
+                let keep = self.path_selected_index().map(|i| n - 1 - i);
+                let next = match &path {
+                    LayerPath::Canvas(c) => LayerPath::Canvas(c.reversed()),
+                    LayerPath::Surface(s) => LayerPath::Surface(s.reversed()),
+                };
+                self.path.marked = None;
+                self.path_commit(Some(layer), next, keep);
+            }
+            PathAction::SelectAllPoints => {
+                if let Some((layer, path)) = self.path_layer() {
+                    let a = ActivePath {
+                        layer,
+                        path: path.id(),
+                    };
+                    let all = (0..path.point_count()).collect();
+                    self.path.marked = Some((a, all));
+                }
+            }
+            PathAction::Kind(kind) => self.path_set_kind(kind),
+            PathAction::Style(edit) => self.path_style_edit(edit),
+            PathAction::BeginRename(id) => {
+                if let Some(layer) = self.selected_layer {
+                    self.path_select_path(Some(id));
+                    self.path_begin_rename(layer, id);
+                }
+            }
             PathAction::DeleteSelected => {
+                let many = self.path_selected_indices();
+                if many.len() > 1 {
+                    // 後ろの点から消す（番号がずれない）
+                    let ops = many.into_iter().rev().map(PointOp::Remove).collect();
+                    self.path_points_many(ops);
+                    return;
+                }
                 let target = self.path_layer().map(|(_, p)| {
                     self.path_selected_index().or(match p {
                         LayerPath::Canvas(c) => edit::last_index(&c.points),
@@ -597,9 +1053,17 @@ impl AppState {
                     },
                     LayerPath::Canvas(_) => None,
                 };
-                let next = with_material(
-                    &with_brush(&path, self.path_new_brush(ctx.as_ref())),
-                    self.path_new_material(),
+                // 今のブラシの筆先の画像・角度・向きも写す
+                let mut style = path.style().clone();
+                style.tip = self.m2.brush.tip.image.clone();
+                style.angle = self.m2.brush.tip.angle;
+                style.follow = self.m2.brush.tip.follow_direction;
+                let next = with_style(
+                    &with_material(
+                        &with_brush(&path, self.path_new_brush(ctx.as_ref())),
+                        self.path_new_material(),
+                    ),
+                    style,
                 );
                 let keep = self.path_selected_index();
                 self.path_commit(Some(layer), next, keep);
@@ -665,8 +1129,25 @@ impl AppState {
                 }
             },
             None => match op {
-                PointOp::Add(place) => match self.path_new(place) {
-                    Ok(p) => (p, Some(0), None),
+                // 編集を抜けたパスの層なら、その一覧に新しいパスを始める（パスの無い層なら、新しいパスの層）
+                PointOp::Add(place) => match self.path_new(
+                    place,
+                    self.doc
+                        .layer(layer)
+                        .and_then(|l| l.paths().first())
+                        .map(|e| e.path.channel()),
+                ) {
+                    // パスの層・塗りつぶしの層なら、その層の一覧に加える（塗りつぶしの層のパスは塗りつぶしの上に重なる）
+                    Ok(p) => (
+                        p,
+                        Some(0),
+                        self.doc
+                            .layer(layer)
+                            .is_some_and(|l| {
+                                l.has_paths() || l.kind() == yolu_core::LayerKind::Fill
+                            })
+                            .then_some(layer),
+                    ),
                     Err(m) => {
                         self.refuse(Source::Path, m);
                         return;
@@ -676,6 +1157,91 @@ impl AppState {
             },
         };
         self.path_commit(target, path, select);
+    }
+
+    /// パスの種類を替える（1 回の Undo）。パスを選んでいなければ、次に作るパスの種類にする。リボンの画像は先に読んでおく
+    /// （文書へ渡してから描く）。
+    fn path_set_kind(&mut self, kind: PathKind) {
+        if let PathKind::Ribbon(r) = kind {
+            let resource = crate::fx::inputs::resource_id(r.image);
+            if let Err(m) = self.use_shelf_image(&resource) {
+                self.refuse(Source::Path, m);
+                return;
+            }
+        }
+        let Some(path) = self.path_layer().map(|(_, p)| p.clone()) else {
+            self.path.next_style.kind = kind;
+            return;
+        };
+        if path.style().kind == kind {
+            return;
+        }
+        let Some((layer, _)) = self.path_target(None) else {
+            return;
+        };
+        let keep = self.path_selected_index();
+        let mut style = path.style().clone();
+        style.kind = kind;
+        self.path_commit(Some(layer), with_style(&path, style), keep);
+    }
+
+    /// パスの対称を入れる・切る（1 回の Undo）。入れるときは今の対称の設定（2D は画布の対称・切っていれば最後のモードで中心は
+    /// 今の中心、3D はミラーの軸と面のずれ）。
+    fn path_set_symmetry(&mut self, on: bool) {
+        let Some(path) = self.path_layer().map(|(_, p)| p.clone()) else {
+            return;
+        };
+        let symmetry = match (on, &path) {
+            (false, _) => paths::PathSymmetry::None,
+            (true, LayerPath::Canvas(_)) => {
+                let mut s = self.sel.symmetry.clone();
+                if !s.enabled() {
+                    s.set_mode(s.last_mode);
+                }
+                paths::PathSymmetry::Canvas(s.canvas(self.doc.width(), self.doc.height()))
+            }
+            (true, LayerPath::Surface(_)) => {
+                let plane = self.sel.symmetry.surface.plane();
+                paths::PathSymmetry::Mirror {
+                    point: plane.point,
+                    normal: plane.normal,
+                }
+            }
+        };
+        if path.style().symmetry == symmetry {
+            return;
+        }
+        let Some((layer, _)) = self.path_target(None) else {
+            return;
+        };
+        let keep = self.path_selected_index();
+        let mut style = path.style().clone();
+        style.symmetry = symmetry;
+        self.path_commit(Some(layer), with_style(&path, style), keep);
+    }
+
+    /// 筆先・角度・向き・深さを替える（1 回の Undo）。パスを選んでいなければ、次に作るパスの設定にする。
+    fn path_style_edit(&mut self, edit: StyleEdit) {
+        let apply = |style: &mut PathStyle| match edit.clone() {
+            StyleEdit::Tip(tip) => style.tip = tip,
+            StyleEdit::Angle(a) => style.angle = a.clamp(-360.0, 360.0),
+            StyleEdit::Follow(on) => style.follow = on,
+            StyleEdit::Depth(d) => style.depth = d.map(|d| d.clamp(0.05, 64.0)),
+        };
+        let Some(path) = self.path_layer().map(|(_, p)| p.clone()) else {
+            apply(&mut self.path.next_style);
+            return;
+        };
+        let mut style = path.style().clone();
+        apply(&mut style);
+        if style == *path.style() {
+            return;
+        }
+        let Some((layer, _)) = self.path_target(None) else {
+            return;
+        };
+        let keep = self.path_selected_index();
+        self.path_commit(Some(layer), with_style(&path, style), keep);
     }
 
     /// パスのブラシの値を替える。パスが無ければ、次に作るパスが取る今のブラシの値を替える。
@@ -708,7 +1274,7 @@ impl AppState {
                     LayerPath::Surface(_) => match self.path_surface_ctx() {
                         Ok(ctx) => {
                             let unit = yolu_core::geometry::world_radius(
-                                &ctx.model.geometry,
+                                &ctx.render,
                                 1.0,
                                 self.doc.width(),
                             );
@@ -790,10 +1356,11 @@ impl AppState {
             {
                 continue;
             }
+            // 位置は両方のモデルの休みの形で比べる（前のモデルにポーズが付いていても、その形へ置き直さない）
             all.extend(rebind::rebind_document(
                 doc,
-                &old.geometry,
-                &new.geometry,
+                old.rest_geometry(),
+                new.rest_geometry(),
                 material,
                 lang,
             ));
@@ -810,6 +1377,14 @@ impl AppState {
         }
         all
     }
+}
+
+/// 面に投影できなかった標本の知らせ。
+fn gaps_message(lang: Lang, gaps: usize) -> String {
+    lang.pick(
+        format!("{gaps} 個の標本が面から外れて、描いていません"),
+        format!("{gaps} sample(s) were off the surface and skipped"),
+    )
 }
 
 /// モデルの差し替えの知らせ: 結果ごとの件数（0 は出さない）と、最初の 1 件の理由（レイヤー名つき。画素にした・残したものを先に）。

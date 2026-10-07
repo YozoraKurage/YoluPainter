@@ -19,8 +19,8 @@ use yolu_io::library as files;
 use yolu_io::psd::CopyRefusal;
 use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
 use yolu_io::smart::{
-    REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_RUST_ADJUSTMENTS,
-    REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+    REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_PATH_LISTS,
+    REFUSAL_RUST_ADJUSTMENTS, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
 };
 
 /// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
@@ -567,6 +567,26 @@ fn core_reason(reason: &str) -> &str {
 fn known_core_reason(reason: &str) -> Option<&'static str> {
     Some(match reason {
         "手動ID色の数・番号・色が範囲外です" => "Manual ID colors are out of range",
+        "リボンの画像が無い" => "The ribbon image is missing",
+        "パスの層にはパスが 1 本以上要る" => "A path layer needs at least one path",
+        "パスで描けるのはラスターと塗りつぶしの層だけ" => {
+            "Paths draw only on raster and fill layers"
+        }
+        "パスを付けられるのはパスの無いラスターか塗りつぶしの層だけ" => {
+            "Paths can be attached only to a raster or fill layer without paths"
+        }
+        "塗りつぶしの層のパスは画素にできない" => {
+            "The paths of a fill layer cannot be rasterized"
+        }
+        "塗りつぶしの層のパスの画素は塗りつぶしの層だけ" => {
+            "Fill-layer path pixels belong to a fill layer"
+        }
+        "3D のパスは呼び手が形で描いて set_paths へ渡す" => {
+            "Paths on a model are drawn with the model and set with set_paths"
+        }
+        "塗りのパスが 1 つの UV の島に収まらない" => {
+            "The fill path does not stay on one UV island"
+        }
         "手動ID色のモデル指紋が不正です" => {
             "The model fingerprint of the manual ID colors is invalid"
         }
@@ -872,15 +892,11 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "パスで描かれた層には手で描けない" => {
             "Cannot paint by hand on a path layer"
         }
-        "パスで描けるのはラスターの層だけ" => "Paths require a raster layer",
         "パスのチャンネルが層で有効でない" => {
             "The path channel is not enabled on the layer"
         }
         "パスのチャンネルの面が層に無い" => {
             "The layer has no surface for the path channel"
-        }
-        "パスを付けられるのはパスの無いラスターの層だけ" => {
-            "A path needs a raster layer without a path"
         }
         "フィルターの ID" => "Filter ID",
         "フィルターの ID が空" => "Filter ID is empty",
@@ -937,6 +953,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "層のパスは種類（モデルの上かキャンバスの上か）を変えない" => {
             "A layer path does not change its kind (model or canvas)"
         }
+        "名前を替えるパスが層に無い" => "The layer has no such path to rename",
         "形のグラデーションは色かスカラーで、法線ではない" => {
             "A shape gradient is a color or scalar, not a normal"
         }
@@ -1332,6 +1349,12 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
             "It uses filters or generators added in 0.5.0",
         )
         .into()
+    } else if m.contains(REFUSAL_PATH_LISTS) {
+        lang.pick(
+            "パスの一覧か新しいパスの設定を使っています",
+            "It uses a path list or new path settings",
+        )
+        .into()
     } else {
         lang.io_error(e)
     }
@@ -1418,6 +1441,18 @@ pub fn path_error(lang: Lang, error: &paths::Error) -> String {
         Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
         Error::Core(e) => lang.core_error(e),
         Error::Dab(d) => lang.path_dab_refusal(*d).into(),
+        Error::MissingImage => lang
+            .pick(
+                "リボンの画像がアセットにありません",
+                "The ribbon image is not in the assets",
+            )
+            .into(),
+        Error::FillIslands => lang
+            .pick(
+                "塗りのパスが 1 つの UV の島に収まっていません",
+                "The fill path does not stay on one UV island",
+            )
+            .into(),
     }
 }
 

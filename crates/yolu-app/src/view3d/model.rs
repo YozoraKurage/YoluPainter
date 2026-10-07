@@ -132,6 +132,8 @@ pub struct ViewModel {
     pub demo: bool,
     /// 角ごとの接線（`tangents`）。法線マップを見せるときだけ、最初に要る所で作る。
     tangents: OnceLock<Arc<Vec<Tangent>>>,
+    /// ポーズを付けた形のときの休みの形（三角形・UV・スロットの並びは同じで、位置だけが違う）。None はこの形が休みの形。
+    rest: Option<Arc<SurfaceGeometry>>,
 }
 
 impl ViewModel {
@@ -155,6 +157,7 @@ impl ViewModel {
             link_generation: None,
             demo: false,
             tangents: OnceLock::new(),
+            rest: None,
         })
     }
 
@@ -173,7 +176,20 @@ impl ViewModel {
             link_generation: None,
             demo: false,
             tangents: OnceLock::new(),
+            rest: None,
         }
+    }
+
+    /// 休みの形を添える（ポーズを付けた形を作ったとき。`rest` は同じ三角形・UV・スロットの並びの、ポーズの無い形）。
+    pub fn with_rest(mut self, rest: Arc<SurfaceGeometry>) -> ViewModel {
+        self.rest = Some(rest);
+        self
+    }
+
+    /// 休みの形（ポーズの無い形。FBX の休みの姿勢・Live Link で最初に受けた形）。3D のパスはこの形で描くので、ポーズを変えても
+    /// テクスチャの絵は変わらない。ポーズを付けていない形は自分自身。
+    pub fn rest_geometry(&self) -> &Arc<SurfaceGeometry> {
+        self.rest.as_ref().unwrap_or(&self.geometry)
     }
 
     /// 試しの立方体（Unity 版のデモと同じ。6 面が別の UV アイランド）。
@@ -270,6 +286,8 @@ impl ViewModel {
         }
         let mut m = ViewModel::new(&self.name, meshes, self.materials.clone(), revision)?;
         m.link_generation = self.link_generation;
+        // 休みの形は最初に受けた形のまま（ポーズを重ねても、前のポーズの形を休みにしない）
+        m.rest = Some(self.rest_geometry().clone());
         Ok(m)
     }
 

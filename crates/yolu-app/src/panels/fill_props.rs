@@ -193,6 +193,7 @@ pub fn sections(
     if channel.is_standard() && channel != Channel::Normal {
         gradient_section(ui, app, rows, id, channel, &problems, enabled, lang);
     }
+    crate::panels::path_props::fill_layer_rows(ui, app, rows, id);
 }
 
 // ───────── 画像 ─────────

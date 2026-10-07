@@ -7,14 +7,20 @@
 
 use egui::{CursorIcon, Painter, Pos2, Rect};
 use yolu_core::geometry::{pick, CameraView, Ray, SurfaceGeometry};
-use yolu_core::glam::{Mat4, Vec2, Vec3, Vec4};
+use yolu_core::glam::{DMat3, DVec3, Mat4, Vec2, Vec3, Vec4};
 use yolu_core::paths::{point_position, SurfacePath};
 use yolu_core::LayerPath;
 
-use super::canvas::{draw_curve, draw_insert_ring, draw_marker, MarkerStyle};
+use super::canvas::{
+    draw_curve, draw_handle, draw_insert_ring, draw_marker, draw_other_curve, draw_rect,
+    shown_tangents, MarkerStyle,
+};
 use super::curve::{nearest_point, nearest_segment, sample_screen, P3};
-use super::edit::{self, Place, PointOp};
-use super::{Hover, PathAction, PenDown, PointDrag, PointRef, SurfaceCtx, GRAB_RADIUS};
+use super::edit::{self, Place, PointOp, Pt, TangentValue};
+use super::{
+    HandleSide, Hover, PathAction, PenDown, PointDrag, PointRef, RectDrag, SurfaceCtx,
+    DOUBLE_CLICK, GRAB_RADIUS,
+};
 use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
 use crate::view3d::input::camera_view;
@@ -124,9 +130,39 @@ fn occluded(app: &AppState, view: &CameraView, positions: &[Option<Vec3>]) -> Ve
         .collect()
 }
 
+/// 三角形の辺 2 本と、長さが辺ほどの法線の 3 本の列（モデルの空間）。潰れた三角形は None。
+fn frame(g: &SurfaceGeometry, triangle: u32) -> Option<DMat3> {
+    let t = g.triangles().get(triangle as usize)?;
+    let e1 = (t.b - t.a).as_dvec3();
+    let e2 = (t.c - t.a).as_dvec3();
+    let n = e1.cross(e2);
+    let area = n.length();
+    if area.is_nan() || area <= 1e-20 {
+        return None;
+    }
+    Some(DMat3::from_cols(e1, e2, n / area.sqrt()))
+}
+
+/// 休みの形の向きを、見ている形（ポーズを付けた形）の向きへ写す行列（点の三角形の変形）。同じ形・潰れた三角形は単位行列。
+pub(super) fn rest_to_shown(
+    rest: &SurfaceGeometry,
+    shown: &SurfaceGeometry,
+    triangle: u32,
+) -> DMat3 {
+    if std::ptr::eq(rest, shown) {
+        return DMat3::IDENTITY;
+    }
+    match (frame(rest, triangle), frame(shown, triangle)) {
+        (Some(r), Some(s)) if r.determinant().abs() > 1e-30 => s * r.inverse(),
+        _ => DMat3::IDENTITY,
+    }
+}
+
 struct Scene {
     proj: Projector,
     positions: Vec<Option<Vec3>>,
+    /// 見ている形での点ごとの接線（取っ手は見ている形の向き）。
+    tangents: Vec<TangentValue>,
     hidden_behind: Vec<bool>,
 }
 
@@ -139,10 +175,33 @@ fn scene(
 ) -> Scene {
     let view = camera_view(app, rect);
     let positions = positions(app, path, g, preview);
+    // 取っ手は休みの形の空間で持つので、点の三角形の変形で見ている形へ写す（ドラッグ中の取っ手も）
+    let rest = app.view3d.full_model().map(|m| m.rest_geometry().clone());
+    let now: Vec<TangentValue> = path.points.iter().map(Pt::tangent_value).collect();
+    let now = match (app.selected_layer, preview) {
+        (Some(layer), Some(_)) => shown_tangents(app, &now, layer, path.id),
+        _ => now,
+    };
+    let tangents = path
+        .points
+        .iter()
+        .zip(now)
+        .map(|(p, t)| match (t, &rest) {
+            (TangentValue::Handles { incoming, outgoing }, Some(rest)) => {
+                let m = rest_to_shown(rest, g, p.triangle);
+                TangentValue::Handles {
+                    incoming: (m * DVec3::from_array(incoming)).to_array(),
+                    outgoing: (m * DVec3::from_array(outgoing)).to_array(),
+                }
+            }
+            (t, _) => t,
+        })
+        .collect();
     Scene {
         proj: Projector::new(&view, rect),
         hidden_behind: occluded(app, &view, &positions),
         positions,
+        tangents,
     }
 }
 
@@ -167,7 +226,8 @@ impl Scene {
             .collect();
         sample_screen(
             &pts,
-            &|p| {
+            &self.tangents,
+            &|p: P3| {
                 self.proj
                     .project(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32))
             },
@@ -175,7 +235,34 @@ impl Scene {
         )
     }
 
-    fn hover(&self, pointer: Pos2) -> Hover {
+    /// 選んでいる点の取っ手（側、点の画面の点、先の画面の点）。取っ手の点だけ、長さ 0 の側は出さない。
+    fn handle_ends(&self, index: usize) -> Vec<(HandleSide, Pos2, Pos2)> {
+        let (Some(Some(p)), Some(TangentValue::Handles { incoming, outgoing })) =
+            (self.positions.get(index), self.tangents.get(index))
+        else {
+            return Vec::new();
+        };
+        let Some(at) = self.proj.project(*p) else {
+            return Vec::new();
+        };
+        [(HandleSide::In, incoming), (HandleSide::Out, outgoing)]
+            .into_iter()
+            .filter(|(_, h)| h.iter().any(|v| *v != 0.0))
+            .filter_map(|(side, h)| {
+                let end = *p + DVec3::from_array(*h).as_vec3();
+                Some((side, at, self.proj.project(end)?))
+            })
+            .collect()
+    }
+
+    fn hover(&self, pointer: Pos2, selected: Option<usize>) -> Hover {
+        if let Some(i) = selected {
+            for (side, _, end) in self.handle_ends(i) {
+                if end.distance(pointer) <= GRAB_RADIUS {
+                    return Hover::Handle(i, side);
+                }
+            }
+        }
         // 遮られている点は掴まない
         let grabbable: Vec<Option<Pos2>> = self
             .screen()
@@ -204,6 +291,36 @@ fn current(app: &AppState) -> Option<(yolu_core::LayerId, &SurfacePath, &Surface
         path,
         &*model.geometry,
     ))
+}
+
+/// 選んでいる層の、編集していないほかの 3D のパス（一覧の上のものから。今のモデルで描かれたものだけ）と、受けたままの形。
+fn others(app: &AppState) -> Vec<(u128, &SurfacePath)> {
+    let Some(model) = app.view3d.full_model() else {
+        return Vec::new();
+    };
+    let print = app.path_fingerprint(&model.geometry);
+    let active = app.path_layer().map(|(_, p)| p.id());
+    app.path_entries()
+        .iter()
+        .rev()
+        .filter_map(|e| match &e.path {
+            LayerPath::Surface(s) if Some(s.id) != active && *print == s.model_fingerprint => {
+                Some((s.id, s))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// ポインタの下の、編集していないほかのパス（点か曲線）。
+fn other_under(app: &AppState, rect: Rect, pointer: Pos2) -> Option<u128> {
+    let model = app.view3d.full_model()?;
+    others(app)
+        .into_iter()
+        .find(|(_, p)| {
+            scene(app, rect, p, &model.geometry, None).hover(pointer, None) != Hover::None
+        })
+        .map(|(id, _)| id)
 }
 
 /// ポインタの下の面の点（描くテクスチャセットのマテリアルの面だけ）。置けなければ理由。
@@ -269,14 +386,28 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
             );
             return;
         }
+        // Shift を押して押したら、点を矩形で選ぶ
+        if app.path.input.shift {
+            app.path.rect = Some(RectDrag {
+                source,
+                surface: true,
+                start: at,
+                now: at,
+            });
+            return;
+        }
         let s = scene(app, rect, path, &ctx.model.geometry, None);
-        match s.hover(at) {
-            Hover::Point(index) => {
-                app.path.selected = Some(PointRef {
-                    layer,
-                    path: path.id,
-                    index,
-                });
+        let selected = app.path_selected_index();
+        let hover = s.hover(at, selected);
+        // 編集していないパスの上を押したら、そのパスを選ぶ（点は置かない）
+        if hover == Hover::None {
+            if let Some(id) = other_under(app, rect, at) {
+                app.path_apply(PathAction::SelectPath(Some(id)));
+                return;
+            }
+        }
+        match hover {
+            Hover::Handle(index, side) => {
                 app.path.drag = Some(PointDrag {
                     layer,
                     path: path.id,
@@ -286,6 +417,39 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
                     start: at,
                     moved: 0.0,
                     target: None,
+                    handle: Some(side),
+                    vector: None,
+                });
+                return;
+            }
+            Hover::Point(index) => {
+                let point = PointRef {
+                    layer,
+                    path: path.id,
+                    index,
+                };
+                // 同じ点のダブルクリックは、角と滑らかの切り替え（ドラッグは始めない）
+                if let (Some(now), Some((t, last))) = (app.path.input.now, app.path.last_press) {
+                    if last == point && now - t <= DOUBLE_CLICK {
+                        app.path.last_press = None;
+                        app.path.selected = Some(point);
+                        app.path_apply(PathAction::Point(PointOp::ToggleCorner(index)));
+                        return;
+                    }
+                }
+                app.path.last_press = app.path.input.now.map(|now| (now, point));
+                app.path.selected = Some(point);
+                app.path.drag = Some(PointDrag {
+                    layer,
+                    path: path.id,
+                    index,
+                    source,
+                    surface: true,
+                    start: at,
+                    moved: 0.0,
+                    target: None,
+                    handle: None,
+                    vector: None,
                 });
                 return;
             }
@@ -301,6 +465,12 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
             Hover::None => {}
         }
     }
+    if existing.is_none() {
+        if let Some(id) = other_under(app, rect, at) {
+            app.path_apply(PathAction::SelectPath(Some(id)));
+            return;
+        }
+    }
     match pick_place(app, rect, at, &ctx) {
         Ok(place) => app.path_apply(PathAction::Point(PointOp::Add(place))),
         Err(m) => app.refuse(Source::Path, m),
@@ -309,11 +479,30 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
 
 /// 動いた。面の上に置けない所では、前の置き場所のまま。
 pub fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
+    if let Some(r) = app
+        .path
+        .rect
+        .as_mut()
+        .filter(|r| r.source == source && r.surface)
+    {
+        r.now = at;
+        return;
+    }
     if app
         .path
         .drag
         .is_none_or(|d| d.source != source || !d.surface)
     {
+        return;
+    }
+    if app.path.drag.is_some_and(|d| d.handle.is_some()) {
+        let vector = handle_vector(app, rect, at);
+        if let Some(d) = app.path.drag.as_mut() {
+            d.moved = d.moved.max(at.distance(d.start));
+            if vector.is_some() {
+                d.vector = vector;
+            }
+        }
         return;
     }
     let place = app
@@ -328,8 +517,70 @@ pub fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
     }
 }
 
+/// 取っ手のドラッグの新しい向き（休みの形のモデルの空間）: ポインタのレイと、点を通り見ている形の面の法線に直交する面との
+/// 交わりから点までを、休みの形へ戻す（取っ手は点の面に沿って動く）。面とレイが平行なら None。
+fn handle_vector(app: &AppState, rect: Rect, at: Pos2) -> Option<[f64; 3]> {
+    let d = app.path.drag?;
+    let (_, path, g) = current(app)?;
+    let p = path.points.get(d.index)?;
+    let (position, normal) = point_position(g, p)?;
+    let view = camera_view(app, rect);
+    let ray = view.ray(local(rect, at));
+    let denom = ray.direction().dot(normal);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = (position - ray.origin()).dot(normal) / denom;
+    if t.is_nan() || t <= 0.0 {
+        return None;
+    }
+    let shown = ray.point(t) - position;
+    let rest = app.view3d.full_model()?.rest_geometry().clone();
+    let m = rest_to_shown(&rest, g, p.triangle);
+    let back = if m.determinant().abs() > 1e-30 {
+        m.inverse() * shown.as_dvec3()
+    } else {
+        shown.as_dvec3()
+    };
+    Some(back.to_array())
+}
+
+/// 矩形の選びを終える: 矩形に入る、遮られていない点を選ぶ。
+fn finish_rect(app: &mut AppState, rect: Rect) {
+    let Some(r) = app.path.rect.take() else {
+        return;
+    };
+    let Some((layer, path, g)) = current(app) else {
+        return;
+    };
+    let s = scene(app, rect, path, g, None);
+    let area = Rect::from_two_pos(r.start, r.now);
+    let inside: Vec<usize> = s
+        .screen()
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| !s.hidden_behind[*i] && p.is_some_and(|p| area.contains(p)))
+        .map(|(i, _)| i)
+        .collect();
+    let a = super::ActivePath {
+        layer,
+        path: path.id,
+    };
+    app.path.selected = None;
+    app.path.marked = (!inside.is_empty()).then_some((a, inside));
+}
+
 /// 離した。
 pub fn release(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
+    if app
+        .path
+        .rect
+        .is_some_and(|r| r.source == source && r.surface)
+    {
+        moved(app, rect, at, source);
+        finish_rect(app, rect);
+        return;
+    }
     if app
         .path
         .drag
@@ -374,13 +625,17 @@ pub fn cursor_icon(app: &AppState, rect: Rect, pointer: Pos2) -> CursorIcon {
     if app.path.drag.is_some() {
         return CursorIcon::Grabbing;
     }
-    match current(app) {
-        Some((_, path, g)) => match scene(app, rect, path, g, None).hover(pointer) {
-            Hover::Point(_) => CursorIcon::Grab,
-            Hover::Segment(..) => CursorIcon::Copy,
-            Hover::None => CursorIcon::Crosshair,
-        },
-        None => CursorIcon::Crosshair,
+    let active = match current(app) {
+        Some((_, path, g)) => {
+            scene(app, rect, path, g, None).hover(pointer, app.path_selected_index())
+        }
+        None => Hover::None,
+    };
+    match active {
+        Hover::Point(_) | Hover::Handle(..) => CursorIcon::Grab,
+        Hover::Segment(..) => CursorIcon::Copy,
+        Hover::None if other_under(app, rect, pointer).is_some() => CursorIcon::PointingHand,
+        Hover::None => CursorIcon::Crosshair,
     }
 }
 
@@ -388,6 +643,15 @@ pub fn cursor_icon(app: &AppState, rect: Rect, pointer: Pos2) -> CursorIcon {
 pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect, pointer: Option<Pos2>) {
     if !app.tool.is_path() {
         return;
+    }
+    // 編集していないパスは薄い線だけ（押すと選ぶ）
+    if let Some(model) = app.view3d.full_model() {
+        for (_, other) in others(app) {
+            draw_other_curve(
+                painter,
+                &scene(app, rect, other, &model.geometry, None).samples(),
+            );
+        }
     }
     let Some((layer, path, g)) = current(app) else {
         return;
@@ -399,11 +663,20 @@ pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect, pointer: Opt
     let s = scene(app, rect, path, g, drag);
     let samples = s.samples();
     draw_curve(painter, &samples);
+    let selected = app.path_selected_index();
     let hover = match (pointer, drag) {
-        (Some(p), None) => s.hover(p),
+        (Some(p), None) => s.hover(p, selected),
         _ => Hover::None,
     };
-    let selected = app.path_selected_index();
+    // 選んでいる点の取っ手（線と先の丸）
+    if let Some(i) = selected {
+        for (side, from, end) in s.handle_ends(i) {
+            let hot = hover == Hover::Handle(i, side)
+                || drag.is_some_and(|d| d.handle == Some(side) && d.index == i);
+            draw_handle(painter, from, end, hot);
+        }
+    }
+    let marked = app.path_selected_indices();
     let closed = edit::is_closed(&path.points);
     let n = path.points.len();
     let screen = s.screen();
@@ -415,7 +688,7 @@ pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect, pointer: Opt
         if s.positions[i].is_none() {
             continue;
         }
-        let is_selected = selected == Some(i) || (closed && i == 0 && selected == Some(n - 1));
+        let is_selected = marked.contains(&i) || (closed && i == 0 && marked.contains(&(n - 1)));
         let is_hover =
             hover == Hover::Point(i) || (closed && i == 0 && hover == Hover::Point(n - 1));
         let style = if is_selected {
@@ -431,5 +704,8 @@ pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect, pointer: Opt
     }
     if let Hover::Segment(_, at) = hover {
         draw_insert_ring(painter, at);
+    }
+    if let Some(r) = app.path.rect.filter(|r| r.surface) {
+        draw_rect(painter, &r);
     }
 }

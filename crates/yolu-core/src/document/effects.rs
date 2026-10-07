@@ -205,15 +205,17 @@ impl Document {
             if let Some(m) = &mut l.mask {
                 renew(&mut m.anchor);
             }
-            // パスにも新しい ID（C# の複製と同じ）
-            let new_path_id = match &l.path {
-                Some(_) => Some(super::random_id(self.id_counter.wrapping_add(0x5041_5448))),
-                None => None,
-            };
-            match (&mut l.path, new_path_id) {
-                (Some(crate::effects::LayerPath::Canvas(p)), Some(id)) => p.id = id,
-                (Some(crate::effects::LayerPath::Surface(p)), Some(id)) => p.id = id,
-                _ => {}
+            // パスにも新しい ID（C# の複製と同じ。一覧のパスごとに別の ID）
+            for (k, e) in l.paths.iter_mut().enumerate() {
+                let id = super::random_id(
+                    self.id_counter
+                        .wrapping_add(0x5041_5448)
+                        .wrapping_add(k as u64),
+                );
+                match &mut e.path {
+                    crate::effects::LayerPath::Canvas(p) => p.id = id,
+                    crate::effects::LayerPath::Surface(p) => p.id = id,
+                }
             }
         }
         if anchors.is_empty() {

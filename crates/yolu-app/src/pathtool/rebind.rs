@@ -10,7 +10,7 @@
 //! （レイヤー名つき）を出す。
 
 use yolu_core::geometry::SurfaceGeometry;
-use yolu_core::paths::{fingerprint, rebind_surface_path, render_surface, Options, SurfacePath};
+use yolu_core::paths::{fingerprint, rebind_surface_path, render_list, LayerPathEntry, Options};
 use yolu_core::{Document, LayerId, LayerLocks, LayerPath};
 
 use crate::lang::Lang;
@@ -49,12 +49,13 @@ pub fn rebind_document(
     if old_print == new_print {
         return Vec::new();
     }
-    let targets: Vec<(LayerId, String, SurfacePath)> = doc
+    // 一覧のパスはどれも同じモデルに結び付くので、1 本目で見る
+    let targets: Vec<(LayerId, String, Vec<LayerPathEntry>)> = doc
         .layers()
         .iter()
         .filter_map(|l| match l.path() {
             Some(LayerPath::Surface(p)) if p.model_fingerprint == old_print => {
-                Some((l.id(), l.name().to_owned(), p.clone()))
+                Some((l.id(), l.name().to_owned(), l.paths().to_vec()))
             }
             _ => None,
         })
@@ -101,30 +102,42 @@ pub fn rebind_document(
     reports
 }
 
-/// 1 つのパスを新しいモデルへ置き直して描き直す。描き直したら、面に投影できなかった標本の知らせ（あれば）。できなければ理由。
+/// 層のパスの一覧を新しいモデルへ置き直して描き直す（1 本でも置けなければ、どれも置き直さない）。描き直したら、面に投影できなかった
+/// 標本の知らせ（あれば）。できなければ理由。
 fn redraw_one(
     doc: &mut Document,
     layer: LayerId,
-    path: &SurfacePath,
+    entries: &[LayerPathEntry],
     old: &SurfaceGeometry,
     new: &SurfaceGeometry,
     material: i32,
     lang: Lang,
 ) -> Result<Option<String>, String> {
-    let rebound = rebind_surface_path(path, old, new, material)
-        .map_err(|e| crate::lang::rebind_error(lang, e))?;
+    let mut rebound = Vec::with_capacity(entries.len());
+    for e in entries {
+        let LayerPath::Surface(path) = &e.path else {
+            continue;
+        };
+        let moved = rebind_surface_path(path, old, new, material)
+            .map_err(|e| crate::lang::rebind_error(lang, e))?;
+        rebound.push(LayerPathEntry {
+            path: LayerPath::Surface(moved),
+            ..e.clone()
+        });
+    }
     let options = Options {
         width: doc.width(),
         height: doc.height(),
         tile_size: doc.tile_size(),
         source_budget_bytes: doc.source_budget_bytes(),
         stroke_budget_bytes: doc.stroke_budget_bytes(),
+        images: doc.effect_inputs().images().clone(),
         ..Options::default()
     };
-    let rendered =
-        render_surface(&rebound, new, &options).map_err(|e| crate::lang::path_error(lang, &e))?;
+    let rendered = render_list(&rebound, Some(new), &options)
+        .map_err(|e| crate::lang::path_error(lang, &e))?;
     let gaps = rendered.gaps;
-    doc.set_path(layer, LayerPath::Surface(rebound), rendered.channels)
+    doc.set_paths(layer, rebound, rendered.channels)
         .map_err(|e| lang.core_error(&e))?;
     Ok((gaps > 0).then(|| {
         lang.pick(

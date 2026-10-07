@@ -6,7 +6,7 @@ use super::operations::Dirty;
 use super::{Document, Target};
 use crate::effects::LayerPath;
 use crate::math::to_byte;
-use crate::paths::{render_canvas, CanvasPath, CanvasPoint, Options};
+use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
 use crate::surface::{PixelReader, Tile};
 use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
 use rayon::prelude::*;
@@ -547,8 +547,8 @@ impl Document {
         for i in 0..self.layers.len() {
             // 2D のパスで描かれたチャンネルは写さない（下で、大きさに合わせたパスから描き直す）。resize_image（Fit::Scale）は C# の
             // Resampled と同じ。resize_canvas（Fit::Shift: 点をずらして描き直す）に当たる C# の操作は無く、Rust 独自の決め
-            let redrawn: Vec<Channel> = match &self.layers[i].path {
-                Some(p) if p.is_canvas() => p.channels(),
+            let redrawn: Vec<Channel> = match self.layers[i].path() {
+                Some(p) if p.is_canvas() => crate::paths::list_channels(&self.layers[i].paths),
                 _ => Vec::new(),
             };
             let mut surfaces: Vec<_> = self.layers[i]
@@ -602,27 +602,45 @@ impl Document {
         // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled が層ごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
         // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（層ごと複製済み）
         for i in 0..self.layers.len() {
-            match &self.layers[i].path {
-                Some(LayerPath::Canvas(path)) => {
+            match self.layers[i].path() {
+                Some(LayerPath::Canvas(_)) => {
                     if cancelled() {
                         return Err(CoreError::Cancelled);
                     }
-                    let fitted = fit.canvas_path(path, &self.layers[i].name, &mut report.notes);
-                    let rendered = render_canvas(
+                    let fitted: Vec<crate::paths::LayerPathEntry> = self.layers[i]
+                        .paths
+                        .iter()
+                        .map(|e| {
+                            let LayerPath::Canvas(path) = &e.path else {
+                                unreachable!("一覧はどれも同じ側")
+                            };
+                            crate::paths::LayerPathEntry {
+                                path: LayerPath::Canvas(fit.canvas_path(
+                                    path,
+                                    &self.layers[i].name,
+                                    &mut report.notes,
+                                )),
+                                ..e.clone()
+                            }
+                        })
+                        .collect();
+                    let rendered = render_list(
                         &fitted,
+                        None,
                         &Options {
                             width,
                             height,
                             tile_size: self.tile_size,
                             source_budget_bytes: self.source_budget,
                             stroke_budget_bytes: self.stroke_budget,
+                            images: self.effects.inputs.images.clone(),
                             ..Options::default()
                         },
                     )
                     .map_err(crate::effects::paths_error)?;
                     let layer = &mut copy.layers[i];
                     // パスのチャンネルは写していないので、古い大きさの面のまま残らないよう、空の面へ置き換えてから描いた結果を入れる
-                    for c in LayerPath::Canvas(fitted.clone()).channels() {
+                    for c in crate::paths::list_channels(&fitted) {
                         layer.put_surface(c, Some(Surface::new(width, height, self.tile_size)));
                     }
                     for (c, surface) in rendered.channels {
@@ -632,7 +650,7 @@ impl Document {
                         }
                         layer.put_surface(c, Some(surface));
                     }
-                    layer.path = Some(LayerPath::Canvas(fitted));
+                    layer.paths = fitted;
                 }
                 Some(LayerPath::Surface(_)) => report.surface_path_layers.push(self.layers[i].id),
                 None => {}
@@ -662,19 +680,39 @@ enum Fit {
     Shift((i32, i32)),
 }
 impl Fit {
-    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点は縦横の倍率かずらしで、ブラシの半径は縦横の倍率の幾何平均で
-    /// 動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
+    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点と画布の対称の中心は縦横の倍率かずらしで、ブラシの半径は縦横の
+    /// 倍率の幾何平均で動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
     fn canvas_path(self, path: &CanvasPath, owner: &str, notes: &mut Vec<String>) -> CanvasPath {
         const LIMIT: f64 = 1e6;
         let mut next = path.clone();
         let mut clamped = false;
+        // 取っ手は点からの向きなので、拡大・縮小では縦横の倍率を掛け、ずらしでは変えない
+        let (hx, hy) = match self {
+            Fit::Scale { sx, sy, .. } => (sx, sy),
+            Fit::Shift(_) => (1.0, 1.0),
+        };
         let mut place = |p: &CanvasPoint, x: f64, y: f64| {
             let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
             clamped |= cx != x || cy != y;
+            let handle = |h: glam::DVec2| {
+                glam::DVec2::new(
+                    (h.x * hx).clamp(-crate::paths::MAX_HANDLE, crate::paths::MAX_HANDLE),
+                    (h.y * hy).clamp(-crate::paths::MAX_HANDLE, crate::paths::MAX_HANDLE),
+                )
+            };
             CanvasPoint {
                 x: cx,
                 y: cy,
                 pressure: p.pressure,
+                tangent: match p.tangent {
+                    crate::paths::Tangent::Handles { incoming, outgoing } => {
+                        crate::paths::Tangent::Handles {
+                            incoming: handle(incoming),
+                            outgoing: handle(outgoing),
+                        }
+                    }
+                    other => other,
+                },
             }
         };
         match self {
@@ -700,6 +738,18 @@ impl Fit {
                     .map(|p| place(p, p.x + dx as f64, p.y + dy as f64))
                     .collect();
             }
+        }
+        // 画布の対称の中心は画布の画素の座標なので、点と同じに動かす（動かさないと、映した側が古い中心で映されて違う所に描かれる）
+        if let PathSymmetry::Canvas(symmetry) = &mut next.style.symmetry {
+            let (x, y) = match self {
+                Fit::Scale { sx, sy, .. } => (symmetry.center.x * sx, symmetry.center.y * sy),
+                Fit::Shift((dx, dy)) => {
+                    (symmetry.center.x + dx as f64, symmetry.center.y + dy as f64)
+                }
+            };
+            let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
+            clamped |= cx != x || cy != y;
+            symmetry.center = glam::DVec2::new(cx, cy);
         }
         if clamped {
             notes.push(format!(

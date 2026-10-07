@@ -82,14 +82,14 @@ fn version_32_is_outside_what_older_readers_accept() {
 
 #[test]
 fn only_versions_with_a_meaning_are_read() {
-    // 読める版は 1〜25・26（分けた正本）・28（画像の Generator）・32 だけ。間の 27・29〜31 と範囲の外は、意味が決まっていないので版の数で断る
+    // 読める版は 1〜25・26（分けた正本）・27（パスの一覧）・28（0.5.0 の効果）・32 だけ。間の 29〜31 と範囲の外は、意味が決まっていないので版の数で断る
     // （版 28 は image_generator の試験が読み書きを固定する）
     let mut off = blurred();
     off.set_filter_seams(false).unwrap();
     let bytes = NativeDocument::from_core(&off).unwrap().to_bytes();
     assert!(NativeDocument::read(&bytes).is_ok());
     for version in (SPLIT_VERSION + 1..SEAMS_VERSION)
-        .filter(|v| *v != EFFECTS_VERSION)
+        .filter(|v| ![yolu_io::PATHS_VERSION, EFFECTS_VERSION].contains(v))
         .chain([0, SEAMS_VERSION + 1, -1])
     {
         let mut bytes = bytes.clone();

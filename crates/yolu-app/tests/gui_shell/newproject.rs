@@ -1192,6 +1192,7 @@ fn add_surface_path_layer(s: &mut S, index: usize, fingerprint: Option<&str>) {
     let geometry = s.view3d.model.as_ref().unwrap().geometry.clone();
     let doc = s.set_doc_mut(index);
     let mut path = SurfacePath {
+        style: Default::default(),
         id: 1 + doc.layers().len() as u128,
         channel: Channel::Color,
         brush: PathBrush::default(),

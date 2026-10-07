@@ -3,6 +3,7 @@
 //! 実行の速さにも別のスレッドとの競り合いにも頼らないので、混んだ台でも結果は変わらない。
 use super::*;
 use crate::geometry::{SurfaceGeometry, SurfaceTriangle, DEFAULT_WELD_TOLERANCE};
+use crate::LayerPath;
 use glam::{Vec2, Vec3};
 use std::cell::RefCell;
 use std::panic::Location;
@@ -128,6 +129,7 @@ fn check(
 #[test]
 fn canvas_path_cancellation_stops_at_every_check_site() {
     let path = CanvasPath {
+        style: Default::default(),
         id: 0,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {
@@ -180,6 +182,7 @@ fn surface_path_cancellation_stops_at_every_check_site() {
     )
     .unwrap();
     let path = SurfacePath {
+        style: Default::default(),
         id: 0,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {
@@ -223,5 +226,189 @@ fn surface_path_cancellation_stops_at_every_check_site() {
                 },
             )
         },
+    );
+}
+
+fn square(kind: PathKind) -> CanvasPath {
+    CanvasPath {
+        style: PathStyle {
+            kind,
+            ..Default::default()
+        },
+        id: 0,
+        channel: Channel::Color,
+        brush: PathBrush(BrushSettings {
+            radius: 3.0,
+            spacing: 0.5,
+            pressure_size: false,
+            ..Default::default()
+        }),
+        points: [(10.0, 10.0), (52.0, 12.0), (50.0, 50.0), (12.0, 46.0)]
+            .map(|(x, y)| CanvasPoint::new(x, y, 1.0).unwrap())
+            .to_vec(),
+        material: None,
+    }
+}
+
+fn plane() -> SurfaceGeometry {
+    let (a, b, c, d) = (Vec3::ZERO, Vec3::X, Vec3::new(1.0, 1.0, 0.0), Vec3::Y);
+    SurfaceGeometry::new(
+        vec![
+            SurfaceTriangle::new(a, b, c, Vec2::ZERO, Vec2::X, Vec2::ONE),
+            SurfaceTriangle::new(a, c, d, Vec2::ZERO, Vec2::ONE, Vec2::Y),
+        ],
+        1,
+        DEFAULT_WELD_TOLERANCE,
+    )
+    .unwrap()
+}
+
+fn plane_path(g: &SurfaceGeometry, kind: PathKind) -> SurfacePath {
+    SurfacePath {
+        style: PathStyle {
+            kind,
+            ..Default::default()
+        },
+        id: 0,
+        channel: Channel::Color,
+        brush: PathBrush(BrushSettings {
+            radius: 0.05,
+            spacing: 0.17,
+            pressure_size: false,
+            ..Default::default()
+        }),
+        points: [(1, 0.2, 0.3), (0, 0.5, 0.3), (1, 0.5, 0.3), (0, 0.1, 0.6)]
+            .map(|(t, u, v)| PathPoint::new(t, u, v, 1.0).unwrap())
+            .to_vec(),
+        model_fingerprint: fingerprint(g),
+        material: None,
+    }
+}
+
+fn ribbon() -> PathKind {
+    PathKind::Ribbon(Ribbon {
+        image: crate::ImageId(7),
+        mode: RibbonMode::Stretch,
+        spacing: 1.0,
+    })
+}
+
+fn options_with<'a>(flag: &'a AtomicBool, images: bool) -> Options<'a> {
+    let mut o = Options {
+        width: 64,
+        height: 64,
+        tile_size: 16,
+        cancel: Some(flag),
+        ..Options::default()
+    };
+    if images {
+        o.images.insert(
+            crate::ImageId(7),
+            crate::effects::ImageInput::new(
+                2,
+                1,
+                [[255u8, 0, 0, 255], [0, 0, 255, 255]].concat(),
+                crate::ImageColorSpace::Srgb,
+            )
+            .unwrap(),
+        );
+    }
+    o
+}
+
+// 塗り・リボン・一覧の確認の場所。画素・ダブごとの回数は、塗りの副標本・ブラシの式で動くので固定せず、十分な数が通ることだけを見る。
+
+#[test]
+fn canvas_fill_cancellation_stops_at_every_check_site() {
+    let path = square(PathKind::Fill);
+    // 入口・Painter::new・塗る画素ごと・出口の 2 回（曲線の標本と多角形の組み立てには確認が無く、予算（標本の上限）で抑える）
+    check(
+        |_| vec![Exactly(1), Exactly(1), AtLeast(100), Exactly(1), Exactly(1)],
+        |flag| render_canvas(&path, &options_with(flag, false)),
+    );
+}
+
+#[test]
+fn canvas_ribbon_cancellation_stops_at_every_check_site() {
+    let path = square(ribbon());
+    // 入口・Painter::new・ダブごと・組のチャンネルごとの重ね（1 つ）・出口の 2 回
+    check(
+        |_| {
+            vec![
+                Exactly(1),
+                Exactly(1),
+                AtLeast(10),
+                Exactly(1),
+                Exactly(1),
+                Exactly(1),
+            ]
+        },
+        |flag| render_canvas(&path, &options_with(flag, true)),
+    );
+}
+
+#[test]
+fn surface_fill_cancellation_stops_at_every_check_site() {
+    let g = plane();
+    let path = plane_path(&g, PathKind::Fill);
+    // 入口・Painter::new・区間ごと（点の数 - 1）・曲線の標本ごと（多角形の組み立て）・塗る画素ごと・出口の 2 回
+    check(
+        |r| {
+            vec![
+                Exactly(1),
+                Exactly(1),
+                Exactly(3),
+                Exactly(r.samples),
+                AtLeast(100),
+                Exactly(1),
+                Exactly(1),
+            ]
+        },
+        |flag| render_surface(&path, &g, &options_with(flag, false)),
+    );
+}
+
+#[test]
+fn surface_ribbon_cancellation_stops_at_every_check_site() {
+    let g = plane();
+    let path = plane_path(&g, ribbon());
+    // 入口・Painter::new・区間ごと・ダブごと・組のチャンネルごとの重ね（1 つ）・出口の 2 回
+    check(
+        |_| {
+            vec![
+                Exactly(1),
+                Exactly(1),
+                Exactly(3),
+                AtLeast(10),
+                Exactly(1),
+                Exactly(1),
+                Exactly(1),
+            ]
+        },
+        |flag| render_surface(&path, &g, &options_with(flag, true)),
+    );
+}
+
+#[test]
+fn list_cancellation_stops_at_every_check_site_across_the_second_path() {
+    let (first, mut second) = (square(PathKind::Stroke), square(PathKind::Fill));
+    second.id = 1;
+    let entries = vec![
+        LayerPathEntry::new(LayerPath::Canvas(first)),
+        LayerPathEntry::new(LayerPath::Canvas(second)),
+    ];
+    // 入口・Painter::new・サンプルと画素ごと（1 本目のストロークと 2 本目の塗り。真ん中は 2 本目の途中）・出口の 2 回。
+    // どこで取り消しても、作業面を返さない（呼び手の層は変わらない）
+    check(
+        |_| {
+            vec![
+                Exactly(1),
+                Exactly(1),
+                AtLeast(1000),
+                Exactly(1),
+                Exactly(1),
+            ]
+        },
+        |flag| render_list(&entries, None, &options_with(flag, false)),
     );
 }

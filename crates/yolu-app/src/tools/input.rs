@@ -348,6 +348,16 @@ impl CanvasTool for GradientInput {
 
 struct PathInput;
 
+/// パスの道具へ、修飾キー（取っ手の Alt・Ctrl）と時刻（点のダブルクリック）を渡す。
+fn path_input(app: &mut AppState, ctx: &InputCtx) {
+    app.path.input = crate::pathtool::PathInputState {
+        alt: ctx.modifiers.alt,
+        ctrl: ctx.modifiers.command,
+        shift: ctx.modifiers.shift,
+        now: Some(ctx.now),
+    };
+}
+
 impl CanvasTool for PathInput {
     fn press(
         &self,
@@ -355,8 +365,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::press(app, view, at, source);
     }
     fn moved(
@@ -365,8 +376,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::moved(app, view, at, source);
     }
     fn release(
@@ -375,8 +387,9 @@ impl CanvasTool for PathInput {
         view: &CanvasView,
         at: Pos2,
         source: StrokeSource,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::release(app, view, at, source);
     }
     fn pen(
@@ -386,8 +399,9 @@ impl CanvasTool for PathInput {
         at: Pos2,
         id: u32,
         contact: bool,
-        _ctx: &InputCtx,
+        ctx: &InputCtx,
     ) {
+        path_input(app, ctx);
         crate::pathtool::canvas::pen_sample(app, view, at, id, contact);
     }
     fn pen_active(&self, app: &AppState, id: u32) -> bool {
@@ -395,14 +409,21 @@ impl CanvasTool for PathInput {
         app.path.pen_down.is_some_and(|d| d.id == id && !d.surface)
     }
     fn dragging(&self, app: &AppState, source: Option<StrokeSource>) -> bool {
-        // 2D のキャンバスで始めたドラッグだけ（3D の面のドラッグは `pathtool::surface`）
+        // 2D のキャンバスで始めたドラッグだけ（3D の面のドラッグは `pathtool::surface`）。点を矩形で選ぶドラッグも
         app.path
             .drag
             .is_some_and(|d| !d.surface && same_source(d.source, source))
+            || app
+                .path
+                .rect
+                .is_some_and(|r| !r.surface && same_source(r.source, source))
     }
-    fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
+    fn lost_release(&self, app: &mut AppState, view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
         // 離したのを取りこぼしたら、最後の位置で確定する
         app.path_finish_drag();
+        if app.path.rect.is_some_and(|r| !r.surface) {
+            crate::pathtool::canvas::finish_rect(app, view);
+        }
     }
     fn cancel(&self, app: &mut AppState, ctx: &InputCtx) -> bool {
         // 点のドラッグを捨てる（ドラッグが無ければ選んだ点を外す）
@@ -410,6 +431,7 @@ impl CanvasTool for PathInput {
     }
     fn focus_lost(&self, app: &mut AppState) {
         app.path_finish_drag();
+        app.path.rect = None;
     }
 }
 

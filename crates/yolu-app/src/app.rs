@@ -484,6 +484,7 @@ impl YoluApp {
                 .pose
                 .pose_presets
                 .attach(dir.join("pose_presets"));
+            app.state.path.presets.attach(dir.join("path_presets"));
         }
         // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
         app.state

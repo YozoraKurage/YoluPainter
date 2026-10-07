@@ -725,6 +725,7 @@ fn a_path_layer_keeps_its_rasterized_pixels_and_says_the_path_is_not_carried() {
     d.set_canvas_path(
         layer,
         CanvasPath {
+            style: Default::default(),
             id: 0x77,
             channel: Channel::Color,
             brush: PathBrush(yolu_core::BrushSettings {

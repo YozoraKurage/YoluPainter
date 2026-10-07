@@ -5,6 +5,23 @@ use crate::smart::{
 use crate::{Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+/// 層のパスの一覧を外す。ラスターの層は画素をそのまま残して true を返す。塗りつぶしの層のパスの画素は層の面にしか無く、一覧が
+/// 無いと評価で使われない（保存も、画素を持てない層として断られる）ので、パスのチャンネルの面も外し（値の無いチャンネルは
+/// パスを付けるときに有効にしたものなので無効に戻し）、false を返す。
+fn detach_paths(layer: &mut Layer) -> bool {
+    let entries = std::mem::take(&mut layer.paths);
+    if layer.kind != LayerKind::Fill {
+        return true;
+    }
+    for c in crate::paths::list_channels(&entries) {
+        layer.put_surface(c, None);
+        if !layer.fill.contains_key(&c) {
+            layer.set_enabled(c, false);
+        }
+    }
+    false
+}
+
 impl Document {
     /// 選択したグループの子孫を含め、文書の並び順で独立した写しを作る。
     pub fn capture_smart_material(
@@ -36,13 +53,21 @@ impl Document {
             if l.parent.is_some_and(|p| !held.contains(&p)) {
                 l.parent = None;
             }
-            // モデルの上のパスは、そのモデルの三角形に結び付いている: 画素だけが残る（C# の SmartMaterials と同じ）
-            if matches!(l.path, Some(crate::LayerPath::Surface(_))) {
-                l.path = None;
-                notes.push(format!(
-                    "「{}」のモデルの上のパスは画素だけになりました（パスはそのモデルの三角形に結び付く）",
-                    l.name
-                ));
+            // モデルの上のパスは、そのモデルの三角形に結び付いている: ラスターの層は画素だけが残る（C# の SmartMaterials と同じ）。
+            // 塗りつぶしの層は画素を持たない（パスの画素は一覧が無いと評価で使われない）ので、パスごと外れる
+            if matches!(l.path(), Some(crate::LayerPath::Surface(_))) {
+                let kept = detach_paths(l);
+                notes.push(if kept {
+                    format!(
+                        "「{}」のモデルの上のパスは画素だけになりました（パスはそのモデルの三角形に結び付く）",
+                        l.name
+                    )
+                } else {
+                    format!(
+                        "「{}」のモデルの上のパスは外れました（パスはそのモデルの三角形に結び付き、塗りつぶしの層は画素を持たない）",
+                        l.name
+                    )
+                });
             }
         }
         let mut material = self
@@ -304,13 +329,20 @@ impl Document {
                 * (f64::from(self.height) / f64::from(material.height)))
             .sqrt();
             notes = Document::scale_effect_radii(&mut layers, scale);
-            // 大きさの違う画布のキャンバスのパスは、点が元の大きさのもの: 画素だけが残る
+            // 大きさの違う画布のキャンバスのパスは、点が元の大きさのもの: ラスターの層は画素だけが残り、塗りつぶしの層はパスごと外れる
             for l in &mut layers {
-                if l.path.take().is_some() {
-                    notes.push(format!(
-                        "「{}」のパスは画素だけになりました（点は元のキャンバスの大きさのもの）",
-                        l.name
-                    ));
+                if l.has_paths() {
+                    notes.push(if detach_paths(l) {
+                        format!(
+                            "「{}」のパスは画素だけになりました（点は元のキャンバスの大きさのもの）",
+                            l.name
+                        )
+                    } else {
+                        format!(
+                            "「{}」のパスは外れました（点は元のキャンバスの大きさのもので、塗りつぶしの層は画素を持たない）",
+                            l.name
+                        )
+                    });
                 }
             }
         }

@@ -537,13 +537,20 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         .enabled(free),
     );
     if layer.is_some_and(|l| l.path().is_some()) {
-        v.push(
-            Entry::item(
-                lang.pick("パスをラスタライズ", "Rasterize Path"),
-                Action::Path(PathAction::Rasterize(id)),
-            )
-            .enabled(free),
-        );
+        // 塗りつぶしの層のパスは画素にできない（パスの欄のボタンと同じ条件）
+        let can = app.path_can_rasterize(id);
+        let mut entry = Entry::item(
+            lang.pick("パスをラスタライズ", "Rasterize Path"),
+            Action::Path(PathAction::Rasterize(id)),
+        )
+        .enabled(free && can);
+        if !can {
+            entry = entry.tooltip(lang.pick(
+                "塗りつぶしの層のパスは画素にできません",
+                "A path on a fill layer cannot become pixels",
+            ));
+        }
+        v.push(entry);
     }
     // アセットの棚へ（層のまとまり・マスク）
     v.push(

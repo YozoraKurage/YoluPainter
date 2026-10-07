@@ -30,6 +30,7 @@ fn brush(radius: f64) -> PathBrush {
 
 fn canvas(material: Option<Vec<ChannelPaint>>) -> CanvasPath {
     CanvasPath {
+        style: Default::default(),
         id: 0x77,
         channel: Channel::Color,
         brush: brush(3.0),
@@ -70,6 +71,7 @@ fn plane() -> SurfaceGeometry {
 
 fn surface_path(g: &SurfaceGeometry) -> SurfacePath {
     SurfacePath {
+        style: Default::default(),
         id: 9,
         channel: Channel::Height,
         brush: brush(0.1),
@@ -218,9 +220,14 @@ fn refusals_keep_the_layer_exactly_as_it_was() {
     bad.brush = brush(0.0);
     let r = doc.set_path(layer, LayerPath::Canvas(bad), drawn.clone());
     check(&mut doc, "ブラシの半径", r);
-    // 層の種類・チャンネル
-    let r = doc.set_path(l[3], LayerPath::Canvas(path.clone()), drawn.clone());
-    assert!(r.is_err(), "塗りつぶしの層");
+    // 層の種類（調整の層には置けない。塗りつぶしの層には置ける: `path_fill_layers.rs`）・チャンネル
+    let (mut other, _) = world();
+    let adjust = other
+        .add_adjustment_layer("調整", yolu_core::AdjustmentSettings::invert(), None, None)
+        .unwrap();
+    let r = other.set_path(adjust, LayerPath::Canvas(path.clone()), drawn.clone());
+    assert!(r.is_err(), "調整の層");
+    let _ = l[3];
     let mut disabled = canvas(None);
     disabled.channel = Channel::Metallic;
     let r = doc.set_path(

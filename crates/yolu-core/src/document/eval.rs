@@ -879,7 +879,15 @@ impl Document {
     }
 
     fn stamp(&self, spec: &Spec, range: TileRange) -> Stamp {
-        let source = if matches!(spec.key, SourceKey::Channel(_)) && spec.config.fill.is_some() {
+        // 塗りつぶしは面を読まない。ただしパスのある塗りつぶしの層は、パスの画素（層の面）を最後に重ねるので、面の変化を見る
+        let fill_paths = match spec.key {
+            SourceKey::Channel(c) => self.layers[spec.layer].fill_paths_draw(c),
+            SourceKey::Mask => false,
+        };
+        let source = if matches!(spec.key, SourceKey::Channel(_))
+            && spec.config.fill.is_some()
+            && !fill_paths
+        {
             0
         } else if spec.global {
             self.source_serial_window(spec.id, spec.key, self.whole_range())
@@ -1660,7 +1668,10 @@ impl Document {
                     if f.image.is_some() || f.decal {
                         return true;
                     }
-                    return f.gradient.is_some() || f.value != Rgba8::TRANSPARENT;
+                    // パスの画素（層の面）のあるタイルも
+                    return f.gradient.is_some()
+                        || f.value != Rgba8::TRANSPARENT
+                        || (layer.fill_paths_draw(c) && near(layer.surface(c), 0));
                 }
                 let expansion: u32 = chain
                     .iter()
@@ -1725,6 +1736,16 @@ impl Document {
             filter::evaluate(env.source, env.value_type, env.stages, region, &options)
                 .map_err(map_filter_error)
         })?;
+        // 塗りつぶしの層のパス: 塗りつぶしと効果のスタックの結果の上に、パスの画素（層の面）を重ねる
+        let mut output = output;
+        if let SourceKey::Channel(c) = spec.key {
+            let layer = &self.layers[spec.layer];
+            if layer.fill_paths_draw(c) {
+                if let Some(surface) = layer.surface(c) {
+                    over_surface(&mut output, region, surface)?;
+                }
+            }
+        }
         // 評価した画素を、タイルへ切り出す。評価するタイルで全部 0 なら「何も無いが評価した」印の一様な透明にする
         let row = region.width as usize * 4;
         let mut out = Vec::with_capacity(coords.len());
@@ -2660,6 +2681,32 @@ fn collect_layers(plan: &[Entry], out: &mut Vec<usize>) {
         collect_layers(&e.children, out);
         collect_layers(&e.clips, out);
     }
+}
+
+/// 評価した画素（`region` の straight RGBA8、行は下から）の上に、面の画素を「通常」で重ねる（塗りつぶしの層のパス。
+/// `src · a + dst · da · (1 − a)` を 8 bit に丸める。パスの作業面へリボンを重ねるのと同じ式）。
+fn over_surface(output: &mut [u8], region: Rect, surface: &Surface) -> Result<(), CoreError> {
+    let w = region.width as usize;
+    let mut row = vec![0u8; w * 4];
+    for y in 0..region.height {
+        surface.read_row(region.x, region.y + y, &mut row)?;
+        let dst = &mut output[y as usize * w * 4..][..w * 4];
+        for (d, s) in dst.chunks_exact_mut(4).zip(row.chunks_exact(4)) {
+            let a = s[3] as f64 / 255.0;
+            if a <= 0.0 {
+                continue;
+            }
+            let da = d[3] as f64 / 255.0;
+            let out = a + da * (1.0 - a);
+            for k in 0..3 {
+                d[k] = ((s[k] as f64 * a + d[k] as f64 * da * (1.0 - a)) / out)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+            d[3] = (out * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

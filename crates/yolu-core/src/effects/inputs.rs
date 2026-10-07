@@ -301,6 +301,10 @@ impl EffectInputs {
             _ => false,
         }
     }
+    /// プロジェクトの画像（ID ごと）。
+    pub fn images(&self) -> &HashMap<ImageId, ImageInput> {
+        &self.images
+    }
     /// 位相以外の入力（マップ・モデルのルート・画像）が同じか（画素・画像は共有していれば中身を見ずに同じとする）。
     pub(crate) fn same_data(&self, other: &EffectInputs) -> bool {
         self.frame == other.frame

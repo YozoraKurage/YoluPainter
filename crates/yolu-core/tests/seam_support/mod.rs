@@ -10,6 +10,7 @@ use yolu_core::{
 
 pub fn path_points(shift: f64) -> CanvasPath {
     CanvasPath {
+        style: Default::default(),
         id: 0x77,
         channel: Channel::Color,
         brush: PathBrush(BrushSettings {

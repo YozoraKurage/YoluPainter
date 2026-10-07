@@ -906,6 +906,7 @@ fn with_surface_path() -> Document {
         .unwrap()
         .clone();
     let path = SurfacePath {
+        style: Default::default(),
         id: 9,
         channel: Channel::Height,
         brush: PathBrush(BrushSettings {

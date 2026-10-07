@@ -74,6 +74,16 @@ pub enum Popup {
     Look(crate::look::panel::LookChoice),
     /// レイヤーの一覧のマスクのサムネイルの右クリック（その層のマスク）。
     MaskContext(crate::engine::LayerId),
+    /// パスの一覧の行の右クリック（パスの ID）。
+    PathContext(u128),
+    /// パスの種類・リボンの画像・リボンの並べ方。
+    PathKind,
+    PathRibbonImage,
+    PathRibbonMode,
+    /// パスの筆先。
+    PathTip,
+    /// パスのプリセット。
+    PathPresets,
 }
 
 fn tips(
@@ -379,6 +389,12 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::StencilImage => crate::panels::stencil_props::image_entries(app),
         Popup::StencilMode => crate::panels::stencil_props::mode_entries(app),
         Popup::StencilTiling => crate::panels::stencil_props::tiling_entries(app),
+        Popup::PathContext(id) => crate::panels::path_props::context_entries(app, id),
+        Popup::PathKind => crate::panels::path_props::kind_entries(app),
+        Popup::PathRibbonImage => crate::panels::path_props::ribbon_image_entries(app),
+        Popup::PathRibbonMode => crate::panels::path_props::ribbon_mode_entries(app),
+        Popup::PathTip => crate::panels::path_props::tip_entries(app),
+        Popup::PathPresets => crate::panels::path_props::preset_entries(app),
         Popup::ChannelContext(channel) => {
             let user = !channel.is_standard();
             vec![

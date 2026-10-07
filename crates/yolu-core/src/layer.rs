@@ -168,8 +168,8 @@ pub struct Layer {
     pub(crate) projection: Projection,
     /// 塗りつぶしのチャンネルごとのグラデーション（ランプ付きの形のグラデーションの Generator。置き換え）。
     pub(crate) fill_gradients: BTreeMap<Channel, generator::Settings>,
-    /// 層の画素を描くパス（ラスターだけ。対象のチャンネルの画素はパスから描いた結果）。
-    pub(crate) path: Option<LayerPath>,
+    /// 層の画素を描くパスの一覧（ラスターだけ。対象のチャンネルの画素は、一覧の見せるパスを順に描いた結果）。
+    pub(crate) paths: Vec<crate::paths::LayerPathEntry>,
 }
 
 impl Layer {
@@ -199,7 +199,7 @@ impl Layer {
             fill_images: BTreeMap::new(),
             projection: Projection::default(),
             fill_gradients: BTreeMap::new(),
-            path: None,
+            paths: Vec::new(),
         }
     }
 
@@ -345,9 +345,17 @@ impl Layer {
             .iter()
             .any(|e| e.is_active() && e.applies_to(channel))
     }
-    /// 層の画素を描いているパス（無ければ None）。
+    /// 層の画素を描いているパスの一覧の、最初のパス（無ければ None。パスの層かを見るだけなら [`Layer::has_paths`]）。
     pub fn path(&self) -> Option<&LayerPath> {
-        self.path.as_ref()
+        self.paths.first().map(|e| &e.path)
+    }
+    /// 層の画素を描いているパスの一覧（下から順に描く）。
+    pub fn paths(&self) -> &[crate::paths::LayerPathEntry] {
+        &self.paths
+    }
+    /// パスで描かれた層か（一覧が空でない）。
+    pub fn has_paths(&self) -> bool {
+        !self.paths.is_empty()
     }
     /// この層の Anchor（その層までのスタックの結果）。
     pub fn anchor(&self) -> Option<&Anchor> {
@@ -404,6 +412,13 @@ impl Layer {
         self.has_active_filters(channel)
             || self.kind == LayerKind::Fill && self.fill_gradients.contains_key(&channel)
             || self.is_projected_fill(channel)
+            || self.fill_paths_draw(channel)
+    }
+    /// 塗りつぶしの層のパスがこのチャンネルを描くか（塗りつぶし → 効果のスタック → パスの順に評価する）。
+    pub(crate) fn fill_paths_draw(&self, channel: Channel) -> bool {
+        self.kind == LayerKind::Fill
+            && !self.paths.is_empty()
+            && crate::paths::list_channels(&self.paths).contains(&channel)
     }
     /// 塗りつぶしが焼いたメッシュマップ・画像を読むか（C# の `ReadsMeshMapsForFill` と、画像の層）。
     pub(crate) fn reads_inputs_for_fill(&self) -> bool {
@@ -424,7 +439,7 @@ impl Layer {
     /// グループは中身が決める（ここでは false）。
     pub(crate) fn has_content(&self, channel: Channel, applies: bool) -> bool {
         match self.kind {
-            LayerKind::Fill => self.fill.contains_key(&channel),
+            LayerKind::Fill => self.fill.contains_key(&channel) || self.fill_paths_draw(channel),
             LayerKind::Adjustment => {
                 self.adjustment.is_some() && applies && self.is_channel_enabled(channel)
             }

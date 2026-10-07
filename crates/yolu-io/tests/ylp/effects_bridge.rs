@@ -884,6 +884,7 @@ pub fn edited_effects_with_history() -> Document {
     doc.set_canvas_path(
         path_layer,
         CanvasPath {
+            style: Default::default(),
             id: 0x77,
             channel: Channel::Color,
             brush: PathBrush(BrushSettings {

@@ -1,6 +1,6 @@
-//! 編集できるパスを持つ層（C# の `PaintDocument.Paths`）。層の対象チャンネルの画素はパスから描いた結果で、パスと画素はいつも
-//! 一緒に変わる（1 回の Undo）。3D のパスを描くのは呼び手（モデルの面が要る）で、ここは描いた結果の面とパスを受け取って入れ替える。
-//! 2D のパスは [`Document::set_canvas_path`] がここで描く。
+//! 編集できるパスを持つ層（C# の `PaintDocument.Paths`）。層の対象チャンネルの画素はパスの一覧から描いた結果で、一覧と画素は
+//! いつも一緒に変わる（1 回の Undo）。3D のパスを描くのは呼び手（モデルの面が要る）で、ここは描いた結果の面と一覧を受け取って
+//! 入れ替える。2D のパスは [`Document::set_canvas_paths`] がここで描く。
 //!
 //! 手で塗る・塗りつぶす・マテリアルで塗ると次の描き直しで消えるので、パスの層には断る。パスを外す（[`Document::rasterize`]）と
 //! 今の画素だけが残り、普通に塗れる。
@@ -12,44 +12,74 @@ use super::{Command, Document, Entry, Target, TileChange};
 use crate::effects::{paths_error, LayerPath};
 use crate::error::CoreError;
 use crate::layer::{Layer, LayerId};
-use crate::paths::{render_canvas, Options};
+use crate::paths::{list_channels, render_list, validate_list, LayerPathEntry, Options};
 use crate::surface::{Surface, Tile};
 use crate::types::{Channel, LayerKind};
 
-/// パスの状態の入れ替え（Undo・Redo）。画素の変化は material が持つ（パスの種類によっては無い）。
+/// パスの一覧の入れ替え（Undo・Redo）。画素の変化は material が持つ（ラスタライズには無い）。
 pub(crate) struct PathCommand {
     pub(super) layer: LayerId,
-    pub(super) old: Option<LayerPath>,
-    pub(super) new: Option<LayerPath>,
+    pub(super) old: Vec<LayerPathEntry>,
+    pub(super) new: Vec<LayerPathEntry>,
     pub(super) pixels: Option<MaterialCommand>,
+}
+
+/// 一覧の履歴の大きさ（パスごとの状態と名前）。
+fn list_cost(entries: &[LayerPathEntry]) -> u64 {
+    entries.iter().map(LayerPathEntry::state_cost).sum()
+}
+
+/// 1 本のパスを、層の今の一覧の 1 本目の名前と表示を引き継いで一覧にする（ID が同じときだけ引き継ぐ）。
+fn single(old: &[LayerPathEntry], path: LayerPath) -> Vec<LayerPathEntry> {
+    let mut entry = LayerPathEntry::new(path);
+    if let Some(first) = old.first().filter(|f| f.id() == entry.id()) {
+        entry.name = first.name.clone();
+        entry.visible = first.visible;
+    }
+    vec![entry]
 }
 
 impl Document {
     /// パスを持つ層に手で描く・塗る操作を断る（次の描き直しで消える）。
     pub(super) fn refuse_path_layer(&self, index: usize) -> Result<(), CoreError> {
-        if self.layers[index].path.is_some() {
+        if self.layers[index].has_paths() {
             Err(CoreError::Unsupported("パスで描かれた層には手で描けない"))
         } else {
             Ok(())
         }
     }
 
-    fn validate_path_target(&self, index: usize, path: &LayerPath) -> Result<(), CoreError> {
+    fn validate_paths_target(
+        &self,
+        index: usize,
+        entries: &[LayerPathEntry],
+    ) -> Result<(), CoreError> {
         let l = &self.layers[index];
-        if l.kind != LayerKind::Raster {
-            return Err(CoreError::Unsupported("パスで描けるのはラスターの層だけ"));
+        // 塗りつぶしの層のパスは、塗りつぶしと効果のスタックの結果の上に重ねる（評価の最後）
+        if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
+            return Err(CoreError::Unsupported(
+                "パスで描けるのはラスターと塗りつぶしの層だけ",
+            ));
         }
-        for c in path.channels() {
-            self.require_channel(c)?;
+        validate_list(entries).map_err(paths_error)?;
+        for e in entries {
+            for c in e.path.channels() {
+                self.require_channel(c)?;
+            }
+            // ラスターの層は、描くチャンネルを有効にしてから（C# と同じ）。塗りつぶしの層は値の無いチャンネルにも描くので、
+            // パスを付けるときに有効にする
+            if l.kind == LayerKind::Raster
+                && e.path.material().is_none()
+                && !l.is_channel_enabled(e.path.channel())
+            {
+                return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
+            }
         }
-        if path.material().is_none() && !l.is_channel_enabled(path.channel()) {
-            return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
-        }
-        if let Some(old) = &l.path {
-            if old.channel() != path.channel() {
+        if let (Some(old), Some(new)) = (l.paths.first(), entries.first()) {
+            if old.path.channel() != new.path.channel() {
                 return Err(CoreError::Unsupported("層のパスはチャンネルを変えない"));
             }
-            if old.is_canvas() != path.is_canvas() {
+            if old.path.is_canvas() != new.path.is_canvas() {
                 return Err(CoreError::Unsupported(
                     "層のパスは種類（モデルの上かキャンバスの上か）を変えない",
                 ));
@@ -60,20 +90,33 @@ impl Document {
         self.ensure_pixels_rewritable(l.id)
     }
 
-    /// 層にパスを付ける（差し替える）。層のパスのチャンネルの画素を、描いた結果 `rendered`（パスの組のチャンネルごとに 1 つ。画布と
-    /// 同じ大きさの面）へそっくり入れ替える。組から外れた古いパスのチャンネルは空にする。ほかのチャンネルとマスクは変えない。
-    /// 層で有効でないチャンネルは有効にする。1 回の Undo。予算（画素・巻き戻し）を超えるなら何も変えずに断る。
+    /// 層にパスを 1 本だけ付ける（一覧をこの 1 本にする）。今の 1 本目と同じ ID なら名前と表示を引き継ぐ。ほかは [`Document::set_paths`]。
     pub fn set_path(
         &mut self,
         layer: LayerId,
         path: LayerPath,
         rendered: Vec<(Channel, Surface)>,
     ) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
-        path.validate()?;
         let index = self.index_of(layer)?;
-        self.validate_path_target(index, &path)?;
-        let paints = path.channels();
+        let entries = single(&self.layers[index].paths, path);
+        self.set_paths(layer, entries, rendered)
+    }
+
+    /// 層のパスの一覧を入れ替える。層の一覧のチャンネル（[`list_channels`]。前の一覧のものも）の画素を、描いた結果 `rendered`（新しい
+    /// 一覧のチャンネルごとに 1 つ。画布と同じ大きさの面）へそっくり入れ替える。新しい一覧から外れたチャンネルは空にする。ほかの
+    /// チャンネルとマスクは変えない。層で有効でないチャンネルは有効にする。空の一覧はパスを外して、そのチャンネルを空にする。
+    /// 1 回の Undo。予算（画素・巻き戻し）を超えるなら何も変えずに断る。
+    pub fn set_paths(
+        &mut self,
+        layer: LayerId,
+        entries: Vec<LayerPathEntry>,
+        rendered: Vec<(Channel, Surface)>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        validate_list(&entries).map_err(paths_error)?;
+        let index = self.index_of(layer)?;
+        self.validate_paths_target(index, &entries)?;
+        let paints = list_channels(&entries);
         let mut rendered: std::collections::BTreeMap<Channel, Surface> = {
             let mut map = std::collections::BTreeMap::new();
             for (c, s) in rendered {
@@ -98,11 +141,8 @@ impl Document {
                 "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ",
             ));
         }
-        let old_path = self.layers[index].path.clone();
-        let old_channels: Vec<Channel> = old_path
-            .as_ref()
-            .map(LayerPath::channels)
-            .unwrap_or_default();
+        let old_paths = self.layers[index].paths.clone();
+        let old_channels: Vec<Channel> = list_channels(&old_paths);
         let channels: BTreeSet<Channel> = paints.iter().chain(&old_channels).copied().collect();
         // 層で有効でないチャンネルを有効にする（取り消しで戻す）
         let mut enabled: Vec<(Channel, bool)> = Vec::new();
@@ -182,11 +222,12 @@ impl Document {
                 self.mark_target_tile(index, *target, c.coord);
             }
         }
-        self.layers[index].path = Some(path.clone());
+        self.layers[index].paths = entries.clone();
         self.revision += 1;
-        // 履歴の費用は C# の SetPath と同じ（有効にしたチャンネルごとに 64 + パスの状態 + チャンネルごとの面の変化）
+        // 履歴の費用は C# の SetPath と同じ（有効にしたチャンネルごとに 64 + パスの状態 + チャンネルごとの面の変化）。一覧はパスごとの
+        // 状態と名前の和
         let cost = 64 * enabled.len() as u64
-            + path.state_cost()
+            + list_cost(&entries)
             + parts
                 .iter()
                 .map(|(_, p)| {
@@ -203,8 +244,8 @@ impl Document {
             kind: super::HistoryKind::Path,
             command: Command::Path(PathCommand {
                 layer,
-                old: old_path,
-                new: Some(path),
+                old: old_paths,
+                new: entries,
                 pixels: Some(MaterialCommand {
                     layer,
                     enabled,
@@ -225,9 +266,25 @@ impl Document {
         rendered: Vec<(Channel, Surface)>,
         above: Option<LayerId>,
     ) -> Result<LayerId, CoreError> {
+        self.add_paths_layer(name, vec![LayerPathEntry::new(path)], rendered, above)
+    }
+
+    /// パスの一覧（1 本以上）を描いた新しい層を足す（[`Document::add_path_layer`] の一覧の形）。
+    pub fn add_paths_layer(
+        &mut self,
+        name: &str,
+        entries: Vec<LayerPathEntry>,
+        rendered: Vec<(Channel, Surface)>,
+        above: Option<LayerId>,
+    ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
-        path.validate()?;
-        let paints = path.channels();
+        if entries.is_empty() {
+            return Err(CoreError::InvalidArgument(
+                "パスの層にはパスが 1 本以上要る",
+            ));
+        }
+        validate_list(&entries).map_err(paths_error)?;
+        let paints = list_channels(&entries);
         for c in &paints {
             self.require_channel(*c)?;
         }
@@ -257,7 +314,7 @@ impl Document {
         self.ensure_new_layer_rewritable(id, parent)?;
         // 履歴の費用は C# の AddPathLayer（層の追加 128 + Color 以外のチャンネルを有効にする 64 ずつ + パスの状態 + チャンネルごとの
         // 面の変化）と同じ: 層が画素を持って入るので、元に戻したあとも履歴がその分を持つ
-        let mut cost = 128 + path.state_cost();
+        let mut cost = 128 + list_cost(&entries);
         for (c, surface) in &rendered {
             if *c != Channel::Color {
                 cost += 64;
@@ -280,11 +337,11 @@ impl Document {
             layer.put_surface(c, Some(surface));
             layer.set_enabled(c, true);
         }
-        layer.path = Some(path);
+        layer.paths = entries;
         self.insert_new_costed(layer, above, cost)
     }
 
-    /// 2D のパスを描いて層に付ける（描き直しも）。選択に依らない。評価は文書の予算で行い、1 回の Undo。
+    /// 2D のパスを描いて層に付ける（一覧をこの 1 本にする。描き直しも）。選択に依らない。評価は文書の予算で行い、1 回の Undo。
     pub fn set_canvas_path(
         &mut self,
         layer: LayerId,
@@ -300,14 +357,36 @@ impl Document {
         path: crate::paths::CanvasPath,
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
-        let path = LayerPath::Canvas(path);
-        path.validate()?;
         let index = self.index_of(layer)?;
-        self.validate_path_target(index, &path)?;
-        let LayerPath::Canvas(canvas) = &path else {
-            unreachable!("作った")
-        };
+        let entries = single(&self.layers[index].paths, LayerPath::Canvas(path));
+        self.set_canvas_paths_cancellable(layer, entries, cancel)
+    }
+
+    /// 2D のパスの一覧を描いて層に付ける（描き直しも）。1 回の Undo。
+    pub fn set_canvas_paths(
+        &mut self,
+        layer: LayerId,
+        entries: Vec<LayerPathEntry>,
+    ) -> Result<(), CoreError> {
+        self.set_canvas_paths_cancellable(layer, entries, None)
+    }
+
+    /// `set_canvas_paths` の、評価を取り消せる形。3D のパスは断る（描くには形が要る）。
+    pub fn set_canvas_paths_cancellable(
+        &mut self,
+        layer: LayerId,
+        entries: Vec<LayerPathEntry>,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        if entries.iter().any(|e| !e.path.is_canvas()) {
+            return Err(CoreError::InvalidArgument(
+                "3D のパスは呼び手が形で描いて set_paths へ渡す",
+            ));
+        }
+        validate_list(&entries).map_err(paths_error)?;
+        let index = self.index_of(layer)?;
+        self.validate_paths_target(index, &entries)?;
         let options = Options {
             width: self.width,
             height: self.height,
@@ -315,53 +394,187 @@ impl Document {
             source_budget_bytes: self.source_budget,
             stroke_budget_bytes: self.stroke_budget,
             cancel,
+            images: self.effects.inputs.images.clone(),
             ..Options::default()
         };
-        let rendered = render_canvas(canvas, &options).map_err(paths_error)?;
-        self.set_path(layer, path, rendered.channels)
+        let rendered = render_list(&entries, None, &options).map_err(paths_error)?;
+        self.set_paths(layer, entries, rendered.channels)
     }
 
     /// パスを外し、今の画素だけを残す（その後は普通に塗れる）。1 回の Undo。パスが無ければ何もしない。
     pub fn rasterize(&mut self, layer: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
-        let Some(old) = self.layers[index].path.clone() else {
+        let old = self.layers[index].paths.clone();
+        if old.is_empty() {
             return Ok(());
-        };
+        }
+        // 塗りつぶしの層は画素を持たない（パスの画素は評価の最後に重ねるだけ）ので、パスを外すと絵が消える。画素にはしない
+        if self.layers[index].kind == LayerKind::Fill {
+            return Err(CoreError::Unsupported(
+                "塗りつぶしの層のパスは画素にできない",
+            ));
+        }
         // 画素は変えないので、すべてのロックだけで断る（C# の Rasterize）
         self.refuse_lock(layer, super::LayerLocks::ALL)?;
         self.execute(
             Command::Path(PathCommand {
                 layer,
-                old: Some(old),
-                new: None,
+                old,
+                new: Vec::new(),
                 pixels: None,
             }),
             64,
         )
     }
 
-    /// 読み込み用: 履歴なしでパスを付ける（画素はもう読み込んである。パスのチャンネルの面があることだけ確かめる）。
-    pub fn set_path_for_load(&mut self, layer: LayerId, path: LayerPath) -> Result<(), CoreError> {
+    /// 一覧のパス 1 本の名前だけを替える。画素は変えないので描き直さない（3D のパスでもモデルを要らない）。1 回の Undo。
+    /// 名前が今と同じなら何もしない。名前の決まり（128 文字・制御文字なし）に合わなければ断る。画素は変えないので、すべてのロックだけで
+    /// 断る（[`Document::rasterize`] と同じ）。
+    pub fn rename_path(&mut self, layer: LayerId, path: u128, name: &str) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        path.validate()?;
         let index = self.index_of(layer)?;
-        let l = &self.layers[index];
-        if l.kind != LayerKind::Raster || l.path.is_some() {
+        let old = self.layers[index].paths.clone();
+        let Some(i) = old.iter().position(|e| e.id() == path) else {
+            return Err(CoreError::InvalidArgument("名前を替えるパスが層に無い"));
+        };
+        if old[i].name == name {
+            return Ok(());
+        }
+        let mut new = old.clone();
+        new[i].name = name.to_string();
+        new[i].validate().map_err(paths_error)?;
+        self.refuse_lock(layer, super::LayerLocks::ALL)?;
+        let cost = 64 + list_cost(&new);
+        self.execute(
+            Command::Path(PathCommand {
+                layer,
+                old,
+                new,
+                pixels: None,
+            }),
+            cost,
+        )
+    }
+
+    /// 読み込み用: 塗りつぶしの層のパスの画素の面を作る（タイルの無い面も。パスの一覧を付ける前に）。
+    pub fn ensure_fill_path_surface(
+        &mut self,
+        id: LayerId,
+        channel: Channel,
+    ) -> Result<(), CoreError> {
+        self.ensure_loadable()?;
+        self.require_channel(channel)?;
+        let index = self.index_of(id)?;
+        if self.layers[index].kind != LayerKind::Fill {
             return Err(CoreError::Unsupported(
-                "パスを付けられるのはパスの無いラスターの層だけ",
+                "塗りつぶしの層のパスの画素は塗りつぶしの層だけ",
             ));
         }
-        for c in path.channels() {
-            if l.surface(c).is_none() {
-                return Err(CoreError::Unsupported("パスのチャンネルの面が層に無い"));
+        if self.ensure_surface(index, channel) {
+            self.external_mutation();
+        }
+        Ok(())
+    }
+
+    /// 読み込み用: 塗りつぶしの層のパスの画素の 1 タイル（[`Document::import_tile`] の塗りつぶしの層の形。読み込みなので履歴を消す）。
+    pub fn import_fill_path_tile(
+        &mut self,
+        id: LayerId,
+        channel: Channel,
+        coord: crate::types::TileCoord,
+        bytes: &[u8],
+    ) -> Result<bool, CoreError> {
+        self.ensure_fill_path_surface(id, channel)?;
+        let index = self.index_of(id)?;
+        let growth = self.growth_for(index, Target::Channel(channel));
+        let changed = self.layers[index]
+            .surface_mut(channel)
+            .expect("作った")
+            .import_tile(coord, bytes, growth)?;
+        if changed {
+            self.mark_target_tile(index, Target::Channel(channel), coord);
+            self.external_mutation();
+        }
+        Ok(changed)
+    }
+
+    /// 読み込み用: 履歴なしでパスを付ける（画素はもう読み込んである。パスのチャンネルの面があることだけ確かめる）。
+    pub fn set_path_for_load(&mut self, layer: LayerId, path: LayerPath) -> Result<(), CoreError> {
+        self.set_paths_for_load(layer, vec![LayerPathEntry::new(path)])
+    }
+
+    /// 読み込み用: 履歴なしでパスの一覧を付ける（1 本以上。画素はもう読み込んである）。
+    pub fn set_paths_for_load(
+        &mut self,
+        layer: LayerId,
+        entries: Vec<LayerPathEntry>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        validate_list(&entries).map_err(paths_error)?;
+        let index = self.index_of(layer)?;
+        let l = &self.layers[index];
+        if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+            || l.has_paths()
+            || entries.is_empty()
+        {
+            return Err(CoreError::Unsupported(
+                "パスを付けられるのはパスの無いラスターか塗りつぶしの層だけ",
+            ));
+        }
+        for e in &entries {
+            for c in e.path.channels() {
+                if l.surface(c).is_none() {
+                    return Err(CoreError::Unsupported("パスのチャンネルの面が層に無い"));
+                }
+            }
+            if e.path.material().is_none() && !l.is_channel_enabled(e.path.channel()) {
+                return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
             }
         }
-        if path.material().is_none() && !l.is_channel_enabled(path.channel()) {
-            return Err(CoreError::Unsupported("パスのチャンネルが層で有効でない"));
-        }
-        self.layers[index].path = Some(path);
+        self.layers[index].paths = entries;
         self.external_mutation();
+        Ok(())
+    }
+
+    /// パスの作業面（`paths` の評価が持つ私の文書）の層のチャンネルへ、1 画素を「通常」で重ねる（straight のアルファで
+    /// `src · a + dst · da · (1 − a)`）。リボンの画素ごとの色に使う。履歴には積まない。
+    pub(crate) fn paths_blend_pixel(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        x: u32,
+        y: u32,
+        src: crate::Rgba8,
+        alpha: f64,
+    ) -> Result<(), CoreError> {
+        let a = if alpha.is_finite() {
+            alpha.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if a <= 0.0 {
+            return Ok(());
+        }
+        let index = self.index_of(layer)?;
+        self.ensure_surface(index, channel);
+        let growth = self.growth_for(index, Target::Channel(channel));
+        let surface = self.layers[index].surface_mut(channel).expect("作った");
+        let dst = surface.pixel(x, y)?;
+        let da = dst.a as f64 / 255.0;
+        let out = a + da * (1.0 - a);
+        let mix = |s: u8, d: u8| {
+            ((s as f64 * a + d as f64 * da * (1.0 - a)) / out)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        let color = crate::Rgba8::new(
+            mix(src.r, dst.r),
+            mix(src.g, dst.g),
+            mix(src.b, dst.b),
+            (out * 255.0).round().clamp(0.0, 255.0) as u8,
+        );
+        surface.set_pixel(x, y, color, growth)?;
         Ok(())
     }
 
@@ -374,7 +587,7 @@ impl Document {
         if let Some(pixels) = &m.pixels {
             self.restore_material(pixels, backwards)?;
         }
-        self.layers[index].path = if backwards {
+        self.layers[index].paths = if backwards {
             m.old.clone()
         } else {
             m.new.clone()

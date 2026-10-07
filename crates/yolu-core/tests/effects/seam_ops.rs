@@ -882,6 +882,7 @@ fn resizing_redraws_2d_paths_from_the_scaled_path_and_lists_the_3d_ones() {
         .set_channel_enabled(surface_layer, Channel::Height, true)
         .unwrap();
     let path = SurfacePath {
+        style: Default::default(),
         id: 9,
         channel: Channel::Height,
         brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings {
@@ -973,6 +974,93 @@ fn resizing_the_canvas_moves_2d_path_points_and_redraws() {
     );
     r.doc.undo().unwrap();
     assert_eq!(canvas_path_of(&r.doc, r.path_layer), old);
+}
+
+/// 対称のある 2D のパスは、拡大・縮小でも画布だけを動かすときでも、対称の中心を点と同じに動かして描き直す: 映した側の画素が、
+/// 新しい画布の中心に対して左右・上下に対称のまま残る。
+#[test]
+fn resizing_moves_the_symmetry_centre_of_a_2d_path_with_its_points() {
+    use yolu_core::glam::DVec2;
+    use yolu_core::paths::{CanvasPoint, PathStyle, PathSymmetry};
+    use yolu_core::{CanvasSymmetry, SymmetryMode};
+    let build = || {
+        let mut doc = Document::with_tile_size(W, H, 8).unwrap();
+        let layer = doc.add_layer("対称のパス").unwrap();
+        let mut path = path_points(0.0);
+        // 映した側と重ならないよう、左上の四分の一に収める（重なると合成の順で最後の 1 が揺れる）
+        path.points = vec![
+            CanvasPoint::new(4.5, 3.25, 0.5).unwrap(),
+            CanvasPoint::new(11.5, 8.5, 1.0).unwrap(),
+            CanvasPoint::new(15.25, 4.75, 0.7).unwrap(),
+        ];
+        path.style = PathStyle {
+            symmetry: PathSymmetry::Canvas(
+                CanvasSymmetry::new(
+                    SymmetryMode::Both,
+                    DVec2::new(W as f64 / 2.0, H as f64 / 2.0),
+                    2,
+                )
+                .unwrap(),
+            ),
+            ..Default::default()
+        };
+        doc.set_canvas_path(layer, path).unwrap();
+        doc.clear_history().unwrap();
+        (doc, layer)
+    };
+    let centre = |doc: &Document, layer: LayerId| match canvas_path_of(doc, layer).style.symmetry {
+        PathSymmetry::Canvas(s) => s.center,
+        other => panic!("{other:?}"),
+    };
+    // 左右・上下に対称な画素（画布の中心は画素の境目）
+    let assert_symmetric = |doc: &Document, layer: LayerId, what: &str| {
+        let surface = doc.layer(layer).unwrap().surface(Channel::Color).unwrap();
+        let (w, h) = (surface.width(), surface.height());
+        let bytes = surface.to_canvas_bytes();
+        let alpha = |x: u32, y: u32| bytes[((y * w + x) * 4 + 3) as usize];
+        let mut drawn = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let a = alpha(x, y);
+                drawn += usize::from(a > 0);
+                assert_eq!(alpha(w - 1 - x, y), a, "{what}: 左右 ({x}, {y})");
+                assert_eq!(alpha(x, h - 1 - y), a, "{what}: 上下 ({x}, {y})");
+            }
+        }
+        assert!(drawn > 0, "{what}: 何も描かれていない");
+    };
+    let (mut doc, layer) = build();
+    assert_symmetric(&doc, layer, "元の大きさ");
+    // 縦横で倍率が違う拡大（2 倍と 1.5 倍）: 中心も縦横の倍率で動く
+    doc.resize_image(W * 2, H * 3 / 2, CanvasResampling::Bilinear)
+        .unwrap();
+    assert_eq!(
+        centre(&doc, layer),
+        DVec2::new(W as f64, H as f64 * 3.0 / 4.0)
+    );
+    assert_symmetric(&doc, layer, "拡大のあと");
+    doc.undo().unwrap();
+    assert_eq!(
+        centre(&doc, layer),
+        DVec2::new(W as f64 / 2.0, H as f64 / 2.0),
+        "Undo で中心も戻る"
+    );
+    // 縮小
+    doc.resize_image(W / 2, H / 2, CanvasResampling::Area)
+        .unwrap();
+    assert_eq!(
+        centre(&doc, layer),
+        DVec2::new(W as f64 / 4.0, H as f64 / 4.0)
+    );
+    assert_symmetric(&doc, layer, "縮小のあと");
+    // 画布だけを広げる（点を画素と同じだけずらす）: 中心も同じだけずれる。新しい画布の中心になるよう左右・上下へ均等に
+    let (mut doc, layer) = build();
+    doc.resize_canvas(W + 8, H + 6, (4, 3)).unwrap();
+    assert_eq!(
+        centre(&doc, layer),
+        DVec2::new(W as f64 / 2.0 + 4.0, H as f64 / 2.0 + 3.0)
+    );
+    assert_symmetric(&doc, layer, "画布を広げたあと");
 }
 
 /// 大きさを変えると、元の画素の無い層（塗りつぶし＋フィルター）の出力も新しい大きさになる: 画布の端の欠けたタイルで評価した古い

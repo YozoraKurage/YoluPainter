@@ -347,6 +347,8 @@ impl AppState {
             }
             for layer in self.set_doc(i).layers() {
                 pointed.extend(layer.image_ids());
+                // パスのリボンの画像（描き直すときに読む）
+                pointed.extend(yolu_core::paths::list_images(layer.paths()));
             }
             pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
@@ -831,7 +833,11 @@ impl AppState {
                 .set_doc(index)
                 .layers()
                 .iter()
-                .flat_map(|l| l.image_ids())
+                .flat_map(|l| {
+                    l.image_ids()
+                        .chain(yolu_core::paths::list_images(l.paths()))
+                        .collect::<Vec<_>>()
+                })
                 .collect();
             let uid = self.sets.get(index).map_or(0, |s| s.uid);
             self.fx.inputs.waiting.insert(uid, wanted);

@@ -100,6 +100,7 @@ pub use error::CoreError;
 pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
+pub use paths::LayerPathEntry;
 pub use selection::{SelectionCombine, SelectionMask};
 pub use surface::Surface;
 pub use symmetry::{CanvasSymmetry, SymmetryMode, SymmetryTransform};

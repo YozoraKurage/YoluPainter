@@ -690,7 +690,8 @@ fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
         meshes,
         s.rig.materials().iter().cloned().map(Some).collect(),
         Arc::new(geometry),
-    );
+    )
+    .with_rest(s.rest.clone());
     s.pose = pose;
     s.edits += 1;
     s.model_revision = revision;

@@ -78,7 +78,7 @@ fn effect_notes(l: &Layer) -> u8 {
     if has_stack(&l.filters) || l.mask.as_ref().is_some_and(|m| has_stack(&m.filters)) {
         notes |= 1;
     }
-    if l.path.is_some() {
+    if l.has_paths() {
         notes |= 2;
     }
     notes
@@ -389,7 +389,7 @@ impl Document {
         {
             notes |= 1;
         }
-        if upper.path.is_some() || lower.path.is_some() {
+        if upper.has_paths() || lower.has_paths() {
             notes |= 2;
         }
         let mut budget = 0;

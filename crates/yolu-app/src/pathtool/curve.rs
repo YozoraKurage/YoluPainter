@@ -3,9 +3,48 @@
 //! 2D は z を 0 にした画素の座標、3D はモデルの空間の位置をそのまま渡す。
 
 use egui::Pos2;
+use yolu_core::glam::DVec3;
+use yolu_core::paths::bezier::{display_controls, display_eval, smooth_handles};
+use yolu_core::paths::Tangent;
+
+use super::edit::TangentValue;
 
 /// 3 成分の点（2D は z = 0）。
 pub type P3 = [f64; 3];
+
+fn to_tangent(t: TangentValue) -> Tangent<DVec3> {
+    match t {
+        TangentValue::Smooth => Tangent::Smooth,
+        TangentValue::Corner => Tangent::Corner,
+        TangentValue::Handles { incoming, outgoing } => Tangent::Handles {
+            incoming: DVec3::from_array(incoming),
+            outgoing: DVec3::from_array(outgoing),
+        },
+    }
+}
+
+/// 区間 `s` の曲線の点（両端が滑らかなら Catmull–Rom、角・取っ手があればベジェ。core と同じ式の倍精度）。`tangents` が空なら
+/// 全部滑らか。
+pub fn segment_point(points: &[P3], tangents: &[TangentValue], s: usize, t: f64) -> P3 {
+    let w = window(points, s);
+    let ends = [
+        tangents.get(s).copied().unwrap_or(TangentValue::Smooth),
+        tangents.get(s + 1).copied().unwrap_or(TangentValue::Smooth),
+    ];
+    match display_controls(w.map(DVec3::from_array), ends.map(to_tangent)) {
+        None => centripetal(w, t),
+        Some(c) => display_eval(c, t).to_array(),
+    }
+}
+
+/// 点 `i` を取っ手の点にするときの初めの取っ手（今の曲線の曲がりを変えない値）。(入る側, 出る側)。
+pub fn initial_handles(points: &[P3], i: usize) -> (P3, P3) {
+    let n = points.len();
+    let window_in = (i >= 1 && i < n).then(|| window(points, i - 1).map(DVec3::from_array));
+    let window_out = (i + 1 < n).then(|| window(points, i).map(DVec3::from_array));
+    let (a, b) = smooth_handles(window_in, window_out);
+    (a.to_array(), b.to_array())
+}
 
 /// 区間 1 つの標本の数の上限。
 const MAX_SAMPLES: usize = 96;
@@ -43,23 +82,37 @@ pub fn window(points: &[P3], s: usize) -> [P3; 4] {
     ]
 }
 
-/// 画面に投影した曲線: 区間ごとの標本（`project` が None を返した所は None）。標本の間隔はおよそ `step` 画素。
+/// 画面に投影した曲線: 区間ごとの標本（`project` が None を返した所は None）。標本の間隔はおよそ `step` 画素。`tangents` は点ごとの
+/// 接線（空なら全部滑らか）。
 pub fn sample_screen(
     points: &[P3],
+    tangents: &[TangentValue],
     project: &dyn Fn(P3) -> Option<Pos2>,
     step: f32,
 ) -> Vec<Vec<Option<Pos2>>> {
     (0..points.len().saturating_sub(1))
         .map(|s| {
             let w = window(points, s);
-            let n = match (project(w[1]), project(w[2])) {
-                (Some(a), Some(b)) => {
-                    ((a.distance(b) / step.max(1.0)).ceil() as usize).clamp(4, MAX_SAMPLES)
+            // 取っ手で膨らむ区間は、制御多角形の画面の長さで標本を増やす
+            let ends = [
+                tangents.get(s).copied().unwrap_or(TangentValue::Smooth),
+                tangents.get(s + 1).copied().unwrap_or(TangentValue::Smooth),
+            ];
+            let polygon: Vec<P3> =
+                match display_controls(w.map(DVec3::from_array), ends.map(to_tangent)) {
+                    None => vec![w[1], w[2]],
+                    Some(c) => c.iter().map(|v| v.to_array()).collect(),
+                };
+            let screen: Option<Vec<Pos2>> = polygon.iter().map(|p| project(*p)).collect();
+            let n = match screen {
+                Some(v) => {
+                    let len: f32 = v.windows(2).map(|q| q[0].distance(q[1])).sum();
+                    ((len / step.max(1.0)).ceil() as usize).clamp(4, MAX_SAMPLES)
                 }
                 _ => 8,
             };
             (0..=n)
-                .map(|k| project(centripetal(w, k as f64 / n as f64)))
+                .map(|k| project(segment_point(points, tangents, s, k as f64 / n as f64)))
                 .collect()
         })
         .collect()
@@ -155,7 +208,7 @@ mod tests {
     fn nearest_segment_and_point_respect_the_radius() {
         let pts: Vec<P3> = vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 100.0, 0.0]];
         let project = |p: P3| Some(pos2(p[0] as f32, p[1] as f32));
-        let samples = sample_screen(&pts, &project, 5.0);
+        let samples = sample_screen(&pts, &[], &project, 5.0);
         assert_eq!(samples.len(), 2);
         // 各区間の真ん中の標本の近くを指すと、その区間（曲線は点の間でふくらむので、標本から測る）
         for s in 0..2 {
@@ -176,7 +229,7 @@ mod tests {
     #[test]
     fn unprojectable_samples_break_the_run() {
         let pts: Vec<P3> = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];
-        let samples = sample_screen(&pts, &|_| None, 5.0);
+        let samples = sample_screen(&pts, &[], &|_| None, 5.0);
         assert!(samples[0].iter().all(Option::is_none));
         assert_eq!(nearest_segment(&samples, pos2(5.0, 0.0), 8.0), None);
     }

@@ -667,6 +667,13 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
+    // パスの道具の取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
+    app.path.input = crate::pathtool::PathInputState {
+        alt: modifiers.alt,
+        ctrl: modifiers.command,
+        shift: modifiers.shift,
+        now: Some(ui.input(|i| i.time)),
+    };
     let space =
         ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
@@ -821,6 +828,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
                 finish(app, false);
                 app.path_finish_drag();
+                // 点を矩形で選ぶドラッグは、離したのを受け取れないので捨てる（古い始点が次の離しで効かないように）
+                if app.path.rect.is_some_and(|r| r.surface) {
+                    app.path.rect = None;
+                }
                 app.view3d.input.pen_press = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
@@ -853,6 +864,21 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         app.path_finish_drag();
+    }
+    // 点を矩形で選ぶドラッグも、取りこぼしたら最後の位置で確定する（2D の道具と同じ）。位置が無ければ捨てる
+    if app
+        .path
+        .rect
+        .is_some_and(|r| r.source == StrokeSource::Mouse && r.surface)
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        match app.view3d.input.last_pointer {
+            Some(at) => crate::pathtool::surface::release(app, rect, at, StrokeSource::Mouse),
+            None => app.path.rect = None,
+        }
     }
     if app.view3d.pose.drag.is_some()
         && !primary

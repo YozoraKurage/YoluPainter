@@ -5,8 +5,20 @@
 //! 無く、形式も変えられないので、閉じるときは始めの点をもう 1 つ終わりに足す。閉じたパスは、始めの点と終わりの点をいつも一緒に
 //! 動かし、足す点は終わりの点の前に入れ、消すときは輪から外してまた閉じる。
 
-use yolu_core::paths::{CanvasPath, CanvasPoint, PathPoint, SurfacePath, MAX_POINTS};
+use yolu_core::glam::{DVec2, Vec3};
+use yolu_core::paths::{CanvasPath, CanvasPoint, PathPoint, SurfacePath, Tangent, MAX_POINTS};
 use yolu_core::LayerPath;
+
+/// 接線の値（2D・3D で共通の形。取っ手は倍精度の 3 成分で、2D は z を使わない。3D は休みの形のモデルの空間）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TangentValue {
+    Smooth,
+    Corner,
+    Handles {
+        incoming: [f64; 3],
+        outgoing: [f64; 3],
+    },
+}
 
 /// 2D の点と 3D の点で共通の操作。
 pub trait Pt: Copy {
@@ -14,6 +26,8 @@ pub trait Pt: Copy {
     fn same_place(&self, other: &Self) -> bool;
     fn width(&self) -> f64;
     fn with_width(self, width: f64) -> Self;
+    fn tangent_value(&self) -> TangentValue;
+    fn with_tangent_value(self, t: TangentValue) -> Self;
 }
 
 impl Pt for CanvasPoint {
@@ -29,6 +43,26 @@ impl Pt for CanvasPoint {
             ..self
         }
     }
+    fn tangent_value(&self) -> TangentValue {
+        match self.tangent {
+            Tangent::Smooth => TangentValue::Smooth,
+            Tangent::Corner => TangentValue::Corner,
+            Tangent::Handles { incoming, outgoing } => TangentValue::Handles {
+                incoming: [incoming.x, incoming.y, 0.0],
+                outgoing: [outgoing.x, outgoing.y, 0.0],
+            },
+        }
+    }
+    fn with_tangent_value(self, t: TangentValue) -> Self {
+        self.with_tangent(match t {
+            TangentValue::Smooth => Tangent::Smooth,
+            TangentValue::Corner => Tangent::Corner,
+            TangentValue::Handles { incoming, outgoing } => Tangent::Handles {
+                incoming: DVec2::new(incoming[0], incoming[1]),
+                outgoing: DVec2::new(outgoing[0], outgoing[1]),
+            },
+        })
+    }
 }
 
 impl Pt for PathPoint {
@@ -43,6 +77,27 @@ impl Pt for PathPoint {
             pressure: width.clamp(0.0, 1.0),
             ..self
         }
+    }
+    fn tangent_value(&self) -> TangentValue {
+        match self.tangent {
+            Tangent::Smooth => TangentValue::Smooth,
+            Tangent::Corner => TangentValue::Corner,
+            Tangent::Handles { incoming, outgoing } => TangentValue::Handles {
+                incoming: incoming.as_dvec3().to_array(),
+                outgoing: outgoing.as_dvec3().to_array(),
+            },
+        }
+    }
+    fn with_tangent_value(self, t: TangentValue) -> Self {
+        let v = |a: [f64; 3]| Vec3::new(a[0] as f32, a[1] as f32, a[2] as f32);
+        self.with_tangent(match t {
+            TangentValue::Smooth => Tangent::Smooth,
+            TangentValue::Corner => Tangent::Corner,
+            TangentValue::Handles { incoming, outgoing } => Tangent::Handles {
+                incoming: v(incoming),
+                outgoing: v(outgoing),
+            },
+        })
     }
 }
 
@@ -78,6 +133,13 @@ pub enum PointOp {
         index: usize,
         pressure: f64,
     },
+    /// 点の接線（閉じたパスの始め・終わりは一緒に）。
+    Tangent {
+        index: usize,
+        tangent: TangentValue,
+    },
+    /// 角と滑らかを切り替える（滑らか → 角、角・取っ手 → 滑らか）。
+    ToggleCorner(usize),
 }
 
 /// 断る理由（文は画面の側が言語で作る）。
@@ -210,7 +272,8 @@ fn run<P: Pt>(
         }
         PointOp::Move { index, place } => {
             let old = points.get(index).ok_or(Refusal::NoPoint)?;
-            let moved = make(place, old.width())?;
+            // 動かしても接線（角・取っ手）は残す
+            let moved = make(place, old.width())?.with_tangent_value(old.tangent_value());
             let mut next = points.to_vec();
             next[index] = moved;
             if let Some(other) = linked(points, index) {
@@ -234,7 +297,30 @@ fn run<P: Pt>(
             }
             Ok((next, Some(index)))
         }
+        PointOp::Tangent { index, tangent } => set_tangent(points, index, tangent),
+        PointOp::ToggleCorner(index) => {
+            let old = points.get(index).ok_or(Refusal::NoPoint)?;
+            let tangent = match old.tangent_value() {
+                TangentValue::Smooth => TangentValue::Corner,
+                _ => TangentValue::Smooth,
+            };
+            set_tangent(points, index, tangent)
+        }
     }
+}
+
+fn set_tangent<P: Pt>(
+    points: &[P],
+    index: usize,
+    tangent: TangentValue,
+) -> Result<(Vec<P>, Option<usize>), Refusal> {
+    let old = *points.get(index).ok_or(Refusal::NoPoint)?;
+    let mut next = points.to_vec();
+    next[index] = old.with_tangent_value(tangent);
+    if let Some(other) = linked(points, index) {
+        next[other] = next[index];
+    }
+    Ok((next, Some(index)))
 }
 
 fn invalid(e: yolu_core::paths::Error) -> Refusal {
@@ -285,6 +371,14 @@ pub fn path_is_closed(path: &LayerPath) -> bool {
     match path {
         LayerPath::Canvas(c) => is_closed(&c.points),
         LayerPath::Surface(s) => is_closed(&s.points),
+    }
+}
+
+/// 点の接線。
+pub fn point_tangent(path: &LayerPath, index: usize) -> Option<TangentValue> {
+    match path {
+        LayerPath::Canvas(c) => c.points.get(index).map(Pt::tangent_value),
+        LayerPath::Surface(s) => s.points.get(index).map(Pt::tangent_value),
     }
 }
 
@@ -506,6 +600,7 @@ mod tests {
     fn apply_works_on_both_kinds_and_keeps_the_rest_of_the_path() {
         use yolu_core::paths::PathBrush;
         let canvas = LayerPath::Canvas(CanvasPath {
+            style: Default::default(),
             id: 7,
             channel: yolu_core::Channel::Color,
             brush: PathBrush::default(),
@@ -526,6 +621,7 @@ mod tests {
             Err(Refusal::OtherKind)
         );
         let surface = LayerPath::Surface(SurfacePath {
+            style: Default::default(),
             id: 8,
             channel: yolu_core::Channel::Color,
             brush: PathBrush::default(),

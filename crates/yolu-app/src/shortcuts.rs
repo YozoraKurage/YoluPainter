@@ -145,6 +145,9 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
             Action::Path(PathAction::DeleteSelected) => {
                 l.pick("パスの点を削除", "Delete Path Point")
             }
+            Action::Path(PathAction::SelectPath(None)) => {
+                l.pick("パスの編集を終える", "Finish Path")
+            }
             Action::Sel(SelAction::Edit(SelEdit::ToNewLayer)) => {
                 l.pick("選択した画素を新しいレイヤーへ", "Selection to New Layer")
             }
