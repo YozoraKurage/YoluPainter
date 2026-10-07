@@ -1,6 +1,6 @@
 //! 画面の並びの保存と復元（設定のフォルダの `layout.json`）: ドックの並び（タブの組・分け方・大きさ・どのタブが前か）と、窓の大きさ・位置・
 //! 最大化を、終わるときに書き、次の起動で戻す。読めない・古い版・知らないタブ・足りない／重なるタブは捨てて既定の並び（理由は画面に出さない）。
-//! 「表示 → パネルの並びを戻す」は既定へ。窓の大きさと位置は、ドックとは別に確かめる。
+//! 「ウィンドウ → パネルの並びを戻す」は既定へ。窓の大きさと位置は、ドックとは別に確かめる。
 use crate::common;
 
 use std::path::{Path, PathBuf};
@@ -679,7 +679,7 @@ fn headless_a_saved_layout_without_the_log_tab_keeps_its_arrangement_and_gains_t
     assert_eq!(actual, shape(&old));
 }
 
-/// アクションのパネルは既定の並びに無く、開くと（`layout::show_tab`）レイヤーと同じ組の後ろへ入って前に出る。開いた並びはファイルで往復し、
+/// アクションのパネルは既定の並びに無く、開くと（「ウィンドウ」のメニューの `DockOp::Show`）レイヤーと同じ組の後ろへ入って前に出る。開いた並びはファイルで往復し、
 /// 前の版の並び（アクションが無い）を読んでも足さない。
 #[test]
 fn headless_the_actions_tab_is_not_in_the_default_dock_and_opens_beside_the_layers() {
@@ -691,7 +691,7 @@ fn headless_the_actions_tab_is_not_in_the_default_dock_and_opens_beside_the_laye
         loaded.dock.unwrap().find_tab(&Tab::Actions).is_none(),
         "読んでも足さない"
     );
-    layout::show_tab(&mut dock, Tab::Actions);
+    yolu_app::detach::Detached::default().show(&mut dock, Tab::Actions);
     let layers = dock.find_tab(&Tab::Layers).unwrap();
     let actions = dock.find_tab(&Tab::Actions).expect("開いた");
     assert_eq!(
@@ -705,7 +705,7 @@ fn headless_the_actions_tab_is_not_in_the_default_dock_and_opens_beside_the_laye
     // もう一度開いても 1 つのまま。後ろにあれば前に出すだけ
     let layers = dock.find_tab(&Tab::Layers).unwrap();
     dock.set_active_tab(layers).unwrap();
-    layout::show_tab(&mut dock, Tab::Actions);
+    yolu_app::detach::Detached::default().show(&mut dock, Tab::Actions);
     assert_eq!(layout::validate(&dock), Ok(()));
     let leaf = dock.leaf(actions.node_path()).unwrap();
     assert_eq!(leaf.tabs.iter().filter(|t| **t == Tab::Actions).count(), 1);
@@ -719,7 +719,7 @@ fn headless_the_actions_tab_is_not_in_the_default_dock_and_opens_beside_the_laye
     );
     // レイヤーのタブが無い並びなら、最初の組へ
     let mut bare = DockState::new(vec![Tab::Canvas]);
-    layout::show_tab(&mut bare, Tab::Actions);
+    yolu_app::detach::Detached::default().show(&mut bare, Tab::Actions);
     assert!(bare.find_tab(&Tab::Actions).is_some());
 }
 
@@ -922,7 +922,7 @@ fn reset_panel_layout_goes_back_to_the_default_and_the_default_is_what_gets_writ
         ),
         shape(&changed_dock())
     );
-    // 表示 → パネルの並びを戻す
+    // ウィンドウ → パネルの並びを戻す
     h.state_mut().state.apply(Action::ResetLayout);
     h.run();
     assert_eq!(
@@ -944,14 +944,16 @@ fn opening_the_actions_panel_puts_it_in_the_dock_and_it_is_written_and_reset_awa
     use eframe::App;
     let dir = settings_dir("show-panel");
     let mut h = app_in(&dir);
-    h.state_mut().state.apply(Action::ShowPanel(Tab::Actions));
+    h.state_mut()
+        .state
+        .apply(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Actions)));
     h.run();
     let dock = &h.state().dock;
     let actions = dock.find_tab(&Tab::Actions).expect("開いた");
     let leaf = dock.leaf(actions.node_path()).unwrap();
     assert!(leaf.tabs.contains(&Tab::Layers));
     assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions, "前に出る");
-    assert_eq!(h.state().state.show_panel, None, "頼みは 1 回で使い切る");
+    assert!(h.state().state.ui.dock_ops.is_empty(), "頼みは 1 回で使い切る");
     h.state_mut().on_exit();
     drop(h);
     let mut h = app_in(&dir);
@@ -1098,61 +1100,53 @@ fn headless_a_file_over_the_size_budget_is_refused_and_one_at_the_budget_is_read
     assert_eq!(layout::saved_window_at(&file), None);
 }
 
-fn window_area(h: &Harness<'static, YoluApp>, surface: usize) -> Rect {
-    let id = egui::Id::new(format!("window {:?}", SurfaceIndex(surface)));
-    h.ctx
-        .memory(|m| m.area_rect(id))
-        .expect("浮かせた窓を描いた")
-}
-
+/// 前の版の、アプリの中の浮いた窓（egui_dock の窓の面）は、読んだあと外の窓になり、組・前のタブ・位置・大きさを保つ。次に書くときは
+/// 外の窓（`detached`）として書き、その次の起動でも同じに戻る。
 #[test]
-fn a_floating_window_comes_back_where_it_was_with_its_size_and_tabs() {
+fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_back_the_same() {
     use eframe::App;
     let dir = settings_dir("floating");
-    let mut h = app_in(&dir);
-    // 履歴とナビゲーターを浮かせた窓にして、位置と大きさを動かす
-    h.state_mut().dock = floating_dock();
-    let state = h
-        .state_mut()
-        .dock
-        .get_window_state_mut(SurfaceIndex(1))
-        .unwrap();
-    state
+    let mut dock = floating_dock();
+    dock.get_window_state_mut(SurfaceIndex(1))
+        .unwrap()
         .set_position(pos2(520.0, 330.0))
         .set_size(vec2(300.0, 210.0));
-    h.run();
-    let before = window_area(&h, 1);
-    assert!(
-        (before.min - pos2(520.0, 330.0)).length() < 1.5,
-        "動かした位置に出る: {before:?}"
+    layout::save(&layout_file(&dir), &layout::render(&dock, None)).unwrap();
+    let mut h = app_in(&dir);
+    let windows = &h.state().detached.windows;
+    assert_eq!(
+        h.state().dock.surfaces_count(),
+        1,
+        "主のドックに浮いた窓の面が残らない"
     );
+    assert_eq!(windows.len(), 1);
+    assert_eq!(
+        shape(&windows[0].dock),
+        vec!["0/0 leaf [\"history\", \"navigator\"] active=1"]
+    );
+    // 主の窓の内側の左上からの位置のまま（試験の窓は内側の左上が原点）
+    let record = windows[0].record.expect("置き場所");
+    assert_eq!(record.position, [520.0, 330.0]);
+    assert_eq!(record.size, [300.0, 210.0]);
+    layout::validate_all(&h.state().dock, &[&windows[0].dock]).expect("どのタブも 1 つずつ");
     h.state_mut().on_exit();
     let saved = layout::parse(&std::fs::read_to_string(layout_file(&dir)).unwrap());
     assert_eq!(saved.problems, Vec::<String>::new());
+    assert_eq!(saved.detached.len(), 1);
+    assert_eq!(saved.detached[0].window, Some(record));
     drop(h);
-    // 次の起動で、組・前のタブ・位置・大きさが戻る
-    let mut h = app_in(&dir);
-    assert_eq!(shape(&h.state().dock), shape(&floating_dock()));
-    let after = window_area(&h, 1);
-    assert!(
-        (after.min - before.min).length() < 1.5,
-        "位置が戻る: {before:?} → {after:?}"
-    );
-    assert!(
-        (after.size() - before.size()).length() < 1.5,
-        "大きさが戻る（毎回、大きくも小さくもならない）: {before:?} → {after:?}"
-    );
-    // 何度繰り返しても、大きさは増えも減りもしない
+    // 次の起動で、組・前のタブ・位置・大きさが戻る（何度繰り返しても変わらない）
     for _ in 0..2 {
+        let mut h = app_in(&dir);
+        let windows = &h.state().detached.windows;
+        assert_eq!(windows.len(), 1);
+        assert_eq!(
+            shape(&windows[0].dock),
+            vec!["0/0 leaf [\"history\", \"navigator\"] active=1"]
+        );
+        assert_eq!(windows[0].record, Some(record));
         h.state_mut().on_exit();
-        drop(h);
-        h = app_in(&dir);
     }
-    let again = window_area(&h, 1);
-    assert!(
-        (again.min - before.min).length() < 1.5 && (again.size() - before.size()).length() < 1.5,
-        "{before:?} → {again:?}"
-    );
 }
 
 /// 窓が画面より大きければ、起動のあと 1 度だけ収める（実際の窓の動き。保存したあとで画面が小さくなったとき）。

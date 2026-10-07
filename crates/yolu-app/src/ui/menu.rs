@@ -166,9 +166,12 @@ pub struct PopupState {
     subs: Vec<Sub>,
     /// キーを受ける段（0 が根、n は `subs[n - 1]`）。
     focus: usize,
+    /// 開いた窓（主の窓か、外へ出した窓の viewport）。その窓のパスだけが描く。
+    pub viewport: egui::ViewportId,
 }
 
 impl PopupState {
+    /// `ctx` の今の窓（パスを回している viewport）に開く。
     pub fn new(ctx: &egui::Context, anchor: Rect) -> PopupState {
         PopupState {
             anchor,
@@ -179,6 +182,7 @@ impl PopupState {
             opened_frame: ctx.cumulative_frame_nr(),
             subs: Vec::new(),
             focus: 0,
+            viewport: ctx.viewport_id(),
         }
     }
     pub fn with_min_width(mut self, width: f32) -> Self {

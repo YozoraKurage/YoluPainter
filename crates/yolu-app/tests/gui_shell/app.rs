@@ -590,15 +590,13 @@ fn view3d_host_hears_when_the_tab_floats_in_a_window() {
         "{:?}",
         placed.rect_px
     );
-    // 窓を動かすと置き場所が変わったと知らせる
+    // 窓を動かすと置き場所が変わったと知らせる（浮かせた窓は外の窓になる。試験の窓では、外の窓は記録の位置に描く）
     let before = placed.rect_px;
     {
-        let dock = &mut h.state_mut().dock;
-        let path = dock.find_tab(&yolu_app::Tab::View3d).unwrap();
-        let rect = egui::Rect::from_min_size(pos2(500.0, 260.0), vec2(360.0, 280.0));
-        dock.get_window_state_mut(path.surface)
-            .unwrap()
-            .set_position(rect.min);
+        let detached = &mut h.state_mut().detached;
+        assert!(detached.contains(yolu_app::Tab::View3d));
+        let record = detached.windows[0].record.as_mut().expect("置き場所");
+        record.position = [500.0, 260.0];
     }
     h.run();
     let moved = events

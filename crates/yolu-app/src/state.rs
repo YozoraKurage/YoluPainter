@@ -410,6 +410,8 @@ pub enum PopupKind {
         map: bool,
         surface: bool,
     },
+    /// ドックのタブの右クリック（別ウィンドウで開く・ドックに戻す）。
+    DockTab(crate::Tab),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -532,8 +534,8 @@ pub enum Action {
     Tools(crate::toolset::ToolsetAction),
     /// アクション（操作の記録と再生。再生だけが文書を変え、1 回の Undo）。
     Automation(crate::automation::AutomationOp),
-    /// ドックのパネルを開いて前に出す（無ければレイヤーと同じ組へ入れる。画面だけ。`YoluApp` が同じフレームのうちに当てる）。
-    ShowPanel(crate::Tab),
+    /// ドックのパネルを外の窓へ出す・戻す・前に出す（画面だけ。文書は変えない）。
+    Dock(crate::detach::DockOp),
 }
 
 impl Action {
@@ -613,7 +615,7 @@ impl Action {
             Self::ToggleUvOverlap => "ToggleUvOverlap",
             Self::Tools(..) => "Tools",
             Self::Automation(..) => "Automation",
-            Self::ShowPanel(..) => "ShowPanel",
+            Self::Dock(..) => "Dock",
         }
     }
 
@@ -674,7 +676,8 @@ pub struct UiTemp {
     /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
     pub canvas_visible: bool,
     pub canvas_drawn: bool,
-    /// 最後にキャンバスのタブを描いたフレームの番号（`Context::cumulative_frame_nr`）。タブが後ろにあるあいだは進まない。
+    /// 最後にキャンバスのタブを描いたフレームの番号（主の窓の `Context::cumulative_frame_nr_for`。キャンバスを外の窓へ出しても、主の窓の番号）。
+    /// タブが後ろにあるあいだは進まない。
     pub canvas_frame: Option<u64>,
     /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
     /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
@@ -685,6 +688,10 @@ pub struct UiTemp {
     pub sections: HashMap<&'static str, bool>,
     /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
+    /// タブのありか（主の窓・外の窓。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
+    pub panels: crate::detach::PanelIndex,
+    /// ドックの操作の頼み（メニュー・タブの右クリックから。`YoluApp` が同じフレームのうちに当てる）。
+    pub dock_ops: Vec<crate::detach::DockOp>,
 }
 
 /// 画面の状態の全部。
@@ -738,8 +745,6 @@ pub struct AppState {
     #[doc(hidden)]
     pub rewritten_sets: usize,
     pub reset_layout: bool,
-    /// 開いて前に出すパネル（`Action::ShowPanel`。`YoluApp` が取ってドックに当てる）。
-    pub show_panel: Option<crate::Tab>,
     pub quit: bool,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
@@ -969,7 +974,6 @@ impl AppState {
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
-            show_panel: None,
             quit: false,
             sets,
             model: None,
@@ -1182,6 +1186,7 @@ impl AppState {
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
             Action::Look(op) => self.look_apply(op),
+            Action::Dock(op) => self.ui.dock_ops.push(op),
             Action::Region(a) => self.region_apply(a),
             Action::Shelf(op) => self.shelf_apply(op),
             Action::Fx(op) => self.fx_apply(op),
@@ -1386,7 +1391,6 @@ impl AppState {
             }
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.reset_layout = true,
-            Action::ShowPanel(tab) => self.show_panel = Some(tab),
             Action::SelectTool(tool) => {
                 self.switch_tool(tool, false);
             }

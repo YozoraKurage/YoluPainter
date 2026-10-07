@@ -13,6 +13,9 @@
 //! 最大化中の内側は、自動で隠すタスクバーのある辺を 1 画素空ける（そうしないと、端へ寄せてもタスクバーが出てこない）。これは窓の
 //! プロシージャの側（`windowpos::native`）で行い、ここの帯と縁の描き方は変わらない。
 //!
+//! 別ウィンドウ（`detach`。パネルを外へ出した窓）も同じ決まりで枠を外す: タブの並ぶ行の何も無い所が帯の代わり（`drag_zone_with`）、
+//! 行の右端に閉じるだけ（`close_button`。最小化・最大化は置かない）、縁は `edges_with`。縁の押しの印は窓ごとに持つ。
+//!
 //! 窓の枠を外すのは `main.rs` が `CUSTOM_FRAME`（Windows だけ true）を見て決める。ここの関数は OS に依らず動くので、試験は
 //! Linux でも Windows の帯を描いて確かめられる（アプリは `YoluApp::set_custom_frame` で帯を切り替える。設定には出さない）。
 
@@ -44,16 +47,20 @@ pub const YIELD_SIZE: f32 = 24.0;
 
 /// 帯の何も無い所（動かす・最大化）の部品の名前。
 const DRAG_ID: &str = "yolu.titlebar.drag";
-/// 縁の押しを譲らない自分の部品（帯の何も無い所と 3 つのボタン。右上の角でも、縁が先に押しを受ける）。
-fn is_own(id: Id) -> bool {
-    id == Id::new(DRAG_ID) || Button::ALL.iter().any(|b| id == button_id(*b))
+/// 縁の押しを譲らない自分の部品（帯の何も無い所と 3 つのボタン、`own` の部品。右上の角でも、縁が先に押しを受ける）。
+fn is_own(id: Id, own: &[Id]) -> bool {
+    id == Id::new(DRAG_ID) || Button::ALL.iter().any(|b| id == button_id(*b)) || own.contains(&id)
 }
 
 fn button_id(button: Button) -> Id {
     Id::new(("yolu.titlebar.button", button as u8))
 }
-/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。
+/// 縁の押しを受けている間の印（ビューが、その押しを自分のものにしないため）。窓（viewport）ごと。
 const EDGE_PRESS: &str = "yolu.titlebar.edge_press";
+
+fn edge_press_id(ctx: &Context) -> Id {
+    Id::new((EDGE_PRESS, ctx.viewport_id()))
+}
 
 /// 帯の右端の 3 つのボタン。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,38 +135,73 @@ pub fn buttons(ui: &mut Ui, bar: Rect, maximized: bool, lang: Lang) -> Option<Bu
     let mut clicked = None;
     for (button, rect) in Button::ALL.into_iter().zip(button_rects(bar)) {
         let name = button.name(lang, maximized);
-        let response = ui.interact(rect, button_id(button), Sense::click());
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
-        let hover = response.hovered();
-        let down = response.is_pointer_button_down_on();
-        let close = button == Button::Close;
-        let fill = match (hover, down, close) {
-            (_, true, true) => Some(t::ERROR.gamma_multiply(0.75)),
-            (true, _, true) => Some(t::ERROR),
-            (_, true, false) => Some(t::CONTROL_ACTIVE),
-            (true, _, false) => Some(t::CONTROL_HOVER),
-            _ => None,
-        };
-        let p = ui.painter();
-        if let Some(fill) = fill {
-            w::fill(p, rect, fill);
-        }
-        let color = if hover || down {
-            Color32::WHITE
-        } else {
-            t::TEXT
-        };
-        w::icon(p, rect, button.icon(maximized), color, ICON_SIZE);
-        if response.on_hover_text(name).clicked() {
+        let response = paint_button(
+            ui,
+            rect,
+            button_id(button),
+            button.icon(maximized),
+            name,
+            button == Button::Close,
+        );
+        if response.clicked() {
             clicked = Some(button);
         }
     }
     clicked
 }
 
+/// 行（別ウィンドウのタブの並ぶ行）の右端の閉じるの矩形。帯の閉じると同じ幅で、行の下の線の上までの高さ。
+pub fn close_rect(row: Rect) -> Rect {
+    Rect::from_min_max(
+        egui::pos2(row.right() - BUTTON_WIDTH, row.top()),
+        egui::pos2(row.right(), row.bottom() - 1.0),
+    )
+}
+
+/// 閉じるを 1 つ描く（帯の閉じると同じ見た目。`name` はツールチップと読み上げ）。押された（離した）なら true。
+pub fn close_button(ui: &mut Ui, rect: Rect, id: Id, name: &str) -> bool {
+    paint_button(ui, rect, id, Button::Close.icon(false), name, true).clicked()
+}
+
+/// ボタン 1 つを描く（乗せる・押すと地の色が変わる。閉じるは赤）。ツールチップは名前だけ。
+fn paint_button(ui: &mut Ui, rect: Rect, id: Id, icon: &str, name: &str, close: bool) -> Response {
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
+    let hover = response.hovered();
+    let down = response.is_pointer_button_down_on();
+    let fill = match (hover, down, close) {
+        (_, true, true) => Some(t::ERROR.gamma_multiply(0.75)),
+        (true, _, true) => Some(t::ERROR),
+        (_, true, false) => Some(t::CONTROL_ACTIVE),
+        (true, _, false) => Some(t::CONTROL_HOVER),
+        _ => None,
+    };
+    let p = ui.painter();
+    if let Some(fill) = fill {
+        w::fill(p, rect, fill);
+    }
+    let color = if hover || down {
+        Color32::WHITE
+    } else {
+        t::TEXT
+    };
+    w::icon(p, rect, icon, color, ICON_SIZE);
+    response.on_hover_text(name)
+}
+
 /// 帯の何も無い所の部品。メニューの見出しなどより先に（下に）作る。
 pub fn drag_zone(ui: &mut Ui, zone: Rect) -> Response {
-    ui.interact(zone, Id::new(DRAG_ID), Sense::click_and_drag())
+    drag_zone_with(ui, zone, Id::new(DRAG_ID))
+}
+
+/// 別ウィンドウ（`window` は窓ごとの番号）の、帯の代わりの部品の名前。
+pub fn drag_id(window: u64) -> Id {
+    Id::new((DRAG_ID, window))
+}
+
+/// 帯の代わりの部品（別ウィンドウのタブの並ぶ行）。タブより先に（下に）作る。
+pub fn drag_zone_with(ui: &mut Ui, zone: Rect, id: Id) -> Response {
+    ui.interact(zone, id, Sense::click_and_drag())
 }
 
 /// 帯の何も無い所の操作が窓へ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
@@ -249,10 +291,10 @@ fn yields_to(direction: ResizeDirection, rect: Rect) -> bool {
 }
 
 /// ポインタの下で、縁の押しを譲る部品が押しを受けるか（egui の当たり判定の結果: 押し・つまみを受ける部品のうち、細いもの）。
-fn control_under_pointer(ctx: &Context, direction: ResizeDirection) -> bool {
+fn control_under_pointer(ctx: &Context, direction: ResizeDirection, own: &[Id]) -> bool {
     let hovered = ctx.interaction_snapshot(|s| s.hovered.clone());
     hovered.into_iter().any(|id| {
-        if is_own(id) {
+        if is_own(id, own) {
             return false;
         }
         ctx.read_response(id).is_some_and(|r| {
@@ -269,17 +311,28 @@ fn covered(ctx: &Context, at: Pos2) -> bool {
 
 /// 縁の押しを受けている間か（ビューは、この押しを自分のものにしない）。
 pub fn edge_press_held(ctx: &Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(Id::new(EDGE_PRESS)))
-        .unwrap_or(false)
+    let id = edge_press_id(ctx);
+    ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false)
 }
 
 /// フレームの始めに呼ぶ。縁を押したら `BeginResize` を送り、ポインタが縁に乗っているときはその向きを返す（ポインタの形は、ほかの部品が
 /// 決めたあとに `edge_cursor` で上書きする）。`busy` は描いている最中・ペンが触れている最中（縁の押しを受けない）。`press_rects` は、
 /// egui の押しを持たず生の押しで動く部品（Live Link の印）の矩形で、縁の押しはその上では譲る（egui の当たり判定に出ないので矩形で渡す）。
 pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDirection> {
+    edges_with(ctx, busy, press_rects, &[])
+}
+
+/// `edges` に、縁の押しを譲らない自分の部品（別ウィンドウの帯の代わりの部品と閉じる）を足したもの。`ctx` の窓（viewport）の縁を見る。
+pub fn edges_with(
+    ctx: &Context,
+    busy: bool,
+    press_rects: &[Rect],
+    own: &[Id],
+) -> Option<ResizeDirection> {
     let any_down = ctx.input(|i| i.pointer.any_down());
+    let press_id = edge_press_id(ctx);
     if !any_down {
-        ctx.data_mut(|d| d.remove::<bool>(Id::new(EDGE_PRESS)));
+        ctx.data_mut(|d| d.remove::<bool>(press_id));
     }
     let (maximized, fullscreen) = ctx.input(|i| {
         let v = i.viewport();
@@ -302,7 +355,7 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
     let at = press.or(hover)?;
     let direction = resize_direction(ctx.content_rect(), at)?;
     if covered(ctx, at)
-        || control_under_pointer(ctx, direction)
+        || control_under_pointer(ctx, direction, own)
         || press_rects.iter().any(|r| r.contains(at))
     {
         return None;
@@ -312,7 +365,7 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
             return None;
         }
         ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
-        ctx.data_mut(|d| d.insert_temp(Id::new(EDGE_PRESS), true));
+        ctx.data_mut(|d| d.insert_temp(press_id, true));
         return Some(direction);
     }
     // 別の操作でボタンを押している最中は、ポインタの形を変えない

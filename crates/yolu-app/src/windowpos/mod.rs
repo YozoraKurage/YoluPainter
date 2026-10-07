@@ -27,6 +27,8 @@ mod native {
     }
 
     pub fn install(_: &eframe::CreationContext<'_>) {}
+
+    pub fn install_hwnd(_: isize) {}
 }
 
 pub use native::install;
@@ -372,4 +374,14 @@ pub fn settle(ctx: &egui::Context) -> bool {
         *guard = None;
     }
     step.settling
+}
+
+/// 今つながっている画面（画面を列挙できる OS だけ。できなければ空）。
+pub fn monitors() -> Vec<Monitor> {
+    native::monitors()
+}
+
+/// 別ウィンドウ（窓のハンドル。Windows の HWND の値）の最大化を、メインウィンドウと同じく自動で隠すタスクバーに合わせる（Windows だけ。ほかは何もしない）。
+pub fn install_hwnd(hwnd: isize) {
+    native::install_hwnd(hwnd);
 }

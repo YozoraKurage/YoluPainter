@@ -13,6 +13,7 @@ mod chrome;
 mod close_jobs;
 mod color_window;
 mod colorsets_ui;
+mod detached;
 mod disabled_reasons;
 mod fonts;
 mod gpu_lost;

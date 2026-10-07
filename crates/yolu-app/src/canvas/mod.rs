@@ -36,7 +36,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     app.ui.canvas_rect = Some(rect);
     app.ui.canvas_drawn = true;
-    app.ui.canvas_frame = Some(ui.ctx().cumulative_frame_nr());
+    // 主の窓のフレームの番号（キャンバスを外の窓へ出しても、キーを見る主の窓の番号と比べられるように）
+    app.ui.canvas_frame = Some(ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ui.advance_cursor_after_rect(rect);
     handle_input(
         ui,

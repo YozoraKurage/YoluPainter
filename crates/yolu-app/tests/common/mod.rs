@@ -8,6 +8,7 @@ pub mod gpu_thread;
 pub mod livelink;
 pub mod shared_gpu;
 pub mod tmp;
+pub mod viewports;
 pub mod wait;
 
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
@@ -199,9 +200,20 @@ pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {
     });
 }
 
-/// ドックのタブのボタンを押す。
+/// ドックのタブのボタンを押す（外へ出した窓のタブも。試験の窓では、外の窓は主の窓の中の egui の窓）。
 pub fn click_tab(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
-    let at = h.state().tab_rects.get(&tab).expect("tab shown").center();
+    let app = h.state();
+    let at = app
+        .tab_rects
+        .get(&tab)
+        .or_else(|| {
+            app.detached
+                .windows
+                .iter()
+                .find_map(|w| w.tab_rects.get(&tab))
+        })
+        .expect("tab shown")
+        .center();
     click(h, at);
 }
 

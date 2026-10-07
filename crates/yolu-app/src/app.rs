@@ -46,7 +46,7 @@ pub enum Tab {
     /// 起動してからの注意と失敗の知らせ（既定の並びではレイヤーと同じ組の後ろ。プロパティ・ヒストリーの組に 3 つ並べると、いちばん小さい窓で
     /// 英語の名前が欠ける。古い並びに無ければ、読んだときにレイヤーの組へ足す）。
     Log,
-    /// アクション（操作の記録と再生）。既定の並びには無く、開くと（`Action::ShowPanel`）レイヤーと同じ組の後ろへ入る。
+    /// アクション（操作の記録と再生）。既定の並びには無く、「ウィンドウ」のメニューから開くと（`DockOp::Show`）レイヤーと同じ組の後ろへ入る。
     Actions,
 }
 
@@ -195,6 +195,21 @@ fn dock_style(style: &egui::Style) -> egui_dock::Style {
     s
 }
 
+/// ドックの描き方（主の窓と外の窓で同じ）。タブは閉じない（閉じるとキャンバスを失う）・足すボタンを出さない・右クリックは
+/// アプリのメニュー（egui_dock の組み込みのメニューは切る）。
+fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> DockArea<'_, Tab> {
+    // 浮かせた窓の閉じるボタンは出さない。egui_dock 0.21 は代わりの名前を案内するが、その名前の関数はまだ無いので、古い名前を使う
+    #[allow(deprecated)]
+    let area = DockArea::new(dock).show_window_close_buttons(false);
+    area.id(id)
+        .style(style)
+        .show_close_buttons(false)
+        .show_add_buttons(false)
+        .show_leaf_collapse_buttons(false)
+        .show_leaf_close_all_buttons(false)
+        .tab_context_menus(false)
+}
+
 struct Tabs<'a> {
     app: &'a mut AppState,
     display: &'a mut CanvasDisplay,
@@ -206,6 +221,13 @@ struct Tabs<'a> {
     tab_rects: HashMap<Tab, Rect>,
     /// このフレームにタブの見出しをつかんでいる（押している・動かしている・離した）か。
     grabbed: bool,
+    /// このフレームに見出しを引いて離したタブ（離した所が窓の外なら、外の窓へ出す・別の窓へ移す）。
+    released: Option<Tab>,
+    /// このフレームに見出しを右クリックしたタブと、押した点。
+    context: Option<(Tab, egui::Pos2)>,
+    /// タブを浮いたウィンドウの落とし先にしてよいか。別ウィンドウのタブがただ 1 つのときは、組の中ほど以外で離すと、そのタブだけの
+    /// 新しいウィンドウに替わって元のウィンドウが空になる（同じウィンドウを作り直すだけ）ので、落とし先にしない。
+    windows_allowed: bool,
 }
 
 impl TabViewer for Tabs<'_> {
@@ -259,10 +281,23 @@ impl TabViewer for Tabs<'_> {
         self.tab_rects.insert(*tab, response.rect);
         self.grabbed |=
             response.is_pointer_button_down_on() || response.dragged() || response.drag_stopped();
+        if response.drag_stopped() {
+            self.released = Some(*tab);
+        }
+        if response.secondary_clicked() {
+            let at = response
+                .interact_pointer_pos()
+                .unwrap_or(response.rect.left_bottom());
+            self.context = Some((*tab, at));
+        }
     }
 
     fn is_closeable(&self, _tab: &Tab) -> bool {
         false
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Tab) -> bool {
+        self.windows_allowed
     }
 
     fn scroll_bars(&self, _tab: &Tab) -> [bool; 2] {
@@ -335,12 +370,18 @@ pub struct YoluApp {
     window_checked: bool,
     /// 起動のあと、窓が画面より大きければ収めるか（実際の窓だけ。試験は `fit_to_screen` で選ぶ）。
     fit_window: bool,
-    /// 浮かせた窓の今の位置と大きさ（保存に入れる。egui_dock は窓の矩形を自分では更新しない）。
-    float_rects: Vec<crate::layout::FloatRect>,
+    /// 外へ出した窓（OS の窓。中のドック・置き場所）。
+    pub detached: crate::detach::Detached,
+    /// 主の窓で描いた、落としたファイルの行き先（ブラシの一覧・ライブラリの格子）。
+    root_drops: crate::detach::DropRects,
+    /// 主の窓の HWND の値（Windows。外の窓の持ち主にする）。
+    #[cfg(windows)]
+    main_hwnd: Option<isize>,
     /// 落とした PSD のうち、取り込まなかった数（取り込みの仕事が終わったときの文に、理由として足す。0 なら無い）。
     psd_drop_more: usize,
 }
 
+mod detached;
 mod gpu_lost;
 
 impl YoluApp {
@@ -372,6 +413,15 @@ impl YoluApp {
             app.watch_gpu(rs, &cc.egui_ctx);
         }
         app.dialogs = true;
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = cc.window_handle() {
+                if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                    app.main_hwnd = Some(h.hwnd.get());
+                }
+            }
+        }
         // 保存は裏のスレッドで動かす（描ける・見られる。試験の状態は、保存の頼みの中で終える）
         app.state.save.background = true;
         app.fit_window = true;
@@ -557,12 +607,32 @@ impl YoluApp {
             for reason in &layout.problems {
                 crate::crash::problem(reason.clone());
             }
-            if let Some(dock) = layout.dock {
+            if let Some(mut dock) = layout.dock {
+                // 前の版の、アプリの中の浮いた窓は、外の窓にする（主の窓の内側の左上からの位置のまま、主の窓の上へ）
+                for float in crate::detach::take_floats(&mut dock, |_| None) {
+                    app.detached.open(
+                        float.dock,
+                        Vec::new(),
+                        crate::detach::Place::OverMain {
+                            offset: [float.rect.min.x, float.rect.min.y],
+                            size: crate::detach::new_window_size(Some(float.rect)),
+                        },
+                    );
+                }
                 app.dock = dock;
+            }
+            for record in layout.detached {
+                let place = match record.window {
+                    Some(window) => crate::detach::Place::Record(window),
+                    None => crate::detach::Place::Center {
+                        size: crate::detach::DEFAULT_SIZE,
+                    },
+                };
+                app.detached.open(record.dock, record.home, place);
             }
             app.window_record = layout.window;
             if path.exists() && layout.problems.is_empty() {
-                app.layout_saved = crate::layout::render(&app.dock, app.window_record.as_ref());
+                app.layout_saved = app.render_layout();
             }
             app.layout_path = Some(path);
         }
@@ -690,7 +760,6 @@ impl YoluApp {
                 }
             }
         }
-        self.remember_floats(ctx);
         let now = ctx.input(|i| i.time);
         if now - self.layout_checked_at < 1.0 {
             return;
@@ -699,31 +768,35 @@ impl YoluApp {
         self.save_layout(false);
     }
 
-    /// 浮かせた窓の今の位置と大きさを、egui が覚えている窓の矩形から控える（egui_dock が窓に命じる大きさは枠を含む外側の大きさなので、
-    /// 矩形をそのまま読み戻しに使える）。まだ描いていない窓は控えない（読んだ値か、最初に描くときの値がそのまま残る）。
-    fn remember_floats(&mut self, ctx: &egui::Context) {
-        self.float_rects.clear();
-        for (index, surface) in self.dock.iter_surfaces_indexed() {
-            if !matches!(surface, egui_dock::Surface::Window(..)) {
-                continue;
-            }
-            // egui_dock が窓に付ける名前（`window {面の番号}`）
-            let id = Id::new(format!("window {index:?}"));
-            if let Some(rect) = ctx.memory(|m| m.area_rect(id)) {
-                self.float_rects.push((index, rect));
-            }
-        }
+    /// 並びのファイルの中身（主のドック・主の窓・外の窓）。
+    fn render_layout(&self) -> String {
+        let window = self
+            .window_record
+            .and_then(crate::layout::WindowRecord::sanitized);
+        // タブの無いウィンドウは書かない（読み直しの検証で、並び全部が既定へ戻る）
+        let detached: Vec<crate::layout::DetachedRecord> = self
+            .detached
+            .windows
+            .iter()
+            .filter(|w| w.dock.main_surface().num_tabs() > 0)
+            .map(|w| crate::layout::DetachedRecord {
+                dock: w.dock.clone(),
+                window: w.record,
+                home: w.home.clone(),
+            })
+            .collect();
+        crate::layout::render_all(&self.dock, window.as_ref(), &[], &detached)
     }
 
     /// 並びを書く。`force` でなければ、前に書いた中身と同じなら書かない。
     fn save_layout(&mut self, force: bool) {
+        if self.layout_path.is_none() {
+            return;
+        }
+        let text = self.render_layout();
         let Some(path) = &self.layout_path else {
             return;
         };
-        let window = self
-            .window_record
-            .and_then(crate::layout::WindowRecord::sanitized);
-        let text = crate::layout::render_with(&self.dock, window.as_ref(), &self.float_rects);
         if !force && text == self.layout_saved {
             return;
         }
@@ -775,7 +848,10 @@ impl YoluApp {
             window_record: None,
             window_checked: false,
             fit_window: false,
-            float_rects: Vec::new(),
+            detached: crate::detach::Detached::new(),
+            root_drops: crate::detach::DropRects::default(),
+            #[cfg(windows)]
+            main_hwnd: None,
             saving_marked: false,
         }
     }
@@ -1569,11 +1645,20 @@ impl YoluApp {
         for sample in &mut pen {
             sample.pressure = self.state.adjust_pressure(sample.pressure);
         }
-        shell::handle_shortcuts(&ctx, &mut self.state);
-        crate::stencil::update_keys(&ctx, &mut self.state);
+        // 外の窓で開いたポップアップは、主の窓を押したら閉じる
+        detached::close_foreign_popup(&ctx, &mut self.state);
+        // キーの割り当てとステンシルのキーの押しは、フォーカスのある窓の入力で決める（外の窓にフォーカスがあれば、その窓のパスが決める。
+        // フォーカスの無い窓のパスが見ると、クリップボードのキーの「前のフレームの修飾」を押していない修飾で上書きする）
+        if !self.detached_focused(&ctx) {
+            shell::handle_shortcuts(&ctx, &mut self.state);
+            crate::stencil::update_keys(&ctx, &mut self.state);
+        }
+        // 落としたファイル。ブラシの一覧とライブラリの格子の範囲は、前のフレームに主の窓で描いたときだけ入る（棚・チャンネルのタブを
+        // 開いている間や、欄を外の窓へ出した後に、前の位置へ落とした PNG を取り込まない。外の窓へ落とした分は、その窓のパスが受ける）
+        self.state.brushes.ui.list_rect = self.root_drops.brush_list;
         self.open_dropped(&ctx);
-        // 一覧の範囲はこのフレームで描いたときだけ入る（棚・チャンネルのタブを開いている間に、前の位置へ落とした PNG を取り込まない）
         self.state.brushes.ui.list_rect = None;
+        self.state.library.grid_rect = self.root_drops.library_grid;
         assets::frame(&ctx, &mut self.state);
         self.handle_requests();
         self.link.poll(&mut self.state);
@@ -1602,7 +1687,12 @@ impl YoluApp {
         self.state.poll_update();
         self.state.poll_clipboard();
         // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
-        let focused = ctx.input(|i| i.viewport().focused);
+        // （主の窓から外の窓へフォーカスが移っても、アプリはフォーカスを失っていない）
+        let focused = if self.detached_focused(&ctx) {
+            Some(true)
+        } else {
+            ctx.input(|i| i.viewport().focused)
+        };
         if self.was_focused == Some(true) && focused == Some(false) {
             self.state.recovery_request_flush();
         }
@@ -1616,18 +1706,15 @@ impl YoluApp {
         self.state.poll_uv_overlap();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
         if crate::view3d::pose::frame(&mut self.state, &ctx) {
-            if let Some(path) = self.dock.find_tab(&Tab::View3d) {
-                let _ = self.dock.set_active_tab(path);
-            }
+            self.bring_forward(Tab::View3d);
         }
-        crate::panels::pose::ensure_tab(&self.state, &mut self.dock);
+        self.ensure_pose_tab();
         if self.state.reset_layout {
             self.dock = default_dock();
+            self.detached.clear();
             self.state.reset_layout = false;
         }
-        if let Some(tab) = self.state.show_panel.take() {
-            crate::layout::show_tab(&mut self.dock, tab);
-        }
+        self.state.ui.panels = self.detached.index(&self.dock);
 
         // 状態の帯の右端のメモリ（実際の窓だけ。1.5 秒おきに測り、止まっていても同じ間隔で描き直す）
         if self.dialogs {
@@ -1774,14 +1861,12 @@ impl YoluApp {
                 shell::tool_strip(ui, &mut self.state, r);
             });
         self.view3d.begin_frame();
-        egui::CentralPanel::default()
+        // 描く前のタブの組（egui_dock がタブを浮いた窓へ動かしたとき、戻る先にする）
+        let mates = crate::detach::leaf_mates(&self.dock);
+        let pass = egui::CentralPanel::default()
             .frame(Frame::NONE.fill(t::WINDOW_BG))
             .show(ui, |ui| {
                 let style = dock_style(ui.style());
-                // 浮かせた窓の閉じるボタンは出さない（タブは閉じない。閉じるとキャンバスを失う）。egui_dock 0.21 は代わりの名前を
-                // 案内するが、その名前の関数はまだ無いので、古い名前を使う
-                #[allow(deprecated)]
-                let area = |dock| DockArea::new(dock).show_window_close_buttons(false);
                 let mut tabs = Tabs {
                     app: &mut self.state,
                     display: &mut self.display,
@@ -1792,21 +1877,47 @@ impl YoluApp {
                     pen: &pen,
                     tab_rects: HashMap::new(),
                     grabbed: false,
+                    released: None,
+                    context: None,
+                    windows_allowed: true,
                 };
-                area(&mut self.dock)
-                    .id(Id::new("yolu.dock"))
-                    .style(style)
-                    .show_close_buttons(false)
-                    .show_add_buttons(false)
-                    .show_leaf_collapse_buttons(false)
-                    .show_leaf_close_all_buttons(false)
-                    .show_inside(ui, &mut tabs);
-                let grabbed = tabs.grabbed;
+                dock_area(&mut self.dock, Id::new("yolu.dock"), style).show_inside(ui, &mut tabs);
                 self.tab_rects = tabs.tab_rects;
-                self.state.ui.dock_grab = [grabbed, self.state.ui.dock_grab[0]];
-            });
-        // ドックのあとに描く窓も、描き始めた・終わった今の状態から
+                detached::DockPass {
+                    grabbed: tabs.grabbed,
+                    released: tabs.released,
+                    context: tabs.context,
+                }
+            })
+            .inner;
+        // （写すだけ。外の窓が無ければ、このフレームに描いた矩形がそのまま残る）
+        self.root_drops = crate::detach::DropRects {
+            brush_list: self.state.brushes.ui.list_rect,
+            library_grid: self.state.library.grid_rect,
+        };
+        // タブの出し入れ（主の窓の外で離したタブ・右クリック・egui_dock が作った浮いた窓）と、外の窓。当てるのは全部の窓を描いた後
+        let mut events = Vec::new();
+        detached::tab_events(
+            &ctx,
+            &mut self.state,
+            &self.dock,
+            egui::ViewportId::ROOT,
+            ctx.content_rect(),
+            &pass,
+            &mut events,
+        );
+        let floats = crate::detach::take_floats(&mut self.dock, |i| {
+            ctx.memory(|m| m.area_rect(crate::detach::float_area_id(i)))
+        });
+        if !floats.is_empty() {
+            events.push(detached::floats_event(&ctx, floats, mates));
+        }
+        // ドックのあとに描く窓（外の窓も）は、描き始めた・終わった今の状態から
         w::update_stroke_hold(&ctx, self.state.holds_panel_look());
+        let grabbed_outside = self.show_detached(&ctx, &mut events);
+        self.state.ui.dock_grab = [pass.grabbed || grabbed_outside, self.state.ui.dock_grab[0]];
+        self.apply_dock_events(&ctx, events);
+        detached::refuse_foreign_drop(&ctx);
         // ツールの列・グループのタブ・ブラシの行をまたぐドラッグは、全部を描いたあとに落とす先へ当てる
         crate::toolset::ui::end_frame(&ctx, &mut self.state);
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
@@ -1835,6 +1946,9 @@ impl YoluApp {
             self.state.m2_cancel_drag();
         }
         self.popups(&ctx, &bar, link_icon);
+        // メニュー・タブの右クリックで選んだドックの操作（外の窓へ出す・戻す・前に出す）
+        self.apply_dock_ops(&ctx);
+        self.state.ui.panels = self.detached.index(&self.dock);
         // 窓の縁の上のポインタの形（キャンバスなどが決めた形を上書きする）
         if let Some(direction) = edge.flatten() {
             titlebar::edge_cursor(&ctx, direction);
@@ -1852,7 +1966,19 @@ impl YoluApp {
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }
-        let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
+        // ポップアップが 3D ビューに重なっているか（同じ窓に開いたときだけ）
+        let view3d_window = self
+            .detached
+            .window_of(Tab::View3d)
+            .map_or(egui::ViewportId::ROOT, |w| {
+                self.detached.windows[w].viewport_id()
+            });
+        let popup_rect = self
+            .state
+            .popup
+            .as_ref()
+            .filter(|p| p.state.viewport == view3d_window)
+            .map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
         self.handle_requests();
@@ -1961,6 +2087,11 @@ impl YoluApp {
         let Some(mut open) = self.state.popup.take() else {
             return;
         };
+        // 外の窓で開いたポップアップは、その窓のパスが描く
+        if open.state.viewport != egui::ViewportId::ROOT {
+            self.state.popup = Some(open);
+            return;
+        }
         let entries = shell::popup_entries(&self.state, open.kind);
         let keep: Vec<Rect> = match open.kind {
             PopupKind::MenuBar(_) => bar.rects.clone(),
@@ -2075,7 +2206,8 @@ impl eframe::App for YoluApp {
     /// Unity からの知らせのたびに描き直しを頼むので、ここで受け取り・返事をすれば、最小化したまま Unity で Play に入る・スクリプトを
     /// リロードしても、再接続と絵の受け渡しが続く。画面に触れる処理（描く・並べる）は `ui` のまま。見えている間は `ui` がするので何もしない。
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().visible()) != Some(false) {
+        // 外の窓が見えている間は、主の窓が隠れていても eframe が `ui` を回す（外の窓は主の窓のパスの中で描く）
+        if ctx.input(|i| i.viewport().visible()) != Some(false) || self.any_detached_visible(ctx) {
             return;
         }
         self.tick_hidden(ctx);

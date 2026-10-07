@@ -99,6 +99,14 @@ impl PenInput {
         input
     }
 
+    /// 窓のハンドル（HWND の値）に繋ぐ（Windows の外の窓。eframe は子の窓のハンドルを渡さないので、`detach` が見つけた窓）。
+    #[cfg(windows)]
+    pub fn attach_hwnd(hwnd: isize, ctx: &egui::Context) -> PenInput {
+        let input = PenInput::detached();
+        let hooked = win_ink::hook(hwnd, input.queue.clone(), ctx.clone());
+        PenInput { hooked, ..input }
+    }
+
     /// 窓に繋がっている（Windows Ink の点が来る）か。
     pub fn is_hooked(&self) -> bool {
         self.hooked

@@ -20,6 +20,7 @@ pub mod canvas;
 pub mod clipboard;
 pub mod colorsets;
 pub mod crash;
+pub mod detach;
 pub mod dialog;
 pub mod distribute;
 pub mod drafting;

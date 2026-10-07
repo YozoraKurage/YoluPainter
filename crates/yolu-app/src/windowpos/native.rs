@@ -230,3 +230,28 @@ fn autohide_edges(monitor: RECT) -> Edges {
         bottom: has(ABE_BOTTOM),
     }
 }
+
+/// `install` と同じ包みを、窓のハンドル（HWND の値）で付ける（別ウィンドウ。eframe は子の窓のハンドルを渡さないので、`detach` が見つけた窓）。
+/// 付けた時にもう最大化していれば、内側の求め直しを頼む（次の `WM_NCCALCSIZE` から 1 画素が空く）。
+pub fn install_hwnd(hwnd: isize) {
+    let hwnd = HWND(hwnd as *mut _);
+    // SAFETY: この画面のスレッドが作った窓（`detach::native::find_window` が同じスレッドの窓から見つけた）に、このモジュールの関数を付ける。
+    // 同じ識別子で再び付けても参照値が替わるだけ。枠の再計算の頼みは位置・大きさ・重なりを変えない。
+    unsafe {
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return;
+        }
+        let _ = SetWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID, 0);
+        if IsZoomed(hwnd).as_bool() {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}

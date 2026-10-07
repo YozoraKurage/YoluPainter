@@ -208,9 +208,8 @@ fn the_pose_tab_is_added_back_after_the_layout_is_reset() {
 fn the_pose_tab_floats_in_its_own_window_and_keeps_working() {
     let mut h = figure(256);
     float_pose_tab(&mut h);
-    let path = h.state().dock.find_tab(&Tab::Pose).unwrap();
     assert!(
-        path.surface != egui_dock::SurfaceIndex::main(),
+        h.state().dock.find_tab(&Tab::Pose).is_none() && h.state().detached.contains(Tab::Pose),
         "ドックから外れて別の窓にいる"
     );
     // 窓の中で、木も節も使える

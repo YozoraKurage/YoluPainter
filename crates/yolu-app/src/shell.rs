@@ -22,21 +22,25 @@ use crate::update::UpdateAction;
 use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
-pub const MENU_TITLES: [&str; 7] = [
+pub const MENU_TITLES: [&str; 8] = [
     "ファイル",
     "編集",
     "レイヤー",
     "選択範囲",
     "フィルター",
     "表示",
+    "ウィンドウ",
     "ヘルプ",
 ];
 
+/// 「ウィンドウ」の見出しの番号。
+pub const WINDOW_MENU: usize = 6;
+
 /// ヘルプの見出しの番号。
-pub const HELP_MENU: usize = 6;
+pub const HELP_MENU: usize = 7;
 
 /// 言語ごとのメニューバーの見出し。
-pub fn menu_titles(lang: Lang) -> [&'static str; 7] {
+pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     [
         lang.pick("ファイル", "File"),
         lang.pick("編集", "Edit"),
@@ -44,6 +48,7 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 7] {
         lang.pick("選択範囲", "Select"),
         lang.pick("フィルター", "Filter"),
         lang.pick("表示", "View"),
+        lang.pick("ウィンドウ", "Window"),
         lang.pick("ヘルプ", "Help"),
     ]
 }
@@ -302,11 +307,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 l.pick("筆圧の調整…", "Pen Pressure…"),
                 Action::Pressure(crate::pen::window::PressureAction::Open),
             ),
-            Entry::item(
-                l.pick("パネルの並びを戻す", "Reset Panel Layout"),
-                Action::ResetLayout,
-            ),
         ],
+        WINDOW_MENU => crate::detach::menu::window_entries(app),
         _ => help_entries(app),
     }
 }
@@ -458,6 +460,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         PopupKind::BakeIsland {
             set, island, map, ..
         } => crate::bake::overlap::menu_entries(app, set, island, map),
+        PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
     }
 }
 
@@ -775,10 +778,11 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     let mut actions = Vec::new();
     // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
-    let canvas_shown = app
-        .ui
-        .canvas_frame
-        .is_some_and(|f| ctx.cumulative_frame_nr().saturating_sub(f) <= 1);
+    let canvas_shown = app.ui.canvas_frame.is_some_and(|f| {
+        ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
+            .saturating_sub(f)
+            <= 1
+    });
     let arrows_move = app.tool == Tool::Move
         && canvas_shown
         && !app.is_stroking()

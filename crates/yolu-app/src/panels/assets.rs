@@ -1515,7 +1515,7 @@ pub fn frame(ctx: &egui::Context, state: &mut AppState) {
     import_dropped(ctx, state, grid);
 }
 
-fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
+pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
     let over_grid = state.library.source == Source::Library
         && grid
             .zip(ctx.input(|i| i.pointer.latest_pos()))
