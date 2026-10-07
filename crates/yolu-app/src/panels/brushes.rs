@@ -770,7 +770,8 @@ fn field(
 pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
-    let in_3d = app.view3d.paintable_on_screen();
+    // 2D だけの設定は、描ける先が 3D の面だけのあいだ無効にする（キャンバスも出ていれば 2D に描けるので有効）
+    let only_in_3d = app.paints_only_in_3d();
     // 今の設定の見本
     let sample = Rect::from_min_size(
         pos2(area.left() + t::PADDING, area.top() + 4.0),
@@ -903,7 +904,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     ) {
         b.spacing = v / 100.0;
     }
-    let off = in_3d.then(|| lang.pick("3D では効きません", "No effect in 3D"));
+    let off = only_in_3d.then(|| lang.pick("3D では効きません", "No effect in 3D"));
     let stabilizer = app.m2.brush.assist.stabilizer as f32;
     // 手ぶれ補正の行の右端に、詳細の窓のボタン
     let row = next();
@@ -950,7 +951,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let tool_is_eraser = app.tool.erases();
     let effect_off = if tool_is_eraser {
         Some(lang.pick("消しゴムでは使えません", "Not available with the eraser"))
-    } else if in_3d {
+    } else if only_in_3d {
         Some(lang.pick("3D では使えません", "Not available in 3D"))
     } else {
         None

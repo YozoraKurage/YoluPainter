@@ -40,10 +40,10 @@ fn decimals(places: u8) -> NumberFormat<'static> {
     }
 }
 
-/// 3D のビューが出ているあいだ、面のダブが使わない設定を無効にする理由（使える間は None）。
+/// 描ける先が 3D の面だけのあいだ（キャンバスのタブが出ていない）、面のダブが使わない設定を無効にする理由（使える間は None）。
+/// ドックを分けてキャンバスも出ていれば 2D に描けて効くので None（`AppState::paints_only_in_3d`）。
 fn off_in_3d(app: &AppState, lang: Lang) -> Option<&'static str> {
-    app.view3d
-        .paintable_on_screen()
+    app.paints_only_in_3d()
         .then(|| lang.pick("3D では効きません", "No effect in 3D"))
 }
 
