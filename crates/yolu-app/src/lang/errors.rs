@@ -1582,10 +1582,23 @@ mod tests {
     #[test]
     fn a_failed_start_is_told_in_both_languages_without_the_os_text() {
         use std::io::{Error, ErrorKind};
-        let busy = Error::from_raw_os_error(11);
+        // 資源が足りない誤りの番号は OS ごとに違う（Linux の EAGAIN 11・macOS の EAGAIN 35・Windows の WSAEWOULDBLOCK 10035。
+        // Windows の 11 は ERROR_BAD_FORMAT で、資源の不足ではない）
+        let code = if cfg!(windows) {
+            10035
+        } else if cfg!(target_os = "macos") {
+            35
+        } else {
+            11
+        };
+        let busy = Error::from_raw_os_error(code);
+        assert_eq!(busy.kind(), ErrorKind::WouldBlock, "{busy:?}");
         let (ja, en) = (Lang::Ja.thread_error(&busy), Lang::En.thread_error(&busy));
-        assert_eq!(ja, "システムの資源が足りません（OS エラー 11）");
-        assert_eq!(en, "Not enough system resources (OS error 11)");
+        assert_eq!(
+            ja,
+            format!("システムの資源が足りません（OS エラー {code}）")
+        );
+        assert_eq!(en, format!("Not enough system resources (OS error {code})"));
         let other = Error::from(ErrorKind::InvalidInput);
         assert_eq!(
             Lang::En.thread_error(&other),
