@@ -51,10 +51,7 @@ impl Env {
 
 /// 環境変数の言語（`ja`・`en`。`C`・知らない言語は手がかりにしない）。
 pub fn lang_from_vars(get: impl Fn(&str) -> Option<String>) -> Option<Lang> {
-    ["YOLUPAINTER_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|name| get(name).filter(|v| !v.is_empty()))
-        .find_map(|v| Lang::parse(&v))
+    Lang::from_vars(get)
 }
 
 /// 終了コード。

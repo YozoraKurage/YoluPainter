@@ -475,10 +475,26 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
 
 /// 設定のファイルを読む。無ければ既定。値が正しくない項目は既定へ戻して `Problem` を返す（ファイルは、設定を変えて書き直すまで触らない）。
 pub fn load(path: &Path) -> (Settings, Vec<Problem>) {
+    let (settings, problems, _) = load_marked(path);
+    (settings, problems)
+}
+
+/// アプリの起動で設定を読む。`load` と同じで、設定に言語が読めなかったとき（ファイルが無い・読めない・`language` の行が無い・値が正しくない）だけ、
+/// 言語を `system`（OS の言語。`lang::system_lang`）にする。`language=ja|en` が読めたなら、いつもそれが先。
+pub fn load_for_startup(path: &Path, system: Lang) -> (Settings, Vec<Problem>) {
+    let (mut settings, problems, has_language) = load_marked(path);
+    if !has_language {
+        settings.lang = system;
+    }
+    (settings, problems)
+}
+
+/// `load` に、言語をファイルから読めたかを添えたもの。
+fn load_marked(path: &Path) -> (Settings, Vec<Problem>, bool) {
     match read(path) {
-        Ok(text) => parse(&text),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => (Settings::default(), Vec::new()),
-        Err(_) => (Settings::default(), vec![Problem::Unreadable]),
+        Ok(text) => parse_marked(&text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (Settings::default(), Vec::new(), false),
+        Err(_) => (Settings::default(), vec![Problem::Unreadable], false),
     }
 }
 
@@ -497,14 +513,22 @@ fn read(path: &Path) -> io::Result<String> {
 
 const MAX_FILE_BYTES: u64 = 4096;
 
+#[cfg(test)]
 fn parse(text: &str) -> (Settings, Vec<Problem>) {
+    let (settings, problems, _) = parse_marked(text);
+    (settings, problems)
+}
+
+/// `parse` に、言語（`language=ja|en`）を読めたかを添えたもの。読めなかった設定の言語は既定のまま（呼ぶ側が決める）。
+fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
     let mut settings = Settings::default();
     let mut problems = Vec::new();
+    let mut has_language = false;
     // 筆圧の調整は 3 つの項目が組で意味を持つので、読み終えてからまとめて作る
     let (mut low, mut high, mut curve) = (None, None, None);
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let Some((key, value)) = line.split_once('=') else {
-            return (Settings::default(), vec![Problem::Unreadable]);
+            return (Settings::default(), vec![Problem::Unreadable], false);
         };
         let value = value.trim();
         let mut invalid = |key: &'static str| {
@@ -515,8 +539,10 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
         };
         match key.trim() {
             "language" => match value {
-                "ja" => settings.lang = Lang::Ja,
-                "en" => settings.lang = Lang::En,
+                "ja" | "en" => {
+                    settings.lang = if value == "ja" { Lang::Ja } else { Lang::En };
+                    has_language = true;
+                }
                 _ => problems.push(Problem::Language(value.to_owned())),
             },
             "export_padding" => match parse_padding(value) {
@@ -663,7 +689,7 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             value: format!("{high}"),
         }),
     }
-    (settings, problems)
+    (settings, problems, has_language)
 }
 
 /// 3D の塗りの切り替えの 1 項目を読む（読めなければ、その項目は既定のまま、正しくない項目のキーを返す）。
@@ -1192,6 +1218,81 @@ mod tests {
             load(&path),
             (Settings::default(), vec![Problem::Unreadable])
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 起動で設定を読むとき、言語が読めなかった（ファイルが無い・読めない・行が無い・値が正しくない）ときだけ OS の言語になる。
+    /// 言語が書いてあれば OS の言語によらずそれ。ほかの項目は `load` と同じ。
+    #[test]
+    fn startup_uses_the_system_language_only_when_the_file_has_none() {
+        let dir = temp_dir("startup-language");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.conf");
+        let startup = |text: Option<&str>, system| {
+            match text {
+                Some(text) => std::fs::write(&path, text).unwrap(),
+                None => drop(std::fs::remove_file(&path)),
+            }
+            load_for_startup(&path, system)
+        };
+        for system in Lang::ALL {
+            // 初めての起動（ファイルが無い）
+            assert_eq!(startup(None, system), (with_lang(system), vec![]));
+            // ファイルはあるが言語の行が無い（ほかの項目は読む）
+            let (settings, problems) = startup(Some("export_padding=8\n"), system);
+            assert_eq!((settings.lang, settings.export_padding), (system, 8));
+            assert_eq!(problems, vec![]);
+            // 言語が書いてあれば、OS の言語によらずそれ
+            for saved in Lang::ALL {
+                let text = format!("language={}\nexport_padding=8\n", saved.pick("ja", "en"));
+                let (settings, problems) = startup(Some(&text), system);
+                assert_eq!((settings.lang, settings.export_padding), (saved, 8));
+                assert_eq!(problems, vec![]);
+            }
+            // 言語の値が正しくない: 知らせは残し、言語は OS の言語
+            assert_eq!(
+                startup(Some("language=unknown\n"), system),
+                (with_lang(system), vec![Problem::Language("unknown".into())])
+            );
+            assert_eq!(
+                startup(Some("language=\n"), system),
+                (with_lang(system), vec![Problem::Language(String::new())])
+            );
+            // 読めないファイル（`キー=値` でない行・大きすぎる）: 設定は全部既定で、言語は OS の言語
+            assert_eq!(
+                startup(Some("garbage\n"), system),
+                (with_lang(system), vec![Problem::Unreadable])
+            );
+            // 言語の行より後ろに壊れた行があっても、読めなかったファイルの言語は使わない
+            assert_eq!(
+                startup(Some("language=ja\ngarbage\n"), system),
+                (with_lang(system), vec![Problem::Unreadable])
+            );
+            std::fs::write(&path, vec![b'a'; 4097]).unwrap();
+            assert_eq!(
+                load_for_startup(&path, system),
+                (with_lang(system), vec![Problem::Unreadable])
+            );
+        }
+        // 読み込みの口（`load`）は今までどおり、言語が無ければ既定の日本語
+        assert_eq!(load(&dir.join("none.conf")).0.lang, Lang::Ja);
+        std::fs::write(&path, "export_padding=8\n").unwrap();
+        assert_eq!(load(&path).0.lang, Lang::Ja);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 言語が無いまま始めた設定は、設定を変えて書くまでファイルを作らず、書いた後は書いた言語が先になる。
+    #[test]
+    fn the_language_a_first_start_chose_is_kept_once_written() {
+        let dir = temp_dir("startup-written");
+        let path = dir.join("settings.conf");
+        let (first, _) = load_for_startup(&path, Lang::En);
+        assert_eq!(first.lang, Lang::En);
+        assert!(!path.exists(), "読むだけではファイルを作らない");
+        save(&path, &first).unwrap();
+        for system in Lang::ALL {
+            assert_eq!(load_for_startup(&path, system).0.lang, Lang::En);
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 

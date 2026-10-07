@@ -783,8 +783,13 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
 
 // ───────── 言語の選択の保存と復元（アプリの配線） ─────────
 
-/// 設定のファイルを使うアプリ（`settings` は設定のファイルの場所）。
+/// 設定のファイルを使うアプリ（`settings` は設定のファイルの場所。設定に言語が無いときは既定の日本語）。
 fn app_with_settings(settings: &std::path::Path) -> Harness<'static, YoluApp> {
+    app_with_system_lang(settings, Lang::default())
+}
+
+/// `app_with_settings` に、OS の言語（設定に言語が無いときの言語）を渡すもの。
+fn app_with_system_lang(settings: &std::path::Path, system: Lang) -> Harness<'static, YoluApp> {
     let settings = settings.to_path_buf();
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
@@ -794,10 +799,11 @@ fn app_with_settings(settings: &std::path::Path) -> Harness<'static, YoluApp> {
         .renderer(common::shared_gpu::renderer())
         .build_eframe(move |cc| {
             with_render_state_cpu_canvas(
-                YoluApp::for_context_with_settings(
+                YoluApp::for_context_with_system_lang(
                     &cc.egui_ctx,
                     Some(settings),
                     PenInput::detached(),
+                    system,
                 ),
                 cc.wgpu_render_state.as_ref(),
             )
@@ -924,6 +930,85 @@ fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing_gpu() {
     let h = app_with_settings(&path);
     assert_eq!(h.state().state.lang, Lang::En);
     assert_eq!(h.state().state.message, "");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_first_start_follows_the_system_language_and_a_saved_language_wins() {
+    gpu_thread::run(the_first_start_follows_the_system_language_and_a_saved_language_wins_gpu);
+}
+
+fn the_first_start_follows_the_system_language_and_a_saved_language_wins_gpu() {
+    let dir = settings_dir("system-language");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let write = |text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+    };
+    let menu = |lang: Lang| lang.pick("ファイル", "File");
+    // 初めての起動（設定のファイルが無い）は OS の言語で始まる。最初の名前も画面の文もその言語で、読むだけではファイルを作らない
+    for system in Lang::ALL {
+        let h = app_with_system_lang(&path, system);
+        assert_eq!(h.state().state.lang, system);
+        assert_eq!(
+            h.state().state.sets.iter().next().unwrap().name,
+            yolu_app::sets::first_set_name(system)
+        );
+        assert_eq!(h.state().state.message, "");
+        h.get_by_label(menu(system));
+        assert!(h
+            .query_by_label(menu(system.pick(Lang::En, Lang::Ja)))
+            .is_none());
+        assert!(!path.exists());
+    }
+    for system in Lang::ALL {
+        // 保存した言語が先（OS の言語と同じでも違っても）
+        for saved in Lang::ALL {
+            write(&format!("language={}\n", saved.pick("ja", "en")));
+            let h = app_with_system_lang(&path, system);
+            assert_eq!(h.state().state.lang, saved, "OS {system:?}・保存 {saved:?}");
+            assert_eq!(h.state().state.message, "");
+            h.get_by_label(menu(saved));
+        }
+        // 言語の行が無い設定: ほかの設定は読み、言語は OS の言語
+        write("export_padding=8\n");
+        let h = app_with_system_lang(&path, system);
+        assert_eq!(h.state().state.lang, system);
+        assert_eq!(h.state().state.settings().export_padding, 8);
+        assert_eq!(h.state().state.message, "");
+        // 言語の値が壊れた設定: 知らせは OS の言語で出し、選ぶまでファイルには触らない
+        write("language=unknown");
+        let h = app_with_system_lang(&path, system);
+        assert_eq!(h.state().state.lang, system);
+        assert_eq!(
+            h.state().state.message,
+            system.pick(
+                "言語の設定を読めません。",
+                "Cannot read the language setting."
+            )
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=unknown");
+        // 読めない設定（`キー=値` でない行）: 全部既定で、言語は OS の言語
+        write("garbage\n");
+        let h = app_with_system_lang(&path, system);
+        assert_eq!(h.state().state.lang, system);
+        assert_eq!(
+            h.state().state.message,
+            system.pick("設定を読めません。", "Cannot read the settings.")
+        );
+    }
+    // OS の言語で始めたあとに言語を選ぶと、選んだ言語を書き、次の起動は OS の言語によらずそれで始まる
+    let _ = std::fs::remove_file(&path);
+    let mut h = app_with_system_lang(&path, Lang::En);
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
+    drop(h);
+    let h = app_with_system_lang(&path, Lang::En);
+    assert_eq!(h.state().state.lang, Lang::Ja);
+    drop(h);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

@@ -356,8 +356,9 @@ impl YoluApp {
         let pen = PenInput::attach(cc);
         // OS の終了が保存の途中に来たら、保存が終わるまで待ってもらう（Windows だけ）
         crate::session_end::attach(cc);
-        let mut app = YoluApp::with_settings(crate::settings::path(), pen)
-            .with_render_state(cc.wgpu_render_state.as_ref());
+        let mut app =
+            YoluApp::with_settings(crate::settings::path(), pen, crate::lang::system_lang())
+                .with_render_state(cc.wgpu_render_state.as_ref());
         // 主の装置を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
         if let Some(rs) = &cc.wgpu_render_state {
             app.watch_gpu(rs, &cc.egui_ctx);
@@ -439,14 +440,24 @@ impl YoluApp {
     }
 
     /// 設定のファイル（無ければ保存しない）から言語・書き出しの余白・メモリの予算・退避を残す数などを決めて作る（`setup` は呼ぶ側で）。
-    /// 最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（日本語・自動の予算・
+    /// 最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（自動の予算・
     /// すべて残す、など）に戻し、理由を知らせる
-    /// （ファイルは、設定を選び直すまで触らない）。
-    fn with_settings(settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
-        let (loaded, problems) = settings
-            .as_deref()
-            .map(crate::settings::load)
-            .unwrap_or_default();
+    /// （ファイルは、設定を選び直すまで触らない）。言語は、設定に書いてあればそれ、無い・読めないときだけ `system`（OS の言語）。
+    fn with_settings(
+        settings: Option<std::path::PathBuf>,
+        pen: PenInput,
+        system: crate::lang::Lang,
+    ) -> YoluApp {
+        let (loaded, problems) = match settings.as_deref() {
+            Some(path) => crate::settings::load_for_startup(path, system),
+            None => (
+                Settings {
+                    lang: system,
+                    ..Default::default()
+                },
+                Vec::new(),
+            ),
+        };
         let lang = loaded.lang;
         let mut app = YoluApp::with_state(
             AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
@@ -564,14 +575,24 @@ impl YoluApp {
         self.state.shelf.set_preview_budget(budgets.shelf_preview);
     }
 
-    /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
+    /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの。設定に言語が無いときは既定の日本語）。
     pub fn for_context_with_settings(
         ctx: &egui::Context,
         settings: Option<std::path::PathBuf>,
         pen: PenInput,
     ) -> YoluApp {
+        Self::for_context_with_system_lang(ctx, settings, pen, crate::lang::Lang::default())
+    }
+
+    /// `for_context_with_settings` の、OS の言語（設定に言語が無いときの言語）を渡せるもの（試験用。本物は `lang::system_lang`）。
+    pub fn for_context_with_system_lang(
+        ctx: &egui::Context,
+        settings: Option<std::path::PathBuf>,
+        pen: PenInput,
+        system: crate::lang::Lang,
+    ) -> YoluApp {
         Self::setup(ctx);
-        YoluApp::with_settings(settings, pen)
+        YoluApp::with_settings(settings, pen, system)
     }
 
     /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。

@@ -590,9 +590,11 @@ pub fn failure_dialog() {
 const LABELLED_BUTTONS: bool = cfg!(not(windows));
 
 fn failure_dialog_with(reason: Option<&str>) {
+    // アプリの起動と同じ決め方（設定に言語が無いときは OS の言語）
+    let system = crate::lang::system_lang();
     let lang = crate::settings::path()
-        .map(|p| crate::settings::load(&p).0.lang)
-        .unwrap_or(crate::lang::Lang::En);
+        .map(|p| crate::settings::load_for_startup(&p, system).0.lang)
+        .unwrap_or(system);
     let folder = lang.pick("ログのフォルダを開く", "Open Log Folder");
     let result = rfd::MessageDialog::new()
         .set_title("YoluPainter")
