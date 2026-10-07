@@ -240,7 +240,6 @@ fn painting_overlapped_texels_in_the_canvas_tells_once() {
 
 #[test]
 fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = app(1280.0, 860.0, 64);
         h.state_mut().state.set_language(lang);
@@ -274,13 +273,43 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
         )
         .click();
         h.run();
-        h.snapshot(format!("uv_overlap_color_{}", lang.pick("ja", "en")));
-        results.extend_harness(&mut h);
+        // 設定のウィンドウの全体には機械ごとの値（メモリの自動の上限・スレッドの数・設定のフォルダ）が出るので、色の行と色のウィンドウだけを撮る
+        let prefs = yolu_app::prefs::last_rect(&h.ctx).expect("設定のウィンドウ");
+        let row = egui::Rect::from_min_max(
+            egui::pos2(prefs.left(), wire.top() - 4.0),
+            egui::pos2(over.right() + 4.0, wire.bottom() + 4.0),
+        );
+        shot_row_and_color_window(
+            &mut h,
+            row,
+            &format!("uv_overlap_color_{}", lang.pick("ja", "en")),
+        );
         assert_eq!(
             h.state().state.prefs.settings.uv_overlap_color,
             yolu_app::uv_wireframe::DEFAULT_OVERLAP_COLOR
         );
     }
+}
+
+/// 行の矩形と、開いている色のウィンドウを、上下に並べた 1 枚の絵にして正解と比べる。
+fn shot_row_and_color_window(h: &mut Harness<'_, YoluApp>, row: egui::Rect, name: &str) {
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウが開いている");
+    let image = h.render().expect("描画");
+    let crop = |r: egui::Rect| {
+        image::imageops::crop_imm(
+            &image,
+            r.left().floor() as u32,
+            r.top().floor() as u32,
+            r.width().ceil() as u32,
+            r.height().ceil() as u32,
+        )
+        .to_image()
+    };
+    let (a, b) = (crop(row), crop(window));
+    let mut out = image::RgbaImage::new(a.width().max(b.width()), a.height() + b.height());
+    image::imageops::overlay(&mut out, &a, 0, 0);
+    image::imageops::overlay(&mut out, &b, 0, a.height() as i64);
+    egui_kittest::image_snapshot(&out, name);
 }
 
 /// ウィンドウと開いているポップアップを合わせた所だけを撮る。
@@ -307,6 +336,24 @@ fn shot_with_popup(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
 }
 
 /// 開いているアイランドのメニュー（セット・アイランド・見取り図からか・3D からか）。
+/// 開いたメニューの項目の矩形。メニューを開いた状態にしたフレームで、まだ描いていなければ描くまで回す（30 フレームまで）。
+/// 出なければ、メニューの状態を添えて落とす。
+fn menu_item(h: &mut Harness<'_, YoluApp>, label: &str) -> egui::Rect {
+    for _ in 0..30 {
+        if h.query_by_label(label).is_some() {
+            return popup_item(h, label);
+        }
+        h.step();
+    }
+    let popup = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .map(|p| format!("{:?} {:?}", p.kind, p.state.rect));
+    panic!("{label} が描かれない（メニュー: {popup:?}）");
+}
+
 fn island_menu(h: &Harness<'_, YoluApp>) -> Option<(usize, bool, bool)> {
     match h.state().state.popup.as_ref().map(|p| p.kind) {
         Some(yolu_app::state::PopupKind::BakeIsland {
@@ -493,7 +540,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         };
         right(&mut h, at);
         assert_eq!(island_menu(&h), Some((0, false, false)));
-        let prefer = popup_item(&h, lang.pick("優先して焼く", "Prefer in Bake"));
+        let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
         h.step();
         h.snapshot(format!(
@@ -503,7 +550,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         // 開いているメニューの外で、同じ所をもう一度右クリックすると次のアイランド（重なった片側）
         right(&mut h, at);
         assert_eq!(island_menu(&h), Some((2, false, false)), "次のアイランド");
-        let item = popup_item(&h, lang.pick("優先して焼く", "Prefer in Bake")).center();
+        let item = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake")).center();
         click(&mut h, item);
         assert!(h.state().state.doc.bake_priority().preferred().contains(&2));
         assert_eq!(h.state().state.doc.undo_count(), 1);
@@ -511,7 +558,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         right(&mut h, at);
         right(&mut h, at);
         assert_eq!(island_menu(&h), Some((2, false, false)));
-        let item = popup_item(&h, lang.pick("優先して焼く", "Prefer in Bake")).center();
+        let item = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake")).center();
         click(&mut h, item);
         assert!(h.state().state.doc.bake_priority().preferred().is_empty());
         // 何も無い所では開かない
@@ -554,7 +601,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         );
         let hover = h.state().state.region.hover.as_ref().expect("強調");
         assert!(hover.on_surface && hover.tris.len() == 2);
-        let prefer = popup_item(&h, lang.pick("優先して焼く", "Prefer in Bake"));
+        let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
         h.step();
         h.snapshot(format!(
