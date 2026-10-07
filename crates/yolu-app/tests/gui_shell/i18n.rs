@@ -240,13 +240,59 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
             assert_eq!(state.doc.id(), before);
             messages.push(state.message.clone());
         }
-        // 手動の ID の色はまだ .ylp に書けない。保存を断り、ファイルは作らない
-        let colors = yolu_core::mesh_maps::IdColorAssignments::new(
-            "0".repeat(64),
-            std::collections::BTreeMap::from([(0usize, 0xff0000u32)]),
-        )
-        .unwrap();
-        state.doc.set_id_colors(colors, false).unwrap();
+        // 塗りつぶしのグラデーションのランプの混色はまだ .ylp に書けない（画面からは作れず、core の口だけで作れる）。保存を断り、ファイルは作らない
+        let fill = state
+            .doc
+            .add_fill_layer(
+                "塗り",
+                &[(
+                    yolu_core::Channel::Color,
+                    yolu_core::Rgba8::new(1, 2, 3, 255),
+                )],
+                None,
+            )
+            .unwrap();
+        let mut gradient =
+            yolu_core::generator::Settings::new(yolu_core::generator::Kind::ShapeGradient);
+        gradient.blend = yolu_core::generator::Blend::Replace;
+        gradient.ramp = Some(
+            yolu_core::generator::Ramp::new(
+                vec![
+                    yolu_core::generator::ColorStop {
+                        position: 0.0,
+                        color: yolu_core::Rgba8::new(0, 0, 0, 255),
+                        midpoint: 0.5,
+                    },
+                    yolu_core::generator::ColorStop {
+                        position: 1.0,
+                        color: yolu_core::Rgba8::new(255, 255, 255, 255),
+                        midpoint: 0.5,
+                    },
+                ],
+                vec![
+                    yolu_core::generator::OpacityStop {
+                        position: 0.0,
+                        opacity: 1.0,
+                        midpoint: 0.5,
+                    },
+                    yolu_core::generator::OpacityStop {
+                        position: 1.0,
+                        opacity: 1.0,
+                        midpoint: 0.5,
+                    },
+                ],
+                None,
+            )
+            .unwrap()
+            .with_mixing(
+                yolu_core::generator::MixMode::Perceptual,
+                yolu_core::generator::LuminanceCorrection::Low,
+            ),
+        );
+        state
+            .doc
+            .set_fill_gradient(fill, yolu_core::Channel::Color, Some(gradient), false)
+            .unwrap();
         let target = root.join(lang.pick("ja.ylp", "en.ylp"));
         state.apply(Action::SaveProjectAs(target.clone()));
         assert!(
@@ -269,7 +315,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
             Lang::Ja => {
                 assert!(messages[0].contains("mimetype"), "{}", messages[0]);
                 assert!(messages[1].contains("予算"), "{}", messages[1]);
-                assert!(messages[2].contains("ID の色"), "{}", messages[2]);
+                assert!(messages[2].contains("混色"), "{}", messages[2]);
             }
             Lang::En => {
                 assert!(
@@ -278,7 +324,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
                     messages[0]
                 );
                 assert!(messages[1].contains("limit exceeded"), "{}", messages[1]);
-                assert!(messages[2].contains("Manual ID colors"), "{}", messages[2]);
+                assert!(messages[2].contains("Color mixing"), "{}", messages[2]);
             }
         }
         seen.push(messages);

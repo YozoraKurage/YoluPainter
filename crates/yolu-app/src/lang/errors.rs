@@ -190,9 +190,6 @@ impl Lang {
             Error::Unwritable(what) => self.pick(
                 what.to_string(),
                 match what {
-                    Unwritable::ManualIdColors => {
-                        "Manual ID colors cannot be saved to .ylp yet".into()
-                    }
                     Unwritable::GeneratorRampMixing => {
                         "Color mixing in a fill gradient cannot be saved to .ylp".into()
                     }
@@ -2226,7 +2223,7 @@ mod tests {
         let errors = [
             Error::InvalidData("正本が不正".into()),
             Error::Budget("アーカイブの予算超過です".into()),
-            Error::Unwritable(Unwritable::ManualIdColors),
+            Error::Unwritable(Unwritable::GeneratorRampMixing),
             Error::SaveConflict("保存先が外部で変更されています".into()),
             Error::UnsupportedFormat {
                 format: 99,
@@ -2257,9 +2254,9 @@ mod tests {
         assert!(Lang::Ja
             .io_error(&errors[1])
             .contains("アーカイブの予算超過"));
-        assert!(Lang::Ja.io_error(&errors[2]).contains("ID の色"));
+        assert!(Lang::Ja.io_error(&errors[2]).contains("混色"));
         assert!(Lang::En.io_error(&errors[1]).contains("limit exceeded"));
-        assert!(Lang::En.io_error(&errors[2]).contains("Manual ID colors"));
+        assert!(Lang::En.io_error(&errors[2]).contains("Color mixing"));
         // 別の保存が進行中の衝突は、外で変わった衝突と日英どちらでも言い分ける
         assert_eq!(Lang::En.io_error(&errors[8]), "Another save is in progress");
         assert!(Lang::En.io_error(&errors[3]).contains("changed"));

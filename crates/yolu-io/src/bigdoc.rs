@@ -282,7 +282,7 @@ impl CoreDoc {
         let mut head: Vec<NativeField> = Vec::new();
         let version = self.plan.version;
         let size = (skeleton.width(), skeleton.height(), skeleton.tile_size());
-        walk(&self.doc, version, Keep::All, &mut NoSink, |parse, i| {
+        let read = walk(&self.doc, version, Keep::All, &mut NoSink, |parse, i| {
             if load.is_none() {
                 head = parse.head_fields().to_vec();
                 load = Some(CoreLoad::begin(&Fields::of(&head), version, size, budget)?);
@@ -296,7 +296,7 @@ impl CoreDoc {
             Ok(())
         })?;
         load.ok_or_else(|| Error::InvalidData("正本の頭がありません".into()))?
-            .finish(&Fields::of(&head))
+            .finish(&Fields::of(&head), read.fields())
     }
     /// 全部をメモリの正本にする（小さな文書・試験のため。分けない正本で 512 MiB まで。超えれば読まずに断る）。
     pub fn to_native(&self) -> Result<NativeDocument> {
@@ -517,6 +517,8 @@ fn walk(
         step(&mut parse, Some(i))?;
     }
     check(parse.next_layer()?.is_none(), "正本の層の数が合いません")?;
+    // 層の後（手動の ID の色）
+    crate::core_bridge::write_tail(&mut feed, doc, version)?;
     parse.finish()
 }
 /// core へ渡せない項目があれば断る。
@@ -554,11 +556,23 @@ pub(crate) fn split_fields(
     version: i32,
     t: &Thresholds,
 ) -> (Vec<u8>, Vec<Vec<u8>>) {
-    let section = |path: &str| -> u32 {
+    let layer_of = |path: &str| -> Option<u32> {
         path.strip_prefix("layers[")
             .and_then(|r| r.split(']').next())
             .and_then(|n| n.parse().ok())
-            .unwrap_or(0)
+    };
+    // 層より前の値は層 0、層より後（手動の ID の色の `tag`）の値は最後の層に数える（`PlanSink` が、書いた順の「今の層」に数えるのと同じ）
+    let last_layer = fields
+        .iter()
+        .filter_map(|f| layer_of(&f.path))
+        .max()
+        .unwrap_or(0);
+    let section = |path: &str| -> u32 {
+        if path.starts_with("manual_id_colors.") {
+            last_layer
+        } else {
+            layer_of(path).unwrap_or(0)
+        }
     };
     let values: Vec<(u32, u32)> = fields
         .iter()
@@ -637,8 +651,8 @@ impl StoredDoc {
             load.layer(&Fields::of(parse.layer_fields()), i)?;
             parse.drop_layer_values();
         }
-        parse.finish()?;
-        load.finish(&Fields::of(&head))
+        let read = parse.finish()?;
+        load.finish(&Fields::of(&head), read.fields())
     }
     /// 全部をメモリの正本にする（小さな文書・試験。ヘッダーと部分の合計で 512 MiB まで。超えれば読まずに断る）。
     pub fn to_native(&self) -> Result<NativeDocument> {
@@ -678,8 +692,8 @@ impl std::fmt::Debug for DocumentSource {
     }
 }
 impl DocumentSource {
-    /// core の文書（保存・書き置きのための写し）から。正本に書けるかを先に確かめる（進行中のストローク・まだ書けない手動の ID の色・
-    /// 寸法など。`NativeDocument::from_core` と同じ断り）。画素は写さない。
+    /// core の文書（保存・書き置きのための写し）から。正本に書けるかを先に確かめる（進行中のストローク・寸法など。
+    /// `NativeDocument::from_core` と同じ断り）。画素は写さない。
     pub fn from_core(doc: Arc<Document>) -> Result<Self> {
         crate::core_bridge::check_writable(&doc)?;
         Ok(Self::Core(doc))

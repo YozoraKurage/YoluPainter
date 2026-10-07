@@ -1174,7 +1174,7 @@ fn ready_parts(s: &mut AppState) -> Vec<usize> {
 }
 
 #[test]
-fn headless_manual_id_colors_are_one_undo_each_and_saving_them_is_refused_with_a_reason() {
+fn headless_manual_id_colors_are_one_undo_each_and_are_saved_and_come_back_when_reopened() {
     let (mut s, _) = with_model(64);
     let parts = ready_parts(&mut s);
     assert_eq!(parts, vec![0, 1], "A と B の 2 つのメッシュの塊");
@@ -1191,15 +1191,19 @@ fn headless_manual_id_colors_are_one_undo_each_and_saving_them_is_refused_with_a
         rgb: Some(0xff0000),
     })));
     assert_eq!(s.doc.undo_count(), undo + 2);
-    // 保存は理由つきで断られる（黙って落とさない）
+    // 保存できる（黙って落とさない）。開き直すと同じ色が戻り、取り消しの履歴は空
     let dir = temp_dir("save");
     s.apply(Action::SaveProjectAs(dir.join("manual.ylp")));
-    assert!(
-        s.message.contains("手動の ID の色"),
-        "保存を断った理由: {}",
-        s.message
-    );
-    assert!(!dir.join("manual.ylp").exists(), "ファイルは作らない");
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(dir.join("manual.ylp").exists());
+    assert!(!s.modified);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(dir.join("manual.ylp")));
+    assert_eq!(again.doc.id_colors().colors(), s.doc.id_colors().colors());
+    assert_eq!(again.doc.id_colors().binding(), s.doc.id_colors().binding());
+    assert_eq!(again.doc.id_colors().colors().len(), 2);
+    assert!(!again.doc.can_undo() && !again.doc.can_redo());
+    assert!(again.sets.get(0).unwrap().read_only.is_none());
     // 自動に戻す・全部戻す・Undo
     s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
@@ -1218,9 +1222,105 @@ fn headless_manual_id_colors_are_one_undo_each_and_saving_them_is_refused_with_a
     s.apply(Action::Undo);
     s.apply(Action::Undo);
     assert!(s.doc.id_colors().colors().is_empty());
-    // 手動の色が無ければ保存できる
+    // 手動の色が無ければ保存できる（塊を書かない）
     s.apply(Action::SaveProjectAs(dir.join("plain.ylp")));
     assert!(dir.join("plain.ylp").exists(), "{}", s.message);
+    let mut plain = AppState::new(64, 64);
+    plain.apply(Action::OpenProject(dir.join("plain.ylp")));
+    assert!(plain.doc.id_colors().colors().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開き直した手動の ID の色は指紋ごと戻る: 同じモデルを読み込めば合い、別のモデルなら別のモデルのものとして編集を断る（色は捨てず、
+/// その状態で保存し直しても残る）。
+#[test]
+fn headless_manual_id_colors_come_back_with_their_model_fingerprint_and_are_kept_for_another_model()
+{
+    let (mut s, _) = with_model(64);
+    ready_parts(&mut s);
+    for (part, rgb) in [(1, 0x336699), (0, 0xff0000)] {
+        s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+            part,
+            rgb: Some(rgb),
+        })));
+    }
+    let before = s.doc.id_colors().clone();
+    assert_eq!(before.colors().len(), 2);
+    let dir = temp_dir("fingerprint");
+    s.apply(Action::SaveProjectAs(dir.join("manual.ylp")));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    // 開き直す（モデルはファイルに無い）: 色は指紋ごと元のまま
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(dir.join("manual.ylp")));
+    assert_eq!(again.doc.id_colors().binding(), before.binding());
+    assert_eq!(again.doc.id_colors().colors(), before.colors());
+    assert!(!again.doc.can_undo());
+    // 同じモデルなら指紋が合い、別のモデルのものではない
+    again.view3d.set_model(two_parts_model());
+    again.view3d.material = 0;
+    ready_parts(&mut again);
+    assert!(!again.id_colors_foreign());
+    // 別のモデルなら、色は残したまま別のモデルのものとして編集を断る
+    again
+        .view3d
+        .set_model(yolu_app::view3d::model::ViewModel::demo(2));
+    ready_parts(&mut again);
+    assert!(again.id_colors_foreign());
+    assert_eq!(again.doc.id_colors().colors(), before.colors());
+    // その状態で保存し直しても、色は消えない
+    again.modified = true;
+    again.apply(Action::SaveProjectAs(dir.join("kept.ylp")));
+    assert!(
+        again.message.starts_with("保存しました"),
+        "{}",
+        again.message
+    );
+    let mut third = AppState::new(64, 64);
+    third.apply(Action::OpenProject(dir.join("kept.ylp")));
+    assert_eq!(third.doc.id_colors().binding(), before.binding());
+    assert_eq!(third.doc.id_colors().colors(), before.colors());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開いたプロジェクトで手動の ID の色だけを変えても、そのセットは保存で書き直され、色が残る（画素は変わらないので、書き直しの要否を
+/// 画素の変更だけで決めていると、色の変更が保存から漏れる）。
+#[test]
+fn headless_changing_only_the_manual_id_colors_of_an_opened_project_is_saved() {
+    let (mut s, _) = with_model(64);
+    ready_parts(&mut s);
+    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+        part: 1,
+        rgb: Some(0x336699),
+    })));
+    let dir = temp_dir("edit-saved");
+    let path = dir.join("manual.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path.clone()));
+    again.view3d.set_model(two_parts_model());
+    again.view3d.material = 0;
+    ready_parts(&mut again);
+    assert!(!again.modified);
+    // 開いたあとに色だけを変える（画素は変えない）
+    again.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+        part: 0,
+        rgb: Some(0xff0000),
+    })));
+    assert!(again.modified);
+    again.apply(Action::SaveProject);
+    assert!(
+        again.message.starts_with("保存しました"),
+        "{}",
+        again.message
+    );
+    assert_eq!(again.rewritten_sets, 1, "色だけを変えたセットも書き直す");
+    let mut third = AppState::new(64, 64);
+    third.apply(Action::OpenProject(path));
+    assert_eq!(
+        third.doc.id_colors().colors(),
+        &std::collections::BTreeMap::from([(0, 0xff0000), (1, 0x336699)])
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

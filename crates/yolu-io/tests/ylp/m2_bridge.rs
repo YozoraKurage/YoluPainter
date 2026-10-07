@@ -957,45 +957,41 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
 
 // ───────── 断る ─────────
 
+/// C# の書き手が作った見本（全機能入り。手動の ID の色つき）は、core に断られずに読め、手動の ID の色が文書へ戻り、書き戻すと元のバイト列になる。
 #[test]
-fn the_rich_native_document_is_refused_only_for_manual_id_colors_and_still_writes_as_it_was() {
+fn the_rich_native_document_with_manual_id_colors_reads_into_core_and_writes_back_the_same_bytes() {
     let rich = NativeDocument::read(include_bytes!("../fixtures/native-rich-v21.utpaint")).unwrap();
+    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロック・手動の ID の色は core にあるので断らない
     let issues = rich.core_issues();
-    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロックは core にあるので断らない
-    assert!(
-        issues
-            .iter()
-            .any(|i| i.contains("manual_id_colors") && i.contains("手動の ID 色")),
-        "{issues:?}"
-    );
-    let message = rich.to_core().err().unwrap().to_string();
-    assert!(message.contains("coreへの変換を拒否しました"), "{message}");
-    assert!(message.contains("manual_id_colors"), "{message}");
-    for effect in [
-        ".locks",
-        ".filters",
-        ".images",
-        ".gradients",
-        ".anchor",
-        ".mask.filters",
-        ".surface_path",
-        ".canvas_path",
-    ] {
-        assert!(
-            !issues.iter().any(|i| i.contains(effect)),
-            "{effect}: {issues:?}"
-        );
+    assert!(issues.is_empty(), "{issues:?}");
+    let core = rich.to_core().unwrap();
+    // 手動の ID の色は、書いてあった指紋・番号・色のまま戻り、読み込みは取り消しの履歴に残らない
+    let colors = core.id_colors();
+    let count = match rich.field("manual_id_colors.count").unwrap() {
+        NativeValue::Int(n) => *n as usize,
+        other => panic!("{other:?}"),
+    };
+    assert!(count > 0 && colors.colors().len() == count, "{colors:?}");
+    assert!(matches!(
+        rich.field("manual_id_colors.binding"),
+        Some(NativeValue::Text(t)) if t == colors.binding()
+    ));
+    for (i, (part, rgb)) in colors.colors().iter().enumerate() {
+        let at = |leaf: &str| rich.field(&format!("manual_id_colors.colors[{i}].{leaf}"));
+        assert_eq!(at("part"), Some(&NativeValue::Int(*part as i32)));
+        assert_eq!(at("rgb"), Some(&NativeValue::Int(*rgb as i32)));
     }
-    // 断った文書の元の正本はそのまま書ける。層の機能で断る項目はもう無く（効果・パス・ロックは core が持つ）、断るのは文書の手動の ID 色だけ
+    assert!(!core.can_undo() && !core.can_redo());
+    // 書き戻すと元のバイト列（C# の書き手と同じ並び）
+    assert_eq!(
+        NativeDocument::from_core(&core).unwrap().to_bytes(),
+        rich.to_bytes()
+    );
+    // 読んだだけの正本も、そのままのバイト列で書ける
     assert_eq!(
         NativeDocument::read(&rich.to_bytes()).unwrap().to_bytes(),
         rich.to_bytes()
     );
-    assert!(
-        issues.iter().all(|i| !i.starts_with("layers[")),
-        "{issues:?}"
-    );
-    assert_eq!(issues.len(), 1, "{issues:?}");
 }
 
 #[test]
@@ -1481,36 +1477,14 @@ fn an_active_stroke_blocks_saving_a_document_with_layers_of_every_kind() {
     );
 }
 
-/// 手動の ID の色はまだ正本に書けないので、黙って落とさずに保存を断る（文書は変えない）。
+/// 色の窓のドラッグでまとめた手動の ID の色は 1 段の取り消しで、保存すると最後の色が書かれ、開き直すと戻る。まとめた 1 段を戻すと
+/// 手動の色の無い文書に戻り、色の無い文書と同じバイト列で保存できる。やり直すと、また最後の色で書ける。
 #[test]
-fn manual_id_colors_are_refused_instead_of_dropped() {
-    let mut doc = yolu_core::Document::new(16, 16).unwrap();
-    let colors = yolu_core::mesh_maps::IdColorAssignments::new(
-        "0".repeat(64),
-        std::collections::BTreeMap::from([(0usize, 0xff0000u32)]),
-    )
-    .unwrap();
-    doc.set_id_colors(colors, false).unwrap();
-    let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
-    // 画面が理由を言い分けられるよう、種類で返す（壊れたデータでも予算超過でもない）
-    assert!(
-        matches!(
-            err,
-            yolu_io::Error::Unwritable(yolu_io::Unwritable::ManualIdColors)
-        ),
-        "{err:?}"
-    );
-    assert!(err.to_string().contains("ID の色"), "{err}");
-    assert_eq!(doc.id_colors().colors().len(), 1);
-}
-
-/// 色の窓のドラッグでまとめた手動の ID の色も、保存は断る（最後の色を黙って落とさない）。まとめた 1 段を戻すと手動の色の無い文書に
-/// 戻り、保存して開き直せる。やり直すと、また断る。
-#[test]
-fn a_dragged_manual_id_color_is_one_step_and_undoing_it_lets_the_document_save_and_reopen() {
+fn a_dragged_manual_id_color_is_one_step_and_saves_its_last_color() {
     let mut doc = yolu_core::Document::new(16, 16).unwrap();
     doc.add_layer("a").unwrap();
     doc.clear_history().unwrap();
+    let plain = NativeDocument::from_core(&doc).unwrap().to_bytes();
     for rgb in [0x102030u32, 0x405060, 0x708090] {
         let colors = yolu_core::mesh_maps::IdColorAssignments::new(
             "0".repeat(64),
@@ -1521,23 +1495,22 @@ fn a_dragged_manual_id_color_is_one_step_and_undoing_it_lets_the_document_save_a
     }
     doc.end_coalescing();
     assert_eq!(doc.undo_count(), 1);
-    let refused = |doc: &Document| {
-        matches!(
-            NativeDocument::from_core(doc),
-            Err(yolu_io::Error::Unwritable(
-                yolu_io::Unwritable::ManualIdColors
-            ))
-        )
+    let last_color_round_trips = |doc: &Document| {
+        let bytes = NativeDocument::from_core(doc).unwrap().to_bytes();
+        let reopened = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
+        assert_eq!(reopened.id_colors().colors().get(&0), Some(&0x708090));
+        assert_eq!(reopened.id_colors().colors().len(), 1);
+        assert_same_document(doc, &reopened, "ドラッグした文書");
     };
-    assert!(refused(&doc));
+    last_color_round_trips(&doc);
     doc.undo().unwrap();
     let bytes = NativeDocument::from_core(&doc).unwrap().to_bytes();
+    assert_eq!(bytes, plain);
     let reopened = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
     assert!(reopened.id_colors().colors().is_empty());
     assert_same_document(&doc, &reopened, "戻した文書");
     doc.redo().unwrap();
-    assert_eq!(doc.id_colors().colors().get(&0), Some(&0x708090));
-    assert!(refused(&doc));
+    last_color_round_trips(&doc);
 }
 
 /// 層のロック（正本の版 12）は黙って落とさず書き、読み戻せる。個別の 4 種・重ね・親のグループだけに掛けた場合のどれも、

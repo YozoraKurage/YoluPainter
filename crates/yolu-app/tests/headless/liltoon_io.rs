@@ -467,16 +467,15 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn a_read_only_set_says_why_its_look_cannot_be_read() {
-    // 最初のセットの正本を core で扱えない中身（手動の ID の色）にして読むだけで開かせ、そのセットに読めない look.json を持たせる
+    // 最初のセットの正本を core で扱えない中身（反転の調整の層が使わない値 gamma を既定から変えたもの）にして読むだけで開かせ、
+    // そのセットに読めない look.json を持たせる
     let dir = Dir::new("readonly");
     let path = dir.0.join("rich.ylp");
     let base = yolu_io::Project::read(&std::fs::read(fixture("format4.ylp")).unwrap())
         .unwrap()
         .upgraded(yolu_app::project::writer())
         .unwrap();
-    let rich =
-        yolu_io::NativeDocument::read(&std::fs::read(fixture("native-rich-v21.utpaint")).unwrap())
-            .unwrap();
+    let rich = crate::common::core_refused::native_core_cannot_hold();
     let first = base.sets()[0].id.clone();
     std::fs::write(
         &path,

@@ -852,15 +852,35 @@ fn headless_the_received_values_follow_the_setting_and_the_choice() {
     assert_eq!(plain.received_look(&id).unwrap(), None);
 }
 
+/// 手動の ID の色は文書の一部なので、配布用の写しでも残る（モデルの参照などを除いても消えない）。何も除かない写しは、いつもの保存と全エントリが同じ。
+#[test]
+fn headless_manual_id_colors_stay_in_the_distribution_copy() {
+    let dir = TempDir::new("id-colors");
+    let mut s = plain_project(&dir, "Plain.ylp");
+    let colors = yolu_core::mesh_maps::IdColorAssignments::new(
+        "0123456789abcdef".repeat(4),
+        [(0usize, 0x112233u32), (2, 0xffeedd)].into_iter().collect(),
+    )
+    .unwrap();
+    s.doc.set_id_colors(colors.clone(), false).unwrap();
+    s.modified = true;
+    // 除く選びの初めのまま（モデルの参照・メッシュマップなどを除く）でも、色は残る
+    let copy = dir.path("Copy.ylp");
+    write_copy(&mut s, &copy, &[]);
+    let mut opened = AppState::new(32, 32);
+    opened.apply(Action::OpenProject(copy));
+    assert_eq!(opened.doc.id_colors().binding(), colors.binding());
+    assert_eq!(opened.doc.id_colors().colors(), colors.colors());
+    assert!(!opened.doc.can_undo());
+    assert!(opened.sets.get(0).unwrap().read_only.is_none());
+    // 何も除かない写しは、いつもの保存と同じ（色の塊も）
+    assert_copy_matches_plain_save(&mut s, &dir, "keep");
+}
+
 /// 描けるセット 1 つと、core で扱えない中身で読むだけになるセット 1 つ（どちらも PSD の原本つき）の .ylp。返すのは（描けるセット・
 /// 読むだけのセット）の ID。
 fn read_only_style(path: &Path) -> (String, String) {
-    let rich = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../yolu-io/tests/fixtures/native-rich-v21.utpaint"),
-    )
-    .unwrap();
-    let rich = NativeDocument::read(&rich).unwrap();
+    let rich = crate::common::core_refused::native_core_cannot_hold();
     assert!(
         !rich.core_issues().is_empty(),
         "core で扱えない中身がある正本"

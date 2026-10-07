@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod canvas_device;
+pub mod core_refused;
 pub mod fbx;
 pub mod gpu_thread;
 pub mod livelink;

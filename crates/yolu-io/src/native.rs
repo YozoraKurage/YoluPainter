@@ -31,6 +31,8 @@ pub const SEAMS_VERSION: i32 = 32;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`EFFECTS_VERSION`（28）・
 /// `SEAMS_VERSION`（32）で、間の 27・29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
+/// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
+pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
 /// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
@@ -556,7 +558,7 @@ impl<'a> Parse<'a> {
     pub fn finish(mut self) -> Result<NativeDocument> {
         check(self.next == self.count, "正本の層を読み終えていません")?;
         let r = &mut self.r;
-        if self.version >= 19 && !r.at_end()? {
+        if self.version >= MANUAL_ID_COLORS_VERSION && !r.at_end()? {
             r.block("manual_id_colors", |r| {
                 r.blob_checked("tag", 4, |tag| {
                     check(tag == b"YLID", "末尾に未知のデータがあります")

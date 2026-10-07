@@ -710,13 +710,12 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
 #[test]
 fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
-    // format4.ylp の最初のセットの文書を、手動の ID の色を持つ正本（core に無い。ロックは core が持つ）に差し替える。2 つ目の Trim は core が持つ中身だけ
+    // format4.ylp の最初のセットの文書を、core に持てない正本（反転の調整の層が使わない値 gamma を既定から変えたもの。C# の読み手は
+    // 黙って既定に戻すので、core へ渡すと保存で値が変わる）に差し替える。2 つ目の Trim は core が持つ中身だけ
     let dir = TempDir::new("readonly");
     let path = dir.0.join("format4.ylp");
     let base = read_project(&fixture("format4.ylp"));
-    let rich =
-        yolu_io::NativeDocument::read(&std::fs::read(fixture("native-rich-v21.utpaint")).unwrap())
-            .unwrap();
+    let rich = crate::common::core_refused::native_core_cannot_hold();
     let first = base.sets()[0].id.clone();
     std::fs::write(
         &path,
@@ -738,9 +737,9 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         .unwrap()
         .read_only
         .as_deref()
-        .expect("手動の ID の色があるので読むだけ");
+        .expect("core に持てない中身があるので読むだけ");
     assert!(reason.contains("編集に対応していない中身"), "{reason}");
-    assert!(reason.contains("手動"), "{reason}");
+    assert!(reason.contains("adjustment.gamma"), "{reason}");
     assert!(!reason.contains("ロック"), "ロックは core が持つ: {reason}");
     assert!(
         !reason.contains("フィルター"),

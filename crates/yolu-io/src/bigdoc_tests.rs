@@ -166,6 +166,40 @@ fn a_core_document_streams_the_same_bytes_as_from_core() {
     }
 }
 
+/// 層の後の手動の ID の色の `tag`（`Bytes` の値）は最後の層の値として数える。区切りは層の始まりで、その層の値の合計を閾値と比べて決めるので、
+/// 数え方が 2 つの作り方（core の文書から流す・メモリの正本を分ける）で違うと、閾値によって区切りが食い違う（`tag` だけを別の層の始まりと
+/// 見る・最後の層の合計が境目で変わる）。閾値を細かく動かして、どちらも同じバイト列になることを見る。
+#[test]
+fn the_tag_after_the_layers_counts_for_the_last_layer_in_both_ways_of_splitting() {
+    let native = fixture("native-rich-v21.utpaint");
+    let core = native.to_core().unwrap();
+    assert!(!core.id_colors().colors().is_empty());
+    let expected = NativeDocument::from_core(&core).unwrap();
+    let doc = Arc::new(core);
+    let mut splits = std::collections::BTreeSet::new();
+    for part_min in (0..=600).chain([1 << 12, 1 << 14, 1 << 20]) {
+        let t = tiny(1 << 20, part_min);
+        let (made, from_native) = t.scoped(|| {
+            (
+                CoreDoc::new(doc.clone()).unwrap(),
+                native_entries(&expected, "sets/x/"),
+            )
+        });
+        let entries = made.entries("sets/x/");
+        splits.insert(entries.len());
+        assert_eq!(entries.len(), from_native.len(), "part_min {part_min}");
+        for ((n, b), (_, c)) in entries.iter().zip(&from_native) {
+            assert_eq!(
+                b.bytes().unwrap(),
+                c.bytes().unwrap(),
+                "part_min {part_min} {n}"
+            );
+        }
+    }
+    // 閾値によって部分の数が変わるところまで試した
+    assert!(splits.len() > 1, "{splits:?}");
+}
+
 #[test]
 fn streaming_into_core_matches_reading_the_whole_document() {
     for name in FIXTURES {

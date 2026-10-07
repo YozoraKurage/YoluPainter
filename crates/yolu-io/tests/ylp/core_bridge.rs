@@ -88,39 +88,18 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
     }
 }
 #[test]
-fn unsupported_fields_are_reported_and_original_stays_writable() {
-    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロックは、もう断る項目に出ない。
-    // 断るのは core に無い機能（手動ID色）だけ
+fn the_document_with_every_feature_has_nothing_core_refuses_and_stays_writable() {
+    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロック・手動の ID の色は、
+    // どれも core にあるので断る項目に出ない
     let rich = NativeDocument::read(include_bytes!("../fixtures/native-rich-v21.utpaint")).unwrap();
-    let issues = rich.core_issues().join("\n");
-    assert!(issues.contains("manual_id_colors"), "{issues}");
-    for what in [
-        "normal",
-        "locks",
-        "attributes",
-        ".mask.enabled",
-        "channels[",
-        "kind",
-        "parent",
-        "filters",
-        "images",
-        "gradients",
-        "anchor",
-        "surface_path",
-        "canvas_path",
-    ] {
-        assert!(!issues.contains(what), "{what}: {issues}");
-    }
-    assert!(rich.to_core().is_err());
+    let issues = rich.core_issues();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(rich.field("manual_id_colors.count").is_some());
+    assert!(rich.to_core().is_ok());
     assert_eq!(
         rich.to_bytes(),
         include_bytes!("../fixtures/native-rich-v21.utpaint")
     );
-    // 断る理由は層の機能ごとに 1 つ（同じ機能の項目を並べない）
-    let mut sorted = rich.core_issues();
-    sorted.sort();
-    sorted.dedup();
-    assert_eq!(sorted.len(), rich.core_issues().len());
 }
 #[test]
 fn m1_fixture_edits_that_m2_can_hold_convert_now() {
@@ -316,8 +295,18 @@ fn a_snapshot_writes_the_same_native_bytes_as_its_source() {
     .unwrap();
     doc.set_selection(Some(SelectionMask::rectangle(&doc, 0, 0, 9, 10)))
         .unwrap();
-    // 手動の ID の色は、まだ正本に書けない（`Unwritable`）ので、写しが保つこと自体は core の試験で確かめる
     assert_snapshot_writes_the_same_bytes(&doc, "層・マスク・チャンネル・選択範囲");
+    // 手動の ID の色（正本の版 19 の塊）も写しが保ち、同じバイト列に書ける
+    doc.set_id_colors(
+        yolu_core::mesh_maps::IdColorAssignments::new(
+            "ab".repeat(32),
+            std::collections::BTreeMap::from([(0usize, 0xff0000u32), (7, 0x00ff80)]),
+        )
+        .unwrap(),
+        false,
+    )
+    .unwrap();
+    assert_snapshot_writes_the_same_bytes(&doc, "手動の ID の色");
     // Unity 版・Rust 版が書いた正本（マスク・グループ・クリッピング・ユーザーチャンネルなど）を開いたもの
     let mut converted = 0;
     for name in [

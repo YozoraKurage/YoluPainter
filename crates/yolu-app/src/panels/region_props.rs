@@ -463,7 +463,7 @@ pub fn part_position(lang: crate::lang::Lang, at: usize, count: usize) -> String
     )
 }
 
-/// 手動の ID の色（メッシュの塊ごと。文書の状態で、.ylp にはまだ書けない）。
+/// 手動の ID の色（メッシュの塊ごと。文書の状態で、.ylp の正本の版 19 の塊に書く）。
 fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     group_label(ui, rows, lang.pick("部品の手動の色", "Manual part colors"));

@@ -72,15 +72,12 @@ pub enum Error {
 /// まだ .ylp の正本に書けない中身（書けるようになるまで、保存を断る）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unwritable {
-    /// 手動の ID の色（正本の版 19）。
-    ManualIdColors,
     /// 塗りつぶしのグラデーションのランプの混色・混合率曲線（Unity 版と共有の並びに形が無い）。
     GeneratorRampMixing,
 }
 impl fmt::Display for Unwritable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::ManualIdColors => "手動の ID の色はまだ .ylp に書けません",
             Self::GeneratorRampMixing => {
                 "塗りつぶしのグラデーションのランプの混色は .ylp に書けません"
             }

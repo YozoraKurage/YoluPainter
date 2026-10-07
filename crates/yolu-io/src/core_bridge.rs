@@ -2,21 +2,22 @@
 //! core を通して書き戻すとバイト一致する）。範囲は M2 の層（層の種類・入れ子と通過・分離・ラスターマスク・クリッピング・層のロック（版 12）・
 //! チャンネルごとの有効と合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
-//! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
+//! （版 8・10・18）、層の後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, EFFECTS_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PROCEDURAL_VERSION,
+    SEAMS_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
     MAX_ENTRY_BYTES,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
 use yolu_core::generator::{
     self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
 };
+use yolu_core::mesh_maps::IdColorAssignments;
 use yolu_core::paths;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
@@ -144,8 +145,8 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         let head = path.split(['.', '[']).next().unwrap_or(path);
         return match head {
             "magic" | "version" | "id" | "width" | "height" | "tile_size" | "normal"
-            | "user_channel_count" | "user_channels" | "filter_seams" | "layer_count" => None,
-            "manual_id_colors" => Some(("manual_id_colors".into(), "手動の ID 色")),
+            | "user_channel_count" | "user_channels" | "filter_seams" | "layer_count"
+            | "manual_id_colors" => None,
             _ => Some((path.into(), "core に無い項目")),
         };
     };
@@ -242,12 +243,12 @@ impl NativeDocument {
         for i in 0..self.layer_count() {
             load.layer(&f, i)?;
         }
-        load.finish(&f)
+        load.finish(&f, self.fields())
     }
 
     /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
-    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色は断る。値の無い塗りつぶしのチャンネルと
-    /// グループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
+    /// 版 22。履歴は保存しない。手動の ID の色は層の後の塊（版 19）に書く（空なら塊を書かず、版も変わらない）。正本の範囲外の寸法・タイル寸法・層の数・名前と、
+    /// 進行中のストロークは断る。値の無い塗りつぶしのチャンネルとグループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
     pub fn from_core(doc: &Document) -> Result<Self> {
         check_writable(doc)?;
         let mut sink = VecSink(Vec::new());
@@ -357,8 +358,9 @@ impl CoreLoad {
         });
         Ok(())
     }
-    /// 親・保存した ID・ロックを付けて終える（`head` は文書の ID を含む頭の項目）。
-    pub(crate) fn finish(self, head: &Fields<'_>) -> Result<Document> {
+    /// 親・保存した ID・ロックと手動の ID の色を付けて終える（`head` は文書の ID を含む頭の項目、`tail` は読み終えた正本の項目で、
+    /// 層の後の手動の ID の色をここから読む。層ごとに流して読む道は、読み終えた `NativeDocument` の項目を渡す）。
+    pub(crate) fn finish(self, head: &Fields<'_>, tail: &[crate::NativeField]) -> Result<Document> {
         let Self {
             doc,
             ids,
@@ -398,13 +400,47 @@ impl CoreLoad {
                 doc.set_locks_for_load(*id, locks)?;
             }
         }
+        // 手動の ID の色は、結び付けたモデルの指紋が今のモデルと合うかに関わらず、書いてあったとおり文書へ戻す（合わなければ、使う側が
+        // 「別のモデルのもの」として扱う。ここで捨てると、別のモデルを開いて保存したときに色が消える）。履歴は残さない
+        let colors = id_colors_of(tail)?;
+        if !colors.colors().is_empty() {
+            doc.restore_id_colors(colors)?;
+        }
         Ok(doc)
     }
 }
 
+/// 読み終えた正本の項目から、層の後の手動の ID の色（版 19）。塊が無ければ空。塊は項目の並びの最後にある。
+pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssignments> {
+    const BLOCK: &str = "manual_id_colors.";
+    let start = fields
+        .iter()
+        .rposition(|f| !f.path.starts_with(BLOCK))
+        .map_or(0, |i| i + 1);
+    let block = &fields[start..];
+    if block.is_empty() {
+        return Ok(IdColorAssignments::default());
+    }
+    let f = Fields::of(block);
+    let count = f.int("manual_id_colors.count")?;
+    let binding = f.text("manual_id_colors.binding")?.to_owned();
+    let mut colors = BTreeMap::new();
+    for i in 0..count {
+        let p = format!("manual_id_colors.colors[{i}]");
+        let number = |leaf: &str| {
+            let v = f.int(&format!("{p}.{leaf}"))?;
+            u32::try_from(v).map_err(|_| Error::InvalidData(format!("{p}.{leaf} が負です")))
+        };
+        colors.insert(number("part")? as usize, number("rgb")?);
+    }
+    IdColorAssignments::new(binding, colors)
+        .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
+}
+
 /// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の画像の Generator も読み書きできる版）、
 /// 画像の Generator（種類 70）があれば 28、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正
-/// （種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
+/// （種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。手動の ID の色
+/// （版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     if !doc.filter_seams() {
@@ -445,10 +481,6 @@ fn nesting_within_limit(doc: &Document) -> bool {
 /// 書く前の確かめ（`from_core` と、流して書く正本の両方）。
 pub(crate) fn check_writable(doc: &Document) -> Result<()> {
     check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
-    // 手動の ID の色（正本の版 19）はまだ書けない。黙って落とさず、空でなければ断る
-    if !doc.id_colors().colors().is_empty() {
-        return Err(Error::Unwritable(Unwritable::ManualIdColors));
-    }
     check_budget(
         doc.width() <= MAX_DOCUMENT_EDGE && doc.height() <= MAX_DOCUMENT_EDGE,
         "キャンバスの辺の上限は8192です",
@@ -475,6 +507,31 @@ pub(crate) fn write_document(sink: &mut dyn Sink, doc: &Document, version: i32) 
     for (i, layer) in doc.layers().iter().enumerate() {
         sink.layer(i)?;
         write_layer_to(sink, layer, version)?;
+    }
+    write_tail(sink, doc, version)
+}
+/// 層の後（手動の ID の色）。空なら何も書かず、塊の無い今の版のままにする。空でなければ版 19 の末尾の塊 `YLID`（`tag` は `Bytes` の値、
+/// 残りは平の値。版 26 では `tag` が部分の側に入る）。版 21 以上の書き手の版はどれも 19 以上なので、色のために版を上げることは無い。
+/// 色は `IdColorAssignments` が数・番号・色・指紋を検査済みで、番号は狭義の昇順で並ぶ。
+pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
+    let assigned = doc.id_colors();
+    if assigned.colors().is_empty() {
+        return Ok(());
+    }
+    check(
+        version >= MANUAL_ID_COLORS_VERSION,
+        "手動の ID の色は正本の版 19 から書けます",
+    )?;
+    let mut w = Out {
+        sink,
+        mixing: version >= MIXING_VERSION,
+    };
+    w.value(b"YLID")?;
+    w.int(assigned.colors().len() as i32)?;
+    w.text(assigned.binding())?;
+    for (part, rgb) in assigned.colors() {
+        w.int(*part as i32)?;
+        w.int(*rgb as i32)?;
     }
     Ok(())
 }

@@ -18,6 +18,7 @@ mod image_generator;
 mod layer_locks;
 mod look;
 mod m2_bridge;
+mod manual_id_colors;
 mod materials;
 mod nesting_native;
 mod procedural_bridge;

@@ -445,20 +445,50 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
 fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
     let dir = TempDir::new("locked");
     let mut s = session(&dir.root());
-    // .ylp にまだ書けない中身（手動の ID の色）は、黙って落とさず理由を出し、世代を書かない
-    s.doc
-        .set_id_colors(
-            yolu_core::mesh_maps::IdColorAssignments::new(
-                "a".repeat(64),
-                [(0, 0x123456)].into_iter().collect(),
-            )
-            .unwrap(),
-            false,
+    // .ylp にまだ書けない中身（塗りつぶしのグラデーションのランプの混色。画面からは作れず、core の口だけで作れる）は、
+    // 黙って落とさず理由を出し、世代を書かない
+    let fill = s
+        .doc
+        .add_fill_layer(
+            "塗り",
+            &[(
+                yolu_core::Channel::Color,
+                yolu_core::Rgba8::new(1, 2, 3, 255),
+            )],
+            None,
         )
+        .unwrap();
+    let stop = |position: f64, v: u8| yolu_core::generator::ColorStop {
+        position,
+        color: yolu_core::Rgba8::new(v, v, v, 255),
+        midpoint: 0.5,
+    };
+    let opacity = |position: f64| yolu_core::generator::OpacityStop {
+        position,
+        opacity: 1.0,
+        midpoint: 0.5,
+    };
+    let mut gradient =
+        yolu_core::generator::Settings::new(yolu_core::generator::Kind::ShapeGradient);
+    gradient.blend = yolu_core::generator::Blend::Replace;
+    gradient.ramp = Some(
+        yolu_core::generator::Ramp::new(
+            vec![stop(0.0, 0), stop(1.0, 255)],
+            vec![opacity(0.0), opacity(1.0)],
+            None,
+        )
+        .unwrap()
+        .with_mixing(
+            yolu_core::generator::MixMode::Perceptual,
+            yolu_core::generator::LuminanceCorrection::Low,
+        ),
+    );
+    s.doc
+        .set_fill_gradient(fill, yolu_core::Channel::Color, Some(gradient), false)
         .unwrap();
     s.modified = true;
     write_after(&mut s, Instant::now());
-    assert!(s.message.contains("手動の ID の色"), "{}", s.message);
+    assert!(s.message.contains("混色"), "{}", s.message);
     assert_eq!(s.recovery.checkpoints(), 0);
     assert!(s.recovery.is_idle());
     // 層のロックは .ylp に書けるようになったので、ロックのある文書は世代に書ける
@@ -471,6 +501,35 @@ fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
     s.modified = true;
     write_after(&mut s, Instant::now());
     assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+}
+
+/// 手動の ID の色は世代に書かれ、落ちた次の起動で復旧から開くと、色・指紋・並びが同じで、取り消しの履歴は空で戻る。
+#[test]
+fn headless_manual_id_colors_are_written_to_the_generation_and_come_back_from_the_recovery() {
+    let dir = TempDir::new("id-colors");
+    let mut s = session(&dir.root());
+    let colors = yolu_core::mesh_maps::IdColorAssignments::new(
+        "a".repeat(64),
+        [(0, 0x123456), (3, 0xabcdef)].into_iter().collect(),
+    )
+    .unwrap();
+    s.doc.set_id_colors(colors.clone(), false).unwrap();
+    s.modified = true;
+    write_after(&mut s, Instant::now());
+    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    // 置き場の最新の世代の文書にある（保存し直した .ylp の中身と同じ形）
+    let written = newest_doc(&s);
+    assert_eq!(written.id_colors().binding(), colors.binding());
+    assert_eq!(written.id_colors().colors(), colors.colors());
+    assert!(!written.can_undo() && !written.can_redo());
+    crash(s);
+    // 落ちた次の起動: 復旧から開くと同じ色が戻る
+    let mut s2 = session(&dir.root());
+    s2.recovery_apply(RecoveryAction::Open);
+    assert_eq!(s2.project_name, "名称未設定（復旧）");
+    assert_eq!(s2.doc.id_colors().binding(), colors.binding());
+    assert_eq!(s2.doc.id_colors().colors(), colors.colors());
+    assert!(!s2.doc.can_undo(), "復旧は正本を返す。途中の履歴は返さない");
 }
 
 #[test]
@@ -992,12 +1051,7 @@ fn headless_losing_focus_writes_without_waiting_for_the_interval() {
 fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewhere_else() {
     use yolu_io::{MaterialRef, NativeDocument, SaveTarget, SetSpec, WriterInfo};
     let dir = TempDir::new("readonly");
-    let rich = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../yolu-io/tests/fixtures/native-rich-v21.utpaint"),
-    )
-    .unwrap();
-    let rich = NativeDocument::read(&rich).unwrap();
+    let rich = crate::common::core_refused::native_core_cannot_hold();
     assert!(
         !rich.core_issues().is_empty(),
         "core で扱えない中身がある正本"
