@@ -5,11 +5,8 @@ pub mod canvas_device;
 pub mod fbx;
 pub mod gpu_thread;
 pub mod livelink;
-#[path = "../../../yolu-protocol/tests/support/names.rs"]
-pub mod names;
 pub mod shared_gpu;
 pub mod tmp;
-#[path = "../../../yolu-protocol/tests/support/wait.rs"]
 pub mod wait;
 
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};

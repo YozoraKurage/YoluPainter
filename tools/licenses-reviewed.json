@@ -886,19 +886,6 @@
         }
       ]
     },
-    "doctest-file@1.1.1": {
-      "declared": "0BSD",
-      "selected": [
-        "0BSD"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE.txt",
-          "sha256": "00515b2bb13879db00e9483244b1bb80d7af9237c58e4de30af52a761d8d2524"
-        }
-      ]
-    },
     "document-features@0.2.12": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -1815,19 +1802,6 @@
         }
       ]
     },
-    "interprocess@2.4.4": {
-      "declared": "0BSD OR Apache-2.0",
-      "selected": [
-        "Apache-2.0"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-APACHE.txt",
-          "sha256": "814fc616d256859d513d7c1a1f76d5a759a6318971cfdc7f9ac934e1d85f58eb"
-        }
-      ]
-    },
     "itertools@0.15.0": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -2648,19 +2622,6 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "7b4c9a3946dfcea7967582760e963e27799e225dcf20565c8ef55324bb017427"
-        }
-      ]
-    },
-    "recvmsg@1.0.0": {
-      "declared": "0BSD",
-      "selected": [
-        "0BSD"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE.txt",
-          "sha256": "612938d4e581d578f2377fdaa2978ff9b79e2dd978f6b1ea45418af475258bbb"
         }
       ]
     },
@@ -3817,19 +3778,6 @@
         {
           "path": "LICENSE.MIT",
           "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
-        }
-      ]
-    },
-    "widestring@1.2.1": {
-      "declared": "MIT OR Apache-2.0",
-      "selected": [
-        "MIT"
-      ],
-      "blocked": [],
-      "files": [
-        {
-          "path": "LICENSE-MIT",
-          "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
         }
       ]
     },

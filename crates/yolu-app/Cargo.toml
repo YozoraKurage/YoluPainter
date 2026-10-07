@@ -35,7 +35,6 @@ image = { version = "0.25", default-features = false, features = ["png", "tga", 
 png = "0.18"   # MIT OR Apache-2.0（取り込んだ筆先の画像を、名前つきの灰色の PNG で置く。yolu-io が既に使っている版）
 sha2 = "0.10"   # MIT OR Apache-2.0（筆先の画像を内容の SHA-256 で名づける。yolu-io が既に使っている版）
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
-interprocess = "2.4"   # 0BSD OR Apache-2.0（外からの操作の待ち受け）
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶ窓。Windows は OS の窓、Linux は xdg-desktop-portal）
 
 [target.'cfg(target_os = "linux")'.dependencies]

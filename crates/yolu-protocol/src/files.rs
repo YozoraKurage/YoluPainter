@@ -1,6 +1,6 @@
 //! Live Link のファイルの受け渡し: Unity が頼みの JSON を `inbox/` に置き、スタンドアロンが拾う。スタンドアロンが書き出したら返事の
 //! JSON を `outbox/` に置き、Unity が拾う。送るのはファイルの道と小さな値だけ（メッシュ・絵の画素は送らない。スタンドアロンが FBX と
-//! 絵のファイルを自分で読む）。パイプの物（`link`・`message` ほか）とは別のモジュールで、それらには頼らない。
+//! 絵のファイルを自分で読む）。
 //!
 //! - フォルダ（`Folder`）: Windows は `%LOCALAPPDATA%\YoluPainter\LiveLink`、macOS は `~/Library/Application Support/YoluPainter/LiveLink`、
 //!   ほかは `${XDG_DATA_HOME:-~/.local/share}/YoluPainter/LiveLink`（`XDG_DATA_HOME` が絶対の道でなければ既定）。環境変数

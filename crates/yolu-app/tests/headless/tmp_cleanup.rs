@@ -1,9 +1,9 @@
-//! 試験が作る一時の物の後始末（`common::tmp`・`common::names`）の確かめ。試験（のスレッド）が終わると、フォルダ・Live Link の名前のファイルが
-//! 残らない。ここで作るフォルダ・名前は、試験の本体の代わりに別のスレッドを立てて作る（libtest は試験ごとにスレッドを分けるので、
-//! 「スレッドが終わる」が「試験が終わる」）。
+//! 試験が作る一時の物の後始末（`common::tmp`）の確かめ。試験（のスレッド）が終わると、控えたフォルダ（Live Link の受け渡しのフォルダを含む）が
+//! 残らず、控えていない物には触らない。ここで作るフォルダは、試験の本体の代わりに別のスレッドを立てて作る（libtest は試験ごとにスレッドを
+//! 分けるので、「スレッドが終わる」が「試験が終わる」）。
 use std::path::PathBuf;
 
-use crate::common::{names, tmp};
+use crate::common::{livelink::Exchange, tmp};
 
 /// スレッドの中で作ったものを、スレッドが終わったあとで確かめる。
 fn made_in_a_thread<T: Send + 'static>(make: impl FnOnce() -> T + Send + 'static) -> T {
@@ -61,33 +61,24 @@ fn sweep_removes_what_the_thread_registered_right_away() {
 }
 
 #[test]
-fn live_link_names_leave_no_lock_key_or_socket_file_after_the_test() {
-    let (name, files, held) = made_in_a_thread(|| {
-        let name = names::unique_name("ylclean", "files");
-        let server = yolu_protocol::Server::bind(&name, false).expect("待ち受けられる");
-        let dir = yolu_protocol::private::link_dir().unwrap();
-        let files: Vec<PathBuf> = ["lock", "key", "sock"]
-            .iter()
-            .map(|e| dir.join(format!("{name}.{e}")))
-            .collect();
-        let held = files.iter().filter(|f| f.exists()).count();
-        drop(server);
-        (name, files, held)
+fn a_live_link_exchange_folder_is_gone_with_what_was_put_in_it_and_a_neighbour_is_left_alone() {
+    let neighbour =
+        std::env::temp_dir().join(format!("yolu-test-neighbour-{}", std::process::id()));
+    std::fs::create_dir_all(&neighbour).unwrap();
+    let (root, put) = made_in_a_thread(|| {
+        let exchange = Exchange::new("cleanup");
+        exchange.put_bytes("request.json", b"{}");
+        let put = exchange.folder().inbox().join("request.json");
+        assert!(put.is_file(), "試験の間は置いた頼みがある");
+        (exchange.root.clone(), put)
     });
     assert!(
-        held >= 2,
-        "待ち受けている間は、鍵とロックのファイルがある（{name}）"
+        !put.exists() && !root.exists(),
+        "試験が終わったら、受け渡しのフォルダごと消える: {}",
+        root.display()
     );
-    for file in files {
-        assert!(!file.exists(), "試験が終わったら消える: {}", file.display());
-    }
-}
-
-#[test]
-fn live_link_names_do_not_repeat() {
-    let first = names::unique_name("ylclean", "same");
-    let second = names::unique_name("ylclean", "same");
-    assert_ne!(first, second);
+    assert!(neighbour.is_dir(), "控えていないフォルダには触らない");
+    std::fs::remove_dir_all(&neighbour).unwrap();
 }
 
 #[test]

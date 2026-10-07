@@ -43,7 +43,7 @@ cargo test -p yolu-app -- --list | grep layerops             # どの束にあ�
 - **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・窓の貸し出しの数え・覚えた窓の置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
 - **窓（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。窓を持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` は窓ごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵は窓ごとに作り直します。窓を作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
 - `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
-- **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。**Live Link の名前**は `common::names::unique_name(接頭辞, タグ)` で作ると、鍵・ソケット・ロックのファイルも試験の終わりに消えます（ロックのファイルは製品が消さないため）。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
+- **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。Live Link の受け渡しのフォルダは `common::livelink::Exchange::new(タグ)` が `common::tmp::test_dir` の下に作るので、置いた頼み・返事ごと試験の終わりに消えます。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
 - 「書き直さない」を更新時刻で確かめるときは、`common::tmp::backdate(&path)` で更新時刻を少し前にしてから比べます（時刻の粒度より早い書き直しを見逃さず、`sleep` を待たない）。
 - 試験が自分の実行ファイルを子として起こすとき（`--exact` に試験名を渡す形）は、束の中では名前にモジュールの道筋（`livelink::child_unity`）が付きます。`module_path!()` から作ってください。
 
@@ -100,11 +100,11 @@ CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査�
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
 
-core・io・protocol・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-ops` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+core・io・protocol・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、アプリの代わりの MCP の受け口（`yolu_mcp::http`）へ 127.0.0.1 の HTTP でつなぐ試験を含みます）。`--package yolu-protocol --package yolu-ops` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、画面の無いクレートだけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
 
 Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 
-Wine は DACL（Live Link の鍵・名前付きパイプ・共有メモリのファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。別のユーザーとして開けないことを確かめる試験（`another_user_can_neither_connect_nor_read_the_files`）は、Linux で `sudo -n -u nobody` が使えるときだけ走ります。同じく、つないだ先がなりすませない（パイプを匿名の段で開く）ことを調べる試験（`windows_pipe::the_server_cannot_impersonate_the_bridge_after_reading`）も、Wine はなりすましの段を保存しないので呼び出しが通るまでで、中身は本物の Windows で確かめます。
+Wine は DACL（Live Link の受け渡しのフォルダとファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。
 
 ## 配布用の許諾全文
 
