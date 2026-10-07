@@ -218,6 +218,8 @@ pub enum NoteAction {
         opacities: usize,
         max_diff: u8,
     },
+    /// テキストレイヤー。画素はテキストの値から描いた結果のままで、テキストの値は PSD に残らない（PSD のテキストレイヤーは書かない）。
+    BakedText,
 }
 
 /// グラデーションマップを停止点へ展開した理由（PSD のグラデーションに形が無いもののうち、使っていたもの）。
@@ -306,6 +308,9 @@ impl ExportNote {
                     "調整「{name}」のグラデーションマップの{what}を、色 {colors} 個・不透明度 {opacities} 個の停止点に展開しました（合成の最大の差 {max_diff}）"
                 )
             }
+            NoteAction::BakedText => {
+                format!("テキストレイヤー「{name}」は画素のレイヤーとして書きました。テキストの値は PSD に残りません")
+            }
         }
     }
 }
@@ -329,6 +334,8 @@ pub(super) enum Need {
     Round(Box<Rounding>),
     /// 焼いても丸めても書けない（断る）。
     Hard(Refusal),
+    /// テキストレイヤー（Color のチャンネルの画素はテキストの値から描いた結果）。
+    Text,
 }
 impl Need {
     /// そのまま書く（焼かない・丸めない・落とさない）ときに断る理由。
@@ -350,6 +357,7 @@ impl Need {
             Need::Hard(Refusal::GradientMapCurveStops) => Refusal::GradientMapCurve,
             Need::Hard(Refusal::GradientMapMixingStops) => Refusal::GradientMapMixing,
             Need::Hard(r) => r.clone(),
+            Need::Text => Refusal::Text,
         }
     }
     /// 焼き込みの書き出しが断る理由。`Hard` は計画の `blockers` にある理由そのまま（展開できなかった理由を言う）。ほかは `refusal`。
@@ -919,6 +927,9 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     if l.path().is_some_and(|p| p.channels().contains(&c)) {
         out.push(Need::Path)
     }
+    if c == Channel::Color && l.text().is_some() {
+        out.push(Need::Text)
+    }
     if l.anchor().is_some() {
         out.push(Need::Anchor)
     }
@@ -1139,6 +1150,7 @@ pub fn plan_export(
                     Need::DroppedMaskFilters(v) => NoteAction::DroppedMaskFilters(v),
                     Need::Anchor => NoteAction::DroppedAnchor,
                     Need::MaskAnchor => NoteAction::DroppedMaskAnchor,
+                    Need::Text => NoteAction::BakedText,
                     Need::Round(r) => {
                         rounded.push((plan.notes.len(), l.id(), (*r).clone(), shown_in(d, l, c)));
                         match r.stops {

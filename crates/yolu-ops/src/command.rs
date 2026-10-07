@@ -247,6 +247,8 @@ pub enum NewLayerKind {
     Group,
     /// An adjustment layer (give `adjustment`).
     Adjustment,
+    /// A text layer whose Color pixels are drawn from editable text (give `text`).
+    Text,
 }
 
 /// An effect kind with parameter values (see effect.list_kinds). Omitted parameters take their defaults.
@@ -280,6 +282,66 @@ pub struct LayerAddArgs {
     /// For an adjustment layer: channels it applies to. Default: every channel the adjustment can be used on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channels: Vec<String>,
+    /// For a text layer: the text values. Omitted values take their defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextSpec>,
+}
+
+/// Horizontal alignment of text lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlignName {
+    Left,
+    Center,
+    Right,
+}
+
+/// Values of a text layer. In layer.add omitted values take their defaults; in layer.set they stay as they are.
+/// Coordinates are document pixels with the origin at the bottom left and y going up.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextSpec {
+    /// The text. Lines are separated by "\n". Up to 4096 bytes of UTF-8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// A font bundled with the app: "biz-udpgothic" (default) or "biz-udpgothic-bold" (drawn only by the running app), or an installed
+    /// font by PostScript name or family name (a family name picks its upright style closest to regular). Not together with `font_file`.
+    /// Without `font` and `font_file`, layer.set finds the layer's own font again; when only a font with other contents is found, the text
+    /// is redrawn with it and the reply's `notes` say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Path of a font file (.ttf, .otf, .ttc). The .ylp keeps only the path, the file's SHA-256 and the font's names, not the font itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_file: Option<String>,
+    /// Font number inside a collection (.ttc). Default 0. Only with `font_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_index: Option<u32>,
+    /// Size in pixels (one em), 1..=4096. Default 48.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    /// "#rrggbb" or "#rrggbbaa"; alpha is the text opacity. Default black.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Line advance as a multiple of the size, 0.1..=10. Default 1.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
+    /// Extra advance after each character as a multiple of the size, -1..=10. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<f64>,
+    /// Default left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<TextAlignName>,
+    /// The anchor point: the top of the first line. Lines go down from it. Default: the top-left corner of the canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    /// Rotation around the anchor point in degrees, counterclockwise, -360..=360. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    /// Wrap width in pixels to the right of the anchor point; 0 does not wrap. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_width: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -363,6 +425,9 @@ pub struct LayerSetArgs {
     /// Fill layer point gradients: channel name -> gradient (replaces the whole gradient of that channel, and its image or shape gradient), or null to remove it. Not on Normal.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub points: BTreeMap<String, Option<PointGradientSpec>>,
+    /// Text layer: new text values. The listed values are changed and the layer is redrawn; the others stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextSpec>,
 }
 
 /// A point gradient on a fill layer channel: a colour at each point, blended smoothly between them (weight 1 / (d² + s²), s = spread × the

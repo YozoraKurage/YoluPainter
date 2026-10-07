@@ -51,10 +51,10 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `doc.open` | `path`、`confirm` | `doc` | 置き換え（開いていた文書の保存していない変更を捨てるとき） |
 | `set.info` | `set` | `set` | 読む |
 | `layer.get` | `layer` | `layer` | 読む |
-| `layer.add` | `kind`（paint・fill・group・adjustment）、`name`、`above`、`fill`、`adjustment`、`channels` | `edited` | 編集 |
+| `layer.add` | `kind`（paint・fill・group・adjustment・text）、`name`、`above`、`fill`、`adjustment`、`channels`、`text` | `edited` | 編集 |
 | `layer.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `layer.move` | `layer`、`parent`、`to_root`、`index` | `edited` | 編集 |
-| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment` | `edited` | 編集（全部で 1 段） |
+| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`text` | `edited` | 編集（全部で 1 段） |
 | `mask.add` | `layer` | `edited` | 編集 |
 | `mask.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `mask.set` | `layer`、`enabled`、`inverted`、`density` | `edited` | 編集 |

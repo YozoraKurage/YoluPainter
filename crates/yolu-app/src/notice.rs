@@ -151,10 +151,12 @@ pub enum Source {
     Display,
     /// アクション（操作の記録と再生）。
     Action,
+    /// テキストツール・テキストレイヤー。
+    Text,
 }
 
 impl Source {
-    pub const ALL: [Source; 37] = [
+    pub const ALL: [Source; 38] = [
         Source::Edit,
         Source::Save,
         Source::Open,
@@ -192,6 +194,7 @@ impl Source {
         Source::Ops,
         Source::Display,
         Source::Action,
+        Source::Text,
     ];
 
     /// 画面の名前（ログの窓の列）。
@@ -234,6 +237,7 @@ impl Source {
             Source::Ops => lang.pick("外からの操作", "External Commands"),
             Source::Display => lang.pick("表示", "Display"),
             Source::Action => lang.pick("アクション", "Actions"),
+            Source::Text => lang.pick("テキスト", "Text"),
         }
     }
 
@@ -277,6 +281,7 @@ impl Source {
             Source::Ops => "ops",
             Source::Display => "display",
             Source::Action => "action",
+            Source::Text => "text",
         }
     }
 }

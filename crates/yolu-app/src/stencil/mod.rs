@@ -1,6 +1,6 @@
 //! ステンシル（Substance Painter のステンシル。Unity 版の `TexturePaintWindow.Stencil` と同じ振る舞い）: PNG の画像を 2D のキャンバスと
 //! 3D のビューの画面に半透明で重ね、ブラシはその上から塗る。画面に貼り付いている（カメラを回しても・キャンバスを動かしても画面の同じ所に
-//! ある）。置き場は表示域に対する割合（中心）・表示域の高さに対する大きさ・画面の上の角度で、T を押したままのドラッグで変える（左 = 回す
+//! ある）。置き場は表示域に対する割合（中心）・表示域の高さに対する大きさ・画面の上の角度で、Y を押したままのドラッグで変える（左 = 回す
 //! （Shift で 15° 刻み）、中か Ctrl+左 = 動かす、右か Alt+左 = 大きさ）。N を押しているあいだは効かない。
 //!
 //! 塗る値は core の `BrushStencil`: 2D はキャンバスの画素の中心を画面へ写し、3D は面のテクセルの点をカメラで画面へ写して（core の
@@ -32,8 +32,8 @@ pub use frame::{
 pub use input::{handle_event, settle, update_keys, DragKind, StencilDrag};
 pub use overlay::draw as draw_overlay;
 
-/// T を押している・動かしているあいだのポインタ（大きさは斜めの矢印、ほかは動かす形）。画像が無ければ替えない（Unity 版は重ね表示を出す
-/// 画像があるときだけポインタの形を替える。T を押しても何も起きない・ブラシのカーソルを隠さない）。
+/// Y を押している・動かしているあいだのポインタ（大きさは斜めの矢印、ほかは動かす形）。画像が無ければ替えない（Unity 版は重ね表示を出す
+/// 画像があるときだけポインタの形を替える。Y を押しても何も起きない・ブラシのカーソルを隠さない）。
 pub fn cursor_icon(st: &StencilState) -> Option<egui::CursorIcon> {
     if !st.handling() || st.image.is_none() {
         return None;
@@ -279,7 +279,7 @@ pub struct StencilState {
     pub size: f32,
     /// 画面の上の角度（度、時計回りが正、(-180, 180]）。
     pub angle: f32,
-    /// T を押している。
+    /// Y を押している。
     pub key_held: bool,
     /// N を押していて、ステンシルを使わない。
     pub ignore_held: bool,
@@ -328,12 +328,12 @@ impl StencilState {
         self.image.is_some() && !self.ignore_held
     }
 
-    /// T を押しているか、ステンシルを動かしているあいだ（ストロークを始めない。ブラシのカーソルを隠すのは、画像があるとき: `cursor_icon`）。
+    /// Y を押しているか、ステンシルを動かしているあいだ（ストロークを始めない。ブラシのカーソルを隠すのは、画像があるとき: `cursor_icon`）。
     pub fn handling(&self) -> bool {
         self.key_held || self.drag.is_some()
     }
 
-    /// 重ね表示を出すか: 画像があり、N を押していない（T を押しているあいだは出す）。
+    /// 重ね表示を出すか: 画像があり、N を押していない（Y を押しているあいだは出す）。
     pub fn shown(&self) -> bool {
         self.image.is_some() && (!self.ignore_held || self.handling())
     }

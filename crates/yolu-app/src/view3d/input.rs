@@ -773,7 +773,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
 
     for event in &events {
-        // T を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。ポーズのモードでは描かない）
+        // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。ポーズのモードでは描かない）
         let over = match event {
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
             _ => false,

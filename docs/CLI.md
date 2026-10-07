@@ -140,10 +140,10 @@ yolupainter-cli run-action "アクション 1.json" --file work.ylp --save
 | `doc.open` | `path`・`confirm` | 置き換え（開いている文書の保存していない変更を捨てるとき） |
 | `set.info` | `set` | 読む |
 | `layer.get` | `layer` | 読む |
-| `layer.add` | `kind`（paint・fill・group・adjustment）・`name`・`above`・`fill`・`adjustment`・`channels` | 編集 |
+| `layer.add` | `kind`（paint・fill・group・adjustment・text）・`name`・`above`・`fill`・`adjustment`・`channels`・`text` | 編集 |
 | `layer.delete` | `layer`・`confirm` | 壊す |
 | `layer.move` | `layer`・`parent`・`to_root`・`index` | 編集 |
-| `layer.set` | `layer`・`name`・`visible`・`opacity`・`blend_mode`・`clipping`・`locks`・`channels`・`fill`・`adjustment`・`points`（塗りつぶしの点のグラデーション。チャンネル → `space`・`spread`・`points`、`null` で外す） | 編集 |
+| `layer.set` | `layer`・`name`・`visible`・`opacity`・`blend_mode`・`clipping`・`locks`・`channels`・`fill`・`adjustment`・`points`（塗りつぶしの点のグラデーション。チャンネル → `space`・`spread`・`points`、`null` で外す）・`text` | 編集 |
 | `mask.add` | `layer` | 編集 |
 | `mask.delete` | `layer`・`confirm` | 壊す |
 | `mask.set` | `layer`・`enabled`・`inverted`・`density` | 編集 |

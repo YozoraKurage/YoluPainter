@@ -1089,6 +1089,10 @@ impl AppState {
 
     /// スライダーのドラッグを終える（まとめていた変更を 1 回の Undo にする）。
     pub fn m2_end_drag(&mut self) {
+        // 打っている文字のまとめ（打った分を 1 回の取り消し）は、打ち終わりで終える
+        if self.text.editing.is_some() {
+            return;
+        }
         self.doc.end_coalescing();
     }
 

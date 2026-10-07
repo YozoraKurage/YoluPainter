@@ -1029,6 +1029,29 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "見た目の詰め合わせの成分" => "Look packed texture component",
         "見た目の画像の ID" => "Look image ID",
         "見た目のキーワード" => "Look keyword",
+        "テキストを塗る面は空であること" => "The text surface must be empty",
+        "フォントのファイルを読めない" => "Cannot read the font file",
+        "フォントに輪郭が無い" => "The font has no outlines",
+        "同梱のフォントの名前" => "Bundled font name",
+        "フォントのファイルの道" => "Font file path",
+        "フォントの名前" => "Font name",
+        "文の長さ" => "Text length",
+        "文の制御文字" => "Control characters in the text",
+        "文字のサイズ" => "Text size",
+        "行間" => "Line spacing",
+        "字間" => "Tracking",
+        "文字の位置" => "Text position",
+        "文字の回転" => "Text rotation",
+        "折り返しの幅" => "Wrap width",
+        "テキストレイヤーではない" => "Not a text layer",
+        "テキストレイヤーには手で描けない" => "Cannot paint by hand on a text layer",
+        "テキストレイヤーにはパスを付けられない" => "A text layer cannot have a path",
+        "テキストレイヤーの Color は無効にできない" => "Cannot disable Color on a text layer",
+        "テキストの値を付けられるのはパスとテキストの無いラスターのレイヤーだけ" => {
+            "Text needs a raster layer without a path or text"
+        }
+        "テキストレイヤーの Color が無い" => "The text layer has no Color",
+        "まとめるテキストの段が無い" => "No text step to merge into",
         _ => return None,
     })
 }

@@ -208,6 +208,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 transform_entry(l, Xform::Rotate90 { clockwise: false }, free),
                 tool_entry(Tool::Eyedropper),
                 tool_entry(Tool::Path),
+                tool_entry(Tool::Text),
                 Entry::Separator,
                 Entry::item(
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -583,6 +584,15 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             ));
         }
         v.push(entry);
+    }
+    if layer.is_some_and(|l| l.text().is_some()) {
+        v.push(
+            Entry::item(
+                lang.pick("テキストをラスタライズ", "Rasterize Text"),
+                Action::Text(crate::textlayer::TextAction::Rasterize(id)),
+            )
+            .enabled(free),
+        );
     }
     // アセットの棚へ（層のまとまり・マスク）
     v.push(

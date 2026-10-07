@@ -99,16 +99,18 @@ pub enum CanvasKind {
     Gradient,
     Path,
     Selection,
+    Text,
 }
 
 impl CanvasKind {
     /// 全部（Esc などで聞く順。Esc は、ストロークと表示の回転より先に `cancel_first` の道具、あとに残りを聞く）。
-    pub const ALL: [CanvasKind; 5] = [
+    pub const ALL: [CanvasKind; 6] = [
         CanvasKind::Drafting,
         CanvasKind::Transform,
         CanvasKind::Path,
         CanvasKind::Gradient,
         CanvasKind::Selection,
+        CanvasKind::Text,
     ];
 
     pub fn handler(self) -> &'static dyn CanvasTool {
@@ -118,6 +120,7 @@ impl CanvasKind {
             CanvasKind::Gradient => &GradientInput,
             CanvasKind::Path => &PathInput,
             CanvasKind::Selection => &SelectionInput,
+            CanvasKind::Text => &TextInput,
         }
     }
 }
@@ -139,6 +142,12 @@ impl CanvasTool for TransformInput {
         source: StrokeSource,
         ctx: &InputCtx,
     ) {
+        // テキストレイヤーのダブルクリックは、テキストツールで打ち直す（離したときに替える）
+        if app.tool == crate::state::Tool::Move
+            && crate::textlayer::canvas::move_press(app, view, at, source, ctx.now)
+        {
+            return;
+        }
         crate::transform::canvas::press(app, view, at, source, ctx.modifiers);
     }
     fn moved(
@@ -159,6 +168,9 @@ impl CanvasTool for TransformInput {
         source: StrokeSource,
         ctx: &InputCtx,
     ) {
+        if crate::textlayer::canvas::move_release(app, source) {
+            return;
+        }
         crate::transform::canvas::release(app, view, at, source, ctx.modifiers.shift);
     }
     fn pen(
@@ -180,16 +192,25 @@ impl CanvasTool for TransformInput {
             .drag
             .as_ref()
             .is_some_and(|d| same_source(d.source, source))
+            || app
+                .text
+                .move_press
+                .as_ref()
+                .is_some_and(|(_, _, s)| same_source(*s, source))
     }
     fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
+        // ダブルクリックの押しは、離したのを受け取れなければ打ち直さない
+        app.text.move_press = None;
         // 離した位置が分からないので、最後の位置で確定する
         crate::transform::canvas::commit(app);
     }
     fn cancel(&self, app: &mut AppState, _ctx: &InputCtx) -> bool {
-        crate::transform::canvas::cancel(app)
+        let double_click = app.text.move_press.take().is_some();
+        crate::transform::canvas::cancel(app) || double_click
     }
     fn focus_lost(&self, app: &mut AppState) {
         // 離したのを受け取れないので、何も変えずにやめる
+        app.text.move_press = None;
         app.transform_cancel_drag();
     }
     fn key(&self, app: &mut AppState, key: Key, _modifiers: Modifiers) -> bool {
@@ -520,6 +541,73 @@ impl CanvasTool for SelectionInput {
     }
 }
 
+// ───────── 文字 ─────────
+
+struct TextInput;
+
+impl CanvasTool for TextInput {
+    fn press(
+        &self,
+        app: &mut AppState,
+        view: &CanvasView,
+        at: Pos2,
+        source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+        crate::textlayer::canvas::press(app, view, at, source);
+    }
+    fn moved(
+        &self,
+        _app: &mut AppState,
+        _view: &CanvasView,
+        _at: Pos2,
+        _source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+    }
+    fn release(
+        &self,
+        app: &mut AppState,
+        _view: &CanvasView,
+        _at: Pos2,
+        source: StrokeSource,
+        _ctx: &InputCtx,
+    ) {
+        crate::textlayer::canvas::release(app, source);
+    }
+    fn pen(
+        &self,
+        app: &mut AppState,
+        view: &CanvasView,
+        at: Pos2,
+        _id: u32,
+        contact: bool,
+        _ctx: &InputCtx,
+    ) {
+        if contact && app.text.press.is_none() {
+            crate::textlayer::canvas::press(app, view, at, StrokeSource::Mouse);
+        } else if !contact {
+            crate::textlayer::canvas::release(app, StrokeSource::Mouse);
+        }
+    }
+    fn pen_active(&self, app: &AppState, _id: u32) -> bool {
+        app.text.press.is_some()
+    }
+    fn dragging(&self, app: &AppState, source: Option<StrokeSource>) -> bool {
+        crate::textlayer::canvas::dragging(app, source)
+    }
+    fn cancel(&self, app: &mut AppState, _ctx: &InputCtx) -> bool {
+        // 押しの途中だけ（打っている文字の Esc は入力欄が受けて、打ち終わる）
+        app.text.press.take().is_some()
+    }
+    fn cancel_first(&self) -> bool {
+        false
+    }
+    fn focus_lost(&self, app: &mut AppState) {
+        app.text.press = None;
+    }
+}
+
 // ───────── 3D ビューの面 ─────────
 
 /// 3D ビューで面を押したときの行き先。
@@ -550,6 +638,8 @@ pub enum Cursor {
     Transform,
     /// 点の上は掴む手、曲線の上は足す形（パス）。
     Path,
+    /// 文字を打つ形（文字）。
+    Text,
 }
 
 impl Cursor {
@@ -568,6 +658,7 @@ impl Cursor {
                 Some(p) => crate::pathtool::canvas::cursor_icon(app, view, p),
                 None => CursorIcon::Crosshair,
             }),
+            Cursor::Text => Some(CursorIcon::Text),
         }
     }
 }

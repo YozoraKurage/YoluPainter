@@ -9,6 +9,7 @@ mod core_bridge;
 pub use core_bridge::{MAX_DOCUMENT_EDGE, MAX_DOCUMENT_LAYERS};
 mod distribution;
 pub mod export;
+pub mod fonts;
 mod generation;
 pub mod library;
 pub mod livelink;
@@ -32,7 +33,8 @@ pub use generation::{
 pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, BAKE_PRIORITY_VERSION,
     EFFECTS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
-    PROCEDURAL_VERSION, SEAMS_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    PROCEDURAL_VERSION, SEAMS_VERSION, SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 pub use package::{
     Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,

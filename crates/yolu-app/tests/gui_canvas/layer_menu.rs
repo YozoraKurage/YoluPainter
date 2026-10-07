@@ -1551,7 +1551,8 @@ fn swatch_rects(h: &Harness<'_, YoluApp>, lang: Lang) -> [Rect; 4] {
 #[test]
 fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tools() {
     use yolu_app::ui::theme::TOOL_STRIP_WIDTH;
-    for (width, height) in [(1280.0, 800.0), (960.0, 640.0)] {
+    // 1000 はツールが帯を埋めない高さ（ツールが増えて、800 では帯がほぼ埋まる）
+    for (width, height) in [(1280.0, 1000.0), (1280.0, 800.0), (960.0, 640.0)] {
         for lang in Lang::ALL {
             let mut h = app(width, height, 64);
             h.state_mut().state.lang = lang;
@@ -1579,10 +1580,10 @@ fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tool
                 last.bottom() <= top_of_colors,
                 "{lang:?}: 最後のツールと色が重ならない {last:?} {rects:?}"
             );
-            if height > 700.0 {
+            if height > 900.0 {
                 assert!(
                     top_of_colors - last.bottom() > 20.0,
-                    "高い窓では色は帯の下の端に付く（ツールの下に寄らない）"
+                    "高い窓では色は帯の下の端に付く（ツールの下に寄らない）: 高さ {height} 最後のツール {last:?} 色の上 {top_of_colors}"
                 );
             }
             // どのツールのボタンとも重ならない

@@ -634,22 +634,22 @@ fn review_auto_depth_pan_tracks_the_surface_after_wheel_zoom() {
 
 #[test]
 fn review_frame_shortcut_preserves_camera_during_stencil_placement() {
-    for release_t in [false, true] {
+    for release_y in [false, true] {
         let mut h = harness(Preferences::default());
         h.state_mut()
             .app
             .stencil
             .set_image_rgba("Test stencil", 2, 2, &[255; 16])
             .unwrap();
-        key(&mut h, Key::T, true, Modifiers::NONE);
+        key(&mut h, Key::Y, true, Modifiers::NONE);
         let at = pos2(350.0, 220.0);
         mouse(&mut h, at, PointerButton::Middle, true, Modifiers::NONE);
         h.event(Event::PointerMoved(at + vec2(30.0, 20.0)));
         h.step();
         assert!(h.state().app.stencil.drag.is_some());
         assert!(h.state().app.view3d.input.nav.is_none());
-        if release_t {
-            key(&mut h, Key::T, false, Modifiers::NONE);
+        if release_y {
+            key(&mut h, Key::Y, false, Modifiers::NONE);
         }
         let before = camera(&h);
         key(&mut h, Key::Period, true, Modifiers::NONE);
@@ -664,7 +664,7 @@ fn review_frame_shortcut_preserves_camera_during_stencil_placement() {
             false,
             Modifiers::NONE,
         );
-        key(&mut h, Key::T, false, Modifiers::NONE);
+        key(&mut h, Key::Y, false, Modifiers::NONE);
         assert!(!h.state().app.stencil.handling());
         key(&mut h, Key::Period, true, Modifiers::NONE);
         assert_ne!(camera(&h), before, "操作後は再びフレームできる");

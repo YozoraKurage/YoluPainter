@@ -30,3 +30,4 @@ mod rejection;
 mod saved_selections;
 mod seams_bridge;
 mod selection;
+mod text_bridge;

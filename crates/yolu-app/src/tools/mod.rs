@@ -13,7 +13,7 @@ use crate::lang::Lang;
 use crate::panels::{brushes, path_props, region_props};
 use crate::state::{AppState, Tool};
 use crate::ui::widgets::Rows;
-use crate::{drafting, eyedrop, gradient, selection, transform};
+use crate::{drafting, eyedrop, gradient, selection, textlayer, transform};
 
 /// サブツールの一覧の種類（左のドックのサブツールの上の部分に何を出すか）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,7 +177,7 @@ impl ToolDef {
 }
 
 /// 全部の道具（`Tool::ALL` の並び）。
-pub static TOOLS: [ToolDef; 18] = [
+pub static TOOLS: [ToolDef; 19] = [
     def(Tool::Brush, "brush", "ブラシ", "Brush", "B")
         .paints()
         .sized()
@@ -324,6 +324,11 @@ pub static TOOLS: [ToolDef; 18] = [
         .cursor(Cursor::Path)
         .sub(SubTools::Single)
         .ui(path_props::body, path_props::options),
+    def(Tool::Text, "text", "テキスト", "Text", "T")
+        .canvas(CanvasKind::Text)
+        .cursor(Cursor::Text)
+        .sub(SubTools::Single)
+        .ui(textlayer::props::props, textlayer::props::options),
 ];
 
 impl Tool {

@@ -132,8 +132,8 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<LayerAddArgs, Edited>(
             "layer.add", "edited", false, Safe, false,
-            ("レイヤーを追加", "ペイント・塗りつぶし・グループ・調整のレイヤーを追加する。1 回の取り消しで戻る。"),
-            ("Add a layer", "Add a paint, fill, group or adjustment layer. One undo step."),
+            ("レイヤーを追加", "ペイント・塗りつぶし・グループ・調整・テキストレイヤーを追加する。1 回の取り消しで戻る。"),
+            ("Add a layer", "Add a paint, fill, group, adjustment or text layer. One undo step."),
         ),
         spec::<LayerDeleteArgs, Edited>(
             "layer.delete", "edited", false, Always, true,
@@ -147,8 +147,8 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<LayerSetArgs, Edited>(
             "layer.set", "edited", false, Safe, true,
-            ("レイヤーを変える", "名前・表示・不透明度・合成モード・クリッピング・ロック・チャンネルの有効・塗りつぶしの値・調整の値を変える。まとめて 1 回の取り消しで戻る。"),
-            ("Change a layer", "Change name, visibility, opacity, blend mode, clipping, locks, enabled channels, fill values or adjustment values. All of it is one undo step."),
+            ("レイヤーを変える", "名前・表示・不透明度・合成モード・クリッピング・ロック・チャンネルの有効・塗りつぶしの値・調整の値・文字の値を変える。まとめて 1 回の取り消しで戻る。"),
+            ("Change a layer", "Change name, visibility, opacity, blend mode, clipping, locks, enabled channels, fill values, adjustment values or text values. All of it is one undo step."),
         ),
         spec::<MaskAddArgs, Edited>(
             "mask.add", "edited", false, Safe, false,

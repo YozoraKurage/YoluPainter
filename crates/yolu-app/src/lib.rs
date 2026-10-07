@@ -72,6 +72,7 @@ pub mod shortcuts;
 pub mod state;
 pub mod stencil;
 pub mod subtool;
+pub mod textlayer;
 pub mod titlebar;
 pub mod toast;
 pub mod tools;

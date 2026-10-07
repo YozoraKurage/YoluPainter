@@ -25,7 +25,8 @@ pub enum MergeMethod {
 pub struct LayerMergeReport {
     pub result_id: LayerId,
     pub method: MergeMethod,
-    /// C# MergeNotes のビット（1: フィルター・Generator を画素へ焼いた、2: パスを画素にした、4: 隠した子を除去、8: 無効チャンネルを除去）。
+    /// C# MergeNotes のビット（1: フィルター・Generator を画素へ焼いた、2: パスを画素にした、4: 隠した子を除去、8: 無効チャンネルを除去）と、
+    /// Rust だけのビット 16（テキストレイヤーの値を外して画素にした）。
     pub notes: u8,
     pub compared_pixels: u64,
     pub changed_pixels: u64,
@@ -139,6 +140,9 @@ fn effect_notes(l: &Layer) -> u8 {
     }
     if l.has_paths() {
         notes |= 2;
+    }
+    if l.text.is_some() {
+        notes |= 16;
     }
     notes
 }
@@ -458,6 +462,9 @@ impl Document {
         }
         if upper.has_paths() || lower.has_paths() {
             notes |= 2;
+        }
+        if upper.text.is_some() || lower.text.is_some() {
+            notes |= 16;
         }
         let mut budget = 0;
         let mut output_tiles: BTreeMap<Channel, BTreeSet<TileCoord>> = BTreeMap::new();

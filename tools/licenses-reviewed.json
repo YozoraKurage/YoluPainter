@@ -4837,6 +4837,45 @@
           "sha256": "d30047bca3b516639339a3c279bb84c3483124fb5a9dafe3c75056a85090e745"
         }
       ]
+    },
+    "fontdb@0.24.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "59a1fdac3bd550043599bd159fd70f09a1108c2b09e3751d39b11e1ff8e51f00"
+        }
+      ]
+    },
+    "slotmap@1.1.1": {
+      "declared": "Zlib",
+      "selected": [
+        "Zlib"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6cec81441b2ab2b5090954c1fb5d0bcca81b86487b5849061fa8952d20ef67d4"
+        }
+      ]
+    },
+    "tinyvec@1.13.3": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT.md",
+          "sha256": "fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc"
+        }
+      ]
     }
   },
   "bundled": {
@@ -5282,6 +5321,14 @@
             "sha256": "6f9cfa6c4c6cb5c43752119d8bee8bacd8aada572855a2c9e915f32153b7fd68"
           },
           {
+            "path": "crates/yolu-app/assets/icons/tools/text.png",
+            "sha256": "ce492d9e37b67ef238d157789db1fe35726806d25381a9e0eca6fd3cca92c309"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/text_selected.png",
+            "sha256": "3049b843291c8ee083b88ab549d79e677674c830629830991b7ed5cb2215a422"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/tune.png",
             "sha256": "1df5a746ffedd24914dceab69604e42d50ea078efbea4481a46168d171f0cf4e"
           },
@@ -5331,7 +5378,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "d8a87935ec4db64c11200e47939b5bb2fc39eaf5f434342f1281211587f5de69"
+          "sha256": "0ed43d6b46b4248f4d7be65c344dbfe1d4ff9a432b88cb2783908dd2a5ca9f83"
         }
       },
       {

@@ -24,6 +24,7 @@ pub mod preview;
 pub mod refs;
 pub mod reply;
 pub mod text;
+pub mod text_layer;
 pub mod value;
 pub mod wire;
 

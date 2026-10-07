@@ -24,8 +24,10 @@ use crate::refs::{
 };
 use crate::reply::*;
 use crate::text::Text;
+use crate::text_layer::{self, patched, text_info, FontData};
 use crate::value::{format_color, parse_color, Value};
 use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
+use yolu_core::text::TextSettings;
 
 /// 命令が当たるセットの、文書の外の事実。
 #[derive(Clone, Copy, Debug)]
@@ -75,16 +77,26 @@ pub fn read(facts: SetFacts<'_>, doc: &Document, command: &Command) -> Result<Re
 
 /// 文書を変える命令を当てる。
 pub fn write(facts: SetFacts<'_>, doc: &mut Document, command: &Command) -> Result<Reply, OpError> {
+    write_with_font(facts, doc, command, None)
+}
+
+/// 文書を変える命令を当てる。テキストレイヤーを描く命令には、前に探したフォント（[`crate::text_layer::font_for`]）を渡す。
+pub fn write_with_font(
+    facts: SetFacts<'_>,
+    doc: &mut Document,
+    command: &Command,
+    font: Option<&FontData>,
+) -> Result<Reply, OpError> {
     let before = doc.undo_count();
     match command {
-        Command::LayerAdd(a) => layer_add(facts, doc, a, before),
+        Command::LayerAdd(a) => layer_add(facts, doc, a, font, before),
         Command::LayerDelete(a) => {
             let id = resolve_layer(doc, &a.layer)?;
             batch(doc, |d| d.remove_layer(id))?;
             Ok(edited(facts, doc, None, None, before))
         }
         Command::LayerMove(a) => layer_move(facts, doc, a, before),
-        Command::LayerSet(a) => layer_set(facts, doc, a, before),
+        Command::LayerSet(a) => layer_set(facts, doc, a, font, before),
         Command::MaskAdd(a) => {
             let id = resolve_layer(doc, &a.layer)?;
             batch(doc, |d| d.add_layer_mask(id))?;
@@ -145,7 +157,16 @@ fn edited(
         unchanged: doc.undo_count() == undo_before,
         undo_count: doc.undo_count() as u32,
         can_undo: doc.can_undo(),
+        notes: Vec::new(),
     })
+}
+
+/// 編集の返事に知らせを添える（編集の返事でなければそのまま）。
+fn with_note(mut reply: Reply, note: Text) -> Reply {
+    if let Reply::Edited(e) = &mut reply {
+        e.notes.push(note);
+    }
+    reply
 }
 
 // ───────── 読む ─────────
@@ -163,7 +184,11 @@ pub fn layer_summary(doc: &Document, layer: &Layer) -> LayerSummary {
     LayerSummary {
         id: layer.id().to_string(),
         name: layer.name().to_owned(),
-        kind: kind_name(layer.kind()),
+        kind: if layer.text().is_some() {
+            LayerKindName::Text
+        } else {
+            kind_name(layer.kind())
+        },
         visible: layer.visible(),
         opacity: layer.opacity(),
         blend_mode: layer.blend_mode().name().to_owned(),
@@ -336,6 +361,7 @@ pub fn layer_info(doc: &Document, layer: &Layer) -> LayerInfo {
                 .collect(),
         }),
         effects: effects_of(doc, layer),
+        text: layer.text().map(|t| Box::new(text_info(t))),
     }
 }
 
@@ -547,6 +573,7 @@ fn layer_add(
     facts: SetFacts<'_>,
     doc: &mut Document,
     args: &LayerAddArgs,
+    font: Option<&FontData>,
     before: usize,
 ) -> Result<Reply, OpError> {
     let above = args
@@ -563,6 +590,9 @@ fn layer_add(
             format!("{what} cannot be used with this kind of layer"),
         )
     };
+    if args.kind != NewLayerKind::Text && args.text.is_some() {
+        return Err(misplaced("text"));
+    }
     let id = match args.kind {
         NewLayerKind::Paint | NewLayerKind::Group => {
             if !args.fill.is_empty() {
@@ -624,6 +654,41 @@ fn layer_add(
                 d.add_adjustment_layer(name, settings, selected, above)
             })?
         }
+        NewLayerKind::Text => {
+            if !args.fill.is_empty() {
+                return Err(misplaced("fill"));
+            }
+            if args.adjustment.is_some() {
+                return Err(misplaced("adjustment"));
+            }
+            if !args.channels.is_empty() {
+                return Err(misplaced("channels"));
+            }
+            let spec = args
+                .text
+                .as_ref()
+                .filter(|t| t.content.is_some())
+                .ok_or_else(|| {
+                    OpError::invalid_request(
+                        "テキストレイヤーには text.content（文）が要ります",
+                        "A text layer needs `text.content`",
+                    )
+                })?;
+            let font = font.ok_or_else(|| {
+                OpError::new(
+                    ErrorCode::Internal,
+                    "テキストレイヤーのフォントを探していません",
+                    "The font of the text layer was not looked up",
+                )
+            })?;
+            // 既定の基準の点はキャンバスの左上
+            let base = TextSettings::new("", font.font.clone(), 0.0, f64::from(doc.height()));
+            let settings = patched(&base, spec, font)?;
+            let name = args.name.as_deref().unwrap_or("Text");
+            batch(doc, |d| {
+                d.add_text_layer(name, settings, &font.bytes, above, false)
+            })?
+        }
     };
     Ok(edited(facts, doc, Some(id), None, before))
 }
@@ -669,9 +734,30 @@ fn layer_set(
     facts: SetFacts<'_>,
     doc: &mut Document,
     args: &LayerSetArgs,
+    font: Option<&FontData>,
     before: usize,
 ) -> Result<Reply, OpError> {
     let id = resolve_layer(doc, &args.layer)?;
+    let text = match &args.text {
+        None => None,
+        Some(spec) => {
+            let Some(current) = layer_of(doc, id)?.text() else {
+                return Err(OpError::new(
+                    ErrorCode::Unsupported,
+                    "テキストレイヤーだけが text を持ちます",
+                    "Only text layers have `text`",
+                ));
+            };
+            let font = font.ok_or_else(|| {
+                OpError::new(
+                    ErrorCode::Internal,
+                    "テキストレイヤーのフォントを探していません",
+                    "The font of the text layer was not looked up",
+                )
+            })?;
+            Some((patched(current, spec, font)?, font))
+        }
+    };
     if let Some(name) = &args.name {
         check_layer_name(name)?;
     }
@@ -801,9 +887,29 @@ fn layer_set(
         for (channel, g) in &point_gradients {
             d.set_fill_points(id, *channel, g.clone(), false)?;
         }
+        if let Some((settings, font)) = &text {
+            d.set_text(id, settings.clone(), &font.bytes, false)?;
+        }
         Ok(())
     })?;
-    Ok(edited(facts, doc, Some(id), None, before))
+    let reply = edited(facts, doc, Some(id), None, before);
+    // フォントを指定しなかったのに、見つけたのが覚えたフォントと中身の違うもの: 黙って入れ替えず、描き直したことを返事に残す
+    Ok(match &text {
+        Some((settings, font)) if font.different => with_note(
+            reply,
+            Text::new(
+                format!(
+                    "フォントが違います（{}。見つけたフォントで描き直しました）",
+                    text_layer::font_name(&settings.font)
+                ),
+                format!(
+                    "The font differs ({}; the text was redrawn with the font that was found)",
+                    text_layer::font_name(&settings.font)
+                ),
+            ),
+        ),
+        _ => reply,
+    })
 }
 
 fn mask_set(

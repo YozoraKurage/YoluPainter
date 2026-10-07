@@ -242,6 +242,9 @@ fn note_text(note: &psd::ExportNote) -> Text {
         NoteAction::ExpandedGradientCurve { max_diff, .. } => {
             format!("Layer \"{name}\": a gradient was expanded to stops (approximation; largest composite difference {max_diff})")
         }
+        NoteAction::BakedText => format!(
+            "Layer \"{name}\": a text layer was written as pixels; the text itself is not kept"
+        ),
     };
     Text::new(note.message(), en)
 }

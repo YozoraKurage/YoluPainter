@@ -425,6 +425,7 @@ fn layer_set(layer: String) -> LayerSetArgs {
         fill: BTreeMap::new(),
         adjustment: None,
         points: BTreeMap::new(),
+        text: None,
     }
 }
 
@@ -461,6 +462,7 @@ fn layer_add(kind: NewLayerKind, name: String, above: Option<String>) -> LayerAd
         fill: BTreeMap::new(),
         adjustment: None,
         channels: Vec::new(),
+        text: None,
     }
 }
 

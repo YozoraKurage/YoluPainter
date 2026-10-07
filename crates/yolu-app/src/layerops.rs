@@ -134,6 +134,9 @@ pub fn merge_notes_text(lang: Lang, notes: u8) -> String {
             "Pixels of disabled channels dropped",
         ));
     }
+    if notes & 16 != 0 {
+        parts.push(lang.pick("テキストは画素になった", "Text became pixels"));
+    }
     parts.join(lang.pick("・", "; "))
 }
 
@@ -612,7 +615,76 @@ impl AppState {
                 lang.pick("変形しました。", "Transformed."),
             ),
         };
-        let changed = self.doc.transform_layers(&targets, transform, resampling)?;
+        // テキストレイヤーは画素でなく値（基準の点・回転・サイズ）を動かして描き直す。ほかの層と一緒なら 1 回の Undo にまとめる
+        let (texts, pixels): (Vec<LayerId>, Vec<LayerId>) = targets
+            .iter()
+            .partition(|id| self.doc.layer(**id).is_some_and(|l| l.text().is_some()));
+        let changed = if texts.is_empty() {
+            self.doc.transform_layers(&targets, transform, resampling)?
+        } else {
+            if self.doc.selection().is_some() {
+                self.refuse(
+                    Source::Transform,
+                    lang.with_reason(
+                        lang.pick("テキストレイヤーは動かせません", "Cannot move a text layer"),
+                        lang.pick(
+                            "選択範囲の中だけは動かせない",
+                            "it cannot move only inside a selection",
+                        ),
+                    ),
+                );
+                return Ok(false);
+            }
+            let mut moved = Vec::new();
+            for id in &texts {
+                let value = self
+                    .doc
+                    .layer(*id)
+                    .and_then(|l| l.text())
+                    .cloned()
+                    .expect("テキストレイヤー");
+                let next = match crate::textlayer::transformed(lang, &value, &transform) {
+                    Ok(v) => v,
+                    Err(reason) => {
+                        self.refuse(Source::Transform, reason);
+                        return Ok(false);
+                    }
+                };
+                let mut next = next;
+                let font = match self.text_font(&next.font) {
+                    Ok((found, bytes)) => {
+                        next.font = found;
+                        bytes
+                    }
+                    Err(reason) => {
+                        self.refuse(
+                            Source::Transform,
+                            lang.with_reason(
+                                lang.pick(
+                                    "テキストレイヤーを動かせません",
+                                    "Cannot move a text layer",
+                                ),
+                                reason,
+                            ),
+                        );
+                        return Ok(false);
+                    }
+                };
+                moved.push((*id, next, font));
+            }
+            self.doc.batch(|d| {
+                let mut changed = false;
+                if !pixels.is_empty() {
+                    changed |= d.transform_layers(&pixels, transform, resampling)?;
+                }
+                for (id, next, font) in &moved {
+                    let before = d.undo_count();
+                    d.set_text(*id, next.clone(), font, false)?;
+                    changed |= d.undo_count() != before;
+                }
+                Ok(changed)
+            })?
+        };
         self.info(
             Source::Transform,
             if changed {

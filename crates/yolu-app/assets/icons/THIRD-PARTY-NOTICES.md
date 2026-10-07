@@ -111,6 +111,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/select-polygon_selected` | phosphor | `polygon` | regular |
 | `tools/select-rectangle` | phosphor | `selection` | regular |
 | `tools/select-rectangle_selected` | phosphor | `selection` | bold |
+| `tools/text` | fluent | `text_t` | regular |
+| `tools/text_selected` | fluent | `text_t` | filled |
 | `tune` | fluent | `options` | regular |
 | `video_clip` | fluent | `video_clip` | regular |
 | `view_in_ar` | fluent | `cube` | regular |

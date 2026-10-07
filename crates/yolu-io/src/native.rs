@@ -37,14 +37,18 @@ pub const EFFECTS_VERSION: i32 = 28;
 pub const POINT_GRADIENT_VERSION: i32 = 29;
 /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
-/// この版の文書は版 27〜29 の中身も読み書きできる。
+/// この版の文書は版 27〜30 の中身も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
+/// テキストレイヤー（ラスターの層の文字の値。続きの属性の印のビット 1 と `text` の塊）を足した版。テキストレイヤーのある文書だけがこの版になり
+/// （版 27〜29 の中身も読み書きできる）、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は「Unsupported archive version」で
+/// 断る（形式と決めは docs/YLP_FORMAT.md）。
+pub const TEXT_VERSION: i32 = 30;
 /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。頭の `bake_priority`）を足した版。決め方を既定（番号の小さい三角形・外さない・
 /// 手で選んだ島なし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。この版の文書は版 27〜32 の中身も読み書きできる。
 pub const BAKE_PRIORITY_VERSION: i32 = 33;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
-/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）で、間の 30・31 は意味を
+/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）で、間の 31 は意味を
 /// 決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = BAKE_PRIORITY_VERSION;
 /// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
@@ -416,7 +420,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION` だけで、間の 30・31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -424,6 +428,7 @@ fn is_known_version(version: i32) -> bool {
         || version == EFFECTS_VERSION
         || version == POINT_GRADIENT_VERSION
         || version == SEAMS_VERSION
+        || version == TEXT_VERSION
         || version == BAKE_PRIORITY_VERSION
 }
 
@@ -482,7 +487,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -917,10 +922,10 @@ fn layer(
         if flags & 2 != 0 {
             r.int("locks", 1, 15)?;
         }
-        // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（版 29）
+        // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（版 29）、ビット 1 文字の値（版 30）
         if flags & 128 != 0 {
             ext = r.int("attributes_ext", 1, i32::MAX)?;
-            let known_ext = 1;
+            let known_ext = 1 | if v >= TEXT_VERSION { 2 } else { 0 };
             check(ext & !known_ext == 0, "未知の続きのレイヤー属性ビットです")?;
         }
         if flags & 4 != 0 {
@@ -1192,6 +1197,17 @@ fn layer(
         )?;
         r.block("paths", |r| path_list(r, v, &channels, &enabled))?;
     }
+    if ext & 2 != 0 {
+        check(
+            kind == 0 && !surface && !canvas && flags & 64 == 0,
+            "テキストの値はパスの無いラスターのレイヤーだけが持てます",
+        )?;
+        check(
+            channels.contains(&0) && enabled.contains(&0),
+            "テキストレイヤーに有効な Color の画素がありません",
+        )?;
+        r.block("text", text)?;
+    }
     Ok(Layer {
         id,
         parent,
@@ -1199,6 +1215,64 @@ fn layer(
         anchors,
         references,
     })
+}
+/// テキストレイヤーの値（版 30。範囲は `yolu_core::text` の値の検査と同じ）。
+fn text(r: &mut Reader<'_>) -> Result<()> {
+    use yolu_core::text as t;
+    r.int("algorithm", 1, 1)?;
+    let content = r.string("content")?;
+    check(
+        content.len() <= t::MAX_TEXT_BYTES
+            && !content
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t'),
+        "テキストの文が長すぎるか、改行とタブのほかの制御文字があります",
+    )?;
+    if r.int("font_kind", 0, 1)? == 0 {
+        let name = r.string("font_name")?;
+        check(
+            !name.is_empty()
+                && name.len() <= t::MAX_FONT_NAME
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            "同梱のフォントの名前が不正です",
+        )?;
+    } else {
+        let path = r.string("font_path")?;
+        check(
+            !path.is_empty()
+                && path.len() <= t::MAX_FONT_PATH_BYTES
+                && !path.chars().any(char::is_control),
+            "フォントのファイルの道が不正です",
+        )?;
+        r.int("font_index", 0, i32::MAX)?;
+        let sha = r.string("font_sha256")?;
+        check(is_hash(&sha), "フォントのファイルの SHA-256 が不正です")?;
+        for name in ["font_family", "font_postscript"] {
+            let v = r.string(name)?;
+            check(
+                v.len() <= t::MAX_FONT_FAMILY_BYTES && !v.chars().any(char::is_control),
+                "フォントの名前が不正です",
+            )?;
+        }
+        r.int("font_weight", 1, 1000)?;
+        r.boolean("font_italic")?;
+    }
+    r.float("size", t::MIN_SIZE, t::MAX_SIZE)?;
+    r.blob("rgba", 4)?;
+    r.float("line_height", t::MIN_LINE_HEIGHT, t::MAX_LINE_HEIGHT)?;
+    r.float(
+        "letter_spacing",
+        t::MIN_LETTER_SPACING,
+        t::MAX_LETTER_SPACING,
+    )?;
+    r.int("align", 0, 2)?;
+    r.float("x", -t::MAX_COORDINATE, t::MAX_COORDINATE)?;
+    r.float("y", -t::MAX_COORDINATE, t::MAX_COORDINATE)?;
+    r.float("rotation", -360., 360.)?;
+    r.float("wrap_width", 0., t::MAX_COORDINATE)?;
+    Ok(())
 }
 /// 標準のチャンネルだけの項目（塗りつぶしの画像・グラデーション、フィルター、パスのマテリアル）。
 fn unique_channel(r: &mut Reader<'_>, seen: &mut HashSet<i32>) -> Result<i32> {

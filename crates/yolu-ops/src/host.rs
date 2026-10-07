@@ -133,6 +133,15 @@ pub trait OpHost {
     fn selected_layer(&mut self, _set: Option<&str>) -> Result<String, OpError> {
         Err(crate::refs::no_selection(None))
     }
+    /// 同梱のフォントの中身（名前は `yolu_core::text::BUNDLED_FONTS`）。既定は持たない（画面なしのホスト。同梱のフォントのテキストは理由を添えて断る）。
+    fn bundled_font(&self, _name: &str) -> Option<std::sync::Arc<[u8]>> {
+        None
+    }
+    /// OS に入っているフォントの一覧（テキストレイヤーのフォントを名前で選ぶ・探す）。既定はプロセスに 1 つの一覧で、初めて呼んだときに
+    /// フォントのフォルダを呼んだスレッドでなめる（遅い。画面のスレッドで呼ぶホストは上書きして、なめ終わるまで `Busy` で断る）。
+    fn system_fonts(&mut self) -> Result<std::sync::Arc<yolu_io::fonts::SystemFonts>, OpError> {
+        Ok(yolu_io::fonts::system())
+    }
 }
 
 /// 壊す操作に `confirm: true` があるか（`Danger::Always` の命令。置き換えるときだけ壊す命令は、置き換える所で確かめる）。
@@ -221,7 +230,11 @@ fn dispatch(
         Command::ExportPsd(a) => host.export(&ExportJob::Psd(a)),
         Command::ActionRun(a) => crate::action::run_args(host, a).map(Reply::Action),
         c if doc_ops::is_write(c) => {
-            host.write_set(c.set(), &mut |facts, doc| doc_ops::write(facts, doc, c))
+            // テキストレイヤーを描く命令は、文書を変える前にフォントを探す（見つからなければ何も変えずに断る）
+            let font = crate::text_layer::font_for(host, c)?;
+            host.write_set(c.set(), &mut |facts, doc| {
+                doc_ops::write_with_font(facts, doc, c, font.as_ref())
+            })
         }
         c => host.read_set(c.set(), &mut |view| match view.doc {
             Some(doc) => doc_ops::read(view.facts(), doc, c),

@@ -1,6 +1,6 @@
-//! ステンシルのキーとドラッグ（Unity 版と同じ）: T を押しているあいだ、2D のキャンバスか 3D のビューでのドラッグが置き場を動かす
+//! ステンシルのキーとドラッグ（Unity 版と同じ）: Y を押しているあいだ、2D のキャンバスか 3D のビューでのドラッグが置き場を動かす
 //! （左 = 回す（Shift で 15° 刻み）、中か Ctrl+左 = 動かす、右か Alt+左 = 大きさ）。N を押しているあいだはステンシルを使わない。
-//! ドラッグの最中の Esc は始めの置き場に戻す。T を離してもドラッグはボタンを離すまで続く。フォーカスを失ったら、押していた印を捨て、
+//! ドラッグの最中の Esc は始めの置き場に戻す。Y を離してもドラッグはボタンを離すまで続く。フォーカスを失ったら、押していた印を捨て、
 //! ドラッグは今の置き場で終える（離したのを受け取れないので）。ストロークの最中・ポップアップが開いているあいだは始めない。ドラッグの最中は、
 //! ほかのボタンを押しても何も始めない（ストローク・パン・3D のカメラ）。
 
@@ -224,7 +224,7 @@ pub fn handle_event(
     {
         return false;
     }
-    // 押し方で決まるドラッグの種類は `keymap::GESTURES`（T を押しながら）
+    // 押し方で決まるドラッグの種類は `keymap::GESTURES`（Y を押しながら）
     let kind = match crate::keymap::gesture("stencil", *button, modifiers, true) {
         Some(crate::keymap::Operation::MoveStencil) => DragKind::Move,
         Some(crate::keymap::Operation::ScaleStencil) => DragKind::Scale,

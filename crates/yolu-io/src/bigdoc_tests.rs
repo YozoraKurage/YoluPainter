@@ -79,10 +79,10 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 doc.version()
             );
             // 分けた正本より前の読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）。今の読み手は 26 を分けた正本の識別として先に見る
-            // （機能の版は 26 を飛ばして 27・28・29・32・33）
+            // （機能の版は 26 を飛ばして 27〜30・32・33）
             const { assert!(SPLIT_VERSION > crate::MIXING_VERSION) };
-            // 中の版は意味の決まった版（1〜25・27〜29・32・33）だけ。分けた正本の識別（26）と、決めていない版（30・31）は、中身を読む前に断る
-            for bad in [SPLIT_VERSION, 30, 31] {
+            // 中の版は意味の決まった版（1〜25・27〜30・32・33）だけ。分けた正本の識別（26）と、決めていない版（31）は、中身を読む前に断る
+            for bad in [SPLIT_VERSION, 31] {
                 let mut bytes = header.to_vec();
                 bytes[12..16].copy_from_slice(&bad.to_le_bytes());
                 let mut changed = stored(&entries);
@@ -287,8 +287,8 @@ fn wrong_parts_are_refused() {
     // 分けていない正本に部分を添える・分けた正本に部分が無い
     assert!(NativeDocument::read_split(&doc.to_bytes(), &[&parts[0]]).is_err());
     assert!(NativeDocument::read(&header).is_err());
-    // 中の版が分けた正本の版・割り振られていない版（30・31）・読み手より新しい版・古すぎる版
-    for inner in [26i32, 30, 31, crate::MAX_NATIVE_VERSION + 1, 20, 0] {
+    // 中の版が分けた正本の版・割り振られていない版（31）・読み手より新しい版・古すぎる版
+    for inner in [26i32, 31, crate::MAX_NATIVE_VERSION + 1, 20, 0] {
         let mut h = header.clone();
         h[12..16].copy_from_slice(&inner.to_le_bytes());
         let e = read(&h, &parts).unwrap_err().to_string();
@@ -308,7 +308,7 @@ fn wrong_parts_are_refused() {
 #[test]
 fn undefined_inner_versions_are_refused_too() {
     // 色調補正のフィルターだけの文書は、版 24 の並びが 25・27・28 と同じなので、中の版の数だけを書き換えても中身は読める（対照）。
-    // 30・31 は番号だけで意味が決まっておらず、範囲の中でも断る（版 25 の並びとして読み進めない）
+    // 31 は番号だけで意味が決まっておらず、範囲の中でも断る（版 25 の並びとして読み進めない）
     let mut core = uniform_layers(16, 8, 1);
     let layer = core.layers()[0].id();
     let posterize =
@@ -335,16 +335,17 @@ fn undefined_inner_versions_are_refused_too() {
         crate::PATHS_VERSION,
         crate::EFFECTS_VERSION,
         crate::POINT_GRADIENT_VERSION,
+        crate::TEXT_VERSION,
     ] {
         assert_eq!(read(inner).unwrap().version(), inner);
     }
-    for inner in 30..=31 {
-        let e = read(inner).err().map(|e| e.to_string());
-        assert!(
-            e.is_some_and(|e| e.contains(&inner.to_string())),
-            "版 {inner} を断らなかった"
-        );
-    }
+    // 意味の決まっていない版（31）は断る
+    let inner = 31;
+    let e = read(inner).err().map(|e| e.to_string());
+    assert!(
+        e.is_some_and(|e| e.contains(&inner.to_string())),
+        "版 {inner} を断らなかった"
+    );
 }
 
 #[test]
@@ -597,4 +598,40 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
         );
     });
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// テキストレイヤーのある文書（版 30）も分けて書け、中の版 30 のまま同じ項目に読み戻せる。
+#[test]
+fn a_text_document_splits_with_inner_version_30() {
+    use yolu_core::text::{TextFont, TextSettings};
+    let mut core = yolu_core::Document::with_tile_size(64, 64, 16).unwrap();
+    let id = core.add_layer("文字").unwrap();
+    for x in 0..40 {
+        core.set_pixel(id, x, 20, yolu_core::Rgba8::new(10, 20, 30, 255))
+            .unwrap();
+    }
+    core.clear_history().unwrap();
+    let text = TextSettings::new(
+        "分ける",
+        TextFont::Bundled("biz-udpgothic".into()),
+        2.0,
+        40.0,
+    );
+    core.set_text_for_load(id, text.clone()).unwrap();
+    let doc = NativeDocument::from_core(&core).unwrap();
+    assert_eq!(doc.version(), crate::TEXT_VERSION);
+    let t = tiny(largest_tile(&doc), 0);
+    let entries = t.scoped(|| native_entries(&doc, "sets/x/"));
+    assert!(entries.len() >= 2, "分けていない");
+    let header = entries[0].1.bytes().unwrap();
+    assert_eq!(
+        i32::from_le_bytes(header[12..16].try_into().unwrap()),
+        crate::TEXT_VERSION
+    );
+    let back = stored(&entries).to_native().unwrap();
+    assert_eq!(back.to_bytes(), doc.to_bytes());
+    assert_eq!(
+        back.to_core().unwrap().layer(id).unwrap().text(),
+        Some(&text)
+    );
 }

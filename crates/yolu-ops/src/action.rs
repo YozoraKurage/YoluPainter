@@ -348,6 +348,8 @@ fn run_checked(host: &mut dyn OpHost, commands: &[Command]) -> Result<ActionDone
                 unchanged: doc.undo_count() == before,
                 undo_count: doc.undo_count() as u32,
                 can_undo: doc.can_undo(),
+                // 命令ごとの知らせは steps が持つ
+                notes: Vec::new(),
             })),
             Err(e) => Err(failure.take().unwrap_or_else(|| OpError::from_core(&e))),
         }
@@ -375,6 +377,7 @@ fn step_of(reply: &Reply) -> ActionStep {
             layer: e.layer.clone(),
             effect: e.effect.clone(),
             unchanged: e.unchanged,
+            notes: e.notes.clone(),
         },
         _ => ActionStep::default(),
     }

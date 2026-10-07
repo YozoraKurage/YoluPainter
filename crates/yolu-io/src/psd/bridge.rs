@@ -362,6 +362,8 @@ pub enum Refusal {
     Path,
     /// ファイルの向きが DirectX の Normal のレベル補正（緑だけ別の曲線になり、PSD の 1 つのレベル補正では書けない）。
     NormalLevels,
+    /// テキストレイヤーの値（このアプリのテキストの値は PSD のテキストレイヤーの形に無い）。
+    Text,
 }
 /// 層 1 枚の断りの理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,6 +395,7 @@ impl Blocker {
             Refusal::Anchor => format!("層「{name}」に Anchor があります。Anchor は PSD に書けません"),
             Refusal::Path => format!("層「{name}」にパスがあります。パスは PSD に書けません"),
             Refusal::NormalLevels => format!("調整「{name}」のレベル補正は、ファイルの向きが DirectX の Normal の PSD に書けません。緑だけ別の曲線になります"),
+            Refusal::Text => format!("「{name}」はテキストレイヤーです。テキストの値は PSD に書けません"),
         }
     }
 }

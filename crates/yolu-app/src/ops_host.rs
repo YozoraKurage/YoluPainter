@@ -225,6 +225,21 @@ impl<'a> AppHost<'a> {
 }
 
 impl OpHost for AppHost<'_> {
+    /// 同梱のフォント（画面の書体と同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
+    fn bundled_font(&self, name: &str) -> Option<std::sync::Arc<[u8]>> {
+        crate::textlayer::bundled_font(name)
+    }
+    /// OS のフォントの一覧は、アプリが別のスレッドでなめたもの（`AppState::text_fonts_wanted`）。まだできていなければ、なめ始めて `Busy` で断る
+    /// （画面のスレッドでフォルダ全体をなめて止めない。呼び手は少し待って同じ命令をもう一度送る）。
+    fn system_fonts(&mut self) -> Result<std::sync::Arc<yolu_io::fonts::SystemFonts>, OpError> {
+        self.state.text_fonts_wanted();
+        self.state
+            .text
+            .fonts
+            .list
+            .clone()
+            .ok_or_else(|| busy("フォントを探しています", "Searching for the fonts"))
+    }
     fn policy(&self) -> &PathPolicy {
         &self.policy
     }
@@ -433,5 +448,65 @@ impl OpHost for AppHost<'_> {
         self.read_set(args.set.as_deref(), &mut |view| {
             yolu_ops::preview::render(view, args)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jobs::Worker;
+    use serde_json::json;
+    use std::sync::Arc;
+    use yolu_core::text::TextFont;
+    use yolu_io::fonts::SystemFonts;
+
+    /// OS のフォントを名前で選ぶ命令は、アプリが別のスレッドでなめた一覧を使う。なめている間は、画面のスレッドでフォルダ全体をなめずに
+    /// `Busy` で断り（文書は変えない）、できたら当たる。
+    #[test]
+    fn installed_fonts_come_from_the_apps_list_and_a_search_in_progress_is_refused_for_now() {
+        let dir = std::env::temp_dir().join(format!("yolu-ops-host-fonts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
+        std::fs::copy(source.join("BIZUDPGothic-Bold.ttf"), dir.join("b.ttf")).unwrap();
+        let list = Arc::new(SystemFonts::from_dirs(&[&dir]));
+        let add = yolu_ops::parse_command(&json!({"command": "layer.add", "args": {
+            "kind": "text", "name": "Label",
+            "text": {"content": "x", "font": "BIZUDPGothic-Bold"}}}))
+        .unwrap();
+        let mut state = AppState::new(64, 64);
+        let (searching, _hold) = Worker::parked();
+        state.text.fonts.worker = Some(searching);
+        let layers = state.doc.layers().len();
+        let undo = state.doc.undo_count();
+        let refused = yolu_ops::execute(&mut AppHost::new(&mut state), &add).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Busy);
+        assert!(
+            refused.message.ja.contains("フォントを探しています"),
+            "{}",
+            refused.message.ja
+        );
+        assert!(
+            refused.message.en.contains("Searching"),
+            "{}",
+            refused.message.en
+        );
+        assert_eq!(state.doc.layers().len(), layers, "断った命令は何も変えない");
+        assert_eq!(state.doc.undo_count(), undo);
+        // 一覧ができた: その一覧（OS の一覧ではなく、アプリが持っている物）から選ぶ
+        state.text.fonts.worker = None;
+        state.text.fonts.list = Some(list);
+        yolu_ops::execute(&mut AppHost::new(&mut state), &add).expect("一覧から選べる");
+        let layer = state
+            .doc
+            .layers()
+            .iter()
+            .find(|l| l.name() == "Label")
+            .expect("追加したレイヤー");
+        let Some(TextFont::File { path, .. }) = layer.text().map(|t| t.font.clone()) else {
+            panic!("ファイルのフォント")
+        };
+        assert!(Path::new(&path).starts_with(&dir), "{path}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

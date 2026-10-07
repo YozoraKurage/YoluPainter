@@ -69,6 +69,13 @@ impl Document {
                     )
                 });
             }
+            // テキストの値はフォント（文書の外のファイル）に結び付き、.ylsmart（版 21 まで）にも入らない: 画素だけが残る
+            if l.text.take().is_some() {
+                notes.push(format!(
+                    "「{}」のテキストは画素だけになりました（スマートマテリアルはテキストの値を持たない）",
+                    l.name
+                ));
+            }
         }
         let mut material = self
             .smart_fragment(SmartKind::Material, name, layers)

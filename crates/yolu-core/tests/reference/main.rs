@@ -29,3 +29,4 @@ mod material_golden;
 mod procedural;
 mod seam_golden;
 mod surface_golden;
+mod text;

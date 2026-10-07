@@ -75,18 +75,18 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                 vec![
                     (
                         lang.pick("ステンシルの移動", "Move Stencil"),
-                        format!("T+{command}+{left}"),
+                        format!("Y+{command}+{left}"),
                     ),
                     (
                         lang.pick("ステンシルの拡縮", "Scale Stencil"),
-                        format!("T+Alt+{left}"),
+                        format!("Y+Alt+{left}"),
                     ),
                     (
                         lang.pick(
                             "ステンシルの回転を 15° 刻みに",
                             "Snap Stencil Rotation to 15°",
                         ),
-                        format!("T+Shift+{left}"),
+                        format!("Y+Shift+{left}"),
                     ),
                 ],
             ),
@@ -521,7 +521,7 @@ fn shift_snaps_the_stencil_rotation_to_the_listed_step() {
             .set_image_rgba("Sample", 1, 1, &[255; 4])
             .unwrap();
         let held = Event::Key {
-            key: Key::T,
+            key: Key::Y,
             physical_key: None,
             pressed: true,
             repeat: false,

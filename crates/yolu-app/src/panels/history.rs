@@ -29,6 +29,7 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
         HistoryKind::SavedSelections => {
             lang.pick("覚えた選択範囲を変える", "Edit remembered selections")
         }
+        HistoryKind::Text => lang.pick("テキストを変える", "Edit Text"),
     }
 }
 

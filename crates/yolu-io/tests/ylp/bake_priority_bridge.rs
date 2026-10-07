@@ -136,12 +136,12 @@ fn version_33_is_outside_what_older_readers_accept() {
 
 #[test]
 fn only_versions_with_a_meaning_are_read() {
-    // 読める版は 1〜25・26（分けた正本）・27〜29・32・33 だけ。間の 30・31 と範囲の外は、意味が決まっていないので版の数で断る
+    // 読める版は 1〜25・26（分けた正本）・27〜30・32・33 だけ。間の 31 と範囲の外は、意味が決まっていないので版の数で断る
     let bytes = NativeDocument::from_core(&with_priority())
         .unwrap()
         .to_bytes();
     assert!(NativeDocument::read(&bytes).is_ok());
-    for version in [30, 31, 0, BAKE_PRIORITY_VERSION + 1, -1] {
+    for version in [31, 0, BAKE_PRIORITY_VERSION + 1, -1] {
         let mut bytes = bytes.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         let Err(e) = NativeDocument::read(&bytes) else {

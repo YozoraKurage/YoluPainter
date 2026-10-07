@@ -8,6 +8,7 @@ use crate::effects::LayerPath;
 use crate::math::to_byte;
 use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
 use crate::surface::{PixelReader, Tile};
+use crate::text::TextSettings;
 use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
 use rayon::prelude::*;
 
@@ -655,6 +656,10 @@ impl Document {
                 Some(LayerPath::Surface(_)) => report.surface_path_layers.push(self.layers[i].id),
                 None => {}
             }
+            // テキストレイヤー: 画素は上で写した（ずらし・補間）。値を同じだけ動かし、次に文を直したときに同じ所・大きさで描き直す
+            if let Some(text) = &self.layers[i].text {
+                copy.layers[i].text = Some(fit.text(text, &self.layers[i].name, &mut report.notes));
+            }
         }
         if let Fit::Scale { scale, .. } = fit {
             report
@@ -755,6 +760,30 @@ impl Fit {
             notes.push(format!(
                 "「{owner}」のパス: キャンバスから遠く外れた点を ±1000000 画素の内へ寄せた"
             ));
+        }
+        next
+    }
+
+    /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は
+    /// 基準の点を縦横の倍率で、大きさを幾何平均で、折り返しの幅を横の倍率で動かす。このとき画素は補間で写しただけなので、
+    /// `notes` に書く（文を直すと新しい大きさで描き直す。縦横の倍率が違えば、描き直した形は写した画素と同じにならない）。
+    fn text(self, text: &TextSettings, owner: &str, notes: &mut Vec<String>) -> TextSettings {
+        let limit = crate::text::MAX_COORDINATE;
+        let mut next = text.clone();
+        match self {
+            Fit::Scale { sx, sy, scale } => {
+                next.x = (text.x * sx).clamp(-limit, limit);
+                next.y = (text.y * sy).clamp(-limit, limit);
+                next.size = (text.size * scale).clamp(crate::text::MIN_SIZE, crate::text::MAX_SIZE);
+                next.wrap_width = (text.wrap_width * sx).clamp(0.0, limit);
+                notes.push(format!(
+                    "「{owner}」のテキストは画素を拡大・縮小しました（文を直すと新しいサイズで描き直す）"
+                ));
+            }
+            Fit::Shift((dx, dy)) => {
+                next.x = (text.x + dx as f64).clamp(-limit, limit);
+                next.y = (text.y + dy as f64).clamp(-limit, limit);
+            }
         }
         next
     }

@@ -209,6 +209,11 @@ impl Document {
                 "パスで描かれたチャンネルは無効にできない",
             ));
         }
+        if !enabled && channel == Channel::Color && layer.text.is_some() {
+            return Err(CoreError::Unsupported(
+                "テキストレイヤーの Color は無効にできない",
+            ));
+        }
         let had_surface = layer.surface(channel).is_some();
         self.execute(
             Command::ChannelEnabled {

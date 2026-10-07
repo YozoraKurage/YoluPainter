@@ -38,21 +38,21 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
         return;
     };
     let (kind, name) = (layer.kind(), layer.name().to_owned());
+    let icon = if layer.text().is_some() {
+        "tools/text"
+    } else {
+        m2::layer_kind_icon(kind)
+    };
     let enabled = app.can_edit();
 
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "layer",
-        &name,
-        m2::layer_kind_icon(kind),
-        None,
-    );
+    let (open, _) = section(ui, app, rows, "layer", &name, icon, None);
     if open {
         layer_section(ui, app, rows, id, enabled, lang);
     }
     lock_section(ui, app, rows);
+    if app.doc.layer(id).is_some_and(|l| l.text().is_some()) {
+        crate::textlayer::props::layer_section(ui, app, rows, enabled);
+    }
     match kind {
         LayerKind::Fill => {
             fill_section(ui, app, rows, id, enabled, lang);

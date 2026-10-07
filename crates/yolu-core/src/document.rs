@@ -17,6 +17,7 @@ mod edits;
 mod effects;
 mod eval;
 mod layer_path;
+mod layer_text;
 pub(crate) mod locks;
 mod look;
 mod material;
@@ -445,6 +446,8 @@ pub(crate) enum Command {
         old: bool,
         new: bool,
     },
+    /// テキストレイヤーの値を変える・外す（画素の入れ替えを伴うことがある）。
+    Text(layer_text::TextCommand),
 }
 
 pub(crate) struct Entry {
@@ -472,6 +475,8 @@ pub(crate) enum CoalesceKey {
     Look,
     /// 手動の ID の色（色の窓のドラッグ）。
     IdColors,
+    /// テキストレイヤーの値（打ちながら描く間）。
+    Text(LayerId),
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
@@ -1717,6 +1722,7 @@ impl Document {
             }
             Command::Path(m) => self.switch_path(m, backwards),
             Command::Compound(steps) => self.switch_compound(steps, backwards),
+            Command::Text(m) => self.switch_text(m, backwards),
         }
     }
 

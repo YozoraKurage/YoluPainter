@@ -1005,6 +1005,7 @@ fn layer_row(
     let (name, visible, kind) = (layer.name().to_owned(), layer.visible(), layer.kind());
     let has_mask = layer.mask().is_some();
     let has_path = layer.path().is_some();
+    let has_text = layer.text().is_some();
     let channel = app.m2.paint_channel;
     let no_pixels = kind == LayerKind::Raster && !layer.is_channel_enabled(channel);
     let clipped = app
@@ -1366,6 +1367,21 @@ fn layer_row(
         .on_hover_text(lang.pick(
             "パスで描かれたレイヤー（手では描けません。ラスタライズで普通のレイヤーになります）",
             "Drawn by a path (it cannot be painted by hand; Rasterize makes it a normal layer)",
+        ));
+    }
+    // 右端の印: テキストレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
+    if has_text {
+        let at = row.right() - mark_inset(usize::from(locked) + usize::from(no_pixels));
+        let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));
+        w::icon(&painter, mark, "tools/text", t::TEXT_DIM, 13.0);
+        ui.interact(
+            mark,
+            ui.make_persistent_id(("layer.text", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(lang.pick(
+            "テキストレイヤー（文字を打ち直せます。手では描けません。ラスタライズで普通のレイヤーになります）",
+            "Text layer (the text stays editable; it cannot be painted by hand; Rasterize makes it a normal layer)",
         ));
     }
     // 右端の印: Live Link で入れた元の絵の読み方（理由はツールチップ）

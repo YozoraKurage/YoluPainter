@@ -174,6 +174,8 @@ pub struct Layer {
     pub(crate) fill_points: BTreeMap<Channel, crate::fill_points::PointGradient>,
     /// 層の画素を描くパスの一覧（ラスターだけ。対象のチャンネルの画素は、一覧の見せるパスを順に描いた結果）。
     pub(crate) paths: Vec<crate::paths::LayerPathEntry>,
+    /// 層の Color の画素を描くテキストの値（ラスターだけ。パスとは両方持たない。画素は値とフォントから描いた結果）。
+    pub(crate) text: Option<crate::text::TextSettings>,
 }
 
 impl Layer {
@@ -206,6 +208,7 @@ impl Layer {
             fill_gradients: BTreeMap::new(),
             fill_points: BTreeMap::new(),
             paths: Vec::new(),
+            text: None,
         }
     }
 
@@ -362,6 +365,10 @@ impl Layer {
     /// パスで描かれた層か（一覧が空でない）。
     pub fn has_paths(&self) -> bool {
         !self.paths.is_empty()
+    }
+    /// テキストレイヤーの値（テキストレイヤーでなければ None）。
+    pub fn text(&self) -> Option<&crate::text::TextSettings> {
+        self.text.as_ref()
     }
     /// この層の Anchor（その層までのスタックの結果）。
     pub fn anchor(&self) -> Option<&Anchor> {

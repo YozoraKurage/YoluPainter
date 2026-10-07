@@ -51,11 +51,13 @@ pub enum Tool {
     Liquify,
     /// パス（2D のキャンバスとモデルの面の上に引く、編集できる曲線。`pathtool`）。
     Path,
+    /// 文字（押した所であとから編集できる文字を打つ。`textlayer`）。
+    Text,
 }
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 18] = [
+    pub const ALL: [Tool; 19] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
@@ -74,6 +76,7 @@ impl Tool {
         Tool::Move,
         Tool::Liquify,
         Tool::Path,
+        Tool::Text,
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
@@ -536,6 +539,8 @@ pub enum Action {
     Automation(crate::automation::AutomationOp),
     /// ドックのパネルを外の窓へ出す・戻す・前に出す（画面だけ。文書は変えない）。
     Dock(crate::detach::DockOp),
+    /// テキストツールとテキストレイヤーの値（打ち始め・打ち終わり・値・フォントのファイル・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
+    Text(crate::textlayer::TextAction),
 }
 
 impl Action {
@@ -616,6 +621,7 @@ impl Action {
             Self::Tools(..) => "Tools",
             Self::Automation(..) => "Automation",
             Self::Dock(..) => "Dock",
+            Self::Text(..) => "Text",
         }
     }
 
@@ -650,6 +656,7 @@ impl Action {
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
             || matches!(self, Action::Automation(op) if op.edits_document())
+            || matches!(self, Action::Text(op) if op.edits_document())
     }
 }
 
@@ -829,6 +836,8 @@ pub struct AppState {
     pub toolset: crate::toolset::ToolsetState,
     /// アクション（操作の記録と再生。置き場は設定のフォルダの actions/。.ylp には入れない）。
     pub automation: crate::automation::Automation,
+    /// テキストツール（打っている文字・次の文字の既定・フォントの覚え）。
+    pub text: crate::textlayer::TextState,
 }
 
 /// ファイルの窓の頼み。
@@ -883,6 +892,8 @@ pub enum DialogRequest {
     ToolsetReset,
     /// 利用者のブラシのファイル（`toolset.catalog.pending_delete`）を消してよいか確かめる。
     BrushFileDelete,
+    /// 文字のフォントのファイルを選ぶ。
+    TextFont,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -1018,6 +1029,7 @@ impl AppState {
             recovery: Default::default(),
             toolset: Default::default(),
             automation: Default::default(),
+            text: Default::default(),
         }
     }
 
@@ -1087,6 +1099,8 @@ impl AppState {
             self.path_tool_changed();
             self.gradient_cancel_drag();
             self.drafting_cancel();
+            self.text_commit();
+            self.text.press = None;
             self.subtool_enter(tool);
         }
         self.tool = tool;
@@ -1196,6 +1210,7 @@ impl AppState {
             Action::SubTool(action) => self.subtool_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
+            Action::Text(a) => self.text_apply(a),
             Action::Fill(op) => self.fill_apply(op),
             Action::LayerMenu(op) => self.layer_menu_apply(op),
             Action::Gradient(op) => self.gradient_apply(op),
@@ -1206,6 +1221,8 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                // 打っている文字は、打ち終えてから（打った分が 1 回の取り消し）
+                self.text_commit();
                 // 多角形の途中なら、文書でなく最後の点を取り消す（Photoshop と同じ）
                 if self.sel_undo_polygon_point() {
                     return;
@@ -1231,6 +1248,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                self.text_commit();
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Redo));
                 }

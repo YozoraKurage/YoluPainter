@@ -29,6 +29,8 @@ pub enum HistoryKind {
     Look,
     /// 名前を付けて残した選択範囲の変更（`Document::save_selection` など）。
     SavedSelections,
+    /// テキストレイヤーの値（`Document::set_text`・テキストの値を外す）。
+    Text,
 }
 
 impl Document {
@@ -70,6 +72,7 @@ impl Command {
             Self::Compound(_) => HistoryKind::Batch,
             Self::Look { .. } => HistoryKind::Look,
             Self::SavedSelections { .. } => HistoryKind::SavedSelections,
+            Self::Text(_) => HistoryKind::Text,
             _ => HistoryKind::Other,
         }
     }

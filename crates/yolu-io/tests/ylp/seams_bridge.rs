@@ -82,7 +82,7 @@ fn version_32_is_outside_what_older_readers_accept() {
 
 #[test]
 fn only_versions_with_a_meaning_are_read() {
-    // 読める版は 1〜25・26（分けた正本）・27（パスの一覧）・28（0.5.0 の効果）・29（点のグラデーション）・32・33（ベイクの優先）だけ。間の 30・31 と範囲の外は、意味が決まっていないので版の数で断る
+    // 読める版は 1〜25・26（分けた正本）・27（パスの一覧）・28（0.5.0 の効果）・29（点のグラデーション）・30（テキストレイヤー）・32・33（ベイクの優先）だけ。間の 31 と範囲の外は、意味が決まっていないので版の数で断る
     // （版 28 は image_generator の試験が読み書きを固定する）
     let mut off = blurred();
     off.set_filter_seams(false).unwrap();
@@ -94,6 +94,7 @@ fn only_versions_with_a_meaning_are_read() {
                 yolu_io::PATHS_VERSION,
                 EFFECTS_VERSION,
                 yolu_io::POINT_GRADIENT_VERSION,
+                yolu_io::TEXT_VERSION,
             ]
             .contains(v)
         })

@@ -586,6 +586,10 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
                 lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
             )
         }
+        NoteAction::BakedText => (
+            lang.pick("テキストレイヤー", "Text layer").into(),
+            lang.pick("画素のみ", "Pixels only").into(),
+        ),
     }
 }
 
@@ -668,6 +672,10 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
         Refusal::Path => lang.pick(
             format!("「{name}」にパスがあります"),
             format!("\"{name}\" has a path"),
+        ),
+        Refusal::Text => lang.pick(
+            format!("「{name}」はテキストレイヤーです"),
+            format!("\"{name}\" is a text layer"),
         ),
     };
     match channel {

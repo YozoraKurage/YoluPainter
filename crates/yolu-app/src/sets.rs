@@ -660,6 +660,14 @@ impl AppState {
         self.ui.renaming = None;
         self.ui.layer_drag = None;
         self.popup = None;
+        // 打っている文字は前の文書のもの（まとめた段は前の文書の履歴に残る）。開いた文書のテキストレイヤーのフォントは探し直して知らせる
+        self.text.editing = None;
+        self.text.press = None;
+        self.text.pending = None;
+        self.text.move_click = None;
+        self.text.move_press = None;
+        self.text.forget_fonts();
+        self.text.check_fonts = true;
         self.fx.selected = None;
         // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
         self.sel_doc_changed();

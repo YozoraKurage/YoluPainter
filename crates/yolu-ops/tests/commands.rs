@@ -1011,3 +1011,359 @@ fn layer_set_places_and_removes_a_point_gradient_in_one_undo_step() {
         assert_eq!(e.code, yolu_ops::ErrorCode::InvalidValue, "{e:?}");
     }
 }
+
+/// 試験に使うフォントのファイル（アプリに同梱の BIZ UDPGothic を作業のフォルダへ写す）。
+fn font_file(fx: &Fixture, name: &str) -> String {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf");
+    std::fs::copy(source, fx.path(name)).unwrap();
+    name.to_owned()
+}
+
+#[test]
+fn text_layers_are_added_and_redrawn_in_one_undo_step_with_a_font_file() {
+    let fx = Fixture::new("text-layer");
+    fx.project("a.ylp");
+    let file = font_file(&fx, "font.ttf");
+    let mut host = fx.host("a.ylp");
+    let e = edited(check_one_command(
+        &fx,
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "name": "Label",
+            "text": {"content": "文字 Text", "font_file": file, "size": 14, "color": "#204080", "x": 2, "y": 40}}}),
+    ));
+    let id = e.layer.unwrap();
+    let get = |host: &mut FileHost| {
+        let Reply::Layer(l) = ok(host, json!({"command": "layer.get", "args": {"layer": id}}))
+        else {
+            panic!()
+        };
+        l
+    };
+    let layer = get(&mut host);
+    assert_eq!(layer.summary.kind, LayerKindName::Text);
+    let text = layer.text.unwrap();
+    assert_eq!(text.content, "文字 Text");
+    assert_eq!(text.size, 14.0);
+    assert_eq!(text.color, "#204080");
+    assert!(text.font.is_none());
+    assert!(text.font_file.unwrap().ends_with("font.ttf"));
+    // 値を変えると描き直す（フォントは層が覚えたファイルから読む）
+    check_one_command(
+        &fx,
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"content": "二行\nの文", "align": "center", "rotation": 15}}}),
+    );
+    let text = get(&mut host).text.unwrap();
+    assert_eq!(text.content, "二行\nの文");
+    assert_eq!(text.align, yolu_ops::command::TextAlignName::Center);
+    assert_eq!(text.size, 14.0, "書かなかった値はそのまま");
+}
+
+#[test]
+fn text_layers_refuse_unavailable_fonts_and_misplaced_values_without_changes() {
+    let fx = Fixture::new("text-refusals");
+    fx.project("a.ylp");
+    let file = font_file(&fx, "font.ttf");
+    // OS のフォントは空の一覧（この PC に入っているフォントで結果が変わらないように）
+    let mut host = WithFonts(fx.host("a.ylp"), Default::default());
+    let before = state(&mut host);
+    // 画面なしのホストは同梱のフォントを持たない（理由で、起動中のアプリなら描けることが分かる）
+    let e = err(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x"}}}),
+    );
+    assert_eq!(e.code, yolu_ops::ErrorCode::Unsupported);
+    assert!(e.message.ja.contains("起動中のアプリ") && e.message.en.contains("running app"));
+    for (command, code) in [
+        (
+            json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x", "font": "nope"}}}),
+            yolu_ops::ErrorCode::NotFound,
+        ),
+        (
+            json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x", "font": "biz-udpgothic", "font_file": file}}}),
+            yolu_ops::ErrorCode::InvalidRequest,
+        ),
+        (
+            json!({"command": "layer.add", "args": {"kind": "text", "text": {"font_file": file}}}),
+            yolu_ops::ErrorCode::InvalidRequest,
+        ),
+        (
+            json!({"command": "layer.add", "args": {"kind": "paint", "text": {"content": "x", "font_file": file}}}),
+            yolu_ops::ErrorCode::InvalidRequest,
+        ),
+        (
+            json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x", "font_file": file, "size": 0}}}),
+            yolu_ops::ErrorCode::InvalidValue,
+        ),
+        (
+            json!({"command": "layer.set", "args": {"layer": "Base", "text": {"content": "x"}}}),
+            yolu_ops::ErrorCode::Unsupported,
+        ),
+    ] {
+        let e = err(&mut host, command.clone());
+        assert_eq!(e.code, code, "{command}");
+    }
+    assert_eq!(state(&mut host), before);
+    // 層が覚えたフォントのファイルの中身が変わったら、見つからない扱いで描き直さない
+    ok(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "name": "Label", "text": {"content": "x", "font_file": file}}}),
+    );
+    let added = state(&mut host);
+    std::fs::write(fx.path("font.ttf"), b"changed").unwrap();
+    let e = err(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"content": "y"}}}),
+    );
+    assert_eq!(e.code, yolu_ops::ErrorCode::NotFound);
+    assert_eq!(state(&mut host), added);
+}
+
+/// 同梱のフォントを持つホスト（起動中のアプリの代わり）。ほかは画面なしのホストへ渡す。
+struct WithBundled(FileHost);
+impl OpHost for WithBundled {
+    fn policy(&self) -> &yolu_ops::PathPolicy {
+        self.0.policy()
+    }
+    fn doc_info(&mut self) -> Result<DocInfo, yolu_ops::OpError> {
+        self.0.doc_info()
+    }
+    fn open(&mut self, p: &std::path::Path, c: bool) -> Result<DocInfo, yolu_ops::OpError> {
+        self.0.open(p, c)
+    }
+    fn read_set(
+        &mut self,
+        set: Option<&str>,
+        f: &mut dyn FnMut(&yolu_ops::SetView<'_>) -> Result<Reply, yolu_ops::OpError>,
+    ) -> Result<Reply, yolu_ops::OpError> {
+        self.0.read_set(set, f)
+    }
+    fn write_set(
+        &mut self,
+        set: Option<&str>,
+        f: &mut dyn FnMut(
+            yolu_ops::doc_ops::SetFacts<'_>,
+            &mut yolu_core::Document,
+        ) -> Result<Reply, yolu_ops::OpError>,
+    ) -> Result<Reply, yolu_ops::OpError> {
+        self.0.write_set(set, f)
+    }
+    fn save(&mut self, job: &yolu_ops::SaveJob) -> Result<Reply, yolu_ops::OpError> {
+        self.0.save(job)
+    }
+    fn bundled_font(&self, name: &str) -> Option<std::sync::Arc<[u8]>> {
+        (name == "biz-udpgothic").then(|| {
+            std::sync::Arc::from(
+                &include_bytes!("../../yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf")[..],
+            )
+        })
+    }
+}
+
+#[test]
+fn a_host_with_bundled_fonts_draws_the_default_font() {
+    let fx = Fixture::new("text-bundled");
+    fx.project("a.ylp");
+    let mut host = WithBundled(fx.host("a.ylp"));
+    let e = edited(ok(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "既定のフォント"}}}),
+    ));
+    let Reply::Layer(l) = ok(
+        &mut host,
+        json!({"command": "layer.get", "args": {"layer": e.layer.unwrap()}}),
+    ) else {
+        panic!()
+    };
+    let text = l.text.unwrap();
+    assert_eq!(text.font.as_deref(), Some("biz-udpgothic"));
+    assert_eq!(
+        (text.x, text.y),
+        (0.0, 48.0),
+        "既定の基準の点はキャンバスの左上"
+    );
+    ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Text", "text": {"size": 20}}}),
+    );
+    // 画面なしのホストは、同梱のフォントの文字を描き直せない
+    let e = err(
+        &mut host.0,
+        json!({"command": "layer.set", "args": {"layer": "Text", "text": {"size": 30}}}),
+    );
+    assert_eq!(e.code, yolu_ops::ErrorCode::Unsupported);
+}
+
+/// OS のフォントの一覧を決めたフォルダのものにしたホスト。ほかは画面なしのホストへ渡す。
+struct WithFonts(FileHost, std::sync::Arc<yolu_io::fonts::SystemFonts>);
+impl OpHost for WithFonts {
+    fn policy(&self) -> &yolu_ops::PathPolicy {
+        self.0.policy()
+    }
+    fn doc_info(&mut self) -> Result<DocInfo, yolu_ops::OpError> {
+        self.0.doc_info()
+    }
+    fn open(&mut self, p: &std::path::Path, c: bool) -> Result<DocInfo, yolu_ops::OpError> {
+        self.0.open(p, c)
+    }
+    fn read_set(
+        &mut self,
+        set: Option<&str>,
+        f: &mut dyn FnMut(&yolu_ops::SetView<'_>) -> Result<Reply, yolu_ops::OpError>,
+    ) -> Result<Reply, yolu_ops::OpError> {
+        self.0.read_set(set, f)
+    }
+    fn write_set(
+        &mut self,
+        set: Option<&str>,
+        f: &mut dyn FnMut(
+            yolu_ops::doc_ops::SetFacts<'_>,
+            &mut yolu_core::Document,
+        ) -> Result<Reply, yolu_ops::OpError>,
+    ) -> Result<Reply, yolu_ops::OpError> {
+        self.0.write_set(set, f)
+    }
+    fn save(&mut self, job: &yolu_ops::SaveJob) -> Result<Reply, yolu_ops::OpError> {
+        self.0.save(job)
+    }
+    fn system_fonts(
+        &mut self,
+    ) -> Result<std::sync::Arc<yolu_io::fonts::SystemFonts>, yolu_ops::OpError> {
+        Ok(self.1.clone())
+    }
+}
+
+/// 返事の知らせ（`edited` の `notes`）の日本語の文。
+fn note_texts(reply: Reply) -> Vec<String> {
+    edited(reply).notes.into_iter().map(|n| n.ja).collect()
+}
+
+#[test]
+fn a_font_found_with_other_contents_is_redrawn_with_a_note_in_the_reply() {
+    let fx = Fixture::new("text-different");
+    fx.project("a.ylp");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-app/assets/fonts");
+    let dir = fx.path("fonts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(source.join("BIZUDPGothic-Bold.ttf"), dir.join("b.ttf")).unwrap();
+    let list = || std::sync::Arc::new(yolu_io::fonts::SystemFonts::from_dirs(&[&dir]));
+    let mut host = WithFonts(fx.host("a.ylp"), list());
+    ok(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "name": "Label", "text": {"content": "OS", "font": "BIZUDPGothic-Bold"}}}),
+    );
+    // 同じ中身が見つかれば、知らせは無い
+    let same = ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"size": 20}}}),
+    );
+    assert!(note_texts(same).is_empty());
+    // 同じ名前・同じ道のファイルが別の中身（末尾に 1 バイト足した、読めるフォント）になった
+    let mut bytes = std::fs::read(dir.join("b.ttf")).unwrap();
+    bytes.push(0);
+    std::fs::write(dir.join("b.ttf"), &bytes).unwrap();
+    host.1 = list();
+    // 色だけを変える命令でも、描き直すのは見つけたフォントなので、黙って入れ替えない
+    let different = ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"color": "#336699"}}}),
+    );
+    let notes = note_texts(different.clone());
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("フォントが違います"), "{}", notes[0]);
+    assert!(notes[0].contains("BIZUDPGothic-Bold"), "{}", notes[0]);
+    let Reply::Edited(e) = different else {
+        panic!()
+    };
+    assert!(e.notes[0].en.contains("differs"), "{}", e.notes[0].en);
+    // 描き直した値は見つけたフォントの印になり、次からは同じ中身
+    let again = ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"size": 22}}}),
+    );
+    assert!(note_texts(again).is_empty());
+    // フォントを指定した命令は、利用者が選んだものなので知らせない
+    let chosen = ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"font": "BIZUDPGothic-Bold"}}}),
+    );
+    assert!(note_texts(chosen).is_empty());
+}
+
+#[test]
+fn installed_fonts_are_chosen_by_name_and_found_again_after_moving() {
+    let fx = Fixture::new("text-installed");
+    fx.project("a.ylp");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-app/assets/fonts");
+    let (first, second) = (fx.path("fonts"), fx.path("moved"));
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    std::fs::copy(source.join("BIZUDPGothic-Regular.ttf"), first.join("r.ttf")).unwrap();
+    std::fs::copy(source.join("BIZUDPGothic-Bold.ttf"), first.join("b.ttf")).unwrap();
+    let list =
+        |dir: &std::path::Path| std::sync::Arc::new(yolu_io::fonts::SystemFonts::from_dirs(&[dir]));
+    let mut host = WithFonts(fx.host("a.ylp"), list(&first));
+    let get = |host: &mut WithFonts| {
+        let Reply::Layer(l) = ok(
+            host,
+            json!({"command": "layer.get", "args": {"layer": "Label"}}),
+        ) else {
+            panic!()
+        };
+        l.text.unwrap()
+    };
+    // ファミリー名は太さ 400 の斜体でないスタイル（画面なしのホストでも描ける）
+    ok(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "name": "Label", "text": {"content": "OS", "font": "BIZ UDPGothic"}}}),
+    );
+    let text = get(&mut host);
+    assert_eq!(text.font, None);
+    assert_eq!(text.font_family.as_deref(), Some("BIZ UDPGothic"));
+    assert_eq!(
+        text.font_postscript.as_deref(),
+        Some("BIZUDPGothic-Regular")
+    );
+    assert!(text.font_file.unwrap().ends_with("r.ttf"));
+    // PostScript 名で 1 つのスタイル
+    ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"font": "BIZUDPGothic-Bold"}}}),
+    );
+    assert_eq!(
+        get(&mut host).font_postscript.as_deref(),
+        Some("BIZUDPGothic-Bold")
+    );
+    // フォントが別のフォルダへ移っても、名前で同じ中身を見つけて描き直す（値の道は見つけた所）
+    std::fs::rename(first.join("b.ttf"), second.join("bold.ttf")).unwrap();
+    host.1 = list(&second);
+    ok(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"size": 20}}}),
+    );
+    let text = get(&mut host);
+    assert_eq!(text.size, 20.0);
+    assert!(text.font_file.unwrap().ends_with("bold.ttf"));
+    // どこにも無ければ、何も変えずに断る
+    std::fs::remove_file(second.join("bold.ttf")).unwrap();
+    host.1 = list(&second);
+    let before = state(&mut host);
+    let e = err(
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Label", "text": {"size": 30}}}),
+    );
+    assert_eq!(e.code, yolu_ops::ErrorCode::NotFound);
+    assert!(
+        e.message.ja.contains("フォントが見つかりません"),
+        "{}",
+        e.message.ja
+    );
+    assert_eq!(state(&mut host), before);
+    // 一覧に無い名前
+    let e = err(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x", "font": "No Such Family"}}}),
+    );
+    assert_eq!(e.code, yolu_ops::ErrorCode::NotFound);
+}

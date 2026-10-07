@@ -296,7 +296,7 @@ pub const VIEW_ROTATE: Key = Key::R;
 /// パン（押しながら左ドラッグ。Ctrl を足すと拡縮）のキー。2D のキャンバスと 3D ビューで同じ。
 pub const VIEW_PAN: Key = Key::Space;
 /// ステンシルの置き場を動かすキー（押しながらドラッグ）。
-pub const STENCIL_MOVE: Key = Key::T;
+pub const STENCIL_MOVE: Key = Key::Y;
 /// ステンシルを使わないあいだ押すキー。
 pub const STENCIL_BYPASS: Key = Key::N;
 /// 3D ビューで選んだセットを収めるキー（3D の上で、修飾なし）。
@@ -318,7 +318,7 @@ impl ContextKey {
     }
 }
 
-/// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの T）は、`GESTURES` の側に出る。
+/// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの Y）は、`GESTURES` の側に出る。
 pub const CONTEXT_KEYS: [ContextKey; 9] = [
     ContextKey {
         scope: "canvas",
@@ -557,7 +557,7 @@ pub const GESTURES: [Gesture; 19] = [
         (true, false, false),
         Operation::Orbit,
     ),
-    // ステンシル（T を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
+    // ステンシル（Y を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
     gesture_of(
         "stencil",
         Some(STENCIL_MOVE),

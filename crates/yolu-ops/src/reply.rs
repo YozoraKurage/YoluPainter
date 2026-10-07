@@ -130,6 +130,8 @@ pub enum LayerKindName {
     Fill,
     Adjustment,
     Group,
+    /// A paint layer whose Color pixels are drawn from editable text.
+    Text,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -246,6 +248,38 @@ pub struct LayerInfo {
     pub mask: Option<MaskInfo>,
     /// Content stack, in the order they are applied.
     pub effects: Vec<EffectInfo>,
+    /// Text layers: the text values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Box<TextInfo>>,
+}
+
+/// Values of a text layer (see `TextSpec` for their meaning).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TextInfo {
+    pub content: String,
+    /// Bundled font name, when the layer uses a bundled font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Font file path, when the layer uses a font file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_index: Option<u32>,
+    /// Family name of the font file, when the layer uses a font file and the font names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// PostScript name of the font file, when the layer uses a font file and the font names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_postscript: Option<String>,
+    pub size: f64,
+    pub color: String,
+    pub line_height: f64,
+    pub letter_spacing: f64,
+    pub align: crate::command::TextAlignName,
+    pub x: f64,
+    pub y: f64,
+    pub rotation: f64,
+    pub wrap_width: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -357,6 +391,9 @@ pub struct Edited {
     pub unchanged: bool,
     pub undo_count: u32,
     pub can_undo: bool,
+    /// Things to know about the edit (a text layer redrawn with a different font than the one it remembered ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Text>,
 }
 
 fn is_false(v: &bool) -> bool {
@@ -427,6 +464,9 @@ pub struct ActionStep {
     /// The command changed nothing (the values were already as asked).
     #[serde(default, skip_serializing_if = "is_false")]
     pub unchanged: bool,
+    /// Things to know about this command's edit (the same notes as the command's own reply).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Text>,
 }
 
 /// Every command of the action was applied, as one undo step.

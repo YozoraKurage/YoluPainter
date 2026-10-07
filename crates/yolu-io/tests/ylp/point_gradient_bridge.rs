@@ -206,16 +206,15 @@ fn versions_between_the_known_ones_are_refused_instead_of_read_as_version_25() {
         MIXING_VERSION
     );
     assert!(NativeDocument::read(&bytes).is_ok());
-    // 意味の決まっていない版（30・31）は、版 25 の並びとして読み進めずに断る
-    for gap in [30_i32, 31] {
-        let mut between = bytes.clone();
-        between[8..12].copy_from_slice(&gap.to_le_bytes());
-        let err = NativeDocument::read(&between).unwrap_err().to_string();
-        assert!(
-            err.contains(&format!("{gap} は未対応または範囲外")),
-            "版 {gap}: {err}"
-        );
-    }
+    // 意味の決まっていない版（31）は、版 25 の並びとして読み進めずに断る
+    let gap = 31_i32;
+    let mut between = bytes;
+    between[8..12].copy_from_slice(&gap.to_le_bytes());
+    let err = NativeDocument::read(&between).unwrap_err().to_string();
+    assert!(
+        err.contains(&format!("{gap} は未対応または範囲外")),
+        "版 {gap}: {err}"
+    );
 }
 
 #[test]

@@ -92,6 +92,8 @@ pub enum Popup {
     CatalogContext,
     /// ポーズの欄のテイク（FBX の中のアニメ）。
     Take,
+    /// テキストのフォント（同梱・インストール済み・選んだフォントのファイル・ファイルから選ぶ）。
+    TextFont,
 }
 
 fn tips(
@@ -179,6 +181,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::Take => crate::panels::pose::take_entries(app),
+        Popup::TextFont => crate::textlayer::props::font_entries(app),
         Popup::NormalEdges => {
             let current = app.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]

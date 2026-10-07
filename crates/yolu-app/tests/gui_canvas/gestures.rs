@@ -1295,9 +1295,9 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
     }
 }
 
-// ───────── 5. ステンシルを動かしているあいだ（T）は、ペンでもビューを動かさない ─────────
+// ───────── 5. ステンシルを動かしているあいだ（Y）は、ペンでもビューを動かさない ─────────
 
-/// 2 × 2 の画像を貼り、置き場を初めに戻す（T で動かすステンシルの試験の用意）。
+/// 2 × 2 の画像を貼り、置き場を初めに戻す（Y で動かすステンシルの試験の用意）。
 fn stencil_ready(h: &mut H) {
     let s = &mut h.state_mut().state.stencil;
     s.set_image_rgba("a", 2, 2, &[255; 16]).unwrap();
@@ -1311,7 +1311,7 @@ fn placement(h: &H) -> (f32, f32, [f32; 2]) {
 }
 
 #[test]
-fn while_t_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in_2d() {
+fn while_y_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in_2d() {
     // (押している修飾, Space を押すか)。Alt + 左はステンシルの拡縮、Space だけでは回す（ステンシルの決まり）
     for (name, mods, space) in [
         ("alt", Modifiers::ALT, false),
@@ -1328,7 +1328,7 @@ fn while_t_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in
         ];
         let (view, base) = (view_of(&h), placement(&h));
         let begin = |h: &mut H| {
-            hold_key(h, Key::T);
+            hold_key(h, Key::Y);
             if space {
                 hold_key(h, Key::Space);
             }
@@ -1341,7 +1341,7 @@ fn while_t_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in
             if space {
                 release_key(h, Key::Space);
             }
-            release_key(h, Key::T);
+            release_key(h, Key::Y);
         };
         begin(&mut h);
         Pen::tip().emulated().drag(&mut h, &path);
@@ -1362,7 +1362,7 @@ fn while_t_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in
 }
 
 #[test]
-fn while_t_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
+fn while_y_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
     // サイドボタン（右ボタンの回す）・Alt（回す）・Alt + Shift（パン）・Space（パン）
     let cases: [(&str, bool, Modifiers, bool); 4] = [
         ("barrel", true, Modifiers::NONE, false),
@@ -1375,7 +1375,7 @@ fn while_t_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         stencil_ready(&mut h);
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
         let before = camera(&h);
-        hold_key(&mut h, Key::T);
+        hold_key(&mut h, Key::Y);
         if space {
             hold_key(&mut h, Key::Space);
         }
@@ -1391,7 +1391,7 @@ fn while_t_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         if space {
             release_key(&mut h, Key::Space);
         }
-        release_key(&mut h, Key::T);
+        release_key(&mut h, Key::Y);
         let after = camera(&h);
         assert_eq!(after.yaw, before.yaw, "{name}: 回さない");
         assert_eq!(after.pitch, before.pitch, "{name}: 回さない");

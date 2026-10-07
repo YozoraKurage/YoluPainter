@@ -23,4 +23,5 @@ mod nesting;
 mod ramp_mixing;
 mod selection;
 mod simd_document;
+mod text_layer;
 mod warp;

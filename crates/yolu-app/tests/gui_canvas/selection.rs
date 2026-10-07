@@ -814,7 +814,7 @@ fn a_selection_tool_pen_presses_drags_and_releases_like_the_mouse() {
 }
 
 #[test]
-fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
+fn holding_y_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     use yolu_app::stencil::StencilOp;
     let dir = temp_dir("stencil-t");
     let mut h = app(1280.0, 800.0, 256);
@@ -825,19 +825,19 @@ fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     assert!(st(&h).stencil.image.is_some(), "{}", st(&h).message);
     pick_tool(&mut h, Tool::SelectRect);
     h.event(Event::Key {
-        key: Key::T,
+        key: Key::Y,
         physical_key: None,
         pressed: true,
         repeat: false,
         modifiers: Modifiers::NONE,
     });
     h.step();
-    // マウス: T を押したままのドラッグはステンシルを動かし、選択の形は始まらない
+    // マウス: Y を押したままのドラッグはステンシルを動かし、選択の形は始まらない
     let path = [at(&h, -60.0, -40.0), at(&h, 0.0, 0.0), at(&h, 60.0, 40.0)];
     drag(&mut h, &path);
     assert!(
         st(&h).doc.selection().is_none(),
-        "T を押したままのドラッグで選択ができた"
+        "Y を押したままのドラッグで選択ができた"
     );
     assert!(st(&h).sel.drag.is_none());
     // ペン: 触れても選択の形は始まらない
@@ -852,7 +852,7 @@ fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
     h.run();
     assert!(
         st(&h).doc.selection().is_none(),
-        "T を押したままのペンで選択ができた"
+        "Y を押したままのペンで選択ができた"
     );
     assert!(st(&h).sel.pen_down.is_none() && st(&h).sel.drag.is_none());
     assert_eq!(steps(&h), 0);

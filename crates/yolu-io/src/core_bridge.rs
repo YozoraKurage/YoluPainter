@@ -6,7 +6,7 @@
 use crate::native::{
     ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION,
     MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -21,6 +21,7 @@ use yolu_core::generator::{
 };
 use yolu_core::mesh_maps::{IdColorAssignments, MeshOverlapPriority, MeshOverlapRule};
 use yolu_core::paths;
+use yolu_core::text::{TextAlign, TextFont, TextSettings};
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
     BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
@@ -166,6 +167,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "opacity"
         | "blend"
         | "attributes"
+        | "attributes_ext"
         | "clipping"
         | "channel_blend_count"
         | "channel_blends"
@@ -191,9 +193,9 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "gradient_count"
         | "gradients"
         | "paths"
-        | "attributes_ext"
         | "point_gradient_count"
-        | "point_gradients" => None,
+        | "point_gradients"
+        | "text" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
                 "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
@@ -467,7 +469,8 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
 }
 
 /// 文書の正本の版（使う機能で決まる）: 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
-/// 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜29 の中身も読み書きできる版）、
+/// 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
+/// テキストレイヤーがあれば 30（版 27〜29 の中身も読み書きできる）、
 /// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
 /// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28（版 27 の中身も読み書きできる）、パスの一覧の形で書くパス
 /// （塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
@@ -479,6 +482,8 @@ pub(crate) fn version_of(doc: &Document) -> i32 {
         BAKE_PRIORITY_VERSION
     } else if !doc.filter_seams() {
         SEAMS_VERSION
+    } else if doc.layers().iter().any(|l| l.text().is_some()) {
+        TEXT_VERSION
     } else if uses_point_gradient_version(doc) {
         POINT_GRADIENT_VERSION
     } else if uses_image_generators(doc) || uses_new_filters(doc) {
@@ -564,6 +569,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
         sink,
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
+        text: version >= TEXT_VERSION,
     };
     w.value(b"YLID")?;
     w.int(assigned.colors().len() as i32)?;
@@ -580,6 +586,7 @@ pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
         sink,
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
+        text: version >= TEXT_VERSION,
     };
     w.raw(b"DOTPAINT")?;
     w.int(version)?;
@@ -595,6 +602,7 @@ pub(crate) fn write_layer_to(
         sink,
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
+        text: version >= TEXT_VERSION,
     };
     write_layer(&mut w, layer)
 }
@@ -1021,6 +1029,11 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         doc.set_paths_for_load(id, entries)
             .map_err(|e| Error::from(e).in_context("パスの一覧をcoreにできません"))?;
     }
+    if ext & 2 != 0 {
+        let text = read_text(f, &format!("{p}.text"))?;
+        doc.set_text_for_load(id, text)
+            .map_err(|e| Error::from(e).in_context("テキストの値をcoreにできません"))?;
+    }
     Ok(locks)
 }
 
@@ -1036,6 +1049,99 @@ fn erase_kind(mut path: LayerPath) -> LayerPath {
     }
     path
 }
+
+/// テキストレイヤーの値（`{p}` の下の項目。版 30）。
+fn read_text(f: &Fields<'_>, p: &str) -> Result<TextSettings> {
+    let font = if f.int(&format!("{p}.font_kind"))? == 0 {
+        TextFont::Bundled(f.text(&format!("{p}.font_name"))?.to_owned())
+    } else {
+        let hex = f.text(&format!("{p}.font_sha256"))?;
+        let mut sha256 = [0u8; 32];
+        for (i, b) in sha256.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                .map_err(|_| Error::InvalidData(format!("{p}.font_sha256 が不正です")))?;
+        }
+        TextFont::File {
+            path: f.text(&format!("{p}.font_path"))?.to_owned(),
+            index: f.int(&format!("{p}.font_index"))? as u32,
+            sha256,
+            names: yolu_core::text::FontNames {
+                family: f.text(&format!("{p}.font_family"))?.to_owned(),
+                postscript: f.text(&format!("{p}.font_postscript"))?.to_owned(),
+                weight: f.int(&format!("{p}.font_weight"))? as u16,
+                italic: f.boolean(&format!("{p}.font_italic"))?,
+            },
+        }
+    };
+    let text = TextSettings {
+        text: f.text(&format!("{p}.content"))?.to_owned(),
+        font,
+        size: f.float(&format!("{p}.size"))?,
+        color: f.rgba(&format!("{p}.rgba"))?,
+        line_height: f.float(&format!("{p}.line_height"))?,
+        letter_spacing: f.float(&format!("{p}.letter_spacing"))?,
+        align: match f.int(&format!("{p}.align"))? {
+            0 => TextAlign::Left,
+            1 => TextAlign::Center,
+            _ => TextAlign::Right,
+        },
+        x: f.float(&format!("{p}.x"))?,
+        y: f.float(&format!("{p}.y"))?,
+        rotation: f.float(&format!("{p}.rotation"))?,
+        wrap_width: f.float(&format!("{p}.wrap_width"))?,
+    };
+    text.validate()
+        .map_err(|e| Error::from(e).in_context(format!("{p} を読めません")))?;
+    Ok(text)
+}
+
+/// テキストレイヤーの値を書く（読み手の `text` の並び）。
+fn write_text(w: &mut Out<'_>, text: &TextSettings) -> Result<()> {
+    w.int(TEXT_ALGORITHM)?;
+    w.text(&text.text)?;
+    match &text.font {
+        TextFont::Bundled(name) => {
+            w.int(0)?;
+            w.text(name)?;
+        }
+        TextFont::File {
+            path,
+            index,
+            sha256,
+            names,
+        } => {
+            w.int(1)?;
+            w.text(path)?;
+            w.int(
+                i32::try_from(*index)
+                    .map_err(|_| Error::InvalidData("フォントの束の番号が大きすぎます".into()))?,
+            )?;
+            let hex: String = sha256.iter().map(|b| format!("{b:02x}")).collect();
+            w.text(&hex)?;
+            w.text(&names.family)?;
+            w.text(&names.postscript)?;
+            w.int(i32::from(names.weight))?;
+            w.boolean(names.italic)?;
+        }
+    }
+    w.float(text.size)?;
+    w.value(&text.color.to_array())?;
+    w.float(text.line_height)?;
+    w.float(text.letter_spacing)?;
+    w.int(match text.align {
+        TextAlign::Left => 0,
+        TextAlign::Center => 1,
+        TextAlign::Right => 2,
+    })?;
+    for v in [text.x, text.y, text.rotation, text.wrap_width] {
+        w.float(v)?;
+    }
+    Ok(())
+}
+
+/// テキストレイヤーの並べ・塗りの版（正本の `text.algorithm`）。並べ・塗りの式を変えて同じ値の画素が変わるときに上げる（画素は保存してあるので、
+/// 開いたときの見た目は変わらない。文を直したときの描き直しだけが新しい式になる）。
+const TEXT_ALGORITHM: i32 = 1;
 
 /// 2D・3D のパス（`{p}` の下の項目）。ブラシは丸いブラシの設定（半径は 2D では画素、3D ではモデルの空間）。
 fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<LayerPath> {
@@ -1992,6 +2098,8 @@ struct Out<'s> {
     mixing: bool,
     /// 版 29 の並び（画像ごとの異方性・点のグラデーション）で書くか。
     points: bool,
+    /// 版 30 の文字の値を書けるか。
+    text: bool,
 }
 impl Out<'_> {
     fn raw(&mut self, b: &[u8]) -> Result<()> {
@@ -2056,8 +2164,14 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     )?;
     // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
     // ビット 5 塗りつぶしのグラデーション、ビット 6 パスの一覧（版 27）、ビット 7 続きの属性の印が続く（版 29）。ロックの印（int、0 は書かない）は
-    // 属性の直後、続きの属性の印（int、0 は書かない。ビット 0 塗りつぶしの点のグラデーション）はロックの直後、どちらもチャンネルごとの設定より前
-    let ext: i32 = if points.is_empty() { 0 } else { 1 };
+    // 属性の直後、続きの属性の印（int、0 は書かない。ビット 0 塗りつぶしの点のグラデーション、ビット 1 文字の値（版 30））はロックの直後、
+    // どちらもチャンネルごとの設定より前
+    check(
+        w.text || layer.text().is_none(),
+        named("テキストレイヤーは版 30 で書く"),
+    )?;
+    let ext: i32 =
+        if points.is_empty() { 0 } else { 1 } | if layer.text().is_some() { 2 } else { 0 };
     w.byte(
         u8::from(layer.clipping())
             | if locks == LayerLocks::NONE { 0 } else { 2 }
@@ -2225,6 +2339,9 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
             write_path(w, &e.path)?;
             write_path_extra(w, &e.path)?;
         }
+    }
+    if let Some(text) = layer.text() {
+        write_text(w, text)?;
     }
     Ok(())
 }

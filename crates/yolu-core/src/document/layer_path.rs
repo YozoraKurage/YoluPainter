@@ -44,6 +44,8 @@ impl Document {
     pub(super) fn refuse_path_layer(&self, index: usize) -> Result<(), CoreError> {
         if self.layers[index].has_paths() {
             Err(CoreError::Unsupported("パスで描かれた層には手で描けない"))
+        } else if self.layers[index].text.is_some() {
+            Err(CoreError::Unsupported("テキストレイヤーには手で描けない"))
         } else {
             Ok(())
         }
@@ -59,6 +61,11 @@ impl Document {
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
             return Err(CoreError::Unsupported(
                 "パスで描けるのはラスターと塗りつぶしの層だけ",
+            ));
+        }
+        if l.text.is_some() {
+            return Err(CoreError::Unsupported(
+                "テキストレイヤーにはパスを付けられない",
             ));
         }
         validate_list(entries).map_err(paths_error)?;
@@ -401,10 +408,13 @@ impl Document {
         self.set_paths(layer, entries, rendered.channels)
     }
 
-    /// パスを外し、今の画素だけを残す（その後は普通に塗れる）。1 回の Undo。パスが無ければ何もしない。
+    /// パス（テキストレイヤーならテキストの値）を外し、今の画素だけを残す（その後は普通に塗れる）。1 回の Undo。どちらも無ければ何もしない。
     pub fn rasterize(&mut self, layer: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
+        if let Some(text) = self.layers[index].text.clone() {
+            return self.rasterize_text(layer, text);
+        }
         let old = self.layers[index].paths.clone();
         if old.is_empty() {
             return Ok(());
@@ -516,6 +526,7 @@ impl Document {
         let l = &self.layers[index];
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
             || l.has_paths()
+            || l.text.is_some()
             || entries.is_empty()
         {
             return Err(CoreError::Unsupported(

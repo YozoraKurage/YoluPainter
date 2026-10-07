@@ -752,6 +752,35 @@ fn a_path_layer_keeps_its_rasterized_pixels_and_says_the_path_is_not_carried() {
     assert_eq!(state(&d), before);
 }
 
+#[test]
+fn a_text_layer_is_written_as_pixels_and_says_the_text_is_not_carried() {
+    use yolu_core::text::{TextFont, TextSettings};
+    let (mut d, _, _, _) = three();
+    let layer = d.add_layer("文字").unwrap();
+    for x in 3..20 {
+        d.set_pixel(layer, x, 9, Rgba8::new(30, 60, 90, 255))
+            .unwrap();
+    }
+    // 画素は読み込みと同じ形で持たせる（フォントを使わずにテキストレイヤーにする）
+    d.set_text_for_load(
+        layer,
+        TextSettings::new("文字", TextFont::Bundled("biz-udpgothic".into()), 3.0, 12.0),
+    )
+    .unwrap();
+    let before = state(&d);
+    let (out, back) = round_trip(&d, Channel::Color);
+    assert_eq!(notes_of(&out), [("文字", &NoteAction::BakedText)]);
+    assert!(back.layers().iter().all(|l| l.text().is_none()));
+    // ほかのチャンネルの PSD には、文字の Color は関わらない
+    let (height, _) = round_trip(&d, Channel::Height);
+    assert!(height.notes.is_empty());
+    // 厳密な書き出しは、文字の値を落とさず断る
+    assert!(psd::export_blockers(&d)
+        .iter()
+        .any(|b| b.layer == "文字" && b.refusal == Refusal::Text));
+    assert_eq!(state(&d), before);
+}
+
 // ───────── クリッピングされたグループ ─────────
 
 #[test]

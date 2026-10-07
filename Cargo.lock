@@ -1387,6 +1387,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontdb"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2660c5e9157bf76d2db1294e4a9feba604ef610819a3b591088d0d8392a3290f"
+dependencies = [
+ "log",
+ "memmap2",
+ "slotmap",
+ "tinyvec",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3755,6 +3767,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "tokio"
 version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4984,9 +5002,12 @@ name = "yolu-core"
 version = "0.4.0"
 dependencies = [
  "glam",
+ "harfrust",
  "libm",
  "rayon",
  "sha2",
+ "skrifa",
+ "vello_cpu",
 ]
 
 [[package]]
@@ -5006,6 +5027,7 @@ version = "0.4.0"
 dependencies = [
  "crc32fast",
  "flate2",
+ "fontdb",
  "png",
  "rayon",
  "rusqlite",

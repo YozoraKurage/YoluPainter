@@ -1157,6 +1157,20 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::DistributeSave) => crate::distribute::run_dialog(&mut self.state),
+            Some(DialogRequest::TextFont) => {
+                let lang = self.state.lang;
+                if let Some(path) = crate::dialog::file()
+                    .set_title(lang.pick("フォントのファイルを開く", "Open a Font File"))
+                    .add_filter(
+                        lang.pick("フォント", "Fonts"),
+                        &["ttf", "otf", "ttc", "TTF", "OTF", "TTC"],
+                    )
+                    .pick_file()
+                {
+                    self.state
+                        .apply(Action::Text(crate::textlayer::TextAction::FontFile(path)));
+                }
+            }
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file()
@@ -1686,6 +1700,8 @@ impl YoluApp {
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();
         self.state.poll_clipboard();
+        // OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる
+        self.state.text_poll();
         // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
         // （主の窓から外の窓へフォーカスが移っても、アプリはフォーカスを失っていない）
         let focused = if self.detached_focused(&ctx) {

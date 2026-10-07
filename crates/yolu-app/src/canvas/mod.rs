@@ -68,12 +68,14 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     // グラデーションの道具: ドラッグ中の線
     crate::gradient::canvas::paint_overlay(&painter, &view, app);
     crate::drafting::canvas::paint_overlay(&painter, &view, app);
+    // テキストツール: 打っている文字の枠・カーソルと入力欄
+    crate::textlayer::canvas::paint_overlay(ui, &painter, &view, app);
     // 選択範囲の下のボタンの帯（描いている間・選択の形を作っている間・表示を動かしている間は出ない）
     crate::selection::bar::show(ui, app, &view, rect);
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
     crate::uv_wireframe::show(ui, app, &view);
-    // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
+    // ステンシル（画面に貼り付いた半透明の画像。Y を押しているあいだは枠も）
     crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
     // パスの道具: 選んでいる層の 2D のパスの線と点
     let hover_for_path = ui.input(|i| i.pointer.hover_pos());
@@ -843,7 +845,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
         } else {
             now
         };
-        // T を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない）
+        // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない）
         let over = match event {
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
             _ => false,
