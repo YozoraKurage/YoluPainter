@@ -1,4 +1,4 @@
-//! 0.5.0 の Generator の種類（模様 66・光 68・マスクの組み立て 69）: 式どおりの値、行の評価と 1 画素ずつの値が同じ、マップが無いときの
+//! 0.5.0 の Generator の種類（模様 66・ライト 68・マスクの組み立て 69）: 式どおりの値、行の評価と 1 画素ずつの値が同じ、マップが無いときの
 //! 断り（使うマップだけ）、種類ごとの欄の検査、領域の切り方で同じバイト。
 use yolu_core::generator::*;
 use yolu_core::Rect;
@@ -229,7 +229,7 @@ fn only_the_maps_in_use_are_required() {
     assert!(pattern.used_maps().is_empty() && pattern.candidate_maps().is_empty());
     let b = BoundGenerator::bind(&pattern, &[], None, (w, h), no_anchor()).unwrap();
     assert!(b.inactive().is_none());
-    // 光はワールドの法線が無ければ入力のまま
+    // ライトはワールドの法線が無ければ入力のまま
     let light = Settings::new(Kind::Light);
     let b = BoundGenerator::bind(&light, &[], None, (w, h), no_anchor()).unwrap();
     assert_eq!(
@@ -259,7 +259,7 @@ fn only_the_maps_in_use_are_required() {
 
 #[test]
 fn kind_settings_stay_with_their_kind_and_ranges_are_checked() {
-    // ほかの種類が模様・光・マスクの組み立ての欄を持つのは断る
+    // ほかの種類が模様・ライト・マスクの組み立ての欄を持つのは断る
     let mut s = Settings::new(Kind::EdgeWear);
     s.pattern.width = 0.3;
     assert!(s.validate().is_err());
@@ -269,7 +269,7 @@ fn kind_settings_stay_with_their_kind_and_ranges_are_checked() {
     let mut s = Settings::new(Kind::Light);
     s.mask_builder.combine = MaskCombine::Max;
     assert!(s.validate().is_err());
-    // 重ねるノイズ・共通の減衰（模様・光）は持たない
+    // 重ねるノイズ・共通の減衰（模様・ライト）は持たない
     let mut s = Settings::new(Kind::Pattern);
     s.noise_amount = 0.2;
     assert!(s.validate().is_err());
@@ -307,6 +307,7 @@ fn kind_settings_stay_with_their_kind_and_ranges_are_checked() {
     // 番号
     for (kind, index) in [
         (Kind::Pattern, 66),
+        (Kind::UvIslandVariation, 67),
         (Kind::Light, 68),
         (Kind::MaskBuilder, 69),
     ] {
@@ -314,9 +315,4 @@ fn kind_settings_stay_with_their_kind_and_ranges_are_checked() {
         assert_eq!(Kind::from_index(i64::from(index)), Some(kind));
         assert!(kind.is_rust_only() && kind.is_050() && !kind.is_procedural());
     }
-    assert_eq!(
-        Kind::from_index(67),
-        None,
-        "67（UV の島ごとの値）はまだ無い"
-    );
 }

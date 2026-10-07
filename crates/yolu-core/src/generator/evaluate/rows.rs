@@ -204,7 +204,8 @@ impl BoundGenerator<'_> {
                     *o = self.image_value(x0 + k as u32, y).unwrap_or_else(none);
                 }
             }
-            // 模様・光・マスクの組み立ては 1 画素ずつ（SIMD にしない）
+            Kind::UvIslandVariation => self.island_row(x0, y, out),
+            // 模様・ライト・マスクの組み立ては 1 画素ずつ（SIMD にしない）
             Kind::Pattern | Kind::Light | Kind::MaskBuilder => {
                 for (k, o) in out.iter_mut().enumerate() {
                     *o = self.base_050(x0 + k as u32, y, at + k).unwrap_or_else(none);
@@ -253,6 +254,28 @@ impl BoundGenerator<'_> {
             *o = self
                 .procedural_value_with(x0 + k as u32, y, at + k, scratch)
                 .unwrap_or_else(none);
+        }
+    }
+
+    /// アイランドごとのばらつきの行の基底の値。島の図の行の連なりを歩き、連なりごとに 1 回だけ値を求めて埋める（`island_value` と同じ式）。
+    fn island_row(&self, x0: u32, y: u32, out: &mut [f64]) {
+        out.fill(none());
+        let Some(map) = &self.islands else {
+            return;
+        };
+        let x1 = x0 + out.len() as u32;
+        let row = map.row(y);
+        let first = row.partition_point(|r| r.end <= x0);
+        for r in &row[first..] {
+            if r.start >= x1 {
+                break;
+            }
+            if r.island == 0 {
+                continue;
+            }
+            let v = self.g.island.value_in(self.island_stream, r.island);
+            let (a, b) = (r.start.max(x0), r.end.min(x1));
+            out[(a - x0) as usize..(b - x0) as usize].fill(v);
         }
     }
 

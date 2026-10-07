@@ -402,6 +402,10 @@ impl Lang {
             InactiveReason::Generator(I::MissingImage) => {
                 "The image is not in the project or cannot be read".into()
             }
+            InactiveReason::Generator(I::NoModel) => "No model".into(),
+            InactiveReason::Generator(I::IslandMap) => {
+                "The UV island map does not fit in the memory budget".into()
+            }
             InactiveReason::Rejected(why) if why.is_ascii() => why.clone(),
             InactiveReason::Rejected(_) => "Settings cannot be used".into(),
         }
@@ -530,6 +534,7 @@ fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Pattern => "Pattern",
         generator::Kind::Light => "Light",
         generator::Kind::MaskBuilder => "Mask builder",
+        generator::Kind::UvIslandVariation => "UV island variation",
     }
 }
 
@@ -1819,6 +1824,8 @@ mod tests {
             InactiveReason::Generator(I::Anchor(anchor::Issue::NotChosen)),
             InactiveReason::Generator(I::Anchor(anchor::Issue::Missing)),
             InactiveReason::Generator(I::Anchor(anchor::Issue::NotBelow)),
+            InactiveReason::Generator(I::NoModel),
+            InactiveReason::Generator(I::IslandMap),
             InactiveReason::Rejected("ASCII reason".into()),
             InactiveReason::Rejected("範囲外の値".into()),
         ];

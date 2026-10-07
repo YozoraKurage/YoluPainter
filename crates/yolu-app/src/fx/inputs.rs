@@ -179,6 +179,8 @@ pub fn space_of(resource: &yolu_io::Resource) -> (&'static str, yolu_core::Image
 }
 
 /// 入力がそろわないことが理由の、効いていない効果（Anchor を選んでいない・ID の色が無いなど、文書の中の設定の不備は含めない）。
+/// モデルが無いこと（`NoModel`: アイランドごとのばらつきの島の図を渡せない）も、モデルのルートが無いこと（`MissingFrame`）と同じく入力の不足。
+/// 島の図を予算で断ったこと（`IslandMap`）は、文書の大きさと予算の設定なので含めない。
 pub fn is_input_problem(effect: &InactiveEffect) -> bool {
     use generator::Inactive as I;
     match &effect.reason {
@@ -188,7 +190,8 @@ pub fn is_input_problem(effect: &InactiveEffect) -> bool {
             | I::UnverifiedMap(_)
             | I::MapSize(_)
             | I::PinMismatch(_)
-            | I::MissingFrame,
+            | I::MissingFrame
+            | I::NoModel,
         ) => true,
         // 画像が棚に無い・予算を超えて読めない
         InactiveReason::Rejected(_) => matches!(effect.target, InactiveTarget::FillImage(_)),
@@ -987,6 +990,24 @@ mod tests {
             a.doc.inactive_effect_list()
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 入力の不足に数えるもの: モデルが無いこと（島の図を渡せない）はモデルのルートが無いことと同じ。島の図を予算で断ったことは
+    /// 文書の設定の側なので数えない。
+    #[test]
+    fn a_missing_model_is_an_input_problem_but_a_refused_island_map_is_not() {
+        let effect = |why: generator::Inactive| InactiveEffect {
+            layer: yolu_core::LayerId(1),
+            layer_name: "Base".into(),
+            target: InactiveTarget::Generator {
+                mask: false,
+                kind: generator::Kind::UvIslandVariation,
+            },
+            reason: InactiveReason::Generator(why),
+        };
+        assert!(is_input_problem(&effect(generator::Inactive::NoModel)));
+        assert!(is_input_problem(&effect(generator::Inactive::MissingFrame)));
+        assert!(!is_input_problem(&effect(generator::Inactive::IslandMap)));
     }
 
     /// 読むだけにする理由の文: 復号できなかった画像は、その理由を言う（棚に無いときだけ「プロジェクトに画像が無い」）。

@@ -1177,7 +1177,7 @@ fn the_new_filters_survive_save_and_reopen_with_their_values() {
 }
 
 /// 0.5.0 の模様（マップを読まない Generator）を足して値を変え、保存して開き直しても同じ設定（開いた文書はマップを待たずに編集できる）。
-/// 光・マスクの組み立ての往復は yolu-io の `filters_v28`（マップを読む種類は、開くとマップがそろうまで読むだけ）。
+/// ライト・マスクの組み立ての往復は yolu-io の `filters_v28`（マップを読む種類は、開くとマップがそろうまで読むだけ）。
 #[test]
 fn the_pattern_generator_survives_save_and_reopen() {
     let dir = temp_dir("generators_v28");

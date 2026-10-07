@@ -1000,7 +1000,7 @@ fn generator_rows(
         }
         Kind::IdColor => id_color_rows(ui, app, rows, layer, id, g, &mut next, enabled),
         Kind::Noise | Kind::Grunge => procedural_rows(ui, app, rows, ctx, &mut next, enabled),
-        // 模様・光・マスクの組み立ては目録の欄から並べる（範囲・反転・合成は下の共通の行。模様・光の softness は自分の欄）
+        // 模様・ライト・マスクの組み立ては目録の欄から並べる（範囲・反転・合成は下の共通の行。模様・ライトの softness は自分の欄）
         Kind::Pattern | Kind::Light | Kind::MaskBuilder => {
             let common: &[&str] = if g.kind == Kind::MaskBuilder {
                 &["low", "high", "softness", "invert", "blend"]
@@ -1015,9 +1015,43 @@ fn generator_rows(
                 next.mask_builder = r.mask_builder;
             }
         }
+        // アイランドごとのばらつき: シードは目録の欄から、最小・最大は互いを越えないように（範囲・反転・合成は下の共通の行）
+        Kind::UvIslandVariation => {
+            let kind = "uv_island_variation";
+            let skip = ["low", "high", "softness", "invert", "blend", "min", "max"];
+            if let Some(EffectSettings::Generator(r)) =
+                catalog_rows(ui, app, rows, effect.settings(), &skip)
+            {
+                next.island.seed = r.island.seed;
+            }
+            if let Some(v) = percent_row(
+                ui,
+                rows,
+                "fx.min",
+                names::param_label(lang, kind, "min"),
+                g.island.min,
+                (0.0, 1.0),
+                names::param_hint(lang, kind, "min"),
+                enabled,
+            ) {
+                next.island.min = v.min(g.island.max);
+            }
+            if let Some(v) = percent_row(
+                ui,
+                rows,
+                "fx.max",
+                names::param_label(lang, kind, "max"),
+                g.island.max,
+                (0.0, 1.0),
+                names::param_hint(lang, kind, "max"),
+                enabled,
+            ) {
+                next.island.max = v.max(g.island.min);
+            }
+        }
         Kind::EdgeWear | Kind::Thickness | Kind::Anchor | Kind::Image => {}
     }
-    // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す。模様・光のやわらかさは自分の欄）
+    // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す。模様・ライトのやわらかさは自分の欄）
     if g.kind != Kind::IdColor && values {
         group_label(ui, rows, lang.pick("範囲", "Range"));
         let gap = 0.001 + 1e-6;
@@ -1085,7 +1119,7 @@ fn generator_rows(
     ) {
         next.invert = on;
     }
-    // 崩し（ノイズ・グランジ・画像・模様・光・マスクの組み立ては重ねるノイズを持たない。core が断るので出さない）
+    // 崩し（ノイズ・グランジ・画像・模様・ライト・マスクの組み立ては重ねるノイズを持たない。core が断るので出さない）
     if !g.kind.is_procedural() && !g.kind.is_050() && g.kind != Kind::Image {
         group_label(ui, rows, lang.pick("崩し", "Breakup"));
         if let Some(v) = percent_row(

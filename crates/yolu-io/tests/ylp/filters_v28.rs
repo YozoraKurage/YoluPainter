@@ -1,4 +1,4 @@
-//! 0.5.0 のフィルターの段（種類 70〜79）と Generator（66 模様・68 光・69 マスクの組み立て）の保存・復元（正本の版 28）。目録の全部の
+//! 0.5.0 のフィルターの段（種類 70〜79）と Generator（66 模様・67 アイランドごとのばらつき・68 ライト・69 マスクの組み立て）の保存・復元（正本の版 28）。目録の全部の
 //! 種類を既定値と既定でない値で往復させ、版の選び方、古い読み手（スタンドアロン 0.4.x・Unity 0.2.0）が版の数で断ること、欄の範囲・
 //! チャンネル・到達半径の検査、.ylsmart の断りを試す。
 use std::collections::BTreeMap;
@@ -470,10 +470,10 @@ fn smart_files_do_not_carry_the_new_kinds() {
     }
 }
 
-/// 版 28 の Generator（模様・光・マスクの組み立て）。既定でない値で 1 つずつ。
+/// 版 28 の Generator（模様・ライト・マスクの組み立て・アイランドごとのばらつき）。既定でない値で 1 つずつ。
 fn generators() -> Vec<(&'static str, yolu_core::generator::Settings)> {
     use yolu_core::generator::{
-        Kind, Light, MaskCombine, MaskInput, Pattern, PatternShape, Settings,
+        IslandVariation, Kind, Light, MaskCombine, MaskInput, Pattern, PatternShape, Settings,
     };
     let mut pattern = Settings::new(Kind::Pattern);
     pattern.low = 0.125;
@@ -522,10 +522,19 @@ fn generators() -> Vec<(&'static str, yolu_core::generator::Settings)> {
             invert: true,
         },
     ];
+    let mut island = Settings::new(Kind::UvIslandVariation);
+    island.softness = 0.35;
+    island.high = 0.875;
+    island.island = IslandVariation {
+        seed: i32::MIN,
+        min: 0.123456789,
+        max: 0.123456789,
+    };
     vec![
         ("pattern", pattern),
         ("light", light),
         ("mask_builder", mask),
+        ("uv_island_variation", island),
     ]
 }
 
@@ -560,8 +569,9 @@ fn the_new_generators_round_trip_at_version_28() {
 }
 
 #[test]
-fn the_reader_refuses_kind_67_wrong_pins_and_out_of_range_generator_fields() {
+fn the_reader_refuses_swapped_kinds_wrong_pins_and_out_of_range_generator_fields() {
     for (name, g) in generators() {
+        let own = g.kind as i32;
         let (mut doc, id) = plain();
         doc.add_filter(
             id,
@@ -571,8 +581,11 @@ fn the_reader_refuses_kind_67_wrong_pins_and_out_of_range_generator_fields() {
         .unwrap();
         let native = NativeDocument::from_core(&doc).unwrap();
         let kind = field_paths(&native, "generator.type").remove(0);
-        // 67 は空けてある。種類を入れ替えると欄の並びが合わない
-        for other in [67, 70, 64, 0] {
+        // 種類を入れ替えると欄の並びが合わない
+        for other in [66, 67, 68, 69, 70, 64, 0] {
+            if other == own {
+                continue;
+            }
             assert!(
                 native.with_value(&kind, NativeValue::Int(other)).is_err(),
                 "{name} → {other}"
@@ -581,11 +594,36 @@ fn the_reader_refuses_kind_67_wrong_pins_and_out_of_range_generator_fields() {
         let (tail, bad) = match name {
             "pattern" => ("effect.scale", NativeValue::Float(512.5)),
             "light" => ("effect.elevation", NativeValue::Float(90.5)),
+            "uv_island_variation" => ("effect.max", NativeValue::Float(1.5)),
             _ => ("effect.thickness.weight", NativeValue::Float(1.5)),
         };
         let path = field_paths(&native, tail).remove(0);
         assert!(native.with_value(&path, bad).is_err(), "{name} {tail}");
     }
+    // アイランドごとのばらつき: 最小が最大を超えるのは断る（等しいのは読める）。シードは i32 の全域
+    let (_, island) = generators().pop().unwrap();
+    let (mut doc, id) = plain();
+    doc.add_filter(
+        id,
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::generator(island)).channels(&[Channel::Color]),
+    )
+    .unwrap();
+    let native = NativeDocument::from_core(&doc).unwrap();
+    let min = field_paths(&native, "effect.min").remove(0);
+    assert!(native.with_value(&min, NativeValue::Float(0.5)).is_err());
+    assert!(native.with_value(&min, NativeValue::Float(0.0)).is_ok());
+    let seed = field_paths(&native, "effect.seed").remove(0);
+    let back = native
+        .with_value(&seed, NativeValue::Int(i32::MAX))
+        .unwrap()
+        .to_core()
+        .unwrap();
+    assert_eq!(
+        stages(&back)[0].0.generator_settings().unwrap().island.seed,
+        i32::MAX
+    );
+
     // 版 25 の正本の Generator を 66 にしても断る
     let (mut doc, id) = plain();
     doc.add_filter(

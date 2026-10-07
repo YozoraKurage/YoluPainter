@@ -40,9 +40,10 @@ pub fn kind_text(id: &str) -> Option<(Text, Text)> {
         "high_pass" => ("ハイパス", "High Pass", "ぼかした画像との差を 0.5 の灰色のまわりに残す。", "Keeps the difference from a blurred copy around 0.5 gray."),
         "median" => ("メディアン", "Median", "正方形の窓の中央値で、細かいごみを消す。", "Removes specks with the median of a square window."),
         "pattern" => ("模様", "Pattern", "UV の空間の繰り返しの模様（縞・市松・水玉・縁・格子）を作る（Generator）。マップを読まない。", "A generator making a repeating pattern in UV space (stripes, checker, dots, border, grid). It reads no maps."),
-        "light" => ("光", "Light", "焼いたワールドの法線と光の向きから明暗を作る（Generator）。", "A generator making light and shade from the baked world normal and a light direction."),
+        "light" => ("ライト", "Light", "焼いたワールドの法線と光の向きから明暗を作る（Generator）。", "A generator making light and shade from the baked world normal and a light direction."),
         "mask_builder" => ("マスクの組み立て", "Mask Builder", "焼いた曲率・AO・位置の高さ・厚みを、それぞれの重みとレベルで合わせる（Generator）。重みが 0 のマップは読まない。", "A generator combining the baked curvature, ambient occlusion, height (position) and thickness maps with weights and levels. Maps with zero weight are not read."),
         "glow" => ("グロー", "Glow", "しきい値より明るい所をぼかして足し、光らせる（色のチャンネルだけ）。", "Adds a blurred copy of the parts brighter than the threshold (color channels only)."),
+        "uv_island_variation" => ("アイランドごとのばらつき", "UV Island Variation", "モデルの UV アイランドごとに、アイランドの番号とシードから決まる一様な乱数の値を出す（Generator。アイランドの中は同じ値）。モデルが無ければ入力のまま通す。", "A generator giving each UV island of the model one uniform random value from the island number and the seed. Without a model it passes its input through."),
         _ => return None,
     };
     Some((Text::new(title_ja, title_en), Text::new(ja, en)))
@@ -69,6 +70,9 @@ pub fn param_text(kind: &str, name: &str) -> Option<Text> {
         ("mask_builder", n) if n.ends_with("_level") => ("この値から上を 1 へ寄せる位置（0〜1）。", "Where values start turning to 1 (0-1)."),
         ("mask_builder", n) if n.ends_with("_contrast") => ("境目の鋭さ（0〜1）。", "Sharpness of the cut (0-1)."),
         ("mask_builder", n) if n.ends_with("_invert") => ("真ならこのマップの値を反転する。", "True inverts this map's value."),
+        ("uv_island_variation", "seed") => ("乱数の種。同じシード・同じモデルなら同じ値。", "Random seed. The same seed and model give the same values."),
+        ("uv_island_variation", "min") => ("値の下端（0〜1）。", "Lower end of the values (0-1)."),
+        ("uv_island_variation", "max") => ("値の上端（0〜1。min 以上）。", "Upper end of the values (0-1, not below min)."),
         ("histogram_scan", "position") => ("切り出す位置（0〜1）。", "Where the cut is (0-1)."),
         ("histogram_scan", "contrast") => ("境目の鋭さ（0〜1。1 で 2 値）。", "Sharpness of the cut (0-1; 1 gives two values)."),
         ("histogram_range", "position") => ("幅の真ん中（0〜1）。", "Middle of the range (0-1)."),

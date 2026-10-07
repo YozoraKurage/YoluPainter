@@ -22,7 +22,7 @@ pub const REFUSAL_RUST_ADJUSTMENTS: &str =
 pub const REFUSAL_IMAGE_GENERATORS: &str =
     ".ylsmart 形式1は Unity 版にもあるジェネレーターの種類だけです（画像のジェネレーターは入れられません）";
 pub const REFUSAL_NEW_FILTERS: &str =
-    ".ylsmart 形式1は Unity 版にもある効果の種類だけです（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グローのフィルターと、模様・光・マスクの組み立てのジェネレーターは入れられません）";
+    ".ylsmart 形式1は Unity 版にもある効果の種類だけです（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グローのフィルターと、模様・ライト・マスクの組み立て・アイランドごとのばらつきのジェネレーターは入れられません）";
 pub const REFUSAL_PATH_LISTS: &str =
     ".ylsmart 形式1に入るパスは、名前の無い見せる 1 本の、角・取っ手の無いストロークか消しゴムだけです（塗りつぶしの層のパス、2 本以上の一覧、名前を付けた・隠したパス、リボン・塗り・指先の種類、筆先・角度・深さ・対称の設定は入れられません）";
 pub const REFUSAL_POINT_GRADIENTS: &str =
@@ -135,7 +135,7 @@ impl SmartFile {
             !crate::core_bridge::uses_image_generators(&doc),
             REFUSAL_IMAGE_GENERATORS,
         )?;
-        // 0.5.0 のフィルター（種類 70〜79）と Generator（66・68・69）は正本の版 28 になり、Unity 版が読めない
+        // 0.5.0 のフィルター（種類 70〜79）と Generator（66〜69）は正本の版 28 になり、Unity 版が読めない
         check(
             !crate::core_bridge::uses_new_filters(&doc),
             REFUSAL_NEW_FILTERS,

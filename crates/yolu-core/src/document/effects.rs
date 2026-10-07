@@ -1673,7 +1673,8 @@ impl Document {
 
     /// 文書の外から渡す入力（焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像・モデルの UV の位相）を置く。保存も Undo もしない。
     /// 今までと違えば、それを読む層の合成を作り直させる。マップ・画像・モデルのルートが替われば、それを読む層（Generator・画像・デカール・
-    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐ層（近傍の段のある層）。ほかの読み手は評価し直さない。
+    /// グラデーション）。UV の位相が別の物に替われば、継ぎ目をまたぐ層（近傍の段のある層）と アイランドごとのばらつきの段のある層。
+    /// ほかの読み手は評価し直さない。
     pub fn set_effect_inputs(&mut self, mut inputs: EffectInputs) -> Result<(), CoreError> {
         for m in &inputs.maps {
             m.validate()?;
@@ -1700,8 +1701,28 @@ impl Document {
         }
         if topology {
             self.mark_seam_readers();
+            self.mark_island_readers();
         }
         Ok(())
+    }
+
+    /// アイランドごとのばらつきの段のある層（内容・マスク）が出す所に印を付ける（モデルの UV の位相・島の図の予算が替わったとき）。
+    pub(super) fn mark_island_readers(&mut self) {
+        let readers: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| {
+                let l = &self.layers[i];
+                l.filters
+                    .iter()
+                    .chain(l.mask.iter().flat_map(|m| m.filters.iter()))
+                    .any(|e| e.settings.reads_islands())
+            })
+            .collect();
+        for &i in &readers {
+            self.mark_layer(i, None);
+        }
+        if !readers.is_empty() {
+            self.mark_clipped_layers();
+        }
     }
 
     /// 今の入力。

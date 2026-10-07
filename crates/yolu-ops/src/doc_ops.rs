@@ -443,6 +443,7 @@ fn inactive_text(e: &InactiveEffect) -> Text {
                 yolu_core::generator::Kind::Pattern => "pattern",
                 yolu_core::generator::Kind::Light => "light",
                 yolu_core::generator::Kind::MaskBuilder => "mask builder",
+                yolu_core::generator::Kind::UvIslandVariation => "UV island variation",
             };
             if mask {
                 format!("{name} generator (mask)")
@@ -478,6 +479,10 @@ fn inactive_text(e: &InactiveEffect) -> Text {
         InactiveReason::Generator(I::NoImage) => "no image is chosen".to_owned(),
         InactiveReason::Generator(I::MissingImage) => {
             "the image is not in the project or cannot be read".to_owned()
+        }
+        InactiveReason::Generator(I::NoModel) => "no model is loaded".to_owned(),
+        InactiveReason::Generator(I::IslandMap) => {
+            "the UV island map does not fit in the working memory budget".to_owned()
         }
         InactiveReason::Rejected(_) => "the settings cannot be used".to_owned(),
     };

@@ -6,6 +6,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     Color,
@@ -62,6 +63,10 @@ pub struct BoundGenerator<'a> {
     plan: Option<procedural::Plan>,
     /// 画像の段が読む、投影を束縛済みの画像（[`Self::with_image`]。ほかの種類と、まだ渡していない画像の段は None）。
     image: Option<&'a crate::fill_image::FillSampler<'a>>,
+    /// アイランドごとのばらつきが読む島の図（[`Self::with_islands`]。ほかの種類と、まだ渡していない段は None）。
+    islands: Option<Arc<crate::geometry::IslandMap>>,
+    /// アイランドごとのばらつきの乱数の種（[`IslandVariation::stream`]。ほかの種類は 0）。
+    island_stream: u32,
 }
 impl<'a> BoundGenerator<'a> {
     pub fn bind(
@@ -135,6 +140,8 @@ impl<'a> BoundGenerator<'a> {
                 }
                 // 画像（`with_image`）を渡すまでは使えない
                 Kind::Image => Some(Inactive::MissingImage),
+                // 島の図（`with_islands`）を渡すまでは、モデルが無いのと同じ
+                Kind::UvIslandVariation => Some(Inactive::NoModel),
                 _ => None,
             };
         }
@@ -163,6 +170,12 @@ impl<'a> BoundGenerator<'a> {
             offset: [0.; 3],
             plan,
             image: None,
+            islands: None,
+            island_stream: if g.kind == Kind::UvIslandVariation {
+                g.island.stream()
+            } else {
+                0
+            },
         };
         if b.inactive.is_some() {
             return Ok(b);
@@ -247,6 +260,33 @@ impl<'a> BoundGenerator<'a> {
             Some(R::UnknownModelFrame) => Some(Inactive::MissingFrame),
         };
         self
+    }
+    /// アイランドごとのばらつきが読む島の図を渡す（モデルのこのテクスチャセットの `UvTopology::island_map_within` の、ジェネレーターと
+    /// 同じ大きさの図）。島の図を待っている アイランドごとのばらつきの段にだけ効く（ほかは何もしない）。大きさの違う図は使わず、島の図を
+    /// 作れなかったことにする（入力のまま通す）。
+    pub fn with_islands(mut self, islands: Arc<crate::geometry::IslandMap>) -> Self {
+        if self.g.kind != Kind::UvIslandVariation || self.inactive != Some(Inactive::NoModel) {
+            return self;
+        }
+        if (islands.width(), islands.height()) != (self.width, self.height) {
+            self.inactive = Some(Inactive::IslandMap);
+            return self;
+        }
+        self.islands = Some(islands);
+        self.inactive = None;
+        self
+    }
+    /// アイランドごとのばらつきの島の図を作れなかった（作業メモリの予算で断られた）ことを渡す。島の図を待っている段にだけ効く。
+    pub fn islands_refused(mut self) -> Self {
+        if self.g.kind == Kind::UvIslandVariation && self.inactive == Some(Inactive::NoModel) {
+            self.inactive = Some(Inactive::IslandMap);
+        }
+        self
+    }
+    /// アイランドごとのばらつきの 1 画素の基底の値（島の外は None）。
+    fn island_value(&self, x: u32, y: u32) -> Option<f64> {
+        let island = self.islands.as_ref()?.island(x, y);
+        (island != 0).then(|| self.g.island.value_in(self.island_stream, island))
     }
     /// 画像の段の 1 画素の画像の色（straight RGBA8、反転は RGB だけ）。値の無い画素（投影の外・位置の無い画素）・範囲外・使えない段は None。
     fn image_color(&self, x: u32, y: u32) -> Option<[u8; 4]> {
@@ -365,6 +405,7 @@ impl<'a> BoundGenerator<'a> {
             Kind::Noise | Kind::Grunge => self.procedural_value(x, y, i)?,
             Kind::Image => self.image_value(x, y)?,
             Kind::Pattern | Kind::Light | Kind::MaskBuilder => self.base_050(x, y, i)?,
+            Kind::UvIslandVariation => self.island_value(x, y)?,
             Kind::ShapeGradient => {
                 let [x, y, z] = vector(MapKind::Position)?;
                 let m = self.matrix;
@@ -399,7 +440,7 @@ impl<'a> BoundGenerator<'a> {
         }
         Some(t)
     }
-    /// 模様・光・マスクの組み立ての 1 画素の基底の値（レベル・反転の前）。`i` は画素の添字。行の評価もこの式を 1 画素ずつ呼ぶ。
+    /// 模様・ライト・マスクの組み立ての 1 画素の基底の値（レベル・反転の前）。`i` は画素の添字。行の評価もこの式を 1 画素ずつ呼ぶ。
     fn base_050(&self, x: u32, y: u32, i: usize) -> Option<f64> {
         let g = self.g;
         match g.kind {

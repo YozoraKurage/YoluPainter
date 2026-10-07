@@ -169,6 +169,8 @@ impl Document {
             topology.shrink(bytes);
         }
         self.mark_seam_readers();
+        // アイランドごとのばらつきも、島の図を作れるかが変わり得る
+        self.mark_island_readers();
         // 前の予算で断った・作れた帯の写しの上に評価を重ねない
         self.release_effect_cache();
     }

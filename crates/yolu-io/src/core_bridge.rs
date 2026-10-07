@@ -722,7 +722,7 @@ pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
                 .any(|e| mixes(e.settings().color_adjust()))
     })
 }
-/// 文書が 0.5.0 の効果（層の内容とマスクのフィルターの段の種類 70〜79、Generator の種類 66・68・69。無効な段も数える）を持つか。
+/// 文書が 0.5.0 の効果（層の内容とマスクのフィルターの段の種類 70〜79、Generator の種類 66〜69。無効な段も数える）を持つか。
 /// 持っていれば正本の版は 28 になり、版 25 までの読み手と Unity 版は開けない。
 pub(crate) fn uses_new_filters(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -1602,6 +1602,7 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
         68 => generator::Kind::Light,
         69 => generator::Kind::MaskBuilder,
         70 => generator::Kind::Image,
+        67 => generator::Kind::UvIslandVariation,
         _ => generator::Kind::Anchor,
     };
     let mut g = generator::Settings::new(kind);
@@ -1703,7 +1704,7 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
     Ok(g)
 }
 
-/// 模様・光・マスクの組み立ての欄（正本の版 28。`write_generator_effect` と対）。
+/// 模様・ライト・マスクの組み立て・アイランドごとのばらつきの欄（正本の版 28。`write_generator_effect` と対）。
 fn read_generator_effect(f: &Fields<'_>, p: &str, g: &mut generator::Settings) -> Result<()> {
     let int = |name: &str| f.int(&format!("{p}.{name}"));
     let float = |name: &str| f.float(&format!("{p}.{name}"));
@@ -1726,6 +1727,13 @@ fn read_generator_effect(f: &Fields<'_>, p: &str, g: &mut generator::Settings) -
                 elevation: float("elevation")?,
                 softness: float("softness")?,
                 ambient: float("ambient")?,
+            };
+        }
+        generator::Kind::UvIslandVariation => {
+            g.island = generator::IslandVariation {
+                seed: int("seed")?,
+                min: float("min")?,
+                max: float("max")?,
             };
         }
         _ => {
@@ -2466,7 +2474,7 @@ fn write_generator(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
     }
     Ok(())
 }
-/// 模様・光・マスクの組み立ての欄（正本の版 28。`read_generator_effect` と対）。
+/// 模様・ライト・マスクの組み立て・アイランドごとのばらつきの欄（正本の版 28。`read_generator_effect` と対）。
 fn write_generator_effect(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
     match g.kind {
         generator::Kind::Pattern => {
@@ -2488,6 +2496,12 @@ fn write_generator_effect(w: &mut Out<'_>, g: &generator::Settings) -> Result<()
             for v in [l.azimuth, l.elevation, l.softness, l.ambient] {
                 w.float(v)?;
             }
+        }
+        generator::Kind::UvIslandVariation => {
+            let v = &g.island;
+            w.int(v.seed)?;
+            w.float(v.min)?;
+            w.float(v.max)?;
         }
         _ => {
             for input in &g.mask_builder.inputs {

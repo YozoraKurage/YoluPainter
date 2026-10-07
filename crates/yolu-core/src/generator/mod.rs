@@ -12,7 +12,9 @@ mod ramp;
 mod shape;
 pub use crate::curve::CurvePoint;
 pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target};
-pub use kinds050::{Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape};
+pub use kinds050::{
+    IslandVariation, Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape,
+};
 pub use mixing::{LuminanceCorrection, MixMode};
 pub(crate) use noisefn::MAX_OCTAVES;
 pub(crate) use noisefn::{sin_cos_deg, value2_gradient};
@@ -66,12 +68,15 @@ pub enum Kind {
     Grunge = 65,
     /// 模様（UV の空間の縞・市松・水玉・縁・格子）。Rust 版だけの種類（正本の版 28）。
     Pattern = 66,
-    /// 光（焼いたワールドの法線と光の向き）。Rust 版だけの種類（正本の版 28）。
+    /// ライト（焼いたワールドの法線と光の向き）。Rust 版だけの種類（正本の版 28）。
     Light = 68,
     /// マスクの組み立て（焼いた曲率・AO・位置の高さ・厚み）。Rust 版だけの種類（正本の版 28）。
     MaskBuilder = 69,
     /// 画像（プロジェクトの画像を塗りつぶしの層と同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
     Image = 70,
+    /// アイランドごとのばらつき（島の番号とシードから決まる一様な乱数の値。[`IslandVariation`]）。モデルの UV の島の図を
+    /// [`BoundGenerator::with_islands`] で渡す。Rust 版だけの種類（正本の版 28）。
+    UvIslandVariation = 67,
 }
 impl Kind {
     /// 正本の種類の番号から。知らない番号は None。
@@ -91,12 +96,16 @@ impl Kind {
             68 => Self::Light,
             69 => Self::MaskBuilder,
             70 => Self::Image,
+            67 => Self::UvIslandVariation,
             _ => return None,
         })
     }
-    /// 0.5.0 の種類（模様・光・マスクの組み立て。正本の版 28）か。
+    /// 0.5.0 の種類（模様・ライト・マスクの組み立て・アイランドごとのばらつき。正本の版 28）か。
     pub fn is_050(self) -> bool {
-        matches!(self, Self::Pattern | Self::Light | Self::MaskBuilder)
+        matches!(
+            self,
+            Self::Pattern | Self::Light | Self::MaskBuilder | Self::UvIslandVariation
+        )
     }
     /// Rust 版だけの種類か（マップを読まず位置・UV から値を作る。Unity 版は読めない）。
     pub fn is_procedural(self) -> bool {
@@ -268,6 +277,8 @@ pub struct Settings {
     pub mask_builder: MaskBuilder,
     /// 画像の段の設定（[`ImageSource`]）。Image 以外の種類は既定のまま。
     pub image: ImageSource,
+    /// アイランドごとのばらつきの設定（[`IslandVariation`]）。UvIslandVariation 以外の種類は既定のまま。
+    pub island: IslandVariation,
 }
 impl Settings {
     pub fn new(kind: Kind) -> Self {
@@ -297,6 +308,7 @@ impl Settings {
             light: Light::default(),
             mask_builder: MaskBuilder::default(),
             image: ImageSource::default(),
+            island: IslandVariation::default(),
         };
         match kind {
             Kind::EdgeWear => {
@@ -431,29 +443,31 @@ impl Settings {
                 "ノイズ・グランジの設定はノイズ・グランジ専用です",
             ));
         }
-        // 模様・光・マスクの組み立て: 重ねるノイズを持たず、境目のぼかしは種類の欄で持つ（共通の減衰は 0）
+        // 模様・ライト・マスクの組み立て・アイランドごとのばらつき: 重ねるノイズを持たない。模様・ライトは境目のぼかしを種類の欄で持つ（共通の減衰は 0）
         if self.kind.is_050()
             && (self.noise_amount != 0.
                 || self.noise_scale != 0.05
                 || self.noise_seed != 0
                 || self.noise_space != NoiseSpace::Model
-                || (self.kind != Kind::MaskBuilder && self.softness != 0.))
+                || (matches!(self.kind, Kind::Pattern | Kind::Light) && self.softness != 0.))
         {
             return Err(Error::Invalid(
-                "模様・光・マスクの組み立ては重ねるノイズを持たず、ぼかしは自身の設定で決めます",
+                "模様・ライト・マスクの組み立て・アイランドごとのばらつきは重ねるノイズを持たず、模様・ライトのぼかしは自身の設定で決めます",
             ));
         }
         if (self.kind != Kind::Pattern && self.pattern != Pattern::default())
             || (self.kind != Kind::Light && self.light != Light::default())
             || (self.kind != Kind::MaskBuilder && self.mask_builder != MaskBuilder::default())
+            || (self.kind != Kind::UvIslandVariation && self.island != IslandVariation::default())
         {
             return Err(Error::Invalid(
-                "模様・光・マスクの組み立ての設定はその種類専用です",
+                "模様・ライト・マスクの組み立て・アイランドごとのばらつきの設定はその種類専用です",
             ));
         }
         self.pattern.validate()?;
         self.light.validate()?;
         self.mask_builder.validate()?;
+        self.island.validate()?;
         for (kind, key) in &self.pins {
             if !self.candidate_maps().contains(kind) || !key_valid(key) {
                 return Err(Error::Invalid(
@@ -478,6 +492,8 @@ impl Settings {
             Kind::MaskBuilder => MaskBuilder::MAPS.to_vec(),
             // 投影のマップは塗りつぶしの層と同じく、ピンを持たない
             Kind::Image => vec![],
+            // 焼いたマップを読まない（モデルの UV の島の図を読む）
+            Kind::UvIslandVariation => vec![],
         }
     }
     pub fn used_maps(&self) -> Vec<MapKind> {
@@ -505,7 +521,7 @@ impl Settings {
             Kind::Anchor => vec![],
             // 位置のマップが使えないときは UV に落とす（入力のまま通さない）ので、読むマップは設定だけで決まる
             Kind::Noise | Kind::Grunge => return self.procedural.maps(self.kind),
-            Kind::Pattern => vec![],
+            Kind::Pattern | Kind::UvIslandVariation => vec![],
             Kind::Light => vec![WorldNormal],
             // 重みが 0 のマップは読まない（無くても断らない）
             Kind::MaskBuilder => self.mask_builder.used(),
@@ -542,6 +558,10 @@ pub enum Inactive {
     NoImage,
     /// 画像の段: 選んだ画像が入力に無い・読めない。
     MissingImage,
+    /// アイランドごとのばらつき: モデルが無い（島の図を渡していない）。
+    NoModel,
+    /// アイランドごとのばらつき: 島の図を作れない（作る作業メモリが予算に収まらない）。
+    IslandMap,
 }
 /// 左下原点の読み取り専用 RGBA8。タイルはこの口を実装する。
 pub trait Source: Sync {

@@ -1,14 +1,16 @@
-//! 0.5.0 の Generator の種類（Rust 版だけ）: 模様（66）・光（68）・マスクの組み立て（69）。
+//! 0.5.0 の Generator の種類（Rust 版だけ）: 模様（66）・アイランドごとのばらつき（67）・ライト（68）・マスクの組み立て（69）。
 //!
 //! - 模様は UV の空間の繰り返し（縞・市松・水玉・縁・格子）。マップを読まない。
-//! - 光は焼いたワールドの法線と光の向きの内積（`softness` で明暗の境を回り込ませる、`ambient` で底上げ）。
+//! - ライトは焼いたワールドの法線と光の向きの内積（`softness` で明暗の境を回り込ませる、`ambient` で底上げ）。
 //! - マスクの組み立ては、焼いた曲率・AO・位置の高さ・厚みを、それぞれ位置とコントラストで 0〜1 にし（ヒストグラムスキャンと同じ式）、
 //!   重みを付けて掛け合わせる・最大・足す。重みが 0 のマップは読まない（無くても断らない）。
+//! - アイランドごとのばらつきは、モデルの UV の島の番号とシードから決まる一様な乱数の値（島の中は同じ値）。島の番号は
+//!   `geometry::IslandMap`（モデルが同じなら解像度によらず同じ番号）から読む。
 //!
 //! 式は + − × ÷ sqrt floor と多項式の sin・cos（`noisefn::sin_cos_deg`）だけで、画素ごとに座標・マップの値だけから決まる。SIMD にしない
 //! （行の評価も 1 画素ずつこの式を呼ぶ）ので、道によらず同じ値。
 
-use super::noisefn::sin_cos_deg;
+use super::noisefn::{cell_hash, sin_cos_deg};
 use super::{unit, Error, MapKind};
 use crate::math::clamp01;
 use crate::ranges;
@@ -120,7 +122,7 @@ impl Pattern {
     }
 }
 
-/// 光（`Kind::Light`）の設定。
+/// ライト（`Kind::Light`）の設定。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Light {
     /// 光の来る向きの水平の角度（度。0〜360。0 が +Z、90 が +X）。
@@ -150,7 +152,7 @@ impl Light {
             || !unit(self.softness)
             || !unit(self.ambient)
         {
-            return Err(Error::Invalid("光の向き・回り込み・底上げが範囲外です"));
+            return Err(Error::Invalid("ライトの向き・回り込み・底上げが範囲外です"));
         }
         Ok(())
     }
@@ -290,6 +292,50 @@ impl MaskBuilder {
             };
         }
         Some(clamp01(out))
+    }
+}
+
+/// アイランドごとのばらつき（`Kind::UvIslandVariation`）の設定。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IslandVariation {
+    /// 乱数の種（同じシード・同じモデルなら同じ値）。
+    pub seed: i32,
+    /// 値の下端（0〜1）。
+    pub min: f64,
+    /// 値の上端（0〜1。`min` 以上。等しければ島によらず同じ値）。
+    pub max: f64,
+}
+impl Default for IslandVariation {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            min: 0.,
+            max: 1.,
+        }
+    }
+}
+impl IslandVariation {
+    pub(super) fn validate(&self) -> Result<(), Error> {
+        if !unit(self.min) || !unit(self.max) || self.min > self.max {
+            return Err(Error::Invalid(
+                "アイランドごとのばらつきの最小・最大が範囲外か、最小が最大を超えています",
+            ));
+        }
+        Ok(())
+    }
+    /// シードから引く乱数の種（重ねるノイズと同じ混ぜ方の 1 つ目）。島ごとの値はこれと島の番号で決まる。
+    pub(super) fn stream(&self) -> u32 {
+        super::noise::seeds(self.seed)[0]
+    }
+    /// 島の番号 `island`（1 から）の基底の値（`min + (max − min) × u`。レベル・反転の前）。u は島の番号とシードの一様な乱数（[0, 1)）。
+    pub fn value(&self, island: u32) -> f64 {
+        self.value_in(self.stream(), island)
+    }
+    /// [`Self::value`] を、前もって引いた乱数の種 `stream`（[`Self::stream`]）で。u は格子の hash（ノイズの格子の角と同じ `cell_hash`）の
+    /// 32 bit を 2^-32 倍したもの（u32 → f64 と 2 の冪の掛け算は丸めが無いので、道・環境によらず同じ値）。
+    pub(super) fn value_in(&self, stream: u32, island: u32) -> f64 {
+        let u = f64::from(cell_hash(stream, island as i32, 0, 0)) * (1. / 4_294_967_296.);
+        self.min + (self.max - self.min) * u
     }
 }
 

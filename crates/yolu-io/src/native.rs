@@ -27,7 +27,7 @@ pub const MIXING_VERSION: i32 = 25;
 /// 断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const PATHS_VERSION: i32 = 27;
 /// 0.5.0 の新しい効果を足した版。版 25 の中身に、フィルターの段の種類 70〜79（ヒストグラムスキャン・ヒストグラムレンジ・スロープぼかし・方向のぼかし・
-/// ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、Generator の種類 66（模様）・68（光）・69（マスクの組み立て）・70（画像）が加わる
+/// ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、Generator の種類 66（模様）・67（アイランドごとのばらつき）・68（ライト）・69（マスクの組み立て）・70（画像）が加わる
 /// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
 /// 「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const EFFECTS_VERSION: i32 = 28;
@@ -1397,7 +1397,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     )?;
     // 8〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
     check(
-        !(8..PROCEDURAL_KIND_MIN).contains(&t) && t != 67,
+        !(8..PROCEDURAL_KIND_MIN).contains(&t),
         "未知のジェネレーターの種類です",
     )?;
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
@@ -1444,6 +1444,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         66 => &[],
         68 => &[0],
         69 => &[3, 2, 1, 4],
+        ISLAND_KIND => &[],
         PROCEDURAL_KIND_MIN.. => &[1, 0],
         _ => &[0, 8, 1],
     };
@@ -1506,15 +1507,19 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
             r.int("component", 0, 4)?;
             Ok(())
         })?;
+    } else if t == ISLAND_KIND {
+        r.block("effect", island_effect)?;
     } else if t > PROCEDURAL_KIND_MAX {
         r.block("effect", |r| generator_effect(r, t))?;
     }
     Ok(t)
 }
-/// Generator の種類 70（画像。正本の版 28。66 模様・68 光・69 マスクの組み立ても同じ版。67 は空けてある）。
+/// Generator の種類 70（画像。正本の版 28。66 模様・67 アイランドごとのばらつき・68 ライト・69 マスクの組み立ても同じ版）。
 const IMAGE_KIND: i32 = 70;
+/// Generator の種類 67（アイランドごとのばらつき。正本の版 28）。
+const ISLAND_KIND: i32 = 67;
 /// 版 28 の Generator の種類ごとの欄（`effect` の塊の中）。66: 形・繰り返し・角度・太さ・ぼかし・ずれ。68: 水平の角度・高さ・回り込み・底上げ。
-/// 69: 曲率・AO・位置・厚みの塊（重み・位置・コントラスト・反転）と合わせ方。
+/// 69: 曲率・AO・位置・厚みの塊（重み・位置・コントラスト・反転）と合わせ方（67 は `island_effect`）。
 fn generator_effect(r: &mut Reader<'_>, t: i32) -> Result<()> {
     match t {
         66 => {
@@ -1546,6 +1551,16 @@ fn generator_effect(r: &mut Reader<'_>, t: i32) -> Result<()> {
         }
     }
     Ok(())
+}
+/// アイランドごとのばらつき（67）の欄（`effect` の塊の中）: シード・最小・最大（最小 ≤ 最大）。
+fn island_effect(r: &mut Reader<'_>) -> Result<()> {
+    r.int("seed", i32::MIN, i32::MAX)?;
+    let min = r.unit("min")?;
+    let max = r.unit("max")?;
+    check(
+        min <= max,
+        "アイランドごとのばらつきの最小が最大を超えています",
+    )
 }
 /// Rust 版だけの Generator の種類の番号（ノイズ 64・グランジ 65）。
 const PROCEDURAL_KIND_MIN: i32 = 64;

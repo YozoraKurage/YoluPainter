@@ -384,7 +384,7 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
             ("radius", int(&ranges::GLOW_RADIUS)),
             ("intensity", num(&ranges::GLOW_INTENSITY)),
         ]),
-        // 模様・光は境目のぼかしを自分の欄（softness）で持つので、共通の減衰を置かない
+        // 模様・ライトは境目のぼかしを自分の欄（softness）で持つので、共通の減衰を置かない
         "pattern" => {
             v.extend(
                 generator_common()
@@ -429,6 +429,14 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
                 }
             }
             v.push(("combine", choice(&MASK_COMBINE_OPTIONS)));
+        }
+        "uv_island_variation" => {
+            v.extend(generator_common());
+            v.extend([
+                ("seed", seed_type()),
+                ("min", num(&ranges::UNIT)),
+                ("max", num(&ranges::UNIT)),
+            ]);
         }
         _ => {}
     }
@@ -483,7 +491,7 @@ type Row = (
     bool,
     &'static [&'static str],
 );
-const KIND_ROWS: [Row; 37] = [
+const KIND_ROWS: [Row; 38] = [
     ("blur", true, false, false, true, &[]),
     ("sharpen", true, false, false, true, &[]),
     ("noise", true, false, false, true, &[]),
@@ -535,6 +543,7 @@ const KIND_ROWS: [Row; 37] = [
         false,
         &["image", "projection", "component"],
     ),
+    ("uv_island_variation", true, false, true, true, &[]),
 ];
 
 /// 効果の種類の一覧（フィルター・調整・Generator。足せない種類も含む）。
@@ -672,6 +681,9 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
             intensity: 1.0,
         }),
         "image" => EffectSettings::generator(generator::Settings::new(G::Image)),
+        "uv_island_variation" => {
+            EffectSettings::generator(generator::Settings::new(G::UvIslandVariation))
+        }
         _ => return None,
     })
 }
@@ -751,6 +763,7 @@ fn generator_kind_id(k: generator::Kind) -> &'static str {
         G::Light => "light",
         G::MaskBuilder => "mask_builder",
         G::Image => "image",
+        G::UvIslandVariation => "uv_island_variation",
     }
 }
 
@@ -769,6 +782,7 @@ fn read_generator(g: &generator::Settings) -> Bag {
             | G::Pattern
             | G::Light
             | G::MaskBuilder
+            | G::UvIslandVariation
     ) {
         return b;
     }
@@ -806,6 +820,13 @@ fn read_generator(g: &generator::Settings) -> Bag {
                 b.insert(mask_param(map, "invert"), ParamValue::Bool(input.invert));
             }
             b.insert("combine", c(MASK_COMBINE_OPTIONS[m.combine as usize]));
+            return b;
+        }
+        G::UvIslandVariation => {
+            let v = &g.island;
+            b.insert("seed", n(f64::from(v.seed)));
+            b.insert("min", n(v.min));
+            b.insert("max", n(v.max));
             return b;
         }
         _ => {}
@@ -1165,7 +1186,7 @@ fn build_generator(
     g.invert = get_b(bag, "invert");
     g.blend = blend_from(get_c(bag, "blend"));
     match id {
-        // 模様・光の softness は種類の欄（共通の減衰は 0 のまま）
+        // 模様・ライトの softness は種類の欄（共通の減衰は 0 のまま）
         "pattern" => {
             g.softness = 0.;
             g.pattern = generator::Pattern {
@@ -1204,6 +1225,13 @@ fn build_generator(
                 .position(|o| *o == get_c(bag, "combine"))
                 .and_then(|i| generator::MaskCombine::from_index(i as i64))
                 .unwrap_or(generator::MaskCombine::Multiply);
+        }
+        "uv_island_variation" => {
+            g.island = generator::IslandVariation {
+                seed: get_n(bag, "seed") as i32,
+                min: get_n(bag, "min"),
+                max: get_n(bag, "max"),
+            };
         }
         _ => {}
     }
@@ -1368,8 +1396,17 @@ fn build_stack(
             radius: get_n(bag, "radius") as u32,
             intensity: get_n(bag, "intensity"),
         }),
-        "edge_wear" | "dirt" | "position_gradient" | "thickness" | "direction"
-        | "procedural_noise" | "grunge" | "pattern" | "light" | "mask_builder" => {
+        "edge_wear"
+        | "dirt"
+        | "position_gradient"
+        | "thickness"
+        | "direction"
+        | "procedural_noise"
+        | "grunge"
+        | "pattern"
+        | "light"
+        | "mask_builder"
+        | "uv_island_variation" => {
             let kind = match id {
                 "edge_wear" => G::EdgeWear,
                 "dirt" => G::Dirt,
@@ -1380,6 +1417,7 @@ fn build_stack(
                 "pattern" => G::Pattern,
                 "light" => G::Light,
                 "mask_builder" => G::MaskBuilder,
+                "uv_island_variation" => G::UvIslandVariation,
                 _ => G::Grunge,
             };
             let start = match base.and_then(EffectSettings::generator_settings) {

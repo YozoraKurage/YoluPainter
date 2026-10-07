@@ -243,6 +243,20 @@ fn combinations_the_core_check_refuses_are_reported_as_refused() {
         ]),
     );
     assert!(ok.is_ok(), "{ok:?}");
+    // アイランドごとのばらつきは最小が最大を超えられない（等しいのは島によらず同じ値）
+    let island = |min: f64, max: f64| {
+        EffectSettings::from_catalog(
+            "uv_island_variation",
+            &given(&[("min", num_v(min)), ("max", num_v(max))]),
+        )
+    };
+    let r = island(0.6, 0.4);
+    assert!(matches!(r, Err(ParamError::Refused(_))), "{r:?}");
+    assert!(island(0.4, 0.4).is_ok() && island(0.0, 1.0).is_ok());
+    assert!(matches!(
+        island(0.0, 1.5),
+        Err(ParamError::OutOfRange { name: "max", .. })
+    ));
 }
 
 #[test]
@@ -409,11 +423,13 @@ fn a_kind_table_row_exists_for_every_generator_kind_and_adjustment_type() {
         G::Light,
         G::MaskBuilder,
         G::Image,
+        G::UvIslandVariation,
     ] {
         let id = generator_kind_id(kind);
         let row = super::kind(id).unwrap_or_else(|| panic!("{id} が表に無い"));
         assert!(row.generator && row.stack && !row.adjustment, "{id}");
-        // マップを読まない（無くても値を出す）のはノイズ・グランジ・模様。画像の段は投影しだい（UV は読まない）
+        // マップを読まない（無くても値を出す）のはノイズ・グランジ・模様。画像の段は投影しだい（UV は読まない）。
+        // アイランドごとのばらつきはモデル（UV の島の図）を読み、無ければ入力のまま通す
         assert_eq!(
             row.needs_maps,
             !kind.is_procedural() && kind != G::Pattern && kind != G::Image,
@@ -495,7 +511,8 @@ fn the_rust_only_kinds_are_the_ones_unity_cannot_read() {
             "pattern",
             "light",
             "mask_builder",
-            "image"
+            "image",
+            "uv_island_variation"
         ]
     );
 }

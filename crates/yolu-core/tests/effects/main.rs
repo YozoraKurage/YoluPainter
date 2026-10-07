@@ -18,6 +18,7 @@ mod fill_points;
 mod filter_kinds;
 mod generator_kinds;
 mod image_stage;
+mod island_variation;
 mod outputs;
 mod path_fill_layers;
 mod path_kinds;

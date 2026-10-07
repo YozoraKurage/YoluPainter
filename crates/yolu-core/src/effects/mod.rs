@@ -198,6 +198,10 @@ impl EffectSettings {
     pub fn reads_anchor(&self) -> bool {
         matches!(self, Self::Generator(g) if g.kind == generator::Kind::Anchor)
     }
+    /// モデルの UV の島の図を読む Generator（アイランドごとのばらつき）か。
+    pub fn reads_islands(&self) -> bool {
+        matches!(self, Self::Generator(g) if g.kind == generator::Kind::UvIslandVariation)
+    }
     pub fn generator_settings(&self) -> Option<&generator::Settings> {
         match self {
             Self::Generator(g) => Some(g),
@@ -330,8 +334,9 @@ pub fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Grunge => "グランジ",
         generator::Kind::Image => "画像",
         generator::Kind::Pattern => "模様",
-        generator::Kind::Light => "光",
+        generator::Kind::Light => "ライト",
         generator::Kind::MaskBuilder => "マスクの組み立て",
+        generator::Kind::UvIslandVariation => "アイランドごとのばらつき",
     }
 }
 
@@ -539,6 +544,10 @@ impl fmt::Display for InactiveReason {
             Self::Generator(I::NoImage) => f.write_str("画像が選ばれていません"),
             Self::Generator(I::MissingImage) => {
                 f.write_str("画像がプロジェクトに無いか、読めません")
+            }
+            Self::Generator(I::NoModel) => f.write_str("モデルがありません"),
+            Self::Generator(I::IslandMap) => {
+                f.write_str("UV アイランドの図が作業メモリの予算に収まりません")
             }
             Self::Rejected(why) => write!(f, "設定が使えません: {why}"),
         }

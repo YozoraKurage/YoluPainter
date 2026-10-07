@@ -498,7 +498,7 @@ little-endian。
 
 | 欄 | 型 | 中身 |
 |---|---|---|
-| `type` | int | 0 EdgeWear・1 Dirt・2 PositionGradient・3 Thickness・4 Direction・5 ShapeGradient（版 13）・6 IdColor（版 15）・7 Anchor（版 20）・64 ノイズ・65 グランジ（版 23）・66 模様・68 光・69 マスクの組み立て・70 画像（版 28）。8〜63 は Unity 版の将来のために空けてあり、断る。67 は空けてあり、断る |
+| `type` | int | 0 EdgeWear・1 Dirt・2 PositionGradient・3 Thickness・4 Direction・5 ShapeGradient（版 13）・6 IdColor（版 15）・7 Anchor（版 20）・64 ノイズ・65 グランジ（版 23）・66 模様・67 アイランドごとのばらつき・68 ライト・69 マスクの組み立て・70 画像（版 28）。8〜63 は Unity 版の将来のために空けてあり、断る |
 | `algorithm` | int | 1。ShapeGradient は版 21 から 2（勾配つき）も |
 | `low`・`high` | double | 0〜1（`high − low` は 0.001 以上） |
 | `softness` | double | 0〜1 |
@@ -519,12 +519,12 @@ little-endian。
 | `tolerance`・`color_count`・`colors[i]` | int | IdColor だけ: 許容の幅 0〜255、色の数 0〜32、色 0xRRGGBB（重ならない） |
 | `anchor_id`・`anchor_channel`・`anchor_read` | GUID・int・int | Anchor だけ: 読む Anchor の ID（まだ選んでいなければ空）、チャンネル（0〜5、Normal でない）、読み方（0 値・1 覆い） |
 | `procedural` | 塊 | ノイズ・グランジだけ（下） |
-| `effect` | 塊 | 模様・光・マスクの組み立て・画像だけ（版 28。下） |
+| `effect` | 塊 | 模様・ライト・マスクの組み立て・画像・アイランドごとのばらつきだけ（版 28。下） |
 
 ピンに使えるメッシュマップ: EdgeWear は Curvature・Position、Dirt は AmbientOcclusion・Curvature・Position、PositionGradient・ShapeGradient・Anchor は Position、
 Thickness は Thickness・Position、IdColor は Id・Position、Direction は WorldNormal・BentNormal・Position、ノイズ・グランジは Position・WorldNormal、
-模様は無し、光は WorldNormal、マスクの組み立ては Curvature・AmbientOcclusion・Position・Thickness、画像は無し（読むマップは投影の種類で決まり、塗りつぶしの層の投影と
-同じく最新のベイクを読む）。
+模様は無し、ライトは WorldNormal、マスクの組み立ては Curvature・AmbientOcclusion・Position・Thickness、画像は無し（読むマップは投影の種類で決まり、塗りつぶしの層の投影と
+同じく最新のベイクを読む）、アイランドごとのばらつきは無し（焼いたマップを読まず、モデルの UV の島を読む）。
 
 ノイズ・グランジ（`procedural`。重ねるノイズ・`balance`・`axis`・向き・`bent_normal` は既定のまま）:
 
@@ -541,14 +541,20 @@ Thickness は Thickness・Position、IdColor は Id・Position、Direction は W
 ノイズ・グランジの式は + − × ÷ sqrt floor と整数だけで書き、同じ設定・シード・マップなら、スレッドの数・領域に依らず同じバイトになります。式を変えるときは
 アルゴリズムの版を上げて古い式を残します。
 
-模様・光・マスクの組み立て（`effect`。版 28。重ねるノイズ・`balance`・`axis`・向き・`bent_normal` は既定のまま。模様・光は共通の `softness` が 0 で、
+模様・ライト・マスクの組み立て・アイランドごとのばらつき（`effect`。版 28。重ねるノイズ・`balance`・`axis`・向き・`bent_normal` は既定のまま。模様・ライトは共通の `softness` が 0 で、
 ぼかし・回り込みは自分の `softness` で持つ）:
 
 | 種類 | 欄 |
 |---|---|
 | 66 模様 | `shape` int（0 縞・1 市松・2 水玉・3 縁・4 格子）、`scale` double（1〜512。UV の 0〜1 に繰り返す回数）、`angle` double（0〜360 度）、`width`・`softness`・`offset_u`・`offset_v` double（0〜1） |
-| 68 光 | `azimuth` double（0〜360 度。0 が +Z、90 が +X）、`elevation` double（0〜90 度）、`softness`・`ambient` double（0〜1） |
+| 68 ライト | `azimuth` double（0〜360 度。0 が +Z、90 が +X）、`elevation` double（0〜90 度）、`softness`・`ambient` double（0〜1） |
 | 69 マスクの組み立て | `curvature`・`ambient_occlusion`・`position`・`thickness` の塊（それぞれ `weight`・`level`・`contrast` double（0〜1）と `invert` bool）、`combine` int（0 乗算・1 最大・2 加算） |
+| 67 アイランドごとのばらつき | `seed` int（i32 の全域）、`min`・`max` double（0〜1。`min` ≤ `max`、等しいのは島によらず同じ値）。共通の `softness` は効く。ピンは持たない |
+
+アイランドごとのばらつきは、テクセルのモデルの UV の島（UV で辺を共有してつながる三角形。番号は 1 から、島のいちばん小さい三角形の番号の順で、モデルが同じなら
+解像度によらず同じ）の番号 i と `seed` から u = `cell_hash(seeds(seed)[0], i, 0, 0)` × 2^-32（[0, 1)。ノイズと同じ整数の hash）を出し、
+`min + (max − min) × u` を `low`・`high`・`softness`・`invert` に通した値を `blend` で合わせます。島の外のテクセルは入力のまま、UV が重なったテクセルは番号の小さい三角形の島の値です。
+モデルが無い・島の図が作業メモリの予算（文書の島の図・帯の写しの予算）に収まらないときは、段は入力を通して理由を出します。島の図は保存しません（モデルから作り直す）。
 
 画像（`effect`。版 28。重ねるノイズ・`balance`・`axis`・向き・`bent_normal` は既定のまま、ピンは持たない）:
 
@@ -1022,8 +1028,8 @@ Unity 0.2.0 は版25 を、版22〜24 と同じく版の数だけで断る（Uni
 ### 版 28（0.5.0 の効果）
 
 フィルターの段の種類 70〜79（ヒストグラムスキャン・ヒストグラムレンジ・スロープぼかし・方向のぼかし・ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、
-Generator の種類 66 模様・68 光・69 マスクの組み立て・70 画像を足した版。種類ごとの欄は段・Generator の `effect` の塊に置き、共通の欄（`radius` など）は既定のまま書く。
-Generator の 67 は、UV の島ごとの値のために空けてある。画像（70）はアセットの画像を、塗りつぶしの層の画像と同じ投影（UV・トライプラナー・平面・球・円柱）で読み、
+Generator の種類 66 模様・67 アイランドごとのばらつき・68 ライト・69 マスクの組み立て・70 画像を足した版。種類ごとの欄は段・Generator の `effect` の塊に置き、共通の欄（`radius` など）は既定のまま書く。
+アイランドごとのばらつき（67）は、モデルの UV の島の番号とシードから島ごとに 1 つの値を出す。画像（70）はアセットの画像を、塗りつぶしの層の画像と同じ投影（UV・トライプラナー・平面・球・円柱）で読み、
 フィルターのスタックの段の値にする。投影は塗りつぶしの層の `projection` と同じ並びをそのまま入れる。
 
 選んだ理由と、採らなかった案:
@@ -1046,7 +1052,9 @@ Generator の 67 は、UV の島ごとの値のために空けてある。画像
 
 保証の射程と失うもの:
 
-- 1 つの段でも種類 70〜79・Generator の 66・68・69・70 を使えば、その .ylp 全体をスタンドアロン 0.4.x と Unity 0.2.0 は開けない。
+- 1 つの段でも種類 70〜79・Generator の 66〜70 を使えば、その .ylp 全体をスタンドアロン 0.4.x と Unity 0.2.0 は開けない。
+- アイランドごとのばらつき（67）の値は島の番号で決まるので、同じ文書でもモデル（三角形の並び・UV）を替えると島の番号が変わり、値も変わる。島の図は保存しないので、
+  開き直したときにモデルが無ければ入力のまま通す（設定は残る）。
 - 式は Rust の式（`yolu_core::filter`。スロープぼかし・ゆがみが読む内蔵の値ノイズは Generator のノイズと同じ hash）で、Substance Painter などの同じ名前のフィルターと
   画素まで一致するとは言わない。式を変えると既存の文書の見た目が変わるので、変えるときは版を足して古い式を残す。
 - 読み方は塗りつぶしの層の画像の読み方（ミップマップ・投影の式）で、色のチャンネルでは同じ画像・同じ投影の塗りつぶしの層と同じ画素になる

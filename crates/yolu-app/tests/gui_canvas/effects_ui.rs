@@ -1214,7 +1214,7 @@ fn snapshot_three_new_filter_panels_in_both_languages() {
     }
 }
 
-/// 0.5.0 の Generator（模様・光・マスクの組み立て）を画素に足して選んだ窓。
+/// 0.5.0 の Generator（模様・ライト・マスクの組み立て）を画素に足して選んだ窓。
 fn with_new_generator(lang: Lang, kind: Kind, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, height, 128);
     h.state_mut().state.set_language(lang);
@@ -1235,6 +1235,7 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
             (Kind::Pattern, "pattern"),
             (Kind::Light, "light"),
             (Kind::MaskBuilder, "mask_builder"),
+            (Kind::UvIslandVariation, "uv_island_variation"),
         ] {
             // 欄の全部が窓に収まる高さ
             let h = with_new_generator(lang, kind, 2400.0);
@@ -1248,18 +1249,20 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
             };
             for (name, _) in settings.catalog_values() {
                 if ["low", "high", "invert", "blend"].contains(&name)
-                    || (id == "mask_builder" && name == "softness")
+                    || (matches!(id, "mask_builder" | "uv_island_variation") && name == "softness")
                 {
                     continue;
                 }
                 let label = yolu_app::fx::names::param_label(lang, id, name);
                 assert!(shown(label), "{lang:?} {kind:?}: 欄「{label}」が無い");
             }
-            // 共通の範囲の行は出る。模様・光の共通のやわらかさと、崩し（重ねるノイズ）は出ない
+            // 共通の範囲の行は出る。模様・ライトの共通のやわらかさと、崩し（重ねるノイズ）は出ない
             assert!(shown(lang.pick("下限", "Low")), "{kind:?}");
             assert!(!shown(lang.pick("崩し", "Breakup")), "{kind:?}");
-            if kind != Kind::MaskBuilder {
+            if matches!(kind, Kind::Pattern | Kind::Light) {
                 assert!(!shown(lang.pick("やわらかさ", "Softness")), "{kind:?}");
+            } else {
+                assert!(shown(lang.pick("やわらかさ", "Softness")), "{kind:?}");
             }
             for (text, _) in texts
                 .iter()
@@ -1312,6 +1315,98 @@ fn snapshot_the_pattern_and_mask_builder_panels_in_both_languages() {
             h.snapshot(format!("fx_props_{name}_{}", lang.pick("ja", "en")));
             results.extend_harness(&mut h);
         }
+    }
+}
+
+/// 2×2 の 4 枚の板（3D で離れていて、UV の別の所。島は 4 つ）。
+fn four_plates() -> yolu_app::view3d::model::ViewModel {
+    use yolu_core::geometry::{ModelMesh, Submesh};
+    use yolu_core::glam::{Vec2, Vec3};
+    let mut positions = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+    for (k, (u0, v0)) in [(0.05f32, 0.05f32), (0.55, 0.05), (0.05, 0.55), (0.55, 0.55)]
+        .into_iter()
+        .enumerate()
+    {
+        let base = positions.len() as u32;
+        for (x, y) in [(0., 0.), (1., 0.), (0., 1.), (1., 1.)] {
+            positions.push(Vec3::new(
+                x + (k % 2) as f32 * 1.5,
+                y + (k / 2) as f32 * 1.5,
+                0.,
+            ));
+            uvs.push(Vec2::new(u0 + 0.4 * x, v0 + 0.4 * y));
+        }
+        indices.extend([0, 1, 2, 2, 1, 3].map(|i| base + i));
+    }
+    let mesh = ModelMesh {
+        name: "板".into(),
+        positions,
+        normals: Vec::new(),
+        uvs,
+        submeshes: vec![Submesh {
+            material: 0,
+            indices,
+        }],
+    };
+    yolu_app::view3d::model::ViewModel::new("板", vec![mesh], vec![Some("材".into())], 1).unwrap()
+}
+
+/// アイランドごとのばらつきの欄と、島ごとに違う値の 2D の絵（4 つの島のモデルを読み、塗った層に置き換えで足す）。
+#[test]
+fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
+    let mut results = SnapshotResults::new();
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 1000.0, 128);
+        h.state_mut().state.set_language(lang);
+        {
+            let s = &mut h.state_mut().state;
+            let layer = s.selected_layer.unwrap();
+            for y in 0..128 {
+                for x in 0..128 {
+                    s.doc
+                        .set_pixel(layer, x, y, yolu_core::Rgba8::new(196, 120, 64, 255))
+                        .unwrap();
+                }
+            }
+            s.view3d.set_model(four_plates());
+            s.sync_effect_inputs_with(true);
+        }
+        fx(
+            &mut h,
+            FxOp::AddGenerator {
+                target: FilterTarget::Content,
+                kind: Kind::UvIslandVariation,
+            },
+        );
+        let Some(Selected::Filter { layer, id }) = selected(&h) else {
+            panic!("{lang:?}")
+        };
+        let mut g = selected_settings(&h).generator_settings().unwrap().clone();
+        g.blend = yolu_core::generator::Blend::Replace;
+        fx(
+            &mut h,
+            FxOp::SetSettings {
+                layer,
+                id,
+                settings: yolu_core::EffectSettings::generator(g),
+                coalesce: false,
+            },
+        );
+        assert_eq!(
+            h.state().state.doc.generator_inactive(layer, id).unwrap(),
+            None,
+            "{lang:?}: モデルを読んでいる"
+        );
+        // ブラシの円を島に重ねない（指はキャンバスの外）
+        move_to(&h, pos2(1270.0, 990.0));
+        h.run();
+        h.snapshot(format!(
+            "fx_props_uv_island_variation_{}",
+            lang.pick("ja", "en")
+        ));
+        results.extend_harness(&mut h);
     }
 }
 

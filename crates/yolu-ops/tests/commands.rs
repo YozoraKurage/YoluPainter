@@ -832,8 +832,8 @@ fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
     assert!(saved.notes.is_empty(), "{:?}", saved.notes);
 }
 
-/// 0.5.0 のフィルター（種類 70〜79）と Generator（模様・光・マスクの組み立て）が `effect.list_kinds` に出て、`effect.add` で値つきで
-/// 足せ、`effect.get` で同じ値が読める。
+/// 0.5.0 のフィルター（種類 70〜79）と Generator（模様・ライト・マスクの組み立て・アイランドごとのばらつき）が `effect.list_kinds` に出て、
+/// `effect.add` で値つきで足せ、`effect.get` で同じ値が読める。
 #[test]
 fn the_new_filters_are_listed_and_added_with_values() {
     let fx = Fixture::new("new-filters");
@@ -902,6 +902,11 @@ fn the_new_filters_are_listed_and_added_with_values() {
             "Height",
             json!({"curvature_weight": 0.5, "ambient_occlusion_weight": 1.0, "combine": "max", "thickness_invert": true}),
         ),
+        (
+            "uv_island_variation",
+            "Roughness",
+            json!({"seed": -5, "min": 0.25, "max": 0.25, "softness": 0.5}),
+        ),
     ];
     let mut host = fx.host("a.ylp");
     for (id, channel, values) in &cases {
@@ -913,7 +918,7 @@ fn the_new_filters_are_listed_and_added_with_values() {
         assert!(kind.addable && kind.rust_only, "{id}");
         assert_eq!(
             kind.generator,
-            ["pattern", "light", "mask_builder"].contains(id),
+            ["pattern", "light", "mask_builder", "uv_island_variation"].contains(id),
             "{id}"
         );
         assert!(kind.used_as.contains(&KindUse::EffectStack), "{id}");
@@ -1366,4 +1371,48 @@ fn installed_fonts_are_chosen_by_name_and_found_again_after_moving() {
         json!({"command": "layer.add", "args": {"kind": "text", "text": {"content": "x", "font": "No Such Family"}}}),
     );
     assert_eq!(e.code, yolu_ops::ErrorCode::NotFound);
+}
+
+/// アイランドごとのばらつきはモデルの UV の島を読む: 画面なしのホストにはモデルが無いので、足せるが入力のまま通し、`inactive_effects` に
+/// モデルが無いことを言う（`needs_baked_maps` の印も立つ）。
+#[test]
+fn the_uv_island_variation_needs_a_model_and_is_listed_as_inactive_without_one() {
+    let fx = Fixture::new("island-variation");
+    fx.project("a.ylp");
+    let mut host = fx.host("a.ylp");
+    let Reply::Kinds(kinds) = ok(&mut host, json!({"command": "effect.list_kinds"})) else {
+        panic!()
+    };
+    let kind = kinds
+        .kinds
+        .iter()
+        .find(|k| k.id == "uv_island_variation")
+        .unwrap();
+    assert!(kind.generator && kind.needs_baked_maps && kind.addable && kind.rust_only);
+    assert_eq!(kind.title.en, "UV Island Variation");
+    let names: Vec<&str> = kind.params.iter().map(|p| p.name.as_str()).collect();
+    for name in [
+        "seed", "min", "max", "low", "high", "softness", "invert", "blend",
+    ] {
+        assert!(names.contains(&name), "{name}: {names:?}");
+    }
+    // 最小が最大を超えるのは断る
+    err(
+        &mut host,
+        json!({"command": "effect.add", "args": {"layer": "Base", "kind": "uv_island_variation", "values": {"min": 0.8, "max": 0.2}}}),
+    );
+    edited(ok(
+        &mut host,
+        json!({"command": "effect.add", "args": {"layer": "Base", "kind": "uv_island_variation", "values": {"seed": 9}}}),
+    ));
+    let Reply::Set(info) = ok(&mut host, json!({"command": "set.info"})) else {
+        panic!()
+    };
+    assert_eq!(info.inactive_effects.len(), 1);
+    let note = &info.inactive_effects[0];
+    assert!(
+        note.en.contains("UV island variation") && note.en.contains("no model"),
+        "{note:?}"
+    );
+    assert!(note.ja.contains("モデルがありません"), "{note:?}");
 }

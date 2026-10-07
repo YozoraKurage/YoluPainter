@@ -4,7 +4,7 @@
 `Image` は連続した画像用。タイル入力は `Source` を実装してキャンバス座標で画素を返す。領域の切り方・Rayon のプールの並列度で計算結果は変わらない。
 入力と設定は借用するため、評価中のスナップショットは変更できない。成功した画像だけを呼び出し側で採用する。
 
-対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor に、Rust 版だけの Noise（64）・Grunge（65）・Image（70）。
+対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor に、Rust 版だけの Noise（64）・Grunge（65）・Image（70）と、下の 0.5.0 の種類（66〜69）。
 ノイズは各種類に重ねる4オクターブの値ノイズで、UV またはモデル空間を使う。ShapeGradient は箱・球・平面、ルートの位置と回転、形の中心・回転・大きさ・減衰を持つ。
 `Ramp` は独立した RGB と不透明度の分岐点、中点、PCHIP の値カーブ、5種類のプリセットを持つ。色は保存された sRGB 値のまま補間し、透明な画素の RGB を保つ。
 色の分岐点の α は評価に使わず、C# の `GradientStop` と同じく `Ramp::new` が 255 にそろえる（不透明度は独立した分岐点が持つ）。α の違う入力から作ったランプは `==` で等しい。
@@ -98,14 +98,19 @@ SSE4.1 は 2）を 1 組にして計算する。N 画素が同じ格子に入る
   （`tests/effects/image_stage.rs`）。マスク・スカラーの輝度は、補間した後の RGB から丸めずに求める。塗りつぶしの層がスカラーのチャンネルで読む輝度は元の画素ごとに
   8 bit へ丸めてから補間するので、補間がかかる投影では値が少し違う（R・G・B・A の成分は塗りつぶしの層に読み方が無い）。
   行の評価（`sample_row`）も画素ごとに `projected` を呼ぶ（レーンの式にはしていない）。
-## 模様・光・マスクの組み立て（0.5.0。Rust 版だけの種類）
+## 模様・ライト・マスクの組み立て（0.5.0。Rust 版だけの種類）
 
-`Kind::Pattern`（66）・`Kind::Light`（68）・`Kind::MaskBuilder`（69）。67 は UV の島ごとの値のために空けてある。設定は `Settings::pattern`・`light`・`mask_builder`
-（その種類以外は既定のまま）。重ねるノイズは持たず、模様・光は共通の `softness` を 0 にして自分の `softness` を使う（マスクの組み立ては共通の減衰を使う）。
+`Kind::Pattern`（66）・`Kind::UvIslandVariation`（67）・`Kind::Light`（68）・`Kind::MaskBuilder`（69）。設定は `Settings::pattern`・`island`・`light`・`mask_builder`
+（その種類以外は既定のまま）。重ねるノイズは持たず、模様・ライトは共通の `softness` を 0 にして自分の `softness` を使う（マスクの組み立ては共通の減衰を使う）。
 式（`kinds050.rs`）は + − × ÷ sqrt floor と多項式の sin・cos だけで、1 画素ずつ（行の評価も同じ式を呼ぶ。SIMD にしない）。
 
 - 模様: UV（画素の中心）を回転して scale 回繰り返し、縞・市松・水玉・格子は繰り返しの中の、縁は UV の正方形の縁からの距離で内外を決め、softness の幅で smoothstep。マップを読まない。
-- 光: ワールドの法線 n と光の向き d（azimuth は +Z から +X へ、elevation は水平から +Y へ）で lit = clamp((n·d + softness) / (1 + softness))、値は ambient + (1 − ambient) × lit。
+- ライト: ワールドの法線 n と光の向き d（azimuth は +Z から +X へ、elevation は水平から +Y へ）で lit = clamp((n·d + softness) / (1 + softness))、値は ambient + (1 − ambient) × lit。
   向きの定まらない法線の画素は値を持たない。
 - マスクの組み立て: 曲率・AO・位置の高さ（Y）・厚みを、ヒストグラムスキャンと同じ式（level・contrast）で 0〜1 にし、invert、重みを付けて掛ける（1 − w + w·t）・最大（w·t）・足す（1 まで）。
   重みが 0 のマップは読まない（無くても断らない）。読むマップの被覆の無い画素は値を持たない。
+- アイランドごとのばらつき: テクセルの UV の島の番号 i（`geometry::IslandMap`。モデルが同じなら解像度によらず同じ番号）とシードから、
+  u = `cell_hash(seeds(seed)[0], i, 0, 0)` × 2^-32（[0, 1)。u32 → f64 と 2 の冪の掛け算に丸めは無い）、値は min + (max − min) × u（min ≤ max。等しければ島によらず同じ値）。
+  共通のレベル・減衰・反転を通す。島の図は束縛の後に `BoundGenerator::with_islands` で渡し、渡すまでは `Inactive::NoModel`、作業予算で作れなければ
+  `islands_refused` で `Inactive::IslandMap`（入力のまま通す）。島の外（0）の画素は値を持たない。重なったテクセルは番号の小さい三角形の島（島の図の決まり）。
+  行の評価は島の図の行の連なりを歩き、連なりごとに 1 回だけ値を求める。

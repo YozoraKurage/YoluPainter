@@ -203,6 +203,8 @@ pub fn param_label(lang: Lang, kind: &str, param: &str) -> &'static str {
         ("mask_builder", p) if p.ends_with("_level") => lang.pick("位置", "Level"),
         ("mask_builder", p) if p.ends_with("_contrast") => lang.pick("コントラスト", "Contrast"),
         ("mask_builder", p) if p.ends_with("_invert") => lang.pick("反転", "Invert"),
+        ("uv_island_variation", "min") => lang.pick("最小", "Min"),
+        ("uv_island_variation", "max") => lang.pick("最大", "Max"),
         (_, "position") => lang.pick("位置", "Position"),
         (_, "contrast") => lang.pick("コントラスト", "Contrast"),
         (_, "range") => lang.pick("幅", "Range"),
@@ -272,6 +274,17 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
         ("mask_builder", "combine") => {
             lang.pick("マップの値の合わせ方", "How the maps are combined")
         }
+        ("uv_island_variation", "seed") => lang.pick(
+            "同じシード・同じモデルなら同じ値",
+            "The same seed and model give the same values",
+        ),
+        ("uv_island_variation", "min") => {
+            lang.pick("アイランドごとの値の下端", "Lowest value an island can get")
+        }
+        ("uv_island_variation", "max") => lang.pick(
+            "アイランドごとの値の上端",
+            "Highest value an island can get",
+        ),
         ("histogram_scan", "position") => lang.pick(
             "どの値から上を 1 にするか",
             "Where values start turning to 1",
@@ -349,8 +362,8 @@ pub fn option_label(lang: Lang, option: &str) -> &'static str {
     }
 }
 
-/// 足せる Generator の種類（メニューの並び: 焼いたマップを読む種類 → 読まない種類 → 画像）。
-pub const GENERATOR_KINDS: [Kind; 14] = [
+/// 足せる Generator の種類（メニューの並び: 焼いたマップ・モデルを読む種類 → 読まない種類 → 画像）。
+pub const GENERATOR_KINDS: [Kind; 15] = [
     Kind::EdgeWear,
     Kind::Dirt,
     Kind::PositionGradient,
@@ -359,6 +372,7 @@ pub const GENERATOR_KINDS: [Kind; 14] = [
     Kind::Direction,
     Kind::Light,
     Kind::MaskBuilder,
+    Kind::UvIslandVariation,
     Kind::IdColor,
     Kind::Anchor,
     Kind::Noise,
@@ -404,8 +418,9 @@ pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
         Kind::Grunge => lang.pick("グランジ", "Grunge"),
         Kind::Image => lang.pick("画像", "Image"),
         Kind::Pattern => lang.pick("模様", "Pattern"),
-        Kind::Light => lang.pick("光", "Light"),
+        Kind::Light => lang.pick("ライト", "Light"),
         Kind::MaskBuilder => lang.pick("マスクの組み立て", "Mask Builder"),
+        Kind::UvIslandVariation => lang.pick("アイランドごとのばらつき", "UV Island Variation"),
     }
 }
 

@@ -101,6 +101,19 @@ impl GeneratorInput for ScaledGenerators<'_> {
     }
 }
 
+/// 束縛した Generator に、アイランドごとのばらつきの島の図を渡す（`islands` が None は、島の図を読む段が無い。モデルが無ければ
+/// 段は島の図を待ったまま、予算で断られたら断られたことにする）。ほかの種類の段は何もしない。
+fn with_islands<'a>(
+    b: BoundGenerator<'a>,
+    islands: Option<&Result<Arc<crate::geometry::IslandMap>, generator::Inactive>>,
+) -> BoundGenerator<'a> {
+    match islands {
+        Some(Ok(map)) => b.with_islands(map.clone()),
+        Some(Err(generator::Inactive::IslandMap)) => b.islands_refused(),
+        _ => b,
+    }
+}
+
 /// 粗い評価の段: ぼかし・シャープの半径を歩幅で割る（丸めて 0 になる段は外す。半径が歩幅の半分に満たないぼかしは、粗い絵では見えない）。
 /// ほかの段は点ごとの処理かノイズ・正規化なので、そのまま。
 fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
@@ -308,7 +321,7 @@ struct Stamp {
     generation: u64,
     source: u64,
     inputs: u64,
-    /// 継ぎ目をまたぐ段が読むモデルの UV の位相の世代（またがない段は 0）。
+    /// 継ぎ目をまたぐ段・アイランドごとのばらつきの段が読むモデルの UV の位相の世代（どちらも無ければ 0）。
     topology: u64,
     anchors: u64,
 }
@@ -369,6 +382,8 @@ pub(super) struct Spec {
     reads_anchor: bool,
     /// UV の継ぎ目をまたぐ帯の幅と近傍の段の数（帯の幅 0 はまたがない。`uv_seams`）。
     pub(super) seam: (u32, usize),
+    /// アイランドごとのばらつきの段がある（モデルの UV の島の図を読む）。
+    reads_islands: bool,
 }
 
 /// 合成が読む評価済みの面（層の番号から）。内容とマスクは別。
@@ -918,6 +933,7 @@ impl Document {
                 .as_ref()
                 .is_some_and(|f| f.image.is_some() || f.gradient.is_some() || f.decal);
         let reads_anchor = anchors.iter().any(Option::is_some);
+        let reads_islands = chain.iter().any(|e| e.settings.reads_islands());
         Spec {
             layer: index,
             id: layer.id,
@@ -934,6 +950,7 @@ impl Document {
             reads_inputs,
             reads_anchor,
             seam,
+            reads_islands,
         }
     }
 
@@ -984,7 +1001,7 @@ impl Document {
             } else {
                 0
             },
-            topology: if spec.seam.0 > 0 {
+            topology: if spec.seam.0 > 0 || spec.reads_islands {
                 self.effects.topology_revision
             } else {
                 0
@@ -1975,6 +1992,13 @@ impl Document {
             });
         }
 
+        // アイランドごとのばらつきの段が読む島の図（文書の大きさ。段が無ければ引かない）
+        let islands = cfg
+            .chain
+            .iter()
+            .any(|e| e.settings.reads_islands())
+            .then(|| self.island_map());
+
         // 段と束縛した Generator
         let mut stages = Vec::with_capacity(cfg.chain.len());
         let mut bound: Vec<Option<BoundGenerator<'_>>> = Vec::with_capacity(cfg.chain.len());
@@ -2004,10 +2028,11 @@ impl Document {
                             _ => Err(anchor::Issue::NotChosen),
                         };
                     let b = BoundGenerator::bind(g, &maps, frame, dims, value_source).ok();
-                    bound.push(match (b, &samplers[k]) {
+                    let b = match (b, &samplers[k]) {
                         (Some(b), Some(sampler)) => Some(b.with_image(sampler)),
                         (b, _) => b,
-                    });
+                    };
+                    bound.push(b.map(|b| with_islands(b, islands.as_ref())));
                 }
             }
         }
@@ -2678,12 +2703,35 @@ impl Document {
                     Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
                 }
             }
+            // アイランドごとのばらつき: 島の図を引いて（評価と同じ。覚えていればそれ、断ったままなら作り直さずに断る）使えるかを見る
+            Ok(b) if b.inactive() == Some(&generator::Inactive::NoModel) => (
+                with_islands(b, Some(&self.island_map()))
+                    .inactive()
+                    .cloned()
+                    .map(InactiveReason::Generator),
+                None,
+            ),
             Ok(b) => (
                 b.inactive().cloned().map(InactiveReason::Generator),
                 b.fallback().cloned(),
             ),
             Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
         }
+    }
+
+    /// アイランドごとのばらつきが読む、文書の大きさの島の図（モデルのこのテクスチャセットの UV の位相から、島の図・帯の写しの予算
+    /// `seam_budget` の中で作る。覚えていればそれ）。モデルが無い・予算に収まらないときは、その理由。
+    fn island_map(&self) -> Result<Arc<crate::geometry::IslandMap>, generator::Inactive> {
+        let topology = self
+            .effects
+            .inputs
+            .topology
+            .as_ref()
+            .ok_or(generator::Inactive::NoModel)?;
+        // 文書の辺は島の図の辺の上限（8192）の中なので、大きさの範囲で断られることは無い。断るのは作業予算だけ
+        topology
+            .island_map_within(self.width, self.height, self.effects.seam_budget)
+            .map_err(|_| generator::Inactive::IslandMap)
     }
 
     /// 画像の段の投影のサンプラー（塗りつぶしの層の画像と同じ入力: 文書の大きさ・位置と向きのマップ（最新のものだけ）・モデルのルート）。
