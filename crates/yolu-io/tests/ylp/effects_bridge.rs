@@ -180,6 +180,20 @@ pub fn layer_outputs(doc: &Document) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// C# の評価と比べるため、塗りつぶしの画像をどれも異方性のフィルターなしで読ませる（C# の `FillImageSampler` は等方の三線形だけ。
+/// このアプリの既定の異方性の読みは、core の `fill_image` の試験が確かめる）。
+pub fn isotropic(core: &mut Document) {
+    let layers: Vec<(yolu_core::LayerId, Vec<yolu_core::Channel>)> = core
+        .layers()
+        .iter()
+        .map(|l| (l.id(), l.fill_images().map(|(c, _)| c).collect()))
+        .filter(|(_, c): &(_, Vec<_>)| !c.is_empty())
+        .collect();
+    for (id, channels) in layers {
+        core.set_fill_isotropic_for_load(id, &channels).unwrap();
+    }
+}
+
 pub fn open(name: &str) -> (NativeDocument, Document) {
     let native = NativeDocument::read(&read(&format!("{name}.utpaint"))).unwrap();
     assert_eq!(native.version(), 21, "{name}");
@@ -215,7 +229,8 @@ fn csharp_effect_documents_roundtrip_byte_for_byte() {
 #[test]
 fn effect_documents_composite_every_channel_like_the_recorded_bytes() {
     for name in FIXTURES {
-        let (_, core) = open(name);
+        let (_, mut core) = open(name);
+        isotropic(&mut core);
         let got = composites(&core);
         let want = read(&format!("{name}.composite"));
         if got != want && std::env::var_os("YOLU_GOLDEN_UPDATE").is_some() {
@@ -285,7 +300,8 @@ pub fn layer_output_mismatches(core: &Document, want: &[u8]) -> Vec<String> {
 #[test]
 fn csharp_effect_documents_evaluate_every_layer_like_csharp() {
     for name in FIXTURES {
-        let (_, core) = open(name);
+        let (_, mut core) = open(name);
+        isotropic(&mut core);
         let bad = layer_output_mismatches(&core, &read(&format!("{name}.layers")));
         assert!(
             bad.is_empty(),
@@ -314,6 +330,7 @@ fn legacy_versions_with_effects_read_and_migrate_like_csharp() {
             read(&format!("{name}.v21")),
             "{name}: 版 21 へ移した正本が C# の書き直しと同じバイト列"
         );
+        isotropic(&mut core);
         assert_eq!(
             composites(&core),
             read(&format!("{name}.composite")),
@@ -340,6 +357,7 @@ fn block_size_does_not_change_the_pixels() {
     for name in FIXTURES {
         for block in [8, 16, 24, 40, 100, 256, 4096] {
             let (_, mut core) = open(name);
+            isotropic(&mut core);
             core.set_filter_block_pixels(block).unwrap();
             assert!(
                 composites(&core) == read(&format!("{name}.composite")),
@@ -1119,6 +1137,8 @@ fn csharp_reads_and_resaves_the_effects_document_this_writer_produces() {
             format!("Layers: {}", edited.layers().len()),
         ]
     );
+    let mut edited = edited;
+    isotropic(&mut edited);
     let bad = layer_output_mismatches(&edited, &read("rust-written-effects-v21.layers"));
     assert!(
         bad.is_empty(),

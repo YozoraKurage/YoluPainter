@@ -23,6 +23,7 @@ mod manual_id_colors;
 mod materials;
 mod nesting_native;
 mod path_lists_bridge;
+mod point_gradient_bridge;
 mod procedural_bridge;
 mod rejection;
 mod saved_selections;

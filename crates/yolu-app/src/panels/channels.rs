@@ -80,8 +80,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     rows.space(8.0);
     app.m2.channels_content = list_height + rows.used();
     ui.set_clip_rect(outer_clip);
-    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする
-    if !ui.input(|i| i.pointer.primary_down()) {
+    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする（ギズモと点のドラッグ中は終えない。properties.rs の同じ所の注記）
+    if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::dragging(app) {
         app.m2_end_drag();
     }
     bar.end(ui, "channels.scroll", &mut app.m2.channel_scroll);

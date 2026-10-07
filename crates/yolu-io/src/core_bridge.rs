@@ -5,7 +5,8 @@
 //! （版 8・10・18）、層の後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
     ADJUST_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION,
-    PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -14,6 +15,7 @@ use crate::{
 use std::collections::{BTreeMap, HashMap};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
+use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{
     self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
 };
@@ -187,7 +189,10 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "projection"
         | "gradient_count"
         | "gradients"
-        | "paths" => None,
+        | "paths"
+        | "attributes_ext"
+        | "point_gradient_count"
+        | "point_gradients" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
                 "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
@@ -438,7 +443,8 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
         .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
 }
 
-/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の中身も読み書きできる版）、
+/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜29 の中身も読み書きできる版）、
+/// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
 /// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28（版 27 の中身も読み書きできる）、パスの一覧の形で書くパス
 /// （塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
 /// Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
@@ -447,6 +453,8 @@ pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     if !doc.filter_seams() {
         SEAMS_VERSION
+    } else if uses_point_gradient_version(doc) {
+        POINT_GRADIENT_VERSION
     } else if uses_image_generators(doc) || uses_new_filters(doc) {
         EFFECTS_VERSION
     } else if uses_path_lists(doc) {
@@ -529,6 +537,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     let mut w = Out {
         sink,
         mixing: version >= MIXING_VERSION,
+        points: version >= POINT_GRADIENT_VERSION,
     };
     w.value(b"YLID")?;
     w.int(assigned.colors().len() as i32)?;
@@ -544,6 +553,7 @@ pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     let mut w = Out {
         sink,
         mixing: version >= MIXING_VERSION,
+        points: version >= POINT_GRADIENT_VERSION,
     };
     w.raw(b"DOTPAINT")?;
     w.int(version)?;
@@ -558,6 +568,7 @@ pub(crate) fn write_layer_to(
     let mut w = Out {
         sink,
         mixing: version >= MIXING_VERSION,
+        points: version >= POINT_GRADIENT_VERSION,
     };
     write_layer(&mut w, layer)
 }
@@ -643,6 +654,14 @@ pub(crate) fn uses_image_generators(doc: &Document) -> bool {
                     .generator_settings()
                     .is_some_and(|g| g.kind == generator::Kind::Image)
             })
+    })
+}
+/// 版 29 の機能（塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像）を使う層があるか。
+pub(crate) fn uses_point_gradient_version(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.kind() == LayerKind::Fill
+            && (l.fill_point_gradients().next().is_some()
+                || l.fill_images().any(|(c, _)| !l.fill_anisotropic(c)))
     })
 }
 /// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整の層か、層の内容・マスクのフィルターの段。無効な段も数える）を
@@ -758,6 +777,12 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
     } else {
         LayerLocks::NONE
     };
+    // 続きの属性の印（ビット 7 のとき、ロックの直後）。ビット 0 は塗りつぶしの点のグラデーション
+    let ext = if attributes & 128 != 0 {
+        f.int(&format!("{p}.attributes_ext"))?
+    } else {
+        0
+    };
     if attributes & 4 != 0 {
         for k in 0..f.byte(&format!("{p}.channel_blend_count"))? {
             let b = format!("{p}.channel_blends[{k}]");
@@ -834,16 +859,27 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
     if attributes & 8 != 0 {
         let n = f.int(&format!("{p}.image_count"))?;
         let mut images = Vec::new();
+        let mut isotropic = Vec::new();
         for k in 0..n {
             let image = format!("{p}.images[{k}]");
+            let channel = f.channel(&format!("{image}.channel"))?;
             images.push((
-                f.channel(&format!("{image}.channel"))?,
+                channel,
                 ImageId(core_id(f.guid(&format!("{image}.resource_id"))?)),
             ));
+            if version >= POINT_GRADIENT_VERSION && !f.boolean(&format!("{image}.anisotropic"))? {
+                isotropic.push(channel);
+            }
         }
         let projection = read_projection(f, &format!("{p}.projection"))?;
         doc.set_fill_images_for_load(id, &images, projection)
             .map_err(|e| Error::from(e).in_context("塗りつぶしの画像・投影をcoreにできません"))?;
+        if !isotropic.is_empty() {
+            doc.set_fill_isotropic_for_load(id, &isotropic)
+                .map_err(|e| {
+                    Error::from(e).in_context("塗りつぶしの画像の読み方をcoreにできません")
+                })?;
+        }
     }
     if attributes & 32 != 0 {
         let mut gradients = Vec::new();
@@ -855,6 +891,39 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             .map_err(|e| {
                 Error::from(e).in_context("塗りつぶしのグラデーションをcoreにできません")
             })?;
+    }
+    if ext & 1 != 0 {
+        let mut list = Vec::new();
+        for k in 0..f.int(&format!("{p}.point_gradient_count"))? {
+            let g = format!("{p}.point_gradients[{k}]");
+            let space = match f.int(&format!("{g}.space"))? {
+                0 => PointSpace::Model,
+                _ => PointSpace::Uv,
+            };
+            let mut points = Vec::new();
+            for j in 0..f.int(&format!("{g}.point_count"))? {
+                let q = format!("{g}.points[{j}]");
+                points.push(GradientPoint {
+                    position: [
+                        f.float(&format!("{q}.x"))?,
+                        f.float(&format!("{q}.y"))?,
+                        f.float(&format!("{q}.z"))?,
+                    ],
+                    color: f.rgba(&format!("{q}.rgba"))?,
+                });
+            }
+            list.push((
+                f.channel(&format!("{g}.channel"))?,
+                PointGradient {
+                    space,
+                    spread: f.float(&format!("{g}.spread"))?,
+                    points,
+                },
+            ));
+        }
+        doc.set_fill_points_for_load(id, list).map_err(|e| {
+            Error::from(e).in_context("塗りつぶしの点のグラデーションをcoreにできません")
+        })?;
     }
     if version >= 8 && f.boolean(&format!("{p}.has_surface_path"))? {
         let path = erase_kind(read_path(f, &format!("{p}.surface_path"), true, version)?);
@@ -1883,6 +1952,8 @@ impl Sink for VecSink {
 struct Out<'s> {
     sink: &'s mut dyn Sink,
     mixing: bool,
+    /// 版 29 の並び（画像ごとの異方性・点のグラデーション）で書くか。
+    points: bool,
 }
 impl Out<'_> {
     fn raw(&mut self, b: &[u8]) -> Result<()> {
@@ -1939,8 +2010,16 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     let anchors = layer.anchor().is_some() || mask_anchor.is_some();
     let gradients: Vec<(Channel, &generator::Settings)> = layer.fill_gradients().collect();
     let list = writes_path_list(layer);
+    let points: Vec<(Channel, &PointGradient)> = layer.fill_point_gradients().collect();
+    // 版の決め（`version_of`）が、点のグラデーション・異方性を切った画像のある文書を版 29 にする。ここに来て古い版なら書けない
+    check(
+        w.points || points.is_empty() && images.iter().all(|(c, _)| layer.fill_anisotropic(*c)),
+        named("点のグラデーション・画像の読み方は版 29 で書く"),
+    )?;
     // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
-    // ビット 5 塗りつぶしのグラデーション。ロックの印（int、0 は書かない）は属性の直後、チャンネルごとの設定より前
+    // ビット 5 塗りつぶしのグラデーション、ビット 6 パスの一覧（版 27）、ビット 7 続きの属性の印が続く（版 29）。ロックの印（int、0 は書かない）は
+    // 属性の直後、続きの属性の印（int、0 は書かない。ビット 0 塗りつぶしの点のグラデーション）はロックの直後、どちらもチャンネルごとの設定より前
+    let ext: i32 = if points.is_empty() { 0 } else { 1 };
     w.byte(
         u8::from(layer.clipping())
             | if locks == LayerLocks::NONE { 0 } else { 2 }
@@ -1948,10 +2027,14 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
             | if fill_images { 8 } else { 0 }
             | if anchors { 16 } else { 0 }
             | if gradients.is_empty() { 0 } else { 32 }
-            | if list { 64 } else { 0 },
+            | if list { 64 } else { 0 }
+            | if ext == 0 { 0 } else { 128 },
     )?;
     if locks != LayerLocks::NONE {
         w.int(i32::from(locks.bits()))?;
+    }
+    if ext != 0 {
+        w.int(ext)?;
     }
     if !blends.is_empty() {
         w.byte(blends.len() as u8)?;
@@ -1980,6 +2063,9 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         for (c, id) in &images {
             w.int(c.index() as i32)?;
             w.raw(&native_id(id.0))?;
+            if w.points {
+                w.boolean(layer.fill_anisotropic(*c))?;
+            }
         }
         write_projection(w, layer.projection())?;
     }
@@ -1988,6 +2074,22 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         for (c, g) in &gradients {
             w.int(c.index() as i32)?;
             write_generator(w, g)?;
+        }
+    }
+    if !points.is_empty() {
+        w.int(points.len() as i32)?;
+        for (c, g) in &points {
+            w.int(c.index() as i32)?;
+            w.int(1)?; // アルゴリズムの版（逆距離の 2 乗の重みと広がり）
+            w.int(g.space as i32)?;
+            w.float(g.spread)?;
+            w.int(g.points.len() as i32)?;
+            for p in &g.points {
+                for v in p.position {
+                    w.float(v)?;
+                }
+                w.value(&p.color.to_array())?;
+            }
         }
     }
     if layer.kind() == LayerKind::Adjustment {

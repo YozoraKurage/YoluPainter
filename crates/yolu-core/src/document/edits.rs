@@ -109,13 +109,15 @@ impl Document {
         // 画像・グラデーションのあるチャンネルの値を消すと、画像・グラデーションも一緒に外れる（1 回の Undo で一緒に戻る）
         if value.is_none()
             && (layer.fill_images.contains_key(&channel)
-                || layer.fill_gradients.contains_key(&channel))
+                || layer.fill_gradients.contains_key(&channel)
+                || layer.fill_points.contains_key(&channel))
         {
             let before = super::effects::FillChannelState::of(layer, channel);
             let mut after = before.clone();
             after.value = None;
             after.image = None;
             after.gradient = None;
+            after.points = None;
             return self.execute(
                 Command::FillChannel {
                     id,

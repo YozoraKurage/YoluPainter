@@ -228,6 +228,10 @@ fn what(
             format!("画像（{}）", channel_name(c)),
             format!("Image ({})", channel_name(c)),
         ),
+        InactiveTarget::FillPoints(c) => lang.pick(
+            format!("点のグラデーション（{}）", channel_name(c)),
+            format!("Point gradient ({})", channel_name(c)),
+        ),
     }
 }
 
@@ -255,6 +259,13 @@ pub fn needed_maps(doc: &Document) -> Vec<MeshMapKind> {
         }
         for (_, g) in layer.fill_gradients() {
             add_settings(&mut want, g);
+        }
+        // モデルの空間の点のグラデーションは、位置のマップを読む
+        if layer
+            .fill_point_gradients()
+            .any(|(_, g)| g.space == yolu_core::fill_points::PointSpace::Model)
+        {
+            want[MeshMapKind::Position as usize] = true;
         }
         // 位置を読む投影（デカール・トライプラナー・平面ほか）は、位置と法線のマップが要る
         if layer.kind() == yolu_core::LayerKind::Fill

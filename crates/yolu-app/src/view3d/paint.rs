@@ -23,6 +23,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use eframe::egui_wgpu::{self, wgpu};
+use rayon::prelude::*;
 use yolu_core::export::uses;
 use yolu_core::normal::output_from_composites;
 use yolu_core::{
@@ -35,6 +36,9 @@ const MAX_PAINT_SIZE: u32 = 8192;
 /// 使っているチャンネルのテクスチャ全部（ミップ込み）の GPU のバイト数の予算（既定）。超える文書は縮めて持つ。4096² で 6 チャンネルすべて
 /// （320 MiB）は収まり、8192² の 6 チャンネル（約 1.28 GiB）は 1 段縮めて 4096² にする。
 pub const PAINT_BUDGET_BYTES: u64 = 512 << 20;
+/// 文書が変更をまとめている間（ギズモ・スライダーのドラッグ）に、効果の出力がまだ評価されていないタイルを粗く合成する歩幅（1/4 の
+/// 大きさで評価して、離したら正確に上げ直す）。
+pub const DRAG_STRIDE: u32 = 4;
 /// 8 bit ずつのリニアの値（Normal・メッシュマップ・リニアの画像）と 1 チャンネル 8 bit の値の形式。
 const RGBA: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SCALAR: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -127,6 +131,8 @@ pub struct PaintStats {
     pub by_budget: bool,
     /// 作ってあるチャンネルのテクスチャ（ミップ込み）のバイト数。
     pub gpu_bytes: u64,
+    /// 粗く合成した絵を見せているタイルの数（全チャンネルの合計。ドラッグが終われば正確に上げ直して 0 に戻る）。
+    pub coarse_tiles: usize,
 }
 
 struct ChannelTexture {
@@ -173,6 +179,8 @@ struct PaintSet {
     /// Normal を作ったときの出力の設定。層の合成を変えない設定（Height → Normal・強さ・端）は変化の記録にタイルを足さないので、
     /// 変わったら Normal を作り直す。
     normal_settings: NormalSettings,
+    /// チャンネルごとの、ドラッグの間に粗く合成して上げたタイル（並べて重なり無し）。ドラッグが終わった同期で正確に上げ直す。
+    coarse: [Vec<TileCoord>; 6],
 }
 
 #[derive(Clone)]
@@ -399,6 +407,7 @@ impl Paint {
                 && s.serial == doc.change_serial()
                 && s.revision == doc.revision()
                 && s.normal_settings == doc.normal_settings()
+                && (doc.is_coalescing() || s.coarse.iter().all(Vec::is_empty))
         })
     }
 
@@ -685,6 +694,7 @@ impl Paint {
         let mut last_slot_tiles = [0usize; 6];
         let mut changed = rebuild;
         let shift = self.set.as_ref().expect("作った").shift;
+        let interactive = doc.is_coalescing();
         for slot in Slot::ALL {
             if slot == Slot::Normal {
                 let set = self.set.as_mut().expect("作った");
@@ -700,6 +710,7 @@ impl Paint {
             if !used && has {
                 if let Some(set) = &mut self.set {
                     set.textures[slot.index()] = None;
+                    set.coarse[slot.index()].clear();
                 }
                 self.layout_version += 1;
                 changed = true;
@@ -709,16 +720,44 @@ impl Paint {
                 continue;
             }
             let created = !has;
+            let mut coarse = Vec::new();
             let rects = if created {
+                self.set.as_mut().expect("作った").coarse[slot.index()].clear();
                 self.create_texture(slot);
                 self.layout_version += 1;
                 changed = true;
                 full_rects(doc, slot, shift)
             } else {
-                changed_rects(doc, slot, since, shift)
+                let mut coords = doc.changed_tiles(slot.channel(), since).unwrap_or_default();
+                let held = &mut self.set.as_mut().expect("作った").coarse[slot.index()];
+                if !interactive {
+                    // ドラッグの間に粗く上げたタイルは、終わったら正確に上げ直す
+                    coords.append(held);
+                }
+                coords.sort();
+                coords.dedup();
+                if interactive
+                    && coarse_allowed(doc, slot)
+                    && !coords.is_empty()
+                    && doc.effects_pending(slot.channel(), &coords)
+                {
+                    coarse = std::mem::take(&mut coords);
+                } else {
+                    held.retain(|c| coords.binary_search(c).is_err());
+                }
+                changed_rects(doc, slot, &coords, since, shift)
             };
             let rects = plan_regions(rects, shift, doc.bounds(), keeps_whole(doc, slot));
-            let (uploaded, mut dirty) = self.upload(doc, slot, &rects);
+            let (mut uploaded, mut dirty) = self.upload(doc, slot, &rects);
+            if !coarse.is_empty() {
+                let (covered, n, d) = self.upload_coarse(doc, slot, &coarse);
+                uploaded += n;
+                dirty = union_dirty(dirty, d);
+                let held = &mut self.set.as_mut().expect("作った").coarse[slot.index()];
+                held.extend_from_slice(&covered);
+                held.sort();
+                held.dedup();
+            }
             last_slot_tiles[slot.index()] = uploaded;
             // 作った直後は、全部の段を作り直す（空のテクスチャの下の段も、Normal の平らな法線も）
             if created {
@@ -756,6 +795,7 @@ impl Paint {
         }
         self.stats.level = set.shift;
         self.stats.by_budget = set.by_budget;
+        self.stats.coarse_tiles = set.coarse.iter().map(Vec::len).sum();
         self.stats.gpu_bytes = self.gpu_bytes();
     }
 
@@ -811,6 +851,7 @@ impl Paint {
             serial: 0,
             revision: 0,
             normal_settings: doc.normal_settings(),
+            coarse: Default::default(),
         });
     }
 
@@ -1003,19 +1044,122 @@ impl Paint {
                     depth_or_array_layers: 1,
                 },
             );
-            let r = [dx, dy, dx + dw, dy + dh];
-            dirty = Some(match dirty {
-                None => r,
-                Some(d) => [
-                    d[0].min(r[0]),
-                    d[1].min(r[1]),
-                    d[2].max(r[2]),
-                    d[3].max(r[3]),
-                ],
-            });
+            dirty = union_dirty(dirty, Some([dx, dy, dx + dw, dy + dh]));
             uploaded += tiles;
         }
         (uploaded, dirty)
+    }
+
+    /// ドラッグの間の仮の絵: タイルを歩幅 `DRAG_STRIDE` で粗く合成し（効果の出力も粗く評価する。`Document::composite_coarse_tiles`）、
+    /// 正確な絵と同じ矩形のまとめ（`plan_regions`）ごとに、粗い画素のままチャンネルの形式へ直してから、最も近い画素で絵の大きさへ
+    /// 広げて 1 回で上げる。まとめた矩形に入ったタイルは全部粗く合成する。粗く上げたタイル・上げたタイルの数・段 0 の変わった範囲を返す。
+    fn upload_coarse(
+        &mut self,
+        doc: &Document,
+        slot: Slot,
+        coords: &[TileCoord],
+    ) -> (Vec<TileCoord>, usize, Option<[u32; 4]>) {
+        let shift = self.set.as_ref().expect("作った").shift;
+        let bounds = doc.bounds();
+        let rects = plan_regions(
+            rects_of(doc, slot, coords, &[], shift),
+            shift,
+            bounds,
+            false,
+        );
+        let ts = doc.tile_size();
+        let mut covered: Vec<TileCoord> = Vec::new();
+        for (r, _) in &rects {
+            for ty in r.y / ts..(r.y + r.height).div_ceil(ts) {
+                for tx in r.x / ts..(r.x + r.width).div_ceil(ts) {
+                    covered.push(TileCoord { x: tx, y: ty });
+                }
+            }
+        }
+        covered.sort();
+        covered.dedup();
+        let Ok(tiles) = doc.composite_coarse_tiles(slot.channel(), &covered, DRAG_STRIDE) else {
+            return (Vec::new(), 0, None);
+        };
+        let s = DRAG_STRIDE;
+        let step = s.trailing_zeros();
+        let more = shift.saturating_sub(step);
+        let factor = 1u32 << step.saturating_sub(shift);
+        let settings = doc.normal_settings();
+        let bpt = slot.bytes_per_texel() as usize;
+        let mut dirty = None;
+        let mut uploaded = 0;
+        for (rect, n) in &rects {
+            // 矩形の粗い画素（行は下から。粗い座標の原点は文書の左下）
+            let (bx, by) = (rect.x / s, rect.y / s);
+            let (bw, bh) = (rect.width.div_ceil(s), rect.height.div_ceil(s));
+            let mut band = vec![0u8; bw as usize * bh as usize * 4];
+            for tile in &tiles {
+                let (tw, th) = tile.size();
+                let (tx, ty) = (tile.rect.x / s, tile.rect.y / s);
+                let x0 = tx.max(bx);
+                let x1 = (tx + tw).min(bx + bw);
+                let y0 = ty.max(by);
+                let y1 = (ty + th).min(by + bh);
+                if x0 >= x1 || y0 >= y1 {
+                    continue;
+                }
+                let len = (x1 - x0) as usize * 4;
+                for y in y0..y1 {
+                    let from = (((y - ty) * tw + (x0 - tx)) * 4) as usize;
+                    let to = (((y - by) * bw + (x0 - bx)) * 4) as usize;
+                    band[to..to + len].copy_from_slice(&tile.pixels[from..from + len]);
+                }
+            }
+            let local = DocRect::new(0, 0, bw, bh);
+            let converted = match slot {
+                Slot::Color => Some(reduce_srgb_premultiplied(&band, local, more)),
+                Slot::Emission => Some(reduce_emission(&band, local, more)),
+                Slot::Normal => output_from_composites(&band, None, bw, bh, &settings)
+                    .ok()
+                    .map(|out| {
+                        reduce(&out, local, more, 4, |p| {
+                            [p[0] as u32, p[1] as u32, p[2] as u32, 255]
+                        })
+                    }),
+                Slot::Metallic | Slot::Roughness | Slot::Height => {
+                    Some(reduce(&band, local, more, 1, |p| {
+                        [((p[0] as u32 * p[3] as u32 + 127) / 255), 0, 0, 0]
+                    }))
+                }
+            };
+            let Some((texels, sw, sh)) = converted else {
+                continue;
+            };
+            let (dx, dy) = (rect.x >> shift, rect.y >> shift);
+            let dw = rect.width.div_ceil(1 << shift);
+            let dh = rect.height.div_ceil(1 << shift);
+            let data = widen(&texels, sw, sh, bpt, factor, dw, dh);
+            let set = self.set.as_ref().expect("作った");
+            let texture = &set.textures[slot.index()].as_ref().expect("作った").texture;
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(dw * slot.bytes_per_texel()),
+                    rows_per_image: Some(dh),
+                },
+                wgpu::Extent3d {
+                    width: dw,
+                    height: dh,
+                    depth_or_array_layers: 1,
+                },
+            );
+            dirty = union_dirty(dirty, Some([dx, dy, dx + dw, dy + dh]));
+            uploaded += n;
+        }
+        (covered, uploaded, dirty)
     }
 
     /// 矩形のテクセル（チャンネルの形式で、縮めた後）。
@@ -1248,16 +1392,59 @@ fn full_rects(doc: &Document, slot: Slot, shift: u32) -> Vec<(DocRect, usize)> {
     rects_of(doc, slot, &coords, &[], shift)
 }
 
-/// since の後に変わった矩形（Normal は Normal の変わったタイルと、Height → Normal が有効なら Height の変わったタイルの外側 1 画素まで）。
-fn changed_rects(doc: &Document, slot: Slot, since: u64, shift: u32) -> Vec<(DocRect, usize)> {
-    let coords = doc.changed_tiles(slot.channel(), since).unwrap_or_default();
+/// 上げ直すタイル `coords`（そのチャンネルの since の後に変わったタイルなど）の矩形。Normal は、Height → Normal が有効なら Height の
+/// 変わったタイルの外側 1 画素までを足す。
+fn changed_rects(
+    doc: &Document,
+    slot: Slot,
+    coords: &[TileCoord],
+    since: u64,
+    shift: u32,
+) -> Vec<(DocRect, usize)> {
     let height = if slot == Slot::Normal && doc.derives_normal() {
         doc.changed_tiles(Channel::Height, since)
             .unwrap_or_default()
     } else {
         Vec::new()
     };
-    rects_of(doc, slot, &coords, &height, shift)
+    rects_of(doc, slot, coords, &height, shift)
+}
+
+/// ドラッグの間、そのチャンネルを粗く合成して見せてよいか。Height から作る Normal は、Sobel が隣の画素を読むので粗くしない。
+fn coarse_allowed(doc: &Document, slot: Slot) -> bool {
+    doc.tile_size().is_multiple_of(DRAG_STRIDE) && !(slot == Slot::Normal && doc.derives_normal())
+}
+
+/// 段 0 の変わった範囲（x0 y0 x1 y1）を合わせる。
+fn union_dirty(a: Option<[u32; 4]>, b: Option<[u32; 4]>) -> Option<[u32; 4]> {
+    match (a, b) {
+        (Some(d), Some(r)) => Some([
+            d[0].min(r[0]),
+            d[1].min(r[1]),
+            d[2].max(r[2]),
+            d[3].max(r[3]),
+        ]),
+        (a, b) => a.or(b),
+    }
+}
+
+/// テクセルの並び（`sw` × `sh`、1 テクセル `bpt` バイト）を、1 つを `factor` × `factor` に広げて、`dw` × `dh` に切る（足りない所は端を延ばす）。
+fn widen(texels: &[u8], sw: u32, sh: u32, bpt: usize, factor: u32, dw: u32, dh: u32) -> Vec<u8> {
+    let mut out = vec![0u8; dw as usize * dh as usize * bpt];
+    if sw == 0 || sh == 0 {
+        return out;
+    }
+    out.par_chunks_mut(dw as usize * bpt)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let sy = (y as u32 / factor).min(sh - 1) as usize;
+            for (x, o) in row.chunks_exact_mut(bpt).enumerate() {
+                let sx = (x as u32 / factor).min(sw - 1) as usize;
+                let i = (sy * sw as usize + sx) * bpt;
+                o.copy_from_slice(&texels[i..i + bpt]);
+            }
+        });
+    out
 }
 
 /// 端が反対側の端を読む Height → Normal（Wrap）か。部分では足りないので、全部を 1 つの矩形で作る。
@@ -1490,50 +1677,61 @@ fn reduce(
     region: DocRect,
     shift: u32,
     channels: usize,
-    map: impl Fn(&[u8]) -> [u32; 4],
+    map: impl Fn(&[u8]) -> [u32; 4] + Sync,
 ) -> (Vec<u8>, u32, u32) {
     reduce_with(src, region, shift, channels, map, |q| q.map(|v| v as u8))
 }
 
-/// `reduce` の、平均した値をバイトへ直す式（`finish`）を選べる形（`map` の値は 8 bit を超えてよい）。
+/// `reduce` の、平均した値をバイトへ直す式（`finish`）を選べる形（`map` の値は 8 bit を超えてよい）。出力の行ごとに並べて計算する
+/// （行の中の式は 1 つの道なので、並べ方によらず同じバイト）。
 fn reduce_with(
     src: &[u8],
     region: DocRect,
     shift: u32,
     channels: usize,
-    map: impl Fn(&[u8]) -> [u32; 4],
-    finish: impl Fn([u32; 4]) -> [u8; 4],
+    map: impl Fn(&[u8]) -> [u32; 4] + Sync,
+    finish: impl Fn([u32; 4]) -> [u8; 4] + Sync,
 ) -> (Vec<u8>, u32, u32) {
     let (w, h) = (region.width, region.height);
-    if shift == 0 {
-        let mut out = Vec::with_capacity((w * h) as usize * channels);
-        for p in src.as_chunks::<4>().0 {
-            let q = finish(map(p));
-            out.extend_from_slice(&q[..channels]);
-        }
-        return (out, w, h);
-    }
     let block = 1u32 << shift;
     let (dw, dh) = (w.div_ceil(block), h.div_ceil(block));
-    let mut out = Vec::with_capacity((dw * dh) as usize * channels);
-    for by in 0..dh {
-        for bx in 0..dw {
-            let mut sum = [0u32; 4];
-            let mut n = 0u32;
-            for y in by * block..((by + 1) * block).min(h) {
-                for x in bx * block..((bx + 1) * block).min(w) {
-                    let i = ((y * w + x) * 4) as usize;
-                    let q = map(&src[i..i + 4]);
-                    for k in 0..4 {
-                        sum[k] += q[k];
-                    }
-                    n += 1;
-                }
-            }
-            let q = finish(sum.map(|s| (s + n / 2) / n));
-            out.extend_from_slice(&q[..channels]);
-        }
+    let mut out = vec![0u8; (dw * dh) as usize * channels];
+    if out.is_empty() {
+        return (out, dw, dh);
     }
+    out.par_chunks_mut(dw as usize * channels)
+        .enumerate()
+        .for_each(|(by, row)| {
+            let by = by as u32;
+            if shift == 0 {
+                let line = &src[(by * w * 4) as usize..((by + 1) * w * 4) as usize];
+                for (p, o) in line
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(row.chunks_exact_mut(channels))
+                {
+                    o.copy_from_slice(&finish(map(p))[..channels]);
+                }
+                return;
+            }
+            for (bx, o) in row.chunks_exact_mut(channels).enumerate() {
+                let bx = bx as u32;
+                let mut sum = [0u32; 4];
+                let mut n = 0u32;
+                for y in by * block..((by + 1) * block).min(h) {
+                    for x in bx * block..((bx + 1) * block).min(w) {
+                        let i = ((y * w + x) * 4) as usize;
+                        let q = map(&src[i..i + 4]);
+                        for k in 0..4 {
+                            sum[k] += q[k];
+                        }
+                        n += 1;
+                    }
+                }
+                o.copy_from_slice(&finish(sum.map(|s| (s + n / 2) / n))[..channels]);
+            }
+        });
     (out, dw, dh)
 }
 

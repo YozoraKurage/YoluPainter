@@ -142,6 +142,9 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
             Action::Fill(crate::fillfx::FillOp::ToggleHandles) => {
                 l.pick("投影のハンドル", "Projection Handles")
             }
+            Action::Fill(crate::fillfx::FillOp::DeletePoint) => {
+                l.pick("グラデーションの点を削除", "Delete Gradient Point")
+            }
             Action::Path(PathAction::DeleteSelected) => {
                 l.pick("パスの点を削除", "Delete Path Point")
             }
@@ -352,6 +355,15 @@ mod tests {
         if binding.when == When::HasSelection {
             app.apply(Action::Sel(SelAction::Edit(SelEdit::All)));
         }
+        if binding.when == When::PointSelected {
+            app.apply(Action::M2(Edit::NewFill));
+            let layer = app.selected_layer.expect("足した層");
+            app.apply(Action::Fill(crate::fillfx::FillOp::AddPoints {
+                layer,
+                channel: yolu_core::Channel::Color,
+            }));
+            app.apply(Action::Fill(crate::fillfx::FillOp::SelectPoint(Some(0))));
+        }
         app
     }
 
@@ -388,6 +400,62 @@ mod tests {
                 assert_eq!(tool.key(), key_label(&binding));
             }
         }
+    }
+
+    /// 点のグラデーションの点を編集していて、点を選んでいる状態（Delete・Backspace が点を消す割り当ての条件）。
+    fn with_point_selected() -> AppState {
+        let delete = bindings()
+            .into_iter()
+            .find(|b| b.when == When::PointSelected)
+            .expect("点を消す割り当て");
+        state_for(&delete)
+    }
+
+    fn dispatched(app: &AppState, key: Key) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = keymap::dispatch(i, app));
+        });
+        output.textures_delta.clear();
+        got
+    }
+
+    #[test]
+    fn a_selected_gradient_point_takes_delete_and_backspace_before_the_selection_and_the_path_tool()
+    {
+        let point = Action::Fill(crate::fillfx::FillOp::DeletePoint);
+        // 選択範囲があっても、Delete は点を消す（選択範囲の消去に取られない）
+        let mut app = with_point_selected();
+        app.apply(Action::Sel(SelAction::Edit(SelEdit::All)));
+        assert!(app.doc.selection().is_some());
+        assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
+        assert_eq!(dispatched(&app, Key::Backspace), vec![point.clone()]);
+        // パスの道具でも、点を選んでいる間は点を消す（パスの点の削除に取られない）
+        app.tool = Tool::Path;
+        assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
+        assert_eq!(dispatched(&app, Key::Backspace), vec![point]);
+        // 点を選んでいなければ、今までどおり選択範囲の消去・パスの点の削除
+        app.apply(Action::Fill(crate::fillfx::FillOp::SelectPoint(None)));
+        assert_eq!(dispatched(&app, Key::Delete), vec![sel_edit_erase()]);
+        assert_eq!(
+            dispatched(&app, Key::Backspace),
+            vec![Action::Path(PathAction::DeleteSelected)]
+        );
+    }
+
+    fn sel_edit_erase() -> Action {
+        Action::Sel(SelAction::Edit(SelEdit::Erase))
     }
 
     #[test]

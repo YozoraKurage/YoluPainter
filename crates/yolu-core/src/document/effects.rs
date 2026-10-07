@@ -15,6 +15,7 @@ use crate::effects::{
 };
 use crate::error::CoreError;
 use crate::fill_image::{ImageMipChain, Projection, ProjectionMode};
+use crate::fill_points::{PointGradient, PointSpace};
 use crate::filter::{self, ValueType};
 use crate::generator::{self, anchor};
 use crate::layer::{Layer, LayerId};
@@ -27,7 +28,10 @@ pub(crate) struct FillChannelState {
     pub value: Option<Rgba8>,
     pub enabled: bool,
     pub image: Option<ImageId>,
+    /// 画像を異方性のフィルターで読むか（画像の無いチャンネルは既定の true）。
+    pub anisotropic: bool,
     pub gradient: Option<generator::Settings>,
+    pub points: Option<PointGradient>,
 }
 
 impl FillChannelState {
@@ -36,7 +40,9 @@ impl FillChannelState {
             value: layer.fill.get(&channel).copied(),
             enabled: layer.is_channel_enabled(channel),
             image: layer.fill_images.get(&channel).copied(),
+            anisotropic: layer.fill_anisotropic(channel),
             gradient: layer.fill_gradients.get(&channel).cloned(),
+            points: layer.fill_points.get(&channel).cloned(),
         }
     }
     fn put(&self, layer: &mut Layer, channel: Channel) {
@@ -47,6 +53,16 @@ impl FillChannelState {
         match self.image {
             Some(i) => layer.fill_images.insert(channel, i),
             None => layer.fill_images.remove(&channel),
+        };
+        // 画像の読み方は画像と一緒にだけ持つ（画像の無いチャンネルは既定）
+        if self.anisotropic || self.image.is_none() {
+            layer.fill_isotropic.remove(&channel);
+        } else {
+            layer.fill_isotropic.insert(channel);
+        }
+        match &self.points {
+            Some(g) => layer.fill_points.insert(channel, g.clone()),
+            None => layer.fill_points.remove(&channel),
         };
         match &self.gradient {
             Some(g) => layer.fill_gradients.insert(channel, g.clone()),
@@ -1207,8 +1223,13 @@ impl Document {
         self.ensure_pixels_rewritable(layer)?;
         let mut new = old.clone();
         new.image = image;
+        if image.is_none() {
+            // 画像の読み方は画像と一緒に保存する（画像の無いチャンネルは既定に戻す）
+            new.anisotropic = true;
+        }
         if image.is_some() {
             new.gradient = None;
+            new.points = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1223,6 +1244,58 @@ impl Document {
             },
             96,
         )
+    }
+
+    /// 塗りつぶしのチャンネルの画像を異方性のフィルターで読むか（1 回の Undo）。画像の無いチャンネルは断る。
+    pub fn set_fill_anisotropic(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        anisotropic: bool,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        require_standard(channel)?;
+        let index = self.fill_layer_index(layer)?;
+        let old = FillChannelState::of(&self.layers[index], channel);
+        if old.image.is_none() {
+            return Err(CoreError::InvalidArgument("画像の無いチャンネル"));
+        }
+        if old.anisotropic == anisotropic {
+            return Ok(());
+        }
+        self.ensure_pixels_rewritable(layer)?;
+        let mut new = old.clone();
+        new.anisotropic = anisotropic;
+        self.execute(
+            Command::FillChannel {
+                id: layer,
+                channel,
+                old: Box::new(old),
+                new: Box::new(new),
+            },
+            96,
+        )
+    }
+
+    /// 読み込み用: 履歴なしで、塗りつぶしの画像を異方性のフィルターなしで読むチャンネルを置く（画像のあるチャンネルだけ）。
+    pub fn set_fill_isotropic_for_load(
+        &mut self,
+        layer: LayerId,
+        channels: &[Channel],
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.fill_layer_index(layer)?;
+        let mut set = std::collections::BTreeSet::new();
+        for c in channels {
+            if !self.layers[index].fill_images.contains_key(c) || !set.insert(*c) {
+                return Err(CoreError::InvalidArgument(
+                    "異方性を切る塗りつぶしの画像のチャンネル",
+                ));
+            }
+        }
+        self.layers[index].fill_isotropic = set;
+        self.external_mutation();
+        Ok(())
     }
 
     /// 塗りつぶしの投影（層で 1 つ。UV・トライプラナー・平面・球・円柱・デカール）を置き換える（1 回の Undo。coalesce ならドラッグをまとめる）。
@@ -1295,6 +1368,7 @@ impl Document {
         new.gradient = gradient;
         if new.gradient.is_some() {
             new.image = None;
+            new.points = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1310,6 +1384,126 @@ impl Document {
             cost,
             coalesce.then_some(CoalesceKey::FillGradient(layer, channel)),
         )
+    }
+
+    /// 塗りつぶしのチャンネルの点のグラデーションを置き換える・外す（1 回の Undo。coalesce なら点のドラッグをまとめる）。置くと、その
+    /// チャンネルの画像・形のグラデーションは外れる。法線のチャンネル・点の数（1〜64）・位置・広がりの範囲の外は断る。
+    pub fn set_fill_points(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        points: Option<PointGradient>,
+        coalesce: bool,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let kind = self.channel_kind(channel)?;
+        require_standard(channel)?;
+        let index = self.fill_layer_index(layer)?;
+        if let Some(g) = &points {
+            validate_fill_points(channel, g)?;
+        }
+        let old = FillChannelState::of(&self.layers[index], channel);
+        if old.points == points {
+            return Ok(());
+        }
+        self.ensure_pixels_rewritable(layer)?;
+        let cost = 96
+            + old
+                .points
+                .as_ref()
+                .map_or(0, |g| g.points.len() as u64 * 32)
+            + points.as_ref().map_or(0, |g| g.points.len() as u64 * 32);
+        let mut new = old.clone();
+        new.points = points;
+        if new.points.is_some() {
+            new.image = None;
+            new.anisotropic = true;
+            new.gradient = None;
+            if new.value.is_none() {
+                new.value = Some(default_fill_fallback(kind));
+            }
+            new.enabled = true;
+        }
+        self.record(
+            Command::FillChannel {
+                id: layer,
+                channel,
+                old: Box::new(old),
+                new: Box::new(new),
+            },
+            cost,
+            coalesce.then_some(CoalesceKey::FillPoints(layer, channel)),
+        )
+    }
+
+    /// 読み込み用: 履歴なしで塗りつぶしの点のグラデーションを置く（画像・形のグラデーションのあるチャンネルは断る）。
+    pub fn set_fill_points_for_load(
+        &mut self,
+        layer: LayerId,
+        points: Vec<(Channel, PointGradient)>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.fill_layer_index(layer)?;
+        let mut map = BTreeMap::new();
+        for (c, g) in points {
+            require_standard(c)?;
+            validate_fill_points(c, &g)?;
+            let l = &self.layers[index];
+            if !l.fill.contains_key(&c)
+                || l.fill_images.contains_key(&c)
+                || l.fill_gradients.contains_key(&c)
+                || map.insert(c, g).is_some()
+            {
+                return Err(CoreError::InvalidArgument(
+                    "塗りつぶしの点のグラデーションのチャンネル",
+                ));
+            }
+        }
+        self.layers[index].fill_points = map;
+        self.external_mutation();
+        Ok(())
+    }
+
+    /// 塗りつぶしのチャンネルの点のグラデーションが今は値を見せているなら、その理由（モデルの空間で、位置のマップ・ルートが使えない）。
+    pub fn fill_points_inactive(
+        &self,
+        layer: LayerId,
+        channel: Channel,
+    ) -> Result<Option<InactiveReason>, CoreError> {
+        let index = self.fill_layer_index(layer)?;
+        let g = self.layers[index]
+            .fill_points
+            .get(&channel)
+            .ok_or(CoreError::Unsupported(
+                "そのチャンネルに点のグラデーションが無い",
+            ))?;
+        Ok(self.points_reason(g))
+    }
+
+    /// 文書の画素 (x, y) の、モデルのルートの空間の位置（効果の入力の位置のマップが今の物で、その画素を覆っているときだけ）。
+    pub fn model_position_at(&self, x: u32, y: u32) -> Option<[f64; 3]> {
+        let inputs = &self.effects.inputs;
+        let map = inputs
+            .map(generator::MapKind::Position)
+            .filter(|m| m.state == generator::MapState::Current)?;
+        if (map.width, map.height) != (self.width, self.height) {
+            return None;
+        }
+        let frame = inputs.frame.and_then(|f| f.for_generator().ok())?;
+        crate::fill_points::root_position(&map.as_generator(), frame, x, y)
+    }
+
+    fn points_reason(&self, g: &PointGradient) -> Option<InactiveReason> {
+        if g.space != PointSpace::Model {
+            return None;
+        }
+        let inputs = &self.effects.inputs;
+        let map = inputs
+            .map(generator::MapKind::Position)
+            .map(|m| m.as_generator());
+        let frame = inputs.frame.and_then(|f| f.for_generator().ok());
+        crate::fill_points::inactive_reason(g, map.as_ref(), frame, (self.width, self.height))
+            .map(InactiveReason::Generator)
     }
 
     pub(super) fn switch_fill_channel(
@@ -1356,6 +1550,7 @@ impl Document {
                 || seen.insert(*c, *id).is_some()
                 || !self.layers[index].fill.contains_key(c)
                 || self.layers[index].fill_gradients.contains_key(c)
+                || self.layers[index].fill_points.contains_key(c)
             {
                 return Err(CoreError::InvalidArgument(
                     "塗りつぶしの画像のチャンネルか ID",
@@ -1363,6 +1558,7 @@ impl Document {
             }
         }
         let l = &mut self.layers[index];
+        l.fill_isotropic.retain(|c| seen.contains_key(c));
         l.fill_images = seen;
         l.projection = projection;
         self.external_mutation();
@@ -1753,9 +1949,26 @@ impl Document {
                     push(InactiveTarget::FillImage(*c), why);
                 }
             }
+            for (c, g) in &l.fill_points {
+                if l.is_channel_enabled(*c) {
+                    if let Some(why) = self.points_reason(g) {
+                        push(InactiveTarget::FillPoints(*c), why);
+                    }
+                }
+            }
         }
         out
     }
+}
+
+/// 塗りつぶしの点のグラデーションの検査。
+fn validate_fill_points(channel: Channel, g: &PointGradient) -> Result<(), CoreError> {
+    if channel == Channel::Normal {
+        return Err(CoreError::Unsupported(
+            "点のグラデーションは色かスカラーで、法線ではない",
+        ));
+    }
+    g.validate().map_err(CoreError::InvalidArgument)
 }
 
 /// 塗りつぶしのグラデーションの設定の検査（C# の `ValidateFillGradient`）。

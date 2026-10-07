@@ -20,7 +20,8 @@ use yolu_io::psd::CopyRefusal;
 use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
 use yolu_io::smart::{
     REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_NEW_FILTERS, REFUSAL_PATH_LISTS,
-    REFUSAL_RUST_ADJUSTMENTS, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+    REFUSAL_POINT_GRADIENTS, REFUSAL_RUST_ADJUSTMENTS, REFUSAL_RUST_GENERATORS,
+    REFUSAL_USER_CHANNELS,
 };
 
 /// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
@@ -422,6 +423,9 @@ impl Lang {
             (Lang::Ja, InactiveTarget::FillImage(c)) => {
                 format!("{name}（{c:?}）は画像を投影していません")
             }
+            (Lang::Ja, InactiveTarget::FillPoints(c)) => {
+                format!("{name}（{c:?}）の点のグラデーションは値を見せています")
+            }
             (Lang::En, target) => {
                 let what = match target {
                     InactiveTarget::Generator { mask, kind } => format!(
@@ -432,6 +436,7 @@ impl Lang {
                     InactiveTarget::FillGradient(c) => format!("gradient ({c:?})"),
                     InactiveTarget::Decal => "decal".into(),
                     InactiveTarget::FillImage(c) => format!("image ({c:?})"),
+                    InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
                 };
                 format!("{name} {what} has no effect")
             }
@@ -940,6 +945,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Effects (filters, images, gradients) can only be placed on standard channels"
         }
         "塗りつぶしのグラデーションのチャンネル" => "Fill gradient channel",
+        "画像の無いチャンネル" => "Channel without an image",
+        "異方性を切る塗りつぶしの画像のチャンネル" => {
+            "Fill image channel for turning anisotropic filtering off"
+        }
+        "塗りつぶしの点のグラデーションのチャンネル" => "Fill point gradient channel",
+        "そのチャンネルに点のグラデーションが無い" => "The channel has no point gradient",
+        "点のグラデーションは色かスカラーで、法線ではない" => {
+            "A point gradient is for colour or scalar channels, not the normal"
+        }
         "塗りつぶしのグラデーションはランプ付きの形のグラデーション" => {
             "A fill gradient is a shape gradient with a ramp"
         }
@@ -1353,6 +1367,12 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
         lang.pick(
             "パスの一覧か新しいパスの設定を使っています",
             "It uses a path list or new path settings",
+        )
+        .into()
+    } else if m.contains(REFUSAL_POINT_GRADIENTS) {
+        lang.pick(
+            "点のグラデーションか、異方性フィルターを切った画像を使っています",
+            "It uses a point gradient or an image with anisotropic filtering off",
         )
         .into()
     } else {

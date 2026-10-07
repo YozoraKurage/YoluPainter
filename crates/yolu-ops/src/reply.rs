@@ -189,6 +189,9 @@ pub struct LayerChannel {
     /// Opacity used only in this channel (absent: the layer's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
+    /// Fill layers: the point gradient of this channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<crate::command::PointGradientSpec>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

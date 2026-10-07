@@ -956,3 +956,58 @@ fn the_new_filters_are_listed_and_added_with_values() {
         json!({"command": "effect.add", "args": {"layer": "Base", "kind": "morphology", "channels": ["Color"]}}),
     );
 }
+
+#[test]
+fn layer_set_places_and_removes_a_point_gradient_in_one_undo_step() {
+    let fx = Fixture::new("layer-points");
+    fx.project("a.ylp");
+    let mut host = fx.host("a.ylp");
+    ok(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "fill", "name": "Dots", "fill": {"Color": "#808080", "Roughness": "#404040"}}}),
+    );
+    // UV の空間の 2 点（色と不透明度）。保存して開き直しても残る
+    check_one_command(
+        &fx,
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Dots", "points": {"Color": {"space": "uv", "spread": 0.25, "points": [
+            {"position": [0.1, 0.5], "color": "#ff0000"},
+            {"position": [0.9, 0.5], "color": "#0000ff80"}
+        ]}}}}),
+    );
+    let Reply::Layer(layer) = ok(
+        &mut host,
+        json!({"command": "layer.get", "args": {"layer": "Dots"}}),
+    ) else {
+        panic!()
+    };
+    let color = layer
+        .channels
+        .iter()
+        .find(|c| c.channel == "Color")
+        .unwrap();
+    let points = color.points.as_ref().expect("点のグラデーション");
+    assert_eq!(points.space, yolu_ops::command::PointSpaceName::Uv);
+    assert_eq!(points.spread, Some(0.25));
+    assert_eq!(points.points.len(), 2);
+    assert_eq!(points.points[1].position, vec![0.9, 0.5]);
+    assert_eq!(points.points[1].color, "#0000ff80");
+    // 外す
+    check_one_command(
+        &fx,
+        &mut host,
+        json!({"command": "layer.set", "args": {"layer": "Dots", "points": {"Color": null}}}),
+    );
+    // 断る: 位置の数が空間と合わない・点が無い・広がりの範囲の外
+    for bad in [
+        json!({"Color": {"space": "model", "points": [{"position": [0.1, 0.5], "color": "#ff0000"}]}}),
+        json!({"Color": {"space": "uv", "points": []}}),
+        json!({"Roughness": {"space": "uv", "spread": 2.0, "points": [{"position": [0.1, 0.5], "color": "#ff0000"}]}}),
+    ] {
+        let e = err(
+            &mut host,
+            json!({"command": "layer.set", "args": {"layer": "Dots", "points": bad}}),
+        );
+        assert_eq!(e.code, yolu_ops::ErrorCode::InvalidValue, "{e:?}");
+    }
+}

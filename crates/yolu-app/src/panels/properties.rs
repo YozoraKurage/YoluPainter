@@ -330,10 +330,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     rows.space(8.0);
     app.m2.props_content = rows.used();
     ui.set_clip_rect(outer_clip);
-    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモのドラッグ中は終えない（ペンの接触は egui の
-    // ポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。ギズモが離す・Esc・
-    // フォーカスの喪失で自分で終える）
-    if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::gizmo::dragging(app) {
+    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモと点のグラデーションの点のドラッグ中は終えない
+    // （ペンの接触は egui のポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。
+    // ドラッグの側が離す・Esc・フォーカスの喪失で自分で終える）
+    if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::dragging(app) {
         app.m2_end_drag();
     }
     bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);

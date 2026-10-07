@@ -48,6 +48,7 @@ pub mod effects;
 mod error;
 pub mod export;
 pub mod fill_image;
+pub mod fill_points;
 pub mod filter;
 pub mod generator;
 pub mod geometry;

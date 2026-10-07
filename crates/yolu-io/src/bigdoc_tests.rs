@@ -79,10 +79,10 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 doc.version()
             );
             // 分けた正本より前の読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）。今の読み手は 26 を分けた正本の識別として先に見る
-            // （機能の版は 26 を飛ばして 27・28・32）
+            // （機能の版は 26 を飛ばして 27・28・29・32）
             const { assert!(SPLIT_VERSION > crate::MIXING_VERSION) };
-            // 中の版は意味の決まった版（1〜25・27・28・32）だけ。分けた正本の識別（26）と、決めていない版（29〜31）は、中身を読む前に断る
-            for bad in [SPLIT_VERSION, 29, 30, 31] {
+            // 中の版は意味の決まった版（1〜25・27〜29・32）だけ。分けた正本の識別（26）と、決めていない版（30・31）は、中身を読む前に断る
+            for bad in [SPLIT_VERSION, 30, 31] {
                 let mut bytes = header.to_vec();
                 bytes[12..16].copy_from_slice(&bad.to_le_bytes());
                 let mut changed = stored(&entries);
@@ -287,8 +287,8 @@ fn wrong_parts_are_refused() {
     // 分けていない正本に部分を添える・分けた正本に部分が無い
     assert!(NativeDocument::read_split(&doc.to_bytes(), &[&parts[0]]).is_err());
     assert!(NativeDocument::read(&header).is_err());
-    // 中の版が分けた正本の版・割り振られていない版（29〜31）・読み手より新しい版・古すぎる版
-    for inner in [26i32, 29, 30, 31, crate::MAX_NATIVE_VERSION + 1, 20, 0] {
+    // 中の版が分けた正本の版・割り振られていない版（30・31）・読み手より新しい版・古すぎる版
+    for inner in [26i32, 30, 31, crate::MAX_NATIVE_VERSION + 1, 20, 0] {
         let mut h = header.clone();
         h[12..16].copy_from_slice(&inner.to_le_bytes());
         let e = read(&h, &parts).unwrap_err().to_string();
@@ -308,7 +308,7 @@ fn wrong_parts_are_refused() {
 #[test]
 fn undefined_inner_versions_are_refused_too() {
     // 色調補正のフィルターだけの文書は、版 24 の並びが 25・27・28 と同じなので、中の版の数だけを書き換えても中身は読める（対照）。
-    // 29〜31 は番号だけで意味が決まっておらず、範囲の中でも断る（版 25 の並びとして読み進めない）
+    // 30・31 は番号だけで意味が決まっておらず、範囲の中でも断る（版 25 の並びとして読み進めない）
     let mut core = uniform_layers(16, 8, 1);
     let layer = core.layers()[0].id();
     let posterize =
@@ -334,10 +334,11 @@ fn undefined_inner_versions_are_refused_too() {
         crate::MIXING_VERSION,
         crate::PATHS_VERSION,
         crate::EFFECTS_VERSION,
+        crate::POINT_GRADIENT_VERSION,
     ] {
         assert_eq!(read(inner).unwrap().version(), inner);
     }
-    for inner in 29..=31 {
+    for inner in 30..=31 {
         let e = read(inner).err().map(|e| e.to_string());
         assert!(
             e.is_some_and(|e| e.contains(&inner.to_string())),

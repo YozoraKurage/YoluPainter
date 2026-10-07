@@ -355,6 +355,40 @@ pub struct LayerSetArgs {
     /// Adjustment layer: new values. With the same kind, the listed values are changed and the others stay; with another kind it is rebuilt from defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjustment: Option<EffectSpec>,
+    /// Fill layer point gradients: channel name -> gradient (replaces the whole gradient of that channel, and its image or shape gradient), or null to remove it. Not on Normal.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub points: BTreeMap<String, Option<PointGradientSpec>>,
+}
+
+/// A point gradient on a fill layer channel: a colour at each point, blended smoothly between them (weight 1 / (d² + s²), s = spread × the
+/// model's bounding-box diagonal in model space, or × 1 in UV space).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointGradientSpec {
+    /// "model" (positions on the model's surface, from the baked position map; continuous across UV seams) or "uv".
+    pub space: PointSpaceName,
+    /// 0..=1. How flat the colour is around each point and how much distant points mix in. Default 0.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread: Option<f64>,
+    /// 1 to 64 points.
+    pub points: Vec<PointSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PointSpaceName {
+    Model,
+    Uv,
+}
+
+/// One point of a point gradient.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointSpec {
+    /// Model space: [x, y, z] from the model root in scene units. UV space: [u, v].
+    pub position: Vec<f64>,
+    /// "#rrggbb" or "#rrggbbaa" (alpha is the point's opacity). On a scalar channel use a gray.
+    pub color: String,
 }
 
 // ───────── マスク ─────────

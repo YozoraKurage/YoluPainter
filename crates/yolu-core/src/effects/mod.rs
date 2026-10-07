@@ -556,6 +556,8 @@ pub enum InactiveTarget {
     Decal,
     /// 画像を投影していない（値を見せている）塗りつぶしのチャンネル。
     FillImage(Channel),
+    /// 塗りつぶしのチャンネルの点のグラデーション（値を見せている）。
+    FillPoints(Channel),
 }
 
 /// 入力のまま通している効果 1 件（[`crate::Document::inactive_effect_list`]）。
@@ -589,6 +591,12 @@ impl fmt::Display for InactiveEffect {
             InactiveTarget::Decal => write!(f, "「{name}」（デカール）: 出ていません。{why}"),
             InactiveTarget::FillImage(c) => {
                 write!(f, "「{name}」（{c:?}）: 画像を投影していません。{why}")
+            }
+            InactiveTarget::FillPoints(c) => {
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: 点のグラデーションは値を見せています。{why}"
+                )
             }
         }
     }

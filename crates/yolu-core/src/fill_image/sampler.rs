@@ -36,7 +36,16 @@ pub struct FillInput<'a> {
     pub frame: Option<ModelFrame>,
     pub stale_position: bool,
     pub stale_normal: bool,
+    /// 異方性のフィルター: 画面の 1 画素の足跡が細長い（斜めから当てた投影・縦横の繰り返しの違う UV）とき、長い向きに沿って
+    /// 足跡の細長さの数（上限 `MAX_ANISOTROPY`）だけ取って平均し、各点は短い向きの長さの段で読む。切ると C# と同じ 1 回の三線形。
+    pub anisotropic: bool,
+    /// デカールの別チャンネルの形（`shape`）を異方性のフィルターで読むか（その画像のチャンネルの設定）。
+    pub shape_anisotropic: bool,
 }
+/// 異方性のフィルターで 1 画素に取る数の上限。
+pub const MAX_ANISOTROPY: usize = 16;
+/// 足跡の細長さ（長い向き / 短い向き）から取る数を決めるとき、この分までの端数は切り捨てる（丸い足跡が揺れで 2 点にならない）。
+const ROUND_SLACK: f64 = 0.01;
 impl Default for FillInput<'_> {
     fn default() -> Self {
         Self {
@@ -54,6 +63,8 @@ impl Default for FillInput<'_> {
             frame: Some(ModelFrame::default()),
             stale_position: false,
             stale_normal: false,
+            anisotropic: false,
+            shape_anisotropic: false,
         }
     }
 }
@@ -65,7 +76,6 @@ pub struct FillSampler<'a> {
     a: [f64; 4],
     b: [f64; 2],
     uv: [f64; 6],
-    rho: f64,
     m: [f64; 9],
     k: [f64; 3],
     nm: [f64; 9],
@@ -156,9 +166,6 @@ impl<'a> FillSampler<'a> {
             h * a[3] / input.height as f64,
             h * b[1] - 0.5,
         ];
-        let rho = (uv[0] * uv[0] + uv[3] * uv[3])
-            .sqrt()
-            .max((uv[1] * uv[1] + uv[4] * uv[4]).sqrt());
         let (mut m, mut k, mut nm) = ([0.; 9], [0.; 3], [0.; 9]);
         if p.mode != Mode::Uv && placed {
             let rs = p.placement.matrix();
@@ -193,7 +200,6 @@ impl<'a> FillSampler<'a> {
             a,
             b,
             uv,
-            rho,
             m,
             k,
             nm,
@@ -491,11 +497,12 @@ impl<'a> FillSampler<'a> {
         if mode == Mode::Uv {
             let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
             let u = self.uv;
-            self.sample(
+            self.sample_footprint(
                 chain,
                 [u[0] * px + u[1] * py + u[2], u[3] * px + u[4] * py + u[5]],
-                self.rho,
+                [[u[0], u[3]], [u[1], u[4]]],
                 1.,
+                self.input.anisotropic,
                 &mut acc,
             );
             return acc.resolved();
@@ -511,7 +518,7 @@ impl<'a> FillSampler<'a> {
             let st = self.project(p, 0, true);
             let dx = self.differences(st, nx, 0, true);
             let dy = self.differences(st, ny, 0, true);
-            self.sample_at(chain, st, [dx, dy], 1., &mut acc);
+            self.sample_at(chain, st, [dx, dy], 1., self.input.anisotropic, &mut acc);
             return acc.resolved();
         }
         if input.normals.unwrap().coverage[i] == 0 {
@@ -545,6 +552,7 @@ impl<'a> FillSampler<'a> {
                     self.differences(st, ny, axis, positive),
                 ],
                 weight,
+                self.input.anisotropic,
                 &mut acc,
             );
         }
@@ -610,7 +618,7 @@ impl<'a> FillSampler<'a> {
         };
         if let Some(shape) = self.input.shape {
             let mut acc = Acc::default();
-            self.sample_at(shape, st, ds, 1., &mut acc);
+            self.sample_at(shape, st, ds, 1., self.input.shape_anisotropic, &mut acc);
             cover *= acc.alpha() / 255.;
             if cover <= 0. {
                 return Rgba8::TRANSPARENT;
@@ -618,7 +626,7 @@ impl<'a> FillSampler<'a> {
         }
         if let Some(chain) = own {
             let mut acc = Acc::default();
-            self.sample_at(chain, st, ds, 1., &mut acc);
+            self.sample_at(chain, st, ds, 1., self.input.anisotropic, &mut acc);
             acc.scaled(cover)
         } else {
             let c = external.unwrap_or(self.input.fallback);
@@ -631,6 +639,7 @@ impl<'a> FillSampler<'a> {
         st: [f64; 2],
         ds: [[f64; 2]; 2],
         weight: f64,
+        anisotropic: bool,
         acc: &mut Acc,
     ) {
         let (w, h) = chain.wh(0);
@@ -644,8 +653,58 @@ impl<'a> FillSampler<'a> {
         let cy = h * (c * dsx + d * dtx);
         let ex = w * (a * dsy + b * dty);
         let ey = h * (c * dsy + d * dty);
-        let rho = (cx * cx + cy * cy).sqrt().max((ex * ex + ey * ey).sqrt());
-        self.sample(chain, [sp * w - 0.5, tp * h - 0.5], rho, weight, acc);
+        self.sample_footprint(
+            chain,
+            [sp * w - 0.5, tp * h - 0.5],
+            [[cx, cy], [ex, ey]],
+            weight,
+            anisotropic,
+            acc,
+        );
+    }
+    /// 足跡（画面の x・y の 1 画素ぶんのテクセルの差 `d[0]`・`d[1]`）で読む。等方（切った・足跡が丸い・拡大・片方の差が分からない）なら、
+    /// 長い方の長さの段で 1 回の三線形（C# と同じ）。異方性なら、長い向きに沿って `細長さ`（切り上げ、上限 `MAX_ANISOTROPY`）の点を
+    /// 等しい間で取り、各点を短い向きの長さ（上限で足りなければ長さ / 数）の段で読んで平均する。
+    fn sample_footprint(
+        &self,
+        chain: &ImageMipChain<'_>,
+        uv: [f64; 2],
+        d: [[f64; 2]; 2],
+        weight: f64,
+        anisotropic: bool,
+        acc: &mut Acc,
+    ) {
+        let l0 = (d[0][0] * d[0][0] + d[0][1] * d[0][1]).sqrt();
+        let l1 = (d[1][0] * d[1][0] + d[1][1] * d[1][1]).sqrt();
+        let (major, minor, axis) = if l0 >= l1 {
+            (l0, l1, d[0])
+        } else {
+            (l1, l0, d[1])
+        };
+        let n = if anisotropic && major > 1. && minor > 0. {
+            // 細長さの 1% までの揺れ（位置のマップの 16 bit の丸め・隣の画素の差）は丸いとみなす（数を 1 つ増やさない）
+            (major / minor - ROUND_SLACK)
+                .ceil()
+                .clamp(1., MAX_ANISOTROPY as f64) as usize
+        } else {
+            1
+        };
+        if n <= 1 {
+            self.sample(chain, uv, major, weight, acc);
+            return;
+        }
+        let rho = minor.max(major / n as f64);
+        let share = weight / n as f64;
+        for k in 0..n {
+            let t = (k as f64 + 0.5) / n as f64 - 0.5;
+            self.sample(
+                chain,
+                [uv[0] + axis[0] * t, uv[1] + axis[1] * t],
+                rho,
+                share,
+                acc,
+            );
+        }
     }
     fn sample(
         &self,

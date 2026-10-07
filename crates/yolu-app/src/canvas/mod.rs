@@ -82,6 +82,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         app,
         hover_for_path.filter(|p| rect.contains(*p) && response.contains_pointer()),
     );
+    // 点のグラデーションの点（編集している間）
+    crate::fillfx::points::paint_canvas(
+        &painter,
+        &view,
+        app,
+        hover_for_path.filter(|p| rect.contains(*p) && response.contains_pointer()),
+    );
 
     // ブラシのカーソル（回している・回すキーを押している・パンしている・ステンシルを動かしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
@@ -260,6 +267,18 @@ fn begin_any(
         crate::eyedrop::pick_canvas(app, view, p);
         return false;
     }
+    // 点のグラデーションの点を編集している間: 点を掴む・追加する（描かない）
+    let points_source = match source {
+        StrokeSource::Mouse => crate::fillfx::gizmo::Source::Mouse,
+        StrokeSource::Pen(id) => crate::fillfx::gizmo::Source::Pen(id),
+    };
+    if crate::fillfx::points::canvas_press(app, view, p, points_source) {
+        if crate::fillfx::points::dragging(app) {
+            app.canvas.stroke = Some(source);
+            app.canvas.stroke_points = 0;
+        }
+        return crate::fillfx::points::dragging(app);
+    }
     if app.tool.is_region() {
         if app.region.drag.is_some() {
             return false;
@@ -378,6 +397,10 @@ fn add_point(
         crate::region::tools::drag_to(app, crate::region::tools::Where::Canvas(view), p);
         return;
     }
+    if app.fillfx.point_drag.as_ref().is_some_and(|d| !d.in_3d) {
+        crate::fillfx::points::canvas_drag(app, view, p);
+        return;
+    }
     if crate::selection::quick::add_point(app, view, p, pressure) {
         return;
     }
@@ -454,6 +477,10 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     app.canvas.ruler_constraint = None;
     let endpoint = app.canvas.current_end.take();
     if crate::region::tools::finish_drag(app, cancel) {
+        return;
+    }
+    if app.fillfx.point_drag.as_ref().is_some_and(|d| !d.in_3d) {
+        crate::fillfx::points::release(app, !cancel);
         return;
     }
     if crate::selection::quick::finish(app, cancel) {

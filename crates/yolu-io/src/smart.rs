@@ -25,6 +25,8 @@ pub const REFUSAL_NEW_FILTERS: &str =
     ".ylsmart 形式1は Unity 版にもある効果の種類だけです（値の切り出し・値の幅・ノイズに沿ったぼかし・方向ぼかし・ゆがみ・太らせる・細らせる・輪郭の検出・ハイパス・メディアン・グローのフィルターと、模様・光・マスクの組み立てのジェネレーターは入れられません）";
 pub const REFUSAL_PATH_LISTS: &str =
     ".ylsmart 形式1に入るパスは、名前の無い見せる 1 本の、角・取っ手の無いストロークか消しゴムだけです（塗りつぶしの層のパス、2 本以上の一覧、名前を付けた・隠したパス、リボン・塗り・指先の種類、筆先・角度・深さ・対称の設定は入れられません）";
+pub const REFUSAL_POINT_GRADIENTS: &str =
+    ".ylsmart 形式1は Unity 版にもある塗りつぶしの作り方だけです（点のグラデーション・異方性のフィルターを切った画像は入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
 const PREFIX: &str = "YOLUPAINTER-SMART-";
 #[derive(Clone, Debug)]
@@ -143,6 +145,11 @@ impl SmartFile {
         check(
             !crate::core_bridge::uses_path_lists(&doc),
             REFUSAL_PATH_LISTS,
+        )?;
+        // 点のグラデーション・異方性を切った画像は正本の版 29 になり、Unity 版が読めない
+        check(
+            !crate::core_bridge::uses_point_gradient_version(&doc),
+            REFUSAL_POINT_GRADIENTS,
         )?;
         let native = NativeDocument::from_core(&doc)?;
         let names = [

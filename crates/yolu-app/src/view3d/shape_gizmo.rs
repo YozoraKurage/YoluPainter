@@ -2,10 +2,12 @@
 //! ための線とハンドル（Unity 版の `ShapeGizmo` と同じ操作）。形はモデルのルートの空間（シーンの単位）にあり、ここは画面の幾何と
 //! 当たり判定とドラッグの計算だけ。値を文書へ入れるのは `crate::fillfx::gizmo`。
 //!
+//! - 1 つのギズモに、中心の四角・移動の矢印・回す輪・大きさのつまみを同時に出す（切り替えは無い）。輪は矢印の外側（矢印の長さ
+//!   `ARROW_POINTS` < 輪の半径 `RING_POINTS`）。重なった所の当たりは、中心の四角 → 大きさのつまみ → 矢印 → 輪の順（小さな的を先に）。
 //! - 移動の矢印はルートの軸に沿い、掴むと中心がその軸に沿って動く（押したときのレイと今のレイが、軸の直線に最も近づく点の差）。
 //!   中心の四角は、カメラに向いた面の中で動かす。
 //! - 輪はルートの軸のまわりに形を回す（押したときと今のレイが輪の面に当たる点の角度の差。Ctrl で 15° ずつ）。真横から見た輪は、画面の
-//!   接線に沿ったポインタの動きで回す。
+//!   接線に沿ったポインタの動きで回す。輪の奥の半分は薄く描く（掴める）。
 //! - 大きさのつまみは形の面（自分の軸）の上にあり、掴んだ面だけが動いて反対の面は動かない（中心が追う）。Shift で両側が動いて中心は動かない。
 //!   球のつまみは半径を変える（中心は動かない）。平面のつまみは 0 と 1 の境で、ランプの幅を変える。
 //! - ドラッグは始まりの形とポインタの位置から毎回計算する（ずれが溜まらない）。軸がカメラを向いていて決まらないドラッグは形を変えない。
@@ -18,9 +20,9 @@ use yolu_core::generator::{Shape as GenShape, Volume};
 use yolu_core::geometry::CameraView;
 use yolu_core::glam::{Mat3, Quat, Vec2, Vec3};
 
-/// 画面での長さ（点）: 移動の矢印・輪の半径・ハンドルを掴める近さ・つまみと中心の四角の大きさ。
-pub const ARROW_POINTS: f32 = 90.0;
-pub const RING_POINTS: f32 = 75.0;
+/// 画面での長さ（点）: 移動の矢印・輪の半径（矢印より外）・ハンドルを掴める近さ・つまみと中心の四角の大きさ。
+pub const ARROW_POINTS: f32 = 64.0;
+pub const RING_POINTS: f32 = 88.0;
 pub const GRAB_POINTS: f32 = 7.0;
 pub const KNOB_POINTS: f32 = 10.0;
 pub const CENTER_POINTS: f32 = 13.0;
@@ -39,14 +41,6 @@ pub const INNER: Color32 = Color32::from_rgba_premultiplied(115, 70, 23, 115);
 /// 形の限界（core の `Volume::validate` と同じ）。
 pub const MIN_SIZE: f64 = 1e-6;
 pub const MAX_SIZE: f64 = 1e6;
-
-/// ギズモが出すハンドルの組: 移動の矢印と中心の四角か、回す輪か。大きさのつまみはどちらにも出る。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Mode {
-    #[default]
-    Move,
-    Rotate,
-}
 
 /// 掴めるもの。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -335,8 +329,8 @@ fn visible_knobs(s: &Shape, root: &Root, view: &CameraView) -> Vec<(Handle, Vec3
         .collect()
 }
 
-/// そのモードで出すハンドルと、それを表す画面の点（つまみ・四角の中心・矢印の先・輪の始まり）。
-pub fn handle_points(s: &Shape, root: &Root, view: &CameraView, mode: Mode) -> Vec<(Handle, Vec2)> {
+/// 出すハンドルと、それを表す画面の点（つまみ・四角の中心・矢印の先・輪の上の掴める点）。
+pub fn handle_points(s: &Shape, root: &Root, view: &CameraView) -> Vec<(Handle, Vec2)> {
     let mut list = Vec::new();
     let c = world_center(s, root);
     let unit = world_per_point(view, c);
@@ -351,25 +345,26 @@ pub fn handle_points(s: &Shape, root: &Root, view: &CameraView, mode: Mode) -> V
             list.push((handle, g));
         }
     }
-    match mode {
-        Mode::Move => {
-            list.push((Handle::MoveFree, cg));
-            for i in 0..3 {
-                let a = root.rotation * axis(i);
-                if axis_visible(view, c, a) {
-                    if let Some(tip) = view.to_screen(c + a * ARROW_POINTS * unit) {
-                        list.push((Handle::move_axis(i), tip));
-                    }
-                }
+    list.push((Handle::MoveFree, cg));
+    for i in 0..3 {
+        let a = root.rotation * axis(i);
+        if axis_visible(view, c, a) {
+            if let Some(tip) = view.to_screen(c + a * ARROW_POINTS * unit) {
+                list.push((Handle::move_axis(i), tip));
             }
         }
-        Mode::Rotate => {
-            for i in 0..3 {
-                let ring = ring(view, c, root.rotation * axis(i), RING_POINTS * unit, 48);
-                if let Some(first) = ring.first() {
-                    list.push((Handle::rotate_axis(i), *first));
-                }
-            }
+    }
+    for i in 0..3 {
+        let handle = Handle::rotate_axis(i);
+        let ring = ring(view, c, root.rotation * axis(i), RING_POINTS * unit, 64);
+        // 輪の上で、ほかのハンドルに取られない点（軸のあいだの 45° から）。無ければ最初の点
+        let at = [8usize, 24, 40, 56, 0, 16, 32, 48]
+            .into_iter()
+            .filter_map(|k| ring.get(k).copied())
+            .find(|p| hit(s, root, view, *p) == handle)
+            .or_else(|| ring.first().copied());
+        if let Some(at) = at {
+            list.push((handle, at));
         }
     }
     list
@@ -386,8 +381,9 @@ fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + ab * t)
 }
 
-/// 画面の点の下のハンドル（なければ `None`）: 大きさのつまみを先に、続けて（移動）中心の四角と矢印か（回転）輪。`GRAB_POINTS` 以内で最も近いもの。
-pub fn hit(s: &Shape, root: &Root, view: &CameraView, mode: Mode, mouse: Vec2) -> Handle {
+/// 画面の点の下のハンドル（なければ `None`）。重なった所は、中心の四角 → 大きさのつまみ → 矢印 → 輪の順（小さな的を先に）。
+/// つまみ・矢印・輪は、それぞれの掴める近さの中で最も近いもの。
+pub fn hit(s: &Shape, root: &Root, view: &CameraView, mouse: Vec2) -> Handle {
     let c = world_center(s, root);
     let unit = world_per_point(view, c);
     let Some(cg) = view.to_screen(c) else {
@@ -395,6 +391,11 @@ pub fn hit(s: &Shape, root: &Root, view: &CameraView, mode: Mode, mouse: Vec2) -
     };
     if unit <= 0.0 {
         return Handle::None;
+    }
+    if (mouse.x - cg.x).abs() <= CENTER_POINTS / 2.0 + 2.0
+        && (mouse.y - cg.y).abs() <= CENTER_POINTS / 2.0 + 2.0
+    {
+        return Handle::MoveFree;
     }
     let mut best = Handle::None;
     let mut best_distance = f32::MAX;
@@ -410,39 +411,30 @@ pub fn hit(s: &Shape, root: &Root, view: &CameraView, mode: Mode, mouse: Vec2) -
     if best != Handle::None {
         return best;
     }
-    match mode {
-        Mode::Move => {
-            if (mouse.x - cg.x).abs() <= CENTER_POINTS / 2.0 + 2.0
-                && (mouse.y - cg.y).abs() <= CENTER_POINTS / 2.0 + 2.0
-            {
-                return Handle::MoveFree;
-            }
-            for i in 0..3 {
-                let a = root.rotation * axis(i);
-                if !axis_visible(view, c, a) {
-                    continue;
-                }
-                let Some(tip) = view.to_screen(c + a * ARROW_POINTS * unit) else {
-                    continue;
-                };
-                let d = distance_to_segment(mouse, cg, tip);
-                if d <= GRAB_POINTS && mouse.distance(cg) > CENTER_POINTS / 2.0 && d < best_distance
-                {
-                    best = Handle::move_axis(i);
-                    best_distance = d;
-                }
-            }
+    for i in 0..3 {
+        let a = root.rotation * axis(i);
+        if !axis_visible(view, c, a) {
+            continue;
         }
-        Mode::Rotate => {
-            for i in 0..3 {
-                let ring = ring(view, c, root.rotation * axis(i), RING_POINTS * unit, 64);
-                for w in ring.windows(2) {
-                    let d = distance_to_segment(mouse, w[0], w[1]);
-                    if d <= GRAB_POINTS && d < best_distance {
-                        best = Handle::rotate_axis(i);
-                        best_distance = d;
-                    }
-                }
+        let Some(tip) = view.to_screen(c + a * ARROW_POINTS * unit) else {
+            continue;
+        };
+        let d = distance_to_segment(mouse, cg, tip);
+        if d <= GRAB_POINTS && d < best_distance {
+            best = Handle::move_axis(i);
+            best_distance = d;
+        }
+    }
+    if best != Handle::None {
+        return best;
+    }
+    for i in 0..3 {
+        let ring = ring(view, c, root.rotation * axis(i), RING_POINTS * unit, 64);
+        for w in ring.windows(2) {
+            let d = distance_to_segment(mouse, w[0], w[1]);
+            if d <= GRAB_POINTS && d < best_distance {
+                best = Handle::rotate_axis(i);
+                best_distance = d;
             }
         }
     }
@@ -652,20 +644,29 @@ pub fn drag(
 
 /// 面 a（単位）に垂直で c を通る円（閉じる。カメラの後ろの点は除く）。画面の点。
 pub fn ring(view: &CameraView, c: Vec3, a: Vec3, radius: f32, segments: usize) -> Vec<Vec2> {
+    ring_world(c, a, radius, segments)
+        .into_iter()
+        .filter_map(|p| view.to_screen(p))
+        .collect()
+}
+
+/// `ring` の世界の点（閉じる）。
+fn ring_world(c: Vec3, a: Vec3, radius: f32, segments: usize) -> Vec<Vec3> {
     let u = a
         .cross(if a.y.abs() < 0.9 { Vec3::Y } else { Vec3::X })
         .normalize_or_zero();
     let w = a.cross(u);
     (0..=segments)
-        .filter_map(|k| {
+        .map(|k| {
             let t = k as f32 * std::f32::consts::TAU / segments as f32;
-            view.to_screen(c + (u * t.cos() + w * t.sin()) * radius)
+            c + (u * t.cos() + w * t.sin()) * radius
         })
         .collect()
 }
 
-/// 描く線: 形の外形（減衰があれば値が 1 になる内側の形も薄く）、平面の 2 つの境と 1 へ向かう矢印、そのモードのハンドル（掴める所の強調つき）。
-pub fn lines(s: &Shape, root: &Root, view: &CameraView, mode: Mode, hover: Handle) -> Vec<Line> {
+/// 描く線: 形の外形（減衰があれば値が 1 になる内側の形も薄く）、平面の 2 つの境と 1 へ向かう矢印、回す輪（奥の半分は薄く）と移動の
+/// 矢印（輪の上に重ねる。掴める所の強調つき）。
+pub fn lines(s: &Shape, root: &Root, view: &CameraView, hover: Handle) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     let c = world_center(s, root);
     let q = world_rotation(s, root);
@@ -819,57 +820,74 @@ pub fn lines(s: &Shape, root: &Root, view: &CameraView, mode: Mode, hover: Handl
     if unit <= 0.0 {
         return out;
     }
-    match mode {
-        Mode::Move => {
-            let to_camera = view
-                .to_screen(c)
-                .map(|g| -ray_of(view, g).1)
-                .unwrap_or(Vec3::NEG_Z);
-            for i in 0..3 {
-                let a = root.rotation * axis(i);
-                if !axis_visible(view, c, a) {
-                    continue;
-                }
-                let tip = c + a * ARROW_POINTS * unit;
-                let hot = hover == Handle::move_axis(i);
-                let color = if hot { HOVER } else { axis_color(i) };
-                segment(
-                    c,
-                    tip - a * 12.0 * unit,
-                    color,
-                    if hot { 4.5 } else { 3.0 },
-                    &mut out,
-                    &mut polyline,
-                );
-                // 矢じり: 画面を向いた三角形（塗る）
-                let side = a.cross(to_camera).normalize_or_zero() * 5.5 * unit;
-                if let (Some(t0), Some(t1), Some(t2)) = (
-                    view.to_screen(tip),
-                    view.to_screen(tip - a * 15.0 * unit + side),
-                    view.to_screen(tip - a * 15.0 * unit - side),
-                ) {
-                    out.push(Line {
-                        points: vec![t0, t1, t2],
-                        color,
-                        width: 0.0,
-                        filled: true,
-                    });
-                }
+    // 回す輪: 手前の半分と奥の半分（薄く細く）に分けて描く
+    let eye = (view.position - c).normalize_or_zero();
+    for i in 0..3 {
+        let hot = hover == Handle::rotate_axis(i);
+        let color = if hot { HOVER } else { axis_color(i) };
+        let world = ring_world(c, root.rotation * axis(i), RING_POINTS * unit, 64);
+        let mut run: Vec<Vec3> = Vec::new();
+        let mut run_front = true;
+        let flush = |run: &mut Vec<Vec3>, front: bool, out: &mut Vec<Line>| {
+            if run.len() > 1 {
+                let (color, width) = if front {
+                    (color, if hot { 4.5 } else { 3.0 })
+                } else {
+                    (color.gamma_multiply(0.4), if hot { 3.0 } else { 2.0 })
+                };
+                polyline(run, color, width, out);
             }
+            run.clear();
+        };
+        for w in world.windows(2) {
+            let front = ((w[0] + w[1]) * 0.5 - c).dot(eye) >= 0.0;
+            if run.is_empty() {
+                run.push(w[0]);
+                run_front = front;
+            } else if front != run_front {
+                let last = *run.last().expect("空でない");
+                flush(&mut run, run_front, &mut out);
+                run.push(last);
+                run_front = front;
+            }
+            run.push(w[1]);
         }
-        Mode::Rotate => {
-            for i in 0..3 {
-                let r = ring(view, c, root.rotation * axis(i), RING_POINTS * unit, 64);
-                if r.len() > 1 {
-                    let hot = hover == Handle::rotate_axis(i);
-                    out.push(Line {
-                        points: r,
-                        color: if hot { HOVER } else { axis_color(i) },
-                        width: if hot { 4.5 } else { 3.0 },
-                        filled: false,
-                    });
-                }
-            }
+        flush(&mut run, run_front, &mut out);
+    }
+    // 移動の矢印（輪より内側。輪の上に重ねる）
+    let to_camera = view
+        .to_screen(c)
+        .map(|g| -ray_of(view, g).1)
+        .unwrap_or(Vec3::NEG_Z);
+    for i in 0..3 {
+        let a = root.rotation * axis(i);
+        if !axis_visible(view, c, a) {
+            continue;
+        }
+        let tip = c + a * ARROW_POINTS * unit;
+        let hot = hover == Handle::move_axis(i);
+        let color = if hot { HOVER } else { axis_color(i) };
+        segment(
+            c,
+            tip - a * 12.0 * unit,
+            color,
+            if hot { 4.5 } else { 3.0 },
+            &mut out,
+            &mut polyline,
+        );
+        // 矢じり: 画面を向いた三角形（塗る）
+        let side = a.cross(to_camera).normalize_or_zero() * 5.5 * unit;
+        if let (Some(t0), Some(t1), Some(t2)) = (
+            view.to_screen(tip),
+            view.to_screen(tip - a * 15.0 * unit + side),
+            view.to_screen(tip - a * 15.0 * unit - side),
+        ) {
+            out.push(Line {
+                points: vec![t0, t1, t2],
+                color,
+                width: 0.0,
+                filled: true,
+            });
         }
     }
     out
@@ -909,8 +927,8 @@ mod tests {
         (a - b).abs() < eps
     }
 
-    fn handle_at(s: &Shape, v: &CameraView, mode: Mode, handle: Handle) -> Vec2 {
-        handle_points(s, &Root::default(), v, mode)
+    fn handle_at(s: &Shape, v: &CameraView, handle: Handle) -> Vec2 {
+        handle_points(s, &Root::default(), v)
             .into_iter()
             .find(|(h, _)| *h == handle)
             .unwrap_or_else(|| panic!("{handle:?} が出ていない"))
@@ -1003,7 +1021,7 @@ mod tests {
     fn moving_along_an_axis_moves_the_centre_that_far_and_does_not_drift() {
         let v = view();
         let s = cube();
-        let from = handle_at(&s, &v, Mode::Move, Handle::MoveX);
+        let from = handle_at(&s, &v, Handle::MoveX);
         let root = Root::default();
         // 矢印の先を、ワールドの +X へ 0.5 の所の画面の点まで動かす
         let c = world_center(&s, &root);
@@ -1068,7 +1086,7 @@ mod tests {
         let v = view();
         let s = cube();
         let root = Root::default();
-        let from = handle_at(&s, &v, Mode::Move, Handle::MoveFree);
+        let from = handle_at(&s, &v, Handle::MoveFree);
         let moved = drag(
             Handle::MoveFree,
             &s,
@@ -1093,7 +1111,7 @@ mod tests {
         let v = view();
         let s = cube();
         let root = Root::default();
-        let from = handle_at(&s, &v, Mode::Move, Handle::SizeXPos);
+        let from = handle_at(&s, &v, Handle::SizeXPos);
         let to = v.to_screen(Vec3::new(1.0, 0.0, 0.0)).unwrap(); // 面を +X 側へ 0.5 動かす
         let out = drag(
             Handle::SizeXPos,
@@ -1144,7 +1162,7 @@ mod tests {
         let mut s = cube();
         s.kind = Kind::Sphere;
         let root = Root::default();
-        let from = handle_at(&s, &v, Mode::Move, Handle::SizeXPos);
+        let from = handle_at(&s, &v, Handle::SizeXPos);
         let to = v.to_screen(Vec3::new(1.0, 0.0, 0.0)).unwrap();
         let out = drag(
             Handle::SizeXPos,
@@ -1235,7 +1253,7 @@ mod tests {
         };
         let v = cam.view(800.0, 600.0);
         let s = cube();
-        let points = handle_points(&s, &Root::default(), &v, Mode::Move);
+        let points = handle_points(&s, &Root::default(), &v);
         assert!(!points.iter().any(|(h, _)| *h == Handle::MoveZ));
         assert!(!points
             .iter()
@@ -1257,70 +1275,119 @@ mod tests {
     }
 
     #[test]
-    fn hit_finds_knobs_first_then_the_modes_handles() {
+    fn one_gizmo_shows_the_arrows_the_centre_and_the_rings_together() {
         let v = view();
         let s = cube();
         let root = Root::default();
-        for mode in [Mode::Move, Mode::Rotate] {
-            for (handle, at) in handle_points(&s, &root, &v, mode) {
-                let got = hit(&s, &root, &v, mode, at);
-                if handle.is_size() || mode == Mode::Move {
-                    assert_eq!(got, handle, "{mode:?}");
-                } else {
-                    assert!(
-                        matches!(
-                            got,
-                            Handle::RotateX
-                                | Handle::RotateY
-                                | Handle::RotateZ
-                                | Handle::SizeXPos
-                                | Handle::SizeXNeg
-                                | Handle::SizeYPos
-                                | Handle::SizeYNeg
-                                | Handle::SizeZPos
-                                | Handle::SizeZNeg
-                        ),
-                        "{got:?}"
-                    );
-                }
-            }
+        let points = handle_points(&s, &root, &v);
+        for h in [
+            Handle::MoveFree,
+            Handle::MoveX,
+            Handle::MoveY,
+            Handle::MoveZ,
+            Handle::RotateX,
+            Handle::RotateY,
+            Handle::RotateZ,
+            Handle::SizeXPos,
+        ] {
+            assert!(points.iter().any(|(x, _)| *x == h), "{h:?} が出ていない");
+        }
+        // どのハンドルも、出した点を押せばそのハンドルが取れる（輪の点はほかに取られない所を選ぶ）
+        for (handle, at) in &points {
+            assert_eq!(hit(&s, &root, &v, *at), *handle, "{handle:?}");
+        }
+        // 輪は矢印の外側
+        let c = v.to_screen(world_center(&s, &root)).unwrap();
+        let tip = handle_at(&s, &v, Handle::MoveX);
+        for h in [Handle::RotateX, Handle::RotateY, Handle::RotateZ] {
+            let at = handle_at(&s, &v, h);
+            assert!(at.distance(c) > tip.distance(c) * 0.5, "{h:?}");
         }
         // 何も無い所
-        assert_eq!(
-            hit(&s, &root, &v, Mode::Move, Vec2::new(5.0, 5.0)),
-            Handle::None
-        );
-        // 回転のモードでは矢印を掴めない
-        let tip = handle_at(&s, &v, Mode::Move, Handle::MoveX);
-        assert!(!matches!(
-            hit(&s, &root, &v, Mode::Rotate, tip),
-            Handle::MoveX
-        ));
+        assert_eq!(hit(&s, &root, &v, Vec2::new(5.0, 5.0)), Handle::None);
     }
 
     #[test]
-    fn lines_draw_the_outline_inner_shape_and_the_modes_handles() {
+    fn hit_prefers_the_centre_then_the_arrows_then_the_rings() {
         let v = view();
         let s = cube();
         let root = Root::default();
-        let box_lines = lines(&s, &root, &v, Mode::Move, Handle::None);
-        let outline = box_lines.iter().filter(|l| l.color == OUTLINE).count();
+        let c = v.to_screen(world_center(&s, &root)).unwrap();
+        // 中心は矢印の根もとと重なるが、中心の四角が先
+        assert_eq!(hit(&s, &root, &v, c), Handle::MoveFree);
+        assert_eq!(
+            hit(&s, &root, &v, c + Vec2::new(CENTER_POINTS / 2.0, 0.0)),
+            Handle::MoveFree
+        );
+        // 矢印の先は、その近くを通る輪より矢印が先
+        let tip = handle_at(&s, &v, Handle::MoveX);
+        assert_eq!(hit(&s, &root, &v, tip), Handle::MoveX);
+        // 矢印と輪が画面で交わる所: 矢印が先（矢印の線の上で、輪にも掴める近さの点）
+        let c3 = world_center(&s, &root);
+        let radius = RING_POINTS * world_per_point(&v, c3);
+        let mut crossings = 0;
+        for (arrow, i) in [(Handle::MoveX, 0), (Handle::MoveY, 1), (Handle::MoveZ, 2)] {
+            let Some((_, tip)) = handle_points(&s, &root, &v)
+                .into_iter()
+                .find(|(h, _)| *h == arrow)
+            else {
+                continue;
+            };
+            // 矢印は自分の軸の輪の面に垂直で、ほかの 2 つの輪の面の中（その輪の内側）にある。交わりうるのは自分の軸の輪だけ
+            let rings = ring(&v, c3, axis(i), radius, 256);
+            for k in 1..=40 {
+                let p = c + (tip - c) * (k as f32 / 40.0);
+                if p.distance(c) <= CENTER_POINTS || !rings.iter().any(|r| r.distance(p) <= 2.0) {
+                    continue;
+                }
+                crossings += 1;
+                let got = hit(&s, &root, &v, p);
+                assert!(
+                    got == arrow || got.is_size(),
+                    "{arrow:?} の上の点 {k} で {got:?}"
+                );
+            }
+        }
+        assert!(crossings > 0, "矢印と輪の交わる所が無い（カメラを替える）");
+    }
+
+    #[test]
+    fn lines_draw_the_outline_rings_and_arrows_together() {
+        let v = view();
+        let s = cube();
+        let root = Root::default();
+        let all = lines(&s, &root, &v, Handle::None);
+        let outline = all.iter().filter(|l| l.color == OUTLINE).count();
         assert_eq!(outline, 12, "箱の辺");
         assert_eq!(
-            box_lines.iter().filter(|l| l.color == INNER).count(),
+            all.iter().filter(|l| l.color == INNER).count(),
             12,
             "減衰の内側の箱"
         );
-        assert!(box_lines.iter().any(|l| l.filled), "矢じり");
-        let rings = lines(&s, &root, &v, Mode::Rotate, Handle::RotateX);
-        assert!(rings.iter().any(|l| l.color == HOVER), "掴める輪は強調");
-        assert!(!rings.iter().any(|l| l.filled));
+        assert!(all.iter().any(|l| l.filled), "矢じり");
+        for color in [AXIS_X, AXIS_Y, AXIS_Z] {
+            assert!(all.iter().any(|l| l.color == color), "軸の色の矢印");
+            assert!(
+                all.iter().any(|l| l.color == color.gamma_multiply(0.4)),
+                "輪の奥の半分は薄く"
+            );
+        }
+        let hot = lines(&s, &root, &v, Handle::RotateX);
+        assert!(
+            hot.iter().any(|l| l.color == HOVER && !l.filled),
+            "掴める輪は強調"
+        );
+        let hot = lines(&s, &root, &v, Handle::MoveY);
+        assert!(
+            hot.iter().any(|l| l.color == HOVER && l.filled),
+            "掴める矢印は強調"
+        );
         let mut plane = s;
         plane.kind = Kind::Plane;
-        assert!(!lines(&plane, &root, &v, Mode::Move, Handle::None).is_empty());
+        assert!(!lines(&plane, &root, &v, Handle::None).is_empty());
         let mut sphere = s;
         sphere.kind = Kind::Sphere;
-        assert!(lines(&sphere, &root, &v, Mode::Move, Handle::None).len() >= 4);
+        assert!(lines(&sphere, &root, &v, Handle::None).len() >= 4);
     }
 
     #[test]

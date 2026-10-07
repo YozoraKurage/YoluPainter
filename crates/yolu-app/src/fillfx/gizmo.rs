@@ -141,7 +141,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
         return Handle::None;
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
-    sg::hit(&s, &root(), &view, app.fillfx.gizmo_mode, local(rect, at))
+    sg::hit(&s, &root(), &view, local(rect, at))
 }
 
 /// ハンドルの画面の点（画面の座標。試験が掴む位置に使う）。
@@ -149,7 +149,7 @@ pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> 
     let t = target(app)?;
     let s = shape(app, t)?;
     let view = app.view3d.camera.view(rect.width(), rect.height());
-    sg::handle_points(&s, &root(), &view, app.fillfx.gizmo_mode)
+    sg::handle_points(&s, &root(), &view)
         .into_iter()
         .find(|(h, _)| *h == handle)
         .map(|(_, p)| pos2(rect.left() + p.x, rect.top() + p.y))
@@ -168,7 +168,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let p = local(rect, at);
-    let handle = sg::hit(&start, &root(), &view, app.fillfx.gizmo_mode, p);
+    let handle = sg::hit(&start, &root(), &view, p);
     if handle == Handle::None {
         return false;
     }
@@ -351,20 +351,19 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let mode = app.fillfx.gizmo_mode;
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let hover = match &app.fillfx.drag {
         Some(d) => d.handle,
         None => pointer
             .filter(|_| !app.is_stroking())
             .map_or(Handle::None, |p| {
-                sg::hit(&s, &root(), &view, mode, local(rect, p))
+                sg::hit(&s, &root(), &view, local(rect, p))
             }),
     };
     app.fillfx.hover = hover;
     let painter = ui.painter_at(rect);
     let to = |p: Vec2| pos2(rect.left() + p.x, rect.top() + p.y);
-    for line in sg::lines(&s, &root(), &view, mode, hover) {
+    for line in sg::lines(&s, &root(), &view, hover) {
         let points: Vec<Pos2> = line.points.iter().map(|p| to(*p)).collect();
         if line.filled {
             painter.add(EguiShape::convex_polygon(points, line.color, Stroke::NONE));
@@ -377,7 +376,7 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
         ));
         painter.add(EguiShape::line(points, Stroke::new(line.width, line.color)));
     }
-    for (handle, at) in sg::handle_points(&s, &root(), &view, mode) {
+    for (handle, at) in sg::handle_points(&s, &root(), &view) {
         let c = to(at);
         if handle == Handle::MoveFree {
             let r = Rect::from_center_size(c, vec2(sg::CENTER_POINTS, sg::CENTER_POINTS));

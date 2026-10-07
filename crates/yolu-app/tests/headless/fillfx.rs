@@ -15,7 +15,7 @@ use yolu_app::m2::Edit;
 use yolu_app::matpaint::MatAction;
 use yolu_app::shelf::ShelfOp;
 use yolu_app::state::{Action, AppState, Tool};
-use yolu_app::view3d::shape_gizmo::{Handle, Mode};
+use yolu_app::view3d::shape_gizmo::Handle;
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
 use yolu_core::generator::{Blend, Kind, Shape};
 use yolu_core::glam::Vec3;
@@ -816,8 +816,7 @@ fn headless_dragging_a_gizmo_handle_edits_the_projection_in_one_undo_and_escape_
         pos2(3.0, 3.0),
         gizmo::Source::Mouse
     ));
-    // 回す輪・大きさのつまみ
-    s.apply(Action::Fill(FillOp::GizmoMode(Mode::Rotate)));
+    // 回す輪・大きさのつまみ（移動の矢印と同じギズモに出ている）
     let ring = gizmo::handle_point(&s, rect, Handle::RotateY).expect("Y の輪");
     assert!(gizmo::press(&mut s, rect, ring, gizmo::Source::Mouse));
     gizmo::drag_to(&mut s, rect, ring + vec2(30.0, 10.0), false, false);
@@ -2872,4 +2871,197 @@ fn headless_the_gizmo_edits_a_shape_gradient_generator_in_the_filter_stack_in_on
     assert!(s.fillfx.edit_gradient.is_some());
     s.apply(Action::Fill(FillOp::EditFilter(Some((layer, filter)))));
     assert!(s.fillfx.edit_gradient.is_none());
+}
+
+// ───────── 点のグラデーション ─────────
+
+fn points_of(s: &AppState, layer: LayerId) -> Option<yolu_core::fill_points::PointGradient> {
+    s.doc
+        .layer(layer)
+        .and_then(|l| l.fill_points(Channel::Color))
+        .cloned()
+}
+
+/// 3D ビュー（800 × 600）の、試しの立方体のモデルの中心の画面の点（手前の面に当たる）。
+fn model_center(s: &AppState, rect: Rect) -> egui::Pos2 {
+    let view = s.view3d.camera.view(rect.width(), rect.height());
+    let p = view.to_screen(Vec3::ZERO).expect("見える");
+    pos2(rect.left() + p.x, rect.top() + p.y)
+}
+
+#[test]
+fn headless_adding_a_point_gradient_enters_point_editing_and_one_undo_takes_it_back() {
+    use yolu_app::fillfx::points;
+    use yolu_core::fill_points::PointSpace;
+    let mut s = cube();
+    let layer = new_fill(&mut s);
+    let before = composite(&s.doc);
+    let steps = s.doc.undo_count();
+    fill(
+        &mut s,
+        FillOp::AddPoints {
+            layer,
+            channel: Channel::Color,
+        },
+    );
+    let g = points_of(&s, layer).expect("点のグラデーション");
+    assert_eq!(g.space, PointSpace::Model, "モデルがあればモデルの空間");
+    assert_eq!(g.points.len(), 2);
+    assert_eq!(s.doc.undo_count(), steps + 1);
+    assert_eq!(points::target(&s), Some((layer, Channel::Color)));
+    assert_ne!(composite(&s.doc), before);
+    // 文書の効かない効果の一覧に出ない（位置のマップがある）
+    assert!(s
+        .doc
+        .inactive_effect_list()
+        .iter()
+        .all(|e| e.layer != layer));
+    assert!(s.doc.undo().unwrap());
+    assert!(points_of(&s, layer).is_none());
+    assert_eq!(composite(&s.doc), before);
+    assert_eq!(points::target(&s), None, "点が無くなれば編集も出ない");
+    // モデルが無いと UV の空間
+    let mut t = AppState::new(32, 32);
+    let layer = new_fill(&mut t);
+    fill(
+        &mut t,
+        FillOp::AddPoints {
+            layer,
+            channel: Channel::Color,
+        },
+    );
+    assert_eq!(points_of(&t, layer).unwrap().space, PointSpace::Uv);
+}
+
+#[test]
+fn headless_pressing_the_model_adds_a_point_dragging_moves_it_in_one_undo_and_escape_puts_it_back()
+{
+    use yolu_app::fillfx::{gizmo::Source, points};
+    let mut s = cube();
+    s.view3d.camera.yaw = -40.0;
+    s.view3d.camera.pitch = 15.0;
+    let rect = view_rect();
+    let layer = new_fill(&mut s);
+    fill(
+        &mut s,
+        FillOp::AddPoints {
+            layer,
+            channel: Channel::Color,
+        },
+    );
+    s.color.main = [0.0, 1.0, 0.0, 1.0];
+    let start = points_of(&s, layer).unwrap();
+    let steps = s.doc.undo_count();
+    let at = model_center(&s, rect);
+    // 面を押すと、メインの色の点が足されて選ばれ、そのままドラッグできる
+    assert!(points::press(&mut s, rect, at, Source::Mouse));
+    let added = points_of(&s, layer).unwrap();
+    assert_eq!(added.points.len(), 3);
+    assert_eq!(added.points[2].color, GREEN);
+    assert_eq!(s.fillfx.point_selected, Some(2));
+    points::drag_to(&mut s, rect, at + vec2(15.0, 5.0));
+    points::drag_to(&mut s, rect, at + vec2(25.0, 10.0));
+    let moved = points_of(&s, layer).unwrap();
+    assert_ne!(moved.points[2].position, added.points[2].position);
+    points::release(&mut s, true);
+    assert_eq!(
+        s.doc.undo_count(),
+        steps + 1,
+        "追加とドラッグで 1 回の Undo"
+    );
+    assert!(s.doc.undo().unwrap());
+    assert_eq!(points_of(&s, layer).unwrap(), start);
+    assert!(s.doc.redo().unwrap());
+    // 印を掴んで動かし、Esc で戻す（履歴に残さない）
+    let steps = s.doc.undo_count();
+    let before = points_of(&s, layer).unwrap();
+    let view = s.view3d.camera.view(rect.width(), rect.height());
+    let mark = {
+        let p = before.points[2].position;
+        let g = view
+            .to_screen(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32))
+            .unwrap();
+        pos2(rect.left() + g.x, rect.top() + g.y)
+    };
+    assert!(points::press(&mut s, rect, mark, Source::Mouse));
+    assert_eq!(
+        points_of(&s, layer).unwrap().points.len(),
+        3,
+        "掴んだだけでは足さない"
+    );
+    points::drag_to(&mut s, rect, mark + vec2(-20.0, 0.0));
+    assert_ne!(points_of(&s, layer).unwrap(), before);
+    points::release(&mut s, false);
+    assert_eq!(points_of(&s, layer).unwrap(), before);
+    assert_eq!(s.doc.undo_count(), steps);
+    // モデルの外を押すと、選びを外すだけ（何も足さない）
+    assert!(points::press(
+        &mut s,
+        rect,
+        rect.min + vec2(3.0, 3.0),
+        Source::Mouse
+    ));
+    assert_eq!(s.fillfx.point_selected, None);
+    assert_eq!(points_of(&s, layer).unwrap(), before);
+    // 編集をやめると、押しは今の道具へ
+    fill(&mut s, FillOp::EditPoints(None));
+    assert!(!points::press(&mut s, rect, at, Source::Mouse));
+}
+
+#[test]
+fn headless_delete_removes_the_selected_point_but_not_the_last_one() {
+    let mut s = AppState::new(32, 32);
+    let layer = new_fill(&mut s);
+    fill(
+        &mut s,
+        FillOp::AddPoints {
+            layer,
+            channel: Channel::Color,
+        },
+    );
+    fill(&mut s, FillOp::SelectPoint(Some(0)));
+    let steps = s.doc.undo_count();
+    s.apply(Action::Fill(FillOp::DeletePoint));
+    assert_eq!(points_of(&s, layer).unwrap().points.len(), 1);
+    assert_eq!(s.doc.undo_count(), steps + 1);
+    assert_eq!(s.fillfx.point_selected, None);
+    fill(&mut s, FillOp::SelectPoint(Some(0)));
+    s.apply(Action::Fill(FillOp::DeletePoint));
+    assert_eq!(
+        points_of(&s, layer).unwrap().points.len(),
+        1,
+        "最後の点は残す"
+    );
+    assert!(s.message.contains("最後の点"), "{}", s.message);
+    assert_eq!(s.doc.undo_count(), steps + 1);
+}
+
+#[test]
+fn headless_a_point_gradient_survives_saving_and_reopening() {
+    let dir = temp_dir("reopen-points");
+    let path = dir.join("points.ylp");
+    let mut s = AppState::new(32, 32);
+    let layer = new_fill(&mut s);
+    fill(
+        &mut s,
+        FillOp::AddPoints {
+            layer,
+            channel: Channel::Color,
+        },
+    );
+    let g = points_of(&s, layer).unwrap();
+    let picture = composite(&s.doc);
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut t = AppState::new(8, 8);
+    t.apply(Action::OpenProject(path));
+    assert!(t.message.starts_with("開きました"), "{}", t.message);
+    let reopened = t
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Fill)
+        .unwrap();
+    assert_eq!(reopened.fill_points(Channel::Color), Some(&g));
+    assert_eq!(composite(&t.doc), picture);
 }

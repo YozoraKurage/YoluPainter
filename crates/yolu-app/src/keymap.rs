@@ -31,6 +31,8 @@ pub enum When {
     Tool(Tool),
     /// Windows のとき（画面から色を取る）。
     Windows,
+    /// 点のグラデーションの点を編集していて、点を選んでいるとき。
+    PointSelected,
 }
 
 impl When {
@@ -40,6 +42,9 @@ impl When {
             When::HasSelection => app.doc.selection().is_some(),
             When::Tool(tool) => app.tool == tool,
             When::Windows => cfg!(windows) && !app.is_stroking(),
+            When::PointSelected => {
+                crate::fillfx::points::target(app).is_some() && app.fillfx.point_selected.is_some()
+            }
         }
     }
 }
@@ -117,6 +122,20 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd_shift, Key::Z, Action::Redo),
         kb(cmd, Key::A, sel_edit(SelEdit::All)),
         kb(cmd, Key::D, sel_edit(SelEdit::Clear)),
+        // 点のグラデーション: 選んでいる点を消す。選択範囲の消去・パスの点の削除と同じキーなので、それらより前に置く（修飾の数が同じ割り当ては
+        // 表の順に判定され、先に当たったものがキーを取る。点を選んでいる間は、Delete・Backspace の相手は点）
+        kb_when(
+            none,
+            Key::Delete,
+            When::PointSelected,
+            Action::Fill(crate::fillfx::FillOp::DeletePoint),
+        ),
+        kb_when(
+            none,
+            Key::Backspace,
+            When::PointSelected,
+            Action::Fill(crate::fillfx::FillOp::DeletePoint),
+        ),
         // 選択範囲があるときだけ: 消去（Delete）
         kb_when(
             none,

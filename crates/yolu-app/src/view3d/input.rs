@@ -518,6 +518,23 @@ fn pen_sample(
         }
         return;
     }
+    if app
+        .fillfx
+        .point_drag
+        .as_ref()
+        .is_some_and(|d| d.in_3d && d.source == crate::fillfx::gizmo::Source::Pen(s.pointer_id))
+    {
+        if s.contact {
+            *drag_at = Some(p);
+        } else {
+            if let Some(at) = drag_at.take() {
+                crate::fillfx::points::drag_to(app, rect, at);
+            }
+            crate::fillfx::points::release(app, true);
+            app.view3d.input.pen_press = None;
+        }
+        return;
+    }
     let press = match app.view3d.input.pen_press {
         Some(press) if press.id == s.pointer_id => press,
         // ほかのペン（別の ID）の押しが続いている間は、この点を使わない
@@ -547,8 +564,13 @@ fn pen_sample(
                         rect,
                         p,
                         crate::fillfx::gizmo::Source::Pen(s.pointer_id),
+                    ) || crate::fillfx::points::press(
+                        app,
+                        rect,
+                        p,
+                        crate::fillfx::gizmo::Source::Pen(s.pointer_id),
                     ) {
-                        // 形のギズモのハンドルの上: 描かずにドラッグを始める
+                        // 形のギズモのハンドルの上・点の編集: 描かずにドラッグを始める
                     } else if app.tool.def().surface == Surface::Path {
                         // パスの道具: 押す・動く・離すを、点を足す・掴む・動かすにする
                         crate::pathtool::surface::pen_sample(
@@ -685,6 +707,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             gizmo::drag_to(app, rect, at, snap);
             // 塗りつぶしの形のギズモ（Shift で両側、Ctrl で刻み）
             crate::fillfx::gizmo::drag_to(app, rect, at, shift, snap);
+            // 点のグラデーションの点
+            crate::fillfx::points::drag_to(app, rect, at);
         }
     };
 
@@ -733,8 +757,13 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                 gizmo::press(app, rect, pos);
                             }
                         } else if !app.stencil.handling() {
-                            // 形のギズモのハンドルの上なら、描かずにドラッグを始める
+                            // 形のギズモのハンドルの上・点のグラデーションの点を編集している間は、描かずにドラッグを始める
                             if !crate::fillfx::gizmo::press(
+                                app,
+                                rect,
+                                pos,
+                                crate::fillfx::gizmo::Source::Mouse,
+                            ) && !crate::fillfx::points::press(
                                 app,
                                 rect,
                                 pos,
@@ -766,6 +795,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         {
                             crate::fillfx::gizmo::release(app, true);
                         }
+                        if app
+                            .fillfx
+                            .point_drag
+                            .as_ref()
+                            .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                        {
+                            crate::fillfx::points::release(app, true);
+                        }
                     }
                 }
                 app.view3d.input.last_pointer = Some(pos);
@@ -785,6 +822,11 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         .drag
                         .as_ref()
                         .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                    || app
+                        .fillfx
+                        .point_drag
+                        .as_ref()
+                        .is_some_and(|d| d.in_3d && d.source == crate::fillfx::gizmo::Source::Mouse)
                 {
                     drag_at = Some(pos);
                 }
@@ -822,6 +864,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 drag_at = None;
                 gizmo::release(app, false);
                 crate::fillfx::gizmo::release(app, false);
+                crate::fillfx::points::release(app, false);
                 nav_cancel(app);
             }
             Event::WindowFocused(false) => {
@@ -835,9 +878,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 app.view3d.input.pen_press = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
-                // 形のギズモは離したのを受け取れないので、ドラッグの前に戻す（履歴にも残さない）
+                // 形のギズモ・点のドラッグは離したのを受け取れないので、ドラッグの前に戻す（履歴にも残さない）
                 drag_at = None;
                 crate::fillfx::gizmo::release(app, false);
+                crate::fillfx::points::release(app, false);
                 nav_cancel(app);
             }
             _ => {}

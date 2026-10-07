@@ -1009,8 +1009,10 @@ fn shared_statistics_and_mip_chains_are_built_once_however_many_blocks_run() {
             2,
             "round {round}: 正規化の統計は、チャンネルごと（上の層の Color と Height）に 1 回"
         );
+        // 同じ中身の画像を読むほかの文書（並んで走るほかの試験）がミップマップを持っていれば、作らずにそれを使う
         assert_eq!(
-            after.mip_chains_built - before.mip_chains_built,
+            (after.mip_chains_built + after.mip_chains_shared)
+                - (before.mip_chains_built + before.mip_chains_shared),
             2,
             "round {round}: 画像のミップマップは、画像（と変換）ごとに 1 つ"
         );

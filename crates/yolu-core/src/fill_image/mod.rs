@@ -9,7 +9,7 @@ mod sampler;
 pub use maps::{Map, ModelMaps};
 pub use mip::{Conversion, ImageMipChain};
 pub use projection::{ModelFrame, Placement, Projection, ProjectionMode, Wrap};
-pub use sampler::{FillInput, FillSampler, InactiveReason};
+pub use sampler::{FillInput, FillSampler, InactiveReason, MAX_ANISOTROPY};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

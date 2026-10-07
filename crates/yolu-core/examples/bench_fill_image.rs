@@ -20,7 +20,7 @@ fn main() {
         let shape =
             ImageMipChain::build(&sd, 13, 17, Conversion::None, false, u64::MAX, None).unwrap();
         for mode in 0..6 {
-            let s = fixture.sampler(mode, 1, &chain, &shape);
+            let s = fixture.sampler_with(mode, 1, &chain, &shape, false);
             std::hint::black_box(s.render(0, 0, 4096, 4096, u64::MAX, None).unwrap());
             for r in 0..runs {
                 let start = std::time::Instant::now();

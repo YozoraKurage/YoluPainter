@@ -31,12 +31,17 @@ pub const PATHS_VERSION: i32 = 27;
 /// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
 /// 「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const EFFECTS_VERSION: i32 = 28;
+/// 塗りつぶしの点のグラデーション（層の属性のビット 7 の続きの属性の印 `attributes_ext` のビット 0）と、塗りつぶしの画像ごとの異方性のフィルターの入・切（`images[i].anisotropic`）を
+/// 足した版。点のグラデーションか、異方性を切った画像のある文書だけがこの版になり、それより古い読み手は版の範囲の外として断る
+/// （形式と決めは docs/YLP_FORMAT.md）。
+pub const POINT_GRADIENT_VERSION: i32 = 29;
 /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
-/// この版の文書は版 28 の中身（0.5.0 の効果）も読み書きできる。
+/// この版の文書は版 28・29 の中身も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
-/// `EFFECTS_VERSION`（28）・`SEAMS_VERSION`（32）で、間の 29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
+/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`SEAMS_VERSION`（32）で、間の 30・31 は意味を決めておらず断る（版を割り振ったら
+/// `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
 /// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
@@ -406,13 +411,14 @@ impl ByteSource for PartStream {
 /// 版 26（分けた正本）の識別の版。ヘッダーは `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値を抜いたもの。
 pub const SPLIT_VERSION: i32 = 26;
 
-/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・`SEAMS_VERSION`
-/// だけで、間の 29〜31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
+/// `POINT_GRADIENT_VERSION`・`SEAMS_VERSION` だけで、間の 30・31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
         || version == PATHS_VERSION
         || version == EFFECTS_VERSION
+        || version == POINT_GRADIENT_VERSION
         || version == SEAMS_VERSION
 }
 
@@ -471,7 +477,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{SEAMS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{SEAMS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -853,6 +859,7 @@ fn layer(
     r.unit("opacity")?;
     let blend = r.int("blend", 0, 26)?;
     let mut flags = 0;
+    let mut ext = 0;
     let mut blends = Vec::new();
     if v >= 12 {
         flags = r.byte("attributes")?;
@@ -861,10 +868,17 @@ fn layer(
             | if v >= 16 { 8 } else { 0 }
             | if v >= 20 { 16 } else { 0 }
             | if v >= 21 { 32 } else { 0 }
-            | if v >= PATHS_VERSION { 64 } else { 0 };
+            | if v >= PATHS_VERSION { 64 } else { 0 }
+            | if v >= POINT_GRADIENT_VERSION { 128 } else { 0 };
         check(flags & !known == 0, "未知のレイヤー属性ビットです")?;
         if flags & 2 != 0 {
             r.int("locks", 1, 15)?;
+        }
+        // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（版 29）
+        if flags & 128 != 0 {
+            ext = r.int("attributes_ext", 1, i32::MAX)?;
+            let known_ext = 1;
+            check(ext & !known_ext == 0, "未知の続きのレイヤー属性ビットです")?;
         }
         if flags & 4 != 0 {
             let n = r.byte("channel_blend_count")?;
@@ -917,6 +931,7 @@ fn layer(
     };
     let mut fills = HashSet::new();
     let mut images = HashSet::new();
+    let mut gradients = HashSet::new();
     let mut references = Vec::new();
     if v >= 3 {
         let n = r.int("fill_count", 0, if kind == 1 { channel_total } else { 0 })?;
@@ -937,6 +952,9 @@ fn layer(
                 let c = unique_channel(r, &mut images)?;
                 check(fills.contains(&c), "画像に対応する塗りつぶし値がありません")?;
                 r.id("resource_id", false)?;
+                if v >= POINT_GRADIENT_VERSION {
+                    r.boolean("anisotropic")?;
+                }
                 Ok(())
             })?;
         }
@@ -958,6 +976,36 @@ fn layer(
                     generator(r, v, &mut references)? == 5,
                     "塗りつぶしグラデーションは形状ジェネレーターが必要です",
                 )?;
+                Ok(())
+            })?;
+        }
+        gradients.extend(seen);
+    }
+    if ext & 1 != 0 {
+        check(kind == 1, "塗りつぶし以外に点のグラデーションがあります")?;
+        let n = r.int("point_gradient_count", 1, 6)?;
+        let mut seen = HashSet::new();
+        for i in 0..n {
+            r.block(&format!("point_gradients[{i}]"), |r| {
+                let c = unique_channel(r, &mut seen)?;
+                check(
+                    c != 4 && fills.contains(&c) && !images.contains(&c) && !gradients.contains(&c),
+                    "点のグラデーションのチャンネル・塗りつぶし元が不正です",
+                )?;
+                r.int("algorithm", 1, 1)?;
+                let space = r.int("space", 0, 1)?;
+                r.unit("spread")?;
+                let count = r.int("point_count", 1, 64)?;
+                for k in 0..count {
+                    r.block(&format!("points[{k}]"), |r| {
+                        r.float("x", -1e6, 1e6)?;
+                        r.float("y", -1e6, 1e6)?;
+                        let z = r.float("z", -1e6, 1e6)?;
+                        check(space == 0 || z == 0., "UV の空間の点の z が 0 でありません")?;
+                        r.blob("rgba", 4)?;
+                        Ok(())
+                    })?;
+                }
                 Ok(())
             })?;
         }

@@ -461,6 +461,8 @@ pub(crate) enum CoalesceKey {
     FilterSettings(FilterId),
     Projection(LayerId),
     FillGradient(LayerId, Channel),
+    /// 塗りつぶしの点のグラデーション（点のドラッグ・欄のスライダー）。
+    FillPoints(LayerId, Channel),
     /// 見た目の設定（スライダーのドラッグ）。
     Look,
     /// 手動の ID の色（色の窓のドラッグ）。

@@ -5,7 +5,7 @@
 //!   （[`ChannelBlend`]）。表示・マスク・クリッピングは全チャンネルで共有する。
 //! - マスクは隠す量を面のアルファに持つ（RGB は 0）。無いタイルは何も隠さない。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::adjust::AdjustmentSettings;
@@ -164,10 +164,14 @@ pub struct Layer {
     pub(crate) anchor: Option<Anchor>,
     /// 塗りつぶしのチャンネルごとの画像（プロジェクトの画像リソースの ID。そのチャンネルの値は画像が使えない所に出る）。
     pub(crate) fill_images: BTreeMap<Channel, ImageId>,
+    /// 塗りつぶしの画像を異方性のフィルターなしで読むチャンネル（既定は異方性で読む。画像のあるチャンネルだけ）。
+    pub(crate) fill_isotropic: BTreeSet<Channel>,
     /// 塗りつぶしの画像の投影（層で 1 つ。画像が無くてもデカールは投影を使う）。
     pub(crate) projection: Projection,
     /// 塗りつぶしのチャンネルごとのグラデーション（ランプ付きの形のグラデーションの Generator。置き換え）。
     pub(crate) fill_gradients: BTreeMap<Channel, generator::Settings>,
+    /// 塗りつぶしのチャンネルごとの点のグラデーション（画像・形のグラデーションとは同じチャンネルに置かない）。
+    pub(crate) fill_points: BTreeMap<Channel, crate::fill_points::PointGradient>,
     /// 層の画素を描くパスの一覧（ラスターだけ。対象のチャンネルの画素は、一覧の見せるパスを順に描いた結果）。
     pub(crate) paths: Vec<crate::paths::LayerPathEntry>,
 }
@@ -197,8 +201,10 @@ impl Layer {
             filters: Vec::new(),
             anchor: None,
             fill_images: BTreeMap::new(),
+            fill_isotropic: BTreeSet::new(),
             projection: Projection::default(),
             fill_gradients: BTreeMap::new(),
+            fill_points: BTreeMap::new(),
             paths: Vec::new(),
         }
     }
@@ -365,6 +371,10 @@ impl Layer {
     pub fn fill_image(&self, channel: Channel) -> Option<ImageId> {
         self.fill_images.get(&channel).copied()
     }
+    /// 塗りつぶしのチャンネルの画像を異方性のフィルターで読むか（既定は読む）。
+    pub fn fill_anisotropic(&self, channel: Channel) -> bool {
+        !self.fill_isotropic.contains(&channel)
+    }
     /// 画像を持つチャンネルと画像（番号の順）。
     pub fn fill_images(&self) -> impl Iterator<Item = (Channel, ImageId)> + '_ {
         self.fill_images.iter().map(|(c, i)| (*c, *i))
@@ -396,6 +406,16 @@ impl Layer {
     pub fn fill_gradients(&self) -> impl Iterator<Item = (Channel, &generator::Settings)> + '_ {
         self.fill_gradients.iter().map(|(c, g)| (*c, g))
     }
+    /// 塗りつぶしのチャンネルの点のグラデーション。
+    pub fn fill_points(&self, channel: Channel) -> Option<&crate::fill_points::PointGradient> {
+        self.fill_points.get(&channel)
+    }
+    /// 点のグラデーションを持つチャンネルと設定（番号の順）。
+    pub fn fill_point_gradients(
+        &self,
+    ) -> impl Iterator<Item = (Channel, &crate::fill_points::PointGradient)> + '_ {
+        self.fill_points.iter().map(|(c, g)| (*c, g))
+    }
     /// 投影がデカールの塗りつぶしか。
     pub fn is_decal(&self) -> bool {
         self.kind == LayerKind::Fill
@@ -411,6 +431,7 @@ impl Layer {
     pub fn has_evaluated_output(&self, channel: Channel) -> bool {
         self.has_active_filters(channel)
             || self.kind == LayerKind::Fill && self.fill_gradients.contains_key(&channel)
+            || self.kind == LayerKind::Fill && self.fill_points.contains_key(&channel)
             || self.is_projected_fill(channel)
             || self.fill_paths_draw(channel)
     }
@@ -423,7 +444,13 @@ impl Layer {
     /// 塗りつぶしが焼いたメッシュマップ・画像を読むか（C# の `ReadsMeshMapsForFill` と、画像の層）。
     pub(crate) fn reads_inputs_for_fill(&self) -> bool {
         self.kind == LayerKind::Fill
-            && (!self.fill_gradients.is_empty() || !self.fill_images.is_empty() || self.is_decal())
+            && (!self.fill_gradients.is_empty()
+                || !self.fill_images.is_empty()
+                || self.is_decal()
+                || self
+                    .fill_points
+                    .values()
+                    .any(|g| g.space == crate::fill_points::PointSpace::Model))
     }
 
     /// そのチャンネルについて何かを持つか: 有効の印・面・塗りつぶしの値・チャンネルごとの合成のどれか。無効にしても面・値・合成は

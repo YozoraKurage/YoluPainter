@@ -96,7 +96,7 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 | `layer.add` | `kind`（paint・fill・group・adjustment）・`name`・`above`・`fill`・`adjustment`・`channels` | 編集 |
 | `layer.delete` | `layer`・`confirm` | 壊す |
 | `layer.move` | `layer`・`parent`・`to_root`・`index` | 編集 |
-| `layer.set` | `layer`・`name`・`visible`・`opacity`・`blend_mode`・`clipping`・`locks`・`channels`・`fill`・`adjustment` | 編集 |
+| `layer.set` | `layer`・`name`・`visible`・`opacity`・`blend_mode`・`clipping`・`locks`・`channels`・`fill`・`adjustment`・`points`（塗りつぶしの点のグラデーション。チャンネル → `space`・`spread`・`points`、`null` で外す） | 編集 |
 | `mask.add` | `layer` | 編集 |
 | `mask.delete` | `layer`・`confirm` | 壊す |
 | `mask.set` | `layer`・`enabled`・`inverted`・`density` | 編集 |

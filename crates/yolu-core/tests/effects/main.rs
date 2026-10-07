@@ -13,6 +13,8 @@ mod attach_coherence;
 mod attach_edit;
 mod attach_paths;
 mod attach_smart;
+mod fill_mip_sharing;
+mod fill_points;
 mod filter_kinds;
 mod generator_kinds;
 mod image_stage;

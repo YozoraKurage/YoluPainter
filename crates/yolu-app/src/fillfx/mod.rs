@@ -13,6 +13,7 @@
 pub mod gizmo;
 pub mod inputs;
 pub mod placement;
+pub mod points;
 
 use std::path::PathBuf;
 
@@ -27,13 +28,11 @@ use yolu_core::{
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{AppState, DialogRequest};
-use crate::view3d::shape_gizmo::{Handle, Mode};
+use crate::view3d::shape_gizmo::Handle;
 
 /// 塗りつぶしの画面の状態。
 #[derive(Default)]
 pub struct FillFxState {
-    /// ギズモの組（移動の矢印と中心の四角か、回す輪か）。
-    pub gizmo_mode: Mode,
     /// 投影の置き場のハンドルを隠している（Q・欄のボタン）。
     pub handles_hidden: bool,
     /// 3D ビューで形を編集している塗りつぶしのグラデーション（層とチャンネル）。
@@ -44,6 +43,12 @@ pub struct FillFxState {
     pub drag: Option<gizmo::ShapeDrag>,
     /// ポインタの下のハンドル（カーソル用。描くたびに更新）。
     pub hover: Handle,
+    /// 点を置く・動かしている塗りつぶしの点のグラデーション（層とチャンネル）。
+    pub edit_points: Option<(LayerId, Channel)>,
+    /// 選んでいる点の番号。
+    pub point_selected: Option<usize>,
+    /// 点のドラッグの途中。
+    pub point_drag: Option<points::PointDrag>,
 }
 
 /// 塗りつぶしの操作（`Action::Fill`）。
@@ -54,6 +59,12 @@ pub enum FillOp {
         layer: LayerId,
         channel: Channel,
         image: Option<ImageId>,
+    },
+    /// チャンネルの画像を異方性のフィルターで読むか（斜めから当てた画像のにじみを減らす。既定は読む）。
+    Anisotropic {
+        layer: LayerId,
+        channel: Channel,
+        on: bool,
     },
     /// 投影を置き換える（`coalesce` ならドラッグを 1 回にまとめる）。
     Projection {
@@ -82,6 +93,20 @@ pub enum FillOp {
         layer: LayerId,
         channel: Channel,
     },
+    /// 点のグラデーションを追加する（モデルがあればモデルの空間で 2 点。メインの色とサブの色）。追加したら点の編集に入る。
+    AddPoints {
+        layer: LayerId,
+        channel: Channel,
+    },
+    /// 点のグラデーションを置き換える・外す（`coalesce` なら欄のドラッグを 1 回にまとめる）。
+    Points {
+        layer: LayerId,
+        channel: Channel,
+        points: Option<Box<yolu_core::fill_points::PointGradient>>,
+        coalesce: bool,
+    },
+    /// 選んだ点を消す（最後の 1 つは消さない）。
+    DeletePoint,
     /// 3D ビューのモデルへ画像をデカールとして置く（`at` は画面の点、`rect` は 3D ビューの表示域）。
     PlaceDecal {
         image: ImageId,
@@ -102,11 +127,14 @@ pub enum FillOp {
     /// 置き場のハンドルを隠す・出す。
     Handles(bool),
     ToggleHandles,
-    GizmoMode(Mode),
     /// グラデーションの形を 3D ビューで編集する・やめる。
     EditGradient(Option<(LayerId, Channel)>),
     /// フィルターの欄の形のグラデーションの Generator の形を 3D ビューで編集する・やめる。
     EditFilter(Option<(LayerId, yolu_core::FilterId)>),
+    /// 点のグラデーションの点を、3D ビューと 2D のキャンバスで置く・動かす編集に入る・やめる。
+    EditPoints(Option<(LayerId, Channel)>),
+    /// 点を選ぶ（欄の行・ビューの印）。
+    SelectPoint(Option<usize>),
 }
 
 impl FillOp {
@@ -116,14 +144,24 @@ impl FillOp {
         matches!(
             self,
             FillOp::Image { .. }
+                | FillOp::Anisotropic { .. }
                 | FillOp::Projection { .. }
                 | FillOp::ProjectionMode { .. }
                 | FillOp::FitPlacement { .. }
                 | FillOp::Gradient { .. }
                 | FillOp::AddGradient { .. }
                 | FillOp::PlaceDecal { .. }
+                | FillOp::AddPoints { .. }
+                | FillOp::Points { .. }
+                | FillOp::DeletePoint
         )
     }
+}
+
+/// 形のギズモか点のグラデーションの点をドラッグしている間か。ペンの接触は egui のポインタの押下にならないので、パネルが「押していなければまとめを
+/// 終える」を毎フレーム行うとき、この間は終えない（終えると 1 フレームごとに別の Undo の段になる）。離す・Esc・フォーカスの喪失は、ドラッグの側が自分で終える。
+pub fn dragging(app: &AppState) -> bool {
+    gizmo::dragging(app) || points::dragging(app)
 }
 
 /// 画像を差したチャンネルに値が無いとき core が置く既定の値（画像が使えない所に出る）。
@@ -264,6 +302,15 @@ impl AppState {
                     }
                 }
             }
+            FillOp::Anisotropic { layer, channel, on } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                self.doc.end_coalescing();
+                if let Err(e) = self.doc.set_fill_anisotropic(layer, channel, on) {
+                    self.fill_refusal(&e);
+                }
+            }
             FillOp::Projection {
                 layer,
                 projection,
@@ -351,6 +398,49 @@ impl AppState {
                     Err(e) => self.fill_refusal(&e),
                 }
             }
+            FillOp::AddPoints { layer, channel } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                let g = points::new_gradient(self, channel);
+                self.doc.end_coalescing();
+                match self.doc.set_fill_points(layer, channel, Some(g), false) {
+                    Ok(()) => {
+                        self.fillfx.edit_points = Some((layer, channel));
+                        self.fillfx.point_selected = None;
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::Points {
+                layer,
+                channel,
+                points: g,
+                coalesce,
+            } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                if !coalesce {
+                    self.doc.end_coalescing();
+                }
+                let removed = g.is_none();
+                match self
+                    .doc
+                    .set_fill_points(layer, channel, g.map(|g| *g), coalesce)
+                {
+                    Ok(()) => {
+                        if removed {
+                            if self.fillfx.edit_points == Some((layer, channel)) {
+                                self.fillfx.edit_points = None;
+                            }
+                            self.fillfx.point_selected = None;
+                        }
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::DeletePoint => points::delete_selected(self),
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
             FillOp::ImportImage(path) => {
                 // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
@@ -421,11 +511,6 @@ impl AppState {
                 self.fill_apply(FillOp::Handles(hidden));
                 return;
             }
-            FillOp::GizmoMode(mode) => {
-                if self.fillfx.drag.is_none() {
-                    self.fillfx.gizmo_mode = mode;
-                }
-            }
             FillOp::EditGradient(target) => {
                 if self.fillfx.edit_gradient != target {
                     gizmo::release(self, false);
@@ -447,6 +532,16 @@ impl AppState {
                     self.fillfx.edit_gradient = None;
                     self.selected_layer = Some(layer);
                 }
+            }
+            FillOp::EditPoints(target) => {
+                if self.fillfx.edit_points != target {
+                    points::release(self, true);
+                    self.fillfx.point_selected = None;
+                }
+                self.fillfx.edit_points = target;
+            }
+            FillOp::SelectPoint(index) => {
+                self.fillfx.point_selected = index;
             }
         }
         if self.doc.revision() != revision {

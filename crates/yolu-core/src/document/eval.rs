@@ -215,6 +215,8 @@ pub struct EffectCounters {
     pub anchor_tiles_composited: u64,
     /// 作ったミップマップの数。
     pub mip_chains_built: u64,
+    /// ほかの文書（テクスチャセット）が作って持っているミップマップを、作らずに使った数。
+    pub mip_chains_shared: u64,
     /// 正規化の統計を求めた回数。
     pub statistics_computed: u64,
     /// 持っている評価済みのタイルのバイト数。
@@ -223,12 +225,45 @@ pub struct EffectCounters {
     pub image_cache_bytes: u64,
 }
 
+/// 画像のミップマップの鍵（中身のハッシュ・色の変換・輝度）。
+type ChainKey = (String, u8, bool);
+
+/// チャンネルの種類で決まる画像の読み方（変換と輝度）と、その鍵。
+fn chain_key(
+    image: &crate::effects::ImageInput,
+    color: bool,
+    luminance: bool,
+) -> (ChainKey, Conversion, bool) {
+    let conversion = if color && image.color_space == crate::brush::ImageColorSpace::Linear {
+        Conversion::LinearToSrgb
+    } else {
+        Conversion::None
+    };
+    (
+        (image.hash.clone(), conversion as u8, luminance),
+        conversion,
+        luminance,
+    )
+}
+
+/// 文書（テクスチャセット）のあいだで共有する画像のミップマップ。持ち主は各文書のキャッシュ（予算もそれぞれの文書で数える）で、
+/// ここは弱い参照だけ: どの文書も持たなくなったミップマップは消え、同じ中身の画像を読む次の文書は作り直す。
+fn shared_chains() -> MutexGuard<'static, HashMap<ChainKey, std::sync::Weak<ImageMipChain<'static>>>>
+{
+    static SHARED: OnceLock<Mutex<HashMap<ChainKey, std::sync::Weak<ImageMipChain<'static>>>>> =
+        OnceLock::new();
+    SHARED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Default)]
 pub(crate) struct EvalCache {
     blocks: HashMap<BlockKey, BlockEntry>,
     stats: HashMap<(LayerId, SourceKey), StatsEntry>,
     anchors: HashMap<(LayerId, Channel, TileCoord), AnchorEntry>,
-    chains: HashMap<(String, u8, bool), ChainEntry>,
+    chains: HashMap<ChainKey, ChainEntry>,
     bytes: u64,
     anchor_bytes: u64,
     chain_bytes: u64,
@@ -296,7 +331,12 @@ struct FillConfig {
     value: Rgba8,
     kind: ChannelKind,
     image: Option<ImageId>,
+    /// 画像を異方性のフィルターで読むか。
+    anisotropic: bool,
+    /// デカールの形（別チャンネルの画像）を異方性のフィルターで読むか（その画像のチャンネルの設定）。
+    shape_anisotropic: bool,
     gradient: Option<generator::Settings>,
+    points: Option<crate::fill_points::PointGradient>,
     projection: Projection,
     /// デカールの形に使う別チャンネルの画像（チャンネルの順で最初の画像のチャンネル。自分なら None）。
     shape: Option<(Channel, ImageId)>,
@@ -434,6 +474,10 @@ struct FillSource<'a> {
     width: u32,
     height: u32,
     gradient: Option<BoundGenerator<'a>>,
+    /// 点のグラデーション（使えない入力なら None で、値を見せる）。
+    points: Option<crate::fill_points::BoundPoints<'a>>,
+    /// 点のグラデーションを持つチャンネルか（束ねられなくても、画像を読まずに値を見せる）。
+    has_points: bool,
     scalar: bool,
     sampler: Option<FillSampler<'a>>,
     decal: bool,
@@ -444,6 +488,22 @@ impl filter::Source for FillSource<'_> {
         (self.width, self.height)
     }
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        if self.has_points {
+            // 点のグラデーション: 位置のマップが覆わない所・使えない入力は値のまま
+            let mut v = self
+                .points
+                .as_ref()
+                .and_then(|p| p.pixel(x, y))
+                .unwrap_or(self.value);
+            if self.decal {
+                if let Some(s) = &self.sampler {
+                    v = s
+                        .apply_decal_to_value(x, y, v)
+                        .unwrap_or(Rgba8::TRANSPARENT);
+                }
+            }
+            return v.to_array();
+        }
         if let Some(g) = &self.gradient {
             // 置き換えのランプ付きのグラデーション: マップが使えない所は値のまま
             let mut v = self.value;
@@ -615,6 +675,22 @@ impl Document {
             image_cache_bytes: c.chain_bytes,
             ..c.counters
         }
+    }
+
+    /// 画像のミップマップ（この文書のキャッシュにあるもの。無ければ None）。テクスチャセットのあいだで同じ物を共有しているかを
+    /// 確かめる口。
+    pub fn cached_mip_chain(
+        &self,
+        image: ImageId,
+        kind: ChannelKind,
+    ) -> Option<Arc<ImageMipChain<'static>>> {
+        let input = self.effects.inputs.images.get(&image)?;
+        let (key, _, _) = chain_key(
+            input,
+            kind == ChannelKind::Color,
+            kind == ChannelKind::Scalar,
+        );
+        self.cache().chains.get(&key).map(|e| e.chain.clone())
     }
 
     /// 持っている評価済みのタイルを全部捨てる（次に読むときに作り直す）。
@@ -797,7 +873,10 @@ impl Document {
                         value: layer.fill.get(&c).copied().unwrap_or(Rgba8::TRANSPARENT),
                         kind,
                         image: layer.fill_images.get(&c).copied(),
+                        anisotropic: layer.fill_anisotropic(c),
+                        shape_anisotropic: shape.is_some_and(|(sc, _)| layer.fill_anisotropic(sc)),
                         gradient: layer.fill_gradients.get(&c).cloned(),
+                        points: layer.fill_points.get(&c).cloned(),
                         projection: layer.projection,
                         shape,
                         decal: layer.is_decal(),
@@ -1983,16 +2062,24 @@ impl Document {
                         frame: inputs.frame.map(|fr| fr.for_fill()),
                         stale_position: position.is_some_and(|m| m.state != MapState::Current),
                         stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
+                        anisotropic: f.anisotropic,
+                        shape_anisotropic: f.shape_anisotropic,
                     };
                     Some(FillSampler::bind(input).map_err(map_fill_error)?)
                 } else {
                     None
                 };
+                let points = f.points.as_ref().and_then(|g| {
+                    let position = maps.iter().find(|m| m.kind == MapKind::Position).cloned();
+                    crate::fill_points::BoundPoints::bind(g, position, frame, dims)
+                });
                 ChainSource::Fill(Box::new(FillSource {
                     value: f.value,
                     width: self.width,
                     height: self.height,
                     gradient,
+                    points,
+                    has_points: f.points.is_some(),
                     scalar: f.kind != ChannelKind::Color,
                     sampler,
                     decal: f.decal,
@@ -2049,12 +2136,7 @@ impl Document {
             .images
             .get(&id)
             .ok_or_else(|| InactiveReason::Rejected("プロジェクトにその画像が無い".into()))?;
-        let conversion = if color && image.color_space == crate::brush::ImageColorSpace::Linear {
-            Conversion::LinearToSrgb
-        } else {
-            Conversion::None
-        };
-        let key = (image.hash.clone(), conversion as u8, luminance);
+        let (key, conversion, luminance) = chain_key(image, color, luminance);
         {
             let mut c = self.cache();
             c.clock += 1;
@@ -2065,20 +2147,40 @@ impl Document {
             }
         }
         let budget = self.effects.image_cache_budget;
-        let chain = ImageMipChain::build_shared(
-            image.pixels.clone(),
-            image.width,
-            image.height,
-            conversion,
-            luminance,
-            budget,
-            None,
-        )
-        .map_err(|e| InactiveReason::Rejected(e.to_string()))?;
-        let chain = Arc::new(chain);
+        // ほかの文書が同じ中身の画像のミップマップを持っていれば、それを使う（予算はこの文書でも数える）
+        let shared = shared_chains()
+            .get(&key)
+            .and_then(std::sync::Weak::upgrade)
+            .filter(|c| c.bytes() <= budget);
+        let reused = shared.is_some();
+        let chain = match shared {
+            Some(chain) => chain,
+            None => {
+                let chain = Arc::new(
+                    ImageMipChain::build_shared(
+                        image.pixels.clone(),
+                        image.width,
+                        image.height,
+                        conversion,
+                        luminance,
+                        budget,
+                        None,
+                    )
+                    .map_err(|e| InactiveReason::Rejected(e.to_string()))?,
+                );
+                let mut registry = shared_chains();
+                registry.retain(|_, w| w.strong_count() > 0);
+                registry.insert(key.clone(), Arc::downgrade(&chain));
+                chain
+            }
+        };
         {
             let mut c = self.cache();
-            c.counters.mip_chains_built += 1;
+            if reused {
+                c.counters.mip_chains_shared += 1;
+            } else {
+                c.counters.mip_chains_built += 1;
+            }
             c.clock += 1;
             let used = c.clock;
             c.chain_bytes += chain.bytes();
@@ -2599,6 +2701,9 @@ impl Document {
             height: self.height,
             image: Some(chain),
             shape: None,
+            // 塗りつぶしの画像の既定と同じく異方性で読む（同じ画像・同じ投影の塗りつぶしの層と同じ画素。段ごとの切り替えは持たない）
+            anisotropic: true,
+            shape_anisotropic: false,
             fallback: Rgba8::TRANSPARENT,
             missing_image: false,
             positions: usable_map(position).map(|m| m.as_fill()),

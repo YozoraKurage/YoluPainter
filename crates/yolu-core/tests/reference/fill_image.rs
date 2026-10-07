@@ -3,8 +3,56 @@ use cases::*;
 use std::sync::atomic::AtomicBool;
 use yolu_core::{fill_image::*, Rgba8};
 
-#[test]
-fn csharp_all_modes_all_bytes_threads_and_tiles() {
+/// 正解の組: C# が撮った、異方性を切った道（`tools/csharp-golden/fill.sh golden`）と、Rust が撮った、異方性を入れた道
+/// （撮り直しは `YOLU_GOLDEN_UPDATE=1`）。
+#[derive(Clone, Copy)]
+struct Golden {
+    dir: &'static str,
+    anisotropic: bool,
+    /// Rust が撮る正解（撮り直しで書き直す）。C# の正解は書き直さない。
+    rust: bool,
+}
+
+const CSHARP: Golden = Golden {
+    dir: "fill-image",
+    anisotropic: false,
+    rust: false,
+};
+
+const RUST_ANISOTROPIC: Golden = Golden {
+    dir: "fill-image-anisotropic",
+    anisotropic: true,
+    rust: true,
+};
+
+/// `actual` を正解 `tests/golden/<dir>/<name>.rgba` と全バイトで比べる。`write`（Rust の正解の、スレッド 1 の回）なら、撮り直しの間は
+/// 違う（無い）正解を今の出力で書き直す。ほかのスレッドの回は書き直した正解と比べる（撮り直しでもスレッドの数で変わらないことを見る）。
+fn compare(golden: Golden, name: &str, actual: &[u8], write: bool, what: &str) {
+    let path = crate::golden_update::tests_dir().join(format!("golden/{}/{name}.rgba", golden.dir));
+    let expected = std::fs::read(&path).ok();
+    if write
+        && golden.rust
+        && crate::golden_update::updating()
+        && expected.as_deref() != Some(actual)
+    {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+    let expected = expected.unwrap_or_else(|| panic!("{} が無い", path.display()));
+    assert_eq!(actual.len(), expected.len(), "{what}");
+    let differences: Vec<_> = actual
+        .iter()
+        .zip(&expected)
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .take(8)
+        .collect();
+    assert!(differences.is_empty(), "{what}: {differences:?}");
+}
+
+/// 6 つの投影 × 8 つの入力を、スレッド 1・2・4 で全バイト正解と比べ、タイルに分けて描いても全面と同じバイトかを見る。
+fn all_modes(golden: Golden) {
     let fixture = Fixture::new(37, 29);
     let shape_data = picture(13, 17, true);
     let shape =
@@ -33,24 +81,14 @@ fn csharp_all_modes_all_bytes_threads_and_tiles() {
                         None,
                     )
                     .unwrap();
-                    let sampler = fixture.sampler(mode, v, &chain, &shape);
+                    let sampler = fixture.sampler_with(mode, v, &chain, &shape, golden.anisotropic);
                     let actual = sampler.render(0, 0, 37, 29, u64::MAX, None).unwrap();
-                    let path = format!(
-                        "{}/tests/golden/fill-image/{mode}-{v}.rgba",
-                        env!("CARGO_MANIFEST_DIR")
-                    );
-                    let expected = std::fs::read(path).unwrap();
-                    assert_eq!(actual.len(), expected.len());
-                    let differences: Vec<_> = actual
-                        .iter()
-                        .zip(&expected)
-                        .enumerate()
-                        .filter(|(_, (a, b))| a != b)
-                        .take(8)
-                        .collect();
-                    assert!(
-                        differences.is_empty(),
-                        "mode={mode} variant={v} threads={threads}: {differences:?}"
+                    compare(
+                        golden,
+                        &format!("{mode}-{v}"),
+                        &actual,
+                        threads == 1,
+                        &format!("{} mode={mode} variant={v} threads={threads}", golden.dir),
                     );
                     for y in (0..29).step_by(7) {
                         for x in (0..37).step_by(11) {
@@ -71,6 +109,17 @@ fn csharp_all_modes_all_bytes_threads_and_tiles() {
         });
     }
 }
+
+#[test]
+fn csharp_all_modes_all_bytes_threads_and_tiles() {
+    all_modes(CSHARP);
+}
+
+#[test]
+fn rust_anisotropic_all_modes_all_bytes_threads_and_tiles() {
+    all_modes(RUST_ANISOTROPIC);
+}
+
 #[test]
 fn uv_identity_preserves_transparent_rgb() {
     let data = picture(31, 23, false);
@@ -546,8 +595,8 @@ fn extreme_coordinates_are_refused_before_float_to_integer_overflow() {
     assert!(matches!(result, Err(FillError::Invalid(_))));
 }
 
-#[test]
-fn csharp_decal_values_all_bytes_threads_and_tiles() {
+/// デカールの値（`apply_decal_to_value`）を 8 つの入力で、スレッド 1・2・4 で全バイト正解と比べ、タイルと 1 画素ずつでも同じバイトかを見る。
+fn decal_values_all(golden: Golden) {
     let fixture = Fixture::new(37, 29);
     let shape_data = picture(13, 17, true);
     let shape =
@@ -576,26 +625,16 @@ fn csharp_decal_values_all_bytes_threads_and_tiles() {
                     None,
                 )
                 .unwrap();
-                let sampler = fixture.sampler(5, v, &chain, &shape);
+                let sampler = fixture.sampler_with(5, v, &chain, &shape, golden.anisotropic);
                 let actual = sampler
                     .render_decal_values(0, 0, 37, 29, &values, u64::MAX, None)
                     .unwrap();
-                let path = format!(
-                    "{}/tests/golden/fill-image/decal-values-{v}.rgba",
-                    env!("CARGO_MANIFEST_DIR")
-                );
-                let expected = std::fs::read(path).unwrap();
-                assert_eq!(actual.len(), expected.len());
-                let differences: Vec<_> = actual
-                    .iter()
-                    .zip(&expected)
-                    .enumerate()
-                    .filter(|(_, (a, b))| a != b)
-                    .take(8)
-                    .collect();
-                assert!(
-                    differences.is_empty(),
-                    "variant={v} threads={threads}: {differences:?}"
+                compare(
+                    golden,
+                    &format!("decal-values-{v}"),
+                    &actual,
+                    threads == 1,
+                    &format!("{} variant={v} threads={threads}", golden.dir),
                 );
                 for y in (0..29usize).step_by(7) {
                     for x in (0..37usize).step_by(11) {
@@ -639,6 +678,16 @@ fn csharp_decal_values_all_bytes_threads_and_tiles() {
             }
         });
     }
+}
+
+#[test]
+fn csharp_decal_values_all_bytes_threads_and_tiles() {
+    decal_values_all(CSHARP);
+}
+
+#[test]
+fn rust_anisotropic_decal_values_all_bytes_threads_and_tiles() {
+    decal_values_all(RUST_ANISOTROPIC);
 }
 
 #[test]
@@ -1150,4 +1199,179 @@ fn normal_map_of_another_size_is_named_and_not_used() {
     .unwrap();
     assert_eq!(planar.reason(), None);
     assert!(planar.placed());
+}
+
+// ---- 異方性のフィルター ----
+
+/// 横縞（行 y の 4 で割った余りが 2 未満なら黒、そうでなければ白。u の向きには一様）の w × h。
+fn stripes(w: usize, h: usize) -> Vec<u8> {
+    let mut d = vec![255; w * h * 4];
+    for y in 0..h {
+        let c = if y % 4 < 2 { 0 } else { 255 };
+        for x in 0..w {
+            d[(y * w + x) * 4..][..3].fill(c);
+        }
+    }
+    d
+}
+
+/// 輝度の平均からの平均の隔たり（にじむほど小さい）。
+fn contrast(d: &[u8]) -> f64 {
+    let n = d.len() / 4;
+    let mean = d.chunks(4).map(|p| p[0] as f64).sum::<f64>() / n as f64;
+    d.chunks(4).map(|p| (p[0] as f64 - mean).abs()).sum::<f64>() / n as f64
+}
+
+#[test]
+fn anisotropic_uv_footprint_keeps_the_sharp_direction_with_a_known_answer() {
+    let image = stripes(32, 32);
+    let chain =
+        ImageMipChain::build(&image, 32, 32, Conversion::None, false, u64::MAX, None).unwrap();
+    let input = |anisotropic| FillInput {
+        width: 32,
+        height: 32,
+        image: Some(&chain),
+        projection: Projection {
+            tiles: [8., 1.],
+            ..Projection::default()
+        },
+        anisotropic,
+        ..FillInput::default()
+    };
+    let on = FillSampler::bind(input(true)).unwrap();
+    let off = FillSampler::bind(input(false)).unwrap();
+    let a = on.render(0, 0, 32, 32, u64::MAX, None).unwrap();
+    let b = off.render(0, 0, 32, 32, u64::MAX, None).unwrap();
+    // u の向きに 8 テクセル／画素、v の向きに 1 テクセル／画素: 8 点を段 0 のテクセルの中心で取るので、行の色そのもの
+    for y in 0..32 {
+        for x in 0..32 {
+            assert_eq!(texel(&a, 32, x, y), texel(&image, 32, 0, y), "({x},{y})");
+        }
+    }
+    // 等方（C# と同じ）は長い向きの段 3 で読むので、縞がにじむ
+    assert!(
+        contrast(&b) < contrast(&a) / 4.,
+        "{} {}",
+        contrast(&b),
+        contrast(&a)
+    );
+}
+
+#[test]
+fn anisotropic_reads_an_oblique_planar_projection_with_less_blur_on_every_thread_and_tile() {
+    // 板を X のまわりに 75° 傾けた平面の投影で、8 回繰り返す縞を読む: 板の y の向きの足跡は短く、x の向きは長い
+    let image = stripes(32, 32);
+    let chain =
+        ImageMipChain::build(&image, 32, 32, Conversion::None, false, u64::MAX, None).unwrap();
+    let flat = board(0., false);
+    let maps = ModelMaps::from_geometry(&flat, 32, 32, 0, u64::MAX, u64::MAX, None).unwrap();
+    let projection = Projection {
+        mode: ProjectionMode::Planar,
+        tiles: [8., 8.],
+        placement: Placement {
+            rotation: [75., 0., 0.],
+            size: [2., 2., 2.],
+            ..Placement::default()
+        },
+        ..Projection::default()
+    };
+    let make = |anisotropic| {
+        FillSampler::bind(FillInput {
+            width: 32,
+            height: 32,
+            anisotropic,
+            ..input_from(&maps, projection, Some(&chain))
+        })
+        .unwrap()
+    };
+    let on = make(true);
+    let off = make(false);
+    let a = on.render(0, 0, 32, 32, u64::MAX, None).unwrap();
+    let b = off.render(0, 0, 32, 32, u64::MAX, None).unwrap();
+    assert!(a != b);
+    assert!(
+        contrast(&a) > contrast(&b) * 1.5,
+        "異方性 {} 等方 {}",
+        contrast(&a),
+        contrast(&b)
+    );
+    // 並べる数・タイルの分け方によらず同じバイト（読みはスカラーの f64 の 1 つの道）
+    for threads in [1, 2, 4] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            assert!(on.render(0, 0, 32, 32, u64::MAX, None).unwrap() == a);
+            for (x, y, w, h) in [(0, 0, 11, 7), (11, 7, 21, 25), (5, 13, 1, 1)] {
+                let tile = on.render(x, y, w, h, u64::MAX, None).unwrap();
+                for row in 0..h as usize {
+                    let o = ((y as usize + row) * 32 + x as usize) * 4;
+                    assert!(
+                        tile[row * w as usize * 4..][..w as usize * 4] == a[o..o + w as usize * 4]
+                    );
+                }
+            }
+        });
+    }
+}
+
+#[test]
+fn anisotropic_changes_nothing_for_a_round_footprint() {
+    // 正方形の画像を正方形の出力へ: 等倍・同じ倍率で縮める・回す（足跡は丸い）。縦横の倍率の違う出力に回して貼ると足跡は細長くなり、
+    // 異方性で読む（それは丸くない）
+    let data = picture(24, 24, false);
+    let chain =
+        ImageMipChain::build(&data, 24, 24, Conversion::None, false, u64::MAX, None).unwrap();
+    for (tiles, rotation) in [([1., 1.], 0.), ([4., 4.], 0.), ([2.5, 2.5], 27.)] {
+        let render = |anisotropic| {
+            FillSampler::bind(FillInput {
+                width: 24,
+                height: 24,
+                image: Some(&chain),
+                projection: Projection {
+                    tiles,
+                    rotation,
+                    ..Projection::default()
+                },
+                anisotropic,
+                ..FillInput::default()
+            })
+            .unwrap()
+            .render(0, 0, 24, 24, u64::MAX, None)
+            .unwrap()
+        };
+        let on = render(true);
+        assert!(on == render(false), "{tiles:?} {rotation}");
+        if tiles == [1., 1.] {
+            assert!(on == data, "等倍は元の画素");
+        }
+    }
+    // 真正面の平面の投影
+    let image = ramp(8, 8);
+    let chain =
+        ImageMipChain::build(&image, 8, 8, Conversion::None, false, u64::MAX, None).unwrap();
+    let flat = board(0., false);
+    let maps = ModelMaps::from_geometry(&flat, 8, 8, 0, u64::MAX, u64::MAX, None).unwrap();
+    for tiles in [[1., 1.], [3., 3.]] {
+        let projection = Projection {
+            mode: ProjectionMode::Planar,
+            tiles,
+            placement: Placement {
+                size: [2., 2., 1.],
+                ..Placement::default()
+            },
+            ..Projection::default()
+        };
+        let render = |anisotropic| {
+            FillSampler::bind(FillInput {
+                anisotropic,
+                ..input_from(&maps, projection, Some(&chain))
+            })
+            .unwrap()
+            .render(0, 0, 8, 8, u64::MAX, None)
+            .unwrap()
+        };
+        assert!(render(true) == render(false), "{tiles:?}");
+    }
 }

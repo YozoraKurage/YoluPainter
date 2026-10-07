@@ -283,7 +283,7 @@ fn older_readers_refuse_version_28_by_the_number() {
 
 #[test]
 fn versions_without_a_meaning_are_refused_by_the_number() {
-    // 読める版は 1〜25・26（分けた正本）・27（パスの一覧）・28・32。間の 29〜31 は番号だけで並びの定義が無い。読める範囲（1〜32）の中にあるので、
+    // 読める版は 1〜25・26（分けた正本）・27（パスの一覧）・28・29（点のグラデーション）・32。間の 30・31 は番号だけで並びの定義が無い。読める範囲（1〜32）の中にあるので、
     // 断らないと版 25 の並びとして読み進める（色調補正のフィルターだけの文書は、版 24 の並びが版 25〜28 と同じなので、版の数だけを書き換えても中身は読める）
     let (mut doc, id) = plain();
     let posterize = EffectSettings::from_catalog("posterize", &BTreeMap::new()).unwrap();
@@ -307,10 +307,11 @@ fn versions_without_a_meaning_are_refused_by_the_number() {
         MIXING_VERSION,
         yolu_io::PATHS_VERSION,
         EFFECTS_VERSION,
+        yolu_io::POINT_GRADIENT_VERSION,
     ] {
         assert_eq!(NativeDocument::read(&numbered(n)).unwrap().version(), n);
     }
-    for n in 29..=31 {
+    for n in 30..=31 {
         let e = NativeDocument::read(&numbered(n))
             .err()
             .map(|e| e.to_string());

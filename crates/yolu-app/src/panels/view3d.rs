@@ -206,6 +206,7 @@ impl View3dSlot {
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
             crate::fillfx::gizmo::draw(ui, app, content, pointer);
+            crate::fillfx::points::draw(ui, app, content, pointer);
             gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
             crate::fillfx::decal_drop(ui, app, content);
         }

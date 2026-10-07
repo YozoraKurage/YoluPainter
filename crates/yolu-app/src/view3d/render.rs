@@ -103,6 +103,8 @@ pub struct View3dStats {
     /// 最後の `prepare` の CPU の時間（マイクロ秒）: 全体と、そのうち塗った絵の同期（合成・縮め・上げ・ミップの積み）。GPU の実行は含まない。
     pub last_prepare_us: u64,
     pub last_sync_us: u64,
+    /// 粗く合成した絵を見せているタイルの数（ドラッグの間。終われば正確に上げ直して 0）。
+    pub paint_coarse_tiles: usize,
     /// 今のセットでないセットの絵を持っている数（GPU に作ってあるもの）。
     pub other_sets: usize,
     /// 持ちたいが、メモリの予算が足りずに持っていないセットの数（その面は絵の無い描き方）。
@@ -152,6 +154,7 @@ impl From<PaintStats> for View3dStats {
             paint_level: p.level,
             paint_by_budget: p.by_budget,
             paint_bytes: p.gpu_bytes,
+            paint_coarse_tiles: p.coarse_tiles,
             ..View3dStats::default()
         }
     }

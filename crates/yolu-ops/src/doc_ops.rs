@@ -25,6 +25,7 @@ use crate::refs::{
 use crate::reply::*;
 use crate::text::Text;
 use crate::value::{format_color, parse_color, Value};
+use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 
 /// 命令が当たるセットの、文書の外の事実。
 #[derive(Clone, Copy, Debug)]
@@ -314,6 +315,7 @@ pub fn layer_info(doc: &Document, layer: &Layer) -> LayerInfo {
                     fill: layer.fill_value(c).map(format_color),
                     blend_mode: blend.mode.map(|m| m.name().to_owned()),
                     opacity: blend.opacity,
+                    points: layer.fill_points(c).map(points_spec),
                 }
             })
             .collect(),
@@ -421,6 +423,7 @@ fn inactive_text(e: &InactiveEffect) -> Text {
         InactiveTarget::FillGradient(c) => format!("gradient ({c:?})"),
         InactiveTarget::Decal => "decal".to_owned(),
         InactiveTarget::FillImage(c) => format!("image ({c:?})"),
+        InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
     };
     let why = match &e.reason {
         InactiveReason::Generator(I::MissingMap(k)) => format!("no {k:?} map is available"),
@@ -466,6 +469,65 @@ fn color_of(text: &str) -> Result<Rgba8, OpError> {
             format!("A color is #rrggbb or #rrggbbaa ({text})"),
         )
     })
+}
+
+fn points_spec(g: &PointGradient) -> PointGradientSpec {
+    PointGradientSpec {
+        space: match g.space {
+            PointSpace::Model => PointSpaceName::Model,
+            PointSpace::Uv => PointSpaceName::Uv,
+        },
+        spread: Some(g.spread),
+        points: g
+            .points
+            .iter()
+            .map(|p| PointSpec {
+                position: match g.space {
+                    PointSpace::Model => p.position.to_vec(),
+                    PointSpace::Uv => p.position[..2].to_vec(),
+                },
+                color: format_color(p.color),
+            })
+            .collect(),
+    }
+}
+
+fn points_of(spec: &PointGradientSpec) -> Result<PointGradient, OpError> {
+    let space = match spec.space {
+        PointSpaceName::Model => PointSpace::Model,
+        PointSpaceName::Uv => PointSpace::Uv,
+    };
+    let mut points = Vec::with_capacity(spec.points.len());
+    for p in &spec.points {
+        let position = match (space, p.position.as_slice()) {
+            (PointSpace::Model, [x, y, z]) => [*x, *y, *z],
+            (PointSpace::Uv, [u, v]) => [*u, *v, 0.0],
+            _ => {
+                return Err(OpError::invalid_value(
+                    "点の位置は、モデルの空間なら [x, y, z]、UV の空間なら [u, v] です",
+                    "A point's position is [x, y, z] in model space and [u, v] in UV space",
+                ))
+            }
+        };
+        points.push(GradientPoint {
+            position,
+            color: color_of(&p.color)?,
+        });
+    }
+    let g = PointGradient {
+        space,
+        spread: spec
+            .spread
+            .unwrap_or(yolu_core::fill_points::DEFAULT_SPREAD),
+        points,
+    };
+    g.validate().map_err(|why| {
+        OpError::invalid_value(
+            format!("点のグラデーションが使えません（{why}）"),
+            "The point gradient is out of range (1 to 64 points, finite positions within ±1e6, spread 0..=1)",
+        )
+    })?;
+    Ok(g)
 }
 
 fn adjustment_of(spec: &EffectSpec) -> Result<AdjustmentSettings, OpError> {
@@ -621,6 +683,13 @@ fn layer_set(
             color.as_deref().map(color_of).transpose()?,
         ));
     }
+    let mut point_gradients = Vec::new();
+    for (name, spec) in &args.points {
+        point_gradients.push((
+            resolve_channel(doc, name)?,
+            spec.as_ref().map(points_of).transpose()?,
+        ));
+    }
     let adjustment = match &args.adjustment {
         None => None,
         Some(spec) => {
@@ -724,6 +793,9 @@ fn layer_set(
         }
         for (channel, value) in &fills {
             d.set_fill_value(id, *channel, *value, false)?;
+        }
+        for (channel, g) in &point_gradients {
+            d.set_fill_points(id, *channel, g.clone(), false)?;
         }
         Ok(())
     })?;

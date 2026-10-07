@@ -96,7 +96,7 @@ The list of error `code`s is in [the command reference](https://github.com/Yozor
 | `layer.add` | `kind` (paint, fill, group, adjustment), `name`, `above`, `fill`, `adjustment`, `channels` | Edit |
 | `layer.delete` | `layer`, `confirm` | Destructive |
 | `layer.move` | `layer`, `parent`, `to_root`, `index` | Edit |
-| `layer.set` | `layer`, `name`, `visible`, `opacity`, `blend_mode`, `clipping`, `locks`, `channels`, `fill`, `adjustment` | Edit |
+| `layer.set` | `layer`, `name`, `visible`, `opacity`, `blend_mode`, `clipping`, `locks`, `channels`, `fill`, `adjustment`, `points` (fill layer point gradients: channel -> `space`, `spread`, `points`; `null` removes) | Edit |
 | `mask.add` | `layer` | Edit |
 | `mask.delete` | `layer`, `confirm` | Destructive |
 | `mask.set` | `layer`, `enabled`, `inverted`, `density` | Edit |
