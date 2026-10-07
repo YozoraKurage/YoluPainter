@@ -303,8 +303,8 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         false,
         can_save,
         Some(lang.pick(
-            "選んでいるレイヤー（グループなら中身ごと）をスマートマテリアルとして棚に入れる",
-            "Put the selected layer (with its contents, for a group) on the shelf as a smart material",
+            "選んでいるレイヤー（グループなら中身ごと）をスマートマテリアルとしてアセットに入れる",
+            "Put the selected layer (with its contents, for a group) into the project's assets as a smart material",
         )),
         None,
     )
@@ -322,8 +322,8 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         false,
         can_save && layer.is_some_and(|(_, has_mask)| has_mask),
         Some(lang.pick(
-            "選んでいるレイヤーのマスクをスマートマスクとして棚に入れる",
-            "Put the selected layer's mask on the shelf as a smart mask",
+            "選んでいるレイヤーのマスクをスマートマスクとしてアセットに入れる",
+            "Put the selected layer's mask into the project's assets as a smart mask",
         )),
         None,
     )
@@ -568,7 +568,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
                 .shelf
                 .unavailable
                 .clone()
-                .map(|r| (lang.pick("棚を読めません", "Shelf unreadable"), r)),
+                .map(|r| (lang.pick("アセットを読めません", "Assets unreadable"), r)),
             Source::Library => app
                 .library
                 .problem()
@@ -971,8 +971,8 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "shelf.remove",
         "delete",
         lang.pick(
-            "棚から消す（置いた層はそのまま）",
-            "Remove from the shelf (placed layers stay)",
+            "アセットから消す（置いた層はそのまま）",
+            "Remove from the project's assets (placed layers stay)",
         ),
         false,
         id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
@@ -1050,8 +1050,8 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         (Some(rel), _, _) if uses => (
             lang.pick("使う", "Use"),
             lang.pick(
-                "写しをプロジェクトの棚へ入れる（まだ置けない種類）",
-                "Copy it into the project's shelf (cannot be placed yet)",
+                "写しをプロジェクトのアセットへ入れる（まだ置けない種類）",
+                "Copy it into the project's assets (cannot be placed yet)",
             )
             .to_owned(),
             free && app.shelf.unavailable.is_none()
@@ -1410,7 +1410,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
                 && !matches!(app.shelf.block_of(&id), Some(shelf::Block::Unreadable(_))),
         ),
         Entry::item(
-            lang.pick("棚から消す…", "Remove from the shelf…"),
+            lang.pick("アセットから消す…", "Remove from the project's assets…"),
             Action::Shelf(ShelfOp::AskRemove(id)),
         )
         .enabled(free && app.shelf.unavailable.is_none() && !builtin),
@@ -1564,8 +1564,8 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         DialogRequest::ShelfImport => {
             if let Some(paths) = crate::dialog::file()
                 .set_title(lang.pick(
-                    "スマート素材を棚へ読み込む",
-                    "Import smart assets to the shelf",
+                    "スマート素材をアセットへ読み込む",
+                    "Import smart assets into the project",
                 ))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .pick_files()
@@ -1647,8 +1647,8 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let yes = crate::dialog::message()
                 .set_title("YoluPainter")
                 .set_description(match lang {
-                    Lang::Ja => format!("「{name}」を棚から消しますか？"),
-                    Lang::En => format!("Remove \"{name}\" from the shelf?"),
+                    Lang::Ja => format!("「{name}」をアセットから消しますか？"),
+                    Lang::En => format!("Remove \"{name}\" from the project's assets?"),
                 })
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .set_level(rfd::MessageLevel::Warning)

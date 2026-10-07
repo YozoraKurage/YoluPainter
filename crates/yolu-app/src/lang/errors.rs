@@ -1298,7 +1298,7 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
     } else if m.contains(REFUSAL_GENERATORS) {
         Block::Generators.reason(lang)
     } else if m.contains(REFUSAL_MEMORY_BUDGET) {
-        lang.pick("棚の予算を超えます", "Over the shelf budget")
+        lang.pick("アセットの予算を超えます", "Over the asset budget")
             .into()
     } else if m.contains(REFUSAL_ARCHIVE_BUDGET) {
         lang.pick(

@@ -794,13 +794,13 @@ fn an_image_that_cannot_be_used_makes_no_layer_and_says_why() {
     }));
     assert_eq!(layer_count(&s), 1);
     assert_eq!(s.doc.undo_count(), steps);
-    assert_eq!(s.message, "棚に画像がありません");
+    assert_eq!(s.message, "アセットに画像がありません");
     s.lang = Lang::En;
     s.apply(Action::LayerMenu(Op::FillImage {
         image: ImageId(0x1234_5678),
         mode: ProjectionMode::Uv,
     }));
-    assert_eq!(s.message, "The shelf has no such image");
+    assert_eq!(s.message, "No such image in the project's assets");
 
     // 復号の予算を超える画像: 断られた画像は誰も持たない
     let mut s = AppState::new(64, 64);

@@ -423,8 +423,11 @@ impl AppState {
     pub fn use_shelf_image(&mut self, resource_id: &str) -> Result<ImageId, String> {
         let lang = self.lang;
         let id = image_id(resource_id).ok_or_else(|| {
-            lang.pick("その画像は棚にありません", "No such image on the shelf")
-                .to_owned()
+            lang.pick(
+                "その画像はアセットにありません",
+                "No such image in the project's assets",
+            )
+            .to_owned()
         })?;
         let present = self
             .shelf
@@ -433,7 +436,10 @@ impl AppState {
             .any(|r| r.kind == "image" && r.id == resource_id);
         if !present {
             return Err(lang
-                .pick("その画像は棚にありません", "No such image on the shelf")
+                .pick(
+                    "その画像はアセットにありません",
+                    "No such image in the project's assets",
+                )
                 .into());
         }
         self.fx.inputs.requested.insert(id);

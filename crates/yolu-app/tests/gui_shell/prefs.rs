@@ -412,7 +412,7 @@ fn headless_the_other_values_are_kept_clamped_or_refused() {
         Some(folder),
         "相対パスは受けない"
     );
-    assert_eq!(s.message, "棚の場所は絶対パスで指定します。");
+    assert_eq!(s.message, "ライブラリの場所は絶対パスで指定します。");
     s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
     set(
         &mut s,
@@ -594,7 +594,11 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     open_settings(&mut h);
     assert!(h.state().state.prefs.open);
     // 棚の場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
-    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    let shelf = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
     h.state_mut()
         .state
         .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
@@ -715,7 +719,7 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         h.state().state.dialog_request,
         Some(DialogRequest::PrefsLibraryFolder)
     );
-    let folder = dir.join("MyShelf");
+    let folder = dir.join("MyLibrary");
     h.state_mut()
         .state
         .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
@@ -1307,7 +1311,11 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     // 棚の場所は、機械によらない場所にして撮る
-    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    let shelf = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
     h.state_mut()
         .state
         .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
@@ -1441,7 +1449,11 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     let mut h = app_with_settings(&path, vec2(1280.0, 1000.0));
     open_settings(&mut h);
     // 窓に出る場所は、機械によらない場所にして撮る
-    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    let shelf = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
     for pref in [
         Pref::LibraryFolder(Some(shelf)),
         Pref::DiskCacheFolder(Some(fixed_cache_folder())),

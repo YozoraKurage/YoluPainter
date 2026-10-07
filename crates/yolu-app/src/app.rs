@@ -918,8 +918,8 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
-                let mut dialog =
-                    crate::dialog::file().set_title(lang.pick("棚の場所", "Library folder"));
+                let mut dialog = crate::dialog::file()
+                    .set_title(lang.pick("ライブラリの場所", "Library folder"));
                 if let Some(current) = self
                     .state
                     .prefs
@@ -1007,7 +1007,10 @@ impl YoluApp {
             Some(DialogRequest::FillImage) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file()
-                    .set_title(lang.pick("画像を棚へ取り込む", "Add an image to the shelf"))
+                    .set_title(lang.pick(
+                        "画像をアセットへ取り込む",
+                        "Add an image to the project's assets",
+                    ))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {

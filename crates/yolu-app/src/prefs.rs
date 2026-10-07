@@ -306,7 +306,7 @@ impl AppState {
                         self.refuse(
                             Source::Settings,
                             lang.pick(
-                                "棚の場所は絶対パスで指定します。",
+                                "ライブラリの場所は絶対パスで指定します。",
                                 "The library folder must be an absolute path.",
                             ),
                         );
@@ -740,7 +740,7 @@ fn content_height(gpu_details: bool, cache_details: bool, external_ops: bool) ->
         + dropdown * 3.0 + dropdown // 処理: スレッド・合成・GPU のメモリ・詳しく
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
-        + dropdown * 2.0 // ファイル: 棚の場所（パスとボタン）
+        + dropdown * 2.0 // ファイル: ライブラリの場所（パスとボタン）
         + slider + dropdown // 退避を残す数・すべて残す
         + 8.0
 }
@@ -1181,8 +1181,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             crate::settings::setting_name(lang, "gpu_memory"),
             s.gpu_memory.name(lang),
             lang.pick(
-                "3D ビュー・キャンバスの GPU の合成・棚のサムネイルが使ってよい GPU のメモリの量。足りないと、3D ビューはほかのテクスチャセットの絵を減らし、今のセットの絵を小さくして見せます（テクスチャと書き出しは変わりません）。自動は GPU のメモリの量が分かるときだけ、それに合わせます（少なければ低に、多ければ標準の量を増やします）。分からないときは標準です",
-                "How much GPU memory the 3D view, the canvas compositing and the shelf previews may use. When it runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard",
+                "3D ビュー・キャンバスの GPU の合成・アセットのサムネイルが使ってよい GPU のメモリの量。足りないと、3D ビューはほかのテクスチャセットの絵を減らし、今のセットの絵を小さくして見せます（テクスチャと書き出しは変わりません）。自動は GPU のメモリの量が分かるときだけ、それに合わせます（少なければ低に、多ければ標準の量を増やします）。分からないときは標準です",
+                "How much GPU memory the 3D view, the canvas compositing and the asset previews may use. When it runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard",
             ),
             PrefChoice::GpuMemory,
         ));
@@ -1209,8 +1209,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                     NumberFormat::int(" MiB"),
                 )
                 .tooltip(lang.pick(
-                    "GPU のメモリの合計。3D の絵・キャンバスの合成・棚のサムネイルへ 4 : 4 : 1 に配ります。動かすと、段の選びを置き換えた量の指定になります",
-                    "The total GPU memory, split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the shelf previews. Moving it replaces the level with a custom amount",
+                    "GPU のメモリの合計。3D の絵・キャンバスの合成・アセットのサムネイルへ 4 : 4 : 1 に配ります。動かすと、段の選びを置き換えた量の指定になります",
+                    "The total GPU memory, split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the asset previews. Moving it replaces the level with a custom amount",
                 )),
             );
             gpu_dragging = out.active;
@@ -1273,9 +1273,12 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             &mut rows,
             lang,
             "library",
-            lang.pick("棚の場所", "Library folder"),
+            lang.pick("ライブラリの場所", "Library folder"),
             &shown,
-            lang.pick("棚の場所のフォルダを選ぶ", "Choose the library folder"),
+            lang.pick(
+                "ライブラリの場所のフォルダを選ぶ",
+                "Choose the library folder",
+            ),
             lang.pick("既定の場所に戻す", "Back to the default folder"),
             s.library_folder.is_some(),
             enabled,

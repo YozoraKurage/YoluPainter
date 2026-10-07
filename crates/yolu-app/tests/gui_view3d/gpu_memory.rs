@@ -465,7 +465,11 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     h.state_mut().state.prefs.gpu = Adapter::default();
     open_settings(&mut h);
     // 棚の場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
-    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    let shelf = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
     h.state_mut()
         .state
         .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(

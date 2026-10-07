@@ -32,7 +32,7 @@
 | `%APPDATA%\YoluPainter\logs\` | クラッシュの記録 | 消える |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | サムネイルのキャッシュ | 消える |
 | `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link と、外からの操作（`yolupainter-cli`・MCP）の接続の置き場 | 消える |
-| `%APPDATA%\YoluPainter\Library\`（棚の場所の既定） | 個人のライブラリ | 残る |
+| `%APPDATA%\YoluPainter\Library\`（ライブラリの場所の既定） | 個人のライブラリ | 残る |
 | `%APPDATA%\YoluPainter\brushes\` | 自分のブラシ・消しゴム | 残る |
 | `%APPDATA%\YoluPainter\subtools\` | 自分のサブツール | 残る |
 | `%APPDATA%\YoluPainter\gradients\` | グラデーションのセット | 残る |
@@ -40,7 +40,7 @@
 | `%APPDATA%\YoluPainter\hide_presets\` | 面の隠し方のプリセット | 残る |
 | `%APPDATA%\YoluPainter\pose_presets\` | ポーズのプリセット | 残る |
 
-残る物と、このアプリが作ったのではないファイルがあるときは、`%APPDATA%\YoluPainter` のフォルダごと残ります。設定で棚の場所や復旧の置き場を別のフォルダにしているときは、そのフォルダには触りません。`.ylp` などの文書は、どちらの場合も消えません。
+残る物と、このアプリが作ったのではないファイルがあるときは、`%APPDATA%\YoluPainter` のフォルダごと残ります。設定でライブラリの場所や復旧の置き場を別のフォルダにしているときは、そのフォルダには触りません。`.ylp` などの文書は、どちらの場合も消えません。
 
 ## 起動時の警告（SmartScreen）
 

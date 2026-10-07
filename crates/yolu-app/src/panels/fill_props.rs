@@ -269,8 +269,8 @@ fn image_section(
                 Some(lang.pick("読み方", "Read as")),
                 space_name(lang, space),
                 Some(lang.pick(
-                    "画像の値が何か（棚の画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
-                    "What the image's values are (the shelf image's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
+                    "画像の値が何か（アセットの画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
+                    "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
                 )),
                 enabled,
                 LABEL_W + 22.0,

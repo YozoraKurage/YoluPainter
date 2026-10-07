@@ -538,7 +538,10 @@ impl AppState {
         let rid = inputs::resource_id(image);
         let Some(name) = self.shelf.get(&rid).map(|r| r.name.clone()) else {
             return Err(lang
-                .pick("棚に画像がありません", "The shelf has no such image")
+                .pick(
+                    "アセットに画像がありません",
+                    "No such image in the project's assets",
+                )
                 .into());
         };
         self.use_shelf_image(&rid)?;
@@ -682,9 +685,15 @@ impl AppState {
                     format!(
                         "{}: {name}",
                         if added {
-                            lang.pick("棚に画像を取り込みました", "Image added to the shelf")
+                            lang.pick(
+                                "アセットに画像を取り込みました",
+                                "Image added to the project's assets",
+                            )
                         } else {
-                            lang.pick("すでに棚にあります", "Already on the shelf")
+                            lang.pick(
+                                "すでにアセットにあります",
+                                "Already in the project's assets",
+                            )
                         }
                     ),
                 );
@@ -697,11 +706,11 @@ impl AppState {
     }
 }
 
-/// 「「名前」を棚に取り込めません」（理由は `Lang::with_reason` で添える）。
+/// 「「名前」をアセットに取り込めません」（理由は `Lang::with_reason` で添える）。
 fn cannot_add_image(lang: Lang, name: &str) -> String {
     let name = lang.quote(name);
     lang.pick(
-        format!("{name}を棚に取り込めません"),
+        format!("{name}をアセットに取り込めません"),
         format!("Cannot import {name}"),
     )
 }

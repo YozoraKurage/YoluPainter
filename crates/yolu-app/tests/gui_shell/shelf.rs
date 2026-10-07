@@ -324,10 +324,14 @@ fn headless_what_cannot_be_saved_or_placed_changes_nothing_and_says_why() {
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     assert!(s.shelf.resources().is_empty());
     assert!(!s.modified && !s.shelf.changed);
-    assert!(s.message.contains("棚の予算を超えます"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットの予算を超えます"),
+        "{}",
+        s.message
+    );
     s.lang = Lang::En;
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-    assert!(s.message.contains("Over the shelf budget"), "{}", s.message);
+    assert!(s.message.contains("Over the asset budget"), "{}", s.message);
     s.lang = Lang::Ja;
     // ユーザーチャンネルを使う層は .ylsmart（形式 1）に書けない
     s.shelf = ShelfState::default();
@@ -595,7 +599,7 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
     other.apply(Action::Shelf(ShelfOp::ImportFile(path.clone())));
     assert_eq!(other.shelf.resources().len(), 1);
     assert!(
-        other.message.starts_with("すでに棚にあります"),
+        other.message.starts_with("すでにアセットにあります"),
         "{}",
         other.message
     );
@@ -826,7 +830,7 @@ fn headless_an_unreadable_shelf_is_not_modified_and_the_files_resources_stay() {
     assert!(
         again
             .message
-            .contains("棚を読めなかったので、棚を変えられません"),
+            .contains("プロジェクトのアセットを読めなかったので、変えられません"),
         "{}",
         again.message
     );
@@ -906,7 +910,11 @@ fn headless_a_large_material_is_written_on_another_thread_and_kept_when_done() {
     s.shelf.hold_saves(false);
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), 1, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     let id = s.shelf.resources()[0].id.clone();
     assert_eq!(s.shelf.selected.as_deref(), Some(id.as_str()));
     assert!(
@@ -1008,7 +1016,12 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
     );
     assert_eq!(
         shelf_menu(&s),
-        ["置く", "書き出す…", "ライブラリへ入れる", "棚から消す…"]
+        [
+            "置く",
+            "書き出す…",
+            "ライブラリへ入れる",
+            "アセットから消す…"
+        ]
     );
     s.shelf.selected = Some(ids(&s, "smartMask").pop().unwrap());
     assert_eq!(shelf_menu(&s)[0], "マスクに適用");
@@ -1022,7 +1035,7 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
             "Apply to Mask",
             "Export…",
             "Put into the library",
-            "Remove from the shelf…"
+            "Remove from the project's assets…"
         ]
     );
     // 層にマスクが無ければ、マスクの保存は出さない
@@ -1132,7 +1145,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message
             .starts_with("「bad.ylsmart」はスマート素材として読めません（")
-            && s.message.contains("2 件を棚に入れました。"),
+            && s.message.contains("2 件をアセットに入れました。"),
         "{}",
         s.message
     );
@@ -1148,8 +1161,9 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message
             .starts_with("\"bad.ylsmart\" is not a readable smart asset (")
-            && s.message
-                .ends_with("Added 1 to the shelf. 1 was already on the shelf."),
+            && s.message.ends_with(
+                "Added 1 to the project's assets. 1 was already in the project's assets."
+            ),
         "{}",
         s.message
     );
@@ -1163,8 +1177,8 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message
             .starts_with("「bad.ylsmart」はスマート素材として読めません（")
-            && s.message.ends_with("2 件はすでに棚にありました。")
-            && !s.message.contains("を棚に入れました"),
+            && s.message.ends_with("2 件はすでにアセットにありました。")
+            && !s.message.contains("をアセットに入れました"),
         "{}",
         s.message
     );
@@ -1176,7 +1190,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     assert!(
         s.message.contains("bad.ylsmart")
             && s.message.contains("none.ylsmart")
-            && !s.message.contains("を棚に入れました"),
+            && !s.message.contains("をアセットに入れました"),
         "{}",
         s.message
     );
@@ -1186,14 +1200,18 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         good("images.ylsmart"),
     ])));
     assert_eq!(
-        s.message, "1 件を棚に入れました。1 件はすでに棚にありました。",
+        s.message, "1 件をアセットに入れました。1 件はすでにアセットにありました。",
         "{}",
         s.message
     );
     s.apply(Action::Shelf(ShelfOp::ImportFiles(vec![good(
         "images.ylsmart",
     )])));
-    assert!(s.message.starts_with("すでに棚にあります"), "{}", s.message);
+    assert!(
+        s.message.starts_with("すでにアセットにあります"),
+        "{}",
+        s.message
+    );
     // 読めない棚には、まとめてでも足さない
     s.shelf = ShelfState::unreadable("試験");
     s.apply(Action::Shelf(ShelfOp::ImportFiles(vec![good(
@@ -1201,7 +1219,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
     )])));
     assert!(
         s.message
-            .contains("棚を読めなかったので、棚を変えられません"),
+            .contains("プロジェクトのアセットを読めなかったので、変えられません"),
         "{}",
         s.message
     );
@@ -1523,15 +1541,19 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
         ),
         (
             REFUSAL_MEMORY_BUDGET,
-            "棚の予算を超えます",
-            "Over the shelf budget",
+            "アセットの予算を超えます",
+            "Over the asset budget",
         ),
         (
             REFUSAL_ARCHIVE_BUDGET,
             "ファイルの大きさの上限を超えます",
             "Over the file size limit",
         ),
-        (REFUSAL_RESOURCE_COUNT, "棚がいっぱいです", "Shelf is full"),
+        (
+            REFUSAL_RESOURCE_COUNT,
+            "アセットがいっぱいです",
+            "Assets are full",
+        ),
         (
             REFUSAL_USER_CHANNELS,
             "ユーザーチャンネルを使っています",
@@ -1597,8 +1619,8 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
             &raster,
         )
         .unwrap_err();
-    assert_eq!(io_reason(Lang::Ja, &error), "棚の予算を超えます");
-    assert_eq!(io_reason(Lang::En, &error), "Over the shelf budget");
+    assert_eq!(io_reason(Lang::Ja, &error), "アセットの予算を超えます");
+    assert_eq!(io_reason(Lang::En, &error), "Over the asset budget");
     // 個数の上限（256 個の棚への 257 個目）。予算とは別の理由
     let mut full = shelf_of_images(MAX_RESOURCES);
     let error = full
@@ -1609,8 +1631,8 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
             &raster,
         )
         .unwrap_err();
-    assert_eq!(io_reason(Lang::Ja, &error), "棚がいっぱいです");
-    assert_eq!(io_reason(Lang::En, &error), "Shelf is full");
+    assert_eq!(io_reason(Lang::Ja, &error), "アセットがいっぱいです");
+    assert_eq!(io_reason(Lang::En, &error), "Assets are full");
     // ユーザーチャンネルを持つ層の保存
     let (mut s, base) = painted(8);
     let channel = s
@@ -1648,9 +1670,12 @@ fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both
     for (lang, want) in [
         (
             Lang::Ja,
-            "を棚に保存できません（ノイズ・グランジを使っています）。",
+            "をアセットに保存できません（ノイズ・グランジを使っています）。",
         ),
-        (Lang::En, " to the shelf (It uses Noise and Grunge)."),
+        (
+            Lang::En,
+            " to the project's assets (It uses Noise and Grunge).",
+        ),
     ] {
         for id in ["builtin:rusty-iron", "builtin:wood"] {
             let mut s = AppState::new(64, 64);
@@ -1699,10 +1724,13 @@ fn headless_an_unreadable_shelf_result_keeps_the_reason_and_the_open_notice_name
     assert_eq!(yolu_app::project::unreadable_shelf_notice(&s), None);
     s.shelf = broken;
     for (lang, want) in [
-        (Lang::Ja, "アセットの棚を読めません（索引が壊れています）"),
+        (
+            Lang::Ja,
+            "プロジェクトのアセットを読めません（索引が壊れています）",
+        ),
         (
             Lang::En,
-            "The asset shelf cannot be read (Invalid or unsupported project data)",
+            "The project's assets cannot be read (Invalid or unsupported project data)",
         ),
     ] {
         s.lang = lang;
@@ -1780,20 +1808,27 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
         fixtures().join("raster.ylsmart"),
     )));
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 257 個目は、棚も未保存の印も変えずに「いっぱい」と断る（予算超過とは別の理由）
     let entries = s.shelf.shelf().entries().clone();
     s.modified = false;
-    for (lang, want) in [(Lang::Ja, "棚がいっぱいです"), (Lang::En, "Shelf is full")] {
+    for (lang, want) in [
+        (Lang::Ja, "アセットがいっぱいです"),
+        (Lang::En, "Assets are full"),
+    ] {
         s.lang = lang;
         s.apply(Action::Shelf(ShelfOp::ImportFile(
             fixtures().join("mask.ylsmart"),
         )));
         assert!(
             s.message.starts_with(if lang == Lang::Ja {
-                "「mask.ylsmart」を棚に読み込めません"
+                "「mask.ylsmart」をアセットに読み込めません"
             } else {
-                "Cannot import \"mask.ylsmart\" into the shelf"
+                "Cannot import \"mask.ylsmart\" into the project's assets"
             }) && s.message.contains(want),
             "{}",
             s.message
@@ -1808,12 +1843,20 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
     s.apply(Action::Shelf(ShelfOp::ImportFile(
         fixtures().join("raster.ylsmart"),
     )));
-    assert!(s.message.starts_with("すでに棚にあります"), "{}", s.message);
+    assert!(
+        s.message.starts_with("すでにアセットにあります"),
+        "{}",
+        s.message
+    );
     // 層の保存は、写しを作る前に断る（別のスレッドも始めない）
     s.shelf.async_bytes = 0;
     let before = fingerprint(&s);
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-    assert!(s.message.contains("棚がいっぱいです"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットがいっぱいです"),
+        "{}",
+        s.message
+    );
     assert!(s.shelf.saving_name().is_none() && s.shelf.saves_running() == 0);
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES);
     assert_eq!(fingerprint(&s), before);
@@ -1824,7 +1867,11 @@ fn headless_the_shelf_takes_256_items_and_refuses_the_257th_without_changing_it(
     s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
     s.shelf_wait();
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES, "{}", s.message);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 読み込みも同じ上限: 256 個の棚は .ylp を経て戻り、1 つ多い索引は棚を読めない
     let dir = temp_dir("limit");
     let path = dir.join("full.ylp");
@@ -1951,7 +1998,11 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
         let mut s = AppState::new(16, 16);
         s.apply(Action::Shelf(ShelfOp::ImportFile(file.clone())));
         let id = ids(&s, "smartMaterial").pop().expect(&s.message);
-        assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+        assert!(
+            s.message.starts_with("アセットに入れました"),
+            "{}",
+            s.message
+        );
         // 棚に並び、置けない理由と警告の印がつく（名前の帯・一覧の印は block を見る）
         s.shelf.inspect_pending(10);
         match (block, s.shelf.block_of(&id)) {
@@ -2094,7 +2145,11 @@ fn headless_a_big_save_adds_to_the_shelf_on_the_worker_and_the_shelf_stays_put_m
     s.shelf_poll();
     assert_eq!(s.shelf.resources().len(), count + 1, "{}", s.message);
     assert!(s.shelf.saving_name().is_none() && s.shelf.changed && s.modified);
-    assert!(s.message.starts_with("棚に入れました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("アセットに入れました"),
+        "{}",
+        s.message
+    );
     // 差し替えた棚は、読み直しても同じ（別のスレッドで足した結果が、画面のスレッドで足した結果と同じ）
     let reread = Shelf::read(s.shelf.shelf().entries(), SHELF_BUDGET).unwrap();
     assert_eq!(reread.used_bytes(), s.shelf.shelf().used_bytes());
@@ -2553,7 +2608,7 @@ mod ui {
             .accesskit_node()
             .is_disabled());
         assert!(h
-            .get_by_label("棚から消す（置いた層はそのまま）")
+            .get_by_label("アセットから消す（置いた層はそのまま）")
             .accesskit_node()
             .is_disabled());
         h.get_by_label("置く").click();
@@ -2577,7 +2632,7 @@ mod ui {
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), false),
                 ("ライブラリへ入れる".to_owned(), false),
-                ("棚から消す…".to_owned(), false),
+                ("アセットから消す…".to_owned(), false),
             ]
         );
     }
@@ -2594,7 +2649,7 @@ mod ui {
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), true),
                 ("ライブラリへ入れる".to_owned(), true),
-                ("棚から消す…".to_owned(), true),
+                ("アセットから消す…".to_owned(), true),
             ]
         );
     }
@@ -2814,7 +2869,7 @@ mod ui {
         h.state_mut().state.dialog_request = None;
         let at = card(&h, "raster").center();
         right_click(&mut h, at);
-        let at = popup_item(&h, "棚から消す…").center();
+        let at = popup_item(&h, "アセットから消す…").center();
         click(&mut h, at);
         assert_eq!(st(&h).dialog_request, Some(DialogRequest::ShelfRemove));
         assert_eq!(st(&h).shelf.resources().len(), 6, "確かめるまでは消さない");
@@ -2843,7 +2898,7 @@ mod ui {
         h.run();
         assert_eq!(ids(st(&h), "smartMaterial").len(), 1, "{}", st(&h).message);
         assert!(
-            st(&h).message.starts_with("棚に入れました"),
+            st(&h).message.starts_with("アセットに入れました"),
             "{}",
             st(&h).message
         );
@@ -3089,7 +3144,7 @@ mod ui {
         assert_eq!(st(&h).shelf.resources().len(), 2, "{}", st(&h).message);
         let message = &st(&h).message;
         assert!(
-            message.contains("bad.ylsmart") && message.contains("2 件を棚に入れました。"),
+            message.contains("bad.ylsmart") && message.contains("2 件をアセットに入れました。"),
             "{message}"
         );
         let _ = std::fs::remove_dir_all(dir);
@@ -3217,5 +3272,50 @@ mod ui {
         h.snapshot("assets_shelf_dragging");
         release(&h, to, PointerButton::Primary);
         h.run();
+    }
+
+    /// 英語のパネル: 読めないときの状態と、取り込んだときの知らせ（日本語の絵は `assets_shelf_unreadable`・`assets_shelf_blocked`）。
+    #[test]
+    fn snapshot_shelf_english_unreadable_and_notice() {
+        let mut h = app(1280.0, 800.0, 64);
+        click_tab(&mut h, yolu_app::Tab::Assets);
+        h.state_mut().state.lang = Lang::En;
+        h.state_mut().state.shelf = ShelfState::unreadable("test reason");
+        h.state_mut().state.shelf.show_builtin = false;
+        h.run();
+        settle(&mut h);
+        h.snapshot("assets_shelf_unreadable_english");
+        h.state_mut().state.shelf = ShelfState::default();
+        h.state_mut().state.shelf.show_builtin = false;
+        h.run();
+        apply(
+            &mut h,
+            Action::Shelf(ShelfOp::ImportFile(fixtures().join("images.ylsmart"))),
+        );
+        h.run();
+        h.run();
+        settle(&mut h);
+        h.snapshot("assets_shelf_blocked_english");
+    }
+
+    /// 右クリックのメニュー（日英）。「アセットから消す…」が「ライブラリへ入れる」と並ぶ。
+    fn snapshot_context_menu(lang: Lang, name: &str) {
+        let mut h = window();
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = card(&h, "raster").center();
+        right_click(&mut h, at);
+        settle(&mut h);
+        h.snapshot(name);
+    }
+
+    #[test]
+    fn snapshot_shelf_context_menu() {
+        snapshot_context_menu(Lang::Ja, "assets_shelf_menu");
+    }
+
+    #[test]
+    fn snapshot_shelf_context_menu_english() {
+        snapshot_context_menu(Lang::En, "assets_shelf_menu_english");
     }
 }

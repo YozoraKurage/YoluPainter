@@ -373,7 +373,10 @@ pub(crate) fn build(
     if let Some(shelf) = &capture.shelf {
         project = project.with_shelf(shelf, writer).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick("棚を書けません", "Cannot write the shelf"),
+                lang.pick(
+                    "プロジェクトのアセットを書けません",
+                    "Cannot write the project's assets",
+                ),
                 lang.io_error(&e),
             ))
         })?;

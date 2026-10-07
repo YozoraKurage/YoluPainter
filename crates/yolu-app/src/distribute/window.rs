@@ -27,7 +27,7 @@ const MAX_NAMES: usize = 40;
 pub fn label(lang: Lang, removal: Removal) -> &'static str {
     match removal {
         Removal::PsdOriginals => lang.pick("PSD の原本", "Original PSDs"),
-        Removal::UnusedShelf => lang.pick("使っていない棚の素材", "Unused shelf assets"),
+        Removal::UnusedShelf => lang.pick("使っていないアセット", "Unused assets"),
         Removal::SourcePaths => lang.pick("素材の出どころのパス", "Asset source paths"),
         Removal::ModelReference => lang.pick("モデルの参照", "Model reference"),
         Removal::MeshMaps => lang.pick("メッシュマップ", "Mesh maps"),
@@ -46,8 +46,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "The original bytes of imported PSDs. They are left out of the copy",
         ),
         Removal::UnusedShelf => lang.pick(
-            "どの層からも、見た目の設定からも使われていない棚の画像・スマート素材・ブラシ。使っている素材は残します",
-            "Shelf images, smart assets and brushes no layer or look setting uses. Assets in use stay",
+            "どの層からも、見た目の設定からも使われていないアセット（画像・スマート素材・ブラシ）。使っているアセットは残します",
+            "Project assets (images, smart assets and brushes) that no layer or look setting uses. Assets in use stay",
         ),
         Removal::SourcePaths => lang.pick(
             "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します",

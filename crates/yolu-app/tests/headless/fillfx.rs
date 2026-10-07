@@ -700,7 +700,7 @@ fn headless_dropping_an_image_on_the_model_places_a_decal_layer_in_one_undo() {
             rect: view_rect(),
         },
     );
-    assert!(s.message.contains("棚"), "{}", s.message);
+    assert!(s.message.contains("アセット"), "{}", s.message);
     let mut bare = AppState::new(64, 64);
     let (_, im) = shelf_image(&mut bare, "四色");
     fill(
@@ -1587,7 +1587,11 @@ fn headless_importing_what_the_shelf_already_has_says_so_and_changes_nothing() {
     s.modified = false;
     s.shelf.selected = None;
     fill(&mut s, FillOp::ImportImage(path.clone()));
-    assert!(s.message.contains("すでに棚にあります"), "{}", s.message);
+    assert!(
+        s.message.contains("すでにアセットにあります"),
+        "{}",
+        s.message
+    );
     assert!(!s.modified, "同じ中身なら、棚も文書も変えた扱いにしない");
     assert_eq!(s.shelf.resources().len(), 1);
     assert_eq!(
@@ -1597,7 +1601,7 @@ fn headless_importing_what_the_shelf_already_has_says_so_and_changes_nothing() {
     );
     s.lang = Lang::En;
     fill(&mut s, FillOp::ImportImage(path));
-    assert_eq!(s.message, "Already on the shelf: tile");
+    assert_eq!(s.message, "Already in the project's assets: tile");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1620,12 +1624,12 @@ fn headless_import_into_a_full_or_unreadable_shelf_is_refused_with_the_reason_an
     assert_eq!(s.shelf.resources().len(), yolu_io::shelf::MAX_RESOURCES);
     s.modified = false;
     fill(&mut s, FillOp::ImportImage(path.clone()));
-    assert!(s.message.contains("棚がいっぱい"), "{}", s.message);
+    assert!(s.message.contains("アセットがいっぱい"), "{}", s.message);
     assert_eq!(s.shelf.resources().len(), yolu_io::shelf::MAX_RESOURCES);
     assert!(!s.modified, "{}", s.message);
     s.lang = Lang::En;
     fill(&mut s, FillOp::ImportImage(path.clone()));
-    assert!(s.message.contains("Shelf is full"), "{}", s.message);
+    assert!(s.message.contains("Assets are full"), "{}", s.message);
     // 読めなかった棚には足さない
     let mut t = AppState::new(32, 32);
     t.shelf = yolu_app::shelf::ShelfState::unreadable("棚が壊れています");
@@ -2566,7 +2570,11 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
     );
     s.apply(Action::Shelf(ShelfOp::Remove(rid.clone())));
     assert!(s.shelf.get(&rid).is_none(), "{}", s.message);
-    assert!(s.message.contains("棚から消しました"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットから消しました"),
+        "{}",
+        s.message
+    );
 }
 
 #[test]

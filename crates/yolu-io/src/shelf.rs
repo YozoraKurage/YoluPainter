@@ -196,7 +196,9 @@ impl Shelf {
             .iter_mut()
             .find(|r| r.id == id && r.kind == "image")
         else {
-            return Err(crate::Error::InvalidData("その画像が棚にありません".into()));
+            return Err(crate::Error::InvalidData(
+                "その画像がアセットにありません".into(),
+            ));
         };
         if r.metadata["colorSpace"].as_str().unwrap_or("unspecified") == space {
             return Ok(false);

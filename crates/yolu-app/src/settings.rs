@@ -455,7 +455,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "min_undo_steps" => lang.pick("最小の取り消し段数", "Minimum undo steps"),
         "cpu_threads" => lang.pick("CPU のスレッド", "CPU threads"),
         "compositing" => lang.pick("表示の合成", "Display compositing"),
-        "library_folder" => lang.pick("棚の場所", "Library folder"),
+        "library_folder" => lang.pick("ライブラリの場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
         "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),

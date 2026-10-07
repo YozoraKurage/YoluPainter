@@ -108,8 +108,8 @@ impl Source {
     pub fn tooltip(self, lang: Lang) -> &'static str {
         match self {
             Source::Project => lang.pick(
-                "このプロジェクトの棚（.ylp に保存される）",
-                "This project's shelf (saved in the .ylp)",
+                "このプロジェクトのアセット（.ylp に保存される）",
+                "This project's assets (saved in the .ylp)",
             ),
             Source::Library => lang.pick(
                 "個人のライブラリ（フォルダ。ほかのプロジェクトからも使える）",

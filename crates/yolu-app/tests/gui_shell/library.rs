@@ -959,7 +959,11 @@ fn headless_using_a_file_is_refused_when_the_shelf_is_full_or_unreadable() {
     let mut s = state(&dir);
     s.shelf = ShelfState::with_shelf(images_shelf(MAX_RESOURCES));
     use_file(&mut s, "Smart/raster.ylsmart");
-    assert!(s.message.contains("棚がいっぱいです"), "{}", s.message);
+    assert!(
+        s.message.contains("アセットがいっぱいです"),
+        "{}",
+        s.message
+    );
     assert_eq!(s.shelf.resources().len(), MAX_RESOURCES);
     assert!(!s.modified);
     s.shelf = ShelfState::unreadable("試験の理由");
@@ -1576,7 +1580,7 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
     let budget = yolu_io::Error::Budget(yolu_io::shelf::REFUSAL_MEMORY_BUDGET.into());
     assert_eq!(
         yolu_app::lang::library_io_error(Lang::Ja, &budget),
-        "棚の予算を超えます"
+        "アセットの予算を超えます"
     );
 }
 

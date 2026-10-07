@@ -68,7 +68,7 @@ pub fn saving(lang: Lang) -> &'static str {
 
 /// 棚の個数が上限（`MAX_RESOURCES`）に達しているときの短い理由。
 pub fn shelf_full(lang: Lang) -> &'static str {
-    lang.pick("棚がいっぱいです", "Shelf is full")
+    lang.pick("アセットがいっぱいです", "Assets are full")
 }
 
 /// 点の操作を断る理由の文。

@@ -586,8 +586,8 @@ fn open_project(
 pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
     let reason = state.shelf.unavailable.as_ref()?.reason(state.lang);
     Some(state.lang.pick(
-        format!(" アセットの棚を読めません（{reason}）。"),
-        format!(" The asset shelf cannot be read ({reason})."),
+        format!(" プロジェクトのアセットを読めません（{reason}）。"),
+        format!(" The project's assets cannot be read ({reason})."),
     ))
 }
 

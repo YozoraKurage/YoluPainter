@@ -28,8 +28,8 @@ impl Lang {
         }
     }
 
-    /// 断り・失敗の文: 「何が」の文に理由を括弧で添えた 1 つの文（「棚に保存できません（棚がいっぱいです）。」・
-    /// "Cannot save to the shelf (shelf is full)."）。「できません: 理由」のように、文と文をコロンでつながない。
+    /// 断り・失敗の文: 「何が」の文に理由を括弧で添えた 1 つの文（「アセットに保存できません（アセットがいっぱいです）。」・
+    /// "Cannot save to the project's assets (assets are full)."）。「できません: 理由」のように、文と文をコロンでつながない。
     /// 理由の終わりの句点は外す（英語の理由の頭の大文字は残す。"Krita …" のような名前を小文字にしないため）。理由が空なら「何が」だけの文。
     pub fn with_reason(self, what: impl AsRef<str>, reason: impl AsRef<str>) -> String {
         let what = what.as_ref().trim_end_matches(['。', '.']);
@@ -94,12 +94,12 @@ mod tests {
     #[test]
     fn a_reason_joins_what_failed_in_one_sentence() {
         assert_eq!(
-            Lang::Ja.with_reason("棚に保存できません", "棚がいっぱいです。"),
-            "棚に保存できません（棚がいっぱいです）。"
+            Lang::Ja.with_reason("アセットに保存できません", "アセットがいっぱいです。"),
+            "アセットに保存できません（アセットがいっぱいです）。"
         );
         assert_eq!(
-            Lang::En.with_reason("Cannot save to the shelf.", "Shelf is full."),
-            "Cannot save to the shelf (Shelf is full)."
+            Lang::En.with_reason("Cannot save to the project's assets.", "Assets are full."),
+            "Cannot save to the project's assets (Assets are full)."
         );
         assert_eq!(
             Lang::En.in_set("A", "Cannot read the selection (Invalid data)."),

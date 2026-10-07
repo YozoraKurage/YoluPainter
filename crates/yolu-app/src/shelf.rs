@@ -1,4 +1,4 @@
-//! アセットの棚（Substance のシェルフ）の状態と操作。棚は .ylp の resources（yolu-io の `Shelf`）で、画像・ブラシ・マテリアル・
+//! プロジェクトのアセット（コード上の名前は棚 `shelf`。画面の言葉は「アセット」）の状態と操作。棚は .ylp の resources（yolu-io の `Shelf`）で、画像・ブラシ・マテリアル・
 //! スマートマテリアル・スマートマスクを並べる。画面（`panels::assets`）は絞り込み・探す・選ぶだけを直に持ち、棚の中身と文書を変える
 //! 操作は `Action::Shelf(ShelfOp)` を通す。
 //!
@@ -1120,7 +1120,10 @@ impl ShelfState {
             .with_shelf(&self.shelf, crate::project::writer())
             .map_err(|e| {
                 lang.with_reason(
-                    lang.pick("棚を書けません", "Cannot write the shelf"),
+                    lang.pick(
+                        "プロジェクトのアセットを書けません",
+                        "Cannot write the project's assets",
+                    ),
                     lang.io_error(&e),
                 )
             })
@@ -1758,8 +1761,8 @@ impl AppState {
                     Source::Assets,
                     lang.with_reason(
                         lang.pick(
-                            "棚を読めなかったので、棚を変えられません",
-                            "Cannot change the shelf because it could not be read",
+                            "プロジェクトのアセットを読めなかったので、変えられません",
+                            "Cannot change the project's assets because they could not be read",
                         ),
                         e.reason(lang),
                     ),
@@ -1914,11 +1917,14 @@ impl AppState {
             match kept {
                 Kept::Added => format!(
                     "{}: {name}",
-                    lang.pick("棚に入れました", "Added to the shelf")
+                    lang.pick("アセットに入れました", "Added to the project's assets")
                 ),
                 Kept::Existing => format!(
                     "{}: {name}",
-                    lang.pick("すでに棚にあります", "Already on the shelf")
+                    lang.pick(
+                        "すでにアセットにあります",
+                        "Already in the project's assets"
+                    )
                 ),
             },
         );
@@ -2230,11 +2236,11 @@ impl AppState {
         }
         let what = lang.pick(
             format!(
-                "{}はレイヤーが使っているので、棚から消せません",
+                "{}はレイヤーが使っているので、アセットから消せません",
                 lang.quote(&res.name)
             ),
             format!(
-                "Cannot remove {} from the shelf because a layer uses it",
+                "Cannot remove {} because a layer uses it",
                 lang.quote(&res.name)
             ),
         );
@@ -2267,7 +2273,10 @@ impl AppState {
                     Source::Assets,
                     format!(
                         "{}: {name}",
-                        lang.pick("棚から消しました", "Removed from the shelf")
+                        lang.pick(
+                            "アセットから消しました",
+                            "Removed from the project's assets"
+                        )
                     ),
                 );
             }
@@ -2305,11 +2314,14 @@ impl AppState {
             let text = match (added.as_slice(), existing.as_slice()) {
                 ([name], []) => format!(
                     "{}: {name}",
-                    lang.pick("棚に入れました", "Added to the shelf")
+                    lang.pick("アセットに入れました", "Added to the project's assets")
                 ),
                 ([], [name]) => format!(
                     "{}: {name}",
-                    lang.pick("すでに棚にあります", "Already on the shelf")
+                    lang.pick(
+                        "すでにアセットにあります",
+                        "Already in the project's assets"
+                    )
                 ),
                 _ => kept_note(lang, new, old),
             };
@@ -2434,15 +2446,15 @@ fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
     let mut parts = Vec::new();
     if added > 0 {
         parts.push(lang.pick(
-            format!("{added} 件を棚に入れました。"),
-            format!("Added {added} to the shelf."),
+            format!("{added} 件をアセットに入れました。"),
+            format!("Added {added} to the project's assets."),
         ));
     }
     if existing > 0 {
         parts.push(lang.pick(
-            format!("{existing} 件はすでに棚にありました。"),
+            format!("{existing} 件はすでにアセットにありました。"),
             format!(
-                "{existing} {} already on the shelf.",
+                "{existing} {} already in the project's assets.",
                 if existing == 1 { "was" } else { "were" }
             ),
         ));
@@ -2450,7 +2462,7 @@ fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
     parts.join(lang.pick("", " "))
 }
 
-/// 棚へ読み込めなかったファイルの 1 文（「「名前」を棚に読み込めません（理由）。」）。
+/// アセットへ読み込めなかったファイルの 1 文（「「名前」をアセットに読み込めません（理由）。」）。
 fn refused(lang: Lang, file: &str, why: &str) -> String {
     lang.with_reason(Attempt::ShelfImport.what(lang, Some(file)), why)
 }
@@ -2483,20 +2495,20 @@ impl Attempt {
             return lang
                 .pick(
                     match self {
-                        Attempt::ShelfSave => "棚に保存できません",
-                        Attempt::ShelfImport => "棚に読み込めません",
-                        Attempt::ShelfChange => "棚を変えられません",
-                        Attempt::ShelfRemove => "棚から消せません",
+                        Attempt::ShelfSave => "アセットに保存できません",
+                        Attempt::ShelfImport => "アセットに読み込めません",
+                        Attempt::ShelfChange => "アセットを変えられません",
+                        Attempt::ShelfRemove => "アセットから消せません",
                         Attempt::Place => "素材を置けません",
                         Attempt::LibraryUse => "ライブラリから取り込めません",
                         Attempt::LibraryAdd => "ライブラリに入れられません",
                         Attempt::LibraryRemove => "ライブラリから消せません",
                     },
                     match self {
-                        Attempt::ShelfSave => "Cannot save to the shelf",
-                        Attempt::ShelfImport => "Cannot import into the shelf",
-                        Attempt::ShelfChange => "Cannot change the shelf",
-                        Attempt::ShelfRemove => "Cannot remove from the shelf",
+                        Attempt::ShelfSave => "Cannot save to the project's assets",
+                        Attempt::ShelfImport => "Cannot import into the project's assets",
+                        Attempt::ShelfChange => "Cannot change the project's assets",
+                        Attempt::ShelfRemove => "Cannot remove from the project's assets",
                         Attempt::Place => "Cannot place the asset",
                         Attempt::LibraryUse => "Cannot import from the library",
                         Attempt::LibraryAdd => "Cannot add to the library",
@@ -2508,20 +2520,20 @@ impl Attempt {
         let q = lang.quote(name);
         match lang {
             Lang::Ja => match self {
-                Attempt::ShelfSave => format!("{q}を棚に保存できません"),
-                Attempt::ShelfImport => format!("{q}を棚に読み込めません"),
-                Attempt::ShelfChange => "棚を変えられません".to_owned(),
-                Attempt::ShelfRemove => format!("{q}を棚から消せません"),
+                Attempt::ShelfSave => format!("{q}をアセットに保存できません"),
+                Attempt::ShelfImport => format!("{q}をアセットに読み込めません"),
+                Attempt::ShelfChange => "アセットを変えられません".to_owned(),
+                Attempt::ShelfRemove => format!("{q}をアセットから消せません"),
                 Attempt::Place => format!("{q}を置けません"),
                 Attempt::LibraryUse => format!("{q}をライブラリから取り込めません"),
                 Attempt::LibraryAdd => format!("{q}をライブラリに入れられません"),
                 Attempt::LibraryRemove => format!("{q}をライブラリから消せません"),
             },
             Lang::En => match self {
-                Attempt::ShelfSave => format!("Cannot save {q} to the shelf"),
-                Attempt::ShelfImport => format!("Cannot import {q} into the shelf"),
-                Attempt::ShelfChange => "Cannot change the shelf".to_owned(),
-                Attempt::ShelfRemove => format!("Cannot remove {q} from the shelf"),
+                Attempt::ShelfSave => format!("Cannot save {q} to the project's assets"),
+                Attempt::ShelfImport => format!("Cannot import {q} into the project's assets"),
+                Attempt::ShelfChange => "Cannot change the project's assets".to_owned(),
+                Attempt::ShelfRemove => format!("Cannot remove {q} from the project's assets"),
                 Attempt::Place => format!("Cannot place {q}"),
                 Attempt::LibraryUse => format!("Cannot import {q} from the library"),
                 Attempt::LibraryAdd => format!("Cannot add {q} to the library"),

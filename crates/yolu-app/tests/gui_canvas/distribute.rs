@@ -1,4 +1,4 @@
-//! 配布用に保存: 開いているものを変えずに、作った人が気づかないまま残る物（PSD の原本・使っていない棚の素材・出どころのパス・モデルの参照・
+//! 配布用に保存: 開いているものを変えずに、作った人が気づかないまま残る物（PSD の原本・使っていないアセット・出どころのパス・モデルの参照・
 //! メッシュマップ・古い状態・知らないエントリ）を除いた写しを書く。窓・切り替え・保存先・置き換え・断る理由・日英・窓の画像。
 //! 取り込み直した PSD の古い原本が、いつもの保存に残らないことも確かめる。`headless_` で始まる試験は画面を描かない。
 //! Unity 版が作った .ylp（PSD の原本・file と unityAsset の出どころ・thumbnail・brush.json・view.json）は試験の中で組み立てる。
@@ -1377,7 +1377,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     for want in [
         "配布用に保存",
         "PSD の原本",
-        "使っていない棚の素材",
+        "使っていないアセット",
         "素材の出どころのパス",
         "モデルの参照",
         "メッシュマップ",
@@ -1441,7 +1441,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     for want in [
         "Save for Distribution",
         "Original PSDs",
-        "Unused shelf assets",
+        "Unused assets",
         "Asset source paths",
         "Model reference",
         "Mesh maps",
