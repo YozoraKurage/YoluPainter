@@ -1,5 +1,5 @@
-//! 頼みの絵のファイル（PNG・TGA・JPG・PSD）を読む。PSD は層を重ねた 1 枚にする（層のままは別の段）。読んだ絵は straight RGBA8・下の行が先
-//! （文書の画素・`PixelClipboard::from_image` と同じ並び）。拡大縮小・リニアから sRGB への直しも置く。
+//! 頼みの絵のファイル（PNG・TGA・JPG・PSD）を読む。PSD はレイヤーを重ねた 1 枚にする（Color の流し込み先の PSD をレイヤーのまま読むのは `load`）。
+//! 読んだ絵は straight RGBA8・下の行が先（文書の画素・`PixelClipboard::from_image` と同じ並び）。拡大縮小・リニアから sRGB への直しも置く。
 //!
 //! - 読むのは裏の仕事のスレッド（ファイルの読みと復号は重い）。取消の旗を区切りで見る。
 //! - 大きさの上限: 辺 [`MAX_SIDE`]（元の絵の上限。Unity 版の画像の上限と同じ）、ファイル [`MAX_FILE_BYTES`]。超えるものは読まずに断る。
@@ -35,6 +35,8 @@ pub enum PictureError {
     Decode(String),
     /// 大きすぎる（幅・高さ）。
     TooLarge(u32, u32),
+    /// PSD を取り込めない（レイヤーのままでも、平らにしても読めなかった。理由はレイヤーのままの取り込みが断った理由）。
+    Psd(yolu_io::psd::CopyRefusal),
     Cancelled,
 }
 
@@ -54,9 +56,16 @@ impl PictureError {
                 format!("大きすぎます（{w}×{h}）"),
                 format!("Too large ({w}×{h})"),
             ),
+            PictureError::Psd(why) => crate::lang::psd_copy_refusal(lang, why),
             PictureError::Cancelled => lang.pick("取り消しました", "Cancelled").into(),
         }
     }
+}
+
+/// 拡張子が PSD か（大文字小文字を区別しない）。
+pub fn is_psd(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("psd"))
 }
 
 /// 拡張子で形式を決めて読む。

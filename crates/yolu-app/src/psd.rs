@@ -404,6 +404,12 @@ impl PsdState {
         self.job.is_some()
     }
 
+    /// ほかの道（Live Link の元の絵）で取り込んだ PSD の場所を覚える（同じファイルへ書き出すときに確かめる）。走っている取り込みは
+    /// 失敗・取消で最後の 1 つを外すので、先頭に入れる。
+    pub(crate) fn remember_imported(&mut self, path: PathBuf) {
+        self.imported.insert(0, path);
+    }
+
     pub fn progress(&self) -> Option<Progress> {
         let job = self.job.as_ref()?;
         Some(Progress {
@@ -1222,23 +1228,11 @@ impl AppState {
 /// 別のスレッドの読み込み: ファイルを流して読み（原本は持たない）、core の文書にする。取り込めなければ理由を `Refused` で返す（何も変えない）。
 /// `budget` は、この文書の層の画素に許すバイト数（設定の「レイヤーのメモリ」）。層の数・画布・層の画素の上限はここから決まる。
 fn import_worker(path: &Path, budget: u64, cancel: &AtomicBool) -> Result<Output, Failure> {
-    let file = std::fs::File::open(path).map_err(Failure::File)?;
-    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
-    let outcome = psd::import_copy(
-        &mut reader,
-        &CopyOptions {
-            source_budget: budget,
-            cancel: Some(cancel),
-        },
-    )
-    .map_err(|e| match e {
-        yolu_io::Error::Io(io) => Failure::File(io),
-        e if is_cancel(&e) => Failure::Canceled,
-        e => Failure::Export(e),
+    let outcome = read_copy(path, budget, cancel).map_err(|e| match e {
+        ReadCopyError::File(io) => Failure::File(io),
+        ReadCopyError::Canceled => Failure::Canceled,
+        ReadCopyError::Other(e) => Failure::Export(e),
     })?;
-    if cancel.load(Ordering::Relaxed) {
-        return Err(Failure::Canceled);
-    }
     Ok(match outcome {
         CopyOutcome::Refused(why) => Output::Refused(why),
         CopyOutcome::Imported(imported) => {
@@ -1248,6 +1242,60 @@ fn import_worker(path: &Path, budget: u64, cancel: &AtomicBool) -> Result<Output
                 notes,
             }
         }
+    })
+}
+
+/// [`read_copy`] が読めなかった理由。
+#[derive(Debug)]
+pub(crate) enum ReadCopyError {
+    /// ファイルを開けない・読めない。
+    File(std::io::Error),
+    /// 取消の旗が立った。
+    Canceled,
+    /// 上のどれでもない（core の誤りなど）。
+    Other(yolu_io::Error),
+}
+
+/// PSD のファイルを流して読み、写しとして core の文書にする（取り込みの道。Live Link の元の絵もここを通り、同じ文書と知らせになる）。
+/// 原本は開いて読むだけで、書き換えない。`budget` は、この文書のレイヤーの画素に許すバイト数。
+pub(crate) fn read_copy(
+    path: &Path,
+    budget: u64,
+    cancel: &AtomicBool,
+) -> Result<CopyOutcome, ReadCopyError> {
+    let file = std::fs::File::open(path).map_err(ReadCopyError::File)?;
+    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
+    let outcome = psd::import_copy(
+        &mut reader,
+        &CopyOptions {
+            source_budget: budget,
+            cancel: Some(cancel),
+        },
+    )
+    .map_err(|e| match e {
+        yolu_io::Error::Io(io) => ReadCopyError::File(io),
+        e if is_cancel(&e) => ReadCopyError::Canceled,
+        e => ReadCopyError::Other(e),
+    })?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ReadCopyError::Canceled);
+    }
+    Ok(outcome)
+}
+
+/// [`read_copy`] を、取り込みの仕事と同じスタックの大きさのスレッドで読む（ほかの裏の仕事のスレッドから呼ぶ。統合画像と照らす合成の
+/// グループの入れ子の再帰に、取り込みの仕事と同じだけの余裕を持たせる）。読み終えるまで待つ。
+pub(crate) fn read_copy_on_psd_stack(
+    path: &Path,
+    budget: u64,
+    cancel: &AtomicBool,
+) -> Result<CopyOutcome, ReadCopyError> {
+    std::thread::scope(|scope| {
+        psd_thread("yolu-psd-import")
+            .spawn_scoped(scope, || read_copy(path, budget, cancel))
+            .map_err(|e| ReadCopyError::Other(yolu_io::Error::Io(e)))?
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
 }
 

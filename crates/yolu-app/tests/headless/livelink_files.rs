@@ -980,3 +980,486 @@ fn headless_the_export_dialog_start_is_the_nearest_existing_folder_and_creates_n
     std::fs::create_dir_all(&wanted).unwrap();
     assert_eq!(h.state.link_export_start(), Some(wanted));
 }
+
+// ───────── 元の絵の PSD をレイヤーのまま ─────────
+
+/// 試しの PSD（96×64。上から: 調整レイヤー「反転」（不透明度 128）、グループ「組」（中に「上」（青、左上 8×8）・「中」（緑、左半分））、
+/// 「下」（全面）。レイヤー 3・グループ 1・調整 1）。`dissolve` なら「下」の合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になり、
+/// 知らせの「変わる物」に出る）。`shade` は「下」の赤の濃さ（ファイルを書き換えたことを見分ける）。
+fn layered_psd(dissolve: bool, shade: u8) -> Vec<u8> {
+    use yolu_io::psd::{self, Adjustment, Layer, LayerKind};
+    let raster = |id: i32, name: &str, w: u32, h: u32, rgba: [u8; 4]| Layer {
+        id,
+        name: name.into(),
+        width: w,
+        height: h,
+        pixels_rgba: rgba.repeat((w * h) as usize),
+        ..Layer::default()
+    };
+    let doc = psd::Document {
+        width: 96,
+        height: 64,
+        layers: vec![
+            Layer {
+                id: 5,
+                name: "反転".into(),
+                kind: LayerKind::Adjustment(Adjustment::Invert),
+                opacity: 128,
+                ..Layer::default()
+            },
+            Layer {
+                id: 3,
+                name: "組".into(),
+                kind: LayerKind::Group {
+                    children: vec![
+                        raster(4, "上", 8, 8, [0, 0, 255, 255]),
+                        raster(2, "中", 48, 64, [0, 255, 0, 255]),
+                    ],
+                    divider_id: 6,
+                },
+                ..Layer::default()
+            },
+            raster(1, "下", 96, 64, [shade, 0, 0, 255]),
+        ],
+        composite_rgba: None,
+    };
+    let mut bytes = psd::write(&doc, &psd::Limits::default()).unwrap();
+    if dissolve {
+        // レイヤーの記録は下から並ぶので、最初の合成モードは「下」
+        let at = bytes
+            .windows(8)
+            .position(|w| w == b"8BIMnorm")
+            .expect("「下」の合成モード");
+        bytes[at + 4..at + 8].copy_from_slice(b"diss");
+    }
+    bytes
+}
+
+/// PSD の取り込み（「ファイル → 読み込み」と同じ写し）で作った文書。
+fn imported_psd(bytes: &[u8]) -> yolu_core::Document {
+    let outcome = yolu_io::psd::import_copy(
+        &mut std::io::Cursor::new(bytes),
+        &yolu_io::psd::CopyOptions {
+            source_budget: 64 << 20,
+            cancel: None,
+        },
+    )
+    .unwrap();
+    match outcome {
+        yolu_io::psd::CopyOutcome::Imported(imported) => {
+            let yolu_io::psd::CopyImport { document, .. } = *imported;
+            document
+        }
+        yolu_io::psd::CopyOutcome::Refused(why) => panic!("{why:?}"),
+    }
+}
+
+/// レイヤーの名前と種類（下から）。
+fn layer_list(doc: &yolu_core::Document) -> Vec<(String, yolu_core::LayerKind)> {
+    doc.layers()
+        .iter()
+        .map(|l| (l.name().to_owned(), l.kind()))
+        .collect()
+}
+
+fn set_index(h: &Headless, name: &str) -> usize {
+    h.state
+        .sets
+        .iter()
+        .position(|s| s.name == name)
+        .unwrap_or_else(|| panic!("{name} のセット"))
+}
+
+/// Color の流し込み先の絵が PSD なら、セットは PSD のレイヤーのまま（PSD の取り込みと同じレイヤー・合成・キャンバスの大きさ）になり、平らな「元の絵」は
+/// 無い。取り込みで変わる物は知らせに出す。元の PSD は読むだけ（保存しても変わらず、同じファイルへの PSD の書き出しは置き換える前に確かめる）。
+#[test]
+fn headless_a_psd_original_comes_in_as_its_layers() {
+    let mut h = Headless::new("psd-layers");
+    let bytes = layered_psd(true, 200);
+    let psd = h.ex.dir.join("body.psd");
+    std::fs::write(&psd, &bytes).unwrap();
+    let mut request = h.arm("r1", KEY);
+    request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
+    h.ex.put(&request);
+    let reply = h.reply();
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert!(reply.problems.is_empty(), "{:?}", reply.problems);
+    let skin = set_index(&h, "Skin");
+    let expect = imported_psd(&bytes);
+    let expected = layer_list(&expect);
+    assert!(
+        expected.len() >= 5,
+        "レイヤー 3・グループ 1・調整 1: {expected:?}"
+    );
+    {
+        let doc = h.state.set_doc(skin);
+        assert_eq!(
+            (doc.width(), doc.height()),
+            (96, 64),
+            "PSD のキャンバスのまま（拡大縮小しない）"
+        );
+        let got = layer_list(doc);
+        let (from_psd, top) = got.split_at(got.len() - 1);
+        assert_eq!(
+            from_psd,
+            expected.as_slice(),
+            "PSD の取り込みと同じレイヤー"
+        );
+        assert_eq!(
+            top[0].0, "レイヤー 1",
+            "セットの空のレイヤーは PSD のレイヤーの上に残る"
+        );
+        assert!(
+            !got.iter().any(|(name, _)| name == "元の絵"),
+            "平らな「元の絵」は無い: {got:?}"
+        );
+        assert_eq!(
+            doc.composite(doc.bounds()).unwrap(),
+            expect.composite(expect.bounds()).unwrap(),
+            "合成も PSD の取り込みと同じ"
+        );
+        assert!(!doc.can_undo(), "入れたことは取り消しの段にしない");
+        assert!(
+            doc.received_look().is_some(),
+            "lilToon の受けた見た目は付く"
+        );
+    }
+    // 取り込みで変わる物（合成モード: ディゾルブ → 通常）は、知らせに名前で出す
+    assert!(
+        h.state.message.contains("合成モード: ディゾルブ") && h.state.message.contains("body.psd"),
+        "{}",
+        h.state.message
+    );
+    // 絵の無い Cloth は、今までどおり白の「元の絵」
+    let cloth = set_index(&h, "Cloth");
+    assert_eq!(h.state.set_doc(cloth).layers()[0].name(), "元の絵");
+    // 保存しても、元の PSD は変わらない。同じファイルへの PSD の書き出しは、置き換える前に確かめる
+    h.state
+        .apply(Action::SaveProjectAs(h.ex.dir.join("layers.ylp")));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    h.state.switch_set(skin).unwrap();
+    h.state
+        .apply(Action::Psd(yolu_app::psd::PsdAction::Export(psd.clone())));
+    assert!(
+        h.state.psd.confirm.as_ref().is_some_and(|c| c.imported),
+        "{}",
+        h.state.message
+    );
+    h.state
+        .apply(Action::Psd(yolu_app::psd::PsdAction::CancelConfirm));
+    assert_eq!(
+        std::fs::read(&psd).unwrap(),
+        bytes,
+        "元の PSD の中身は 1 バイトも変わらない"
+    );
+}
+
+/// Color 以外のスロットの PSD（受けた見た目の絵）と、リニアの Color の PSD は、今までどおり平らな 1 枚として読む。
+#[test]
+fn headless_a_psd_in_another_slot_or_a_linear_one_is_read_flattened() {
+    let mut h = Headless::new("psd-flat");
+    let bytes = layered_psd(false, 200);
+    let psd = h.ex.dir.join("shade.psd");
+    std::fs::write(&psd, &bytes).unwrap();
+    let mut request = h.arm("r1", KEY);
+    // Skin（lilToon）の影の色のスロットに PSD（Color は PNG のまま）
+    request["materials"][0]["textures"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "property": "_ShadowColorTex", "path": slash(&psd),
+                      "srgb": true, "normal_map": false }));
+    // Cloth の Color はリニアの PSD
+    request["materials"][1]["textures"] = json!([{ "property": "_MainTex", "path": slash(&psd),
+                                                  "srgb": false, "normal_map": false }]);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    let (w, _, flat) =
+        yolu_io::psd::read_flattened(&bytes, &yolu_io::psd::Limits::default(), None).unwrap();
+    let skin = set_index(&h, "Skin");
+    let image = h
+        .state
+        .set_doc(skin)
+        .received_look()
+        .and_then(|r| r.images.get("_ShadowColorTex").cloned())
+        .expect("影の色の絵");
+    assert_eq!((image.width, image.height), (96, 64));
+    // 受けた絵は下の行が先。平らにした PSD の一番下の行の左端と同じ
+    let bottom_left = (63 * w as usize) * 4;
+    assert_eq!(image.pixels[..4], flat[bottom_left..bottom_left + 4]);
+    assert_eq!(h.state.set_doc(skin).layers()[0].name(), "元の絵");
+    let cloth = set_index(&h, "Cloth");
+    let names: Vec<&str> = h
+        .state
+        .set_doc(cloth)
+        .layers()
+        .iter()
+        .map(|l| l.name())
+        .collect();
+    assert_eq!(
+        names,
+        ["元の絵", "レイヤー 1"],
+        "リニアの PSD は平らにして直す"
+    );
+}
+
+/// `path` を書き直し、更新時刻を前より進める（ファイルシステムの時刻の細かさによらず、身元が変わる）。
+fn rewrite(path: &std::path::Path, bytes: &[u8]) {
+    let before = std::fs::metadata(path).unwrap().modified().unwrap();
+    std::fs::write(path, bytes).unwrap();
+    let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_modified(before + Duration::from_secs(30)).unwrap();
+}
+
+/// 送り直す（ポーズだけを変えた同じ相手の頼み）。
+fn resend(h: &mut Headless, request: &serde_json::Value, id: &str) {
+    let mut again = request.clone();
+    again["id"] = id.into();
+    again["bones"][0]["local"]["r"] = json!([0.0, 0.0, 0.0, 1.0]);
+    h.ex.put(&again);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+}
+
+/// 送り直しで元の絵のファイルが変わっていれば、元の絵を入れた直後のまま（何も触っていない）セットには入れ直す（PSD はレイヤーのまま、
+/// 道が PNG に替われば平らな「元の絵」）。ファイルが同じなら入れ直さない。
+#[test]
+fn headless_a_resend_puts_a_changed_original_into_an_untouched_set() {
+    let mut h = Headless::new("psd-refresh");
+    let psd = h.ex.dir.join("body.psd");
+    std::fs::write(&psd, layered_psd(false, 200)).unwrap();
+    let mut request = h.arm("r1", KEY);
+    request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    let first = h.state.set_doc(set_index(&h, "Skin")).id();
+    // 同じファイルなら入れ直さない
+    resend(&mut h, &request, "r2");
+    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), first);
+    // 描き直した PSD は、レイヤーのまま入れ直す（PSD の取り込みと同じ）
+    let bytes = layered_psd(true, 90);
+    rewrite(&psd, &bytes);
+    resend(&mut h, &request, "r3");
+    let expect = imported_psd(&bytes);
+    {
+        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        assert_ne!(doc.id(), first, "入れ直した");
+        let got = layer_list(doc);
+        assert_eq!(got[..got.len() - 1], layer_list(&expect)[..]);
+        assert_eq!(got.last().unwrap().0, "レイヤー 1");
+        assert_eq!(
+            doc.composite(doc.bounds()).unwrap(),
+            expect.composite(expect.bounds()).unwrap()
+        );
+        assert!(!doc.can_undo(), "入れ直しは取り消しの段にしない");
+        assert!(doc.received_look().is_some(), "受けた見た目は付いたまま");
+    }
+    assert!(
+        h.state.message.contains("合成モード: ディゾルブ")
+            && !h.state.message.contains("変わりました"),
+        "{}",
+        h.state.message
+    );
+    assert_eq!(std::fs::read(&psd).unwrap(), bytes, "元の PSD は読むだけ");
+    assert!(h.state.modified, "入れ直したセットは保存する変更");
+    // 道が PNG に替われば、平らな「元の絵」（元の絵の大きさに丸めたセット）
+    let png = h.ex.dir.join("skin.png");
+    request["materials"][0]["textures"][0]["path"] = slash(&png).into();
+    resend(&mut h, &request, "r4");
+    let doc = h.state.set_doc(set_index(&h, "Skin"));
+    let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
+    assert_eq!(names, ["元の絵", "レイヤー 1"]);
+    assert_eq!((doc.width(), doc.height()), (256, 256));
+    let mut px = [0u8; 4];
+    doc.composite_into(
+        yolu_core::Channel::Color,
+        yolu_core::Rect::new(0, 0, 1, 1),
+        &mut px,
+        yolu_core::RowOrder::BottomUp,
+    )
+    .unwrap();
+    assert_eq!(px, [200, 100, 50, 255]);
+}
+
+/// 送り直しで、元の PSD のファイルが変わっていても、描いたセットは変えず、変わったことを知らせる（同じ変化は 1 度だけ）。
+#[test]
+fn headless_a_resend_does_not_change_a_touched_psd_set() {
+    let mut h = Headless::new("psd-resend");
+    let psd = h.ex.dir.join("body.psd");
+    std::fs::write(&psd, layered_psd(false, 200)).unwrap();
+    let mut request = h.arm("r1", KEY);
+    request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
+    // Unity が送れなかった物が無い頼み（知らせが注意にならない）
+    request["refused"] = json!([]);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    let skin = set_index(&h, "Skin");
+    h.state.switch_set(skin).unwrap();
+    h.state.doc.add_layer("描いた").unwrap();
+    let id = h.state.doc.id();
+    let layers = layer_list(&h.state.doc);
+    let composite = h.state.doc.composite(h.state.doc.bounds()).unwrap();
+    let changed = layered_psd(false, 90);
+    rewrite(&psd, &changed);
+    resend(&mut h, &request, "r2");
+    {
+        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        assert_eq!(doc.id(), id, "文書を替えない");
+        assert_eq!(layer_list(doc), layers);
+        assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
+    }
+    assert!(
+        h.state
+            .message
+            .contains("Skin: 元の絵「body.psd」が変わりました。"),
+        "{}",
+        h.state.message
+    );
+    assert_eq!(
+        h.state.link.notice.as_ref().map(|n| n.0),
+        Some(yolu_app::livelink::NoticeLevel::Info),
+        "変わったことは注意にしない"
+    );
+    assert_eq!(std::fs::read(&psd).unwrap(), changed, "元の PSD は読むだけ");
+    // 同じ変化を送り直しのたびに知らせない
+    resend(&mut h, &request, "r3");
+    assert!(
+        !h.state.message.contains("変わりました"),
+        "{}",
+        h.state.message
+    );
+    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), id);
+}
+
+/// 送り直しで、変わった元の PSD を読めなければ、入れた直後のままのセットも変えず（白にしない）、読めないことを知らせる。身元は前のままなので、
+/// 更新時刻と大きさが同じまま読めるようになっても、次の送り直しで入れ直す。
+#[test]
+fn headless_a_resend_keeps_the_set_when_the_changed_original_cannot_be_read() {
+    let mut h = Headless::new("psd-unreadable");
+    let psd = h.ex.dir.join("body.psd");
+    std::fs::write(&psd, layered_psd(false, 200)).unwrap();
+    let mut request = h.arm("r1", KEY);
+    request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
+    request["refused"] = json!([]);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    let skin = set_index(&h, "Skin");
+    let id = h.state.set_doc(skin).id();
+    let layers = layer_list(h.state.set_doc(skin));
+    let doc = h.state.set_doc(skin);
+    let composite = doc.composite(doc.bounds()).unwrap();
+    // 先頭の署名を壊す（大きさは同じ）。読めない間は、前のセットのまま
+    let good = layered_psd(false, 90);
+    let mut broken = good.clone();
+    broken[..4].fill(0);
+    rewrite(&psd, &broken);
+    resend(&mut h, &request, "r2");
+    {
+        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        assert_eq!(doc.id(), id, "文書を替えない（白にしない）");
+        assert_eq!(layer_list(doc), layers);
+        assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
+    }
+    assert!(
+        h.state
+            .message
+            .contains("Skin: 元の絵「body.psd」を読めないので、セットはそのままです"),
+        "{}",
+        h.state.message
+    );
+    assert_eq!(std::fs::read(&psd).unwrap(), broken, "元の PSD は読むだけ");
+    // 更新時刻と大きさを変えずに読めるようにする。身元を覚えていないので、次の送り直しで読み直して入れ直す
+    let at = std::fs::metadata(&psd).unwrap().modified().unwrap();
+    std::fs::write(&psd, &good).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&psd)
+        .unwrap()
+        .set_modified(at)
+        .unwrap();
+    resend(&mut h, &request, "r3");
+    let expect = imported_psd(&good);
+    let doc = h.state.set_doc(set_index(&h, "Skin"));
+    assert_ne!(doc.id(), id, "読めるようになったので入れ直した");
+    assert_eq!(
+        doc.composite(doc.bounds()).unwrap(),
+        expect.composite(expect.bounds()).unwrap()
+    );
+    assert!(!h.state.message.contains("読めない"), "{}", h.state.message);
+}
+
+/// 元の PSD で開いて .ylp に保存し、開き直したセットは、触ったセットとして扱う: 開き直しでは元の絵について何も知らせず、開き直した後に PSD が
+/// 変わって送り直せば、セットは変えずに 1 度だけ知らせる。
+#[test]
+fn headless_a_set_reopened_from_a_ylp_counts_as_touched_and_reports_a_later_change() {
+    let mut h = Headless::new("psd-reopen-touched");
+    let psd = h.ex.dir.join("body.psd");
+    std::fs::write(&psd, layered_psd(false, 200)).unwrap();
+    let mut request = h.arm("r1", KEY);
+    request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
+    request["refused"] = json!([]);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    let ylp = h.ex.dir.join("body.ylp");
+    h.state.apply(Action::SaveProjectAs(ylp.clone()));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    // 開き直す（livelink.json を Unity なしで当て直す。元の絵は読み直さず、セットの中の PSD のレイヤーが残る）
+    h.state.apply(Action::OpenProject(ylp));
+    h.until("開き直し", |h| {
+        h.state.message.contains("開き直しました") && !h.link.is_working()
+    });
+    assert!(
+        !h.state.message.contains("元の絵"),
+        "開き直しでは元の絵について知らせない: {}",
+        h.state.message
+    );
+    let skin = set_index(&h, "Skin");
+    let id = h.state.set_doc(skin).id();
+    let layers = layer_list(h.state.set_doc(skin));
+    assert!(
+        layers.iter().any(|(name, _)| name == "反転"),
+        "PSD のレイヤーのまま: {layers:?}"
+    );
+    let doc = h.state.set_doc(skin);
+    let composite = doc.composite(doc.bounds()).unwrap();
+    // 開き直した後に PSD が変わって送り直す: 触ったセットとして、セットは変えず 1 度だけ知らせる
+    let changed = layered_psd(false, 90);
+    rewrite(&psd, &changed);
+    resend(&mut h, &request, "r2");
+    {
+        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        assert_eq!(doc.id(), id, "文書を替えない");
+        assert_eq!(layer_list(doc), layers);
+        assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
+    }
+    assert_eq!(
+        h.state
+            .message
+            .matches("元の絵「body.psd」が変わりました")
+            .count(),
+        1,
+        "{}",
+        h.state.message
+    );
+    assert!(
+        h.state
+            .message
+            .contains("Skin: 元の絵「body.psd」が変わりました。"),
+        "{}",
+        h.state.message
+    );
+    assert_eq!(std::fs::read(&psd).unwrap(), changed, "元の PSD は読むだけ");
+    resend(&mut h, &request, "r3");
+    assert!(
+        !h.state.message.contains("変わりました"),
+        "同じ変化は 1 度だけ: {}",
+        h.state.message
+    );
+    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), id);
+}

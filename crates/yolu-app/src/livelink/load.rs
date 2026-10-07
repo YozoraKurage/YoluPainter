@@ -8,25 +8,46 @@
 //!   （FBX のノードのマテリアルのスロットの順・面の無いスロットは飛ばす）なので、`materials` をその順に当てる。足りないサブメッシュと
 //!   鍵 `none` のマテリアルは、マテリアルなしの組（1 つにまとめる）。
 //! - 骨の名前の道が FBX をまたいで重ならないよう、FBX が 2 つ以上なら根の骨の名前の頭に FBX の番号を付ける。
+//! - 元の絵（Color の流し込み先のスロットの絵）が sRGB の PSD なら、PSD の取り込みと同じ写しの読み（`crate::psd::read_copy`。同じ
+//!   スタックの大きさのスレッドで）でレイヤーのまま読む。取り込みが断った PSD（予算・形式）は、今までどおり平らにして読み、断った理由を返す。リニアの PSD は、レイヤーごとに sRGB へ直すと
+//!   合成が変わるので、平らにしてから直す。ほかのスロットの PSD はいつも平ら（受けた見た目の絵）。
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use yolu_core::look::{MissingImage, ReceivedImage};
 use yolu_core::skin::{merge, MergePart, MeshPick, Rig, RigBudget};
+use yolu_io::psd::{CopyOutcome, CopyRefusal, ImportNote};
 use yolu_model::{load_fbx_with, LoadControl, ModelLimits};
 use yolu_protocol::files::{Problem, Reason, Request, KEY_NONE};
 use yolu_protocol::{MaterialInfo, MaterialKey, TextureProperty};
 
-use super::images::{fit_within, linear_to_srgb, read_picture, Picture, PictureError};
+use super::images::{fit_within, is_psd, linear_to_srgb, read_picture, Picture, PictureError};
 use super::layout::{resolve, unity_root, Layout, PartLayout, PathMiss};
 use crate::look::link::{MAX_RECEIVED_IMAGE_BYTES, MAX_RECEIVED_SIDE, SHOWN};
 use crate::view3d::model::ViewError;
 
-/// 元の絵の画素のバイトの合計の上限（1 つの頼みで読む分）。
+/// 元の絵の画素のバイトの合計の上限（1 つの頼みで読む分。平らな絵の画素と、レイヤーのまま入れる PSD の文書の画素の合計）。
 pub const MAX_ORIGINAL_BYTES: u64 = 512 << 20;
+
+/// 1 つの頼みで読んだ元の絵の画素のバイトの合計（上限は [`MAX_ORIGINAL_BYTES`]。試験は小さい上限で確かめる）。
+struct OriginalBytes {
+    used: u64,
+    cap: u64,
+}
+
+impl OriginalBytes {
+    fn new(cap: u64) -> OriginalBytes {
+        OriginalBytes { used: 0, cap }
+    }
+
+    /// 上限までの残り。
+    fn left(&self) -> u64 {
+        self.cap.saturating_sub(self.used)
+    }
+}
 
 /// 読んだ FBX（道と guid で引く。取り込みの設定は並べるときに当てるので、読みには入らない）。
 #[derive(Debug)]
@@ -40,7 +61,7 @@ pub struct LoadedFbx {
 }
 
 /// ファイルの身元（更新時刻と大きさ。同じなら中身が同じとみなす）。
-type Stamp = (std::time::SystemTime, u64);
+pub type Stamp = (std::time::SystemTime, u64);
 
 fn stamp_of(path: &str) -> Option<Stamp> {
     let meta = std::fs::metadata(path).ok()?;
@@ -57,15 +78,63 @@ pub struct SlotPicture {
     pub image: Arc<ReceivedImage>,
 }
 
-/// 元の絵 1 つの結果。
+/// 元の絵のファイルの身元（道・更新時刻と大きさ・色の扱い。絵の無いスロットは道が無い）。送り直しで、セットに入れた元の絵のファイルが
+/// 変わったかを見る。保証の射程は [`SlotPicture`] と同じ（更新時刻と大きさが同じまま中身だけ変わったファイルは見分けない）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OriginalSource {
+    pub path: Option<String>,
+    /// 読めない・無いファイルは None。
+    pub stamp: Option<Stamp>,
+    pub srgb: bool,
+}
+
+/// マテリアル `m` の Color の流し込み先の絵のファイルの身元（今のファイルの更新時刻と大きさを読む）。
+pub fn original_source(request: &Request, m: usize) -> OriginalSource {
+    let texture = request.materials.get(m).and_then(|mat| {
+        mat.textures
+            .iter()
+            .rfind(|t| SHOWN.iter().any(|(_, p)| *p == t.property))
+    });
+    match texture.and_then(|t| t.path.as_ref().map(|path| (path, t.srgb))) {
+        Some((path, srgb)) => OriginalSource {
+            stamp: stamp_of(path),
+            path: Some(path.clone()),
+            srgb,
+        },
+        None => OriginalSource::default(),
+    }
+}
+
+/// 送り直しで元の絵のファイルが変わったかを見るマテリアル（すでにセットのあるもの）。
 #[derive(Clone, Debug)]
+pub struct Watched {
+    /// `materials[]` の番号。
+    pub material: usize,
+    /// 前に見た元の絵のファイルの身元（覚えていなければ None: 今の身元を覚えるだけ）。
+    pub known: Option<OriginalSource>,
+    /// セットが元の絵を入れた直後のまま（変わっていれば読み直して入れ直す）。
+    pub untouched: bool,
+}
+
+/// 元の絵 1 つの結果。
 pub enum Original {
     /// 読めた（sRGB の画素へ直した。読んだファイルの大きさ）。
     Picture(Arc<Picture>),
+    /// Color の流し込み先の PSD を、レイヤーのまま取り込んだ文書。
+    Layers(Box<PsdLayers>),
     /// 絵が無い（Unity の中にしかない絵・テクスチャの無いスロット）: 白で始める。
     White,
     /// 読めない（白で始めて、理由を知らせる）。
     Unreadable { path: String, why: PictureError },
+}
+
+/// レイヤーのまま取り込んだ元の絵の PSD（PSD の取り込みと同じ写し。原本は読むだけ）。
+pub struct PsdLayers {
+    /// 読んだファイル（同じファイルへ書き出すときに確かめるため、取り込んだ場所として覚える）。
+    pub path: PathBuf,
+    pub doc: yolu_core::Document,
+    /// 取り込みの知らせ（無視・落とす・変わる）。
+    pub notes: Vec<ImportNote>,
 }
 
 /// 裏の仕事に渡すもの。
@@ -77,8 +146,12 @@ pub struct Inputs {
     pub slot_cache: Vec<Arc<SlotPicture>>,
     /// 元の絵を読むマテリアル（`materials[]` の番号）。
     pub originals: Vec<usize>,
+    /// 元の絵のファイルが変わったかを見るマテリアル（変わっていて、セットが入れた直後のままなら、元の絵も読む）。
+    pub watched: Vec<Watched>,
     /// Rig を組み直さない（送り直しで、FBX・使うメッシュ・マテリアルの付け方が前と同じ）。絵だけを読む。
     pub keep_rig: bool,
+    /// レイヤーのまま取り込む元の絵の PSD 1 つの、レイヤーの画素に許すバイト数（設定の「レイヤーのメモリ」。PSD の取り込みと同じ）。
+    pub psd_budget: u64,
 }
 
 /// 裏の仕事の結果（画面のスレッドが入れる）。
@@ -90,6 +163,10 @@ pub struct Opened {
     pub materials: Vec<MaterialInfo>,
     /// 元の絵（`materials[]` の番号ごと）。
     pub originals: BTreeMap<usize, Original>,
+    /// レイヤーのまま取り込めず、平らにして読んだ元の絵の PSD（`materials[]` の番号ごとの、ファイルと断った理由）。
+    pub flattened: BTreeMap<usize, (String, CopyRefusal)>,
+    /// 元の絵のファイルの身元（読んだ元の絵と、見たマテリアルの。読む前に取った物）。
+    pub sources: BTreeMap<usize, OriginalSource>,
     /// スロットの絵（`materials[]` の番号・スロット）。読めない・予算を超える・ファイルの無い絵は理由。
     pub slots: BTreeMap<(usize, String), Result<Arc<ReceivedImage>, MissingImage>>,
     /// 今の頼みのスロットの絵のうち、次の送り直しで使い回せる物（今の頼みが使う物だけ）。
@@ -306,21 +383,49 @@ pub fn run(
             parts.push((mi, meshes));
         }
     }
+    // 元の絵のファイルの身元は読む前に取る（読む間にファイルが変わっても、新しい中身に古い身元が付くだけで、次の送り直しで入れ直す）。
+    // 見たマテリアルのうち、ファイルが変わっていて、セットが入れた直後のままのものは、元の絵も読む
+    let mut sources = BTreeMap::new();
+    let mut original_list = inputs.originals.clone();
+    for w in &inputs.watched {
+        let now = original_source(&request, w.material);
+        if w.untouched
+            && w.known.as_ref().is_some_and(|k| *k != now)
+            && !original_list.contains(&w.material)
+        {
+            original_list.push(w.material);
+        }
+        sources.insert(w.material, now);
+    }
+    for &m in &inputs.originals {
+        sources
+            .entry(m)
+            .or_insert_with(|| original_source(&request, m));
+    }
     let mut sizes = BTreeMap::new();
     let Pictures {
         originals,
+        flattened,
         slots,
         slot_cache,
     } = read_pictures(
         &request,
-        &inputs.originals,
+        &original_list,
         &inputs.slot_cache,
+        inputs.psd_budget,
+        MAX_ORIGINAL_BYTES,
         cancel,
         &mut problems,
     )?;
     for (m, o) in &originals {
-        if let Original::Picture(p) = o {
-            sizes.insert(*m, (p.width, p.height));
+        match o {
+            Original::Picture(p) => {
+                sizes.insert(*m, (p.width, p.height));
+            }
+            Original::Layers(l) => {
+                sizes.insert(*m, (l.doc.width(), l.doc.height()));
+            }
+            _ => {}
         }
     }
     let mut materials = material_infos(&request, &sizes);
@@ -392,6 +497,8 @@ pub fn run(
             layout,
             materials,
             originals,
+            flattened,
+            sources,
             slots,
             slot_cache,
             problems,
@@ -405,6 +512,7 @@ type Slots = BTreeMap<(usize, String), Result<Arc<ReceivedImage>, MissingImage>>
 /// 絵を読んだ結果。
 struct Pictures {
     originals: BTreeMap<usize, Original>,
+    flattened: BTreeMap<usize, (String, CopyRefusal)>,
     slots: Slots,
     /// 次の送り直しで使い回せるスロットの絵（今の頼みが使う物だけ）。
     slot_cache: Vec<Arc<SlotPicture>>,
@@ -416,20 +524,18 @@ fn read_pictures(
     request: &Request,
     originals: &[usize],
     cache: &[Arc<SlotPicture>],
+    psd_budget: u64,
+    original_cap: u64,
     cancel: &AtomicBool,
     problems: &mut Vec<Problem>,
 ) -> Result<Pictures, ViewError> {
     let mut out = BTreeMap::new();
+    let mut flattened = BTreeMap::new();
     let mut slots: Slots = BTreeMap::new();
     let mut slot_cache: Vec<Arc<SlotPicture>> = Vec::new();
-    let mut original_bytes = 0u64;
+    let mut original_bytes = OriginalBytes::new(original_cap);
     let mut slot_bytes = 0u64;
-    let mut seen: BTreeMap<String, Result<Arc<Picture>, PictureError>> = BTreeMap::new();
-    let read = |path: &str, seen: &mut BTreeMap<String, Result<Arc<Picture>, PictureError>>| {
-        seen.entry(path.to_owned())
-            .or_insert_with(|| read_picture(Path::new(path), cancel).map(Arc::new))
-            .clone()
-    };
+    let mut seen: Seen = BTreeMap::new();
     for (mi, m) in request.materials.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(ViewError::Cancelled);
@@ -443,31 +549,28 @@ fn read_pictures(
                 }
                 let original = match &t.path {
                     None => Original::White,
-                    Some(path) => match read(path, &mut seen) {
-                        Ok(p) if original_bytes + p.rgba.len() as u64 <= MAX_ORIGINAL_BYTES => {
-                            original_bytes += p.rgba.len() as u64;
-                            let p = if t.srgb {
-                                p
-                            } else {
-                                let mut q = (*p).clone();
-                                linear_to_srgb(&mut q.rgba);
-                                Arc::new(q)
-                            };
-                            Original::Picture(p)
+                    Some(path) if t.srgb && is_psd(Path::new(path)) => {
+                        let (original, why) = layered_original(
+                            path,
+                            psd_budget,
+                            &mut seen,
+                            &mut original_bytes,
+                            problems,
+                            cancel,
+                        )?;
+                        if let Some(why) = why {
+                            flattened.insert(mi, (path.clone(), why));
                         }
-                        Ok(p) => Original::Unreadable {
-                            path: path.clone(),
-                            why: PictureError::TooLarge(p.width, p.height),
-                        },
-                        Err(PictureError::Cancelled) => return Err(ViewError::Cancelled),
-                        Err(why) => {
-                            problems.push(Problem::new(path.clone(), Reason::TextureUnreadable));
-                            Original::Unreadable {
-                                path: path.clone(),
-                                why,
-                            }
-                        }
-                    },
+                        original
+                    }
+                    Some(path) => flat_original(
+                        path,
+                        t.srgb,
+                        &mut seen,
+                        &mut original_bytes,
+                        problems,
+                        cancel,
+                    )?,
                 };
                 out.insert(mi, original);
                 continue;
@@ -490,7 +593,7 @@ fn read_pictures(
                     });
                     let loaded = match hit {
                         Some(c) => Ok(c.image.clone()),
-                        None => match read(path, &mut seen) {
+                        None => match read_seen(path, &mut seen, cancel) {
                             Ok(p) => {
                                 let p = fit_within((*p).clone(), MAX_RECEIVED_SIDE);
                                 Ok(Arc::new(ReceivedImage {
@@ -540,9 +643,121 @@ fn read_pictures(
     problems.dedup();
     Ok(Pictures {
         originals: out,
+        flattened,
         slots,
         slot_cache,
     })
+}
+
+/// 同じ頼みの中で読んだ絵（道ごと。同じファイルを読み直さない）。
+type Seen = BTreeMap<String, Result<Arc<Picture>, PictureError>>;
+
+/// 絵を読む（`seen` にあれば読み直さない）。
+fn read_seen(
+    path: &str,
+    seen: &mut Seen,
+    cancel: &AtomicBool,
+) -> Result<Arc<Picture>, PictureError> {
+    seen.entry(path.to_owned())
+        .or_insert_with(|| read_picture(Path::new(path), cancel).map(Arc::new))
+        .clone()
+}
+
+/// 元の絵を平らな 1 枚として読む。元の絵の画素の合計（`original_bytes`）が上限を超える絵は読めない物にし、リニアの絵は
+/// sRGB の画素へ直す。
+fn flat_original(
+    path: &str,
+    srgb: bool,
+    seen: &mut Seen,
+    original_bytes: &mut OriginalBytes,
+    problems: &mut Vec<Problem>,
+    cancel: &AtomicBool,
+) -> Result<Original, ViewError> {
+    Ok(match read_seen(path, seen, cancel) {
+        Ok(p) if p.rgba.len() as u64 <= original_bytes.left() => {
+            original_bytes.used += p.rgba.len() as u64;
+            let p = if srgb {
+                p
+            } else {
+                let mut q = (*p).clone();
+                linear_to_srgb(&mut q.rgba);
+                Arc::new(q)
+            };
+            Original::Picture(p)
+        }
+        Ok(p) => Original::Unreadable {
+            path: path.to_owned(),
+            why: PictureError::TooLarge(p.width, p.height),
+        },
+        Err(PictureError::Cancelled) => return Err(ViewError::Cancelled),
+        Err(why) => {
+            problems.push(Problem::new(path.to_owned(), Reason::TextureUnreadable));
+            Original::Unreadable {
+                path: path.to_owned(),
+                why,
+            }
+        }
+    })
+}
+
+/// 元の絵の PSD をレイヤーのまま読む（PSD の取り込みと同じ写し。`budget` は 1 つの PSD のレイヤーの画素に許すバイト数）。取り込んだ文書の画素は
+/// 元の絵の合計（`original_bytes`）に数え、取り込みには、`budget` と合計の残りの小さい方を渡す（残りを超える PSD は読み終える前に断る。
+/// 同じ PSD を使うマテリアルが複数あれば、マテリアルごとに別の文書として取り込み、それぞれ数える。断る理由は取り込みの断りのままで、
+/// 合計の残りで断ったときも予算の断りになる）。取り込みが断った PSD は平らにして読み、断った理由を一緒に返す。平らにしても読めなければ、
+/// 断った理由で読めない物にする（平らの読みの理由より、レイヤーのままを断った理由の方が何が足りないかを言う）。
+fn layered_original(
+    path: &str,
+    budget: u64,
+    seen: &mut Seen,
+    original_bytes: &mut OriginalBytes,
+    problems: &mut Vec<Problem>,
+    cancel: &AtomicBool,
+) -> Result<(Original, Option<CopyRefusal>), ViewError> {
+    use crate::psd::ReadCopyError;
+    let granted = budget.min(original_bytes.left());
+    let why = match crate::psd::read_copy_on_psd_stack(Path::new(path), granted, cancel) {
+        Ok(CopyOutcome::Imported(imported)) => {
+            let yolu_io::psd::CopyImport {
+                mut document,
+                notes,
+            } = *imported;
+            original_bytes.used = original_bytes
+                .used
+                .saturating_add(document.allocated_bytes());
+            // 文書の予算は、合計の残りではなく、PSD の取り込みと同じ設定の予算にしておく（`granted` 以上なので core は断らない。
+            // 入れた後は `sync_budgets` がセットの数と設定から決め直す）
+            let _ = document.set_source_budget_bytes(budget);
+            let layers = PsdLayers {
+                path: PathBuf::from(path),
+                doc: document,
+                notes,
+            };
+            return Ok((Original::Layers(Box::new(layers)), None));
+        }
+        Ok(CopyOutcome::Refused(why)) => why,
+        Err(ReadCopyError::Canceled) => return Err(ViewError::Cancelled),
+        Err(ReadCopyError::File(e)) => {
+            problems.push(Problem::new(path.to_owned(), Reason::TextureUnreadable));
+            let why = PictureError::Io(e.to_string());
+            let path = path.to_owned();
+            return Ok((Original::Unreadable { path, why }, None));
+        }
+        // 取り込みの中の誤り（core の誤り）: 壊れた PSD と同じく、平らにして読んでみる
+        Err(ReadCopyError::Other(e)) => CopyRefusal::Malformed(e.to_string()),
+    };
+    Ok(
+        match flat_original(path, true, seen, original_bytes, problems, cancel)? {
+            picture @ Original::Picture(_) => (picture, Some(why)),
+            Original::Unreadable { path, .. } => (
+                Original::Unreadable {
+                    path,
+                    why: PictureError::Psd(why),
+                },
+                None,
+            ),
+            other => (other, None),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -578,5 +793,212 @@ mod tests {
             );
         }
         assert_eq!(material_key(KEY_NONE, ""), MaterialKey::Unassigned);
+    }
+
+    /// Color の流し込み先に PSD 1 つを持つマテリアル 1 つの頼み。
+    fn psd_request(path: &Path, srgb: bool) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "format": 1, "kind": "open", "id": "t", "target": { "key": "k" },
+            "models": [], "renderers": [],
+            "materials": [ { "key": "object:1", "name": "M", "shader": { "name": "Standard" },
+                             "textures": [ { "property": "_MainTex", "path": path.to_string_lossy(),
+                                             "srgb": srgb } ] } ]
+        }))
+        .unwrap()
+    }
+
+    /// 4×4 の レイヤー 1 つの PSD。
+    fn small_psd() -> Vec<u8> {
+        let doc = yolu_io::psd::Document {
+            width: 4,
+            height: 4,
+            layers: vec![yolu_io::psd::Layer {
+                id: 1,
+                width: 4,
+                height: 4,
+                pixels_rgba: [10, 20, 30, 255].repeat(16),
+                ..yolu_io::psd::Layer::default()
+            }],
+            composite_rgba: None,
+        };
+        yolu_io::psd::write(&doc, &yolu_io::psd::Limits::default()).unwrap()
+    }
+
+    fn read(request: &Request, budget: u64) -> (Pictures, Vec<Problem>) {
+        read_capped(request, &[0], budget, MAX_ORIGINAL_BYTES)
+    }
+
+    /// 元の絵を読むマテリアルと、元の絵の合計の上限を指定して読む。
+    fn read_capped(
+        request: &Request,
+        originals: &[usize],
+        budget: u64,
+        cap: u64,
+    ) -> (Pictures, Vec<Problem>) {
+        let mut problems = Vec::new();
+        let pictures = read_pictures(
+            request,
+            originals,
+            &[],
+            budget,
+            cap,
+            &AtomicBool::new(false),
+            &mut problems,
+        )
+        .unwrap();
+        (pictures, problems)
+    }
+
+    /// Color の流し込み先に、同じ PSD を持つマテリアル `count` 個の頼み。
+    fn shared_psd_request(path: &Path, count: usize) -> Request {
+        let material = |i: usize| {
+            serde_json::json!({
+                "key": format!("object:{i}"), "name": format!("M{i}"), "shader": { "name": "Standard" },
+                "textures": [ { "property": "_MainTex", "path": path.to_string_lossy(), "srgb": true } ]
+            })
+        };
+        serde_json::from_value(serde_json::json!({
+            "format": 1, "kind": "open", "id": "t", "target": { "key": "k" },
+            "models": [], "renderers": [],
+            "materials": (0..count).map(material).collect::<Vec<_>>()
+        }))
+        .unwrap()
+    }
+
+    /// 画素が一様でない 32×32 の PSD（レイヤー `layers` 枚。レイヤー 1 枚の画素は 4096 バイト）。
+    fn noisy_psd(layers: usize) -> Vec<u8> {
+        let layer = |id: i32| yolu_io::psd::Layer {
+            id,
+            width: 32,
+            height: 32,
+            pixels_rgba: (0..32 * 32 * 4)
+                .map(|i| {
+                    (i as u32)
+                        .wrapping_mul(2_654_435_761)
+                        .wrapping_add(id as u32 * 97) as u8
+                        | 1
+                })
+                .collect(),
+            ..yolu_io::psd::Layer::default()
+        };
+        let doc = yolu_io::psd::Document {
+            width: 32,
+            height: 32,
+            layers: (1..=layers as i32).map(layer).collect(),
+            composite_rgba: None,
+        };
+        yolu_io::psd::write(&doc, &yolu_io::psd::Limits::default()).unwrap()
+    }
+
+    #[test]
+    fn a_psd_original_is_read_as_layers_and_flattened_only_when_the_layers_are_refused() {
+        let dir = std::env::temp_dir().join(format!("yolu-ll-psd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Body.PSD");
+        std::fs::write(&path, small_psd()).unwrap();
+        // レイヤーのまま（拡張子の大文字小文字は問わない）
+        let (p, problems) = read(&psd_request(&path, true), 64 << 20);
+        assert!(
+            matches!(p.originals.get(&0), Some(Original::Layers(l)) if l.doc.width() == 4 && l.path == path)
+        );
+        assert!(p.flattened.is_empty() && problems.is_empty());
+        // 予算が足りずレイヤーのままを断ったら、平らにして読み、断った理由を返す
+        let (p, _) = read(&psd_request(&path, true), 16);
+        assert!(matches!(p.originals.get(&0), Some(Original::Picture(pic)) if pic.width == 4));
+        assert!(
+            matches!(p.flattened.get(&0), Some((_, why)) if why.raised_by_budget()),
+            "予算の理由"
+        );
+        // リニアの PSD は平らにして直す（断った理由は無い）
+        let (p, _) = read(&psd_request(&path, false), 64 << 20);
+        assert!(matches!(p.originals.get(&0), Some(Original::Picture(_))));
+        assert!(p.flattened.is_empty());
+        // 平らにしても読めない（CMYK）なら、レイヤーのままを断った理由で読めない物にする
+        let mut cmyk = small_psd();
+        cmyk[24..26].copy_from_slice(&4u16.to_be_bytes());
+        let path = dir.join("cmyk.psd");
+        std::fs::write(&path, cmyk).unwrap();
+        let (p, problems) = read(&psd_request(&path, true), 64 << 20);
+        assert!(
+            matches!(
+                p.originals.get(&0),
+                Some(Original::Unreadable {
+                    why: PictureError::Psd(CopyRefusal::ColorFormat { mode: 4, .. }),
+                    ..
+                })
+            ),
+            "CMYK の理由"
+        );
+        assert_eq!(
+            problems
+                .iter()
+                .map(|p| p.known_reason())
+                .collect::<Vec<_>>(),
+            [Some(Reason::TextureUnreadable)]
+        );
+        // 無いファイルは読めない物（平らにも読み直さない）
+        let (p, _) = read(&psd_request(&dir.join("none.psd"), true), 64 << 20);
+        assert!(matches!(
+            p.originals.get(&0),
+            Some(Original::Unreadable {
+                why: PictureError::Io(_),
+                ..
+            })
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    /// 1 つの頼みで読む元の絵の合計の上限は、レイヤーのまま取り込んだ文書の画素も数える。同じ PSD を使うマテリアルが複数あれば、マテリアルごとに
+    /// 別の文書として取り込み、それぞれ数える。残りを超える PSD は平らにし（平らな画素も合計に入る）、それも入らなければ読めない物にする。
+    #[test]
+    fn layered_psd_originals_count_toward_the_total_original_bytes() {
+        let dir = std::env::temp_dir().join(format!("yolu-ll-psd-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("two.psd");
+        std::fs::write(&path, noisy_psd(2)).unwrap();
+        let request = shared_psd_request(&path, 3);
+        let big = 64 << 20;
+        // 上限が十分なら、3 つとも別の文書のレイヤーのまま（画素の予算は設定の予算のまま）
+        let (p, _) = read_capped(&request, &[0, 1, 2], big, 1 << 30);
+        let docs: Vec<&PsdLayers> = (0..3)
+            .map(|m| match p.originals.get(&m) {
+                Some(Original::Layers(l)) => &**l,
+                _ => panic!("{m} はレイヤーのまま"),
+            })
+            .collect();
+        let layered = docs[0].doc.allocated_bytes();
+        let flat = 32 * 32 * 4;
+        assert!(layered > flat, "2 レイヤー分の画素は平らな 1 枚より大きい");
+        assert!(docs.iter().all(|l| l.doc.allocated_bytes() == layered));
+        assert!(
+            docs.iter().all(|l| l.doc.source_budget_bytes() == big),
+            "文書の予算は設定の予算（合計の残りではない）"
+        );
+        assert!(p.flattened.is_empty());
+        // 2 つ分に平らな 1 枚を足した上限: 3 つ目はレイヤーのままだと残りを超えるので断り、平らにして入れる
+        let (p, _) = read_capped(&request, &[0, 1, 2], big, 2 * layered + flat);
+        assert!(matches!(p.originals.get(&0), Some(Original::Layers(_))));
+        assert!(matches!(p.originals.get(&1), Some(Original::Layers(_))));
+        assert!(
+            matches!(p.originals.get(&2), Some(Original::Picture(pic)) if pic.rgba.len() as u64 == flat),
+            "3 つ目は平ら"
+        );
+        assert!(
+            matches!(p.flattened.get(&2), Some((_, why)) if why.raised_by_budget()),
+            "予算の断り"
+        );
+        assert_eq!(p.flattened.len(), 1);
+        // 上限がちょうど 1 つ分なら、2 つ目はレイヤーのままも平らも入らない（レイヤーのままを断った理由で読めない物。白で入る）
+        let (p, _) = read_capped(&request, &[0, 1], big, layered);
+        assert!(matches!(p.originals.get(&0), Some(Original::Layers(_))));
+        assert!(matches!(
+            p.originals.get(&1),
+            Some(Original::Unreadable {
+                why: PictureError::Psd(_),
+                ..
+            })
+        ));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -11,7 +11,8 @@
 //!   来た頼みは、終わってから当てる（断らずに待つ。待つ間は `claimed/` に置いたまま）。裏の仕事の間に利用者が文書を替えた（新規・開く）ときと、
 //!   受け付けをやめたときは、結果を入れずに取り消して `declined` を返す。
 //! - テクスチャセットはマテリアルの `key`（Unity のマテリアルのアセット）ごとに 1 つ。元の絵は新しく作ったセットと何も触っていない最初の
-//!   セットの一番下のレイヤー（`originals`）。lilToon の値は受けた見た目（`look::link`）。
+//!   セットの一番下のレイヤー（`originals`。Color の流し込み先の絵が PSD なら、PSD のレイヤーのまま）。送り直しで元の絵のファイルが変わって
+//!   いれば、入れた直後のままのセットには入れ直し、触ったセットは変えずに知らせる（`SetOriginal`）。lilToon の値は受けた見た目（`look::link`）。
 //! - 返事: 開いた・送り直しを当てた `opened`（合わなかった物は `problems`）、受けなかった `refused`、書き出した `exported`。
 //! - .ylp: 当てた頼み（今のポーズを入れ、マテリアルの値を除いたもの）を根の `livelink.json` に残し、開き直すと Unity なしで同じモデルと
 //!   ポーズになる（`store`）。
@@ -42,7 +43,7 @@ use crate::state::AppState;
 use crate::view3d::model::ViewError;
 use crate::view3d::pose::{self, RigJob};
 use layout::Layout;
-use load::{Inputs, LoadedFbx, Opened, Original, SlotPicture};
+use load::{Inputs, LoadedFbx, Opened, Original, OriginalSource, SlotPicture, Watched};
 
 pub use originals::{OriginalMark, OriginalMarks};
 
@@ -227,6 +228,22 @@ impl AppState {
     }
 }
 
+/// テクスチャセットに入れた元の絵の覚え（セットの uid ごと。セッションの中だけで、保存しない）。送り直しで元の絵のファイルが変わったとき、
+/// 入れた直後のままのセットには入れ直し、触ったセットは変えずに知らせる。
+#[derive(Clone, Debug)]
+struct SetOriginal {
+    /// 入れた直後の文書（ID と版）。今のセットの文書が同じなら、何も触っていない。触ったセットと、.ylp から開き直したセット（入れた直後を
+    /// 知らない）は None。
+    untouched: Option<(u128, u64)>,
+    /// 最後に見た元の絵のファイルの身元（変わったと知らせたら、新しい身元にする: 同じ変化を送り直しのたびに知らせない）。
+    source: OriginalSource,
+    /// 入れ直してもセットの大きさを変えない（新規プロジェクトの窓で解像度を選んだ最初のセット）。
+    keep_size: bool,
+}
+
+/// 元の絵を入れたセット（セットの uid・マテリアルの番号・大きさを変えないか）。
+type Installed = (u32, usize, bool);
+
 /// 拾った頼み 1 つ。
 struct Taken {
     /// 受け渡しのフォルダの頼み（.ylp から開き直すものは None。返事を書かない）。
@@ -310,6 +327,8 @@ pub struct LiveLink {
     cache: Vec<Arc<LoadedFbx>>,
     /// 読んだスロットの絵（同じファイルなら読み直さない）。
     slot_cache: Vec<Arc<SlotPicture>>,
+    /// セットに入れた元の絵の覚え（セットの uid ごと）。
+    set_originals: BTreeMap<u32, SetOriginal>,
     /// 頼みの id ごとの、次の返事の番号。
     counters: BTreeMap<String, u32>,
     problems: Vec<Problem>,
@@ -391,6 +410,7 @@ impl LiveLink {
             job: None,
             cache: Vec::new(),
             slot_cache: Vec::new(),
+            set_originals: BTreeMap::new(),
             counters: BTreeMap::new(),
             problems: Vec::new(),
         }
@@ -739,27 +759,50 @@ impl LiveLink {
         // 元の絵を読むマテリアル: 送り直しは、まだセットの無いマテリアルだけ（新しく作るセット）。.ylp から開き直すときは、絵はセットの中に
         // 残っているので、元の絵は入れ直さない（読んでも使わず、読めない絵が合わない物として出るだけ）
         let reopening = taken.claimed.is_none();
-        let originals: Vec<usize> = request
-            .materials
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| {
-                !reopening
-                    && (!same || {
-                        let key = load::material_key(&m.key, &m.name);
-                        !state.sets.iter().any(|s| {
-                            s.bound.is_some() && s.material == crate::sets::material_from_link(&key)
-                        })
-                    })
-            })
-            .map(|(i, _)| i)
-            .collect();
+        // セットのあるマテリアルは、元の絵のファイルが変わったかを見る（送り直しは覚えと比べ、開き直しは今の身元を覚えるだけ）
+        let mut originals: Vec<usize> = Vec::new();
+        let mut watched: Vec<Watched> = Vec::new();
+        for (i, m) in request.materials.iter().enumerate() {
+            if reopening {
+                watched.push(Watched {
+                    material: i,
+                    known: None,
+                    untouched: false,
+                });
+                continue;
+            }
+            let key = crate::sets::material_from_link(&load::material_key(&m.key, &m.name));
+            let set = same
+                .then(|| {
+                    state
+                        .sets
+                        .iter()
+                        .position(|s| s.bound.is_some() && s.material == key)
+                })
+                .flatten();
+            let Some(index) = set else {
+                originals.push(i);
+                continue;
+            };
+            let record = state
+                .sets
+                .get(index)
+                .and_then(|s| self.set_originals.get(&s.uid));
+            let doc = state.set_doc(index);
+            watched.push(Watched {
+                material: i,
+                known: record.map(|r| r.source.clone()),
+                untouched: record.is_some_and(|r| r.untouched == Some((doc.id(), doc.revision()))),
+            });
+        }
         let inputs = Inputs {
             request,
             cache: self.cache.clone(),
             slot_cache: self.slot_cache.clone(),
             originals,
+            watched,
             keep_rig,
+            psd_budget: state.load_source_bytes(),
         };
         let epoch = state.project_epoch;
         if keep_rig {
@@ -886,7 +929,7 @@ impl LiveLink {
     fn install(
         &mut self,
         taken: Taken,
-        opened: Opened,
+        mut opened: Opened,
         prepared: Option<pose::PreparedModel>,
         state: &mut AppState,
     ) {
@@ -973,6 +1016,8 @@ impl LiveLink {
         };
         // 元の絵（新しく作ったセットと、何も触っていない最初のセット）
         let mut notes: Vec<String> = Vec::new();
+        let fresh_uids: Vec<u32> = fresh.clone();
+        let mut installed: Vec<Installed> = Vec::new();
         for uid in fresh {
             let Some(index) = state.sets.index_of(uid) else {
                 continue;
@@ -981,36 +1026,85 @@ impl LiveLink {
                 continue;
             };
             let m = m as usize;
-            let converted = request
-                .materials
-                .get(m)
-                .and_then(|mat| {
-                    mat.textures.iter().find(|t| {
-                        crate::look::link::SHOWN
-                            .iter()
-                            .any(|(_, p)| *p == t.property)
-                    })
-                })
-                .is_some_and(|t| !t.srgb && t.path.is_some());
             let refit = pristine_first == Some(uid) && !state.resolution_chosen;
-            let result = match opened.originals.get(&m) {
-                Some(Original::Picture(p)) => {
-                    originals::install(state, index, p, converted, refit, lang)
-                }
-                Some(Original::White) => originals::install_white(state, index, lang),
-                Some(Original::Unreadable { path, why }) => {
-                    notes.push(format!("{path}: {}", why.text(lang)));
-                    originals::install_white(state, index, lang)
-                }
-                None => Ok(()),
+            let keep_size = pristine_first == Some(uid) && state.resolution_chosen;
+            if let Some(original) = opened.originals.remove(&m) {
+                put_original(
+                    state, index, &request, m, original, &opened, refit, &mut notes,
+                );
+                installed.push((uid, m, keep_size));
+            }
+        }
+        // 送り直し: 元の絵のファイルが変わったセット。入れた直後のままなら入れ直し、触ったセットは変えずに知らせる
+        let mut changed: Vec<String> = Vec::new();
+        for index in 0..state.sets.len() {
+            let Some((uid, m, name)) = state
+                .sets
+                .get(index)
+                .and_then(|s| s.bound.map(|m| (s.uid, m as usize, s.name.clone())))
+            else {
+                continue;
             };
-            if let Err(e) = result {
-                let name = state
-                    .sets
-                    .get(index)
-                    .map(|s| s.name.clone())
-                    .unwrap_or_default();
-                notes.push(format!("{name}: {e}"));
+            if fresh_uids.contains(&uid) {
+                continue;
+            }
+            let Some(source) = opened.sources.get(&m).cloned() else {
+                continue;
+            };
+            let doc = state.set_doc(index);
+            let now = (doc.id(), doc.revision());
+            let Some(record) = self.set_originals.get_mut(&uid) else {
+                // 覚えの無いセット（.ylp から開き直した・前からあった）は、今の身元を覚えるだけ
+                self.set_originals.insert(
+                    uid,
+                    SetOriginal {
+                        untouched: None,
+                        source,
+                        keep_size: false,
+                    },
+                );
+                continue;
+            };
+            if record.untouched != Some(now) {
+                record.untouched = None;
+            }
+            if record.source == source {
+                continue;
+            }
+            let keep_size = record.keep_size;
+            let original = opened
+                .originals
+                .remove(&m)
+                .filter(|_| record.untouched.is_some());
+            if let Some(Original::Unreadable { path, why }) = &original {
+                // 読めなかった（壊れている・書き込みの途中など）: 今のセットを残し、見た身元も前のままにして、次の送り直しでもう一度読む
+                // （読めない間に身元だけ覚えると、時刻と大きさが同じまま読めるようになっても入れ直さない）
+                notes.push(originals::unreadable_kept_note(lang, &name, path, why));
+                continue;
+            }
+            match original {
+                Some(original) => {
+                    if let Err(e) = originals::reset_untouched(state, index, lang) {
+                        notes.push(format!("{name}: {e}"));
+                        continue;
+                    }
+                    record.source = source.clone();
+                    put_original(
+                        state, index, &request, m, original, &opened, !keep_size, &mut notes,
+                    );
+                    installed.push((uid, m, keep_size));
+                    // 保存したプロジェクトの中身が変わった
+                    state.modified = true;
+                }
+                None => {
+                    record.source = source.clone();
+                    changed.extend(
+                        source
+                            .path
+                            .as_deref()
+                            .map(|path| originals::changed_note(lang, &name, path)),
+                    );
+                }
             }
         }
         // 受けた見た目（lilToon の値と、スロットの絵）
@@ -1078,6 +1172,23 @@ impl LiveLink {
                 state.modified = true;
             }
         }
+        // 入れた元の絵を覚える（入れた直後の文書の ID と版。受けた見た目とポーズは文書の版を進めない）。無くなったセットの覚えは捨てる
+        for (uid, m, keep_size) in installed {
+            let Some(index) = state.sets.index_of(uid) else {
+                continue;
+            };
+            let doc = state.set_doc(index);
+            self.set_originals.insert(
+                uid,
+                SetOriginal {
+                    untouched: Some((doc.id(), doc.revision())),
+                    source: opened.sources.get(&m).cloned().unwrap_or_default(),
+                    keep_size,
+                },
+            );
+        }
+        self.set_originals
+            .retain(|uid, _| state.sets.index_of(*uid).is_some());
         problems.splice(0..0, opened.problems.iter().cloned());
         problems.dedup();
         state.link_target = Some(LinkTarget {
@@ -1119,8 +1230,9 @@ impl LiveLink {
                 format!(" {} item(s) did not fit.", self.problems.len()),
             );
         }
-        for n in &notes {
-            text += &format!(" {n}。");
+        for n in notes.iter().chain(&changed) {
+            let n = n.trim_end_matches(['。', '.']);
+            text += &lang.pick(format!(" {n}。"), format!(" {n}."));
         }
         let level = if notes.is_empty() && self.problems.is_empty() {
             NoticeLevel::Info
@@ -1194,6 +1306,65 @@ impl LiveLink {
         if folder.write_reply(&reply, *n).is_ok() {
             *n += 1;
         }
+    }
+}
+
+/// 読んだ元の絵 1 つを、セット `index`（マテリアル `m` に付いた、新しく作った・何も触っていない・入れ直すために空に戻したセット）に入れる。
+/// 落とした物・入れられなかった理由は `notes` に。`refit` は元の絵の大きさで文書を作り直してよいか。
+#[allow(clippy::too_many_arguments)]
+fn put_original(
+    state: &mut AppState,
+    index: usize,
+    request: &Request,
+    m: usize,
+    original: Original,
+    opened: &Opened,
+    refit: bool,
+    notes: &mut Vec<String>,
+) {
+    let lang = state.lang;
+    let converted = request
+        .materials
+        .get(m)
+        .and_then(|mat| {
+            mat.textures.iter().find(|t| {
+                crate::look::link::SHOWN
+                    .iter()
+                    .any(|(_, p)| *p == t.property)
+            })
+        })
+        .is_some_and(|t| !t.srgb && t.path.is_some());
+    let name = state
+        .sets
+        .get(index)
+        .map(|s| s.name.clone())
+        .unwrap_or_default();
+    let result = match original {
+        Original::Picture(p) => {
+            if let Some((path, why)) = opened.flattened.get(&m) {
+                notes.push(originals::flattened_note(lang, &name, path, why));
+            }
+            originals::install(state, index, &p, converted, refit, lang)
+        }
+        Original::Layers(layers) => {
+            let note = originals::layers_note(lang, &name, &layers);
+            let path = layers.path.clone();
+            let installed = originals::install_layers(state, index, *layers, lang);
+            if installed.is_ok() {
+                // 同じファイルへ PSD を書き出すときは、置き換える前に確かめる（PSD の取り込みと同じ）
+                state.psd.remember_imported(path);
+                notes.extend(note);
+            }
+            installed
+        }
+        Original::White => originals::install_white(state, index, lang),
+        Original::Unreadable { path, why } => {
+            notes.push(format!("{path}: {}", why.text(lang)));
+            originals::install_white(state, index, lang)
+        }
+    };
+    if let Err(e) = result {
+        notes.push(format!("{name}: {e}"));
     }
 }
 

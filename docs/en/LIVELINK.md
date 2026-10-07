@@ -150,8 +150,20 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
   acceptance also cancels the requests that are not applied yet and the ones that are loading, with `declined` (reopening a `.ylp` continues).
 - Several FBX files become one model (with two or more, the root bone names are prefixed with the FBX number). Bones can be moved in the Pose panel.
 - One texture set per material `key` (renderers using the same Unity material share a set).
-- Original texture: the file of the Color destination (`_MainTex`) is read (PNG, TGA, JPG, PSD; a PSD is flattened) and added as the bottom layer "Original" of newly created sets
+- Original texture: the file of the Color destination (`_MainTex`) is read (PNG, TGA, JPG, PSD) and added as the bottom layer "Original" of newly created sets
   and of the untouched first set. Materials without a texture, or with a texture that exists only inside Unity, start white; unreadable files start white with a reason.
+- When the original texture is a PSD (sRGB), the set gets the PSD's layers instead of a flattened "Original". It is read as the same copy as File → Import of a PSD;
+  the PSD's layers come at the bottom and the set's empty layer stays above them. The set keeps the PSD's canvas size (layers are not resized). What the import drops
+  or changes is listed in the notice with the same names as the import check window (no window is shown). The original PSD is only read; exporting a PSD to the
+  same file asks before replacing it. A PSD that cannot be imported as layers (for example over the budget) becomes a flattened "Original", with the reason in the
+  notice. The pixels of the originals read for one request (flattened pictures and the documents of PSDs kept as layers) are limited to 512 MiB in total; a PSD that would go
+  over the remainder is flattened (and if even that does not fit, the set starts white with the reason). When several materials use the same PSD, each gets its own document
+  and each is counted. A linear PSD (`srgb` is false) and PSDs in slots other than Color are read flattened.
+- If a resend finds that the original texture file changed (path, modification time, size or `srgb`), a set that is still as it was when the original was put in
+  (nothing drawn or changed) gets the new original (white if the texture is gone). If the changed file cannot be read (damaged, being written, and so on), the set is not changed (it does not turn white),
+  the notice says "<set>: the original "body.psd" cannot be read, so the set is kept", and the file is read again on the next resend. A set you have touched is not changed; the notice says "<set>: the original "body.psd" has changed" (once per
+  change). Whether a set is untouched is remembered only while the application is open, so sets reopened from a `.ylp` count as touched (changes after reopening
+  are reported).
 - lilToon material values become the set's received look (read by the 3D view's lilToon rendering; `_MainTex` shows the standalone application's Color, and textures of other slots
   are read from their files, up to 2048 on the long side and 256 MiB in total; a resend does not read a file again while its path, modification time and size stay the same).
   Materials that are not lilToon get no received look.

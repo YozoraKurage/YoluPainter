@@ -10,10 +10,10 @@ YoluPainter for Unity (VPM package `net.yozolab.yolupainter`)**. The two exchang
 
 1. In Unity's `YozoLab → YoluPainter → Live Link` window, choose a scene object and press Open in YoluPainter. If the standalone application is not running, it is
    started. The standalone application reads the object's FBX and texture files itself and creates one texture set per material (the original texture becomes the bottom layer
-   "Original"). lilToon materials are drawn in the 3D view with Unity's values (only materials with lilToon's version value or shaders from the lilToon package; shaders that only
+   "Original"; a PSD keeps its layers). lilToon materials are drawn in the 3D view with Unity's values (only materials with lilToon's version value or shaders from the lilToon package; shaders that only
    look similar by name are not drawn as lilToon).
 2. After changing the pose, BlendShapes or material values in Unity, press the same button to resend (the FBX is not read again; only the pose and values are applied, overwriting
-   bones moved by hand in the Pose panel).
+   bones moved by hand in the Pose panel. If an original texture file changed, untouched sets get it again; touched sets are left as they are, with a notice).
 3. When you export with File → Export, the export folder starts in the folder Unity specified. Unity imports the PNG files written and asks in its window whether to assign them to
    the materials.
 4. Save your work as `.ylp`. The model opened over Live Link (the FBX files, renderer and material bindings, and pose) is kept in the `.ylp` and reopens without Unity.
