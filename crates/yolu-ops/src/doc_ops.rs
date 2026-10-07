@@ -114,11 +114,15 @@ pub fn write(facts: SetFacts<'_>, doc: &mut Document, command: &Command) -> Resu
     }
 }
 
-/// 1 つの命令を取り消しの 1 段にする（core の `batch`。断ると文書は元のまま）。
+/// 1 つの命令を取り消しの 1 段にする（core の `batch`。断ると文書は元のまま）。もうまとめの中（アクションの実行が、命令の列の全部を
+/// 1 つのまとめで当てている）なら、そのまとめに積む（まとめは入れ子にできない。途中で断った命令の段は、外のまとめが全部と一緒に戻す）。
 fn batch<T>(
     doc: &mut Document,
     edits: impl FnOnce(&mut Document) -> Result<T, CoreError>,
 ) -> Result<T, OpError> {
+    if doc.is_batching() {
+        return edits(doc).map_err(|e| OpError::from_core(&e));
+    }
     doc.batch(edits).map_err(|e| OpError::from_core(&e))
 }
 

@@ -7,6 +7,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod automation;
 mod bigdoc;
 mod brush_import;
 mod brush_list;

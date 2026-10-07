@@ -23,6 +23,8 @@ pub enum Danger {
     Always,
     /// ファイルを置き換える・開いている文書の変更を捨てるときだけ壊す。そうなるときに `confirm: true` が無ければ断る。
     WhenReplacing,
+    /// 列の中の命令による（`action.run`）。壊す命令は、その命令に `confirm: true` が無ければ、列の全部を当てる前に断る。
+    PerCommand,
 }
 
 /// 命令 1 つの説明。
@@ -232,6 +234,11 @@ fn build() -> Vec<CommandSpec> {
             "save_as", "saved", false, WhenReplacing, true,
             ("名前を付けて保存", "別の .ylp として保存する。既にあるファイルへは confirm: true が要る。"),
             ("Save as", "Save as another .ylp. Replacing an existing file needs confirm: true."),
+        ),
+        spec::<ActionRunArgs, ActionDone>(
+            "action.run", "action", false, PerCommand, false,
+            ("アクションを実行", "レイヤー・マスク・効果を変える命令の列を、1 つのテクスチャセットへ取り消しの 1 段で当てる。途中の命令が断れば全部を戻し、何番目か（data.index、0 から）を返す。中の壊す命令には、それぞれ confirm: true が要る。"),
+            ("Run an action", "Apply a list of commands that change layers, masks and effects to one texture set as one undo step. If a command fails, everything is rolled back and the error tells which one (data.index, from 0). Destructive commands in the list need their own confirm: true."),
         ),
     ]
 }

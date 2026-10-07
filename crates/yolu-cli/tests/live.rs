@@ -181,3 +181,64 @@ fn live_replies_are_the_same_values_the_headless_host_gives() {
         .unwrap();
     assert!(matches!(reply, Reply::Set(_)));
 }
+
+#[test]
+fn a_live_batch_resolves_what_it_created_before_sending() {
+    let fx = Fixture::new("live-created");
+    fx.project("a.ylp");
+    let app = FakeApp::start(&fx, "a.ylp", Behavior::Serve);
+    let port = app.port_arg();
+    let lines = [
+        r#"{"command": "layer.add", "args": {"kind": "paint", "name": "Made"}}"#,
+        r#"{"command": "layer.set", "args": {"layer": "$created:1", "opacity": 0.4}}"#,
+    ]
+    .join("\n");
+    let out = fx.cli_in(&live_args(&port, &["batch", "-"]), &lines);
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    assert_eq!(
+        fx.ok(&live_args(&port, &["layer.get", "--layer", "Made"]))["opacity"],
+        0.4
+    );
+    // アプリは 1 つずつ受けるので、`$created` をそのまま送ると断る（CLI が送る前に替えている）
+    let (code, error) = fx.fails(&live_args(&port, &["mask.add", "--layer", "$created:1"]));
+    assert_eq!(
+        (code, error["code"].as_str().unwrap()),
+        (2, "invalid_request")
+    );
+}
+
+#[test]
+fn run_action_reaches_the_running_app_as_one_undo_step() {
+    let fx = Fixture::new("live-action");
+    fx.project("a.ylp");
+    let app = FakeApp::start(&fx, "a.ylp", Behavior::Serve);
+    let port = app.port_arg();
+    let action = serde_json::json!({"format": 1, "name": "Wash", "commands": [
+        {"command": "layer.add", "args": {"kind": "paint", "name": "Made"}},
+        {"command": "layer.set", "args": {"layer": "$created:1", "opacity": 0.4}},
+        {"command": "mask.add", "args": {"layer": "$created:1"}},
+    ]});
+    std::fs::write(fx.path("wash.json"), action.to_string()).unwrap();
+    let out = fx.ok(&live_args(&port, &["run-action", "wash.json"]));
+    assert_eq!(out["action"], "Wash");
+    assert_eq!(out["steps"].as_array().unwrap().len(), 3);
+    assert_eq!(out["undo_count"], 1);
+    assert_eq!(app.served(), 1, "命令 action.run の 1 回で送る");
+    let made = fx.ok(&live_args(&port, &["layer.get", "--layer", "Made"]));
+    assert_eq!(made["opacity"], 0.4);
+    // 取り消し 1 回で全部戻る
+    fx.ok(&live_args(&port, &["undo"]));
+    let (code, error) = fx.fails(&live_args(&port, &["layer.get", "--layer", "Made"]));
+    assert_eq!((code, error["code"].as_str().unwrap()), (1, "not_found"));
+    // 途中で断られたら、そこまでの分も戻して何番目かを言う
+    let bad = serde_json::json!({"format": 1, "name": "Bad", "commands": [
+        {"command": "layer.add", "args": {"kind": "paint", "name": "Made"}},
+        {"command": "layer.set", "args": {"layer": "NoSuchLayer", "opacity": 0.4}},
+    ]});
+    std::fs::write(fx.path("bad.json"), bad.to_string()).unwrap();
+    let (code, error) = fx.fails(&live_args(&port, &["run-action", "bad.json"]));
+    assert_eq!((code, error["code"].as_str().unwrap()), (1, "not_found"));
+    assert_eq!(error["data"]["index"], 1);
+    let (code, _) = fx.fails(&live_args(&port, &["layer.get", "--layer", "Made"]));
+    assert_eq!(code, 1);
+}

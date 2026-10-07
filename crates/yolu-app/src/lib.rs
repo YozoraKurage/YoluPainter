@@ -13,6 +13,7 @@
 //! `view3d::shape_gizmo`）、2D のグラデーションの道具は `gradient`。
 
 pub mod app;
+pub mod automation;
 pub mod bake;
 pub mod brushes;
 pub mod canvas;

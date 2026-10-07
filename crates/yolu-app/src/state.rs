@@ -530,6 +530,10 @@ pub enum Action {
     ToggleUvOverlap,
     /// ツールの並び（ツールの列とブラシのグループを作る・消す・名前・並べ替え・最初の並びに戻す。文書は変えない）。
     Tools(crate::toolset::ToolsetAction),
+    /// アクション（操作の記録と再生。再生だけが文書を変え、1 回の Undo）。
+    Automation(crate::automation::AutomationOp),
+    /// ドックのパネルを開いて前に出す（無ければレイヤーと同じ組へ入れる。画面だけ。`YoluApp` が同じフレームのうちに当てる）。
+    ShowPanel(crate::Tab),
 }
 
 impl Action {
@@ -608,6 +612,8 @@ impl Action {
             Self::Look(..) => "Look",
             Self::ToggleUvOverlap => "ToggleUvOverlap",
             Self::Tools(..) => "Tools",
+            Self::Automation(..) => "Automation",
+            Self::ShowPanel(..) => "ShowPanel",
         }
     }
 
@@ -641,6 +647,7 @@ impl Action {
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
+            || matches!(self, Action::Automation(op) if op.edits_document())
     }
 }
 
@@ -731,6 +738,8 @@ pub struct AppState {
     #[doc(hidden)]
     pub rewritten_sets: usize,
     pub reset_layout: bool,
+    /// 開いて前に出すパネル（`Action::ShowPanel`。`YoluApp` が取ってドックに当てる）。
+    pub show_panel: Option<crate::Tab>,
     pub quit: bool,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
@@ -813,6 +822,8 @@ pub struct AppState {
     pub recovery: crate::recovery::RecoveryState,
     /// ツールの並び（ツールの列とブラシのグループ。設定のフォルダの tools.json。.ylp には入れない）。
     pub toolset: crate::toolset::ToolsetState,
+    /// アクション（操作の記録と再生。置き場は設定のフォルダの actions/。.ylp には入れない）。
+    pub automation: crate::automation::Automation,
 }
 
 /// ファイルの窓の頼み。
@@ -958,6 +969,7 @@ impl AppState {
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
+            show_panel: None,
             quit: false,
             sets,
             model: None,
@@ -1001,6 +1013,7 @@ impl AppState {
             crash: Default::default(),
             recovery: Default::default(),
             toolset: Default::default(),
+            automation: Default::default(),
         }
     }
 
@@ -1132,7 +1145,10 @@ impl AppState {
     /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
         let prior = self.message_begin();
+        // 記録中なら、命令にできる操作を記録する（入れ子の操作は外の操作として 1 回）
+        let pending = crate::automation::record::before(self, &action);
         self.apply_action(action);
+        crate::automation::record::after(self, pending);
         self.message_end(prior);
     }
 
@@ -1370,6 +1386,7 @@ impl AppState {
             }
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.reset_layout = true,
+            Action::ShowPanel(tab) => self.show_panel = Some(tab),
             Action::SelectTool(tool) => {
                 self.switch_tool(tool, false);
             }
@@ -1519,6 +1536,7 @@ impl AppState {
             Action::Prefs(a) => self.prefs_apply(a),
             Action::Pressure(a) => self.pressure_apply(a),
             Action::Recovery(a) => self.recovery_apply(a),
+            Action::Automation(op) => self.automation_apply(op),
         }
     }
 }

@@ -54,6 +54,10 @@ pub enum Action {
     Batch {
         source: Option<String>,
     },
+    /// アクションのファイル（`{"format": 1, "name": ..., "commands": [...]}`）を、1 回の取り消しで当てる。
+    RunAction {
+        path: String,
+    },
     /// 命令 1 つ。`args` は命令の引数（JSON の欄名で）。
     Run {
         name: String,
@@ -269,6 +273,15 @@ pub fn parse(tokens: &[String], source: Source<'_>) -> Result<Invocation, OpErro
                 tools,
             }
         }
+        "run-action" | "run_action" => match sub_args.as_slice() {
+            [path] => Action::RunAction { path: path.clone() },
+            _ => {
+                return Err(usage_error(
+                    "run-action にはアクションのファイルを 1 つ渡します",
+                    "run-action takes one action file",
+                ))
+            }
+        },
         "batch" => {
             if sub_args.len() > 1 {
                 return Err(usage_error(

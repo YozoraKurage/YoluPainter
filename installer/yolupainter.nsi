@@ -372,7 +372,7 @@ Section "Uninstall"
   RMDir "$LOCALAPPDATA\${PRODUCT}"
 
   ; アプリが作り直せるデータは、消すかを聞く（無音では /DELETEDATA のときだけ消す）。
-  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・pose_presets・colorsets）と、
+  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・pose_presets・colorsets・actions）と、
   ; 後の版が足した知らないファイル・フォルダは、どちらの答えでも消さない（フォルダも、空になったときだけ消す）。
   ${un.GetParameters} $R0
   ClearErrors

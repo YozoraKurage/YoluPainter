@@ -25,6 +25,7 @@ pub enum Reply {
     Undone(Undone),
     Exported(Exported),
     Saved(Saved),
+    Action(ActionDone),
 }
 
 impl Reply {
@@ -42,6 +43,7 @@ impl Reply {
             Reply::Undone(_) => "undone",
             Reply::Exported(_) => "exported",
             Reply::Saved(_) => "saved",
+            Reply::Action(_) => "action",
         }
     }
 }
@@ -409,4 +411,34 @@ pub struct Saved {
     pub backup: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Text>,
+}
+
+// ───────── アクション ─────────
+
+/// What one command of an action did.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionStep {
+    /// The layer the command added or changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// The effect the command added or changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+    /// The command changed nothing (the values were already as asked).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unchanged: bool,
+}
+
+/// Every command of the action was applied, as one undo step.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActionDone {
+    /// The texture set that was changed.
+    pub set: String,
+    /// One entry per command, in the same order.
+    pub steps: Vec<ActionStep>,
+    /// Nothing changed (no undo step was added).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unchanged: bool,
+    pub undo_count: u32,
+    pub can_undo: bool,
 }

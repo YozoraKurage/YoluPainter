@@ -129,6 +129,25 @@ fn send_to(port: u16, command: Value) -> Receiver<Result<Reply, OpError>> {
     rx
 }
 
+/// コマンドラインの batch（標準入力の命令の列）を起動中のアプリへ、裏のスレッドから送る（結果は、アプリのフレームを回しながら受ける）。
+fn cli_batch(port: u16, lines: &str) -> Receiver<yolu_cli::cli::Outcome> {
+    let tokens: Vec<String> = ["batch", "-", "--live", "--port", &port.to_string()]
+        .iter()
+        .map(|t| (*t).to_owned())
+        .collect();
+    let env = yolu_cli::cli::Env {
+        cwd: std::env::temp_dir(),
+        lang: None,
+    };
+    let lines = lines.to_owned();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut input = lines.as_bytes();
+        let _ = tx.send(yolu_cli::cli::run(&tokens, &env, &mut input));
+    });
+    rx
+}
+
 /// 画面のスレッドを通らない MCP の要求（`initialize`・`tools/list`）を、本物の HTTP の客で送る。
 fn mcp(port: u16, message: Value, version: Option<&str>) -> (u16, Vec<Value>) {
     let headers = yolu_mcp::client::mcp_headers(&message, version);
@@ -879,4 +898,172 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
     );
     old.tick_hidden(&ctx);
     assert_eq!(old.state.ops.status, OpsStatus::Off);
+}
+
+// ───────── 相対の指し方 ─────────
+
+#[test]
+fn selected_points_at_the_screens_selected_layer_and_created_needs_a_run() {
+    let mut state = AppState::new(64, 64);
+    state.apply(Action::NewLayer);
+    let first = state.doc.layers()[0].id();
+    state.selected_layer = Some(first);
+    let mut live = Live::on_with(state);
+    live.frame();
+    live.ok(json!({"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.25}}));
+    assert_eq!(live.app.state.doc.layer(first).unwrap().opacity(), 0.25);
+    let e = live.err(json!({"command": "mask.add", "args": {"layer": "$created:1"}}));
+    assert_eq!(e.code, ErrorCode::InvalidRequest);
+    // 選んでいるレイヤーが無ければ断る
+    live.app.state.selected_layer = None;
+    let e = live.err(json!({"command": "mask.add", "args": {"layer": "$selected"}}));
+    assert_eq!(e.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn a_live_batch_fixes_selected_when_it_starts() {
+    let mut state = AppState::new(64, 64);
+    state.apply(Action::NewLayer);
+    state.apply(Action::NewLayer);
+    let ids: Vec<_> = state.doc.layers().iter().map(|l| l.id()).collect();
+    let (top, below) = (ids[ids.len() - 1], ids[ids.len() - 2]);
+    state.selected_layer = Some(top);
+    let mut live = Live::on_with(state);
+    live.frame();
+    // 消すと選びが隣へ移る。2 つ目の `$selected` は、始めた時の（もう無い）レイヤーを指して断られ、隣のレイヤーを黙って変えない
+    let lines = [
+        r#"{"command": "layer.delete", "args": {"layer": "$selected", "confirm": true}}"#,
+        r#"{"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.4}}"#,
+    ]
+    .join("\n");
+    let before = layer_count(&live);
+    let rx = cli_batch(live.port(), &lines);
+    let out = live.until("batch の結果", |_| rx.try_recv().ok());
+    assert_eq!(out.code, 1, "{}{}", out.stdout, out.stderr);
+    let error: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "not_found", "{error}");
+    assert_eq!(error["error"]["data"]["index"], 1, "{error}");
+    assert_eq!(error["error"]["data"]["completed"], 1, "{error}");
+    assert_eq!(layer_count(&live), before - 1, "1 つ目は当たっている");
+    assert_eq!(
+        live.app.state.selected_layer,
+        Some(below),
+        "選びは隣へ移った"
+    );
+    assert_eq!(live.app.state.doc.layer(below).unwrap().opacity(), 1.0);
+    // 選びが動かなければ、同じレイヤーに全部当たる
+    let lines = [
+        r#"{"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.4}}"#,
+        r#"{"command": "mask.add", "args": {"layer": "$selected"}}"#,
+    ]
+    .join("\n");
+    let rx = cli_batch(live.port(), &lines);
+    let out = live.until("batch の結果", |_| rx.try_recv().ok());
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let target = live.app.state.doc.layer(below).unwrap();
+    assert_eq!(target.opacity(), 0.4);
+    assert!(target.mask().is_some());
+    // 選んでいるレイヤーが無ければ、何も変える前に、使う最初の命令の番号つきで断る
+    live.app.state.selected_layer = None;
+    let undo = live.app.state.doc.undo_count();
+    let lines = [
+        r#"{"command": "layer.add", "args": {"kind": "paint"}}"#,
+        r#"{"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.1}}"#,
+    ]
+    .join("\n");
+    let rx = cli_batch(live.port(), &lines);
+    let out = live.until("batch の結果", |_| rx.try_recv().ok());
+    assert_eq!(out.code, 1, "{}{}", out.stdout, out.stderr);
+    let error: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "not_found", "{error}");
+    assert_eq!(error["error"]["data"]["index"], 1, "{error}");
+    assert_eq!(error["error"]["data"]["completed"], 0, "{error}");
+    assert_eq!(live.app.state.doc.undo_count(), undo, "何も変えない");
+}
+
+// ───────── アクション（命令 action.run） ─────────
+
+#[test]
+fn action_run_is_one_step_of_the_screens_undo_and_a_refusal_rolls_back_everything() {
+    let mut state = AppState::new(64, 64);
+    state.apply(Action::NewLayer);
+    let first = state.doc.layers()[0].id();
+    state.selected_layer = Some(first);
+    let mut live = Live::on_with(state);
+    live.frame();
+    let before = layer_count(&live);
+    let undo_before = live.app.state.doc.undo_count();
+    let Reply::Action(done) = live.ok(json!({"command": "action.run", "args": {"commands": [
+        {"command": "layer.add", "args": {"kind": "paint", "name": "外から", "above": "$selected"}},
+        {"command": "layer.set", "args": {"layer": "$created:1", "opacity": 0.5}},
+        {"command": "effect.add", "args": {"layer": "$created:1", "kind": "invert"}},
+        {"command": "mask.add", "args": {"layer": "$selected"}},
+    ]}})) else {
+        panic!("action の返事ではない")
+    };
+    assert_eq!(done.steps.len(), 4);
+    assert_eq!(layer_count(&live), before + 1);
+    assert_eq!(
+        live.app.state.doc.undo_count(),
+        undo_before + 1,
+        "全部で画面の取り消しの 1 段"
+    );
+    assert!(live.app.state.doc.layer(first).unwrap().mask().is_some());
+    assert!(live.app.state.modified);
+    // 画面の取り消し 1 回で全部戻り、やり直し 1 回で全部また当たる
+    live.app.state.apply(Action::Undo);
+    assert_eq!(layer_count(&live), before);
+    assert!(live.app.state.doc.layer(first).unwrap().mask().is_none());
+    live.app.state.apply(Action::Redo);
+    assert_eq!(layer_count(&live), before + 1);
+    // 途中の命令が断れば、そこまでの分も戻して何番目かを言う
+    let undo_mid = live.app.state.doc.undo_count();
+    let e = live.err(json!({"command": "action.run", "args": {"commands": [
+        {"command": "layer.add", "args": {"kind": "paint", "name": "戻る"}},
+        {"command": "layer.set", "args": {"layer": "無いレイヤー", "visible": false}},
+    ]}}));
+    assert_eq!(e.code, ErrorCode::NotFound);
+    assert_eq!(e.data.unwrap()["index"], 1);
+    assert_eq!(layer_count(&live), before + 1);
+    assert_eq!(live.app.state.doc.undo_count(), undo_mid, "段を残さない");
+    // 消す命令を含むアクションは、済んだら短く知らせる
+    live.app.state.message.clear();
+    live.ok(json!({"command": "action.run", "args": {"commands": [
+        {"command": "layer.delete", "args": {"layer": "外から", "confirm": true}},
+    ]}}));
+    assert_eq!(layer_count(&live), before);
+    assert_eq!(live.app.state.message, "外からの操作: アクションを実行");
+}
+
+#[test]
+fn action_run_is_refused_while_drawing_and_is_listed_as_a_tool() {
+    let mut live = Live::on();
+    live.frame();
+    let (status, messages) = mcp(
+        live.port(),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}),
+        Some("2025-11-25"),
+    );
+    assert_eq!(status, 200);
+    let tools = messages[0]["result"]["tools"].as_array().unwrap();
+    let tool = tools
+        .iter()
+        .find(|t| t["name"] == "action_run")
+        .expect("action_run がツールの一覧にある");
+    assert_eq!(tool["annotations"]["destructiveHint"], true);
+    assert!(tool["inputSchema"]["properties"]["commands"].is_object());
+    // 描いている最中は断り、何も変えない
+    let layer = live.app.state.doc.layers().last().unwrap().id();
+    let brush = live.app.state.stroke_settings(false);
+    let mut stroke = live.app.state.doc.begin_stroke(layer, &brush).unwrap();
+    stroke
+        .add_point(&mut live.app.state.doc, 10.0, 10.0, 1.0, DVec2::ZERO)
+        .unwrap();
+    let before = layer_count(&live);
+    let e = live.err(json!({"command": "action.run", "args": {"commands": [
+        {"command": "layer.add", "args": {"kind": "paint"}},
+    ]}}));
+    assert_eq!(e.code, ErrorCode::Busy);
+    assert_eq!(layer_count(&live), before);
+    live.app.state.doc.end_stroke(stroke).unwrap();
 }

@@ -120,8 +120,10 @@ mod tests {
                 assert_eq!(a["readOnlyHint"], false);
                 assert_eq!(a["destructiveHint"], spec.destructive(), "{}", spec.name);
             }
-            // 壊す命令は確認の引数を持つ
-            if spec.destructive() {
+            // 壊す命令は確認の引数を持つ（列を当てる action_run は、列の中の壊す命令がそれぞれ持つ）
+            if spec.danger == yolu_ops::Danger::PerCommand {
+                assert!(t["inputSchema"]["properties"]["commands"].is_object());
+            } else if spec.destructive() {
                 assert!(
                     t["inputSchema"]["properties"]["confirm"].is_object(),
                     "{} に confirm",
@@ -133,7 +135,13 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_owned())
             .collect();
-        for destructive in ["layer_delete", "mask_delete", "effect_delete", "save"] {
+        for destructive in [
+            "layer_delete",
+            "mask_delete",
+            "effect_delete",
+            "save",
+            "action_run",
+        ] {
             let t = tools()
                 .into_iter()
                 .find(|t| t["name"] == destructive)

@@ -76,13 +76,17 @@ A failure is an `isError` reply holding JSON with `code`, a Japanese and an Engl
 - Resources: `yolupainter://docs/<name>` is the documentation of the installed version (`guide`, `cli`, `mcp`, `install`, `psd`, `brush`, the .ylp format specification `ylp-format` and so on; where an English version exists it is the default, and `<name>.ja` and `<name>.en` choose a language).
   `yolupainter://ops/commands` is the command list with JSON Schemas, and `yolupainter://ops/effect-kinds` is the effect kinds and their value ranges (the same as `effect_list_kinds`).
 - `doc_open` returns the document only for the file the app has open. Another file is refused with `unsupported` (the app does not switch documents).
+- `$selected` in a layer field (`layer`, `above`, `parent`) refers to the layer selected in the app's current texture set. `$created:<n>` works only inside a run of several commands
+  (a command-line batch or an action) and is refused for a single tool call ([relative references](CLI.md#relative-references)).
+- `action_run` applies a list of commands that change layers, masks and effects (`{"commands": [{"command": "layer.add", "args": {...}}, ...]}`) as one undo step in the app.
+  If a command is refused, everything is rolled back and the error tells which one (`data.index`, from 0). `$created:<n>` works inside the list.
 - Protocol versions 2025-11-25 and 2026-07-28 are both answered (the flow with `initialize`, and the flow with `server/discover` and a per-request `_meta`). The endpoint is stateless
   and does not use `Mcp-Session-Id`.
 
 ## Safety
 
 - Destructive operations (deleting layers, masks and effects, saving over the file, replacing existing files) change nothing and are refused unless the argument `confirm: true` is given,
-  and those tools carry the destructive annotation. The assistant should ask you before passing `confirm: true`. Saving keeps the previous version in `<file name>-backups~` next to the file.
+  and those tools carry the destructive annotation (in `action_run`, each destructive command of the list needs its own `confirm: true`, and the tool carries the annotation). The assistant should ask you before passing `confirm: true`. Saving keeps the previous version in `<file name>-backups~` next to the file.
 - There is no tool that runs arbitrary code. The only files touched are the paths given to the export and save tools. Relative paths start at the folder of the open project, and `..` cannot leave it.
 - It listens on `127.0.0.1` (inside this PC) only. A request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, or whose `Origin` is present and not the same place
   (a web page that points another name at 127.0.0.1, or a page of another site), is refused. Up to 8 connections at once.

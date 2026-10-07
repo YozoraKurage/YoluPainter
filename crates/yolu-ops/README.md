@@ -36,6 +36,9 @@ fn main() -> Result<(), yolu_ops::OpError> {
 - **チャンネル**: `Color`・`Roughness`・`Metallic`・`Height`・`Normal`・`Emission`、またはユーザーチャンネルの名前（大文字小文字は問いません）。番号でも指せます。
 - **効果**: 効果の ID（`effect.add` の返事と `effect.get` に出ます）。
 - **色**: `#rrggbb` か `#rrggbbaa`。
+- **相対の指し方**（`refs`）: レイヤーの欄の `$selected` はホストが選んでいるレイヤー（`OpHost::selected_layer`。画面なしの `FileHost` は .ylp に選んでいたレイヤーが
+  無いので断る）。`$created:<n>` は同じ実行の中で n 番目に作ったレイヤーか効果（`layer.add`・`effect.add` の通し番号）で、まとめて当てる実行（`execute_in` に
+  `Created` を渡す・`action::run`・`action.run`）の中だけ。1 つだけの命令（`execute`）では断ります。起動中のアプリへ 1 つずつ送る呼び手は、送る前に `substitute_created` で替えます。
 
 ## 命令の一覧
 
@@ -68,11 +71,23 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `export.psd` | `set`、`path`、`channel`、`mode`（bake・flat）、`confirm` | `exported` | 置き換え |
 | `save` | `confirm` | `saved` | 壊す（開いている `.ylp` を上書き） |
 | `save_as` | `path`、`confirm` | `saved` | 置き換え |
+| `action.run` | `commands`（命令の列。[アクション](#アクション)） | `action` | 編集（全部で 1 段。中の壊す命令は、それぞれ `confirm`） |
 
 ツールの名前は、命令の名前の `.` を `_` にしたもの（`layer.set` → `layer_set`。`CommandSpec::tool_name`）です。
 欄の型・範囲・説明は `yolu_ops::commands()`（命令の一覧。名前・日英の説明・読むだけか壊すか・引数と返事の JSON Schema）と、`command_schema()`・
-`reply_schema()`・`error_schema()` で取れます。壊す印は `Danger`（`Always`・`WhenReplacing`）で、確認の欄（`confirm`）を持つ命令と持たない命令が、
-この印と一致することを試験が確かめます。
+`reply_schema()`・`error_schema()` で取れます。壊す印は `Danger`（`Always`・`WhenReplacing`・`PerCommand`）で、確認の欄（`confirm`）を持つ命令
+（`Always`・`WhenReplacing`）と持たない命令が、この印と一致することを試験が確かめます。`PerCommand` は `action.run` で、列の中の壊す命令がそれぞれ `confirm` を持ちます。
+
+## アクション
+
+`action` は、記録した命令の列のファイル（`{"format": 1, "name": "...", "commands": [...]}`。命令は上の JSON）と、その列を 1 つのテクスチャセットへ
+**取り消しの 1 段**で当てる `action::run` です。命令 `action.run`（`{"commands": [...]}`。MCP のツール `action_run`）も同じ実行で、起動中のアプリにも画面なしの
+ホストにも同じに当たります。返事は `action`（`set`・命令ごとの `steps`（作った・変えた `layer`・`effect`、`unchanged`）・`unchanged`・`undo_count`・`can_undo`）。
+
+- 入れられるのは、レイヤー・マスク・効果を変える命令だけ（`ACTION_COMMANDS`・`check_allowed`）。読む・見本・書き出し・保存・取り消し・`action.run` は、当てる前に断ります。壊す命令の `confirm` も先に見ます。
+- 全部を `Document::batch` の 1 回で当てます（`doc_ops` の編集は、外がまとめの中ならそのまとめに積む）。途中の命令が断ったら、そこまでの分も戻して、誤りの
+  `data` に `index`（0 から）・`command`・`completed` を添えます。
+- 上限: 命令 1,000 個（`MAX_COMMANDS`）・ファイル 4 MiB（`MAX_FILE_BYTES`）・名前 100 文字（`MAX_NAME_CHARS`）。`format` が 1 でないファイルは `unsupported_version`。
 
 ## 取り消し
 

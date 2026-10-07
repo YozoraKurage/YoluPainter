@@ -1,10 +1,262 @@
 //! 文書の中の対象（層・チャンネル・効果・合成モード）を、命令の文字列から引く。名前が複数に当たるときは断る（IDで指す）。
+//!
+//! 相対の指し方（ID を持たない相手。記録したアクションが別の文書でも同じ相手を指せるように）:
+//! - `$selected`: 層の欄だけ。実行の時に選んでいる層（起動中のアプリの選んでいる層。画面なしの .ylp には選んでいた層が入っていないので断る）。
+//!   まとめて当てる実行（アクション・CLI の batch）では、始めた時の 1 つに決める。
+//! - `$created:<n>`: 同じ実行（アクション・CLI の batch）の中で n 番目（1 から）に作った層か効果（`layer.add`・`effect.add` の順の通し番号）。
+//!   1 つだけの命令では断る。層の欄に効果を、効果の欄に層を指すと断る。
+//!
+//! `$` で始まるほかの文字列は名前として引く（`$created:` で始まる物だけは、番号が読めなければ断る）。
 
 use serde_json::json;
 use yolu_core::effects::FilterId;
 use yolu_core::{BlendMode, Channel, Document, LayerId, LayerKind};
 
+use crate::command::Command;
 use crate::error::{ErrorCode, Noun, OpError};
+use crate::reply::Reply;
+
+/// 実行の時に選んでいる層（層の欄だけ）。
+pub const SELECTED: &str = "$selected";
+/// 同じ実行の中で作った層・効果の番号の前置き（`$created:1` が最初）。
+pub const CREATED_PREFIX: &str = "$created:";
+
+/// 相対の指し方。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relative {
+    Selected,
+    /// 1 から。
+    Created(usize),
+}
+
+/// 相対の指し方を読む（相対でなければ None。`$created:` で始まるのに番号が読めなければ誤り）。
+pub fn parse_relative(text: &str) -> Result<Option<Relative>, OpError> {
+    if text == SELECTED {
+        return Ok(Some(Relative::Selected));
+    }
+    let Some(number) = text.strip_prefix(CREATED_PREFIX) else {
+        return Ok(None);
+    };
+    number
+        .parse::<usize>()
+        .ok()
+        .filter(|n| *n >= 1 && number.bytes().all(|b| b.is_ascii_digit()))
+        .map(|n| Some(Relative::Created(n)))
+        .ok_or_else(|| {
+            OpError::invalid_value(
+                format!("「{text}」の番号は 1 からの数です"),
+                format!("The number in \"{text}\" counts from 1"),
+            )
+        })
+}
+
+/// 命令の中の、相手を指す欄の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefSlot {
+    /// `layer`・`above`・`parent`。
+    Layer,
+    /// `effect`。
+    Effect,
+}
+
+/// 作った物の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreatedKind {
+    Layer,
+    Effect,
+}
+
+/// 同じ実行の中で作った層・効果（作った順。`$created:<n>` が指す）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Created {
+    items: Vec<(CreatedKind, String)>,
+}
+
+impl Created {
+    /// 命令の返事から、作った層・効果を覚える（`layer.add` の層・`effect.add` の効果）。
+    pub fn note(&mut self, command: &Command, reply: &Reply) {
+        let Reply::Edited(edited) = reply else {
+            return;
+        };
+        let made = match command {
+            Command::LayerAdd(_) => edited.layer.clone().map(|id| (CreatedKind::Layer, id)),
+            Command::EffectAdd(_) => edited.effect.clone().map(|id| (CreatedKind::Effect, id)),
+            _ => None,
+        };
+        self.items.extend(made);
+    }
+    /// 覚えた数。
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+    /// n 番目（1 から）を、欄の種類に合わせて引く。
+    fn get(&self, n: usize, slot: RefSlot, text: &str) -> Result<String, OpError> {
+        let Some((kind, id)) = n.checked_sub(1).and_then(|i| self.items.get(i)) else {
+            return Err(OpError::new(
+                ErrorCode::NotFound,
+                format!(
+                    "「{text}」の物はありません（この実行で作ったのは {} 個です）",
+                    self.items.len()
+                ),
+                format!(
+                    "Nothing matches \"{text}\" (this run has created {} so far)",
+                    self.items.len()
+                ),
+            )
+            .with_data(json!({"name": text, "created": self.items.len()})));
+        };
+        match (slot, kind) {
+            (RefSlot::Layer, CreatedKind::Layer) | (RefSlot::Effect, CreatedKind::Effect) => {
+                Ok(id.clone())
+            }
+            (RefSlot::Layer, CreatedKind::Effect) => Err(OpError::invalid_value(
+                format!("「{text}」は効果です（レイヤーの欄には使えません）"),
+                format!("\"{text}\" is an effect, not a layer"),
+            )),
+            (RefSlot::Effect, CreatedKind::Layer) => Err(OpError::invalid_value(
+                format!("「{text}」はレイヤーです（効果の欄には使えません）"),
+                format!("\"{text}\" is a layer, not an effect"),
+            )),
+        }
+    }
+}
+
+/// 欄の中身を書き換える関数（替えないなら None）。
+pub type RefRewrite<'a> = dyn FnMut(RefSlot, &str) -> Result<Option<String>, OpError> + 'a;
+
+/// 命令の中の、層・効果を指す欄を `f` に渡し、`f` が Some を返した欄を書き換えた命令を作る（変えなければ None）。
+pub fn rewrite_refs(command: &Command, f: &mut RefRewrite<'_>) -> Result<Option<Command>, OpError> {
+    let mut out = command.clone();
+    let mut changed = false;
+    let mut fix = |slot: RefSlot, text: &mut String| -> Result<(), OpError> {
+        if let Some(new) = f(slot, text)? {
+            *text = new;
+            changed = true;
+        }
+        Ok(())
+    };
+    match &mut out {
+        Command::LayerGet(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::LayerAdd(a) => {
+            if let Some(above) = &mut a.above {
+                fix(RefSlot::Layer, above)?;
+            }
+        }
+        Command::LayerDelete(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::LayerMove(a) => {
+            fix(RefSlot::Layer, &mut a.layer)?;
+            if let Some(parent) = &mut a.parent {
+                fix(RefSlot::Layer, parent)?;
+            }
+        }
+        Command::LayerSet(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::MaskAdd(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::MaskDelete(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::MaskSet(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::EffectGet(a) => {
+            fix(RefSlot::Layer, &mut a.layer)?;
+            if let Some(effect) = &mut a.effect {
+                fix(RefSlot::Effect, effect)?;
+            }
+        }
+        Command::EffectAdd(a) => fix(RefSlot::Layer, &mut a.layer)?,
+        Command::EffectSet(a) => {
+            fix(RefSlot::Layer, &mut a.layer)?;
+            fix(RefSlot::Effect, &mut a.effect)?;
+        }
+        Command::EffectDelete(a) => {
+            fix(RefSlot::Layer, &mut a.layer)?;
+            fix(RefSlot::Effect, &mut a.effect)?;
+        }
+        Command::DocInfo(_)
+        | Command::DocOpen(_)
+        | Command::SetInfo(_)
+        | Command::EffectListKinds(_)
+        | Command::HistoryInfo(_)
+        | Command::Undo(_)
+        | Command::Redo(_)
+        | Command::Preview(_)
+        | Command::ExportChannels(_)
+        | Command::ExportTextures(_)
+        | Command::ExportPsd(_)
+        | Command::Save(_)
+        | Command::SaveAs(_) => {}
+        // 列の中の命令は、列を当てる所（`action::run`）が 1 つずつ引く
+        Command::ActionRun(_) => {}
+    }
+    Ok(changed.then_some(out))
+}
+
+/// 命令が `$selected` を使うか。
+pub fn uses_selected(command: &Command) -> bool {
+    let mut found = false;
+    let _ = rewrite_refs(command, &mut |_, text| {
+        found |= text == SELECTED;
+        Ok(None)
+    });
+    found
+}
+
+/// `$created:<n>` だけを、作った物の ID に替える（`$selected` は残す。起動中のアプリへ 1 つずつ送る CLI の batch が、送る前に使う）。
+pub fn substitute_created(command: &Command, created: &Created) -> Result<Command, OpError> {
+    let rewritten = rewrite_refs(command, &mut |slot, text| match parse_relative(text)? {
+        Some(Relative::Created(n)) => created.get(n, slot, text).map(Some),
+        _ => Ok(None),
+    })?;
+    Ok(rewritten.unwrap_or_else(|| command.clone()))
+}
+
+/// 相対の指し方を全部、ID に替える（替える物が無ければ None）。`created` が None なら 1 つだけの命令（`$created` は断る）。
+/// `selected` は `$selected` が要るときだけ呼ぶ（選んでいる層の ID。無ければ理由つきの誤り）。
+pub fn resolve_relative(
+    command: &Command,
+    created: Option<&Created>,
+    selected: &mut dyn FnMut() -> Result<String, OpError>,
+) -> Result<Option<Command>, OpError> {
+    let mut chosen: Option<String> = None;
+    rewrite_refs(command, &mut |slot, text| {
+        match parse_relative(text)? {
+        None => Ok(None),
+        Some(Relative::Selected) => {
+            if slot != RefSlot::Layer {
+                return Err(OpError::invalid_value(
+                    "$selected はレイヤーの欄だけで使えます",
+                    "$selected can only be used for a layer",
+                ));
+            }
+            if chosen.is_none() {
+                chosen = Some(selected()?);
+            }
+            Ok(chosen.clone())
+        }
+        Some(Relative::Created(n)) => match created {
+            Some(created) => created.get(n, slot, text).map(Some),
+            None => Err(OpError::invalid_request(
+                format!("「{text}」は、まとめて当てる実行（アクション・batch）の中だけで使えます"),
+                format!("\"{text}\" can only be used inside a run of several commands (an action or a batch)"),
+            )),
+        },
+    }
+    })
+}
+
+/// 選んでいる層が無いときの誤り（`why` は、無い理由。日英）。
+pub fn no_selection(why: Option<(&str, &str)>) -> OpError {
+    let (ja, en) = match why {
+        Some((ja, en)) => (
+            format!("選んでいるレイヤーがありません（{ja}）"),
+            format!("No layer is selected ({en})"),
+        ),
+        None => (
+            "選んでいるレイヤーがありません".to_owned(),
+            "No layer is selected".to_owned(),
+        ),
+    };
+    OpError::new(ErrorCode::NotFound, ja, en).with_data(json!({"name": SELECTED}))
+}
 
 /// 32 桁の 16 進（層・効果の ID）から数へ。
 pub fn parse_id(text: &str) -> Option<u128> {

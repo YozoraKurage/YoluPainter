@@ -39,6 +39,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\colorsets\` | Color sets | Kept |
 | `%APPDATA%\YoluPainter\hide_presets\` | Presets for hiding parts of a model | Kept |
 | `%APPDATA%\YoluPainter\pose_presets\` | Pose presets | Kept |
+| `%APPDATA%\YoluPainter\actions\` | Actions | Kept |
 
 When kept items, or files this application did not create, are present, the `%APPDATA%\YoluPainter` folder stays with them. A library or recovery folder that you moved elsewhere in the settings is not touched. Documents such as `.ylp` files are never removed.
 

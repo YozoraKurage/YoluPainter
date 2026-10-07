@@ -5074,8 +5074,16 @@
             "sha256": "cd980b25c0895c4495372aaa0033cd688d98e7074ba31209c06f53d6257316e3"
           },
           {
+            "path": "crates/yolu-app/assets/icons/play.png",
+            "sha256": "42250f165ece05911f33bddd9261709ee3bd331da6fbc91d31fa2905bea84941"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/quick_mask.png",
             "sha256": "854dd2943014cf17363658523d9e2d78c1bd8f247d91ee655804e957bc714ba9"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/record.png",
+            "sha256": "9be08f93f8d40ed9284cb57e5481daa72e64fb0d6f4ade3807d36db2241cc2fe"
           },
           {
             "path": "crates/yolu-app/assets/icons/restart_alt.png",
@@ -5120,6 +5128,10 @@
           {
             "path": "crates/yolu-app/assets/icons/square.png",
             "sha256": "6e922704256fc78ee14675e95e6caa9919b13212717d7f0023db792e251df773"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/stop.png",
+            "sha256": "a922a186a31d56d6f2a3b17348197c43c31d6bc58f52aa7cf10b1dac442b1d33"
           },
           {
             "path": "crates/yolu-app/assets/icons/stylus.png",

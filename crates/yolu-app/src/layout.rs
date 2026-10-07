@@ -206,8 +206,8 @@ fn forget_focus(dock: &mut DockState<Tab>) {
 }
 
 /// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログは後の版で足したタブで、それより前の版が保存した
-/// 並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。
-pub const OPTIONAL_TABS: [Tab; 2] = [Tab::Pose, Tab::Log];
+/// 並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションは既定の並びに無く、開いたときだけある。
+pub const OPTIONAL_TABS: [Tab; 3] = [Tab::Pose, Tab::Log, Tab::Actions];
 
 /// 後の版で足したタブが、読んだ並びに無ければ足す: ログは既定の並びと同じく、レイヤーと同じ組の後ろ（レイヤーが無ければ最初の組。
 /// 前へは出さない）。
@@ -215,10 +215,26 @@ pub fn add_missing_tabs(dock: &mut DockState<Tab>) {
     if dock.find_tab(&Tab::Log).is_some() {
         return;
     }
+    push_beside_layers(dock, Tab::Log);
+}
+
+/// タブを、レイヤーと同じ組の後ろへ入れる（レイヤーが無ければ最初の組）。
+fn push_beside_layers(dock: &mut DockState<Tab>, tab: Tab) {
     let target = dock.find_tab(&Tab::Layers).map(|p| p.node_path());
     match target.and_then(|path| dock.leaf_mut(path).ok()) {
-        Some(leaf) => leaf.tabs.push(Tab::Log),
-        None => dock.push_to_first_leaf(Tab::Log),
+        Some(leaf) => leaf.tabs.push(tab),
+        None => dock.push_to_first_leaf(tab),
+    }
+}
+
+/// パネルを開いて前に出す（`Action::ShowPanel`）: ドックのどこか（浮かせた窓も）にあればそのタブを選び、無ければレイヤーと同じ組の後ろへ
+/// 入れて選ぶ（既定の並びに無いパネル。アクション）。
+pub fn show_tab(dock: &mut DockState<Tab>, tab: Tab) {
+    if dock.find_tab(&tab).is_none() {
+        push_beside_layers(dock, tab);
+    }
+    if let Some(path) = dock.find_tab(&tab) {
+        let _ = dock.set_active_tab(path);
     }
 }
 
@@ -227,7 +243,8 @@ pub fn add_missing_tabs(dock: &mut DockState<Tab>) {
 /// - 面: 先頭が主の面で、それ以外に主の面が無い。浮かせた窓の面は、組を 1 つ以上持ち、窓の位置と大きさが有限で範囲の中。
 /// - 木: 分けた所の両側が木の中にあり、根からつながらない節が無い（見えないタブができる）。分け方は有限で 0 と 1 の間。
 /// - 組: 空でなく、前のタブの番号がタブの数の中。浮かせた窓の木のフォーカスは、木の中の組（読むときは `forget_focus` で外してある）。
-/// - タブ: どのタブも 1 つずつ（ポーズとログは、無くてよい。ポーズはモデルを読むと足され、ログは読んだときに `add_missing_tabs` が足す）。
+/// - タブ: どのタブも 1 つずつ（ポーズ・ログ・アクションは、無くてよい。ポーズはモデルを読むと足され、ログは読んだときに
+///   `add_missing_tabs` が足し、アクションは開いたときだけある）。
 ///   足りない・重なるなら理由。
 pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
     use egui_dock::Surface;

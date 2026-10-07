@@ -149,10 +149,12 @@ pub enum Source {
     Ops,
     /// 表示（GPU の装置・描き直し）。
     Display,
+    /// アクション（操作の記録と再生）。
+    Action,
 }
 
 impl Source {
-    pub const ALL: [Source; 36] = [
+    pub const ALL: [Source; 37] = [
         Source::Edit,
         Source::Save,
         Source::Open,
@@ -189,6 +191,7 @@ impl Source {
         Source::LiveLink,
         Source::Ops,
         Source::Display,
+        Source::Action,
     ];
 
     /// 画面の名前（ログの窓の列）。
@@ -230,6 +233,7 @@ impl Source {
             Source::LiveLink => "Live Link",
             Source::Ops => lang.pick("外からの操作", "External Commands"),
             Source::Display => lang.pick("表示", "Display"),
+            Source::Action => lang.pick("アクション", "Actions"),
         }
     }
 
@@ -272,6 +276,7 @@ impl Source {
             Source::LiveLink => "livelink",
             Source::Ops => "ops",
             Source::Display => "display",
+            Source::Action => "action",
         }
     }
 }

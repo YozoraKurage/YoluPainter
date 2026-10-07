@@ -229,6 +229,22 @@ impl OpHost for AppHost<'_> {
         &self.policy
     }
 
+    /// `$selected`: 今のテクスチャセットで選んでいるレイヤー（ほかのセットには選んでいるレイヤーが無い）。
+    fn selected_layer(&mut self, set: Option<&str>) -> Result<String, OpError> {
+        let index = self.resolve(set)?;
+        if index != self.state.sets.current_index() {
+            return Err(yolu_ops::refs::no_selection(Some((
+                "選んでいるレイヤーは今のテクスチャセットにだけあります",
+                "only the current texture set has a selected layer",
+            ))));
+        }
+        self.state
+            .selected_layer
+            .filter(|id| self.state.doc.layer(*id).is_some())
+            .map(|id| id.to_string())
+            .ok_or_else(|| yolu_ops::refs::no_selection(None))
+    }
+
     fn doc_info(&mut self) -> Result<DocInfo, OpError> {
         let project = self.state.project.as_ref().filter(|p| p.is_file());
         let info = project.map(|p| p.project().info());

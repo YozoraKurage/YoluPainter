@@ -397,6 +397,15 @@ impl OpHost for FileHost {
         &self.policy
     }
 
+    /// .ylp には選んでいた層が入っていないので、`$selected` はいつも断る（理由を言う）。
+    fn selected_layer(&mut self, set: Option<&str>) -> Result<String, OpError> {
+        self.opened_mut()?.resolve_set(set)?;
+        Err(crate::refs::no_selection(Some((
+            ".ylp には選んでいたレイヤーが入っていません。名前か ID で指してください",
+            "a .ylp file does not store the selected layer; use a name or an id",
+        ))))
+    }
+
     fn doc_info(&mut self) -> Result<DocInfo, OpError> {
         Ok(doc_info_of(self.opened_mut()?))
     }

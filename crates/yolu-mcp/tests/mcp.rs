@@ -466,6 +466,13 @@ fn structured_results_conform_to_the_output_schemas() {
         ("effect_get", json!({"layer": "Base"})),
         ("layer_get", json!({"layer": "Base"})),
         ("layer_get", json!({"layer": "Tint"})),
+        (
+            "action_run",
+            json!({"commands": [
+                {"command": "layer.add", "args": {"kind": "paint", "name": "Act"}},
+                {"command": "mask.add", "args": {"layer": "$created:1"}}
+            ]}),
+        ),
         ("effect_list_kinds", json!({})),
         ("history_info", json!({})),
         ("undo", json!({})),

@@ -10,6 +10,7 @@
 //!
 //! 命令の一覧・版・壊す操作・誤りは `README.md`。
 
+pub mod action;
 pub mod command;
 pub mod describe;
 pub mod doc_ops;
@@ -29,7 +30,7 @@ pub mod wire;
 pub use command::{Command, COMMAND_VERSION};
 pub use error::{ErrorCode, OpError};
 pub use file_host::{newer_version_note, writer, FileHost, FileHostConfig};
-pub use host::{execute, ExportJob, OpHost, SaveJob, SetView};
+pub use host::{execute, execute_in, ExportJob, OpHost, SaveJob, SetView};
 pub use meta::{
     command_schema, command_spec, command_spec_by_tool, commands, error_schema, reply_schema,
     CommandSpec, Danger,

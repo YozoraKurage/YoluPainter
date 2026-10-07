@@ -46,11 +46,13 @@ pub enum Tab {
     /// 起動してからの注意と失敗の知らせ（既定の並びではレイヤーと同じ組の後ろ。プロパティ・ヒストリーの組に 3 つ並べると、いちばん小さい窓で
     /// 英語の名前が欠ける。古い並びに無ければ、読んだときにレイヤーの組へ足す）。
     Log,
+    /// アクション（操作の記録と再生）。既定の並びには無く、開くと（`Action::ShowPanel`）レイヤーと同じ組の後ろへ入る。
+    Actions,
 }
 
 impl Tab {
     /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
-    pub const ALL: [Tab; 14] = [
+    pub const ALL: [Tab; 15] = [
         Tab::SubTools,
         Tab::Assets,
         Tab::Color,
@@ -65,6 +67,7 @@ impl Tab {
         Tab::ColorSets,
         Tab::Navigator,
         Tab::Log,
+        Tab::Actions,
     ];
 
     /// 保存する名前（並びのファイル `layout.json` に書く。Rust の名前を変えても変わらないよう、ここで決める。足すのは良いが、
@@ -85,6 +88,7 @@ impl Tab {
             Tab::ColorSets => "color_sets",
             Tab::Navigator => "navigator",
             Tab::Log => "log",
+            Tab::Actions => "actions",
         }
     }
 
@@ -114,6 +118,7 @@ impl Tab {
             Tab::History => lang.pick("ヒストリー", "History"),
             Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
             Tab::Log => lang.pick("ログ", "Log"),
+            Tab::Actions => lang.pick("アクション", "Actions"),
         }
     }
 }
@@ -246,6 +251,7 @@ impl TabViewer for Tabs<'_> {
             Tab::SubTools => crate::panels::subtools::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
             Tab::Log => crate::panels::log::show(ui, self.app),
+            Tab::Actions => crate::panels::actions::show(ui, self.app),
         }
     }
 
@@ -516,6 +522,17 @@ impl YoluApp {
                 startup.push_str(" / ");
             }
             startup.push_str(&colorsets);
+        }
+        // アクション（読めなかったファイルは消さずに、起動時の知らせに添える）
+        let actions = settings
+            .as_deref()
+            .and_then(|p| p.parent())
+            .and_then(|dir| crate::automation::attach(&mut app.state, dir.join("actions")));
+        if let Some(actions) = actions {
+            if !startup.is_empty() {
+                startup.push_str(" / ");
+            }
+            startup.push_str(&actions);
         }
         if !startup.is_empty() {
             app.state.warn(crate::notice::Source::Settings, startup);
@@ -1607,6 +1624,9 @@ impl YoluApp {
         if self.state.reset_layout {
             self.dock = default_dock();
             self.state.reset_layout = false;
+        }
+        if let Some(tab) = self.state.show_panel.take() {
+            crate::layout::show_tab(&mut self.dock, tab);
         }
 
         // 状態の帯の右端のメモリ（実際の窓だけ。1.5 秒おきに測り、止まっていても同じ間隔で描き直す）

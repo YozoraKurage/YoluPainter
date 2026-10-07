@@ -74,6 +74,8 @@ pub enum Command {
     Save(SaveArgs),
     #[serde(rename = "save_as")]
     SaveAs(SaveAsArgs),
+    #[serde(rename = "action.run")]
+    ActionRun(ActionRunArgs),
 }
 
 impl Command {
@@ -105,6 +107,7 @@ impl Command {
             Command::ExportPsd(_) => "export.psd",
             Command::Save(_) => "save",
             Command::SaveAs(_) => "save_as",
+            Command::ActionRun(_) => "action.run",
         }
     }
 
@@ -135,6 +138,8 @@ impl Command {
             | Command::EffectListKinds(_)
             | Command::Save(_)
             | Command::SaveAs(_) => None,
+            // 列の中の命令の `set`（全部同じか省く）。列を当てる所が確かめる
+            Command::ActionRun(_) => None,
         }
     }
 
@@ -628,4 +633,16 @@ pub struct SaveAsArgs {
     /// Required when the file already exists (it must be a valid .ylp; the previous version is kept in the backups folder).
     #[serde(default, skip_serializing_if = "is_false")]
     pub confirm: bool,
+}
+
+// ───────── アクション ─────────
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRunArgs {
+    /// Commands applied in order as one undo step, each written as {"command": "layer.add", "args": {...}} with the arguments of that command.
+    /// Only commands that change layers, masks and effects, at most 1000, all on one texture set (`set` omitted everywhere or the same).
+    /// Layer and effect fields also take "$selected" (the layer selected when the run starts) and "$created:<n>" (the n-th layer or effect this run created, from 1).
+    #[schemars(schema_with = "crate::action::commands_schema")]
+    pub commands: Vec<serde_json::Value>,
 }

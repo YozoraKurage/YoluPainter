@@ -59,7 +59,9 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `opacity` | fluent | `drop` | regular |
 | `paint_brush` | fluent | `paint_brush` | regular |
 | `palette` | fluent | `color` | regular |
+| `play` | fluent | `play` | regular |
 | `quick_mask` | fluent | `shape_organic` | regular |
+| `record` | fluent | `record` | regular |
 | `restart_alt` | fluent | `arrow_reset` | regular |
 | `rotate_90_degrees_ccw` | fluent | `arrow_rotate_counterclockwise` | regular |
 | `rotate_90_degrees_cw` | fluent | `arrow_rotate_clockwise` | regular |
@@ -71,6 +73,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `shape_union` | fluent | `shape_union` | regular |
 | `shapes` | fluent | `shapes` | regular |
 | `square` | fluent | `image` | regular |
+| `stop` | fluent | `stop` | regular |
 | `stylus` | fluent | `inking_tool` | regular |
 | `swap_horiz` | fluent | `arrow_swap` | regular |
 | `sync` | fluent | `arrow_sync` | regular |
@@ -132,6 +135,8 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `window_minimize`・`window_maximize`・`window_restore` are the standalone app's window buttons on Windows (Fluent regular; the close button is the existing `close`). They were rendered white at 48 px by the same procedure as the rest.
 
 `error_circle` (the error mark of the Log panel and its Errors Only toggle) and `document_copy` (its Copy All button) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
+
+`record`・`stop`・`play` (the Actions panel: start and stop recording, play an action) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

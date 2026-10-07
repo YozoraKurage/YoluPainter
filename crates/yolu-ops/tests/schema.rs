@@ -189,6 +189,10 @@ fn samples() -> Vec<Value> {
         json!({"command": "export.psd", "args": {"path": "a.psd", "channel": "Color", "mode": "flat", "confirm": true}}),
         json!({"command": "save", "args": {"confirm": true}}),
         json!({"command": "save_as", "args": {"path": "b.ylp"}}),
+        json!({"command": "action.run", "args": {"commands": [
+            {"command": "layer.add", "args": {"kind": "paint", "name": "A"}},
+            {"command": "mask.add", "args": {"layer": "$created:1"}}
+        ]}}),
     ]
 }
 
@@ -228,7 +232,7 @@ fn every_command_has_a_sample_a_spec_and_a_schema_entry_of_the_same_name() {
         schema_names, spec_names,
         "型（スキーマ）と命令の表の名前が合わない"
     );
-    assert_eq!(spec_names.len(), 25);
+    assert_eq!(spec_names.len(), 26);
 }
 
 #[test]
@@ -353,6 +357,8 @@ fn a_command_has_a_confirm_argument_exactly_when_it_can_be_destructive() {
         match spec.danger {
             Danger::Always => assert!(always.contains(spec.name), "{}", spec.name),
             Danger::WhenReplacing => assert!(replacing.contains(spec.name), "{}", spec.name),
+            // 列の中の壊す命令が、それぞれ confirm を持つ（列そのものには無い）
+            Danger::PerCommand => assert_eq!(spec.name, "action.run"),
             Danger::Safe => assert!(
                 !always.contains(spec.name) && !replacing.contains(spec.name),
                 "{}",
@@ -361,11 +367,24 @@ fn a_command_has_a_confirm_argument_exactly_when_it_can_be_destructive() {
         }
         assert_eq!(
             has_confirm,
-            spec.danger != Danger::Safe,
+            matches!(spec.danger, Danger::Always | Danger::WhenReplacing),
             "{}: confirm の欄と壊す印が合わない",
             spec.name
         );
-        assert_eq!(spec.destructive(), has_confirm, "{}", spec.name);
+        assert_eq!(
+            spec.destructive(),
+            spec.danger != Danger::Safe,
+            "{}",
+            spec.name
+        );
+        if spec.danger == Danger::PerCommand {
+            assert!(
+                spec.description.en.contains("confirm: true")
+                    && spec.description.ja.contains("confirm: true"),
+                "{}",
+                spec.name
+            );
+        }
         // 読むだけの命令は壊さない
         if spec.read_only {
             assert_eq!(spec.danger, Danger::Safe, "{}", spec.name);
@@ -552,7 +571,16 @@ fn every_reply() -> Vec<(String, Reply)> {
     run_one(
         &mut out,
         &mut host,
-        json!({"command": "doc.open", "args": {"path": "b.ylp"}}),
+        json!({"command": "action.run", "args": {"commands": [
+            {"command": "layer.add", "args": {"kind": "paint", "name": "Act"}},
+            {"command": "effect.add", "args": {"layer": "$created:1", "kind": "invert"}},
+            {"command": "layer.set", "args": {"layer": "$created:1", "visible": true}}
+        ]}}),
+    );
+    run_one(
+        &mut out,
+        &mut host,
+        json!({"command": "doc.open", "args": {"path": "b.ylp", "confirm": true}}),
     );
     out
 }
@@ -572,7 +600,7 @@ fn every_reply_round_trips_and_fits_the_reply_schemas() {
     let kinds: BTreeSet<&str> = replies.iter().map(|(_, r)| r.name()).collect();
     for expected in [
         "doc", "set", "layer", "effects", "kinds", "history", "preview", "edited", "undone",
-        "exported", "saved",
+        "exported", "saved", "action",
     ] {
         assert!(kinds.contains(expected), "{expected}");
     }

@@ -516,11 +516,20 @@ fn command_breaks(name: &str) -> bool {
     command_spec(name).is_some_and(|s| s.danger == Danger::Always)
 }
 
-/// 済んだ命令が、壊す操作だったか: 消す・上書き保存（いつも壊す印。ただし何も書かなかったものは除く）、置き換えたファイルのある書き出し。
+/// 済んだ命令が、壊す操作だったか: 消す・上書き保存（いつも壊す印。ただし何も書かなかったものは除く）、置き換えたファイルのある書き出し、
+/// 消す命令を含み何かを変えたアクション（`action.run`）。
 fn breaks_something(command: &Command, reply: &Reply) -> bool {
     // 何も書かなかった上書き保存（編集が無い）は、壊す操作が済んだことにならない
     if matches!(reply, Reply::Saved(s) if !s.written) {
         return false;
+    }
+    if let (Command::ActionRun(args), Reply::Action(done)) = (command, reply) {
+        return !done.unchanged
+            && args.commands.iter().any(|c| {
+                c.get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(command_breaks)
+            });
     }
     command_breaks(command.name())
         || matches!(reply, Reply::Exported(e) if e.files.iter().any(|f| f.replaced))

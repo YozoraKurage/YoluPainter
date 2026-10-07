@@ -13,6 +13,7 @@ use crate::doc_ops::{self, SetFacts};
 use crate::error::{ErrorCode, OpError};
 use crate::meta::{command_spec, Danger};
 use crate::path::PathPolicy;
+use crate::refs::{resolve_relative, Created};
 use crate::reply::*;
 use crate::text::Text;
 
@@ -127,10 +128,15 @@ pub trait OpHost {
             crate::preview::render(view, args)
         })
     }
+    /// セット（省略は今のセット）で選んでいる層の ID（`$selected`）。選んでいる層が無ければ、理由つきで断る
+    /// （[`crate::refs::no_selection`]）。既定は、選ぶ画面が無いので断る。
+    fn selected_layer(&mut self, _set: Option<&str>) -> Result<String, OpError> {
+        Err(crate::refs::no_selection(None))
+    }
 }
 
 /// 壊す操作に `confirm: true` があるか（`Danger::Always` の命令。置き換えるときだけ壊す命令は、置き換える所で確かめる）。
-fn check_confirm(command: &Command) -> Result<(), OpError> {
+pub(crate) fn check_confirm(command: &Command) -> Result<(), OpError> {
     let Some(spec) = command_spec(command.name()) else {
         return Ok(());
     };
@@ -147,32 +153,53 @@ fn check_confirm(command: &Command) -> Result<(), OpError> {
     Ok(())
 }
 
-/// 命令を実行する。壊す操作の確認 → 振り分け。断った命令は何も変えない。
+/// 命令を実行する。壊す操作の確認 → 相対の指し方（`$selected`）を ID に → 振り分け。断った命令は何も変えない。
+/// 1 つだけの命令なので、`$created:<n>` は断る（まとめて当てるときは [`execute_in`]）。
 ///
 /// 途中の panic は `internal` の誤りにして返す（呼び手のプロセス・つながりを落とさない）。文書の編集は `Document::batch` が積んだ段を戻してから
 /// panic を返すので、文書は編集の前のまま。
 pub fn execute(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(host, command)))
-        .unwrap_or_else(|payload| {
-            let detail = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_owned())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_default();
-            Err(OpError::new(
-                ErrorCode::Internal,
-                format!("{} の途中で想定していない失敗が起きました", command.name()),
-                format!(
-                    "{} stopped because of an unexpected failure",
-                    command.name()
-                ),
-            )
-            .with_data(serde_json::json!({"command": command.name(), "detail": detail})))
-        })
+    execute_in(host, command, None)
 }
 
-fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
+/// まとめて当てる実行（CLI の batch など）の中の 1 つの命令を実行する。`created` は、その実行でここまでに作った層・効果
+/// （`$created:<n>` が指す。返事を [`Created::note`] で覚えさせるのは呼び手）。None なら 1 つだけの命令。
+pub fn execute_in(
+    host: &mut dyn OpHost,
+    command: &Command,
+    created: Option<&Created>,
+) -> Result<Reply, OpError> {
+    guard(command.name(), || dispatch(host, command, created))
+}
+
+/// 途中の panic を `internal` の誤りにする。
+pub(crate) fn guard<T>(name: &str, run: impl FnOnce() -> Result<T, OpError>) -> Result<T, OpError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(OpError::new(
+            ErrorCode::Internal,
+            format!("{name} の途中で想定していない失敗が起きました"),
+            format!("{name} stopped because of an unexpected failure"),
+        )
+        .with_data(serde_json::json!({"command": name, "detail": detail})))
+    })
+}
+
+fn dispatch(
+    host: &mut dyn OpHost,
+    command: &Command,
+    created: Option<&Created>,
+) -> Result<Reply, OpError> {
     check_confirm(command)?;
+    let set = command.set().map(str::to_owned);
+    let resolved = resolve_relative(command, created, &mut || {
+        host.selected_layer(set.as_deref())
+    })?;
+    let command = resolved.as_ref().unwrap_or(command);
     match command {
         Command::DocInfo(_) => host.doc_info().map(Reply::Doc),
         Command::DocOpen(a) => {
@@ -192,6 +219,7 @@ fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> 
         Command::ExportChannels(a) => host.export(&ExportJob::Channels(a)),
         Command::ExportTextures(a) => host.export(&ExportJob::Textures(a)),
         Command::ExportPsd(a) => host.export(&ExportJob::Psd(a)),
+        Command::ActionRun(a) => crate::action::run_args(host, a).map(Reply::Action),
         c if doc_ops::is_write(c) => {
             host.write_set(c.set(), &mut |facts, doc| doc_ops::write(facts, doc, c))
         }

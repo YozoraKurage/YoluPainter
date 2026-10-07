@@ -1299,6 +1299,8 @@ fn layer_row(
         if let Some(next) = out.committed {
             let next = next.trim().to_owned();
             if !next.is_empty() {
+                // 記録中なら、名前の変更も記録する（レイヤーの欄は文書へ直に当てるので、ここで前後を渡す）
+                let pending = crate::automation::record::before_rename(app, id, &next);
                 if let Err(e) = app.doc.set_layer_name(id, &next) {
                     app.notify(
                         crate::notice::Kind::of_core(&e),
@@ -1306,6 +1308,7 @@ fn layer_row(
                         app.lang.core_error(&e),
                     );
                 }
+                crate::automation::record::after(app, pending);
                 app.modified = true;
             }
         }

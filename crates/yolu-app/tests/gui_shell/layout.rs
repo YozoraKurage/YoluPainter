@@ -291,7 +291,8 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     }
     // メインのタブを、キャンバスのほかは全部浮かせる（メインの木はほとんど空になる）
     for tab in Tab::ALL {
-        if tab == Tab::Canvas || tab == Tab::Pose {
+        // ポーズ・アクションは既定の並びに無い
+        if tab == Tab::Canvas || tab == Tab::Pose || tab == Tab::Actions {
             continue;
         }
         let path = dock.find_tab(&tab).unwrap();
@@ -631,7 +632,8 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
             "history",
             "color_sets",
             "navigator",
-            "log"
+            "log",
+            "actions",
         ]
     );
     // ドックに出るタブは、全部 ALL にある
@@ -675,6 +677,50 @@ fn headless_a_saved_layout_without_the_log_tab_keeps_its_arrangement_and_gains_t
         .map(|line| line.replace(", \"log\"", ""))
         .collect();
     assert_eq!(actual, shape(&old));
+}
+
+/// アクションのパネルは既定の並びに無く、開くと（`layout::show_tab`）レイヤーと同じ組の後ろへ入って前に出る。開いた並びはファイルで往復し、
+/// 前の版の並び（アクションが無い）を読んでも足さない。
+#[test]
+fn headless_the_actions_tab_is_not_in_the_default_dock_and_opens_beside_the_layers() {
+    let mut dock = default_dock();
+    assert!(dock.find_tab(&Tab::Actions).is_none(), "既定の並びに無い");
+    let loaded = layout::parse(&layout::render(&dock, None));
+    assert_eq!(loaded.problems, Vec::<String>::new());
+    assert!(
+        loaded.dock.unwrap().find_tab(&Tab::Actions).is_none(),
+        "読んでも足さない"
+    );
+    layout::show_tab(&mut dock, Tab::Actions);
+    let layers = dock.find_tab(&Tab::Layers).unwrap();
+    let actions = dock.find_tab(&Tab::Actions).expect("開いた");
+    assert_eq!(
+        (actions.surface, actions.node_path()),
+        (layers.surface, layers.node_path()),
+        "レイヤーと同じ組"
+    );
+    let leaf = dock.leaf(actions.node_path()).unwrap();
+    assert_eq!(leaf.tabs.last(), Some(&Tab::Actions), "組の後ろ");
+    assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions, "前に出る");
+    // もう一度開いても 1 つのまま。後ろにあれば前に出すだけ
+    let layers = dock.find_tab(&Tab::Layers).unwrap();
+    dock.set_active_tab(layers).unwrap();
+    layout::show_tab(&mut dock, Tab::Actions);
+    assert_eq!(layout::validate(&dock), Ok(()));
+    let leaf = dock.leaf(actions.node_path()).unwrap();
+    assert_eq!(leaf.tabs.iter().filter(|t| **t == Tab::Actions).count(), 1);
+    assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions);
+    let loaded = layout::parse(&layout::render(&dock, None));
+    assert_eq!(loaded.problems, Vec::<String>::new());
+    assert_eq!(
+        shape(&loaded.dock.unwrap()),
+        shape(&dock),
+        "開いた並びが往復する"
+    );
+    // レイヤーのタブが無い並びなら、最初の組へ
+    let mut bare = DockState::new(vec![Tab::Canvas]);
+    layout::show_tab(&mut bare, Tab::Actions);
+    assert!(bare.find_tab(&Tab::Actions).is_some());
 }
 
 // ───────── アプリ ─────────
@@ -891,6 +937,32 @@ fn reset_panel_layout_goes_back_to_the_default_and_the_default_is_what_gets_writ
         shape(&default_dock()),
         "戻した並びが書かれる"
     );
+}
+
+#[test]
+fn opening_the_actions_panel_puts_it_in_the_dock_and_it_is_written_and_reset_away() {
+    use eframe::App;
+    let dir = settings_dir("show-panel");
+    let mut h = app_in(&dir);
+    h.state_mut().state.apply(Action::ShowPanel(Tab::Actions));
+    h.run();
+    let dock = &h.state().dock;
+    let actions = dock.find_tab(&Tab::Actions).expect("開いた");
+    let leaf = dock.leaf(actions.node_path()).unwrap();
+    assert!(leaf.tabs.contains(&Tab::Layers));
+    assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions, "前に出る");
+    assert_eq!(h.state().state.show_panel, None, "頼みは 1 回で使い切る");
+    h.state_mut().on_exit();
+    drop(h);
+    let mut h = app_in(&dir);
+    assert!(
+        h.state().dock.find_tab(&Tab::Actions).is_some(),
+        "次の起動でも開いている"
+    );
+    // パネルの並びを戻すと、既定の並び（アクションは無い）
+    h.state_mut().state.apply(Action::ResetLayout);
+    h.run();
+    assert!(h.state().dock.find_tab(&Tab::Actions).is_none());
 }
 
 fn set_viewport(

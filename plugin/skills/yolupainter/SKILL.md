@@ -22,11 +22,13 @@ The `yolupainter` tools talk to the YoluPainter app running on this PC (`http://
 
 - `layer_add`, `layer_set`, `layer_move`, `mask_add`, `mask_set`, `effect_add`, `effect_set`.
 - Each editing tool is one step of the app's undo history; `undo` and `redo` revert and repeat them.
+- `action_run` applies several of these at once (`commands`: a list of `{"command": "layer.add", "args": {...}}`) as one undo step; if one is refused, all of them are rolled back. Inside the list `$created:1` names the first layer or effect the list made.
 - Before `effect_add` or `effect_set`, read `yolupainter://ops/effect-kinds` (or call `effect_list_kinds`) for the kinds, their parameters and value ranges.
 
 ## Destructive tools need consent
 
 - `layer_delete`, `mask_delete`, `effect_delete`, `save`, and `save_as`, `export_channels`, `export_textures`, `export_psd` when they replace a file need `confirm: true`.
+- A destructive command inside `action_run` needs its own `confirm: true`.
 - Ask the user before passing `confirm: true`. Without it the tool changes nothing and answers `confirm_required`.
 - `save` keeps the previous version in the backups folder next to the file.
 - Use absolute paths for `save_as` and the export tools.

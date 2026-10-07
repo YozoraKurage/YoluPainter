@@ -7,6 +7,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod actions_panel;
 mod app;
 mod chrome;
 mod close_jobs;

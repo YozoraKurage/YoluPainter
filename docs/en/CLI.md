@@ -15,6 +15,7 @@ It has the same version as the app and is replaced together with it on updates.
 ```
 yolupainter-cli <command> [--name value ...] [--file project.ylp [--save]] [--pretty]
 yolupainter-cli batch [file|-] --file project.ylp [--save]
+yolupainter-cli run-action <action.json> [--file project.ylp [--save]]
 yolupainter-cli commands            list every command
 yolupainter-cli schema [command]    JSON Schema of the commands (--tools: MCP tool definitions)
 yolupainter-cli mcp [--port number] relay MCP on stdio to the running app
@@ -64,6 +65,51 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 
 If a command fails the run stops there and nothing is saved (the error's `data.index` tells which one, `data.completed` how many were done).
 The reply is `{"replies": [...], "saved": {...}}` (`saved` with `--save`).
+Inside a batch, layers and effects made by earlier commands can be named with `$created:<n>` ([relative references](#relative-references)).
+
+### Applying an action (run-action)
+
+Actions recorded in the app's Actions panel are kept as `actions/<name>.json` in the settings folder (on Windows
+`%APPDATA%\YoluPainter\actions`). Such a file can be applied to a `.ylp` without the app, or to the running app (without `--file`).
+
+```
+yolupainter-cli run-action "Action 1.json" --file work.ylp --save
+```
+
+```json
+{
+  "format": 1,
+  "name": "Action 1",
+  "commands": [
+    {"command": "layer.add", "args": {"kind": "fill", "name": "Wash", "fill": {"Color": "#336699ff"}, "above": "$selected"}},
+    {"command": "effect.add", "args": {"layer": "$created:1", "kind": "blur", "values": {"radius": 4.0}}}
+  ]
+}
+```
+
+- The commands are applied to one texture set as **one undo step**. If a command is refused, everything applied before it is rolled back, the run stops and nothing is saved
+  (the error's `data.index`, `data.command` and `data.completed` are as in batch).
+- Only commands that change layers, masks and effects can be in an action (`layer.add`, `layer.delete`, `layer.move`, `layer.set`, `mask.add`, `mask.delete`, `mask.set`,
+  `effect.add`, `effect.set`, `effect.delete`). An action holding a read, preview, export, save or undo command is refused before anything is applied. Leave `set` out, or give the same one everywhere.
+- Limits: 1,000 commands per action, 4 MiB per file, names up to 100 characters. A file whose `format` is not 1 is not read.
+- Exports and saves cannot be in an action and are not recorded by the app (an action edits layers, masks and effects only).
+- The reply is `{"action": "<name>", "reply": "action", "set": "<set id>", "steps": [{"layer": "..."}, ...], "undo_count": 1, "can_undo": true, "saved": {...}}`.
+  `steps` has one entry per command: the layer (`layer`) and effect (`effect`) it added or changed, and whether it changed nothing (`unchanged`).
+- To the running app the action is sent as one `action.run` command, and one undo in the app takes all of it back. There `$selected` is the layer selected in the current texture set.
+  A `.ylp` does not store the selected layer, so an action using `$selected` is refused without the app.
+- The same run is available as the command `action.run` (`{"commands": [...]}`; the MCP tool `action_run`).
+
+### Relative references
+
+So that a recorded action works on another document too, layer and effect fields (`layer`, `above`, `parent`, `effect`) accept these besides ids and names.
+
+| Written as | Refers to | Where |
+|---|---|---|
+| `$selected` | The selected layer (layer fields only) | The running app (the layer selected in the current texture set). In an action or a batch, the one selected when it started. Refused for a `.ylp` without the app |
+| `$created:<n>` | The n-th (from 1) layer or effect made in the same run (one count over `layer.add` and `effect.add`) | Inside an action or a batch only. Refused for a single command |
+
+- An effect in a layer field, or a layer in an effect field, is refused. So is a number past what was made (`data.created` gives the count).
+- Other text starting with `$` is looked up as a name (text starting with `$created:` whose number cannot be read is refused).
 
 ### Replies and exit codes
 
@@ -86,6 +132,7 @@ The list of error `code`s is in [the command reference](https://github.com/Yozor
 
 "Read" changes nothing. "Edit" changes the document and is one undo step. "Destructive" needs `--confirm`. "Replace" needs `--confirm` only when it replaces an existing file.
 `set` is a texture set id or name (omit it for the current set). Layers are given by their 32-digit hex id or by name (when a name matches several layers the command refuses and lists the ids).
+[Relative references](#relative-references) (`$selected`, `$created:<n>`) work too.
 
 | Command | Arguments | Kind |
 |---|---|---|
@@ -113,6 +160,7 @@ The list of error `code`s is in [the command reference](https://github.com/Yozor
 | `export.psd` | `set`, `path`, `channel`, `mode`, `confirm` | Replace |
 | `save` | `confirm` | Destructive (overwrites the open `.ylp`) |
 | `save_as` | `path`, `confirm` | Replace |
+| `action.run` | `commands` (the command list of an [action](#applying-an-action-run-action)) | Edit (one undo step in all; destructive commands inside each need `confirm`) |
 
 Field types, ranges and descriptions are printed by `yolupainter-cli schema <command>`. The effect kinds and the ranges of their values are returned by `effect.list_kinds`.
 Painting operations (strokes, fills, selections) are not commands yet.

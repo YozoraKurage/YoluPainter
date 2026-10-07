@@ -15,6 +15,7 @@
 ```
 yolupainter-cli <命令> [--名前 値 ...] [--file project.ylp [--save]] [--pretty]
 yolupainter-cli batch [ファイル|-] --file project.ylp [--save]
+yolupainter-cli run-action <アクション.json> [--file project.ylp [--save]]
 yolupainter-cli commands            命令の一覧
 yolupainter-cli schema [命令]       命令の JSON Schema（--tools は MCP のツールの定義）
 yolupainter-cli mcp [--port 番号]   標準入出力の MCP を起動中のアプリへ中継する
@@ -64,6 +65,51 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 
 途中で失敗したら、そこで止まり、何も保存しません（誤りの `data.index` が何番目か、`data.completed` がいくつ済んだかを教えます）。
 返事は `{"replies": [...], "saved": {...}}` です（`saved` は `--save` のとき）。
+batch の中では、前の命令で作ったレイヤー・効果を `$created:<n>` で指せます（[相対の指し方](#相対の指し方)）。
+
+### アクションを当てる（run-action）
+
+アプリの「アクション」のパネルで記録したアクションは、設定のフォルダの `actions/<名前>.json` に置かれます（Windows は
+`%APPDATA%\YoluPainter\actions`）。そのファイルを、画面なしの `.ylp` にも、起動中のアプリにも（`--file` が無いとき）当てられます。
+
+```
+yolupainter-cli run-action "アクション 1.json" --file work.ylp --save
+```
+
+```json
+{
+  "format": 1,
+  "name": "アクション 1",
+  "commands": [
+    {"command": "layer.add", "args": {"kind": "fill", "name": "Wash", "fill": {"Color": "#336699ff"}, "above": "$selected"}},
+    {"command": "effect.add", "args": {"layer": "$created:1", "kind": "blur", "values": {"radius": 4.0}}}
+  ]
+}
+```
+
+- 命令の列を、1 つのテクスチャセットへ**取り消しの 1 段**で当てます。途中の命令が断ったら、そこまでに当てた分も戻して止まり、何も保存しません
+  （誤りの `data.index`・`data.command`・`data.completed` は batch と同じ）。
+- 入れられる命令は、レイヤー・マスク・効果を変える命令だけです（`layer.add`・`layer.delete`・`layer.move`・`layer.set`・`mask.add`・`mask.delete`・`mask.set`・
+  `effect.add`・`effect.set`・`effect.delete`）。読む・見本・書き出し・保存・取り消しの命令が入っていれば、当てる前に断ります。`set` は省くか、全部同じにします。
+- 上限: 1 つのアクションの命令は 1,000 個、ファイルは 4 MiB、名前は 100 文字まで。`format` が 1 でないファイルは読みません。
+- 書き出し・保存はアクションに入らず、アプリの記録にも残りません（アクションはレイヤー・マスク・効果の編集だけです）。
+- 返事は `{"action": "<名前>", "reply": "action", "set": "<セットの ID>", "steps": [{"layer": "..."}, ...], "undo_count": 1, "can_undo": true, "saved": {...}}` です。
+  `steps` は命令ごとに、作った・変えたレイヤー（`layer`）と効果（`effect`）、何も変えなかったか（`unchanged`）です。
+- 起動中のアプリへは命令 `action.run` の 1 回で送り、アプリの取り消し 1 回で全部戻ります。`$selected` はアプリの今のテクスチャセットで選んでいるレイヤーです。
+  `.ylp` には選んでいたレイヤーが入っていないので、`$selected` を使うアクションは画面なしでは断ります。
+- 同じ実行は命令 `action.run`（`{"commands": [...]}`。MCP のツール `action_run`）でも呼べます。
+
+### 相対の指し方
+
+記録したアクションを別の文書でも使えるように、レイヤー・効果の欄（`layer`・`above`・`parent`・`effect`）には ID と名前のほかに次の指し方を書けます。
+
+| 書き方 | 指すもの | 使える所 |
+|---|---|---|
+| `$selected` | 選んでいるレイヤー（レイヤーの欄だけ） | 起動中のアプリ（今のテクスチャセットで選んでいるレイヤー）。アクションと batch では始めた時の 1 つ。画面なしの `.ylp` では断ります |
+| `$created:<n>` | 同じ実行の中で n 番目（1 から）に作ったレイヤーか効果（`layer.add`・`effect.add` の順の通し番号） | アクションと batch の中だけ。1 つだけの命令では断ります |
+
+- レイヤーの欄に効果を、効果の欄にレイヤーを指すと断ります。番号の外も断ります（作った数を `data.created` に返します）。
+- `$` で始まるほかの文字列は名前として探します（`$created:` で始まるのに番号が読めないものは断ります）。
 
 ### 返事と終了コード
 
@@ -86,6 +132,7 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 
 「読む」は何も変えません。「編集」は文書を変え、取り消しの 1 段になります。「壊す」は `--confirm` が要ります。「置き換え」は、既にあるファイルを置き換えるときだけ `--confirm` が要ります。
 `set` はテクスチャセットの ID か名前で、省くと今のセットです。層は 32 桁の 16 進の ID か名前で指します（同じ名前が複数あれば、候補の ID を返して断ります）。
+[相対の指し方](#相対の指し方)（`$selected`・`$created:<n>`）も使えます。
 
 | 命令 | 引数 | 種類 |
 |---|---|---|
@@ -113,6 +160,7 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 | `export.psd` | `set`・`path`・`channel`・`mode`・`confirm` | 置き換え |
 | `save` | `confirm` | 壊す（開いている `.ylp` を上書き） |
 | `save_as` | `path`・`confirm` | 置き換え |
+| `action.run` | `commands`（[アクション](#アクションを当てるrun-action)の命令の列） | 編集（全部で 1 段。中の壊す命令は、それぞれ `confirm`） |
 
 欄の型・範囲・説明は `yolupainter-cli schema <命令>` で出せます。効果の種類と値の範囲は `effect.list_kinds` が返します。
 描く操作（ストローク・塗りつぶし・選択）はまだ命令にありません。

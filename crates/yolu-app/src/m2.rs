@@ -1098,8 +1098,10 @@ impl AppState {
         if self.is_stroking() {
             return;
         }
+        let revision = self.doc.revision();
         match self.doc.cancel_coalescing() {
             Ok(true) => {
+                crate::automation::record::drag_cancelled(self, revision);
                 self.info(
                     Source::Layer,
                     self.lang.pick("取り消しました。", "Cancelled."),
