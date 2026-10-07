@@ -5,7 +5,7 @@ use yolu_core::mesh_maps::{MeshOverlapPriority, MeshOverlapRule};
 use yolu_core::{Document, Rgba8};
 use yolu_io::{
     NativeDocument, NativeValue, Project, SaveTarget, SetSpec, WriterInfo, BAKE_PRIORITY_VERSION,
-    MIXING_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION,
+    MIXING_VERSION, UNITY_NATIVE_VERSION,
 };
 
 const BINDING: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
