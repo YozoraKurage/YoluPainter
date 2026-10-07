@@ -244,17 +244,92 @@ fn the_folder_follows_each_os_and_the_override() {
         tail(folder_for("linux", env(&[("HOME", "/home/u"), (ENV_DIR, "/tmp/ll")])).unwrap()),
         "/tmp/ll"
     );
-    #[cfg(windows)]
+    // 絶対の道かどうかは、走っている OS ではなく引数の OS の決まりで見る（どの OS でも、ほかの OS の場合を確かめられる）
     assert_eq!(
-        tail(
-            folder_for(
-                "windows",
-                env(&[("LOCALAPPDATA", "C:\\Users\\u\\AppData\\Local")])
-            )
-            .unwrap()
-        ),
-        "C:/Users/u/AppData/Local/YoluPainter/LiveLink"
+        folder_for("linux", env(&[("HOME", "C:\\Users\\u")])),
+        None,
+        "linux はドライブ文字の道を絶対と見ない"
     );
+    assert_eq!(folder_for("macos", env(&[("HOME", "Users/u")])), None);
+    for (local, expected) in [
+        (
+            "C:\\Users\\u\\AppData\\Local",
+            "C:/Users/u/AppData/Local/YoluPainter/LiveLink",
+        ),
+        (
+            "d:/Users/u/AppData/Local",
+            "d:/Users/u/AppData/Local/YoluPainter/LiveLink",
+        ),
+        (
+            "\\\\?\\C:\\Users\\u\\AppData\\Local",
+            "//?/C:/Users/u/AppData/Local/YoluPainter/LiveLink",
+        ),
+        (
+            "\\\\server\\share\\Local",
+            "//server/share/Local/YoluPainter/LiveLink",
+        ),
+    ] {
+        let env = |key: &str| (key == "LOCALAPPDATA").then(|| PathBuf::from(local));
+        assert_eq!(
+            tail(folder_for("windows", env).unwrap()),
+            expected,
+            "{local}"
+        );
+    }
+    for relative in [
+        "AppData\\Local",
+        "/home/u",
+        "C:Users",
+        "\\Users\\u",
+        "\\",
+        "\\\\",
+        "",
+    ] {
+        let env = |key: &str| (key == "LOCALAPPDATA").then(|| PathBuf::from(relative));
+        assert_eq!(
+            folder_for("windows", env),
+            None,
+            "windows は絶対でない道を使わない: {relative:?}"
+        );
+    }
+    for (dir, expected) in [
+        ("D:\\ll", "D:/ll"),
+        ("ll", "C:/Local/YoluPainter/LiveLink"), // 絶対でない差し替えは使わない
+    ] {
+        let env = |key: &str| match key {
+            "LOCALAPPDATA" => Some(PathBuf::from("C:\\Local")),
+            ENV_DIR => Some(PathBuf::from(dir)),
+            _ => None,
+        };
+        assert_eq!(tail(folder_for("windows", env).unwrap()), expected, "{dir}");
+    }
+}
+
+/// 走っている OS が Windows のとき、`windows` の決まりは本物の `Path::is_absolute` と同じ答え（本物の `default_folder` の振る舞いが
+/// 試験用の決まりに替わっても変わらない）。
+#[cfg(windows)]
+#[test]
+fn the_windows_rule_agrees_with_the_real_path_check() {
+    for path in [
+        "C:\\Users\\u",
+        "c:/Users/u",
+        "\\\\?\\C:\\Users\\u",
+        "\\\\server\\share\\x",
+        "//server/share/x",
+        "C:Users",
+        "\\Users\\u",
+        "\\\\",
+        "/home/u",
+        "Users\\u",
+        "",
+    ] {
+        let path = Path::new(path);
+        assert_eq!(
+            absolute_for("windows", path),
+            path.is_absolute(),
+            "{path:?}"
+        );
+    }
 }
 
 #[test]
@@ -334,6 +409,24 @@ fn presence_is_written_through_a_tmp_name_and_removed() {
     cleanup(&root);
 }
 
+/// `claimed/` の拾っている印（`.lock`）の名前を、古い順に。
+fn marks(f: &Folder) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(f.claimed())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(LOCK_SUFFIX))
+        .collect();
+    names.sort();
+    names
+}
+
+/// ファイルの更新の時刻を 3 日前にする。
+fn make_old(path: &Path) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(SystemTime::now() - Duration::from_secs(3 * 86_400))
+        .unwrap();
+}
+
 #[test]
 fn half_written_files_are_not_seen_and_claiming_moves_the_request() {
     let root = temp("claim");
@@ -352,42 +445,160 @@ fn half_written_files_are_not_seen_and_claiming_moves_the_request() {
     assert_eq!(claimed.stem, "b");
     assert!(!waiting[0].exists() && claimed.path.exists());
     assert_eq!(f.claimed_files().unwrap(), vec![claimed.path.clone()]);
+    assert_eq!(marks(&f), ["b.json.lock"], "拾っている間は印を持つ");
     let request = claimed.read().unwrap();
     assert_eq!(claimed.reply_id(Some(&request)).unwrap(), request.id);
     assert_eq!(claimed.reply_id(None).unwrap(), "b");
     // 2 度目は拾えない（もう無い）
-    assert_eq!(f.claim(&waiting[0]).unwrap(), None);
+    assert!(f.claim(&waiting[0]).unwrap().is_none());
+    assert_eq!(
+        marks(&f),
+        ["b.json.lock"],
+        "拾えなかった受け手は印に触れない"
+    );
     claimed.finish().unwrap();
     claimed.finish().unwrap();
     assert!(f.claimed_files().unwrap().is_empty());
+    assert!(marks(&f).is_empty(), "終えたら印も消える");
+    cleanup(&root);
+}
+
+#[test]
+fn finishing_removes_the_request_and_then_the_mark_and_only_once() {
+    let root = temp("finish");
+    let f = Folder::open(&root).unwrap();
+    let inbox = f.inbox().join("b.json");
+    std::fs::write(&inbox, EXAMPLE).unwrap();
+    let first = f.claim(&inbox).unwrap().unwrap();
+    first.finish().unwrap();
+    assert!(!first.path.exists() && marks(&f).is_empty());
+    // 同じ名前の頼みをもう一度拾った後で、前の持ち主がまた `finish` や落とすことをしても、今の持ち主の頼みと印は消えない
+    std::fs::write(&inbox, EXAMPLE).unwrap();
+    let second = f.claim(&inbox).unwrap().unwrap();
+    first.finish().unwrap();
+    drop(first);
+    assert!(second.path.exists());
+    assert_eq!(marks(&f), ["b.json.lock"]);
+    second.finish().unwrap();
+    assert!(marks(&f).is_empty() && f.claimed_files().unwrap().is_empty());
+    cleanup(&root);
+}
+
+#[test]
+fn dropping_a_claim_releases_its_mark_and_leaves_the_request_for_the_sweep() {
+    let root = temp("drop");
+    let f = Folder::open(&root).unwrap();
+    let inbox = f.inbox().join("b.json");
+    std::fs::write(&inbox, EXAMPLE).unwrap();
+    let claimed = f.claim(&inbox).unwrap().unwrap();
+    let path = claimed.path.clone();
+    assert_eq!(marks(&f).len(), 1);
+    drop(claimed);
+    assert!(marks(&f).is_empty(), "落とせば印は残らない");
+    assert!(
+        path.exists(),
+        "頼みは claimed/ に残す（古くなれば片付ける）"
+    );
+    cleanup(&root);
+}
+
+#[test]
+fn claiming_what_is_already_gone_leaves_no_mark() {
+    let root = temp("gone");
+    let f = Folder::open(&root).unwrap();
+    assert!(f.claim(&f.inbox().join("gone.json")).unwrap().is_none());
+    assert!(marks(&f).is_empty(), "頼みが無かったときは印を消す");
+    // 印を作れない理由が「もう有る」でなければ、拾えなかったことにせず断る（頼みには触れない）
+    let inbox = f.inbox().join("b.json");
+    std::fs::write(&inbox, EXAMPLE).unwrap();
+    std::fs::remove_dir(f.claimed()).unwrap();
+    assert!(f.claim(&inbox).is_err());
+    assert!(inbox.exists());
+    cleanup(&root);
+}
+
+#[test]
+fn a_leftover_mark_blocks_the_claim_until_it_is_old_enough_to_sweep() {
+    let root = temp("mark");
+    let f = Folder::open(&root).unwrap();
+    let inbox = f.inbox().join("m.json");
+    let mark = f.claimed().join("m.json.lock");
+    std::fs::write(&inbox, EXAMPLE).unwrap();
+    // 印だけが残った（印を作った直後に落ちた）形
+    std::fs::write(&mark, b"").unwrap();
+    assert!(f.claim(&inbox).unwrap().is_none());
+    assert!(
+        inbox.exists() && mark.exists(),
+        "ほかの受け手の印と頼みには触れない"
+    );
+    assert_eq!(f.sweep_claimed(Duration::from_secs(86_400)).unwrap(), 0);
+    assert!(f.claim(&inbox).unwrap().is_none(), "新しい印は消えない");
+    make_old(&mark);
+    assert_eq!(f.sweep_claimed(Duration::from_secs(86_400)).unwrap(), 1);
+    assert!(!mark.exists() && inbox.exists());
+    let claimed = f.claim(&inbox).unwrap().expect("古い印を片付ければ拾える");
+    assert_eq!(claimed.read().unwrap().target.name, "Avatar");
+    cleanup(&root);
+}
+
+#[test]
+fn marks_are_not_listed_as_requests() {
+    let root = temp("lock-names");
+    let f = Folder::open(&root).unwrap();
+    std::fs::write(f.claimed().join("x.json.lock"), b"").unwrap();
+    std::fs::write(f.inbox().join("y.json.lock"), b"").unwrap();
+    std::fs::write(f.outbox().join("z.json.lock"), b"").unwrap();
+    assert!(f.claimed_files().unwrap().is_empty());
+    assert!(f.waiting().unwrap().is_empty());
+    assert!(f.replies().unwrap().is_empty());
+    std::fs::write(f.inbox().join("y.json"), EXAMPLE).unwrap();
+    assert_eq!(f.waiting().unwrap(), vec![f.inbox().join("y.json")]);
+    cleanup(&root);
+}
+
+/// `receivers` 個の受け手（それぞれ別の `Folder`）が、同じ頼みを同時に拾いに行く。`hold` なら勝った受け手が印を持ったまま全員の結果を待ち、
+/// そうでなければ拾ってすぐ落とす（遅れた受け手が、印の消えた後で「頼みはもう無い」に当たる道も通る）。毎回、勝ったのは 1 つだけで、
+/// 全員が手放した後に印が残らないこと。
+fn race(name: &str, receivers: usize, rounds: usize, hold: bool) {
+    let root = temp(name);
+    let f = Folder::open(&root).unwrap();
+    let folders: Vec<Folder> = (0..receivers)
+        .map(|_| Folder::open(&root).unwrap())
+        .collect();
+    for round in 0..rounds {
+        let file = f.inbox().join(format!("r{round}.json"));
+        std::fs::write(&file, EXAMPLE).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(receivers));
+        let handles: Vec<_> = folders
+            .iter()
+            .map(|g| {
+                let (g, file, barrier) = (g.clone(), file.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let claimed = g.claim(&file).unwrap();
+                    (claimed.is_some(), hold.then_some(claimed))
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let won = results.iter().filter(|(won, _)| *won).count();
+        assert_eq!(won, 1, "回 {round}");
+        drop(results);
+        assert!(marks(&f).is_empty(), "回 {round}: 印が残った");
+        assert!(!file.exists(), "回 {round}: 頼みが inbox に残った");
+    }
+    assert_eq!(f.claimed_files().unwrap().len(), rounds);
     cleanup(&root);
 }
 
 #[test]
 fn two_receivers_claiming_at_once_get_it_only_once() {
-    let root = temp("race");
-    let f = Folder::open(&root).unwrap();
-    for round in 0..20 {
-        let file = f.inbox().join(format!("r{round}.json"));
-        std::fs::write(&file, EXAMPLE).unwrap();
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let handles: Vec<_> = (0..2)
-            .map(|_| {
-                let (g, file, barrier) =
-                    (Folder::open(&root).unwrap(), file.clone(), barrier.clone());
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    g.claim(&file).unwrap().is_some()
-                })
-            })
-            .collect();
-        let won: usize = handles
-            .into_iter()
-            .map(|h| h.join().unwrap() as usize)
-            .sum();
-        assert_eq!(won, 1, "回 {round}");
-    }
-    cleanup(&root);
+    race("race", 2, 300, true);
+}
+
+#[test]
+fn receivers_that_let_go_at_once_still_leave_it_to_one() {
+    race("race-drop", 4, 150, false);
 }
 
 #[test]
@@ -411,6 +622,7 @@ fn a_request_file_that_is_too_large_or_unreadable_is_refused() {
         let c = Claimed {
             path: link,
             stem: "link".into(),
+            mark: Mutex::new(None),
         };
         assert!(c.read().is_err(), "シンボリックリンクは辿らない");
     }
@@ -461,11 +673,19 @@ fn leftover_claims_are_swept_only_when_old() {
     let new = f.claimed().join("new.json");
     std::fs::write(&old, b"{}").unwrap();
     std::fs::write(&new, b"{}").unwrap();
-    let file = std::fs::File::options().write(true).open(&old).unwrap();
-    file.set_modified(SystemTime::now() - Duration::from_secs(3 * 86_400))
-        .unwrap();
-    drop(file);
+    make_old(&old);
     assert_eq!(f.sweep_claimed(Duration::from_secs(86_400)).unwrap(), 1);
     assert!(!old.exists() && new.exists());
+    // 印も同じ。古い印は頼みといっしょに消え、新しい印は残る
+    let old_mark = f.claimed().join("old.json.lock");
+    let new_mark = f.claimed().join("new.json.lock");
+    std::fs::write(&old, b"{}").unwrap();
+    make_old(&old);
+    std::fs::write(&old_mark, b"").unwrap();
+    std::fs::write(&new_mark, b"").unwrap();
+    make_old(&old_mark);
+    assert_eq!(f.sweep_claimed(Duration::from_secs(86_400)).unwrap(), 2);
+    assert!(!old.exists() && !old_mark.exists());
+    assert!(new.exists() && new_mark.exists());
     cleanup(&root);
 }

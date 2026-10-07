@@ -7,8 +7,10 @@
 //!   [`ENV_DIR`] で差し替えられる（試験・2 つのアプリを並べるとき）。中に `inbox/`・`claimed/`・`outbox/` と、起きている印 `presence.json`。
 //!   フォルダは自分だけのもの（`private`。Unix は 0700 で持ち主が自分、Windows は自分だけの DACL）で、そうでないフォルダは読まない。
 //! - 書くときは必ず `<名前>.tmp` に書いて閉じてから最終の名前へ置き換える（読み手は書きかけを見ない）。読み手は `.tmp` を見ない。
-//! - 拾うのは `inbox/` から `claimed/` への名前の変更（[`Folder::claim`]）。2 つのスタンドアロンが同時に移そうとしても、移せた方だけが受ける
-//!   （名前の変更は 1 回しか成功しない）。読み終えたら `claimed/` から消す。
+//! - 拾うのは [`Folder::claim`]: まず `claimed/<名前>.lock`（拾っている印）を「同じ名前があれば必ず失敗する」作り方（`create_new`）で作り、作れた
+//!   方だけが `inbox/` から `claimed/` へ頼みを移す。2 つのスタンドアロンが同時に拾おうとしても、印を作れた 1 つだけが受ける（名前の変更の
+//!   成否では決めない。Windows では、同時の名前の変更が両方成功することがある）。読み終えたら頼みを `claimed/` から消し、その後で印を消す
+//!   （[`Claimed::finish`]）。印は拾った頼みを持っている間だけ残り、落とせば消える。
 //! - 頼みの読み（[`read_request`]）: 大きさの上限（[`MAX_REQUEST_BYTES`]・数の上限）、知らない `format`・`kind`、有限でない数、
 //!   決まりに合わない形（番号が範囲の外・必須の欄が無い）を、理由（[`Reason`]）つきで断る。知らないキーは読み飛ばす（Unity の新しい版が
 //!   足した欄で壊れない）。
@@ -16,6 +18,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -52,6 +55,8 @@ pub const INBOX_EVERY: Duration = Duration::from_millis(500);
 pub const PRESENCE: &str = "presence.json";
 /// 書きかけの印（この末尾の名前は読まない）。
 pub const TMP_SUFFIX: &str = ".tmp";
+/// `claimed/` の拾っている印の名前の末尾（`<頼みのファイルの名前>.lock`。`.json` で終わらないので、頼みとして読まれない）。
+pub const LOCK_SUFFIX: &str = ".lock";
 
 // ───────── 理由 ─────────
 
@@ -736,20 +741,37 @@ pub struct Folder {
     root: PathBuf,
 }
 
-/// 拾った頼み（`claimed/` に移したファイル）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 拾った頼み（`claimed/` に移したファイル）。拾った受け手だけが持つ印 `claimed/<名前>.lock` も持ち、[`Claimed::finish`] か落としたときに消す
+/// （頼みが `claimed/` にある間、同じ名前の頼みを別の受け手に拾わせない）。複製はできない（印を持つのは 1 つだけ）。
+#[derive(Debug)]
 pub struct Claimed {
     pub path: PathBuf,
     /// ファイルの名前の拡張子の前（頼みが読めないときの返事の名前）。
     pub stem: String,
+    /// 持っている印の道（手放したら None）。
+    mark: Mutex<Option<PathBuf>>,
+}
+
+/// `os`（`std::env::consts::OS` の言葉）の決まりで絶対の道か。走っている OS の `Path::is_absolute` ではなく引数の OS で見る（ほかの OS の
+/// 決まりを、どの OS でも試験できるように）。windows は、ドライブ文字つき（`X:\`・`X:/`）か、区切り 2 つと名前で始まる道（UNC・`\\?\`。
+/// 区切りは `\` と `/` のどちらでも。UNC のサーバー・共有の中身までは確かめない）。ほかは `/` で始まる道。
+fn absolute_for(os: &str, path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    if os == "windows" {
+        let separator = |b: u8| b == b'\\' || b == b'/';
+        matches!(bytes, [drive, b':', next, ..] if drive.is_ascii_alphabetic() && separator(*next))
+            || matches!(bytes, [a, b, name, ..] if separator(*a) && separator(*b) && !separator(*name))
+    } else {
+        bytes.first() == Some(&b'/')
+    }
 }
 
 /// OS ごとのフォルダ（環境の読み方を引数にして、試験できるようにする）。決まらなければ None。
 pub fn folder_for(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(dir) = env(ENV_DIR).filter(|p| p.is_absolute()) {
+    if let Some(dir) = env(ENV_DIR).filter(|p| absolute_for(os, p)) {
         return Some(dir);
     }
-    let absolute = |key| env(key).filter(|p| p.is_absolute());
+    let absolute = |key| env(key).filter(|p| absolute_for(os, p));
     let base = match os {
         "windows" => absolute("LOCALAPPDATA")?,
         "macos" => absolute("HOME")?
@@ -900,23 +922,42 @@ impl Folder {
         json_files(&self.outbox())
     }
 
-    /// 頼みを拾う（`inbox/` から `claimed/` へ名前を変える）。ほかの受け手が先に拾った（もう無い）なら None。
+    /// 頼みを拾う。`claimed/<名前>.lock` を `create_new` で作れた受け手だけが、`inbox/` から `claimed/` へ頼みを移して受ける。印が既にある
+    /// （ほかの受け手が拾っている最中か、拾った頼みをまだ持っている）なら、頼みには触れず None。印を作れても頼みがもう無い
+    /// （先に拾われて終わった）なら、印を消して None。印を作れなかった理由が「既にある」でなければ（権限・ディスクなど）、None にせず断る。
     pub fn claim(&self, inbox_file: &Path) -> io::Result<Option<Claimed>> {
         let Some(name) = inbox_file.file_name() else {
             return Ok(None);
         };
+        let mark = self.mark_for(name);
+        match create_private_file(&mark, false) {
+            Ok(file) => drop(file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(None),
+            Err(e) => return Err(e),
+        }
+        // ここから先は、勝てずに出る道（早い return・panic も）でも `claimed` を落とせば印が消える
         let to = self.claimed().join(name);
-        match std::fs::rename(inbox_file, &to) {
-            Ok(()) => {
-                let stem = to
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                Ok(Some(Claimed { path: to, stem }))
-            }
+        let stem = to
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let claimed = Claimed {
+            path: to,
+            stem,
+            mark: Mutex::new(Some(mark)),
+        };
+        match std::fs::rename(inbox_file, &claimed.path) {
+            Ok(()) => Ok(Some(claimed)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// 頼みのファイルの名前から、拾っている印の道。
+    fn mark_for(&self, name: &std::ffi::OsStr) -> PathBuf {
+        let mut mark = name.to_owned();
+        mark.push(LOCK_SUFFIX);
+        self.claimed().join(mark)
     }
 
     /// 返事を書く（`outbox/<頼みの id>-<n>.json`）。id が名前にできなければ断る。
@@ -933,11 +974,14 @@ impl Folder {
         Ok(path)
     }
 
-    /// `claimed/` に残った、`age` より古い頼みを消す（落ちたプロセスが残した物。新しい物はほかの受け手が当てている最中かもしれない）。
+    /// `claimed/` に残った、`age` より古い頼みと拾っている印を消して、消したファイルの数を返す（落ちたプロセスが残した物。新しい物は
+    /// ほかの受け手が当てている最中かもしれない）。古い印は、頼みがまだ `inbox/` にあれば、次の受け手が拾えるようになる（印を作った
+    /// 直後に落ちた受け手が残した形）。頼みを先に、印を後に消す（[`Claimed::finish`] と同じ順）。
     pub fn sweep_claimed(&self, age: Duration) -> io::Result<usize> {
         let now = SystemTime::now();
         let mut removed = 0;
-        for path in self.claimed_files()? {
+        let leftovers = self.claimed_files()?.into_iter().chain(self.marks()?);
+        for path in leftovers {
             let old = std::fs::symlink_metadata(&path)
                 .and_then(|m| m.modified())
                 .is_ok_and(|t| now.duration_since(t).is_ok_and(|d| d > age));
@@ -946,6 +990,11 @@ impl Folder {
             }
         }
         Ok(removed)
+    }
+
+    /// `claimed/` の拾っている印（`.lock` で終わる名前）。
+    fn marks(&self) -> io::Result<Vec<PathBuf>> {
+        files_ending(&self.claimed(), LOCK_SUFFIX)
     }
 }
 
@@ -962,12 +1011,22 @@ impl Claimed {
         read_request(&bytes)
     }
 
-    /// 終えた頼みを消す。
+    /// 終えた頼みを消し、その後で拾っている印を消す。印を持っている間だけ消す（2 回呼んでもよい。2 回目は何もしない。印を手放した後に、
+    /// 同じ名前の頼みをほかの受け手が拾っていても、その頼みを消さない）。頼みを消せなくても印は手放す。
     pub fn finish(&self) -> io::Result<()> {
-        match std::fs::remove_file(&self.path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        }
+        let Some(mark) = self.take_mark() else {
+            return Ok(());
+        };
+        let request = remove_if_present(&self.path);
+        let released = remove_if_present(&mark);
+        request.and(released)
+    }
+
+    fn take_mark(&self) -> Option<PathBuf> {
+        self.mark
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// 返事の名前にする ID（頼みが読めればその id、読めなければファイルの名前。どちらも名前にできなければ None）。
@@ -979,15 +1038,37 @@ impl Claimed {
     }
 }
 
-/// フォルダの中の `.json` のファイル（シンボリックリンク・フォルダ・`.tmp` は除く）。古い順。
+/// 消す（無ければ何もしない）。
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// 拾った頼みを落としたら、持っている印を消す（頼みのファイルは `claimed/` に残す。古くなれば `sweep_claimed` が消す）。
+impl Drop for Claimed {
+    fn drop(&mut self) {
+        if let Some(mark) = self.take_mark() {
+            let _ = remove_if_present(&mark);
+        }
+    }
+}
+
+/// フォルダの中の `.json` のファイル（シンボリックリンク・フォルダ・`.tmp`・`.lock` は除く）。古い順。
 fn json_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    files_ending(dir, ".json")
+}
+
+/// フォルダの中の、名前が `suffix` で終わるファイル（`.` で始まる名前・シンボリックリンク・フォルダは除く）。古い順。
+fn files_ending(dir: &Path, suffix: &str) -> io::Result<Vec<PathBuf>> {
     let mut out: Vec<(SystemTime, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if !name.ends_with(".json") || name.starts_with('.') {
+        if !name.ends_with(suffix) || name.starts_with('.') {
             continue;
         }
         let Ok(meta) = std::fs::symlink_metadata(&path) else {

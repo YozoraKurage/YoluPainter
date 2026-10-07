@@ -19,7 +19,7 @@ Both sides work out the same path on their own.
 | Linux and others | `${XDG_DATA_HOME:-~/.local/share}/YoluPainter/LiveLink/` (the default if `XDG_DATA_HOME` is not absolute) |
 
 - If the environment variable `YOLUPAINTER_LIVELINK_DIR` (an absolute path) is set, both sides use that folder instead (tests, or two applications side by side).
-- Inside are `inbox/` (Unity → standalone), `claimed/` (requests the standalone application picked up), `outbox/` (standalone → Unity), and the presence file `presence.json`.
+- Inside are `inbox/` (Unity → standalone), `claimed/` (requests the standalone application picked up, and the marks `<request file name>.lock` that show a request is being picked up; Unity neither reads nor writes them), `outbox/` (standalone → Unity), and the presence file `presence.json`.
 - The folder is accessible only to the user: on Unix, mode 0700 and owned by the user (Unity runs `chmod 0700` when it creates it); on Windows, a DACL allowing only that user.
   The standalone application does not use a folder others can enter or that someone else owns (the reason appears on the entrance icon).
 - Files are always written as `<name>.tmp`, closed, and then renamed to the final name. Readers ignore names ending in `.tmp` (they never read a half-written file).
@@ -135,8 +135,11 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 ## How the standalone application accepts requests
 
 - It accepts requests while the setting "Accept Live Link from Unity" is on (the default) or when started with `--livelink`, and checks `inbox/*.json` every 0.5 seconds.
-- It picks a request up by renaming it from `inbox/` to `claimed/`. Even if two standalone applications run, only the one whose rename succeeds takes it. When done, it removes
-  the file from `claimed/`. Requests left in `claimed/` for more than a day (left by a crashed process) are cleaned up when accepting starts.
+- To pick a request up, it first creates `claimed/<request file name>.lock` (the mark that the request is being picked up) in a way that always fails if the name already exists
+  (exclusive creation). Only the application that created the mark moves the request from `inbox/` to `claimed/` and takes it, so even if two standalone applications run, a single
+  request is taken only by the one that created the mark (whether a rename succeeded does not decide it). When done, it removes the request from `claimed/` and then removes the mark.
+- Requests and marks left in `claimed/` for more than a day (left by a crashed process) are cleaned up when accepting starts. If the request stayed in `inbox/` and only its
+  mark was left for more than a day (a crash right after creating the mark), the next application can pick it up after that cleanup.
 - Requests that arrive while drawing, while saving, or while another model is loading are not refused; they stay in `claimed/` and are applied afterwards.
 - If a document of the same `target.key` is open, the request is a **resend**: the pose, BlendShapes, material values and visibility are applied. An FBX is not read again while its
   path and `guid` stay the same (if visibility, the meshes used, or material assignments change, the model is rebuilt from the FBX already read). A resent pose also overwrites
