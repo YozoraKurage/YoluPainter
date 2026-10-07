@@ -837,6 +837,7 @@ fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
     assert_eq!(yolu_io::UNITY_NATIVE_VERSION, 21);
     assert_eq!(yolu_io::USER_CHANNELS_VERSION, 22);
     // 版 23（Rust 版だけの Generator の種類）は procedural_bridge、版 24（色調補正の 6 種）は adjust_bridge の試験で固定する
+    assert_eq!(yolu_io::EFFECTS_VERSION, 28);
     assert_eq!(yolu_io::MAX_NATIVE_VERSION, yolu_io::SEAMS_VERSION);
 }
 

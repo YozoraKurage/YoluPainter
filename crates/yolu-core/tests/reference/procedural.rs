@@ -147,7 +147,10 @@ fn kinds_are_numbered_outside_the_csharp_range() {
     assert_eq!(Kind::Grunge as u8, 65);
     assert_eq!(Kind::from_index(64), Some(Kind::Noise));
     assert_eq!(Kind::from_index(65), Some(Kind::Grunge));
-    for i in (8..64).chain(66..300).chain([-1]) {
+    // 0.5.0 で足した種類（70 は画像）。割り振っていない番号は今までどおり読まない
+    assert_eq!(Kind::Image as u8, 70);
+    assert_eq!(Kind::from_index(70), Some(Kind::Image));
+    for i in (8..64).chain(66..70).chain(71..300).chain([-1]) {
         assert_eq!(Kind::from_index(i), None, "{i}");
     }
     for i in 0..8 {

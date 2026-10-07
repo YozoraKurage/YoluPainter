@@ -351,7 +351,7 @@ type Row = (
     bool,
     &'static [&'static str],
 );
-const KIND_ROWS: [Row; 23] = [
+const KIND_ROWS: [Row; 24] = [
     ("blur", true, false, false, true, &[]),
     ("sharpen", true, false, false, true, &[]),
     ("noise", true, false, false, true, &[]),
@@ -382,6 +382,14 @@ const KIND_ROWS: [Row; 23] = [
     ),
     ("id_color", true, false, true, false, &["id_colors", "pins"]),
     ("anchor", true, false, true, false, &["anchor"]),
+    (
+        "image",
+        true,
+        false,
+        true,
+        false,
+        &["image", "projection", "component"],
+    ),
 ];
 
 /// 効果の種類の一覧（フィルター・調整・Generator。足せない種類も含む）。
@@ -403,7 +411,9 @@ pub fn kinds() -> &'static [EffectKind] {
                         ty,
                     })
                     .collect();
-                let needs_maps = generator && !matches!(id, "procedural_noise" | "grunge");
+                // 画像の段は投影しだい（UV は読まない）なので、ここでは偽
+                let needs_maps =
+                    generator && !matches!(id, "procedural_noise" | "grunge" | "image");
                 EffectKind {
                     id,
                     stack,
@@ -433,7 +443,7 @@ fn rust_only(id: &str) -> bool {
         Some(s) => {
             s.type_index() >= 64
                 || s.generator_settings()
-                    .is_some_and(|g| g.kind.is_procedural())
+                    .is_some_and(|g| g.kind.is_rust_only())
         }
         None => default_adjustment(id).is_some_and(|a| a.kind().is_rust_only()),
     }
@@ -473,6 +483,7 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         "direction" => EffectSettings::generator(generator::Settings::new(G::Direction)),
         "procedural_noise" => EffectSettings::generator(generator::Settings::new(G::Noise)),
         "grunge" => EffectSettings::generator(generator::Settings::new(G::Grunge)),
+        "image" => EffectSettings::generator(generator::Settings::new(G::Image)),
         _ => return None,
     })
 }
@@ -548,6 +559,7 @@ fn generator_kind_id(k: generator::Kind) -> &'static str {
         G::Anchor => "anchor",
         G::Noise => "procedural_noise",
         G::Grunge => "grunge",
+        G::Image => "image",
     }
 }
 

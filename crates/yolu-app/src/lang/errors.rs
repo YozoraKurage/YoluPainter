@@ -400,6 +400,10 @@ impl Lang {
             InactiveReason::Generator(I::Anchor(anchor::Issue::NotBelow)) => {
                 "The anchor is not below its layer".into()
             }
+            InactiveReason::Generator(I::NoImage) => "No image chosen".into(),
+            InactiveReason::Generator(I::MissingImage) => {
+                "The image is not in the project or cannot be read".into()
+            }
             InactiveReason::Rejected(why) if why.is_ascii() => why.clone(),
             InactiveReason::Rejected(_) => "Settings cannot be used".into(),
         }
@@ -520,6 +524,7 @@ fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Anchor => "Anchor",
         generator::Kind::Noise => "Noise",
         generator::Kind::Grunge => "Grunge",
+        generator::Kind::Image => "Image",
     }
 }
 

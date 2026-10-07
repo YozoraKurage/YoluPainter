@@ -60,6 +60,8 @@ pub struct BoundGenerator<'a> {
     offset: [f64; 3],
     /// ノイズ・グランジの評価の計画（それ以外の種類は None）。
     plan: Option<procedural::Plan>,
+    /// 画像の段が読む、投影を束縛済みの画像（[`Self::with_image`]。ほかの種類と、まだ渡していない画像の段は None）。
+    image: Option<&'a crate::fill_image::FillSampler<'a>>,
 }
 impl<'a> BoundGenerator<'a> {
     pub fn bind(
@@ -81,7 +83,9 @@ impl<'a> BoundGenerator<'a> {
                 return Err(Error::Invalid("マップの種類が重複しています"));
             }
         }
-        let mut inactive = None;
+        // 画像の段は、画像を選んでいないことを先に言う（マップより直しやすい）
+        let mut inactive =
+            (g.kind == Kind::Image && g.image.image == 0).then_some(Inactive::NoImage);
         // ノイズ・グランジはマップが使えなくても UV に落として評価する（入力のまま通さない。理由は `fallback`）
         let plan = g
             .kind
@@ -94,6 +98,9 @@ impl<'a> BoundGenerator<'a> {
             g.used_maps()
         };
         for kind in wanted {
+            if inactive.is_some() {
+                break;
+            }
             let why = match table[kind as usize] {
                 None => Some(Inactive::MissingMap(kind)),
                 Some(m) => {
@@ -120,6 +127,14 @@ impl<'a> BoundGenerator<'a> {
                 Kind::ShapeGradient if frame.is_none() => Some(Inactive::MissingFrame),
                 Kind::IdColor if g.id_colors.is_empty() => Some(Inactive::NoIdColors),
                 Kind::Anchor => anchor.as_ref().err().map(|e| Inactive::Anchor(e.clone())),
+                Kind::Image
+                    if frame.is_none()
+                        && g.image.projection.mode != crate::fill_image::ProjectionMode::Uv =>
+                {
+                    Some(Inactive::MissingFrame)
+                }
+                // 画像（`with_image`）を渡すまでは使えない
+                Kind::Image => Some(Inactive::MissingImage),
                 _ => None,
             };
         }
@@ -147,6 +162,7 @@ impl<'a> BoundGenerator<'a> {
             matrix: [0.; 9],
             offset: [0.; 3],
             plan,
+            image: None,
         };
         if b.inactive.is_some() {
             return Ok(b);
@@ -202,6 +218,57 @@ impl<'a> BoundGenerator<'a> {
     }
     fn map(&self, k: MapKind) -> &'a Map<'a> {
         self.maps[k as usize].unwrap()
+    }
+    /// 画像の段が読む画像を渡す（`FillSampler::bind` で、この段の投影・文書の大きさ・位置と向きのマップ・モデルのルートを束縛したもの）。
+    /// 色のチャンネルに使う段は色として読むミップマップ（リニアの画像は sRGB に直す）、マスク・スカラーは値のままのミップマップのサンプラーを渡す。
+    /// 画像の段で、マップ・モデルのルートが揃っていて画像だけを待っていたときにだけ効く（ほかは何もしない）。サンプラー自身が
+    /// 使えなければ（位置・法線のマップが無いなど）その理由で入力のまま通す。
+    pub fn with_image(mut self, sampler: &'a crate::fill_image::FillSampler<'a>) -> Self {
+        use crate::fill_image::InactiveReason as R;
+        if self.g.kind != Kind::Image || self.inactive != Some(Inactive::MissingImage) {
+            return self;
+        }
+        self.inactive = match sampler.reason() {
+            None => {
+                self.image = Some(sampler);
+                None
+            }
+            Some(R::MissingImage) => Some(Inactive::MissingImage),
+            Some(R::MissingPosition) => Some(Inactive::MissingMap(MapKind::Position)),
+            Some(R::MissingNormal) => Some(Inactive::MissingMap(MapKind::WorldNormal)),
+            Some(R::PositionSize) => Some(Inactive::MapSize(MapKind::Position)),
+            Some(R::NormalSize) => Some(Inactive::MapSize(MapKind::WorldNormal)),
+            Some(R::StalePosition) => Some(Inactive::StaleMap(MapKind::Position)),
+            Some(R::StaleNormal) => Some(Inactive::StaleMap(MapKind::WorldNormal)),
+            Some(R::UnknownModelFrame) => Some(Inactive::MissingFrame),
+        };
+        self
+    }
+    /// 画像の段の 1 画素の画像の色（straight RGBA8、反転は RGB だけ）。値の無い画素（投影の外・位置の無い画素）・範囲外・使えない段は None。
+    fn image_color(&self, x: u32, y: u32) -> Option<[u8; 4]> {
+        if x >= self.width || y >= self.height || self.inactive.is_some() {
+            return None;
+        }
+        let c = self.image?.projected(x, y)?;
+        Some(if self.g.invert {
+            [255 - c.r, 255 - c.g, 255 - c.b, c.a]
+        } else {
+            c.to_array()
+        })
+    }
+    /// 画像の段の 1 画素の基底の値（選んだ成分。レベル・反転の前）。
+    fn image_value(&self, x: u32, y: u32) -> Option<f64> {
+        let c = self.image?.projected(x, y)?;
+        let u = |b: u8| UNIT[b as usize];
+        Some(match self.g.image.component {
+            ImageComponent::Red => u(c.r),
+            ImageComponent::Green => u(c.g),
+            ImageComponent::Blue => u(c.b),
+            ImageComponent::Alpha => u(c.a),
+            ImageComponent::Luminance => {
+                clamp01(0.2126 * u(c.r) + 0.7152 * u(c.g) + 0.0722 * u(c.b))
+            }
+        })
     }
     pub fn inactive(&self) -> Option<&Inactive> {
         self.inactive.as_ref()
@@ -292,6 +359,7 @@ impl<'a> BoundGenerator<'a> {
             }
             Kind::Anchor => self.anchor?.value(x, y)?,
             Kind::Noise | Kind::Grunge => self.procedural_value(x, y, i)?,
+            Kind::Image => self.image_value(x, y)?,
             Kind::ShapeGradient => {
                 let [x, y, z] = vector(MapKind::Position)?;
                 let m = self.matrix;
@@ -363,7 +431,11 @@ impl<'a> BoundGenerator<'a> {
         };
         plan.value(x, y, (self.width, self.height), position, normal, scratch)
     }
+    /// 1 画素の出力。画像の段は、色の対象（`scalar` が偽）では画素の色（`Mapped`）、マスク・スカラーでは選んだ成分の値。
     pub fn sample(&self, x: u32, y: u32, scalar: bool) -> Option<Generated> {
+        if self.g.kind == Kind::Image && !scalar {
+            return self.image_color(x, y).map(Generated::Mapped);
+        }
         let value = self.value(x, y)?;
         Some(match &self.g.ramp {
             None => Generated::Scalar(value),
@@ -448,8 +520,12 @@ pub fn evaluate(
                 }
                 // 強さ 0・マップが使えない段は入力のまま（値を作らない）
                 if strength != 0. && g.inactive.is_none() {
-                    g.value_row(region.x, y, &mut scratch.values, &mut scratch.aux);
-                    g.apply_row(bytes, &scratch.values, target, strength, scratch.aux.level);
+                    if g.g.kind == Kind::Image && target == Target::Color {
+                        g.apply_image_row(bytes, region.x, y, strength);
+                    } else {
+                        g.value_row(region.x, y, &mut scratch.values, &mut scratch.aux);
+                        g.apply_row(bytes, &scratch.values, target, strength, scratch.aux.level);
+                    }
                 }
                 Ok(())
             },

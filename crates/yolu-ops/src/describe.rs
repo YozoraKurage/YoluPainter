@@ -29,6 +29,7 @@ pub fn kind_text(id: &str) -> Option<(Text, Text)> {
         "shape_gradient" => ("形のグラデーション", "Shape Gradient", "形（ボリューム）とランプの勾配（Generator）。形とランプは値の欄では作れず変えられない。", "A generator with a volume and a ramp. The volume and ramp cannot be created or changed by values."),
         "id_color" => ("ID の色", "ID Color", "ID マップの選んだ色の所を取り出す（Generator）。色の一覧は値の欄では作れず変えられない。", "A generator selecting colors of the ID map. The color list cannot be created or changed by values."),
         "anchor" => ("アンカー", "Anchor", "下の層の結果を読む（Generator）。参照は値の欄では作れず変えられない。", "A generator reading the result of a layer below. The reference cannot be created or changed by values."),
+        "image" => ("画像", "Image", "アセットの画像を塗りつぶしの層と同じ投影で読む（Generator）。色のチャンネルは画素の色、マスク・スカラーは選んだ成分。画像の参照と投影は値の欄では作れず変えられない。", "A generator reading a project image with the same projections as a fill layer: the pixel's colour on colour channels, the chosen component on masks and scalar channels. The image reference and projection cannot be created or changed by values."),
         _ => return None,
     };
     Some((Text::new(title_ja, title_en), Text::new(ja, en)))

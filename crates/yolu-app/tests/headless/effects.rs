@@ -524,7 +524,11 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
                 ..
             }] => {
                 assert_eq!(label, lang.pick("ジェネレーター", "Generators"));
-                assert_eq!(generators.len(), 10, "{lang:?}");
+                assert_eq!(
+                    generators.len(),
+                    yolu_app::fx::names::GENERATOR_KINDS.len(),
+                    "{lang:?}"
+                );
             }
             other => panic!("{lang:?}: 区切りの後はジェネレーターの入れ子だけ: {other:?}"),
         }
@@ -535,7 +539,11 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
                 _ => None,
             })
             .collect();
-        assert_eq!(labels.len(), 13 + 10, "{lang:?}: {labels:?}");
+        assert_eq!(
+            labels.len(),
+            13 + yolu_app::fx::names::GENERATOR_KINDS.len(),
+            "{lang:?}: {labels:?}"
+        );
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(Edit::AddMask(layer)));
         for target in [FilterTarget::Content, FilterTarget::Mask] {

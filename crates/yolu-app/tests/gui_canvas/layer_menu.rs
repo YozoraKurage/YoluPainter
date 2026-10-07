@@ -148,7 +148,11 @@ fn the_filter_menu_has_no_heading_and_the_generators_are_one_submenu() {
                 .iter()
                 .all(|e| matches!(e, Entry::Item { .. })));
             let generators = submenu(&entries, lang.pick("ジェネレーター", "Generators"));
-            assert_eq!(generators.len(), 10, "{lang:?}: ジェネレーターの種類の全部");
+            assert_eq!(
+                generators.len(),
+                yolu_app::fx::names::GENERATOR_KINDS.len(),
+                "{lang:?}: ジェネレーターの種類の全部"
+            );
             // 足す先は、今の編集の状態のまま（マスクを描いていればマスク、そうでなければ層の画素）
             let target = if edit_mask {
                 FilterTarget::Mask
@@ -307,11 +311,11 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
         for l in labels.iter().flatten() {
             assert!(!l.contains(": ") && !l.contains(" — "), "{l}");
         }
-        // 入れ子の中は、フィルター 13 種・ジェネレーター 10 種・調整 9 種（全部）・塗りつぶし 4 種
+        // 入れ子の中は、フィルター 13 種・ジェネレーター（全部）・調整 9 種（全部）・塗りつぶし 4 種
         let filters = submenu(&v, lang.pick("フィルター", "Filter"));
         assert_eq!(filters.len(), 13);
         let generators = submenu(&v, lang.pick("ジェネレーター", "Generators"));
-        assert_eq!(generators.len(), 10);
+        assert_eq!(generators.len(), yolu_app::fx::names::GENERATOR_KINDS.len());
         let adjustments = submenu(&v, lang.pick("新規調整レイヤー", "New Adjustment Layer"));
         let expected: Vec<Option<String>> = AdjustmentKind::ALL
             .iter()

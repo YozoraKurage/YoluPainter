@@ -290,6 +290,7 @@ pub fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::Anchor => "Anchor",
         generator::Kind::Noise => "ノイズ",
         generator::Kind::Grunge => "グランジ",
+        generator::Kind::Image => "画像",
     }
 }
 
@@ -493,6 +494,10 @@ impl fmt::Display for InactiveReason {
             }
             Self::Generator(I::Anchor(generator::anchor::Issue::NotBelow)) => {
                 f.write_str("Anchor が自分の層より下にありません")
+            }
+            Self::Generator(I::NoImage) => f.write_str("画像が選ばれていません"),
+            Self::Generator(I::MissingImage) => {
+                f.write_str("画像がプロジェクトに無いか、読めません")
             }
             Self::Rejected(why) => write!(f, "設定が使えません: {why}"),
         }

@@ -2,8 +2,8 @@
 //! だけが版 32 になる。往復・版の選び方・古い版の並びとの食い違いの拒否・.ylp への保存を試す。
 use yolu_core::{Channel, Document, EffectSettings, FilterSpec, FilterTarget, Rgba8};
 use yolu_io::{
-    NativeDocument, NativeValue, Project, SaveTarget, SetSpec, WriterInfo, MIXING_VERSION,
-    SEAMS_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION,
+    NativeDocument, NativeValue, Project, SaveTarget, SetSpec, WriterInfo, EFFECTS_VERSION,
+    MIXING_VERSION, SEAMS_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION,
 };
 
 fn writer() -> WriterInfo {
@@ -82,12 +82,16 @@ fn version_32_is_outside_what_older_readers_accept() {
 
 #[test]
 fn only_versions_with_a_meaning_are_read() {
-    // 読める版は 1〜25・26（分けた正本）・32 だけ。間の 27〜31 と範囲の外は、意味が決まっていないので版の数で断る
+    // 読める版は 1〜25・26（分けた正本）・28（画像の Generator）・32 だけ。間の 27・29〜31 と範囲の外は、意味が決まっていないので版の数で断る
+    // （版 28 は image_generator の試験が読み書きを固定する）
     let mut off = blurred();
     off.set_filter_seams(false).unwrap();
     let bytes = NativeDocument::from_core(&off).unwrap().to_bytes();
     assert!(NativeDocument::read(&bytes).is_ok());
-    for version in (SPLIT_VERSION + 1..SEAMS_VERSION).chain([0, SEAMS_VERSION + 1, -1]) {
+    for version in (SPLIT_VERSION + 1..SEAMS_VERSION)
+        .filter(|v| *v != EFFECTS_VERSION)
+        .chain([0, SEAMS_VERSION + 1, -1])
+    {
         let mut bytes = bytes.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         let Err(e) = NativeDocument::read(&bytes) else {

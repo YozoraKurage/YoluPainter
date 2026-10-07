@@ -2,6 +2,7 @@
 //! 断られる項目は黙って隠さず、押せない項目にして理由をツールチップに置く（チャンネルの型・層の種類・マスクの有無・読める Anchor が無い。
 //! ラベルは名前だけで、理由は続けない）。フィルターは平らに並べ、Generator は「ジェネレーター ▸」の入れ子にまとめる。
 
+use yolu_core::fill_image::ProjectionMode;
 use yolu_core::generator::{self, anchor::ReadMode, Blend, Kind, NoiseSpace, Shape};
 use yolu_core::{AnchorId, AnchorPlacement, Channel, EffectSettings, FilterTarget, LayerId};
 
@@ -281,6 +282,14 @@ pub enum FxChoice {
     Anchor,
     AnchorChannel,
     AnchorRead,
+    /// 画像の段の画像（アセットの画像の一覧・ファイルから取り込む・外す）。
+    Image,
+    /// 画像の段の投影の種類（デカールは無い）。
+    ImageMode,
+    /// 画像の段の投影の外側。
+    ImageWrap,
+    /// 画像の段がマスク・スカラーで値にする成分。
+    ImageComponent,
 }
 
 /// 選んでいる Generator の設定を 1 つ変えて渡す操作。
@@ -479,6 +488,61 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
                     }),
                 )
                 .radio(g.anchor.read == *r)
+                .enabled(free)
+            })
+            .collect(),
+        FxChoice::Image => {
+            let current = (g.image.image != 0).then_some(yolu_core::ImageId(g.image.image));
+            crate::panels::fill_props::image_list(app, current, |image| {
+                Action::Fx(FxOp::SetImage { layer, id, image })
+            })
+        }
+        FxChoice::ImageMode => names::IMAGE_PROJECTIONS
+            .iter()
+            .map(|mode| {
+                let mut next = g.clone();
+                let p = &mut next.image.projection;
+                // UV から型の上の投影へ替えたとき、置き場が初めのままならモデルの外形に合わせる（塗りつぶしの層と同じ）
+                if p.mode == ProjectionMode::Uv
+                    && *mode != ProjectionMode::Uv
+                    && p.placement == yolu_core::fill_image::Placement::default()
+                {
+                    if let Some(placement) = app.fitted_placement_for(*mode, None) {
+                        p.placement = placement;
+                    }
+                }
+                p.mode = *mode;
+                Entry::item(
+                    crate::panels::fill_props::projection_name(lang, *mode),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.image.projection.mode == *mode)
+                .enabled(free)
+            })
+            .collect(),
+        FxChoice::ImageWrap => names::IMAGE_WRAPS
+            .iter()
+            .map(|wrap| {
+                let mut next = g.clone();
+                next.image.projection.wrap = *wrap;
+                Entry::item(
+                    crate::panels::fill_props::wrap_name(lang, *wrap),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.image.projection.wrap == *wrap)
+                .enabled(free)
+            })
+            .collect(),
+        FxChoice::ImageComponent => generator::ImageComponent::ALL
+            .iter()
+            .map(|c| {
+                let mut next = g.clone();
+                next.image.component = *c;
+                Entry::item(
+                    names::image_component_name(lang, *c),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.image.component == *c)
                 .enabled(free)
             })
             .collect(),

@@ -4,6 +4,8 @@
 //! ノイズの格子の値は同じ格子の中で使い回す。式の演算とその順は 1 画素ずつの式と同じで、結果のビットは変わらない（試験で全画素を比べる）。
 //! 値を持たない画素（`Option::None`）は、有限の 0..1 の値と取り違えない印（[`none`]）で表す。
 use super::*;
+#[cfg(target_arch = "x86_64")]
+use crate::generator::mixing::MixLanes;
 use crate::generator::shape::{self, BOX, PLANE, SPHERE};
 use crate::math::simd::{self, Level};
 #[cfg(target_arch = "x86_64")]
@@ -197,6 +199,11 @@ impl BoundGenerator<'_> {
             Kind::Noise | Kind::Grunge => {
                 self.procedural_row(x0, y, at, out, plan.expect("束縛済み"), level)
             }
+            Kind::Image => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = self.image_value(x0 + k as u32, y).unwrap_or_else(none);
+                }
+            }
             Kind::ShapeGradient => {
                 let local = g.volume.local();
                 match local.shape() {
@@ -371,6 +378,34 @@ impl BoundGenerator<'_> {
         }
     }
 
+    /// 画像の段の色の対象: 行の画素に、画素ごとの画像の色を合成する（`apply_with` のランプの色と同じ式。透明な画素・値の無い画素は入力のまま）。
+    pub(super) fn apply_image_row(&self, dst: &mut [u8], x0: u32, y: u32, strength: f64) {
+        match self.g.blend {
+            Blend::Multiply => self.apply_image_with::<Multiply>(dst, x0, y, strength),
+            Blend::Replace => self.apply_image_with::<Replace>(dst, x0, y, strength),
+            Blend::Screen => self.apply_image_with::<Screen>(dst, x0, y, strength),
+            Blend::Max => self.apply_image_with::<Max>(dst, x0, y, strength),
+            Blend::Min => self.apply_image_with::<Min>(dst, x0, y, strength),
+            Blend::Add => self.apply_image_with::<Add>(dst, x0, y, strength),
+            Blend::Subtract => self.apply_image_with::<Subtract>(dst, x0, y, strength),
+        }
+    }
+    fn apply_image_with<B: Op>(&self, dst: &mut [u8], x0: u32, y: u32, strength: f64) {
+        let u = |b: u8| UNIT[b as usize];
+        for (k, p) in dst.chunks_exact_mut(4).enumerate() {
+            if p[3] == 0 {
+                continue;
+            }
+            let Some(m) = self.image_color(x0 + k as u32, y) else {
+                continue;
+            };
+            for c in 0..3 {
+                p[c] = to_byte(mix::<B>(u(p[c]), u(m[c]), strength));
+            }
+            p[3] = to_byte(u(p[3]) * (1. - strength + strength * u(m[3])));
+        }
+    }
+
     /// 行の画素を `values`（`value_row` の結果）で合成する。`dst` は入力の行（Mask の対象では RGB が 0）で、その場で書き換える。
     pub(super) fn apply_row(
         &self,
@@ -451,6 +486,13 @@ impl BoundGenerator<'_> {
     /// 行 `y` の `x0` から `out.len()` 画素の `sample` と同じ結果。範囲外の画素は `None`。1 画素ずつ `sample` を呼ぶより速い（同じ行の
     /// 値を SIMD でまとめて作る）。作業領域はスレッドごとに持って使い回すので、行ごとに呼んでも確保し直さない。
     pub fn sample_row(&self, x0: u32, y: u32, scalar: bool, out: &mut [Option<Generated>]) {
+        // 画像の段の色は画素ごとの画像の色（値の行を作らない）
+        if self.g.kind == Kind::Image && !scalar {
+            for (i, o) in out.iter_mut().enumerate() {
+                *o = self.sample(x0 + i as u32, y, false);
+            }
+            return;
+        }
         use std::cell::RefCell;
         thread_local! {
             static ROW: RefCell<(Vec<f64>, Option<Aux>)> = const { RefCell::new((Vec::new(), None)) };
@@ -750,7 +792,7 @@ unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn ramp_lanes<V: Lanes>(
+unsafe fn ramp_lanes<V: MixLanes>(
     r: &Ramp,
     values: &[f64],
     scalar: bool,
@@ -792,7 +834,7 @@ unsafe fn mix_lanes<V: Lanes, B: Op>(s: V::F, v: V::F, strength: f64) -> V::F {
 /// 行の合成（`apply_with` の N 画素ぶん）。組の値が全部「値あり」なら N 画素を同時に、そうでない組は 1 画素ずつ。
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn apply_lanes<V: Lanes, B: Op>(
+unsafe fn apply_lanes<V: MixLanes, B: Op>(
     g: &BoundGenerator<'_>,
     dst: &mut [u8],
     values: &[f64],

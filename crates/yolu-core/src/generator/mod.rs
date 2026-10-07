@@ -61,6 +61,8 @@ pub enum Kind {
     Noise = 64,
     /// グランジ（ノイズの組み合わせのプリセット）。Rust 版だけの種類。
     Grunge = 65,
+    /// 画像（プロジェクトの画像を塗りつぶしの層と同じ投影で読む。[`ImageSource`]）。Rust 版だけの種類（正本の版 28）。
+    Image = 70,
 }
 impl Kind {
     /// 正本の種類の番号から。知らない番号は None。
@@ -76,6 +78,7 @@ impl Kind {
             7 => Self::Anchor,
             64 => Self::Noise,
             65 => Self::Grunge,
+            70 => Self::Image,
             _ => return None,
         })
     }
@@ -83,7 +86,53 @@ impl Kind {
     pub fn is_procedural(self) -> bool {
         matches!(self, Self::Noise | Self::Grunge)
     }
+    /// Unity 版に無い種類か（種類の番号が 64 から）。
+    pub fn is_rust_only(self) -> bool {
+        self as u8 >= 64
+    }
 }
+
+/// 画像の段（[`Kind::Image`]）が値にする成分。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ImageComponent {
+    Red = 0,
+    Green = 1,
+    Blue = 2,
+    Alpha = 3,
+    /// 輝度（0.2126・0.7152・0.0722）。投影で補間した後の RGB から、丸めずに求める。塗りつぶしの層が画像をスカラーのチャンネルで読むときは、元の画素ごとに
+    /// 8 bit へ丸めてから補間するので、補間がかかる投影（タイル・回転・縮小）では値が少し違う。
+    #[default]
+    Luminance = 4,
+}
+
+impl ImageComponent {
+    pub const ALL: [Self; 5] = [
+        Self::Red,
+        Self::Green,
+        Self::Blue,
+        Self::Alpha,
+        Self::Luminance,
+    ];
+    /// 保存の番号から。知らない番号は None。
+    pub fn from_index(i: i64) -> Option<Self> {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| Self::ALL.get(i).copied())
+    }
+}
+
+/// 画像の段（[`Kind::Image`]）の設定: 読む画像・投影（塗りつぶしの層の画像と同じ。デカールは除く）・値にする成分。
+/// 画像そのもの（画素）は文書の外の入力で、束縛のときに [`BoundGenerator::with_image`] で渡す。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ImageSource {
+    /// プロジェクトの画像リソースの ID（`effects::ImageId` の値）。0 はまだ選んでいない。
+    pub image: u128,
+    pub projection: crate::fill_image::Projection,
+    /// マスク・スカラーのチャンネルで値にする成分（色のチャンネルでは画素の色をそのまま使う）。
+    pub component: ImageComponent,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Blend {
@@ -195,6 +244,8 @@ pub struct Settings {
     pub pins: BTreeMap<MapKind, String>,
     /// ノイズ・グランジの設定（[`Procedural`]）。Noise・Grunge 以外の種類は既定のまま。
     pub procedural: Procedural,
+    /// 画像の段の設定（[`ImageSource`]）。Image 以外の種類は既定のまま。
+    pub image: ImageSource,
 }
 impl Settings {
     pub fn new(kind: Kind) -> Self {
@@ -220,6 +271,7 @@ impl Settings {
             anchor: anchor::Reference::default_for(kind),
             pins: BTreeMap::new(),
             procedural: Procedural::default(),
+            image: ImageSource::default(),
         };
         match kind {
             Kind::EdgeWear => {
@@ -241,6 +293,8 @@ impl Settings {
                 g.noise_amount = 0.3;
             }
             Kind::Grunge => g.procedural = Procedural::for_preset(GrungePreset::Stain),
+            // 画像の段は、足したときに画像がそのまま見えるように置き換える（塗りつぶしの層の画像と同じ見え方）
+            Kind::Image => g.blend = Blend::Replace,
             _ => {}
         }
         g
@@ -323,13 +377,26 @@ impl Settings {
         } else if self.anchor != anchor::Reference::default_for(self.kind) {
             return Err(Error::Invalid("Anchor の参照は Anchor 専用です"));
         }
+        let default_overlay = self.noise_amount == 0.
+            && self.noise_scale == 0.05
+            && self.noise_seed == 0
+            && self.noise_space == NoiseSpace::Model;
+        if self.kind == Kind::Image {
+            let p = &self.image.projection;
+            if p.validate().is_err() || p.mode == crate::fill_image::ProjectionMode::Decal {
+                return Err(Error::Invalid(
+                    "画像の投影が範囲外か、デカールです（画像の段は UV・トライプラナー・平面・球・円柱）",
+                ));
+            }
+            if !default_overlay {
+                return Err(Error::Invalid("画像の段は重ねるノイズを持ちません"));
+            }
+        } else if self.image != ImageSource::default() {
+            return Err(Error::Invalid("画像の設定は画像の段専用です"));
+        }
         if self.kind.is_procedural() {
             self.procedural.validate(self.kind)?;
-            if self.noise_amount != 0.
-                || self.noise_scale != 0.05
-                || self.noise_seed != 0
-                || self.noise_space != NoiseSpace::Model
-            {
+            if !default_overlay {
                 return Err(Error::Invalid(
                     "ノイズ・グランジは重ねるノイズを持たず、大きさ・シードは自身の設定で決めます",
                 ));
@@ -358,6 +425,8 @@ impl Settings {
             Kind::Direction => vec![WorldNormal, BentNormal, Position],
             Kind::IdColor => vec![Id, Position],
             Kind::Noise | Kind::Grunge => vec![Position, WorldNormal],
+            // 投影のマップは塗りつぶしの層と同じく、ピンを持たない
+            Kind::Image => vec![],
         }
     }
     pub fn used_maps(&self) -> Vec<MapKind> {
@@ -385,6 +454,15 @@ impl Settings {
             Kind::Anchor => vec![],
             // 位置のマップが使えないときは UV に落とす（入力のまま通さない）ので、読むマップは設定だけで決まる
             Kind::Noise | Kind::Grunge => return self.procedural.maps(self.kind),
+            // 投影の種類で決まる（UV は読まない。トライプラナーは向きも）
+            Kind::Image => {
+                use crate::fill_image::ProjectionMode as M;
+                return match self.image.projection.mode {
+                    M::Uv => vec![],
+                    M::Triplanar | M::Decal => vec![Position, WorldNormal],
+                    M::Planar | M::Spherical | M::Cylindrical => vec![Position],
+                };
+            }
         };
         if self.noise_amount > 0. && self.noise_space == NoiseSpace::Model && !v.contains(&Position)
         {
@@ -405,6 +483,10 @@ pub enum Inactive {
     EmptyBounds,
     NoIdColors,
     Anchor(anchor::Issue),
+    /// 画像の段: 画像をまだ選んでいない。
+    NoImage,
+    /// 画像の段: 選んだ画像が入力に無い・読めない。
+    MissingImage,
 }
 /// 左下原点の読み取り専用 RGBA8。タイルはこの口を実装する。
 pub trait Source: Sync {

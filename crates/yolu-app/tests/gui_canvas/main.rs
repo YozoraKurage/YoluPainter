@@ -24,6 +24,7 @@ mod fillfx_gui;
 mod gestures;
 mod grunge_picker;
 mod history;
+mod image_stage_ui;
 mod layer_menu;
 mod layerops;
 mod pathtool;

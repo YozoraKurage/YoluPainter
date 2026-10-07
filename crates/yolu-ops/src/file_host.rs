@@ -263,13 +263,9 @@ impl Opened {
         Ok(())
     }
 
-    /// 塗りつぶしの画像が指すプロジェクトの画像を、効果の入力として文書へ渡す。モデルはここには無いので、位置を読む効果は入力のまま通す。
+    /// 塗りつぶしの画像と画像の段が指すプロジェクトの画像を、効果の入力として文書へ渡す。モデルはここには無いので、位置を読む効果は入力のまま通す。
     fn give_images(&mut self, doc: &mut Document) {
-        let wanted: HashSet<ImageId> = doc
-            .layers()
-            .iter()
-            .flat_map(|l| l.fill_images().map(|(_, id)| id))
-            .collect();
+        let wanted: HashSet<ImageId> = doc.layers().iter().flat_map(|l| l.image_ids()).collect();
         if wanted.is_empty() {
             return;
         }

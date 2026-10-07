@@ -205,6 +205,8 @@ fn the_version_follows_the_features_used() {
     assert_eq!(USER_CHANNELS_VERSION, 22);
     assert_eq!(PROCEDURAL_VERSION, 23);
     assert_eq!(ADJUST_VERSION, 24);
+    // 版 25 は gradient_mixing_bridge、版 28 は image_generator（the_image_generator_round_trips_at_version_28）の試験、版 32 は seams_bridge が固定する
+    assert_eq!(yolu_io::EFFECTS_VERSION, 28);
     assert_eq!(MAX_NATIVE_VERSION, yolu_io::SEAMS_VERSION);
     // 使わない文書の版は変わらない: 今の 3 種の調整・フィルターだけなら Unity 版と同じ 21
     let mut old = plain();

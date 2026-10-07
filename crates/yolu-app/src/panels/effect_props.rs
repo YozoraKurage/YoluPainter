@@ -683,14 +683,25 @@ fn generator_rows(
     layer: LayerId,
     effect: &FilterEffect,
     g: &generator::Settings,
-    _target: FilterTarget,
+    target: FilterTarget,
 ) -> Option<generator::Settings> {
     let lang = app.lang;
     let enabled = app.can_edit();
     let id = effect.id();
     let mut next = g.clone();
+    // 値（範囲を通した 0〜1）を使うか: 画像の段の色のチャンネルは画素の色をそのまま使い、範囲と成分は効かない
+    let values = g.kind != Kind::Image
+        || target == FilterTarget::Mask
+        || effect.channels().iter().any(|c| {
+            app.doc
+                .channel_info(*c)
+                .is_some_and(|i| i.kind != yolu_core::ChannelKind::Color)
+        });
     if g.kind == Kind::Anchor {
         anchor_reading_rows(ui, app, rows, ctx, g, enabled);
+    }
+    if g.kind == Kind::Image {
+        image_source_rows(ui, app, rows, ctx, layer, id, g, &mut next, values, enabled);
     }
     // 読むマップと状態
     let used = g.used_maps();
@@ -736,8 +747,8 @@ fn generator_rows(
             }
         }
     }
-    // このベイクだけを読む
-    if !used.is_empty() {
+    // このベイクだけを読む（画像の段は塗りつぶしの層の投影と同じく、いつも最新のベイクを読む）
+    if !used.is_empty() && !g.candidate_maps().is_empty() {
         let pinned = !g.pins.is_empty();
         let all_usable = used
             .iter()
@@ -855,10 +866,10 @@ fn generator_rows(
         }
         Kind::IdColor => id_color_rows(ui, app, rows, layer, id, g, &mut next, enabled),
         Kind::Noise | Kind::Grunge => procedural_rows(ui, app, rows, ctx, &mut next, enabled),
-        Kind::EdgeWear | Kind::Thickness | Kind::Anchor => {}
+        Kind::EdgeWear | Kind::Thickness | Kind::Anchor | Kind::Image => {}
     }
     // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す）
-    if g.kind != Kind::IdColor {
+    if g.kind != Kind::IdColor && values {
         group_label(ui, rows, lang.pick("範囲", "Range"));
         let gap = 0.001 + 1e-6;
         if let Some(v) = slider_row(
@@ -923,8 +934,8 @@ fn generator_rows(
     ) {
         next.invert = on;
     }
-    // 崩し（ノイズ・グランジは重ねるノイズを持たない。core が断るので出さない）
-    if !g.kind.is_procedural() {
+    // 崩し（ノイズ・グランジ・画像は重ねるノイズを持たない。core が断るので出さない）
+    if !g.kind.is_procedural() && g.kind != Kind::Image {
         group_label(ui, rows, lang.pick("崩し", "Breakup"));
         if let Some(v) = percent_row(
             ui,
@@ -998,6 +1009,119 @@ fn generator_rows(
         open_popup(app, ctx, Popup::Fx(FxChoice::Blend), rect, rect.width());
     }
     (next != *g).then_some(next)
+}
+
+/// 画像の段の画像（箱・読み方）・成分・投影（塗りつぶしの層の画像と投影の欄と同じ並びと部品）。`values` は成分を使うか
+/// （マスクかスカラーのチャンネルに掛かる）。
+#[allow(clippy::too_many_arguments)]
+fn image_source_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    ctx: &egui::Context,
+    layer: LayerId,
+    id: yolu_core::FilterId,
+    g: &generator::Settings,
+    next: &mut generator::Settings,
+    values: bool,
+    enabled: bool,
+) {
+    use super::fill_props::{self as fp, ImageRow, ProjectionPopups};
+    use yolu_core::fill_image::ProjectionMode;
+    let lang = app.lang;
+    let image = (g.image.image != 0).then_some(yolu_core::ImageId(g.image.image));
+    fp::image_row(
+        ui,
+        app,
+        rows,
+        ImageRow {
+            key: "fx.image",
+            box_key: "fx.image",
+            image,
+            enabled,
+            popup: Popup::Fx(FxChoice::Image),
+            clear_tip: lang.pick(
+                "画像を外す（入力のまま通す）",
+                "Remove the image (the stage passes its input through)",
+            ),
+        },
+        |image| Action::Fx(FxOp::SetImage { layer, id, image }),
+    );
+    if values {
+        if let Some(rect) = choice_row(
+            ui,
+            rows,
+            "fx.image.component",
+            lang.pick("成分", "Component"),
+            names::image_component_name(lang, g.image.component),
+            Some(lang.pick(
+                "マスクとスカラーのチャンネルで値にする画像の成分（色のチャンネルは画素の色をそのまま使う）",
+                "The image component used as the value on masks and scalar channels (colour channels use the pixel's colour)",
+            )),
+            enabled,
+        ) {
+            open_popup(
+                app,
+                ctx,
+                Popup::Fx(FxChoice::ImageComponent),
+                rect,
+                rect.width(),
+            );
+        }
+    }
+    // 投影（見出しは置かない。最初の行の名前が「投影」）
+    let p = g.image.projection;
+    let popups = ProjectionPopups {
+        mode: Popup::Fx(FxChoice::ImageMode),
+        wrap: Popup::Fx(FxChoice::ImageWrap),
+    };
+    if let Some(changed) = fp::projection_rows(
+        ui,
+        app,
+        rows,
+        ctx,
+        "fx.image.projection",
+        &p,
+        popups,
+        enabled,
+    ) {
+        next.image.projection = changed;
+    }
+    if p.mode != ProjectionMode::Uv {
+        let editing = app.fillfx.edit_filter == Some((layer, id));
+        let fit = {
+            let g = g.clone();
+            move |app: &mut AppState| match app.fitted_placement_for(p.mode, None) {
+                Some(placement) => {
+                    let mut fitted = g;
+                    fitted.image.projection.placement = placement;
+                    set_settings(app, layer, id, EffectSettings::generator(fitted), false);
+                }
+                None => app.refuse(
+                    crate::notice::Source::Effect,
+                    app.lang.pick("モデルがありません", "No model"),
+                ),
+            }
+        };
+        if let Some(placement) = fp::placement_fields(
+            ui,
+            app,
+            rows,
+            "fx.image.projection",
+            &p,
+            editing,
+            enabled,
+            lang,
+            move |app| {
+                app.apply(Action::Fill(crate::fillfx::FillOp::EditFilter(
+                    if editing { None } else { Some((layer, id)) },
+                )));
+            },
+            fit,
+        ) {
+            next.image.projection.placement = placement;
+        }
+    }
 }
 
 /// 形のグラデーションの形・置き場・減衰。

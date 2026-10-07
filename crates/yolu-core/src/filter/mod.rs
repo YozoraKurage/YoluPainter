@@ -3,6 +3,7 @@
 //! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整層の責務。
 //! Normalize の全域統計は `statistics` で単独に求められ、`Options::statistics` で評価へ渡せる（タイルごとの再走査を避けられる）。
 
+mod generated;
 mod pixels;
 mod rows;
 mod seams;
@@ -39,13 +40,17 @@ pub enum Locality {
 
 /// Generator のマップ解決は呼び出し側。値は 0..1、欠損は None。
 /// 同じ座標は評価中いつも同じ値を返すこと。ランプ適用後は Mapped を返す。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Generated {
-    Scalar(f64),
-    Mapped([u8; 4]),
-}
+/// 型は [`crate::generator::Generated`] そのもの（束縛済みの Generator の結果を写し替えずに渡せる）。
+pub use crate::generator::Generated;
 pub trait GeneratorInput: Sync {
     fn sample(&self, slot: u32, x: u32, y: u32) -> Option<Generated>;
+    /// 行 `y` の `x0` から `out.len()` 画素の `sample` と同じ結果（範囲外は None）。評価器は段ごと・行ごとにこちらを呼ぶ。
+    /// 既定は `sample` を 1 画素ずつ呼ぶ。行をまとめて作れる入力（束縛済みの Generator）は置き換える。
+    fn sample_row(&self, slot: u32, x0: u32, y: u32, out: &mut [Option<Generated>]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = self.sample(slot, x0 + i as u32, y);
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GeneratorBlend {
@@ -738,6 +743,8 @@ impl<'a> Engine<'a> {
         let width4 = r.width as usize * 4;
         // 調整の段が行ごとの結果を置く作業の領域
         let mut adjusted: Vec<u8> = Vec::new();
+        // Generator の段の行の値（`generated::spans` の範囲の外は前の行の値が残るが、そこは透明な画素で読まない）
+        let mut values: Vec<Option<Generated>> = Vec::new();
         for (y, row) in buf.chunks_exact_mut(width4).enumerate() {
             self.options.check()?;
             let y_canvas = r.y + y as u32;
@@ -760,15 +767,24 @@ impl<'a> Engine<'a> {
                     rows::lerp_rows_at(level, row, &adjusted, s.strength);
                 }
                 Settings::Generator { slot, blend } => {
-                    for (x, p) in row.chunks_exact_mut(4).enumerate() {
-                        if p[3] == 0 && self.value_type != ValueType::Mask {
+                    let Some(input) = self.options.generators else {
+                        continue;
+                    };
+                    let mask = self.value_type == ValueType::Mask;
+                    values.resize(r.width as usize, None);
+                    generated::spans(row, mask, |start, end| {
+                        input.sample_row(
+                            slot,
+                            r.x + start as u32,
+                            y_canvas,
+                            &mut values[start..end],
+                        );
+                    });
+                    for (p, g) in row.chunks_exact_mut(4).zip(&values) {
+                        if p[3] == 0 && !mask {
                             continue;
                         }
-                        let Some(g) = self
-                            .options
-                            .generators
-                            .and_then(|g| g.sample(slot, r.x + x as u32, y_canvas))
-                        else {
+                        let Some(g) = *g else {
                             continue;
                         };
                         if matches!(g,Generated::Scalar(v) if !v.is_finite() || !(0.0..=1.0).contains(&v))

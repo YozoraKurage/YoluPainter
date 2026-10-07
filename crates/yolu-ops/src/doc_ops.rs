@@ -407,6 +407,7 @@ fn inactive_text(e: &InactiveEffect) -> Text {
                 yolu_core::generator::Kind::Anchor => "anchor",
                 yolu_core::generator::Kind::Noise => "noise",
                 yolu_core::generator::Kind::Grunge => "grunge",
+                yolu_core::generator::Kind::Image => "image",
             };
             if mask {
                 format!("{name} generator (mask)")
@@ -438,6 +439,10 @@ fn inactive_text(e: &InactiveEffect) -> Text {
         InactiveReason::Generator(I::EmptyBounds) => "the position bounds are empty".to_owned(),
         InactiveReason::Generator(I::NoIdColors) => "no ID colors are chosen".to_owned(),
         InactiveReason::Generator(I::Anchor(_)) => "the anchor is not usable".to_owned(),
+        InactiveReason::Generator(I::NoImage) => "no image is chosen".to_owned(),
+        InactiveReason::Generator(I::MissingImage) => {
+            "the image is not in the project or cannot be read".to_owned()
+        }
         InactiveReason::Rejected(_) => "the settings cannot be used".to_owned(),
     };
     Text::new(

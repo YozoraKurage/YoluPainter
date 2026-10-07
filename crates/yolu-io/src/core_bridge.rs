@@ -4,8 +4,8 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    ADJUST_VERSION, EFFECTS_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
+    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -402,13 +402,15 @@ impl CoreLoad {
     }
 }
 
-/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32、グラデーションマップの混色（混色モード・
-/// 混合率曲線）があれば 25、Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら
-/// 22、どれも無ければ Unity 版と同じ 21。
+/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 28 の画像の Generator も読み書きできる版）、
+/// 画像の Generator（種類 70）があれば 28、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正
+/// （種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     if !doc.filter_seams() {
         SEAMS_VERSION
+    } else if uses_image_generators(doc) {
+        EFFECTS_VERSION
     } else if uses_gradient_mixing(doc) {
         MIXING_VERSION
     } else if uses_rust_only_adjustments(doc) {
@@ -550,6 +552,20 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
                 e.settings()
                     .generator_settings()
                     .is_some_and(|g| g.kind.is_procedural())
+            })
+    })
+}
+/// 文書が画像の Generator（種類 70）の段を持つか（層の内容とマスクのスタック。無効な段も数える）。持っていれば正本の版は 28 になり、
+/// 版 25 までの読み手と Unity 版は開けない。
+pub(crate) fn uses_image_generators(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.filters()
+            .iter()
+            .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+            .any(|e| {
+                e.settings()
+                    .generator_settings()
+                    .is_some_and(|g| g.kind == generator::Kind::Image)
             })
     })
 }
@@ -970,6 +986,7 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
         6 => generator::Kind::IdColor,
         64 => generator::Kind::Noise,
         65 => generator::Kind::Grunge,
+        70 => generator::Kind::Image,
         _ => generator::Kind::Anchor,
     };
     let mut g = generator::Settings::new(kind);
@@ -1052,6 +1069,18 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
     }
     if kind.is_procedural() {
         g.procedural = read_procedural(f, &format!("{p}.procedural"), kind)?;
+    }
+    if kind == generator::Kind::Image {
+        // 画像の欄（正本の版 28。`write_generator` の末尾と対）
+        let q = format!("{p}.effect");
+        let component = f.int(&format!("{q}.component"))?;
+        g.image = generator::ImageSource {
+            image: core_id(f.guid(&format!("{q}.resource_id"))?),
+            projection: read_projection(f, &format!("{q}.projection"))?,
+            component: generator::ImageComponent::from_index(i64::from(component)).ok_or_else(
+                || Error::InvalidData(format!("{q}.component {component} は範囲外です")),
+            )?,
+        };
     }
     Ok(g)
 }
@@ -1639,6 +1668,13 @@ fn write_generator(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
         } else {
             w.int(p.preset as i32)?;
         }
+    }
+    if g.kind == generator::Kind::Image {
+        // 画像の欄（正本の版 28。`read_generator` と対）: 画像の ID（選んでいなければ空）・投影・成分
+        let image = &g.image;
+        w.raw(&native_id(image.image))?;
+        write_projection(w, &image.projection)?;
+        w.int(image.component as i32)?;
     }
     Ok(())
 }

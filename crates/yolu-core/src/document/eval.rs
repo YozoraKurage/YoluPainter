@@ -82,6 +82,9 @@ impl filter::Source for StridedSource<'_> {
 }
 
 /// 粗い評価の Generator: 粗い画素 (x, y) の値は、元の画素 (x·歩幅, y·歩幅) での値。
+/// 行の評価（`sample_row`）は置き換えず、1 画素ずつ読む: 粗い行の画素は元の行で歩幅ごとに離れていて、元の行を続けて作ってから拾うと
+/// 歩幅の倍の画素を作る（4096²・1 スレッドの `generator_stage_bench` で、歩幅 4 は 3 段の層で 1 画素ずつと同じ程度・ランプの段で 1.4〜2.5 倍、
+/// 歩幅 8・16 は 1.6〜6.2 倍遅かった）。
 struct ScaledGenerators<'e> {
     inner: &'e dyn GeneratorInput,
     stride: u32,
@@ -495,10 +498,13 @@ struct StageInput<'e> {
 impl GeneratorInput for StageInput<'_> {
     fn sample(&self, slot: u32, x: u32, y: u32) -> Option<filter::Generated> {
         let b = self.bound.get(slot as usize)?.as_ref()?;
-        b.sample(x, y, self.scalar).map(|g| match g {
-            generator::Generated::Scalar(v) => filter::Generated::Scalar(v),
-            generator::Generated::Mapped(p) => filter::Generated::Mapped(p),
-        })
+        b.sample(x, y, self.scalar)
+    }
+    fn sample_row(&self, slot: u32, x0: u32, y: u32, out: &mut [Option<filter::Generated>]) {
+        match self.bound.get(slot as usize).and_then(Option::as_ref) {
+            Some(b) => b.sample_row(x0, y, self.scalar, out),
+            None => out.fill(None),
+        }
     }
 }
 
@@ -1838,6 +1844,30 @@ impl Document {
             });
         }
 
+        // 画像の段の画像（ミップマップと、投影を束縛したサンプラー。束縛した Generator より長く生きる）。読めない画像の段は入力のまま
+        let image_chains: Vec<Option<Arc<ImageMipChain<'static>>>> = cfg
+            .chain
+            .iter()
+            .map(|e| match &e.settings {
+                EffectSettings::Generator(g)
+                    if g.kind == generator::Kind::Image && g.image.image != 0 =>
+                {
+                    self.generator_image_chain(g.image.image, scalar).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        let mut samplers: Vec<Option<FillSampler<'_>>> = Vec::with_capacity(cfg.chain.len());
+        for (e, chain) in cfg.chain.iter().zip(&image_chains) {
+            samplers.push(match (&e.settings, chain) {
+                // 組めない投影（極端な位置の箱など）の段は、画像を待つ段のまま入力を通す（理由は `generator_status` が言う）
+                (EffectSettings::Generator(g), Some(chain)) => {
+                    self.image_sampler(&g.image.projection, chain).ok()
+                }
+                _ => None,
+            });
+        }
+
         // 段と束縛した Generator
         let mut stages = Vec::with_capacity(cfg.chain.len());
         let mut bound: Vec<Option<BoundGenerator<'_>>> = Vec::with_capacity(cfg.chain.len());
@@ -1866,7 +1896,11 @@ impl Document {
                             (_, Some(v)) => Ok(v),
                             _ => Err(anchor::Issue::NotChosen),
                         };
-                    bound.push(BoundGenerator::bind(g, &maps, frame, dims, value_source).ok());
+                    let b = BoundGenerator::bind(g, &maps, frame, dims, value_source).ok();
+                    bound.push(match (b, &samplers[k]) {
+                        (Some(b), Some(sampler)) => Some(b.with_image(sampler)),
+                        (b, _) => b,
+                    });
                 }
             }
         }
@@ -1958,20 +1992,40 @@ impl Document {
         id: ImageId,
         kind: ChannelKind,
     ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
+        self.mip_chain_as(id, kind == ChannelKind::Color, kind == ChannelKind::Scalar)
+    }
+
+    /// 画像の段が読む画像のミップマップ（色の対象は色として読む: リニアの画像は sRGB に直す。マスク・スカラーは値のまま。輝度には直さない。
+    /// 成分は段が選ぶ）。画像が入力に無いときは `MissingImage`。
+    fn generator_image_chain(
+        &self,
+        id: u128,
+        scalar: bool,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
+        if !self.effects.inputs.images.contains_key(&ImageId(id)) {
+            return Err(InactiveReason::Generator(generator::Inactive::MissingImage));
+        }
+        self.mip_chain_as(ImageId(id), !scalar, false)
+    }
+
+    /// `color` は色として読む（リニアの画像を sRGB に直す）か、`luminance` は輝度に直すか。
+    fn mip_chain_as(
+        &self,
+        id: ImageId,
+        color: bool,
+        luminance: bool,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
         let image = self
             .effects
             .inputs
             .images
             .get(&id)
             .ok_or_else(|| InactiveReason::Rejected("プロジェクトにその画像が無い".into()))?;
-        let conversion = if kind == ChannelKind::Color
-            && image.color_space == crate::brush::ImageColorSpace::Linear
-        {
+        let conversion = if color && image.color_space == crate::brush::ImageColorSpace::Linear {
             Conversion::LinearToSrgb
         } else {
             Conversion::None
         };
-        let luminance = kind == ChannelKind::Scalar;
         let key = (image.hash.clone(), conversion as u8, luminance);
         {
             let mut c = self.cache();
@@ -2477,12 +2531,56 @@ impl Document {
             None => Err(anchor::Issue::NotChosen),
         };
         match BoundGenerator::bind(g, &maps, frame, dims, value_source) {
+            // 画像の段: 画像だけを待っているなら、画像を読めるか・投影を組めるかを見る（色かスカラーかで読めるかは変わらない）
+            Ok(b) if b.inactive() == Some(&generator::Inactive::MissingImage) => {
+                let chain = match self.generator_image_chain(g.image.image, true) {
+                    Ok(chain) => chain,
+                    Err(why) => return (Some(why), None),
+                };
+                match self.image_sampler(&g.image.projection, &chain) {
+                    Ok(sampler) => (
+                        b.with_image(&sampler)
+                            .inactive()
+                            .cloned()
+                            .map(InactiveReason::Generator),
+                        None,
+                    ),
+                    Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
+                }
+            }
             Ok(b) => (
                 b.inactive().cloned().map(InactiveReason::Generator),
                 b.fallback().cloned(),
             ),
             Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
         }
+    }
+
+    /// 画像の段の投影のサンプラー（塗りつぶしの層の画像と同じ入力: 文書の大きさ・位置と向きのマップ（最新のものだけ）・モデルのルート）。
+    fn image_sampler<'s>(
+        &'s self,
+        projection: &Projection,
+        chain: &'s ImageMipChain<'static>,
+    ) -> Result<FillSampler<'s>, fill_image::FillError> {
+        let inputs = &self.effects.inputs;
+        let position = inputs.map(MapKind::Position);
+        let normal = inputs.map(MapKind::WorldNormal);
+        FillSampler::bind(FillInput {
+            projection: *projection,
+            width: self.width,
+            height: self.height,
+            image: Some(chain),
+            shape: None,
+            fallback: Rgba8::TRANSPARENT,
+            missing_image: false,
+            positions: usable_map(position).map(|m| m.as_fill()),
+            normals: usable_map(normal).map(|m| m.as_fill()),
+            bounds_min: position.map_or([0.; 3], |m| m.bounds_min),
+            bounds_max: position.map_or([1.; 3], |m| m.bounds_max),
+            frame: inputs.frame.map(|fr| fr.for_fill()),
+            stale_position: position.is_some_and(|m| m.state != MapState::Current),
+            stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
+        })
     }
 
     /// デカールが今は出ていない理由（位置・法線のマップが使えない・モデルのルートが分からない）。

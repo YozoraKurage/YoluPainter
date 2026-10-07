@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use yolu_core::generator::{self, anchor::ReadMode, Kind};
 use yolu_core::{
     AnchorId, AnchorInfo, AnchorIssueKind, AnchorPlacement, Channel, CoreError, Document,
-    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, LayerId,
+    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId, LayerId,
 };
 
 pub use names::FilterKind;
@@ -130,6 +130,12 @@ pub enum FxOp {
     },
     /// 層のフィルターが UV の継ぎ目をまたぐか（文書の設定。テクスチャセットのすべてのフィルターに効く）。
     SetFilterSeams(bool),
+    /// 画像の段が読むアセットの画像を差す・外す（差す前に復号して、読めなければ理由を添えて断る）。
+    SetImage {
+        layer: LayerId,
+        id: FilterId,
+        image: Option<ImageId>,
+    },
 }
 
 impl FxOp {
@@ -396,6 +402,48 @@ impl AppState {
                 self.doc
                     .set_generator_anchor(layer, filter, anchor, channel, read, false)?;
                 Ok(None)
+            }
+            FxOp::SetImage { layer, id, image } => {
+                let Some(mut g) = self
+                    .doc
+                    .find_filter(id)
+                    .filter(|(l, _, _)| *l == layer)
+                    .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
+                else {
+                    return Ok(None);
+                };
+                if let Some(image) = image {
+                    if let Err(why) =
+                        self.use_shelf_image(&crate::fillfx::inputs::resource_id(image))
+                    {
+                        self.fail(Source::Effect, why);
+                        return Ok(None);
+                    }
+                }
+                g.image.image = image.map_or(0, |i| i.0);
+                self.doc.end_coalescing();
+                if let Err(e) =
+                    self.doc
+                        .set_filter_settings(layer, id, EffectSettings::generator(g), false)
+                {
+                    // 画像は先に復号して文書へ渡してある。差さなかった画像は手放す
+                    if let Some(image) = image {
+                        self.release_shelf_image(image);
+                    }
+                    return Err(e);
+                }
+                Ok(Some(
+                    match image.and_then(|i| {
+                        self.shelf
+                            .get(&crate::fillfx::inputs::resource_id(i))
+                            .map(|r| r.name.clone())
+                    }) {
+                        Some(name) => {
+                            format!("{}: {name}", lang.pick("画像を差しました", "Image set"))
+                        }
+                        None => lang.pick("画像を外しました", "Image removed").into(),
+                    },
+                ))
             }
             FxOp::SelectFilter { layer, id } => {
                 if self.doc.find_filter(id).is_some_and(|(l, _, _)| l == layer) {

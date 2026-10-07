@@ -458,18 +458,33 @@ impl<'a> FillSampler<'a> {
         }
         [ds * sign, sign * (q[1] - st[1])]
     }
+    /// 画像を投影した画素。画像の値が無い所（代わりの値 `fallback` を見せる所: 使えない入力・位置や法線の無い画素・向きの定まらない画素・
+    /// 外側が透明の画像の外）は None。デカールは扱わない（None）。`pixel` はこれに代わりの値を当てたもの。
+    pub fn projected(&self, x: u32, y: u32) -> Option<Rgba8> {
+        if x >= self.input.width
+            || y >= self.input.height
+            || self.input.projection.mode == Mode::Decal
+        {
+            return None;
+        }
+        self.projected_inner(x as usize, y as usize)
+    }
     fn pixel_inner(&self, x: usize, y: usize) -> Rgba8 {
         let input = &self.input;
-        let mode = input.projection.mode;
-        if mode == Mode::Decal {
+        if input.projection.mode == Mode::Decal {
             return if self.placed {
                 self.decal_pixel(x, y, None)
             } else {
                 Rgba8::TRANSPARENT
             };
         }
+        self.projected_inner(x, y).unwrap_or(input.fallback)
+    }
+    fn projected_inner(&self, x: usize, y: usize) -> Option<Rgba8> {
+        let input = &self.input;
+        let mode = input.projection.mode;
         if self.reason.is_some() {
-            return input.fallback;
+            return None;
         }
         let chain = input.image.unwrap();
         let mut acc = Acc::default();
@@ -483,11 +498,11 @@ impl<'a> FillSampler<'a> {
                 1.,
                 &mut acc,
             );
-            return acc.resolve(input.fallback);
+            return acc.resolved();
         }
         let i = y * input.width as usize + x;
         if input.positions.unwrap().coverage[i] == 0 {
-            return input.fallback;
+            return None;
         }
         let p = self.point(i);
         let nx = self.neighbor(x, y, 1, 0, p);
@@ -497,16 +512,16 @@ impl<'a> FillSampler<'a> {
             let dx = self.differences(st, nx, 0, true);
             let dy = self.differences(st, ny, 0, true);
             self.sample_at(chain, st, [dx, dy], 1., &mut acc);
-            return acc.resolve(input.fallback);
+            return acc.resolved();
         }
         if input.normals.unwrap().coverage[i] == 0 {
-            return input.fallback;
+            return None;
         }
         let n = self.normal(i);
         let a = n.map(f64::abs);
         let most = a[0].max(a[1].max(a[2]));
         if most <= 1e-9 {
-            return input.fallback;
+            return None;
         }
         let cut = (1. - input.projection.blend_width) * most;
         let mut weights = a.map(|v| (v - cut).max(0.));
@@ -533,7 +548,7 @@ impl<'a> FillSampler<'a> {
                 &mut acc,
             );
         }
-        acc.resolve(input.fallback)
+        acc.resolved()
     }
     fn decal_point(&self, i: usize) -> Option<([f64; 3], f64)> {
         if self.input.positions.unwrap().coverage[i] == 0

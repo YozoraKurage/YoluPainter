@@ -21,11 +21,15 @@ pub const ADJUST_VERSION: i32 = 24;
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
+/// 0.5.0 の新しい効果を足した版。版 25 の中身に、Generator の種類 70（画像。`effect` の塊）が加わる。これを使う文書だけがこの版になり、
+/// 版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+pub const EFFECTS_VERSION: i32 = 28;
 /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// この版の文書は版 28 の中身（画像の Generator）も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
-/// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`・`SEAMS_VERSION` で、間の 27〜31 は意味を決めておらず断る
-/// （版を割り振ったら `is_known_version` へ足す）。
+/// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`EFFECTS_VERSION`（28）・
+/// `SEAMS_VERSION`（32）で、間の 27・29〜31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
 pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
@@ -393,10 +397,13 @@ impl ByteSource for PartStream {
 /// 版 26（分けた正本）の識別の版。ヘッダーは `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値を抜いたもの。
 pub const SPLIT_VERSION: i32 = 26;
 
-/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`SEAMS_VERSION` だけで、間の 27〜31 は読まない
-/// （`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`EFFECTS_VERSION`・`SEAMS_VERSION` だけで、
+/// 間の 27・29〜31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
-    (1..=MIXING_VERSION).contains(&version) || version == SPLIT_VERSION || version == SEAMS_VERSION
+    (1..=MIXING_VERSION).contains(&version)
+        || version == SPLIT_VERSION
+        || version == EFFECTS_VERSION
+        || version == SEAMS_VERSION
 }
 
 /// 正本を層ごとに読む（頭 → 層 0, 1, … → 終わり）。層ごとに項目を取り出せる（流して core へ入れる読みが、層 1 枚ぶんだけ持つため）。
@@ -453,7 +460,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{SEAMS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{EFFECTS_VERSION}・{SEAMS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -921,7 +928,7 @@ fn layer(
                 Ok(())
             })?;
         }
-        let default = r.block("projection", |r| projection(r, v))?;
+        let (_, default) = r.block("projection", |r| projection(r, v))?;
         check(n > 0 || !default, "空の画像投影ブロックです")?;
     }
     if flags & 32 != 0 {
@@ -1149,7 +1156,8 @@ fn volume(r: &mut Reader<'_>, falloff: bool) -> Result<Vec<f64>> {
     }
     Ok(p)
 }
-fn projection(r: &mut Reader<'_>, v: i32) -> Result<bool> {
+/// 投影の欄。返すのは (種類, 既定のままか)。
+fn projection(r: &mut Reader<'_>, v: i32) -> Result<(i32, bool)> {
     r.int("algorithm", 1, 1)?;
     let mode = r.int("mode", 0, if v >= 17 { 5 } else { 4 })?;
     let wrap = r.int("wrap", 0, if v >= 17 { 2 } else { 1 })?;
@@ -1165,21 +1173,26 @@ fn projection(r: &mut Reader<'_>, v: i32) -> Result<bool> {
         r.float("backface_angle", 0., 180.)?;
         r.unit("backface_hardness")?;
     }
-    Ok(mode == 0
-        && wrap == 0
-        && u == 1.
-        && vv == 1.
-        && ou == 0.
-        && ov == 0.
-        && rot == 0.
-        && blend == 0.3
-        && p == [0., 0., 0., 0., 0., 0., 1., 1., 1.])
+    Ok((
+        mode,
+        mode == 0
+            && wrap == 0
+            && u == 1.
+            && vv == 1.
+            && ou == 0.
+            && ov == 0.
+            && rot == 0.
+            && blend == 0.3
+            && p == [0., 0., 0., 0., 0., 0., 1., 1., 1.],
+    ))
 }
 fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32> {
     let t = r.int(
         "type",
         0,
-        if v >= PROCEDURAL_VERSION {
+        if v >= EFFECTS_VERSION {
+            IMAGE_KIND
+        } else if v >= PROCEDURAL_VERSION {
             PROCEDURAL_KIND_MAX
         } else if v >= 20 {
             7
@@ -1193,7 +1206,8 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     )?;
     // 8〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
     check(
-        !(8..PROCEDURAL_KIND_MIN).contains(&t),
+        !(8..PROCEDURAL_KIND_MIN).contains(&t)
+            && !(PROCEDURAL_KIND_MAX + 1..IMAGE_KIND).contains(&t),
         "未知のジェネレーターの種類です",
     )?;
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
@@ -1205,10 +1219,10 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     )?;
     r.unit("softness")?;
     r.boolean("invert")?;
-    r.unit("noise_amount")?;
-    r.float("noise_scale", 0.001, 1.)?;
-    r.int("noise_seed", i32::MIN, i32::MAX)?;
-    r.int("noise_space", 0, 1)?;
+    let noise_amount = r.unit("noise_amount")?;
+    let noise_scale = r.float("noise_scale", 0.001, 1.)?;
+    let noise_seed = r.int("noise_seed", i32::MIN, i32::MAX)?;
+    let noise_space = r.int("noise_space", 0, 1)?;
     r.int("blend", 0, 6)?;
     let balance = r.unit("balance")?;
     let axis = r.int("axis", 0, 2)?;
@@ -1236,6 +1250,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         2 | 5 | 7 => &[1],
         3 => &[4, 1],
         6 => &[7, 1],
+        IMAGE_KIND => &[],
         PROCEDURAL_KIND_MIN.. => &[1, 0],
         _ => &[0, 8, 1],
     };
@@ -1281,11 +1296,28 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         )?;
         r.int("anchor_read", 0, 1)?;
     }
-    if t >= PROCEDURAL_KIND_MIN {
+    if (PROCEDURAL_KIND_MIN..=PROCEDURAL_KIND_MAX).contains(&t) {
         r.block("procedural", |r| procedural(r, t))?;
+    }
+    if t == IMAGE_KIND {
+        // 重ねるノイズを持たない（ノイズ・グランジと同じ）
+        check(
+            noise_amount == 0. && noise_scale == 0.05 && noise_seed == 0 && noise_space == 0,
+            "画像のジェネレーターは重ねるノイズを持ちません",
+        )?;
+        // 種類ごとの欄は、版 28 のほかの Generator（66・68・69）と同じ `effect` の塊に置く
+        r.block("effect", |r| {
+            r.id("resource_id", true)?;
+            let (mode, _) = r.block("projection", |r| projection(r, v))?;
+            check(mode != 5, "画像のジェネレーターはデカールに投影できません")?;
+            r.int("component", 0, 4)?;
+            Ok(())
+        })?;
     }
     Ok(t)
 }
+/// Generator の種類 70（画像。正本の版 28）。
+const IMAGE_KIND: i32 = 70;
 /// Rust 版だけの Generator の種類の番号（ノイズ 64・グランジ 65）。
 const PROCEDURAL_KIND_MIN: i32 = 64;
 const PROCEDURAL_KIND_MAX: i32 = 65;

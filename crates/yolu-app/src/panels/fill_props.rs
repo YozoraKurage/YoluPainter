@@ -221,86 +221,136 @@ fn image_section(
     if !open_section {
         return;
     }
-    let ctx_for_popup = ui.ctx().clone();
     let image = app.doc.layer(id).and_then(|l| l.fill_image(channel));
-    let row = rows.row(26.0, 4.0);
-    let clear_w = if image.is_some() { 28.0 } else { 0.0 };
-    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
-    image_box(ui, app, box_rect, id, channel, image, enabled, lang);
-    if image.is_some() {
-        let b = Rect::from_min_size(
-            pos2(row.right() - 26.0, row.top()),
-            vec2(26.0, row.height()),
-        );
-        if w::icon_button(
-            ui,
-            b,
-            "fill.image.clear",
-            "close",
-            lang.pick(
+    image_row(
+        ui,
+        app,
+        rows,
+        ImageRow {
+            key: "fill.image",
+            box_key: ("fill.image", channel.index()),
+            image,
+            enabled,
+            popup: Popup::FillImage(id, channel),
+            clear_tip: lang.pick(
                 "画像を外す（値に戻る）",
                 "Remove the image (the channel shows its value)",
             ),
-            false,
-            enabled,
-            15.0,
-        )
-        .clicked()
-        {
-            fill(
-                app,
-                FillOp::Image {
-                    layer: id,
-                    channel,
-                    image: None,
-                },
-            );
-        }
-        // 読み方（棚の画像の色空間。この画像を読む全部の層に効く）
-        if let Some(space) = image
-            .and_then(|i| app.shelf.get(&inputs::resource_id(i)))
-            .map(|r| inputs::space_of(r).1)
-        {
-            let r = rows.row(t::ROW_HEIGHT, 4.0);
-            let (response, anchor) = w::dropdown(
-                ui,
-                r,
-                "fill.image.space",
-                Some(lang.pick("読み方", "Read as")),
-                space_name(lang, space),
-                Some(lang.pick(
-                    "画像の値が何か（アセットの画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
-                    "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
-                )),
-                enabled,
-                LABEL_W + 22.0,
-            );
-            if response.clicked() {
-                if let Some(image) = image {
-                    open(app, &ctx_for_popup, Popup::ImageSpace(image), anchor);
-                }
-            }
-        }
+        },
+        |image| {
+            Action::Fill(FillOp::Image {
+                layer: id,
+                channel,
+                image,
+            })
+        },
+    );
+    if image.is_some() {
         if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::FillImage(channel)) {
             warn_row(ui, rows, &why);
         }
     }
 }
 
-/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと棚の画像の一覧、棚の素材のドラッグを受ける。
+/// 画像の行（[`image_row`]）の置き場と見た目。
+pub struct ImageRow<'a, K> {
+    /// 行の部品の ID の頭（外すボタンは `<key>.clear`、読み方は `<key>.space`）。
+    pub key: &'a str,
+    /// 画像の箱の ID。
+    pub box_key: K,
+    pub image: Option<ImageId>,
+    pub enabled: bool,
+    /// 箱を押すと開く一覧（[`image_list`] の項目を出すもの）。
+    pub popup: Popup,
+    /// 外すボタンのツールチップ。
+    pub clear_tip: &'a str,
+}
+
+/// 画像の箱と外すボタンの行、選んでいれば読み方（アセットの画像の色空間）の行。`set` は差す・外す操作（落とした画像も同じ）。
+pub fn image_row<K: egui::AsIdSalt>(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    spec: ImageRow<'_, K>,
+    set: impl Fn(Option<ImageId>) -> Action,
+) {
+    let lang = app.lang;
+    let ctx_for_popup = ui.ctx().clone();
+    let ImageRow {
+        key,
+        box_key,
+        image,
+        enabled,
+        popup,
+        clear_tip,
+    } = spec;
+    let row = rows.row(26.0, 4.0);
+    let clear_w = if image.is_some() { 28.0 } else { 0.0 };
+    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
+    if let Some(dropped) = image_box(ui, app, box_rect, box_key, image, enabled, lang, popup) {
+        app.apply(set(Some(dropped)));
+    }
+    let Some(image) = image else {
+        return;
+    };
+    let b = Rect::from_min_size(
+        pos2(row.right() - 26.0, row.top()),
+        vec2(26.0, row.height()),
+    );
+    if w::icon_button(
+        ui,
+        b,
+        format!("{key}.clear"),
+        "close",
+        clear_tip,
+        false,
+        enabled,
+        15.0,
+    )
+    .clicked()
+    {
+        app.apply(set(None));
+    }
+    // 読み方（棚の画像の色空間。この画像を読む全部の層に効く）
+    if let Some(space) = app
+        .shelf
+        .get(&inputs::resource_id(image))
+        .map(|r| inputs::space_of(r).1)
+    {
+        let r = rows.row(t::ROW_HEIGHT, 4.0);
+        let (response, anchor) = w::dropdown(
+            ui,
+            r,
+            format!("{key}.space"),
+            Some(lang.pick("読み方", "Read as")),
+            space_name(lang, space),
+            Some(lang.pick(
+                "画像の値が何か（アセットの画像の色空間。この画像を読む全部の層に効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
+                "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
+            )),
+            enabled,
+            LABEL_W + 22.0,
+        );
+        if response.clicked() {
+            open(app, &ctx_for_popup, Popup::ImageSpace(image), anchor);
+        }
+    }
+}
+
+/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと `popup`（棚の画像の一覧）を開く。棚の素材のドラッグを受け、落とした画像を返す。
 #[allow(clippy::too_many_arguments)]
 fn image_box(
     ui: &mut Ui,
     app: &mut AppState,
     r: Rect,
-    layer: LayerId,
-    channel: Channel,
+    key: impl egui::AsIdSalt,
     image: Option<ImageId>,
     enabled: bool,
     lang: Lang,
-) {
+    popup: Popup,
+) -> Option<ImageId> {
     let ctx = ui.ctx().clone();
-    let id = ui.make_persistent_id(("fill.image", channel.index()));
+    let id = ui.make_persistent_id(key);
     let response = ui.interact(
         r,
         id,
@@ -404,23 +454,14 @@ fn image_box(
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, &info));
     let response = response.on_hover_text(tip);
     if enabled && response.clicked() {
-        open(app, &ctx, Popup::FillImage(layer, channel), r);
+        open(app, &ctx, popup, r);
     }
+    let mut dropped = None;
     if dropping && ui.input(|i| i.pointer.any_released()) {
-        if let Some(drag) = dragged {
-            if let Some(image) = inputs::image_id(&drag.id) {
-                fill(
-                    app,
-                    FillOp::Image {
-                        layer,
-                        channel,
-                        image: Some(image),
-                    },
-                );
-            }
-        }
+        dropped = dragged.and_then(|drag| inputs::image_id(&drag.id));
         DragAndDrop::clear_payload(&ctx);
     }
+    dropped
 }
 
 /// 棚の画像の読み方（色空間）の名前。
@@ -459,9 +500,24 @@ fn space_entries(app: &AppState, image: ImageId) -> Vec<Entry<Action>> {
 
 /// 画像の一覧のポップアップ（棚の画像・ファイルから取り込む・外す）。
 fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
+    let current = app.doc.layer(layer).and_then(|l| l.fill_image(channel));
+    image_list(app, current, |image| {
+        Action::Fill(FillOp::Image {
+            layer,
+            channel,
+            image,
+        })
+    })
+}
+
+/// 画像の一覧の項目（棚の画像・ファイルから取り込む・外す）。`current` は今の画像、`set` は差す・外す操作。
+pub fn image_list(
+    app: &AppState,
+    current: Option<ImageId>,
+    set: impl Fn(Option<ImageId>) -> Action,
+) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let current = app.doc.layer(layer).and_then(|l| l.fill_image(channel));
     let mut v = Vec::new();
     for r in app.shelf.resources().iter().filter(|r| r.kind == "image") {
         let Some(image) = inputs::image_id(&r.id) else {
@@ -472,16 +528,9 @@ fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<
             r.metadata["height"].as_u64().unwrap_or(0),
         );
         v.push(
-            Entry::item(
-                format!("{}  ({w} × {h})", r.name),
-                Action::Fill(FillOp::Image {
-                    layer,
-                    channel,
-                    image: Some(image),
-                }),
-            )
-            .radio(current == Some(image))
-            .enabled(free),
+            Entry::item(format!("{}  ({w} × {h})", r.name), set(Some(image)))
+                .radio(current == Some(image))
+                .enabled(free),
         );
     }
     if !v.is_empty() {
@@ -495,17 +544,7 @@ fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<
         .enabled(free && app.shelf.unavailable.is_none()),
     );
     if current.is_some() {
-        v.push(
-            Entry::item(
-                lang.pick("画像を外す", "Remove the Image"),
-                Action::Fill(FillOp::Image {
-                    layer,
-                    channel,
-                    image: None,
-                }),
-            )
-            .enabled(free),
-        );
+        v.push(Entry::item(lang.pick("画像を外す", "Remove the Image"), set(None)).enabled(free));
     }
     v
 }
@@ -589,31 +628,97 @@ fn projection_section(
     let Some(p) = app.doc.layer(id).map(|l| *l.projection()) else {
         return;
     };
+    let popups = ProjectionPopups {
+        mode: Popup::ProjectionMode(id),
+        wrap: Popup::ProjectionWrap(id),
+    };
+    if let Some(next) = projection_rows(ui, app, rows, &ctx, "projection", &p, popups, enabled) {
+        fill(
+            app,
+            FillOp::Projection {
+                layer: id,
+                projection: Box::new(next),
+                coalesce: true,
+            },
+        );
+    }
+    // デカールの出ていない理由と、置き場
+    if p.mode == ProjectionMode::Decal {
+        if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::Decal) {
+            warn_row(ui, rows, &why);
+        }
+    }
+    if p.mode != ProjectionMode::Uv {
+        placement_rows(ui, app, rows, id, &p, enabled, lang);
+    } else {
+        // 画像のチャンネルが投影できない理由（UV は画像がなければ何も出ない）
+        for e in problems {
+            if let InactiveTarget::FillImage(c) = e.target {
+                let name = m2::channel_name(lang, &app.doc, c);
+                warn_row(
+                    ui,
+                    rows,
+                    &format!("{name}: {}", lang.inactive_reason(&e.reason)),
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// 投影の種類と外側のドロップダウンが開く一覧。
+pub struct ProjectionPopups {
+    pub mode: Popup,
+    pub wrap: Popup,
+}
+
+/// 投影の欄（種類・外側・タイル・オフセット・回転、トライプラナーの混ぜ幅、デカールの縁と裏向き。置き場は [`placement_fields`]）。
+/// 部品の ID は `<key>.mode` のように頭を付ける。変えたら新しい投影を返す（数値とスライダーはドラッグの続き）。
+#[allow(clippy::too_many_arguments)]
+pub fn projection_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    ctx: &egui::Context,
+    key: &str,
+    p: &Projection,
+    popups: ProjectionPopups,
+    enabled: bool,
+) -> Option<Projection> {
+    let lang = app.lang;
+    let p = *p;
     let mut next = p;
     // 種類
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let (response, anchor) = w::dropdown(
         ui,
         r,
-        "projection.mode",
+        format!("{key}.mode"),
         Some(lang.pick("投影", "Projection")),
         projection_name(lang, p.mode),
-        Some(lang.pick(
-            "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに。デカール: 箱の正面から、箱の中だけに、画像のアルファで切り抜く",
-            "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre. Decal: through the box's front face, only inside the box, cut out by the image's alpha",
-        )),
+        Some(if matches!(popups.mode, Popup::ProjectionMode(_)) {
+            lang.pick(
+                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに。デカール: 箱の正面から、箱の中だけに、画像のアルファで切り抜く",
+                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre. Decal: through the box's front face, only inside the box, cut out by the image's alpha",
+            )
+        } else {
+            lang.pick(
+                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに",
+                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre",
+            )
+        }),
         enabled,
         LABEL_W + 22.0,
     );
     if response.clicked() {
-        open(app, &ctx, Popup::ProjectionMode(id), anchor);
+        open(app, ctx, popups.mode, anchor);
     }
     // 外側
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let (response, anchor) = w::dropdown(
         ui,
         r,
-        "projection.wrap",
+        format!("{key}.wrap"),
         Some(lang.pick("外側", "Outside")),
         wrap_name(lang, p.wrap),
         Some(lang.pick(
@@ -624,13 +729,13 @@ fn projection_section(
         LABEL_W + 22.0,
     );
     if response.clicked() {
-        open(app, &ctx, Popup::ProjectionWrap(id), anchor);
+        open(app, ctx, popups.wrap, anchor);
     }
     // タイル・オフセット・回転
     if let Some(v) = vec2_row(
         ui,
         rows,
-        "projection.tiles",
+        &format!("{key}.tiles"),
         lang.pick("タイル", "Tiling"),
         p.tiles,
         &NumSpec::new(1e-3, 1e4, 0.01, 3),
@@ -651,7 +756,7 @@ fn projection_section(
     if let Some(v) = vec2_row(
         ui,
         rows,
-        "projection.offset",
+        &format!("{key}.offset"),
         lang.pick("オフセット", "Offset"),
         p.offset,
         &NumSpec::new(-1e4, 1e4, 0.005, 3),
@@ -672,7 +777,7 @@ fn projection_section(
     if let Some(v) = slider_row(
         ui,
         rows,
-        "projection.rotation",
+        &format!("{key}.rotation"),
         lang.pick("回転", "Rotation"),
         p.rotation as f32,
         (-180.0, 180.0),
@@ -693,7 +798,7 @@ fn projection_section(
         if let Some(v) = percent_row(
             ui,
             rows,
-            "projection.blend",
+            &format!("{key}.blend"),
             lang.pick("混ぜ幅", "Blend"),
             p.blend_width,
             (0.0, 1.0),
@@ -754,38 +859,7 @@ fn projection_section(
             next.backface_hardness = 1.0 - v;
         }
     }
-    if next != p {
-        fill(
-            app,
-            FillOp::Projection {
-                layer: id,
-                projection: Box::new(next),
-                coalesce: true,
-            },
-        );
-    }
-    // デカールの出ていない理由と、置き場
-    if p.mode == ProjectionMode::Decal {
-        if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::Decal) {
-            warn_row(ui, rows, &why);
-        }
-    }
-    if p.mode != ProjectionMode::Uv {
-        placement_rows(ui, app, rows, id, &p, enabled, lang);
-    } else {
-        // 画像のチャンネルが投影できない理由（UV は画像がなければ何も出ない）
-        for e in problems {
-            if let InactiveTarget::FillImage(c) = e.target {
-                let name = m2::channel_name(lang, &app.doc, c);
-                warn_row(
-                    ui,
-                    rows,
-                    &format!("{name}: {}", lang.inactive_reason(&e.reason)),
-                );
-                break;
-            }
-        }
-    }
+    (next != p).then_some(next)
 }
 
 /// 投影の置き場: 3D ビューのハンドル（出す・隠す・移動・回転・モデルに合わせる）と、中心・回転・大きさ（モデルのルートの空間）。
@@ -800,15 +874,14 @@ fn placement_rows(
 ) {
     let editing =
         crate::fillfx::gizmo::target(app) == Some(crate::fillfx::gizmo::Target::Projection(id));
-    let has_model = app.view3d.model.is_some();
-    handle_buttons(
+    let next = placement_fields(
         ui,
         app,
         rows,
         "projection",
+        p,
         editing,
         enabled,
-        has_model,
         lang,
         |app| {
             fill(app, FillOp::ToggleHandles);
@@ -817,12 +890,45 @@ fn placement_rows(
             fill(app, FillOp::FitPlacement { layer: id });
         },
     );
+    if let Some(next) = next {
+        let mut projection = *p;
+        projection.placement = next;
+        fill(
+            app,
+            FillOp::Projection {
+                layer: id,
+                projection: Box::new(projection),
+                coalesce: true,
+            },
+        );
+    }
+}
+
+/// 投影の置き場の欄: 3D ビューのハンドルの行（`toggle` で出す・隠す、`fit` でモデルに合わせる。`editing` はハンドルが出ているか）と、
+/// 中心・回転・大きさ（球は大きさを持たない）。変えたら新しい置き場を返す。
+#[allow(clippy::too_many_arguments)]
+pub fn placement_fields(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    key: &str,
+    p: &Projection,
+    editing: bool,
+    enabled: bool,
+    lang: Lang,
+    toggle: impl FnOnce(&mut AppState),
+    fit: impl FnOnce(&mut AppState),
+) -> Option<yolu_core::fill_image::Placement> {
+    let has_model = app.view3d.model.is_some();
+    handle_buttons(
+        ui, app, rows, key, editing, enabled, has_model, lang, toggle, fit,
+    );
     let v = p.placement;
     let mut next = v;
     if let Some(c) = vec3_row(
         ui,
         rows,
-        "projection.center",
+        &format!("{key}.center"),
         lang.pick("中心", "Center"),
         v.center,
         &NumSpec::new(-1e6, 1e6, 0.01, 3),
@@ -837,7 +943,7 @@ fn placement_rows(
     if let Some(r) = vec3_row(
         ui,
         rows,
-        "projection.rotation3d",
+        &format!("{key}.rotation3d"),
         lang.pick("回転", "Rotation"),
         v.rotation,
         &NumSpec::new(-360.0, 360.0, 1.0, 1),
@@ -853,7 +959,7 @@ fn placement_rows(
         if let Some(s) = vec3_row(
             ui,
             rows,
-            "projection.size",
+            &format!("{key}.size"),
             lang.pick("大きさ", "Size"),
             v.size,
             &NumSpec::new(1e-6, 1e6, 0.01, 3),
@@ -863,18 +969,7 @@ fn placement_rows(
             next.size = s;
         }
     }
-    if next != v {
-        let mut projection = *p;
-        projection.placement = next;
-        fill(
-            app,
-            FillOp::Projection {
-                layer: id,
-                projection: Box::new(projection),
-                coalesce: true,
-            },
-        );
-    }
+    (next != v).then_some(next)
 }
 
 /// 3D ビューのハンドルの行: 出す・隠す（Q）、移動・回転の組、モデルに合わせる。

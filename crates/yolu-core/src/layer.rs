@@ -361,6 +361,21 @@ impl Layer {
     pub fn fill_images(&self) -> impl Iterator<Item = (Channel, ImageId)> + '_ {
         self.fill_images.iter().map(|(c, i)| (*c, *i))
     }
+    /// 内容とマスクのフィルターのスタックの、画像の段（Generator の種類 Image）が読む画像（選んでいない段は除く。無効な段も含む）。
+    pub fn generator_images(&self) -> impl Iterator<Item = ImageId> + '_ {
+        self.filters
+            .iter()
+            .chain(self.mask.iter().flat_map(|m| m.filters.iter()))
+            .filter_map(|e| e.settings.generator_settings())
+            .filter(|g| g.kind == generator::Kind::Image && g.image.image != 0)
+            .map(|g| ImageId(g.image.image))
+    }
+    /// この層が読むプロジェクトの画像（塗りつぶしの画像と画像の段。重なりうる）。
+    pub fn image_ids(&self) -> impl Iterator<Item = ImageId> + '_ {
+        self.fill_images()
+            .map(|(_, id)| id)
+            .chain(self.generator_images())
+    }
     /// 塗りつぶしの画像の投影。
     pub fn projection(&self) -> &Projection {
         &self.projection

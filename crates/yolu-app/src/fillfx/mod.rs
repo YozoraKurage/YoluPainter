@@ -767,7 +767,7 @@ pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let mut users = Vec::new();
     for (i, set) in app.sets.iter().enumerate() {
         for layer in app.set_doc(i).layers() {
-            if layer.fill_images().any(|(_, id)| id == image) {
+            if layer.image_ids().any(|id| id == image) {
                 users.push(if named {
                     format!("{}: {}", set.name, layer.name())
                 } else {

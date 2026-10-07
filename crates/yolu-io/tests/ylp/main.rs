@@ -14,6 +14,7 @@ mod core_bridge;
 mod effects_bridge;
 mod format_doc;
 mod gradient_mixing_bridge;
+mod image_generator;
 mod layer_locks;
 mod look;
 mod m2_bridge;

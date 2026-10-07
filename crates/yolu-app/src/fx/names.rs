@@ -1,9 +1,10 @@
 //! 効果の名前と一覧の 1 行の文字（日本語は Unity 版の ja.po と同じ言葉、英語は Unity 版の原文）。名前・値・短い状態だけで、説明は置かない。
 
 use yolu_core::effects::{generator_kind_name, EffectSettings};
+use yolu_core::fill_image::{ProjectionMode, Wrap};
 use yolu_core::filter::Settings as Filter;
 use yolu_core::generator::{
-    anchor::ReadMode, Blend, CellOutput, FractalMode, Kind, NoiseBasis, NoiseSpace,
+    anchor::ReadMode, Blend, CellOutput, FractalMode, ImageComponent, Kind, NoiseBasis, NoiseSpace,
     ProceduralSpace, Shape,
 };
 use yolu_core::{Anchor, AnchorPlacement, Channel, FilterEffect, FilterTarget};
@@ -98,7 +99,7 @@ impl FilterKind {
 }
 
 /// 足せる Generator の種類（メニューの並び）。
-pub const GENERATOR_KINDS: [Kind; 10] = [
+pub const GENERATOR_KINDS: [Kind; 11] = [
     Kind::EdgeWear,
     Kind::Dirt,
     Kind::PositionGradient,
@@ -109,7 +110,31 @@ pub const GENERATOR_KINDS: [Kind; 10] = [
     Kind::Anchor,
     Kind::Noise,
     Kind::Grunge,
+    Kind::Image,
 ];
+
+/// 画像の段の投影の種類（塗りつぶしの層の投影の、デカールを除いたもの。並びも同じ）。
+pub const IMAGE_PROJECTIONS: [ProjectionMode; 5] = [
+    ProjectionMode::Uv,
+    ProjectionMode::Triplanar,
+    ProjectionMode::Planar,
+    ProjectionMode::Spherical,
+    ProjectionMode::Cylindrical,
+];
+
+/// 画像の段の投影の外側（塗りつぶしの層と同じ並び）。
+pub const IMAGE_WRAPS: [Wrap; 3] = [Wrap::Repeat, Wrap::Clamp, Wrap::None];
+
+/// 画像の段がマスク・スカラーで値にする成分の名前。
+pub fn image_component_name(lang: Lang, c: ImageComponent) -> &'static str {
+    match c {
+        ImageComponent::Red => lang.pick("R", "R"),
+        ImageComponent::Green => lang.pick("G", "G"),
+        ImageComponent::Blue => lang.pick("B", "B"),
+        ImageComponent::Alpha => lang.pick("アルファ", "Alpha"),
+        ImageComponent::Luminance => lang.pick("輝度", "Luminance"),
+    }
+}
 
 pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
     match kind {
@@ -123,6 +148,7 @@ pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
         Kind::Anchor => lang.pick("アンカー", "Anchor"),
         Kind::Noise => lang.pick("ノイズ", "Noise"),
         Kind::Grunge => lang.pick("グランジ", "Grunge"),
+        Kind::Image => lang.pick("画像", "Image"),
     }
 }
 

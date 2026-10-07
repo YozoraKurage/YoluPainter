@@ -78,10 +78,11 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 i32::from_le_bytes(header[12..16].try_into().unwrap()),
                 doc.version()
             );
-            // 古い読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）
+            // 分けた正本より前の読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）。今の読み手は 26 を分けた正本の識別として先に見る
+            // （機能の版は 26 を飛ばして 28・32）
             const { assert!(SPLIT_VERSION > crate::MIXING_VERSION) };
-            // 中の版は意味の決まった版だけ。分けた正本の識別（26）と、決めていない版（27〜31）は、中身を読む前に断る
-            for bad in [SPLIT_VERSION, 27, 31] {
+            // 中の版は意味の決まった版（1〜25・28・32）だけ。分けた正本の識別（26）と、決めていない版（27・29〜31）は、中身を読む前に断る
+            for bad in [SPLIT_VERSION, 27, 29, 30, 31] {
                 let mut bytes = header.to_vec();
                 bytes[12..16].copy_from_slice(&bad.to_le_bytes());
                 let mut changed = stored(&entries);
@@ -252,11 +253,15 @@ fn wrong_parts_are_refused() {
     // 分けていない正本に部分を添える・分けた正本に部分が無い
     assert!(NativeDocument::read_split(&doc.to_bytes(), &[&parts[0]]).is_err());
     assert!(NativeDocument::read(&header).is_err());
-    // 中の版が分けた正本の版・古すぎる版
-    for inner in [26i32, 20, 0] {
+    // 中の版が分けた正本の版・割り振られていない版（27・29〜31）・読み手より新しい版・古すぎる版
+    for inner in [26i32, 27, 29, 30, 31, crate::MAX_NATIVE_VERSION + 1, 20, 0] {
         let mut h = header.clone();
         h[12..16].copy_from_slice(&inner.to_le_bytes());
-        assert!(read(&h, &parts).is_err(), "中の版 {inner}");
+        let e = read(&h, &parts).unwrap_err().to_string();
+        assert!(
+            e.contains(&format!("中の版 {inner} は未対応")),
+            "{inner}: {e}"
+        );
     }
     // 長さだけの骨組みの読みも、数と境目は確かめる
     let s = StoredDoc {

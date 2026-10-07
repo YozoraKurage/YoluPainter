@@ -346,7 +346,7 @@ impl AppState {
                 continue;
             }
             for layer in self.set_doc(i).layers() {
-                pointed.extend(layer.fill_images().map(|(_, id)| id));
+                pointed.extend(layer.image_ids());
             }
             pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
@@ -831,7 +831,7 @@ impl AppState {
                 .set_doc(index)
                 .layers()
                 .iter()
-                .flat_map(|l| l.fill_images().map(|(_, id)| id))
+                .flat_map(|l| l.image_ids())
                 .collect();
             let uid = self.sets.get(index).map_or(0, |s| s.uid);
             self.fx.inputs.waiting.insert(uid, wanted);

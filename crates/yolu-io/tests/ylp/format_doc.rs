@@ -2,9 +2,9 @@
 use yolu_core::{look::MaterialLook, Document, SelectionMask};
 use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
-    SetSpec, WriterInfo, ADJUST_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION,
-    PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION,
-    SET_ENTRIES, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    SetSpec, WriterInfo, ADJUST_VERSION, EFFECTS_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION,
+    MIXING_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT,
+    SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 
 const SPEC: &str = include_str!("../../../../docs/YLP_FORMAT.md");
@@ -85,6 +85,7 @@ fn every_version_is_in_the_spec() {
         ("PROCEDURAL_VERSION", PROCEDURAL_VERSION),
         ("ADJUST_VERSION", ADJUST_VERSION),
         ("MIXING_VERSION", MIXING_VERSION),
+        ("EFFECTS_VERSION", EFFECTS_VERSION),
         ("SEAMS_VERSION", SEAMS_VERSION),
         ("MAX_NATIVE_VERSION", MAX_NATIVE_VERSION),
         ("SPLIT_VERSION", SPLIT_VERSION),
@@ -113,13 +114,19 @@ fn every_version_is_in_the_spec() {
         summary.contains(&format!("1〜{SPLIT_VERSION}")),
         "正本の版の範囲"
     );
+    // 読める版の一番新しいもの（機能の版の末尾）は、範囲の末尾に載る
+    assert!(
+        summary.contains(&format!("・{MAX_NATIVE_VERSION} |")),
+        "正本の版の範囲の末尾が MAX_NATIVE_VERSION でない"
+    );
     assert!(
         summary.contains(&format!("版 1〜{}", mesh_map::FORMAT_VERSION)),
         "メッシュマップの版"
     );
     assert!(summary.contains("YOLUPAINTER-YLP-1`〜`4"), "外側の版");
-    let ranges =
-        format!("| `YLP-1`〜`4` | 1〜{MAX_FORMAT} | 1〜{SPLIT_VERSION}・{SEAMS_VERSION} |");
+    let ranges = format!(
+        "| `YLP-1`〜`4` | 1〜{MAX_FORMAT} | 1〜{SPLIT_VERSION}・{EFFECTS_VERSION}・{SEAMS_VERSION} |"
+    );
     assert!(
         summary.contains(&ranges),
         "読み手ごとの範囲のこのアプリの行: {ranges}"
@@ -133,7 +140,7 @@ fn every_version_is_in_the_spec() {
         );
     }
     let natives = section("### 正本の版");
-    for v in (1..=SPLIT_VERSION).chain([SEAMS_VERSION]) {
+    for v in (1..=SPLIT_VERSION).chain([EFFECTS_VERSION, SEAMS_VERSION]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),
             "正本の版 {v} の行が無い"

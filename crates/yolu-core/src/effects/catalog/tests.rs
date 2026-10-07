@@ -329,6 +329,22 @@ fn an_existing_effect_with_a_list_part_is_readable_and_keeps_that_part() {
     let anchor = EffectSettings::generator(generator::Settings::new(G::Anchor));
     assert_eq!(anchor.kind_id(), "anchor");
     assert_eq!(anchor.opaque_parts(), &["anchor"]);
+    // 画像の段は画像の参照（プロジェクトの画像）を持つので、値の欄では足せず、変えられない
+    let mut g = generator::Settings::new(G::Image);
+    g.image.image = 7;
+    let image = EffectSettings::generator(g);
+    assert_eq!(image.kind_id(), "image");
+    assert_eq!(image.opaque_parts(), &["image", "projection", "component"]);
+    assert!(image.catalog_values().is_empty());
+    assert_eq!(image.with_catalog_values(&BTreeMap::new()).unwrap(), image);
+    assert!(matches!(
+        image.with_catalog_values(&given(&[("invert", ParamValue::Bool(true))])),
+        Err(ParamError::NotEditable { kind: "image" })
+    ));
+    assert!(matches!(
+        EffectSettings::from_catalog("image", &BTreeMap::new()),
+        Err(ParamError::NotEditable { kind: "image" })
+    ));
     let adjust =
         AdjustmentSettings::gradient_map(crate::GradientMap::new(generator::Ramp::default(), true));
     assert_eq!(adjust.kind_id(), "gradient_map");
@@ -389,11 +405,17 @@ fn a_kind_table_row_exists_for_every_generator_kind_and_adjustment_type() {
         G::Anchor,
         G::Noise,
         G::Grunge,
+        G::Image,
     ] {
         let id = generator_kind_id(kind);
         let row = super::kind(id).unwrap_or_else(|| panic!("{id} が表に無い"));
         assert!(row.generator && row.stack && !row.adjustment, "{id}");
-        assert_eq!(row.needs_maps, !kind.is_procedural(), "{id}");
+        // 画像の段は投影しだい（UV は読まない）
+        assert_eq!(
+            row.needs_maps,
+            !kind.is_procedural() && kind != G::Image,
+            "{id}"
+        );
     }
     for t in [
         AdjustmentType::Invert,
@@ -456,7 +478,8 @@ fn the_rust_only_kinds_are_the_ones_unity_cannot_read() {
             "threshold",
             "posterize",
             "procedural_noise",
-            "grunge"
+            "grunge",
+            "image"
         ]
     );
 }

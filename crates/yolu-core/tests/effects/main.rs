@@ -13,6 +13,7 @@ mod attach_coherence;
 mod attach_edit;
 mod attach_paths;
 mod attach_smart;
+mod image_stage;
 mod outputs;
 mod procedural_doc;
 mod seam_locks;
