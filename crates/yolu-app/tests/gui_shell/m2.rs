@@ -891,9 +891,11 @@ fn fill_and_adjustment_properties_edit_and_undo() {
             .fill_value(Channel::Color),
         Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
     );
-    // 描画色を替えて、値の見本を押すと値が描画色になる
+    // 描画色を替えて、値の見本を押して色の窓の「描画色を入れる」を押すと、値が描画色になる
     h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
-    h.get_by_label_contains("押すと描画色にする").click();
+    h.get_by_label("カラー の値").click();
+    h.run();
+    h.get_by_label("描画色を入れる").click();
     h.run();
     assert_eq!(
         h.state()

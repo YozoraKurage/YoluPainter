@@ -1,5 +1,5 @@
 //! 文書とは独立した UV の辺と表示座標のキャッシュ。
-mod color;
+pub mod color;
 #[cfg(test)]
 mod tests;
 

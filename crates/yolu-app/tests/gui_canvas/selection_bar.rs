@@ -554,7 +554,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
     let id = st(&h).selected_layer.expect("足した層を選ぶ");
     select_rect(&mut h, 10, 10, 30, 30);
     // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
-    let label = "分岐点の色（押すと色の選びを開く）";
+    let label = "分岐点の色";
     let right = |r: Rect| r.left() > 1000.0;
     let at = rect_of(&h, label, right).top();
     let scroll = st(&h).m2.props_scroll + (at - 900.0);
@@ -562,18 +562,20 @@ fn escape_closes_the_color_picker_before_the_selection() {
     h.run();
     let swatch = rect_of(&h, label, right);
     click(&mut h, swatch.center());
-    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
     assert!(
-        yolu_app::panels::color_popup::is_open(&h.ctx, popup),
-        "色の選びが開いた"
+        yolu_app::panels::color_window::is_target(
+            &h.ctx,
+            yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0)
+        ),
+        "色の窓が開いた"
     );
     assert!(st(&h).doc.selection().is_some(), "開く押しで選択を外さない");
     // Esc は色の選びを（元の色へ戻して）閉じるだけ
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(
-        !yolu_app::panels::color_popup::is_open(&h.ctx, popup),
-        "色の選びが閉じた"
+        !yolu_app::panels::color_window::is_open(&h.ctx),
+        "色の窓が閉じた"
     );
     assert!(
         st(&h).doc.selection().is_some(),

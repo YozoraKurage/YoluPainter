@@ -453,6 +453,7 @@ fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
                 [(0, 0x123456)].into_iter().collect(),
             )
             .unwrap(),
+            false,
         )
         .unwrap();
     s.modified = true;

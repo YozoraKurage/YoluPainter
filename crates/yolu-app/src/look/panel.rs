@@ -548,7 +548,7 @@ fn to_linear(c: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// 色の行（見本を押すと描画色、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
+/// 色の行（見本を押すと色の窓、16 進で打つ）。`alpha` があれば、その名前で不透明度の行も出す。発光の色（Unity の [HDR]）は値が
 /// リニアなので、見本と 16 進はガンマに直して見せ、明るさ（1 を超える倍率）の行も出す。`label` は名前の差し替え（無ければ表の名前）。
 fn color_row(
     ui: &mut Ui,
@@ -578,7 +578,8 @@ fn color_row(
     ];
     let shown = if linear { to_gamma(unit) } else { unit };
     let row = rows.row(t::ROW_HEIGHT, 2.0);
-    let (label, unity) = marked(app, name, label.unwrap_or(prop.label(lang)));
+    let title = label.unwrap_or(prop.label(lang)).to_owned();
+    let (label, unity) = marked(app, name, &title);
     let label_rect = Rect::from_min_size(row.min, vec2(LABEL_W, row.height()));
     w::text(
         ui.painter(),
@@ -597,10 +598,6 @@ fn color_row(
         pos2(row.left() + LABEL_W, row.top() + 1.0),
         vec2(36.0, row.height() - 2.0),
     );
-    let tip = lang.pick(
-        format!("{name}（押すと描画色）"),
-        format!("{name} (click to take the paint color)"),
-    );
     let set = |app: &mut AppState, gamma: [f32; 3], drag: bool| {
         let mut c = [gamma[0], gamma[1], gamma[2], raw[3]];
         if linear {
@@ -613,19 +610,23 @@ fn color_row(
             drag,
         }));
     };
-    if w::color_swatch(
+    // 押すと色の窓（相手は文書とプロパティごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+    let current = crate::panels::color_window::Pick::from_floats(shown, false);
+    if let Some(u) = crate::panels::color_window::field(
         ui,
         swatch,
-        ("look.swatch", name),
-        [shown[0], shown[1], shown[2], 1.0],
-        &tip,
+        egui::Id::new(("look.color", app.doc.id(), name)),
+        &title,
+        current,
+        name,
         enabled,
-    )
-    .clicked()
-        && enabled
-    {
-        let m = app.color.main;
-        set(app, [m[0], m[1], m[2]], false);
+    ) {
+        if u.pick != current {
+            set(app, u.pick.rgb_floats(), u.dragging);
+        }
+        if u.done {
+            app.m2_end_drag();
+        }
     }
     let hex_rect = Rect::from_min_max(
         pos2(swatch.right() + 4.0, row.top() + 1.0),

@@ -1489,7 +1489,7 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
         std::collections::BTreeMap::from([(0usize, 0xff0000u32)]),
     )
     .unwrap();
-    doc.set_id_colors(colors).unwrap();
+    doc.set_id_colors(colors, false).unwrap();
     let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
     // 画面が理由を言い分けられるよう、種類で返す（壊れたデータでも予算超過でもない）
     assert!(
@@ -1501,6 +1501,42 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
     );
     assert!(err.to_string().contains("ID の色"), "{err}");
     assert_eq!(doc.id_colors().colors().len(), 1);
+}
+
+/// 色の窓のドラッグでまとめた手動の ID の色も、保存は断る（最後の色を黙って落とさない）。まとめた 1 段を戻すと手動の色の無い文書に
+/// 戻り、保存して開き直せる。やり直すと、また断る。
+#[test]
+fn a_dragged_manual_id_color_is_one_step_and_undoing_it_lets_the_document_save_and_reopen() {
+    let mut doc = yolu_core::Document::new(16, 16).unwrap();
+    doc.add_layer("a").unwrap();
+    doc.clear_history().unwrap();
+    for rgb in [0x102030u32, 0x405060, 0x708090] {
+        let colors = yolu_core::mesh_maps::IdColorAssignments::new(
+            "0".repeat(64),
+            std::collections::BTreeMap::from([(0usize, rgb)]),
+        )
+        .unwrap();
+        doc.set_id_colors(colors, true).unwrap();
+    }
+    doc.end_coalescing();
+    assert_eq!(doc.undo_count(), 1);
+    let refused = |doc: &Document| {
+        matches!(
+            NativeDocument::from_core(doc),
+            Err(yolu_io::Error::Unwritable(
+                yolu_io::Unwritable::ManualIdColors
+            ))
+        )
+    };
+    assert!(refused(&doc));
+    doc.undo().unwrap();
+    let bytes = NativeDocument::from_core(&doc).unwrap().to_bytes();
+    let reopened = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
+    assert!(reopened.id_colors().colors().is_empty());
+    assert_same_document(&doc, &reopened, "戻した文書");
+    doc.redo().unwrap();
+    assert_eq!(doc.id_colors().colors().get(&0), Some(&0x708090));
+    assert!(refused(&doc));
 }
 
 /// 層のロック（正本の版 12）は黙って落とさず書き、読み戻せる。個別の 4 種・重ね・親のグループだけに掛けた場合のどれも、

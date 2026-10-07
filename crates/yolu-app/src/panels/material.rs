@@ -5,6 +5,7 @@
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
+use super::color_window;
 use super::properties::{section, slider_row, status_row};
 use crate::engine::Channel;
 use crate::lang::Lang;
@@ -218,19 +219,30 @@ fn value_rows(
         Channel::Emission => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);
             let e = app.mat.emission;
-            let swatch = label_and_swatch(
-                ui,
-                row,
+            // 押すと色の窓（ブラシの設定なので取り消しには積まない）
+            let current = color_window::Pick::from_floats([e[0], e[1], e[2], 1.0], false);
+            w::text(
+                ui.painter(),
+                Rect::from_min_size(row.min, vec2(80.0, row.height())),
                 &name,
-                "mat.emission",
-                [e[0], e[1], e[2], 1.0],
-                lang.pick(
-                    "ストロークが塗るエミッションの色（押すと描画色にする）",
-                    "The emission color the stroke paints (click to take the paint color)",
-                ),
+                t::LABEL,
+                w::Align::Left,
             );
-            if swatch && free {
-                app.apply(Action::Mat(MatAction::EmissionFromPaint));
+            if let Some(u) = color_window::field(
+                ui,
+                swatch_rect(row),
+                egui::Id::new("mat.emission"),
+                &name,
+                current,
+                lang.pick(
+                    "ストロークが塗るエミッションの色",
+                    "The emission color the stroke paints",
+                ),
+                free,
+            ) {
+                if u.pick != current {
+                    app.apply(Action::Mat(MatAction::Emission(u.pick.rgb_floats())));
+                }
             }
             let hex_rect = Rect::from_min_max(
                 pos2(row.left() + 84.0 + 40.0, row.top() + 1.0),
@@ -356,9 +368,13 @@ fn label_and_swatch(
         t::LABEL,
         w::Align::Left,
     );
-    let swatch = Rect::from_min_size(
+    w::color_swatch(ui, swatch_rect(row), id, color, tooltip, true).clicked()
+}
+
+/// 名前の右の色の見本の場所。
+fn swatch_rect(row: Rect) -> Rect {
+    Rect::from_min_size(
         pos2(row.left() + 84.0, row.top() + 1.0),
         vec2(36.0, row.height() - 2.0),
-    );
-    w::color_swatch(ui, swatch, id, color, tooltip, true).clicked()
+    )
 }

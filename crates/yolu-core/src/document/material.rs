@@ -18,22 +18,25 @@ impl Document {
     pub fn id_colors(&self) -> &crate::mesh_maps::IdColorAssignments {
         &self.id_colors
     }
-    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする。
+    /// 手動 ID 色の変更。画素を変えず、一回の Undo にする（`coalesce` なら、間に何も無い手動 ID 色の変更へまとめる。色の窓のドラッグ。
+    /// まとめは `end_coalescing` まで。戻すと最初の変更の前へ）。同じ値なら何もしない。
     pub fn set_id_colors(
         &mut self,
         colors: crate::mesh_maps::IdColorAssignments,
+        coalesce: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if self.id_colors.binding == colors.binding && self.id_colors.colors == colors.colors {
             return Ok(());
         }
         let cost = 128 + 16 * (self.id_colors.colors.len() + colors.colors.len()) as u64;
-        self.execute(
+        self.record(
             Command::IdColors {
                 old: self.id_colors.clone(),
                 new: colors,
             },
             cost,
+            coalesce.then_some(CoalesceKey::IdColors),
         )
     }
     /// 読み込み直後に手動 ID 色を復元する。履歴・リビジョンを増やさない。

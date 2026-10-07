@@ -4,6 +4,7 @@
 
 use egui::{pos2, vec2, Rect, Ui};
 
+use super::color_window::{self, Pick};
 use super::properties::{group_label, percent_row, section, slider_row, toggle_row};
 use crate::engine::{
     AdjustmentSettings, AdjustmentType, BlendMode, ChannelKind, LayerId, LayerKind, Rgba8,
@@ -305,26 +306,19 @@ fn fill_section(
                         pos2(main.left() + 84.0, main.top() + 1.0),
                         pos2(main.right(), main.bottom() - 1.0),
                     );
-                    let color = [
-                        v.r as f32 / 255.0,
-                        v.g as f32 / 255.0,
-                        v.b as f32 / 255.0,
-                        v.a as f32 / 255.0,
-                    ];
-                    if w::color_swatch(
+                    // 押すと色の窓（相手は層とチャンネルごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる
+                    let target = egui::Id::new(("fill.value", id.0, channel.index()));
+                    if let Some(u) = color_window::field(
                         ui,
                         swatch,
-                        ("fill.swatch", channel.index()),
-                        color,
-                        &lang.pick(
-                            format!("{name} の値（押すと描画色にする）"),
-                            format!("Value of {name} (click to set it to the paint color)"),
-                        ),
+                        target,
+                        &name,
+                        Pick::rgb([v.r, v.g, v.b]),
+                        &lang.pick(format!("{name} の値"), format!("Value of {name}")),
                         enabled,
-                    )
-                    .clicked()
-                    {
-                        let next = m2::fill_from_color(app.color.main);
+                    ) {
+                        let [r, g, b] = u.pick.rgb;
+                        let next = Rgba8::new(r, g, b, v.a);
                         if next != v {
                             edit(
                                 app,
@@ -334,6 +328,8 @@ fn fill_section(
                                     value: Some(next),
                                 },
                             );
+                        }
+                        if u.done {
                             app.m2_end_drag();
                         }
                     }

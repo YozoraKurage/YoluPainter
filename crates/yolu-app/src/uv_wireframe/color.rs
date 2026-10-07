@@ -1,22 +1,28 @@
-//! UV の個人設定用の色・不透明度。内部の数値型の切り替えは出さない。
+//! UV の個人設定用の色・不透明度。見本を押すと色の窓（色と不透明度）。内部の数値型の切り替えは出さない。
 use crate::{
+    panels::color_window::{self, Pick},
     state::AppState,
     ui::{
         theme as t,
-        widgets::{self as w, Align, NumberFormat, SliderSpec},
+        widgets::{self as w, Align},
     },
 };
-use egui::{pos2, vec2, Rect, Sense, Ui};
+use egui::{pos2, vec2, Rect, Ui};
 
-/// スライダーをドラッグしている間は true。
+/// 色の窓の相手の名前（試験が窓の相手を確かめる）。
+pub fn window_target() -> egui::Id {
+    egui::Id::new("uv.wireframe.color")
+}
+
+/// 色の窓で色・不透明度をドラッグしている間は true（離すまで設定のファイルへ書かない）。
 pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool {
-    let mut dragging = false;
     let row = rows.row(t::ROW_HEIGHT, 4.0);
     let lang = app.lang;
+    let name = lang.pick("UV ワイヤーフレーム", "UV Wireframe");
     w::text(
         ui.painter(),
         Rect::from_min_max(row.min, pos2(row.right() - 56.0, row.bottom())),
-        lang.pick("UV ワイヤーフレーム", "UV Wireframe"),
+        name,
         t::LABEL,
         Align::Left,
     );
@@ -24,75 +30,25 @@ pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool
         pos2(row.right() - 48.0, row.top()),
         vec2(48.0, row.height()),
     );
-    let response = w::color_swatch(
+    let c = app.prefs.settings.uv_wireframe_color;
+    let current = Pick {
+        rgb: [c[0], c[1], c[2]],
+        alpha: Some(c[3]),
+    };
+    if let Some(u) = color_window::field(
         ui,
         swatch,
-        "uv.color",
-        app.prefs
-            .settings
-            .uv_wireframe_color
-            .map(|v| v as f32 / 255.0),
+        window_target(),
+        name,
+        current,
         lang.pick(
             "UV ワイヤーフレームの色と不透明度",
             "UV wireframe color and opacity",
         ),
         true,
-    );
-    egui::Popup::from_toggle_button_response(&response)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .width(280.0)
-        .show(|ui| {
-            let (area, _) = ui.allocate_exact_size(
-                vec2(280.0, 30.0 + 4.0 * (t::SLIDER_ROW_HEIGHT + 4.0)),
-                Sense::hover(),
-            );
-            let mut rows = w::Rows::new(area, 0.0);
-            let preview = rows.row(26.0, 4.0);
-            w::color_swatch(
-                ui,
-                preview,
-                "uv.preview",
-                app.prefs
-                    .settings
-                    .uv_wireframe_color
-                    .map(|v| v as f32 / 255.0),
-                lang.pick("選択中の色", "Current color"),
-                false,
-            );
-            let labels = [
-                lang.pick("赤", "Red"),
-                lang.pick("緑", "Green"),
-                lang.pick("青", "Blue"),
-                lang.pick("不透明度", "Opacity"),
-            ];
-            let tips = [
-                lang.pick("赤の強さ", "Red intensity"),
-                lang.pick("緑の強さ", "Green intensity"),
-                lang.pick("青の強さ", "Blue intensity"),
-                lang.pick("UV ワイヤーフレームの不透明度", "UV wireframe opacity"),
-            ];
-            for (i, (label, tip)) in labels.into_iter().zip(tips).enumerate() {
-                let alpha = i == 3;
-                let scale = if alpha { 100.0 / 255.0 } else { 1.0 };
-                let out = w::slider(
-                    ui,
-                    rows.row(t::SLIDER_ROW_HEIGHT, 4.0),
-                    ("uv.component", i),
-                    app.prefs.settings.uv_wireframe_color[i] as f32 * scale,
-                    &SliderSpec::new(
-                        label,
-                        0.0,
-                        if alpha { 100.0 } else { 255.0 },
-                        NumberFormat::int(if alpha { "%" } else { "" }),
-                    )
-                    .tooltip(tip),
-                );
-                dragging |= out.active;
-                if out.changed {
-                    app.prefs.settings.uv_wireframe_color[i] =
-                        (out.value / scale).round().clamp(0.0, 255.0) as u8;
-                }
-            }
-        });
-    dragging
+    ) {
+        let [r, g, b] = u.pick.rgb;
+        app.prefs.settings.uv_wireframe_color = [r, g, b, u.pick.alpha.unwrap_or(c[3])];
+    }
+    color_window::dragging(ui.ctx(), window_target())
 }

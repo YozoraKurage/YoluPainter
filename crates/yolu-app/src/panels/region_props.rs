@@ -5,6 +5,7 @@
 
 use egui::{pos2, vec2, Rect, Ui};
 
+use super::color_window::{self, Pick};
 use super::properties::{
     choice_buttons, group_label, slider_row, status_row, toggle_row, ChoiceButton,
 };
@@ -538,20 +539,8 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             let swatch =
                 Rect::from_min_size(row.min + vec2(0.0, 1.0), vec2(36.0, row.height() - 2.0));
             let rgb = shown.unwrap_or(0x808080);
-            let color = [
-                ((rgb >> 16) & 255) as f32 / 255.0,
-                ((rgb >> 8) & 255) as f32 / 255.0,
-                (rgb & 255) as f32 / 255.0,
-                1.0,
-            ];
-            w::color_swatch(
-                ui,
-                swatch,
-                "id.part.swatch",
-                color,
-                lang.pick("この部品の ID の色", "This part's ID color"),
-                false,
-            );
+            let editable = app.can_edit();
+            part_color(ui, app, swatch, part, manual, rgb, editable);
             let hex_rect = Rect::from_min_size(
                 pos2(swatch.right() + 6.0, row.top()),
                 vec2(76.0, row.height()),
@@ -625,6 +614,71 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             t::LABEL_DIM.with_color(t::WARNING),
             w::Align::Left,
         );
+    }
+}
+
+/// 部品の ID の色の見本。押すと色の窓（相手は文書と部品ごと）。窓の変更はその場で当て、ドラッグ 1 回を 1 回の取り消しにまとめる。
+/// 窓がこの文書の部品の色を相手にしている間に部品を替えたら、窓はそのままで相手を新しい部品へ替える。自動の色を見せているときに
+/// 開いて Esc で戻したら、自動へ戻す。
+fn part_color(
+    ui: &mut Ui,
+    app: &mut AppState,
+    swatch: Rect,
+    part: usize,
+    manual: Option<u32>,
+    rgb: u32,
+    enabled: bool,
+) {
+    let lang = app.lang;
+    let ctx = ui.ctx().clone();
+    let doc = app.doc.id();
+    let target_of = |part: usize| egui::Id::new(("id.part.color", doc, part));
+    let target = target_of(part);
+    let auto_id = target.with("auto");
+    let name = lang.pick("部品の ID の色", "Part ID Color");
+    let current = Pick::rgb([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);
+    let last_id = egui::Id::new(("id.part.color.last", doc));
+    let last = ctx.data(|d| d.get_temp::<usize>(last_id));
+    ctx.data_mut(|d| d.insert_temp(last_id, part));
+    let was_target = color_window::is_target(&ctx, target);
+    if enabled && !was_target && last.is_some_and(|l| color_window::is_target(&ctx, target_of(l))) {
+        color_window::open(&ctx, target, name, swatch, ui.clip_rect(), current);
+    }
+    let update = color_window::field(
+        ui,
+        swatch,
+        target,
+        name,
+        current,
+        lang.pick("この部品の ID の色", "This part's ID color"),
+        enabled,
+    );
+    if !was_target && color_window::is_target(&ctx, target) {
+        ctx.data_mut(|d| d.insert_temp(auto_id, manual.is_none()));
+    }
+    let Some(u) = update else {
+        return;
+    };
+    let auto = ctx.data(|d| d.get_temp::<bool>(auto_id)).unwrap_or(false);
+    let [r, g, b] = u.pick.rgb;
+    let next = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+    let op = if u.reverted && auto {
+        manual.map(|_| IdColorOp::Set { part, rgb: None })
+    } else if manual == Some(next) {
+        None
+    } else if u.dragging {
+        Some(IdColorOp::Drag { part, rgb: next })
+    } else {
+        Some(IdColorOp::Set {
+            part,
+            rgb: Some(next),
+        })
+    };
+    if let Some(op) = op {
+        app.apply(Action::Region(RegionAction::IdColor(op)));
+    }
+    if u.done {
+        app.apply(Action::Region(RegionAction::IdColor(IdColorOp::EndDrag)));
     }
 }
 

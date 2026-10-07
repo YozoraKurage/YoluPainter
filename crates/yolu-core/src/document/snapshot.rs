@@ -197,6 +197,7 @@ mod tests {
                 [(0, 0x123456)].into_iter().collect(),
             )
             .unwrap(),
+            false,
         )
         .unwrap();
         assert!(doc.can_undo());

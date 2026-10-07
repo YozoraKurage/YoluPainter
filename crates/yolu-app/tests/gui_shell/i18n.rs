@@ -246,7 +246,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
             std::collections::BTreeMap::from([(0usize, 0xff0000u32)]),
         )
         .unwrap();
-        state.doc.set_id_colors(colors).unwrap();
+        state.doc.set_id_colors(colors, false).unwrap();
         let target = root.join(lang.pick("ja.ylp", "en.ylp"));
         state.apply(Action::SaveProjectAs(target.clone()));
         assert!(

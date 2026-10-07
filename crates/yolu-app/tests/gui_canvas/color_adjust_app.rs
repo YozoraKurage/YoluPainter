@@ -596,16 +596,13 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
     let first = value_of(&h, id);
     let steps = undo_count(&h);
     // 色の見本を押して色の選びを開き、四角の中で何度か動かす（1 回のドラッグ）
-    scroll_panel_to(&mut h, "分岐点の色（押すと色の選びを開く）");
-    let swatch = rect_of(
-        &h,
-        "分岐点の色（押すと色の選びを開く）",
-        |r| r.left() > 1000.0,
-    );
+    scroll_panel_to(&mut h, "分岐点の色");
+    let swatch = rect_of(&h, "分岐点の色", |r| r.left() > 1000.0);
     click(&mut h, swatch.center());
-    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
-    let window = yolu_app::panels::color_popup::rect(&h.ctx, popup).expect("色の選びが開く");
-    let wheel = yolu_app::panels::color_popup::wheel_of(window);
+    let target = yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0);
+    assert!(yolu_app::panels::color_window::is_target(&h.ctx, target));
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓が開く");
+    let wheel = yolu_app::panels::color_window::wheel_of(window);
     let sq = yolu_app::panels::color::wheel_square(wheel);
     drag(
         &mut h,

@@ -1759,6 +1759,8 @@ impl YoluApp {
         crate::prefs::show(&ctx, &mut self.state);
         crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
+        // 色の窓（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
+        crate::panels::color_window::show_in_app(&ctx, &mut self.state);
         self.state.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
         crate::toast::show(&ctx, &mut self.state);

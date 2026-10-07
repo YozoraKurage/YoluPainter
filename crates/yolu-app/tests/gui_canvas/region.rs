@@ -2390,6 +2390,179 @@ fn the_sub_tool_list_has_the_ranges_and_the_bucket_adds_similar_colors() {
     assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
 }
 
+/// ID の色で選択の道具を選び、部品が求まるまで待った画面。
+fn id_panel(lang: Lang) -> Harness<'static, YoluApp> {
+    let mut h = app_with_model(1280.0, 800.0, 128);
+    h.state_mut().state.lang = lang;
+    key(&h, Key::W, Modifiers::SHIFT);
+    h.run();
+    assert_eq!(h.state().state.tool, Tool::IdSelect);
+    ready_parts(&mut h.state_mut().state);
+    h.run();
+    h
+}
+
+fn manual_color(h: &Harness<'_, YoluApp>, part: usize) -> Option<u32> {
+    h.state().state.doc.id_colors().colors().get(&part).copied()
+}
+
+/// 部品の ID の色の見本を押すと色の窓が出て、円・四角のドラッグがその場で入り、1 回の取り消しになる（ドラッグの間は知らせを出さず、
+/// 離して 1 回）。自動の色を見せているときに開いて Esc を押すと自動へ戻し、手動の色から開いたときは、その色へ戻す。窓が部品の色を
+/// 相手にしている間に部品を替えると、窓はそのままで相手が新しい部品へ替わる。
+#[test]
+fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() {
+    use egui::PointerButton;
+    use yolu_app::panels::color::wheel_square;
+    use yolu_app::panels::color_window::{self, wheel_of};
+    let mut h = id_panel(Lang::Ja);
+    let steps = h.state().state.doc.undo_count();
+    let doc = h.state().state.doc.id();
+    let target = |part: usize| egui::Id::new(("id.part.color", doc, part));
+    let swatch = h.get_by_label("この部品の ID の色").rect();
+    click(&mut h, swatch.center());
+    assert!(color_window::is_target(&h.ctx, target(0)));
+    let window = color_window::rect(&h.ctx).expect("色の窓");
+    let sq = wheel_square(wheel_of(window));
+    // ドラッグの途中: その場で入るが、知らせは出さない
+    h.state_mut().state.message.clear();
+    let end = sq.right_bottom() - vec2(8.0, 30.0);
+    press(&h, sq.left_top() + vec2(8.0, 8.0), PointerButton::Primary);
+    h.step();
+    for p in [sq.center(), end] {
+        move_to(&h, p);
+        h.step();
+    }
+    h.step();
+    let dragged = manual_color(&h, 0);
+    assert!(dragged.is_some(), "その場で入る");
+    assert!(
+        !h.state().state.message.contains("変えました"),
+        "ドラッグの間は知らせない: {}",
+        h.state().state.message
+    );
+    release(&h, end, PointerButton::Primary);
+    h.step();
+    h.run();
+    assert_eq!(manual_color(&h, 0), dragged);
+    assert_eq!(
+        h.state().state.doc.undo_count(),
+        steps + 1,
+        "ドラッグは 1 回の取り消し"
+    );
+    assert!(
+        h.state()
+            .state
+            .message
+            .contains("手動の ID の色を変えました"),
+        "離して 1 回知らせる: {}",
+        h.state().state.message
+    );
+    // Esc: 開いたときの「自動」へ戻して閉じる（戻すのも 1 回の取り消し）
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert_eq!(manual_color(&h, 0), None, "自動へ戻る");
+    assert!(!color_window::is_open(&h.ctx));
+    assert_eq!(h.state().state.doc.undo_count(), steps + 2);
+    key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert_eq!(manual_color(&h, 0), dragged);
+    key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert_eq!(manual_color(&h, 0), None);
+    // 手動の色から開いて Esc: その手動の色へ戻す（自動にはしない）
+    apply(
+        &mut h,
+        Action::Region(RegionAction::IdColor(IdColorOp::Set {
+            part: 0,
+            rgb: Some(0x336699),
+        })),
+    );
+    click(&mut h, swatch.center());
+    click(&mut h, sq.left_top() + vec2(6.0, 6.0));
+    assert_ne!(manual_color(&h, 0), Some(0x336699));
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert_eq!(manual_color(&h, 0), Some(0x336699));
+    // 部品を替えると、窓はそのままで相手が新しい部品へ替わる
+    click(&mut h, swatch.center());
+    assert!(color_window::is_target(&h.ctx, target(0)));
+    let placed = color_window::rect(&h.ctx).expect("色の窓");
+    apply(&mut h, Action::Region(RegionAction::IdPart(1)));
+    h.run();
+    assert!(color_window::is_target(&h.ctx, target(1)));
+    assert_eq!(color_window::rect(&h.ctx), Some(placed), "窓は動かない");
+    click(&mut h, sq.center());
+    assert!(manual_color(&h, 1).is_some());
+    assert_eq!(manual_color(&h, 0), Some(0x336699), "前の部品は変えない");
+}
+
+/// 部品の ID の色の窓の円を押したまま Esc: 押したあとのドラッグは取り消され（まとめていた段ごと捨てる）、「取り消しました。」が残る。
+/// 窓の戻しが次のフレームに届いても、変えていないのに「手動の ID の色を変えました。」を出して上書きしない。
+#[test]
+fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_change() {
+    use egui::PointerButton;
+    use yolu_app::panels::color::wheel_square;
+    use yolu_app::panels::color_window::{self, wheel_of};
+    let mut h = id_panel(Lang::Ja);
+    let steps = h.state().state.doc.undo_count();
+    let swatch = h.get_by_label("この部品の ID の色").rect();
+    click(&mut h, swatch.center());
+    let sq = wheel_square(wheel_of(color_window::rect(&h.ctx).expect("色の窓")));
+    h.state_mut().state.message.clear();
+    press(&h, sq.left_top() + vec2(8.0, 8.0), PointerButton::Primary);
+    h.step();
+    for p in [sq.center(), sq.right_bottom() - vec2(8.0, 30.0)] {
+        move_to(&h, p);
+        h.step();
+    }
+    h.step();
+    assert!(
+        manual_color(&h, 0).is_some(),
+        "ドラッグの途中はその場で入る"
+    );
+    // 押したまま Esc
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.step();
+    h.step();
+    release(
+        &h,
+        sq.right_bottom() - vec2(8.0, 30.0),
+        PointerButton::Primary,
+    );
+    h.run();
+    assert_eq!(manual_color(&h, 0), None, "自動へ戻る");
+    assert_eq!(h.state().state.doc.undo_count(), steps, "段は残さない");
+    assert!(
+        !h.state().state.message.contains("変えました"),
+        "変えていないので知らせない: {}",
+        h.state().state.message
+    );
+    assert!(
+        h.state().state.message.contains("取り消しました"),
+        "取り消した知らせが残る: {}",
+        h.state().state.message
+    );
+}
+
+/// 部品の ID の色から開いた色の窓の絵（日英）。
+#[test]
+fn snapshot_the_colour_window_on_a_part_id_color() {
+    let mut results = egui_kittest::SnapshotResults::new();
+    for (lang, name, label) in [
+        (Lang::Ja, "ja", "この部品の ID の色"),
+        (Lang::En, "en", "This part's ID color"),
+    ] {
+        let mut h = id_panel(lang);
+        let swatch = h.get_by_label(label).rect();
+        click(&mut h, swatch.center());
+        assert!(yolu_app::panels::color_window::is_open(&h.ctx));
+        h.state_mut().state.message.clear();
+        h.run();
+        h.snapshot(format!("color_window_part_id_{name}"));
+        results.extend_harness(&mut h);
+    }
+}
+
 #[test]
 fn the_id_panel_shows_the_part_position_of_the_second_texture_set() {
     let mut h = app_with_model(1280.0, 800.0, 128);

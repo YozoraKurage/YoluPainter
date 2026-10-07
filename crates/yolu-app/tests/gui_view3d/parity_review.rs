@@ -121,6 +121,7 @@ fn settings(lang: Lang) -> Harness<'static, AppState> {
                     return;
                 }
                 yolu_app::prefs::show(ui.ctx(), app);
+                yolu_app::panels::color_window::show_in_app(ui.ctx(), app);
             },
             app,
         );
@@ -181,77 +182,47 @@ fn assert_color_text(h: &Harness<'_, AppState>, lang: Lang) {
 }
 
 #[test]
-fn opened_uv_color_picker_has_no_internal_notation_and_is_localized() {
+fn opened_uv_color_window_has_no_internal_notation_and_is_localized() {
     for lang in Lang::ALL {
         let mut h = settings(lang);
         let before = h.state().prefs.settings.uv_wireframe_color;
         assert_color_text(&h, lang);
         h.get_by_role(Role::ColorWell).click();
         h.run();
+        assert!(yolu_app::panels::color_window::is_target(
+            &h.ctx,
+            yolu_app::uv_wireframe::color::window_target()
+        ));
         assert_color_text(&h, lang);
+        // 色の窓に不透明度（アルファ）の欄がある
         assert!(
-            drawn_text(&h)
-                .iter()
-                .any(|s| s == lang.pick("不透明度", "Opacity")),
-            "開いた色選択に言語に合った不透明度がありません"
+            h.query_by_role_and_label(Role::Slider, "A").is_some(),
+            "開いた色の窓に不透明度の欄がありません"
         );
         assert_eq!(before, h.state().prefs.settings.uv_wireframe_color);
     }
 }
 
 #[test]
-fn opened_color_tooltips_follow_language_and_sliders_preserve_other_components() {
+fn the_uv_color_window_changes_the_color_and_the_opacity_separately_in_the_right_language() {
     for lang in Lang::ALL {
         let mut h = settings(lang);
         h.ctx
             .all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
         h.get_by_role(Role::ColorWell).click();
         h.run();
-        let preview_tip = lang.pick("選択中の色", "Current color");
-        let preview = h.get_by_role_and_label(Role::ColorWell, preview_tip).rect();
-        h.event(egui::Event::PointerMoved(preview.center()));
+        let alpha = h.get_by_role_and_label(Role::Slider, "A").rect();
+        h.event(egui::Event::PointerMoved(alpha.center()));
         for _ in 0..8 {
             h.step();
         }
-        assert!(drawn_text(&h).iter().any(|text| text == preview_tip));
+        let tip = lang.pick("不透明度", "Opacity");
+        assert!(
+            drawn_text(&h).iter().any(|text| text == tip),
+            "ツールチップがありません: {tip}"
+        );
         assert_color_text(&h, lang);
-        for (label, tip) in [
-            (
-                lang.pick("赤", "Red"),
-                lang.pick("赤の強さ", "Red intensity"),
-            ),
-            (
-                lang.pick("緑", "Green"),
-                lang.pick("緑の強さ", "Green intensity"),
-            ),
-            (
-                lang.pick("青", "Blue"),
-                lang.pick("青の強さ", "Blue intensity"),
-            ),
-            (
-                lang.pick("不透明度", "Opacity"),
-                lang.pick("UV ワイヤーフレームの不透明度", "UV wireframe opacity"),
-            ),
-        ] {
-            let rect = h.get_by_role_and_label(Role::Slider, label).rect();
-            h.event(egui::Event::PointerMoved(rect.center()));
-            for _ in 0..8 {
-                h.step();
-            }
-            assert_color_text(&h, lang);
-            assert!(
-                drawn_text(&h).iter().any(|text| text == tip),
-                "ツールチップがありません: {tip}"
-            );
-        }
-        let before = h.state().prefs.settings.uv_wireframe_color;
-        for (label, component) in [
-            (lang.pick("不透明度", "Opacity"), 3),
-            (lang.pick("赤", "Red"), 0),
-        ] {
-            let rect = h.get_by_role_and_label(Role::Slider, label).rect();
-            let at = egui::pos2(rect.left() + rect.width() * 0.25, rect.bottom() - 3.0);
-            let previous = h.state().prefs.settings.uv_wireframe_color;
+        let click = |h: &mut Harness<'_, AppState>, at: egui::Pos2| {
             h.event(egui::Event::PointerMoved(at));
             h.event(egui::Event::PointerButton {
                 pos: at,
@@ -259,6 +230,7 @@ fn opened_color_tooltips_follow_language_and_sliders_preserve_other_components()
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             });
+            h.step();
             h.event(egui::Event::PointerButton {
                 pos: at,
                 button: egui::PointerButton::Primary,
@@ -266,19 +238,26 @@ fn opened_color_tooltips_follow_language_and_sliders_preserve_other_components()
                 modifiers: egui::Modifiers::NONE,
             });
             h.run();
-            let after = h.state().prefs.settings.uv_wireframe_color;
-            assert_ne!(after[component], previous[component]);
-            for i in 0..4 {
-                if i != component {
-                    assert_eq!(previous[i], after[i]);
-                }
-            }
-            assert_color_text(&h, lang);
-        }
-        assert_eq!(
-            &h.state().prefs.settings.uv_wireframe_color[1..3],
-            &before[1..3]
+        };
+        // 不透明度を変えても色は変わらない
+        let previous = h.state().prefs.settings.uv_wireframe_color;
+        click(
+            &mut h,
+            egui::pos2(alpha.left() + alpha.width() * 0.25, alpha.center().y),
         );
+        let after = h.state().prefs.settings.uv_wireframe_color;
+        assert_ne!(after[3], previous[3]);
+        assert_eq!(after[..3], previous[..3]);
+        // 四角で色を変えても不透明度は変わらない
+        let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓");
+        let sq =
+            yolu_app::panels::color::wheel_square(yolu_app::panels::color_window::wheel_of(window));
+        click(&mut h, sq.left_top() + vec2(6.0, 6.0));
+        let later = h.state().prefs.settings.uv_wireframe_color;
+        assert_ne!(later[..3], after[..3]);
+        assert_eq!(later[3], after[3]);
+        assert_color_text(&h, lang);
+        // 設定は文書の取り消しに積まない
         assert!(!h.state().can_undo());
     }
 }
@@ -590,9 +569,9 @@ fn app_with_settings(path: &std::path::Path) -> Harness<'static, YoluApp> {
     h
 }
 
-/// 色・不透明度のスライダーは、ドラッグの間は設定のファイルへ書かず、離したときに 1 回だけ書く（退避の数のスライダーと同じ）。
+/// UV ワイヤーフレームの色は、色の窓でドラッグしている間は設定のファイルへ書かず、離したときに 1 回だけ書く（退避の数のスライダーと同じ）。
 #[test]
-fn dragging_a_uv_color_slider_writes_the_settings_once_on_release() {
+fn dragging_in_the_uv_color_window_writes_the_settings_once_on_release() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/parity-review-tests")
         .join(std::process::id().to_string());
@@ -606,10 +585,10 @@ fn dragging_a_uv_color_slider_writes_the_settings_once_on_release() {
     h.get_by_role_and_label(Role::ColorWell, "UV wireframe color and opacity")
         .click();
     h.run();
-    let slider = h.get_by_role_and_label(Role::Slider, "Red").rect();
-    let y = slider.bottom() - 3.0;
-    let at = |fraction: f32| egui::pos2(slider.left() + slider.width() * fraction, y);
-    let red = |h: &Harness<'_, YoluApp>| h.state().state.prefs.settings.uv_wireframe_color[0];
+    let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色の窓");
+    let sq =
+        yolu_app::panels::color::wheel_square(yolu_app::panels::color_window::wheel_of(window));
+    let color = |h: &Harness<'_, YoluApp>| h.state().state.prefs.settings.uv_wireframe_color;
     // 書いたかどうかは、ファイルを見張り用の中身に替えておき、書き換えられたかで見る
     let watch = || std::fs::write(&path, "watch\n").unwrap();
     let untouched = || {
@@ -619,28 +598,32 @@ fn dragging_a_uv_color_slider_writes_the_settings_once_on_release() {
             "ドラッグの間は書いてはいけない"
         )
     };
-    let default_red = red(&h);
+    let default_color = color(&h);
     watch();
-    press(&h, at(0.25), PointerButton::Primary);
+    press(&h, sq.left_top() + vec2(10.0, 10.0), PointerButton::Primary);
     h.step();
-    assert_ne!(red(&h), default_red, "値は動く");
+    h.step();
+    assert_ne!(color(&h), default_color, "値は動く");
     assert!(h.state().state.prefs.dragging);
     untouched();
-    move_to(&h, at(0.75));
+    move_to(&h, sq.center());
     h.step();
-    assert_eq!(red(&h), 191);
+    h.step();
     assert!(h.state().state.prefs.dragging);
-    untouched();
-    h.step();
     untouched();
     // 離すと、そのときの値を 1 回だけ書く（続くフレームでは書き直さない）
-    release(&h, at(0.75), PointerButton::Primary);
+    release(&h, sq.center(), PointerButton::Primary);
     h.step();
     h.run();
     assert!(!h.state().state.prefs.dragging);
+    let c = color(&h);
+    assert_eq!(c[3], default_color[3], "不透明度はそのまま");
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        "language=en\nuv_wireframe_color=191,217,255,153\n"
+        format!(
+            "language=en\nuv_wireframe_color={},{},{},{}\n",
+            c[0], c[1], c[2], c[3]
+        )
     );
     watch();
     h.step();

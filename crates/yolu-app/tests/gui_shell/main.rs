@@ -10,6 +10,7 @@ mod common;
 mod app;
 mod chrome;
 mod close_jobs;
+mod color_window;
 mod colorsets_ui;
 mod disabled_reasons;
 mod fonts;

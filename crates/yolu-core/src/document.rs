@@ -456,6 +456,8 @@ pub(crate) enum CoalesceKey {
     FillGradient(LayerId, Channel),
     /// 見た目の設定（スライダーのドラッグ）。
     Look,
+    /// 手動の ID の色（色の窓のドラッグ）。
+    IdColors,
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
@@ -957,6 +959,7 @@ impl Document {
                         *n = new
                     }
                     (Command::Look { new: n, .. }, Command::Look { new, .. }) => *n = new,
+                    (Command::IdColors { new: n, .. }, Command::IdColors { new, .. }) => *n = new,
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
                 self.revision += 1;

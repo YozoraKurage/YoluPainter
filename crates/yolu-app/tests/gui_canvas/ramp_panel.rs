@@ -1,14 +1,15 @@
 //! ランプの欄（`panels::ramp_rows`。グラデーションマップと塗りつぶしのグラデーションが共通で使う）: 混色・グラデーションセット・分岐点の編集・
-//! ダブルクリックの色の選び・メインとサブに付いていく色・スポイトの色・混合率曲線・値のカーブ・無効・日英・説明を置かないこと・画像。
-//! 欄だけを並べた見本の窓で確かめる。アプリの中でのつなぎ（層・段の選び・1 回の Undo）は `color_adjust_app.rs`・`fillfx*.rs`。
+//! 分岐点の色の窓（`panels::color_window`）・メインとサブに付いていく色・スポイトの色・混合率曲線・値のカーブ・無効・日英・説明を置かないこと・画像。
+//! 欄だけを並べた見本の窓（左に色の窓の入る余白）で確かめる。アプリの中でのつなぎ（層・段の選び・1 回の Undo）は `color_adjust_app.rs`・`fillfx*.rs`。
 use crate::common;
 
 use egui::{pos2, vec2, Key, Pos2, Rect, Ui};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotResults};
+use yolu_app::colorsets::{Palette, Swatch};
 use yolu_app::eyedrop::EyedropState;
 use yolu_app::lang::Lang;
-use yolu_app::panels::color_popup;
+use yolu_app::panels::color_window::{self, Sources};
 use yolu_app::panels::ramp_rows::{self, Change, Features, Params};
 use yolu_app::rampsets::{RampSets, MAX_USER};
 use yolu_app::ui::ramp::{ops, Selection, STOPS_HEIGHT};
@@ -20,6 +21,8 @@ use yolu_core::generator::{ColorStop, LuminanceCorrection, MixMode, OpacityStop,
 use yolu_core::Rgba8;
 
 const WIDTH: f32 = 320.0;
+/// 欄の左の余白（色の窓は欄の左に入る）。
+const LEFT: f32 = 230.0;
 const KEY: (&str, u128) = ("test", 7);
 const ROWS_WIDTH: f32 = WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT;
 
@@ -40,6 +43,9 @@ struct Panel {
     width: f32,
     /// false の間は欄を描かない（別の層を選んでいる間）。
     shown: bool,
+    /// 色の窓の「今のカラーセット」。
+    palette: Palette,
+    /// 色の窓が開いているか・その場所（描いたあとに読む）。
     popup_open: bool,
     popup: Option<Rect>,
     selected: Selection,
@@ -53,11 +59,32 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         ui.ctx().request_repaint();
         return;
     }
-    if !p.shown {
+    if p.shown {
+        rows_in(ui, p);
+    } else {
         ui.ctx().request_repaint();
-        return;
     }
-    let area = Rect::from_min_size(ui.max_rect().min, vec2(p.width, p.height));
+    // 色の窓はフレームの終わりに描く（アプリと同じ）
+    let failure = color_window::show(
+        ui.ctx(),
+        &Sources {
+            lang: p.lang,
+            main: p.main,
+            set: Some(&p.palette),
+        },
+    );
+    if failure.is_some() {
+        p.failure = failure;
+    }
+    p.popup_open = color_window::is_open(ui.ctx());
+    p.popup = color_window::rect(ui.ctx()).filter(|_| p.popup_open);
+}
+
+fn rows_in(ui: &mut Ui, p: &mut Panel) {
+    let area = Rect::from_min_size(ui.max_rect().min + vec2(LEFT, 0.0), vec2(p.width, p.height));
+    let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(area));
+    ui.set_clip_rect(area);
+    let ui = &mut ui;
     ui.allocate_rect(area, egui::Sense::hover());
     ui.painter().rect_filled(area, 0.0, t::PANEL_BG);
     let mut rows = Rows::new(area, 0.0);
@@ -78,10 +105,19 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         p.ramp = change.ramp.clone();
         p.changes.push(change);
     }
-    let id = ramp_rows::popup_id(KEY);
-    p.popup_open = color_popup::is_open(ui.ctx(), id);
-    p.popup = color_popup::rect(ui.ctx(), id).filter(|_| p.popup_open);
     p.selected = ramp_rows::selected(ui, KEY);
+}
+
+/// 色の窓の「今のカラーセット」（試験用の 3 色）。
+fn palette() -> Palette {
+    Palette {
+        name: "Test".into(),
+        colors: vec![
+            Swatch::new([1.0, 0.0, 0.0, 1.0]),
+            Swatch::new([0.0, 1.0, 0.0, 1.0]),
+            Swatch::new([0.0, 0.0, 1.0, 1.0]),
+        ],
+    }
 }
 
 const MAP: Features = Features {
@@ -127,7 +163,7 @@ fn three() -> Ramp {
 
 fn panel_with(ramp: Ramp, features: Features, lang: Lang, height: f32) -> Harness<'static, Panel> {
     let mut h = common::gpu_thread::builder()
-        .with_size(vec2(WIDTH, height))
+        .with_size(vec2(LEFT + WIDTH, height))
         .with_step_dt(1.0 / 60.0)
         .build_ui_state(
             draw,
@@ -147,6 +183,7 @@ fn panel_with(ramp: Ramp, features: Features, lang: Lang, height: f32) -> Harnes
                 height,
                 width: WIDTH,
                 shown: true,
+                palette: palette(),
                 popup_open: false,
                 popup: None,
                 selected: Selection::default(),
@@ -653,37 +690,50 @@ fn removing_a_stop_keeps_two_and_the_position_field_moves_the_selected_stop() {
     assert_eq!(h.state().changes.len(), n);
 }
 
-// ───────── ダブルクリックの色の選び ─────────
+// ───────── 分岐点の色の窓 ─────────
+
+/// 色の窓の見出しの帯の、つかめる所（閉じるボタンの左）。
+fn window_title(window: Rect) -> Pos2 {
+    pos2(window.left() + 60.0, window.top() + 12.0)
+}
 
 #[test]
-fn double_clicking_a_stop_opens_the_colour_picker_next_to_it_and_the_wheel_changes_the_colour_in_place(
+fn double_clicking_a_stop_opens_the_colour_window_beside_the_panel_and_the_wheel_changes_the_colour_in_place(
 ) {
     let mut h = panel(three());
     assert!(!h.state().popup_open);
     double_click_stop(&mut h, 0.5);
-    assert!(h.state().popup_open, "ダブルクリックで色の選びが出る");
+    assert!(h.state().popup_open, "ダブルクリックで色の窓が出る");
     assert_eq!(h.state().selected.index, 1);
-    let window = h.state().popup.expect("窓の場所");
-    let anchor = stop_at(&h, 0.5);
+    let ctx = h.ctx.clone();
     assert!(
-        (window.left() - anchor.x).abs() < 80.0 && window.top() >= anchor.y - 4.0,
-        "分岐点のそば: {window:?} {anchor:?}"
+        color_window::is_target(&ctx, ramp_rows::stop_target(KEY, 1)),
+        "相手は分岐点 1"
+    );
+    let window = h.state().popup.expect("窓の場所");
+    assert!(
+        window.right() <= LEFT,
+        "欄の左に出る（欄を隠さない）: {window:?}"
     );
     let before = colour_of(&h, 1);
     // 円の輪をドラッグして色相を変える（その場で色が変わり、離すまで 1 回の取り消しにまとめる）
-    let wheel = color_popup::wheel_of(window);
+    let wheel = color_window::wheel_of(window);
     let radius = wheel.width() * 0.5 * (1.0 - 0.17 * 0.5);
     let top = pos2(wheel.center().x, wheel.center().y - radius);
     let right = pos2(wheel.center().x + radius, wheel.center().y);
+    let changes = h.state().changes.len();
     drag_through(
         &mut h,
         &[top, pos2(top.x + radius * 0.7, top.y + radius * 0.3), right],
     );
     let after = colour_of(&h, 1);
     assert_ne!(after, before, "色が変わった");
-    assert!(!last(&h).discrete);
+    assert!(
+        h.state().changes[changes..].iter().all(|c| !c.discrete),
+        "ドラッグの変更は前の変更とまとめる"
+    );
     assert!(h.state().popup_open, "ドラッグのあとも開いたまま");
-    // 色相は右（0.25）。元の彩度・明度のまま
+    // 色相は右（0.25）。元の彩度・明度のまま。ほかの分岐点は変わらない
     assert_eq!(
         h.state().ramp.colors()[0].color,
         Rgba8::new(10, 20, 120, 255)
@@ -699,52 +749,174 @@ fn double_clicking_a_stop_opens_the_colour_picker_next_to_it_and_the_wheel_chang
 }
 
 #[test]
-fn escape_puts_the_colour_back_and_closes_the_picker_and_a_click_outside_keeps_it() {
+fn escape_puts_the_colour_back_and_closes_the_window_and_a_click_outside_keeps_it_open() {
     let mut h = panel(three());
     double_click_stop(&mut h, 0.5);
     let original = colour_of(&h, 1);
     let window = h.state().popup.unwrap();
-    let wheel = color_popup::wheel_of(window);
-    let sq = yolu_app::panels::color::wheel_square(wheel);
+    let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(window));
     click_at(&mut h, sq.center());
     assert_ne!(colour_of(&h, 1), original);
-    // Esc: 開いたときの色へ戻して閉じる
+    // Esc: 開いたときの色へ戻して閉じる（戻す変更は 1 回で決まる変更）
     h.key_press(Key::Escape);
     h.run();
     assert_eq!(colour_of(&h, 1), original, "Esc で戻る");
+    assert!(last(&h).discrete);
     assert!(!h.state().popup_open);
-    // もう 1 度開いて、色を変えてから外を押す: 今の色のまま閉じる
+    // もう 1 度開いて、色を変えてから外（欄の何も無い所と、窓の外の余白）を押す: 閉じず、今の色のまま
     double_click_stop(&mut h, 0.5);
     let window = h.state().popup.unwrap();
-    let sq = yolu_app::panels::color::wheel_square(color_popup::wheel_of(window));
+    let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(window));
     click_at(&mut h, sq.center());
     let picked = colour_of(&h, 1);
     assert_ne!(picked, original);
-    click_at(&mut h, pos2(20.0, 740.0));
+    click_at(&mut h, pos2(LEFT + 20.0, 740.0));
+    click_at(&mut h, pos2(10.0, 740.0));
+    assert!(h.state().popup_open, "外を押しても閉じない");
+    assert_eq!(colour_of(&h, 1), picked);
+    // 閉じるボタン: 今の色のまま閉じる
+    h.get_by_label("閉じる").click();
+    h.run();
     assert!(!h.state().popup_open);
     assert_eq!(colour_of(&h, 1), picked);
 }
 
 #[test]
-fn the_picker_follows_the_stop_that_is_selected_and_closes_when_another_is_chosen() {
+fn the_window_follows_the_selected_stop_and_escape_restores_only_that_stop() {
     let mut h = panel(three());
     double_click_stop(&mut h, 0.5);
-    assert!(h.state().popup_open);
-    // 別の分岐点を選ぶ（矢印）と閉じる。Esc で戻すのは開いた分岐点のものだけなので、別の分岐点の色は触らない
-    click_label(&mut h, ">");
-    assert!(!h.state().popup_open);
+    let window = h.state().popup.unwrap();
+    let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(window));
+    click_at(&mut h, sq.center());
+    let changed = colour_of(&h, 1);
     let before = colour_of(&h, 2);
+    // 別の分岐点を選ぶ（矢印）と、窓はそのままで相手が替わる
+    click_label(&mut h, ">");
+    assert!(h.state().popup_open);
+    assert_eq!(h.state().popup, Some(window), "窓は動かない");
+    let ctx = h.ctx.clone();
+    assert!(color_window::is_target(
+        &ctx,
+        ramp_rows::stop_target(KEY, 2)
+    ));
+    // Esc で戻すのは今の相手（替えたときの色）だけ。前の相手の変更は残る
+    click_at(&mut h, sq.left_top() + vec2(4.0, 4.0));
+    assert_ne!(colour_of(&h, 2), before);
     h.key_press(Key::Escape);
     h.run();
     assert_eq!(colour_of(&h, 2), before);
+    assert_eq!(colour_of(&h, 1), changed);
+    assert!(!h.state().popup_open);
     // 色の見本を押しても開く
-    let swatch = rect(&h, "分岐点の色（押すと色の選びを開く）");
+    let swatch = rect(&h, "分岐点の色");
     click_at(&mut h, swatch.center());
+    assert!(h.state().popup_open);
+    // 不透明度の分岐点を選ぶと、色の欄が無くなるので閉じる
+    click_opacity(&mut h, 0.0);
+    h.run_steps(4);
+    assert!(!h.state().popup_open);
+}
+
+#[test]
+fn removing_the_stop_in_the_window_closes_it() {
+    let mut h = panel(three());
+    double_click_stop(&mut h, 0.5);
+    assert!(h.state().popup_open);
+    h.get_by_label("分岐点を消す").click();
+    h.run();
+    assert_eq!(h.state().ramp.colors().len(), 2);
+    assert!(!h.state().popup_open, "相手の分岐点が無くなったら閉じる");
+}
+
+#[test]
+fn the_window_moves_by_its_title_and_opens_at_the_same_place_next_time() {
+    let mut h = panel(three());
+    double_click_stop(&mut h, 0.5);
+    let first = h.state().popup.unwrap();
+    let grab = window_title(first);
+    drag_through(
+        &mut h,
+        &[grab, grab + vec2(10.0, 30.0), grab + vec2(20.0, 60.0)],
+    );
+    let moved = h.state().popup.unwrap();
+    assert!(
+        (moved.min - (first.min + vec2(20.0, 60.0))).length() < 1.5,
+        "{first:?} → {moved:?}"
+    );
+    assert!(h.state().popup_open, "動かしても閉じない");
+    h.get_by_label("閉じる").click();
+    h.run();
+    assert!(!h.state().popup_open);
+    // 別の分岐点から開いても、前の位置
+    double_click_stop(&mut h, 1.0);
+    assert_eq!(h.state().popup.map(|r| r.min), Some(moved.min));
+}
+
+#[test]
+fn hex_paint_colour_and_set_colour_each_make_one_change_and_leave_the_paint_colour_alone() {
+    let mut h = panel(three());
+    double_click_stop(&mut h, 0.5);
+    let window = h.state().popup.unwrap();
+    // 16 進: 決めたときに 1 回
+    let hex = color_window::hex_of(window, false);
+    click_at(&mut h, hex.center());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.event(egui::Event::Text("#204060".into()));
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(colour_of(&h, 1), (0x20, 0x40, 0x60));
+    assert!(last(&h).discrete);
+    // 読めない 16 進は変えずに知らせる
+    click_at(&mut h, hex.center());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.event(egui::Event::Text("#zz".into()));
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(colour_of(&h, 1), (0x20, 0x40, 0x60));
+    assert!(h
+        .state()
+        .failure
+        .as_deref()
+        .is_some_and(|m| m.contains("#zz")));
+    // 描画色を入れる
+    h.get_by_label("描画色を入れる").click();
+    h.run();
+    assert_eq!(colour_of(&h, 1), (230, 51, 26));
+    assert!(last(&h).discrete);
+    // カラーセットの色
+    let green = h
+        .get_all_by_label(&palette().colors[1].label())
+        .next()
+        .unwrap()
+        .rect();
+    click_at(&mut h, green.center());
+    assert_eq!(colour_of(&h, 1), (0, 255, 0));
+    assert!(last(&h).discrete);
+    // 描画色は窓では変わらない
+    assert_eq!(h.state().main, [0.9, 0.2, 0.1, 1.0]);
     assert!(h.state().popup_open);
 }
 
 #[test]
-fn double_clicking_the_opacity_row_does_not_open_the_picker() {
+fn the_window_follows_a_colour_changed_from_outside() {
+    let mut h = panel(three());
+    double_click_stop(&mut h, 0.5);
+    // スポイトの色（外からの変更）が分岐点に入ると、窓の 16 進もその色になる。Esc は開いたときの色へ戻す
+    h.state_mut().eyedrop.ramp_stop_pick = Some([12, 200, 99]);
+    h.run();
+    assert_eq!(colour_of(&h, 1), (12, 200, 99));
+    assert!(
+        has(&h, "#0CC863"),
+        "窓の 16 進が外の色に合う: {:?}",
+        shown_texts(&h)
+    );
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(colour_of(&h, 1), (200, 60, 90));
+}
+
+#[test]
+fn double_clicking_the_opacity_row_does_not_open_the_window() {
     let mut h = panel(three());
     double_click_opacity(&mut h, 0.0);
     assert!(!h.state().popup_open);
@@ -832,9 +1004,10 @@ fn another_edit_to_a_followed_stop_ends_only_that_stops_following_and_a_set_ends
     click_label(&mut h, ">");
     click_label(&mut h, "メイン");
     // 分岐点 1 を色の選びで決めると、分岐点 1 だけ付いていくのをやめる
-    let swatch = rect(&h, "分岐点の色（押すと色の選びを開く）");
+    let swatch = rect(&h, "分岐点の色");
     click_at(&mut h, swatch.center());
-    let sq = yolu_app::panels::color::wheel_square(color_popup::wheel_of(h.state().popup.unwrap()));
+    let sq =
+        yolu_app::panels::color::wheel_square(color_window::wheel_of(h.state().popup.unwrap()));
     click_at(&mut h, sq.center());
     let chosen = colour_of(&h, 1);
     h.state_mut().main = [1.0, 1.0, 0.0, 1.0];
@@ -1027,8 +1200,8 @@ fn a_disabled_panel_changes_nothing_and_opens_nothing() {
     h.state_mut().enabled = false;
     h.run();
     for y in (40..740).step_by(23) {
-        click_at(&mut h, pos2(100.0, y as f32));
-        click_at(&mut h, pos2(250.0, y as f32));
+        click_at(&mut h, pos2(LEFT + 100.0, y as f32));
+        click_at(&mut h, pos2(LEFT + 250.0, y as f32));
     }
     double_click_stop(&mut h, 0.5);
     assert!(h.state().changes.is_empty());
@@ -1118,7 +1291,7 @@ fn a_narrow_panel_wraps_its_buttons_and_swatches_and_no_text_leaves_the_panel() 
             assert!(!texts.is_empty());
             for (text, bounds) in texts {
                 assert!(
-                    bounds.right() <= width + 1.0,
+                    bounds.right() <= LEFT + width + 1.0,
                     "{lang:?} 幅 {width}: {text:?} が欄の外へ出る {bounds:?}"
                 );
             }

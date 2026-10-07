@@ -275,12 +275,78 @@ fn manual_id_colors_undo() {
     let colors =
         mesh_maps::IdColorAssignments::new("a".repeat(64), [(0, 0x123456)].into()).unwrap();
     let key = colors.key();
-    d.set_id_colors(colors).unwrap();
+    d.set_id_colors(colors, false).unwrap();
     assert_eq!(d.id_colors().key(), key);
     d.undo().unwrap();
     assert_eq!(d.id_colors().key(), "");
     d.redo().unwrap();
     assert_eq!(d.id_colors().key(), key);
+}
+/// 色の窓のドラッグ: まとめた手動 ID 色の変更は 1 回の Undo（戻すと最初の変更の前＝自動、やり直すと最後の色）。まとめを切った後・ほかの
+/// 変更の後は別の段。ドラッグを Escape で止めると、その段ごと捨てる。保存用の写しは最後の色を持つ。
+#[test]
+fn dragged_manual_id_colors_coalesce_into_one_undo_step() {
+    let binding = "a".repeat(64);
+    let with =
+        |rgb: u32| mesh_maps::IdColorAssignments::new(binding.clone(), [(0, rgb)].into()).unwrap();
+    let color = |d: &Document| d.id_colors().colors().get(&0).copied();
+    let mut d = Document::new(8, 8).unwrap();
+    let layer = d.add_layer("a").unwrap();
+    let before = d.history_bytes();
+    d.set_id_colors(with(0x112233), true).unwrap();
+    let first = d.history_bytes() - before;
+    for rgb in [0x445566, 0x778899] {
+        d.set_id_colors(with(rgb), true).unwrap();
+    }
+    assert!(d.is_coalescing());
+    assert_eq!(d.undo_count(), 2);
+    assert_eq!(color(&d), Some(0x778899));
+    // まとめた段の費用は最初の変更のまま（ほかのまとめと同じ）
+    assert_eq!(d.history_bytes() - before, first);
+    // 同じ色は段を積まない
+    d.set_id_colors(with(0x778899), true).unwrap();
+    assert_eq!(d.undo_count(), 2);
+    d.end_coalescing();
+    assert!(!d.is_coalescing());
+    // 切った後の変更は別の段
+    d.set_id_colors(with(0xabcdef), true).unwrap();
+    // ほかの変更の後のまとめも別の段
+    d.set_layer_opacity(layer, 0.5, false).unwrap();
+    d.set_id_colors(with(0x010203), true).unwrap();
+    d.end_coalescing();
+    assert_eq!(d.undo_count(), 5);
+    // 保存用の写しは最後の色
+    assert_eq!(color(&d.capture_snapshot().unwrap()), Some(0x010203));
+    for expected in [Some(0xabcdef), Some(0xabcdef), Some(0x778899), None] {
+        d.undo().unwrap();
+        assert_eq!(color(&d), expected);
+    }
+    assert_eq!(d.id_colors().key(), "");
+    for expected in [
+        Some(0x778899),
+        Some(0xabcdef),
+        Some(0xabcdef),
+        Some(0x010203),
+    ] {
+        d.redo().unwrap();
+        assert_eq!(color(&d), expected);
+    }
+    // ドラッグを Escape で止める: まとめた段を戻して捨てる
+    let steps = d.undo_count();
+    d.set_id_colors(with(0x0f0f0f), true).unwrap();
+    d.set_id_colors(with(0xf0f0f0), true).unwrap();
+    assert!(d.cancel_coalescing().unwrap());
+    assert_eq!((d.undo_count(), color(&d)), (steps, Some(0x010203)));
+    // まとめは手動 ID 色の変更どうしだけ（不透明度のドラッグの段に混ざらない）
+    d.set_layer_opacity(layer, 0.25, true).unwrap();
+    d.set_id_colors(with(0x123456), true).unwrap();
+    d.end_coalescing();
+    assert_eq!(d.undo_count(), steps + 2);
+    d.undo().unwrap();
+    assert_eq!(
+        (color(&d), d.layer(layer).unwrap().opacity()),
+        (Some(0x010203), 0.25)
+    );
 }
 fn quad() -> [material_triangles::PixelTriangle; 2] {
     [

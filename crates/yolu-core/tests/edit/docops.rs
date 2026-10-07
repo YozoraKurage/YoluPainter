@@ -2379,7 +2379,7 @@ fn manual_id_colours_survive_layer_operations_transforms_and_resizes() {
         let (mut d, a) = patterned();
         let b = d.duplicate_layer(a, None).unwrap();
         let c = d.duplicate_layer(a, None).unwrap();
-        d.set_id_colors(colours()).unwrap();
+        d.set_id_colors(colours(), false).unwrap();
         d.clear_history().unwrap();
         let same = |d: &Document, when: &str| {
             assert_eq!(
