@@ -11,14 +11,15 @@
 //! - 今のポーズは、プロジェクトのモデル（FBX）のものだけ `.ylp` の根の `pose.json` に残り、同じモデルを開くと戻る（`stored`。形式は上げない状態の
 //!   エントリ）。変えると「変更あり」の印が付く（`sync_modified`）。名前を付けてモデルをまたいで使うのは個人の設定のフォルダのプリセット（`presets`）。
 //! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`、ポーズのプリセット（保存・当てる・左右反転）は
-//!   `presets`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・プリセットを当てるのは 1 つの取り消しの段、
-//!   隠すのは見せ方の状態で取り消しの対象ではない）。
+//!   `presets`、FBX のテイクとフレームからポーズにするのは `takes`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・
+//!   プリセットやテイクを当てるのは 1 つの取り消しの段、隠すのは見せ方の状態で取り消しの対象ではない）。
 
 pub mod edit;
 pub mod hide;
 pub mod loads;
 pub mod presets;
 pub mod stored;
+pub mod takes;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -59,6 +60,10 @@ pub enum PoseAction {
     Reset,
     Undo,
     Redo,
+    /// 欄でテイクを選ぶ（テイクを持つ FBX の番号・その中のテイクの番号）。
+    ChooseTake(usize, usize),
+    /// 選んでいるテイクとフレームのポーズにする（裏で求め、終わったら取り消しの 1 段として当てる）。
+    ApplyTake,
 }
 
 /// 組み直しの時間（ミリ秒。状態の表示と試験用）。
@@ -95,8 +100,11 @@ pub struct PoseSession {
     pub hide: hide::HideState,
     /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
     pub preset_notes: Vec<presets::Skipped>,
-    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。このセッションが始まってから）。「変更あり」の印と復旧の書き置きの鍵。
+    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。欄で選ぶテイクとフレームを変えたのも数える。このセッションが始まってから）。
+    /// 「変更あり」の印と復旧の書き置きの鍵。
     pub edits: u64,
+    /// FBX のテイク（一覧・欄の選び・求めている途中の仕事）。
+    pub takes: takes::TakeState,
 }
 
 impl PoseSession {
@@ -130,6 +138,7 @@ struct Loaded {
     rest: SurfaceGeometry,
     meshes: Vec<ModelMesh>,
     warnings: Vec<String>,
+    takes: Vec<takes::TakeSource>,
 }
 
 struct Loading {
@@ -279,6 +288,7 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         hide: hide::HideState::default(),
         preset_notes: Vec::new(),
         edits: 0,
+        takes: takes::TakeState::new(loaded.takes),
     });
     view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
@@ -301,6 +311,7 @@ pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
             rest,
             meshes,
             warnings: Vec::new(),
+            takes: Vec::new(),
         },
     );
     Ok(())
@@ -341,11 +352,18 @@ fn load_blocking(
     progress.set(MODEL_SHARE);
     let (meshes, rest) = build_rest(&model.rig, revision, Some(cancel))?;
     progress.set(1.0);
+    let takes = takes::TakeSource::whole(
+        path.to_path_buf(),
+        model.takes,
+        model.rig.bones().len(),
+        model.rig.meshes().len(),
+    );
     Ok(Loaded {
         rig: model.rig,
         rest,
         meshes,
         warnings: model.report.warnings,
+        takes: takes.into_iter().collect(),
     })
 }
 
@@ -471,10 +489,13 @@ impl<T> RigJob<T> {
 }
 
 /// スキンを別のスレッドで組み（`work` が読む・並べる。取消の旗を区切りで見る）、休みの形まで作る（3D ビューには入れない。入れるのは
-/// `install_prepared`）。`work` はスキン・読み込みの知らせ・呼び手の残りの結果を返す。スレッドは `view3d` に登録する（終わるときに止まるのを待つ）。
+/// `install_prepared`）。`work` はスキン・読み込みの知らせ・テイクを持つ FBX（スキンのどこに入ったか）・呼び手の残りの結果を返す。
+/// スレッドは `view3d` に登録する（終わるときに止まるのを待つ）。
 pub fn prepare_rig_with<T: Send + 'static>(
     view3d: &mut View3dState,
-    work: impl FnOnce(&AtomicBool) -> Result<(Rig, Vec<String>, T), ViewError> + Send + 'static,
+    work: impl FnOnce(&AtomicBool) -> Result<(Rig, Vec<String>, Vec<takes::TakeSource>, T), ViewError>
+        + Send
+        + 'static,
 ) -> RigJob<T> {
     let revision = view3d.next_revision();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -485,7 +506,7 @@ pub fn prepare_rig_with<T: Send + 'static>(
         move |tx, flag| {
             let _finished = finished;
             let flag = flag.flag();
-            let result = work(flag).and_then(|(rig, warnings, rest)| {
+            let result = work(flag).and_then(|(rig, warnings, takes, rest)| {
                 if flag.load(Ordering::Relaxed) {
                     return Err(ViewError::Cancelled);
                 }
@@ -496,6 +517,7 @@ pub fn prepare_rig_with<T: Send + 'static>(
                         rest: geometry,
                         meshes,
                         warnings,
+                        takes,
                     }),
                     rest,
                 ))
@@ -919,6 +941,11 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
                 );
             }
         }),
+        PoseAction::ChooseTake(source, take) => {
+            takes::choose(app, source, take);
+            Ok(())
+        }
+        PoseAction::ApplyTake => takes::start(&mut app.view3d),
     };
     if let Err(e) = result {
         let text = app.lang.view_error(&e);
@@ -972,6 +999,7 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     });
     edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
+    takes::poll(app);
     sync_modified(app);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();
@@ -990,7 +1018,13 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
         }
         app.notify(kind, Source::Pose, m);
     }
-    if app.view3d.pose.is_loading() {
+    let taking = app
+        .view3d
+        .pose
+        .session
+        .as_ref()
+        .is_some_and(|s| s.takes.is_running());
+    if app.view3d.pose.is_loading() || taking {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     let focus = installed || app.view3d.pose.focus;

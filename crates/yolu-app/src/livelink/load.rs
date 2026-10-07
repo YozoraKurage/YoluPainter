@@ -11,6 +11,8 @@
 //! - 元の絵（Color の流し込み先のスロットの絵）が sRGB の PSD なら、PSD の取り込みと同じ写しの読み（`crate::psd::read_copy`。同じ
 //!   スタックの大きさのスレッドで）でレイヤーのまま読む。取り込みが断った PSD（予算・形式）は、今までどおり平らにして読み、断った理由を返す。リニアの PSD は、レイヤーごとに sRGB へ直すと
 //!   合成が変わるので、平らにしてから直す。ほかのスロットの PSD はいつも平ら（受けた見た目の絵）。
+//! - テイク（FBX の中のアニメ）を持つ FBX は、並べた Rig のどこに入ったか（骨の範囲・倍率・メッシュの対応）を添える（ポーズの欄のテイク。
+//!   `view3d::pose::takes`）。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,7 @@ use super::images::{fit_within, is_psd, linear_to_srgb, read_picture, Picture, P
 use super::layout::{resolve, unity_root, Layout, PartLayout, PathMiss};
 use crate::look::link::{MAX_RECEIVED_IMAGE_BYTES, MAX_RECEIVED_SIDE, SHOWN};
 use crate::view3d::model::ViewError;
+use crate::view3d::pose::takes::TakeSource;
 
 /// 元の絵の画素のバイトの合計の上限（1 つの頼みで読む分。平らな絵の画素と、レイヤーのまま入れる PSD の文書の画素の合計）。
 pub const MAX_ORIGINAL_BYTES: u64 = 512 << 20;
@@ -58,6 +61,8 @@ pub struct LoadedFbx {
     /// ファイルの単位（1 単位が何メートルか）。
     pub unit_meters: f64,
     pub warnings: Vec<String>,
+    /// テイクの一覧（無ければ空）。
+    pub takes: yolu_model::Takes,
 }
 
 /// ファイルの身元（更新時刻と大きさ。同じなら中身が同じとみなす）。
@@ -174,6 +179,8 @@ pub struct Opened {
     pub problems: Vec<Problem>,
     /// 何も使えるレンダラーが無い（返事は断り）。
     pub nothing: bool,
+    /// テイクを持つ FBX が、並べた Rig のどこに入ったか（Rig を組み直したときだけ）。
+    pub takes: Vec<TakeSource>,
 }
 
 /// Unity の鍵を、マテリアルの鍵にする: アセットの `guid:<32 桁>/fileid:<数>` は識別子つき、マテリアルの無いサブメッシュの `none` は
@@ -264,6 +271,7 @@ fn load_one(path: &str, cancel: &AtomicBool) -> Result<LoadedFbx, ViewError> {
         unit_meters: loaded.report.file_unit_meters,
         warnings: loaded.report.warnings,
         rig: loaded.rig,
+        takes: loaded.takes,
     })
 }
 
@@ -440,6 +448,7 @@ pub fn run(
     let mut warnings = Vec::new();
     let mut rig = None;
     let mut layout = Layout::default();
+    let mut takes = Vec::new();
     if !inputs.keep_rig && !nothing {
         let several = parts.len() > 1;
         let merge_parts: Vec<MergePart<'_>> = parts
@@ -479,7 +488,24 @@ pub fn run(
                 unity_root: range.bones.start + local_root,
             });
             warnings.extend(f.warnings.iter().cloned());
-            let _ = k;
+            if !f.takes.is_empty() {
+                // FBX のメッシュ → 並べた Rig のメッシュ（入れたメッシュは選んだ順に並ぶ。BlendShape を入れない部分は重みを当てない）
+                let mut meshes = vec![None; f.rig.meshes().len()];
+                if model.import.import_blend_shapes {
+                    for (j, pick) in merge_parts[k].meshes.iter().enumerate() {
+                        if let Some(slot) = meshes.get_mut(pick.mesh) {
+                            *slot = Some(range.meshes.start + j);
+                        }
+                    }
+                }
+                takes.push(TakeSource {
+                    path: f.path.clone().into(),
+                    takes: f.takes.clone(),
+                    bones: range.bones.clone(),
+                    scale: merge_parts[k].scale,
+                    meshes,
+                });
+            }
         }
         layout.renderers = renderer_slot
             .iter()
@@ -503,6 +529,7 @@ pub fn run(
             slot_cache,
             problems,
             nothing,
+            takes,
         },
     ))
 }

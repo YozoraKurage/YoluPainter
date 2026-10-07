@@ -17,6 +17,7 @@ mod overlap_uv_ui;
 mod parity_review;
 mod parity_views;
 mod pose;
+mod pose_takes;
 mod pose_ui;
 mod sets;
 mod view3d;

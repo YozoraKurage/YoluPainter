@@ -26,6 +26,7 @@ mod no_instruction_text;
 mod notice_rules;
 mod overlap_uv;
 mod pose_saved;
+mod pose_takes;
 mod procedural;
 mod recovery;
 mod save_background;

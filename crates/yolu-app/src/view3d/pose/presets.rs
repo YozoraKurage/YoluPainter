@@ -47,6 +47,8 @@ pub enum SkipReason {
     ShapeNotFound,
     /// ファイルのポーズの BlendShape に、メッシュの名前と名前の組が合うものが複数ある。
     ShapeAmbiguous,
+    /// ファイルのポーズの欄のテイクが、モデルに無い。
+    TakeNotFound,
 }
 
 /// 飛ばした項目。
@@ -87,6 +89,7 @@ impl Skipped {
                 "同じ名前の BlendShape が複数あります",
                 "Several BlendShapes share the name",
             ),
+            SkipReason::TakeNotFound => lang.pick("テイクがありません", "Take not found"),
         };
         format!("{}: {} ({reason})", self.preset, self.path)
     }

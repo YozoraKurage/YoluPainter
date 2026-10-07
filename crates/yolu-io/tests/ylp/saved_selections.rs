@@ -645,6 +645,10 @@ fn sample_pose() -> yolu_io::pose::StoredPose {
             name: "Smile".into(),
             weight: 40.5,
         }],
+        take: Some(yolu_io::pose::StoredTake {
+            name: "歩き".into(),
+            frame: -3,
+        }),
     }
 }
 
@@ -721,6 +725,23 @@ fn a_bad_pose_is_refused_whole_and_the_entry_stays_as_bytes() {
             text.replace("[\"腰\",\"左足\"]", "[\"腰\",\"背骨\",\"胸\"]"),
         ),
         ("範囲外", text.replace("0.1,0.2,0.3", "1e30,0,0")),
+        (
+            "テイクのフレームが整数でない",
+            text.replace("\"frame\":-3", "\"frame\":1.5"),
+        ),
+        (
+            "テイクの名前が空",
+            text.replace("\"name\":\"歩き\"", "\"name\":\"\""),
+        ),
+        (
+            "テイクのフレームが範囲外",
+            text.replace("\"frame\":-3", "\"frame\":2000000000"),
+        ),
+        (
+            "テイクがオブジェクトでない",
+            text.replace("\"take\":{", "\"take\":[{")
+                .replace("-3}}", "-3}]}"),
+        ),
     ] {
         let q = with(&broken);
         assert!(q.pose().is_err(), "{what}: {broken}");
@@ -765,4 +786,29 @@ fn a_bad_pose_is_refused_whole_and_the_entry_stays_as_bytes() {
         })
         .collect();
     assert!(project().with_pose(Some(&bad)).is_err());
+    let mut bad = sample_pose();
+    bad.take.as_mut().unwrap().frame = yolu_io::pose::MAX_FRAME + 1;
+    assert!(project().with_pose(Some(&bad)).is_err());
+}
+
+#[test]
+fn a_pose_without_the_take_key_reads_as_no_take_and_only_a_take_is_not_rest() {
+    // 0.4.x が書いた pose.json（take のキーが無い）
+    let mut old = sample_pose();
+    old.take = None;
+    let p = project().with_pose(Some(&old)).unwrap();
+    let bytes = p.original_archive().entries()["pose.json"].bytes().unwrap();
+    assert!(!std::str::from_utf8(&bytes).unwrap().contains("take"));
+    assert_eq!(reopened(&p).pose().unwrap().unwrap(), old);
+    // テイクだけを選んだポーズは休みの形ではない（エントリを書く）
+    let only = yolu_io::pose::StoredPose {
+        take: Some(yolu_io::pose::StoredTake {
+            name: "Take 001".into(),
+            frame: 0,
+        }),
+        ..Default::default()
+    };
+    assert!(!only.is_rest());
+    let p = project().with_pose(Some(&only)).unwrap();
+    assert_eq!(reopened(&p).pose().unwrap().unwrap(), only);
 }

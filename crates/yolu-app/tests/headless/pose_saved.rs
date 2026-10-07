@@ -269,6 +269,7 @@ fn headless_a_model_that_does_not_fit_skips_with_reasons_and_leaves_the_pose_alo
             scale: [1.0; 3],
         }],
         shapes: Vec::new(),
+        take: None,
     };
     let project = on_disk(&path);
     std::fs::write(

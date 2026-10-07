@@ -1327,6 +1327,8 @@ impl Lang {
             ModelError::NoMesh => "No triangle mesh".into(),
             ModelError::Cancelled => "Cancelled".into(),
             ModelError::Rig(e) => self.rig_error(e),
+            ModelError::Changed => "The file has changed since it was loaded".into(),
+            ModelError::NoTake => "The take is not in the file".into(),
         }
     }
 }
@@ -2123,6 +2125,8 @@ mod tests {
             ViewError::Model(ModelError::NoMesh),
             ViewError::Model(ModelError::Cancelled),
             ViewError::Model(ModelError::Rig(rig)),
+            ViewError::Model(ModelError::Changed),
+            ViewError::Model(ModelError::NoTake),
         ];
         for e in [
             GeometryError::NonFinite,

@@ -883,6 +883,7 @@ fn with_remembered() -> Project {
             scale: [1.0; 3],
         }],
         shapes: Vec::new(),
+        take: None,
     };
     base.with_selection(SET_A, Some(&selection(20)))
         .unwrap()

@@ -5,13 +5,15 @@
 //! - 戻すのは「休みの形 + 保存した差」: 合わない項目（名前の道に合う骨が無い・同じ名前が並ぶ・メッシュと BlendShape の名前の組が決まらない）は
 //!   飛ばして理由を残し（ポーズの欄の知らせ）、1 つも合わなければポーズを変えない。戻したポーズは取り消しの段にも「変更あり」の印にもならない
 //!   （開いた直後の状態）。
+//! - 欄で選んでいるテイクとフレーム（`takes`）も同じエントリに残し（最初のテイクの始まりのままなら書かない）、開いたときに選びを戻す。
+//!   名前の合うテイクが無ければ、選びは最初のテイクのままにして理由を残す。
 //! - 保存するのは、プロジェクトのモデル（FBX）のポーズだけ。Live Link で Unity から受けるポーズは頂点の位置（骨ではない）で、Live Link のモデルは
 //!   ポーズのセッションを持たないので、保存しない。Live Link のモデルが出ている間（セッションが無い間）の保存は、ファイルのポーズに触れない
 //!   （消さず、受けたポーズで上書きもしない）。保存済みのポーズは、そのプロジェクトのモデルを読み直したときに戻る。
 
 use yolu_core::glam::{Quat, Vec3};
 use yolu_core::skin::{Pose, Rig};
-use yolu_io::pose::{StoredBone, StoredPose, StoredShape};
+use yolu_io::pose::{StoredBone, StoredPose, StoredShape, StoredTake};
 
 use super::presets::store::PoseEntry;
 use super::presets::{self, Built, SkipReason, Skipped};
@@ -149,14 +151,27 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
     let label = lang.pick("ファイルのポーズ", "Pose in file");
     let built = pose_from_stored(&session.rig, &stored, label);
     let total = stored.bones.len() + stored.shapes.len();
-    let skipped = built.skipped.len();
     let nothing_fits = built.applied == 0 && total > 0;
     let mut result = Ok(());
     if !nothing_fits {
         result = super::restore_pose(&mut app.view3d, built.pose);
     }
+    let mut notes = built.skipped;
     if let Some(s) = app.view3d.pose.session.as_mut() {
-        s.preset_notes = built.skipped;
+        // 欄のテイクの選び（「変更あり」にも取り消しにも数えない: 開いた直後の状態）
+        if let Some(t) = &stored.take {
+            if !s.takes.choose_by_name(&t.name, t.frame) {
+                notes.push(Skipped {
+                    preset: label.to_owned(),
+                    path: t.name.clone(),
+                    reason: SkipReason::TakeNotFound,
+                });
+            }
+        }
+    }
+    let skipped = notes.len();
+    if let Some(s) = app.view3d.pose.session.as_mut() {
+        s.preset_notes = notes;
     }
     Some(match result {
         Err(e) => lang.with_reason(
@@ -197,11 +212,24 @@ pub fn capture(app: &AppState) -> (PoseCapture, Vec<String>) {
     let Some(session) = app.view3d.pose.session.as_ref() else {
         return (PoseCapture::Keep, Vec::new());
     };
-    let (stored, unsaved) = stored_from_pose(&session.rig, session.pose());
+    let (mut stored, unsaved) = stored_from_pose(&session.rig, session.pose());
+    stored.take = stored_take(&session.takes);
     (
         PoseCapture::Write((!stored.is_rest()).then_some(stored)),
         unsaved,
     )
+}
+
+/// 欄で選んでいるテイクとフレーム（最初のテイクの始まりのまま・名前が決まりに合わないなら None）。
+fn stored_take(takes: &super::takes::TakeState) -> Option<StoredTake> {
+    if takes.is_default_choice() {
+        return None;
+    }
+    let take = takes.chosen_take()?;
+    savable_name(&take.name).then(|| StoredTake {
+        name: take.name.clone(),
+        frame: takes.frame(),
+    })
 }
 
 /// 保存できなかった項目の知らせ（無ければ空。先頭に空白を置いて、保存の知らせの文へ続ける）。

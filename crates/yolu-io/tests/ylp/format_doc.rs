@@ -258,6 +258,10 @@ fn every_entry_the_writer_makes_has_a_form_in_the_spec() {
             name: "Smile".into(),
             weight: 10.0,
         }],
+        take: Some(pose::StoredTake {
+            name: "Take 001".into(),
+            frame: 12,
+        }),
     };
     project = project.with_pose(Some(&pose)).unwrap();
     project = project.with_view_model(Some("model.fbx")).unwrap();

@@ -11,11 +11,13 @@
 //!   {
 //!     "format": 1,
 //!     "bones": [ { "path": ["Hips", "Spine"], "translation": [0.0, 0.01, 0.0], "rotation": [0.0, 0.0, 0.1, 0.99], "scale": [1.0, 1.0, 1.0] } ],
-//!     "shapes": [ { "mesh": "Face", "name": "Smile", "weight": 40.0 } ]
+//!     "shapes": [ { "mesh": "Face", "name": "Smile", "weight": 40.0 } ],
+//!     "take": { "name": "Take 001", "frame": 12 }
 //!   }
 //!   ```
 //!   `translation` は親の空間での足し算の差、`rotation` は骨のローカルの差（単位クォータニオン x,y,z,w。今の回転 = 休みの回転 × 差）、
-//!   `scale` は休みの大きさとの比。`weight` は Unity と同じ 0〜100 の目盛り。知らないキーは読み飛ばし、`format` が 1 でないもの
+//!   `scale` は休みの大きさとの比。`weight` は Unity と同じ 0〜100 の目盛り。`take` は欄で選んでいるモデルのテイクの名前とフレーム
+//!   （無ければ書かない。古い読み手は知らないキーとして読み飛ばす）。知らないキーは読み飛ばし、`format` が 1 でないもの
 //!   （新しい版）は読まずに断る。
 //! - 読み手は範囲の外・数でない値・単位でない回転・骨や BlendShape の重なり・数の上限を超えたものを、エントリごと断る（一部だけを
 //!   読まない）。断ったエントリはファイルにバイト列のまま残り、ポーズを書き換えるまで保つ。
@@ -42,6 +44,8 @@ pub const MAX_NAME_CHARS: usize = 256;
 pub const MAX_MAGNITUDE: f32 = 1.0e6;
 /// BlendShape の重みの絶対値の上限（Unity の目盛りで 100 が普通。外れた値は断る）。
 pub const MAX_WEIGHT: f32 = 1.0e4;
+/// テイクのフレームの絶対値の上限。
+pub const MAX_FRAME: i64 = 1_000_000_000;
 /// 回転の差の長さの許す幅（単位クォータニオン。読んだあとで正規化する）。
 const QUAT_TOLERANCE: f32 = 0.01;
 
@@ -64,17 +68,25 @@ pub struct StoredShape {
     pub weight: f32,
 }
 
+/// 欄で選んでいるテイクとフレーム。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredTake {
+    pub name: String,
+    pub frame: i64,
+}
+
 /// 保存するポーズ。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StoredPose {
     pub bones: Vec<StoredBone>,
     pub shapes: Vec<StoredShape>,
+    pub take: Option<StoredTake>,
 }
 
 impl StoredPose {
-    /// 休みの形と同じ（何も持たない）か。
+    /// 休みの形と同じで、テイクも選んでいない（何も持たない）か。
     pub fn is_rest(&self) -> bool {
-        self.bones.is_empty() && self.shapes.is_empty()
+        self.bones.is_empty() && self.shapes.is_empty() && self.take.is_none()
     }
 }
 
@@ -130,6 +142,13 @@ fn validate(pose: &StoredPose) -> Result<()> {
         check(
             s.weight.is_finite() && s.weight.abs() <= MAX_WEIGHT,
             "ポーズの BlendShape の重みが範囲外です",
+        )?;
+    }
+    if let Some(t) = &pose.take {
+        check(name_ok(&t.name), "ポーズのテイクの名前が不正です")?;
+        check(
+            t.frame.abs() <= MAX_FRAME,
+            "ポーズのテイクのフレームが範囲外です",
         )?;
     }
     Ok(())
@@ -208,6 +227,22 @@ pub fn read(bytes: &[u8]) -> Result<StoredPose> {
             scale: floats(&b["scale"], "scale")?,
         });
     }
+    pose.take = match root.get("take") {
+        None | Some(Value::Null) => None,
+        Some(t) => {
+            check(
+                t.is_object(),
+                "pose.json の take がオブジェクトではありません",
+            )?;
+            let frame = t.get("frame").and_then(Value::as_i64).ok_or_else(|| {
+                crate::Error::InvalidData("pose.json の take の frame が整数ではありません".into())
+            })?;
+            Some(StoredTake {
+                name: text(t, "name")?.to_owned(),
+                frame,
+            })
+        }
+    };
     for s in &shapes {
         let [weight] = floats::<1>(
             &serde_json::json!([s.get("weight").cloned().unwrap_or(Value::Null)]),
@@ -284,7 +319,15 @@ pub fn write(pose: &StoredPose) -> Result<Vec<u8>> {
             number(s.weight)
         );
     }
-    out += "]}";
+    out += "]";
+    if let Some(t) = &pose.take {
+        out += &format!(
+            ",\"take\":{{\"name\":{},\"frame\":{}}}",
+            quote(&t.name),
+            t.frame
+        );
+    }
+    out += "}";
     check_budget(out.len() <= MAX_BYTES, "pose.json が大きすぎます")?;
     Ok(out.into_bytes())
 }

@@ -953,7 +953,10 @@ fn opening_the_actions_panel_puts_it_in_the_dock_and_it_is_written_and_reset_awa
     let leaf = dock.leaf(actions.node_path()).unwrap();
     assert!(leaf.tabs.contains(&Tab::Layers));
     assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions, "前に出る");
-    assert!(h.state().state.ui.dock_ops.is_empty(), "頼みは 1 回で使い切る");
+    assert!(
+        h.state().state.ui.dock_ops.is_empty(),
+        "頼みは 1 回で使い切る"
+    );
     h.state_mut().on_exit();
     drop(h);
     let mut h = app_in(&dir);

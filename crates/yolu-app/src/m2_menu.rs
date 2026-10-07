@@ -90,6 +90,8 @@ pub enum Popup {
     GroupContext,
     /// 「＋」の窓の行の右クリック（対象は `toolset.catalog.context`）。
     CatalogContext,
+    /// ポーズの欄のテイク（FBX の中のアニメ）。
+    Take,
 }
 
 fn tips(
@@ -176,6 +178,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         .collect(),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
+        Popup::Take => crate::panels::pose::take_entries(app),
         Popup::NormalEdges => {
             let current = app.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]

@@ -1,6 +1,7 @@
 //! ポーズの欄（ドックのタブ「ポーズ」。ほかのタブと同じく動かせる・別の窓に出せる。スキンのあるモデルを読んでいるときだけ中身が出る）:
-//! 頭に操作のボタン（ポーズのモード・FBX を開く・ポーズを戻す・取り消し・やり直し）、その下は縦にスクロールする 4 つの節。
+//! 頭に操作のボタン（ポーズのモード・FBX を開く・ポーズを戻す・取り消し・やり直し）、その下は縦にスクロールする節。
 //! 「ボーン」はボーンの木（開閉・選ぶ）と、選んだボーンのインスペクター（位置・回転・大きさを数値で直す・項目ごとに戻す）、
+//! 「テイク」は FBX の中のテイクとフレームを選んでポーズにする（テイクのあるモデルだけ）、
 //! 「ポーズのプリセット」は今のポーズに名前を付けて残す・当てる・左右を反転して当てる・上書き・名前を変える・消す、
 //! 「面を隠す」はボーンの影響で面を隠す項目と隠し方のプリセット、「BlendShape」はスライダー（メッシュごと・1 つずつ戻す）。
 //! 節の開閉は `AppState::sections` が覚える。文言は名前と状態だけ（操作の説明はツールチップ）。
@@ -8,6 +9,9 @@
 mod hide_ui;
 mod inspector;
 mod preset_ui;
+mod take_ui;
+
+pub use take_ui::entries as take_entries;
 
 use egui::{pos2, vec2, Rect, Sense, Ui};
 use egui_dock::DockState;
@@ -268,7 +272,7 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     }
 }
 
-/// 節の並び（読み込み中の知らせ・名前と知らせ・ボーン・ポーズのプリセット・面を隠す・BlendShape）。木がホイールを使ったら true。
+/// 節の並び（読み込み中の知らせ・名前と知らせ・ボーン・テイク・ポーズのプリセット・面を隠す・BlendShape）。木がホイールを使ったら true。
 fn content(
     ui: &mut Ui,
     app: &mut AppState,
@@ -340,6 +344,28 @@ fn content(
         wheel_used = bones_section(ui, app, rows, body);
     }
     rows.indent = 0.0;
+
+    let has_takes = app
+        .view3d
+        .pose
+        .session
+        .as_ref()
+        .is_some_and(|s| !s.takes.is_empty());
+    if has_takes {
+        let (open, _) = super::properties::section(
+            ui,
+            app,
+            rows,
+            "pose.takes",
+            lang.pick("テイク", "Takes"),
+            "video_clip",
+            None,
+        );
+        if open {
+            take_ui::show(ui, app, rows);
+        }
+        rows.indent = 0.0;
+    }
 
     let (open, _) = super::properties::section(
         ui,

@@ -8,10 +8,13 @@
 //!   （コントロールポイント）から分けた頂点へ写す。
 //! - 大きすぎる・壊れたファイルは `ModelLimits` で断る（ファイルの大きさ・パーサーのメモリ・ノードの深さ・スキンの予算）。
 //! - 読み込みは `LoadControl` で途中で取り消せ、進み具合を知らせる（取り消すと途中の物は捨て、何も返さない。区切りは `LoadControl` の説明）。
+//! - テイク（アニメのスタック）は名前と長さの一覧だけを読み込みで取り、ポーズはファイルを読み直して求める（`takes`）。
 
 pub mod fbx;
+pub mod takes;
 
 pub use fbx::{
     load_fbx, load_fbx_bytes, load_fbx_bytes_with, load_fbx_with, LoadControl, LoadReport,
     LoadedModel, ModelError, ModelLimits,
 };
+pub use takes::{evaluate_take, evaluate_take_bytes, evaluate_take_with, Take, TakePose, Takes};

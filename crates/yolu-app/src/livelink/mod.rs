@@ -822,9 +822,9 @@ impl LiveLink {
             let empty = Arc::new(Mutex::new(None));
             let slot = empty.clone();
             let job = pose::prepare_rig_with(&mut state.view3d, move |cancel| {
-                let (rig, warnings, opened) = load::run(inputs, cancel)?;
+                let (rig, warnings, mut opened) = load::run(inputs, cancel)?;
                 match rig {
-                    Some(rig) => Ok((rig, warnings, opened)),
+                    Some(rig) => Ok((rig, warnings, std::mem::take(&mut opened.takes), opened)),
                     None => {
                         *slot.lock().expect("ロックを持ったまま落ちない") = Some(opened);
                         Err(ViewError::NoTriangles)

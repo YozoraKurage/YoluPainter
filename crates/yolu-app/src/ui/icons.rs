@@ -124,6 +124,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "record",
     "stop",
     "play",
+    "video_clip",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];

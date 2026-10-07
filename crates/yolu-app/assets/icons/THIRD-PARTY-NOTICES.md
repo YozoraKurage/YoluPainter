@@ -112,6 +112,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/select-rectangle` | phosphor | `selection` | regular |
 | `tools/select-rectangle_selected` | phosphor | `selection` | bold |
 | `tune` | fluent | `options` | regular |
+| `video_clip` | fluent | `video_clip` | regular |
 | `view_in_ar` | fluent | `cube` | regular |
 | `vignette` | fluent | `image_circle` | regular |
 | `visibility` | fluent | `eye` | regular |

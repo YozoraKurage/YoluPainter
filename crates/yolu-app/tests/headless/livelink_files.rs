@@ -1463,3 +1463,76 @@ fn headless_a_set_reopened_from_a_ylp_counts_as_touched_and_reports_a_later_chan
     );
     assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), id);
 }
+
+/// FBX を 2 つ並べた相手で、テイクを持つのが 2 つ目だけのとき: テイクの一覧はその FBX のもの、当てるのはその FBX の
+/// 骨と BlendShape だけ（1 つ目の骨は今のまま）。骨の移動には FBX の倍率が掛かる。
+#[test]
+fn headless_a_take_moves_only_the_bones_of_the_fbx_that_has_it() {
+    let mut h = Headless::new("takes");
+    let request = h.arm("r1", KEY);
+    let second = h.ex.write_scene("takes.fbx", &fbx_ascii::arm_takes_scene());
+    let mut req = request.clone();
+    req["models"].as_array_mut().unwrap().push(json!({
+        "id": 7, "fbx": slash(&second), "guid": "abababababababababababababababab",
+        "import": { "global_scale": 2.0, "import_blend_shapes": true }
+    }));
+    req["renderers"].as_array_mut().unwrap().push(json!({
+        "path": "Second/ArmMesh", "model": 7, "node": "ArmMesh", "materials": [0, 1]
+    }));
+    h.ex.put(&req);
+    let reply = h.reply();
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    let rig = h.session_rig();
+    let takes = &h.state.view3d.pose.session.as_ref().unwrap().takes;
+    assert_eq!(takes.sources.len(), 1, "テイクを持つのは 2 つ目だけ");
+    assert_eq!(
+        takes.label(0, 1),
+        "Raise",
+        "テイクを持つ FBX が 1 つなら、ファイルの名前は添えない"
+    );
+    let part = takes.sources[0].bones.clone();
+    assert_eq!(rig.bones()[part.start].name, "7:takes");
+    let before = h.pose();
+    h.state
+        .apply(Action::Pose(pose::PoseAction::ChooseTake(0, 1)));
+    pose::takes::set_frame(&mut h.state, 50);
+    h.state.apply(Action::Pose(pose::PoseAction::ApplyTake));
+    pose::takes::wait(&mut h.state);
+    let after = h.pose();
+    // 1 つ目の FBX の骨は今のまま
+    assert_eq!(after.locals[..part.start], before.locals[..part.start]);
+    // 2 つ目の Upper の移動は、テイクの値（y = 1.2）の倍率 2
+    let upper = (part.clone())
+        .find(|&b| rig.bones()[b].name == "Upper")
+        .unwrap();
+    assert!(
+        (after.locals[upper].translation - Vec3::new(0.0, 2.4, 0.0)).length() < 1e-5,
+        "{}",
+        after.locals[upper].translation
+    );
+    // Wave は 2 つ目の腕の BlendShape（Bend）だけを動かす
+    h.state
+        .apply(Action::Pose(pose::PoseAction::ChooseTake(0, 0)));
+    pose::takes::set_frame(&mut h.state, 15);
+    h.state.apply(Action::Pose(pose::PoseAction::ApplyTake));
+    pose::takes::wait(&mut h.state);
+    let waved = h.pose();
+    let second_arm = rig
+        .meshes()
+        .iter()
+        .enumerate()
+        .rfind(|(_, m)| m.mesh.name == "ArmMesh")
+        .map(|(i, _)| i)
+        .unwrap();
+    let bend = rig.meshes()[second_arm]
+        .blend_shapes
+        .iter()
+        .position(|s| s.name == "Bend")
+        .unwrap();
+    assert!((waved.blend_weights[second_arm][bend] - 50.0).abs() < 1e-3);
+    for (m, w) in waved.blend_weights.iter().enumerate() {
+        if m != second_arm {
+            assert_eq!(*w, after.blend_weights[m], "メッシュ {m}");
+        }
+    }
+}
