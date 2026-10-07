@@ -57,7 +57,7 @@ const fn tool_icon(key: &'static str, normal: &'static str, selected: &'static s
 }
 
 /// 選べるアイコン（ツールの表のアイコンと、ブラシのツールに合う形）。
-pub static ICONS: [IconChoice; 28] = [
+pub static ICONS: [IconChoice; 29] = [
     tool_icon("brush", "tools/brush", "tools/brush_selected"),
     tool_icon("eraser", "tools/eraser", "tools/eraser_selected"),
     tool_icon("fill", "tools/fill", "tools/fill_selected"),
@@ -104,6 +104,7 @@ pub static ICONS: [IconChoice; 28] = [
     tool_icon("move", "tools/move", "tools/move_selected"),
     tool_icon("liquify", "tools/liquify", "tools/liquify_selected"),
     tool_icon("path", "tools/path", "tools/path_selected"),
+    tool_icon("text", "tools/text", "tools/text_selected"),
     tool_icon("stylus", "stylus", "stylus"),
     tool_icon("paint-brush", "paint_brush", "paint_brush"),
     tool_icon("ink-stroke", "ink_stroke", "ink_stroke"),
@@ -1013,6 +1014,16 @@ mod tests {
                 .iter()
                 .map(|b| (BrushKey::Builtin(b.id), b.group)),
         )
+    }
+
+    /// どのツールにも、選べるアイコンの一覧に自分の id のアイコンがある（無いと、ツールの列に代わりのブラシのアイコンが出る）。
+    #[test]
+    fn every_tool_has_its_own_icon_in_the_choices() {
+        for tool in Tool::ALL {
+            let choice =
+                icon(tool.id()).unwrap_or_else(|| panic!("{tool:?}: 選べるアイコンに無い"));
+            assert_eq!(tool_default_icon(tool), *choice, "{tool:?}");
+        }
     }
 
     #[test]
