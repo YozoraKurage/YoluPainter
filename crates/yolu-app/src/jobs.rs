@@ -208,6 +208,7 @@ pub const JOBS: &[JobSpec] = &[
     crate::library::JOB,
     crate::shelf::JOB,
     crate::view3d::pose::JOB,
+    crate::uv_wireframe::overlap::JOB,
 ];
 
 /// 動いている間は描き直し続ける仕事が動いている。

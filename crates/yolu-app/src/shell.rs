@@ -230,6 +230,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         4 => crate::fx::menu::menu_entries(app),
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
+            crate::uv_wireframe::overlap::menu_entry(app),
             Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
             Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
@@ -454,6 +455,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         PopupKind::View3dShading => crate::view3d::display::entries(app),
         PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
         PopupKind::LiveLink => link_entries(app),
+        PopupKind::BakeIsland {
+            set, island, map, ..
+        } => crate::bake::overlap::menu_entries(app, set, island, map),
     }
 }
 

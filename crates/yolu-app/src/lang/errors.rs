@@ -598,6 +598,27 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "手動ID色が別のモデルに属しています" => {
             "The manual ID colors belong to another model"
         }
+        "手で選んだ島が別のモデルに属しています" => {
+            "The chosen islands belong to another model"
+        }
+        "手で選んだ島の番号がモデルにありません" => {
+            "A chosen island is not in the model"
+        }
+        "手で選んだ島の数か番号が範囲外です" => {
+            "Too many chosen islands, or an island out of range"
+        }
+        "同じ島が「焼かない」と「優先する」の両方にあります" => {
+            "The same island is both not baked and preferred"
+        }
+        "手で選んだ島のモデル指紋が不正です" => {
+            "The model fingerprint of the chosen islands is invalid"
+        }
+        "ベイクの優先の値が範囲外です" => {
+            "The overlapping UV priority is out of range"
+        }
+        "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません" => {
+            "UVs outside 0–1 (tiled or UDIM UVs) cannot be baked"
+        }
         "マスクへのストロークはチャンネルの合成を読めない" => {
             "A mask stroke cannot read the channel composite"
         }
@@ -945,6 +966,9 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Effects (filters, images, gradients) can only be placed on standard channels"
         }
         "塗りつぶしのグラデーションのチャンネル" => "Fill gradient channel",
+        "ベイクの優先の復元は読み込み直後だけ" => {
+            "Bake priority can only be restored right after loading"
+        }
         "画像の無いチャンネル" => "Channel without an image",
         "異方性を切る塗りつぶしの画像のチャンネル" => {
             "Fill image channel for turning anisotropic filtering off"

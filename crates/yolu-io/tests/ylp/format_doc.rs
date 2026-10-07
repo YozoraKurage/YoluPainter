@@ -2,10 +2,10 @@
 use yolu_core::{look::MaterialLook, Document, SelectionMask};
 use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
-    SetSpec, WriterInfo, ADJUST_VERSION, EFFECTS_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION,
-    MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES,
-    ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    SetSpec, WriterInfo, ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MAX_FORMAT,
+    MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION,
+    RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES,
+    SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 
 const SPEC: &str = include_str!("../../../../docs/YLP_FORMAT.md");
@@ -90,6 +90,7 @@ fn every_version_is_in_the_spec() {
         ("EFFECTS_VERSION", EFFECTS_VERSION),
         ("POINT_GRADIENT_VERSION", POINT_GRADIENT_VERSION),
         ("SEAMS_VERSION", SEAMS_VERSION),
+        ("BAKE_PRIORITY_VERSION", BAKE_PRIORITY_VERSION),
         ("MAX_NATIVE_VERSION", MAX_NATIVE_VERSION),
         ("SPLIT_VERSION", SPLIT_VERSION),
         ("FORMAT_VERSION", mesh_map::FORMAT_VERSION),
@@ -128,7 +129,7 @@ fn every_version_is_in_the_spec() {
     );
     assert!(summary.contains("YOLUPAINTER-YLP-1`〜`4"), "外側の版");
     let ranges = format!(
-        "| `YLP-1`〜`4` | 1〜{MAX_FORMAT} | 1〜{POINT_GRADIENT_VERSION}・{SEAMS_VERSION} |"
+        "| `YLP-1`〜`4` | 1〜{MAX_FORMAT} | 1〜{POINT_GRADIENT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION} |"
     );
     assert!(
         summary.contains(&ranges),
@@ -143,7 +144,7 @@ fn every_version_is_in_the_spec() {
         );
     }
     let natives = section("### 正本の版");
-    for v in (1..=POINT_GRADIENT_VERSION).chain([SEAMS_VERSION]) {
+    for v in (1..=POINT_GRADIENT_VERSION).chain([SEAMS_VERSION, BAKE_PRIORITY_VERSION]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),
             "正本の版 {v} の行が無い"

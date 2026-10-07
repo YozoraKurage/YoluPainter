@@ -7,6 +7,7 @@
 mod brush_sources;
 mod material;
 mod mesh_maps;
+mod overlap_priority;
 mod stencil;
 mod surface_path_rebind;
 mod surface_projection;

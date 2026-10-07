@@ -255,6 +255,13 @@ pub use ids::{
 };
 mod surface;
 pub use surface::reconstruct_normals;
+mod overlap;
+mod priority;
+pub use overlap::{uv_overlap, UvOverlap};
+pub use priority::{
+    bake_islands, islands_of, MeshOverlapList, MeshOverlapPriority, MeshOverlapRule,
+    MAX_OVERLAP_ISLANDS,
+};
 mod bake;
 mod curvature;
 mod plan;

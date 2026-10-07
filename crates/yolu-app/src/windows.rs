@@ -261,6 +261,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::update::window::show(ctx, app);
     job_card(ctx, app);
     saving_before_close(ctx, app);
+    crate::bake::overlap::poll_menu(ctx, app);
     app.release_idle_bake_input();
 }
 

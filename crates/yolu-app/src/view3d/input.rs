@@ -91,6 +91,10 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
+    // ベイクの窓で島を選んでいる間は、押した面の島を選ぶだけ（道具を使わない）
+    if crate::bake::overlap::press(app, crate::region::tools::Where::Surface(rect), at) {
+        return;
+    }
     match app.tool.def().surface {
         // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描く道具の一時的なスポイトは 2D だけ）
         Surface::Pick => {
@@ -261,6 +265,8 @@ fn begin(
                 app.color.remember();
             }
             app.modified = true;
+            // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
+            crate::uv_wireframe::overlap::note_surface(app, rect, at);
         }
         Err(e) => {
             app.doc.cancel_stroke(stroke);
@@ -297,6 +303,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
             if let Some(outcome) = surface.symmetry_note() {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
+            crate::uv_wireframe::overlap::note_surface(app, rect, at);
         }
         Err(e) => abandon(app, &e),
     }
@@ -585,6 +592,14 @@ fn pen_sample(
                     if let Some(nav) = nav_of(button, &frame.modifiers, frame.space) {
                         nav_press(app, nav, button, p, &frame.modifiers, frame.space);
                     }
+                    // サイドボタン（右ボタン）を動かさずに離したら、ポリゴン塗りつぶしの島のメニュー
+                    if s.barrel && !frame.modifiers.any() && !frame.space {
+                        crate::bake::overlap::menu_press(
+                            app,
+                            crate::region::tools::Where::Surface(rect),
+                            p,
+                        );
+                    }
                 }
                 PressKind::Tool => {
                     if crate::fillfx::gizmo::press(
@@ -639,6 +654,12 @@ fn pen_sample(
                 if let Some((_, button)) = app.view3d.input.nav {
                     nav_release(app, rect, p, button);
                 }
+                crate::bake::overlap::menu_release(
+                    app,
+                    ui.ctx(),
+                    crate::region::tools::Where::Surface(rect),
+                    p,
+                );
             }
             PressKind::Tool => {
                 if app.view3d.input.stroke == Some(source) {
@@ -779,6 +800,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     }
                     if let Some(nav) = nav_of(*button, m, space) {
                         nav_press(app, nav, *button, pos, m, space);
+                        // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしの島のメニュー（動かせば回すだけ）
+                        if *button == PointerButton::Secondary && !m.any() && !space {
+                            crate::bake::overlap::menu_press(
+                                app,
+                                crate::region::tools::Where::Surface(rect),
+                                pos,
+                            );
+                        }
                     } else if *button == PointerButton::Primary && app.view3d.input.nav.is_none() {
                         if pose_mode {
                             if app.view3d.pose.drag.is_none() {
@@ -805,6 +834,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     // ペンの押しの回す・パン・拡縮は、ペンの点が終える
                     if !pen_frame {
                         nav_release(app, rect, pos, *button);
+                        if *button == PointerButton::Secondary {
+                            crate::bake::overlap::menu_release(
+                                app,
+                                &ctx,
+                                crate::region::tools::Where::Surface(rect),
+                                pos,
+                            );
+                        }
                     }
                     if *button == PointerButton::Primary
                         && app.view3d.input.stroke == Some(StrokeSource::Mouse)

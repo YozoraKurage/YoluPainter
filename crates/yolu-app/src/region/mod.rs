@@ -24,7 +24,7 @@ use crate::notice::Source;
 use crate::state::AppState;
 
 pub use self::idcolor::IdColorOp;
-pub use self::tools::{Hover, PolygonDrag};
+pub use self::tools::{Cycle, CycleKind, Hover, PolygonDrag};
 
 /// 範囲の道具の設定と途中の状態。
 pub struct RegionState {
@@ -52,6 +52,8 @@ pub struct RegionState {
     pub drag: Option<PolygonDrag>,
     /// ポインタの下の範囲（強調）。
     pub hover: Option<Hover>,
+    /// 2D で重なった UV の同じ所を続けて押したときの選び替え（ポリゴン塗りつぶしとベイクの島を選ぶ）。
+    pub cycle: Option<tools::Cycle>,
     index: Option<Arc<RegionIndex>>,
     grid: Option<Arc<UvGrid>>,
     /// 手動の ID の色を直している部品と、焼いた ID マップの口。
@@ -75,6 +77,7 @@ impl Default for RegionState {
             modifiers: egui::Modifiers::NONE,
             drag: None,
             hover: None,
+            cycle: None,
             index: None,
             grid: None,
             id: Default::default(),

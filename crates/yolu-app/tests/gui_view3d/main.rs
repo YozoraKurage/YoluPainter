@@ -13,6 +13,7 @@ mod liltoon_panel;
 mod liltoon_reference;
 mod normalset;
 mod outputs;
+mod overlap_uv_ui;
 mod parity_review;
 mod parity_views;
 mod pose;

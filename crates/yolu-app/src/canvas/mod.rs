@@ -267,6 +267,10 @@ fn begin_any(
         crate::eyedrop::pick_canvas(app, view, p);
         return false;
     }
+    // ベイクの窓で島を選んでいる間は、押した所の島を選ぶだけ（道具を使わない）
+    if crate::bake::overlap::press(app, crate::region::tools::Where::Canvas(view), p) {
+        return false;
+    }
     // 点のグラデーションの点を編集している間: 点を掴む・追加する（描かない）
     let points_source = match source {
         StrokeSource::Mouse => crate::fillfx::gizmo::Source::Mouse,
@@ -456,6 +460,11 @@ fn add_point(
             app.canvas.current_end = Some((x, y));
             app.canvas.stroke_time = Some(time);
             app.canvas.stroke_points += 1;
+            // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
+            if app.tool.paints() {
+                let radius = app.brush.radius as f64;
+                app.note_overlap_canvas(x, y, radius);
+            }
         }
         Err(e) => {
             // core は失敗したストロークを取り消してから返す（予算を超えたなど）。札を手放して知らせる
@@ -950,6 +959,35 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     (PointerButton::Middle, false) => {
                         app.canvas.panning = false;
                         app.canvas.middle_rotating = false;
+                    }
+                    // ポリゴン塗りつぶしの右クリック: 島の優先・焼かないのメニュー（開いている島のメニューの外の右クリックは、重なった
+                    // 次の島のメニュー）
+                    (PointerButton::Secondary, true) => {
+                        // 開いている島のメニューの受け皿が上にあるので、そのときはメニューの本体の外かだけを見る
+                        let menu = app.popup.as_ref().is_some_and(|p| {
+                            matches!(
+                                p.kind,
+                                crate::state::PopupKind::BakeIsland { map: false, .. }
+                            ) && rect.contains(pos)
+                                && !p.state.rect.contains(pos)
+                        });
+                        if !pen_frame && (menu || (!frame.no_press && on_top(ui, rect, pos))) {
+                            let view = app.view.view(rect, w_px, h_px);
+                            crate::bake::overlap::menu_press(
+                                app,
+                                crate::region::tools::Where::Canvas(&view),
+                                pos,
+                            );
+                        }
+                    }
+                    (PointerButton::Secondary, false) => {
+                        let view = app.view.view(rect, w_px, h_px);
+                        crate::bake::overlap::menu_release(
+                            app,
+                            &ctx,
+                            crate::region::tools::Where::Canvas(&view),
+                            pos,
+                        );
                     }
                     _ => {}
                 }

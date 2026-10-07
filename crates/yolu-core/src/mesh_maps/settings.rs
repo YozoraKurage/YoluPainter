@@ -43,6 +43,8 @@ pub struct MeshBakeSettings {
     pub reference_average_normals: bool,
     pub reference_match_by_name: bool,
     pub manual_id_colors: super::IdColorAssignments,
+    /// 重なった UV のテクセルの持ち主の決め方（既定は番号の小さい三角形）。
+    pub overlap: super::MeshOverlapPriority,
 }
 impl Default for MeshBakeSettings {
     fn default() -> Self {
@@ -70,6 +72,7 @@ impl Default for MeshBakeSettings {
             reference_average_normals: true,
             reference_match_by_name: false,
             manual_id_colors: super::IdColorAssignments::default(),
+            overlap: super::MeshOverlapPriority::default(),
         }
     }
 }
@@ -128,7 +131,8 @@ impl MeshBakeSettings {
         check(
             (0.001..=0.5).contains(&self.curvature_radius),
             "曲率半径が範囲外です",
-        )
+        )?;
+        self.overlap.validate()
     }
     pub fn targets(&self) -> Vec<i32> {
         if !self.target_slots.is_empty() {
@@ -156,7 +160,7 @@ impl MeshBakeSettings {
         } else {
             "occlude"
         };
-        match k {
+        let key: String = match k {
             MeshMapKind::WorldNormal => "source=vertex-normals".into(),
             MeshMapKind::Position => "normalize=bounding-box".into(),
             MeshMapKind::AmbientOcclusion => format!(
@@ -199,7 +203,9 @@ impl MeshBakeSettings {
                     format!(";manual={}", self.manual_id_colors.key())
                 }
             ),
-        }
+        };
+        // 重なったテクセルの持ち主の決め方は、どの種類の値も変える（既定なら何も足さず、今までの鍵のまま）
+        key + &self.overlap.key()
     }
     pub fn source_key(&self, reference_hash: Option<&str>) -> String {
         match reference_hash {

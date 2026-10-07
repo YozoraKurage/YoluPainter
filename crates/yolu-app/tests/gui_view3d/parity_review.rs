@@ -187,7 +187,14 @@ fn opened_uv_color_window_has_no_internal_notation_and_is_localized() {
         let mut h = settings(lang);
         let before = h.state().prefs.settings.uv_wireframe_color;
         assert_color_text(&h, lang);
-        h.get_by_role(Role::ColorWell).click();
+        h.get_by_role_and_label(
+            Role::ColorWell,
+            lang.pick(
+                "UV ワイヤーフレームの色と不透明度",
+                "UV wireframe color and opacity",
+            ),
+        )
+        .click();
         h.run();
         assert!(yolu_app::panels::color_window::is_target(
             &h.ctx,
@@ -209,7 +216,14 @@ fn the_uv_color_window_changes_the_color_and_the_opacity_separately_in_the_right
         let mut h = settings(lang);
         h.ctx
             .all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
-        h.get_by_role(Role::ColorWell).click();
+        h.get_by_role_and_label(
+            Role::ColorWell,
+            lang.pick(
+                "UV ワイヤーフレームの色と不透明度",
+                "UV wireframe color and opacity",
+            ),
+        )
+        .click();
         h.run();
         let alpha = h.get_by_role_and_label(Role::Slider, "A").rect();
         h.event(egui::Event::PointerMoved(alpha.center()));

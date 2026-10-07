@@ -608,6 +608,7 @@ impl YoluApp {
         if self.state.prefs.dragging {
             now.backups = saved.backups;
             now.uv_wireframe_color = saved.uv_wireframe_color;
+            now.uv_overlap_color = saved.uv_overlap_color;
             now.gpu_memory = saved.gpu_memory;
         }
         if self.state.pressure.dragging {
@@ -1546,6 +1547,8 @@ impl YoluApp {
         }
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
+        // 重なった UV の図（今のモデル・セット・大きさで数え直す。表示と塗りの知らせ）
+        self.state.poll_uv_overlap();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
         if crate::view3d::pose::frame(&mut self.state, &ctx) {
             if let Some(path) = self.dock.find_tab(&Tab::View3d) {

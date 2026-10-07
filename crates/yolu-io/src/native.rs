@@ -37,12 +37,16 @@ pub const EFFECTS_VERSION: i32 = 28;
 pub const POINT_GRADIENT_VERSION: i32 = 29;
 /// 層のフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
 /// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
-/// この版の文書は版 28・29 の中身も読み書きできる。
+/// この版の文書は版 27〜29 の中身も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
+/// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。頭の `bake_priority`）を足した版。決め方を既定（番号の小さい三角形・外さない・
+/// 手で選んだ島なし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
+/// version」で断る（形式と決めは docs/YLP_FORMAT.md）。この版の文書は版 27〜32 の中身も読み書きできる。
+pub const BAKE_PRIORITY_VERSION: i32 = 33;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
-/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`SEAMS_VERSION`（32）で、間の 30・31 は意味を決めておらず断る（版を割り振ったら
-/// `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = SEAMS_VERSION;
+/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）で、間の 30・31 は意味を
+/// 決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = BAKE_PRIORITY_VERSION;
 /// 層の後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -412,7 +416,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`SEAMS_VERSION` だけで、間の 30・31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION` だけで、間の 30・31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -420,6 +424,7 @@ fn is_known_version(version: i32) -> bool {
         || version == EFFECTS_VERSION
         || version == POINT_GRADIENT_VERSION
         || version == SEAMS_VERSION
+        || version == BAKE_PRIORITY_VERSION
 }
 
 /// 正本を層ごとに読む（頭 → 層 0, 1, … → 終わり）。層ごとに項目を取り出せる（流して core へ入れる読みが、層 1 枚ぶんだけ持つため）。
@@ -477,7 +482,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{SEAMS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -507,6 +512,9 @@ impl<'a> Parse<'a> {
         };
         if version >= SEAMS_VERSION {
             r.boolean("filter_seams")?;
+        }
+        if version >= BAKE_PRIORITY_VERSION {
+            r.block("bake_priority", bake_priority)?;
         }
         let count = r.int("layer_count", 0, crate::MAX_DOCUMENT_LAYERS as i32)?;
         let layer_start = r.fields.len();
@@ -803,6 +811,41 @@ struct Layer {
 }
 /// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
 /// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。
+/// 版 33 の頭の `bake_priority`: 決め方・0〜1 の外の島を焼かない・モデルの指紋・「焼かない」と「優先する」の島（三角形の番号、狭義の昇順、
+/// 両方に同じ番号を置かない）。一覧が両方とも空なら指紋も空、どちらかにあれば小文字の SHA-256 の 64 桁。
+fn bake_priority(r: &mut Reader<'_>) -> Result<()> {
+    r.int("rule", 0, 3)?;
+    r.boolean("skip_outside")?;
+    let binding = r.string("binding")?;
+    let mut lists: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
+    for (name, list) in ["skip", "prefer"].into_iter().zip(lists.iter_mut()) {
+        let count = r.int(
+            &format!("{name}_count"),
+            0,
+            yolu_core::mesh_maps::MAX_OVERLAP_ISLANDS as i32,
+        )?;
+        for i in 0..count {
+            let t = r.int(&format!("{name}[{i}]"), 0, 3_999_999)?;
+            check(
+                list.last().is_none_or(|p| *p < t),
+                "ベイクの優先の島の番号の並びが不正です",
+            )?;
+            list.push(t);
+        }
+    }
+    check(
+        lists[0].iter().all(|t| lists[1].binary_search(t).is_err()),
+        "ベイクの優先の同じ島が「焼かない」と「優先する」の両方にあります",
+    )?;
+    check(
+        if lists.iter().all(Vec::is_empty) {
+            binding.is_empty()
+        } else {
+            is_hash(&binding)
+        },
+        "ベイクの優先のモデルの指紋が不正です",
+    )
+}
 fn user_channels(r: &mut Reader<'_>, version: i32) -> Result<UserChannels> {
     let n = r.int(
         "user_channel_count",

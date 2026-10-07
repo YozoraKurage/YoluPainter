@@ -8,6 +8,7 @@
 mod legacy_layout;
 
 mod adjust_bridge;
+mod bake_priority_bridge;
 mod bundle_layout;
 mod compatibility;
 mod core_bridge;

@@ -6,7 +6,8 @@
 
 use egui::{pos2, vec2, Id, Key, Rect, Ui, UiBuilder, Vec2};
 use yolu_core::mesh_maps::{
-    MeshBakeNote, MeshBakeReport, MeshMapKind, MeshMapState, MeshOcclusionFalloff,
+    MeshBakeNote, MeshBakeReport, MeshMapKind, MeshMapState, MeshOcclusionFalloff, MeshOverlapList,
+    MeshOverlapRule,
 };
 
 use super::{
@@ -29,6 +30,9 @@ const ROW: f32 = 26.0;
 const SET_ROW: f32 = 24.0;
 /// 焼くテクスチャセットの欄の、見せる行の数の上限（それ以上は欄の中でスクロール）。
 const SET_ROWS_VISIBLE: usize = 5;
+/// 「重なった UV」の項目の、見取り図の左の一覧の幅と、見取り図の最小の辺。
+const MAP_LIST_WIDTH: f32 = 180.0;
+const MAP_MIN: f32 = 160.0;
 
 /// 右に出している項目。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +40,8 @@ pub enum Page {
     #[default]
     Common,
     Map(MeshMapKind),
+    /// 重なった UV のテクセルの持ち主の決め方（今のセット）。
+    Overlap,
 }
 
 /// 窓の状態（右の項目・スクロール・動かした量）。
@@ -48,6 +54,8 @@ pub struct BakeWindow {
     /// 右の項目の中身の高さ（前のフレームに描いたもの。つまみの長さとずらせる範囲の元）。
     page_content: f32,
     offset: Vec2,
+    /// 「重なった UV」の UV の見取り図（拡大・中心・選び替え）。
+    pub map: super::uvmap::MapUi,
 }
 
 /// 窓の 1 フレームぶんの表示データ（描く前に集める。描く途中で状態を借りないため）。
@@ -75,6 +83,19 @@ struct Place {
     backend: BakeBackend,
     probe: Option<PlaceLine>,
     last: Option<PlaceLine>,
+}
+
+/// 重なった UV の欄に出すもの（今のセットの文書のベイクの優先）。
+struct Overlap {
+    set: String,
+    rule: MeshOverlapRule,
+    skip_outside: bool,
+    rows: [(MeshOverlapList, Vec<super::overlap::IslandRow>); 2],
+    picking: Option<MeshOverlapList>,
+    /// 手で選んだ島が別のモデルのもの。
+    foreign: bool,
+    /// 変えられない理由（読むだけのセット・描いている間）。
+    locked: Option<String>,
 }
 
 /// 焼く場所の選びの並び。
@@ -156,6 +177,48 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             .map(|r| run_line(lang, r)),
     };
 
+    let priority = app.doc.bake_priority().clone();
+    let overlap = Overlap {
+        set: app.sets.current().name.clone(),
+        rule: priority.rule,
+        skip_outside: priority.skip_outside,
+        rows: [
+            (
+                MeshOverlapList::Prefer,
+                app.overlap_island_rows(MeshOverlapList::Prefer),
+            ),
+            (
+                MeshOverlapList::Skip,
+                app.overlap_island_rows(MeshOverlapList::Skip),
+            ),
+        ],
+        picking: super::overlap::picking(app),
+        foreign: app.overlap_islands_foreign(),
+        locked: if app.is_stroking() {
+            Some(crate::lang::refusals::during_stroke(lang).to_owned())
+        } else {
+            app.read_only_reason()
+                .map(|r| crate::lang::refusals::read_only_set(lang, r))
+        },
+    };
+
+    // 「重なった UV」の UV の見取り図（項目を出しているときだけ作る）
+    let map_frame = (win.page == Page::Overlap).then(|| super::uvmap::MapFrame {
+        data: app.overlap_map(),
+        priority: priority.clone(),
+        overlap: crate::uv_wireframe::overlap::texture_for_map(ctx, app),
+        menu: match app.popup.as_ref().map(|p| p.kind) {
+            Some(crate::state::PopupKind::BakeIsland {
+                set,
+                island,
+                map: true,
+                ..
+            }) if set == app.sets.current().uid => Some(island),
+            _ => None,
+        },
+    });
+    let mut map_out = super::uvmap::MapOutcome::default();
+
     let mut actions: Vec<BakeAction> = Vec::new();
     let mut close = false;
     let title = lang.pick("メッシュマップをベイク", "Bake Mesh Maps");
@@ -167,14 +230,19 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
     };
     let id = Id::new("yolu.bake-window");
+    let popup_open = app.ui.popup_was_open;
     let mut offset = win.offset;
     let closed = window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
-        // Esc: 焼いている間は取消、そうでなければ閉じる（窓の上にポインタがあるとき）
-        let esc = ui.input(|i| i.key_pressed(Key::Escape))
+        // Esc: 焼いている間は取消、そうでなければ閉じる（窓の上にポインタがあるとき。ポップアップを開いていたら、閉じるのはそちらだけ）
+        let esc = !popup_open
+            && ui.input(|i| i.key_pressed(Key::Escape))
             && ui
                 .input(|i| i.pointer.hover_pos())
                 .is_some_and(|p| frame.rect.contains(p));
-        if esc {
+        // 島を手で選んでいる間の Esc は、ポインタの場所によらず選ぶのをやめるだけ
+        if overlap.picking.is_some() && ui.input(|i| i.key_pressed(Key::Escape)) {
+            actions.push(BakeAction::Priority(super::overlap::PriorityOp::Pick(None)));
+        } else if esc {
             if baking {
                 actions.push(BakeAction::Cancel);
             } else {
@@ -194,13 +262,22 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             app.bake.outcome.clone(),
             report.as_ref(),
             &place,
+            &overlap,
+            map_frame.as_ref(),
+            &mut map_out,
             &mut actions,
             &mut app.bake.settings,
         );
     });
     win.offset = offset;
+    let showing_map = win.page == Page::Overlap;
     if !(closed || close) {
         app.bake.window = Some(win);
+    }
+    // 見取り図・一覧の行で指している島は、キャンバスと 3D ビューでも強調する。押した島はメニューを開く
+    app.bake.map_hover = map_out.hover.filter(|_| showing_map && !(closed || close));
+    if let Some((island, at)) = map_out.menu.filter(|_| showing_map) {
+        super::overlap::open_menu(app, ctx, island, at, true, false);
     }
     for a in actions {
         app.apply(crate::state::Action::Bake(a));
@@ -224,6 +301,9 @@ fn draw(
     outcome: Option<(String, bool)>,
     report: Option<&MeshBakeReport>,
     place: &Place,
+    overlap: &Overlap,
+    map: Option<&super::uvmap::MapFrame>,
+    map_out: &mut super::uvmap::MapOutcome,
     actions: &mut Vec<BakeAction>,
     settings: &mut yolu_core::mesh_maps::MeshBakeSettings,
 ) {
@@ -322,7 +402,9 @@ fn draw(
     w::fill(&p, list, t::MENU_BG);
     w::vline(&p, list.right(), top, footer.top(), t::BORDER);
     draw_list(ui, list, win, lang, maps, showing, actions, settings);
-    draw_page(ui, page, win, lang, maps, report, place, actions, settings);
+    draw_page(
+        ui, page, win, lang, maps, report, place, overlap, map, map_out, actions, settings,
+    );
     draw_footer(ui, footer, lang, refusal, progress, outcome, actions);
 }
 
@@ -337,7 +419,7 @@ fn draw_list(
     actions: &mut Vec<BakeAction>,
     settings: &yolu_core::mesh_maps::MeshBakeSettings,
 ) {
-    let rows = maps.len() + 2; // 共通の設定・UV の範囲・マップ
+    let rows = maps.len() + 3; // 共通の設定・UV の範囲・重なった UV・マップ
     let content = rows as f32 * ROW + 8.0;
     let bar = Scroll::begin(ui, list, content, &mut win.list_scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
@@ -414,6 +496,26 @@ fn draw_list(
                 MeshMapView::Coverage
             }));
         }
+    }
+    // 重なった UV（今のセットの持ち主の決め方）
+    let over = cursor.next();
+    page_row(&mut child, over, win.page == Page::Overlap);
+    w::icon(
+        &p,
+        Rect::from_min_size(over.min + vec2(6.0, 0.0), vec2(18.0, over.height())),
+        "shape_intersect",
+        t::TEXT_DIM,
+        15.0,
+    );
+    w::text(
+        &p,
+        Rect::from_min_max(pos2(over.left() + 28.0, over.top()), over.max),
+        lang.pick("重なった UV", "Overlapping UVs"),
+        t::LABEL.with_color(t::TEXT),
+        Align::Left,
+    );
+    if click_page(&mut child, over, "bake.page.overlap") {
+        win.page = Page::Overlap;
     }
     w::hline(
         &p,
@@ -661,11 +763,18 @@ fn draw_page(
     maps: &[MapRow],
     report: Option<&MeshBakeReport>,
     place: &Place,
+    overlap: &Overlap,
+    map: Option<&super::uvmap::MapFrame>,
+    map_out: &mut super::uvmap::MapOutcome,
     actions: &mut Vec<BakeAction>,
     settings: &mut yolu_core::mesh_maps::MeshBakeSettings,
 ) {
-    // 中身の高さは前のフレームのもの（描き終えたあとに入れる）
-    let bar = Scroll::begin(ui, page, win.page_content, &mut win.page_scroll);
+    // 中身の高さは前のフレームのもの（描き終えたあとに入れる）。見取り図の上のホイールは見取り図の拡大（欄を送らない）
+    let bar = if win.page == Page::Overlap && ui.rect_contains_pointer(win.map.rect) {
+        Scroll::new(page, win.page_content, &mut win.page_scroll)
+    } else {
+        Scroll::begin(ui, page, win.page_content, &mut win.page_scroll)
+    };
     let mut child = ui.new_child(UiBuilder::new().max_rect(page));
     child.set_clip_rect(page.intersect(ui.clip_rect()));
     let p = child.painter().clone();
@@ -816,6 +925,183 @@ fn draw_page(
                 if shown != text {
                     tip.on_hover_text(text);
                 }
+            }
+        }
+        Page::Overlap => {
+            use super::overlap::{list_name, rule_help, rule_label, PriorityOp};
+            let enabled = overlap.locked.is_none();
+            let locked = overlap.locked.as_deref();
+            let r = row(18.0, 2.0, &mut y);
+            w::text(
+                &p,
+                r,
+                lang.pick("重なった UV", "Overlapping UVs"),
+                t::HEADER,
+                Align::Left,
+            );
+            let r = row(18.0, 2.0, &mut y);
+            w::text(&p, r, &overlap.set, t::LABEL_DIM, Align::Left);
+            y += 4.0;
+            let r = row(24.0, 4.0, &mut y);
+            let parts = w::Rows::split(r, MeshOverlapRule::ALL.len() + 1, 4.0);
+            w::text(
+                &p,
+                parts[0],
+                lang.pick("優先", "Priority"),
+                t::LABEL,
+                Align::Left,
+            );
+            for (i, rule) in MeshOverlapRule::ALL.iter().enumerate() {
+                if w::button(
+                    &mut child,
+                    parts[i + 1],
+                    ("bake.overlap.rule", i),
+                    rule_label(lang, *rule),
+                    overlap.rule == *rule,
+                    enabled,
+                    Some(locked.unwrap_or(rule_help(lang, *rule))),
+                    None,
+                )
+                .clicked()
+                {
+                    actions.push(BakeAction::Priority(PriorityOp::Rule(*rule)));
+                }
+            }
+            let r = row(22.0, 4.0, &mut y);
+            let next = w::toggle(
+                &mut child,
+                r,
+                "bake.overlap.outside",
+                lang.pick("0〜1 の外の島を焼かない", "Skip islands outside 0–1"),
+                overlap.skip_outside,
+                Some(locked.unwrap_or(lang.pick(
+                    "UV を 0〜1 の外へずらした島を焼かない（切っているときは、0〜1 の外の UV があるとベイクを断る）",
+                    "Islands moved outside the 0–1 UV square are not baked (when off, a UV outside 0–1 stops the bake)",
+                ))),
+                enabled,
+            );
+            if next != overlap.skip_outside {
+                actions.push(BakeAction::Priority(PriorityOp::SkipOutside(next)));
+            }
+            // 左に一覧、右に UV の見取り図（窓の大きさに合わせた正方形）
+            y += 6.0;
+            let top = y;
+            let side = (width - MAP_LIST_WIDTH - 12.0)
+                .min(page.bottom() - (top + win.page_scroll) - 8.0)
+                .max(MAP_MIN);
+            let list_width = (width - side - 12.0).max(0.0);
+            let lrow = |h: f32, gap: f32, y: &mut f32| {
+                let r = Rect::from_min_size(pos2(x, *y), vec2(list_width, h));
+                *y += h + gap;
+                r
+            };
+            let mut list_hover = None;
+            for (n, (list, rows)) in overlap.rows.iter().enumerate() {
+                if n > 0 {
+                    y += 6.0;
+                }
+                let r = lrow(22.0, 2.0, &mut y);
+                let name = list_name(lang, *list);
+                w::text(
+                    &p,
+                    Rect::from_min_max(r.min, pos2(r.right() - 28.0, r.bottom())),
+                    name,
+                    t::HEADER.with_color(t::TEXT_DIM),
+                    Align::Left,
+                );
+                let on = overlap.picking == Some(*list);
+                let add_tip = lang.pick(
+                    format!("2D か 3D で押した島を{}に追加する（入っている島を押すと外す・Esc でやめる）", lang.quote(name)),
+                    format!("Add the island you click in 2D or 3D to {} (clicking one already listed removes it; Esc stops)", lang.quote(name)),
+                );
+                if w::icon_button(
+                    &mut child,
+                    Rect::from_min_size(pos2(r.right() - 24.0, r.top()), vec2(24.0, r.height())),
+                    ("bake.overlap.add", *list as u8),
+                    "add",
+                    locked.unwrap_or(&add_tip),
+                    on,
+                    enabled,
+                    16.0,
+                )
+                .clicked()
+                {
+                    actions.push(BakeAction::Priority(PriorityOp::Pick(Some(*list))));
+                }
+                for island in rows {
+                    let r = lrow(20.0, 0.0, &mut y);
+                    if child.rect_contains_pointer(r) {
+                        list_hover = Some(island.representative);
+                    }
+                    let shown = w::fit(&p, &island.label, r.width() - 30.0, t::LABEL);
+                    w::text(
+                        &p,
+                        Rect::from_min_max(
+                            pos2(r.left() + 6.0, r.top()),
+                            pos2(r.right() - 28.0, r.bottom()),
+                        ),
+                        &shown,
+                        t::LABEL,
+                        Align::Left,
+                    );
+                    if shown != island.label {
+                        ui.interact(
+                            r,
+                            Id::new(("bake.overlap.row", *list as u8, island.representative)),
+                            egui::Sense::hover(),
+                        )
+                        .on_hover_text(&island.label);
+                    }
+                    if w::icon_button(
+                        &mut child,
+                        Rect::from_min_size(
+                            pos2(r.right() - 24.0, r.top()),
+                            vec2(24.0, r.height()),
+                        ),
+                        ("bake.overlap.remove", *list as u8, island.representative),
+                        "close",
+                        locked.unwrap_or(lang.pick("一覧から外す", "Remove from the list")),
+                        false,
+                        enabled,
+                        14.0,
+                    )
+                    .clicked()
+                    {
+                        actions.push(BakeAction::Priority(PriorityOp::Remove(
+                            island.representative,
+                        )));
+                    }
+                }
+            }
+            if overlap.foreign {
+                y += 4.0;
+                let r = lrow(18.0, 2.0, &mut y);
+                let text = lang.with_reason(
+                    lang.pick(
+                        "手で選んだ島は使えません",
+                        "The chosen islands cannot be used",
+                    ),
+                    lang.pick("別のモデルのもの", "they belong to another model"),
+                );
+                let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
+                w::text(
+                    &p,
+                    r,
+                    &shown,
+                    t::LABEL_DIM.with_color(t::WARNING),
+                    Align::Left,
+                );
+                if shown != text {
+                    ui.interact(r, Id::new("bake.overlap.foreign"), egui::Sense::hover())
+                        .on_hover_text(text);
+                }
+            }
+            if let Some(map) = map {
+                let rect = Rect::from_min_size(pos2(x + width - side, top), Vec2::splat(side));
+                let out = super::uvmap::draw(&mut child, rect, &mut win.map, map, list_hover);
+                map_out.hover = out.hover.or(list_hover);
+                map_out.menu = out.menu;
+                y = y.max(rect.bottom() + 4.0);
             }
         }
         Page::Map(kind) => {

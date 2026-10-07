@@ -149,7 +149,7 @@ fn the_image_generator_round_trips_at_version_28() {
 fn documents_without_the_image_generator_keep_their_version() {
     assert_eq!(EFFECTS_VERSION, 28);
     // 版 28 の上に、継ぎ目の設定（seams_bridge）の版 32 がある
-    const { assert!(EFFECTS_VERSION < SEAMS_VERSION && SEAMS_VERSION == MAX_NATIVE_VERSION) };
+    const { assert!(EFFECTS_VERSION < SEAMS_VERSION && SEAMS_VERSION < MAX_NATIVE_VERSION) };
     let mut with = document_with(&odd());
     assert_eq!(
         NativeDocument::from_core(&with).unwrap().version(),
@@ -205,12 +205,13 @@ fn older_readers_refuse_the_image_generator_by_the_version() {
 #[test]
 fn versions_nobody_assigned_are_refused() {
     // 25 より上で割り振られた番号。ほかの機能の版を取り込んだら、末尾に自分の行だけ足す（読む版の判定 `is_known_version` と揃える）
-    const ASSIGNED_ABOVE_25: [i32; 5] = [
+    const ASSIGNED_ABOVE_25: [i32; 6] = [
         SPLIT_VERSION,
         yolu_io::PATHS_VERSION,
         EFFECTS_VERSION,
         yolu_io::POINT_GRADIENT_VERSION,
         SEAMS_VERSION,
+        yolu_io::BAKE_PRIORITY_VERSION,
     ];
     let bytes = NativeDocument::from_core(&document_with(&odd()))
         .unwrap()

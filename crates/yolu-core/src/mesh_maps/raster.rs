@@ -120,7 +120,19 @@ impl Raster {
         }
         Ok(Self { triangles, bands })
     }
+    /// 行 `y` のサンプルの持ち主。同じサンプルを覆う三角形のうち、受け手の並び（`new` に渡した順）で先の三角形が持ち主になる。
     pub fn row(&self, y: usize, width: usize, n: usize) -> RowSamples {
+        self.row_with(y, width, n, |_, _| {})
+    }
+    /// `row` と同じ割り当てで、重なりの印を付けるたびに（持ち主の内側に、後の三角形の内側が来た）`overlap(持ち主, 後の三角形)` を
+    /// 元の番号で呼ぶ（重なりに関わる三角形を数える。`row` は何もしない関数を渡すだけで、割り当ても値も同じ）。
+    pub fn row_with(
+        &self,
+        y: usize,
+        width: usize,
+        n: usize,
+        mut overlap: impl FnMut(usize, usize),
+    ) -> RowSamples {
         let mut samples = RowSamples::new(width * n * n);
         for j in 0..n {
             let py = y as f64 + (j as f64 + 0.5) / n as f64;
@@ -152,6 +164,7 @@ impl Raster {
                             samples.interior[idx] = u8::from(interior);
                         } else if interior && samples.interior[idx] != 0 {
                             samples.overlap[idx] = 1;
+                            overlap(samples.owner[idx] as usize, t.original);
                         }
                     }
                 }

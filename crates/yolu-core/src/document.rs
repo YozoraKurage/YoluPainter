@@ -316,6 +316,11 @@ pub(crate) enum Command {
         old: crate::mesh_maps::IdColorAssignments,
         new: crate::mesh_maps::IdColorAssignments,
     },
+    /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先）。
+    BakePriority {
+        old: crate::mesh_maps::MeshOverlapPriority,
+        new: crate::mesh_maps::MeshOverlapPriority,
+    },
     Swap(Box<operations::State>),
     Stroke {
         layer: LayerId,
@@ -525,6 +530,8 @@ pub struct Document {
     material: material::MaterialState,
     triangle_fill: Option<triangle_fill::TriangleState>,
     id_colors: crate::mesh_maps::IdColorAssignments,
+    /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。画素ではなく文書の状態。`Document::bake_priority`）。
+    bake_priority: crate::mesh_maps::MeshOverlapPriority,
     /// 見た目の設定（3D ビューの描き方と lilToon の値。画素ではなく、正本には入らない。`look`）。
     look: crate::look::SharedLook,
     /// 外から受けた見た目（Live Link。Undo にも版にも入らない。`look`）。
@@ -610,6 +617,7 @@ impl Document {
             material: material::MaterialState::default(),
             triangle_fill: None,
             id_colors: crate::mesh_maps::IdColorAssignments::default(),
+            bake_priority: crate::mesh_maps::MeshOverlapPriority::default(),
             look: Default::default(),
             received_look: None,
             drawn_look: None,
@@ -1468,6 +1476,10 @@ impl Document {
             Command::Material(m) => self.restore_material(m, backwards),
             Command::IdColors { old, new } => {
                 self.id_colors = if backwards { old.clone() } else { new.clone() };
+                Ok(())
+            }
+            Command::BakePriority { old, new } => {
+                self.bake_priority = if backwards { old.clone() } else { new.clone() };
                 Ok(())
             }
             Command::Look { old, new } => {

@@ -403,6 +403,13 @@ pub enum PopupKind {
     Symmetry,
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
+    /// 重なった UV のベイクの島のメニュー（セット・島の代表の三角形・ベイクの窓の見取り図からか・3D ビューの右クリックからか）。
+    BakeIsland {
+        set: u32,
+        island: usize,
+        map: bool,
+        surface: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -519,6 +526,8 @@ pub enum Action {
     Recovery(crate::recovery::RecoveryAction),
     /// テクスチャセットの見た目の設定（標準・lilToon と lilToon の値。1 つが 1 回の Undo）。
     Look(crate::look::LookOp),
+    /// 重なった UV を 2D のキャンバスに出す・出さない（表示のメニュー）。
+    ToggleUvOverlap,
 }
 
 impl Action {
@@ -595,6 +604,7 @@ impl Action {
             Self::Pressure(..) => "Pressure",
             Self::Recovery(..) => "Recovery",
             Self::Look(..) => "Look",
+            Self::ToggleUvOverlap => "ToggleUvOverlap",
         }
     }
 
@@ -786,6 +796,8 @@ pub struct AppState {
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
     pub prefs: crate::prefs::PrefsState,
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
+    /// 重なった UV の図（表示と塗りの知らせ）。
+    pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
     pub shortcuts: crate::shortcuts::ShortcutWindow,
     /// 筆圧の調整の窓（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
     pub pressure: crate::pen::window::PressureWindow,
@@ -972,6 +984,7 @@ impl AppState {
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
+            uv_overlap: Default::default(),
             shortcuts: crate::shortcuts::ShortcutWindow::default(),
             pressure: crate::pen::window::PressureWindow::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -1115,6 +1128,9 @@ impl AppState {
             }
             Action::ToggleUvWireframe => {
                 self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe
+            }
+            Action::ToggleUvOverlap => {
+                self.prefs.settings.uv_overlap = !self.prefs.settings.uv_overlap
             }
             Action::ShowShortcuts => self.shortcuts.open = true,
             Action::M2(edit) => self.m2_edit(edit),

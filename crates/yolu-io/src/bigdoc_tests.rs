@@ -79,9 +79,9 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 doc.version()
             );
             // 分けた正本より前の読み手は版の数で断る（0.4.x の上限は 25、Unity 版 0.2.0 は 21）。今の読み手は 26 を分けた正本の識別として先に見る
-            // （機能の版は 26 を飛ばして 27・28・29・32）
+            // （機能の版は 26 を飛ばして 27・28・29・32・33）
             const { assert!(SPLIT_VERSION > crate::MIXING_VERSION) };
-            // 中の版は意味の決まった版（1〜25・27〜29・32）だけ。分けた正本の識別（26）と、決めていない版（30・31）は、中身を読む前に断る
+            // 中の版は意味の決まった版（1〜25・27〜29・32・33）だけ。分けた正本の識別（26）と、決めていない版（30・31）は、中身を読む前に断る
             for bad in [SPLIT_VERSION, 30, 31] {
                 let mut bytes = header.to_vec();
                 bytes[12..16].copy_from_slice(&bad.to_le_bytes());

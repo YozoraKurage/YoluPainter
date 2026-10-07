@@ -51,6 +51,53 @@ impl Document {
         self.id_colors = colors;
         Ok(())
     }
+    /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。テクスチャセットごと）。画素ではなく文書の状態で、Document 自身は
+    /// 保存しない: `.ylp` へは呼び手（yolu-io の正本の版 33）がこの値を書き出し、読み込み直後に [`Document::restore_bake_priority`] で戻す。
+    pub fn bake_priority(&self) -> &crate::mesh_maps::MeshOverlapPriority {
+        &self.bake_priority
+    }
+    /// ベイクの優先の変更。画素を変えず、1 回の Undo にする。範囲の外の値は断る。
+    pub fn set_bake_priority(
+        &mut self,
+        priority: crate::mesh_maps::MeshOverlapPriority,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        priority
+            .validate()
+            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+        if self.bake_priority == priority {
+            return Ok(());
+        }
+        let cost = 192
+            + 16 * (self.bake_priority.skipped().len()
+                + self.bake_priority.preferred().len()
+                + priority.skipped().len()
+                + priority.preferred().len()) as u64;
+        self.execute(
+            Command::BakePriority {
+                old: self.bake_priority.clone(),
+                new: priority,
+            },
+            cost,
+        )
+    }
+    /// 読み込み直後にベイクの優先を戻す。履歴・リビジョンを増やさない。
+    pub fn restore_bake_priority(
+        &mut self,
+        priority: crate::mesh_maps::MeshOverlapPriority,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        if !self.undo.is_empty() || !self.redo.is_empty() {
+            return Err(CoreError::Unsupported(
+                "ベイクの優先の復元は読み込み直後だけ",
+            ));
+        }
+        priority
+            .validate()
+            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+        self.bake_priority = priority;
+        Ok(())
+    }
     pub fn begin_material_stroke(
         &mut self,
         layer: LayerId,

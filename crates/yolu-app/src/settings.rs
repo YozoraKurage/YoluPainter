@@ -203,6 +203,9 @@ pub struct Settings {
     pub view3d_paint: yolu_core::geometry::ProjectionSettings,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
+    /// 重なった UV のテクセルと島の縁を 2D のキャンバスに出すか（表示のメニュー）と、その色。
+    pub uv_overlap: bool,
+    pub uv_overlap_color: [u8; 4],
     /// Unity からの Live Link の頼みを受けるか（設定のファイルのキーは前の版と同じ `livelink_on_startup`。--livelink で起動すると、
     /// この設定によらず受ける）。
     pub livelink_on_startup: bool,
@@ -245,6 +248,8 @@ impl Default for Settings {
             view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
+            uv_overlap: true,
+            uv_overlap_color: crate::uv_wireframe::DEFAULT_OVERLAP_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: true,
             external_ops: false,
@@ -461,6 +466,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
         "external_ops_port" => lang.pick("ポート番号", "Port"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
+        "uv_overlap_color" => lang.pick("重なった UV の色", "Overlapping UV color"),
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
         "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
@@ -643,6 +649,11 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) {
                 Some(c) => settings.uv_wireframe_color = c,
                 None => invalid("uv_wireframe_color"),
+            },
+            "uv_overlap" => settings.uv_overlap = value != "off",
+            "uv_overlap_color" => match crate::uv_wireframe::parse_color(value) {
+                Some(c) => settings.uv_overlap_color = c,
+                None => invalid("uv_overlap_color"),
             },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             "livelink_keep_values" => settings.livelink_keep_values = value != "off",
@@ -1032,6 +1043,8 @@ mod tests {
             },
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
+            uv_overlap: false,
+            uv_overlap_color: [10, 20, 30, 40],
             livelink_on_startup: true,
             livelink_keep_values: false,
             external_ops: true,
@@ -1646,6 +1659,8 @@ mod tests {
             "view3d_paint_falloff_start=60",
             "view3d_paint_falloff_end=75",
             "view3d_paint_seam_bleed=4",
+            "uv_overlap=off",
+            "uv_overlap_color=10,20,30,40",
             "external_ops=on",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
@@ -1675,6 +1690,8 @@ mod tests {
         back.disk_cache = true;
         back.disk_cache_folder = None;
         back.disk_cache_limit = DiskLimit::Auto;
+        back.uv_overlap = true;
+        back.uv_overlap_color = crate::uv_wireframe::DEFAULT_OVERLAP_COLOR;
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値

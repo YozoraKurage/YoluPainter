@@ -81,6 +81,118 @@ impl PolygonDrag {
     }
 }
 
+/// 何を選び替えているか（2D の押した所の候補の数え方が違う）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CycleKind {
+    /// ポリゴン塗りつぶし（範囲の種類の鍵ごと）。
+    Fill,
+    /// ベイクの島を手で選ぶ（ベイクの島ごと）。
+    BakeIsland,
+    /// ポリゴン塗りつぶしの右クリックの、島の優先・焼かないのメニュー（ベイクの島ごと。文書は変えない）。
+    Menu,
+}
+
+/// 2D で重なった UV の同じ所を続けて押したときの選び替えの控え。押すたびに次の候補へ進み、前に押してから文書が変わっていなければ
+/// （ほかの編集を挟んでいなければ）前の候補の分を取り消してから次を当てる（重なった片方だけを選び直す）。
+#[derive(Clone, Debug)]
+pub struct Cycle {
+    pub kind: CycleKind,
+    /// 押した画面の位置。
+    at: Pos2,
+    /// 候補の鍵の並び（同じ並びのときだけ続ける）。
+    keys: Vec<u64>,
+    /// 選んでいる候補。
+    pub index: usize,
+    /// 当てた後の文書（ID・版）。当てて文書が変わらなかった（取り消すものが無い）なら None。
+    stamp: Option<(u128, u64)>,
+}
+
+/// 同じ所とみなす画面の距離（px）。
+const CYCLE_RADIUS: f32 = 4.0;
+
+impl Cycle {
+    /// この位置・候補で続けて押したか。
+    fn continues(&self, kind: CycleKind, at: Pos2, keys: &[u64]) -> bool {
+        self.kind == kind && self.at.distance(at) <= CYCLE_RADIUS && self.keys == keys
+    }
+}
+
+/// 2D で押す・ポインタを置いた所の候補の番号: 続けて同じ所なら前の候補（押せば次）、そうでなければ 0。`press` なら控えを進めて、
+/// 前の候補を取り消すべきか（前に当ててから文書が変わっていない）を返す。
+pub(crate) fn cycle_index(
+    app: &mut AppState,
+    kind: CycleKind,
+    at: Pos2,
+    keys: &[u64],
+    press: bool,
+) -> (usize, bool) {
+    if keys.len() < 2 {
+        if press {
+            app.region.cycle = None;
+        }
+        return (0, false);
+    }
+    let stamp = (app.doc.id(), app.doc.revision());
+    let previous = app
+        .region
+        .cycle
+        .as_ref()
+        .filter(|c| c.continues(kind, at, keys));
+    if !press {
+        return (previous.map_or(0, |c| c.index), false);
+    }
+    let (index, undo) = match previous {
+        Some(c) => ((c.index + 1) % keys.len(), c.stamp == Some(stamp)),
+        None => (0, false),
+    };
+    app.region.cycle = Some(Cycle {
+        kind,
+        at,
+        keys: keys.to_vec(),
+        index,
+        stamp: None,
+    });
+    (index, undo)
+}
+
+/// 選び替えの候補を当て終えた（`changed` なら文書に段が積まれた）。次に同じ所を押したとき、文書が変わっていなければこの段を取り消す。
+pub(crate) fn cycle_applied(app: &mut AppState, kind: CycleKind, changed: bool) {
+    let stamp = (app.doc.id(), app.doc.revision());
+    if let Some(c) = app.region.cycle.as_mut().filter(|c| c.kind == kind) {
+        c.stamp = changed.then_some(stamp);
+    }
+}
+
+/// 2D の点の下の今のセットの三角形（見せる形の番号の昇順。重なった UV では 2 つ以上）。
+pub(crate) fn canvas_triangles(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<u32> {
+    let (x, y) = view.to_canvas(at);
+    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
+        return Vec::new();
+    }
+    let Some(grid) = app.region_grid() else {
+        return Vec::new();
+    };
+    grid.find_all(Vec2::new((x / cw) as f32, (y / ch) as f32))
+}
+
+/// 2D のポリゴン塗りつぶしの候補: 点の下の三角形を、今の範囲の種類の鍵ごとに 1 つ（番号の小さい順）。鍵と三角形。
+fn fill_candidates(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<(u64, u32)> {
+    let triangles = canvas_triangles(app, view, at);
+    let kind = app.region.kind;
+    let Some(index) = app.region_index().filter(|_| !triangles.is_empty()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(u64, u32)> = Vec::new();
+    for t in triangles {
+        let key = index.key(t, kind);
+        if !out.iter().any(|(k, _)| *k == key) {
+            out.push((key, t));
+        }
+    }
+    out
+}
+
 fn local(rect: Rect, p: Pos2) -> Vec2 {
     Vec2::new(p.x - rect.left(), p.y - rect.top())
 }
@@ -336,6 +448,30 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         other_set(app, &name);
         return false;
     }
+    // 2D で重なった UV の同じ所を続けて押したら、次の候補へ（前の候補の塗りを取り消して、片方だけを塗り直す）
+    let mut first = None;
+    if let Where::Canvas(view) = w {
+        let candidates = fill_candidates(app, view, at);
+        let keys: Vec<u64> = candidates.iter().map(|(k, _)| *k).collect();
+        let (index, undo) = cycle_index(app, CycleKind::Fill, at, &keys, true);
+        if undo {
+            match app.doc.undo() {
+                Ok(_) => app.modified = true,
+                Err(e) => {
+                    app.region.cycle = None;
+                    app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Fill,
+                        lang.core_error(&e),
+                    );
+                    return false;
+                }
+            }
+        }
+        first = candidates.get(index).map(|(_, t)| *t);
+    } else {
+        app.region.cycle = None;
+    }
     let (opacity, erase, mask) = (app.brush.opacity as f64, app.region.erase, app.m2.edit_mask);
     let fill = if mask {
         let reveal = mask_reveals(app, layer, erase);
@@ -366,8 +502,11 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         last: at,
         erase,
     });
-    add_region_at(app, w, at);
-    // 最初の範囲で予算を超えたときは、`add_region_at` が札を手放している（始まっていない）
+    match first {
+        Some(t) => add_region(app, t),
+        None => add_region_at(app, w, at),
+    }
+    // 最初の範囲で予算を超えたときは、`add_region` が札を手放している（始まっていない）
     app.region.drag.is_some()
 }
 
@@ -376,6 +515,11 @@ fn add_region_at(app: &mut AppState, w: Where, at: Pos2) {
     let Under::Triangle(t) = under(app, w, at) else {
         return;
     };
+    add_region(app, t);
+}
+
+/// 三角形 `t` を含む範囲を足す。
+fn add_region(app: &mut AppState, t: u32) {
     let kind = app.region.kind;
     let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
         return;
@@ -409,6 +553,14 @@ pub fn drag_to(app: &mut AppState, w: Where, at: Pos2) {
         return;
     }
     let from = drag.last;
+    if app
+        .region
+        .cycle
+        .as_ref()
+        .is_some_and(|c| c.at.distance(at) > CYCLE_RADIUS)
+    {
+        app.region.cycle = None;
+    }
     for p in samples(from, at) {
         if app.region.drag.is_none() {
             return;
@@ -433,6 +585,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     let what = kind_name(lang, app.region.kind);
     if cancel {
         drag.fill.cancel(&mut app.doc);
+        app.region.cycle = None;
         app.info(
             Source::Fill,
             lang.pick("ストロークを取り消しました。", "Stroke cancelled."),
@@ -441,6 +594,11 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     }
     match drag.fill.commit(&mut app.doc) {
         Ok(result) => {
+            if regions == 1 && !drag.on_surface {
+                cycle_applied(app, CycleKind::Fill, result.changed);
+            } else {
+                app.region.cycle = None;
+            }
             if result.changed {
                 app.modified = true;
                 let text = if drag.erase {
@@ -551,7 +709,20 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
         super::idcolor::update_hover(app, w, at);
         return;
     }
-    let Under::Triangle(t) = under(app, w, at) else {
+    let t = match w {
+        // 2D で重なった UV なら、続けて押している候補（押せばこれが塗られる・塗られた）
+        Where::Canvas(view) if tool == Tool::PolygonFill => {
+            let candidates = fill_candidates(app, view, at);
+            let keys: Vec<u64> = candidates.iter().map(|(k, _)| *k).collect();
+            let (i, _) = cycle_index(app, CycleKind::Fill, at, &keys, false);
+            candidates.get(i).map(|(_, t)| *t)
+        }
+        _ => match under(app, w, at) {
+            Under::Triangle(t) => Some(t),
+            _ => None,
+        },
+    };
+    let Some(t) = t else {
         app.region.hover = None;
         return;
     };

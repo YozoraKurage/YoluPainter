@@ -246,16 +246,24 @@ impl UvGrid {
 
     /// UV の点を含む三角形（重なっていれば番号の小さいもの）。UV の 0〜1 の外は None。
     pub fn find(&self, uv: Vec2) -> Option<u32> {
+        self.find_all(uv).first().copied()
+    }
+
+    /// UV の点を含む三角形の全部（重なった UV では 2 つ以上。番号の昇順）。UV の 0〜1 の外は空。
+    pub fn find_all(&self, uv: Vec2) -> Vec<u32> {
         if !(0.0..=1.0).contains(&uv.x) || !(0.0..=1.0).contains(&uv.y) {
-            return None;
+            return Vec::new();
         }
         let bin = |v: f32| ((v * self.n as f32) as usize).min(self.n - 1);
         let cell = &self.cells[bin(uv.y) * self.n + bin(uv.x)];
         let triangles = self.geometry.triangles();
-        cell.iter()
+        let mut out: Vec<u32> = cell
+            .iter()
             .copied()
             .filter(|i| uv_barycentric(uv, &triangles[*i as usize]).is_some())
-            .min()
+            .collect();
+        out.sort_unstable();
+        out
     }
 }
 

@@ -642,6 +642,65 @@ fn the_built_input_is_released_when_nothing_needs_it() {
     assert!(s.bake.input.is_some(), "焼いたマップの古さの判定に要る");
 }
 
+#[test]
+fn closing_the_window_frees_the_input_the_overlap_caches_point_at() {
+    // 窓を閉じて、焼いたマップも走っているベイクも無ければ、島の索引・見取り図も入力と形を握り続けない
+    let mut s = cube();
+    let geometry_refs = |s: &AppState| Arc::strong_count(&s.view3d.full_model().unwrap().geometry);
+    let baseline = geometry_refs(&s);
+    s.apply(bake(BakeAction::OpenWindow));
+    let input = s.bake_input().unwrap();
+    let weak = Arc::downgrade(&input);
+    drop(input);
+    assert!(matches!(s.overlap_islands(true), Some(Ok(_))));
+    assert!(s.overlap_map().is_some(), "見取り図の中身ができる");
+    assert!(s.bake.islands.is_some() && s.bake.map.is_some());
+    assert!(geometry_refs(&s) > baseline, "見取り図が形を握っている");
+    // 窓を開いている間は、入力も索引も見取り図も持つ
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some() && s.bake.islands.is_some() && s.bake.map.is_some());
+    s.apply(bake(BakeAction::CloseWindow));
+    assert!(s.bake.map.is_none(), "見取り図は窓の物");
+    assert_eq!(geometry_refs(&s), baseline, "窓を閉じたら形を握らない");
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_none());
+    assert!(s.bake.islands.is_none(), "手放した入力を索引が握っている");
+    assert!(weak.upgrade().is_none(), "入力がどこかに残っている");
+    assert_eq!(geometry_refs(&s), baseline);
+}
+
+#[test]
+fn the_island_index_of_the_polygon_fill_menu_does_not_outlive_the_input() {
+    // 窓を開かずに、ポリゴン塗りつぶしの右クリックだけで島の索引を作った場合
+    let mut s = cube();
+    let islands = s.overlap_islands(true).unwrap().unwrap();
+    let weak = Arc::downgrade(&s.bake_input().unwrap());
+    drop(islands);
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_none());
+    assert!(s.bake.islands.is_none());
+    assert!(weak.upgrade().is_none(), "入力がどこかに残っている");
+}
+
+#[test]
+fn an_island_index_of_a_replaced_input_is_dropped_while_the_window_is_open() {
+    // 窓を開いている間にモデルの形が替わって入力が作り直されたら、古い入力に結び付いた索引は残さない
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    s.apply(bake(BakeAction::OpenWindow));
+    assert!(matches!(s.overlap_islands(true), Some(Ok(_))));
+    let old = Arc::downgrade(&s.bake_input().unwrap());
+    lift(&mut s, 0.3);
+    let now = s.bake_input().unwrap();
+    assert!(old.upgrade().is_some(), "索引がまだ古い入力を握っている");
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some(), "窓を開いている間は今の入力を持つ");
+    assert!(s.bake.islands.is_none());
+    assert!(old.upgrade().is_none(), "古い入力が残っている");
+    assert!(matches!(s.overlap_islands(true), Some(Ok(i)) if i.is_on(&now)));
+}
+
 // ───────── モデルの同一性・入力を作る場所 ─────────
 
 /// Live Link のポーズで、1 枚目の板の上の頂点を `z` に動かす（形が変わり、モデルは作り直される）。

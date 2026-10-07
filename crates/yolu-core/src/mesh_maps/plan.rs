@@ -29,7 +29,8 @@ pub enum MeshBakePlanOutcome<'a> {
 /// 「持たない」ことを表す値（手動の ID 色・投影の対象の BVH がない受け手）。
 pub const SCENE_NONE: u32 = u32::MAX;
 
-/// 受け手（焼く三角形）ごとの配列は、`receivers`（元の三角形の番号の昇順）と同じ順。
+/// 受け手（焼く三角形）ごとの配列は、`receivers` と同じ順（重なったテクセルを先に取る順。既定の決め方では元の三角形の番号の昇順。
+/// `settings.overlap` で変わる）。同じテクセルを覆う三角形のうち、この並びで先のものが持ち主になる。
 #[derive(Clone, Debug)]
 pub struct MeshBakeScene<'a> {
     pub width: u32,

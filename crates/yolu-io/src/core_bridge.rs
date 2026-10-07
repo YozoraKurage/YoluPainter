@@ -4,9 +4,9 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、層の後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION,
-    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION,
+    MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
+    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -19,7 +19,7 @@ use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{
     self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
 };
-use yolu_core::mesh_maps::IdColorAssignments;
+use yolu_core::mesh_maps::{IdColorAssignments, MeshOverlapPriority, MeshOverlapRule};
 use yolu_core::paths;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
@@ -149,6 +149,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
             "magic" | "version" | "id" | "width" | "height" | "tile_size" | "normal"
             | "user_channel_count" | "user_channels" | "filter_seams" | "layer_count"
             | "manual_id_colors" => None,
+            "bake_priority" => None,
             _ => Some((path.into(), "core に無い項目")),
         };
     };
@@ -298,6 +299,10 @@ impl CoreLoad {
         if let Some(bytes) = source_budget {
             doc.set_source_budget_bytes(bytes)?;
         }
+        if version >= BAKE_PRIORITY_VERSION {
+            // 履歴の段を積む設定より先に戻す（戻すのは履歴が空のときだけ）
+            doc.restore_bake_priority(read_bake_priority(f)?)?;
+        }
         if version >= 7 {
             let settings = NormalSettings::new(
                 f.boolean("normal.derive_from_height")?,
@@ -443,7 +448,26 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
         .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
 }
 
-/// 文書の正本の版（使う機能で決まる）: 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜29 の中身も読み書きできる版）、
+/// 版 33 の頭の `bake_priority` から、ベイクの優先（読み手が並び・範囲・指紋を確かめた後）。
+fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
+    let list = |name: &str| -> Result<std::collections::BTreeSet<usize>> {
+        (0..f.int(&format!("bake_priority.{name}_count"))?)
+            .map(|i| Ok(f.int(&format!("bake_priority.{name}[{i}]"))? as usize))
+            .collect()
+    };
+    MeshOverlapPriority::new(
+        MeshOverlapRule::from_index(f.int("bake_priority.rule")?)
+            .ok_or_else(|| Error::InvalidData("ベイクの優先の決め方が不正です".into()))?,
+        f.boolean("bake_priority.skip_outside")?,
+        f.text("bake_priority.binding")?.to_owned(),
+        list("skip")?,
+        list("prefer")?,
+    )
+    .map_err(|e| Error::InvalidData(e.to_string()))
+}
+
+/// 文書の正本の版（使う機能で決まる）: 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
+/// 層のフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜29 の中身も読み書きできる版）、
 /// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
 /// 0.5.0 の効果（フィルターの段の種類 70〜79、Generator の種類 66・68・69・70）があれば 28（版 27 の中身も読み書きできる）、パスの一覧の形で書くパス
 /// （塗りつぶしの層のパス・2 本以上・名前・隠す・種類・筆先・深さ・対称・角・取っ手）があれば 27、グラデーションマップの混色（混色モード・混合率曲線）があれば 25、
@@ -451,7 +475,9 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if !doc.filter_seams() {
+    if !doc.bake_priority().is_default() {
+        BAKE_PRIORITY_VERSION
+    } else if !doc.filter_seams() {
         SEAMS_VERSION
     } else if uses_point_gradient_version(doc) {
         POINT_GRADIENT_VERSION
@@ -609,6 +635,18 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
     }
     if version >= SEAMS_VERSION {
         w.boolean(doc.filter_seams())?;
+    }
+    if version >= BAKE_PRIORITY_VERSION {
+        let p = doc.bake_priority();
+        w.int(p.rule as i32)?;
+        w.boolean(p.skip_outside)?;
+        w.text(p.binding())?;
+        for list in [p.skipped(), p.preferred()] {
+            w.int(list.len() as i32)?;
+            for t in list {
+                w.int(*t as i32)?;
+            }
+        }
     }
     w.int(doc.layers().len() as i32)
 }

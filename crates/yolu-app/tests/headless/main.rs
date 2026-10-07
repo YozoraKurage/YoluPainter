@@ -23,6 +23,7 @@ mod mcp_server;
 mod no_developer_words;
 mod no_instruction_text;
 mod notice_rules;
+mod overlap_uv;
 mod pose_saved;
 mod procedural;
 mod recovery;
