@@ -68,7 +68,7 @@ def artifact_name(tree, target):
     return f'dist-{tree}-{target}'
 
 
-# ───────── 道具 ─────────
+# ───────── ツール ─────────
 
 def git(*args, cwd=ROOT):
     try:

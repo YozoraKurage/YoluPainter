@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ブラシ形式の取り込みの正解（crates/yolu-io/tests/fixtures/brushes/）を作る。
 #   brushes.sh [出力先]
-# 1. Rust の試験（brush_golden の export_corpus）が、手で組んだ事例と壊した入力を inputs.bin に書く。
-# 2. Unity 版の Runtime/Core（ブラシの読み手を含む）を Unity の同梱の Roslyn で原文のまま組み、Mono で inputs.bin を全部読ませる。
-# 3. cases.txt（手で組んだ事例の完全な指紋）と fuzz.txt（壊した入力ごとの結果と指紋の短縮）を出力先へ書く。
-# 要るもの: Unity 2022.3 のエディタの同梱の道具（$YOLUPAINTER_CORE_UNITY_DATA）。Unity の原文は $YOLUPAINTER_UNITY_SOURCE（既定 /workspace）。
+# 1. Rust の試験（brush_golden の export_corpus）が、手で作った事例と壊した入力を inputs.bin に書く。
+# 2. Unity 版の Runtime/Core（ブラシの読み手を含む）を Unity の同梱の Roslyn で原文のままビルドし、Mono で inputs.bin を全部読ませる。
+# 3. cases.txt（手で作った事例の完全な指紋）と fuzz.txt（壊した入力ごとの結果と指紋の短縮）を出力先へ書く。
+# 要るもの: Unity 2022.3 のエディタの同梱のツール（$YOLUPAINTER_CORE_UNITY_DATA）。Unity の原文は $YOLUPAINTER_UNITY_SOURCE（既定 /workspace）。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"

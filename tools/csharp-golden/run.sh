@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Unity 版の C# の Core から yolu-core の正解のファイルを作る・C# の速さを測る。
 #   run.sh [golden]            台本（crates/yolu-core/tests/golden/cases.txt）を走らせ、同じフォルダへ index.txt と .rgba を書く
-#   run.sh docops-bench       人工二層・512² と 1024² の変形・面積縮小・結合を各 3 回計測
-#   run.sh docops             層のロック・結合・複数操作・変形・画像サイズ変更の正解を生成
-#   run.sh clipboard          層の画素のコピー・カット・結合してコピー・ペースト・置き換え・まとめ（Batch）の正解を生成
+#   run.sh docops-bench       人工 2 レイヤー・512² と 1024² の変形・面積縮小・結合を各 3 回計測
+#   run.sh docops             レイヤーのロック・結合・複数操作・変形・画像サイズ変更の正解を生成
+#   run.sh clipboard          レイヤーの画素のコピー・カット・結合してコピー・ペースト・置き換え・まとめ（Batch）の正解を生成
 #                             （台本 crates/yolu-core/tests/golden/clipboard/cases.txt。事例ごとの出力の SHA-256 を index.txt へ。
 #                             食い違ったときは GOLDEN_FULL=フォルダ で出力そのものを書く）
 #   run.sh bench [回数]         4096² の合成と半径 40・200 のストローク、M2 のブラシ（ゆらぎ・筆先・質感・デュアル・色・全部・
@@ -13,7 +13,7 @@
 #   run.sh filter              非破壊フィルターの正解を生成（Generator の事例は、実 FilterEngine が解決した値も <名前>.s<段> へ書く）
 #   run.sh filter-bench        4096² のフィルターごとの時間（Mono）
 #   run.sh surface             面の計算の台本（crates/yolu-core/tests/golden/surface/cases.txt）を Unity 版の SurfaceGeometry に通し、
-#                              同じフォルダへ index.txt を書く（Editor/Preview の原文を、本物の UnityEngine.CoreModule.dll と組む。
+#                              同じフォルダへ index.txt を書く（Editor/Preview の原文を、本物の UnityEngine.CoreModule.dll と一緒にビルドする。
 #                              ネイティブの Bounds.SqrDistance の呼び出しだけを SurfaceGolden.cs の写しに置き換える）
 #   run.sh surface-bench [回数]  7 万三角形の球で組み立て・レイ・ダブの時間（Mono）
 #   run.sh export              書き出しの台本（crates/yolu-core/tests/golden/export/cases.txt）を Unity 版の ExportTemplates・TexturePadding に通し、
@@ -25,7 +25,7 @@
 # オプション:
 #   --source DIR   Unity 版のリポジトリ（Runtime/Core を読む。既定 /workspace か $YOLUPAINTER_UNITY_SOURCE）
 #   --out DIR      golden の出力先（既定は台本と同じフォルダ）
-#   --release      Release で組む（既定は Unity のエディタの既定と同じ Debug。浮動小数の結果は変わらないはず）
+#   --release      Release でビルドする（既定は Unity のエディタの既定と同じ Debug。浮動小数の結果は変わらないはず）
 # 要るもの: Unity 2022.3 のエディタ（同梱の .NET・Roslyn・Mono・参照アセンブリ）。$YOLUPAINTER_CORE_UNITY_DATA で場所を変えられる。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +57,7 @@ core="$source_dir/Runtime/Core"
 [[ -d "$core" ]] || { echo "Core のソースが無い: $core" >&2; exit 3; }
 dotnet="$unity/NetCoreRuntime/dotnet"; csc="$unity/DotNetSdkRoslyn/csc.dll"; mono="$unity/MonoBleedingEdge/bin/mono"
 api="$unity/UnityReferenceAssemblies/unity-4.8-api"
-for f in "$dotnet" "$csc" "$mono"; do [[ -e "$f" ]] || { echo "Unity の同梱の道具が無い: $f" >&2; exit 3; }; done
+for f in "$dotnet" "$csc" "$mono"; do [[ -e "$f" ]] || { echo "Unity の同梱のツールが無い: $f" >&2; exit 3; }; done
 
 if [[ "$mode" == export* ]]; then
   build="$repo/target/csharp-golden/export-$flavor"
@@ -70,7 +70,7 @@ if [[ "$mode" == export* ]]; then
     find "$core" -name '*.cs' | LC_ALL=C sort | sed 's/.*/"&"/'
     echo "\"$here/ExportGolden.cs\""
   } > "$rsp"
-  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
+  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "ビルドできなかった" >&2; exit 3; }
   if [[ "$mode" == "export-bench" ]]; then exec "$mono" "$build/export.exe" bench "${extra[@]}"; fi
   commit="$(git -C "$source_dir" rev-parse --short=12 HEAD 2>/dev/null || echo 不明)"
   dirty="$(git -C "$source_dir" status --porcelain -- Runtime/Core 2>/dev/null | head -1)"
@@ -92,7 +92,7 @@ if [[ "$mode" == psd ]]; then
     find "$core" -name '*.cs' | LC_ALL=C sort | sed 's/.*/"&"/'
     echo "\"$here/PsdBridgeGolden.cs\""
   } > "$rsp"
-  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
+  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "ビルドできなかった" >&2; exit 3; }
   commit="$(git -C "$source_dir" rev-parse --short=12 HEAD 2>/dev/null || echo 不明)"
   dirty="$(git -C "$source_dir" status --porcelain -- Runtime/Core 2>/dev/null | head -1)"
   fingerprint="$(cd "$core" && find . -name '*.cs' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16)"
@@ -133,7 +133,7 @@ if [[ "$mode" == surface* ]]; then
     for f in "$build"/src/*.cs; do echo "\"$f\""; done
     echo "\"$here/SurfaceGolden.cs\""
   } > "$rsp"
-  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
+  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "ビルドできなかった" >&2; exit 3; }
   # Unity の外の Mono で UnityEngine.CoreModule の C# の部分（Vector3・Mathf・Bounds・Ray）を使う。版の違いの警告は捨てる
   run_mono() { MONO_PATH="$managed" "$mono" "$build/surface.exe" "$@" 2> >(grep -v -e "out of sync" -e "update one from git" -e "compile and install" -e "the other too" -e "Do not report this as a bug" -e "you probably have a broken" -e "If you see other errors" -e "and you need to fix your mono" -e "The out of sync library" -e '^$' >&2); }
   if [[ "$mode" == "surface-bench" ]]; then run_mono bench "${extra[@]}"; exit 0; fi
@@ -160,7 +160,7 @@ rsp="$build/build.rsp"
   find "$core" -name '*.cs' | LC_ALL=C sort | sed 's/.*/"&"/'
   echo "\"$here/$program\""
 } > "$rsp"
-"$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
+"$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "ビルドできなかった" >&2; exit 3; }
 
 if [[ "$mode" == "docops-bench" ]]; then
   exec "$mono" "$build/golden.exe" bench

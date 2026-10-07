@@ -6,7 +6,7 @@ using System.Text;
 using Yozolab.YoluPainter.Core;
 using Yozolab.YoluPainter.Core.Persistence;
 
-/// M2 の層（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本を C# の実際の書き手で作り、
+/// M2 のレイヤー（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本を C# の実際の書き手で作り、
 /// 全チャンネルの合成と Normal のファイル出力を添える（Rust の to_core の意味を、往復のバイトだけでなく絵でも確かめるため）。
 /// ほかに、Rust が書いた正本を Unity 0.2.0 の読み手に読ませた結果の記録が 2 つ: 版 22（ユーザーチャンネル）は読み手が断ること
 /// （DocumentBinary・YlpFormat・ウィンドウの開く手順）、版 21（ユーザーチャンネルが無い文書）は読めて、書き直すと同じバイト列になり、
@@ -34,7 +34,7 @@ static class M2Fixture
         return true;
     }
 
-    /// 画布の外の余白を 0 にした、seed ごとの模様のタイルを全部（skip の剰余のタイルは置かない）。マスクは隠す量だけ（RGB 0）。
+    /// キャンバスの外の余白を 0 にした、seed ごとの模様のタイルを全部（skip の剰余のタイルは置かない）。マスクは隠す量だけ（RGB 0）。
     static void Paint(PaintDocument doc, SparseTileSurface surface, int seed, bool mask = false, int skip = -1)
     {
         int ts = doc.TileSize, cols = (doc.Width + ts - 1) / ts, rows = (doc.Height + ts - 1) / ts;
@@ -93,7 +93,7 @@ static class M2Fixture
         var lv3 = doc.GroupLayers(new[] { deep.Id }, "3 段目", Id()); doc.SetLayerBlendMode(lv3.Id, LayerBlendMode.Luminosity);
         var lv2 = doc.GroupLayers(new[] { lv3.Id }, "2 段目", Id()); doc.SetLayerOpacity(lv2.Id, .9);
         var lv1 = doc.GroupLayers(new[] { lv2.Id }, "1 段目", Id()); doc.SetLayerBlendMode(lv1.Id, LayerBlendMode.LinearBurn);
-        // 一番上の段の層を、作った後でグループの中へ動かす（並びの組み替え）
+        // 一番上の段のレイヤーを、作った後でグループの中へ動かす（並びの組み替え）
         var moved = Raster(doc, "動かした層", 9);
         doc.MoveLayerTo(moved.Id, inner.Id, 1);
         return doc;
@@ -168,8 +168,8 @@ static class M2Fixture
         return doc;
     }
 
-    /// 層のロック（版 12 の属性の印のビット 1 と、直後の int）を、C# の実際の書き手で。個別 4 種・重ね・すべて・グループ・塗りつぶし・調整・
-    /// クリッピング・チャンネルごとの合成との同居（属性の印のビット 1 と 2 の並び）・ロックの無い層。ロックは合成を変えない。
+    /// レイヤーのロック（版 12 の属性の印のビット 1 と、直後の int）を、C# の実際の書き手で。個別 4 種・重ね・すべて・グループ・塗りつぶし・調整・
+    /// クリッピング・チャンネルごとの合成との同居（属性の印のビット 1 と 2 の並び）・ロックの無いレイヤー。ロックは合成を変えない。
     static PaintDocument LockedLayers()
     {
         var doc = new PaintDocument(19, 13, 8, 1024 * 1024, Id());
@@ -198,7 +198,7 @@ static class M2Fixture
         if (DocumentBinary.CurrentVersion != 21) throw new Exception("正本21の書き手が必要です");
         Directory.CreateDirectory(root);
         Save(root, "locks-v21", LockedLayers());
-        Console.WriteLine("層のロックの正本をC#で生成しました");
+        Console.WriteLine("レイヤーのロックの正本をC#で生成しました");
     }
 
     static PaintDocument Tiny()
@@ -233,7 +233,7 @@ static class M2Fixture
         return s.ToArray();
     }
 
-    /// Rust が書いた版 21 の正本（ユーザーチャンネルが無い文書）を Unity 0.2.0 の読み手に読ませ、書き直したバイト列が元と同じか、層の数、
+    /// Rust が書いた版 21 の正本（ユーザーチャンネルが無い文書）を Unity 0.2.0 の読み手に読ませ、書き直したバイト列が元と同じか、レイヤーの数、
     /// 全チャンネルの合成を記録する（Rust の from_core が C# の書き手と同じ並びで書けていることを、C# の読み手側から確かめる）。
     static void RustWritten(string input, string record, string composite)
     {
@@ -245,7 +245,7 @@ static class M2Fixture
         if (doc == null) throw new Exception("C# の読み手が Rust の書いた正本を読めません: " + lines.Last());
         lines.Add("DocumentBinary.Write(Read) == input: " + DocumentBinary.Write(doc).SequenceEqual(bytes));
         lines.Add("Layers: " + doc.Layers.Count());
-        // ロックがあるときだけ、層ごとの自分のロックと効くロック（親のグループ・すべてを含む）の数も記録する（ロックの無い文書の記録は変わらない）
+        // ロックがあるときだけ、レイヤーごとの自分のロックと効くロック（親のグループ・すべてを含む）の数も記録する（ロックの無い文書の記録は変わらない）
         if (doc.Layers.Any(l => l.Locks != LayerLocks.None))
             lines.Add("Locks (own/effective): " + string.Join(", ", doc.Layers.Select(l => (int)l.Locks + "/" + (int)doc.EffectiveLocks(l.Id))));
         File.WriteAllText(record, string.Join("\n", lines) + "\n", new UTF8Encoding(false));

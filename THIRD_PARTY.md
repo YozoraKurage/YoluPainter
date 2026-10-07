@@ -1,7 +1,7 @@
 # 第三者の許諾
 
 Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
-`yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じ組みでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
+`yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じビルドでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
 各対象の依存と、Linux の配布を止めている条件を分けて記載する。
 
@@ -27,7 +27,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   （MIT OR Apache-2.0 から MIT）と、その依存の `os_pipe`・`tree_magic_mini`・`nom`（いずれも MIT）、`petgraph`・`fixedbitset`・
   `hashbrown 0.15.5`（MIT OR Apache-2.0 から MIT）、`foldhash 0.1.5`（Zlib）。Windows の依存は変わらない。`tree_magic_mini` の GPL のデータ
   （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を足さないこと。
-- `yolu-app` は画面の並び（ドックのタブの組・分け方・窓の大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
+- `yolu-app` は画面の並び（ドックのタブの組・分け方・ウィンドウの大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
   `egui`・`epaint`・`emath`・`ecolor`・`accesskit` などが既に使っている `serde` を使うだけで、増えるクレートは `accesskit` の `serde` 機能が引く
   手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
@@ -129,12 +129,12 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 （<https://bottosson.github.io/posts/oklab/>。著者は式と参照コードを **MIT**（Copyright (c) 2020 Björn Ottosson）で公開している）の係数を使う。
 変換の行列の係数だけを使い、参照コードは移していない。クレートではないので、上の件数には含めない。輝度の補正の式（彩度の落ちた量に比例して明るさを持ち上げる）はこのアプリのもの。
 
-## 生成・試験に使う道具
+## 生成・試験に使うツール
 
 許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。
-以下は開発環境で使う道具の許諾であり、道具本体を製品へ同梱しない。
+以下は開発環境で使うツールの許諾であり、ツール本体を製品へ同梱しない。
 
-| 道具 | 許諾・参照元 |
+| ツール | 許諾・参照元 |
 |---|---|
 | Python | PSF License と付随する許諾。 [Python の表記](https://docs.python.org/3/license.html) |
 | Rust / Cargo | 主に MIT OR Apache-2.0。 [Rust](https://github.com/rust-lang/rust/blob/master/COPYRIGHT)・[Cargo](https://github.com/rust-lang/cargo/blob/master/LICENSE-MIT) の第三者表記も参照 |
@@ -206,7 +206,7 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 `cargo xtask bundle` と同じく app は `--include-update --include-cli` を付けた集合を記載する。
 `yolu-update` はアプリの自動更新として組み込み済みで、その依存も app の一覧に含まれる。
 `yolu-cli`（`yolupainter-cli`）は app と同じ配布物（zip・tar.gz・インストーラー）に入るので、その依存も app の一覧と全文束に含め、
-`.mcpb` には `yolu-cli` の一覧と全文束（`--package yolu-cli --built-with yolu-app`）を入れる。実行ファイルは `-p yolu-app -p yolu-cli` の 1 回の組みで作り、2 つのクレートの機能が合わさって、`yolu-cli` 単独の木に無い依存（`libm`・`foldhash`）が入るので、数えるのはその組みでの `yolu-cli` の部分木。
+`.mcpb` には `yolu-cli` の一覧と全文束（`--package yolu-cli --built-with yolu-app`）を入れる。実行ファイルは `-p yolu-app -p yolu-cli` の 1 回のビルドで作り、2 つのクレートの機能が合わさって、`yolu-cli` 単独の木に無い依存（`libm`・`foldhash`）が入るので、数えるのはそのビルドでの `yolu-cli` の部分木。
 開発用 `xtask` の依存は後段に分ける。
 同名でも別版のクレートは別件として数える。製品間・対象間の件数は重複する。
 
@@ -224,7 +224,7 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/RELEASING.md) と一致する。
 別の対象の一覧を流用しない。結果は `target/third-party/<target>/<クレート>/` に出力する。
 
-| 対象 | app（更新・コマンドライン込み） | cli（app と同じ組み） | update 単独 | xtask | app の全文束 |
+| 対象 | app（更新・コマンドライン込み） | cli（app と同じビルド） | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
 | Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
 | Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
@@ -572,7 +572,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -1006,7 +1006,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -1507,7 +1507,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
-`yolu-app` と同じ cargo の組み（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
+`yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|

@@ -9,13 +9,13 @@ import shutil
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--verify', action='store_true', help='既存の27件の.ylpをC#とRustの例で合成しPNG全バイトを比較')
 parser.add_argument('--m1', action='store_true', help='形式7とM1合成の正解データを生成')
-parser.add_argument('--m2', action='store_true', help='M2の層の正本5件と全チャンネルの合成を生成')
-parser.add_argument('--locks', action='store_true', help='層のロック（版12の属性の印のビット1）の正本（locks-v21.utpaint）と全チャンネルの合成を生成')
+parser.add_argument('--m2', action='store_true', help='M2のレイヤーの正本5件と全チャンネルの合成を生成')
+parser.add_argument('--locks', action='store_true', help='レイヤーのロック（版12の属性の印のビット1）の正本（locks-v21.utpaint）と全チャンネルの合成を生成')
 parser.add_argument('--rust-written-locks', action='store_true',
                     help='Rustが書いたロックつきの版21の正本（rust-written-locks-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致と合成を記録')
-parser.add_argument('--effects', action='store_true', help='効果（フィルター・Generator・Anchor・塗りつぶしの画像と投影・グラデーション・パス）の正本5件と、版9〜20の旧い正本12件、合成・層の出力・入力を生成')
+parser.add_argument('--effects', action='store_true', help='効果（フィルター・Generator・Anchor・塗りつぶしの画像と投影・グラデーション・パス）の正本5件と、版9〜20の旧い正本12件、合成・レイヤーの出力・入力を生成')
 parser.add_argument('--rust-written-effects', action='store_true',
-                    help='Rustが編集APIで作って書いた効果入りの版21の正本（rust-written-effects-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致・全チャンネルの合成・層ごとの出力を記録')
+                    help='Rustが編集APIで作って書いた効果入りの版21の正本（rust-written-effects-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致・全チャンネルの合成・レイヤーごとの出力を記録')
 parser.add_argument('--user-channels', action='store_true',
                     help='Rustが書いた版22の正本（user-channels-v22.utpaint）をUnity版の読み手に読ませた結果を記録')
 parser.add_argument('--procedural', action='store_true',
@@ -54,7 +54,7 @@ if args.verify:
         source = fixtures / (name + '.ylp')
         csharp = comparison / (name + '-csharp.png')
         rust = comparison / (name + '-rust.png')
-        rust.unlink(missing_ok=True)  # この道具が作った出力だけを再生成する。
+        rust.unlink(missing_ok=True)  # このツールが作った出力だけを再生成する。
         subprocess.run(mono + ['--composite', str(source), str(csharp)], check=True)
         subprocess.run([str(root / 'target/debug/examples/composite_png'), str(source), str(rust)], cwd=root, check=True)
         actual, expected = rust.read_bytes(), csharp.read_bytes()
@@ -97,7 +97,7 @@ elif args.generation:
     cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')
     subprocess.run([cargo, 'build', '-p', 'yolu-io', '--example', 'write_generation'], cwd=root, check=True)
     rust_stores = out / 'rust-generation'
-    shutil.rmtree(rust_stores, ignore_errors=True)  # この道具が作った出力だけを再生成する。
+    shutil.rmtree(rust_stores, ignore_errors=True)  # このツールが作った出力だけを再生成する。
     subprocess.run([str(root / 'target/debug/examples/write_generation'), str(fixtures / 'format6.ylp'), str(rust_stores)],
                    cwd=root, check=True)
     subprocess.run(mono + ['--generation-reads', str(rust_stores), str(fixtures / 'rust-generation.unity.txt')], check=True)

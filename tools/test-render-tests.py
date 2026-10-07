@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""画面の試験を並べて回す道具（render-tests.py）の確かめ。試験になる target が列のどこかに入ること、
+"""画面の試験を並べて回すツール（render-tests.py）の確かめ。試験になる target が列のどこかに入ること、
 上限の時間を越えた試験がプロセスのグループごと殺されて失敗になり、その列の残りは回さなかった物として残ることを確かめる。
 cargo は呼ばない（`cargo metadata` の応答は偽、回す command は sh に置き換える）。"""
 import contextlib

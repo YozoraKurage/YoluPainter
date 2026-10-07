@@ -1,6 +1,6 @@
 // 正本の C# Core に人工入力を通す。出力は全バイトの SHA-256。行の種類は mat・edge（マテリアルの塗り）、mask-mat・mask-edge（マスクの塗り）、
-// lock・lockmask（層のロックを立てた層への塗り・グラデーション・三角形の塗り・ストローク。断った層・持ち主・ロックと、断ったあとの文書、通ったときの Undo/Redo まで。
-// チャンネルごとに透明な画素が違う画素と、文書の選択範囲、マスクの無い層も含む）、locknr（塗りつぶし・調整・グループの層に書いたとき、型の拒否とロックの拒否のどちらが先か）、
+// lock・lockmask（レイヤーのロックを立てたレイヤーへの塗り・グラデーション・三角形の塗り・ストローク。断ったレイヤー・持ち主・ロックと、断ったあとの文書、通ったときの Undo/Redo まで。
+// チャンネルごとに透明な画素が違う画素と、文書の選択範囲、マスクの無いレイヤーも含む）、locknr（塗りつぶし・調整・グループのレイヤーに書いたとき、型の拒否とロックの拒否のどちらが先か）、
 // id・uv・uvx（ID の色・UV の配置）、tri（三角形の和集合）、rollback・rollback-fill（ストロークの巻き戻しのバイト数。ハッシュでなく数）。Rust 側の試験（crates/yolu-core/tests/reference/material_golden.rs）が行の鍵を数えて照らす。
 using System;
 using System.IO;
@@ -10,7 +10,7 @@ using System.Security.Cryptography;
 using Yozolab.YoluPainter.Core;
 using Yozolab.YoluPainter.Core.MeshMaps;
 class MaterialGolden {
-    /// <summary>画布の場面。mat は画布がタイルの整数倍、edge は端が欠けたタイル（37×29・タイル 8）に画素と三角形が掛かる。</summary>
+    /// <summary>キャンバスの場面。mat はキャンバスがタイルの整数倍、edge は端が欠けたタイル（37×29・タイル 8）に画素と三角形が掛かる。</summary>
     sealed class Scene {
         public string Name; public int W, H;
         public (double, double, double, double, double, double)[] Triangles;
@@ -52,7 +52,7 @@ class MaterialGolden {
             var f=d.BeginMaterialTriangleFill(layer.Id,material,.63,erase);
             f.Add(new[]{t[1]});f.Add(new[]{t[0],t[1]});f.Add(new[]{t[2]});f.Stroke.Commit();
         } else {
-            // 画布ぴったりの四角を 2 回に分けて: 端が欠けたタイルも画布の中が全部覆われた印（全覆いのタイル）になる
+            // キャンバスぴったりの四角を 2 回に分けて: 端が欠けたタイルもキャンバスの中が全部覆われた印（全覆いのタイル）になる
             var f=d.BeginMaterialTriangleFill(layer.Id,material,.63,erase);
             f.Add(new[]{(0.0,0.0,(double)w,0.0,(double)w,(double)h)});f.Add(new[]{(0.0,0.0,(double)w,(double)h,0.0,(double)h)});f.Stroke.Commit();
         }
@@ -82,9 +82,9 @@ class MaterialGolden {
         for(int y=0;y<h;y++)for(int x=0;x<w;x++) bytes[y*w+x]=mask.GetPixel(x,y).A;
         return bytes;
     }
-    /// <summary>ロックの場面（edge の画布）。層は 6 チャンネルとも画素あり。透明な画素はチャンネルごとに違う（アルファの式にチャンネル番号が入る）。
+    /// <summary>ロックの場面（edge のキャンバス）。レイヤーは 6 チャンネルとも画素あり。透明な画素はチャンネルごとに違う（アルファの式にチャンネル番号が入る）。
     /// lockCase: 0 ロックなし・1 透明部分・2 画像・3 すべて・4 位置（塗りは通る）、
-    /// 5〜7 は層を 1 つだけ含むグループに 透明部分・画像・すべて。off は 2 つのチャンネルを無効にしておく（拒否が有効化を残さないことを見る）。
+    /// 5〜7 はレイヤーを 1 つだけ含むグループに 透明部分・画像・すべて。off は 2 つのチャンネルを無効にしておく（拒否が有効化を残さないことを見る）。
     /// selected は文書の選択範囲（楕円）を立てる。</summary>
     static PaintDocument LockDoc(int lockCase,bool off,bool withMask,bool selected,out PaintLayer layer) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H;
@@ -114,8 +114,8 @@ class MaterialGolden {
             if(has)for(int y=0;y<h;y++)for(int x=0;x<w;x++){var p=s.GetPixel(x,y);b.Write(p.R);b.Write(p.G);b.Write(p.B);b.Write(p.A);}
         }
     }
-    /// <summary>ロックを立てた層への書き込み。断った層・持ち主・ロック（番号は文書の層の並びの位置）か、通ったか（0）、そのほかの拒否（2）と、
-    /// 続く Undo/Redo の可否、層の全チャンネル（有効か・面があるか・画素）。通って履歴ができたときは、Undo の後と Redo の後も。</summary>
+    /// <summary>ロックを立てたレイヤーへの書き込み。断ったレイヤー・持ち主・ロック（番号は文書のレイヤーの並びの位置）か、通ったか（0）、そのほかの拒否（2）と、
+    /// 続く Undo/Redo の可否、レイヤーの全チャンネル（有効か・面があるか・画素）。通って履歴ができたときは、Undo の後と Redo の後も。</summary>
     static byte[] RunLock(int kind,int lockCase,int v) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H; bool erase=(v&1)!=0,off=(v&2)!=0,selected=(v&4)!=0;
         var d=LockDoc(lockCase,off,false,selected,out var layer);
@@ -150,7 +150,7 @@ class MaterialGolden {
         if(ok && d.CanUndo) { d.Undo(); b.Write(d.CanUndo); b.Write(d.CanRedo); LockState(b,layer,w,h,false); d.Redo(); b.Write(d.CanUndo); b.Write(d.CanRedo); LockState(b,layer,w,h,false); }
         b.Flush(); return ms.ToArray();
     }
-    /// <summary>ロックを立てた層のマスクへの書き込み（画像・透明部分のロックでは通り、すべてのロックでだけ断る）。v のビット 0 は見せる側、ビット 1 は層にマスクが無い
+    /// <summary>ロックを立てたレイヤーのマスクへの書き込み（画像・透明部分のロックでは通り、すべてのロックでだけ断る）。v のビット 0 は見せる側、ビット 1 はレイヤーにマスクが無い
     /// （どのロックでも「マスクが無い」で断る。ロックの拒否より先）、ビット 2 は文書の選択範囲。</summary>
     static byte[] RunLockMask(int kind,int lockCase,int v) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H; bool reveal=(v&1)!=0,noMask=(v&2)!=0,selected=(v&4)!=0;
@@ -176,7 +176,7 @@ class MaterialGolden {
         if(ok && d.CanUndo) { d.Undo(); b.Write(d.CanUndo); b.Write(d.CanRedo); LockState(b,layer,w,h,true); d.Redo(); b.Write(d.CanUndo); b.Write(d.CanRedo); LockState(b,layer,w,h,true); }
         b.Flush(); return ms.ToArray();
     }
-    /// <summary>塗りつぶし・調整・グループの層の場面（edge の画布）。層に全体のマスクを付け、ロックの置き方は LockDoc と同じ（lockCase 5〜7 は層を含むグループに掛ける）。
+    /// <summary>塗りつぶし・調整・グループのレイヤーの場面（edge のキャンバス）。レイヤーに全体のマスクを付け、ロックの置き方は LockDoc と同じ（lockCase 5〜7 はレイヤーを含むグループに掛ける）。
     /// target: 0 塗りつぶし（Color と Emission の値）・1 調整（反転）・2 グループ。</summary>
     static PaintDocument LockKindDoc(int target,int lockCase,out PaintLayer layer) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H;
@@ -197,9 +197,9 @@ class MaterialGolden {
         for(int c=0;c<6;c++) b.Write(l.IsChannelEnabled((PaintChannel)c));
         for(int y=0;y<h;y++)for(int x=0;x<w;x++)b.Write(l.Mask.Surface.GetPixel(x,y).A);
     }
-    /// <summary>塗りつぶし・調整・グループの層への書き込み。entry: 0 BeginStroke・1 BeginMaterialStroke・2 FillMaterial・3 GradientMaterial・4 BeginMaterialTriangleFill・
+    /// <summary>塗りつぶし・調整・グループのレイヤーへの書き込み。entry: 0 BeginStroke・1 BeginMaterialStroke・2 FillMaterial・3 GradientMaterial・4 BeginMaterialTriangleFill・
     /// 5 Fill・6 Gradient・7 BeginTriangleFill（5〜7 は Color）・8 GradientMask・9 BeginMaskTriangleFill・10 FillMask・11 BeginMaskStroke。v のビット 0 は消す（マスクでは見せる）。
-    /// 先頭は 0 通った・1 ロックで断った（層・持ち主・ロックの並びの位置）・2 そのほかの拒否（型）。続いて Undo/Redo の可否・各チャンネルの有効・マスクの隠す量。</summary>
+    /// 先頭は 0 通った・1 ロックで断った（レイヤー・持ち主・ロックの並びの位置）・2 そのほかの拒否（型）。続いて Undo/Redo の可否・各チャンネルの有効・マスクの隠す量。</summary>
     static byte[] RunLockKind(int entry,int target,int lockCase,int v) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H; bool flag=(v&1)!=0;
         var d=LockKindDoc(target,lockCase,out var layer);
@@ -232,7 +232,7 @@ class MaterialGolden {
         b.Flush(); return ms.ToArray();
     }
     /// <summary>1 つの点で 1 回塗ったときのストロークの巻き戻しのバイト数（PeakWorkingBytes − 確保量 − 履歴）。C# は被覆（覆い）を全チャンネルで
-    /// 1 枚共有し、元のタイルの写しだけをチャンネルごとに持つ。tile は画布の 1 タイルの辺（画布は 6×5 タイル）、existing は全チャンネルに画素がある層。</summary>
+    /// 1 枚共有し、元のタイルの写しだけをチャンネルごとに持つ。tile はキャンバスの 1 タイルの辺（キャンバスは 6×5 タイル）、existing は全チャンネルに画素があるレイヤー。</summary>
     static long Rollback(int tile,bool existing,int channels) {
         int w=tile*6,h=tile*5;
         var d=new PaintDocument(w,h,tile); var layer=d.AddLayer("paint");
@@ -245,7 +245,7 @@ class MaterialGolden {
         }
     }
     /// <summary>累積の三角形の塗りで、1 回の Add（edge の場面の 3 三角形）のあとのストロークの巻き戻しのバイト数。選択範囲の外のタイルも、
-    /// 写しを取って数える。全チャンネルに画素がある層（Run と同じ画素）。</summary>
+    /// 写しを取って数える。全チャンネルに画素があるレイヤー（Run と同じ画素）。</summary>
     static long RollbackFill(bool selected,int channels) {
         var sc=Scenes[1]; int w=sc.W,h=sc.H;
         var d=new PaintDocument(w,h,8); var layer=d.AddLayer("paint");
@@ -305,9 +305,9 @@ class MaterialGolden {
         new[]{(1.0,1.0,10.0,10.0,20.0,20.0)},                                  // 3 一直線（面積 0）
         new[]{(1.0,1.0,1.000001,1.0,1.0,1.0000001)},                           // 4 面積 1e-13（飛ばす）
         new[]{(1.375,1.375,1.375001,1.375,1.375,1.375004)},                    // 5 頂点がサンプルの位置の極小
-        new[]{(-1e6,-1e6,1e6,-1e6,0.0,1e6)},                                   // 6 画布を含む巨大
+        new[]{(-1e6,-1e6,1e6,-1e6,0.0,1e6)},                                   // 6 キャンバスを含む巨大
         new[]{(-1e9,-1e9,1e9,-1e9,0.0,1e9)},                                   // 7 1e9 の座標
-        new[]{(0.0,0.0,37.0,0.0,37.0,29.0),(0.0,0.0,37.0,29.0,0.0,29.0)},      // 8 画布ぴったりの 2 枚（継ぎ目なし）
+        new[]{(0.0,0.0,37.0,0.0,37.0,29.0),(0.0,0.0,37.0,29.0,0.0,29.0)},      // 8 キャンバスぴったりの 2 枚（継ぎ目なし）
         new[]{(0.0,0.0,37.0,0.0,0.0,29.0)},                                    // 9 角から角
         new[]{(8.0,8.0,16.0,8.0,8.0,16.0)},                                    // 10 タイルの境目の頂点
     };

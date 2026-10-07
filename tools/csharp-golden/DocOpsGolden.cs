@@ -60,7 +60,7 @@ static class DocOpsGolden
         b.Write((int)r.Method);b.Write((int)r.Notes);b.Write(r.ComparedPixels);b.Write(r.ChangedPixels);b.Write(r.MaxDifference);b.Write(r.MaxVisibleDifference);
         foreach(PaintChannel c in Enum.GetValues(typeof(PaintChannel))) b.Write(r.ChangedByChannel.TryGetValue(c,out var n)?n:0L);
     }
-    /// 結合がロックで断られる・断られないの照合。結果の型（0 成功・1 ロック・2 そのほかの拒否）、断った層・持ち主・ロック、断ったあとの文書（変わらない）を書く。
+    /// 結合がロックで断られる・断られないの照合。結果の型（0 成功・1 ロック・2 そのほかの拒否）、断ったレイヤー・持ち主・ロック、断ったあとの文書（変わらない）を書く。
     static void MergeLock(PaintDocument d,int n,BinaryWriter output) {
         var a=d.Layers[0].Id;var b=d.Layers[1].Id;PaintLayer g=null;Func<LayerMergeReport> act=null;
         switch(n) {

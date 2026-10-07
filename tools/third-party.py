@@ -32,7 +32,7 @@ def digest(data):
 
 
 def dependency_keys(package, edges, offline, built_with=None):
-    """`package` が入れる依存の集合。`built_with` を指すと、その製品と同じ cargo の組み（機能が合わさる）で作った物の、`package` の部分木。"""
+    """`package` が入れる依存の集合。`built_with` を指すと、その製品と同じ cargo のビルド（機能が合わさる）で作った物の、`package` の部分木。"""
     if built_with:
         text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', TARGET,
                      '-p', built_with, '-p', package, '-e', edges, '--prefix', 'depth', '--no-dedupe', '--format', '{p}')
@@ -262,7 +262,7 @@ def markdown(package, records, errors, lock_hash, built_with=None):
     lines = [f'## {package} の依存一覧', '', f'対象: `{TARGET}`、通常の機能。Cargo.lock SHA-256: `{lock_hash}`。', '',
              f'外部クレート {len(records)} 件（同名の別版は別件）。実行時 {sum(r["role"] == "実行時" for r in records)} 件。', '',
              'ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。', '',
-             *([f'`{built_with}` と同じ cargo の組み（`-p {built_with} -p {package}`）で機能が合わさった、`{package}` の部分木。', ''] if built_with else []),
+             *([f'`{built_with}` と同じ cargo のビルド（`-p {built_with} -p {package}`）で機能が合わさった、`{package}` の部分木。', ''] if built_with else []),
              '| 選択した許諾（追加条件を含む） | 件数 |', '|---|---:|']
     lines += [f'| {license_id} | {count} |' for license_id, count in sorted(counts.items())]
     lines += ['', '状態: ' + ('要確認。配布用全文束は生成しない。' if errors else 'クレートの許諾照合は成功。'), '',
@@ -292,8 +292,8 @@ def main():
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
     parser.add_argument('--built-with', choices=['yolu-app', 'yolu-update', 'yolu-cli'],
-                        help='指した製品と同じ cargo の命令で組む物として、--package の依存を数える（機能が合わさって、単独の木に無い依存が入る。'
-                             '`cargo build -p yolu-app -p yolu-cli` で組む yolupainter-cli の .mcpb 用）')
+                        help='指した製品と同じ cargo の命令でビルドする物として、--package の依存を数える（機能が合わさって、単独の木に無い依存が入る。'
+                             '`cargo build -p yolu-app -p yolu-cli` でビルドする yolupainter-cli の .mcpb 用）')
     args = parser.parse_args()
     if args.built_with and (args.package == 'all' or args.built_with == args.package):
         parser.error('--built-with は、別の製品を指した --package と一緒に使います')

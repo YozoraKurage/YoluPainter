@@ -12,7 +12,7 @@
 ;                   /RUN          入れ終わったらアプリを起こす（アプリの更新が使う）。待ちの上限で何も変えずに終わるときも、今入っているアプリを起こし直す
 ;                   /D=PATH       入れ先（最後に置く。省略は前の入れ先、初めては %LOCALAPPDATA%\Programs\YoluPainter）
 ;   アンインストーラー  /S           無音
-;                       /DELETEDATA  アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
+;                       /DELETEDATA  アプリが作り直せるデータ（設定・ウィンドウの配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
 ;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）は、どちらでも消さない
 ;
 ; 実行中のアプリは終了させない。exe が使われている間（アプリと、MCP の接続などが使っている yolupainter-cli.exe のどちらでも）は待つ
@@ -122,7 +122,7 @@ VIProductVersion "${VERSION_NUMERIC}"
 !insertmacro VersionKeys ${LANG_ENGLISH}
 
 ; /RUN が付いていれば、今入っている exe を起こす（入れ終わったとき、と、待ちの上限で何も変えずに終わるとき）。exe が無ければ何もしない。
-; 更新のアプリは、インストーラーを起こしたあと自分を閉じる。別の窓が exe を使い続けていてインストーラーが諦めても、利用者を窓の無い状態に置かない。
+; 更新のアプリは、インストーラーを起こしたあと自分を閉じる。別のウィンドウが exe を使い続けていてインストーラーが諦めても、利用者をウィンドウの無い状態に置かない。
 Function RunIfRequested
   ${GetParameters} $R0
   ClearErrors
@@ -385,7 +385,7 @@ Section "Uninstall"
     Goto keep_data
   ${EndIf}
   delete_data:
-  ; %APPDATA%\YoluPainter: 設定・窓の配置・復旧・クラッシュの記録（と、書き込み途中で残った一時ファイル）
+  ; %APPDATA%\YoluPainter: 設定・ウィンドウの配置・復旧・クラッシュの記録（と、書き込み途中で残った一時ファイル）
   Delete "$APPDATA\${PRODUCT}\settings.conf"
   Delete "$APPDATA\${PRODUCT}\recovery.conf"
   Delete "$APPDATA\${PRODUCT}\update.conf"

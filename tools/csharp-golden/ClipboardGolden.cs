@@ -1,4 +1,4 @@
-// 層の画素のコピー・カット・結合してコピー・ペースト・置き換えと、複数の編集のまとめ（Batch）を実 C# Core に通す。
+// レイヤーの画素のコピー・カット・結合してコピー・ペースト・置き換えと、複数の編集のまとめ（Batch）を実 C# Core に通す。
 // Rust 側 crates/yolu-core/tests/reference/clipboard_golden.rs と同じ台本・出力順。事例ごとの出力（結果の型・写し・履歴のバイト数・文書の
 // 全状態と、Undo・Redo の後の状態）の SHA-256 を index.txt に書く（全部を保存すると、同じ人工の文書の状態が事例の数だけ積まれて
 // 大きくなる）。食い違ったときは環境変数 GOLDEN_FULL=フォルダ で、事例ごとの出力そのものを <事例>.bin に書いて Rust 側の出力
@@ -30,7 +30,7 @@ static class ClipboardGolden
         }
         d.ClearHistory(); return d;
     }
-    /// 貼り先の文書: 1 つの層（Color に人工の画素）。kind 0 = 写し元と同じ大きさ、1 = 小さい、2 = 大きい、3 = 同じ大きさで選択範囲あり。
+    /// 貼り先の文書: 1 つのレイヤー（Color に人工の画素）。kind 0 = 写し元と同じ大きさ、1 = 小さい、2 = 大きい、3 = 同じ大きさで選択範囲あり。
     static PaintDocument MakeTarget(int kind,int seed,bool grouped,out Guid baseId) {
         int w=kind==1?9:kind==2?25:17,h=kind==1?7:kind==2?21:13,tile=kind==0||kind==3?new[]{4,8,16}[seed%3]:8;
         var d=new PaintDocument(w,h,tile,256L<<20); var l=d.AddLayer("base"); var s=l.GetChannel(PaintChannel.Color);
@@ -73,7 +73,7 @@ static class ClipboardGolden
         b.Write(c.X);b.Write(c.Y);b.Write(c.Width);b.Write(c.Height);b.Write(c.DocumentWidth);b.Write(c.DocumentHeight);
         b.Write((int)c.Source);b.Write((int)c.Channel);b.Write(c.GetPixels());
     }
-    /// 断りの型: 1 ロック（断った層・持ち主・ロック）、2 層の操作の断り（理由・バイト数・上限）、3 そのほかの InvalidOperation、4 引数の誤り。
+    /// 断りの型: 1 ロック（断ったレイヤー・持ち主・ロック）、2 レイヤーの操作の断り（理由・バイト数・上限）、3 そのほかの InvalidOperation、4 引数の誤り。
     static void Fail(BinaryWriter b,PaintDocument d,Exception e) {
         var all=d.Layers.ToList();
         if(e is LayerLockedException l) { b.Write((byte)1);b.Write(all.FindIndex(x=>x.Id==l.LayerId));b.Write(all.FindIndex(x=>x.Id==l.LockedBy));b.Write((int)l.Lock); }
@@ -106,7 +106,7 @@ static class ClipboardGolden
         try { var c=d.CopyPixels(layer,PaintChannel.Color,fromMask:true);o.Write((byte)0);WriteClip(o,c); } catch(Exception e) { Fail(o,d,e); }
         After(o,d,false);
     }
-    /// 写せる大きさの上限（上限を超えた時点の矩形の大きさ・タイルを読む順が出力に出る）。0〜23 は層、24〜47 は結合。
+    /// 写せる大きさの上限（上限を超えた時点の矩形の大きさ・タイルを読む順が出力に出る）。0〜23 はレイヤー、24〜47 は結合。
     static void Limit(int n,int seed,BinaryWriter o) {
         var d=Make(seed);var layer=d.Layers[n%2].Id;long limit=new long[]{100,300,700,1500}[(n/2)%4];
         ApplySelection(d,(n/8)%3);d.ClearHistory();

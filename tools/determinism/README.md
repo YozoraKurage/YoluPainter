@@ -1,6 +1,6 @@
 # 数学関数の値を採る
 
-C# の Math と Rust の f64 を、同じビット列の入力で比較する小さな道具。`probe.rs` は依存のない Rust example で、crates の実装を変更せず `rustc` で組める。
+C# の Math と Rust の f64 を、同じビット列の入力で比較する小さなツール。`probe.rs` は依存のない Rust example で、crates の実装を変更せず `rustc` でビルドできる。
 出力は `識別子 関数 入力x 入力y 結果`。入力は IEEE 754 double の 16 桁 hex、結果は Math/f64 なら 16 桁、MathF/f32 なら 8 桁。
 `atan2` の入力順は各 API の引数順（最初が y、次が x）。式を写した `amount` / `azimuth` はペンの x、y の順。
 
@@ -17,7 +17,7 @@ python3 tools/determinism/run.py
 Unity 同梱 .NET・Roslyn・Mono が必要（既定 `/opt/unity/Editor/Data`、`YOLUPAINTER_CORE_UNITY_DATA` で変更）。
 `run.py` は Linux Math と f64、Wine の Windows GNU f64 を測る。MathF は以下の明示的な別測定にする。
 `rust-wine.tsv` は相違のある入力すべて、`.json` は件数・最大 ULP・異なるビットの個数・最初の入力。`*-stages.*` は傾きの sqrt/atan/atan2 の分離測定。
-`environment.json` に Rust・Mono・Wine の版を記録する。NaN のペイロード・符号付きゼロの意味を評価する道具ではない。
+`environment.json` に Rust・Mono・Wine の版を記録する。NaN のペイロード・符号付きゼロの意味を評価するツールではない。
 
 ## Windows 実機（PowerShell と cmd）
 
@@ -49,9 +49,9 @@ Unity 同梱 .NET・Roslyn・Mono が必要（既定 `/opt/unity/Editor/Data`、
 
    `Application.unityVersion`、`Environment.Version`、Windows の版・CPU・API Compatibility Level・バックエンドを別ログに残す。
    MathF がないランタイムでは `NotSupportedException` で止まる。Math へ黙って代用しない。
-   `Mathf` とネイティブ `Quaternion.Euler` の検証はこの道具に含まれず、カメラの実機照合で別に採る。
+   `Mathf` とネイティブ `Quaternion.Euler` の検証はこのツールに含まれず、カメラの実機照合で別に採る。
 
-3. Unity に同梱された Mono を単体で起動できる場合は、同梱 Roslyn で `Probe.cs` を exe に組む。
+3. Unity に同梱された Mono を単体で起動できる場合は、同梱 Roslyn で `Probe.cs` を exe にビルドする。
    `run.py` の `build.rsp` と同じ形式で、Windows Unity の `UnityReferenceAssemblies/unity-4.8-api/*.dll` を参照する。
    Windows 版 `NetCoreRuntime/dotnet.exe exec DotNetSdkRoslyn/csc.dll /noconfig @build.rsp` でコンパイルし、同梱の Mono で実行する。
    Unity 内の測定と別のファイルに保存する。インストール形態により同梱パスが異なるので、版と使用 exe の場所を記録する。

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """yolu-gpu・yolu-app の試験（描画するもの）を、試験の実行ファイルごとの別のプロセスで並べて回す。
 
-1 つのプロセスの中は `--test-threads=1`（窓・GPU の装置を作る試験は同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、
+1 つのプロセスの中は `--test-threads=1`（ウィンドウ・GPU の装置を作る試験は同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、
 貸し出しで 1 つずつにしている。描かない試験も混ざるので、プロセスの中は前と同じ 1 本ずつ）。プロセスどうしは別の装置なので並べてよい。
 並べ方: 長い 3 つの束（gui_view3d・gui_canvas・gui_shell）がそれぞれ 1 本の列の先頭で、残りの試験の実行ファイル（`cargo metadata` から
 数える。新しく足した物も漏れない）と単体試験（`--lib`・`--bins`）・ドキュメントの試験は、列の決まった所に入る。列の中は順に回す。
@@ -94,7 +94,7 @@ def command(name):
 
 def run_limited(cmd, root, out, seconds):
     """`seconds` 秒を越えたら殺して TIMED_OUT を返す。新しいセッションで起こし、プロセスのグループごと殺す
-    （cargo だけを殺すと、cargo が起こした試験の実行ファイルが残って CPU と窓を取り続ける）。"""
+    （cargo だけを殺すと、cargo が起こした試験の実行ファイルが残って CPU とウィンドウを取り続ける）。"""
     proc = subprocess.Popen(cmd, cwd=root, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         return proc.wait(timeout=seconds)

@@ -49,7 +49,7 @@ jobs:
             xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
-      - name: 配る物の道具の試験（tools/dist.py・tools/check-workflows.py）と画面の試験を並べる道具の試験
+      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）と画面の試験を並べるツールの試験
         if: ${{ !cancelled() }}
         run: |
           python3 tools/test-dist.py
@@ -87,7 +87,7 @@ jobs:
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
       # 試験の実行ファイルごとの別のプロセスを 3 列に並べて回す（列の中は順に、プロセスの中は 1 本ずつ。並べ方は tools/render-tests.py の頭）。
-      # 窓・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、プロセスの中は前と同じく 1 本ずつにしている。
+      # ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、プロセスの中は前と同じく 1 本ずつにしている。
       # 回す間は全体で 20 分（--time-limit）で区切る。止まった試験はスクリプトが殺し、その名前をジョブのログに出す（ジョブの 45 分で切られると残らない）。
       - name: 描画する試験（束ごとのプロセスを並べ、プロセスの中は 1 本ずつ）
         env:

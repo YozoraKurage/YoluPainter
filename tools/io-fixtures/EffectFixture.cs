@@ -10,7 +10,7 @@ using Yozolab.YoluPainter.Core.Persistence;
 using Yozolab.YoluPainter.Core.Shelf;
 
 /// 効果（フィルターのスタック・Generator・Anchor・塗りつぶしの画像と投影・グラデーション）を持つ正本を C# の実際の書き手で作り、
-/// 全チャンネルの合成と、評価した層・マスクの出力（Rust の評価が C# の FilterEngine と同じバイトかを層ごとに見るため）、外から渡した
+/// 全チャンネルの合成と、評価したレイヤー・マスクの出力（Rust の評価が C# の FilterEngine と同じバイトかをレイヤーごとに見るため）、外から渡した
 /// 入力（メッシュマップ・モデルのルート・画像）を添える。入力は人工の値で、ユーザーのモデルや画像は含まない。
 static class EffectFixture
 {
@@ -35,12 +35,12 @@ static class EffectFixture
         Save(root, "effects-paths", Paths(), inputs, resources);
         WriteInputs(Path.Combine(root, "effects-inputs.bin"), inputs, images);
         for (int v = 9; v <= 20; v++) SaveLegacy(root, v, inputs, resources, images);
-        Console.WriteLine("効果の正本4件と合成・層の出力・入力をC#で生成しました");
+        Console.WriteLine("効果の正本4件と合成・レイヤーの出力・入力をC#で生成しました");
         return true;
     }
 
-    /// Rust が編集 API で作って書いた版 21 の正本（効果入り）を Unity 版の読み手に読ませ、読めたこと・書き直したバイト列が元と同じこと・層の数を
-    /// 記録し、同じ人工の入力（`--effects` と同じ ID の画像・マップ）での全チャンネルの合成と、層ごとの評価した出力を添える
+    /// Rust が編集 API で作って書いた版 21 の正本（効果入り）を Unity 版の読み手に読ませ、読めたこと・書き直したバイト列が元と同じこと・レイヤーの数を
+    /// 記録し、同じ人工の入力（`--effects` と同じ ID の画像・マップ）での全チャンネルの合成と、レイヤーごとの評価した出力を添える
     /// （Rust の `from_core` が効果を C# の書き手と同じ並びで書けていることを、C# の読み手の側から確かめる）。
     static void RustWrittenEffects(string input, string record, string composite, string layers)
     {
@@ -133,7 +133,7 @@ static class EffectFixture
         return images.ToDictionary(e => e.Key, e => e.Value);
     }
 
-    // ───────── 層の道具 ─────────
+    // ───────── レイヤーのツール ─────────
 
     static void Paint(PaintDocument doc, SparseTileSurface surface, int seed, bool mask = false, int skip = -1)
     {
@@ -288,7 +288,7 @@ static class EffectFixture
         var mid = Raster(doc, "中", 303, PaintChannel.Height);
         doc.SetLayerOpacity(mid.Id, .6); doc.SetLayerBlendMode(mid.Id, LayerBlendMode.Multiply);
         var a2 = doc.AddAnchor(mid.Id, AnchorPlacement.Layer, "中の層", Id());
-        // 読む層: 土台の Height を値として、Color を被覆として、マスクの Anchor を反転して
+        // 読むレイヤー: 土台の Height を値として、Color を被覆として、マスクの Anchor を反転して
         var r1 = doc.AddFillLayer("読む 1", new Dictionary<PaintChannel, Rgba32> { { PaintChannel.Height, new Rgba32(128, 128, 128, 255) }, { PaintChannel.Color, new Rgba32(60, 160, 220, 255) } }, Id());
         var s1 = doc.AddFilter(r1.Id, FilterTarget.Content, Gen(GeneratorSettings.Default(GeneratorType.Anchor).WithLevels(.1, .9, .3).WithBlend(GeneratorBlend.Multiply)), new[] { PaintChannel.Height }, -1, Id());
         doc.SetGeneratorAnchor(r1.Id, s1.Id, a1.Id, PaintChannel.Height, AnchorRead.Value);
@@ -298,7 +298,7 @@ static class EffectFixture
         Mask(doc, r1, -1);
         var s3 = doc.AddFilter(r1.Id, FilterTarget.Mask, Gen(GeneratorSettings.Default(GeneratorType.Anchor).WithInvert(true).WithBlend(GeneratorBlend.Replace)), null, -1, Id());
         doc.SetGeneratorAnchor(r1.Id, s3.Id, m1.Id, PaintChannel.Height, AnchorRead.Value);
-        // 連鎖: 中の Anchor を読む層（段の後にぼかし）。その層にも Anchor
+        // 連鎖: 中の Anchor を読むレイヤー（段の後にぼかし）。そのレイヤーにも Anchor
         var r2 = Raster(doc, "読む 2（連鎖）", 304, PaintChannel.Height, PaintChannel.Color);
         var s4 = doc.AddFilter(r2.Id, FilterTarget.Content, Gen(GeneratorSettings.Default(GeneratorType.Anchor).WithNoise(.5, .1, 5, GeneratorNoiseSpace.Uv).WithBlend(GeneratorBlend.Subtract)), new[] { PaintChannel.Height }, -1, Id());
         doc.SetGeneratorAnchor(r2.Id, s4.Id, a2.Id, PaintChannel.Height, AnchorRead.Value);
@@ -308,7 +308,7 @@ static class EffectFixture
         var s5 = doc.AddFilter(r3.Id, FilterTarget.Content, Gen(GeneratorSettings.Default(GeneratorType.Anchor).WithBlend(GeneratorBlend.Min)), new[] { PaintChannel.Height }, -1, Id());
         doc.SetGeneratorAnchor(r3.Id, s5.Id, a3.Id, PaintChannel.Height, AnchorRead.Value);
         doc.SetLayerClipping(r3.Id, true);
-        // 分離のグループの中の Anchor（グループの中は透明から）を、グループより上の層が読む
+        // 分離のグループの中の Anchor（グループの中は透明から）を、グループより上のレイヤーが読む
         var inside = Raster(doc, "グループの中", 305, PaintChannel.Height);
         var group = doc.GroupLayers(new[] { inside.Id }, "分離", Id()); doc.SetLayerBlendMode(group.Id, LayerBlendMode.Multiply);
         var a4 = doc.AddAnchor(inside.Id, AnchorPlacement.Layer, "グループの中", Id());
@@ -387,7 +387,7 @@ static class EffectFixture
         return surface;
     }
 
-    /// 2D のパス（C# が描いた画素）・3D のパス（描いた画素を渡す）。層のパスと画素がそろって保存され、合成は画素のまま。
+    /// 2D のパス（C# が描いた画素）・3D のパス（描いた画素を渡す）。レイヤーのパスと画素がそろって保存され、合成は画素のまま。
     static PaintDocument Paths()
     {
         var doc = new PaintDocument(W, H, TS, 1024 * 1024, Id());
@@ -460,7 +460,7 @@ static class EffectFixture
         }
         void Defaults() { w.Write(0); w.Write(0.0); w.Write(0); w.Write(0); w.Write(false); w.Write(0.0); w.Write(1.0); w.Write(1.0); w.Write(0.0); w.Write(1.0); }
         Guid anchorId = Id(), layer0 = Id();
-        // 層 0: ラスター（Color）。マスクとフィルター・Anchor
+        // レイヤー 0: ラスター（Color）。マスクとフィルター・Anchor
         Guid16(layer0); Text("旧い版の効果"); w.Write(true); w.Write(.8); w.Write(0);
         int attribute = (anchors ? 16 : 0);
         if (v >= 12) w.Write((byte)attribute); else if (v >= 5) w.Write((byte)0);
@@ -481,7 +481,7 @@ static class EffectFixture
         }
         if (v >= 10) w.Write(false);
         if (anchors) { w.Write((byte)1); Guid16(anchorId); Text("旧い版の Anchor"); }
-        // 層 1: 塗りつぶし（版 3 から）。版 16 から画像と投影
+        // レイヤー 1: 塗りつぶし（版 3 から）。版 16 から画像と投影
         if (v >= 3)
         {
             Guid16(Id()); Text("塗り"); w.Write(true); w.Write(1.0); w.Write(0);
@@ -497,7 +497,7 @@ static class EffectFixture
             w.Write(0); // チャンネルの面は無い
             if (v >= 2) w.Write(false); if (v >= 8) w.Write(false); if (v >= 9) w.Write(false); if (v >= 10) w.Write(false);
         }
-        // 層 2: デカール（版 17）
+        // レイヤー 2: デカール（版 17）
         if (decal)
         {
             Guid16(Id()); Text("デカール"); w.Write(true); w.Write(1.0); w.Write(0);
@@ -507,7 +507,7 @@ static class EffectFixture
             w.Write(1); w.Write(5); w.Write(2); foreach (double d in new[] { 1, 1, 0, 0, 0, .3, .4, .3, 0, 0, 25, 0, 2.5, 3, 2, .6, 100, .5 }) w.Write(d);
             w.Write(0); w.Write(false); w.Write(false); w.Write(false); w.Write(false);
         }
-        // 層 3: Anchor を読む塗りつぶし（版 20）
+        // レイヤー 3: Anchor を読む塗りつぶし（版 20）
         if (anchors)
         {
             Guid16(Id()); Text("Anchor を読む"); w.Write(true); w.Write(1.0); w.Write(0);
@@ -548,7 +548,7 @@ static class EffectFixture
         File.WriteAllBytes(Path.Combine(root, name + ".layers"), LayerOutputs(doc));
     }
 
-    /// 層ごとに、チャンネルごとの評価した出力（評価が要る層・チャンネルだけ。旗 1 バイトに続けて画素）と、マスクの評価した隠す量。
+    /// レイヤーごとに、チャンネルごとの評価した出力（評価が要るレイヤー・チャンネルだけ。旗 1 バイトに続けて画素）と、マスクの評価した隠す量。
     /// 合成が読むのと同じタイルの経路（`GetOutputPixel`・`OutputHideAt`。何も出ない所は透明）で読む。
     static byte[] LayerOutputs(PaintDocument doc)
     {

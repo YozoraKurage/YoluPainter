@@ -72,7 +72,7 @@ def main():
            '--lib', '--tests', '--message-format=json']
     for package in packages:
         cmd += ['-p', package]
-    print('Windows 向けに試験を組みます。ログ: target/wine-tests/build.log', flush=True)
+    print('Windows 向けに試験をビルドします。ログ: target/wine-tests/build.log', flush=True)
     # ビルドの診断と Cargo の構造化出力を分離する。
     with (OUT / 'build.jsonl').open('w') as stdout, (OUT / 'build.log').open('w') as stderr:
         code = subprocess.run(cmd, cwd=ROOT, env=env, stdout=stdout, stderr=stderr).returncode

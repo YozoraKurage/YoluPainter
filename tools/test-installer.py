@@ -7,7 +7,7 @@
 何も変えずに終了コード 5 で終わること（アプリの exe でも、MCP のクライアントが動かし続けることがあるコマンドラインの exe でも。
 待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる。
 上限を超えたときは、/RUN が付いていれば今入っている exe を起こし直し、付いていなければ起こさない）、
-アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA では、アプリが作り直せるデータ（設定・窓の配置・復旧・
+アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA では、アプリが作り直せるデータ（設定・ウィンドウの配置・復旧・
 クラッシュの記録・サムネイルのキャッシュ・落とした更新）だけを消し、利用者が作った物（個人のライブラリ・ブラシ・サブツール・
 グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）と、知らないファイルは残す）。
 文書（docs\ と docs\en\）は、入れる・上書きで新しい版の中身になる・前の版にだけあった文書が更新で消える・利用者が docs\ に
@@ -402,7 +402,7 @@ def run(args):
     check(all((install / name).read_bytes() == data for name, data in snapshot.items()),
           '上限を超えたら、exe・README・文書とその記録・アンインストーラーを何も変えない')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == version_before, '上限を超えたら、登録の版を変えない')
-    # /RUN が付いていれば、利用者を窓の無い状態に置かないよう、今入っている（変わっていない）exe を起こし直す。
+    # /RUN が付いていれば、利用者をウィンドウの無い状態に置かないよう、今入っている（変わっていない）exe を起こし直す。
     check(wait_for(ran), '上限を超えても、/RUN が付いていれば今入っている exe を起こし直す')
     check(exe.read_bytes().endswith(b'build 0.1.0'), '起こし直すのは、置き換わっていない今の版')
     started_in = cwd_record.read_text().strip() if cwd_record.exists() else None
@@ -475,7 +475,7 @@ def run(args):
     code, gone = uninstall(install, '/DELETEDATA')
     check(code == 0 and gone, '/DELETEDATA の無音のアンインストールが終わる')
     gone_roaming = [name for name in REBUILDABLE_ROAMING if (data / name).exists()]
-    check(not gone_roaming, f'/DELETEDATA で、作り直せる設定・窓の配置・復旧・クラッシュの記録・一時ファイルが消える（残り {gone_roaming}）')
+    check(not gone_roaming, f'/DELETEDATA で、作り直せる設定・ウィンドウの配置・復旧・クラッシュの記録・一時ファイルが消える（残り {gone_roaming}）')
     for folder in ['recovery', 'logs']:
         check(not (data / folder).exists(), f'/DELETEDATA で {folder} のフォルダごと消える')
     check(not any((local / name).exists() for name in REBUILDABLE_LOCAL) and not (local / 'thumbnails').exists()

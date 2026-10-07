@@ -2,7 +2,7 @@
 // 出力（<出力先>/）:
 //   index.txt          事例の一覧（名前と種類）と出どころ
 //   <事例>.psd         書き出し事例: PsdBridge.Export(Color) → PsdCodec.Write のバイト列。取り込み事例: PsdCodec.Write で組んだ PSD
-//   <事例>.snap        そのバイト列を PsdCodec.Read → PsdBridge.Import した文書の中身（層の並び・属性・マスク・調整・塗りつぶし・画素の指紋・合成の指紋）
+//   <事例>.snap        そのバイト列を PsdCodec.Read → PsdBridge.Import した文書の中身（レイヤーの並び・属性・マスク・調整・塗りつぶし・画素の指紋・合成の指紋）
 //   <事例>.refused     書き出しを断る事例: C# の断りの文（Rust も断ることを確かめる。文は照合しない）
 using System;
 using System.IO;
@@ -19,7 +19,7 @@ static class PsdBridgeGolden
 
     // ---- 台本の部品（Rust の psd_golden.rs と同じ） ----
 
-    /// 層 n 番目（作った順、1 から）の ID: 先頭 4 バイトが PSD の層 ID（100 + n）、続く 4 バイトがグループの区切りの ID（300 + n）、残りは固定。
+    /// レイヤー n 番目（作った順、1 から）の ID: 先頭 4 バイトが PSD のレイヤー ID（100 + n）、続く 4 バイトがグループの区切りの ID（300 + n）、残りは固定。
     static Guid Id(int n)
     {
         var b = new byte[16];
@@ -191,7 +191,7 @@ static class PsdBridgeGolden
     static byte[] ImportMasks()
     {
         var d = new PsdDocument { Width = W, Height = H, Layers = new List<PsdRasterLayer>() };
-        // 一番下から: 既定 0 で矩形の外は全部隠す / 矩形が画布の外へはみ出して、外の値は既定と同じ 255 / 無効・濃度つき
+        // 一番下から: 既定 0 で矩形の外は全部隠す / 矩形がキャンバスの外へはみ出して、外の値は既定と同じ 255 / 無効・濃度つき
         var inside = Full(1, "default zero", Gradient);
         var m1 = new PsdLayerMask { Left = 4, Top = 2, Width = 8, Height = 6, DefaultColor = 0, Enabled = true, Density = 255, Pixels = new byte[48] };
         for (int i = 0; i < 48; i++) m1.Pixels[i] = (byte)(i % 7 == 0 ? 0 : i % 5 == 0 ? 255 : i * 37);
