@@ -1017,6 +1017,11 @@ impl AppState {
             || self.drafting.drag.is_some()
     }
 
+    /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。
+    pub fn holds_panel_look(&self) -> bool {
+        self.is_stroking() || self.view3d.pose.drag.is_some()
+    }
+
     /// ドックのタブの見出しをつかんでいる最中か、離した直後のフレームか（このあいだ、ビューは描き始め・回し始めない）。
     pub fn dock_grabbed(&self) -> bool {
         self.ui.dock_grab[0] || self.ui.dock_grab[1]

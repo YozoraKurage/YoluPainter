@@ -2,6 +2,8 @@
 //! ボタンやスライダーの見た目は使わない。部品は押した・変えたの結果を返し、状態は呼ぶ側が持つ（Unity 版と同じ即時の形）。
 //! 試験と読み上げのため、押せる部品には名前（`WidgetInfo`）を付ける（egui_kittest は名前で部品を探す）。
 
+use std::collections::HashMap;
+
 use egui::{
     pos2, vec2, Color32, Id, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui, WidgetInfo,
     WidgetType,
@@ -200,6 +202,122 @@ pub fn strip_separator(p: &Painter, r: Rect) {
     );
 }
 
+// ───────── 描いている間の見た目 ─────────
+
+/// 描いている間（`AppState::is_stroking`）の部品の見た目の記憶（egui の ctx の一時データ）。
+///
+/// 描いている間は多くの部品が「押せない」になるが、見た目まで灰色に替えると、線を引くたびに画面の一部が点滅する。
+/// そこで押す判定は本当の `enabled` のまま、色・枠などの見た目だけは描き始める前の `enabled` を使い続ける。
+#[derive(Clone, Default)]
+struct StrokeLook {
+    /// 今、描き始める前の見た目を保っているか。
+    holding: bool,
+    /// このフレームか前のフレームの途中で描き始めた・描いていた（`pending` は描き始める前の見た目に使えない）。
+    dirty: bool,
+    /// 描き始める前の最後の通しのフレームで描いた、部品ごとの見た目の `enabled`。
+    stable: HashMap<Id, bool>,
+    /// このフレームで描いた見た目（次のフレームの頭で、通しのフレームなら `stable` になる）。
+    pending: HashMap<Id, bool>,
+}
+
+fn with_stroke_look<R>(ctx: &egui::Context, f: impl FnOnce(&mut StrokeLook) -> R) -> R {
+    ctx.data_mut(|d| f(d.get_temp_mut_or_default::<StrokeLook>(Id::new("yolu.stroke_look"))))
+}
+
+/// フレームの頭（部品を描く前）に 1 度。`stroking` はこのフレームの頭に描いているか。描いていなければ、前のフレームの
+/// 見た目を「描き始める前の見た目」として取っておく（前のフレームが描き始めの途中なら、取っておかずに前のままにする）。
+pub fn begin_stroke_frame(ctx: &egui::Context, stroking: bool) {
+    with_stroke_look(ctx, |s| {
+        if !(stroking || s.dirty) {
+            std::mem::swap(&mut s.stable, &mut s.pending);
+        }
+        s.pending.clear();
+        s.holding = stroking;
+        s.dirty = stroking;
+    });
+}
+
+/// フレームの途中（タブなどの区切りの頭）で、描いているかを更新する。キャンバスの上の押しで描き始めた直後のフレームでも、
+/// そのあとに描くパネルが、描き始める前の見た目を使えるように。
+pub fn update_stroke_hold(ctx: &egui::Context, stroking: bool) {
+    with_stroke_look(ctx, |s| {
+        s.holding = stroking;
+        s.dirty |= stroking;
+    });
+}
+
+/// 描いている間の見た目を保っているか（このあいだ、パネルの部品は hover・押した見た目も出さない。ポインタはキャンバスが持っている）。
+pub fn stroke_held(ctx: &egui::Context) -> bool {
+    with_stroke_look(ctx, |s| s.holding)
+}
+
+/// 部品の見た目の `enabled`。描いている間でなければ `enabled` を部品の ID ごとに覚えて返し、描いている間なら、覚えている値
+/// （描き始める前の見た目）を返す。覚えていない部品（描いている間に初めて出たもの）は `enabled` を返す。
+/// 押す判定には使わない（押せるかは本当の `enabled`）。
+pub fn look_enabled(ui: &Ui, id: Id, enabled: bool) -> bool {
+    look(ui.ctx(), id, enabled).enabled
+}
+
+/// 1 つの部品の見た目の決まり。
+#[derive(Clone, Copy)]
+pub struct Look {
+    /// 色・文字・枠を押せる見た目にするか（描いている間は、描き始める前のまま）。
+    pub enabled: bool,
+    /// hover・押した見た目を出してよいか（押せて、描いている間でない）。
+    pub live: bool,
+}
+
+/// 部品の見た目を決める（`look_enabled` と、hover・押した見た目を出してよいか）。
+pub fn look(ctx: &egui::Context, id: Id, enabled: bool) -> Look {
+    with_stroke_look(ctx, |s| {
+        if s.holding {
+            Look {
+                enabled: s.stable.get(&id).copied().unwrap_or(enabled),
+                live: false,
+            }
+        } else {
+            s.pending.insert(id, enabled);
+            Look {
+                enabled,
+                live: enabled,
+            }
+        }
+    })
+}
+
+/// 部品でない名前・見出しの文字の色（押せる見た目なら通常の文字、押せない見た目なら灰色）。描いている間は、描き始める前の見た目のまま。
+/// `id_salt` は文字ごとに別の名前（同じ場所の文字を覚えるための鍵）。
+pub fn label_color(ui: &Ui, id_salt: impl egui::AsIdSalt, enabled: bool) -> Color32 {
+    let id = ui.make_persistent_id(id_salt);
+    if look(ui.ctx(), id, enabled).enabled {
+        t::TEXT
+    } else {
+        t::TEXT_DISABLED
+    }
+}
+
+/// `ui.add_enabled_ui` の代わり。`enabled` が偽の間は中の部品が押せない（`ui.is_enabled()` が偽）のは同じで、見た目は
+/// 描いている間だけ描き始める前のまま（灰色にもうすくも替えない）。中の egui の標準の部品は、押せない見た目の描き方になる。
+pub fn enabled_scope<R>(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    enabled: bool,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled).enabled;
+    ui.scope(|ui| {
+        if !enabled || !shown {
+            let opacity = ui.opacity();
+            ui.disable();
+            if shown {
+                ui.set_opacity(opacity);
+            }
+        }
+        add_contents(ui)
+    })
+}
+
 // ───────── 押せる部品 ─────────
 
 fn interact(ui: &mut Ui, r: Rect, id: Id, enabled: bool, sense: Sense) -> Response {
@@ -226,9 +344,10 @@ pub fn icon_button(
     size: f32,
 ) -> Response {
     let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
-    let hover = enabled && response.hovered();
-    let pressed = enabled && response.is_pointer_button_down_on();
+    let hover = shown.live && response.hovered();
+    let pressed = shown.live && response.is_pointer_button_down_on();
     let p = ui.painter();
     if selected {
         rounded(p, r, t::ACCENT_DIM, 4.0);
@@ -237,7 +356,7 @@ pub fn icon_button(
     } else if hover {
         rounded(p, r, t::CONTROL_HOVER, 4.0);
     }
-    let color = if !enabled {
+    let color = if !shown.enabled {
         t::TEXT_DISABLED
     } else if selected || hover {
         Color32::WHITE
@@ -360,16 +479,17 @@ pub fn corner_icons(
             rounded(ui.painter(), bar, Color32::from_black_alpha(150), 6.0);
             for (i, item) in items.iter().enumerate() {
                 let r = rects[i];
+                let item_id = Id::new(("yolu.corner", id, item.id));
+                let shown = look(ui.ctx(), item_id, item.enabled);
                 let response = interact(
                     ui,
                     r,
-                    Id::new(("yolu.corner", id, item.id)),
+                    item_id,
                     item.enabled && item.clickable,
                     Sense::click(),
                 );
-                let hover = item.enabled && item.clickable && response.hovered();
-                let pressed =
-                    item.enabled && item.clickable && response.is_pointer_button_down_on();
+                let hover = shown.live && item.clickable && response.hovered();
+                let pressed = shown.live && item.clickable && response.is_pointer_button_down_on();
                 if item.selected {
                     rounded(ui.painter(), r, t::ACCENT_DIM, 4.0);
                 } else if pressed {
@@ -377,7 +497,7 @@ pub fn corner_icons(
                 } else if hover {
                     rounded(ui.painter(), r, t::CONTROL_HOVER, 4.0);
                 }
-                let color = if !item.enabled {
+                let color = if !shown.enabled {
                     t::TEXT_DISABLED
                 } else if let Some(color) = item.color {
                     color
@@ -408,11 +528,13 @@ pub fn corner_icons(
 pub fn tool_button(ui: &mut Ui, r: Rect, tool_id: &str, tooltip: &str, selected: bool) -> Response {
     let id = ui.make_persistent_id(("tool", tool_id));
     let response = ui.interact(r, id, Sense::click());
-    let hover = response.hovered();
+    // 描いている間は、パネルの部品の hover・押した見た目を出さない（ポインタはキャンバスが持っている）
+    let live = !stroke_held(ui.ctx());
+    let hover = live && response.hovered();
     let p = ui.painter();
     if selected {
         rounded(p, r, t::ACCENT_DIM, 4.0);
-    } else if response.is_pointer_button_down_on() {
+    } else if live && response.is_pointer_button_down_on() {
         rounded(p, r, t::CONTROL_ACTIVE, 4.0);
     } else if hover {
         rounded(p, r, t::CONTROL_HOVER, 4.0);
@@ -450,10 +572,11 @@ pub fn button(
     icon_name: Option<&str>,
 ) -> Response {
     let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
-    let hover = enabled && response.hovered();
-    let pressed = enabled && response.is_pointer_button_down_on();
-    let bg = if !enabled {
+    let hover = shown.live && response.hovered();
+    let pressed = shown.live && response.is_pointer_button_down_on();
+    let bg = if !shown.enabled {
         t::CONTROL_BG
     } else if primary {
         if pressed {
@@ -475,7 +598,7 @@ pub fn button(
     if !primary {
         outline(p, r, t::BORDER, 1.0, 4.0);
     }
-    let color = if !enabled {
+    let color = if !shown.enabled {
         t::TEXT_DISABLED
     } else if primary {
         Color32::WHITE
@@ -522,7 +645,7 @@ pub fn section_header(
 ) -> SectionOutcome {
     let id = ui.make_persistent_id(id_salt);
     let response = ui.interact(r, id, Sense::click());
-    let hover = response.hovered();
+    let hover = !stroke_held(ui.ctx()) && response.hovered();
     {
         let p = ui.painter();
         fill(
@@ -602,8 +725,9 @@ pub fn subsection_header(
 ) -> bool {
     let id = ui.make_persistent_id(id_salt);
     let response = ui.interact(r, id, Sense::click());
+    let hover = !stroke_held(ui.ctx()) && response.hovered();
     let p = ui.painter();
-    if response.hovered() {
+    if hover {
         rounded(
             p,
             Rect::from_min_max(pos2(r.left() - 2.0, r.top()), r.max),
@@ -678,6 +802,7 @@ pub fn tab_strip(
         if response.clicked() && !on {
             result = i;
         }
+        let live = !stroke_held(ui.ctx());
         let p = ui.painter();
         if on {
             rounded(p, tr, t::PANEL_BG, 3.0);
@@ -689,7 +814,7 @@ pub fn tab_strip(
                 ),
                 t::ACCENT,
             );
-        } else if response.hovered() || response.is_pointer_button_down_on() {
+        } else if live && (response.hovered() || response.is_pointer_button_down_on()) {
             rounded(p, tr, t::CONTROL_HOVER, 3.0);
         }
         let color = if on { Color32::WHITE } else { t::TEXT_DIM };
@@ -892,6 +1017,8 @@ pub fn slider(
 ) -> SliderOutcome {
     let id = ui.make_persistent_id(id_salt);
     let enabled = spec.enabled && ui.is_enabled();
+    // 色・枠の見た目（描いている間は描き始める前のまま。押せるかは本当の `enabled`）
+    let shown_look = look(ui.ctx(), id, enabled);
     let two = r.height() >= TWO_LINE_MIN_HEIGHT;
     let shown = spec.format.format(value);
     let box_rect = if two {
@@ -941,7 +1068,7 @@ pub fn slider(
                     "",
                     from,
                     fraction(value),
-                    enabled,
+                    shown_look.enabled,
                     false,
                     false,
                 );
@@ -1005,7 +1132,7 @@ pub fn slider(
     // 当たりは行の全体（1 行目の右端の値の箱まで押せる）。2 行目の右の空けた所（ペンのボタン）の押下は値にしない
     // （ボタンは後から置くので、押下はそちらが受ける）
     let response = interact(ui, r, id, enabled, Sense::click_and_drag());
-    let hover = enabled && response.hovered();
+    let hover = shown_look.live && response.hovered();
     // 押しているあいだは押し始めの位置、離したフレーム（クリック）は応答の位置（離すと press_origin は空になる）
     let press_origin = ui
         .input(|i| i.pointer.press_origin())
@@ -1088,13 +1215,17 @@ pub fn slider(
                 &shown,
                 from,
                 fraction(out.value),
-                enabled,
+                shown_look.enabled,
                 hover,
                 active,
             );
         } else {
             let tv = fraction(out.value);
-            let color = if enabled { t::TEXT } else { t::TEXT_DISABLED };
+            let color = if shown_look.enabled {
+                t::TEXT
+            } else {
+                t::TEXT_DISABLED
+            };
             rounded(p, r, t::CONTROL_BG, 3.0);
             let fill_rect = Rect::from_min_size(
                 pos2(r.left() + r.width() * from.min(tv), r.top()),
@@ -1104,7 +1235,7 @@ pub fn slider(
                 rounded(
                     p,
                     fill_rect,
-                    if !enabled {
+                    if !shown_look.enabled {
                         t::CONTROL_HOVER
                     } else if active || hover {
                         t::SLIDER_FILL_HOVER
@@ -1274,9 +1405,10 @@ pub fn toggle(
     enabled: bool,
 ) -> bool {
     let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
     let next = if response.clicked() { !value } else { value };
-    let hover = enabled && response.hovered();
+    let hover = shown.live && response.hovered();
     let p = ui.painter();
     let tall = r.height() > t::ROW_HEIGHT + 0.5;
     let center_y = if tall {
@@ -1289,7 +1421,7 @@ pub fn toggle(
         p,
         b,
         if next {
-            if enabled {
+            if shown.enabled {
                 t::ACCENT
             } else {
                 t::CONTROL_HOVER
@@ -1310,7 +1442,11 @@ pub fn toggle(
             3.0,
         );
     }
-    let style = t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED });
+    let style = t::LABEL.with_color(if shown.enabled {
+        t::TEXT
+    } else {
+        t::TEXT_DISABLED
+    });
     if tall {
         wrapped_text(
             p,
@@ -1345,6 +1481,8 @@ pub fn dropdown(
     label_width: f32,
 ) -> (Response, Rect) {
     let mut b = r;
+    let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
     if let Some(label) = label.filter(|l| !l.is_empty()) {
         let p = ui.painter();
         let lw = if label_width > 0.0 {
@@ -1356,19 +1494,22 @@ pub fn dropdown(
             p,
             Rect::from_min_size(r.min, vec2(lw, r.height())),
             label,
-            t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+            t::LABEL.with_color(if shown.enabled {
+                t::TEXT
+            } else {
+                t::TEXT_DISABLED
+            }),
             Align::Left,
         );
         b = Rect::from_min_max(pos2(r.left() + lw, r.top()), r.max);
     }
-    let id = ui.make_persistent_id(id_salt);
     let response = interact(ui, b, id, enabled, Sense::click());
-    let hover = enabled && response.hovered();
+    let hover = shown.live && response.hovered();
     let p = ui.painter();
     rounded(
         p,
         b,
-        if enabled && response.is_pointer_button_down_on() {
+        if shown.live && response.is_pointer_button_down_on() {
             t::CONTROL_ACTIVE
         } else if hover {
             t::CONTROL_HOVER
@@ -1382,12 +1523,16 @@ pub fn dropdown(
         pos2(b.left() + 7.0, b.top()),
         vec2((b.width() - 26.0).max(0.0), b.height()),
     );
-    let shown = fit(p, value, value_rect.width(), t::LABEL);
+    let shown_text = fit(p, value, value_rect.width(), t::LABEL);
     text(
         p,
         value_rect,
-        &shown,
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        &shown_text,
+        t::LABEL.with_color(if shown.enabled {
+            t::TEXT
+        } else {
+            t::TEXT_DISABLED
+        }),
         Align::Left,
     );
     icon(
@@ -1430,7 +1575,7 @@ pub fn text_field(
     } else {
         current.to_owned()
     };
-    let hover = ui.rect_contains_pointer(r);
+    let hover = !stroke_held(ui.ctx()) && ui.rect_contains_pointer(r);
     {
         let p = ui.painter();
         rounded(p, r, t::CONTROL_BG, 3.0);
@@ -1489,8 +1634,9 @@ pub fn color_swatch(
     enabled: bool,
 ) -> Response {
     let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
-    let hover = enabled && response.hovered();
+    let hover = shown.live && response.hovered();
     let p = ui.painter();
     let c = |a: f32| {
         Color32::from_rgba_unmultiplied(

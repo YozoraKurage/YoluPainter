@@ -150,7 +150,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             Stroke::new(1.0, theme::ACCENT),
         ));
     }
-    ui.add_enabled_ui(app.ui.canvas_rect.is_some() && !app.is_stroking(), |ui| {
+    // 描いている間も、操作の部品は描き始める前の見た目のまま（押せないことは、下で本当の `enabled` で守る）
+    let enabled = app.ui.canvas_rect.is_some() && !app.is_stroking();
+    let shown = widgets::look_enabled(ui, ui.make_persistent_id("navigator.controls"), enabled);
+    ui.add_enabled_ui(shown, |ui| {
         let viewport = app.ui.canvas_rect.unwrap_or(area);
         let fit = (viewport.width() / size.0 as f32).min(viewport.height() / size.1 as f32);
         let mut zoom = app.view.zoom;
@@ -174,6 +177,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                     }),
             )
             .changed()
+            && enabled
         {
             app.view.zoom_to(zoom, None, viewport);
             ui.ctx().request_repaint();
@@ -186,6 +190,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                     .text(app.lang.pick("回転", "Rotation")),
             )
             .changed()
+            && enabled
         {
             app.view.set_angle(angle);
             ui.ctx().request_repaint();
@@ -206,8 +211,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                 ),
             ] {
                 let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
-                if widgets::icon_button(ui, r, i, icon, label, i == 0 && app.view.flip, true, 18.0)
-                    .clicked()
+                if widgets::icon_button(
+                    ui,
+                    r,
+                    i,
+                    icon,
+                    label,
+                    i == 0 && app.view.flip,
+                    enabled,
+                    18.0,
+                )
+                .clicked()
                 {
                     match i {
                         0 => app.view.flip_horizontally(),

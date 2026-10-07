@@ -74,7 +74,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
     let mut target = None;
     let row_height = ui.spacing().interact_size.y;
     egui::ScrollArea::vertical().show_rows(ui, row_height, count + 1, |ui, rows| {
-        ui.add_enabled_ui(app.can_edit(), |ui| {
+        // 描いている間も、行は描き始める前の見た目のまま（押せないことは、下で本当の `can_edit` で守る）
+        let can_edit = app.can_edit();
+        let shown =
+            crate::ui::widgets::look_enabled(ui, ui.make_persistent_id("history.rows"), can_edit);
+        ui.add_enabled_ui(shown, |ui| {
             // スライスのイテレーターで先頭を飛ばし、可視範囲だけ読む。全段のコピーは作らない。
             let mut kinds = app.doc.history().skip(rows.start.saturating_sub(1));
             for position in rows {
@@ -96,6 +100,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                         egui::Button::selectable(position == current, text).truncate(),
                     )
                     .clicked()
+                    && can_edit
                 {
                     target = Some(position);
                 }

@@ -68,6 +68,8 @@ pub fn number_field(
 ) -> NumOutcome {
     let id = ui.make_persistent_id(id_salt);
     let enabled = enabled && ui.is_enabled();
+    // 色・枠の見た目（描いている間は描き始める前のまま。押せるかは本当の `enabled`）
+    let shown_look = super::widgets::look(ui.ctx(), id, enabled);
     let mut out = NumOutcome {
         value,
         changed: false,
@@ -213,8 +215,8 @@ pub fn number_field(
             &shown,
             underline,
             false,
-            enabled && (response.hovered() || dragging),
-            enabled,
+            shown_look.live && (response.hovered() || dragging),
+            shown_look.enabled,
         );
     }
     let name = if label.is_empty() {

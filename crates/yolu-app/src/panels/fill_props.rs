@@ -389,6 +389,7 @@ fn image_box(
 ) -> Option<ImageId> {
     let ctx = ui.ctx().clone();
     let id = ui.make_persistent_id(key);
+    let look = w::look(&ctx, id, enabled);
     let response = ui.interact(
         r,
         id,
@@ -421,7 +422,7 @@ fn image_box(
         r,
         if dropping {
             t::ACCENT_DIM
-        } else if enabled && response.hovered() {
+        } else if look.live && response.hovered() {
             t::CONTROL_HOVER
         } else {
             t::CONTROL_BG
@@ -470,7 +471,11 @@ fn image_box(
         p,
         area,
         &shown,
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(if look.enabled {
+            t::TEXT
+        } else {
+            t::TEXT_DISABLED
+        }),
         w::Align::Left,
     );
     w::icon(

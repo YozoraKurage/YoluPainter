@@ -1858,7 +1858,7 @@ fn procedural_rows(
     if kind == Kind::Grunge {
         group_label(ui, rows, lang.pick("プリセット", "Preset"));
         let r = rows.row(super::grunge_picker::height(rows.width()), 4.0);
-        ui.add_enabled_ui(enabled, |ui| {
+        crate::ui::widgets::enabled_scope(ui, "fx.procedural.preset", enabled, |ui| {
             if let Some(preset) = super::grunge_picker::show(ui, r, p.preset, lang) {
                 p.preset = preset;
                 p.scale = preset.default_scale();

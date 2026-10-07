@@ -114,19 +114,25 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 app.view3d.pose.preset_rename = None;
             }
         } else {
+            let apply_id = ui.make_persistent_id(("pose.preset.apply", *id));
+            let shown = w::look(ui.ctx(), apply_id, editable);
             let response = ui.interact(
                 label_rect,
-                ui.make_persistent_id(("pose.preset.apply", *id)),
+                apply_id,
                 if editable {
                     Sense::click()
                 } else {
                     Sense::hover()
                 },
             );
-            if editable && response.hovered() {
+            if shown.live && response.hovered() {
                 w::fill(ui.painter(), label_rect, t::CONTROL_HOVER);
             }
-            let color = if editable { t::TEXT } else { t::TEXT_DISABLED };
+            let color = if shown.enabled {
+                t::TEXT
+            } else {
+                t::TEXT_DISABLED
+            };
             let shown = w::fit(ui.painter(), name, label_rect.width() - 8.0, t::LABEL);
             w::text(
                 ui.painter(),

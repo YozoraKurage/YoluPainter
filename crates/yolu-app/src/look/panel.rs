@@ -585,7 +585,7 @@ fn color_row(
         ui.painter(),
         label_rect,
         &label,
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(w::label_color(ui, ("look.color.text", name), enabled)),
         w::Align::Left,
     );
     ui.interact(
@@ -632,17 +632,22 @@ fn color_row(
         pos2(swatch.right() + 4.0, row.top() + 1.0),
         pos2(row.right(), row.bottom() - 1.0),
     );
-    if hex_rect.width() > 40.0 && enabled {
+    // 押せない間は出さない。描いている間は、描き始める前に出ていたものを出したまま（押せない入れ物に入れて、打てなくする）
+    let hex_shown = w::look_enabled(ui, ui.make_persistent_id(("look.hex.shown", name)), enabled);
+    if hex_rect.width() > 40.0 && hex_shown {
         let current = crate::state::to_hex([shown[0], shown[1], shown[2], 1.0]);
-        let out = w::text_field(
-            ui,
-            hex_rect,
-            ("look.hex", name),
-            &current,
-            Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")),
-            false,
-        );
-        if let Some(text) = out.committed {
+        let out = w::enabled_scope(ui, ("look.hex.scope", name), enabled, |ui| {
+            w::text_field(
+                ui,
+                hex_rect,
+                ("look.hex", name),
+                &current,
+                Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")),
+                false,
+            )
+        })
+        .inner;
+        if let Some(text) = out.committed.filter(|_| enabled) {
             if let Some(rgb) = crate::state::parse_hex(&text) {
                 set(app, rgb, false);
             }
@@ -1332,7 +1337,7 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL_W, row.height())),
         lang.pick("プリセットを適用", "Apply Preset"),
-        t::LABEL.with_color(if free { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(w::label_color(ui, "look.preset.label", free)),
         w::Align::Left,
     );
     let buttons = Rows::split(

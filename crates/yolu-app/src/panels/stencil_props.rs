@@ -127,9 +127,11 @@ fn dropped_png(ui: &Ui, over: bool) -> Option<std::path::PathBuf> {
 /// 画像の箱（サムネイル・名前・▾）。押したら true。
 fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> bool {
     let lang = app.lang;
+    let id = ui.make_persistent_id("stencil.image");
+    let shown = w::look(ui.ctx(), id, enabled);
     let response = ui.interact(
         box_rect,
-        ui.make_persistent_id("stencil.image"),
+        id,
         if enabled {
             Sense::click()
         } else {
@@ -140,7 +142,7 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
         .input(|i| i.pointer.hover_pos())
         .is_some_and(|p| box_rect.contains(p));
     let dragging_file = enabled && ui.input(|i| !i.raw.hovered_files.is_empty()) && pointer_over;
-    let hover = enabled && response.hovered();
+    let hover = shown.live && response.hovered();
     let ctx = ui.ctx().clone();
     let texture = app.stencil.thumb_texture(&ctx);
     let name = app
@@ -204,12 +206,16 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
     );
     // 画像が無いときは名前（「なし」）を書かない（空の欄の状態は印。名前は読み上げとツールチップ）。窓が最小のときも詰まらない
     if has_image {
-        let shown = w::fit(p, &name, label.width(), t::LABEL);
+        let shown_name = w::fit(p, &name, label.width(), t::LABEL);
         w::text(
             p,
             label,
-            &shown,
-            t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+            &shown_name,
+            t::LABEL.with_color(if shown.enabled {
+                t::TEXT
+            } else {
+                t::TEXT_DISABLED
+            }),
             w::Align::Left,
         );
     }
@@ -279,7 +285,7 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL_WIDTH, row.height())),
         lang.pick("画像", "Image"),
-        t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+        t::LABEL.with_color(w::label_color(ui, "stencil.image.label", enabled)),
         w::Align::Left,
     );
     let box_rect = Rect::from_min_max(

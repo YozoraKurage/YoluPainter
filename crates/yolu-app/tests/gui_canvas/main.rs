@@ -37,4 +37,5 @@ mod selection;
 mod selection_bar;
 mod selection_build;
 mod stencil;
+mod stroke_look;
 mod warp;

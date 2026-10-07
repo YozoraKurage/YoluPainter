@@ -217,6 +217,8 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
+        // 前のタブ（キャンバス・3D ビュー）の押しで描き始めたなら、このタブからは描き始める前の見た目を使う
+        w::update_stroke_hold(ui.ctx(), self.app.holds_panel_look());
         // 選んだタブの上に青い線（Unity 版のパネルの見出しと同じ）
         if let Some(r) = self.tab_rects.get(tab) {
             let mut p = ui.painter().clone();
@@ -1572,6 +1574,8 @@ impl YoluApp {
             });
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(crate::usage::INTERVAL));
         }
+        // 描いている間は部品の見た目を描き始める前のまま保つ（灰色に替えて点滅させない。押せないことは変えない）
+        w::begin_stroke_frame(&ctx, self.state.holds_panel_look());
         let mut bar = None;
         let mut link_icon = None;
         let custom_frame = self.custom_frame;
@@ -1684,7 +1688,7 @@ impl YoluApp {
             .frame(Frame::NONE)
             .show(ui, |ui| {
                 let r = ui.max_rect();
-                ui.add_enabled_ui(!self.state.is_stroking(), |ui| {
+                w::enabled_scope(ui, "yolu.options.scope", !self.state.is_stroking(), |ui| {
                     shell::options_bar(ui, &mut self.state, r)
                 });
             });
@@ -1735,6 +1739,8 @@ impl YoluApp {
                 self.tab_rects = tabs.tab_rects;
                 self.state.ui.dock_grab = [grabbed, self.state.ui.dock_grab[0]];
             });
+        // ドックのあとに描く窓も、描き始めた・終わった今の状態から
+        w::update_stroke_hold(&ctx, self.state.holds_panel_look());
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
