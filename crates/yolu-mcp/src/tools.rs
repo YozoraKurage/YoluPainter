@@ -1,27 +1,19 @@
 //! MCP のツールの定義（名前・題・説明・inputSchema・outputSchema・注釈）を、yolu-ops の命令の一覧から作る。手で書いた表は持たない。
 //!
-//! 定義は JSON の値で作る（rmcp の型への変換は `mcp`）。`yolupainter-cli schema --tools` も同じ物を出す。
+//! 定義は JSON の値で作る（rmcp の型への変換は `server`）。`yolupainter-cli schema --tools` も同じ物を出す。
 //!
 //! - 名前は命令の名前の `.` を `_` にした物（`layer_set`）。
-//! - どのツールにも、任意の引数 `file`（画面なしで操作する .ylp）を足す。省くと起動中のアプリが相手。
+//! - 引数は命令の引数そのもの。相手はいつも起動中のアプリ（開いている文書）。
 //! - 命令の説明は英語（AI が読む）で、題は英語と日本語を並べる。
-//! - 全部の命令がツール。文書を開くのは普通は `file` だが、`doc_open` は、`file` の組の保存していない編集を捨てて開き直す道
-//!   （外でファイルが書き換わって `save` が衝突で断られたあと）として残す。
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use yolu_ops::{commands, CommandSpec};
 
-/// 画面なしで操作する .ylp を指す引数の名前。
-pub const FILE_ARG: &str = "file";
+/// `doc_open` の説明に足す、MCP での相手（起動中のアプリは文書を開き替えない）。
+const DOC_OPEN_NOTE: &str = " Through MCP the target is the running YoluPainter app, which does not switch documents: \
+pass the path of the file the app has open to get that document; any other path is refused with code unsupported.";
 
-const FILE_DESCRIPTION: &str = "Path of a .ylp project to operate on directly, without the YoluPainter app (absolute, or relative to the server's working folder). \
-Edits stay in memory until the save tool is called with confirm: true. Omit it to operate on the running YoluPainter, which must have \"Accept external commands\" turned on in its settings.";
-
-/// `doc_open` の説明に足す、このサーバーでの使い方（`file` の組が相手になる）。
-const DOC_OPEN_NOTE: &str = " With `file`, pass the same .ylp as `path` to reload that project from disk: its unsaved in-memory edits and undo history are discarded (confirm: true is needed when there are any), \
-for example after save was refused with code conflict because the file changed outside. Opening a project the first time needs no call: any tool with `file` opens it.";
-
-/// ツールの説明（命令の説明に、`doc_open` だけこのサーバーでの使い方を足す）。
+/// ツールの説明（命令の説明に、`doc_open` だけ MCP での振る舞いを足す）。
 fn description(spec: &CommandSpec) -> String {
     if spec.name == "doc.open" {
         format!("{}{DOC_OPEN_NOTE}", spec.description.en)
@@ -30,20 +22,12 @@ fn description(spec: &CommandSpec) -> String {
     }
 }
 
-/// ツールの inputSchema（命令の引数の schema に `file` を足した物）。
+/// ツールの inputSchema（命令の引数の schema。型と欄の表が無ければ足す: 引数の無い命令も、空の欄の表を持つ object にする）。
 pub fn input_schema(spec: &CommandSpec) -> Value {
     let mut schema = spec.args_schema();
     if let Value::Object(map) = &mut schema {
         map.entry("type").or_insert_with(|| json!("object"));
-        let props = map
-            .entry("properties")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Value::Object(props) = props {
-            props.insert(
-                FILE_ARG.into(),
-                json!({"type": "string", "description": FILE_DESCRIPTION}),
-            );
-        }
+        map.entry("properties").or_insert_with(|| json!({}));
     }
     schema
 }
@@ -106,8 +90,8 @@ mod tests {
             assert_eq!(t["inputSchema"]["type"], "object", "{name}");
             assert_eq!(t["outputSchema"]["type"], "object", "{name}");
             assert!(
-                t["inputSchema"]["properties"][FILE_ARG].is_object(),
-                "{name} に file の引数"
+                t["inputSchema"]["properties"].get("file").is_none(),
+                "{name}: ファイルを直に開く引数は無い"
             );
             let a = &t["annotations"];
             assert!(

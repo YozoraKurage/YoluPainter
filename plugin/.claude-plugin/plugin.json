@@ -1,0 +1,14 @@
+{
+  "name": "yolupainter",
+  "displayName": "YoluPainter",
+  "version": "0.4.0",
+  "description": "Work on the project open in YoluPainter: read and edit layers, masks and effects, preview channels, export and save. Connects to the running app on this PC (Settings: Accept external commands).",
+  "author": {
+    "name": "Yozolab",
+    "url": "https://github.com/YozoraKurage/YoluPainter"
+  },
+  "homepage": "https://github.com/YozoraKurage/YoluPainter/blob/main/docs/en/MCP.md",
+  "repository": "https://github.com/YozoraKurage/YoluPainter",
+  "license": "MIT",
+  "keywords": ["texture", "painting", "3d", "mcp"]
+}

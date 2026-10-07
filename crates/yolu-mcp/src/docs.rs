@@ -199,7 +199,7 @@ mod tests {
         }
         on_disk.sort();
         embedded.sort();
-        assert_eq!(on_disk, embedded, "docs/ の文書（開発用を除く）と埋め込みの一覧が合わない。crates/yolu-cli/src/docs.rs に足す");
+        assert_eq!(on_disk, embedded, "docs/ の文書（開発用を除く）と埋め込みの一覧が合わない。crates/yolu-mcp/src/docs.rs に足す");
     }
 
     #[test]

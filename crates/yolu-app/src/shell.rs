@@ -866,8 +866,8 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
 const OPS_DOT: f32 = 8.0;
 
 /// 外からの操作の印の色。
-pub fn ops_indicator_color(indicator: crate::opslive::OpsIndicator) -> egui::Color32 {
-    use crate::opslive::OpsIndicator;
+pub fn ops_indicator_color(indicator: crate::mcp_server::OpsIndicator) -> egui::Color32 {
+    use crate::mcp_server::OpsIndicator;
     match indicator {
         OpsIndicator::Waiting => t::ACCENT_DIM,
         OpsIndicator::Connected => t::OK,

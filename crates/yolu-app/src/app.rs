@@ -9,7 +9,7 @@ use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
 use crate::livelink::LiveLink;
-use crate::opslive::OpsLink;
+use crate::mcp_server::McpServer;
 use crate::panels::{
     assets, color::ColorTextures, layers, layers::Thumbnails, properties, texture_sets,
     view3d::View3dHost, view3d::View3dSlot,
@@ -280,8 +280,8 @@ pub struct YoluApp {
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
-    /// 外からの操作（CLI・MCP のクライアント）を受ける（設定「外からの操作を受ける」が入っている間だけ待ち受ける）。
-    ops: OpsLink,
+    /// 外からの操作（MCP のクライアント・コマンドライン）を受ける（設定「外からの操作を受ける」が入っている間だけ 127.0.0.1 で待つ）。
+    ops: McpServer,
     /// ファイルの窓・確かめの窓を開くか（eframe の窓だけ。試験では開かず、頼みを `state.dialog_request` に残す）。
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
@@ -691,7 +691,7 @@ impl YoluApp {
             gpu_lost_wait: gpu_lost::RECOVERY_WAIT,
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
-            ops: OpsLink::new(),
+            ops: McpServer::new(),
             dialogs: false,
             closing: false,
             close_answer: None,
@@ -752,12 +752,14 @@ impl YoluApp {
         &mut self.link
     }
 
-    pub fn ops(&self) -> &OpsLink {
+    /// 外からの操作の受け口（試験が待っている番号・保存の返事待ちを見る）。
+    pub fn ops(&self) -> &McpServer {
         &self.ops
     }
 
-    /// 外からの操作の受け口（試験でつなぎ先の名前を替える）。
-    pub fn ops_mut(&mut self) -> &mut OpsLink {
+    /// 試験用: 外からの操作の受け口（1 フレームの数を小さくする）。
+    #[doc(hidden)]
+    pub fn ops_mut(&mut self) -> &mut McpServer {
         &mut self.ops
     }
 
@@ -1875,7 +1877,8 @@ impl YoluApp {
     /// 外からの操作を 1 回まわす: 設定（外からの操作を受ける）に合わせて待ち受けを始める・やめ、受けた要求を画面のスレッドで実行して返す。
     fn tick_ops(&mut self, ctx: &egui::Context) {
         let want = self.state.prefs.settings.external_ops;
-        self.ops.sync(want, ctx, &mut self.state);
+        let port = self.state.prefs.settings.external_ops_port;
+        self.ops.sync(want, port, ctx, &mut self.state);
         self.ops.poll(&mut self.state);
         self.state.ops = self.ops.view();
     }

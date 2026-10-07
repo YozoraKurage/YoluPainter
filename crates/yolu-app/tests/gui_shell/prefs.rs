@@ -882,32 +882,40 @@ fn english(h: &mut Harness<'static, YoluApp>, lang: Lang) {
 }
 
 /// 窓の高さの見積もり（描く行の数と合わせた表）が、実際に並べた高さと同じ（行を足して数え違えると、最後の行が窓からはみ出す）。
+/// GPU とディスクキャッシュの詳しくの開け閉め・外からの操作の入り切（入っている間だけポート番号の行が出る）のどれでも。
 #[test]
 fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_languages() {
     let dir = settings_dir("height");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1600.0, 1100.0));
+    // 外からの操作を入れても、ほかの試験・開いているアプリと番号が重ならない（0: OS が空いた番号を選ぶ）
+    h.state_mut().state.prefs.settings.external_ops_port = 0;
     open_settings(&mut h);
     for lang in Lang::ALL {
         english(&mut h, lang);
-        for (details, cache) in [(false, false), (true, false), (false, true), (true, true)] {
-            h.state_mut()
-                .state
-                .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
-            h.state_mut()
-                .state
-                .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
-            h.run();
-            h.run();
-            let window = window_rect(&h);
-            let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
-            let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
-            assert!(
-                (body - drawn).abs() < 0.5,
-                "{lang:?} 詳しく={details} キャッシュの詳しく={cache}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
-            );
+        for ops in [false, true] {
+            h.state_mut().state.prefs.settings.external_ops = ops;
+            for (details, cache) in [(false, false), (true, false), (false, true), (true, true)] {
+                h.state_mut()
+                    .state
+                    .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
+                h.state_mut()
+                    .state
+                    .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
+                h.run();
+                h.run();
+                let window = window_rect(&h);
+                let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
+                let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
+                assert!(
+                    (body - drawn).abs() < 0.5,
+                    "{lang:?} 外からの操作={ops} 詳しく={details} キャッシュの詳しく={cache}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
+                );
+            }
         }
     }
+    h.state_mut().state.prefs.settings.external_ops = false;
+    h.run();
 }
 
 /// どの大きさの窓でも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
@@ -1173,18 +1181,24 @@ fn status_bar_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     egui_kittest::image_snapshot(&cropped, name);
 }
 
-/// 「外からの操作を受ける」: 既定は切。欄を押すと待ち受けて設定のファイルに書かれ、状態の帯の右端に小さな丸（説明はツールチップ。日英）が出る。
-/// もう一度押すと待ち受けをやめ、丸も消える。
+/// 「外からの操作を受ける」: 既定は切。欄を押すと 127.0.0.1 の番号で待ち受けて設定のファイルに書かれ、状態の帯の右端に小さな丸（説明は
+/// ツールチップ。つなぐ側に渡す URL つき。日英）が出る。つながると丸の色が替わり、もう一度押すと待ち受けをやめ、丸も消える。
+/// 番号の欄に打つと、その番号で待ち直す（範囲の外は断る）。
 #[test]
 fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows_a_dot() {
     let dir = settings_dir("ops");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    // 試験ごとに別の名前で受ける（ほかの試験・開いているアプリと重ならない）
-    let name = common::names::unique_name("ylops", "prefs");
-    h.state_mut().ops_mut().set_name(&name).unwrap();
+    // 試験ごとに空いた番号で受ける（ほかの試験・開いているアプリと重ならない）
+    let free = || {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let port = free();
+    h.state_mut().state.prefs.settings.external_ops_port = port;
+    let waiting = |port: u16| format!("外からの操作を待っています（http://127.0.0.1:{port}/mcp）");
     assert!(
-        h.query_by_label("外からの操作を待っています").is_none(),
+        h.query_by_label(&waiting(port)).is_none(),
         "切のあいだは丸が無い"
     );
     open_settings(&mut h);
@@ -1194,14 +1208,11 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     assert!(h.state().state.settings().external_ops);
     assert_eq!(
         h.state().state.ops.status,
-        yolu_app::opslive::OpsStatus::Listening
+        yolu_app::mcp_server::OpsStatus::Listening
     );
-    assert!(
-        yolu_protocol::link::connect(&name).is_ok(),
-        "待ち受けている"
-    );
+    // まだ誰もつないでいない: 丸は「待っている」
     status_bar_shot(&mut h, "status_bar_ops_listening");
-    let dot = h.get_by_label("外からの操作を待っています").rect();
+    let dot = h.get_by_label(&waiting(port)).rect();
     let bar = Rect::from_min_max(
         egui::pos2(0.0, 800.0 - yolu_app::ui::theme::STATUS_BAR_HEIGHT),
         egui::pos2(1280.0, 800.0),
@@ -1212,16 +1223,18 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     );
     assert!(dot.right() > bar.right() - 20.0, "右端にある: {dot:?}");
     h.run();
-    assert!(std::fs::read_to_string(&path)
-        .unwrap()
-        .lines()
-        .any(|l| l == "external_ops=on"));
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.lines().any(|l| l == "external_ops=on"), "{written}");
+    assert!(
+        written
+            .lines()
+            .any(|l| l == format!("external_ops_port={port}")),
+        "{written}"
+    );
     // つながると、丸は「つながっている」になる（色が替わる。ツールチップも）
-    let identity = yolu_protocol::Identity::standalone("試験のクライアント");
-    let (_conn, _reader, _) =
-        yolu_protocol::link::connect_and_greet_as(&name, &identity).expect("つなげる");
+    let held = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while h.state().state.ops.status != yolu_app::opslive::OpsStatus::Connected(1) {
+    while h.state().state.ops.status != yolu_app::mcp_server::OpsStatus::Connected(1) {
         assert!(
             std::time::Instant::now() < deadline,
             "つながらない: {:?}",
@@ -1231,27 +1244,123 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     h.run();
-    let _ = h.get_by_label("外からの操作を受けています（つながり 1）");
+    let _ = h.get_by_label(&format!(
+        "外からの操作を受けています（つながり 1・http://127.0.0.1:{port}/mcp）"
+    ));
     status_bar_shot(&mut h, "status_bar_ops_connected");
     // 英語の表示
     english(&mut h, Lang::En);
-    let _ = h.get_by_label("Accepting external commands (1 connected)");
+    let _ = h.get_by_label(&format!(
+        "Accepting external commands (1 connected, http://127.0.0.1:{port}/mcp)"
+    ));
     let _ = h.get_by_label("Accept external commands");
     english(&mut h, Lang::Ja);
+    drop(held);
+    // 番号の欄（外からの操作の行のすぐ下の文字の欄）に打つと、その番号で待ち直す
+    let toggle = h.get_by_label("外からの操作を受ける").rect();
+    let field = h
+        .get_all_by_role(egui::accesskit::Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| r.top() > toggle.bottom() && r.top() < toggle.bottom() + 40.0)
+        .expect("番号の欄");
+    let moved = free();
+    click(&mut h, field.center());
+    key(&h, egui::Key::A, egui::Modifiers::COMMAND);
+    h.event(egui::Event::Text(moved.to_string()));
+    key(&h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.settings().external_ops_port, moved);
+    assert_eq!(h.state().ops().port(), Some(moved));
+    assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .any(|l| l == format!("external_ops_port={moved}")));
+    // 範囲の外は断る（番号は変わらず、理由を知らせる）
+    click(&mut h, field.center());
+    key(&h, egui::Key::A, egui::Modifiers::COMMAND);
+    h.event(egui::Event::Text("80".into()));
+    key(&h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.settings().external_ops_port, moved);
+    assert_eq!(h.state().state.message, "ポート番号は 1024〜65535 です");
     // 切る: 待ち受けをやめ、丸も消える
     h.get_by_label("外からの操作を受ける").click();
     h.run();
     assert!(!h.state().state.settings().external_ops);
     assert_eq!(
         h.state().state.ops.status,
-        yolu_app::opslive::OpsStatus::Off
+        yolu_app::mcp_server::OpsStatus::Off
     );
-    assert!(h.query_by_label("外からの操作を待っています").is_none());
-    assert!(yolu_protocol::link::connect(&name).is_err());
+    assert!(h.query_by_label(&waiting(moved)).is_none());
+    assert!(std::net::TcpStream::connect(("127.0.0.1", moved)).is_err());
     h.run();
     assert!(!std::fs::read_to_string(&path)
         .unwrap()
-        .contains("external_ops"));
+        .contains("external_ops=on"));
+}
+
+/// ポート番号の行は、「外からの操作を受ける」を入れている間だけ、そのすぐ下に出る（切ると消え、窓も 1 行分低くなる）。日英の絵。
+#[test]
+fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
+    let dir = settings_dir("ops-port");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    // 棚の場所は、機械によらない場所にして撮る
+    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+            shelf,
+        )))));
+    // 絵には既定の番号を出す。試験のアプリがその番号で外からの要求を受けないよう、先に取っておく（取れなければ、ほかのプログラムが
+    // 使っている。どちらでも試験のアプリは待てず、窓の中身は同じ）
+    let _held = std::net::TcpListener::bind(("127.0.0.1", yolu_mcp::DEFAULT_PORT));
+    open_settings(&mut h);
+    let has_port_row = |h: &Harness<'_, YoluApp>, label: &str| {
+        drawn_texts(h).iter().any(|(text, _)| text == label)
+    };
+    assert!(!has_port_row(&h, "ポート番号"), "切のあいだは出ない");
+    let closed = window_rect(&h);
+    h.get_by_label("外からの操作を受ける").click();
+    h.run();
+    assert!(h.state().state.settings().external_ops);
+    let toggle = h.get_by_label("外からの操作を受ける").rect();
+    let (_, label) = drawn_texts(&h)
+        .into_iter()
+        .find(|(text, _)| text == "ポート番号")
+        .expect("入れるとポート番号の行が出る");
+    assert!(
+        label.top() > toggle.bottom() && label.top() < toggle.bottom() + 40.0,
+        "外からの操作の行のすぐ下: {toggle:?} {label:?}"
+    );
+    let field = h
+        .get_all_by_role(egui::accesskit::Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| r.top() > toggle.bottom() && r.top() < toggle.bottom() + 40.0)
+        .expect("ポート番号の欄");
+    assert!(
+        (field.center().y - label.center().y).abs() < 4.0,
+        "名前と欄は同じ行"
+    );
+    let open = window_rect(&h);
+    assert!(open.height() > closed.height(), "{closed:?} {open:?}");
+    // 待てなかった知らせは状態の帯の丸の試験が見る。ここでは窓だけを撮る
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_window_external_ops");
+    english(&mut h, Lang::En);
+    assert!(has_port_row(&h, "Port"));
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_window_external_ops_english");
+    english(&mut h, Lang::Ja);
+    // 切ると消える
+    h.get_by_label("外からの操作を受ける").click();
+    h.run();
+    assert!(!h.state().state.settings().external_ops);
+    assert!(!has_port_row(&h, "ポート番号"), "切ると消える");
+    assert!((window_rect(&h).height() - closed.height()).abs() < 0.5);
 }
 
 /// ディスクキャッシュが入（既定）なら、今のセットの画素の予算は「メモリの上限（レイヤーのメモリ＋取り消し履歴）＋ディスクの上限 − ほかの

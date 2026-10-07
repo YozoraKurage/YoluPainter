@@ -719,8 +719,8 @@ pub struct AppState {
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
     pub link_request: Option<LinkRequest>,
-    /// 外からの操作（CLI・MCP のクライアント）を受けている様子（毎フレーム `OpsLink` から写す。状態の帯の印が読む）。
-    pub ops: crate::opslive::OpsView,
+    /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
+    pub ops: crate::mcp_server::OpsView,
     /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
     pub link_originals: crate::livelink_base::OriginalMarks,
     /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを

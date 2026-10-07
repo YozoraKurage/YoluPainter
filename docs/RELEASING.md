@@ -19,6 +19,8 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 ## 版と配布物
 
 `Cargo.toml` の workspace.package.version を更新し、`Cargo.lock` を更新・コミットしてから、そのコミットを配布対象にします。
+AI のアシスタント向けのプラグイン（`plugin/.claude-plugin/plugin.json`・`plugin/.codex-plugin/plugin.json`）の `version` も同じ版にします（`yolu-mcp` の試験 `tests/plugin.rs` が食い違いを断ります）。
+プラグインは Release に載せず、`main` の `plugin/` と根の `.claude-plugin/marketplace.json` から配ります（Claude Code はこの `version` が変わったときに新しい版を入れます）。
 版は SemVer です。試験版（kind=prerelease）は `0.1.0-rc.1` のように、プレリリース識別子を `alpha.N`・`beta.N`・`rc.N`（N は整数）の 1 つにします。
 この形にすると、`rc.2` < `rc.10` < 正式版の順に並び（`rc10` のようにつなげると辞書順で `rc10` < `rc2` になるので認めません）、アプリの「試験版を使う」の設定が見つけられます
 （[試験版の置き場](#試験版の置き場)）。stable は識別子を含む版を使えません。`cargo xtask preflight --kind prerelease` が版の形を確かめます。
@@ -71,14 +73,14 @@ URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<�
 ### Claude Desktop の拡張（.mcpb）
 
 `cargo xtask mcpb --target x86_64-pc-windows-msvc` が、`target/dist/yolupainter-<版>-x86_64-pc-windows-msvc.mcpb` を作ります（`build` のあとに。`yolupainter-cli.exe` を使います）。
-中身は zip で、`manifest.json`（mcpb の manifest_version 0.3。`server.type` は `binary`、実行ファイルは `server/yolupainter-cli.exe`、引数は `mcp`、対象は `win32` だけ。ツールの一覧は書かず `tools_generated` にして、
-実行ファイルが `tools/list` で返す物を正本にします）・アイコン（アプリのロゴの PNG）・`LICENSE`・コマンドラインの許諾の全文（`DEPENDENCIES.md`・`THIRD_PARTY_LICENSES.txt`。
+中身は zip で、`manifest.json`（mcpb の manifest_version 0.3。`server.type` は `binary`、実行ファイルは `server/yolupainter-cli.exe`、引数は `mcp --port ${user_config.port}`（拡張の設定「Port」。既定は 17347）、
+対象は `win32` だけ。実行ファイルは標準入出力を起動中のアプリの受け口へつなぐ中継で、ツールの一覧は書かず `tools_generated` にして、アプリが `tools/list` で返す物を正本にします）・アイコン（アプリのロゴの PNG）・`LICENSE`・コマンドラインの許諾の全文（`DEPENDENCIES.md`・`THIRD_PARTY_LICENSES.txt`。
 `tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`。実行ファイルはアプリと 1 回のビルドで作り機能が合わさるので、そのビルドでの `yolu-cli` の部分木で数えます）・実行ファイル 1 つです。ロゴを替えるときは `crates/xtask/src/main.rs` の `MCPB_LOGO` を替えます。
 
 PDB の付属物と同じく、Release に載せるだけで、更新の対象ではありません。署名つきの更新情報には載せず（アプリは取りに行かず、インストールした拡張は、新しい `.mcpb` を入れ直して替えます）、
 `updater-json` はこの名前（版と対象が今の版と一致する 1 つ）だけを知って読み飛ばし、`verify` は中身の形（一覧のファイルだけで、manifest が今の版・実行ファイルを指す）を見ます。
 `dist-build.yml` の Windows のビルドが `xtask mcpb` を走らせ、`target/dist/*` ごと成果物・Release の付属物になります。
-manifest は公式の検証（`npx @anthropic-ai/mcpb validate manifest.json`）が通ることを確かめています。Windows の実機では、Claude Desktop に入れて、ツールが並び、`file` を付けて操作できることを、版ごとに 1 回確かめてください。
+manifest は公式の検証（`npx @anthropic-ai/mcpb validate manifest.json`）が通ることを確かめています。Windows の実機では、アプリの設定「外からの操作を受ける」を入れてから Claude Desktop に入れて、ツールが並び、アプリの文書を操作できることを、版ごとに 1 回確かめてください。
 
 ### Windows のインストーラー
 

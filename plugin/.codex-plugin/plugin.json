@@ -1,0 +1,31 @@
+{
+  "name": "yolupainter",
+  "version": "0.4.0",
+  "description": "Work on the project open in YoluPainter: read and edit layers, masks and effects, preview channels, export and save. Connects to the running app on this PC (Settings: Accept external commands).",
+  "author": {
+    "name": "Yozolab",
+    "url": "https://github.com/YozoraKurage/YoluPainter"
+  },
+  "homepage": "https://github.com/YozoraKurage/YoluPainter/blob/main/docs/en/MCP.md",
+  "repository": "https://github.com/YozoraKurage/YoluPainter",
+  "license": "MIT",
+  "keywords": ["texture", "painting", "3d", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "YoluPainter",
+    "shortDescription": "Texture painting for 3D models",
+    "longDescription": "Lets the assistant work on the project open in YoluPainter, the texture painting app for 3D models, running on this PC: read the texture sets and the layer stack, add and edit layers, masks, filters and generators, look at channel previews, export textures and save. Each edit is one step of the app's undo history. Deleting, saving over a file and replacing exported files need an explicit confirmation. Turn on Settings > Accept external commands in the app first. Drawing strokes, selections and baking are not available.",
+    "developerName": "Yozolab",
+    "category": "Design",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/YozoraKurage/YoluPainter",
+    "defaultPrompt": [
+      "Describe the layers of the open YoluPainter project.",
+      "Lower the opacity of the top layer in YoluPainter to 50%.",
+      "Show me a preview of the Color channel in YoluPainter."
+    ],
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  }
+}

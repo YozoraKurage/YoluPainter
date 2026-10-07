@@ -1,5 +1,5 @@
-//! MCP サーバー（stdio）。ツールは yolu-ops の命令から作り（`tools`）、相手はツールの引数 `file` で選ぶ
-//! （省くと起動中のアプリ。あれば画面なしで、その .ylp を開いて操作する）。
+//! MCP サーバー（rmcp の `ServerHandler`）。ツールは yolu-ops の命令から作り（`tools`）、命令は [`Backend`] へ渡して実行する
+//! （起動中のアプリでは画面のスレッド。相手はいつもアプリが開いている文書）。
 //!
 //! - 返事は structuredContent（outputSchema どおりの JSON）と、同じ JSON の text。見本（`preview`）は、PNG を image の content と
 //!   resource_link（`yolupainter://preview/<番号>.png`。直近の数枚を覚えていて、`resources/read` で読める）の両方で返す
@@ -8,10 +8,11 @@
 //! - 資料: `yolupainter://docs/<名前>`（実行ファイルに埋め込んだ、入れてある版の文書。`.ja`・`.en` で言語を指せる）、
 //!   `yolupainter://ops/commands`（命令の一覧と schema）、`yolupainter://ops/effect-kinds`（効果の種類と値の範囲）。
 //! - 版: rmcp が 2025-11-25 以前の `initialize` と、2026-07-28 の `server/discover`・要求ごとの `_meta` の両方を受ける。
-//! - 任意のコードを実行する道具は無い。ファイルは、`file` の .ylp と、書き出し・保存の命令が指す道だけを扱う（道の決まりは yolu-ops の `PathPolicy`）。
+//! - 任意のコードを実行する道具は無い。ファイルは、書き出し・保存の命令が指す道だけを扱う（道の決まりは yolu-ops の `PathPolicy` と相手のホスト）。
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rmcp::model::{
@@ -21,50 +22,34 @@ use rmcp::model::{
     ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
-use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
+use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde_json::{json, Value};
 use yolu_ops::value::base64_encode;
-use yolu_ops::{
-    command_spec_by_tool, commands, parse_command, Command, ErrorCode, Lang, OpError, Reply,
-};
+use yolu_ops::{command_spec_by_tool, commands, parse_command, Command, Lang, OpError, Reply};
 
 use crate::docs;
-use crate::live::{self, LiveConfig};
-use crate::session::Sessions;
-use crate::tools::{self, FILE_ARG};
+use crate::tools;
 
 /// 見本の PNG を覚えておく枚数と合計の大きさ。
 const MAX_PREVIEWS: usize = 8;
 const MAX_PREVIEW_BYTES: usize = 64 << 20;
 
-const URI_COMMANDS: &str = "yolupainter://ops/commands";
-const URI_EFFECT_KINDS: &str = "yolupainter://ops/effect-kinds";
-const URI_PREVIEW_PREFIX: &str = "yolupainter://preview/";
+pub const URI_COMMANDS: &str = "yolupainter://ops/commands";
+pub const URI_EFFECT_KINDS: &str = "yolupainter://ops/effect-kinds";
+pub const URI_PREVIEW_PREFIX: &str = "yolupainter://preview/";
 
-const INSTRUCTIONS: &str = "YoluPainter texture painting. Every tool takes an optional `file` (a .ylp path). \
-With `file` the project is opened and edited directly (edits stay in memory until `save` with confirm: true). Without it the tool operates on the running YoluPainter app, \
-which must have \"Accept external commands\" turned on in its settings. Destructive tools (deleting, saving over a file, replacing exported files) need `confirm: true`; \
-ask the user before passing it. Each editing tool is one undo step. After save_as, the project is the new file: pass the new path as `file` from then on. \
-If save is refused with code conflict (the file changed outside), call doc_open with the same path as `file` and `path` and confirm: true to discard the in-memory edits and reload. Read `yolupainter://docs/guide` for the app, `yolupainter://docs/mcp` for these tools, \
+const INSTRUCTIONS: &str = "YoluPainter texture painting. The tools operate on the project open in the running YoluPainter app \
+(its \"Accept external commands\" setting is on, or this server would not answer). Destructive tools (deleting, saving over a file, replacing exported files) need `confirm: true`; \
+ask the user before passing it. Each editing tool is one step of the app's undo history, and the user sees every change in the app. \
+Tools are refused with code busy while the user is drawing or a save is running: wait and retry. Read `yolupainter://docs/guide` for the app, `yolupainter://docs/mcp` for these tools, \
 and `yolupainter://ops/effect-kinds` for effect kinds and their value ranges. `preview` returns the channel image.";
 
-/// サーバーの設定。
-#[derive(Clone, Debug)]
-pub struct McpOptions {
-    /// 起動中のアプリへの経路。
-    pub live: LiveConfig,
-    /// `file` の相対パスの起点。
-    pub base: PathBuf,
-}
+/// 命令を実行する相手の返事（非同期。画面のスレッドが答えるまで待つ）。
+pub type BackendFuture = Pin<Box<dyn Future<Output = Result<Reply, OpError>> + Send>>;
 
-impl McpOptions {
-    /// 今のフォルダを起点にした既定の設定。
-    pub fn from_env() -> McpOptions {
-        McpOptions {
-            live: LiveConfig::default(),
-            base: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        }
-    }
+/// 命令を実行する相手（起動中のアプリ・試験の画面なしのホスト）。1 つの命令は取り消しの 1 段。
+pub trait Backend: Send + Sync + 'static {
+    fn run(&self, command: Command) -> BackendFuture;
 }
 
 #[derive(Default)]
@@ -98,9 +83,8 @@ impl Previews {
 }
 
 struct Shared {
-    options: McpOptions,
+    backend: Arc<dyn Backend>,
     tools: Vec<Tool>,
-    sessions: Mutex<Sessions>,
     previews: Mutex<Previews>,
 }
 
@@ -108,23 +92,22 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// MCP サーバー（`ServerHandler`）。
+/// MCP サーバー（`ServerHandler`）。複製は同じ相手と同じ見本の記憶を持つ（要求ごとに複製を作る HTTP の受け口でも、見本のリンクが続く）。
 #[derive(Clone)]
 pub struct YoluMcp {
     shared: Arc<Shared>,
 }
 
 impl YoluMcp {
-    pub fn new(options: McpOptions) -> YoluMcp {
+    pub fn new(backend: Arc<dyn Backend>) -> YoluMcp {
         let tools = tools::tools()
             .into_iter()
             .map(|t| serde_json::from_value::<Tool>(t).expect("ツールの定義は MCP の Tool の形"))
             .collect();
         YoluMcp {
             shared: Arc::new(Shared {
-                options,
+                backend,
                 tools,
-                sessions: Mutex::new(Sessions::new()),
                 previews: Mutex::new(Previews::default()),
             }),
         }
@@ -132,14 +115,6 @@ impl YoluMcp {
 }
 
 impl Shared {
-    /// 命令を相手（`file` の .ylp か、起動中のアプリ）へ当てる。
-    fn run(&self, file: Option<&str>, command: &Command) -> Result<Reply, OpError> {
-        match file {
-            Some(file) => lock(&self.sessions).run(&self.options.base, file, command),
-            None => live::call(&self.options.live, command),
-        }
-    }
-
     fn success(&self, reply: Reply) -> CallToolResult {
         let mut payload = reply.payload();
         match reply {
@@ -266,34 +241,14 @@ impl ServerHandler for YoluMcp {
                 None,
             ));
         };
-        let mut args = request.arguments.unwrap_or_default();
-        let file = match args.remove(FILE_ARG) {
-            None | Some(Value::Null) => None,
-            Some(Value::String(s)) => Some(s),
-            Some(_) => {
-                let e = OpError::new(
-                    ErrorCode::InvalidRequest,
-                    "file は .ylp の道（文字列）です",
-                    "`file` must be a string path of a .ylp",
-                );
-                return Ok(error_result(&e).into());
-            }
-        };
+        let args = request.arguments.unwrap_or_default();
         let command = match parse_command(&json!({"command": spec.name, "args": args})) {
             Ok(c) => c,
             Err(e) => return Ok(error_result(&e).into()),
         };
-        let shared = self.shared.clone();
-        let outcome =
-            tokio::task::spawn_blocking(move || shared.run(file.as_deref(), &command)).await;
-        let result = match outcome {
-            Ok(Ok(reply)) => self.shared.success(reply),
-            Ok(Err(e)) => error_result(&e),
-            Err(join) => error_result(&OpError::new(
-                ErrorCode::Internal,
-                format!("命令の途中で想定していない失敗が起きました: {join}"),
-                format!("The command stopped because of an unexpected failure: {join}"),
-            )),
+        let result = match self.shared.backend.run(command).await {
+            Ok(reply) => self.shared.success(reply),
+            Err(e) => error_result(&e),
         };
         Ok(result.into())
     }
@@ -366,37 +321,4 @@ impl ServerHandler for YoluMcp {
         };
         Ok(ReadResourceResult::new(vec![contents]).into())
     }
-}
-
-/// stdio で MCP サーバーを動かす。クライアントが閉じるまで返らない。終了コードを返す。
-pub fn serve_stdio(options: McpOptions) -> i32 {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("yolupainter-cli: cannot start the runtime: {e}");
-            return 1;
-        }
-    };
-    let code = runtime.block_on(async {
-        let service = match YoluMcp::new(options).serve(rmcp::transport::stdio()).await {
-            Ok(service) => service,
-            Err(e) => {
-                eprintln!("yolupainter-cli: the MCP server could not start: {e}");
-                return 0;
-            }
-        };
-        match service.waiting().await {
-            Ok(_) => 0,
-            Err(e) => {
-                eprintln!("yolupainter-cli: the MCP server stopped: {e}");
-                1
-            }
-        }
-    });
-    // 標準入力を待つ読みが残っていても、終わりを待たない
-    runtime.shutdown_background();
-    code
 }

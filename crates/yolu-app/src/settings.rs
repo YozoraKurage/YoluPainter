@@ -207,9 +207,11 @@ pub struct Settings {
     pub livelink_on_startup: bool,
     /// Live Link で Unity から受けたマテリアルの値を .ylp に保存するか（`look.json` の `received`。既定は保存する）。
     pub livelink_keep_values: bool,
-    /// 外からの操作（CLI・MCP のクライアントなど、同じ PC の同じユーザーのプログラムからの命令）を受けるか。既定は切。入っている間だけ待ち受ける
-    /// （`opslive`）。
+    /// 外からの操作（MCP のクライアント・コマンドラインなど、同じ PC のプログラムからの命令）を受けるか。既定は切。入っている間だけ
+    /// `http://127.0.0.1:<external_ops_port>/mcp` で待つ（`mcp_server`）。
     pub external_ops: bool,
+    /// 外からの操作を待つ番号（1024〜65535。既定は `yolu_mcp::DEFAULT_PORT`）。
+    pub external_ops_port: u16,
     /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
@@ -245,6 +247,7 @@ impl Default for Settings {
             livelink_on_startup: true,
             livelink_keep_values: true,
             external_ops: false,
+            external_ops_port: yolu_mcp::DEFAULT_PORT,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
             disk_cache: true,
@@ -455,6 +458,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
         "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
+        "external_ops_port" => lang.pick("ポート番号", "Port"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
@@ -617,6 +621,10 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "livelink_keep_values" => settings.livelink_keep_values = value != "off",
             // 入れたときだけ書く行（既定は切）。読めない値は切のまま
             "external_ops" => settings.external_ops = value == "on",
+            "external_ops_port" => match value.parse::<u16>() {
+                Ok(port) if yolu_mcp::valid_port(port) => settings.external_ops_port = port,
+                _ => invalid("external_ops_port"),
+            },
             "color_wheel" => settings.color_wheel = value != "off",
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
@@ -823,6 +831,9 @@ fn render(settings: &Settings) -> String {
     if settings.external_ops {
         text += "external_ops=on\n";
     }
+    if settings.external_ops_port != default.external_ops_port {
+        text += &format!("external_ops_port={}\n", settings.external_ops_port);
+    }
     if !settings.color_wheel {
         text += "color_wheel=off\n";
     }
@@ -997,6 +1008,7 @@ mod tests {
             livelink_on_startup: true,
             livelink_keep_values: false,
             external_ops: true,
+            external_ops_port: 23456,
             color_wheel: true,
             gpu_memory: GpuMemory::Mib(1536),
             disk_cache: false,
@@ -1053,6 +1065,23 @@ mod tests {
             "{problems:?}"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_external_commands_port_defaults_to_the_standard_one_and_is_kept_only_when_changed() {
+        assert_eq!(
+            Settings::default().external_ops_port,
+            yolu_mcp::DEFAULT_PORT
+        );
+        let (settings, problems) = parse("external_ops_port=23456\n");
+        assert_eq!((settings.external_ops_port, problems), (23456, vec![]));
+        assert!(!render(&Settings::default()).contains("external_ops_port"));
+        // 1024 より下・番号でない値は既定へ戻し、その項目を知らせる
+        for bad in ["80", "0", "70000", "port"] {
+            let (settings, problems) = parse(&format!("external_ops_port={bad}\n"));
+            assert_eq!(settings.external_ops_port, yolu_mcp::DEFAULT_PORT, "{bad}");
+            assert_eq!(problems.len(), 1, "{bad}: {problems:?}");
+        }
     }
 
     #[test]
@@ -1518,6 +1547,7 @@ mod tests {
             "external_ops=on",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
+            "external_ops_port=23456",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -1537,6 +1567,7 @@ mod tests {
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
         back.external_ops = false;
+        back.external_ops_port = yolu_mcp::DEFAULT_PORT;
         back.view3d_post = crate::view3d::display::PostFx::default();
         back.view3d_paint = yolu_core::geometry::ProjectionSettings::default();
         back.disk_cache = true;

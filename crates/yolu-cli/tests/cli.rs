@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use serde_json::{json, Value};
-use yolu_cli::tools;
+use yolu_mcp::tools;
 use yolu_ops::value::base64_decode;
 use yolu_ops::{command_schema, commands, error_schema, parse_command, reply_schema, ErrorCode};
 
@@ -706,13 +706,13 @@ fn mcp_refuses_the_options_that_choose_a_file() {
 }
 
 #[test]
-fn an_unusable_link_name_is_refused_by_mcp_as_by_the_commands() {
-    // 使えない名前を鍵のファイル探しへ渡すと「アプリが待ち受けていない」という誤った直し方になるので、起こす前に断る
-    let fx = Fixture::new("link-name");
-    for name in ["../x", "a/b", "", "x y", &"n".repeat(65)] {
+fn an_unusable_port_is_refused_by_mcp_as_by_the_commands() {
+    // 1024 より下・番号でない物は、つなぐ前に断る（「アプリが待ち受けていない」という誤った直し方にしない）
+    let fx = Fixture::new("port");
+    for port in ["0", "80", "1023", "65536", "x", ""] {
         for args in [
-            vec!["mcp", "--link-name", name],
-            vec!["doc.info", "--link-name", name],
+            vec!["mcp", "--port", port],
+            vec!["doc.info", "--port", port],
         ] {
             let (code, error) = fx.fails(&args);
             assert_eq!(

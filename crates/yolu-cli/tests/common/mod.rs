@@ -1,9 +1,9 @@
-//! 試験の台: 小さな .ylp を作る・命令を CLI の引数で当てる・起動中のアプリの待ち受けの代わり（本物の文書を操作する）を立てる。
+//! 試験の台: 小さな .ylp を作る・命令を CLI の引数で当てる・起動中のアプリの受け口の代わり（本物の MCP の受け口で、本物の文書を操作する）を立てる。
 #![allow(dead_code)]
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,12 +11,9 @@ use serde_json::Value;
 use yolu_cli::cli::{run, Env, Outcome};
 use yolu_core::{Channel, Document, Rgba8};
 use yolu_io::{composite_pngs, DocumentSource, MaterialRef, Project, SaveTarget, SetSpec};
-use yolu_ops::link::{
-    decode_request, encode_response, read_frame, Received, Response, KIND_REQUEST,
-};
-use yolu_ops::{execute, FileHost, OpHost, PathPolicy};
-use yolu_protocol::link::{accept_as, Server, HANDSHAKE_TIMEOUT};
-use yolu_protocol::{Identity, Reject};
+use yolu_mcp::http::{self, Limits, Observer, Refusal, Running};
+use yolu_mcp::{Backend, BackendFuture, YoluMcp};
+use yolu_ops::{execute, Command, FileHost, OpHost, PathPolicy};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -132,21 +129,16 @@ pub fn sample_document() -> Document {
     doc
 }
 
-/// 経路の名前（試験ごとに別。実際のアプリの `yolupainter-ops` と重ならない）。
-pub fn unique_link_name(tag: &str) -> String {
-    format!(
-        "ylp-cli-test-{}-{}-{tag}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
-/// 起動中のアプリの代わり。本物の挨拶（鍵の確かめ合い）で待ち受け、受けた要求を本物の文書（`FileHost`）に当てて返す。
+/// 起動中のアプリの代わり。本物の MCP の受け口（127.0.0.1 の空いた番号）で、受けた命令を本物の文書（`FileHost`）に当てて返す。
+/// 振る舞いを変えると、HTTP の段で壊れた相手にもなる。
 pub struct FakeApp {
-    pub name: String,
+    pub port: u16,
     pub host: Arc<Mutex<FileHost>>,
-    /// 受けた要求の数。
+    /// 受けた命令の数。
     pub served: Arc<AtomicU64>,
+    /// 開いているつながりの数（受け口が数えた物）。
+    pub open: Arc<AtomicUsize>,
+    _running: Option<Running>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -154,121 +146,178 @@ pub struct FakeApp {
 /// 待ち受けの振る舞い。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Behavior {
-    /// 要求を実行して返す。
+    /// 命令を実行して返す。
     Serve,
-    /// 挨拶のあと、返事を返さずにつながりを閉じる。
-    CloseWithoutReply,
-    /// 返事を返さずに待つ（時間切れの試験）。
+    /// 命令を受けたまま返事をしない（時間切れの試験）。
     Silent,
-    /// 要求に、操作の返事ではない枠を返す。
-    WrongFrame,
-    /// 挨拶で断る（鍵と版は合っていて、受けてよいかの確かめで断る）。
-    Reject,
+    /// 要求を読んで、返事を書かずにつながりを閉じる。
+    CloseWithoutReply,
+    /// MCP でない HTTP の返事をする（別のプログラムが同じ番号で待っている）。
+    NotMcp,
+    /// つながりの数が上限（503）。
+    Busy,
+}
+
+struct Run {
+    host: Arc<Mutex<FileHost>>,
+    served: Arc<AtomicU64>,
+    silent: bool,
+}
+
+impl Backend for Run {
+    fn run(&self, command: Command) -> BackendFuture {
+        self.served.fetch_add(1, Ordering::Relaxed);
+        let host = self.host.clone();
+        let silent = self.silent;
+        Box::pin(async move {
+            if silent {
+                std::future::pending::<()>().await;
+            }
+            tokio::task::spawn_blocking(move || execute(&mut *host.lock().unwrap(), &command))
+                .await
+                .expect("命令のスレッドが終わる")
+        })
+    }
 }
 
 impl FakeApp {
-    pub fn start(fx: &Fixture, file: &str, tag: &str, behavior: Behavior) -> FakeApp {
-        let name = unique_link_name(tag);
+    pub fn start(fx: &Fixture, file: &str, behavior: Behavior) -> FakeApp {
         let mut host = FileHost::new(PathPolicy::new(&fx.dir).unwrap());
         host.open(&fx.path(file), true).unwrap();
-        FakeApp::start_with(name, host, behavior)
+        FakeApp::start_with(host, behavior)
     }
 
-    pub fn start_with(name: String, host: FileHost, behavior: Behavior) -> FakeApp {
-        let server = Server::bind(&name, true).expect("待ち受けを始められる");
+    pub fn start_with(host: FileHost, behavior: Behavior) -> FakeApp {
+        FakeApp::start_on(0, host, behavior)
+    }
+
+    /// つながりの数の上限を変えて、命令を実行して返す（上限を小さくして埋める試験）。
+    pub fn start_limited(fx: &Fixture, file: &str, limits: Limits) -> FakeApp {
+        let mut host = FileHost::new(PathPolicy::new(&fx.dir).unwrap());
+        host.open(&fx.path(file), true).unwrap();
+        FakeApp::start_with_limits(0, host, Behavior::Serve, limits)
+    }
+
+    /// 決めた番号で待つ（0 なら空いた番号）。
+    pub fn start_on(port: u16, host: FileHost, behavior: Behavior) -> FakeApp {
+        FakeApp::start_with_limits(port, host, behavior, Limits::default())
+    }
+
+    fn start_with_limits(port: u16, host: FileHost, behavior: Behavior, limits: Limits) -> FakeApp {
         let host = Arc::new(Mutex::new(host));
+        let open = Arc::new(AtomicUsize::new(0));
         let served = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let thread = {
-            let (host, served, stop) = (host.clone(), served.clone(), stop.clone());
-            std::thread::spawn(move || {
-                let key = server.key();
-                while !stop.load(Ordering::Relaxed) {
-                    let stream = match server.accept() {
-                        Ok(s) => s,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(Duration::from_millis(5));
-                            continue;
-                        }
-                        Err(_) => break,
-                    };
-                    let (host, served, stop) = (host.clone(), served.clone(), stop.clone());
-                    let key = key.clone();
-                    std::thread::spawn(move || {
-                        let claim = |_: &yolu_protocol::Hello| -> Result<(), Reject> {
-                            if behavior == Behavior::Reject {
-                                Err(Reject::plain(yolu_protocol::RejectCode::Busy, "試験の断り"))
-                            } else {
-                                Ok(())
-                            }
-                        };
-                        let Ok((connection, mut reader, _hello)) = accept_as(
-                            stream,
-                            &Identity::standalone("fake-app"),
-                            1,
-                            &key,
-                            HANDSHAKE_TIMEOUT,
-                            &claim,
-                        ) else {
-                            return;
-                        };
-                        loop {
-                            if stop.load(Ordering::Relaxed) {
-                                return;
-                            }
-                            reader.set_timeout(Some(Duration::from_millis(100)));
-                            let (frames, stream) = reader.raw();
-                            let mut stream = stream;
-                            match read_frame(frames, &mut stream) {
-                                Ok(Received::Frame(frame)) => {
-                                    assert_eq!(frame.kind, KIND_REQUEST);
-                                    served.fetch_add(1, Ordering::Relaxed);
-                                    let request = decode_request(&frame).expect("要求は読める");
-                                    match behavior {
-                                        Behavior::CloseWithoutReply => return,
-                                        Behavior::Silent => {
-                                            while !stop.load(Ordering::Relaxed) {
-                                                std::thread::sleep(Duration::from_millis(20));
-                                            }
-                                            return;
-                                        }
-                                        Behavior::WrongFrame => {
-                                            let _ = connection.send_raw(0x0007, b"x");
-                                            return;
-                                        }
-                                        _ => {}
-                                    }
-                                    let outcome = {
-                                        let mut host = host.lock().unwrap();
-                                        execute(&mut *host, &request.command)
-                                    };
-                                    let bytes = encode_response(&Response {
-                                        id: request.id,
-                                        outcome,
-                                    });
-                                    if connection.send_frame(&bytes).is_err() {
-                                        return;
-                                    }
-                                }
-                                Ok(Received::Idle) => {}
-                                Ok(Received::Closed) | Err(_) => return,
-                            }
-                        }
-                    });
-                }
-            })
+        let listener = http::bind(port).expect("待てる");
+        let port = listener.local_addr().unwrap().port();
+        let (running, thread) = match behavior {
+            Behavior::Serve | Behavior::Silent => {
+                let backend = Arc::new(Run {
+                    host: host.clone(),
+                    served: served.clone(),
+                    silent: behavior == Behavior::Silent,
+                });
+                let running = Running::start(
+                    listener,
+                    YoluMcp::new(backend),
+                    limits,
+                    Arc::new(Counting { open: open.clone() }),
+                )
+                .unwrap();
+                (Some(running), None)
+            }
+            _ => {
+                let (stop, served) = (stop.clone(), served.clone());
+                let thread =
+                    std::thread::spawn(move || raw_server(listener, behavior, stop, served));
+                (None, Some(thread))
+            }
         };
         FakeApp {
-            name,
+            port,
             host,
             served,
+            open,
+            _running: running,
             stop,
-            thread: Some(thread),
+            thread,
         }
     }
 
     pub fn served(&self) -> u64 {
         self.served.load(Ordering::Relaxed)
+    }
+
+    /// `--port` の引数。
+    pub fn port_arg(&self) -> String {
+        self.port.to_string()
+    }
+}
+
+/// 開いているつながりの数を覚える `Observer`。
+struct Counting {
+    open: Arc<AtomicUsize>,
+}
+
+impl Observer for Counting {
+    fn connections(&self, open: usize) {
+        self.open.store(open, Ordering::Relaxed);
+    }
+    fn refused(&self, _refusal: Refusal) {}
+}
+
+/// HTTP の段で壊れた相手（要求を読んで、決めた振る舞いをする）。
+fn raw_server(
+    listener: std::net::TcpListener,
+    behavior: Behavior,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    served: Arc<AtomicU64>,
+) {
+    use std::io::Write;
+    while !stop.load(Ordering::Relaxed) {
+        let mut stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(_) => break,
+        };
+        let _ = stream.set_nonblocking(false);
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        // 頭と本文を読む（頭の終わりまで読み、Content-Length の分を足す）
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    buffer.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&buffer).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let length = text[..end]
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        if buffer.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        served.fetch_add(1, Ordering::Relaxed);
+        let reply: &[u8] = match behavior {
+            Behavior::CloseWithoutReply => b"",
+            Behavior::NotMcp => b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+            _ => b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy",
+        };
+        let _ = stream.write_all(reply);
+        let _ = stream.flush();
     }
 }
 
@@ -279,6 +328,12 @@ impl Drop for FakeApp {
             let _ = t.join();
         }
     }
+}
+
+/// どこも待っていない番号（開いてすぐ閉じた口の番号）。
+pub fn unused_port() -> u16 {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.local_addr().unwrap().port()
 }
 
 pub fn read_to_end(mut r: impl Read) -> Vec<u8> {

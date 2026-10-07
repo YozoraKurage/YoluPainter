@@ -4,7 +4,7 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "yolupainter-cli: 命令の JSON を .ylp（画面なし）か起動中のアプリへ当てるコマンドラインと、MCP サーバー（stdio）。"
+description = "yolupainter-cli: 命令の JSON を .ylp（画面なし）か起動中のアプリへ当てるコマンドラインと、標準入出力の MCP を起動中のアプリへ中継する口。"
 
 [lib]
 name = "yolu_cli"
@@ -15,12 +15,10 @@ name = "yolupainter-cli"
 path = "src/main.rs"
 
 [dependencies]
+yolu-mcp.workspace = true   # 起動中のアプリの MCP の受け口への客（中継・命令）と、ツールの定義（schema --tools）
 yolu-ops.workspace = true
-yolu-protocol.workspace = true
-serde = { version = "1", features = ["derive"] }   # MIT OR Apache-2.0
 serde_json = "1"   # MIT OR Apache-2.0
-rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }   # Apache-2.0（公式の Rust SDK）
-tokio = { version = "1", features = ["rt", "macros", "io-std", "io-util", "sync", "time"] }   # MIT
+tokio = { version = "1", features = ["rt", "io-std", "io-util", "sync", "time"] }   # MIT
 
 [dev-dependencies]
 yolu-core.workspace = true

@@ -13,6 +13,7 @@ yolu-brush-sets = { path = "crates/yolu-brush-sets" }
 yolu-core = { path = "crates/yolu-core" }
 yolu-gpu = { path = "crates/yolu-gpu" }
 yolu-io = { path = "crates/yolu-io" }
+yolu-mcp = { path = "crates/yolu-mcp" }
 yolu-model = { path = "crates/yolu-model" }
 yolu-ops = { path = "crates/yolu-ops" }
 yolu-protocol = { path = "crates/yolu-protocol" }

@@ -3,8 +3,8 @@
 [日本語](../CLI.md)
 
 `yolupainter-cli` is a small console program that operates YoluPainter `.ylp` projects from commands, either without showing a window or against the app that is running.
-Scripts and AI assistants can use it to read and change layers, masks and effects, get preview images, export and save. The MCP server for AI assistants is the same program
-(`yolupainter-cli mcp`) and is described in [the MCP document](MCP.md).
+Scripts and AI assistants can use it to read and change layers, masks and effects, get preview images, export and save. AI assistants connect to the running app directly over MCP
+([the MCP document](MCP.md)); for clients that only speak MCP over standard input and output, the same program relays to the app (`yolupainter-cli mcp`).
 
 With the installer it is placed next to the app (by default `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`). In the zip and tar.gz it is next to the app too.
 The installer does not change PATH, so from Command Prompt or PowerShell go to that folder or call it by its full path.
@@ -17,7 +17,7 @@ yolupainter-cli <command> [--name value ...] [--file project.ylp [--save]] [--pr
 yolupainter-cli batch [file|-] --file project.ylp [--save]
 yolupainter-cli commands            list every command
 yolupainter-cli schema [command]    JSON Schema of the commands (--tools: MCP tool definitions)
-yolupainter-cli mcp                 MCP server on stdio
+yolupainter-cli mcp [--port number] relay MCP on stdio to the running app
 ```
 
 ### Choosing the target
@@ -26,6 +26,8 @@ yolupainter-cli mcp                 MCP server on stdio
   (the previous version stays in the `<file name>-backups~` folder next to it).
 - Without `--file` the target is the running YoluPainter. Turn on "Accept external commands" in the app's settings first (it is off by default).
   The command runs inside the app, and each command is one undo step of the app. If the app is not accepting commands you get an error that says how to fix it (exit code 3).
+  - The app is reached over HTTP that stays inside this PC (`http://127.0.0.1:17347/mcp`). If you changed the port in the app's settings, pass the same one with `--port number`.
+  - The reply is awaited for 60 seconds (change it with `--timeout seconds`). When that runs out it is unknown whether the command ran, so check with `doc.info` or `history.info` before asking again.
 
 ### Passing arguments
 
@@ -75,7 +77,7 @@ The language of that line is chosen with `--lang ja|en` (or the environment vari
 | 0 | Success |
 | 1 | The command refused (not found, value out of range, read-only set, file failure and so on; see `error.code`) |
 | 2 | Bad arguments (unknown command or field, wrong type, unreadable JSON) |
-| 3 | The running app cannot be reached (not running, or the setting is off) |
+| 3 | The running app cannot be reached (not running, the setting is off, or a different port) |
 | 4 | A destructive command lacks confirmation (`--confirm`) |
 
 The list of error `code`s is in [the command reference](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-ops/README.md).

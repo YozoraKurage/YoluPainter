@@ -11,19 +11,8 @@ use yolu_ops::{command_spec, command_spec_by_tool, commands, CommandSpec, Lang, 
 
 /// この CLI が自分で使う名前（命令の引数の名前と重ならない。試験が確かめる）。
 pub const RESERVED: &[&str] = &[
-    "file",
-    "live",
-    "save",
-    "pretty",
-    "lang",
-    "timeout",
-    "out",
-    "link_name",
-    "cwd",
-    "args",
-    "help",
-    "version",
-    "tools",
+    "file", "live", "save", "pretty", "lang", "timeout", "out", "port", "cwd", "args", "help",
+    "version", "tools",
 ];
 
 /// どの動作にも付けられる設定。
@@ -41,8 +30,8 @@ pub struct Global {
     pub timeout_secs: Option<f64>,
     /// 見本（`preview`）の PNG をこの道に書き、JSON には道を出す。
     pub out: Option<String>,
-    /// 起動中のアプリへの経路の名前（試験・複数のアプリを分けるとき）。
-    pub link_name: Option<String>,
+    /// 起動中のアプリの番号（アプリの設定「外からの操作を受ける」の番号。既定は `yolu_mcp::DEFAULT_PORT`）。
+    pub port: Option<u16>,
     /// 相対パスの起点（既定は今のフォルダ）。
     pub cwd: Option<String>,
 }
@@ -166,7 +155,20 @@ pub fn parse(tokens: &[String], source: Source<'_>) -> Result<Invocation, OpErro
                 global.timeout_secs = Some(secs);
             }
             "out" => global.out = Some(take("a PNG path")?),
-            "link_name" => global.link_name = Some(take("a link name")?),
+            "port" => {
+                let text = take("a port number")?;
+                let port = text
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|p| yolu_mcp::valid_port(*p))
+                    .ok_or_else(|| {
+                        usage_error(
+                            format!("--port は 1024〜65535 の番号です（{text}）"),
+                            format!("--port is a number from 1024 to 65535 (got {text})"),
+                        )
+                    })?;
+                global.port = Some(port);
+            }
             "cwd" => global.cwd = Some(take("a folder")?),
             "args" => json_args = Some(take("JSON, @file or -")?),
             "tools" => {
@@ -777,6 +779,8 @@ mod tests {
             vec!["--timeout", "0", "doc.info"],
             vec!["commands", "extra"],
             vec!["mcp", "--file"],
+            vec!["--port", "80", "doc.info"],
+            vec!["--port", "abc", "doc.info"],
         ] {
             let e = run(&bad).unwrap_err();
             assert!(

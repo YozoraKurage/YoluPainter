@@ -54,7 +54,7 @@ CRCCheck on
 !define PUBLISHER "Yozolab"
 !define HOMEPAGE "https://github.com/YozoraKurage/YoluPainter"
 !define EXE "yolupainter.exe"
-; コマンドラインと MCP サーバー（アプリと同じ入れ先・同じ版。PATH は変えない）
+; コマンドラインと、標準入出力の MCP の中継（アプリと同じ入れ先・同じ版。PATH は変えない）
 !define CLI_EXE "yolupainter-cli.exe"
 !define UNINSTALLER "uninstall.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"

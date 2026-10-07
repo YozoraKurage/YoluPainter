@@ -1,0 +1,22 @@
+[package]
+name = "yolu-mcp"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "YoluPainter の MCP サーバーの中身（ツール・資料・見本・誤りの形）と、手元の HTTP（127.0.0.1）の受け口と客。"
+
+[dependencies]
+yolu-ops.workspace = true
+serde_json = "1"   # MIT OR Apache-2.0
+rmcp = { version = "3.5", default-features = false, features = ["server", "transport-streamable-http-server"] }   # Apache-2.0（公式の Rust SDK）
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }   # MIT
+tokio-util = "0.7"   # MIT（止める合図 CancellationToken。rmcp が既に使っている版）
+hyper = { version = "1", features = ["server", "client", "http1"] }   # MIT（127.0.0.1 の HTTP/1.1 の受け口と客）
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }   # MIT（hyper を tokio の流れ・時計に載せる）
+http-body-util = "0.1"   # MIT（rmcp が既に使っている版）
+bytes = "1"   # MIT（rmcp が既に使っている版）
+
+[dev-dependencies]
+yolu-core.workspace = true
+yolu-io.workspace = true

@@ -61,8 +61,10 @@ pub enum Pref {
     LiveLinkOnStartup(bool),
     /// Unity から受けたマテリアルの値を .ylp に保存するか。
     LiveLinkKeepValues(bool),
-    /// 外からの操作（CLI・MCP のクライアントなど）を受けるか。入れている間だけ待ち受ける（`opslive`）。
+    /// 外からの操作（MCP のクライアント・コマンドラインなど）を受けるか。入れている間だけ待ち受ける（`mcp_server`）。
     ExternalOps(bool),
+    /// 外からの操作を待つ番号（範囲の外は断る）。
+    ExternalOpsPort(u16),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -247,6 +249,18 @@ impl AppState {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
                 Pref::ExternalOps(v) => self.prefs.settings.external_ops = v,
+                Pref::ExternalOpsPort(port) => {
+                    if yolu_mcp::valid_port(port) {
+                        self.prefs.settings.external_ops_port = port;
+                    } else {
+                        self.message = lang
+                            .pick(
+                                "ポート番号は 1024〜65535 です",
+                                "The port is a number from 1024 to 65535",
+                            )
+                            .into();
+                    }
+                }
                 Pref::ExportPadding(v) => {
                     if EXPORT_PADDINGS.contains(&v) {
                         self.prefs.settings.export_padding = v;
@@ -704,12 +718,14 @@ enum Request {
 const HEADING: f32 = 24.0;
 
 /// 窓の中身（見出しの帯の下）の高さの見積もり。描く行の数と合わせる（試験が、実際に並べた高さと同じであることを確かめる）。
-/// 画面に収まらなければ、窓は画面の高さにして、中身は共通のスクロールで送る。
-fn content_height(gpu_details: bool, cache_details: bool) -> f32 {
+/// 画面に収まらなければ、窓は画面の高さにして、中身は共通のスクロールで送る。`external_ops` は「外からの操作を受ける」が入っているか
+/// （入っている間だけ、その下にポート番号の行を出す）。
+fn content_height(gpu_details: bool, cache_details: bool, external_ops: bool) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     let slider = t::SLIDER_ROW_HEIGHT + GAP;
     8.0 + HEADING * 5.0 // 節の見出し: 一般・メモリ・処理・3D ビュー・ファイル
         + dropdown * 5.0 // 一般: 言語・Live Link の起動・受けた値の保存・外からの操作・書き出しの余白
+        + if external_ops { dropdown } else { 0.0 } // 外からの操作のポート番号
         + dropdown * 3.0 + slider // メモリ: 予算 3 つ・最小の取り消し段数
         + dropdown * 2.0 // メモリ: ディスクキャッシュ・詳しく
         + if cache_details { dropdown * 3.0 } else { 0.0 } // キャッシュの上限・置き場所（パスとボタン）
@@ -721,8 +737,8 @@ fn content_height(gpu_details: bool, cache_details: bool) -> f32 {
         + 8.0
 }
 
-fn window_height(gpu_details: bool, cache_details: bool) -> f32 {
-    window::HEADER_HEIGHT + content_height(gpu_details, cache_details)
+fn window_height(gpu_details: bool, cache_details: bool, external_ops: bool) -> f32 {
+    window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops)
 }
 
 /// 最後に描いた中身の高さ（見出しの帯の下。画面の点。開いていなければ None）。試験が、見積もりと実際の並びの食い違いを見つける。
@@ -823,7 +839,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         icon: Some("tune"),
         size: vec2(
             WIDTH,
-            window_height(app.prefs.gpu_details, app.prefs.cache_details),
+            window_height(
+                app.prefs.gpu_details,
+                app.prefs.cache_details,
+                app.prefs.settings.external_ops,
+            ),
         ),
         modal: false,
         close_label: lang.pick("閉じる", "Close"),
@@ -851,7 +871,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let body = frame.body;
         let previous = ctx
             .data(|d| d.get_temp::<f32>(content_id))
-            .unwrap_or_else(|| content_height(gpu_details, cache_details));
+            .unwrap_or_else(|| content_height(gpu_details, cache_details, s.external_ops));
         let bar = Scroll::begin(ui, body, previous, &mut scroll);
         let area = Rect::from_min_max(
             pos2(body.left(), body.top() - scroll),
@@ -946,20 +966,50 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 next,
             ))));
         }
+        let ops_url = yolu_mcp::endpoint(s.external_ops_port);
+        let ops_tip = lang.pick(
+            format!("AI のアシスタント（MCP）やコマンドラインからの操作を {ops_url} で受ける。入れている間だけ待ち、切るとつながりも閉じる。合言葉は無いので、この PC のほかのアカウントのプログラムもつなげる"),
+            format!("Accepts commands from AI assistants (MCP) and the command line at {ops_url}. It listens only while on; turning it off also closes the connections. There is no password, so programs of other accounts on this PC can connect too"),
+        );
         let next = w::toggle(
             ui,
             rows.row(t::ROW_HEIGHT, GAP),
             id.with("external-ops"),
             crate::settings::setting_name(lang, "external_ops"),
             s.external_ops,
-            Some(lang.pick(
-                "この PC の同じユーザーのプログラム（コマンドラインや MCP のクライアントなど）からの操作を受ける。入れている間だけ待ち受け、切るとつながりも閉じる",
-                "Accepts commands from programs of the same user on this PC, such as the command line and MCP clients. It listens only while on; turning it off also closes the connections",
-            )),
+            Some(&ops_tip),
             enabled,
         );
         if next != s.external_ops {
             requests.push(Request::Do(PrefsAction::Set(Pref::ExternalOps(next))));
+        }
+        // 外からの操作を待つポート番号（入れている間だけ）: 名前と打つ欄（Enter か外を押して決める。Esc でやめる）
+        if s.external_ops {
+            let row = rows.row(t::ROW_HEIGHT, GAP);
+            w::text(
+                ui.painter(),
+                Rect::from_min_size(row.min, vec2(LABEL_WIDTH, row.height())),
+                crate::settings::setting_name(lang, "external_ops_port"),
+                t::LABEL,
+                Align::Left,
+            );
+            let field = Rect::from_min_max(pos2(row.left() + LABEL_WIDTH, row.top()), row.max);
+            let typed = w::text_field(
+                ui,
+                field,
+                ("prefs", "external-ops-port"),
+                &s.external_ops_port.to_string(),
+                Some(lang.pick(
+                    "外からの操作を待つ番号（1024〜65535）。変えたら、つなぐ側の設定の番号も同じにする",
+                    "The port external commands are accepted on (1024 to 65535). When you change it, use the same port in the programs that connect",
+                )),
+                false,
+            );
+            if let Some(text) = typed.committed {
+                // 番号でない・範囲の外は 0 として渡し、断る理由を出す
+                let port = text.trim().parse::<u16>().unwrap_or(0);
+                requests.push(Request::Do(PrefsAction::Set(Pref::ExternalOpsPort(port))));
+            }
         }
         requests.extend(choice(
             ui,

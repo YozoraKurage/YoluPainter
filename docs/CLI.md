@@ -3,8 +3,8 @@
 [English](en/CLI.md)
 
 `yolupainter-cli` は、YoluPainter の `.ylp` を、画面を出さずに、またはいま起動しているアプリに対して、コマンドから操作する小さなコンソールのプログラムです。
-スクリプトや AI から、レイヤー・マスク・効果の読み書き、見本の画像、書き出し、保存を呼べます。AI のアシスタントにつなぐ MCP サーバーも同じプログラム（`yolupainter-cli mcp`）で、
-[MCP の文書](MCP.md)にあります。
+スクリプトや AI から、レイヤー・マスク・効果の読み書き、見本の画像、書き出し、保存を呼べます。AI のアシスタントは、起動中のアプリへ MCP で直接つなぎます
+（[MCP の文書](MCP.md)）。標準入出力の MCP しか使えないクライアントのための中継も、同じプログラム（`yolupainter-cli mcp`）にあります。
 
 インストーラーで入れたときは、アプリと同じフォルダ（既定は `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`）に入ります。zip と tar.gz でも、アプリの隣にあります。
 インストーラーは PATH を変えないので、コマンドプロンプトや PowerShell からは、そのフォルダへ移るか、フルパスで呼びます。
@@ -17,7 +17,7 @@ yolupainter-cli <命令> [--名前 値 ...] [--file project.ylp [--save]] [--pre
 yolupainter-cli batch [ファイル|-] --file project.ylp [--save]
 yolupainter-cli commands            命令の一覧
 yolupainter-cli schema [命令]       命令の JSON Schema（--tools は MCP のツールの定義）
-yolupainter-cli mcp                 MCP サーバー（stdio）
+yolupainter-cli mcp [--port 番号]   標準入出力の MCP を起動中のアプリへ中継する
 ```
 
 ### 相手を選ぶ
@@ -26,6 +26,8 @@ yolupainter-cli mcp                 MCP サーバー（stdio）
   （前の版は隣の `<ファイル名>-backups~` フォルダに残ります）。
 - `--file` を付けないと、いま起動している YoluPainter が相手です。アプリの設定「外からの操作を受ける」を入れておきます（既定は切です）。
   命令はアプリの中で実行され、1 つの命令が画面の取り消しの 1 段になります。アプリが受けていなければ、直し方を言う誤りを返します（終了コード 3）。
+  - アプリとは、この PC の中だけの HTTP（`http://127.0.0.1:17347/mcp`）でつなぎます。アプリの設定で番号を変えたときは、`--port 番号` で同じ番号を指します。
+  - 返事を待つのは 60 秒までです（`--timeout 秒` で変えられます）。間に合わなければ、操作が済んだかは分からないので、`doc.info` や `history.info` で確かめてから頼み直します。
 
 ### 引数の渡し方
 
@@ -75,7 +77,7 @@ yolupainter-cli batch commands.jsonl --file work.ylp --save
 | 0 | 成功 |
 | 1 | 命令が断った（見つからない・値が範囲の外・読むだけのセット・ファイルの失敗など。`error.code` で区別） |
 | 2 | 引数の誤り（知らない命令・欄、型の違い、JSON が読めない） |
-| 3 | 起動中のアプリにつなげない（アプリが起きていない・設定が切） |
+| 3 | 起動中のアプリにつなげない（アプリが起きていない・設定が切・番号が違う） |
 | 4 | 壊す操作に確認（`--confirm`）が無い |
 
 誤りの `code` の一覧は、[命令の仕様](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-ops/README.md)にあります。
