@@ -473,6 +473,7 @@ impl YoluApp {
             .spawn(move || yolu_core::tile_cache::remove_stale_files(&cache_folder));
         // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
+            // ツールの並び（tools.json）も、ここで一緒に読む
             app.state.attach_brush_store(dir.join("brushes"));
             app.state.attach_subtool_store(dir.join("subtools"));
             app.state.ramp_sets.attach(dir.join("gradients"));
@@ -495,6 +496,7 @@ impl YoluApp {
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
+        notices.extend(app.state.toolset_problem_message());
         notices.extend(app.state.subtool_problem_message());
         notices.extend(app.state.ramp_sets.problem().map(|e| {
             lang.pick(
@@ -959,6 +961,50 @@ impl YoluApp {
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::LibraryFolder(Some(dir)),
                         )));
+                }
+            }
+            Some(DialogRequest::ToolsetReset) => {
+                let lang = self.state.lang;
+                let yes = crate::dialog::message()
+                    .set_title("YoluPainter")
+                    .set_description(lang.pick(
+                        "ツールの並びを最初の並びに戻しますか？（ツールとグループの名前・並びは取り消せません。ブラシのファイルは残ります）",
+                        "Reset the tool layout? (Tool and group names and order cannot be restored. Brush files stay.)",
+                    ))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .set_level(rfd::MessageLevel::Warning)
+                    .show()
+                    == rfd::MessageDialogResult::Yes;
+                if yes {
+                    self.state
+                        .apply(Action::Tools(crate::toolset::ToolsetAction::Reset));
+                }
+            }
+            Some(DialogRequest::BrushFileDelete) => {
+                let lang = self.state.lang;
+                let Some(key) = self.state.toolset.catalog.pending_delete.take() else {
+                    return;
+                };
+                let name = self
+                    .state
+                    .brushes
+                    .lib
+                    .entry(key)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                let yes = crate::dialog::message()
+                    .set_title("YoluPainter")
+                    .set_description(lang.pick(
+                        format!("ブラシのファイル「{name}」を消しますか？（取り消せません）"),
+                        format!("Delete the brush file \"{name}\"? (This cannot be undone.)"),
+                    ))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .set_level(rfd::MessageLevel::Warning)
+                    .show()
+                    == rfd::MessageDialogResult::Yes;
+                if yes {
+                    self.state
+                        .apply(Action::Brush(crate::brushes::BrushAction::DeleteFile(key)));
                 }
             }
             Some(DialogRequest::PrefsCacheFolder) => {
@@ -1741,6 +1787,8 @@ impl YoluApp {
             });
         // ドックのあとに描く窓も、描き始めた・終わった今の状態から
         w::update_stroke_hold(&ctx, self.state.holds_panel_look());
+        // ツールの列・グループのタブ・ブラシの行をまたぐドラッグは、全部を描いたあとに落とす先へ当てる
+        crate::toolset::ui::end_frame(&ctx, &mut self.state);
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);

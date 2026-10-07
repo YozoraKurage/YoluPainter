@@ -243,13 +243,13 @@ fn brush_files_and_pngs_dropped_with_a_psd_follow_the_same_rules_as_before() {
     std::fs::write(&gbr_path, gbr_gray("Chalk")).unwrap();
     let psd = psd_file(&dir, "a.psd", false);
     // PNG は一覧の外ではブラシにしない（PSD だけが動く）
-    let before = st(&h).brushes.lib.in_group(Group::Imported).len();
+    let before = st(&h).brush_entries_in(Group::Imported).len();
     drop_files(&mut h, &[&psd, &png]);
     settle(&mut h);
     wait_brush_import(&mut h);
     assert_eq!(st(&h).sets.len(), 2, "PSD は読む");
     assert_eq!(
-        st(&h).brushes.lib.in_group(Group::Imported).len(),
+        st(&h).brush_entries_in(Group::Imported).len(),
         before,
         "一覧の外の PNG はブラシにしない"
     );
@@ -260,20 +260,17 @@ fn brush_files_and_pngs_dropped_with_a_psd_follow_the_same_rules_as_before() {
     settle(&mut h);
     wait_brush_import(&mut h);
     assert_eq!(st(&h).sets.len(), 3, "PSD も読む");
-    assert_eq!(
-        st(&h).brushes.lib.in_group(Group::Imported).len(),
-        before + 1
-    );
+    assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), before + 1);
     // PSD の入らない落とし方（ブラシのファイルだけ）は PSD の取り込みを起こさない
     let sets = st(&h).sets.len();
-    let imported = st(&h).brushes.lib.in_group(Group::Imported).len();
+    let imported = st(&h).brush_entries_in(Group::Imported).len();
     let abr = dir.join("old.abr");
     std::fs::write(&abr, abr_v1()).unwrap();
     drop_files(&mut h, &[&abr]);
     assert!(!st(&h).psd.is_busy());
     wait_brush_import(&mut h);
     assert_eq!(
-        st(&h).brushes.lib.in_group(Group::Imported).len(),
+        st(&h).brush_entries_in(Group::Imported).len(),
         imported + 2,
         "ABR は取り込む（PSD が付かなくても）"
     );

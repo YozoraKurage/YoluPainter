@@ -21,6 +21,7 @@ use super::{
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::state::Tool;
 use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
 use crate::windows::CloseJob;
 
@@ -306,6 +307,11 @@ impl AppState {
             self.brush_refuse_while_importing();
             return;
         }
+        // 取り込んだブラシは並びに置くので、並びを変えられないときは断る
+        if let Some(r) = self.toolset.set.lock_refusal() {
+            self.toolset_refuse(r);
+            return;
+        }
         let user_count = self.brushes.lib.user_count();
         if user_count >= super::MAX_USER_BRUSHES {
             self.refuse(
@@ -427,32 +433,59 @@ impl AppState {
                 if loaded.save_error.is_some() {
                     job.report.save_error = loaded.save_error;
                 }
-                let lib = &mut self.brushes.lib;
                 for user in loaded.brushes {
                     let key = BrushKey::User(user.id);
-                    // 取り込んだブラシは「取り込み」のグループの後ろ（無ければ一覧の最後）
-                    let at = lib
-                        .entries
-                        .iter()
-                        .rposition(|e| e.group == Group::Imported)
-                        .map_or(lib.entries.len(), |i| i + 1);
-                    lib.entries.insert(
-                        at,
-                        Entry {
-                            key,
-                            name: user.name,
-                            group: Group::Imported,
-                            baseline: super::canonical(&user.brush),
-                            edited: None,
-                            import: user.import,
-                            assist: user.assist,
-                        },
-                    );
+                    self.brushes.lib.entries.push(Entry {
+                        key,
+                        name: user.name,
+                        group: Group::Imported,
+                        baseline: super::canonical(&user.brush),
+                        edited: None,
+                        import: user.import,
+                        assist: user.assist,
+                    });
+                    // 取り込んだブラシは、今のブラシのツールの「取り込み」のグループの後ろ（無ければそのツールの最後に作る。いっぱいなら
+                    // 次の「取り込み」のグループを作る。どこにも置けなければファイルだけ残り、「＋」の窓から戻せる）
+                    if let Some(group) = self.brush_import_group() {
+                        let _ = self.toolset.set.insert_brush(key, group, None);
+                    }
+                    let Some(job) = &mut self.brushes.import.job else {
+                        return;
+                    };
                     job.report.imported += 1;
                     job.report.first.get_or_insert(key);
                 }
             }
         }
+    }
+
+    /// 取り込んだブラシを置くグループ。今のブラシのツール（今のツールがブラシのツールならそれ、そうでなければ今のブラシがあるブラシの
+    /// ツール、それも無ければ最初のブラシのツール）の「取り込み」のグループで、空きのある最初の物。無ければ、そのツールの最後に作る
+    /// （いっぱいなら次を作る）。消しゴムのツールの中のグループは選ばない（取り込んだブラシが、描かずに消す筆になってしまうため）。
+    /// ツールのグループが上限なら None（ファイルだけ残り、「＋」の窓から戻せる）。
+    fn brush_import_group(&mut self) -> Option<crate::toolset::GroupId> {
+        let set = &self.toolset.set;
+        let is_brush_tool =
+            |id: &crate::toolset::SlotId| set.slot(*id).is_some_and(|s| s.tool == Tool::Brush);
+        let slot = set
+            .active_slot()
+            .map(|s| s.id)
+            .filter(is_brush_tool)
+            .or_else(|| {
+                set.slot_of(self.brushes.lib.current())
+                    .filter(is_brush_tool)
+            })
+            .or_else(|| set.first_of(Tool::Brush))?;
+        let room = set
+            .slot(slot)?
+            .groups
+            .iter()
+            .find(|g| g.builtin == Some(Group::Imported) && g.has_room())
+            .map(|g| g.id);
+        if room.is_some() {
+            return room;
+        }
+        self.toolset.set.add_imported_group(slot)
     }
 
     /// 仕事の終わり: 並びを書き、最初のブラシに替え、結果を状態の帯へ。
@@ -465,7 +498,7 @@ impl AppState {
         let mut order_error = None;
         if report.imported > 0 {
             // 並びを保存できなかった理由は、取り込みの知らせに添えて 1 回だけ知らせる
-            if let Err(text) = self.brush_save_order() {
+            if let Err(text) = self.toolset_save() {
                 order_error = Some(text);
             }
             if let Some(first) = report.first {

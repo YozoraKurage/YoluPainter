@@ -19,6 +19,7 @@ use yolu_app::lang::Lang;
 use yolu_app::m2::{BrushOp, UiOp};
 use yolu_app::m2_menu::{self, Popup};
 use yolu_app::state::{Action, AppState, Tool};
+use yolu_app::toolset::{ToolsetAction, MAX_GROUP_BRUSHES};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,12 +59,27 @@ fn import(s: &mut AppState, paths: &[PathBuf]) {
 }
 
 fn imported(s: &AppState) -> Vec<Entry> {
-    s.brushes
-        .lib
-        .in_group(Group::Imported)
+    s.brush_entries_in(Group::Imported)
         .into_iter()
         .cloned()
         .collect()
+}
+
+/// 今の設定の新しいブラシを `n` 個足す（1 つのグループは 512 個までなので、いっぱいになったら今のツールにグループを足す）。
+fn add_many(s: &mut AppState, n: usize) {
+    for _ in 0..n {
+        let slot = s.toolset.set.active().unwrap();
+        let full = s
+            .toolset
+            .set
+            .shown_group(slot)
+            .and_then(|g| s.toolset.set.group(g))
+            .is_some_and(|(_, g)| g.brushes.len() >= MAX_GROUP_BRUSHES);
+        if full {
+            s.apply(Action::Tools(ToolsetAction::AddGroup(slot)));
+        }
+        s.apply(Action::Brush(BrushAction::Add));
+    }
 }
 
 fn brush_files(dir: &Path) -> usize {
@@ -99,7 +115,7 @@ fn headless_a_gbr_is_imported_in_the_background_saved_and_comes_back() {
     assert_eq!((e.name.as_str(), e.group), ("Chalk 筆", Group::Imported));
     // 取り込んだブラシに替わり、「取り込み」のタブが開く
     assert_eq!(s.brushes.lib.current(), e.key);
-    assert_eq!(s.brushes.ui.group, Group::Imported);
+    assert_eq!(s.shown_brush_group(), Some(Group::Imported));
     assert!(
         s.message.starts_with("ブラシを 1 個取り込みました"),
         "{}",
@@ -132,6 +148,82 @@ fn headless_a_gbr_is_imported_in_the_background_saved_and_comes_back() {
     assert_eq!(again[0].baseline, e.baseline);
     assert_eq!(again[0].import, e.import);
     assert_eq!(again[0].name, "Chalk 筆");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn headless_imported_brushes_go_to_the_current_brush_tool_never_into_an_eraser_tool() {
+    let dir = temp_dir("import-tool");
+    let file = write(&dir, "chalk_set.gbr", &gbr_gray("Chalk"));
+    let mut s = state(&dir);
+    let slot = |s: &AppState, tool: Tool| s.toolset.set.first_of(tool).unwrap();
+    let group_of = |s: &AppState, key: BrushKey| {
+        let id = s.toolset.set.group_of(key).expect("並びにある");
+        s.toolset
+            .set
+            .group(id)
+            .map(|(slot, g)| (slot.id, g.clone()))
+            .unwrap()
+    };
+    // 取り込みのタブを消しゴムのツールへ動かしておく
+    import(&mut s, std::slice::from_ref(&file));
+    let first = s.brushes.lib.current();
+    let (_, tab) = group_of(&s, first);
+    assert_eq!(tab.builtin, Some(Group::Imported));
+    let eraser = slot(&s, Tool::Eraser);
+    s.apply(Action::Tools(ToolsetAction::MoveGroup {
+        group: tab.id,
+        to: eraser,
+        before: None,
+    }));
+    assert_eq!(s.toolset.set.slot_of(first), Some(eraser));
+    // ブラシのツールで取り込むと、ブラシのツールの最後に取り込みのグループができる
+    let brush = slot(&s, Tool::Brush);
+    s.apply(Action::Tools(ToolsetAction::Select(brush)));
+    import(&mut s, std::slice::from_ref(&file));
+    let second = s.brushes.lib.current();
+    assert_ne!(second, first);
+    let (second_slot, second_tab) = group_of(&s, second);
+    assert_eq!(second_slot, brush, "消しゴムのツールの中には置かない");
+    assert_eq!(second_tab.builtin, Some(Group::Imported));
+    assert_eq!(
+        s.toolset.set.slot(brush).unwrap().groups.last().unwrap().id,
+        second_tab.id,
+        "ツールの最後"
+    );
+    assert_eq!(
+        s.toolset.set.slot_of(first),
+        Some(eraser),
+        "前に取り込んだ物は動かさない"
+    );
+    // 2 つ目のブラシのツールで取り込むと、そのツールの中に作る。元のツールの取り込みのグループには入らない
+    s.apply(Action::Tools(ToolsetAction::Add {
+        tool: Tool::Brush,
+        after: None,
+    }));
+    let other = s.toolset.set.slots().last().unwrap().id;
+    s.apply(Action::Tools(ToolsetAction::Select(other)));
+    import(&mut s, std::slice::from_ref(&file));
+    let third = s.brushes.lib.current();
+    let (third_slot, third_tab) = group_of(&s, third);
+    assert_eq!(third_slot, other);
+    assert_eq!(third_tab.builtin, Some(Group::Imported));
+    assert_eq!(
+        group_of(&s, second).1.brushes,
+        [second],
+        "元のツールのグループのまま"
+    );
+    // 元のブラシのツールへ戻して取り込むと、そのツールの取り込みのグループの後ろへ入る
+    s.apply(Action::Tools(ToolsetAction::Select(brush)));
+    import(&mut s, &[file]);
+    let fourth = s.brushes.lib.current();
+    let (fourth_slot, fourth_tab) = group_of(&s, fourth);
+    assert_eq!((fourth_slot, fourth_tab.id), (brush, second_tab.id));
+    assert_eq!(fourth_tab.brushes, [second, fourth]);
+    // 並びは保存され、読み戻せる
+    let back = state(&dir);
+    assert!(back.toolset.problem.is_none(), "{:?}", back.toolset.problem);
+    assert_eq!(back.toolset.set, s.toolset.set);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -194,9 +286,13 @@ fn headless_an_abr_gives_several_brushes_and_a_second_import_gets_new_names() {
         names,
         ["Old set 1", "Old set 2", "Old set 1 2", "Old set 2 2"]
     );
-    // 1 つ消すと、そのブラシのファイルだけが消え、同じ画像を使うほかのブラシが残るあいだ画像は残る
+    // 並びから外しても、ファイルは残る（「＋」の窓から戻せる）
     let key = imported(&s)[1].key;
     s.apply(Action::Brush(BrushAction::Delete(key)));
+    assert!(!s.toolset.set.contains(key));
+    assert_eq!((brush_files(&dir), image_files(&dir)), (4, 1));
+    // ファイルを 1 つ消すと、そのブラシのファイルだけが消え、同じ画像を使うほかのブラシが残るあいだ画像は残る
+    s.apply(Action::Brush(BrushAction::DeleteFile(key)));
     assert_eq!((brush_files(&dir), image_files(&dir)), (3, 1));
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -498,7 +594,7 @@ fn headless_finishing_an_import_does_not_take_the_tool_from_a_selection_in_progr
     let key = imported(&s)[0].key;
     assert_ne!(before, key);
     assert_eq!(s.brushes.lib.current(), key);
-    assert_eq!(s.brushes.ui.group, Group::Imported);
+    assert_eq!(s.shown_brush_group(), Some(Group::Imported));
     assert!(s.m2.brush.tip.image.is_some(), "今の設定も取り込んだ筆先");
     // バケツなどほかの道具でも同じ
     s.tool = Tool::Fill;
@@ -531,6 +627,7 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
     assert!(s.is_brush_importing());
     for action in [
         BrushAction::Delete(old),
+        BrushAction::DeleteFile(old),
         BrushAction::Add,
         BrushAction::Duplicate(old),
         BrushAction::Register(old),
@@ -550,10 +647,12 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
     s.lang = Lang::En;
     s.apply(Action::Brush(BrushAction::Delete(old)));
     assert!(s.message.contains("Importing brushes"), "{}", s.message);
-    // 取消のあと（仕事が無くなれば）、また消せる
+    // 取消のあと（仕事が無くなれば）、また消せる（並びから外す・ファイルを消す）
     s.apply(Action::Brush(BrushAction::ImportCancel));
     finish(&mut s);
     s.apply(Action::Brush(BrushAction::Delete(old)));
+    assert!(!s.toolset.set.contains(old));
+    s.apply(Action::Brush(BrushAction::DeleteFile(old)));
     assert!(s.brushes.lib.entry(old).is_none());
     assert_eq!(brush_files(&dir), 1);
     std::fs::remove_dir_all(dir).unwrap();
@@ -562,15 +661,15 @@ fn headless_while_importing_add_duplicate_delete_and_register_are_refused_and_th
 #[test]
 fn headless_a_brush_order_that_cannot_be_saved_is_reported_after_the_import() {
     for (lang, expect) in [
-        (Lang::Ja, "ブラシの並びを保存できません"),
-        (Lang::En, "Cannot save the brush order"),
+        (Lang::Ja, "ツールの並びを保存できません"),
+        (Lang::En, "Cannot save the tool layout"),
     ] {
         let dir = temp_dir("order-fails");
         let file = write(&dir, "chalk.gbr", &gbr_gray("Chalk"));
         let mut s = state(&dir);
         s.lang = lang;
-        // 並びのファイルの場所をフォルダで塞ぐ（置換できない）。ブラシのファイルは置ける
-        std::fs::create_dir_all(dir.join("brushes/order.conf")).unwrap();
+        // ツールの並びのファイルの場所をフォルダで塞ぐ（置換できない）。ブラシのファイルは置ける
+        std::fs::create_dir_all(dir.join("tools.json")).unwrap();
         import(&mut s, &[file]);
         assert_eq!(imported(&s).len(), 1);
         assert_eq!(brush_files(&dir), 1);
@@ -590,9 +689,7 @@ fn headless_the_number_of_brushes_stops_the_import_and_says_so() {
     let dir = temp_dir("cap");
     let file = write(&dir, "old.abr", &abr_v1());
     let mut s = AppState::new(64, 64);
-    for _ in 0..MAX_USER_BRUSHES - 1 {
-        s.apply(Action::Brush(BrushAction::Add));
-    }
+    add_many(&mut s, MAX_USER_BRUSHES - 1);
     import(&mut s, std::slice::from_ref(&file));
     assert_eq!(imported(&s).len(), 1, "あと 1 個だけ入る");
     assert!(
@@ -676,8 +773,8 @@ fn headless_a_pat_adds_its_patterns_to_the_texture_choices_and_they_survive_a_re
             .collect::<Vec<_>>(),
         ["Paper A", "Paper B"]
     );
-    // 模様のブラシを消すと、その模様は選びから消える
-    s.apply(Action::Brush(BrushAction::Delete(a.key)));
+    // 模様のブラシのファイルを消すと、その模様は選びから消える
+    s.apply(Action::Brush(BrushAction::DeleteFile(a.key)));
     assert_eq!(&labels(&s)[builtin.len()..], ["Paper B"]);
     assert_eq!(image_files(&dir), 1, "A の画像のファイルも消える");
     std::fs::remove_dir_all(dir).unwrap();

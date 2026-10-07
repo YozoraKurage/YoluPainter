@@ -190,7 +190,7 @@ fn group(action: &Action) -> usize {
 pub fn rows(app: &AppState) -> Vec<Row> {
     let l = app.lang;
     let groups = [
-        l.pick("道具", "Tools"),
+        l.pick("ツール", "Tools"),
         l.pick("編集", "Edit"),
         l.pick("レイヤー", "Layer"),
         l.pick("選択範囲", "Selection"),

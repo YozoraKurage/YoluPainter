@@ -1499,9 +1499,11 @@ fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both
 // ───────── メインとサブの色（ツールの帯の一番下） ─────────
 
 fn tool_label(lang: Lang, tool: Tool) -> String {
-    match lang {
-        Lang::Ja => format!("{}（{}）", tool.name_in(lang), tool.key()),
-        Lang::En => format!("{} ({})", tool.name_in(lang), tool.key()),
+    // キーの無いツール（ゆがみ）は名前だけ
+    match (lang, tool.key()) {
+        (_, "") => tool.name_in(lang).to_string(),
+        (Lang::Ja, key) => format!("{}（{key}）", tool.name_in(lang)),
+        (Lang::En, key) => format!("{} ({key})", tool.name_in(lang)),
     }
 }
 

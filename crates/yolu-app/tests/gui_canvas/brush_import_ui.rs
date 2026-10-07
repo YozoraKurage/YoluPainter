@@ -181,7 +181,7 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
         .apply(Action::Brush(BrushAction::Import(vec![colour, plain])));
     wait_import(&mut h);
     // タブが現れ、取り込んだブラシに替わって、そのグループを開いている
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     assert!(h.query_by_label("取り込み").is_some());
     assert!(h.query_by_label("Colour tip").is_some());
     assert!(h.query_by_label("Plain tip").is_some());
@@ -226,11 +226,9 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
         .filter(|t| has_japanese(t))
         .collect();
     assert!(japanese.is_empty(), "英語の画面に日本語: {japanese:?}");
-    // 取り込んだブラシを全部消すと、タブも消えて、ほかのグループへ戻る
+    // 取り込んだブラシを全部並びから外しても、グループ（タブ）は残る（グループは利用者が消す）。今のブラシはツールのほかのブラシへ
     for key in st(&h)
-        .brushes
-        .lib
-        .in_group(Group::Imported)
+        .brush_entries_in(Group::Imported)
         .iter()
         .map(|e| e.key)
         .collect::<Vec<_>>()
@@ -241,8 +239,8 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
     }
     h.run();
     h.run();
-    assert_eq!(st(&h).brushes.ui.group, Group::Pen);
-    assert!(h.query_by_label("Imported").is_none());
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Pen));
+    assert!(h.query_by_label("Imported").is_some());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -285,9 +283,7 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
     wait_import(&mut h);
     let find = |h: &H, name: &str| {
         st(h)
-            .brushes
-            .lib
-            .in_group(Group::Imported)
+            .brush_entries_in(Group::Imported)
             .into_iter()
             .find(|e| e.name == name)
             .map(|e| e.key)
@@ -347,13 +343,13 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     drop_files(&mut h, outside, &[&abr]);
     assert!(st(&h).is_brush_importing());
     wait_import(&mut h);
-    assert_eq!(st(&h).brushes.lib.in_group(Group::Imported).len(), 2);
+    assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     // 一覧の上の PNG は取り込もうとする（PNG として読めなければ、その理由を状態の帯に出す）
     drop_files(&mut h, inside, &[&png]);
     assert!(st(&h).is_brush_importing());
     wait_import(&mut h);
     assert!(st(&h).message.contains("tip.png"), "{}", st(&h).message);
-    assert_eq!(st(&h).brushes.lib.in_group(Group::Imported).len(), 2);
+    assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -498,7 +494,7 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
         .apply(Action::Brush(BrushAction::Import(vec![file])));
     wait_import(&mut h);
     h.run();
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     assert_eq!(marked(&h, round), Some(false));
     assert_eq!(marked(&h, &krita.brushes[0].name), Some(false));
     // 丸へ戻せば丸のマスだけ
@@ -728,7 +724,7 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     assert!(!st(&h).brushes.csp.open);
     assert!(!drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
     assert!(h.query_by_label("Ink").is_some() && h.query_by_label("Stamp").is_none());
-    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     // 取り込んだブラシの行のツールチップに、写した項目（入り抜き）が並ぶ
     let row = rect_of(&h, "Ink", |r| in_panel(r) && r.width() > 200.0);
     move_to(&h, pos2(2.0, 2.0));

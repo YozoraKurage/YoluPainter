@@ -121,7 +121,7 @@ fn begin(
             app.refuse(
                 Source::View3d,
                 app.lang.pick(
-                    "この道具は 2D のキャンバスで使います",
+                    "このツールは 2D のキャンバスで使います",
                     "This tool works on the 2D canvas",
                 ),
             );

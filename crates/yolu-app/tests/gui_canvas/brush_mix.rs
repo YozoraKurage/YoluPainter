@@ -87,11 +87,13 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
     egui_kittest::image_snapshot(&cropped, name);
 }
 
+/// 試験ごとの設定のフォルダの中の、ブラシのフォルダ（ツールの並びの `tools.json` は、その隣に置かれる）。
 fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/brush-mix-tests")
         .join(format!("{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("brushes");
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -108,7 +110,7 @@ fn headless_the_thick_paint_brushes_are_built_in_brush_group_brushes_that_mix() 
     ] {
         s.apply(Action::Brush(BrushAction::Select(b(id))));
         assert_eq!(s.brushes.lib.current(), b(id), "{id}");
-        assert_eq!(s.brushes.ui.group, Group::Brush, "{id}");
+        assert_eq!(s.shown_brush_group(), Some(Group::Brush), "{id}");
         assert_eq!(s.tool, Tool::Brush);
         assert_eq!(s.m2.brush.mix.mode, mode, "{id}");
         assert!(s.m2.brush.mix.validate().is_ok());

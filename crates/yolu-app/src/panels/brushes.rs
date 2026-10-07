@@ -8,10 +8,12 @@
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use crate::brushes::sample::SampleSpec;
-use crate::brushes::{BrushAction, BrushDrag, BrushKey, DropAt, Group};
+use crate::brushes::{BrushAction, BrushKey, DropAt};
 use crate::engine::{Brush, BrushEffect};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState};
+use crate::toolset::ui::{Dragged, Renaming, Target};
+use crate::toolset::{GroupId, SlotId, ToolsetAction};
 use crate::ui::menu::context_anchor;
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -20,7 +22,8 @@ use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 /// 決まった直径（px）。アプリの直径の上限（256）まで。
 pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
 
-pub(super) const GROUP_STRIP: f32 = 30.0;
+/// グループのタブの 1 段の高さ（入りきらなければ段を足す）。
+pub(super) const TAB_HEIGHT: f32 = 26.0;
 pub(super) const ROW_HEIGHT: f32 = 36.0;
 pub(super) const FOOTER_HEIGHT: f32 = 28.0;
 pub(super) const MIN_LIST: f32 = 96.0;
@@ -104,88 +107,226 @@ pub(super) fn paint_sample(
     }
 }
 
+/// 今のツールが消すツールか（消しゴムのツールの中のブラシは消す）。
 pub(super) fn is_eraser(app: &AppState) -> bool {
-    app.brushes
-        .lib
-        .entry(app.brushes.lib.current())
-        .is_some_and(|e| e.group.is_eraser())
+    app.tool.erases()
 }
 
-/// ブラシの道具のタブに出すグループ（組み込みのあるグループはいつも。取り込んだブラシが 1 つでもあれば「取り込み」も）。消しゴムのグループは
-/// 消しゴムの道具の一覧なので出さない（ブラシと消しゴムを同じ一覧に並べない）。
-pub fn tab_groups(app: &AppState) -> Vec<Group> {
-    let mut groups: Vec<Group> = Group::ALL
-        .iter()
-        .copied()
-        .filter(|g| !g.is_eraser())
-        .collect();
-    if app
-        .brushes
-        .lib
-        .entries()
-        .iter()
-        .any(|e| e.group == Group::Imported)
-    {
-        groups.push(Group::Imported);
+/// グループのタブの 1 つ。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TabKind {
+    Group(GroupId),
+    /// グループを追加（最後の「＋」）。
+    Add,
+}
+
+/// グループのタブの並び（帯の左上からの矩形）と帯の高さ。名前の長さで幅を決め、入りきらなければ次の段へ折り返す。
+pub(super) fn tab_layout(
+    p: &egui::Painter,
+    app: &AppState,
+    slot: SlotId,
+    width: f32,
+) -> (Vec<(TabKind, Rect)>, f32) {
+    let lang = app.lang;
+    let mut tabs: Vec<(TabKind, f32)> = Vec::new();
+    if let Some(s) = app.toolset.set.slot(slot) {
+        for g in &s.groups {
+            let renaming = app.toolset.ui.renaming == Some(Renaming::Group(g.id));
+            let text = w::text_width(p, &g.short_in(lang), t::HEADER);
+            let mut tab_w = (text + 14.0).clamp(32.0, (width - 4.0).max(32.0));
+            if renaming {
+                tab_w = tab_w.max(110.0).min((width - 4.0).max(32.0));
+            }
+            tabs.push((TabKind::Group(g.id), tab_w));
+        }
     }
-    groups
+    tabs.push((TabKind::Add, 24.0));
+    let (mut x, mut y) = (2.0, 2.0);
+    let mut out = Vec::with_capacity(tabs.len());
+    for (kind, tab_w) in tabs {
+        if x > 2.0 && x + tab_w > width - 2.0 {
+            x = 2.0;
+            y += TAB_HEIGHT;
+        }
+        out.push((
+            kind,
+            Rect::from_min_size(pos2(x, y), vec2(tab_w, TAB_HEIGHT - 3.0)),
+        ));
+        x += tab_w + 1.0;
+    }
+    (out, y + TAB_HEIGHT + 2.0)
 }
 
-/// グループのタブ（短い名前。全名はツールチップ。入りきらなければ名前を詰め、それでも入らなければアイコンだけ）。
-pub(super) fn group_strip(ui: &mut Ui, r: Rect, app: &mut AppState) {
+/// グループのタブ（名前。押して出すグループを替える・ダブルクリックで名前・右クリックでメニュー・ドラッグで並べ替えと別のツールへ。
+/// 最後の「＋」でグループを追加）。
+pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId) {
     let lang = app.lang;
     {
         let p = ui.painter();
         w::fill(p, r, t::PANEL_HEADER);
         w::hline(p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
     }
-    let groups = tab_groups(app);
-    let n = groups.len();
-    let tab_w = (r.width() - 4.0) / n as f32;
-    let widest = groups
+    let (tabs, _) = tab_layout(ui.painter(), app, slot, r.width());
+    let shown = app.toolset.set.shown_group(slot);
+    let editable = !app.is_stroking() && app.toolset.set.locked.is_none();
+    let dragging = app.toolset.ui.dragging();
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let order: Vec<GroupId> = tabs
         .iter()
-        .map(|g| w::text_width(ui.painter(), g.short(lang), t::HEADER))
-        .fold(0.0f32, f32::max);
-    let text_only = tab_w.round() - 1.0 >= widest + 8.0;
-    for (i, group) in groups.iter().enumerate() {
-        let tab = Rect::from_min_size(
-            pos2((r.left() + 2.0 + i as f32 * tab_w).round(), r.top() + 2.0),
-            vec2(tab_w.round() - 1.0, r.height() - 3.0),
-        );
-        let on = app.brushes.ui.group == *group;
-        let response = ui.interact(
-            tab,
-            ui.make_persistent_id(("brush.group", i)),
-            Sense::click(),
-        );
-        if response.clicked() {
-            app.brushes.ui.group = *group;
-            app.brushes.ui.list_scroll = 0.0;
+        .filter_map(|(k, _)| match k {
+            TabKind::Group(g) => Some(*g),
+            TabKind::Add => None,
+        })
+        .collect();
+    let mut placed: Vec<(GroupId, Rect)> = Vec::new();
+    for (kind, rel) in &tabs {
+        let tab = rel.translate(r.min.to_vec2());
+        match *kind {
+            TabKind::Add => {
+                if w::icon_button(
+                    ui,
+                    tab,
+                    ("brush.group.add", slot),
+                    "add",
+                    lang.pick("グループを追加", "Add Group"),
+                    false,
+                    editable,
+                    15.0,
+                )
+                .clicked()
+                {
+                    app.apply(Action::Tools(ToolsetAction::AddGroup(slot)));
+                }
+            }
+            TabKind::Group(group) => {
+                placed.push((group, tab));
+                let Some((short, full)) = app
+                    .toolset
+                    .set
+                    .group(group)
+                    .map(|(_, g)| (g.short_in(lang), g.name_in(lang)))
+                else {
+                    continue;
+                };
+                if app.toolset.ui.renaming == Some(Renaming::Group(group)) {
+                    let first = !app.toolset.ui.rename_started;
+                    app.toolset.ui.rename_started = true;
+                    let out =
+                        w::text_field(ui, tab, ("brush.group.rename", group), &full, None, first);
+                    if let Some(next) = out.committed {
+                        app.apply(Action::Tools(ToolsetAction::RenameGroup(group, next)));
+                    }
+                    if !first && !out.focused {
+                        app.toolset.ui.renaming = None;
+                    }
+                    continue;
+                }
+                let on = shown == Some(group);
+                let response = ui.interact(
+                    tab,
+                    ui.make_persistent_id(("brush.group", group)),
+                    Sense::click_and_drag(),
+                );
+                if response.clicked() {
+                    app.apply(Action::Tools(ToolsetAction::ShowGroup(group)));
+                }
+                if response.double_clicked() && editable {
+                    app.apply(Action::Tools(ToolsetAction::StartRenameGroup(group)));
+                }
+                if response.drag_started() && editable {
+                    app.toolset.ui.start_drag(Dragged::Group(group));
+                }
+                if response.secondary_clicked() {
+                    if let Some(at) = response.interact_pointer_pos() {
+                        app.toolset.ui.context_group = Some(group);
+                        super::properties::open_popup(
+                            app,
+                            ui.ctx(),
+                            Popup::GroupContext,
+                            context_anchor(at),
+                            0.0,
+                        );
+                    }
+                }
+                let p = ui.painter();
+                if on {
+                    w::rounded(p, tab, t::PANEL_BG, 3.0);
+                    w::fill(
+                        p,
+                        Rect::from_min_size(
+                            pos2(tab.left() + 4.0, tab.bottom() - 2.0),
+                            vec2(tab.width() - 8.0, 2.0),
+                        ),
+                        t::ACCENT,
+                    );
+                } else if response.hovered() || response.is_pointer_button_down_on() {
+                    w::rounded(p, tab, t::CONTROL_HOVER, 3.0);
+                }
+                if dragging == Some(Dragged::Group(group)) {
+                    w::rounded(p, tab, t::CONTROL_ACTIVE, 3.0);
+                }
+                let color = if on { Color32::WHITE } else { t::TEXT_DIM };
+                let shown_text = w::fit(p, &short, tab.width() - 8.0, t::HEADER);
+                w::text(
+                    p,
+                    tab,
+                    &shown_text,
+                    t::HEADER.with_color(color),
+                    Align::Center,
+                );
+                response.widget_info(|| {
+                    WidgetInfo::selected(WidgetType::SelectableLabel, true, on, &full)
+                });
+                let _ = response.on_hover_text(&full);
+                // ドラッグ: グループはタブの間へ、ブラシはタブの上へ
+                if let (Some(what), Some(pos)) = (dragging, pointer) {
+                    if tab.contains(pos) {
+                        match what {
+                            Dragged::Group(_) => {
+                                let at = order.iter().position(|g| *g == group).unwrap_or(0);
+                                let before = if pos.x < tab.center().x {
+                                    Some(group)
+                                } else {
+                                    order.get(at + 1).copied()
+                                };
+                                app.toolset.ui.hover(Target::TabGap(slot, before));
+                            }
+                            Dragged::Brush(_) => app.toolset.ui.hover(Target::Tab(group)),
+                            Dragged::Slot(_) => {}
+                        }
+                    }
+                }
+            }
         }
-        let p = ui.painter();
-        if on {
-            w::rounded(p, tab, t::PANEL_BG, 3.0);
-            w::fill(
-                p,
-                Rect::from_min_size(
-                    pos2(tab.left() + 4.0, tab.bottom() - 2.0),
-                    vec2(tab.width() - 8.0, 2.0),
-                ),
-                t::ACCENT,
-            );
-        } else if response.hovered() || response.is_pointer_button_down_on() {
-            w::rounded(p, tab, t::CONTROL_HOVER, 3.0);
+    }
+    // グループをタブの後ろの空いた所へ落とす（最後へ）
+    if let (Some(Dragged::Group(_)), Some(pos)) = (dragging, pointer) {
+        if r.contains(pos) && !placed.iter().any(|(_, tab)| tab.contains(pos)) {
+            app.toolset.ui.hover(Target::TabGap(slot, None));
         }
-        let color = if on { Color32::WHITE } else { t::TEXT_DIM };
-        if text_only {
-            let shown = w::fit(p, group.short(lang), tab.width() - 6.0, t::HEADER);
-            w::text(p, tab, &shown, t::HEADER.with_color(color), Align::Center);
-        } else {
-            w::icon(p, tab, group.icon(), color, 15.0);
+    }
+    // 落とす先の印
+    let p = ui.painter();
+    match app.toolset.ui.target() {
+        Some(Target::TabGap(s, before)) if s == slot => {
+            let x_rect = match before {
+                Some(g) => placed.iter().find(|(id, _)| *id == g).map(|(_, tab)| {
+                    Rect::from_min_size(pos2(tab.left() - 2.0, tab.top()), vec2(2.0, tab.height()))
+                }),
+                None => placed.last().map(|(_, tab)| {
+                    Rect::from_min_size(pos2(tab.right(), tab.top()), vec2(2.0, tab.height()))
+                }),
+            };
+            if let Some(line) = x_rect {
+                w::fill(p, line, t::ACCENT);
+            }
         }
-        let full = group.name(lang);
-        response.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, on, full));
-        let _ = response.on_hover_text(full);
+        Some(Target::Tab(g)) => {
+            if let Some((_, tab)) = placed.iter().find(|(id, _)| *id == g) {
+                w::outline(p, *tab, t::ACCENT, 1.5, 3.0);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -198,23 +339,26 @@ fn drop_target(list_keys: &[BrushKey], position: f32) -> DropAt {
     }
 }
 
-/// ブラシの一覧の中（行・ドラッグの追従・スクロール・空白）。`group` は出すグループ（消しゴムの道具は消しゴムのグループ）。
-pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Group) {
+/// ブラシの一覧の中（今のツールの出しているグループの行・ドラッグの落とす先・スクロール）。
+pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, slot: SlotId) {
     let lang = app.lang;
     let live = app.brush_live();
     let current = app.brushes.lib.current();
-    let rows: Vec<(BrushKey, String, bool, Group)> = app
-        .brushes
-        .lib
-        .in_group(group)
-        .into_iter()
-        .map(|e| {
-            (
+    let erases = app.toolset.set.slot(slot).is_some_and(|s| s.tool.erases());
+    let group = app.toolset.set.shown_group(slot);
+    let keys: Vec<BrushKey> = group
+        .and_then(|g| app.toolset.set.group(g))
+        .map(|(_, g)| g.brushes.clone())
+        .unwrap_or_default();
+    let rows: Vec<(BrushKey, String, bool)> = keys
+        .iter()
+        .filter_map(|k| {
+            let e = app.brushes.lib.entry(*k)?;
+            Some((
                 e.key,
                 e.name_in(lang),
                 app.brushes.lib.is_modified(e.key, &live),
-                e.group,
-            )
+            ))
         })
         .collect();
     let keys: Vec<BrushKey> = rows.iter().map(|r| r.0).collect();
@@ -240,31 +384,23 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
     }
     // ホイールは、このパネルを包む `subtools` が（全体のスクロールと分けて）受ける
     let bar = Scroll::new(list, content, &mut app.brushes.ui.list_scroll);
-    // ドラッグ: ボタンを押しているあいだは落とす先をポインタに追わせ、離したら落とす（行がスクロールで見えなくなっても）
-    if let Some(drag) = app.brushes.ui.drag {
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            // Esc: 動かすのをやめる（落とさない）
-            app.brushes.ui.drag = None;
-        } else if ui.input(|i| i.pointer.primary_down()) {
-            if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
-                let position = (p.y - list.top() + app.brushes.ui.list_scroll) / ROW_HEIGHT;
-                app.brushes.ui.drag = Some(BrushDrag {
-                    target: Some(drop_target(&keys, position)),
-                    ..drag
-                });
-            }
-        } else {
-            app.brushes.ui.drag = None;
-            if let Some(at) = drag.target {
-                app.apply(Action::Brush(BrushAction::Move { key: drag.key, at }));
-            }
+    // ドラッグ: ブラシを一覧の上で動かしている間は、行の間のいちばん近い所を落とす先にする（離すのはフレームの終わり）
+    if let (Some(Dragged::Brush(_)), Some(group)) = (app.toolset.ui.dragging(), group) {
+        if let Some(p) = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| list.contains(*p))
+        {
+            let position = (p.y - list.top() + app.brushes.ui.list_scroll) / ROW_HEIGHT;
+            app.toolset
+                .ui
+                .hover(Target::Row(group, drop_target(&keys, position)));
         }
     }
     let scroll = app.brushes.ui.list_scroll;
     let row_width = list.width() - bar.reserved();
     let outer = ui.clip_rect();
     ui.set_clip_rect(list.intersect(outer));
-    for (i, (key, name, modified, row_group)) in rows.iter().enumerate() {
+    for (i, (key, name, modified)) in rows.iter().enumerate() {
         let row = Rect::from_min_size(
             pos2(list.left(), list.top() + i as f32 * ROW_HEIGHT - scroll),
             vec2(row_width, ROW_HEIGHT),
@@ -276,25 +412,24 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
             ui,
             app,
             row,
-            (*key, name, *modified, *row_group),
+            (*key, name, *modified, erases),
             *key == current,
         );
     }
     // ドラッグの落とす先の線
-    if let Some(BrushDrag {
-        target: Some(at), ..
-    }) = app.brushes.ui.drag
-    {
-        let index = match at {
-            DropAt::Before(key) => keys.iter().position(|k| *k == key).unwrap_or(keys.len()),
-            DropAt::End => keys.len(),
-        };
-        let y = list.top() + index as f32 * ROW_HEIGHT - scroll;
-        w::fill(
-            ui.painter(),
-            Rect::from_min_size(pos2(list.left(), y - 1.0), vec2(row_width, 2.0)),
-            t::ACCENT,
-        );
+    if let (Some(Target::Row(g, at)), Some(shown)) = (app.toolset.ui.target(), group) {
+        if g == shown {
+            let index = match at {
+                DropAt::Before(key) => keys.iter().position(|k| *k == key).unwrap_or(keys.len()),
+                DropAt::End => keys.len(),
+            };
+            let y = list.top() + index as f32 * ROW_HEIGHT - scroll;
+            w::fill(
+                ui.painter(),
+                Rect::from_min_size(pos2(list.left(), y - 1.0), vec2(row_width, 2.0)),
+                t::ACCENT,
+            );
+        }
     }
     ui.set_clip_rect(outer);
     bar.end(ui, "brushes.list.scroll", &mut app.brushes.ui.list_scroll);
@@ -304,7 +439,7 @@ fn brush_row(
     ui: &mut Ui,
     app: &mut AppState,
     row: Rect,
-    (key, name, modified, group): (BrushKey, &str, bool, Group),
+    (key, name, modified, erases): (BrushKey, &str, bool, bool),
     selected: bool,
 ) {
     let lang = app.lang;
@@ -328,7 +463,7 @@ fn brush_row(
     } else if response.hovered() {
         w::fill(&painter, row, t::CONTROL_HOVER);
     }
-    if app.brushes.ui.drag.is_some_and(|d| d.key == key) {
+    if app.toolset.ui.dragging() == Some(Dragged::Brush(key)) {
         w::fill(&painter, row, t::CONTROL_ACTIVE);
     }
     w::hline(
@@ -355,11 +490,11 @@ fn brush_row(
             app.brushes.ui.renaming = None;
         }
     }
-    if (response.double_clicked() || response.triple_clicked()) && key.is_user() {
+    if response.double_clicked() || response.triple_clicked() {
         app.apply(Action::Brush(BrushAction::StartRename(key)));
     }
     if response.drag_started() {
-        app.brushes.ui.drag = Some(BrushDrag { key, target: None });
+        app.toolset.ui.start_drag(Dragged::Brush(key));
     }
     if response.secondary_clicked() {
         if let Some(at) = response.interact_pointer_pos() {
@@ -435,7 +570,7 @@ fn brush_row(
         app,
         sample_rect,
         &brush,
-        SampleSpec::row(group.is_eraser()),
+        SampleSpec::row(erases),
         egui::Id::new(("brush.sample.row", key)),
     );
 
@@ -445,15 +580,17 @@ fn brush_row(
     let _ = response.on_hover_text(tooltip);
 }
 
-/// 一覧の下の帯: 元に戻す・複製・取り込み・追加・削除（右寄せ）。`with_import` が偽なら取り込みは出さない（消しゴムの一覧）。
+/// 一覧の下の帯: 元に戻す・複製・取り込み・今の設定で新しいブラシ・ブラシを追加（「＋」の窓）・削除（右寄せ）。`with_import` が偽なら
+/// 取り込みは出さない（消しゴムの一覧）。削除は並びから外すだけ（ファイルは「＋」の窓から戻せる）。
 pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bool) {
     let lang = app.lang;
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
     w::hline(ui.painter(), bar.left(), bar.right(), bar.top(), t::BORDER);
     let current = app.brushes.lib.current();
-    let user = current.is_user();
     let modified = app.brush_is_modified(current);
     let free = !app.is_stroking();
+    let layout = app.toolset.set.locked.is_none();
+    let placed = app.toolset.set.contains(current);
     let button =
         |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
     let mut x = bar.right() - 4.0 - 26.0;
@@ -462,16 +599,9 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.delete",
         "delete",
-        if user {
-            lang.pick("ブラシを削除", "Delete Brush")
-        } else {
-            lang.pick(
-                "組み込みのブラシは消せません",
-                "Built-in brushes cannot be deleted",
-            )
-        },
+        lang.pick("ブラシを削除", "Delete Brush"),
         false,
-        free && user,
+        free && layout && placed,
         17.0,
     )
     .clicked()
@@ -482,15 +612,30 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
     if w::icon_button(
         ui,
         button(x),
-        "brush.add",
+        "brush.catalog",
         "add",
+        lang.pick("ブラシを追加", "Add Brushes"),
+        app.toolset.catalog.open,
+        free && layout,
+        18.0,
+    )
+    .clicked()
+    {
+        app.toolset.catalog.open = !app.toolset.catalog.open;
+    }
+    x -= 28.0;
+    if w::icon_button(
+        ui,
+        button(x),
+        "brush.add",
+        "copy_add",
         lang.pick(
             "今の設定を新しいブラシに",
             "Add the Current Settings as a Brush",
         ),
         false,
-        free,
-        18.0,
+        free && layout,
+        17.0,
     )
     .clicked()
     {
@@ -508,7 +653,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
                 "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
             ),
             app.brushes.import.is_busy(),
-            !app.brushes.import.is_busy(),
+            !app.brushes.import.is_busy() && layout,
             17.0,
         )
         .clicked()
@@ -524,7 +669,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
             "folder_open",
             lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"),
             app.brushes.csp.open,
-            !app.brushes.import.is_busy(),
+            !app.brushes.import.is_busy() && layout,
             17.0,
         )
         .clicked()
@@ -540,7 +685,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         "content_copy",
         lang.pick("ブラシを複製", "Duplicate Brush"),
         false,
-        free,
+        free && layout,
         16.0,
     )
     .clicked()

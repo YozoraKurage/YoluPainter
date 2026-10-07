@@ -73,6 +73,7 @@ pub mod subtool;
 pub mod titlebar;
 pub mod toast;
 pub mod tools;
+pub mod toolset;
 pub mod transform;
 pub mod ui;
 pub mod update;

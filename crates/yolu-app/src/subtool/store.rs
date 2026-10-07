@@ -91,7 +91,10 @@ impl StoreError {
                 format!("Invalid value of \"{k}\""),
             ),
             StoreError::WrongTool => lang
-                .pick("別の道具のファイルです", "The file belongs to another tool")
+                .pick(
+                    "別のツールのファイルです",
+                    "The file belongs to another tool",
+                )
                 .into(),
             StoreError::TooMany => lang
                 .pick("プリセットが多すぎます", "Too many presets")

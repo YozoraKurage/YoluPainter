@@ -629,9 +629,11 @@ fn tool_strip_and_symmetry_toggle_fit_the_minimum_window_in_both_languages() {
         // 窓の最小の大きさ（960x640）で、ツールの帯の全部のボタンが帯の中に収まる
         let (top, bottom) = (24.0 + 36.0, 640.0 - 22.0);
         for tool in Tool::ALL {
-            let label = match lang {
-                Lang::Ja => format!("{}（{}）", tool.name_in(lang), tool.key()),
-                Lang::En => format!("{} ({})", tool.name_in(lang), tool.key()),
+            // キーの無いツール（ゆがみ）は名前だけ
+            let label = match (lang, tool.key()) {
+                (_, "") => tool.name_in(lang).to_string(),
+                (Lang::Ja, key) => format!("{}（{key}）", tool.name_in(lang)),
+                (Lang::En, key) => format!("{} ({key})", tool.name_in(lang)),
             };
             let r = h.get_by_label(&label).rect();
             assert!(

@@ -677,7 +677,7 @@ fn escape_cancels_a_brush_row_drag_before_the_selection() {
             r.left() < 340.0 && r.top() > 100.0 && r.top() < 900.0 && r.width() > 200.0
         })
     };
-    let order = st(&h).brushes.lib.order();
+    let order = st(&h).toolset.set.brushes();
     let a = row(&h, "ブラシ");
     let b = row(&h, "ブラシ 2");
     let from = egui::pos2(b.left() + 30.0, b.center().y);
@@ -688,12 +688,12 @@ fn escape_cancels_a_brush_row_drag_before_the_selection() {
     let over = egui::pos2(a.left() + 30.0, a.top() + 4.0);
     move_to(&h, over);
     h.step();
-    assert!(st(&h).brushes.ui.drag.is_some(), "ブラシを動かしている");
+    assert!(st(&h).toolset.ui.drag.is_some(), "ブラシを動かしている");
     esc_keeps_the_selection(&mut h, "ブラシの並べ替えのドラッグ");
-    assert!(st(&h).brushes.ui.drag.is_none(), "ドラッグをやめた");
+    assert!(st(&h).toolset.ui.drag.is_none(), "ドラッグをやめた");
     release(&h, over, PointerButton::Primary);
     h.run();
-    assert_eq!(st(&h).brushes.lib.order(), order, "落とさない");
+    assert_eq!(st(&h).toolset.set.brushes(), order, "落とさない");
     esc_clears_the_selection(&mut h, "ドラッグをやめたあと");
 }
 

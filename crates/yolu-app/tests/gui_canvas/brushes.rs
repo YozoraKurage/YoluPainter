@@ -147,7 +147,7 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     // グループのタブを押しても、ブラシは替わらない（見ている一覧だけ）
     let tab = group_tab(&h, "筆").center();
     click(&mut h, tab);
-    assert_eq!(st(&h).brushes.ui.group, Group::Brush);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Brush));
     assert_eq!(st(&h).brushes.lib.current(), b("hard-round"));
     assert_eq!(st(&h).tool, Tool::Brush);
     click_row(&mut h, "チョーク");
@@ -184,8 +184,8 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     h.run();
     assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
     assert_eq!(
-        st(&h).brushes.ui.group,
-        Group::Brush,
+        st(&h).shown_brush_group(),
+        Some(Group::Brush),
         "一覧もそのブラシのグループへ"
     );
     key(&h, Key::E, Modifiers::NONE);
@@ -208,7 +208,7 @@ fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     h.run();
     assert_eq!(st(&h).tool, Tool::Eraser);
     assert_eq!(st(&h).brushes.lib.current(), b("standard-eraser"));
-    assert_eq!(st(&h).brushes.ui.group, Group::Eraser);
+    assert_eq!(st(&h).shown_brush_group(), Some(Group::Eraser));
     assert_eq!(
         st(&h).brush.radius,
         16.0,
@@ -256,21 +256,19 @@ fn the_list_footer_adds_duplicates_reverts_and_deletes() {
     h.run();
     row_of(&h, "ブラシ のコピー");
     assert_ne!(st(&h).brushes.lib.current(), key);
-    // 削除（今のブラシ。組み込みでは押せない）
+    // 削除（今のブラシ。並びから外すだけで、ファイルは残る）
     let copy = st(&h).brushes.lib.current();
     h.get_by_label("ブラシを削除").click();
     h.run();
-    assert!(st(&h).brushes.lib.entry(copy).is_none());
+    assert!(!st(&h).toolset.set.contains(copy));
+    assert!(st(&h).brushes.lib.entry(copy).is_some());
     assert_eq!(st(&h).brushes.lib.current(), key, "前の行へ");
+    // 組み込みも並びから外せる（「＋」の窓から戻せる）
     click_row(&mut h, "ハード円");
-    assert!(h
-        .get_by_label("組み込みのブラシは消せません")
-        .accesskit_node()
-        .is_disabled());
-    let count = st(&h).brushes.lib.entries().len();
-    h.get_by_label("組み込みのブラシは消せません").click();
+    h.get_by_label("ブラシを削除").click();
     h.run();
-    assert_eq!(st(&h).brushes.lib.entries().len(), count);
+    assert!(!st(&h).toolset.set.contains(b("hard-round")));
+    assert!(st(&h).brushes.lib.entry(b("hard-round")).is_some());
 }
 
 #[test]
@@ -309,7 +307,7 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
     h.run();
     assert_eq!(st(&h).brushes.lib.entry(key).unwrap().name, "太い線");
     assert_eq!(st(&h).brushes.ui.renaming, None);
-    // 組み込みはダブルクリックしても名前を変えない
+    // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）
     let row = row_of(&h, "標準");
     let at = pos2(row.left() + 30.0, row.center().y);
     for _ in 0..2 {
@@ -318,7 +316,16 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
         h.step();
     }
     h.run();
-    assert_eq!(st(&h).brushes.ui.renaming, None);
+    assert_eq!(st(&h).brushes.ui.renaming, Some(b("standard")));
+    self::key(&h, Key::A, Modifiers::COMMAND);
+    h.event(Event::Text("細い線".into()));
+    self::key(&h, Key::Enter, Modifiers::NONE);
+    h.run();
+    assert!(!st(&h).toolset.set.contains(b("standard")));
+    let copy = st(&h).brushes.lib.current();
+    assert!(copy.is_user());
+    assert_eq!(st(&h).brushes.lib.entry(copy).unwrap().name, "細い線");
+    row_of(&h, "細い線");
 }
 
 #[test]
@@ -331,8 +338,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     release(&h, row.center(), PointerButton::Secondary);
     h.run();
     assert!(st(&h).popup.is_some());
-    // 組み込みでは、名前の変更・削除・登録（と、変更が無ければ元に戻す）は押せない。複製はできる
-    for label in ["名前を変更", "この設定で登録", "元に戻す", "削除"] {
+    // 変更が無ければ、登録と元に戻すは押せない（組み込みも、名前の変更・削除・複製はできる）
+    for label in ["この設定で登録", "元に戻す"] {
         let item = popup_item(&h, label);
         click(&mut h, item.center());
         assert!(st(&h).popup.is_some(), "{label}: 押せない項目は閉じない");
@@ -380,7 +387,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     h.run();
     let at = popup_item(&h, "削除").center();
     click(&mut h, at);
-    assert!(st(&h).brushes.lib.entry(copy).is_none());
+    assert!(!st(&h).toolset.set.contains(copy), "並びから外す");
+    assert!(st(&h).brushes.lib.entry(copy).is_some(), "ファイルは残る");
 }
 
 #[test]
@@ -393,9 +401,7 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     }
     let pen = |h: &H| -> Vec<BrushKey> {
         st(h)
-            .brushes
-            .lib
-            .in_group(Group::Pen)
+            .brush_entries_in(Group::Pen)
             .iter()
             .map(|e| e.key)
             .collect()
@@ -418,7 +424,7 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     assert_eq!(after[after.len() - 2], second);
     assert_eq!(after[after.len() - 1], first);
     // 動かしても、今のブラシは替わらない。ドラッグは Undo の段を作らない
-    assert_eq!(st(&h).brushes.ui.drag, None);
+    assert_eq!(st(&h).toolset.ui.drag, None);
     assert!(!st(&h).doc.can_undo());
     // 一番下の空白へ落とすと、グループの一番後ろ
     let top = row_of(&h, "標準");
@@ -1222,7 +1228,7 @@ fn the_brush_panel_and_the_detail_window_speak_both_languages_without_clipped_te
             // 一覧は全グループ・利用者のブラシ 1 つ
             h.state_mut().state.apply(Action::Brush(BrushAction::Add));
             for group in Group::ALL {
-                h.state_mut().state.brushes.ui.group = group;
+                h.state_mut().state.show_brush_group(group);
                 h.run();
                 let clipped = clipped_texts(&h);
                 assert!(
@@ -1254,7 +1260,7 @@ fn the_brush_panel_and_the_detail_window_speak_both_languages_without_clipped_te
     let mut h = app(1600.0, 900.0, 128);
     language(&mut h, Lang::En);
     for group in Group::ALL {
-        h.state_mut().state.brushes.ui.group = group;
+        h.state_mut().state.show_brush_group(group);
         h.run();
         let japanese: Vec<String> = drawn_texts(&h)
             .into_iter()
@@ -1408,7 +1414,7 @@ fn escape_cancels_a_row_drag_and_nothing_moves() {
         h.get_by_label("今の設定を新しいブラシに").click();
         h.run();
     }
-    let order = st(&h).brushes.lib.order();
+    let order = st(&h).toolset.set.brushes();
     let a = row_of(&h, "ブラシ");
     let b2 = row_of(&h, "ブラシ 2");
     let from = pos2(b2.left() + 30.0, b2.center().y);
@@ -1418,17 +1424,17 @@ fn escape_cancels_a_row_drag_and_nothing_moves() {
     h.step();
     move_to(&h, pos2(a.left() + 30.0, a.top() + 4.0));
     h.step();
-    assert!(st(&h).brushes.ui.drag.is_some(), "動かしている");
+    assert!(st(&h).toolset.ui.drag.is_some(), "動かしている");
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
-    assert_eq!(st(&h).brushes.ui.drag, None);
+    assert_eq!(st(&h).toolset.ui.drag, None);
     release(
         &h,
         pos2(a.left() + 30.0, a.top() + 4.0),
         PointerButton::Primary,
     );
     h.run();
-    assert_eq!(st(&h).brushes.lib.order(), order, "落とさない");
+    assert_eq!(st(&h).toolset.set.brushes(), order, "落とさない");
 }
 
 #[test]

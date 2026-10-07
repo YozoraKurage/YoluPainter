@@ -731,7 +731,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     click_tab(&mut h, Tab::SubTools);
     apply(&mut h, Action::Brush(BrushAction::Add));
     for group in Group::ALL {
-        h.state_mut().state.brushes.ui.group = group;
+        h.state_mut().state.show_brush_group(group);
         h.run();
         assert_english(&h, group.name(Lang::En), &[]);
     }
@@ -1629,7 +1629,7 @@ fn walk_states(
     // ブラシの一覧（全グループ）と詳細の窓（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
-        h.state_mut().state.brushes.ui.group = group;
+        h.state_mut().state.show_brush_group(group);
         h.run();
         visit(&mut h, group.name(lang));
     }
@@ -1641,7 +1641,7 @@ fn walk_states(
         visit(&mut h, category.name(lang));
     }
     h.state_mut().state.brushes.ui.detail.open = false;
-    h.state_mut().state.brushes.ui.group = Group::Pen;
+    h.state_mut().state.show_brush_group(Group::Pen);
     h.run();
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();

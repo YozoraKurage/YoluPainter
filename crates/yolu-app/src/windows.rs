@@ -246,6 +246,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     bake::window::show(ctx, app);
     crate::panels::brush_detail::show(ctx, app);
+    crate::panels::brush_catalog::show(ctx, app);
     crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);
     export_confirm(ctx, app);

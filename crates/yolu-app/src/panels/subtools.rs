@@ -7,12 +7,12 @@
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
-use super::brushes::{self, FOOTER_HEIGHT, GROUP_STRIP, MIN_LIST, ROW_HEIGHT, SECTION_HEIGHT};
-use crate::brushes::Group;
+use super::brushes::{self, FOOTER_HEIGHT, MIN_LIST, ROW_HEIGHT, SECTION_HEIGHT};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, Tool};
 use crate::subtool::{Key, SubToolAction};
 use crate::tools::SubTools;
+use crate::toolset::SlotId;
 use crate::ui::menu::context_anchor;
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -30,50 +30,60 @@ struct ListShape {
     footer: f32,
     /// 余った高さを全部使う（ブラシの一覧。グループを替えても下の欄が動かない）。
     fills: bool,
+    /// グループのタブを並べる幅（スクロールの帯の分を先に引く。組み立てと描くのを同じ幅にする）。
+    tabs_width: f32,
 }
 
-fn list_shape(app: &AppState, tool: Tool) -> ListShape {
+/// ブラシ・消しゴムのツールの一覧に出すツールの列の 1 つ（今のツール。列に無いツールをキーで使っているときは、そのツールの最初の 1 つ）。
+fn brush_slot(app: &AppState, tool: Tool) -> Option<SlotId> {
+    let set = &app.toolset.set;
+    set.active_slot()
+        .filter(|s| s.tool == tool)
+        .map(|s| s.id)
+        .or_else(|| set.first_of(tool))
+}
+
+fn list_shape(ui: &Ui, app: &AppState, tool: Tool, width: f32) -> ListShape {
+    let tabs_width = (width - crate::ui::scroll::BAR_WIDTH).max(40.0);
     match tool.def().subtools {
-        SubTools::Brushes => ListShape {
-            strip: GROUP_STRIP,
-            body: app.brushes.lib.in_group(brush_group(app)).len() as f32 * ROW_HEIGHT,
-            footer: FOOTER_HEIGHT,
-            fills: true,
-        },
-        SubTools::Erasers => ListShape {
-            strip: 0.0,
-            body: app.brushes.lib.in_group(Group::Eraser).len() as f32 * ROW_HEIGHT,
-            footer: FOOTER_HEIGHT,
-            fills: true,
-        },
+        SubTools::Brushes | SubTools::Erasers => {
+            let slot = brush_slot(app, tool);
+            let strip = slot.map_or(0.0, |s| {
+                brushes::tab_layout(ui.painter(), app, s, tabs_width).1
+            });
+            let rows = slot
+                .and_then(|s| app.toolset.set.shown_group(s))
+                .and_then(|g| app.toolset.set.group(g))
+                .map_or(0, |(_, g)| g.brushes.len());
+            ListShape {
+                strip,
+                body: rows as f32 * ROW_HEIGHT,
+                footer: FOOTER_HEIGHT,
+                fills: true,
+                tabs_width,
+            }
+        }
         SubTools::Presets => ListShape {
             strip: 0.0,
             body: app.subtool_list(tool).map_or(0, |l| l.entries().len()) as f32 * ROW,
             footer: FOOTER_HEIGHT,
             fills: false,
+            tabs_width,
         },
         SubTools::Tools(tools) => ListShape {
             strip: 0.0,
             body: tools.len() as f32 * ROW,
             footer: 0.0,
             fills: false,
+            tabs_width,
         },
         SubTools::Single => ListShape {
             strip: 0.0,
             body: ROW,
             footer: 0.0,
             fills: false,
+            tabs_width,
         },
-    }
-}
-
-/// ブラシの道具で出すグループ（消しゴムのグループは消しゴムの道具のものなので、そのときは先頭のグループ）。
-fn brush_group(app: &AppState) -> Group {
-    let group = app.brushes.ui.group;
-    if group.is_eraser() {
-        Group::Pen
-    } else {
-        group
     }
 }
 
@@ -428,17 +438,30 @@ fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: 
     );
     let footer = Rect::from_min_max(pos2(area.left(), area.bottom() - shape.footer), area.max);
     match tool.def().subtools {
-        SubTools::Brushes => {
-            brushes::group_strip(ui, strip, app);
-            let group = brush_group(app);
-            brushes::list_body(ui, app, body, group);
-            brushes::footer(ui, app, footer, true);
-        }
-        SubTools::Erasers => {
-            brushes::list_body(ui, app, body, Group::Eraser);
-            // 取り込みのファイルを落とす先はブラシの一覧だけ
-            app.brushes.ui.list_rect = None;
-            brushes::footer(ui, app, footer, false);
+        SubTools::Brushes | SubTools::Erasers => {
+            let Some(slot) = brush_slot(app, tool) else {
+                return;
+            };
+            let tabs = Rect::from_min_size(strip.min, vec2(shape.tabs_width, strip.height()));
+            {
+                let p = ui.painter();
+                w::fill(p, strip, t::PANEL_HEADER);
+                w::hline(
+                    p,
+                    strip.left(),
+                    strip.right(),
+                    strip.bottom() - 1.0,
+                    t::BORDER,
+                );
+            }
+            brushes::group_tabs(ui, tabs, app, slot);
+            brushes::list_body(ui, app, body, slot);
+            let erasers = tool.def().subtools == SubTools::Erasers;
+            if erasers {
+                // 取り込みのファイルを落とす先はブラシの一覧だけ
+                app.brushes.ui.list_rect = None;
+            }
+            brushes::footer(ui, app, footer, !erasers);
         }
         SubTools::Presets => {
             let lang = app.lang;
@@ -497,13 +520,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     app.subtools.ui.panel_right = r.right();
     app.subtool_follow(tool);
 
-    // 取り込んだブラシが無くなったら、「取り込み」のタブは消えるので、ほかのグループへ戻す
-    if app.brushes.ui.group == Group::Imported
-        && !brushes::tab_groups(app).contains(&Group::Imported)
-    {
-        app.brushes.ui.group = Group::Pen;
-        app.brushes.ui.list_scroll = 0.0;
-    }
     let props_open = app.section_open("tool-props", true);
     let sized = def.sized;
     let size_open = sized && app.section_open("brush-sizes", true);
@@ -518,7 +534,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         0.0
     };
     let fixed = SECTION_HEIGHT + props_h + if sized { SECTION_HEIGHT + size_h } else { 0.0 };
-    let shape = list_shape(app, tool);
+    let shape = list_shape(ui, app, tool, r.width());
     let avail = (r.height() - fixed).max(0.0);
     // ブラシの一覧は余った高さを全部使う。ほかの一覧は行の数の高さ（ツールプロパティが長くても縮めない。全体がスクロールする）で、
     // 多くなったら一覧の中でスクロールする

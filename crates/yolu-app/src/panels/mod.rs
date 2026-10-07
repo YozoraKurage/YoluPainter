@@ -1,5 +1,6 @@
 //! ドックのパネルの中身。
 pub mod assets;
+pub mod brush_catalog;
 pub mod brush_clipstudio;
 pub mod brush_detail;
 pub mod brush_props;

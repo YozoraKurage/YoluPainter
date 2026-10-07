@@ -150,6 +150,9 @@ pub struct LoadReport {
     /// フォルダにあるブラシのファイル名（`brush-<番号>.ylbrush`）の番号の最大。読めなかったもの・数の上限で読まなかったもの・
     /// ファイルでないものも含む（次に付ける番号が、それらの番号に当たって置き換えてしまわないように）。
     pub max_file_id: Option<u32>,
+    /// フォルダにあるのに読み込まなかったブラシのファイルの番号（読めなかった物・数の上限で読まなかった物）。ツールの並びが、
+    /// この番号の札を消さずに覚えておくために使う（フォルダに無い番号の札は覚えない）。
+    pub unloaded: Vec<u32>,
     /// 並びの札（`BrushKey::token`）。
     pub order: Vec<String>,
     pub problems: Vec<Problem>,
@@ -1190,6 +1193,7 @@ pub fn load_all(dir: &Path) -> LoadReport {
     files.sort();
     report.max_file_id = files.iter().map(|(id, _, _)| *id).max();
     files.retain(|(_, _, is_file)| *is_file);
+    let on_disk: Vec<u32> = files.iter().map(|(id, _, _)| *id).collect();
     if files.len() > MAX_FILES {
         report.problems.push(Problem {
             file: dir
@@ -1225,6 +1229,11 @@ pub fn load_all(dir: &Path) -> LoadReport {
             Err(reason) => report.problems.push(Problem { file: name, reason }),
         }
     }
+    let loaded: HashSet<u32> = report.brushes.iter().map(|b| b.id).collect();
+    report.unloaded = on_disk
+        .into_iter()
+        .filter(|id| !loaded.contains(id))
+        .collect();
     match read_text(&dir.join(ORDER_FILE)) {
         Ok(text) => {
             report.order = text
@@ -2209,6 +2218,8 @@ mod tests {
         assert_eq!(report.order, ["u:2", "u:1", "b:pencil"]);
         // 読めなかったファイルの番号（4）も最大に入る。名前の形でないファイルと一時ファイルは入らない
         assert_eq!(report.max_file_id, Some(4));
+        // 読めなかったファイルは「読み込まなかった番号」に入る（読めた物と、フォルダに無い番号は入らない）
+        assert_eq!(report.unloaded, [3, 4]);
         assert!(store.is_taken(3) && store.is_taken(4) && !store.is_taken(5));
         // 置換できないとき、元のファイルは変わらず、一時ファイルも残らない
         let before = std::fs::read(store.path_of(1)).unwrap();
@@ -2254,6 +2265,8 @@ mod tests {
             .problems
             .iter()
             .any(|p| p.file == file_name(MAX_FILES as u32 + 1)));
+        // 上限で読まなかった番号も「読み込まなかった番号」に入る
+        assert_eq!(report.unloaded.len(), MAX_FILES + 6);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

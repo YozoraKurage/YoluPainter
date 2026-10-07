@@ -793,7 +793,7 @@ fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
         && app.region.job.is_none()
         && app.colorsets.rename.is_none()
         && app.colorsets.dragging.is_none()
-        && app.brushes.ui.drag.is_none()
+        && app.toolset.ui.drag.is_none()
 }
 
 fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {

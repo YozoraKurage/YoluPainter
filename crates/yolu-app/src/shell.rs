@@ -824,37 +824,9 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
-    // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り（道具の表の `starts_group`）
-    let starts_group = |tool: Tool| tool.def().starts_group;
-    let separators = Tool::ALL.iter().filter(|t| starts_group(**t)).count() as f32;
-    // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
-    // 帯の下の端に付く 2 枚の色の分の高さを先に取る
-    let step = ((r.height()
-        - 6.0
-        - 4.0
-        - separators * 9.0
-        - crate::panels::color_swatch::reserved_height())
-        / Tool::ALL.len() as f32)
-        .clamp(24.0, 34.0);
-    let mut y = r.top() + 6.0;
-    for tool in Tool::ALL {
-        if starts_group(tool) {
-            w::strip_separator(
-                &p,
-                Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 9.0)),
-            );
-            y += 9.0;
-        }
-        let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, step - 2.0));
-        let tip = app.lang.pick(
-            format!("{}（{}）", tool.name_in(app.lang), tool.key()),
-            format!("{} ({})", tool.name_in(app.lang), tool.key()),
-        );
-        if w::tool_button(ui, at, tool.id(), &tip, app.tool == tool).clicked() {
-            app.apply(Action::SelectTool(tool));
-        }
-        y += step;
-    }
+    // ツールの列はツールの並び（`toolset`）のとおり（区切りはツールごとの「前に区切り」）。帯の下の端に付く 2 枚の色の分の高さを先に取る
+    let bottom = r.bottom() - crate::panels::color_swatch::reserved_height();
+    crate::toolset::ui::strip(ui, app, r, bottom);
     crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
 }
 

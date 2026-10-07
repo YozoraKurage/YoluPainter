@@ -528,6 +528,8 @@ pub enum Action {
     Look(crate::look::LookOp),
     /// 重なった UV を 2D のキャンバスに出す・出さない（表示のメニュー）。
     ToggleUvOverlap,
+    /// ツールの並び（ツールの列とブラシのグループを作る・消す・名前・並べ替え・最初の並びに戻す。文書は変えない）。
+    Tools(crate::toolset::ToolsetAction),
 }
 
 impl Action {
@@ -605,6 +607,7 @@ impl Action {
             Self::Recovery(..) => "Recovery",
             Self::Look(..) => "Look",
             Self::ToggleUvOverlap => "ToggleUvOverlap",
+            Self::Tools(..) => "Tools",
         }
     }
 
@@ -808,6 +811,8 @@ pub struct AppState {
     /// 復旧用の世代の書き置きと復旧の窓（`recovery`。動かすまでは何もしない）。
     pub crash: crate::crash::window::Report,
     pub recovery: crate::recovery::RecoveryState,
+    /// ツールの並び（ツールの列とブラシのグループ。設定のフォルダの tools.json。.ylp には入れない）。
+    pub toolset: crate::toolset::ToolsetState,
 }
 
 /// ファイルの窓の頼み。
@@ -858,6 +863,10 @@ pub enum DialogRequest {
     NewFillImage(yolu_core::fill_image::ProjectionMode),
     /// ディスクキャッシュの置き場所のフォルダを選ぶ。
     PrefsCacheFolder,
+    /// ツールの並びを最初の並びに戻してよいか確かめる。
+    ToolsetReset,
+    /// 利用者のブラシのファイル（`toolset.catalog.pending_delete`）を消してよいか確かめる。
+    BrushFileDelete,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -991,6 +1000,7 @@ impl AppState {
             brushes: crate::brushes::BrushesState::default(),
             crash: Default::default(),
             recovery: Default::default(),
+            toolset: Default::default(),
         }
     }
 
@@ -1031,9 +1041,23 @@ impl AppState {
     /// 替わるときは、途中の選択の形・移動と変形のドラッグ・パスの途中のドラッグと選んだ点を捨てる。`keep_effect` なら、選んでいる効果の行と
     /// 「ID の色」を選んでいる状態は残す（効果の欄から ID マップを読む道具へ移るとき。そうでなければ道具の欄へ戻す）。
     pub(crate) fn switch_tool(&mut self, tool: Tool, keep_effect: bool) -> bool {
-        if tool != self.tool && !self.brush_for_tool(tool) {
+        let slot = self.toolset.set.slot_for_tool(tool);
+        self.switch_to(tool, slot, keep_effect)
+    }
+
+    /// ツールを、ツールの列の `slot`（列に無いツールをキーで使うときは None）へ替える。ブラシ・消しゴムのツールは、そのツールの最後のブラシへ
+    /// （ストロークの最中にブラシが替わるなら断って false）。
+    pub(crate) fn switch_to(
+        &mut self,
+        tool: Tool,
+        slot: Option<crate::toolset::SlotId>,
+        keep_effect: bool,
+    ) -> bool {
+        let changes = tool != self.tool || slot != self.toolset.set.active();
+        if changes && !self.brush_for_slot(tool, slot) {
             return false;
         }
+        self.toolset.set.set_active(slot);
         if tool != self.tool {
             // 今の道具の設定を覚え、入る道具の今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
             self.subtool_leave(self.tool);
@@ -1147,6 +1171,7 @@ impl AppState {
             Action::Fx(op) => self.fx_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Brush(action) => self.brush_action(action),
+            Action::Tools(action) => self.toolset_action(action),
             Action::SubTool(action) => self.subtool_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
