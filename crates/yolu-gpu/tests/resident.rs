@@ -1,6 +1,8 @@
 use yolu_core::{BlendMode, Channel, Document, Rect, Rgba8, TileCoord};
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 use yolu_gpu::{GpuPainter, Options, ResidentCompositor, ResidentOptions};
 fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
     gpu_lease::lease();
@@ -8,7 +10,7 @@ fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            eprintln!("GPU 常駐試験をスキップ: {e}");
+            require_gpu::skipped("GPU 常駐試験", &e.to_string());
             return None;
         }
     };

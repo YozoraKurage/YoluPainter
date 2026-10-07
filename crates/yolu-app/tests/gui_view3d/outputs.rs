@@ -1402,6 +1402,11 @@ fn headless_gpu_baked_mesh_maps_survive_save_and_reopen() {
     };
     if let Err(why) = probe {
         eprintln!("GPU を使えない環境なので、GPU で焼いた結果の保存と復元の試験は省く: {why}");
+        // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、アダプターを取れないときに通った扱いにしない（common::canvas_device と同じ）
+        assert!(
+            std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),
+            "YOLUPAINTER_REQUIRE_GPU があるのに GPU を使えない: {why}"
+        );
         return;
     }
     s.apply(Action::LoadDemoModel);
