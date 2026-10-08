@@ -900,7 +900,9 @@ impl SurfaceStroke {
         let factor = if dab.skip {
             0.0
         } else {
-            brush.assist.taper(dab.arc, self.end.unwrap_or(f64::INFINITY))
+            brush
+                .assist
+                .taper(dab.arc, self.end.unwrap_or(f64::INFINITY))
         };
         // 散布の届く長さの元: 筆圧の前の半径を画面へ直したもの
         let nominal = dab.scale.map_or(0.0, |s| (s * self.world_radius) as f64);
@@ -1101,11 +1103,8 @@ impl SurfaceStroke {
         let Some(dual_brush) = self.brush.dual.clone() else {
             return;
         };
-        loop {
-            let Some(&(at, arc, dual_scale)) = self.dual.as_ref().and_then(|d| d.pending.front())
-            else {
-                break;
-            };
+        while let Some(&(at, arc, dual_scale)) = self.dual.as_ref().and_then(|d| d.pending.front())
+        {
             if arc > limit {
                 break;
             }
@@ -1117,9 +1116,8 @@ impl SurfaceStroke {
             for _ in 0..dual_brush.count {
                 let (mut x, mut y) = (at.x as f64, self.up(at.y));
                 if dual_brush.scatter > 0.0 {
-                    let reach = dual_scale.map_or(0.0, |s| (s * world) as f64)
-                        * 2.0
-                        * dual_brush.scatter;
+                    let reach =
+                        dual_scale.map_or(0.0, |s| (s * world) as f64) * 2.0 * dual_brush.scatter;
                     let r = &mut self.dual.as_mut().expect("デュアルブラシ").random;
                     x += (r.next_double() * 2.0 - 1.0) * reach;
                     y += (r.next_double() * 2.0 - 1.0) * reach;
@@ -1150,8 +1148,8 @@ impl SurfaceStroke {
         if !(at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height) {
             return;
         }
-        let hit =
-            pick(&self.geometry, &self.view, at).filter(|h| self.material.is_none_or(|m| m == h.material));
+        let hit = pick(&self.geometry, &self.view, at)
+            .filter(|h| self.material.is_none_or(|m| m == h.material));
         let shape = dual_brush.dab_shape(0.0, 0.0, (scale * world) as f64);
         let (stats, note, symmetry_note) = (self.stats, self.note, self.symmetry_note);
         let (result, _) = self.build_dab(
@@ -1281,7 +1279,9 @@ impl SurfaceStroke {
         }
         let cover = DabCover {
             form: match form {
-                Form::Round { hardness } => CoverForm::Round(RoundCover::new(screen_radius, *hardness)),
+                Form::Round { hardness } => {
+                    CoverForm::Round(RoundCover::new(screen_radius, *hardness))
+                }
                 Form::Shaped(shape) => CoverForm::Shaped(shape.coverage_fn(), shape.reach()),
             },
             dual,
@@ -1290,11 +1290,11 @@ impl SurfaceStroke {
         let total = self.memory_total(doc);
         let room = self.room(total, None);
         let clock = self.clock;
-        let mut result =
-            self.projector
-                .as_mut()
-                .expect("作った")
-                .dab_with(at, &cover, weighted, room, clock);
+        let mut result = self
+            .projector
+            .as_mut()
+            .expect("作った")
+            .dab_with(at, &cover, weighted, room, clock);
         if result.refusal.is_some() {
             return (result, hit);
         }

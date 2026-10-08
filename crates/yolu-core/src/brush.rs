@@ -75,6 +75,7 @@ use rayon::prelude::*;
 
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use mix::{ColorMix, MixGround, MixMode};
+pub(crate) use plan::{DabPlan, StampControls};
 pub use presets::{builtin_presets, BrushPreset};
 pub(crate) use pressure::PressureScale;
 pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
@@ -84,7 +85,6 @@ pub use settings::{
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
-pub(crate) use plan::{DabPlan, StampControls};
 pub use stencil::{
     linear_to_srgb, luminance, BrushStencil, ImageColorSpace, StencilImage, StencilMapping,
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
@@ -395,6 +395,9 @@ pub(crate) struct StrokeState {
     /// （パスなど: 係数 1・紙の質感なしで塗る）。
     surface_look: Option<SurfaceDabLook>,
 }
+
+/// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
+type SurfaceScales = ((f32, f32), Option<(DualBrushMode, f32, f32)>);
 
 /// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1458,11 +1461,7 @@ impl StrokeState {
     /// 面の画素 (x, y) の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。面のダブを始めていなければ係数 1・質感なし
     /// （今までの面の塗りと同じ）。紙の質感は 2D と同じく文書の画素の座標で読み、乗算は天井の係数に掛ける（2D の行の核と同じ f32 の式）。
     /// 乗算の質感で天井の係数が 0 以下の画素は None（塗らない）。
-    fn surface_scales(
-        &self,
-        x: i64,
-        y: i64,
-    ) -> Option<((f32, f32), Option<(DualBrushMode, f32, f32)>)> {
+    fn surface_scales(&self, x: i64, y: i64) -> Option<SurfaceScales> {
         let Some(look) = self.surface_look else {
             return Some(((1.0, 1.0), None));
         };
@@ -1477,7 +1476,10 @@ impl StrokeState {
                 let ceiling = rows::texture_scale_one(&grain, depth, opacity, x);
                 (ceiling > 0.0).then_some(((ceiling, flow), None))
             }
-            Some(mode) => Some(((opacity, flow), Some((mode, rows::grain_one(&grain, x), depth)))),
+            Some(mode) => Some((
+                (opacity, flow),
+                Some((mode, rows::grain_one(&grain, x), depth)),
+            )),
         }
     }
 

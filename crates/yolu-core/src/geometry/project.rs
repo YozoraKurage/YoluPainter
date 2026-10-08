@@ -1092,9 +1092,10 @@ impl SurfaceProjector {
         clock: u64,
     ) -> SurfaceDabResult {
         if !radius.is_finite() || radius <= 0.0 {
-            let mut result = SurfaceDabResult::default();
-            result.refusal = Some(DabRefusal::InvalidArguments);
-            return result;
+            return SurfaceDabResult {
+                refusal: Some(DabRefusal::InvalidArguments),
+                ..SurfaceDabResult::default()
+            };
         }
         self.dab_with(
             center,
