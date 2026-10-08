@@ -115,7 +115,8 @@ mod tests {
     }
 
     #[test]
-    fn the_top_half_of_the_ring_is_the_current_color_and_the_bottom_half_is_the_one_under_the_pointer() {
+    fn the_top_half_of_the_ring_is_the_current_color_and_the_bottom_half_is_the_one_under_the_pointer(
+    ) {
         let current = Color32::from_rgb(10, 20, 30);
         let under = Color32::from_rgb(200, 100, 50);
         let lines = painted(current, Some(under));

@@ -845,16 +845,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         continue;
                     }
                     if let Some(nav) = nav_of(*button, m, space) {
-                        nav_press(
-                            app,
-                            rect,
-                            StrokeSource::Mouse,
-                            nav,
-                            *button,
-                            pos,
-                            m,
-                            space,
-                        );
+                        nav_press(app, rect, StrokeSource::Mouse, nav, *button, pos, m, space);
                         // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。動かせば回すだけ）
                         if *button == PointerButton::Secondary && !m.any() && !space {
                             crate::bake::overlap::menu_press(

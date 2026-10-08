@@ -516,7 +516,7 @@ fn a_modifier_pressed_after_the_stroke_began_does_not_stop_it_and_one_released_d
 }
 
 #[test]
-fn the_pen_pans_with_space_and_rotates_with_r_like_the_mouse() {
+fn the_pen_pans_with_space_and_rotates_with_alt_in_steps_like_the_mouse() {
     for emulate in [Emulate::No, Emulate::Yes] {
         let mut h = app(1280.0, 800.0, 256);
         let c = canvas_rect(&h).center();
@@ -535,29 +535,45 @@ fn the_pen_pans_with_space_and_rotates_with_r_like_the_mouse() {
             emulate == Emulate::Yes
         );
         nothing_started(&h);
-        // R を押しながらは表示の回転
+        // 押しの始めに Alt を持っていれば表示の回転（描かない）。15° 刻みが既定
+        h.state_mut().state.view.fit();
+        let before = view_of(&h).angle;
+        hold(&mut h, Modifiers::ALT);
+        let center = canvas_rect(&h).center();
+        let start = offset(center, 100.0, 0.0);
+        let path = [
+            start,
+            offset(center, 90.0, 40.0),
+            offset(center, 70.0, 70.0),
+            offset(center, 20.0, 100.0),
+        ];
+        pen.drag(&mut h, &path);
+        let stepped = view_of(&h).angle;
+        assert_ne!(stepped, before, "回った {}", emulate == Emulate::Yes);
+        assert!(
+            (stepped / 15.0 - (stepped / 15.0).round()).abs() < 1e-3,
+            "15° の倍数: {stepped}"
+        );
+        nothing_started(&h);
+        // Shift も押していれば自由
+        h.state_mut().state.view.fit();
+        hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
+        pen.drag(&mut h, &path);
+        let free = view_of(&h).angle;
+        assert!(
+            (free / 15.0 - (free / 15.0).round()).abs() > 1e-2,
+            "自由な角度: {free}"
+        );
+        release_mods(&mut h);
+        nothing_started(&h);
+        // R を押しながらは、もう回さない（描く）
         h.state_mut().state.view.fit();
         let before = view_of(&h).angle;
         hold_key(&mut h, Key::R);
-        let center = canvas_rect(&h).center();
-        let start = offset(center, 100.0, 0.0);
-        pen.drag(
-            &mut h,
-            &[
-                start,
-                offset(center, 90.0, 40.0),
-                offset(center, 70.0, 70.0),
-                offset(center, 0.0, 100.0),
-            ],
-        );
+        pen.drag(&mut h, &path);
         release_key(&mut h, Key::R);
-        assert_ne!(
-            view_of(&h).angle,
-            before,
-            "回った {}",
-            emulate == Emulate::Yes
-        );
-        nothing_started(&h);
+        assert_eq!(view_of(&h).angle, before, "R では回らない");
+        assert_eq!(strokes(&h), 1, "R を押していても描く");
     }
 }
 
@@ -868,7 +884,7 @@ fn the_pen_tip_paints_the_surface_and_the_side_button_orbits_it() {
 }
 
 #[test]
-fn the_pen_with_the_side_button_and_shift_pans() {
+fn the_pen_with_the_side_button_and_shift_orbits_and_no_longer_pans() {
     let (mut h, rect) = cube_view();
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let before = camera(&h);
@@ -876,13 +892,13 @@ fn the_pen_with_the_side_button_and_shift_pans() {
     Pen::barrel().drag(&mut h, &[at, offset(at, 30.0, 0.0), offset(at, 60.0, 10.0)]);
     release_mods(&mut h);
     let after = camera(&h);
-    assert_ne!(after.target, before.target, "Shift でパン");
-    assert_eq!(after.yaw, before.yaw, "回さない");
+    assert_eq!(after.target, before.target, "Shift でもパンしない");
+    assert_ne!(after.yaw, before.yaw, "回す");
     assert_eq!(strokes(&h), 0);
 }
 
 #[test]
-fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
+fn the_pen_with_alt_snap_orbits_and_alt_shift_no_longer_pans_like_the_mouse() {
     for emulate in [Emulate::No, Emulate::Yes] {
         let (mut h, rect) = cube_view();
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
@@ -897,12 +913,12 @@ fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
         let after = camera(&h);
         assert!(
             (after.yaw - (before.yaw + 50.0 * 0.35)).abs() < 1e-3,
-            "Alt + ペンで回す（二重に回らない）{} {}",
+            "Alt + ペンで回す（二重に回らない。軸から離れていれば吸い付かない）{} {}",
             before.yaw,
             after.yaw
         );
         assert_eq!(strokes(&h), 0, "描かない");
-        // Alt + Shift: パン
+        // Alt + Shift: パンしない（回す）
         let before = camera(&h);
         hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
         Pen {
@@ -911,7 +927,8 @@ fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
         }
         .drag(&mut h, &[at, offset(at, 30.0, 0.0)]);
         release_mods(&mut h);
-        assert_ne!(camera(&h).target, before.target);
+        assert_eq!(camera(&h).target, before.target);
+        assert_ne!(camera(&h).yaw, before.yaw);
         assert_eq!(strokes(&h), 0);
         // マウスの Alt + 左ドラッグも同じ量（ペンとマウスは同じ決まり）
         let before = camera(&h);

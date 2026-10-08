@@ -185,17 +185,16 @@ fn all_centers_and_empty_surface_fallback() {
 }
 
 #[test]
-fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_shift_barrel() {
+fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_the_pen_with_space() {
     for route in 0..3 {
         let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::View));
         let at = pos2(375.0, 215.0);
         let point = hit(&h, at);
-        if route == 1 {
+        if route == 1 || route == 2 {
             key(&mut h, Key::Space, true, Modifiers::NONE);
         }
         if route == 2 {
-            h.event(Event::ModifiersChanged(Modifiers::SHIFT));
-            pen(&mut h, at, true, true);
+            pen(&mut h, at, true, false);
         } else {
             mouse(
                 &mut h,
@@ -211,7 +210,7 @@ fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_shift_barrel() {
         }
         let end = at + vec2(45.0, -30.0);
         if route == 2 {
-            pen(&mut h, end, true, true);
+            pen(&mut h, end, true, false);
         } else {
             h.event(Event::PointerMoved(end));
             h.step();
@@ -592,14 +591,14 @@ fn review_auto_depth_pan_tracks_the_surface_after_wheel_zoom() {
                 let at = pos2(375.0, 215.0);
                 let point = hit(&h, at);
                 if use_pen {
-                    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
-                    pen(&mut h, at, true, true);
+                    key(&mut h, Key::Space, true, Modifiers::NONE);
+                    pen(&mut h, at, true, false);
                 } else {
                     mouse(&mut h, at, PointerButton::Middle, true, Modifiers::NONE);
                 }
                 let start = at + vec2(20.0, 10.0);
                 if use_pen {
-                    pen(&mut h, start, true, true);
+                    pen(&mut h, start, true, false);
                 } else {
                     h.event(Event::PointerMoved(start));
                     h.step();
@@ -618,7 +617,7 @@ fn review_auto_depth_pan_tracks_the_surface_after_wheel_zoom() {
                 let before = project(camera(&h), point);
                 let delta = vec2(35.0, -18.0);
                 if use_pen {
-                    pen(&mut h, start + delta, true, true);
+                    pen(&mut h, start + delta, true, false);
                 } else {
                     h.event(Event::PointerMoved(start + delta));
                     h.step();

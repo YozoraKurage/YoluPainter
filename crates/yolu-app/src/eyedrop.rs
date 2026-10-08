@@ -99,7 +99,11 @@ pub fn right_end(
     at: Pos2,
     apply: bool,
 ) {
-    if app.canvas.eyedrop.is_none_or(|press| press.source != source) {
+    if app
+        .canvas
+        .eyedrop
+        .is_none_or(|press| press.source != source)
+    {
         return;
     }
     app.canvas.eyedrop = None;
@@ -191,7 +195,10 @@ fn swatch(doc: &Document, channel: Channel, px: Rgba8) -> Color32 {
 
 /// スポイトの印の「今の色」（描画色。スカラーのチャンネルを描いているときは灰色の濃さ）。
 pub fn current_swatch(app: &AppState) -> Color32 {
-    let [r, g, b, _] = app.color.main.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let [r, g, b, _] = app
+        .color
+        .main
+        .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
     let scalar = !app.paints_material()
         && app
             .doc

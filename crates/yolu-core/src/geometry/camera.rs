@@ -71,7 +71,12 @@ impl AxisView {
 }
 
 fn orientation_rotation(yaw: f32, pitch: f32) -> Quat {
-    Quat::from_euler(glam::EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.0)
+    Quat::from_euler(
+        glam::EulerRot::YXZ,
+        yaw.to_radians(),
+        pitch.to_radians(),
+        0.0,
+    )
 }
 
 /// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで）。
@@ -548,23 +553,39 @@ mod tests {
                 ..OrbitCamera::default()
             };
             let v = c.view(400.0, 300.0);
-            assert!(v.view_projection().to_cols_array().iter().all(|x| x.is_finite()));
+            assert!(v
+                .view_projection()
+                .to_cols_array()
+                .iter()
+                .all(|x| x.is_finite()));
             // 見ている向きは真下（上から）・真上（下から）
             let down = if pitch > 0.0 { Vec3::NEG_Y } else { Vec3::Y };
-            assert!((v.forward - down).length() < 1e-6, "{view:?}: {}", v.forward);
+            assert!(
+                (v.forward - down).length() < 1e-6,
+                "{view:?}: {}",
+                v.forward
+            );
             // 画面の中心のレイは注視点へ向かう
             let r = v.ray(Vec2::new(200.0, 150.0));
             assert!(((c.target - r.origin()).normalize() - r.direction()).length() < 1e-3);
             let p = v.to_screen(c.target).unwrap();
             assert!((p - Vec2::new(200.0, 150.0)).length() < 1e-2);
             // 画面のどの点のレイも、写すと同じ点へ戻る
-            for s in [Vec2::new(10.0, 20.0), Vec2::new(390.0, 290.0), Vec2::new(200.0, 40.0)] {
+            for s in [
+                Vec2::new(10.0, 20.0),
+                Vec2::new(390.0, 290.0),
+                Vec2::new(200.0, 40.0),
+            ] {
                 let back = v.to_screen(v.ray(s).point(2.0)).unwrap();
                 assert!((back - s).length() < 5e-2, "{view:?}: {s} → {back}");
             }
             // 画面の右・上へ向く物は、画面の右・上に写る
-            let right = v.to_screen(c.target + c.rotation() * Vec3::X * 0.1).unwrap();
-            let up = v.to_screen(c.target + c.rotation() * Vec3::Y * 0.1).unwrap();
+            let right = v
+                .to_screen(c.target + c.rotation() * Vec3::X * 0.1)
+                .unwrap();
+            let up = v
+                .to_screen(c.target + c.rotation() * Vec3::Y * 0.1)
+                .unwrap();
             assert!(right.x > 200.0 && (right.y - 150.0).abs() < 1e-2);
             assert!(up.y < 150.0 && (up.x - 200.0).abs() < 1e-2);
             // ブラシの大きさの式は、向きによらず同じ距離で同じ値
@@ -577,7 +598,10 @@ mod tests {
             }
             .view(400.0, 300.0)
             .world_radius_to_screen(Vec3::ZERO, 0.1);
-            assert!((at_default - at_axis).abs() < 1e-3, "{at_default} {at_axis}");
+            assert!(
+                (at_default - at_axis).abs() < 1e-3,
+                "{at_default} {at_axis}"
+            );
             // パン: 右へドラッグすると注視点は画面の左へ
             let before = c.target;
             c.pan(10.0, 0.0, 300.0);
@@ -592,7 +616,10 @@ mod tests {
             let screen = c.view(640.0, 480.0).to_screen(pivot).unwrap();
             c.set_orientation_about(pivot, yaw + 40.0, pitch - 20.0);
             let moved = c.view(640.0, 480.0).to_screen(pivot).unwrap();
-            assert!((moved - screen).length() < 2e-3, "{view:?}: {screen} → {moved}");
+            assert!(
+                (moved - screen).length() < 2e-3,
+                "{view:?}: {screen} → {moved}"
+            );
         }
     }
 

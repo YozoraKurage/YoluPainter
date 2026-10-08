@@ -437,10 +437,10 @@ fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
         "{cx},{cy} / {sx},{sy}"
     );
     undo(&mut h);
-    // 設定なしでも Alt を押しているあいだは中心から
+    // 設定なしでも、押したあとに Alt を押していれば中心から（押しの始めの Alt は表示を回す組み合わせなので、始めには持たない）
     h.state_mut().state.sel.from_center = false;
     let (p, q) = (at(&h, 0.0, 0.0), at(&h, 80.0, 50.0));
-    drag_with(&mut h, &[p, q], Modifiers::ALT, Modifiers::ALT);
+    drag_with(&mut h, &[p, q], Modifiers::NONE, Modifiers::ALT);
     let (cx, cy) = centered(&h);
     assert!(
         (cx - sx).abs() <= 1.0 && (cy - sy).abs() <= 1.0,

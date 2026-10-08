@@ -317,7 +317,9 @@ pub fn fly(ui: &Ui, app: &mut AppState) {
         return;
     }
     let speed = app.view3d.camera.model_radius * FLY_SPEED * if fast { FLY_FAST } else { 1.0 };
-    app.view3d.camera.fly(direction * speed * dt.min(FLY_MAX_DT));
+    app.view3d
+        .camera
+        .fly(direction * speed * dt.min(FLY_MAX_DT));
     app.view3d.input.eyedrop = None;
     ui.ctx().request_repaint();
 }

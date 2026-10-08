@@ -662,15 +662,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                     drive_pen(app, &view, p, s.pointer_id, true, frame);
                 }
                 PressKind::Tool => {
-                    if begin_any(
-                        app,
-                        &view,
-                        p,
-                        source,
-                        s.eraser,
-                        rect,
-                        frame.modifiers.shift,
-                    ) {
+                    if begin_any(app, &view, p, source, s.eraser, rect, frame.modifiers.shift) {
                         first_point(
                             app,
                             &view,

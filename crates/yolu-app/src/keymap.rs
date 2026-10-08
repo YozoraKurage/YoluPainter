@@ -870,12 +870,7 @@ pub const GESTURES: [Gesture; 19] = [
         (false, false, false),
         Operation::Orbit,
     ),
-    click_of(
-        "view3d",
-        Secondary,
-        (false, false, false),
-        Operation::Pick,
-    ),
+    click_of("view3d", Secondary, (false, false, false), Operation::Pick),
     gesture_of(
         "view3d",
         None,
@@ -1000,7 +995,6 @@ pub fn click_gesture(
         })
         .map(|g| g.operation)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1811,7 +1805,13 @@ mod tests {
                 "{command}"
             );
             let row = primary(command).expect("表の行");
-            assert_eq!(row.trigger, Trigger::Key { modifiers: Modifiers::NONE, key });
+            assert_eq!(
+                row.trigger,
+                Trigger::Key {
+                    modifiers: Modifiers::NONE,
+                    key
+                }
+            );
         }
     }
 
