@@ -44,6 +44,8 @@ C# の `Resampled` は履歴なしの別文書を返しますが、Rust のサ�
 
 レイヤーのロックの保存は I/O 側（yolu-io の `core_bridge`）が `locks()`（書く）と `set_locks_for_load`（読み終えてから付ける）でつなぎ、正本の版 12 の並びで読み書きします。文書は効果（フィルター・Generator・Anchor・塗りつぶしの画像と投影とグラデーション）とパスを持ち、レイヤーの操作はそれらも扱います（上の各項目と `effects/README.md` の「レイヤーの操作」）。C# の `BakeFilters`（1 枚のレイヤーの効果を画素へ焼く）と `CutPixels`（切り抜き。パスレイヤーは断る）に当たる操作は、まだ core にありません。
 
+C# の正解を作る道具（`tools/csharp-golden/`）の C# の元は Unity ブリッジのタグ `0.4.0` の `Runtime/Core` で、場所は環境変数 `YOLUPAINTER_UNITY_SOURCE` で渡します（0.5.0 の Unity ブリッジには無い）。
+
 照合は `tools/csharp-golden/run.sh docops` で実 C# Core の人工データを生成し、`cargo test -p yolu-core --test reference docops_golden::` で実行します。582 事例を、並列度 1 と 4 で全バイト比較します。生画素・レイヤーの属性・親子・マスク・選択範囲・合成・結合報告・履歴バイト数・Undo/Redo を比べますが、画像サイズ変更（`resize`・`selected_resize` の 108 事例）は C# の `Resampled` が履歴なしの別文書を返すため、変更直後の画素・属性だけです（サイズ変更の Undo・履歴・予算は `tests/edit/docops.rs` と `resize.rs` の試験が見ます）。結合がロックで断られる・断られない 34 通り（`mergelock`。断ったレイヤー・ロックの持ち主・ロックと、断ったあとの文書が変わらないこと、親グループの継承を含む）と、動く画素の外接矩形 `transform_bounds`（`bounds`・`selected_bounds`）も C# と比べます。
 
 効果・パスとロックとレイヤーの操作のつなぎ目は、`tools/csharp-golden/run-seam.sh` が実 C# の `PaintDocument` に同じ台本を通して書く `tests/golden/seam.txt`（511 事例）を、`cargo test -p yolu-core --test reference seam_golden::` が並列度 1 と 4 で全バイト比較します。効果の設定の入口 × ロック × レイヤー／親グループ、手の書き込み × ロック × パスレイヤー／ラスターレイヤー、変形、パスレイヤーの追加、複製・削除・並べ替え・結合・画像の大きさを、結果の型（断ったレイヤー・持ち主・ロック）・履歴の費用・前後と Undo/Redo の文書（全チャンネルの合成）まで含めて比べます。照合は人工データ・メッシュマップ無しの範囲で、マップを要る段（形のグラデーションなど）は「効かない効果」としての扱いだけを照らし、3D のパスの描き直しとキャンバスだけを動かす `resize_canvas` は C# に無いので照らしません。意図して C# と変えた所は 3 つです: 読まれている Anchor が結合で無くなったときの変化を結合の報告が数える（C# は数えそこなう）、分離の結合で下のマスクの効いていない Generator を断る（golden の事例は分離にならない形）、名前を省いたときの既定の Anchor 名（golden は名前を渡す）。
