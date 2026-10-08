@@ -232,6 +232,19 @@ impl Stroke {
             )
         })
     }
+    /// 3D の面のダブを 1 つ始める（ストロークの全部のチャンネルで）: ダブごとの色を次の色へ進め、塗るダブなら、そのゆらぎの不透明度と
+    /// 流量の係数を覚える（この後の `apply_pixel`・`apply_dab`・`apply_mapped_dab` が、係数と紙の質感を当てる）。
+    pub(crate) fn begin_surface_dab(
+        &mut self,
+        doc: &mut Document,
+        look: Option<crate::brush::SurfaceDabLook>,
+    ) -> Result<(), CoreError> {
+        doc.with_stroke(self.id, |state, _, _| {
+            state.begin_surface_dab(look);
+            Ok(false)
+        })
+        .map(|_| ())
+    }
     /// 指先の前の位置を忘れる（3D の面で UV の継ぎ目をまたぐとき。次のダブは位置を覚えるだけ）。
     pub fn reset_effect_direction(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         match doc.active.as_mut() {

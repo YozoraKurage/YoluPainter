@@ -1,4 +1,4 @@
-//! フィルターの行の核が、画素ごとの式（元の実装そのままの写し）と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2）に比べる。
+//! フィルターの行の核が、画素ごとの式（元の実装そのままの写し）と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2・NEON）に比べる。
 #![allow(clippy::needless_range_loop)]
 
 use super::super::pixels::{box_blur_scalar, mix};

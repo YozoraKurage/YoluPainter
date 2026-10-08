@@ -792,7 +792,7 @@ pub enum Operation {
     Pick,
     /// 3D ビューの視点を回す。軸の向き（正面・背面・右・左・上・下）の 15° 以内に入ったらその向きへ吸い付く。
     SnapOrbit,
-    /// クローンのブラシで、クローンの元を決める（3D で Alt + 左を動かさずに離す）。
+    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D はスナップ回転）。
     CloneSource,
     SelectionAdd,
     SelectionSubtract,
@@ -863,6 +863,22 @@ pub struct Gesture {
     pub starts: bool,
     /// 動かさずに離したときの操作（真なら、同じ組み合わせで始めた操作を、押した所から動かさずに離したときの行き先）。
     pub click: bool,
+    /// 効くモード（キーの段。ペイントの組み合わせ（クローンの元・選択範囲の作り方・ステンシル）はペイントのモードだけ）。一覧と設定の画面が読み、
+    /// 受け口も同じ決まりで止める（クローンの元は `clone_source::active`、選択範囲は 2D のツールの押し、ステンシルは `stencil::update_keys`）。
+    pub mode: Scope,
+}
+
+impl Gesture {
+    /// 今のモードで、この組み合わせが効くか。
+    pub fn holds(&self, app: &AppState) -> bool {
+        self.mode.holds(app)
+    }
+}
+
+/// ペイントのモードだけの組み合わせにする。
+const fn in_paint(mut g: Gesture) -> Gesture {
+    g.mode = Scope::Paint;
+    g
 }
 
 const fn gesture_of(
@@ -882,6 +898,7 @@ const fn gesture_of(
         operation,
         starts: true,
         click: false,
+        mode: Scope::Everywhere,
     }
 }
 
@@ -902,14 +919,15 @@ const fn click_of(
         operation,
         starts: false,
         click: true,
+        mode: Scope::Everywhere,
     }
 }
 
 use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
-pub const GESTURES: [Gesture; 19] = [
-    // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由）、右ボタンを押すとスポイト
+pub const GESTURES: [Gesture; 20] = [
+    // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由。動かさずに離すとクローンの元）、右ボタンを押すとスポイト
     gesture_of(
         "canvas",
         None,
@@ -924,6 +942,12 @@ pub const GESTURES: [Gesture; 19] = [
         (true, false, false),
         Operation::Rotate,
     ),
+    in_paint(click_of(
+        "canvas",
+        Primary,
+        (true, false, false),
+        Operation::CloneSource,
+    )),
     gesture_of(
         "canvas",
         None,
@@ -932,27 +956,27 @@ pub const GESTURES: [Gesture; 19] = [
         Operation::Pick,
     ),
     // 選択範囲のツールの作り方: Shift で足す・Ctrl で引く・両方で重ねる
-    gesture_of(
+    in_paint(gesture_of(
         "selection",
         None,
         Primary,
         (false, true, true),
         Operation::SelectionIntersect,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "selection",
         None,
         Primary,
         (false, true, false),
         Operation::SelectionAdd,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "selection",
         None,
         Primary,
         (false, false, true),
         Operation::SelectionSubtract,
-    ),
+    )),
     // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
     // Alt + 左でスナップ回転（動かさずに離すとクローンの元）
     gesture_of(
@@ -991,48 +1015,48 @@ pub const GESTURES: [Gesture; 19] = [
         (true, false, false),
         Operation::SnapOrbit,
     ),
-    click_of(
+    in_paint(click_of(
         "view3d",
         Primary,
         (true, false, false),
         Operation::CloneSource,
-    ),
+    )),
     // ステンシル（Y を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
-    gesture_of(
+    in_paint(gesture_of(
         "stencil",
         Some("stencil.transform_hold"),
         Middle,
         (false, false, false),
         Operation::MoveStencil,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "stencil",
         Some("stencil.transform_hold"),
         Primary,
         (false, false, true),
         Operation::MoveStencil,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "stencil",
         Some("stencil.transform_hold"),
         Secondary,
         (false, false, false),
         Operation::ScaleStencil,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "stencil",
         Some("stencil.transform_hold"),
         Primary,
         (true, false, false),
         Operation::ScaleStencil,
-    ),
-    gesture_of(
+    )),
+    in_paint(gesture_of(
         "stencil",
         Some("stencil.transform_hold"),
         Primary,
         (false, false, false),
         Operation::RotateStencil,
-    ),
+    )),
     // 回している間の Shift は 15° 刻み（`StencilState::update_drag`）。押す順は問わないので、回す組み合わせに Shift を足した形で載せる
     Gesture {
         scope: "stencil",
@@ -1044,6 +1068,7 @@ pub const GESTURES: [Gesture; 19] = [
         operation: Operation::SnapStencilRotation,
         starts: false,
         click: false,
+        mode: Scope::Paint,
     },
 ];
 
@@ -1987,6 +2012,54 @@ mod tests {
             2,
             "繰り返しを受けないのはパイを開く操作だけ"
         );
+    }
+
+    #[test]
+    fn paint_combinations_belong_to_paint_mode_and_the_view_ones_to_every_mode() {
+        use crate::mode::EditorMode;
+        for g in &GESTURES {
+            let paint = matches!(
+                g.operation,
+                Operation::CloneSource
+                    | Operation::SelectionAdd
+                    | Operation::SelectionSubtract
+                    | Operation::SelectionIntersect
+                    | Operation::MoveStencil
+                    | Operation::RotateStencil
+                    | Operation::ScaleStencil
+                    | Operation::SnapStencilRotation
+            );
+            assert_eq!(
+                g.mode,
+                if paint {
+                    Scope::Paint
+                } else {
+                    Scope::Everywhere
+                },
+                "{g:?}"
+            );
+        }
+        // 2D と 3D のクローンの元（Alt＋左を動かさずに離す）は、ペイントのモードだけ
+        let clone: Vec<&Gesture> = GESTURES
+            .iter()
+            .filter(|g| g.operation == Operation::CloneSource)
+            .collect();
+        assert_eq!(
+            clone.iter().map(|g| g.scope).collect::<Vec<_>>(),
+            ["canvas", "view3d"]
+        );
+        let mut app = AppState::new(32, 32);
+        app.m2.brush.effect = crate::engine::BrushEffect::Clone {
+            offset: Default::default(),
+        };
+        for mode in [EditorMode::Paint, EditorMode::Edit] {
+            app.set_mode(mode);
+            for g in &clone {
+                assert_eq!(g.holds(&app), mode.paints(), "{mode:?} {}", g.scope);
+            }
+            // 受け口も同じ決まり
+            assert_eq!(crate::clone_source::active(&app), mode.paints(), "{mode:?}");
+        }
     }
 
     #[test]

@@ -244,6 +244,59 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
     }
 }
 
+/// 3D の押した点の下に、今のテクスチャセットの面が無かった理由。
+pub(crate) enum Miss {
+    /// 面が無い（モデルの外・今のテクスチャセットの三角形が無い）。
+    Nothing,
+    /// ほかのテクスチャセット（その名前）の面。
+    OtherSet(String),
+    /// 面の UV がテクスチャの外（繰り返し・はみ出し）。
+    OutsideUv,
+}
+
+/// 3D の `at` の下の面が指す、今の文書（今のテクスチャセット）の点（文書の座標。連続した値。バケツの近い色の種）。UV が指す画素は
+/// 色のスポイトと同じ（⌊u·幅⌋・⌊v·高さ⌋）。面が無い・別のテクスチャセット・UV が外なら理由。
+pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<(f64, f64), Miss> {
+    let Some((model, material)) = app.region_model() else {
+        return Err(Miss::Nothing);
+    };
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let Some(hit) = pick(&model.geometry, &view, local(rect, at)) else {
+        return Err(Miss::Nothing);
+    };
+    if hit.material != material {
+        return Err(Miss::OtherSet(
+            model.material_name(hit.material as usize, app.lang),
+        ));
+    }
+    let (w, h) = (app.doc.width(), app.doc.height());
+    crate::eyedrop::texel_of(hit.uv, w, h).ok_or(Miss::OutsideUv)?;
+    // 最後の列・行（u = 1・v = 1）は、画素の中へ収める
+    let inside = |v: f32, n: u32| (v as f64 * n as f64).min(n as f64 - 1e-6);
+    Ok((inside(hit.uv.x, w), inside(hit.uv.y, h)))
+}
+
+/// `surface_point` が取れなかった理由を断りとして出す。
+pub(crate) fn refuse_miss(app: &mut AppState, miss: Miss) {
+    match miss {
+        Miss::Nothing => app.refuse(
+            Source::Fill,
+            app.lang.pick(
+                "ポインタの下にこのテクスチャセットの三角形がありません",
+                "No triangle of this texture set under the pointer",
+            ),
+        ),
+        Miss::OtherSet(name) => other_set(app, &name),
+        Miss::OutsideUv => app.refuse(
+            Source::Fill,
+            app.lang.pick(
+                "この面の UV はテクスチャの外です",
+                "This surface's UV is outside the texture",
+            ),
+        ),
+    }
+}
+
 /// 読むだけのテクスチャセットなら、その短い理由（文書を変えるツールの入口で断る文。ステータスバーへ）。
 pub(super) fn read_only_message(app: &AppState) -> Option<String> {
     app.read_only_reason()
@@ -320,20 +373,26 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
         }
     };
     let (mask, what) = if app.region.by_color {
-        let Where::Canvas(view) = w else {
-            app.refuse(
-                Source::Fill,
-                lang.pick(
-                    "近い色は 2D のキャンバスでだけ使えます。",
-                    "Similar colors work only on the 2D canvas.",
-                ),
-            );
-            return;
+        // 近い色: 押した所の文書の画素から求める（3D は、押した面の UV が指す画素。許し幅・つながり・全体の合成は 2D と同じ）
+        let (x, y) = match w {
+            Where::Canvas(view) => {
+                let (x, y) = view.to_canvas(at);
+                if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64
+                {
+                    return;
+                }
+                (x, y)
+            }
+            Where::Surface(rect) => {
+                if app.region_model().is_none() {
+                    return needs_model(app);
+                }
+                match surface_point(app, rect, at) {
+                    Ok(point) => point,
+                    Err(miss) => return refuse_miss(app, miss),
+                }
+            }
         };
-        let (x, y) = view.to_canvas(at);
-        if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64 {
-            return;
-        }
         super::bucket::start(app, vec![(x, y)]);
         return;
     } else {
@@ -420,7 +479,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
 // ───────── ポリゴン塗りつぶし ─────────
 
 /// 前の位置から今の位置までの線の上（画面で 4 px おき、多くて 64 点）。速く動かしても間の三角形を飛ばしにくい。
-fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
+pub(super) fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
     let steps = ((from.distance(to) / 4.0).ceil() as usize).clamp(1, 64);
     (1..=steps)
         .map(|i| from + (to - from) * (i as f32 / steps as f32))
@@ -668,6 +727,9 @@ pub fn canvas_press(
 pub fn surface_press(app: &mut AppState, rect: Rect, at: Pos2, _source: StrokeSource) -> bool {
     let w = Where::Surface(rect);
     match app.tool {
+        Tool::Fill if app.region.by_color && app.region.color.leftovers => {
+            super::bucket::begin_surface(app, rect, at)
+        }
         Tool::Fill => {
             bucket(app, w, at);
             false

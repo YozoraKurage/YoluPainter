@@ -242,9 +242,9 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert_eq!(camera(&h), before, "クリックで視点は動かない");
-    assert!(h.state().state.view3d.clone.source.is_some(), "元を決めた");
+    assert!(h.state().state.clone.source.is_some(), "元を決めた");
     // 動かしたらスナップ回転（元は決めない）
-    h.state_mut().state.view3d.clone.source = None;
+    h.state_mut().state.clone.source = None;
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
     h.step();
@@ -260,7 +260,7 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     mods(&mut h, Modifiers::NONE);
     assert!(camera(&h).yaw < before.yaw, "回った");
     assert!(
-        h.state().state.view3d.clone.source.is_none(),
+        h.state().state.clone.source.is_none(),
         "動かしたら元は決めない"
     );
     assert!(!h.state().state.doc.can_undo());
@@ -613,14 +613,14 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert_eq!(camera(&h), before);
-    let source = h.state().state.view3d.clone.source.expect("元を決めた");
+    let source = h.state().state.clone.source.expect("元を決めた");
     assert!(
         (source.position - expected).length() < 1e-4,
         "元は押した所の面の点: {} / {expected}",
         source.position
     );
     // 右クリック（スポイト）: 揺れでは視点が動かず、スポイトの候補も残る
-    h.state_mut().state.view3d.clone.source = None;
+    h.state_mut().state.clone.source = None;
     h.state_mut().state.color.set_main([0.0, 1.0, 0.0, 1.0]);
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.step();

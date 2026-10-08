@@ -1,11 +1,11 @@
 //! フィルターの画素の計算の行の核（SIMD）。各画素・各値は、`pixels.rs` と `mod.rs` の画素ごとの式と**同じバイト**になる。
 //!
-//! 道は AVX2（4 画素）・SSE4.1（2 画素）・スカラー（今までの式）で、`crate::math::simd` の土台で選ぶ。割り算を使う丸め
+//! 道は AVX2（4 画素）・SSE4.1 と NEON（2 画素）・スカラー（今までの式）で、`crate::math::simd` の土台で選ぶ。割り算を使う丸め
 //! （箱ぼかしの平均・乗算済みから戻す除算）は、f64 の演算が厳密に整数の商の切り捨てと一致する範囲（分子が 2²⁶ 程度まで、商が 2¹⁷ 未満、
 //! 商の端からの距離が f64 の丸めの誤差より十分大きい: 箱ぼかしは 0.5/(2r+1) 以上、乗算済みから戻す除算は 1/(2·qa) 以上）で行うので、
 //! 整数の除算と同じ値になる（根拠は各関数の注釈と試験）。
 #![cfg_attr(
-    not(target_arch = "x86_64"),
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
 )]
 
@@ -13,6 +13,8 @@ use super::pixels::{hash, lerp, Check};
 use super::{area, zeros, Error, Rect, Settings, ValueType};
 use crate::math::simd::{self, to_byte, Lanes, Level};
 
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neon;
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2, Sse41};
 
@@ -23,9 +25,9 @@ unsafe fn lerp_lanes<V: Lanes>(a: V::F, b: V::F, t: V::F) -> V::F {
     V::min(V::max(v, V::splat(0.0)), V::splat(255.0))
 }
 
-/// 道ごとの入口を作る: `$lanes::<V>(...)` を、AVX2 と FMA・SSE4.1 を有効にした関数の中で呼び、処理した画素数を返す。
+/// 道ごとの入口を作る: `$lanes::<V>(...)` を、AVX2 と FMA・SSE4.1・NEON を有効にした関数の中で呼び、処理した画素数を返す。
 macro_rules! entries {
-    ($avx2:ident, $sse41:ident, $lanes:ident ( $($p:ident : $t:ty),* $(,)? ) $(,)?) => {
+    ($avx2:ident, $sse41:ident, $neon:ident, $lanes:ident ( $($p:ident : $t:ty),* $(,)? ) $(,)?) => {
         #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2,fma")]
         unsafe fn $avx2($($p: $t),*) -> usize {
@@ -36,12 +38,17 @@ macro_rules! entries {
         unsafe fn $sse41($($p: $t),*) -> usize {
             $lanes::<Sse41>($($p),*)
         }
+        #[cfg(target_arch = "aarch64")]
+        #[target_feature(enable = "neon")]
+        unsafe fn $neon($($p: $t),*) -> usize {
+            $lanes::<Neon>($($p),*)
+        }
     };
 }
 
 /// 道を選んで入口を呼ぶ（スカラーは 0 画素処理で戻る）。
 macro_rules! run {
-    ($level:expr, $avx2:ident, $sse41:ident ( $($a:expr),* )) => {
+    ($level:expr, $avx2:ident, $sse41:ident, $neon:ident ( $($a:expr),* )) => {
         match $level.min(simd::detect()) {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、AVX2 と FMA を持つ
@@ -49,7 +56,10 @@ macro_rules! run {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
             Level::Sse41 => unsafe { $sse41($($a),*) },
-            _ => 0,
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+            Level::Neon => unsafe { $neon($($a),*) },
+            Level::Scalar => 0,
         }
     };
 }
@@ -78,6 +88,7 @@ unsafe fn lerp_rows_lanes<V: Lanes>(row: &mut [u8], target: &[u8], t: f64) -> us
 entries!(
     lerp_rows_avx2,
     lerp_rows_sse41,
+    lerp_rows_neon,
     lerp_rows_lanes(row: &mut [u8], target: &[u8], t: f64)
 );
 
@@ -90,7 +101,12 @@ pub(super) fn lerp_rows_at(level: Level, row: &mut [u8], target: &[u8], t: f64) 
         }
         return;
     }
-    let from = run!(level, lerp_rows_avx2, lerp_rows_sse41(row, target, t));
+    let from = run!(
+        level,
+        lerp_rows_avx2,
+        lerp_rows_sse41,
+        lerp_rows_neon(row, target, t)
+    );
     for i in from..row.len() / 4 {
         for c in 0..3 {
             row[i * 4 + c] = lerp(row[i * 4 + c], target[i * 4 + c], t);
@@ -119,6 +135,7 @@ unsafe fn lut_row_lanes<V: Lanes>(row: &mut [u8], lut: &[u8; 256], t: f64) -> us
 entries!(
     lut_row_avx2,
     lut_row_sse41,
+    lut_row_neon,
     lut_row_lanes(row: &mut [u8], lut: &[u8; 256], t: f64)
 );
 
@@ -132,7 +149,12 @@ pub(super) fn lut_row_at(level: Level, row: &mut [u8], lut: &[u8; 256], t: f64) 
         }
         return;
     }
-    let from = run!(level, lut_row_avx2, lut_row_sse41(row, lut, t));
+    let from = run!(
+        level,
+        lut_row_avx2,
+        lut_row_sse41,
+        lut_row_neon(row, lut, t)
+    );
     for p in row[from * 4..].chunks_exact_mut(4) {
         for v in &mut p[..3] {
             *v = lerp(*v, lut[*v as usize], t);
@@ -205,6 +227,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
 entries!(
     noise_row_avx2,
     noise_row_sse41,
+    noise_row_neon,
     noise_row_lanes(
         row: &mut [u8],
         x0: u32,
@@ -231,7 +254,8 @@ pub(super) fn noise_row_at(
     let from = run!(
         level,
         noise_row_avx2,
-        noise_row_sse41(row, x0, y, seed, amount, monochrome, t)
+        noise_row_sse41,
+        noise_row_neon(row, x0, y, seed, amount, monochrome, t)
     );
     for (x, p) in row.chunks_exact_mut(4).enumerate().skip(from) {
         let h = noise_seed(seed, x0.wrapping_add(x as u32), y);
@@ -267,12 +291,18 @@ unsafe fn premultiply_lanes<V: Lanes>(src: &[u8], out: &mut [u16]) -> usize {
 entries!(
     premultiply_avx2,
     premultiply_sse41,
+    premultiply_neon,
     premultiply_lanes(src: &[u8], out: &mut [u16])
 );
 
 /// 画素（straight RGBA）を乗算済み（R・G・B に A を掛け、A は A × 255。u16 × 4）にする。
 pub(super) fn premultiply_at(level: Level, src: &[u8], out: &mut [u16]) {
-    let from = run!(level, premultiply_avx2, premultiply_sse41(src, out));
+    let from = run!(
+        level,
+        premultiply_avx2,
+        premultiply_sse41,
+        premultiply_neon(src, out)
+    );
     for (p, b) in out[from * 4..]
         .chunks_exact_mut(4)
         .zip(src[from * 4..].chunks_exact(4))
@@ -404,6 +434,7 @@ unsafe fn blur_finish_lanes<V: Lanes>(input: &[u8], q: &[u16], out: &mut [u8], t
 entries!(
     blur_finish_avx2,
     blur_finish_sse41,
+    blur_finish_neon,
     blur_finish_lanes(input: &[u8], q: &[u16], out: &mut [u8], t: f64)
 );
 
@@ -448,6 +479,7 @@ unsafe fn sharpen_finish_lanes<V: Lanes>(
 entries!(
     sharpen_finish_avx2,
     sharpen_finish_sse41,
+    sharpen_finish_neon,
     sharpen_finish_lanes(
         input: &[u8],
         q: &[u16],
@@ -477,7 +509,8 @@ pub(super) fn finish_row_at(
             let from = run!(
                 level,
                 sharpen_finish_avx2,
-                sharpen_finish_sse41(input, q, out, amount, threshold, strength)
+                sharpen_finish_sse41,
+                sharpen_finish_neon(input, q, out, amount, threshold, strength)
             );
             for i in from..count {
                 let px = sharpen_pixel(
@@ -495,7 +528,8 @@ pub(super) fn finish_row_at(
         _ => run!(
             level,
             blur_finish_avx2,
-            blur_finish_sse41(input, q, out, strength)
+            blur_finish_sse41,
+            blur_finish_neon(input, q, out, strength)
         ),
     };
     for i in from..count {
@@ -625,6 +659,20 @@ unsafe fn box_blur_sse41(
     box_blur_lanes::<Sse41>(src, a, b, r, w, h, check)
 }
 
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn box_blur_neon(
+    src: &[u16],
+    a: Rect,
+    b: Rect,
+    r: u32,
+    w: u32,
+    h: u32,
+    check: Check<'_>,
+) -> Result<Vec<u16>, Error> {
+    box_blur_lanes::<Neon>(src, a, b, r, w, h, check)
+}
+
 /// 箱ぼかしの SIMD の道（スカラーの道なら None）。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn box_blur_at(
@@ -644,7 +692,10 @@ pub(super) fn box_blur_at(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => Some(unsafe { box_blur_sse41(src, a, b, r, w, h, check) }),
-        _ => None,
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => Some(unsafe { box_blur_neon(src, a, b, r, w, h, check) }),
+        Level::Scalar => None,
     }
 }
 

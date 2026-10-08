@@ -1197,6 +1197,7 @@ impl AppState {
         let b = &mut self.m2.brush;
         match op {
             BrushOp::Effect(kind) => {
+                let before = EffectKind::of(&b.effect);
                 b.effect = match kind {
                     EffectKind::Paint => BrushEffect::Paint,
                     EffectKind::Blur => match b.effect {
@@ -1214,6 +1215,11 @@ impl AppState {
                         },
                     },
                 };
+                // 種類を替えたときだけ、新しい効果をブラシの持つ値として覚え直す（2D の揃える offset が決まっていれば入れ直す）。同じ種類を
+                // 選び直しても、元から入れた offset はそのまま（「変えた」に数えない）
+                if before != kind {
+                    self.clone.brush_loaded(&mut self.m2.brush.effect);
+                }
                 // 効果のブラシは消しゴムにできない。描くツールへ戻す
                 if kind != EffectKind::Paint && self.tool.erases() {
                     self.tool = crate::state::Tool::Brush;
@@ -1335,7 +1341,7 @@ impl AppState {
                 .begin_brush_stroke_in(id, self.m2.paint_channel, brush)?
         };
         // クローンが、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごと）を読む（最初のダブの前に凍結する。マスクには使えない）
-        if self.view3d.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
+        if self.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
             stroke.use_composite_clone_source(&mut self.doc)?;
         }
         // 色の混ぜが「全レイヤーから」拾うブラシも、同じ参照元（見えているレイヤーの重なり）を最初のダブの前に凍結する

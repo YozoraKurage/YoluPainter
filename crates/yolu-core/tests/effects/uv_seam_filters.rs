@@ -308,7 +308,7 @@ fn tangent_normals_turn_with_a_mirrored_seam() {
 
 #[test]
 fn the_seam_bytes_are_pinned_on_every_simd_path() {
-    // `YOLU_SIMD=scalar|sse41|avx2` で同じ値になる（近傍の段は SIMD の道、帯を埋めるのは整数の 1 本の道）
+    // `YOLU_SIMD=scalar|sse41|avx2|neon`（その CPU にある道）で同じ値になる（近傍の段は SIMD の道、帯を埋めるのは整数の 1 本の道）
     let topology = straight();
     let (mut doc, layer) = painted(&topology, 16);
     blur(&mut doc, layer, 5);

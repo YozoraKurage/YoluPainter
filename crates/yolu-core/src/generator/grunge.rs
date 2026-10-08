@@ -6,15 +6,15 @@
 //!
 //! 各式には、N 画素を 1 組で計算する版（`*_lanes`）がある。1 画素の式と同じ演算を同じ順に並べ、分岐はレーンごとの選択に置き換えたもので、
 //! 結果のビットは変わらない。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::noisefn::{sin_cos_deg_lanes, unit24_lanes};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::procedural::GenLanes;
 use super::{
     noisefn::{cell_hash, hash_unit, sin_cos_deg, unit24, wrap},
     procedural::{Ctx, FractalMode::*, GrungePreset, Layer, NoiseBasis::*},
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 
 /// セルの枠（Worley の特徴点を引く座標の写し方）。
@@ -455,20 +455,20 @@ fn pebbles(cx: &mut Ctx<'_>, b: [f64; 3]) -> f64 {
 // ───────── SIMD の道（N 画素を 1 組で） ─────────
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn smooth_lanes<V: Lanes>(e0: f64, e1: f64, x: V::F) -> V::F {
     let t = simd::clamp01::<V>(V::div(V::sub(x, V::splat(e0)), V::splat(e1 - e0)));
     V::mul(V::mul(t, t), V::sub(V::splat(3.), V::mul(V::splat(2.), t)))
 }
 /// 端もレーンごとに違う `smooth`。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn smooth_edges_lanes<V: Lanes>(e0: V::F, e1: V::F, x: V::F) -> V::F {
     let t = simd::clamp01::<V>(V::div(V::sub(x, e0), V::sub(e1, e0)));
     V::mul(V::mul(t, t), V::sub(V::splat(3.), V::mul(V::splat(2.), t)))
 }
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn tri_lanes<V: Lanes>(x: V::F) -> V::F {
     V::abs(V::sub(
         V::mul(V::sub(x, V::floor(x)), V::splat(2.)),
@@ -477,7 +477,7 @@ unsafe fn tri_lanes<V: Lanes>(x: V::F) -> V::F {
 }
 /// 整数の値を持つ N 個の f64（ハッシュなど）の各レーンに `f` を引く（`from_fn` に渡すので、レーンの演算は含めない）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn per_hash<V: Lanes>(ids: V::F, f: impl Fn(u32) -> f64) -> V::F {
     let mut at = [0.; 4];
     V::store_f64(&mut at, ids);
@@ -485,7 +485,7 @@ unsafe fn per_hash<V: Lanes>(ids: V::F, f: impl Fn(u32) -> f64) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn eval_lanes<V: GenLanes>(
     cx: &mut Ctx<'_>,
     b: [V::F; 3],
@@ -498,7 +498,6 @@ pub(super) unsafe fn eval_lanes<V: GenLanes>(
 /// （模様ごとの関数は数個のレイヤーの大きさに収まる）、模様どうしは別の関数にする。
 macro_rules! preset_entries {
     ($m:ident, $ty:ident, $feature:literal, $($preset:ident => $f:ident),* $(,)?) => {
-        #[cfg(target_arch = "x86_64")]
         pub(super) mod $m {
             use super::*;
             use crate::math::simd::$ty;
@@ -531,11 +530,15 @@ macro_rules! presets {
             Pebbles => pebbles_lanes);
     };
 }
+#[cfg(target_arch = "x86_64")]
 presets!(avx2, Avx2, "avx2,fma");
+#[cfg(target_arch = "x86_64")]
 presets!(sse41, Sse41, "sse4.1");
+#[cfg(target_arch = "aarch64")]
+presets!(neon, Neon, "neon");
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn stain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let a = cx.layer_body::<V>(b, 0);
     let c = cx.layer_body::<V>(b, 1);
@@ -551,7 +554,7 @@ unsafe fn stain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn rust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let patch = cx.layer_body::<V>(b, 0);
     let blot = cx.layer_body::<V>(b, 1);
@@ -575,7 +578,7 @@ unsafe fn rust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 
 /// `segments` の N 画素ぶん。N 画素が同じ格子に入れば線分を共有して計算し、またぐ組は 1 画素ずつ。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn segments_lanes<V: Lanes>(
     fp: [V::F; 3],
     seed: u32,
@@ -637,7 +640,7 @@ pub(super) unsafe fn segments_lanes<V: Lanes>(
     best
 }
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn scratches_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let wear = smooth_lanes::<V>(0.25, 0.6, cx.layer_body::<V>(b, 0));
     let long = cx.segments_body::<V>(b, 0);
@@ -650,7 +653,7 @@ unsafe fn scratches_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn dust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let fine = cx.layer_body::<V>(b, 0);
     let m = cx.layer_body::<V>(b, 1);
@@ -665,7 +668,7 @@ unsafe fn dust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn fingerprints_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let (c, fp) = cx.cells_body::<V>(b, 0);
     let d = [V::sub(fp[0], c.point[0]), V::sub(fp[1], c.point[1])];
@@ -690,7 +693,7 @@ unsafe fn fingerprints_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn weave_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     const T: f64 = WEAVE_THREADS;
     let (x, y) = (V::mul(b[0], V::splat(T)), V::mul(b[1], V::splat(T)));
@@ -730,14 +733,14 @@ unsafe fn weave_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 /// 織りの糸の断面（`1 - (2f - 1)²`）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn prof_lanes<V: Lanes>(f: V::F) -> V::F {
     let u = V::sub(V::mul(V::splat(2.), f), V::splat(1.));
     V::sub(V::splat(1.), V::mul(u, u))
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let half = V::splat(0.5);
     let k = V::splat(0.45);
@@ -774,7 +777,7 @@ unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn drops_lanes<V: Lanes>(
     cx: &mut Ctx<'_>,
     b: [V::F; 3],
@@ -792,7 +795,7 @@ unsafe fn drops_lanes<V: Lanes>(
     V::select(V::lt(r2, V::splat(0.45)), V::splat(0.), v)
 }
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn splatter_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let big = drops_lanes::<V>(cx, b, 0, 0.32);
     let mid = drops_lanes::<V>(cx, b, 1, 0.3);
@@ -801,7 +804,7 @@ unsafe fn splatter_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn peeling_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let base = cx.layer_body::<V>(b, 0);
     let chip = cx.layer_body::<V>(b, 1);
@@ -809,7 +812,7 @@ unsafe fn peeling_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn wood_grain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let r = if cx.plan.is_uv() {
         V::mul(b[0], V::splat(4.))
@@ -842,7 +845,7 @@ unsafe fn wood_grain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn pebbles_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let (c, _) = cx.cells_body::<V>(b, 0);
     let border = smooth_lanes::<V>(0., 0.14, V::sub(c.f2, c.f1));

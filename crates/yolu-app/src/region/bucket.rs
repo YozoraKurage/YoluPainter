@@ -9,15 +9,26 @@ use crate::{
     jobs::{Polled, Worker},
     state::AppState,
 };
-use egui::{Context, Pos2};
+use egui::{Context, Pos2, Rect};
 use std::sync::atomic::AtomicBool;
 use yolu_core::{CoreError, LayerId, SelectionMask};
 
 pub struct Drag {
+    /// 通った文書の点。3D では、面の外・別のテクスチャセット・UV の外を通った所と、継ぎ目（画面の線を二分しても縮まない UV の飛び）の間を
+    /// `NaN` の点で区切る（区切りをまたいで、間の線を塗り残しの範囲にしない）。
     points: Vec<(f64, f64)>,
     document: u128,
     revision: u64,
+    /// 3D: 前に標本を取った画面の点（そこから今の位置までを標本する）。
+    last: Option<Pos2>,
 }
+impl Drag {
+    /// 通った文書の点（区切りは NaN の点）。
+    pub fn points(&self) -> &[(f64, f64)] {
+        &self.points
+    }
+}
+
 /// 別のスレッドで計算している塗りつぶし（受け口を捨てると取り消す）。
 pub struct Job {
     worker: Worker<Result<SelectionMask, CoreError>>,
@@ -250,16 +261,193 @@ pub fn begin(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
         points: vec![p],
         document: app.doc.id(),
         revision: app.doc.revision(),
+        last: None,
     });
     true
 }
+
+/// 3D: 塗り残しのドラッグを始める。押した点の下の面の UV が指す文書の点が最初の点。面が無ければ理由を断って始めない。
+pub fn begin_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
+    if refuse_busy(app) {
+        return false;
+    }
+    if let Err(e) = paint_gate(app) {
+        app.refuse(Source::Fill, e);
+        return false;
+    }
+    let p = match super::tools::surface_point(app, rect, at) {
+        Ok(p) => p,
+        Err(miss) => {
+            super::tools::refuse_miss(app, miss);
+            return false;
+        }
+    };
+    app.region.leftover_drag = Some(Drag {
+        points: vec![p],
+        document: app.doc.id(),
+        revision: app.doc.revision(),
+        last: Some(at),
+    });
+    true
+}
+
+/// 塗り残しのドラッグの点の上限（2D も 3D も。区切りの点も数える）。
+const MAX_DRAG_POINTS: usize = 4096;
+/// 3D: UV で離れた 2 つの標本の間を、画面の線で二分する回数の上限（画面の 4 点を 256 分まで）。
+const BRIDGE_DEPTH: u32 = 8;
+/// 3D: 二分で足した点を除いても線が動かない、と見なす UV の距離（画素）。
+const BRIDGE_TOLERANCE: f64 = 0.5;
+
+/// 3D: ドラッグが `at` へ動いた。前の位置から画面で 4 点おきに標本し、その下の面の UV が指す文書の点を足す（速く動かしても間を飛ばしにくい）。
+/// 面の外・別のテクスチャセット・UV の外は足さず、その前後は線でつながない。UV でブラシの半径の 2 倍＋2 画素より離れた 2 つの標本の間は、
+/// 画面の線を二分して標本を足し（`bridge`）、継ぎ目（二分しても縮まない UV の飛び）と面の外でだけ区切る。引いて見ていて画面の 4 点が UV で
+/// 遠くなっても、1 つのアイランドの中の線は途切れない。
+pub fn drag_surface(app: &mut AppState, rect: Rect, at: Pos2) {
+    let Some(drag) = app.region.leftover_drag.as_ref() else {
+        return;
+    };
+    let Some(from) = drag.last else {
+        return;
+    };
+    // 前の標本（画面の点と UV の点）。最後に足した点が区切りなら、無い
+    let mut previous = drag
+        .points
+        .last()
+        .copied()
+        .filter(|p| p.0.is_finite())
+        .map(|p| (from, p));
+    let join = 2.0 * app.brush.radius as f64 + 2.0;
+    let mut added = Vec::new();
+    for sample in super::tools::samples(from, at) {
+        let point = super::tools::surface_point(app, rect, sample).ok();
+        match (previous, point) {
+            (_, None) => {
+                // 面の外を通った: 次の点は新しい区切りから
+                if previous.take().is_some() {
+                    added.push((f64::NAN, f64::NAN));
+                }
+            }
+            (None, Some(p)) => {
+                added.push(p);
+                previous = Some((sample, p));
+            }
+            (Some((_, last)), Some(p)) if last == p => previous = Some((sample, p)),
+            (Some(a), Some(p)) => {
+                let mut run = Vec::new();
+                bridge(app, rect, a, (sample, p), join, BRIDGE_DEPTH, &mut run);
+                push_simplified(&mut added, a.1, &run);
+                previous = Some((sample, p));
+            }
+        }
+    }
+    let Some(drag) = app.region.leftover_drag.as_mut() else {
+        return;
+    };
+    if drag.points.len() + added.len() > MAX_DRAG_POINTS {
+        app.region.leftover_drag = None;
+        app.view3d.stroke_ended();
+        app.refuse(
+            Source::Fill,
+            app.lang
+                .pick("ストロークが長すぎます", "Stroke is too long"),
+        );
+        return;
+    }
+    drag.points.extend(added);
+    drag.last = Some(at);
+}
+
+/// 3D: 画面の点 `a.0` から `b.0` までの線の、UV の点の列を `out` に足す（`a` は足さない）。UV で `join` より離れた 2 つの標本の間は、
+/// 画面の線を二分して標本を足す。二分した点が面の外（別のテクスチャセット・UV の外も）なら、そこで区切る（NaN の点）。`depth` 回二分しても
+/// 縮まない飛びは、継ぎ目（別のアイランドへ移った）として区切る。同じアイランドの中なら、二分するたびに UV の間がおよそ半分になるので区切らない。
+fn bridge(
+    app: &mut AppState,
+    rect: Rect,
+    a: (Pos2, (f64, f64)),
+    b: (Pos2, (f64, f64)),
+    join: f64,
+    depth: u32,
+    out: &mut Vec<(f64, f64)>,
+) {
+    if distance(a.1, b.1) <= join {
+        out.push(b.1);
+        return;
+    }
+    let mid = a.0 + (b.0 - a.0) * 0.5;
+    let point = (depth > 0)
+        .then(|| super::tools::surface_point(app, rect, mid).ok())
+        .flatten();
+    let Some(point) = point else {
+        out.push((f64::NAN, f64::NAN));
+        out.push(b.1);
+        return;
+    };
+    bridge(app, rect, a, (mid, point), join, depth - 1, out);
+    bridge(app, rect, (mid, point), b, join, depth - 1, out);
+}
+
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    (a.0 - b.0).hypot(a.1 - b.1)
+}
+
+/// `bridge` の点の列 `run`（`anchor` の続き）を、区切りごとに、線の形を変えない点だけにして `out` へ足す。1 つの三角形の中の画面の直線は
+/// UV でも直線なので、二分で足した点のほとんどは要らない（三角形の境で曲がる所は残る）。
+fn push_simplified(out: &mut Vec<(f64, f64)>, anchor: (f64, f64), run: &[(f64, f64)]) {
+    let mut start = anchor;
+    for (i, piece) in run.split(|p| !p.0.is_finite()).enumerate() {
+        if i > 0 {
+            out.push((f64::NAN, f64::NAN));
+            let Some((&first, rest)) = piece.split_first() else {
+                continue;
+            };
+            out.push(first);
+            start = first;
+            keep_bends(out, start, rest);
+        } else {
+            keep_bends(out, start, piece);
+        }
+        if let Some(&last) = piece.last() {
+            start = last;
+        }
+    }
+}
+
+/// `start` に続く `points` のうち、`start` から最後の点までの折れ線の形を `BRIDGE_TOLERANCE` より変える点と、最後の点を足す（Douglas–Peucker）。
+fn keep_bends(out: &mut Vec<(f64, f64)>, start: (f64, f64), points: &[(f64, f64)]) {
+    let Some((&end, inner)) = points.split_last() else {
+        return;
+    };
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    let length = dx.hypot(dy);
+    let off = |p: &(f64, f64)| {
+        if length == 0.0 {
+            distance(*p, start)
+        } else {
+            ((p.0 - start.0) * dy - (p.1 - start.1) * dx).abs() / length
+        }
+    };
+    if let Some((i, far)) = inner
+        .iter()
+        .map(off)
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        if far > BRIDGE_TOLERANCE {
+            keep_bends(out, start, &points[..=i]);
+            keep_bends(out, points[i], &points[i + 1..]);
+            return;
+        }
+    }
+    out.push(end);
+}
+
 pub fn drag(app: &mut AppState, view: &CanvasView, at: Pos2) {
     let Some(drag) = app.region.leftover_drag.as_mut() else {
         return;
     };
     let p = view.to_canvas(at);
     if drag.points.last() != Some(&p) {
-        if drag.points.len() >= 4096 {
+        if drag.points.len() >= MAX_DRAG_POINTS {
             app.region.leftover_drag = None;
             app.canvas.stroke = None;
             app.refuse(

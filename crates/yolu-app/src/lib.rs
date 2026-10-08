@@ -18,6 +18,7 @@ pub mod bake;
 pub mod brushes;
 pub mod canvas;
 pub mod clipboard;
+pub mod clone_source;
 pub mod colorsets;
 pub mod commands;
 pub mod crash;

@@ -204,7 +204,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     release_with(&h, source, Modifiers::ALT);
     h.run();
     assert_eq!(message(&h), "クローンの元を決めました。");
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     assert_eq!(h.state().state.view3d.camera.yaw, yaw);
     // 右の面へ描くと、手前の面の模様が写る
     h.state_mut().state.message.clear();
@@ -222,7 +222,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     }
     assert!(painted > 20, "{painted}");
     assert!(
-        h.state().state.view3d.clone.destination.is_some(),
+        h.state().state.clone.destination.is_some(),
         "揃えるクローンは、先の基準を次のストロークへ渡す"
     );
     key(&h, Key::Z, Modifiers::COMMAND);
@@ -249,7 +249,7 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
     h.run();
     assert_ne!(h.state().state.view3d.camera.yaw, yaw, "回る");
     assert!(
-        h.state().state.view3d.clone.source.is_none(),
+        h.state().state.clone.source.is_none(),
         "動かしたクリックは元にしない"
     );
 }
@@ -401,7 +401,7 @@ fn all_layers_makes_the_2d_clone_read_the_visible_composite_too() {
         offset: DVec2::new(-10.0, 0.0),
     };
     for all_layers in [false, true] {
-        app.view3d.clone.all_layers = all_layers;
+        app.clone.all_layers = all_layers;
         let mut stroke = app.begin_canvas_stroke(target, false, None).unwrap();
         stroke
             .add_point(&mut app.doc, 14.5, 4.5, 1.0, DVec2::ZERO)
@@ -536,12 +536,12 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     h.step();
     release_with(&h, source, Modifiers::ALT);
     h.run();
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     open_detail(&mut h, yolu_app::brushes::Category::Effect);
     assert!(!disabled(&h, "揃える"));
     assert!(h.query_by_label("元を決めました").is_none());
     // マスクを描くあいだは、全レイヤーから読めない（描いているマスクだけを読む）ので、切った表示で薄い
-    h.state_mut().state.view3d.clone.all_layers = true;
+    h.state_mut().state.clone.all_layers = true;
     h.run();
     assert!(!disabled(&h, "全レイヤーから"));
     let layer = h.state().state.selected_layer.expect("レイヤー");
@@ -556,7 +556,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
         Some(egui::accesskit::Toggled::False)
     );
     assert!(
-        h.state().state.view3d.clone.all_layers,
+        h.state().state.clone.all_layers,
         "設定は変えない（マスクをやめれば戻る）"
     );
 }
@@ -714,4 +714,71 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         shots[3] == shots[0],
         "フォーカスを失っても、持ち越しを塗ってから確定"
     );
+}
+
+/// 3D ビューのマウスの速さの制御も、2D のキャンバスと同じく、1 フレームに来るイベントの数（マウスの報告の頻度）によらない（イベントごとの
+/// 時刻はフレームの間を等分する）。同じ速さで動かせば、1 フレーム 1・2・4 イベントで同じ絵になり、倍の速さなら絵が変わる。
+#[test]
+fn mouse_speed_in_3d_does_not_depend_on_how_many_events_arrive_per_frame() {
+    let (mut h, rect) = cube_view();
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.random_seed = false;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 8.0;
+        s.m2.brush.controls.speed_size = true;
+        // 3D の速さは画面の点 / 秒（1 フレーム 8 点・60 フレーム毎秒で 480）
+        s.m2.brush.controls.speed_max = 2000.0;
+    }
+    let ink = |h: &Harness<'_, YoluApp>| {
+        let bounds = h.state().state.doc.bounds();
+        h.state()
+            .state
+            .doc
+            .composite(bounds)
+            .unwrap()
+            .chunks(4)
+            .map(|p| p[3] as u64)
+            .sum::<u64>()
+    };
+    // 手前の面の中ほどを右へ、1 フレームに 8 点（画面の点）ずつ
+    let start = offset(screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5)), -56.0, 0.0);
+    let frames = 14;
+    let per_frame = 8.0;
+    let run = |h: &mut Harness<'_, YoluApp>, events: usize, speed: f32| {
+        let at = |i: usize| offset(start, speed * per_frame * i as f32 / events as f32, 0.0);
+        let frames = (frames as f32 / speed) as usize;
+        press(h, at(0), PointerButton::Primary);
+        h.step();
+        for frame in 0..frames {
+            // 1 フレームに複数のイベント（ハーネスの step は、待たせたイベントを 1 つずつ別のフレームにするので、直に入れる）
+            for e in 1..=events {
+                h.input_mut()
+                    .events
+                    .push(Event::PointerMoved(at(frame * events + e)));
+            }
+            h.step();
+        }
+        release(h, at(frames * events), PointerButton::Primary);
+        h.step();
+        h.run();
+        let v = ink(h);
+        h.state_mut().state.apply(yolu_app::state::Action::Undo);
+        h.run();
+        v
+    };
+    let one = run(&mut h, 1, 1.0);
+    let two = run(&mut h, 2, 1.0);
+    let four = run(&mut h, 4, 1.0);
+    assert!(one > 0);
+    for (name, v) in [("2", two), ("4", four)] {
+        let diff = (v as f64 - one as f64).abs() / one as f64;
+        assert!(
+            diff < 0.08,
+            "1 フレーム {name} イベントでも同じ速さ: {v} と {one}（{diff:.3}）"
+        );
+    }
+    // 速さは実際に効いている: 倍の速さで動かすと絵が変わる
+    let fast = run(&mut h, 1, 2.0);
+    assert!(fast != one, "{fast} != {one}");
 }

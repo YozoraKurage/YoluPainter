@@ -2,7 +2,6 @@
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
 pub mod brdf;
-pub mod clone_source;
 pub mod display;
 pub mod environment;
 pub mod gizmo;
@@ -62,6 +61,14 @@ pub struct SurfaceInput {
     pub fly_held: Vec<egui::Key>,
     /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
+    /// 確定した 3D ストロークの終点（面の点。Shift + 押しの直線の始め。今のカメラで画面へ写し直して使う。今のモデルの世代のときだけ使う）。
+    pub previous_end: Option<yolu_core::geometry::SurfaceHit>,
+    /// 描いている 3D ストロークの今の終点（画面の点。Shift のぶれの抑え・向きの固定を当てた後）。
+    pub last_point: Option<egui::Pos2>,
+    /// 描いている 3D ストロークの入力で、面に当たった最後の点（確定すると `previous_end` になる。モデルの外へ出て終えても、面の上の終わりを覚える）。
+    pub last_hit: Option<yolu_core::geometry::SurfaceHit>,
+    /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定（画面の点。2D の `CanvasInput::shift_hold` と同じ決まり）。
+    pub shift_hold: Option<crate::state::ShiftHold>,
 }
 
 impl SurfaceInput {
@@ -118,8 +125,6 @@ pub struct View3dState {
     pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
-    /// クローンの元と設定。
-    pub clone: clone_source::CloneState,
     /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
     /// （`Settings::view3d_paint`）。
     pub projection: yolu_core::geometry::ProjectionSettings,
@@ -388,6 +393,9 @@ impl View3dState {
         self.input.stroke = None;
         self.input.surface = None;
         self.input.symmetry = None;
+        self.input.last_point = None;
+        self.input.last_hit = None;
+        self.input.shift_hold = None;
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;

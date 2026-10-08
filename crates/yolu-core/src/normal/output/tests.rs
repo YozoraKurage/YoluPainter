@@ -1,4 +1,4 @@
-//! Normal のチャンネルの出力の行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2）に比べる。
+//! Normal のチャンネルの出力の行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2・NEON）に比べる。
 
 use super::super::{output_pixel, row, HeightEdgeMode, NormalSettings, NormalYDirection};
 use super::*;

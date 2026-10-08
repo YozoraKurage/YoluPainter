@@ -1077,52 +1077,35 @@ fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it
 }
 
 #[test]
-fn what_does_not_apply_in_3d_is_disabled_with_the_reason_instead_of_a_note() {
+fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     use yolu_app::engine::Channel;
     let mut h = app(1600.0, 1000.0, 256);
     click_tab(&mut h, Tab::View3d);
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     assert!(st(&h).view3d.paintable_on_screen());
-    // ツールプロパティ: 手ぶれ補正は効かない（直径・不透明度・硬さ・流量・間隔は効く）
-    assert!(h.get_by_label("手ぶれ補正").accesskit_node().is_disabled());
+    // ツールプロパティ: 手ぶれ補正も 3D の面のダブに効く（直径・不透明度・硬さ・流量・間隔も）
+    assert!(!h.get_by_label("手ぶれ補正").accesskit_node().is_disabled());
     for label in ["直径", "不透明度", "硬さ", "流量", "間隔"] {
         assert!(!rect_of_enabled(&h, label), "{label} は 3D でも効く");
     }
-    // 詳細のウィンドウ: 筆先・ゆらぎ・テクスチャ・デュアル・フェード・傾き・手ぶれ補正は無効。注記の行は出さない
-    for (category, disabled, enabled) in [
-        (Category::Shape, vec!["真円率", "角度"], vec![]),
-        (
-            Category::Stroke,
-            vec!["手ぶれ補正", "曲線"],
-            vec!["直径", "間隔"],
-        ),
-        (Category::Dynamics, vec!["入り", "抜き"], vec![]),
-        // 筆圧は 3D の面のダブにも効く（大きさ・不透明度・流量・硬さ。最小値は切り替えを入れたものだけ）
-        (Category::Pressure, vec![], vec!["筆圧を使う"]),
-        (Category::Jitter, vec!["サイズ", "散布"], vec![]),
+    // 詳細のウィンドウ: 筆先・ストローク（手ぶれ補正・曲線）・入り抜き・筆圧・ゆらぎも 3D で効く。注記の行は出さない
+    for (category, enabled) in [
+        (Category::Shape, vec!["真円率", "角度"]),
+        (Category::Stroke, vec!["手ぶれ補正", "曲線", "直径", "間隔"]),
+        (Category::Dynamics, vec!["入り", "抜き"]),
+        (Category::Pressure, vec!["筆圧を使う"]),
+        (Category::Jitter, vec!["サイズ", "散布"]),
     ] {
         open_detail(&mut h, category);
         let window = detail_rect(&h);
-        for label in disabled {
-            let node = h
-                .query_all_by_label(label)
-                .find(|n| {
-                    window.contains(n.rect().center()) && n.rect().left() > window.left() + 168.0
-                })
-                .unwrap_or_else(|| panic!("{category:?} {label}"));
-            assert!(
-                node.accesskit_node().is_disabled(),
-                "{category:?} {label} は 3D では効かない"
-            );
-        }
         for label in enabled {
             let node = h
                 .query_all_by_label(label)
                 .find(|n| {
                     window.contains(n.rect().center()) && n.rect().left() > window.left() + 168.0
                 })
-                .unwrap();
+                .unwrap_or_else(|| panic!("{category:?} {label}"));
             assert!(!node.accesskit_node().is_disabled(), "{category:?} {label}");
         }
         for note in [
@@ -1479,17 +1462,16 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
         tool_off(&h) && shape_off(&h),
         "画像の先端は 2D では効かない"
     );
-    // 3D: 面のダブは画像を使わず丸いので、画像の先端でも両方が効く
+    // 3D: 面のダブも画像の筆先を使うので、2D と同じく画像の先端では両方が効かない
     click_tab(&mut h, Tab::View3d);
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     assert!(st(&h).view3d.paintable_on_screen());
     assert!(st(&h).m2.brush.tip.image.is_some());
-    assert!(hardness_applies(st(&h)));
-    assert!(!tool_off(&h), "3D ではツールプロパティの硬さが効く");
+    assert!(!hardness_applies(st(&h)));
     assert!(
-        !shape_off(&h),
-        "3D では形状の硬さも効く（同じブラシで食い違わない）"
+        tool_off(&h) && shape_off(&h),
+        "画像の先端は 3D でも効かない（同じブラシで食い違わない）"
     );
     h.state_mut()
         .state

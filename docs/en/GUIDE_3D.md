@@ -38,7 +38,15 @@ The material values received from Unity appear as "Unity Values", and "Match Uni
 
 You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). Selections, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas.
 
-For brushes, Size, Hardness, Flow, Opacity, pressure, color, Color Dynamics, color mixing, erasing, stencils and effect brushes (Blur, Smudge, Clone) work in 3D. Image tips and the stroke (Stabilizer), fade and pen, jitter, texture and dual brush settings are limited to the 2D canvas, so they are disabled while you can paint only in the 3D view. While the 3D view is shown, the brush properties gain a "3D" group.
+Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper & Pen (fade, tilt, rotation, speed), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
+
+- The tip shape is laid out on the screen and projected from the camera onto the surface (it is not laid flat along the surface).
+- Dabs are placed every spacing along the stroke length, as in 2D. However densely or sparsely the input points arrive, the stroke's density and the length of a fade stay the same. The spacing comes from the brush size converted to the screen at the depth of the surface where each stretch of the stroke starts.
+- Stabilizer, taper and speed lengths and speeds are measured in screen points in the 3D view (in document pixels on the 2D canvas).
+- The texture is read at the document pixel being painted, so its grain lines up between what you paint in 2D and in 3D.
+- With 3D symmetry, a mirror copy flips the tip left to right and a radial copy rotates it.
+
+While the 3D view is shown, the brush properties gain a "3D" group.
 
 | Field | What it does |
 |---|---|
@@ -47,7 +55,9 @@ For brushes, Size, Hardness, Flow, Opacity, pressure, color, Color Dynamics, col
 | Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |
 | Seam bleed | How far to paint outside the edges of UV islands so seams do not show |
 
-3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together.
+3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together. These two are the same settings as on the 2D canvas. Because the 3D source is set by a point on a surface, the clone's "Offset X" and "Offset Y" fields are dimmed while only the 3D view is shown. Switching texture sets forgets the source.
+
+`Shift`-click draws a straight line from the end of the previous stroke (the last point that hit a surface) to the clicked point (with the mouse and the pen; when there is no previous point, holding `Shift` and dragging locks the first direction you move in to 45° steps). A contact with `Ctrl` held does not paint with the pen but paints with the mouse. The force of a touch, such as a finger, becomes the pressure. These also work the same as on the 2D canvas ([GUIDE_PAINT.md](GUIDE_PAINT.md)). The Fill tool's "Similar colors" also fills the same extent as in 2D, from the pixel that the UV of the pressed surface points to.
 
 ## Pose the model
 

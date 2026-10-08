@@ -1,4 +1,4 @@
-//! レーンの演算が、スカラーの式と同じ bit を出すことの試験。AVX2・SSE4.1 の両方（この CPU が持つ道）で走らせる。
+//! レーンの演算が、スカラーの式と同じ bit を出すことの試験。AVX2・SSE4.1・NEON（この CPU が持つ道）で走らせる。
 #![allow(clippy::needless_range_loop)]
 
 use super::*;
@@ -58,6 +58,26 @@ fn specials() -> Vec<f64> {
         2.0,
         1.0 - f64::EPSILON,
         1.0 + f64::EPSILON,
+        // 前提（0〜255 の整数・0〜1）の外: 負の値、255 や 65535 や 2³¹ を超える値、整数に丸めたとき端になる値、f64 の端
+        -255.0,
+        256.0,
+        65535.0,
+        65536.0,
+        1e10,
+        2_147_483_647.0,
+        2_147_483_648.0,
+        -2_147_483_649.0,
+        4_503_599_627_370_495.5,
+        4_503_599_627_370_496.0,
+        -4_503_599_627_370_495.5,
+        f64::MAX,
+        f64::MIN,
+        -f64::MIN_POSITIVE,
+        // NaN のほかの形（符号つき・ペイロードつき・シグナリング）
+        f64::from_bits(0xFFF8_0000_0000_0000),
+        f64::from_bits(0x7FF8_0000_0000_5EED),
+        f64::from_bits(0x7FF0_0000_0000_0001),
+        f64::from_bits(0x7FFF_FFFF_FFFF_FFFF),
     ];
     for b in 0..=255 {
         let u = UNIT[b];
@@ -224,6 +244,49 @@ unsafe fn arithmetic_and_comparisons_follow_the_scalar_on<V: Lanes>() {
     }
 }
 
+/// 比較と選択、符号のビットだけの演算（`min`・`max`・`select`・`abs`・`neg`）は、NaN のペイロードや符号つきのゼロも含めて、
+/// スカラーの式が選ぶ側のビットがそのまま出る（`vmin`・`vmax` の NaN・±0 の扱いと取り違えていないことの確かめ）。
+unsafe fn selection_keeps_every_bit_on<V: Lanes>() {
+    const SIGN: u64 = 1 << 63;
+    let values = specials();
+    let mut out = Vec::new();
+    for (i, &a) in values.iter().enumerate() {
+        let pairs: Vec<(f64, f64)> = (0..V::N)
+            .map(|k| (a, values[(i * 11 + k * 5 + 3) % values.len()]))
+            .collect();
+        let x = V::from_fn(|k| pairs[k].0);
+        let y = V::from_fn(|k| pairs[k].1);
+        each::<V>(V::min(x, y), &mut out);
+        for (k, &(p, q)) in pairs.iter().enumerate() {
+            let want = if p < q { p } else { q };
+            assert_eq!(out[k].to_bits(), want.to_bits(), "min({p}, {q})");
+        }
+        each::<V>(V::max(x, y), &mut out);
+        for (k, &(p, q)) in pairs.iter().enumerate() {
+            let want = if p > q { p } else { q };
+            assert_eq!(out[k].to_bits(), want.to_bits(), "max({p}, {q})");
+        }
+        each::<V>(V::select(V::lt(x, y), x, y), &mut out);
+        for (k, &(p, q)) in pairs.iter().enumerate() {
+            let want = if p < q { p } else { q };
+            assert_eq!(out[k].to_bits(), want.to_bits(), "select({p}, {q})");
+        }
+        each::<V>(V::abs(x), &mut out);
+        for (k, &(p, _)) in pairs.iter().enumerate() {
+            assert_eq!(out[k].to_bits(), p.to_bits() & !SIGN, "abs({p})");
+        }
+        each::<V>(V::neg(x), &mut out);
+        for (k, &(p, _)) in pairs.iter().enumerate() {
+            assert_eq!(out[k].to_bits(), p.to_bits() ^ SIGN, "neg({p})");
+        }
+    }
+}
+
+#[test]
+fn selection_keeps_every_bit() {
+    on_each_level!(selection_keeps_every_bit_on);
+}
+
 unsafe fn mask_any_all_on<V: Lanes>() {
     let all_true = V::ge(V::splat(1.0), V::splat(0.0));
     let all_false = V::lt(V::splat(1.0), V::splat(0.0));
@@ -371,23 +434,69 @@ fn the_chosen_level_never_exceeds_the_cpu() {
     }
 }
 
+/// 別の CPU の道の名前（その CPU では知らない値）。
+#[cfg(target_arch = "x86_64")]
+const FOREIGN_NAMES: &[&str] = &["neon"];
+#[cfg(not(target_arch = "x86_64"))]
+const FOREIGN_NAMES: &[&str] = &["sse41", "avx2"];
+
 #[test]
 fn the_request_only_narrows_the_level() {
-    use Level::*;
-    for detected in [Scalar, Sse41, Avx2] {
+    for detected in Level::ALL.iter().copied() {
         assert_eq!(clamp_to_request(None, detected), detected);
         assert_eq!(clamp_to_request(Some(""), detected), detected);
         assert_eq!(clamp_to_request(Some("bogus"), detected), detected);
-        assert_eq!(
-            clamp_to_request(Some("AVX2"), detected),
-            detected,
-            "綴りは小文字だけ"
-        );
-        assert_eq!(clamp_to_request(Some("scalar"), detected), Scalar);
-        assert_eq!(
-            clamp_to_request(Some("sse41"), detected),
-            Sse41.min(detected)
-        );
-        assert_eq!(clamp_to_request(Some("avx2"), detected), detected);
+        assert_eq!(clamp_to_request(Some("scalar"), detected), Level::Scalar);
+        for &foreign in FOREIGN_NAMES {
+            assert_eq!(
+                clamp_to_request(Some(foreign), detected),
+                detected,
+                "別の CPU の道 {foreign} は知らない値として無視する"
+            );
+        }
+        for wanted in Level::ALL.iter().copied() {
+            assert_eq!(
+                clamp_to_request(Some(wanted.name()), detected),
+                wanted.min(detected),
+                "{wanted:?} を {detected:?} の CPU で"
+            );
+            assert_eq!(
+                clamp_to_request(Some(&wanted.name().to_uppercase()), detected),
+                detected,
+                "綴りは小文字だけ"
+            );
+        }
     }
+}
+
+#[test]
+fn the_levels_of_this_cpu_are_listed_narrow_first() {
+    let all = Level::ALL;
+    assert_eq!(all[0], Level::Scalar);
+    assert!(all.windows(2).all(|w| w[0] < w[1]), "{all:?}");
+    let names: std::collections::HashSet<_> = all.iter().map(|l| l.name()).collect();
+    assert_eq!(names.len(), all.len(), "道の名前は重ならない");
+    // この CPU で使える道は、一番広い道（detect()）までの全部
+    let supported = forced::supported();
+    assert_eq!(supported.last(), Some(&detect()));
+    assert!(supported.iter().all(|l| all.contains(l)));
+    // aarch64 は NEON があるので、スカラーと NEON の 2 つ
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(supported, vec![Level::Scalar, Level::Neon]);
+}
+
+/// 環境変数 `YOLU_SIMD` の値が、プロセスで選ぶ道に反映される（値を変えて回すと、道が変わる）。
+#[test]
+fn the_environment_variable_picks_the_level() {
+    let wanted = std::env::var("YOLU_SIMD").ok();
+    let expected = match wanted.as_deref() {
+        Some("scalar") => Level::Scalar,
+        Some(name) => Level::ALL
+            .iter()
+            .copied()
+            .find(|l| l.name() == name && *l <= detect())
+            .unwrap_or(detect()),
+        None => detect(),
+    };
+    assert_eq!(from_environment(detect()), expected, "{wanted:?}");
 }

@@ -726,6 +726,98 @@ fn holding_tab_after_choosing_does_not_reopen_the_pie_by_key_repeat() {
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
 }
 
+fn alt_click(h: &mut H, at: Pos2) {
+    h.event(Event::ModifiersChanged(Modifiers::ALT));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerMoved(at));
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::ALT,
+        });
+        h.step();
+    }
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+}
+
+fn shift_click(h: &mut H, at: Pos2) {
+    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerMoved(at));
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::SHIFT,
+        });
+        h.step();
+    }
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+}
+
+#[test]
+fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
+    let (mut h, rect) = figure_view();
+    let at = body_point(&h, rect);
+    h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        offset: Default::default(),
+    };
+    for m in [EditorMode::Edit, EditorMode::Pose] {
+        h.state_mut().apply(Action::Mode(ModeAction::Set(m)));
+        h.run();
+        // 3D: Alt＋クリックのクローンの元・Shift＋クリックの直線
+        alt_click(&mut h, at);
+        assert!(h.state().state.clone.source.is_none(), "{m:?}: 3D の元");
+        shift_click(&mut h, at);
+        assert!(!h.state().state.doc.can_undo(), "{m:?}: 3D の直線");
+        assert!(!h.state().state.is_stroking());
+    }
+    // 2D: Alt＋クリックのクローンの元・Shift＋クリックの直線
+    click_tab(&mut h, yolu_app::Tab::Canvas);
+    h.run();
+    let c = canvas_rect(&h).center();
+    for m in [EditorMode::Edit, EditorMode::Pose] {
+        h.state_mut().apply(Action::Mode(ModeAction::Set(m)));
+        h.run();
+        alt_click(&mut h, c);
+        let doc = h.state().state.doc.id();
+        assert!(
+            h.state().state.clone.canvas_source_for(doc).is_none(),
+            "{m:?}: 2D の元"
+        );
+        shift_click(&mut h, offset(c, 40.0, 0.0));
+        assert!(!h.state().state.doc.can_undo(), "{m:?}: 2D の直線");
+    }
+    // 近い色のバケツ（2D と 3D）
+    h.state_mut().apply(Action::SelectTool(Tool::Fill));
+    h.state_mut()
+        .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
+    h.run();
+    click(&mut h, c);
+    assert!(!h.state().state.doc.can_undo(), "2D のバケツ");
+    click_tab(&mut h, yolu_app::Tab::View3d);
+    h.run();
+    click(&mut h, at);
+    assert!(!h.state().state.doc.can_undo(), "3D のバケツ");
+    assert!(!h.state().state.is_stroking());
+    // ペイントへ戻すと、同じ Alt＋クリックで 3D の元が決まる
+    h.state_mut().apply(Action::SelectTool(Tool::Brush));
+    h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        offset: Default::default(),
+    };
+    assert_eq!(mode(&h), EditorMode::Paint);
+    alt_click(&mut h, at);
+    assert!(
+        h.state().state.clone.source.is_some(),
+        "ペイントでは元が決まる"
+    );
+}
+
 // ───────── 絵 ─────────
 
 fn crop(h: &mut H, rect: Rect, name: &str) {
