@@ -1,13 +1,14 @@
 # 配布の手順
 
-Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）、Linux x86_64 の tar.gz を作ります。macOS、AppImage は対象外です。
+Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）を出します。Linux x86_64 の tar.gz も作れますが、下の許諾の判断が済むまでは配りません
+（`release.yml` の入力 `linux` は切が既定です）。macOS、AppImage は対象外です。
 実行ファイル・インストーラーのコード署名は、[SignPath Foundation への申し込み](#コード署名signpath-foundation)が通るまで付けません（署名なしで出します）。
-ビルドには Rust stable、Python 3.10 以降、各 OS の C/C++ ビルド環境が必要です。Windows のインストーラーには NSIS 3 も要ります。Linux の実行環境は README を参照してください。
+ビルドには Rust stable、Python 3.10 以降、各 OS の C/C++ ビルド環境が必要です。Windows のインストーラーには NSIS 3 も要ります。Linux の実行環境は [BUILDING.md の「Linux（試用）」](BUILDING.md#linux試用)を参照してください。
 Ubuntu 22.04 で作るため、これより古い glibc 環境での動作は保証しません。
 
 Linux の既存依存 `wayland-protocols-plasma` と `wayland-protocols-misc` の protocol XML には LGPL-2.1-or-later の表記があり、
 `tools/licenses-reviewed.json` の `blocked` に記録しています。条件を確認するか依存構成を変更するまで、Linux の `bundle` は停止し、
-両 OS の成功が必要な Release 作成も進みません。`blocked` を外すのは、生成バインディングへの条件の適用を確認した後だけです。
+入力 `linux` を入にした配布も進みません。`blocked` を外すのは、生成バインディングへの条件の適用を確認した後だけです。
 
 依存を追加・更新して `licenses-reviewed.json` へ承認を足すときは、クレートの宣言だけでなく、同梱する XML・ソース全体に
 GPL/LGPL の表記が無いかを調べます。ヒットしたら、選ばないデュアルライセンスの側（例: `self_cell` の GPL）かを確かめ、そうでなければ `blocked` に理由を書きます。
@@ -15,6 +16,39 @@ GPL/LGPL の表記が無いかを調べます。ヒットしたら、選ばな�
 ```sh
 grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~/.cargo/registry/src/*/<クレート>-<版>
 ```
+
+## 出す流れ
+
+1. 版を上げるリリース（`x.y.0`）では、[出す前の文書の確かめ](#出す前の文書の確かめ)を済ませ、直した文書を作業の枝に入れます。
+2. 版を上げ（[版と配布物](#版と配布物)）、main 向けの PR を作ります。PR の CI が試験を回し、配る物もビルドします（[配る物をビルドする場所と、受け取る道](#配る物をビルドする場所と受け取る道)）。
+3. Actions の「配布物の作成」を、作業の枝から dry-run=true（リリースの下書きを作らない試し運転）で動かし、配る物を確かめます。
+4. PR の CI が全部成功したら、PR を main にマージします。
+5. main から「配布物の作成」を dry-run=false で動かします。environment の承認のあとに、リリースの下書きができます。
+6. 下書きを確かめ、本文を書いて公開します。
+
+各段の細かい手順は[GitHub の設定と起動](#github-の設定と起動)にあります。
+
+## 出す前の文書の確かめ
+
+版を上げるリリース（`0.6.0` のように末尾が 0 の版）では、main 向けの PR を作る前（配布のワークフローを試し運転で回す前）に、
+公開している文書を全部、その版の変更の記録・画面の文字・コードと照らし、古い手順と抜けを直して、同じ PR に入れます。
+使う人向けの文書は配る物（zip・インストーラー）にもそのまま入る（[版と配布物](#版と配布物)）ので、出した版の配布物の中の文書は、あとから直せません。
+
+確かめる文書:
+
+- スタンドアロン（このリポジトリ）: `README.md`・`README.en.md`、`docs/` の日本語と `docs/en/`、`CHANGELOG.md`、コードの中の README（`crates/` と `tools/` の下の `README.md`・`smart.README.md`）、
+  `plugin/` の `SKILL.md`、許諾の表記（`THIRD_PARTY.md`・`crates/` の下の `THIRD-PARTY-NOTICES.md`）
+- Unity ブリッジ（YoluPainter-UnityBridge）: `README.md`・`Editor/LiveLink/README.md`・`licence.md`・`Documentation~/THIRD_PARTY.md`。スタンドアロンと同じ版で出すので、一緒に確かめます
+
+確かめ方（1 つの文書ごとに、頭から）:
+
+1. 確かめられる主張に印を付けます: ファイル・型・モジュールの名前と置き場、コマンドと引数、ワークフローの入力とジョブの名前、数・既定値・版、画面の名前と操作の順。
+2. 1 つずつ実物と照らします: 画面の文字（`crates/yolu-app/src` の `lang.pick(日, 英)`・メニュー・ツールチップ）、コードと試験、`.github/workflows/`・`crates/xtask`・`tools/`、
+   その版の `CHANGELOG.md`、コミットの本文（`git log <前の版のタグ>..HEAD -- <道>`）。
+3. 古い所・誤り・抜け（その版で足した機能の説明が無い所）を直します。実物で確かめられなかった事は書きません。
+4. 言葉を画面にそろえます（レイヤー・ツール・ウィンドウ・アイランド・フォント・キャンバス。ビルドの意味で「組む」と書かない）。
+5. 試験で見張れる所は回します: `cargo test -p xtask`（配る文書の一覧と、入れる文書の相対リンクが配布物の中で切れないこと）、
+   `cargo test -p yolu-io --test ylp format_doc`（`docs/YLP_FORMAT.md` の版とエントリが実装と合うこと）、許諾を変えたら `cargo xtask preflight --only licenses`。
 
 ## 版と配布物
 
@@ -64,7 +98,7 @@ URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<�
 ### PDB の付属物
 
 クラッシュの記録は各フレームの番地と実行ファイルの基底の番地（`Image base`）を書くので、配布物の PDB があれば、同じ版の関数名・行へ引けます。
-`.github/workflows/release.yml` の Windows のビルドは、`cargo xtask build` の前に `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`・`CARGO_PROFILE_RELEASE_STRIP=none` を環境に置き
+`.github/workflows/dist-build.yml` の Windows のビルドは、`cargo xtask build` の前に `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`・`CARGO_PROFILE_RELEASE_STRIP=none` を環境に置き
 （命令は変えず、行番号つきの PDB を実行ファイルとは別に作る）、`cargo xtask installer` のあとに `cargo xtask symbols` で `yolupainter.pdb` だけを入れた
 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` を `target/dist` に作ります。Release の付属物としては載りますが、zip・インストーラーには入らず、
 更新の対象ではありません（署名つきの更新情報に載せず、アプリは取りに行きません）。`verify` は、通常のファイルで、空でなく、大きさの上限内で、中身が `yolupainter.pdb` だけであることを見ます。
@@ -173,11 +207,14 @@ cargo xtask preflight --only version --kind prerelease
 配る物（zip・インストーラー）は、**main 向けの PR の CI** がビルドします。配布（`release.yml`）は、同じ木の物があれば**ビルドし直さずに受け取ります**。
 同じ内容を PR の CI と配布で 2 度ビルドするのは無駄で、試験を通した物と配る物が別のビルドになるためです。
 
-- `ci.yml` は main への push では動かしません（main は CI を通した PR からしか変わりません）。main 向けの、同じリポジトリの枝からの PR だけ、試験のジョブと並べて「配る物のビルド」
+- `ci.yml` は main への push では動かしません（main は CI を通した PR からしか変わりません）。代わりに `main-tested.yml` が、main の木がマージした PR の先頭の木と同じで、
+  その PR の CI が成功しているかだけを確かめます（ビルドし直しません。README の CI の印はこの結果です）。
+  PR の CI（`ci.yml`）は、main 向けの、同じリポジトリの枝からの PR のときだけ、試験のジョブと並べて「配る物のビルド」
   （`dist-plan` → `dist`）を走らせます（待ち時間は延びません）。フォークの PR ではビルドしません。
 - ビルドの手順は `.github/workflows/dist-build.yml` の 1 つで、`ci.yml` と `release.yml` の両方が呼びます。対象の並びは `tools/dist-targets.json` の 1 か所です
   （今は Windows だけ。Linux は `release.yml` の入力 `linux` が入のときだけで、CI ではビルドしません。対象を足したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
-  手順は 診断用の ID（`tools/dist.py revision`）→ `cargo xtask preflight` → `cargo xtask build --release --require-update-key` → `bundle` → `installer`（Windows）→ 目録（`tools/dist.py catalog`）→ 成果物のアップロードです。
+  手順は 診断用の ID（`tools/dist.py revision`）→ `cargo xtask preflight --target <対象>` → `cargo xtask build --release`（PR の CI と dry-run=false の配布は `--require-update-key` も付け、公開鍵が空なら止めます）
+  → `bundle` → `installer`（Windows。先に NSIS 3.11 を確かめます）→ `mcpb`・`symbols`（Windows）→ 目録（`tools/dist.py catalog`）→ 成果物のアップロードです。
 - 成果物の名前は `dist-<木>-<対象>`（保存 14 日）。木は `git rev-parse HEAD^{tree}` で、PR の CI は merge の commit の木です。中に `catalog.json`
   （木・commit・アプリに埋めた ID の元の commit・版・対象・組み込んだ更新用の公開鍵・各ファイルの SHA-256 と大きさ・rustc・runner）が入ります。
 - アプリの版の表示（「0.4.0 · a1b2c3d」）とクラッシュ報告の `Git:` の ID は、PR の CI では**PR の先頭の commit**です。PR の CI がビルドするのは merge の commit
@@ -188,7 +225,7 @@ cargo xtask preflight --only version --kind prerelease
   - その実行の `head_sha`（PR の先頭の commit）の木が、GitHub の API で確かめて、成果物の名前の木と同じ
   - 成果物が期限切れでなく、GitHub が記録した digest があって落とした zip と同じ（digest の記録が無い成果物は確かめようが無いので受け取らない）で、目録の木・対象・組み込んだ公開鍵（いまのリポジトリ変数と同じ）・各ファイルの SHA-256 が合う
   - 全部の対象が同じ 1 つの実行にそろっている
-- そろえば `build`（ビルド）を飛ばし、`metadata` が目録の SHA-256 をもう一度確かめて `target/dist` に集めます。そこから先（未署名の更新情報の確認・Draft の署名と作成）はビルドした場合と同じです。
+- そろえば `build`（ビルド）を飛ばし、`metadata` が目録の SHA-256 をもう一度確かめて `target/dist` に集めます。そこから先（未署名の更新情報の確認・リリースの下書きの署名と作成）はビルドした場合と同じです。
   そろわなければ（木が違う・期限切れ・成功でない・Linux を足した・鍵が変わった・API が失敗した）、いつもどおり同じ手順でビルドします。理由は実行の Summary に 1 行ずつ出ます。
   入力 `rebuild` を入にすると、探さずに必ずビルドします。
 - 配布のワークフロー（`release.yml`・`dist-build.yml`）はキャッシュを使いません（Actions のキャッシュ・rust-cache・sccache）。汚染されたキャッシュが配る物に入る道を作らないためで、
@@ -234,8 +271,8 @@ cargo xtask preflight --only version --kind prerelease
 
 | 候補 | 認証なしで引けるか | 回数の上限 | キャッシュ | 壊れにくさ | 署名との関係 | 公開の順・運用 |
 |---|---|---|---|---|---|---|
-| **固定のタグの Release の資産**（採用） | 引ける（stable の道と同じ種類の URL） | 無い（Web の配布の道で、API の回数制限の外） | 最初の応答は `no-cache`（stable の道で確かめた）。置き換えは資産の削除と再登録なので、古い写しが返る見込みは低い（置き換えの反映の遅れは測っていない） | アプリが決めた更新情報の形をそのまま返す。GitHub の API の JSON の形に依存しない | 原本の署名つきの更新情報。stable と同じ鍵・同じ形で、アプリは追加の仕組み無しに検証できる | 公開（published）のときに 1 回だけ上書き。Draft のうちは置き場が動かない。置き場の Release を 1 つ持つ |
-| GitHub の API で最新の prerelease を引く（`releases`） | 引ける（認証なし） | 認証なしは 1 時間 60 回・IP ごと。共有の回線の利用者がまとめて止まる | API の応答に依存 | Release の本文などを含む大きな JSON の形・ページ送り・並び（作成日順で stable と混ざる）に依存する | API の応答は署名の外。結局、更新情報を取る 2 回目の通信が要る | Draft は認証が無いと見えない。置き場の更新の手間は要らない |
+| **固定のタグの Release の資産**（採用） | 引ける（stable の道と同じ種類の URL） | 無い（Web の配布の道で、API の回数制限の外） | 最初の応答は `no-cache`（stable の道で確かめた）。置き換えは資産の削除と再登録なので、古い写しが返る見込みは低い（置き換えの反映の遅れは測っていない） | アプリが決めた更新情報の形をそのまま返す。GitHub の API の JSON の形に依存しない | 原本の署名つきの更新情報。stable と同じ鍵・同じ形で、アプリは追加の仕組み無しに検証できる | 公開（published）のときに 1 回だけ上書き。リリースの下書きのうちは置き場が動かない。置き場の Release を 1 つ持つ |
+| GitHub の API で最新の prerelease を引く（`releases`） | 引ける（認証なし） | 認証なしは 1 時間 60 回・IP ごと。共有の回線の利用者がまとめて止まる | API の応答に依存 | Release の本文などを含む大きな JSON の形・ページ送り・並び（作成日順で stable と混ざる）に依存する | API の応答は署名の外。結局、更新情報を取る 2 回目の通信が要る | 下書きは認証が無いと見えない。置き場の更新の手間は要らない |
 | `releases.atom`（フィード）を読む | 引ける | 無い | フィードのキャッシュに依存 | XML の解析と依存の追加。項目から prerelease かを確実に見分けられる保証が無い | 署名の外の指し示しで、2 回目の通信が要る | 置き場の更新の手間は要らない |
 | リポジトリのファイル（`main` の raw）に置く | 引ける | 無い | 数分のキャッシュ | ファイル名は固定 | 署名つきの更新情報を置ける | 保護された `main` へワークフローが push することになり、PR 必須の運用と合わない |
 
@@ -247,8 +284,9 @@ cargo xtask preflight --only version --kind prerelease
 
 1. 作業ブランチで `Cargo.toml` の workspace.package.version を `0.4.0-rc.1` のように `alpha.N`・`beta.N`・`rc.N` の版にし、`Cargo.lock` を更新してコミットし、main 向けの PR を出します
    （CI が配る物をビルドします。`cargo xtask preflight --kind prerelease` で版の形も確かめられます）。
-2. Actions の「配布物の作成」を kind=prerelease で、まず dry-run=true、次に dry-run=false（environment の承認）で動かします。Draft Release が prerelease の印つきで出ます。
-3. 実機の確認のあとに Draft を公開します。**公開すると `beta-channel.yml` が動き**、公開した Release の配布物をすべて取り、公開鍵だけで署名・版・大きさ・SHA-256・梱包の中身を確かめ直して
+2. Actions の「配布物の作成」を kind=prerelease で、まず作業の枝から dry-run=true の試し運転をします。PR を main にマージしたあと、main から dry-run=false（environment の承認。`main` からだけ動かせます）で動かすと、
+   リリースの下書きが prerelease の印つきで出ます。
+3. 実機の確認のあとに下書きを公開します。**公開すると `beta-channel.yml` が動き**、公開した Release の配布物をすべて取り、公開鍵だけで署名・版・大きさ・SHA-256・梱包の中身を確かめ直して
    （`cargo xtask beta-channel`）、`updater-beta` の Release の `updater-v1.json` を上書きします（初めてなら Release を作ります）。
    置き場の Release は毎回 prerelease・「最新の Release」にしない設定へ付け直すので、stable の `releases/latest` は動きません。
 4. 「試験版を使う」を入れたアプリが、次の更新の確かめで新しい試験版を見つけます。入れていない人には何も変わりません。
@@ -308,7 +346,7 @@ cargo xtask pubkey --key-file /secure/location/update-private-key.hex
 アプリは、ビルド時の環境変数 `YOLUPAINTER_UPDATE_PUBLIC_KEY` に入れた公開鍵だけを信じ（`yolu_update::embedded_public_key`）、
 公開鍵を組み込んでいないビルド（ソースからの手元のビルドなど）は、ヘルプのメニューの更新の項目も初回の問いも出さず、通信もしません。
 `cargo xtask build` はこの環境変数を検査し、空の値（GitHub の未設定の変数）は未設定として扱い、入っているのに鍵として使えない値
-（長さ・形式が違う、弱い鍵）はビルドを止めます。Draft を作る配布では `--require-update-key` を付けて、未設定も止めます
+（長さ・形式が違う、弱い鍵）はビルドを止めます。リリースの下書きを作る配布では `--require-update-key` を付けて、未設定も止めます
 （更新できないアプリを配らないため）。更新サーバーから公開鍵を受け取る設計にはしないでください。
 鍵の変更は既存アプリの信頼する公開鍵も変える必要があり、自動の鍵更新は未対応です。
 
@@ -334,27 +372,30 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
 
 ## GitHub の設定と起動
 
-1. リポジトリに environment `release` を作り、承認者と利用可能なブランチ／タグを制限します。
+1. リポジトリに environment `release` を作り、承認者を決め、利用できるブランチを `main`、タグを `v*` に制限します。
 2. **environment の secret** `YOLUPAINTER_UPDATE_PRIVATE_KEY` に秘密鍵ファイルの内容を保存します。リポジトリ全体の secret には置きません。
 3. リポジトリの変数（Variables）`YOLUPAINTER_UPDATE_PUBLIC_KEY` に公開鍵の hex を保存します。公開鍵は秘密ではありません。
    配る物のビルドが、この値をアプリへ組み込みます（main 向けの PR の CI のビルドと、dry-run=false の配布のビルドでは、空だと止まります。成果物の目録にも載り、変数を変えると、PR の CI の成果物は受け取らずビルドし直します）。
-   draft ジョブは署名の直後にこの公開鍵で `verify` を実行し、通らなければ Draft を作りません。
-4. Actions の「配布物の作成」で配布対象のコミットを含むブランチ／タグを選び、kind を prerelease または stable にします。
+   draft ジョブは署名の直後にこの公開鍵で `verify` を実行し、通らなければリリースの下書きを作りません。
+4. Actions の「配布物の作成」を開き、kind を prerelease または stable にします。
    版が `0.4.0-rc.1` のような試験版なら prerelease、`0.4.0` のようにプレリリース識別子のない正式版の形なら **stable** を選びます。
-   kind の既定は prerelease なので、正式版の形の版を既定のまま動かすと preflight の version で止まります（止まるのは Draft を作る前です）。
-5. 最初は **dry-run=true（既定）** で実行します。同じ木の物が main 向けの PR の CI にあれば受け取り（[配る物をビルドする場所と、受け取る道](#配る物をビルドする場所と受け取る道)）、無ければ Windows（`linux` が入なら Linux も）をビルドし、未署名 JSON を含む `release-preview` artifact を作ります。secret に触れず、Release は作りません。
-6. artifact を取得し、両 OS で展開・起動・同梱文書・許諾全文を確認します。Linux 実行ファイルには実行権限があります。
+   kind の既定は prerelease なので、正式版の形の版を既定のまま動かすと preflight の version で止まります（止まるのはリリースの下書きを作る前です）。
+   動かす枝は、dry-run=true の試し運転なら配布対象の枝を選べます。**dry-run=false は `main` からだけ**です（リリースの下書きのジョブが environment `release` を使い、1. の制限に合わない枝からは environment に断られます）。
+   なので本番は、PR を main にマージして CI の確かめが済んでから動かします。
+5. 最初は **dry-run=true（既定。リリースの下書きを作らない試し運転）** で実行します。同じ木の物が main 向けの PR の CI にあれば受け取り（[配る物をビルドする場所と、受け取る道](#配る物をビルドする場所と受け取る道)）、無ければ Windows（`linux` が入なら Linux も）をビルドし、未署名 JSON を含む `release-preview` artifact を作ります。secret に触れず、Release は作りません。
+6. artifact を取得し、ビルドした OS（Windows。入力 `linux` を入にしたときは Linux も）で展開・起動・同梱文書・許諾全文を確認します。Linux 実行ファイルには実行権限があります。
    Windows はインストーラーで、インストール・起動・更新（前の版のインストーラーで入れた上に入れる）・アンインストールを通します。
-7. 同じコミットに対して dry-run=false で実行し、environment の承認を行います。署名付き JSON とアーカイブを **Draft Release** にアップロードします。
-8. 署名と各配布物の SHA-256・サイズはワークフローが公開鍵で確認済みです。Draft のタグと対象コミット、版、prerelease の状態を確認します。
-   本文は空で作られるので、両 OS の実機確認後、管理者が本文を書き、README の「Code signing policy」の節へのリンクを入れて手で公開します。
+7. PR を main にマージしたあと、main から kind を合わせて dry-run=false で実行し、environment の承認を行います。署名付き JSON とアーカイブを **リリースの下書き（Draft Release）** にアップロードします。
+   マージのあとの main の木（ファイルの中身）が PR の先頭の木と同じなら（`main-tested.yml` が確かめます）、PR の CI の成果物を受け取れます。違えば、いつもどおりビルドし直します（[配る物をビルドする場所と、受け取る道](#配る物をビルドする場所と受け取る道)）。
+8. 署名と各配布物の SHA-256・サイズはワークフローが公開鍵で確認済みです。下書きのタグと対象コミット、版、prerelease の状態を確認します。
+   本文は空で作られるので、実機確認のあと、管理者が本文を書いて手で公開します（コード署名を付けるようになったら、README の「Code signing policy」の節へのリンクも本文に入れます。節の準備は[コード署名](#コード署名signpath-foundation)）。
    **公開した時点で `releases/latest` が切り替わり、アプリの更新の確認がその版を見つけ始めます**（stable のみ。prerelease は `latest` に出ません）。
    prerelease を公開すると `.github/workflows/beta-channel.yml` が動き、試験版の置き場を更新します（[試験版の置き場](#試験版の置き場)）。
 
 同時実行は 1 本です。実行中の処理は自動取消しません。既存の同じタグの Release は上書きしません。
-失敗後は Draft とタグの状態を確認してから再実行してください。非公開リポジトリでは認証と Actions の利用枠にも注意してください。
+失敗後はリリースの下書きとタグの状態を確認してから再実行してください。非公開リポジトリでは認証と Actions の利用枠にも注意してください。
 版の形と kind は組になっています。kind=prerelease は `alpha.N`・`beta.N`・`rc.N` の版だけ、kind=stable はプレリリース識別子のない版だけを受け付けます
-（`cargo xtask preflight` の version が確かめ、合わなければ Draft を作る前に止まります）。
+（`cargo xtask preflight` の version が確かめ、合わなければリリースの下書きを作る前に止まります）。
 
 ## コード署名（SignPath Foundation）
 
@@ -365,22 +406,23 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
 |---|---|
 | OSI の許諾・自作のコードだけ | [MIT](../LICENSE)。依存の許諾は `THIRD_PARTY.md` と許諾の全文で追う |
 | 製品名と版のメタデータ | 実行ファイル（`build.rs`）とインストーラー（NSIS）が、製品名 `YoluPainter` と同じ版を持つ |
-| 聞かずに通信しない | 更新の確認は初回の問いで「はい」を選んだときと、手で押したときだけ。README の「Code signing policy」にプライバシーの一文 |
+| 聞かずに通信しない | 更新の確認は初回の問いで「はい」を選んだときと、手で押したときだけ。プライバシーは README の「プライバシー」の節に一文、全文は [INSTALL.md](INSTALL.md) |
 | システムの変更の告知・アンインストール | `.ylp` の関連付けは選択肢で、無音では付けない（今の状態のまま）。アンインストーラーは入れたファイルだけを消し、利用者のデータは聞く |
-| Code signing policy の表記 | README の節（役割とプライバシー）。定型文は、申し込みが通ってから足す |
-| 検証できるビルド・リリースごとの手動の承認 | `配布物の作成` ワークフロー（手で起動・dry-run が既定・Draft を作るには environment の承認） |
+| Code signing policy の表記 | README にこの節は今ありません。申し込みの前に、署名の役割（作者・レビュー・署名の承認）とプライバシーを書いた節を足します。定型文は、申し込みが通ってから足す |
+| 検証できるビルド・リリースごとの手動の承認 | `配布物の作成` ワークフロー（手で起動・dry-run が既定・リリースの下書きを作るには environment の承認） |
 
 管理者がすること:
 
 1. 最初のリリース（署名なし）を出し、使われ始めるのを待ちます（申し込みは「署名する形で、もうリリースされている」ことが条件です）。
-2. GitHub と SignPath の全員で多要素認証を有効にし、SignPath Foundation へ申し込みます。
-3. 通ったら、README の「Code signing policy」の節の先頭へ次の定型文を足し、Release の本文からもこの節へリンクします。
+2. README に「Code signing policy」の節（署名の役割とプライバシー）を足します。
+3. GitHub と SignPath の全員で多要素認証を有効にし、SignPath Foundation へ申し込みます。
+4. 通ったら、README の「Code signing policy」の節の先頭へ次の定型文を足し、Release の本文からもこの節へリンクします。
 
    ```
    Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
    ```
 
-4. SignPath 側で、署名する実行ファイルの製品名を `YoluPainter` に、製品の版をビルド内で同じ値に強制する設定（artifact configuration）を作り、
+5. SignPath 側で、署名する実行ファイルの製品名を `YoluPainter` に、製品の版をビルド内で同じ値に強制する設定（artifact configuration）を作り、
    ワークフローに署名の段階を足します。署名する物は `yolupainter.exe`（zip とインストーラーに入れる前）とインストーラー本体です。
    署名した実行ファイルを入れた zip・インストーラーを作り直し、更新情報（`updater-json`）の SHA-256 は署名後の配布物から作ります。
    インストーラーが書き出すアンインストーラーの署名は NSIS の `!uninstfinalize` を使う手順になるので、この段階で設計します。
@@ -393,7 +435,7 @@ cargo test -p yolu-update -p xtask --locked
 python3 tools/test-release-tools.py
 python3 tools/test-dist.py
 cargo xtask preflight
-actionlint .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/dist-build.yml .github/workflows/beta-channel.yml
+actionlint .github/workflows/*.yml
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -410,5 +452,3 @@ WinHTTP は 5 回に絞る設定を試み、設定できない環境では OS �
 置き場のインストーラーと書きかけは、次のダウンロードと、アプリの起動時（今の版以下のものだけ。走っている最中のものは次の起動で）に片付けます。
 アプリ自身は実行ファイルを置き換えません。インストールした Windows はインストーラーを無音で走らせて終了し（インストーラーが終了を待って入れ、`/RUN` で起こし直す）、
 zip・Linux はその版のリリースのページを開きます。実行ファイルの隣に `uninstall.exe` があるかで、インストーラーで入れた物かを見分けます。
-
-ワークフローの構成は [ALCOM の配布ワークフロー](https://github.com/vrc-get/vrc-get/blob/master/.github/workflows/publish-gui.yml)を参考にしています。
