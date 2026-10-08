@@ -128,6 +128,26 @@ pub fn all() -> &'static [Doc] {
             ja: ja!("LIVELINK.md"),
             en: en!("LIVELINK.md"),
         },
+        Doc {
+            name: "guide-fill",
+            ja: ja!("GUIDE_FILL.md"),
+            en: en!("GUIDE_FILL.md"),
+        },
+        Doc {
+            name: "guide-paths",
+            ja: ja!("GUIDE_PATHS.md"),
+            en: en!("GUIDE_PATHS.md"),
+        },
+        Doc {
+            name: "guide-3d",
+            ja: ja!("GUIDE_3D.md"),
+            en: en!("GUIDE_3D.md"),
+        },
+        Doc {
+            name: "guide-files",
+            ja: ja!("GUIDE_FILES.md"),
+            en: en!("GUIDE_FILES.md"),
+        },
     ];
     DOCS
 }

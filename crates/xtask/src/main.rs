@@ -259,6 +259,14 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/en/BUILDING.md",
     "docs/LIVELINK.md",
     "docs/en/LIVELINK.md",
+    "docs/GUIDE_FILL.md",
+    "docs/GUIDE_PATHS.md",
+    "docs/GUIDE_3D.md",
+    "docs/GUIDE_FILES.md",
+    "docs/en/GUIDE_FILL.md",
+    "docs/en/GUIDE_PATHS.md",
+    "docs/en/GUIDE_3D.md",
+    "docs/en/GUIDE_FILES.md",
 ];
 /// docs/ にあって配布物へは入れないファイル（開発・リリースの手順）。docs/ に足したファイルは、入れるか外すかのどちらかに必ず載せる（試験が確かめる）。
 const LEFT_OUT_DOCS: &[&str] = &["docs/DEVELOPMENT.md", "docs/RELEASING.md"];

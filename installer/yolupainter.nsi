@@ -204,6 +204,14 @@ FunctionEnd
   !insertmacro ${ACTION} "docs\en" "BUILDING.md"
   !insertmacro ${ACTION} "docs" "LIVELINK.md"
   !insertmacro ${ACTION} "docs\en" "LIVELINK.md"
+  !insertmacro ${ACTION} "docs" "GUIDE_FILL.md"
+  !insertmacro ${ACTION} "docs" "GUIDE_PATHS.md"
+  !insertmacro ${ACTION} "docs" "GUIDE_3D.md"
+  !insertmacro ${ACTION} "docs" "GUIDE_FILES.md"
+  !insertmacro ${ACTION} "docs\en" "GUIDE_FILL.md"
+  !insertmacro ${ACTION} "docs\en" "GUIDE_PATHS.md"
+  !insertmacro ${ACTION} "docs\en" "GUIDE_3D.md"
+  !insertmacro ${ACTION} "docs\en" "GUIDE_FILES.md"
 !macroend
 !macro InstallDoc DIR NAME
   SetOutPath "$INSTDIR\${DIR}"
