@@ -10,7 +10,7 @@ Linux の既存依存 `wayland-protocols-plasma` と `wayland-protocols-misc` �
 `tools/licenses-reviewed.json` の `blocked` に記録しています。条件を確認するか依存構成を変更するまで、Linux の `bundle` は停止し、
 入力 `linux` を入にした配布も進みません。`blocked` を外すのは、生成バインディングへの条件の適用を確認した後だけです。
 
-依存を追加・更新して `licenses-reviewed.json` へ承認を足すときは、クレートの宣言だけでなく、同梱する XML・ソース全体に
+依存を追加・更新して `licenses-reviewed.json` へ承認を追加するときは、クレートの宣言だけでなく、同梱する XML・ソース全体に
 GPL/LGPL の表記が無いかを調べます。ヒットしたら、選ばないデュアルライセンスの側（例: `self_cell` の GPL）かを確かめ、そうでなければ `blocked` に理由を書きます。
 
 ```sh
@@ -45,7 +45,7 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 1. 確かめられる主張に印を付けます: ファイル・型・モジュールの名前と置き場、コマンドと引数、ワークフローの入力とジョブの名前、数・既定値・版、画面の名前と操作の順。
 2. 1 つずつ実物と照らします: 画面の文字（`crates/yolu-app/src` の `lang.pick(日, 英)`・メニュー・ツールチップ）、コードと試験、`.github/workflows/`・`crates/xtask`・`tools/`、
    その版の `CHANGELOG.md`、コミットの本文（`git log <前の版のタグ>..HEAD -- <道>`）。
-3. 古い所・誤り・抜け（その版で足した機能の説明が無い所）を直します。実物で確かめられなかった事は書きません。
+3. 古い所・誤り・抜け（その版で追加した機能の説明が無い所）を直します。実物で確かめられなかった事は書きません。
 4. 言葉を画面にそろえます（レイヤー・ツール・ウィンドウ・アイランド・フォント・キャンバス。ビルドの意味で「組む」と書かない）。
 5. 試験で見張れる所は回します: `cargo test -p xtask`（配る文書の一覧と、入れる文書の相対リンクが配布物の中で切れないこと）、
    `cargo test -p yolu-io --test ylp format_doc`（`docs/YLP_FORMAT.md` の版とエントリが実装と合うこと）、許諾を変えたら `cargo xtask preflight --only licenses`。
@@ -76,10 +76,10 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 実行ファイル（アプリの `yolupainter` と、コマンドラインと MCP サーバーの `yolupainter-cli`。`build` が同じ命令でビルドします）、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
 同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
 開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
-`docs/` に足したファイルは、そのどちらかへ必ず載せます（載せ忘れると `bundle`・`installer` が止まり、`cargo test -p xtask` も落ちます）。
+`docs/` に追加したファイルは、そのどちらかへ必ず載せます（載せ忘れると `bundle`・`installer` が止まり、`cargo test -p xtask` も落ちます）。
 入れる物は `.md` の文書だけで、画像など `.md` でない物は `LEFT_OUT_DOCS` へ載せて入れません（更新で前の版にだけあった文書を消すインストーラーの掃除が `.md` だけを対象にするため。入れる必要が出たら、`installer/yolupainter.nsi` の `RemoveOldDocs` も直します。試験が断ります）。
 入れる文書の相対のリンクが配布物の中で切れないことも試験が確かめるので、入れない物（`docs/DEVELOPMENT.md`・`CHANGELOG.md`・`crates/` の README など）へは GitHub の URL で張ります。
-インストーラーのスクリプト `installer/yolupainter.nsi` の `DocFiles` にも同じ一覧があり、試験が突き合わせます（文書を足したら両方に足します）。
+インストーラーのスクリプト `installer/yolupainter.nsi` の `DocFiles` にも同じ一覧があり、試験が突き合わせます（文書を追加したら両方に追加します）。
 `tools/third-party.py` が対象ごとに許諾を照合し、未確認の依存や原文の不一致では束ねません。
 更新クレート（`yolu-update`）はアプリに組み込まれ、コマンドライン（`yolu-cli`）は同じ配布物に入るので、その依存の許諾全文も含めます（`--include-update --include-cli`）。
 `xtask` 自体は配りません。独自の `CARGO_TARGET_DIR` は使わず、出力を `target/` に揃えてください。
@@ -212,7 +212,7 @@ cargo xtask preflight --only version --kind prerelease
   PR の CI（`ci.yml`）は、main 向けの、同じリポジトリの枝からの PR のときだけ、試験のジョブと並べて「配る物のビルド」
   （`dist-plan` → `dist`）を走らせます（待ち時間は延びません）。フォークの PR ではビルドしません。
 - ビルドの手順は `.github/workflows/dist-build.yml` の 1 つで、`ci.yml` と `release.yml` の両方が呼びます。対象の並びは `tools/dist-targets.json` の 1 か所です
-  （今は Windows だけ。Linux は `release.yml` の入力 `linux` が入のときだけで、CI ではビルドしません。対象を足したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
+  （今は Windows だけ。Linux は `release.yml` の入力 `linux` が入のときだけで、CI ではビルドしません。対象を追加したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
   手順は 診断用の ID（`tools/dist.py revision`）→ `cargo xtask preflight --target <対象>` → `cargo xtask build --release`（PR の CI と dry-run=false の配布は `--require-update-key` も付け、公開鍵が空なら止めます）
   → `bundle` → `installer`（Windows。先に NSIS 3.11 を確かめます）→ `mcpb`・`symbols`（Windows）→ 目録（`tools/dist.py catalog`）→ 成果物のアップロードです。
 - 成果物の名前は `dist-<木>-<対象>`（保存 14 日）。木は `git rev-parse HEAD^{tree}` で、PR の CI は merge の commit の木です。中に `catalog.json`
@@ -226,7 +226,7 @@ cargo xtask preflight --only version --kind prerelease
   - 成果物が期限切れでなく、GitHub が記録した digest があって落とした zip と同じ（digest の記録が無い成果物は確かめようが無いので受け取らない）で、目録の木・対象・組み込んだ公開鍵（いまのリポジトリ変数と同じ）・各ファイルの SHA-256 が合う
   - 全部の対象が同じ 1 つの実行にそろっている
 - そろえば `build`（ビルド）を飛ばし、`metadata` が目録の SHA-256 をもう一度確かめて `target/dist` に集めます。そこから先（未署名の更新情報の確認・リリースの下書きの署名と作成）はビルドした場合と同じです。
-  そろわなければ（木が違う・期限切れ・成功でない・Linux を足した・鍵が変わった・API が失敗した）、いつもどおり同じ手順でビルドします。理由は実行の Summary に 1 行ずつ出ます。
+  そろわなければ（木が違う・期限切れ・成功でない・Linux を追加した・鍵が変わった・API が失敗した）、いつもどおり同じ手順でビルドします。理由は実行の Summary に 1 行ずつ出ます。
   入力 `rebuild` を入にすると、探さずに必ずビルドします。
 - 配布のワークフロー（`release.yml`・`dist-build.yml`）はキャッシュを使いません（Actions のキャッシュ・rust-cache・sccache）。汚染されたキャッシュが配る物に入る道を作らないためで、
   `cargo xtask preflight` の `workflows` が確かめます。PR の CI の試験のジョブは今までどおりキャッシュを使います。
@@ -315,7 +315,7 @@ cargo xtask preflight --only version --kind prerelease
 ## 更新情報の互換
 
 更新クレートは、署名が通った更新情報のうち知らない target の配布物を読み飛ばし、自分の target の配布物だけを厳密に確かめます。
-macOS など対象を足した版の更新情報を、すでに配った版が拒否することはありません。インストーラーも、知らない鍵の配布物として旧いクライアントが読み飛ばします。配布物の数の上限は固定値（`MAX_ASSETS`）です。
+macOS など対象を追加した版の更新情報を、すでに配った版が拒否することはありません。インストーラーも、知らない鍵の配布物として旧いクライアントが読み飛ばします。配布物の数の上限は固定値（`MAX_ASSETS`）です。
 
 次の変更は schema を上げる必要があります。既存のクライアントは schema が違う更新情報を拒否し、そのまま古い版に残ります。
 
@@ -408,22 +408,22 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
 | 製品名と版のメタデータ | 実行ファイル（`build.rs`）とインストーラー（NSIS）が、製品名 `YoluPainter` と同じ版を持つ |
 | 聞かずに通信しない | 更新の確認は初回の問いで「はい」を選んだときと、手で押したときだけ。プライバシーは README の「プライバシー」の節に一文、全文は [INSTALL.md](INSTALL.md) |
 | システムの変更の告知・アンインストール | `.ylp` の関連付けは選択肢で、無音では付けない（今の状態のまま）。アンインストーラーは入れたファイルだけを消し、利用者のデータは聞く |
-| Code signing policy の表記 | README にこの節は今ありません。申し込みの前に、署名の役割（作者・レビュー・署名の承認）とプライバシーを書いた節を足します。定型文は、申し込みが通ってから足す |
+| Code signing policy の表記 | README にこの節は今ありません。申し込みの前に、署名の役割（作者・レビュー・署名の承認）とプライバシーを書いた節を追加します。定型文は、申し込みが通ってから追加します |
 | 検証できるビルド・リリースごとの手動の承認 | `配布物の作成` ワークフロー（手で起動・dry-run が既定・リリースの下書きを作るには environment の承認） |
 
 管理者がすること:
 
 1. 最初のリリース（署名なし）を出し、使われ始めるのを待ちます（申し込みは「署名する形で、もうリリースされている」ことが条件です）。
-2. README に「Code signing policy」の節（署名の役割とプライバシー）を足します。
+2. README に「Code signing policy」の節（署名の役割とプライバシー）を追加します。
 3. GitHub と SignPath の全員で多要素認証を有効にし、SignPath Foundation へ申し込みます。
-4. 通ったら、README の「Code signing policy」の節の先頭へ次の定型文を足し、Release の本文からもこの節へリンクします。
+4. 通ったら、README の「Code signing policy」の節の先頭へ次の定型文を追加し、Release の本文からもこの節へリンクします。
 
    ```
    Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
    ```
 
 5. SignPath 側で、署名する実行ファイルの製品名を `YoluPainter` に、製品の版をビルド内で同じ値に強制する設定（artifact configuration）を作り、
-   ワークフローに署名の段階を足します。署名する物は `yolupainter.exe`（zip とインストーラーに入れる前）とインストーラー本体です。
+   ワークフローに署名の段階を追加します。署名する物は `yolupainter.exe`（zip とインストーラーに入れる前）とインストーラー本体です。
    署名した実行ファイルを入れた zip・インストーラーを作り直し、更新情報（`updater-json`）の SHA-256 は署名後の配布物から作ります。
    インストーラーが書き出すアンインストーラーの署名は NSIS の `!uninstfinalize` を使う手順になるので、この段階で設計します。
    この署名の段階は、まだワークフローに入っていません。
