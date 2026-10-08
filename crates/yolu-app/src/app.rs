@@ -1520,6 +1520,22 @@ impl YoluApp {
         self.renderer3d.as_ref()?.read_paint_level(slot, level)
     }
 
+    /// 試験用: 塗った絵の重みの絵の 1 段の中身（1 テクセル 1 バイト、行は下から。大きさつき。塗り広げていなければ None）。
+    pub fn view3d_read_paint_weight_level(&self, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
+        self.renderer3d.as_ref()?.read_paint_weight_level(level)
+    }
+
+    /// 試験用: ほかのテクスチャセット（マテリアルの番号）の絵の重みの絵の 1 段の中身（絵を持っていなければ None）。
+    pub fn view3d_read_other_weight_level(
+        &self,
+        material: i32,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2])> {
+        self.renderer3d
+            .as_ref()?
+            .read_other_weight_level(material, level)
+    }
+
     /// 試験用: ほかのテクスチャセット（マテリアルの番号）の絵のチャンネルの 1 段の中身と、その縮めた段（絵を持っていなければ None）。
     pub fn view3d_read_other_level(
         &self,
