@@ -46,4 +46,8 @@ Drawing strokes, fills, selections, baking and opening another document. Point t
 ## More
 
 - `yolupainter://docs/mcp`: these tools and the connection.
-- `yolupainter://docs/guide`: how the app works (texture sets, layers, masks, effects, exports).
+- `yolupainter://docs/guide`: the user guide's entry page, listing its pages. Each page is its own resource:
+  `yolupainter://docs/guide-layers` (layers, masks, channels), `yolupainter://docs/guide-fill` (fill layers, filters and generators, assets, actions),
+  `yolupainter://docs/guide-files` (saving, exporting, PSD), `yolupainter://docs/guide-3d` (3D view, models, baking),
+  `yolupainter://docs/guide-paths`, `yolupainter://docs/guide-settings`, `yolupainter://docs/guide-start`, `yolupainter://docs/guide-paint`,
+  `yolupainter://docs/guide-select`, `yolupainter://docs/guide-keys`.

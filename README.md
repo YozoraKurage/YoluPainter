@@ -40,7 +40,7 @@ OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験は [docs/DEV
 
 ## 文書
 
-- [機能と操作](docs/GUIDE.md)
+- [使い方](docs/GUIDE.md)
 - [Unity との連携](docs/UNITY.md)（Live Link）
 - [コマンドラインと AI からの操作](docs/CLI.md)（`yolupainter-cli`・[MCP でつなぐ](docs/MCP.md)）
 - [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)、[.ylp の形式](docs/YLP_FORMAT.md)
