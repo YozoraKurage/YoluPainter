@@ -39,7 +39,9 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] } 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }   # Apache-2.0（eframe が使う版と同じ。起動のウィンドウを X11 に決めるため。新しい crate ではない）
-libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの記録。新しい crate ではなく、yolu-protocol も使う）
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"           # MIT OR Apache-2.0（落ちたときの記録: Linux はシグナルとバックトレース、macOS はバックトレース。Linux は空き容量・時刻も。新しい crate ではなく、yolu-protocol も使う）
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
