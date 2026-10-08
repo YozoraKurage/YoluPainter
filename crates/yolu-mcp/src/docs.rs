@@ -49,6 +49,36 @@ pub fn all() -> &'static [Doc] {
             en: en!("GUIDE.md"),
         },
         Doc {
+            name: "guide-start",
+            ja: ja!("GUIDE_START.md"),
+            en: en!("GUIDE_START.md"),
+        },
+        Doc {
+            name: "guide-paint",
+            ja: ja!("GUIDE_PAINT.md"),
+            en: en!("GUIDE_PAINT.md"),
+        },
+        Doc {
+            name: "guide-select",
+            ja: ja!("GUIDE_SELECT.md"),
+            en: en!("GUIDE_SELECT.md"),
+        },
+        Doc {
+            name: "guide-layers",
+            ja: ja!("GUIDE_LAYERS.md"),
+            en: en!("GUIDE_LAYERS.md"),
+        },
+        Doc {
+            name: "guide-settings",
+            ja: ja!("GUIDE_SETTINGS.md"),
+            en: en!("GUIDE_SETTINGS.md"),
+        },
+        Doc {
+            name: "guide-keys",
+            ja: ja!("GUIDE_KEYS.md"),
+            en: en!("GUIDE_KEYS.md"),
+        },
+        Doc {
             name: "cli",
             ja: ja!("CLI.md"),
             en: en!("CLI.md"),
@@ -106,11 +136,6 @@ pub fn all() -> &'static [Doc] {
         Doc {
             name: "recovery",
             ja: ja!("RECOVERY.md"),
-            en: None,
-        },
-        Doc {
-            name: "window",
-            ja: ja!("WINDOW.md"),
             en: None,
         },
         Doc {
