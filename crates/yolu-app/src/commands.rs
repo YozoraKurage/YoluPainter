@@ -13,14 +13,19 @@ use std::sync::OnceLock;
 
 use egui::Key;
 
+use yolu_core::geometry::AxisView;
+
 use crate::clipboard::ClipAction;
 use crate::keymap::Operation;
 use crate::lang::Lang;
 use crate::m2::Edit;
+use crate::mode::{EditorMode, ModeAction};
 use crate::pathtool::PathAction;
+use crate::pie::PieAction;
 use crate::prefs::PrefsAction;
 use crate::selection::{SelAction, SelEdit, SelUiOp};
 use crate::state::{Action, AppState, Tool};
+use crate::view3d::navigation::NavOp;
 
 /// 操作の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +61,14 @@ pub struct Command {
     pub name: Name,
     /// 割り当てを替えさせない（設定の画面で替えられない印）。
     pub locked: bool,
+    /// パイ・メニューから実行するときの `Action`（キーをビューが読む `Press` で、ビューの外からも実行できるもの。`action` を持つものは要らない）。
+    pub run: Option<fn() -> Action>,
+    /// パイメニューの項目に出す短い名前（日本語・英語。無ければ `label`）。
+    pub short: Option<(&'static str, &'static str)>,
+    /// この版では実行できない理由（日本語・英語）。パイの項目は押せず、ツールチップに理由を出す。
+    pub unavailable: Option<(&'static str, &'static str)>,
+    /// キーを押し続けたときの繰り返しの押しでも実行する（パイを開く操作は偽: 押したまま項目を選んで閉じたあと、繰り返しで開き直さない）。
+    pub repeats: bool,
 }
 
 impl Command {
@@ -75,6 +88,21 @@ impl Command {
         }
     }
 
+    /// パイ・メニューから実行する `Action`（`action` か `run`。どちらも無ければ None）。
+    pub fn runnable(&self) -> Option<Action> {
+        self.action.or(self.run).map(|make| make())
+    }
+
+    /// パイメニューの項目の短い名前（無ければ None。呼ぶ側は `label` を使う）。
+    pub fn short_label(&self, lang: Lang) -> Option<&'static str> {
+        self.short.map(|(ja, en)| lang.pick(ja, en))
+    }
+
+    /// この版では実行できない理由（実行できれば None）。
+    pub fn unavailable(&self, lang: Lang) -> Option<&'static str> {
+        self.unavailable.map(|(ja, en)| lang.pick(ja, en))
+    }
+
     /// 言語だけで引ける名前（`Action` の名前はメニューの引き当てに `AppState` が要るので、`OfAction` は None）。
     pub fn static_label(&self, lang: Lang) -> Option<&'static str> {
         match self.name {
@@ -92,6 +120,36 @@ const fn press(id: &'static str, make: fn() -> Action) -> Command {
         action: Some(make),
         name: Name::OfAction,
         locked: false,
+        run: None,
+        short: None,
+        unavailable: None,
+        repeats: true,
+    }
+}
+
+/// 名前を自分で持つ `Press`（メニューに同じ `Action` の項目が無いもの）。
+const fn press_named(
+    id: &'static str,
+    ja: &'static str,
+    en: &'static str,
+    make: fn() -> Action,
+) -> Command {
+    Command {
+        name: Name::Text(ja, en),
+        ..press(id, make)
+    }
+}
+
+/// パイメニューに短い名前で出る `Press`。
+const fn press_short(
+    id: &'static str,
+    (ja, en): (&'static str, &'static str),
+    short: (&'static str, &'static str),
+    make: fn() -> Action,
+) -> Command {
+    Command {
+        short: Some(short),
+        ..press_named(id, ja, en, make)
     }
 }
 
@@ -111,37 +169,46 @@ const fn read_by_view(id: &'static str, ja: &'static str, en: &'static str) -> C
         action: None,
         name: Name::Text(ja, en),
         locked: false,
+        run: None,
+        short: None,
+        unavailable: None,
+        repeats: true,
     }
 }
 
 const fn hold(id: &'static str, ja: &'static str, en: &'static str) -> Command {
     Command {
-        id,
         kind: Kind::Hold,
-        action: None,
-        name: Name::Text(ja, en),
-        locked: false,
+        ..read_by_view(id, ja, en)
     }
 }
 
 const fn gesture(id: &'static str, operation: Operation) -> Command {
     Command {
-        id,
         kind: Kind::Gesture,
-        action: None,
         name: Name::Mouse(operation),
-        locked: false,
+        ..read_by_view(id, "", "")
     }
 }
 
 const fn fixed(id: &'static str, key: Key, ja: &'static str, en: &'static str) -> Command {
     Command {
-        id,
         kind: Kind::Fixed(key),
-        action: None,
-        name: Name::Text(ja, en),
         locked: true,
+        ..read_by_view(id, ja, en)
     }
+}
+
+fn mode(m: EditorMode) -> Action {
+    Action::Mode(ModeAction::Set(m))
+}
+
+fn axis(view: AxisView) -> Action {
+    Action::View3dNav(NavOp::Axis(view))
+}
+
+fn pie(id: &str) -> Action {
+    Action::Pie(PieAction::Open(id.to_owned()))
 }
 
 fn edit(e: SelEdit) -> Action {
@@ -238,11 +305,15 @@ pub static COMMANDS: &[Command] = &[
     press("tool.path", || Action::SelectTool(Tool::Path)),
     press("tool.text", || Action::SelectTool(Tool::Text)),
     // ビューが押しを読む `Press`
-    read_by_view(
-        "view3d.frame_selected",
-        "選んだセットを収める",
-        "Frame Selected Set",
-    ),
+    Command {
+        run: Some(|| Action::View3dNav(NavOp::FrameSelected)),
+        short: Some(("収める", "Frame")),
+        ..read_by_view(
+            "view3d.frame_selected",
+            "選んだセットを収める",
+            "Frame Selected Set",
+        )
+    },
     read_by_view("transform.nudge_left", "移動 ←（1 px）", "Move ← (1 px)"),
     read_by_view("transform.nudge_right", "移動 →（1 px）", "Move → (1 px)"),
     read_by_view("transform.nudge_up", "移動 ↑（1 px）", "Move ↑ (1 px)"),
@@ -350,6 +421,86 @@ pub static COMMANDS: &[Command] = &[
         "操作をキャンセル",
         "Cancel Operation",
     ),
+    // モード（ペイント・編集・ポーズ）とモードのパイ
+    press_short(
+        "mode.paint",
+        ("ペイントのモード", "Paint Mode"),
+        ("ペイント", "Paint"),
+        || mode(EditorMode::Paint),
+    ),
+    press_short(
+        "mode.edit",
+        ("編集のモード", "Edit Mode"),
+        ("編集", "Edit"),
+        || mode(EditorMode::Edit),
+    ),
+    press_short(
+        "mode.pose",
+        ("ポーズのモード", "Pose Mode"),
+        ("ポーズ", "Pose"),
+        || mode(EditorMode::Pose),
+    ),
+    Command {
+        repeats: false,
+        ..press_named(
+            "mode.pie",
+            "モードのパイメニュー",
+            "Mode Pie Menu",
+            || pie("mode"),
+        )
+    },
+    // 3D の視点（視点のパイ。既定のキーは無い）
+    Command {
+        repeats: false,
+        ..press_named(
+            "view3d.pie",
+            "視点のパイメニュー",
+            "View Pie Menu",
+            || pie("view"),
+        )
+    },
+    press_short(
+        "view3d.view_front",
+        ("正面の視点", "Front View"),
+        ("正面", "Front"),
+        || axis(AxisView::Front),
+    ),
+    press_short(
+        "view3d.view_back",
+        ("背面の視点", "Back View"),
+        ("背面", "Back"),
+        || axis(AxisView::Back),
+    ),
+    press_short(
+        "view3d.view_right",
+        ("右の視点", "Right View"),
+        ("右", "Right"),
+        || axis(AxisView::Right),
+    ),
+    press_short(
+        "view3d.view_left",
+        ("左の視点", "Left View"),
+        ("左", "Left"),
+        || axis(AxisView::Left),
+    ),
+    press_short(
+        "view3d.view_top",
+        ("上の視点", "Top View"),
+        ("上", "Top"),
+        || axis(AxisView::Top),
+    ),
+    press_short(
+        "view3d.view_bottom",
+        ("下の視点", "Bottom View"),
+        ("下", "Bottom"),
+        || axis(AxisView::Bottom),
+    ),
+    // 正投影はこの版では入っていない（パイの項目は押せず、理由を出す）
+    Command {
+        short: Some(("正投影", "Orthographic")),
+        unavailable: Some(("この版ではまだ使えません", "Not available in this version")),
+        ..read_by_view("view3d.ortho", "正投影の切り替え", "Toggle Orthographic")
+    },
 ];
 
 /// 操作の全部。
@@ -493,10 +644,33 @@ mod tests {
             "transform.nudge_right_10",
             "transform.nudge_up_10",
             "transform.nudge_down_10",
+            // 正投影はこの版では実行できない（パイの項目は押せない）
+            "view3d.ortho",
         ]
         .into_iter()
         .collect();
         assert_eq!(read_by_view, expected);
+        // パイから実行できる口を持つのは、3D の . で収める操作だけ。この版で使えないのは正投影だけ
+        let run: Vec<&str> = COMMANDS
+            .iter()
+            .filter(|c| c.run.is_some())
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(run, ["view3d.frame_selected"]);
+        let unavailable: Vec<&str> = COMMANDS
+            .iter()
+            .filter(|c| c.unavailable.is_some())
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(unavailable, ["view3d.ortho"]);
+        for c in COMMANDS {
+            assert_eq!(
+                c.runnable().is_some(),
+                c.action.is_some() || c.id == "view3d.frame_selected",
+                "{}",
+                c.id
+            );
+        }
         for c in COMMANDS.iter().filter(|c| c.kind != Kind::Press) {
             assert!(
                 c.action.is_none(),
@@ -602,8 +776,24 @@ mod tests {
                 c.id
             );
         }
+        // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
+        // その中身（設定で割り当てる）
+        const NO_DEFAULT_KEY: [&str; 12] = [
+            "tool.liquify",
+            "mode.paint",
+            "mode.edit",
+            "mode.pose",
+            "view3d.pie",
+            "view3d.view_front",
+            "view3d.view_back",
+            "view3d.view_right",
+            "view3d.view_left",
+            "view3d.view_top",
+            "view3d.view_bottom",
+            "view3d.ortho",
+        ];
         for c in COMMANDS {
-            if c.kind == Kind::Press && c.id != "tool.liquify" {
+            if c.kind == Kind::Press && !NO_DEFAULT_KEY.contains(&c.id) {
                 assert!(
                     keymap::bindings().iter().any(|b| b.command == c.id),
                     "{}: 割り当てがない",
@@ -651,11 +841,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 61);
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 72);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 10);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 99);
+        assert_eq!(COMMANDS.len(), 111);
     }
 }

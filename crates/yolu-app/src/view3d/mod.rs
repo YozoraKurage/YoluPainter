@@ -133,6 +133,8 @@ pub struct View3dState {
     /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
     /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,
+    /// 最後に描いた 3D ビューの表示域（画面の点。パイから「収める」ときの縦横の比）。
+    pub view_rect: Option<egui::Rect>,
 }
 
 impl View3dState {

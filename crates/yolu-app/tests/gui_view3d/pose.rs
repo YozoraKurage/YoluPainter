@@ -9,6 +9,7 @@ use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use yolu_app::engine::composite_pixel;
+use yolu_app::mode::EditorMode;
 use yolu_app::sets::{MaterialRef, TextureSets};
 use yolu_app::state::{blank_document, Action, DialogRequest};
 use yolu_app::view3d::gizmo;
@@ -380,7 +381,7 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
         .pose()
         .clone();
     assert!(pose::set_pose(&mut h.state_mut().state.view3d, p).is_err());
-    assert!(!h.state().state.view3d.pose.mode);
+    assert_eq!(h.state().state.mode, EditorMode::Paint);
     h.step();
     assert_eq!(
         h.state().state.view3d.model.as_ref().unwrap().revision(),
@@ -405,7 +406,7 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
     h.run();
     // 描き終えたらポーズを変えられる
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
-    assert!(h.state().state.view3d.pose.mode);
+    assert_eq!(h.state().state.mode, EditorMode::Pose);
 }
 
 #[test]
@@ -501,7 +502,7 @@ fn pose_undo_works_in_a_read_only_texture_set() {
     h.run();
     let app = &h.state().state;
     assert!(app.read_only_reason().is_some());
-    assert!(app.view3d.pose.mode && app.view3d.visible);
+    assert!(app.mode == EditorMode::Pose && app.view3d.visible);
     assert_eq!(undo_len(&h), 2);
     // Ctrl+Z・Ctrl+Shift+Z は、読むだけのセットでもポーズを戻す・やり直す
     key(&h, Key::Z, Modifiers::COMMAND);
@@ -538,19 +539,19 @@ fn pose_undo_works_in_a_read_only_texture_set() {
 fn undo_goes_to_the_pixels_while_the_3d_tab_is_behind_the_canvas() {
     let (mut h, _) = figure_view(256);
     bend_upper_arm(&mut h, -0.8);
-    h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
-    h.run();
-    assert!(h.state().state.view3d.visible);
-    // キャンバスのタブへ移って 2D を描く（ポーズのモードは残る）
+    // ペイントのモードで 2D に描いてから、ポーズのモードへ（ポーズのモードの 2D のキャンバスは見るだけ）
     click_tab(&mut h, yolu_app::Tab::Canvas);
     h.run();
-    assert!(h.state().view3d_rect().is_none(), "3D ビューは裏");
-    assert!(!h.state().state.view3d.visible);
-    assert!(h.state().state.view3d.pose.mode, "モードは残る");
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
     assert!(canvas_pixel(&h, c)[3] > 0, "描けた");
     assert!(h.state().state.doc.can_undo());
+    h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
+    h.run();
+    // キャンバスのタブが前（ポーズのモードは残る）
+    assert!(h.state().view3d_rect().is_none(), "3D ビューは裏");
+    assert!(!h.state().state.view3d.visible);
+    assert_eq!(h.state().state.mode, EditorMode::Pose, "モードは残る");
     // Ctrl+Z は見えているキャンバスの画素を戻し、見えていないポーズは戻さない
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();

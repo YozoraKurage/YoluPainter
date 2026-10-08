@@ -157,9 +157,12 @@ pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
         app.stencil.release_input();
         return;
     }
+    // 編集・ポーズのモードでは描かないので、Y・N を押しても効かない（ペイントのモードの行。`keymap::Scope::Paint`）
+    let paints = app.mode.paints();
     let st = &mut app.stencil;
-    st.key_held = t && (st.key_held || !typing && !blocked && !modifiers.command && !modifiers.alt);
-    st.ignore_held = n && (st.ignore_held || !typing && !blocked && !modifiers.any());
+    st.key_held =
+        paints && t && (st.key_held || !typing && !blocked && !modifiers.command && !modifiers.alt);
+    st.ignore_held = paints && n && (st.ignore_held || !typing && !blocked && !modifiers.any());
 }
 
 /// 1 つの入力イベントを見る（rect は押した表示域（2D のキャンバスか 3D の中身）、over はこの点がその表示域の一番上にあるか）。

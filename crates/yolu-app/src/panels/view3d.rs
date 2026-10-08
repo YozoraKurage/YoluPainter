@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, ViewportId};
 
+use crate::mode::EditorMode;
 use crate::pen::PenSample;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::tools::input::Surface;
@@ -121,6 +122,7 @@ impl View3dSlot {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
         let content = full;
+        app.view3d.view_rect = Some(content);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(
@@ -193,15 +195,16 @@ impl View3dSlot {
                 false
             }
         };
-        // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
-        if drawn && !app.view3d.pose.mode {
+        // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。編集・ポーズのモードでは描かないので出さない）
+        let mode = app.mode;
+        if drawn && mode.paints() {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
         }
         // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;
-        if drawn && !app.view3d.pose.mode {
+        if drawn && mode != EditorMode::Pose {
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
@@ -221,7 +224,7 @@ impl View3dSlot {
                 press.sample,
             );
             ui.ctx().set_cursor_icon(CursorIcon::None);
-        } else if app.view3d.pose.mode {
+        } else if mode == EditorMode::Pose {
             // ポーズのモード: ギズモ（輪の上は掴む形のポインタ）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
@@ -241,6 +244,18 @@ impl View3dSlot {
         } else if let Some(icon) = gizmo_cursor {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
+        } else if mode == EditorMode::Edit {
+            // 編集のモード: 描かないので、ブラシの円もツールの印も出さない
+            if ui
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| response.contains_pointer() && content.contains(p))
+            {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else {
+                    CursorIcon::Default
+                });
+            }
         } else if app.tool.def().surface == Surface::Path {
             // パスのツール: 選んでいるレイヤーのパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui

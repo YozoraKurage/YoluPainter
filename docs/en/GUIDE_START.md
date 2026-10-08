@@ -9,14 +9,25 @@ This page covers the screen layout, creating and opening projects, your first st
 | Area | Contents |
 |---|---|
 | Menu bar (top) | File, Edit, Layer, Select, Filter, View, Window and Help. At the right end are the project name (a “•” marks unsaved changes) and the Unity mark, the entrance to Live Link |
-| Options bar (below it) | Two or three settings you use most with the selected tool. They are the same values as Tool Properties |
-| Toolbar (left edge) | The tool buttons. The main and sub colors sit at the bottom |
+| Options bar (below it) | The mode (Paint, Edit or Pose) at the left end. To its right, two or three settings you use most with the selected tool. They are the same values as Tool Properties |
+| Toolbar (left edge) | The tool buttons (in Edit and Pose modes, the four tools Select, Move, Rotate and Scale). The main and sub colors sit at the bottom |
 | Left dock | Tools (the sub tools), Assets and Channels, with Color and Color Sets below them |
 | Center | Canvas (2D) and 3D View, as tabs |
 | Right dock | Texture Sets and Navigator, then Layers and Log, then Properties and History |
 | Status bar (bottom) | The version and build (for example `0.5.0 · a1b2c3d`) and the memory in use at the right end. The left is empty; the result of your last operation appears as a small notice just above the bar |
 
 The Tools panel changes with the selected tool. Brushes and their settings are in [GUIDE_PAINT.md](GUIDE_PAINT.md). Properties shows the contents of the selected layer ([GUIDE_LAYERS.md](GUIDE_LAYERS.md)). The Pose panel appears when you load a model with a skeleton ([GUIDE_3D.md](GUIDE_3D.md)).
+
+## Modes
+
+You paint in Paint mode. Edit and Pose modes do not paint: the 2D canvas is for viewing only (moving, rotating and zooming the view, and the right-button eyedropper still work), and nothing is painted in the 3D view either. The brush and color panels are dimmed and cannot be used. Pose mode can be chosen only while a model with bones is loaded ([GUIDE_3D.md](GUIDE_3D.md)).
+
+Switch modes with any of the following. The mode cannot change while you are drawing.
+
+- The dropdown at the left end of the options bar.
+- The pie menu on `Ctrl+Tab` (it opens at the pointer. Keep the key held, move toward an item and release, or release right away and click an item. See [GUIDE_KEYS.md](GUIDE_KEYS.md)).
+- View → Mode.
+- Choosing a painting tool (for example from the Edit menu) switches to Paint, and choosing a bone in the "Bones" tree of the Pose panel switches to Pose.
 
 ## Creating, opening and saving
 

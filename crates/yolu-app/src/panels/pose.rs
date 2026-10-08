@@ -179,7 +179,7 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
             "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押してボーンを選ぶ）",
             "Pose mode (drag a gizmo ring in the 3D View to rotate; click a surface to pick a bone)",
         ),
-        app.view3d.pose.mode,
+        app.mode == crate::mode::EditorMode::Pose,
         free && has,
         18.0,
     )
@@ -589,8 +589,10 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
     }
     if let Some(b) = select {
         s.selected = Some(b);
+    }
+    if select.is_some() {
         // ボーンを選んだらポーズのモードへ（輪が出る）
-        app.view3d.pose.mode = true;
+        app.set_mode(crate::mode::EditorMode::Pose);
     }
     if let Some(s) = app.view3d.pose.session.as_mut() {
         tree_bar.end(ui, "pose.tree.scroll", &mut s.tree_scroll);

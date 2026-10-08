@@ -73,7 +73,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     crate::bake::overlay::paint(&painter, app, &view);
     crate::uv_wireframe::show(ui, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。Y を押しているあいだは枠も）
-    crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
+    if app.mode.paints() {
+        crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
+    }
     // パスのツール: 選んでいるレイヤーの 2D のパスの線と点
     let hover_for_path = ui.input(|i| i.pointer.hover_pos());
     crate::pathtool::canvas::paint_overlay(
@@ -104,7 +106,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             || app.canvas.panning
             || app.canvas.zooming.is_some()
             || app.canvas.space_held;
-        let at = hover.filter(|_| pointer_on_canvas && !navigating);
+        let at = hover.filter(|_| pointer_on_canvas && !navigating && app.mode.paints());
         crate::region::overlay::paint_canvas(&painter, app, &view, at);
     }
     let busy =
@@ -128,6 +130,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
                 .set_cursor_icon(zoom_cursor(ui.input(|i| i.modifiers.alt)));
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
+        } else if !app.mode.paints() {
+            // 編集・ポーズのモード: 描かないので、ブラシの円もツールの印も出さない
+            ui.ctx().set_cursor_icon(CursorIcon::Default);
         } else if crate::eyedrop::picks(app) {
             // スポイトのツール: ポインタに見本の輪とスポイトの絵（OS の矢印は隠す）
             if let Some(p) = hover {
@@ -808,13 +813,14 @@ fn press_kind(
             &frame.modifiers,
             app.canvas.space_held,
         ) == Some(crate::keymap::Operation::Pick);
-        return if picks && app.tool != crate::state::Tool::PolygonFill && !app.is_stroking() {
+        return if picks && !app.right_opens_island_menu() && !app.is_stroking() {
             PressKind::Eyedrop
         } else {
             PressKind::Ignored
         };
     }
-    if gesture::pen_holds_off(app.tool.paints(), &frame.modifiers) {
+    // 編集・ポーズのモードは見るだけ。描くツールの Ctrl は描かない
+    if !app.mode.paints() || gesture::pen_holds_off(app.tool.paints(), &frame.modifiers) {
         return PressKind::Ignored;
     }
     PressKind::Tool
@@ -899,7 +905,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
             _ => false,
         };
-        if crate::stencil::handle_event(app, event, rect, over, modifiers.shift) {
+        // 編集・ポーズのモードでは描かないので、ステンシルも使わない（3D と同じ）
+        if app.mode.paints()
+            && crate::stencil::handle_event(app, event, rect, over, modifiers.shift)
+        {
             continue;
         }
         match event {
@@ -927,6 +936,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         }
                         if !app.is_stroking() && nav::press(app, rect, pos, event_modifiers) {
                             // R・Space・Ctrl+Space を押しながらの左ドラッグ: 回す・パン・拡縮
+                        } else if !app.mode.paints() {
+                            // 編集・ポーズのモード: 2D のキャンバスは見るだけ（描かない・選択範囲も作らない）
                         } else if let Some(kind) = app.tool.def().canvas {
                             // ドラッグの札を持つツール（選択・移動と変形・グラデーション・図形と定規・パス）
                             let handler = kind.handler();
@@ -1028,7 +1039,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                             // ほかのツールの右ボタンはスポイト（押した所の色が見本。押したまま動かすと付いてくる。離して決める）。組み合わせの表
                             // （`keymap::GESTURES`）から、修飾を書いたとおりに引く。左ボタンのドラッグの途中は始めない
                             if !menu
-                                && app.tool != crate::state::Tool::PolygonFill
+                                && !app.right_opens_island_menu()
                                 && !ui.input(|i| i.pointer.primary_down())
                                 && crate::keymap::gesture_exact(
                                     "canvas",
@@ -1110,11 +1121,12 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 app.view
                     .zoom_to(app.view.zoom * (notches * 0.21).exp(), Some(p), rect);
             }
+            // メニュー・パイ・ダイアログが開いている間の Esc は、それを閉じる（下のキャンバスの操作はやめない）
             Event::Key {
                 key: Key::Escape,
                 pressed: true,
                 ..
-            } => {
+            } if !blocked => {
                 let ctx = InputCtx {
                     modifiers,
                     now,

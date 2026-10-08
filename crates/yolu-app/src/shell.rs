@@ -281,12 +281,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Action::Pose(PoseAction::OpenFbx),
             )
             .enabled(free),
-            Entry::item(
-                l.pick("ポーズのモード", "Pose Mode"),
-                Action::Pose(PoseAction::ToggleMode),
-            )
-            .checked(app.view3d.pose.mode)
-            .enabled(free && app.view3d.pose.session.is_some()),
+            crate::mode::view_menu_entry(app),
             Entry::item(
                 l.pick(
                     "3D ビューでモデル全体を見る",
@@ -464,6 +459,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             set, island, map, ..
         } => crate::bake::overlap::menu_entries(app, set, island, map),
         PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
+        PopupKind::Mode => crate::mode::entries(app),
+        // パイは項目の並びでなく、自分で描く（`pie::show`）
+        PopupKind::Pie => Vec::new(),
     }
 }
 
@@ -782,6 +780,8 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
+    // メニューなどから頼まれたパイを、ポインタの所に開く
+    crate::pie::open_requested(ctx, app);
     if ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
         || app.sel.dialog.is_some()
@@ -806,6 +806,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     // 右ボタンを押して 3D の視点を動かしている間は、W/A/S/D/Q/E を視点の移動に使う（ツールの切り替えなどの表のキーに渡さない）
     let flying = crate::view3d::navigation::flying(app);
     ctx.input_mut(|i| {
+        // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
         crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
         actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
@@ -816,12 +817,14 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
                 }
             }
         }
-        // ^ の文字の入力（キーの位置が配列で違う）も、表の行として判定に入る
+        // キーの段 2〜4「場面」「モード」「どこでも」（判定の順は `keymap::Keymap::order`）。^ の文字の入力（キーの位置が配列で違う）も、表の行として判定に入る
         actions.extend(crate::keymap::dispatch(i, app));
     });
     for a in actions {
         app.apply(a);
     }
+    // キーで開いたパイ（Ctrl+Tab など）は、そのキーを押している間に開く（押したまま離すと、指している項目を実行する）
+    crate::pie::open_requested(ctx, app);
     for (dir, shift) in arrows {
         crate::transform::canvas::arrow(app, dir, shift);
     }
@@ -832,7 +835,21 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::hline(&p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
-    let mut x = r.left() + 8.0;
+    // 左端はモードのドロップダウン
+    let mut x = crate::mode::dropdown(ui, app, r, r.left() + 8.0) + 8.0;
+    w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+    x += 4.0;
+    if !app.mode.paints() {
+        // 編集・ポーズ: 今のツールのアイコン（ツールの設定は無い）
+        w::icon(
+            &p,
+            Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
+            app.edit_tool.icon(),
+            t::TEXT,
+            20.0,
+        );
+        return;
+    }
     w::icon(
         &p,
         Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
@@ -853,8 +870,18 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
     // ツールの列はツールの並び（`toolset`）のとおり（区切りはツールごとの「前に区切り」）。帯の下の端に付く 2 枚の色の分の高さを先に取る
     let bottom = r.bottom() - crate::panels::color_swatch::reserved_height();
-    crate::toolset::ui::strip(ui, app, r, bottom);
-    crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
+    if app.mode.paints() {
+        crate::toolset::ui::strip(ui, app, r, bottom);
+        crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
+    } else {
+        // 編集・ポーズ: 選択・移動・回転・拡縮。色の 2 枚は暗くして押せない
+        crate::mode::edit_strip(ui, app, r, bottom);
+        let area = crate::panels::color_swatch::area(r);
+        w::enabled_scope(ui, "mode.swatch", false, |ui| {
+            crate::panels::color_swatch::draw(ui, app, area)
+        });
+        crate::mode::dimmed_reason(ui, app, area, "swatch");
+    }
 }
 
 /// 直前の操作の結果と理由（`message`）。状態の帯の左には出さず、小さな知らせ（`toast`）が短く出して消す。試験が読む口はここ。

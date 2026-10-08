@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use egui::{Modifiers, Pos2, Rect, Ui};
-use yolu_core::geometry::{orbited, pick, snap_orientation, Bounds, OrbitCamera};
+use yolu_core::geometry::{orbited, pick, snap_orientation, AxisView, Bounds, OrbitCamera};
 use yolu_core::glam::{Vec2, Vec3};
 
 use super::{model::ViewModel, Nav, View3dState};
@@ -363,6 +363,45 @@ fn can_frame(app: &AppState) -> bool {
         && app.fillfx.drag.is_none()
         && app.path.drag.is_none()
         && app.region.drag.is_none()
+}
+
+/// 視点の操作（パイ・メニューから。キーの表の操作 `view3d.view_*`・`view3d.frame_selected`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavOp {
+    /// 軸の視点（正面・背面・右・左・上・下）にする。
+    Axis(AxisView),
+    /// 選んだセットを収める（3D ビューの上の `.` と同じ）。
+    FrameSelected,
+}
+
+/// 視点の操作を当てる（`Action::View3dNav`）。描いている・視点を動かしている・ギズモをドラッグしている間は何もしない（`.` と同じ）。
+pub fn apply(app: &mut AppState, op: NavOp) {
+    match op {
+        NavOp::Axis(view) => axis_view(app, view),
+        NavOp::FrameSelected => {
+            if let Some(rect) = app.view3d.view_rect {
+                frame_selected(app, rect);
+            }
+        }
+    }
+}
+
+/// 軸の視点にする。上・下も含めて画面の向きは `AxisView::orientation` のとおり（yaw は今の値から何周しているかを保つ）。回す中心の設定が
+/// モデルの中心・テクスチャセットの中心なら、その点の画面の位置を変えない（面の位置の設定は押した所が無いので、注視点）。
+pub fn axis_view(app: &mut AppState, view: AxisView) {
+    if app.view3d.model.is_none() || !can_frame(app) {
+        return;
+    }
+    let camera = app.view3d.camera;
+    let (axis_yaw, pitch) = view.orientation();
+    let yaw = axis_yaw + 360.0 * ((camera.yaw - axis_yaw) / 360.0).round();
+    let pivot = match app.prefs.settings.navigation.orbit {
+        OrbitCenter::View | OrbitCenter::Surface => None,
+        OrbitCenter::Model => app.view3d.full_model().map(|m| m.geometry.bounds().center),
+        OrbitCenter::TextureSet => selected_bounds(&app.view3d).map(|b| b.center),
+    }
+    .unwrap_or(camera.target);
+    app.view3d.camera.set_orientation_about(pivot, yaw, pitch);
 }
 
 pub fn frame_selected(app: &mut AppState, rect: Rect) {

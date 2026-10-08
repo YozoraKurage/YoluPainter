@@ -211,9 +211,10 @@ impl AppState {
     }
 }
 
-/// 今のツールがクローンのブラシか（元を決められる）。
+/// 今のツールがクローンのブラシか（元を決められる）。編集・ポーズのモードでは描かないので偽。
 pub fn active(app: &AppState) -> bool {
-    app.tool.paints()
+    app.mode.paints()
+        && app.tool.paints()
         && !app.tool.erases()
         && matches!(app.m2.brush.effect, BrushEffect::Clone { .. })
 }

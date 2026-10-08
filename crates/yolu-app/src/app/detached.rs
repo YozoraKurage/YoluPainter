@@ -403,6 +403,12 @@ impl YoluApp {
             self.state.popup = Some(open);
             return;
         }
+        if open.kind == PopupKind::Pie {
+            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
+            return;
+        }
         let entries = crate::shell::popup_entries(&self.state, open.kind);
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &[]) {
             PopupOutcome::Open | PopupOutcome::Step(_) => self.state.popup = Some(open),

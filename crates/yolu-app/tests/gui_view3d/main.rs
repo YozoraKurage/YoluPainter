@@ -11,6 +11,7 @@ mod gpu_memory;
 mod liltoon;
 mod liltoon_panel;
 mod liltoon_reference;
+mod modes;
 mod normalset;
 mod outputs;
 mod overlap_uv_ui;

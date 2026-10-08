@@ -207,6 +207,7 @@ fn group(action: &Action) -> usize {
         | Action::RotateLeft
         | Action::RotateRight
         | Action::Fill(_) => 4,
+        Action::Mode(_) | Action::Pie(_) | Action::View3dNav(_) => 4,
         Action::SaveProject
         | Action::SaveProjectAsDialog
         | Action::OpenProjectDialog
@@ -234,9 +235,9 @@ pub fn rows(app: &AppState) -> Vec<Row> {
     for (g, title) in groups.iter().enumerate() {
         all.push(Row::text(*title, false));
         let in_group = || listed.iter().filter(|(_, action)| group(action) == g);
-        for (binding, action) in in_group().filter(|(b, _)| b.key().is_some()) {
+        for (binding, _) in in_group().filter(|(b, _)| b.key().is_some()) {
             all.push(Row {
-                left: action_label(app, action)
+                left: binding_label(app, binding)
                     .unwrap_or_else(|| l.pick("未登録の操作", "Unlisted Action").into()),
                 middle: String::new(),
                 right: key_label(binding),
@@ -264,6 +265,11 @@ pub fn rows(app: &AppState) -> Vec<Row> {
     }
     all.extend(context_rows(l));
     all
+}
+
+/// 割り当ての行の名前（操作の名前。メニューにある操作はメニューと同じ名前）。
+fn binding_label(app: &AppState, binding: &Binding) -> Option<String> {
+    commands::find(binding.command).and_then(|c| c.label(app))
 }
 
 /// 文字の入力で見る割り当ての行の名前（キーの行と並べたとき、どの操作のもう 1 つの割り当てかが分かる名前）。
@@ -368,7 +374,7 @@ mod tests {
             app.selected_layer = None;
             for binding in bindings() {
                 let action = binding.action().expect("一覧の行は Action を持つ");
-                let label = action_label(&app, &action)
+                let label = binding_label(&app, &binding)
                     .unwrap_or_else(|| panic!("名前がありません: {action:?}"));
                 assert!(!label.is_empty());
                 if lang == Lang::En {
@@ -743,6 +749,7 @@ mod tests {
                 "Zoom In | Ctrl+=",
                 "Zoom Out | Ctrl+-",
                 "Reset Rotation | Shift+R",
+                "Mode Pie Menu | Ctrl+Tab",
                 "Projection Handles | Q",
                 "Flip View | H",
                 "Rotate View Left | -",

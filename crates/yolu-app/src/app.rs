@@ -265,11 +265,27 @@ impl TabViewer for Tabs<'_> {
             Tab::TextureSets => texture_sets::show(ui, self.app),
             Tab::Channels => crate::panels::channels::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
+            Tab::Color if !self.app.mode.paints() => {
+                let rect = ui.max_rect();
+                w::enabled_scope(ui, "mode.dim.color", false, |ui| {
+                    crate::panels::color::show(ui, self.app, self.colors)
+                });
+                crate::mode::dimmed_reason(ui, self.app, rect, "color");
+            }
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Pose => crate::panels::pose::show(ui, self.app),
             Tab::Properties => properties::show(ui, self.app),
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
+            // 編集・ポーズのモードでは、ブラシと色の欄を暗くして押せない（理由はツールチップ）
+            Tab::SubTools | Tab::ColorSets if !self.app.mode.paints() => {
+                let rect = ui.max_rect();
+                w::enabled_scope(ui, ("mode.dim", tab.key()), false, |ui| match tab {
+                    Tab::SubTools => crate::panels::subtools::show(ui, self.app),
+                    _ => crate::panels::colorsets::show(ui, self.app),
+                });
+                crate::mode::dimmed_reason(ui, self.app, rect, tab.key());
+            }
             Tab::SubTools => crate::panels::subtools::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
             Tab::Log => crate::panels::log::show(ui, self.app),
@@ -2127,6 +2143,13 @@ impl YoluApp {
         // 別ウィンドウで開いたポップアップは、そのウィンドウのパスが描く
         if open.state.viewport != egui::ViewportId::ROOT {
             self.state.popup = Some(open);
+            return;
+        }
+        // パイは自分で描いて入力を受ける（選んだ項目は閉じてから実行し、別のパイなら開き直す）
+        if open.kind == PopupKind::Pie {
+            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
             return;
         }
         let entries = shell::popup_entries(&self.state, open.kind);

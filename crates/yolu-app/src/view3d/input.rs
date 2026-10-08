@@ -139,6 +139,10 @@ fn begin(
     if crate::bake::overlap::press(app, crate::region::tools::Where::Surface(rect), at) {
         return;
     }
+    // 編集・ポーズのモードでは描かない（ツールを使わない）
+    if !app.mode.paints() {
+        return;
+    }
     match app.tool.def().surface {
         // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描くツールの一時的なスポイトは 2D だけ）
         Surface::Pick => {
@@ -568,7 +572,7 @@ fn nav_press(
         Some(Operation::CloneSource) if crate::clone_source::active(app) => {
             app.view3d.input.clone_press = Some(pos);
         }
-        Some(Operation::Pick) if app.tool != crate::state::Tool::PolygonFill => {
+        Some(Operation::Pick) if !app.right_opens_island_menu() => {
             let sample = crate::eyedrop::sample_surface(app, rect, pos);
             app.view3d.input.eyedrop = Some(crate::eyedrop::RightPress {
                 source,
@@ -791,7 +795,7 @@ fn pen_sample(
                         crate::fillfx::gizmo::Source::Pen(s.pointer_id),
                     ) {
                         // 形のギズモのハンドルの上・点の編集: 描かずにドラッグを始める
-                    } else if app.tool.def().surface == Surface::Path {
+                    } else if app.mode.paints() && app.tool.def().surface == Surface::Path {
                         // パスのツール: 押す・動く・離すを、点を足す・掴む・動かすにする
                         crate::pathtool::surface::pen_sample(
                             app,
@@ -946,7 +950,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .count(),
     );
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
-    let pose_mode = app.view3d.pose.mode;
+    let pose_mode = app.mode == crate::mode::EditorMode::Pose;
     // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
     if pose_mode {
         app.view3d.input.pen_press = None;
@@ -995,12 +999,12 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         } else {
             now
         };
-        // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。ポーズのモードでは描かない）
+        // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。編集・ポーズのモードでは描かないので、ステンシルも使わない）
         let over = match event {
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
             _ => false,
         };
-        if !pose_mode && crate::stencil::handle_event(app, event, rect, over, shift) {
+        if app.mode.paints() && crate::stencil::handle_event(app, event, rect, over, shift) {
             continue;
         }
         match event {
@@ -1154,11 +1158,12 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 };
                 super::navigation::wheel(app, rect, p, notches);
             }
+            // メニュー・パイが開いている間の Esc は、それを閉じる（下の 3D の操作はやめない）
             Event::Key {
                 key: Key::Escape,
                 pressed: true,
                 ..
-            } => {
+            } if !blocked => {
                 // パスの点のドラッグを捨てる（無ければ選んだ点を外す）
                 let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
                 if app.view3d.input.stroke.is_some() && !path_esc {
