@@ -1224,14 +1224,29 @@ impl Document {
             groups.entry((c.x / bt, c.y / bt)).or_default().push(c);
         }
         let groups: Vec<Vec<TileCoord>> = groups.into_values().collect();
+        // 縮めた大きさの帯の写しと、アイランドごとのばらつきが読むアイランドの図は、ブロックを並べる前に 1 回だけ作る（作るのは rayon の
+        // 並列で、各ブロックが同時に取りに行くと、作っている最中のスレッドが別のブロックを拾って同じ門を待ち、止まる）。各ブロックは作ったものを受け取る
+        let seams = self.coarse_seam_table(&spec, stride, (cw, ch));
+        if spec.reads_islands {
+            let _ = self.island_map();
+        }
         let statistics = if spec.global {
-            Some(self.coarse_statistics(&spec, stride, cancel)?)
+            Some(self.coarse_statistics(&spec, stride, seams.as_deref(), cancel)?)
         } else {
             None
         };
         let done: Vec<Result<Vec<(TileCoord, Tile)>, CoreError>> = groups
             .par_iter()
-            .map(|tiles| self.coarse_block(&spec, tiles, stride, statistics.as_deref(), cancel))
+            .map(|tiles| {
+                self.coarse_block(
+                    &spec,
+                    tiles,
+                    stride,
+                    statistics.as_deref(),
+                    seams.as_deref(),
+                    cancel,
+                )
+            })
             .collect();
         for block in done {
             for (coord, tile) in block? {
@@ -1246,11 +1261,11 @@ impl Document {
         &self,
         spec: &Spec,
         stride: u32,
+        seams: Option<&crate::geometry::SeamBand>,
         cancel: Option<&AtomicBool>,
     ) -> Result<Arc<Vec<Option<filter::Statistics>>>, CoreError> {
         let full = (self.width, self.height);
         let coarse = (full.0.div_ceil(stride), full.1.div_ceil(stride));
-        let seams = self.coarse_seam_table(spec, stride, coarse);
         let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1270,7 +1285,7 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: None,
-                seams: seams.as_deref(),
+                seams,
             };
             filter::statistics(&strided, env.value_type, &stages, &options)
                 .map_err(map_filter_error)
@@ -1308,6 +1323,7 @@ impl Document {
         tiles: &[TileCoord],
         stride: u32,
         statistics: Option<&Vec<Option<filter::Statistics>>>,
+        seams: Option<&crate::geometry::SeamBand>,
         cancel: Option<&AtomicBool>,
     ) -> Result<Vec<(TileCoord, Tile)>, CoreError> {
         cancelled(cancel)?;
@@ -1332,7 +1348,6 @@ impl Document {
             x1: bx1,
             y1: by1,
         };
-        let seams = self.coarse_seam_table(spec, stride, coarse);
         let output = self.with_env(spec, self.grown_range(range, spec.halo), cancel, |env| {
             let strided = StridedSource {
                 inner: env.source,
@@ -1352,7 +1367,7 @@ impl Document {
                 cancel,
                 generators: Some(&generators),
                 statistics: statistics.map(Vec::as_slice),
-                seams: seams.as_deref(),
+                seams,
             };
             filter::evaluate(&strided, env.value_type, &stages, region, &options)
                 .map_err(map_filter_error)
@@ -1499,8 +1514,10 @@ impl Document {
     /// 並べてから各ブロックが取りに行くと、キャッシュが空の最初のバッチでは全ブロックが同じものを同時に作り、作業メモリが予算の
     /// 並列数倍に届き（統計は呼ぶたびに予算いっぱいまで使う）、画像のミップマップも重複して作る。
     fn prepare_shared(&self, spec: &Spec, cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
-        // 継ぎ目をまたぐ帯の写しも、ブロックを並べる前に 1 回だけ作る（作れなければ、どのブロックも 2D で評価する）
-        let _ = self.seam_table(spec.seam.0);
+        // 継ぎ目をまたぐ帯の写しと、アイランドごとのばらつきが読むアイランドの図も、ブロックを並べる前に 1 回だけ作る（作れなければ、どのブロックも
+        // 2D で評価する・入力のまま通す）。作るのは rayon の並列で、並べたあとで各ブロックが同時に取りに行くと、作っている最中のスレッドが別のブロックを
+        // 拾って同じ門を待ち、止まる
+        self.prepare_topology(spec);
         if spec.global {
             self.stage_statistics(spec, cancel)?;
         }
@@ -1515,6 +1532,15 @@ impl Document {
             }
         }
         Ok(())
+    }
+
+    /// 評価の仕様（スタック）が読む、モデルの UV の位相の物（文書の大きさの帯の写しと、アイランドごとのばらつきが読むアイランドの図）を作っておく。
+    /// 作れなければ何もしない（評価が、またがずに 2D で・入力のままで通す）。ブロックを並べる（rayon）前に呼ぶ。
+    fn prepare_topology(&self, spec: &Spec) {
+        let _ = self.seam_table(spec.seam.0);
+        if spec.reads_islands {
+            let _ = self.island_map();
+        }
     }
 
     /// 同時に評価してよいブロックの数: 作業メモリの予算に収まる数を、並列の数で頭打ちにする（最小 1）。
@@ -2231,6 +2257,7 @@ impl Document {
         cancel: Option<&AtomicBool>,
     ) -> Result<TileGrid, CoreError> {
         let host = self.layer_index(r.host).ok_or(CoreError::LayerNotFound)?;
+        self.prepare_anchor_topology(r, host);
         let coords: Vec<TileCoord> = range.iter().collect();
         // タイルごとに独立に合成する（結果は並びによらない）。下のレイヤーの評価済みのブロックは、キャッシュを通して共有する
         let tiles = coords
@@ -2262,6 +2289,38 @@ impl Document {
             tile_size: self.tile_size,
             dims: (self.width, self.height),
         })
+    }
+
+    /// Anchor が読むレイヤー（`anchor_layer_tile` と同じ: host とそれより下。マスクの Anchor は host のマスク）の、評価した出力が使う帯の写し・アイランドの図を、
+    /// 読むタイルを並べる（rayon）前に作っておく。並べたあとで、各タイルの読み（ほかのレイヤーのブロックの評価）が同時に作りに行かないように。
+    fn prepare_anchor_topology(&self, r: &AnchorRef, host: usize) {
+        let masked = |i: usize| {
+            self.layers[i]
+                .mask
+                .as_ref()
+                .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
+        };
+        match r.placement {
+            AnchorPlacement::Layer => {
+                for (i, l) in self.layers.iter().enumerate().take(host + 1) {
+                    if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+                        && l.has_evaluated_output(r.channel)
+                        && l.is_channel_enabled(r.channel)
+                        && l.has_content(r.channel, true)
+                    {
+                        self.prepare_topology(&self.make_spec(i, SourceKey::Channel(r.channel)));
+                    }
+                    if masked(i) {
+                        self.prepare_topology(&self.make_spec(i, SourceKey::Mask));
+                    }
+                }
+            }
+            AnchorPlacement::Mask => {
+                if masked(host) {
+                    self.prepare_topology(&self.make_spec(host, SourceKey::Mask));
+                }
+            }
+        }
     }
 
     /// レイヤーの Anchor のタイル: そのレイヤーまでのスタックを、そのレイヤーより上が無いものとして合成した結果（全部透明なら None）。

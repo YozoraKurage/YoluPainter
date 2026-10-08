@@ -331,3 +331,5 @@ impl SurfaceGeometry {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod uv_parallel_tests;
