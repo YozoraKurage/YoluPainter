@@ -15,6 +15,8 @@
 //!   64 GiB と、置き場所の空き（そのフォルダで初めて測ったとき）の半分の小さい方。ディスクから読めないタイルが出たら、それを持つセットを
 //!   読むだけにする（保存は開いたときの中身のまま。保存したことの無いセットは元の中身が無いので、そのセットだけ保存と復旧用の書き置きに
 //!   入れない。`check_tile_cache`）。
+//! - **ペン**の節は macOS だけに出る（`PrefsState::tablet_row`）。「タブレットの筆圧（試し）」は、Wacom・XP-Pen などのドライバーが標準のイベントで送る筆圧・傾き・
+//!   消しゴムの端を読むか（`pen::mac_tablet`）。既定は入。切り替えは次のフレームでペンの受け口の札に届く（`YoluApp::update`）。
 //! - **表示の合成**は 2D のキャンバスの表示の方針（`YoluApp::apply_compositing` がキャンバスの表示に入れる。自動は環境変数
 //!   `YOLUPAINTER_CANVAS` か自動）。保存・書き出し・3D ビューの値の合成は、どれでも CPU が正本。
 
@@ -67,6 +69,8 @@ pub enum Pref {
     ExternalOps(bool),
     /// 外からの操作を待つ番号（範囲の外は断る）。
     ExternalOpsPort(u16),
+    /// macOS のタブレットの筆圧・傾き・消しゴムの端を読むか（「ペン」の節。macOS だけに出る）。
+    TabletPressure(bool),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -148,6 +152,8 @@ pub struct PrefsState {
     pub gpu_details: bool,
     /// ディスクキャッシュの「詳しく」を開いているか（ウィンドウの中だけの状態）。
     pub cache_details: bool,
+    /// 「ペン」の節（タブレットの筆圧の切り替え）を出すか。macOS だけ（試験は差し替える）。
+    pub tablet_row: bool,
     /// 合計のスライダーを押し始めたときの「GPU のメモリ」の選び（自動・段・指定）。Esc で止めたとき、押し始めの量ではなく
     /// この選びへ戻す（量へ戻すと、自動・段が「指定」に置き換わる）。押していないあいだは None。
     gpu_memory_before_drag: Option<GpuMemory>,
@@ -175,6 +181,7 @@ impl Default for PrefsState {
             gpu: gpu_memory::Adapter::default(),
             gpu_details: false,
             cache_details: false,
+            tablet_row: cfg!(target_os = "macos"),
             gpu_memory_before_drag: None,
             scroll: 0.0,
             cache_free: Vec::new(),
@@ -251,6 +258,7 @@ impl AppState {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
                 Pref::ExternalOps(v) => self.prefs.settings.external_ops = v,
+                Pref::TabletPressure(v) => self.prefs.settings.tablet_pressure = v,
                 Pref::ExternalOpsPort(port) => {
                     if yolu_mcp::valid_port(port) {
                         self.prefs.settings.external_ops_port = port;
@@ -728,7 +736,12 @@ const HEADING: f32 = 24.0;
 /// ウィンドウの中身（見出しの帯の下）の高さの見積もり。描く行の数と合わせる（試験が、実際に並べた高さと同じであることを確かめる）。
 /// 画面に収まらなければ、ウィンドウは画面の高さにして、中身は共通のスクロールで送る。`external_ops` は「外からの操作を受ける」が入っているか
 /// （入っている間だけ、その下にポート番号の行を出す）。
-fn content_height(gpu_details: bool, cache_details: bool, external_ops: bool) -> f32 {
+fn content_height(
+    gpu_details: bool,
+    cache_details: bool,
+    external_ops: bool,
+    tablet_row: bool,
+) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     let slider = t::SLIDER_ROW_HEIGHT + GAP;
     8.0 + HEADING * 5.0 // 節の見出し: 一般・メモリ・処理・3D ビュー・ファイル
@@ -740,13 +753,19 @@ fn content_height(gpu_details: bool, cache_details: bool, external_ops: bool) ->
         + dropdown * 3.0 + dropdown // 処理: スレッド・合成・GPU のメモリ・詳しく
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
+        + if tablet_row { HEADING + dropdown } else { 0.0 } // ペン（macOS だけ）: 見出しとタブレットの筆圧
         + dropdown * 2.0 // ファイル: ライブラリの場所（パスとボタン）
         + slider + dropdown // 退避を残す数・すべて残す
         + 8.0
 }
 
-fn window_height(gpu_details: bool, cache_details: bool, external_ops: bool) -> f32 {
-    window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops)
+fn window_height(
+    gpu_details: bool,
+    cache_details: bool,
+    external_ops: bool,
+    tablet_row: bool,
+) -> f32 {
+    window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops, tablet_row)
 }
 
 /// 最後に描いた中身の高さ（見出しの帯の下。画面の点。開いていなければ None）。試験が、見積もりと実際の並びの食い違いを見つける。
@@ -851,6 +870,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 app.prefs.gpu_details,
                 app.prefs.cache_details,
                 app.prefs.settings.external_ops,
+                app.prefs.tablet_row,
             ),
         ),
         modal: false,
@@ -870,6 +890,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let backup_count = app.prefs.shown_backups();
     let (gpu_details, gpu_total) = (app.prefs.gpu_details, app.gpu_total_mib());
     let cache_details = app.prefs.cache_details;
+    let tablet_row = app.prefs.tablet_row;
     let mut dragging = false;
     let mut gpu_dragging = false;
     let mut scroll = app.prefs.scroll;
@@ -879,7 +900,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let body = frame.body;
         let previous = ctx
             .data(|d| d.get_temp::<f32>(content_id))
-            .unwrap_or_else(|| content_height(gpu_details, cache_details, s.external_ops));
+            .unwrap_or_else(|| {
+                content_height(gpu_details, cache_details, s.external_ops, tablet_row)
+            });
         let bar = Scroll::begin(ui, body, previous, &mut scroll);
         let area = Rect::from_min_max(
             pos2(body.left(), body.top() - scroll),
@@ -1262,6 +1285,24 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             PrefChoice::ZoomCenter,
         ));
         dragging |= crate::uv_wireframe::settings_row(ui, &mut rows, app);
+        if tablet_row {
+            section(ui, &mut rows, false, lang.pick("ペン", "Pen"));
+            let next = w::toggle(
+                ui,
+                rows.row(t::ROW_HEIGHT, GAP),
+                id.with("tablet-pressure"),
+                crate::settings::setting_name(lang, "tablet_pressure"),
+                s.tablet_pressure,
+                Some(lang.pick(
+                    "Wacom・XP-Pen などのドライバーが macOS の標準のイベントで送る筆圧・傾き・消しゴムの端・サイドボタンを読む。切ると、ペンはマウスと同じに描く",
+                    "Reads the pressure, tilt, eraser end and side buttons that tablet drivers such as Wacom and XP-Pen send as standard macOS events. When off, the pen draws like a mouse",
+                )),
+                enabled,
+            );
+            if next != s.tablet_pressure {
+                requests.push(Request::Do(PrefsAction::Set(Pref::TabletPressure(next))));
+            }
+        }
         section(ui, &mut rows, false, lang.pick("ファイル", "Files"));
         // 棚の場所: ラベルとパス、その下にボタン
         let shown = library

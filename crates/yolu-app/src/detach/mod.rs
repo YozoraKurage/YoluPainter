@@ -97,14 +97,17 @@ pub struct OsWindow {
     pub(crate) resolved: Option<Resolved>,
     /// 最後のフレームのタブの見出しの矩形（試験用。このウィンドウの点）。
     pub tab_rects: HashMap<Tab, Rect>,
-    /// このウィンドウのペンの点（Windows Ink をウィンドウに繋いだら入る。位置はこのウィンドウの内側の画素）。
+    /// このウィンドウのペンの点（Windows Ink、または macOS のタブレットをウィンドウに繋いだら入る。位置はこのウィンドウの内側の画素）。
     pub(crate) pen: PenInput,
     /// 見つけた OS のウィンドウ（Windows の HWND の値。持ち主とペンを繋いだウィンドウ）。
     #[cfg(windows)]
     pub(crate) hwnd: Option<isize>,
-    /// OS のウィンドウを探した回数（Windows。上限で諦める）。
-    #[cfg(windows)]
+    /// OS のウィンドウを探した回数（Windows と macOS。上限で諦める。macOS は題名が変わったら 0 に戻す）。
+    #[cfg(any(windows, target_os = "macos"))]
     pub(crate) attach_tries: u32,
+    /// OS のウィンドウを探したときの、ビューポートの題名（macOS。題名が変わったら探し直す）。
+    #[cfg(target_os = "macos")]
+    pub(crate) attach_title: String,
     /// このウィンドウで描いた、落としたファイルの行き先。
     pub(crate) drops: DropRects,
 }
@@ -197,8 +200,10 @@ impl Detached {
             pen: PenInput::detached(),
             #[cfg(windows)]
             hwnd: None,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             attach_tries: 0,
+            #[cfg(target_os = "macos")]
+            attach_title: String::new(),
             drops: DropRects::default(),
         });
         serial

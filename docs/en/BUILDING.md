@@ -28,7 +28,7 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
-There is no dedicated pen input handling equivalent to Windows Ink. Mouse operation is the baseline; pressure input depends on the OS and input device.
+For pen tablets (Wacom, XP-Pen and others), the app reads the pressure, tilt, eraser end and side buttons that the driver sends as standard macOS events (experimental). No manufacturer SDK is used. If something is off, turn off Tablet pressure (experimental) under Pen in Edit → Settings…, and the pen draws like a mouse. If the pen's pressure is too strong or too weak, adjust it in View → Pen Pressure….
 
 ## Linux (experimental)
 

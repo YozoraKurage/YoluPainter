@@ -196,6 +196,9 @@ pub struct Settings {
     pub selection_bar: bool,
     /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」のウィンドウ）。
     pub pressure: PressureAdjust,
+    /// macOS のタブレット（Wacom・XP-Pen などのドライバー）の筆圧・傾き・消しゴムの端を NSEvent から読むか（試し。既定は入。`pen::mac_tablet`）。切ると、ペンはマウスと同じに描く。
+    /// macOS 以外では使わないが、設定のファイルには同じ書き方で残す（OS をまたいで設定のフォルダを共有しても消さない）。
+    pub tablet_pressure: bool,
     pub navigation: crate::view3d::navigation::Preferences,
     /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
     pub view3d_post: crate::view3d::display::PostFx,
@@ -243,6 +246,7 @@ impl Default for Settings {
             backups: BackupKeep::All,
             selection_bar: true,
             pressure: PressureAdjust::default(),
+            tablet_pressure: true,
             navigation: crate::view3d::navigation::Preferences::default(),
             view3d_post: crate::view3d::display::PostFx::default(),
             view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
@@ -470,6 +474,9 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
         "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
+        "tablet_pressure" => {
+            lang.pick("タブレットの筆圧（試し）", "Tablet pressure (experimental)")
+        }
         "disk_cache" => lang.pick("ディスクキャッシュ", "Disk cache"),
         "disk_cache_folder" => lang.pick("キャッシュの場所", "Cache folder"),
         "disk_cache_limit_gib" => lang.pick("キャッシュの上限", "Cache limit"),
@@ -664,6 +671,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 _ => invalid("external_ops_port"),
             },
             "color_wheel" => settings.color_wheel = value != "off",
+            // 切ったときだけ書く行（既定は入）。読めない値は入のまま
+            "tablet_pressure" => settings.tablet_pressure = value != "off",
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
                 None => invalid("gpu_memory"),
@@ -855,6 +864,9 @@ fn render(settings: &Settings) -> String {
             "pressure_curve={}\n",
             crate::brushes::store::curve_text(pressure.curve())
         );
+    }
+    if !settings.tablet_pressure {
+        text += "tablet_pressure=off\n";
     }
     settings.navigation.write(&mut text);
     write_post(&mut text, &settings.view3d_post);
@@ -1050,6 +1062,7 @@ mod tests {
             external_ops: true,
             external_ops_port: 23456,
             color_wheel: true,
+            tablet_pressure: false,
             gpu_memory: GpuMemory::Mib(1536),
             disk_cache: false,
             disk_cache_folder: Some(dir.join("cache")),
@@ -1071,6 +1084,38 @@ mod tests {
         assert!(std::fs::read_to_string(&path)
             .unwrap()
             .contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_tablet_pressure_defaults_on_and_survives_restart_when_switched_off() {
+        let dir = temp_dir("tabletpressure");
+        let path = dir.join("settings.conf");
+        assert!(load(&path).0.tablet_pressure, "ファイルが無ければ入");
+        let off = Settings {
+            tablet_pressure: false,
+            ..Settings::default()
+        };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("tablet_pressure=off"));
+        // 入は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("tablet_pressure"));
+        // この項目を知らない古い設定は入として読む。読めない値も入
+        assert!(parse("language=ja\n").0.tablet_pressure);
+        let (settings, problems) = parse("tablet_pressure=maybe\nlanguage=en\n");
+        assert!(
+            settings.tablet_pressure && problems.is_empty(),
+            "{problems:?}"
+        );
+        // 画面の名前は日英とも「試し」と分かる
+        assert!(setting_name(Lang::Ja, "tablet_pressure").contains("試し"));
+        assert!(setting_name(Lang::En, "tablet_pressure").contains("experimental"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1662,6 +1707,7 @@ mod tests {
             "uv_overlap=off",
             "uv_overlap_color=10,20,30,40",
             "external_ops=on",
+            "tablet_pressure=off",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
             "external_ops_port=23456",
@@ -1683,6 +1729,7 @@ mod tests {
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
+        back.tablet_pressure = true;
         back.external_ops = false;
         back.external_ops_port = yolu_mcp::DEFAULT_PORT;
         back.view3d_post = crate::view3d::display::PostFx::default();
