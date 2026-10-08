@@ -32,6 +32,8 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
   OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
+- `yolu-io` は OS に入っているフォントの一覧（テキストレイヤーのフォントの選び）のために `fontdb 0.24.0`（MIT）を `std`・`fs`・`memmap` の機能で使う（`default-features` は切）。
+  OS のフォントのファイルを読むだけで、OS のフォントは同梱しない。同梱するフォントは下の BIZ UDPGothic と、egui の標準書体（上の表）。
 - `yolu-app` は Live Link の元の絵（JPG）を読むために `image` の `jpeg` 機能を有効にしている。増えるのは `zune-jpeg 0.5.15` と `zune-core 0.5.3`
   （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（試験の依存の `tiff` 経由で）あった。
   2 件の全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。TGA の読み（`tga` 機能）は `image` の中だけで、クレートは増えない。
@@ -87,7 +89,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 書体を変更して配る場合は、予約された書体名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
 [既存のアイコンの表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
-アイコン 102 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
+アイコン 113 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
 Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
 
 ### 同梱の画面の書体（BIZ UDPGothic）
@@ -143,7 +145,7 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 | MinGW-w64 の GCC・binutils | ツール本体は GPL 系。ランタイムは別の許諾・例外を持つため [MinGW-w64](https://www.mingw-w64.org/) と各インストールの copyright を確認 |
 
 Wine 用の `bcryptprimitives.dll` はこのリポジトリの小さな接続コードから試験時だけ作る。
-Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DLL をコピーして作るものではない。
+Windows 配布物に入れない。Wine や Windows の DLL をコピーして作るものではない。
 
 ## 同梱の筆先とブラシ形式
 
@@ -234,7 +236,7 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
 
 Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` はクレートの宣言が MIT でも、
-同梱 protocol XML に **LGPL-2.1-or-later** の条件がある。生成バインディングの配布条件についてユーザーの判断待ちであり、
+同梱 protocol XML に **LGPL-2.1-or-later** の条件がある。生成バインディングの配布条件について判断待ちであり、
 `blocked` を維持する。以下の Linux 集計の MIT 件数にはこの 2 件も含まれるが、許可済みという意味ではない。
 Linux app の全文束は生成せず、依存の変更・削除も行わない。update・xtask の照合は成功する。
 
@@ -245,7 +247,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。外部クレート 496 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。外部クレート 496 件の内訳は次のとおり。
 
 | 範囲（3 対象の和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
@@ -289,7 +291,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -566,7 +568,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -723,7 +725,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -1000,7 +1002,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -1157,7 +1159,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 319 件（同名の別版は別件）。実行時 271 件。
 
@@ -1501,7 +1503,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `46cdcc8f65aeec9e25ffc08e928aff287baf882c8b0302ab65e3c7185bb4e1e7`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `d2718538eea739ea5e659a873f701ddad020efb1e239ae0747c4e7e79175706c`。
 
 外部クレート 131 件（同名の別版は別件）。実行時 108 件。
 
