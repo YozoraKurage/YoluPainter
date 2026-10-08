@@ -14,7 +14,7 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
 
-Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。Unity 版の `Runtime/Core` などは Unity ブリッジの 0.5.0 で外れたので、Unity ブリッジのリポジトリのタグ `0.4.0` を取り出し、環境変数 `YOLUPAINTER_UNITY_SOURCE` にその場所を渡します（`tools/csharp-golden/` の道具と `tools/bench-all.sh` の既定の場所は `/workspace`）。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。Unity 版の `Runtime/Core` などは Unity ブリッジの 0.5.0 で外れたので、Unity ブリッジのリポジトリのタグ `0.4.0` を取り出し、環境変数 `YOLUPAINTER_UNITY_SOURCE` にその場所を渡します（`tools/csharp-golden/` のツールと `tools/bench-all.sh` の既定の場所は `/workspace`）。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
 ### yolu-app の結合試験の置き方
 
@@ -38,8 +38,8 @@ cargo test -p yolu-app --test gui_canvas layerops::undo      # ファイル名�
 cargo test -p yolu-app -- --list | grep layerops             # どの束にあるか（`Running tests/<束>/main.rs` の下）
 ```
 
-- **新しい試験を足す**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行足します。足し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけではビルドされず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
-- 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を足し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
+- **新しい試験を追加する**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行追加します。追加し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけではビルドされず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
+- 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を追加し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
 - **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・ウィンドウの貸し出しの数え・覚えたウィンドウの置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
 - **ウィンドウ（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。ウィンドウを持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` はウィンドウごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵はウィンドウごとに作り直します。ウィンドウを作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
 - `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
@@ -80,7 +80,7 @@ cargo test -p yolu-core --test reference seam_golden::   # 束の中の 1 ファ
 cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test format_doc`
 ```
 
-- 足し方は yolu-app と同じです（内容に近い束のフォルダにファイルを置き、その `main.rs` に `mod 名前;` を足す）。足し忘れと、直下に理由の無い 1 ファイル 1 本が増えたことは、`yolu-core/tests/edit/bundle_layout.rs`・`yolu-io/tests/ylp/bundle_layout.rs` が落ちて知らせます。
+- 追加の仕方は yolu-app と同じです（内容に近い束のフォルダにファイルを置き、その `main.rs` に `mod 名前;` を追加する）。追加し忘れと、直下に理由の無い 1 ファイル 1 本が増えたことは、`yolu-core/tests/edit/bundle_layout.rs`・`yolu-io/tests/ylp/bundle_layout.rs` が落ちて知らせます。
 - 共通の部品（`attach_support`・`golden_update`・`brush_files` など）は、束の `main.rs` で `#[path]` を付けて 1 度だけ宣言し、ファイルでは `use crate::<部品>;` と書きます。`include_str!`・`include_bytes!` の道はファイルの場所から数えます（束のフォルダの 1 つ上が `tests/`）。
 - 使用メモリ（VmHWM）を測る手で回す試験（`#[ignore]` の `bigdoc::measure`・`psd_stream::measure`）は、名前で絞って回します（束のほかの試験と同じプロセスで同時に走ると、測りが乱れます）。
 

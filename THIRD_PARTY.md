@@ -26,7 +26,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   使えなければ X11）で直接使う。`arboard` 自体は `egui-winit` 経由で入っていたもので、増えるのは Linux だけの `wl-clipboard-rs 0.9.4`
   （MIT OR Apache-2.0 から MIT）と、その依存の `os_pipe`・`tree_magic_mini`・`nom`（いずれも MIT）、`petgraph`・`fixedbitset`・
   `hashbrown 0.15.5`（MIT OR Apache-2.0 から MIT）、`foldhash 0.1.5`（Zlib）。Windows の依存は変わらない。`tree_magic_mini` の GPL のデータ
-  （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を足さないこと。
+  （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を有効にしないこと。
 - `yolu-app` は画面の並び（ドックのタブの組・分け方・ウィンドウの大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
   `egui`・`epaint`・`emath`・`ecolor`・`accesskit` などが既に使っている `serde` を使うだけで、増えるクレートは `accesskit` の `serde` 機能が引く
   手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
