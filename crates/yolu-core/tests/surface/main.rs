@@ -4,6 +4,9 @@
 //! （`RUST_TEST_THREADS` の分だけ）。プロセス全体の状態を変える試験は束に入れず、`tests/` の直下に 1 ファイル 1 本で置く（理由はそのファイルの頭）。
 //! 新しい試験は、内容に近い束のフォルダにファイルを置き、この `main.rs` に `mod` を 1 行足す（`edit/bundle_layout.rs` が足し忘れを見つける）。
 //! 共通の部品は下で 1 度だけ宣言し、各ファイルは `use crate::<部品>;` で使う。
+#[path = "../rayon_support/mod.rs"]
+mod rayon_support;
+
 mod brush_sources;
 mod material;
 mod mesh_maps;
