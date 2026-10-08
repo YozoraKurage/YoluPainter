@@ -101,6 +101,51 @@ const INSIDE_EPSILON: f64 = 1e-7;
 /// 1 つの区画の名目の固定のバイト（一覧の項目と管理）。
 const BUCKET_OVERHEAD: u64 = 64;
 
+/// 画面の上のダブの形: 投影の画素ごとの覆い（面の向きの弱めの前）。投影の画素はワーカーからも読むので Sync。
+pub(crate) trait ScreenCover: Sync {
+    /// 区画を選ぶ円の半径（画面の単位）。この円の外の投影の画素の覆いは 0 でなければならない。
+    fn reach(&self) -> f64;
+    /// 中心からの画面のずれ (dx, dy)（y は下向き）の所にある、テクセル (x, y) の覆い（0 以下は塗らない）。
+    fn cover(&self, dx: f64, dy: f64, x: u16, y: u16) -> f32;
+}
+
+/// 丸い筆先（3D のストロークの今までの式: 中心からの距離を半径で割った値の硬さの smoothstep。円の上と外は 0）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RoundCover {
+    radius: f64,
+    radius2: f64,
+    hardness: f32,
+}
+
+impl RoundCover {
+    pub(crate) fn hardness(&self) -> f32 {
+        self.hardness
+    }
+
+    pub(crate) fn new(radius: f32, hardness: f32) -> RoundCover {
+        let r = radius as f64;
+        RoundCover {
+            radius: r,
+            radius2: r * r,
+            hardness: clamp01(hardness),
+        }
+    }
+}
+
+impl ScreenCover for RoundCover {
+    fn reach(&self) -> f64 {
+        self.radius
+    }
+    #[inline]
+    fn cover(&self, dx: f64, dy: f64, _x: u16, _y: u16) -> f32 {
+        let d2 = dx * dx + dy * dy;
+        if d2 >= self.radius2 {
+            return 0.0;
+        }
+        coverage((d2.sqrt() / self.radius) as f32, self.hardness)
+    }
+}
+
 /// 投影の画素 1 つ（区画に覚える）。
 #[derive(Clone, Copy, Debug)]
 struct ProjPixel {
@@ -160,6 +205,20 @@ impl CopyTransform {
         if let Some((r, copy)) = &self.radial {
             let o = r.origin.as_dvec3();
             p = o + r.rotation(*copy).as_dquat() * (p - o);
+        }
+        p
+    }
+
+    /// 写しの側の点を元の側へ戻す（回転を戻してから鏡映）。
+    pub(crate) fn inverse_point(&self, p: DVec3) -> DVec3 {
+        let mut p = p;
+        if let Some((r, copy)) = &self.radial {
+            let o = r.origin.as_dvec3();
+            p = o + r.rotation(*copy).as_dquat().inverse() * (p - o);
+        }
+        if let Some(m) = &self.mirror {
+            let n = m.normal.as_dvec3();
+            p -= n * (2.0 * (p - m.point.as_dvec3()).dot(n));
         }
         p
     }
@@ -1032,14 +1091,37 @@ impl SurfaceProjector {
         room: u64,
         clock: u64,
     ) -> SurfaceDabResult {
-        let mut result = SurfaceDabResult::default();
-        if !finite2(center) || !radius.is_finite() || radius <= 0.0 {
+        if !radius.is_finite() || radius <= 0.0 {
+            let mut result = SurfaceDabResult::default();
             result.refusal = Some(DabRefusal::InvalidArguments);
             return result;
         }
-        let hardness = clamp01(hardness);
+        self.dab_with(
+            center,
+            &RoundCover::new(radius, hardness),
+            true,
+            room,
+            clock,
+        )
+    }
+
+    /// [`SurfaceProjector::dab_at`] の、ダブの形を渡す形: 円（`cover.reach()`）に重なる区画の投影の画素の覆いを `cover` で出す。
+    /// `weighted` なら面の向きの弱め（裏の面・傾いた面）を掛ける（デュアルブラシの 2 つ目のダブの溜まりは掛けない）。
+    pub(crate) fn dab_with<C: ScreenCover>(
+        &mut self,
+        center: Vec2,
+        cover: &C,
+        weighted: bool,
+        room: u64,
+        clock: u64,
+    ) -> SurfaceDabResult {
+        let mut result = SurfaceDabResult::default();
+        let r = cover.reach();
+        if !finite2(center) || !r.is_finite() || r <= 0.0 {
+            result.refusal = Some(DabRefusal::InvalidArguments);
+            return result;
+        }
         let c = center.as_dvec2();
-        let r = radius as f64;
         let needed = self.buckets_in_circle(c, r);
         self.clock = clock;
         let missing: Vec<u32> = needed
@@ -1099,12 +1181,11 @@ impl SurfaceProjector {
             for p in pixels.iter() {
                 let dx = p.sx as f64 - c.x;
                 let dy = p.sy as f64 - c.y;
-                let d2 = dx * dx + dy * dy;
-                if d2 >= r * r {
+                let cov = cover.cover(dx, dy, p.x, p.y);
+                if cov <= 0.0 {
                     continue;
                 }
-                let distance = (d2.sqrt() / r) as f32;
-                let cov = coverage(distance, hardness) * p.weight;
+                let cov = if weighted { cov * p.weight } else { cov };
                 if cov > 0.0 {
                     out.push(Candidate {
                         key: p.y as i64 * width + p.x as i64,

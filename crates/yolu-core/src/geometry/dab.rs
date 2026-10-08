@@ -260,6 +260,61 @@ impl SurfaceGeometry {
         cache: Option<&mut SurfaceVisibilityCache>,
         ignore_visibility: bool,
     ) -> SurfaceDabResult {
+        self.build_surface_dabs_with(
+            hit,
+            radius_world,
+            width,
+            height,
+            camera,
+            hardness,
+            budget,
+            cache,
+            ignore_visibility,
+            None,
+        )
+    }
+
+    /// カメラによらない足跡（対称の写しの側、[`SurfaceGeometry::build_surface_dabs`] の ignore_visibility）の、覆いを呼び手が決める形:
+    /// 半径 radius_world の球に入るテクセルごとに、`cover(テクセルの点, x, y)` を覆いにする（同じテクセルは大きいほう）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build_surface_footprint(
+        &self,
+        hit: &SurfaceHit,
+        radius_world: f32,
+        width: i32,
+        height: i32,
+        camera: Vec3,
+        budget: &SurfaceBrushBudget,
+        cover: &dyn Fn(Vec3, i32, i32) -> f32,
+    ) -> SurfaceDabResult {
+        self.build_surface_dabs_with(
+            hit,
+            radius_world,
+            width,
+            height,
+            camera,
+            1.0,
+            budget,
+            None,
+            true,
+            Some(cover),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_surface_dabs_with(
+        &self,
+        hit: &SurfaceHit,
+        radius_world: f32,
+        width: i32,
+        height: i32,
+        camera: Vec3,
+        hardness: f32,
+        budget: &SurfaceBrushBudget,
+        cache: Option<&mut SurfaceVisibilityCache>,
+        ignore_visibility: bool,
+        cover: Option<&dyn Fn(Vec3, i32, i32) -> f32>,
+    ) -> SurfaceDabResult {
         let mut result = SurfaceDabResult::default();
         if hit.revision != self.revision || hit.triangle as usize >= self.triangles.len() {
             result.refusal = Some(DabRefusal::SnapshotChanged);
@@ -374,7 +429,10 @@ impl SurfaceGeometry {
             }
             let mut merged: FastMap<i32, f32> = FastMap::default();
             for c in &candidates {
-                let cov = coverage(c.distance, hardness);
+                let cov = match cover {
+                    Some(f) => f(c.position, c.x, c.y),
+                    None => coverage(c.distance, hardness),
+                };
                 let key = c.y * width + c.x;
                 // C# の !TryGetValue || coverage > old
                 if merged.get(&key).is_none_or(|&old| cov > old) {

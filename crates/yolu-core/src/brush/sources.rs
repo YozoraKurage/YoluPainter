@@ -351,6 +351,9 @@ impl StrokeState {
             let coord = TileCoord::new((d.x / ts) as u32, (d.y / ts) as u32);
             let local = ((d.y % ts) * ts + d.x % ts) as usize;
             let point = points.map(|v| v[i]);
+            let Some((scales, paper)) = self.surface_scales(d.x, d.y) else {
+                continue;
+            };
             if let Err(e) = cursor.move_to(self, surface, coord) {
                 result = Err(e);
                 break;
@@ -364,8 +367,8 @@ impl StrokeState {
                     local,
                     d.coverage as f32,
                     pressure,
-                    (1.0, 1.0),
-                    None,
+                    scales,
+                    paper,
                     point,
                 )
             });
