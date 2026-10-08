@@ -18,9 +18,21 @@
 //!   （縮めは上げるだけ。文書が替わると決め直す）。メッシュマップの 1 枚も同じく予算（半分）と辺の上限で縮める。
 //! - 表示の写しは UV の外へ塗り広げる（`set_padding`。書き出しと同じ式の `yolu_core::padding`。正本は変えない）: UV の覆いから作る
 //!   段の地図（`padding::Rings`）をモデルの UV の形・文書の大きさ・縮めごとに作って覚え、上げる矩形ごとに、その周りを塗り広げの幅
-//!   だけ広げて合成し、矩形の中を画像全体を塗り広げたときと同じ値にして上げる（`DISPLAY_PAD_TEXELS`）。離れて見たときにミップの段が
-//!   アイランドの外の透明・0 を混ぜて、継ぎ目が暗く・縁が浮くのを防ぐ。今のセットは 1 度作ったら覚えたまま使い、ほかのセットは同期のたびに
-//!   作り直す（`release_scratch` が手放す。文書の大きさ・1 画素 1 バイトのメモリを、ほかのセットの数に比例して残さないため）。
+//!   だけ広げて合成し、矩形の中を画像全体を塗り広げたときと同じ値にして上げる（`DISPLAY_PAD_TEXELS`）。段 0 のバイリニアがアイランドの外の
+//!   透明・0 を混ぜないための塗り広げ。今のセットは 1 度作ったら覚えたまま使い、ほかのセットは同期のたびに作り直す（`release_scratch` が手放す。
+//!   文書の大きさ・1 画素 1 バイトのメモリを、ほかのセットの数に比例して残さないため）。
+//! - 塗り広げるときは、ミップマップ（段 1 以降）を UV の上の画素（覆い + 塗り広げ）だけで作る（押し引き。`shaders/mip_weighted.wgsl`）。塗り広げの幅より
+//!   大きい箱（段 4 以上）に、塗り広げの外の色（塗りつぶしの色・透明）が混ざって継ぎ目に線が出るのを防ぐ。段 0 の塗り広げを外側の全部へ広げると、描いた
+//!   矩形 1 つの変化が画像全体の外側へ届き、描いている間の同期が幅に比例して重い。重みの絵（`Weights`。R8・ミップつき・セットごとに 1 つでチャンネルで共通）の
+//!   段 0 は、そのテクセルの箱の文書の画素が全部、覆い・塗り広げの中なら 255、そうでなければ 0（縮めて持つ絵の箱の外縁の色には外の色が混ざるので、
+//!   重みで外す）、段 1 以降は 1 つ上の段の箱の平均（切り上げ。重みのある子が 1 つでもあれば最低 1）。押し（`fs_push`）は 1 つ上の段の箱の重みつきの平均、
+//!   引き（`fs_pull`）は重みが 0 のテクセルを 1 つ粗い段から埋める（粗い段の重みが 0 でないテクセルだけを双線形に数える）。重みが 0 でないテクセルとその
+//!   となりのテクセル（描画が読むのはここだけ）は、読む 4 つの中の重みが 0 でないテクセルの値だけで決まるので、描いた所だけの作り直しは、押した範囲とその
+//!   すぐ外までで足りる（全部を作り直したものと、描画が読むテクセルで同じ）。そこから離れたテクセルは粗い段の埋めた値を読むので、範囲の外では前の値のまま残りうる
+//!   （描画では読まれない）。粗い絵を見せている間（ギズモ・スライダーのドラッグ）は、仮の絵のまま重みを使わない今までの作り（全部のテクセルの箱の平均）で
+//!   作り、書き換えた段ごとの範囲を覚える（`plain_dirty`）。離して正確に上げ直したときの重みつきの作り直しが、その範囲も作り直す（`weighted_mip_builds`・
+//!   `coarse_mip_builds` が通った道を数える）。重みの絵は予算に入る（1 テクセル 1 バイト、ミップ込み。`bytes_per_texel_planned`）。塗り広げない（幅 0・UV の三角形が
+//!   無い）セットは重みを使わず、全部のテクセルの箱の平均。
 //! - 今のセットでないセットの絵も同じ `Paint` の兄弟（`sibling`）で持つ。辺の上限（`set_cap`）で縮めて持ち、文書が変わったとき
 //!   （版・変化の記録）だけ同期する。今のセットが替わったとき、前のセットの絵は、ミップの段をコピーして上限の大きさへ縮める
 //!   （`demote`。文書を合成し直さない）。
@@ -50,12 +62,11 @@ pub const PAINT_BUDGET_BYTES: u64 = 512 << 20;
 /// 大きさで評価して、離したら正確に上げ直す）。
 pub const DRAG_STRIDE: u32 = 4;
 /// 表示の写しを UV の外へ塗り広げる幅（表示のテクスチャのテクセル。縮めて持つ絵は 2^縮め 倍の文書の画素で塗り広げてから縮める）。
-/// ミップの段 L の 1 テクセルは段 0 の 2^L 四方の平均で、バイリニアは段 L の隣の 1 テクセルまで読むので、アイランドの縁から 2^(L+1) テクセル
-/// 塗り広げれば段 L まではアイランドの外を混ぜない。16 は段 3（1 画素に段 0 の 8 テクセルほどを縮めて見る距離）まで。
+/// 段 0 のバイリニアは隣の 1 テクセルまで読み、段 1 以降は塗り広げの外を重みで外して作る（押し引き）ので、塗り広げの幅に頼るのは段 0 だけ。
 /// 測った（`view3d_padding` の計測、2048²・アイランドの外を広くあけた UV の球、表示域 454 × 494 画素）: 球の内側で継ぎ目がにじむ画素は、幅 0 で
-/// 487・259・149・70（球の直径 312・154・78・40 画素）、16 で 0・0・1・24、32 で全部 0。球の輪郭の近くの寝た面は段が高く、幅 64 でも
-/// 6〜19 画素残る。描いている最中の 1 フレームの同期（4096²・Color と Roughness の 2 タイルずつ、lavapipe）は幅 0 の 0.71 ms に対して 16 で
-/// 1.16 ms・32 で 1.84 ms で、32 は増えた分が 1 ms を超えるので 16 にした。
+/// 487・259・149・70（球の直径 312・154・78・40 画素。lavapipe の描画）、幅 2 以上は全部 0。押し引きにする前は、16 で 0・0・1・24、32 で全部 0、64 でも寝た面で
+/// 6〜19 画素残った。描いている最中の 1 フレームの同期（4096²・Color と Roughness の 2 タイルずつ、lavapipe）は、幅 0 の 0.71 ms に対して
+/// 16 で 1.16 ms・32 で 1.84 ms（押し引きにする前の測り。幅に比例して増える）。幅は 16 のままにしてある。
 pub const DISPLAY_PAD_TEXELS: u32 = 16;
 /// 8 bit ずつのリニアの値（Normal・メッシュマップ・リニアの画像）と 1 チャンネル 8 bit の値の形式。
 const RGBA: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -151,6 +162,9 @@ pub struct PaintStats {
     pub gpu_bytes: u64,
     /// 粗く合成した絵を見せているタイルの数（全チャンネルの合計。ドラッグが終われば正確に上げ直して 0 に戻る）。
     pub coarse_tiles: usize,
+    /// ミップマップを UV の上の画素だけで作った（押し引き）回数と、粗い絵を見せているために全部のテクセルの箱の平均で作った回数（チャンネルごとに 1 回）。
+    pub weighted_mip_builds: u64,
+    pub coarse_mip_builds: u64,
 }
 
 struct ChannelTexture {
@@ -161,6 +175,28 @@ struct ChannelTexture {
     /// 段 i を作るときに読む、段 i − 1 の束ね。
     mip_binds: Vec<wgpu::BindGroup>,
     view: wgpu::TextureView,
+    /// 重みつきのミップ（押し引き）の束ね。重みの絵が替わるたびに作り直す。
+    weighted_binds: Option<WeightedBinds>,
+    /// 粗い絵を見せている間に、全部のテクセルの箱の平均で書き換えた段ごとの範囲（x0 y0 x1 y1。添え字は段）。次の重みつきの作り直しが、その範囲も
+    /// 作り直す（外側の色が混ざった値を残さない）。
+    plain_dirty: Vec<Option<[u32; 4]>>,
+}
+
+/// `rebuild_mips` が作った道。
+enum MipsBuilt {
+    /// 重みつき（UV の上の画素だけ）。持ち越した範囲も作り直したので空にしてよい。
+    Weighted,
+    /// 全部のテクセルの箱の平均。書き換えた段ごとの範囲。
+    Plain(Vec<Option<[u32; 4]>>),
+}
+
+/// 重みつきのミップの、段ごとの束ね（`Weights::uid` の重みの絵に対するもの）。
+struct WeightedBinds {
+    weights_uid: u64,
+    /// 段 i（1 から）を押すときの束ね: 段 i − 1 の色・重みと、段 i の重み。添え字は i − 1。
+    push: Vec<wgpu::BindGroup>,
+    /// 段 i（1 から最後の 1 つ手前まで）を引くときの束ね: 段 i + 1 の色・重みと、段 i の重み。添え字は i − 1。
+    pull: Vec<wgpu::BindGroup>,
 }
 
 /// 文書の外の 1 枚の絵（メッシュマップ）。
@@ -226,6 +262,33 @@ struct PadRings {
     rings: Option<Arc<Rings>>,
 }
 
+/// 重みの絵の元（形・文書の大きさ・文書の画素での塗り広げの幅・縮め）。同じなら同じ絵。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WeightKey {
+    shape: PadShape,
+    doc_size: (u32, u32),
+    reach: u32,
+    shift: u32,
+}
+
+/// 表示の写しと同じ大きさの 1 チャンネル 8 bit の重みの絵（ミップつき。セットごとに 1 つで、チャンネルで共通）。段 0 は、そのテクセルの箱の文書の
+/// 画素が全部、覆い・塗り広げの中なら 255、そうでなければ 0（`coverage_weights`）、段 1 以降は 1 つ上の段の箱の平均（0〜255 が 0〜1。切り上げで、
+/// 1 つでも重みのある子があれば最低 1）。重みが 0 のテクセルは、UV の上の画素だけでできた色を持たない。
+struct Weights {
+    /// 作った順の番号（束ねの鍵）。
+    uid: u64,
+    key: WeightKey,
+    size: [u32; 2],
+    /// 段ごとの別のテクスチャ（1 段だけ）。同じテクスチャの違う段を 1 つの描きで 2 つ読む（引きの粗い段の重みと描き先の重み）と、段の範囲を
+    /// テクスチャごとの状態で持つ GL では、片方の段しか読めない。
+    textures: Vec<wgpu::Texture>,
+    /// 段ごとの見え方。
+    views: Vec<wgpu::TextureView>,
+    /// 段ごとに、重みが 0 のテクセルがあるか（無い段は引かない）。
+    holes: Vec<bool>,
+    bytes: u64,
+}
+
 #[derive(Clone)]
 struct Mips {
     layout: wgpu::BindGroupLayout,
@@ -234,6 +297,25 @@ struct Mips {
     srgb: wgpu::RenderPipeline,
     scalar: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
+    weighted: WeightedMips,
+}
+
+/// UV の上の画素だけでミップを作る（押し引き）パイプライン。形式ごと（RGBA・sRGB・scalar の順）に、押しと引き。
+#[derive(Clone)]
+struct WeightedMips {
+    layout: wgpu::BindGroupLayout,
+    push: [wgpu::RenderPipeline; 3],
+    pull: [wgpu::RenderPipeline; 3],
+}
+
+impl WeightedMips {
+    fn index(format: wgpu::TextureFormat) -> usize {
+        match format {
+            RGBA_SRGB => 1,
+            SCALAR => 2,
+            _ => 0,
+        }
+    }
 }
 
 /// 塗った絵の GPU の持ち物。
@@ -266,7 +348,69 @@ pub struct Paint {
     pad_seen: Option<(u32, i32, Option<PadShape>)>,
     /// 覚えている段の地図。
     pad_rings: Option<PadRings>,
+    /// 表示の写しの重みの絵（塗り広げるときだけ。UV の形・文書の大きさ・縮め・塗り広げの幅が同じなら作り直さない）。
+    weights: Option<Weights>,
     pub stats: PaintStats,
+}
+
+/// 重みつきのミップ（`shaders/mip_weighted.wgsl`）の束ねの形とパイプライン。3 つの読み（色・重み・描き先の重み）は、押しも引きも同じ形。
+fn make_weighted_mips(device: &wgpu::Device) -> WeightedMips {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("yolu-3d-mip-weighted"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mip_weighted.wgsl").into()),
+    });
+    let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("yolu-3d-mip-weighted"),
+        entries: &[texture_entry(0), texture_entry(1), texture_entry(2)],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("yolu-3d-mip-weighted"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let make = |entry: &'static str, format| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("yolu-3d-mip-weighted"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let formats = [RGBA, RGBA_SRGB, SCALAR];
+    WeightedMips {
+        layout,
+        push: formats.map(|f| make("fs_push", f)),
+        pull: formats.map(|f| make("fs_pull", f)),
+    }
 }
 
 fn next_uid() -> u64 {
@@ -344,6 +488,7 @@ impl Paint {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let weighted = make_weighted_mips(&device);
         let defaults = Slot::ALL
             .iter()
             .map(|slot| {
@@ -388,6 +533,7 @@ impl Paint {
                 srgb,
                 scalar,
                 sampler,
+                weighted,
             },
             defaults,
             set: None,
@@ -404,6 +550,7 @@ impl Paint {
             pad_want: None,
             pad_seen: None,
             pad_rings: None,
+            weights: None,
             stats: PaintStats::default(),
         }
     }
@@ -429,6 +576,7 @@ impl Paint {
             pad_want: None,
             pad_seen: None,
             pad_rings: None,
+            weights: None,
             stats: PaintStats::default(),
         }
     }
@@ -576,7 +724,7 @@ impl Paint {
     /// `estimate_bytes` の、縮めの段とバイト数（ユーザーチャンネルの配列は、この段から縮める）。
     pub fn estimate(&self, doc: &Document, cap: u32) -> (u32, u64) {
         let limit = self.side_limit().min(cap);
-        let per_texel = used_bytes_per_texel(doc);
+        let per_texel = self.bytes_per_texel_planned(doc);
         let shift = choose_shift([doc.width(), doc.height()], per_texel, limit, u64::MAX);
         let size = [
             doc.width().div_ceil(1 << shift).max(1),
@@ -593,7 +741,7 @@ impl Paint {
             doc.width().div_ceil(1 << shift).max(1),
             doc.height().div_ceil(1 << shift).max(1),
         ];
-        mip_bytes(size, used_bytes_per_texel(doc))
+        mip_bytes(size, self.bytes_per_texel_planned(doc))
     }
 
     /// `planned_bytes` の縮めの段。
@@ -602,6 +750,18 @@ impl Paint {
         match &self.set {
             Some(s) if !self.rebuild_needed(doc, want) => s.shift,
             _ => want,
+        }
+    }
+
+    /// 文書を持つ縮めを決める 1 テクセルのバイト数: 使っているチャンネルの合計に、表示の写しを塗り広げる（重みの絵を持つ）なら重みの 1 バイトを足す。
+    /// 重みの絵はセットごとに 1 つで、チャンネルの数によらない。使っているチャンネルが無ければミップを作らないので足さない。モデルの UV が無い
+    /// （塗り広げない）セットも、計画では持つ側に数える（計画が実際より小さくならないように）。
+    fn bytes_per_texel_planned(&self, doc: &Document) -> u64 {
+        let used = used_bytes_per_texel(doc);
+        if used > 0 && self.pad_texels > 0 {
+            used + 1
+        } else {
+            used
         }
     }
 
@@ -659,6 +819,17 @@ impl Paint {
         {
             return false;
         }
+        // 粗い絵を見せている間に、重みを使わない作りで書き換えた段・まだ正確に上げ直していない粗いタイルがあるときは、コピーしない（コピーした段 0 に外側の
+        // 色が混ざった範囲が残り、離したあとの上げ直しはタイルの範囲しか直さない）。文書から縮めて作り直す
+        if set
+            .textures
+            .iter()
+            .flatten()
+            .any(|t| t.plain_dirty.iter().any(Option::is_some))
+            || set.coarse.iter().any(|c| !c.is_empty())
+        {
+            return false;
+        }
         let (old_levels, old_size) = (set.levels, set.size);
         let levels = old_levels - k;
         let mut encoder = self
@@ -697,6 +868,8 @@ impl Paint {
             moved[slot.index()] = Some(new);
         }
         self.queue.submit(Some(encoder.finish()));
+        // 重みの絵は縮めの段ごとの絵なので、縮めたら次のミップの作り直しで作り直す（ここで作ると、変わっていないセットの段の地図まで作り直す）
+        self.weights = None;
         let set = self.set.as_mut().expect("確かめた");
         set.textures = moved;
         set.size = size;
@@ -741,7 +914,36 @@ impl Paint {
             (texture.size[0] >> level).max(1),
             (texture.size[1] >> level).max(1),
         );
-        let row = (w * slot.bytes_per_texel()).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        Some((
+            self.read_texture_level(&texture.texture, level, [w, h], slot.bytes_per_texel()),
+            [w, h],
+        ))
+    }
+
+    /// 試験用: 重みの絵の 1 段の中身を CPU へ読む（1 テクセル 1 バイト、行は下から。大きさつき）。塗り広げていない（重みの絵が無い）・段が無いときは None。
+    pub fn read_weight_level(&self, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
+        let weights = self.weights.as_ref()?;
+        if level as usize >= weights.views.len() {
+            return None;
+        }
+        let (w, h) = (
+            (weights.size[0] >> level).max(1),
+            (weights.size[1] >> level).max(1),
+        );
+        Some((
+            self.read_texture_level(&weights.textures[level as usize], 0, [w, h], 1),
+            [w, h],
+        ))
+    }
+
+    fn read_texture_level(
+        &self,
+        texture: &wgpu::Texture,
+        level: u32,
+        [w, h]: [u32; 2],
+        bytes_per_texel: u32,
+    ) -> Vec<u8> {
+        let row = (w * bytes_per_texel).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("yolu-3d-read"),
             size: row as u64 * h as u64,
@@ -755,7 +957,7 @@ impl Paint {
             });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture.texture,
+                texture,
                 mip_level: level,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -780,14 +982,14 @@ impl Paint {
         });
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let mapped = buffer.slice(..).get_mapped_range().expect("読み出しの範囲");
-        let line = (w * slot.bytes_per_texel()) as usize;
+        let line = (w * bytes_per_texel) as usize;
         let mut out = Vec::with_capacity(line * h as usize);
         for y in 0..h as usize {
             out.extend_from_slice(&mapped[y * row as usize..y * row as usize + line]);
         }
         drop(mapped);
         buffer.unmap();
-        Some((out, [w, h]))
+        out
     }
 
     /// 1 × 1 の透明（絵が無いときに束ねる）。
@@ -893,7 +1095,7 @@ impl Paint {
                 uploaded += n;
                 dirty = union_dirty(dirty, d);
                 let held = &mut self.set.as_mut().expect("作った").coarse[slot.index()];
-                held.extend_from_slice(&covered);
+                held.extend_from_slice(&held_after_coarse(covered, &coarse));
                 held.sort();
                 held.dedup();
             }
@@ -904,13 +1106,45 @@ impl Paint {
                 dirty = Some([0, 0, size[0], size[1]]);
             }
             if let Some(d) = dirty {
+                // 粗い絵を見せている間は仮の絵なので、重みを使わない今までの作り（全部のテクセルの箱の平均）で作る。外側の色が混ざった範囲は覚えておき、
+                // ドラッグが終わって正確に上げ直したときの重みつきの作り直しが、その範囲も作り直す
+                let showing_coarse = !coarse.is_empty();
+                if !showing_coarse {
+                    self.ensure_weights(doc);
+                    self.ensure_weighted_binds(slot);
+                }
                 let set = self.set.as_ref().expect("作った");
                 let texture = set.textures[slot.index()].as_ref().expect("作った");
-                self.rebuild_mips(slot.format(), texture, encoder, d);
+                let weights = if showing_coarse {
+                    None
+                } else {
+                    self.weights.as_ref()
+                };
+                let built = self.rebuild_mips(slot.format(), texture, weights, encoder, d);
+                let texture = self.set.as_mut().expect("作った").textures[slot.index()]
+                    .as_mut()
+                    .expect("作った");
+                match built {
+                    MipsBuilt::Weighted => {
+                        texture.plain_dirty.clear();
+                        self.stats.weighted_mip_builds += 1;
+                    }
+                    MipsBuilt::Plain(touched) => {
+                        if showing_coarse {
+                            merge_levels(&mut texture.plain_dirty, &touched);
+                            self.stats.coarse_mip_builds += 1;
+                        }
+                    }
+                }
             }
             if uploaded > 0 {
                 changed = true;
             }
+        }
+        let set = self.set.as_mut().expect("作った");
+        // 使っているチャンネルが 1 つも無くなったら、重みの絵も要らない
+        if set.textures.iter().all(Option::is_none) {
+            self.weights = None;
         }
         let set = self.set.as_mut().expect("作った");
         set.serial = serial;
@@ -940,7 +1174,7 @@ impl Paint {
 
     fn gpu_bytes(&self) -> u64 {
         let Some(set) = &self.set else { return 0 };
-        Slot::ALL
+        let channels: u64 = Slot::ALL
             .iter()
             .filter(|s| set.textures[s.index()].is_some())
             .map(|s| {
@@ -952,7 +1186,8 @@ impl Paint {
                     })
                     .sum::<u64>()
             })
-            .sum()
+            .sum();
+        channels + self.weights.as_ref().map_or(0, |w| w.bytes)
     }
 
     /// 絵の一辺の上限（GPU の上限と `MAX_PAINT_SIZE` の小さい方。上限 `cap` は含めない）。
@@ -967,7 +1202,7 @@ impl Paint {
     /// 上限（と、あれば `cap`）に収まるまで上げる。`cap` で決まる縮めは予算で決まるのではないので、`by_budget` にしない。
     fn shift_for(&self, doc: &Document) -> (u32, bool) {
         let limit = self.side_limit().min(self.cap.unwrap_or(u32::MAX));
-        let per_texel = used_bytes_per_texel(doc);
+        let per_texel = self.bytes_per_texel_planned(doc);
         let (w, h) = (doc.width(), doc.height());
         let shift = choose_shift([w, h], per_texel, limit, self.budget);
         let by_limit = choose_shift([w, h], 0, limit, u64::MAX);
@@ -1064,6 +1299,8 @@ impl Paint {
             levels: level_views,
             mip_binds,
             view,
+            weighted_binds: None,
+            plain_dirty: Vec::new(),
         }
     }
 
@@ -1107,7 +1344,7 @@ impl Paint {
                 depth_or_array_layers: 1,
             },
         );
-        self.rebuild_mips(format, &texture, encoder, [0, 0, w, h]);
+        let _ = self.rebuild_mips(format, &texture, None, encoder, [0, 0, w, h]);
         Some(ImageTexture {
             texture,
             level: shift,
@@ -1405,19 +1642,155 @@ impl Paint {
         }
     }
 
-    /// 段 0 の dirty（x0 y0 x1 y1）の下の段を作り直す（その範囲だけを鋏で切って描く）。
+    /// 重みの絵を、今のセットの形・縮めに合わせる（塗り広げないなら持たない）。作るには段の地図が要る（`rings`）。
+    fn ensure_weights(&mut self, doc: &Document) {
+        let key = self.set.as_ref().and_then(|set| {
+            let shape = set.pad.filter(|_| self.pad_texels > 0)?;
+            Some(WeightKey {
+                shape,
+                doc_size: (doc.width(), doc.height()),
+                reach: (self.pad_texels << set.shift).min(padding::MAX_RING_REACH),
+                shift: set.shift,
+            })
+        });
+        let Some(key) = key else {
+            self.weights = None;
+            return;
+        };
+        if self.weights.as_ref().is_some_and(|w| w.key == key) {
+            return;
+        }
+        // 前の絵を先に手放す（作る間に 2 つ持たない）
+        self.weights = None;
+        let Some(rings) = self.rings(doc) else {
+            return;
+        };
+        let set = self.set.as_ref().expect("確かめた");
+        let (size, levels) = (set.size, set.levels);
+        let pyramid = weight_pyramid(coverage_weights(&rings, key.shift, size), size, levels);
+        let mut textures = Vec::with_capacity(levels as usize);
+        let mut views = Vec::with_capacity(levels as usize);
+        let mut holes = Vec::with_capacity(levels as usize);
+        for (level, texels) in pyramid.iter().enumerate() {
+            let (w, h) = ((size[0] >> level).max(1), (size[1] >> level).max(1));
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("yolu-3d-mip-weights"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SCALAR,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            self.queue.write_texture(
+                texture.as_image_copy(),
+                texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            views.push(texture.create_view(&Default::default()));
+            textures.push(texture);
+            holes.push(texels.contains(&0));
+        }
+        self.weights = Some(Weights {
+            uid: next_uid(),
+            key,
+            size,
+            textures,
+            views,
+            holes,
+            bytes: mip_bytes(size, 1),
+        });
+    }
+
+    /// チャンネルのテクスチャの、重みつきのミップの束ねを、今の重みの絵に合わせる。
+    fn ensure_weighted_binds(&mut self, slot: Slot) {
+        let (Some(weights), Some(set)) = (self.weights.as_ref(), self.set.as_mut()) else {
+            return;
+        };
+        let Some(texture) = set.textures[slot.index()].as_mut() else {
+            return;
+        };
+        if texture
+            .weighted_binds
+            .as_ref()
+            .is_some_and(|b| b.weights_uid == weights.uid)
+            || weights.views.len() != texture.levels.len()
+            || weights.size != texture.size
+        {
+            return;
+        }
+        let levels = texture.levels.len();
+        let bind = |color: &wgpu::TextureView, source: usize, target: usize| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("yolu-3d-mip-weighted"),
+                layout: &self.mips.weighted.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&weights.views[source]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&weights.views[target]),
+                    },
+                ],
+            })
+        };
+        let push = (1..levels)
+            .map(|l| bind(&texture.levels[l - 1], l - 1, l))
+            .collect();
+        let pull = (1..levels.saturating_sub(1))
+            .map(|l| bind(&texture.levels[l + 1], l + 1, l))
+            .collect();
+        texture.weighted_binds = Some(WeightedBinds {
+            weights_uid: weights.uid,
+            push,
+            pull,
+        });
+    }
+
+    /// 段 0 の dirty（x0 y0 x1 y1）の下の段を作り直す（その範囲だけを鋏で切って描く）。`weights` があれば UV の上の画素だけで作る（押し引き。
+    /// 束ねが重みの絵に合っていること）。無ければ、全部のテクセルの箱の平均。
     fn rebuild_mips(
         &self,
         format: wgpu::TextureFormat,
         texture: &ChannelTexture,
+        weights: Option<&Weights>,
         encoder: &mut wgpu::CommandEncoder,
         dirty: [u32; 4],
-    ) {
+    ) -> MipsBuilt {
+        if let (Some(weights), Some(binds)) = (weights, texture.weighted_binds.as_ref()) {
+            if binds.weights_uid == weights.uid {
+                self.rebuild_mips_weighted(format, texture, weights, binds, encoder, dirty);
+                return MipsBuilt::Weighted;
+            }
+        }
         let pipeline = match format {
             SCALAR => &self.mips.scalar,
             RGBA_SRGB => &self.mips.srgb,
             _ => &self.mips.rgba,
         };
+        let mut touched: Vec<Option<[u32; 4]>> = vec![None];
         for level in 1..texture.levels.len() {
             let w = (texture.size[0] >> level).max(1);
             let h = (texture.size[1] >> level).max(1);
@@ -1427,35 +1800,251 @@ impl Paint {
             let x1 = (dirty[2].div_ceil(1 << level) + 1).min(w);
             let y1 = (dirty[3].div_ceil(1 << level) + 1).min(h);
             if x1 <= x0 || y1 <= y0 {
+                touched.push(None);
                 continue;
             }
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("yolu-3d-mip"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &texture.levels[level],
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            touched.push(Some([x0, y0, x1, y1]));
+            let mut pass = begin_mip_pass(encoder, &texture.levels[level]);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &texture.mip_binds[level - 1], &[]);
             pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
             pass.draw(0..3, 0..1);
         }
+        MipsBuilt::Plain(touched)
     }
+
+    /// 押し引きのミップ: 段 0 の変わった範囲から、押し（細かい段から粗い段へ、重みつきの平均）で変わる範囲を段ごとに出して作り、そのあと引き（粗い段から
+    /// 細かい段へ、重みが 0 のテクセルを 1 つ粗い段から埋める）で、押しで書き換わった範囲と、変わった粗いテクセルを読むテクセルを埋め直す。
+    ///
+    /// 重みが 0 でないテクセルの近く（となり）で埋めるテクセルは、読む 4 つの中に重みが 0 でないテクセルがあり、その値だけで決まる（それが押した値で、
+    /// 引きで書き換わらない）ので、引きの範囲が押しの範囲のすぐ外までで足りる。重みが 0 でないテクセルから離れたテクセル（描画では読まれない）は、
+    /// 粗い段の埋めた値を読むので、範囲の外では前の値のまま残ることがある。
+    fn rebuild_mips_weighted(
+        &self,
+        format: wgpu::TextureFormat,
+        texture: &ChannelTexture,
+        weights: &Weights,
+        binds: &WeightedBinds,
+        encoder: &mut wgpu::CommandEncoder,
+        dirty: [u32; 4],
+    ) {
+        let index = WeightedMips::index(format);
+        let levels = texture.levels.len();
+        let dim = |l: usize| ((texture.size[0] >> l).max(1), (texture.size[1] >> l).max(1));
+        let draw = |encoder: &mut wgpu::CommandEncoder,
+                    level: usize,
+                    pipeline: &wgpu::RenderPipeline,
+                    bind: &wgpu::BindGroup,
+                    r: [u32; 4]| {
+            let mut pass = begin_mip_pass(encoder, &texture.levels[level]);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind, &[]);
+            pass.set_scissor_rect(r[0], r[1], r[2] - r[0], r[3] - r[1]);
+            pass.draw(0..3, 0..1);
+        };
+        // 押し（段 0 は押さない）。粗い絵を見せている間に全部のテクセルの箱の平均で書き換えた範囲も、押し直す
+        let mut pushed: Vec<Option<[u32; 4]>> = vec![None];
+        let mut previous = clip_rect(dirty, dim(0));
+        for level in 1..levels {
+            let derived = previous.map(|r| parent_rect(r, dim(level - 1), dim(level)));
+            let carried = texture.plain_dirty.get(level).copied().flatten();
+            previous = match (derived, carried) {
+                (Some(a), Some(b)) => Some(union_rect(a, b)),
+                (a, b) => a.or(b),
+            };
+            if let Some(rect) = previous {
+                draw(
+                    encoder,
+                    level,
+                    &self.mips.weighted.push[index],
+                    &binds.push[level - 1],
+                    rect,
+                );
+            }
+            pushed.push(previous);
+        }
+        // 引き
+        for level in (1..levels.saturating_sub(1)).rev() {
+            if !weights.holes[level] {
+                continue;
+            }
+            let Some(own) = pushed[level] else { continue };
+            let rect = match pushed[level + 1] {
+                Some(coarse) => union_rect(own, children_rect(coarse, dim(level), dim(level + 1))),
+                None => own,
+            };
+            draw(
+                encoder,
+                level,
+                &self.mips.weighted.pull[index],
+                &binds.pull[level - 1],
+                rect,
+            );
+        }
+    }
+}
+
+/// ミップの 1 段へ描く（`Load`: 範囲の外は前のまま）パス。
+fn begin_mip_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &'a wgpu::TextureView,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("yolu-3d-mip"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
+// ───────── 重みの絵 ─────────
+
+/// 段 `n`（辺の長さ）の画素 `y` が入る、1 つ下の段（`m`）の箱の番号。箱の真ん中を、上の段の座標へ比例して写した位置に置く（シェーダーの `first_of` と
+/// 同じ写し）。
+pub(super) fn box_of(y: u32, n: u32, m: u32) -> u32 {
+    ((2 * y as u64 + 1) * m as u64 / (2 * n as u64)) as u32
+}
+
+/// 段 `m`（辺の長さ）の箱 `o` が受け持つ、1 つ上の段（`n`）の画素の始まり（終わりは `o + 1` の始まり）。
+pub(super) fn box_start(o: u32, n: u32, m: u32) -> u32 {
+    ((2 * o as u64 * n as u64 + m as u64 - 1) / (2 * m as u64)) as u32
+}
+
+/// 段 0 の重み: 表示のテクセルごとに、その箱（縮めの 2^shift 四方の文書の画素。端の欠けた箱は中の画素だけ）の全部の画素が、覆い・塗り広げの中なら 255、
+/// 1 つでも外なら 0。縮めて持つ絵の色は箱の全部の画素の平均なので、箱の一部だけが中のテクセル（塗り広げの幅の外の縁）の色には、外の画素の
+/// 色（塗りつぶしの色など）が混ざっている。そのテクセルの重みを 0 にして、押しに使わない。アイランドの縁の箱は、塗り広げが箱より外まで届くので
+/// 全部が中になる。縮めないなら中のテクセルが 255、外が 0。行は下から（文書の y）。
+pub(super) fn coverage_weights(rings: &Rings, shift: u32, size: [u32; 2]) -> Vec<u8> {
+    let (dw, dh) = (rings.width(), rings.height());
+    let block = 1u32 << shift;
+    let mut out = vec![0u8; size[0] as usize * size[1] as usize];
+    out.par_chunks_mut(size[0] as usize)
+        .enumerate()
+        .for_each(|(j, row)| {
+            let j = j as u32;
+            let (y0, y1) = (j * block, ((j + 1) * block).min(dh));
+            for (i, o) in row.iter_mut().enumerate() {
+                let i = i as u32;
+                let (x0, x1) = (i * block, ((i + 1) * block).min(dw));
+                let whole = (y0..y1).all(|y| (x0..x1).all(|x| rings.ring(x, y).is_some()));
+                *o = if whole { 255 } else { 0 };
+            }
+        });
+    out
+}
+
+/// 段 0 の重みから、全部の段の重み（段 1 以降は 1 つ上の段の箱の平均の切り上げ。含めば最低 1、全部 255 なら 255）。
+pub(super) fn weight_pyramid(level0: Vec<u8>, size: [u32; 2], levels: u32) -> Vec<Vec<u8>> {
+    let mut out = vec![level0];
+    for level in 1..levels as usize {
+        let (n, m) = (
+            [
+                (size[0] >> (level - 1)).max(1),
+                (size[1] >> (level - 1)).max(1),
+            ],
+            [(size[0] >> level).max(1), (size[1] >> level).max(1)],
+        );
+        let above = &out[level - 1];
+        let mut next = vec![0u8; m[0] as usize * m[1] as usize];
+        next.par_chunks_mut(m[0] as usize)
+            .enumerate()
+            .for_each(|(j, row)| {
+                let j = j as u32;
+                let (y0, y1) = (box_start(j, n[1], m[1]), box_start(j + 1, n[1], m[1]));
+                for (i, o) in row.iter_mut().enumerate() {
+                    let i = i as u32;
+                    let (x0, x1) = (box_start(i, n[0], m[0]), box_start(i + 1, n[0], m[0]));
+                    let mut sum = 0u32;
+                    for y in y0..y1 {
+                        for x in x0..x1 {
+                            sum += above[(y * n[0] + x) as usize] as u32;
+                        }
+                    }
+                    *o = sum.div_ceil((x1 - x0) * (y1 - y0)) as u8;
+                }
+            });
+        out.push(next);
+    }
+    out
+}
+
+/// 粗い合成で上げたタイル（`covered`）を、離したときに正確に上げ直すタイルとして覚える。粗い合成が失敗して何も上げなかったとき（`covered` が空）は、
+/// 頼んだタイル（`requested`）を覚える（覚えないと、そのタイルは粗くも正確にも上がらないまま、離したあとも古い絵が残る）。
+fn held_after_coarse(covered: Vec<TileCoord>, requested: &[TileCoord]) -> Vec<TileCoord> {
+    if covered.is_empty() {
+        requested.to_vec()
+    } else {
+        covered
+    }
+}
+
+/// 段ごとの範囲を合わせる（`into` の長さを足りるだけ伸ばして、段ごとに範囲の和を取る）。
+fn merge_levels(into: &mut Vec<Option<[u32; 4]>>, other: &[Option<[u32; 4]>]) {
+    if into.len() < other.len() {
+        into.resize(other.len(), None);
+    }
+    for (level, rect) in other.iter().enumerate() {
+        if let Some(rect) = rect {
+            into[level] = Some(into[level].map_or(*rect, |own| union_rect(own, *rect)));
+        }
+    }
+}
+
+/// 範囲（x0 y0 x1 y1）を大きさ `dim` の中に切る。空なら None。
+fn clip_rect(r: [u32; 4], dim: (u32, u32)) -> Option<[u32; 4]> {
+    let r = [
+        r[0].min(dim.0),
+        r[1].min(dim.1),
+        r[2].min(dim.0),
+        r[3].min(dim.1),
+    ];
+    (r[2] > r[0] && r[3] > r[1]).then_some(r)
+}
+
+/// 範囲（段 `n` の画素）を入れる、1 つ下の段（`m`）の箱の範囲（押しで書き換わる範囲）。
+fn parent_rect(r: [u32; 4], n: (u32, u32), m: (u32, u32)) -> [u32; 4] {
+    [
+        box_of(r[0], n.0, m.0),
+        box_of(r[1], n.1, m.1),
+        box_of(r[2] - 1, n.0, m.0) + 1,
+        box_of(r[3] - 1, n.1, m.1) + 1,
+    ]
+}
+
+/// 1 つ粗い段（`m`）の範囲を、双線形で読む段 `n` のテクセルの範囲（読む 4 つのどれかが範囲に入りうるテクセル。余裕を持って広げる）。
+fn children_rect(r: [u32; 4], n: (u32, u32), m: (u32, u32)) -> [u32; 4] {
+    let lo = |v: u32, n: u32, m: u32| ((v as u64 * n as u64 / m as u64) as u32).saturating_sub(2);
+    let hi = |v: u32, n: u32, m: u32| ((v as u64 * n as u64).div_ceil(m as u64) as u32 + 2).min(n);
+    [
+        lo(r[0], n.0, m.0),
+        lo(r[1], n.1, m.1),
+        hi(r[2], n.0, m.0),
+        hi(r[3], n.1, m.1),
+    ]
+}
+
+fn union_rect(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
 }
 
 // ───────── 縮めの決め方 ─────────
 
-/// 文書が使っているチャンネルの 1 テクセルのバイト数の合計。
+/// 文書が使っているチャンネルの 1 テクセルのバイト数の合計（重みの絵は含めない）。
 fn used_bytes_per_texel(doc: &Document) -> u64 {
     Slot::ALL
         .iter()
@@ -2150,6 +2739,80 @@ mod tests {
     }
 
     #[test]
+    fn merging_the_plain_ranges_of_each_level_keeps_the_union() {
+        let mut held: Vec<Option<[u32; 4]>> = Vec::new();
+        merge_levels(&mut held, &[None, Some([2, 2, 5, 5]), None]);
+        assert_eq!(held, vec![None, Some([2, 2, 5, 5]), None]);
+        merge_levels(
+            &mut held,
+            &[
+                None,
+                Some([4, 0, 9, 3]),
+                Some([1, 1, 2, 2]),
+                Some([0, 0, 1, 1]),
+            ],
+        );
+        assert_eq!(
+            held,
+            vec![
+                None,
+                Some([2, 0, 9, 5]),
+                Some([1, 1, 2, 2]),
+                Some([0, 0, 1, 1])
+            ]
+        );
+        merge_levels(&mut held, &[]);
+        assert_eq!(held.len(), 4);
+    }
+
+    #[test]
+    fn a_failed_coarse_composite_keeps_the_requested_tiles_for_the_exact_upload() {
+        let tile = |x, y| TileCoord { x, y };
+        let requested = [tile(0, 0), tile(1, 0)];
+        // 上げたタイルがあれば、それ（まとめた矩形の中の全部）を覚える
+        assert_eq!(
+            held_after_coarse(vec![tile(0, 0), tile(1, 0), tile(2, 0)], &requested),
+            vec![tile(0, 0), tile(1, 0), tile(2, 0)]
+        );
+        // 何も上げなかったら、頼んだタイルを覚える
+        assert_eq!(
+            held_after_coarse(Vec::new(), &requested),
+            requested.to_vec()
+        );
+    }
+
+    #[test]
+    fn the_weight_byte_keeps_the_shrink_of_common_documents() {
+        // 塗り広げるセットは、使っているチャンネルの 1 テクセルのバイト数に重みの絵の 1 を足して数える（`bytes_per_texel_planned`）
+        let with_weights = |channels: u64| channels + 1;
+        // 4096² の 6 チャンネル（15 → 16 B）は収まる（約 341 MiB）。8192² の 6 チャンネルは今までどおり 1 段縮めて 4096²
+        assert_eq!(
+            choose_shift([4096, 4096], with_weights(15), 8192, PAINT_BUDGET_BYTES),
+            0
+        );
+        assert_eq!(
+            choose_shift([8192, 8192], with_weights(15), 8192, PAINT_BUDGET_BYTES),
+            1
+        );
+        // 8192² の Color だけ（4 → 5 B、約 427 MiB）は収まる。Color と Roughness（5 → 6 B）は予算に 2 バイトだけ残して収まる
+        assert_eq!(
+            choose_shift([8192, 8192], with_weights(4), 8192, PAINT_BUDGET_BYTES),
+            0
+        );
+        assert_eq!(
+            choose_shift([8192, 8192], with_weights(5), 8192, PAINT_BUDGET_BYTES),
+            0
+        );
+        assert_eq!(mip_bytes([8192, 8192], 6), PAINT_BUDGET_BYTES - 2);
+        // 重みの 1 B で境を越えるのは、8192² で 1 テクセル 6 B（Color と 2 つのスカラーのチャンネル）だったセットだけ（前は予算に 2 バイトの余りで収まっていた）
+        assert_eq!(choose_shift([8192, 8192], 6, 8192, PAINT_BUDGET_BYTES), 0);
+        assert_eq!(
+            choose_shift([8192, 8192], with_weights(6), 8192, PAINT_BUDGET_BYTES),
+            1
+        );
+    }
+
+    #[test]
     fn a_cap_on_the_side_shrinks_other_sets_like_the_texture_limit() {
         // ほかのセットの上限（辺 1024）: 4096² は 1/4、2048² は 1/2、1024² 以下は縮めない。予算には依らない（u64::MAX）
         assert_eq!(choose_shift([4096, 4096], 15, 1024, u64::MAX), 2);
@@ -2161,6 +2824,119 @@ mod tests {
         // 縮めた後のバイト数（持つかどうかの計画が見積もる値）: 4096² の Color だけは 1024² のミップ込み
         let reduced = [1024u32, 1024];
         assert_eq!(mip_bytes(reduced, 4), 4 * 1_398_101);
+    }
+
+    #[test]
+    fn boxes_partition_each_level_into_nonempty_groups_of_two_or_three() {
+        // 辺 n の段の画素は、辺 m = max(n / 2, 1) の段の箱へ重ならず隙間なく入り、箱の幅は 2〜3（n = 1 は 1）。`box_of` と `box_start` が逆
+        for n in 1..=130u32 {
+            let m = (n / 2).max(1);
+            assert_eq!(box_start(0, n, m), 0);
+            assert_eq!(box_start(m, n, m), n, "n={n}");
+            for o in 0..m {
+                let (a, b) = (box_start(o, n, m), box_start(o + 1, n, m));
+                assert!(b > a, "n={n} o={o}: 空の箱");
+                if n >= 2 {
+                    assert!((2..=3).contains(&(b - a)), "n={n} o={o}: 幅 {}", b - a);
+                } else {
+                    assert_eq!(b - a, 1);
+                }
+                for y in a..b {
+                    assert_eq!(box_of(y, n, m), o, "n={n} y={y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_pull_reads_a_positive_texel_next_to_any_positive_texel_at_every_size() {
+        // 重みが 0 でないテクセル y のとなり x（±1）が引くとき、読む 2 つ（双線形の左右）の中に y の箱（重みが 0 でない）が入る
+        for n in 2..=130u32 {
+            let m = (n / 2).max(1);
+            for y in 0..n {
+                let parent = box_of(y, n, m) as i64;
+                for x in [y.saturating_sub(1), y, (y + 1).min(n - 1)] {
+                    // 読み位置（粗い段のテクセルの座標。真ん中が 0.5）。シェーダーの式と同じ
+                    let f = (x as f32 + 0.5) * m as f32 / n as f32 - 0.5;
+                    let (a, b) = (f.floor() as i64, f.floor() as i64 + 1);
+                    let (a, b) = (a.clamp(0, m as i64 - 1), b.clamp(0, m as i64 - 1));
+                    assert!(
+                        parent == a || parent == b,
+                        "n={n} y={y} x={x}: 箱 {parent}、読む {a} {b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn push_and_pull_rects_cover_everything_a_change_can_reach() {
+        // 段 n の画素の範囲を押すと、その画素の箱が全部入る。粗い段の範囲を読みうる段 n のテクセルは、全部 `children_rect` の中
+        for n in [1u32, 2, 3, 5, 8, 17, 64, 65, 100] {
+            let m = (n / 2).max(1);
+            for x0 in 0..n {
+                for x1 in x0 + 1..=n.min(x0 + 9) {
+                    let r = parent_rect([x0, 0, x1, 1], (n, 1), (m, 1));
+                    for y in x0..x1 {
+                        assert!(r[0] <= box_of(y, n, m) && box_of(y, n, m) < r[2]);
+                    }
+                }
+            }
+            for a in 0..m {
+                for b in a + 1..=m.min(a + 5) {
+                    let r = children_rect([a, 0, b, 1], (n, 1), (m, 1));
+                    for x in 0..n {
+                        let f = (x as f32 + 0.5) * m as f32 / n as f32 - 0.5;
+                        let taps = [
+                            (f.floor() as i64).clamp(0, m as i64 - 1),
+                            (f.floor() as i64 + 1).clamp(0, m as i64 - 1),
+                        ];
+                        if taps.iter().any(|&t| (a as i64..b as i64).contains(&t)) {
+                            assert!(r[0] <= x && x < r[2], "n={n} 範囲 {a}..{b} x={x}: {r:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn level_zero_weights_are_whole_boxes_and_the_pyramid_keeps_any_positive_child() {
+        // 8 × 8 の文書の中央 4 × 4 が覆い、塗り広げの幅 1（全部で 6 × 6）。縮め 1（4 × 4 の絵）: 箱 2 × 2 が全部中のテクセルだけ 255
+        let size = 8u32;
+        let keep: Vec<bool> = (0..size * size)
+            .map(|i| (2..6).contains(&(i % size)) && (2..6).contains(&(i / size)))
+            .collect();
+        let rings = Rings::new(size, size, &keep, 1).unwrap();
+        let flat = coverage_weights(&rings, 0, [8, 8]);
+        assert_eq!(
+            flat.iter().filter(|&&w| w == 255).count(),
+            36,
+            "覆い 16 + 塗り広げ 20"
+        );
+        assert!(flat.iter().all(|&w| w == 0 || w == 255));
+        let boxed = coverage_weights(&rings, 1, [4, 4]);
+        // 6 × 6（1..7）の中に 2 × 2 の箱で全部入るのは、箱の x・y が 1..3 の 2 × 2 = 4 個だけ（残りは一部だけ中）
+        assert_eq!(boxed.iter().filter(|&&w| w == 255).count(), 4);
+        assert!(boxed.iter().all(|&w| w == 0 || w == 255));
+        // 端の欠けた箱（5 × 5 の文書を縮め 1 で 3 × 3）は中の画素だけで見る: 右上の箱は 1 画素で、それが中なら 255
+        let keep5 = vec![true; 25];
+        let rings5 = Rings::new(5, 5, &keep5, 0).unwrap();
+        assert!(coverage_weights(&rings5, 1, [3, 3])
+            .iter()
+            .all(|&w| w == 255));
+        // ピラミッド: 子に 1 つでも重みがあれば最低 1、全部 255 なら 255、全部 0 なら 0
+        let pyramid = weight_pyramid(
+            vec![0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255],
+            [4, 4],
+            3,
+        );
+        assert_eq!(pyramid.len(), 3);
+        // 255 を 1 つ含む 2 × 2 は 255 / 4 の切り上げで 64、2 つなら 510 / 4 の切り上げで 128
+        assert_eq!(pyramid[1], vec![64, 64, 128, 128]);
+        assert_eq!(pyramid[2], vec![96]);
+        let tiny = weight_pyramid(vec![1, 0, 0, 0], [2, 2], 2);
+        assert_eq!(tiny[1], vec![1], "1 つでも重みがあれば最低 1（切り上げ）");
     }
 
     #[test]
