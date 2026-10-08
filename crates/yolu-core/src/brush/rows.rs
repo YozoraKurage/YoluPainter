@@ -1,4 +1,4 @@
-//! ダブの画素を行ごとに f32 のレーン（AVX2 は 8 画素・SSE4.1 は 4 画素・スカラーは 1 画素）で処理する核。ステンシルを使わないブラシ
+//! ダブの画素を行ごとに f32 のレーン（AVX2 は 8 画素・SSE4.1 と NEON は 4 画素・スカラーは 1 画素）で処理する核。ステンシルを使わないブラシ
 //! （色を塗る・消す、ダブごとの色・色の混ぜ、読み元の枠から読む効果）は、どの道（スカラーも）でもこの核で描く。選択範囲・透明部分の
 //! ロックは、色を塗る・消すだけのブラシなら行の核が受け持ち、画素ごとの色・効果のブラシでは画素ごとの式（`apply_at`）のまま。
 //! ステンシル・乗算でない紙の質感も画素ごとの式（[`usable`]）。
@@ -23,7 +23,7 @@
 //! あとはタイルの中へ直接書く。
 
 #![cfg_attr(
-    not(target_arch = "x86_64"),
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
 )]
 
@@ -32,8 +32,12 @@ use crate::blend::lanes::NORMAL;
 use crate::blend::{blend_block, fade_block};
 use crate::math::simd::{self, clamp01_32, to_byte32, Lanes32, Level, Scalar1};
 
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neonx4;
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2x8, Sse41x4};
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
@@ -119,6 +123,33 @@ impl Slice32 for Sse41x4 {
     #[inline(always)]
     unsafe fn to_i32(v: __m128, out: &mut [i32; 8]) {
         unsafe { _mm_storeu_si128(out.as_mut_ptr().cast(), _mm_cvttps_epi32(v)) }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Slice32 for Neonx4 {
+    #[inline(always)]
+    unsafe fn load_f32(p: &[f32]) -> float32x4_t {
+        let q: &[f32; 4] = p[..4].try_into().unwrap();
+        unsafe { vld1q_f32(q.as_ptr()) }
+    }
+    #[inline(always)]
+    unsafe fn store_f32(p: &mut [f32], v: float32x4_t) {
+        let q: &mut [f32; 4] = (&mut p[..4]).try_into().unwrap();
+        unsafe { vst1q_f32(q.as_mut_ptr(), v) }
+    }
+    /// 範囲の外と NaN を `i32::MIN` にする: `vcvtq_s32_f32` は範囲の外を飽和・NaN を 0 にするので、x86_64 の `cvttps2dq`・
+    /// [`truncate_i32`] と同じ値になるように、範囲の確かめ（NaN は偽）で選び直す。範囲の中では切り捨てで同じ値。
+    #[inline(always)]
+    unsafe fn to_i32(v: float32x4_t, out: &mut [i32; 8]) {
+        unsafe {
+            let inside = vandq_u32(
+                vcgeq_f32(v, vdupq_n_f32(-2_147_483_648.0)),
+                vcltq_f32(v, vdupq_n_f32(2_147_483_648.0)),
+            );
+            let truncated = vbslq_s32(inside, vcvtq_s32_f32(v), vdupq_n_s32(i32::MIN));
+            vst1q_s32(out.as_mut_ptr(), truncated);
+        }
     }
 }
 
@@ -427,8 +458,11 @@ pub(super) fn dab_tile(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { tile_sse41(cx, held, live, dual, s, coord, xs, ys) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { tile_neon(cx, held, live, dual, s, coord, xs, ys) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { tile::<Scalar1>(cx, held, live, dual, s, coord, xs, ys) },
+        Level::Scalar => unsafe { tile::<Scalar1>(cx, held, live, dual, s, coord, xs, ys) },
     }
 }
 
@@ -463,8 +497,24 @@ unsafe fn tile_sse41(
 ) -> Result<bool, CoreError> {
     unsafe { tile::<Sse41x4>(cx, held, live, dual, s, coord, xs, ys) }
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn tile_neon(
+    cx: &mut PixelContext<'_>,
+    held: &mut Option<StrokeTile>,
+    live: &mut LiveTile,
+    dual: Option<&[f32]>,
+    s: &DabShape<'_>,
+    coord: TileCoord,
+    xs: (i64, i64),
+    ys: (i64, i64),
+) -> Result<bool, CoreError> {
+    unsafe { tile::<Neonx4>(cx, held, live, dual, s, coord, xs, ys) }
+}
 
-/// 箱の平均を画素ごとに読むブラシ（ぼかし・色の混ぜの伸ばす）か。
+/// 箱の平均を画素ごとに読むブラシ（ぼかし・色の混ぜの伸ばす）か。AVX2 の CPU でも SSE4.1 の 4 本で描くかの判断にだけ使う。
+#[cfg(target_arch = "x86_64")]
 fn box_average(p: &Paint<'_>) -> bool {
     matches!(p.effect, EffectKind::Blur(_)) || p.mix.is_some_and(|m| m.mode == MixMode::Smear)
 }
@@ -1489,8 +1539,11 @@ pub(super) fn dual_tile(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level() は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { dual_sse41(shape, xs, ys, origin, cells, alloc) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level() は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { dual_neon(shape, xs, ys, origin, cells, alloc) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { dual_rows::<Scalar1>(shape, xs, ys, origin, cells, alloc) },
+        Level::Scalar => unsafe { dual_rows::<Scalar1>(shape, xs, ys, origin, cells, alloc) },
     }
 }
 
@@ -1518,6 +1571,18 @@ unsafe fn dual_sse41(
     alloc: &mut dyn FnMut() -> Result<Vec<f32>, CoreError>,
 ) -> Result<(), CoreError> {
     unsafe { dual_rows::<Sse41x4>(shape, xs, ys, origin, cells, alloc) }
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn dual_neon(
+    shape: &DualShape<'_>,
+    xs: (i64, i64),
+    ys: (i64, i64),
+    origin: (i64, i64, usize),
+    cells: &mut Option<Vec<f32>>,
+    alloc: &mut dyn FnMut() -> Result<Vec<f32>, CoreError>,
+) -> Result<(), CoreError> {
+    unsafe { dual_rows::<Neonx4>(shape, xs, ys, origin, cells, alloc) }
 }
 
 /// デュアルの 2 つ目の筆先の形を、主のダブの形（丸も回転の式で測る = `plain` でない。反転・紙の質感・デュアルは無い）として。

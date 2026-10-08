@@ -4,12 +4,12 @@
 //! f32 の式をレーンで）、(2) 下とモードと量で混ぜる（`blend` の行の核と同じレーンの式）。段の間は 256 画素ずつの小さい作業の領域で
 //! 受け渡す。
 //!
-//! 色相/彩度とカラーバランスの f32 の式は色の合成（`crate::blend`）と同じ形で、道（AVX2 8 画素・SSE4.1 4 画素・スカラー 1 画素）の
+//! 色相/彩度とカラーバランスの f32 の式は色の合成（`crate::blend`）と同じ形で、道（AVX2 8 画素・SSE4.1 と NEON 4 画素・スカラー 1 画素）の
 //! どれも同じレーンの式を通り、端の画素・スカラーの道・画素ごとの式（`AdjustmentSettings::apply_in`・
 //! [`ColorBalance::apply`](super::ColorBalance::apply)）は 1 本のレーン（[`Scalar1`]）で同じ関数を呼ぶ。演算は IEEE の四則・比較・
 //! 選択・floor だけなので、道とスレッド数によらず同じバイトになる。
 #![cfg_attr(
-    not(target_arch = "x86_64"),
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
 )]
 
@@ -18,6 +18,8 @@ use crate::blend::{mix_row_at, RowAmount};
 use crate::math::simd::{self, clamp01_32, to_byte32, Lanes32, Level, Scalar1};
 use crate::types::{BlendMode, ChannelKind, Rgba8};
 
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neonx4;
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2x8, Sse41x4};
 
@@ -263,6 +265,11 @@ unsafe fn hue_rows32_avx2(h: &HueSat32, src: &[u8], out: &mut [u8]) {
 unsafe fn hue_rows32_sse41(h: &HueSat32, src: &[u8], out: &mut [u8]) {
     hue_rows32_lanes::<Sse41x4>(h, src, out)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn hue_rows32_neon(h: &HueSat32, src: &[u8], out: &mut [u8]) {
+    hue_rows32_lanes::<Neonx4>(h, src, out)
+}
 
 /// RGBA の並び（src）に色相/彩度を当てて out へ（アルファはそのまま）。全部の画素を処理する。
 fn hue_rows32_at(level: Level, h: &HueSat32, src: &[u8], out: &mut [u8]) {
@@ -273,8 +280,11 @@ fn hue_rows32_at(level: Level, h: &HueSat32, src: &[u8], out: &mut [u8]) {
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { hue_rows32_sse41(h, src, out) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { hue_rows32_neon(h, src, out) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { hue_rows32_lanes::<Scalar1>(h, src, out) },
+        Level::Scalar => unsafe { hue_rows32_lanes::<Scalar1>(h, src, out) },
     }
 }
 
@@ -389,6 +399,11 @@ unsafe fn balance_rows_avx2(b: &Balance32, src: &[u8], out: &mut [u8]) {
 unsafe fn balance_rows_sse41(b: &Balance32, src: &[u8], out: &mut [u8]) {
     balance_rows_lanes::<Sse41x4>(b, src, out)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn balance_rows_neon(b: &Balance32, src: &[u8], out: &mut [u8]) {
+    balance_rows_lanes::<Neonx4>(b, src, out)
+}
 
 /// RGBA の並び（src）にカラーバランスを当てて out へ（アルファはそのまま）。全部の画素を処理する。
 pub(super) fn balance_rows_at(level: Level, b: &Balance32, src: &[u8], out: &mut [u8]) {
@@ -399,8 +414,11 @@ pub(super) fn balance_rows_at(level: Level, b: &Balance32, src: &[u8], out: &mut
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { balance_rows_sse41(b, src, out) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { balance_rows_neon(b, src, out) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { balance_rows_lanes::<Scalar1>(b, src, out) },
+        Level::Scalar => unsafe { balance_rows_lanes::<Scalar1>(b, src, out) },
     }
 }
 

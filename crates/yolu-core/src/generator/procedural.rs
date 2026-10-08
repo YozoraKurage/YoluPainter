@@ -6,7 +6,7 @@
 //! - 位置のマップが使えない（無い・古い・大きさが違う・ピンと違う・境界箱が 0）ときは入力のまま通さず、UV 空間に落とす。
 //!   UV では x・y の格子を周期で巻くので、テクスチャの端で継ぎ目が出ない（回転は効かない）。理由は [`super::BoundGenerator::fallback`]。
 //! - 式は + − × ÷ sqrt floor と整数だけ（libm を使わない）。同じ設定・シード・マップなら、スレッド数・領域の切り方に依らず同じバイト。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::noisefn::{
     perlin3_lanes, value3_lanes, worley3_lanes, worley_distances_lanes, CellsLanes,
 };
@@ -18,7 +18,9 @@ use super::{
     },
     unit, Error, Inactive, Kind, Map, MapKind, MapState,
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neon;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2, Sse41};
@@ -397,7 +399,7 @@ impl OctavePlan {
 impl OctavePlan {
     /// `point` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn point_lanes<V: Lanes>(&self, b: [V::F; 3], uv: bool) -> [V::F; 3] {
         if uv {
             [
@@ -749,7 +751,7 @@ impl Plan {
     /// `value` の N 画素ぶん。画素 `x..x + N` は行 `y` の連続した画素（`position`・`normal` は生の値のレーン。位置を使わない空間では無視）。
     /// 三角面の向きが定まらない画素（`value` が `None` を返す画素）が 1 つでもあれば `None`（呼び手が 1 画素ずつ引く）。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn value_lanes<V: GenLanes>(
         &self,
         x: u32,
@@ -834,7 +836,7 @@ impl Plan {
 
     /// `rotated` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn rotated_lanes<V: Lanes>(&self, p: [V::F; 3]) -> [V::F; 3] {
         let w = [
             V::mul(p[0], V::splat(self.unit[0])),
@@ -856,7 +858,7 @@ impl Plan {
     }
 
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn recipe_body<V: GenLanes>(&self, b: [V::F; 3], set: &mut CellSet) -> V::F {
         let mut cx = Ctx { plan: self, set };
         let b = cx.warp_lanes::<V>(b);
@@ -918,18 +920,18 @@ static NEXT_PLAN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 
 /// にじみのずらし量 `(レイヤーの値 - 0.5) * a`。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn shift_lanes<V: Lanes>(layer: V::F, a: V::F) -> V::F {
     V::mul(V::sub(layer, V::splat(0.5)), a)
 }
 
-/// Generator の重い式（ノイズのレイヤー・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1）ごとの入口。
+/// Generator の重い式（ノイズのレイヤー・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1・NEON）ごとの入口。
 ///
 /// 式の本体（`*_body`）は `#[inline(always)]` のレーンの式で、呼んだ所に丸ごと展開される。ノイズのレイヤーは 1 つの値の式の中で何十回も
 /// 呼ばれ（にじみ・種類・グランジの各模様）、その全部を 1 つの関数に展開すると、LLVM の最適化が 1 関数で数十秒かかっていた。
 /// ここで道ごとに `#[target_feature]` 付きの展開しない関数を 1 つずつ置き、呼び出しの側は関数の呼び出しになる（式も演算の順も
-/// 変わらないので、値は同じ bit）。呼び出しは 1 回で N 画素ぶん（AVX2 は 4、SSE4.1 は 2）。
-#[cfg(target_arch = "x86_64")]
+/// 変わらないので、値は同じ bit）。呼び出しは 1 回で N 画素ぶん（AVX2 は 4、SSE4.1・NEON は 2）。
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) trait GenLanes: Lanes {
     unsafe fn layer(cx: &mut Ctx<'_>, b: [Self::F; 3], index: usize) -> Self::F;
     unsafe fn recipe(plan: &Plan, b: [Self::F; 3], set: &mut CellSet) -> Self::F;
@@ -938,7 +940,7 @@ pub(super) trait GenLanes: Lanes {
 }
 
 /// `GenLanes` を道の型に実装する（入口の関数は、その道の命令を有効にした展開しない関数）。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 macro_rules! gen_lanes {
     ($ty:ident, $feature:literal, $m:ident) => {
         impl GenLanes for $ty {
@@ -979,6 +981,8 @@ macro_rules! gen_lanes {
 gen_lanes!(Avx2, "avx2,fma", avx2);
 #[cfg(target_arch = "x86_64")]
 gen_lanes!(Sse41, "sse4.1", sse41);
+#[cfg(target_arch = "aarch64")]
+gen_lanes!(Neon, "neon", neon);
 
 /// 1 組の格子の覚え（基底ごとに、レイヤーのオクターブ・セルの枠の数だけ）。
 pub(super) struct CellSet {
@@ -1059,7 +1063,7 @@ impl Ctx<'_> {
 
     /// `layer` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn layer_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let layer = &plan.layers[index];
@@ -1108,7 +1112,7 @@ impl Ctx<'_> {
 
     /// `cells` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn cells_body<V: Lanes>(
         &mut self,
         b: [V::F; 3],
@@ -1123,7 +1127,7 @@ impl Ctx<'_> {
 
     /// セルの枠 `index` の最寄りと 2 番目の距離だけ（`cells_lanes` の `f1`・`f2` と同じ値。ID・点が要らない呼び手用）。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn distances_body<V: Lanes>(
         &mut self,
         b: [V::F; 3],
@@ -1137,7 +1141,7 @@ impl Ctx<'_> {
 
     /// `segments` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn segments_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let (oc, spec) = &plan.segments[index];
@@ -1147,14 +1151,14 @@ impl Ctx<'_> {
 
     /// `layer` の N 画素ぶん。道ごとの入口（[`GenLanes::layer`]）を呼び、ノイズの式の展開はそこで止まる。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub unsafe fn layer_lanes<V: GenLanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         V::layer(self, b, index)
     }
 
     /// `warp` の N 画素ぶん。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn warp_lanes<V: GenLanes>(&mut self, b: [V::F; 3]) -> [V::F; 3] {
         let amount = self.plan.p.bleed;
         if amount <= 0. {
@@ -1359,10 +1363,10 @@ mod tests {
         assert_eq!(checked, settings.len() * 3 * 2 * 400);
     }
 
-    /// SIMD の道（AVX2・SSE4.1）の N 画素ぶんの値は、1 画素ずつ（`Plan::value`）の値とビットまで同じ。全部のノイズの種類・プリセット・空間・
+    /// SIMD の道（AVX2・SSE4.1・NEON）の N 画素ぶんの値は、1 画素ずつ（`Plan::value`）の値とビットまで同じ。全部のノイズの種類・プリセット・空間・
     /// にじみ・回転で、位置・向き・UV の座標が同じ格子に居続ける・隣の格子へ越える・飛ぶ、のどれもを通り、向きの定まらない画素
     /// （`None`）の組は、1 つでも `None` があれば組全体が `None` になる。
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lane_values_equal_single_pixel_values_on_every_simd_level() {
         const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

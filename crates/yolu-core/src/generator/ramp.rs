@@ -4,11 +4,11 @@
 //! （どれも既定は「なし」で、`Ramp::new` で作ったランプは昔どおりの評価になる）。評価の順は、入力 → 値のカーブ（ランプの位置）→
 //! 区間を探す → 区間の重み（混合率曲線があればそれ、無ければ中点）→ 混色モードで色を混ぜる。
 use super::mixing::{mix, LuminanceCorrection, MixMode, StopColor};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::mixing::{mix_lanes, MixLanes, StopLanes};
 use super::{unit, Error};
 use crate::curve::{Curve, CurvePoint};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 use crate::{
     math::{clamp01, to_byte},
@@ -328,7 +328,7 @@ impl Ramp {
 
 /// 区間の重み（`sample_unchecked` の `weight` の N 画素ぶん）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn weight_lanes<V: Lanes>(x: V::F, a: V::F, b: V::F, m: V::F) -> V::F {
     let (half, one) = (V::splat(0.5), V::splat(1.));
     let t = simd::clamp01::<V>(V::div(V::sub(x, a), V::sub(b, a)));
@@ -338,7 +338,7 @@ unsafe fn weight_lanes<V: Lanes>(x: V::F, a: V::F, b: V::F, m: V::F) -> V::F {
 }
 /// `(v + 0.5).floor() as u8`（0〜255 に収めた整数の値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn byte_lanes<V: Lanes>(v: V::F) -> V::F {
     V::min(
         V::max(V::floor(V::add(v, V::splat(0.5))), V::splat(0.)),
@@ -353,7 +353,7 @@ impl Ramp {
     /// # Safety
     /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(super) unsafe fn evaluate_lanes<V: MixLanes>(
         &self,
         input: V::F,
@@ -417,7 +417,7 @@ impl Ramp {
     /// 混合率曲線のある区間のレーンの重みを、曲線の値に差し替える（`sample_unchecked` の `segment_curve` の分岐と同じ値）。`cs` はレーンごとの
     /// 区間の番号 + 1、`midpoint` は中点の重み（曲線の無い区間のレーンはこれのまま）。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn segment_weight_lanes<V: Lanes>(
         &self,
         x: V::F,
@@ -509,7 +509,7 @@ impl Ramp {
     }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod tests {
     use super::*;
 
@@ -595,7 +595,7 @@ mod tests {
         ramp
     }
 
-    /// SIMD の道（AVX2・SSE4.1）の N 画素ぶんのランプの色は、1 画素の式とバイトまで同じ。分岐点の数・中点・値のカーブ・混色・
+    /// SIMD の道（AVX2・SSE4.1・NEON）の N 画素ぶんのランプの色は、1 画素の式とバイトまで同じ。分岐点の数・中点・値のカーブ・混色・
     /// 混合率曲線をいろいろに変え、分岐点ちょうどの入力・両端・範囲外を通る。
     #[test]
     fn lane_ramps_equal_the_scalar_evaluation_on_every_simd_level() {

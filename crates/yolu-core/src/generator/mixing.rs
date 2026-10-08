@@ -17,10 +17,10 @@
 //! **式は + − × ÷ と sqrt だけ**（OS の数学の関数 `powf`・`cbrt`・`hypot` を使わない）。分岐点の色の線形の光は 256 値の表（sRGB の式の値。
 //! 作ったのは glibc の `pow`）、立方根は二分の一の 3 乗の段で [1/8, 1] へ寄せてからのニュートン法 4 回（正しく丸めた値から 1 ULP 以内）、
 //! `c^(1/2.4)` は `r·√√r`（r = ∛c）、彩度は `√(a² + b²)`。だから画素ごとの式（[`mix`]）とレーンの式（[`mix_lanes`]）は同じ演算を同じ順に
-//! 並べられ、**スカラー・SSE4.1・AVX2 で同じバイト**になり、OS の数学の関数の違い（Windows と Linux）にも左右されない。分岐点ごとの値
+//! 並べられ、**スカラー・SSE4.1・AVX2・NEON で同じバイト**になり、OS の数学の関数の違い（Windows と Linux）にも左右されない。分岐点ごとの値
 //! （線形の光・Oklab・彩度）は [`StopColor`] に前もって作り、画素ごとには計算しない。
 use crate::math::clamp01;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 use crate::Rgba8;
 
@@ -325,7 +325,7 @@ pub(crate) fn mix(
 // ───────── レーン（N 画素を 1 組で。画素ごとの式と同じ演算を同じ順に） ─────────
 
 /// N 本のレーンの分岐点の色（レーンごとに別の区間の端でよい）。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct StopLanes<V: Lanes> {
     pub srgb: [V::F; 3],
@@ -334,7 +334,7 @@ pub(crate) struct StopLanes<V: Lanes> {
     pub chroma: V::F,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl<V: Lanes> StopLanes<V> {
     /// レーン l に `stop(l)` の色を集める。
     ///
@@ -365,7 +365,7 @@ impl<V: Lanes> StopLanes<V> {
 
 /// [`cbrt`] の N 本ぶん。入力は 0.0031308〜1（`to_srgb` の冪の側）の範囲で同じ値。範囲の外（`select` で捨てる側）でも NaN にはならない。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn cbrt_lanes<V: Lanes>(x: V::F) -> V::F {
     let (eighth, eight, half) = (V::splat(0.125), V::splat(8.), V::splat(0.5));
     let (mut v, mut scale) = (x, V::splat(1.));
@@ -389,7 +389,7 @@ unsafe fn cbrt_lanes<V: Lanes>(x: V::F) -> V::F {
 
 /// [`to_srgb`] の N 本ぶん。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn to_srgb_lanes<V: Lanes>(linear: V::F) -> V::F {
     let c = simd::clamp01::<V>(linear);
     // 0 の立方根の側（捨てる側）でニュートン法の割り算が 0 にならないよう、捨てる側の値は 1 にしておく
@@ -407,14 +407,14 @@ unsafe fn to_srgb_lanes<V: Lanes>(linear: V::F) -> V::F {
 
 /// `p + (q − p)·t`
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn lerp<V: Lanes>(p: V::F, q: V::F, t: V::F) -> V::F {
     V::add(p, V::mul(V::sub(q, p), t))
 }
 
 /// 3 成分ぶんの [`lerp`]。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(clippy::needless_range_loop)] // 3 つの並びを同じ番号で読む
 unsafe fn lerp3<V: Lanes>(p: [V::F; 3], q: [V::F; 3], t: V::F) -> [V::F; 3] {
     let mut out = p;
@@ -426,14 +426,14 @@ unsafe fn lerp3<V: Lanes>(p: [V::F; 3], q: [V::F; 3], t: V::F) -> [V::F; 3] {
 
 /// `v·v·v`（左から）
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn cube<V: Lanes>(v: V::F) -> V::F {
     V::mul(V::mul(v, v), v)
 }
 
 /// `k·v`
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn scale<V: Lanes>(k: f64, v: V::F) -> V::F {
     V::mul(V::splat(k), v)
 }
@@ -449,7 +449,7 @@ unsafe fn scale<V: Lanes>(k: f64, v: V::F) -> V::F {
 /// # Safety
 /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn mix_curved_lanes<V: Lanes>(
     a: &StopLanes<V>,
     b: &StopLanes<V>,
@@ -523,9 +523,9 @@ unsafe fn mix_curved_lanes<V: Lanes>(
 }
 
 /// リニア・知覚的の混ぜの入口（[`mix_curved_lanes`]）を、道ごとに 1 つずつ持つ型。ramp・合成の道は `V: MixLanes` で受け、
-/// 重い式の写しを道ごとに 1 つ（AVX2・SSE4.1）にとどめる。入口は `inline(never)` で、`V::F`・[`StopLanes`] は参照・メモリ渡しになる
+/// 重い式の写しを道ごとに 1 つ（AVX2・SSE4.1・NEON）にとどめる。入口は `inline(never)` で、`V::F`・[`StopLanes`] は参照・メモリ渡しになる
 /// （1 回の呼びの手間は、中の `to_srgb` の冪 3〜6 回に比べて小さい）。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) trait MixLanes: Lanes {
     /// [`mix_curved_lanes`]。
     ///
@@ -563,6 +563,18 @@ unsafe fn mix_curved_sse41(
 ) -> [<simd::Sse41 as Lanes>::F; 3] {
     mix_curved_lanes::<simd::Sse41>(a, b, t, mode, correction)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+#[inline(never)]
+unsafe fn mix_curved_neon(
+    a: &StopLanes<simd::Neon>,
+    b: &StopLanes<simd::Neon>,
+    t: <simd::Neon as Lanes>::F,
+    mode: MixMode,
+    correction: LuminanceCorrection,
+) -> [<simd::Neon as Lanes>::F; 3] {
+    mix_curved_lanes::<simd::Neon>(a, b, t, mode, correction)
+}
 #[cfg(target_arch = "x86_64")]
 impl MixLanes for simd::Avx2 {
     #[inline(always)]
@@ -589,6 +601,19 @@ impl MixLanes for simd::Sse41 {
         mix_curved_sse41(a, b, t, mode, correction)
     }
 }
+#[cfg(target_arch = "aarch64")]
+impl MixLanes for simd::Neon {
+    #[inline(always)]
+    unsafe fn mix_curved(
+        a: &StopLanes<Self>,
+        b: &StopLanes<Self>,
+        t: Self::F,
+        mode: MixMode,
+        correction: LuminanceCorrection,
+    ) -> [Self::F; 3] {
+        mix_curved_neon(a, b, t, mode, correction)
+    }
+}
 
 /// [`mix`] の N 本ぶん（`Linear`・`Perceptual`。`Standard` は直に補間する）。結果は R・G・B の 0〜255 の実数。
 /// 重い式は道ごとの入口 [`MixLanes::mix_curved`] に出してあり、ここは呼びと両端の選び方だけ。
@@ -596,7 +621,7 @@ impl MixLanes for simd::Sse41 {
 /// # Safety
 /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(clippy::needless_range_loop)] // 3 つの並び（端の色）を同じ番号で読む
 pub(crate) unsafe fn mix_lanes<V: MixLanes>(
     a: &StopLanes<V>,
@@ -962,9 +987,9 @@ mod tests {
         assert_eq!(cbrt(0.0), 0.0);
     }
 
-    /// `to_srgb` のレーンの式は、画素ごとの式と同じビット（0 と 1 の外・冪と直線の境の前後・密な掃引を、3 つの道で）。
+    /// `to_srgb` のレーンの式は、画素ごとの式と同じビット（0 と 1 の外・冪と直線の境の前後・密な掃引を、この CPU が持つ全部の道で）。
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn srgb_lanes_equal_the_scalar_formula_on_every_simd_level() {
         unsafe fn check<V: Lanes>() {
             let edge = 0.003_130_8f64;

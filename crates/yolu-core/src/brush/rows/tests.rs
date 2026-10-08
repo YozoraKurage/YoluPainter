@@ -1,5 +1,5 @@
-//! 行の核（[`super`]）が、道（スカラー・SSE4.1・AVX2）によらず、画素ごとの式（`apply_at`）と同じバイトを出すこと。ブラシ・レイヤーの中身・
-//! タイルの大きさ・点の列を乱数で振って、同じ入力を画素ごとの式（行の核を使わない）と 3 つの道の行の核で描き、レイヤーの全バイトと
+//! 行の核（[`super`]）が、道（スカラー・SSE4.1・AVX2・NEON）によらず、画素ごとの式（`apply_at`）と同じバイトを出すこと。ブラシ・レイヤーの中身・
+//! タイルの大きさ・点の列を乱数で振って、同じ入力を画素ごとの式（行の核を使わない）と この CPU が持つ全部の道の行の核で描き、レイヤーの全バイトと
 //! ダブの数・変わったかが一致することを確かめる。
 
 use super::*;
@@ -442,4 +442,54 @@ fn a_level_switched_by_another_thread_does_not_break_a_stroke() {
             let _ = run(&random_case(seed));
         }
     });
+}
+
+/// 整数の値のレーンを添字にする変換（`Slice32::to_i32`）は、どの道でも `truncate_i32`（x86_64 の `cvttps2dq` と同じ）と同じ値になる。
+/// 範囲の外・NaN・無限大は `i32::MIN`、範囲の中は 0 へ切り捨て（NEON の `vcvtq_s32_f32` は範囲の外を飽和、NaN を 0 にするので、
+/// 揃え直してあることの確かめ）。
+#[test]
+fn to_i32_follows_the_truncating_conversion_on_every_level() {
+    use crate::math::simd::on_each_level32;
+    unsafe fn check<V: Slice32>() {
+        let values = [
+            0.0f32,
+            -0.0,
+            0.5,
+            -0.5,
+            1.9999,
+            -1.9999,
+            255.5,
+            -255.5,
+            8_388_607.5,
+            -8_388_607.5,
+            2_147_483_520.0,
+            2_147_483_648.0,
+            -2_147_483_648.0,
+            -2_147_483_904.0,
+            1e30,
+            -1e30,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::from_bits(0xFFC0_0000),
+            f32::from_bits(0x7F80_0001),
+            f32::MIN_POSITIVE,
+        ];
+        for start in 0..values.len() {
+            let v = V::from_fn(|k| values[(start + k) % values.len()]);
+            let mut out = [0x5A5A_5A5Ai32; 8];
+            V::to_i32(v, &mut out);
+            for k in 0..V::N {
+                let x = values[(start + k) % values.len()];
+                assert_eq!(out[k], truncate_i32(x), "{x}");
+            }
+            assert!(
+                out[V::N..].iter().all(|&o| o == 0x5A5A_5A5A),
+                "先頭の N 個より後ろは書かない"
+            );
+        }
+    }
+    on_each_level32!(check);
 }

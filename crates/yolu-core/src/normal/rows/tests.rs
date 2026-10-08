@@ -1,4 +1,4 @@
-//! Normal チャンネルの合成の行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2）に比べる。
+//! Normal チャンネルの合成の行の核が、画素ごとの式と同じバイトを出すことの試験。道ごと（スカラー・SSE4.1・AVX2・NEON）に比べる。
 #![allow(clippy::needless_range_loop)]
 
 use super::super::{blend_unchecked, clip_onto, fade};

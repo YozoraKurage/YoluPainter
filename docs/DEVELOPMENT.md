@@ -16,6 +16,20 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。Unity 版の `Runtime/Core` などは Unity ブリッジの 0.5.0 で外れたので、Unity ブリッジのリポジトリのタグ `0.4.0` を取り出し、環境変数 `YOLUPAINTER_UNITY_SOURCE` にその場所を渡します（`tools/csharp-golden/` のツールと `tools/bench-all.sh` の既定の場所は `/workspace`）。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
+### aarch64（NEON）の試験を x86_64 の Linux で回す
+
+aarch64 の道（NEON）は、Mac の CI のほかに、x86_64 の Linux でも QEMU のユーザーモードで試験できます。Debian・Ubuntu では `qemu-user-static`・`gcc-aarch64-linux-gnu`・`libc6-dev-arm64-cross` を入れ、Rust のターゲット `aarch64-unknown-linux-gnu` を追加します（`rustup target add aarch64-unknown-linux-gnu`）。target は普段の物と分けて回します。
+
+```sh
+CARGO_TARGET_DIR=target-arm CARGO_INCREMENTAL=0 \
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64-static -L /usr/aarch64-linux-gnu" \
+CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+cargo test -p yolu-core --lib --target aarch64-unknown-linux-gnu --locked
+```
+
+QEMU は浮動小数点の演算を IEEE どおりに再現するので、NEON の結果のバイトがスカラーと一致するかを確かめられます（`YOLU_SIMD=scalar`・`YOLU_SIMD=neon` を付けて道を固定しても回せます）。速さは QEMU では測れないので、Mac の実機で測ります（下の「画素の計算の SIMD」）。型だけを見るなら、`cargo clippy -p yolu-core --all-targets --target aarch64-unknown-linux-gnu -- -D warnings` が QEMU なしで通ります。
+
 ### yolu-app の結合試験の置き方
 
 `crates/yolu-app/tests/` の試験は、性質ごとに数本の実行ファイル（「束」）にまとめています。1 ファイルを 1 本の実行ファイルにすると、試験の数だけアプリ全体のリンクと共通部品のビルドし直しが増え、`target/` が試験の実行ファイルだけで 10 GB を超えるためです。
@@ -130,13 +144,15 @@ Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存�
 ## 画素の計算の SIMD
 
 x86_64 では、合成（Normal チャンネルを含む）・調整レイヤー・フィルターの画素の計算に AVX2（と FMA）・SSE4.1 を使い、実行時に CPU が持つ一番広い道を選ぶ
-（Windows の配布物も同じ）。それ以外の CPU（aarch64 など）は、今までの画素ごとの計算を使う。結果のバイトはどの道でも同じで、試験が道ごとに画素ごとの式と比べる。
-環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で狭い道へ下げられる（CPU が持たない広い道には上げない）。
+（Windows の配布物も同じ）。aarch64（Apple Silicon の Mac など）では NEON（f64 が 2 本・f32 が 4 本）を使う。NEON は aarch64 のどの CPU にもあるので、実行時の判定はしない。
+それ以外の CPU は、今までの画素ごとの計算を使う。結果のバイトはどの道でも同じで、試験が道ごとに画素ごとの式と比べる。
+環境変数 `YOLU_SIMD`（x86_64 は `scalar`・`sse41`・`avx2`、aarch64 は `scalar`・`neon`）で狭い道へ下げられる（CPU が持たない広い道には上げない。別の CPU の道の名前は知らない値として無視する）。
 2D の合成（矩形・タイルの束・歩幅つきの粗い合成・グループの出力）はこの行の核で重ねる。参照の `composite_pixel`（画素ごとの式）とバイトが同じで、試験が全モード・マスク・クリッピング・グループ・調整レイヤー・Normal チャンネルを道ごとに比べる。
 表示に寄与するレイヤー・複数のレイヤー・グループの結合も、タイルの合成で焼く（下のレイヤーへ結合する `merge_down` は、下のレイヤーの画素を下地にする方法があるので画素ごとの式のまま）。
 
 `cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|kernel|all] [回数]` が、合成モード・調整の種類・フィルターごとの時間
 （1 タイルと 4096²。`kernel` は行の核だけの ns/画素）を測る。スレッドは `SIMD_THREADS`（既定 1）、名前の絞り込みは `SIMD_FILTER`（カンマ区切り）。
+Mac（Apple Silicon）の NEON の効きは、同じコマンドを `YOLU_SIMD=scalar` と既定（NEON）で回して比べる。出力の先頭の道の名前で、どの道で測ったかが分かる。
 
 2D のブラシのダブの画素（丸・筆先の画像・紙の質感・デュアル・指先・ぼかし・クローン・色の混ぜ・ダブごとの色）も同じ道で、行ごとにレーンで描く。
 参照は画素ごとの式（`YOLU_SIMD=scalar`）で、試験が乱数で振ったブラシ・レイヤー・タイルの大きさ・点の列を道ごとに描いて、レイヤーの全バイトとダブの数を比べる。

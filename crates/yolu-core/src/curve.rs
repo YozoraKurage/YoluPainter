@@ -4,7 +4,7 @@
 //! 増える 2〜16 個で、両端の x は 0 と 1、y は 0〜1。隣り合う点の横の間隔は [`Curve::MIN_GAP`] 以上。評価の式は C# の
 //! `GradientRamp` の値のカーブと同じで、入力は 0〜1 に収めてから 3 次のエルミートで引き、結果も 0〜1 に収める。
 use crate::math::clamp01;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 use std::fmt;
 
@@ -174,7 +174,7 @@ impl Curve {
     /// # Safety
     /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
     #[inline(always)]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn value_lanes<V: Lanes>(&self, input: V::F) -> V::F {
         let x = simd::clamp01::<V>(input);
         let last = self.points.len() - 1;

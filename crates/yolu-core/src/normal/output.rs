@@ -4,13 +4,15 @@
 //! IEEE の厳密な演算（SSE/AVX の `sqrtpd`・`divpd`）なので同じ double になる。道の選びは `crate::math::simd`。
 //! レイヤーの重ね（合成）は f32 の式で、[`super::rows`] にある。
 #![cfg_attr(
-    not(target_arch = "x86_64"),
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
 )]
 
 use super::{height_of, DEGENERATE_LENGTH_SQUARED};
 use crate::math::simd::{self, to_byte, Lanes, Level};
 
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neon;
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2, Sse41};
 
@@ -211,6 +213,18 @@ unsafe fn output_row_sse41(
 ) -> usize {
     output_row_lanes::<Sse41>(normal, heights, w, strength, from, out)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn output_row_neon(
+    normal: Option<&[u8]>,
+    heights: Option<&[f64]>,
+    w: usize,
+    strength: f64,
+    from: usize,
+    out: &mut [u8],
+) -> usize {
+    output_row_lanes::<Neon>(normal, heights, w, strength, from, out)
+}
 
 /// 出力の行のうちレーンで処理できる画素を処理して、スカラーで処理する最初の画素の位置を返す（画素 0 は常にスカラー側）。
 /// `[start, 次の位置)` が処理済み。高さが無い行は 0 から。
@@ -230,7 +244,10 @@ pub(super) fn output_row_at(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { output_row_sse41(normal, heights, w, strength, 0, out) },
-        _ => start,
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { output_row_neon(normal, heights, w, strength, 0, out) },
+        Level::Scalar => start,
     };
     (start, end)
 }
@@ -263,6 +280,11 @@ unsafe fn heights_avx2(src: &[u8], out: &mut [f64]) -> usize {
 unsafe fn heights_sse41(src: &[u8], out: &mut [f64]) -> usize {
     heights_lanes::<Sse41>(src, out)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn heights_neon(src: &[u8], out: &mut [f64]) -> usize {
+    heights_lanes::<Neon>(src, out)
+}
 
 /// 合成の行（RGBA）から高さ（R × A / 65025）の行を作る。
 pub(super) fn heights_from_rgba(level: Level, src: &[u8], out: &mut [f64]) {
@@ -273,7 +295,10 @@ pub(super) fn heights_from_rgba(level: Level, src: &[u8], out: &mut [f64]) {
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { heights_sse41(src, out) },
-        _ => 0,
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { heights_neon(src, out) },
+        Level::Scalar => 0,
     };
     for (x, h) in out.iter_mut().enumerate().skip(from) {
         *h = height_of(src[x * 4], src[x * 4 + 3]);
