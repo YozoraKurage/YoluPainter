@@ -770,8 +770,6 @@ fn field(
 pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
-    // 2D だけの設定は、描ける先が 3D の面だけのあいだ無効にする（キャンバスも出ていれば 2D に描けるので有効）
-    let only_in_3d = app.paints_only_in_3d();
     // 今の設定の見本
     let sample = Rect::from_min_size(
         pos2(area.left() + t::PADDING, area.top() + 4.0),
@@ -904,7 +902,6 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     ) {
         b.spacing = v / 100.0;
     }
-    let off = only_in_3d.then(|| lang.pick("3D では効きません", "No effect in 3D"));
     let stabilizer = app.m2.brush.assist.stabilizer as f32;
     // 手ぶれ補正の行の右端に、詳細のウィンドウのボタン
     let row = next();
@@ -922,13 +919,13 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             200.0,
             NumberFormat::int(" px"),
         )
-        .tooltip(off.unwrap_or(lang.pick(
+        .tooltip(lang.pick(
             "筆が入力に引かれる糸の長さ。0 で切",
             "Length of the string that pulls the brush. 0 = off",
-        ))),
+        )),
         stabilizer,
         None,
-        editable && off.is_none(),
+        editable,
     ) {
         app.m2.brush.assist.stabilizer = v as f64;
     }
@@ -949,13 +946,9 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     }
     // 効果のブラシの主な値
     let tool_is_eraser = app.tool.erases();
-    let effect_off = if tool_is_eraser {
-        Some(lang.pick("消しゴムでは使えません", "Not available with the eraser"))
-    } else if only_in_3d {
-        Some(lang.pick("3D では使えません", "Not available in 3D"))
-    } else {
-        None
-    };
+    // ぼかしの半径と指先の強さは、3D の面のダブも同じ値を使う
+    let effect_off = tool_is_eraser
+        .then(|| lang.pick("消しゴムでは使えません", "Not available with the eraser"));
     match app.m2.brush.effect {
         BrushEffect::Blur { radius } => {
             if let Some(v) = field(

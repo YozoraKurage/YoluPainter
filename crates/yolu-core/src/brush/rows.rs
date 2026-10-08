@@ -969,7 +969,7 @@ unsafe fn round_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F) -> V::F {
 
 /// 1 画素の覆い（[`cover_block`] の 1 本のレーン。SIMD の道の端の画素も通る）。
 #[inline(never)]
-fn cover_one(c: &Shape32<'_>, dx: f32, dy: f32) -> f32 {
+pub(super) fn cover_one(c: &Shape32<'_>, dx: f32, dy: f32) -> f32 {
     // SAFETY: 1 本のレーンは CPU の前提を持たない
     unsafe { cover_block::<Scalar1>(c, dx, dy, None) }
 }
@@ -1586,7 +1586,7 @@ unsafe fn dual_neon(
 }
 
 /// デュアルの 2 つ目の筆先の形を、主のダブの形（丸も回転の式で測る = `plain` でない。反転・紙の質感・デュアルは無い）として。
-fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
+pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
     DabShape {
         x: shape.x,
         y: shape.y,

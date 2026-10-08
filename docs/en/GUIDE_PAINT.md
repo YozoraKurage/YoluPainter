@@ -49,7 +49,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 - **Tablets on Mac**: on Mac, the app reads the pressure, tilt, eraser end and side buttons that drivers such as Wacom and XP-Pen send as standard macOS events (experimental). Turn it on or off with Tablet pressure (experimental) under Pen in Edit → Settings… (on by default; when off, the pen draws like a mouse).
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
 - **Taper**: the settings that thin the start and end of a stroke are in Taper & Pen in Brush Details.
-- **With the Canvas and the 3D View side by side**: settings that affect only 2D strokes, such as Stabilizer, taper and jitter, can still be changed (they apply to strokes on the Canvas). When only the 3D View tab is showing, they are grayed out and the tooltip says why.
+- **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
 
 ## Lines, shapes and rulers
 

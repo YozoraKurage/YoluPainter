@@ -1284,12 +1284,14 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
 }
 
 /// 速い入力の線: 左のアイランドの左端から右のアイランドの右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より
-/// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする。
+/// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする（曲線で結ぶブラシ: 最新の区間は
+/// その先の点が来るまで待つので、長い区間のダブは 2 つ目の入力でまとめて並ぶ）。
 fn fast_line() -> (Arc<SurfaceGeometry>, CameraView, Brush, [Vec2; 3]) {
     let g = plane();
     let view = front(&g);
     let mut b = brush(BrushEffect::Paint);
     b.base.spacing = 0.01;
+    b.assist.curve = true;
     let points = [
         screen(&view, p(0.05, 0.5)),
         screen(&view, p(1.95, 0.5)),

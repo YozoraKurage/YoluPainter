@@ -731,8 +731,14 @@ fn a_dab_whose_buckets_do_not_fit_is_skipped_and_the_stroke_goes_on() {
     let refused = s.stats.refused;
     assert!(refused > 0);
     s.set_projection_memory(None);
-    s.add(&mut d, &mut stroke, Vec2::new(280.0, 185.0), 1.0)
-        .unwrap();
+    // ダブは線の長さで間隔ごとに置くので、メモリを戻した後も間隔より長く動かす
+    for at in [
+        Vec2::new(280.0, 185.0),
+        Vec2::new(300.0, 188.0),
+        Vec2::new(320.0, 190.0),
+    ] {
+        s.add(&mut d, &mut stroke, at, 1.0).unwrap();
+    }
     s.finish(&mut d, &mut stroke).unwrap();
     assert!(s.stats.dabs > 1);
     assert!(d.end_stroke(stroke).unwrap().changed);
@@ -754,8 +760,11 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
         let at = view.to_screen(Vec3::ZERO).unwrap();
         let mut s = SurfaceStroke::begin(d, &mut stroke, g.clone(), view, &brush, Some(0), at, 1.0)
             .unwrap();
-        s.add(d, &mut stroke, at + Vec2::new(4.0, 0.0), 1.0)
-            .unwrap();
+        // ダブは線の長さで間隔ごとに置くので、間隔より長く動かす（重なるダブが前の区画を使い回す）
+        for i in 1..=6 {
+            s.add(d, &mut stroke, at + Vec2::new(4.0 * i as f32, 0.0), 1.0)
+                .unwrap();
+        }
         s.finish(d, &mut stroke).unwrap();
         d.end_stroke(stroke).unwrap();
         // 塗られた面（UV アイランド 3 × 2）
@@ -817,12 +826,13 @@ fn blur_along_the_seam(
     if let Some(b) = budget {
         d.set_stroke_budget_bytes(b).unwrap();
     }
+    // 間隔は、線の長さで置くダブが 9 個ほどになるように（入力の 8 区間のそれぞれに 1 つずつ置いていた前と同じくらいの、ぼかしの重なり）
     let brush = yolu_core::Brush {
         effect: yolu_core::BrushEffect::Blur { radius: 3 },
         ..yolu_core::Brush::from(BrushSettings {
             radius: 6.0,
             hardness: 1.0,
-            spacing: 0.15,
+            spacing: 0.08,
             ..BrushSettings::default()
         })
     };
@@ -849,7 +859,9 @@ fn blur_along_the_seam(
             s.add(&mut d, &mut stroke, a + (b - a) * (i as f32 / 8.0), 1.0)?;
         }
         s.finish(&mut d, &mut stroke)?;
-        assert_eq!((s.stats.dabs, s.note), (9, None), "{:?}", s.stats);
+        // ダブは線の長さで間隔ごと（入力の点の数ではない）。どれも塗れて、断ったダブは無い
+        assert!(s.stats.dabs >= 8, "{:?}", s.stats);
+        assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
         Ok(())
     });
     match result {
