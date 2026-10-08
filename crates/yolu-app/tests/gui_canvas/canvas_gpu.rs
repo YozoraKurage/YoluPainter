@@ -1249,3 +1249,42 @@ fn the_gpu_display_texture_matches_egui_premultiplication_for_every_value_and_al
     }
     assert!(partial > 60_000, "半透明の組合せを通した: {partial}");
 }
+
+/// WebGL2 の上限で作った装置（egui-wgpu が OpenGL のときに作る形。storage の入れ物も compute も無い）では合成のシェーダーを動かせない。
+/// 理由は装置の上限で、予算の超過（OverBudget）ではない（束の入れ物を作れず、要る量の見積もりが予算を超えて見えていた）。
+#[test]
+fn a_device_without_compute_falls_back_with_the_device_reason() {
+    use eframe::egui_wgpu::{wgpu, WgpuSetup};
+    use yolu_app::canvas::gpu::GpuCanvas;
+    let Some(_gpu) =
+        canvas_device::begin("a_device_without_compute_falls_back_with_the_device_reason")
+    else {
+        return;
+    };
+    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    if let WgpuSetup::CreateNew(create) = &mut setup {
+        create.device_descriptor = std::sync::Arc::new(|adapter| wgpu::DeviceDescriptor {
+            label: Some("WebGL2 の上限"),
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits()),
+            ..Default::default()
+        });
+    }
+    let rs = egui_kittest::wgpu::create_render_state(setup, render_options());
+    assert!(!yolu_gpu::device_can_composite(&rs.device.limits()));
+    let mut canvas = GpuCanvas::default();
+    canvas.attach(Some(rs));
+    let doc = Document::new(64, 64).unwrap();
+    for policy in [CanvasBackend::Gpu, CanvasBackend::Auto] {
+        assert_eq!(
+            canvas.decide(policy, &doc, Channel::Color),
+            Some(Fallback::DeviceLimits),
+            "{policy:?}"
+        );
+    }
+    // 方針が CPU なら、方針が理由
+    assert_eq!(
+        canvas.decide(CanvasBackend::Cpu, &doc, Channel::Color),
+        Some(Fallback::Policy)
+    );
+}

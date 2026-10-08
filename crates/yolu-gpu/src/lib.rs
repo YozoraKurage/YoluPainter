@@ -10,6 +10,18 @@ mod source;
 use plan::Plan;
 pub use plan::{supports, Unsupported};
 
+/// 装置が、タイルの合成（`GpuPainter`・`ResidentCompositor` の compute のシェーダー）に要る上限を持つか。storage の入れ物を 1 段に 7 つ
+/// （合成・ダブの束ね）、storage のテクスチャを 1 つ（表示）、1 つの組に 64 の呼び（`@workgroup_size(64)`）。WebGL2 の上限で作った装置
+/// （egui-wgpu が OpenGL のときに作る）は storage も compute も持たない。
+pub fn device_can_composite(limits: &wgpu::Limits) -> bool {
+    limits.max_storage_buffers_per_shader_stage >= 7
+        && limits.max_storage_textures_per_shader_stage >= 1
+        && limits.max_storage_buffer_binding_size > 0
+        && limits.max_compute_workgroups_per_dimension > 0
+        && limits.max_compute_invocations_per_workgroup >= 64
+        && limits.max_compute_workgroup_size_x >= 64
+}
+
 #[derive(Debug)]
 pub struct GpuError(pub String);
 impl fmt::Display for GpuError {
@@ -719,6 +731,14 @@ pub use resident::{
 mod tests {
     use super::*;
     use yolu_core::{AdjustmentSettings, BlendMode, Rgba8};
+
+    #[test]
+    fn webgl2_limits_cannot_composite_but_the_default_limits_can() {
+        assert!(device_can_composite(&wgpu::Limits::default()));
+        assert!(!device_can_composite(
+            &wgpu::Limits::downlevel_webgl2_defaults()
+        ));
+    }
 
     /// 面・命令・調整の表が多い文書（クリッピング・マスク・独立のグループ・表を引く調整）。
     fn busy_doc() -> Document {

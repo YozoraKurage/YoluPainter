@@ -40,12 +40,22 @@ pub fn with_render_state_cpu_canvas(
 
 /// ウィンドウの全体（eframe の App として）。文書は size × size。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
+    app_with_renderer(width, height, size, shared_gpu::renderer())
+}
+
+/// `app` の、描画器（装置）を選ぶ版（計測が `shared_gpu::renderer_with_adapter_limits` を渡す）。
+pub fn app_with_renderer(
+    width: f32,
+    height: f32,
+    size: u32,
+    renderer: egui_kittest::wgpu::WgpuTestRenderer,
+) -> Harness<'static, YoluApp> {
     let mut h = gpu_thread::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0) // 実際のウィンドウに近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）
         .with_max_steps(120)
-        .renderer(shared_gpu::renderer())
+        .renderer(renderer)
         .build_eframe(move |cc| {
             with_render_state_cpu_canvas(
                 YoluApp::for_context(
