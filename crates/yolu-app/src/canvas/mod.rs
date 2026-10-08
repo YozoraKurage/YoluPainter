@@ -112,6 +112,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     if pointer_on_canvas {
         if let Some(icon) = crate::stencil::cursor_icon(&app.stencil) {
             ui.ctx().set_cursor_icon(icon);
+        } else if let Some(press) = app.canvas.eyedrop {
+            // 右ボタンでスポイトの途中: 見本の輪とスポイトの絵（押したまま動かすと付いてくる）
+            paint_eyedrop_mark(app, &painter, &view, press.at);
+            ui.ctx().set_cursor_icon(CursorIcon::None);
         } else if busy {
             ui.ctx().set_cursor_icon(CursorIcon::Move);
         } else if app.canvas.panning {
@@ -124,8 +128,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
                 .set_cursor_icon(zoom_cursor(ui.input(|i| i.modifiers.alt)));
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
-        } else if crate::eyedrop::picks(app, crate::keymap::picks(&ui.input(|i| i.modifiers))) {
-            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+        } else if crate::eyedrop::picks(app) {
+            // スポイトのツール: ポインタに見本の輪とスポイトの絵（OS の矢印は隠す）
+            if let Some(p) = hover {
+                paint_eyedrop_mark(app, &painter, &view, p);
+            }
+            ui.ctx().set_cursor_icon(CursorIcon::None);
         } else if let Some(icon) = app.tool.def().cursor.icon(app, &view, hover) {
             ui.ctx().set_cursor_icon(icon);
         } else if let Some(p) = hover {
@@ -141,6 +149,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         }
     }
     draw_corner(ui, app, rect);
+}
+
+/// スポイトの印（今の色｜ポインタの下の色の輪とスポイトの絵）を `at` に描く。ポインタの下の色は、同じ画素・同じ文書なら読み直さない。
+fn paint_eyedrop_mark(app: &mut AppState, painter: &egui::Painter, view: &CanvasView, at: Pos2) {
+    let sample = crate::eyedrop::sample_canvas(app, view, at);
+    crate::eyedrop_mark::paint(painter, at, crate::eyedrop::current_swatch(app), sample);
 }
 
 /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない）。読むだけのセットの鍵・表示の回転・左右反転・重ねて見ている
@@ -254,7 +268,7 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
             .is_none_or(|layer| layer == ui.layer_id())
 }
 
-/// スポイト（Alt を押した描くツールも）は押した所の値を取るだけで、始めない。ストロークかドラッグを始めたら true。
+/// スポイトのツールは押した所の値を取るだけで、始めない。ストロークかドラッグを始めたら true。
 #[allow(clippy::too_many_arguments)]
 fn begin_any(
     app: &mut AppState,
@@ -263,10 +277,9 @@ fn begin_any(
     source: StrokeSource,
     eraser: bool,
     rect: Rect,
-    pick: bool,
     shift: bool,
 ) -> bool {
-    if crate::eyedrop::picks(app, pick) {
+    if crate::eyedrop::picks(app) {
         crate::eyedrop::pick_canvas(app, view, p);
         return false;
     }
@@ -642,6 +655,9 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                 PressKind::View => {
                     nav::press(app, rect, p, &frame.modifiers);
                 }
+                PressKind::Eyedrop => {
+                    crate::eyedrop::right_begin(app, source, p);
+                }
                 PressKind::Tool if drives_pen(app) => {
                     drive_pen(app, &view, p, s.pointer_id, true, frame);
                 }
@@ -653,7 +669,6 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                         source,
                         s.eraser,
                         rect,
-                        crate::keymap::picks(&frame.modifiers),
                         frame.modifiers.shift,
                     ) {
                         first_point(
@@ -678,6 +693,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
         match press.kind {
             PressKind::Ignored => {}
             PressKind::View => nav::moved(app, rect, p, press.last, frame.modifiers.shift),
+            PressKind::Eyedrop => crate::eyedrop::right_move(app, source, p),
             PressKind::Tool => {
                 // 描いている・選択の形を作っているときだけ続ける（ツールを途中で替えても、始めた側を終わらせる）
                 if app.canvas.stroke == Some(source) {
@@ -700,6 +716,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
         match press.kind {
             PressKind::Ignored => {}
             PressKind::View => nav::released(app, rect),
+            PressKind::Eyedrop => crate::eyedrop::right_end(app, &view, source, p, true),
             PressKind::Tool => {
                 if app.canvas.stroke == Some(source) {
                     finish_stroke(app, false);
@@ -745,9 +762,9 @@ fn drive_pen(
     }
 }
 
-/// ペンが触れた最初の点の行き先。ビューを動かす（R・Space・Ctrl+Space）・何もしない（押した所が別の部品・ステンシルを動かしている間・
-/// サイドボタン・Ctrl を押したブラシと消しゴム）・ツール。Alt を押したツールはツールのまま（`begin_any` が、Alt のスポイトとして値を取って、
-/// 描き始めない）。ステンシルを動かす押しは、同じ押しの egui のポインタの代わりの入力をステンシルが取るので、ビューを動かす判定より先に
+/// ペンが触れた最初の点の行き先。ビューを動かす（Alt・R・Space・Ctrl+Space）・スポイト（サイドボタン）・何もしない（押した所が別の部品・
+/// ステンシルを動かしている間・ポリゴン塗りつぶしのサイドボタン・Ctrl を押したブラシと消しゴム）・ツール。押しの始めに Alt を持っていれば表示を回す。
+/// ステンシルを動かす押しは、同じ押しの egui のポインタの代わりの入力をステンシルが取るので、ビューを動かす判定より先に
 /// 手放す（マウスの押しと同じく、ステンシルだけが動く）。
 fn press_kind(
     ui: &Ui,
@@ -760,12 +777,16 @@ fn press_kind(
     if frame.no_press || !on_top(ui, rect, p) || app.stencil.handling() {
         return PressKind::Ignored;
     }
-    if (app.canvas.rotate_key_held || app.canvas.space_held) && !app.is_stroking() {
+    if !app.is_stroking() && nav::starts_view(app, &frame.modifiers) {
         return PressKind::View;
     }
-    // 2D には右ボタンの操作が無い。ペンのサイドボタンは、描かない
+    // ペンのサイドボタンは右ボタンと同じ: スポイト（ポリゴン塗りつぶしのツールは、2D のアイランドのメニューをペンでは開かないので、何もしない）。描かない
     if s.barrel {
-        return PressKind::Ignored;
+        return if app.tool == crate::state::Tool::PolygonFill || app.is_stroking() {
+            PressKind::Ignored
+        } else {
+            PressKind::Eyedrop
+        };
     }
     let m = &frame.modifiers;
     if app.tool.paints() && gesture::ctrl(m) {
@@ -880,6 +901,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                             // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）
                             continue;
                         }
+                        if app.canvas.eyedrop.is_some() {
+                            // 右ボタンでスポイトの途中は、左ボタンで始めない
+                            continue;
+                        }
                         if !app.is_stroking() && nav::press(app, rect, pos, event_modifiers) {
                             // R・Space・Ctrl+Space を押しながらの左ドラッグ: 回す・パン・拡縮
                         } else if let Some(kind) = app.tool.def().canvas {
@@ -904,7 +929,6 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                                 StrokeSource::Mouse,
                                 false,
                                 rect,
-                                crate::keymap::picks(event_modifiers),
                                 event_modifiers.shift,
                             )
                         } {
@@ -945,7 +969,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     }
                     (PointerButton::Middle, true) => {
                         if !frame.no_press && !pen_frame && on_top(ui, rect, pos) {
-                            // 中ボタン: パン、Shift を足すと回転（`keymap::GESTURES`）
+                            // 中ボタン: パン（`keymap::GESTURES`。回転を割り当てていれば回転）
                             if crate::keymap::gesture(
                                 "canvas",
                                 PointerButton::Middle,
@@ -981,10 +1005,15 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                                 crate::region::tools::Where::Canvas(&view),
                                 pos,
                             );
+                            // ほかのツールの右ボタンはスポイト（押した所の色が見本。押したまま動かすと付いてくる。離して決める）
+                            if !menu && app.tool != crate::state::Tool::PolygonFill {
+                                crate::eyedrop::right_begin(app, StrokeSource::Mouse, pos);
+                            }
                         }
                     }
                     (PointerButton::Secondary, false) => {
                         let view = app.view.view(rect, w_px, h_px);
+                        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, pos, true);
                         crate::bake::overlap::menu_release(
                             app,
                             &ctx,
@@ -1029,6 +1058,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 // ペンの押しの回す・パン・拡縮は、ペンの点が動かす
                 if !pen_frame {
                     nav::moved(app, rect, pos, previous, modifiers.shift);
+                    crate::eyedrop::right_move(app, StrokeSource::Mouse, pos);
                 }
                 app.canvas.last_pointer = Some(pos);
             }
@@ -1066,7 +1096,9 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         .filter(|k| k.handler().cancel_first() == first)
                         .any(|k| k.handler().cancel(app, &ctx))
                 };
-                if cancelled(app, true) {
+                if app.canvas.eyedrop.take().is_some() {
+                    // 右ボタンのスポイトを取りやめた（色は変えない）
+                } else if cancelled(app, true) {
                     // 図形と定規は離すまで画素・定規を変更しない。移動・変形のドラッグは何も変えずにやめた。
                     // パスの点のドラッグを捨てた（ドラッグが無ければ選んだ点を外した）
                 } else if app.is_stroking() {
@@ -1106,6 +1138,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     kind.handler().focus_lost(app);
                 }
                 app.canvas.pen_press = None;
+                app.canvas.eyedrop = None;
                 nav::cancel(app);
                 app.canvas.rotate_key_held = false;
             }
@@ -1139,6 +1172,27 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 handler.lost_release(app, &view, at, &frame_ctx);
             }
         }
+    }
+    // 右ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）は、最後の位置で決める
+    if app
+        .canvas
+        .eyedrop
+        .is_some_and(|press| press.source == StrokeSource::Mouse)
+        && !ui.input(|i| i.pointer.secondary_down())
+        && !events.iter().any(|e| {
+            matches!(
+                e,
+                Event::PointerButton {
+                    button: PointerButton::Secondary,
+                    pressed: true,
+                    ..
+                }
+            )
+        })
+    {
+        let view = app.view.view(rect, w_px, h_px);
+        let at = app.canvas.last_pointer.unwrap_or(rect.center());
+        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, at, true);
     }
     // ペンが回す・拡縮している間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     if !ui.input(|i| i.pointer.primary_down()) && !nav::pen_driven(app) {

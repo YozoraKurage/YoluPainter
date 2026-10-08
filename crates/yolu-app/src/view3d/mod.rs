@@ -32,6 +32,8 @@ use crate::state::StrokeSource;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Orbit,
+    /// 軸の向きへ吸い付く回転（Alt + 左）。
+    SnapOrbit,
     Pan,
     /// Ctrl+Space（寄る・引く）。
     Zoom,
@@ -56,6 +58,8 @@ pub struct SurfaceInput {
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
     /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
     pub clone_press: Option<egui::Pos2>,
+    /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
+    pub eyedrop: Option<crate::eyedrop::RightPress>,
 }
 
 impl SurfaceInput {
@@ -67,6 +71,7 @@ impl SurfaceInput {
         self.navigation = None;
         self.zoom = None;
         self.clone_press = None;
+        self.eyedrop = None;
     }
 }
 

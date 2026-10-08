@@ -337,7 +337,7 @@ pub enum StrokeSource {
     Pen(u32),
 }
 
-/// 回すドラッグ（R ＋ 左ドラッグ）。
+/// 回すドラッグ（Alt ＋ 左ドラッグ。R を押しながらの左ドラッグを割り当てたときも）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RotateDrag {
     pub start_angle: f32,
@@ -362,6 +362,8 @@ pub struct CanvasInput {
     /// Shift ＋ 中ボタンのドラッグで回している。
     pub middle_rotating: bool,
     pub rotating: Option<RotateDrag>,
+    /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
+    pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,
     pub space_held: bool,
     pub last_pointer: Option<Pos2>,
