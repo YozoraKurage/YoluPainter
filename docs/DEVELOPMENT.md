@@ -14,7 +14,7 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
 
-Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。Unity 版の `Runtime/Core` などは Unity ブリッジの 0.5.0 で外れたので、Unity ブリッジのリポジトリのタグ `0.4.0` を取り出し、環境変数 `YOLUPAINTER_UNITY_SOURCE` にその場所を渡します（`tools/csharp-golden/` の道具と `tools/bench-all.sh` の既定の場所は `/workspace`）。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
 ### yolu-app の結合試験の置き方
 
@@ -22,7 +22,7 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 | 束（`cargo test -p yolu-app --test <束>`） | 中身 |
 | --- | --- |
-| `headless` | ウィンドウ・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link の通信と頼み・ソースの文言の検査）。同時に走る |
+| `headless` | ウィンドウ・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link のフォルダの受け渡しと頼み・外からの操作（MCP の受け口）・ディスクキャッシュ・ソースの文言の検査）。同時に走る |
 | `gui_canvas` | キャンバス・ツール・ブラシ・選択・色・効果の画面（`egui_kittest`） |
 | `gui_shell` | ウィンドウの全体・メニュー・設定・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU の装置の喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・アセット・ライブラリ |
 | `gui_view3d` | 3D ビュー（アンチエイリアス・ブルームを含む）・マテリアルの見た目（lilToon を含む）・ポーズ・テクスチャセット・出力 |
@@ -67,6 +67,7 @@ yolu-app と同じく、`crates/yolu-core/tests/`・`crates/yolu-io/tests/` の�
 | | `reference` | 実 C# Core の正解・収録したハッシュとの全バイトの照合 |
 | | `surface` | 3D の面への投影・面のストローク・対称・メッシュのマップ・ブラシの参照元・ステンシル・チャンネルの塗り |
 | | `brush`・`document`・`golden`・`mix`・`parallelism`・`paths`・`pressure`（直下の 1 ファイル 1 本） | ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を変える、またはその値に頼ってダブの経路を確かめる試験 |
+| | `seam_memory`（直下の 1 ファイル 1 本） | 確保を数える `#[global_allocator]` を置くので、1 本の実行ファイルにする。継ぎ目をまたぐ評価の実際の確保が見積りに収まることを確かめる |
 | yolu-io | `brushes` | ブラシの取り込み（同梱の筆先・GIMP・Photoshop・CLIP STUDIO の形式・信頼できないファイル） |
 | | `psd_io` | PSD の書き出し・取り込み・焼き込み・調整レイヤー・C# の正解との照合 |
 | | `ylp` | .ylp の形式の読み書き・前の版との互換・断り方・C# の書き手との一致・形式の仕様の文書 |
@@ -85,16 +86,16 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 
 ## CI
 
-`.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
+`.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。代わりに `.github/workflows/main-tested.yml` が、main の中身（ファイルの木）が PR の最後の CI を通した中身と同じで、その CI が成功しているかだけを確かめます（README の CI の印はこの結果です）。違うとき（PR の枝が main より古いまま入った）は失敗にするので、`ci.yml` を手で動かします。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
 - Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
-- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合試験は通常の `cargo test` に含みます。
 
-CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査できます。runner の版を上げたときは、Ubuntu の Mesa の版による画面の正解との差を確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
+CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査できます。runner の版を上げたときは、Ubuntu の Mesa の版による画面の正解との差を確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
 
 ## Windows 向けの画面なし試験（Wine）
 
@@ -122,7 +123,7 @@ python3 tools/third-party.py --bundle --offline
 
 Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存の Rust と C# の合成・ブラシ・面のベンチを同じ回数・並列上限・CPU 割当で順に測り、
 `target/bench-all/summary.md` に比較表、同じ場所にログと実行条件を保存する。Python 3.10 以降・taskset・上記の C# 用の Unity 同梱ツールが必要。
-`--source DIR` で Unity 版の場所、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
+`--source DIR`（または `YOLUPAINTER_UNITY_SOURCE`）で Unity 版の場所（0.4.x までの `Runtime/Core` を持つ checkout。上の注意と同じ）、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
 合成・ブラシは予熱 2 回を除き、面は予熱なしの中央値。フィルターはレベル補正・ブラシのぼかし／指先を含む。GPU と独立フィルター全種は対象外。
 
 ## 画素の計算の SIMD
