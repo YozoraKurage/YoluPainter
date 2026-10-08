@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1
+
+### 日本語
+
+- **固まる不具合**: モデルがあり「UV の継ぎ目をまたぐ」が入のとき、ぼかし・方向ぼかしなど周りの画素を読むフィルターのスライダーを動かすと、アプリが応答しなくなっていました。こうしたフィルターを使った文書を開いたときや、アイランドごとのばらつき・アンカーを使ったときに固まることも直しました。
+- **開き直すと編集できない不具合**: 焼いたメッシュマップを読む効果（エッジの摩耗・グラデーションデカールなど）を使った .ylp を開き直すと、モデルを読み終えてもテクスチャセットが読むだけのままでした（ベイクのウィンドウを開くまで）。ベイクの優先を既定から変えて焼いたマップも、開き直すと「古い」と判定されていました。
+- Unity のブリッジも 0.5.1 です（中身の変更はありません）。
+
+### English
+
+- **Freeze**: With a model loaded and "Across UV seams" on, dragging the slider of a filter that reads neighboring pixels (Gaussian Blur, Directional Blur and others) made the app stop responding. Opening a document that uses such filters, and using UV Island Variation or anchors, could also freeze.
+- **Documents reopening read-only**: A .ylp that uses effects reading baked mesh maps (Edge Wear, Gradient Decal and others) stayed read-only after reopening, even after the model finished loading, until the bake window was opened. Maps baked with a non-default bake priority were also judged stale after reopening.
+- The Unity bridge is 0.5.1 too (no changes inside).
+
 ## 0.5.0
 
 ### 日本語
