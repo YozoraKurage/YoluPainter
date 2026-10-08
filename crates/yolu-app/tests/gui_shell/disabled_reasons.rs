@@ -269,8 +269,9 @@ fn assert_brush_field(
     assert_eq!(shown, disabled, "{lang:?}: {label} のツールチップの理由");
 }
 
-/// ツールプロパティ（手ぶれ補正・効果のブラシの値）とブラシの詳細（形状・ストローク・入り抜き・ゆらぎ）の、2D のキャンバスだけで効く欄が `disabled` どおりか。
-fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
+/// ツールプロパティ（手ぶれ補正・効果のブラシの値）とブラシの詳細（形状・ストローク・入り抜き・ゆらぎ）の欄が有効で、前の「3D では
+/// 効きません」の理由はツールチップにも出ない（3D のビューの面のダブも同じ式で使う）。
+fn assert_brush_fields_enabled(h: &mut H, lang: Lang) {
     use yolu_app::brushes::Category;
     let effect_reason = lang.pick("3D では使えません", "Not available in 3D");
     let reason = lang.pick("3D では効きません", "No effect in 3D");
@@ -278,14 +279,14 @@ fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
     let stabilizer = lang.pick("手ぶれ補正", "Stabilizer");
     let node = h.get_by_label(stabilizer);
     let found = (node.rect(), node.accesskit_node().is_disabled());
-    assert_brush_field(h, lang, found, stabilizer, reason, disabled);
+    assert_brush_field(h, lang, found, stabilizer, reason, false);
     // 効果のブラシ（ぼかし）の値
     h.state_mut().state.m2.brush.effect = BrushEffect::BLUR;
     h.run();
     let blur = lang.pick("ぼかしの半径", "Blur radius");
     let node = h.get_by_label(blur);
     let found = (node.rect(), node.accesskit_node().is_disabled());
-    assert_brush_field(h, lang, found, blur, effect_reason, disabled);
+    assert_brush_field(h, lang, found, blur, effect_reason, false);
     h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
     h.run();
     for (category, labels) in [
@@ -309,14 +310,14 @@ fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
         open_brush_detail(h, category);
         for label in labels {
             let found = pane_field(h, label);
-            assert_brush_field(h, lang, found, label, reason, disabled);
+            assert_brush_field(h, lang, found, label, reason, false);
         }
     }
 }
 
-/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだは、2D にも描けるので、手ぶれ補正などの欄は有効のまま（理由のツールチップも出ない）。
+/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだも、手ぶれ補正などの欄は有効（理由のツールチップも出ない）。
 #[test]
-fn the_2d_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
+fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
     for lang in Lang::ALL {
         let mut h = brush_app(lang, true);
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
@@ -325,27 +326,18 @@ fn the_2d_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
             "{lang:?}"
         );
         assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_two_d_brush_fields(&mut h, lang, false);
+        assert_brush_fields_enabled(&mut h, lang);
     }
 }
 
-/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだは無効で、理由はツールチップ。
+/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだも、筆先・ストローク・入り抜き・ゆらぎ・効果の値の欄は有効（3D の面のダブも
+/// 2D と同じ式で使う）。
 #[test]
-fn the_2d_brush_fields_are_disabled_with_the_reason_while_only_the_3d_view_can_be_painted() {
+fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     for lang in Lang::ALL {
         let mut h = brush_app(lang, false);
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_two_d_brush_fields(&mut h, lang, true);
-        // キャンバスのタブへ戻せば有効に戻る
-        click_tab(&mut h, Tab::Canvas);
-        h.run();
-        assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        close_brush_detail(&mut h);
-        let stabilizer = lang.pick("手ぶれ補正", "Stabilizer");
-        assert!(
-            !h.get_by_label(stabilizer).accesskit_node().is_disabled(),
-            "{lang:?}: キャンバスへ戻した"
-        );
+        assert_brush_fields_enabled(&mut h, lang);
     }
 }
 

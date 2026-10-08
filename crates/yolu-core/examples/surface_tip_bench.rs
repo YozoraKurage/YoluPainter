@@ -1,7 +1,8 @@
 //! 3D のストロークの 1 ダブの時間（丸い筆先と画像の筆先）。
 //!   cargo run --release -p yolu-core --example surface_tip_bench [回数]
 //! 立方体を 76 × 76 に分けて膨らませた球（69,312 三角形）を斜めから見て、文書 2048² と 4096² に、画面の上の同じ道筋を
-//! 描く（ダブの数は間隔で決まる）。ブラシは同梱の「丸」（硬さ 0.8）と「かすれ筆」（画像の筆先・線の向き・不透明度のゆらぎ）。ストロークの始め（投影の準備と
+//! 描く（ダブの数は間隔で決まる）。ブラシは同梱の「丸」（硬さ 0.8）と「かすれ筆」（画像の筆先・線の向き・不透明度のゆらぎ）と、
+//! 丸と同じ設定で筆先の画像だけ「角の丸い四角」にしたもの。ストロークの始め（投影の準備と
 //! 最初のダブ）を除いた、2 つ目からのダブの時間の平均（道筋が進んで作る区画も含む）を、回数の中央値で出す。
 
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use yolu_core::geometry::{
     SurfaceStrokeOptions, DEFAULT_WELD_TOLERANCE,
 };
 use yolu_core::glam::Vec2;
-use yolu_core::{builtin_presets, Brush, BrushSettings, Document, Rgba8};
+use yolu_core::{builtin_presets, builtin_tip, Brush, BrushSettings, Document, Rgba8};
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -43,8 +44,15 @@ fn main() {
         .find(|p| p.id == "dry-brush")
         .expect("かすれ筆")
         .brush;
+    // 画像の筆先で、丸とほぼ同じ所を覆うもの（画素ごとの式の重さを丸と比べる）
+    let mut square = round.clone();
+    square.tip.image = builtin_tip("rounded-square");
     for size in [2048u32, 4096] {
-        for (name, brush) in [("丸", &round), ("かすれ筆", &dry)] {
+        for (name, brush) in [
+            ("丸", &round),
+            ("かすれ筆", &dry),
+            ("角の丸い四角", &square),
+        ] {
             // 画面の上の直径をそろえる（文書の大きさに比例させる）
             let mut brush = brush.clone();
             brush.base.radius = 24.0 * size as f64 / 2048.0;

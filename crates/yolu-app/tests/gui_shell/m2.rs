@@ -1875,7 +1875,7 @@ fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
     assert!(plain.chunks(4).any(|p| p[3] > 0) && chalky.chunks(4).any(|p| p[3] > 0));
     assert!(plain != chalky, "基本の値は 3D でも効く");
     undo(&mut h);
-    // 筆先の画像と質感だけを外しても、3D の絵は 1 画素も変わらない（面のダブは受け取らない。プロパティの欄はそう出す）
+    // 筆先の画像と質感も 3D の面のダブに効く（外すと 3D の絵が変わる）
     {
         let brush = &mut h.state_mut().state.m2.brush;
         assert!(brush.tip.image.is_some() && brush.texture.is_some());
@@ -1883,10 +1883,7 @@ fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
         brush.texture = None;
     }
     cube_stroke(&mut h, rect);
-    assert!(
-        composite(&h) == chalky,
-        "3D では筆先・質感は効かない（効くようになったら、プロパティの欄の「3D では効きません」も外す）"
-    );
+    assert!(composite(&h) != chalky, "3D でも筆先・質感が効く");
     undo(&mut h);
     // 色の変化は 3D でも効く
     apply(&mut h, Action::M2Ui(UiOp::Preset(0)));

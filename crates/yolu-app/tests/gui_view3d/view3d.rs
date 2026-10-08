@@ -61,6 +61,8 @@ fn pixel(image: &image::RgbaImage, p: Pos2) -> [u8; 4] {
 fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     let (mut h, rect) = cube_view(1100.0, 760.0, 256); // 2 × 2 タイル
     h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    // 入力の点を曲線で結ぶブラシ（撮った絵の線は曲線。3D の線もブラシの「曲線」に従う）
+    h.state_mut().state.m2.brush.assist.curve = true;
     let stats = h.state().view3d_stats().expect("wgpu の 3D");
     assert!(
         stats.renders >= 1 && stats.total_tiles == 0,

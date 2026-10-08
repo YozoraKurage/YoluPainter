@@ -16,13 +16,13 @@
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Stroke, Ui};
 use yolu_core::geometry::{
     copy_hits, pick, world_radius, CameraView, Ray, SurfaceCloneSource, SurfaceEffect,
-    SurfaceGeometry, SurfaceHit, SurfaceStroke, SurfaceStrokeOptions, SurfaceSymmetrySetup,
-    SURFACE_DABS_PER_EVENT,
+    SurfaceGeometry, SurfaceHit, SurfaceInput, SurfaceStroke, SurfaceStrokeOptions,
+    SurfaceSymmetrySetup, SURFACE_DABS_PER_EVENT,
 };
-use yolu_core::glam::{Vec2, Vec3};
+use yolu_core::glam::{DVec2, Vec2, Vec3};
 
 use super::{gizmo, Nav};
-use crate::engine::BrushEffect;
+use crate::engine::{BrushEffect, Tilt};
 use crate::gesture::{self, ZoomDrag};
 use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
@@ -39,6 +39,46 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
 
 fn local(rect: Rect, p: Pos2) -> Vec2 {
     Vec2::new(p.x - rect.left(), p.y - rect.top())
+}
+
+/// ストロークの点に添えるペンの傾き・軸の回転と時刻（マウスは傾き・回転なし）。
+#[derive(Clone, Copy, Default)]
+struct PenState {
+    tilt: Tilt,
+    /// 度、画面で時計回り（回転を送れないペン・マウスは None）。
+    rotation: Option<f32>,
+    /// 秒。
+    time: f64,
+}
+
+impl PenState {
+    fn of(s: &PenSample) -> PenState {
+        PenState {
+            tilt: s.tilt,
+            rotation: s.rotation,
+            time: s.time_ms as f64 / 1000.0,
+        }
+    }
+
+    fn mouse(time: f64) -> PenState {
+        PenState {
+            time,
+            ..PenState::default()
+        }
+    }
+
+    /// core の入力の点: 傾きは画面の右・上へ倒れる向きを正のラジアンに（ペンの値は右・下が正）、回転は画面で反時計回りのラジアンに
+    /// （2D のキャンバスを回さずに見たときと同じ向き）。
+    fn input(self, at: Vec2, pressure: f32) -> SurfaceInput {
+        const MAX: f64 = std::f64::consts::FRAC_PI_2 - 1e-6;
+        let radians = |degrees: f32| (degrees as f64).to_radians().clamp(-MAX, MAX);
+        SurfaceInput {
+            tilt: DVec2::new(radians(self.tilt.x), -radians(self.tilt.y)),
+            rotation: self.rotation.map_or(0.0, |d| -(d as f64).to_radians()),
+            time: self.time,
+            ..SurfaceInput::new(at, pressure.clamp(0.0, 1.0))
+        }
+    }
 }
 
 /// 今のカメラを表示域の大きさ（点）で見たもの。
@@ -90,6 +130,7 @@ fn begin(
     pressure: f32,
     source: StrokeSource,
     eraser: bool,
+    pen: PenState,
 ) {
     // ベイクのウィンドウでアイランドを選んでいる間は、押した面のアイランドを選ぶだけ（ツールを使わない）
     if crate::bake::overlap::press(app, crate::region::tools::Where::Surface(rect), at) {
@@ -221,8 +262,7 @@ fn begin(
             return;
         }
     };
-    // 全部入りのブラシ。面のダブは筆先・ゆらぎ・質感・デュアル・フェード・傾き・回転・速さ・手ぶれ補正を受け取らない（効くのは基本の値・色・
-    // 色の変化・消しゴム・筆圧・ステンシルと、効果のブラシ・3D の対称）
+    // 全部入りのブラシ（筆先・ゆらぎ・質感・デュアル・入り抜き・手ぶれ補正・曲線も、2D と同じ式で面のダブに効く）
     let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
         Ok(s) => s,
         Err(e) => {
@@ -237,15 +277,14 @@ fn begin(
             return;
         }
     };
-    match SurfaceStroke::begin_with_options(
+    match SurfaceStroke::begin_input(
         &mut app.doc,
         &mut stroke,
         model.geometry.clone(),
         view,
         &settings,
         Some(material),
-        p,
-        pressure.clamp(0.0, 1.0),
+        pen.input(p, pressure),
         SurfaceStrokeOptions {
             stencil: surface_stencil,
             symmetry,
@@ -282,7 +321,7 @@ fn note_symmetry(app: &mut AppState, s: &SurfaceStroke) {
     }
 }
 
-fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
+fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
     // ポリゴン塗りつぶしのドラッグは、通った範囲を足す
     if app.region.drag.is_some() {
         crate::region::tools::drag_to(app, crate::region::tools::Where::Surface(rect), at);
@@ -292,12 +331,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
     else {
         return;
     };
-    match surface.add(
-        &mut app.doc,
-        stroke,
-        local(rect, at),
-        pressure.clamp(0.0, 1.0),
-    ) {
+    match surface.add_input(&mut app.doc, stroke, pen.input(local(rect, at), pressure)) {
         Ok(()) => {
             app.view3d.input.stroke_points += 1;
             if let Some(outcome) = surface.symmetry_note() {
@@ -625,7 +659,7 @@ fn pen_sample(
                             true,
                         );
                     } else {
-                        begin(app, rect, p, s.pressure, source, s.eraser);
+                        begin(app, rect, p, s.pressure, source, s.eraser, PenState::of(s));
                     }
                 }
             }
@@ -640,7 +674,7 @@ fn pen_sample(
             PressKind::View => nav_move(app, rect, p, press.last),
             PressKind::Tool => {
                 if app.view3d.input.stroke == Some(source) {
-                    add(app, rect, p, s.pressure);
+                    add(app, rect, p, s.pressure, PenState::of(s));
                 } else if app.path.pen_in(true) {
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, false);
                 }
@@ -728,7 +762,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let press_blocked =
         blocked || app.view3d.display.settings_open || app.dock_grabbed() || foreign;
     super::navigation::shortcut(ui, app, rect, foreign);
-    let events = ui.input(|i| i.events.clone());
+    let (events, now) = ui.input(|i| (i.events.clone(), i.time));
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
     // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
@@ -826,7 +860,15 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                 pos,
                                 crate::fillfx::gizmo::Source::Mouse,
                             ) {
-                                begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
+                                begin(
+                                    app,
+                                    rect,
+                                    pos,
+                                    1.0,
+                                    StrokeSource::Mouse,
+                                    false,
+                                    PenState::mouse(now),
+                                );
                             }
                         }
                     }
@@ -876,7 +918,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 let pos = *pos;
                 let previous = app.view3d.input.last_pointer.unwrap_or(pos);
                 if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
-                    add(app, rect, pos, 1.0);
+                    add(app, rect, pos, 1.0, PenState::mouse(now));
                 }
                 if !pen_frame {
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
