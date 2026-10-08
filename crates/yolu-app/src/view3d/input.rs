@@ -706,6 +706,22 @@ fn pen_sample(
 ) {
     let p = s.pos_points(ui.ctx().pixels_per_point());
     let source = StrokeSource::Pen(s.pointer_id);
+    // ツールの帯のドラッグで始めた G/R/S（このペン）: 点を渡し、離したら G/R/S が決める
+    if app
+        .objects
+        .transform
+        .as_ref()
+        .is_some_and(|t| t.drag == Some(crate::fillfx::gizmo::Source::Pen(s.pointer_id)))
+    {
+        if s.contact {
+            app.objects.pen_at = Some(p);
+        } else {
+            app.objects.pen_at = Some(p);
+            app.objects.pen_lifted = true;
+            app.view3d.input.pen_press = None;
+        }
+        return;
+    }
     if app
         .fillfx
         .drag
@@ -783,7 +799,16 @@ fn pen_sample(
                     }
                 }
                 PressKind::Tool => {
-                    if crate::fillfx::gizmo::press(
+                    if app.mode == crate::mode::EditorMode::Edit {
+                        // 編集のモード: 点の印で選ぶ・選んだ形の取っ手を掴む（描かない）。移動・回転・拡縮のツールは G/R/S のドラッグ
+                        crate::objects::press(
+                            app,
+                            rect,
+                            p,
+                            crate::fillfx::gizmo::Source::Pen(s.pointer_id),
+                        );
+                        crate::objects::transform::start_drag(ui.ctx(), app);
+                    } else if crate::fillfx::gizmo::press(
                         app,
                         rect,
                         p,
@@ -1040,7 +1065,29 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         if pose_mode {
                             if app.view3d.pose.drag.is_none() {
                                 gizmo::press(app, rect, pos);
+                                // 移動・回転・拡縮のツール: 輪の外で、選んだボーンの面から左ドラッグを始めたら、その種類の G/R/S
+                                if let Some(kind) = app.edit_tool.transform() {
+                                    let selected =
+                                        app.view3d.pose.session.as_ref().and_then(|s| s.selected);
+                                    if app.view3d.pose.drag.is_none()
+                                        && selected.is_some()
+                                        && gizmo::bone_at(app, rect, pos) == selected
+                                    {
+                                        app.objects.drag_request =
+                                            Some((kind, pos, crate::fillfx::gizmo::Source::Mouse));
+                                        crate::objects::transform::start_drag(ui.ctx(), app);
+                                    }
+                                }
                             }
+                        } else if app.mode == crate::mode::EditorMode::Edit {
+                            // 編集のモード: 点の印で選ぶ・選んだ形の取っ手を掴む（描かない）。移動・回転・拡縮のツールは G/R/S のドラッグ
+                            crate::objects::press(
+                                app,
+                                rect,
+                                pos,
+                                crate::fillfx::gizmo::Source::Mouse,
+                            );
+                            crate::objects::transform::start_drag(ui.ctx(), app);
                         } else if !app.stencil.handling() {
                             // 形のギズモのハンドルの上・点のグラデーションの点を編集している間は、描かずにドラッグを始める
                             if !crate::fillfx::gizmo::press(

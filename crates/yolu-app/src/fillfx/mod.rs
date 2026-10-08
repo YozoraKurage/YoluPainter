@@ -158,10 +158,10 @@ impl FillOp {
     }
 }
 
-/// 形のギズモか点のグラデーションの点をドラッグしている間か。ペンの接触は egui のポインタの押下にならないので、パネルが「押していなければまとめを
+/// 形のギズモか点のグラデーションの点をドラッグしている間か（編集のモードの G/R/S の途中も）。ペンの接触は egui のポインタの押下にならないので、パネルが「押していなければまとめを
 /// 終える」を毎フレーム行うとき、この間は終えない（終えると 1 フレームごとに別の Undo の段になる）。離す・Esc・フォーカスの喪失は、ドラッグの側が自分で終える。
 pub fn dragging(app: &AppState) -> bool {
-    gizmo::dragging(app) || points::dragging(app)
+    gizmo::dragging(app) || points::dragging(app) || crate::objects::transforming(app)
 }
 
 /// 画像を差したチャンネルに値が無いとき core が置く既定の値（画像が使えない所に出る）。
@@ -516,11 +516,16 @@ impl AppState {
                     gizmo::release(self, false);
                 }
                 self.fillfx.edit_gradient = target;
-                if let Some((layer, _)) = target {
+                if let Some((layer, channel)) = target {
                     self.fillfx.edit_filter = None; // ギズモは 1 つ
                     self.selected_layer = Some(layer);
                     self.set_edit_mask(false);
                     self.fillfx.handles_hidden = false;
+                    // 編集のモードでは、その形を選ぶ（取っ手は選んだ物に出る）
+                    crate::objects::select_when_editing(
+                        self,
+                        crate::objects::Object::Shape(gizmo::Target::Gradient(layer, channel)),
+                    );
                 }
             }
             FillOp::EditFilter(target) => {
@@ -528,9 +533,13 @@ impl AppState {
                     gizmo::release(self, false);
                 }
                 self.fillfx.edit_filter = target;
-                if let Some((layer, _)) = target {
+                if let Some((layer, filter)) = target {
                     self.fillfx.edit_gradient = None;
                     self.selected_layer = Some(layer);
+                    crate::objects::select_when_editing(
+                        self,
+                        crate::objects::Object::Shape(gizmo::Target::Filter(layer, filter)),
+                    );
                 }
             }
             FillOp::EditPoints(target) => {
@@ -539,6 +548,17 @@ impl AppState {
                     self.fillfx.point_selected = None;
                 }
                 self.fillfx.edit_points = target;
+                // 編集のモードでは、最初の点を選ぶ（モデルの空間の点だけ。点は 3D ビューの印で動かす）
+                if let Some((layer, channel)) = target {
+                    crate::objects::select_when_editing(
+                        self,
+                        crate::objects::Object::Point {
+                            layer,
+                            channel,
+                            index: 0,
+                        },
+                    );
+                }
             }
             FillOp::SelectPoint(index) => {
                 self.fillfx.point_selected = index;
@@ -715,6 +735,10 @@ impl AppState {
                 self.set_edit_mask(false);
                 self.fillfx.handles_hidden = false;
                 self.fillfx.edit_gradient = None;
+                crate::objects::select_when_editing(
+                    self,
+                    crate::objects::Object::Shape(gizmo::Target::Projection(id)),
+                );
                 match self.decal_problem(id) {
                     None => self.info(
                         Source::FillLayer,

@@ -95,6 +95,27 @@ impl EditTool {
         }
     }
 
+    /// 移動・回転・拡縮のツールが始める G/R/S の種類（選択は None）。
+    pub fn transform(self) -> Option<crate::objects::Kind> {
+        use crate::objects::Kind;
+        match self {
+            Self::Select => None,
+            Self::Move => Some(Kind::Grab),
+            Self::Rotate => Some(Kind::Rotate),
+            Self::Scale => Some(Kind::Scale),
+        }
+    }
+
+    /// 帯で光らせるツール: G/R/S の途中はその種類のツール（キーで始めても）、ほかは選んでいるツール。
+    pub fn shown(app: &AppState) -> EditTool {
+        match app.objects.transform.as_ref().map(|t| t.kind) {
+            Some(crate::objects::Kind::Grab) => Self::Move,
+            Some(crate::objects::Kind::Rotate) => Self::Rotate,
+            Some(crate::objects::Kind::Scale) => Self::Scale,
+            None => app.edit_tool,
+        }
+    }
+
     /// 試験・読み上げの部品の名前に添える札。
     fn key(self) -> &'static str {
         match self {
@@ -149,7 +170,8 @@ impl AppState {
             self.refuse(Source::Pose, text);
             return false;
         }
-        // 途中の操作は確定してから替える
+        // 途中の操作は確定してから替える（G/R/S は決める。面に乗らないパスはやめる）
+        crate::objects::transform::finish(self, true);
         crate::view3d::gizmo::release(self, true);
         crate::fillfx::gizmo::release(self, true);
         crate::fillfx::points::release(self, true);
@@ -310,7 +332,7 @@ pub fn edit_strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             ("mode.tool", tool.key()),
             tool.icon(),
             tool.name(lang),
-            app.edit_tool == tool,
+            EditTool::shown(app) == tool,
             true,
             22.0,
         )
@@ -319,6 +341,91 @@ pub fn edit_strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             app.apply(Action::Mode(ModeAction::Tool(tool)));
         }
         y += 34.0;
+    }
+}
+
+/// オプションバーの、G/R/S のスナップ（常にする・移動・回転・拡縮の刻み。Ctrl を押している間は、常にするの逆）。
+pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
+    use crate::ui::widgets::{NumberFormat, SliderSpec};
+    let lang = app.lang;
+    let (y, h) = (bar.top() + 6.0, bar.height() - 12.0);
+    let mut x = x + 4.0;
+    let key = crate::shortcuts::menu_key("object.snap_toggle");
+    let tip = match key {
+        Some(k) => lang.pick(
+            format!("スナップを常にする（{k}）。Ctrl を押している間は逆"),
+            format!("Always snap ({k}). Hold Ctrl for the opposite"),
+        ),
+        None => lang
+            .pick(
+                "スナップを常にする。Ctrl を押している間は逆",
+                "Always snap. Hold Ctrl for the opposite",
+            )
+            .to_owned(),
+    };
+    let label = lang.pick("スナップ", "Snap");
+    let width = 23.0 + w::text_width(ui.painter(), label, t::LABEL) + 8.0;
+    let on = w::toggle(
+        ui,
+        Rect::from_min_size(pos2(x, y), vec2(width, h)),
+        "options.snap",
+        label,
+        app.objects.snap,
+        Some(&tip),
+        true,
+    );
+    if on != app.objects.snap {
+        app.apply(Action::Object(crate::objects::ObjectAction::ToggleSnap));
+    }
+    x += width + 8.0;
+    let steps = &mut app.objects.steps;
+    for (id, name, value, min, max, format) in [
+        (
+            "options.snap.move",
+            lang.pick("移動", "Move"),
+            &mut steps.movement,
+            0.001,
+            100.0,
+            NumberFormat {
+                decimals: 3,
+                trim: true,
+                suffix: "",
+            },
+        ),
+        (
+            "options.snap.rotate",
+            lang.pick("回転", "Rotate"),
+            &mut steps.rotation,
+            0.1,
+            90.0,
+            NumberFormat {
+                decimals: 1,
+                trim: true,
+                suffix: "°",
+            },
+        ),
+        (
+            "options.snap.scale",
+            lang.pick("拡縮", "Scale"),
+            &mut steps.scale,
+            0.001,
+            10.0,
+            NumberFormat {
+                decimals: 3,
+                trim: true,
+                suffix: "",
+            },
+        ),
+    ] {
+        let r = Rect::from_min_size(pos2(x, y), vec2(110.0, h));
+        if r.right() > bar.right() - 60.0 {
+            break;
+        }
+        let out = w::slider(ui, r, id, *value, &SliderSpec::new(name, min, max, format));
+        if out.changed {
+            *value = out.value;
+        }
+        x += 118.0;
     }
 }
 

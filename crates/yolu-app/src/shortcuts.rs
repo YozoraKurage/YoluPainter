@@ -7,6 +7,7 @@ use crate::{
     keymap::{self, Trigger, When},
     lang::Lang,
     m2::Edit,
+    mode::EditorMode,
     pathtool::PathAction,
     selection::{SelAction, SelEdit},
     state::{Action, AppState},
@@ -28,13 +29,21 @@ pub type Binding = keymap::KeyBinding;
 /// 一覧に出すキーの割り当て（今効いている表のもの。この環境で効くもの。Windows だけのキーは Windows でだけ）。`Action` を持たない行（押している間のキー・
 /// ビューが読むキー）は、ビューごとのキーの節に出るので入れない。
 pub fn bindings() -> Vec<Binding> {
-    keymap::current()
-        .rows()
-        .iter()
-        .filter(|b| b.when != When::Windows || cfg!(windows))
-        .filter(|b| b.action().is_some())
-        .copied()
-        .collect()
+    let mut out: Vec<Binding> = Vec::new();
+    for b in keymap::current().rows() {
+        if (b.when == When::Windows && !cfg!(windows)) || b.action().is_none() {
+            continue;
+        }
+        // 同じ操作・同じ入力の行（編集とポーズの段に同じキーで置いた行）は 1 行にする
+        if out
+            .iter()
+            .any(|o| o.command == b.command && o.trigger == b.trigger)
+        {
+            continue;
+        }
+        out.push(*b);
+    }
+    out
 }
 
 /// 移動・変形のツールの矢印キー（1 画素の 4 つ。表の行のキー）。
@@ -101,21 +110,46 @@ fn key_text(m: &Modifiers, key: Key, mac: bool) -> String {
 /// メニューに主の行だけでなく全部の行を並べる操作（やり直しは、Ctrl+Shift+Z と Ctrl+Y のどちらも押せることをメニューが示す）。
 const MENU_ALL_ROWS: [&str; 1] = ["edit.redo"];
 
-/// メニューの項目に添えるキーの文字（操作の ID の主の行。表で最初の行。`MENU_ALL_ROWS` の操作は全部の行を「 / 」でつなぐ。割り当てが無ければ None）。
-/// メニューの文字は手で書かず、ここから作る。
-pub fn menu_key(command: &str) -> Option<String> {
-    menu_key_with(command, cfg!(target_os = "macos"))
+thread_local! {
+    /// メニューを作っている間のモード（`menu_mode` が決め、`menu_key` が読む）。既定はペイント。
+    static MENU_MODE: std::cell::Cell<EditorMode> = const { std::cell::Cell::new(EditorMode::Paint) };
 }
 
-fn menu_key_with(command: &str, mac: bool) -> Option<String> {
+/// メニューを作る間、キーの文字をそのモードの表から引く（戻すと前のモードへ）。
+pub struct MenuMode(EditorMode);
+
+impl Drop for MenuMode {
+    fn drop(&mut self) {
+        MENU_MODE.with(|m| m.set(self.0));
+    }
+}
+
+/// この後 `MenuMode` を捨てるまで、`menu_key` は `mode` で効くキーだけを出す（メニューを作る口が使う）。
+pub fn menu_mode(mode: EditorMode) -> MenuMode {
+    MenuMode(MENU_MODE.with(|m| m.replace(mode)))
+}
+
+/// メニューの項目に添えるキーの文字（操作の ID の主の行。表で最初の行。`MENU_ALL_ROWS` の操作は全部の行を「 / 」でつなぐ。割り当てが無ければ None）。
+/// メニューの文字は手で書かず、ここから作る。メニューを作っている間は、そのモードで効く行だけ（`menu_mode`）。
+pub fn menu_key(command: &str) -> Option<String> {
+    menu_key_in(command, MENU_MODE.with(|m| m.get()))
+}
+
+/// そのモードで効く行からの、キーの文字（ほかのモードの行・同じキーをほかの操作が先に取る行は出さない）。
+pub fn menu_key_in(command: &str, mode: EditorMode) -> Option<String> {
+    menu_key_with(command, mode, cfg!(target_os = "macos"))
+}
+
+fn menu_key_with(command: &str, mode: EditorMode, mac: bool) -> Option<String> {
+    let map = keymap::current();
+    let mut rows = map
+        .rows_of(command)
+        .filter(|b| keymap::effective_in(&map, b, mode));
     if MENU_ALL_ROWS.contains(&command) {
-        let rows: Vec<String> = keymap::current()
-            .rows_of(command)
-            .map(|b| label_for(b, mac))
-            .collect();
+        let rows: Vec<String> = rows.map(|b| label_for(b, mac)).collect();
         return (!rows.is_empty()).then(|| rows.join(" / "));
     }
-    keymap::primary(command).map(|b| label_for(&b, mac))
+    rows.next().map(|b| label_for(b, mac))
 }
 
 /// 操作に割り当てたキーの文字（「Ctrl+A」。主の行だけ。無ければ None）。
@@ -403,6 +437,17 @@ mod tests {
     /// 割り当てが効く条件を満たした状態（ツールは、ツールの割り当てなら押す前と違うもの）。
     fn state_for(binding: &Binding) -> AppState {
         let mut app = AppState::new(32, 32);
+        // 編集・ポーズの段の行は、そのモードで（ポーズはボーンのあるモデルが要る）
+        match binding.scope {
+            keymap::Scope::Edit => {
+                app.set_mode(crate::mode::EditorMode::Edit);
+            }
+            keymap::Scope::Pose => {
+                app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+                app.set_mode(crate::mode::EditorMode::Pose);
+            }
+            _ => {}
+        }
         app.tool = match (binding.when, binding.action()) {
             (When::Tool(tool), _) => tool,
             (_, Some(Action::SelectTool(Tool::Brush))) => Tool::Eraser,
@@ -940,16 +985,22 @@ mod tests {
             Some(format!("{command}++").as_str())
         );
         // macOS の書き方（Cmd）は、メニューの文字でも同じ
-        assert_eq!(menu_key_with("file.save", true).as_deref(), Some("Cmd+S"));
         assert_eq!(
-            menu_key_with("edit.redo", true).as_deref(),
+            menu_key_with("file.save", EditorMode::Paint, true).as_deref(),
+            Some("Cmd+S")
+        );
+        assert_eq!(
+            menu_key_with("edit.redo", EditorMode::Paint, true).as_deref(),
             Some("Cmd+Shift+Z / Cmd+Y")
         );
         assert_eq!(
-            menu_key_with("view.zoom_in", true).as_deref(),
+            menu_key_with("view.zoom_in", EditorMode::Paint, true).as_deref(),
             Some("Cmd++")
         );
-        assert_eq!(menu_key_with("tool.brush", true).as_deref(), Some("B"));
+        assert_eq!(
+            menu_key_with("tool.brush", EditorMode::Paint, true).as_deref(),
+            Some("B")
+        );
         assert_eq!(menu_key("tool.liquify"), None);
         assert_eq!(menu_key("no.such.command"), None);
     }

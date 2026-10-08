@@ -114,7 +114,9 @@ pub fn show_list_with(
     }
     let mut esc = false;
     let closed = window::show(ctx, id, &window_spec, offset, false, |ui, frame| {
+        // 先に描いた部品（G/R/S など）が使った Esc では閉じない
         esc = ui.input(|i| i.key_pressed(Key::Escape))
+            && !crate::ui::window::escape_taken(ui.ctx())
             && (spec.modal
                 || ui
                     .input(|i| i.pointer.hover_pos())

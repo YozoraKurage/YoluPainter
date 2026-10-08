@@ -466,6 +466,8 @@ pub enum PopupKind {
     Mode,
     /// パイメニュー（中身と途中の状態は `AppState::pie`。開いている間は下の入力を止める）。
     Pie,
+    /// 編集・ポーズのモードの G/R/S の途中（中身は `AppState::objects`。開いている間は下の入力を止める）。
+    Transform,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -598,6 +600,8 @@ pub enum Action {
     Pie(crate::pie::PieAction),
     /// 3D の視点（軸の視点・選んだセットを収める。画面だけ）。
     View3dNav(crate::view3d::navigation::NavOp),
+    /// 編集・ポーズのモードの物（選ぶ・G/R/S・戻す・隠す・消す）。
+    Object(crate::objects::ObjectAction),
 }
 
 impl Action {
@@ -682,6 +686,7 @@ impl Action {
             Self::Mode(..) => "Mode",
             Self::Pie(..) => "Pie",
             Self::View3dNav(..) => "View3dNav",
+            Self::Object(..) => "Object",
         }
     }
 
@@ -906,6 +911,8 @@ pub struct AppState {
     pub edit_tool: crate::mode::EditTool,
     /// パイメニュー（パイの並びと、開いているもの）。
     pub pie: crate::pie::PieState,
+    /// 編集・ポーズのモードの物（選んだ物・隠した物・G/R/S の途中・スナップ）。
+    pub objects: crate::objects::ObjectsState,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -1102,6 +1109,7 @@ impl AppState {
             mode: Default::default(),
             edit_tool: Default::default(),
             pie: Default::default(),
+            objects: Default::default(),
         }
     }
 
@@ -1638,6 +1646,7 @@ impl AppState {
             Action::Mode(op) => self.mode_apply(op),
             Action::Pie(op) => self.pie_apply(op),
             Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
+            Action::Object(op) => self.objects_apply(op),
         }
     }
 }

@@ -69,6 +69,12 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 /// いまギズモを出す対象（無ければ `None`）。3D のモデルが無ければ出さない。形のグラデーションの Generator（フィルターの欄で「3D ビューで
 /// 編集」にしたもの）が先で、続けて塗りつぶしのグラデーション、投影の置き場。マスクを編集している間は Generator 以外は出さない。
 pub fn target(app: &AppState) -> Option<Target> {
+    // 編集のモードは、点の印で選んだ物（G/R/S の途中・Q で隠したときは出さない）。ポーズのモードは出さない
+    match app.mode {
+        crate::mode::EditorMode::Edit => return crate::objects::gizmo_target(app),
+        crate::mode::EditorMode::Pose => return None,
+        crate::mode::EditorMode::Paint => {}
+    }
     app.view3d.model.as_ref()?;
     let id = app.selected_layer?;
     let layer = app.doc.layer(id)?;
@@ -221,29 +227,41 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
     if Some(next) == shape(app, d.target) {
         return;
     }
+    if let Some(Err(e)) = write_shape(app, d.target, next, true) {
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            NoticeSource::FillLayer,
+            app.lang.core_error(&e),
+        );
+        release(app, false);
+    }
+}
+
+/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。値が範囲外なら理由を知らせて None
+/// （文書は変えない）。対象が無ければ None。入れたら（変わっていれば「変更あり」の印を付けて）Some(Ok)、core が断ったら Some(Err)。
+pub fn write_shape(
+    app: &mut AppState,
+    target: Target,
+    next: Shape,
+    coalesce: bool,
+) -> Option<Result<(), yolu_core::CoreError>> {
     let revision = app.doc.revision();
-    let result = match d.target {
+    let result = match target {
         Target::Projection(layer) => {
-            let Some(l) = app.doc.layer(layer) else {
-                return;
-            };
-            let mut p = *l.projection();
+            let mut p = *app.doc.layer(layer)?.projection();
             p.placement = next.into_placement();
             if let Err(e) = p.validate() {
                 app.fail(NoticeSource::FillLayer, app.lang.fill_error(&e));
-                return;
+                return None;
             }
-            app.doc.set_fill_projection(layer, p, true)
+            app.doc.set_fill_projection(layer, p, coalesce)
         }
         Target::Gradient(layer, ch) => {
-            let Some(mut g) = app
+            let mut g = app
                 .doc
                 .layer(layer)
                 .and_then(|l| l.fill_gradient(ch))
-                .cloned()
-            else {
-                return;
-            };
+                .cloned()?;
             g.volume = next.into_volume(&g.volume);
             if g.validate().is_err() {
                 app.fail(
@@ -251,18 +269,15 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
                     app.lang
                         .pick("形の値が範囲外です", "The shape is out of range"),
                 );
-                return;
+                return None;
             }
-            app.doc.set_fill_gradient(layer, ch, Some(g), true)
+            app.doc.set_fill_gradient(layer, ch, Some(g), coalesce)
         }
         Target::Filter(layer, filter) => {
-            let Some(mut g) = app
+            let mut g = app
                 .doc
                 .find_filter(filter)
-                .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
-            else {
-                return;
-            };
+                .and_then(|(_, e, _)| e.settings().generator_settings().cloned())?;
             if g.kind == GeneratorKind::Image {
                 g.image.projection.placement = next.into_placement();
             } else {
@@ -274,27 +289,16 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
                     app.lang
                         .pick("形の値が範囲外です", "The shape is out of range"),
                 );
-                return;
+                return None;
             }
             app.doc
-                .set_filter_settings(layer, filter, EffectSettings::generator(g), true)
+                .set_filter_settings(layer, filter, EffectSettings::generator(g), coalesce)
         }
     };
-    match result {
-        Ok(()) => {
-            if app.doc.revision() != revision {
-                app.modified = true;
-            }
-        }
-        Err(e) => {
-            app.notify(
-                crate::notice::Kind::of_core(&e),
-                NoticeSource::FillLayer,
-                app.lang.core_error(&e),
-            );
-            release(app, false);
-        }
+    if result.is_ok() && app.doc.revision() != revision {
+        app.modified = true;
     }
+    Some(result)
 }
 
 /// ドラッグを終える。`commit` なら 1 回の Undo にまとめて確定、そうでなければ（Esc・フォーカスの喪失）ドラッグの前に戻して履歴にも残さない。

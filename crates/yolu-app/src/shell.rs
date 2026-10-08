@@ -105,6 +105,8 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
 
 /// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
+    // 項目のキーの文字は、今のモードで効く行から（編集のモードの H は印を隠すので、表示を左右反転に H を添えない）
+    let _mode = crate::shortcuts::menu_mode(app.mode);
     let free = !app.is_stroking();
     // 保存の間は、プロジェクトを入れ替える・もう 1 度保存する・配布用に保存するは断る（描く・見るは止めない）
     let idle = free && !app.is_saving();
@@ -460,8 +462,8 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         } => crate::bake::overlap::menu_entries(app, set, island, map),
         PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
         PopupKind::Mode => crate::mode::entries(app),
-        // パイは項目の並びでなく、自分で描く（`pie::show`）
-        PopupKind::Pie => Vec::new(),
+        // パイと G/R/S は項目の並びでなく、自分で描く（`pie::show`・`objects::transform::show`）
+        PopupKind::Pie | PopupKind::Transform => Vec::new(),
     }
 }
 
@@ -780,8 +782,10 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
-    // メニューなどから頼まれたパイを、ポインタの所に開く
+    // メニューなどから頼まれたパイを、ポインタの所に開く。外から閉じられた G/R/S はそこまでで決め、頼まれた G/R/S を始める
     crate::pie::open_requested(ctx, app);
+    crate::objects::transform::settle(app);
+    crate::objects::transform::start_requested(ctx, app);
     if ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
         || app.sel.dialog.is_some()
@@ -808,8 +812,15 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     ctx.input_mut(|i| {
         // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
         crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
-        // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
-        actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
+        // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）。画素を変えるカット・ペーストは、ペイントのモードだけ
+        let paints = app.mode.paints();
+        actions.extend(
+            crate::clipboard::keys::shortcut_actions(i, &mut app.clip)
+                .into_iter()
+                .filter(|a| {
+                    paints || !matches!(a, Action::Clip(c) if crate::keymap::changes_pixels(*c))
+                }),
+        );
         if arrows_move {
             for nudge in crate::keymap::NUDGES {
                 if crate::keymap::consume_command(i, app, nudge.command) {
@@ -823,8 +834,9 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     for a in actions {
         app.apply(a);
     }
-    // キーで開いたパイ（Ctrl+Tab など）は、そのキーを押している間に開く（押したまま離すと、指している項目を実行する）
+    // キーで開いたパイ（Ctrl+Tab など）は、そのキーを押している間に開く（押したまま離すと、指している項目を実行する）。G/R/S はポインタの所から始める
     crate::pie::open_requested(ctx, app);
+    crate::objects::transform::start_requested(ctx, app);
     for (dir, shift) in arrows {
         crate::transform::canvas::arrow(app, dir, shift);
     }
@@ -844,10 +856,14 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::icon(
             &p,
             Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
-            app.edit_tool.icon(),
+            crate::mode::EditTool::shown(app).icon(),
             t::TEXT,
             20.0,
         );
+        x += 30.0;
+        w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+        // G/R/S のスナップ（常にする・刻み）
+        crate::mode::snap_options(ui, app, r, x);
         return;
     }
     w::icon(

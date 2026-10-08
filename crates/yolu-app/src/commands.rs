@@ -20,6 +20,7 @@ use crate::keymap::Operation;
 use crate::lang::Lang;
 use crate::m2::Edit;
 use crate::mode::{EditorMode, ModeAction};
+use crate::objects::{Kind as TransformKind, ObjectAction};
 use crate::pathtool::PathAction;
 use crate::pie::PieAction;
 use crate::prefs::PrefsAction;
@@ -207,6 +208,18 @@ fn axis(view: AxisView) -> Action {
     Action::View3dNav(NavOp::Axis(view))
 }
 
+/// キーの繰り返しの押しでは実行しない操作にする（切り替え・消す・G/R/S を始める）。
+const fn no_repeat(c: Command) -> Command {
+    Command {
+        repeats: false,
+        ..c
+    }
+}
+
+fn object(a: ObjectAction) -> Action {
+    Action::Object(a)
+}
+
 fn pie(id: &str) -> Action {
     Action::Pie(PieAction::Open(id.to_owned()))
 }
@@ -268,9 +281,10 @@ pub static COMMANDS: &[Command] = &[
     }),
     press("brush.smaller", || Action::BrushSmaller),
     press("brush.larger", || Action::BrushLarger),
-    press("fill.toggle_handles", || {
+    // 切り替えは、押したままの繰り返しで出たり消えたりしない
+    no_repeat(press("fill.toggle_handles", || {
         Action::Fill(crate::fillfx::FillOp::ToggleHandles)
-    }),
+    })),
     press("fill.delete_point", || {
         Action::Fill(crate::fillfx::FillOp::DeletePoint)
     }),
@@ -495,6 +509,76 @@ pub static COMMANDS: &[Command] = &[
         ("下", "Bottom"),
         || axis(AxisView::Bottom),
     ),
+    // 編集・ポーズのモードの物（選んだ物・ボーン。キーは編集とポーズの段）
+    Command {
+        repeats: false,
+        ..press_named(
+            "object.grab",
+            "選んだ物を移動",
+            "Move Selected",
+            || object(ObjectAction::Transform(TransformKind::Grab)),
+        )
+    },
+    Command {
+        repeats: false,
+        ..press_named(
+            "object.rotate",
+            "選んだ物を回転",
+            "Rotate Selected",
+            || object(ObjectAction::Transform(TransformKind::Rotate)),
+        )
+    },
+    Command {
+        repeats: false,
+        ..press_named(
+            "object.scale",
+            "選んだ物を拡縮",
+            "Scale Selected",
+            || object(ObjectAction::Transform(TransformKind::Scale)),
+        )
+    },
+    press_named(
+        "object.reset_position",
+        "選んだ物の位置を戻す",
+        "Reset Position of Selected",
+        || object(ObjectAction::Reset(TransformKind::Grab)),
+    ),
+    press_named(
+        "object.reset_rotation",
+        "選んだ物の回転を戻す",
+        "Reset Rotation of Selected",
+        || object(ObjectAction::Reset(TransformKind::Rotate)),
+    ),
+    press_named(
+        "object.reset_scale",
+        "選んだ物の大きさを戻す",
+        "Reset Scale of Selected",
+        || object(ObjectAction::Reset(TransformKind::Scale)),
+    ),
+    no_repeat(press_named(
+        "object.snap_toggle",
+        "スナップの切り替え",
+        "Toggle Snapping",
+        || object(ObjectAction::ToggleSnap),
+    )),
+    no_repeat(press_named(
+        "object.hide",
+        "選んだ物の印を隠す",
+        "Hide Selected Marker",
+        || object(ObjectAction::Hide),
+    )),
+    no_repeat(press_named(
+        "object.reveal",
+        "隠した印を出す",
+        "Reveal Hidden Markers",
+        || object(ObjectAction::Reveal),
+    )),
+    no_repeat(press_named(
+        "object.delete",
+        "選んだ物を削除",
+        "Delete Selected",
+        || object(ObjectAction::Delete),
+    )),
     // 正投影はこの版では入っていない（パイの項目は押せず、理由を出す）
     Command {
         short: Some(("正投影", "Orthographic")),
@@ -841,11 +925,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 72);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 82);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 10);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 111);
+        assert_eq!(COMMANDS.len(), 121);
     }
 }

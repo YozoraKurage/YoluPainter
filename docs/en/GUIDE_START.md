@@ -20,7 +20,7 @@ The Tools panel changes with the selected tool. Brushes and their settings are i
 
 ## Modes
 
-You paint in Paint mode. Edit and Pose modes do not paint: the 2D canvas is for viewing only (moving, rotating and zooming the view, and the right-button eyedropper still work), and nothing is painted in the 3D view either. The brush and color panels are dimmed and cannot be used. Pose mode can be chosen only while a model with bones is loaded ([GUIDE_3D.md](GUIDE_3D.md)).
+You paint in Paint mode. Edit and Pose modes do not paint: the 2D canvas is for viewing only (moving, rotating and zooming the view, and the right-button eyedropper still work), and nothing is painted in the 3D view either. The brush and color panels are dimmed and cannot be used. Pose mode can be chosen only while a model with bones is loaded ([GUIDE_3D.md](GUIDE_3D.md)). In Edit mode, the markers in the 3D view select fill projections, gradient decals, filter shapes, points and 3D paths, and `G`, `R` and `S` move them; in Pose mode the same keys move the selected bone ("Select and move objects" in [GUIDE_3D.md](GUIDE_3D.md)).
 
 Switch modes with any of the following. The mode cannot change while you are drawing.
 

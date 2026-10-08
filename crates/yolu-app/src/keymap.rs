@@ -68,12 +68,17 @@ pub enum Scope {
 impl Scope {
     /// 今のモードで、この範囲の行が `dispatch` で効くか。
     pub fn holds(self, app: &AppState) -> bool {
+        self.holds_in(app.mode)
+    }
+
+    /// そのモードで、この範囲の行が `dispatch` で効くか。
+    pub fn holds_in(self, mode: crate::mode::EditorMode) -> bool {
         use crate::mode::EditorMode;
         match self {
             Scope::Everywhere => true,
-            Scope::Paint => app.mode == EditorMode::Paint,
-            Scope::Edit => app.mode == EditorMode::Edit,
-            Scope::Pose => app.mode == EditorMode::Pose,
+            Scope::Paint => mode == EditorMode::Paint,
+            Scope::Edit => mode == EditorMode::Edit,
+            Scope::Pose => mode == EditorMode::Pose,
             Scope::During => false,
         }
     }
@@ -274,9 +279,10 @@ pub fn bindings() -> Vec<KeyBinding> {
     let none = Modifiers::NONE;
     let shift = Modifiers::SHIFT;
     let mut v = vec![
-        kb(cmd_shift, Key::E, "layer.merge_visible"),
+        // 結合は画素を変えるので、ペイントのモードだけ（メニューからはどのモードでも）
+        kb(cmd_shift, Key::E, "layer.merge_visible").paint(),
         kb(cmd_shift, Key::G, "layer.ungroup"),
-        kb(cmd, Key::E, "layer.merge_down"),
+        kb(cmd, Key::E, "layer.merge_down").paint(),
         // Ctrl+J: 選択範囲があれば、その画素を新しいレイヤーへ（Photoshop の「コピーしたレイヤー」）。無ければレイヤーの複製
         kb(cmd, Key::J, "selection.to_new_layer").when(When::HasSelection),
         kb(cmd, Key::J, "layer.duplicate"),
@@ -293,8 +299,10 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(none, Key::Backspace, "fill.delete_point")
             .when(When::PointSelected)
             .paint(),
-        // 選択範囲があるときだけ: 消去（Delete）
-        kb(none, Key::Delete, "selection.erase").when(When::HasSelection),
+        // 選択範囲があるときだけ: 消去（Delete）。キーからの画素の変更なので、ペイントのモードだけ（メニューからはどのモードでも）
+        kb(none, Key::Delete, "selection.erase")
+            .when(When::HasSelection)
+            .paint(),
         kb(cmd, Key::Z, "edit.undo"),
         kb(cmd, Key::Y, "edit.redo"),
         kb(cmd_shift, Key::N, "layer.new"),
@@ -357,9 +365,15 @@ pub fn bindings() -> Vec<KeyBinding> {
             };
         v.push(kb(modifiers, Key::I, command).when(When::Windows).paint());
     }
-    // クリップボード（コピー・カット・ペースト。入力の受け方は `clipboard::keys` が持つが、割り当てはここ）
+    // クリップボード（コピー・カット・ペースト。入力の受け方は `clipboard::keys` が持つが、割り当てはここ）。画素を変えるカット・ペーストは
+    // ペイントのモードだけ（受け口は `shell::handle_shortcuts` が同じ決まりで止める）
     for (modifiers, key, action) in CLIPBOARD_KEYS {
-        v.push(kb(modifiers, key, clip_command(action)));
+        let row = kb(modifiers, key, clip_command(action));
+        v.push(if changes_pixels(action) {
+            row.paint()
+        } else {
+            row
+        });
     }
     // 押している間だけ効くキー（Space: パン（Ctrl を加えると拡縮）、Y: ステンシルの置き場、N: ステンシルの一時解除）。
     // 押している間に見る修飾の条件は、読む側が持つ。`view.rotate_hold`（R を押しながらの 2D の回転）は、既定では割り当てない
@@ -376,6 +390,26 @@ pub fn bindings() -> Vec<KeyBinding> {
     }
     // 3D ビューで選んだセットを収める（3D の上で、修飾なし。ビューが読む）
     v.push(kb(none, Key::Period, "view3d.frame_selected"));
+    // 編集・ポーズのモードの段: G/R/S・Alt+G/R/S（位置・回転・大きさを戻す）・Shift+Tab（スナップを常にする・しない）
+    let alt = Modifiers::ALT;
+    for scope in [Scope::Edit, Scope::Pose] {
+        v.extend([
+            kb(none, Key::G, "object.grab").scope(scope),
+            kb(none, Key::R, "object.rotate").scope(scope),
+            kb(none, Key::S, "object.scale").scope(scope),
+            kb(alt, Key::G, "object.reset_position").scope(scope),
+            kb(alt, Key::R, "object.reset_rotation").scope(scope),
+            kb(alt, Key::S, "object.reset_scale").scope(scope),
+            kb(shift, Key::Tab, "object.snap_toggle").scope(scope),
+        ]);
+    }
+    // 編集のモードだけ: H・Alt+H（選んだ物の印を隠す・全部出す）・Delete（選んだ物を削除）・Q（選んだ形の取っ手を隠す・出す）
+    v.extend([
+        kb(none, Key::H, "object.hide").scope(Scope::Edit),
+        kb(alt, Key::H, "object.reveal").scope(Scope::Edit),
+        kb(none, Key::Delete, "object.delete").scope(Scope::Edit),
+        kb(none, Key::Q, "fill.toggle_handles").scope(Scope::Edit),
+    ]);
     // 移動・変形のツールの矢印キー（移動・変形のツールを選んでいるとき。ビューが読む）
     for n in NUDGES {
         let modifiers = if n.shift { shift } else { none };
@@ -405,6 +439,11 @@ pub const CLIPBOARD_KEYS: [(Modifiers, Key, ClipAction); 4] = [
     (Modifiers::COMMAND, Key::X, ClipAction::Cut),
     (Modifiers::COMMAND, Key::V, ClipAction::Paste),
 ];
+
+/// キーからのクリップボードの操作が画素を変えるか（カット・ペースト。ペイントのモードだけで効く）。
+pub fn changes_pixels(action: ClipAction) -> bool {
+    matches!(action, ClipAction::Cut | ClipAction::Paste)
+}
 
 /// クリップボードの操作の ID。
 fn clip_command(action: ClipAction) -> &'static str {
@@ -691,6 +730,27 @@ pub fn key_of(command: &str) -> Option<Key> {
 /// 操作の主の行（表で最初の行。メニューのキーの文字になる）。
 pub fn primary(command: &str) -> Option<KeyBinding> {
     current().rows_of(command).next().copied()
+}
+
+/// そのモードで、この行のキーが操作を実行するか: 範囲がそのモードで効き、判定の順で先に同じキーを取る別の操作の行（場面の行は場面に
+/// よるので数えない）が無い。メニュー・ツールチップに出すキーの文字を、今のモードの表から引くのに使う。
+pub fn effective_in(map: &Keymap, row: &KeyBinding, mode: crate::mode::EditorMode) -> bool {
+    if !row.scope.holds_in(mode) {
+        return false;
+    }
+    for b in map.order() {
+        if b == row {
+            return true;
+        }
+        if b.trigger == row.trigger
+            && b.command != row.command
+            && b.when == When::Always
+            && b.scope.holds_in(mode)
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// このフレームのキーの操作（効く範囲と条件を満たし、押されたもの。押した事象は取り除く）。文字を打っている・メニューを開いている間は呼ばない。
@@ -1766,6 +1826,7 @@ mod tests {
     #[test]
     fn rows_belong_to_the_scope_the_design_gives_them() {
         for b in bindings() {
+            // キーからの画素の変更（選択範囲の消去・カット・ペースト・結合）もペイントだけ
             let paint = b.command.starts_with("tool.")
                 || b.command.starts_with("color.")
                 || b.command.starts_with("brush.")
@@ -1774,9 +1835,32 @@ mod tests {
                 || b.command.starts_with("transform.nudge_")
                 || matches!(
                     b.command,
-                    "fill.toggle_handles" | "fill.delete_point" | "selection.quick_mask"
+                    "fill.toggle_handles"
+                        | "fill.delete_point"
+                        | "selection.quick_mask"
+                        | "selection.erase"
+                        | "clip.cut"
+                        | "clip.paste"
+                        | "layer.merge_down"
+                        | "layer.merge_visible"
                 );
             let during = b.command.starts_with("view3d.fly_");
+            // 編集・ポーズの段の行（同じ操作をそれぞれの段に置く）。Q は、ペイントと編集の両方の段
+            if b.command.starts_with("object.")
+                || (b.command == "fill.toggle_handles" && b.scope == Scope::Edit)
+            {
+                let both = !matches!(
+                    b.command,
+                    "object.hide" | "object.reveal" | "object.delete" | "fill.toggle_handles"
+                );
+                assert!(
+                    b.scope == Scope::Edit || (both && b.scope == Scope::Pose),
+                    "{} {:?}",
+                    b.command,
+                    b.scope
+                );
+                continue;
+            }
             assert_eq!(
                 b.scope,
                 if during {
@@ -1789,6 +1873,23 @@ mod tests {
                 "{}",
                 b.command
             );
+        }
+        // G/R/S・Alt+G/R/S・Shift+Tab は編集とポーズの両方の段、H・Alt+H・Delete は編集だけ
+        for (command, scopes) in [
+            ("object.grab", &[Scope::Edit, Scope::Pose][..]),
+            ("object.rotate", &[Scope::Edit, Scope::Pose]),
+            ("object.scale", &[Scope::Edit, Scope::Pose]),
+            ("object.reset_position", &[Scope::Edit, Scope::Pose]),
+            ("object.reset_rotation", &[Scope::Edit, Scope::Pose]),
+            ("object.reset_scale", &[Scope::Edit, Scope::Pose]),
+            ("object.snap_toggle", &[Scope::Edit, Scope::Pose]),
+            ("object.hide", &[Scope::Edit]),
+            ("object.reveal", &[Scope::Edit]),
+            ("object.delete", &[Scope::Edit]),
+            ("fill.toggle_handles", &[Scope::Paint, Scope::Edit]),
+        ] {
+            let got: Vec<Scope> = current().rows_of(command).map(|b| b.scope).collect();
+            assert_eq!(got, scopes, "{command}");
         }
         // 3D の視点の移動は、キーの段 1「途中の操作」（右を押している間だけ）。押している間の Space と 3D の . は、どのモードでも。
         // Y・N（ステンシル）はペイントだけ
@@ -2007,10 +2108,27 @@ mod tests {
         );
         assert!(!commands::find("mode.pie").unwrap().repeats);
         assert!(!commands::find("view3d.pie").unwrap().repeats);
+        // 繰り返しを受けないのは、パイを開く操作・G/R/S を始める操作（ポップアップを開く操作。閉じたあと、押したままのキーで開き直さない）と、
+        // 切り替え・消す操作（押したままで出たり消えたり、続けて消したりしない）
+        let once: Vec<&str> = commands::all()
+            .iter()
+            .filter(|c| !c.repeats)
+            .map(|c| c.id)
+            .collect();
         assert_eq!(
-            commands::all().iter().filter(|c| !c.repeats).count(),
-            2,
-            "繰り返しを受けないのはパイを開く操作だけ"
+            once,
+            [
+                "fill.toggle_handles",
+                "mode.pie",
+                "view3d.pie",
+                "object.grab",
+                "object.rotate",
+                "object.scale",
+                "object.snap_toggle",
+                "object.hide",
+                "object.reveal",
+                "object.delete",
+            ]
         );
     }
 
@@ -2065,34 +2183,192 @@ mod tests {
     #[test]
     fn a_mode_row_takes_its_key_before_an_everywhere_row_and_only_in_its_mode() {
         use crate::mode::EditorMode;
-        // 編集・ポーズの段の行を、どこでもの段の H（表示を左右反転）と同じキーに置く
-        let mut rows = bindings();
-        rows.push(kb(Modifiers::NONE, Key::H, "color.swap").scope(Scope::Edit));
-        rows.push(kb(Modifiers::NONE, Key::H, "color.default").scope(Scope::Pose));
-        let map = Keymap::new(rows);
+        use crate::objects::{Kind as K, ObjectAction as O};
+        // 編集の段の H（印を隠す）は、どこでもの段の H（表示を左右反転）より先。ポーズの段には H が無いので、どこでもの段へ落ちる
+        let map = current();
         let mut app = AppState::new(32, 32);
         app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+        let h = |app: &AppState| dispatched_with(&map, app, Key::H, Modifiers::NONE);
         assert_eq!(
-            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
+            h(&app),
             vec![Action::FlipView],
             "ペイントのモードはどこでもの段"
         );
         assert!(app.set_mode(EditorMode::Edit));
         assert_eq!(
-            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
-            vec![Action::SwapColors],
+            h(&app),
+            vec![Action::Object(O::Hide)],
             "編集のモードの段が先に取り、どこでもの段へは落ちない"
         );
         assert!(app.set_mode(EditorMode::Pose));
-        assert_eq!(
-            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
-            vec![Action::DefaultColors]
-        );
+        assert_eq!(h(&app), vec![Action::FlipView]);
+        // G・R・S は、ペイントではツール（G はバケツ・S は選択ペン）、編集・ポーズでは G/R/S
+        let key = |app: &AppState, k| dispatched_with(&map, app, k, Modifiers::NONE);
+        for mode in [EditorMode::Edit, EditorMode::Pose] {
+            assert!(app.set_mode(mode));
+            assert_eq!(
+                key(&app, Key::G),
+                vec![Action::Object(O::Transform(K::Grab))]
+            );
+            assert_eq!(
+                key(&app, Key::R),
+                vec![Action::Object(O::Transform(K::Rotate))]
+            );
+            assert_eq!(
+                key(&app, Key::S),
+                vec![Action::Object(O::Transform(K::Scale))]
+            );
+            assert_eq!(
+                dispatched_with(&map, &app, Key::G, Modifiers::ALT),
+                vec![Action::Object(O::Reset(K::Grab))]
+            );
+            assert_eq!(
+                dispatched_with(&map, &app, Key::Tab, Modifiers::SHIFT),
+                vec![Action::Object(O::ToggleSnap)]
+            );
+        }
+        assert!(app.set_mode(EditorMode::Paint));
+        assert_eq!(key(&app, Key::G), vec![Action::SelectTool(Tool::Fill)]);
+        assert_eq!(key(&app, Key::S), vec![Action::SelectTool(Tool::SelectPen)]);
+        assert!(key(&app, Key::R).is_empty());
+        assert!(dispatched_with(&map, &app, Key::Tab, Modifiers::SHIFT).is_empty());
         // 判定の順: 修飾の数が同じなら、場面 → モード → どこでも
         let order = map.order();
         let at = |command: &str| order.iter().position(|b| b.command == command).unwrap();
-        assert!(at("color.swap") < at("view.flip"));
+        assert!(at("object.hide") < at("view.flip"));
         assert!(at("selection.to_new_layer") < at("layer.duplicate"));
+    }
+
+    #[test]
+    fn delete_and_the_pixel_keys_follow_the_mode() {
+        use crate::mode::EditorMode;
+        use crate::objects::ObjectAction as O;
+        let map = current();
+        let mut app = AppState::new(32, 32);
+        app.apply(Action::Sel(crate::selection::SelAction::Edit(
+            crate::selection::SelEdit::All,
+        )));
+        let delete = |app: &AppState| dispatched_with(&map, app, Key::Delete, Modifiers::NONE);
+        let erase = Action::Sel(crate::selection::SelAction::Edit(
+            crate::selection::SelEdit::Erase,
+        ));
+        // ペイント: 選択範囲の中身を消す。編集: 選んだ物を消す（選択範囲の中身は消さない）。ポーズ: 何もしない
+        assert_eq!(delete(&app), vec![erase]);
+        assert!(app.set_mode(EditorMode::Edit));
+        assert_eq!(delete(&app), vec![Action::Object(O::Delete)]);
+        app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+        assert!(app.set_mode(EditorMode::Pose));
+        assert!(delete(&app).is_empty());
+        // Q（取っ手を隠す・出す）は、ペイントと編集の段
+        assert!(app.set_mode(EditorMode::Edit));
+        let q = Action::Fill(crate::fillfx::FillOp::ToggleHandles);
+        assert_eq!(
+            dispatched_with(&map, &app, Key::Q, Modifiers::NONE),
+            vec![q.clone()]
+        );
+        assert!(app.set_mode(EditorMode::Pose));
+        assert!(dispatched_with(&map, &app, Key::Q, Modifiers::NONE).is_empty());
+        // 画素を変えるクリップボードのキーはペイントだけ
+        assert!(changes_pixels(ClipAction::Cut) && changes_pixels(ClipAction::Paste));
+        assert!(!changes_pixels(ClipAction::Copy) && !changes_pixels(ClipAction::CopyMerged));
+        // 結合（Ctrl+E・Ctrl+Shift+E）もペイントだけ。複製（Ctrl+J）はどのモードでも
+        let cmd = Modifiers::COMMAND;
+        for mode in [EditorMode::Edit, EditorMode::Pose] {
+            assert!(app.set_mode(mode));
+            assert!(
+                dispatched_with(&map, &app, Key::E, cmd).is_empty(),
+                "{mode:?}"
+            );
+            assert!(dispatched_with(&map, &app, Key::E, cmd | Modifiers::SHIFT).is_empty());
+            assert!(!dispatched_with(&map, &app, Key::J, cmd).is_empty());
+        }
+        assert!(app.set_mode(EditorMode::Paint));
+        assert_eq!(
+            dispatched_with(&map, &app, Key::E, cmd),
+            vec![Action::M2(crate::m2::Edit::MergeDown)]
+        );
+    }
+
+    #[test]
+    fn a_pose_row_takes_its_key_before_an_everywhere_row_of_the_same_key() {
+        use crate::mode::EditorMode;
+        // 今の表でポーズの段とどこでもの段に同じキーは無いので、表を作って確かめる（H: どこでもは表示を左右反転、ポーズは初期設定の色）
+        let map = Keymap::new(vec![
+            kb(Modifiers::NONE, Key::H, "view.flip"),
+            kb(Modifiers::NONE, Key::H, "color.default").scope(Scope::Pose),
+        ]);
+        let mut app = AppState::new(32, 32);
+        app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+        let h = |app: &AppState| dispatched_with(&map, app, Key::H, Modifiers::NONE);
+        assert_eq!(h(&app), vec![Action::FlipView]);
+        assert!(app.set_mode(EditorMode::Pose));
+        assert_eq!(h(&app), vec![Action::DefaultColors], "ポーズの段が先に取る");
+        assert!(app.set_mode(EditorMode::Edit));
+        assert_eq!(h(&app), vec![Action::FlipView]);
+        // メニューのキーの文字も同じ決まり: ポーズのモードでは、表示を左右反転に H を添えない
+        let row = |command: &str| *map.rows_of(command).next().unwrap();
+        assert!(effective_in(&map, &row("view.flip"), EditorMode::Paint));
+        assert!(!effective_in(&map, &row("view.flip"), EditorMode::Pose));
+        assert!(effective_in(&map, &row("color.default"), EditorMode::Pose));
+        assert!(!effective_in(
+            &map,
+            &row("color.default"),
+            EditorMode::Paint
+        ));
+    }
+
+    #[test]
+    fn menu_keys_show_only_the_keys_that_work_in_the_current_mode() {
+        use crate::mode::EditorMode::{Edit, Paint, Pose};
+        use crate::shortcuts::menu_key_in;
+        assert_eq!(menu_key_in("view.flip", Paint).as_deref(), Some("H"));
+        assert_eq!(menu_key_in("view.flip", Edit), None, "編集の H は印を隠す");
+        assert_eq!(menu_key_in("view.flip", Pose).as_deref(), Some("H"));
+        for command in [
+            "selection.erase",
+            "layer.merge_down",
+            "clip.cut",
+            "clip.paste",
+        ] {
+            assert!(menu_key_in(command, Paint).is_some(), "{command}");
+            assert_eq!(menu_key_in(command, Edit), None, "{command}");
+        }
+        assert_eq!(
+            menu_key_in("fill.toggle_handles", Edit).as_deref(),
+            Some("Q")
+        );
+        assert!(menu_key_in("layer.duplicate", Edit).is_some());
+        // メニューを作る間だけ、そのモードの表で引く
+        {
+            let _mode = crate::shortcuts::menu_mode(Edit);
+            assert_eq!(crate::shortcuts::menu_key("view.flip"), None);
+        }
+        assert_eq!(
+            crate::shortcuts::menu_key("view.flip").as_deref(),
+            Some("H")
+        );
+        // 表示のメニューの「表示を左右反転」: 編集のモードでは H を添えない
+        let mut app = AppState::new(32, 32);
+        let flip_key = |app: &AppState| {
+            (0..8)
+                .find_map(|i| {
+                    let entries = crate::shell::menu_entries(app, i);
+                    crate::ui::menu::leaves(&entries)
+                        .into_iter()
+                        .find_map(|e| match e {
+                            crate::ui::menu::Entry::Item {
+                                action: Action::FlipView,
+                                shortcut,
+                                ..
+                            } => Some(shortcut.clone()),
+                            _ => None,
+                        })
+                })
+                .expect("表示を左右反転の項目")
+        };
+        assert_eq!(flip_key(&app).as_deref(), Some("H"));
+        assert!(app.set_mode(Edit));
+        assert_eq!(flip_key(&app), None);
     }
 
     #[test]

@@ -59,11 +59,26 @@ While the 3D view is shown, the brush properties gain a "3D" group.
 
 `Shift`-click draws a straight line from the end of the previous stroke (the last point that hit a surface) to the clicked point (with the mouse and the pen; when there is no previous point, holding `Shift` and dragging locks the first direction you move in to 45° steps). A contact with `Ctrl` held does not paint with the pen but paints with the mouse. The force of a touch, such as a finger, becomes the pressure. These also work the same as on the 2D canvas ([GUIDE_PAINT.md](GUIDE_PAINT.md)). The Fill tool's "Similar colors" also fills the same extent as in 2D, from the pixel that the UV of the pressed surface points to.
 
+## Select and move objects (Edit mode)
+
+In Edit mode, the 3D view shows a marker (a white dot) for each object on the visible layers. The objects are fill projection boxes and decals (none when the projection is UV), gradient decals, filter shapes, points of point gradients in model space, and 3D paths (drawn on the current model).
+
+- Click a marker to select that object and its layer. The selected object's marker, frame or line turns orange. Shapes also show the same handles as when you edit them from the fill or filter fields (`Q` hides them).
+- When markers overlap, click the same place again to select the next object. Click an empty spot to deselect.
+- `G` (move), `R` (rotate) and `S` (scale) start at the pointer and follow how far the mouse moves. `X`, `Y` and `Z` choose an axis (press again for the object's own axis; scaling uses the object's own axis from the first press), and you can type a value. Left click or `Enter` applies; right click or `Esc` cancels. All the keys are in "Edit and Pose modes" in [GUIDE_KEYS.md](GUIDE_KEYS.md).
+- Without keys, choose Move, Rotate or Scale in the tool strip on the left and drag from a marker with the left button (releasing applies it; `X`, `Y`, `Z` and `Ctrl` snapping work during the drag; a pen works too). When you start with a key, that tool in the strip lights up as well.
+- Each move, rotation or scale is one undo step. While you move, a coarse preview follows.
+- Points can only be moved. A 3D path moves as a whole, and its points are placed back onto the nearest surface points when you apply. Only surfaces facing the same way as where it was drawn are used, so a path on the front of a thin plate does not move to the back (it cannot be applied while a point is too far from the surface).
+- `Alt+G`, `Alt+R` and `Alt+S` reset a shape's position, rotation and size to the placement it gets when it is created (fitted to the model's bounds).
+- `H` hides the selected object's marker and `Alt+H` shows them all (display only; the file does not change). `Delete` deletes the selected object (projection boxes and decals cannot be deleted, as they are the fill layer's projection).
+
+Objects on hidden layers (including layers in a hidden group) show no marker and cannot be selected. Dropping an image from Assets on the model in the 3D view places a decal, and in Edit mode the placed decal is selected. Pressing "Edit in 3D View" in a field also selects that object. Nothing can be moved on the 2D canvas (in Edit mode it is for viewing only). One object moves at a time.
+
 ## Pose the model
 
 When you load a model with bones from an FBX, a "Pose" tab appears in the same group as Properties (it can also be moved to a separate window).
 
-1. Select a bone in the "Bones" tree to enter Pose mode; rings of a gizmo appear in the 3D view. Drag a ring with the left button to rotate, or click a surface to pick a bone. The mode dropdown at the left end of the options bar, the mode pie menu on `Ctrl+Tab`, View → Mode in the menu bar, and the button at the top of the Pose panel also switch the mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). Pose mode does not paint (the 2D canvas is for viewing only, too).
+1. Select a bone in the "Bones" tree to enter Pose mode; rings of a gizmo appear in the 3D view. Drag a ring with the left button to rotate, or click a surface to pick a bone. The mode dropdown at the left end of the options bar, the mode pie menu on `Ctrl+Tab`, View → Mode in the menu bar, and the button at the top of the Pose panel also switch the mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). Pose mode does not paint (the 2D canvas is for viewing only, too). The selected bone can also be moved with `G`, `R` and `S`, or by choosing Move, Rotate or Scale in the tool strip and dragging from the bone's surface with the left button (they work as in Edit mode; see "Edit and Pose modes" in [GUIDE_KEYS.md](GUIDE_KEYS.md)).
 2. The selected bone's position, rotation and scale can be typed (rotation is Euler angles in the same order as the Unity Inspector). You can reset a field, the bone, the bone and its children, everything, or one BlendShape at a time.
 3. Each pose operation is one pose undo step (`Ctrl+Z` in Pose mode). Presets and takes cannot be applied while you are painting.
 

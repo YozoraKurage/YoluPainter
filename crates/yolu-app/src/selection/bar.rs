@@ -51,6 +51,14 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
         }
         None => name.to_owned(),
     };
+    // 消去のキーは、今のモードで効くときだけ添える（編集のモードの Delete は選んだ物を消す）
+    let erase_name = {
+        let name = lang.pick("選択範囲を消去", "Erase Selection");
+        match crate::shortcuts::menu_key_in("selection.erase", app.mode) {
+            Some(key) => lang.pick(format!("{name}（{key}）"), format!("{name} ({key})")),
+            None => name.to_owned(),
+        }
+    };
     [
         vec![
             Item {
@@ -110,10 +118,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "erase",
                 icon: "tools/eraser",
-                tooltip: named(
-                    lang.pick("選択範囲を消去（Delete）", "Erase Selection (Delete)"),
-                    &paint_reason,
-                ),
+                tooltip: named(&erase_name, &paint_reason),
                 enabled: free && paint_reason.is_none(),
                 action: edit(SelEdit::Erase),
             },

@@ -2152,6 +2152,12 @@ impl YoluApp {
             }
             return;
         }
+        if open.kind == PopupKind::Transform {
+            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
+            return;
+        }
         let entries = shell::popup_entries(&self.state, open.kind);
         let keep: Vec<Rect> = match open.kind {
             PopupKind::MenuBar(_) => bar.rects.clone(),

@@ -123,6 +123,8 @@ impl View3dSlot {
         ui.advance_cursor_after_rect(full);
         let content = full;
         app.view3d.view_rect = Some(content);
+        app.view3d.viewport = Some(ui.ctx().viewport_id());
+        crate::objects::transform::settle(app);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(
@@ -209,9 +211,15 @@ impl View3dSlot {
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
             crate::fillfx::gizmo::draw(ui, app, content, pointer);
-            crate::fillfx::points::draw(ui, app, content, pointer);
-            gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
+            if mode == EditorMode::Edit {
+                // 編集のモード: 選べる物の点の印と、選んだ物の枠・線
+                crate::objects::draw(ui, app, content, pointer);
+            } else {
+                crate::fillfx::points::draw(ui, app, content, pointer);
+            }
+            // 棚の画像を落としてデカールを置く（編集のモードでは、置いたデカールを選ぶ）
             crate::fillfx::decal_drop(ui, app, content);
+            gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
         }
         if !drawn {
             self.placeholder(ui, app, content);
@@ -225,11 +233,13 @@ impl View3dSlot {
             );
             ui.ctx().set_cursor_icon(CursorIcon::None);
         } else if mode == EditorMode::Pose {
-            // ポーズのモード: ギズモ（輪の上は掴む形のポインタ）
+            // ポーズのモード: ギズモ（輪の上は掴む形のポインタ。G/R/S の途中は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
-            gizmo::draw(ui, app, content, pointer);
+            if !crate::objects::transforming(app) {
+                gizmo::draw(ui, app, content, pointer);
+            }
             if pointer.is_some() {
                 ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
                     CursorIcon::Move
