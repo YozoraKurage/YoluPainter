@@ -6,6 +6,8 @@
 //! 共通の部品は下で 1 度だけ宣言し、各ファイルは `use crate::<部品>;` で使う。
 #[path = "../attach_support/mod.rs"]
 mod attach_support;
+#[path = "../rayon_support/mod.rs"]
+mod rayon_support;
 #[path = "../seam_support/mod.rs"]
 mod seam_support;
 

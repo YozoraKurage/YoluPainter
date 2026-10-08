@@ -124,7 +124,8 @@ fn pool(threads: usize) -> rayon::ThreadPool {
         .unwrap()
 }
 
-/// 帯の写しを予算 budget で作って、成功したなら、作る間の確保が予算に収まったか。結果と最大の確保。
+/// 帯の写しを予算 budget で作って、成功したなら、作る間の確保が予算に収まったか。結果と最大の確保。`threads` が 0 なら rayon の外のスレッドから
+/// （グローバルのプールで並列に作る）、1 以上ならそのスレッド数のプールの中から（rayon のスレッドの中では並列にせず、順に作る）。
 fn build_within(
     threads: usize,
     n: u32,
@@ -134,14 +135,18 @@ fn build_within(
     let topology = atlas(n);
     // 位相の対応（アイランド・縁）は作る間の確保に数えない（解像度によらず、モデルごとに 1 つ）
     let _ = topology.seam_edge_count();
-    let (r, peak) = pool(threads).install(|| {
+    let build = || {
         measure(|| {
             topology
                 .seam_band_within(SIZE, SIZE, band, budget)
                 .map(|_| ())
         })
-    });
-    (r, peak)
+    };
+    if threads == 0 {
+        build()
+    } else {
+        pool(threads).install(build)
+    }
 }
 
 /// n × n のアイランド（n が大きいほど小さなアイランドが多く、小さいほど大きなアイランドが少ない）と、近傍の段の半径。
@@ -224,14 +229,14 @@ fn estimates_and_budgets_bound_the_real_allocations() {
         }
 
         // ── 帯の写しを作る間: 成功した予算では、確保の最大が予算に収まる。収まらない予算では断る
-        for threads in [1usize, 4] {
+        for threads in [0usize, 1, 4] {
             for budget in [4u64 << 20, 16 << 20, 64 << 20, 256 << 20] {
                 let (r, peak) = build_within(threads, n, radius, budget);
-                eprintln!("  帯を作る（{threads} スレッド）予算 {budget}: {r:?} 最大 {peak}");
+                eprintln!("  帯を作る（スレッド {threads}）予算 {budget}: {r:?} 最大 {peak}");
                 match r {
                     Ok(()) => assert!(
                         peak as u64 <= budget,
-                        "{threads} スレッド 予算 {budget}: 確保 {peak}"
+                        "スレッド {threads} 予算 {budget}: 確保 {peak}"
                     ),
                     Err(e) => assert!(matches!(e, UvTopologyError::Budget { .. }), "{e}"),
                 }
@@ -248,11 +253,11 @@ fn estimates_and_budgets_bound_the_real_allocations() {
                 }
             }
             let (r, peak) = build_within(threads, n, radius, hi);
-            eprintln!("  帯を作る（{threads} スレッド）通る一番小さい予算 {hi}: 最大 {peak}");
+            eprintln!("  帯を作る（スレッド {threads}）通る一番小さい予算 {hi}: 最大 {peak}");
             assert!(r.is_ok());
             assert!(
                 peak as u64 <= hi,
-                "{threads} スレッド: 通る最小の予算 {hi} で確保 {peak} が予算を超えた"
+                "スレッド {threads}: 通る最小の予算 {hi} で確保 {peak} が予算を超えた"
             );
         }
     }

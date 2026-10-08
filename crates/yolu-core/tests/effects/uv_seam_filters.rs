@@ -2,11 +2,13 @@
 //! アイランドの外は段の入力のまま・設定を切ると（モデルが無いのと）同じバイト・1 回の Undo・相手のアイランドに描くと縁の向こうの出力と変化の印が
 //! 変わる・ブロックやタイルの大きさによらない・接空間の法線は継ぎ目の向きで回る・作業メモリの予算で断る・取り消せる・アイランドの図と帯の写しが
 //! 予算に収まらなければ 2D のまま評価して、それが分かる。
+//! 初めて要る帯の写しを rayon の並列で作る間に評価が固まらない（ドラッグ中の粗い評価・文書を開いた直後の評価・Anchor が読む出力。レイヤーの内容もマスクも）。
 //!
 //! モデルは試験で組む: 3D で 1 辺を共有する 2 つの四角（A は x 0..1、B は x 1..2）を、64² の UV の別の所に置く。A は赤、B は青で塗る。
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use crate::rayon_support::{assert_finishes_alike, atlas};
 use yolu_core::filter::{self, Options, Settings, Source, Stage, ValueType};
 use yolu_core::generator::{self, MapKind, MapState};
 use yolu_core::geometry::{
@@ -823,4 +825,199 @@ fn another_resolution_redraws_the_seam_crossing_blur() {
     // 戻すと、前の大きさの評価と同じ
     assert!(doc.undo().unwrap());
     assert_eq!(whole(&doc), first);
+}
+
+// ── 固まらない（ドラッグ中の粗い評価・文書を開いた直後の評価・専用のプールの中）─────────────────────────────────────────
+//
+// 帯の写し・アイランドの図・位相の対応は、初めて要るときに rayon の並列で作る。作る間は門を持つので、作っている最中のスレッドが、待つ間に別のブロックの
+// 評価を拾い、同じ門を待つと止まる。モデルを渡した直後（何も作っていない）に、ブロックが何個にもなる評価を始める形で、道ごとに確かめる。
+// プールのスレッドが多いほど出やすいので、グローバルのプール（スレッド数は環境による）のほかに、スレッドが多い専用のプールの中でも回す。
+
+/// 固まりの試験の文書の辺。タイル 16² のブロック 32²（256 個）に分ける（ブロックがスレッドより十分多いほど、固まりやすい）。
+const BIG: u32 = 512;
+const TILE: u32 = 16;
+
+fn tint(x: u32, y: u32) -> [u8; 4] {
+    let h = (x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503)).wrapping_mul(2_246_822_519);
+    [(h >> 8) as u8, (h >> 16) as u8, (h >> 24) as u8, 255]
+}
+
+/// タイル `coord` の画素（TileSize² × 4、下の行から）。`pixel(x, y)` は文書の座標。
+fn tile_bytes(coord: TileCoord, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity((TILE * TILE * 4) as usize);
+    for y in 0..TILE {
+        for x in 0..TILE {
+            bytes.extend(pixel(coord.x * TILE + x, coord.y * TILE + y));
+        }
+    }
+    bytes
+}
+
+/// 継ぎ目の縁が多いモデル（`atlas`）を渡した直後の文書（帯の写しもアイランドの図もまだ無い）と、全部のタイル。画素のあるレイヤー 1 枚（タイルを
+/// 読み込んで置く。文書を開いたときと同じ）に、`target` へ `stage` を重ねる。マスクなら、マスクにも（間引いた）画素を置く。
+fn cold_document(target: FilterTarget, stage: EffectSettings) -> (Document, Vec<TileCoord>) {
+    let mut doc = Document::with_tile_size(BIG, BIG, TILE).unwrap();
+    doc.set_filter_block_pixels(32).unwrap();
+    let layer = doc.add_layer("塗り").unwrap();
+    let tiles: Vec<TileCoord> = (0..BIG / TILE)
+        .flat_map(|y| (0..BIG / TILE).map(move |x| TileCoord::new(x, y)))
+        .collect();
+    for &coord in &tiles {
+        doc.import_tile(layer, Channel::Color, coord, &tile_bytes(coord, tint))
+            .unwrap();
+    }
+    let spec = match target {
+        FilterTarget::Mask => {
+            doc.add_layer_mask(layer).unwrap();
+            for &coord in &tiles {
+                let hide = tile_bytes(coord, |x, y| {
+                    [0, 0, 0, if x % 3 == 0 && y % 3 == 0 { 255 } else { 0 }]
+                });
+                doc.import_mask_tile(layer, coord, &hide).unwrap();
+            }
+            FilterSpec::new(stage)
+        }
+        _ => FilterSpec::new(stage).channels(&[Channel::Color]),
+    };
+    doc.add_filter(layer, target, spec).unwrap();
+    with_model(&mut doc, &atlas(12));
+    assert!(doc.seams_active());
+    (doc, tiles)
+}
+
+/// (名前, 重ねる所, 段): ガウスぼかしと方向ぼかしを、レイヤーの内容とマスクの両方で。
+fn seam_stages() -> Vec<(&'static str, FilterTarget, EffectSettings)> {
+    let directional = EffectSettings::Filter(Settings::DirectionalBlur {
+        angle: 0.7,
+        distance: 12.0,
+    });
+    vec![
+        (
+            "内容のガウスぼかし",
+            FilterTarget::Content,
+            EffectSettings::blur(8),
+        ),
+        (
+            "内容の方向ぼかし",
+            FilterTarget::Content,
+            directional.clone(),
+        ),
+        (
+            "マスクのガウスぼかし",
+            FilterTarget::Mask,
+            EffectSettings::blur(8),
+        ),
+        ("マスクの方向ぼかし", FilterTarget::Mask, directional),
+    ]
+}
+
+/// 評価の入り口（アプリが呼ぶ形）。
+#[derive(Clone, Copy, Debug)]
+enum Entry {
+    /// ドラッグ中の粗い合成（歩幅 2）。
+    Coarse,
+    /// 正確な合成（開いた直後に全タイルを描くのと同じ）。
+    Exact,
+}
+
+fn pixels_of(doc: &Document, tiles: &[TileCoord], entry: Entry) -> Vec<Vec<u8>> {
+    let composed = match entry {
+        Entry::Coarse => doc.composite_coarse_tiles(Channel::Color, tiles, 2),
+        Entry::Exact => doc.composite_tiles(Channel::Color, tiles),
+    }
+    .unwrap();
+    assert_eq!(composed.len(), tiles.len());
+    composed.into_iter().map(|t| t.pixels).collect()
+}
+
+fn check(entry: Entry) {
+    for (name, target, stage) in seam_stages() {
+        assert_finishes_alike(
+            &format!("{name}（{entry:?}）"),
+            move || cold_document(target, stage.clone()),
+            move |(doc, tiles)| pixels_of(doc, tiles, entry),
+        );
+    }
+}
+
+/// ぼかしのスライダーをドラッグしている間の粗い評価（歩幅 2）。縮めた大きさの帯の写しを、評価を並べる前に作る。
+#[test]
+fn the_coarse_evaluation_of_a_blur_that_crosses_seams_does_not_hang() {
+    check(Entry::Coarse);
+}
+
+/// 文書を開いた直後の評価（全部のタイルの正確な合成）。マスクのぼかしも、レイヤーの内容のぼかしと同じ。
+#[test]
+fn the_first_evaluation_of_a_document_with_a_blur_that_crosses_seams_does_not_hang() {
+    check(Entry::Exact);
+}
+
+/// Anchor が読むレイヤー（ぼかしのレイヤー）の出力は、Anchor を読む側のブロックの評価の最中に（そのレイヤーのブロックを評価して）初めて要る。
+/// 土台のレイヤー（画素とぼかし）の Anchor を、その上の塗りつぶしレイヤーの Anchor のジェネレーター（置き換え）が読む文書。
+fn cold_anchor_document() -> (Document, Vec<TileCoord>) {
+    let mut doc = Document::with_tile_size(BIG, BIG, TILE).unwrap();
+    doc.set_filter_block_pixels(32).unwrap();
+    let base = doc.add_layer("土台").unwrap();
+    let tiles: Vec<TileCoord> = (0..BIG / TILE)
+        .flat_map(|y| (0..BIG / TILE).map(move |x| TileCoord::new(x, y)))
+        .collect();
+    for &coord in &tiles {
+        doc.import_tile(base, Channel::Color, coord, &tile_bytes(coord, tint))
+            .unwrap();
+    }
+    doc.add_filter(
+        base,
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::blur(8)).channels(&[Channel::Color]),
+    )
+    .unwrap();
+    let anchor = doc
+        .add_anchor(base, yolu_core::AnchorPlacement::Layer, Some("土台"), None)
+        .unwrap();
+    let reader = doc
+        .add_fill_layer("読む側", &[(Channel::Color, BLUE)], None)
+        .unwrap();
+    let mut g = generator::Settings::new(generator::Kind::Anchor);
+    g.blend = generator::Blend::Replace;
+    let stage = doc
+        .add_filter(
+            reader,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::generator(g)).channels(&[Channel::Color]),
+        )
+        .unwrap();
+    doc.set_generator_anchor(
+        reader,
+        stage,
+        Some(anchor),
+        Channel::Color,
+        generator::anchor::ReadMode::Value,
+        false,
+    )
+    .unwrap();
+    with_model(&mut doc, &atlas(12));
+    assert!(doc.seams_active());
+    (doc, tiles)
+}
+
+/// Anchor が読むぼかしのレイヤー（継ぎ目をまたぐ）の出力を、Anchor を読む側の評価の最中に初めて作っても固まらない。
+#[test]
+fn an_anchor_reading_a_blur_that_crosses_seams_does_not_hang() {
+    // 読む側は、塗りつぶしの色ではなく、Anchor の（ぼかした）土台の値を出す
+    let (doc, tiles) = cold_anchor_document();
+    let read = pixels_of(&doc, &tiles, Entry::Exact);
+    assert!(read.iter().any(|t| t
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .any(|p| p[..3] != BLUE.to_array()[..3])));
+    for round in 0..4 {
+        for entry in [Entry::Coarse, Entry::Exact] {
+            assert_finishes_alike(
+                &format!("Anchor が読むぼかし（{entry:?}・{round}）"),
+                cold_anchor_document,
+                move |(doc, tiles)| pixels_of(doc, tiles, entry),
+            );
+        }
+    }
 }

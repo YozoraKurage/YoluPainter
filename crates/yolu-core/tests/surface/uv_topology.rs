@@ -1,6 +1,8 @@
 //! UV の位相: アイランドの番号・アイランドの図（重なりの印）・継ぎ目の縁と、帯の写しが読む所（拡大率・向き・鏡映の違い、重なった UV、開いた縁、
-//! 展開の届く所）。小さなモデルは試験で組む: 3D で 1 辺を共有する 2 つの四角（A は x 0..1、B は x 1..2）を、UV の別の所に置く。
+//! 展開の届く所）と、rayon のタスクの中から初めて作らせても固まらないこと。小さなモデルは試験で組む: 3D で 1 辺を共有する 2 つの四角（A は x 0..1、B は x 1..2）を、UV の別の所に置く。
 use std::sync::Arc;
+
+use crate::rayon_support::{assert_finishes_alike, atlas};
 
 use yolu_core::geometry::{
     seam_band_width, SurfaceGeometry, SurfaceTriangle, UvTopology, UvTopologyError,
@@ -339,5 +341,47 @@ fn many_threads_asking_for_the_same_table_get_the_same_one() {
     });
     for b in &got[1..] {
         assert!(Arc::ptr_eq(&got[0], b));
+    }
+}
+
+/// 並列の仕事（rayon のタスク）の中から、まだ何も作っていない位相の対応・アイランドの図・帯の写しを初めて作らせても固まらず、できる物は rayon の外から作るのと同じ。
+/// 作る間は門を持ち、待つスレッドは同じスレッドの中で別のタスクを拾う（それも同じ物を取りに来る）ので、作る側が並列で待つと止まる。
+#[test]
+fn tables_first_asked_for_inside_parallel_tasks_do_not_hang() {
+    use rayon::prelude::*;
+    for round in 0..4 {
+        assert_finishes_alike(
+            &format!("位相の対応・アイランドの図・帯の写し（{round}）"),
+            || atlas(24),
+            |topology: &Arc<UvTopology>| {
+                // 96 個のタスクが、3 種類の物を、全部が冷えた状態から同時に取りに行く
+                (0..96).into_par_iter().for_each(|i| match i % 3 {
+                    0 => {
+                        topology.seam_band(256, 256, 8).unwrap();
+                    }
+                    1 => {
+                        topology.island_map(256, 256).unwrap();
+                    }
+                    _ => {
+                        topology.seam_edge_count();
+                    }
+                });
+                let band = topology.seam_band(256, 256, 8).unwrap();
+                let map = topology.island_map(256, 256).unwrap();
+                let runs: u64 = (0..256).map(|y| map.row(y).len() as u64).sum();
+                let taps: u64 = (0..256)
+                    .flat_map(|y| (0..256).map(move |x| (x, y)))
+                    .filter_map(|(x, y)| band.taps(x, y))
+                    .map(|t| t.len() as u64)
+                    .sum();
+                (
+                    topology.island_count(),
+                    topology.seam_edge_count(),
+                    band.texel_count(),
+                    runs,
+                    taps,
+                )
+            },
+        );
     }
 }

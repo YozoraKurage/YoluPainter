@@ -32,6 +32,7 @@ const STRIP: u32 = 64;
 type Built = (Option<Chart>, [f64; 4], bool);
 
 /// 行の帯 1 つ（`STRIP` 行）の帯のテクセル。行 `local` のテクセルは `entries[rows[local]..rows[local + 1]]`（x の順）。
+#[derive(Debug, PartialEq)]
 struct StripEntries {
     rows: Vec<u32>,
     entries: Vec<BandEntry>,
@@ -117,6 +118,18 @@ impl std::fmt::Debug for SeamBand {
             .field("band", &self.band)
             .field("stats", &self.stats)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl SeamBand {
+    /// 帯のテクセル・縁の向き・アイランドの図が同じか（作るのにかかった時間・タイルの対応の覚えは見ない）。
+    pub(crate) fn same_content(&self, other: &SeamBand) -> bool {
+        (self.width, self.height, self.band, self.texels)
+            == (other.width, other.height, other.band, other.texels)
+            && self.strips == other.strips
+            && self.frames == other.frames
+            && self.islands == other.islands
     }
 }
 
@@ -689,11 +702,15 @@ impl Inside {
 /// - 帯のテクセル（行の帯ごとの結果をそのまま持つ。残りから作業の分を引いた量まで）
 ///
 /// 展開した三角形と帯のテクセルは、作りながらバイト数を数え、超えた時点で途中で断る。
+///
+/// `parallel` なら縁ごとの展開と行の帯ごとの埋めを rayon で並べ、そうでなければ今のスレッドで順に回す（結果・断る理由は同じ。確保の見積りと
+/// 同時に動かす数の頭打ちも同じ式で、逐次のときは実際に同時に動く数が少ないだけ）。
 pub(crate) fn build(
     topology: &UvTopology,
     islands: Arc<IslandMap>,
     band: u32,
     budget: u64,
+    parallel: bool,
 ) -> Result<SeamBand, UvTopologyError> {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     let over = || UvTopologyError::Budget { budget };
@@ -715,23 +732,24 @@ pub(crate) fn build(
     let chart_held = AtomicU64::new(0);
     let item_bytes = std::mem::size_of::<Built>() as u64;
     let tri_bytes = std::mem::size_of::<ChartTri>() as u64;
-    let built: Result<Vec<Built>, UvTopologyError> = parts
-        .seams
-        .par_iter()
-        .map(|s| {
-            let made = Chart::new(topology, parts, &islands, s, width, height, band);
-            let bytes = item_bytes
-                + made
-                    .0
-                    .as_ref()
-                    .map_or(0, |c| c.tris.len() as u64 * tri_bytes);
-            if chart_held.fetch_add(bytes, Relaxed) + bytes > chart_limit {
-                Err(over())
-            } else {
-                Ok(made)
-            }
-        })
-        .collect();
+    let chart_of = |s: &SeamEdge| -> Result<Built, UvTopologyError> {
+        let made = Chart::new(topology, parts, &islands, s, width, height, band);
+        let bytes = item_bytes
+            + made
+                .0
+                .as_ref()
+                .map_or(0, |c| c.tris.len() as u64 * tri_bytes);
+        if chart_held.fetch_add(bytes, Relaxed) + bytes > chart_limit {
+            Err(over())
+        } else {
+            Ok(made)
+        }
+    };
+    let built: Result<Vec<Built>, UvTopologyError> = if parallel {
+        parts.seams.par_iter().map(chart_of).collect()
+    } else {
+        parts.seams.iter().map(chart_of).collect()
+    };
     let built = built?;
     let mut charts = Vec::with_capacity(built.len());
     let mut frames = Vec::with_capacity(built.len());
@@ -765,20 +783,22 @@ pub(crate) fn build(
     // 同時に動かせる数が足りるなら、全部を 1 度に並べる（結果は同じ。作業の分だけ数を絞るときだけ、その数ずつ）
     let group = if workers >= threads { strips } else { workers };
     let mut done: Vec<(Vec<u32>, Vec<BandEntry>, usize)> = Vec::with_capacity(strips);
+    let strip_of = |&s: &usize| -> Result<(Vec<u32>, Vec<BandEntry>, usize), UvTopologyError> {
+        let made = fill_strip(s as u32, &lists[s], &charts, &inside, &islands, band);
+        let bytes =
+            made.1.len() as u64 * std::mem::size_of::<BandEntry>() as u64 + made.0.len() as u64 * 4;
+        if entry_held.fetch_add(bytes, Relaxed) + bytes > entry_limit {
+            Err(over())
+        } else {
+            Ok(made)
+        }
+    };
     for chunk in order.chunks(group.max(1)) {
-        let part: Result<Vec<_>, UvTopologyError> = chunk
-            .par_iter()
-            .map(|&s| {
-                let made = fill_strip(s as u32, &lists[s], &charts, &inside, &islands, band);
-                let bytes = made.1.len() as u64 * std::mem::size_of::<BandEntry>() as u64
-                    + made.0.len() as u64 * 4;
-                if entry_held.fetch_add(bytes, Relaxed) + bytes > entry_limit {
-                    Err(over())
-                } else {
-                    Ok(made)
-                }
-            })
-            .collect();
+        let part: Result<Vec<_>, UvTopologyError> = if parallel {
+            chunk.par_iter().map(strip_of).collect()
+        } else {
+            chunk.iter().map(strip_of).collect()
+        };
         done.extend(part?);
     }
     let fill_ms = t1.elapsed().as_secs_f64() * 1000.0;

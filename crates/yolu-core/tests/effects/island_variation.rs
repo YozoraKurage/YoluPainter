@@ -1,10 +1,12 @@
 //! アイランドごとのばらつき（Generator の種類 67）: アイランドの中は同じ値・アイランドごとに違う値・シードで変わる・最小と最大の範囲（等しいのも）・
 //! アイランドの外は入力のまま・重なったテクセルは番号の小さい三角形のアイランドの値・1 画素の式と行の式が同じ・領域・スレッドの数・タイルの大きさ・
 //! 解像度によらない・モデルが無い・予算で断られた・図を渡す前は理由つきで入力のまま・モデルを替えたら評価し直す・欄の検査・
-//! SIMD の道（`YOLU_SIMD`）によらないバイト。
+//! SIMD の道（`YOLU_SIMD`）によらないバイト・アイランドの図を初めて作る間に評価が固まらない。
 //!
 //! モデルは試験で組む: 3D で離れた 4 つの四角。A・B・C は UV の別の所、D は B と UV の一部が重なる（アイランドの番号は三角形の順で A 1・B 2・C 3・D 4）。
 use std::sync::Arc;
+
+use crate::rayon_support::{assert_finishes_alike, atlas};
 
 use yolu_core::generator::*;
 use yolu_core::geometry::{
@@ -512,3 +514,66 @@ fn the_bytes_are_pinned_on_every_simd_path() {
 }
 
 const PINNED: u64 = 0xfb62_7427_4389_6d1f;
+
+// ── 固まらない ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+//
+// アイランドの図は、初めて要るときに rayon の並列で作る。作る間は門を持つので、評価のブロックの中から初めて要ると、作っている最中のスレッドが、待つ間に
+// 別のブロックを拾って同じ門を待つと止まる。モデルを渡した直後（アイランドの図が無い）の、ブロックが何個にもなる評価で確かめる。
+
+/// 全面を塗った塗りつぶしレイヤーにアイランドごとのばらつきの段（置き換え）を重ねた、512² の文書（タイル 16²・ブロック 32² の 256 個）と、全部のタイル
+/// （ブロックがスレッドより十分多いほど、固まりやすい）。
+/// 継ぎ目の縁もアイランドも多いモデルを渡しただけで、アイランドの図はまだ作っていない。
+fn cold_big_document() -> (Document, Vec<yolu_core::TileCoord>) {
+    const BIG: u32 = 512;
+    let mut doc = Document::with_tile_size(BIG, BIG, 16).unwrap();
+    doc.set_filter_block_pixels(32).unwrap();
+    let layer = doc
+        .add_fill_layer("塗り", &[(Channel::Color, BASE)], None)
+        .unwrap();
+    doc.add_filter(
+        layer,
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::generator(replace(3))).channels(&[Channel::Color]),
+    )
+    .unwrap();
+    with_model(&mut doc, &atlas(12));
+    let tiles = (0..BIG / 16)
+        .flat_map(|y| (0..BIG / 16).map(move |x| yolu_core::TileCoord::new(x, y)))
+        .collect();
+    (doc, tiles)
+}
+
+/// 固まりは、仕事を拾うタイミングで決まる（出ない回もある）ので、冷えた文書を作り直して何回か。
+const ROUNDS: usize = 4;
+
+#[test]
+fn the_first_evaluation_of_island_variation_does_not_hang() {
+    for round in 0..ROUNDS {
+        assert_finishes_alike(
+            &format!("アイランドごとのばらつきの評価（{round}）"),
+            cold_big_document,
+            |(doc, tiles)| {
+                let composed = doc.composite_tiles(Channel::Color, tiles).unwrap();
+                assert_eq!(composed.len(), tiles.len());
+                composed.into_iter().map(|t| t.pixels).collect::<Vec<_>>()
+            },
+        );
+    }
+}
+
+#[test]
+fn the_coarse_evaluation_of_island_variation_does_not_hang() {
+    for round in 0..ROUNDS {
+        assert_finishes_alike(
+            &format!("アイランドごとのばらつきの粗い評価（{round}）"),
+            cold_big_document,
+            |(doc, tiles)| {
+                let composed = doc
+                    .composite_coarse_tiles(Channel::Color, tiles, 2)
+                    .unwrap();
+                assert_eq!(composed.len(), tiles.len());
+                composed.into_iter().map(|t| t.pixels).collect::<Vec<_>>()
+            },
+        );
+    }
+}

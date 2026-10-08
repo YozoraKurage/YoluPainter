@@ -931,7 +931,8 @@ impl AppState {
     }
 
     /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるときを除く）。毎フレーム呼ぶ。
+    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるとき・入力を待つ読むだけのセットが
+    /// あるときを除く）。毎フレーム呼ぶ。
     pub fn release_idle_bake_input(&mut self) {
         // ID の色のツール（強調・部品の欄）は、ウィンドウが無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
         // 始まって終わらない
@@ -942,7 +943,14 @@ impl AppState {
             Some(crate::state::PopupKind::BakeIsland { .. })
         ) || self.bake.menu_wait.is_some()
             || self.bake.menu_press.is_some();
-        if self.bake.window.is_none() && self.tool != crate::state::Tool::IdSelect && !island_menu {
+        // 入力がそろうのを待つ読むだけのセット（.ylp を開いた直後で、モデルを別のスレッドで読み直しているときなど）があるあいだは、効果の入力の
+        // 同期（`sync_effect_inputs`）が毎フレーム入力を求めて待つ。手放すと ID の色のツールと同じく作り直しが終わらず、モデルを読んでもセットが開かない
+        let waiting = self.sets.iter().any(|s| s.waiting_inputs);
+        if self.bake.window.is_none()
+            && self.tool != crate::state::Tool::IdSelect
+            && !island_menu
+            && !waiting
+        {
             self.bake.pending = None;
         }
         if self.bake.input.is_some()
