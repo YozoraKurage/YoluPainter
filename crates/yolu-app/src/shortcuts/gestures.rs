@@ -12,6 +12,8 @@ pub struct Binding {
     pub modifiers: Modifiers,
     pub button: PointerButton,
     pub operation: Operation,
+    /// 動かさずに離したときの操作（「右クリック」のように、ボタンを押したまま動かす操作とは別の行）。
+    pub click: bool,
 }
 
 /// マウスの組み合わせの全部（押している間のキーは、キーの表の今の割り当て）。
@@ -30,6 +32,7 @@ pub fn bindings() -> Vec<Binding> {
             },
             button: g.button,
             operation: g.operation,
+            click: g.click,
         })
         .collect()
 }
@@ -53,10 +56,18 @@ pub fn key_label(binding: &Binding, lang: Lang) -> String {
     if binding.modifiers.shift {
         text.push_str("Shift+");
     }
-    text.push_str(match binding.button {
-        PointerButton::Primary => lang.pick("左ボタン", "Left Button"),
-        PointerButton::Middle => lang.pick("中ボタン", "Middle Button"),
-        PointerButton::Secondary => lang.pick("右ボタン", "Right Button"),
+    text.push_str(match (binding.button, binding.click) {
+        (PointerButton::Primary, false) => lang.pick("左ボタン", "Left Button"),
+        (PointerButton::Primary, true) => lang.pick(
+            "左ボタンを動かさずに離す",
+            "Left Button Released without Moving",
+        ),
+        (PointerButton::Middle, _) => lang.pick("中ボタン", "Middle Button"),
+        (PointerButton::Secondary, false) => lang.pick("右ボタン", "Right Button"),
+        (PointerButton::Secondary, true) => lang.pick(
+            "右ボタンを動かさずに離す",
+            "Right Button Released without Moving",
+        ),
         _ => unreachable!("一覧は3つのボタンを列挙する"),
     });
     text

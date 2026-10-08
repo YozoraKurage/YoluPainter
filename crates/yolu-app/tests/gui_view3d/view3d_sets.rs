@@ -324,8 +324,8 @@ fn a_set_over_the_memory_budget_is_left_out_farthest_first_and_the_list_says_why
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
-    // 256² の Color だけ（ミップ込み 349,524 B）を 2 枚入れる予算（今のセット + ほかの 1 枚）
-    h.state_mut().view3d_set_paint_budget(700_000);
+    // 256² の Color だけ（ミップ込み 349,524 B + 重みの絵 87,381 B = 436,905 B）を 2 枚入れる予算（今のセット + ほかの 1 枚）
+    h.state_mut().view3d_set_paint_budget(900_000);
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (1, 1), "{s:?}");
@@ -430,8 +430,8 @@ fn the_current_sets_bytes_come_off_the_budget_before_the_others() {
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
-    // 今のセットの絵が予算を食い切ったら、ほかのセットは 1 枚も持たない（今のセットが先）
-    h.state_mut().view3d_set_paint_budget(349_524);
+    // 今のセットの絵（256² の Color だけ。ミップ込み 349,524 B + 重みの絵 87,381 B）が予算を食い切ったら、ほかのセットは 1 枚も持たない（今のセットが先）
+    h.state_mut().view3d_set_paint_budget(436_905);
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (0, 2), "{s:?}");
@@ -1024,9 +1024,10 @@ fn the_other_sets_do_not_keep_their_composition_work_buffers() {
 
 #[test]
 fn switching_the_current_set_never_holds_the_old_and_the_new_full_pictures_together() {
-    // 512² の Color だけ（ミップ込み 1,398,100 B）が今のセット、128² に縮めたほかのセットが 87,380 B。予算 1.5 MB は今のセット 1 枚と、
-    // ほかの 1 枚だけが入る。替わるフレームの途中で、前の絵（満量）と新しい絵（満量）が重なると、予算の 2 倍近くになっていた
-    const BUDGET: u64 = 1_500_000;
+    // 512² の Color だけ（ミップ込み 1,398,100 B + 重みの絵 349,525 B = 1,747,625 B）が今のセット、128² に縮めたほかのセットが 87,380 B + 21,845 B =
+    // 109,225 B。予算 1.9 MB は今のセット 1 枚と、ほかの 1 枚だけが入る。替わるフレームの途中で、前の絵（満量）と新しい絵（満量）が重なると、
+    // 予算の 2 倍近くになっていた
+    const BUDGET: u64 = 1_900_000;
     let mut h = scene(3, 512);
     h.state_mut().view3d_set_other_cap(128);
     for (i, c) in COLORS.iter().take(3).enumerate() {
@@ -1040,7 +1041,7 @@ fn switching_the_current_set_never_holds_the_old_and_the_new_full_pictures_toget
         switch(&mut h, to);
         let s = h.state().view3d_stats().unwrap();
         assert!(
-            s.peak_bytes > 1_398_100 && s.peak_bytes <= BUDGET,
+            s.peak_bytes > 1_747_625 && s.peak_bytes <= BUDGET,
             "今のセット {to} へ替えたフレームの途中の最大: {} B（予算 {BUDGET} B）{s:?}",
             s.peak_bytes
         );
@@ -1052,7 +1053,7 @@ fn switching_the_current_set_never_holds_the_old_and_the_new_full_pictures_toget
 fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_full_size() {
     // 510² は 1/4 にすると 128²（切り上げ）だが、ミップの 2 段目は 127² で、コピーでは縮められない。満量のまま次のフレームへ残さず、
     // その場で文書から縮めて作り直す（新しい今のセットの絵と重ならない）。セット 0 の文書だけが 510²（ほかのセットは 512² で、コピーで縮まる）
-    const BUDGET: u64 = 1_600_000;
+    const BUDGET: u64 = 2_000_000;
     let mut h = scene(2, 510);
     h.state_mut().view3d_set_other_cap(128);
     paint(&mut h, 0, COLORS[0]);
@@ -1076,7 +1077,7 @@ fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_fu
             "{s:?}"
         );
         assert!(
-            s.peak_bytes > 1_300_000 && s.peak_bytes <= BUDGET,
+            s.peak_bytes > 1_625_000 && s.peak_bytes <= BUDGET,
             "今のセット {to}: 途中の最大 {} B: {s:?}",
             s.peak_bytes
         );
@@ -1087,12 +1088,12 @@ fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_fu
 
 #[test]
 fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_building_it_again() {
-    // セット 0 は Color + Normal + Emission（12 B/テクセル。512² で 4,194,300 B）で、予算 3,000,000 B には入らず 256²（1,048,572 B）へ縮む。
-    // そのあと Normal と Emission のレイヤーを消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
+    // セット 0 は Color + Normal + Emission と重みの絵（13 B/テクセル。512² で 4,543,825 B）で、予算 3,750,000 B には入らず 256²（1,135,953 B）へ縮む。
+    // そのあと Normal と Emission のレイヤーを消すと Color だけと重みの絵（512² で 1,747,625 B）になるが、縮めは上げるだけなので 256² のまま。
     // 今のセットを 1 に替えるとき、前の絵は縮めたまま持ち越す。ほかのセットへ回すときの `u64::MAX` の入れ直しを「予算を上げた」と
     // 数えると、替えるたびに 512² へ作り直す（新しい絵を作る前に前の絵を縮める、が逆になる）。予算を上げたときだけ戻る
     // （`lowering_the_memory_shrinks_the_current_sets_picture_and_raising_it_restores_the_size`）
-    const BUDGET: u64 = 3_000_000;
+    const BUDGET: u64 = 3_750_000;
     let mut h = scene(2, 512);
     paint(&mut h, 0, COLORS[0]);
     paint(&mut h, 1, COLORS[1]);
@@ -1133,7 +1134,7 @@ fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_buildi
     );
     assert_eq!(
         (s.other_level, s.other_bytes),
-        (1, 349_524),
+        (1, 436_905),
         "縮めたまま持ち越す: {s:?}"
     );
     let (_, size, level) = h
@@ -1289,7 +1290,7 @@ fn the_list_mark_for_a_set_left_out_of_the_budget_says_why_in_both_languages() {
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
-    h.state_mut().view3d_set_paint_budget(700_000);
+    h.state_mut().view3d_set_paint_budget(900_000);
     h.run();
     assert_eq!(h.state().state.view3d.unpainted, vec![2]);
     let look = |h: &Harness<'_, YoluApp>, i| set_state(&h.state().state, i);
@@ -1319,7 +1320,7 @@ fn a_budget_mark_does_not_outlive_the_model_or_the_current_set_while_the_3d_view
     for (i, c) in COLORS.iter().take(3).enumerate() {
         paint(&mut h, i, *c);
     }
-    h.state_mut().view3d_set_paint_budget(700_000);
+    h.state_mut().view3d_set_paint_budget(900_000);
     h.run();
     assert_eq!(h.state().state.view3d.unpainted, vec![2]);
     assert!(set_state(&h.state().state, 2).is_some());
@@ -1363,7 +1364,7 @@ fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
         for (i, c) in COLORS.iter().take(3).enumerate() {
             paint(&mut h, i, *c);
         }
-        h.state_mut().view3d_set_paint_budget(700_000);
+        h.state_mut().view3d_set_paint_budget(900_000);
         h.run();
         h.snapshot(lang.pick("view3d_sets_over_budget_ja", "view3d_sets_over_budget_en"));
         snapshots.extend_harness(&mut h);

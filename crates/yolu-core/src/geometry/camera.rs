@@ -18,13 +18,109 @@ pub const DEFAULT_YAW: f32 = 180.0 + 25.0;
 /// 既定の pitch（度。わずかに見下ろす）。
 pub const DEFAULT_PITCH: f32 = 10.0;
 
+/// 回すときの、画面の点 1 つあたりの角度（度。Unity 版と同じ）。
+pub const ORBIT_DEGREES_PER_POINT: f32 = 0.35;
+/// 軸の向きへ吸い付く角度（度）。
+pub const SNAP_ANGLE: f32 = 15.0;
+
+/// 軸に沿った視点（正面・背面・右・左・上・下）。モデルは Unity の流儀で +Z を向き、+Y が上。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisView {
+    /// 前（+Z 側）から見る。
+    Front,
+    /// 背中（-Z 側）から見る。
+    Back,
+    /// モデルの右（+X 側）から見る。
+    Right,
+    /// モデルの左（-X 側）から見る。
+    Left,
+    /// 真上（+Y 側）から見下ろす。
+    Top,
+    /// 真下（-Y 側）から見上げる。
+    Bottom,
+}
+
+impl AxisView {
+    pub const ALL: [AxisView; 6] = [
+        Self::Front,
+        Self::Back,
+        Self::Right,
+        Self::Left,
+        Self::Top,
+        Self::Bottom,
+    ];
+
+    /// この視点の (yaw, pitch)（度）。上・下は pitch ±90°（`orbit` は ±89° までなので、吸い付くときだけここへ来る）で、
+    /// yaw は 180°（画面の上がモデルの背中側）。
+    pub fn orientation(self) -> (f32, f32) {
+        match self {
+            Self::Front => (180.0, 0.0),
+            Self::Back => (0.0, 0.0),
+            Self::Right => (-90.0, 0.0),
+            Self::Left => (90.0, 0.0),
+            Self::Top => (180.0, 90.0),
+            Self::Bottom => (180.0, -90.0),
+        }
+    }
+
+    /// カメラの前の向き（見ている向き）。
+    fn forward(self) -> Vec3 {
+        let (yaw, pitch) = self.orientation();
+        orientation_rotation(yaw, pitch) * Vec3::Z
+    }
+}
+
+fn orientation_rotation(yaw: f32, pitch: f32) -> Quat {
+    Quat::from_euler(
+        glam::EulerRot::YXZ,
+        yaw.to_radians(),
+        pitch.to_radians(),
+        0.0,
+    )
+}
+
+/// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで。今の pitch がそれを越えている（軸の視点へ吸い付いて ±90°）ときは、
+/// その値まで止めを広げる: 真上・真下から回し始めても、最初に 1° はねない）。
+pub fn orbited(yaw: f32, pitch: f32, dx_points: f32, dy_points: f32) -> (f32, f32) {
+    let limit = pitch.abs().clamp(89.0, 90.0);
+    (
+        yaw + dx_points * ORBIT_DEGREES_PER_POINT,
+        (pitch + dy_points * ORBIT_DEGREES_PER_POINT).clamp(-limit, limit),
+    )
+}
+
+/// この向きに `SNAP_ANGLE` 以内で近い軸の視点（見ている向きどうしの角度。いちばん近いもの。無ければ None）。
+pub fn nearest_axis_view(yaw: f32, pitch: f32) -> Option<AxisView> {
+    let forward = orientation_rotation(yaw, pitch) * Vec3::Z;
+    AxisView::ALL
+        .into_iter()
+        .map(|view| (view, forward.dot(view.forward()).clamp(-1.0, 1.0).acos()))
+        .filter(|(_, angle)| angle.to_degrees() <= SNAP_ANGLE)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(view, _)| view)
+}
+
+/// 向きを、`SNAP_ANGLE` 以内にある軸の視点へ吸い付ける（無ければそのまま）。yaw は回した数（360° の何周か）を保つ。
+/// 上・下は画面の向きが決まらないので、今の yaw にいちばん近い 90° の倍数にする。
+pub fn snap_orientation(yaw: f32, pitch: f32) -> (f32, f32) {
+    let Some(view) = nearest_axis_view(yaw, pitch) else {
+        return (yaw, pitch);
+    };
+    let (axis_yaw, axis_pitch) = view.orientation();
+    let target_yaw = match view {
+        AxisView::Top | AxisView::Bottom => (yaw / 90.0).round() * 90.0,
+        _ => axis_yaw + 360.0 * ((yaw - axis_yaw) / 360.0).round(),
+    };
+    (target_yaw, axis_pitch)
+}
+
 /// 注視点のまわりを回るカメラ。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCamera {
     pub target: Vec3,
     /// 度。
     pub yaw: f32,
-    /// 度（−89〜89）。
+    /// 度（`orbit` は −89〜89。軸の視点へ吸い付いたときだけ ±90）。
     pub pitch: f32,
     pub distance: f32,
     /// モデルの半径（寄る範囲・近い面と遠い面の目安）。
@@ -59,12 +155,7 @@ impl OrbitCamera {
 
     /// 向き（`Quaternion.Euler(pitch, yaw, 0)`: Z、X、Y の順に回す）。
     pub fn rotation(&self) -> Quat {
-        Quat::from_euler(
-            glam::EulerRot::YXZ,
-            self.yaw.to_radians(),
-            self.pitch.to_radians(),
-            0.0,
-        )
+        orientation_rotation(self.yaw, self.pitch)
     }
 
     pub fn position(&self) -> Vec3 {
@@ -73,8 +164,20 @@ impl OrbitCamera {
 
     /// 回す（Unity 版: 画面の点 1 つで 0.35°。下へドラッグすると上から見下ろす）。
     pub fn orbit(&mut self, dx_points: f32, dy_points: f32) {
-        self.yaw += dx_points * 0.35;
-        self.pitch = (self.pitch + dy_points * 0.35).clamp(-89.0, 89.0);
+        (self.yaw, self.pitch) = orbited(self.yaw, self.pitch, dx_points, dy_points);
+    }
+
+    /// 向きを (yaw, pitch) にする（pitch は ±90° まで）。`pivot` の画面上の位置は変えない（`orbit_about` と同じ置き方）。
+    pub fn set_orientation_about(&mut self, pivot: Vec3, yaw: f32, pitch: f32) {
+        let before = self.rotation();
+        self.yaw = yaw;
+        self.pitch = pitch.clamp(-90.0, 90.0);
+        self.target = pivot + (self.rotation() * before.inverse()) * (self.target - pivot);
+    }
+
+    /// 注視点とカメラを一緒に動かす（距離は変えない）。`local` はカメラの (右, 上, 前) の向きの移動量（モデルの単位）。
+    pub fn fly(&mut self, local: Vec3) {
+        self.target += self.rotation() * local;
     }
 
     /// パン（ポインタの下の注視点の面が指についてくる。view_height は表示域の高さの点）。
@@ -364,6 +467,242 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_axis_views_look_at_the_target_from_the_side_they_are_named_for() {
+        for (view, side) in [
+            (AxisView::Front, Vec3::Z),
+            (AxisView::Back, Vec3::NEG_Z),
+            (AxisView::Right, Vec3::X),
+            (AxisView::Left, Vec3::NEG_X),
+            (AxisView::Top, Vec3::Y),
+            (AxisView::Bottom, Vec3::NEG_Y),
+        ] {
+            let (yaw, pitch) = view.orientation();
+            let c = OrbitCamera {
+                yaw,
+                pitch,
+                ..OrbitCamera::default()
+            };
+            let offset = (c.position() - c.target).normalize();
+            assert!((offset - side).length() < 1e-5, "{view:?}: {offset}");
+        }
+    }
+
+    #[test]
+    fn the_orientation_snaps_to_an_axis_view_only_within_the_snap_angle() {
+        // 正面（yaw 180・pitch 0）の 14° 手前は吸い付き、16° 手前は吸い付かない
+        let near = snap_orientation(180.0 + 14.0, 0.0);
+        assert_eq!(near, (180.0, 0.0));
+        assert_eq!(snap_orientation(180.0 - 14.0, 0.0), (180.0, 0.0));
+        assert_eq!(snap_orientation(180.0 + 16.0, 0.0), (196.0, 0.0));
+        // 縦の向きも見る
+        assert_eq!(snap_orientation(180.0, 14.0), (180.0, 0.0));
+        assert_eq!(snap_orientation(180.0, 16.0), (180.0, 16.0));
+        // 背面・右・左
+        assert_eq!(snap_orientation(5.0, -3.0), (0.0, 0.0));
+        assert_eq!(snap_orientation(-80.0, 4.0), (-90.0, 0.0));
+        assert_eq!(snap_orientation(100.0, 4.0), (90.0, 0.0));
+        // 斜め 45° はどの軸にも吸い付かない
+        assert_eq!(snap_orientation(45.0, 0.0), (45.0, 0.0));
+        assert_eq!(snap_orientation(225.0, 35.0), (225.0, 35.0));
+        // 角度は、yaw と pitch が同時に振れた分で測る（yaw 10°・pitch 10° は 約 14° で内、yaw 11°・pitch 11° は 約 15.4° で外）
+        assert_eq!(snap_orientation(180.0 + 10.0, 10.0), (180.0, 0.0));
+        assert_eq!(snap_orientation(180.0 + 11.0, 11.0), (191.0, 11.0));
+    }
+
+    #[test]
+    fn snapping_keeps_the_number_of_full_turns_of_yaw() {
+        // 回した数（360° の何周か）は保つ。-180° も 540° も正面
+        assert_eq!(snap_orientation(540.0 + 10.0, 0.0), (540.0, 0.0));
+        assert_eq!(snap_orientation(-180.0 + 10.0, 0.0), (-180.0, 0.0));
+        assert_eq!(snap_orientation(360.0 + 5.0, 0.0), (360.0, 0.0));
+        assert_eq!(snap_orientation(-270.0 - 5.0, 0.0), (-270.0, 0.0));
+    }
+
+    #[test]
+    fn looking_nearly_straight_up_or_down_snaps_to_pitch_90_with_a_quarter_turn_yaw() {
+        // orbit の上限（89°）まで来れば、上へ吸い付く
+        assert_eq!(snap_orientation(180.0, 89.0), (180.0, 90.0));
+        assert_eq!(snap_orientation(180.0, 80.0), (180.0, 90.0));
+        assert_eq!(snap_orientation(180.0, 74.0), (180.0, 74.0));
+        assert_eq!(snap_orientation(180.0, -80.0), (180.0, -90.0));
+        // 画面の向きは、今の yaw にいちばん近い 90° の倍数
+        assert_eq!(snap_orientation(200.0, 85.0), (180.0, 90.0));
+        assert_eq!(snap_orientation(230.0, 85.0), (270.0, 90.0));
+        assert_eq!(snap_orientation(-50.0, -85.0), (-90.0, -90.0));
+    }
+
+    #[test]
+    fn the_nearest_axis_view_wins_when_two_are_in_range() {
+        // 正面（180・0）と上（pitch 90）の間。pitch 50° は上のほうが近い（40°）が、15° 以内の物が無ければ None
+        assert_eq!(nearest_axis_view(180.0, 50.0), None);
+        assert_eq!(nearest_axis_view(180.0, 8.0), Some(AxisView::Front));
+        assert_eq!(nearest_axis_view(180.0, 82.0), Some(AxisView::Top));
+        assert_eq!(nearest_axis_view(90.0 + 5.0, 0.0), Some(AxisView::Left));
+        assert_eq!(nearest_axis_view(-90.0 + 5.0, 0.0), Some(AxisView::Right));
+    }
+
+    #[test]
+    fn rays_projection_pan_and_pivoting_still_work_at_pitch_90_and_minus_90() {
+        for view in [AxisView::Top, AxisView::Bottom] {
+            let (yaw, pitch) = view.orientation();
+            let mut c = OrbitCamera {
+                target: Vec3::new(1.0, 2.0, 3.0),
+                yaw,
+                pitch,
+                ..OrbitCamera::default()
+            };
+            let v = c.view(400.0, 300.0);
+            assert!(v
+                .view_projection()
+                .to_cols_array()
+                .iter()
+                .all(|x| x.is_finite()));
+            // 見ている向きは真下（上から）・真上（下から）
+            let down = if pitch > 0.0 { Vec3::NEG_Y } else { Vec3::Y };
+            assert!(
+                (v.forward - down).length() < 1e-6,
+                "{view:?}: {}",
+                v.forward
+            );
+            // 画面の中心のレイは注視点へ向かう
+            let r = v.ray(Vec2::new(200.0, 150.0));
+            assert!(((c.target - r.origin()).normalize() - r.direction()).length() < 1e-3);
+            let p = v.to_screen(c.target).unwrap();
+            assert!((p - Vec2::new(200.0, 150.0)).length() < 1e-2);
+            // 画面のどの点のレイも、写すと同じ点へ戻る
+            for s in [
+                Vec2::new(10.0, 20.0),
+                Vec2::new(390.0, 290.0),
+                Vec2::new(200.0, 40.0),
+            ] {
+                let back = v.to_screen(v.ray(s).point(2.0)).unwrap();
+                assert!((back - s).length() < 5e-2, "{view:?}: {s} → {back}");
+            }
+            // 画面の右・上へ向く物は、画面の右・上に写る
+            let right = v
+                .to_screen(c.target + c.rotation() * Vec3::X * 0.1)
+                .unwrap();
+            let up = v
+                .to_screen(c.target + c.rotation() * Vec3::Y * 0.1)
+                .unwrap();
+            assert!(right.x > 200.0 && (right.y - 150.0).abs() < 1e-2);
+            assert!(up.y < 150.0 && (up.x - 200.0).abs() < 1e-2);
+            // ブラシの大きさの式は、向きによらず同じ距離で同じ値
+            let near = OrbitCamera::default().view(400.0, 300.0);
+            let at_default = near.world_radius_to_screen(OrbitCamera::default().target, 0.1);
+            let at_axis = OrbitCamera {
+                yaw,
+                pitch,
+                ..OrbitCamera::default()
+            }
+            .view(400.0, 300.0)
+            .world_radius_to_screen(Vec3::ZERO, 0.1);
+            assert!(
+                (at_default - at_axis).abs() < 1e-3,
+                "{at_default} {at_axis}"
+            );
+            // パン: 右へドラッグすると注視点は画面の左へ
+            let before = c.target;
+            c.pan(10.0, 0.0, 300.0);
+            assert!((c.target - before).dot(c.rotation() * Vec3::X) < 0.0);
+            // 注視点以外の点のまわりの置き直しは、その点の画面上の位置を保つ
+            let mut c = OrbitCamera {
+                yaw,
+                pitch,
+                ..OrbitCamera::default()
+            };
+            let pivot = c.target + c.rotation() * Vec3::new(0.3, -0.2, -0.5);
+            let screen = c.view(640.0, 480.0).to_screen(pivot).unwrap();
+            c.set_orientation_about(pivot, yaw + 40.0, pitch - 20.0);
+            let moved = c.view(640.0, 480.0).to_screen(pivot).unwrap();
+            assert!(
+                (moved - screen).length() < 2e-3,
+                "{view:?}: {screen} → {moved}"
+            );
+        }
+    }
+
+    #[test]
+    fn setting_the_orientation_about_a_pivot_reaches_pitch_90_and_keeps_the_pivot_in_place() {
+        let mut c = OrbitCamera::default();
+        let pivot = c.target + c.rotation() * Vec3::new(0.3, -0.2, -0.5);
+        let screen = c.view(640.0, 480.0).to_screen(pivot).unwrap();
+        let distance = c.position().distance(pivot);
+        c.set_orientation_about(pivot, 180.0, 90.0);
+        assert_eq!((c.yaw, c.pitch), (180.0, 90.0));
+        let moved = c.view(640.0, 480.0).to_screen(pivot).unwrap();
+        assert!((moved - screen).length() < 2e-3, "{screen} → {moved}");
+        assert!((c.position().distance(pivot) - distance).abs() < 1e-5);
+        // 90° を越える値は 90° に止める
+        c.set_orientation_about(pivot, 10.0, 200.0);
+        assert_eq!(c.pitch, 90.0);
+        c.set_orientation_about(pivot, 10.0, -200.0);
+        assert_eq!(c.pitch, -90.0);
+        // 回す（orbit）は、±90° にいるときはそのまま（はねない）。89° の内側からは今までどおり ±89° で止まる
+        c.orbit(0.0, -1000.0);
+        assert_eq!(c.pitch, -90.0);
+        c.pitch = 0.0;
+        c.orbit(0.0, -1000.0);
+        assert_eq!(c.pitch, -89.0);
+    }
+
+    #[test]
+    fn orbiting_from_straight_up_or_down_does_not_jump_to_the_89_degree_limit() {
+        for pitch in [90.0f32, -90.0] {
+            let mut c = OrbitCamera {
+                yaw: 180.0,
+                pitch,
+                ..OrbitCamera::default()
+            };
+            // 動かさない・さらに向こうへ回すだけでは、pitch は変わらない
+            c.orbit(10.0, 0.0);
+            assert_eq!(c.pitch, pitch);
+            c.orbit(0.0, 30.0 * pitch.signum());
+            assert_eq!(c.pitch, pitch);
+            assert!((c.yaw - (180.0 + 10.0 * ORBIT_DEGREES_PER_POINT)).abs() < 1e-5);
+            // 戻す向きには、なめらかに離れる（1° はねない）
+            c.orbit(0.0, -10.0 * pitch.signum());
+            assert!(
+                (c.pitch - (pitch - 3.5 * pitch.signum())).abs() < 1e-4,
+                "{}",
+                c.pitch
+            );
+            // 89° の内側から始めれば、今までどおり ±89° で止まる
+            c.orbit(0.0, 1000.0 * pitch.signum());
+            assert_eq!(c.pitch, 89.0 * pitch.signum());
+        }
+        // 90° を越える値は 90° までに止める（範囲を広げすぎない）
+        assert_eq!(orbited(0.0, 120.0, 0.0, 100.0).1, 90.0);
+    }
+
+    #[test]
+    fn orbiting_by_points_matches_the_free_orbit() {
+        let mut c = OrbitCamera::default();
+        let (yaw, pitch) = orbited(c.yaw, c.pitch, 30.0, -20.0);
+        c.orbit(30.0, -20.0);
+        assert_eq!((c.yaw, c.pitch), (yaw, pitch));
+        assert!((yaw - (DEFAULT_YAW + 30.0 * ORBIT_DEGREES_PER_POINT)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn flying_moves_the_target_and_the_camera_together_without_changing_the_distance() {
+        let mut c = OrbitCamera::default();
+        let before = (c.position(), c.target, c.distance);
+        c.fly(Vec3::new(0.0, 0.0, 0.5));
+        let forward = c.rotation() * Vec3::Z;
+        assert!((c.target - before.1 - forward * 0.5).length() < 1e-6);
+        assert!((c.position() - before.0 - forward * 0.5).length() < 1e-6);
+        assert_eq!(c.distance, before.2);
+        // 右・上はカメラの右・上
+        let (right, up) = (c.rotation() * Vec3::X, c.rotation() * Vec3::Y);
+        let at = c.target;
+        c.fly(Vec3::new(0.25, -0.5, 0.0));
+        assert!((c.target - at - right * 0.25 + up * 0.5).length() < 1e-6);
+        // 向きは変わらない
+        assert_eq!((c.yaw, c.pitch), (DEFAULT_YAW, DEFAULT_PITCH));
     }
 
     #[test]

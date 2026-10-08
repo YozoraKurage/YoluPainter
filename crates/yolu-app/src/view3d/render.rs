@@ -105,6 +105,9 @@ pub struct View3dStats {
     pub last_sync_us: u64,
     /// 粗く合成した絵を見せているタイルの数（ドラッグの間。終われば正確に上げ直して 0）。
     pub paint_coarse_tiles: usize,
+    /// 塗った絵のミップマップを UV の上の画素だけで作った回数（チャンネルごとに 1 回。これまでの合計）と、粗い絵を見せている間に全部のテクセルの箱の平均で作った回数。
+    pub paint_weighted_mip_builds: u64,
+    pub paint_coarse_mip_builds: u64,
     /// 今のセットでないセットの絵を持っている数（GPU に作ってあるもの）。
     pub other_sets: usize,
     /// 持ちたいが、メモリの予算が足りずに持っていないセットの数（その面は絵の無い描き方）。
@@ -155,6 +158,8 @@ impl From<PaintStats> for View3dStats {
             paint_by_budget: p.by_budget,
             paint_bytes: p.gpu_bytes,
             paint_coarse_tiles: p.coarse_tiles,
+            paint_weighted_mip_builds: p.weighted_mip_builds,
+            paint_coarse_mip_builds: p.coarse_mip_builds,
             ..View3dStats::default()
         }
     }
@@ -1315,6 +1320,24 @@ impl View3dRenderer {
     /// 試験用: 塗った絵のチャンネルの 1 段の中身（`Paint::read_level`）。
     pub fn read_paint_level(&self, slot: Slot, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
         self.paint.read_level(slot, level)
+    }
+
+    /// 試験用: 塗った絵の重みの絵の 1 段の中身（`Paint::read_weight_level`。1 テクセル 1 バイト）。
+    pub fn read_paint_weight_level(&self, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
+        self.paint.read_weight_level(level)
+    }
+
+    /// 試験用: ほかのセットの絵の重みの絵の 1 段の中身。そのマテリアルのセットの絵が無ければ None。
+    pub fn read_other_weight_level(
+        &self,
+        material: i32,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2])> {
+        self.held
+            .iter()
+            .find(|h| h.material == material && h.paint.is_built())?
+            .paint
+            .read_weight_level(level)
     }
 
     /// 試験用: 接線を作るスレッドが仕事の前に呼ぶ口（`TangentHook`）。

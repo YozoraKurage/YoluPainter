@@ -25,7 +25,7 @@ Each point operation is one undo step. Dragging a point redraws the path on rele
 At first, a point joins its neighbors smoothly. With a point selected you can:
 
 - "Corner": break the curve at the point. Double-clicking the point also toggles it.
-- "Handles": show handles on the point and drag them to set the curvature. Showing them does not change the shape. When you drag a handle, the opposite handle follows to keep the curve smooth. Hold `Alt` to move only the handle you drag; hold `Ctrl` to scale both handles by the same ratio.
+- "Handles": show handles on the point and drag them to set the curvature. Showing them does not change the shape. When you drag a handle, the opposite handle follows to keep the curve smooth. Press `Alt` after you start dragging to move only the handle you drag (if `Alt` is already held when you press, it is a view control); hold `Ctrl` to scale both handles by the same ratio.
 - Press the same button again to return to a smooth point.
 
 ## Put several paths on one layer

@@ -197,33 +197,37 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
 }
 
 #[test]
-fn rotate_drag_with_r_held() {
+fn rotate_drag_with_alt_held_turns_the_view_in_15_degree_steps_and_never_paints() {
     let mut h = app(1280.0, 800.0, 512);
     let r = canvas_rect(&h);
-    h.event(Event::Key {
-        key: Key::R,
-        physical_key: None,
+    let alt = Modifiers::ALT;
+    h.event(Event::ModifiersChanged(alt));
+    h.step();
+    // 中心の右から真下へ回す = 時計回りに 90°（15° の倍数）。押す・動く・離すに Alt を添える（実際のウィンドウのイベントもそうなる）
+    let start = offset(r.center(), 100.0, 0.0);
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
         pressed: true,
-        repeat: false,
-        modifiers: Modifiers::NONE,
+        modifiers: alt,
     });
     h.step();
-    // 中心の右から真下へ回す = 時計回りに 90°
-    drag(
-        &mut h,
-        &[
-            offset(r.center(), 100.0, 0.0),
-            offset(r.center(), 70.7, 70.7),
-            offset(r.center(), 0.0, 100.0),
-        ],
-    );
-    h.event(Event::Key {
-        key: Key::R,
-        physical_key: None,
+    for p in [
+        offset(r.center(), 70.7, 70.7),
+        offset(r.center(), 0.0, 100.0),
+    ] {
+        h.event(Event::PointerMoved(p));
+        h.step();
+    }
+    h.event(Event::PointerButton {
+        pos: offset(r.center(), 0.0, 100.0),
+        button: PointerButton::Primary,
         pressed: false,
-        repeat: false,
-        modifiers: Modifiers::NONE,
+        modifiers: alt,
     });
+    h.step();
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.run();
     assert!(
         (h.state().state.view.angle - 90.0).abs() < 0.5,

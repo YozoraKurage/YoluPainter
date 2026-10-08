@@ -340,7 +340,8 @@ fn shape_mouse_shift_alt_release_and_escape() {
     let a = point(&h, 30.0, 30.0);
     let b = point(&h, 40.0, 50.0);
     let m = Modifiers::SHIFT | Modifiers::ALT;
-    mouse(&mut h, a, true, m);
+    // 押しの始めの Alt は表示を回す組み合わせなので、Alt は押したあとに足す（図形の「中心から」）
+    mouse(&mut h, a, true, Modifiers::SHIFT);
     mouse(&mut h, b, false, m);
     assert!(alpha(&h.state().state, 15, 15) > 0);
     h.state_mut().state.doc.undo().unwrap();

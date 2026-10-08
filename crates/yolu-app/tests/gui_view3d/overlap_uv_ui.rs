@@ -565,11 +565,20 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         let empty = view.to_screen(60.0, 60.0);
         right(&mut h, empty);
         assert_eq!(island_menu(&h), None);
-        // ほかのツールでは開かない
+        // ほかのツールでは開かない（右ボタンはスポイトになり、透明の所を取ろうとした知らせが出る。あとの絵に写らないよう、前の知らせへ戻す）
+        let (message, toast) = {
+            let s = &h.state().state;
+            (s.message.clone(), s.toast.clone())
+        };
         h.state_mut().state.tool = Tool::Brush;
         h.run();
         right(&mut h, at);
         assert_eq!(island_menu(&h), None);
+        {
+            let s = &mut h.state_mut().state;
+            s.message = message;
+            s.toast = toast;
+        }
         // 3D: 動かさずに離した右クリックは当たった面のアイランド（+X の四角）のメニュー、3D の面を強調する。右ドラッグは回すだけ
         h.state_mut().state.tool = Tool::PolygonFill;
         {

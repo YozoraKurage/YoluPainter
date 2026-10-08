@@ -803,7 +803,10 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         && !app.is_stroking()
         && app.transform.drag.is_none();
     let mut arrows: Vec<((f64, f64), bool)> = Vec::new();
+    // 右ボタンを押して 3D の視点を動かしている間は、W/A/S/D/Q/E を視点の移動に使う（ツールの切り替えなどの表のキーに渡さない）
+    let flying = crate::view3d::navigation::flying(app);
     ctx.input_mut(|i| {
+        crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
         actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
         if arrows_move {

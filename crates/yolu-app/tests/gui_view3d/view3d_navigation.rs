@@ -165,6 +165,40 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
 }
 
 #[test]
+fn snap_orbit_keeps_the_pressed_surface_point_in_place_and_snaps_the_view_to_the_axis() {
+    // 面の位置を回転の中心にしていても、Alt + ドラッグのスナップ回転は押した面の点を画面の同じ所に保つ（吸い付いた向きでも）
+    let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::View));
+    h.state_mut().app.view3d.camera.yaw = 25.0;
+    let at = pos2(375.0, 215.0);
+    let point = hit(&h, at);
+    let alt = Modifiers::ALT;
+    h.event(Event::ModifiersChanged(alt));
+    mouse(&mut h, at, PointerButton::Primary, true, alt);
+    assert!(h.state().app.view3d.input.navigation.is_some());
+    // yaw 25° → 10°: 背面（yaw 0・pitch 0）の 10° 手前。背面へ吸い付く
+    h.event(Event::PointerMoved(at + vec2(-15.0 / 0.35, 0.0)));
+    h.step();
+    let c = camera(&h);
+    assert_eq!((c.yaw, c.pitch), (0.0, 0.0), "背面へ吸い付いた");
+    near(project(c, point), Vec2::new(at.x, at.y));
+    // 吸い付く範囲の外（yaw 25° → -20°）では、回した分の向きのまま。点は動かない
+    h.event(Event::PointerMoved(at + vec2(-45.0 / 0.35, 0.0)));
+    h.step();
+    let c = camera(&h);
+    assert!((c.yaw + 20.0).abs() < 1e-3, "{}", c.yaw);
+    near(project(c, point), Vec2::new(at.x, at.y));
+    mouse(
+        &mut h,
+        at + vec2(-45.0 / 0.35, 0.0),
+        PointerButton::Primary,
+        false,
+        alt,
+    );
+    assert!(h.state().app.view3d.input.navigation.is_none());
+    assert!(!h.state().app.doc.can_undo());
+}
+
+#[test]
 fn all_centers_and_empty_surface_fallback() {
     for mode in OrbitCenter::ALL {
         let mut h = harness(prefs(mode, ZoomCenter::View));
@@ -185,17 +219,16 @@ fn all_centers_and_empty_surface_fallback() {
 }
 
 #[test]
-fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_shift_barrel() {
+fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_the_pen_with_space() {
     for route in 0..3 {
         let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::View));
         let at = pos2(375.0, 215.0);
         let point = hit(&h, at);
-        if route == 1 {
+        if route == 1 || route == 2 {
             key(&mut h, Key::Space, true, Modifiers::NONE);
         }
         if route == 2 {
-            h.event(Event::ModifiersChanged(Modifiers::SHIFT));
-            pen(&mut h, at, true, true);
+            pen(&mut h, at, true, false);
         } else {
             mouse(
                 &mut h,
@@ -211,7 +244,7 @@ fn auto_depth_pan_tracks_the_pointer_for_middle_space_and_shift_barrel() {
         }
         let end = at + vec2(45.0, -30.0);
         if route == 2 {
-            pen(&mut h, end, true, true);
+            pen(&mut h, end, true, false);
         } else {
             h.event(Event::PointerMoved(end));
             h.step();
@@ -592,14 +625,14 @@ fn review_auto_depth_pan_tracks_the_surface_after_wheel_zoom() {
                 let at = pos2(375.0, 215.0);
                 let point = hit(&h, at);
                 if use_pen {
-                    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
-                    pen(&mut h, at, true, true);
+                    key(&mut h, Key::Space, true, Modifiers::NONE);
+                    pen(&mut h, at, true, false);
                 } else {
                     mouse(&mut h, at, PointerButton::Middle, true, Modifiers::NONE);
                 }
                 let start = at + vec2(20.0, 10.0);
                 if use_pen {
-                    pen(&mut h, start, true, true);
+                    pen(&mut h, start, true, false);
                 } else {
                     h.event(Event::PointerMoved(start));
                     h.step();
@@ -618,7 +651,7 @@ fn review_auto_depth_pan_tracks_the_surface_after_wheel_zoom() {
                 let before = project(camera(&h), point);
                 let delta = vec2(35.0, -18.0);
                 if use_pen {
-                    pen(&mut h, start + delta, true, true);
+                    pen(&mut h, start + delta, true, false);
                 } else {
                     h.event(Event::PointerMoved(start + delta));
                     h.step();

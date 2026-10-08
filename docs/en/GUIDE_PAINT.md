@@ -20,7 +20,7 @@ In Tool Properties in the Tools panel on the left, you can change Size, Opacity,
 | Color Mixing, Effect | Picking up and mixing the colors underneath (used by the oil, gouache and mixer brushes); Blur, Smudge and Clone |
 | Symmetry | See “Painting with symmetry” below |
 
-The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese). In 2D, with Brush, Eraser, Fill or Polygon Fill selected, `Alt`-click temporarily acts as the eyedropper (`Alt` orbits in 3D). While you paint, the controls in the panels do nothing when pressed. They keep the look they had before the stroke and do not turn gray.
+The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese). With any tool selected, the right button temporarily acts as the eyedropper: in 2D, press it (while you hold it, the swatch follows the pointer, and the color where you release is picked); in 3D, release it without moving. With Polygon Fill, the right button opens the island menu (`Alt` is a view control). While you paint, the controls in the panels do nothing when pressed. They keep the look they had before the stroke and do not turn gray.
 
 ## Choosing and rearranging brushes
 
@@ -46,6 +46,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 
 - **Pressure**: the pen button in the Size, Opacity, Hardness and Flow rows of Tool Properties turns pressure on or off for that setting. The minimum (the value at zero pressure) and the curve are set in Pen Pressure in Brush Details.
 - **Differences between pens**: View → Pen Pressure… sets a low limit, a high limit and a curve. Draw a few strokes at your usual strength and press Auto, and the settings are worked out from the pressure of the strokes you drew. This is a per-device setting and is stored neither in documents nor in brushes.
+- **Tablets on Mac**: on Mac, the app reads the pressure, tilt, eraser end and side buttons that drivers such as Wacom and XP-Pen send as standard macOS events (experimental). Turn it on or off with Tablet pressure (experimental) under Pen in Edit → Settings… (on by default; when off, the pen draws like a mouse).
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
 - **Taper**: the settings that thin the start and end of a stroke are in Taper & Pen in Brush Details.
 - **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
@@ -53,7 +54,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 ## Lines, shapes and rulers
 
 - **Straight lines**: with the brush, the eraser or an effect brush, `Shift`-click to draw a straight line from the end of the previous stroke to the clicked point (one undo step). When there is no previous point (after switching documents or texture sets, or after an undo), you start a normal stroke. If you hold `Shift` and drag, the direction is locked to a multiple of 45°. 2D Canvas only.
-- **Shape** (`U`): drag to draw a Line, Rectangle or Ellipse. Outline draws the outline as one stroke with the current brush, and Fill fills the inside with the paint color (only inside the selection, if there is one). A rectangle has a Corner Radius. `Shift` gives 45° steps, a square or a circle, `Alt` draws from the center, and `Esc` cancels. Releasing makes one undo step. 2D Canvas only.
+- **Shape** (`U`): drag to draw a Line, Rectangle or Ellipse. Outline draws the outline as one stroke with the current brush, and Fill fills the inside with the paint color (only inside the selection, if there is one). A rectangle has a Corner Radius. `Shift` gives 45° steps, a square or a circle, `Alt` pressed after you start dragging draws from the center, and `Esc` cancels. Releasing makes one undo step. 2D Canvas only.
 - **Ruler** (`Shift+U`): drag to place a Straight Ruler, Parallel, Concentric or Perspective (1 or 2 points) ruler. Drag an endpoint or a line to move it, and use Delete to remove it. Each texture set has one ruler, drawn as a thin line over the view. A ruler is view state and is not saved in the `.ylp`.
 - **Snap** (Snap to Ruler, `Ctrl+1`): while on, the points of brush and eraser strokes (including `Shift` lines) are pulled onto the ruler's lines. When combined with `Shift`, the ruler takes priority.
 
@@ -76,7 +77,7 @@ Set it in Symmetry in Brush Details, or in the symmetry menu on the options bar.
 - **Setting the color**: use the main and sub colors at the bottom of the toolbar, or the Color panel. Color has a hue wheel or a square and hue bar (switch with the button at the top right), a hex field (`#RRGGBB`) and alpha. `X` swaps the main and sub colors, and `D` returns to the default colors.
 - **Color window**: pressing the color swatch of a value such as a fill layer's color, a lilToon color or a gradient color opens a color window. Set the color on the spot with the hue wheel, hex, opacity or a color from a color set. Use Paint Color puts in the current paint color. It does not close when you click outside, so you can change colors while working in other fields. `Esc` restores the color from when it opened and closes it.
 - **Color sets**: the Color Sets panel manages sets of colors (new, duplicate, rename, delete, import GPL and ACO, export a GIMP palette). Click a color for the main color, or `Alt`-click for the sub color. It also shows a History and the Intermediate Colors between four corner colors.
-- **Eyedropper** (`I`): picks the value at the pressed point on the 2D Canvas or the 3D View as the paint color of the painting channel. It reads only the selected layer; turn on Sample All Layers in the options bar to read the composite of all layers. With Paint several channels at once on, it picks the six standard channels into the brush material's values.
+- **Eyedropper** (`I`): picks the value at the pressed point on the 2D Canvas or the 3D View as the paint color of the painting channel. While it picks, the pointer shows an eyedropper icon and a ring (the top half is the current color and the bottom half is the color under the pointer; a scalar channel is a gray level). It reads only the selected layer; turn on Sample All Layers in the options bar to read the composite of all layers. With Paint several channels at once on, it picks the six standard channels into the brush material's values.
 - **Screen color** (Windows only): in the Edit menu, Pick Screen Color (`Ctrl+Alt+I`) and Hide Window and Pick Screen Color (`Ctrl+Alt+Shift+I`) pick a color from the desktop.
 
 ## Painting through a stencil

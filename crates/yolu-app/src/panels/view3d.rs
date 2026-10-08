@@ -212,6 +212,15 @@ impl View3dSlot {
         }
         if !drawn {
             self.placeholder(ui, app, content);
+        } else if let Some(press) = app.view3d.input.eyedrop {
+            // 右ボタンを押して、まだ動かしていない: 押したときの見本の輪とスポイトの絵（動かせば回すだけ。OS の矢印は隠す）
+            crate::eyedrop_mark::paint(
+                &ui.painter_at(content),
+                press.at,
+                crate::eyedrop::current_swatch(app),
+                press.sample,
+            );
+            ui.ctx().set_cursor_icon(CursorIcon::None);
         } else if app.view3d.pose.mode {
             // ポーズのモード: ギズモ（輪の上は掴む形のポインタ）
             let pointer = ui
@@ -260,16 +269,23 @@ impl View3dSlot {
                 });
             }
         } else if app.tool.def().surface == Surface::Pick {
-            // スポイト: ブラシの円は出さない
+            // スポイト: ブラシの円は出さない。回しているあいだは回すポインタ、ほかは見本の輪とスポイトの絵（OS の矢印は隠す）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
-            if pointer.is_some() {
-                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
-                    CursorIcon::Move
+            if let Some(p) = pointer {
+                if app.view3d.input.nav.is_some() {
+                    ui.ctx().set_cursor_icon(CursorIcon::Move);
                 } else {
-                    CursorIcon::Crosshair
-                });
+                    let sample = crate::eyedrop::sample_surface(app, content, p);
+                    crate::eyedrop_mark::paint(
+                        &ui.painter_at(content),
+                        p,
+                        crate::eyedrop::current_swatch(app),
+                        sample,
+                    );
+                    ui.ctx().set_cursor_icon(CursorIcon::None);
+                }
             }
         } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             // ブラシのカーソル（回している・パンしているあいだは出さない）

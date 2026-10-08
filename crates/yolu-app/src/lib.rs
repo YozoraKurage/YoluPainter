@@ -28,6 +28,7 @@ pub mod drafting;
 pub mod engine;
 pub mod export;
 pub mod eyedrop;
+pub mod eyedrop_mark;
 pub mod fillfx;
 pub mod fx;
 pub mod gesture;

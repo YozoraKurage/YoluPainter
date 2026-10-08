@@ -47,8 +47,8 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                 lang.pick("2D ビュー", "2D View"),
                 vec![
                     (lang.pick("パン", "Pan"), middle.to_string()),
-                    (lang.pick("回転", "Rotate"), format!("Shift+{middle}")),
-                    (lang.pick("スポイト", "Eyedropper"), format!("Alt+{left}")),
+                    (lang.pick("回転", "Rotate"), format!("Alt+{left}")),
+                    (lang.pick("スポイト", "Eyedropper"), right.to_string()),
                     (
                         lang.pick("選択範囲に追加", "Add to Selection"),
                         format!("Shift+{left}"),
@@ -66,8 +66,30 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
             (
                 lang.pick("3D ビュー", "3D View"),
                 vec![
-                    (lang.pick("回転", "Orbit"), format!("Alt+{left}")),
-                    (lang.pick("パン", "Pan"), format!("Shift+{right}")),
+                    (lang.pick("回転", "Orbit"), right.to_string()),
+                    (
+                        lang.pick("スポイト", "Eyedropper"),
+                        lang.pick(
+                            "右ボタンを動かさずに離す",
+                            "Right Button Released without Moving",
+                        )
+                        .to_string(),
+                    ),
+                    (lang.pick("パン", "Pan"), middle.to_string()),
+                    (
+                        lang.pick("スナップ回転", "Snap Orbit"),
+                        format!("Alt+{left}"),
+                    ),
+                    (
+                        lang.pick("クローンの元を決める", "Set Clone Source"),
+                        format!(
+                            "Alt+{}",
+                            lang.pick(
+                                "左ボタンを動かさずに離す",
+                                "Left Button Released without Moving"
+                            )
+                        ),
+                    ),
                 ],
             ),
             (
@@ -101,6 +123,32 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                 missing.is_empty(),
                 "{title} にない組み合わせ: {missing:?}\n{listed:?}"
             );
+        }
+        // 既定から外した組み合わせは、一覧に出ない（2D の Shift+中ボタンの回転・Alt+左のスポイト、3D の Shift+右・Alt+Shift+左のパンと Alt+左の自由な回転）
+        let gone = [
+            (
+                lang.pick("2D ビュー", "2D View"),
+                vec![
+                    (lang.pick("回転", "Rotate"), format!("Shift+{middle}")),
+                    (lang.pick("スポイト", "Eyedropper"), format!("Alt+{left}")),
+                ],
+            ),
+            (
+                lang.pick("3D ビュー", "3D View"),
+                vec![
+                    (lang.pick("パン", "Pan"), format!("Shift+{right}")),
+                    (lang.pick("パン", "Pan"), format!("Alt+Shift+{left}")),
+                    (lang.pick("回転", "Orbit"), format!("Alt+{left}")),
+                ],
+            ),
+        ];
+        for (title, removed) in gone {
+            let listed = section(&rows, title);
+            let still: Vec<_> = removed
+                .iter()
+                .filter(|(action, keys)| listed.iter().any(|(a, k)| a == action && k == keys))
+                .collect();
+            assert!(still.is_empty(), "{title} にまだある組み合わせ: {still:?}");
         }
     }
 }
@@ -288,6 +336,12 @@ fn view_or_stencil_gesture(binding: &Binding) {
     let at = rect.center();
     if binding.scope == "view3d" {
         app.apply(Action::LoadDemoModel);
+        // クローンの元は、クローンのブラシのときだけ決まる
+        if binding.operation == Operation::CloneSource {
+            app.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+                offset: Default::default(),
+            };
+        }
     } else {
         app.stencil
             .set_image_rgba("Sample", 1, 1, &[255; 4])
@@ -346,11 +400,44 @@ fn view_or_stencil_gesture(binding: &Binding) {
         },
     );
     output.textures_delta.clear();
+    if binding.click {
+        // 動かさずに離したときの操作: 押した時点で、離したときの行き先の印が付き、同じ所で離すと印が消える
+        let (nav, button) = app.view3d.input.nav.expect("3D 操作が始まる");
+        assert_eq!(button, binding.button);
+        assert!(matches!(nav, Nav::Orbit | Nav::SnapOrbit), "{binding:?}");
+        match binding.operation {
+            Operation::Pick => assert!(app.view3d.input.eyedrop.is_some(), "{binding:?}"),
+            Operation::CloneSource => {
+                assert!(app.view3d.input.clone_press.is_some(), "{binding:?}")
+            }
+            other => panic!("3D の離したときの操作ではない: {other:?}"),
+        }
+        let release = Event::PointerButton {
+            pos: at,
+            button: binding.button,
+            pressed: false,
+            modifiers: binding.modifiers,
+        };
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                events: vec![release],
+                ..Default::default()
+            },
+            |ui| yolu_app::view3d::input::handle(ui, &mut app, rect, &[], false),
+        );
+        output.textures_delta.clear();
+        assert!(app.view3d.input.eyedrop.is_none() && app.view3d.input.clone_press.is_none());
+        assert!(app.view3d.input.nav.is_none());
+        assert!(!app.can_undo());
+        return;
+    }
     let found = if binding.scope == "view3d" {
         let (nav, button) = app.view3d.input.nav.expect("3D 操作が始まる");
         assert_eq!(button, binding.button);
         match nav {
             Nav::Orbit => Operation::Orbit,
+            Nav::SnapOrbit => Operation::SnapOrbit,
             Nav::Pan => Operation::Pan,
             Nav::Zoom => Operation::Zoom,
         }
@@ -372,7 +459,7 @@ fn view_or_stencil_gesture(binding: &Binding) {
     assert!(!app.is_stroking());
 }
 
-/// 2D キャンバスの押し（中ボタンのパン・回転、Alt のスポイト）を、実際のウィンドウの入力へ流す。
+/// 2D キャンバスの押し（中ボタンのパン、Alt + 左の回転、右ボタンのスポイト）を、実際のウィンドウの入力へ流す。
 fn canvas_gesture(binding: &Binding) {
     let mut h = app(1280.0, 800.0, 256);
     let at = canvas_rect(&h).center();
@@ -390,13 +477,17 @@ fn canvas_gesture(binding: &Binding) {
         let s = &h.state().state;
         match binding.operation {
             Operation::Pan => assert!(s.canvas.panning && !s.canvas.middle_rotating, "{binding:?}"),
+            // Alt + 左ボタンは、ストロークを始めずに表示を回す
             Operation::Rotate => {
-                assert!(s.canvas.middle_rotating && !s.canvas.panning, "{binding:?}")
+                assert!(
+                    s.canvas.rotating.is_some() && !s.canvas.panning,
+                    "{binding:?}"
+                );
+                assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{binding:?}");
             }
-            // 描くツールの Alt は、ストロークを始めずにスポイトとして働く
+            // 右ボタンは、ストロークを始めずにスポイト（見本が付いてくる途中）
             Operation::Pick => {
-                assert!(yolu_app::eyedrop::picks(s, true), "{binding:?}");
-                assert!(!yolu_app::eyedrop::picks(s, false));
+                assert!(s.canvas.eyedrop.is_some(), "{binding:?}");
                 assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{binding:?}");
             }
             other => panic!("2D の組み合わせではない: {other:?}"),
@@ -414,6 +505,7 @@ fn canvas_gesture(binding: &Binding) {
     h.run();
     let s = &h.state().state;
     assert!(!s.canvas.panning && !s.canvas.middle_rotating);
+    assert!(s.canvas.rotating.is_none() && s.canvas.eyedrop.is_none());
 }
 
 /// 選択範囲のツールの Shift・Ctrl を、実際の選択の入力で確かめる（先に左半分を選び、中ほどの帯をなぞる）。
@@ -490,21 +582,25 @@ fn every_listed_mouse_gesture_matches_the_real_input_handler() {
 }
 
 #[test]
-fn the_eyedropper_row_covers_exactly_the_tools_where_alt_picks() {
+fn only_the_eyedropper_tool_picks_on_a_left_press_and_every_other_tool_picks_with_the_right_button()
+{
     use yolu_app::state::Tool;
     let mut app = AppState::new(16, 16);
-    let mut picking = Vec::new();
-    for tool in Tool::ALL {
-        app.tool = tool;
-        if yolu_app::eyedrop::picks(&app, true) && !yolu_app::eyedrop::picks(&app, false) {
-            picking.push(tool);
-        }
-    }
-    // 一覧の「Alt+左ボタン」の行は、描くツール（ここに挙げたツール）のスポイト。ツールの組が替わったら行の書き方を見直す
-    assert_eq!(
-        picking,
-        [Tool::Brush, Tool::Eraser, Tool::Fill, Tool::PolygonFill]
-    );
+    let picking: Vec<Tool> = Tool::ALL
+        .into_iter()
+        .filter(|tool| {
+            app.tool = *tool;
+            yolu_app::eyedrop::picks(&app)
+        })
+        .collect();
+    // 一覧の「スポイト」の左ボタンの行は無い（描くツールの Alt + 左は、表示を回す組み合わせになった）。右ボタンの行は、どのツールからでも
+    assert_eq!(picking, [Tool::Eyedropper]);
+    assert!(bindings()
+        .iter()
+        .all(|b| !(b.operation == Operation::Pick && b.button == PointerButton::Primary)));
+    assert!(bindings().iter().any(|b| b.operation == Operation::Pick
+        && b.button == PointerButton::Secondary
+        && b.scope == "canvas"));
 }
 
 #[test]

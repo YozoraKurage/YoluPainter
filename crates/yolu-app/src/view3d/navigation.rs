@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use egui::{Modifiers, Pos2, Rect, Ui};
-use yolu_core::geometry::{pick, Bounds, OrbitCamera};
+use yolu_core::geometry::{orbited, pick, snap_orientation, Bounds, OrbitCamera};
 use yolu_core::glam::{Vec2, Vec3};
 
 use super::{model::ViewModel, Nav, View3dState};
@@ -176,7 +176,12 @@ fn zoom_point(model: Option<&ViewModel>, camera: OrbitCamera, rect: Rect, at: Po
 
 pub struct Drag {
     at: Pos2,
+    /// 回すドラッグが、押した所から遊び（クリックとみなす距離）を超えて動いたか（超えるまで回さない。`rotation_delta`）。
+    moved: bool,
     camera: OrbitCamera,
+    /// スナップ回転の、吸い付ける前の向き（yaw・pitch）。吸い付いた向きを元に回すと、いちど吸い付いたら離れられないので、
+    /// 回した分はこちらへ溜めて、カメラには吸い付けた結果を当てる。
+    free: Option<(f32, f32)>,
     model: Option<Arc<ViewModel>>,
     model_center: Option<Vec3>,
     material: i32,
@@ -195,13 +200,34 @@ impl Drag {
     pub fn new(state: &View3dState, preferences: Preferences, at: Pos2) -> Self {
         Self {
             at,
+            moved: false,
             camera: state.camera,
+            free: None,
             model: state.model.clone(),
             model_center: state.full_model().map(|m| m.geometry.bounds().center),
             material: state.material,
             preferences,
             resolved: None,
         }
+    }
+
+    /// 回すドラッグ（右ボタン・Alt + 左）で、このポインタの位置を受けて回す量（画面の点）。押した所から `dead_zone` までは回さない（動かさずに離す
+    /// 操作 — スポイト・クローンの元 — が、小さな揺れで視点を動かして別の点を指さないように）。超えた最初の動きでは、押した所からの動きを全部当てる。
+    /// `previous` は前の位置。
+    pub fn rotation_delta(
+        &mut self,
+        pos: Pos2,
+        previous: Pos2,
+        dead_zone: f32,
+    ) -> Option<egui::Vec2> {
+        if self.moved {
+            return Some(pos - previous);
+        }
+        if self.at.distance(pos) <= dead_zone {
+            return None;
+        }
+        self.moved = true;
+        Some(pos - self.at)
     }
 
     fn anchor(&mut self, rect: Rect) -> Anchor {
@@ -249,6 +275,17 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
             camera.orbit_about(anchor.pivot, dx, dy)
         }
         Nav::Orbit => camera.orbit(dx, dy),
+        Nav::SnapOrbit => {
+            let (yaw, pitch) = drag.free.unwrap_or((camera.yaw, camera.pitch));
+            let free = orbited(yaw, pitch, dx, dy);
+            drag.free = Some(free);
+            let (yaw, pitch) = snap_orientation(free.0, free.1);
+            let pivot = match preferences.orbit {
+                OrbitCenter::View => camera.target,
+                _ => anchor.pivot,
+            };
+            camera.set_orientation_about(pivot, yaw, pitch);
+        }
         Nav::Pan if preferences.orbit == OrbitCenter::Surface => {
             // ホイールを挟んでも、押した面での画面上の移動量を保つ。
             let depth = anchor
@@ -264,6 +301,49 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
         }
         Nav::Zoom => camera.zoom(dx),
     }
+}
+
+/// 右ボタン（ペンのサイドボタンも）を押して視点を回している間か。この間だけ、W/A/S/D/Q/E は視点の移動（`fly`）。
+pub fn flying(app: &AppState) -> bool {
+    matches!(
+        app.view3d.input.nav,
+        Some((Nav::Orbit, egui::PointerButton::Secondary))
+    )
+}
+
+/// 視点の移動の速さ（1 秒あたり、モデルの半径のこの倍）と、Shift を押したときの倍率。
+pub const FLY_SPEED: f32 = 0.5;
+pub const FLY_FAST: f32 = 3.0;
+/// 1 フレームの長さの上限（秒。止まったあとの最初のフレームで飛ばない）。
+const FLY_MAX_DT: f32 = 0.1;
+
+/// 右ボタンを押している間、W/S（前後）・A/D（左右）・Q/E（下上）を押していれば、注視点とカメラを一緒に動かす（距離は変えない。
+/// Shift で速く）。毎フレームの長さ（`stable_dt`）で動かし、動かしている間は描き直しを頼む。動かしたら、右ボタンを動かさずに離してもスポイトにしない。
+pub fn fly(ui: &Ui, app: &mut AppState) {
+    if !flying(app) || app.is_stroking() || ui.ctx().egui_wants_keyboard_input() {
+        return;
+    }
+    let (direction, dt, fast) = ui.input(|i| {
+        let mut direction = Vec3::ZERO;
+        if !i.modifiers.command && !i.modifiers.ctrl && !i.modifiers.alt {
+            for key in crate::keymap::FLY_KEYS {
+                if crate::keymap::hold_down(i, key.command) {
+                    direction += Vec3::from(key.direction);
+                }
+            }
+        }
+        (direction, i.stable_dt, i.modifiers.shift)
+    });
+    let direction = direction.normalize_or_zero();
+    if direction == Vec3::ZERO {
+        return;
+    }
+    let speed = app.view3d.camera.model_radius * FLY_SPEED * if fast { FLY_FAST } else { 1.0 };
+    app.view3d
+        .camera
+        .fly(direction * speed * dt.min(FLY_MAX_DT));
+    app.view3d.input.eyedrop = None;
+    ui.ctx().request_repaint();
 }
 
 pub fn wheel(app: &mut AppState, rect: Rect, at: Pos2, notches: f32) {

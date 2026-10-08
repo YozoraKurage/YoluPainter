@@ -683,6 +683,8 @@ impl AppState {
                 continue;
             }
             let inputs = self.build_effect_inputs(index, input.as_deref(), frame, &needed);
+            // 効果の入力が替わると、文書の版は上がらないまま見える値が変わる（スポイトの印の見本を読み直させる）
+            self.eyedrop.sample_cache = None;
             match self.set_doc_mut(index).set_effect_inputs(inputs) {
                 Ok(()) => {
                     self.fx.inputs.keys.insert(uid, key);
@@ -782,6 +784,7 @@ impl AppState {
 
     /// セットの文書を入れ替える（今のセットなら画面の文書。選んでいるレイヤー・選択の状態は新しい文書に合わせる）。
     fn put_set_doc(&mut self, index: usize, doc: Document) {
+        self.eyedrop.sample_cache = None;
         if index == self.sets.current_index() {
             // 同じ文書を編集できるようにするだけで大きさは変わらないので、表示は今のまま
             self.install_document(

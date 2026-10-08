@@ -196,6 +196,32 @@ const fn nudge(command: &'static str, key: Key, shift: bool, direction: (f64, f6
     }
 }
 
+/// 3D ビューで右ボタンを押している間の視点の移動キー 1 つ（`direction` はカメラの (右, 上, 前) の向き）。
+#[derive(Clone, Copy, Debug)]
+pub struct FlyKey {
+    pub command: &'static str,
+    pub key: Key,
+    pub direction: [f32; 3],
+}
+
+/// 視点の移動キーの全部（W/S は前後、A/D は左右、Q/E は下上）。キーは表の行（`hold_key`）で引く。
+pub const FLY_KEYS: [FlyKey; 6] = [
+    fly("view3d.fly_forward", Key::W, [0.0, 0.0, 1.0]),
+    fly("view3d.fly_back", Key::S, [0.0, 0.0, -1.0]),
+    fly("view3d.fly_left", Key::A, [-1.0, 0.0, 0.0]),
+    fly("view3d.fly_right", Key::D, [1.0, 0.0, 0.0]),
+    fly("view3d.fly_down", Key::Q, [0.0, -1.0, 0.0]),
+    fly("view3d.fly_up", Key::E, [0.0, 1.0, 0.0]),
+];
+
+const fn fly(command: &'static str, key: Key, direction: [f32; 3]) -> FlyKey {
+    FlyKey {
+        command,
+        key,
+        direction,
+    }
+}
+
 /// 一覧に出す順の、キーボードの割り当て（クリップボードのキー・押している間のキー・ビューが読むキーも含む）。
 /// 1 つの操作に行が 2 つ以上あるとき、最初の行が「主の行」（メニューのキーの文字になる）。
 pub fn bindings() -> Vec<KeyBinding> {
@@ -289,14 +315,18 @@ pub fn bindings() -> Vec<KeyBinding> {
     for (modifiers, key, action) in CLIPBOARD_KEYS {
         v.push(kb(modifiers, key, clip_command(action)));
     }
-    // 押している間だけ効くキー（R: 2D の表示を回す、Space: パン（Ctrl を加えると拡縮）、Y: ステンシルの置き場、N: ステンシルの一時解除）。
-    // 押している間に見る修飾の条件は、読む側が持つ
+    // 押している間だけ効くキー（Space: パン（Ctrl を加えると拡縮）、Y: ステンシルの置き場、N: ステンシルの一時解除）。
+    // 押している間に見る修飾の条件は、読む側が持つ。`view.rotate_hold`（R を押しながらの 2D の回転）は、既定では割り当てない
+    // （Alt + 左ドラッグと重なるので。操作は残してあり、割り当てれば読む側が受ける）
     v.extend([
-        kb(none, Key::R, "view.rotate_hold"),
         kb(none, Key::Space, "view.pan_hold"),
         kb(none, Key::Y, "stencil.transform_hold").paint(),
         kb(none, Key::N, "stencil.bypass_hold").paint(),
     ]);
+    // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動（前後・左右・下上。Shift で速く。読み方は `FLY_KEYS`）
+    for fly in FLY_KEYS {
+        v.push(kb(none, fly.key, fly.command));
+    }
     // 3D ビューで選んだセットを収める（3D の上で、修飾なし。ビューが読む）
     v.push(kb(none, Key::Period, "view3d.frame_selected"));
     // 移動・変形のツールの矢印キー（移動・変形のツールを選んでいるとき。ビューが読む）
@@ -547,6 +577,53 @@ pub fn hold_down(i: &InputState, command: &str) -> bool {
     hold_key(command).is_some_and(|key| i.key_down(key))
 }
 
+/// 視点の移動キーの押し（繰り返しを含む。Shift 以外の修飾キーが無いもの。Ctrl を押した Ctrl+S などは残す）を取り除く。右ボタンを押している
+/// 3D ビューの間（`flying`）は、W/A/S/D/Q/E をキーの表に渡さない（ツールの切り替え・初期設定の色・塗りつぶしの取っ手に行かない）。
+/// `held` は、移動の間に押されていた移動キー: 右ボタンを先に離しても、そのキーが押されたままの間は、OS のキーの繰り返し（`repeat` の押し）が
+/// 続くので、キーを離すまで取り除き続ける。離して押し直せば、今までどおり表へ届く。
+pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
+    let keys: Vec<Key> = FLY_KEYS
+        .iter()
+        .filter_map(|fly| hold_key(fly.command))
+        .collect();
+    if flying {
+        // 右ボタンを押す前から押していたキーも、移動の間は押されている
+        for key in &keys {
+            if i.key_down(*key) && !held.contains(key) {
+                held.push(*key);
+            }
+        }
+    }
+    if !flying && held.is_empty() {
+        return;
+    }
+    i.events.retain(|event| match event {
+        Event::Key {
+            key,
+            modifiers,
+            pressed,
+            ..
+        } if keys.contains(key) => {
+            if !*pressed {
+                // 離した: 次の押しは新しい押し
+                held.retain(|k| k != key);
+                return true;
+            }
+            let plain = !modifiers.command && !modifiers.ctrl && !modifiers.alt;
+            if plain && (flying || held.contains(key)) {
+                if !held.contains(key) {
+                    held.push(*key);
+                }
+                false
+            } else {
+                true
+            }
+        }
+        _ => true,
+    });
+    held.retain(|key| i.key_down(*key));
+}
+
 /// 操作のキー（表の最初のキーの行。画面の部品の決まった働きは、その定義のキー）。
 pub fn key_of(command: &str) -> Option<Key> {
     hold_key(command).or_else(|| match commands::find(command)?.kind {
@@ -618,14 +695,19 @@ const fn context(scope: &'static str, command: &'static str, mouse: bool) -> Con
 }
 
 /// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの Y）は、`GESTURES` の側に出る。
-pub const CONTEXT_KEYS: [ContextKey; 9] = [
-    context("canvas", "view.rotate_hold", true),
+pub const CONTEXT_KEYS: [ContextKey; 14] = [
     context("canvas", "view.pan_hold", true),
     context("canvas", "canvas.cancel", false),
     context("canvas", "canvas.confirm", false),
     context("canvas", "canvas.remove_last_point", false),
     context("view3d", "view3d.cancel", false),
     context("view3d", "view3d.frame_selected", false),
+    context("view3d", "view3d.fly_forward", false),
+    context("view3d", "view3d.fly_back", false),
+    context("view3d", "view3d.fly_left", false),
+    context("view3d", "view3d.fly_right", false),
+    context("view3d", "view3d.fly_down", false),
+    context("view3d", "view3d.fly_up", false),
     context("stencil", "stencil.bypass_hold", false),
     context("stencil", "stencil.cancel", false),
 ];
@@ -639,10 +721,14 @@ pub enum Operation {
     Orbit,
     Pan,
     Zoom,
-    /// 2D キャンバスの表示を回す。
+    /// 2D キャンバスの表示を回す（15° 刻み。Shift で自由）。
     Rotate,
-    /// 描くツールで色を取る（Alt）。
+    /// 色を取る（2D は右ボタンを押す。3D は右ボタンを動かさずに離す）。
     Pick,
+    /// 3D ビューの視点を回す。軸の向き（正面・背面・右・左・上・下）の 15° 以内に入ったらその向きへ吸い付く。
+    SnapOrbit,
+    /// クローンのブラシで、クローンの元を決める（3D で Alt + 左を動かさずに離す）。
+    CloneSource,
     SelectionAdd,
     SelectionSubtract,
     SelectionIntersect,
@@ -655,12 +741,14 @@ pub enum Operation {
 
 impl Operation {
     /// 全部の組み合わせ。
-    pub const ALL: [Operation; 12] = [
+    pub const ALL: [Operation; 14] = [
         Self::Orbit,
         Self::Pan,
         Self::Zoom,
         Self::Rotate,
         Self::Pick,
+        Self::SnapOrbit,
+        Self::CloneSource,
         Self::SelectionAdd,
         Self::SelectionSubtract,
         Self::SelectionIntersect,
@@ -677,6 +765,8 @@ impl Operation {
             Self::Zoom => lang.pick("ズーム", "Zoom"),
             Self::Rotate => lang.pick("回転", "Rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
+            Self::SnapOrbit => lang.pick("スナップ回転", "Snap Orbit"),
+            Self::CloneSource => lang.pick("クローンの元を決める", "Set Clone Source"),
             Self::SelectionAdd => lang.pick("選択範囲に追加", "Add to Selection"),
             Self::SelectionSubtract => lang.pick("選択範囲から引く", "Subtract from Selection"),
             Self::SelectionIntersect => lang.pick("選択範囲と重ねる", "Intersect with Selection"),
@@ -693,6 +783,7 @@ impl Operation {
 
 /// マウスの組み合わせ 1 つ。`alt`・`shift`・`ctrl` は押していなければならない修飾（ほかの修飾は気にしない。上から順に最初に当たったものが効く）、
 /// `held` はあるとき押している間のキーの操作の ID（`Kind::Hold`。キーは `hold_key` で引く）。
+/// 修飾は押しの始め（ボタンを押した瞬間）に持っているもので決める。始めたあとに押した修飾は、始めた操作の中の修飾（`starts: false` の行）。
 #[derive(Clone, Copy, Debug)]
 pub struct Gesture {
     /// 一覧のまとまり（選択範囲のツールの組み合わせ方は「selection」で、一覧では 2D ビューに並ぶ）。
@@ -705,6 +796,8 @@ pub struct Gesture {
     pub operation: Operation,
     /// この組み合わせで操作を始める（偽なら、始めたあとの修飾の効き方で、始め方の判定には使わない）。
     pub starts: bool,
+    /// 動かさずに離したときの操作（真なら、同じ組み合わせで始めた操作を、押した所から動かさずに離したときの行き先）。
+    pub click: bool,
 }
 
 const fn gesture_of(
@@ -723,6 +816,27 @@ const fn gesture_of(
         ctrl,
         operation,
         starts: true,
+        click: false,
+    }
+}
+
+/// 同じ組み合わせで始めた操作を、動かさずに離したときの操作の行。
+const fn click_of(
+    scope: &'static str,
+    button: PointerButton,
+    (alt, shift, ctrl): (bool, bool, bool),
+    operation: Operation,
+) -> Gesture {
+    Gesture {
+        scope,
+        held: None,
+        button,
+        alt,
+        shift,
+        ctrl,
+        operation,
+        starts: false,
+        click: true,
     }
 }
 
@@ -730,14 +844,7 @@ use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
 pub const GESTURES: [Gesture; 19] = [
-    // 2D キャンバス: 中ボタンのパンと、Shift で回転。左ボタンの Alt は描くツールのスポイト
-    gesture_of(
-        "canvas",
-        None,
-        Middle,
-        (false, true, false),
-        Operation::Rotate,
-    ),
+    // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由）、右ボタンを押すとスポイト
     gesture_of(
         "canvas",
         None,
@@ -750,6 +857,13 @@ pub const GESTURES: [Gesture; 19] = [
         None,
         Primary,
         (true, false, false),
+        Operation::Rotate,
+    ),
+    gesture_of(
+        "canvas",
+        None,
+        Secondary,
+        (false, false, false),
         Operation::Pick,
     ),
     // 選択範囲のツールの作り方: Shift で足す・Ctrl で引く・両方で重ねる
@@ -774,14 +888,8 @@ pub const GESTURES: [Gesture; 19] = [
         (false, false, true),
         Operation::SelectionSubtract,
     ),
-    // 3D ビュー: 右ボタンで回す（Shift でパン）・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 左で回す（Shift を足すとパン）
-    gesture_of(
-        "view3d",
-        None,
-        Secondary,
-        (false, true, false),
-        Operation::Pan,
-    ),
+    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
+    // Alt + 左でスナップ回転（動かさずに離すとクローンの元）
     gesture_of(
         "view3d",
         None,
@@ -789,6 +897,7 @@ pub const GESTURES: [Gesture; 19] = [
         (false, false, false),
         Operation::Orbit,
     ),
+    click_of("view3d", Secondary, (false, false, false), Operation::Pick),
     gesture_of(
         "view3d",
         None,
@@ -810,13 +919,18 @@ pub const GESTURES: [Gesture; 19] = [
         (false, false, false),
         Operation::Pan,
     ),
-    gesture_of("view3d", None, Primary, (true, true, false), Operation::Pan),
     gesture_of(
         "view3d",
         None,
         Primary,
         (true, false, false),
-        Operation::Orbit,
+        Operation::SnapOrbit,
+    ),
+    click_of(
+        "view3d",
+        Primary,
+        (true, false, false),
+        Operation::CloneSource,
     ),
     // ステンシル（Y を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
     gesture_of(
@@ -864,6 +978,7 @@ pub const GESTURES: [Gesture; 19] = [
         ctrl: false,
         operation: Operation::SnapStencilRotation,
         starts: false,
+        click: false,
     },
 ];
 
@@ -887,9 +1002,46 @@ pub fn gesture(scope: &str, button: PointerButton, m: &Modifiers, held: bool) ->
         .map(|g| g.operation)
 }
 
-/// 描くツールの左ボタンが、この修飾でスポイトになるか（2D だけ）。
-pub fn picks(m: &Modifiers) -> bool {
-    gesture("canvas", Primary, m, false) == Some(Operation::Pick)
+/// この押しが始める操作を、修飾も押しながらのキーも書いたとおりに（書いていない Shift・Alt・Ctrl・押しながらのキーがあれば当てない）引く。
+/// 2D の右ボタンのスポイトのように、修飾を足した押しでは始めない操作が使う（`gesture` は書いていない修飾を気にしない）。
+pub fn gesture_exact(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+) -> Option<Operation> {
+    exact(scope, button, m, held, |g| g.starts)
+}
+
+/// この押しを動かさずに離したときの操作（押しの始めの修飾で決める。始める組み合わせと違い、修飾は書いたとおりに（書いていない Shift・Alt・Ctrl・
+/// 押しながらのキーがあれば当てない）見る: Shift を押した右クリックがスポイトになったりしない。無ければ None）。
+pub fn click_gesture(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+) -> Option<Operation> {
+    exact(scope, button, m, held, |g| g.click)
+}
+
+fn exact(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+    wanted: impl Fn(&Gesture) -> bool,
+) -> Option<Operation> {
+    GESTURES
+        .iter()
+        .filter(|g| wanted(g) && g.scope == scope)
+        .find(|g| {
+            g.button == button
+                && g.held.is_some() == held
+                && g.alt == m.alt
+                && g.shift == m.shift
+                && g.ctrl == ctrl(m)
+        })
+        .map(|g| g.operation)
 }
 
 #[cfg(test)]
@@ -906,6 +1058,7 @@ mod tests {
                     o.scope == g.scope
                         && o.held == g.held
                         && o.button == g.button
+                        && (o.starts, o.click) == (g.starts, g.click)
                         && (o.alt, o.shift, o.ctrl) == (g.alt, g.shift, g.ctrl)
                 })
                 .count();
@@ -931,20 +1084,16 @@ mod tests {
     }
 
     #[test]
-    fn the_view_gestures_resolve_the_way_the_input_code_used_to() {
+    fn the_view_gestures_resolve_the_way_the_input_code_reads_them() {
         let none = Modifiers::NONE;
         let alt = Modifiers::ALT;
         let shift = Modifiers::SHIFT;
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         let ctrl = Modifiers::CTRL;
-        // 3D
+        // 3D: 右で回す・中でパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 左でスナップ回転
         assert_eq!(
             gesture("view3d", Secondary, &none, false),
             Some(Operation::Orbit)
-        );
-        assert_eq!(
-            gesture("view3d", Secondary, &shift, false),
-            Some(Operation::Pan)
         );
         assert_eq!(
             gesture("view3d", Middle, &none, false),
@@ -962,27 +1111,74 @@ mod tests {
         assert_eq!(gesture("view3d", Primary, &ctrl, false), None);
         assert_eq!(
             gesture("view3d", Primary, &alt, false),
+            Some(Operation::SnapOrbit)
+        );
+        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 左も、パンではなくスナップ回転
+        assert_eq!(
+            gesture("view3d", Secondary, &shift, false),
             Some(Operation::Orbit)
         );
         assert_eq!(
             gesture("view3d", Primary, &alt_shift, false),
-            Some(Operation::Pan)
+            Some(Operation::SnapOrbit)
         );
         // Space を押していても、右・中ボタンは同じ
         assert_eq!(
             gesture("view3d", Secondary, &none, true),
             Some(Operation::Orbit)
         );
-        // 2D
+        // 動かさずに離したとき: 右はスポイト、Alt + 左はクローンの元。修飾は書いたとおり（Shift を足すとどちらでもない）
+        assert_eq!(
+            click_gesture("view3d", Secondary, &none, false),
+            Some(Operation::Pick)
+        );
+        assert_eq!(
+            click_gesture("view3d", Primary, &alt, false),
+            Some(Operation::CloneSource)
+        );
+        assert_eq!(click_gesture("view3d", Secondary, &shift, false), None);
+        assert_eq!(click_gesture("view3d", Primary, &alt_shift, false), None);
+        assert_eq!(click_gesture("view3d", Secondary, &ctrl, false), None);
+        assert_eq!(click_gesture("view3d", Secondary, &none, true), None);
+        assert_eq!(click_gesture("view3d", Primary, &alt, true), None);
+        assert_eq!(click_gesture("view3d", Primary, &none, false), None);
+        assert_eq!(click_gesture("view3d", Middle, &none, false), None);
+        // 2D の右ボタンのスポイトは、修飾も書いたとおり（Shift・Alt・Ctrl・Space を足すと始めない）
+        assert_eq!(
+            gesture_exact("canvas", Secondary, &none, false),
+            Some(Operation::Pick)
+        );
+        assert_eq!(gesture_exact("canvas", Secondary, &shift, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &alt, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &ctrl, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &none, true), None);
+        assert_eq!(
+            gesture_exact("canvas", Primary, &alt, false),
+            Some(Operation::Rotate)
+        );
+        assert_eq!(gesture_exact("canvas", Primary, &alt_shift, false), None);
+        // 2D: 中でパン・Alt + 左で回す・右でスポイト。Shift + 中は回さない（パン）
         assert_eq!(
             gesture("canvas", Middle, &none, false),
             Some(Operation::Pan)
         );
         assert_eq!(
             gesture("canvas", Middle, &shift, false),
+            Some(Operation::Pan)
+        );
+        assert_eq!(
+            gesture("canvas", Primary, &alt, false),
             Some(Operation::Rotate)
         );
-        assert!(picks(&alt) && !picks(&none) && !picks(&shift));
+        assert_eq!(gesture("canvas", Primary, &none, false), None);
+        assert_eq!(
+            gesture("canvas", Secondary, &none, false),
+            Some(Operation::Pick)
+        );
+        // 2D の Alt + 左は、描くツールのスポイトではない（どの組み合わせも Pick を左ボタンに割り当てない）
+        assert!(GESTURES
+            .iter()
+            .all(|g| !(g.operation == Operation::Pick && g.button == Primary)));
         // 選択範囲の作り方
         assert_eq!(gesture("selection", Primary, &none, false), None);
         assert_eq!(
@@ -1501,11 +1697,15 @@ mod tests {
                 b.command
             );
         }
-        // 押している間の R・Space と 3D の . は、どのモードでも。Y・N（ステンシル）はペイントだけ
-        assert_eq!(
-            primary("view.rotate_hold").map(|b| b.scope),
-            Some(Scope::Everywhere)
-        );
+        // 押している間の Space・3D の視点の移動と 3D の . は、どのモードでも。Y・N（ステンシル）はペイントだけ
+        for fly in FLY_KEYS {
+            assert_eq!(
+                primary(fly.command).map(|b| b.scope),
+                Some(Scope::Everywhere),
+                "{}",
+                fly.command
+            );
+        }
         assert_eq!(
             primary("view.pan_hold").map(|b| b.scope),
             Some(Scope::Everywhere)
@@ -1529,7 +1729,8 @@ mod tests {
 
     #[test]
     fn the_keys_read_by_the_views_come_from_the_table() {
-        assert_eq!(hold_key("view.rotate_hold"), Some(Key::R));
+        // R を押しながらの 2D の回転は、既定では割り当てが無い（操作は残してある）
+        assert_eq!(hold_key("view.rotate_hold"), None);
         assert_eq!(hold_key("view.pan_hold"), Some(Key::Space));
         assert_eq!(hold_key("stencil.transform_hold"), Some(Key::Y));
         assert_eq!(hold_key("stencil.bypass_hold"), Some(Key::N));
@@ -1640,6 +1841,228 @@ mod tests {
         assert!(!Arc::ptr_eq(&before, &after));
         assert_eq!(before.rows(), after.rows());
         assert_eq!(before.order(), after.order());
+    }
+
+    #[test]
+    fn the_fly_keys_are_rows_of_the_table_and_point_the_way_their_names_say() {
+        let expected = [
+            ("view3d.fly_forward", Key::W, [0.0, 0.0, 1.0]),
+            ("view3d.fly_back", Key::S, [0.0, 0.0, -1.0]),
+            ("view3d.fly_left", Key::A, [-1.0, 0.0, 0.0]),
+            ("view3d.fly_right", Key::D, [1.0, 0.0, 0.0]),
+            ("view3d.fly_down", Key::Q, [0.0, -1.0, 0.0]),
+            ("view3d.fly_up", Key::E, [0.0, 1.0, 0.0]),
+        ];
+        assert_eq!(FLY_KEYS.len(), expected.len());
+        for (command, key, direction) in expected {
+            assert_eq!(hold_key(command), Some(key), "{command}");
+            let fly = FLY_KEYS
+                .iter()
+                .find(|f| f.command == command)
+                .unwrap_or_else(|| panic!("{command}"));
+            assert_eq!((fly.key, fly.direction), (key, direction), "{command}");
+            assert_eq!(
+                commands::find(command).map(|c| c.kind),
+                Some(commands::Kind::Hold),
+                "{command}"
+            );
+            let row = primary(command).expect("表の行");
+            assert_eq!(
+                row.trigger,
+                Trigger::Key {
+                    modifiers: Modifiers::NONE,
+                    key
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn taking_the_fly_keys_removes_only_plain_and_shifted_presses_of_those_keys() {
+        let key = |key, modifiers, pressed| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        let ctx = egui::Context::default();
+        let mut left = Vec::new();
+        let input = egui::RawInput {
+            events: vec![
+                key(Key::W, Modifiers::NONE, true),
+                key(Key::S, Modifiers::SHIFT, true),
+                key(Key::A, Modifiers::COMMAND, true),
+                key(Key::D, Modifiers::ALT, true),
+                key(Key::Q, Modifiers::NONE, true),
+                key(Key::E, Modifiers::NONE, false),
+                key(Key::X, Modifiers::NONE, true),
+                Event::Text("w".into()),
+            ],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| {
+                take_fly_keys(i, &mut Vec::new(), true);
+                left = i.events.clone();
+            });
+        });
+        output.textures_delta.clear();
+        // 修飾なし・Shift だけの押し（W・S・Q）は取り除く。Ctrl・Alt を足したもの・離した事象・ほかのキー・文字の入力は残す
+        let keys: Vec<(Key, bool)> = left
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                (Key::A, true),
+                (Key::D, true),
+                (Key::E, false),
+                (Key::X, true)
+            ]
+        );
+        assert!(left.iter().any(|e| matches!(e, Event::Text(t) if t == "w")));
+    }
+
+    #[test]
+    fn a_fly_key_still_held_after_the_flight_stays_off_the_table_until_it_is_released_and_pressed_again(
+    ) {
+        let key = |key, modifiers, pressed, repeat| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat,
+            modifiers,
+        };
+        let ctx = egui::Context::default();
+        let mut held: Vec<Key> = Vec::new();
+        let frame = |events: Vec<Event>, flying: bool, held: &mut Vec<Key>| -> Vec<(Key, bool)> {
+            let mut left = Vec::new();
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.input_mut(|i| {
+                    take_fly_keys(i, held, flying);
+                    left = i
+                        .events
+                        .iter()
+                        .filter_map(|e| match e {
+                            Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                            _ => None,
+                        })
+                        .collect();
+                });
+            });
+            output.textures_delta.clear();
+            left
+        };
+        // 移動の間（右ボタンを押している）に W・D・Shift+Q を押す: 取り除く
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, false),
+                key(Key::D, Modifiers::NONE, true, false),
+                key(Key::Q, Modifiers::SHIFT, true, false),
+            ],
+            true,
+            &mut held,
+        );
+        assert!(left.is_empty());
+        assert_eq!(held.len(), 3);
+        // 右ボタンを先に離しても、押したままの間のキーの繰り返しは取り除く（W・D・Shift+Q）
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, true),
+                key(Key::D, Modifiers::NONE, true, true),
+                key(Key::Q, Modifiers::SHIFT, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert!(left.is_empty(), "{left:?}");
+        // 押していなかったキー（X）と、Ctrl を足した W は届く
+        let left = frame(
+            vec![
+                key(Key::X, Modifiers::NONE, true, false),
+                key(Key::W, Modifiers::COMMAND, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::X, true), (Key::W, true)]);
+        // W を離す: 離した事象は届き、W だけ「押したまま」の扱いが終わる
+        let left = frame(
+            vec![key(Key::W, Modifiers::NONE, false, false)],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::W, false)]);
+        assert!(!held.contains(&Key::W) && held.contains(&Key::D) && held.contains(&Key::Q));
+        // 押し直した W は、表へ届く。D・Q は押したままなので、まだ届かない
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, false),
+                key(Key::D, Modifiers::NONE, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::W, true)]);
+        // 全部離したら、何も覚えていない
+        frame(
+            vec![
+                key(Key::W, Modifiers::NONE, false, false),
+                key(Key::D, Modifiers::NONE, false, false),
+                key(Key::Q, Modifiers::SHIFT, false, false),
+            ],
+            false,
+            &mut held,
+        );
+        assert!(held.is_empty());
+    }
+
+    #[test]
+    fn a_fly_key_pressed_before_the_right_button_is_held_counts_as_held_for_the_flight() {
+        let ctx = egui::Context::default();
+        let mut held: Vec<Key> = Vec::new();
+        let run = |events: Vec<Event>, flying: bool, held: &mut Vec<Key>| {
+            let mut count = 0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.input_mut(|i| {
+                        take_fly_keys(i, held, flying);
+                        count = i
+                            .events
+                            .iter()
+                            .filter(|e| matches!(e, Event::Key { pressed: true, .. }))
+                            .count();
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            count
+        };
+        let press = |repeat| Event::Key {
+            key: Key::W,
+            physical_key: None,
+            pressed: true,
+            repeat,
+            modifiers: Modifiers::NONE,
+        };
+        // 右ボタンを押す前に W を押していた（表へ届く）
+        assert_eq!(run(vec![press(false)], false, &mut held), 1);
+        // 右ボタンを押した（移動の間）: 繰り返しは届かず、右を離したあとも W を離すまで届かない
+        assert_eq!(run(vec![press(true)], true, &mut held), 0);
+        assert_eq!(run(vec![press(true)], false, &mut held), 0);
     }
 
     #[test]

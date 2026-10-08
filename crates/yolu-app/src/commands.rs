@@ -27,7 +27,7 @@ use crate::state::{Action, AppState, Tool};
 pub enum Kind {
     /// 押して 1 回。
     Press,
-    /// 押している間だけ効く（R・Space・Y・N）。
+    /// 押している間だけ効く（Space・Y・N・3D で右ボタンを押している間の視点の移動キー。R は、割り当てがあれば 2D の回転）。
     Hold,
     /// マウスの組み合わせ（`keymap::GESTURES` の `Operation` ごと）。
     Gesture,
@@ -263,7 +263,7 @@ pub static COMMANDS: &[Command] = &[
         "移動 ↓（10 px）",
         "Move ↓ (10 px)",
     ),
-    // 押している間だけ効くキー
+    // 押している間だけ効くキー（`view.rotate_hold` は既定では割り当てが無い）
     hold("view.rotate_hold", "回転", "Rotate"),
     hold("view.pan_hold", "パン / Ctrl: ズーム", "Pan / Ctrl: Zoom"),
     hold("stencil.transform_hold", "ステンシル", "Stencil"),
@@ -272,12 +272,46 @@ pub static COMMANDS: &[Command] = &[
         "ステンシルを一時解除",
         "Bypass Stencil",
     ),
+    // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動
+    hold(
+        "view3d.fly_forward",
+        "前へ移動（右ボタン中）",
+        "Move Forward (While Right Button Held)",
+    ),
+    hold(
+        "view3d.fly_back",
+        "後ろへ移動（右ボタン中）",
+        "Move Back (While Right Button Held)",
+    ),
+    hold(
+        "view3d.fly_left",
+        "左へ移動（右ボタン中）",
+        "Move Left (While Right Button Held)",
+    ),
+    hold(
+        "view3d.fly_right",
+        "右へ移動（右ボタン中）",
+        "Move Right (While Right Button Held)",
+    ),
+    hold(
+        "view3d.fly_down",
+        "下へ移動（右ボタン中）",
+        "Move Down (While Right Button Held)",
+    ),
+    hold(
+        "view3d.fly_up",
+        "上へ移動（右ボタン中）",
+        "Move Up (While Right Button Held)",
+    ),
     // マウスの組み合わせ（`keymap::GESTURES`）
     gesture("view.orbit", Operation::Orbit),
     gesture("view.pan", Operation::Pan),
     gesture("view.zoom", Operation::Zoom),
     gesture("view.rotate", Operation::Rotate),
+    // `color.eyedrop_temporary` は、描くツールで Alt + 左を押すと色を取る組み合わせだった ID。ショートカットの設定（段 6）で割り当てを戻せるように残す（今は右ボタンで色を取る）
     gesture("color.eyedrop_temporary", Operation::Pick),
+    gesture("view.snap_orbit", Operation::SnapOrbit),
+    gesture("brush.clone_source", Operation::CloneSource),
     gesture("selection.combine_add", Operation::SelectionAdd),
     gesture("selection.combine_subtract", Operation::SelectionSubtract),
     gesture("selection.combine_intersect", Operation::SelectionIntersect),
@@ -558,10 +592,15 @@ mod tests {
                 row.command
             );
         }
-        // 割り当てが要る Press は表に行がある（ツールのうち、キーの無いゆがみを除く）
+        // 押している間のキーは表に行がある（既定で割り当てを外した `view.rotate_hold` を除く）。ほかの種類は行を持たない
         for c in COMMANDS.iter().filter(|c| c.kind != Kind::Press) {
             let has_row = keymap::bindings().iter().any(|b| b.command == c.id);
-            assert_eq!(has_row, c.kind == Kind::Hold, "{}", c.id);
+            assert_eq!(
+                has_row,
+                c.kind == Kind::Hold && c.id != "view.rotate_hold",
+                "{}",
+                c.id
+            );
         }
         for c in COMMANDS {
             if c.kind == Kind::Press && c.id != "tool.liquify" {
@@ -614,9 +653,9 @@ mod tests {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 61);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
-        assert_eq!(count(|c| c.kind == Kind::Hold), 4);
-        assert_eq!(count(|c| c.kind == Kind::Gesture), 12);
+        assert_eq!(count(|c| c.kind == Kind::Hold), 10);
+        assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 91);
+        assert_eq!(COMMANDS.len(), 99);
     }
 }

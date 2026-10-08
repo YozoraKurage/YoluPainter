@@ -724,8 +724,8 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             lang.pick("中心から", "From center"),
             app.sel.from_center,
             Some(lang.pick(
-                "押した点を中心に広げる（切っていても、Alt を押すあいだは中心から）",
-                "Grow around the pressed point (with it off, Alt held does the same)",
+                "押した点を中心に広げる（切っていても、ドラッグを始めたあとに Alt を押すあいだは中心から）",
+                "Grow around the pressed point (with it off, pressing Alt after you start dragging does the same)",
             )),
             true,
         ) {
