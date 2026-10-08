@@ -1,6 +1,6 @@
 # 塗りつぶし投影の C# 正解
 
-`tools/csharp-golden/fill.sh golden` で再生成します。すべて人工データです。
+`tools/csharp-golden/fill.sh golden` で再生成します（C# の元は Unity ブリッジのタグ `0.4.0` の `Runtime/Core`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）。すべて人工データです。
 
 異方性を切った道（`FillInput::anisotropic`・`shape_anisotropic` が false）の正解です。入れた道の正解は Rust が撮った [`../fill-image-anisotropic/`](../fill-image-anisotropic/README.md) にあります。
 

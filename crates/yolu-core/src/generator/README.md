@@ -59,11 +59,11 @@ SSE4.1 は 2）を 1 組にして計算する。N 画素が同じ格子に入る
 約 2,845 万の値で 0（glibc。`mixing.rs` の試験）。混合率曲線のある区間は、N 画素が同じ区間ならその曲線のレーンの式、またがる組は 1 画素ずつの曲線の式で重みを出す。
 
 `cargo run --release -p yolu-core --example generator_perf` は種類 × 大きさ（256²・1024²・4096²）× スレッド数（1・8）の表（環境変数 `GEN_SIZES`・`GEN_THREADS`・`GEN_ROWS`・`GEN_RUNS` で絞る）で、
-出力は全画素の SHA-256 で毎回同じ。`GEN_BREAKDOWN=1` は 4096²・スレッド 1 の段ごとの内訳（入力の取り込み・値・ノイズ・行・全体）。`GEN_FUZZ=件数` は計測の代わりに、固定のシードの乱数で作った設定・マップ・入力・領域の組を評価して出力のハッシュを 1 件ずつ出す。前後のコミットで組んだ例の出力（`YOLU_SIMD` を変えても）を `diff` すれば、設定をばらまいた入力でバイトが変わっていないことを確かめられる。
+出力は全画素の SHA-256 で毎回同じ。`GEN_BREAKDOWN=1` は 4096²・スレッド 1 の段ごとの内訳（入力の取り込み・値・ノイズ・行・全体）。`GEN_FUZZ=件数` は計測の代わりに、固定のシードの乱数で作った設定・マップ・入力・領域の組を評価して出力のハッシュを 1 件ずつ出す。前後のコミットでビルドした例の出力（`YOLU_SIMD` を変えても）を `diff` すれば、設定をばらまいた入力でバイトが変わっていないことを確かめられる。
 入力は C# との一致試験と同じ合成入力（`rand`。マップの値が画素ごとに飛ぶので格子の覚えが
 当たらない）と、メッシュのマップに近いなめらかな入力（`smooth`）の 2 通り。
 
-`bash tools/csharp-golden/run-generator.sh` は Unity に同梱の Roslyn/Mono で正本の Core をそのまま組み、合成した入力を実評価する。
+`bash tools/csharp-golden/run-generator.sh` は Unity に同梱の Roslyn/Mono で正本の Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）をそのままビルドし、合成した入力を実評価する。
 出力は `target/csharp-generator/golden/`。試験は全画素の SHA-256 を `tests/generator-index.txt` と比較する。
 `GEN_THREADS=1` と `4` で並列度を指定できる。`run-generator.sh bench` と
 `cargo run --release -p yolu-core --example generator_bench` は4096²、ウォームアップ1回・計測1回。入力画像と設定の作成は時間に含めず、束縛と返却画像の確保は含める。
@@ -98,6 +98,7 @@ SSE4.1 は 2）を 1 組にして計算する。N 画素が同じ格子に入る
   （`tests/effects/image_stage.rs`）。マスク・スカラーの輝度は、補間した後の RGB から丸めずに求める。塗りつぶしレイヤーがスカラーのチャンネルで読む輝度は元の画素ごとに
   8 bit へ丸めてから補間するので、補間がかかる投影では値が少し違う（R・G・B・A の成分は塗りつぶしレイヤーに読み方が無い）。
   行の評価（`sample_row`）も画素ごとに `projected` を呼ぶ（レーンの式にはしていない）。
+
 ## 模様・ライト・マスクの組み立て（0.5.0。Rust 版だけの種類）
 
 `Kind::Pattern`（66）・`Kind::UvIslandVariation`（67）・`Kind::Light`（68）・`Kind::MaskBuilder`（69）。設定は `Settings::pattern`・`island`・`light`・`mask_builder`

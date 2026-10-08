@@ -74,6 +74,6 @@ Unity 同梱 .NET・Roslyn・Mono が必要（既定 `/opt/unity/Editor/Data`、
    python tools/determinism/compare.py target/determinism/dotnet-mathf.txt target/determinism/rust-msvc-mathf.txt target/determinism/windows-dotnet-mathf
    ```
 
-   Unity の C# Core の完全な正解再生成も、元の golden を上書きせず target 内へ出す。
+   Unity の C# Core の完全な正解再生成（Unity ブリッジのタグ `0.4.0` の `Runtime/Core` が要る。`docs/DEVELOPMENT.md`）も、元の golden を上書きせず target 内へ出す。
    入力・実行環境・出力の SHA-256 を記録し、Linux の正解と Windows Unity のどちらに合わせるか判断する。
    最適化やランタイム更新後も同じ入力で再測定する。

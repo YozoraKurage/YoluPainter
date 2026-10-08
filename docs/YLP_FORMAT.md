@@ -930,7 +930,7 @@ Unity 版の `Runtime/Core` の読み手に読ませた記録がある: `crates/
 
 ### 版 22（ユーザーチャンネル）
 
-Unity 0.2.0 は版22を「Unsupported archive version; source retained unchanged.」で断る。C#の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）にRustが書いた版22を読ませた記録が [`user-channels-v22.unity.txt`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/user-channels-v22.unity.txt) で、外側の .ylp と `project.json` は読め、開く手順のセットの正本の読みで断る（全部のセットを読めてから入れ替えるので、Unityの状態は変わらず、ファイルも書き換えない）。記録の最後の行は、ウィンドウ（`TexturePaintWindow`）が正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもの。
+Unity 0.2.0 は版22を「Unsupported archive version; source retained unchanged.」で断る。C#の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）にRustが書いた版22を読ませた記録が [`user-channels-v22.unity.txt`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/user-channels-v22.unity.txt) で、外側の .ylp と `project.json` は読め、開く手順のセットの正本の読みで断る（全部のセットを読めてから入れ替えるので、Unityの状態は変わらず、ファイルも書き換えない）。記録の最後の行は、ウィンドウ（`TexturePaintWindow`）が正本の読みの失敗に付ける文を、読み手の例外から同じ形に作ったもの。
 
 選んだ理由と、採らなかった案:
 
