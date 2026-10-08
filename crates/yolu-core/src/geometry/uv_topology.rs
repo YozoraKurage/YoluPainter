@@ -14,6 +14,9 @@
 //!   超えれば作らずに断り（[`UvTopologyError::Budget`]）、作ったら、覚えているアイランドの図と帯の写しの合計が予算に収まるよう古いものから捨てる
 //!   （直近の 1 つずつは残す）。断った大きさと予算は覚え、同じか小さい予算での頼みは作り直さずに断る（[`UvTopology::refusal`]）。同じ大きさを
 //!   別のスレッドが同時に頼んでも、作るのは 1 回（待たせる）。
+//! - 作るのは、rayon のスレッドの外（アプリの主のスレッドや裏の仕事）からなら rayon で並列に、rayon のスレッドの中（評価のブロックを並べている最中など）からなら
+//!   並列にせず今のスレッドで順に回す（[`may_parallelize`]。結果は同じ）。作る間は門・`OnceLock` を持っていて、並列の仕事の終わりを待つスレッドは同じスレッドの
+//!   中で別の仕事を拾うので、拾った仕事が同じ物を取りに来ると、自分が持つ物を待って止まるから。評価の側は、並列の仕事を並べる前に要る物を作っておく。
 
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -85,7 +88,7 @@ pub struct IslandRun {
 }
 
 /// アイランドの図: テクセル → UV アイランドの番号（左下原点）。行ごとの連なりで持つ。
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct IslandMap {
     width: u32,
     height: u32,
@@ -174,6 +177,7 @@ impl Link {
 }
 
 /// アイランドと縁の対応（解像度によらない）。
+#[derive(Debug, PartialEq)]
 pub(crate) struct Parts {
     /// 三角形の番号ごとのアイランド（セットの外は 0）。
     pub island_of: Vec<u32>,
@@ -188,12 +192,16 @@ pub(crate) struct Parts {
 pub struct UvTopology {
     geometry: Arc<SurfaceGeometry>,
     material: Option<i32>,
+    /// 初めて要るときに作る（作る間、ほかのスレッドは `get_or_init` で待つ）。持ったまま rayon の仕事を待たない: 作るのが rayon のスレッドの中なら
+    /// 並列にしない（[`may_parallelize`]）。
     parts: OnceLock<Parts>,
     maps: Mutex<Vec<Arc<IslandMap>>>,
     bands: Mutex<Vec<Arc<SeamBand>>>,
     /// 作業予算で断った作り方（新しいものが後ろ）。
     refused: Mutex<Vec<Refusal>>,
     /// アイランドの図・帯の写しを作る間の門（同じものを同時に作らない）。帯の写しの門を持ってからアイランドの図の門を取る。
+    /// 門を持ったまま rayon の仕事を待たない: 待つ間のスレッドは同じスレッドの中で別の仕事（同じ門を取りに来る評価のブロックなど）を拾い、自分が持つ門を
+    /// 待って止まる。作るのが rayon のスレッドの中なら並列にしない（[`may_parallelize`]）。
     map_gate: Mutex<()>,
     band_gate: Mutex<()>,
 }
@@ -258,7 +266,7 @@ impl UvTopology {
 
     pub(crate) fn parts(&self) -> &Parts {
         self.parts
-            .get_or_init(|| Parts::new(&self.geometry, self.material))
+            .get_or_init(|| Parts::new(&self.geometry, self.material, may_parallelize()))
     }
 
     /// アイランドの数（番号は 1..=数）。
@@ -311,6 +319,7 @@ impl UvTopology {
             width,
             height,
             budget,
+            may_parallelize(),
         );
         let map = match built {
             Ok(map) => Arc::new(map),
@@ -375,7 +384,9 @@ impl UvTopology {
         }
         let built = self
             .island_map_within(width, height, budget)
-            .and_then(|islands| super::seam_band::build(self, islands, band, budget));
+            .and_then(|islands| {
+                super::seam_band::build(self, islands, band, budget, may_parallelize())
+            });
         let built = match built {
             Ok(b) => Arc::new(b),
             Err(e) => {
@@ -497,13 +508,43 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 今のスレッドから、位相の対応・アイランドの図・帯の写しを並列（rayon）で作ってよいか。rayon のスレッドの中（評価のブロックを並べている最中など）では
+/// 作らない: 作る間は門・`OnceLock` を持っていて、並列の仕事の終わりを待つスレッドは、同じスレッドの中で別の仕事を拾う。拾った仕事が同じ門・`OnceLock` を
+/// 取りに来ると、自分が持つものを待って止まる。rayon の外（アプリの主のスレッドや裏の仕事）からは、今までどおり並列にする。結果は並列でも逐次でも同じ。
+pub(crate) fn may_parallelize() -> bool {
+    rayon::current_thread_index().is_none()
+}
+
+/// `0..n` の各番号に `f` を当てた結果を、番号の順に集める。`parallel` なら rayon で、そうでなければ今のスレッドで順に（結果は同じ）。
+pub(crate) fn collect_indexed<T, R>(
+    parallel: bool,
+    n: usize,
+    min_len: usize,
+    f: impl Fn(usize) -> T + Sync + Send,
+) -> R
+where
+    T: Send,
+    R: FromIterator<T> + FromParallelIterator<T>,
+{
+    if parallel {
+        (0..n)
+            .into_par_iter()
+            .with_min_len(min_len.max(1))
+            .map(f)
+            .collect()
+    } else {
+        (0..n).map(f).collect()
+    }
+}
+
 /// 2 つの UV が同じか（`project` の継ぎ目の見つけ方と同じ許し）。
 pub(crate) fn same_uv(a: Vec2, b: Vec2) -> bool {
     (a.x - b.x).abs() <= 1e-6 && (a.y - b.y).abs() <= 1e-6
 }
 
 impl Parts {
-    fn new(g: &SurfaceGeometry, material: Option<i32>) -> Parts {
+    /// `parallel` なら辺の向こうの検索を rayon で並べる（結果は逐次と同じ）。
+    pub(crate) fn new(g: &SurfaceGeometry, material: Option<i32>, parallel: bool) -> Parts {
         let tris = g.triangles();
         let n = tris.len();
         let member = |i: usize| material.is_none_or(|m| tris[i].material == m);
@@ -567,17 +608,13 @@ impl Parts {
         }
         // 辺の向こうと継ぎ目の縁
         let tolerance = g.weld_tolerance() as f64;
-        let links: Vec<[Link; 3]> = (0..n)
-            .into_par_iter()
-            .with_min_len(1024)
-            .map(|i| {
-                if member(i) {
-                    links_of(g, i, tolerance, &member)
-                } else {
-                    [Link::NONE; 3]
-                }
-            })
-            .collect();
+        let links: Vec<[Link; 3]> = collect_indexed(parallel, n, 1024, |i| {
+            if member(i) {
+                links_of(g, i, tolerance, &member)
+            } else {
+                [Link::NONE; 3]
+            }
+        });
         // アイランドの縁（継ぎ目と相手の無い辺）を、始まり・終わりの UV でつなぐ（向きの揃ったアイランドでは、縁の頂点ごとに出る縁と入る縁が 1 つずつ）
         let uv_of = |i: usize, j: usize| {
             let t = &tris[i];
@@ -701,13 +738,14 @@ fn links_of(
 
 /// アイランドの図を作る（ベイクの行の割り当てを 1 テクセル 1 点で）。作る途中の確保（行ごとの連なり、それを 1 本にまとめる写しとの 2 つ分と、
 /// 行ごとの入れ物）が `budget` に収まらなければ、行の連なりを数えながら途中で断る。
-fn build_island_map(
+pub(crate) fn build_island_map(
     g: &SurfaceGeometry,
     material: Option<i32>,
     parts: &Parts,
     width: u32,
     height: u32,
     budget: u64,
+    parallel: bool,
 ) -> Result<IslandMap, UvTopologyError> {
     let over = UvTopologyError::Budget { budget };
     let run_bytes = std::mem::size_of::<IslandRun>() as u64;
@@ -737,9 +775,8 @@ fn build_island_map(
     // 連なりのバイト数（行ごとの入れ物に入っている分）。まとめるとき同じだけ増えるので、2 倍まで
     let held = std::sync::atomic::AtomicU64::new(0);
     let limit = (budget - rows_bytes) / 2;
-    let rows: Result<Vec<Vec<IslandRun>>, UvTopologyError> = (0..height as usize)
-        .into_par_iter()
-        .map(|y| {
+    let rows: Result<Vec<Vec<IslandRun>>, UvTopologyError> =
+        collect_indexed(parallel, height as usize, 1, |y| {
             let samples = raster.row(y, w, 1);
             let mut runs: Vec<IslandRun> = Vec::new();
             for x in 0..w {
@@ -765,8 +802,7 @@ fn build_island_map(
                 return Err(UvTopologyError::Budget { budget });
             }
             Ok(runs)
-        })
-        .collect();
+        });
     let rows = rows?;
     let mut offsets = Vec::with_capacity(rows.len() + 1);
     offsets.push(0u32);
