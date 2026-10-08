@@ -36,7 +36,7 @@ The material values received from Unity appear as "Unity Values", and "Match Uni
 
 ## Paint on the model
 
-The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). Selections, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas.
+You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). Selections, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas.
 
 For brushes, Size, Hardness, Flow, Opacity, pressure, color, Color Dynamics, color mixing, erasing, stencils and effect brushes (Blur, Smudge, Clone) work in 3D. Image tips and the stroke (Stabilizer), fade and pen, jitter, texture and dual brush settings are limited to the 2D canvas, so they are disabled while you can paint only in the 3D view. While the 3D view is shown, the brush properties gain a "3D" group.
 
@@ -53,9 +53,9 @@ For brushes, Size, Hardness, Flow, Opacity, pressure, color, Color Dynamics, col
 
 When you load a model with bones from an FBX, a "Pose" tab appears in the same group as Properties (it can also be moved to a separate window).
 
-1. Select a bone in the "Bones" tree to enter pose mode; rings of a gizmo appear in the 3D view. Drag a ring with the left button to rotate, or click a surface to pick a bone. View → "Pose Mode" also switches the mode.
+1. Select a bone in the "Bones" tree to enter Pose mode; rings of a gizmo appear in the 3D view. Drag a ring with the left button to rotate, or click a surface to pick a bone. The mode dropdown at the left end of the options bar, the mode pie menu on `Ctrl+Tab`, View → Mode in the menu bar, and the button at the top of the Pose panel also switch the mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). Pose mode does not paint (the 2D canvas is for viewing only, too).
 2. The selected bone's position, rotation and scale can be typed (rotation is Euler angles in the same order as the Unity Inspector). You can reset a field, the bone, the bone and its children, everything, or one BlendShape at a time.
-3. Each pose operation is one pose undo step (`Ctrl+Z` in pose mode). Presets and takes cannot be applied while you are painting.
+3. Each pose operation is one pose undo step (`Ctrl+Z` in Pose mode). Presets and takes cannot be applied while you are painting.
 
 A model whose FBX contains takes (animations) shows a "Takes" section. Pick a take and a frame with the frame slider, then press "Apply as Pose" to apply the bones and BlendShape weights at that time to the current pose (moving the slider alone does not apply it). You can adjust the result by hand afterwards.
 

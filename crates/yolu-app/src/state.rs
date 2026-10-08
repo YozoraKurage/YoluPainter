@@ -417,6 +417,10 @@ pub enum PopupKind {
     },
     /// ドックのタブの右クリック（別ウィンドウで開く・ドックに戻す）。
     DockTab(crate::Tab),
+    /// オプションバーの左端のモードのドロップダウン（ペイント・編集・ポーズ）。
+    Mode,
+    /// パイメニュー（中身と途中の状態は `AppState::pie`。開いている間は下の入力を止める）。
+    Pie,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -543,6 +547,12 @@ pub enum Action {
     Dock(crate::detach::DockOp),
     /// テキストツールとテキストレイヤーの値（打ち始め・打ち終わり・値・フォントのファイル・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
     Text(crate::textlayer::TextAction),
+    /// モード（ペイント・編集・ポーズ）と、編集・ポーズのツールの帯のツール（画面だけ。文書は変えない）。
+    Mode(crate::mode::ModeAction),
+    /// パイメニューを開く（画面だけ）。
+    Pie(crate::pie::PieAction),
+    /// 3D の視点（軸の視点・選んだセットを収める。画面だけ）。
+    View3dNav(crate::view3d::navigation::NavOp),
 }
 
 impl Action {
@@ -624,6 +634,9 @@ impl Action {
             Self::Automation(..) => "Automation",
             Self::Dock(..) => "Dock",
             Self::Text(..) => "Text",
+            Self::Mode(..) => "Mode",
+            Self::Pie(..) => "Pie",
+            Self::View3dNav(..) => "View3dNav",
         }
     }
 
@@ -840,6 +853,12 @@ pub struct AppState {
     pub automation: crate::automation::Automation,
     /// テキストツール（打っている文字・次の文字の既定・フォントの覚え）。
     pub text: crate::textlayer::TextState,
+    /// モード（ペイント・編集・ポーズ）。替えるのは `set_mode`。
+    pub mode: crate::mode::EditorMode,
+    /// 編集・ポーズのモードのツールの帯で選んでいるツール。
+    pub edit_tool: crate::mode::EditTool,
+    /// パイメニュー（パイの並びと、開いているもの）。
+    pub pie: crate::pie::PieState,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -1032,6 +1051,9 @@ impl AppState {
             toolset: Default::default(),
             automation: Default::default(),
             text: Default::default(),
+            mode: Default::default(),
+            edit_tool: Default::default(),
+            pie: Default::default(),
         }
     }
 
@@ -1077,13 +1099,16 @@ impl AppState {
     }
 
     /// ツールを、ツールの列の `slot`（列に無いツールをキーで使うときは None）へ替える。ブラシ・消しゴムのツールは、そのツールの最後のブラシへ
-    /// （ストロークの最中にブラシが替わるなら断って false）。
+    /// （ストロークの最中にブラシが替わるなら断って false）。編集・ポーズのモードからは、ペイントのモードへ戻る（戻せなければツールも替えない）。
     pub(crate) fn switch_to(
         &mut self,
         tool: Tool,
         slot: Option<crate::toolset::SlotId>,
         keep_effect: bool,
     ) -> bool {
+        if !self.set_mode(crate::mode::EditorMode::Paint) {
+            return false;
+        }
         let changes = tool != self.tool || slot != self.toolset.set.active();
         if changes && !self.brush_for_slot(tool, slot) {
             return false;
@@ -1412,6 +1437,7 @@ impl AppState {
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.reset_layout = true,
             Action::SelectTool(tool) => {
+                // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
                 self.switch_tool(tool, false);
             }
             Action::SwapColors => self.color.swap(),
@@ -1561,6 +1587,9 @@ impl AppState {
             Action::Pressure(a) => self.pressure_apply(a),
             Action::Recovery(a) => self.recovery_apply(a),
             Action::Automation(op) => self.automation_apply(op),
+            Action::Mode(op) => self.mode_apply(op),
+            Action::Pie(op) => self.pie_apply(op),
+            Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
         }
     }
 }

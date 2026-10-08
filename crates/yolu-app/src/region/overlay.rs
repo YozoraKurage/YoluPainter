@@ -106,14 +106,14 @@ fn visible(hover: &super::tools::Hover, view: &CameraView) -> Arc<Vec<u32>> {
     Arc::new(out)
 }
 
-/// 3D ビュー: 範囲を求め直し（ポインタが表示域の上にあるときだけ）、範囲の面を薄い色で重ねる。回している・ポーズのモードでは出さない。
+/// 3D ビュー: 範囲を求め直し（ポインタが表示域の上にあるときだけ）、範囲の面を薄い色で重ねる。回している・ペイントのモードでないときは出さない。
 pub fn paint_surface(
     painter: &Painter,
     app: &mut AppState,
     rect: Rect,
     pointer: Option<egui::Pos2>,
 ) {
-    let busy = app.view3d.input.nav.is_some() || app.view3d.pose.mode;
+    let busy = app.view3d.input.nav.is_some() || !app.mode.paints();
     let picking = crate::bake::overlap::highlighting(app);
     if (!app.tool.is_region() && !picking) || busy {
         if app.region.hover.as_ref().is_some_and(|h| h.on_surface) {

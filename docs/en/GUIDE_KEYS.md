@@ -2,7 +2,17 @@
 
 [日本語](../GUIDE_KEYS.md)
 
-A list of keyboard, mouse and pen controls. The app lists the same assignments under Help → Keyboard Shortcuts. On Mac, read `Ctrl` in these tables as `Command` (menus still display `Ctrl`).
+A list of keyboard, mouse and pen controls. The app lists the same assignments under Help → Keyboard Shortcuts. On Mac, read `Ctrl` in these tables as `Command` (menus show `Cmd` too). The one exception is `Ctrl+Tab` for the mode pie menu, which is `Control` on Mac as well.
+
+## Modes and pie menus
+
+There are three modes: Paint, Edit and Pose. You paint only in Paint mode. The tool keys (the Tools section below), the brush size (`[` / `]`), swapping colors and the default colors (`X` / `D`), the keys in the Paths and fill points section, Quick Mask (`Shift+Q`), the arrow keys of Move / Transform, and screen color picking (Windows) work only in Paint mode.
+
+| Action | Input |
+|---|---|
+| Mode pie menu | `Ctrl+Tab` (opens at the pointer. It does not open while a mouse button is held or during a drag) |
+| Choose a pie menu item | Keep the key held, move toward an item, and release. If you release right away, the pie stays open: click an item. `1`–`8` (clockwise from the top) also choose |
+| Close a pie menu | `Esc`, a right click, or a click in the middle. Holding the key for a while and releasing it without moving also closes it |
 
 ## Tools
 

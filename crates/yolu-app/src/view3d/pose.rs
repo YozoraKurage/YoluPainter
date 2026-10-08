@@ -39,6 +39,7 @@ use super::model::{ViewError, ViewModel};
 use super::View3dState;
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::lang::Lang;
+use crate::mode::EditorMode;
 use crate::notice::{Kind, Source};
 use crate::state::{AppState, DialogRequest};
 
@@ -154,8 +155,6 @@ struct Loading {
 pub struct PoseEditor {
     pub session: Option<PoseSession>,
     loading: Option<Loading>,
-    /// ポーズのモード（3D ビューの左ドラッグがギズモを回す。描かない）。
-    pub mode: bool,
     /// ギズモのドラッグ（`super::gizmo`）。
     pub drag: Option<super::gizmo::GizmoDrag>,
     /// ギズモの上にポインタがある輪（強調して描く）。
@@ -688,7 +687,6 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
     if let Some(s) = &view3d.pose.session {
         if latest != Some(s.model_revision) {
             view3d.pose.session = None;
-            view3d.pose.mode = false;
             view3d.pose.drag = None;
             view3d.set_face_mask(None);
         }
@@ -916,11 +914,13 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             }
         }),
         PoseAction::ToggleMode => {
+            // ポーズのモードとペイントのモードを行き来する（ギズモのドラッグの途中なら、そこまでを確定してから。`set_mode`）
             if app.view3d.pose.session.is_some() {
-                if app.view3d.pose.mode {
-                    super::gizmo::release(app, true);
-                }
-                app.view3d.pose.mode = !app.view3d.pose.mode;
+                app.set_mode(if app.mode == EditorMode::Pose {
+                    EditorMode::Paint
+                } else {
+                    EditorMode::Pose
+                });
             }
             Ok(())
         }
@@ -956,7 +956,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
 /// ポーズのモードで、3D ビューが見えているときだけ、取り消し・やり直しをポーズへ回す（キャンバスのタブへ移って 2D を描いている
 /// ときに、見えていないポーズが戻らないように。モードはそのまま残り、3D ビューへ戻れば続きから）。
 pub fn owns_undo(app: &AppState) -> bool {
-    app.view3d.pose.mode && app.view3d.pose.session.is_some() && app.view3d.visible
+    app.mode == EditorMode::Pose && app.view3d.pose.session.is_some() && app.view3d.visible
 }
 
 /// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデル・Live Link の相手の無い試しの人形のポーズは
@@ -999,6 +999,8 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     });
     edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
+    // ほかのモデルに替わってセッションが終わったら、ポーズのモードを出る
+    crate::mode::leave_pose_without_rig(app);
     takes::poll(app);
     sync_modified(app);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
@@ -1178,7 +1180,7 @@ mod tests {
         assert!(begin_edit(&mut app.view3d).is_err());
         app.apply(Action::Pose(PoseAction::Reset));
         app.apply(Action::Pose(PoseAction::ToggleMode));
-        assert!(!app.view3d.pose.mode, "描いている間はモードも変えない");
+        assert_ne!(app.mode, EditorMode::Pose, "描いている間はモードも変えない");
         assert_eq!(app.message, ViewError::Stroking.to_string());
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
@@ -1217,7 +1219,7 @@ mod tests {
         assert!(app.doc.can_undo());
         // ポーズのモード: Ctrl+Z はポーズ（3D ビューが見えているあいだ）
         app.apply(Action::Pose(PoseAction::ToggleMode));
-        assert!(app.view3d.pose.mode);
+        assert_eq!(app.mode, EditorMode::Pose);
         app.view3d.visible = false;
         assert!(
             !owns_undo(&app),
@@ -1244,7 +1246,7 @@ mod tests {
     #[test]
     fn another_model_ends_the_session() {
         let mut app = app();
-        app.view3d.pose.mode = true;
+        app.mode = EditorMode::Pose;
         assert!(!poll(&mut app.view3d).1);
         assert!(app.view3d.pose.session.is_some(), "自分のモデルなら続く");
         {
@@ -1257,7 +1259,9 @@ mod tests {
         app.apply(Action::LoadDemoModel);
         poll(&mut app.view3d);
         assert!(app.view3d.pose.session.is_none());
-        assert!(!app.view3d.pose.mode);
+        // フレームの初め（`frame`）に、セッションの無いポーズのモードを出る
+        crate::mode::leave_pose_without_rig(&mut app);
+        assert_eq!(app.mode, EditorMode::Paint);
     }
 
     /// 最小の ASCII の FBX: 三角形 1 つ（UV つき）、骨なし。

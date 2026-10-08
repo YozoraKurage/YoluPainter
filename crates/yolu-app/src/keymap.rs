@@ -8,7 +8,8 @@
 //! Enter・Escape・Backspace・Delete・矢印・Home・End・PageUp・PageDown・Insert）は、Shift と Alt を書いたとおりに見る（書いていない Shift・Alt を押していれば
 //! 当てない）。記号のキーと数字のキーは、配列によって Shift や Alt（macOS の Option）を押して打つので、行に書いていない Shift・Alt は見ない
 //! （行に書いてあれば押していなければならない）。たとえば US 配列の `+` は Shift+= で Plus として、JIS 配列の `=` は Shift+- で Equals として届き、
-//! macOS のドイツ語配列の `[` は Option+5 で届く。AZERTY 配列は上の段の数字を Shift で打つ。判定の順は修飾の多いものが先、同じなら表の順。
+//! macOS のドイツ語配列の `[` は Option+5 で届く。AZERTY 配列は上の段の数字を Shift で打つ。判定の順は修飾の多いものが先、同じならキーの段
+//! （`Layer`: 場面・モード・どこでも）の上が先、それも同じなら表の順。途中の操作の段の行は、その操作が読む。
 
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -49,21 +50,51 @@ impl When {
     }
 }
 
-/// 割り当てが効く範囲（どのモードで効くか）。今はモードが無いので、どちらもいつも成り立つ。
+/// 割り当てが効く範囲（どのモードで効くか。途中の操作の間だけのキーは、その操作が読む）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     /// どのモードでも（ファイル・編集・選択範囲・レイヤー・表示・視点）。
     Everywhere,
     /// ペイントのモードだけ（ツール・色・ブラシの大きさ・Q・Shift+Q など）。
     Paint,
+    /// 編集のモードだけ。
+    Edit,
+    /// ポーズのモードだけ。
+    Pose,
+    /// 途中の操作（3D で右を押している間の視点の移動など）の間だけ。その操作が読み（`take_fly_keys`）、`dispatch` は当てない。
+    During,
 }
 
 impl Scope {
-    pub fn holds(self, _app: &AppState) -> bool {
+    /// 今のモードで、この範囲の行が `dispatch` で効くか。
+    pub fn holds(self, app: &AppState) -> bool {
+        use crate::mode::EditorMode;
         match self {
-            Scope::Everywhere | Scope::Paint => true,
+            Scope::Everywhere => true,
+            Scope::Paint => app.mode == EditorMode::Paint,
+            Scope::Edit => app.mode == EditorMode::Edit,
+            Scope::Pose => app.mode == EditorMode::Pose,
+            Scope::During => false,
         }
     }
+
+    /// モードの段の範囲か（ペイント・編集・ポーズ）。
+    pub fn is_mode(self) -> bool {
+        matches!(self, Scope::Paint | Scope::Edit | Scope::Pose)
+    }
+}
+
+/// キーの段（上の段ほど先に見る。上の段が受けた入力は、下の段へ落ちない）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Layer {
+    /// 1 途中の操作（右を押している間の視点の移動・開いているパイ）。その操作が先に入力を取る（`take_fly_keys`・`pie`）。
+    During,
+    /// 2 場面（選択範囲がある・ツール・点を選んでいる など。`When` が `Always` でない行）。
+    Context,
+    /// 3 モード（ペイント・編集・ポーズ）。
+    Mode,
+    /// 4 どこでも。
+    Everywhere,
 }
 
 /// 割り当ての入力。
@@ -97,6 +128,19 @@ impl KeyBinding {
         match self.trigger {
             Trigger::Key { key, .. } => Some(key),
             Trigger::Text(_) => None,
+        }
+    }
+
+    /// この行のキーの段。
+    pub fn layer(&self) -> Layer {
+        if self.scope == Scope::During {
+            Layer::During
+        } else if self.when != When::Always {
+            Layer::Context
+        } else if self.scope.is_mode() {
+            Layer::Mode
+        } else {
+            Layer::Everywhere
         }
     }
 
@@ -266,6 +310,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd, Key::Q, "app.quit"),
         kb(cmd, Key::Comma, "app.settings"),
         kb(shift, Key::R, "view.reset_rotation"),
+        // モードのパイ（どのモードでも。macOS でも Command ではなく Control）
+        kb(Modifiers::CTRL, Key::Tab, "mode.pie"),
     ];
     // ツールのキー（ツールの表のとおり。ツールの帯の並び）
     for tool in Tool::ALL {
@@ -323,9 +369,10 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(none, Key::Y, "stencil.transform_hold").paint(),
         kb(none, Key::N, "stencil.bypass_hold").paint(),
     ]);
-    // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動（前後・左右・下上。Shift で速く。読み方は `FLY_KEYS`）
+    // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動（前後・左右・下上。Shift で速く。読み方は `FLY_KEYS`）。
+    // キーの段 1「途中の操作」: 右を押している間だけ、ペイントのツールのキーより先に取る
     for fly in FLY_KEYS {
-        v.push(kb(none, fly.key, fly.command));
+        v.push(kb(none, fly.key, fly.command).scope(Scope::During));
     }
     // 3D ビューで選んだセットを収める（3D の上で、修飾なし。ビューが読む）
     v.push(kb(none, Key::Period, "view3d.frame_selected"));
@@ -374,16 +421,17 @@ fn modifier_count(m: &Modifiers) -> u8 {
     u8::from(m.shift) + u8::from(m.alt) + u8::from(m.command) + u8::from(m.ctrl)
 }
 
-/// 判定の順の、キーボードの割り当て（修飾の多いものが先、同じなら表の順）。`Action` を持たない行（押している間のキー・ビューが読むキー）と
-/// クリップボード（`clipboard::keys` が受ける）は入らない。
+/// 判定の順の、キーボードの割り当て（修飾の多いものが先、同じならキーの段の上（場面・モード・どこでも）が先、それも同じなら表の順）。
+/// `Action` を持たない行（押している間のキー・ビューが読むキー）とクリップボード（`clipboard::keys` が受ける）は入らない。
+/// 修飾の数を段より先に見るのは、記号と数字のキーが書いていない Shift・Alt を見ないため（モードの段の `-` が、どこでもの段の Shift+- を取らない）。
 fn dispatch_order_of(rows: &[KeyBinding]) -> Vec<KeyBinding> {
     let mut v: Vec<KeyBinding> = rows
         .iter()
         .filter(|b| !matches!(b.action(), None | Some(Action::Clip(_))))
         .copied()
         .collect();
-    // 安定な並べ替え（修飾の数が同じなら表の順）
-    v.sort_by_key(|b| std::cmp::Reverse(modifier_count(&b.modifiers())));
+    // 安定な並べ替え（修飾の数と段が同じなら表の順）
+    v.sort_by_key(|b| (std::cmp::Reverse(modifier_count(&b.modifiers())), b.layer()));
     v
 }
 
@@ -536,21 +584,29 @@ pub fn modifiers_match(pressed: &Modifiers, pattern: Modifiers, key: Key) -> boo
 
 /// このフレームにキーを押した事象があれば取り除いて true（繰り返しも含む。修飾キーは `modifiers_match`）。
 pub fn consume_key(i: &mut InputState, modifiers: Modifiers, key: Key) -> bool {
-    let mut found = false;
+    take_key(i, modifiers, key).0
+}
+
+/// このフレームのキーの押しを取り除き、（当たったか, 繰り返しでない押しがあったか）を返す。
+fn take_key(i: &mut InputState, modifiers: Modifiers, key: Key) -> (bool, bool) {
+    let (mut found, mut fresh) = (false, false);
     i.events.retain(|event| {
-        let is_match = matches!(
-            event,
-            Event::Key {
-                key: pressed_key,
-                modifiers: pressed_modifiers,
-                pressed: true,
-                ..
-            } if *pressed_key == key && modifiers_match(pressed_modifiers, modifiers, key)
-        );
+        let Event::Key {
+            key: pressed_key,
+            modifiers: pressed_modifiers,
+            pressed: true,
+            repeat,
+            ..
+        } = event
+        else {
+            return true;
+        };
+        let is_match = *pressed_key == key && modifiers_match(pressed_modifiers, modifiers, key);
         found |= is_match;
+        fresh |= is_match && !*repeat;
         !is_match
     });
-    found
+    (found, fresh)
 }
 
 /// 操作の割り当て（効く範囲と条件を満たすもの）のどれかを押したか（押した事象は取り除く）。ビューが押しを読む操作（3D の `.`・矢印）が使う。
@@ -640,21 +696,30 @@ pub fn primary(command: &str) -> Option<KeyBinding> {
 /// このフレームのキーの操作（効く範囲と条件を満たし、押されたもの。押した事象は取り除く）。文字を打っている・メニューを開いている間は呼ばない。
 /// 同じ操作の行が 2 つ同時に当たっても（JIS 配列の ^ のキーは `Key::Equals` と文字の `^` が両方届く）、1 回だけ実行する。
 pub fn dispatch(i: &mut InputState, app: &AppState) -> Vec<Action> {
-    let map = current();
+    dispatch_with(&current(), i, app)
+}
+
+/// `dispatch` を、与えた割り当てで（試験が今効いている表を差し替えずに確かめる）。
+pub fn dispatch_with(map: &Keymap, i: &mut InputState, app: &AppState) -> Vec<Action> {
     let mut actions = Vec::new();
     let mut done: Vec<&'static str> = Vec::new();
     for b in map.order() {
         if !(b.scope.holds(app) && b.when.holds(app)) {
             continue;
         }
-        let hit = match b.trigger {
-            Trigger::Key { modifiers, key } => consume_key(i, modifiers, key),
+        let (hit, fresh) = match b.trigger {
+            Trigger::Key { modifiers, key } => take_key(i, modifiers, key),
             // 文字の入力は取り除かない（文字を打つ部品は、キーの処理の前に止めてある）
-            Trigger::Text(text) => i
-                .events
-                .iter()
-                .any(|e| matches!(e, Event::Text(s) if s == text)),
+            Trigger::Text(text) => {
+                let hit = i
+                    .events
+                    .iter()
+                    .any(|e| matches!(e, Event::Text(s) if s == text));
+                (hit, hit)
+            }
         };
+        // 繰り返しの押しを受けない操作（パイを開く）は、繰り返しだけなら事象を取り除いて何もしない
+        let hit = hit && (fresh || commands::find(b.command).is_none_or(|c| c.repeats));
         // 事象は当たった行ごとに取り除き、操作は 1 回目だけ実行する
         if hit && !done.contains(&b.command) {
             done.push(b.command);
@@ -1686,9 +1751,12 @@ mod tests {
                     b.command,
                     "fill.toggle_handles" | "fill.delete_point" | "selection.quick_mask"
                 );
+            let during = b.command.starts_with("view3d.fly_");
             assert_eq!(
                 b.scope,
-                if paint {
+                if during {
+                    Scope::During
+                } else if paint {
                     Scope::Paint
                 } else {
                     Scope::Everywhere
@@ -1697,11 +1765,12 @@ mod tests {
                 b.command
             );
         }
-        // 押している間の Space・3D の視点の移動と 3D の . は、どのモードでも。Y・N（ステンシル）はペイントだけ
+        // 3D の視点の移動は、キーの段 1「途中の操作」（右を押している間だけ）。押している間の Space と 3D の . は、どのモードでも。
+        // Y・N（ステンシル）はペイントだけ
         for fly in FLY_KEYS {
             assert_eq!(
                 primary(fly.command).map(|b| b.scope),
-                Some(Scope::Everywhere),
+                Some(Scope::During),
                 "{}",
                 fly.command
             );
@@ -1722,9 +1791,235 @@ mod tests {
             primary("stencil.bypass_hold").map(|b| b.scope),
             Some(Scope::Paint)
         );
-        // この段にはモードが無いので、どの範囲もいつも成り立つ
+        // モードのパイ（Ctrl+Tab）はどのモードでも。macOS でも Command ではなく Control
+        let pie = primary("mode.pie").expect("モードのパイの行");
+        assert_eq!(pie.scope, Scope::Everywhere);
+        assert_eq!(
+            pie.trigger,
+            Trigger::Key {
+                modifiers: Modifiers::CTRL,
+                key: Key::Tab
+            }
+        );
+        // 範囲はモードで決まる。途中の操作の行は `dispatch` では効かない（その操作が読む）
+        use crate::mode::EditorMode;
+        let mut app = AppState::new(32, 32);
+        for mode in EditorMode::ALL {
+            app.mode = mode;
+            assert!(Scope::Everywhere.holds(&app));
+            assert_eq!(Scope::Paint.holds(&app), mode == EditorMode::Paint);
+            assert_eq!(Scope::Edit.holds(&app), mode == EditorMode::Edit);
+            assert_eq!(Scope::Pose.holds(&app), mode == EditorMode::Pose);
+            assert!(!Scope::During.holds(&app));
+        }
+    }
+
+    #[test]
+    fn every_row_belongs_to_one_key_layer() {
+        for b in bindings() {
+            let expected = if b.scope == Scope::During {
+                Layer::During
+            } else if b.when != When::Always {
+                Layer::Context
+            } else if matches!(b.scope, Scope::Paint | Scope::Edit | Scope::Pose) {
+                Layer::Mode
+            } else {
+                Layer::Everywhere
+            };
+            assert_eq!(b.layer(), expected, "{}", b.command);
+        }
+        // 段の順: 途中の操作 → 場面 → モード → どこでも
+        assert!(Layer::During < Layer::Context);
+        assert!(Layer::Context < Layer::Mode);
+        assert!(Layer::Mode < Layer::Everywhere);
+        // 途中の操作の行は判定の順に入らない（その操作が読む）
+        assert!(current().order().iter().all(|b| b.layer() != Layer::During));
+        assert_eq!(
+            bindings()
+                .iter()
+                .filter(|b| b.layer() == Layer::During)
+                .map(|b| b.command)
+                .collect::<Vec<_>>(),
+            FLY_KEYS.iter().map(|f| f.command).collect::<Vec<_>>()
+        );
+    }
+
+    /// 1 つのキーの押しを、与えた割り当て（`dispatch_with`）へ流す。
+    fn dispatched_with(
+        map: &Keymap,
+        app: &AppState,
+        key: Key,
+        modifiers: Modifiers,
+    ) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = dispatch_with(map, i, app));
+        });
+        output.textures_delta.clear();
+        got
+    }
+
+    #[test]
+    fn paint_keys_work_only_in_paint_mode_and_everywhere_keys_work_in_every_mode() {
+        use crate::mode::EditorMode;
+        let mut app = AppState::new(32, 32);
+        app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+        let map = current();
+        for mode in EditorMode::ALL {
+            assert!(app.set_mode(mode), "{mode:?}: {}", app.message);
+            let paints = mode == EditorMode::Paint;
+            // ペイントの段: ツールのキー・X・D・[ ]
+            for (key, action) in [
+                (Key::E, Action::SelectTool(Tool::Eraser)),
+                (Key::X, Action::SwapColors),
+                (Key::D, Action::DefaultColors),
+                (Key::OpenBracket, Action::BrushSmaller),
+            ] {
+                assert_eq!(
+                    dispatched_with(&map, &app, key, Modifiers::NONE),
+                    if paints { vec![action] } else { vec![] },
+                    "{mode:?} {key:?}"
+                );
+            }
+            // どこでもの段: 保存・取り消し・モードのパイ
+            assert_eq!(
+                dispatched_with(&map, &app, Key::S, Modifiers::COMMAND),
+                vec![Action::SaveProject],
+                "{mode:?}"
+            );
+            assert_eq!(
+                dispatched_with(&map, &app, Key::Z, Modifiers::COMMAND),
+                vec![Action::Undo],
+                "{mode:?}"
+            );
+            assert_eq!(
+                dispatched_with(&map, &app, Key::Tab, Modifiers::CTRL),
+                vec![Action::Pie(crate::pie::PieAction::Open("mode".into()))],
+                "{mode:?}"
+            );
+            // Ctrl に Shift を加えた Tab・Ctrl の無い Tab は、モードのパイではない
+            assert!(
+                dispatched_with(&map, &app, Key::Tab, Modifiers::CTRL | Modifiers::SHIFT)
+                    .is_empty()
+            );
+            assert!(dispatched_with(&map, &app, Key::Tab, Modifiers::NONE).is_empty());
+        }
+    }
+
+    #[test]
+    fn the_mode_pie_opens_on_the_real_control_key_of_each_platform_but_not_on_a_repeat() {
         let app = AppState::new(32, 32);
-        assert!(Scope::Everywhere.holds(&app) && Scope::Paint.holds(&app));
+        let map = current();
+        let open = vec![Action::Pie(crate::pie::PieAction::Open("mode".into()))];
+        // Windows・Linux の Ctrl は ctrl と command の両方が立って届く。macOS の Control は ctrl だけ
+        let ctrl = Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        let mac_control = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(dispatched_with(&map, &app, Key::Tab, ctrl), open);
+        assert_eq!(dispatched_with(&map, &app, Key::Tab, mac_control), open);
+        // macOS の Command+Tab（OS のアプリの切り替え）は当たらない
+        let mac_command = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        assert!(dispatched_with(&map, &app, Key::Tab, mac_command).is_empty());
+        // 押したままのキーの繰り返しでは開かない（事象は取り除く）。ほかの操作の繰り返しは今までどおり効く。egui は、押したままのキーの
+        // 2 回目からの押しを繰り返しにするので、同じ入れ物で押してから続ける
+        let ctx = egui::Context::default();
+        let frame = |key, modifiers, repeat| {
+            let mut got = Vec::new();
+            let mut left = Vec::new();
+            let input = egui::RawInput {
+                events: vec![Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat,
+                    modifiers,
+                }],
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.input_mut(|i| {
+                    got = dispatch(i, &app);
+                    left = i.events.clone();
+                });
+            });
+            output.textures_delta.clear();
+            (got, left)
+        };
+        assert_eq!(frame(Key::Tab, ctrl, false).0, open);
+        for _ in 0..3 {
+            let (got, left) = frame(Key::Tab, ctrl, true);
+            assert!(got.is_empty(), "{got:?}");
+            assert!(left.iter().all(|e| !matches!(e, Event::Key { .. })));
+        }
+        assert_eq!(
+            frame(Key::OpenBracket, Modifiers::NONE, false).0,
+            vec![Action::BrushSmaller]
+        );
+        assert_eq!(
+            frame(Key::OpenBracket, Modifiers::NONE, true).0,
+            vec![Action::BrushSmaller]
+        );
+        assert!(!commands::find("mode.pie").unwrap().repeats);
+        assert!(!commands::find("view3d.pie").unwrap().repeats);
+        assert_eq!(
+            commands::all().iter().filter(|c| !c.repeats).count(),
+            2,
+            "繰り返しを受けないのはパイを開く操作だけ"
+        );
+    }
+
+    #[test]
+    fn a_mode_row_takes_its_key_before_an_everywhere_row_and_only_in_its_mode() {
+        use crate::mode::EditorMode;
+        // 編集・ポーズの段の行を、どこでもの段の H（表示を左右反転）と同じキーに置く
+        let mut rows = bindings();
+        rows.push(kb(Modifiers::NONE, Key::H, "color.swap").scope(Scope::Edit));
+        rows.push(kb(Modifiers::NONE, Key::H, "color.default").scope(Scope::Pose));
+        let map = Keymap::new(rows);
+        let mut app = AppState::new(32, 32);
+        app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
+        assert_eq!(
+            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
+            vec![Action::FlipView],
+            "ペイントのモードはどこでもの段"
+        );
+        assert!(app.set_mode(EditorMode::Edit));
+        assert_eq!(
+            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
+            vec![Action::SwapColors],
+            "編集のモードの段が先に取り、どこでもの段へは落ちない"
+        );
+        assert!(app.set_mode(EditorMode::Pose));
+        assert_eq!(
+            dispatched_with(&map, &app, Key::H, Modifiers::NONE),
+            vec![Action::DefaultColors]
+        );
+        // 判定の順: 修飾の数が同じなら、場面 → モード → どこでも
+        let order = map.order();
+        let at = |command: &str| order.iter().position(|b| b.command == command).unwrap();
+        assert!(at("color.swap") < at("view.flip"));
+        assert!(at("selection.to_new_layer") < at("layer.duplicate"));
     }
 
     #[test]
