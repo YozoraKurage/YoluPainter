@@ -5,7 +5,7 @@
 While "Accept external commands" is on in its settings, YoluPainter is an MCP server at `http://127.0.0.1:17347/mcp`. AI assistants (Claude Code, Codex,
 Claude Desktop and others) connect there to read the layers, masks and effects of the document open in the app, change values, look at preview images, export and save.
 The tools live in the app, so updating the app brings the new tools. The connection stays inside this PC and never goes onto the network.
-The tools are the same 25 as the [command line](CLI.md) commands (the `.` in names becomes `_`). Painting (strokes, fills, selections), baking and opening another document are not available.
+The tools are the same 26 as the [command line](CLI.md) commands (the `.` in names becomes `_`). Painting (strokes, fills, selections), baking and opening another document are not available.
 
 ## YoluPainter settings
 

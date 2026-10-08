@@ -6,18 +6,19 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 YoluPainter is a painting application for textures on a 2D canvas and on 3D models.
-Connect it to Unity to paint while seeing your colors on the real materials of an avatar in the scene.
+Connect it to Unity to open a model of the scene with its material values, and to apply what you paint to the Unity materials.
 
 Windows is the primary platform. Mac and Linux support is experimental.
 
 ## Features
 
 - 2D and 3D painting: brushes that respond to pressure and tilt, color mixing, blur, smudge and clone, symmetry, and stencils
-- Layers, groups, masks, clipping, 26 blend modes, adjustment layers, and locks
+- Layers, groups, masks, clipping, 26 blend modes, adjustment layers, text layers, and locks
 - Material painting: Color, Roughness, Metallic, Height, Normal, Emission, and user channels in a single stroke
 - Filters, generators that read baked mesh maps (AO, curvature, thickness, ID, and more), noise and grunge, and smart materials
 - The lilToon look in the 3D view
 - Live Link with Unity: open a scene model in one step and send exported textures back to Unity (they are assigned to materials only after you confirm in Unity)
+- Editing layers, masks, and effects from the command line (`yolupainter-cli`) and from AI assistants connected over MCP
 - PSD layers, groups, masks, and adjustments in and out; import of ABR and CLIP STUDIO (.sut) brushes
 - Export of per-channel PNGs and templates for Unity Standard, URP, HDRP, and lilToon
 - Automatic recovery after a crash
@@ -40,9 +41,9 @@ See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [d
 ## Documentation
 
 - [Features and controls](docs/en/GUIDE.md)
-- [Working with Unity](docs/en/UNITY.md) (Live Link, exchanging `.ylp` files with the Unity version)
+- [Working with Unity](docs/en/UNITY.md) (Live Link)
 - [Command line and AI assistants](docs/en/CLI.md) (`yolupainter-cli`, [connecting over MCP](docs/en/MCP.md))
-- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md), [the .ylp format](docs/YLP_FORMAT.md)
+- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md), [the .ylp format](docs/YLP_FORMAT.md)
 - [Changelog](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 
 ## Contact
@@ -51,7 +52,7 @@ For questions, development discussion, and feature requests, join us on [Discord
 
 ## Privacy
 
-The application sends nothing over the network except a query to GitHub for the latest version when you choose to check for updates. Live Link only communicates within the same PC.
+The application sends nothing over the network except a query to GitHub for the latest version when you choose to check for updates. Live Link exchanges files in a folder on the same PC. External operation listens on `127.0.0.1` (this PC only), and only while it is turned on in the settings.
 
 ## License
 

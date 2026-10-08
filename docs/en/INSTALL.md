@@ -2,9 +2,12 @@
 
 [日本語](../INSTALL.md)
 
-Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats.
+Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats, an installer and a zip. An extension for Claude Desktop (`.mcpb`) is attached too.
 
-- `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. Uninstall through Settings → Apps; you will be asked whether to remove settings and recovery data as well (they remain if no prompt is shown). Things you made are removed in neither case ([table below](#uninstalling-and-your-data)). Use `/S` for silent installation, `/ASSOC=1` to enable file association (`/ASSOC=0` to disable it), and `/RUN` to launch the application after installation. For a silent uninstall use `/S`, and add `/DELETEDATA` to remove settings and recovery data as well.
+- `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. 
+  - Uninstall through Settings → Apps; you will be asked whether to remove settings and recovery data as well (they remain if no prompt is shown). Things you made are removed in neither case ([table below](#uninstalling-and-your-data)).
+  - Use `/S` for silent installation, `/ASSOC=1` to enable file association (`/ASSOC=0` to disable it), and `/RUN` to launch the application after installation.
+  - For a silent uninstall use `/S`, and add `/DELETEDATA` to remove settings and recovery data as well.
 - `yolupainter-<version>-x86_64-pc-windows-msvc.zip`: extract and run `yolupainter.exe`; no installation is needed.
 - `yolupainter-<version>-x86_64-pc-windows-msvc.mcpb`: an extension for Claude Desktop ([Operating from an AI assistant](MCP.md)). Double-click it to install. It only relays to the running app, and the tools are answered by the app (they follow app updates). Claude Code and Codex use the plugin instead.
 
@@ -31,7 +34,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\recovery\` | Recovery generations | Removed |
 | `%APPDATA%\YoluPainter\logs\` | Crash records | Removed |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | Thumbnail cache | Removed |
-| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Connection files of Live Link and of external control (`yolupainter-cli`, MCP) | Removed |
+| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | The Live Link exchange folder (requests and replies with Unity, the awake mark) | Removed |
 | `%APPDATA%\YoluPainter\Library\` (the default library folder) | Personal library | Kept |
 | `%APPDATA%\YoluPainter\brushes\` | Your brushes and erasers | Kept |
 | `%APPDATA%\YoluPainter\subtools\` | Your sub-tools | Kept |
@@ -40,6 +43,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\hide_presets\` | Presets for hiding parts of a model | Kept |
 | `%APPDATA%\YoluPainter\pose_presets\` | Pose presets | Kept |
 | `%APPDATA%\YoluPainter\actions\` | Actions | Kept |
+| `%APPDATA%\YoluPainter\tools.json` | The order of the toolbar and the brush groups (an unreadable file is moved to `tools.broken.json`) | Kept |
 
 When kept items, or files this application did not create, are present, the `%APPDATA%\YoluPainter` folder stays with them. A library or recovery folder that you moved elsewhere in the settings is not touched. Documents such as `.ylp` files are never removed.
 
@@ -49,4 +53,4 @@ Current distributions are not code-signed. If Windows SmartScreen displays “Wi
 
 ## Privacy
 
-The application does not send information over the network except to query GitHub for the latest version when you choose to check for updates (by enabling Check for Updates at Startup or selecting Check for Updates…). The query is an ordinary HTTPS request to fetch an update metadata file (with Use Beta Versions on, the beta update metadata file is fetched as well). Apart from the application name and version in the User-Agent, no information identifying the user is included. Live Link communicates only within the same machine.
+The application does not send information over the network except to query GitHub for the latest version when you choose to check for updates (by enabling Check for Updates at Startup or selecting Check for Updates…). The query is an ordinary HTTPS request to fetch an update metadata file (with Use Beta Versions on, the beta update metadata file is fetched as well). Apart from the application name and version in the User-Agent, no information identifying the user is included. Live Link only exchanges files in a folder on the same machine, and external operation listens on `127.0.0.1` (this machine only), and only while it is turned on in the settings.

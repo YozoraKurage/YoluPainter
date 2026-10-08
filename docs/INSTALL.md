@@ -2,9 +2,12 @@
 
 [English](en/INSTALL.md)
 
-[Releases](https://github.com/YozoraKurage/YoluPainter/releases) から入手します。Windows（64 ビット）には 2 つの形があります。
+[Releases](https://github.com/YozoraKurage/YoluPainter/releases) から入手します。Windows（64 ビット）には、インストーラーと zip の 2 つの形があります。Claude Desktop 用の拡張（`.mcpb`）も付きます。
 
-- `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラー）: 利用者ごとにインストールします。管理者権限は要りません。入れ先は `%LOCALAPPDATA%\Programs\YoluPainter`（変えられます）で、スタートメニューに登録し、`.ylp` をこのアプリで開く関連付けは選べます。アンインストールは「設定 → アプリ」から行い、設定と復旧のデータも消すかを聞かれます（聞かれなければ残ります。自分で作った物はどちらでも消えません。[下の表](#アンインストールとデータ)）。画面を出さずに入れるときは `/S`、関連付けは `/ASSOC=1`（付けない `/ASSOC=0`）、入れ終わったあとにアプリを起動するときは `/RUN` を付けます。画面を出さずに消すときは `/S`、設定と復旧のデータも消すときは `/DELETEDATA` を付けます。
+- `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラー）: 利用者ごとにインストールします。管理者権限は要りません。入れ先は `%LOCALAPPDATA%\Programs\YoluPainter`（変えられます）で、スタートメニューに登録し、`.ylp` をこのアプリで開く関連付けは選べます。
+  - アンインストールは「設定 → アプリ」から行い、設定と復旧のデータも消すかを聞かれます（聞かれなければ残ります。自分で作った物はどちらでも消えません。[下の表](#アンインストールとデータ)）。
+  - 画面を出さずに入れるときは `/S`、関連付けは `/ASSOC=1`（付けない `/ASSOC=0`）、入れ終わったあとにアプリを起動するときは `/RUN` を付けます。
+  - 画面を出さずに消すときは `/S`、設定と復旧のデータも消すときは `/DELETEDATA` を付けます。
 - `yolupainter-<版>-x86_64-pc-windows-msvc.zip`: 展開して `yolupainter.exe` を実行します（インストール不要）。
 - `yolupainter-<版>-x86_64-pc-windows-msvc.mcpb`: Claude Desktop に入れる拡張です（[AI のアシスタントから操作する](MCP.md)）。ダブルクリックで入れます。中身は起動中のアプリへの中継だけで、ツールはアプリが答えます（アプリの更新で新しくなります）。Claude Code と Codex はプラグインで入れます。
 
@@ -31,7 +34,7 @@
 | `%APPDATA%\YoluPainter\recovery\` | 復旧用の世代 | 消える |
 | `%APPDATA%\YoluPainter\logs\` | クラッシュの記録 | 消える |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | サムネイルのキャッシュ | 消える |
-| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link と、外からの操作（`yolupainter-cli`・MCP）の接続の置き場 | 消える |
+| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link の受け渡しのフォルダ（Unity の頼みと返事・起きている印） | 消える |
 | `%APPDATA%\YoluPainter\Library\`（ライブラリの場所の既定） | 個人のライブラリ | 残る |
 | `%APPDATA%\YoluPainter\brushes\` | 自分のブラシ・消しゴム | 残る |
 | `%APPDATA%\YoluPainter\subtools\` | 自分のサブツール | 残る |
@@ -40,6 +43,7 @@
 | `%APPDATA%\YoluPainter\hide_presets\` | 面の隠し方のプリセット | 残る |
 | `%APPDATA%\YoluPainter\pose_presets\` | ポーズのプリセット | 残る |
 | `%APPDATA%\YoluPainter\actions\` | アクション | 残る |
+| `%APPDATA%\YoluPainter\tools.json` | ツールバーとブラシのグループの並び（読めなかったファイルは `tools.broken.json` に退避） | 残る |
 
 残る物と、このアプリが作ったのではないファイルがあるときは、`%APPDATA%\YoluPainter` のフォルダごと残ります。設定でライブラリの場所や復旧の置き場を別のフォルダにしているときは、そのフォルダには触りません。`.ylp` などの文書は、どちらの場合も消えません。
 
@@ -49,4 +53,4 @@
 
 ## プライバシー
 
-更新の確認を選んだとき（「起動時に更新を確かめる」を「はい」にしたとき、または「更新を確かめる…」を押したとき）に GitHub へ最新の版を問い合わせるほかは、ネットワークへ情報を送りません。問い合わせは、更新情報のファイルを取る通常の HTTPS の要求だけです（「試験版を使う」を入れていると、試験版の更新情報のファイルも取ります）。アプリの名前と版（User-Agent）のほかに、利用者を識別する情報は付けません。Live Link は同じ機械の中の通信だけです。
+更新の確認を選んだとき（「起動時に更新を確かめる」を「はい」にしたとき、または「更新を確かめる…」を押したとき）に GitHub へ最新の版を問い合わせるほかは、ネットワークへ情報を送りません。問い合わせは、更新情報のファイルを取る通常の HTTPS の要求だけです（「試験版を使う」を入れていると、試験版の更新情報のファイルも取ります）。アプリの名前と版（User-Agent）のほかに、利用者を識別する情報は付けません。Live Link は同じ機械のフォルダでのファイルの受け渡しだけで、外からの操作は、設定で入れている間だけ `127.0.0.1`（この機械の中）で待ちます。

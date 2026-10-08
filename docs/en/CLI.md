@@ -170,6 +170,6 @@ Painting operations (strokes, fills, selections) are not commands yet.
 - Destructive operations (deleting, saving over a file, replacing an existing file) are refused without changing anything unless `--confirm` is given. `--save` counts as asking for the overwrite.
 - Saving is committed by one replacement from a verified temporary file. If the file was changed outside after it was opened it is not overwritten (`conflict`), and the previous version stays in the backups folder next to it.
 - There is no command that runs arbitrary code. The files touched are the `.ylp` of `--file` and the paths named by the export and save commands.
-- Commands to the app are accepted only from programs of the same user on the same PC (see "Safety" in [the MCP document](MCP.md)).
+- Commands to the app are accepted only from this PC (`127.0.0.1`). There is no password, so while the setting is on, programs of other accounts on this PC can connect too (see "Safety" in [the MCP document](MCP.md)).
 - Without the app, Generators that read baked mesh maps or the model have no effect (their settings are kept, but they are not in previews, exports or the composite PNGs of a saved file; the reply's `notes` and `inactive_effects` say so).
-  A set that uses Rust-only effects (noise, grunge, gradient map and so on) is saved in a newer format that the Unity package (0.2.0) cannot open; the `notes` of the save reply tell which set.
+  A set that uses features only the standalone application has (noise, grunge, gradient map and so on) is saved in a newer version that the Unity version up to 0.4.x cannot open ("Ranges by reader" in [the .ylp format](../YLP_FORMAT.md), Japanese); the `notes` of the save reply tell which set.

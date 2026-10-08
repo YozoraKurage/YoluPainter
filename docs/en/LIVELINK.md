@@ -2,7 +2,7 @@
 
 [日本語](../LIVELINK.md)
 
-This is the specification of how YoluPainter in the Unity Editor (VPM package `net.yozolab.yolupainter`) and the standalone YoluPainter exchange JSON files in a folder on the same PC.
+This is the specification of how the Unity Bridge in the Unity Editor (VPM package `net.yozolab.yolupainter`) and the standalone YoluPainter exchange JSON files in a folder on the same PC.
 Unity writes a **request** with the chosen target's (a scene object's) **FBX paths, bone values, material values and texture paths**, and the standalone application picks it up and opens it.
 When you export in the standalone application, it writes a **reply** listing the PNG files it wrote, and Unity picks it up and imports them. Meshes and pixels are not sent; each side reads the files itself.
 

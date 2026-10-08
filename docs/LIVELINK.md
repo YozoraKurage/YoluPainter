@@ -2,7 +2,7 @@
 
 [English](en/LIVELINK.md)
 
-Unity エディターの YoluPainter（VPM パッケージ `net.yozolab.yolupainter`）とスタンドアロンの YoluPainter が、同じ PC のフォルダに JSON のファイルを置いて受け渡す仕組みの仕様です。
+Unity エディターの Unity ブリッジ（VPM パッケージ `net.yozolab.yolupainter`）とスタンドアロンの YoluPainter が、同じ PC のフォルダに JSON のファイルを置いて受け渡す仕組みの仕様です。
 Unity は、選んだ相手（シーンのオブジェクト）の **FBX の道・骨の値・マテリアルの値と絵の道**を「頼み」に書いて置き、スタンドアロンがそれを拾って開きます。
 スタンドアロンで書き出したら、書いた PNG を「返事」に書いて置き、Unity が拾って取り込みます。メッシュや絵の画素は送らず、両方がファイルを自分で読みます。
 
