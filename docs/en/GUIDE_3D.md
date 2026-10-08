@@ -55,7 +55,9 @@ While the 3D view is shown, the brush properties gain a "3D" group.
 | Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |
 | Seam bleed | How far to paint outside the edges of UV islands so seams do not show |
 
-3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together.
+3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together. These two are the same settings as on the 2D canvas. Because the 3D source is set by a point on a surface, the clone's "Offset X" and "Offset Y" fields are dimmed while only the 3D view is shown. Switching texture sets forgets the source.
+
+`Shift`-click draws a straight line from the end of the previous stroke (the last point that hit a surface) to the clicked point (with the mouse and the pen; when there is no previous point, holding `Shift` and dragging locks the first direction you move in to 45° steps). A contact with `Ctrl` held does not paint with the pen but paints with the mouse. The force of a touch, such as a finger, becomes the pressure. These also work the same as on the 2D canvas ([GUIDE_PAINT.md](GUIDE_PAINT.md)). The Fill tool's "Similar colors" also fills the same extent as in 2D, from the pixel that the UV of the pressed surface points to.
 
 ## Pose the model
 

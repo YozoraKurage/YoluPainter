@@ -727,7 +727,7 @@ pub enum Operation {
     Pick,
     /// 3D ビューの視点を回す。軸の向き（正面・背面・右・左・上・下）の 15° 以内に入ったらその向きへ吸い付く。
     SnapOrbit,
-    /// クローンのブラシで、クローンの元を決める（3D で Alt + 左を動かさずに離す）。
+    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D はスナップ回転）。
     CloneSource,
     SelectionAdd,
     SelectionSubtract,
@@ -843,8 +843,8 @@ const fn click_of(
 use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
-pub const GESTURES: [Gesture; 19] = [
-    // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由）、右ボタンを押すとスポイト
+pub const GESTURES: [Gesture; 20] = [
+    // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由。動かさずに離すとクローンの元）、右ボタンを押すとスポイト
     gesture_of(
         "canvas",
         None,
@@ -858,6 +858,12 @@ pub const GESTURES: [Gesture; 19] = [
         Primary,
         (true, false, false),
         Operation::Rotate,
+    ),
+    click_of(
+        "canvas",
+        Primary,
+        (true, false, false),
+        Operation::CloneSource,
     ),
     gesture_of(
         "canvas",

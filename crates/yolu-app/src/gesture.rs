@@ -14,6 +14,11 @@ pub fn ctrl(m: &Modifiers) -> bool {
     m.ctrl || m.command
 }
 
+/// ペン先の接触を描かずに捨てるか（描くツールで Ctrl を押している。マウスの Ctrl は描く。2D のキャンバスも 3D ビューも同じ）。
+pub fn pen_holds_off(paints: bool, m: &Modifiers) -> bool {
+    paints && ctrl(m)
+}
+
 /// Ctrl+Space の拡縮の組み合わせか（`space` は Space を押しているか）。
 pub fn zoom_chord(m: &Modifiers, space: bool) -> bool {
     space && ctrl(m)

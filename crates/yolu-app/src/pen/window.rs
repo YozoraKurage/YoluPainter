@@ -160,6 +160,22 @@ impl AppState {
         self.prefs.settings.pressure.apply(pressure)
     }
 
+    /// egui の Touch（指・Windows Ink が無い環境のペン）の力を覚える。ペンの点と同じ全体の調整を通し、マウスの道の筆圧に使う
+    /// （2D のキャンバスも 3D ビューも。力が無い・終わったら 1）。
+    pub fn note_touch(&mut self, force: Option<f32>, phase: egui::TouchPhase) {
+        if let Some(f) = force {
+            self.canvas.touch_pressure = Some(self.adjust_pressure(f.clamp(0.0, 1.0)));
+        }
+        if matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel) {
+            self.forget_touch();
+        }
+    }
+
+    /// Touch の力を忘れる（終わった・フォーカスを失って終わりを受け取れない。次のマウスの押しの筆圧を 1 に戻す）。
+    pub fn forget_touch(&mut self) {
+        self.canvas.touch_pressure = None;
+    }
+
     /// このフレームのペンの点（調整を通す前）を、ウィンドウが開いていれば枠の中の線として集める。
     pub fn pressure_observe(&mut self, pixels_per_point: f32, samples: &[PenSample]) {
         let window = &mut self.pressure;

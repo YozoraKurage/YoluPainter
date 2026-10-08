@@ -30,7 +30,7 @@ pub use self::tools::{Cycle, CycleKind, Hover, PolygonDrag};
 pub struct RegionState {
     /// クリックした三角形から辿る範囲（バケツとポリゴン塗りつぶしで共有。Unity 版の「3D Pick」の既定は UV アイランド）。
     pub kind: SurfaceRegionKind,
-    /// バケツ: 範囲をモデルの三角形からでなく、押した画素に近い色で決める（2D だけ）。
+    /// バケツ: 範囲をモデルの三角形からでなく、押した画素に近い色で決める（3D は押した面の UV が指す画素から）。
     pub by_color: bool,
     /// 近い色の許し幅（各成分の差。0〜255）。
     pub tolerance: u8,

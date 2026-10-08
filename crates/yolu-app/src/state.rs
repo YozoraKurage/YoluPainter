@@ -344,6 +344,10 @@ pub struct RotateDrag {
     pub start_pan: Vec2,
     pub swept: f32,
     pub last_pointer_angle: f32,
+    /// 押した点（画面の点）。ここから `gesture::CLICK_MOVE` を超えて動くまで回さない（動かさずに離す操作 — クローンの元 — が、小さな揺れで表示を回さないように）。
+    pub press: Pos2,
+    /// 押した点から遊びを超えて動いたか。
+    pub moved: bool,
 }
 
 /// キャンバスの入力の途中の状態。
@@ -378,6 +382,10 @@ pub struct CanvasInput {
     /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定。
     pub shift_hold: Option<ShiftHold>,
     pub ruler_constraint: Option<crate::drafting::Constraint>,
+    /// クローンのブラシで Alt + 左を押した点（画面の点。動かさずに離したらクローンの元にする。動かしたら表示を回すだけ）。
+    pub clone_press: Option<Pos2>,
+    /// 描いているクローンのストロークが使う offset（文書の座標の、描く点から元までのずれ。元の印が今写している点へ動くのに使う）。
+    pub clone_offset: Option<yolu_core::glam::DVec2>,
 }
 
 /// Shift で押した点（文書座標）のまわりのぶれの抑え。画面の点で一定の距離（`SHIFT_HOLD_POINTS`）を超えて動くまで、点を押した所に留める。
@@ -388,6 +396,43 @@ pub struct ShiftHold {
     pub origin: (f64, f64),
     pub locks: bool,
     pub direction: Option<(f64, f64)>,
+}
+
+/// Shift で押した点から動いたとみなす画面の距離（点）。これより内側のぶれでは、向きを決めず点も動かさない。縮小して見ていても
+/// 画面の 1 画素のぶれが数画素の向きに見えないよう、文書の画素でなく画面の点で測る（2D のキャンバスも 3D ビューも同じ）。
+pub const SHIFT_HOLD_POINTS: f64 = 8.0;
+
+impl ShiftHold {
+    /// Shift で押した点 `origin` のぶれの抑え。前の終点から線を引いた押し（`from_previous`）は、ぶれを超えて動いたら普通に描き、
+    /// 前の終点が無い押しは、最初に動いた向きを 45° 刻みで固定する（2D のキャンバスも 3D ビューも同じ）。
+    pub fn new(origin: (f64, f64), from_previous: bool) -> ShiftHold {
+        ShiftHold {
+            origin,
+            locks: !from_previous,
+            direction: None,
+        }
+    }
+
+    /// 点 `at`（`origin` と同じ座標）に、ぶれの抑えと向きの固定を当てる。`near` は、`at` が押した点から画面で `SHIFT_HOLD_POINTS` より近いか。
+    /// 返すのは当てた点で、None は「続きは普通に描く」（前の終点から線を引いた押しが、ぶれを超えて動いた）。向きは、固定する押しで最初に
+    /// ぶれを超えて動いたときの向きを 45° 刻みに丸めて決め、そのあとは変えない。
+    pub fn constrain(&mut self, at: (f64, f64), near: bool) -> Option<(f64, f64)> {
+        let (ox, oy) = self.origin;
+        if self.direction.is_none() && near {
+            return Some((ox, oy));
+        }
+        if !self.locks {
+            return None;
+        }
+        let (dx, dy) = (at.0 - ox, at.1 - oy);
+        let (ux, uy) = *self.direction.get_or_insert_with(|| {
+            let angle =
+                (dy.atan2(dx) / std::f64::consts::FRAC_PI_4).round() * std::f64::consts::FRAC_PI_4;
+            (angle.cos(), angle.sin())
+        });
+        let length = dx * ux + dy * uy;
+        Some((ox + length * ux, oy + length * uy))
+    }
 }
 
 /// 開いているポップアップの種類。
@@ -782,6 +827,8 @@ pub struct AppState {
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+    /// クローンの元と設定（2D のキャンバスと 3D ビューで共有する。元は 2D が文書の点、3D が面の点を別々に持つ）。
+    pub clone: crate::clone_source::CloneState,
     /// アセットの棚（.ylp の resources）。
     pub shelf: ShelfState,
     /// 個人のライブラリ（フォルダ。アセットの欄が棚と切り替えて見せる）。
@@ -1001,6 +1048,7 @@ impl AppState {
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
+            clone: Default::default(),
             shelf: ShelfState::default(),
             library: Default::default(),
             sel: crate::selection::SelState::default(),
@@ -1601,6 +1649,55 @@ pub fn blend_name(mode: BlendMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shift_hold_stays_on_the_pressed_point_then_locks_the_first_direction_to_45_degrees() {
+        let mut hold = ShiftHold {
+            origin: (100.0, 100.0),
+            locks: true,
+            direction: None,
+        };
+        // 押した点のぶれ（画面の点で数画素まで）は、向きも点も動かさない
+        assert_eq!(hold.constrain((103.0, 101.0), true), Some((100.0, 100.0)));
+        assert_eq!(hold.direction, None);
+        // 超えて動いた最初の向きを 45° 刻みに丸めて固定し、その線の上へ落とす
+        let (x, y) = hold.constrain((140.0, 112.0), false).unwrap();
+        assert!(
+            (x - 140.0).abs() < 1e-9 && y.abs() > 0.0 && (y - 100.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+        let direction = hold.direction.expect("向きを決めた");
+        assert!((direction.0 - 1.0).abs() < 1e-9 && direction.1.abs() < 1e-9);
+        // 向きを決めたあとは、近くへ戻っても向きを変えない
+        let (x, y) = hold.constrain((130.0, 150.0), true).unwrap();
+        assert!(
+            (x - 130.0).abs() < 1e-9 && (y - 100.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+        // 斜めは 45°
+        let mut diagonal = ShiftHold {
+            origin: (0.0, 0.0),
+            locks: true,
+            direction: None,
+        };
+        let (x, y) = diagonal.constrain((50.0, 40.0), false).unwrap();
+        assert!(
+            (x - 45.0).abs() < 1e-9 && (y - 45.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+    }
+
+    #[test]
+    fn a_shift_hold_from_a_previous_end_lets_go_when_it_moves_past_the_jitter() {
+        let mut hold = ShiftHold {
+            origin: (100.0, 100.0),
+            locks: false,
+            direction: None,
+        };
+        assert_eq!(hold.constrain((102.0, 100.0), true), Some((100.0, 100.0)));
+        // 前の終点からの線は押した点で終わっている: 超えて動いたら、続きは普通に描く
+        assert_eq!(hold.constrain((140.0, 112.0), false), None);
+    }
 
     #[test]
     fn hsv_round_trip_and_hex() {

@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use egui::{Rect, Vec2};
 
-use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist};
+use crate::engine::{
+    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist,
+};
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
@@ -719,6 +721,13 @@ impl AppState {
     pub fn brush_live(&self) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.brush.settings([1.0; 4], false);
+        // クローンの元から決めた offset は、ブラシの設定でなく、作業の位置: 比べる・覚えるときは、入れる前のブラシの offset と見なす
+        // （「変えた」の印を付けない。変えたままの設定にも登録にも入れない）
+        if let BrushEffect::Clone { offset } = &mut brush.effect {
+            if let Some(own) = self.clone.brush_offset(*offset) {
+                *offset = own;
+            }
+        }
         canonical(&brush)
     }
 
@@ -740,6 +749,8 @@ impl AppState {
             assist,
             ..brush.clone()
         };
+        // 読んだブラシの offset をブラシの持つ値として覚え直す（2D の揃える offset が決まっていれば、それを入れ直して続ける）
+        self.clone.brush_loaded(&mut self.m2.brush.effect);
     }
 
     /// 今の設定を、今のブラシの「変えたままの設定」として一覧へ書き戻す（元と同じなら変更なし）。

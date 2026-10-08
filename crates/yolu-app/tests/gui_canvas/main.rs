@@ -13,6 +13,7 @@ mod brushes;
 mod canvas_gpu;
 mod clipboard;
 mod clipping_button;
+mod clone_parity;
 mod color_adjust;
 mod color_adjust_app;
 mod curve_editor;

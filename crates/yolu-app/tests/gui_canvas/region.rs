@@ -517,7 +517,7 @@ fn headless_bucket_on_an_inverted_mask_writes_the_opposite_value() {
 }
 
 #[test]
-fn headless_bucket_by_color_fills_the_similar_area_in_2d_only() {
+fn headless_bucket_by_color_fills_the_similar_area_in_2d_and_3d() {
     let mut s = AppState::new(64, 64);
     s.color.set_main([0.0, 1.0, 0.0, 1.0]);
     s.tool = Tool::Fill;
@@ -532,13 +532,34 @@ fn headless_bucket_by_color_fills_the_similar_area_in_2d_only() {
         [0, 255, 0, 255],
         "空のレイヤーは全体が近い色"
     );
-    // 3D では近い色は使えない（理由だけ出す）
-    s.view3d.set_model(two_parts_model());
-    s.view3d.material = 0;
-    let before = s.doc.undo_count();
-    bucket(&mut s, Where::Surface(rect), rect.center());
-    assert_eq!(s.doc.undo_count(), before);
-    assert!(s.message.contains("2D"), "{}", s.message);
+    // 3D でも使える: 押した面の UV が指す画素から、2D と同じ近い色の範囲を求める（空のレイヤーは全体が近い色）
+    let (mut s3, rect3) = with_model(64);
+    s3.color.set_main([0.0, 1.0, 0.0, 1.0]);
+    s3.tool = Tool::Fill;
+    s3.apply(Action::Region(RegionAction::ByColor(true)));
+    let on_face = at_model(&s3, rect3, Vec3::new(0.1, 0.1, 0.0));
+    bucket(&mut s3, Where::Surface(rect3), on_face);
+    assert_eq!(s3.doc.undo_count(), 1);
+    assert_eq!(
+        composite_pixel(&s3.doc, 5, 5),
+        [0, 255, 0, 255],
+        "3D でも空のレイヤーは全体が近い色"
+    );
+    // 面の無い所では塗らず、理由を出す
+    let mut empty = with_model(64).0;
+    empty.tool = Tool::Fill;
+    empty.apply(Action::Region(RegionAction::ByColor(true)));
+    bucket(
+        &mut empty,
+        Where::Surface(rect3),
+        pos2(rect3.left() + 1.0, rect3.top() + 1.0),
+    );
+    assert_eq!(empty.doc.undo_count(), 0);
+    assert!(
+        empty.message.contains("三角形がありません"),
+        "{}",
+        empty.message
+    );
 }
 
 #[test]

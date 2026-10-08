@@ -290,7 +290,14 @@ fn mask(doc: &Document, data: &[u8]) -> Result<SelectionMask, CoreError> {
 fn touched(x: usize, y: usize, r: &Request) -> bool {
     let p = (x as f64 + 0.5, y as f64 + 0.5);
     r.points.iter().enumerate().any(|(i, &b)| {
-        let a = if i == 0 { b } else { r.points[i - 1] };
+        // `NaN` の点は線の区切り（3D の、面の外・継ぎ目をまたぐ所）。区切りの前後は線でつながない
+        if !b.0.is_finite() {
+            return false;
+        }
+        let a = match i.checked_sub(1).map(|j| r.points[j]) {
+            Some(before) if before.0.is_finite() => before,
+            _ => b,
+        };
         let d = (b.0 - a.0, b.1 - a.1);
         let len = d.0 * d.0 + d.1 * d.1;
         let t = if len == 0.0 {

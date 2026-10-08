@@ -1431,7 +1431,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
 
 // ───────── 効果 ─────────
 
-/// 効果のブラシ（ぼかし・指先・クローン）。消しゴムでは使えず、3D でも使えない。
+/// 効果のブラシ（ぼかし・指先・クローン）。消しゴムでは使えない。2D のキャンバスでも 3D の面でも効く。
 fn effect_fields(
     ui: &mut Ui,
     app: &mut AppState,
@@ -1463,6 +1463,10 @@ fn effect_fields(
     // ぼかし・指先・クローンは 3D の面でも効く（3D の面のブラシ）。断るのは消しゴムだけ
     let reason = eraser;
     let enabled = reason.is_none();
+    // クローンの「ずれ」の欄: 3D の面だけを出しているときは面の点で決まり、2D の元を決めて揃えないときはストロークごとに元から決め直すので、
+    // どちらも欄では決まらない
+    let only_3d = app.paints_only_in_3d();
+    let resets_offset = app.clone.canvas_resets_offset(app.doc.id());
     match &mut app.m2.brush.effect {
         BrushEffect::Paint => {}
         BrushEffect::Blur { radius } => {
@@ -1496,6 +1500,22 @@ fn effect_fields(
         }
         BrushEffect::Clone { offset } => {
             let mut next = *offset;
+            let offset_reason = if only_3d {
+                Some(lang.pick(
+                    "3D では、元の面の点で決まる",
+                    "On 3D surfaces the source point decides this",
+                ))
+            } else if resets_offset {
+                Some(lang.pick(
+                    "揃えないときは、ストロークごとに始めが元に重なる",
+                    "Without Aligned, every stroke starts on the source",
+                ))
+            } else {
+                None
+            };
+            let offset_tip = eraser.or(offset_reason);
+            let offset_enabled = enabled && offset_reason.is_none();
+            let mut edited = false;
             if let Some(v) = slider_row(
                 ui,
                 rows,
@@ -1505,15 +1525,16 @@ fn effect_fields(
                 (-2048.0, 2048.0),
                 NumberFormat::int(" px"),
                 tip(
-                    reason,
+                    offset_tip,
                     lang.pick(
                         "コピー元までの横の距離",
                         "Horizontal distance to the source",
                     ),
                 ),
-                enabled,
+                offset_enabled,
             ) {
                 next.x = v as f64;
+                edited = true;
             }
             if let Some(v) = slider_row(
                 ui,
@@ -1524,21 +1545,26 @@ fn effect_fields(
                 (-2048.0, 2048.0),
                 NumberFormat::int(" px"),
                 tip(
-                    reason,
+                    offset_tip,
                     lang.pick(
                         "コピー元までの縦の距離（上が正）",
                         "Vertical distance to the source (up is positive)",
                     ),
                 ),
-                enabled,
+                offset_enabled,
             ) {
                 next.y = v as f64;
+                edited = true;
             }
             *offset = DVec2::new(next.x, next.y);
-            // 見えているレイヤーの重なりを読む・3D の面のクローンの揃え方（3D のビューを出しているとき）。
+            // 欄で直した offset は、次のストロークから使う（元からは決め直さない）。ブラシの設定を直したので「変えた」に数える
+            if edited {
+                app.clone.offset_edited(next);
+            }
+            // 見えているレイヤーの重なりを読む・揃え方（2D のキャンバスも 3D の面も同じ設定）。
             // マスクを描くあいだは描いているマスクだけを読むので、入れても効かない切り替えは薄くして切った表示にする
             let masked = app.m2.edit_mask;
-            let clone = &mut app.view3d.clone;
+            let clone = &mut app.clone;
             if let Some(v) = toggle_row(
                 ui,
                 rows,
@@ -1561,36 +1587,35 @@ fn effect_fields(
             ) {
                 clone.all_layers = v;
             }
-            if app.view3d.paintable_on_screen() {
-                // 元の有無は文では言わず、揃えるの薄さで示す（元は 3D ビューの十字で見える。決めるのは Alt クリック）
-                let has_source = app
+            // 元の有無は文では言わず、揃えるの薄さで示す（元は十字で見える。決めるのは Alt クリック）
+            let has_source = app.clone.canvas_source_for(app.doc.id()).is_some()
+                || app
                     .view3d
                     .model
                     .as_ref()
-                    .is_some_and(|m| app.view3d.clone.source_for(&m.geometry).is_some());
-                let clone = &mut app.view3d.clone;
-                if let Some(v) = toggle_row(
-                    ui,
-                    rows,
-                    "effect.clone.aligned",
-                    lang.pick("揃える", "Aligned"),
-                    clone.aligned,
-                    Some(lang.pick(
-                        if has_source {
-                            "3D: 前のストロークと同じ位置関係で続ける。切ると、ストロークごとに最初の点が元に重なる"
-                        } else {
-                            "3D: 元を決めると使える（Alt を押しながらクリック）"
-                        },
-                        if has_source {
-                            "3D: Keep the offset from the previous stroke. Off: every stroke starts on the source"
-                        } else {
-                            "3D: Available once a source is set (Alt+click)"
-                        },
-                    )),
-                    usable && has_source,
-                ) {
-                    clone.set_aligned(v);
-                }
+                    .is_some_and(|m| app.clone.source_for(&m.geometry).is_some());
+            let clone = &mut app.clone;
+            if let Some(v) = toggle_row(
+                ui,
+                rows,
+                "effect.clone.aligned",
+                lang.pick("揃える", "Aligned"),
+                clone.aligned,
+                Some(lang.pick(
+                    if has_source {
+                        "前のストロークと同じ位置関係で続ける。切ると、ストロークごとに最初の点が元に重なる"
+                    } else {
+                        "元を決めると使える（Alt を押しながらクリック）"
+                    },
+                    if has_source {
+                        "Keep the offset from the previous stroke. Off: every stroke starts on the source"
+                    } else {
+                        "Available once a source is set (Alt+click)"
+                    },
+                )),
+                usable && has_source,
+            ) {
+                clone.set_aligned(v);
             }
         }
     }

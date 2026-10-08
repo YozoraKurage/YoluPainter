@@ -459,9 +459,15 @@ fn view_or_stencil_gesture(binding: &Binding) {
     assert!(!app.is_stroking());
 }
 
-/// 2D キャンバスの押し（中ボタンのパン、Alt + 左の回転、右ボタンのスポイト）を、実際のウィンドウの入力へ流す。
+/// 2D キャンバスの押し（中ボタンのパン、Alt + 左の回転と、動かさずに離したクローンの元、右ボタンのスポイト）を、実際のウィンドウの入力へ流す。
 fn canvas_gesture(binding: &Binding) {
     let mut h = app(1280.0, 800.0, 256);
+    // クローンの元は、クローンのブラシのときだけ決まる
+    if binding.operation == Operation::CloneSource {
+        h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+            offset: Default::default(),
+        };
+    }
     let at = canvas_rect(&h).center();
     h.event(Event::ModifiersChanged(binding.modifiers));
     h.step();
@@ -481,6 +487,15 @@ fn canvas_gesture(binding: &Binding) {
             Operation::Rotate => {
                 assert!(
                     s.canvas.rotating.is_some() && !s.canvas.panning,
+                    "{binding:?}"
+                );
+                assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{binding:?}");
+            }
+            // 動かさずに離したときの Alt + 左は、押した時点で、離したときの行き先（クローンの元）の印が付く。表示は回し始めのまま
+            Operation::CloneSource => {
+                assert!(binding.click, "{binding:?}");
+                assert!(
+                    s.canvas.rotating.is_some() && s.canvas.clone_press.is_some(),
                     "{binding:?}"
                 );
                 assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{binding:?}");
@@ -506,6 +521,15 @@ fn canvas_gesture(binding: &Binding) {
     let s = &h.state().state;
     assert!(!s.canvas.panning && !s.canvas.middle_rotating);
     assert!(s.canvas.rotating.is_none() && s.canvas.eyedrop.is_none());
+    // 同じ所で離したので、クローンの元が決まり、印は消える
+    if binding.operation == Operation::CloneSource {
+        assert!(s.canvas.clone_press.is_none());
+        assert!(
+            s.clone.canvas_source_for(s.doc.id()).is_some(),
+            "{binding:?}"
+        );
+        assert_eq!(s.view.angle, 0.0, "{binding:?}");
+    }
 }
 
 /// 選択範囲のツールの Shift・Ctrl を、実際の選択の入力で確かめる（先に左半分を選び、中ほどの帯をなぞる）。

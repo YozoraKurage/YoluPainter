@@ -687,6 +687,10 @@ impl AppState {
         self.canvas.current_end = None;
         self.canvas.shift_hold = None;
         self.canvas.ruler_constraint = None;
+        self.canvas.clone_press = None;
+        self.canvas.clone_offset = None;
+        self.forget_clone_sources();
+        self.view3d.input.previous_end = None;
         self.drafting_cancel();
         self.drafting.pen_down = None;
     }

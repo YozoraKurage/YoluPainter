@@ -1018,13 +1018,12 @@ fn ctrl_and_space_dolly_the_3d_view_for_the_pen_and_the_mouse() {
 }
 
 #[test]
-fn the_pen_never_paints_the_surface_with_shift_or_ctrl_or_the_side_button_or_an_eraser_modifier() {
+fn the_pen_never_paints_the_surface_with_ctrl_or_the_side_button() {
     let (mut h, rect) = cube_view();
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     for (m, pen) in [
-        (Modifiers::SHIFT, Pen::tip()),
         (Modifiers::CTRL, Pen::tip()),
-        (Modifiers::SHIFT, Pen::eraser()),
+        (Modifiers::CTRL, Pen::eraser()),
         (Modifiers::NONE, Pen::barrel()),
     ] {
         hold(&mut h, m);
@@ -1299,10 +1298,7 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         h.run();
         assert!(h.state().state.view3d.visible);
         h.state_mut().state.m2.brush.effect = normal;
-        assert!(
-            h.state().state.view3d.clone.source.is_none(),
-            "元は決まっていない"
-        );
+        assert!(h.state().state.clone.source.is_none(), "元は決まっていない");
         assert!(h.state().state.view3d.input.clone_press.is_none());
         // 次に触れた押しは、新しい押しとして描ける
         pen.drag(&mut h, &[at, offset(at, 6.0, 0.0)]);

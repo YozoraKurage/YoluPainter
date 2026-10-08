@@ -27,7 +27,8 @@ The Liquify tool has no key.
 
 | Action | Input |
 |---|---|
-| Draw a straight line from the end of the previous stroke | `Shift`-click with the brush or eraser (hold `Shift` and drag to lock the direction to 45° steps) |
+| Draw a straight line from the end of the previous stroke | `Shift`-click with the brush or eraser (when there is no previous point, hold `Shift` and drag to lock the direction to 45° steps; in 2D and 3D, with the mouse and the pen) |
+| Set the clone source | `Alt`-click with the Clone brush (release without moving; in 2D and 3D. If you move, 2D rotates the view and 3D snap-orbits) |
 | Pick a color with any tool (eyedropper) | In 2D, press the right button (while it is held, the swatch at the pointer follows it; the color where you release is picked; `Esc` cancels). In 3D, release the right button without moving it (if you move it, the view just orbits). With Polygon Fill, the right button opens the island menu |
 | Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` pressed after starting to drag |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
@@ -91,7 +92,7 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 | Zoom | Wheel, or `Ctrl+Space` + left-drag horizontally (the pressed point is the center; releasing without moving zooms in, and adding `Alt` zooms out) |
 | Zoom In / Zoom Out | `Ctrl++` (or `Ctrl+=`) / `Ctrl+-` |
 | Pan | Middle-drag, or `Space` + left-drag |
-| Rotate | `Alt` + left-drag (15° steps; free if `Shift` is also held) |
+| Rotate | `Alt` + left-drag (15° steps; free if `Shift` is also held. Released without moving with the Clone brush, it sets the clone source) |
 | Rotate View Left / Right | `-` / `^` (the `=` key also works) |
 | Reset rotation / flip horizontally | `Shift+R` / `H` |
 | Pick a color | Press the right button (move while holding it, and the color where you release is picked) |
@@ -107,7 +108,6 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 | Pan | Middle-drag, or `Space` + left-drag |
 | Zoom | Wheel, or `Ctrl+Space` + left-drag (as in 2D) |
 | Pick a color | Release the right button without moving it |
-| Set the clone source | `Alt`-click with the Clone brush (release without moving; if you move, it is the snap orbit) |
 | Frame the selected texture set | `.` |
 | Cancel an operation | `Esc` |
 
@@ -121,7 +121,7 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 
 ## Pen
 
-The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Alt`, `Space` and `Ctrl+Space` act the same as with the left mouse button. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line.
+The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Alt`, `Space` and `Ctrl+Space` act the same as with the left mouse button. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line (in 2D and 3D).
 
 ## If you get lost
 

@@ -204,7 +204,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     release_with(&h, source, Modifiers::ALT);
     h.run();
     assert_eq!(message(&h), "クローンの元を決めました。");
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     assert_eq!(h.state().state.view3d.camera.yaw, yaw);
     // 右の面へ描くと、手前の面の模様が写る
     h.state_mut().state.message.clear();
@@ -222,7 +222,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     }
     assert!(painted > 20, "{painted}");
     assert!(
-        h.state().state.view3d.clone.destination.is_some(),
+        h.state().state.clone.destination.is_some(),
         "揃えるクローンは、先の基準を次のストロークへ渡す"
     );
     key(&h, Key::Z, Modifiers::COMMAND);
@@ -249,7 +249,7 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
     h.run();
     assert_ne!(h.state().state.view3d.camera.yaw, yaw, "回る");
     assert!(
-        h.state().state.view3d.clone.source.is_none(),
+        h.state().state.clone.source.is_none(),
         "動かしたクリックは元にしない"
     );
 }
@@ -401,7 +401,7 @@ fn all_layers_makes_the_2d_clone_read_the_visible_composite_too() {
         offset: DVec2::new(-10.0, 0.0),
     };
     for all_layers in [false, true] {
-        app.view3d.clone.all_layers = all_layers;
+        app.clone.all_layers = all_layers;
         let mut stroke = app.begin_canvas_stroke(target, false, None).unwrap();
         stroke
             .add_point(&mut app.doc, 14.5, 4.5, 1.0, DVec2::ZERO)
@@ -536,12 +536,12 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     h.step();
     release_with(&h, source, Modifiers::ALT);
     h.run();
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     open_detail(&mut h, yolu_app::brushes::Category::Effect);
     assert!(!disabled(&h, "揃える"));
     assert!(h.query_by_label("元を決めました").is_none());
     // マスクを描くあいだは、全レイヤーから読めない（描いているマスクだけを読む）ので、切った表示で薄い
-    h.state_mut().state.view3d.clone.all_layers = true;
+    h.state_mut().state.clone.all_layers = true;
     h.run();
     assert!(!disabled(&h, "全レイヤーから"));
     let layer = h.state().state.selected_layer.expect("レイヤー");
@@ -556,7 +556,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
         Some(egui::accesskit::Toggled::False)
     );
     assert!(
-        h.state().state.view3d.clone.all_layers,
+        h.state().state.clone.all_layers,
         "設定は変えない（マスクをやめれば戻る）"
     );
 }
