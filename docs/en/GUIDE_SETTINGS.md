@@ -2,7 +2,7 @@
 
 [日本語](../GUIDE_SETTINGS.md)
 
-This page explains each item in Edit → Settings… (`Ctrl+,`), section by section. The window has five sections: General, Memory, Processing, 3D View and Files. You can move it by dragging its title. If the screen is too short to fit it, scroll inside the window to reach the last row.
+This page explains each item in Edit → Settings… (`Ctrl+,`), section by section. The window has five sections: General, Memory, Processing, 3D View and Files (on Mac, Pen is added between 3D View and Files). You can move it by dragging its title. If the screen is too short to fit it, scroll inside the window to reach the last row.
 
 Values are written to `YoluPainter/settings.conf` in the settings folder (`%APPDATA%` on Windows, `~/.config` on Linux), and only the values that differ from the defaults. A value that is not valid is reset to the default for that item only, and you are told why.
 
@@ -72,6 +72,12 @@ When **GPU memory** runs short, the 3D view drops the other sets' pictures and s
 | UV Wireframe | Two color swatches: the UV wireframe color and the Overlapping UV color. Pressing one opens the color window, where you set the color and opacity |
 
 The orbit and zoom centers are the same values as Navigation in the 3D view's display settings; changing either changes the same setting ([GUIDE_3D.md](GUIDE_3D.md)).
+
+## Pen (Mac)
+
+| Item | What it does |
+|---|---|
+| Tablet pressure (experimental) | Reads the pressure, tilt, eraser end and side buttons that tablet drivers such as Wacom and XP-Pen send as standard macOS events. On by default. When off, the pen draws like a mouse. The change takes effect immediately |
 
 ## Files
 

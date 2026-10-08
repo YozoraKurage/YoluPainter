@@ -899,27 +899,109 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
         english(&mut h, lang);
         for ops in [false, true] {
             h.state_mut().state.prefs.settings.external_ops = ops;
-            for (details, cache) in [(false, false), (true, false), (false, true), (true, true)] {
-                h.state_mut()
-                    .state
-                    .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
-                h.state_mut()
-                    .state
-                    .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
-                h.run();
-                h.run();
-                let window = window_rect(&h);
-                let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
-                let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
-                assert!(
-                    (body - drawn).abs() < 0.5,
-                    "{lang:?} 外からの操作={ops} 詳しく={details} キャッシュの詳しく={cache}: ウィンドウの中身 {body} と、並べた高さ {drawn} が違う"
-                );
+            // 「ペン」の節は macOS だけに出る。ほかの OS でも、出したときの高さを確かめる
+            for pen in [false, true] {
+                h.state_mut().state.prefs.tablet_row = pen;
+                for (details, cache) in [(false, false), (true, false), (false, true), (true, true)]
+                {
+                    h.state_mut()
+                        .state
+                        .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
+                    h.state_mut()
+                        .state
+                        .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
+                    h.run();
+                    h.run();
+                    let window = window_rect(&h);
+                    let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
+                    let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
+                    assert!(
+                        (body - drawn).abs() < 0.5,
+                        "{lang:?} 外からの操作={ops} ペンの節={pen} 詳しく={details} キャッシュの詳しく={cache}: ウィンドウの中身 {body} と、並べた高さ {drawn} が違う"
+                    );
+                }
             }
         }
     }
     h.state_mut().state.prefs.settings.external_ops = false;
     h.run();
+}
+
+/// 「ペン」の節（タブレットの筆圧（試し））は macOS だけに出て、切り替えがペンの受け口の札と設定のファイルに届き、次の起動でも切のまま。
+#[test]
+fn the_pen_section_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_and_survives_a_restart(
+) {
+    let dir = settings_dir("tablet");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    open_settings(&mut h);
+    // 節が出るのは macOS だけ
+    assert_eq!(h.state().state.prefs.tablet_row, cfg!(target_os = "macos"));
+    // 設定のウィンドウの中に描いた文字だけ（ツールの名前などにも「ペン」がある）
+    let shown = |h: &Harness<'_, YoluApp>, text: &str| {
+        let window = window_rect(h);
+        drawn_texts(h)
+            .iter()
+            .any(|(t, r)| t == text && window.contains_rect(*r))
+    };
+    if !cfg!(target_os = "macos") {
+        assert!(!shown(&h, "ペン"), "macOS 以外には節が無い");
+        assert!(h.query_by_label("タブレットの筆圧（試し）").is_none());
+        h.state_mut().state.prefs.tablet_row = true;
+        h.run();
+        h.run();
+    }
+    assert!(shown(&h, "ペン"), "節の見出し");
+    // 既定は入。札は設定から合わせる
+    assert!(h.state().state.settings().tablet_pressure);
+    assert!(h.state().pen().tablet_on());
+    // ライブラリの場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
+    let library = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+            library,
+        )))));
+    h.run();
+    shot(&mut h, "prefs_window_pen");
+    // 切る
+    h.get_by_label("タブレットの筆圧（試し）").click();
+    h.run();
+    h.run();
+    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(!h.state().pen().tablet_on(), "ペンの受け口に届く");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "tablet_pressure=off"),
+        "{written}"
+    );
+    // 英語でも節と名前が出る
+    english(&mut h, Lang::En);
+    assert!(shown(&h, "Pen"), "節の見出し");
+    let _ = h.get_by_label("Tablet pressure (experimental)");
+    // 入れ直すと行が消える
+    h.get_by_label("Tablet pressure (experimental)").click();
+    h.run();
+    h.run();
+    assert!(h.state().state.settings().tablet_pressure && h.state().pen().tablet_on());
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("tablet_pressure"));
+    // 切って終わると、次の起動も切（札も切）
+    h.get_by_label("Tablet pressure (experimental)").click();
+    h.run();
+    h.run();
+    drop(h);
+    let h = app_with_settings(&path, vec2(1280.0, 900.0));
+    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(
+        !h.state().pen().tablet_on(),
+        "起動のとき、設定の値が札に入る"
+    );
 }
 
 /// どの大きさのウィンドウでも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、

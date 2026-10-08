@@ -164,6 +164,38 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- livelink_files::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
+  macos:
+    name: macOS のビルドと画面なし試験
+    # Apple Silicon の runner。アプリが macOS でビルドできること（タブレットの入力の `pen::mac_tablet` を含む）と、画面を使わない試験が通ることを見る。
+    # GPU・画面の統合試験と、配る物（.app・署名）は対象外。キャッシュの無い回の長さはまだ測っていない（最初の回を見て決め直す）
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回ビルドし直す）
+          cache-on-failure: true
+      - name: アプリのビルド
+        run: cargo build -p yolu-app -p yolu-cli --locked
+      - name: 描画を使わないクレートの試験
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-ops -p yolu-cli -- --test-threads=1
+      - name: アプリの単体試験（画面なし）
+        if: ${{ !cancelled() }}
+        run: cargo test -p yolu-app --lib --locked -- --test-threads=1
+      # Windows のジョブが回す、OS のロックとファイルの置換を使う画面なしの結合試験のうち、2 組（復旧のロックと、Live Link の受け渡しのフォルダ・ファイル）。
+      # ほかの組（更新・ブラシの一覧・選択範囲・ポーズの保存）は、このジョブでは回さない（Linux の画面の試験が、同じ試験を Unix で回している）
+      - name: 復旧と Live Link のファイルの受け渡しの試験（画面なし）
+        if: ${{ !cancelled() }}
+        run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ livelink_files::headless_ --test-threads=1
+
   # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
   # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
   dist-plan:

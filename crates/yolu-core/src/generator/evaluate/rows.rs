@@ -1152,7 +1152,10 @@ mod tests {
             Blend::Add,
             Blend::Subtract,
         ];
-        let mut compared = 0;
+        // この CPU が持つ道（x86_64 は最大 3 つ。ほかの CPU はスカラーだけで、スカラーどうしを比べるので違いは出ない）
+        let levels = simd::forced::supported();
+        assert!(levels.contains(&Level::Scalar), "{levels:?}");
+        let (mut cases, mut compared) = (0, 0);
         for (name, base) in settings() {
             for (i, blend) in blends.into_iter().enumerate() {
                 for target in [Target::Color, Target::Scalar, Target::Mask] {
@@ -1181,9 +1184,9 @@ mod tests {
                                 .pixels
                             })
                         };
-                        let levels = simd::forced::supported();
+                        cases += 1;
                         let reference = run(Level::Scalar);
-                        for level in levels {
+                        for &level in &levels {
                             assert!(
                                 run(level) == reference,
                                 "{name} {blend:?} {target:?} 強さ {strength} {level:?} がスカラーと違う（{i}）"
@@ -1194,6 +1197,8 @@ mod tests {
                 }
             }
         }
-        assert!(compared > 800, "{compared}");
+        // 組み合わせの数は道の数によらない。比べた回数は、組み合わせ × この CPU の道の数（決め打ちの数と比べない）
+        assert!(cases > 300, "{cases}");
+        assert_eq!(compared, cases * levels.len());
     }
 }

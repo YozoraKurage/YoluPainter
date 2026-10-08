@@ -46,6 +46,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 
 - **Pressure**: the pen button in the Size, Opacity, Hardness and Flow rows of Tool Properties turns pressure on or off for that setting. The minimum (the value at zero pressure) and the curve are set in Pen Pressure in Brush Details.
 - **Differences between pens**: View → Pen Pressure… sets a low limit, a high limit and a curve. Draw a few strokes at your usual strength and press Auto, and the settings are worked out from the pressure of the strokes you drew. This is a per-device setting and is stored neither in documents nor in brushes.
+- **Tablets on Mac**: on Mac, the app reads the pressure, tilt, eraser end and side buttons that drivers such as Wacom and XP-Pen send as standard macOS events (experimental). Turn it on or off with Tablet pressure (experimental) under Pen in Edit → Settings… (on by default; when off, the pen draws like a mouse).
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
 - **Taper**: the settings that thin the start and end of a stroke are in Taper & Pen in Brush Details.
 - **With the Canvas and the 3D View side by side**: settings that affect only 2D strokes, such as Stabilizer, taper and jitter, can still be changed (they apply to strokes on the Canvas). When only the 3D View tab is showing, they are grayed out and the tooltip says why.

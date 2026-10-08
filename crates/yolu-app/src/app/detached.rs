@@ -166,6 +166,8 @@ impl YoluApp {
             settle_and_record(&ctx, win, &info);
             #[cfg(windows)]
             self.attach_native(&ctx, win, &info);
+            #[cfg(target_os = "macos")]
+            self.attach_native_mac(&ctx, win, &info);
             pen = win.pen.drain();
             self.state.pressure_observe(ctx.pixels_per_point(), &pen);
             for sample in &mut pen {
@@ -581,6 +583,30 @@ impl YoluApp {
             crate::windowpos::install_hwnd(hwnd);
             win.pen = crate::pen::PenInput::attach_hwnd(hwnd, ctx);
             win.hwnd = Some(hwnd);
+        }
+    }
+
+    /// macOS: 別ウィンドウの NSWindow を、そのビューポートに今付いている題名（`info.title`）で見つけたら、タブレットの入力を繋ぐ。フォーカスがあるときはキーウィンドウを
+    /// 使う。見つかるまで、数十フレーム探す（諦めたあとも、題名が変わったら 0 から探し直す）。題名が重なって決まらないときは繋がない
+    /// （取り違えると、ほかのウィンドウのペンの点を受けてしまう）。
+    #[cfg(target_os = "macos")]
+    fn attach_native_mac(&mut self, ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInfo) {
+        const TRIES: u32 = 120;
+        if win.pen.is_window_hooked() {
+            return;
+        }
+        let title = info.title.clone().unwrap_or_default();
+        if win.attach_title != title {
+            win.attach_title = title.clone();
+            win.attach_tries = 0;
+        }
+        if title.is_empty() || win.attach_tries >= TRIES {
+            return;
+        }
+        win.attach_tries += 1;
+        let focused = info.focused == Some(true);
+        if let Some(pen) = crate::pen::PenInput::attach_titled(&title, focused, ctx, &self.pen) {
+            win.pen = pen;
         }
     }
 
