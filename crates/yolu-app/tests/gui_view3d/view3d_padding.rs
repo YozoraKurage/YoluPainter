@@ -32,7 +32,20 @@ fn islands(n: u32, scale: f32) -> ModelMesh {
 }
 
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
-    let mut h = app(width, height, doc);
+    view_on(app(width, height, doc))
+}
+
+/// 計測用の `view`: 装置をアダプターの上限で作る（OpenGL でも compute を使う道を通す。`shared_gpu::renderer_with_adapter_limits`）。
+fn view_for_measure(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
+    view_on(app_with_renderer(
+        width,
+        height,
+        doc,
+        common::shared_gpu::renderer_with_adapter_limits(),
+    ))
+}
+
+fn view_on(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp> {
     h.state_mut()
         .state
         .doc
@@ -1764,6 +1777,13 @@ fn measure_painting_frames_with_and_without_display_padding() {
 /// 試しの立方体に、塗りつぶしレイヤー（白）の形のグラデーション（グラデーションデカール。球）を置き、メッシュマップを焼いた状態の 3D ビュー（文書は
 /// `size`²）と、ギズモのつまみ（X の面）のあるポインタの位置。
 fn shape_gradient_scene(size: u32) -> (Harness<'static, YoluApp>, egui::Pos2) {
+    shape_gradient_scene_on(view(1400.0, 900.0, size))
+}
+
+/// `shape_gradient_scene` の、作った画面（`view` か `view_for_measure`）に置く版。
+fn shape_gradient_scene_on(
+    mut h: Harness<'static, YoluApp>,
+) -> (Harness<'static, YoluApp>, egui::Pos2) {
     use yolu_app::bake::{BakeAction, BakeBackend};
     use yolu_app::fillfx::{gizmo, FillOp};
     use yolu_app::m2::Edit;
@@ -1772,7 +1792,6 @@ fn shape_gradient_scene(size: u32) -> (Harness<'static, YoluApp>, egui::Pos2) {
     use yolu_core::generator::{Kind, MapState, Settings, Shape};
     use yolu_core::mesh_maps::MeshMapKind;
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget, MapInput};
-    let mut h = view(1400.0, 900.0, size);
     {
         let s = &mut h.state_mut().state;
         s.bake.backend = BakeBackend::Cpu;
@@ -2067,7 +2086,7 @@ fn measure_dragging_the_shape_gradient_gizmo_in_3d() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(2048);
     let started = Instant::now();
-    let (mut h, from) = shape_gradient_scene(size);
+    let (mut h, from) = shape_gradient_scene_on(view_for_measure(1400.0, 900.0, size));
     println!(
         "GPU: {}、文書 {size}²（ベイクと準備 {:.1} 秒）",
         h.state().view3d_adapter().unwrap_or_default(),
@@ -2128,6 +2147,706 @@ fn measure_dragging_the_shape_gradient_gizmo_in_3d() {
         "離した直後の 1 フレーム（粗い絵のタイル {coarse}）: 上げたタイル {:.0}・塗った絵の同期 {:.2} ms・prepare {:.2} ms・step {:.1} ms・GPU の完了まで {:.1} ms",
         row[4], row[0], row[1], row[2], row[3]
     );
+}
+
+/// 計測で動かす操作。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DragOp {
+    /// 形のグラデーションの Generator のつまみ（ポインタで 3D ビューのギズモを動かす）。
+    Gizmo,
+    /// デカールの投影の箱の位置。
+    Projection,
+    /// レイヤーの不透明度。
+    Opacity,
+    /// 調整レイヤー（色相）の値。
+    Adjust,
+    /// ぼかしの半径。
+    Blur,
+    /// 点のグラデーションの点。
+    Points,
+}
+
+impl DragOp {
+    const ALL: [DragOp; 6] = [
+        DragOp::Gizmo,
+        DragOp::Projection,
+        DragOp::Opacity,
+        DragOp::Adjust,
+        DragOp::Blur,
+        DragOp::Points,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            DragOp::Gizmo => "gizmo",
+            DragOp::Projection => "projection",
+            DragOp::Opacity => "opacity",
+            DragOp::Adjust => "adjust",
+            DragOp::Blur => "blur",
+            DragOp::Points => "points",
+        }
+    }
+}
+
+/// 計測の文書のレイヤー（`drag_scene`）。下から: 模様を読み込んだラスター（不透明度を動かす）、同じ模様にぼかしを掛けたラスター、
+/// 色相の調整、デカールの画像の塗りつぶし、点のグラデーションの塗りつぶし、形のグラデーションの Generator を掛けた白の塗りつぶし。
+struct DragScene {
+    base: LayerId,
+    blurred: LayerId,
+    blur: yolu_core::FilterId,
+    adjust: LayerId,
+    decal: LayerId,
+    points: LayerId,
+    gradient: LayerId,
+    filter: yolu_core::FilterId,
+}
+
+impl DragScene {
+    /// 操作の対象のレイヤー（と土台の模様）だけを見せる。
+    fn layers_for(&self, op: DragOp) -> Vec<LayerId> {
+        let own = match op {
+            DragOp::Gizmo => self.gradient,
+            DragOp::Projection => self.decal,
+            DragOp::Opacity => self.base,
+            DragOp::Adjust => self.adjust,
+            DragOp::Blur => self.blurred,
+            DragOp::Points => self.points,
+        };
+        vec![self.base, own]
+    }
+
+    fn all(&self) -> [LayerId; 6] {
+        [
+            self.base,
+            self.blurred,
+            self.adjust,
+            self.decal,
+            self.points,
+            self.gradient,
+        ]
+    }
+}
+
+/// `shape_gradient_scene` の文書に、操作ごとのレイヤーを足す（模様は文書の全面。画像は 1024² の sRGB）。
+fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
+    use yolu_core::fill_image::ProjectionMode;
+    use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
+    use yolu_core::{AdjustmentSettings, EffectSettings, FilterSpec, FilterTarget};
+    let (mut h, _) = shape_gradient_scene_on(view_for_measure(1400.0, 900.0, size));
+    let gradient = h
+        .state()
+        .state
+        .selected_layer
+        .expect("形のグラデーションのレイヤー");
+    let (filter, _) = h
+        .state()
+        .state
+        .fillfx
+        .edit_filter
+        .map(|(l, f)| (f, l))
+        .expect("Generator");
+    let pattern = |x: u32, y: u32| -> [u8; 4] {
+        let c = ((x / 37 + y / 53) % 7) as u8;
+        [40 + c * 30, 200 - c * 20, 60 + ((x ^ y) & 63) as u8, 255]
+    };
+    let base = first_layer(&h);
+    let scene = {
+        let s = &mut h.state_mut().state;
+        import(&mut s.doc, base, Channel::Color, pattern);
+        let blurred = s.doc.add_layer("ぼかし").unwrap();
+        import(&mut s.doc, blurred, Channel::Color, pattern);
+        let blur = s
+            .doc
+            .add_filter(
+                blurred,
+                FilterTarget::Content,
+                FilterSpec::new(EffectSettings::blur(6)).channels(&[Channel::Color]),
+            )
+            .unwrap();
+        let adjust = s
+            .doc
+            .add_adjustment_layer(
+                "色相",
+                AdjustmentSettings::hue_saturation(20.0, 0.0, 0.0).unwrap(),
+                Some(&[Channel::Color]),
+                Some(blurred),
+            )
+            .unwrap();
+        // デカール: 1024² の模様の画像を、カメラから見て正面に貼る
+        let image_id = yolu_core::ImageId(0xD8A6_0000_0000_0000_0000_0000_0000_0001);
+        let n = 1024u32;
+        let pixels: Vec<u8> = (0..n * n)
+            .flat_map(|i| {
+                let (x, y) = (i % n, i / n);
+                let on = ((x / 64) + (y / 64)) % 2 == 0;
+                if on {
+                    [230, 80, 40, 255]
+                } else {
+                    [40, 90, 220, 255]
+                }
+            })
+            .collect();
+        let image =
+            yolu_core::ImageInput::new(n, n, pixels, yolu_core::ImageColorSpace::Srgb).unwrap();
+        let inputs = s.doc.effect_inputs().clone().with_image(image_id, image);
+        s.doc.set_effect_inputs(inputs).unwrap();
+        let decal = s
+            .doc
+            .add_fill_layer(
+                "デカール",
+                &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
+                Some(adjust),
+            )
+            .unwrap();
+        s.doc
+            .set_fill_image(decal, Channel::Color, Some(image_id))
+            .unwrap();
+        let mut projection = *s.doc.layer(decal).unwrap().projection();
+        projection.mode = ProjectionMode::Decal;
+        projection.placement = s
+            .fitted_placement_for(ProjectionMode::Decal, Some((n, n)))
+            .expect("モデルがある");
+        s.doc.set_fill_projection(decal, projection, false).unwrap();
+        // 点のグラデーション: モデルの外形の中の 3 点
+        let bounds = s.model_bounds().expect("モデルがある");
+        let at = |k: f32| {
+            let p = bounds.center + bounds.extents * Vec3::new(k, -k * 0.5, 0.3);
+            [p.x as f64, p.y as f64, p.z as f64]
+        };
+        let points_layer = s
+            .doc
+            .add_fill_layer(
+                "点",
+                &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
+                Some(decal),
+            )
+            .unwrap();
+        s.doc
+            .set_fill_points(
+                points_layer,
+                Channel::Color,
+                Some(PointGradient {
+                    space: PointSpace::Model,
+                    spread: 0.3,
+                    points: vec![
+                        GradientPoint {
+                            position: at(-0.6),
+                            color: Rgba8::new(250, 40, 40, 255),
+                        },
+                        GradientPoint {
+                            position: at(0.0),
+                            color: Rgba8::new(40, 250, 40, 255),
+                        },
+                        GradientPoint {
+                            position: at(0.6),
+                            color: Rgba8::new(40, 40, 250, 255),
+                        },
+                    ],
+                }),
+                false,
+            )
+            .unwrap();
+        // 形のグラデーションのレイヤーをいちばん上へ（ギズモの対象は選んだレイヤー）
+        let top = s.doc.layers().len() - 1;
+        let index = s
+            .doc
+            .layers()
+            .iter()
+            .position(|l| l.id() == gradient)
+            .unwrap();
+        if index != top {
+            s.doc.move_layer(gradient, top).unwrap();
+        }
+        DragScene {
+            base,
+            blurred,
+            blur,
+            adjust,
+            decal,
+            points: points_layer,
+            gradient,
+            filter,
+        }
+    };
+    h.run();
+    (h, scene)
+}
+
+/// ドックの並び: 3D ビューだけ（3D ビューを前に）か、キャンバスと 3D ビューを左右に並べる。左はレイヤー。
+/// プロパティのタブは置かない: プロパティはポインタを押していないフレームで変更のまとめを終える（スライダーを離した扱い）。この計測は
+/// 文書の口で値を変え、ポインタを押さないので、プロパティがあると、それより後に描くビュー（並べたときの 3D ビュー）がまとめの終わった文書を見る。
+fn set_drag_layout(h: &mut Harness<'static, YoluApp>, both: bool) {
+    use egui_dock::{DockState, NodeIndex};
+    use yolu_app::Tab;
+    let mut dock = if both {
+        DockState::new(vec![Tab::Canvas])
+    } else {
+        DockState::new(vec![Tab::Canvas, Tab::View3d])
+    };
+    let surface = dock.main_surface_mut();
+    let [center, _] = surface.split_left(NodeIndex::root(), 0.18, vec![Tab::Layers]);
+    if both {
+        surface.split_right(center, 0.5, vec![Tab::View3d]);
+    }
+    h.state_mut().dock = dock;
+    h.run();
+    if !both {
+        click_tab(h, Tab::View3d);
+    }
+    h.run();
+}
+
+/// 計測のための一時の内訳（コミットしない細工が入っているときだけ値を返す）。
+fn drag_breakdown() -> Vec<(&'static str, f64)> {
+    Vec::new()
+}
+
+/// 計測: 3D ビューで見ているときの、ドラッグの 1 フレーム（文書の変更・step・GPU の完了まで）を、操作ごと・並びごとに（3D だけ／キャンバスと
+/// 並べる）。離した直後の 1 フレームも。文書の大きさ `DRAG_SIZE`（既定 2048）、平均を取るフレーム数 `DRAG_FRAMES`（既定 16）、回数
+/// `DRAG_ROUNDS`（既定 2。操作と並びを交互に回して、ほかの負荷のぶれを見る）、操作 `DRAG_OPS`（gizmo,projection,opacity,adjust,blur,points の
+/// どれか。カンマ区切り）、並び `DRAG_LAYOUTS`（3d,both）。2D のキャンバスの合成は `DRAG_CANVAS`（auto・gpu・cpu。既定は実際のアプリの既定と
+/// 同じ自動: ソフトウェアの GPU では CPU、そうでなければ GPU の常駐の合成）。2D が GPU の常駐の合成のときは、そのフレームの 2D の上げ（タイルの数と
+/// MiB）も出す。GPU は wgpu の環境変数（`WGPU_BACKEND` など）で選ぶ。
+/// `cargo test -p yolu-app --test gui_view3d measure_drag_frames_by_operation -- --ignored --nocapture`
+#[test]
+#[ignore = "計測"]
+fn measure_drag_frames_by_operation() {
+    use std::time::Instant;
+    use yolu_app::fillfx::gizmo;
+    use yolu_app::view3d::shape_gizmo::Handle;
+    use yolu_core::EffectSettings;
+    let var = |name: &str| std::env::var(name).ok();
+    let size: u32 = var("DRAG_SIZE")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2048);
+    let frames: usize = var("DRAG_FRAMES")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    let rounds: usize = var("DRAG_ROUNDS").and_then(|v| v.parse().ok()).unwrap_or(2);
+    let ops: Vec<DragOp> = match var("DRAG_OPS") {
+        Some(list) => DragOp::ALL
+            .into_iter()
+            .filter(|op| list.split(',').any(|n| n.trim() == op.name()))
+            .collect(),
+        None => DragOp::ALL.to_vec(),
+    };
+    let layouts: Vec<bool> = match var("DRAG_LAYOUTS") {
+        Some(list) => list
+            .split(',')
+            .filter_map(|n| match n.trim() {
+                "3d" => Some(false),
+                "both" => Some(true),
+                _ => None,
+            })
+            .collect(),
+        None => vec![false, true],
+    };
+    let started = Instant::now();
+    let (mut h, scene) = drag_scene(size);
+    h.state_mut()
+        .set_canvas_backend(yolu_app::canvas::gpu::CanvasBackend::parse(
+            var("DRAG_CANVAS").as_deref(),
+        ));
+    println!(
+        "GPU: {}、文書 {size}²（ベイクと準備 {:.1} 秒）、{frames} フレームの平均",
+        h.state().view3d_adapter().unwrap_or_default(),
+        started.elapsed().as_secs_f64()
+    );
+    const WARM: usize = 3;
+    let mut run = 0usize;
+    for round in 0..rounds {
+        for &both in &layouts {
+            set_drag_layout(&mut h, both);
+            for &op in &ops {
+                // 対象のレイヤーだけを見せて、落ち着くまで回す
+                {
+                    let s = &mut h.state_mut().state;
+                    let shown = scene.layers_for(op);
+                    for id in scene.all() {
+                        s.doc.set_layer_visible(id, shown.contains(&id)).unwrap();
+                    }
+                    s.selected_layer = Some(if op == DragOp::Gizmo {
+                        scene.gradient
+                    } else {
+                        scene.base
+                    });
+                    s.fillfx.edit_filter =
+                        (op == DragOp::Gizmo).then_some((scene.gradient, scene.filter));
+                    // 前の回の評価のキャッシュを使わない（同じ値の繰り返しで、粗い絵の道を通らなくなる）
+                    s.doc.release_effect_cache();
+                }
+                run += 1;
+                h.run();
+                h.step();
+                h.state().view3d_wait_gpu();
+                let canvas = if both {
+                    // CPU なら理由も（GPU を試して落ちたのか、方針か）
+                    match h.state().display().fallback() {
+                        Some(why) => format!("Cpu({why:?})"),
+                        None => format!("{:?}", h.state().display().shown()),
+                    }
+                } else {
+                    "-".into()
+                };
+                let rect = h.state().view3d_rect().expect("3D ビュー");
+                let from = gizmo::handle_point(&h.state().state, rect, Handle::SizeXPos);
+                if op == DragOp::Gizmo {
+                    let from = from.expect("つまみ");
+                    press(&h, from, egui::PointerButton::Primary);
+                    h.step();
+                    assert!(h.state().state.fillfx.drag.is_some(), "つまみを掴んだ");
+                }
+                let originals = {
+                    let doc = &h.state().state.doc;
+                    (
+                        *doc.layer(scene.decal).unwrap().projection(),
+                        doc.layer(scene.points)
+                            .unwrap()
+                            .fill_points(Channel::Color)
+                            .unwrap()
+                            .clone(),
+                    )
+                };
+                let mut rows: Vec<Vec<f64>> = Vec::new();
+                let mut coarse_frames = 0;
+                // step のあとに変更のまとめが切れていたフレーム（操作がまとめのままのはずなのに、どこかが終えた）
+                let mut ended = 0;
+                for frame in 0..frames + WARM {
+                    let wobble = ((frame + 1) as f64 * 0.35 + run as f64 * 0.7).sin();
+                    let t = Instant::now();
+                    {
+                        let doc = &mut h.state_mut().state.doc;
+                        match op {
+                            DragOp::Gizmo => {
+                                move_to(&h, from.unwrap() + egui::vec2(30.0 * wobble as f32, 0.0))
+                            }
+                            DragOp::Projection => {
+                                let mut p = originals.0;
+                                p.placement.center[0] += 0.05 * wobble;
+                                doc.set_fill_projection(scene.decal, p, true).unwrap();
+                            }
+                            DragOp::Opacity => doc
+                                .set_layer_opacity(scene.base, 0.6 + 0.3 * wobble, true)
+                                .unwrap(),
+                            DragOp::Adjust => doc
+                                .set_adjustment(
+                                    scene.adjust,
+                                    yolu_core::AdjustmentSettings::hue_saturation(
+                                        60.0 * wobble,
+                                        0.0,
+                                        0.0,
+                                    )
+                                    .unwrap(),
+                                    true,
+                                )
+                                .unwrap(),
+                            DragOp::Blur => doc
+                                .set_filter_settings(
+                                    scene.blurred,
+                                    scene.blur,
+                                    EffectSettings::blur(4 + ((frame + run) % 8) as u32),
+                                    true,
+                                )
+                                .unwrap(),
+                            DragOp::Points => {
+                                let mut g = originals.1.clone();
+                                g.points[1].position[0] += 0.1 * wobble;
+                                doc.set_fill_points(scene.points, Channel::Color, Some(g), true)
+                                    .unwrap();
+                            }
+                        }
+                    }
+                    let edit_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    h.step();
+                    let step_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    h.state().view3d_wait_gpu();
+                    let total_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    let st = h.state().view3d_stats().unwrap();
+                    let breakdown = drag_breakdown();
+                    // 2D の GPU の常駐の合成の、このフレームの上げ（GPU でなければ 0）
+                    let canvas_upload =
+                        match (h.state().display().shown(), h.state().display().gpu().last) {
+                            (yolu_app::canvas::gpu::Shown::Gpu, Some(u)) => (
+                                u.uploaded_tiles as f64,
+                                u.uploaded_bytes as f64 / (1u64 << 20) as f64,
+                            ),
+                            _ => (0.0, 0.0),
+                        };
+                    if frame < WARM {
+                        continue;
+                    }
+                    coarse_frames += usize::from(st.paint_coarse_tiles > 0);
+                    ended += usize::from(!h.state().state.doc.is_coalescing());
+                    let mut row = vec![
+                        edit_ms,
+                        step_ms - edit_ms,
+                        total_ms - step_ms,
+                        total_ms,
+                        st.last_sync_us as f64 / 1000.0,
+                        st.last_prepare_us as f64 / 1000.0,
+                        st.last_tiles as f64,
+                        canvas_upload.0,
+                        canvas_upload.1,
+                    ];
+                    row.extend(breakdown.iter().map(|(_, v)| *v));
+                    rows.push(row);
+                }
+                let mean = |k: usize| rows.iter().map(|r| r[k]).sum::<f64>() / rows.len() as f64;
+                let names: Vec<&str> = drag_breakdown_names();
+                let extra: String = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| format!(" {n} {:.2}", mean(9 + i)))
+                    .collect();
+                println!(
+                    "[{round}] {:<10} {:<4} 2D={canvas:<4} 粗 {coarse_frames}/{} 切れ {ended}: 合計 {:.1} ms（変更 {:.2}・step {:.1}・GPU 待ち {:.1}）同期 {:.1} prepare {:.1} タイル {:.1} 2D の上げ {:.0} タイル・{:.1} MiB{extra}",
+                    op.name(),
+                    if both { "both" } else { "3d" },
+                    rows.len(),
+                    mean(3),
+                    mean(0),
+                    mean(1),
+                    mean(2),
+                    mean(4),
+                    mean(5),
+                    mean(6),
+                    mean(7),
+                    mean(8),
+                );
+                // 離した直後の 1 フレーム
+                let _ = drag_breakdown();
+                let t = Instant::now();
+                if op == DragOp::Gizmo {
+                    release(&h, from.unwrap(), egui::PointerButton::Primary);
+                } else {
+                    h.state_mut().state.doc.end_coalescing();
+                }
+                h.step();
+                let step_ms = t.elapsed().as_secs_f64() * 1000.0;
+                h.state().view3d_wait_gpu();
+                let total_ms = t.elapsed().as_secs_f64() * 1000.0;
+                let st = h.state().view3d_stats().unwrap();
+                let breakdown = drag_breakdown();
+                let extra: String = breakdown
+                    .iter()
+                    .map(|(n, v)| format!(" {n} {v:.2}"))
+                    .collect();
+                println!(
+                    "[{round}] {:<10} {:<4} 2D={canvas:<4} 離した直後: 合計 {total_ms:.1} ms（step {step_ms:.1}）同期 {:.1} prepare {:.1} タイル {}{extra}",
+                    op.name(),
+                    if both { "both" } else { "3d" },
+                    st.last_sync_us as f64 / 1000.0,
+                    st.last_prepare_us as f64 / 1000.0,
+                    st.last_tiles,
+                );
+                assert_eq!(st.paint_coarse_tiles, 0, "離したら正確に上げ直す");
+                h.run();
+            }
+        }
+    }
+}
+
+/// `drag_breakdown` の項目の名前（細工が無ければ空）。
+fn drag_breakdown_names() -> Vec<&'static str> {
+    drag_breakdown().into_iter().map(|(n, _)| n).collect()
+}
+
+/// 計測: この GPU での上げ方ごとの時間（2048² の RGBA8 = 16 MiB を、`write_texture` の 1 回・128² のタイルごと、`write_buffer` のタイルごと
+/// （作ってある・毎回作る入れ物へ）・1 回で大きな入れ物へ上げて GPU の中でタイルへ写す）。数は「呼びの CPU の時間 / GPU の完了まで」。
+/// GPU の選び方は `measure_dragging_the_shape_gradient_gizmo_in_3d` と同じ環境変数。
+#[test]
+#[ignore = "計測"]
+fn measure_upload_calls_on_this_gpu() {
+    use eframe::egui_wgpu::wgpu;
+    use std::time::Instant;
+    let rs = egui_kittest::wgpu::create_render_state(
+        egui_kittest::wgpu::default_wgpu_setup(),
+        common::render_options(),
+    );
+    let info = rs.adapter.get_info();
+    println!(
+        "GPU: {} ({:?}, {:?})",
+        info.name, info.backend, info.device_type
+    );
+    let (device, queue) = (&rs.device, &rs.queue);
+    let (size, ts) = (2048u32, 128u32);
+    let tiles = (size / ts) * (size / ts);
+    let tile_bytes = (ts * ts * 4) as u64;
+    let data: Vec<u8> = (0..size * size * 4)
+        .map(|i| ((i * 31) >> 3) as u8)
+        .collect();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let buffer = |bytes: u64| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        })
+    };
+    let kept: Vec<wgpu::Buffer> = (0..tiles).map(|_| buffer(tile_bytes)).collect();
+    let big = buffer(tile_bytes * tiles as u64);
+    let tile_data = |k: u32| {
+        let (tx, ty) = (k % (size / ts), k / (size / ts));
+        let mut out = Vec::with_capacity(tile_bytes as usize);
+        for y in 0..ts {
+            let at = (((ty * ts + y) * size + tx * ts) * 4) as usize;
+            out.extend_from_slice(&data[at..at + (ts * 4) as usize]);
+        }
+        out
+    };
+    let packed: Vec<Vec<u8>> = (0..tiles).map(tile_data).collect();
+    let flat: Vec<u8> = packed.concat();
+    let finish = |t: Instant| {
+        let cpu = t.elapsed().as_secs_f64() * 1000.0;
+        queue.submit(std::iter::empty());
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        (cpu, t.elapsed().as_secs_f64() * 1000.0)
+    };
+    let layout = |w: u32, h: u32| wgpu::TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(w * 4),
+        rows_per_image: Some(h),
+    };
+    // 写しの帯（`StagingBelt`）: 対応付けたままの入れ物を回して使う（初めの回だけ作る）
+    let mut belt = wgpu::util::StagingBelt::new(device.clone(), tile_bytes * tiles as u64);
+    for round in 0..4 {
+        let t = Instant::now();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for k in 0..tiles {
+            belt.write_buffer(
+                &mut encoder,
+                &kept[k as usize],
+                0,
+                std::num::NonZeroU64::new(tile_bytes).unwrap(),
+            )
+            .copy_from_slice(&packed[k as usize]);
+        }
+        belt.finish();
+        queue.submit(Some(encoder.finish()));
+        let belt_tiles = finish(t);
+        belt.recall();
+        let t = Instant::now();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let slice = belt.allocate(
+                std::num::NonZeroU64::new(data.len() as u64).unwrap(),
+                std::num::NonZeroU64::new(256).unwrap(),
+            );
+            slice
+                .get_mapped_range_mut()
+                .expect("対応付けた")
+                .copy_from_slice(&data);
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: slice.buffer(),
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: slice.offset(),
+                        bytes_per_row: Some(size * 4),
+                        rows_per_image: Some(size),
+                    },
+                },
+                texture.as_image_copy(),
+                texture.size(),
+            );
+        }
+        belt.finish();
+        queue.submit(Some(encoder.finish()));
+        let belt_texture = finish(t);
+        belt.recall();
+        println!(
+            "[{round}] 写しの帯: タイルごと {tiles} 回 {:.1}/{:.1} ms・テクスチャへ 1 回 {:.1}/{:.1} ms",
+            belt_tiles.0, belt_tiles.1, belt_texture.0, belt_texture.1
+        );
+    }
+    for round in 0..3 {
+        let t = Instant::now();
+        queue.write_texture(
+            texture.as_image_copy(),
+            &data,
+            layout(size, size),
+            texture.size(),
+        );
+        let whole = finish(t);
+        let t = Instant::now();
+        for k in 0..tiles {
+            let (tx, ty) = (k % (size / ts), k / (size / ts));
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: tx * ts,
+                        y: ty * ts,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &packed[k as usize],
+                layout(ts, ts),
+                wgpu::Extent3d {
+                    width: ts,
+                    height: ts,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        let per_tile_texture = finish(t);
+        let t = Instant::now();
+        for k in 0..tiles {
+            queue.write_buffer(&kept[k as usize], 0, &packed[k as usize]);
+        }
+        let per_tile_buffer = finish(t);
+        let t = Instant::now();
+        let fresh: Vec<wgpu::Buffer> = (0..tiles)
+            .map(|k| {
+                let b = buffer(tile_bytes);
+                queue.write_buffer(&b, 0, &packed[k as usize]);
+                b
+            })
+            .collect();
+        let fresh_buffers = finish(t);
+        drop(fresh);
+        let t = Instant::now();
+        queue.write_buffer(&big, 0, &flat);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for k in 0..tiles {
+            encoder.copy_buffer_to_buffer(
+                &big,
+                k as u64 * tile_bytes,
+                &kept[k as usize],
+                0,
+                tile_bytes,
+            );
+        }
+        queue.submit(Some(encoder.finish()));
+        let one_buffer = finish(t);
+        let t = Instant::now();
+        queue.submit(std::iter::empty());
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let empty = t.elapsed().as_secs_f64() * 1000.0;
+        println!(
+            "[{round}] 16 MiB: write_texture 1 回 {:.1}/{:.1} ms・タイルごと {tiles} 回 {:.1}/{:.1} ms、write_buffer タイルごと（作ってある）{:.1}/{:.1} ms・\
+             （毎回作る）{:.1}/{:.1} ms・1 回で大きな入れ物へ＋GPU の中で写す {:.1}/{:.1} ms、空の submit と待ち {empty:.2} ms",
+            whole.0, whole.1, per_tile_texture.0, per_tile_texture.1, per_tile_buffer.0, per_tile_buffer.1,
+            fresh_buffers.0, fresh_buffers.1, one_buffer.0, one_buffer.1
+        );
+    }
 }
 
 /// 計測: 塗り広げの幅ごとの、離れて見たときの継ぎ目のにじみ（アイランドの中だけを塗った球と、全面を塗った球の差）。
