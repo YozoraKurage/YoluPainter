@@ -351,7 +351,7 @@ pub(crate) struct StrokeState {
     stroke_length: f64,
     pending: VecDeque<PendingDab>,
     random: NetRandom,
-    // 色の変化: ストロークの色（ダブごとでないとき・3D の面のブラシ）、今のダブの色、色の乱数の列
+    // 色の変化: ストロークの色（ダブごとでないとき・パスの面のダブ）、今のダブの色、色の乱数の列
     stroke_color: Rgba8,
     dab_color: Rgba8,
     color_random: Option<NetRandom>,
@@ -437,7 +437,8 @@ impl StrokeState {
         let mut color_random = None;
         let mut tip_colors = false;
         if brush.effect.is_paint() && brush.color.is_active() && !brush.base.erase {
-            // ストロークの色を最初に 1 回引く（ダブごとでないとき、また 3D の面のブラシはこの色で塗る）
+            // ストロークの色を最初に 1 回引く（ダブごとでないときはこの色で塗る。ダブごとなら、2D の描点と 3D の面のダブ
+            // （`begin_surface_dab`）がダブごとに次の色を引く。面のダブを始めないパスの塗りは、この色のまま）
             let mut r = NetRandom::new(brush.seed ^ COLOR_STREAM);
             stroke_color = brush.color.next(brush.base.color, &mut r);
             color_random = Some(r);
@@ -1483,7 +1484,8 @@ impl StrokeState {
         }
     }
 
-    /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。ストロークに 1 色）。
+    /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。色は今のダブの色で、3D の面のダブは
+    /// `begin_surface_dab` でダブごとに進める）。
     /// キャンバスの外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_pixel(

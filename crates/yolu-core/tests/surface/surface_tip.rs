@@ -1,12 +1,11 @@
-//! 3D のストロークの筆先（画像の筆先・ゆらぎ・紙の質感・デュアルブラシ・色の変化・入り抜き・フェード）が 2D のストロークと同じ形になる
-//! こと。カメラに正面を向けた平らな四角（UV が文書の全体、文書の 1 画素が画面の 1 点）に、同じブラシで同じ点の列を 2D と 3D に描いて、
-//! テクセルの値を比べる。
+//! 3D のストロークの筆先（画像の筆先・ゆらぎ・紙の質感・デュアルブラシ・色の変化・入り抜き・フェード）とダブの置き方が 2D のストロークと
+//! 同じになること。カメラに正面を向けた平らな四角（UV が文書の全体、文書の 1 画素が画面の 1 点）に、同じブラシで同じ点の列を 2D と 3D に
+//! 描いて、テクセルの値を比べる。
 //!
 //! 比べ方の前提: 3D のブラシの半径はモデルの単位から画面へ直すので（箱の対角線 × 半径 / 文書の幅）、3D のブラシの半径を「箱の対角線 / 幅」で
-//! 割って、画面の半径を 2D の半径にそろえる。3D は入力の区間ごとに長さを等分してダブを置き、2D は線の長さで間隔ごとに置くので、区間の
-//! 長さを 2D の間隔のちょうど倍数にし、3D の間隔は 0.1 % 広げる（f32 の丸めで区間のダブが 1 つ増えないように）。どちらも同じ位置に同じ数の
-//! ダブが並ぶ。残る差は、テクセルの中心を画面へ写す f32 の丸め（1e-5 点ほど）と、丸い筆先の式の違い（3D の丸は今までの式）による、
-//! 覆いの縁の 1〜数段。
+//! 割って、画面の半径を 2D の半径にそろえる。ダブは 2D も 3D も線の長さで間隔ごとに置く（前の区間の余りを持ち越す）ので、入力の点の間隔に
+//! よらず同じ位置に同じ数のダブが並ぶ。残る差は、テクセルの中心と入力の点を画面へ写す f32 の丸め（1e-5 点ほど）と、丸い筆先の式の違い
+//! （3D の丸は今までの式）による、覆いの縁の 1〜数段。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::sync::Arc;
@@ -103,15 +102,13 @@ fn draw_2d(brush: &Brush, points: &[(f64, f64)]) -> Vec<u8> {
     bytes(&d, l)
 }
 
-/// 3D のブラシ: 画面の半径を 2D の半径にそろえ、間隔を 0.1 % 広げる。
+/// 3D のブラシ: 画面の半径を 2D の半径にそろえる。
 fn brush_3d(g: &SurfaceGeometry, brush: &Brush) -> Brush {
     let k = W as f64 / g.brush_scale() as f64;
     let mut b = brush.clone();
     b.base.radius *= k;
-    b.base.spacing *= 1.001;
     if let Some(d) = b.dual.as_mut() {
         d.radius *= k;
-        d.spacing *= 1.001;
     }
     b
 }
@@ -155,14 +152,20 @@ fn line(start: (f64, f64), (ux, uy): (f64, f64), gap: f64, steps: &[u32]) -> Vec
     points
 }
 
-/// 差の数: 塗った画素（どちらかでアルファが 0 でない）、値が違う画素、チャンネルの差のいちばん大きい値。
+/// 差の数: 塗った画素（どちらかでアルファが 0 でない）、値が違う画素、チャンネルの差のいちばん大きい値。色はアルファを掛けた値
+/// （プリマルチプライド、0〜255 に丸める）で比べる（覆いの縁のほぼ透明な画素の、見えない色の差を数えない）。
 fn compare(a: &[u8], b: &[u8]) -> (usize, usize, u8) {
+    let weighted = |p: &[u8]| -> [u8; 4] {
+        let k = |c: u8| ((c as u32 * p[3] as u32 + 127) / 255) as u8;
+        [k(p[0]), k(p[1]), k(p[2]), p[3]]
+    };
     let (mut painted, mut differ, mut max) = (0, 0, 0u8);
     for (p, q) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
         if p[3] > 0 || q[3] > 0 {
             painted += 1;
         }
-        let d = p.iter().zip(q).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
+        let (p, q) = (weighted(p), weighted(q));
+        let d = p.iter().zip(&q).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
         if d > 0 {
             differ += 1;
             max = max.max(d);
@@ -270,32 +273,101 @@ fn brushes() -> Vec<(&'static str, Brush, f64)> {
     out
 }
 
+/// 入力の点の列の 3 通り: 区間の長さが間隔の倍数の直線、間隔より短い区間（間隔の 0.6 倍）の直線、長さ（間隔の 0.2〜3.7 倍）と向き
+/// （±50°）がばらばらな折れ線。どれも文書の (40, 30) から 100 画素ほど。
+fn inputs(gap: f64) -> Vec<(&'static str, Vec<(f64, f64)>)> {
+    let multiples = line(
+        (40.0, 30.0),
+        (0.8, 0.6),
+        gap,
+        &[12, 7, 20, 9].map(|n| (n as f64 * 2.0 / gap).round().max(1.0) as u32),
+    );
+    let mut short = vec![(40.0, 30.0)];
+    while short.len() < 400 && (short.len() as f64) * 0.6 * gap < 96.0 {
+        let n = short.len() as f64;
+        short.push((40.0 + 0.8 * 0.6 * gap * n, 30.0 + 0.6 * 0.6 * gap * n));
+    }
+    // 決まった種の乱数（線形合同法）で、区間の長さと向きを散らす
+    let mut seed = 0x2545_f491u64;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut ragged = vec![(40.0, 30.0)];
+    let mut along = 0.0;
+    while along < 96.0 {
+        let length = gap * (0.2 + 3.5 * next());
+        let angle = 0.6435 + (next() * 2.0 - 1.0) * 0.87;
+        let (x, y) = *ragged.last().unwrap();
+        ragged.push((x + length * angle.cos(), y + length * angle.sin()));
+        along += length;
+    }
+    vec![
+        ("倍数の区間", multiples),
+        ("短い区間", short),
+        ("ばらばらの区間", ragged),
+    ]
+}
+
 /// 同じブラシ・同じ点の列なら、3D の四角に描いたテクセルは 2D の画素とほぼ同じ（差はテクセルの中心を画面へ写す丸めと丸い筆先の式の
-/// 違いによる縁の数段まで）。直す前の 3D（筆先の画像・ゆらぎ・質感・デュアルを使わない丸い筆先）では大きく違う。
+/// 違いによる縁の数段まで）。入力の点の間隔によらない（3D も線の長さで間隔ごとにダブを置く）。直す前の 3D（筆先の画像・ゆらぎ・質感・
+/// デュアルを使わない丸い筆先）では大きく違う。
 #[test]
 fn a_flat_quad_facing_the_camera_paints_the_same_tip_as_the_2d_canvas() {
     for (name, brush, gap) in brushes() {
-        // 斜めの直線（3:4:5 の向きで、区間の長さは間隔の倍数）を、いくつかの長さの区間で
-        let points = line(
-            (40.0, 30.0),
-            (0.8, 0.6),
-            gap,
-            &[12, 7, 20, 9].map(|n| {
-                // 区間を間隔の長さで、全体で 100 画素ほど
-                (n as f64 * 2.0 / gap).round().max(1.0) as u32
-            }),
-        );
-        let a = draw_2d(&brush, &points);
-        let b = draw_3d(&brush, &points);
-        let (painted, differ, max) = compare(&a, &b);
-        println!("{name}: 塗った画素 {painted}・違う画素 {differ}・最大の差 {max}");
-        assert!(painted > 300, "{name}: 試験の前提: 線を描いた ({painted})");
-        assert!(max <= 4, "{name}: 差の最大 {max}");
-        assert!(
-            differ * 100 <= painted,
-            "{name}: 違う画素は塗った画素の 1 % まで ({differ}/{painted})"
-        );
+        for (shape, points) in inputs(gap) {
+            let a = draw_2d(&brush, &points);
+            let b = draw_3d(&brush, &points);
+            let (painted, differ, max) = compare(&a, &b);
+            println!("{name}・{shape}: 塗った画素 {painted}・違う画素 {differ}・最大の差 {max}");
+            assert!(
+                painted > 300,
+                "{name}・{shape}: 試験の前提: 線を描いた ({painted})"
+            );
+            assert!(max <= 4, "{name}・{shape}: 差の最大 {max}");
+            assert!(
+                differ * 100 <= painted,
+                "{name}・{shape}: 違う画素は塗った画素の 1 % まで ({differ}/{painted})"
+            );
+        }
     }
+}
+
+/// フェード（描点の数で薄く・小さくなる）が、入力の点の間隔によらず 2D と同じ長さで消える（区間ごとにダブを足していた前の 3D では、
+/// 入力の間が間隔より短いと、ずっと短く消えた）。
+#[test]
+fn fade_reaches_the_same_length_as_2d_whatever_the_input_spacing() {
+    let mut b = Brush::from(BrushSettings {
+        radius: 6.0,
+        hardness: 1.0,
+        spacing: 0.25, // 間隔 3
+        color: Rgba8::new(0, 0, 0, 255),
+        ..BrushSettings::default()
+    });
+    b.controls.fade_size = 30; // 30 描点 = 90 画素で消える
+                               // 右へ 1 画素ずつの入力（間隔より短い）
+    let points: Vec<(f64, f64)> = (0..=140).map(|i| (20.0 + i as f64, 64.0)).collect();
+    let reach = |px: &[u8]| {
+        (0..W as usize)
+            .filter(|&x| (0..H as usize).any(|y| px[(y * W as usize + x) * 4 + 3] > 0))
+            .max()
+            .unwrap()
+    };
+    let (flat, surface) = (draw_2d(&b, &points), draw_3d(&b, &points));
+    let (a, c) = (reach(&flat), reach(&surface));
+    println!("フェードで消える所: 2D {a}・3D {c}");
+    assert!(
+        (90..=115).contains(&a),
+        "試験の前提: 90 画素ほどで消える ({a})"
+    );
+    assert!(a.abs_diff(c) <= 1, "2D {a}・3D {c}");
+    let (painted, differ, max) = compare(&flat, &surface);
+    assert!(
+        max <= 4 && differ * 100 <= painted,
+        "{differ}/{painted}・{max}"
+    );
 }
 
 /// 3D の入力の点を、傾き・回転・時刻つきで描く（入力ごとに paint_queued を呼ぶ・呼ばないなどの塗り方を how で選ぶ）。
@@ -434,6 +506,18 @@ fn every_dual_brush_mode_matches_2d() {
 /// ゆらぎ・フェード・傾き・抜きのダブの列は、入力のまとまり方・フレームの区切り（待ち行列をいつ塗るか）によらず同じ。
 #[test]
 fn jitter_fade_and_tilt_do_not_depend_on_when_the_queue_is_painted() {
+    queue_independence(true);
+}
+
+/// 曲線を切にしたブラシ（入力の点を直線で結び、点が来るたびに区間を並べる）でも、フレームの区切りによらず同じ。
+#[test]
+fn straight_segments_do_not_depend_on_when_the_queue_is_painted() {
+    queue_independence(false);
+}
+
+/// ゆらぎ・フェード・傾き・抜き・色の変化のブラシを、入力ごとにすぐ全部塗る・5 つずつ塗る・離したときにまとめて塗るの 3 通りで描き、
+/// 同じ画素になること（curve はブラシの「曲線」）。
+fn queue_independence(curve: bool) {
     let mut b = Brush::from(BrushSettings {
         radius: 8.0,
         spacing: 0.05,
@@ -453,7 +537,7 @@ fn jitter_fade_and_tilt_do_not_depend_on_when_the_queue_is_painted() {
     b.controls.fade_size = 300;
     b.controls.tilt_opacity = true;
     b.assist.taper_out = 40.0;
-    b.assist.curve = true;
+    b.assist.curve = curve;
     b.color = ColorDynamics {
         hue: 0.5,
         ..ColorDynamics::default()
@@ -478,8 +562,11 @@ fn jitter_fade_and_tilt_do_not_depend_on_when_the_queue_is_painted() {
     });
     let on_release = draw_3d_inputs(&b3, &inputs, |_, _, _, _| {});
     assert!(at_once.chunks_exact(4).filter(|p| p[3] > 0).count() > 500);
-    assert!(in_frames == at_once, "フレームに分けても同じ");
-    assert!(on_release == at_once, "離したときにまとめて塗っても同じ");
+    assert!(in_frames == at_once, "曲線 {curve}: フレームに分けても同じ");
+    assert!(
+        on_release == at_once,
+        "曲線 {curve}: 離したときにまとめて塗っても同じ"
+    );
 }
 
 /// 紙の質感は、塗るテクセルの文書の画素の座標で読む: カメラを動かして描いても、2D で描いても、硬い丸で覆い切った所の値は同じ。
@@ -514,7 +601,7 @@ fn paper_texture_follows_document_pixels_whatever_the_camera() {
     views.push(moved.view(W as f32 + 32.0, H as f32 + 32.0));
     moved.yaw = 12.0;
     views.push(moved.view(W as f32 + 32.0, H as f32 + 32.0));
-    // 線の中ほどの窓は、どの描き方でも覆い切っている
+    // 線の中ほどの範囲は、どの描き方でも覆い切っている
     let window = |px: &[u8]| -> Vec<u8> {
         let mut v = Vec::new();
         for y in 58..68 {

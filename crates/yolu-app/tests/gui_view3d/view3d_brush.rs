@@ -715,3 +715,70 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         "フォーカスを失っても、持ち越しを塗ってから確定"
     );
 }
+
+/// 3D ビューのマウスの速さの制御も、2D のキャンバスと同じく、1 フレームに来るイベントの数（マウスの報告の頻度）によらない（イベントごとの
+/// 時刻はフレームの間を等分する）。同じ速さで動かせば、1 フレーム 1・2・4 イベントで同じ絵になり、倍の速さなら絵が変わる。
+#[test]
+fn mouse_speed_in_3d_does_not_depend_on_how_many_events_arrive_per_frame() {
+    let (mut h, rect) = cube_view();
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.random_seed = false;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 8.0;
+        s.m2.brush.controls.speed_size = true;
+        // 3D の速さは画面の点 / 秒（1 フレーム 8 点・60 フレーム毎秒で 480）
+        s.m2.brush.controls.speed_max = 2000.0;
+    }
+    let ink = |h: &Harness<'_, YoluApp>| {
+        let bounds = h.state().state.doc.bounds();
+        h.state()
+            .state
+            .doc
+            .composite(bounds)
+            .unwrap()
+            .chunks(4)
+            .map(|p| p[3] as u64)
+            .sum::<u64>()
+    };
+    // 手前の面の中ほどを右へ、1 フレームに 8 点（画面の点）ずつ
+    let start = offset(screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5)), -56.0, 0.0);
+    let frames = 14;
+    let per_frame = 8.0;
+    let run = |h: &mut Harness<'_, YoluApp>, events: usize, speed: f32| {
+        let at = |i: usize| offset(start, speed * per_frame * i as f32 / events as f32, 0.0);
+        let frames = (frames as f32 / speed) as usize;
+        press(h, at(0), PointerButton::Primary);
+        h.step();
+        for frame in 0..frames {
+            // 1 フレームに複数のイベント（ハーネスの step は、待たせたイベントを 1 つずつ別のフレームにするので、直に入れる）
+            for e in 1..=events {
+                h.input_mut()
+                    .events
+                    .push(Event::PointerMoved(at(frame * events + e)));
+            }
+            h.step();
+        }
+        release(h, at(frames * events), PointerButton::Primary);
+        h.step();
+        h.run();
+        let v = ink(h);
+        h.state_mut().state.apply(yolu_app::state::Action::Undo);
+        h.run();
+        v
+    };
+    let one = run(&mut h, 1, 1.0);
+    let two = run(&mut h, 2, 1.0);
+    let four = run(&mut h, 4, 1.0);
+    assert!(one > 0);
+    for (name, v) in [("2", two), ("4", four)] {
+        let diff = (v as f64 - one as f64).abs() / one as f64;
+        assert!(
+            diff < 0.08,
+            "1 フレーム {name} イベントでも同じ速さ: {v} と {one}（{diff:.3}）"
+        );
+    }
+    // 速さは実際に効いている: 倍の速さで動かすと絵が変わる
+    let fast = run(&mut h, 1, 2.0);
+    assert!(fast != one, "{fast} != {one}");
+}

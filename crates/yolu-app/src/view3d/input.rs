@@ -820,7 +820,16 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     super::navigation::shortcut(ui, app, rect, foreign);
     // 右ボタンを押している間の W/A/S/D/Q/E は、視点の移動
     super::navigation::fly(ui, app);
-    let (events, now) = ui.input(|i| (i.events.clone(), i.time));
+    let (events, now, frame_dt) = ui.input(|i| (i.events.clone(), i.time, i.unstable_dt as f64));
+    // マウスの点の時刻（筆の速さ）: 2D のキャンバスと同じく、前のフレームからの時間をこのフレームのマウスの点の数で等分する
+    let mut clock = crate::gesture::MouseClock::new(
+        now,
+        frame_dt,
+        events
+            .iter()
+            .filter(|e| crate::gesture::is_mouse_sample_event(e))
+            .count(),
+    );
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
     // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
@@ -865,6 +874,12 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
 
     for event in &events {
+        // 描く点になりうるイベントごとに 1 つずつ進める（描かなくても進める。数えたときと同じ数になる）
+        let time = if crate::gesture::is_mouse_sample_event(event) {
+            clock.next_time()
+        } else {
+            now
+        };
         // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。ポーズのモードでは描かない）
         let over = match event {
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
@@ -925,7 +940,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                     1.0,
                                     StrokeSource::Mouse,
                                     false,
-                                    PenState::mouse(now),
+                                    PenState::mouse(time),
                                 );
                             }
                         }
@@ -976,7 +991,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 let pos = *pos;
                 let previous = app.view3d.input.last_pointer.unwrap_or(pos);
                 if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
-                    add(app, rect, pos, 1.0, PenState::mouse(now));
+                    add(app, rect, pos, 1.0, PenState::mouse(time));
                 }
                 if !pen_frame {
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
