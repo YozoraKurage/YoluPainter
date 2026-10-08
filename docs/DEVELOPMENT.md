@@ -153,6 +153,8 @@ x86_64 では、合成（Normal チャンネルを含む）・調整レイヤー
 `cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|kernel|all] [回数]` が、合成モード・調整の種類・フィルターごとの時間
 （1 タイルと 4096²。`kernel` は行の核だけの ns/画素）を測る。スレッドは `SIMD_THREADS`（既定 1）、名前の絞り込みは `SIMD_FILTER`（カンマ区切り）。
 Mac（Apple Silicon）の NEON の効きは、同じコマンドを `YOLU_SIMD=scalar` と既定（NEON）で回して比べる。出力の先頭の道の名前で、どの道で測ったかが分かる。
+歩幅つきの粗い合成（ドラッグの間の仮の絵）は `cargo run --release -p yolu-core --example coarse_bench [回数]` で、辺 × レイヤー数 × 歩幅 × スレッド数ごとの 1 回の時間を測る
+（組は `COARSE_SCENE`・`COARSE_SIZE`・`COARSE_LAYERS`・`COARSE_STRIDE`、束の枚数は `COARSE_CHUNK`）。
 
 2D のブラシのダブの画素（丸・筆先の画像・紙の質感・デュアル・指先・ぼかし・クローン・色の混ぜ・ダブごとの色）も同じ道で、行ごとにレーンで描く。
 参照は画素ごとの式（`YOLU_SIMD=scalar`）で、試験が乱数で振ったブラシ・レイヤー・タイルの大きさ・点の列を道ごとに描いて、レイヤーの全バイトとダブの数を比べる。

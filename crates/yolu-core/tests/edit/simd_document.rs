@@ -230,7 +230,7 @@ fn a_coarse_composite_matches_the_pixel_reference_at_the_sample_points() {
         let doc = complex_document_with_tile_size(tile_size);
         let coords: Vec<TileCoord> = doc.canvas_tiles().collect();
         for ch in [Channel::Color, Channel::Normal] {
-            for stride in [1u32, 2, 4, 16, 64] {
+            for stride in [1u32, 2, 4, 8, 16, 64] {
                 for t in doc.composite_coarse_tiles(ch, &coords, stride).unwrap() {
                     let (w, h) = t.size();
                     for j in 0..h {

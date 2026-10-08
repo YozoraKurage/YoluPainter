@@ -56,10 +56,35 @@ impl RowAmount<'_> {
     }
 }
 
-/// 読み元の画素の刻み（0 は 1 画素を全部に使う、4 は連続）だけを SIMD で扱う。
+/// 読み元の画素の刻み（0 は 1 画素を全部に使う、4 は連続）だけを SIMD で扱う。ほかの刻みはスカラーの道に入る。
+/// Normal のチャンネルの核（`crate::normal`）も同じ判定を使う。
 #[inline(always)]
-fn simd_step(step: usize) -> bool {
-    step == 0 || step == 4
+pub(crate) fn simd_step(step: usize) -> bool {
+    let simd = step == 0 || step == 4;
+    #[cfg(test)]
+    if !simd {
+        scalar_steps::note();
+    }
+    simd
+}
+
+/// 試験用: 読み元の刻みが SIMD の道に入れない値で行の核が呼ばれた回数（呼んだスレッドの分だけ）。粗い合成が、歩幅つきの読み元を
+/// 詰めてから核へ渡すこと（歩幅つきのまま渡すとスカラーの道に落ちる）の確かめに使う。
+#[cfg(test)]
+pub(crate) mod scalar_steps {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn note() {
+        CALLS.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn count() -> usize {
+        CALLS.with(Cell::get)
+    }
 }
 
 // ───────── N 画素の式（レーンの核。画素ごとの関数も 1 本のレーンでこれを呼ぶ） ─────────

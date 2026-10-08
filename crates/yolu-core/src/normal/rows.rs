@@ -13,7 +13,7 @@
 )]
 
 use super::is_detail;
-use crate::blend::RowAmount;
+use crate::blend::{simd_step, RowAmount};
 use crate::math::simd::{self, to_byte32 as to_byte, Lanes32, Level, Scalar1};
 use crate::types::{BlendMode, Rgba8};
 
@@ -28,12 +28,6 @@ type Vec3<V> = [<V as Lanes32>::F; 3];
 const DEGENERATE_LENGTH_SQUARED: f32 = 1e-12;
 /// RNM の土台の z + 1 がこれ以下（真内向き）なら、座標系を持たないので土台のまま。
 const DEGENERATE_BASE: f32 = 1e-6;
-
-/// 読み元の画素の刻み（0 は 1 画素を全部に使う、4 は連続）だけを SIMD で扱う。
-#[inline(always)]
-fn simd_step(step: usize) -> bool {
-    step == 0 || step == 4
-}
 
 // ───────── レーンの式 ─────────
 
