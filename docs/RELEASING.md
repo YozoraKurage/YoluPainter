@@ -53,6 +53,8 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 ## 版と配布物
 
 `Cargo.toml` の workspace.package.version を更新し、`Cargo.lock` を更新・コミットしてから、そのコミットを配布対象にします。
+`Cargo.lock` が変わると（版だけの更新でも）ハッシュが替わるので、`python3 tools/third-party.py` で製品別の一覧を作り直し、`THIRD_PARTY.md` の「Cargo.lock SHA-256」
+（製品別の一覧ごとと、Cargo.lock 全体の節）を出力に合わせます。クレートの件数が替わったときは、件数の表も直します。
 AI のアシスタント向けのプラグイン（`plugin/.claude-plugin/plugin.json`・`plugin/.codex-plugin/plugin.json`）の `version` も同じ版にします（`yolu-mcp` の試験 `tests/plugin.rs` が食い違いを断ります）。
 プラグインは Release に載せず、`main` の `plugin/` と根の `.claude-plugin/marketplace.json` から配ります（Claude Code はこの `version` が変わったときに新しい版を入れます）。
 版は SemVer です。試験版（kind=prerelease）は `0.1.0-rc.1` のように、プレリリース識別子を `alpha.N`・`beta.N`・`rc.N`（N は整数）の 1 つにします。
