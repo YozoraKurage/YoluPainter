@@ -27,7 +27,7 @@ use crate::state::{Action, AppState, Tool};
 pub enum Kind {
     /// 押して 1 回。
     Press,
-    /// 押している間だけ効く（R・Space・Y・N）。
+    /// 押している間だけ効く（Space・Y・N・3D で右ボタンを押している間の視点の移動キー。R は、割り当てがあれば 2D の回転）。
     Hold,
     /// マウスの組み合わせ（`keymap::GESTURES` の `Operation` ごと）。
     Gesture,

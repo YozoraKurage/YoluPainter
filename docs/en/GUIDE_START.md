@@ -58,7 +58,7 @@ These change only the view. The saved image is never rotated or flipped.
 |---|---|
 | Zoom | Wheel, or hold `Ctrl+Space` and left-drag (move left and right; the pressed point is the center) |
 | Pan | Middle-drag, or hold `Space` and left-drag |
-| Rotate | Hold `R` and left-drag, or `Shift` + middle-drag. `Shift+R` resets it |
+| Rotate | Hold `Alt` and left-drag (15° steps; free if `Shift` is also held). `Shift+R` resets it |
 | Flip horizontally | `H` |
 | Fit to the view | `Ctrl+0` |
 

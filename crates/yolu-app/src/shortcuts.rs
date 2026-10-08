@@ -669,6 +669,8 @@ mod tests {
                 .1
         };
         assert!(code("view3d/navigation.rs").contains("\"view3d.frame_selected\""));
+        assert!(code("view3d/navigation.rs").contains("keymap::FLY_KEYS"));
+        assert!(code("shell.rs").contains("take_fly_keys"));
         assert!(code("shell.rs").contains("keymap::NUDGES"));
         assert!(code("stencil/input.rs").contains("\"stencil.transform_hold\""));
         assert!(code("stencil/input.rs").contains("\"stencil.bypass_hold\""));

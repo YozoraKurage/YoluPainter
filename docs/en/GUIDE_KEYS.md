@@ -28,7 +28,7 @@ The Liquify tool has no key.
 | Action | Input |
 |---|---|
 | Draw a straight line from the end of the previous stroke | `Shift`-click with the brush or eraser (hold `Shift` and drag to lock the direction to 45° steps) |
-| Temporarily act as the eyedropper (2D) | `Alt`-click with Brush, Eraser, Fill or Polygon Fill |
+| Pick a color with any tool (eyedropper) | In 2D, press the right button (while it is held, the swatch at the pointer follows it; the color where you release is picked; `Esc` cancels). In 3D, release the right button without moving it (if you move it, the view just orbits). With Polygon Fill, the right button opens the island menu |
 | Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
 | Cancel the current stroke, shape or ruler drag, selection operation or path point drag | `Esc`. If there is nothing to cancel, it deselects the selected point, and if there is no point, it deselects the selection. An input field, menu or window that is using the key takes it first |
@@ -78,6 +78,12 @@ The Liquify tool has no key.
 | Quit | `Ctrl+Q` |
 | Pick Screen Color / Hide Window and Pick Screen Color (Windows only) | `Ctrl+Alt+I` / `Ctrl+Alt+Shift+I` |
 
+## View controls and `Alt`
+
+View controls are the same in 2D and 3D. `Alt` is a view control (rotating the view in 2D, snap orbit in 3D) if it is held at the moment you press the button; if you press it after pressing the button, it is the tool's modifier (From center for shapes, rectangles and ellipses, breaking a path handle, and so on). A drag of a selection or shape that starts with `Alt` held becomes a view rotation.
+
+These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shift` + left-drag (move; with `Shift` held, a right-drag orbits and an `Alt` + left-drag snap-orbits). In 2D, `R` + left-drag and `Shift` + middle-drag (rotate; with `Shift` held, a middle-drag pans). In 2D, `Alt`-click as a temporary eyedropper (`Alt` + left-drag now rotates the view, and the eyedropper moved to the right button). In 3D, `Alt` + left-drag as a free orbit (it is now the snap orbit).
+
 ## The 2D view
 
 | Action | Input |
@@ -85,18 +91,23 @@ The Liquify tool has no key.
 | Zoom | Wheel, or `Ctrl+Space` + left-drag horizontally (the pressed point is the center; releasing without moving zooms in, and adding `Alt` zooms out) |
 | Zoom In / Zoom Out | `Ctrl++` (or `Ctrl+=`) / `Ctrl+-` |
 | Pan | Middle-drag, or `Space` + left-drag |
-| Rotate | `R` + left-drag, or `Shift` + middle-drag |
+| Rotate | `Alt` + left-drag (15° steps; free if `Shift` is also held) |
 | Rotate View Left / Right | `-` / `^` (the `=` key also works) |
 | Reset rotation / flip horizontally | `Shift+R` / `H` |
+| Pick a color | Press the right button (move while holding it, and the color where you release is picked) |
 | Fit to the view | `Ctrl+0` |
 
 ## The 3D view
 
 | Action | Input |
 |---|---|
-| Orbit | Right-drag, or `Alt` + left-drag |
-| Pan | Middle-drag, `Space` + left-drag, or add `Shift` to an orbit |
+| Orbit | Right-drag |
+| Snap orbit | `Alt` + left-drag (when the direction comes within 15° of an axis view (front, back, right, left, top, bottom), it snaps to that view) |
+| Move the view forward / back, left / right, down / up | `W` / `S`, `A` / `D`, `Q` / `E` while the right button is held (`Shift` for faster; while it is held, these keys are not used for switching tools and so on) |
+| Pan | Middle-drag, or `Space` + left-drag |
 | Zoom | Wheel, or `Ctrl+Space` + left-drag (as in 2D) |
+| Pick a color | Release the right button without moving it |
+| Set the clone source | `Alt`-click with the Clone brush (release without moving; if you move, it is the snap orbit) |
 | Frame the selected texture set | `.` |
 | Cancel an operation | `Esc` |
 
@@ -110,7 +121,7 @@ The Liquify tool has no key.
 
 ## Pen
 
-The side buttons act as the right button. `Alt`, `Space`, `Ctrl+Space` and `R` act the same as with the left mouse button. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line.
+The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Alt`, `Space` and `Ctrl+Space` act the same as with the left mouse button. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line.
 
 ## If you get lost
 

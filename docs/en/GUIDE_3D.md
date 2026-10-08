@@ -6,7 +6,7 @@ This page covers viewing a model in the 3D view, moving around it, and painting 
 
 ## Move around the 3D view
 
-Rotate with a right drag or `Alt`+left drag. Pan with a middle drag or `Space`+left drag (or add `Shift` to the rotate drag). Zoom with the wheel or `Ctrl+Space`+left drag. `.` over the 3D view fits the faces of the current texture set, and "Fit the whole model in view" in the top right fits the whole model. All the keys are in [GUIDE_KEYS.md](GUIDE_KEYS.md).
+Rotate with a right drag. An `Alt`+left drag also rotates, and when the direction comes within 15° of an axis view (front, back, right, left, top, bottom) it snaps to that view. While the right button is held, `W` / `S` move the view forward and back, `A` / `D` left and right, and `Q` / `E` down and up (`Shift` for faster). Pan with a middle drag or `Space`+left drag. Zoom with the wheel or `Ctrl+Space`+left drag. Releasing the right button without moving it picks the value of that face as the paint color (eyedropper; with Polygon Fill it opens the island menu). `.` over the 3D view fits the faces of the current texture set, and "Fit the whole model in view" in the top right fits the whole model. All the keys are in [GUIDE_KEYS.md](GUIDE_KEYS.md).
 
 ## Open a model
 
@@ -47,7 +47,7 @@ For brushes, Size, Hardness, Flow, Opacity, pressure, color, Color Dynamics, col
 | Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |
 | Seam bleed | How far to paint outside the edges of UV islands so seams do not show |
 
-3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving. "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together.
+3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together.
 
 ## Pose the model
 

@@ -20,7 +20,7 @@ In Tool Properties in the Tools panel on the left, you can change Size, Opacity,
 | Color Mixing, Effect | Picking up and mixing the colors underneath (used by the oil, gouache and mixer brushes); Blur, Smudge and Clone |
 | Symmetry | See “Painting with symmetry” below |
 
-The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese). In 2D, with Brush, Eraser, Fill or Polygon Fill selected, `Alt`-click temporarily acts as the eyedropper (`Alt` orbits in 3D). While you paint, the controls in the panels do nothing when pressed. They keep the look they had before the stroke and do not turn gray.
+The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese). With any tool selected, the right button temporarily acts as the eyedropper: in 2D, press it (while you hold it, the swatch follows the pointer, and the color where you release is picked); in 3D, release it without moving. With Polygon Fill, the right button opens the island menu (`Alt` is a view control). While you paint, the controls in the panels do nothing when pressed. They keep the look they had before the stroke and do not turn gray.
 
 ## Choosing and rearranging brushes
 
@@ -76,7 +76,7 @@ Set it in Symmetry in Brush Details, or in the symmetry menu on the options bar.
 - **Setting the color**: use the main and sub colors at the bottom of the toolbar, or the Color panel. Color has a hue wheel or a square and hue bar (switch with the button at the top right), a hex field (`#RRGGBB`) and alpha. `X` swaps the main and sub colors, and `D` returns to the default colors.
 - **Color window**: pressing the color swatch of a value such as a fill layer's color, a lilToon color or a gradient color opens a color window. Set the color on the spot with the hue wheel, hex, opacity or a color from a color set. Use Paint Color puts in the current paint color. It does not close when you click outside, so you can change colors while working in other fields. `Esc` restores the color from when it opened and closes it.
 - **Color sets**: the Color Sets panel manages sets of colors (new, duplicate, rename, delete, import GPL and ACO, export a GIMP palette). Click a color for the main color, or `Alt`-click for the sub color. It also shows a History and the Intermediate Colors between four corner colors.
-- **Eyedropper** (`I`): picks the value at the pressed point on the 2D Canvas or the 3D View as the paint color of the painting channel. It reads only the selected layer; turn on Sample All Layers in the options bar to read the composite of all layers. With Paint several channels at once on, it picks the six standard channels into the brush material's values.
+- **Eyedropper** (`I`): picks the value at the pressed point on the 2D Canvas or the 3D View as the paint color of the painting channel. While it picks, the pointer shows an eyedropper icon and a ring (the top half is the current color and the bottom half is the color under the pointer; a scalar channel is a gray level). It reads only the selected layer; turn on Sample All Layers in the options bar to read the composite of all layers. With Paint several channels at once on, it picks the six standard channels into the brush material's values.
 - **Screen color** (Windows only): in the Edit menu, Pick Screen Color (`Ctrl+Alt+I`) and Hide Window and Pick Screen Color (`Ctrl+Alt+Shift+I`) pick a color from the desktop.
 
 ## Painting through a stencil
