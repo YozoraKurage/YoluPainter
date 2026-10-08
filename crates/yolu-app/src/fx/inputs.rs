@@ -10,7 +10,9 @@
 //! - **マップの写しは焼いたマップごとに 1 度**: 16 bit の正本（`BakedMeshMap`）から `MapInput`（`Arc` の写し）を作るのは
 //!   焼き直したときだけで、状態だけが変わるときは写しを共有したまま状態を付け替える。
 //! - **モデルの入力（指紋）は待たない**: モデルが替わったあとの入力は別のスレッドで作る（`bake_input_nowait`）。できるまでは前の入力のまま
-//!   （起動の直後など、一度も渡していないときは入力無しのまま）。開くときだけは待って作る。
+//!   （起動の直後など、一度も渡していないときは入力無しのまま）。開くときだけは待って作る。作りかけの入力は、ベイクのウィンドウ・ID の色の
+//!   ツール・入力待ちの読むだけのセットのどれも無ければ、フレームの終わりに手放す（`release_idle_bake_input`）。そのあいだ編集できるセットは、
+//!   モデルを替えても前の入力のまま照合する。
 //! - **画像は使うものだけ復号する**: 棚の画像（.ylp の素材）のうち、文書の塗りつぶしレイヤーが指しているものと、画面が先に頼んだもの
 //!   （`AppState::use_shelf_image`。文書が指したら文書の分になり、指さなくなれば手放す）、入力待ちの読むだけのセットが指していたものだけ。
 //!   大きな画像を全部は開かない。復号した画素の合計は `Project::image_inputs` と同じ 768 MiB で通算して断る（1 枚ずつ復号しても
@@ -835,8 +837,12 @@ impl AppState {
                         .cloned()
                 })
                 .and_then(|b| b.bytes().ok());
-            let (preview, note) =
+            let (mut preview, note) =
                 crate::project::preview_document(png.as_deref(), width, height, lang);
+            // ベイクの優先と手動の ID の色は、マップが古いかの照合とベイクが読む文書の状態（`mesh_map_expectation`・`bake_target`）。保存した
+            // 合成の文書へも写す（写さないと既定の値と照合し、既定でない値で焼いたマップは古いままで、モデルを読んでも編集できるようにならない）
+            let _ = preview.restore_bake_priority(doc.bake_priority().clone());
+            let _ = preview.restore_id_colors(doc.id_colors().clone());
             let reason = match note {
                 Some(n) => format!("{reason}。{n}"),
                 None => reason,

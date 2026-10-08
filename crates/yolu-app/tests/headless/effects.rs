@@ -1277,6 +1277,123 @@ fn a_set_with_generators_is_read_only_until_its_inputs_arrive_and_then_editable(
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// FBX のモデルで焼いて保存した .ylp を、起動した直後のアプリ（3D ビューは試しの立方体）で開く。開いた瞬間はモデルを別のスレッドで
+/// 読み直している最中で、マップを立方体と照合するので読むだけになる。読み終えたら、ベイクのウィンドウを開かなくても、画面の毎フレームの
+/// 同期（効果の入力を渡す → 使わない入力を手放す）だけでマップが最新になり、同じセットを編集できる。`priority` は焼く前に変える重なった UV の優先。
+fn reopened_set_becomes_editable_once_its_model_is_read(
+    name: &str,
+    priority: Option<yolu_app::bake::overlap::PriorityOp>,
+) {
+    use crate::common::fbx::{ascii_fbx, mesh, write_fbx};
+    use std::time::{Duration, Instant};
+    use yolu_app::newproject::NpAction;
+    use yolu_core::mesh_maps::MeshMapState;
+    let dir = temp_dir(name);
+    let model = write_fbx(
+        &dir,
+        "m.fbx",
+        &ascii_fbx(&["Skin"], &[mesh("Body", &[Some(0), Some(0)])]),
+    );
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    s.apply(Action::Project(NpAction::OpenNew));
+    s.apply(Action::Project(NpAction::ChooseModel(model)));
+    let start = Instant::now();
+    while s.np.window.as_ref().is_some_and(|w| w.is_loading()) {
+        s.poll_newproject();
+        assert!(start.elapsed() < Duration::from_secs(60), "モデルの準備");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    s.apply(Action::Project(NpAction::Resolution(512)));
+    s.apply(Action::Project(NpAction::Submit));
+    assert!(s.np.window.is_none(), "{}", s.message);
+    // エッジの摩耗（Curvature）と、位置のマップ
+    s.bake.settings.maps = vec![MeshMapKind::Position, MeshMapKind::Curvature];
+    s.bake.settings.padding = 4;
+    if let Some(op) = priority {
+        s.apply(Action::Bake(BakeAction::Priority(op)));
+    }
+    let (layer, id) = masked_fill(&mut s, Kind::EdgeWear);
+    bake(&mut s);
+    assert_eq!(
+        s.doc.generator_inactive(layer, id).unwrap(),
+        None,
+        "{}",
+        s.message
+    );
+    let saved_priority = s.doc.bake_priority().clone();
+    let path = dir.join("p.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+
+    let mut again = AppState::new(64, 64);
+    again.bake.backend = BakeBackend::Cpu;
+    again.view3d.load_demo(); // 起動したアプリの 3D ビュー
+    again.apply(Action::OpenProject(path));
+    assert!(
+        again.sets.current().waiting_inputs,
+        "開いた瞬間のモデルは立方体: {}",
+        again.message
+    );
+    // 読むだけのあいだも、照合とベイクはそのセットのベイクの優先を読む（保存した合成の文書は既定の値ではない）
+    assert_eq!(again.doc.bake_priority(), &saved_priority);
+    // モデルの読み直しが終わるまで
+    let start = Instant::now();
+    while again.np.reopening.is_some() {
+        again.poll_newproject();
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "モデルの読み直し"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        again.view3d.full_model().is_some_and(|m| !m.demo),
+        "{}",
+        again.message
+    );
+    // 画面の 1 フレームと同じ順に回す（ベイクのウィンドウは開かない）
+    let start = Instant::now();
+    while again.sets.current().waiting_inputs {
+        again.sync_effects();
+        again.release_idle_bake_input();
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "モデルを読んだのに入力が届かない: {:?}",
+            again.read_only_reason()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(again.bake.window.is_none());
+    assert!(again.read_only_reason().is_none(), "{}", again.message);
+    for kind in [MeshMapKind::Position, MeshMapKind::Curvature] {
+        let check = again.mesh_map_check(0, kind).expect("焼いたマップ");
+        assert_eq!(
+            check.state,
+            MeshMapState::Current,
+            "{kind:?}: {}",
+            yolu_app::bake::stale_reasons(&check)
+        );
+    }
+    assert!(again.doc.inactive_effect_list().is_empty(), "効果が効く");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_reopened_set_becomes_editable_once_its_model_is_read_without_opening_the_bake_window() {
+    reopened_set_becomes_editable_once_its_model_is_read("reopen-model", None);
+}
+
+#[test]
+fn a_reopened_set_baked_with_an_overlap_priority_becomes_editable_once_its_model_is_read() {
+    use yolu_app::bake::overlap::PriorityOp;
+    use yolu_core::mesh_maps::MeshOverlapRule;
+    reopened_set_becomes_editable_once_its_model_is_read(
+        "reopen-priority",
+        Some(PriorityOp::Rule(MeshOverlapRule::LargerArea)),
+    );
+}
+
 #[test]
 fn the_remembered_selections_come_back_when_a_read_only_set_becomes_editable_and_stay_in_the_file()
 {
