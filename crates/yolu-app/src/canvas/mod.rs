@@ -708,7 +708,10 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
         match press.kind {
             PressKind::Ignored => {}
             PressKind::View => nav::released(app, rect),
-            PressKind::Eyedrop => crate::eyedrop::right_end(app, &view, source, p, true),
+            PressKind::Eyedrop => {
+                let inside = on_top(ui, rect, p);
+                crate::eyedrop::right_end(app, &view, source, p, inside);
+            }
             PressKind::Tool => {
                 if app.canvas.stroke == Some(source) {
                     finish_stroke(app, false);
@@ -769,15 +772,28 @@ fn press_kind(
     if frame.no_press || !on_top(ui, rect, p) || app.stencil.handling() {
         return PressKind::Ignored;
     }
-    if !app.is_stroking() && nav::starts_view(app, &frame.modifiers) {
+    // サイドボタンは右ボタンと同じなので、左ボタンの Alt（表示を回す組み合わせ）は読まない（R・Space は今までどおり）
+    let starts_view = if s.barrel {
+        app.canvas.rotate_key_held || app.canvas.space_held
+    } else {
+        nav::starts_view(app, &frame.modifiers)
+    };
+    if !app.is_stroking() && starts_view {
         return PressKind::View;
     }
-    // ペンのサイドボタンは右ボタンと同じ: スポイト（ポリゴン塗りつぶしのツールは、2D のアイランドのメニューをペンでは開かないので、何もしない）。描かない
+    // ペンのサイドボタンは右ボタンと同じ: スポイト（組み合わせの表から、修飾を書いたとおりに引く。ポリゴン塗りつぶしのツールは、2D のアイランドの
+    // メニューをペンでは開かないので、何もしない）。描かない
     if s.barrel {
-        return if app.tool == crate::state::Tool::PolygonFill || app.is_stroking() {
-            PressKind::Ignored
-        } else {
+        let picks = crate::keymap::gesture_exact(
+            "canvas",
+            PointerButton::Secondary,
+            &frame.modifiers,
+            app.canvas.space_held,
+        ) == Some(crate::keymap::Operation::Pick);
+        return if picks && app.tool != crate::state::Tool::PolygonFill && !app.is_stroking() {
             PressKind::Eyedrop
+        } else {
+            PressKind::Ignored
         };
     }
     let m = &frame.modifiers;
@@ -997,15 +1013,27 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                                 crate::region::tools::Where::Canvas(&view),
                                 pos,
                             );
-                            // ほかのツールの右ボタンはスポイト（押した所の色が見本。押したまま動かすと付いてくる。離して決める）
-                            if !menu && app.tool != crate::state::Tool::PolygonFill {
+                            // ほかのツールの右ボタンはスポイト（押した所の色が見本。押したまま動かすと付いてくる。離して決める）。組み合わせの表
+                            // （`keymap::GESTURES`）から、修飾を書いたとおりに引く。左ボタンのドラッグの途中は始めない
+                            if !menu
+                                && app.tool != crate::state::Tool::PolygonFill
+                                && !ui.input(|i| i.pointer.primary_down())
+                                && crate::keymap::gesture_exact(
+                                    "canvas",
+                                    PointerButton::Secondary,
+                                    event_modifiers,
+                                    app.canvas.space_held,
+                                ) == Some(crate::keymap::Operation::Pick)
+                            {
                                 crate::eyedrop::right_begin(app, StrokeSource::Mouse, pos);
                             }
                         }
                     }
                     (PointerButton::Secondary, false) => {
                         let view = app.view.view(rect, w_px, h_px);
-                        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, pos, true);
+                        // キャンバスの表示域の中（上に別の物が無い所）で離したときだけ取る。外で離したら、見えていない画素の色は取らずに取りやめる
+                        let inside = on_top(ui, rect, pos);
+                        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, pos, inside);
                         crate::bake::overlap::menu_release(
                             app,
                             &ctx,
@@ -1165,7 +1193,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
             }
         }
     }
-    // 右ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）は、最後の位置で決める
+    // 右ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）は、取りやめる（3D と同じ。離した所が分からないので、色は取らない）
     if app
         .canvas
         .eyedrop
@@ -1184,7 +1212,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     {
         let view = app.view.view(rect, w_px, h_px);
         let at = app.canvas.last_pointer.unwrap_or(rect.center());
-        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, at, true);
+        crate::eyedrop::right_end(app, &view, StrokeSource::Mouse, at, false);
     }
     // ペンが回す・拡縮している間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     if !ui.input(|i| i.pointer.primary_down()) && !nav::pen_driven(app) {

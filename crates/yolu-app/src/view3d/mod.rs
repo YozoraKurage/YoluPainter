@@ -58,6 +58,8 @@ pub struct SurfaceInput {
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
     /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
     pub clone_press: Option<egui::Pos2>,
+    /// 視点の移動の間に押されていた移動キー（右ボタンを先に離しても、押したままの間は、キーの繰り返しをキーの表に渡さない。`keymap::take_fly_keys`）。
+    pub fly_held: Vec<egui::Key>,
     /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
 }

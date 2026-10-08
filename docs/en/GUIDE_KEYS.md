@@ -29,7 +29,7 @@ The Liquify tool has no key.
 |---|---|
 | Draw a straight line from the end of the previous stroke | `Shift`-click with the brush or eraser (hold `Shift` and drag to lock the direction to 45° steps) |
 | Pick a color with any tool (eyedropper) | In 2D, press the right button (while it is held, the swatch at the pointer follows it; the color where you release is picked; `Esc` cancels). In 3D, release the right button without moving it (if you move it, the view just orbits). With Polygon Fill, the right button opens the island menu |
-| Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` |
+| Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` pressed after starting to drag |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
 | Cancel the current stroke, shape or ruler drag, selection operation or path point drag | `Esc`. If there is nothing to cancel, it deselects the selected point, and if there is no point, it deselects the selection. An input field, menu or window that is using the key takes it first |
 

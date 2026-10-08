@@ -275,32 +275,32 @@ pub static COMMANDS: &[Command] = &[
     // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動
     hold(
         "view3d.fly_forward",
-        "前へ移動（右ボタンを押している間）",
+        "前へ移動（右ボタン中）",
         "Move Forward (While Right Button Held)",
     ),
     hold(
         "view3d.fly_back",
-        "後ろへ移動（右ボタンを押している間）",
+        "後ろへ移動（右ボタン中）",
         "Move Back (While Right Button Held)",
     ),
     hold(
         "view3d.fly_left",
-        "左へ移動（右ボタンを押している間）",
+        "左へ移動（右ボタン中）",
         "Move Left (While Right Button Held)",
     ),
     hold(
         "view3d.fly_right",
-        "右へ移動（右ボタンを押している間）",
+        "右へ移動（右ボタン中）",
         "Move Right (While Right Button Held)",
     ),
     hold(
         "view3d.fly_down",
-        "下へ移動（右ボタンを押している間）",
+        "下へ移動（右ボタン中）",
         "Move Down (While Right Button Held)",
     ),
     hold(
         "view3d.fly_up",
-        "上へ移動（右ボタンを押している間）",
+        "上へ移動（右ボタン中）",
         "Move Up (While Right Button Held)",
     ),
     // マウスの組み合わせ（`keymap::GESTURES`）
@@ -308,7 +308,7 @@ pub static COMMANDS: &[Command] = &[
     gesture("view.pan", Operation::Pan),
     gesture("view.zoom", Operation::Zoom),
     gesture("view.rotate", Operation::Rotate),
-    // `color.eyedrop_temporary` は、描くツールで Alt + 左を押すと色を取る組み合わせだった ID（保存した設定が指すので残す）。今は右ボタンで色を取る
+    // `color.eyedrop_temporary` は、描くツールで Alt + 左を押すと色を取る組み合わせだった ID。ショートカットの設定（段 6）で割り当てを戻せるように残す（今は右ボタンで色を取る）
     gesture("color.eyedrop_temporary", Operation::Pick),
     gesture("view.snap_orbit", Operation::SnapOrbit),
     gesture("brush.clone_source", Operation::CloneSource),

@@ -249,8 +249,8 @@ fn corner_tip(lang: Lang) -> &'static str {
 
 fn handles_tip(lang: Lang) -> &'static str {
     lang.pick(
-        "選んでいる点の曲がりを取っ手で決めます。取っ手をドラッグ（Alt で片側だけ、Ctrl で両側を同じ割合で伸ばす）",
-        "Shape the curve at the selected point with handles. Drag a handle (Alt: one side only, Ctrl: scale both)",
+        "選んでいる点の曲がりを取っ手で決めます。取っ手をドラッグ（始めたあとに Alt を押すと片側だけ、Ctrl で両側を同じ割合で伸ばす）",
+        "Shape the curve at the selected point with handles. Drag a handle (Alt pressed after you start: one side only; Ctrl: scale both)",
     )
 }
 

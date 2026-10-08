@@ -58,10 +58,16 @@ pub fn key_label(binding: &Binding, lang: Lang) -> String {
     }
     text.push_str(match (binding.button, binding.click) {
         (PointerButton::Primary, false) => lang.pick("左ボタン", "Left Button"),
-        (PointerButton::Primary, true) => lang.pick("左クリック", "Left Click"),
+        (PointerButton::Primary, true) => lang.pick(
+            "左ボタンを動かさずに離す",
+            "Left Button Released without Moving",
+        ),
         (PointerButton::Middle, _) => lang.pick("中ボタン", "Middle Button"),
         (PointerButton::Secondary, false) => lang.pick("右ボタン", "Right Button"),
-        (PointerButton::Secondary, true) => lang.pick("右クリック", "Right Click"),
+        (PointerButton::Secondary, true) => lang.pick(
+            "右ボタンを動かさずに離す",
+            "Right Button Released without Moving",
+        ),
         _ => unreachable!("一覧は3つのボタンを列挙する"),
     });
     text

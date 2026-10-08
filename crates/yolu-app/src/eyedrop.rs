@@ -71,7 +71,7 @@ pub fn picks(app: &AppState) -> bool {
 
 /// 2D の右ボタン（ペンのサイドボタン）でスポイトを始める。描いている最中・ほかのスポイトの途中は始めない。
 pub fn right_begin(app: &mut AppState, source: StrokeSource, at: Pos2) -> bool {
-    if app.is_stroking() || app.canvas.eyedrop.is_some() {
+    if app.is_stroking() || app.canvas.eyedrop.is_some() || left_drag_in_progress(app) {
         return false;
     }
     app.canvas.eyedrop = Some(RightPress {
@@ -80,6 +80,18 @@ pub fn right_begin(app: &mut AppState, source: StrokeSource, at: Pos2) -> bool {
         sample: None,
     });
     true
+}
+
+/// 左ボタンのドラッグの途中か（選択・移動と変形・図形・グラデーション・パスなど、`is_stroking` に入らないドラッグと、表示の回す・動かす・拡縮も）。
+fn left_drag_in_progress(app: &AppState) -> bool {
+    app.canvas.rotating.is_some()
+        || app.canvas.panning
+        || app.canvas.middle_rotating
+        || app.canvas.zooming.is_some()
+        || app.region.drag.is_some()
+        || crate::tools::input::CanvasKind::ALL
+            .iter()
+            .any(|kind| kind.handler().dragging(app, None))
 }
 
 /// 2D の右ボタンを押したまま動かした（印の見本が付いてくる）。
@@ -91,7 +103,8 @@ pub fn right_move(app: &mut AppState, source: StrokeSource, at: Pos2) {
     }
 }
 
-/// 2D の右ボタンを離した: 離した所の値を取る（`apply`。取りやめなら何もしない）。この入力が始めたスポイトでなければ何もしない。
+/// 2D の右ボタンを離した: 離した所の値を取る（`apply`。キャンバスの表示域の外・上に別の物がある所で離した、取りこぼした、Esc などの取りやめなら
+/// 何もしない）。この入力が始めたスポイトでなければ何もしない。
 pub fn right_end(
     app: &mut AppState,
     view: &CanvasView,

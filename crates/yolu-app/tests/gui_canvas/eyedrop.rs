@@ -1569,3 +1569,401 @@ fn headless_the_3d_mark_sample_reads_the_texel_under_the_surface_and_nothing_els
     s.view3d.model = None;
     assert_eq!(sample_surface(&mut s, rect(), at), None);
 }
+
+#[test]
+#[ignore = "計測（cargo test -p yolu-app --test gui_canvas -- measure_the_mark_sample --ignored --nocapture）"]
+fn measure_the_mark_sample_on_a_heavy_document() {
+    use std::time::Instant;
+    use yolu_app::eyedrop::sample_texel;
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let mut s = AppState::new(2048, 2048);
+    s.tool = Tool::Eyedropper;
+    let first = s.selected_layer.unwrap();
+    let mut ids = vec![first];
+    for i in 0..11 {
+        ids.push(s.doc.add_layer(&format!("layer {i}")).unwrap());
+    }
+    for (n, id) in ids.iter().enumerate() {
+        // 256 × 256 の範囲を塗って、タイルを持たせる（空のレイヤーは読みが速いので、実際の絵に近づける）
+        for y in 0..256u32 {
+            for x in 0..256u32 {
+                put(
+                    &mut s,
+                    *id,
+                    Channel::Color,
+                    100 + x,
+                    100 + y,
+                    [200, (x % 256) as u8, n as u8, 255],
+                );
+            }
+        }
+        // 反転と、半径 8 のぼかし（ぼかしは 1 画素のために近くの画素も読む）
+        for effect in [EffectSettings::invert(), EffectSettings::blur(8)] {
+            s.doc
+                .add_filter(
+                    *id,
+                    FilterTarget::Content,
+                    FilterSpec::new(effect).channels(&[Channel::Color]),
+                )
+                .unwrap();
+        }
+    }
+    s.selected_layer = ids.last().copied();
+    for (label, all_layers) in [("選んだレイヤーだけ", false), ("全レイヤーの合成", true)]
+    {
+        s.eyedrop.all_layers = all_layers;
+        let started = Instant::now();
+        let runs = 500;
+        for i in 0..runs {
+            // 毎回別の画素（読み直しになる）
+            let _ = sample_texel(&mut s, 0, 100 + (i % 400) as u32, 100 + (i / 400) as u32);
+        }
+        let per = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+        // 同じ画素の読み直しは無い
+        let started = Instant::now();
+        for _ in 0..runs {
+            let _ = sample_texel(&mut s, 0, 100, 100);
+        }
+        let cached = started.elapsed().as_secs_f64() * 1e6 / runs as f64;
+        println!(
+            "{label}: 12 レイヤー（各 256² を塗り、反転とぼかし）・2048²: 1 画素 {per:.3} ms、同じ画素の再読み {cached:.2} us"
+        );
+    }
+}
+
+// ───────── 2D の右ボタンのスポイト: 離す所・修飾・ほかのドラッグとの重なり ─────────
+
+/// 文書を大きく拡大して、キャンバスの表示域の外（右のパネルの上）にも、取れる色を持つ文書の画素が来るようにし、その画面の点を返す。
+fn colored_pixel_outside_the_canvas(h: &mut Harness<'_, YoluApp>) -> Pos2 {
+    let rect = canvas_rect(h);
+    h.state_mut().state.view.zoom = 12.0;
+    h.run();
+    let outside = pos2(rect.right() + 40.0, rect.center().y);
+    {
+        let s = &h.state().state;
+        let view = s.view.view(rect, s.doc.width(), s.doc.height());
+        let (x, y) = view.to_canvas(outside);
+        assert!(
+            (0.0..s.doc.width() as f64).contains(&x) && (0.0..s.doc.height() as f64).contains(&y),
+            "この点には、見えていない文書の画素がある: {x},{y}"
+        );
+    }
+    // その画素に色を置く（外で離したときに取ってしまえば、この色になる）
+    {
+        let s = &mut h.state_mut().state;
+        let view = s.view.view(rect, s.doc.width(), s.doc.height());
+        let (x, y) = view.to_canvas(outside);
+        let id = s.selected_layer.unwrap();
+        for dy in 0..3 {
+            for dx in 0..3 {
+                put(
+                    s,
+                    id,
+                    Channel::Color,
+                    (x as u32).saturating_sub(1) + dx,
+                    (y as u32).saturating_sub(1) + dy,
+                    [220, 40, 220, 255],
+                );
+            }
+        }
+        let view = s.view.view(rect, s.doc.width(), s.doc.height());
+        assert_eq!(
+            yolu_app::eyedrop::sample_canvas(s, &view, outside),
+            Some(Color32::from_rgb(220, 40, 220)),
+            "試験の前提: 外のこの点は取れる色を持つ"
+        );
+    }
+    outside
+}
+
+#[test]
+fn releasing_the_right_button_outside_the_canvas_cancels_the_pick_even_over_a_pixel_of_the_document(
+) {
+    let (mut h, [a, ..]) = three_colors_app(Tool::Brush);
+    h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    let rect = canvas_rect(&h);
+    let outside = colored_pixel_outside_the_canvas(&mut h);
+    // 押した所は表示域の中の、文書の画素
+    let inside = rect.center();
+    button_event(&h, inside, PointerButton::Secondary, true);
+    h.step();
+    assert!(h.state().state.canvas.eyedrop.is_some());
+    // 表示域の外へ動かして、そこで離す: 取りやめ（見えていない画素の色は取らない）
+    h.event(Event::PointerMoved(outside));
+    h.step();
+    button_event(&h, outside, PointerButton::Secondary, false);
+    h.run();
+    let s = &h.state().state;
+    assert!(s.canvas.eyedrop.is_none());
+    assert_eq!(
+        main_rgb(s),
+        [0, 0, 0],
+        "外で離したら色は変わらない: {}",
+        s.message
+    );
+    // 表示域の中で離せば、取る（同じ操作で外だけが違う）
+    let on_color = screen_of(&h, 64, 64);
+    button_event(&h, on_color, PointerButton::Secondary, true);
+    h.step();
+    h.event(Event::PointerMoved(offset(on_color, 1.0, 0.0)));
+    h.step();
+    button_event(
+        &h,
+        offset(on_color, 1.0, 0.0),
+        PointerButton::Secondary,
+        false,
+    );
+    h.run();
+    assert_ne!(main_rgb(&h.state().state), [0, 0, 0], "中で離せば取る");
+    let _ = a;
+}
+
+#[test]
+fn a_pen_side_button_lifted_outside_the_canvas_cancels_and_a_missed_right_release_cancels_too() {
+    let (mut h, [a, b, _]) = three_colors_app(Tool::Brush);
+    h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    let outside = colored_pixel_outside_the_canvas(&mut h);
+    // ペン: 表示域の外で離す
+    barrel_frames(&mut h, &[(a, true), (outside, true), (outside, false)]);
+    assert_eq!(
+        main_rgb(&h.state().state),
+        [0, 0, 0],
+        "外で離したペンは取らない"
+    );
+    assert!(h.state().state.canvas.eyedrop.is_none());
+    // 表示を戻して、中で離せば取る
+    h.state_mut().state.view.fit();
+    h.run();
+    barrel_frames(&mut h, &[(a, true), (b, true), (b, false)]);
+    assert_eq!(main_rgb(&h.state().state), GREEN);
+    // 離しを取りこぼした右ボタン（ボタンは押していないのに押している途中の印だけが残った）: 色は取らずに取りやめる
+    h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    h.state_mut().state.canvas.eyedrop = Some(yolu_app::eyedrop::RightPress {
+        source: yolu_app::state::StrokeSource::Mouse,
+        at: b,
+        sample: None,
+    });
+    h.event(Event::PointerMoved(b));
+    h.run();
+    assert!(h.state().state.canvas.eyedrop.is_none(), "取りやめた");
+    assert_eq!(
+        main_rgb(&h.state().state),
+        [0, 0, 0],
+        "取りこぼしでは取らない"
+    );
+}
+
+#[test]
+fn a_right_press_with_shift_alt_ctrl_or_space_added_does_not_pick_in_2d_like_in_3d() {
+    let (mut h, [a, ..]) = three_colors_app(Tool::Brush);
+    for (label, modifiers) in [
+        ("Shift", Modifiers::SHIFT),
+        ("Alt", Modifiers::ALT),
+        ("Ctrl", Modifiers::CTRL | Modifiers::COMMAND),
+    ] {
+        h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+        h.event(Event::ModifiersChanged(modifiers));
+        h.step();
+        h.event(Event::PointerMoved(a));
+        h.event(Event::PointerButton {
+            pos: a,
+            button: PointerButton::Secondary,
+            pressed: true,
+            modifiers,
+        });
+        h.step();
+        assert!(
+            h.state().state.canvas.eyedrop.is_none(),
+            "{label}＋右では始めない"
+        );
+        h.event(Event::PointerButton {
+            pos: a,
+            button: PointerButton::Secondary,
+            pressed: false,
+            modifiers,
+        });
+        h.step();
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        h.run();
+        assert_eq!(
+            main_rgb(&h.state().state),
+            [0, 0, 0],
+            "{label}＋右では取らない"
+        );
+    }
+    // Space を押しながらの右も取らない
+    h.event(Event::Key {
+        key: Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    button_event(&h, a, PointerButton::Secondary, true);
+    h.step();
+    assert!(
+        h.state().state.canvas.eyedrop.is_none(),
+        "Space＋右では始めない"
+    );
+    button_event(&h, a, PointerButton::Secondary, false);
+    h.step();
+    h.event(Event::Key {
+        key: Key::Space,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    assert_eq!(main_rgb(&h.state().state), [0, 0, 0]);
+    // 修飾なしの右は取る（同じ場所・同じ操作で修飾だけが違う）
+    button_event(&h, a, PointerButton::Secondary, true);
+    h.step();
+    assert!(h.state().state.canvas.eyedrop.is_some());
+    button_event(&h, a, PointerButton::Secondary, false);
+    h.run();
+    assert_eq!(main_rgb(&h.state().state), RED);
+}
+
+#[test]
+fn a_pen_side_button_with_shift_does_not_pick_either() {
+    let (mut h, [a, ..]) = three_colors_app(Tool::Brush);
+    h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.step();
+    barrel_frames(&mut h, &[(a, true), (a, false)]);
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+    assert_eq!(
+        main_rgb(&h.state().state),
+        [0, 0, 0],
+        "Shift＋サイドボタンでは取らない"
+    );
+    assert!(!h.state().state.modified, "描きもしない");
+}
+
+#[test]
+fn a_right_press_does_not_start_the_eyedropper_during_a_left_drag_of_a_tool_that_is_not_stroking() {
+    let mut h = mark_app(Tool::SelectRect);
+    let (p0, p1) = (screen_of(&h, 40, 40), screen_of(&h, 90, 80));
+    let on_pixel = screen_of(&h, 60, 60);
+    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    // 選択範囲を左ドラッグしている途中（`is_stroking` に入らない）
+    press_with(&h, p0, Modifiers::NONE);
+    h.step();
+    h.event(Event::PointerMoved(p1));
+    h.step();
+    assert!(
+        !h.state().state.is_stroking(),
+        "選択のドラッグは is_stroking に入らない"
+    );
+    button_event(&h, on_pixel, PointerButton::Secondary, true);
+    h.step();
+    assert!(
+        h.state().state.canvas.eyedrop.is_none(),
+        "左のドラッグの途中は始めない"
+    );
+    button_event(&h, on_pixel, PointerButton::Secondary, false);
+    h.step();
+    release_with(&h, p1, Modifiers::NONE);
+    h.run();
+    assert_eq!(main_rgb(&h.state().state), [255, 0, 0], "色は取らない");
+    assert!(
+        h.state().state.doc.selection().is_some(),
+        "選択は作り終えた"
+    );
+    // 表示を Alt + 左ドラッグで回している途中も始めない
+    mods_alt(&mut h, true);
+    h.event(Event::PointerMoved(p0));
+    h.event(Event::PointerButton {
+        pos: p0,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::ALT,
+    });
+    h.step();
+    assert!(h.state().state.canvas.rotating.is_some());
+    button_event(&h, on_pixel, PointerButton::Secondary, true);
+    h.step();
+    assert!(
+        h.state().state.canvas.eyedrop.is_none(),
+        "回している途中は始めない"
+    );
+    h.event(Event::PointerButton {
+        pos: on_pixel,
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: Modifiers::ALT,
+    });
+    h.event(Event::PointerButton {
+        pos: on_pixel,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::ALT,
+    });
+    h.step();
+    mods_alt(&mut h, false);
+    h.run();
+    assert_eq!(main_rgb(&h.state().state), [255, 0, 0]);
+    // 何も押していなければ、始められる
+    button_event(&h, on_pixel, PointerButton::Secondary, true);
+    h.step();
+    assert!(h.state().state.canvas.eyedrop.is_some());
+    button_event(&h, on_pixel, PointerButton::Secondary, false);
+    h.run();
+    assert_eq!(main_rgb(&h.state().state), [30, 90, 150]);
+}
+
+fn mods_alt(h: &mut Harness<'_, YoluApp>, on: bool) {
+    h.event(Event::ModifiersChanged(if on {
+        Modifiers::ALT
+    } else {
+        Modifiers::NONE
+    }));
+    h.step();
+}
+
+// ───────── 印の見本のキャッシュは、文書や効果の入力が替わったら捨てる ─────────
+
+#[test]
+fn headless_the_mark_sample_cache_is_dropped_when_the_document_or_the_effect_inputs_are_replaced() {
+    use yolu_app::eyedrop::sample_texel;
+    use yolu_app::sets::Keep;
+    let mut s = state();
+    let id = s.selected_layer.unwrap();
+    // 文書 A: (9, 9) を塗り、(5, 5) は空
+    put(&mut s, id, Channel::Color, 9, 9, [1, 2, 3, 255]);
+    assert_eq!(sample_texel(&mut s, 0, 5, 5), None);
+    assert!(s.eyedrop.sample_cache.is_some());
+    // 文書 B: 版が同じ（別の文書の版は同じ値になりうる）で、(5, 5) が塗られている
+    let mut other = state();
+    let other_id = other.selected_layer.unwrap();
+    put(
+        &mut other,
+        other_id,
+        Channel::Color,
+        5,
+        5,
+        [200, 100, 50, 255],
+    );
+    let doc_b = std::mem::replace(
+        &mut other.doc,
+        yolu_app::engine::Document::new(64, 64).unwrap(),
+    );
+    assert_eq!(doc_b.revision(), s.doc.revision(), "試験の前提: 版が同じ");
+    s.install_document(doc_b, Keep::default());
+    assert!(s.eyedrop.sample_cache.is_none(), "文書を替えたら捨てる");
+    assert_eq!(
+        sample_texel(&mut s, 0, 5, 5),
+        Some(Color32::from_rgb(200, 100, 50)),
+        "替えた文書の値を読む"
+    );
+    // 効果の入力を渡し直すと（文書の版は上がらない）、捨てる
+    assert!(s.eyedrop.sample_cache.is_some());
+    s.sync_effect_inputs();
+    assert!(
+        s.eyedrop.sample_cache.is_none(),
+        "効果の入力を替えたら捨てる"
+    );
+}

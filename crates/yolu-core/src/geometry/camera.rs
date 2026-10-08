@@ -79,11 +79,13 @@ fn orientation_rotation(yaw: f32, pitch: f32) -> Quat {
     )
 }
 
-/// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで）。
+/// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで。今の pitch がそれを越えている（軸の視点へ吸い付いて ±90°）ときは、
+/// その値まで止めを広げる: 真上・真下から回し始めても、最初に 1° はねない）。
 pub fn orbited(yaw: f32, pitch: f32, dx_points: f32, dy_points: f32) -> (f32, f32) {
+    let limit = pitch.abs().clamp(89.0, 90.0);
     (
         yaw + dx_points * ORBIT_DEGREES_PER_POINT,
-        (pitch + dy_points * ORBIT_DEGREES_PER_POINT).clamp(-89.0, 89.0),
+        (pitch + dy_points * ORBIT_DEGREES_PER_POINT).clamp(-limit, limit),
     )
 }
 
@@ -639,9 +641,41 @@ mod tests {
         assert_eq!(c.pitch, 90.0);
         c.set_orientation_about(pivot, 10.0, -200.0);
         assert_eq!(c.pitch, -90.0);
-        // 回す（orbit）は今までどおり ±89°
+        // 回す（orbit）は、±90° にいるときはそのまま（はねない）。89° の内側からは今までどおり ±89° で止まる
+        c.orbit(0.0, -1000.0);
+        assert_eq!(c.pitch, -90.0);
+        c.pitch = 0.0;
         c.orbit(0.0, -1000.0);
         assert_eq!(c.pitch, -89.0);
+    }
+
+    #[test]
+    fn orbiting_from_straight_up_or_down_does_not_jump_to_the_89_degree_limit() {
+        for pitch in [90.0f32, -90.0] {
+            let mut c = OrbitCamera {
+                yaw: 180.0,
+                pitch,
+                ..OrbitCamera::default()
+            };
+            // 動かさない・さらに向こうへ回すだけでは、pitch は変わらない
+            c.orbit(10.0, 0.0);
+            assert_eq!(c.pitch, pitch);
+            c.orbit(0.0, 30.0 * pitch.signum());
+            assert_eq!(c.pitch, pitch);
+            assert!((c.yaw - (180.0 + 10.0 * ORBIT_DEGREES_PER_POINT)).abs() < 1e-5);
+            // 戻す向きには、なめらかに離れる（1° はねない）
+            c.orbit(0.0, -10.0 * pitch.signum());
+            assert!(
+                (c.pitch - (pitch - 3.5 * pitch.signum())).abs() < 1e-4,
+                "{}",
+                c.pitch
+            );
+            // 89° の内側から始めれば、今までどおり ±89° で止まる
+            c.orbit(0.0, 1000.0 * pitch.signum());
+            assert_eq!(c.pitch, 89.0 * pitch.signum());
+        }
+        // 90° を越える値は 90° までに止める（範囲を広げすぎない）
+        assert_eq!(orbited(0.0, 120.0, 0.0, 100.0).1, 90.0);
     }
 
     #[test]

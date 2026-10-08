@@ -480,6 +480,246 @@ fn the_view_stops_flying_when_the_right_button_is_released_escape_is_pressed_or_
     }
 }
 
+/// 繰り返し（OS のキーの繰り返し）の押し。
+fn key_repeat(h: &mut H, key: Key, modifiers: Modifiers) {
+    h.event(Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: true,
+        modifiers,
+    });
+    h.step();
+}
+
+#[test]
+fn releasing_the_right_button_first_keeps_the_held_fly_keys_off_the_table_until_they_are_released()
+{
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.run();
+    press_right(&mut h, at);
+    // 移動の間に W・D・Shift+Q を押したままにする
+    key_event(&mut h, Key::W, true, Modifiers::NONE);
+    key_event(&mut h, Key::D, true, Modifiers::NONE);
+    mods(&mut h, Modifiers::SHIFT);
+    key_event(&mut h, Key::Q, true, Modifiers::SHIFT);
+    // 右ボタンだけを先に離す。キーは押したまま（OS のキーの繰り返し）
+    release_right(&mut h, at);
+    assert!(nav(&h).is_none());
+    let before = camera(&h).target;
+    for _ in 0..3 {
+        key_repeat(&mut h, Key::W, Modifiers::SHIFT);
+        key_repeat(&mut h, Key::D, Modifiers::SHIFT);
+        key_repeat(&mut h, Key::Q, Modifiers::SHIFT);
+    }
+    assert_eq!(tool(&h), Tool::Brush, "W（自動選択）に替わらない");
+    assert_eq!(
+        h.state().state.color.main,
+        [1.0, 0.0, 0.0, 1.0],
+        "D（初期の色）に戻らない"
+    );
+    assert!(
+        !h.state().state.sel.quick,
+        "Shift+Q（クイックマスク）が入らない"
+    );
+    assert_eq!(camera(&h).target, before, "右を離したので、もう動かさない");
+    // Shift を離し、修飾なしの繰り返しでも同じ
+    mods(&mut h, Modifiers::NONE);
+    key_repeat(&mut h, Key::W, Modifiers::NONE);
+    key_repeat(&mut h, Key::D, Modifiers::NONE);
+    assert_eq!(tool(&h), Tool::Brush);
+    assert_eq!(h.state().state.color.main, [1.0, 0.0, 0.0, 1.0]);
+    // 押していなかったキーは、今までどおり表へ届く（X は色の入れ替え）
+    key_event(&mut h, Key::X, true, Modifiers::NONE);
+    key_event(&mut h, Key::X, false, Modifiers::NONE);
+    assert_eq!(h.state().state.color.sub, [1.0, 0.0, 0.0, 1.0], "X は効く");
+    // W を離して押し直せば、表へ届く（自動選択）。D・Q は押したままなので、まだ届かない
+    key_event(&mut h, Key::W, false, Modifiers::NONE);
+    key_event(&mut h, Key::W, true, Modifiers::NONE);
+    assert_eq!(tool(&h), Tool::Wand, "押し直した W は自動選択");
+    key_repeat(&mut h, Key::D, Modifiers::NONE);
+    assert_eq!(
+        h.state().state.color.sub,
+        [1.0, 0.0, 0.0, 1.0],
+        "押したままの D はまだ届かない"
+    );
+    // D も離して押し直せば、初期の色
+    key_event(&mut h, Key::D, false, Modifiers::NONE);
+    key_event(&mut h, Key::D, true, Modifiers::NONE);
+    assert_eq!(
+        h.state().state.color.main,
+        [0.0, 0.0, 0.0, 1.0],
+        "押し直した D は初期の色"
+    );
+}
+
+#[test]
+fn a_key_held_before_the_right_button_and_repeating_after_it_is_released_stays_off_the_table() {
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.run();
+    // 右ボタンを押す前から W を押している（そのとき W は表へ届く）
+    key_event(&mut h, Key::W, true, Modifiers::NONE);
+    assert_eq!(tool(&h), Tool::Wand);
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    press_right(&mut h, at);
+    key_repeat(&mut h, Key::W, Modifiers::NONE);
+    release_right(&mut h, at);
+    key_repeat(&mut h, Key::W, Modifiers::NONE);
+    assert_eq!(tool(&h), Tool::Brush, "右を離したあとの繰り返しも届かない");
+}
+
+/// 視点の押した所の面の点（押す前のカメラで引く）。
+fn surface_point_at(h: &H, rect: Rect, at: Pos2) -> Vec3 {
+    let model = h.state().state.view3d.model.clone().expect("モデル");
+    yolu_core::geometry::pick(
+        &model.geometry,
+        &camera(h).view(rect.width(), rect.height()),
+        Vec2::new(at.x - rect.left(), at.y - rect.top()),
+    )
+    .expect("面に当たる")
+    .position
+}
+
+#[test]
+fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_moves_the_picked_point(
+) {
+    // Alt + クリック（クローンの元）: 軸の近くの向き（正面の 10° 手前）で 4 点以内の揺れ。視点は変わらず、元は押した所の面の点
+    let (mut h, rect) = cube_view();
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+            offset: Default::default(),
+        };
+        s.view3d.camera.yaw = 190.0;
+        s.view3d.camera.pitch = 0.0;
+    }
+    let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, 0.5));
+    let expected = surface_point_at(&h, rect, at);
+    let before = camera(&h);
+    let alt = Modifiers::ALT;
+    mods(&mut h, alt);
+    mouse(&h, at, PointerButton::Primary, true, alt);
+    h.step();
+    for wobble in [vec2(2.0, 1.0), vec2(-1.0, 2.0), vec2(2.0, 1.0)] {
+        move_mouse(&mut h, at + wobble);
+        assert_eq!(camera(&h), before, "遊びの内は回さない（スナップもしない）");
+    }
+    mouse(&h, at + vec2(2.0, 1.0), PointerButton::Primary, false, alt);
+    h.step();
+    mods(&mut h, Modifiers::NONE);
+    assert_eq!(camera(&h), before);
+    let source = h.state().state.view3d.clone.source.expect("元を決めた");
+    assert!(
+        (source.position - expected).length() < 1e-4,
+        "元は押した所の面の点: {} / {expected}",
+        source.position
+    );
+    // 右クリック（スポイト）: 揺れでは視点が動かず、スポイトの候補も残る
+    h.state_mut().state.view3d.clone.source = None;
+    h.state_mut().state.color.set_main([0.0, 1.0, 0.0, 1.0]);
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.step();
+    move_mouse(&mut h, at + vec2(3.0, 1.0));
+    assert_eq!(camera(&h), before, "右ドラッグも遊びの内は回さない");
+    assert!(
+        h.state().state.view3d.input.eyedrop.is_some(),
+        "印と取る点が揃う（まだ候補）"
+    );
+    mouse(
+        &h,
+        at + vec2(3.0, 1.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::NONE,
+    );
+    h.step();
+    assert_eq!(camera(&h), before);
+    assert!(h.state().state.view3d.input.eyedrop.is_none());
+}
+
+#[test]
+fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
+    // 右ドラッグ: 4 点以内の揺れのあと 60 点動かすと、押した所からの 60 点ぶんの回転（遊びの分を引かない）
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    h.state_mut().state.view3d.camera.yaw = 190.0;
+    h.state_mut().state.view3d.camera.pitch = 0.0;
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.step();
+    move_mouse(&mut h, at + vec2(2.0, 1.0));
+    assert_eq!(camera(&h).yaw, 190.0);
+    move_mouse(&mut h, at + vec2(60.0, 0.0));
+    let c = camera(&h);
+    assert!((c.yaw - (190.0 + 60.0 * 0.35)).abs() < 1e-3, "{}", c.yaw);
+    assert!(c.pitch.abs() < 1e-3);
+    assert!(
+        h.state().state.view3d.input.eyedrop.is_none(),
+        "動かしたのでスポイトにしない"
+    );
+    // そのあとは、動いた分ずつ
+    move_mouse(&mut h, at + vec2(80.0, 0.0));
+    assert!((camera(&h).yaw - (190.0 + 80.0 * 0.35)).abs() < 1e-3);
+    mouse(
+        &h,
+        at + vec2(80.0, 0.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::NONE,
+    );
+    h.step();
+    // Alt + 左ドラッグ（スナップ回転）: 同じ。軸から離れた向きまで動かすと、押した所からの動きが全部当たる
+    h.state_mut().state.view3d.camera.yaw = 190.0;
+    let alt = Modifiers::ALT;
+    mods(&mut h, alt);
+    mouse(&h, at, PointerButton::Primary, true, alt);
+    h.step();
+    move_mouse(&mut h, at + vec2(1.0, 2.0));
+    assert_eq!(camera(&h).yaw, 190.0);
+    move_mouse(&mut h, at + vec2(60.0, 0.0));
+    assert!((camera(&h).yaw - 211.0).abs() < 1e-3, "{}", camera(&h).yaw);
+    mouse(&h, at + vec2(60.0, 0.0), PointerButton::Primary, false, alt);
+    h.step();
+    mods(&mut h, Modifiers::NONE);
+    // パン（Space + 左）には遊びを入れない（今までどおり 1 点から動く）
+    key_event(&mut h, Key::Space, true, Modifiers::NONE);
+    let target = camera(&h).target;
+    mouse(&h, at, PointerButton::Primary, true, Modifiers::NONE);
+    h.step();
+    move_mouse(&mut h, at + vec2(2.0, 0.0));
+    assert_ne!(camera(&h).target, target, "パンは遊びなしで動く");
+}
+
+#[test]
+fn right_dragging_from_straight_above_does_not_jump_by_a_degree_first() {
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    {
+        let c = &mut h.state_mut().state.view3d.camera;
+        c.yaw = 180.0;
+        c.pitch = 90.0;
+    }
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.step();
+    // 横にだけ動かす: pitch は 90° のまま（89° に止められない）
+    move_mouse(&mut h, at + vec2(20.0, 0.0));
+    assert_eq!(camera(&h).pitch, 90.0);
+    // さらに向こうへ（下へ）動かしても 90° のまま
+    move_mouse(&mut h, at + vec2(20.0, 20.0));
+    assert_eq!(camera(&h).pitch, 90.0);
+    // 戻す向き（上へ）には、動いた分だけなめらかに離れる
+    move_mouse(&mut h, at + vec2(20.0, -20.0));
+    assert!(
+        (camera(&h).pitch - (90.0 - 40.0 * 0.35)).abs() < 1e-3,
+        "{}",
+        camera(&h).pitch
+    );
+}
+
 #[test]
 fn flying_makes_the_right_button_release_no_longer_a_click() {
     let (mut h, rect) = cube_view();
@@ -839,38 +1079,44 @@ fn the_shortcut_list_names_the_new_operations_in_both_languages() {
         assert!(
             has(
                 lang.pick("クローンの元を決める", "Set Clone Source"),
-                &format!("Alt+{}", lang.pick("左クリック", "Left Click"))
+                &format!(
+                    "Alt+{}",
+                    lang.pick(
+                        "左ボタンを動かさずに離す",
+                        "Left Button Released without Moving"
+                    )
+                )
             ),
             "{lang:?}"
         );
         for (ja, en, key) in [
             (
-                "前へ移動（右ボタンを押している間）",
+                "前へ移動（右ボタン中）",
                 "Move Forward (While Right Button Held)",
                 "W",
             ),
             (
-                "後ろへ移動（右ボタンを押している間）",
+                "後ろへ移動（右ボタン中）",
                 "Move Back (While Right Button Held)",
                 "S",
             ),
             (
-                "左へ移動（右ボタンを押している間）",
+                "左へ移動（右ボタン中）",
                 "Move Left (While Right Button Held)",
                 "A",
             ),
             (
-                "右へ移動（右ボタンを押している間）",
+                "右へ移動（右ボタン中）",
                 "Move Right (While Right Button Held)",
                 "D",
             ),
             (
-                "下へ移動（右ボタンを押している間）",
+                "下へ移動（右ボタン中）",
                 "Move Down (While Right Button Held)",
                 "Q",
             ),
             (
-                "上へ移動（右ボタンを押している間）",
+                "上へ移動（右ボタン中）",
                 "Move Up (While Right Button Held)",
                 "E",
             ),

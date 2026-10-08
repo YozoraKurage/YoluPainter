@@ -577,24 +577,51 @@ pub fn hold_down(i: &InputState, command: &str) -> bool {
     hold_key(command).is_some_and(|key| i.key_down(key))
 }
 
-/// 視点の移動キーの事象（Shift 以外の修飾キーが無いもの。Ctrl を押した Ctrl+S などは残す）を取り除く。右ボタンを押している 3D ビューの間は、
-/// W/A/S/D/Q/E をキーの表に渡さない（ツールの切り替え・初期設定の色・塗りつぶしの取っ手に行かない）。
-pub fn take_fly_keys(i: &mut InputState) {
+/// 視点の移動キーの押し（繰り返しを含む。Shift 以外の修飾キーが無いもの。Ctrl を押した Ctrl+S などは残す）を取り除く。右ボタンを押している
+/// 3D ビューの間（`flying`）は、W/A/S/D/Q/E をキーの表に渡さない（ツールの切り替え・初期設定の色・塗りつぶしの取っ手に行かない）。
+/// `held` は、移動の間に押されていた移動キー: 右ボタンを先に離しても、そのキーが押されたままの間は、OS のキーの繰り返し（`repeat` の押し）が
+/// 続くので、キーを離すまで取り除き続ける。離して押し直せば、今までどおり表へ届く。
+pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
     let keys: Vec<Key> = FLY_KEYS
         .iter()
         .filter_map(|fly| hold_key(fly.command))
         .collect();
-    i.events.retain(|event| {
-        !matches!(
-            event,
-            Event::Key {
-                key,
-                modifiers,
-                pressed: true,
-                ..
-            } if keys.contains(key) && !modifiers.command && !modifiers.ctrl && !modifiers.alt
-        )
+    if flying {
+        // 右ボタンを押す前から押していたキーも、移動の間は押されている
+        for key in &keys {
+            if i.key_down(*key) && !held.contains(key) {
+                held.push(*key);
+            }
+        }
+    }
+    if !flying && held.is_empty() {
+        return;
+    }
+    i.events.retain(|event| match event {
+        Event::Key {
+            key,
+            modifiers,
+            pressed,
+            ..
+        } if keys.contains(key) => {
+            if !*pressed {
+                // 離した: 次の押しは新しい押し
+                held.retain(|k| k != key);
+                return true;
+            }
+            let plain = !modifiers.command && !modifiers.ctrl && !modifiers.alt;
+            if plain && (flying || held.contains(key)) {
+                if !held.contains(key) {
+                    held.push(*key);
+                }
+                false
+            } else {
+                true
+            }
+        }
+        _ => true,
     });
+    held.retain(|key| i.key_down(*key));
 }
 
 /// 操作のキー（表の最初のキーの行。画面の部品の決まった働きは、その定義のキー）。
@@ -975,6 +1002,17 @@ pub fn gesture(scope: &str, button: PointerButton, m: &Modifiers, held: bool) ->
         .map(|g| g.operation)
 }
 
+/// この押しが始める操作を、修飾も押しながらのキーも書いたとおりに（書いていない Shift・Alt・Ctrl・押しながらのキーがあれば当てない）引く。
+/// 2D の右ボタンのスポイトのように、修飾を足した押しでは始めない操作が使う（`gesture` は書いていない修飾を気にしない）。
+pub fn gesture_exact(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+) -> Option<Operation> {
+    exact(scope, button, m, held, |g| g.starts)
+}
+
 /// この押しを動かさずに離したときの操作（押しの始めの修飾で決める。始める組み合わせと違い、修飾は書いたとおりに（書いていない Shift・Alt・Ctrl・
 /// 押しながらのキーがあれば当てない）見る: Shift を押した右クリックがスポイトになったりしない。無ければ None）。
 pub fn click_gesture(
@@ -983,9 +1021,19 @@ pub fn click_gesture(
     m: &Modifiers,
     held: bool,
 ) -> Option<Operation> {
+    exact(scope, button, m, held, |g| g.click)
+}
+
+fn exact(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+    wanted: impl Fn(&Gesture) -> bool,
+) -> Option<Operation> {
     GESTURES
         .iter()
-        .filter(|g| g.click && g.scope == scope)
+        .filter(|g| wanted(g) && g.scope == scope)
         .find(|g| {
             g.button == button
                 && g.held.is_some() == held
@@ -1095,6 +1143,20 @@ mod tests {
         assert_eq!(click_gesture("view3d", Primary, &alt, true), None);
         assert_eq!(click_gesture("view3d", Primary, &none, false), None);
         assert_eq!(click_gesture("view3d", Middle, &none, false), None);
+        // 2D の右ボタンのスポイトは、修飾も書いたとおり（Shift・Alt・Ctrl・Space を足すと始めない）
+        assert_eq!(
+            gesture_exact("canvas", Secondary, &none, false),
+            Some(Operation::Pick)
+        );
+        assert_eq!(gesture_exact("canvas", Secondary, &shift, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &alt, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &ctrl, false), None);
+        assert_eq!(gesture_exact("canvas", Secondary, &none, true), None);
+        assert_eq!(
+            gesture_exact("canvas", Primary, &alt, false),
+            Some(Operation::Rotate)
+        );
+        assert_eq!(gesture_exact("canvas", Primary, &alt_shift, false), None);
         // 2D: 中でパン・Alt + 左で回す・右でスポイト。Shift + 中は回さない（パン）
         assert_eq!(
             gesture("canvas", Middle, &none, false),
@@ -1841,7 +1903,7 @@ mod tests {
         };
         let mut output = ctx.run_ui(input, |ui| {
             ui.input_mut(|i| {
-                take_fly_keys(i);
+                take_fly_keys(i, &mut Vec::new(), true);
                 left = i.events.clone();
             });
         });
@@ -1864,6 +1926,143 @@ mod tests {
             ]
         );
         assert!(left.iter().any(|e| matches!(e, Event::Text(t) if t == "w")));
+    }
+
+    #[test]
+    fn a_fly_key_still_held_after_the_flight_stays_off_the_table_until_it_is_released_and_pressed_again(
+    ) {
+        let key = |key, modifiers, pressed, repeat| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat,
+            modifiers,
+        };
+        let ctx = egui::Context::default();
+        let mut held: Vec<Key> = Vec::new();
+        let frame = |events: Vec<Event>, flying: bool, held: &mut Vec<Key>| -> Vec<(Key, bool)> {
+            let mut left = Vec::new();
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.input_mut(|i| {
+                    take_fly_keys(i, held, flying);
+                    left = i
+                        .events
+                        .iter()
+                        .filter_map(|e| match e {
+                            Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                            _ => None,
+                        })
+                        .collect();
+                });
+            });
+            output.textures_delta.clear();
+            left
+        };
+        // 移動の間（右ボタンを押している）に W・D・Shift+Q を押す: 取り除く
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, false),
+                key(Key::D, Modifiers::NONE, true, false),
+                key(Key::Q, Modifiers::SHIFT, true, false),
+            ],
+            true,
+            &mut held,
+        );
+        assert!(left.is_empty());
+        assert_eq!(held.len(), 3);
+        // 右ボタンを先に離しても、押したままの間のキーの繰り返しは取り除く（W・D・Shift+Q）
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, true),
+                key(Key::D, Modifiers::NONE, true, true),
+                key(Key::Q, Modifiers::SHIFT, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert!(left.is_empty(), "{left:?}");
+        // 押していなかったキー（X）と、Ctrl を足した W は届く
+        let left = frame(
+            vec![
+                key(Key::X, Modifiers::NONE, true, false),
+                key(Key::W, Modifiers::COMMAND, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::X, true), (Key::W, true)]);
+        // W を離す: 離した事象は届き、W だけ「押したまま」の扱いが終わる
+        let left = frame(
+            vec![key(Key::W, Modifiers::NONE, false, false)],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::W, false)]);
+        assert!(!held.contains(&Key::W) && held.contains(&Key::D) && held.contains(&Key::Q));
+        // 押し直した W は、表へ届く。D・Q は押したままなので、まだ届かない
+        let left = frame(
+            vec![
+                key(Key::W, Modifiers::NONE, true, false),
+                key(Key::D, Modifiers::NONE, true, true),
+            ],
+            false,
+            &mut held,
+        );
+        assert_eq!(left, vec![(Key::W, true)]);
+        // 全部離したら、何も覚えていない
+        frame(
+            vec![
+                key(Key::W, Modifiers::NONE, false, false),
+                key(Key::D, Modifiers::NONE, false, false),
+                key(Key::Q, Modifiers::SHIFT, false, false),
+            ],
+            false,
+            &mut held,
+        );
+        assert!(held.is_empty());
+    }
+
+    #[test]
+    fn a_fly_key_pressed_before_the_right_button_is_held_counts_as_held_for_the_flight() {
+        let ctx = egui::Context::default();
+        let mut held: Vec<Key> = Vec::new();
+        let run = |events: Vec<Event>, flying: bool, held: &mut Vec<Key>| {
+            let mut count = 0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.input_mut(|i| {
+                        take_fly_keys(i, held, flying);
+                        count = i
+                            .events
+                            .iter()
+                            .filter(|e| matches!(e, Event::Key { pressed: true, .. }))
+                            .count();
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            count
+        };
+        let press = |repeat| Event::Key {
+            key: Key::W,
+            physical_key: None,
+            pressed: true,
+            repeat,
+            modifiers: Modifiers::NONE,
+        };
+        // 右ボタンを押す前に W を押していた（表へ届く）
+        assert_eq!(run(vec![press(false)], false, &mut held), 1);
+        // 右ボタンを押した（移動の間）: 繰り返しは届かず、右を離したあとも W を離すまで届かない
+        assert_eq!(run(vec![press(true)], true, &mut held), 0);
+        assert_eq!(run(vec![press(true)], false, &mut held), 0);
     }
 
     #[test]

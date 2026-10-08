@@ -681,6 +681,8 @@ impl AppState {
     /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。
     pub(crate) fn document_replaced(&mut self) {
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
+        // スポイトの印の見本は前の文書を読んだもの（文書の版は別の文書と同じ値になりうる）
+        self.eyedrop.sample_cache = None;
         self.canvas.previous_end = None;
         self.canvas.current_end = None;
         self.canvas.shift_hold = None;
@@ -693,6 +695,7 @@ impl AppState {
     /// 表示（拡大・位置）と選んでいるレイヤーは、新しい文書の大きさに合わせて既定に戻す。Live Link が、何も触っていない最初のセットを元の絵の
     /// 大きさで作り直すときに使う（触っていないことは呼ぶ側が確かめる）。
     pub(crate) fn swap_untouched_set_document(&mut self, index: usize, doc: Document) {
+        self.eyedrop.sample_cache = None;
         if let Some(set) = self.sets.get_mut(index) {
             // 新しく作るセットと同じく、セットの ID は文書の ID と同じ値
             set.id = guid_string(doc.id());

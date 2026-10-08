@@ -69,7 +69,11 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                     (lang.pick("回転", "Orbit"), right.to_string()),
                     (
                         lang.pick("スポイト", "Eyedropper"),
-                        lang.pick("右クリック", "Right Click").to_string(),
+                        lang.pick(
+                            "右ボタンを動かさずに離す",
+                            "Right Button Released without Moving",
+                        )
+                        .to_string(),
                     ),
                     (lang.pick("パン", "Pan"), middle.to_string()),
                     (
@@ -78,7 +82,13 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                     ),
                     (
                         lang.pick("クローンの元を決める", "Set Clone Source"),
-                        format!("Alt+{}", lang.pick("左クリック", "Left Click")),
+                        format!(
+                            "Alt+{}",
+                            lang.pick(
+                                "左ボタンを動かさずに離す",
+                                "Left Button Released without Moving"
+                            )
+                        ),
                     ),
                 ],
             ),

@@ -480,7 +480,19 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
     let Some((nav, _)) = app.view3d.input.nav else {
         return;
     };
-    let d = pos - previous;
+    let d = match nav {
+        // 回すドラッグは、押した所から `CLICK_DISTANCE` を超えるまで回さない（超えたら、押した所からの動きを全部当てる。パン・拡縮は今までどおり）
+        Nav::Orbit | Nav::SnapOrbit => {
+            let Some(drag) = app.view3d.input.navigation.as_mut() else {
+                return;
+            };
+            match drag.rotation_delta(pos, previous, CLICK_DISTANCE) {
+                Some(d) => d,
+                None => return,
+            }
+        }
+        Nav::Pan | Nav::Zoom => pos - previous,
+    };
     match nav {
         Nav::Orbit | Nav::SnapOrbit | Nav::Pan => {
             super::navigation::move_by(app, rect, nav, d.x, d.y)

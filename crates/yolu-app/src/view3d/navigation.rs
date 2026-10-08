@@ -176,6 +176,8 @@ fn zoom_point(model: Option<&ViewModel>, camera: OrbitCamera, rect: Rect, at: Po
 
 pub struct Drag {
     at: Pos2,
+    /// 回すドラッグが、押した所から遊び（クリックとみなす距離）を超えて動いたか（超えるまで回さない。`rotation_delta`）。
+    moved: bool,
     camera: OrbitCamera,
     /// スナップ回転の、吸い付ける前の向き（yaw・pitch）。吸い付いた向きを元に回すと、いちど吸い付いたら離れられないので、
     /// 回した分はこちらへ溜めて、カメラには吸い付けた結果を当てる。
@@ -198,6 +200,7 @@ impl Drag {
     pub fn new(state: &View3dState, preferences: Preferences, at: Pos2) -> Self {
         Self {
             at,
+            moved: false,
             camera: state.camera,
             free: None,
             model: state.model.clone(),
@@ -206,6 +209,25 @@ impl Drag {
             preferences,
             resolved: None,
         }
+    }
+
+    /// 回すドラッグ（右ボタン・Alt + 左）で、このポインタの位置を受けて回す量（画面の点）。押した所から `dead_zone` までは回さない（動かさずに離す
+    /// 操作 — スポイト・クローンの元 — が、小さな揺れで視点を動かして別の点を指さないように）。超えた最初の動きでは、押した所からの動きを全部当てる。
+    /// `previous` は前の位置。
+    pub fn rotation_delta(
+        &mut self,
+        pos: Pos2,
+        previous: Pos2,
+        dead_zone: f32,
+    ) -> Option<egui::Vec2> {
+        if self.moved {
+            return Some(pos - previous);
+        }
+        if self.at.distance(pos) <= dead_zone {
+            return None;
+        }
+        self.moved = true;
+        Some(pos - self.at)
     }
 
     fn anchor(&mut self, rect: Rect) -> Anchor {
