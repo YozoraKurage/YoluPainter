@@ -816,8 +816,9 @@ fn move_without_replacing(from: &Path, to: &Path) -> io::Result<Moved> {
     }
     link_then_unlink(from, to)
 }
-/// `hard_link` は移動先が先にあれば断る（作る操作そのものが断る）。リンクを作れない場所は `Unsupported`（本当の失敗は、
-/// 呼ぶ側の置き換える移動が同じ形で返す）。リンクを作れたら元の名前を消す。消せなくても、確定した保存は戻さず `Done` を返す
+/// `hard_link` は移動先が先にあれば断る（作る操作そのものが断る）。元（か移動先のフォルダー）が無いのは本当の失敗なので `Err`（`Unsupported` にすると、
+/// 置き換えない移動の失敗として見えず、呼ぶ側が確かめ直してから置き換える移動へ進んで、同じ失敗がそちらで返る）。そのほかの、リンクを作れない場所は
+/// `Unsupported`（本当の失敗は、呼ぶ側の置き換える移動が同じ形で返す）。リンクを作れたら元の名前を消す。消せなくても、確定した保存は戻さず `Done` を返す
 /// （元の名前は保存先と同じ実体を指す。呼ぶ側の `Pending` が最後に消し直す）。
 #[cfg(unix)]
 fn link_then_unlink(from: &Path, to: &Path) -> io::Result<Moved> {
@@ -835,6 +836,7 @@ fn link_then_unlink_with(
             Ok(Moved::Done)
         }
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Moved::Occupied),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(e),
         Err(_) => Ok(Moved::Unsupported),
     }
 }
@@ -1109,7 +1111,7 @@ fn names_the_same_file(_: &File, _: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::{hash, Thresholds};
-    #[cfg(unix)]
+    #[cfg(all(unix, target_os = "linux", target_env = "gnu"))]
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     /// 試験の作業フォルダの通し番号。
@@ -2517,11 +2519,42 @@ mod tests {
             link_then_unlink(&from, &s.0.join("dangling")).unwrap(),
             Moved::Occupied
         );
-        // リンクを作れない（ここでは元が無い）なら、未対応として呼び出し側に任せる
+        // 元が無いのは本当の失敗（未対応として呼び出し側に任せない）
         assert_eq!(
-            link_then_unlink(&s.0.join("missing"), &s.0.join("free")).unwrap(),
+            link_then_unlink(&s.0.join("missing"), &s.0.join("free"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn the_hard_link_way_returns_a_missing_source_as_a_failure_and_other_refusals_as_unsupported() {
+        let s = Scratch::new();
+        let mut removed = 0;
+        let mut remove = |_: &Path| {
+            removed += 1;
+            Ok(())
+        };
+        // 元が無い: 失敗。何も作らず、元の名前を消しにも行かない
+        let error = link_then_unlink_with(&s.0.join("missing"), &s.0.join("free"), &mut remove)
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!s.0.join("free").exists());
+        // 移動先のフォルダーが無いのも、本当の失敗
+        let (from, to) = (s.0.join("from.bin"), s.0.join("none").join("to.bin"));
+        fs::write(&from, b"new").unwrap();
+        let error = link_then_unlink_with(&from, &to, &mut remove).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read(&from).unwrap(), b"new", "元は変えない");
+        // ほかの断り（フォルダーへのリンクは作れない）は、今までどおり未対応
+        let dir = s.0.join("dir");
+        fs::create_dir(&dir).unwrap();
+        assert_eq!(
+            link_then_unlink_with(&dir, &s.0.join("linked"), &mut remove).unwrap(),
             Moved::Unsupported
         );
+        assert_eq!(removed, 0);
     }
     #[cfg(unix)]
     #[test]
