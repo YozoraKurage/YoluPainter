@@ -492,7 +492,7 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         return None;
     }
     ui.input(|i| {
-        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN))
+        crate::gesture::zoom_chord(&i.modifiers, crate::keymap::hold_down(i, "view.pan_hold"))
             .then_some(i.modifiers.alt)
     })
 }

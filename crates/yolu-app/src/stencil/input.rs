@@ -145,8 +145,8 @@ pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let blocked = app.popup.is_some() || app.ui.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
-            i.key_down(crate::keymap::STENCIL_MOVE),
-            i.key_down(crate::keymap::STENCIL_BYPASS),
+            crate::keymap::hold_down(i, "stencil.transform_hold"),
+            crate::keymap::hold_down(i, "stencil.bypass_hold"),
             i.modifiers,
             i.events
                 .iter()

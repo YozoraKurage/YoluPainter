@@ -745,8 +745,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         shift: modifiers.shift,
         now: Some(ui.input(|i| i.time)),
     };
-    let space =
-        ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
+    let space = ui.input(|i| crate::keymap::hold_down(i, "view.pan_hold"))
+        && !ctx.egui_wants_keyboard_input();
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
     // モデルの組み直しが走るので、高いポーリングのマウスやペンでは、途中の位置は描かれずに捨てられるだけ）。ボタンを離す・Esc・
     // フォーカスを失うの前には、そこまでの位置を当ててから終える

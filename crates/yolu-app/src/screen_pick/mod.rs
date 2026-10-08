@@ -32,11 +32,16 @@ impl Mode {
             ),
         }
     }
-    pub(crate) fn shortcut(self) -> &'static str {
+    /// 操作の ID（キーの割り当て・ボタンの識別に使う）。
+    pub(crate) fn command(self) -> &'static str {
         match self {
-            Self::Visible => "Ctrl+Alt+I",
-            Self::HideWindow => "Ctrl+Alt+Shift+I",
+            Self::Visible => "color.pick_screen",
+            Self::HideWindow => "color.pick_screen_hidden",
         }
+    }
+    /// キーの文字（キーの表の行から作る）。
+    pub(crate) fn shortcut(self) -> String {
+        crate::shortcuts::menu_key(self.command()).unwrap_or_default()
     }
 }
 
@@ -76,7 +81,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .into_iter()
         .map(|mode| {
             Entry::item(mode.label(app.lang), Action::ScreenPick(mode))
-                .shortcut(mode.shortcut())
+                .command_key(mode.command())
                 .enabled(!app.is_stroking())
         })
         .collect()
@@ -97,17 +102,18 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     for mode in [Mode::Visible, Mode::HideWindow] {
         let label = mode.label(app.lang);
         let width = w::text_width(ui.painter(), label, t::LABEL) + 18.0;
+        let key = mode.shortcut();
         if x + width > r.right() - 8.0 {
             break;
         }
         if w::button(
             ui,
             Rect::from_min_size(pos2(x, r.top() + 6.0), vec2(width, r.height() - 12.0)),
-            mode.shortcut(),
+            mode.command(),
             label,
             false,
             !app.is_stroking(),
-            Some(mode.shortcut()),
+            Some(&key),
             None,
         )
         .clicked()
@@ -124,12 +130,13 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut w::Rows) {
         return;
     }
     let modes = [Mode::Visible, Mode::HideWindow];
-    let items = modes.map(|mode| crate::panels::properties::ChoiceButton {
-        id: mode.shortcut(),
-        label: mode.label(app.lang),
+    let keys = modes.map(|mode| mode.shortcut());
+    let items = [0, 1].map(|i| crate::panels::properties::ChoiceButton {
+        id: modes[i].command(),
+        label: modes[i].label(app.lang),
         selected: false,
         enabled: !app.is_stroking(),
-        tooltip: Some(mode.shortcut()),
+        tooltip: Some(keys[i].as_str()),
     });
     if let Some(i) = crate::panels::properties::choice_buttons(ui, rows, &items) {
         request(app, modes[i]);

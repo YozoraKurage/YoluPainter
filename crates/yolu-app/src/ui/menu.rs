@@ -64,9 +64,10 @@ impl<A> Entry<A> {
             tooltip: None,
         }
     }
-    pub fn shortcut(mut self, keys: &str) -> Self {
+    /// 操作（`commands` の ID）のキーの文字を添える（キーの表の主の行から作る。割り当てが無ければ何も添えない）。
+    pub fn command_key(mut self, command: &str) -> Self {
         if let Entry::Item { shortcut, .. } = &mut self {
-            *shortcut = Some(keys.to_owned());
+            *shortcut = crate::shortcuts::menu_key(command);
         }
         self
     }

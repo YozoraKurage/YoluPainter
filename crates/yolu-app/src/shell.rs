@@ -1,7 +1,7 @@
 //! ウィンドウの外枠（Unity 版の Shell）: メニューの中身、オプションバー（今のツールの設定を 1 行で）、ツールの帯、ステータスバー、
 //! キーの割り当て。
 
-use egui::{pos2, vec2, Modifiers, Rect, Sense, Ui};
+use egui::{pos2, vec2, Rect, Sense, Ui};
 
 use yolu_core::export::ExportTemplate;
 
@@ -121,11 +121,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     l.pick("新規プロジェクト…", "New Project…"),
                     Action::NewProjectDialog,
                 )
-                .shortcut("Ctrl+N")
+                .command_key("file.new_project")
                 .enabled(idle)),
                 why(
                     Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
-                        .shortcut("Ctrl+O")
+                        .command_key("file.open")
                         .enabled(idle),
                 ),
                 why(Entry::item(
@@ -135,13 +135,13 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
                 why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
-                    .shortcut("Ctrl+S")
+                    .command_key("file.save")
                     .enabled(idle)),
                 why(Entry::item(
                     l.pick("別名で保存…", "Save As…"),
                     Action::SaveProjectAsDialog,
                 )
-                .shortcut("Ctrl+Shift+S")
+                .command_key("file.save_as")
                 .enabled(idle)),
                 why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
@@ -157,7 +157,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::Separator,
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
-                Entry::item(l.pick("終了", "Quit"), Action::Quit).shortcut("Ctrl+Q"),
+                Entry::item(l.pick("終了", "Quit"), Action::Quit).command_key("app.quit"),
             ];
             // 読み込み・書き出しは Live Link の前の区切りの前に入れる
             if let Some(at) = entries.iter().position(|e| {
@@ -176,10 +176,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         1 => {
             let mut entries = vec![
                 Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
-                    .shortcut("Ctrl+Z")
+                    .command_key("edit.undo")
                     .enabled(free && app.can_undo()),
                 Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
-                    .shortcut("Ctrl+Shift+Z / Ctrl+Y")
+                    .command_key("edit.redo")
                     .enabled(free && app.can_redo()),
                 Entry::Separator,
             ];
@@ -189,7 +189,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             // ツールの項目は、名前もキーもツールの表（`tools`）のとおり（メニューにキーを重ねて書かない）
             let tool_entry = |tool: Tool| {
                 Entry::item(tool.name_in(l), Action::SelectTool(tool))
-                    .shortcut(tool.key())
+                    .command_key(crate::commands::tool_command(tool))
                     .radio(app.tool == tool)
             };
             entries.extend([
@@ -214,19 +214,19 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
                     Action::SwapColors,
                 )
-                .shortcut("X"),
+                .command_key("color.swap"),
                 Entry::item(
                     l.pick("初期設定の色", "Default Colors"),
                     Action::DefaultColors,
                 )
-                .shortcut("D"),
+                .command_key("color.default"),
                 // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
                 Entry::Separator,
                 Entry::item(
                     l.pick("設定…", "Settings…"),
                     Action::Prefs(crate::prefs::PrefsAction::Open),
                 )
-                .shortcut("Ctrl+,"),
+                .command_key("app.settings"),
             ]);
             entries
         }
@@ -237,39 +237,41 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
             crate::uv_wireframe::overlap::menu_entry(app),
-            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
-            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
+            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn)
+                .command_key("view.zoom_in"),
+            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut)
+                .command_key("view.zoom_out"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
-                .shortcut("Ctrl+0")
+                .command_key("view.fit")
                 .enabled(free),
             Entry::Separator,
             Entry::item(
                 l.pick("表示を左に回す", "Rotate View Left"),
                 Action::RotateLeft,
             )
-            .shortcut("-")
+            .command_key("view.rotate_left")
             .enabled(free),
             Entry::item(
                 l.pick("表示を右に回す", "Rotate View Right"),
                 Action::RotateRight,
             )
-            .shortcut("^")
+            .command_key("view.rotate_right")
             .enabled(free),
             Entry::item(
                 l.pick("回転を戻す", "Reset Rotation"),
                 Action::ResetRotation,
             )
-            .shortcut("Shift+R")
+            .command_key("view.reset_rotation")
             .enabled(free && app.view.angle != 0.0),
             Entry::item(
                 l.pick("定規にスナップ", "Snap to Ruler"),
                 Action::ToggleRulerSnap,
             )
-            .shortcut("Ctrl+1")
+            .command_key("view.ruler_snap")
             .checked(app.drafting.snap)
             .enabled(free),
             Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
-                .shortcut("H")
+                .command_key("view.flip")
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
@@ -518,21 +520,24 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(Entry::Separator);
     v.push(new_group);
     if group && !multi {
-        v.push(
-            Entry::item(
-                lang.pick("グループ解除", "Ungroup"),
-                Action::M2(Edit::Ungroup(id)),
-            )
-            .shortcut("Ctrl+Shift+G")
-            .enabled(free),
-        );
+        let ungroup = Entry::item(
+            lang.pick("グループ解除", "Ungroup"),
+            Action::M2(Edit::Ungroup(id)),
+        )
+        .enabled(free);
+        // Ctrl+Shift+G は選んでいるレイヤーのグループ解除なので、右クリックしたグループが選んでいるレイヤーと同じときだけ出す
+        v.push(if app.selected_layer == Some(id) {
+            ungroup.command_key("layer.ungroup")
+        } else {
+            ungroup
+        });
     } else {
         v.push(
             Entry::item(
                 lang.pick("レイヤーをグループ化", "Group Layers"),
                 Action::M2(Edit::GroupSelected),
             )
-            .shortcut("Ctrl+G")
+            .command_key("layer.group")
             .enabled(free && app.selected_layer == Some(id)),
         );
     }
@@ -546,7 +551,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(if app.doc.selection().is_some() {
         duplicate
     } else {
-        duplicate.shortcut("Ctrl+J")
+        duplicate.command_key("layer.duplicate")
     });
     // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと）
     let merge_label = if members.len() > 1 {
@@ -558,7 +563,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     };
     v.push(
         Entry::item(merge_label, Action::M2(Edit::MergeDown))
-            .shortcut("Ctrl+E")
+            .command_key("layer.merge_down")
             .enabled(free && app.selected_layer == Some(id)),
     );
     v.push(
@@ -566,7 +571,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             lang.pick("表示レイヤーを結合", "Merge Visible"),
             Action::M2(Edit::MergeVisible),
         )
-        .shortcut("Ctrl+Shift+E")
+        .command_key("layer.merge_visible")
         .enabled(free),
     );
     if layer.is_some_and(|l| l.path().is_some()) {
@@ -802,22 +807,14 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
         actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
         if arrows_move {
-            for (k, dir) in crate::keymap::MOVE_KEYS {
-                if i.consume_key(Modifiers::SHIFT, k) {
-                    arrows.push((dir, true));
-                } else if i.consume_key(Modifiers::NONE, k) {
-                    arrows.push((dir, false));
+            for nudge in crate::keymap::NUDGES {
+                if crate::keymap::consume_command(i, app, nudge.command) {
+                    arrows.push((nudge.direction, nudge.shift));
                 }
             }
         }
+        // ^ の文字の入力（キーの位置が配列で違う）も、表の行として判定に入る
         actions.extend(crate::keymap::dispatch(i, app));
-        // ^ はキーの位置が配列で違うので文字で見る（JIS の ^ のキー、US の Shift+6）
-        if i.events
-            .iter()
-            .any(|e| matches!(e, egui::Event::Text(s) if s == crate::keymap::ROTATE_RIGHT_TEXT))
-        {
-            actions.push(Action::RotateRight);
-        }
     });
     for a in actions {
         app.apply(a);

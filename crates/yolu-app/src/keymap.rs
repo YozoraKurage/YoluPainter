@@ -1,22 +1,22 @@
-//! キーとマウスの割り当ての宣言の表。キーボードの割り当て（`bindings`）・マウスと修飾キーの組み合わせ（`GESTURES`）・押している間だけ効くキーや
-//! ビューの中のキー（`CONTEXT_KEYS`）を、ここだけに書く。キーの処理（`shell::handle_shortcuts`・3D ビューの回す・パン・ステンシルの移動など）と
-//! ショートカットの一覧のウィンドウ（`shortcuts`）は、この表を読む。実装の入力判定のソースを文字で読んで一覧を作る方式（ビルドスクリプト）はやめた:
-//! 表が実装の一次の資料なので、一覧と実際の入力が食い違わない（食い違いは試験が、表のすべての割り当てを実際の入力へ流して確かめる）。
-//! ツールのキーはツールの表（`tools`）の `key` から作る。キーを利用者が替える設定は、この表の上に作る（`bindings` を差し替える）。
+//! キーとマウスの割り当ての宣言の表。キーボードの割り当て（`bindings`）・マウスと修飾キーの組み合わせ（`GESTURES`）・ビューの中のキー（`CONTEXT_KEYS`）を、
+//! ここだけに書く。割り当ては操作の ID（`commands`）を指し、`Action` はそこから作る。キーの処理（`shell::handle_shortcuts`・3D ビューの回す・パン・
+//! ステンシルの移動など）・メニューのキーの文字・ショートカットの一覧のウィンドウ（`shortcuts`）は、この表を読む。実装の入力判定のソースを文字で読んで
+//! 一覧を作る方式（ビルドスクリプト）はやめた: 表が実装の一次の資料なので、一覧と実際の入力が食い違わない（食い違いは試験が、表のすべての割り当てを実際の
+//! 入力へ流して確かめる）。ツールのキーはツールの表（`tools`）の `key` から作る。キーを利用者が替える設定は、この表の上に作る（`table` の作り方を差し替える）。
 //!
-//! 順序の決まり: `consume_key` は、書いていない Shift・Alt を気にしない（Shift 付きも修飾なしに当たる）ので、同じキーの割り当ては、修飾の多いほうを
-//! 先に判定する。`bindings()` は一覧に出す順、`dispatch` は判定の順（修飾の多いものが先。同じなら表の順）。
+//! 修飾キーは厳密に見る（`modifiers_match`）。Ctrl・Command は egui の `Modifiers::cmd_ctrl_matches` と同じ。文字（A〜Z）・F キー・名前のキー（Tab・Space・
+//! Enter・Escape・Backspace・Delete・矢印・Home・End・PageUp・PageDown・Insert）は、Shift と Alt を書いたとおりに見る（書いていない Shift・Alt を押していれば
+//! 当てない）。記号のキーと数字のキーは、配列によって Shift や Alt（macOS の Option）を押して打つので、行に書いていない Shift・Alt は見ない
+//! （行に書いてあれば押していなければならない）。たとえば US 配列の `+` は Shift+= で Plus として、JIS 配列の `=` は Shift+- で Equals として届き、
+//! macOS のドイツ語配列の `[` は Option+5 で届く。AZERTY 配列は上の段の数字を Shift で打つ。判定の順は修飾の多いものが先、同じなら表の順。
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
-use egui::{InputState, Key, Modifiers, PointerButton};
+use egui::{Event, InputState, Key, Modifiers, PointerButton};
 
 use crate::clipboard::ClipAction;
+use crate::commands;
 use crate::lang::Lang;
-use crate::m2::Edit;
-use crate::pathtool::PathAction;
-use crate::prefs::PrefsAction;
-use crate::selection::{SelAction, SelEdit, SelUiOp};
 use crate::state::{Action, AppState, Tool};
 
 // ───────── キーボードの割り当て ─────────
@@ -49,35 +49,96 @@ impl When {
     }
 }
 
+/// 割り当てが効く範囲（どのモードで効くか）。今はモードが無いので、どちらもいつも成り立つ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// どのモードでも（ファイル・編集・選択範囲・レイヤー・表示・視点）。
+    Everywhere,
+    /// ペイントのモードだけ（ツール・色・ブラシの大きさ・Q・Shift+Q など）。
+    Paint,
+}
+
+impl Scope {
+    pub fn holds(self, _app: &AppState) -> bool {
+        match self {
+            Scope::Everywhere | Scope::Paint => true,
+        }
+    }
+}
+
+/// 割り当ての入力。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    /// キー（修飾キーは厳密に見る）。
+    Key { modifiers: Modifiers, key: Key },
+    /// 文字の入力（配列でキーの位置が違う文字。JIS の ^ のキー、US の Shift+6）。キーの行と区別して、入力の文字で見る。
+    Text(&'static str),
+}
+
 /// 1 つのキーの割り当て。
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyBinding {
-    pub modifiers: Modifiers,
-    pub key: Key,
+    pub trigger: Trigger,
+    /// 操作の ID（`commands`）。
+    pub command: &'static str,
+    pub scope: Scope,
     pub when: When,
-    pub action: Action,
 }
 
-fn kb(modifiers: Modifiers, key: Key, action: Action) -> KeyBinding {
+impl KeyBinding {
+    pub fn modifiers(&self) -> Modifiers {
+        match self.trigger {
+            Trigger::Key { modifiers, .. } => modifiers,
+            Trigger::Text(_) => Modifiers::NONE,
+        }
+    }
+
+    pub fn key(&self) -> Option<Key> {
+        match self.trigger {
+            Trigger::Key { key, .. } => Some(key),
+            Trigger::Text(_) => None,
+        }
+    }
+
+    /// この割り当てがキーで実行する `Action`（押しをビューが読む操作・押している間のキーは None）。
+    pub fn action(&self) -> Option<Action> {
+        commands::find(self.command)
+            .and_then(|c| c.action)
+            .map(|make| make())
+    }
+
+    fn scope(mut self, scope: Scope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    fn when(mut self, when: When) -> Self {
+        self.when = when;
+        self
+    }
+
+    /// ペイントのモードだけの割り当てにする。
+    fn paint(self) -> Self {
+        self.scope(Scope::Paint)
+    }
+}
+
+fn kb(modifiers: Modifiers, key: Key, command: &'static str) -> KeyBinding {
     KeyBinding {
-        modifiers,
-        key,
+        trigger: Trigger::Key { modifiers, key },
+        command,
+        scope: Scope::Everywhere,
         when: When::Always,
-        action,
     }
 }
 
-fn kb_when(modifiers: Modifiers, key: Key, when: When, action: Action) -> KeyBinding {
+fn kb_text(text: &'static str, command: &'static str) -> KeyBinding {
     KeyBinding {
-        modifiers,
-        key,
-        when,
-        action,
+        trigger: Trigger::Text(text),
+        command,
+        scope: Scope::Everywhere,
+        when: When::Always,
     }
-}
-
-fn sel_edit(edit: SelEdit) -> Action {
-    Action::Sel(SelAction::Edit(edit))
 }
 
 /// ツールのキーの文字（「B」「Shift+G」「4」。ツールの表の `key`）から、修飾とキーを読む。キーが空・読めなければ None。
@@ -99,133 +160,153 @@ pub fn parse_tool_key(text: &str) -> Option<(Modifiers, Key)> {
     Key::from_name(rest).map(|key| (modifiers, key))
 }
 
-/// 一覧に出す順の、キーボードの割り当て（クリップボードのキーも含む）。
+/// 移動・変形のツールの矢印キー 1 つ（画面の向きの 1 画素。Shift で 10）。
+#[derive(Clone, Copy, Debug)]
+pub struct Nudge {
+    pub command: &'static str,
+    pub key: Key,
+    pub shift: bool,
+    /// 画面の向き（x は右、y は下）。
+    pub direction: (f64, f64),
+}
+
+/// 移動・変形のツールの矢印キーの全部（1 画素の 4 つ、Shift で 10 画素の 4 つ）。
+pub const NUDGES: [Nudge; 8] = [
+    nudge("transform.nudge_left", Key::ArrowLeft, false, (-1.0, 0.0)),
+    nudge("transform.nudge_right", Key::ArrowRight, false, (1.0, 0.0)),
+    nudge("transform.nudge_up", Key::ArrowUp, false, (0.0, -1.0)),
+    nudge("transform.nudge_down", Key::ArrowDown, false, (0.0, 1.0)),
+    nudge("transform.nudge_left_10", Key::ArrowLeft, true, (-1.0, 0.0)),
+    nudge(
+        "transform.nudge_right_10",
+        Key::ArrowRight,
+        true,
+        (1.0, 0.0),
+    ),
+    nudge("transform.nudge_up_10", Key::ArrowUp, true, (0.0, -1.0)),
+    nudge("transform.nudge_down_10", Key::ArrowDown, true, (0.0, 1.0)),
+];
+
+const fn nudge(command: &'static str, key: Key, shift: bool, direction: (f64, f64)) -> Nudge {
+    Nudge {
+        command,
+        key,
+        shift,
+        direction,
+    }
+}
+
+/// 一覧に出す順の、キーボードの割り当て（クリップボードのキー・押している間のキー・ビューが読むキーも含む）。
+/// 1 つの操作に行が 2 つ以上あるとき、最初の行が「主の行」（メニューのキーの文字になる）。
 pub fn bindings() -> Vec<KeyBinding> {
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let none = Modifiers::NONE;
     let shift = Modifiers::SHIFT;
     let mut v = vec![
-        kb(cmd_shift, Key::E, Action::M2(Edit::MergeVisible)),
-        kb(cmd_shift, Key::G, Action::M2(Edit::UngroupSelected)),
-        kb(cmd, Key::E, Action::M2(Edit::MergeDown)),
+        kb(cmd_shift, Key::E, "layer.merge_visible"),
+        kb(cmd_shift, Key::G, "layer.ungroup"),
+        kb(cmd, Key::E, "layer.merge_down"),
         // Ctrl+J: 選択範囲があれば、その画素を新しいレイヤーへ（Photoshop の「コピーしたレイヤー」）。無ければレイヤーの複製
-        kb_when(
-            cmd,
-            Key::J,
-            When::HasSelection,
-            sel_edit(SelEdit::ToNewLayer),
-        ),
-        kb(cmd, Key::J, Action::M2(Edit::DuplicateSelected)),
-        kb(cmd, Key::G, Action::M2(Edit::GroupSelected)),
-        kb(cmd_shift, Key::I, sel_edit(SelEdit::Invert)),
-        kb(cmd_shift, Key::Z, Action::Redo),
-        kb(cmd, Key::A, sel_edit(SelEdit::All)),
-        kb(cmd, Key::D, sel_edit(SelEdit::Clear)),
+        kb(cmd, Key::J, "selection.to_new_layer").when(When::HasSelection),
+        kb(cmd, Key::J, "layer.duplicate"),
+        kb(cmd, Key::G, "layer.group"),
+        kb(cmd_shift, Key::I, "selection.invert"),
+        kb(cmd_shift, Key::Z, "edit.redo"),
+        kb(cmd, Key::A, "selection.all"),
+        kb(cmd, Key::D, "selection.deselect"),
         // 点のグラデーション: 選んでいる点を消す。選択範囲の消去・パスの点の削除と同じキーなので、それらより前に置く（修飾の数が同じ割り当ては
         // 表の順に判定され、先に当たったものがキーを取る。点を選んでいる間は、Delete・Backspace の相手は点）
-        kb_when(
-            none,
-            Key::Delete,
-            When::PointSelected,
-            Action::Fill(crate::fillfx::FillOp::DeletePoint),
-        ),
-        kb_when(
-            none,
-            Key::Backspace,
-            When::PointSelected,
-            Action::Fill(crate::fillfx::FillOp::DeletePoint),
-        ),
+        kb(none, Key::Delete, "fill.delete_point")
+            .when(When::PointSelected)
+            .paint(),
+        kb(none, Key::Backspace, "fill.delete_point")
+            .when(When::PointSelected)
+            .paint(),
         // 選択範囲があるときだけ: 消去（Delete）
-        kb_when(
-            none,
-            Key::Delete,
-            When::HasSelection,
-            sel_edit(SelEdit::Erase),
-        ),
-        kb(cmd, Key::Z, Action::Undo),
-        kb(cmd, Key::Y, Action::Redo),
-        kb(cmd_shift, Key::N, Action::NewLayer),
-        kb(cmd_shift, Key::S, Action::SaveProjectAsDialog),
-        kb(cmd, Key::S, Action::SaveProject),
-        kb(cmd, Key::O, Action::OpenProjectDialog),
-        kb(cmd, Key::N, Action::NewProjectDialog),
-        kb(cmd, Key::Num1, Action::ToggleRulerSnap),
-        kb(cmd, Key::Num0, Action::FitView),
-        kb(cmd, Key::Plus, Action::ZoomIn),
-        kb(cmd, Key::Equals, Action::ZoomIn),
-        kb(cmd, Key::Minus, Action::ZoomOut),
-        kb(cmd, Key::Q, Action::Quit),
-        kb(cmd, Key::Comma, Action::Prefs(PrefsAction::Open)),
-        kb(shift, Key::R, Action::ResetRotation),
+        kb(none, Key::Delete, "selection.erase").when(When::HasSelection),
+        kb(cmd, Key::Z, "edit.undo"),
+        kb(cmd, Key::Y, "edit.redo"),
+        kb(cmd_shift, Key::N, "layer.new"),
+        kb(cmd_shift, Key::S, "file.save_as"),
+        kb(cmd, Key::S, "file.save"),
+        kb(cmd, Key::O, "file.open"),
+        kb(cmd, Key::N, "file.new_project"),
+        kb(cmd, Key::Num1, "view.ruler_snap"),
+        kb(cmd, Key::Num0, "view.fit"),
+        kb(cmd, Key::Plus, "view.zoom_in"),
+        kb(cmd, Key::Equals, "view.zoom_in"),
+        kb(cmd, Key::Minus, "view.zoom_out"),
+        kb(cmd, Key::Q, "app.quit"),
+        kb(cmd, Key::Comma, "app.settings"),
+        kb(shift, Key::R, "view.reset_rotation"),
     ];
     // ツールのキー（ツールの表のとおり。ツールの帯の並び）
     for tool in Tool::ALL {
         if let Some((modifiers, key)) = parse_tool_key(tool.key()) {
-            v.push(kb(modifiers, key, Action::SelectTool(tool)));
+            v.push(kb(modifiers, key, commands::tool_command(tool)).paint());
         }
     }
     v.extend([
-        kb(
-            shift,
-            Key::Q,
-            Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
-        ),
+        kb(shift, Key::Q, "selection.quick_mask").paint(),
         // パスのツール: 選んでいる点（無ければ最後の点）を消す
-        kb_when(
-            none,
-            Key::Delete,
-            When::Tool(Tool::Path),
-            Action::Path(PathAction::DeleteSelected),
-        ),
-        kb_when(
-            none,
-            Key::Backspace,
-            When::Tool(Tool::Path),
-            Action::Path(PathAction::DeleteSelected),
-        ),
+        kb(none, Key::Delete, "path.delete_point")
+            .when(When::Tool(Tool::Path))
+            .paint(),
+        kb(none, Key::Backspace, "path.delete_point")
+            .when(When::Tool(Tool::Path))
+            .paint(),
         // パスのツール: パスの編集を抜ける（次の点は新しいパスを始める）
-        kb_when(
-            none,
-            Key::Enter,
-            When::Tool(Tool::Path),
-            Action::Path(PathAction::SelectPath(None)),
-        ),
-        kb(
-            none,
-            Key::Q,
-            Action::Fill(crate::fillfx::FillOp::ToggleHandles),
-        ),
-        kb(none, Key::X, Action::SwapColors),
-        kb(none, Key::D, Action::DefaultColors),
-        kb(none, Key::OpenBracket, Action::BrushSmaller),
-        kb(none, Key::CloseBracket, Action::BrushLarger),
-        kb(none, Key::H, Action::FlipView),
-        kb(none, Key::Minus, Action::RotateLeft),
-        kb(none, Key::Equals, Action::RotateRight),
+        kb(none, Key::Enter, "path.finish")
+            .when(When::Tool(Tool::Path))
+            .paint(),
+        kb(none, Key::Q, "fill.toggle_handles").paint(),
+        kb(none, Key::X, "color.swap").paint(),
+        kb(none, Key::D, "color.default").paint(),
+        kb(none, Key::OpenBracket, "brush.smaller").paint(),
+        kb(none, Key::CloseBracket, "brush.larger").paint(),
+        kb(none, Key::H, "view.flip"),
+        kb(none, Key::Minus, "view.rotate_left"),
+        // 表示を右に回す: 主の行は文字の ^（メニューの文字）。JIS の ^ のキーと US の Shift+6 は配列でキーの位置が違うので、文字で見る
+        kb_text("^", "view.rotate_right"),
+        kb(none, Key::Equals, "view.rotate_right"),
     ]);
     // 画面から色を取る（Windows）
-    for mode in [
-        crate::screen_pick::Mode::HideWindow,
-        crate::screen_pick::Mode::Visible,
+    for (command, shifted) in [
+        ("color.pick_screen_hidden", true),
+        ("color.pick_screen", false),
     ] {
         let modifiers = Modifiers::CTRL
             | Modifiers::ALT
-            | if mode == crate::screen_pick::Mode::HideWindow {
+            | if shifted {
                 Modifiers::SHIFT
             } else {
                 Modifiers::NONE
             };
-        v.push(kb_when(
-            modifiers,
-            Key::I,
-            When::Windows,
-            Action::ScreenPick(mode),
-        ));
+        v.push(kb(modifiers, Key::I, command).when(When::Windows).paint());
     }
     // クリップボード（コピー・カット・ペースト。入力の受け方は `clipboard::keys` が持つが、割り当てはここ）
     for (modifiers, key, action) in CLIPBOARD_KEYS {
-        v.push(kb(modifiers, key, Action::Clip(action)));
+        v.push(kb(modifiers, key, clip_command(action)));
+    }
+    // 押している間だけ効くキー（R: 2D の表示を回す、Space: パン（Ctrl を加えると拡縮）、Y: ステンシルの置き場、N: ステンシルの一時解除）。
+    // 押している間に見る修飾の条件は、読む側が持つ
+    v.extend([
+        kb(none, Key::R, "view.rotate_hold"),
+        kb(none, Key::Space, "view.pan_hold"),
+        kb(none, Key::Y, "stencil.transform_hold").paint(),
+        kb(none, Key::N, "stencil.bypass_hold").paint(),
+    ]);
+    // 3D ビューで選んだセットを収める（3D の上で、修飾なし。ビューが読む）
+    v.push(kb(none, Key::Period, "view3d.frame_selected"));
+    // 移動・変形のツールの矢印キー（移動・変形のツールを選んでいるとき。ビューが読む）
+    for n in NUDGES {
+        let modifiers = if n.shift { shift } else { none };
+        v.push(
+            kb(modifiers, n.key, n.command)
+                .when(When::Tool(Tool::Move))
+                .paint(),
+        );
     }
     v
 }
@@ -248,141 +329,305 @@ pub const CLIPBOARD_KEYS: [(Modifiers, Key, ClipAction); 4] = [
     (Modifiers::COMMAND, Key::V, ClipAction::Paste),
 ];
 
+/// クリップボードの操作の ID。
+fn clip_command(action: ClipAction) -> &'static str {
+    match action {
+        ClipAction::CopyMerged => "clip.copy_merged",
+        ClipAction::Copy => "clip.copy",
+        ClipAction::Cut => "clip.cut",
+        ClipAction::Paste => "clip.paste",
+    }
+}
+
 /// 押している修飾キーの数。
 fn modifier_count(m: &Modifiers) -> u8 {
     u8::from(m.shift) + u8::from(m.alt) + u8::from(m.command) + u8::from(m.ctrl)
 }
 
-/// 判定の順の、キーボードの割り当て（修飾の多いものが先）。クリップボードは `clipboard::keys` が受けるので入らない。
-pub(crate) fn dispatch_order() -> &'static [KeyBinding] {
-    static ORDER: OnceLock<Vec<KeyBinding>> = OnceLock::new();
-    ORDER.get_or_init(|| {
-        let mut v: Vec<KeyBinding> = bindings()
-            .into_iter()
-            .filter(|b| !matches!(b.action, Action::Clip(_)))
-            .collect();
-        // 安定な並べ替え（修飾の数が同じなら表の順）。修飾の多いものは、少ないものの修飾を含むので、先に判定する
-        v.sort_by_key(|b| std::cmp::Reverse(modifier_count(&b.modifiers)));
-        v
+/// 判定の順の、キーボードの割り当て（修飾の多いものが先、同じなら表の順）。`Action` を持たない行（押している間のキー・ビューが読むキー）と
+/// クリップボード（`clipboard::keys` が受ける）は入らない。
+fn dispatch_order_of(rows: &[KeyBinding]) -> Vec<KeyBinding> {
+    let mut v: Vec<KeyBinding> = rows
+        .iter()
+        .filter(|b| !matches!(b.action(), None | Some(Action::Clip(_))))
+        .copied()
+        .collect();
+    // 安定な並べ替え（修飾の数が同じなら表の順）
+    v.sort_by_key(|b| std::cmp::Reverse(modifier_count(&b.modifiers())));
+    v
+}
+
+/// 今効いている割り当て: 表（一覧に出す順）と判定の順を 1 つにしたもの。作り直して丸ごと差し替える（`replace`）ので、表と判定の順が食い違わない。
+#[derive(Debug)]
+pub struct Keymap {
+    rows: Vec<KeyBinding>,
+    order: Vec<KeyBinding>,
+}
+
+impl Keymap {
+    pub fn new(rows: Vec<KeyBinding>) -> Keymap {
+        let order = dispatch_order_of(&rows);
+        Keymap { rows, order }
+    }
+
+    /// 表の行（一覧に出す順。クリップボード・押している間のキー・ビューが読むキーも含む）。
+    pub fn rows(&self) -> &[KeyBinding] {
+        &self.rows
+    }
+
+    /// 判定の順の行（`dispatch` が見る）。
+    pub fn order(&self) -> &[KeyBinding] {
+        &self.order
+    }
+
+    /// この操作の行（表の順）。
+    pub fn rows_of<'a>(&'a self, command: &'a str) -> impl Iterator<Item = &'a KeyBinding> {
+        self.rows.iter().filter(move |b| b.command == command)
+    }
+}
+
+fn slot() -> &'static RwLock<Arc<Keymap>> {
+    static SLOT: OnceLock<RwLock<Arc<Keymap>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(Arc::new(Keymap::new(bindings()))))
+}
+
+/// 今効いている割り当て（既定の表。利用者の設定を読み込む所は、読んだ表を `replace` で入れる）。
+pub fn current() -> Arc<Keymap> {
+    slot()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// 効かせる割り当てを丸ごと差し替える（表と判定の順を作り直す）。
+pub fn replace(rows: Vec<KeyBinding>) {
+    let next = Arc::new(Keymap::new(rows));
+    *slot()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+}
+
+/// 修飾キーを書いたとおりに見るキーか（文字・F キー・名前のキー）。記号と数字のキーは、配列によって Shift や Option を押して打つので、見ない。
+pub fn modifiers_are_exact(key: Key) -> bool {
+    use Key::*;
+    matches!(
+        key,
+        A | B
+            | C
+            | D
+            | E
+            | F
+            | G
+            | H
+            | I
+            | J
+            | K
+            | L
+            | M
+            | N
+            | O
+            | P
+            | Q
+            | R
+            | S
+            | T
+            | U
+            | V
+            | W
+            | X
+            | Y
+            | Z
+            | F1
+            | F2
+            | F3
+            | F4
+            | F5
+            | F6
+            | F7
+            | F8
+            | F9
+            | F10
+            | F11
+            | F12
+            | F13
+            | F14
+            | F15
+            | F16
+            | F17
+            | F18
+            | F19
+            | F20
+            | F21
+            | F22
+            | F23
+            | F24
+            | F25
+            | F26
+            | F27
+            | F28
+            | F29
+            | F30
+            | F31
+            | F32
+            | F33
+            | F34
+            | F35
+            | Tab
+            | Space
+            | Enter
+            | Escape
+            | Backspace
+            | Delete
+            | ArrowUp
+            | ArrowDown
+            | ArrowLeft
+            | ArrowRight
+            | Home
+            | End
+            | PageUp
+            | PageDown
+            | Insert
+    )
+}
+
+/// 押した修飾キーが、割り当ての修飾に当たるか。Ctrl・Command は `Modifiers::cmd_ctrl_matches`（Command の割り当ては Ctrl でも Mac の Command でも当たる）。
+/// `modifiers_are_exact` のキーは Shift・Alt を書いたとおり（書いていない Shift・Alt を押していれば当たらない）、記号と数字のキーは、書いた Shift・Alt が
+/// 押されていれば当たる（書いていない Shift・Alt は見ない）。
+pub fn modifiers_match(pressed: &Modifiers, pattern: Modifiers, key: Key) -> bool {
+    if !pressed.cmd_ctrl_matches(pattern) {
+        return false;
+    }
+    if modifiers_are_exact(key) {
+        pressed.alt == pattern.alt && pressed.shift == pattern.shift
+    } else {
+        (!pattern.alt || pressed.alt) && (!pattern.shift || pressed.shift)
+    }
+}
+
+/// このフレームにキーを押した事象があれば取り除いて true（繰り返しも含む。修飾キーは `modifiers_match`）。
+pub fn consume_key(i: &mut InputState, modifiers: Modifiers, key: Key) -> bool {
+    let mut found = false;
+    i.events.retain(|event| {
+        let is_match = matches!(
+            event,
+            Event::Key {
+                key: pressed_key,
+                modifiers: pressed_modifiers,
+                pressed: true,
+                ..
+            } if *pressed_key == key && modifiers_match(pressed_modifiers, modifiers, key)
+        );
+        found |= is_match;
+        !is_match
+    });
+    found
+}
+
+/// 操作の割り当て（効く範囲と条件を満たすもの）のどれかを押したか（押した事象は取り除く）。ビューが押しを読む操作（3D の `.`・矢印）が使う。
+pub fn consume_command(i: &mut InputState, app: &AppState, command: &str) -> bool {
+    let map = current();
+    let mut found = false;
+    for b in map.rows_of(command) {
+        if let Trigger::Key { modifiers, key } = b.trigger {
+            if b.scope.holds(app) && b.when.holds(app) && consume_key(i, modifiers, key) {
+                found = true;
+            }
+        }
+    }
+    found
+}
+
+/// 押している間だけ効く操作のキー（表の最初のキーの行。割り当てが無ければ None）。
+pub fn hold_key(command: &str) -> Option<Key> {
+    current().rows_of(command).find_map(KeyBinding::key)
+}
+
+/// 押している間だけ効く操作のキーを今押しているか。
+pub fn hold_down(i: &InputState, command: &str) -> bool {
+    hold_key(command).is_some_and(|key| i.key_down(key))
+}
+
+/// 操作のキー（表の最初のキーの行。画面の部品の決まった働きは、その定義のキー）。
+pub fn key_of(command: &str) -> Option<Key> {
+    hold_key(command).or_else(|| match commands::find(command)?.kind {
+        commands::Kind::Fixed(key) => Some(key),
+        _ => None,
     })
 }
 
-/// このフレームのキーの操作（効く条件を満たし、押されたもの。押した事象は取り除く）。文字を打っている・メニューを開いている間は呼ばない。
+/// 操作の主の行（表で最初の行。メニューのキーの文字になる）。
+pub fn primary(command: &str) -> Option<KeyBinding> {
+    current().rows_of(command).next().copied()
+}
+
+/// このフレームのキーの操作（効く範囲と条件を満たし、押されたもの。押した事象は取り除く）。文字を打っている・メニューを開いている間は呼ばない。
+/// 同じ操作の行が 2 つ同時に当たっても（JIS 配列の ^ のキーは `Key::Equals` と文字の `^` が両方届く）、1 回だけ実行する。
 pub fn dispatch(i: &mut InputState, app: &AppState) -> Vec<Action> {
+    let map = current();
     let mut actions = Vec::new();
-    for b in dispatch_order() {
-        if b.when.holds(app) && i.consume_key(b.modifiers, b.key) {
-            actions.push(b.action.clone());
+    let mut done: Vec<&'static str> = Vec::new();
+    for b in map.order() {
+        if !(b.scope.holds(app) && b.when.holds(app)) {
+            continue;
+        }
+        let hit = match b.trigger {
+            Trigger::Key { modifiers, key } => consume_key(i, modifiers, key),
+            // 文字の入力は取り除かない（文字を打つ部品は、キーの処理の前に止めてある）
+            Trigger::Text(text) => i
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Text(s) if s == text)),
+        };
+        // 事象は当たった行ごとに取り除き、操作は 1 回目だけ実行する
+        if hit && !done.contains(&b.command) {
+            done.push(b.command);
+            actions.extend(b.action());
         }
     }
     actions
 }
 
-/// 移動・変形のツールの矢印キー（画面の向きの 1 画素。Shift で 10）。
-pub const MOVE_KEYS: [(Key, (f64, f64)); 4] = [
-    (Key::ArrowLeft, (-1.0, 0.0)),
-    (Key::ArrowRight, (1.0, 0.0)),
-    (Key::ArrowUp, (0.0, -1.0)),
-    (Key::ArrowDown, (0.0, 1.0)),
-];
-
-/// 「表示を右に回す」のもう 1 つの割り当て（キーの位置が配列で違うので文字で見る。JIS の ^ のキー、US の Shift+6）。
-pub const ROTATE_RIGHT_TEXT: &str = "^";
-
 // ───────── ビューの中のキー ─────────
 
-/// 2D の表示を回すキー（押しながら左ドラッグ）。
-pub const VIEW_ROTATE: Key = Key::R;
-/// パン（押しながら左ドラッグ。Ctrl を足すと拡縮）のキー。2D のキャンバスと 3D ビューで同じ。
-pub const VIEW_PAN: Key = Key::Space;
-/// ステンシルの置き場を動かすキー（押しながらドラッグ）。
-pub const STENCIL_MOVE: Key = Key::Y;
-/// ステンシルを使わないあいだ押すキー。
-pub const STENCIL_BYPASS: Key = Key::N;
-/// 3D ビューで選んだセットを収めるキー（3D の上で、修飾なし）。
-pub const VIEW3D_FRAME: Key = Key::Period;
-
-/// ビューごとのキー（一覧の「2D ビュー」「3D ビュー」「ステンシル」の項目。押しながらマウスを使うものは `mouse`）。
+/// ビューごとのキー（一覧の「2D ビュー」「3D ビュー」「ステンシル」の項目。押しながらマウスを使うものは `mouse`）。名前とキーは操作（`commands`）のもの。
 #[derive(Clone, Copy, Debug)]
 pub struct ContextKey {
     pub scope: &'static str,
-    pub key: Key,
+    pub command: &'static str,
     pub mouse: bool,
-    pub ja: &'static str,
-    pub en: &'static str,
 }
 
 impl ContextKey {
     pub fn label(&self, lang: Lang) -> &'static str {
-        lang.pick(self.ja, self.en)
+        commands::find(self.command)
+            .and_then(|c| c.static_label(lang))
+            .unwrap_or("")
+    }
+
+    pub fn key(&self) -> Option<Key> {
+        key_of(self.command)
+    }
+}
+
+const fn context(scope: &'static str, command: &'static str, mouse: bool) -> ContextKey {
+    ContextKey {
+        scope,
+        command,
+        mouse,
     }
 }
 
 /// 一覧に出すビューのキー。押しながらの組み合わせで一覧に出るもの（3D の Space・ステンシルの Y）は、`GESTURES` の側に出る。
 pub const CONTEXT_KEYS: [ContextKey; 9] = [
-    ContextKey {
-        scope: "canvas",
-        key: VIEW_ROTATE,
-        mouse: true,
-        ja: "回転",
-        en: "Rotate",
-    },
-    ContextKey {
-        scope: "canvas",
-        key: VIEW_PAN,
-        mouse: true,
-        ja: "パン / Ctrl: ズーム",
-        en: "Pan / Ctrl: Zoom",
-    },
-    ContextKey {
-        scope: "canvas",
-        key: Key::Escape,
-        mouse: false,
-        ja: "操作をキャンセル / 選択を解除",
-        en: "Cancel Operation / Deselect",
-    },
-    ContextKey {
-        scope: "canvas",
-        key: Key::Enter,
-        mouse: false,
-        ja: "変形・多角形選択を確定",
-        en: "Confirm Transform / Polygon Selection",
-    },
-    ContextKey {
-        scope: "canvas",
-        key: Key::Backspace,
-        mouse: false,
-        ja: "多角形選択の最後の点を削除",
-        en: "Delete Last Polygon Selection Point",
-    },
-    ContextKey {
-        scope: "view3d",
-        key: Key::Escape,
-        mouse: false,
-        ja: "操作をキャンセル",
-        en: "Cancel Operation",
-    },
-    ContextKey {
-        scope: "view3d",
-        key: VIEW3D_FRAME,
-        mouse: false,
-        ja: "選んだセットを収める",
-        en: "Frame Selected Set",
-    },
-    ContextKey {
-        scope: "stencil",
-        key: STENCIL_BYPASS,
-        mouse: false,
-        ja: "ステンシルを一時解除",
-        en: "Bypass Stencil",
-    },
-    ContextKey {
-        scope: "stencil",
-        key: Key::Escape,
-        mouse: false,
-        ja: "操作をキャンセル",
-        en: "Cancel Operation",
-    },
+    context("canvas", "view.rotate_hold", true),
+    context("canvas", "view.pan_hold", true),
+    context("canvas", "canvas.cancel", false),
+    context("canvas", "canvas.confirm", false),
+    context("canvas", "canvas.remove_last_point", false),
+    context("view3d", "view3d.cancel", false),
+    context("view3d", "view3d.frame_selected", false),
+    context("stencil", "stencil.bypass_hold", false),
+    context("stencil", "stencil.cancel", false),
 ];
 
 // ───────── マウスと修飾キーの組み合わせ ─────────
@@ -409,6 +654,22 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// 全部の組み合わせ。
+    pub const ALL: [Operation; 12] = [
+        Self::Orbit,
+        Self::Pan,
+        Self::Zoom,
+        Self::Rotate,
+        Self::Pick,
+        Self::SelectionAdd,
+        Self::SelectionSubtract,
+        Self::SelectionIntersect,
+        Self::MoveStencil,
+        Self::RotateStencil,
+        Self::ScaleStencil,
+        Self::SnapStencilRotation,
+    ];
+
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
             Self::Orbit => lang.pick("回転", "Orbit"),
@@ -431,12 +692,12 @@ impl Operation {
 }
 
 /// マウスの組み合わせ 1 つ。`alt`・`shift`・`ctrl` は押していなければならない修飾（ほかの修飾は気にしない。上から順に最初に当たったものが効く）、
-/// `held` はあるとき押しているキー。
+/// `held` はあるとき押している間のキーの操作の ID（`Kind::Hold`。キーは `hold_key` で引く）。
 #[derive(Clone, Copy, Debug)]
 pub struct Gesture {
     /// 一覧のまとまり（選択範囲のツールの組み合わせ方は「selection」で、一覧では 2D ビューに並ぶ）。
     pub scope: &'static str,
-    pub held: Option<Key>,
+    pub held: Option<&'static str>,
     pub button: PointerButton,
     pub alt: bool,
     pub shift: bool,
@@ -448,7 +709,7 @@ pub struct Gesture {
 
 const fn gesture_of(
     scope: &'static str,
-    held: Option<Key>,
+    held: Option<&'static str>,
     button: PointerButton,
     (alt, shift, ctrl): (bool, bool, bool),
     operation: Operation,
@@ -537,14 +798,14 @@ pub const GESTURES: [Gesture; 19] = [
     ),
     gesture_of(
         "view3d",
-        Some(VIEW_PAN),
+        Some("view.pan_hold"),
         Primary,
         (false, false, true),
         Operation::Zoom,
     ),
     gesture_of(
         "view3d",
-        Some(VIEW_PAN),
+        Some("view.pan_hold"),
         Primary,
         (false, false, false),
         Operation::Pan,
@@ -560,35 +821,35 @@ pub const GESTURES: [Gesture; 19] = [
     // ステンシル（Y を押しながら）: 左で回す・中か Ctrl + 左で動かす・右か Alt + 左で大きさ
     gesture_of(
         "stencil",
-        Some(STENCIL_MOVE),
+        Some("stencil.transform_hold"),
         Middle,
         (false, false, false),
         Operation::MoveStencil,
     ),
     gesture_of(
         "stencil",
-        Some(STENCIL_MOVE),
+        Some("stencil.transform_hold"),
         Primary,
         (false, false, true),
         Operation::MoveStencil,
     ),
     gesture_of(
         "stencil",
-        Some(STENCIL_MOVE),
+        Some("stencil.transform_hold"),
         Secondary,
         (false, false, false),
         Operation::ScaleStencil,
     ),
     gesture_of(
         "stencil",
-        Some(STENCIL_MOVE),
+        Some("stencil.transform_hold"),
         Primary,
         (true, false, false),
         Operation::ScaleStencil,
     ),
     gesture_of(
         "stencil",
-        Some(STENCIL_MOVE),
+        Some("stencil.transform_hold"),
         Primary,
         (false, false, false),
         Operation::RotateStencil,
@@ -596,7 +857,7 @@ pub const GESTURES: [Gesture; 19] = [
     // 回している間の Shift は 15° 刻み（`StencilState::update_drag`）。押す順は問わないので、回す組み合わせに Shift を足した形で載せる
     Gesture {
         scope: "stencil",
-        held: Some(STENCIL_MOVE),
+        held: Some("stencil.transform_hold"),
         button: Primary,
         alt: false,
         shift: true,
@@ -764,34 +1025,415 @@ mod tests {
         );
     }
 
-    #[test]
-    fn more_specific_keys_are_judged_before_the_ones_that_would_swallow_them() {
-        let order = dispatch_order();
-        let includes = |big: &Modifiers, small: &Modifiers| {
-            (!small.shift || big.shift)
-                && (!small.alt || big.alt)
-                && (!small.command || big.command)
-                && (!small.ctrl || big.ctrl)
+    /// 1 つのキーの押しを、実際の判定（`dispatch`）へ流す。
+    fn dispatched(app: &AppState, key: Key, modifiers: Modifiers) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
         };
-        for (i, a) in order.iter().enumerate() {
-            for b in &order[i + 1..] {
-                if a.key != b.key {
-                    continue;
-                }
-                // 先に判定される a は、書いていない修飾を気にしないことがある。b が a の修飾を全部含む（b のほうが細かい）のに a が先だと、
-                // b の押しは a に横取りされる（a が、b と同じ条件でしか効かない場合を除く）
-                let swallowed = includes(&b.modifiers, &a.modifiers)
-                    && modifier_count(&b.modifiers) > modifier_count(&a.modifiers);
-                assert!(
-                    !swallowed || a.when != When::Always,
-                    "{:?}+{:?} が先の {:?}+{:?} に横取りされる",
-                    b.modifiers,
-                    b.key,
-                    a.modifiers,
-                    a.key
-                );
-            }
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = dispatch(i, app));
+        });
+        output.textures_delta.clear();
+        got
+    }
+
+    #[test]
+    fn modifiers_are_exact_for_letters_function_keys_and_named_keys_but_not_for_symbols_and_digits()
+    {
+        for key in Key::ALL {
+            let name = key.name();
+            let letter = name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic();
+            let function = name.len() >= 2
+                && name.starts_with('F')
+                && name[1..].bytes().all(|b| b.is_ascii_digit());
+            let named = matches!(
+                key,
+                Key::Tab
+                    | Key::Space
+                    | Key::Enter
+                    | Key::Escape
+                    | Key::Backspace
+                    | Key::Delete
+                    | Key::ArrowUp
+                    | Key::ArrowDown
+                    | Key::ArrowLeft
+                    | Key::ArrowRight
+                    | Key::Home
+                    | Key::End
+                    | Key::PageUp
+                    | Key::PageDown
+                    | Key::Insert
+            );
+            assert_eq!(
+                modifiers_are_exact(*key),
+                letter || function || named,
+                "{key:?}"
+            );
         }
+        // 数字は上の段を Shift で打つ配列（AZERTY）があるので、記号と同じ扱い
+        for key in [
+            Key::Num0,
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+            Key::Num7,
+            Key::Num8,
+            Key::Num9,
+            Key::Minus,
+            Key::Equals,
+            Key::Plus,
+            Key::Comma,
+            Key::Period,
+            Key::Slash,
+            Key::Backslash,
+            Key::Semicolon,
+            Key::Colon,
+            Key::Quote,
+            Key::Backtick,
+            Key::OpenBracket,
+            Key::CloseBracket,
+            Key::Pipe,
+            Key::Questionmark,
+            Key::Exclamationmark,
+        ] {
+            assert!(!modifiers_are_exact(key), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn modifiers_match_exactly_for_letters_and_by_what_is_written_for_symbols_and_digits() {
+        let none = Modifiers::NONE;
+        // 書いていない Shift・Alt を押していれば、文字のキーは当たらない
+        assert!(modifiers_match(&none, none, Key::B));
+        assert!(!modifiers_match(&Modifiers::SHIFT, none, Key::B));
+        assert!(!modifiers_match(&Modifiers::ALT, none, Key::B));
+        assert!(modifiers_match(&Modifiers::SHIFT, Modifiers::SHIFT, Key::G));
+        assert!(!modifiers_match(&none, Modifiers::SHIFT, Key::G));
+        // 書いていない Ctrl は当たらない・Command の割り当ては Ctrl でも Mac の Command でも当たる
+        assert!(!modifiers_match(&Modifiers::CTRL, none, Key::B));
+        assert!(modifiers_match(
+            &(Modifiers::CTRL | Modifiers::COMMAND),
+            Modifiers::COMMAND,
+            Key::S
+        ));
+        assert!(modifiers_match(
+            &(Modifiers::MAC_CMD | Modifiers::COMMAND),
+            Modifiers::COMMAND,
+            Key::S
+        ));
+        // 記号と数字のキーは、書いていない Shift・Alt を押していても当たる
+        for key in [Key::Equals, Key::Minus, Key::OpenBracket, Key::Num4] {
+            assert!(modifiers_match(&Modifiers::SHIFT, none, key), "{key:?}");
+            assert!(modifiers_match(&Modifiers::ALT, none, key), "{key:?}");
+            assert!(
+                modifiers_match(&(Modifiers::ALT | Modifiers::SHIFT), none, key),
+                "{key:?}"
+            );
+        }
+        // 行に書いてあれば、押していなければならない
+        assert!(!modifiers_match(&none, Modifiers::ALT, Key::Equals));
+        assert!(modifiers_match(
+            &Modifiers::ALT,
+            Modifiers::ALT,
+            Key::Equals
+        ));
+        assert!(!modifiers_match(&none, Modifiers::SHIFT, Key::Num4));
+        // Ctrl の扱いは記号・数字でも変わらない（Ctrl+0 は Ctrl を押したときだけ）
+        assert!(modifiers_match(
+            &(Modifiers::COMMAND | Modifiers::SHIFT),
+            Modifiers::COMMAND,
+            Key::Plus
+        ));
+        assert!(modifiers_match(
+            &(Modifiers::CTRL | Modifiers::COMMAND),
+            Modifiers::COMMAND,
+            Key::Num0
+        ));
+        assert!(!modifiers_match(&none, Modifiers::COMMAND, Key::Num0));
+        assert!(!modifiers_match(&Modifiers::CTRL, none, Key::Num0));
+        // 名前のキー（矢印・Delete など）は Shift を書いたとおりに見る
+        assert!(!modifiers_match(&Modifiers::SHIFT, none, Key::ArrowLeft));
+        assert!(modifiers_match(
+            &Modifiers::SHIFT,
+            Modifiers::SHIFT,
+            Key::ArrowLeft
+        ));
+        assert!(!modifiers_match(&Modifiers::SHIFT, none, Key::Delete));
+        assert!(!modifiers_match(&Modifiers::ALT, none, Key::Delete));
+    }
+
+    #[test]
+    fn extra_shift_or_alt_no_longer_reaches_a_plain_letter_key() {
+        let app = AppState::new(32, 32);
+        let brush = vec![Action::SelectTool(Tool::Brush)];
+        assert_eq!(dispatched(&app, Key::B, Modifiers::NONE), brush);
+        assert_eq!(dispatched(&app, Key::B, Modifiers::SHIFT), vec![]);
+        assert_eq!(dispatched(&app, Key::B, Modifiers::ALT), vec![]);
+        assert_eq!(
+            dispatched(&app, Key::B, Modifiers::ALT | Modifiers::SHIFT),
+            vec![]
+        );
+        // Alt+G はバケツでもグラデーションでもない・Shift+G はグラデーション
+        assert_eq!(dispatched(&app, Key::G, Modifiers::ALT), vec![]);
+        assert_eq!(
+            dispatched(&app, Key::G, Modifiers::NONE),
+            vec![Action::SelectTool(Tool::Fill)]
+        );
+        assert_eq!(
+            dispatched(&app, Key::G, Modifiers::SHIFT),
+            vec![Action::SelectTool(Tool::Gradient)]
+        );
+        // 修飾なしのキー X・D・[ も同じ
+        assert_eq!(dispatched(&app, Key::X, Modifiers::SHIFT), vec![]);
+        assert_eq!(dispatched(&app, Key::D, Modifiers::ALT), vec![]);
+        // Ctrl 付きの割り当ては Alt が増えると当たらない・Ctrl+Shift+Z はやり直し
+        assert_eq!(
+            dispatched(&app, Key::Z, Modifiers::COMMAND),
+            vec![Action::Undo]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Z, Modifiers::COMMAND | Modifiers::ALT),
+            vec![]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Z, Modifiers::COMMAND | Modifiers::SHIFT),
+            vec![Action::Redo]
+        );
+    }
+
+    #[test]
+    fn symbol_and_digit_keys_do_not_look_at_the_shift_or_option_a_layout_needs_to_type_them() {
+        let app = AppState::new(32, 32);
+        // US 配列の Ctrl+Shift+= は、論理キー + の Plus に Shift が付いて届く。Equals で届く配列もある。どちらもズームイン
+        for key in [Key::Plus, Key::Equals] {
+            assert_eq!(
+                dispatched(&app, key, Modifiers::COMMAND | Modifiers::SHIFT),
+                vec![Action::ZoomIn],
+                "{key:?}"
+            );
+            assert_eq!(
+                dispatched(&app, key, Modifiers::COMMAND),
+                vec![Action::ZoomIn],
+                "{key:?}"
+            );
+        }
+        // = を Shift で打つ配列（JIS の Shift+-、ドイツ語の Shift+0）は Equals に Shift が付いて届く。表示を右に回す
+        assert_eq!(
+            dispatched(&app, Key::Equals, Modifiers::SHIFT),
+            vec![Action::RotateRight]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Minus, Modifiers::SHIFT),
+            vec![Action::RotateLeft]
+        );
+        // US 配列の Shift+= は論理キー + の Plus で届く。Ctrl の無い Plus の割り当ては無いので、何も起きない
+        assert_eq!(dispatched(&app, Key::Plus, Modifiers::SHIFT), vec![]);
+        // macOS のドイツ語配列の [ ] は Option+5・Option+6 で届く（Option の効果が論理キーに入る）。ブラシの大きさが替わる
+        assert_eq!(
+            dispatched(&app, Key::OpenBracket, Modifiers::ALT),
+            vec![Action::BrushSmaller]
+        );
+        assert_eq!(
+            dispatched(&app, Key::CloseBracket, Modifiers::ALT),
+            vec![Action::BrushLarger]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Equals, Modifiers::ALT),
+            vec![Action::RotateRight]
+        );
+        // AZERTY 配列は上の段の数字を Shift で打つ。ポリゴン塗りつぶし（4）が効く
+        assert_eq!(
+            dispatched(&app, Key::Num4, Modifiers::NONE),
+            vec![Action::SelectTool(Tool::PolygonFill)]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Num4, Modifiers::SHIFT),
+            vec![Action::SelectTool(Tool::PolygonFill)]
+        );
+        // Ctrl 付きの数字の割り当ては今までどおり（Ctrl を押したときだけ）
+        assert_eq!(
+            dispatched(&app, Key::Num0, Modifiers::COMMAND),
+            vec![Action::FitView]
+        );
+        assert_eq!(
+            dispatched(&app, Key::Num1, Modifiers::COMMAND),
+            vec![Action::ToggleRulerSnap]
+        );
+        assert_eq!(dispatched(&app, Key::Num0, Modifiers::NONE), vec![]);
+        // 文字のキーは Option・Shift を加えると効かない（記号・数字とは違う）
+        assert_eq!(dispatched(&app, Key::X, Modifiers::ALT), vec![]);
+    }
+
+    /// 与えた事象を `dispatch` に流して、実行する操作と、判定のあとに残った事象を返す。
+    fn dispatched_events(app: &AppState, events: Vec<Event>) -> (Vec<Action>, Vec<Event>) {
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let mut left = Vec::new();
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| {
+                got = dispatch(i, app);
+                left = i.events.clone();
+            });
+        });
+        output.textures_delta.clear();
+        (got, left)
+    }
+
+    #[test]
+    fn one_operation_runs_once_per_frame_even_when_two_of_its_rows_match() {
+        let app = AppState::new(32, 32);
+        let key = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        // JIS 配列の ^ のキーは、キーの Equals と文字の ^ が両方届く。表示を右に回すのは 1 回だけ
+        let (got, left) = dispatched_events(
+            &app,
+            vec![key(Key::Equals, Modifiers::NONE), Event::Text("^".into())],
+        );
+        assert_eq!(got, vec![Action::RotateRight]);
+        // 操作を捨てても、当たった事象は取り除いたまま（キーの事象は残らない）
+        assert!(
+            left.iter().all(|e| !matches!(e, Event::Key { .. })),
+            "{left:?}"
+        );
+        // 文字だけ・キーだけでも 1 回
+        let (got, _) = dispatched_events(&app, vec![Event::Text("^".into())]);
+        assert_eq!(got, vec![Action::RotateRight]);
+        let (got, _) = dispatched_events(&app, vec![key(Key::Equals, Modifiers::NONE)]);
+        assert_eq!(got, vec![Action::RotateRight]);
+        // やり直しの 2 つのキーを同じフレームで押しても 1 回
+        let (got, left) = dispatched_events(
+            &app,
+            vec![
+                key(Key::Z, Modifiers::COMMAND | Modifiers::SHIFT),
+                key(Key::Y, Modifiers::COMMAND),
+            ],
+        );
+        assert_eq!(got, vec![Action::Redo]);
+        assert!(
+            left.iter().all(|e| !matches!(e, Event::Key { .. })),
+            "{left:?}"
+        );
+        // 別の操作は、同じフレームで両方実行する
+        let (got, _) = dispatched_events(
+            &app,
+            vec![key(Key::X, Modifiers::NONE), key(Key::D, Modifiers::NONE)],
+        );
+        assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn the_caret_text_rotates_right_like_the_equals_key() {
+        let app = AppState::new(32, 32);
+        let ctx = egui::Context::default();
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Text("^".into())],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = dispatch(i, &app));
+        });
+        output.textures_delta.clear();
+        assert_eq!(got, vec![Action::RotateRight]);
+        // 別の文字は当たらない
+        let mut got = Vec::new();
+        let input = egui::RawInput {
+            events: vec![Event::Text("6".into())],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| got = dispatch(i, &app));
+        });
+        output.textures_delta.clear();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn consume_key_removes_the_matching_events_only() {
+        let ctx = egui::Context::default();
+        let key_event = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let input = egui::RawInput {
+            events: vec![
+                key_event(Key::A, Modifiers::SHIFT),
+                key_event(Key::A, Modifiers::NONE),
+                key_event(Key::A, Modifiers::NONE),
+            ],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| {
+                assert!(consume_key(i, Modifiers::NONE, Key::A));
+                // Shift 付きの 1 つだけが残る
+                assert_eq!(
+                    i.events
+                        .iter()
+                        .filter(|e| matches!(e, Event::Key { .. }))
+                        .count(),
+                    1
+                );
+                assert!(!consume_key(i, Modifiers::NONE, Key::A));
+                assert!(consume_key(i, Modifiers::SHIFT, Key::A));
+            });
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn rows_are_judged_with_more_modifiers_first_and_keep_the_table_order_otherwise() {
+        let map = current();
+        let order = map.order();
+        for pair in order.windows(2) {
+            assert!(
+                modifier_count(&pair[0].modifiers()) >= modifier_count(&pair[1].modifiers()),
+                "{:?} が {:?} より先",
+                pair[0],
+                pair[1]
+            );
+        }
+        // 同じ修飾の行は表の順（点を選んでいる間の Delete は、選択範囲の消去・パスの点の削除より先）
+        let at = |command: &str, when: When| {
+            order
+                .iter()
+                .position(|b| {
+                    b.command == command && b.when == when && b.key() == Some(Key::Delete)
+                })
+                .unwrap_or_else(|| panic!("{command}"))
+        };
+        assert!(
+            at("fill.delete_point", When::PointSelected)
+                < at("selection.erase", When::HasSelection)
+        );
+        assert!(
+            at("fill.delete_point", When::PointSelected)
+                < at("path.delete_point", When::Tool(Tool::Path))
+        );
     }
 
     #[test]
@@ -800,7 +1442,7 @@ mod tests {
         for tool in Tool::ALL {
             let found: Vec<_> = all
                 .iter()
-                .filter(|b| b.action == Action::SelectTool(tool))
+                .filter(|b| b.command == commands::tool_command(tool))
                 .collect();
             if tool.key().is_empty() {
                 assert!(found.is_empty(), "{tool:?}");
@@ -808,7 +1450,11 @@ mod tests {
             }
             assert_eq!(found.len(), 1, "{tool:?}");
             let (m, key) = parse_tool_key(tool.key()).expect("読める");
-            assert_eq!((found[0].modifiers, found[0].key), (m, key), "{tool:?}");
+            assert_eq!(
+                found[0].trigger,
+                Trigger::Key { modifiers: m, key },
+                "{tool:?}"
+            );
         }
         assert_eq!(parse_tool_key("Shift+G"), Some((Modifiers::SHIFT, Key::G)));
         assert_eq!(parse_tool_key("4"), Some((Modifiers::NONE, Key::Num4)));
@@ -817,17 +1463,194 @@ mod tests {
     }
 
     #[test]
-    fn the_same_key_and_modifiers_are_never_bound_twice_under_the_same_condition() {
+    fn the_same_input_is_never_bound_twice_under_the_same_condition_and_scope() {
         let all = bindings();
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
-                if a.key == b.key && a.modifiers == b.modifiers && a.when == b.when {
+                if a.trigger == b.trigger && a.when == b.when && a.scope == b.scope {
                     panic!(
-                        "重なった割り当て: {:?}+{:?} {:?} / {:?}",
-                        a.modifiers, a.key, a.action, b.action
+                        "重なった割り当て: {:?} {:?} {:?}: {} / {}",
+                        a.trigger, a.when, a.scope, a.command, b.command
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn rows_belong_to_the_scope_the_design_gives_them() {
+        for b in bindings() {
+            let paint = b.command.starts_with("tool.")
+                || b.command.starts_with("color.")
+                || b.command.starts_with("brush.")
+                || b.command.starts_with("stencil.")
+                || b.command.starts_with("path.")
+                || b.command.starts_with("transform.nudge_")
+                || matches!(
+                    b.command,
+                    "fill.toggle_handles" | "fill.delete_point" | "selection.quick_mask"
+                );
+            assert_eq!(
+                b.scope,
+                if paint {
+                    Scope::Paint
+                } else {
+                    Scope::Everywhere
+                },
+                "{}",
+                b.command
+            );
+        }
+        // 押している間の R・Space と 3D の . は、どのモードでも。Y・N（ステンシル）はペイントだけ
+        assert_eq!(
+            primary("view.rotate_hold").map(|b| b.scope),
+            Some(Scope::Everywhere)
+        );
+        assert_eq!(
+            primary("view.pan_hold").map(|b| b.scope),
+            Some(Scope::Everywhere)
+        );
+        assert_eq!(
+            primary("view3d.frame_selected").map(|b| b.scope),
+            Some(Scope::Everywhere)
+        );
+        assert_eq!(
+            primary("stencil.transform_hold").map(|b| b.scope),
+            Some(Scope::Paint)
+        );
+        assert_eq!(
+            primary("stencil.bypass_hold").map(|b| b.scope),
+            Some(Scope::Paint)
+        );
+        // この段にはモードが無いので、どの範囲もいつも成り立つ
+        let app = AppState::new(32, 32);
+        assert!(Scope::Everywhere.holds(&app) && Scope::Paint.holds(&app));
+    }
+
+    #[test]
+    fn the_keys_read_by_the_views_come_from_the_table() {
+        assert_eq!(hold_key("view.rotate_hold"), Some(Key::R));
+        assert_eq!(hold_key("view.pan_hold"), Some(Key::Space));
+        assert_eq!(hold_key("stencil.transform_hold"), Some(Key::Y));
+        assert_eq!(hold_key("stencil.bypass_hold"), Some(Key::N));
+        assert_eq!(hold_key("nothing.here"), None);
+        assert_eq!(key_of("view3d.frame_selected"), Some(Key::Period));
+        assert_eq!(key_of("canvas.cancel"), Some(Key::Escape));
+        assert_eq!(key_of("canvas.confirm"), Some(Key::Enter));
+        assert_eq!(key_of("canvas.remove_last_point"), Some(Key::Backspace));
+        assert_eq!(key_of("view3d.cancel"), Some(Key::Escape));
+        assert_eq!(key_of("stencil.cancel"), Some(Key::Escape));
+        // 文字の行は、キーを持たない
+        assert_eq!(
+            primary("view.rotate_right").map(|b| b.trigger),
+            Some(Trigger::Text("^"))
+        );
+        assert_eq!(hold_key("view.rotate_right"), Some(Key::Equals));
+        // 矢印は 1 画素の 4 つと Shift の 4 つ
+        assert_eq!(NUDGES.len(), 8);
+        for n in NUDGES {
+            let row = primary(n.command).unwrap_or_else(|| panic!("{}", n.command));
+            let modifiers = if n.shift {
+                Modifiers::SHIFT
+            } else {
+                Modifiers::NONE
+            };
+            assert_eq!(
+                row.trigger,
+                Trigger::Key {
+                    modifiers,
+                    key: n.key
+                }
+            );
+            assert_eq!(row.when, When::Tool(Tool::Move));
+        }
+        // 押している間のキーを持つ操作の組み合わせの表示は、そのキーの操作の ID を指す
+        for g in &GESTURES {
+            if let Some(held) = g.held {
+                assert!(hold_key(held).is_some(), "{held}");
+            }
+        }
+    }
+
+    #[test]
+    fn consume_command_reads_the_table_and_respects_the_condition() {
+        let mut app = AppState::new(32, 32);
+        let ctx = egui::Context::default();
+        let press = |key, modifiers| egui::RawInput {
+            events: vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        };
+        // 矢印は移動・変形のツールのときだけ
+        app.tool = Tool::Brush;
+        let mut hit = true;
+        let mut output = ctx.run_ui(press(Key::ArrowLeft, Modifiers::NONE), |ui| {
+            hit = ui.input_mut(|i| consume_command(i, &app, "transform.nudge_left"));
+        });
+        output.textures_delta.clear();
+        assert!(!hit);
+        app.tool = Tool::Move;
+        let mut output = ctx.run_ui(press(Key::ArrowLeft, Modifiers::NONE), |ui| {
+            hit = ui.input_mut(|i| consume_command(i, &app, "transform.nudge_left"));
+        });
+        output.textures_delta.clear();
+        assert!(hit);
+        // Shift+矢印は 10 画素の行にだけ当たる
+        let mut small = true;
+        let mut big = false;
+        let mut output = ctx.run_ui(press(Key::ArrowLeft, Modifiers::SHIFT), |ui| {
+            small = ui.input_mut(|i| consume_command(i, &app, "transform.nudge_left"));
+            big = ui.input_mut(|i| consume_command(i, &app, "transform.nudge_left_10"));
+        });
+        output.textures_delta.clear();
+        assert!(!small && big);
+    }
+
+    #[test]
+    fn a_rebuilt_keymap_keeps_its_rows_and_its_judging_order_together() {
+        let default = Keymap::new(bindings());
+        assert_eq!(default.rows(), bindings().as_slice());
+        // 判定の順は、行のうち Action を持つもの（クリップボードを除く）を、修飾の多い順に並べたもの
+        let judged = default
+            .rows()
+            .iter()
+            .filter(|b| !matches!(b.action(), None | Some(Action::Clip(_))))
+            .count();
+        assert_eq!(default.order().len(), judged);
+        // 行を減らして作り直すと、判定の順も一緒に変わる
+        let only_save: Vec<KeyBinding> = bindings()
+            .into_iter()
+            .filter(|b| b.command == "file.save")
+            .collect();
+        assert_eq!(only_save.len(), 1);
+        let small = Keymap::new(only_save);
+        assert_eq!(small.rows().len(), 1);
+        assert_eq!(small.order().len(), 1);
+        assert_eq!(small.rows_of("file.save").count(), 1);
+        assert_eq!(small.rows_of("file.open").count(), 0);
+        // 今効いている割り当てを同じ内容で差し替えても、表と判定の順は変わらない（ほかの試験と並んで走ってよい）
+        let before = current();
+        replace(bindings());
+        let after = current();
+        assert!(!Arc::ptr_eq(&before, &after));
+        assert_eq!(before.rows(), after.rows());
+        assert_eq!(before.order(), after.order());
+    }
+
+    #[test]
+    fn every_clipboard_key_has_its_own_command_id() {
+        for (modifiers, key, action) in CLIPBOARD_KEYS {
+            let row = bindings()
+                .into_iter()
+                .find(|b| b.trigger == Trigger::Key { modifiers, key })
+                .expect("クリップボードの行");
+            assert_eq!(row.action(), Some(Action::Clip(action)));
+            assert_eq!(row.command, clip_command(action));
         }
     }
 }

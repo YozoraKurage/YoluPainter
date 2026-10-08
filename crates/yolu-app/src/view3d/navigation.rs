@@ -319,7 +319,7 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     });
     if over
         && ui.input(|i| i.modifiers == Modifiers::NONE)
-        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, crate::keymap::VIEW3D_FRAME))
+        && ctx.input_mut(|i| crate::keymap::consume_command(i, app, "view3d.frame_selected"))
     {
         frame_selected(app, rect);
     }

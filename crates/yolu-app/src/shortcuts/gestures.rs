@@ -2,7 +2,6 @@
 //! 作り方、2D のパン・回転・スポイト）は同じ表を読む。
 use crate::{lang::Lang, windows::Row};
 use egui::{Key, Modifiers, PointerButton};
-use std::sync::OnceLock;
 
 pub use crate::keymap::Operation;
 
@@ -15,26 +14,24 @@ pub struct Binding {
     pub operation: Operation,
 }
 
-pub fn bindings() -> &'static [Binding] {
-    static BINDINGS: OnceLock<Vec<Binding>> = OnceLock::new();
-    BINDINGS.get_or_init(|| {
-        crate::keymap::GESTURES
-            .iter()
-            .map(|g| Binding {
-                scope: g.scope,
-                held: g.held,
-                modifiers: Modifiers {
-                    alt: g.alt,
-                    shift: g.shift,
-                    ctrl: g.ctrl,
-                    command: g.ctrl,
-                    ..Modifiers::NONE
-                },
-                button: g.button,
-                operation: g.operation,
-            })
-            .collect()
-    })
+/// マウスの組み合わせの全部（押している間のキーは、キーの表の今の割り当て）。
+pub fn bindings() -> Vec<Binding> {
+    crate::keymap::GESTURES
+        .iter()
+        .map(|g| Binding {
+            scope: g.scope,
+            held: g.held.and_then(crate::keymap::hold_key),
+            modifiers: Modifiers {
+                alt: g.alt,
+                shift: g.shift,
+                ctrl: g.ctrl,
+                command: g.ctrl,
+                ..Modifiers::NONE
+            },
+            button: g.button,
+            operation: g.operation,
+        })
+        .collect()
 }
 
 pub fn key_label(binding: &Binding, lang: Lang) -> String {

@@ -812,8 +812,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
         (
             i.events.clone(),
             i.modifiers,
-            i.key_down(crate::keymap::VIEW_ROTATE),
-            i.key_down(crate::keymap::VIEW_PAN),
+            crate::keymap::hold_down(i, "view.rotate_hold"),
+            crate::keymap::hold_down(i, "view.pan_hold"),
         )
     });
     let mut clock = MouseClock::new(

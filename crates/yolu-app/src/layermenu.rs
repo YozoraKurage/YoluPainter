@@ -41,7 +41,7 @@ pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     vec![
         Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer)
-            .shortcut("Ctrl+Shift+N")
+            .command_key("layer.new")
             .enabled(free),
         Entry::submenu(
             lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),

@@ -475,7 +475,7 @@ fn every_listed_mouse_gesture_matches_the_real_input_handler() {
             "{scope} の組み合わせがありません"
         );
     }
-    for binding in all {
+    for binding in &all {
         assert!(matches!(
             binding.button,
             PointerButton::Primary | PointerButton::Middle | PointerButton::Secondary

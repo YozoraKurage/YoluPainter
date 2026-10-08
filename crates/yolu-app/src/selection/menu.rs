@@ -25,16 +25,16 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
     let mut v = vec![
         Entry::item(l.pick("すべてを選択", "Select All"), edit(SelEdit::All))
-            .shortcut("Ctrl+A")
+            .command_key("selection.all")
             .enabled(free),
         Entry::item(l.pick("選択を解除", "Deselect"), edit(SelEdit::Clear))
-            .shortcut("Ctrl+D")
+            .command_key("selection.deselect")
             .enabled(free && any),
         Entry::item(
             l.pick("選択範囲を反転", "Invert Selection"),
             edit(SelEdit::Invert),
         )
-        .shortcut("Ctrl+Shift+I")
+        .command_key("selection.invert")
         .enabled(free && any),
         Entry::Separator,
     ];
@@ -83,7 +83,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             l.pick("選択範囲を消去", "Erase Selection"),
             edit(SelEdit::Erase),
         )
-        .shortcut("Delete")
+        .command_key("selection.erase")
         .enabled(paintable),
     );
     v.push(
@@ -91,7 +91,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             l.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
             edit(SelEdit::ToNewLayer),
         )
-        .shortcut("Ctrl+J")
+        .command_key("selection.to_new_layer")
         .enabled(copyable),
     );
     v.push(
@@ -109,7 +109,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             l.pick("クイックマスク", "Quick Mask"),
             Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
         )
-        .shortcut("Shift+Q")
+        .command_key("selection.quick_mask")
         .checked(app.sel.quick)
         .enabled(app.sel.quick || !app.is_stroking()),
     );
@@ -137,7 +137,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     for tool in SELECT_TOOLS {
         v.push(
             Entry::item(tool.name_in(l), Action::SelectTool(tool))
-                .shortcut(tool.key())
+                .command_key(crate::commands::tool_command(tool))
                 .radio(app.tool == tool),
         );
     }
@@ -147,7 +147,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             Tool::IdSelect.name_in(l),
             Action::SelectTool(Tool::IdSelect),
         )
-        .shortcut(Tool::IdSelect.key())
+        .command_key(crate::commands::tool_command(Tool::IdSelect))
         .radio(app.tool == Tool::IdSelect),
     );
     v

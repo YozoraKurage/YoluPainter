@@ -1052,13 +1052,14 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     // キーの一覧（読むだけのウィンドウ）にある
     let binding = yolu_app::shortcuts::bindings()
         .into_iter()
-        .find(|b| b.action == Action::Prefs(PrefsAction::Open))
+        .find(|b| b.action() == Some(Action::Prefs(PrefsAction::Open)))
         .expect("一覧に設定のキーがある");
     assert_eq!(yolu_app::shortcuts::key_label(&binding), "Ctrl+,");
     for lang in Lang::ALL {
         h.state_mut().state.lang = lang;
         assert_eq!(
-            yolu_app::shortcuts::action_label(&h.state().state, &binding.action).as_deref(),
+            yolu_app::shortcuts::action_label(&h.state().state, &binding.action().unwrap())
+                .as_deref(),
             Some(lang.pick("設定…", "Settings…"))
         );
     }
