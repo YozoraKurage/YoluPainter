@@ -48,7 +48,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 - **Differences between pens**: View → Pen Pressure… sets a low limit, a high limit and a curve. Draw a few strokes at your usual strength and press Auto, and the settings are worked out from the pressure of the strokes you drew. This is a per-device setting and is stored neither in documents nor in brushes.
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
 - **Taper**: the settings that thin the start and end of a stroke are in Taper & Pen in Brush Details.
-- **With the Canvas and the 3D View side by side**: settings that affect only 2D strokes, such as Stabilizer, taper and jitter, can still be changed (they apply to strokes on the Canvas). When only the 3D View tab is showing, they are grayed out and the tooltip says why.
+- **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
 
 ## Lines, shapes and rulers
 
