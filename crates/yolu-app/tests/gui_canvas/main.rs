@@ -7,6 +7,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod anti_alias_ui;
 mod brush_import_ui;
 mod brush_mix;
 mod brushes;

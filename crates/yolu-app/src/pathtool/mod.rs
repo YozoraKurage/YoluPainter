@@ -198,6 +198,8 @@ pub enum BrushEdit {
     PressureSize(bool),
     PressureOpacity(bool),
     PressureFlow(bool),
+    /// 縁のアンチエイリアス。
+    AntiAlias(yolu_core::AntiAlias),
 }
 
 /// パスの操作（メニュー・キー・ボタン・試験が同じ道を通る）。
@@ -1259,6 +1261,7 @@ impl AppState {
                 BrushEdit::PressureSize(on) => b.pressure_size = on,
                 BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
                 BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+                BrushEdit::AntiAlias(level) => b.anti_alias = level,
             }
             return;
         };
@@ -1298,6 +1301,7 @@ impl AppState {
             BrushEdit::PressureSize(on) => b.pressure_size = on,
             BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
             BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+            BrushEdit::AntiAlias(level) => b.anti_alias = level,
         }
         if brush == path_brush(&path) {
             return;

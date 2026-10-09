@@ -1710,6 +1710,8 @@ fn headless_a_canvas_stroke_obeys_the_selection_the_stencil_and_the_symmetry_tog
     let mut s = doc_state(64);
     s.brush.radius = 3.0;
     s.brush.hardness = 1.0;
+    // 縁の画素の 0・255 を確かめるので、縁の帯の無い丸で描く
+    s.brush.anti_alias = yolu_app::engine::AntiAlias::None;
     s.m2.random_seed = false;
     s.stencil.size = 1.0;
     s.apply(Action::Stencil(StencilOp::Load(half_open_png(&dir))));

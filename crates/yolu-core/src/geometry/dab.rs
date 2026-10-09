@@ -16,7 +16,9 @@ use rayon::prelude::*;
 use super::build::FastMap;
 use super::query::{coverage, uv_barycentric, uv_footprint_bounds, RayQueryBudget};
 use super::unity::{clamp01, dot, finite, finite3, magnitude, mix3, sqr_magnitude, Ray};
-use super::{SurfaceGeometry, SurfaceHit};
+use super::{SurfaceGeometry, SurfaceHit, SurfaceTriangle};
+use crate::brush::edge;
+use crate::brush::AntiAlias;
 
 /// ダブ 1 つの仕事の上限（C# の SurfaceBrushBudget と同じ既定値）。どれかを超えたダブは画素を返さずに断る。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -236,6 +238,157 @@ struct RayOutcome {
     visits: i64,
 }
 
+/// テクセルの x・y の 1 つ分が、三角形の上でモデルの空間でどれだけ動くか（解像度 width × height。UV が潰れていれば None）。
+pub(crate) fn texel_steps_world(
+    t: &SurfaceTriangle,
+    width: i32,
+    height: i32,
+) -> Option<[glam::DVec3; 2]> {
+    let scale = glam::DVec2::new(width as f64, height as f64);
+    let (p0, p1, p2) = (
+        t.uv_a.as_dvec2() * scale,
+        t.uv_b.as_dvec2() * scale,
+        t.uv_c.as_dvec2() * scale,
+    );
+    let (e1, e2) = (p1 - p0, p2 - p0);
+    let det = e1.x * e2.y - e1.y * e2.x;
+    if !det.is_finite() || det.abs() <= 1e-12 {
+        return None;
+    }
+    let (c11, c12, c21, c22) = (e2.y / det, -e2.x / det, -e1.y / det, e1.x / det);
+    let (a, b, c) = (t.a.as_dvec3(), t.b.as_dvec3(), t.c.as_dvec3());
+    let (f1, f2) = (b - a, c - a);
+    let steps = [f1 * c11 + f2 * c21, f1 * c12 + f2 * c22];
+    (steps[0].is_finite() && steps[1].is_finite()).then_some(steps)
+}
+
+/// テクセルの動き steps（モデルの空間）の、いちばん長い・短い向きの長さ（StepsᵀSteps の固有値の平方根）。
+fn step_lengths(steps: &[glam::DVec3; 2]) -> (f64, f64) {
+    let m = edge::TexelMetric {
+        xx: steps[0].length_squared(),
+        xy: steps[0].dot(steps[1]),
+        yy: steps[1].length_squared(),
+    };
+    let (big, small) = m.eigen();
+    (big.sqrt(), small.sqrt())
+}
+
+/// 三角形 1 つのテクセルの動き（モデルの空間）・いちばん長い向きの長さ・帯の幅と濃さ。
+struct TriangleTexels {
+    steps: [glam::DVec3; 2],
+    long: f64,
+    e: edge::Edge,
+}
+
+/// 面のダブ（モデルの空間の球）の縁のアンチエイリアス（[`crate::brush::AntiAlias`]）。帯（テクセル）は、テクセルの候補の三角形の
+/// テクセルの動きで、球の距離の勾配をテクセルの空間へ直して当てる。届く半径は、当たった三角形のテクセルの 2 倍の大きさまで帯が収まる
+/// ように取り、それより大きいテクセルでは帯をその半径に収まる幅で止める。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SphereEdge {
+    band: f64,
+    hardness: f64,
+    radius: f64,
+    /// 届く距離（規格化）と、その中に収まる帯の上限（規格化した単位）。
+    pub outer: f64,
+    cap: f64,
+    /// 三角形が分からない所（カメラによらない足跡の覆いを呼び手が決める形）で使う、当たった三角形の値の帯（規格化した単位）と濃さ。
+    pub band_at_hit: f64,
+    pub density_at_hit: f64,
+}
+
+impl SphereEdge {
+    /// 当たり hit の三角形で見積もる（段がなし・UV が潰れていれば None）。
+    pub(crate) fn new(
+        geometry: &SurfaceGeometry,
+        hit: &SurfaceHit,
+        radius_world: f32,
+        hardness: f32,
+        level: AntiAlias,
+        width: i32,
+        height: i32,
+    ) -> Option<SphereEdge> {
+        let w = level.band();
+        let t = geometry.triangles().get(hit.triangle as usize)?;
+        if w <= 0.0 || !edge::above(radius_world as f64, 0.0) {
+            return None;
+        }
+        let steps = texel_steps_world(t, width, height)?;
+        let (long, short) = step_lengths(&steps);
+        if !edge::above(short, 0.0) {
+            return None;
+        }
+        let (r, h) = (radius_world as f64, clamp01(hardness) as f64);
+        let estimate = 2.0 * w.max(1.0) * long / r;
+        let (_, outer) = edge::bounds(h, estimate);
+        let e = edge::band_and_density(w, h, r / short, r / long);
+        Some(SphereEdge {
+            band: w,
+            hardness: h,
+            radius: r,
+            outer,
+            cap: edge::band_for_outer(h, outer),
+            band_at_hit: (e.band * long / r).min(edge::band_for_outer(h, outer)),
+            density_at_hit: e.density,
+        })
+    }
+
+    /// 三角形 t のテクセルの動きと、その三角形での帯の幅・濃さ（UV が潰れていれば None。ダブの中で三角形ごとに 1 回）。
+    fn texels(&self, t: &SurfaceTriangle, width: i32, height: i32) -> Option<TriangleTexels> {
+        let steps = texel_steps_world(t, width, height)?;
+        let (long, short) = step_lengths(&steps);
+        if !edge::above(short, 0.0) {
+            return None;
+        }
+        let e = edge::band_and_density(
+            self.band,
+            self.hardness,
+            self.radius / short,
+            self.radius / long,
+        );
+        Some(TriangleTexels { steps, long, e })
+    }
+
+    /// 三角形（`texels`）の上の点 position（球の中心 center から、規格化した距離 distance）の覆い。帯がぼかしの幅以下で濃さ 1 なら今の式。
+    fn cover_with(
+        &self,
+        texels: Option<&TriangleTexels>,
+        position: Vec3,
+        center: Vec3,
+        distance: f32,
+    ) -> f32 {
+        let Some(tt) = texels else {
+            return coverage(distance, self.hardness as f32);
+        };
+        let r = (position - center).as_dvec3();
+        let len = r.length();
+        // 規格化した距離のテクセルあたりの勾配（中心は、テクセルがいちばん長い向きの値）
+        let g = if len > 0.0 {
+            let n = r / len;
+            (tt.steps[0].dot(n).powi(2) + tt.steps[1].dot(n).powi(2)).sqrt() / self.radius
+        } else {
+            tt.long / self.radius
+        };
+        let band = (tt.e.band * g).min(self.cap);
+        if tt.e.density == 1.0 && !edge::above(band, 1.0 - self.hardness) {
+            return coverage(distance, self.hardness as f32);
+        }
+        edge::cover64(distance as f64, self.hardness, band, tt.e.density) as f32
+    }
+
+    /// 三角形の分からない所の覆い（当たった三角形の値で、向きによらない帯）。
+    pub(crate) fn cover_at_hit(&self, distance: f64) -> f32 {
+        if self.density_at_hit == 1.0 && !edge::above(self.band_at_hit, 1.0 - self.hardness) {
+            return coverage(distance as f32, self.hardness as f32);
+        }
+        edge::cover64(
+            distance,
+            self.hardness,
+            self.band_at_hit,
+            self.density_at_hit,
+        ) as f32
+    }
+}
+
 /// 組の大きさ（C# と同じ 4096。予算を超えたときに無駄に撃つのは多くても 1 組）。64 本未満の組は呼んだスレッドで撃つ。
 const CHUNK: usize = 4096;
 /// 1 つのワーカーが続けて撃つレイの最小の数。細かく分けると、32 スレッドでは起こす手間が勝って 1 本のスレッドより遅くなった
@@ -271,6 +424,37 @@ impl SurfaceGeometry {
             cache,
             ignore_visibility,
             None,
+            AntiAlias::None,
+        )
+    }
+
+    /// [`SurfaceGeometry::build_surface_dabs`] に、丸の縁のアンチエイリアスの段 anti_alias を加えたもの（なしなら同じ結果）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_surface_dabs_anti_aliased(
+        &self,
+        hit: &SurfaceHit,
+        radius_world: f32,
+        width: i32,
+        height: i32,
+        camera: Vec3,
+        hardness: f32,
+        anti_alias: AntiAlias,
+        budget: &SurfaceBrushBudget,
+        cache: Option<&mut SurfaceVisibilityCache>,
+        ignore_visibility: bool,
+    ) -> SurfaceDabResult {
+        self.build_surface_dabs_with(
+            hit,
+            radius_world,
+            width,
+            height,
+            camera,
+            hardness,
+            budget,
+            cache,
+            ignore_visibility,
+            None,
+            anti_alias,
         )
     }
 
@@ -298,6 +482,7 @@ impl SurfaceGeometry {
             None,
             true,
             Some(cover),
+            AntiAlias::None,
         )
     }
 
@@ -314,6 +499,7 @@ impl SurfaceGeometry {
         cache: Option<&mut SurfaceVisibilityCache>,
         ignore_visibility: bool,
         cover: Option<&dyn Fn(Vec3, i32, i32) -> f32>,
+        anti_alias: AntiAlias,
     ) -> SurfaceDabResult {
         let mut result = SurfaceDabResult::default();
         if hit.revision != self.revision || hit.triangle as usize >= self.triangles.len() {
@@ -338,6 +524,19 @@ impl SurfaceGeometry {
             return result;
         }
         let hardness = clamp01(hardness);
+        // アンチエイリアスは、球の外へ帯の分だけ届く（候補はその半径の中のテクセル。覆いを呼び手が決める形には使わない）
+        let sphere = cover
+            .is_none()
+            .then(|| SphereEdge::new(self, hit, radius_world, hardness, anti_alias, width, height))
+            .flatten();
+        // 候補を集める半径（帯の外の端まで）と、規格化した距離の打ち切り。距離はいつも元の半径で割る（帯の無い画素は今と同じビット）
+        let (reach_world, cutoff) = match &sphere {
+            Some(e) => (radius_world * e.outer as f32, e.outer as f32),
+            None => (radius_world, 1.0),
+        };
+
+        // 帯の三角形ごとの値（テクセルの動き・帯の幅・濃さ）の覚え
+        let mut texel_cache: FastMap<u32, Option<TriangleTexels>> = FastMap::default();
 
         // 1. 幅優先で候補のテクセルを並びのまま集める
         let mut queue: VecDeque<u32> = VecDeque::new();
@@ -346,7 +545,7 @@ impl SurfaceGeometry {
         let mut candidates: Vec<DabCandidate> = Vec::new();
         queue.push_back(hit.triangle);
         visited.insert(hit.triangle);
-        let radius_sq = radius_world * radius_world;
+        let radius_sq = reach_world * reach_world;
         let mut processed = 0i32;
         let mut stop: Option<DabRefusal> = None;
         let (wf, hf) = (width as f32, height as f32);
@@ -382,7 +581,7 @@ impl SurfaceGeometry {
                     queue.push_back(n);
                 }
             }
-            let Some((uv_min, uv_max)) = uv_footprint_bounds(t, hit.position, radius_world) else {
+            let Some((uv_min, uv_max)) = uv_footprint_bounds(t, hit.position, reach_world) else {
                 continue;
             };
             let min_x = 0.max((uv_min.x * wf - 0.5).ceil() as i32);
@@ -406,7 +605,7 @@ impl SurfaceGeometry {
                     };
                     let position = mix3(t.a, t.b, t.c, bary);
                     let distance = magnitude(position - hit.position) / radius_world;
-                    if distance >= 1.0 {
+                    if distance >= cutoff {
                         continue;
                     }
                     candidates.push(DabCandidate {
@@ -429,10 +628,19 @@ impl SurfaceGeometry {
             }
             let mut merged: FastMap<i32, f32> = FastMap::default();
             for c in &candidates {
-                let cov = match cover {
-                    Some(f) => f(c.position, c.x, c.y),
-                    None => coverage(c.distance, hardness),
+                let cov = match (cover, &sphere) {
+                    (Some(f), _) => f(c.position, c.x, c.y),
+                    (None, Some(e)) => {
+                        let tt = texel_cache.entry(c.triangle).or_insert_with(|| {
+                            e.texels(&self.triangles[c.triangle as usize], width, height)
+                        });
+                        e.cover_with(tt.as_ref(), c.position, hit.position, c.distance)
+                    }
+                    (None, None) => coverage(c.distance, hardness),
                 };
+                if sphere.is_some() && cov <= 0.0 {
+                    continue;
+                }
                 let key = c.y * width + c.x;
                 // C# の !TryGetValue || coverage > old
                 if merged.get(&key).is_none_or(|&old| cov > old) {
@@ -554,7 +762,18 @@ impl SurfaceGeometry {
                     continue;
                 }
             }
-            let cov = coverage(c.distance, hardness);
+            let cov = match &sphere {
+                Some(e) => {
+                    let tt = texel_cache.entry(c.triangle).or_insert_with(|| {
+                        e.texels(&self.triangles[c.triangle as usize], width, height)
+                    });
+                    e.cover_with(tt.as_ref(), c.position, hit.position, c.distance)
+                }
+                None => coverage(c.distance, hardness),
+            };
+            if sphere.is_some() && cov <= 0.0 {
+                continue;
+            }
             let key = c.y * width + c.x;
             if pixels.get(&key).is_none_or(|p| cov > p.coverage) {
                 pixels.insert(

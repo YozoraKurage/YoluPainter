@@ -2802,6 +2802,49 @@ fn headless_presets_save_apply_and_delete_through_the_settings_folder() {
 }
 
 #[test]
+fn headless_a_preset_carries_the_anti_alias_with_or_without_a_selected_path() {
+    use yolu_app::engine::AntiAlias;
+    use yolu_app::pathtool::presets::PresetOp;
+    let dir = std::env::temp_dir().join(format!("yolu-pathpresets-aa-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    crate::common::tmp::clean_up_after_test(&dir);
+    let mut s = state(128);
+    s.path.presets.attach(dir.clone());
+    click2d(&mut s, 10.0, 60.0);
+    click2d(&mut s, 118.0, 60.0);
+    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+        AntiAlias::Strong,
+    ))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::Strong
+    );
+    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
+    let id = s.path.presets.list()[0].id;
+    // 選んでいるパスへ当てる
+    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+        AntiAlias::None,
+    ))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::None
+    );
+    s.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::Strong
+    );
+    // パスを選んでいないときは、次に作るパスが取る今のブラシへ
+    let mut t = state(128);
+    t.path.presets.attach(dir.clone());
+    assert!(path(&t).is_none());
+    t.brush.anti_alias = AntiAlias::None;
+    t.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    assert_eq!(t.brush.anti_alias, AntiAlias::Strong);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn headless_a_preset_rename_rewrites_its_file_numbers_a_taken_name_and_keeps_an_empty_one() {
     use yolu_app::pathtool::presets::{PathPresets, PresetOp, RenameError};
     let dir = std::env::temp_dir().join(format!("yolu-pathpresets-rename-{}", std::process::id()));
@@ -3377,6 +3420,23 @@ fn sized_app(width: f32, height: f32, lang: Lang) -> Harness<'static, YoluApp> {
         });
     h.run();
     h
+}
+
+/// 狭い英語の画面では、パスのブラシのアンチエイリアスの名前を上の行に置き、値の箱を詰めずに 1 行に出す（ほかの選びは名前と箱が 1 行）。
+#[test]
+fn snapshot_the_narrow_path_panel_puts_the_anti_alias_name_above_its_box() {
+    let mut h = sized_app(960.0, 640.0, Lang::En);
+    key(&h, Key::P, Modifiers::NONE);
+    h.run();
+    let aa = h.get_by_label("Anti-aliasing: Medium").rect();
+    let kind = h.get_by_label("Type: Stroke").rect();
+    assert!(
+        aa.left() + 20.0 < kind.left(),
+        "名前が上の行にあれば、箱は行の左から始まる: {aa:?} {kind:?}"
+    );
+    h.event(Event::PointerGone);
+    h.step();
+    h.snapshot("path_panel_narrow_english");
 }
 
 /// 画面に描いた文字（重複なし）。

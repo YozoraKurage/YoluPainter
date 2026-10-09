@@ -17,7 +17,7 @@ pub use yolu_core::{
     SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, Threshold,
     TileCoord, TipShape, ToneChannel, ToneCurves,
 };
-pub use yolu_core::{ColorMix, MixGround, MixMode};
+pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

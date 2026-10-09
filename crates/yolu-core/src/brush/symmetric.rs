@@ -56,16 +56,48 @@ impl DabShape<'_> {
             if self.flip_y {
                 v = -v;
             }
-            return tip.sample(
+            let c = tip.sample(
                 (u / self.aspect_x + 1.0) * 0.5,
                 (v / self.aspect_y + 1.0) * 0.5,
             );
+            return if self.edge.density != 1.0 {
+                c * self.edge.density
+            } else {
+                c
+            };
         }
         let distance = if self.plain {
             (dx * dx + dy * dy).sqrt() / self.radius
         } else {
             (u * u + v * v).sqrt()
         };
+        if !self.edge.is_off() {
+            if self.plain {
+                return super::edge::cover64(
+                    distance,
+                    self.hardness,
+                    self.edge.band / self.radius,
+                    self.edge.density,
+                );
+            }
+            let minor = self.radius * self.roundness;
+            let g = super::edge::ellipse_gradient(u, v, distance, self.radius, minor);
+            let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+            let floored = super::edge::box_floor(
+                distance,
+                g,
+                mid,
+                (u * self.radius, v * minor),
+                (self.radius * mid, minor * mid),
+            );
+            return super::edge::cover64_floored(
+                distance,
+                floored,
+                self.hardness,
+                self.edge.band * g,
+                self.edge.density,
+            );
+        }
         if distance > 1.0 {
             return 0.0;
         }

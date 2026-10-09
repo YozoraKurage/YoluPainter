@@ -47,10 +47,14 @@ pub const TEXT_VERSION: i32 = 30;
 /// 手で選んだアイランドなし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
 /// version」で断る（形式と決めは docs/YLP_FORMAT.md）。この版の文書は版 27〜32 の中身も読み書きできる。
 pub const BAKE_PRIORITY_VERSION: i32 = 33;
+/// パスのブラシのアンチエイリアスの段（パスの `brush` の塊の `anti_alias`）を加えた版。段が なし でないパスのある文書だけがこの版になり、
+/// 0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// この版の文書は版 27〜33 の中身も読み書きできる。
+pub const ANTI_ALIAS_VERSION: i32 = 34;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
-/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）で、間の 31 は意味を
-/// 決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = BAKE_PRIORITY_VERSION;
+/// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
+/// `ANTI_ALIAS_VERSION`（34）で、間の 31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = ANTI_ALIAS_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -420,7 +424,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -430,6 +434,7 @@ fn is_known_version(version: i32) -> bool {
         || version == SEAMS_VERSION
         || version == TEXT_VERSION
         || version == BAKE_PRIORITY_VERSION
+        || version == ANTI_ALIAS_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -487,7 +492,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -1933,6 +1938,10 @@ fn path(
             "pressure_flow",
         ] {
             r.boolean(k)?;
+        }
+        if v >= ANTI_ALIAS_VERSION {
+            let level = r.byte("anti_alias")?;
+            check(level <= 3, "パスのブラシのアンチエイリアスの段が不正です")?;
         }
         Ok(())
     })?;

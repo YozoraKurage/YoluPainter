@@ -612,11 +612,11 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
 
 #[test]
 fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
-    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 5 を同じ形で確かめる）
+    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 6 を同じ形で確かめる）
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),
-        "yolupainter-brush 5\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
     )
     .unwrap();
     let mut s = AppState::new(64, 64);
@@ -628,7 +628,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     ));
     assert_eq!(
         std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
-        "yolupainter-brush 5\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
         "触らない"
     );
     std::fs::remove_dir_all(dir).unwrap();

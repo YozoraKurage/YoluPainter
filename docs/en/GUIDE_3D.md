@@ -38,7 +38,7 @@ The material values received from Unity appear as "Unity Values", and "Match Uni
 
 You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). Selections, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas.
 
-Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper & Pen (fade, tilt, rotation, speed), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
+Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Anti-aliasing (its band is measured in texture pixels), Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper & Pen (fade, tilt, rotation, speed), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
 
 - The tip shape is laid out on the screen and projected from the camera onto the surface (it is not laid flat along the surface).
 - Dabs are placed every spacing along the stroke length, as in 2D. However densely or sparsely the input points arrive, the stroke's density and the length of a fade stay the same. The spacing comes from the brush size converted to the screen at the depth of the surface where each stretch of the stroke starts.

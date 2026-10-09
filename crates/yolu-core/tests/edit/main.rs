@@ -8,6 +8,7 @@
 mod comp2d_support;
 
 mod adjust_kinds;
+mod anti_alias;
 mod batch;
 mod bundle_layout;
 mod channels;

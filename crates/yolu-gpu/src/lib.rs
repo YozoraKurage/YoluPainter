@@ -425,6 +425,12 @@ impl GpuPainter {
         dabs: &[Dab],
     ) -> Result<Vec<u8>, GpuError> {
         settings.validate()?;
+        // 縁のアンチエイリアス（帯・小さなダブの濃さ）は core のストロークだけが持つ。黙って今の式で描かない
+        if settings.anti_alias != yolu_core::AntiAlias::None {
+            return Err(error(
+                "ブラシのアンチエイリアスは GPU のプレビューでは描けない（core のストロークで描く）",
+            ));
+        }
         let count = u64::from(width) * u64::from(height);
         if width == 0 || height == 0 || count > u32::MAX as u64 || count * 4 != start.len() as u64 {
             return Err(error("ブラシの矩形と入力が不正"));

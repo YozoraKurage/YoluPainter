@@ -8,9 +8,10 @@ use std::sync::OnceLock;
 use yolu_core::LayerLocks;
 
 use crate::engine::{
-    AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushPreset, Channel, ChannelBlend,
-    ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush, DualBrushMode, LayerId,
-    LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8, Stroke, TextureMode,
+    AdjustmentSettings, AntiAlias, BlendMode, Brush, BrushEffect, BrushPreset, Channel,
+    ChannelBlend, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush,
+    DualBrushMode, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8,
+    Stroke, TextureMode,
 };
 use crate::lang::Lang;
 use crate::layerops::Xform;
@@ -237,6 +238,8 @@ pub enum BrushOp {
     DualTip(Option<&'static str>),
     DualMode(DualBrushMode),
     DualEnabled(bool),
+    /// 縁のアンチエイリアス（基本の値 `AppState::brush` に持つ）。
+    AntiAlias(AntiAlias),
 }
 
 /// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。
@@ -487,6 +490,16 @@ pub fn texture_mode_label(lang: Lang, mode: TextureMode) -> &'static str {
         TextureMode::ColorBurn => blend_label(lang, BlendMode::ColorBurn),
         TextureMode::LinearBurn => blend_label(lang, BlendMode::LinearBurn),
         TextureMode::HardMix => blend_label(lang, BlendMode::HardMix),
+    }
+}
+
+/// アンチエイリアスの段の名前。
+pub fn anti_alias_label(lang: Lang, level: AntiAlias) -> &'static str {
+    match level {
+        AntiAlias::None => lang.pick("なし", "None"),
+        AntiAlias::Weak => lang.pick("弱", "Weak"),
+        AntiAlias::Medium => lang.pick("中", "Medium"),
+        AntiAlias::Strong => lang.pick("強", "Strong"),
     }
 }
 
@@ -1194,6 +1207,10 @@ impl AppState {
     }
 
     fn apply_brush_op(&mut self, op: BrushOp) {
+        if let BrushOp::AntiAlias(level) = op {
+            self.brush.anti_alias = level;
+            return;
+        }
         let b = &mut self.m2.brush;
         match op {
             BrushOp::Effect(kind) => {
@@ -1288,6 +1305,8 @@ impl AppState {
                     d.mode = mode;
                 }
             }
+            // 基本の値なので先に当てた
+            BrushOp::AntiAlias(_) => {}
         }
     }
 

@@ -23,7 +23,10 @@ use crate::engine::{
     PressureResponse, PressureResponses, TipShape,
 };
 use crate::lang::Lang;
-use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
+use crate::m2::{
+    self, anti_alias_label, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind,
+    UiOp,
+};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, BrushState, Tool};
 use crate::ui::curve;
@@ -124,6 +127,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
     match category {
         Category::Shape => {
             app.brush.hardness = defaults.hardness;
+            app.brush.anti_alias = defaults.anti_alias;
             brush.tip = TipShape::default();
         }
         Category::Stroke => {
@@ -1746,6 +1750,21 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         hardness_on,
     ) {
         app.brush.hardness = v as f32;
+    }
+    // 縁のアンチエイリアス（丸い筆先の縁と、画像の筆先の小さなダブ。3D でも効く）
+    if let Some(b) = choice_row(
+        ui,
+        rows,
+        "alpha.anti_alias",
+        lang.pick("アンチエイリアス", "Anti-aliasing"),
+        anti_alias_label(lang, app.brush.anti_alias),
+        Some(lang.pick(
+            "縁のギザギザをならす強さ",
+            "How much the jagged edge is smoothed",
+        )),
+        true,
+    ) {
+        open_popup(app, ctx, Popup::AntiAlias, b, b.width());
     }
     let tip = &mut app.m2.brush.tip;
     if let Some(v) = percent_row(

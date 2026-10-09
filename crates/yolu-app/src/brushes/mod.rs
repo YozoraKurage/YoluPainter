@@ -743,6 +743,7 @@ impl AppState {
             pressure_size: base.pressure_size,
             pressure_opacity: base.pressure_opacity,
             pressure_flow: base.pressure_flow,
+            anti_alias: base.anti_alias,
         };
         let assist = self.m2.brush.assist;
         self.m2.brush = Brush {

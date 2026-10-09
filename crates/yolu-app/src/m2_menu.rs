@@ -3,12 +3,13 @@
 
 use crate::brushes::BrushAction;
 use crate::engine::{
-    Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection, TextureMode,
+    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection,
+    TextureMode,
 };
 use crate::lang::Lang;
 use crate::m2::{
-    self, channel_format, dual_mode_label, kind_name, new_channel_info, texture_mode_label,
-    tip_label, BrushOp, Edit, EffectKind, UiOp,
+    self, anti_alias_label, channel_format, dual_mode_label, kind_name, new_channel_info,
+    texture_mode_label, tip_label, BrushOp, Edit, EffectKind, UiOp,
 };
 use crate::state::{Action, AppState};
 use crate::subtool::SubToolAction;
@@ -94,6 +95,10 @@ pub enum Popup {
     Take,
     /// テキストのフォント（同梱・インストール済み・選んだフォントのファイル・ファイルから選ぶ）。
     TextFont,
+    /// ブラシの縁のアンチエイリアス（なし・弱・中・強）。
+    AntiAlias,
+    /// パスのブラシの縁のアンチエイリアス。
+    PathAntiAlias,
 }
 
 fn tips(
@@ -374,6 +379,16 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 })
                 .collect()
         }
+        Popup::AntiAlias => AntiAlias::ALL
+            .iter()
+            .map(|a| {
+                Entry::item(
+                    anti_alias_label(lang, *a),
+                    Action::M2Ui(UiOp::Brush(BrushOp::AntiAlias(*a))),
+                )
+                .radio(app.brush.anti_alias == *a)
+            })
+            .collect(),
         Popup::DualMode => {
             let current = app.m2.brush.dual.as_ref().map(|d| d.mode);
             DualBrushMode::ALL
@@ -419,6 +434,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::PathRibbonMode => crate::panels::path_props::ribbon_mode_entries(app),
         Popup::PathTip => crate::panels::path_props::tip_entries(app),
         Popup::PathPresets => crate::panels::path_props::preset_entries(app),
+        Popup::PathAntiAlias => crate::panels::path_props::anti_alias_entries(app),
         Popup::ChannelContext(channel) => {
             let user = !channel.is_standard();
             vec![

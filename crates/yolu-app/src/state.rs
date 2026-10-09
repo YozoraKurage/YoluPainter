@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
-use crate::engine::{BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
 use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
 use crate::m2::{Edit, LayerDrag, M2State, UiOp};
@@ -99,7 +99,7 @@ impl Tool {
     }
 }
 
-/// ブラシの設定（画面の値。Unity 版の BrushState と同じ既定値）。
+/// ブラシの設定（画面の値。アンチエイリアスのほかは Unity 版の BrushState と同じ既定値）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrushState {
     pub radius: f32,
@@ -110,6 +110,8 @@ pub struct BrushState {
     pub pressure_size: bool,
     pub pressure_opacity: bool,
     pub pressure_flow: bool,
+    /// 丸い筆先の縁のアンチエイリアス（core の既定は なし。アプリの既定は 中）。
+    pub anti_alias: AntiAlias,
 }
 
 impl Default for BrushState {
@@ -123,6 +125,7 @@ impl Default for BrushState {
             pressure_size: true,
             pressure_opacity: true,
             pressure_flow: false,
+            anti_alias: AntiAlias::Medium,
         }
     }
 }
@@ -148,6 +151,7 @@ impl BrushState {
             pressure_opacity: self.pressure_opacity,
             pressure_flow: self.pressure_flow,
             erase,
+            anti_alias: self.anti_alias,
         }
     }
 }

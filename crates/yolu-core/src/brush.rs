@@ -50,6 +50,7 @@
 
 pub mod curve;
 mod dynamics;
+pub(crate) mod edge;
 mod effects;
 mod mix;
 mod mix_stroke;
@@ -74,6 +75,8 @@ use glam::DVec2;
 use rayon::prelude::*;
 
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
+pub use edge::AntiAlias;
+pub(crate) use edge::{Edge, TexelMetric};
 pub use mix::{ColorMix, MixGround, MixMode};
 pub(crate) use plan::{DabPlan, StampControls};
 pub use presets::{builtin_presets, BrushPreset};
@@ -124,6 +127,8 @@ pub struct BrushSettings {
     pub pressure_flow: bool,
     /// 消しゴム（アルファを消す。色のアルファの割合だけ）。
     pub erase: bool,
+    /// 拡張（C# に無い）: 丸い筆先の縁のアンチエイリアスと、小さなダブの濃さ（[`AntiAlias`]）。既定は なし（今の式）。
+    pub anti_alias: AntiAlias,
 }
 
 impl Default for BrushSettings {
@@ -140,6 +145,7 @@ impl Default for BrushSettings {
             pressure_opacity: true,
             pressure_flow: false,
             erase: false,
+            anti_alias: AntiAlias::None,
         }
     }
 }
@@ -944,7 +950,7 @@ impl StrokeState {
             ) else {
                 continue;
             };
-            let shape = brush.dab_shape(&plan, &c);
+            let shape = brush.dab_shape(&plan, &c).with_edge(s.anti_alias);
             any |= self.dab(surface, &brush, &shape, changed)?;
         }
         Ok(any)
@@ -977,7 +983,10 @@ impl StrokeState {
     /// 2 つ目の筆先のダブ 1 つ（C# の DualDabAt）。丸い筆先も回転の式で測る（C# と同じ。角度 0 でも主の丸の近道とは丸めが違う）。
     fn dual_dab_at(&mut self, dual: &DualBrush, x: f64, y: f64) -> Result<(), CoreError> {
         let radius = dual.radius;
-        let extent = if dual.tip.is_none() {
+        let shape = plan::dual_shape(dual, x, y, radius, self.brush.base.anti_alias);
+        let extent = if !shape.edge.is_off() {
+            rows::dual_cover_shape(&shape).reach()
+        } else if dual.tip.is_none() {
             radius
         } else {
             radius * SQRT_2
@@ -986,7 +995,6 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(self.width - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(self.height - 1);
-        let shape = plan::dual_shape(dual, x, y, radius);
         if self.brush.symmetry.enabled() {
             // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
             return self.symmetric_dual_dab(&shape, extent);
@@ -1816,6 +1824,8 @@ struct DualShape<'a> {
     aspect_x: f64,
     aspect_y: f64,
     tip: Option<&'a BrushTip>,
+    /// 縁のアンチエイリアス（画素。主の筆先と同じ [`DabShape::with_edge`] の値）。
+    edge: Edge,
 }
 
 impl DualShape<'_> {
@@ -1825,6 +1835,26 @@ impl DualShape<'_> {
         let u = (self.cos * dx + self.sin * dy) / self.radius;
         let v = (-self.sin * dx + self.cos * dy) / (self.radius * self.roundness);
         match self.tip {
+            None if !self.edge.is_off() => {
+                let dist = (u * u + v * v).sqrt();
+                let minor = self.radius * self.roundness;
+                let g = edge::ellipse_gradient(u, v, dist, self.radius, minor);
+                let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+                let floored = edge::box_floor(
+                    dist,
+                    g,
+                    mid,
+                    (u * self.radius, v * minor),
+                    (self.radius * mid, minor * mid),
+                );
+                edge::cover64_floored(
+                    dist,
+                    floored,
+                    self.hardness,
+                    self.edge.band * g,
+                    self.edge.density,
+                )
+            }
             None => {
                 let dist = (u * u + v * v).sqrt();
                 if dist > 1.0 {
@@ -1837,10 +1867,17 @@ impl DualShape<'_> {
                 }
                 c
             }
-            Some(t) => t.sample(
-                (u / self.aspect_x + 1.0) * 0.5,
-                (v / self.aspect_y + 1.0) * 0.5,
-            ),
+            Some(t) => {
+                let c = t.sample(
+                    (u / self.aspect_x + 1.0) * 0.5,
+                    (v / self.aspect_y + 1.0) * 0.5,
+                );
+                if self.edge.density != 1.0 {
+                    c * self.edge.density
+                } else {
+                    c
+                }
+            }
         }
     }
 }
@@ -1877,6 +1914,8 @@ pub(crate) struct DabShape<'a> {
     pub flip_y: bool,
     pub texture: Option<&'a PaperTexture>,
     pub dual: Option<DualBrushMode>,
+    /// 縁のアンチエイリアス（帯の幅はダブの座標の単位。[`DabShape::with_edge`]。既定は今の式）。
+    pub edge: Edge,
 }
 
 /// ダブの覆いを、中心からのずれ（y は上向き）ごとに 1 つずつ測る形（[`DabShape::coverage_fn`]。2D の行の核と同じ f32 の式・同じ値を
@@ -1901,11 +1940,111 @@ impl<'a> DabShape<'a> {
     /// ダブが届く、中心からの距離（丸は半径、筆先の画像は回した四角の外接円の √2 × 半径）。2D のダブの外接の箱と、3D の面のダブが
     /// 投影の画素を集める画面の円は、この半径。
     pub(crate) fn reach(&self) -> f64 {
-        if self.tip.is_none() {
-            self.radius
-        } else {
-            self.radius * SQRT_2
+        if self.edge.is_off() {
+            return if self.tip.is_none() {
+                self.radius
+            } else {
+                self.radius * SQRT_2
+            };
         }
+        match self.tip {
+            // 真円は帯の外の端。潰した丸は、それと、覆いが半分になる楕円の外接の箱を帯の分だけ広げた箱の角までの、近い方（帯の式は
+            // 箱の外の距離で押さえるので、その外は 0）
+            None if self.plain || self.roundness >= 1.0 => self.radius * self.round_bounds().1,
+            None => {
+                let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+                let grow = (self.radius * (1.0 - self.hardness)).max(self.edge.band) * 0.5 + 1e-3;
+                let (eu, ev) = (
+                    self.radius * mid + grow,
+                    self.radius * self.roundness * mid + grow,
+                );
+                (self.radius * self.round_bounds().1).min((eu * eu + ev * ev).sqrt())
+            }
+            // 広げた筆先は、縦が横より長くなりうる
+            Some(_) => self.radius * self.roundness.max(1.0) * SQRT_2,
+        }
+    }
+
+    /// 丸の縁の帯の内の端・外の端（規格化した距離。潰した丸は、帯がいちばん広くなる短い軸の向きの値）。
+    pub(crate) fn round_bounds(&self) -> (f64, f64) {
+        if self.edge.is_off() {
+            return (self.hardness, 1.0);
+        }
+        let minor = self.radius * self.roundness.min(1.0);
+        edge::bounds(self.hardness, self.edge.band / minor)
+    }
+
+    /// アンチエイリアスの段 level の縁を付ける（2D。ダブの座標は描く先の画素）。丸は帯の幅と濃さ、画像の筆先は小さなダブの
+    /// 広げと濃さだけ（画像の補間は今のまま）。段がなしなら今の式のまま。
+    pub(crate) fn with_edge(self, level: AntiAlias) -> Self {
+        self.with_edge_in(level, &TexelMetric::IDENTITY)
+    }
+
+    /// [`DabShape::with_edge`] の、テクセル 1 つの枠での大きさ metric を渡す形（3D の面のダブ: 枠は画面の点、metric はダブの中心の値）。
+    pub(crate) fn with_edge_in(mut self, level: AntiAlias, metric: &TexelMetric) -> Self {
+        let w = level.band();
+        self.edge = Edge::OFF;
+        if w <= 0.0 || !metric.usable() {
+            return self;
+        }
+        let identity = *metric == TexelMetric::IDENTITY;
+        let (c, s) = (self.cos, self.sin);
+        match self.tip {
+            None => {
+                let (a, b) = (self.radius, self.radius * self.roundness);
+                // 軸の向きのテクセルの半径
+                let (ta, tb) = if identity {
+                    (a, b)
+                } else {
+                    (
+                        metric.texel_length(c * a, s * a),
+                        metric.texel_length(-s * b, c * b),
+                    )
+                };
+                let e = edge::band_and_density(w, self.hardness, ta, tb);
+                // 帯の半分より細い軸は帯の半分まで広げ（濃さで面積を保つ）、その形に帯を付ける
+                let (fa, fb) = edge::widen_axes(&e, self.hardness, ta, tb);
+                if fa != 1.0 || fb != 1.0 {
+                    self.radius *= fa;
+                    self.roundness = self.roundness * fb / fa;
+                }
+                // 帯はテクセルの幅。枠の単位へは、2D はそのまま、3D はテクセルがいちばん長く写る向きの長さを掛ける（ダブの中で
+                // 1 つの値。どの向きでも帯がテクセル 1 つ分より細くならない側）
+                self.edge = if identity {
+                    e
+                } else {
+                    Edge {
+                        band: e.band * metric.eigen().0.sqrt(),
+                        density: e.density,
+                    }
+                };
+            }
+            Some(_) => {
+                let hu = self.radius * self.aspect_x;
+                let hv = self.radius * self.roundness * self.aspect_y;
+                let (tu, tv) = if identity {
+                    (hu, hv)
+                } else {
+                    (
+                        metric.texel_length(c * hu, s * hu),
+                        metric.texel_length(-s * hv, c * hv),
+                    )
+                };
+                let e = edge::band_and_density(w, 1.0, tu, tv);
+                let rho = e.band * 0.5;
+                let fu = if tu < rho { rho / tu } else { 1.0 };
+                let fv = if tv < rho { rho / tv } else { 1.0 };
+                if fu != 1.0 || fv != 1.0 {
+                    self.radius *= fu;
+                    self.roundness = self.roundness * fv / fu;
+                }
+                self.edge = Edge {
+                    band: 0.0,
+                    density: e.density,
+                };
+            }
+        }
+        self
     }
 
     /// 覆いを 1 画素ずつ測る形を作る（丸・筆先の画像・回転・真円率・反転。2D の行の核と同じ値）。

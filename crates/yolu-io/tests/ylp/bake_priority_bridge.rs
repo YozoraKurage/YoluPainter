@@ -141,7 +141,7 @@ fn only_versions_with_a_meaning_are_read() {
         .unwrap()
         .to_bytes();
     assert!(NativeDocument::read(&bytes).is_ok());
-    for version in [31, 0, BAKE_PRIORITY_VERSION + 1, -1] {
+    for version in [31, 0, yolu_io::MAX_NATIVE_VERSION + 1, -1] {
         let mut bytes = bytes.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         let Err(e) = NativeDocument::read(&bytes) else {

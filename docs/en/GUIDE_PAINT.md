@@ -12,7 +12,7 @@ In Tool Properties in the Tools panel on the left, you can change Size, Opacity,
 
 | Category | Contents |
 |---|---|
-| Shape | The tip (round, a built-in image, or an imported image), hardness, roundness, angle, follow direction, flip |
+| Shape | The tip (round, a built-in image, or an imported image), hardness, anti-aliasing (None, Weak, Medium, Strong; smooths the jagged pixels of the edge), roundness, angle, follow direction, flip |
 | Stroke | Size, spacing, flow, opacity, stabilizer, curve. The 3D settings are in [GUIDE_3D.md](GUIDE_3D.md) |
 | Pen Pressure | For each of size, opacity, flow and hardness: whether pressure is used, its minimum, and its curve |
 | Taper & Pen | Taper, fade, pen tilt and rotation, speed |

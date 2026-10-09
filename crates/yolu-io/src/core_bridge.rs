@@ -4,9 +4,9 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION,
-    MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
-    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION,
+    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
+    PROCEDURAL_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -23,8 +23,8 @@ use yolu_core::mesh_maps::{IdColorAssignments, MeshOverlapPriority, MeshOverlapR
 use yolu_core::paths;
 use yolu_core::text::{TextAlign, TextFont, TextSettings};
 use yolu_core::{
-    AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
-    BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
+    AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, AntiAlias, BalanceRange,
+    BlendMode, BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
     ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
     FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks,
     LayerPath, NormalSettings, NormalYDirection, Posterize, Rgba8, Threshold, TileCoord,
@@ -468,7 +468,26 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
     .map_err(|e| Error::InvalidData(e.to_string()))
 }
 
-/// 文書の正本の版（使う機能で決まる）: 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
+/// パスのブラシにアンチエイリアスの段（なし でない）を持つパスがあるか（あれば版 34）。
+fn uses_anti_aliased_paths(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.path()
+            .into_iter()
+            .chain(l.paths().iter().map(|e| &e.path))
+            .any(|p| path_brush(p).anti_alias != AntiAlias::None)
+    })
+}
+
+/// パスのブラシの設定。
+fn path_brush(path: &LayerPath) -> BrushSettings {
+    match path {
+        LayerPath::Surface(p) => p.brush.0,
+        LayerPath::Canvas(p) => p.brush.0,
+    }
+}
+
+/// 文書の正本の版（使う機能で決まる）: パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
+/// 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
 /// レイヤーのフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
 /// テキストレイヤーがあれば 30（版 27〜29 の中身も読み書きできる）、
 /// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
@@ -478,7 +497,9 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if !doc.bake_priority().is_default() {
+    if uses_anti_aliased_paths(doc) {
+        ANTI_ALIAS_VERSION
+    } else if !doc.bake_priority().is_default() {
         BAKE_PRIORITY_VERSION
     } else if !doc.filter_seams() {
         SEAMS_VERSION
@@ -570,6 +591,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
         text: version >= TEXT_VERSION,
+        anti_alias: version >= ANTI_ALIAS_VERSION,
     };
     w.value(b"YLID")?;
     w.int(assigned.colors().len() as i32)?;
@@ -587,6 +609,7 @@ pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
         text: version >= TEXT_VERSION,
+        anti_alias: version >= ANTI_ALIAS_VERSION,
     };
     w.raw(b"DOTPAINT")?;
     w.int(version)?;
@@ -603,6 +626,7 @@ pub(crate) fn write_layer_to(
         mixing: version >= MIXING_VERSION,
         points: version >= POINT_GRADIENT_VERSION,
         text: version >= TEXT_VERSION,
+        anti_alias: version >= ANTI_ALIAS_VERSION,
     };
     write_layer(&mut w, layer)
 }
@@ -1161,6 +1185,14 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
         pressure_size: flag("pressure_size")?,
         pressure_opacity: flag("pressure_opacity")?,
         pressure_flow: flag("pressure_flow")?,
+        // 版 34 から。前の版は なし（今の式）
+        anti_alias: if version >= ANTI_ALIAS_VERSION {
+            AntiAlias::from_index(f.byte(&format!("{p}.brush.anti_alias"))?).ok_or_else(|| {
+                Error::InvalidData("パスのブラシのアンチエイリアスの段が不正です".into())
+            })?
+        } else {
+            AntiAlias::None
+        },
     });
     let count = f.int(&format!("{p}.point_count"))?;
     let material = if version >= 18 {
@@ -1523,6 +1555,9 @@ fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
         brush.pressure_flow,
     ] {
         w.boolean(v)?;
+    }
+    if w.anti_alias {
+        w.byte(brush.anti_alias.index())?;
     }
     match path {
         LayerPath::Surface(p) => {
@@ -2108,6 +2143,8 @@ struct Out<'s> {
     points: bool,
     /// 版 30 の文字の値を書けるか。
     text: bool,
+    /// 版 34 のパスのブラシのアンチエイリアスの段を書くか。
+    anti_alias: bool,
 }
 impl Out<'_> {
     fn raw(&mut self, b: &[u8]) -> Result<()> {

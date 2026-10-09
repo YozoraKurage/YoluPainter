@@ -65,8 +65,8 @@ use super::unity::{dot, fmax, magnitude, sqr_magnitude, v2_magnitude as magnitud
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::random::NetRandom;
 use crate::brush::{
-    combine_dual, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, PendingDab, ShapeCoverage,
-    StampControls, SurfaceDabLook, DUAL_STREAM,
+    combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, PendingDab,
+    ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, DUAL_STREAM,
 };
 use crate::{
     Brush, BrushPixel, BrushSettings, CoreError, Document, DualBrushMode, MixMode,
@@ -316,9 +316,9 @@ impl ScreenCover for DabCover<'_> {
         }
     }
     #[inline]
-    fn cover(&self, dx: f64, dy: f64, x: u16, y: u16) -> f32 {
+    fn cover(&self, dx: f64, dy: f64, x: u16, y: u16, metric: [f32; 3]) -> f32 {
         let c = match &self.form {
-            CoverForm::Round(r) => r.cover(dx, dy, x, y),
+            CoverForm::Round(r) => r.cover(dx, dy, x, y, metric),
             // 形は y を上向きに測る（2D の文書の画素と同じ向き）
             CoverForm::Shaped(s, _) => s.coverage(dx as f32, (-dy) as f32),
         };
@@ -353,6 +353,10 @@ pub struct SurfaceStroke {
     /// 筆圧を掛ける前のモデルの単位の半径。
     world_radius: f32,
     hardness: f32,
+    /// 丸い筆先の縁のアンチエイリアス（[`crate::BrushSettings::anti_alias`]）と、直前に面に当たったダブの中心のテクセルの画面の
+    /// 大きさ（中心が面に無いダブの見積もりに使う）。
+    anti_alias: AntiAlias,
+    last_metric: Option<TexelMetric>,
     spacing: f32,
     pressure_size: bool,
     /// 筆圧の応え（ストロークのブラシと同じもの）。大きさは、切っていない・応えが既定（筆圧そのもの）のとき None。硬さは切っているとき
@@ -558,6 +562,8 @@ impl SurfaceStroke {
             memory_override: options.projection_memory,
             world_radius,
             hardness: brush.hardness as f32,
+            anti_alias: brush.anti_alias,
+            last_metric: None,
             spacing: brush.spacing as f32,
             pressure_size: brush.pressure_size,
             size_response,
@@ -1284,16 +1290,39 @@ impl SurfaceStroke {
                 scale * self.world_radius,
                 self.projection,
             ) {
-                Ok(p) => self.projector = Some(p),
+                // テクセルの画面の大きさは、アンチエイリアスの段があるストロークだけが持つ（なし は今と同じ大きさ・予算）
+                Ok(p) => {
+                    self.projector = Some(p.with_texel_metrics(self.anti_alias != AntiAlias::None))
+                }
                 Err(why) => return (SurfaceDabResult::default().reject(why), hit),
             }
         }
+        // アンチエイリアスの帯の見積もりと画像の筆先の小さなダブ: ダブの中心のテクセルの画面の大きさ（中心が面に無ければ直前の値）
+        let metric = if self.anti_alias == AntiAlias::None {
+            None
+        } else {
+            let at_hit = hit.and_then(|h| self.projector.as_ref().and_then(|p| p.metric_at(&h)));
+            if at_hit.is_some() {
+                self.last_metric = at_hit;
+            }
+            at_hit.or(self.last_metric)
+        };
         let cover = DabCover {
             form: match form {
-                Form::Round { hardness } => {
-                    CoverForm::Round(RoundCover::new(screen_radius, *hardness))
+                Form::Round { hardness } => CoverForm::Round(
+                    RoundCover::new(screen_radius, *hardness)
+                        .with_anti_alias(self.anti_alias, metric),
+                ),
+                Form::Shaped(shape) => {
+                    // 形は y を上向きに測るので、画面（y は下向き）の値の xy の符号を反す
+                    let shape = match metric {
+                        Some(m) => {
+                            shape.with_edge_in(self.anti_alias, &TexelMetric { xy: -m.xy, ..m })
+                        }
+                        None => *shape,
+                    };
+                    CoverForm::Shaped(shape.coverage_fn(), shape.reach())
                 }
-                Form::Shaped(shape) => CoverForm::Shaped(shape.coverage_fn(), shape.reach()),
             },
             dual,
         };
@@ -1356,32 +1385,55 @@ impl SurfaceStroke {
                 let dab = if sym.ignore_visibility {
                     // 見えない面にも塗る写しは、写しの点のまわりの球の中の面（カメラによらない足跡）
                     match (&cover.form, cover.dual) {
-                        (CoverForm::Round(round), None) => self.geometry.build_surface_dabs(
-                            &found,
-                            radius,
-                            self.width,
-                            self.height,
-                            self.view.position,
-                            round.hardness(),
-                            &self.budget,
-                            None,
-                            true,
-                        ),
+                        (CoverForm::Round(round), None) => {
+                            self.geometry.build_surface_dabs_anti_aliased(
+                                &found,
+                                radius,
+                                self.width,
+                                self.height,
+                                self.view.position,
+                                round.hardness(),
+                                self.anti_alias,
+                                &self.budget,
+                                None,
+                                true,
+                            )
+                        }
                         // 形のあるダブ・デュアルブラシ: 足跡のテクセルの点を元の側へ戻して元のカメラの画面へ写し、元のダブの形で読む
                         // （鏡映は左右が、放射状は向きが、写しに合わせて変わる）。丸は今までどおり球の中の距離で
                         (form, _) => {
+                            // 丸の縁のアンチエイリアスは、写しの点の三角形のテクセルの大きさで（向きによらない帯）
+                            let sphere = match form {
+                                CoverForm::Round(round) => super::dab::SphereEdge::new(
+                                    &self.geometry,
+                                    &found,
+                                    radius,
+                                    round.hardness(),
+                                    self.anti_alias,
+                                    self.width,
+                                    self.height,
+                                ),
+                                CoverForm::Shaped(..) => None,
+                            };
                             let reach = match form {
-                                CoverForm::Round(_) => radius,
+                                CoverForm::Round(_) => {
+                                    radius * sphere.map_or(1.0, |e| e.outer as f32)
+                                }
                                 CoverForm::Shaped(_, reach) => (*reach / scale as f64) as f32,
                             };
                             let view = self.view;
                             let center = found.position;
                             let cover_at = |position: Vec3, x: i32, y: i32| -> f32 {
                                 let c = match form {
-                                    CoverForm::Round(round) => coverage(
-                                        magnitude(position - center) / radius,
-                                        round.hardness(),
-                                    ),
+                                    CoverForm::Round(round) => match &sphere {
+                                        Some(e) => e.cover_at_hit(
+                                            (magnitude(position - center) / radius) as f64,
+                                        ),
+                                        None => coverage(
+                                            magnitude(position - center) / radius,
+                                            round.hardness(),
+                                        ),
+                                    },
                                     CoverForm::Shaped(shape, _) => {
                                         let back = transform.inverse_point(position.as_dvec3());
                                         match view.to_screen(back.as_vec3()) {

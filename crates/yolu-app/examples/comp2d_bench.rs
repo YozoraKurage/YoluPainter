@@ -81,6 +81,7 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
                 pressure_opacity: false,
                 pressure_flow: false,
                 erase: false,
+                anti_alias: yolu_core::AntiAlias::None,
             };
             let mut s = d.begin_stroke(id, &brush).unwrap();
             let (x, y) = (rng.below(size as u64) as f64, rng.below(size as u64) as f64);
@@ -186,6 +187,7 @@ fn dense(size: u32, layers: usize) -> (Document, LayerId, LayerId) {
             pressure_opacity: false,
             pressure_flow: false,
             erase: false,
+            anti_alias: yolu_core::AntiAlias::None,
         };
         let mut s = d.begin_stroke(id, &brush).unwrap();
         let step = 40.0;
@@ -532,6 +534,7 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
         pressure_opacity: false,
         pressure_flow: false,
         erase: false,
+        anti_alias: yolu_core::AntiAlias::None,
     };
     let mut frames = Vec::new();
     let mut stroke_ms = Vec::new();
@@ -951,6 +954,7 @@ fn scene_hash(doc: &mut Document, layer: LayerId) {
             pressure_opacity: false,
             pressure_flow: false,
             erase: false,
+            anti_alias: yolu_core::AntiAlias::None,
         };
         let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
         for i in 0..60 {

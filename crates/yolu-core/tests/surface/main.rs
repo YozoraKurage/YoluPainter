@@ -7,6 +7,7 @@
 #[path = "../rayon_support/mod.rs"]
 mod rayon_support;
 
+mod anti_alias;
 mod brush_sources;
 mod material;
 mod mesh_maps;

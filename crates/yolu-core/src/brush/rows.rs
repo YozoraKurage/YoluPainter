@@ -418,7 +418,7 @@ pub(super) fn cost_per_pixel(
     if paint.effect != EffectKind::Paint || paint.tip_colors {
         return 14;
     }
-    let mut cost = if s.tip.is_some() || s.hardness < 1.0 {
+    let mut cost = if s.tip.is_some() || s.hardness < 1.0 || !s.edge.is_off() {
         3
     } else {
         1
@@ -559,6 +559,32 @@ pub(super) struct Shape32<'a> {
     flip_x: bool,
     flip_y: bool,
     tip: Option<&'a BrushTip>,
+    /// 丸の縁のアンチエイリアス（None は今の式）。
+    aa: Option<Aa32>,
+    /// 画像の筆先の小さなダブの濃さ（1 は掛けない）。
+    density: f32,
+}
+
+/// 丸の縁のアンチエイリアスの f32 の値（[`super::edge`] の式。ダブで 1 つ）。
+#[derive(Clone, Copy)]
+struct Aa32 {
+    /// 帯の幅（画素）。
+    band: f32,
+    /// 1 − 硬さ（ぼかしの幅、規格化した単位）と、今の式で覆いが半分になる距離。
+    soft: f32,
+    mid: f32,
+    density: f32,
+    /// 帯がぼかしの幅以下の画素は今の式にする（濃さ 1 のダブ）。
+    exact_soft: bool,
+    /// 真円の帯（規格化した単位）と、帯の幅・外の端（ダブで 1 つ）。
+    plain_band: f32,
+    plain_width: f32,
+    plain_outer: f32,
+    /// 潰した丸の、中心での勾配（規格化した単位 / 画素。短い軸の向き）。
+    max_gradient: f32,
+    /// 潰した丸の、覆いが半分になる楕円の外接の箱の半分の幅（画素。回した座標の u・v の向き。帯の式の距離を下から押さえる）。
+    box_u: f32,
+    box_v: f32,
 }
 
 impl<'a> Shape32<'a> {
@@ -567,7 +593,7 @@ impl<'a> Shape32<'a> {
         let hardness = s.hardness as f32;
         let squash = (s.radius * s.roundness) as f32;
         let (r, h, q) = (f64::from(radius), f64::from(hardness), f64::from(squash));
-        let (inside, outside) = if s.plain {
+        let (mut inside, mut outside) = if s.plain {
             (
                 h * r * (h * r) * (1.0 - ROUND_MARGIN),
                 r * r * (1.0 + ROUND_MARGIN),
@@ -575,6 +601,52 @@ impl<'a> Shape32<'a> {
         } else {
             (h * h * (1.0 - ROUND_MARGIN), 1.0 + ROUND_MARGIN)
         };
+        let mut aa = None;
+        let mut density = 1.0f32;
+        if !s.edge.is_off() {
+            match s.tip {
+                Some(_) => density = s.edge.density as f32,
+                None => {
+                    let soft = 1.0 - s.hardness;
+                    let band = s.edge.band;
+                    let plain_band = band / s.radius;
+                    let max_gradient = 1.0 / (s.radius * s.roundness);
+                    // 帯がいちばん広い向きでもぼかしの幅以下で、濃さ 1 のダブは今の式のまま
+                    if s.edge.density != 1.0 || band * max_gradient > soft {
+                        let (inner, outer) = s.round_bounds();
+                        let (inner2, outer2) = (
+                            inner * inner * (1.0 - ROUND_MARGIN),
+                            outer * outer * (1.0 + ROUND_MARGIN),
+                        );
+                        (inside, outside) = if s.plain {
+                            (
+                                inner2 * (s.radius * s.radius),
+                                outer2 * (s.radius * s.radius),
+                            )
+                        } else {
+                            (inner2, outer2)
+                        };
+                        let width = if plain_band > soft { plain_band } else { soft };
+                        let mid = 1.0 - soft * 0.5;
+                        let half = plain_band * 0.5;
+                        let m = if half > mid { half } else { mid };
+                        aa = Some(Aa32 {
+                            band: band as f32,
+                            soft: soft as f32,
+                            mid: mid as f32,
+                            density: s.edge.density as f32,
+                            exact_soft: s.edge.density == 1.0,
+                            plain_band: plain_band as f32,
+                            plain_width: width as f32,
+                            plain_outer: (m + width * 0.5) as f32,
+                            max_gradient: max_gradient as f32,
+                            box_u: (s.radius * mid) as f32,
+                            box_v: (s.radius * s.roundness * mid) as f32,
+                        });
+                    }
+                }
+            }
+        }
         Shape32 {
             radius,
             hardness,
@@ -593,6 +665,8 @@ impl<'a> Shape32<'a> {
             flip_x: s.flip_x,
             flip_y: s.flip_y,
             tip: s.tip,
+            aa,
+            density,
         }
     }
 }
@@ -912,10 +986,13 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
         let (omfx, omfy) = (V::sub(one, fx), V::sub(one, fy));
         let top = V::add(V::mul(a, omfx), V::mul(b, fx));
         let bottom = V::add(V::mul(cc, omfx), V::mul(d, fx));
-        let value = V::div(
+        let mut value = V::div(
             V::add(V::mul(top, omfy), V::mul(bottom, fy)),
             V::splat(255.0),
         );
+        if c.density != 1.0 {
+            value = V::mul(value, V::splat(c.density));
+        }
         V::select(outside, zero, value)
     }
 }
@@ -941,10 +1018,43 @@ unsafe fn round_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F) -> V::F {
         };
         let inside = V::lt(approx, V::splat(c.inside));
         let outside = V::gt(approx, V::splat(c.outside));
-        let sure = V::select(inside, one, zero);
+        let full = match &c.aa {
+            Some(aa) => V::splat(aa.density),
+            None => one,
+        };
+        let sure = V::select(inside, full, zero);
         let decided = V::or(inside, outside);
         if V::all(decided) {
             return sure;
+        }
+        if let Some(aa) = &c.aa {
+            let (d, floored, band) = if c.plain {
+                let d = V::div(V::sqrt(q), V::splat(c.radius));
+                (d, d, V::splat(aa.plain_band))
+            } else {
+                let u = V::div(ru, V::splat(c.radius));
+                let v = V::div(rv, V::splat(c.squash));
+                let uu = V::mul(u, u);
+                let vv = V::mul(v, v);
+                let d = V::sqrt(V::add(uu, vv));
+                // 規格化した距離の勾配（画素あたり）: √(u²/r² + v²/q²) / d。中心は短い軸の向きの値
+                let g = V::div(
+                    V::sqrt(V::add(
+                        V::mul(uu, V::splat(c.inv_radius2)),
+                        V::mul(vv, V::splat(c.inv_squash2)),
+                    )),
+                    d,
+                );
+                let g = V::select(V::gt(d, zero), g, V::splat(aa.max_gradient));
+                // 帯の式の距離を、半分の楕円の外接の箱の外の距離で下から押さえる（細い楕円の斜めで帯が外へ伸びない）
+                let du = V::sub(V::abs(ru), V::splat(aa.box_u));
+                let dv = V::sub(V::abs(rv), V::splat(aa.box_v));
+                let outside = V::max(V::max(du, dv), zero);
+                let floored = V::max(d, V::add(V::splat(aa.mid), V::mul(g, outside)));
+                (d, floored, V::mul(V::splat(aa.band), g))
+            };
+            let exact = aa_block::<V>(c, aa, d, floored, band);
+            return V::select(decided, sure, exact);
         }
         let d = if c.plain {
             V::div(V::sqrt(q), V::splat(c.radius))
@@ -964,6 +1074,54 @@ unsafe fn round_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F) -> V::F {
             V::select(V::gt(d, V::splat(c.hardness)), smooth, one),
         );
         V::select(decided, sure, exact)
+    }
+}
+
+/// 丸の縁のアンチエイリアスの覆い（[`super::edge::cover64`] の f32 のレーンの版）: 規格化した距離 d、帯 band（規格化した単位）。
+/// 帯の幅は max(ぼかしの幅, 帯)、帯の中心は今の式で覆いが半分になる距離（帯の半分より近ければ帯の半分）。濃さ 1 のダブで帯が
+/// ぼかしの幅以下の画素は今の式。
+#[inline(always)]
+unsafe fn aa_block<V: Slice32>(
+    c: &Shape32<'_>,
+    aa: &Aa32,
+    d: V::F,
+    floored: V::F,
+    band: V::F,
+) -> V::F {
+    unsafe {
+        let (zero, one) = (V::splat(0.0), V::splat(1.0));
+        let soft = V::splat(aa.soft);
+        let (width, outer) = if c.plain {
+            (V::splat(aa.plain_width), V::splat(aa.plain_outer))
+        } else {
+            let width = V::max(soft, band);
+            let m = V::max(V::splat(aa.mid), V::mul(band, V::splat(0.5)));
+            (width, V::add(m, V::mul(width, V::splat(0.5))))
+        };
+        let t = V::min(V::div(V::sub(outer, floored), width), one);
+        let smooth = V::mul(
+            V::mul(
+                V::mul(t, t),
+                V::sub(V::splat(3.0), V::mul(V::splat(2.0), t)),
+            ),
+            V::splat(aa.density),
+        );
+        let cover = V::select(V::ge(floored, outer), zero, smooth);
+        if !aa.exact_soft {
+            return cover;
+        }
+        // 帯がぼかしの幅以下の画素は今の式
+        let t = V::div(V::sub(one, d), V::splat(c.inner));
+        let old = V::mul(
+            V::mul(t, t),
+            V::sub(V::splat(3.0), V::mul(V::splat(2.0), t)),
+        );
+        let old = V::select(
+            V::gt(d, one),
+            zero,
+            V::select(V::gt(d, V::splat(c.hardness)), old, one),
+        );
+        V::select(V::gt(band, soft), cover, old)
     }
 }
 
@@ -1028,7 +1186,11 @@ pub(super) unsafe fn cover_row<V: Slice32>(
         // 丸の外の画素は d > 1 で塗らない。行が円（半径 radius。潰した丸は半径が小さいだけ）にかかる区間。回転・潰しのときは外接の
         // 半径 radius の円で足りる
         None => {
-            let reach = s.radius * s.roundness.max(1.0) + 1.5;
+            let reach = if s.edge.is_off() {
+                s.radius * s.roundness.max(1.0)
+            } else {
+                s.reach()
+            } + 1.5;
             if dy64.abs() > reach {
                 return (0, 0);
             }
@@ -1611,6 +1773,7 @@ pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
         flip_y: false,
         texture: None,
         dual: None,
+        edge: shape.edge,
     }
 }
 

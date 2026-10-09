@@ -91,6 +91,7 @@ fn brush(rng: &mut Rng, radius: f64, opacity: f64) -> BrushSettings {
         pressure_opacity: false,
         pressure_flow: false,
         erase: false,
+        anti_alias: yolu_core::AntiAlias::None,
     }
 }
 

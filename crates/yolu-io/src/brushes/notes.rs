@@ -299,6 +299,8 @@ pub enum SutMapped {
     AngleRandom,
     /// 色の混ぜ。
     ColorMixing,
+    /// アンチエイリアス。
+    AntiAliasing,
 }
 
 impl SutMapped {
@@ -314,6 +316,7 @@ impl SutMapped {
             Self::TipAngle => ("筆先の角度", "tip angle"),
             Self::AngleRandom => ("角度のランダム", "angle jitter"),
             Self::ColorMixing => ("色の混ぜ", "color mixing"),
+            Self::AntiAliasing => ("アンチエイリアス", "anti-aliasing"),
         }
     }
 }
@@ -389,6 +392,8 @@ pub enum SutNote {
     BrushesCapped(usize),
     /// 素材が多く、上限を超えた分は読まなかった（ファイル全体）。
     MaterialsCapped,
+    /// アンチエイリアスの値（`AntiAlias`）が 0〜3 の整数でなく、写さなかった（なし のまま）。
+    AntiAliasing(f64),
 }
 
 impl SutNote {
@@ -506,6 +511,10 @@ impl SutNote {
             Self::MaterialsCapped => (
                 "素材が多く、上限を超えた分は読まなかった".into(),
                 "There are more materials than the limit; the rest were not read.".into(),
+            ),
+            Self::AntiAliasing(v) => (
+                format!("アンチエイリアスの値 {v} は読めないので、なしにした"),
+                format!("The anti-aliasing value {v} is not understood; none is used."),
             ),
         }
     }

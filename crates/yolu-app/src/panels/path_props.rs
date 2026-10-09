@@ -1043,6 +1043,74 @@ pub fn ribbon_mode_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
+/// パスのブラシの縁のアンチエイリアスの箱（押されたら箱の矩形）。名前と値が 1 行に収まらない狭い欄では、名前を上の行に置く
+/// （値を詰めない）。
+fn anti_alias_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    lang: Lang,
+    level: yolu_core::AntiAlias,
+    editable: bool,
+) -> Option<Rect> {
+    let label = lang.pick("アンチエイリアス", "Anti-aliasing");
+    let value = crate::m2::anti_alias_label(lang, level);
+    let tip = lang.pick(
+        "縁のギザギザをならす強さ",
+        "How much the jagged edge is smoothed",
+    );
+    let p = ui.painter();
+    let needed =
+        w::text_width(p, label, t::LABEL) + 10.0 + w::text_width(p, value, t::LABEL) + 30.0;
+    if rows.width() >= needed {
+        return choice_row(
+            ui,
+            rows,
+            "path.anti_alias",
+            label,
+            value,
+            Some(tip),
+            editable,
+        );
+    }
+    let head = rows.row(16.0, 1.0);
+    w::text(
+        ui.painter(),
+        head,
+        label,
+        t::LABEL.with_color(if editable { t::TEXT } else { t::TEXT_DISABLED }),
+        w::Align::Left,
+    );
+    let r = rows.row(t::ROW_HEIGHT, 4.0);
+    let (response, b) = w::dropdown(
+        ui,
+        r,
+        "path.anti_alias",
+        None,
+        value,
+        Some(tip),
+        editable,
+        0.0,
+    );
+    let name = format!("{label}: {value}");
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, editable, &name));
+    response.clicked().then_some(b)
+}
+
+/// パスのブラシの縁のアンチエイリアスの選び。
+pub fn anti_alias_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let current = brush_view(app).anti_alias;
+    yolu_core::AntiAlias::ALL
+        .into_iter()
+        .map(|level| {
+            Entry::item(
+                crate::m2::anti_alias_label(app.lang, level),
+                Action::Path(PathAction::Brush(BrushEdit::AntiAlias(level))),
+            )
+            .radio(level == current)
+        })
+        .collect()
+}
+
 /// 種類の行（種類・リボンの画像と並べ方と間隔・指先の強さ）。
 fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
     let lang = app.lang;
@@ -1326,6 +1394,7 @@ struct BrushView {
     /// パスのブラシか（スライダーは離したとき 1 回で描き直す）。
     deferred: bool,
     editable: bool,
+    anti_alias: yolu_core::AntiAlias,
 }
 
 fn brush_view(app: &AppState) -> BrushView {
@@ -1361,6 +1430,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 surface: !path.is_canvas(),
                 deferred: true,
                 editable: free && !other && diameter.is_some(),
+                anti_alias: b.anti_alias,
             }
         }
         None => {
@@ -1377,6 +1447,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 surface: false,
                 deferred: false,
                 editable: free,
+                anti_alias: b.anti_alias,
             }
         }
     }
@@ -1466,6 +1537,11 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             None,
         ) {
             edit_brush(app, BrushEdit::Hardness(x));
+        }
+        // 縁のアンチエイリアス（丸い筆先の縁）
+        let ctx = ui.ctx().clone();
+        if let Some(r) = anti_alias_row(ui, rows, lang, v.anti_alias, v.editable) {
+            open_popup(app, &ctx, Popup::PathAntiAlias, r, r.width());
         }
     }
     if stroke_like {

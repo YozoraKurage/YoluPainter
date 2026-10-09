@@ -206,6 +206,7 @@ impl Brush {
             flip_y: self.tip.flip_y,
             texture: self.texture.as_ref().filter(|t| t.depth > 0.0),
             dual: self.dual.as_ref().map(|d| d.mode),
+            edge: Edge::OFF,
         }
         .with_aspect()
     }
@@ -240,12 +241,18 @@ impl StrokeAssist {
 impl DualBrush {
     /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）。
     pub(crate) fn dab_shape(&self, x: f64, y: f64, radius: f64) -> DabShape<'_> {
-        rows::dual_cover_shape(&dual_shape(self, x, y, radius))
+        rows::dual_cover_shape(&dual_shape(self, x, y, radius, AntiAlias::None))
     }
 }
 
-/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。
-pub(super) fn dual_shape(dual: &DualBrush, x: f64, y: f64, radius: f64) -> DualShape<'_> {
+/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。level はアンチエイリアスの段（2D。ダブの座標は描く先の画素）。
+pub(super) fn dual_shape(
+    dual: &DualBrush,
+    x: f64,
+    y: f64,
+    radius: f64,
+    level: AntiAlias,
+) -> DualShape<'_> {
     let angle = dual.angle * std::f64::consts::PI / 180.0;
     let (cos, sin) = cos_sin(angle);
     let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
@@ -256,7 +263,7 @@ pub(super) fn dual_shape(dual: &DualBrush, x: f64, y: f64, radius: f64) -> DualS
             aspect_x = t.width() as f64 / t.height() as f64;
         }
     }
-    DualShape {
+    let mut shape = DualShape {
         x,
         y,
         radius,
@@ -267,5 +274,14 @@ pub(super) fn dual_shape(dual: &DualBrush, x: f64, y: f64, radius: f64) -> DualS
         aspect_x,
         aspect_y,
         tip: dual.tip.as_deref(),
+        edge: Edge::OFF,
+    };
+    if level != AntiAlias::None {
+        // 縁と小さなダブの広げは主の筆先と同じ式（画像の筆先は半径・真円率を広げる）
+        let cover = rows::dual_cover_shape(&shape).with_edge(level);
+        shape.radius = cover.radius;
+        shape.roundness = cover.roundness;
+        shape.edge = cover.edge;
     }
+    shape
 }

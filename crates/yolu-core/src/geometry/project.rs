@@ -34,7 +34,9 @@ use super::dab::{DabRefusal, SurfaceDabResult, SurfacePixel};
 use super::query::coverage;
 use super::symmetry::{MirrorPlane, RadialSymmetry};
 use super::unity::{clamp01, finite2};
-use super::SurfaceGeometry;
+use super::{SurfaceGeometry, SurfaceHit};
+use crate::brush::edge::{self, TexelMetric};
+use crate::brush::AntiAlias;
 
 /// 投影の塗りの切り替え（ストロークの始めに固める）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -105,16 +107,29 @@ const BUCKET_OVERHEAD: u64 = 64;
 pub(crate) trait ScreenCover: Sync {
     /// 区画を選ぶ円の半径（画面の単位）。この円の外の投影の画素の覆いは 0 でなければならない。
     fn reach(&self) -> f64;
-    /// 中心からの画面のずれ (dx, dy)（y は下向き）の所にある、テクセル (x, y) の覆い（0 以下は塗らない）。
-    fn cover(&self, dx: f64, dy: f64, x: u16, y: u16) -> f32;
+    /// 中心からの画面のずれ (dx, dy)（y は下向き）の所にある、テクセル (x, y) の覆い（0 以下は塗らない）。`metric` はそのテクセルの
+    /// 1 つ分が画面でどれだけか（[`TexelMetric`] の xx・xy・yy。y は下向き）。
+    fn cover(&self, dx: f64, dy: f64, x: u16, y: u16, metric: [f32; 3]) -> f32;
 }
 
-/// 丸い筆先（3D のストロークの今までの式: 中心からの距離を半径で割った値の硬さの smoothstep。円の上と外は 0）。
+/// 丸い筆先（3D のストロークの今までの式: 中心からの距離を半径で割った値の硬さの smoothstep。円の上と外は 0）。アンチエイリアスの
+/// 段があれば、縁の帯（テクセル）を投影の画素ごとのテクセルの画面の大きさで画面の距離へ直す（[`crate::brush::AntiAlias`]）。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RoundCover {
     radius: f64,
     radius2: f64,
     hardness: f32,
+    aa: Option<RoundAa>,
+}
+
+/// 丸い筆先のアンチエイリアスの、ダブで 1 つの値。
+#[derive(Clone, Copy, Debug)]
+struct RoundAa {
+    /// 段の帯の幅（テクセル）。
+    band: f64,
+    /// 届く半径（画面）と、その中に収まる帯の上限（規格化した距離の単位）。
+    reach: f64,
+    cap: f64,
 }
 
 impl RoundCover {
@@ -128,17 +143,78 @@ impl RoundCover {
             radius: r,
             radius2: r * r,
             hardness: clamp01(hardness),
+            aa: None,
         }
+    }
+
+    /// アンチエイリアスの段 level を付ける。`center` はダブの中心のテクセルの画面の大きさ（届く半径の見積もり: 帯がその 2 倍の
+    /// 大きさのテクセルでも収まるように取り、それより大きく写るテクセルでは帯をその半径に収まる幅で止める）。中心の値が無い・
+    /// 使えないなら今の式のまま。
+    pub(crate) fn with_anti_alias(
+        mut self,
+        level: AntiAlias,
+        center: Option<TexelMetric>,
+    ) -> RoundCover {
+        let w = level.band();
+        let Some(m) = center.filter(|m| w > 0.0 && m.usable() && self.radius > 0.0) else {
+            return self;
+        };
+        let h = self.hardness as f64;
+        let longest = m.eigen().0.sqrt();
+        let estimate = 2.0 * w.max(1.0) * longest / self.radius;
+        let (_, outer) = edge::bounds(h, estimate);
+        let reach = self.radius * outer;
+        self.aa = Some(RoundAa {
+            band: w,
+            reach,
+            cap: edge::band_for_outer(h, outer),
+        });
+        self
     }
 }
 
 impl ScreenCover for RoundCover {
     fn reach(&self) -> f64 {
-        self.radius
+        match &self.aa {
+            Some(aa) => aa.reach,
+            None => self.radius,
+        }
     }
     #[inline]
-    fn cover(&self, dx: f64, dy: f64, _x: u16, _y: u16) -> f32 {
+    fn cover(&self, dx: f64, dy: f64, _x: u16, _y: u16, metric: [f32; 3]) -> f32 {
         let d2 = dx * dx + dy * dy;
+        if let Some(aa) = &self.aa {
+            if d2 >= aa.reach * aa.reach {
+                return 0.0;
+            }
+            let m = TexelMetric {
+                xx: metric[0] as f64,
+                xy: metric[1] as f64,
+                yy: metric[2] as f64,
+            };
+            if m.usable() {
+                let h = self.hardness as f64;
+                let dist = d2.sqrt();
+                let (big, small) = m.eigen();
+                // 画面の円のテクセルの空間での半径（テクセルが画面で短く写る向きほど、テクセルの数は多い）
+                let e = edge::band_and_density(
+                    aa.band,
+                    h,
+                    self.radius / small.sqrt(),
+                    self.radius / big.sqrt(),
+                );
+                // 規格化した距離のテクセルあたりの勾配（中心は、テクセルがいちばん長く写る向きの値）
+                let g = if dist > 0.0 {
+                    m.gradient(dx / dist, dy / dist) / self.radius
+                } else {
+                    big.sqrt() / self.radius
+                };
+                let band = (e.band * g).min(aa.cap);
+                if e.density != 1.0 || band > 1.0 - h {
+                    return edge::cover64(dist / self.radius, h, band, e.density) as f32;
+                }
+            }
+        }
         if d2 >= self.radius2 {
             return 0.0;
         }
@@ -163,8 +239,18 @@ struct ProjPixel {
     rank: u8,
 }
 
+/// 区画 1 つの投影の画素と、アンチエイリアスのある投影の塗りでは、投影の画素ごとのテクセル 1 つ分の画面の大きさ
+/// （[`TexelMetric`] の xx・xy・yy。y は下向き。並びは `pixels` と同じ。無い投影の塗りでは空）。
+#[derive(Debug, Default)]
+struct Bucket {
+    pixels: Vec<ProjPixel>,
+    metrics: Vec<[f32; 3]>,
+}
+
 /// 投影の画素 1 つの名目のバイト。
 const PIXEL_BYTES: u64 = std::mem::size_of::<ProjPixel>() as u64;
+/// アンチエイリアスのある投影の塗りで、投影の画素 1 つに加わるバイト（テクセルの画面の大きさ）。
+const METRIC_BYTES: u64 = std::mem::size_of::<[f32; 3]>() as u64;
 
 /// 覚えの数（試験と計測用）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -913,7 +999,9 @@ pub struct SurfaceProjector {
     /// cos の閾値（弱め始め・0 になる所）。弱めないなら None。
     cos_range: Option<(f64, f64)>,
     tolerance: f64,
-    cache: FastMap<u32, (Arc<Vec<ProjPixel>>, u64)>,
+    cache: FastMap<u32, (Arc<Bucket>, u64)>,
+    /// 投影の画素ごとのテクセルの画面の大きさを持つか（ストロークにアンチエイリアスの段があるときだけ）。
+    metrics: bool,
     clock: u64,
     /// 最後に区画に時刻を付けたダブの時刻と、そのダブの区画のバイト。
     stamp: (u64, u64),
@@ -986,6 +1074,7 @@ impl SurfaceProjector {
             Some(real),
             self.shared.clone(),
         )
+        .with_texel_metrics(self.metrics)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1020,6 +1109,7 @@ impl SurfaceProjector {
             cos_range,
             tolerance,
             cache: FastMap::default(),
+            metrics: false,
             clock: 0,
             stamp: (0, 0),
             stats: ProjectionStats::default(),
@@ -1028,6 +1118,19 @@ impl SurfaceProjector {
 
     pub fn settings(&self) -> ProjectionSettings {
         self.settings
+    }
+
+    /// 投影の画素ごとに、テクセル 1 つ分の画面の大きさも求めて持つ（アンチエイリアスの帯に使う。投影の画素 1 つが
+    /// `METRIC_BYTES` 増える）。区画を作る前に決める（作った区画は作り直さない）。写しの投影の塗りは、この設定を受け継ぐ。
+    pub(crate) fn with_texel_metrics(mut self, on: bool) -> SurfaceProjector {
+        debug_assert!(self.cache.is_empty());
+        self.metrics = on;
+        self
+    }
+
+    /// 区画 1 つの名目のバイト。
+    fn bucket_bytes(&self, len: usize) -> u64 {
+        bucket_bytes(len, self.metrics)
     }
 
     /// 区画の大きさ（画面の単位）。
@@ -1130,29 +1233,28 @@ impl SurfaceProjector {
             .copied()
             .filter(|b| !self.cache.contains_key(b))
             .collect();
-        let built: Vec<(u32, Vec<ProjPixel>)> =
-            if missing.len() > 1 && rayon::current_num_threads() > 1 {
-                missing
-                    .par_iter()
-                    .with_max_len(1)
-                    .map(|&b| (b, self.build_bucket(b as usize)))
-                    .collect()
-            } else {
-                missing
-                    .iter()
-                    .map(|&b| (b, self.build_bucket(b as usize)))
-                    .collect()
-            };
+        let built: Vec<(u32, Bucket)> = if missing.len() > 1 && rayon::current_num_threads() > 1 {
+            missing
+                .par_iter()
+                .with_max_len(1)
+                .map(|&b| (b, self.build_bucket(b as usize)))
+                .collect()
+        } else {
+            missing
+                .iter()
+                .map(|&b| (b, self.build_bucket(b as usize)))
+                .collect()
+        };
         let need: u64 = needed
             .iter()
             .map(|b| match self.cache.get(b) {
-                Some((p, _)) => bucket_bytes(p.len()),
+                Some((p, _)) => self.bucket_bytes(p.pixels.len()),
                 None => 0,
             })
             .sum::<u64>()
             + built
                 .iter()
-                .map(|(_, p)| bucket_bytes(p.len()))
+                .map(|(_, p)| self.bucket_bytes(p.pixels.len()))
                 .sum::<u64>();
         self.stats.buckets_built += built.len() as u64;
         self.stats.bucket_reuses += (needed.len() - built.len()) as u64;
@@ -1162,9 +1264,9 @@ impl SurfaceProjector {
             result.refusal = Some(DabRefusal::MemoryBudget);
             return result;
         }
-        for (b, pixels) in built {
-            self.stats.cached_bytes += bucket_bytes(pixels.len());
-            self.cache.insert(b, (Arc::new(pixels), 0));
+        for (b, bucket) in built {
+            self.stats.cached_bytes += self.bucket_bytes(bucket.pixels.len());
+            self.cache.insert(b, (Arc::new(bucket), 0));
         }
         for b in &needed {
             if let Some(entry) = self.cache.get_mut(b) {
@@ -1174,15 +1276,16 @@ impl SurfaceProjector {
         self.stamp = (clock, need);
         self.stats.cached_buckets = self.cache.len();
         // 円の中の投影の画素の覆い
-        let lists: Vec<Arc<Vec<ProjPixel>>> =
-            needed.iter().map(|b| self.cache[b].0.clone()).collect();
+        let lists: Vec<Arc<Bucket>> = needed.iter().map(|b| self.cache[b].0.clone()).collect();
         let width = self.width as i64;
-        let gather = |pixels: &Arc<Vec<ProjPixel>>| -> Vec<Candidate> {
+        let gather = |bucket: &Arc<Bucket>| -> Vec<Candidate> {
             let mut out = Vec::new();
-            for p in pixels.iter() {
+            for (i, p) in bucket.pixels.iter().enumerate() {
                 let dx = p.sx as f64 - c.x;
                 let dy = p.sy as f64 - c.y;
-                let cov = cover.cover(dx, dy, p.x, p.y);
+                // テクセルの画面の大きさを持たない投影の塗りは 0（使えない値。丸い筆先は今の式）
+                let metric = bucket.metrics.get(i).copied().unwrap_or([0.0; 3]);
+                let cov = cover.cover(dx, dy, p.x, p.y, metric);
                 if cov <= 0.0 {
                     continue;
                 }
@@ -1199,7 +1302,7 @@ impl SurfaceProjector {
             }
             out
         };
-        let total: usize = lists.iter().map(|l| l.len()).sum();
+        let total: usize = lists.iter().map(|l| l.pixels.len()).sum();
         result.candidate_pixels = total.min(i32::MAX as usize) as i32;
         let mut candidates: Vec<Candidate> = if lists.len() > 1 && total > 16_384 {
             lists.par_iter().map(gather).collect::<Vec<_>>().concat()
@@ -1269,7 +1372,7 @@ impl SurfaceProjector {
     }
 
     /// 区画 1 つの投影の画素（区画・三角形・設定だけで決まる）。
-    fn build_bucket(&self, b: usize) -> Vec<ProjPixel> {
+    fn build_bucket(&self, b: usize) -> Bucket {
         let layout = &*self.layout;
         let frame = &layout.frame;
         let (bx, by) = (b % layout.columns, b / layout.columns);
@@ -1289,7 +1392,7 @@ impl SurfaceProjector {
             }),
             _ => None,
         };
-        let mut out = Vec::new();
+        let mut out = Bucket::default();
         let mut clipped = Vec::with_capacity(8);
         for (i, sf) in screen.iter().enumerate() {
             let f = sf.face as usize;
@@ -1325,6 +1428,8 @@ impl SurfaceProjector {
                         ],
                     )
                 }),
+                texel_steps: texel_steps(&v, &uv),
+                metrics: self.metrics,
             };
             // 区画の中の部分の UV の箱（切った多角形の頂点をレイで平面へ戻す）
             let mut uv_lo = DVec2::splat(f64::INFINITY);
@@ -1353,9 +1458,7 @@ impl SurfaceProjector {
                         if !UvFace::inside(w) {
                             continue;
                         }
-                        if let Some(p) = ctx.pixel(w, x as u16, y as u16, 0) {
-                            out.push(p);
-                        }
+                        ctx.push(w, x as u16, y as u16, 0, &mut out);
                     }
                 }
             }
@@ -1387,7 +1490,7 @@ impl SurfaceProjector {
         edge: usize,
         lo: DVec2,
         hi: DVec2,
-        out: &mut Vec<ProjPixel>,
+        out: &mut Bucket,
     ) {
         let n = self.settings.seam_bleed as f64;
         let (i, j) = (edge, (edge + 1) % 3);
@@ -1422,17 +1525,15 @@ impl SurfaceProjector {
                 let mut w = DVec3::ZERO;
                 w[i] = 1.0 - u;
                 w[j] = u;
-                if let Some(p) = ctx.pixel(w, x as u16, y as u16, edge as u8 + 1) {
-                    out.push(p);
-                }
+                ctx.push(w, x as u16, y as u16, edge as u8 + 1, out);
             }
         }
     }
 }
 
 /// 覚えた区画 1 つの名目のバイト。
-fn bucket_bytes(len: usize) -> u64 {
-    len as u64 * PIXEL_BYTES + BUCKET_OVERHEAD
+fn bucket_bytes(len: usize, metrics: bool) -> u64 {
+    len as u64 * (PIXEL_BYTES + if metrics { METRIC_BYTES } else { 0 }) + BUCKET_OVERHEAD
 }
 
 /// いくつかの投影の塗り（元の側と対称の写し）の覚えを、合わせて limit バイトまでに減らす。どの投影の塗りの区画でも、長く使って
@@ -1448,7 +1549,7 @@ pub(crate) fn evict_least_recent(projectors: &mut [&mut SurfaceProjector], limit
                 p.cache
                     .iter()
                     .filter(|(_, (_, used))| *used != clock)
-                    .map(move |(b, (list, used))| (*used, i, *b, bucket_bytes(list.len())))
+                    .map(move |(b, (list, used))| (*used, i, *b, p.bucket_bytes(list.pixels.len())))
             })
             .collect();
         old.sort_unstable();
@@ -1519,12 +1620,63 @@ struct FaceContext<'a> {
     cos_range: Option<(f64, f64)>,
     /// 写しのとき、元のカメラの確かめと、その三角形の元のカメラのビューの空間の頂点。
     real: Option<(&'a RealCheck<'a>, [DVec3; 3])>,
+    /// テクセルの x・y の 1 つ分の、ビューの空間での動き（三角形の上で一定）。
+    texel_steps: [DVec3; 2],
+    /// 投影の画素ごとにテクセルの画面の大きさを求めるか。
+    metrics: bool,
+}
+
+/// 三角形の上で、テクセルの x・y の 1 つ分がビューの空間でどれだけ動くか（UV → 重心座標の係数と頂点から）。
+fn texel_steps(v: &[DVec3; 3], uv: &UvFace) -> [DVec3; 2] {
+    let (e1, e2) = (v[1] - v[0], v[2] - v[0]);
+    [e1 * uv.c11 + e2 * uv.c21, e1 * uv.c12 + e2 * uv.c22]
+}
+
+/// ビューの空間の点 p で、テクセルの動き steps が画面でどれだけか（テクセル → 画面の写しの J·Jᵀ）。
+fn texel_metric(frame: &Frame, p: DVec3, steps: &[DVec3; 2]) -> TexelMetric {
+    let iz = 1.0 / p.z;
+    let (ax, ay) = (0.5 * frame.sw / frame.tx, -0.5 * frame.sh / frame.ty);
+    let column = |d: DVec3| {
+        (
+            ax * (d.x - p.x * iz * d.z) * iz,
+            ay * (d.y - p.y * iz * d.z) * iz,
+        )
+    };
+    TexelMetric::from_columns(column(steps[0]), column(steps[1]))
+}
+
+impl SurfaceProjector {
+    /// 面の点 hit のテクセル 1 つ分が、この投影の画面でどれだけか（y は下向き。カメラの前に無い・UV が潰れていれば None）。
+    pub(crate) fn metric_at(&self, hit: &SurfaceHit) -> Option<TexelMetric> {
+        let t = self.geometry.triangles().get(hit.triangle as usize)?;
+        let frame = &self.layout.frame;
+        let v = [frame.view_of(t.a), frame.view_of(t.b), frame.view_of(t.c)];
+        let uv = UvFace::new(t, self.width, self.height)?;
+        let w = hit.barycentric.as_dvec3();
+        let p = v[0] * w.x + v[1] * w.y + v[2] * w.z;
+        if p.z.is_nan() || p.z < frame.near {
+            return None;
+        }
+        Some(texel_metric(frame, p, &texel_steps(&v, &uv))).filter(|m| m.usable())
+    }
 }
 
 impl FaceContext<'_> {
-    /// 三角形の上の重み w の点が、この区画の中に見えるなら、その投影の画素。
+    /// 三角形の上の重み w の点が、この区画の中に見えるなら、その投影の画素（と、持つならテクセルの画面の大きさ）を out に足す。
     #[inline]
-    fn pixel(&self, w: DVec3, x: u16, y: u16, rank: u8) -> Option<ProjPixel> {
+    fn push(&self, w: DVec3, x: u16, y: u16, rank: u8, out: &mut Bucket) {
+        if let Some((pixel, p)) = self.pixel(w, x, y, rank) {
+            out.pixels.push(pixel);
+            if self.metrics {
+                let m = texel_metric(&self.layout.frame, p, &self.texel_steps);
+                out.metrics.push([m.xx as f32, m.xy as f32, m.yy as f32]);
+            }
+        }
+    }
+
+    /// 三角形の上の重み w の点が、この区画の中に見えるなら、その投影の画素と、ビューの空間の点。
+    #[inline]
+    fn pixel(&self, w: DVec3, x: u16, y: u16, rank: u8) -> Option<(ProjPixel, DVec3)> {
         let frame = &self.layout.frame;
         let p = self.v[0] * w.x + self.v[1] * w.y + self.v[2] * w.z;
         if p.z.is_nan() || p.z < frame.near {
@@ -1567,16 +1719,19 @@ impl FaceContext<'_> {
             }
         }
         let m = self.model[0] * w.x + self.model[1] * w.y + self.model[2] * w.z;
-        Some(ProjPixel {
-            x,
-            y,
-            face: self.face,
-            sx: s.x as f32,
-            sy: s.y as f32,
-            weight,
-            position: m.as_vec3(),
-            rank,
-        })
+        Some((
+            ProjPixel {
+                x,
+                y,
+                face: self.face,
+                sx: s.x as f32,
+                sy: s.y as f32,
+                weight,
+                position: m.as_vec3(),
+                rank,
+            },
+            p,
+        ))
     }
 }
 
@@ -1875,6 +2030,44 @@ mod tests {
         for x in 0..200 {
             assert_eq!(m.get(x, 1), (3..=150).contains(&x), "{x}");
             assert!(!m.get(x, 0));
+        }
+    }
+
+    /// 丸い筆先のアンチエイリアス: 帯は投影の画素ごとのテクセルの画面の大きさで直し（向きでも違う）、届く半径の外は 0。中心の 2 倍より
+    /// 大きく写るテクセルでは、帯を届く半径に収まる幅で止める。テクセルの大きさを持たない画素は今の式。
+    #[test]
+    fn the_round_band_follows_each_pixels_texel_and_stops_at_the_reach() {
+        use crate::brush::AntiAlias;
+        let h = 1.0;
+        let center = TexelMetric::from_columns((1.0, 0.0), (0.0, 1.0));
+        let round = RoundCover::new(10.0, h).with_anti_alias(AntiAlias::Strong, Some(center));
+        let reach = round.reach();
+        // 中心の 2 倍まで帯が収まる: 半径 10 + 帯 2 × 2 / 2 + …
+        assert!(reach > 11.9 && reach < 12.1, "{reach}");
+        // テクセルが画面で 1 点（中心と同じ）: 帯は画面の 2 点。縁の 9 点と 11 点の間を smoothstep で
+        let metric = |k: f32| [k * k, 0.0, k * k];
+        let at = |x: f64, k: f32| round.cover(x, 0.0, 0, 0, metric(k));
+        assert_eq!(at(8.9, 1.0), 1.0);
+        assert!((at(10.0, 1.0) - 0.5).abs() < 1e-6);
+        assert_eq!(at(11.0, 1.0), 0.0);
+        // テクセルが画面で 0.5 点: 帯は画面の 1 点（縁の 9.5〜10.5）
+        assert_eq!(at(9.45, 0.5), 1.0);
+        assert!(at(10.25, 0.5) > 0.0 && at(10.55, 0.5) == 0.0);
+        // 横だけ 0.5 点に縮むテクセル: 横の向きは帯 1 点、縦の向きは 2 点
+        let squashed = [0.25f32, 0.0, 1.0];
+        assert_eq!(round.cover(10.55, 0.0, 0, 0, squashed), 0.0);
+        assert!(round.cover(0.0, 10.55, 0, 0, squashed) > 0.0);
+        // 中心の 4 倍に写るテクセル: 帯は届く半径に収まる幅で止まり、届く半径の外は 0
+        assert!(at(11.5, 4.0) > 0.0);
+        assert_eq!(at(reach, 4.0), 0.0);
+        assert_eq!(round.cover(0.0, reach + 0.01, 0, 0, metric(8.0)), 0.0);
+        // テクセルの大きさを持たない画素（なし のストロークの投影の塗り）は今の式
+        let old = RoundCover::new(10.0, h);
+        for x in [0.0, 9.0, 9.99, 10.0, 10.5] {
+            assert_eq!(
+                round.cover(x, 0.0, 0, 0, [0.0; 3]),
+                old.cover(x, 0.0, 0, 0, [0.0; 3])
+            );
         }
     }
 }
