@@ -10,6 +10,7 @@ mod rayon_support;
 mod anti_alias;
 mod brush_sources;
 mod cross_symmetry;
+mod dab_digest;
 mod material;
 mod mesh_maps;
 mod overlap_priority;

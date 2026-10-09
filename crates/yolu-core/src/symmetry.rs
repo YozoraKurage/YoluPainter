@@ -5,7 +5,7 @@
 //! 塗る。放射状の写しの角度は、四分の一周の倍数なら正確な値（cos・sin を通らない）、それ以外は libm の `cos`・`sin` を通る。
 //! C# とのバイト一致を確かめたのは同じ libm（Linux の glibc）の上で、別の libm では 1 ULP ずれ得る。鏡映・四分の一周の倍数
 //! だけの組（縦・横・両方、放射状の 2・4）は正確な値だけを通る。
-//! ここは文書の画素の上（UV の平面）の対称だけを扱う。3D の面のストロークは画素ごとに `apply_pixel` で塗り、`Brush.symmetry`
+//! ここは文書の画素の上（UV の平面）の対称だけを扱う。3D の面のストロークはダブの画素をまとめて `apply_dab` で塗り、`Brush.symmetry`
 //! を見ない。3D の面のストロークに 2D の対称を当てるときは、面のストロークが塗る UV の画素（元と 3D の写し）を、同じ変換で UV の
 //! 平面の上に写す（`geometry::uv_symmetry` の `copy_by_canvas`。面のストロークの `SurfaceStrokeOptions::canvas_symmetry`）。
 //!

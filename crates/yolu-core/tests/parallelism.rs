@@ -969,3 +969,90 @@ fn layer_merges_are_the_same_with_any_number_of_threads() {
         });
     }
 }
+
+/// 3D の面のストロークの投影の塗り（覆いの集め・候補の並べ替え）をワーカーで行う道は、直列の道と同じバイトで、どのスレッド数でも変わらない。
+/// 既定では大きなダブだけがワーカーを使うので、下限を 0（いつもワーカー）にして、小さなブラシの線でも通す。
+#[test]
+fn surface_strokes_are_the_same_whether_the_projection_gathers_on_workers_or_not() {
+    use std::sync::Arc;
+    use yolu_core::geometry::{
+        cube_sphere, model_triangles, set_parallel_projection_candidates, CameraView, Projection,
+        SurfaceGeometry, SurfaceStroke, SurfaceStrokeOptions, DEFAULT_WELD_TOLERANCE,
+    };
+    use yolu_core::glam::{Quat, Vec2, Vec3};
+    let geometry = Arc::new(
+        SurfaceGeometry::new(
+            model_triangles(&[cube_sphere(18, 0.5)]).unwrap(),
+            1,
+            DEFAULT_WELD_TOLERANCE,
+        )
+        .unwrap(),
+    );
+    // 回転なしの正投影のカメラ（三角関数を通らない）
+    let view = CameraView {
+        position: Vec3::new(0.0, 0.0, -3.0),
+        rotation: Quat::IDENTITY,
+        forward: Vec3::Z,
+        near: 0.1,
+        far: 100.0,
+        width: 640.0,
+        height: 480.0,
+        projection: Projection::Orthographic { height: 1.2 },
+    };
+    let stroke_hash = |threshold: usize, degree: usize| -> String {
+        let previous = set_parallel_projection_candidates(threshold);
+        let hash = with_degree(degree, || {
+            let mut doc = Document::new(256, 256).unwrap();
+            let layer = doc.add_layer("a").unwrap();
+            let mut brush = Brush::from(BrushSettings {
+                radius: 14.0,
+                hardness: 0.8,
+                color: Rgba8::new(200, 60, 30, 255),
+                pressure_size: false,
+                pressure_opacity: false,
+                ..BrushSettings::default()
+            });
+            brush.seed = 7;
+            let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
+            let c = Vec2::new(320.0, 240.0);
+            let mut s = SurfaceStroke::begin_with_options(
+                &mut doc,
+                &mut stroke,
+                geometry.clone(),
+                view,
+                &brush.base,
+                Some(0),
+                c + Vec2::new(-150.0, -30.0),
+                1.0,
+                SurfaceStrokeOptions::default(),
+            )
+            .unwrap();
+            for p in [
+                Vec2::new(150.0, -60.0),
+                Vec2::new(-140.0, 20.0),
+                Vec2::new(140.0, 90.0),
+            ] {
+                s.add(&mut doc, &mut stroke, c + p, 1.0).unwrap();
+            }
+            s.finish(&mut doc, &mut stroke).unwrap();
+            assert!(s.stats.dabs > 50, "{:?}", s.stats);
+            doc.end_stroke(stroke).unwrap();
+            color_hash(&doc, layer)
+        });
+        set_parallel_projection_candidates(previous);
+        hash
+    };
+    let sequential = stroke_hash(usize::MAX, 1);
+    for degree in DEGREES {
+        assert_eq!(
+            stroke_hash(0, degree),
+            sequential,
+            "ワーカーで集めても（スレッド {degree}）同じバイト"
+        );
+        assert_eq!(
+            stroke_hash(usize::MAX, degree),
+            sequential,
+            "直列で集めても（スレッド {degree}）同じバイト"
+        );
+    }
+}

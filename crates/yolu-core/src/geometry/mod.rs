@@ -53,8 +53,8 @@ pub use paint::{
     MAX_QUEUED_DABS,
 };
 pub use project::{
-    CopyTransform, ProjectionSettings, ProjectionStats, SurfaceProjector, MAX_BUCKET,
-    MAX_SEAM_BLEED, MIN_BUCKET,
+    set_parallel_projection_candidates, CopyTransform, ProjectionSettings, ProjectionStats,
+    SurfaceProjector, MAX_BUCKET, MAX_SEAM_BLEED, MIN_BUCKET,
 };
 pub use query::{
     barycentric, closest_point, intersect_triangle, uv_barycentric, NodeBudgetExceeded,

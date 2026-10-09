@@ -1,5 +1,5 @@
 //! 3D ビューのストローク: 画面の点の円の中の、カメラから見える面のテクセルを、投影の塗り（[`SurfaceProjector`]）で集めて、文書の
-//! ストロークへ `apply_pixel` で塗る。
+//! ストロークへ `apply_dab`（画素の並びをまとめて）で塗る。
 //!
 //! - ブラシの半径（文書の画素）をモデルの単位に直す式: max(1e-6, 箱の対角線) × 半径 / 文書の幅（× 筆圧の応え）。画面の円の半径は、
 //!   中心の下の塗るテクスチャセットの面の奥行きで、その半径を画面へ直したもの。中心がほかのセットの面・背景にあるダブは、直前に
@@ -1111,7 +1111,7 @@ impl SurfaceStroke {
         let footprint = self
             .stencil
             .map(|st| st.footprint(&self.geometry, &self.view, &hit, self.width, self.height));
-        // apply_pixel は覆いが 0〜1 の外だとストロークを取り消すので、0 以下は塗らない（覆い 0 は何も変えない）
+        // apply_dab は覆いが 0〜1 の外だとストロークを取り消すので、0 以下は塗らない（覆い 0 は何も変えない）
         let painted: Vec<&super::SurfacePixel> =
             dab.pixels.iter().filter(|p| p.coverage > 0.0).collect();
         let point_of = |this: &SurfaceStroke, p: &super::SurfacePixel| -> Option<StencilPoint> {
@@ -1129,28 +1129,33 @@ impl SurfaceStroke {
                     .filter(|v| !v.is_empty());
                 self.mapped_dab(doc, stroke, &hit, pressure, &painted, points)?;
             }
+            // 色を塗るだけ: ダブの画素をまとめて渡す（画素ごとに文書へ入ると、変わったタイルの印やメモの調整が画素の数だけ繰り返される）。
+            // 塗る式・順は画素ごとに渡したときと同じ
             SurfaceEffect::Paint if !self.mixes => {
                 let _profile = profile::scope(profile::Stage::SurfaceApply);
-                for p in &painted {
-                    let coverage = p.coverage.min(1.0) as f64;
-                    match point_of(self, p) {
-                        Some(at) => stroke.apply_pixel_at(
-                            doc,
-                            p.x as i64,
-                            p.y as i64,
-                            coverage,
-                            pressure as f64,
-                            at,
-                        )?,
-                        None => stroke.apply_pixel(
-                            doc,
-                            p.x as i64,
-                            p.y as i64,
-                            coverage,
-                            pressure as f64,
-                        )?,
-                    };
-                }
+                let pixels: Vec<BrushPixel> = painted
+                    .iter()
+                    .map(|p| BrushPixel {
+                        x: p.x as i64,
+                        y: p.y as i64,
+                        coverage: p.coverage.min(1.0) as f64,
+                    })
+                    .collect();
+                let center = DVec2::new(
+                    hit.uv.x as f64 * self.width as f64,
+                    hit.uv.y as f64 * self.height as f64,
+                );
+                let points: Option<Vec<StencilPoint>> = painted
+                    .iter()
+                    .map(|p| point_of(self, p))
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|v| !v.is_empty());
+                match &points {
+                    Some(points) => {
+                        stroke.apply_dab_at(doc, &pixels, center, pressure as f64, points)?
+                    }
+                    None => stroke.apply_dab(doc, &pixels, center, pressure as f64)?,
+                };
             }
             SurfaceEffect::Blur => {
                 let points: Option<Vec<StencilPoint>> = painted

@@ -25,6 +25,7 @@
 //!   前の向き、面の向きの弱めは法線と前の向きの cos、辺の上の割合は画面の割合のまま（奥行きで歪まない）。透視の式は変えない。
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec2, Vec3};
@@ -94,6 +95,20 @@ impl ProjectionSettings {
             ..self
         }
     }
+}
+
+/// 覆いの集めと、候補の並べ替えを、ワーカーで行う下限（区画の投影の画素の数 / 覆いのある候補の数）。合成の球（202,800 三角形）・文書 2048²・
+/// 大きさ 256（候補が約 6.4 万、区画の投影の画素が約 11 万）でダブ 1 つの中央値を測ると、直列は 8 スレッドの分け合いと同じか速く
+/// （8 スレッド 4.0 → 3.7 ms）、32 スレッドでは分け合いが遅かった（4.9 → 3.6 ms）。分け合いが負ける理由は測っていない（ワーカーを起こす遅れが
+/// 疑わしい）。直列のほうが速い範囲より十分大きいダブだけをワーカーで行う。結果は変わらない。
+const PARALLEL_CANDIDATES_DEFAULT: usize = 1 << 18;
+static PARALLEL_CANDIDATES: AtomicUsize = AtomicUsize::new(PARALLEL_CANDIDATES_DEFAULT);
+
+/// 試験のための口: 覆いの集めと候補の並べ替えをワーカーで行う下限を変え、前の値を返す（小さなダブでもワーカーの経路を通すために使う。
+/// どの値でも結果は同じで、経路の選び方だけが変わる）。
+#[doc(hidden)]
+pub fn set_parallel_projection_candidates(candidates: usize) -> usize {
+    PARALLEL_CANDIDATES.swap(candidates, Ordering::Relaxed)
 }
 
 /// 区画の大きさの範囲（画面の単位）。ブラシの直径の 1/4 を、この範囲に収める。
@@ -256,6 +271,35 @@ struct Bucket {
     pixels: Vec<ProjPixel>,
     metrics: Vec<[f32; 3]>,
     columns: Vec<[f32; 4]>,
+}
+
+impl Bucket {
+    /// 下の行から（同じ位置は三角形の番号・辺の番号の順に）並べ替えたもの。テクセルの位置・三角形・辺で順が決まるので、作る順や
+    /// 並列の度合いによらない。ダブが複数の区画の候補を位置の順に併合できるようにする。
+    fn sorted(self) -> Bucket {
+        let n = self.pixels.len();
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        order.sort_unstable_by_key(|&i| {
+            let p = &self.pixels[i as usize];
+            (p.y, p.x, p.face, p.rank)
+        });
+        if order.iter().enumerate().all(|(k, &i)| k == i as usize) {
+            return self;
+        }
+        Bucket {
+            pixels: order.iter().map(|&i| self.pixels[i as usize]).collect(),
+            metrics: if self.metrics.is_empty() {
+                Vec::new()
+            } else {
+                order.iter().map(|&i| self.metrics[i as usize]).collect()
+            },
+            columns: if self.columns.is_empty() {
+                Vec::new()
+            } else {
+                order.iter().map(|&i| self.columns[i as usize]).collect()
+            },
+        }
+    }
 }
 
 /// 画面の形の覆いを測った投影の画素 1 つ（[`SurfaceProjector::sweep`] が渡す。覆いは 0 より大きい）。
@@ -1401,24 +1445,36 @@ impl SurfaceProjector {
         };
         let total: usize = lists.iter().map(|l| l.pixels.len()).sum();
         result.candidate_pixels = total.min(i32::MAX as usize) as i32;
-        let mut candidates: Vec<Candidate> = if lists.len() > 1 && total > 16_384 {
+        let parallel_min = PARALLEL_CANDIDATES.load(Ordering::Relaxed);
+        let mut candidates: Vec<Candidate> = if lists.len() > 1 && total > parallel_min {
             lists.par_iter().map(gather).collect::<Vec<_>>().concat()
         } else {
             lists.iter().flat_map(gather).collect()
         };
-        let order = |a: &Candidate, b: &Candidate| {
-            a.key
-                .cmp(&b.key)
-                .then(b.coverage.total_cmp(&a.coverage))
-                .then(a.face.cmp(&b.face))
-                .then(a.rank.cmp(&b.rank))
-        };
-        if candidates.len() > 65_536 {
-            candidates.par_sort_unstable_by(order);
+        // 区画ごとに下の行から並んでいる（区画を作るときに並べてある）ので、区画の並びのまま足した候補は、整った列がいくつか連なった形。
+        // 位置だけで安定に並べる（整った列を併合するだけなので、全部の候補を比べて並べるより速い）と、同じテクセルは区画の並びの順に隣り合い、
+        // 覆いの大きいほう（同じなら三角形の番号の小さいほう、続けて辺の番号）の 1 つだけを残す
+        if candidates.len() > parallel_min {
+            candidates.par_sort_by_key(|c| c.key);
         } else {
-            candidates.sort_unstable_by(order);
+            candidates.sort_by_key(|c| c.key);
         }
-        candidates.dedup_by_key(|c| c.key);
+        candidates.dedup_by(|next, kept| {
+            if next.key != kept.key {
+                return false;
+            }
+            if next
+                .coverage
+                .total_cmp(&kept.coverage)
+                .reverse()
+                .then(next.face.cmp(&kept.face))
+                .then(next.rank.cmp(&kept.rank))
+                .is_lt()
+            {
+                *kept = *next;
+            }
+            true
+        });
         result.pixels = candidates
             .into_iter()
             .map(|c| SurfacePixel {
@@ -1687,7 +1743,7 @@ impl SurfaceProjector {
                 }
             }
         }
-        out
+        out.sorted()
     }
 
     /// 辺 edge の外のにじみのテクセルのうち、辺の上の点が区画に落ちるもの。
@@ -2222,6 +2278,71 @@ fn taylor_sin(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 区画の投影の画素は、下の行から（同じ位置は三角形・辺の番号の順に）並び、テクセルの画面の大きさも同じ順に付いてくる。
+    #[test]
+    fn a_bucket_holds_its_pixels_in_row_order_with_their_metrics_alongside() {
+        let pixel = |x: u16, y: u16, face: u32, rank: u8| ProjPixel {
+            x,
+            y,
+            face,
+            sx: x as f32,
+            sy: y as f32,
+            weight: 1.0,
+            position: Vec3::new(x as f32, y as f32, face as f32),
+            rank,
+        };
+        let given = [
+            (pixel(5, 2, 0, 0), 1.0),
+            (pixel(3, 1, 7, 0), 2.0),
+            (pixel(3, 1, 4, 2), 3.0),
+            (pixel(9, 0, 1, 0), 4.0),
+            (pixel(3, 1, 4, 1), 5.0),
+        ];
+        let sorted = Bucket {
+            pixels: given.iter().map(|p| p.0).collect(),
+            metrics: given.iter().map(|p| [p.1, 0.0, 0.0]).collect(),
+            columns: given.iter().map(|p| [p.1, 0.0, 0.0, 0.0]).collect(),
+        }
+        .sorted();
+        let order: Vec<(u16, u16, u32, u8)> = sorted
+            .pixels
+            .iter()
+            .map(|p| (p.x, p.y, p.face, p.rank))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (9, 0, 1, 0),
+                (3, 1, 4, 1),
+                (3, 1, 4, 2),
+                (3, 1, 7, 0),
+                (5, 2, 0, 0)
+            ]
+        );
+        let metrics: Vec<f32> = sorted.metrics.iter().map(|m| m[0]).collect();
+        assert_eq!(metrics, [4.0, 5.0, 3.0, 2.0, 1.0], "画面の大きさも同じ順");
+        let columns: Vec<f32> = sorted.columns.iter().map(|m| m[0]).collect();
+        assert_eq!(columns, metrics, "画面の動きも同じ順");
+        // もう並んでいれば、そのまま
+        let again = Bucket {
+            pixels: sorted.pixels.clone(),
+            metrics: sorted.metrics.clone(),
+            columns: sorted.columns.clone(),
+        }
+        .sorted();
+        assert_eq!(again.metrics, sorted.metrics);
+        assert_eq!(again.columns, sorted.columns);
+        // 画面の大きさを持たない投影の塗りは、空のまま
+        let plain = Bucket {
+            pixels: given.iter().map(|p| p.0).collect(),
+            metrics: Vec::new(),
+            columns: Vec::new(),
+        }
+        .sorted();
+        assert!(plain.metrics.is_empty() && plain.columns.is_empty());
+        assert_eq!(plain.pixels.len(), 5);
+    }
 
     #[test]
     fn deterministic_cos_matches_the_library_closely() {
