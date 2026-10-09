@@ -1124,6 +1124,94 @@ fn headless_the_model_reference_is_pointed_again_from_where_the_copy_is_written(
     assert!(!text_of(&read_entries(&removed)).contains("Prop.fbx"));
 }
 
+/// テキストレイヤーのフォントのファイル（利用者が入れたフォントの場所）は、写しではファイル名だけになる。作業用のファイルには場所が入るが、
+/// 写しのどのエントリ（JSON・文書・画像・名前）にも、作った人の道（試験の一時のフォルダー・ホーム・ユーザー名）が無い。フォントの SHA-256・名前は残り、
+/// 写しを開くと名前でフォントを探せる。
+#[test]
+fn headless_a_font_file_of_a_text_layer_keeps_only_its_file_name_and_no_entry_holds_the_authors_paths(
+) {
+    use yolu_core::text::{file_font, TextFont, TextSettings};
+    const FONT: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Regular.ttf");
+    let dir = TempDir::new("font");
+    let font_file = dir.path("Fonts/Example Face.ttf");
+    std::fs::create_dir_all(font_file.parent().unwrap()).unwrap();
+    std::fs::write(&font_file, FONT).unwrap();
+    let (mut s, _path) = opened(&dir);
+    let font = file_font(&font_file.to_string_lossy(), 0, FONT);
+    let TextFont::File { sha256, names, .. } = font.clone() else {
+        unreachable!()
+    };
+    s.doc
+        .add_text_layer(
+            "文字",
+            TextSettings::new("Text", font, 4.0, 10.0),
+            FONT,
+            None,
+            false,
+        )
+        .unwrap();
+    s.modified = true;
+    let authors_paths = {
+        let mut v = vec![dir.0.to_string_lossy().into_owned(), "tester".to_owned()];
+        v.extend(std::env::var("HOME").ok().filter(|h| h.len() > 1));
+        v.extend(std::env::var("USERPROFILE").ok().filter(|h| h.len() > 1));
+        v
+    };
+    let holds = |entries: &BTreeMap<String, Vec<u8>>, needle: &str| {
+        let escaped = needle.replace('\\', "\\\\");
+        entries.keys().any(|n| n.contains(needle))
+            || text_of(entries).contains(needle)
+            || text_of(entries).contains(&escaped)
+    };
+    // 保存した作業用のファイルには、フォントの場所が入る（ここは作った人の作業のファイル）
+    let plain = dir.path("Plain.ylp");
+    s.apply(Action::SaveProjectAs(plain.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(holds(&read_entries(&plain), &dir.0.to_string_lossy()));
+    // 配布用の写し（全部除く）: どのエントリにも作った人の道が無い
+    let dest = dir.path("Font-dist.ylp");
+    write_copy(&mut s, &dest, &[]);
+    let copy = read_entries(&dest);
+    for needle in &authors_paths {
+        assert!(!holds(&copy, needle), "{needle} が写しに残る");
+    }
+    // フォントの項目はファイル名だけ。SHA-256・名前は残る
+    let project = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
+    let doc = project.sets()[0].document.to_native().unwrap();
+    let text_of_field = |suffix: &str| {
+        doc.fields()
+            .iter()
+            .find(|f| f.path.ends_with(suffix))
+            .map(|f| f.value.clone())
+    };
+    assert_eq!(
+        text_of_field(".text.font_path"),
+        Some(yolu_io::NativeValue::Text("Example Face.ttf".into()))
+    );
+    assert_eq!(
+        text_of_field(".text.font_family"),
+        Some(yolu_io::NativeValue::Text(names.family.clone()))
+    );
+    let hex: String = sha256.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        text_of_field(".text.font_sha256"),
+        Some(yolu_io::NativeValue::Text(hex))
+    );
+    // 開いて、名前でフォントを探せる（ファイル名だけの道は使わない）
+    let list = yolu_io::fonts::SystemFonts::from_dirs(&[font_file.parent().unwrap()]);
+    let mut t = AppState::new(32, 32);
+    t.apply(Action::OpenProject(dest));
+    let layer = t.doc.layers().iter().find(|l| l.text().is_some()).unwrap();
+    let wanted = layer.text().unwrap().font.clone();
+    assert!(
+        matches!(
+            yolu_io::fonts::find(&wanted, &list),
+            yolu_io::fonts::Lookup::Same { .. }
+        ),
+        "{wanted:?}"
+    );
+}
+
 /// ウィンドウなしの流れ（除く物が 1 つも無い）で保存先を決めたところから、断られて戻る。
 fn windowless(dir: &TempDir) -> (AppState, PathBuf) {
     let s = plain_project(dir, "Plain.ylp");

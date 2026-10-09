@@ -148,17 +148,23 @@ impl NativeDocument {
     }
     /// 値を差し替えて全体を再検証する。未知の構造や不整合を保存に持ち越さない。
     pub fn with_value(&self, path: &str, value: NativeValue) -> Result<Self> {
+        self.with_values(&[(path.to_owned(), value)])
+    }
+    /// 値をまとめて差し替えて、全体を 1 回だけ再検証する（`with_value` と同じ決まり。同じ項目を 2 回は差し替えない）。
+    pub fn with_values(&self, changes: &[(String, NativeValue)]) -> Result<Self> {
         check(!self.skeleton, "骨組みの正本は書き換えられません")?;
         let mut fields = self.fields.clone();
-        let field = fields
-            .iter_mut()
-            .find(|f| f.path == path)
-            .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {path}")))?;
-        check(
-            std::mem::discriminant(&field.value) == std::mem::discriminant(&value),
-            "正本の値の型を変更できません",
-        )?;
-        field.value = value;
+        for (path, value) in changes {
+            let field = fields
+                .iter_mut()
+                .find(|f| &f.path == path)
+                .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {path}")))?;
+            check(
+                std::mem::discriminant(&field.value) == std::mem::discriminant(value),
+                "正本の値の型を変更できません",
+            )?;
+            field.value = value.clone();
+        }
         let mut out = Vec::new();
         for f in fields {
             f.value.write(&mut out);

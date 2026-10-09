@@ -50,8 +50,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "Project assets (images, smart assets and brushes) that no layer or look setting uses. Assets in use stay",
         ),
         Removal::SourcePaths => lang.pick(
-            "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します",
-            "Where the assets were imported from. Assets in use stay; only their source is dropped",
+            "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します。テキストのフォントの場所はファイル名だけにします",
+            "Where the assets were imported from. Assets in use stay; only their source is dropped. The location of a text layer's font file is cut to its file name",
         ),
         Removal::ModelReference => lang.pick(
             "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ、Live Link で開いたモデルの記録（FBX や Unity のプロジェクトの場所）",
@@ -312,6 +312,8 @@ mod tests {
             saved.contains("0.4.x") && saved.contains("format 7"),
             "{saved}"
         );
+        assert!(tooltip(Lang::Ja, Removal::SourcePaths).contains("フォント"));
+        assert!(tooltip(Lang::En, Removal::SourcePaths).contains("font"));
         assert!(tooltip(Lang::Ja, Removal::ModelReference).contains("Live Link"));
         assert!(tooltip(Lang::En, Removal::ModelReference).contains("Live Link"));
     }
