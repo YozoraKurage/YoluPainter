@@ -27,6 +27,7 @@ mod pose_ui;
 mod sets;
 mod tool_keys_3d;
 mod view3d;
+mod view3d_aniso;
 mod view3d_axes;
 mod view3d_brush;
 mod view3d_draft;

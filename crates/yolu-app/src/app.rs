@@ -1558,6 +1558,18 @@ impl YoluApp {
         }
     }
 
+    /// 塗った絵のサンプラーが今使っている異方性の上限（試験・計測用。wgpu が無ければ None）。
+    pub fn view3d_paint_anisotropy(&self) -> Option<u16> {
+        self.renderer3d.as_ref().map(|r| r.paint_anisotropy())
+    }
+
+    /// 試験用: 塗った絵のサンプラーの異方性の上限を変える（1 で等方。GPU が持たなければ 1 のまま）。
+    pub fn view3d_set_paint_anisotropy(&mut self, wanted: u16) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_paint_anisotropy(wanted);
+        }
+    }
+
     /// 試験用: 3D の面の描き先に使ってよいバイト数を決める（None で既定の、3D の絵の予算と同じ量）。多サンプルを下げる道を通す。
     pub fn view3d_set_target_budget(&mut self, bytes: Option<u64>) {
         if let Some(r) = &mut self.renderer3d {

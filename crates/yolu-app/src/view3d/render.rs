@@ -428,6 +428,8 @@ pub struct View3dRenderer {
     bounds: Option<(u32, Vec3, f32)>,
     uniforms: wgpu::Buffer,
     paint_sampler: wgpu::Sampler,
+    /// 塗った絵のサンプラーの異方性の上限（GPU が異方性フィルタリングを持たなければ 1）。
+    paint_anisotropy: u16,
     env_sampler: wgpu::Sampler,
     dummy_cube: wgpu::TextureView,
     _dummy_texture: wgpu::Texture,
@@ -785,14 +787,61 @@ fn multisample(count: u32) -> wgpu::MultisampleState {
     }
 }
 
+/// 塗った絵のサンプラーの異方性の上限。斜めに見た面は、画面で縦と横の縮み方が違うので、等方のミップだと強く縮む側に合わせて全体が
+/// ぼやける。異方性フィルタリングは、縮みの小さい側の細かさを残す。wgpu の上限（16）まで。
+const PAINT_ANISOTROPY: u16 = 16;
+
+/// GPU が異方性フィルタリングを持つとき `wanted`（1〜16 に収める）、持たないとき 1。
+/// wgpu も持たない GPU では 1 に直すが、使っている値を確かめられるよう、ここで決める。
+fn supported_anisotropy(flags: wgpu::DownlevelFlags, wanted: u16) -> u16 {
+    if flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING) {
+        wanted.clamp(1, 16)
+    } else {
+        1
+    }
+}
+
+/// サンプラーの既定の異方性。CPU で描くアダプター（`software`。lavapipe・WARP など）では 1 のままにする。lavapipe で測ると、異方性 16 は球の 1 フレームが
+/// 約 28 ms から約 36 ms に増え、拡大して見る絵（粗さの段・法線）の境が実 GPU（d3d12 の OpenGL）より大きくぼける（絵の比べの正解や Unity との
+/// 差の上限が、等方の絵で決まっているのも同じ）。ソフトで描く場面は斜めの鮮明さを求める用途でもない。試験が `set_paint_anisotropy` で上げて確かめる。
+///
+/// 判定は wgpu のアダプターの種類（`device_type == Cpu`。lavapipe・WARP はこれで報告される）。Mesa の d3d12 の OpenGL が WARP の上で動くときのように、
+/// 種類が CPU と報告されないものは見分けられず、16 になりうる。
+fn default_anisotropy(flags: wgpu::DownlevelFlags, software: bool) -> u16 {
+    if software {
+        1
+    } else {
+        supported_anisotropy(flags, PAINT_ANISOTROPY)
+    }
+}
+
+/// 塗った絵（標準のチャンネル・ユーザーチャンネル・lilToon が読む画像）を読むサンプラー。異方性が 1 を超えるときは、wgpu の決まりで
+/// 拡大・縮小・ミップの 3 つの補間がすべて Linear でなければならない。
+///
+/// 絵を読むサンプラーはこれだけ。環境のキューブ（`env_sampler`）は段を明示して読む（粗さからの `textureSampleLevel`）ので、異方性は効かない。
+/// ブルーム・影のサンプラーは絵ではなく、画面の効果と深さの比較。
+fn paint_sampler_descriptor(anisotropy: u16) -> wgpu::SamplerDescriptor<'static> {
+    wgpu::SamplerDescriptor {
+        label: Some("yolu-3d-paint"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: anisotropy,
+        ..Default::default()
+    }
+}
+
 impl View3dRenderer {
     pub fn new(rs: &egui_wgpu::RenderState) -> View3dRenderer {
         let device = &rs.device;
-        let srgb_views = rs
-            .adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let downlevel = rs.adapter.get_downlevel_capabilities().flags;
+        let srgb_views = downlevel.contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let paint_anisotropy = default_anisotropy(
+            downlevel,
+            rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu,
+        );
         // 面のシェーダー: 標準（scene.wgsl）と lilToon の再現（`shaders/liltoon/` の部品をつないだもの。scene.wgsl の一様バッファ・束ね・
         // 関数を使う）を 1 つのモジュールに
         let scene_source = format!(
@@ -819,7 +868,7 @@ impl View3dRenderer {
             },
             count: None,
         }];
-        // 塗った絵の標本器は、lilToon の輪郭線の頂点（太さのマスク）も読む
+        // 塗った絵のサンプラーは、lilToon の輪郭線の頂点（太さのマスク）も読む
         let mut paint_sampler_entry = sampler_entry(7);
         paint_sampler_entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
         entries.push(paint_sampler_entry);
@@ -1080,15 +1129,7 @@ impl View3dRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let paint_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("yolu-3d-paint"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
+        let paint_sampler = device.create_sampler(&paint_sampler_descriptor(paint_anisotropy));
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("yolu-3d-env"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1199,6 +1240,7 @@ impl View3dRenderer {
             bounds: None,
             uniforms,
             paint_sampler,
+            paint_anisotropy,
             env_sampler,
             dummy_cube,
             _dummy_texture: dummy,
@@ -1256,6 +1298,28 @@ impl View3dRenderer {
     /// 描き先のメモリの上限を決める（試験・計測用。None で既定へ）。
     pub fn set_target_budget(&mut self, bytes: Option<u64>) {
         self.target_budget = bytes;
+    }
+
+    /// 塗った絵のサンプラーが今使っている異方性の上限（GPU が持たなければ 1）。
+    pub fn paint_anisotropy(&self) -> u16 {
+        self.paint_anisotropy
+    }
+
+    /// 塗った絵のサンプラーの異方性の上限を変える（試験・計測用。1 で等方。GPU が持たなければ 1 のまま）。
+    pub fn set_paint_anisotropy(&mut self, wanted: u16) {
+        let flags = self.rs.adapter.get_downlevel_capabilities().flags;
+        let clamp = supported_anisotropy(flags, wanted);
+        if clamp == self.paint_anisotropy {
+            return;
+        }
+        self.paint_anisotropy = clamp;
+        self.paint_sampler = self
+            .rs
+            .device
+            .create_sampler(&paint_sampler_descriptor(clamp));
+        // サンプラーは group 0 の束ねに入っている。絵は同じでも描き直す
+        self.bind = None;
+        self.last_key = None;
     }
 
     /// 機材が面の描き先に使えるサンプル数（昇順。1 を含む）。アンチエイリアスの選びに出す。
@@ -3321,6 +3385,33 @@ mod tests {
         // 待たないほうが既定の形（設定の既定と同じ向き）
         let default = surface_config(crate::settings::Settings::default().vsync);
         assert_eq!(default.present_mode, wgpu::PresentMode::AutoNoVsync);
+    }
+
+    /// 塗った絵のサンプラー: 異方性は 16 まで、GPU が持たなければ 1。異方性を使うときは、wgpu が求める 3 つの補間がすべて Linear。
+    #[test]
+    fn the_paint_sampler_uses_anisotropy_only_when_the_adapter_has_it() {
+        let with = wgpu::DownlevelFlags::ANISOTROPIC_FILTERING;
+        let without = wgpu::DownlevelFlags::empty();
+        assert_eq!(supported_anisotropy(with, PAINT_ANISOTROPY), 16);
+        assert_eq!(supported_anisotropy(without, PAINT_ANISOTROPY), 1);
+        // 既定: 実 GPU は 16、持たない機材と CPU で描くアダプターは 1
+        assert_eq!(default_anisotropy(with, false), 16);
+        assert_eq!(default_anisotropy(without, false), 1);
+        assert_eq!(default_anisotropy(with, true), 1);
+        assert_eq!(default_anisotropy(without, true), 1);
+        // 範囲の外は 1〜16 に収める（0 は wgpu が断る値）
+        assert_eq!(supported_anisotropy(with, 0), 1);
+        assert_eq!(supported_anisotropy(with, 1), 1);
+        assert_eq!(supported_anisotropy(with, 64), 16);
+        for anisotropy in [1u16, 16] {
+            let d = paint_sampler_descriptor(anisotropy);
+            assert_eq!(d.anisotropy_clamp, anisotropy);
+            assert_eq!(d.mag_filter, wgpu::FilterMode::Linear);
+            assert_eq!(d.min_filter, wgpu::FilterMode::Linear);
+            assert_eq!(d.mipmap_filter, wgpu::MipmapFilterMode::Linear);
+            assert_eq!(d.address_mode_u, wgpu::AddressMode::Repeat);
+            assert_eq!(d.address_mode_v, wgpu::AddressMode::Repeat);
+        }
     }
 
     #[test]
