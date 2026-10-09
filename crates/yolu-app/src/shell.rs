@@ -463,7 +463,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
         PopupKind::Mode => crate::mode::entries(app),
         // パイと G/R/S は項目の並びでなく、自分で描く（`pie::show`・`objects::transform::show`）
-        PopupKind::Pie | PopupKind::Transform => Vec::new(),
+        PopupKind::Pie | PopupKind::Transform | PopupKind::KeyCapture => Vec::new(),
     }
 }
 
@@ -782,6 +782,8 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
+    // ショートカットの設定で割り当てに使ったキーは、離すまで繰り返しの押しを表へ渡さない
+    crate::shortcuts::editor::swallow_held(ctx, app);
     // メニューなどから頼まれたパイを、ポインタの所に開く。外から閉じられた G/R/S はそこまでで決め、頼まれた G/R/S を始める
     crate::pie::open_requested(ctx, app);
     crate::objects::transform::settle(app);

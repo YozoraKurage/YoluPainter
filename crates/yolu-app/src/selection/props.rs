@@ -105,7 +105,7 @@ fn creation_group(
     held: egui::Modifiers,
 ) -> f32 {
     let l = app.lang;
-    let effective = super::combine_of(app.sel.combine, held);
+    let effective = super::combine_of(app.sel.combine, egui::PointerButton::Primary, held);
     let width = CREATION_MODES.len() as f32 * 28.0 + 4.0;
     let group = Rect::from_min_size(pos2(x, y), vec2(width, h));
     w::rounded(ui.painter(), group, t::CONTROL_BG, 5.0);
@@ -355,7 +355,7 @@ pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let l = app.lang;
     let row = rows.row(24.0, 4.0);
     let held = ui.input(|i| i.modifiers);
-    let effective = super::combine_of(app.sel.combine, held);
+    let effective = super::combine_of(app.sel.combine, egui::PointerButton::Primary, held);
     for (i, mode) in CREATION_MODES.into_iter().enumerate() {
         let at = Rect::from_min_size(
             pos2(row.left() + 30.0 * i as f32, row.top()),

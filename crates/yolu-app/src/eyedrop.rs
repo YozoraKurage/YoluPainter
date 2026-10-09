@@ -62,6 +62,8 @@ pub struct RightPress {
     pub source: StrokeSource,
     pub at: Pos2,
     pub sample: Option<Color32>,
+    /// 押したボタン（そのボタンを離して決める。組み合わせの表で、スポイトを別のボタンにもできる）。
+    pub button: egui::PointerButton,
 }
 
 /// 押したときにスポイトとして働くか（スポイトのツール。描くツールの右ボタンは `RightPress`）。
@@ -70,7 +72,12 @@ pub fn picks(app: &AppState) -> bool {
 }
 
 /// 2D の右ボタン（ペンのサイドボタン）でスポイトを始める。描いている最中・ほかのスポイトの途中は始めない。
-pub fn right_begin(app: &mut AppState, source: StrokeSource, at: Pos2) -> bool {
+pub fn right_begin(
+    app: &mut AppState,
+    source: StrokeSource,
+    at: Pos2,
+    button: egui::PointerButton,
+) -> bool {
     if app.is_stroking() || app.canvas.eyedrop.is_some() || left_drag_in_progress(app) {
         return false;
     }
@@ -78,6 +85,7 @@ pub fn right_begin(app: &mut AppState, source: StrokeSource, at: Pos2) -> bool {
         source,
         at,
         sample: None,
+        button,
     });
     true
 }
@@ -86,7 +94,6 @@ pub fn right_begin(app: &mut AppState, source: StrokeSource, at: Pos2) -> bool {
 fn left_drag_in_progress(app: &AppState) -> bool {
     app.canvas.rotating.is_some()
         || app.canvas.panning
-        || app.canvas.middle_rotating
         || app.canvas.zooming.is_some()
         || app.region.drag.is_some()
         || crate::tools::input::CanvasKind::ALL

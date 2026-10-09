@@ -75,7 +75,7 @@ pub fn press(
         Tool::Wand => {
             let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
             let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
-            let mode = combine_of(app.sel.combine, modifiers);
+            let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand { x, y, mode })));
         }
         Tool::Polygon => polygon_press(app, view, pos, canvas, modifiers, now),
@@ -137,7 +137,7 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
         );
         return;
     }
-    let mode = combine_of(app.sel.combine, modifiers);
+    let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
     app.apply(Action::Sel(SelAction::Edit(SelEdit::Polygon {
         points,
         mode,
@@ -208,7 +208,13 @@ pub fn release(
     }
     let click = drag.moved < CLICK_RADIUS;
     let pressed_with = app.sel.press_modifiers;
-    let mode = drag_mode(app.sel.combine, drag.tool, pressed_with, modifiers);
+    let mode = drag_mode(
+        app.sel.combine,
+        drag.tool,
+        app.sel.press_button,
+        pressed_with,
+        modifiers,
+    );
     let c = shape::Constraint::of(&app.sel, drag.tool, pressed_with, modifiers);
     let (a, b) = shape::drag_corners(drag.start, drag.current, c.square, c.center);
     let corner_radius = app.sel.corner_radius;
@@ -258,6 +264,7 @@ pub fn release(
 fn drag_mode(
     base: SelectionCombine,
     tool: Tool,
+    button: egui::PointerButton,
     pressed_with: Modifiers,
     now: Modifiers,
 ) -> SelectionCombine {
@@ -267,6 +274,7 @@ fn drag_mode(
     let ctrl = pressed_with.ctrl || pressed_with.command || now.ctrl || now.command;
     combine_of(
         base,
+        button,
         Modifiers {
             shift,
             ctrl,

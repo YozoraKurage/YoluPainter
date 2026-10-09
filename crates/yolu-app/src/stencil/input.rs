@@ -172,12 +172,18 @@ pub fn handle_event(
     event: &Event,
     rect: Rect,
     over: bool,
-    shift: bool,
+    modifiers: &egui::Modifiers,
 ) -> bool {
     if let Some(drag) = app.stencil.drag {
         return match event {
             Event::PointerMoved(p) => {
-                app.stencil.update_drag(*p, shift);
+                // 回す間の刻み（組み合わせの表の、始めたあとに効く修飾。既定は Shift）
+                let snap = crate::keymap::modifier_held(
+                    "stencil",
+                    crate::keymap::Operation::SnapStencilRotation,
+                    modifiers,
+                );
+                app.stencil.update_drag(*p, snap);
                 true
             }
             // ドラッグの最中は、ほかのボタンを押しても何も始めない（ストロークも、キャンバスのパンも、3D の回しも）。離すほうは、ドラッグの

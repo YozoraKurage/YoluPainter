@@ -936,7 +936,7 @@ fn r_drag_and_shift_middle_drag_no_longer_rotate_the_2d_view() {
     mods(&mut h, Modifiers::SHIFT);
     mouse(&h, center, PointerButton::Middle, true, Modifiers::SHIFT);
     h.step();
-    assert!(!h.state().state.canvas.middle_rotating);
+    assert!(h.state().state.canvas.rotating.is_none() && h.state().state.canvas.panning);
     move_mouse(&mut h, offset(center, 30.0, 10.0));
     mouse(
         &h,
@@ -1060,33 +1060,39 @@ fn an_alt_pressed_after_a_brush_stroke_began_does_not_turn_it_into_a_rotation() 
 // ───────── ショートカットの一覧 ─────────
 
 #[test]
-fn the_shortcut_list_names_the_new_operations_in_both_languages() {
+fn the_default_key_tables_name_the_new_operations_in_both_languages() {
     use yolu_app::lang::Lang;
     for lang in Lang::ALL {
-        let mut app = yolu_app::state::AppState::new(32, 32);
-        app.lang = lang;
-        let rows = yolu_app::shortcuts::rows(&app);
-        let has = |name: &str, keys: &str| rows.iter().any(|r| r.left == name && r.right == keys);
-        let alt_left = format!("Alt+{}", lang.pick("左ボタン", "Left Button"));
+        // アプリの表から作る、既定の割り当ての表（ショートカットの設定のウィンドウ・文書と同じ表）
+        let tables = yolu_app::shortcuts::guide::tables(lang);
+        let has = |line: &str| tables.lines().any(|l| l == line);
+        let left = lang.pick("左ボタン", "Left Button");
+        let (open, close) = lang.pick(("（", "）"), (" (", ")"));
+        let mode = lang.pick("どこでも・視点", "Everywhere & View");
         assert!(
-            has(lang.pick("スナップ回転", "Snap Orbit"), &alt_left),
+            has(&format!(
+                "| {}{open}3D{close} | Alt+{left} | {mode} |",
+                lang.pick("スナップ回転", "Snap Orbit")
+            )),
             "{lang:?}"
         );
         assert!(
-            has(lang.pick("回転", "Rotate"), &alt_left),
+            has(&format!(
+                "| {}{open}2D{close} | Alt+{left} | {mode} |",
+                lang.pick("回転", "Rotate")
+            )),
             "2D の回転: {lang:?}"
         );
         assert!(
-            has(
+            has(&format!(
+                "| {}{open}3D{close} | Alt+{} | {} |",
                 lang.pick("クローンの元を決める", "Set Clone Source"),
-                &format!(
-                    "Alt+{}",
-                    lang.pick(
-                        "左ボタンを動かさずに離す",
-                        "Left Button Released without Moving"
-                    )
-                )
-            ),
+                lang.pick(
+                    "左ボタンを動かさずに離す",
+                    "Left Button Released without Moving"
+                ),
+                lang.pick("ペイント", "Paint"),
+            )),
             "{lang:?}"
         );
         for (ja, en, key) in [
@@ -1121,12 +1127,16 @@ fn the_shortcut_list_names_the_new_operations_in_both_languages() {
                 "E",
             ),
         ] {
-            assert!(has(lang.pick(ja, en), key), "{ja}: {lang:?}");
+            assert!(
+                has(&format!("| {} | `{key}` |", lang.pick(ja, en))),
+                "{ja}: {lang:?}"
+            );
         }
-        // R を押しながらの回転は、一覧に出ない
-        assert!(!rows
-            .iter()
-            .any(|r| r.left == lang.pick("回転", "Rotate") && r.right == "R + マウス"));
-        assert!(!rows.iter().any(|r| r.right.starts_with("R +")));
+        // R を押しながらの回転は、既定では割り当てが無い（表に出ない）
+        let everywhere = tables
+            .split(&format!("### {}", lang.pick("ペイント", "Paint")))
+            .next()
+            .unwrap();
+        assert!(!everywhere.contains("| `R` |"), "{lang:?}");
     }
 }

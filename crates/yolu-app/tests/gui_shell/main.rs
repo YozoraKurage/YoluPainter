@@ -34,6 +34,7 @@ mod recovery_ui;
 mod save_close;
 mod scroll;
 mod shelf;
+mod shortcut_editor;
 mod subtools;
 mod titlebar;
 mod update;

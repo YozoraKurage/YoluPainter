@@ -233,7 +233,8 @@ fn tool_row(
     );
     let name = tool.name_in(lang);
     // キーは、名前が入りきるときだけ右に出す（狭いパネルで名前を詰めない。キーはツールチップにも）
-    let key = Some(tool.key())
+    let key_text = crate::shortcuts::tool_key(tool);
+    let key = Some(key_text.as_str())
         .filter(|k| !k.is_empty())
         .filter(|k| {
             let needed = 36.0
@@ -278,7 +279,7 @@ fn tool_row(
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, clickable, selected, name)
     });
-    let tip = match tool.key() {
+    let tip = match key_text.as_str() {
         "" => name.to_owned(),
         k => format!("{name} ({k})"),
     };

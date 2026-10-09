@@ -569,6 +569,16 @@ impl YoluApp {
             .attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
+        // キー・マウス・パイの設定（keymap.json。読めなければ既定のキーで始め、ファイルは残す）
+        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
+            let state = &mut app.state;
+            notices.extend(state.keys.attach(
+                dir.join(crate::keyconfig::FILE_NAME),
+                &mut state.pie.menus,
+                lang,
+            ));
+            crate::keymap::install(state.keys.map());
+        }
         notices.extend(app.state.brush_problem_message());
         notices.extend(app.state.toolset_problem_message());
         notices.extend(app.state.subtool_problem_message());
@@ -1189,6 +1199,27 @@ impl YoluApp {
                         .apply(Action::Text(crate::textlayer::TextAction::FontFile(path)));
                 }
             }
+            Some(DialogRequest::KeymapExport) => {
+                let lang = self.state.lang;
+                if let Some(path) = crate::dialog::file()
+                    .set_title(lang.pick("キーの設定を書き出す", "Export Key Settings"))
+                    .set_file_name(crate::keyconfig::FILE_NAME)
+                    .add_filter("JSON", &["json", "JSON"])
+                    .save_file()
+                {
+                    self.state.keys_export(&path);
+                }
+            }
+            Some(DialogRequest::KeymapImport) => {
+                let lang = self.state.lang;
+                if let Some(path) = crate::dialog::file()
+                    .set_title(lang.pick("キーの設定を読み込む", "Import Key Settings"))
+                    .add_filter("JSON", &["json", "JSON"])
+                    .pick_file()
+                {
+                    self.state.keys_import(&path);
+                }
+            }
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file()
@@ -1671,6 +1702,8 @@ impl YoluApp {
 
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        // このアプリのキーの割り当て（ショートカットの設定）を、このスレッドで効かせる
+        crate::keymap::install(self.state.keys.map());
         self.poll_gpu_watch(&ctx);
         self.state.ui.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
@@ -2156,6 +2189,11 @@ impl YoluApp {
             if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
                 self.state.popup.get_or_insert(open);
             }
+            return;
+        }
+        // キーを待っている間の受け皿は、ショートカットのウィンドウが受けて閉じる
+        if open.kind == PopupKind::KeyCapture {
+            self.state.popup = Some(open);
             return;
         }
         let entries = shell::popup_entries(&self.state, open.kind);

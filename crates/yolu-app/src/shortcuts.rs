@@ -1,6 +1,8 @@
 //! キーの一覧のウィンドウ（読むだけ）と、メニュー・ツールチップのキーの文字。割り当ては `keymap` の表（操作は `commands` の ID）で、一覧・メニューの文字・
 //! 実際のキーの処理は同じ表を読む。名前はメニューと共有する。
+pub mod editor;
 pub mod gestures;
+pub mod guide;
 
 use crate::{
     commands,
@@ -12,16 +14,10 @@ use crate::{
     selection::{SelAction, SelEdit},
     state::{Action, AppState},
     ui::menu::Entry,
-    windows::{ListSpec, Row},
 };
-use egui::{Key, Modifiers, Vec2};
+use egui::{Key, Modifiers};
 
-#[derive(Default)]
-pub struct ShortcutWindow {
-    pub open: bool,
-    offset: Vec2,
-    scroll: f32,
-}
+pub use editor::ShortcutWindow;
 
 /// キーの割り当て 1 つ（`keymap` の表のもの）。
 pub type Binding = keymap::KeyBinding;
@@ -73,15 +69,25 @@ fn key_name(key: Key) -> &'static str {
         Key::Plus => "+",
         Key::Equals => "=",
         Key::Minus => "-",
+        Key::Period => ".",
+        Key::Slash => "/",
+        Key::Backslash => "\\",
+        Key::Semicolon => ";",
+        Key::Escape => "Esc",
         _ => key.name(),
     }
+}
+
+/// キーの文字（文書・一覧の書き方。記号は記号で、Esc は Esc）。
+pub fn key_text_of(key: Key) -> &'static str {
+    key_name(key)
 }
 /// 割り当ての文字（「Ctrl+A」。macOS は Command を「Cmd+」と書く）。文字の入力の行はその文字。
 pub fn key_label(binding: &Binding) -> String {
     label_for(binding, cfg!(target_os = "macos"))
 }
 
-fn label_for(binding: &Binding, mac: bool) -> String {
+pub(crate) fn label_for(binding: &Binding, mac: bool) -> String {
     let (m, key) = match binding.trigger {
         Trigger::Text(text) => return text.to_owned(),
         Trigger::Key { modifiers, key } => (modifiers, key),
@@ -150,6 +156,26 @@ fn menu_key_with(command: &str, mode: EditorMode, mac: bool) -> Option<String> {
         return (!rows.is_empty()).then(|| rows.join(" / "));
     }
     rows.next().map(|b| label_for(b, mac))
+}
+
+/// 操作の、そのモードで効くキーの文字（主の行。無ければ None）。ツールチップに添えるキーは、ここから引く（設定で変えたキーに付いてくる）。
+pub fn key_in(command: &str, mode: EditorMode) -> Option<String> {
+    menu_key_in(command, mode)
+}
+
+/// 名前にキーを添える（「選択を解除（Ctrl+D / Esc）」。英語は「Deselect (Ctrl+D / Esc)」）。キーが無ければ名前だけ。
+pub fn named_with_keys(lang: Lang, name: &str, keys: &[Option<String>]) -> String {
+    let keys: Vec<&str> = keys.iter().flatten().map(String::as_str).collect();
+    if keys.is_empty() {
+        return name.to_owned();
+    }
+    let keys = keys.join(" / ");
+    lang.pick(format!("{name}（{keys}）"), format!("{name} ({keys})"))
+}
+
+/// ツールのキーの文字（ペイントのモードの表から。設定で外していれば空）。
+pub fn tool_key(tool: crate::state::Tool) -> String {
+    menu_key_in(commands::tool_command(tool), EditorMode::Paint).unwrap_or_default()
 }
 
 /// 操作に割り当てたキーの文字（「Ctrl+A」。主の行だけ。無ければ None）。
@@ -223,157 +249,15 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
     )
 }
 
-fn group(action: &Action) -> usize {
-    match action {
-        Action::SelectTool(_)
-        | Action::BrushSmaller
-        | Action::BrushLarger
-        | Action::SwapColors
-        | Action::DefaultColors
-        | Action::Path(_) => 0,
-        Action::M2(_) | Action::NewLayer => 2,
-        Action::Sel(_) => 3,
-        Action::FitView
-        | Action::ZoomIn
-        | Action::ZoomOut
-        | Action::ResetRotation
-        | Action::FlipView
-        | Action::RotateLeft
-        | Action::RotateRight
-        | Action::Fill(_) => 4,
-        Action::Mode(_) | Action::Pie(_) | Action::View3dNav(_) => 4,
-        Action::SaveProject
-        | Action::SaveProjectAsDialog
-        | Action::OpenProjectDialog
-        | Action::NewProjectDialog
-        | Action::Quit => 5,
-        _ => 1,
-    }
-}
-
-pub fn rows(app: &AppState) -> Vec<Row> {
-    let l = app.lang;
-    let groups = [
-        l.pick("ツール", "Tools"),
-        l.pick("編集", "Edit"),
-        l.pick("レイヤー", "Layer"),
-        l.pick("選択範囲", "Selection"),
-        l.pick("表示", "View"),
-        l.pick("ファイル", "File"),
-    ];
-    let mut all = Vec::new();
-    let listed: Vec<(Binding, Action)> = bindings()
-        .into_iter()
-        .filter_map(|b| b.action().map(|action| (b, action)))
-        .collect();
-    for (g, title) in groups.iter().enumerate() {
-        all.push(Row::text(*title, false));
-        let in_group = || listed.iter().filter(|(_, action)| group(action) == g);
-        for (binding, _) in in_group().filter(|(b, _)| b.key().is_some()) {
-            all.push(Row {
-                left: binding_label(app, binding)
-                    .unwrap_or_else(|| l.pick("未登録の操作", "Unlisted Action").into()),
-                middle: String::new(),
-                right: key_label(binding),
-                warning: false,
-            });
-        }
-        if g == 0 {
-            let arrows = movement_keys().map(key_name).join(" / ");
-            all.push(Row {
-                left: l.pick("移動（1 px / 10 px）", "Move (1 px / 10 px)").into(),
-                middle: String::new(),
-                right: format!("{arrows} / Shift"),
-                warning: false,
-            });
-        }
-        // 文字の入力で見る割り当て（キーの位置が配列で違う文字）は、キーの行のあとに別の行で出す
-        for (binding, _) in in_group().filter(|(b, _)| b.key().is_none()) {
-            all.push(Row {
-                left: text_row_label(app, binding),
-                middle: String::new(),
-                right: key_label(binding),
-                warning: false,
-            });
-        }
-    }
-    all.extend(context_rows(l));
-    all
-}
-
 /// 割り当ての行の名前（操作の名前。メニューにある操作はメニューと同じ名前）。
+#[cfg(test)]
 fn binding_label(app: &AppState, binding: &Binding) -> Option<String> {
     commands::find(binding.command).and_then(|c| c.label(app))
 }
 
-/// 文字の入力で見る割り当ての行の名前（キーの行と並べたとき、どの操作のもう 1 つの割り当てかが分かる名前）。
-fn text_row_label(app: &AppState, binding: &Binding) -> String {
-    match binding.command {
-        "view.rotate_right" => app.lang.pick("右に回転", "Rotate Right").into(),
-        _ => binding
-            .action()
-            .and_then(|action| action_label(app, &action))
-            .unwrap_or_default(),
-    }
-}
-
-fn context_rows(lang: Lang) -> Vec<Row> {
-    let mut rows = Vec::new();
-    for (scope, title) in [
-        ("canvas", lang.pick("2D ビュー", "2D View")),
-        ("view3d", lang.pick("3D ビュー", "3D View")),
-        ("stencil", lang.pick("ステンシル", "Stencil")),
-    ] {
-        rows.push(Row::text(title, false));
-        for context in keymap::CONTEXT_KEYS.iter().filter(|c| c.scope == scope) {
-            let Some(key) = context.key() else {
-                continue;
-            };
-            rows.push(Row {
-                left: context.label(lang).into(),
-                middle: String::new(),
-                right: format!(
-                    "{}{}",
-                    key_name(key),
-                    if context.mouse {
-                        lang.pick(" + マウス", " + Mouse")
-                    } else {
-                        ""
-                    }
-                ),
-                warning: false,
-            });
-        }
-        rows.extend(gestures::rows(scope, lang));
-    }
-    rows
-}
-
+/// ショートカットの設定のウィンドウ（`editor`）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if !app.shortcuts.open {
-        return;
-    }
-    let spec = ListSpec {
-        id: "shortcuts",
-        title: app.lang.pick("ショートカット", "Keyboard Shortcuts").into(),
-        icon: "tune",
-        modal: false,
-        width: 620.0,
-        summary: None,
-        rows: rows(app),
-        buttons: Vec::new(),
-        close_label: app.lang.pick("閉じる", "Close").into(),
-    };
-    if crate::windows::show_list(
-        ctx,
-        &spec,
-        &mut app.shortcuts.offset,
-        &mut app.shortcuts.scroll,
-    )
-    .is_some()
-    {
-        app.shortcuts.open = false;
-    }
+    editor::show(ctx, app);
 }
 
 #[cfg(test)]
@@ -398,6 +282,113 @@ mod tests {
         };
         let mut output = ctx.run_ui(input, |ui| crate::shell::handle_shortcuts(ui.ctx(), app));
         output.textures_delta.clear();
+    }
+
+    /// マウスの組み合わせの欄の文字は、どの行にどのボタン（戻る・進むも）を当てても書ける。離しの行は「動かさずに離す」。
+    #[test]
+    fn every_button_on_every_mouse_row_has_a_label_in_both_languages() {
+        use egui::PointerButton::*;
+        for g in crate::keymap::GESTURES.iter() {
+            for button in [Primary, Secondary, Middle, Extra1, Extra2] {
+                let combo = crate::keyconfig::Combo {
+                    button,
+                    alt: false,
+                    shift: true,
+                    ctrl: false,
+                };
+                let ja = editor::combo_label(Lang::Ja, g.index, combo);
+                let en = editor::combo_label(Lang::En, g.index, combo);
+                assert!(
+                    ja.contains("ボタン") && en.contains("Button"),
+                    "{ja} / {en}"
+                );
+                assert_eq!(ja.contains("動かさずに離す"), g.click, "{ja}");
+                assert_eq!(en.contains("Released without Moving"), g.click, "{en}");
+            }
+        }
+        let back = crate::keyconfig::Combo {
+            button: Extra1,
+            alt: false,
+            shift: false,
+            ctrl: false,
+        };
+        assert!(editor::combo_label(Lang::Ja, 0, back).ends_with("戻るボタン"));
+        assert!(editor::combo_label(
+            Lang::En,
+            0,
+            crate::keyconfig::Combo {
+                button: Extra2,
+                ..back
+            }
+        )
+        .ends_with("Forward Button"));
+    }
+
+    /// 部品のツールチップに添えるキー（左右反転の印・色の入れ替えと初期設定・3D ビューのハンドル・新しいパス）は、表から引くので、
+    /// ショートカットの設定で変えると、ツールチップも変わる。左右反転は、H が印を隠す編集のモードでは添えない。
+    #[test]
+    fn the_keys_in_button_tooltips_follow_the_shortcut_settings() {
+        use crate::mode::EditorMode;
+        let mut app = AppState::new(32, 32);
+        let lang = Lang::Ja;
+        let tips = |mode: EditorMode| {
+            [
+                crate::canvas::flip_tip(lang, mode),
+                crate::panels::color_swatch::swap_tip(lang, mode),
+                crate::panels::color_swatch::default_tip(lang, mode),
+                crate::panels::fill_props::handles_tip(lang, mode),
+                crate::panels::path_props::new_path_tip(lang),
+            ]
+        };
+        let defaults = tips(EditorMode::Paint);
+        let default_keys = ["（H）", "（X）", "（D）", "（Q）", "（Enter）"];
+        for (tip, key) in defaults.iter().zip(default_keys) {
+            assert!(tip.contains(key), "{tip}");
+        }
+        assert_eq!(
+            tips(EditorMode::Edit)[0],
+            "表示を左右反転しています。押すと戻します"
+        );
+        // 5 つの操作のキーを、ほかで使っていないキーに替える
+        let changed = [
+            ("view.flip", "Shift+F7"),
+            ("color.swap", "Shift+F8"),
+            ("color.default", "Shift+F9"),
+            ("fill.toggle_handles", "Shift+F10"),
+            ("path.finish", "Shift+F11"),
+        ];
+        for (command, text) in changed {
+            let trigger = crate::keyconfig::parse_trigger(text).unwrap();
+            for group in crate::keyconfig::default_groups()
+                .into_iter()
+                .filter(|g| g.0 == command)
+            {
+                app.keys.set(group, vec![trigger]);
+            }
+        }
+        app.keys_changed();
+        assert!(!app.keys.has_conflicts());
+        let now = tips(EditorMode::Paint);
+        for ((tip, (_, text)), old) in now.iter().zip(changed).zip(&defaults) {
+            assert!(tip.contains(&format!("（{text}）")), "{tip}");
+            assert_ne!(tip, old);
+        }
+        // 外すと、名前だけ
+        for (command, _) in changed {
+            for group in crate::keyconfig::default_groups()
+                .into_iter()
+                .filter(|g| g.0 == command)
+            {
+                app.keys.set(group, Vec::new());
+            }
+        }
+        app.keys_changed();
+        for (tip, key) in tips(EditorMode::Paint).iter().zip(default_keys) {
+            assert!(!tip.contains(key) && !tip.contains("（Shift+F"), "{tip}");
+        }
+        assert_eq!(tips(EditorMode::Paint)[1], "メインとサブの色を入れ替え");
+        app.keys_reset_all();
+        assert_eq!(tips(EditorMode::Paint), defaults);
     }
 
     #[test]
@@ -430,7 +421,6 @@ mod tests {
                         .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)));
                 }
             }
-            assert!(rows(&app).len() > bindings().len());
         }
     }
 
@@ -745,74 +735,50 @@ mod tests {
         );
         let caret = keymap::primary("view.rotate_right").expect("行");
         assert_eq!(caret.trigger, Trigger::Text("^"));
-        let mut app = AppState::new(32, 32);
-        app.lang = Lang::En;
-        let all = rows(&app);
-        assert!(all.iter().any(|r| r.left.contains("Move (1 px / 10 px)")));
-        assert!(all
-            .iter()
-            .any(|r| r.left == "Rotate Right" && r.right == "^"));
-        assert!(all
-            .iter()
-            .any(|r| r.left == "Rotate View Right" && r.right == "="));
-        // 一覧に出すキーの割り当てには、押している間のキーとビューが読むキーは入らない（ビューごとのキーの節に出る）
+        // 既定の割り当ての表（ウィンドウと文書と同じ表）: 矢印・文字の行・ツールのキー
+        let tables = guide::tables(Lang::En);
+        assert!(tables.contains("(1 px)") && tables.contains("(10 px)"));
+        assert!(
+            tables.contains("| Rotate View Right | `^` / `=` |"),
+            "{tables}"
+        );
+        // 表のキーの割り当てには、押している間のキーとビューが読むキーも入る（一覧の行は Action を持つ物だけ）
         assert!(bindings().iter().all(|b| b.action().is_some()));
-        // ツールのキーはツールの表のとおり、ツールの帯の並びで一覧に出る
+        // ツールのキーはツールの表のとおり、ツールの帯の並びで表に出る
         let mut last = 0;
         for tool in Tool::ALL.iter().filter(|t| !t.key().is_empty()) {
-            let at = all
-                .iter()
-                .position(|r| r.left == tool.name_in(Lang::En) && r.right == tool.key())
-                .unwrap_or_else(|| panic!("{tool:?} のキーが一覧にない"));
+            let line = format!("| {} | `{}` |", tool.name_in(Lang::En), tool.key());
+            let at = tables
+                .find(&line)
+                .unwrap_or_else(|| panic!("{tool:?} のキーが表にない"));
             assert!(at > last, "{tool:?}: ツールの帯の並び");
             last = at;
         }
     }
 
     #[test]
-    fn the_listed_rows_keep_their_groups_names_and_keys() {
-        // 一覧のウィンドウの中身（行の並び・名前・キーの文字）は、表を ID に替えても変わらない
-        let mut app = AppState::new(32, 32);
-        app.lang = Lang::En;
-        let all = rows(&app);
-        let text = |r: &Row| format!("{} | {}", r.left, r.right);
-        let find = |title: &str| {
-            all.iter()
-                .position(|r| r.left == title && r.right.is_empty())
-                .unwrap_or_else(|| panic!("見出し {title}"))
-        };
-        let section = |title: &str, next: &str| -> Vec<String> {
-            all[find(title) + 1..find(next)].iter().map(text).collect()
-        };
-        assert_eq!(
-            section("View", "File"),
-            [
-                "Delete Gradient Point | Delete",
-                "Delete Gradient Point | Backspace",
-                "Fit to Screen | Ctrl+0",
-                "Zoom In | Ctrl++",
-                "Zoom In | Ctrl+=",
-                "Zoom Out | Ctrl+-",
-                "Reset Rotation | Shift+R",
-                "Mode Pie Menu | Ctrl+Tab",
-                "Projection Handles | Q",
-                "Flip View | H",
-                "Rotate View Left | -",
-                "Rotate View Right | =",
-                "Rotate Right | ^",
-            ]
-        );
-        assert_eq!(
-            section("Selection", "View"),
-            [
-                "Copy to a New Layer | Ctrl+J",
-                "Invert Selection | Ctrl+Shift+I",
-                "Select All | Ctrl+A",
-                "Deselect | Ctrl+D",
-                "Erase Selection | Delete",
-                "Quick Mask | Shift+Q",
-            ]
-        );
+    fn the_default_tables_keep_the_names_and_keys() {
+        // 既定の割り当ての表の名前とキーの文字（表を ID に替えても、名前はメニューと同じ）
+        let tables = guide::tables(Lang::En);
+        for line in [
+            "| Fit to Screen | `Ctrl+0` |",
+            "| Zoom In | `Ctrl++` / `Ctrl+=` |",
+            "| Zoom Out | `Ctrl+-` |",
+            "| Reset Rotation | `Shift+R` |",
+            "| Mode Pie Menu | `Ctrl+Tab` |",
+            "| Flip View | `H` |",
+            "| Rotate View Left | `-` |",
+            "| Copy to a New Layer (With a selection) | `Ctrl+J` |",
+            "| Invert Selection | `Ctrl+Shift+I` |",
+            "| Select All | `Ctrl+A` |",
+            "| Deselect | `Ctrl+D` |",
+            "| Erase Selection (With a selection) | `Delete` |",
+            "| Quick Mask | `Shift+Q` |",
+            "| Delete Gradient Point (With a point selected) | `Delete` / `Backspace` |",
+            "| Projection Handles | `Q` |",
+        ] {
+            assert!(tables.lines().any(|l| l == line), "{line}\n{tables}");
+        }
     }
 
     #[test]

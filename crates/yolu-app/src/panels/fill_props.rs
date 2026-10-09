@@ -1043,10 +1043,7 @@ fn handle_buttons(
         lang.pick("3D ビューのハンドル", "Handles in 3D View"),
         editing,
         enabled && has_model,
-        Some(lang.pick(
-            "3D ビューに箱とハンドルを出す・隠す（Q）。矢印と中心の四角で移動、輪で回転（Ctrl で 15° ずつ）、面のつまみで大きさ（Shift で両側）",
-            "Show or hide the box and its handles in the 3D view (Q). Arrows and the centre square move, rings rotate (Ctrl for 15° steps), face knobs resize (Shift for both sides)",
-        )),
+        Some(&handles_tip(lang, app.mode)),
         Some("view_in_ar"),
     )
     .clicked()
@@ -2012,4 +2009,20 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::CurvePresets(layer, channel) => curve_preset_entries(app, layer, channel),
         _ => Vec::new(),
     }
+}
+
+/// 「3D ビューのハンドル」のツールチップ（キーは今の割り当て）。
+pub fn handles_tip(lang: Lang, mode: crate::mode::EditorMode) -> String {
+    let key = crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick(
+            "3D ビューに箱とハンドルを出す・隠す",
+            "Show or hide the box and its handles in the 3D view",
+        ),
+        &[crate::shortcuts::key_in("fill.toggle_handles", mode)],
+    );
+    lang.pick(
+        format!("{key}。矢印と中心の四角で移動、輪で回転（Ctrl で 15° ずつ）、面のつまみで大きさ（Shift で両側）"),
+        format!("{key}. Arrows and the centre square move, rings rotate (Ctrl for 15° steps), face knobs resize (Shift for both sides)"),
+    )
 }

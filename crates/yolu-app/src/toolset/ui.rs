@@ -217,7 +217,7 @@ struct StripRow {
     icon: super::IconChoice,
     gap: bool,
     selected: bool,
-    key: &'static str,
+    key: String,
 }
 
 /// ツールの帯のツールの列（帯の下の端の 2 枚の色の分は、呼ぶ側が先に取る）。`bottom` は列の下の端。
@@ -235,9 +235,9 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             selected: set.active() == Some(s.id),
             // キーは、そのキーで替わるツール（そのツールの列の最初の 1 つ）にだけ添える
             key: if set.first_of(s.tool) == Some(s.id) {
-                s.tool.key()
+                crate::shortcuts::tool_key(s.tool)
             } else {
-                ""
+                String::new()
             },
         })
         .collect();
@@ -264,7 +264,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let mut rects: Vec<(SlotId, Rect)> = Vec::with_capacity(rows.len());
     let mut gap_marks: Vec<(Option<SlotId>, f32)> = Vec::new();
     for (i, row) in rows.iter().enumerate() {
-        let (slot, name, key) = (&row.slot, &row.name, row.key);
+        let (slot, name, key) = (&row.slot, &row.name, row.key.as_str());
         if row.gap {
             w::strip_separator(
                 &p,

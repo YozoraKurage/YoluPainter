@@ -543,20 +543,8 @@ fn nav_of(button: PointerButton, m: &Modifiers, space: bool) -> Option<Nav> {
     }
 }
 
-/// ビューを動かす操作を始める（マウスもペンも）。動かさずに離したときの行き先も、ここで決める: クローンのブラシで Alt + 左なら元を決める、
-/// 右ボタン（ペンのサイドボタン）ならスポイト（ポリゴン塗りつぶしのツールのときは、アイランドのメニュー）。動かせば、そのまま回す。
-#[allow(clippy::too_many_arguments)]
-fn nav_press(
-    app: &mut AppState,
-    rect: Rect,
-    source: StrokeSource,
-    nav: Nav,
-    button: PointerButton,
-    pos: Pos2,
-    m: &Modifiers,
-    space: bool,
-) {
-    use crate::keymap::Operation;
+/// ビューを動かす操作を始める（マウスもペンも）。動かせば、そのまま回す・パン・拡縮。
+fn nav_press(app: &mut AppState, nav: Nav, button: PointerButton, pos: Pos2, m: &Modifiers) {
     app.view3d.input.navigation = Some(super::navigation::Drag::new(
         &app.view3d,
         app.prefs.settings.navigation,
@@ -566,18 +554,49 @@ fn nav_press(
     if nav == Nav::Zoom {
         app.view3d.input.zoom = Some(ZoomDrag::new(pos, m.alt));
     }
+}
+
+/// この押しを動かさずに離したときの操作（組み合わせの表の離しの行。クローンの元はクローンのブラシのとき、スポイトはポリゴン塗りつぶしの右ボタン
+/// （アイランドのメニュー）でないとき）。ドラッグの操作の有無によらず引く。
+fn click_of(
+    app: &AppState,
+    button: PointerButton,
+    m: &Modifiers,
+    space: bool,
+) -> Option<crate::keymap::Operation> {
+    use crate::keymap::Operation;
+    match crate::keymap::click_gesture("view3d", button, m, space)? {
+        Operation::CloneSource if crate::clone_source::active(app) => Some(Operation::CloneSource),
+        Operation::Pick
+            if !(button == PointerButton::Secondary && app.right_opens_island_menu()) =>
+        {
+            Some(Operation::Pick)
+        }
+        _ => None,
+    }
+}
+
+/// 離しの操作を覚える（動かさずに離したら行う。動かしたら捨てる）。スポイトは押した所の見本を読んでおく。
+fn note_click(
+    app: &mut AppState,
+    rect: Rect,
+    source: StrokeSource,
+    button: PointerButton,
+    pos: Pos2,
+    click: Option<crate::keymap::Operation>,
+) {
+    use crate::keymap::Operation;
     app.view3d.input.clone_press = None;
     app.view3d.input.eyedrop = None;
-    match crate::keymap::click_gesture("view3d", button, m, space) {
-        Some(Operation::CloneSource) if crate::clone_source::active(app) => {
-            app.view3d.input.clone_press = Some(pos);
-        }
-        Some(Operation::Pick) if !app.right_opens_island_menu() => {
+    match click {
+        Some(Operation::CloneSource) => app.view3d.input.clone_press = Some((pos, button)),
+        Some(Operation::Pick) => {
             let sample = crate::eyedrop::sample_surface(app, rect, pos);
             app.view3d.input.eyedrop = Some(crate::eyedrop::RightPress {
                 source,
                 at: pos,
                 sample,
+                button,
             });
         }
         _ => {}
@@ -590,9 +609,9 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
         .view3d
         .input
         .clone_press
-        .is_some_and(|start| start.distance(pos) > CLICK_DISTANCE)
+        .is_some_and(|(start, _)| start.distance(pos) > CLICK_DISTANCE)
     {
-        app.view3d.input.clone_press = None; // 動かした: 回すだけ
+        app.view3d.input.clone_press = None; // 動かした: ドラッグの操作だけ
     }
     if app
         .view3d
@@ -660,15 +679,20 @@ fn nav_release(app: &mut AppState, rect: Rect, pos: Pos2, button: PointerButton)
         app.view3d.input.nav = None;
         app.view3d.input.navigation = None;
     }
-    if button == PointerButton::Primary {
-        if let Some(start) = app.view3d.input.clone_press.take() {
+    // 離しの操作は、押したボタンを離したときだけ（動かさずに離したら行う）
+    if app
+        .view3d
+        .input
+        .clone_press
+        .is_some_and(|(_, b)| b == button)
+    {
+        if let Some((start, _)) = app.view3d.input.clone_press.take() {
             if start.distance(pos) <= CLICK_DISTANCE {
                 set_clone_source(app, rect, start);
             }
         }
     }
-    // 右ボタンを動かさずに離した: 離した所の面の値を取る
-    if button == PointerButton::Secondary {
+    if app.view3d.input.eyedrop.is_some_and(|p| p.button == button) {
         if let Some(press) = app.view3d.input.eyedrop.take() {
             if press.at.distance(pos) <= CLICK_DISTANCE {
                 crate::eyedrop::pick_surface(app, rect, pos);
@@ -778,17 +802,10 @@ fn pen_sample(
                         PointerButton::Primary
                     };
                     if let Some(nav) = nav_of(button, &frame.modifiers, frame.space) {
-                        nav_press(
-                            app,
-                            rect,
-                            source,
-                            nav,
-                            button,
-                            p,
-                            &frame.modifiers,
-                            frame.space,
-                        );
+                        nav_press(app, nav, button, p, &frame.modifiers);
                     }
+                    let click = click_of(app, button, &frame.modifiers, frame.space);
+                    note_click(app, rect, source, button, p, click);
                     // サイドボタン（右ボタン）を動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。`nav_press`）
                     if s.barrel && !frame.modifiers.any() && !frame.space {
                         crate::bake::overlap::menu_press(
@@ -866,7 +883,15 @@ fn pen_sample(
         match press.kind {
             PressKind::Ignored | PressKind::Eyedrop => {}
             PressKind::View => {
-                if let Some((_, button)) = app.view3d.input.nav {
+                // このペンが始めた物のボタン（ドラッグの操作か、離しの操作）
+                let button = app
+                    .view3d
+                    .input
+                    .nav
+                    .map(|(_, b)| b)
+                    .or(app.view3d.input.clone_press.map(|(_, b)| b))
+                    .or(app.view3d.input.eyedrop.map(|e| e.button));
+                if let Some(button) = button {
                     nav_release(app, rect, p, button);
                 }
                 crate::bake::overlap::menu_release(
@@ -913,8 +938,14 @@ fn press_kind(
     } else {
         PointerButton::Primary
     };
-    if nav_of(button, &frame.modifiers, frame.space).is_some() {
+    // ドラッグの操作か離しの操作があれば、ビューの押し（どちらも無いときだけ、ペン先はツール）
+    if nav_of(button, &frame.modifiers, frame.space).is_some()
+        || click_of(app, button, &frame.modifiers, frame.space).is_some()
+    {
         return PressKind::View;
+    }
+    if button != PointerButton::Primary {
+        return PressKind::Ignored;
     }
     // Ctrl を押した接触は描かない（Shift は直線）
     if gesture::pen_holds_off(app.tool.paints(), &frame.modifiers) {
@@ -1029,7 +1060,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
             _ => false,
         };
-        if app.mode.paints() && crate::stencil::handle_event(app, event, rect, over, shift) {
+        if app.mode.paints() && crate::stencil::handle_event(app, event, rect, over, &modifiers) {
             continue;
         }
         match event {
@@ -1051,16 +1082,26 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）
                         continue;
                     }
-                    if let Some(nav) = nav_of(*button, m, space) {
-                        nav_press(app, rect, StrokeSource::Mouse, nav, *button, pos, m, space);
-                        // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。動かせば回すだけ）
-                        if *button == PointerButton::Secondary && !m.any() && !space {
-                            crate::bake::overlap::menu_press(
-                                app,
-                                crate::region::tools::Where::Surface(rect),
-                                pos,
-                            );
-                        }
+                    // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く。ドラッグの操作があれば
+                    // 始め、離しの操作は覚えて、動かさずに離したら行う（動いたら捨てる）。どちらも無ければ、左ボタンはツールの押し
+                    let nav = nav_of(*button, m, space);
+                    let click = click_of(app, *button, m, space);
+                    if let Some(nav) = nav {
+                        nav_press(app, nav, *button, pos, m);
+                    }
+                    if nav.is_some() || click.is_some() {
+                        note_click(app, rect, StrokeSource::Mouse, *button, pos, click);
+                    }
+                    // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。動かせば回すだけ）
+                    if *button == PointerButton::Secondary && !m.any() && !space {
+                        crate::bake::overlap::menu_press(
+                            app,
+                            crate::region::tools::Where::Surface(rect),
+                            pos,
+                        );
+                    }
+                    if nav.is_some() || click.is_some() {
+                        // ビューの押し（ツールへは渡さない）
                     } else if *button == PointerButton::Primary && app.view3d.input.nav.is_none() {
                         if pose_mode {
                             if app.view3d.pose.drag.is_none() {

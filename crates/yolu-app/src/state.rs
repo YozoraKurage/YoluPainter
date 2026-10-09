@@ -363,9 +363,11 @@ pub struct CanvasInput {
     /// egui の Touch の筆圧（winit が出したとき）。
     pub touch_pressure: Option<f32>,
     pub panning: bool,
-    /// Shift ＋ 中ボタンのドラッグで回している。
-    pub middle_rotating: bool,
     pub rotating: Option<RotateDrag>,
+    /// 表示の回す・パン・拡縮を始めたボタン（そのボタンを離したら終える）。
+    pub nav_button: Option<egui::PointerButton>,
+    /// 描く・選択などのツールの押しを始めたボタン（そのボタンを離したらツールが終える。無ければ左ボタン）。
+    pub tool_button: Option<egui::PointerButton>,
     /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,
@@ -382,8 +384,9 @@ pub struct CanvasInput {
     /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定。
     pub shift_hold: Option<ShiftHold>,
     pub ruler_constraint: Option<crate::drafting::Constraint>,
-    /// クローンのブラシで Alt + 左を押した点（画面の点。動かさずに離したらクローンの元にする。動かしたら表示を回すだけ）。
-    pub clone_press: Option<Pos2>,
+    /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（画面の点。動かさずに離したらクローンの元にする。動かしたら
+    /// ドラッグの操作だけ）。
+    pub clone_press: Option<(Pos2, egui::PointerButton)>,
     /// 描いているクローンのストロークが使う offset（文書の座標の、描く点から元までのずれ。元の印が今写している点へ動くのに使う）。
     pub clone_offset: Option<yolu_core::glam::DVec2>,
 }
@@ -468,6 +471,9 @@ pub enum PopupKind {
     Pie,
     /// 編集・ポーズのモードの G/R/S の途中（中身は `AppState::objects`。開いている間は下の入力を止める）。
     Transform,
+    /// ショートカットの設定で、次に押すキー・マウスの組み合わせを待っている間（中身は `AppState::shortcuts`。キーの表・キャンバス・3D ビューの
+    /// キーと Esc を止める。描くのはショートカットのウィンドウ）。
+    KeyCapture,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -913,6 +919,8 @@ pub struct AppState {
     pub pie: crate::pie::PieState,
     /// 編集・ポーズのモードの物（選んだ物・隠した物・G/R/S の途中・スナップ）。
     pub objects: crate::objects::ObjectsState,
+    /// 利用者のキー・マウス・パイの設定（ショートカットの設定のウィンドウが変える。keymap.json）。
+    pub keys: crate::keyconfig::KeyConfig,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -969,6 +977,10 @@ pub enum DialogRequest {
     BrushFileDelete,
     /// 文字のフォントのファイルを選ぶ。
     TextFont,
+    /// キーの設定（keymap.json の形）を書き出す先を選ぶ。
+    KeymapExport,
+    /// 読み込むキーの設定を選ぶ。
+    KeymapImport,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -1110,6 +1122,7 @@ impl AppState {
             edit_tool: Default::default(),
             pie: Default::default(),
             objects: Default::default(),
+            keys: Default::default(),
         }
     }
 

@@ -142,6 +142,65 @@ pub fn builtin() -> Vec<PieMenu> {
     ]
 }
 
+/// 新しいパイの ID の数（プロセスの乱数の種と、数え上げから）。
+fn random_u32() -> u32 {
+    use std::hash::{BuildHasher, Hasher};
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(n);
+    h.finish() as u32
+}
+
+/// 利用者が作ったパイ（開く操作は `pie.<ID>`。キーはショートカットの設定で入れる）。
+pub fn user_menu(id: &str, name: String, slots: [Option<PieItem>; SLOTS]) -> PieMenu {
+    PieMenu {
+        id: id.to_owned(),
+        name: PieName::User(name),
+        command: Some(crate::keymap::intern(&format!("pie.{id}"))),
+        slots,
+    }
+}
+
+impl PieState {
+    /// 利用者のパイを加える（空の 8 か所。名前は「パイメニュー n」）。加えたパイの ID。
+    pub fn add_user(&mut self, lang: Lang) -> String {
+        let n = (1..)
+            .find(|n| {
+                let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+                !self.menus.iter().any(|m| m.name(lang) == name)
+            })
+            .unwrap_or(1);
+        let id = loop {
+            let id = format!("u{:08x}", random_u32());
+            if self.menu(&id).is_none() {
+                break id;
+            }
+        };
+        let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+        self.menus.push(user_menu(&id, name, Default::default()));
+        id
+    }
+
+    /// 利用者のパイを消す（最初からあるパイは消さない）。消したら true。ほかのパイの、このパイを開く項目は空にする。
+    pub fn remove_user(&mut self, id: &str) -> bool {
+        let before = self.menus.len();
+        self.menus
+            .retain(|m| m.id != id || matches!(m.name, PieName::Builtin(..)));
+        if self.menus.len() == before {
+            return false;
+        }
+        for m in &mut self.menus {
+            for slot in &mut m.slots {
+                if matches!(slot, Some(PieItem::Pie(p)) if p == id) {
+                    *slot = None;
+                }
+            }
+        }
+        true
+    }
+}
+
 /// 項目の見せ方（名前・アイコン・押せるか・今の状態か・押せない理由）。
 pub fn slot_of(app: &AppState, item: &PieItem) -> Slot {
     let lang = app.lang;
@@ -248,7 +307,6 @@ pub fn dragging(app: &AppState) -> bool {
         || app.bake.menu_press.is_some()
         || app.canvas.rotating.is_some()
         || app.canvas.panning
-        || app.canvas.middle_rotating
         || app.canvas.zooming.is_some()
         || app.canvas.eyedrop.is_some()
         || app.stencil.drag.is_some()

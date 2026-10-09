@@ -10,7 +10,7 @@ Values are written to `YoluPainter/settings.conf` in the settings folder (`%APPD
 
 | Item | What it does |
 |---|---|
-| Language | Japanese or English. The View menu also switches it |
+| Language | Japanese or English. The View menu also switches it. "Shortcuts…" at the right of the row opens the window for key and mouse assignments ([GUIDE_KEYS.md](GUIDE_KEYS.md)) |
 | Accept Live Link from Unity | When on, opens the model and materials sent with Open in YoluPainter in the Unity Editor. When the app is launched with `--livelink`, it accepts them regardless of this setting ([UNITY.md](UNITY.md)) |
 | Save material values received from Unity | Stores the lilToon values received through Live Link in the `.ylp` (not the pixels of textures; they are read from their files on reopening). When off, they are removed on the next save |
 | Accept external commands | See “External commands (MCP)” below |
@@ -46,7 +46,7 @@ Choose each of the three memory budgets as Auto or a number of MiB. Auto is deri
 
 Disk cache moves the tiles beyond the memory limit (the sum of the layer memory and undo history budgets) to disk, least recently used first, so you can keep painting on a large document. It is on by default. When off, edits beyond the budgets are refused. If a tile cannot be read back from disk, the app makes that texture set read-only and tells you. For more, see [GUIDE_FILES.md](GUIDE_FILES.md).
 
-Open Details to see two more items.
+Open Details at the right of the row to see two more items.
 
 - Cache limit: how much disk space the cache may use. Auto is 64 GiB or half the free space of the folder, whichever is smaller. When it is full, edits beyond it are refused.
 - Cache folder: choose the folder for the cache file with Choose… (a faster drive brings moved tiles back faster). Default goes back to the system temporary folder.
@@ -61,7 +61,7 @@ Open Details to see two more items.
 
 **Display compositing** affects only what is shown on screen. Saving, exporting and the 3D view always composite on the CPU, whatever you choose (GPU pixels can differ from the CPU result by a small amount, within 2 even for documents with many levels; this is a display-only difference). Automatic composites on the GPU when a usable GPU exists, and on the CPU for a software GPU. Documents with adjustment layers, isolated groups, Normal channels and effects are composited on the GPU too (the effects are computed on the CPU, and the resulting pixels are uploaded to the GPU). A document falls back to the CPU when its drawn tiles exceed the canvas budget given by GPU memory (512 MiB at Standard), when it is larger than the device's texture limit, or when its groups are nested too deeply. The environment variable `YOLUPAINTER_CANVAS` (`auto`, `gpu` or `cpu`) can force it.
 
-When **GPU memory** runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard. Open Details to get a Total slider, which is split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the asset previews. Moving it replaces the level with a custom amount.
+When **GPU memory** runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard. Open Details at the right of the row to get a Total slider, which is split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the asset previews. Moving it replaces the level with a custom amount.
 
 ## 3D View
 
@@ -94,3 +94,4 @@ The orbit and zoom centers are the same values as Navigation in the 3D view's di
 - **Updates**: Help → Check for Updates…, Check for Updates at Startup and Use Beta Versions ([INSTALL.md](INSTALL.md)).
 - **The selection button bar**: Show the Selection Button Bar in the Select menu ([GUIDE_SELECT.md](GUIDE_SELECT.md)).
 - **Panel layout**: remembered in `YoluPainter/layout.json` in the settings folder ([GUIDE_START.md](GUIDE_START.md)).
+- **Key and mouse assignments and pie menus**: changed with "Shortcuts…" to the right of the Language row in the General section (Help → Keyboard Shortcuts); only what differs from the defaults is remembered in `YoluPainter/keymap.json` in the settings folder ([GUIDE_KEYS.md](GUIDE_KEYS.md)).

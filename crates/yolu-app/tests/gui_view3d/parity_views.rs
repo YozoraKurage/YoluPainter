@@ -69,7 +69,11 @@ fn shortcut_window_is_localized_and_closes_without_document_changes() {
             );
         h.run();
         assert!(yolu_app::windows::window_rect(&h.ctx, "shortcuts").is_some());
-        h.get_by_label(lang.pick("閉じる", "Close")).click();
+        // 閉じるは見出しの印と下の帯のボタンの 2 つ（下の帯のほう）
+        h.get_all_by_label(lang.pick("閉じる", "Close"))
+            .last()
+            .expect("閉じる")
+            .click();
         h.run();
         assert!(!h.state().shortcuts.open);
         assert!(!h.state().can_undo());

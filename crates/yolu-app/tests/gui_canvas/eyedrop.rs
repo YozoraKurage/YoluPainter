@@ -1742,6 +1742,7 @@ fn a_pen_side_button_lifted_outside_the_canvas_cancels_and_a_missed_right_releas
         source: yolu_app::state::StrokeSource::Mouse,
         at: b,
         sample: None,
+        button: egui::PointerButton::Secondary,
     });
     h.event(Event::PointerMoved(b));
     h.run();

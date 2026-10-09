@@ -1,72 +1,140 @@
-//! 2D のキャンバスを動かす操作（Alt + 左ドラッグで回す・Space + 左ドラッグでパン・Ctrl+Space + 左ドラッグで拡縮。R を押しながらの左ドラッグも、
-//! 割り当てがあれば回す）の、押す・動く・離す。回すのは 15° 刻みが既定で、Shift を押していれば自由。修飾は押しの始めに持っているもので決める。
-//! マウスとペンが同じ関数を通る（ペンの押しの行き先は `pen::PenPress`）。中ボタンのパンと、割り当てがあれば中ボタンの回転はマウスだけ（`mod.rs`）。
-//! 回すドラッグは、押した所から `gesture::CLICK_MOVE` を超えて動くまで回さない。クローンのブラシで Alt + 左を動かさずに離すと、そこがクローンの元
-//! （動かせば回すだけ）。
+//! 2D のキャンバスの押しの行き先（表示の回す・パン・拡縮、選択の組み合わせ方、スポイト、クローンの元、ツール）と、表示を動かす操作の押す・
+//! 動く・離す。押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作（`keymap::gesture`）と、動かさずに離したときの操作
+//! （`keymap::click_gesture`）を別々に引く（`start_of`・`click_of`）。ドラッグの操作があれば始め、離しの操作は、ドラッグの有無によらず
+//! 覚えて、動かさずに離したら行う（動いたら捨てる）。どちらも無ければ、左ボタンはツールの押し、ほかのボタンは何もしない。順は、押しながらの
+//! キー（R・Space・Ctrl+Space。左ボタン）→ 視点の行（パン・回転）→ 選択のツールの選択の行 → スポイト → ツール。マウスとペン（サイドボタンは
+//! 右ボタン）が同じ関数を通る。回すのは 15° 刻みが既定で、Shift を押していれば自由。回すドラッグは、押した所から `gesture::CLICK_MOVE` を
+//! 超えて動くまで回さない。
 
-use egui::{Modifiers, Pos2, Rect};
+use egui::{Modifiers, PointerButton, Pos2, Rect};
 
 use super::{delta_angle, pointer_angle, ROTATE_DEAD_ZONE};
 use crate::canvas::view::ROTATE_STEP;
+use crate::engine::SelectionCombine;
 use crate::gesture::{self, ZoomDrag};
+use crate::keymap::Operation;
 use crate::notice::Source;
 use crate::state::{AppState, RotateDrag};
 
-/// この押しがビューを動かす操作になるか（R を押している・Space を押している・Alt + 左ドラッグで回す組み合わせ。`press` が始める押し）。
-pub fn starts_view(app: &AppState, modifiers: &Modifiers) -> bool {
-    app.canvas.rotate_key_held || app.canvas.space_held || rotates(modifiers)
+/// 押しで始める物。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Rotate,
+    Pan,
+    Zoom,
+    /// スポイト（押した所から、離した所の色を取る）。
+    Pick,
+    /// 選択のツールの、組み合わせ方の決まった押し。
+    Select(SelectionCombine),
+    /// ツールの押し（左ボタン）。
+    Tool,
+    Nothing,
 }
 
-/// 左ボタンのこの修飾が、表示を回す組み合わせか（`keymap::GESTURES` の表。Alt）。
-fn rotates(modifiers: &Modifiers) -> bool {
-    crate::keymap::gesture("canvas", egui::PointerButton::Primary, modifiers, false)
-        == Some(crate::keymap::Operation::Rotate)
-}
-
-/// 押した点で、ビューを動かす操作を始める（R・Ctrl+Space・Space・Alt の順。押していなければ何もしない）。始めたか。
-/// 動かさずに離したときの行き先も、ここで決める: クローンのブラシで Alt + 左なら、押した点をクローンの元にする（`released`）。
-pub fn press(app: &mut AppState, rect: Rect, pos: Pos2, modifiers: &Modifiers) -> bool {
-    app.canvas.clone_press = None;
-    if app.canvas.rotate_key_held || (!app.canvas.space_held && rotates(modifiers)) {
-        app.canvas.rotating = Some(RotateDrag {
-            start_angle: app.view.angle,
-            start_pan: app.view.pan,
-            swept: 0.0,
-            last_pointer_angle: pointer_angle(rect, pos),
-            press: pos,
-            moved: false,
-        });
-        if crate::keymap::click_gesture(
-            "canvas",
-            egui::PointerButton::Primary,
-            modifiers,
-            app.canvas.space_held,
-        ) == Some(crate::keymap::Operation::CloneSource)
-            && crate::clone_source::active(app)
-        {
-            app.canvas.clone_press = Some(pos);
-        }
-        true
-    } else if gesture::zoom_chord(modifiers, app.canvas.space_held) {
-        app.canvas.zooming = Some(ZoomDrag::new(pos, modifiers.alt));
-        true
-    } else if app.canvas.space_held {
-        app.canvas.panning = true;
-        true
-    } else {
-        false
+impl Start {
+    /// 表示を動かす操作か。
+    pub fn moves_view(self) -> bool {
+        matches!(self, Start::Rotate | Start::Pan | Start::Zoom)
     }
 }
 
-/// ポインタが動いた（`previous` は前の位置）。回している・中ボタンで回している・パンしている・拡縮している、のどれかだけ動かす。
+/// この押しで始める物（実際のボタン・修飾・押しながらのキーで引く）。
+pub fn start_of(app: &AppState, button: PointerButton, m: &Modifiers) -> Start {
+    // 押しながらのキー（左ボタン）
+    if button == PointerButton::Primary {
+        if app.canvas.rotate_key_held {
+            return Start::Rotate;
+        }
+        if gesture::zoom_chord(m, app.canvas.space_held) {
+            return Start::Zoom;
+        }
+        if app.canvas.space_held {
+            return Start::Pan;
+        }
+    }
+    // 視点の行（組み合わせの表の canvas）
+    match crate::keymap::gesture_where("canvas", button, m, false, |op| {
+        matches!(op, Operation::Pan | Operation::Rotate)
+    }) {
+        Some(Operation::Pan) => return Start::Pan,
+        Some(Operation::Rotate) => return Start::Rotate,
+        _ => {}
+    }
+    // 選択のツールの、選択の行（組み合わせ方）
+    if app.mode.paints() && app.tool.is_select() {
+        if let Some(combine) = crate::selection::combine_for(button, m) {
+            return Start::Select(combine);
+        }
+    }
+    // スポイト（修飾を書いたとおりに。ポリゴン塗りつぶしの右ボタンはアイランドのメニュー）
+    if crate::keymap::gesture_exact("canvas", button, m, app.canvas.space_held)
+        == Some(Operation::Pick)
+        && !(button == PointerButton::Secondary && app.right_opens_island_menu())
+    {
+        return Start::Pick;
+    }
+    if button == PointerButton::Primary {
+        Start::Tool
+    } else {
+        Start::Nothing
+    }
+}
+
+/// この押しを動かさずに離したときの操作（クローンの元。クローンのブラシのときだけ）。
+pub fn click_of(app: &AppState, button: PointerButton, m: &Modifiers) -> Option<Operation> {
+    match crate::keymap::click_gesture("canvas", button, m, app.canvas.space_held) {
+        Some(Operation::CloneSource) if crate::clone_source::active(app) => {
+            Some(Operation::CloneSource)
+        }
+        _ => None,
+    }
+}
+
+/// 表示を動かす操作を始める（`start` が表示を動かす物のとき。始めたら true）。
+pub fn start(
+    app: &mut AppState,
+    rect: Rect,
+    pos: Pos2,
+    button: PointerButton,
+    start: Start,
+    m: &Modifiers,
+) -> bool {
+    match start {
+        Start::Rotate => {
+            app.canvas.rotating = Some(RotateDrag {
+                start_angle: app.view.angle,
+                start_pan: app.view.pan,
+                swept: 0.0,
+                last_pointer_angle: pointer_angle(rect, pos),
+                press: pos,
+                moved: false,
+            });
+        }
+        Start::Zoom => app.canvas.zooming = Some(ZoomDrag::new(pos, m.alt)),
+        Start::Pan => app.canvas.panning = true,
+        _ => return false,
+    }
+    app.canvas.nav_button = Some(button);
+    true
+}
+
+/// 離しの操作を覚える（動かさずに離したら行う）。
+pub fn note_click(app: &mut AppState, pos: Pos2, button: PointerButton, click: Option<Operation>) {
+    app.canvas.clone_press = match click {
+        Some(Operation::CloneSource) => Some((pos, button)),
+        _ => None,
+    };
+}
+
+/// ポインタが動いた（`previous` は前の位置）。回している・パンしている・拡縮している、のどれかだけ動かす。
 /// 回すのは 15° 刻みで、`free`（Shift を押している）なら自由。
 pub fn moved(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2, free: bool) {
     if app
         .canvas
         .clone_press
-        .is_some_and(|start| start.distance(pos) > gesture::CLICK_MOVE)
+        .is_some_and(|(start, _)| start.distance(pos) > gesture::CLICK_MOVE)
     {
-        app.canvas.clone_press = None; // 動かした: 回すだけ
+        app.canvas.clone_press = None; // 動かした: ドラッグの操作だけ
     }
     if let Some(mut drag) = app.canvas.rotating {
         // 押した所から遊びを超えるまで回さない（超えたら、押した所からの動きを全部当てる: 角度は押したときの向きからの合計）
@@ -90,15 +158,6 @@ pub fn moved(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2, free: bo
                 .rotate_from(drag.start_angle, drag.start_pan, swept);
             app.canvas.rotating = Some(drag);
         }
-    } else if app.canvas.middle_rotating {
-        if (previous - rect.center()).length() >= ROTATE_DEAD_ZONE
-            && (pos - rect.center()).length() >= ROTATE_DEAD_ZONE
-        {
-            app.view.rotate_by(delta_angle(
-                pointer_angle(rect, previous),
-                pointer_angle(rect, pos),
-            ));
-        }
     } else if app.canvas.panning {
         app.view.pan += pos - previous;
     } else if let Some(mut zoom) = app.canvas.zooming {
@@ -112,13 +171,18 @@ pub fn moved(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2, free: bo
     }
 }
 
-/// ボタンを離した（ペンが離れた）。動かさずに離した拡縮は、押した点を中心に拡大（Alt を押して押していたら縮小）。動かさずに離したクローンの元の指定は、
-/// ここで決める（`pos` は離した点）。
-pub fn released(app: &mut AppState, rect: Rect, pos: Pos2) {
-    if let Some(start) = app.canvas.clone_press.take() {
-        if start.distance(pos) <= gesture::CLICK_MOVE {
-            set_clone_source(app, rect, start);
+/// ボタンを離した（ペンが離れた）。`button` が始めた物だけを終える。動かさずに離した拡縮は、押した点を中心に拡大（Alt を押して押していたら
+/// 縮小）。動かさずに離したクローンの元の指定は、ここで決める（`pos` は離した点）。
+pub fn released(app: &mut AppState, rect: Rect, pos: Pos2, button: PointerButton) {
+    if app.canvas.clone_press.is_some_and(|(_, b)| b == button) {
+        if let Some((start, _)) = app.canvas.clone_press.take() {
+            if start.distance(pos) <= gesture::CLICK_MOVE {
+                set_clone_source(app, rect, start);
+            }
         }
+    }
+    if app.canvas.nav_button.is_some_and(|b| b != button) {
+        return;
     }
     if let Some(zoom) = app.canvas.zooming.take() {
         if zoom.is_click() {
@@ -131,9 +195,8 @@ pub fn released(app: &mut AppState, rect: Rect, pos: Pos2) {
         }
     }
     app.canvas.rotating = None;
-    if !app.canvas.middle_rotating {
-        app.canvas.panning = false;
-    }
+    app.canvas.panning = false;
+    app.canvas.nav_button = None;
 }
 
 /// ビューを動かす操作の途中を全部やめる（フォーカスを失ったとき）。
@@ -142,7 +205,7 @@ pub fn cancel(app: &mut AppState) {
     app.canvas.rotating = None;
     app.canvas.zooming = None;
     app.canvas.panning = false;
-    app.canvas.middle_rotating = false;
+    app.canvas.nav_button = None;
 }
 
 /// ペンがビューを動かしている最中か（egui のポインタの代わりの入力が離れたように見えても、ペンが離すまで続ける）。

@@ -122,6 +122,8 @@ pub enum PrefsAction {
     ChooseCacheFolder,
     /// ディスクキャッシュの「詳しく」（上限・置き場所）を開く・閉じる（ウィンドウの中だけの状態。設定には書かない）。
     CacheDetails(bool),
+    /// ショートカットの設定のウィンドウを開く。
+    Shortcuts,
 }
 
 /// 設定のウィンドウの状態と、いま選んでいる設定。
@@ -231,6 +233,7 @@ impl AppState {
         let lang = self.lang;
         match action {
             PrefsAction::Open => self.prefs.open = true,
+            PrefsAction::Shortcuts => self.shortcuts.open = true,
             PrefsAction::Close => {
                 self.prefs.open = false;
                 self.prefs.dragging = false;
@@ -748,9 +751,9 @@ fn content_height(
         + dropdown * 5.0 // 一般: 言語・Live Link の起動・受けた値の保存・外からの操作・書き出しの余白
         + if external_ops { dropdown } else { 0.0 } // 外からの操作のポート番号
         + dropdown * 3.0 + slider // メモリ: 予算 3 つ・最小の取り消し段数
-        + dropdown * 2.0 // メモリ: ディスクキャッシュ・詳しく
+        + dropdown // メモリ: ディスクキャッシュ（同じ行の右に「詳しく」）
         + if cache_details { dropdown * 3.0 } else { 0.0 } // キャッシュの上限・置き場所（パスとボタン）
-        + dropdown * 3.0 + dropdown // 処理: スレッド・合成・GPU のメモリ・詳しく
+        + dropdown * 3.0 // 処理: スレッド・合成・GPU のメモリ（同じ行の右に「詳しく」）
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
         + if tablet_row { HEADING + dropdown } else { 0.0 } // ペン（macOS だけ）: 見出しとタブレットの筆圧
@@ -766,6 +769,15 @@ fn window_height(
     tablet_row: bool,
 ) -> f32 {
     window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops, tablet_row)
+}
+
+/// 行を、左の欄と、右の「詳しく」の開け閉めに分ける。
+fn details_split(ui: &egui::Ui, r: Rect, lang: Lang) -> (Rect, Rect) {
+    let width =
+        16.0 + w::text_width(ui.painter(), lang.pick("詳しく", "Details"), t::LABEL_BOLD) + 12.0;
+    let details = Rect::from_min_max(pos2(r.right() - width, r.top()), r.max);
+    let left = Rect::from_min_max(r.min, pos2(details.left() - 8.0, r.bottom()));
+    (left, details)
 }
 
 /// 最後に描いた中身の高さ（見出しの帯の下。画面の点。開いていなければ None）。試験が、見積もりと実際の並びの食い違いを見つける。
@@ -911,14 +923,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let outer_clip = ui.clip_rect();
         ui.set_clip_rect(body.intersect(outer_clip));
         let mut rows = w::Rows::new(area, 8.0);
-        let choice = |ui: &mut egui::Ui,
-                      rows: &mut w::Rows,
-                      key: &str,
-                      label: &str,
-                      value: &str,
-                      tip: &str,
-                      which: PrefChoice| {
-            let r = rows.row(t::ROW_HEIGHT, GAP);
+        let choice_in = |ui: &mut egui::Ui,
+                         r: Rect,
+                         key: &str,
+                         label: &str,
+                         value: &str,
+                         tip: &str,
+                         which: PrefChoice| {
             let (response, b) = w::dropdown(
                 ui,
                 r,
@@ -930,6 +941,23 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 LABEL_WIDTH,
             );
             response.clicked().then_some(Request::Open(which, b))
+        };
+        let choice = |ui: &mut egui::Ui,
+                      rows: &mut w::Rows,
+                      key: &str,
+                      label: &str,
+                      value: &str,
+                      tip: &str,
+                      which: PrefChoice| {
+            choice_in(
+                ui,
+                rows.row(t::ROW_HEIGHT, GAP),
+                key,
+                label,
+                value,
+                tip,
+                which,
+            )
         };
         // 節の見出し（2 つ目からは上に細い線）
         let section = |ui: &mut egui::Ui, rows: &mut w::Rows, first: bool, title: &str| {
@@ -953,15 +981,44 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         };
 
         section(ui, &mut rows, true, lang.pick("一般", "General"));
-        requests.extend(choice(
-            ui,
-            &mut rows,
-            "language",
-            lang.pick("言語", "Language"),
-            lang.name(),
-            lang.pick("画面の言語", "The language of the screen"),
-            PrefChoice::Language,
-        ));
+        // 言語と、同じ行の右に、キー・マウス・パイメニューの設定（ショートカットのウィンドウ）を開くボタン
+        {
+            let r = rows.row(t::ROW_HEIGHT, GAP);
+            let label = lang.pick("ショートカット…", "Shortcuts…");
+            let bw = w::text_width(ui.painter(), label, t::LABEL) + 24.0;
+            let b = Rect::from_min_max(pos2(r.right() - bw, r.top()), r.max);
+            let d = Rect::from_min_max(r.min, pos2(b.left() - 8.0, r.bottom()));
+            let (response, at) = w::dropdown(
+                ui,
+                d,
+                ("prefs", "language"),
+                Some(lang.pick("言語", "Language")),
+                lang.name(),
+                Some(lang.pick("画面の言語", "The language of the screen")),
+                enabled,
+                LABEL_WIDTH,
+            );
+            if response.clicked() {
+                requests.push(Request::Open(PrefChoice::Language, at));
+            }
+            if w::button(
+                ui,
+                b,
+                ("prefs", "shortcuts"),
+                label,
+                false,
+                enabled,
+                Some(lang.pick(
+                    "キーとマウスの組み合わせ・パイメニューを変える",
+                    "Change keys, mouse combinations and pie menus",
+                )),
+                None,
+            )
+            .clicked()
+            {
+                requests.push(Request::Do(PrefsAction::Shortcuts));
+            }
+        }
         let next = w::toggle(
             ui,
             rows.row(t::ROW_HEIGHT, GAP),
@@ -1098,9 +1155,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 out.value.round().clamp(0.0, MAX_MIN_UNDO_STEPS as f32) as u32,
             ))));
         }
+        // ディスクキャッシュの入切と、同じ行の右に「詳しく」（Mac の「ペン」の節があっても、1280 × 800 の画面に最後の行まで収める）
+        let (toggle_rect, details_rect) = details_split(ui, rows.row(t::ROW_HEIGHT, GAP), lang);
         let next = w::toggle(
             ui,
-            rows.row(t::ROW_HEIGHT, GAP),
+            toggle_rect,
             id.with("disk-cache"),
             crate::settings::setting_name(lang, "disk_cache"),
             s.disk_cache,
@@ -1115,7 +1174,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         }
         let open = w::subsection_header(
             ui,
-            rows.row(t::ROW_HEIGHT, GAP),
+            details_rect,
             ("prefs", "cache-details"),
             lang.pick("詳しく", "Details"),
             cache_details,
@@ -1197,9 +1256,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
             PrefChoice::Compositing,
         ));
-        requests.extend(choice(
+        // GPU のメモリと、同じ行の右に「詳しく」
+        let (gpu_rect, details_rect) = details_split(ui, rows.row(t::ROW_HEIGHT, GAP), lang);
+        requests.extend(choice_in(
             ui,
-            &mut rows,
+            gpu_rect,
             "gpu-memory",
             crate::settings::setting_name(lang, "gpu_memory"),
             s.gpu_memory.name(lang),
@@ -1211,7 +1272,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         ));
         let open = w::subsection_header(
             ui,
-            rows.row(t::ROW_HEIGHT, GAP),
+            details_rect,
             ("prefs", "gpu-details"),
             lang.pick("詳しく", "Details"),
             gpu_details,

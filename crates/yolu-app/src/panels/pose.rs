@@ -240,9 +240,10 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         lang.pick("取り消し", "Undo"),
         false,
         free && !editing && can_undo,
-        Some(lang.pick(
-            "ポーズの取り消し（ポーズのモードでは Ctrl+Z）",
-            "Undo pose (Ctrl+Z in pose mode)",
+        Some(&pose_tip(
+            lang,
+            lang.pick("ポーズの取り消し", "Undo pose"),
+            "edit.undo",
         )),
         None,
     )
@@ -257,9 +258,10 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         lang.pick("やり直し", "Redo"),
         false,
         free && !editing && can_redo,
-        Some(lang.pick(
-            "ポーズのやり直し（ポーズのモードでは Ctrl+Shift+Z）",
-            "Redo pose (Ctrl+Shift+Z in pose mode)",
+        Some(&pose_tip(
+            lang,
+            lang.pick("ポーズのやり直し", "Redo pose"),
+            "edit.redo",
         )),
         None,
     )
@@ -709,5 +711,16 @@ fn set_weight(app: &mut AppState, m: usize, k: usize, value: f32, active: bool, 
     }
     if released || !active {
         pose::end_edit(&mut app.view3d, true);
+    }
+}
+
+/// ポーズの取り消し・やり直しのツールチップ（ポーズのモードのキーを添える。設定で変えたキーに付いてくる）。
+fn pose_tip(lang: crate::lang::Lang, name: &str, command: &str) -> String {
+    match crate::shortcuts::key_in(command, crate::mode::EditorMode::Pose) {
+        Some(key) => lang.pick(
+            format!("{name}（ポーズのモードでは {key}）"),
+            format!("{name} ({key} in pose mode)"),
+        ),
+        None => name.to_owned(),
     }
 }

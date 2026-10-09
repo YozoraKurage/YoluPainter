@@ -11,7 +11,9 @@
 //! macOS のドイツ語配列の `[` は Option+5 で届く。AZERTY 配列は上の段の数字を Shift で打つ。判定の順は修飾の多いものが先、同じならキーの段
 //! （`Layer`: 場面・モード・どこでも）の上が先、それも同じなら表の順。途中の操作の段の行は、その操作が読む。
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use egui::{Event, InputState, Key, Modifiers, PointerButton};
 
@@ -51,7 +53,7 @@ impl When {
 }
 
 /// 割り当てが効く範囲（どのモードで効くか。途中の操作の間だけのキーは、その操作が読む）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
     /// どのモードでも（ファイル・編集・選択範囲・レイヤー・表示・視点）。
     Everywhere,
@@ -86,6 +88,29 @@ impl Scope {
     /// モードの段の範囲か（ペイント・編集・ポーズ）。
     pub fn is_mode(self) -> bool {
         matches!(self, Scope::Paint | Scope::Edit | Scope::Pose)
+    }
+
+    pub const ALL: [Scope; 5] = [
+        Scope::Everywhere,
+        Scope::Paint,
+        Scope::Edit,
+        Scope::Pose,
+        Scope::During,
+    ];
+
+    /// 設定のファイル（keymap.json）の名前。
+    pub fn key(self) -> &'static str {
+        match self {
+            Scope::Everywhere => "everywhere",
+            Scope::Paint => "paint",
+            Scope::Edit => "edit",
+            Scope::Pose => "pose",
+            Scope::During => "during",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Scope> {
+        Scope::ALL.into_iter().find(|s| s.key() == key)
     }
 }
 
@@ -149,8 +174,12 @@ impl KeyBinding {
         }
     }
 
-    /// この割り当てがキーで実行する `Action`（押しをビューが読む操作・押している間のキーは None）。
+    /// この割り当てがキーで実行する `Action`（押しをビューが読む操作・押している間のキーは None）。利用者が作ったパイを開く行（`pie.<ID>`）は、
+    /// そのパイを開く。
     pub fn action(&self) -> Option<Action> {
+        if let Some(id) = pie_of(self.command) {
+            return Some(Action::Pie(crate::pie::PieAction::Open(id.to_owned())));
+        }
         commands::find(self.command)
             .and_then(|c| c.action)
             .map(|make| make())
@@ -169,6 +198,53 @@ impl KeyBinding {
     /// ペイントのモードだけの割り当てにする。
     fn paint(self) -> Self {
         self.scope(Scope::Paint)
+    }
+}
+
+/// 利用者が作ったパイを開く操作の ID（`pie.<パイの ID>`）なら、そのパイの ID。
+pub fn pie_of(command: &str) -> Option<&str> {
+    command.strip_prefix("pie.")
+}
+
+/// 文字を、プロセスの間ずっと使える文字にする（利用者が作ったパイの操作の ID。同じ文字は 1 度だけ確保する）。
+pub fn intern(text: &str) -> &'static str {
+    static SEEN: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let mut seen = SEEN
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(found) = seen.get(text) {
+        return found;
+    }
+    let made: &'static str = Box::leak(text.to_owned().into_boxed_str());
+    seen.insert(made);
+    made
+}
+
+/// 2 つの入力が、この環境で同じ押しに当たるか（Mac 以外の Ctrl は、Command の割り当ても Control の割り当ても同じ Ctrl）。
+pub fn same_input(a: &Trigger, b: &Trigger) -> bool {
+    match (a, b) {
+        (Trigger::Text(x), Trigger::Text(y)) => x == y,
+        (
+            Trigger::Key {
+                modifiers: ma,
+                key: ka,
+            },
+            Trigger::Key {
+                modifiers: mb,
+                key: kb,
+            },
+        ) => {
+            let ctrl = |m: &Modifiers| {
+                if cfg!(target_os = "macos") {
+                    (m.command || m.mac_cmd, m.ctrl)
+                } else {
+                    (m.command || m.ctrl || m.mac_cmd, false)
+                }
+            };
+            ka == kb && ctrl(ma) == ctrl(mb) && ma.alt == mb.alt && ma.shift == mb.shift
+        }
+        _ => false,
     }
 }
 
@@ -474,17 +550,40 @@ fn dispatch_order_of(rows: &[KeyBinding]) -> Vec<KeyBinding> {
     v
 }
 
-/// 今効いている割り当て: 表（一覧に出す順）と判定の順を 1 つにしたもの。作り直して丸ごと差し替える（`replace`）ので、表と判定の順が食い違わない。
+/// 今効いている割り当て: 表（一覧に出す順）と判定の順、マウスの組み合わせを 1 つにしたもの。作り直して丸ごと差し替える（`install`）ので、表と
+/// 判定の順が食い違わない。
 #[derive(Debug)]
 pub struct Keymap {
     rows: Vec<KeyBinding>,
     order: Vec<KeyBinding>,
+    gestures: Vec<Gesture>,
 }
 
 impl Keymap {
+    /// キーの表から（マウスの組み合わせは既定）。
     pub fn new(rows: Vec<KeyBinding>) -> Keymap {
+        Self::with_gestures(rows, GESTURES.to_vec())
+    }
+
+    /// キーの表とマウスの組み合わせから。組み合わせは、条件の多いもの（押しながらのキー・修飾の多いもの）を先に見る（少ないものに隠れない）。
+    pub fn with_gestures(rows: Vec<KeyBinding>, mut gestures: Vec<Gesture>) -> Keymap {
         let order = dispatch_order_of(&rows);
-        Keymap { rows, order }
+        gestures.sort_by_key(|g| {
+            std::cmp::Reverse((
+                g.held.is_some(),
+                u8::from(g.alt) + u8::from(g.shift) + u8::from(g.ctrl),
+            ))
+        });
+        Keymap {
+            rows,
+            order,
+            gestures,
+        }
+    }
+
+    /// マウスの組み合わせ（判定の順。外したものは入らない）。
+    pub fn gestures(&self) -> &[Gesture] {
+        &self.gestures
     }
 
     /// 表の行（一覧に出す順。クリップボード・押している間のキー・ビューが読むキーも含む）。
@@ -508,20 +607,35 @@ fn slot() -> &'static RwLock<Arc<Keymap>> {
     SLOT.get_or_init(|| RwLock::new(Arc::new(Keymap::new(bindings()))))
 }
 
-/// 今効いている割り当て（既定の表。利用者の設定を読み込む所は、読んだ表を `replace` で入れる）。
-pub fn current() -> Arc<Keymap> {
+thread_local! {
+    /// このスレッドで効かせる割り当て（アプリがフレームの初めと、ショートカットの設定を変えたときに入れる）。入れていなければ既定の表。
+    /// アプリの状態ごとに持ち、プロセスで 1 つの表を書き換えないので、同じプロセスの別のアプリ（試験の並び）の割り当てに混ざらない。
+    static INSTALLED: RefCell<Option<Arc<Keymap>>> = const { RefCell::new(None) };
+}
+
+/// 既定の割り当て（ツールの表とこのファイルの表から作ったもの）。
+pub fn default_map() -> Arc<Keymap> {
     slot()
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
 }
 
-/// 効かせる割り当てを丸ごと差し替える（表と判定の順を作り直す）。
+/// 今効いている割り当て（このスレッドに入れた表。無ければ既定の表）。
+pub fn current() -> Arc<Keymap> {
+    INSTALLED
+        .with(|m| m.borrow().clone())
+        .unwrap_or_else(default_map)
+}
+
+/// このスレッドで効かせる割り当てを入れる（ショートカットの設定が作った表）。
+pub fn install(map: Arc<Keymap>) {
+    INSTALLED.with(|m| *m.borrow_mut() = Some(map));
+}
+
+/// 効かせる割り当てを丸ごと差し替える（このスレッドで。表と判定の順を作り直す。マウスの組み合わせは既定）。
 pub fn replace(rows: Vec<KeyBinding>) {
-    let next = Arc::new(Keymap::new(rows));
-    *slot()
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    install(Arc::new(Keymap::new(rows)));
 }
 
 /// 修飾キーを書いたとおりに見るキーか（文字・F キー・名前のキー）。記号と数字のキーは、配列によって Shift や Option を押して打つので、見ない。
@@ -753,6 +867,11 @@ pub fn effective_in(map: &Keymap, row: &KeyBinding, mode: crate::mode::EditorMod
     true
 }
 
+/// キーの繰り返しの押しでも実行する操作か（パイを開く操作・切り替えなどは偽。利用者が作ったパイを開く操作も偽）。
+pub fn repeats(command: &str) -> bool {
+    pie_of(command).is_none() && commands::find(command).is_none_or(|c| c.repeats)
+}
+
 /// このフレームのキーの操作（効く範囲と条件を満たし、押されたもの。押した事象は取り除く）。文字を打っている・メニューを開いている間は呼ばない。
 /// 同じ操作の行が 2 つ同時に当たっても（JIS 配列の ^ のキーは `Key::Equals` と文字の `^` が両方届く）、1 回だけ実行する。
 pub fn dispatch(i: &mut InputState, app: &AppState) -> Vec<Action> {
@@ -779,7 +898,7 @@ pub fn dispatch_with(map: &Keymap, i: &mut InputState, app: &AppState) -> Vec<Ac
             }
         };
         // 繰り返しの押しを受けない操作（パイを開く）は、繰り返しだけなら事象を取り除いて何もしない
-        let hit = hit && (fresh || commands::find(b.command).is_none_or(|c| c.repeats));
+        let hit = hit && (fresh || repeats(b.command));
         // 事象は当たった行ごとに取り除き、操作は 1 回目だけ実行する
         if hit && !done.contains(&b.command) {
             done.push(b.command);
@@ -909,7 +1028,7 @@ impl Operation {
 /// マウスの組み合わせ 1 つ。`alt`・`shift`・`ctrl` は押していなければならない修飾（ほかの修飾は気にしない。上から順に最初に当たったものが効く）、
 /// `held` はあるとき押している間のキーの操作の ID（`Kind::Hold`。キーは `hold_key` で引く）。
 /// 修飾は押しの始め（ボタンを押した瞬間）に持っているもので決める。始めたあとに押した修飾は、始めた操作の中の修飾（`starts: false` の行）。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gesture {
     /// 一覧のまとまり（選択範囲のツールの組み合わせ方は「selection」で、一覧では 2D ビューに並ぶ）。
     pub scope: &'static str,
@@ -926,6 +1045,8 @@ pub struct Gesture {
     /// 効くモード（キーの段。ペイントの組み合わせ（クローンの元・選択範囲の作り方・ステンシル）はペイントのモードだけ）。一覧と設定の画面が読み、
     /// 受け口も同じ決まりで止める（クローンの元は `clone_source::active`、選択範囲は 2D のツールの押し、ステンシルは `stencil::update_keys`）。
     pub mode: Scope,
+    /// 既定の表（`GESTURES`）の番号（ショートカットの設定が、変えた組み合わせをこの番号で覚える）。
+    pub index: u8,
 }
 
 impl Gesture {
@@ -959,6 +1080,7 @@ const fn gesture_of(
         starts: true,
         click: false,
         mode: Scope::Everywhere,
+        index: 0,
     }
 }
 
@@ -980,13 +1102,14 @@ const fn click_of(
         starts: false,
         click: true,
         mode: Scope::Everywhere,
+        index: 0,
     }
 }
 
 use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
-pub const GESTURES: [Gesture; 20] = [
+pub const GESTURES: [Gesture; 20] = numbered([
     // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由。動かさずに離すとクローンの元）、右ボタンを押すとスポイト
     gesture_of(
         "canvas",
@@ -1129,8 +1252,19 @@ pub const GESTURES: [Gesture; 20] = [
         starts: false,
         click: false,
         mode: Scope::Paint,
+        index: 0,
     },
-];
+]);
+
+/// 表の並びの番号を付ける。
+const fn numbered<const N: usize>(mut gestures: [Gesture; N]) -> [Gesture; N] {
+    let mut i = 0;
+    while i < N {
+        gestures[i].index = i as u8;
+        i += 1;
+    }
+    gestures
+}
 
 /// Ctrl（Mac の Command も）か。
 fn ctrl(m: &Modifiers) -> bool {
@@ -1139,9 +1273,21 @@ fn ctrl(m: &Modifiers) -> bool {
 
 /// この押しに当たる操作（`held` は、その範囲の押しながらのキーを押しているか）。表の上から順に最初に当たったもの。
 pub fn gesture(scope: &str, button: PointerButton, m: &Modifiers, held: bool) -> Option<Operation> {
-    GESTURES
+    gesture_where(scope, button, m, held, |_| true)
+}
+
+/// `gesture` の、引く操作を `wanted` に絞ったもの（2D の視点の行は、スポイトの行の条件の多い組み合わせに隠れない）。
+pub fn gesture_where(
+    scope: &str,
+    button: PointerButton,
+    m: &Modifiers,
+    held: bool,
+    wanted: impl Fn(Operation) -> bool,
+) -> Option<Operation> {
+    current()
+        .gestures()
         .iter()
-        .filter(|g| g.starts && g.scope == scope)
+        .filter(|g| g.starts && g.scope == scope && wanted(g.operation))
         .find(|g| {
             g.button == button
                 && (g.held.is_none() || held)
@@ -1150,6 +1296,20 @@ pub fn gesture(scope: &str, button: PointerButton, m: &Modifiers, held: bool) ->
                 && (!g.ctrl || ctrl(m))
         })
         .map(|g| g.operation)
+}
+
+/// 始めたあとに効く修飾の行（ステンシルの回転を 15° 刻みにする Shift など）の修飾を、今押しているか（行を外していれば、修飾が無い行なら偽）。
+pub fn modifier_held(scope: &str, operation: Operation, m: &Modifiers) -> bool {
+    current().gestures().iter().any(|g| {
+        g.scope == scope
+            && g.operation == operation
+            && !g.starts
+            && !g.click
+            && (g.alt || g.shift || g.ctrl)
+            && (!g.alt || m.alt)
+            && (!g.shift || m.shift)
+            && (!g.ctrl || ctrl(m))
+    })
 }
 
 /// この押しが始める操作を、修飾も押しながらのキーも書いたとおりに（書いていない Shift・Alt・Ctrl・押しながらのキーがあれば当てない）引く。
@@ -1181,7 +1341,8 @@ fn exact(
     held: bool,
     wanted: impl Fn(&Gesture) -> bool,
 ) -> Option<Operation> {
-    GESTURES
+    current()
+        .gestures()
         .iter()
         .filter(|g| wanted(g) && g.scope == scope)
         .find(|g| {

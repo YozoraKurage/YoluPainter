@@ -357,7 +357,11 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     }
     let tolerance = app.region.id_tolerance;
     // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
-    let mode = combine_of(app.sel.combine, app.region.modifiers);
+    let mode = combine_of(
+        app.sel.combine,
+        egui::PointerButton::Primary,
+        app.region.modifiers,
+    );
     let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {

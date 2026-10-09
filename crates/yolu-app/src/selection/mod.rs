@@ -282,6 +282,8 @@ pub struct SelState {
     pub last_press: Option<(f64, egui::Pos2)>,
     /// 形のドラッグを押し始めたときの修飾（離したときと見比べて、追加か縦横比の固定かを分ける）。
     pub press_modifiers: egui::Modifiers,
+    /// 選択のツールを押したボタン（組み合わせ方を、組み合わせの表のそのボタンの行で引く）。
+    pub press_button: egui::PointerButton,
     /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
     pub pen_down: Option<u32>,
     pub symmetry: SymmetryState,
@@ -350,6 +352,7 @@ impl Default for SelState {
             polygon_hover: None,
             last_press: None,
             press_modifiers: egui::Modifiers::NONE,
+            press_button: egui::PointerButton::Primary,
             pen_down: None,
             symmetry: SymmetryState::default(),
             stroke_symmetry: None,
@@ -493,14 +496,27 @@ pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
     }
 }
 
-/// キーの修飾から組み合わせ方（Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。組み合わせは `keymap::GESTURES` の表）。
-pub fn combine_of(base: SelectionCombine, modifiers: egui::Modifiers) -> SelectionCombine {
+/// 押したボタンとキーの修飾から組み合わせ方（既定は左ボタンの Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。
+/// 組み合わせは `keymap::GESTURES` の表の selection の行）。
+pub fn combine_of(
+    base: SelectionCombine,
+    button: egui::PointerButton,
+    modifiers: egui::Modifiers,
+) -> SelectionCombine {
+    combine_for(button, &modifiers).unwrap_or(base)
+}
+
+/// 押したボタンと修飾が、選択の行（足す・引く・重ねる）に当たるなら、その組み合わせ方。
+pub fn combine_for(
+    button: egui::PointerButton,
+    modifiers: &egui::Modifiers,
+) -> Option<SelectionCombine> {
     use crate::keymap::Operation;
-    match crate::keymap::gesture("selection", egui::PointerButton::Primary, &modifiers, false) {
-        Some(Operation::SelectionAdd) => SelectionCombine::Add,
-        Some(Operation::SelectionSubtract) => SelectionCombine::Subtract,
-        Some(Operation::SelectionIntersect) => SelectionCombine::Intersect,
-        _ => base,
+    match crate::keymap::gesture("selection", button, modifiers, false) {
+        Some(Operation::SelectionAdd) => Some(SelectionCombine::Add),
+        Some(Operation::SelectionSubtract) => Some(SelectionCombine::Subtract),
+        Some(Operation::SelectionIntersect) => Some(SelectionCombine::Intersect),
+        _ => None,
     }
 }
 

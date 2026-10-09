@@ -1776,7 +1776,7 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
         state: PopupState::new(&ctx, Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0))),
     };
     let try_start = |s: &mut AppState, over: bool| {
-        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, false);
+        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, &Modifiers::NONE);
         (taken, s.stencil.drag.take().is_some())
     };
     // 何も邪魔が無ければ始まる（対照）

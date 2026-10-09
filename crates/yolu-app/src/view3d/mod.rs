@@ -55,8 +55,8 @@ pub struct SurfaceInput {
     pub stroke_points: usize,
     /// 描いているストロークに固めた 3D の対称（対称の面の表示と、写しのカーソルはこれを読む）。
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
-    /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
-    pub clone_press: Option<egui::Pos2>,
+    /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（動かさずに離したらクローンの元にする。動かしたらドラッグの操作だけ）。
+    pub clone_press: Option<(egui::Pos2, egui::PointerButton)>,
     /// 視点の移動の間に押されていた移動キー（右ボタンを先に離しても、押したままの間は、キーの繰り返しをキーの表に渡さない。`keymap::take_fly_keys`）。
     pub fly_held: Vec<egui::Key>,
     /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
