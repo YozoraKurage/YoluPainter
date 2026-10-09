@@ -651,15 +651,32 @@ pub fn plan_samples(
     samples
 }
 
+/// ウィンドウの面の設定: 先に溜めるフレームは 1 枚（`SurfaceConfig::LOW_LATENCY`。eframe の既定の `HIGH_THROUGHPUT` は 2 枚）で、
+/// 同期は `vsync` なら垂直同期を待つ（`AutoVsync` = 使えるなら FifoRelaxed → Fifo の順）、そうでなければ待たない（`AutoNoVsync` = 使えるなら Immediate → Mailbox → Fifo の順）。
+/// 待たないと、フレームの出る間隔が垂直同期の枠に揃わない代わりに、ペンの入力から線が画面に出るまでの遅れが縮む
+/// （描き直しが速すぎて回りすぎないよう、アプリが自分でフレームの間隔に下限をかける。`pacing`）。
+/// wgpu が面の出し方に Fifo しか出さない道（wgpu-hal 30.0.1 の OpenGL は、Windows 以外では Fifo だけ）では、どちらの設定でも出し方は Fifo で、
+/// 下限だけがかかる。Vulkan（lavapipe）では `AutoVsync` が FifoRelaxed、`AutoNoVsync` が Immediate になる（wgpu-core の振り替えのログで確かめた）。
+pub fn surface_config(vsync: bool) -> egui_wgpu::SurfaceConfig {
+    egui_wgpu::SurfaceConfig {
+        present_mode: if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        },
+        ..egui_wgpu::SurfaceConfig::LOW_LATENCY
+    }
+}
+
 /// 製品のウィンドウの wgpu の設定: eframe の既定に、アダプター固有の形式の機能（2× と 8× の多サンプルが使えるかを調べるのに要る）を、
 /// 機材が持つときだけ装置へ足す。機能を足しても、使える形式・上限は増えるだけで減らない。
 ///
-/// 面は `SurfaceConfig::LOW_LATENCY`（先に溜めるフレームを 1 枚に絞る。eframe の既定の `HIGH_THROUGHPUT` は 2 枚）にする。2D に描く操作は、
-/// 入力から画面までの遅れをなめらかさより先にする。同期は垂直同期のまま。eframe の 1 つの描画器が、別ウィンドウに出したビューポートを含む
-/// 全ての面へこの設定を使う。
-pub fn wgpu_configuration() -> egui_wgpu::WgpuConfiguration {
-    let mut config = egui_wgpu::WgpuConfiguration::default()
-        .with_surface_config(egui_wgpu::SurfaceConfig::LOW_LATENCY);
+/// 面の設定は `surface_config(vsync)`（設定「垂直同期」。既定は待たない）。2D に描く操作は、入力から画面までの遅れをなめらかさより先にする。
+/// eframe の 1 つの描画器が、別ウィンドウに出したビューポートを含む全ての面へこの設定を使い、起動のあとに切り替える口は無い
+/// （変えた設定は次の起動から効く）。
+pub fn wgpu_configuration(vsync: bool) -> egui_wgpu::WgpuConfiguration {
+    let mut config =
+        egui_wgpu::WgpuConfiguration::default().with_surface_config(surface_config(vsync));
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = Arc::new(move |adapter| {
@@ -3286,14 +3303,24 @@ fn shadow_matrix(center: Vec3, radius: f32, to_light: Vec3) -> Mat4 {
 mod tests {
     use super::*;
 
-    /// ウィンドウの面は、入力から画面までの遅れを短くする設定（`LOW_LATENCY`）で作る。
+    /// ウィンドウの面は、先に溜めるフレームを 1 枚に絞る設定（`LOW_LATENCY` の溜め）で作る。同期は、既定（設定「垂直同期」が切）は待たず、入のときだけ待つ。
     #[test]
-    fn the_window_surface_is_configured_for_low_latency() {
-        let config = wgpu_configuration();
-        assert_eq!(config.surface, egui_wgpu::SurfaceConfig::LOW_LATENCY);
-        assert_ne!(config.surface, egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT);
-        // 同期は垂直同期のまま（Immediate・Mailbox はテアリングと電力の理由で使わない）
-        assert_eq!(config.surface.present_mode, wgpu::PresentMode::AutoVsync);
+    fn the_window_surface_is_configured_for_low_latency_and_waits_for_vsync_only_when_asked() {
+        let latency = egui_wgpu::SurfaceConfig::LOW_LATENCY.desired_maximum_frame_latency;
+        assert_eq!(latency, Some(1));
+        for (vsync, mode) in [
+            (false, wgpu::PresentMode::AutoNoVsync),
+            (true, wgpu::PresentMode::AutoVsync),
+        ] {
+            let config = wgpu_configuration(vsync);
+            assert_eq!(config.surface.present_mode, mode, "vsync={vsync}");
+            assert_eq!(config.surface.desired_maximum_frame_latency, latency);
+            assert_eq!(config.surface, surface_config(vsync));
+            assert_ne!(config.surface, egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT);
+        }
+        // 待たないほうが既定の形（設定の既定と同じ向き）
+        let default = surface_config(crate::settings::Settings::default().vsync);
+        assert_eq!(default.present_mode, wgpu::PresentMode::AutoNoVsync);
     }
 
     #[test]

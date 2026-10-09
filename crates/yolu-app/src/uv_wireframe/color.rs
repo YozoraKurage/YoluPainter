@@ -25,7 +25,7 @@ pub fn overlap_window_target() -> egui::Id {
 
 /// 色のウィンドウで色・不透明度をドラッグしている間は true（離すまで設定のファイルへ書かない）。
 pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool {
-    let row = rows.row(t::ROW_HEIGHT, 4.0);
+    let row = rows.row(t::ROW_HEIGHT, crate::prefs::GAP);
     let lang = app.lang;
     let name = lang.pick("UV ワイヤーフレーム", "UV Wireframe");
     w::text(

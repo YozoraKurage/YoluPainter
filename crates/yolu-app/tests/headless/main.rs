@@ -18,6 +18,7 @@ mod dialog_parent;
 mod disk_cache;
 mod effects;
 mod fillfx;
+mod frame_pacing;
 mod guide_keys;
 mod island_variation;
 mod liltoon_io;

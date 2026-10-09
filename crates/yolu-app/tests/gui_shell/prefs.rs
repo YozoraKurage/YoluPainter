@@ -1726,3 +1726,84 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     assert_eq!(s.disk_cache_limit, yolu_app::settings::DiskLimit::Gib(16));
     assert_eq!(s.disk_cache_folder, Some(fixed_cache_folder()));
 }
+
+/// 垂直同期（処理の節の「表示の合成」の下）: 既定は切（待たない = フレームの間隔に下限をかける）。入れると次の起動から効くので「再起動で反映」が出て、
+/// 起動のときの値に戻すと消える。設定のファイルは入のときだけ行を持つ。起動のとき読んだ値でフレームの間隔の下限が決まる。日英の絵。
+#[test]
+fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on() {
+    let dir = settings_dir("vsync");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.prefs.settings.vsync, "既定は待たない");
+    assert!(h.state().paces_frames(), "待たない形は、間隔の下限をかける");
+    assert!(!h.state().state.prefs.vsync_at_start);
+    // 絵は、機械によらない場所にして撮る
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+            PathBuf::from(if cfg!(windows) {
+                "C:\\Library"
+            } else {
+                "/Library"
+            }),
+        )))));
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::DiskCacheFolder(
+            Some(fixed_cache_folder()),
+        ))));
+    open_settings(&mut h);
+    h.run();
+    // 表示の合成のすぐ下の行（同じ節）
+    let compositing = h.get_by_label("表示の合成: 自動").rect();
+    let row = h.get_by_label("垂直同期").rect();
+    assert!(
+        row.top() > compositing.bottom() && row.top() < compositing.bottom() + 40.0,
+        "表示の合成の下: {compositing:?} {row:?}"
+    );
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    // 入れる: 次の起動から効く
+    h.get_by_label("垂直同期").click();
+    h.run();
+    assert!(h.state().state.settings().vsync);
+    let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
+    assert!(
+        h.state().paces_frames(),
+        "今の起動の同期は変わらない（ウィンドウの面は起動のときに決まる）"
+    );
+    h.run();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.lines().any(|l| l == "vsync=on"), "{written}");
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_window_vsync");
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("VSync · applies after restart");
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_window_vsync_english");
+    english(&mut h, Lang::Ja);
+    // 起動のときの値（切）に戻すと、「再起動で反映」は消え、ファイルの行も消える
+    h.get_by_label("垂直同期 ・ 再起動で反映").click();
+    h.run();
+    assert!(!h.state().state.settings().vsync);
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    let _ = h.get_by_label("垂直同期");
+    h.run();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("vsync"));
+    // 入れて終わると、次の起動は垂直同期を待つ形（間隔の下限は無し）で、その値が「起動のときの値」
+    h.get_by_label("垂直同期").click();
+    h.run();
+    drop(h);
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(h.state().state.prefs.settings.vsync);
+    assert!(h.state().state.prefs.vsync_at_start);
+    assert!(!h.state().paces_frames(), "待つ形は、間隔の下限をかけない");
+    open_settings(&mut h);
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    // 切ると、起動のときの値と違うので「再起動で反映」
+    h.get_by_label("垂直同期").click();
+    h.run();
+    assert!(!h.state().state.settings().vsync);
+    let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
+}

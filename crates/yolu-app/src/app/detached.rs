@@ -180,6 +180,10 @@ impl YoluApp {
             let (drained, lost) = win.pen.drain_with_lost();
             pen = drained;
             self.state.pen_lost = lost;
+            // 次のフレームの初めで、入力のあるフレームとして数える（別ウィンドウの egui の事象は、主のフレームの初めには見えない。`pacing`）
+            if !pen.is_empty() || ctx.input(|i| !i.events.is_empty()) {
+                self.pacing.note_detached_input();
+            }
             self.state.pressure_observe(ctx.pixels_per_point(), &pen);
             for sample in &mut pen {
                 sample.pressure = self.state.adjust_pressure(sample.pressure);

@@ -921,6 +921,42 @@ fn an_outside_window_runs_its_own_pass_and_takes_the_same_shortcuts() {
         .contains_key(&Tab::Layers));
 }
 
+/// 別ウィンドウの egui の事象は、主のフレームの初めには見えない（フレームの間隔の下限で、入力のあるフレームの 1/240 秒にしたい）。別ウィンドウのパスが
+/// 入力を見たら、次の主のフレームの初めが入力のあるフレームとして数える印を残す。入力の無いパスは印を付けない。印は一度取り出したら消える。
+#[test]
+fn an_outside_window_that_saw_input_marks_the_next_main_frame_as_an_input_frame() {
+    let (mut h, driver) = app_with_viewports();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::Layers,
+        Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
+    );
+    let empty = egui::RawInput::default();
+    // 取り出して印を消す。入力の無い子のパスだけでは印は付かない
+    h.state_mut().frame_has_input(&empty);
+    driver.take_ran();
+    h.run();
+    assert!(driver.take_ran().contains(&id), "子ウィンドウのパスが回る");
+    assert!(
+        !h.state_mut().frame_has_input(&empty),
+        "入力の無いパスは印を付けない"
+    );
+    // 別ウィンドウの上でポインタが動く
+    driver.child(id, |c| {
+        c.events.push(Event::PointerMoved(pos2(40.0, 40.0)));
+    });
+    h.run();
+    assert!(
+        h.state_mut().frame_has_input(&empty),
+        "別ウィンドウが入力を見たら、次の主のフレームの初めは入力のあるフレーム"
+    );
+    assert!(
+        !h.state_mut().frame_has_input(&empty),
+        "一度取り出したら消える"
+    );
+}
+
 #[test]
 fn closing_an_outside_window_returns_its_tabs_to_the_dock() {
     let (mut h, driver) = app_with_viewports();

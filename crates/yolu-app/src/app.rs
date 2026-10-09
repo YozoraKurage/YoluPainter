@@ -332,6 +332,8 @@ pub struct YoluApp {
     thumbs: Thumbnails,
     colors: ColorTextures,
     pen: PenInput,
+    /// フレームの間隔の下限（垂直同期を待たない表示のとき。待つ表示と試験では何もしない。`pacing`）。
+    pacing: crate::pacing::Pacing,
     /// サイドボタンを押したペンの接触を、egui の部品にも右ボタンとして届ける。
     pen_buttons: crate::pen::ButtonMap,
     view3d: View3dSlot,
@@ -548,6 +550,9 @@ impl YoluApp {
             pen,
         );
         app.state.load_settings(loaded.clone());
+        // 垂直同期を待たない表示（設定の既定）では、フレームの間隔に下限をかける。ウィンドウの面の同期は起動のときに決まる
+        // （`wgpu_configuration`）ので、起動のとき読んだ設定の値で決める（変えた値は次の起動から）
+        app.pacing = crate::pacing::Pacing::new(loaded.vsync);
         // macOS のタブレットの筆圧を読むか（試し。ほかの OS では何も起きない）
         app.pen.set_tablet(loaded.tablet_pressure);
         // Windows のペンを WinTab で読むか（既定は Windows Ink。ほかの OS では何も起きない）
@@ -863,6 +868,7 @@ impl YoluApp {
             thumbs: Thumbnails::default(),
             colors: ColorTextures::default(),
             pen,
+            pacing: crate::pacing::Pacing::default(),
             pen_buttons: crate::pen::ButtonMap::default(),
             view3d: View3dSlot::default(),
             renderer3d: None,
@@ -1689,6 +1695,88 @@ impl YoluApp {
         self.pen_buttons.remap(&self.pen.peek(), events);
     }
 
+    /// フレームの初め（egui のパスの前。`raw_input_hook` が呼ぶ）に、垂直同期を待たない表示のときだけ、前のフレームの始まりからの間が下限より短ければ
+    /// 残りを眠る（`pacing`）。入力のあるフレームは 1/240 秒、無いフレーム（描き直しの頼みだけ）はウィンドウのあるモニターのリフレッシュレートの逆数
+    /// （60〜240 Hz。読めなければ 1/120 秒。入力の見方は `frame_has_input`、リフレッシュレートの読み方は `read_refresh_rate`）。
+    /// 眠った分だけ、このフレームの時刻（`raw_input.time`）を進める。
+    pub fn pace_frame(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.pacing.waits_for_vsync() {
+            return;
+        }
+        // 最小化・非表示の間は、eframe が自分で間隔を空ける（`logic` だけを回す。見えている別ウィンドウがあるときは、主が隠れていてもパスは回る）。
+        // 覆われているだけのとき（`visible()` は偽）は `logic` だけが回るが、画面に出さないので、垂直同期を待たない設定で増える回りは無い
+        let hidden = raw_input
+            .viewports
+            .get(&raw_input.viewport_id)
+            .is_some_and(|info| info.visible() == Some(false));
+        if hidden && !self.any_detached_visible(ctx) {
+            return;
+        }
+        if self.pacing.refresh_due(std::time::Instant::now()) {
+            self.read_refresh_rate();
+        }
+        let input = self.frame_has_input(raw_input);
+        let slept = self.pacing.wait(input);
+        if let Some(time) = raw_input.time.as_mut() {
+            *time += slept.as_secs_f64();
+        }
+    }
+
+    /// ウィンドウのあるモニターのリフレッシュレートを読んで、入力の無いフレームの下限に入れる（1 秒に 1 度まで。`pace_frame` が呼ぶ）。
+    /// Windows だけ読む（主のウィンドウと別ウィンドウのあるモニターのうち、いちばん速いもの。`pacing::refresh`）。eframe・winit はウィンドウの
+    /// モニターのリフレッシュレートを渡さず、macOS・Linux は安く読める道が無いので、読まずに 1/120 秒のまま（`set_monitor_refresh_hz` で入れた値は消さない）。
+    fn read_refresh_rate(&mut self) {
+        #[cfg(windows)]
+        {
+            let hwnds: Vec<isize> = self
+                .main_hwnd
+                .into_iter()
+                .chain(self.detached.windows.iter().filter_map(|w| w.hwnd))
+                .collect();
+            if !hwnds.is_empty() {
+                self.pacing
+                    .set_refresh_rate(crate::pacing::refresh::fastest_refresh_hz(&hwnds));
+            }
+        }
+    }
+
+    /// 入力の無いフレームの下限に使うモニターのリフレッシュレートを入れる（Hz。読めない = `None` は 1/120 秒。試験用。Windows の実際のウィンドウは
+    /// `read_refresh_rate` が 1 秒ごとに読んで入れ直す）。
+    pub fn set_monitor_refresh_hz(&mut self, refresh_hz: Option<f64>) {
+        self.pacing.set_refresh_rate(refresh_hz);
+    }
+
+    /// 最後にフレームの間隔として選んだ下限（待つ形・まだフレームが無いときは `None`）。試験が、入力のあるフレームに 1/240 秒、
+    /// 無いフレームにモニターのリフレッシュレートの逆数を選んだことを見る。
+    pub fn frame_interval(&self) -> Option<std::time::Duration> {
+        self.pacing.last_interval()
+    }
+
+    /// このフレームの初めに見える入力があるか（フレームの間隔の下限を、入力のあるフレームの 1/240 秒にするか）。見るのは、主のウィンドウの egui の事象
+    /// （`raw_input.events`）、主と別ウィンドウのペンの待ち行列、前のフレームに別ウィンドウのパスが見た入力の印（別ウィンドウの egui の事象は、主のフレームの
+    /// 初めには見えない。印は取り出して消す）。
+    pub fn frame_has_input(&mut self, raw_input: &egui::RawInput) -> bool {
+        let detached_marked = self.pacing.take_detached_input();
+        detached_marked
+            || !raw_input.events.is_empty()
+            || !self.pen.peek().is_empty()
+            || self
+                .detached
+                .windows
+                .iter()
+                .any(|w| !w.pen.peek().is_empty())
+    }
+
+    /// フレームの間隔に下限をかけているか（垂直同期を待たない表示。起動のとき読んだ設定の「垂直同期」が切のとき）。
+    pub fn paces_frames(&self) -> bool {
+        !self.pacing.waits_for_vsync()
+    }
+
+    /// フレームの間隔の下限を、待つ形（何もしない）か待たない形（下限をかける）に替える（試験が `raw_input_hook` の眠りを確かめるのに使う）。
+    pub fn set_frame_pacing(&mut self, waits_for_vsync: bool) {
+        self.pacing = crate::pacing::Pacing::new(waits_for_vsync);
+    }
+
     pub fn display(&self) -> &CanvasDisplay {
         &self.display
     }
@@ -2369,8 +2457,9 @@ impl eframe::App for YoluApp {
         self.watch_point(ui.ctx(), FramePoint::UiEnd);
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.remap_pen_buttons(&mut raw_input.events);
+        self.pace_frame(ctx, raw_input);
     }
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。

@@ -209,6 +209,10 @@ pub struct Settings {
     /// CPU の処理に使うスレッドの数（None は自動 = 論理プロセッサの数。起動のときに決まる）。
     pub cpu_threads: Option<u32>,
     pub compositing: Compositing,
+    /// 画面の更新を、モニターの垂直同期まで待たせるか（既定は待たない。待たないと画面の上下のずれ〔テアリング〕が出うる代わりに、
+    /// ペンの入力から線が画面に出るまでの遅れが短い）。ウィンドウの面を作るときに決まるので、変えた値は次の起動から効く
+    /// （`view3d::render::wgpu_configuration`）。
+    pub vsync: bool,
     /// 棚の場所（None は既定。`default_library_folder`）。
     pub library_folder: Option<PathBuf>,
     /// 上書き保存で置き換えた前の版（退避）をいくつ残すか。
@@ -266,6 +270,7 @@ impl Default for Settings {
             min_undo_steps: DEFAULT_MIN_UNDO_STEPS,
             cpu_threads: None,
             compositing: Compositing::Auto,
+            vsync: false,
             library_folder: None,
             backups: BackupKeep::All,
             selection_bar: true,
@@ -490,6 +495,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "min_undo_steps" => lang.pick("最小の取り消し段数", "Minimum undo steps"),
         "cpu_threads" => lang.pick("CPU のスレッド", "CPU threads"),
         "compositing" => lang.pick("表示の合成", "Display compositing"),
+        "vsync" => lang.pick("垂直同期", "VSync"),
         "library_folder" => lang.pick("ライブラリの場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
@@ -605,6 +611,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(c) => settings.compositing = c,
                 None => invalid("compositing"),
             },
+            // 入れたときだけ書く行（既定は待たない）。読めない値は待たないまま
+            "vsync" => settings.vsync = value == "on",
             "library_folder" => match parse_folder(value) {
                 Some(v) => settings.library_folder = v,
                 None => invalid("library_folder"),
@@ -877,6 +885,9 @@ fn render(settings: &Settings) -> String {
     if settings.compositing != default.compositing {
         text += &format!("compositing={}\n", settings.compositing.key());
     }
+    if settings.vsync {
+        text += "vsync=on\n";
+    }
     if let BackupKeep::Count(n) = settings.backups {
         text += &format!("backups={}\n", n.min(MAX_BACKUPS_TO_KEEP));
     }
@@ -1030,6 +1041,12 @@ pub fn apply_thread_setting() {
     }
 }
 
+/// 起動のときに、設定のファイルの「垂直同期」を返す（ウィンドウの面を作る前に 1 回。読めない設定・項目が無いときは待たない）。
+/// `apply_thread_setting` と同じく、アプリが後で読む設定と同じファイルを見る。
+pub fn startup_vsync() -> bool {
+    path().is_some_and(|path| load(&path).0.vsync)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1059,6 +1076,7 @@ mod tests {
             min_undo_steps: 12,
             cpu_threads: Some(4),
             compositing: Compositing::Cpu,
+            vsync: true,
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
             selection_bar: true,
@@ -1230,6 +1248,41 @@ mod tests {
             !settings.external_ops && problems.is_empty(),
             "{problems:?}"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn vsync_defaults_off_and_survives_restart_only_when_on() {
+        let dir = temp_dir("vsync");
+        let path = dir.join("settings.conf");
+        assert!(!Settings::default().vsync, "既定は垂直同期を待たない");
+        assert!(!load(&path).0.vsync, "ファイルが無ければ待たない");
+        let on = Settings {
+            vsync: true,
+            ..Settings::default()
+        };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), (on, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "vsync=on"));
+        // 待たないは書かない（行が無い設定ファイルと同じ中身）
+        save(&path, &with_lang(Lang::En)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
+        // この項目を知らない前の版の設定は、待たないとして読む。ほかの項目は前のまま生きる
+        let (old, problems) = parse("language=ja\ncpu_threads=4\nexternal_ops=on\n");
+        assert!(!old.vsync && problems.is_empty(), "{problems:?}");
+        assert_eq!((old.cpu_threads, old.external_ops), (Some(4), true));
+        // 読めない値・大文字・空は、待たないまま（知らせる問題にはしない）
+        for bad in ["maybe", "ON", "", "1", "true", "off"] {
+            let (read, problems) = parse(&format!("language=ja\nvsync={bad}\n"));
+            assert!(!read.vsync, "vsync={bad:?}");
+            assert!(problems.is_empty(), "vsync={bad:?}: {problems:?}");
+        }
+        // 画面の名前は日英で出る
+        assert_eq!(setting_name(Lang::Ja, "vsync"), "垂直同期");
+        assert_eq!(setting_name(Lang::En, "vsync"), "VSync");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1770,6 +1823,7 @@ mod tests {
             "min_undo_steps=12",
             "cpu_threads=4",
             "compositing=cpu",
+            "vsync=on",
             "backups=7",
             "gpu_memory=1536",
             "pressure_low=0.125",
@@ -1806,6 +1860,7 @@ mod tests {
         back.min_undo_steps = DEFAULT_MIN_UNDO_STEPS;
         back.cpu_threads = None;
         back.compositing = Compositing::Auto;
+        back.vsync = false;
         back.library_folder = None;
         back.backups = BackupKeep::All;
         back.gpu_memory = GpuMemory::Auto;

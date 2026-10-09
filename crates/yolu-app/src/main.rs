@@ -18,6 +18,13 @@ fn main() -> eframe::Result {
 fn start() -> eframe::Result {
     // CPU のスレッドの設定は、最初の rayon の利用より前に入れる（変えた値は次の起動から効く）
     yolu_app::settings::apply_thread_setting();
+    // ウィンドウの面の同期（垂直同期を待つか）は、ウィンドウを作るときに決まる。設定のファイルの値を、eframe を作る前に読む
+    let vsync = yolu_app::settings::startup_vsync();
+    yolu_app::crash::note(if vsync {
+        "present mode: AutoVsync"
+    } else {
+        "present mode: AutoNoVsync"
+    });
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("YoluPainter")
         .with_inner_size([1600.0, 960.0])
@@ -47,8 +54,8 @@ fn start() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
-        // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す
-        wgpu_options: yolu_app::view3d::render::wgpu_configuration(),
+        // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す。面の同期は設定「垂直同期」（既定は待たない）
+        wgpu_options: yolu_app::view3d::render::wgpu_configuration(vsync),
         // Linux: ウィンドウは X11 で開く（Wayland の机では XWayland の上）。Wayland は浮かせるウィンドウの位置を決められず、ウィンドウの外へ出す欄・位置の覚えが
         // 効かないため。X11 が無い机（XWayland の無い Wayland）では起動できない
         #[cfg(target_os = "linux")]

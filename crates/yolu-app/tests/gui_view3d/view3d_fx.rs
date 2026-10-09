@@ -38,7 +38,7 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
             unreachable!("kittest の既定は新しく作る形")
         };
         let WgpuSetup::CreateNew(product) =
-            yolu_app::view3d::render::wgpu_configuration().wgpu_setup
+            yolu_app::view3d::render::wgpu_configuration(false).wgpu_setup
         else {
             unreachable!("製品の設定は新しく作る形")
         };

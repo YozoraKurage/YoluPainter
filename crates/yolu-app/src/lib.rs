@@ -56,6 +56,7 @@ pub mod newproject;
 pub mod notice;
 pub mod objects;
 pub mod ops_host;
+pub mod pacing;
 pub mod panels;
 pub mod pathtool;
 pub mod pen;

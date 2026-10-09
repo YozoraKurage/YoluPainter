@@ -1,5 +1,5 @@
 //! 設定のウィンドウ（編集 → 設定…、Ctrl+,）: 言語・書き出しの余白・メモリの予算（取り消し履歴・レイヤーのメモリ・1 回の操作・最小の取り消し段数）・
-//! CPU のスレッド・表示の合成・棚の場所・退避を残す数。値は `AppState::prefs` に入り、設定のファイル（`settings`）へは次のフレームで書かれる。
+//! CPU のスレッド・表示の合成・垂直同期・棚の場所・退避を残す数。値は `AppState::prefs` に入り、設定のファイル（`settings`）へは次のフレームで書かれる。
 //! ウィンドウは浮いたウィンドウの骨組み（`ui::window`）で、見出しをドラッグして動かせる。選択肢はポップアップ（`m2_menu::Popup::Pref`）。
 //!
 //! - **メモリの予算**（取り消し履歴・レイヤーのメモリ）は**プロジェクト全体**の上限で、全テクスチャセットの合計が設定を超えない
@@ -18,6 +18,8 @@
 //! - **ペン**の節は macOS と Windows だけに出る。macOS の「タブレットの筆圧（試し）」（`PrefsState::tablet_row`）は、Wacom・XP-Pen などのドライバーが標準のイベントで送る
 //!   筆圧・傾き・消しゴムの端を読むか（`pen::mac_tablet`）。既定は入。Windows の「ペンの入力」（`PrefsState::pen_input_row`）は、ペンを Windows Ink と WinTab の
 //!   どちらで読むか（`pen::win_tab`。既定は Windows Ink。WinTab が使えない機械では Windows Ink のまま）。切り替えは次のフレームでペンの受け口の札に届く（`YoluApp::frame_body`）。
+//! - **垂直同期**（既定は切 = 待たない）は、ウィンドウの面の同期（`view3d::render::wgpu_configuration`）で、ウィンドウを作るときに決まる。変えた値は次の起動から
+//!   効くので、ウィンドウに「再起動で反映」と出す（`PrefsState::vsync_at_start`）。切の間は、アプリがフレームの間隔に下限をかける（`pacing`）。
 //! - **表示の合成**は 2D のキャンバスの表示の方針（`YoluApp::apply_compositing` がキャンバスの表示に入れる。自動は環境変数
 //!   `YOLUPAINTER_CANVAS` か自動）。保存・書き出し・3D ビューの値の合成は、どれでも CPU が正本。
 
@@ -45,7 +47,8 @@ use crate::view3d::navigation::{OrbitCenter, ZoomCenter};
 const WIDTH: f32 = 400.0;
 /// ラベルの幅（値の箱はその右）。
 const LABEL_WIDTH: f32 = 150.0;
-const GAP: f32 = 4.0;
+/// 行と行の間（UV ワイヤーフレームの行も、これで置く）。「ペン」の節（macOS・Windows）があっても、1280 × 800 の画面に最後の行まで（スクロール無しで）収まるように詰めている（`HEADING` も）。
+pub(crate) const GAP: f32 = 3.0;
 /// 「すべて残す」を切ったときにスライダーが戻る数（まだ数を選んでいないとき）。
 const DEFAULT_BACKUP_COUNT: u32 = 10;
 
@@ -79,6 +82,8 @@ pub enum Pref {
     /// None は自動。
     CpuThreads(Option<u32>),
     Compositing(Compositing),
+    /// 画面の更新を垂直同期まで待たせるか（ウィンドウの面の同期。変えた値は次の起動から効く）。
+    Vsync(bool),
     /// GPU のメモリ（自動・低・標準・高、詳しくで指定した合計）。
     GpuMemory(GpuMemory),
     /// None は既定。
@@ -147,6 +152,8 @@ pub struct PrefsState {
     pub settings: Settings,
     /// 起動のときに rayon に入れたスレッドの設定（今の設定と違えば「再起動で反映」）。
     pub threads_at_start: Option<u32>,
+    /// 起動のときにウィンドウの面へ入れた「垂直同期」の設定（今の設定と違えば「再起動で反映」）。
+    pub vsync_at_start: bool,
     /// このマシンの物理メモリ（MiB。自動の予算の元。試験は差し替える）。
     pub ram_mib: u64,
     /// このマシンの論理プロセッサの数（スレッドの選択肢と自動の表示。試験は差し替える）。
@@ -185,6 +192,7 @@ impl Default for PrefsState {
             remembered_backups: DEFAULT_BACKUP_COUNT,
             settings: Settings::default(),
             threads_at_start: None,
+            vsync_at_start: false,
             ram_mib: system_memory_mib(),
             cores: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
             managed: false,
@@ -233,6 +241,7 @@ impl AppState {
     pub fn load_settings(&mut self, settings: Settings) {
         self.export.padding = settings.export_padding;
         self.prefs.threads_at_start = settings.cpu_threads;
+        self.prefs.vsync_at_start = settings.vsync;
         self.color.wheel = settings.color_wheel;
         self.view3d.display.post = settings.view3d_post;
         self.view3d.projection = settings.view3d_paint;
@@ -318,6 +327,7 @@ impl AppState {
                     self.prefs.settings.cpu_threads = n.map(|n| n.clamp(1, MAX_CPU_THREADS));
                 }
                 Pref::Compositing(c) => self.prefs.settings.compositing = c,
+                Pref::Vsync(on) => self.prefs.settings.vsync = on,
                 Pref::GpuMemory(choice) => {
                     self.prefs.settings.gpu_memory = match choice {
                         GpuMemory::Mib(n) => GpuMemory::Mib(
@@ -768,8 +778,8 @@ enum Request {
     Do(PrefsAction),
 }
 
-/// 節の見出しの行の高さ（最初の節以外は、上に細い線）。
-const HEADING: f32 = 24.0;
+/// 節の見出しの行の高さ（最初の節以外は、上に細い線）。「ペン」の節（macOS・Windows）があっても 1280 × 800 の画面に最後の行まで収まる高さにする。
+const HEADING: f32 = 22.0;
 
 /// ウィンドウの中身（見出しの帯の下）の高さの見積もり。描く行の数と合わせる（試験が、実際に並べた高さと同じであることを確かめる）。
 /// 画面に収まらなければ、ウィンドウは画面の高さにして、中身は共通のスクロールで送る。`external_ops` は「外からの操作を受ける」が入っているか
@@ -788,7 +798,7 @@ fn content_height(
         + dropdown * 3.0 + slider // メモリ: 予算 3 つ・最小の取り消し段数
         + dropdown // メモリ: ディスクキャッシュ（同じ行の右に「詳しく」）
         + if cache_details { dropdown * 3.0 } else { 0.0 } // キャッシュの上限・置き場所（パスとボタン）
-        + dropdown * 3.0 // 処理: スレッド・合成・GPU のメモリ（同じ行の右に「詳しく」）
+        + dropdown * 4.0 // 処理: スレッド・合成・垂直同期・GPU のメモリ（同じ行の右に「詳しく」）
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 4.0 // 3D ビュー: 回転の中心・ズームの中心・軸の向きで正投影・UV ワイヤーフレーム
         + if pen_rows > 0 { HEADING + dropdown * pen_rows as f32 } else { 0.0 } // ペン（macOS・Windows だけ）: 見出しと、タブレットの筆圧（macOS）・ペンの入力（Windows）
@@ -872,7 +882,7 @@ fn folder_rows(
         vec2(widths[1], row.height()),
     );
     let choose_rect = Rect::from_min_size(
-        pos2(default_rect.left() - GAP - widths[0], row.top()),
+        pos2(default_rect.left() - 4.0 - widths[0], row.top()),
         vec2(widths[0], row.height()),
     );
     let chose = w::button(
@@ -931,6 +941,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let ram = app.prefs.ram_mib;
     let cores = app.prefs.cores;
     let restart = s.cpu_threads != app.prefs.threads_at_start;
+    let vsync_restart = s.vsync != app.prefs.vsync_at_start;
     let library = s.library_folder();
     let cache_free = app.cache_free_now();
     let keep_all = s.backups == BackupKeep::All;
@@ -1292,6 +1303,30 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
             PrefChoice::Compositing,
         ));
+        // 垂直同期（ウィンドウの面を作るときに決まる。起動のときの値と違えば「再起動で反映」）
+        let mut vsync_label = crate::settings::setting_name(lang, "vsync").to_owned();
+        if vsync_restart {
+            vsync_label += &format!(
+                "{}{}",
+                lang.pick(" ・ ", " · "),
+                lang.pick("再起動で反映", "applies after restart")
+            );
+        }
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("vsync"),
+            &vsync_label,
+            s.vsync,
+            Some(lang.pick(
+                "垂直同期を待つと、画面の上下のずれ（テアリング）が出ない代わりに、ペンで描く線が画面に出るまでの遅れが増えます。次の起動から効きます",
+                "Waiting for the monitor's vertical sync avoids screen tearing but adds delay before a line you draw appears. Takes effect from the next start",
+            )),
+            enabled,
+        );
+        if next != s.vsync {
+            requests.push(Request::Do(PrefsAction::Set(Pref::Vsync(next))));
+        }
         // GPU のメモリと、同じ行の右に「詳しく」
         let (gpu_rect, details_rect) = details_split(ui, rows.row(t::ROW_HEIGHT, GAP), lang);
         requests.extend(choice_in(
