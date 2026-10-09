@@ -1554,6 +1554,49 @@ fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
     }
 }
 
+/// 行の下（ポインタのすぐ下）に出ている文字のうち、理由を含む物。
+fn reason_tooltips(h: &Harness<'_, YoluApp>, row: Rect, reason: &str) -> Vec<String> {
+    shown_texts(h)
+        .into_iter()
+        .filter(|(t, r)| t.contains(reason) && r.top() > row.top() && r.top() < row.top() + 90.0)
+        .map(|(t, _)| t)
+        .collect()
+}
+
+#[test]
+fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_the_row_tooltip() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 1000.0, 128);
+        h.state_mut().state.set_language(lang);
+        effect_document(&mut h);
+        let label = format!(
+            "{}  {}",
+            lang.pick("エッジの摩耗", "Edge Wear"),
+            lang.pick("乗算", "Multiply")
+        );
+        let row = h.get_by_label(&label).rect();
+        let reason = lang.pick("Curvature のマップがありません", "No Curvature map");
+        // 印の上: 理由だけの 1 つ（行のツールチップ「名前＋理由」は出さない）
+        move_to(&h, pos2(row.right() - 4.0 - 60.0 - 10.0, row.center().y));
+        for _ in 0..90 {
+            h.step();
+        }
+        let on_mark = reason_tooltips(&h, row, reason);
+        assert_eq!(on_mark, vec![reason.to_owned()], "{lang:?}: 印の上");
+        // 印でも名前でもない所（行の左の端）: 行のツールチップ 1 つ（名前＋理由）
+        move_to(&h, pos2(row.left() + 40.0, row.center().y));
+        for _ in 0..90 {
+            h.step();
+        }
+        let on_row = reason_tooltips(&h, row, reason);
+        assert_eq!(
+            on_row,
+            vec![format!("{label}\n{reason}")],
+            "{lang:?}: 行の上"
+        );
+    }
+}
+
 fn procedural(h: &Harness<'_, YoluApp>) -> yolu_core::generator::Settings {
     let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
     match effect.settings() {
