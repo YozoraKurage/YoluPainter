@@ -649,6 +649,16 @@ impl YoluApp {
             .any(|w| info_of(ctx, w.viewport_id()).is_some_and(|i| i.visible().unwrap_or(true)))
     }
 
+    /// メインウィンドウか別ウィンドウのどれかで、ポインタのボタン（マウス・ペン）が押されているか。
+    pub(super) fn any_pointer_down(&self, ctx: &egui::Context) -> bool {
+        ctx.input(|i| i.pointer.any_down())
+            || self
+                .detached
+                .windows
+                .iter()
+                .any(|w| ctx.input_for(w.viewport_id(), |i| i.pointer.any_down()))
+    }
+
     /// 別ウィンドウのどれかにフォーカスがあるか。
     pub(super) fn detached_focused(&self, ctx: &egui::Context) -> bool {
         self.detached

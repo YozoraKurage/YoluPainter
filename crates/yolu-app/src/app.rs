@@ -1937,6 +1937,9 @@ impl YoluApp {
         self.state.poll_clipboard();
         // OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる
         self.state.text_poll();
+        // 文字の色の元が描画色なら、描画色が変わったとき、選んでいるテキストレイヤーの色も変える（円のドラッグは 1 回の取り消し）
+        let pointer_down = self.any_pointer_down(&ctx);
+        self.state.text_follow_paint_color(pointer_down);
         // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
         // （メインウィンドウから別ウィンドウへフォーカスが移っても、アプリはフォーカスを失っていない）
         let focused = if self.detached_focused(&ctx) {
