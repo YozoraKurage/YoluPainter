@@ -24,6 +24,7 @@ mod island_variation;
 mod liltoon_io;
 mod livelink_files;
 mod mcp_server;
+mod new_layer_position;
 mod no_developer_words;
 mod no_instruction_text;
 mod notice_rules;
