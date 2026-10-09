@@ -63,6 +63,7 @@ fn creations(s: &mut AppState) -> Vec<(String, Action)> {
             }),
         ),
     ];
+    v.push(("パスレイヤー".to_owned(), Action::LayerMenu(Op::PathLayer)));
     for kind in AdjustmentKind::ALL {
         v.push((
             format!("調整レイヤー {kind:?}"),

@@ -297,6 +297,11 @@ fn random_id() -> u128 {
     ((a.finish() as u128) << 64) | b.finish() as u128
 }
 
+/// 点が 1 つも無い 1 本だけの一覧か（置く側が、まだ決まっていない）。
+fn is_unplaced(entries: &[LayerPathEntry]) -> bool {
+    matches!(entries, [only] if only.path.point_count() == 0)
+}
+
 /// パスを持つレイヤーの名前。
 fn layer_name(lang: Lang, n: usize) -> String {
     format!("{} {n}", lang.pick("パス", "Path"))
@@ -527,6 +532,65 @@ impl AppState {
         })
     }
 
+    /// 点の無い 1 本のパスを持つパスレイヤーを、選んでいるレイヤーのすぐ上（グループの中ならその中）に作り、選んで、パスのツールへ替える（1 回の Undo。
+    /// 最初の点はツールで置く。置いた側（2D・3D）がそのパスの側になる）。描けない状態（描いている最中・読むだけのセット）では断る。
+    pub fn new_path_layer(&mut self) {
+        let lang = self.lang;
+        if self.is_stroking() {
+            self.refuse(Source::Path, crate::lang::refusals::during_stroke(lang));
+            return;
+        }
+        if let Some(reason) = self.read_only_reason().map(str::to_owned) {
+            self.refuse(
+                Source::Path,
+                crate::lang::refusals::read_only_set(lang, &reason),
+            );
+            return;
+        }
+        let path = CanvasPath {
+            style: self.path.next_style.clone(),
+            id: random_id(),
+            channel: self.m2.paint_channel,
+            brush: self.path_new_brush(None),
+            points: Vec::new(),
+            material: self.path_new_material(),
+        };
+        let rendered = match render_canvas(&path, &self.path_options()) {
+            Ok(r) => r,
+            Err(e) => {
+                self.fail(Source::Path, crate::lang::path_error(lang, &e));
+                return;
+            }
+        };
+        let n = self.doc.layers().iter().filter(|l| l.has_paths()).count() + 1;
+        let above = self
+            .selected_layer
+            .filter(|id| self.doc.layer(*id).is_some());
+        let id = path.id;
+        match self.doc.add_path_layer(
+            &layer_name(lang, n),
+            LayerPath::Canvas(path),
+            rendered.channels,
+            above,
+        ) {
+            Ok(layer) => {
+                self.modified = true;
+                self.select_new(layer);
+                // ツールを替えると、ほかのツールの途中の状態を捨てる。編集するパスは、そのあとで決める
+                self.switch_tool(crate::state::Tool::Path, false);
+                self.path.active = Some(ActivePath { layer, path: id });
+                self.path.fresh = None;
+                self.path.selected = None;
+                self.path.marked = None;
+            }
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Path,
+                lang.core_error(&e),
+            ),
+        }
+    }
+
     /// 点を 1 つ持つ新しいパス（今のブラシ・描くチャンネル・組で）。`channel` はレイヤーの一覧の基準のチャンネル（一覧に加えるとき。
     /// 一覧のパスはどれも同じ基準のチャンネル）。
     fn path_new(
@@ -602,10 +666,12 @@ impl AppState {
             return None;
         };
         let existing = self.path_layer().map(|(_, p)| p.clone());
-        // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、レイヤーの一覧の側で断る
+        // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、レイヤーの一覧の側で断る。
+        // 点が 1 つも無い 1 本だけのレイヤー（新規パスレイヤー・点を全部消したレイヤー）は、まだ側が決まっていない
         let side = self
             .doc
             .layer(layer)
+            .filter(|l| !is_unplaced(l.paths()))
             .and_then(|l| l.paths().first())
             .map(|e| e.path.clone());
         match (&side, surface) {
@@ -649,8 +715,11 @@ impl AppState {
                 .layer(l)
                 .map(|x| x.paths().to_vec())
                 .unwrap_or_default();
+            let unplaced = is_unplaced(&entries);
             match entries.iter_mut().find(|e| e.id() == path.id()) {
                 Some(e) => e.path = path.clone(),
+                // 点の無い 1 本だけの一覧に別のパスを足すときは、その 1 本を新しいパスに替える（空のパスを残さない。側が違っても付けられる）
+                None if unplaced => entries[0].path = path.clone(),
                 None => entries.push(LayerPathEntry::new(path.clone())),
             }
             let gaps = self.path_write_list(l, entries)?;
@@ -705,21 +774,47 @@ impl AppState {
     ) -> Result<usize, String> {
         let lang = self.lang;
         let core = |e: CoreError| lang.core_error(&e);
+        // 点が 1 つも無い 1 本だけのレイヤーを、別の側（2D・3D）のパスにするときは、core が「パスは種類を変えない」と断るので、
+        // 先にパスを外してから付け直す（1 回の Undo。外すのは点の無いパスなので、画素は変わらない）
+        let swaps_side = self.doc.layer(layer).is_some_and(|l| {
+            is_unplaced(l.paths())
+                && entries
+                    .first()
+                    .is_some_and(|e| e.path.is_canvas() != l.paths()[0].path.is_canvas())
+        });
         let surface = entries.iter().find_map(|e| match &e.path {
             LayerPath::Surface(s) => Some(s.clone()),
             LayerPath::Canvas(_) => None,
         });
         let Some(first) = surface else {
-            self.doc.set_canvas_paths(layer, entries).map_err(core)?;
+            if swaps_side {
+                self.doc
+                    .batch(|d| {
+                        d.set_paths(layer, Vec::new(), Vec::new())?;
+                        d.set_canvas_paths(layer, entries)
+                    })
+                    .map_err(core)?;
+            } else {
+                self.doc.set_canvas_paths(layer, entries).map_err(core)?;
+            }
             return Ok(0);
         };
         let ctx = self.path_surface_ctx_for(&first)?;
         let rendered = render_list(&entries, Some(&ctx.render), &self.path_options())
             .map_err(|e| crate::lang::path_error(lang, &e))?;
         let gaps = rendered.gaps;
-        self.doc
-            .set_paths(layer, entries, rendered.channels)
-            .map_err(core)?;
+        if swaps_side {
+            self.doc
+                .batch(|d| {
+                    d.set_paths(layer, Vec::new(), Vec::new())?;
+                    d.set_paths(layer, entries, rendered.channels)
+                })
+                .map_err(core)?;
+        } else {
+            self.doc
+                .set_paths(layer, entries, rendered.channels)
+                .map_err(core)?;
+        }
         Ok(gaps)
     }
 
@@ -780,7 +875,13 @@ impl AppState {
         };
         self.path.selected = None;
         self.path.active = None;
-        self.path.fresh = Some(layer);
+        // 点が 1 つも無い 1 本だけのレイヤー（新規パスレイヤー・点を全部消したレイヤー）は、抜けても次の点がその 1 本に入る
+        // （空のパスを残して 2 本目を始めない。側（2D・3D）も、その点で決まる）
+        let unplaced = self
+            .doc
+            .layer(layer)
+            .is_some_and(|l| is_unplaced(l.paths()));
+        self.path.fresh = (!unplaced).then_some(layer);
         true
     }
 
@@ -1123,6 +1224,25 @@ impl AppState {
             return;
         };
         let (path, select, target) = match existing {
+            // 点が 1 つも無い 1 本だけのパスは、置いた側（2D・3D）がパスの側と違えば、その側の 1 点のパスに替える（同じ ID・同じ一覧の位置）
+            Some(path)
+                if path.point_count() == 0
+                    && self
+                        .doc
+                        .layer(layer)
+                        .is_some_and(|l| is_unplaced(l.paths()))
+                    && matches!(op, PointOp::Add(place)
+                        if matches!(place, Place::Canvas { .. }) != path.is_canvas()) =>
+            {
+                let PointOp::Add(place) = op else { return };
+                match self.path_new(place, Some(path.channel())) {
+                    Ok(p) => (p.with_id(path.id()), Some(0), Some(layer)),
+                    Err(m) => {
+                        self.refuse(Source::Path, m);
+                        return;
+                    }
+                }
+            }
             Some(path) => match edit::apply(&path, &op) {
                 Ok((next, select)) => (next, select, Some(layer)),
                 Err(r) => {

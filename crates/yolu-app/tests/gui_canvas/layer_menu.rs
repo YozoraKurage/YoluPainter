@@ -361,9 +361,70 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
                     lang.pick("新規調整レイヤー", "New Adjustment Layer")
                         .to_owned()
                 ),
+                Some(lang.pick("新規パスレイヤー", "New Path Layer").to_owned()),
                 None,
                 Some(lang.pick("新規グループ", "New Group").to_owned()),
             ]
+        );
+    }
+}
+
+#[test]
+fn the_new_path_layer_entry_is_in_the_menu_bar_and_the_right_click_but_not_in_the_layers_toolbar() {
+    for lang in Lang::ALL {
+        let label = lang.pick("新規パスレイヤー", "New Path Layer");
+        // 並びの項目: 押せる・描いている最中は押せない・キーは持たない
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let id = s.selected_layer.unwrap();
+        for entries in [
+            shell::menu_entries(&s, 2),
+            shell::popup_entries(&s, PopupKind::LayerContext(id)),
+        ] {
+            let item = entries
+                .iter()
+                .find(|e| e.label() == Some(label))
+                .unwrap_or_else(|| panic!("{lang:?}: {:?}", names(&entries)));
+            assert!(
+                matches!(item, Entry::Item { enabled: true, shortcut: None, action, .. }
+                    if *action == Action::LayerMenu(Op::PathLayer)),
+                "{lang:?}"
+            );
+        }
+        let settings = s.stroke_settings(false);
+        let stroke = s.doc.begin_stroke(id, &settings).unwrap();
+        let bar = shell::menu_entries(&s, 2);
+        assert!(
+            bar.iter().any(
+                |e| e.label() == Some(label) && matches!(e, Entry::Item { enabled: false, .. })
+            ),
+            "{lang:?}: 描いている最中は押せない"
+        );
+        s.doc.cancel_stroke(stroke);
+        // 画面: レイヤーの一覧の下の帯のボタンには無く、メニューバーの「レイヤー」には出る。押すと作ってパスのツールへ替える
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        assert!(
+            h.query_by_label(label).is_none(),
+            "{lang:?}: 帯には置かない"
+        );
+        let base = h.state().state.selected_layer.unwrap();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        let item = popup_item(&h, label);
+        click(&mut h, item.center());
+        assert!(h.state().state.popup.is_none(), "選んだら閉じる");
+        let made = h.state().state.selected_layer.unwrap();
+        assert_ne!(made, base);
+        assert!(h.state().state.doc.layer(made).unwrap().has_paths());
+        assert_eq!(h.state().state.tool, Tool::Path);
+        assert_eq!(h.state().state.doc.layers().len(), 2);
+        h.state_mut().state.apply(Action::Undo);
+        assert_eq!(
+            h.state().state.doc.layers().len(),
+            1,
+            "1 回の取り消しで戻る"
         );
     }
 }
@@ -380,6 +441,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             ja_en("新規レイヤー", "New Layer"),
             ja_en("新規塗りつぶしレイヤー", "New Fill Layer"),
             ja_en("新規調整レイヤー", "New Adjustment Layer"),
+            ja_en("新規パスレイヤー", "New Path Layer"),
             None,
             ja_en("フィルターを追加", "Add Filter"),
             ja_en("ジェネレーターを追加", "Add Generator"),
