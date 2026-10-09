@@ -236,11 +236,22 @@ pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
 
 /// 止める仕事を取り消し（表の順）、止まるのを `wait` まで待つ（待つ間も結果を受ける）。
 pub fn stop(app: &mut AppState, wait: Duration) {
+    request_stop(app);
+    wait_stopped(app, wait);
+}
+
+/// 止める仕事の取り消しを頼むだけ（待たない）。先に頼んでおけば、利用者の答えを待つウィンドウを出している間も仕事が止まっていく。
+/// 止まるのを待つのは [`wait_stopped`]。
+pub fn request_stop(app: &mut AppState) {
     for job in JOBS {
         if let Some(cancel) = job.cancel {
             cancel(app);
         }
     }
+}
+
+/// 止める仕事が止まるのを `wait` まで待つ（待つ間も結果を受ける）。取り消しは [`request_stop`] が頼む。
+pub fn wait_stopped(app: &mut AppState, wait: Duration) {
     let start = Instant::now();
     while JOBS.iter().any(|j| j.cancel.is_some() && (j.busy)(app)) && start.elapsed() < wait {
         for job in JOBS {

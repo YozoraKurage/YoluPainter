@@ -138,7 +138,7 @@ impl Fallback {
             Fallback::Policy => lang
                 .pick("設定で GPU を使わない", "GPU turned off in the settings")
                 .into(),
-            Fallback::NoDevice => lang.pick("GPU の装置がありません", "No GPU device").into(),
+            Fallback::NoDevice => lang.pick("GPU が見つかりません", "No GPU found").into(),
             Fallback::SoftwareAdapter => lang
                 .pick("ソフトウェアの GPU です", "Software GPU adapter")
                 .into(),

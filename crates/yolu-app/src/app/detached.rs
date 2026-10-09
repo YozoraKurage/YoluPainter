@@ -20,6 +20,7 @@ use egui::{
     ViewportInfo,
 };
 
+use super::gpu_lost::FramePoint;
 use super::{dock_area, dock_style, Tab, Tabs, YoluApp};
 use crate::detach::{self, place, DockOp, Float, OsWindow, Place, Resolved};
 use crate::layout::FloatRecord;
@@ -80,6 +81,9 @@ impl YoluApp {
         if self.detached.windows.is_empty() {
             return false;
         }
+        // 別ウィンドウはここでその場で描かれる（`show_viewport_immediate`）。ここまでのメインウィンドウの描画（3D の提出など）で
+        // 失ったときは、別ウィンドウを失ったデバイスで描く前に終える
+        self.watch_point(ctx, FramePoint::BeforeDetached);
         let root = ctx.input(|i| i.viewport().clone());
         let root_ppp = ctx.pixels_per_point();
         let monitors = crate::windowpos::monitors();
@@ -106,6 +110,7 @@ impl YoluApp {
                 builder = builder.with_position(position);
             }
             let id = win.viewport_id();
+            let serial = win.serial;
             if ctx.embed_viewports() {
                 // egui がウィンドウを OS のウィンドウに出せない（試験のウィンドウ）: メインウィンドウの中の egui のウィンドウに、記録の位置と大きさで描く（egui_dock の浮いたウィンドウと
                 // 同じ枠。動かすのは記録を変えたときだけ）
@@ -127,11 +132,13 @@ impl YoluApp {
                         grabbed |=
                             self.detached_pass(ui, ViewportClass::EmbeddedWindow, win, events);
                     });
-                continue;
+            } else {
+                grabbed |= ctx.show_viewport_immediate(id, builder, |ui, class| {
+                    self.detached_pass(ui, class, win, events)
+                });
             }
-            grabbed |= ctx.show_viewport_immediate(id, builder, |ui, class| {
-                self.detached_pass(ui, class, win, events)
-            });
+            // このウィンドウの描画の中で失ったときも、次のウィンドウを描く前に終える
+            self.watch_point(ctx, FramePoint::AfterDetached(serial));
         }
         // （パスの中ではウィンドウを足さない。足したのは当てる側だけ）
         windows.append(&mut self.detached.windows);
@@ -296,6 +303,8 @@ impl YoluApp {
         if let Some(direction) = edge {
             titlebar::edge_cursor(&ctx, direction);
         }
+        // eframe はこのあと、このウィンドウを描く。このウィンドウの中（3D の提出など）で失ったときは、失ったデバイスで描く前に終える
+        self.watch_point(&ctx, FramePoint::DetachedPassEnd(win.serial));
         pass.grabbed
     }
 

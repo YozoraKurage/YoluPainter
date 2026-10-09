@@ -672,7 +672,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                             "Smooths jagged edges (MSAA)",
                         )
                     } else {
-                        lang.pick("この機材は対応していません", "Not supported on this device")
+                        lang.pick("この GPU は対応していません", "Not supported on this GPU")
                     };
                     if w::button(
                         ui,

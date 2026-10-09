@@ -337,12 +337,18 @@ pub struct YoluApp {
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
-    /// 主の wgpu の装置の見張り（実際のウィンドウだけ。`watch_gpu`）。装置を失ったときの流れは `gpu_lost`。
+    /// 主の wgpu のデバイスの見張り（実際のウィンドウだけ。`watch_gpu`）。GPU を失ったときの流れは `gpu_lost`。
     gpu_watch: Option<crate::gpu_watch::GpuWatch>,
-    /// 主の wgpu の装置を失った（このあと終わる）。
+    /// 主の GPU を失った（このあと、戻らずにプロセスを終える。戻るのは終え方を替えた試験だけ）。
     gpu_lost: Option<crate::gpu_watch::Lost>,
-    /// 装置を失ったとき、書き置きの書き込みを待つ長さの上限（取るときも、終わるときも。試験が短くする）。
+    /// GPU を失ったとき、書き置きの書き込み・保存の途中の分を待つ長さの上限（取るときも、終わるときも。試験が短くする）。
     gpu_lost_wait: std::time::Duration,
+    /// GPU を失ったとき、保存の途中の分を待つ長さの上限（試験が短くする）。
+    gpu_lost_save_wait: std::time::Duration,
+    /// GPU を失って終わるときのプロセスの終え方（None は `std::process::exit`。試験が替える）。
+    gpu_lost_exit: Option<gpu_lost::Exit>,
+    /// 試験用: フレームの中の見張りを読む場所に着いたときに呼ばれる物（`set_frame_probe`）。
+    frame_probe: Option<Box<dyn FnMut(FramePoint)>>,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
@@ -399,6 +405,10 @@ pub struct YoluApp {
 
 mod detached;
 mod gpu_lost;
+#[doc(hidden)]
+pub use gpu_lost::FramePoint;
+/// GPU でエラーが起きて終わるときのプロセスの終了コード（`gpu_lost`）。
+pub use gpu_lost::EXIT_CODE as GPU_LOST_EXIT_CODE;
 
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（ウィンドウを作るときに 1 度）。
@@ -424,7 +434,7 @@ impl YoluApp {
         let mut app =
             YoluApp::with_settings(crate::settings::path(), pen, crate::lang::system_lang())
                 .with_render_state(cc.wgpu_render_state.as_ref());
-        // 主の装置を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
+        // 主の GPU を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
         if let Some(rs) = &cc.wgpu_render_state {
             app.watch_gpu(rs, &cc.egui_ctx);
         }
@@ -859,6 +869,9 @@ impl YoluApp {
             gpu_watch: None,
             gpu_lost: None,
             gpu_lost_wait: gpu_lost::RECOVERY_WAIT,
+            gpu_lost_save_wait: gpu_lost::SAVE_WAIT,
+            gpu_lost_exit: None,
+            frame_probe: None,
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
             ops: McpServer::new(),
@@ -1306,7 +1319,7 @@ impl YoluApp {
     /// 保存していない変更があっても終わってよいか（ウィンドウを開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
     /// 状態で聞く）。
     fn confirm_close(&mut self) -> bool {
-        // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU の装置を失って終わるときは、復旧の書き置きに任せる
+        // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU を失って終わるときは、復旧の書き置きに任せる
         if self.state.update.is_quitting() || self.gpu_lost.is_some() {
             return true;
         }
@@ -2343,6 +2356,9 @@ impl eframe::App for YoluApp {
         self.persist_layout(ui.ctx());
         self.state.message_end(prior);
         self.finish_message(ui.ctx());
+        // eframe はこのあと、このフレームを描く。このフレームの中（キャンバスの GPU の合成・3D ビューの提出）で失ったと分かったときも、
+        // 失ったデバイスで描く前に、ここで拾って終える
+        self.watch_point(ui.ctx(), FramePoint::UiEnd);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
@@ -2351,15 +2367,20 @@ impl eframe::App for YoluApp {
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
     fn on_exit(&mut self) {
-        if self.gpu_lost.is_some() && self.state.modified {
-            // 装置を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ）、書き込み中の分だけ、期限まで待つ。
+        if self.gpu_lost.is_some() && (self.state.modified || self.state.is_saving()) {
+            // GPU を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ。保存が終わらないまま終えるときも）、
+            // 書き込み中の分だけ、期限まで待つ。
             // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧のウィンドウから開ける
             self.state.recovery_wait_within(self.gpu_lost_wait);
         } else {
             self.state.recovery_shutdown();
         }
-        // 並びとウィンドウの大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
-        self.save_layout(false);
+        // 並びとウィンドウの大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）。GPU を失って終わるときは書き直さない:
+        // 別ウィンドウを描いている途中（`detached.windows` を取り出している間）に終えることがあり、いまの状態から書くと別ウィンドウが抜ける。
+        // 並びは前のフレームまでの `persist_layout` が書いてある（失う物は、最後の数フレームのウィンドウの大きさ・位置の変化だけ）
+        if self.gpu_lost.is_none() {
+            self.save_layout(false);
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

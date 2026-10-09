@@ -342,10 +342,7 @@ impl Default for LiveLink {
 
 impl Drop for LiveLink {
     fn drop(&mut self) {
-        self.watcher = None;
-        if let Some(f) = &self.folder {
-            let _ = f.remove_presence();
-        }
+        self.shutdown();
     }
 }
 
@@ -391,6 +388,14 @@ impl Drop for Watcher {
 }
 
 impl LiveLink {
+    /// 見張りを止め、起きている印を消す（落とすときと同じ。デストラクターを走らせずにプロセスを終えるとき、先にこれを呼ぶ）。
+    pub fn shutdown(&mut self) {
+        self.watcher = None;
+        if let Some(f) = &self.folder {
+            let _ = f.remove_presence();
+        }
+    }
+
     pub fn new() -> LiveLink {
         LiveLink {
             armed: false,

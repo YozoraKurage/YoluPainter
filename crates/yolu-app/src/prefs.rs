@@ -1408,7 +1408,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 crate::settings::setting_name(lang, "pen_input"),
                 pen_api_name(s.pen_input),
                 lang.pick(
-                    "ペンの筆圧・傾き・回転・消しゴムの端・サイドボタンを読む方式。WinTab は Wacom などのドライバーが出す入力で、ドライバーが無い機械やタブレットが無いときは Windows Ink のままです",
+                    "ペンの筆圧・傾き・回転・消しゴムの端・サイドボタンを読む方式。WinTab は Wacom などのドライバーが出す入力で、ドライバーが無い PC やタブレットが無いときは Windows Ink のままです",
                     "How pen pressure, tilt, rotation, the eraser end and the side buttons are read. WinTab is the input that tablet drivers such as Wacom's provide; without the driver or a tablet, Windows Ink stays in use",
                 ),
                 PrefChoice::PenInput,

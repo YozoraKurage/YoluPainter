@@ -81,6 +81,12 @@ impl ClipState {
         self.stale = None;
     }
 
+    /// OS のクリップボードへの口を手放す（OS には繋がない状態に戻す）。本物（`SystemClipboard`）は手放すとき、書いた画像が X11 の
+    /// クリップボードの管理に渡るのを少しだけ待つので、デストラクターを走らせずにプロセスを終えるときは、先にこれを呼ぶ。
+    pub fn release_os(&mut self) {
+        self.set_os(Box::new(NoClipboard));
+    }
+
     /// 本物の OS のクリップボードに繋ぐ（スレッドは最初に使うときに起きる）。
     pub fn use_system(&mut self) {
         self.set_os(Box::new(SystemClipboard::new()));
@@ -394,4 +400,42 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
             free,
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// 手放されたこと（`Drop`）だけを覚える OS のクリップボード。
+    struct Released(Arc<AtomicBool>);
+    impl OsClipboard for Released {
+        fn read_image(&mut self) -> Result<Option<ClipImage>, OsClipboardError> {
+            Ok(None)
+        }
+        fn write_image(&mut self, _image: ClipImage) {}
+        fn take_error(&mut self) -> Option<OsClipboardError> {
+            None
+        }
+    }
+    impl Drop for Released {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// デストラクターを走らせずにプロセスを終えるとき、`release_os` が OS への口を手放す（本物は、書いた画像が X11 のクリップボードの管理に
+    /// 渡るのを待ってから手放す）。
+    #[test]
+    fn releasing_the_os_connection_drops_it() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut clip = ClipState::default();
+        clip.set_os(Box::new(Released(dropped.clone())));
+        assert!(!dropped.load(Ordering::SeqCst));
+        clip.release_os();
+        assert!(dropped.load(Ordering::SeqCst), "口を手放した");
+        // 手放したあとにもう一度呼んでも、何も繋がっていないだけ（落ちない）
+        clip.release_os();
+    }
 }

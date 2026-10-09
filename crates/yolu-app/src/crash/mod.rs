@@ -498,7 +498,7 @@ pub fn install() {
     let Some(dir) = directory() else { return };
     install_at(dir);
 }
-fn install_at(dir: PathBuf) {
+pub(crate) fn install_at(dir: PathBuf) {
     if LOGGER.set(Recorder::new(dir)).is_err() {
         return;
     }
