@@ -278,17 +278,22 @@ pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<
 
 /// `surface_point` が取れなかった理由を断りとして出す。
 pub(crate) fn refuse_miss(app: &mut AppState, miss: Miss) {
+    refuse_miss_as(app, miss, Source::Fill);
+}
+
+/// `refuse_miss` の、断りの出どころを選べる版（自動選択は選択範囲の出どころ）。
+pub(crate) fn refuse_miss_as(app: &mut AppState, miss: Miss, source: Source) {
     match miss {
         Miss::Nothing => app.refuse(
-            Source::Fill,
+            source,
             app.lang.pick(
                 "ポインタの下にこのテクスチャセットの三角形がありません",
                 "No triangle of this texture set under the pointer",
             ),
         ),
-        Miss::OtherSet(name) => other_set(app, &name),
+        Miss::OtherSet(name) => app.refuse(source, other_set_face(app.lang, &name)),
         Miss::OutsideUv => app.refuse(
-            Source::Fill,
+            source,
             app.lang.pick(
                 "この面の UV はテクスチャの外です",
                 "This surface's UV is outside the texture",

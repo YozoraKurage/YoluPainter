@@ -319,6 +319,357 @@ fn a_fill_seen_straight_on_counts_the_same_amounts_as_the_2d_shapes() {
     }
 }
 
+/// 画面の点が多角形（偶奇の規則）の中か。
+fn in_polygon(points: &[DVec2], p: DVec2) -> bool {
+    let mut inside = false;
+    let mut j = points.len() - 1;
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[j]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// 点から多角形のどれかの辺までの距離（縁に近い点を見分けるだけ）。
+fn edge_distance(points: &[DVec2], p: DVec2) -> f64 {
+    let mut best = f64::MAX;
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[(i + 1) % points.len()]);
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+        best = best.min((a + ab * t).distance(p));
+    }
+    best
+}
+
+#[test]
+fn a_polygon_seen_straight_on_counts_the_same_amounts_as_the_2d_polygon() {
+    // 正投影で真正面から、テクセル 1 つが画面の 2 点の正方形に写るカメラ（長方形・楕円の同じ試験と同じ）
+    let (doc, _) = document();
+    let view = camera(Projection::Orthographic {
+        height: 200.0 / 32.0,
+    });
+    let o = screen(&view, Vec3::ZERO);
+    let canvas = |s: DVec2| {
+        DVec2::new(
+            16.0 * ((s.x - o.x) / 32.0 + 1.0),
+            16.0 * ((o.y - s.y) / 32.0 + 1.0),
+        )
+    };
+    let v = DVec2::new;
+    // 凸・凹（へこみのある形）・自分と交わる形（蝶ネクタイ。偶奇の規則で真ん中の三角は外）・細長い形
+    let shapes: [Vec<DVec2>; 4] = [
+        vec![
+            v(73.1, 58.3),
+            v(140.4, 70.2),
+            v(150.9, 120.7),
+            v(90.6, 140.1),
+            v(66.2, 100.5),
+        ],
+        vec![
+            v(60.3, 50.9),
+            v(160.2, 55.1),
+            v(158.8, 150.4),
+            v(120.7, 98.3),
+            v(62.5, 152.6),
+        ],
+        vec![
+            v(63.7, 61.2),
+            v(158.9, 140.3),
+            v(61.4, 141.7),
+            v(160.6, 62.9),
+        ],
+        vec![
+            v(50.2, 100.1),
+            v(170.9, 103.7),
+            v(171.3, 109.2),
+            v(51.8, 106.4),
+        ],
+    ];
+    for (n, points) in shapes.iter().enumerate() {
+        let two_d =
+            SelectionMask::polygon(&doc, &points.iter().map(|&p| canvas(p)).collect::<Vec<_>>())
+                .unwrap();
+        let c = cover_screen(
+            &doc,
+            scene(),
+            &view,
+            &settings(ScreenShape::Polygon { points }, false),
+        )
+        .unwrap();
+        let (mut partial, mut full) = (0, 0);
+        for &(x, y) in front().keys() {
+            assert_eq!(amount(&c, x, y), two_d.amount(x, y), "形 {n} ({x}, {y})");
+            match two_d.amount(x, y) {
+                0 => {}
+                255 => full += 1,
+                _ => partial += 1,
+            }
+        }
+        assert!(partial > 10 && full > 5, "形 {n}: {partial} {full}");
+    }
+}
+
+#[test]
+fn a_polygon_counts_four_by_four_points_of_each_texel_on_screen_with_the_even_odd_rule() {
+    let (doc, _) = document();
+    let v = DVec2::new;
+    // 蝶ネクタイと、へこみのある形
+    let shapes: [Vec<DVec2>; 2] = [
+        vec![
+            v(63.7, 61.2),
+            v(158.9, 140.3),
+            v(61.4, 141.7),
+            v(160.6, 62.9),
+        ],
+        vec![
+            v(60.3, 50.9),
+            v(160.2, 55.1),
+            v(158.8, 150.4),
+            v(120.7, 98.3),
+            v(62.5, 152.6),
+        ],
+    ];
+    // 正投影ではテクセルの写しが線形なので点の数がそのまま一致し、透視では写しをテクセルの中心の一次で近似するので、縁で 1 点まで違いうる
+    for (view, slack) in [
+        (camera(Projection::Orthographic { height: 3.0 }), 0),
+        (perspective(), 16),
+    ] {
+        for points in &shapes {
+            let c = cover_screen(
+                &doc,
+                scene(),
+                &view,
+                &settings(ScreenShape::Polygon { points }, false),
+            )
+            .unwrap();
+            let (mut full, mut partial) = (0, 0);
+            for &(x, y) in front().keys() {
+                // 期待: テクセルを 4 × 4 の点で見て、画面の多角形の中の点の数（2D の選択範囲の形と同じ丸め）
+                let (mut count, mut near) = (0u32, false);
+                for oy in OFFSETS {
+                    for ox in OFFSETS {
+                        let s = screen(&view, front_point(x, y, DVec2::new(ox, oy)));
+                        near |= edge_distance(points, s) < 0.05;
+                        if in_polygon(points, s) {
+                            count += 1;
+                        }
+                    }
+                }
+                let want = ((count * 255 + 8) / 16) as i32;
+                let got = amount(&c, x, y);
+                if got == 255 {
+                    full += 1;
+                } else if got > 0 {
+                    partial += 1;
+                }
+                if near && slack == 0 {
+                    continue;
+                }
+                assert!(
+                    (got as i32 - want).abs() <= slack,
+                    "{points:?} ({x}, {y}) {got} {want}"
+                );
+            }
+            assert!(full > 20 && partial > 10, "{points:?} {full} {partial}");
+        }
+    }
+}
+
+#[test]
+fn a_polygon_of_the_four_corners_is_the_rectangle_and_one_far_off_screen_is_the_same_shape() {
+    let (doc, _) = document();
+    let view = camera(Projection::Orthographic {
+        height: 200.0 / 32.0,
+    });
+    let (a, b) = (DVec2::new(73.1, 58.3), DVec2::new(122.9, 101.7));
+    let corners = [a, DVec2::new(b.x, a.y), b, DVec2::new(a.x, b.y)];
+    let rect = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Rectangle { a, b, corner: 0.0 }, false),
+    )
+    .unwrap();
+    let poly = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &corners }, false),
+    )
+    .unwrap();
+    assert!(!rect.is_empty() && rect.mask() == poly.mask());
+    // 表示域の外まで大きく広がる形（帯の表を作る範囲の外の辺を持つ）でも、画面の中は同じ形のまま
+    let wide = [
+        DVec2::new(a.x, -9000.0),
+        DVec2::new(a.x, 9000.0),
+        DVec2::new(b.x, 9000.0),
+        DVec2::new(b.x, -9000.0),
+    ];
+    let tall = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &wide }, false),
+    )
+    .unwrap();
+    let column = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(
+            ScreenShape::Rectangle {
+                a: DVec2::new(a.x, -9000.0),
+                b: DVec2::new(b.x, 9000.0),
+                corner: 0.0,
+            },
+            false,
+        ),
+    )
+    .unwrap();
+    assert!(!tall.is_empty() && tall.mask() == column.mask());
+}
+
+#[test]
+fn a_polygon_covers_only_the_visible_front_texels() {
+    // 表示域の全体を覆う多角形でも、隠れた面・裏の面は覆わない
+    let (doc, _) = document();
+    let view = perspective();
+    let all = [
+        DVec2::new(-10.0, -10.0),
+        DVec2::new(240.0, -10.0),
+        DVec2::new(240.0, 210.0),
+        DVec2::new(-10.0, 210.0),
+    ];
+    let c = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &all }, false),
+    )
+    .unwrap();
+    let front = front();
+    let mut lit = 0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if amount(&c, x, y) > 0 {
+                lit += 1;
+                assert!(front.contains_key(&(x, y)), "隠れた面・裏の面 ({x}, {y})");
+            }
+        }
+    }
+    assert_eq!(lit, front.len());
+}
+
+#[test]
+fn a_polygon_with_too_few_points_covers_nothing_and_bad_or_huge_input_or_a_small_budget_is_refused()
+{
+    let (doc, _) = document();
+    let view = perspective();
+    let two = [DVec2::new(40.0, 40.0), DVec2::new(160.0, 150.0)];
+    let c = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &two }, false),
+    )
+    .unwrap();
+    assert!(c.is_empty());
+    // 一直線（面積が無い）
+    let line = [
+        DVec2::new(40.0, 40.0),
+        DVec2::new(100.0, 40.0),
+        DVec2::new(160.0, 40.0),
+    ];
+    let c = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &line }, false),
+    )
+    .unwrap();
+    assert!(c.is_empty());
+    let bad = [
+        DVec2::new(40.0, 40.0),
+        DVec2::new(f64::NAN, 100.0),
+        DVec2::new(160.0, 150.0),
+    ];
+    assert!(matches!(
+        cover_screen(
+            &doc,
+            scene(),
+            &view,
+            &settings(ScreenShape::Polygon { points: &bad }, false)
+        ),
+        Err(SurfaceStrokeError::Dab(DabRefusal::InvalidArguments))
+    ));
+    let many = vec![DVec2::new(1.0, 1.0); yolu_core::selection::MAX_POLYGON_POINTS + 1];
+    assert!(matches!(
+        cover_screen(
+            &doc,
+            scene(),
+            &view,
+            &settings(ScreenShape::Polygon { points: &many }, false)
+        ),
+        Err(SurfaceStrokeError::Dab(DabRefusal::InvalidArguments))
+    ));
+    // 縦に長い辺で細かく往復する線（辺 2 万本が約 150 の帯をまたぐ）: 帯ごとの辺の表が大きくなるので、予算が小さければ断る（結果を作りかけて落とさない）
+    let zigzag: Vec<DVec2> = (0..20_000)
+        .map(|i| DVec2::new(30.0 + i as f64 * 0.007, 20.0 + (i % 2) as f64 * 150.0))
+        .collect();
+    let small = ScreenCoverSettings {
+        room: 1 << 20,
+        ..settings(ScreenShape::Polygon { points: &zigzag }, false)
+    };
+    assert!(matches!(
+        cover_screen(&doc, scene(), &view, &small),
+        Err(SurfaceStrokeError::Dab(DabRefusal::MemoryBudget))
+    ));
+    // 予算が十分なら、同じ形を覆える
+    let c = cover_screen(
+        &doc,
+        scene(),
+        &view,
+        &settings(ScreenShape::Polygon { points: &zigzag }, false),
+    )
+    .unwrap();
+    assert!(!c.is_empty());
+}
+
+#[test]
+fn the_polygon_table_is_counted_in_the_same_budget_as_the_buckets_and_candidates() {
+    // 縦に長い辺で往復する多角形（辺 4000 本が約 150 の帯をまたぐ = 約 2.5 MB の帯の表）。表を引いた残りだけを区画・候補・溜めに渡すので、
+    // 表の分に少し足しただけの予算では、表は作れても区画が作れずに断る。表の分と十分な残りがあれば通る
+    let (doc, _) = document();
+    let view = perspective();
+    let zigzag: Vec<DVec2> = (0..4_000)
+        .map(|i| DVec2::new(30.0 + i as f64 * 0.03, 20.0 + (i % 2) as f64 * 150.0))
+        .collect();
+    let shape = ScreenShape::Polygon { points: &zigzag };
+    let table = cover_screen(&doc, scene(), &view, &settings(shape, false))
+        .unwrap()
+        .table_bytes;
+    assert!(table > 2_000_000, "{table}");
+    let with = |extra: u64| {
+        let s = ScreenCoverSettings {
+            room: table + extra,
+            ..settings(shape, false)
+        };
+        cover_screen(&doc, scene(), &view, &s)
+    };
+    assert!(
+        matches!(
+            with(8192),
+            Err(SurfaceStrokeError::Dab(DabRefusal::MemoryBudget))
+        ),
+        "表のあとに 8 KiB しか残らないなら、区画を作れずに断る"
+    );
+    assert!(with(1 << 20).is_ok(), "表のあとに 1 MiB 残れば通る");
+}
+
 #[test]
 fn rounded_corners_leave_the_corner_texels_out() {
     let (doc, _) = document();
@@ -363,6 +714,13 @@ fn rounded_corners_leave_the_corner_texels_out() {
 fn the_result_does_not_depend_on_the_number_of_threads() {
     let (doc, _) = document();
     let view = perspective();
+    let lasso = [
+        DVec2::new(40.0, 40.0),
+        DVec2::new(170.0, 60.0),
+        DVec2::new(120.0, 110.0),
+        DVec2::new(180.0, 165.0),
+        DVec2::new(60.0, 150.0),
+    ];
     let run = |threads: usize, shape: ScreenShape| {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -382,6 +740,7 @@ fn the_result_does_not_depend_on_the_number_of_threads() {
             a: DVec2::new(40.0, 30.0),
             b: DVec2::new(170.0, 160.0),
         },
+        ScreenShape::Polygon { points: &lasso },
     ] {
         let one = run(1, shape);
         let many = run(6, shape);

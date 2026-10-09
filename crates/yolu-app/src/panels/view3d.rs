@@ -211,6 +211,11 @@ impl View3dSlot {
             input::draw_overlays(ui, app, content);
             // 定規（画面に固定）と、グラデーション・図形・定規のドラッグの途中の形
             crate::view3d::draft::paint_overlay(&ui.painter_at(content), app, content);
+            // 選択のツールで引いている形と、打っている多角形の点（ゴムの線はポインタまで）
+            let hover = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            crate::view3d::select::paint_overlay(&ui.painter_at(content), app, content, hover);
         }
         // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;

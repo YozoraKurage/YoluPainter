@@ -2196,6 +2196,8 @@ impl YoluApp {
         }
         if !self.state.view3d.visible {
             self.state.view3d.input.drop_presses();
+            // 3D ビューで引いていた選択の形と、打っていた多角形の点も、離したのを受け取れないので何も選ばずに捨てる
+            self.state.sel.view3d.cancel();
             // 離した後の残りを塗っているストロークは、ビューが隠れると塗り進められないので、その場で塗り終えて確定する（取り残さない）
             crate::view3d::input::settle(&mut self.state);
         }

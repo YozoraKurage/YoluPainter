@@ -2,7 +2,7 @@
 
 [日本語](../GUIDE_SELECT.md)
 
-This page covers making and using selections, remembering them, moving and transforming layers, and copy and paste. Selections are made on the 2D Canvas. The current selection is saved in the `.ylp` for each texture set.
+This page covers making and using selections, remembering them, moving and transforming layers, and copy and paste. Selections can be made on the 2D Canvas and in the 3D View. The current selection is saved in the `.ylp` for each texture set.
 
 ## Making a selection
 
@@ -14,6 +14,8 @@ This page covers making and using selections, remembering them, moving and trans
 | Magic Wand | `W` | Selects colors close to the pixel you press. It has Tolerance, Contiguous and Sample All Layers |
 | Selection Pen, Selection Eraser | `S` | Paint like a brush to add or remove selection amount. Size, hardness and opacity are shared with the brush |
 | ID Color Select | `Shift+W` | Selects from the colors of a baked ID map |
+
+In the 3D View, Rectangle Select, Ellipse Select, Lasso, Polygon Select, Magic Wand and ID Color Select work. You draw the shape on the screen of the 3D View, it is projected onto the texture pixels of the visible faces, and it becomes the same selection as on the 2D Canvas ("Select by dragging on the screen" in [GUIDE_3D.md](GUIDE_3D.md)). The Selection Pen works only on the 2D Canvas; in the 3D View, the brush and the eraser work as a selection pen and a selection eraser while Quick Mask is on. The selection's edge is shown on the 2D Canvas.
 
 The list in the Tools panel shows these selection tools, and clicking a row switches to that tool. Choose how to combine with the existing selection with New, Add, Subtract and Intersect on the options bar. Hold `Shift` to add, `Ctrl` to subtract, and `Shift+Ctrl` to intersect. With the Selection Pen, `Shift` gives the pen and `Ctrl` gives the eraser. For rectangles and ellipses, pressing `Shift` after you start dragging holds the aspect ratio, and holding `Alt` grows the shape around the pressed point. You can also turn on Fixed ratio and From center. Anti-alias sets whether the edge is smooth.
 

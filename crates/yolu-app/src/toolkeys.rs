@@ -356,7 +356,7 @@ fn settle(app: &mut AppState, levels: &mut Vec<Level>, wait: bool) {
 }
 
 /// ツールで描いている・ドラッグしている最中か（ストローク、キャンバスのツールのドラッグ（移動と変形・図形・グラデーション・パスと点の矩形・
-/// 選択の形・テキストの押し）、3D ビューのグラデーション・図形・定規のドラッグ、3D のパスの矩形、多角形選択の途中）。戻すのは、これが
+/// 選択の形・テキストの押し）、3D ビューのグラデーション・図形・定規・選択の形のドラッグ、3D のパスの矩形、多角形選択の途中（2D も 3D も））。戻すのは、これが
 /// 終わってから（ツールを替えると、途中の形を捨てるため）。
 /// ポインタを押している印（`canvas.tool_button` など）は、フォーカスを失ったあとに残りうるので、待つ条件には使わない。
 fn drawing(app: &AppState) -> bool {
@@ -365,6 +365,7 @@ fn drawing(app: &AppState) -> bool {
             .iter()
             .any(|kind| kind.handler().dragging(app, None))
         || crate::view3d::draft::dragging(app)
+        || crate::view3d::select::dragging(app)
         || app.path.rect.is_some()
         || app.sel.pen.is_some()
         || app.sel_has_polygon_point()

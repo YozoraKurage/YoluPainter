@@ -11,6 +11,8 @@
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）と 2D の対称（UV の平面。3D の写しの後に当てる）は、面のストロークに通す
 //!   （core の `SurfaceStrokeOptions`）。
 //! - クイックマスクが入っている間のブラシ・消しゴムは、選択ペン・選択消し（2D のキャンバスと同じ。`quick`）。
+//! - 長方形選択・楕円形選択・なげなわ・多角形選択・自動選択は、グラデーション・図形と同じく画面の上で引いて（自動選択は押して）、見えている面の
+//!   テクセルの選択範囲にする（`select`。離したのを取りこぼしたときは何も選ばずにやめる）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
 //! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てず、画面を固めない: 面のストロークは、入力ではダブを並べるだけにして、塗るのは
@@ -143,8 +145,9 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
     pen: PenState,
-    shift: bool,
+    modifiers: Modifiers,
 ) {
+    let shift = modifiers.shift;
     // ベイクのウィンドウでアイランドを選んでいる間は、押した面のアイランドを選ぶだけ（ツールを使わない）
     if crate::bake::overlap::press(app, crate::region::tools::Where::Surface(rect), at) {
         return;
@@ -175,12 +178,17 @@ fn begin(
             }
             return;
         }
-        // グラデーション・図形・定規は、画面の上で引いて、離したときに見えている面へ写す
+        // グラデーション・図形・定規は、画面の上で引いて、離したときに見えている面へ写す。選択のツール（長方形・楕円・なげなわ・多角形・自動選択）は、
+        // 同じ写し方で選択範囲にする
         Surface::Screen => {
-            super::draft::press(app, rect, at, source, shift);
+            if app.tool.is_select() {
+                super::select::press(app, rect, at, source, modifiers);
+            } else {
+                super::draft::press(app, rect, at, source, shift);
+            }
             return;
         }
-        // 選択・移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
+        // 選択ペン・移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
         Surface::Unsupported => {
             app.refuse(
                 Source::View3d,
@@ -1030,7 +1038,7 @@ fn pen_sample(
                             source,
                             s.eraser,
                             PenState::of(s),
-                            frame.modifiers.shift,
+                            frame.modifiers,
                         );
                     }
                 }
@@ -1051,14 +1059,15 @@ fn pen_sample(
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, false);
                 } else {
                     super::draft::moved(app, rect, p, source, &frame.modifiers);
+                    super::select::moved(app, rect, p, source, &frame.modifiers);
                 }
             }
         }
         app.view3d.input.pen_press = Some(PenPress { last: p, ..press });
     } else {
         // OS に押しを奪われて補った離し（本物の離しではない。`AppState::pen_release_lost`）は、マウスの取りこぼしと同じに扱う: ビューの操作の離しの操作
-        // （クリックの拡縮・クローンの元・スポイト・メニュー）は出さず、途中をやめる。グラデーション・図形・定規は `draft::lost_release`。ストロークと、ギズモ・パスの離しは、
-        // 今までどおり最後の位置で終える
+        // （クリックの拡縮・クローンの元・スポイト・メニュー）は出さず、途中をやめる。グラデーション・図形・定規は `draft::lost_release`、選択の形は何も選ばずにやめる。
+        // ストロークと、ギズモ・パスの離しは、今までどおり最後の位置で終える
         let lost = app.pen_release_lost(s);
         match press.kind {
             PressKind::Ignored | PressKind::Eyedrop => {}
@@ -1089,8 +1098,10 @@ fn pen_sample(
                 if lost {
                     // 補った離しの位置は本物の離しの位置ではない: グラデーションは最後の位置で塗り、図形と定規はやめる（マウスの取りこぼしと同じ）
                     super::draft::lost_release(app, rect, source);
+                    super::select::lost_release(app, source);
                 } else {
                     super::draft::release(app, rect, p, source, &frame.modifiers);
+                    super::select::release(app, rect, p, source, &frame.modifiers);
                 }
                 if app.path.pen_in(true) {
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, false, false);
@@ -1117,6 +1128,7 @@ fn press_kind(
         || app.view3d.input.nav.is_some()
         || app.view3d.input.stroke.is_some()
         || app.view3d.input.draft.is_some()
+        || super::select::dragging(app)
         || app.stencil.handling()
     {
         return PressKind::Ignored;
@@ -1161,6 +1173,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         nav_cancel(app);
         app.view3d.input.pen_press = None;
         app.view3d.input.draft = None;
+        super::select::focus_lost(app);
         // Touch の終わり・取りやめとフォーカスを失ったのは、モデルが無くても読む（古い力を次のマウスの押しに持ち越さない）
         let ended = ui.input(|i| {
             i.events.iter().any(|e| {
@@ -1178,7 +1191,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
         return;
     }
-    let blocked = app.popup.is_some() || app.ui.popup_was_open;
+    let blocked = app.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some();
     app.region.modifiers = ui.input(|i| i.modifiers);
     // 設定のパネルを開いているあいだの押しは、パネルの外でも 3D に使わない（パネルは外の押しで閉じる。その押しが描き始め・回し始めに
     // ならないように。このフレームの押しで閉じるときも、パネルはこの後に描くので開いている）。ホイールは使える。ドックのタブの見出しを
@@ -1189,6 +1202,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     // 右ボタンを押している間の W/A/S/D/Q/E は、視点の移動
     super::navigation::fly(ui, app);
     let (events, now, frame_dt) = ui.input(|i| (i.events.clone(), i.time, i.unstable_dt as f64));
+    super::select::frame(app, now);
     // マウスの点の時刻（筆の速さ）: 2D のキャンバスと同じく、前のフレームからの時間をこのフレームのマウスの点の数で等分する
     let mut clock = crate::gesture::MouseClock::new(
         now,
@@ -1209,6 +1223,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
     // 図形のドラッグの Shift・Alt は、動かさなくても形に効く
     super::draft::modifiers(app, &modifiers);
+    super::select::modifiers(app, &modifiers);
     // パスのツールの取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
     app.path.input = crate::pathtool::PathInputState {
         alt: modifiers.alt,
@@ -1274,7 +1289,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     }
                     // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける（押しを捨てない）
                     settle(app);
-                    if app.view3d.input.stroke.is_some() || app.view3d.input.draft.is_some() {
+                    if app.view3d.input.stroke.is_some()
+                        || app.view3d.input.draft.is_some()
+                        || super::select::dragging(app)
+                    {
                         continue;
                     }
                     if pen_frame {
@@ -1349,7 +1367,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                     StrokeSource::Mouse,
                                     false,
                                     PenState::mouse(time),
-                                    m.shift,
+                                    *m,
                                 );
                             }
                         }
@@ -1374,6 +1392,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     }
                     if *button == PointerButton::Primary {
                         super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
+                        super::select::release(app, rect, pos, StrokeSource::Mouse, m);
                         crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
                         flush(app, &mut drag_at);
                         gizmo::release(app, true);
@@ -1412,6 +1431,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 if !pen_frame {
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
                     super::draft::moved(app, rect, pos, StrokeSource::Mouse, &modifiers);
+                    super::select::moved(app, rect, pos, StrokeSource::Mouse, &modifiers);
                 }
                 if app.view3d.pose.drag.is_some()
                     || app
@@ -1445,6 +1465,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     || !on_top(ui, rect, p)
                     || app.view3d.input.stroke.is_some()
                     || app.view3d.input.draft.is_some()
+                    || super::select::dragging(app)
                 {
                     continue;
                 }
@@ -1468,8 +1489,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 if app.view3d.input.stroke.is_some() && !path_esc {
                     finish(app, true);
                 }
-                // グラデーション・図形・定規のドラッグは何も描かずに捨てる
+                // グラデーション・図形・定規のドラッグは何も描かずに捨てる。選択の形と多角形の点も、何も選ばずに捨てる
                 super::draft::cancel(app);
+                super::select::cancel(app, &ctx);
                 // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）。形のギズモもドラッグの前へ戻す
                 drag_at = None;
                 gizmo::release(app, false);
@@ -1477,11 +1499,21 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 crate::fillfx::points::release(app, false);
                 nav_cancel(app);
             }
+            // 多角形選択の Enter（閉じる）・Backspace（最後の点を消す）。文字を打っているときは使わない
+            Event::Key {
+                key: key @ (Key::Enter | Key::Backspace),
+                pressed: true,
+                modifiers: key_modifiers,
+                ..
+            } if !blocked && !ctx.egui_wants_keyboard_input() => {
+                super::select::key(app, rect, *key, *key_modifiers);
+            }
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので。離したのと同じく、残りは時間の枠で塗ってから）
                 release(app, &ctx);
-                // グラデーション・図形・定規のドラッグは、離したのを受け取れないので何も描かずに捨てる
+                // グラデーション・図形・定規のドラッグは、離したのを受け取れないので何も描かずに捨てる。選択の形と多角形の点も同じ
                 app.view3d.input.draft = None;
+                super::select::focus_lost(app);
                 app.path_finish_drag();
                 // 点を矩形で選ぶドラッグは、離したのを受け取れないので捨てる（古い始点が次の離しで効かないように）
                 if app.path.rect.is_some_and(|r| r.surface) {
@@ -1523,6 +1555,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         super::draft::lost_release(app, rect, StrokeSource::Mouse);
+    }
+    if super::select::dragging(app)
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        super::select::lost_release(app, StrokeSource::Mouse);
     }
     if app
         .path

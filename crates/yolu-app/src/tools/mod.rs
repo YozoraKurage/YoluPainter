@@ -248,6 +248,7 @@ pub static TOOLS: [ToolDef; 19] = [
     .group()
     .select()
     .canvas(CanvasKind::Selection)
+    .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(
@@ -259,11 +260,13 @@ pub static TOOLS: [ToolDef; 19] = [
     )
     .select()
     .canvas(CanvasKind::Selection)
+    .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(Tool::Lasso, "lasso", "なげなわ", "Lasso", "L")
         .select()
         .canvas(CanvasKind::Selection)
+        .surface(Surface::Screen)
         .sub(SubTools::Tools(&SELECTION_TOOLS))
         .ui(selection::props::body, selection::props::select_options),
     def(
@@ -275,11 +278,13 @@ pub static TOOLS: [ToolDef; 19] = [
     )
     .select()
     .canvas(CanvasKind::Selection)
+    .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(Tool::Wand, "magic-wand", "自動選択", "Magic Wand", "W")
         .select()
         .canvas(CanvasKind::Selection)
+        .surface(Surface::Screen)
         .sub(SubTools::Tools(&SELECTION_TOOLS))
         .ui(selection::props::body, selection::props::select_options),
     def(

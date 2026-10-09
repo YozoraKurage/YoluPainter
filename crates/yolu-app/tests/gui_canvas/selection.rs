@@ -757,16 +757,37 @@ fn selection_tools_do_not_paint_on_the_canvas_or_the_cube() {
         0,
         "選択のツールは描かない"
     );
-    // 3D のビューでも描き始めない（面に描くのはブラシ・消しゴムだけ）
+    // 3D のビューでも画素は描かない（面に描くのはブラシ・消しゴムだけ。引いた形は選択範囲になるので、取り消し 1 回）
     h.state_mut().state.view3d.load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     let before = steps(&h);
     let a = rect.center();
-    drag(&mut h, &[a, offset(a, 30.0, 10.0), offset(a, 60.0, 20.0)]);
-    assert_eq!(steps(&h), before, "3D では選択のツールで描かない");
+    drag(
+        &mut h,
+        &[
+            a,
+            offset(a, 30.0, 10.0),
+            offset(a, 60.0, 20.0),
+            offset(a, 20.0, 50.0),
+        ],
+    );
+    assert_eq!(
+        steps(&h),
+        before + 1,
+        "3D の選択のツールは選択範囲を作る（取り消し 1 回）: {}",
+        st(&h).message
+    );
     assert!(!st(&h).doc.has_active_stroke());
+    let doc = &st(&h).doc;
+    assert!(
+        doc.composite(doc.bounds())
+            .unwrap()
+            .chunks(4)
+            .all(|p| p[3] == 0),
+        "3D では選択のツールで描かない"
+    );
     assert!(!st(&h).message.is_empty());
     key(&h, Key::D, Modifiers::COMMAND);
     h.run();

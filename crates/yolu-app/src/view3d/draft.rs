@@ -210,10 +210,10 @@ fn ruler_of(app: &AppState, d: &SurfaceDraft) -> Ruler {
 /// 画面の形を、今のテクスチャセットの見えている面のテクセルへ写す（1 回の操作の予算で）。面の向きの弱めと継ぎ目のにじみはブラシの「3D」の
 /// 切り替えのまま、隠れた所と裏の面は、切り替えによらず塗らない（形は画面の全体まで広がるので、見ていない面をまとめて変えない）。写せなければ
 /// 理由を知らせて None。
-fn cover(
+pub(super) fn cover(
     app: &mut AppState,
     rect: Rect,
-    shape: ScreenShape,
+    shape: ScreenShape<'_>,
     positions: bool,
     source: Source,
 ) -> Option<ScreenCoverage> {

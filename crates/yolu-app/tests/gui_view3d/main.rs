@@ -37,4 +37,5 @@ mod view3d_look;
 mod view3d_navigation;
 mod view3d_padding;
 mod view3d_path_rect;
+mod view3d_select;
 mod view3d_sets;

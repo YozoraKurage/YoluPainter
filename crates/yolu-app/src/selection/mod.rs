@@ -275,6 +275,8 @@ pub struct SelState {
     /// ウィンドウを見出しで動かした量。
     pub dialog_offset: egui::Vec2,
     pub drag: Option<ShapeDrag>,
+    /// 3D ビューで画面の上に引いている形と、打っている多角形の点（表示域の画面の点。`view3d::select`）。
+    pub view3d: crate::view3d::select::Draft,
     /// 多角形の途中の点（キャンバスの座標）と、ポインタの今の位置（ゴムの線）。
     pub polygon: Vec<(f64, f64)>,
     pub polygon_hover: Option<(f64, f64)>,
@@ -348,6 +350,7 @@ impl Default for SelState {
             dialog: None,
             dialog_offset: egui::Vec2::ZERO,
             drag: None,
+            view3d: Default::default(),
             polygon: Vec::new(),
             polygon_hover: None,
             last_press: None,
@@ -397,7 +400,8 @@ impl SelState {
         if pen {
             self.pen = None;
         }
-        let any = self.drag.is_some() || !self.polygon.is_empty() || pen;
+        let surface = self.view3d.cancel();
+        let any = self.drag.is_some() || !self.polygon.is_empty() || pen || surface;
         self.drag = None;
         self.polygon.clear();
         self.polygon_hover = None;
@@ -598,7 +602,7 @@ impl AppState {
     }
 
     /// 縁の滑らかさの設定を形に当てる（切っていれば、半分以上の量を全部に・ほかを 0 にする）。
-    fn edge_of(&self, shape: SelectionMask) -> SelectionMask {
+    pub(crate) fn edge_of(&self, shape: SelectionMask) -> SelectionMask {
         if self.sel.antialias {
             shape
         } else {
@@ -849,7 +853,8 @@ impl AppState {
 
     /// 多角形の点を打っている途中か（取り消しが最後の点に当たる間。メニューの「取り消し」もこのあいだは押せる）。
     pub fn sel_has_polygon_point(&self) -> bool {
-        self.tool == Tool::Polygon && !self.sel.polygon.is_empty()
+        self.tool == Tool::Polygon
+            && (!self.sel.polygon.is_empty() || !self.sel.view3d.polygon.is_empty())
     }
 
     /// 多角形の途中の点があれば最後の 1 つを取り消す（取り消しのキーを文書でなく途中の形に当てる）。取り消したか。
@@ -857,7 +862,10 @@ impl AppState {
         if !self.sel_has_polygon_point() {
             return false;
         }
-        canvas::remove_last_point(self);
+        // 3D ビューで打っている点を先に（2D の点と同時には無い）
+        if !self.sel.view3d.remove_last_point() {
+            canvas::remove_last_point(self);
+        }
         true
     }
 

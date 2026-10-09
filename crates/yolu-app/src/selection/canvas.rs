@@ -23,11 +23,11 @@ use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
 /// これ以内（画面の点）しか動かさなければ、ドラッグでなくクリック。
-const CLICK_RADIUS: f32 = 4.0;
+pub(crate) const CLICK_RADIUS: f32 = 4.0;
 /// 多角形の始めの点にこれ以内（画面の点）で押すと閉じる。
-const CLOSE_RADIUS: f32 = 9.0;
+pub(crate) const CLOSE_RADIUS: f32 = 9.0;
 /// 多角形をダブルクリックで閉じる間隔（秒）。
-const DOUBLE_CLICK: f64 = 0.4;
+pub(crate) const DOUBLE_CLICK: f64 = 0.4;
 /// 点線で流す縁の線分の上限（画面に見える数。これより多いときは点線にせず、動かさない実線で描く）。
 const MAX_DASHED_RUNS: usize = 6_000;
 /// 1 画面で描く縁の線分の上限（それより多いときは先頭から描く）。
@@ -58,7 +58,8 @@ pub fn press(
     modifiers: Modifiers,
     now: f64,
 ) {
-    if app.is_stroking() || !app.tool.is_select() {
+    // 3D ビューで形を引いている間は、2D のキャンバスでは始めない（選択範囲の途中の形は 1 つ）
+    if app.is_stroking() || !app.tool.is_select() || crate::view3d::select::dragging(app) {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
@@ -106,6 +107,8 @@ fn polygon_press(
         .last_press
         .is_some_and(|(t, p)| now - t <= DOUBLE_CLICK && p.distance(pos) <= CLICK_RADIUS * 2.0);
     app.sel.last_press = Some((now, pos));
+    // 3D ビューで打っていた途中の点は捨てる（途中の多角形は 1 つ）
+    app.sel.view3d.drop_polygon();
     let n = app.sel.polygon.len();
     if n >= 3 {
         let first = app.sel.polygon[0];
@@ -130,11 +133,7 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
         return;
     }
     if points.len() < 3 {
-        app.refuse(
-            Source::Selection,
-            app.lang
-                .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
-        );
+        refuse_too_few_points(app);
         return;
     }
     let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
@@ -144,7 +143,16 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
     })));
 }
 
-/// 多角形の最後の点を消す（Backspace）。
+/// 多角形の点が 3 つに満たないときの断り（2D のキャンバスと 3D ビューで同じ文）。
+pub(crate) fn refuse_too_few_points(app: &mut AppState) {
+    app.refuse(
+        Source::Selection,
+        app.lang
+            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+    );
+}
+
+/// 多角形の最後の点を消す（Backspace。2D のキャンバスで打った点だけ。3D ビューの点は 3D の入力が消す）。
 pub fn remove_last_point(app: &mut AppState) {
     app.sel.polygon.pop();
     if app.sel.polygon.is_empty() {
@@ -261,7 +269,7 @@ pub fn release(
 
 /// 形のドラッグの組み合わせ方。Shift は押し始めに押していれば「追加」、押し始めたあとに押したなら縦横比の固定（長方形・楕円）で、
 /// 追加には使わない。Ctrl は押し始めか離したときのどちらかに押していれば「削除」。修飾が無ければオプションバーの値。
-fn drag_mode(
+pub(crate) fn drag_mode(
     base: SelectionCombine,
     tool: Tool,
     button: egui::PointerButton,
@@ -533,6 +541,82 @@ fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &m
     }
 }
 
+/// ドラッグ中の形（長方形・楕円・なげなわ）の輪郭を描く。2D のキャンバスと 3D ビューで同じ見た目。`a`・`b` は向かい合う角、`lasso` はなげなわの点、
+/// `corner_radius` は長方形の角の半径、`screen` は形の座標を画面の点へ写す。
+pub(crate) fn paint_shape_outline(
+    painter: &Painter,
+    tool: Tool,
+    (a, b): ((f64, f64), (f64, f64)),
+    lasso: &[(f64, f64)],
+    corner_radius: f64,
+    screen: &dyn Fn((f64, f64)) -> Pos2,
+) {
+    match tool {
+        Tool::SelectRect if corner_radius > 0.0 => {
+            let points: Vec<Pos2> = shape::rounded_rect_outline(
+                a.0.min(b.0),
+                a.1.min(b.1),
+                a.0.max(b.0),
+                a.1.max(b.1),
+                corner_radius,
+            )
+            .iter()
+            .map(|p| screen((p.x, p.y)))
+            .collect();
+            path(painter, &points, true);
+        }
+        Tool::SelectRect => {
+            let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(screen);
+            path(painter, &corners, true);
+        }
+        Tool::SelectEllipse => {
+            let c = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let r = ((b.0 - a.0).abs() / 2.0, (b.1 - a.1).abs() / 2.0);
+            let points: Vec<Pos2> = (0..64)
+                .map(|i| {
+                    let t = i as f64 / 64.0 * std::f64::consts::TAU;
+                    screen((c.0 + t.cos() * r.0, c.1 + t.sin() * r.1))
+                })
+                .collect();
+            path(painter, &points, true);
+        }
+        Tool::Lasso => {
+            let points: Vec<Pos2> = lasso.iter().map(|p| screen(*p)).collect();
+            path(painter, &points, false);
+            if let (Some(first), Some(last)) = (points.first(), points.last()) {
+                painter.line_segment(
+                    [*last, *first],
+                    Stroke::new(1.0, Color32::from_white_alpha(120)),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 多角形の途中を描く（打った点 `placed` を結び、ポインタ `hover` までのゴムの線と、点の印。3 点以上で始めの点にポインタが届けば、閉じる印を大きく）。
+/// 2D のキャンバスと 3D ビューで同じ見た目。
+pub(crate) fn paint_polygon_draft(painter: &Painter, placed: &[Pos2], hover: Option<Pos2>) {
+    let Some(&first) = placed.first() else {
+        return;
+    };
+    let mut points = placed.to_vec();
+    if let Some(h) = hover {
+        points.push(h);
+    }
+    path(painter, &points, false);
+    let closable = placed.len() >= 3
+        && points
+            .last()
+            .is_some_and(|p| p.distance(first) <= CLOSE_RADIUS);
+    for (i, p) in points.iter().take(placed.len()).enumerate() {
+        let size = if i == 0 && closable { 6.0 } else { 3.5 };
+        let r = Rect::from_center_size(*p, egui::vec2(size * 2.0, size * 2.0));
+        painter.rect_filled(r, 1.0, Color32::from_black_alpha(160));
+        painter.rect_filled(r.shrink(1.2), 1.0, Color32::WHITE);
+    }
+}
+
 /// ドラッグ中の形と多角形の途中。
 fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState, modifiers: Modifiers) {
     let screen = |p: (f64, f64)| view.to_screen(p.0, p.1);
@@ -542,65 +626,24 @@ fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState, modifiers:
         }
         let c = shape::Constraint::of(&app.sel, d.tool, app.sel.press_modifiers, modifiers);
         let (a, b) = shape::drag_corners(d.start, d.current, c.square, c.center);
-        match d.tool {
-            Tool::SelectRect if app.sel.corner_radius > 0 => {
-                let points: Vec<Pos2> = shape::rounded_rect_points(
-                    a.0.min(b.0).round() as i64,
-                    a.1.min(b.1).round() as i64,
-                    a.0.max(b.0).round() as i64,
-                    a.1.max(b.1).round() as i64,
-                    app.sel.corner_radius,
-                )
-                .iter()
-                .map(|p| screen((p.x, p.y)))
-                .collect();
-                path(painter, &points, true);
-            }
-            Tool::SelectRect => {
-                let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(screen);
-                path(painter, &corners, true);
-            }
-            Tool::SelectEllipse => {
-                let c = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-                let r = ((b.0 - a.0).abs() / 2.0, (b.1 - a.1).abs() / 2.0);
-                let points: Vec<Pos2> = (0..64)
-                    .map(|i| {
-                        let t = i as f64 / 64.0 * std::f64::consts::TAU;
-                        screen((c.0 + t.cos() * r.0, c.1 + t.sin() * r.1))
-                    })
-                    .collect();
-                path(painter, &points, true);
-            }
-            Tool::Lasso => {
-                let points: Vec<Pos2> = d.lasso.iter().map(|p| screen(*p)).collect();
-                path(painter, &points, false);
-                if let (Some(first), Some(last)) = (points.first(), points.last()) {
-                    painter.line_segment(
-                        [*last, *first],
-                        Stroke::new(1.0, Color32::from_white_alpha(120)),
-                    );
-                }
-            }
-            _ => {}
-        }
+        // 角を丸めた長方形は、選択範囲と同じく画素の座標へ丸めた角から
+        let (a, b) = if d.tool == Tool::SelectRect && app.sel.corner_radius > 0 {
+            ((a.0.round(), a.1.round()), (b.0.round(), b.1.round()))
+        } else {
+            (a, b)
+        };
+        paint_shape_outline(
+            painter,
+            d.tool,
+            (a, b),
+            &d.lasso,
+            app.sel.corner_radius as f64,
+            &screen,
+        );
     }
     if app.tool == Tool::Polygon && !app.sel.polygon.is_empty() {
-        let mut points: Vec<Pos2> = app.sel.polygon.iter().map(|p| screen(*p)).collect();
-        let first = points[0];
-        if let Some(h) = app.sel.polygon_hover {
-            points.push(screen(h));
-        }
-        path(painter, &points, false);
-        let closable = app.sel.polygon.len() >= 3
-            && points
-                .last()
-                .is_some_and(|p| p.distance(first) <= CLOSE_RADIUS);
-        for (i, p) in points.iter().take(app.sel.polygon.len()).enumerate() {
-            let size = if i == 0 && closable { 6.0 } else { 3.5 };
-            let r = Rect::from_center_size(*p, egui::vec2(size * 2.0, size * 2.0));
-            painter.rect_filled(r, 1.0, Color32::from_black_alpha(160));
-            painter.rect_filled(r.shrink(1.2), 1.0, Color32::WHITE);
-        }
+        let placed: Vec<Pos2> = app.sel.polygon.iter().map(|p| screen(*p)).collect();
+        paint_polygon_draft(painter, &placed, app.sel.polygon_hover.map(screen));
     }
 }
 
