@@ -4,6 +4,7 @@
 pub mod axis_gizmo;
 pub mod brdf;
 pub mod display;
+pub mod draft;
 pub mod environment;
 pub mod gizmo;
 pub mod input;
@@ -73,6 +74,10 @@ pub struct SurfaceInput {
     pub last_hit: Option<yolu_core::geometry::SurfaceHit>,
     /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定（画面の点。2D の `CanvasInput::shift_hold` と同じ決まり）。
     pub shift_hold: Option<crate::state::ShiftHold>,
+    /// 定規にスナップするストロークの寄せ先（表示域の画面の点。ストロークの始めに凍結する）。
+    pub ruler_constraint: Option<crate::drafting::Constraint>,
+    /// グラデーション・図形・定規のドラッグの途中（画面の上の形。離すまで文書を変えない）。
+    pub draft: Option<draft::SurfaceDraft>,
 }
 
 impl SurfaceInput {
@@ -85,6 +90,7 @@ impl SurfaceInput {
         self.zoom = None;
         self.clone_press = None;
         self.eyedrop = None;
+        self.draft = None;
     }
 }
 
@@ -131,6 +137,8 @@ pub struct View3dState {
     pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
+    /// 3D ビューの定規（表示域の画面の点。視点を動かしても画面の同じ所に残る。保存しない）。
+    pub ruler: Option<crate::drafting::Ruler>,
     /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
     /// （`Settings::view3d_paint`）。
     pub projection: yolu_core::geometry::ProjectionSettings,
@@ -414,6 +422,7 @@ impl View3dState {
         self.input.last_point = None;
         self.input.last_hit = None;
         self.input.shift_hold = None;
+        self.input.ruler_constraint = None;
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;

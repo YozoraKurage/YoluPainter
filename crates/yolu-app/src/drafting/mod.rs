@@ -1,4 +1,5 @@
-//! 2D の図形と定規。定規は文書 ID ごとのセッション状態で、保存形式には含めない。
+//! 図形と定規。2D の定規は文書 ID ごとのセッション状態で、保存形式には含めない。3D ビューの図形と定規（画面の上で引く）は
+//! `view3d::draft`。点・寄せ先・輪郭の式は 2D と 3D で同じ（3D は表示域の画面の点で測る）。
 pub mod canvas;
 pub mod props;
 
@@ -204,14 +205,96 @@ pub fn outline(figure: Figure, a: DVec2, b: DVec2, corner: f64) -> Vec<DVec2> {
     points
 }
 
+/// 定規を引く・動かすドラッグの今の定規。original があれば、handle（1・2 は端点、0 は全体）を動かす。無ければ start から current への
+/// 新しい定規（Shift で 45 度刻み）。
+pub fn dragged_ruler(
+    original: Option<Ruler>,
+    handle: usize,
+    (start, current): (DVec2, DVec2),
+    shift: bool,
+    kind: RulerKind,
+    two_points: bool,
+) -> Ruler {
+    if let Some(mut r) = original {
+        match handle {
+            1 => r.a = current,
+            2 => r.b = current,
+            _ => {
+                r.a += current - start;
+                r.b += current - start;
+            }
+        }
+        r
+    } else {
+        let (a, b) = endpoints(start, current, Figure::Line, shift, false);
+        Ruler {
+            kind,
+            a,
+            b,
+            two_points,
+        }
+    }
+}
+
 impl AppState {
+    /// 図形と定規のドラッグをやめる（2D のキャンバスと 3D ビューの両方）。何かあったか。
     pub fn drafting_cancel(&mut self) -> bool {
+        let surface = self
+            .view3d
+            .input
+            .draft
+            .take_if(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
+            .is_some();
+        self.drafting_cancel_canvas() || surface
+    }
+
+    /// 2D のキャンバスの図形と定規のドラッグだけをやめる（キャンバスが隠れたとき）。
+    pub fn drafting_cancel_canvas(&mut self) -> bool {
         // ペンの接触の札は離すまで残す。Esc の後の接触点で形を作り直さない。
         self.drafting.drag.take().is_some()
     }
 
     pub fn ruler(&self) -> Option<Ruler> {
         self.drafting.rulers.get(&self.doc.id()).copied()
+    }
+
+    /// 定規の種類を、ツールの設定と、今の文書の 2D の定規・3D ビューの定規に当てる。
+    pub fn set_ruler_kind(&mut self, kind: RulerKind) {
+        self.drafting.ruler_kind = kind;
+        for r in self
+            .drafting
+            .rulers
+            .get_mut(&self.doc.id())
+            .into_iter()
+            .chain(self.view3d.ruler.as_mut())
+        {
+            r.kind = kind;
+        }
+    }
+
+    /// パースの点の数を、ツールの設定と、今の文書の 2D の定規・3D ビューの定規に当てる。
+    pub fn set_ruler_two_points(&mut self, two: bool) {
+        self.drafting.two_points = two;
+        for r in self
+            .drafting
+            .rulers
+            .get_mut(&self.doc.id())
+            .into_iter()
+            .chain(self.view3d.ruler.as_mut())
+        {
+            r.two_points = two;
+        }
+    }
+
+    /// 定規があるか（今の文書の 2D の定規か、3D ビューの定規）。
+    pub fn has_ruler(&self) -> bool {
+        self.ruler().is_some() || self.view3d.ruler.is_some()
+    }
+
+    /// 定規を消す（今の文書の 2D の定規と、3D ビューの定規）。
+    pub fn delete_rulers(&mut self) {
+        self.drafting.rulers.remove(&self.doc.id());
+        self.view3d.ruler = None;
     }
 
     pub fn toggle_snap(&mut self) {

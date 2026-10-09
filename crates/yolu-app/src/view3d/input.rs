@@ -26,6 +26,7 @@ use yolu_core::geometry::{
 };
 use yolu_core::glam::{DVec2, Vec2, Vec3};
 
+use super::model::ViewModel;
 use super::{gizmo, Nav};
 use crate::engine::{BrushEffect, Tilt};
 use crate::gesture::{self, ZoomDrag};
@@ -167,7 +168,12 @@ fn begin(
             }
             return;
         }
-        // 選択・移動と変形・図形・グラデーションなどは 2D のキャンバスだけで使う（3D ビューで描き始めない）
+        // グラデーション・図形・定規は、画面の上で引いて、離したときに見えている面へ写す
+        Surface::Screen => {
+            super::draft::press(app, rect, at, source, shift);
+            return;
+        }
+        // 選択・移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
         Surface::Unsupported => {
             app.refuse(
                 Source::View3d,
@@ -225,7 +231,7 @@ fn begin(
         app.refuse(Source::View3d, reason);
         return;
     }
-    let settings = app.stroke_settings(eraser);
+    let erase = app.stroke_settings(eraser).erase;
     // Shift: 前のストロークの終点を今の画面へ写した点から、押した点までを直線で描く。前の終点が無い（今のモデルの面でない・カメラの後ろ・
     // ありえない遠さ）ときは、押した点から向きを固定する
     let line = shift && app.tool.paints();
@@ -233,6 +239,96 @@ fn begin(
         .then(|| previous_screen(app, &model.geometry, &view, rect, at))
         .flatten();
     let first = from.unwrap_or(at);
+    // 定規のスナップ: 押した点で寄せ先を決めて凍結し（ストロークの間は変えない）、最初の点も寄せる（2D と同じ式。決まった道なので、
+    // 手ぶれ補正と曲線は切る）
+    let constraint = app
+        .drafting
+        .snap
+        .then_some(app.view3d.ruler)
+        .flatten()
+        .map(|r| r.constraint(screen_point(rect, at)));
+    let first = match constraint {
+        Some(mut c) => to_pos(rect, c.project(screen_point(rect, first))),
+        None => first,
+    };
+    let Some(Opened {
+        stroke,
+        surface: s,
+        symmetry,
+    }) = open_stroke(
+        app,
+        &model,
+        rect,
+        view,
+        layer,
+        eraser,
+        constraint.is_some(),
+        pen.input(local(rect, first), pressure),
+    )
+    else {
+        return;
+    };
+    app.stroke = Some(stroke);
+    app.view3d.input.stroke = Some(source);
+    app.view3d.input.symmetry = symmetry;
+    app.view3d.input.ruler_constraint = constraint;
+    note_symmetry(app, &s);
+    app.view3d.input.surface = Some(s);
+    app.view3d.input.stroke_points = 1;
+    app.view3d.input.last_point = Some(first);
+    app.view3d.input.last_hit = pick(&model.geometry, &view, local(rect, first));
+    app.view3d.input.shift_hold = None;
+    if !erase {
+        app.color.remember();
+    }
+    app.modified = true;
+    // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
+    crate::uv_wireframe::overlap::note_surface(app, rect, at);
+    if line {
+        if from.is_some() {
+            // 前の終点から押した点までの線（押した点も 1 つの入力）
+            add(app, rect, at, pressure, pen);
+        }
+        // 押した点のぶれを抑える。前の終点が無ければ、最初に動いた向きを 45° 刻みで固定する
+        if app.view3d.input.stroke.is_some() {
+            app.view3d.input.shift_hold =
+                Some(ShiftHold::new((at.x as f64, at.y as f64), from.is_some()));
+        }
+    }
+}
+
+/// 表示域の画面の点（定規の点の空間。表示域の左上が原点）。
+pub(super) fn screen_point(rect: Rect, p: Pos2) -> DVec2 {
+    DVec2::new((p.x - rect.left()) as f64, (p.y - rect.top()) as f64)
+}
+
+/// 表示域の画面の点を、egui の点へ。
+pub(super) fn to_pos(rect: Rect, p: DVec2) -> Pos2 {
+    Pos2::new(rect.left() + p.x as f32, rect.top() + p.y as f32)
+}
+
+/// 面のストロークを始めた物: 文書のストロークの札・面のストローク・固めた 3D の対称。
+pub(super) struct Opened {
+    pub stroke: crate::engine::Stroke,
+    pub surface: SurfaceStroke,
+    pub symmetry: Option<SurfaceSymmetrySetup>,
+}
+
+/// 面のストロークを始める: 効果（消しゴムは色を塗る側。クローンは元の面の点が要る）・3D と 2D の対称・ステンシル・全部入りのブラシ
+/// （筆先・ゆらぎ・質感・デュアル・入り抜き・手ぶれ補正・曲線も、2D と同じ式で面のダブに効く）で、文書のストロークと面のストロークを始める。
+/// `guided` なら手ぶれ補正と曲線を切る（定規のスナップ・図形の輪郭のような決まった道。2D と同じ）。始められなければ理由を知らせて None。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn open_stroke(
+    app: &mut AppState,
+    model: &ViewModel,
+    rect: Rect,
+    view: CameraView,
+    layer: crate::engine::LayerId,
+    eraser: bool,
+    guided: bool,
+    input: SurfaceInput,
+) -> Option<Opened> {
+    let settings = app.stroke_settings(eraser);
     // 効果のブラシ（消しゴムは色を塗る側）。クローンは元の面の点が要る
     let effect = if settings.erase {
         SurfaceEffect::Paint
@@ -251,7 +347,7 @@ fn begin(
                         Source::View3d,
                         app.lang.pick("クローンの元がありません", "No clone source"),
                     );
-                    return;
+                    return None;
                 }
             },
         }
@@ -269,7 +365,7 @@ fn begin(
                 "Smudge and clone do not work with symmetry",
             ),
         );
-        return;
+        return None;
     }
     // ステンシル: 置き場とカメラはストロークの始めに決める（面のテクセルの点を画面へ写して、そこの画像を読む）
     let (stencil_brush, surface_stencil) = match app.surface_stencil(rect) {
@@ -284,11 +380,16 @@ fn begin(
                     app.lang.core_error(&e),
                 ),
             );
-            return;
+            return None;
         }
     };
-    // 全部入りのブラシ（筆先・ゆらぎ・質感・デュアル・入り抜き・手ぶれ補正・曲線も、2D と同じ式で面のダブに効く）
-    let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
+    let mut brush = app.stroke_brush(eraser);
+    brush.stencil = stencil_brush;
+    if guided {
+        brush.assist.stabilizer = 0.0;
+        brush.assist.curve = false;
+    }
+    let mut stroke = match app.begin_stroke_with(layer, &brush) {
         Ok(s) => s,
         Err(e) => {
             app.notify(
@@ -299,9 +400,10 @@ fn begin(
                     app.lang.core_error(&e),
                 ),
             );
-            return;
+            return None;
         }
     };
+    let material = app.view3d.material;
     match SurfaceStroke::begin_input(
         &mut app.doc,
         &mut stroke,
@@ -309,7 +411,7 @@ fn begin(
         view,
         &settings,
         Some(material),
-        pen.input(local(rect, first), pressure),
+        input,
         SurfaceStrokeOptions {
             stencil: surface_stencil,
             symmetry,
@@ -319,37 +421,15 @@ fn begin(
             canvas_symmetry,
         },
     ) {
-        Ok(s) => {
-            app.stroke = Some(stroke);
-            app.view3d.input.stroke = Some(source);
-            app.view3d.input.symmetry = symmetry;
-            note_symmetry(app, &s);
-            app.view3d.input.surface = Some(s);
-            app.view3d.input.stroke_points = 1;
-            app.view3d.input.last_point = Some(first);
-            app.view3d.input.last_hit = pick(&model.geometry, &view, local(rect, first));
-            app.view3d.input.shift_hold = None;
-            if !settings.erase {
-                app.color.remember();
-            }
-            app.modified = true;
-            // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
-            crate::uv_wireframe::overlap::note_surface(app, rect, at);
-            if line {
-                if from.is_some() {
-                    // 前の終点から押した点までの線（押した点も 1 つの入力）
-                    add(app, rect, at, pressure, pen);
-                }
-                // 押した点のぶれを抑える。前の終点が無ければ、最初に動いた向きを 45° 刻みで固定する
-                if app.view3d.input.stroke.is_some() {
-                    app.view3d.input.shift_hold =
-                        Some(ShiftHold::new((at.x as f64, at.y as f64), from.is_some()));
-                }
-            }
-        }
+        Ok(surface) => Some(Opened {
+            stroke,
+            surface,
+            symmetry,
+        }),
         Err(e) => {
             app.doc.cancel_stroke(stroke);
             app.fail(Source::View3d, app.lang.surface_error(&e));
+            None
         }
     }
 }
@@ -418,6 +498,11 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
         return;
     }
     let at = shifted(app, at);
+    // 定規のスナップ（ストロークの始めに凍結した寄せ先）
+    let at = match app.view3d.input.ruler_constraint.as_mut() {
+        Some(c) => to_pos(rect, c.project(screen_point(rect, at))),
+        None => at,
+    };
     // 面に当たった最後の点（確定したら、次の Shift の直線の始め）。ストロークの間はカメラもモデルも動かないので、塗りと同じ当たり
     let hit = app
         .view3d
@@ -892,6 +977,8 @@ fn pen_sample(
                     add(app, rect, p, s.pressure, PenState::of(s));
                 } else if app.path.pen_in(true) {
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, false);
+                } else {
+                    super::draft::moved(app, rect, p, source, &frame.modifiers);
                 }
             }
         }
@@ -922,6 +1009,7 @@ fn pen_sample(
                 if app.view3d.input.stroke == Some(source) {
                     finish(app, false);
                 }
+                super::draft::release(app, rect, p, source, &frame.modifiers);
                 if app.path.pen_in(true) {
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, false, false);
                 }
@@ -946,6 +1034,7 @@ fn press_kind(
         || !on_top(ui, rect, p)
         || app.view3d.input.nav.is_some()
         || app.view3d.input.stroke.is_some()
+        || app.view3d.input.draft.is_some()
         || app.stencil.handling()
     {
         return PressKind::Ignored;
@@ -989,6 +1078,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     if app.view3d.model.is_none() {
         nav_cancel(app);
         app.view3d.input.pen_press = None;
+        app.view3d.input.draft = None;
         // Touch の終わり・取りやめとフォーカスを失ったのは、モデルが無くても読む（古い力を次のマウスの押しに持ち越さない）
         let ended = ui.input(|i| {
             i.events.iter().any(|e| {
@@ -1035,6 +1125,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
+    // 図形のドラッグの Shift・Alt は、動かさなくても形に効く
+    super::draft::modifiers(app, &modifiers);
     // パスのツールの取っ手のドラッグ（Alt で折る・Ctrl で両方を伸ばす）と、点のダブルクリック
     app.path.input = crate::pathtool::PathInputState {
         alt: modifiers.alt,
@@ -1095,7 +1187,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             } => {
                 let pos = *pos;
                 if *pressed {
-                    if press_blocked || !on_top(ui, rect, pos) || app.view3d.input.stroke.is_some()
+                    if press_blocked
+                        || !on_top(ui, rect, pos)
+                        || app.view3d.input.stroke.is_some()
+                        || app.view3d.input.draft.is_some()
                     {
                         continue;
                     }
@@ -1195,6 +1290,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         finish(app, false);
                     }
                     if *button == PointerButton::Primary {
+                        super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
                         crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
                         flush(app, &mut drag_at);
                         gizmo::release(app, true);
@@ -1232,6 +1328,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 }
                 if !pen_frame {
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
+                    super::draft::moved(app, rect, pos, StrokeSource::Mouse, &modifiers);
                 }
                 if app.view3d.pose.drag.is_some()
                     || app
@@ -1257,7 +1354,11 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 let Some(p) = ui.input(|i| i.pointer.hover_pos()) else {
                     continue;
                 };
-                if blocked || !on_top(ui, rect, p) || app.view3d.input.stroke.is_some() {
+                if blocked
+                    || !on_top(ui, rect, p)
+                    || app.view3d.input.stroke.is_some()
+                    || app.view3d.input.draft.is_some()
+                {
                     continue;
                 }
                 let notches = match unit {
@@ -1278,6 +1379,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 if app.view3d.input.stroke.is_some() && !path_esc {
                     finish(app, true);
                 }
+                // グラデーション・図形・定規のドラッグは何も描かずに捨てる
+                super::draft::cancel(app);
                 // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）。形のギズモもドラッグの前へ戻す
                 drag_at = None;
                 gizmo::release(app, false);
@@ -1288,6 +1391,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
                 finish(app, false);
+                // グラデーション・図形・定規のドラッグは、離したのを受け取れないので何も描かずに捨てる
+                app.view3d.input.draft = None;
                 app.path_finish_drag();
                 // 点を矩形で選ぶドラッグは、離したのを受け取れないので捨てる（古い始点が次の離しで効かないように）
                 if app.path.rect.is_some_and(|r| r.surface) {
@@ -1317,6 +1422,18 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         finish(app, false);
+    }
+    if app
+        .view3d
+        .input
+        .draft
+        .is_some_and(|d| d.source == StrokeSource::Mouse)
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        super::draft::lost_release(app, rect);
     }
     if app
         .path

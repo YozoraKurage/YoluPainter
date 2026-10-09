@@ -1,5 +1,6 @@
 //! 図形と定規の欄: オプションバー（図形の種類・線か塗り、定規の種類・点の数・削除、スナップ）と、左のドックのツールプロパティ（図形の線か塗り・
-//! 角の丸み・直径と不透明度、定規の点の数・削除・スナップ）。図形の種類と定規の種類はサブツールの一覧（`subtool`）でも選べる。
+//! 角の丸み・直径と不透明度、定規の点の数・削除・スナップ）。図形の種類と定規の種類はサブツールの一覧（`subtool`）でも選べる。2D のキャンバスと
+//! 3D ビューで同じ欄（定規の種類・点の数・削除は、今の文書の 2D の定規と 3D ビューの定規の両方に当てる）。
 
 use super::{Figure, RulerKind};
 use crate::panels::properties::{choice_buttons, slider_row, toggle_row, ChoiceButton};
@@ -101,10 +102,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
             ),
         ] {
             if button(ui, id, name, app.drafting.ruler_kind == kind) {
-                app.drafting.ruler_kind = kind;
-                if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
-                    r.kind = kind;
-                }
+                app.set_ruler_kind(kind);
             }
         }
         if app.drafting.ruler_kind == RulerKind::Perspective {
@@ -113,15 +111,12 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
                 (true, "ruler.two", lang.pick("2 点", "2 Points")),
             ] {
                 if button(ui, id, name, app.drafting.two_points == two) {
-                    app.drafting.two_points = two;
-                    if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
-                        r.two_points = two;
-                    }
+                    app.set_ruler_two_points(two);
                 }
             }
         }
         if button(ui, "ruler.delete", lang.pick("削除", "Delete"), false) {
-            app.drafting.rulers.remove(&app.doc.id());
+            app.delete_rulers();
         }
     }
     snap_button(
@@ -271,10 +266,7 @@ pub fn ruler_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
         },
     ];
     if let Some(i) = choice_buttons(ui, rows, &items) {
-        app.drafting.ruler_kind = kinds[i];
-        if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
-            r.kind = kinds[i];
-        }
+        app.set_ruler_kind(kinds[i]);
     }
     if app.drafting.ruler_kind == RulerKind::Perspective {
         let items = [
@@ -294,21 +286,18 @@ pub fn ruler_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
             },
         ];
         if let Some(i) = choice_buttons(ui, rows, &items) {
-            app.drafting.two_points = i == 1;
-            if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
-                r.two_points = i == 1;
-            }
+            app.set_ruler_two_points(i == 1);
         }
     }
     let delete = [ChoiceButton {
         id: "props.ruler.delete",
         label: lang.pick("削除", "Delete"),
         selected: false,
-        enabled: enabled && app.ruler().is_some(),
+        enabled: enabled && app.has_ruler(),
         tooltip: None,
     }];
     if choice_buttons(ui, rows, &delete).is_some() {
-        app.drafting.rulers.remove(&app.doc.id());
+        app.delete_rulers();
     }
     if let Some(v) = toggle_row(
         ui,

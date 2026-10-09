@@ -1,4 +1,5 @@
-//! ツールのキーの動き方（押している間だけ・短押し／長押し）の、3D ビューの入力の道での試験（egui_kittest。試しの立方体の上で、マウスとペン）。
+//! ツールのキーの動き方（押している間だけ・短押し／長押し）の、3D ビューの入力の道での試験（egui_kittest。試しの立方体の上で、マウスとペン。
+//! ストローク・パスの矩形・グラデーションと図形と定規のドラッグの途中で離したとき）。
 //! 2D は gui_canvas、状態の細かい決まりは `src/toolkeys/tests.rs`。1 フレームは 1/60 秒（長押しの境は 0.25 秒）。
 use crate::common;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
@@ -308,4 +309,73 @@ fn releasing_the_key_in_the_middle_of_a_3d_path_rectangle_drag_keeps_the_rectang
     h.run();
     assert!(st(&h).path.rect.is_none());
     assert_eq!(st(&h).tool, Tool::Brush, "ドラッグが終わったら戻る");
+}
+
+#[test]
+fn releasing_the_key_in_the_middle_of_a_3d_gradient_shape_or_ruler_drag_finishes_the_drag_first() {
+    for (command, key, shift, tool) in [
+        ("tool.gradient", Key::G, true, Tool::Gradient),
+        ("tool.shape", Key::U, false, Tool::Shape),
+        ("tool.ruler", Key::U, true, Tool::Ruler),
+    ] {
+        let (mut h, rect) = cube_view();
+        h.state_mut().state.drafting.fill = true;
+        h.state_mut()
+            .state
+            .apply(Action::ToolKeyMode(command, ToolKeyMode::Hold));
+        h.run();
+        let m = if shift {
+            Modifiers::SHIFT
+        } else {
+            Modifiers::NONE
+        };
+        h.event(Event::ModifiersChanged(m));
+        h.event(Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: m,
+        });
+        h.step();
+        h.step();
+        assert_eq!(st(&h).tool, tool);
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        h.step();
+        let (a, b) = (
+            screen_of(&h, rect, Vec3::new(-0.3, -0.3, -0.5)),
+            screen_of(&h, rect, Vec3::new(0.3, 0.3, -0.5)),
+        );
+        let steps = st(&h).doc.undo_count();
+        press(&h, a, PointerButton::Primary);
+        h.step();
+        move_to(&h, a + (b - a) * 0.5);
+        h.step();
+        assert!(
+            yolu_app::view3d::draft::dragging(st(&h)),
+            "{tool:?}: 3D のドラッグが始まった"
+        );
+        up(&mut h, key);
+        frames(&mut h, 20);
+        assert_eq!(st(&h).tool, tool, "{tool:?}: ドラッグの途中は戻さない");
+        assert!(yolu_app::view3d::draft::dragging(st(&h)), "{tool:?}");
+        move_to(&h, b);
+        h.step();
+        release(&h, b, PointerButton::Primary);
+        h.step();
+        h.run();
+        assert!(!yolu_app::view3d::draft::dragging(st(&h)), "{tool:?}");
+        if tool == Tool::Ruler {
+            assert!(st(&h).view3d.ruler.is_some(), "定規を置いた");
+            assert_eq!(st(&h).doc.undo_count(), steps);
+        } else {
+            assert_eq!(
+                st(&h).doc.undo_count(),
+                steps + 1,
+                "{tool:?}: 離したときに塗った（取り消し 1 回）: {}",
+                st(&h).message
+            );
+        }
+        assert_eq!(st(&h).tool, Tool::Brush, "{tool:?}: 描き終えたら戻る");
+    }
 }

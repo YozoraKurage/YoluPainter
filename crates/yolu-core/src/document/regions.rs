@@ -1,8 +1,14 @@
 use super::material::MaterialCommand;
 use super::selection::{fill_pixel, mask_fill_pixel};
 use super::*;
+use crate::glam::DVec2;
 use crate::material::{ChannelPaint, GradientSettings};
 use crate::SelectionMask;
+
+/// 画素の中心（2D のグラデーションの点）。
+fn pixel_center(x: u32, y: u32) -> Option<DVec2> {
+    Some(DVec2::new(x as f64 + 0.5, y as f64 + 0.5))
+}
 
 impl Document {
     /// 全チャンネルを同じ範囲へ塗る。無効のチャンネルは有効にし、取消・失敗・変更なしなら戻す。画像・すべてのロックと、消すときの
@@ -38,6 +44,21 @@ impl Document {
         region: Option<&SelectionMask>,
         erase: bool,
     ) -> Result<bool, CoreError> {
+        self.gradient_material_at(layer, channels, to, gradient, region, erase, &pixel_center)
+    }
+    /// [`Document::gradient_material`] の、画素 (x, y) の色を、グラデーションの空間の点 `place(x, y)` で決める形（3D ビューの画面の
+    /// グラデーションは、テクセルが写る画面の点）。None の画素は変えない。
+    #[allow(clippy::too_many_arguments)]
+    pub fn gradient_material_at(
+        &mut self,
+        layer: LayerId,
+        channels: &[ChannelPaint],
+        to: Option<&[ChannelPaint]>,
+        gradient: &GradientSettings,
+        region: Option<&SelectionMask>,
+        erase: bool,
+        place: &(dyn Fn(u32, u32) -> Option<DVec2> + Sync),
+    ) -> Result<bool, CoreError> {
         gradient.validate()?;
         self.validate_material(channels)?;
         if let Some(to) = to {
@@ -56,6 +77,9 @@ impl Document {
             region,
             erase,
             |m, x, y, start, amount, keep_alpha| {
+                let Some(p) = place(x, y) else {
+                    return start;
+                };
                 let g = GradientSettings {
                     from: m.value,
                     to: to
@@ -65,7 +89,7 @@ impl Document {
                 };
                 fill_pixel(
                     start,
-                    g.color_at(x as f64 + 0.5, y as f64 + 0.5),
+                    g.color_at(p.x, p.y),
                     g.opacity,
                     amount,
                     erase,
@@ -105,6 +129,17 @@ impl Document {
         region: Option<&SelectionMask>,
         reveal: bool,
     ) -> Result<bool, CoreError> {
+        self.gradient_mask_at(layer, gradient, region, reveal, &pixel_center)
+    }
+    /// [`Document::gradient_mask`] の、画素の量を、グラデーションの空間の点 `place(x, y)` で決める形（None の画素は変えない）。
+    pub fn gradient_mask_at(
+        &mut self,
+        layer: LayerId,
+        gradient: &GradientSettings,
+        region: Option<&SelectionMask>,
+        reveal: bool,
+        place: &(dyn Fn(u32, u32) -> Option<DVec2> + Sync),
+    ) -> Result<bool, CoreError> {
         gradient.validate()?;
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
@@ -123,8 +158,10 @@ impl Document {
             &coords,
             &mut 0,
             |x, y, start, amount| {
-                let coverage =
-                    amount * gradient.color_at(x as f64 + 0.5, y as f64 + 0.5).a as f64 / 255.0;
+                let Some(p) = place(x, y) else {
+                    return start;
+                };
+                let coverage = amount * gradient.color_at(p.x, p.y).a as f64 / 255.0;
                 mask_fill_pixel(start, gradient.opacity, coverage, reveal)
             },
         )?;

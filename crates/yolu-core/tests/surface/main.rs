@@ -18,6 +18,7 @@ mod surface_ortho;
 mod surface_path_rebind;
 mod surface_projection;
 mod surface_sampling;
+mod surface_screen;
 mod surface_stroke;
 mod surface_symmetry;
 mod surface_tip;

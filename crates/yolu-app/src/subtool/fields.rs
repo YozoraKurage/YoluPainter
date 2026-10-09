@@ -274,11 +274,8 @@ static RULER: [Field; 2] = [
                 "perspective" => RulerKind::Perspective,
                 _ => RulerKind::Line,
             };
-            a.drafting.ruler_kind = kind;
-            // 置いてある定規にも効く（オプションバーの定規の種類のボタンと同じ）
-            if let Some(r) = a.drafting.rulers.get_mut(&a.doc.id()) {
-                r.kind = kind;
-            }
+            // 置いてある定規（2D と 3D）にも効く（オプションバーの定規の種類のボタンと同じ）
+            a.set_ruler_kind(kind);
         },
     },
     Field {
@@ -287,10 +284,7 @@ static RULER: [Field; 2] = [
         default: Value::Bool(false),
         get: |a| Value::Bool(a.drafting.two_points),
         set: |a, v| {
-            a.drafting.two_points = flag(v);
-            if let Some(r) = a.drafting.rulers.get_mut(&a.doc.id()) {
-                r.two_points = flag(v);
-            }
+            a.set_ruler_two_points(flag(v));
         },
     },
 ];

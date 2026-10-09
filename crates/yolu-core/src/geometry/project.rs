@@ -114,6 +114,12 @@ pub(crate) trait ScreenCover: Sync {
     fn cover(&self, dx: f64, dy: f64, x: u16, y: u16, metric: [f32; 3]) -> f32;
 }
 
+/// 画面の形の覆い（[`SurfaceProjector::sweep`]）: 中心からの画面のずれ (dx, dy)（y は下向き）の所にある投影の画素の覆い（0 以下は
+/// 塗らない）。`columns` はそのテクセルの x・y の 1 つ分の画面の動き（[jx.x, jx.y, jy.x, jy.y]。持たない投影の塗りでは 0）。
+pub(crate) trait AreaCover: Sync {
+    fn cover(&self, dx: f64, dy: f64, columns: [f32; 4]) -> f32;
+}
+
 /// 丸い筆先（3D のストロークの今までの式: 中心からの距離を半径で割った値の硬さの smoothstep。円の上と外は 0）。アンチエイリアスの
 /// 段があれば、縁の帯（テクセル）を投影の画素ごとのテクセルの画面の大きさで画面の距離へ直す（[`crate::brush::AntiAlias`]）。
 #[derive(Clone, Copy, Debug)]
@@ -242,17 +248,34 @@ struct ProjPixel {
 }
 
 /// 区画 1 つの投影の画素と、アンチエイリアスのある投影の塗りでは、投影の画素ごとのテクセル 1 つ分の画面の大きさ
-/// （[`TexelMetric`] の xx・xy・yy。y は下向き。並びは `pixels` と同じ。無い投影の塗りでは空）。
+/// （[`TexelMetric`] の xx・xy・yy。y は下向き。並びは `pixels` と同じ。無い投影の塗りでは空）。画面の形を集める投影の塗りでは、
+/// 投影の画素ごとのテクセルの x・y の 1 つ分の画面の動き（テクセル → 画面の写しの列。y は下向き。無ければ空）。
 #[derive(Debug, Default)]
 struct Bucket {
     pixels: Vec<ProjPixel>,
     metrics: Vec<[f32; 3]>,
+    columns: Vec<[f32; 4]>,
 }
+
+/// 画面の形の覆いを測った投影の画素 1 つ（[`SurfaceProjector::sweep`] が渡す。覆いは 0 より大きい）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SweepPixel {
+    pub x: u16,
+    pub y: u16,
+    pub coverage: f32,
+    /// 画面の位置（にじみのテクセルは、塗る元の辺の上の点の位置）。
+    pub screen: Vec2,
+}
+
+/// [`SweepPixel`] 1 つの名目のバイト。
+pub(crate) const SWEEP_PIXEL_BYTES: u64 = std::mem::size_of::<SweepPixel>() as u64;
 
 /// 投影の画素 1 つの名目のバイト。
 const PIXEL_BYTES: u64 = std::mem::size_of::<ProjPixel>() as u64;
 /// アンチエイリアスのある投影の塗りで、投影の画素 1 つに加わるバイト（テクセルの画面の大きさ）。
 const METRIC_BYTES: u64 = std::mem::size_of::<[f32; 3]>() as u64;
+/// テクセルの画面の動きを持つ投影の塗りで、投影の画素 1 つに加わるバイト。
+const COLUMN_BYTES: u64 = std::mem::size_of::<[f32; 4]>() as u64;
 
 /// 覚えの数（試験と計測用）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1054,6 +1077,8 @@ pub struct SurfaceProjector {
     cache: FastMap<u32, (Arc<Bucket>, u64)>,
     /// 投影の画素ごとのテクセルの画面の大きさを持つか（ストロークにアンチエイリアスの段があるときだけ）。
     metrics: bool,
+    /// 投影の画素ごとのテクセルの画面の動きを持つか（画面の形の塗りの、1 テクセルを 4 × 4 の点で見る覆いだけ）。
+    columns: bool,
     clock: u64,
     /// 最後に区画に時刻を付けたダブの時刻と、そのダブの区画のバイト。
     stamp: (u64, u64),
@@ -1129,6 +1154,7 @@ impl SurfaceProjector {
             self.shared.clone(),
         )
         .with_texel_metrics(self.metrics)
+        .with_texel_columns(self.columns)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1164,6 +1190,7 @@ impl SurfaceProjector {
             tolerance,
             cache: FastMap::default(),
             metrics: false,
+            columns: false,
             clock: 0,
             stamp: (0, 0),
             stats: ProjectionStats::default(),
@@ -1182,9 +1209,19 @@ impl SurfaceProjector {
         self
     }
 
+    /// 投影の画素ごとに、テクセルの x・y の 1 つ分の画面の動きも求めて持つ（画面の形の塗りの覆いに使う。投影の画素 1 つが
+    /// `COLUMN_BYTES` 増える）。区画を作る前に決める。
+    pub(crate) fn with_texel_columns(mut self, on: bool) -> SurfaceProjector {
+        debug_assert!(self.cache.is_empty());
+        self.columns = on;
+        self
+    }
+
     /// 区画 1 つの名目のバイト。
     fn bucket_bytes(&self, len: usize) -> u64 {
-        bucket_bytes(len, self.metrics)
+        let extra = if self.metrics { METRIC_BYTES } else { 0 }
+            + if self.columns { COLUMN_BYTES } else { 0 };
+        bucket_bytes(len, extra)
     }
 
     /// 区画の大きさ（画面の単位）。
@@ -1398,6 +1435,121 @@ impl SurfaceProjector {
         }
     }
 
+    /// 画面の箱 [lo, hi]（画面の単位）に重なる全部の区画の投影の画素の、中心 center からのずれで測った `cover` の覆い（`weighted` なら
+    /// 面の向きの弱めも掛ける）を、区画の組ごとに作って、0 より大きいものを sink へ渡す（区画は覚えずに捨てる。1 回きりの大きな形の
+    /// 集め。箱の外の投影の画素の覆いは 0 でなければならない）。同じテクセルは区画をまたいで何度も来うる（重なった UV・にじみ）ので、
+    /// まとめるのは sink。sink は今溜めているバイトを返す。room は一覧（共有の一覧・区画の一覧）・作った区画・候補・溜めの合計に
+    /// 使ってよいバイトで、超えたら `MemoryBudget`（sink に渡した分は呼び手が捨てる）。
+    pub(crate) fn sweep<C: AreaCover>(
+        &mut self,
+        center: DVec2,
+        cover: &C,
+        weighted: bool,
+        (lo, hi): (DVec2, DVec2),
+        room: u64,
+        mut sink: impl FnMut(&[SweepPixel]) -> u64,
+    ) -> Result<(), DabRefusal> {
+        if !center.is_finite() || !lo.is_finite() || !hi.is_finite() {
+            return Err(DabRefusal::InvalidArguments);
+        }
+        let c = center;
+        let needed = self.buckets_in_box(lo, hi);
+        let fixed = self.shared_bytes() + self.fixed_bytes();
+        let threads = rayon::current_num_threads().max(1);
+        let gather = |bucket: &Bucket| -> Vec<SweepPixel> {
+            let mut out = Vec::new();
+            for (i, p) in bucket.pixels.iter().enumerate() {
+                let columns = bucket.columns.get(i).copied().unwrap_or([0.0; 4]);
+                let cov = cover.cover(p.sx as f64 - c.x, p.sy as f64 - c.y, columns);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let cov = if weighted { cov * p.weight } else { cov };
+                if cov > 0.0 {
+                    out.push(SweepPixel {
+                        x: p.x,
+                        y: p.y,
+                        coverage: cov,
+                        screen: Vec2::new(p.sx, p.sy),
+                    });
+                }
+            }
+            out
+        };
+        let mut held = 0u64;
+        for batch in needed.chunks(threads * 2) {
+            let built: Vec<Bucket> = if batch.len() > 1 && threads > 1 {
+                batch
+                    .par_iter()
+                    .with_max_len(1)
+                    .map(|&b| self.build_bucket(b as usize))
+                    .collect()
+            } else {
+                batch
+                    .iter()
+                    .map(|&b| self.build_bucket(b as usize))
+                    .collect()
+            };
+            self.stats.buckets_built += built.len() as u64;
+            let bytes: u64 = built
+                .iter()
+                .map(|b| self.bucket_bytes(b.pixels.len()))
+                .sum();
+            self.stats.largest_dab_bytes = self.stats.largest_dab_bytes.max(bytes);
+            if fixed + held + bytes > room {
+                self.stats.skipped_dabs += 1;
+                return Err(DabRefusal::MemoryBudget);
+            }
+            let lists: Vec<Vec<SweepPixel>> = if built.len() > 1 && threads > 1 {
+                built.par_iter().with_max_len(1).map(gather).collect()
+            } else {
+                built.iter().map(gather).collect()
+            };
+            let candidates: u64 = lists
+                .iter()
+                .map(|l| l.len() as u64 * SWEEP_PIXEL_BYTES)
+                .sum();
+            if fixed + held + bytes + candidates > room {
+                self.stats.skipped_dabs += 1;
+                return Err(DabRefusal::MemoryBudget);
+            }
+            drop(built);
+            for list in &lists {
+                held = sink(list);
+            }
+            if fixed + held > room {
+                self.stats.skipped_dabs += 1;
+                return Err(DabRefusal::MemoryBudget);
+            }
+        }
+        Ok(())
+    }
+
+    /// 画面の箱 [lo, hi] に重なる区画（番号の順）。
+    fn buckets_in_box(&self, lo: DVec2, hi: DVec2) -> Vec<u32> {
+        let layout = &self.layout;
+        let b = layout.bucket;
+        let mut out = Vec::new();
+        if !(lo.x <= hi.x && lo.y <= hi.y)
+            || hi.x < 0.0
+            || hi.y < 0.0
+            || lo.x > layout.frame.sw
+            || lo.y > layout.frame.sh
+        {
+            return out;
+        }
+        let x0 = cell_index(lo.x, b, layout.columns);
+        let x1 = cell_index(hi.x, b, layout.columns);
+        let y0 = cell_index(lo.y, b, layout.rows);
+        let y1 = cell_index(hi.y, b, layout.rows);
+        for by in y0..=y1 {
+            for bx in x0..=x1 {
+                out.push((by * layout.columns + bx) as u32);
+            }
+        }
+        out
+    }
+
     /// 円に重なる区画（番号の順）。
     fn buckets_in_circle(&self, c: DVec2, r: f64) -> Vec<u32> {
         let layout = &self.layout;
@@ -1484,6 +1636,7 @@ impl SurfaceProjector {
                 }),
                 texel_steps: texel_steps(&v, &uv),
                 metrics: self.metrics,
+                columns: self.columns,
             };
             // 区画の中の部分の UV の箱（切った多角形の頂点をレイで平面へ戻す）
             let mut uv_lo = DVec2::splat(f64::INFINITY);
@@ -1583,8 +1736,8 @@ impl SurfaceProjector {
 }
 
 /// 覚えた区画 1 つの名目のバイト。
-fn bucket_bytes(len: usize, metrics: bool) -> u64 {
-    len as u64 * (PIXEL_BYTES + if metrics { METRIC_BYTES } else { 0 }) + BUCKET_OVERHEAD
+fn bucket_bytes(len: usize, extra: u64) -> u64 {
+    len as u64 * (PIXEL_BYTES + extra) + BUCKET_OVERHEAD
 }
 
 /// いくつかの投影の塗り（元の側と対称の写し）の覚えを、合わせて limit バイトまでに減らす。どの投影の塗りの区画でも、長く使って
@@ -1675,6 +1828,8 @@ struct FaceContext<'a> {
     texel_steps: [DVec3; 2],
     /// 投影の画素ごとにテクセルの画面の大きさを求めるか。
     metrics: bool,
+    /// 投影の画素ごとにテクセルの画面の動きを求めるか。
+    columns: bool,
 }
 
 /// 三角形の上で、テクセルの x・y の 1 つ分がビューの空間でどれだけ動くか（UV → 重心座標の係数と頂点から）。
@@ -1685,11 +1840,17 @@ fn texel_steps(v: &[DVec3; 3], uv: &UvFace) -> [DVec3; 2] {
 
 /// ビューの空間の点 p で、テクセルの動き steps が画面でどれだけか（テクセル → 画面の写しの J·Jᵀ）。
 fn texel_metric(frame: &Frame, p: DVec3, steps: &[DVec3; 2]) -> TexelMetric {
+    let (jx, jy) = texel_columns(frame, p, steps);
+    TexelMetric::from_columns(jx, jy)
+}
+
+/// ビューの空間の点 p で、テクセルの x・y の 1 つ分の動き steps が画面でどれだけ動くか（テクセル → 画面の写し J の列。y は下向き）。
+fn texel_columns(frame: &Frame, p: DVec3, steps: &[DVec3; 2]) -> ((f64, f64), (f64, f64)) {
     if let Some((hx, hy)) = frame.ortho {
         // 正投影の写しは線形（奥行きによらない）
         let (ax, ay) = (0.5 * frame.sw / hx, -0.5 * frame.sh / hy);
         let column = |d: DVec3| (ax * d.x, ay * d.y);
-        return TexelMetric::from_columns(column(steps[0]), column(steps[1]));
+        return (column(steps[0]), column(steps[1]));
     }
     let iz = 1.0 / p.z;
     let (ax, ay) = (0.5 * frame.sw / frame.tx, -0.5 * frame.sh / frame.ty);
@@ -1699,7 +1860,7 @@ fn texel_metric(frame: &Frame, p: DVec3, steps: &[DVec3; 2]) -> TexelMetric {
             ay * (d.y - p.y * iz * d.z) * iz,
         )
     };
-    TexelMetric::from_columns(column(steps[0]), column(steps[1]))
+    (column(steps[0]), column(steps[1]))
 }
 
 impl SurfaceProjector {
@@ -1727,6 +1888,11 @@ impl FaceContext<'_> {
             if self.metrics {
                 let m = texel_metric(&self.layout.frame, p, &self.texel_steps);
                 out.metrics.push([m.xx as f32, m.xy as f32, m.yy as f32]);
+            }
+            if self.columns {
+                let (jx, jy) = texel_columns(&self.layout.frame, p, &self.texel_steps);
+                out.columns
+                    .push([jx.0 as f32, jx.1 as f32, jy.0 as f32, jy.1 as f32]);
             }
         }
     }

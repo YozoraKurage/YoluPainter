@@ -1163,6 +1163,11 @@ impl AppState {
             || self.region.leftover_drag.is_some()
             || self.path.drag.is_some()
             || self.drafting.drag.is_some()
+            || self
+                .view3d
+                .input
+                .draft
+                .is_some_and(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
     }
 
     /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。

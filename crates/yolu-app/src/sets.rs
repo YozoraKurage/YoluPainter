@@ -726,6 +726,8 @@ impl AppState {
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
         self.drafting.rulers.clear();
+        // 3D ビューの定規も、開いたプロジェクトの間のもの（保存しない）
+        self.view3d.ruler = None;
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();

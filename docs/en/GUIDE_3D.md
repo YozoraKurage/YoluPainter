@@ -44,7 +44,7 @@ The material values received from Unity appear as "Unity Values", and "Match Uni
 
 ## Paint on the model
 
-You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). The selection tools, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas. While Quick Mask is on, the brush and the eraser in the 3D view work as a selection pen and a selection eraser, as on the 2D canvas: they add the texture pixels of the faces you paint to the selection or take them out (Size, Hardness, Opacity and pressure come from the current brush; one stroke is one undo; layer pixels do not change). The red overlay is shown on the 2D canvas ([GUIDE_SELECT.md](GUIDE_SELECT.md)).
+You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select, Path, Gradient, Shape and Ruler (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md); Gradient, Shape and Ruler are in "Drag on the screen" below). The selection tools, Move / Transform, Liquify and Text work only on the 2D canvas. While Quick Mask is on, the brush and the eraser in the 3D view work as a selection pen and a selection eraser, as on the 2D canvas: they add the texture pixels of the faces you paint to the selection or take them out (Size, Hardness, Opacity and pressure come from the current brush; one stroke is one undo; layer pixels do not change). The red overlay is shown on the 2D canvas ([GUIDE_SELECT.md](GUIDE_SELECT.md)).
 
 Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Anti-aliasing (its band is measured in texture pixels), Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper & Pen (fade, tilt, rotation, speed), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
 
@@ -63,6 +63,17 @@ While the 3D view is shown, the brush properties gain a "3D" group.
 | Paint back faces | Also paints faces that point away from the camera |
 | Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |
 | Seam bleed | How far to paint outside the edges of UV islands so seams do not show |
+
+### Drag on the screen
+
+Gradient, Shape and Ruler are set by dragging on the screen of the 3D view. When you release, the result is projected onto the faces visible from the camera (nothing changes while you drag; `Esc` cancels). This works the same in orthographic. The Tool Properties fields are the same as on the 2D canvas.
+
+- **Gradient**: each texture pixel of the visible faces takes the color of the place where it appears on the screen. With Linear, the start side has the start color, the end side has the end color, and in between it blends as in 2D. The selection, painting a mask and painting with materials work as in 2D.
+- **Shape, Fill**: paints the visible faces that appear inside the shape on the screen. As with Fill on the 2D canvas, each texture pixel is checked at 4 × 4 points and painted by the share of those points inside the shape (the brush's Anti-aliasing does not change it). As in 2D, symmetry is not used. A rectangle's Corner Radius is measured in screen points.
+- **Shape, Outline**: draws the outline as a brush stroke in the 3D view. The brush settings and symmetry apply (the pressure is constant, and Stabilizer and Curve are not used, as in 2D).
+- Gradient and Shape Fill never paint hidden areas or back faces, whatever the brush's "3D" group says. Fade by angle and Seam bleed follow the group.
+- Each makes one undo step when you release. On a locked layer, on a read-only texture set, or when it does not fit in the memory of one operation, it is refused and nothing changes.
+- **Ruler**: drawn on the screen of the 3D view. It stays at the same place on the screen when you orbit or move the viewpoint (it does not stick to the surface). It is separate from the 2D canvas's ruler and is not saved in the `.ylp`. While Snap to Ruler is on, the points of brush and eraser strokes in the 3D view are pulled onto this ruler.
 
 3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together. These two are the same settings as on the 2D canvas. Because the 3D source is set by a point on a surface, the clone's "Offset X" and "Offset Y" fields are dimmed while only the 3D view is shown. Switching texture sets forgets the source.
 

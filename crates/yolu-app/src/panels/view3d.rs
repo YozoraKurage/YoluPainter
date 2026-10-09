@@ -205,6 +205,8 @@ impl View3dSlot {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
+            // 定規（画面に固定）と、グラデーション・図形・定規のドラッグの途中の形
+            crate::view3d::draft::paint_overlay(&ui.painter_at(content), app, content);
         }
         // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;
@@ -289,6 +291,18 @@ impl View3dSlot {
             let painter = ui.painter_at(content);
             crate::region::overlay::paint_surface(&painter, app, content, pointer);
             if pointer.is_some() {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else {
+                    CursorIcon::Crosshair
+                });
+            }
+        } else if app.tool.def().surface == Surface::Screen {
+            // グラデーション・図形・定規: 画面の上で引くので十字（ブラシの円は出さない）
+            if ui
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| response.contains_pointer() && content.contains(p))
+            {
                 ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
                     CursorIcon::Move
                 } else {

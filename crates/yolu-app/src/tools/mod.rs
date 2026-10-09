@@ -203,14 +203,17 @@ pub static TOOLS: [ToolDef; 19] = [
         "Shift+G",
     )
     .canvas(CanvasKind::Gradient)
+    .surface(Surface::Screen)
     .sub(SubTools::Presets)
     .ui(gradient::props::body, gradient::props::options),
     def(Tool::Shape, "shape", "図形", "Shape", "U")
         .canvas(CanvasKind::Drafting)
+        .surface(Surface::Screen)
         .sub(SubTools::Presets)
         .ui(drafting::props::shape_props, drafting::props::options),
     def(Tool::Ruler, "ruler", "定規", "Ruler", "Shift+U")
         .canvas(CanvasKind::Drafting)
+        .surface(Surface::Screen)
         .sub(SubTools::Presets)
         .ui(drafting::props::ruler_props, drafting::props::options),
     def(

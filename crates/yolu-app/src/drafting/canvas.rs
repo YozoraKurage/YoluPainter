@@ -52,25 +52,14 @@ pub fn moved(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
 }
 
 fn draft_ruler(app: &AppState, d: Drag) -> Ruler {
-    if let Some(mut r) = d.original {
-        match d.handle {
-            1 => r.a = d.current,
-            2 => r.b = d.current,
-            _ => {
-                r.a += d.current - d.start;
-                r.b += d.current - d.start;
-            }
-        }
-        r
-    } else {
-        let (a, b) = endpoints(d.start, d.current, Figure::Line, d.shift, false);
-        Ruler {
-            kind: app.drafting.ruler_kind,
-            a,
-            b,
-            two_points: app.drafting.two_points,
-        }
-    }
+    super::dragged_ruler(
+        d.original,
+        d.handle,
+        (d.start, d.current),
+        d.shift,
+        app.drafting.ruler_kind,
+        app.drafting.two_points,
+    )
 }
 
 pub fn release(
@@ -115,22 +104,7 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     app.doc.end_coalescing();
     let result = if app.drafting.fill && figure != Figure::Line {
         SelectionMask::polygon(&app.doc, &points)
-            .and_then(|mask| {
-                if app.m2.edit_mask {
-                    let reveal = crate::region::tools::mask_reveals(app, layer, false);
-                    app.doc
-                        .fill_mask(layer, app.brush.opacity as f64, Some(&mask), reveal)
-                } else {
-                    let channels = app.paint_channels();
-                    app.doc.fill_material(
-                        layer,
-                        &channels,
-                        app.brush.opacity as f64,
-                        Some(&mask),
-                        false,
-                    )
-                }
-            })
+            .and_then(|mask| fill_region(app, layer, &mask))
             .map(|_| ())
     } else {
         app.canvas_stencil(rect)
@@ -148,6 +122,38 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
                 app.doc.end_stroke(stroke).map(|_| ())
             })
     };
+    finish_paint(app, result, before);
+}
+
+/// 図形の「塗る」: 範囲の量で、マスクを描くときはマスクへ（白で見せる）、そうでなければ描くチャンネル（マテリアルで塗るときは組の全部）へ
+/// 不透明度で塗る（1 回の Undo。範囲は選択範囲と core で合わせる）。画素が変わったか。
+pub(crate) fn fill_region(
+    app: &mut AppState,
+    layer: yolu_core::LayerId,
+    mask: &SelectionMask,
+) -> Result<bool, yolu_core::CoreError> {
+    if app.m2.edit_mask {
+        let reveal = crate::region::tools::mask_reveals(app, layer, false);
+        app.doc
+            .fill_mask(layer, app.brush.opacity as f64, Some(mask), reveal)
+    } else {
+        let channels = app.paint_channels();
+        app.doc.fill_material(
+            layer,
+            &channels,
+            app.brush.opacity as f64,
+            Some(mask),
+            false,
+        )
+    }
+}
+
+/// 図形を描いた後: 失敗を知らせ（途中のストロークは取り消す）、文書が変わったら印を付けて色を覚える。
+pub(crate) fn finish_paint(
+    app: &mut AppState,
+    result: Result<(), yolu_core::CoreError>,
+    before: u64,
+) {
     if let Err(e) = result {
         app.doc.cancel_active_stroke();
         app.notify(
@@ -187,13 +193,8 @@ pub fn pen_sample(
 }
 
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
-    let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 170, 230, 110));
     let screen = |p: DVec2| view.to_screen(p.x, p.y);
     let long = app.doc.width().max(app.doc.height()) as f64 * 8.0;
-    let line = |a: DVec2, b: DVec2| {
-        let dir = super::direction(b - a) * long;
-        painter.line_segment([screen(a - dir), screen(a + dir)], stroke);
-    };
     let ruler = app
         .drafting
         .drag
@@ -202,6 +203,33 @@ pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
         .filter(Ruler::is_placeable)
         .or_else(|| app.ruler());
     if let Some(r) = ruler {
+        paint_ruler(painter, r, screen, long, app.tool == Tool::Ruler);
+    }
+    if let Some(d) = app.drafting.drag.filter(|d| !d.ruler) {
+        let (a, b) = endpoints(d.start, d.current, app.drafting.figure, d.shift, d.alt);
+        let points: Vec<_> = outline(app.drafting.figure, a, b, app.drafting.corner as f64)
+            .into_iter()
+            .map(screen)
+            .collect();
+        paint_outline(painter, points);
+    }
+}
+
+/// 定規の線（2D のキャンバスと 3D ビューで同じ見た目）。`screen` は定規の点を画面の点へ、`long` は線を伸ばす長さ（定規の点の単位）、
+/// `handles` は端点の輪を出すか（定規のツールのとき）。
+pub(crate) fn paint_ruler(
+    painter: &Painter,
+    r: Ruler,
+    screen: impl Fn(DVec2) -> Pos2,
+    long: f64,
+    handles: bool,
+) {
+    let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 170, 230, 110));
+    let line = |a: DVec2, b: DVec2| {
+        let dir = super::direction(b - a) * long;
+        painter.line_segment([screen(a - dir), screen(a + dir)], stroke);
+    };
+    {
         match r.kind {
             RulerKind::Line => line(r.a, r.b),
             RulerKind::Parallel => {
@@ -232,22 +260,19 @@ pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
                 }
             }
         }
-        if app.tool == Tool::Ruler {
+        if handles {
             for point in [r.a, r.b] {
                 painter.circle_stroke(screen(point), 5.0, stroke);
             }
         }
     }
-    if let Some(d) = app.drafting.drag.filter(|d| !d.ruler) {
-        let (a, b) = endpoints(d.start, d.current, app.drafting.figure, d.shift, d.alt);
-        let points: Vec<_> = outline(app.drafting.figure, a, b, app.drafting.corner as f64)
-            .into_iter()
-            .map(screen)
-            .collect();
-        painter.add(Shape::line(
-            points.clone(),
-            Stroke::new(3.0, Color32::from_black_alpha(140)),
-        ));
-        painter.add(Shape::line(points, Stroke::new(1.2, Color32::WHITE)));
-    }
+}
+
+/// 図形のドラッグの途中の輪郭（黒の縁取りと白。2D と 3D で同じ見た目）。
+pub(crate) fn paint_outline(painter: &Painter, points: Vec<Pos2>) {
+    painter.add(Shape::line(
+        points.clone(),
+        Stroke::new(3.0, Color32::from_black_alpha(140)),
+    ));
+    painter.add(Shape::line(points, Stroke::new(1.2, Color32::WHITE)));
 }

@@ -23,6 +23,7 @@ mod refit;
 mod regions;
 mod restrict;
 mod sampling;
+mod screen;
 pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
@@ -63,6 +64,7 @@ pub use regions::{region, SurfaceRegionKind};
 pub use sampling::{
     SamplingChart, SamplingError, SAMPLING_CHART_MAX_TRIANGLES, SAMPLING_CHART_TRIANGLE_BYTES,
 };
+pub use screen::{cover_screen, ScreenCoverSettings, ScreenCoverage, ScreenShape};
 pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
 pub use stroke::{
