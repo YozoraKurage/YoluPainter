@@ -709,6 +709,11 @@ fn what_the_3d_tools_paint_survives_save_and_reopen_but_the_3d_ruler_is_not_save
 
 /// ペンで a から b へ引く（触れる → 動く → 離す。1 点ごとに 1 フレーム）。
 fn pen_pull(h: &mut H, a: Pos2, b: Pos2) {
+    pen_pull_ending(h, a, b, false);
+}
+
+/// ペンで a から b へ引き、最後の離しが本物（`lost` が false）か、OS に押しを奪われて補った離し（true）か。
+fn pen_pull_ending(h: &mut H, a: Pos2, b: Pos2, lost: bool) {
     let sample = |at: Pos2, contact: bool, time_ms: u32| PenSample {
         pos: [at.x, at.y],
         pressure: 0.6,
@@ -725,9 +730,51 @@ fn pen_pull(h: &mut H, a: Pos2, b: Pos2) {
         h.state().pen().push(sample(at, true, i * 10));
         h.step();
     }
-    h.state().pen().push(sample(b, false, 60));
+    if lost {
+        h.state().pen().push_lost(sample(b, false, 60));
+    } else {
+        h.state().pen().push(sample(b, false, 60));
+    }
     h.step();
     h.run();
+}
+
+/// ペンの押しを OS に奪われて離しが補われたら、離した位置が不明なので、グラデーションは最後の位置で塗り（2D のグラデーションの補った離しと同じ）、図形と定規はやめる
+/// （マウスの取りこぼしと同じ）。本物の離しは、図形も確定し、定規も置く。次の押しは新しい押しとして始まる。
+#[test]
+fn a_pen_press_taken_by_the_os_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rulers() {
+    for t in [Tool::Gradient, Tool::Shape, Tool::Ruler] {
+        let (mut h, rect) = cube_view();
+        red(&mut h);
+        tool(&mut h, t);
+        h.state_mut().state.drafting.figure = Figure::Rectangle;
+        h.state_mut().state.drafting.fill = true;
+        let (a, b) = front_rect(&h, rect);
+        pen_pull_ending(&mut h, a, b, true);
+        assert!(!draft::dragging(&h.state().state), "{t:?}");
+        assert!(st(&h).view3d.input.pen_press.is_none(), "{t:?}");
+        assert!(
+            st(&h).view3d.ruler.is_none(),
+            "{t:?}: 補った離しでは定規を置かない"
+        );
+        assert_eq!(
+            st(&h).doc.undo_count(),
+            usize::from(t == Tool::Gradient),
+            "{t:?}: グラデーションだけ最後の位置で塗る {}",
+            message(&h)
+        );
+        // 次の押しは新しい押しとして始まり、本物の離しで決まる（図形も確定し、定規も置く）
+        let before = st(&h).doc.undo_count();
+        pen_pull(&mut h, a, b);
+        assert!(!draft::dragging(&h.state().state), "{t:?}");
+        assert_eq!(
+            st(&h).doc.undo_count(),
+            before + usize::from(t != Tool::Ruler),
+            "{t:?}: {}",
+            message(&h)
+        );
+        assert_eq!(st(&h).view3d.ruler.is_some(), t == Tool::Ruler, "{t:?}");
+    }
 }
 
 #[test]

@@ -979,6 +979,28 @@ fn a_pen_side_button_on_a_paint_tool_picks_where_it_lifts_like_the_right_button(
     assert!(h.state().state.modified, "ペン先は描く");
 }
 
+/// サイドボタンのペンの押しを OS に奪われて離しが補われたら、離した所が不明なので色を取らずに取りやめる（マウスの取りこぼしと同じ）。
+#[test]
+fn a_pen_side_button_press_taken_by_the_os_picks_no_color() {
+    let (mut h, [a, b, c]) = three_colors_app(Tool::Brush);
+    let revision = h.state().state.doc.revision();
+    barrel_frames(&mut h, &[(a, true), (a, true), (b, true)]);
+    assert_eq!(h.state().state.canvas.eyedrop.map(|p| p.at), Some(b));
+    // 補った離し（青の上）
+    h.state().pen().push_lost(barrel_sample(c, false));
+    h.step();
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(main_rgb(s), [0, 0, 0], "色は取らない: {}", s.message);
+    assert!(s.canvas.eyedrop.is_none(), "見本の途中は残らない");
+    assert!(s.canvas.pen_press.is_none());
+    assert_eq!(s.tool, Tool::Brush);
+    assert_eq!(s.doc.revision(), revision);
+    // 次の本物の押しは新しい押しとして、離した所の色を取る
+    barrel_frames(&mut h, &[(c, true), (c, false)]);
+    assert_eq!(main_rgb(&h.state().state), BLUE);
+}
+
 #[test]
 fn a_pen_held_with_alt_rotates_the_view_instead_of_picking_or_painting() {
     let (mut h, [a, b, c]) = three_colors_app(Tool::Brush);
@@ -1261,6 +1283,27 @@ fn a_pen_side_button_click_in_3d_picks_like_the_right_click_and_a_slide_only_orb
     );
     assert_eq!(main_rgb(&h.state().state), [0, 0, 0]);
     assert_ne!(h.state().state.view3d.camera.yaw, before);
+}
+
+/// 3D でもサイドボタンのペンの押しを OS に奪われて離しが補われたら、色を取らずに取りやめる。次の本物の押しは新しい押しとして取る。
+#[test]
+fn a_pen_side_button_press_taken_by_the_os_in_3d_picks_no_color() {
+    let (mut h, [_, b, _]) = three_colors_3d_app();
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    barrel_frames(&mut h, &[(b, true)]);
+    assert!(h.state().state.view3d.input.eyedrop.is_some());
+    // 補った離し（本物の離しなら、ここで緑を取る）
+    h.state().pen().push_lost(barrel_sample(b, false));
+    h.step();
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(main_rgb(s), [0, 0, 0], "色は取らない: {}", s.message);
+    assert!(s.view3d.input.eyedrop.is_none(), "見本の途中は残らない");
+    assert!(s.view3d.input.pen_press.is_none());
+    // 次の本物の押しは新しい押し
+    barrel_frames(&mut h, &[(b, true), (b, false)]);
+    assert_eq!(main_rgb(&h.state().state), GREEN);
 }
 
 // ───────── スポイトの印 ─────────

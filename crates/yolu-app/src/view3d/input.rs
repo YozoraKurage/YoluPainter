@@ -984,8 +984,13 @@ fn pen_sample(
         }
         app.view3d.input.pen_press = Some(PenPress { last: p, ..press });
     } else {
+        // OS に押しを奪われて補った離し（本物の離しではない。`AppState::pen_release_lost`）は、マウスの取りこぼしと同じに扱う: ビューの操作の離しの操作
+        // （クリックの拡縮・クローンの元・スポイト・メニュー）は出さず、途中をやめる。グラデーション・図形・定規は `draft::lost_release`。ストロークと、ギズモ・パスの離しは、
+        // 今までどおり最後の位置で終える
+        let lost = app.pen_release_lost(s);
         match press.kind {
             PressKind::Ignored | PressKind::Eyedrop => {}
+            PressKind::View if lost => nav_cancel(app),
             PressKind::View => {
                 // このペンが始めた物のボタン（ドラッグの操作か、離しの操作）
                 let button = app
@@ -1009,7 +1014,12 @@ fn pen_sample(
                 if app.view3d.input.stroke == Some(source) {
                     finish(app, false);
                 }
-                super::draft::release(app, rect, p, source, &frame.modifiers);
+                if lost {
+                    // 補った離しの位置は本物の離しの位置ではない: グラデーションは最後の位置で塗り、図形と定規はやめる（マウスの取りこぼしと同じ）
+                    super::draft::lost_release(app, rect, source);
+                } else {
+                    super::draft::release(app, rect, p, source, &frame.modifiers);
+                }
                 if app.path.pen_in(true) {
                     crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, false, false);
                 }
@@ -1433,7 +1443,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
-        super::draft::lost_release(app, rect);
+        super::draft::lost_release(app, rect, StrokeSource::Mouse);
     }
     if app
         .path

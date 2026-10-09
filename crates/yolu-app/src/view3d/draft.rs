@@ -8,7 +8,7 @@
 //!   2D と同じ式で寄せる（`input`）。
 //!
 //! どれも離すまで文書を変えない。Esc・フォーカスを失う・ツールの切り替え・ビューが隠れるで、途中の形を何も描かずに捨てる（離したのを取りこぼした
-//! グラデーションは、2D と同じく最後の位置で塗る）。
+//! グラデーションは、2D と同じく最後の位置で塗る。ペンの押しを OS に奪われて補った離しも、取りこぼしと同じ）。
 
 use egui::{Modifiers, Painter, Pos2, Rect};
 use yolu_core::geometry::{
@@ -155,9 +155,12 @@ pub(super) fn release(
     }
 }
 
-/// 離したのを取りこぼした（ウィンドウの外で離したなど）: グラデーションは最後の位置で離したことにし、図形と定規は何も変えずにやめる
-/// （2D と同じ）。
-pub(super) fn lost_release(app: &mut AppState, rect: Rect) {
+/// 離したのを取りこぼした（ウィンドウの外で離した・ペンの押しを OS に奪われて補った離し（`AppState::pen_release_lost`）など）: グラデーションは最後の位置で
+/// 離したことにし、図形と定規は何も変えずにやめる（2D と同じ。2D のグラデーションの補った離しも最後の位置で塗る）。この入力（`source`）で始めたドラッグだけ。
+pub(super) fn lost_release(app: &mut AppState, rect: Rect, source: StrokeSource) {
+    if app.view3d.input.draft.is_none_or(|d| d.source != source) {
+        return;
+    }
     if let Some(d) = app.view3d.input.draft.take() {
         if d.kind == DraftKind::Gradient {
             apply(app, rect, d);

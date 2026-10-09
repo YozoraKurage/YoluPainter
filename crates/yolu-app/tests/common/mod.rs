@@ -11,11 +11,80 @@ pub mod tmp;
 pub mod viewports;
 pub mod wait;
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
-use yolu_app::pen::PenInput;
+use yolu_app::pen::{PenInput, WindowMover};
 use yolu_app::state::AppState;
 use yolu_app::YoluApp;
+
+/// 試験の「ペン・指でウィンドウを動かす手」（Windows のウィンドウの代わり）: 呼ばれた回数を数え、`answer` が true の間だけ「動かし始めた」と答える。
+/// 渡した `StartDrag`・毎フレームの見張りの呼び出しも数える。
+pub struct TestMover {
+    calls: AtomicUsize,
+    answer: AtomicBool,
+    handed: AtomicUsize,
+    polls: AtomicUsize,
+}
+
+impl TestMover {
+    pub fn new(answer: bool) -> Arc<TestMover> {
+        Arc::new(TestMover {
+            calls: AtomicUsize::new(0),
+            answer: AtomicBool::new(answer),
+            handed: AtomicUsize::new(0),
+            polls: AtomicUsize::new(0),
+        })
+    }
+
+    /// `begin`（ペン・指で動かし始める）を呼ばれた回数。
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// 以後の答えを変える（触れているポインタが分かる・分からない）。
+    pub fn answer(&self, touching: bool) {
+        self.answer.store(touching, Ordering::SeqCst);
+    }
+
+    /// OS の移動の輪に渡した `StartDrag` の数。
+    pub fn handed(&self) -> usize {
+        self.handed.load(Ordering::SeqCst)
+    }
+
+    /// 毎フレームの見張りの呼び出しの数。
+    pub fn polls(&self) -> usize {
+        self.polls.load(Ordering::SeqCst)
+    }
+}
+
+impl WindowMover for TestMover {
+    fn begin(&self) -> bool {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.answer.load(Ordering::SeqCst)
+    }
+
+    fn start_drag_handed(&self) {
+        self.handed.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn poll(&self) {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// ペン・指の接触の始まりの入力（winit が `WM_POINTER` から作る Touch。egui の左ボタンの押しの前に付く）。
+pub fn touch_start(at: Pos2) -> Event {
+    Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Start,
+        pos: at,
+        force: Some(0.5),
+    }
+}
 
 /// 描画の設定: 実際のウィンドウ（eframe）と同じくテクスチャの補間を GPU のサンプラーに任せる（kittest の既定の「予測できる補間」は
 /// シェーダーの中の双線形と端の切り詰めで、Nearest と Repeat が効かず、拡大したキャンバスと市松が実際と違って見える）。

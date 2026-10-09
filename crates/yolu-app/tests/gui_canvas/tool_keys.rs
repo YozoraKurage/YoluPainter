@@ -395,6 +395,72 @@ fn a_pen_stroke_started_while_held_finishes_before_the_tool_returns() {
     }
 }
 
+/// 押している間だけ切り替えたツールで、ペンの押しを OS に奪われて離しが補われても、ツールが戻らないまま残らない: キーを先に離して待っていても、押しを後で
+/// 奪われても、ドラッグを終えて（図形は取りやめ・グラデーションは最後の位置で塗る）、キーが離れていれば前のツールに戻る。
+#[test]
+fn a_pen_press_taken_by_the_os_during_a_hold_tool_drag_lets_the_tool_return() {
+    for (command, key, shift, tool, paints) in [
+        ("tool.shape", Key::U, false, Tool::Shape, false),
+        ("tool.gradient", Key::G, true, Tool::Gradient, true),
+    ] {
+        for key_up_first in [true, false] {
+            let label = format!("{tool:?} key_up_first={key_up_first}");
+            let (mut h, c) = painted();
+            h.state_mut().state.drafting.fill = true;
+            set_mode(&mut h, command, ToolKeyMode::Hold);
+            let m = if shift {
+                Modifiers::SHIFT
+            } else {
+                Modifiers::NONE
+            };
+            h.event(Event::ModifiersChanged(m));
+            key_event(&h, key, true, false, m);
+            h.step();
+            h.step();
+            assert_eq!(st(&h).tool, tool, "{label}");
+            h.event(Event::ModifiersChanged(Modifiers::NONE));
+            h.step();
+            let (a, b) = (offset(c, -50.0, 0.0), offset(c, 50.0, 40.0));
+            pen_frames(&mut h, &[(a, true), (b, true)]);
+            let dragging = |h: &H| st(h).drafting.drag.is_some() || st(h).gradient.drag.is_some();
+            assert!(dragging(&h), "{label}: ペンのドラッグが始まった");
+            if key_up_first {
+                up(&mut h, key);
+                frames(&mut h, 20);
+                assert_eq!(st(&h).tool, tool, "{label}: ドラッグの途中は戻さない");
+                assert!(dragging(&h), "{label}");
+            }
+            // 押しを奪われて、離しが補われた
+            let steps = st(&h).doc.undo_count();
+            h.state().pen().push_lost(pen_at(b, false));
+            h.step();
+            h.run();
+            assert!(!dragging(&h), "{label}: ドラッグは残らない");
+            assert!(st(&h).canvas.pen_press.is_none(), "{label}");
+            assert_eq!(
+                st(&h).doc.undo_count(),
+                steps + usize::from(paints),
+                "{label}: 図形は取りやめ・グラデーションは最後の位置で塗る"
+            );
+            if key_up_first {
+                assert_eq!(st(&h).tool, Tool::Brush, "{label}: 奪われたあとで戻る");
+                assert!(!st(&h).temp_tool.is_active(), "{label}");
+            } else {
+                assert_eq!(
+                    st(&h).tool,
+                    tool,
+                    "{label}: キーを押している間は、そのツール"
+                );
+                assert!(st(&h).temp_tool.is_active(), "{label}");
+                up(&mut h, key);
+                h.run();
+                assert_eq!(st(&h).tool, Tool::Brush, "{label}: キーを離したら戻る");
+                assert!(!st(&h).temp_tool.is_active(), "{label}");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_toolbar_dot_marks_the_tool_that_comes_back_and_the_tooltips_stay_plain() {
     let (mut h, _) = painted();

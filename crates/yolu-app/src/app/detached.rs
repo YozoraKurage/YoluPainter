@@ -10,7 +10,7 @@
 //! タブの出し入れは、パスの中では起きたことを控えるだけ（`DockEvent`）で、全部のウィンドウを描いた後に当てる（ウィンドウをまたいで動かすので）。
 //!
 //! 自前の枠（Windows。メインウィンドウと同じ `custom_frame`）では OS の枠を外し、タブの並ぶ行の何も無い所を帯の代わりにする（引くと
-//! `StartDrag`、ダブルクリックで最大化と元に戻す）。行の右端に閉じる（OS の閉じると同じく、出す前の組へ戻す）、縁で大きさを変える
+//! `StartDrag`（ペンが触れた引きは、そのウィンドウのペンの受け口がウィンドウを動かす）、ダブルクリックで最大化と元に戻す）。行の右端に閉じる（OS の閉じると同じく、出す前の組へ戻す）、縁で大きさを変える
 //! （`titlebar`）。行の右端の閉じるの分は、どの組のタブの行も右を空ける（egui_dock の見た目はドック全体で 1 つ）。
 
 use std::collections::HashMap;
@@ -177,7 +177,9 @@ impl YoluApp {
             self.attach_native_mac(&ctx, win, &info);
             // WinTab の入切（設定「ペンの入力」）は、メインウィンドウと同じ札を、このウィンドウの文脈にも合わせる
             win.pen.sync_wintab();
-            pen = win.pen.drain();
+            let (drained, lost) = win.pen.drain_with_lost();
+            pen = drained;
+            self.state.pen_lost = lost;
             self.state.pressure_observe(ctx.pixels_per_point(), &pen);
             for sample in &mut pen {
                 sample.pressure = self.state.adjust_pressure(sample.pressure);
@@ -264,9 +266,11 @@ impl YoluApp {
         }
         if let (Some(drag), true) = (drag, own) {
             let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            for command in titlebar::drag_commands(&drag, &[], maximized) {
-                ctx.send_viewport_cmd(command);
-            }
+            titlebar::send_drag_commands(
+                &ctx,
+                titlebar::drag_commands(&drag, &[], maximized),
+                &win.pen,
+            );
         }
         let pass = DockPass {
             grabbed: tabs.grabbed,

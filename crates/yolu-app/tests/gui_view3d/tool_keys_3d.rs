@@ -379,3 +379,93 @@ fn releasing_the_key_in_the_middle_of_a_3d_gradient_shape_or_ruler_drag_finishes
         assert_eq!(st(&h).tool, Tool::Brush, "{tool:?}: 描き終えたら戻る");
     }
 }
+
+/// 3D でも、押している間だけ切り替えたグラデーション・図形・定規のペンのドラッグを OS に奪われて離しが補われたら、ドラッグを終えて（図形・定規はやめる、
+/// グラデーションは最後の位置で塗る）、キーが離れていれば前のツールに戻る。ツールが戻らないまま残らない。
+#[test]
+fn a_pen_press_taken_by_the_os_during_a_3d_hold_tool_drag_lets_the_tool_return() {
+    for (command, key, shift, tool) in [
+        ("tool.gradient", Key::G, true, Tool::Gradient),
+        ("tool.shape", Key::U, false, Tool::Shape),
+        ("tool.ruler", Key::U, true, Tool::Ruler),
+    ] {
+        for key_up_first in [true, false] {
+            let label = format!("{tool:?} key_up_first={key_up_first}");
+            let (mut h, rect) = cube_view();
+            h.state_mut().state.drafting.fill = true;
+            h.state_mut()
+                .state
+                .apply(Action::ToolKeyMode(command, ToolKeyMode::Hold));
+            h.run();
+            let m = if shift {
+                Modifiers::SHIFT
+            } else {
+                Modifiers::NONE
+            };
+            h.event(Event::ModifiersChanged(m));
+            h.event(Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: m,
+            });
+            h.step();
+            h.step();
+            assert_eq!(st(&h).tool, tool, "{label}");
+            h.event(Event::ModifiersChanged(Modifiers::NONE));
+            h.step();
+            let (a, b) = (
+                screen_of(&h, rect, Vec3::new(-0.3, -0.3, -0.5)),
+                screen_of(&h, rect, Vec3::new(0.3, 0.3, -0.5)),
+            );
+            for p in [a, a + (b - a) * 0.5, b] {
+                h.state().pen().push(pen_at(p, true));
+                h.step();
+            }
+            assert!(
+                yolu_app::view3d::draft::dragging(st(&h)),
+                "{label}: 3D のペンのドラッグが始まった"
+            );
+            if key_up_first {
+                up(&mut h, key);
+                frames(&mut h, 20);
+                assert_eq!(st(&h).tool, tool, "{label}: ドラッグの途中は戻さない");
+                assert!(yolu_app::view3d::draft::dragging(st(&h)), "{label}");
+            }
+            let steps = st(&h).doc.undo_count();
+            h.state().pen().push_lost(pen_at(b, false));
+            h.step();
+            h.run();
+            assert!(
+                !yolu_app::view3d::draft::dragging(st(&h)),
+                "{label}: ドラッグは残らない"
+            );
+            assert!(st(&h).view3d.input.pen_press.is_none(), "{label}");
+            assert!(
+                st(&h).view3d.ruler.is_none(),
+                "{label}: 補った離しでは定規を置かない"
+            );
+            assert_eq!(
+                st(&h).doc.undo_count(),
+                steps + usize::from(tool == Tool::Gradient),
+                "{label}: グラデーションだけ最後の位置で塗る: {}",
+                st(&h).message
+            );
+            if key_up_first {
+                assert_eq!(st(&h).tool, Tool::Brush, "{label}: 奪われたあとで戻る");
+                assert!(!st(&h).temp_tool.is_active(), "{label}");
+            } else {
+                assert_eq!(
+                    st(&h).tool,
+                    tool,
+                    "{label}: キーを押している間は、そのツール"
+                );
+                up(&mut h, key);
+                h.run();
+                assert_eq!(st(&h).tool, Tool::Brush, "{label}: キーを離したら戻る");
+                assert!(!st(&h).temp_tool.is_active(), "{label}");
+            }
+        }
+    }
+}

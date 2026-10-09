@@ -644,6 +644,43 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
     }
 }
 
+/// Ctrl+Space のペンの拡縮のクリック（動かさずに離す）は、離しの操作。OS に押しを奪われて補った離しでは出さない（マウスの取りこぼしと同じ）。本物の離しは拡大する。
+#[test]
+fn a_taken_pen_press_does_not_zoom_like_a_click_but_a_real_release_does() {
+    let mut h = app(1280.0, 800.0, 256);
+    let c = canvas_rect(&h).center();
+    let pen = Pen::tip().emulated();
+    hold(&mut h, Modifiers::CTRL);
+    hold_key(&mut h, Key::Space);
+    let anchor = offset(c, 100.0, 40.0);
+    let near = offset(anchor, 1.0, 0.0);
+    pen.down(&mut h, anchor);
+    pen.to(&mut h, near);
+    h.state().pen().push_lost(sample(near, false, false, false));
+    let modifiers = current_modifiers(&h);
+    h.input_mut().events.push(Event::PointerButton {
+        pos: near,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    h.step();
+    assert_eq!(
+        view_of(&h).zoom,
+        1.0,
+        "補った離しではクリックの拡縮をしない"
+    );
+    assert!(
+        h.state().state.canvas.zooming.is_none() && h.state().state.canvas.pen_press.is_none(),
+        "押しの途中は残らない"
+    );
+    // 本物の離しは、同じ操作で 2 倍にする
+    pen.drag(&mut h, &[anchor, near]);
+    assert_eq!(view_of(&h).zoom, 2.0, "クリックで 2 倍");
+    release_key(&mut h, Key::Space);
+    release_mods(&mut h);
+}
+
 #[test]
 fn the_mouse_zooms_with_ctrl_and_space_and_pans_with_space_alone() {
     let mut h = app(1280.0, 800.0, 256);

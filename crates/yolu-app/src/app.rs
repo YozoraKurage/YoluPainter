@@ -1675,6 +1675,12 @@ impl YoluApp {
         &self.pen
     }
 
+    /// 試験用: メインウィンドウのペンの受け口の、ウィンドウをアプリの側で動かす手を差し替える（None は手が無い受け口。Windows 以外と同じ）。
+    #[doc(hidden)]
+    pub fn set_pen_mover(&mut self, mover: Option<std::sync::Arc<dyn crate::pen::WindowMover>>) {
+        self.pen = self.pen.clone().with_mover(mover);
+    }
+
     /// egui が受けるポインタの入力のうち、サイドボタンを押したペンの接触を右ボタンに直す（`eframe::App::raw_input_hook` が毎フレーム
     /// 呼ぶ。winit はペンを左ボタンの押しにしか変えないので、これが無いと、ペンではどの部品の右クリックのメニューも開かない）。
     pub fn remap_pen_buttons(&mut self, events: &mut [egui::Event]) {
@@ -1732,7 +1738,9 @@ impl YoluApp {
         if let Some(why) = self.pen.take_wintab_notice() {
             self.state.wintab_unavailable(why);
         }
-        let mut pen = self.pen.drain();
+        // 補った離し（OS に押しを奪われて、離しの点を補った）の印も一緒に取る。2D と 3D の入力が、本物の離しと分けて扱う
+        let (mut pen, lost) = self.pen.drain_with_lost();
+        self.state.pen_lost = lost;
         // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
         let edge = self.custom_frame.then(|| {
@@ -1931,9 +1939,7 @@ impl YoluApp {
                     caption = titlebar::buttons(ui, r, maximized, self.state.lang);
                 }
             });
-        for command in frame_commands {
-            ctx.send_viewport_cmd(command);
-        }
+        titlebar::send_drag_commands(&ctx, frame_commands, &self.pen);
         match caption {
             // 閉じるは、メニューの「終了」と同じ道（保存していない変更の確かめ。下の終了の処理が受ける）
             Some(titlebar::Button::Close) => self.state.apply(Action::Quit),

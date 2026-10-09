@@ -907,6 +907,9 @@ pub struct AppState {
     pub shortcuts: crate::shortcuts::ShortcutWindow,
     /// 筆圧の調整のウィンドウ（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
     pub pressure: crate::pen::window::PressureWindow,
+    /// 今描いているウィンドウのペンの点のうち、OS に押しを奪われて補った離し（本物の離しではない）のポインタの番号。ウィンドウごとのパスの始めに、そのウィンドウの
+    /// ペンの受け口（`PenInput::drain_with_lost`）から入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
+    pub pen_lost: Vec<u32>,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・ツールごとの覚え・見本・詳細のウィンドウ）。アプリの状態で、.ylp には入れない。
@@ -1124,6 +1127,7 @@ impl AppState {
             uv_overlap: Default::default(),
             shortcuts: crate::shortcuts::ShortcutWindow::default(),
             pressure: crate::pen::window::PressureWindow::default(),
+            pen_lost: Vec::new(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
             crash: Default::default(),

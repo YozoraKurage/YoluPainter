@@ -59,6 +59,11 @@ pub trait CanvasTool: Sync {
         contact: bool,
         ctx: &InputCtx,
     );
+    /// ペンの押しを OS に奪われて、離しが補われた（離した位置は最後の点で、本物の離しではない。`AppState::pen_release_lost`）。既定は普通の離し（最後の位置で離す）。
+    /// `lost_release` を上書きして、離した位置を使わない終わらせ方にしたツールは、これも同じ終わらせ方に上書きする。
+    fn pen_lost(&self, app: &mut AppState, view: &CanvasView, at: Pos2, id: u32, ctx: &InputCtx) {
+        self.pen(app, view, at, id, false, ctx);
+    }
     /// このペンで押している途中か。
     fn pen_active(&self, app: &AppState, id: u32) -> bool;
     /// 自分のドラッグがあるか（`source` が Some なら、その入力で始めたもの）。
@@ -287,6 +292,20 @@ impl CanvasTool for DraftingInput {
     fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
         // 図形は離した位置が不明なら取消し、画素を変更しない
         app.drafting_cancel();
+    }
+    fn pen_lost(
+        &self,
+        app: &mut AppState,
+        _view: &CanvasView,
+        _at: Pos2,
+        id: u32,
+        _ctx: &InputCtx,
+    ) {
+        // ペンの押しも、マウスの取りこぼしと同じく取り消す（補った離しの位置は、本物の離しの位置ではない）
+        if app.drafting.pen_down == Some(id) {
+            app.drafting_cancel();
+            app.drafting.pen_down = None;
+        }
     }
     fn cancel(&self, app: &mut AppState, _ctx: &InputCtx) -> bool {
         // 図形と定規は離すまで画素・定規を変更しない

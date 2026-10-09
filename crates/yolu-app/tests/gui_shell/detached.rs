@@ -7,6 +7,7 @@
 use crate::common;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use common::viewports::Driver;
 use common::*;
@@ -18,7 +19,7 @@ use egui_kittest::Harness;
 use yolu_app::app::default_dock;
 use yolu_app::detach::{self, place, DockOp, Place};
 use yolu_app::layout::{self, DetachedRecord, FloatRecord};
-use yolu_app::pen::PenInput;
+use yolu_app::pen::{PenInput, PenSample};
 use yolu_app::shell;
 use yolu_app::state::{Action, AppState};
 use yolu_app::windowpos::{Monitor, PxRect};
@@ -1174,10 +1175,20 @@ fn play_child(
     id: ViewportId,
     events: Vec<Event>,
 ) -> (Vec<ViewportCommand>, Vec<ViewportCommand>) {
+    play_child_groups(h, driver, id, events.into_iter().map(|e| vec![e]).collect())
+}
+
+/// 子ウィンドウに入力を、グループごとに 1 フレームで渡す（winit は、ペン・指の接触の始まりの Touch と、その押しの代わりの入力を、同じ入力のまとまりに入れる）。
+fn play_child_groups(
+    h: &mut Harness<'static, YoluApp>,
+    driver: &Driver,
+    id: ViewportId,
+    groups: Vec<Vec<Event>>,
+) -> (Vec<ViewportCommand>, Vec<ViewportCommand>) {
     let mut child = Vec::new();
     let mut root = Vec::new();
-    for event in events {
-        driver.child(id, |c| c.events.push(event));
+    for group in groups {
+        driver.child(id, |c| c.events.extend(group));
         h.step();
         let out = h.output();
         let take = |v: ViewportId| {
@@ -1418,6 +1429,226 @@ fn without_the_custom_frame_the_tab_row_and_the_right_end_do_nothing_to_the_wind
         "{child:?}"
     );
     assert_eq!(h.state().detached.windows.len(), 1, "閉じるは無い");
+}
+
+// ───────── 帯をペン・指で引く（Windows。Linux でも手の差し替えで確かめる） ─────────
+
+/// 別ウィンドウ 1 つ目のペンの受け口に、試験の手を付ける。
+fn give_mover(h: &mut Harness<'static, YoluApp>, mover: &Arc<TestMover>) {
+    let mover: Arc<dyn yolu_app::pen::WindowMover> = mover.clone();
+    h.state_mut().detached.windows[0].set_pen_mover(Some(mover));
+}
+
+/// ペンや指の引き: 触れた入力（Touch の始まり）と押しを同じフレームで渡し、離さずに引く。
+fn child_pen_hold(from: Pos2, by: egui::Vec2) -> Vec<Vec<Event>> {
+    let mut groups = vec![vec![
+        touch_start(from),
+        Event::PointerMoved(from),
+        child_button(from, true),
+    ]];
+    for i in 1..=6 {
+        groups.push(vec![Event::PointerMoved(from + by * (i as f32 / 6.0))]);
+    }
+    groups
+}
+
+/// ペンや指の引き（離すまで）。
+fn child_pen_drag(from: Pos2, by: egui::Vec2) -> Vec<Vec<Event>> {
+    let mut groups = child_pen_hold(from, by);
+    groups.push(vec![child_button(from + by, false)]);
+    groups
+}
+
+fn starts(commands: &[ViewportCommand]) -> usize {
+    commands.iter().filter(|c| starts_drag(c)).count()
+}
+
+#[test]
+fn with_the_custom_frame_a_pen_drag_on_the_empty_tab_row_is_moved_by_the_app_not_by_the_os_loop() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, root) =
+        play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1, "引き始めでアプリの手を 1 度呼ぶ");
+    assert_eq!(
+        starts(&child),
+        0,
+        "ペンの引きは OS の移動の輪に渡さない: {child:?}"
+    );
+    assert_eq!(starts(&root), 0, "{root:?}");
+    assert_eq!(mover.handed(), 0, "輪に渡していない");
+    assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
+}
+
+/// 触れているポインタが分からなくて動かせなくても（点が途絶えた・指など）、ペン・指の押しは OS の移動の輪に渡さない: 元の不具合の道に戻らない。
+#[test]
+fn a_pen_or_finger_press_never_goes_to_the_os_loop_even_when_the_app_cannot_move_the_window() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(false);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    assert_eq!(mover.handed(), 0);
+    // 止めたペン: 押してしばらく動かさず（点が途絶える）から動かしても、アプリの側で動かす（OS の移動の輪に戻らない）
+    let before = mover.calls();
+    let (mut seen, _) = play_child_groups(
+        &mut h,
+        &driver,
+        id,
+        vec![vec![
+            touch_start(at),
+            Event::PointerMoved(at),
+            child_button(at, true),
+        ]],
+    );
+    for _ in 0..30 {
+        h.step();
+        seen.extend(
+            h.output()
+                .viewport_output
+                .get(&id)
+                .map(|o| o.commands.clone())
+                .unwrap_or_default(),
+        );
+    }
+    let (moved, _) = play_child(
+        &mut h,
+        &driver,
+        id,
+        vec![
+            Event::PointerMoved(at + vec2(20.0, 0.0)),
+            Event::PointerMoved(at + vec2(40.0, 10.0)),
+            child_button(at + vec2(40.0, 10.0), false),
+        ],
+    );
+    seen.extend(moved);
+    assert_eq!(starts(&seen), 0, "{seen:?}");
+    assert_eq!(
+        mover.calls(),
+        before + 1,
+        "止めたあとに動かしたとき、手を呼ぶ"
+    );
+}
+
+#[test]
+fn a_mouse_drag_still_starts_the_os_move_and_tells_the_watch() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    assert_eq!(mover.calls(), 0, "マウスの引きでは、アプリの手を呼ばない");
+    assert_eq!(mover.handed(), 1, "輪に渡したと見張りに伝える");
+    assert!(
+        mover.polls() >= 6,
+        "見張りは毎フレーム呼ばれる: {}",
+        mover.polls()
+    );
+    // 手の無い受け口（Windows 以外・繋ぐ前）の引きは、ペンの接触でも今までどおり StartDrag
+    h.state_mut().detached.windows[0].set_pen_mover(None);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+}
+
+/// 補った離し（`WM_LBUTTONUP` → winit のマウスの離し → egui のポインタの離し）が届いたあとは、次のマウスの引きでまた StartDrag が出る。
+#[test]
+fn after_a_pen_press_was_taken_and_released_for_it_the_next_mouse_drag_starts_the_os_move_again() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    // ペンで引いている途中（離しは来ない）
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_hold(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // 補われた離し
+    let (child, _) = play_child(
+        &mut h,
+        &driver,
+        id,
+        vec![child_button(at + vec2(60.0, 30.0), false)],
+    );
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // 次はマウス
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+}
+
+/// ペンの押しの離しが egui に一度も届かなくても、次のマウスの押しは、押し出しの出どころ（Touch の無い押し）を見て、マウスの引きとして StartDrag を出す。
+/// ただし egui は、離しが来るまで前の引きを続けているので、マウスの 1 度目の引きは StartDrag にならず、押しと離しを 1 度挟んだ 2 度目で出る
+/// （これが、ペンの受け口の側で離しを補う理由）。
+#[test]
+fn without_the_release_the_first_mouse_drag_after_a_pen_press_does_not_start_the_os_move() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let _ = play_child_groups(&mut h, &driver, id, child_pen_hold(at, vec2(60.0, 30.0)));
+    let (first, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    let (second, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&first), 0, "{first:?}");
+    assert_eq!(starts(&second), 1, "{second:?}");
+    assert_eq!(
+        mover.calls(),
+        1,
+        "手を呼んだのはペンの引きの 1 度だけ（マウスの押しは、ペンの押しとして数えない）"
+    );
+}
+
+/// ペンでタブを引いて別ウィンドウにし、その帯をペンで引いて動かしたあとも、マウスでもペンでもまた引ける（ペンの引きは OS の移動の輪に渡さないので、輪の印が残らない）。
+#[test]
+fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then_by_the_mouse() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_custom_frame(true);
+    h.run();
+    // ペンでタブの見出しを押して外へ引いて離す
+    let tab = h.state().tab_rects[&Tab::Navigator];
+    let sample = |at: Pos2, contact: bool| PenSample {
+        pos: [at.x, at.y],
+        pressure: if contact { 0.5 } else { 0.0 },
+        tilt: yolu_app::engine::Tilt::default(),
+        rotation: None,
+        contact,
+        eraser: false,
+        barrel: false,
+        pointer_id: 5,
+        time_ms: 0,
+    };
+    let (from, to) = (tab.center(), pos2(1500.0, 300.0));
+    h.state().pen().push(sample(from, true));
+    drag_tab(&mut h, from, to);
+    h.state().pen().push(sample(to, false));
+    h.run();
+    assert_eq!(h.state().detached.windows.len(), 1, "別ウィンドウができる");
+    let id = h.state().detached.windows[0].viewport_id();
+    driver.child(id, |c| {
+        c.inner = Some(OUTSIDE);
+        c.focused = true;
+    });
+    sync(&mut h, &driver);
+    h.run();
+    // その帯をペンで引く → OS の移動の輪ではなく、アプリの側で動かす
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::Navigator);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // もう一度ペンで引ける
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(-40.0, 20.0)));
+    assert_eq!(mover.calls(), 2);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // マウスで引くと OS の移動になる
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    assert_eq!(mover.calls(), 2, "マウスの引きでは手を呼ばない");
+    assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
 }
 
 /// 絵: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。

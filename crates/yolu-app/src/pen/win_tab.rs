@@ -38,6 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 
+use super::capture::{self, Loss};
 use super::wintab::{
     self, batch_positions, map_name, sample_from_packet, Axis, CursorInfo, Device, InkMessage,
     LogContext, OrientationAxes, OutputRange, Owner, PacketLayout, PressOwner, RawPacket, Rect,
@@ -202,6 +203,14 @@ fn log_flush() {
 fn log_message(what: &str, offset: u32, lparam: isize) {
     if log_enabled() {
         log_line(&format!("{what} offset={offset} lparam=0x{lparam:x}"));
+        log_flush();
+    }
+}
+
+/// 記録に 1 行（`YOLU_PEN_LOG` があるときだけ。行は記録が有効なときにだけ作る）。
+pub(super) fn log_event(line: impl FnOnce() -> String) {
+    if log_enabled() {
+        log_line(&line());
         log_flush();
     }
 }
@@ -609,6 +618,8 @@ struct State {
 pub(super) struct Tab {
     hwnd: isize,
     queue: Arc<Mutex<Vec<PenSample>>>,
+    /// 補った離しのポインタの番号（`queue` と同じ錠の中で足す。`PenInput::drain_with_lost`）。
+    lost: Arc<Mutex<Vec<u32>>>,
     ctx: egui::Context,
     /// 設定で WinTab を選んでいるか。
     wanted: Arc<AtomicBool>,
@@ -630,6 +641,7 @@ impl Tab {
     pub(super) fn new(
         hwnd: isize,
         queue: Arc<Mutex<Vec<PenSample>>>,
+        lost: Arc<Mutex<Vec<u32>>>,
         ctx: egui::Context,
         wanted: Arc<AtomicBool>,
         notice: Arc<Mutex<WintabNotice>>,
@@ -637,6 +649,7 @@ impl Tab {
         Tab {
             hwnd,
             queue,
+            lost,
             ctx,
             wanted,
             notice,
@@ -677,6 +690,27 @@ impl Tab {
         }
         drop(ink);
         log_ink(samples);
+    }
+
+    /// 触れている Windows Ink のペンの最後の点（触れていなければ None）。
+    pub(super) fn touching(&self) -> Option<PenSample> {
+        self.ink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .touching()
+    }
+
+    /// 押しを奪う合図 `loss` が触れている Windows Ink の押しを奪ったなら、その離しを（補った離しの印つきで）受け口へ入れ、押しの持ち主（Windows Ink）を手放す
+    /// （`capture::seize`）。
+    pub(super) fn seize(&self, loss: Loss) -> Option<PenSample> {
+        let lift = {
+            let mut ink = self.ink.lock().unwrap_or_else(|e| e.into_inner());
+            let mut owner = self.owner.lock().unwrap_or_else(|e| e.into_inner());
+            capture::seize(&mut ink, &mut owner, loss)
+        }?;
+        super::push_lost(&self.queue, &self.lost, lift);
+        self.ctx.request_repaint();
+        Some(lift)
     }
 
     /// Windows Ink のペンの点のうち、押しの持ち主が許す物（`wintab::route_ink`）。押しの始まりでは、先に WinTab のパケットを取って持ち主を決める。

@@ -484,6 +484,64 @@ fn pen_shape_cancel_stays_cancelled_until_lift_and_focus_loss_discards_preview()
     assert!(!h.state().state.doc.can_undo());
 }
 
+/// OS に押しを奪われて補った離し（`PenInput::push_lost`）。egui には、補ったときに post されるマウスの離し（winit が egui のポインタの離しにする）も届く。
+fn pen_lost(h: &mut Harness<'_, YoluApp>, p: Pos2) {
+    h.state().pen().push_lost(PenSample {
+        pos: [p.x, p.y],
+        pressure: 0.0,
+        tilt: Default::default(),
+        rotation: None,
+        contact: false,
+        eraser: false,
+        barrel: false,
+        pointer_id: 5,
+        time_ms: 100,
+    });
+    h.input_mut().events.push(Event::PointerButton {
+        pos: p,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+}
+
+/// 図形の途中でペンの押しを OS に奪われて離しが補われたら、離した位置が不明なので取りやめる（マウスの取りこぼしと同じ。画素を変えない）。本物の離しは確定する。
+#[test]
+fn a_shape_pen_press_taken_by_the_os_is_cancelled_while_a_real_release_commits_it() {
+    let mut h = common::app(1280.0, 800.0, 64);
+    h.state_mut().state.tool = Tool::Shape;
+    h.state_mut().state.drafting.figure = Figure::Ellipse;
+    h.state_mut().state.drafting.fill = true;
+    let a = point(&h, 10.0, 10.0);
+    let b = point(&h, 50.0, 50.0);
+    // 本物の離し: 確定する
+    pen(&mut h, a, true, 1.0, Modifiers::NONE);
+    pen(&mut h, b, true, 1.0, Modifiers::NONE);
+    assert!(h.state().state.drafting.drag.is_some());
+    pen(&mut h, b, false, 0.0, Modifiers::NONE);
+    assert!(alpha(&h.state().state, 30, 30) > 0, "本物の離しは確定する");
+    h.state_mut().state.doc.undo().unwrap();
+    assert_eq!(alpha(&h.state().state, 30, 30), 0);
+    // 奪われて補った離し: 取りやめる
+    pen(&mut h, a, true, 1.0, Modifiers::NONE);
+    pen(&mut h, b, true, 1.0, Modifiers::NONE);
+    pen_lost(&mut h, b);
+    let s = &h.state().state;
+    assert!(s.drafting.drag.is_none(), "途中の図形は残らない");
+    assert!(
+        s.drafting.pen_down.is_none(),
+        "このペンの押しの印も残らない"
+    );
+    assert_eq!(alpha(s, 30, 30), 0, "補った離しで確定しない");
+    assert!(!s.doc.can_undo(), "履歴にも残さない");
+    // 次の押しは新しい押しとして始まり、確定する
+    pen(&mut h, a, true, 1.0, Modifiers::NONE);
+    pen(&mut h, b, true, 1.0, Modifiers::NONE);
+    pen(&mut h, b, false, 0.0, Modifiers::NONE);
+    assert!(alpha(&h.state().state, 30, 30) > 0);
+}
+
 #[test]
 fn shape_and_ruler_shortcuts_select_their_tools() {
     let mut h = common::app(1280.0, 800.0, 64);

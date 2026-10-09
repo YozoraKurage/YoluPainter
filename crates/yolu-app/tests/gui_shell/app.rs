@@ -312,6 +312,63 @@ fn pen_samples_paint_with_pressure_and_the_eraser_end_erases() {
     );
 }
 
+/// 離しが届かないまま OS にペンの押しを奪われたとき: 離しが補われるまでは、その押しがキャンバスに残って別のポインタの番号の押しを使わない。補われた離しで
+/// ストロークが終わり、次の押し（別のポインタの番号）は新しい押しとして描ける。
+#[test]
+fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints() {
+    use yolu_app::pen::capture::{seize, Loss};
+    use yolu_app::pen::wintab::{PressOwner, Touch};
+    let mut h = app(1280.0, 800.0, 256);
+    let r = canvas_rect(&h);
+    let c = r.center();
+    let pixel = h.state().state.view.view(r, 256, 256).pixel_size();
+    let (mut touch, mut owner) = (Touch::default(), PressOwner::default());
+    // 押して、少し動かす（離しは来ない）
+    for p in [c, offset(c, 20.0 * pixel, 0.0)] {
+        let s = pen(p, 0.5, true, false);
+        touch.note(&s);
+        h.state().pen().push(s);
+    }
+    h.run();
+    assert!(
+        h.state().state.doc.has_active_stroke(),
+        "離しが来ないあいだは描いている"
+    );
+    // 別のポインタの番号の押しは、前の押しが残っているあいだは使われない
+    let elsewhere = offset(c, 0.0, 60.0 * pixel);
+    let other = |contact: bool| PenSample {
+        pointer_id: 9,
+        ..pen(elsewhere, 0.5, contact, false)
+    };
+    h.state().pen().push(other(true));
+    h.state().pen().push(other(false));
+    h.run();
+    assert_eq!(
+        canvas_pixel(&h, elsewhere)[3],
+        0,
+        "前の押しが残っていると、次の押しは描けない"
+    );
+    // 押しを奪われた → 離しが補われ、ストロークが終わる
+    let lift = seize(&mut touch, &mut owner, Loss::Pointer { id: 7, kept: false })
+        .expect("触れていた押しの離しが補われる");
+    h.state().pen().push_lost(lift);
+    h.run();
+    assert!(!h.state().state.doc.has_active_stroke());
+    assert!(
+        canvas_pixel(&h, c)[3] > 0,
+        "終わったストロークは描かれている"
+    );
+    // 次の押しは新しい押しとして描ける
+    h.state().pen().push(other(true));
+    h.state().pen().push(other(false));
+    h.run();
+    assert!(
+        canvas_pixel(&h, elsewhere)[3] > 0,
+        "次の押しは新しい押しとして描ける"
+    );
+    assert!(!h.state().state.doc.has_active_stroke());
+}
+
 #[test]
 fn layer_panel_add_hide_blend_and_opacity() {
     use egui_kittest::kittest::Queryable;

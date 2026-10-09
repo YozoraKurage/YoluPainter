@@ -737,18 +737,26 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
         }
         app.canvas.pen_press = Some(PenPress { last: p, ..press });
     } else {
+        // OS に押しを奪われて補った離し（本物の離しではない）は、マウスの取りこぼしと同じに扱う: 離しの操作（クリックの拡縮・クローンの元）はしない、スポイトは色を取らない、
+        // 離した位置が要るツールは取りやめる。ストロークは今までどおり、そこまでを終える
+        let lost = app.pen_release_lost(s);
         match press.kind {
             PressKind::Ignored => {}
+            PressKind::View if lost => nav::cancel(app),
             PressKind::View => nav::released(app, rect, p, pen_button(s)),
             PressKind::Eyedrop => {
-                let inside = on_top(ui, rect, p);
+                let inside = !lost && on_top(ui, rect, p);
                 crate::eyedrop::right_end(app, &view, source, p, inside);
             }
             PressKind::Tool => {
                 if app.canvas.stroke == Some(source) {
                     finish_stroke(app, false);
                 }
-                drive_pen(app, &view, p, s.pointer_id, false, frame);
+                if lost {
+                    lost_pen(app, &view, p, s.pointer_id, frame);
+                } else {
+                    drive_pen(app, &view, p, s.pointer_id, false, frame);
+                }
             }
         }
         app.canvas.pen_press = None;
@@ -758,6 +766,27 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
 /// ペンを押す・動く・離すとして渡すツール（ドラッグの札を持つツール。ツールの表の `canvas`）。
 fn drives_pen(app: &AppState) -> bool {
     app.tool.def().canvas.is_some()
+}
+
+/// ペンの点を渡すときの入力の前提。
+fn pen_input_ctx(app: &AppState, frame: &Frame) -> InputCtx {
+    InputCtx {
+        modifiers: frame.modifiers,
+        now: frame.now,
+        rect: app.ui.canvas_rect.unwrap_or(Rect::NOTHING),
+        pass: 0,
+    }
+}
+
+/// ペンの押しを OS に奪われて離しが補われたとき、そのペンで押している途中のツールの終わらせ方（`CanvasTool::pen_lost`）。
+fn lost_pen(app: &mut AppState, view: &CanvasView, p: Pos2, id: u32, frame: &Frame) {
+    let ctx = pen_input_ctx(app, frame);
+    for kind in CanvasKind::ALL {
+        let handler = kind.handler();
+        if handler.pen_active(app, id) {
+            handler.pen_lost(app, view, p, id, &ctx);
+        }
+    }
 }
 
 /// ドラッグの札を持つツール（選択・移動と変形・グラデーション・図形と定規・パス）のペン（触れる・動く・離すを、押す・動く・離すにする）。押しの始めは今のツールへ、
@@ -770,12 +799,7 @@ fn drive_pen(
     contact: bool,
     frame: &Frame,
 ) {
-    let ctx = InputCtx {
-        modifiers: frame.modifiers,
-        now: frame.now,
-        rect: app.ui.canvas_rect.unwrap_or(Rect::NOTHING),
-        pass: 0,
-    };
+    let ctx = pen_input_ctx(app, frame);
     let starting = contact
         && !CanvasKind::ALL
             .iter()

@@ -751,6 +751,11 @@ impl Touch {
     pub fn is_touching(&self) -> bool {
         self.last.is_some()
     }
+
+    /// 触れている最後の点（触れていなければ None）。
+    pub fn touching(&self) -> Option<PenSample> {
+        self.last
+    }
 }
 
 // ───────── 押しの持ち主 ─────────

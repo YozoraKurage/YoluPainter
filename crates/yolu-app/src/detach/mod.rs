@@ -113,6 +113,12 @@ pub struct OsWindow {
 }
 
 impl OsWindow {
+    /// 試験用: このウィンドウのペンの受け口の、ウィンドウをアプリの側で動かす手を差し替える（None は手が無い受け口。Windows 以外と同じ）。
+    #[doc(hidden)]
+    pub fn set_pen_mover(&mut self, mover: Option<std::sync::Arc<dyn crate::pen::WindowMover>>) {
+        self.pen = self.pen.clone().with_mover(mover);
+    }
+
     /// このウィンドウの viewport。
     pub fn viewport_id(&self) -> ViewportId {
         viewport_of(self.serial)
