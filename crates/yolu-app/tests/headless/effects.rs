@@ -719,6 +719,50 @@ fn a_generator_says_which_map_is_missing_until_the_maps_are_baked_and_then_works
     assert_ne!(composite(&s), before, "焼いたマップで合成が変わる");
 }
 
+/// 焼いたマップがそろっているところへ、そのマップを読むジェネレーターを足す。文書へ渡すマップは今の効果が読む分だけなので、足した直後は
+/// まだ渡っていないが、その場で渡してから理由を見る: 足した知らせに「効果がありません（…のマップがありません）」が出ない（日英）。
+/// 本当に焼いていないマップ（厚み）は、今までどおり理由を言う。
+#[test]
+fn adding_a_generator_whose_maps_are_baked_does_not_claim_a_map_is_missing() {
+    for lang in [Lang::Ja, Lang::En] {
+        let claim = lang.pick("効果がありません", "It has no effect");
+        // 汚れ・隙間（AO と曲率）・エッジの摩耗（曲率）・位置のグラデーション（位置）・向き（ワールドの法線）
+        for kind in [
+            Kind::Dirt,
+            Kind::EdgeWear,
+            Kind::PositionGradient,
+            Kind::Direction,
+        ] {
+            let mut s = cube();
+            s.lang = lang;
+            bake(&mut s);
+            assert!(s.doc.inactive_effect_list().is_empty());
+            let (layer, id) = masked_fill(&mut s, kind);
+            assert!(
+                !s.message.contains(claim),
+                "{kind:?} {lang:?}: {}",
+                s.message
+            );
+            assert_eq!(
+                s.doc.generator_inactive(layer, id).unwrap(),
+                None,
+                "{kind:?}: {}",
+                s.message
+            );
+            // 足すだけでは取り消しの段は 1 つ（入力を渡すのは文書の版を上げない）
+            s.apply(Action::Undo);
+            assert_eq!(filters(&s, layer, FilterTarget::Mask), 0, "{kind:?}");
+        }
+        // 焼いていないマップ（厚み）は本当に無い
+        let mut s = cube();
+        s.lang = lang;
+        bake(&mut s);
+        let (layer, id) = masked_fill(&mut s, Kind::Thickness);
+        assert!(s.message.contains(claim), "{lang:?}: {}", s.message);
+        assert!(s.doc.generator_inactive(layer, id).unwrap().is_some());
+    }
+}
+
 #[test]
 fn maps_go_stale_with_the_bake_settings_and_the_generator_says_so() {
     let mut s = cube();
