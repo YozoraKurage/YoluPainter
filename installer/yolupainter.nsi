@@ -410,6 +410,7 @@ Section "Uninstall"
   Delete "$APPDATA\${PRODUCT}\recovery.conf"
   Delete "$APPDATA\${PRODUCT}\update.conf"
   Delete "$APPDATA\${PRODUCT}\layout.json"
+  Delete "$APPDATA\${PRODUCT}\places.conf"
   ; 書き込み途中の一時ファイル: 今の版は .{名前}.{pid}-{番号}.pending~、前の版は {名前}.{pid}.pending
   Delete "$APPDATA\${PRODUCT}\.*.pending~"
   Delete "$APPDATA\${PRODUCT}\*.pending"

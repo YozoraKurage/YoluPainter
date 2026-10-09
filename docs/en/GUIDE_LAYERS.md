@@ -6,13 +6,14 @@ This page covers creating and arranging layers, masks, adjustment layers and cha
 
 ## Creating and arranging layers
 
-Create layers with the buttons below the Layers panel or the Layer menu in the menu bar. The same items are in the right-click menu of a layer and of the empty area of the list.
+Create layers with the buttons below the Layers panel or the Layer menu in the menu bar. The same items are in the right-click menu of a layer and of the empty area of the list (the buttons below the panel are only New Layer, New Fill Layer and New Adjustment Layer). A new layer is made right above the selected layer (inside the group, if a layer in a group is selected), and on top when no layer is selected.
 
 | Item | What it creates |
 |---|---|
 | New Layer (`Ctrl+Shift+N`) | A layer that holds pixels |
 | New Fill Layer | Solid Color, Gradient Decal, Image or Decal ([GUIDE_FILL.md](GUIDE_FILL.md)) |
 | New Adjustment Layer | See “Adjustment layers” below |
+| New Path Layer | A layer with one path that has no points. It switches to the Path tool, and the first point you place becomes a path of this layer ([GUIDE_PATHS.md](GUIDE_PATHS.md)) |
 | New Group | A container for layers |
 
 - **Select**: click a row. `Ctrl`+click adds or removes, `Shift`+click selects a range, and `Ctrl+Shift`+click adds a range.

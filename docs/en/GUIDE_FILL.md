@@ -6,7 +6,7 @@ This page covers fill layers (layers that paint surfaces with values, images or 
 
 ## Create a fill layer
 
-Choose a type from "New Fill Layer" in the Layers panel (the same item is in the Layer menu).
+Choose a type from "New Fill Layer" in the Layers panel (the same item is in the Layer menu). It is made right above the selected layer (inside the group, if a layer in a group is selected).
 
 | Type | What it creates |
 |---|---|

@@ -8,6 +8,7 @@ The Path tool (`P`) draws an editable curve through a series of points, on the 2
 
 1. Choose the Path tool (`P`) in the left toolbar and select the layer to draw on.
 2. Click the canvas, or a surface of the model in the 3D view, to place the first point. If an ordinary layer is selected, a new path layer is created above it. If a path layer or a fill layer is selected, the point becomes a path of that layer.
+   To make the layer before placing a point, use New Path Layer in the Layer menu (and the right-click menu). It makes a layer with a path that has no points right above the selected layer and switches to the Path tool, and the first point (in 2D or in 3D) becomes a path of that layer.
 3. Keep clicking to add points at the end. Click on the curve to insert a point into that segment, and drag a point to move it.
 4. `Delete` (or `Backspace`) removes the selected point, or the last point when none is selected.
 5. `Enter` leaves the path. The next click starts a new path on the same layer. `Esc` cancels a drag; otherwise it clears the point selection; when no point is selected, it leaves the path.

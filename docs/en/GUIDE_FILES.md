@@ -89,6 +89,15 @@ A smart material's `.ylsmart` can be imported into the assets and the library.
 - Tiles are written uncompressed, so the disk used never exceeds the amount of the document's pixels. Cache files left by a previous run are deleted in the background at start.
 - If a tile cannot be read back from the disk, that texture set becomes read-only and you are told. A save writes what was there when the set was opened. A set that was never saved has no original content, so only that set is left out of saving and recovery checkpoints.
 
+## Where the file windows start
+
+A window that chooses a file or folder starts in the first existing place of the following.
+
+- **Open, import, export**: the folder you last chose for that kind (project, model, PSD import and export, image import and export, brushes, fonts, key settings, assets and library, color sets, Save for Distribution, settings folders) → the folder of the open project's `.ylp` → the OS Documents folder.
+- **Save, Save As**: for a document opened from a backup `.ylp`, the folder of the original `.ylp` → the folder of the open project's `.ylp` → the folder last chosen for projects → the OS Documents folder.
+
+The folder last chosen is kept per kind in `places.conf` in the settings folder (if you delete it, the app remembers again from the next choice). A folder that no longer exists is not used. For a template export of a model opened with Live Link, the folder Unity reported still comes first.
+
 ## Handing files to older versions and Unity
 
 A `.ylp` that uses any of these is saved under a newer version number that the 0.4.x standalone app and the Unity version up to 0.4.x cannot open (the Unity bridge does not open `.ylp` from 0.5.0):

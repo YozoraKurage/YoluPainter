@@ -31,6 +31,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | --- | --- | --- |
 | `%APPDATA%\YoluPainter\settings.conf` | Settings | Removed |
 | `%APPDATA%\YoluPainter\recovery.conf`, `update.conf`, `layout.json` | Recovery settings, the update-check and beta choices, panel and window layout | Removed |
+| `%APPDATA%\YoluPainter\places.conf` | Where the file windows start (the folder last chosen for each kind) | Removed |
 | `%APPDATA%\YoluPainter\recovery\` | Recovery generations | Removed |
 | `%APPDATA%\YoluPainter\logs\` | Crash records | Removed |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | Thumbnail cache | Removed |

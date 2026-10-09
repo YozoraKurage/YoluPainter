@@ -31,6 +31,7 @@
 | --- | --- | --- |
 | `%APPDATA%\YoluPainter\settings.conf` | 設定 | 消える |
 | `%APPDATA%\YoluPainter\recovery.conf`・`update.conf`・`layout.json` | 復旧の設定・更新の確かめと試験版の選択・パネルとウィンドウの配置 | 消える |
+| `%APPDATA%\YoluPainter\places.conf` | ファイルを選ぶウィンドウの始まりの場所（種類ごとに前に選んだフォルダ） | 消える |
 | `%APPDATA%\YoluPainter\recovery\` | 復旧用の世代 | 消える |
 | `%APPDATA%\YoluPainter\logs\` | クラッシュの記録 | 消える |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | サムネイルのキャッシュ | 消える |
