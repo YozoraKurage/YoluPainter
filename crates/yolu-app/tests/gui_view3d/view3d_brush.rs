@@ -621,10 +621,10 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
     );
 }
 
-/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力ごと・
-/// フレームごとに決まった数までダブを塗り、残りを持ち越して後のフレームで塗る。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを
-/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを
-/// 失っても、同じ画素の 1 本の線になる（終える時に持ち越しを塗ってから確定する）。
+/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力は区間のダブを
+/// 並べるだけで、塗るのはフレームごとに時間の枠まで。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを塗り終えてから次の点）与えても、1 フレームに
+/// まとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを失っても、同じ画素の 1 本の線になる（離したあとも
+/// 時間の枠で塗り続け、塗り終えたら確定する）。
 #[test]
 fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_in() {
     let corners = [
@@ -643,6 +643,10 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         let (mut h, rect) = cube_view();
         h.state_mut().state.brush.radius = 2.0;
         h.state_mut().state.brush.spacing = 0.05;
+        // 持ち越しが残る前提の場合は、1 フレーム 1 ダブの枠（0）にする
+        if matches!(how, "one frame" | "focus lost") {
+            h.state_mut().state.view3d.input.paint_budget = Some(std::time::Duration::ZERO);
+        }
         let points: Vec<Pos2> = corners.iter().map(|c| screen_of(&h, rect, *c)).collect();
         let last = *points.last().unwrap();
         press_with(&h, points[0], Modifiers::NONE);
@@ -679,10 +683,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
                     .as_ref()
                     .unwrap()
                     .queued();
-                assert!(
-                    left > 0,
-                    "{how}: 試験の前提: 1 回の入力で塗る数を超えて持ち越した"
-                );
+                assert!(left > 0, "{how}: 試験の前提: 時間の枠を超えて持ち越した");
                 if how == "focus lost" {
                     h.event(Event::WindowFocused(false));
                 } else {
@@ -697,9 +698,16 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
             }
         }
         h.step();
+        // 離したあとも時間の枠で塗り続け、塗り終えたら確定する
+        let mut frames = 0;
+        while h.state().state.is_stroking() {
+            h.step();
+            frames += 1;
+            assert!(frames < 5000, "{how}: 確定しない");
+        }
         assert!(
             h.state().state.view3d.input.surface.is_none(),
-            "{how}: 離したら確定"
+            "{how}: 塗り終えたら確定"
         );
         h.run();
         assert!(message(&h).is_empty(), "{how}: {}", message(&h));

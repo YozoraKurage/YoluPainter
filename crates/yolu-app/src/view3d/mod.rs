@@ -13,6 +13,7 @@ pub mod look_gpu;
 pub mod model;
 pub mod navigation;
 pub mod other_sets;
+pub mod pacing;
 pub mod paint;
 pub mod pose;
 mod quick;
@@ -45,6 +46,15 @@ pub enum Nav {
 #[derive(Default)]
 pub struct SurfaceInput {
     pub stroke: Option<StrokeSource>,
+    /// 面のストロークを離した（マウス・ペンを離した・ウィンドウのフォーカスを失った）。持ち越したダブが残っていれば、フレームごとに時間の枠で
+    /// 塗り続け、塗り終えたら文書のストロークを確定する（それまでは描いている最中のまま。新しい点は受けない）。
+    pub released: bool,
+    /// 1 フレームに面のダブを塗ってよい時間の上書き（試験用。None なら溜まった仕事の見込みで決める。`pacing::frame_budget`）。
+    pub paint_budget: Option<std::time::Duration>,
+    /// 今のストロークの 1 ダブの平均の時間（溜まった仕事の見込みの元。ストロークが終わると忘れる）。
+    pub dab_clock: pacing::DabClock,
+    /// 直前の `paint_queued` が今のフレームに塗ったダブの数（同じフレームの表示の同期の時間を、ダブあたりに直すため。`note_sync` が取る）。
+    pub frame_dabs: usize,
     /// ペンの今の押し（2D の `CanvasInput::pen_press` と同じ。押した瞬間に終わるバケツ・ID の色で選択を押し直さない印も兼ねる）。
     pub pen_press: Option<crate::pen::PenPress>,
     /// Ctrl+Space の拡縮のドラッグ（`nav` が `Nav::Zoom` のあいだ）。
@@ -81,6 +91,13 @@ pub struct SurfaceInput {
 }
 
 impl SurfaceInput {
+    /// このフレームの 3D の表示の同期（変わったタイルの合成・上げ・ミップ）に `sync` かかった。このフレームに塗ったダブの数で割って、
+    /// 1 ダブの時間の見積もりに足す（塗っていないフレームでは何もしない）。
+    pub fn note_sync(&mut self, sync: std::time::Duration) {
+        let painted = std::mem::take(&mut self.frame_dabs);
+        self.dab_clock.record_sync(painted, sync);
+    }
+
     /// 押しの印と、回し・パン・拡縮の途中を全部捨てる（ビューが隠れて、ペンの離れ・ボタンの離れを受け取れなかったとき。印が残ると、次の押しを
     /// 前の押しの続きとして扱い、Alt で押した点の近くで離せばクローンの元を決めてしまう）。描いているストロークは別の持ち主が終える。
     pub fn drop_presses(&mut self) {
@@ -416,6 +433,9 @@ impl View3dState {
     /// ストロークが終わったら、待たせていたモデル・閉じる・隠すを当てる。
     pub(crate) fn stroke_ended(&mut self) {
         self.input.stroke = None;
+        self.input.released = false;
+        self.input.dab_clock = pacing::DabClock::default();
+        self.input.frame_dabs = 0;
         self.input.surface = None;
         self.input.cover = None;
         self.input.symmetry = None;

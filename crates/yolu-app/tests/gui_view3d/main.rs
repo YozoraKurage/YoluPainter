@@ -31,6 +31,7 @@ mod view3d_axes;
 mod view3d_brush;
 mod view3d_draft;
 mod view3d_fx;
+mod view3d_lag;
 mod view3d_look;
 mod view3d_navigation;
 mod view3d_padding;

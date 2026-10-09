@@ -180,6 +180,10 @@ impl View3dSlot {
                     ui.ctx().request_repaint();
                 }
                 let stats = renderer.stats;
+                // このフレームに塗ったダブの分の、表示の同期の時間（次のフレームから、枠のうち塗りに使う割合と、溜まった仕事の見込みに使う）
+                app.view3d
+                    .input
+                    .note_sync(std::time::Duration::from_micros(stats.last_sync_us));
                 app.view3d.display.drawn_samples = stats.samples;
                 reduced = match app.view3d.display.shading {
                     Shading::MeshMap(_) => (stats.map_level > 0).then_some((stats.map_level, None)),

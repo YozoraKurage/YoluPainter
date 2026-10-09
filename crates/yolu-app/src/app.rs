@@ -1812,6 +1812,38 @@ impl YoluApp {
         }
     }
 
+    /// 離した後の残りを塗っている 3D のストローク（確定待ち）は、次の操作が来たら、その操作を通す前に、残りを塗って確定する。利用者は離した
+    /// 時点で描き終えたと思っているので、断らず・捨てずに、操作をそのまま通すため。操作は、ポインタを押す・キーを押す・ホイール・文字の入力・
+    /// 貼り付けなど・ファイルの落とし・ペンが触れる（動くだけ・離すだけでは確定しない）。ここは全部の部品より先に呼ぶ。パネルの部品・メニュー・
+    /// ショートカットの全部が、描いている最中の判定（`is_stroking`）を見る前に済む。
+    fn settle_before_input(&mut self, ctx: &egui::Context, pen: &[PenSample]) {
+        if !self.state.view3d.input.released {
+            return;
+        }
+        let acts = ctx.input(|i| {
+            !i.raw.dropped_files.is_empty()
+                || i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::PointerButton { pressed: true, .. }
+                            | egui::Event::Key { pressed: true, .. }
+                            | egui::Event::MouseWheel { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Touch {
+                                phase: egui::TouchPhase::Start,
+                                ..
+                            }
+                    )
+                })
+        });
+        if acts || pen.iter().any(|s| s.contact) {
+            crate::view3d::input::settle(&mut self.state);
+        }
+    }
+
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         // このアプリのキーの割り当て（ショートカットの設定）を、このスレッドで効かせる
@@ -1831,6 +1863,7 @@ impl YoluApp {
         // 補った離し（OS に押しを奪われて、離しの点を補った）の印も一緒に取る。2D と 3D の入力が、本物の離しと分けて扱う
         let (mut pen, lost) = self.pen.drain_with_lost();
         self.state.pen_lost = lost;
+        self.settle_before_input(&ctx, &pen);
         // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
         let edge = self.custom_frame.then(|| {
@@ -2137,6 +2170,8 @@ impl YoluApp {
         }
         if !self.state.view3d.visible {
             self.state.view3d.input.drop_presses();
+            // 離した後の残りを塗っているストロークは、ビューが隠れると塗り進められないので、その場で塗り終えて確定する（取り残さない）
+            crate::view3d::input::settle(&mut self.state);
         }
 
         let bar = bar.unwrap_or(menu::BarOutcome {
@@ -2220,6 +2255,8 @@ impl YoluApp {
         if (!self.state.quit && !close_requested) || self.closing {
             return;
         }
+        // 離した後の残りを塗っているストロークは、塗り終えて確定してから、保存していない変更を聞く・閉じる
+        crate::view3d::input::settle(&mut self.state);
         if self.state.is_saving() {
             // ウィンドウを閉じる頼みは止めて、終わるまで待つ（`quit` に覚える）。画面のスレッドは回し続ける（「応答なし」にならない）
             if close_requested {
@@ -2399,6 +2436,8 @@ impl YoluApp {
         // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
         // 見えないウィンドウを知らせのために回し続けない）
         let prior = self.state.message_begin();
+        // 離した後の残りを塗っているストロークは、隠れていると塗り進められないので、その場で塗り終えて確定する
+        crate::view3d::input::settle(&mut self.state);
         self.poll_gpu_watch(ctx);
         self.tick_link();
         // 見えないウィンドウでも、Live Link の頼みを拾う間隔で回す（受け付けている間だけ）

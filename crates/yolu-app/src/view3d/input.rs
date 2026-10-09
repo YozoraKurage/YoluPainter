@@ -13,21 +13,28 @@
 //! - クイックマスクが入っている間のブラシ・消しゴムは、選択ペン・選択消し（2D のキャンバスと同じ。`quick`）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
-//! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てない: 面のストロークは、1 回の入力とフレームごとに決まった数までダブを
-//!   塗り、残りを持ち越す（`SurfaceStroke::paint_queued`）。持ち越しがあればフレームを続けて頼み、離したら残りを塗ってから確定する。
+//! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てず、画面を固めない: 面のストロークは、入力ではダブを並べるだけにして、塗るのは
+//!   1 フレームに 1 回、時間の枠まで（`SurfaceStroke::paint_queued_until`。最初の 1 つは必ず塗る）。枠は、溜まった仕事の見込みで 8〜50 ms
+//!   の間に決める（`pacing`。遅れを約 0.3 秒に収める）。残りは次のフレームに持ち越し、フレームを頼み続ける。離したあとも同じ枠で塗り続け
+//!   （`release`。離したあとは最大の枠）、塗り終えたら確定する。
+//! - 離したあと塗り終えるまでは「確定待ち」: 利用者は離した時点で描き終えたと思っているので、次の操作（押し・キー・ホイール・Esc・取り消しや
+//!   保存などの操作・閉じる・ビューが隠れる・GPU を失う）が来たら、先に残りを全部塗って確定してから（`settle`・`finish`）、その操作をそのまま通す。
+//!   離す前の Esc は、今までどおり線ごと捨てる。
 //!
 //! 画面の点はタブの中身の左上からの egui の点。core のカメラも同じ点の大きさで作る（ストロークの間隔は Unity 版と同じく画面の点）。
+
+use std::time::Instant;
 
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Stroke, Ui};
 use yolu_core::geometry::{
     copy_hits, pick, world_radius, CameraView, Ray, SurfaceCloneSource, SurfaceEffect,
     SurfaceGeometry, SurfaceHit, SurfaceInput, SurfaceStroke, SurfaceStrokeOptions,
-    SurfaceSymmetrySetup, SURFACE_DABS_PER_EVENT,
+    SurfaceSymmetrySetup,
 };
 use yolu_core::glam::{DVec2, Vec2, Vec3};
 
 use super::model::ViewModel;
-use super::{gizmo, Nav};
+use super::{gizmo, pacing, Nav};
 use crate::engine::{BrushEffect, Tilt};
 use crate::gesture::{self, ZoomDrag};
 use crate::notice::Source;
@@ -494,7 +501,8 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
         super::quick::add(app, rect, at, pressure);
         return;
     }
-    if app.view3d.input.surface.is_none() {
+    // 離した後（残りを塗っている間）の点は受けない
+    if app.view3d.input.surface.is_none() || app.view3d.input.released {
         return;
     }
     let at = shifted(app, at);
@@ -529,23 +537,49 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
     }
 }
 
-/// 持ち越したダブを、このフレームの分（入力 1 回と同じ数）だけ塗る。まだ残れば次のフレームを頼む（動かさずに押しているだけでも
-/// 塗り進める）。
+/// 持ち越したダブを、このフレームの分（時間の枠まで）塗る。まだ残れば次のフレームを頼む（動かさずに押しているだけでも塗り進める）。
+/// 離したあとで塗り終えたら、文書のストロークを確定する。
 fn paint_queued(app: &mut AppState, ctx: &egui::Context) {
+    // egui が 1 フレームに 2 パス回すときの、捨てるほうのパスでは塗らない（最後のパスが塗る）
+    if ctx.will_discard() {
+        return;
+    }
+    let released = app.view3d.input.released;
+    let fixed_budget = app.view3d.input.paint_budget;
+    let mut clock = app.view3d.input.dab_clock;
     let (Some(stroke), Some(surface)) = (app.stroke.as_mut(), app.view3d.input.surface.as_mut())
     else {
         return;
     };
     if surface.queued() == 0 {
+        if released {
+            finish(app, false);
+        }
         return;
     }
-    match surface.paint_queued(&mut app.doc, stroke, SURFACE_DABS_PER_EVENT) {
-        Ok(_) => {
-            if surface.queued() > 0 {
+    // 塗り＋表示の同期の枠のうち、塗りに使う時間
+    let budget = fixed_budget.unwrap_or_else(|| {
+        clock.paint_budget(pacing::frame_budget(
+            clock.backlog(surface.queued()),
+            released,
+        ))
+    });
+    let started = Instant::now();
+    match surface.paint_queued_until(&mut app.doc, stroke, started + budget) {
+        Ok(painted) => {
+            clock.record(painted, started.elapsed());
+            app.view3d.input.dab_clock = clock;
+            app.view3d.input.frame_dabs = painted;
+            let more = surface.queued() > 0;
+            let note = surface.symmetry_note();
+            if more {
                 ctx.request_repaint();
             }
-            if let Some(outcome) = surface.symmetry_note() {
+            if let Some(outcome) = note {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
+            }
+            if released && !more {
+                finish(app, false);
             }
         }
         Err(e) => abandon(app, &e),
@@ -561,7 +595,41 @@ fn abandon(app: &mut AppState, e: &yolu_core::geometry::SurfaceStrokeError) {
     app.fail(Source::View3d, app.lang.surface_error(e));
 }
 
-/// 3D のストロークを終える（cancel なら捨てる）。
+/// 離した（マウス・ペンを離した、ウィンドウのフォーカスを失った）: 面のストロークは、残りのダブを塗らずに並べて持ち越し、フレームごとに
+/// 時間の枠で塗って、塗り終えたら確定する（`paint_queued`。それまでは描いている最中のまま、新しい点は受けない）。残りが無ければ、
+/// 同じフレームのうちに確定する。面のストローク以外（範囲・クイックマスク）はその場で確定する。
+pub fn release(app: &mut AppState, ctx: &egui::Context) {
+    if app.view3d.input.stroke.is_none() || app.view3d.input.released {
+        return;
+    }
+    let Some(surface) = app
+        .view3d
+        .input
+        .surface
+        .as_mut()
+        .filter(|_| app.stroke.is_some())
+    else {
+        finish(app, false);
+        return;
+    };
+    match surface.end_input() {
+        Ok(()) => {
+            app.view3d.input.released = true;
+            ctx.request_repaint();
+        }
+        Err(e) => abandon(app, &e),
+    }
+}
+
+/// 離した後で残りを塗っているストロークを、その場で（残りを全部塗って）確定する。新しい押し・閉じる・ビューが隠れるなど、残りを待てない所が
+/// 呼ぶ。そうでなければ何もしない。
+pub fn settle(app: &mut AppState) {
+    if app.view3d.input.released {
+        finish(app, false);
+    }
+}
+
+/// 3D のストロークを、その場で終える（cancel なら捨てる）。持ち越したダブが残っていれば全部塗ってから確定する。
 pub fn finish(app: &mut AppState, cancel: bool) {
     if app.view3d.input.stroke.is_none() {
         return;
@@ -888,6 +956,10 @@ fn pen_sample(
         // ほかのペン（別の ID）の押しが続いている間は、この点を使わない
         Some(_) => return,
         None if s.contact => {
+            // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける
+            if !frame.press_blocked && on_top(ui, rect, p) {
+                settle(app);
+            }
             let kind = press_kind(ui, app, rect, p, s, frame);
             app.view3d.input.pen_press = Some(PenPress {
                 id: s.pointer_id,
@@ -1012,7 +1084,7 @@ fn pen_sample(
             }
             PressKind::Tool => {
                 if app.view3d.input.stroke == Some(source) {
-                    finish(app, false);
+                    release(app, ui.ctx());
                 }
                 if lost {
                     // 補った離しの位置は本物の離しの位置ではない: グラデーションは最後の位置で塗り、図形と定規はやめる（マウスの取りこぼしと同じ）
@@ -1197,11 +1269,12 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             } => {
                 let pos = *pos;
                 if *pressed {
-                    if press_blocked
-                        || !on_top(ui, rect, pos)
-                        || app.view3d.input.stroke.is_some()
-                        || app.view3d.input.draft.is_some()
-                    {
+                    if press_blocked || !on_top(ui, rect, pos) {
+                        continue;
+                    }
+                    // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける（押しを捨てない）
+                    settle(app);
+                    if app.view3d.input.stroke.is_some() || app.view3d.input.draft.is_some() {
                         continue;
                     }
                     if pen_frame {
@@ -1297,7 +1370,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     if *button == PointerButton::Primary
                         && app.view3d.input.stroke == Some(StrokeSource::Mouse)
                     {
-                        finish(app, false);
+                        release(app, &ctx);
                     }
                     if *button == PointerButton::Primary {
                         super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
@@ -1364,6 +1437,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 let Some(p) = ui.input(|i| i.pointer.hover_pos()) else {
                     continue;
                 };
+                // 離した後の残りを塗っている途中（確定待ち）のホイールは、確定してから受ける
+                if !blocked && on_top(ui, rect, p) {
+                    settle(app);
+                }
                 if blocked
                     || !on_top(ui, rect, p)
                     || app.view3d.input.stroke.is_some()
@@ -1384,6 +1461,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 pressed: true,
                 ..
             } if !blocked => {
+                // 離したあと残りを塗っている間（確定待ち）の Esc は、線を捨てない: 確定してから、Esc の普段の意味へ進む
+                settle(app);
                 // パスの点のドラッグを捨てる（無ければ選んだ点を外す）
                 let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
                 if app.view3d.input.stroke.is_some() && !path_esc {
@@ -1399,8 +1478,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 nav_cancel(app);
             }
             Event::WindowFocused(false) => {
-                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
-                finish(app, false);
+                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので。離したのと同じく、残りは時間の枠で塗ってから）
+                release(app, &ctx);
                 // グラデーション・図形・定規のドラッグは、離したのを受け取れないので何も描かずに捨てる
                 app.view3d.input.draft = None;
                 app.path_finish_drag();
@@ -1422,8 +1501,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
     }
     flush(app, &mut drag_at);
-    paint_queued(app, &ctx);
-    // ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）も、押していなければ終える
+    // ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）も、押していなければ離したことにする
     let (primary, any_down) = ui.input(|i| (i.pointer.primary_down(), i.pointer.any_down()));
     if app.view3d.input.stroke == Some(StrokeSource::Mouse)
         && !primary
@@ -1431,8 +1509,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
-        finish(app, false);
+        release(app, &ctx);
     }
+    paint_queued(app, &ctx);
     if app
         .view3d
         .input

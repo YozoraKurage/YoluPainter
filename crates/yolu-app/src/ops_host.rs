@@ -64,6 +64,8 @@ fn reason_text(reason: &str) -> Text {
 
 impl<'a> AppHost<'a> {
     pub fn new(state: &'a mut AppState) -> AppHost<'a> {
+        // 離した後の残りを塗っている 3D のストローク（確定待ち）は、外からの操作を受ける前に確定する（「描いている最中」で断らない）
+        crate::view3d::input::settle(state);
         let base = state
             .project
             .as_ref()

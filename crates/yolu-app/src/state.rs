@@ -1285,8 +1285,10 @@ impl AppState {
             .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
-    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
+    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る（離した後の残りを塗っている間は、先に確定する）。
     pub fn apply(&mut self, action: Action) {
+        // 離した後の残りを塗っている 3D のストローク（確定待ち）は、先に残りを塗って確定してから、この操作を通す（断らない・捨てない）
+        crate::view3d::input::settle(self);
         let prior = self.message_begin();
         // 記録中なら、命令にできる操作を記録する（入れ子の操作は外の操作として 1 回）
         let pending = crate::automation::record::before(self, &action);

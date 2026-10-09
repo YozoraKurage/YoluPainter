@@ -69,7 +69,7 @@ pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLE
 pub use stencil::SurfaceStencil;
 pub use stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, StrokeCurve, TooManyDabs,
-    SURFACE_DABS_PER_EVENT, SURFACE_DABS_PER_SEGMENT,
+    SURFACE_DABS_PER_SEGMENT,
 };
 pub use symmetry::{
     build_expanded, build_mirrored, copy_count, copy_hits, find_copy, search_distance, union_dabs,

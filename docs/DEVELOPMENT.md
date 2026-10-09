@@ -165,6 +165,9 @@ Mac（Apple Silicon）の NEON の効きは、同じコマンドを `YOLU_SIMD=s
 （`--threads 1` は CPU 時間、2 以上は壁時計。`--features stroke-profile` を付けると段ごとの時間も出る）。ペンの入力が画面に出るまでの遅れは
 `cargo run --release -p yolu-app --example stroke_latency`、取り込んだブラシは `cargo run --release -p yolu-io --example stroke_bench_imported -- --bundled 6` で測る。
 
+3D ビューのダブは、`cargo run --release -p yolu-core --features stroke-profile --example surface_dab_bench -- --threads 8` が、合成の球（3,888 と 202,800 三角形）・文書 2048² と 4096²・ブラシの大きさ 64・128・256 ごとに、速いストロークの
+ダブ 1 つの時間（中央・最大）と内訳（投影の塗り・区画の作り直し・覆いの集め・文書へ塗る）、同じ文書・大きさの 2D のダブとの比べ、1 フレームに塗る時間の枠（`--budget`、ミリ秒）で塗ったときのフレームの時間と、離した後の残りを塗り切るまでを測る。
+
 ## 機能ごとの試験と実装の置き場
 
 使う人向けの文書から、試験のコマンド・確かめた範囲・実装の置き場をここへ集めています。

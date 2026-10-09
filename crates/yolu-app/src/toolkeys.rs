@@ -190,6 +190,8 @@ fn stale(app: &AppState) -> bool {
 
 /// 押しの事象 1 つを実行する。動き方が `Hold`/`TapOrHold` のツールのキーなら、一時の切り替えを始める。
 pub fn press(ctx: &egui::Context, app: &mut AppState, fired: Fired) {
+    // 離した後の残りを塗っている 3D のストローク（確定待ち）は、先に確定する（離した直後の「押している間だけ」の切り替えも効かせる）
+    crate::view3d::input::settle(app);
     let now = clock(ctx);
     app.temp_tool.clock = now;
     let (Some(tool), Some(key)) = (commands::selected_tool(fired.command), fired.key) else {

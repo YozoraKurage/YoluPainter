@@ -154,6 +154,8 @@ impl AppState {
         if self.mode == mode {
             return true;
         }
+        // 3D ビューで離した後の残りを塗っている途中（確定待ち）は、先に確定する（断らない）
+        crate::view3d::input::settle(self);
         if self.is_stroking() {
             self.refuse(
                 Source::Edit,

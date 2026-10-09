@@ -555,8 +555,18 @@ fn add_point(
     }
 }
 
-/// ストロークを終える（cancel なら捨てる）。
+/// ストロークをその場で終える（cancel なら捨てる）。3D ビューのストロークは、持ち越したダブを全部塗ってから確定する。
 pub fn finish_stroke(app: &mut AppState, cancel: bool) {
+    finish_stroke_with(app, cancel, None);
+}
+
+/// ウィンドウのフォーカスを失ったとき、ストロークをそこまでで終える。3D ビューのストロークは、離したのと同じく、残りを時間の枠で塗ってから
+/// 確定する（`view3d::input::release`。ctx はその間のフレームを頼む）。
+fn release_stroke(app: &mut AppState, ctx: &egui::Context) {
+    finish_stroke_with(app, false, Some(ctx));
+}
+
+fn finish_stroke_with(app: &mut AppState, cancel: bool, release: Option<&egui::Context>) {
     app.canvas.stroke = None;
     let cloned = app.canvas.clone_offset.take();
     app.canvas.shift_hold = None;
@@ -564,7 +574,10 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     let endpoint = app.canvas.current_end.take();
     // 3D ビューのストロークは 3D ビューの終わらせ方で（持ち越したダブと最後の区間を塗ってから確定する。クイックマスクも）
     if app.view3d.input.surface.is_some() || app.view3d.input.cover.is_some() {
-        crate::view3d::input::finish(app, cancel);
+        match release {
+            Some(ctx) if !cancel => crate::view3d::input::release(app, ctx),
+            _ => crate::view3d::input::finish(app, cancel),
+        }
         return;
     }
     if crate::region::tools::finish_drag(app, cancel) {
@@ -671,6 +684,10 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
         // ほかのペン（別の ID）の押しが続いている間は、この点を使わない
         Some(_) => return,
         None if s.contact => {
+            // 3D ビューで離した後の残りを塗っている途中（確定待ち）の押し: 先に確定してから、この押しを受ける
+            if !frame.no_press && on_top(ui, rect, p) {
+                crate::view3d::input::settle(app);
+            }
             let kind = press_kind(ui, app, rect, p, s, frame);
             app.canvas.pen_press = Some(PenPress {
                 id: s.pointer_id,
@@ -989,6 +1006,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     {
                         continue;
                     }
+                    // 3D ビューで離した後の残りを塗っている途中（確定待ち）の押し: 先に確定してから、この押しを受ける
+                    crate::view3d::input::settle(app);
                     // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く（`nav::start_of`）
                     let start = nav::start_of(app, *button, event_modifiers);
                     let click = nav::click_of(app, *button, event_modifiers);
@@ -1167,6 +1186,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 pressed: true,
                 ..
             } if !blocked => {
+                // 3D ビューで離した後の残りを塗っている間（確定待ち）の Esc は、線を捨てない: 確定してから、Esc の普段の意味へ進む
+                crate::view3d::input::settle(app);
                 let ctx = InputCtx {
                     modifiers,
                     now,
@@ -1219,7 +1240,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる。移動と変形・グラデーション・図形は
                 // 何も変えずにやめる
-                finish_stroke(app, false);
+                release_stroke(app, ui.ctx());
                 for kind in CanvasKind::ALL {
                     kind.handler().focus_lost(app);
                 }

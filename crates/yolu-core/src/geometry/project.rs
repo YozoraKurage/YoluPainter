@@ -38,6 +38,7 @@ use super::symmetry::{MirrorPlane, RadialSymmetry};
 use super::unity::{clamp01, finite2};
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::edge::{self, TexelMetric};
+use crate::brush::profile;
 use crate::brush::AntiAlias;
 
 /// 投影の塗りの切り替え（ストロークの始めに固める）。
@@ -1324,17 +1325,21 @@ impl SurfaceProjector {
             .copied()
             .filter(|b| !self.cache.contains_key(b))
             .collect();
-        let built: Vec<(u32, Bucket)> = if missing.len() > 1 && rayon::current_num_threads() > 1 {
-            missing
-                .par_iter()
-                .with_max_len(1)
-                .map(|&b| (b, self.build_bucket(b as usize)))
-                .collect()
-        } else {
-            missing
-                .iter()
-                .map(|&b| (b, self.build_bucket(b as usize)))
-                .collect()
+        let built: Vec<(u32, Bucket)> = {
+            let _profile =
+                (!missing.is_empty()).then(|| profile::scope(profile::Stage::SurfaceBuckets));
+            if missing.len() > 1 && rayon::current_num_threads() > 1 {
+                missing
+                    .par_iter()
+                    .with_max_len(1)
+                    .map(|&b| (b, self.build_bucket(b as usize)))
+                    .collect()
+            } else {
+                missing
+                    .iter()
+                    .map(|&b| (b, self.build_bucket(b as usize)))
+                    .collect()
+            }
         };
         let need: u64 = needed
             .iter()
@@ -1367,6 +1372,7 @@ impl SurfaceProjector {
         self.stamp = (clock, need);
         self.stats.cached_buckets = self.cache.len();
         // 円の中の投影の画素の覆い
+        let _gather_profile = profile::scope(profile::Stage::SurfaceGather);
         let lists: Vec<Arc<Bucket>> = needed.iter().map(|b| self.cache[b].0.clone()).collect();
         let width = self.width as i64;
         let gather = |bucket: &Arc<Bucket>| -> Vec<Candidate> {

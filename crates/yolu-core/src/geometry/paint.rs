@@ -11,10 +11,12 @@
 //!   だけで入らないとき、ダブ 1 つの上限（三角形・画素・見え方の判定・写しの点の探索）を超えたとき、区間のダブがありえない数
 //!   （[`SURFACE_DABS_PER_SEGMENT`]）のとき、指先・クローン・伸ばす・色の混ぜの読み元が 1 回の操作のメモリに入らないときは、2D の
 //!   ストロークと同じく `Err`（呼ぶ側がストロークごと取り消す。ダブを飛ばして塗り残しを作らない）。
-//! - 速い入力: 区間のダブは、位置・面の当たり・画面の大きさを先に決めて待ち行列に並べ、1 回の入力（[`SurfaceStroke::add`]）と
-//!   1 フレーム（[`SurfaceStroke::paint_queued`]）ごとに [`SURFACE_DABS_PER_EVENT`] まで塗り、残りは持ち越す。離したとき
-//!   （[`SurfaceStroke::finish`]）は残りを全部塗る。並べる時に当たりと大きさを決めるので、次の区間の間隔も、塗る時も、いつ塗っても
-//!   すぐ塗ったときと同じ（塗った結果は入力のまとまり方・フレームの区切りによらない）。
+//! - 速い入力: 区間のダブは、位置・面の当たり・画面の大きさを先に決めて待ち行列に並べるだけで（[`SurfaceStroke::add`]。塗らない）、
+//!   塗るのは呼ぶ側がフレームごとに時間の枠まで（[`SurfaceStroke::paint_queued_until`]・[`SurfaceStroke::paint_queued_while`]。最初の
+//!   1 つは必ず塗るので進む）。大きいブラシは 1 つのダブが重く、ダブの数で区切ると 1 フレームが長くなるため。離したとき
+//!   （[`SurfaceStroke::end_input`]）は残りを塗らずに並べ、呼ぶ側が同じ枠で塗り続けて、空になってから文書のストロークを確定する。
+//!   その場で確定させる呼び手は [`SurfaceStroke::finish`]（残りを全部塗る）。並べる時に当たりと大きさを決めるので、次の区間の間隔も、
+//!   塗る時も、いつ塗っても、すぐ塗ったときと同じ（塗った結果は入力のまとまり方・フレームの区切り・時間の枠によらない）。
 //! - 3D の対称（[`SurfaceSymmetrySetup`]）: 写しの点が、向きの合う同じテクスチャセットの面の近くにあるときだけ、写しの側を塗る。
 //!   写しの点は、中心の下の面の点か、中心がほかのセット・背景にあるダブでは元の側の画素の点を写して探す。
 //!   見えない面にも塗らない設定では、写したカメラ（鏡映・回転したカメラ）から同じ画面の円で投影の塗りをする（元の側の見え方を写した
@@ -62,12 +64,12 @@ use super::query::coverage;
 use super::sampling::SamplingError;
 use super::stencil::SurfaceStencil;
 use super::stroke::{
-    ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, TooManyDabs, SURFACE_DABS_PER_EVENT,
-    SURFACE_DABS_PER_SEGMENT,
+    ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, TooManyDabs, SURFACE_DABS_PER_SEGMENT,
 };
 use super::symmetry::{find_copy, union_dabs, CopyHit, MirrorOutcome, MirrorPlane, RadialSymmetry};
 use super::unity::{dot, fmax, magnitude, sqr_magnitude, v2_magnitude as magnitude2};
 use super::{SurfaceGeometry, SurfaceHit};
+use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, PendingDab,
@@ -198,7 +200,10 @@ pub struct SurfaceStrokeStats {
     pub lost: usize,
 }
 
-/// 待ち行列に置けるダブの数（超えた分は、入力のときにその場で塗る）。1 つの区間の上限と同じ。
+/// 待ち行列に置けるダブの数（超えた分は、入力のときにその場で塗る）。1 つの区間の上限と同じ。待ち行列のメモリの上限で（1 つ約 150 バイト、
+/// 上限でおよそ 10 MiB）、時間の見込みでは決めない: 見込みでその場で塗る形にすると、塗りが追いつかない入力のとき入力の処理が塗りの時間で止まり、
+/// 固まる元の形に戻る。時間の枠は呼ぶ側（`paint_queued_until`。アプリは溜まった見込みで枠を広げる）が持ち、ここに届くのは、塗りがまったく
+/// 追いつかないまま 65,536 ダブ溜まった異常な長さの線だけ。
 pub const MAX_QUEUED_DABS: usize = SURFACE_DABS_PER_SEGMENT;
 
 /// 3D のストロークの入力の点（画面の点。表示域の左上が原点で、下が +y）。
@@ -623,7 +628,8 @@ impl SurfaceStroke {
         });
         s.queue.push_back(dab);
         s.enqueue_dual(&[(input.at, 0.0)]);
-        s.paint_queued(doc, stroke, SURFACE_DABS_PER_EVENT)?;
+        // 押した点のダブだけが並んでいる（抜きがあれば待たせる）
+        s.paint_queued(doc, stroke, usize::MAX)?;
         Ok(s)
     }
 
@@ -689,9 +695,10 @@ impl SurfaceStroke {
         self.add_input(doc, stroke, input)
     }
 
-    /// 新しい入力の点。手ぶれ補正の糸で筆を引き（2D と同じ式、長さは画面の点）、描けるようになった区間のダブを待ち行列に並べ、古い順に
-    /// [`SURFACE_DABS_PER_EVENT`] まで塗る（残りは次の入力・[`SurfaceStroke::paint_queued`]・[`SurfaceStroke::finish`] で塗る）。
-    /// 待ちが [`MAX_QUEUED_DABS`] を超える分は、その場で塗る（覚えるメモリを抑える）。抜きの長さの内の描点は、線が伸びるか離すまで待つ。
+    /// 新しい入力の点。手ぶれ補正の糸で筆を引き（2D と同じ式、長さは画面の点）、描けるようになった区間のダブを待ち行列に並べるだけで、
+    /// 塗らない（塗るのは呼ぶ側がフレームごとに [`SurfaceStroke::paint_queued_until`] で時間の枠まで）。入力が重なっても 1 回の入力は
+    /// 並べる仕事（点の数に比例）しかしないので、塗りの重さが入力の処理に積み上がらない。待ちが [`MAX_QUEUED_DABS`] を超える分だけは、
+    /// その場で塗る（覚えるメモリを抑える安全弁）。抜きの長さの内の描点は、線が伸びるか離すまで待つ。
     pub fn add_input(
         &mut self,
         doc: &mut Document,
@@ -718,7 +725,9 @@ impl SurfaceStroke {
             self.move_pen(at, input)?;
         }
         let over = self.queue.len().saturating_sub(MAX_QUEUED_DABS);
-        self.paint_queued(doc, stroke, SURFACE_DABS_PER_EVENT.max(over))?;
+        if over > 0 {
+            self.paint_queued(doc, stroke, over)?;
+        }
         Ok(())
     }
 
@@ -776,7 +785,8 @@ impl SurfaceStroke {
         self.end.is_some() || taper <= 0.0 || dab.arc <= self.sampler.length() - taper
     }
 
-    /// 待ち行列のダブを、古い順に max まで塗る（入力の無いフレームの分。塗った数を返す）。
+    /// 待ち行列のダブを、古い順に max まで塗る（塗った数を返す。数で区切る形で、時間で区切るのは
+    /// [`SurfaceStroke::paint_queued_while`]・[`SurfaceStroke::paint_queued_until`]）。
     pub fn paint_queued(
         &mut self,
         doc: &mut Document,
@@ -784,18 +794,62 @@ impl SurfaceStroke {
         max: usize,
     ) -> Result<usize, SurfaceStrokeError> {
         let mut painted = 0;
-        while painted < max {
-            let Some(&dab) = self.queue.front() else {
-                break;
-            };
-            if !self.paintable(&dab) {
-                break;
-            }
-            self.queue.pop_front();
-            self.paint_located(doc, stroke, dab)?;
+        while painted < max && self.paint_front(doc, stroke)? {
             painted += 1;
         }
         Ok(painted)
+    }
+
+    /// 待ち行列のダブを、古い順に、`more` が true を返す間塗る。最初の 1 つは（塗れるなら）必ず塗り（時間の枠が小さくても進む）、
+    /// 1 つ塗るごとに、これまでに塗った数を `more` へ渡して続けるかを聞く。呼ぶ側は時計（フレームの締め切り）か、試験では決まった数を
+    /// 渡す。塗った数を返す。どこで区切っても、塗る結果は同じ（当たりと大きさは並べるときに決めてある）。
+    pub fn paint_queued_while(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        mut more: impl FnMut(usize) -> bool,
+    ) -> Result<usize, SurfaceStrokeError> {
+        let mut painted = 0;
+        while self.paint_front(doc, stroke)? {
+            painted += 1;
+            if !more(painted) {
+                break;
+            }
+        }
+        Ok(painted)
+    }
+
+    /// [`SurfaceStroke::paint_queued_while`] の、締め切りの時刻まで。次の 1 つが、ここまでに塗った 1 つの平均と同じ長さかかっても締め切りに
+    /// 収まるときだけ続ける（ダブ 1 つが重いとき、締め切りを過ぎてから止めると、1 フレームがダブ 1 つ分だけ必ず延びるため）。最初の 1 つは
+    /// 締め切りを過ぎていても塗る。
+    pub fn paint_queued_until(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        deadline: std::time::Instant,
+    ) -> Result<usize, SurfaceStrokeError> {
+        let start = std::time::Instant::now();
+        self.paint_queued_while(doc, stroke, |painted| {
+            let now = std::time::Instant::now();
+            now + (now - start) / painted as u32 <= deadline
+        })
+    }
+
+    /// 待ち行列の先頭のダブが塗れるなら塗って true（空・抜きのために線の続きを待っているときは false）。
+    fn paint_front(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+    ) -> Result<bool, SurfaceStrokeError> {
+        let Some(&dab) = self.queue.front() else {
+            return Ok(false);
+        };
+        if !self.paintable(&dab) {
+            return Ok(false);
+        }
+        self.queue.pop_front();
+        self.paint_located(doc, stroke, dab)?;
+        Ok(true)
     }
 
     /// 今塗れる、まだ塗っていないダブの数（抜きのために線の続きを待っているダブは数えない）。
@@ -803,13 +857,13 @@ impl SurfaceStroke {
         self.queue.iter().take_while(|d| self.paintable(d)).count()
     }
 
-    /// 離したとき: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている最後の区間を並べ、待ち行列を全部塗る（抜きはここで終わりの長さが
-    /// 決まる。この後に文書のストロークを確定する）。
-    pub fn finish(
-        &mut self,
-        doc: &mut Document,
-        stroke: &mut Stroke,
-    ) -> Result<(), SurfaceStrokeError> {
+    /// 離したとき（塗らない形）: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている最後の区間を並べて、抜きの終わりの長さを決める。
+    /// 残りのダブは塗らずに待ち行列に残す（呼ぶ側が [`SurfaceStroke::paint_queued_until`] などでフレームごとに塗り、
+    /// [`SurfaceStroke::queued`] が 0 になったら文書のストロークを確定する）。2 回目からは何もしない。
+    pub fn end_input(&mut self) -> Result<(), SurfaceStrokeError> {
+        if self.end.is_some() {
+            return Ok(());
+        }
         if self.brush.assist.stabilizer > 0.0 && self.pen.at != self.last_input.at {
             self.move_pen(self.last_input.at, self.last_input)?;
         }
@@ -820,6 +874,22 @@ impl SurfaceStroke {
             .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
         self.enqueue(points, &duals);
         self.end = Some(self.sampler.length());
+        Ok(())
+    }
+
+    /// 離したあとか（[`SurfaceStroke::end_input`] 済み）。
+    pub fn input_ended(&self) -> bool {
+        self.end.is_some()
+    }
+
+    /// 離したとき: [`SurfaceStroke::end_input`] をして、待ち行列を全部塗る（この後に文書のストロークを確定する）。その場で確定させる
+    /// 呼び手（保存・閉じる・GPU を失ったときなど）の形で、時間の枠は使わない。
+    pub fn finish(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+    ) -> Result<(), SurfaceStrokeError> {
+        self.end_input()?;
         self.paint_queued(doc, stroke, usize::MAX)?;
         Ok(())
     }
@@ -971,6 +1041,7 @@ impl SurfaceStroke {
         plan: &DabPlan<'_>,
         controls: &StampControls,
     ) -> Result<(), SurfaceStrokeError> {
+        let _profile = profile::scope(profile::Stage::SurfaceDab);
         let pressure = dab.pressure;
         // 散布で動いたダブは、その中心の下の面を当て直す
         let (at, hit) = if plan.x == pending.x && plan.y == pending.y {
@@ -1059,6 +1130,7 @@ impl SurfaceStroke {
                 self.mapped_dab(doc, stroke, &hit, pressure, &painted, points)?;
             }
             SurfaceEffect::Paint if !self.mixes => {
+                let _profile = profile::scope(profile::Stage::SurfaceApply);
                 for p in &painted {
                     let coverage = p.coverage.min(1.0) as f64;
                     match point_of(self, p) {
@@ -1297,6 +1369,7 @@ impl SurfaceStroke {
         dual: Option<(DualBrushMode, &DualCells)>,
         weighted: bool,
     ) -> (SurfaceDabResult, Option<SurfaceHit>) {
+        let _profile = profile::scope(profile::Stage::SurfaceProject);
         let (result, hit) = self.build_model_dab(doc, hit, at, scale, radius, form, dual, weighted);
         if self.canvas.is_empty() {
             return (result, hit);
