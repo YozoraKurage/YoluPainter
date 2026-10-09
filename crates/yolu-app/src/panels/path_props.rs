@@ -293,6 +293,14 @@ fn delete_tip(lang: Lang) -> String {
     )
 }
 
+/// 3D のパスの「描き直す」: 描くのは休みの形（`path_surface_ctx` の `render`）で、今のポーズは使わない。
+fn redraw_tip(lang: Lang) -> &'static str {
+    lang.pick(
+        "ポーズを付けない形（休みの形）のモデルの面に描き直します",
+        "Redraw on the model's surface in its rest shape (the pose is not applied)",
+    )
+}
+
 fn rasterize_tip(lang: Lang) -> &'static str {
     lang.pick(
         "今の画素を残してパスを外します。そのあとは普通に塗れます",
@@ -809,10 +817,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         buttons.push(Btn {
             id: "path.redraw",
             label: lang.pick("描き直す", "Redraw"),
-            tip: lang.pick(
-                "今のポーズのモデルの面に描き直します",
-                "Redraw on the model in its current pose",
-            ),
+            tip: redraw_tip(lang),
             enabled: editable,
             action: Action::Path(PathAction::Redraw),
             on: false,
@@ -1643,4 +1648,24 @@ pub fn new_path_tip(lang: Lang) -> String {
             crate::mode::EditorMode::Paint,
         )],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 3D のパスは休みの形で描くので、「描き直す」のツールチップは今のポーズに描くとは言わない。
+    #[test]
+    fn the_redraw_tip_says_the_pose_is_not_used() {
+        let ja = redraw_tip(Lang::Ja);
+        assert!(
+            ja.contains("休みの形") && !ja.contains("今のポーズ"),
+            "{ja}"
+        );
+        let en = redraw_tip(Lang::En);
+        assert!(
+            en.contains("rest shape") && !en.contains("current pose"),
+            "{en}"
+        );
+    }
 }

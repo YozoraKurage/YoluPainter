@@ -10,7 +10,7 @@ use super::properties::{
     choice_buttons, group_label, slider_row, status_row, toggle_row, ChoiceButton,
 };
 use crate::engine::SelectionCombine;
-use crate::region::idcolor::{hex_of, manual_state_lines, parse_rgb};
+use crate::region::idcolor::{hex_of, manual_state_line, parse_rgb};
 use crate::region::{IdColorOp, RegionAction};
 use crate::selection::{combine_name, combine_tooltip, SelAction, SelUiOp};
 use crate::state::{Action, AppState, Tool};
@@ -603,17 +603,8 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     {
         app.apply(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
     }
-    if let Some([count_line, why]) = manual_state_lines(lang, count) {
+    if let Some(count_line) = manual_state_line(lang, count) {
         status_row(ui, rows, &count_line);
-        let r = rows.row(t::ROW_HEIGHT, 2.0);
-        let shown = w::fit(ui.painter(), &why, r.width(), t::LABEL_DIM);
-        w::text(
-            ui.painter(),
-            r,
-            &shown,
-            t::LABEL_DIM.with_color(t::WARNING),
-            w::Align::Left,
-        );
     }
 }
 
