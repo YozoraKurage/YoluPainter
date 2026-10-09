@@ -16,7 +16,8 @@
 //! - 出どころのパス: 棚の項目の `origin` のうち `file`（絶対のパス）・`unityAsset`（Assets の中のパス）・`library`（置き場の相対パス）を `none` に。
 //!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。
 //! - モデルの参照: `view.json` の `standaloneModel` と、モデルの GUID（空にする）、モデルの中のレンダラーの目（空にする）、根の `pose.json`
-//!   （モデルのポーズ。どのモデルのものか分からなくなる）。
+//!   （モデルのポーズ。どのモデルのものか分からなくなる）、根の `livelink.json`（Live Link で開いたモデルの記録。FBX と絵のファイルの絶対の場所・
+//!   Unity のプロジェクトの場所・書き出しの置き場を持つ。ポーズも入っているので、モデルの参照と一緒に除く）。
 //! - メッシュマップ: `sets/<ID>/meshmap-*.bin`（モデルの形から焼いた派生物。焼き直せる）。
 //! - Unity の値: `look.json` の `received`（Live Link で Unity のマテリアルから受けた値）。利用者の設定は残る。
 //! - 名前を付けて残した選択範囲: `sets/<ID>/selections.json` と `selection-*.bin`。作業の補助で、絵ではない。形式 8 のエントリなので、残した写しは
@@ -47,7 +48,7 @@ pub enum Removal {
     UnusedShelf,
     /// 棚の物の出どころのパス。
     SourcePaths,
-    /// モデルの参照（`view.json`）。
+    /// モデルの参照（`view.json`・`pose.json`・`livelink.json`）。
     ModelReference,
     /// 焼いたメッシュマップ。
     MeshMaps,
@@ -319,9 +320,24 @@ impl Project {
         Inventory { found }
     }
 
-    /// `view.json` にモデルの参照があれば、その名前（モデルのファイルの名前。名前が無ければ空）。読めない `view.json` は、中を確かめられないので
-    /// 名前 `view.json` で当たる。
+    /// モデルの参照（`view.json` のモデルの場所・Unity のモデルの GUID・レンダラーの目と、Live Link で開いたモデルの記録 `livelink.json`）が
+    /// あれば、その名前（モデルのファイルの名前、記録はエントリの名前 `livelink.json`。名前が無ければ空）。読めない `view.json` は、中を確かめ
+    /// られないので名前 `view.json` で当たる。
     fn model_reference(&self) -> Option<Vec<String>> {
+        let view = self.view_model_reference();
+        let link = self.files.contains_key(crate::livelink::ENTRY);
+        if view.is_none() && !link {
+            return None;
+        }
+        let mut names = view.unwrap_or_default();
+        if link {
+            names.push(crate::livelink::ENTRY.into());
+        }
+        Some(names)
+    }
+
+    /// `view.json` にモデルの参照があれば、その名前（モデルのファイルの名前。名前が無ければ空）。
+    fn view_model_reference(&self) -> Option<Vec<String>> {
         let bytes = self.files.get("view.json")?;
         let Ok(view) = bytes.bytes().and_then(|b| read_view(&b)) else {
             return Some(vec!["view.json".into()]);
@@ -437,8 +453,10 @@ impl Project {
             }
         }
         if on(Removal::ModelReference) {
-            // モデルのポーズ（pose.json）も、モデルの参照と一緒に除く（どのモデルのポーズか分からなくなる）
+            // モデルのポーズ（pose.json）も、モデルの参照と一緒に除く（どのモデルのポーズか分からなくなる）。Live Link で開いたモデルの記録
+            // （livelink.json）は、FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ（ポーズも持つ）ので同じく除く
             files.remove(crate::pose::ENTRY);
+            files.remove(crate::livelink::ENTRY);
             if let Some(blob) = files.get("view.json").cloned() {
                 match blob.bytes().and_then(|b| read_view(&b)) {
                     Ok(mut view) => {

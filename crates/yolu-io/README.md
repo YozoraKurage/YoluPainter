@@ -287,7 +287,7 @@ for image in &report.written {
 - `atomic`: 一時ファイルへ書いて最後の 1 回の置換で確定する書き込み（設定・ブラシ・プリセット・素材・キャッシュ・ダウンロード）。一時ファイルは置き先と同じフォルダの `.{ファイル名}.{pid}-{通し番号}.pending~`（ファイル名が 200 バイトを超えるときは、先頭を切って指紋を付ける）、書いたら `sync_all`、置換は `rename` で、Windows の共有違反・ロック違反・アクセス拒否のあいだは合計 1.5 秒までやり直す。失敗したら一時ファイルを消し、置き先は前のまま。
 - `psd::write_verified`: 検証つきの PSD の書き出し。同じフォルダの一時ファイルへ流して書き、同期し、最後まで流して読み戻して確かめ（`verify_stream`）、書いたバイト列と CRC-32・長さで照らしてから確定する（置き換える `rename`、または「あれば失敗」の `hard_link`）。読めない・書いたものと違う PSD は確定しない。
 - `library`: 個人のライブラリ（プロジェクトをまたいで使う素材のフォルダ）の読み書き。PNG・`.ylsmart`・`.ylbrush`・`.ylmaterial` を拡張子で見分け、フォルダの外のファイルは一覧・読み・書き・消しの対象にしない。
-- `distribution`: 配布用の写し。開いている .ylp から、取り込んだ PSD の原本・どのレイヤーにも使われていないアセット・モデルの場所・焼いたメッシュマップ・Unity のマテリアルの値・知らないエントリなどを種類ごとに除いた写し（`Project::distribution_inventory`・`Project::for_distribution`・`Removal`）を作る。作業用のファイルは変えない。
+- `distribution`: 配布用の写し。開いている .ylp から、取り込んだ PSD の原本・どのレイヤーにも使われていないアセット・モデルの場所（`pose.json`・Live Link で開いたモデルの記録 `livelink.json` を含む）・焼いたメッシュマップ・Unity のマテリアルの値・知らないエントリなどを種類ごとに除いた写し（`Project::distribution_inventory`・`Project::for_distribution`・`Removal`）を作る。作業用のファイルは変えない。
 - `fonts`: OS に入っているフォントの一覧（`fontdb`）と、テキストレイヤーのフォントを探す決まり（形は [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md) の「テキスト」）。
 - `livelink`: Live Link の相手の文書（根の `livelink.json`）の検査（大きさ・JSON のオブジェクト・`format`）。中身はアプリが読む。
 

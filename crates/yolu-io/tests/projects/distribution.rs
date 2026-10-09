@@ -948,3 +948,72 @@ fn the_pose_goes_with_the_model_reference_and_stays_otherwise() {
     assert!(!entries(&copy).contains_key("pose.json"));
     assert!(copy.view_model().unwrap().is_none());
 }
+
+/// Live Link で開いたモデルの記録（根の `livelink.json`）。FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ。
+const LIVE_LINK: &str = r#"{"format":1,"kind":"open","target":{"key":"GlobalObjectId_V1-2-0123-4567-0","name":"Prop","export":"C:\\Users\\tester\\export"},"models":[{"path":"C:\\Users\\tester\\models\\Prop.fbx"}],"unityProject":"C:\\Users\\tester\\UnityProject"}"#;
+
+#[test]
+fn the_live_link_record_goes_with_the_model_reference_and_stays_otherwise() {
+    let project = with_remembered()
+        .with_livelink(Some(LIVE_LINK.as_bytes()))
+        .unwrap();
+    assert!(entries(&project).contains_key("livelink.json"));
+    // 目録: モデルのファイルの名前に並べて、記録のエントリの名前も挙げる
+    assert_eq!(
+        names(&project, Removal::ModelReference),
+        ["Prop.fbx", "livelink.json"]
+    );
+    // モデルの参照を残すなら、記録も残る（バイト列のまま）
+    let kept = project
+        .for_distribution(writer(), &[Removal::SavedSelections])
+        .unwrap();
+    assert_eq!(
+        kept.livelink().unwrap().as_deref(),
+        Some(LIVE_LINK.as_bytes())
+    );
+    // モデルの参照を除くなら、記録も除く（絶対の場所とポーズが写しに残らない）
+    let copy = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert!(!entries(&copy).contains_key("livelink.json"));
+    assert_eq!(copy.livelink().unwrap(), None);
+    let text = String::from_utf8_lossy(
+        &entries(&copy)
+            .values()
+            .flatten()
+            .copied()
+            .collect::<Vec<u8>>(),
+    )
+    .into_owned();
+    assert!(
+        !text.contains("tester") && !text.contains("GlobalObjectId"),
+        "作った人の場所や Unity のオブジェクトの鍵が残る"
+    );
+    // 読み直せて、除く物はもう無い
+    let again = Project::read(&copy.to_bytes().unwrap()).unwrap();
+    assert!(again.unknown_entries().is_empty());
+    assert!(!again
+        .distribution_inventory(&Removal::ALL)
+        .kinds()
+        .contains(&Removal::ModelReference));
+    // 開いているプロジェクトは変わらない
+    assert_eq!(
+        project.livelink().unwrap().as_deref(),
+        Some(LIVE_LINK.as_bytes())
+    );
+}
+
+#[test]
+fn a_live_link_record_without_a_view_still_counts_as_a_model_reference() {
+    // view.json が無い（モデルのファイルの参照が無い）プロジェクトでも、記録だけで種類が当たる
+    let base = Project::create(writer(), &[spec(SET_A, "Body", &doc_reading(&[]))], SET_A).unwrap();
+    assert!(!entries(&base).contains_key("view.json"));
+    assert!(names(&base, Removal::ModelReference).is_empty());
+    let project = base.with_livelink(Some(LIVE_LINK.as_bytes())).unwrap();
+    assert_eq!(names(&project, Removal::ModelReference), ["livelink.json"]);
+    let copy = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert_eq!(copy.livelink().unwrap(), None);
+    assert!(copy.distribution_inventory(&Removal::ALL).is_empty());
+}

@@ -516,6 +516,84 @@ fn headless_saving_and_reopening_gives_the_same_model_and_pose_without_unity() {
     );
 }
 
+/// 配布用に保存: Live Link で開いたモデルの記録（livelink.json。FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ）は、
+/// 「モデルの参照」を除く選びなら写しに入らず、残す選びなら入る。ウィンドウの一覧にも記録の名前が出る。開いている文書とファイルは変わらない。
+#[test]
+fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_reference() {
+    use yolu_app::distribute::DistributeAction;
+    use yolu_io::Removal;
+    let mut h = Headless::new("dist");
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened);
+    let path = h.ex.dir.join("arm.ylp");
+    h.state.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    let saved = std::fs::read(&path).unwrap();
+    let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
+    let record = project.livelink().unwrap().expect("livelink.json");
+    // 記録は、作った人の場所（FBX・書き出しの置き場）を持っている
+    let dir_text = h.ex.dir.to_string_lossy().replace('\\', "/");
+    assert!(
+        String::from_utf8(record.clone())
+            .unwrap()
+            .contains(&dir_text),
+        "記録に場所が入る"
+    );
+    let s = &mut h.state;
+    s.apply(Action::Distribute(DistributeAction::Start));
+    s.wait_distribute();
+    let window = s.distribute.window().expect("ウィンドウがある");
+    let found = window
+        .inventory()
+        .get(Removal::ModelReference)
+        .expect("モデルの参照の種類が当たる");
+    assert!(
+        found.names.iter().any(|n| n == "livelink.json"),
+        "{:?}",
+        found.names
+    );
+    // 既定は全部除く: 記録も、その中の場所も写しに無い
+    let dest = h.ex.dir.join("arm-dist.ylp");
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
+    s.wait_distribute();
+    assert!(
+        s.message.starts_with("配布用に保存しました"),
+        "{}",
+        s.message
+    );
+    let copy = yolu_io::Project::open(&dest, &yolu_io::Limits::unbounded()).unwrap();
+    assert_eq!(copy.livelink().unwrap(), None);
+    assert!(copy.unknown_entries().is_empty());
+    let all = std::fs::read(&dest).unwrap();
+    let archive = yolu_io::Archive::read(&all).unwrap();
+    for (name, blob) in archive.entries() {
+        assert!(
+            !String::from_utf8_lossy(blob).contains(&dir_text),
+            "{name} に場所が残る"
+        );
+    }
+    // 開いているファイルは変わらない
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    // 残す選び: 記録はバイト列のまま写しに入る
+    s.apply(Action::Distribute(DistributeAction::Start));
+    s.wait_distribute();
+    s.apply(Action::Distribute(DistributeAction::Toggle(
+        Removal::ModelReference,
+    )));
+    let kept = h.ex.dir.join("arm-kept.ylp");
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
+    s.wait_distribute();
+    let copy = yolu_io::Project::open(&kept, &yolu_io::Limits::unbounded()).unwrap();
+    assert_eq!(copy.livelink().unwrap().as_deref(), Some(&record[..]));
+}
+
 #[test]
 fn headless_two_fbx_files_make_one_model_and_a_collapsed_root_is_followed() {
     let mut h = Headless::new("two");

@@ -54,8 +54,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "Where the assets were imported from. Assets in use stay; only their source is dropped",
         ),
         Removal::ModelReference => lang.pick(
-            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ",
-            "The location of the model that was open, the Unity model GUID and the model's pose",
+            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ、Live Link で開いたモデルの記録（FBX や Unity のプロジェクトの場所）",
+            "The location of the model that was open, the Unity model GUID, the model's pose and the record of a model opened over Live Link (FBX and Unity project locations)",
         ),
         Removal::MeshMaps => lang.pick(
             "モデルの形から焼いたマップ。Generator が使うマップは、開いたあとにモデルから焼き直します",
