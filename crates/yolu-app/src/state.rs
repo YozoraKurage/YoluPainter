@@ -478,6 +478,8 @@ pub enum PopupKind {
     /// ショートカットの設定で、次に押すキー・マウスの組み合わせを待っている間（中身は `AppState::shortcuts`。キーの表・キャンバス・3D ビューの
     /// キーと Esc を止める。描くのはショートカットのウィンドウ）。
     KeyCapture,
+    /// ショートカットの設定の、ツールのキーの動き方を選ぶ一覧（ツールを選ぶ操作の ID）。
+    ToolKeyMode(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -612,6 +614,8 @@ pub enum Action {
     View3dNav(crate::view3d::navigation::NavOp),
     /// 編集・ポーズのモードの物（選ぶ・G/R/S・戻す・隠す・消す）。
     Object(crate::objects::ObjectAction),
+    /// ツールのキーの動き方を替える（ショートカットの設定。操作の ID と動き方。キーの設定を保存する）。
+    ToolKeyMode(&'static str, crate::toolkeys::ToolKeyMode),
 }
 
 impl Action {
@@ -697,6 +701,7 @@ impl Action {
             Self::Pie(..) => "Pie",
             Self::View3dNav(..) => "View3dNav",
             Self::Object(..) => "Object",
+            Self::ToolKeyMode(..) => "ToolKeyMode",
         }
     }
 
@@ -925,6 +930,10 @@ pub struct AppState {
     pub objects: crate::objects::ObjectsState,
     /// 利用者のキー・マウス・パイの設定（ショートカットの設定のウィンドウが変える。keymap.json）。
     pub keys: crate::keyconfig::KeyConfig,
+    /// ツールのキーを押している間だけの切り替え（離したら戻す前のツール。保存しない）。
+    pub temp_tool: crate::toolkeys::TempTool,
+    /// ツールを替えた回数（`switch_to` が替えるたびに増える。押している間の切り替えが、別の手段で選ばれたかを見る）。
+    pub(crate) tool_epoch: u64,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -1127,6 +1136,8 @@ impl AppState {
             pie: Default::default(),
             objects: Default::default(),
             keys: Default::default(),
+            temp_tool: Default::default(),
+            tool_epoch: 0,
         }
     }
 
@@ -1205,6 +1216,7 @@ impl AppState {
             self.subtool_enter(tool);
         }
         self.tool = tool;
+        self.tool_epoch += 1;
         true
     }
 
@@ -1665,6 +1677,10 @@ impl AppState {
             Action::Pie(op) => self.pie_apply(op),
             Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
             Action::Object(op) => self.objects_apply(op),
+            Action::ToolKeyMode(command, mode) => {
+                self.keys.set_tool_mode(command, mode);
+                self.keys_changed();
+            }
         }
     }
 }

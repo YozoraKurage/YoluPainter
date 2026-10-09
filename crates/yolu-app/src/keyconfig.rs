@@ -23,6 +23,7 @@ use crate::lang::Lang;
 use crate::notice::Source;
 use crate::pie::{self, PieItem, PieMenu, PieName};
 use crate::state::AppState;
+use crate::toolkeys::ToolKeyMode;
 use crate::ui::pie::SLOTS;
 
 /// 設定のフォルダの中のファイルの名前。
@@ -101,6 +102,8 @@ pub enum ComboConflict {
 pub struct KeyConfig {
     keys: BTreeMap<GroupKey, Vec<Trigger>>,
     mouse: BTreeMap<u8, Option<Combo>>,
+    /// ツールのキーの動き方（押すと切り替えから変えた操作だけ）。
+    tool_modes: BTreeMap<&'static str, ToolKeyMode>,
     map: Arc<Keymap>,
     path: Option<PathBuf>,
     /// 起動のときに読めなかったファイルを、そのまま残している（次に書くとき、別の名前へ移してから書く）。
@@ -114,6 +117,7 @@ impl Default for KeyConfig {
         KeyConfig {
             keys: BTreeMap::new(),
             mouse: BTreeMap::new(),
+            tool_modes: BTreeMap::new(),
             map: keymap::default_map(),
             path: None,
             broken: false,
@@ -127,6 +131,7 @@ impl Default for KeyConfig {
 pub struct Parsed {
     pub keys: BTreeMap<GroupKey, Vec<Trigger>>,
     pub mouse: BTreeMap<u8, Option<Combo>>,
+    pub tool_modes: BTreeMap<&'static str, ToolKeyMode>,
     pub pies: Vec<PieMenu>,
     pub skipped: usize,
 }
@@ -181,9 +186,32 @@ impl KeyConfig {
             .unwrap_or_else(|| default_triggers(key))
     }
 
-    /// まとまりを既定から変えたか。
+    /// まとまりを既定から変えたか（ツールのキーは、動き方を変えたときも）。
     pub fn is_changed(&self, key: GroupKey) -> bool {
-        self.keys.contains_key(&key)
+        self.keys.contains_key(&key) || self.tool_modes.contains_key(key.0)
+    }
+
+    /// ツールを選ぶ操作のキーの動き方（変えていなければ、押すと切り替え）。
+    pub fn tool_mode(&self, command: &str) -> ToolKeyMode {
+        self.tool_modes
+            .get(command)
+            .copied()
+            .unwrap_or(ToolKeyMode::Tap)
+    }
+
+    /// ツールのキーの動き方を替える（押すと切り替えなら、変えた所から外す）。ツールを選ぶ操作でなければ何もしない。
+    pub fn set_tool_mode(&mut self, command: &str, mode: ToolKeyMode) {
+        let Some(command) =
+            commands::find(command).filter(|c| commands::selected_tool(c.id).is_some())
+        else {
+            return;
+        };
+        if mode == ToolKeyMode::Tap {
+            self.tool_modes.remove(command.id);
+        } else {
+            self.tool_modes.insert(command.id, mode);
+        }
+        self.rebuild();
     }
 
     /// 変えたまとまり（既定の行が無い操作に入れた物も）。
@@ -201,22 +229,25 @@ impl KeyConfig {
         self.rebuild();
     }
 
-    /// まとまりを既定に戻す。
+    /// まとまりを既定に戻す（ツールのキーは、動き方も押すと切り替えに）。
     pub fn reset(&mut self, key: GroupKey) {
         self.keys.remove(&key);
+        self.tool_modes.remove(key.0);
         self.rebuild();
     }
 
-    /// 全部を既定に戻す（キーとマウス）。
+    /// 全部を既定に戻す（キーとマウスと、ツールのキーの動き方）。
     pub fn reset_all(&mut self) {
         self.keys.clear();
         self.mouse.clear();
+        self.tool_modes.clear();
         self.rebuild();
     }
 
     /// 利用者のパイを消したとき、そのパイを開くキーも外す。
     pub fn forget_command(&mut self, command: &str) {
         self.keys.retain(|(c, _), _| *c != command);
+        self.tool_modes.remove(command);
         self.rebuild();
     }
 
@@ -250,7 +281,7 @@ impl KeyConfig {
 
     /// 既定から変えた所が無いか。
     pub fn is_default(&self) -> bool {
-        self.keys.is_empty() && self.mouse.is_empty()
+        self.keys.is_empty() && self.mouse.is_empty() && self.tool_modes.is_empty()
     }
 
     /// 割り当てを作り直して、このスレッドで効かせる。
@@ -302,7 +333,8 @@ impl KeyConfig {
                 Some(None) => None,
             })
             .collect();
-        self.map = Arc::new(Keymap::with_gestures(rows, gestures));
+        let modes = self.tool_modes.iter().map(|(id, m)| (*id, *m)).collect();
+        self.map = Arc::new(Keymap::with_gestures(rows, gestures).with_tool_modes(modes));
         keymap::install(self.map.clone());
     }
 
@@ -456,19 +488,30 @@ impl KeyConfig {
                 Value::Object(o)
             })
             .collect();
-        json!({
+        let mut out = json!({
             "format": FORMAT,
             "version": VERSION,
             "keys": keys,
             "mouse": mouse,
             "pies": pies,
-        })
+        });
+        // ツールのキーの動き方は、押すと切り替えから変えた物があるときだけ（無ければ書かない）
+        if !self.tool_modes.is_empty() {
+            let modes: Map<String, Value> = self
+                .tool_modes
+                .iter()
+                .map(|(id, mode)| ((*id).to_owned(), Value::String(mode.key().to_owned())))
+                .collect();
+            out["tool_keys"] = Value::Object(modes);
+        }
+        out
     }
 
     /// 読んだ設定を入れる（今の変更は捨て、既定に読んだ所を重ねる）。パイは呼ぶ側が入れる。
     pub fn apply(&mut self, parsed: &Parsed) {
         self.keys = parsed.keys.clone();
         self.mouse = parsed.mouse.clone();
+        self.tool_modes = parsed.tool_modes.clone();
         self.rebuild();
     }
 
@@ -934,6 +977,25 @@ pub fn parse(text: &str, lang: Lang) -> Result<Parsed, String> {
         if combo != Some(Combo::of(g)) {
             parsed.mouse.insert(g.index, combo);
         }
+    }
+    // ツールのキーの動き方（ツールを選ぶ操作の ID → 動き方）。知らない操作・知らない動き方は飛ばして数える。押すと切り替え（既定）は変えた所に入れない
+    match o.get("tool_keys") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(modes)) => {
+            for (id, mode) in modes {
+                let command =
+                    commands::find(id).filter(|c| commands::selected_tool(c.id).is_some());
+                let mode = mode.as_str().and_then(ToolKeyMode::from_key);
+                match (command, mode) {
+                    (Some(_), Some(ToolKeyMode::Tap)) => {}
+                    (Some(c), Some(mode)) => {
+                        parsed.tool_modes.insert(c.id, mode);
+                    }
+                    _ => parsed.skipped += 1,
+                }
+            }
+        }
+        Some(_) => parsed.skipped += 1,
     }
     Ok(parsed)
 }

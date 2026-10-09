@@ -462,6 +462,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         } => crate::bake::overlap::menu_entries(app, set, island, map),
         PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
         PopupKind::Mode => crate::mode::entries(app),
+        PopupKind::ToolKeyMode(command) => {
+            crate::shortcuts::editor::tool_mode_entries(app, command)
+        }
         // パイと G/R/S は項目の並びでなく、自分で描く（`pie::show`・`objects::transform::show`）
         PopupKind::Pie | PopupKind::Transform | PopupKind::KeyCapture => Vec::new(),
     }
@@ -782,6 +785,8 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
+    // ツールのキーを押している間だけの切り替え: 離したか、戻す条件が揃ったかを先に見る（下の早い戻りでも離しを見落とさない）
+    crate::toolkeys::update(ctx, app);
     // ショートカットの設定で割り当てに使ったキーは、離すまで繰り返しの押しを表へ渡さない
     crate::shortcuts::editor::swallow_held(ctx, app);
     // メニューなどから頼まれたパイを、ポインタの所に開く。外から閉じられた G/R/S はそこまでで決め、頼まれた G/R/S を始める
@@ -797,6 +802,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let mut actions = Vec::new();
+    // ツールのキーのうち、押している間だけの動き方のもの（切り替えと離しの戻しは `toolkeys` が持つ）
+    let mut holds = Vec::new();
     // 移動・変形のツール: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
     let canvas_shown = app.ui.canvas_frame.is_some_and(|f| {
@@ -814,6 +821,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     ctx.input_mut(|i| {
         // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
         crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
+        // ツールのキーを押している間の、そのキーの繰り返しの押し（修飾を先に離したあとも）は、表のほかの割り当てへ渡さない
+        crate::toolkeys::swallow_repeats(i, app);
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）。画素を変えるカット・ペーストは、ペイントのモードだけ
         let paints = app.mode.paints();
         actions.extend(
@@ -831,11 +840,22 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
             }
         }
         // キーの段 2〜4「場面」「モード」「どこでも」（判定の順は `keymap::Keymap::order`）。^ の文字の入力（キーの位置が配列で違う）も、表の行として判定に入る
-        actions.extend(crate::keymap::dispatch(i, app));
+        for fired in crate::keymap::dispatch_fired(&crate::keymap::current(), i, app) {
+            if fired.mode == crate::toolkeys::ToolKeyMode::Tap {
+                actions.push(fired.action);
+            } else {
+                holds.push(fired);
+            }
+        }
     });
     for a in actions {
         app.apply(a);
     }
+    for fired in holds {
+        crate::toolkeys::press(ctx, app, fired);
+    }
+    // 押したのと同じフレームで離していたら、ここで戻す条件を見る
+    crate::toolkeys::update(ctx, app);
     // キーで開いたパイ（Ctrl+Tab など）は、そのキーを押している間に開く（押したまま離すと、指している項目を実行する）。G/R/S はポインタの所から始める
     crate::pie::open_requested(ctx, app);
     crate::objects::transform::start_requested(ctx, app);

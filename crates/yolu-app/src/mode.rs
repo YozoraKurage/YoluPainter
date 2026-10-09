@@ -170,6 +170,10 @@ impl AppState {
             self.refuse(Source::Pose, text);
             return false;
         }
+        // キーを押している間だけのツールは、離したものとして、押す前のツールへ戻してから替える（ペイントへ戻ったとき、一時のツールのまま残さない）
+        if self.mode == EditorMode::Paint {
+            crate::toolkeys::leave_paint(self);
+        }
         // 途中の操作は確定してから替える（G/R/S は決める。面に乗らないパスはやめる）
         crate::objects::transform::finish(self, true);
         crate::view3d::gizmo::release(self, true);

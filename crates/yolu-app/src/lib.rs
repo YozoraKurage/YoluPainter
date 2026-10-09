@@ -82,6 +82,7 @@ pub mod subtool;
 pub mod textlayer;
 pub mod titlebar;
 pub mod toast;
+pub mod toolkeys;
 pub mod tools;
 pub mod toolset;
 pub mod transform;

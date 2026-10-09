@@ -609,6 +609,14 @@ pub fn for_action(action: &Action) -> Option<&'static Command> {
         .find(|c| c.action.is_some_and(|make| make() == *action))
 }
 
+/// ツールを選ぶ操作が選ぶツール（ほかの操作は None。ツールのキーの動き方を選べる操作）。
+pub fn selected_tool(command: &str) -> Option<Tool> {
+    match find(command)?.action?() {
+        Action::SelectTool(tool) => Some(tool),
+        _ => None,
+    }
+}
+
 /// ツールを選ぶ操作の ID（`tool.<ツールの id>`）。
 pub fn tool_command(tool: Tool) -> &'static str {
     match tool {

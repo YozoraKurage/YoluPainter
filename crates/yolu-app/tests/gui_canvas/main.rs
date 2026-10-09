@@ -41,6 +41,7 @@ mod selection_build;
 mod stencil;
 mod stroke_look;
 mod text_tool;
+mod tool_keys;
 mod tool_layout_ui;
 mod view_controls;
 mod warp;

@@ -460,3 +460,171 @@ fn snapshot_the_pie_menu_editor_in_both_languages() {
         crop(&mut h, w.expand(8.0), name);
     }
 }
+
+// ───────── ツールのキーの動き方 ─────────
+
+fn mode_box(h: &H, command: &'static str) -> Rect {
+    h.state()
+        .state
+        .shortcuts
+        .mode_boxes
+        .iter()
+        .find(|(c, _)| *c == command)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("{command}"))
+}
+
+fn click_mode_item(h: &mut H, label: &str) {
+    let item = popup_item(h, label);
+    click(h, item.center());
+}
+
+#[test]
+fn tool_rows_have_a_mode_box_whose_list_changes_the_mode_and_the_row_reset_returns_it() {
+    let mut h = editor(Lang::Ja);
+    section(&mut h, Section::Paint);
+    // 箱はツールを選ぶ操作の行だけ
+    let boxes = h.state().state.shortcuts.mode_boxes.clone();
+    assert!(boxes.len() >= 8, "ツールの行が並ぶ: {}", boxes.len());
+    for (command, _) in &boxes {
+        assert!(command.starts_with("tool."), "{command}");
+    }
+    assert!(boxes.iter().any(|(c, _)| *c == "tool.eraser"));
+    assert_eq!(
+        h.state().state.keys.tool_mode("tool.eraser"),
+        yolu_app::toolkeys::ToolKeyMode::Tap
+    );
+    // 箱を押すと、動き方の一覧が開く（今の動き方に印）
+    let at = mode_box(&h, "tool.eraser").center();
+    click(&mut h, at);
+    assert!(matches!(
+        h.state().state.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::ToolKeyMode("tool.eraser"))
+    ));
+    for label in [
+        "押すと切り替え",
+        "押している間だけ",
+        "短く押すと切り替え・長押しで押している間だけ",
+    ] {
+        popup_item(&h, label);
+    }
+    click_mode_item(&mut h, "押している間だけ");
+    assert!(h.state().state.popup.is_none());
+    assert_eq!(
+        h.state().state.keys.tool_mode("tool.eraser"),
+        yolu_app::toolkeys::ToolKeyMode::Hold
+    );
+    // 行に「既定に戻す」の印が出て、押すと押すと切り替えに戻る
+    let row = mode_box(&h, "tool.eraser");
+    let w = window(&h);
+    let reset = rect_of(&h, "既定に戻す", |r| {
+        (r.center().y - row.center().y).abs() < 12.0 && w.contains_rect(r)
+    });
+    // 実際の割り当てで効く（設定のウィンドウを閉じて、E を押している間だけ消しゴム）
+    h.state_mut().state.shortcuts.open = false;
+    h.run();
+    key_event(&h, Key::E, true, false, Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.tool, Tool::Eraser);
+    key_event(&h, Key::E, false, false, Modifiers::NONE);
+    h.run();
+    assert_eq!(
+        h.state().state.tool,
+        Tool::Brush,
+        "設定が、実際のキーに効く"
+    );
+    h.state_mut().state.apply(Action::ShowShortcuts);
+    h.run();
+    section(&mut h, Section::Paint);
+    click(&mut h, reset.center());
+    assert_eq!(
+        h.state().state.keys.tool_mode("tool.eraser"),
+        yolu_app::toolkeys::ToolKeyMode::Tap
+    );
+    assert!(h.state().state.keys.is_default());
+    // 英語の一覧と、3 つ目の動き方（箱には短い名前）
+    h.state_mut().state.set_language(Lang::En);
+    h.run();
+    let at = mode_box(&h, "tool.fill").center();
+    click(&mut h, at);
+    click_mode_item(&mut h, "Tap to Switch, Hold for Temporary");
+    assert_eq!(
+        h.state().state.keys.tool_mode("tool.fill"),
+        yolu_app::toolkeys::ToolKeyMode::TapOrHold
+    );
+    let r = mode_box(&h, "tool.fill");
+    assert!(
+        h.query_all_by_label_contains("Tap / Hold")
+            .any(|n| r.contains(n.rect().center())),
+        "箱の短い名前"
+    );
+}
+
+#[test]
+fn the_mode_list_closes_without_a_change_when_the_box_is_pressed_again() {
+    let mut h = editor(Lang::Ja);
+    section(&mut h, Section::Paint);
+    let at = mode_box(&h, "tool.brush").center();
+    click(&mut h, at);
+    assert!(h.state().state.popup.is_some());
+    let at = mode_box(&h, "tool.brush").center();
+    click(&mut h, at);
+    assert!(h.state().state.popup.is_none());
+    assert!(h.state().state.keys.is_default());
+}
+
+fn tool_mode_scene(lang: Lang, open: &'static str) -> H {
+    use yolu_app::toolkeys::ToolKeyMode;
+    let mut h = editor(lang);
+    {
+        let keys = &mut h.state_mut().state.keys;
+        keys.set_tool_mode("tool.eraser", ToolKeyMode::Hold);
+        keys.set_tool_mode("tool.fill", ToolKeyMode::TapOrHold);
+    }
+    h.run();
+    section(&mut h, Section::Paint);
+    let at = mode_box(&h, open).center();
+    click(&mut h, at);
+    move_to(&h, window(&h).right_bottom() - egui::vec2(8.0, 8.0));
+    h.run();
+    h
+}
+
+#[test]
+fn snapshot_the_tool_key_mode_list_in_both_languages() {
+    for (lang, name) in [
+        (Lang::Ja, "shortcut_tool_mode_ja"),
+        (Lang::En, "shortcut_tool_mode_en"),
+    ] {
+        let mut h = tool_mode_scene(lang, "tool.shape");
+        let w = window(&h).expand(8.0);
+        let popup = h
+            .state()
+            .state
+            .popup
+            .as_ref()
+            .map(|p| p.state.rect)
+            .unwrap_or(Rect::NOTHING);
+        crop(&mut h, w.union(popup.expand(8.0)), name);
+    }
+}
+
+#[test]
+fn starting_to_type_in_a_text_field_while_a_tool_key_is_held_counts_as_releasing_it() {
+    use yolu_app::toolkeys::ToolKeyMode;
+    let mut h = editor(Lang::Ja);
+    h.state_mut()
+        .state
+        .apply(Action::ToolKeyMode("tool.eraser", ToolKeyMode::Hold));
+    // ウィンドウの外のキャンバスにフォーカスがあるまま E を押す（押している間だけ消しゴム）
+    key_event(&h, Key::E, true, false, Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.tool, Tool::Eraser);
+    assert!(h.state().state.temp_tool.is_active());
+    // 名前で探す欄を押して、文字を打ち始める（押している間の E は、離したものとして扱う）
+    let search = h.state().state.shortcuts.search_rect.expect("探す欄");
+    click(&mut h, search.center());
+    h.run();
+    assert_eq!(h.state().state.tool, Tool::Brush);
+    assert!(!h.state().state.temp_tool.is_active());
+}

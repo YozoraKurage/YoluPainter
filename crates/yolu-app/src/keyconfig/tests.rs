@@ -625,3 +625,213 @@ fn a_view_combination_on_the_plain_left_button_or_one_shared_by_the_canvas_and_t
     app.keys.reset_all();
     assert!(!app.keys.has_conflicts());
 }
+
+// ───────── ツールのキーの動き方（tool_keys） ─────────
+
+use crate::toolkeys::ToolKeyMode;
+
+const ERASER: GroupKey = ("tool.eraser", Scope::Paint);
+
+/// 1 つの押しを、今効いている割り当てで判定する（動き方つき）。`repeat` なら、先に押した（離していない）あとの繰り返しの押し
+/// （egui は、押されているキーの 2 度目の押しを繰り返しにする）。
+fn fired(app: &AppState, k: Key, repeat: bool) -> Vec<keymap::Fired> {
+    let ctx = egui::Context::default();
+    let mut got = Vec::new();
+    let press = |ctx: &egui::Context, got: &mut Vec<keymap::Fired>, repeat: bool| {
+        let input = egui::RawInput {
+            events: vec![Event::Key {
+                key: k,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.input_mut(|i| *got = keymap::dispatch_fired(&keymap::current(), i, app));
+        });
+        output.textures_delta.clear();
+    };
+    if repeat {
+        press(&ctx, &mut got, false);
+    }
+    press(&ctx, &mut got, repeat);
+    got
+}
+
+#[test]
+fn tool_key_modes_are_written_only_when_changed_and_come_back_from_the_file() {
+    let dir = temp_dir("toolkeys");
+    let path = dir.join(FILE_NAME);
+    let mut app = AppState::new(32, 32);
+    let mut pies = app.pie.menus.clone();
+    assert!(app.keys.attach(path.clone(), &mut pies, Lang::Ja).is_none());
+    // 既定（押すと切り替え）のまま: tool_keys を書かず、ファイルも作らない
+    assert!(app.keys.is_default());
+    assert_eq!(app.keys.tool_mode("tool.eraser"), ToolKeyMode::Tap);
+    assert!(app.keys.to_json(&app.pie.menus).get("tool_keys").is_none());
+    app.keys_changed();
+    assert!(!path.exists());
+    // 変えた物だけ書く
+    app.keys.set_tool_mode("tool.eraser", ToolKeyMode::Hold);
+    app.keys.set_tool_mode("tool.fill", ToolKeyMode::TapOrHold);
+    app.keys.set_tool_mode("tool.brush", ToolKeyMode::Tap);
+    assert!(!app.keys.is_default());
+    assert!(app.keys.is_changed(ERASER));
+    assert!(!app.keys.is_changed(("tool.brush", Scope::Paint)));
+    app.keys_changed();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["tool_keys"],
+        json!({"tool.eraser": "hold", "tool.fill": "tap_or_hold"})
+    );
+    assert_eq!(v["version"], 1, "形式の版は上げない");
+    // 次の起動で読み直す
+    let mut again = AppState::new(32, 32);
+    let mut pies = again.pie.menus.clone();
+    assert!(again
+        .keys
+        .attach(path.clone(), &mut pies, Lang::Ja)
+        .is_none());
+    assert_eq!(again.keys.tool_mode("tool.eraser"), ToolKeyMode::Hold);
+    assert_eq!(again.keys.tool_mode("tool.fill"), ToolKeyMode::TapOrHold);
+    assert_eq!(again.keys.tool_mode("tool.brush"), ToolKeyMode::Tap);
+    // 表の判定にも付いてくる（押しは動き方つきで返る。割り当ては変えていない）
+    let hit = fired(&again, Key::E, false);
+    assert_eq!(hit.len(), 1);
+    assert_eq!(hit[0].action, Action::SelectTool(Tool::Eraser));
+    assert_eq!((hit[0].mode, hit[0].key), (ToolKeyMode::Hold, Some(Key::E)));
+    assert_eq!(fired(&again, Key::B, false)[0].mode, ToolKeyMode::Tap);
+    // 押すと切り替えに戻せば、変えた所から外れ、tool_keys も消える
+    again.keys.set_tool_mode("tool.eraser", ToolKeyMode::Tap);
+    again.keys.set_tool_mode("tool.fill", ToolKeyMode::Tap);
+    assert!(again.keys.is_default());
+    assert!(again
+        .keys
+        .to_json(&again.pie.menus)
+        .get("tool_keys")
+        .is_none());
+}
+
+#[test]
+fn hold_modes_ignore_key_repeat_and_the_tap_mode_keeps_repeating() {
+    let mut app = AppState::new(32, 32);
+    // 押すと切り替え: 繰り返しの押しも今までどおり実行する
+    assert_eq!(fired(&app, Key::E, true).len(), 1);
+    app.keys.set_tool_mode("tool.eraser", ToolKeyMode::Hold);
+    assert_eq!(fired(&app, Key::E, false).len(), 1);
+    assert!(fired(&app, Key::E, true).is_empty(), "繰り返しは何もしない");
+    app.keys
+        .set_tool_mode("tool.eraser", ToolKeyMode::TapOrHold);
+    assert!(fired(&app, Key::E, true).is_empty());
+    // ツール以外の操作は、動き方が無い
+    assert_eq!(fired(&app, Key::X, true)[0].mode, ToolKeyMode::Tap);
+}
+
+#[test]
+fn a_tool_row_reset_returns_the_keys_and_the_mode_and_reset_all_returns_every_mode() {
+    let mut app = AppState::new(32, 32);
+    app.keys.set(ERASER, vec![key(Modifiers::NONE, Key::K)]);
+    app.keys.set_tool_mode("tool.eraser", ToolKeyMode::Hold);
+    app.keys.set_tool_mode("tool.fill", ToolKeyMode::Hold);
+    app.keys.reset(ERASER);
+    assert_eq!(app.keys.triggers(ERASER), default_triggers(ERASER));
+    assert_eq!(app.keys.tool_mode("tool.eraser"), ToolKeyMode::Tap);
+    assert_eq!(
+        app.keys.tool_mode("tool.fill"),
+        ToolKeyMode::Hold,
+        "ほかの行はそのまま"
+    );
+    app.keys_reset_all();
+    assert!(app.keys.is_default());
+    assert_eq!(app.keys.tool_mode("tool.fill"), ToolKeyMode::Tap);
+    // 動き方だけを変えた行も「変えた行」（既定に戻す印が出る）
+    app.keys.set_tool_mode("tool.fill", ToolKeyMode::Hold);
+    assert!(app.keys.is_changed(("tool.fill", Scope::Paint)));
+    assert_eq!(
+        app.keys.changed_groups().count(),
+        0,
+        "追加の行は増えない（キーは既定のまま）"
+    );
+}
+
+#[test]
+fn export_and_import_carry_the_tool_key_modes_and_import_replaces_them() {
+    let dir = temp_dir("toolkeys-roundtrip");
+    let file = dir.join("mine.json");
+    let mut app = AppState::new(32, 32);
+    app.keys.set_tool_mode("tool.eraser", ToolKeyMode::Hold);
+    app.keys.set_tool_mode("tool.move", ToolKeyMode::TapOrHold);
+    app.keys_export(&file);
+    let mut other = AppState::new(32, 32);
+    other.keys.set_tool_mode("tool.fill", ToolKeyMode::Hold);
+    other.keys_import(&file);
+    assert_eq!(other.keys.tool_mode("tool.eraser"), ToolKeyMode::Hold);
+    assert_eq!(other.keys.tool_mode("tool.move"), ToolKeyMode::TapOrHold);
+    assert_eq!(
+        other.keys.tool_mode("tool.fill"),
+        ToolKeyMode::Tap,
+        "読み込みは今の変更を置き換える"
+    );
+    assert_eq!(
+        other.keys.to_json(&other.pie.menus),
+        app.keys.to_json(&app.pie.menus)
+    );
+    // tool_keys の無いファイル（今までの keymap.json）を読み込むと、動き方は押すと切り替えに戻る
+    let old = r#"{"format":"yolupainter-keymap","version":1,"keys":[],"mouse":[],"pies":[]}"#;
+    std::fs::write(&file, old).unwrap();
+    other.keys_import(&file);
+    assert!(other.keys.is_default());
+    assert!(!other.message.contains("飛ばしました"), "{}", other.message);
+}
+
+#[test]
+fn unknown_tool_key_entries_are_skipped_and_counted() {
+    let text = r#"{"format":"yolupainter-keymap","version":1,"tool_keys":{
+        "tool.fill":"hold",
+        "tool.eraser":"toggle",
+        "tool.brush":"tap",
+        "view.flip":"hold",
+        "no.such":"hold",
+        "clip.copy":"hold",
+        "tool.move":7
+    },"future_field":{"x":1}}"#;
+    let parsed = parse(text, Lang::Ja).unwrap();
+    assert_eq!(
+        parsed.tool_modes.into_iter().collect::<Vec<_>>(),
+        vec![("tool.fill", ToolKeyMode::Hold)],
+        "知っている動き方の、ツールを選ぶ操作だけ。押すと切り替えは変えた所に入れない"
+    );
+    assert_eq!(
+        parsed.skipped, 5,
+        "知らない動き方・ツールでない操作・知らない操作・値の形が違う物"
+    );
+    // 形が違う tool_keys 全体は 1 個として数える
+    let text = r#"{"format":"yolupainter-keymap","version":1,"tool_keys":["tool.fill"]}"#;
+    let parsed = parse(text, Lang::Ja).unwrap();
+    assert!(parsed.tool_modes.is_empty());
+    assert_eq!(parsed.skipped, 1);
+    // 取り込みの知らせにも数が出る
+    let dir = temp_dir("toolkeys-unknown");
+    let file = dir.join("x.json");
+    std::fs::write(
+        &file,
+        r#"{"format":"yolupainter-keymap","version":1,"tool_keys":{"tool.fill":"hold","tool.eraser":"x"}}"#,
+    )
+    .unwrap();
+    let mut app = AppState::new(32, 32);
+    app.keys_import(&file);
+    assert_eq!(app.keys.tool_mode("tool.fill"), ToolKeyMode::Hold);
+    assert!(app.message.contains("1 個"), "{}", app.message);
+}
+
+#[test]
+fn only_tool_commands_take_a_mode_and_locked_or_unknown_ones_are_ignored() {
+    let mut app = AppState::new(32, 32);
+    app.keys.set_tool_mode("clip.copy", ToolKeyMode::Hold);
+    app.keys.set_tool_mode("view.flip", ToolKeyMode::TapOrHold);
+    app.keys.set_tool_mode("pie.nothing", ToolKeyMode::Hold);
+    assert!(app.keys.is_default());
+}

@@ -183,6 +183,7 @@ fn slot_button(
     icon: (&str, &str),
     tooltip: &str,
     selected: bool,
+    returns: bool,
 ) -> egui::Response {
     let id = ui.make_persistent_id(("tool.slot", slot));
     let response = ui.interact(r, id, Sense::click_and_drag());
@@ -206,6 +207,12 @@ fn slot_button(
         },
         22.0,
     );
+    // キーを離すと戻るツール（押している間だけのツールのキーの間）に、小さな点
+    if returns {
+        let at = pos2(r.right() - 5.0, r.bottom() - 5.0);
+        p.circle_filled(at, 4.0, t::PANEL_BG);
+        p.circle_filled(at, 2.75, t::ACCENT);
+    }
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, tooltip));
     response.on_hover_text(tooltip)
 }
@@ -217,6 +224,8 @@ struct StripRow {
     icon: super::IconChoice,
     gap: bool,
     selected: bool,
+    /// キーを離すと戻るツール（押している間だけのツールのキーの間）。
+    returns: bool,
     key: String,
 }
 
@@ -224,6 +233,7 @@ struct StripRow {
 pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let lang = app.lang;
     let set = &app.toolset.set;
+    let return_slot = app.temp_tool_return_slot();
     let rows: Vec<StripRow> = set
         .slots()
         .iter()
@@ -233,6 +243,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             icon: s.icon(),
             gap: s.gap,
             selected: set.active() == Some(s.id),
+            returns: return_slot == Some(s.id),
             // キーは、そのキーで替わるツール（そのツールの列の最初の 1 つ）にだけ添える
             key: if set.first_of(s.tool) == Some(s.id) {
                 crate::shortcuts::tool_key(s.tool)
@@ -287,6 +298,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             (row.icon.normal, row.icon.selected),
             &tip,
             row.selected,
+            row.returns,
         );
         if response.clicked() {
             app.apply(Action::Tools(ToolsetAction::Select(*slot)));

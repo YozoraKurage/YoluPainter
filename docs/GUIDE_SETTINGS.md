@@ -98,4 +98,4 @@ WinTab を選んでも、WinTab のドライバー（`Wintab32.dll`）が無い�
 - **更新**: 「ヘルプ → 更新を確かめる…」「起動時に更新を確かめる」「試験版を使う」（[INSTALL.md](INSTALL.md)）。
 - **選択範囲のボタンの帯**: 「選択範囲」メニューの「選択範囲のボタンの帯を表示」（[GUIDE_SELECT.md](GUIDE_SELECT.md)）。
 - **パネルの並び**: 設定のフォルダの `YoluPainter/layout.json` に覚えます（[GUIDE_START.md](GUIDE_START.md)）。
-- **キーとマウスの割り当て・パイメニュー**: 一般の節の言語の行の右の「ショートカット…」（「ヘルプ → ショートカット」）で変え、設定のフォルダの `YoluPainter/keymap.json` に、既定から変えた所だけを覚えます（[GUIDE_KEYS.md](GUIDE_KEYS.md)）。
+- **キーとマウスの割り当て・パイメニュー**: 一般の節の言語の行の右の「ショートカット…」（「ヘルプ → ショートカット」）で変え、設定のフォルダの `YoluPainter/keymap.json` に、既定から変えた所だけを覚えます。ツールのキーの動き方は `tool_keys` に、ツールを選ぶ操作の ID と動き方（`hold` は押している間だけ、`tap_or_hold` は短く押すと切り替え・長押しで押している間だけ）で書きます（例: `"tool_keys": { "tool.eraser": "hold" }`。既定の押すと切り替えは書きません）（[GUIDE_KEYS.md](GUIDE_KEYS.md)）。

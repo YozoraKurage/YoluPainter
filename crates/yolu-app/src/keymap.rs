@@ -3,6 +3,8 @@
 //! ステンシルの移動など）・メニューのキーの文字・ショートカットの一覧のウィンドウ（`shortcuts`）は、この表を読む。実装の入力判定のソースを文字で読んで
 //! 一覧を作る方式（ビルドスクリプト）はやめた: 表が実装の一次の資料なので、一覧と実際の入力が食い違わない（食い違いは試験が、表のすべての割り当てを実際の
 //! 入力へ流して確かめる）。ツールのキーはツールの表（`tools`）の `key` から作る。キーを利用者が替える設定は、この表の上に作る（`table` の作り方を差し替える）。
+//! ツールのキーの動き方（押すと切り替え・押している間だけ・短く押すと切り替え／長押しで押している間だけ）は、表の行ではなく `Keymap::tool_mode` に持ち、
+//! `dispatch_fired` が押しと一緒に返す（実行と離しの見張りは `toolkeys`）。
 //!
 //! 修飾キーは厳密に見る（`modifiers_match`）。Ctrl・Command は egui の `Modifiers::cmd_ctrl_matches` と同じ。文字（A〜Z）・F キー・名前のキー（Tab・Space・
 //! Enter・Escape・Backspace・Delete・矢印・Home・End・PageUp・PageDown・Insert）は、Shift と Alt を書いたとおりに見る（書いていない Shift・Alt を押していれば
@@ -21,6 +23,7 @@ use crate::clipboard::ClipAction;
 use crate::commands;
 use crate::lang::Lang;
 use crate::state::{Action, AppState, Tool};
+use crate::toolkeys::ToolKeyMode;
 
 // ───────── キーボードの割り当て ─────────
 
@@ -557,6 +560,8 @@ pub struct Keymap {
     rows: Vec<KeyBinding>,
     order: Vec<KeyBinding>,
     gestures: Vec<Gesture>,
+    /// 既定（押すと切り替え）から変えたツールのキーの動き方（操作の ID ごと）。
+    tool_modes: Vec<(&'static str, ToolKeyMode)>,
 }
 
 impl Keymap {
@@ -578,7 +583,22 @@ impl Keymap {
             rows,
             order,
             gestures,
+            tool_modes: Vec::new(),
         }
+    }
+
+    /// ツールのキーの動き方（既定から変えたもの）を入れる。
+    pub fn with_tool_modes(mut self, modes: Vec<(&'static str, ToolKeyMode)>) -> Keymap {
+        self.tool_modes = modes;
+        self
+    }
+
+    /// ツールを選ぶ操作のキーの動き方（変えていなければ、押すと切り替え）。
+    pub fn tool_mode(&self, command: &str) -> ToolKeyMode {
+        self.tool_modes
+            .iter()
+            .find(|(id, _)| *id == command)
+            .map_or(ToolKeyMode::Tap, |(_, mode)| *mode)
     }
 
     /// マウスの組み合わせ（判定の順。外したものは入らない）。
@@ -880,7 +900,27 @@ pub fn dispatch(i: &mut InputState, app: &AppState) -> Vec<Action> {
 
 /// `dispatch` を、与えた割り当てで（試験が今効いている表を差し替えずに確かめる）。
 pub fn dispatch_with(map: &Keymap, i: &mut InputState, app: &AppState) -> Vec<Action> {
-    let mut actions = Vec::new();
+    dispatch_fired(map, i, app)
+        .into_iter()
+        .map(|f| f.action)
+        .collect()
+}
+
+/// キーで起きた操作 1 つ（`dispatch_fired`）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fired {
+    pub action: Action,
+    /// 操作の ID。
+    pub command: &'static str,
+    /// 押したキー（文字の入力は None。離しを見られない）。
+    pub key: Option<Key>,
+    /// ツールを選ぶ操作のキーの動き方（ほかの操作は `Tap`）。`Tap` 以外は、繰り返しの押しを受けない。
+    pub mode: ToolKeyMode,
+}
+
+/// `dispatch_with` の、押したキーと動き方も返す版（ツールのキーの「押している間だけ」が、離しを見るキーを知るのに使う）。
+pub fn dispatch_fired(map: &Keymap, i: &mut InputState, app: &AppState) -> Vec<Fired> {
+    let mut fired = Vec::new();
     let mut done: Vec<&'static str> = Vec::new();
     for b in map.order() {
         if !(b.scope.holds(app) && b.when.holds(app)) {
@@ -897,15 +937,23 @@ pub fn dispatch_with(map: &Keymap, i: &mut InputState, app: &AppState) -> Vec<Ac
                 (hit, hit)
             }
         };
-        // 繰り返しの押しを受けない操作（パイを開く）は、繰り返しだけなら事象を取り除いて何もしない
-        let hit = hit && (fresh || repeats(b.command));
+        let mode = map.tool_mode(b.command);
+        // 繰り返しの押しを受けない操作（パイを開く・押している間だけのツールのキー）は、繰り返しだけなら事象を取り除いて何もしない
+        let hit = hit && (fresh || (mode == ToolKeyMode::Tap && repeats(b.command)));
         // 事象は当たった行ごとに取り除き、操作は 1 回目だけ実行する
         if hit && !done.contains(&b.command) {
             done.push(b.command);
-            actions.extend(b.action());
+            if let Some(action) = b.action() {
+                fired.push(Fired {
+                    action,
+                    command: b.command,
+                    key: b.key(),
+                    mode,
+                });
+            }
         }
     }
-    actions
+    fired
 }
 
 // ───────── ビューの中のキー ─────────

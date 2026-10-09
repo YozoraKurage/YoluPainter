@@ -21,8 +21,9 @@ use crate::keyconfig::{self, Combo, GroupKey};
 use crate::keymap::{self, Scope, Trigger, When, GESTURES};
 use crate::lang::Lang;
 use crate::pie::{PieItem, PieName};
-use crate::state::{AppState, DialogRequest, OpenPopup, PopupKind};
-use crate::ui::menu::PopupState;
+use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
+use crate::toolkeys::ToolKeyMode;
+use crate::ui::menu::{Entry, PopupState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
@@ -166,6 +167,8 @@ pub struct ShortcutWindow {
     ignore_click: bool,
     /// このフレームに描いた欄（試験が押す所を知る・マウスの欄の押しの当たり）。
     pub chips: Vec<(Target, Rect)>,
+    /// このフレームに描いた、ツールのキーの動き方を選ぶ箱（ツールを選ぶ操作の ID と矩形。試験が押す所を知る）。
+    pub mode_boxes: Vec<(&'static str, Rect)>,
     /// 名前で探す欄・パイの 8 か所の欄・項目を探す欄の矩形（試験が押す所を知る）。
     pub search_rect: Option<Rect>,
     pub slot_rects: Vec<Rect>,
@@ -738,6 +741,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let mut esc = false;
     let closed = crate::ui::window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
         app.shortcuts.chips.clear();
+        app.shortcuts.mode_boxes.clear();
         esc = !app.shortcuts.capturing()
             && !finished
             && ui.input(|i| i.key_pressed(Key::Escape))
@@ -964,6 +968,14 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let head = Rect::from_min_size(pos2(r.left(), r.top() + TOP - 14.0), vec2(r.width(), HEAD));
     let col_key = head.left() + head.width() * 0.46;
     let col_mouse = head.left() + head.width() * 0.74;
+    let section = app.shortcuts.section;
+    let mut window = std::mem::take(&mut app.shortcuts);
+    let lines = lines(&mut window, app, section);
+    app.shortcuts = window;
+    // マウスの欄には、ツールの行では、キーの動き方の箱が並ぶ（その行があれば、見出しも）
+    let has_tool_rows = lines.iter().any(
+        |l| matches!(l, Line::Key { group, locked: false } if commands::selected_tool(group.0).is_some()),
+    );
     {
         let p = ui.painter();
         w::text(
@@ -986,17 +998,17 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::text(
             p,
             Rect::from_min_max(pos2(col_mouse, head.top()), head.max),
-            lang.pick("マウス", "Mouse"),
+            if has_tool_rows {
+                lang.pick("マウス・動き方", "Mouse / Behavior")
+            } else {
+                lang.pick("マウス", "Mouse")
+            },
             t::LABEL_DIM,
             Align::Left,
         );
         w::hline(p, head.left(), head.right(), head.bottom(), t::SEPARATOR);
     }
-    let section = app.shortcuts.section;
     let list = Rect::from_min_max(pos2(r.left(), head.bottom() + 1.0), r.max);
-    let mut window = std::mem::take(&mut app.shortcuts);
-    let lines = lines(&mut window, app, section);
-    app.shortcuts = window;
     let mut scroll = app.shortcuts.scroll;
     let bar = Scroll::begin(ui, list, lines.len() as f32 * ROW, &mut scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
@@ -1199,6 +1211,10 @@ fn draw_line(
                     }
                 }
             }
+            // ツールのキーの動き方（押すと切り替え・押している間だけ・短く押すと切り替え／長押しで押している間だけ）
+            if !locked && commands::selected_tool(group.0).is_some() {
+                tool_mode_box(ui, app, ctx, group.0, row, col_mouse, chip_y);
+            }
         }
         Line::Fixed { key, .. } => {
             let tip = lang.pick("このキーは変えられません", "This key cannot be changed");
@@ -1303,6 +1319,64 @@ fn draw_line(
             app.keys_changed();
         }
     }
+}
+
+/// ツールのキーの動き方を選ぶ箱（マウスの欄の位置。押すと、動き方の一覧を開く）。
+fn tool_mode_box(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    command: &'static str,
+    row: Rect,
+    col_mouse: f32,
+    chip_y: f32,
+) {
+    let lang = app.lang;
+    let mode = app.keys.tool_mode(command);
+    let width = (row.right() - 36.0 - col_mouse).clamp(90.0, 190.0);
+    let r = Rect::from_min_size(pos2(col_mouse, chip_y), vec2(width, 20.0));
+    app.shortcuts.mode_boxes.push((command, r));
+    let open = matches!(
+        app.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::ToolKeyMode(c)) if c == command
+    );
+    let (response, _) = w::dropdown(
+        ui,
+        r,
+        ("yolu.shortcuts.mode", command),
+        None,
+        mode.short_label(lang),
+        Some(mode.label(lang)),
+        true,
+        0.0,
+    );
+    if response.clicked() {
+        if open {
+            app.popup = None;
+        } else {
+            let anchor =
+                Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(r.width(), 0.0));
+            let mut state = PopupState::new(ctx, anchor).with_min_width(r.width());
+            state.selected = ToolKeyMode::ALL.iter().position(|m| *m == mode);
+            app.popup = Some(OpenPopup {
+                kind: PopupKind::ToolKeyMode(command),
+                state,
+            });
+        }
+    }
+}
+
+/// ツールのキーの動き方を選ぶ一覧の項目（今の動き方に印）。
+pub fn tool_mode_entries(app: &AppState, command: &'static str) -> Vec<Entry<Action>> {
+    let current = app.keys.tool_mode(command);
+    ToolKeyMode::ALL
+        .into_iter()
+        .map(|mode| {
+            Entry::item(mode.label(app.lang), Action::ToolKeyMode(command, mode))
+                .radio(mode == current)
+                .tooltip(mode.tip(app.lang))
+        })
+        .collect()
 }
 
 /// 「同じキー」のツールチップ（相手の名前と区分）。
