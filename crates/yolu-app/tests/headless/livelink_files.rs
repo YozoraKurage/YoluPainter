@@ -594,6 +594,97 @@ fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_
     assert_eq!(copy.livelink().unwrap().as_deref(), Some(&record[..]));
 }
 
+/// Live Link で開いて焼いた .ylp を、Unity なしで開き直す。開いた瞬間のモデルは試しの立方体で、焼いたマップは立方体と照合して古い。Live Link の
+/// 頼みを当て直してモデルができたら、ベイクのウィンドウを開かなくても、画面の毎フレームの同期だけで照合し直して、位置のマップを読むノイズは位置で評価する。
+#[test]
+fn headless_a_reopened_live_link_project_checks_its_baked_maps_again_without_the_bake_window() {
+    use yolu_app::bake::{BakeAction, BakeBackend};
+    use yolu_app::fx::FxOp;
+    use yolu_app::m2::Edit;
+    use yolu_core::generator::{self, Kind};
+    use yolu_core::mesh_maps::MeshMapKind;
+    use yolu_core::FilterTarget;
+    let mut h = Headless::new("check");
+    h.state.bake.backend = BakeBackend::Cpu;
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened);
+    h.state.bake.settings.maps = vec![MeshMapKind::Position];
+    h.state.bake.settings.padding = 4;
+    // 位置のマップを読むノイズ（位置の空間が既定）をマスクに持つセットを焼く
+    h.state.apply(Action::M2(Edit::NewFill));
+    let layer = h.state.selected_layer.unwrap();
+    h.state.apply(Action::M2(Edit::AddMask(layer)));
+    h.state.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Mask,
+        kind: Kind::Noise,
+    }));
+    let id = h.state.doc.filters_of(layer, FilterTarget::Mask).unwrap()[0].id();
+    h.state.apply(Action::Bake(BakeAction::Start));
+    h.state.wait_bake();
+    h.state.sync_effects();
+    assert_eq!(
+        h.state.doc.generator_fallback(layer, id).unwrap(),
+        None,
+        "{}",
+        h.state.message
+    );
+    let path = h.ex.dir.join("noise.ylp");
+    h.state.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    // Unity なしで開き直す（起動した直後のアプリ: 3D ビューは試しの立方体）
+    let mut open = AppState::new(64, 64);
+    open.bake.backend = BakeBackend::Cpu;
+    open.view3d.load_demo();
+    let mut link = LiveLink::new();
+    link.set_folder(h.ex.dir.join("unused")).unwrap();
+    open.prefs.settings.livelink_on_startup = false;
+    open.apply(Action::OpenProject(path));
+    assert!(open.project.is_some(), "{}", open.message);
+    let deadline = Instant::now() + WATCHDOG;
+    while open.view3d.pose.session.is_none() || link.is_working() {
+        link.poll(&mut open);
+        assert!(Instant::now() < deadline, "{}", open.message);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // 開いた瞬間に立方体と照合した入力のままなので、位置のマップは古い（ノイズは UV に落ちる）
+    assert!(
+        matches!(
+            open.doc.generator_fallback(layer, id).unwrap(),
+            Some(generator::Inactive::StaleMap(_))
+        ),
+        "{:?}",
+        open.doc.generator_fallback(layer, id)
+    );
+    // 毎フレームの同期だけで、モデルの入力ができて照合し直される（ウィンドウは開かない）
+    assert!(open.bake.window.is_none());
+    let deadline = Instant::now() + WATCHDOG;
+    loop {
+        open.sync_effects();
+        open.release_idle_bake_input();
+        if open
+            .doc
+            .generator_fallback(layer, id)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "モデルを読んだのに照合し直せない: {:?}",
+            open.doc.generator_fallback(layer, id)
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(open.doc.inactive_effect_list().is_empty());
+}
+
 #[test]
 fn headless_two_fbx_files_make_one_model_and_a_collapsed_root_is_followed() {
     let mut h = Headless::new("two");

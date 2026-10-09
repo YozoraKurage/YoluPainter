@@ -864,6 +864,97 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
     assert!(!s.bake.is_checking());
 }
 
+/// 焼いたマップのある 2 枚の板の状態（ウィンドウは閉じている）から、.ylp を開き直してモデルを読み終えた状態にする: モデルは作り直され（入力は前の形のまま）、
+/// 照合し直しの印が付く。
+fn reopened_with_maps() -> AppState {
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(!s.sets.current().mesh_maps.is_empty());
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some(), "焼いたマップがあるので入力は残る");
+    lift(&mut s, 0.3);
+    s.expect_reopen_check();
+    s
+}
+
+/// 画面の毎フレーム（入力を求める → 使わない入力を手放す）。
+fn one_frame(s: &mut AppState) {
+    let _ = s.bake_input_nowait();
+    s.release_idle_bake_input();
+}
+
+#[test]
+fn the_reopen_check_keeps_the_building_input_until_it_arrives_and_then_lets_go() {
+    let mut s = reopened_with_maps();
+    assert!(s.bake.window.is_none());
+    // ウィンドウが閉じていても、読み終えたモデルの入力ができるまで作りかけを手放さない
+    let start = Instant::now();
+    while s.bake.reopen_check.is_some() {
+        one_frame(&mut s);
+        assert!(start.elapsed().as_secs() < 120, "入力ができない");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let model = s.view3d.full_model().unwrap().clone();
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "読み終えたモデルの入力ができている"
+    );
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Stale,
+        "焼いたあとに形を替えたので、本当に古い"
+    );
+    // 済んだら今までどおり: ポーズ（モデルの作り直し）は追わず、作りかけは手放す
+    lift(&mut s, 0.6);
+    one_frame(&mut s);
+    assert!(!s.bake.is_checking(), "作りかけを持ち続けない");
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "前の入力のまま"
+    );
+}
+
+#[test]
+fn the_reopen_check_does_not_follow_a_model_that_changes_before_the_input_arrives() {
+    let mut s = reopened_with_maps();
+    assert!(s.bake_input_nowait().is_none());
+    assert!(s.bake.is_checking());
+    // 照合するモデルから替わった（ポーズを付けた・差し替えた）: 追わずに手放す
+    lift(&mut s, 0.6);
+    s.release_idle_bake_input();
+    assert!(s.bake.reopen_check.is_none());
+    assert!(!s.bake.is_checking());
+}
+
+#[test]
+fn the_reopen_check_is_for_a_project_with_baked_maps_and_a_loaded_model_only() {
+    // 試しの立方体は読み終えたモデルではない
+    let mut s = cube();
+    s.expect_reopen_check();
+    assert!(s.bake.reopen_check.is_none());
+    // 焼いたマップが無ければ、印は最初のフレームで外れる
+    let mut t = AppState::new(64, 64);
+    t.bake.backend = BakeBackend::Cpu;
+    let _ = t.receive_link_model(&two_quads(1, 0.0));
+    t.expect_reopen_check();
+    assert!(t.bake.reopen_check.is_some());
+    assert!(t.bake_input_nowait().is_none());
+    t.release_idle_bake_input();
+    assert!(t.bake.reopen_check.is_none());
+    assert!(!t.bake.is_checking(), "マップが無ければ作りかけも手放す");
+    // 別のプロジェクトになったら無効
+    let mut u = reopened_with_maps();
+    assert!(u.bake_input_nowait().is_none());
+    u.np.generation += 1;
+    u.release_idle_bake_input();
+    assert!(u.bake.reopen_check.is_none());
+    assert!(!u.bake.is_checking());
+}
+
 #[test]
 fn a_failed_input_is_remembered_and_shown_as_the_reason() {
     use crate::view3d::model::ViewModel;

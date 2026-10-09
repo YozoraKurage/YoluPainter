@@ -14,7 +14,9 @@
 //! - **モデルの同一性は `Arc` の弱い参照で見る**（`ModelId`）。アドレスだけを覚えると、旧モデルが解放されたあとに別のモデルが同じ
 //!   アドレスに置かれて同じと取り違える（ポーズを変えるたびにモデルは作り直される）。
 //! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。ウィンドウの状態表示は毎フレーム
-//!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。
+//!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。作りかけの入力は、ウィンドウを
+//!   閉じていれば手放す（`release_idle_bake_input`）ので、ウィンドウを閉じているあいだは、モデルの差し替えもポーズの変更も追わない（前の入力のまま
+//!   照合する）。例外は、.ylp を開いてモデルを読み直した直後の照合し直し 1 回（`ReopenCheck`）。
 //!
 //! 高ポリからの投影（参照）は、ウィンドウで選べるようになるまで使わない（参照なしで焼く）。
 
@@ -117,6 +119,17 @@ impl ModelId {
     }
 }
 
+/// .ylp を開いてモデルを読み直した直後の、焼いたマップの照合し直しを待つ印。開いた瞬間の 3D ビューは試しの立方体で、焼いたマップは立方体と
+/// 照合して「古い」になる。読み終えたモデルの入力（指紋）ができて効果の入力へ渡るまで、作りかけの入力を手放さない
+/// （ウィンドウが閉じていると、毎フレーム作り直しては手放し、いつまでもできない）。済んだら手放し、あとは追わない。
+struct ReopenCheck {
+    /// 印を付けたときのプロジェクトの世代（`np.generation`。別のプロジェクトにしたら無効）。
+    generation: u64,
+    /// 照合するモデル: 読み終えた時点のもの（ポーズを戻した後の形。描いている最中で入れ替わりを待っているなら、そのモデル）。その後ポーズの変更や
+    /// モデルの差し替えで替わったら、追わずに手放す。
+    model: ModelId,
+}
+
 /// 作った入力（モデルの形ごとに 1 回）。失敗も覚える（毎フレーム作り直さない）。
 struct CachedInput {
     model: ModelId,
@@ -155,6 +168,10 @@ pub struct BakeState {
     finished: usize,
     input: Option<CachedInput>,
     pending: Option<PendingInput>,
+    /// .ylp を開いた直後の照合し直しを待っている（`AppState::expect_reopen_check`）。
+    reopen_check: Option<ReopenCheck>,
+    /// 別のスレッドで入力を作り始めた回数（`bake_input_nowait`）。試験が、作りかけを毎フレーム立てていないことを数える。
+    input_builds: u64,
     /// 手でアイランドを選んでいる（次に 2D・3D で押したアイランドをこの一覧へ入れる）。
     pub pick: Option<overlap::Picking>,
     /// 手で選ぶアイランドの索引（モデルの入力ごと）。
@@ -259,6 +276,12 @@ impl BakeState {
     /// 描き直しを続けるために真）。
     pub fn is_checking(&self) -> bool {
         self.pending.is_some() || self.pending_islands.is_some() || self.menu_wait.is_some()
+    }
+
+    /// 試験用: 別のスレッドで入力を作り始めた回数（毎フレーム作りかけを立てては捨てていないことを数える）。
+    #[doc(hidden)]
+    pub fn input_builds_started(&self) -> u64 {
+        self.input_builds
     }
 
     pub fn progress(&self) -> Option<Progress> {
@@ -692,6 +715,7 @@ impl AppState {
             });
         match spawned {
             Ok(_) => {
+                self.bake.input_builds += 1;
                 self.bake.pending = Some(PendingInput {
                     model: ModelId::of(&model),
                     rx,
@@ -700,6 +724,11 @@ impl AppState {
             }
             Err(e) => Some(self.cache_input(&model, Err(e.to_string()))),
         }
+    }
+
+    /// 手元の入力（作ってあるもの。今のモデルのものとは限らない。無ければ None）。効果の入力の同期が、モデルの差し替え・ポーズの変更を追わないときに使う。
+    pub(crate) fn bake_input_held(&self) -> Option<Result<Arc<MeshBakeInput>, String>> {
+        self.bake.input.as_ref().map(|c| c.input.clone())
     }
 
     /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクのウィンドウが入力を作っている
@@ -930,29 +959,73 @@ impl AppState {
         Occlusion::Bytes(bytes)
     }
 
-    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるとき・入力を待つ読むだけのセットが
-    /// あるときを除く）。毎フレーム呼ぶ。
-    pub fn release_idle_bake_input(&mut self) {
-        // ID の色のツール（強調・部品の欄）は、ウィンドウが無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
-        // 始まって終わらない
-        // アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
-        // （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）
-        let island_menu = matches!(
+    /// .ylp を開いてモデルを読み直したとき（`newproject::reopen`・Live Link の開き直し）に呼ぶ: 焼いたマップを持つセットがあれば、読み終えた
+    /// モデルの入力（指紋）が効果の入力へ渡って照合し直しが 1 回済むまで、作りかけの入力を手放さない。開いた瞬間のマップは試しの立方体と
+    /// 照合して「古い」で、読み終えた後に入力を作る間もウィンドウが閉じていると、読むだけにならずに動き続けるセット（位置の空間のノイズなど）は
+    /// 「古い」のまま、いつまでも照合し直せなかった。済んだら今までどおり手放し、ポーズの変更・モデルの差し替えには追わない。
+    pub(crate) fn expect_reopen_check(&mut self) {
+        self.bake.reopen_check =
+            self.view3d
+                .latest_model()
+                .filter(|m| !m.demo)
+                .map(|model| ReopenCheck {
+                    generation: self.np.generation,
+                    model: ModelId::of(model),
+                });
+    }
+
+    /// 今のモデルの入力を、作って待つか（ウィンドウ・ID の色のツール・アイランドのメニュー・入力待ちの読むだけのセット・開いた直後の照合し直しが
+    /// あるとき。焼いたマップがあるのに手元の入力が 1 つも無いときも、作る）。待つあいだは、作りかけを手放さず（`release_idle_bake_input`）、
+    /// 効果の入力の同期も今のモデルの入力が届くまで待つ。待たないときは、手元の入力のまま照合して、新しく作り始めない（モデルの差し替え・
+    /// ポーズの変更は追わない）。手放す側と作る側が別の条件で動くと、作りかけを毎フレーム立てては捨てて、入力がいつまでも届かない。
+    pub(crate) fn bake_input_followed(&mut self) -> bool {
+        self.bake.window.is_some()
+            || self.tool == crate::state::Tool::IdSelect
+            || self.island_menu_open()
+            || self.sets.iter().any(|s| s.waiting_inputs)
+            || self.reopen_check_waiting()
+            || (self.bake.input.is_none() && self.sets.iter().any(|s| !s.mesh_maps.is_empty()))
+    }
+
+    /// アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
+    /// （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）。
+    fn island_menu_open(&self) -> bool {
+        matches!(
             self.popup.as_ref().map(|p| p.kind),
             Some(crate::state::PopupKind::BakeIsland { .. })
         ) || self.bake.menu_wait.is_some()
-            || self.bake.menu_press.is_some();
-        // 入力がそろうのを待つ読むだけのセット（.ylp を開いた直後で、モデルを別のスレッドで読み直しているときなど）があるあいだは、効果の入力の
-        // 同期（`sync_effect_inputs`）が毎フレーム入力を求めて待つ。手放すと ID の色のツールと同じく作り直しが終わらず、モデルを読んでもセットが開かない
-        let waiting = self.sets.iter().any(|s| s.waiting_inputs);
-        if self.bake.window.is_none()
-            && self.tool != crate::state::Tool::IdSelect
-            && !island_menu
-            && !waiting
-        {
+            || self.bake.menu_press.is_some()
+    }
+
+    /// 開いた直後の照合し直しをまだ待っているか。待たなくなったら（済んだ・別のプロジェクト・焼いたマップが無い・照合するモデルから替わった）
+    /// 印も外す。
+    fn reopen_check_waiting(&mut self) -> bool {
+        let Some(check) = self.bake.reopen_check.as_ref() else {
+            return false;
+        };
+        let maps = self.sets.iter().any(|s| !s.mesh_maps.is_empty());
+        // 照合するモデル（描いている最中なら、入れ替わりを待っているモデル）のままで、その入力がまだできていない。できた入力は、焼いたマップが
+        // あるあいだ手放さず、毎フレームの同期が効果の入力へ渡す
+        let waiting = check.generation == self.np.generation
+            && maps
+            && self.view3d.latest_model().is_some_and(|m| {
+                check.model.is(m) && !self.bake.input.as_ref().is_some_and(|c| c.model.is(m))
+            });
+        if !waiting {
+            self.bake.reopen_check = None;
+        }
+        waiting
+    }
+
+    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
+    /// 作り直す）。作っている最中のものも、今のモデルの入力を待つ理由（`bake_input_followed`）が無ければ手放す。毎フレーム呼ぶ。
+    pub fn release_idle_bake_input(&mut self) {
+        // 待つ理由（ID の色のツールは強調・部品の欄が毎フレーム入力を求める、入力がそろうのを待つ読むだけのセット、開いた直後の照合し直し、など）が
+        // あるあいだに作りかけを手放すと、毎フレーム作り直しが始まって終わらない。効果の入力の同期も同じ条件で入力を作る
+        if !self.bake_input_followed() {
             self.bake.pending = None;
         }
+        let island_menu = self.island_menu_open();
         if self.bake.input.is_some()
             && self.bake.window.is_none()
             && !island_menu

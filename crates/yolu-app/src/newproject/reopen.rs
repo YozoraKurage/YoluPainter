@@ -277,6 +277,8 @@ pub(super) fn poll(app: &mut AppState) {
                 kind = Kind::Warning;
                 text += &format!(" {note}");
             }
+            // 焼いたマップは、読み終えた（ポーズを戻した）このモデルで照合し直す
+            app.expect_reopen_check();
             (kind, text)
         }
         Some(Err(e)) => (

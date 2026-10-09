@@ -1207,6 +1207,10 @@ impl LiveLink {
         if first_install && !reopening {
             state.view3d.pose.focus = true;
         }
+        if reopening {
+            // .ylp を開き直したモデル（ポーズも当てた後）で、焼いたマップを照合し直す
+            state.expect_reopen_check();
+        }
         self.reply(&taken, ReplyKind::Opened, problems.clone());
         self.finish(&taken);
         let mut shown = problems.clone();
