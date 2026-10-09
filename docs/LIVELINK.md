@@ -164,7 +164,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
   ファイルから読みます（長い辺 2048 まで、合計 256 MiB まで）。送り直しでは、道・更新時刻・大きさが同じファイルは読み直しません）。lilToon でないマテリアルは受けた見た目を外します。
 - lilToon かどうかは、シェーダーの名前では決めません。`values` に `_lilToonVersion`（lilToon のシェーダーが持つ版の値）があるか、`shader.package` が
   `jp.lilxyzw.liltoon` のときだけ lilToon として描きます。
-- `.ylp` には、当てた頼みに今のポーズを入れ、マテリアルの値（`_lilToonVersion` のほか）を除いた形を根の `livelink.json` に残し、Unity なしで開き直せます（[YLP_FORMAT.md](YLP_FORMAT.md#livelinkjson状態根)）。
+- `.ylp` には、当てた頼みに今のポーズを入れ、マテリアルの値（`_lilToonVersion` のほか）を除いた形を根の `livelink.json` に残し、Unity なしで開き直せます（[YLP_FORMAT.md](YLP_FORMAT.md#livelinkjson)）。
 
 ## 返事 `outbox/<id>-<n>.json`（スタンドアロン → Unity）
 

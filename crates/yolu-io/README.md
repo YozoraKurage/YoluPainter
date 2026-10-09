@@ -1,6 +1,6 @@
 # yolu-io
 
-`.ylp` の形式1〜8（1〜7 は Unity 版が書いた形式。8 は名前を付けて残した選択範囲を使うファイルだけ。下）と、`document.utpaint` の版1〜30・32・33（31 は欠番）と、外側の `YLP-1`〜`4`（`YLP-4` は今の上限に収まらない大きな .ylp。下）を読み書きする。版1〜21 は Unity 版が書いた版で、22 以降は Rust 版が追加した版: 22 ユーザーチャンネル・23 手続き型の Generator・24 色調補正・25 グラデーションマップの混色・26 分けた正本・27 パスの一覧・28 0.5.0 の効果・29 点のグラデーション・30 テキストレイヤー・32 継ぎ目の設定・33 ベイクの優先（下）。形式の仕様（エントリ・JSON の形・正本の欄・版）は [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md)。ファイル全体・正本全体をメモリに作らず、流して読み書きする。レイヤー（ラスター・塗りつぶし・調整・グループ、マスク、クリッピング、チャンネルごとの合成）の文書は `yolu-core::Document` と相互変換できる。
+`.ylp` の形式1〜8（1〜7 は Unity 版が書いた形式。8 は名前を付けて残した選択範囲を使うファイルだけ。下）と、`document.utpaint` の版1〜30・32〜34（31 は欠番）と、外側の `YLP-1`〜`4`（`YLP-4` は今の上限に収まらない大きな .ylp。下）を読み書きする。版1〜21 は Unity 版が書いた版で、22 以降は Rust 版が追加した版: 22 ユーザーチャンネル・23 手続き型の Generator・24 色調補正・25 グラデーションマップの混色・26 分けた正本・27 パスの一覧・28 0.5.0 の効果・29 点のグラデーション・30 テキストレイヤー・32 継ぎ目の設定・33 ベイクの優先・34 パスのブラシのアンチエイリアス（下）。形式の仕様（エントリ・JSON の形・正本の欄・版）は [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md)。ファイル全体・正本全体をメモリに作らず、流して読み書きする。レイヤー（ラスター・塗りつぶし・調整・グループ、マスク、クリッピング、チャンネルごとの合成）の文書は `yolu-core::Document` と相互変換できる。
 
 ```rust,no_run
 use yolu_io::{NativeValue, SaveTarget};
@@ -40,7 +40,7 @@ target.save(&changed)?;
 
 ### 見た目の設定（`look.json`）
 
-`Project::look` / `with_look` / `received_look` / `with_received_look`（上）が読み書きする。形と決まりは [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md) の「look.json」、別のエントリにした理由は同じ文書の「決めたことの理由」。
+`Project::look` / `with_look` / `received_look` / `with_received_look`（上）が読み書きする。形と決まりは [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md) の「look.json」、別のエントリにした理由は [docs/YLP_DECISIONS.md](../../docs/YLP_DECISIONS.md) の「見た目の設定を別のエントリにした」。
 
 ## coreとの変換・合成PNG
 
@@ -77,7 +77,7 @@ let changed = project.with_document(&set.id, &native)?; // 他セット・リソ
 
 ### Rust 版だけの正本の版（22 以降）
 
-`NativeDocument::from_core` は、Unity 版に無い機能（ユーザーチャンネル・ノイズとグランジ・色調補正・グラデーションマップの混色・パスの一覧・0.5.0 の効果・点のグラデーション・テキストレイヤー・継ぎ目の設定・ベイクの優先）を使う文書だけを新しい版で書く（上）。欄の並び・範囲・古い読み手の扱い・選んだ理由は [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md) の「正本」と「決めたことの理由」。
+`NativeDocument::from_core` は、Unity 版に無い機能（ユーザーチャンネル・ノイズとグランジ・色調補正・グラデーションマップの混色・パスの一覧・0.5.0 の効果・点のグラデーション・テキストレイヤー・継ぎ目の設定・ベイクの優先・パスのブラシのアンチエイリアス）を使う文書だけを新しい版で書く（上）。欄の並び・範囲・古い読み手の扱いは [docs/YLP_FORMAT.md](../../docs/YLP_FORMAT.md) の「document.utpaint」と「版と互換」、選んだ理由は [docs/YLP_DECISIONS.md](../../docs/YLP_DECISIONS.md)。
 
 ### 大きな文書（正本の版 26）と大きな .ylp（`YLP-4`）の読み書き
 

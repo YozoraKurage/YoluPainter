@@ -270,7 +270,7 @@ impl Project {
     pub(crate) fn rebuild_at(&self, files: Files) -> Result<Self> {
         self.rebuild(files, self.original.level, &[])
     }
-    /// 棚を差し替えたエントリから作り直す（形式 7 へ上げた並び）。
+    /// アセットを差し替えたエントリから作り直す（形式 7 へ上げた並び）。
     pub(crate) fn rebuild_shelf(&self, files: Files) -> Result<Self> {
         self.rebuild(files, 3, &[])
     }
@@ -1143,7 +1143,7 @@ fn set_document(
     }
     SetDocument::stored(header.clone(), parts)
 }
-/// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリ」の表）と同じ一覧で、
+/// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリの一覧」の表）と同じ一覧で、
 /// `tests/ylp/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
 pub const ROOT_ENTRIES: [&str; 9] = [
     "ylp.json",
@@ -1156,7 +1156,7 @@ pub const ROOT_ENTRIES: [&str; 9] = [
     "model.json",
     crate::livelink::ENTRY,
 ];
-/// 棚の中身のエントリの形（`resources.json` の並びにあるもの。`<content>` は中身のハッシュ）。
+/// アセットの中身のエントリの形（`resources.json` の並びにあるもの。`<content>` は中身のハッシュ）。
 pub const RESOURCE_ENTRIES: [&str; 3] = [
     "resources/<content>.png",
     "resources/<content>.ylsmart",
@@ -1175,7 +1175,7 @@ pub const SET_ENTRIES: [&str; 9] = [
     "imported-original.psd",
 ];
 /// エントリの名前が、どの形のエントリか（[`ROOT_ENTRIES`]・[`RESOURCE_ENTRIES`]・[`SET_ENTRIES`] の 1 つ。知らない名前は None）。
-/// 名前の形だけを見て、並びにあるか（セットの ID・棚の中身）は見ない。
+/// 名前の形だけを見て、並びにあるか（セットの ID・アセットの中身）は見ない。
 pub fn entry_form(name: &str) -> Option<&'static str> {
     if let Some((_, leaf)) = split_set(name) {
         let form = if leaf == "document.utpaint" {
@@ -1331,7 +1331,7 @@ pub(crate) fn load_resources(
         return Ok(Vec::new());
     };
     let root = json(&b?, 1024 * 1024)?;
-    // 個数の上限は予算と同じ種類の断り（壊れたファイルとは別に、棚がいっぱいだと言い分けられる）
+    // 個数の上限は予算と同じ種類の断り（壊れたファイルとは別に、アセットがいっぱいだと言い分けられる）
     let list = array(&root, "resources", 0, usize::MAX)?;
     check_budget(
         list.len() <= crate::shelf::MAX_RESOURCES,
@@ -1508,7 +1508,7 @@ fn add_budget(b: &mut usize, n: usize) -> Result<()> {
         .ok_or_else(|| Error::Budget("リソース予算超過です".into()))?;
     check_budget(*b <= MAX_TOTAL_BYTES, "復号リソースの768 MiB予算超過です")
 }
-/// 画像リソース（`kind == "image"` のもの）を効果の入力にする。プロジェクトと棚が同じ道を使う（読み込みの検査と同じ: 寸法・ハッシュ・予算）。
+/// 画像リソース（`kind == "image"` のもの）を効果の入力にする。プロジェクトとアセットが同じ道を使う（読み込みの検査と同じ: 寸法・ハッシュ・予算）。
 /// `used` は、すでに復号して持っている画素のバイト数（呼び出しをまたいで通算するとき。この呼び出しの分と合わせて `limit` 以下）。
 /// `limit` は復号した画素の合計に許すバイト数（`MAX_TOTAL_BYTES` を超えて広げられない）。
 pub(crate) fn image_inputs_of<'a>(

@@ -7,48 +7,48 @@ use std::{
 /// Unity 版（0.2.0 の `DocumentBinary`）が書き、読める正本の一番新しい版。
 pub const UNITY_NATIVE_VERSION: i32 = 21;
 /// 文書のユーザーチャンネル（core の 6〜63）の一覧を足した版。ユーザーチャンネルのある文書だけがこの版になり、
-/// Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// Unity 版の読み手は「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const USER_CHANNELS_VERSION: i32 = 22;
 /// Rust 版だけの Generator の種類（ノイズ 64・グランジ 65）を足した版。版 22 の中身（ユーザーチャンネルの一覧。この版では 0 個も書く）に、
 /// Generator の種類 64・65 とその欄が加わる。これを使う文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る
-/// （形式と決めは docs/YLP_FORMAT.md）。
+/// （形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const PROCEDURAL_VERSION: i32 = 23;
 /// Rust 版だけの色調補正（調整レイヤーとフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
 /// 2 値化・ポスタリゼーション）を足した版。版 23 の中身に、調整・フィルターの種類 64〜69 とその欄（`color_adjust` の並び）が加わる。これを使う
-/// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const ADJUST_VERSION: i32 = 24;
 /// グラデーションマップの混色（混色モード・輝度の補正）と区間ごとの混合率曲線を足した版。版 24 の中身に、種類 64（グラデーションマップ）の欄の
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
-/// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const MIXING_VERSION: i32 = 25;
 /// レイヤーのパスの一覧（1 つのレイヤーに何本ものパス、パスごとの名前・表示）を足した版。版 25 の中身に、レイヤーの属性のビット 6 とパスの一覧の塊
 /// （`paths`）が加わる。一覧を使うレイヤー（塗りつぶしレイヤーのパス・2 本以上のパス・名前や隠すパス・ストローク／消しゴム以外の種類・筆先・
 /// 角度・深さ・対称の設定・角や取っ手の点を持つパス）のある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で
-/// 断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const PATHS_VERSION: i32 = 27;
 /// 0.5.0 の新しい効果を足した版。版 25 の中身に、フィルターの段の種類 70〜79（ヒストグラムスキャン・ヒストグラムレンジ・スロープぼかし・方向のぼかし・
 /// ゆがみ・モルフォロジー・エッジ検出・ハイパス・メディアン・グロー）と、Generator の種類 66（模様）・67（アイランドごとのばらつき）・68（ライト）・69（マスクの組み立て）・70（画像）が加わる
 /// （種類ごとの欄は `effect` の塊）。これを使う文書だけがこの版になり、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は
-/// 「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const EFFECTS_VERSION: i32 = 28;
 /// 塗りつぶしの点のグラデーション（レイヤーの属性のビット 7 の続きの属性の印 `attributes_ext` のビット 0）と、塗りつぶしの画像ごとの異方性のフィルターの入・切（`images[i].anisotropic`）を
 /// 足した版。点のグラデーションか、異方性を切った画像のある文書だけがこの版になり、それより古い読み手は版の範囲の外として断る
-/// （形式と決めは docs/YLP_FORMAT.md）。
+/// （形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const POINT_GRADIENT_VERSION: i32 = 29;
 /// レイヤーのフィルターが UV の継ぎ目をまたぐかの文書の設定（頭の `filter_seams`）を足した版。設定を切った（既定の入から変えた）文書だけが
-/// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// この版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 /// この版の文書は版 27〜30 の中身も読み書きできる。
 pub const SEAMS_VERSION: i32 = 32;
 /// テキストレイヤー（ラスターレイヤーの文字の値。続きの属性の印のビット 1 と `text` の塊）を足した版。テキストレイヤーのある文書だけがこの版になり
 /// （版 27〜29 の中身も読み書きできる）、版 25 までの読み手（スタンドアロン 0.4.x）は版の範囲の外として、Unity 版は「Unsupported archive version」で
-/// 断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 pub const TEXT_VERSION: i32 = 30;
 /// 重なった UV のテクセルの持ち主の決め方（ベイクの優先。頭の `bake_priority`）を足した版。決め方を既定（番号の小さい三角形・外さない・
 /// 手で選んだアイランドなし）から変えた文書だけがこの版になり、0.4.x のスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive
-/// version」で断る（形式と決めは docs/YLP_FORMAT.md）。この版の文書は版 27〜32 の中身も読み書きできる。
+/// version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。この版の文書は版 27〜32 の中身も読み書きできる。
 pub const BAKE_PRIORITY_VERSION: i32 = 33;
 /// パスのブラシのアンチエイリアスの段（パスの `brush` の塊の `anti_alias`）を加えた版。段が なし でないパスのある文書だけがこの版になり、
-/// 0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
+/// 0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 /// この版の文書は版 27〜33 の中身も読み書きできる。
 pub const ANTI_ALIAS_VERSION: i32 = 34;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・

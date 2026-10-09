@@ -201,6 +201,7 @@ FunctionEnd
   !insertmacro ${ACTION} "docs" "RECOVERY.md"
   !insertmacro ${ACTION} "docs" "SAVE_FOR_DISTRIBUTION.md"
   !insertmacro ${ACTION} "docs" "YLP_FORMAT.md"
+  !insertmacro ${ACTION} "docs" "YLP_DECISIONS.md"
   !insertmacro ${ACTION} "docs\en" "GUIDE.md"
   !insertmacro ${ACTION} "docs\en" "GUIDE_START.md"
   !insertmacro ${ACTION} "docs\en" "GUIDE_PAINT.md"

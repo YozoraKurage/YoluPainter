@@ -149,6 +149,11 @@ pub fn all() -> &'static [Doc] {
             en: None,
         },
         Doc {
+            name: "ylp-decisions",
+            ja: ja!("YLP_DECISIONS.md"),
+            en: None,
+        },
+        Doc {
             name: "livelink",
             ja: ja!("LIVELINK.md"),
             en: en!("LIVELINK.md"),

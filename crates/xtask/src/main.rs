@@ -256,6 +256,7 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/RECOVERY.md",
     "docs/SAVE_FOR_DISTRIBUTION.md",
     "docs/YLP_FORMAT.md",
+    "docs/YLP_DECISIONS.md",
     "docs/en/GUIDE.md",
     "docs/en/GUIDE_START.md",
     "docs/en/GUIDE_PAINT.md",
