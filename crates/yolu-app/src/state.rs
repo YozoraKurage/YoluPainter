@@ -826,6 +826,8 @@ pub struct AppState {
     pub canvas: CanvasInput,
     pub popup: Option<OpenPopup>,
     pub project_name: String,
+    /// 次に名前を付けて保存のウィンドウを開く場所（退避を開いたときの、元の .ylp のフォルダー。保存したら外す。無ければ OS の既定）。
+    pub save_folder: Option<std::path::PathBuf>,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
     /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
@@ -1085,6 +1087,7 @@ impl AppState {
             canvas: CanvasInput::default(),
             popup: None,
             project_name: lang.pick("名称未設定", "Untitled").into(),
+            save_folder: None,
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,

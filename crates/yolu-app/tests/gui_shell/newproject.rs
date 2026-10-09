@@ -1975,6 +1975,69 @@ fn a_backup_opens_with_the_model_of_the_file_it_backs_up_and_saved_elsewhere_sti
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// 退避（前の版）を開いた文書は保存先を持たない（新しい文書と同じ）。「保存」は名前を付けて保存になり、始まりの場所は元の .ylp のフォルダー、
+/// 名前の候補は元の .ylp の名前。退避のファイルは変わらず、退避のフォルダーの中へは何も書かない。元の名前へ保存すれば、元が置き換わり、
+/// 前の元は今の保存の決まりで退避に回る。
+#[test]
+fn a_backup_is_opened_without_a_destination_and_save_asks_where_without_touching_it() {
+    let (dir, _model, ylp, backup) = project_with_a_backup("backup-nodest");
+    let backup_before = std::fs::read(&backup).unwrap();
+    let origin_before = std::fs::read(&ylp).unwrap();
+    let kept_before = yolu_io::backups(&ylp).unwrap().len();
+    let backup_folder = backup.parent().unwrap().to_path_buf();
+    let names_before = std::fs::read_dir(&backup_folder).unwrap().count();
+    for lang in [Lang::Ja, Lang::En] {
+        let mut t = S::new_in(64, 64, lang);
+        t.apply(Action::OpenProject(backup.clone()));
+        wait_reopen(&mut t);
+        assert!(t.project.as_ref().is_some_and(|p| !p.is_file()));
+        assert_eq!(t.project_name, "p", "題名は元の .ylp の名前");
+        assert!(!t.modified);
+        assert_eq!(t.save_folder.as_deref(), ylp.parent());
+        assert!(
+            t.message.contains(lang.pick("（退避）", "(backup)")),
+            "{}",
+            t.message
+        );
+        // 保存 → 名前を付けて保存。退避は変わらず、退避のフォルダーに何も増えない
+        t.apply(Action::SaveProject);
+        assert_eq!(t.dialog_request, Some(DialogRequest::SaveAs));
+        assert_eq!(std::fs::read(&backup).unwrap(), backup_before);
+        assert_eq!(
+            std::fs::read_dir(&backup_folder).unwrap().count(),
+            names_before
+        );
+        t.dialog_request = None;
+    }
+    // 元の名前へ保存する（ウィンドウが確かめて返した道）: 元が置き換わり、前の元が退避に回る
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(backup.clone()));
+    wait_reopen(&mut t);
+    t.apply(Action::SaveProjectAs(ylp.clone()));
+    assert!(t.message.starts_with("保存しました"), "{}", t.message);
+    let kept = yolu_io::backups(&ylp).unwrap();
+    assert_eq!(kept.len(), kept_before + 1);
+    assert!(
+        kept.iter()
+            .any(|b| std::fs::read(b).unwrap() == origin_before),
+        "前の元が退避に回る"
+    );
+    assert_ne!(std::fs::read(&ylp).unwrap(), origin_before);
+    assert_eq!(
+        std::fs::read(&backup).unwrap(),
+        backup_before,
+        "開いた退避は変わらない"
+    );
+    // 保存したら、行き先のある文書になる
+    assert!(t.project.as_ref().is_some_and(|p| p.is_file()));
+    assert_eq!(t.save_folder, None);
+    assert_eq!(
+        read_file(&ylp).view_model().unwrap().as_deref(),
+        Some("models/c.fbx")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// 前の版のアプリが退避の場所を基準に書き直したパス（退避から開いて保存した退避）は、元のファイルの場所から解いた 1 か所だけを探すので、
 /// 見つからない（退避の場所から解いた先に同じ名前のファイルがあっても、別のモデルを黙って拾わない）。参照は残り、モデルを選び直せば開ける。
 #[test]

@@ -1008,15 +1008,17 @@ impl YoluApp {
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.project_name);
-                if let Some(path) = crate::dialog::file()
+                let mut dialog = crate::dialog::file()
                     .set_title(lang.pick("別名で保存", "Save As"))
                     .add_filter(
                         lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
                         &["ylp"],
                     )
-                    .set_file_name(name)
-                    .save_file()
-                {
+                    .set_file_name(name);
+                if let Some(folder) = &self.state.save_folder {
+                    dialog = dialog.set_directory(folder);
+                }
+                if let Some(path) = dialog.save_file() {
                     self.state.apply(Action::SaveProjectAs(path));
                 }
             }

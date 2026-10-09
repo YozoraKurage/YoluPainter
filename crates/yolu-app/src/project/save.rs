@@ -596,6 +596,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                     set.mesh_maps.mark_saved(maps);
                 }
             }
+            state.save_folder = None;
             state.project_name = job
                 .path
                 .file_stem()

@@ -137,6 +137,7 @@ fn install(
     app.shelf = ShelfState::default().inherit_running_from(&app.shelf);
     app.project = None;
     app.project_name = lang.pick("名称未設定", "Untitled").into();
+    app.save_folder = None;
     app.modified = false;
     app.sync_mesh_map_view();
     // 上限を超えるマテリアルがあれば、セットにならなかった数を言う（黙って落とさない）
