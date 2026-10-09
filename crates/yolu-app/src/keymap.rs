@@ -2289,6 +2289,7 @@ mod tests {
                 "object.hide",
                 "object.reveal",
                 "object.delete",
+                "view3d.ortho",
             ]
         );
     }

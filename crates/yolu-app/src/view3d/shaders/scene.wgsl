@@ -12,7 +12,7 @@ const DIELECTRIC: f32 = 0.04;
 struct Uniforms {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
-    // xyz: カメラの位置
+    // xyz: カメラの位置、w: 正投影なら 1（透視は 0）
     camera: vec4<f32>,
     // xyz: 光へ向かう向き
     light_dir: vec4<f32>,
@@ -376,7 +376,11 @@ fn vs_bg(@builtin(vertex_index) i: u32) -> BgOut {
 @fragment
 fn fs_bg(f: BgOut) -> @location(0) vec4<f32> {
     let p = u.inv_view_proj * vec4<f32>(f.ndc, 0.5, 1.0);
-    let d = normalize(p.xyz / p.w - u.camera.xyz);
+    var d = normalize(p.xyz / p.w - u.camera.xyz);
+    if (u.camera.w > 0.5) {
+        // 正投影: 視線はどこも前の向き（画面の奥へ）
+        d = -u.lil_camera_front.xyz;
+    }
     let c = textureSampleLevel(env_cube, env_sampler, to_source(d), u.env_rot.z).rgb * u.env.y;
     return vec4<f32>(linear_to_srgb(c), 1.0);
 }

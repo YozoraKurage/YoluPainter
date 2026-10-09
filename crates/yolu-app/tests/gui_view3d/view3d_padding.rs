@@ -73,6 +73,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
         pitch,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }

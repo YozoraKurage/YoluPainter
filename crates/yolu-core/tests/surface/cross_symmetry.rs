@@ -47,6 +47,7 @@ fn front() -> yolu_core::geometry::CameraView {
         pitch: 0.0,
         distance: 4.0,
         model_radius: 1.0,
+        ..Default::default()
     }
     .view(400.0, 400.0)
 }

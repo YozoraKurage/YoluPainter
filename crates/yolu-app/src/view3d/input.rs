@@ -1419,14 +1419,18 @@ fn symmetry_color(alpha: u8) -> Color32 {
 }
 
 /// 面の上の点がカメラから見えるか（表向きで、手前に別の面が無い）。
-fn seen_from_camera(geometry: &SurfaceGeometry, camera: Vec3, point: &SurfaceHit) -> bool {
-    let to = point.position - camera;
-    let distance = to.length();
+fn seen_from_camera(geometry: &SurfaceGeometry, view: &CameraView, point: &SurfaceHit) -> bool {
+    let sight = view.sight(point.position);
+    let (to, distance) = (sight.to, sight.distance);
     if distance <= 0.0 || point.normal.dot(-to) <= 0.0 {
         return false;
     }
     let epsilon = (geometry.bounds().size().length() * 1e-5).max(1e-7);
-    match geometry.raycast(Ray::new(camera, to / distance), false, distance + epsilon) {
+    match geometry.raycast(
+        Ray::new(sight.origin, to / distance),
+        false,
+        distance + epsilon,
+    ) {
         None => true,
         Some(first) => first.triangle == point.triangle || first.distance >= distance - epsilon,
     }
@@ -1489,7 +1493,7 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         None => Vec::new(),
     };
     for copy in &copies {
-        let alpha = if seen_from_camera(&model.geometry, view.position, copy) {
+        let alpha = if seen_from_camera(&model.geometry, &view, copy) {
             242
         } else {
             100
@@ -1552,7 +1556,7 @@ fn canvas_copy_rings(
                 triangle: index,
                 ..*h
             };
-            let alpha = if seen_from_camera(geometry, view.position, &copy) {
+            let alpha = if seen_from_camera(geometry, view, &copy) {
                 242
             } else {
                 100

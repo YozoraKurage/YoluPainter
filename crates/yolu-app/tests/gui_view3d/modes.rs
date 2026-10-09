@@ -427,16 +427,15 @@ fn the_view_pie_turns_the_camera_to_each_axis_and_frames_the_set() {
             camera.yaw
         );
         assert!(pie_open(&h).is_none());
+        // 軸の向きでは正投影（設定の既定）
+        assert!(camera.is_orthographic(), "{label}");
     }
-    // 正投影はこの版では押せない（理由はツールチップ）。押しても閉じるだけ
+    // 正投影の項目: 透視と正投影を切り替える（押すと閉じる）
     open(&mut h);
     let ortho = pie_item(&h, "正投影");
-    hover_and_wait(&mut h, ortho.center());
-    assert!(h.query_by_label("この版ではまだ使えません").is_some());
-    let before = h.state().state.view3d.camera;
     click(&mut h, ortho.center());
     assert!(pie_open(&h).is_none());
-    assert_eq!(h.state().state.view3d.camera, before);
+    assert!(!h.state().state.view3d.camera.is_orthographic());
     // 収める: 3D の . と同じ（選んだセットを画面に収める）
     h.state_mut().state.view3d.camera.distance *= 3.0;
     let mut expected = h.state().state.view3d.camera;

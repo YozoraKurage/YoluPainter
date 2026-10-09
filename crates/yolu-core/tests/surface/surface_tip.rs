@@ -67,6 +67,7 @@ fn front() -> CameraView {
         pitch: 0.0,
         distance,
         model_radius: W as f32,
+        ..Default::default()
     }
     .view(sw, sh)
 }
@@ -596,6 +597,7 @@ fn paper_texture_follows_document_pixels_whatever_the_camera() {
             .distance(Vec3::new(W as f32 / 2.0, H as f32 / 2.0, 0.0))
             * 0.83,
         model_radius: W as f32,
+        ..Default::default()
     };
     views.push(moved.view(W as f32 + 32.0, H as f32 + 32.0));
     moved.yaw = 12.0;

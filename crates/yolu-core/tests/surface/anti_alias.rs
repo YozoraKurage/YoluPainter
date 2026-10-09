@@ -55,6 +55,7 @@ fn front() -> CameraView {
         pitch: 0.0,
         distance,
         model_radius: W as f32,
+        ..Default::default()
     }
     .view(sw, sh)
 }
@@ -266,6 +267,7 @@ fn turned(yaw: f32, pitch: f32) -> CameraView {
         pitch,
         distance,
         model_radius: W as f32,
+        ..Default::default()
     }
     .view(sw, sh)
 }

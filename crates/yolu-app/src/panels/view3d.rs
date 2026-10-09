@@ -77,6 +77,8 @@ impl View3dHost for RecordingHost {
 struct Corner {
     /// 設定のアイコンの矩形（設定のパネルは、その外を押すと閉じる。このアイコンは外に数えない）。
     settings: Option<Rect>,
+    /// アイコンの列の下の端（軸の印をその下に置く）。
+    bottom: f32,
 }
 
 #[derive(Default)]
@@ -339,6 +341,9 @@ impl View3dSlot {
         let corner = self.corner(ui, app, content, reduced.filter(|_| drawn));
         if app.view3d.display.settings_open {
             settings_panel(ui, app, content, corner.settings);
+        } else if drawn {
+            // 軸の印（アイコンの下。設定のパネルと重なるので、パネルが開いている間は出さない）
+            crate::view3d::axis_gizmo::show(ui, app, content, corner.bottom);
         }
 
         let placement = Placement {
@@ -462,6 +467,7 @@ impl View3dSlot {
                 .iter()
                 .position(|item| item.id == "settings")
                 .and_then(|i| out.rects.get(i).copied()),
+            bottom: w::corner_bottom(view, items.len()),
         }
     }
 

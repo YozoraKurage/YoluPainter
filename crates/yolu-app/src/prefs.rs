@@ -87,6 +87,8 @@ pub enum Pref {
     OrbitCenter(OrbitCenter),
     /// 3D ビューのズームの中心。
     ZoomCenter(ZoomCenter),
+    /// 3D ビューを軸の向きで正投影にする（軸の視点・スナップ回転で軸に入ったとき）。
+    AxisOrthographic(bool),
     /// ディスクキャッシュの入切。
     DiskCache(bool),
     /// ディスクキャッシュの上限。
@@ -326,6 +328,7 @@ impl AppState {
                 }
                 Pref::OrbitCenter(center) => self.prefs.settings.navigation.orbit = center,
                 Pref::ZoomCenter(center) => self.prefs.settings.navigation.zoom = center,
+                Pref::AxisOrthographic(on) => self.prefs.settings.navigation.axis_ortho = on,
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
                         self.refuse(
@@ -787,7 +790,7 @@ fn content_height(
         + if cache_details { dropdown * 3.0 } else { 0.0 } // キャッシュの上限・置き場所（パスとボタン）
         + dropdown * 3.0 // 処理: スレッド・合成・GPU のメモリ（同じ行の右に「詳しく」）
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
-        + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
+        + dropdown * 4.0 // 3D ビュー: 回転の中心・ズームの中心・軸の向きで正投影・UV ワイヤーフレーム
         + if pen_rows > 0 { HEADING + dropdown * pen_rows as f32 } else { 0.0 } // ペン（macOS・Windows だけ）: 見出しと、タブレットの筆圧（macOS）・ペンの入力（Windows）
         + dropdown * 2.0 // ファイル: ライブラリの場所（パスとボタン）
         + slider + dropdown // 退避を残す数・すべて残す
@@ -1378,6 +1381,21 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
             PrefChoice::ZoomCenter,
         ));
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("axis-ortho"),
+            crate::settings::setting_name(lang, "view3d_axis_ortho"),
+            s.navigation.axis_ortho,
+            Some(lang.pick(
+                "軸の視点を選んだとき・スナップ回転で軸の向きに吸い付いたときは正投影にし、回して軸から外れたら透視へ戻す",
+                "Switches to orthographic when you pick an axis view or snap-orbit onto an axis, and back to perspective when you orbit off the axis",
+            )),
+            enabled,
+        );
+        if next != s.navigation.axis_ortho {
+            requests.push(Request::Do(PrefsAction::Set(Pref::AxisOrthographic(next))));
+        }
         dragging |= crate::uv_wireframe::settings_row(ui, &mut rows, app);
         if pen_rows > 0 {
             section(ui, &mut rows, false, lang.pick("ペン", "Pen"));

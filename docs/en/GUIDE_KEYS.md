@@ -82,7 +82,8 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 - The wheel also zooms. `Ctrl+Space` + left-drag zooms as you move horizontally, around the pressed point (releasing without moving zooms in, and adding `Alt` zooms out).
 - Rotating the 2D view goes in 15° steps, and is free with `Shift` also held. The 3D snap orbit snaps to an axis view (front, back, right, left, top, bottom) when the direction comes within 15° of it.
 - Rotating the view right uses the `^` character, and the `=` key also works (keyboard layouts put the keys in different places).
-- While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (`Shift` for faster; meanwhile these keys are not used for switching tools and so on).
+- The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or snapping onto an axis makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
+- While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (`Shift` for faster; meanwhile these keys are not used for switching tools and so on). In orthographic, `W` / `S` zoom in and out.
 - In Edit mode `H` hides the selected object's marker, so flip the 2D view with View → Flip View.
 - The stencil rotates with a left-drag while `Y` is held (15° steps with `Shift`), moves with a middle-drag or `Ctrl` + left-drag, and scales with a right-drag or `Alt` + left-drag (in 2D and 3D). It is not used while `N` is held.
 - The Liquify tool has no default key.

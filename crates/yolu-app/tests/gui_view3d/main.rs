@@ -9,6 +9,7 @@ mod common;
 
 mod gpu_memory;
 mod liltoon;
+mod liltoon_ortho;
 mod liltoon_panel;
 mod liltoon_reference;
 mod modes;
@@ -25,6 +26,7 @@ mod pose_takes;
 mod pose_ui;
 mod sets;
 mod view3d;
+mod view3d_axes;
 mod view3d_brush;
 mod view3d_fx;
 mod view3d_look;

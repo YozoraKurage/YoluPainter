@@ -21,6 +21,8 @@
 //!   UV が覆うテクセル・アイランドの縁の辺）はスナップショットに覚えて、次のストロークでも使う。
 //! - 計算は倍精度（頂点はモデルの単精度の値から）の四則と平方根だけ（画角の tan と弱めの cos も四則で作る）。例外は放射状の写しの
 //!   カメラの回転で、[`RadialSymmetry`] の単精度の sin・cos（機械の数学の関数）を使う。
+//! - 正投影のカメラ（[`super::camera::Projection::Orthographic`]）: 画面への写しは奥行きで割らず、視線は前の向きに平行。面の表裏は法線と
+//!   前の向き、面の向きの弱めは法線と前の向きの cos、辺の上の割合は画面の割合のまま（奥行きで歪まない）。透視の式は変えない。
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -337,6 +339,8 @@ struct Frame {
     near: f64,
     sw: f64,
     sh: f64,
+    /// 正投影の、横と縦の見える長さの半分（ビューの空間）。透視なら None。
+    ortho: Option<(f64, f64)>,
 }
 
 impl Frame {
@@ -362,6 +366,13 @@ impl Frame {
             near: view.near as f64,
             sw,
             sh,
+            ortho: match view.projection {
+                super::camera::Projection::Perspective => None,
+                super::camera::Projection::Orthographic { height } => {
+                    let hy = height as f64 * 0.5;
+                    Some((hy * (sw / sh), hy))
+                }
+            },
         }
     }
 
@@ -373,20 +384,66 @@ impl Frame {
 
     #[inline]
     fn screen_of(&self, v: DVec3) -> DVec2 {
+        if let Some((hx, hy)) = self.ortho {
+            return DVec2::new(
+                (v.x / hx + 1.0) * 0.5 * self.sw,
+                (1.0 - v.y / hy) * 0.5 * self.sh,
+            );
+        }
         DVec2::new(
             (v.x / (v.z * self.tx) + 1.0) * 0.5 * self.sw,
             (1.0 - v.y / (v.z * self.ty)) * 0.5 * self.sh,
         )
     }
 
-    /// 画面の点を通るレイの向き（ビューの空間、z = 1）。
+    /// 画面の点を通る視線と、ビューの空間の平面 normal · p = k の交わり（平面が視線に沿うなら None）。透視の視線は原点から
+    /// 向き (x·tx, y·ty, 1)、正投影の視線は (x·hx, y·hy, 0) から前の向き。
     #[inline]
-    fn ray(&self, s: DVec2) -> DVec3 {
-        DVec3::new(
+    fn plane_point(&self, s: DVec2, normal: DVec3, k: f64) -> Option<DVec3> {
+        if let Some((hx, hy)) = self.ortho {
+            let o = DVec3::new(
+                (2.0 * s.x / self.sw - 1.0) * hx,
+                (1.0 - 2.0 * s.y / self.sh) * hy,
+                0.0,
+            );
+            if normal.z == 0.0 {
+                return None;
+            }
+            return Some(DVec3::new(o.x, o.y, (k - normal.dot(o)) / normal.z));
+        }
+        let d = DVec3::new(
             (2.0 * s.x / self.sw - 1.0) * self.tx,
             (1.0 - 2.0 * s.y / self.sh) * self.ty,
             1.0,
-        )
+        );
+        let denom = normal.dot(d);
+        if denom == 0.0 {
+            return None;
+        }
+        Some(d * (k / denom))
+    }
+
+    /// ビューの空間の平面 normal · p = k の三角形が、見る人の側を向くか（鏡映した組の裏返しの前の判定。透視は原点が平面の表の側、
+    /// 正投影は法線が前の向きに逆らう）。
+    #[inline]
+    fn faces_viewer(&self, normal: DVec3, k: f64) -> bool {
+        match self.ortho {
+            None => k < 0.0,
+            Some(_) => normal.z < 0.0,
+        }
+    }
+
+    /// 単位の法線 unit と、ビューの空間の点 p から見る人への向きの cos の絶対値（点が原点なら None）。
+    #[inline]
+    fn view_cos(&self, unit: DVec3, p: DVec3) -> Option<f64> {
+        if self.ortho.is_some() {
+            return Some(unit.z.abs());
+        }
+        let length = p.length();
+        if length.is_nan() || length <= 0.0 {
+            return None;
+        }
+        Some(unit.dot(p).abs() / length)
     }
 }
 
@@ -493,12 +550,7 @@ impl ScreenFace {
     /// 画面の点での奥行き（その点のレイと平面の交わり。平面がレイに沿うなら None）。
     #[inline]
     fn depth_at(&self, frame: &Frame, s: DVec2) -> Option<f64> {
-        let d = frame.ray(s);
-        let denom = self.normal.dot(d);
-        if denom == 0.0 {
-            return None;
-        }
-        let z = self.k / denom;
+        let z = frame.plane_point(s, self.normal, self.k)?.z;
         z.is_finite().then_some(z)
     }
 
@@ -860,7 +912,7 @@ impl Layout {
                     return (0, None);
                 };
                 let mut flag = 0u8;
-                if (f.k < 0.0) != frame.flip {
+                if frame.faces_viewer(f.normal, f.k) != frame.flip {
                     flag |= FRONT;
                 }
                 if material.is_none_or(|m| m == t.material)
@@ -1029,6 +1081,8 @@ impl SurfaceProjector {
             || view.height < 1.0
             || !view.position.is_finite()
             || !brush_screen_radius.is_finite()
+            || matches!(view.projection, super::camera::Projection::Orthographic { height }
+                if !(height.is_finite() && height > 0.0))
         {
             return Err(DabRefusal::InvalidArguments);
         }
@@ -1435,12 +1489,9 @@ impl SurfaceProjector {
             let mut uv_lo = DVec2::splat(f64::INFINITY);
             let mut uv_hi = DVec2::splat(f64::NEG_INFINITY);
             for &q in &clipped {
-                let d = frame.ray(q);
-                let denom = sf.normal.dot(d);
-                if denom == 0.0 {
+                let Some(p) = frame.plane_point(q, sf.normal, sf.k) else {
                     continue;
-                }
-                let p = d * (sf.k / denom);
+                };
                 let u = uv.point(bary3(v, p));
                 if u.is_finite() {
                     uv_lo = uv_lo.min(u);
@@ -1634,6 +1685,12 @@ fn texel_steps(v: &[DVec3; 3], uv: &UvFace) -> [DVec3; 2] {
 
 /// ビューの空間の点 p で、テクセルの動き steps が画面でどれだけか（テクセル → 画面の写しの J·Jᵀ）。
 fn texel_metric(frame: &Frame, p: DVec3, steps: &[DVec3; 2]) -> TexelMetric {
+    if let Some((hx, hy)) = frame.ortho {
+        // 正投影の写しは線形（奥行きによらない）
+        let (ax, ay) = (0.5 * frame.sw / hx, -0.5 * frame.sh / hy);
+        let column = |d: DVec3| (ax * d.x, ay * d.y);
+        return TexelMetric::from_columns(column(steps[0]), column(steps[1]));
+    }
     let iz = 1.0 / p.z;
     let (ax, ay) = (0.5 * frame.sw / frame.tx, -0.5 * frame.sh / frame.ty);
     let column = |d: DVec3| {
@@ -1689,13 +1746,9 @@ impl FaceContext<'_> {
         let weight = match self.cos_range {
             None => 1.0,
             Some((start, end)) => {
-                let length = p.length();
-                if length.is_nan() || length <= 0.0 {
-                    return None;
-                }
                 // 法線と、点からカメラへの向きの cos。平面の上の点では unit · p が同じ符号（表の面は負・裏の面と鏡映のカメラでは
-                // 逆）なので、絶対値が見ている側から測った角度になる
-                let cos = self.unit.dot(p).abs() / length;
+                // 逆）なので、絶対値が見ている側から測った角度になる（正投影は前の向きとの cos）
+                let cos = frame.view_cos(self.unit, p)?;
                 if cos >= start {
                     1.0
                 } else if cos <= end {
@@ -1900,9 +1953,13 @@ fn edge_interval(frame: &Frame, a: DVec3, b: DVec3, lo: DVec2, hi: DVec2) -> Opt
     if e0 > e1 {
         return None;
     }
-    // 画面の割合 → 3D の割合（1/z が画面で線形）
+    // 画面の割合 → 3D の割合（透視は 1/z が画面で線形、正投影は画面の割合のまま）
     let (z0, z1) = (p0.z, p1.z);
+    let ortho = frame.ortho.is_some();
     let to3d = |e: f64| -> f64 {
+        if ortho {
+            return t0 + (t1 - t0) * e;
+        }
         let w = e / z1;
         let w0 = (1.0 - e) / z0;
         let u = w / (w + w0);

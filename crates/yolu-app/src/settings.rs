@@ -472,6 +472,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "language" => lang.pick("言語", "Language"),
         "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
         "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
+        "view3d_axis_ortho" => lang.pick("軸の向きで正投影", "Orthographic on axis views"),
         "view3d_antialias" => lang.pick("アンチエイリアス", "Anti-aliasing"),
         "view3d_bloom" => lang.pick("ブルーム", "Bloom"),
         "view3d_bloom_strength" => lang.pick("ブルームの強さ", "Bloom strength"),
@@ -636,7 +637,7 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(points) => curve = Some(points),
                 None => invalid("pressure_curve"),
             },
-            "view3d_orbit" | "view3d_zoom" => {
+            "view3d_orbit" | "view3d_zoom" | "view3d_axis_ortho" => {
                 settings.navigation.parse(key.trim(), value, &mut problems)
             }
             "view3d_antialias" => match value

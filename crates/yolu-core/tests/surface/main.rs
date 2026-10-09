@@ -14,6 +14,7 @@ mod material;
 mod mesh_maps;
 mod overlap_priority;
 mod stencil;
+mod surface_ortho;
 mod surface_path_rebind;
 mod surface_projection;
 mod surface_sampling;

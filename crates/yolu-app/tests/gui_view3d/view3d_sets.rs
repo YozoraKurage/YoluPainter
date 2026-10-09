@@ -117,6 +117,7 @@ fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
             6.0 + 2.2 * cols as f32
         },
         model_radius: 1.0,
+        ..Default::default()
     };
     h.state_mut()
         .apply(Action::View3d(Op::Shading(Shading::Channel(
@@ -383,6 +384,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         pitch: 0.0,
         distance: 9.0,
         model_radius: 1.0,
+        ..Default::default()
     };
     for (i, c) in COLORS.iter().enumerate() {
         h.state_mut()
@@ -1432,6 +1434,7 @@ fn measure_frames_by_triangles_and_set_count() {
                 pitch: 10.0,
                 distance: 1.6,
                 model_radius: 1.0,
+                ..Default::default()
             };
             for set in 0..n {
                 let rgb = COLORS[set % 4];

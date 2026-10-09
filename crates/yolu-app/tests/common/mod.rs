@@ -153,6 +153,14 @@ pub fn canvas_pixel(h: &Harness<'_, YoluApp>, p: Pos2) -> [u8; 4] {
     )
 }
 
+/// 3D ビューの右上の軸の印の矩形（描いていなければ None）。絵の画素を数える試験は、この中を数えない（3D の絵の上に重ねた印）。
+pub fn view3d_axes_rect(h: &Harness<'_, YoluApp>) -> Option<Rect> {
+    use egui_kittest::kittest::Queryable;
+    h.query_by_label("視点の軸")
+        .or_else(|| h.query_by_label("View axes"))
+        .map(|n| n.rect().expand(2.0))
+}
+
 /// 同じ名前の部品のうち、条件に合うもの（例: 右の列の中）の矩形。
 pub fn rect_of(h: &Harness<'_, YoluApp>, label: &str, pick: impl Fn(Rect) -> bool) -> Rect {
     use egui_kittest::kittest::Queryable;

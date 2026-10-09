@@ -113,7 +113,11 @@ fn key(h: &mut Harness<'_, Fixture>, k: Key, pressed: bool, modifiers: Modifiers
     h.step();
 }
 fn prefs(orbit: OrbitCenter, zoom: ZoomCenter) -> Preferences {
-    Preferences { orbit, zoom }
+    Preferences {
+        orbit,
+        zoom,
+        ..Preferences::default()
+    }
 }
 
 #[test]
@@ -702,4 +706,211 @@ fn review_frame_shortcut_preserves_camera_during_stencil_placement() {
         key(&mut h, Key::Period, true, Modifiers::NONE);
         assert_ne!(camera(&h), before, "操作後は再びフレームできる");
     }
+}
+
+/// 注視点の所の、世界の 0.1 の画面の大きさ（透視と正投影を切り替えても変わらないはず）。
+fn size_at_target(h: &Harness<'_, Fixture>) -> f32 {
+    let c = camera(h);
+    c.view(640.0, 480.0).world_radius_to_screen(c.target, 0.1)
+}
+
+#[test]
+fn alt_drag_onto_an_axis_turns_orthographic_and_off_the_axis_back_to_perspective() {
+    for axis_ortho in [true, false] {
+        let mut h = harness(Preferences {
+            axis_ortho,
+            ..Preferences::default()
+        });
+        h.state_mut().app.view3d.camera.yaw = 25.0;
+        let size = size_at_target(&h);
+        let at = pos2(375.0, 215.0);
+        let alt = Modifiers::ALT;
+        h.event(Event::ModifiersChanged(alt));
+        mouse(&mut h, at, PointerButton::Primary, true, alt);
+        // 背面の 10° 手前: 吸い付いて、設定が入なら正投影（大きさは変わらない）
+        h.event(Event::PointerMoved(at + vec2(-15.0 / 0.35, 0.0)));
+        h.step();
+        let c = camera(&h);
+        assert_eq!((c.yaw, c.pitch), (0.0, 0.0));
+        assert_eq!(c.is_orthographic(), axis_ortho);
+        assert_eq!(h.state().app.view3d.auto_orthographic, axis_ortho);
+        assert!((size_at_target(&h) - size).abs() < 1e-3);
+        // 吸い付く範囲の外へ: 透視へ戻る
+        h.event(Event::PointerMoved(at + vec2(-45.0 / 0.35, 0.0)));
+        h.step();
+        let c = camera(&h);
+        assert!((c.yaw + 20.0).abs() < 1e-3);
+        assert!(!c.is_orthographic());
+        assert!(!h.state().app.view3d.auto_orthographic);
+        assert!((size_at_target(&h) - size).abs() < 1e-3);
+        mouse(
+            &mut h,
+            at + vec2(-45.0 / 0.35, 0.0),
+            PointerButton::Primary,
+            false,
+            alt,
+        );
+        // 視点は文書を変えない（取り消しに積まない）
+        assert!(!h.state().app.doc.can_undo());
+    }
+}
+
+#[test]
+fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
+    let mut h = harness(Preferences::default());
+    // 軸の視点（視点のパイと同じ操作）: 正投影へ、自動の印つき
+    h.state_mut()
+        .app
+        .apply(yolu_app::state::Action::View3dNav(navigation::NavOp::Axis(
+            yolu_core::geometry::AxisView::Front,
+        )));
+    assert!(camera(&h).is_orthographic());
+    assert!(h.state().app.view3d.auto_orthographic);
+    let at = pos2(320.0, 240.0);
+    mouse(&mut h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.event(Event::PointerMoved(at + vec2(30.0, 0.0)));
+    h.step();
+    mouse(
+        &mut h,
+        at + vec2(30.0, 0.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::NONE,
+    );
+    assert!(!camera(&h).is_orthographic(), "回して外れたら透視");
+    // 手で正投影にしたものは、回しても戻さない
+    h.state_mut().app.apply(yolu_app::state::Action::View3dNav(
+        navigation::NavOp::ToggleOrthographic,
+    ));
+    assert!(camera(&h).is_orthographic());
+    assert!(!h.state().app.view3d.auto_orthographic);
+    mouse(&mut h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.event(Event::PointerMoved(at + vec2(-40.0, 25.0)));
+    h.step();
+    mouse(
+        &mut h,
+        at + vec2(-40.0, 25.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::NONE,
+    );
+    assert!(camera(&h).is_orthographic());
+    // 手で正投影にした後に軸の視点を選んでも、自動の印は付けない（外れても正投影のまま）
+    h.state_mut()
+        .app
+        .apply(yolu_app::state::Action::View3dNav(navigation::NavOp::Axis(
+            yolu_core::geometry::AxisView::Top,
+        )));
+    assert!(camera(&h).is_orthographic() && !h.state().app.view3d.auto_orthographic);
+    // モデル全体の位置へ戻しても、手で選んだ正投影は保つ（既定の斜めの向き）
+    h.state_mut().app.view3d.frame_model();
+    assert!(camera(&h).is_orthographic());
+    assert_eq!(camera(&h).yaw, yolu_core::geometry::DEFAULT_YAW);
+    // 自動の正投影なら、全体の位置へ戻すと透視
+    h.state_mut().app.apply(yolu_app::state::Action::View3dNav(
+        navigation::NavOp::ToggleOrthographic,
+    ));
+    h.state_mut()
+        .app
+        .apply(yolu_app::state::Action::View3dNav(navigation::NavOp::Axis(
+            yolu_core::geometry::AxisView::Left,
+        )));
+    assert!(h.state().app.view3d.auto_orthographic);
+    h.state_mut().app.view3d.frame_model();
+    assert!(!camera(&h).is_orthographic());
+    assert!(!h.state().app.doc.can_undo());
+}
+
+#[test]
+fn orthographic_pan_and_pointer_zoom_follow_the_pointer() {
+    for at in [pos2(375.0, 215.0), pos2(30.0, 40.0)] {
+        let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::Pointer));
+        h.state_mut().app.view3d.camera.yaw = 25.0;
+        h.state_mut().app.view3d.camera.set_orthographic(true);
+        let c = camera(&h);
+        let view = c.view(640.0, 480.0);
+        // 面が無ければ、注視点と同じ奥行きの点
+        let point = pick(
+            &h.state().app.view3d.model.as_ref().unwrap().geometry,
+            &view,
+            Vec2::new(at.x, at.y),
+        )
+        .map(|p| p.position)
+        .unwrap_or(view.point_at_depth(Vec2::new(at.x, at.y), c.distance));
+        h.event(Event::PointerMoved(at));
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, 1.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+        let after = camera(&h);
+        assert!(after.is_orthographic());
+        assert!(after.height_at_target() < c.height_at_target(), "寄った");
+        assert_eq!(after.distance, c.distance, "カメラの距離は変えない");
+        near(project(after, point), Vec2::new(at.x, at.y));
+        // 中ボタンのパン: 押した点が指についてくる（奥行きによらない）
+        let p = hit(&h, pos2(375.0, 215.0));
+        let before = project(camera(&h), p);
+        mouse(
+            &mut h,
+            pos2(375.0, 215.0),
+            PointerButton::Middle,
+            true,
+            Modifiers::NONE,
+        );
+        h.event(Event::PointerMoved(pos2(405.0, 195.0)));
+        h.step();
+        mouse(
+            &mut h,
+            pos2(405.0, 195.0),
+            PointerButton::Middle,
+            false,
+            Modifiers::NONE,
+        );
+        near(project(camera(&h), p), before + Vec2::new(30.0, -20.0));
+    }
+}
+
+#[test]
+fn the_axis_orthographic_setting_is_on_by_default_and_round_trips() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/navigation-settings-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("axis-{}.conf", std::process::id()));
+    // 既定は入。入のままなら書かない（前の版の設定のファイルも入として読む）
+    assert!(Preferences::default().axis_ortho);
+    let on = yolu_app::settings::Settings::default();
+    yolu_app::settings::save(&path, &on).unwrap();
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("view3d_axis_ortho"));
+    // 切ると書き、読み直すと切
+    let off = yolu_app::settings::Settings {
+        navigation: Preferences {
+            axis_ortho: false,
+            ..Preferences::default()
+        },
+        ..Default::default()
+    };
+    yolu_app::settings::save(&path, &off).unwrap();
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("view3d_axis_ortho=off\n"));
+    let (loaded, problems) = yolu_app::settings::load(&path);
+    assert_eq!(loaded, off);
+    assert!(problems.is_empty());
+    // 知らない値は断って既定（入）
+    std::fs::write(&path, "view3d_axis_ortho=maybe\n").unwrap();
+    let (loaded, problems) = yolu_app::settings::load(&path);
+    assert!(loaded.navigation.axis_ortho);
+    assert_eq!(
+        problems,
+        [yolu_app::settings::Problem::Invalid {
+            key: "view3d_axis_ortho",
+            value: "maybe".into()
+        }]
+    );
+    std::fs::remove_file(path).unwrap();
 }

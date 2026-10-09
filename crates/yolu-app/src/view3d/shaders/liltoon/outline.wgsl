@@ -10,7 +10,11 @@ fn vs_outline(v: VsIn) -> VsOut {
     width = width * slot_level(SLOT_OUTLINE_WIDTH, uv_main, 0.0).r;
     width = width * mix(1.0, saturate(length(u.camera.xyz - v.position)), o.z);
     var p = v.position + v.normal * width;
-    let to_camera = u.camera.xyz - p;
+    // lilCalcOutlinePosition の V（Z バイアスはこの逆へ押す）: 透視はカメラの位置への向き、正投影はカメラの手前への向き（LIL_MATRIX_V の 3 行目）
+    var to_camera = u.camera.xyz - p;
+    if (!lil_is_perspective()) {
+        to_camera = u.lil_camera_front.xyz;
+    }
     p = p - normalize(to_camera) * lil.p[P_OUTLINE_Q].x;
     var out: VsOut;
     out.clip = u.view_proj * vec4<f32>(p, 1.0);

@@ -222,11 +222,14 @@ pub fn slot_of(app: &AppState, item: &PieItem) -> Slot {
                 }
                 (Some(c), _) => c.unavailable(lang).map(str::to_owned),
             };
+            // 入っている切り替え（今のモード・正投影）には印
+            let on = mode == Some(app.mode)
+                || (id == "view3d.ortho" && app.view3d.camera.is_orthographic());
             Slot {
                 label,
                 icon: mode.map(EditorMode::icon),
                 enabled: reason.is_none(),
-                checked: mode == Some(app.mode),
+                checked: on,
                 tooltip: reason,
             }
         }
@@ -616,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_pie_marks_the_current_mode_and_the_view_pie_disables_orthographic() {
+    fn the_mode_pie_marks_the_current_mode_and_the_view_pie_marks_orthographic() {
         let mut app = AppState::new(32, 32);
         let menu = app.pie.menu("mode").cloned().unwrap();
         let slot = |app: &AppState, i: usize| slot_of(app, menu.slots[i].as_ref().unwrap());
@@ -633,12 +636,20 @@ mod tests {
         assert!(slot(&app, 2).enabled);
         app.set_mode(EditorMode::Edit);
         assert!(slot(&app, 0).checked && !slot(&app, 6).checked);
-        // 視点のパイの正投影は、この版では押せない（理由つき）。ほかは押せる
+        // 視点のパイは全部押せる。正投影の項目は、正投影の間だけ印が付く
         let view = app.pie.menu("view").cloned().unwrap();
+        for item in view.slots.iter() {
+            let s = slot_of(&app, item.as_ref().unwrap());
+            assert!(
+                s.enabled && s.tooltip.is_none() && !s.checked,
+                "{}",
+                s.label
+            );
+        }
+        app.view3d.camera.set_orthographic(true);
         for (i, item) in view.slots.iter().enumerate() {
             let s = slot_of(&app, item.as_ref().unwrap());
-            assert_eq!(s.enabled, i != 3, "{}", s.label);
-            assert_eq!(s.tooltip.is_some(), i == 3, "{}", s.label);
+            assert_eq!(s.checked, i == 3, "{}", s.label);
         }
     }
 
@@ -667,12 +678,12 @@ mod tests {
         // 操作
         run(&mut app, &PieItem::Command("mode.edit".into()));
         assert_eq!(app.mode, EditorMode::Edit);
-        // この版で使えない操作は、理由を言って何もしない
+        // 正投影の切り替え（3D のモデルがあるとき）
+        app.view3d.load_demo();
         run(&mut app, &PieItem::Command("view3d.ortho".into()));
-        assert_eq!(
-            app.message,
-            "正投影の切り替えは使えません（この版ではまだ使えません）。"
-        );
+        assert!(app.view3d.camera.is_orthographic());
+        run(&mut app, &PieItem::Command("view3d.ortho".into()));
+        assert!(!app.view3d.camera.is_orthographic());
         run(&mut app, &PieItem::Command("no.such".into()));
         assert_eq!(app.message, "操作「no.such」がありません。");
         // 別のパイ: 開く頼み

@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 
 use eframe::egui_wgpu::{self, wgpu};
 use wgpu::util::DeviceExt;
-use yolu_core::geometry::OrbitCamera;
+use yolu_core::geometry::{OrbitCamera, Projection};
 use yolu_core::glam::{Mat4, Vec3, Vec4};
 use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
@@ -266,7 +266,8 @@ enum Pick {
 
 #[derive(Clone, Copy, PartialEq)]
 struct SceneKey {
-    camera: [u32; 6],
+    /// 注視点・yaw・pitch・距離と、投影（0 透視・1 正投影）・正投影の見える高さ。
+    camera: [u32; 8],
     size: [u32; 2],
     /// モデルの世代（`GpuMesh::model` と同じ）。
     model: u32,
@@ -1440,6 +1441,11 @@ impl View3dRenderer {
                 camera.yaw.to_bits(),
                 camera.pitch.to_bits(),
                 camera.distance.to_bits(),
+                u32::from(camera.is_orthographic()),
+                match camera.projection {
+                    Projection::Orthographic { height } => height.to_bits(),
+                    Projection::Perspective => 0,
+                },
             ],
             size,
             model: model.revision(),
@@ -2585,8 +2591,9 @@ impl View3dRenderer {
         let mut f: Vec<f32> = Vec::with_capacity(UNIFORM_BYTES as usize / 4);
         f.extend_from_slice(&view_proj.to_cols_array());
         f.extend_from_slice(&view_proj.inverse().to_cols_array());
+        // w: 正投影なら 1（lilToon の `lilIsPerspective()` が偽になる所と背景の向き）
         let p = view.position;
-        f.extend_from_slice(&[p.x, p.y, p.z, 0.0]);
+        f.extend_from_slice(&[p.x, p.y, p.z, f32::from(view.is_orthographic())]);
         let l = display.light_direction();
         f.extend_from_slice(&[l.x, l.y, l.z, 0.0]);
         // マテリアル表示の光（Unity のディレクショナルライトの `_LightColor0` と同じ値。`Display::direct_light`）と、環境が無いときの

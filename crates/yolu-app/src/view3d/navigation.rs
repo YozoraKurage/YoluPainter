@@ -1,9 +1,15 @@
 //! 3D の回転中心・自動深度・ポインタへの拡縮。押したときのモデルとカメラを離すまで保持する。
+//!
+//! 透視と正投影: 視点のパイ・軸の印の真ん中で切り替える（[`toggle_orthographic`]）。軸の向きで正投影の設定が入なら、軸の視点を選んだとき・
+//! スナップ回転で軸に吸い付いたときに正投影にし（[`enter_axis`]）、回して軸から外れたら元の透視へ戻す（[`after_orbit`]）。手で切り替えた
+//! 投影は、軸から外れても戻さない。
 
 use std::sync::Arc;
 
 use egui::{Modifiers, Pos2, Rect, Ui};
-use yolu_core::geometry::{orbited, pick, snap_orientation, AxisView, Bounds, OrbitCamera};
+use yolu_core::geometry::{
+    aligned_axis_view, orbited, pick, snap_orientation, AxisView, Bounds, OrbitCamera,
+};
 use yolu_core::glam::{Vec2, Vec3};
 
 use super::{model::ViewModel, Nav, View3dState};
@@ -87,10 +93,22 @@ impl ZoomCenter {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preferences {
     pub orbit: OrbitCenter,
     pub zoom: ZoomCenter,
+    /// 軸の向きで正投影（軸の視点・スナップ回転で軸に入ったら正投影にし、外れたら戻す）。
+    pub axis_ortho: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            orbit: OrbitCenter::default(),
+            zoom: ZoomCenter::default(),
+            axis_ortho: true,
+        }
+    }
 }
 
 impl Preferences {
@@ -111,6 +129,14 @@ impl Preferences {
                     value: value.into(),
                 }),
             },
+            "view3d_axis_ortho" => match value {
+                "on" => self.axis_ortho = true,
+                "off" => self.axis_ortho = false,
+                _ => problems.push(Problem::Invalid {
+                    key: "view3d_axis_ortho",
+                    value: value.into(),
+                }),
+            },
             _ => {}
         }
     }
@@ -121,6 +147,9 @@ impl Preferences {
         }
         if self.zoom == ZoomCenter::Pointer {
             text.push_str("view3d_zoom=pointer\n");
+        }
+        if !self.axis_ortho {
+            text.push_str("view3d_axis_ortho=off\n");
         }
     }
 }
@@ -168,9 +197,9 @@ fn point_under(
 /// 面が無い所では注視点と同じ深さの平面へ落とす。
 fn zoom_point(model: Option<&ViewModel>, camera: OrbitCamera, rect: Rect, at: Pos2) -> Vec3 {
     point_under(model, camera, rect, at).unwrap_or_else(|| {
-        let view = camera.view(rect.width(), rect.height());
-        let ray = view.ray(local(rect, at));
-        view.position + ray.direction() * (camera.distance / ray.direction().dot(view.forward))
+        camera
+            .view(rect.width(), rect.height())
+            .point_at_depth(local(rect, at), camera.distance)
     })
 }
 
@@ -272,9 +301,14 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
     let camera = &mut app.view3d.camera;
     match nav {
         Nav::Orbit if preferences.orbit != OrbitCenter::View => {
-            camera.orbit_about(anchor.pivot, dx, dy)
+            camera.orbit_about(anchor.pivot, dx, dy);
+            after_orbit(&mut app.view3d, anchor.pivot);
         }
-        Nav::Orbit => camera.orbit(dx, dy),
+        Nav::Orbit => {
+            camera.orbit(dx, dy);
+            let target = camera.target;
+            after_orbit(&mut app.view3d, target);
+        }
         Nav::SnapOrbit => {
             let (yaw, pitch) = drag.free.unwrap_or((camera.yaw, camera.pitch));
             let free = orbited(yaw, pitch, dx, dy);
@@ -285,6 +319,11 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
                 _ => anchor.pivot,
             };
             camera.set_orientation_about(pivot, yaw, pitch);
+            if aligned_axis_view(yaw, pitch).is_some() {
+                enter_axis(&mut app.view3d, preferences, pivot);
+            } else {
+                after_orbit(&mut app.view3d, pivot);
+            }
         }
         Nav::Pan if preferences.orbit == OrbitCenter::Surface => {
             // ホイールを挟んでも、押した面での画面上の移動量を保つ。
@@ -365,13 +404,15 @@ fn can_frame(app: &AppState) -> bool {
         && app.region.drag.is_none()
 }
 
-/// 視点の操作（パイ・メニューから。キーの表の操作 `view3d.view_*`・`view3d.frame_selected`）。
+/// 視点の操作（パイ・メニューから。キーの表の操作 `view3d.view_*`・`view3d.frame_selected`・`view3d.ortho`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavOp {
     /// 軸の視点（正面・背面・右・左・上・下）にする。
     Axis(AxisView),
     /// 選んだセットを収める（3D ビューの上の `.` と同じ）。
     FrameSelected,
+    /// 透視と正投影を切り替える。
+    ToggleOrthographic,
 }
 
 /// 視点の操作を当てる（`Action::View3dNav`）。描いている・視点を動かしている・ギズモをドラッグしている間は何もしない（`.` と同じ）。
@@ -383,25 +424,71 @@ pub fn apply(app: &mut AppState, op: NavOp) {
                 frame_selected(app, rect);
             }
         }
+        NavOp::ToggleOrthographic => toggle_orthographic(app),
     }
 }
 
+/// 視点を動かせるか（モデルがあり、描いている・視点やギズモを動かしている途中でない）。
+pub fn can_move_view(app: &AppState) -> bool {
+    app.view3d.model.is_some() && can_frame(app)
+}
+
+/// 押した所の無い向きの替え（軸の視点・軸の印のドラッグ）で回す中心: 回す中心の設定がモデルの中心・テクスチャセットの中心ならその点、
+/// ほか（画面の中心・面の位置）は注視点。
+pub fn pivot_without_press(app: &AppState) -> yolu_core::glam::Vec3 {
+    match app.prefs.settings.navigation.orbit {
+        OrbitCenter::View | OrbitCenter::Surface => None,
+        OrbitCenter::Model => app.view3d.full_model().map(|m| m.geometry.bounds().center),
+        OrbitCenter::TextureSet => selected_bounds(&app.view3d).map(|b| b.center),
+    }
+    .unwrap_or(app.view3d.camera.target)
+}
+
 /// 軸の視点にする。上・下も含めて画面の向きは `AxisView::orientation` のとおり（yaw は今の値から何周しているかを保つ）。回す中心の設定が
-/// モデルの中心・テクスチャセットの中心なら、その点の画面の位置を変えない（面の位置の設定は押した所が無いので、注視点）。
+/// モデルの中心・テクスチャセットの中心なら、その点の画面の位置を変えない（面の位置の設定は押した所が無いので、注視点）。軸の向きで
+/// 正投影の設定が入なら正投影にする。
 pub fn axis_view(app: &mut AppState, view: AxisView) {
-    if app.view3d.model.is_none() || !can_frame(app) {
+    if !can_move_view(app) {
         return;
     }
     let camera = app.view3d.camera;
     let (axis_yaw, pitch) = view.orientation();
     let yaw = axis_yaw + 360.0 * ((camera.yaw - axis_yaw) / 360.0).round();
-    let pivot = match app.prefs.settings.navigation.orbit {
-        OrbitCenter::View | OrbitCenter::Surface => None,
-        OrbitCenter::Model => app.view3d.full_model().map(|m| m.geometry.bounds().center),
-        OrbitCenter::TextureSet => selected_bounds(&app.view3d).map(|b| b.center),
-    }
-    .unwrap_or(camera.target);
+    let pivot = pivot_without_press(app);
     app.view3d.camera.set_orientation_about(pivot, yaw, pitch);
+    let preferences = app.prefs.settings.navigation;
+    enter_axis(&mut app.view3d, preferences, pivot);
+}
+
+/// 透視と正投影を切り替える（回す中心（設定がモデル・テクスチャセットの中心ならその点、ほかは注視点）の画面の位置と大きさは変えない。
+/// 軸の向きで自動に替えるときと同じ中心）。手で選んだ投影は、軸から外れても戻さない。
+pub fn toggle_orthographic(app: &mut AppState) {
+    if !can_move_view(app) {
+        return;
+    }
+    let on = !app.view3d.camera.is_orthographic();
+    let pivot = pivot_without_press(app);
+    app.view3d.camera.set_orthographic_about(on, pivot);
+    app.view3d.auto_orthographic = false;
+}
+
+/// 軸の向きに入った（軸の視点を選んだ・スナップ回転で軸に吸い付いた）: 軸の向きで正投影の設定が入で、今が透視なら正投影にし、
+/// 軸から外れたら戻す印を付ける。回す中心 pivot の画面の位置と大きさは変えない。
+pub fn enter_axis(state: &mut View3dState, preferences: Preferences, pivot: Vec3) {
+    if preferences.axis_ortho && !state.camera.is_orthographic() {
+        state.camera.set_orthographic_about(true, pivot);
+        state.auto_orthographic = true;
+    }
+}
+
+/// 向きを変えた後: 軸の向きに入って自動で正投影にしていて、軸の向きから外れたら透視へ戻す（回す中心 pivot の画面の位置と大きさは
+/// 変えない）。
+pub fn after_orbit(state: &mut View3dState, pivot: Vec3) {
+    if state.auto_orthographic && aligned_axis_view(state.camera.yaw, state.camera.pitch).is_none()
+    {
+        state.camera.set_orthographic_about(false, pivot);
+        state.auto_orthographic = false;
+    }
 }
 
 pub fn frame_selected(app: &mut AppState, rect: Rect) {
@@ -441,5 +528,79 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
         && ctx.input_mut(|i| crate::keymap::consume_command(i, app, "view3d.frame_selected"))
     {
         frame_selected(app, rect);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Action;
+
+    #[test]
+    fn the_projection_and_the_axis_views_do_not_move_while_drawing_or_without_a_model() {
+        let mut app = AppState::new(32, 32);
+        // モデルが無い: 何もしない
+        let before = app.view3d.camera;
+        app.apply(Action::View3dNav(NavOp::ToggleOrthographic));
+        app.apply(Action::View3dNav(NavOp::Axis(AxisView::Top)));
+        assert_eq!(app.view3d.camera, before);
+        // 描いている間: カメラを動かさない（区画の投影の画素を覚えて使うので）
+        app.view3d.load_demo();
+        let layer = app.selected_layer.unwrap();
+        let settings = app.stroke_settings(false);
+        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
+        app.stroke = Some(stroke);
+        app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
+        let before = app.view3d.camera;
+        app.apply(Action::View3dNav(NavOp::ToggleOrthographic));
+        app.apply(Action::View3dNav(NavOp::Axis(AxisView::Top)));
+        assert_eq!(app.view3d.camera, before);
+        assert!(!app.view3d.auto_orthographic);
+        // 描き終えたら効く（軸の視点は軸の向きで正投影）
+        let stroke = app.stroke.take().unwrap();
+        app.canvas.stroke = None;
+        app.doc.end_stroke(stroke).unwrap();
+        app.apply(Action::View3dNav(NavOp::Axis(AxisView::Top)));
+        assert!(app.view3d.camera.is_orthographic());
+        assert!(app.view3d.auto_orthographic);
+        assert_eq!(app.view3d.camera.pitch, 90.0);
+    }
+
+    #[test]
+    fn switching_by_hand_keeps_the_orbit_center_in_place_and_size_like_the_axis_views() {
+        let mut app = AppState::new(32, 32);
+        app.view3d.load_demo();
+        app.prefs.settings.navigation.orbit = OrbitCenter::Model;
+        // パンして、注視点をモデルの中心から外す（モデルの中心は画面の中心でも注視点の奥行きでもない）
+        app.view3d.camera.pan(120.0, -40.0, 480.0);
+        app.view3d
+            .camera
+            .fly(yolu_core::glam::Vec3::new(0.0, 0.0, -0.8));
+        let center = app.view3d.full_model().unwrap().geometry.bounds().center;
+        let probe = center + app.view3d.camera.rotation() * Vec3::X * 0.05;
+        let seen = |app: &AppState| {
+            let v = app.view3d.camera.view(640.0, 480.0);
+            (v.to_screen(center).unwrap(), v.to_screen(probe).unwrap())
+        };
+        let before = seen(&app);
+        for on in [true, false] {
+            app.apply(Action::View3dNav(NavOp::ToggleOrthographic));
+            assert_eq!(app.view3d.camera.is_orthographic(), on);
+            let now = seen(&app);
+            assert!(
+                (now.0 - before.0).length() < 2e-2,
+                "{on}: {before:?} {now:?}"
+            );
+            assert!(
+                (now.1 - before.1).length() < 2e-2,
+                "{on}: {before:?} {now:?}"
+            );
+        }
+        // 画面の中心のときは注視点（前と同じ）
+        app.prefs.settings.navigation.orbit = OrbitCenter::View;
+        let mut expected = app.view3d.camera;
+        expected.set_orthographic(true);
+        app.apply(Action::View3dNav(NavOp::ToggleOrthographic));
+        assert_eq!(app.view3d.camera, expected);
     }
 }

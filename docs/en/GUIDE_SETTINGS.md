@@ -69,6 +69,7 @@ When **GPU memory** runs short, the 3D view drops the other sets' pictures and s
 |---|---|
 | Orbit center | The pivot when orbiting the 3D view: View center, Surface (auto depth), Model center or Texture set center |
 | Zoom center | The center when zooming the 3D view: Toward view center or Toward pointer |
+| Orthographic on axis views | Switches to orthographic when you pick an axis view or snap-orbit onto an axis, and back to perspective when you orbit off the axis. On by default ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)) |
 | UV Wireframe | Two color swatches: the UV wireframe color and the Overlapping UV color. Pressing one opens the color window, where you set the color and opacity |
 
 The orbit and zoom centers are the same values as Navigation in the 3D view's display settings; changing either changes the same setting ([GUIDE_3D.md](GUIDE_3D.md)).

@@ -137,6 +137,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
         pitch,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }
@@ -196,11 +197,20 @@ fn background_point(h: &Harness<'_, YoluApp>) -> egui::Pos2 {
     pos2(rect.left() + 30.0, rect.bottom() - 30.0)
 }
 
-/// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。
-fn count_other(image: &image::RgbaImage, area: Rect, colors: &[[u8; 3]], tol: u8) -> usize {
+/// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。軸の印 skip の中は数えない。
+fn count_other(
+    image: &image::RgbaImage,
+    area: Rect,
+    skip: Option<Rect>,
+    colors: &[[u8; 3]],
+    tol: u8,
+) -> usize {
     let mut count = 0;
     for y in area.top().ceil() as u32..area.bottom().floor() as u32 {
         for x in area.left().ceil() as u32..area.right().floor() as u32 {
+            if skip.is_some_and(|r| r.contains(pos2(x as f32, y as f32))) {
+                continue;
+            }
             let c = image.get_pixel(x, y).0;
             let c = [c[0], c[1], c[2]];
             if !colors.iter().any(|k| close(c, *k, tol)) {
@@ -299,7 +309,7 @@ fn every_sample_count_makes_intermediate_values_on_slanted_edges_and_leaves_the_
             assert_eq!(samples, want, "{name}・{n}×を選ぶ");
             let (face, background) = (px(&image, center(&h)), px(&image, corner));
             assert_ne!(face, background, "{name}: 板が見える");
-            let others = count_other(&image, area, &[face, background], 2);
+            let others = count_other(&image, area, view3d_axes_rect(&h), &[face, background], 2);
             if samples == 1 {
                 assert_eq!(others, 0, "{name}・1×: 縁の画素は面か背景のどちらか");
             } else {
@@ -353,7 +363,7 @@ fn a_lil_toon_transparent_face_blends_edges_at_every_sample_count_too() {
         assert_eq!(samples, clamp_samples(n, &supported));
         let (face, background) = (px(&image, center(&h)), px(&image, corner));
         assert_ne!(face, background, "半透明の板が背景と違う");
-        let others = count_other(&image, area, &[face, background], 3);
+        let others = count_other(&image, area, view3d_axes_rect(&h), &[face, background], 3);
         if samples == 1 {
             assert_eq!(others, 0, "1×");
         } else {
@@ -398,7 +408,16 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     );
     let image = h.render().unwrap();
     let (face, background) = (px(&image, center(&h)), px(&image, background_point(&h)));
-    assert_eq!(count_other(&image, region(&h), &[face, background], 2), 0);
+    assert_eq!(
+        count_other(
+            &image,
+            region(&h),
+            view3d_axes_rect(&h),
+            &[face, background],
+            2
+        ),
+        0
+    );
     // 1 つ下の数の見積もりがぎりぎり入る上限では、1 つ下の数になる
     if let Some(&lower) = supported.iter().rev().find(|n| **n > 1 && **n < want) {
         let rect = view_rect(&h);

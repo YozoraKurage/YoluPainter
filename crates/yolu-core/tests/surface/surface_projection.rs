@@ -63,6 +63,7 @@ fn front_view(target: Vec3, distance: f32, size: f32) -> CameraView {
         pitch: 0.0,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     }
     .view(size, size)
 }
@@ -222,6 +223,7 @@ fn a_sphere_paints_its_front_inside_the_circle_and_never_its_back() {
         pitch: 20.0,
         distance: 2.5,
         model_radius: 0.5,
+        ..Default::default()
     }
     .view(320.0, 320.0);
     let center = view.to_screen(Vec3::ZERO).unwrap();
@@ -240,6 +242,7 @@ fn a_cube_from_a_corner_never_paints_the_three_hidden_faces() {
         pitch: 25.0,
         distance: 3.0,
         model_radius: 0.9,
+        ..Default::default()
     }
     .view(300.0, 300.0);
     let center = view.to_screen(Vec3::ZERO).unwrap();
@@ -563,6 +566,7 @@ fn crowded_view() -> CameraView {
         pitch: 10.0,
         distance: 3.0,
         model_radius: 0.8,
+        ..Default::default()
     }
     .view(480.0, 360.0)
 }
@@ -774,6 +778,7 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
         pitch: 0.0,
         distance: 3.0,
         model_radius: 0.9,
+        ..Default::default()
     };
     let (first, s) = paint(&mut d, a.view(300.0, 300.0));
     assert_eq!(first, [0].into_iter().collect(), "−Z の面");
@@ -1217,6 +1222,7 @@ fn a_mirror_copy_on_the_far_side_of_a_closed_shape_is_hidden_unless_hidden_areas
         pitch: 0.0,
         distance: 2.5,
         model_radius: 0.5,
+        ..Default::default()
     }
     .view(320.0, 320.0);
     // カメラに向いた側（x の符号）と、その中心の点

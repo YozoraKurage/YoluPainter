@@ -80,6 +80,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32) {
         pitch: 0.0,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }
@@ -1648,6 +1649,7 @@ fn measure_frames_standard_and_liltoon() {
             pitch: 10.0,
             distance: 1.6,
             model_radius: 1.0,
+            ..Default::default()
         };
         let mut sums = vec![(Vec::new(), Vec::new(), Vec::new()); looks.len()];
         // 見た目を切り替えたあと落ち着くまで（1 回目はソフトの描画ならパイプラインを作る。2 回目からは作ったものを使う）

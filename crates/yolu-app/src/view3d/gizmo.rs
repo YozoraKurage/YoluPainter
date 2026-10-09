@@ -70,7 +70,7 @@ pub fn rings(rig: &Rig, pose: &Pose, bone: usize, view: &CameraView) -> Option<R
         return None;
     }
     let q = Rig::world_rotation(&world, bone);
-    let toward_camera = (view.position - center).normalize_or_zero();
+    let toward_camera = view.to_viewer(center).normalize_or_zero();
     let axes = [q * Vec3::X, q * Vec3::Y, q * Vec3::Z, -view.forward];
     let points = std::array::from_fn(|i| {
         let a = axes[i];

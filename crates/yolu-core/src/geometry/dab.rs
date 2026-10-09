@@ -2,7 +2,8 @@
 //!
 //! 1. 当たった三角形から幅優先で辿り（同じレンダラー・同じスロット・半径の中・カメラを向く面だけ進む）、三角形ごとに UV の足跡の
 //!    箱の中のテクセルの中心を重心座標で 3D へ戻し、半径の中のものを候補として並びのまま集める。三角形の数と候補の画素の予算はここで数える。
-//! 2. 候補ごとにカメラから遮蔽のレイを撃つ（4096 本ずつの組で並列。BVH は読むだけ）。
+//! 2. 候補ごとにカメラから遮蔽のレイを撃つ（4096 本ずつの組で並列。BVH は読むだけ）。正投影のカメラ（[`Viewer::Parallel`]）は、
+//!    近い面から前の向きに平行なレイを撃ち、面の向きも前の向きと比べる。
 //! 3. 組ごとに並びのとおりに予算を数えて受け入れる。予算を超えたら画素を返さずに断る（呼ぶ側はストロークを取り消す）。
 //!    同じ画素は覆いの大きいほう（同じなら先に訪れた三角形）を残し、下の行から順に並べる。
 //!
@@ -14,6 +15,7 @@ use glam::{Vec2, Vec3};
 use rayon::prelude::*;
 
 use super::build::FastMap;
+use super::camera::Viewer;
 use super::query::{coverage, uv_barycentric, uv_footprint_bounds, RayQueryBudget};
 use super::unity::{clamp01, dot, finite, finite3, magnitude, mix3, sqr_magnitude, Ray};
 use super::{SurfaceGeometry, SurfaceHit, SurfaceTriangle};
@@ -163,7 +165,7 @@ pub struct SurfaceVisibilityCache {
     revision: i64,
     width: i32,
     height: i32,
-    camera: Vec3,
+    camera: Viewer,
     /// 覚えていた結果を使った数（試験と計測用）。
     pub hits: i64,
 }
@@ -175,7 +177,7 @@ impl Default for SurfaceVisibilityCache {
             revision: -1,
             width: 0,
             height: 0,
-            camera: Vec3::ZERO,
+            camera: Viewer::Point(Vec3::ZERO),
             hits: 0,
         }
     }
@@ -193,10 +195,20 @@ impl SurfaceVisibilityCache {
     pub fn is_empty(&self) -> bool {
         self.rays.is_empty()
     }
-    fn prepare(&mut self, revision: u32, camera: Vec3, width: i32, height: i32) {
-        // カメラは Unity の Vector3 の == （差の長さの 2 乗が 1e-10 未満）で比べる
-        let d = camera - self.camera;
-        let same_camera = sqr_magnitude(d) < 0.00001f32 * 0.00001f32;
+    fn prepare(&mut self, revision: u32, camera: Viewer, width: i32, height: i32) {
+        // カメラは Unity の Vector3 の == （差の長さの 2 乗が 1e-10 未満）で比べる（正投影は前の向きと近い面の位置）
+        let same = |a: Vec3, b: Vec3| sqr_magnitude(a - b) < 0.00001f32 * 0.00001f32;
+        let same_camera = match (camera, self.camera) {
+            (Viewer::Point(a), Viewer::Point(b)) => same(a, b),
+            (
+                Viewer::Parallel { forward, near },
+                Viewer::Parallel {
+                    forward: f,
+                    near: n,
+                },
+            ) => same(forward, f) && (near - n).abs() < 0.00001,
+            _ => false,
+        };
         if revision as i64 == self.revision
             && same_camera
             && width == self.width
@@ -400,6 +412,7 @@ impl SurfaceGeometry {
     /// 半径 radius_world（モデルの単位）の球が面の上で覆う、カメラから見えるテクセルと覆い（解像度 width × height）。
     /// hardness は C# と同じく 0〜1 に収める。cache はストロークの間の遮蔽の結果（ストロークごとに 1 つ。None なら覚えない）。
     /// ignore_visibility なら遮蔽のレイを撃たず、面の向きは当たりの法線と比べる（対称の側のカメラによらない足跡）。
+    /// camera はカメラの位置（透視）か [`Viewer`]（正投影は [`super::CameraView::viewer`]）。
     #[allow(clippy::too_many_arguments)]
     pub fn build_surface_dabs(
         &self,
@@ -407,7 +420,7 @@ impl SurfaceGeometry {
         radius_world: f32,
         width: i32,
         height: i32,
-        camera: Vec3,
+        camera: impl Into<Viewer>,
         hardness: f32,
         budget: &SurfaceBrushBudget,
         cache: Option<&mut SurfaceVisibilityCache>,
@@ -418,7 +431,7 @@ impl SurfaceGeometry {
             radius_world,
             width,
             height,
-            camera,
+            camera.into(),
             hardness,
             budget,
             cache,
@@ -436,7 +449,7 @@ impl SurfaceGeometry {
         radius_world: f32,
         width: i32,
         height: i32,
-        camera: Vec3,
+        camera: impl Into<Viewer>,
         hardness: f32,
         anti_alias: AntiAlias,
         budget: &SurfaceBrushBudget,
@@ -448,7 +461,7 @@ impl SurfaceGeometry {
             radius_world,
             width,
             height,
-            camera,
+            camera.into(),
             hardness,
             budget,
             cache,
@@ -476,7 +489,7 @@ impl SurfaceGeometry {
             radius_world,
             width,
             height,
-            camera,
+            Viewer::Point(camera),
             1.0,
             budget,
             None,
@@ -493,7 +506,7 @@ impl SurfaceGeometry {
         radius_world: f32,
         width: i32,
         height: i32,
-        camera: Vec3,
+        camera: Viewer,
         hardness: f32,
         budget: &SurfaceBrushBudget,
         cache: Option<&mut SurfaceVisibilityCache>,
@@ -512,7 +525,7 @@ impl SurfaceGeometry {
             || height > 32768
             || !finite(radius_world)
             || radius_world <= 0.0
-            || !finite3(camera)
+            || !camera.is_finite()
             || !finite3(hit.position)
         {
             result.refusal = Some(DabRefusal::InvalidArguments);
@@ -571,7 +584,7 @@ impl SurfaceGeometry {
             let faces = if ignore_visibility {
                 dot(t.normal(), hit.normal) <= 0.0
             } else {
-                dot(t.normal(), camera - (t.a + t.b + t.c) / 3.0) <= 0.0
+                dot(t.normal(), camera.to_viewer((t.a + t.b + t.c) / 3.0)) <= 0.0
             };
             if faces {
                 continue;
@@ -803,7 +816,7 @@ impl SurfaceGeometry {
     fn shoot(
         &self,
         c: &DabCandidate,
-        camera: Vec3,
+        camera: Viewer,
         epsilon: f32,
         budget: &SurfaceBrushBudget,
         known: Option<&HashMap<i64, CachedRay>>,
@@ -821,8 +834,22 @@ impl SurfaceGeometry {
                 ..RayOutcome::default()
             };
         }
-        let direction = c.position - camera;
-        let distance = magnitude(direction);
+        // 透視はカメラの位置から点へ、正投影は点を通る視線の近い面の上から前の向きへ
+        let (origin, direction, distance) = match camera {
+            Viewer::Point(camera) => {
+                let direction = c.position - camera;
+                let distance = magnitude(direction);
+                (camera, direction, distance)
+            }
+            Viewer::Parallel { forward, near } => {
+                let distance = dot(c.position, forward) - near;
+                (
+                    c.position - forward * distance,
+                    forward * distance,
+                    distance,
+                )
+            }
+        };
         if distance <= epsilon {
             return RayOutcome {
                 skipped: true,
@@ -834,7 +861,7 @@ impl SurfaceGeometry {
             remaining_node_visits: budget.max_ray_node_visits,
             exceeded: false,
         };
-        let ray = Ray::new(camera, direction / distance);
+        let ray = Ray::new(origin, direction / distance);
         let hit = self.raycast_internal(ray, false, distance + epsilon * 2.0, Some(&mut work));
         RayOutcome {
             has_hit: hit.is_some(),

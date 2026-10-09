@@ -836,7 +836,7 @@ fn lines_with(
         return out;
     }
     // 回す輪: 手前の半分と奥の半分（薄く細く）に分けて描く
-    let eye = (view.position - c).normalize_or_zero();
+    let eye = view.to_viewer(c).normalize_or_zero();
     for i in 0..3 {
         let hot = hover == Handle::rotate_axis(i);
         let color = if hot { HOVER } else { axis_color(i) };

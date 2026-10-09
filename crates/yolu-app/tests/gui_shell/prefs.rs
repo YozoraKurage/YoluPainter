@@ -1325,6 +1325,11 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         h.state().state.prefs.settings.navigation.zoom,
         ZoomCenter::Pointer
     );
+    // 軸の向きで正投影（既定は入）: 切ると設定のファイルに書き、次の起動でも切
+    assert!(h.state().state.prefs.settings.navigation.axis_ortho);
+    let at = h.get_by_label("軸の向きで正投影").rect().center();
+    click(&mut h, at);
+    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
     // 3D ビューの表示の設定と同じ値（見る口が同じ）
     assert_eq!(
         h.state().state.settings().navigation.orbit,
@@ -1340,8 +1345,13 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         written.lines().any(|l| l == "view3d_zoom=pointer"),
         "{written}"
     );
+    assert!(
+        written.lines().any(|l| l == "view3d_axis_ortho=off"),
+        "{written}"
+    );
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
     assert_eq!(
         h.state().state.prefs.settings.navigation.orbit,
         OrbitCenter::Model
@@ -1358,6 +1368,7 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         "節の見出し"
     );
     let _ = h.get_by_label("Orbit center: Model center");
+    let _ = h.get_by_label("Orthographic on axis views");
     let _ = h.get_by_label("Zoom center: Toward pointer");
 }
 

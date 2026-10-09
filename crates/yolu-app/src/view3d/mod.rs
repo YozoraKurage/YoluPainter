@@ -1,6 +1,7 @@
 //! 3D ビュー: モデル（`model`）、wgpu の描画（`render`）、入力（`input`: 面に描く・回す・パン・寄る）、ブラシのカーソル。
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
+pub mod axis_gizmo;
 pub mod brdf;
 pub mod display;
 pub mod environment;
@@ -97,6 +98,8 @@ pub struct View3dState {
     /// 見せる形（描画・当たり・カーソルが読む）。
     pub model: Option<Arc<ViewModel>>,
     pub camera: OrbitCamera,
+    /// 今の正投影は、軸の向きに入ったので自動で替えたもの（回して軸から外れたら透視へ戻す。`navigation::after_orbit`）。
+    pub auto_orthographic: bool,
     /// 描くテクスチャセット（マテリアルの組の番号。負ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
     pub material: i32,
     /// メモリの予算が足りずに、絵を 3D に見せていないセットのマテリアル（今のセットでないセットだけ。描くたびに `other_sets::finish` が入れる。
@@ -177,7 +180,7 @@ impl View3dState {
             .as_ref()
             .is_some_and(|m| m.name == model.name && m.triangle_count() == model.triangle_count());
         if !keep_camera {
-            self.camera = OrbitCamera::framing(&model.geometry.bounds());
+            self.reframe(&model.geometry.bounds());
         }
         self.full = Some(model);
         self.unpainted.clear();
@@ -388,9 +391,18 @@ impl View3dState {
 
     /// カメラをモデル全体が入る位置へ戻す。
     pub fn frame_model(&mut self) {
-        if let Some(m) = &self.full {
-            self.camera = OrbitCamera::framing(&m.geometry.bounds());
+        if let Some(bounds) = self.full.as_ref().map(|m| m.geometry.bounds()) {
+            self.reframe(&bounds);
         }
+    }
+
+    /// カメラを、この境界が全部入る既定の向きの位置へ置き直す。手で選んだ正投影は保ち、軸の向きで自動で替えた正投影は透視へ戻す
+    /// （既定の向きは軸の向きではない）。
+    fn reframe(&mut self, bounds: &yolu_core::geometry::Bounds) {
+        let orthographic = self.camera.is_orthographic() && !self.auto_orthographic;
+        self.camera = OrbitCamera::framing(bounds);
+        self.camera.set_orthographic(orthographic);
+        self.auto_orthographic = false;
     }
 
     /// ストロークが終わったら、待たせていたモデル・閉じる・隠すを当てる。

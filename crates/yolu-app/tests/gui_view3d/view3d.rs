@@ -121,6 +121,57 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     assert!(painted_islands(&h).is_empty());
 }
 
+/// 正投影でも、アプリの入力の道（ドラッグ）から同じように描ける: 手前の面から右の面へ縁をまたいで描くと、その 2 つのアイランドだけに
+/// 塗り、1 回の取り消しで戻る。ブラシの円の大きさは奥行きによらない。
+#[test]
+fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step() {
+    let (mut h, rect) = cube_view(1100.0, 760.0, 256);
+    h.state_mut().state.view3d.camera.set_orthographic(true);
+    h.run();
+    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    let from = screen_of(&h, rect, Vec3::new(0.15, 0.1, -0.5));
+    let mid = screen_of(&h, rect, Vec3::new(0.5, 0.1, -0.5));
+    let to = screen_of(&h, rect, Vec3::new(0.5, 0.05, -0.15));
+    let points: Vec<Pos2> = (0..=12)
+        .map(|i| {
+            let t = i as f32 / 12.0;
+            if t < 0.5 {
+                from + (mid - from) * (t * 2.0)
+            } else {
+                mid + (to - mid) * ((t - 0.5) * 2.0)
+            }
+        })
+        .collect();
+    drag(&mut h, &points);
+    assert!(h.state().state.view3d.camera.is_orthographic());
+    assert_eq!(
+        painted_islands(&h),
+        [(0, 0), (0, 1)].into_iter().collect(),
+        "手前の面（アイランド 0,0）と右の面（アイランド 0,1）。見えない面は塗らない"
+    );
+    assert!(
+        h.state().state.message.is_empty(),
+        "{}",
+        h.state().state.message
+    );
+    let image = h.render().expect("描ける");
+    let painted = pixel(&image, from);
+    assert!(painted[0] > 120 && painted[1] < 80, "描いた所: {painted:?}");
+    // ブラシの円の画面の大きさは、手前の面の点と奥の面の点で同じ
+    let view = h
+        .state()
+        .state
+        .view3d
+        .camera
+        .view(rect.width(), rect.height());
+    let near = view.world_radius_to_screen(Vec3::new(0.0, 0.0, -0.5), 0.1);
+    let far = view.world_radius_to_screen(Vec3::new(0.0, 0.0, 0.5), 0.1);
+    assert!((near - far).abs() < 1e-4, "{near} {far}");
+    key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert!(painted_islands(&h).is_empty());
+}
+
 /// `open_3d_over_a_blurred_corner` の文書の一辺。
 const BLURRED_CORNER_DOC: u32 = 256;
 

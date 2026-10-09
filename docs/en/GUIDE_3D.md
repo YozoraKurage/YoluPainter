@@ -8,6 +8,14 @@ This page covers viewing a model in the 3D view, moving around it, and painting 
 
 Rotate with a right drag. An `Alt`+left drag also rotates, and when the direction comes within 15° of an axis view (front, back, right, left, top, bottom) it snaps to that view. While the right button is held, `W` / `S` move the view forward and back, `A` / `D` left and right, and `Q` / `E` down and up (`Shift` for faster). Pan with a middle drag or `Space`+left drag. Zoom with the wheel or `Ctrl+Space`+left drag. Releasing the right button without moving it picks the value of that face as the paint color (eyedropper; with Polygon Fill it opens the island menu). `.` over the 3D view fits the faces of the current texture set, and "Fit the whole model in view" in the top right fits the whole model. All the keys are in [GUIDE_KEYS.md](GUIDE_KEYS.md).
 
+### Axis views and orthographic
+
+Below the icons in the top right of the 3D view is the axis widget (red X, green Y and blue Z balls). Pressing a lettered ball looks at the model from that axis's side (X is the Right view, Y the Top view, Z the Front view; the small unlettered balls are the opposite Left, Bottom and Back views). Pressing the ball in the middle switches between perspective and orthographic (it is filled white while the view is orthographic). Dragging on the widget rotates the view. The widget is hidden while the light, environment and tone mapping settings panel is open. The View Pie Menu also has the Front, Back, Right, Left, Top and Bottom views and Toggle Orthographic (the pie has no key at first; see "Change shortcuts" in [GUIDE_KEYS.md](GUIDE_KEYS.md)).
+
+Choosing an axis view, or snapping onto an axis with an `Alt`+left drag, makes the view orthographic. Rotating off the axis brings back perspective. A projection you switched with the middle ball or the pie menu stays when you rotate. Turn off "Orthographic on axis views" under "3D View" in the settings window to keep perspective on axis views as well.
+
+In orthographic, near and far parts look the same size, and the brush circle paints at the same size on the surface at any depth. Painting, picking colors, selecting and placing path points land where you see them in orthographic too. Zooming with the wheel changes how much of the scene is in view, and `W` / `S` while the right button is held zoom in and out instead of moving forward and back. Switching back to perspective keeps the size you zoomed to. The view (its direction and projection) is not saved in the file.
+
 ## Open a model
 
 While there is no model, the 3D view shows only "Load Test Cube". Open an FBX with View → "Open an FBX in the 3D View…", "Open FBX" in the Pose panel, or by dropping a .fbx onto the window. To open from Unity, see Live Link at the end of this page.

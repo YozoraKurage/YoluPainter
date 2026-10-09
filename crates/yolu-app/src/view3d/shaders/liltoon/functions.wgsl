@@ -87,9 +87,15 @@ fn rotate_uv(uv: vec2<f32>, angle: f32) -> vec2<f32> {
     return vec2<f32>(o.x * c - o.y * s, o.x * s + o.y * c) + vec2<f32>(0.5);
 }
 
+// lilIsPerspective()（Unity の unity_OrthoParams.w == 0。u.camera.w は正投影なら 1）
+fn lil_is_perspective() -> bool {
+    return u.camera.w < 0.5;
+}
+
+// lilCalcMatCapUV: 透視でマテリアルの「透視」が入なら視線、ほかはカメラの手前への向き
 fn matcap_uv(n: vec3<f32>, v: vec3<f32>, st: vec4<f32>, zrot_cancel: bool, perspective: bool) -> vec2<f32> {
     var nvd = v;
-    if (!perspective) {
+    if (!(lil_is_perspective() && perspective)) {
         nvd = u.lil_camera_front.xyz;
     }
     var bvd = u.lil_camera_up.xyz;

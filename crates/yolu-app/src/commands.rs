@@ -579,12 +579,13 @@ pub static COMMANDS: &[Command] = &[
         "Delete Selected",
         || object(ObjectAction::Delete),
     )),
-    // 正投影はこの版では入っていない（パイの項目は押せず、理由を出す）
-    Command {
-        short: Some(("正投影", "Orthographic")),
-        unavailable: Some(("この版ではまだ使えません", "Not available in this version")),
-        ..read_by_view("view3d.ortho", "正投影の切り替え", "Toggle Orthographic")
-    },
+    // 透視と正投影の切り替え（視点のパイ・3D ビューの軸の印の真ん中。既定のキーは無い）
+    no_repeat(press_short(
+        "view3d.ortho",
+        ("正投影の切り替え", "Toggle Orthographic"),
+        ("正投影", "Orthographic"),
+        || Action::View3dNav(NavOp::ToggleOrthographic),
+    )),
 ];
 
 /// 操作の全部。
@@ -728,13 +729,11 @@ mod tests {
             "transform.nudge_right_10",
             "transform.nudge_up_10",
             "transform.nudge_down_10",
-            // 正投影はこの版では実行できない（パイの項目は押せない）
-            "view3d.ortho",
         ]
         .into_iter()
         .collect();
         assert_eq!(read_by_view, expected);
-        // パイから実行できる口を持つのは、3D の . で収める操作だけ。この版で使えないのは正投影だけ
+        // パイから実行できる口を持つのは、3D の . で収める操作だけ。この版で使えない操作は無い（正投影も実行できる）
         let run: Vec<&str> = COMMANDS
             .iter()
             .filter(|c| c.run.is_some())
@@ -746,7 +745,7 @@ mod tests {
             .filter(|c| c.unavailable.is_some())
             .map(|c| c.id)
             .collect();
-        assert_eq!(unavailable, ["view3d.ortho"]);
+        assert!(unavailable.is_empty(), "{unavailable:?}");
         for c in COMMANDS {
             assert_eq!(
                 c.runnable().is_some(),
@@ -925,8 +924,8 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 82);
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 10);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 83);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);

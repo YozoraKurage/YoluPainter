@@ -37,8 +37,9 @@ use std::sync::atomic::AtomicBool;
 use glam::{Vec2, Vec3};
 
 pub use camera::{
-    nearest_axis_view, orbited, snap_orientation, AxisView, CameraView, OrbitCamera, DEFAULT_PITCH,
-    DEFAULT_YAW, ORBIT_DEGREES_PER_POINT, SNAP_ANGLE,
+    aligned_axis_view, nearest_axis_view, orbited, snap_orientation, visible_height, AxisView,
+    CameraView, OrbitCamera, Projection, Sight, Viewer, DEFAULT_PITCH, DEFAULT_YAW,
+    ORBIT_DEGREES_PER_POINT, SNAP_ANGLE,
 };
 pub use cover::{CoverParams, CoverPixel, SurfaceCoverStroke};
 pub use dab::{
