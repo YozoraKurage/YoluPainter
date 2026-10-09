@@ -8,6 +8,7 @@ use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Sense, Ui, WidgetText
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
+use crate::dialog::places::Place;
 use crate::livelink::LiveLink;
 use crate::mcp_server::McpServer;
 use crate::panels::{
@@ -441,6 +442,9 @@ impl YoluApp {
             app.watch_gpu(rs, &cc.egui_ctx);
         }
         app.dialogs = true;
+        // ファイルを選ぶウィンドウの始まりの場所: 前に使った場所を、設定のフォルダの `places.conf` から読む（実際のウィンドウだけ）
+        app.state.places =
+            crate::dialog::places::Places::load(crate::dialog::places::Places::default_path());
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -985,11 +989,12 @@ impl YoluApp {
             }
             Some(DialogRequest::ProjectModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Model)
                     .set_title(lang.pick("モデルを選ぶ", "Choose a model"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Model, &path);
                     self.state
                         .apply(Action::Project(crate::newproject::NpAction::ChooseModel(
                             path,
@@ -999,7 +1004,7 @@ impl YoluApp {
             Some(DialogRequest::Open) => {
                 let lang = self.state.lang;
                 if self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file()
+                    if let Some(path) = crate::dialog::file(&self.state, Place::Project)
                         .set_title(lang.pick("プロジェクトを開く", "Open Project"))
                         .add_filter(
                             lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
@@ -1007,6 +1012,7 @@ impl YoluApp {
                         )
                         .pick_file()
                     {
+                        self.state.note_file_chosen(Place::Project, &path);
                         self.state.apply(Action::OpenProject(path));
                     }
                 }
@@ -1014,27 +1020,26 @@ impl YoluApp {
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.project_name);
-                let mut dialog = crate::dialog::file()
+                let dialog = crate::dialog::file_for_save(&self.state, Place::Project)
                     .set_title(lang.pick("別名で保存", "Save As"))
                     .add_filter(
                         lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
                         &["ylp"],
                     )
                     .set_file_name(name);
-                if let Some(folder) = &self.state.save_folder {
-                    dialog = dialog.set_directory(folder);
-                }
                 if let Some(path) = dialog.save_file() {
+                    self.state.note_file_chosen(Place::Project, &path);
                     self.state.apply(Action::SaveProjectAs(path));
                 }
             }
             Some(DialogRequest::OpenModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Model)
                     .set_title(lang.pick("3D ビューに FBX を開く", "Open FBX in the 3D View"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Model, &path);
                     crate::view3d::pose::open_file(&mut self.state, &path);
                 }
             }
@@ -1048,7 +1053,7 @@ impl YoluApp {
             ) => assets::run_dialog(&mut self.state, request),
             Some(DialogRequest::ExportFolder(id)) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file().set_title(
+                let mut dialog = crate::dialog::file(&self.state, Place::ImageExport).set_title(
                     lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
                 );
                 // Live Link の相手の文書は、Unity が知らせた置き場（利用者が選び直したらそちら）から。無ければ、ある一番近い親から
@@ -1057,6 +1062,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(start);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::ImageExport, &dir);
                     self.state.note_export_dir(&dir);
                     self.state
                         .apply(Action::Export(crate::export::ExportAction::TemplateTo {
@@ -1067,22 +1073,14 @@ impl YoluApp {
             }
             Some(DialogRequest::ExportChannel) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file()
+                let dialog = crate::dialog::file(&self.state, Place::ImageExport)
                     .set_title(
                         lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"),
                     )
                     .add_filter("PNG", &["png"])
                     .set_file_name(crate::export::default_channel_file_name(&self.state));
-                if let Some(dir) = self
-                    .state
-                    .project
-                    .as_ref()
-                    .and_then(|p| p.path().parent())
-                    .filter(|d| d.is_dir())
-                {
-                    dialog = dialog.set_directory(dir);
-                }
                 if let Some(path) = dialog.save_file() {
+                    self.state.note_file_chosen(Place::ImageExport, &path);
                     // 拡張子が無ければ .png を足す（ウィンドウの種類で付かない環境がある）。足した名前はウィンドウが確かめていない
                     self.state
                         .apply(Action::Export(crate::export::channel_action(path)));
@@ -1090,7 +1088,7 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file()
+                let mut dialog = crate::dialog::file(&self.state, Place::Settings)
                     .set_title(lang.pick("ライブラリの場所", "Library folder"));
                 if let Some(current) = self
                     .state
@@ -1102,6 +1100,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(current);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::LibraryFolder(Some(dir)),
@@ -1154,13 +1153,14 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsCacheFolder) => {
                 let lang = self.state.lang;
-                let mut dialog =
-                    crate::dialog::file().set_title(lang.pick("キャッシュの場所", "Cache folder"));
+                let mut dialog = crate::dialog::file(&self.state, Place::Settings)
+                    .set_title(lang.pick("キャッシュの場所", "Cache folder"));
                 let current = self.state.prefs.settings.disk_cache_folder();
                 if current.is_dir() {
                     dialog = dialog.set_directory(current);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::DiskCacheFolder(Some(dir)),
@@ -1169,12 +1169,13 @@ impl YoluApp {
             }
             Some(DialogRequest::ExportChannelsFolder) => {
                 let lang = self.state.lang;
-                if let Some(dir) = crate::dialog::file()
+                if let Some(dir) = crate::dialog::file(&self.state, Place::ImageExport)
                     .set_title(
                         lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
                     )
                     .pick_folder()
                 {
+                    self.state.note_folder_chosen(Place::ImageExport, &dir);
                     self.state
                         .apply(Action::Export(crate::export::ExportAction::ChannelsTo(dir)));
                 }
@@ -1183,11 +1184,12 @@ impl YoluApp {
                 let lang = self.state.lang;
                 // 今の文書を替えるときは、保存していない変更を捨ててよいか聞く
                 if target == crate::psd::PsdTarget::NewSet || self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file()
+                    if let Some(path) = crate::dialog::file(&self.state, Place::PsdImport)
                         .set_title(lang.pick("PSD を読み込む", "Import PSD"))
                         .add_filter("PSD", &["psd", "PSD"])
                         .pick_file()
                     {
+                        self.state.note_file_chosen(Place::PsdImport, &path);
                         self.state
                             .apply(Action::Psd(crate::psd::PsdAction::Import { path, target }));
                     }
@@ -1196,14 +1198,12 @@ impl YoluApp {
             Some(DialogRequest::PsdExport) => {
                 let lang = self.state.lang;
                 let name = crate::psd::default_export_name(&self.state);
-                let mut dialog = crate::dialog::file()
+                let dialog = crate::dialog::file(&self.state, Place::PsdExport)
                     .set_title(lang.pick("PSD に書き出す", "Export PSD"))
                     .add_filter("PSD", &["psd"])
                     .set_file_name(name);
-                if let Some(dir) = self.state.project.as_ref().and_then(|p| p.path().parent()) {
-                    dialog = dialog.set_directory(dir);
-                }
                 if let Some(path) = dialog.save_file() {
+                    self.state.note_file_chosen(Place::PsdExport, &path);
                     self.state
                         .apply(Action::Psd(crate::psd::PsdAction::Export(path)));
                 }
@@ -1211,7 +1211,7 @@ impl YoluApp {
             Some(DialogRequest::DistributeSave) => crate::distribute::run_dialog(&mut self.state),
             Some(DialogRequest::TextFont) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Font)
                     .set_title(lang.pick("フォントのファイルを開く", "Open a Font File"))
                     .add_filter(
                         lang.pick("フォント", "Fonts"),
@@ -1219,45 +1219,49 @@ impl YoluApp {
                     )
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Font, &path);
                     self.state
                         .apply(Action::Text(crate::textlayer::TextAction::FontFile(path)));
                 }
             }
             Some(DialogRequest::KeymapExport) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
                     .set_title(lang.pick("キーの設定を書き出す", "Export Key Settings"))
                     .set_file_name(crate::keyconfig::FILE_NAME)
                     .add_filter("JSON", &["json", "JSON"])
                     .save_file()
                 {
+                    self.state.note_file_chosen(Place::Keys, &path);
                     self.state.keys_export(&path);
                 }
             }
             Some(DialogRequest::KeymapImport) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
                     .set_title(lang.pick("キーの設定を読み込む", "Import Key Settings"))
                     .add_filter("JSON", &["json", "JSON"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Keys, &path);
                     self.state.keys_import(&path);
                 }
             }
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick("ステンシルの画像を開く", "Open a stencil image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::Stencil(crate::stencil::StencilOp::Load(path)));
                 }
             }
             Some(DialogRequest::FillImage) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick(
                         "画像をアセットへ取り込む",
                         "Add an image to the project's assets",
@@ -1265,6 +1269,7 @@ impl YoluApp {
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::Fill(crate::fillfx::FillOp::ImportImage(path)));
                 }
@@ -1272,11 +1277,12 @@ impl YoluApp {
             Some(DialogRequest::NewFillImage(mode)) => {
                 let lang = self.state.lang;
                 // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick("画像で塗りつぶしを作る", "Create a fill from an image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::LayerMenu(crate::layermenu::Op::FillImageFile {
                             path,
@@ -1286,7 +1292,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
-                if let Some(paths) = crate::dialog::file()
+                if let Some(paths) = crate::dialog::file(&self.state, Place::Brush)
                     .set_title(lang.pick("ブラシを取り込む", "Import Brushes"))
                     .add_filter(
                         lang.pick("ブラシのファイル", "Brush files"),
@@ -1294,16 +1300,20 @@ impl YoluApp {
                     )
                     .pick_files()
                 {
+                    if let Some(first) = paths.first() {
+                        self.state.note_file_chosen(Place::Brush, first);
+                    }
                     self.state
                         .apply(Action::Brush(crate::brushes::BrushAction::Import(paths)));
                 }
             }
             Some(DialogRequest::ClipStudioFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file().set_title(lang.pick(
-                    "CLIP STUDIO のサブツールのフォルダ",
-                    "CLIP STUDIO sub tool folder",
-                ));
+                let mut dialog =
+                    crate::dialog::file(&self.state, Place::Settings).set_title(lang.pick(
+                        "CLIP STUDIO のサブツールのフォルダ",
+                        "CLIP STUDIO sub tool folder",
+                    ));
                 // 今探している場所（手で選んだフォルダか、既定の場所のうち開けたもの）から選び始める
                 let csp = &self.state.brushes.csp;
                 let start = csp.folder.clone().or_else(|| {
@@ -1315,6 +1325,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(dir);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state.apply(Action::Brush(
                         crate::brushes::BrushAction::ClipStudioFolder(dir),
                     ));

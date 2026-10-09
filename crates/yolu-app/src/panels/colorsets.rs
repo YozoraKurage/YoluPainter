@@ -1,4 +1,5 @@
 //! カラーセット・履歴・中間色の専用タブ。
+use crate::dialog::places::Place;
 use crate::notice::Source;
 use crate::{
     colorsets::{self, Edit, Error, Palette, Swatch},
@@ -128,10 +129,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     }
                     ui.separator();
                     if ui.button(lang.pick("読み込み", "Import")).clicked() {
-                        if let Some(path) = crate::dialog::file()
+                        if let Some(path) = crate::dialog::file(app, Place::ColorSet)
                             .add_filter("GPL / ACO", &["gpl", "aco"])
                             .pick_file()
                         {
+                            app.note_file_chosen(Place::ColorSet, &path);
                             let r = app.colorsets.import(&path);
                             report(app, r);
                         }
@@ -149,11 +151,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         match colorsets::format::write_gpl(app.colorsets.palette()) {
                             Err(e) => report(app, Err(e)),
                             Ok(_) => {
-                                if let Some(path) = crate::dialog::file()
+                                if let Some(path) = crate::dialog::file(app, Place::ColorSet)
                                     .add_filter("GIMP", &["gpl"])
                                     .set_file_name("palette.gpl")
                                     .save_file()
                                 {
+                                    app.note_file_chosen(Place::ColorSet, &path);
                                     let r = app.colorsets.export(&path);
                                     report(app, r);
                                 }

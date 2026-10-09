@@ -15,6 +15,7 @@ mod bucket;
 mod bundle_layout;
 mod colorsets;
 mod dialog_parent;
+mod dialog_places;
 mod disk_cache;
 mod effects;
 mod fillfx;

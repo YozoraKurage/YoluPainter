@@ -828,6 +828,8 @@ pub struct AppState {
     pub project_name: String,
     /// 次に名前を付けて保存のウィンドウを開く場所（退避を開いたときの、元の .ylp のフォルダー。保存したら外す。無ければ OS の既定）。
     pub save_folder: Option<std::path::PathBuf>,
+    /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
+    pub places: crate::dialog::places::Places,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
     /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
@@ -1088,6 +1090,7 @@ impl AppState {
             popup: None,
             project_name: lang.pick("名称未設定", "Untitled").into(),
             save_folder: None,
+            places: Default::default(),
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
