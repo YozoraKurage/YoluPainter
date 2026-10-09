@@ -1189,13 +1189,14 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
     use egui_kittest::kittest::NodeT;
     use yolu_app::prefs;
     use yolu_io::BackupKeep;
-    // 「ペン」の節（macOS だけ）を出した形でも、1280 × 800 に最後の行まで収まる
+    // 「ペン」の節（macOS のタブレットの筆圧と、Windows のペンの入力。どちらも並べた形）を出しても、1280 × 800 に最後の行まで収まる
     for (lang, pen) in Lang::ALL
         .into_iter()
         .flat_map(|lang| [(lang, false), (lang, true)])
     {
         let mut h = english_app_sized(1280.0, 800.0, lang);
         h.state_mut().state.prefs.tablet_row = pen;
+        h.state_mut().state.prefs.pen_input_row = pen;
         let (view, item) = (lang.pick("編集", "Edit"), lang.pick("設定…", "Settings…"));
         let (title, label, keep_all) = (
             lang.pick("設定", "Settings"),
@@ -1441,7 +1442,7 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-remembered");
     let path = dir.join("settings.conf");
-    // 「ペン」の節（macOS だけ）を出した形でも同じ
+    // 「ペン」の節（macOS のタブレットの筆圧と、Windows のペンの入力）を出した形でも同じ
     for (saved, pen) in [(5u32, false), (0, false), (1000, false), (5, true)] {
         std::fs::write(&path, format!("language=en\nbackups={saved}\n")).unwrap();
         let mut h = app_with_settings(&path);
@@ -1450,6 +1451,7 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
             BackupKeep::Count(saved)
         );
         h.state_mut().state.prefs.tablet_row = pen;
+        h.state_mut().state.prefs.pen_input_row = pen;
         h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
         h.run();
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all")

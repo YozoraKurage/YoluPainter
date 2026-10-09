@@ -13,7 +13,7 @@ use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
 use yolu_app::pen::PenInput;
 use yolu_app::prefs::{self, entries, Pref, PrefChoice, PrefsAction};
-use yolu_app::settings::{Budget, BudgetKind, Compositing, Settings};
+use yolu_app::settings::{Budget, BudgetKind, Compositing, PenApi, Settings};
 use yolu_app::state::{Action, AppState, DialogRequest};
 use yolu_app::YoluApp;
 
@@ -899,9 +899,10 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
         english(&mut h, lang);
         for ops in [false, true] {
             h.state_mut().state.prefs.settings.external_ops = ops;
-            // 「ペン」の節は macOS だけに出る。ほかの OS でも、出したときの高さを確かめる
+            // 「ペン」の節は macOS と Windows だけに出る。ほかの OS でも、出したとき（2 つの行を並べた形）の高さを確かめる
             for pen in [false, true] {
                 h.state_mut().state.prefs.tablet_row = pen;
+                h.state_mut().state.prefs.pen_input_row = pen;
                 for (details, cache) in [(false, false), (true, false), (false, true), (true, true)]
                 {
                     h.state_mut()
@@ -934,6 +935,8 @@ fn the_pen_section_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_an
     let dir = settings_dir("tablet");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    // この試験は macOS の行だけを見る（Windows のペンの入力の行は、別の試験）
+    h.state_mut().state.prefs.pen_input_row = false;
     open_settings(&mut h);
     // 節が出るのは macOS だけ
     assert_eq!(h.state().state.prefs.tablet_row, cfg!(target_os = "macos"));
@@ -1004,6 +1007,117 @@ fn the_pen_section_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_an
     );
 }
 
+/// WinTab が使えず Windows Ink に戻したときの知らせは、設定の出どころの「注意」で、日英とも 1 文（ログに残る）。
+#[test]
+fn headless_wintab_unavailable_is_a_warning_from_settings_in_both_languages() {
+    use yolu_app::notice::{Kind, Source};
+    use yolu_app::pen::Unavailable;
+    for lang in Lang::ALL {
+        let mut s = AppState::new_in(64, 64, lang);
+        s.wintab_unavailable(Unavailable::NoLibrary);
+        let notice = s.current_notice().expect("知らせた").clone();
+        assert_eq!(
+            (notice.kind, notice.source),
+            (Kind::Warning, Source::Settings)
+        );
+        assert_eq!(notice.text, Unavailable::NoLibrary.text(lang));
+        assert_eq!(s.message, notice.text);
+        assert!(notice.text.contains("Windows Ink") && notice.text.contains("WinTab"));
+    }
+}
+
+/// 「ペン」の節のペンの入力（Windows だけ）: 既定は Windows Ink で、WinTab を選ぶとペンの受け口の札と設定のファイルに届き、次の起動でも WinTab のまま。
+/// 選び直して Windows Ink に戻すと、設定のファイルの行が消える。
+#[test]
+fn the_pen_section_has_the_pen_input_choice_which_reaches_the_pen_input_and_survives_a_restart() {
+    let dir = settings_dir("peninput");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    // 行が出るのは Windows だけ（ほかの OS は差し替えて確かめる。macOS のタブレットの筆圧の行は外して、この行だけを見る）
+    assert_eq!(h.state().state.prefs.pen_input_row, cfg!(windows));
+    h.state_mut().state.prefs.pen_input_row = true;
+    h.state_mut().state.prefs.tablet_row = false;
+    open_settings(&mut h);
+    h.run();
+    let shown = |h: &Harness<'_, YoluApp>, text: &str| {
+        let window = window_rect(h);
+        drawn_texts(h)
+            .iter()
+            .any(|(t, r)| t == text && window.contains_rect(*r))
+    };
+    assert!(shown(&h, "ペン"), "節の見出し");
+    // 既定は Windows Ink。札は設定から合わせる
+    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert!(!h.state().pen().wintab_on());
+    let _ = h.get_by_label("ペンの入力: Windows Ink");
+    // ライブラリの場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
+    let library = PathBuf::from(if cfg!(windows) {
+        "C:\\Library"
+    } else {
+        "/Library"
+    });
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+            library,
+        )))));
+    h.run();
+    shot(&mut h, "prefs_window_pen_input");
+    // WinTab を選ぶ
+    let at = h.get_by_label("ペンの入力: Windows Ink").rect().center();
+    click(&mut h, at);
+    let names: Vec<String> = ["Windows Ink", "WinTab"]
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    assert_eq!(
+        labels(&entries(&h.state().state, PrefChoice::PenInput)),
+        names,
+        "選択肢は 2 つ"
+    );
+    let at = popup_item(&h, "WinTab").center();
+    click(&mut h, at);
+    h.run();
+    h.run();
+    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert!(h.state().pen().wintab_on(), "ペンの受け口に届く");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "pen_input=wintab"),
+        "{written}"
+    );
+    // 英語でも節と名前が出る
+    english(&mut h, Lang::En);
+    assert!(shown(&h, "Pen"), "節の見出し");
+    let _ = h.get_by_label("Pen input: WinTab");
+    english(&mut h, Lang::Ja);
+    // 終わって起動し直すと、WinTab のまま（札も WinTab）
+    drop(h);
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert!(
+        h.state().pen().wintab_on(),
+        "起動のとき、設定の値が札に入る"
+    );
+    // Windows Ink に戻すと、行が消える（既定は書かない）
+    h.state_mut().state.prefs.pen_input_row = true;
+    h.state_mut().state.prefs.tablet_row = false;
+    open_settings(&mut h);
+    h.run();
+    let at = h.get_by_label("ペンの入力: WinTab").rect().center();
+    click(&mut h, at);
+    let at = popup_item(&h, "Windows Ink").center();
+    click(&mut h, at);
+    h.run();
+    h.run();
+    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert!(!h.state().pen().wintab_on());
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("pen_input"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// どの大きさのウィンドウでも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
 /// 横にははみ出さない。日英・いちばん小さいウィンドウ（960 × 640）。
 #[test]
@@ -1012,6 +1126,9 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
     let path = dir.join("YoluPainter").join("settings.conf");
     for lang in Lang::ALL {
         let mut h = app_with_settings(&path, vec2(960.0, 640.0));
+        // 「ペン」の節（macOS のタブレットの筆圧と、Windows のペンの入力）も並べた形で確かめる
+        h.state_mut().state.prefs.tablet_row = true;
+        h.state_mut().state.prefs.pen_input_row = true;
         // 小さいウィンドウでは編集のメニューも長くてポップアップの中で送るので、ウィンドウはキーで開く
         key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
         h.run();

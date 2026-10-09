@@ -2,7 +2,7 @@
 
 [日本語](../GUIDE_SETTINGS.md)
 
-This page explains each item in Edit → Settings… (`Ctrl+,`), section by section. The window has five sections: General, Memory, Processing, 3D View and Files (on Mac, Pen is added between 3D View and Files). You can move it by dragging its title. If the screen is too short to fit it, scroll inside the window to reach the last row.
+This page explains each item in Edit → Settings… (`Ctrl+,`), section by section. The window has five sections: General, Memory, Processing, 3D View and Files (on Mac and Windows, Pen is added between 3D View and Files). You can move it by dragging its title. If the screen is too short to fit it, scroll inside the window to reach the last row.
 
 Values are written to `YoluPainter/settings.conf` in the settings folder (`%APPDATA%` on Windows, `~/.config` on Linux), and only the values that differ from the defaults. A value that is not valid is reset to the default for that item only, and you are told why.
 
@@ -73,11 +73,14 @@ When **GPU memory** runs short, the 3D view drops the other sets' pictures and s
 
 The orbit and zoom centers are the same values as Navigation in the 3D view's display settings; changing either changes the same setting ([GUIDE_3D.md](GUIDE_3D.md)).
 
-## Pen (Mac)
+## Pen (Mac and Windows)
 
 | Item | What it does |
 |---|---|
-| Tablet pressure (experimental) | Reads the pressure, tilt, eraser end and side buttons that tablet drivers such as Wacom and XP-Pen send as standard macOS events. On by default. When off, the pen draws like a mouse. The change takes effect immediately |
+| Tablet pressure (experimental) (Mac) | Reads the pressure, tilt, eraser end and side buttons that tablet drivers such as Wacom and XP-Pen send as standard macOS events. On by default. When off, the pen draws like a mouse. The change takes effect immediately |
+| Pen input (Windows) | How the pen's pressure, tilt, rotation, eraser end and side buttons are read: Windows Ink (the default) or WinTab (the input that tablet drivers such as Wacom's provide). The change takes effect immediately and applies to separate windows too. A pen that is touching is treated as lifted when you switch |
+
+If you choose WinTab but the WinTab driver (`Wintab32.dll`) is missing, does not respond, no tablet is connected, or WinTab cannot be opened, the pen is read through Windows Ink and the reason is shown once. The choice stays WinTab, and it is tried again when the window is brought to the front. When WinTab's position does not match the cursor (for example in the driver's mouse mode), the points are placed at the cursor position (pressure and the rest still come from WinTab).
 
 ## Files
 

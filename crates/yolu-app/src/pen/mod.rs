@@ -1,6 +1,9 @@
 //! ペンの入力。Windows では Windows Ink（WM_POINTER）をウィンドウのプロシージャで先に受け、筆圧・傾き・消しゴムの端・サイドボタンを
 //! 履歴の点ごとに読む（winit も WM_POINTER を受けて egui の Touch に変えるが、筆圧だけで、履歴の点にも最新の筆圧を付ける）。
 //! 読んだあとは winit にそのまま渡すので、ペンでボタンを押すなどの画面の操作はいつもどおり egui に届く。
+//! 設定の「ペンの入力」で WinTab を選ぶと、Windows Ink の代わりに WinTab（`Wintab32.dll`。Wacom などのドライバーが出す）を同じプロシージャで受ける
+//! （`win_tab`。値の直しは OS に依らない `wintab`）。WinTab を開いている間は Windows Ink のペンの点を受け口に入れない（二重にしない）。
+//! WinTab が使えない機械（`Wintab32.dll` が無い・ドライバーが応えない・タブレットが無い）では Windows Ink のままで、理由を 1 度だけ知らせる。
 //! macOS では、アプリの NSEvent のローカルの監視（`mac_tablet`）で、Wacom・XP-Pen などのドライバーが標準の NSEvent に載せるタブレットの点（筆圧・傾き・消しゴムの端・
 //! サイドボタン）を読む（試し。設定で切れる）。winit は macOS のタブレットの筆圧を捨て、マウスの左ボタンにして渡すだけなので、読んだあとのイベントは返して、
 //! winit とアプリがいつもどおり受ける。値の直しは `tablet`（OS に依らない）。
@@ -17,12 +20,17 @@ mod mac_tablet;
 pub mod tablet;
 #[cfg(windows)]
 mod win_ink;
+#[cfg(windows)]
+mod win_tab;
 pub mod window;
+pub mod wintab;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::engine::Tilt;
+
+pub use wintab::Unavailable;
 
 /// ペンの押しの行き先。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +85,34 @@ impl PenSample {
     }
 }
 
+/// WinTab が使えなかった理由の知らせ（同じ理由は選びを替えるまで 1 度だけ。別ウィンドウの受け口と共有する）。
+#[derive(Debug, Default)]
+pub(crate) struct WintabNotice {
+    pending: Option<Unavailable>,
+    shown: Option<Unavailable>,
+}
+
+impl WintabNotice {
+    /// 使えなかった理由を知らせる頼み。前に知らせた理由と同じなら何もしない。
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn report(&mut self, why: Unavailable) {
+        if self.shown != Some(why) {
+            self.shown = Some(why);
+            self.pending = Some(why);
+        }
+    }
+
+    /// まだ知らせていない理由を取り出す。
+    pub(crate) fn take(&mut self) -> Option<Unavailable> {
+        self.pending.take()
+    }
+
+    /// 選びが替わった（次の失敗は、同じ理由でもまた知らせる）。
+    pub(crate) fn forget(&mut self) {
+        self.shown = None;
+    }
+}
+
 /// ペンの点の受け口（ウィンドウのプロシージャが詰め、画面のフレームが取り出す）。
 #[derive(Clone, Default)]
 pub struct PenInput {
@@ -84,6 +120,13 @@ pub struct PenInput {
     hooked: bool,
     /// macOS のタブレットの点を詰めるか（設定「タブレットの筆圧（試し）」。別ウィンドウの受け口と同じ札を共有する）。ほかの OS では使わない。
     tablet: Arc<AtomicBool>,
+    /// WinTab で読むか（設定「ペンの入力」が WinTab。別ウィンドウの受け口と同じ札を共有する）。Windows だけで効く（ほかの OS でも札は持つ）。
+    wintab: Arc<AtomicBool>,
+    /// WinTab が使えなかった理由（別ウィンドウの受け口と共有する）。
+    notice: Arc<Mutex<WintabNotice>>,
+    /// 繋いだウィンドウ（HWND の値。Windows だけ）。
+    #[cfg(windows)]
+    hwnd: Option<isize>,
 }
 
 impl PenInput {
@@ -100,9 +143,19 @@ impl PenInput {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(h) = handle.as_raw() {
-                    let hooked =
-                        win_ink::hook(h.hwnd.get(), input.queue.clone(), cc.egui_ctx.clone());
-                    return PenInput { hooked, ..input };
+                    let hwnd = h.hwnd.get();
+                    let hooked = win_ink::hook(
+                        hwnd,
+                        input.queue.clone(),
+                        cc.egui_ctx.clone(),
+                        input.wintab.clone(),
+                        input.notice.clone(),
+                    );
+                    return PenInput {
+                        hooked,
+                        hwnd: hooked.then_some(hwnd),
+                        ..input
+                    };
                 }
             }
         }
@@ -128,11 +181,26 @@ impl PenInput {
     }
 
     /// ウィンドウのハンドル（HWND の値）に繋ぐ（Windows の別ウィンドウ。eframe は子ウィンドウのハンドルを渡さないので、`detach` が見つけたウィンドウ）。
+    /// WinTab の入切の札と理由の知らせは `main` と共有する。
     #[cfg(windows)]
-    pub fn attach_hwnd(hwnd: isize, ctx: &egui::Context) -> PenInput {
-        let input = PenInput::detached();
-        let hooked = win_ink::hook(hwnd, input.queue.clone(), ctx.clone());
-        PenInput { hooked, ..input }
+    pub fn attach_hwnd(hwnd: isize, ctx: &egui::Context, main: &PenInput) -> PenInput {
+        let input = PenInput {
+            wintab: main.wintab.clone(),
+            notice: main.notice.clone(),
+            ..PenInput::detached()
+        };
+        let hooked = win_ink::hook(
+            hwnd,
+            input.queue.clone(),
+            ctx.clone(),
+            input.wintab.clone(),
+            input.notice.clone(),
+        );
+        PenInput {
+            hooked,
+            hwnd: hooked.then_some(hwnd),
+            ..input
+        }
     }
 
     /// 題名で見つけた macOS の別ウィンドウに繋ぐ（eframe は別ウィンドウの NSWindow を渡さないので、アプリの全ウィンドウから、題名が合うまだ繋いでいない 1 つを探す。
@@ -147,6 +215,8 @@ impl PenInput {
     ) -> Option<PenInput> {
         let input = PenInput {
             tablet: main.tablet.clone(),
+            wintab: main.wintab.clone(),
+            notice: main.notice.clone(),
             ..PenInput::detached()
         };
         mac_tablet::hook_titled(
@@ -185,6 +255,46 @@ impl PenInput {
     /// 札の今の値（試験用）。
     pub fn tablet_on(&self) -> bool {
         self.tablet.load(Ordering::Relaxed)
+    }
+
+    /// WinTab で読むか（設定「ペンの入力」）を合わせる。Windows では、このウィンドウの WinTab を開く・閉じる（`sync_wintab`）。
+    /// 選びを替えたとき、触れたままのペンは離したことにし（離しの点が来なくなって、ペンの押しがキャンバスに残らないように）、理由の知らせは選び直しのたびにまた出す。
+    /// ほかの OS では札だけ。
+    pub fn set_wintab(&self, on: bool) {
+        if self.wintab.swap(on, Ordering::Relaxed) != on {
+            self.notice
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .forget();
+        }
+        self.sync_wintab();
+    }
+
+    /// 札の今の値（試験用）。
+    pub fn wintab_on(&self) -> bool {
+        self.wintab.load(Ordering::Relaxed)
+    }
+
+    /// 札に合わせて、このウィンドウの WinTab を開く・閉じる（Windows だけ。別ウィンドウは、フレームごとに呼ぶ）。開けなかったときは Windows Ink のままで、理由を知らせに残す。
+    pub fn sync_wintab(&self) {
+        #[cfg(windows)]
+        if let Some(hwnd) = self.hwnd {
+            win_ink::sync(hwnd);
+        }
+    }
+
+    /// WinTab が開いているか（このウィンドウの点が WinTab から来ている）。
+    pub fn wintab_active(&self) -> bool {
+        #[cfg(windows)]
+        if let Some(hwnd) = self.hwnd {
+            return win_ink::wintab_open(hwnd);
+        }
+        false
+    }
+
+    /// WinTab が使えなかった理由で、まだ知らせていない物を 1 つ取り出す（Windows Ink へ戻した知らせ）。
+    pub fn take_wintab_notice(&self) -> Option<Unavailable> {
+        self.notice.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
     /// 溜まった点を取り出す（古い順）。
@@ -276,5 +386,70 @@ mod tests {
         copy.set_tablet(true);
         copy.set_tablet(false);
         assert_eq!(main.drain().len(), 1);
+    }
+
+    /// WinTab の入切の札は、複製（別ウィンドウの受け口が持つ）と共有する。ウィンドウに繋がっていない受け口は、札によらず WinTab を開かない。
+    #[test]
+    fn the_wintab_switch_is_shared_by_clones_and_an_input_without_a_window_never_opens_it() {
+        let main = PenInput::detached();
+        let copy = main.clone();
+        assert!(!main.wintab_on(), "既定は Windows Ink");
+        main.set_wintab(true);
+        assert!(copy.wintab_on());
+        assert!(!main.wintab_active() && !copy.wintab_active());
+        assert!(!main.is_hooked());
+        // 選びを替えても、溜まった点は取り出せる（捨てない）
+        main.push(PenSample {
+            pos: [1.0, 2.0],
+            pressure: 0.5,
+            tilt: Tilt::default(),
+            rotation: None,
+            contact: true,
+            eraser: false,
+            barrel: false,
+            pointer_id: 0,
+            time_ms: 0,
+        });
+        copy.set_wintab(false);
+        assert!(!main.wintab_on());
+        assert_eq!(main.drain().len(), 1);
+        // 同じ札を何度合わせても同じ
+        copy.set_wintab(false);
+        assert!(!main.wintab_on());
+    }
+
+    /// 使えなかった理由は、同じ理由なら選びを替えるまで 1 度だけ知らせる。別ウィンドウの受け口と共有する。
+    #[test]
+    fn the_reason_wintab_could_not_be_used_is_told_once_per_choice() {
+        let main = PenInput::detached();
+        let copy = main.clone();
+        assert_eq!(main.take_wintab_notice(), None);
+        main.set_wintab(true);
+        let report = |input: &PenInput, why| {
+            input
+                .notice
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .report(why)
+        };
+        report(&copy, Unavailable::NoLibrary);
+        assert_eq!(main.take_wintab_notice(), Some(Unavailable::NoLibrary));
+        assert_eq!(main.take_wintab_notice(), None, "取り出したら空");
+        // 同じ理由は、ウィンドウが前に来るたびに試し直しても、また知らせない
+        report(&main, Unavailable::NoLibrary);
+        report(&copy, Unavailable::NoLibrary);
+        assert_eq!(main.take_wintab_notice(), None);
+        // 違う理由は知らせる
+        report(&main, Unavailable::NoTablet);
+        assert_eq!(copy.take_wintab_notice(), Some(Unavailable::NoTablet));
+        // 選びを替えて選び直すと、同じ理由もまた知らせる
+        main.set_wintab(false);
+        main.set_wintab(true);
+        report(&main, Unavailable::NoTablet);
+        assert_eq!(main.take_wintab_notice(), Some(Unavailable::NoTablet));
+        // 同じ値を合わせ直しただけでは、知らせの記憶を消さない
+        main.set_wintab(true);
+        report(&main, Unavailable::NoTablet);
+        assert_eq!(main.take_wintab_notice(), None);
     }
 }

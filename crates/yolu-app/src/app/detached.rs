@@ -168,6 +168,8 @@ impl YoluApp {
             self.attach_native(&ctx, win, &info);
             #[cfg(target_os = "macos")]
             self.attach_native_mac(&ctx, win, &info);
+            // WinTab の入切（設定「ペンの入力」）は、メインウィンドウと同じ札を、このウィンドウの文脈にも合わせる
+            win.pen.sync_wintab();
             pen = win.pen.drain();
             self.state.pressure_observe(ctx.pixels_per_point(), &pen);
             for sample in &mut pen {
@@ -593,7 +595,7 @@ impl YoluApp {
                 detach::native::set_owner(hwnd, owner);
             }
             crate::windowpos::install_hwnd(hwnd);
-            win.pen = crate::pen::PenInput::attach_hwnd(hwnd, ctx);
+            win.pen = crate::pen::PenInput::attach_hwnd(hwnd, ctx, &self.pen);
             win.hwnd = Some(hwnd);
         }
     }

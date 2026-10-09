@@ -17,7 +17,7 @@ cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
 .\target\x86_64-pc-windows-msvc\release\yolupainter.exe
 ```
 
-ペンタブレットはドライバー側でも Windows Ink を有効にしてください。ブラシのツールプロパティのペンのボタンで、どの項目を筆圧で変えるか選べます。ペンの筆圧が強すぎる・弱すぎるときは「表示 → 筆圧の調整…」で直せます。
+ペンタブレットは、既定では Windows Ink で読むので、ドライバー側でも Windows Ink を有効にしてください（WinTab で読むときは、「編集 → 設定…」の「ペン」の「ペンの入力」で選びます）。ブラシのツールプロパティのペンのボタンで、どの項目を筆圧で変えるか選べます。ペンの筆圧が強すぎる・弱すぎるときは「表示 → 筆圧の調整…」で直せます。
 
 ## Mac（試用）
 

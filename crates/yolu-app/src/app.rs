@@ -540,6 +540,9 @@ impl YoluApp {
         app.state.load_settings(loaded.clone());
         // macOS のタブレットの筆圧を読むか（試し。ほかの OS では何も起きない）
         app.pen.set_tablet(loaded.tablet_pressure);
+        // Windows のペンを WinTab で読むか（既定は Windows Ink。ほかの OS では何も起きない）
+        app.pen
+            .set_wintab(loaded.pen_input == crate::settings::PenApi::WinTab);
         // 前のプロセスが残したディスクキャッシュのファイル（電源が落ちたときなど）を、起動の邪魔をしないよう裏で消す
         let cache_folder = loaded.disk_cache_folder();
         let _ = std::thread::Builder::new()
@@ -1710,6 +1713,12 @@ impl YoluApp {
         // 設定の「タブレットの筆圧（試し）」（設定のウィンドウで切り替えた値を、ペンの受け口へ。別ウィンドウの受け口は同じ札を共有する）
         self.pen
             .set_tablet(self.state.prefs.settings.tablet_pressure);
+        // 設定の「ペンの入力」（Windows の WinTab。別ウィンドウは、それぞれのフレームで合わせる）。開けなかったときは Windows Ink のままで、理由を 1 度だけ知らせる
+        self.pen
+            .set_wintab(self.state.prefs.settings.pen_input == crate::settings::PenApi::WinTab);
+        if let Some(why) = self.pen.take_wintab_notice() {
+            self.state.wintab_unavailable(why);
+        }
         let mut pen = self.pen.drain();
         // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない

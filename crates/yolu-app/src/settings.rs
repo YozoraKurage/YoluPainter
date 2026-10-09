@@ -136,6 +136,27 @@ impl Compositing {
     }
 }
 
+/// Windows でペンの筆圧・傾きなどを読む方式（設定「ペンの入力」。Windows だけで効くが、設定のファイルには同じ書き方で残す）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PenApi {
+    /// Windows Ink（WM_POINTER）。
+    #[default]
+    Ink,
+    /// WinTab（`Wintab32.dll`。Wacom などのドライバーが出す）。使えない機械では Windows Ink に戻る。
+    WinTab,
+}
+
+impl PenApi {
+    pub const ALL: [PenApi; 2] = [PenApi::Ink, PenApi::WinTab];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            PenApi::Ink => "ink",
+            PenApi::WinTab => "wintab",
+        }
+    }
+}
+
 /// ディスクキャッシュに使う量の上限の指定: 自動（64 GiB と、置き場所の起動したときの空きの半分の小さい方）か GiB。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiskLimit {
@@ -199,6 +220,9 @@ pub struct Settings {
     /// macOS のタブレット（Wacom・XP-Pen などのドライバー）の筆圧・傾き・消しゴムの端を NSEvent から読むか（試し。既定は入。`pen::mac_tablet`）。切ると、ペンはマウスと同じに描く。
     /// macOS 以外では使わないが、設定のファイルには同じ書き方で残す（OS をまたいで設定のフォルダを共有しても消さない）。
     pub tablet_pressure: bool,
+    /// Windows でペンを Windows Ink と WinTab のどちらで読むか（`pen::win_tab`。既定は Windows Ink）。Windows 以外では使わないが、
+    /// 設定のファイルには同じ書き方で残す（OS をまたいで設定のフォルダを共有しても消さない）。
+    pub pen_input: PenApi,
     pub navigation: crate::view3d::navigation::Preferences,
     /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
     pub view3d_post: crate::view3d::display::PostFx,
@@ -247,6 +271,7 @@ impl Default for Settings {
             selection_bar: true,
             pressure: PressureAdjust::default(),
             tablet_pressure: true,
+            pen_input: PenApi::default(),
             navigation: crate::view3d::navigation::Preferences::default(),
             view3d_post: crate::view3d::display::PostFx::default(),
             view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
@@ -477,6 +502,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "tablet_pressure" => {
             lang.pick("タブレットの筆圧（試し）", "Tablet pressure (experimental)")
         }
+        "pen_input" => lang.pick("ペンの入力", "Pen input"),
         "disk_cache" => lang.pick("ディスクキャッシュ", "Disk cache"),
         "disk_cache_folder" => lang.pick("キャッシュの場所", "Cache folder"),
         "disk_cache_limit_gib" => lang.pick("キャッシュの上限", "Cache limit"),
@@ -673,6 +699,10 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             "color_wheel" => settings.color_wheel = value != "off",
             // 切ったときだけ書く行（既定は入）。読めない値は入のまま
             "tablet_pressure" => settings.tablet_pressure = value != "off",
+            "pen_input" => match PenApi::ALL.into_iter().find(|a| a.key() == value) {
+                Some(a) => settings.pen_input = a,
+                None => invalid("pen_input"),
+            },
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
                 None => invalid("gpu_memory"),
@@ -867,6 +897,9 @@ fn render(settings: &Settings) -> String {
     }
     if !settings.tablet_pressure {
         text += "tablet_pressure=off\n";
+    }
+    if settings.pen_input != default.pen_input {
+        text += &format!("pen_input={}\n", settings.pen_input.key());
     }
     settings.navigation.write(&mut text);
     write_post(&mut text, &settings.view3d_post);
@@ -1063,6 +1096,7 @@ mod tests {
             external_ops_port: 23456,
             color_wheel: true,
             tablet_pressure: false,
+            pen_input: PenApi::WinTab,
             gpu_memory: GpuMemory::Mib(1536),
             disk_cache: false,
             disk_cache_folder: Some(dir.join("cache")),
@@ -1116,6 +1150,52 @@ mod tests {
         // 画面の名前は日英とも「試し」と分かる
         assert!(setting_name(Lang::Ja, "tablet_pressure").contains("試し"));
         assert!(setting_name(Lang::En, "tablet_pressure").contains("experimental"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_pen_input_defaults_to_windows_ink_and_keeps_wintab_across_a_restart() {
+        let dir = temp_dir("peninput");
+        let path = dir.join("settings.conf");
+        assert_eq!(
+            load(&path).0.pen_input,
+            PenApi::Ink,
+            "ファイルが無ければ Windows Ink"
+        );
+        let wintab = Settings {
+            pen_input: PenApi::WinTab,
+            ..Settings::default()
+        };
+        save(&path, &wintab).unwrap();
+        assert_eq!(load(&path), (wintab, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "pen_input=wintab"));
+        // Windows Ink は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("pen_input"));
+        // この項目を知らない古い設定は Windows Ink として読む。書き方は 2 つだけ
+        assert_eq!(parse("language=ja\n").0.pen_input, PenApi::Ink);
+        assert_eq!(parse("pen_input=ink\n").0.pen_input, PenApi::Ink);
+        assert_eq!(parse("pen_input=wintab\n").0.pen_input, PenApi::WinTab);
+        // 知らない値は既定へ戻して、正しくない項目として知らせる（大文字は別の値）
+        for bad in ["pen_input=tablet", "pen_input=WinTab", "pen_input="] {
+            let (settings, problems) = parse(&format!("{bad}\nlanguage=en\n"));
+            assert_eq!(settings.pen_input, PenApi::Ink, "{bad}");
+            assert_eq!(settings.lang, Lang::En, "ほかの行は読む: {bad}");
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| format!("{p:?}").contains("pen_input")),
+                "{bad}: {problems:?}"
+            );
+        }
+        // 画面の名前は日英で出る
+        assert_eq!(setting_name(Lang::Ja, "pen_input"), "ペンの入力");
+        assert_eq!(setting_name(Lang::En, "pen_input"), "Pen input");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1708,6 +1788,7 @@ mod tests {
             "uv_overlap_color=10,20,30,40",
             "external_ops=on",
             "tablet_pressure=off",
+            "pen_input=wintab",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
             "external_ops_port=23456",
@@ -1730,6 +1811,7 @@ mod tests {
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
         back.tablet_pressure = true;
+        back.pen_input = PenApi::Ink;
         back.external_ops = false;
         back.external_ops_port = yolu_mcp::DEFAULT_PORT;
         back.view3d_post = crate::view3d::display::PostFx::default();

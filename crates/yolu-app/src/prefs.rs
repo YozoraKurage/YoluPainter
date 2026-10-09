@@ -15,8 +15,9 @@
 //!   64 GiB と、置き場所の空き（そのフォルダで初めて測ったとき）の半分の小さい方。ディスクから読めないタイルが出たら、それを持つセットを
 //!   読むだけにする（保存は開いたときの中身のまま。保存したことの無いセットは元の中身が無いので、そのセットだけ保存と復旧用の書き置きに
 //!   入れない。`check_tile_cache`）。
-//! - **ペン**の節は macOS だけに出る（`PrefsState::tablet_row`）。「タブレットの筆圧（試し）」は、Wacom・XP-Pen などのドライバーが標準のイベントで送る筆圧・傾き・
-//!   消しゴムの端を読むか（`pen::mac_tablet`）。既定は入。切り替えは次のフレームでペンの受け口の札に届く（`YoluApp::update`）。
+//! - **ペン**の節は macOS と Windows だけに出る。macOS の「タブレットの筆圧（試し）」（`PrefsState::tablet_row`）は、Wacom・XP-Pen などのドライバーが標準のイベントで送る
+//!   筆圧・傾き・消しゴムの端を読むか（`pen::mac_tablet`）。既定は入。Windows の「ペンの入力」（`PrefsState::pen_input_row`）は、ペンを Windows Ink と WinTab の
+//!   どちらで読むか（`pen::win_tab`。既定は Windows Ink。WinTab が使えない機械では Windows Ink のまま）。切り替えは次のフレームでペンの受け口の札に届く（`YoluApp::frame_body`）。
 //! - **表示の合成**は 2D のキャンバスの表示の方針（`YoluApp::apply_compositing` がキャンバスの表示に入れる。自動は環境変数
 //!   `YOLUPAINTER_CANVAS` か自動）。保存・書き出し・3D ビューの値の合成は、どれでも CPU が正本。
 
@@ -30,8 +31,8 @@ use crate::lang::Lang;
 use crate::m2::UiOp;
 use crate::notice::Source;
 use crate::settings::{
-    system_memory_mib, Budget, BudgetKind, Compositing, DiskLimit, Settings, EXPORT_PADDINGS,
-    MAX_CPU_THREADS, MAX_MIN_UNDO_STEPS,
+    system_memory_mib, Budget, BudgetKind, Compositing, DiskLimit, PenApi, Settings,
+    EXPORT_PADDINGS, MAX_CPU_THREADS, MAX_MIN_UNDO_STEPS,
 };
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::ui::menu::{Entry, PopupState};
@@ -71,6 +72,8 @@ pub enum Pref {
     ExternalOpsPort(u16),
     /// macOS のタブレットの筆圧・傾き・消しゴムの端を読むか（「ペン」の節。macOS だけに出る）。
     TabletPressure(bool),
+    /// Windows のペンを Windows Ink と WinTab のどちらで読むか（「ペン」の節。Windows だけに出る）。
+    PenInput(PenApi),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -100,6 +103,8 @@ pub enum PrefChoice {
     Budget(BudgetKind),
     CpuThreads,
     Compositing,
+    /// Windows のペンの入力（Windows Ink・WinTab）。
+    PenInput,
     GpuMemory,
     OrbitCenter,
     ZoomCenter,
@@ -154,8 +159,10 @@ pub struct PrefsState {
     pub gpu_details: bool,
     /// ディスクキャッシュの「詳しく」を開いているか（ウィンドウの中だけの状態）。
     pub cache_details: bool,
-    /// 「ペン」の節（タブレットの筆圧の切り替え）を出すか。macOS だけ（試験は差し替える）。
+    /// 「ペン」の節に、タブレットの筆圧の切り替えを出すか。macOS だけ（試験は差し替える）。
     pub tablet_row: bool,
+    /// 「ペン」の節に、ペンの入力（Windows Ink・WinTab）の選びを出すか。Windows だけ（試験は差し替える）。
+    pub pen_input_row: bool,
     /// 合計のスライダーを押し始めたときの「GPU のメモリ」の選び（自動・段・指定）。Esc で止めたとき、押し始めの量ではなく
     /// この選びへ戻す（量へ戻すと、自動・段が「指定」に置き換わる）。押していないあいだは None。
     gpu_memory_before_drag: Option<GpuMemory>,
@@ -184,6 +191,7 @@ impl Default for PrefsState {
             gpu_details: false,
             cache_details: false,
             tablet_row: cfg!(target_os = "macos"),
+            pen_input_row: cfg!(windows),
             gpu_memory_before_drag: None,
             scroll: 0.0,
             cache_free: Vec::new(),
@@ -193,6 +201,11 @@ impl Default for PrefsState {
 }
 
 impl PrefsState {
+    /// 「ペン」の節に並べる行の数（0 なら節ごと出さない）。
+    pub fn pen_rows(&self) -> usize {
+        usize::from(self.tablet_row) + usize::from(self.pen_input_row)
+    }
+
     /// 退避のスライダーに出す数。
     fn shown_backups(&self) -> u32 {
         match self.settings.backups {
@@ -262,6 +275,7 @@ impl AppState {
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
                 Pref::ExternalOps(v) => self.prefs.settings.external_ops = v,
                 Pref::TabletPressure(v) => self.prefs.settings.tablet_pressure = v,
+                Pref::PenInput(api) => self.prefs.settings.pen_input = api,
                 Pref::ExternalOpsPort(port) => {
                     if yolu_mcp::valid_port(port) {
                         self.prefs.settings.external_ops_port = port;
@@ -577,6 +591,12 @@ fn disk_limit_name(lang: Lang, limit: DiskLimit, free: Option<u64>) -> String {
 }
 
 impl AppState {
+    /// WinTab が使えず Windows Ink で読んでいることを知らせる（理由は `pen::Unavailable`。設定の選びは WinTab のままで、使える機械では WinTab で読む）。
+    pub fn wintab_unavailable(&mut self, why: crate::pen::Unavailable) {
+        let text = why.text(self.lang);
+        self.warn(Source::Settings, text);
+    }
+
     /// 今の置き場所で測った空き（まだ測っていなければ None）。
     fn cache_free_now(&self) -> Option<u64> {
         let folder = self.prefs.settings.disk_cache_folder();
@@ -595,6 +615,14 @@ fn threads_name(lang: Lang, threads: Option<u32>, cores: u32) -> String {
             .pick("1（並列にしない）", "1 (no parallel work)")
             .into(),
         Some(n) => n.to_string(),
+    }
+}
+
+/// ペンの入力の名前（どちらも製品の名前なので日英で同じ）。
+fn pen_api_name(api: PenApi) -> &'static str {
+    match api {
+        PenApi::Ink => "Windows Ink",
+        PenApi::WinTab => "WinTab",
     }
 }
 
@@ -675,6 +703,10 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
                     .radio(s.compositing == c)
             })
             .collect(),
+        PrefChoice::PenInput => PenApi::ALL
+            .into_iter()
+            .map(|a| Entry::item(pen_api_name(a), set(Pref::PenInput(a))).radio(s.pen_input == a))
+            .collect(),
         PrefChoice::OrbitCenter => OrbitCenter::ALL
             .into_iter()
             .map(|c| {
@@ -743,7 +775,7 @@ fn content_height(
     gpu_details: bool,
     cache_details: bool,
     external_ops: bool,
-    tablet_row: bool,
+    pen_rows: usize,
 ) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     let slider = t::SLIDER_ROW_HEIGHT + GAP;
@@ -756,7 +788,7 @@ fn content_height(
         + dropdown * 3.0 // 処理: スレッド・合成・GPU のメモリ（同じ行の右に「詳しく」）
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
-        + if tablet_row { HEADING + dropdown } else { 0.0 } // ペン（macOS だけ）: 見出しとタブレットの筆圧
+        + if pen_rows > 0 { HEADING + dropdown * pen_rows as f32 } else { 0.0 } // ペン（macOS・Windows だけ）: 見出しと、タブレットの筆圧（macOS）・ペンの入力（Windows）
         + dropdown * 2.0 // ファイル: ライブラリの場所（パスとボタン）
         + slider + dropdown // 退避を残す数・すべて残す
         + 8.0
@@ -766,9 +798,9 @@ fn window_height(
     gpu_details: bool,
     cache_details: bool,
     external_ops: bool,
-    tablet_row: bool,
+    pen_rows: usize,
 ) -> f32 {
-    window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops, tablet_row)
+    window::HEADER_HEIGHT + content_height(gpu_details, cache_details, external_ops, pen_rows)
 }
 
 /// 行を、左の欄と、右の「詳しく」の開け閉めに分ける。
@@ -882,7 +914,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 app.prefs.gpu_details,
                 app.prefs.cache_details,
                 app.prefs.settings.external_ops,
-                app.prefs.tablet_row,
+                app.prefs.pen_rows(),
             ),
         ),
         modal: false,
@@ -902,7 +934,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let backup_count = app.prefs.shown_backups();
     let (gpu_details, gpu_total) = (app.prefs.gpu_details, app.gpu_total_mib());
     let cache_details = app.prefs.cache_details;
-    let tablet_row = app.prefs.tablet_row;
+    let (tablet_row, pen_input_row) = (app.prefs.tablet_row, app.prefs.pen_input_row);
+    let pen_rows = app.prefs.pen_rows();
     let mut dragging = false;
     let mut gpu_dragging = false;
     let mut scroll = app.prefs.scroll;
@@ -913,7 +946,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let previous = ctx
             .data(|d| d.get_temp::<f32>(content_id))
             .unwrap_or_else(|| {
-                content_height(gpu_details, cache_details, s.external_ops, tablet_row)
+                content_height(gpu_details, cache_details, s.external_ops, pen_rows)
             });
         let bar = Scroll::begin(ui, body, previous, &mut scroll);
         let area = Rect::from_min_max(
@@ -1346,8 +1379,24 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             PrefChoice::ZoomCenter,
         ));
         dragging |= crate::uv_wireframe::settings_row(ui, &mut rows, app);
-        if tablet_row {
+        if pen_rows > 0 {
             section(ui, &mut rows, false, lang.pick("ペン", "Pen"));
+        }
+        if pen_input_row {
+            requests.extend(choice(
+                ui,
+                &mut rows,
+                "pen-input",
+                crate::settings::setting_name(lang, "pen_input"),
+                pen_api_name(s.pen_input),
+                lang.pick(
+                    "ペンの筆圧・傾き・回転・消しゴムの端・サイドボタンを読む方式。WinTab は Wacom などのドライバーが出す入力で、ドライバーが無い機械やタブレットが無いときは Windows Ink のままです",
+                    "How pen pressure, tilt, rotation, the eraser end and the side buttons are read. WinTab is the input that tablet drivers such as Wacom's provide; without the driver or a tablet, Windows Ink stays in use",
+                ),
+                PrefChoice::PenInput,
+            ));
+        }
+        if tablet_row {
             let next = w::toggle(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),

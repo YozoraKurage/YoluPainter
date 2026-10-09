@@ -17,7 +17,7 @@ cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
 .\target\x86_64-pc-windows-msvc\release\yolupainter.exe
 ```
 
-For pen tablets, enable Windows Ink in the tablet driver too. The pen buttons in the brush's Tool Properties select which settings respond to pressure. If the pen's pressure is too strong or too weak, adjust it in View → Pen Pressure….
+Pen tablets are read through Windows Ink by default, so enable Windows Ink in the tablet driver too (to read them through WinTab instead, choose it with Pen input under Pen in Edit → Settings…). The pen buttons in the brush's Tool Properties select which settings respond to pressure. If the pen's pressure is too strong or too weak, adjust it in View → Pen Pressure….
 
 ## Mac (experimental)
 
