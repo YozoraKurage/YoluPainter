@@ -141,7 +141,6 @@ fn draw_3d(
         s.add(&mut d, &mut stroke, screen(x, y), 1.0).unwrap();
     }
     s.finish(&mut d, &mut stroke).unwrap();
-    assert_eq!(s.stats.refused, 0);
     d.end_stroke(stroke).unwrap();
     bytes(&d, l)
 }

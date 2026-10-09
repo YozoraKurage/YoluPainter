@@ -620,8 +620,7 @@ fn the_painted_bytes_do_not_depend_on_threads_or_on_dropping_buckets() {
             .num_threads(threads)
             .build()
             .unwrap();
-        let (d, l, s) = pool.install(|| crowded_stroke(&g, view, None, 60.0));
-        assert_eq!(s.stats.refused, 0, "{:?}", s.stats);
+        let (d, l, _) = pool.install(|| crowded_stroke(&g, view, None, 60.0));
         results.push((format!("{threads} スレッド"), layer_bytes(&d, l)));
     }
     let (d, l, _) = crowded_stroke(&g, view, None, 60.0);
@@ -643,7 +642,6 @@ fn the_painted_bytes_do_not_depend_on_threads_or_on_dropping_buckets() {
     let (d2, l2, s2) = crowded_stroke(&g, view, Some(tight), 16.0);
     let stats = s2.projection_stats();
     assert!(stats.evictions > 0, "{stats:?}");
-    assert_eq!(s2.stats.refused, 0, "{:?}", s2.stats);
     assert!(
         s2.projection_bytes() <= tight,
         "{} > {tight}",
@@ -687,7 +685,6 @@ fn a_big_brush_over_overlapping_faces_paints_instead_of_cancelling() {
     );
     // 投影の塗りは取り消さずに塗る。覚えは 1 回の操作のメモリ（既定 64 MiB）の中
     let (d, l, s) = crowded_stroke(&g, view, None, 60.0);
-    assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
     assert!(s.stats.dabs >= 6, "{:?}", s.stats);
     assert!(s.projection_bytes() <= d.stroke_budget_bytes());
     let count = layer_bytes(&d, l)
@@ -698,7 +695,7 @@ fn a_big_brush_over_overlapping_faces_paints_instead_of_cancelling() {
 }
 
 #[test]
-fn a_dab_whose_buckets_do_not_fit_is_skipped_and_the_stroke_goes_on() {
+fn a_dab_whose_buckets_do_not_fit_cancels_the_stroke_like_2d() {
     let g = crowded();
     let view = crowded_view();
     let (mut d, l) = document(512, 512);
@@ -719,30 +716,23 @@ fn a_dab_whose_buckets_do_not_fit_is_skipped_and_the_stroke_goes_on() {
     )
     .unwrap();
     assert_eq!(s.stats.dabs, 1);
-    // 区画の一覧の分しか無い: 次のダブは飛ばす（理由を残す）。メモリを戻せばまた塗る
+    // 区画の一覧の分しか無い: 次のダブは入らないので、ストロークごと断る（呼び手が取り消し、最初のダブも戻る。塗り残しを作らない）
     let fixed = s.projection_bytes() - s.projection_stats().cached_bytes;
     s.set_projection_memory(Some(fixed));
-    // 区間は次の点が来てから描く
-    s.add(&mut d, &mut stroke, Vec2::new(260.0, 180.0), 1.0)
-        .unwrap();
-    s.add(&mut d, &mut stroke, Vec2::new(270.0, 182.0), 1.0)
-        .unwrap();
-    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
-    let refused = s.stats.refused;
-    assert!(refused > 0);
-    s.set_projection_memory(None);
-    // ダブは線の長さで間隔ごとに置くので、メモリを戻した後も間隔より長く動かす
-    for at in [
-        Vec2::new(280.0, 185.0),
-        Vec2::new(300.0, 188.0),
-        Vec2::new(320.0, 190.0),
-    ] {
-        s.add(&mut d, &mut stroke, at, 1.0).unwrap();
-    }
-    s.finish(&mut d, &mut stroke).unwrap();
-    assert!(s.stats.dabs > 1);
-    assert!(d.end_stroke(stroke).unwrap().changed);
-    assert_eq!(d.undo_count(), 1);
+    let refused = [Vec2::new(260.0, 180.0), Vec2::new(270.0, 182.0)]
+        .into_iter()
+        .find_map(|at| s.add(&mut d, &mut stroke, at, 1.0).err())
+        .or_else(|| s.finish(&mut d, &mut stroke).err());
+    assert_eq!(
+        refused,
+        Some(yolu_core::geometry::SurfaceStrokeError::Dab(
+            DabRefusal::MemoryBudget
+        ))
+    );
+    d.cancel_stroke(stroke);
+    assert!(!d.has_active_stroke());
+    assert!(layer_bytes(&d, l).chunks_exact(4).all(|c| c[3] == 0));
+    assert_eq!(d.undo_count(), 0);
 }
 
 #[test]
@@ -859,9 +849,8 @@ fn blur_along_the_seam(
             s.add(&mut d, &mut stroke, a + (b - a) * (i as f32 / 8.0), 1.0)?;
         }
         s.finish(&mut d, &mut stroke)?;
-        // ダブは線の長さで間隔ごと（入力の点の数ではない）。どれも塗れて、断ったダブは無い
+        // ダブは線の長さで間隔ごと（入力の点の数ではない）。どれも塗れた（断れば Err）
         assert!(s.stats.dabs >= 8, "{:?}", s.stats);
-        assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
         Ok(())
     });
     match result {
@@ -1040,12 +1029,6 @@ fn a_mirror_copy_that_first_appears_late_in_a_tight_budget_is_still_painted() {
     };
     let (mut d, l) = document(512, 128);
     let open = stroke_through(&mut d, l, &g, view, &brush, &path, options, None);
-    assert_eq!(
-        (open.stats.refused, open.note),
-        (0, None),
-        "{:?}",
-        open.stats
-    );
     let largest = open.projection_stats().largest_dab_bytes;
     let fixed = open.projection_fixed_bytes();
     let wide = layer_bytes(&d, l);
@@ -1057,7 +1040,6 @@ fn a_mirror_copy_that_first_appears_late_in_a_tight_budget_is_still_painted() {
     let s = stroke_through(&mut d2, l2, &g, view, &brush, &path, options, Some(tight));
     let stats = s.projection_stats();
     assert!(stats.evictions > 0, "{stats:?}");
-    assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
     assert!(
         s.projection_bytes() <= tight,
         "{} > {tight}",

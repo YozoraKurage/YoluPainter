@@ -210,6 +210,15 @@ impl AppState {
         r.index.clone()
     }
 
+    /// 今のモデルとセットの UV の格子（作ってあるときだけ。作らない。3D ビューのカーソルが読む）。
+    pub fn cached_region_grid(&self) -> Option<Arc<UvGrid>> {
+        let (model, material) = self.region_model()?;
+        self.region
+            .grid
+            .clone()
+            .filter(|g| g.is_for(&model.geometry, material))
+    }
+
     /// 今のセットの UV の格子（モデルかセットが替わるまで作り直さない）。
     pub fn region_grid(&mut self) -> Option<Arc<UvGrid>> {
         let (model, material) = self.region_model()?;

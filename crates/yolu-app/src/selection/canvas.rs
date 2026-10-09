@@ -695,22 +695,55 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
     painter.circle_stroke(at, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
 }
 
-/// ブラシのカーソルを、対称の写しの所にも描く（水色の円。radius は画面の点）。
+/// ブラシのカーソルを、対称の写しの所にも描く（水色の円。radius は画面の点）。2D の対称の写しと、3D の対称（`model`。今のモデルの
+/// 面を写した先の UV）の写し、両方なら 3D の写しのそれぞれの 2D の写し。3D の写しの円は、写した先のテクスチャの細かさに合わせた大きさ。
 pub fn paint_mirrored_cursors(
     painter: &Painter,
     view: &CanvasView,
     app: &AppState,
+    model: Option<&yolu_core::geometry::ModelSymmetry>,
     at: Pos2,
     radius: f32,
 ) {
-    let Some(s) = active_symmetry(app) else {
+    if app.sel.quick || app.tool == Tool::SelectPen {
         return;
-    };
+    }
     let (x, y) = view.to_canvas(at);
-    for (mx, my) in mirrored_points(&s, x, y) {
+    let symmetry = active_symmetry(app);
+    let canvas = symmetry
+        .and_then(|s| s.transforms().ok())
+        .unwrap_or_default();
+    let copies = model
+        .and_then(|m| {
+            m.copies(
+                x,
+                y,
+                app.brush.radius as f64,
+                app.doc.width(),
+                app.doc.height(),
+            )
+            .ok()
+        })
+        .map(|c| c.copies)
+        .unwrap_or_default();
+    let mut points: Vec<((f64, f64), f32)> = symmetry
+        .map(|s| mirrored_points(&s, x, y))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p, radius))
+        .collect();
+    for c in &copies {
+        let p = c.map(x, y);
+        let scale = (c.m[0] * c.m[3] - c.m[1] * c.m[2]).abs().sqrt() as f32;
+        points.push((p, radius * scale));
+        for t in canvas.iter().skip(1) {
+            points.push((t.map(p.0, p.1), radius * scale));
+        }
+    }
+    for ((mx, my), r) in points {
         let p = view.to_screen(mx, my);
-        painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(100)));
-        painter.circle_stroke(p, radius, Stroke::new(1.2, axis_color()));
+        painter.circle_stroke(p, r, Stroke::new(3.0, Color32::from_black_alpha(100)));
+        painter.circle_stroke(p, r, Stroke::new(1.2, axis_color()));
     }
 }
 

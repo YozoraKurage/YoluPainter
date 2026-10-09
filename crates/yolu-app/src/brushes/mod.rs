@@ -198,6 +198,7 @@ pub fn canonical(brush: &Brush) -> Brush {
         assist: StrokeAssist::default(),
         stencil: None,
         symmetry: CanvasSymmetry::default(),
+        model_symmetry: None,
         ..brush.clone()
     }
 }

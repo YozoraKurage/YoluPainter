@@ -9,6 +9,9 @@
 //!
 //! 被覆は文書と同じ大きさのタイルの量で、触れたタイルだけを持つ。メモリの予算（`PEN_BUDGET_BYTES`）を超えるストロークは、
 //! 途中でも断って捨てる。
+//!
+//! 3D ビューのクイックマスク（`view3d::quick`）も同じ被覆を使う: 面のダブの覆い（文書の画素ごとの量）を [`PenStroke::raise`] で
+//! 積む（ダブの形と間隔は core の `SurfaceCoverStroke` が 2D と同じ値で決める）。
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,6 +42,17 @@ pub struct PenParams {
 }
 
 impl PenParams {
+    /// 3D ビューの面のダブの形（同じ値）。
+    pub fn cover(&self) -> yolu_core::geometry::CoverParams {
+        yolu_core::geometry::CoverParams {
+            radius: self.radius,
+            hardness: self.hardness,
+            opacity: self.opacity,
+            pressure_size: self.pressure_size,
+            pressure_opacity: self.pressure_opacity,
+        }
+    }
+
     /// 今のブラシの設定から。
     pub fn from_brush(b: &BrushState) -> PenParams {
         PenParams {
@@ -157,6 +171,34 @@ impl PenStroke {
     /// 被覆のタイルの数。
     pub fn tile_count(&self) -> usize {
         self.cover.len()
+    }
+
+    /// 作業の予算に数える被覆のバイト（タイル 1 枚を、被覆・見た目の 2 つの札・合成の結果の 3 倍で見る。`tile_mut` と同じ数え方）。
+    pub fn bytes(&self) -> u64 {
+        self.cover.len() as u64 * (self.ts as u64 * self.ts as u64) * 3
+    }
+
+    /// 作業の予算（バイト）。
+    pub fn budget(&self) -> u64 {
+        self.budget
+    }
+
+    /// 外で求めたダブ 1 つの量（文書の画素と 0〜255。3D ビューの面のダブ）を被覆に積む（大きい方を残す）。文書の外の画素は飛ばす。
+    pub fn raise(&mut self, pixels: &[yolu_core::geometry::CoverPixel]) -> Result<(), PenError> {
+        self.dabs += 1;
+        let (w, h, ts) = (self.width as i32, self.height as i32, self.ts as i32);
+        for &(x, y, a) in pixels {
+            if a == 0 || x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
+            let i = ((y % ts) * ts + x % ts) as usize;
+            let tile = self.tile_mut(coord)?;
+            if a > tile[i] {
+                tile[i] = a;
+            }
+        }
+        Ok(())
     }
 
     /// ダブの半径と最大の量（筆圧を入れたもの）。

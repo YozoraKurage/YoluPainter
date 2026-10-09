@@ -143,7 +143,15 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             let radius = (app.brush.radius * view.pixel_size()).max(1.5);
             painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
             painter.circle_stroke(p, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
-            crate::selection::canvas::paint_mirrored_cursors(&painter, &view, app, p, radius);
+            let model = app.canvas_model_symmetry();
+            crate::selection::canvas::paint_mirrored_cursors(
+                &painter,
+                &view,
+                app,
+                model.as_deref(),
+                p,
+                radius,
+            );
             ui.ctx().set_cursor_icon(if radius >= 4.0 {
                 CursorIcon::None
             } else {
@@ -554,8 +562,8 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     app.canvas.shift_hold = None;
     app.canvas.ruler_constraint = None;
     let endpoint = app.canvas.current_end.take();
-    // 3D ビューのストロークは 3D ビューの終わらせ方で（持ち越したダブと最後の区間を塗ってから確定する）
-    if app.view3d.input.surface.is_some() {
+    // 3D ビューのストロークは 3D ビューの終わらせ方で（持ち越したダブと最後の区間を塗ってから確定する。クイックマスクも）
+    if app.view3d.input.surface.is_some() || app.view3d.input.cover.is_some() {
         crate::view3d::input::finish(app, cancel);
         return;
     }
@@ -589,6 +597,10 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
                 app.lang.core_error(&e),
             ),
             Ok(result) => {
+                // 3D の対称の写しが見つからなかったダブがあれば（確定のときに描いた待ちのダブも）、3D ビューと同じく知らせる
+                if let Some(outcome) = result.copy_note {
+                    app.warn(Source::Canvas, app.lang.mirror_note(outcome));
+                }
                 if endpoint.is_some() {
                     app.canvas.previous_end = endpoint;
                 }

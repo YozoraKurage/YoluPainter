@@ -752,13 +752,14 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// ブラシの詳細のウィンドウの「対称」の欄（見出しと既定に戻すはウィンドウが出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
-/// 指先・クローンは対称と組めないので、対称のモードは「なし」のほかを無効にする。
+/// ブラシの詳細のウィンドウの「対称」の欄（見出しと既定に戻すはウィンドウが出す）。2D の対称（UV の平面）と、3D の対称（モデルの空間。
+/// モデルがあるとき）。どちらも 2D のキャンバスと 3D ビューの両方のストロークに効く（両方入っていれば、3D の写しの後に 2D の写し）。
+/// 指先・クローンは対称と組めないので、効かない欄を無効にする。
 pub fn symmetry_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     rows.indent = 0.0;
     let free = !app.is_stroking();
-    // 2D のキャンバスと 3D のビューを並べて見ているときは、どちらの設定も出す（別々に効く）
-    let both = app.view3d.paintable_on_screen();
+    // モデルがあれば、3D の対称の設定も出す（2D のキャンバスだけを出していても、2D のストロークに効く）
+    let both = app.view3d.model.is_some();
     if both {
         group_label(ui, rows, "2D");
     }
@@ -790,12 +791,9 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
     if current == SymmetryMode::None {
         return;
     }
-    // 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。
-    // 3D の面のストロークは対称を見ない（core に 3D の対称は無い）ので、描ける先が 3D だけのあいだだけ無効にする（ドックを分けて
-    // キャンバスも出ているあいだは、2D に描く対称の設定を残す）。指先・クローンも対称を見ない
-    let reason: Option<&str> = if app.paints_only_in_3d() {
-        Some(lang.pick("3D では効きません", "No effect in 3D"))
-    } else if matches!(
+    // 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。2D の対称は 3D ビューのストロークにも効く（UV の平面で
+    // 写す）。指先・クローンは対称を使えない
+    let reason: Option<&str> = if matches!(
         app.m2.brush.effect,
         BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
     ) {

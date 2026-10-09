@@ -36,7 +36,7 @@ The material values received from Unity appear as "Unity Values", and "Match Uni
 
 ## Paint on the model
 
-You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). Selections, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas.
+You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)). The tools that work in the 3D view are Brush, Eraser, Eyedropper, Fill, Polygon Fill, ID Color Select and Path (paths are in [GUIDE_PATHS.md](GUIDE_PATHS.md)). The selection tools, Move / Transform, Liquify, Shape, Ruler, Gradient and Text work only on the 2D canvas. While Quick Mask is on, the brush and the eraser in the 3D view work as a selection pen and a selection eraser, as on the 2D canvas: they add the texture pixels of the faces you paint to the selection or take them out (Size, Hardness, Opacity and pressure come from the current brush; one stroke is one undo; layer pixels do not change). The red overlay is shown on the 2D canvas ([GUIDE_SELECT.md](GUIDE_SELECT.md)).
 
 Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Anti-aliasing (its band is measured in texture pixels), Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper & Pen (fade, tilt, rotation, speed), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
 
@@ -44,7 +44,8 @@ Brush settings work in the 3D view with the same formulas as on the 2D canvas: S
 - Dabs are placed every spacing along the stroke length, as in 2D. However densely or sparsely the input points arrive, the stroke's density and the length of a fade stay the same. The spacing comes from the brush size converted to the screen at the depth of the surface where each stretch of the stroke starts.
 - Stabilizer, taper and speed lengths and speeds are measured in screen points in the 3D view (in document pixels on the 2D canvas).
 - The texture is read at the document pixel being painted, so its grain lines up between what you paint in 2D and in 3D.
-- With 3D symmetry, a mirror copy flips the tip left to right and a radial copy rotates it.
+- With 3D symmetry, a mirror copy flips the tip left to right and a radial copy rotates it. The 2D symmetry works too, copying the texture pixels you paint across the canvas ("Painting with symmetry" in [GUIDE_PAINT.md](GUIDE_PAINT.md)).
+- If a brush mark does not fit in the memory of one operation, the whole stroke is cancelled, as on the 2D canvas (no part is left unpainted).
 
 While the 3D view is shown, the brush properties gain a "3D" group.
 

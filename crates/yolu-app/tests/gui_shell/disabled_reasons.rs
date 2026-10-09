@@ -132,35 +132,42 @@ fn the_symmetry_fields_are_disabled_with_a_reason_for_smudge_and_clone_and_come_
     }
 }
 
-/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだは無効。キャンバスのタブへ戻せば有効に戻る。
+/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだも、2D の対称の欄は有効（2D の対称は 3D ビューのストロークにも、UV の平面で
+/// 写して効く）。前の「3D では効きません」の理由は、ツールチップにも出ない。モデルがあるので、3D の対称の欄も並ぶ。
 #[test]
-fn the_symmetry_fields_are_disabled_while_only_the_3d_view_can_be_painted() {
+fn the_symmetry_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
+    use egui::accesskit::Role;
     for lang in Lang::ALL {
         let mut h = symmetry_app(lang);
         h.state_mut().state.view3d.load_demo();
         click_tab(&mut h, Tab::View3d);
         h.run();
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, true, "3D だけ");
-        let reason = lang.pick("3D では効きません", "No effect in 3D");
+        assert_symmetry_fields(&h, lang, false, "3D だけ");
+        let old = lang.pick("3D では効きません", "No effect in 3D");
         for label in symmetry_labels(lang) {
             assert!(
-                tooltip_shows(&mut h, label, reason),
-                "{lang:?}: {label} のツールチップに理由"
+                !tooltip_shows(&mut h, label, old),
+                "{lang:?}: {label} に前の理由は出ない"
             );
         }
-        assert!(
-            h.query_by_label(reason).is_none(),
-            "{lang:?}: 注記の行は出さない"
-        );
+        assert!(h
+            .query_by_role_and_label(Role::CheckBox, lang.pick("ミラー", "Mirror"))
+            .is_some());
         click_tab(&mut h, Tab::Canvas);
         h.run();
         assert!(!h.state().state.paints_only_in_3d());
         assert_symmetry_fields(&h, lang, false, "キャンバスへ戻した");
+        // キャンバスだけを出していても、モデルがあれば 3D の対称の欄が並ぶ（2D のストロークにも効く）
+        assert!(
+            h.query_by_role_and_label(Role::CheckBox, lang.pick("ミラー", "Mirror"))
+                .is_some(),
+            "{lang:?}"
+        );
     }
 }
 
-/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだは、2D にも描けるので、対称の欄は有効のまま（前は注記だけで操作できた）。
+/// ドックを分けてキャンバスと 3D ビューを並べても、重ねて 3D だけにしても、対称の欄は有効のまま（2D の対称はどちらのビューにも効く）。
 #[test]
 fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
     for lang in Lang::ALL {
@@ -186,7 +193,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
             Action::Sel(SelAction::Symmetry(SymOp::Count(before + 1))),
         );
         assert_eq!(h.state().state.sel.symmetry.count, before + 1);
-        // キャンバスを 3D の裏へ回すと、3D だけになって無効
+        // キャンバスを 3D の裏へ回して 3D だけになっても、有効のまま
         let mut stacked = DockState::new(vec![Tab::Canvas, Tab::View3d]);
         stacked
             .main_surface_mut()
@@ -196,7 +203,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         click_tab(&mut h, Tab::View3d);
         h.run();
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, true, "重ねた");
+        assert_symmetry_fields(&h, lang, false, "重ねた");
     }
 }
 

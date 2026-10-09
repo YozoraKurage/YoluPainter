@@ -13,6 +13,7 @@ pub mod navigation;
 pub mod other_sets;
 pub mod paint;
 pub mod pose;
+mod quick;
 pub mod received_layers;
 pub mod render;
 pub mod shape_gizmo;
@@ -47,6 +48,8 @@ pub struct SurfaceInput {
     /// Ctrl+Space の拡縮のドラッグ（`nav` が `Nav::Zoom` のあいだ）。
     pub zoom: Option<crate::gesture::ZoomDrag>,
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
+    /// クイックマスクのブラシ・消しゴムの 3D のストローク（選択範囲の被覆を集める。被覆は `AppState::sel` の選択ペンが持つ）。
+    pub cover: Option<yolu_core::geometry::SurfaceCoverStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
     pub nav: Option<(Nav, egui::PointerButton)>,
     pub navigation: Option<navigation::Drag>,
@@ -394,6 +397,7 @@ impl View3dState {
     pub(crate) fn stroke_ended(&mut self) {
         self.input.stroke = None;
         self.input.surface = None;
+        self.input.cover = None;
         self.input.symmetry = None;
         self.input.last_point = None;
         self.input.last_hit = None;

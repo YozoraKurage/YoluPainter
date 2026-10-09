@@ -16,6 +16,7 @@ use super::stencil::BrushStencil;
 use super::tip::BrushTip;
 use super::BrushSettings;
 use crate::error::CoreError;
+use crate::geometry::ModelSymmetry;
 use crate::math::require_finite;
 use crate::symmetry::CanvasSymmetry;
 use crate::types::Rgba8;
@@ -46,6 +47,10 @@ pub struct Brush {
     pub stencil: Option<Arc<BrushStencil>>,
     /// 2D の対称（既定は無し）。指先・クローンとは組めない（写しごとに読み元と動きが要る）。
     pub symmetry: CanvasSymmetry,
+    /// 3D の対称（モデルの空間のミラー・放射状）を、2D のキャンバスのストロークのダブにも当てる（既定は無し。共有する）。2D の対称と
+    /// 両方あれば、3D の写しの後に 2D の写しを当てる。指先・クローンとは組めない。3D の面のストロークは見ない（面のストロークは
+    /// 自分の対称を持つ）。
+    pub model_symmetry: Option<Arc<ModelSymmetry>>,
 }
 
 impl From<BrushSettings> for Brush {
@@ -500,7 +505,7 @@ impl Brush {
             ));
         }
         self.symmetry.validate()?;
-        if self.symmetry.enabled()
+        if (self.symmetry.enabled() || self.model_symmetry.is_some())
             && matches!(
                 self.effect,
                 BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }

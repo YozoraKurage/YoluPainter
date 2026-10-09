@@ -56,6 +56,14 @@ pub fn begin(app: &mut AppState, source: StrokeSource, eraser: bool) -> Option<b
     if !app.sel.quick {
         return None;
     }
+    // ほかのビューで選択ペンのストロークが動いている間は始めない（被覆を上書きしない）
+    if app.sel.pen.is_some() {
+        app.refuse(
+            Source::Selection,
+            crate::lang::refusals::during_stroke(app.lang),
+        );
+        return Some(false);
+    }
     let erase = eraser || app.tool.erases();
     if !pen::begin(app, source, erase, true) {
         return Some(false);

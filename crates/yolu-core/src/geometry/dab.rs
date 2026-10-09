@@ -71,13 +71,13 @@ pub enum DabRefusal {
     VisibilityBudget,
     /// 遮蔽のレイの BVH の仕事量の予算を超えた（ストロークを取り消す）。
     BvhBudget,
-    /// 投影の塗りで、このダブに要る区画の投影の画素が、1 回の操作のメモリに入らない（そのダブだけ飛ばす）。
+    /// 投影の塗りで、このダブに要る区画の投影の画素が、1 回の操作のメモリに入らない（ストロークを取り消す）。
     MemoryBudget,
 }
 
 impl DabRefusal {
-    /// 上限を超えた断りか（ダブ 1 つの 4 つの上限と、投影の塗りのメモリ）。3D のストロークは、どの断りでもストロークを取り消さず、
-    /// そのダブ・写しを飛ばして知らせる。パスの評価は、どの断りでも評価ごと失敗する。
+    /// 上限を超えた断りか（ダブ 1 つの 4 つの上限と、投影の塗りのメモリ）。3D のストロークは、どの断りでも（2D のストロークと
+    /// 同じく）ストロークごと取り消す。パスの評価は、どの断りでも評価ごと失敗する。
     pub fn is_limit(self) -> bool {
         matches!(
             self,
@@ -89,7 +89,7 @@ impl DabRefusal {
         )
     }
 
-    /// C# の Diagnostic と同じ英語の文（照合用）。
+    /// C# の Diagnostic と同じ英語の文（照合用）。投影の塗りのメモリ（`MemoryBudget`）は C# に無い断りで、ストロークを取り消すと言う。
     pub fn csharp_message(self) -> &'static str {
         match self {
             DabRefusal::SnapshotChanged => "The model snapshot changed. Start a new stroke.",
@@ -99,7 +99,7 @@ impl DabRefusal {
             DabRefusal::PixelBudget => "Surface dab exceeded the pixel budget. No pixels were changed; reduce brush radius or use a smaller document.",
             DabRefusal::VisibilityBudget => "Surface dab exceeded the visibility budget. No pixels were changed; reduce the brush radius.",
             DabRefusal::BvhBudget => "Surface visibility exceeded the BVH work budget. No pixels were changed; reduce the radius or simplify overlapping geometry.",
-            DabRefusal::MemoryBudget => "The projected brush area does not fit in the stroke memory budget. The dab was skipped.",
+            DabRefusal::MemoryBudget => "The projected brush area does not fit in the stroke memory budget. The stroke was cancelled.",
         }
     }
 }
@@ -114,7 +114,7 @@ impl std::fmt::Display for DabRefusal {
             DabRefusal::PixelBudget => "ブラシが大きすぎるので、ストロークを取り消しました。ブラシを小さくするか、文書を小さくしてください",
             DabRefusal::VisibilityBudget => "見え方の確認が多すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
             DabRefusal::BvhBudget => "見え方の確認が重すぎるので、ストロークを取り消しました。ブラシを小さくするか、重なった面を減らしてください",
-            DabRefusal::MemoryBudget => "ブラシの範囲が 1 回の操作のメモリに入らないので、塗らなかった所があります",
+            DabRefusal::MemoryBudget => "ブラシの範囲が 1 回の操作のメモリに入らないので、ストロークを取り消しました",
         })
     }
 }

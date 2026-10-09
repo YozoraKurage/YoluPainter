@@ -273,6 +273,9 @@ pub struct StrokeResult {
     pub stamps: u64,
     /// 受け取った入力の点の数。
     pub samples: u64,
+    /// 3D の対称（[`crate::Brush::model_symmetry`]）の写しを作れなかった最後の理由（確定のときに描いた待ちのダブも含む。
+    /// 全部写せたか、3D の対称が無ければ None）。
+    pub copy_note: Option<crate::geometry::MirrorOutcome>,
 }
 
 /// 進行中のストロークの数（確定の前に見る）。
@@ -288,6 +291,9 @@ pub struct StrokeStats {
     pub parallel_dabs: u64,
     /// 同じ入力を受けるチャンネル（面）の数（複数チャンネルのストロークは 2 以上）。
     pub targets: usize,
+    /// 3D の対称（[`crate::Brush::model_symmetry`]）の写しを作れなかった最後の理由（面が無い・別のテクスチャセット。全部写せたか、
+    /// 3D の対称が無ければ None）。
+    pub copy_note: Option<crate::geometry::MirrorOutcome>,
 }
 
 /// ストロークが描く面: レイヤーのチャンネルか、レイヤーのマスク。
@@ -775,6 +781,7 @@ impl Document {
                     .map(|s| s.parallel_dabs)
                     .sum::<u64>(),
             targets: 1 + self.material.extra.len(),
+            copy_note: a.copy_note(),
         })
     }
 
@@ -2335,6 +2342,7 @@ impl Document {
             changed: !changes.is_empty(),
             stamps: state.stamp_count,
             samples: state.sample_count,
+            copy_note: state.copy_note(),
         };
         if !changes.is_empty() {
             let cost = 64

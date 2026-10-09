@@ -1141,6 +1141,10 @@ impl Lang {
                 "見えない対称の写しは飛ばしました",
                 "Symmetry copies that cannot be seen were skipped",
             ),
+            UvMismatch => self.pick(
+                "UV が潰れているか大きさが合わない対称の写しは飛ばしました",
+                "Symmetry copies with flat or mismatched UVs were skipped",
+            ),
             Painted | OnPlane => "",
         }
     }
@@ -1196,44 +1200,45 @@ impl Lang {
             ),
         }
     }
-    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分）や対称の写しを塗れなかった理由。どれもその打ち・写しだけを飛ばして
-    /// ストロークは続く（終わったあとに知らせる）。上限の 4 つは、見えない面にも塗る写し（球の中の面）と、写しの点を探す所でだけ
-    /// 起きる。パスの評価はどの断りでも評価ごと失敗するので、その文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・
-    /// スナップショット）は使わず、原因を使う人の言葉で短く言う。
+    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分。対称の写し・デュアルブラシの 2 つ目の打ちも）を塗れなかった理由。2D の
+    /// ストロークと同じく、どれもストロークごと取り消す（塗り残しを作らない）ので、「取り消し」を言う。1 回の操作のメモリが足りない
+    /// ときは、2D の予算を超えたときと同じ文。パスの評価の文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・スナップショット）は
+    /// 使わず、原因を使う人の言葉で短く言う。
     fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
             SnapshotChanged => self.pick(
-                "モデルが変わったため、塗れなかった所があります",
-                "Some parts were not painted because the model changed",
+                "モデルが変わったため、取り消しました",
+                "Cancelled: the model changed",
             ),
             InvalidArguments => self.pick(
-                "ブラシの大きさかカメラが範囲外で、塗れなかった所があります",
-                "Some parts were not painted: brush size or camera out of range",
+                "ブラシの大きさかカメラが範囲外のため、取り消しました",
+                "Cancelled: brush size or camera out of range",
             ),
             BindingMismatch => self.pick(
-                "面がモデルと合わず、塗れなかった所があります",
-                "Some parts were not painted: the surface does not match the model",
+                "面がモデルと合わないため、取り消しました",
+                "Cancelled: the surface does not match the model",
             ),
             TriangleBudget => self.pick(
-                "写しがまたがる面が多すぎて、塗れなかった所があります",
-                "Some parts were not painted: a copy covers too many faces",
+                "ブラシがまたがる面が多すぎるため、取り消しました",
+                "Cancelled: the brush covers too many faces",
             ),
             PixelBudget => self.pick(
-                "写しの範囲が広すぎて、塗れなかった所があります",
-                "Some parts were not painted: a copy covers too large an area",
+                "ブラシの範囲が広すぎるため、取り消しました",
+                "Cancelled: the brush area is too large",
             ),
             VisibilityBudget => self.pick(
-                "見える面の判定が多すぎて、塗れなかった所があります",
-                "Some parts were not painted: too many points to check",
+                "見える面の判定が多すぎるため、取り消しました",
+                "Cancelled: too many points to check for visibility",
             ),
             BvhBudget => self.pick(
-                "重なった面が多すぎて、写しを塗れなかった所があります",
-                "Some parts were not painted: too many overlapping faces",
+                "重なった面が多すぎるため、取り消しました",
+                "Cancelled: too many overlapping faces under the brush",
             ),
+            // 2D の `CoreError::StrokeBudgetExceeded` と同じ文
             MemoryBudget => self.pick(
-                "1 回の操作のメモリが足りず、塗れなかった所があります",
-                "Some parts were not painted: not enough memory for one operation",
+                "1 回の操作のメモリの予算を超えます（取り消しました）",
+                "Over the memory budget of one operation (cancelled)",
             ),
         }
     }
@@ -2271,22 +2276,32 @@ mod tests {
         }
     }
 
-    /// 3D のブラシのストロークで塗れなかった理由の 8 つの文は、内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
-    /// どれもその打ち・写しだけを飛ばしてストロークは残るので、「取り消し」を言わず、塗れなかった所があると言う。
+    /// 3D のブラシのストロークで塗れなかった理由の 8 つの文。2D のストロークと同じく、どれもストロークごと取り消すので「取り消し」を言う。
+    /// 1 回の操作のメモリが足りないときは、2D の予算を超えたとき（`CoreError::StrokeBudgetExceeded`。設定のウィンドウの名前で言う）と
+    /// 同じ文。ほかの 7 つは内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
     #[test]
-    fn dab_refusals_are_told_in_the_users_words() {
+    fn dab_refusals_cancel_the_stroke_and_the_memory_one_is_the_2d_sentence() {
+        use yolu_core::geometry::{DabRefusal, SurfaceStrokeError};
         let mut seen = std::collections::BTreeSet::new();
         for refusal in DAB_REFUSALS {
             let (ja, en) = (Lang::Ja.dab_refusal(refusal), Lang::En.dab_refusal(refusal));
+            assert!(
+                ja.contains("取り消") && en.to_ascii_lowercase().contains("cancelled"),
+                "{refusal:?}: {ja} / {en}"
+            );
+            for lang in [Lang::Ja, Lang::En] {
+                assert_eq!(
+                    lang.surface_error(&SurfaceStrokeError::Dab(refusal)),
+                    lang.dab_refusal(refusal),
+                    "{refusal:?}"
+                );
+            }
+            if refusal == DabRefusal::MemoryBudget {
+                assert_eq!(ja, Lang::Ja.core_error(&CoreError::StrokeBudgetExceeded));
+                assert_eq!(en, Lang::En.core_error(&CoreError::StrokeBudgetExceeded));
+                continue;
+            }
             assert_users_words(&mut seen, &format!("{refusal:?}"), ja, en);
-            assert!(
-                !ja.contains("取り消") && ja.ends_with("所があります"),
-                "{refusal:?}: {ja}"
-            );
-            assert!(
-                en.starts_with("Some parts were not painted"),
-                "{refusal:?}: {en}"
-            );
         }
     }
 

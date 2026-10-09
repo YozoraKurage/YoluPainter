@@ -18,6 +18,7 @@ mod outputs;
 mod overlap_uv_ui;
 mod parity_input;
 mod parity_review;
+mod parity_symmetry;
 mod parity_views;
 mod pose;
 mod pose_takes;

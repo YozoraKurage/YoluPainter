@@ -1145,6 +1145,7 @@ impl AppState {
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
         self.canvas.stroke.is_some()
+            || self.view3d.input.cover.is_some()
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
             || self.region.job.is_some()

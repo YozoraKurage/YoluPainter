@@ -6,7 +6,8 @@
 //! C# とのバイト一致を確かめたのは同じ libm（Linux の glibc）の上で、別の libm では 1 ULP ずれ得る。鏡映・四分の一周の倍数
 //! だけの組（縦・横・両方、放射状の 2・4）は正確な値だけを通る。
 //! ここは文書の画素の上（UV の平面）の対称だけを扱う。3D の面のストロークは画素ごとに `apply_pixel` で塗り、`Brush.symmetry`
-//! を見ない（UV の座標で写すと、モデルの上では別の場所に二重に塗ってしまうため）。
+//! を見ない。3D の面のストロークに 2D の対称を当てるときは、面のストロークが塗る UV の画素（元と 3D の写し）を、同じ変換で UV の
+//! 平面の上に写す（`geometry::uv_symmetry` の `copy_by_canvas`。面のストロークの `SurfaceStrokeOptions::canvas_symmetry`）。
 //!
 //! ```
 //! use yolu_core::{Brush, BrushSettings, CanvasSymmetry, Document, SymmetryMode, glam::DVec2};
@@ -163,6 +164,31 @@ impl SymmetryTransform {
             self.cx + self.a * u + self.c * v,
             self.cy + self.b * u + self.d * v,
         )
+    }
+
+    /// 中心と、中心のまわりの 2×2 の係数（行の順: a b / c d）。
+    pub(crate) fn parts(&self) -> (DVec2, [f64; 4]) {
+        (
+            DVec2::new(self.cx, self.cy),
+            [self.a, self.b, self.c, self.d],
+        )
+    }
+
+    /// 恒等（写さない）。
+    pub(crate) fn identity() -> SymmetryTransform {
+        SymmetryTransform {
+            cx: 0.0,
+            cy: 0.0,
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+        }
+    }
+
+    /// 恒等（写さない）か。
+    pub(crate) fn is_identity(&self) -> bool {
+        self.a == 1.0 && self.b == 0.0 && self.c == 0.0 && self.d == 1.0
     }
 }
 

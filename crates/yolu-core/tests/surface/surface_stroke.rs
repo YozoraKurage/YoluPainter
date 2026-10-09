@@ -497,7 +497,7 @@ fn smudge_and_clone_refuse_symmetry_before_painting() {
 }
 
 #[test]
-fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab() {
+fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_the_stroke() {
     let g = plane();
     let view = front(&g);
     let (mut d, layer) = document();
@@ -561,7 +561,7 @@ fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab()
     assert!(!d.has_active_stroke());
     assert_eq!(bytes(&d, layer), before);
     assert_eq!(d.undo_count(), 0);
-    // 投影の画素も入らない: ダブを飛ばして理由を残し、ストロークは取り消さない（何も塗らないので履歴に残らない）
+    // 投影の画素も入らない: 2D と同じくストロークごと取り消す（呼び手が取り消す。何も残らない）
     let (stroke, s) = begin(
         &mut d,
         layer,
@@ -573,10 +573,11 @@ fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab()
         screen(&view, Vec3::new(1.25, 0.5, 0.0)),
         clone(source, None),
     );
-    let s = s.unwrap();
-    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
-    assert_eq!(s.stats.dabs, 0);
-    assert!(!d.end_stroke(stroke).unwrap().changed);
+    assert_eq!(
+        s.err(),
+        Some(SurfaceStrokeError::Dab(DabRefusal::MemoryBudget))
+    );
+    d.cancel_stroke(stroke);
     assert!(!d.has_active_stroke());
     assert_eq!(bytes(&d, layer), before);
     assert_eq!(d.undo_count(), 0);

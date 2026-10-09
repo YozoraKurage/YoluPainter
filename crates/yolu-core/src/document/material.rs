@@ -261,6 +261,7 @@ impl Document {
             changed: false,
             stamps: first.stamp_count,
             samples: first.sample_count,
+            copy_note: first.copy_note(),
         };
         let layer = first.layer;
         let index = first.layer_index;

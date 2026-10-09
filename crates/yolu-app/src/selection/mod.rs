@@ -877,11 +877,21 @@ impl AppState {
         self.sel.cancel_drafts();
     }
 
-    /// 2D のキャンバスのストロークに渡す対称（文書の大きさに写した中心）。3D の面のストロークには渡さない（core は見ない）。
+    /// 2D の対称（文書の大きさに写した中心）。2D のキャンバスのストロークにも、3D ビューの面のストローク（UV の平面で、3D の写しの後に）にも渡す。
     pub fn canvas_symmetry(&self) -> CanvasSymmetry {
         self.sel
             .symmetry
             .canvas(self.doc.width(), self.doc.height())
+    }
+
+    /// 2D のキャンバスのストロークに当てる 3D の対称（3D の対称が入っていて、今のテクスチャセットの面のモデルがあるとき）。ダブの中心の UV の
+    /// 下の面の点を 3D で写し、写しの面の UV へダブを置く（core の `ModelSymmetry`。UV の格子は範囲のツールと共有する）。
+    pub fn canvas_model_symmetry(
+        &mut self,
+    ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
+        let setup = self.sel.symmetry.surface.setup()?;
+        let grid = self.region_grid()?;
+        yolu_core::geometry::ModelSymmetry::new(grid, &setup).map(std::sync::Arc::new)
     }
 
     /// 幾何形状に沿って描く。補間と手ぶれ補正だけを切り、入り抜きと筆先の設定は保つ。
@@ -894,6 +904,7 @@ impl AppState {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
         brush.symmetry = self.canvas_symmetry();
+        brush.model_symmetry = self.canvas_model_symmetry();
         brush.assist.stabilizer = 0.0;
         brush.assist.curve = false;
         let result = self.begin_stroke_with(id, &brush);
@@ -904,7 +915,8 @@ impl AppState {
         result
     }
 
-    /// 2D のキャンバスで描き始める（対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは `begin_paint_stroke`。
+    /// 2D のキャンバスで描き始める（2D の対称と 3D の対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは
+    /// `begin_paint_stroke`。
     pub fn begin_canvas_stroke(
         &mut self,
         id: crate::engine::LayerId,
@@ -914,6 +926,7 @@ impl AppState {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
         brush.symmetry = self.canvas_symmetry();
+        brush.model_symmetry = self.canvas_model_symmetry();
         let result = self.begin_stroke_with(id, &brush);
         self.sel.stroke_symmetry = result
             .is_ok()

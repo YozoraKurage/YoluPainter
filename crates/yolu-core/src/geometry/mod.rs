@@ -13,6 +13,7 @@
 
 mod build;
 mod camera;
+mod cover;
 mod dab;
 mod model;
 mod paint;
@@ -27,6 +28,8 @@ mod stencil;
 mod stroke;
 mod symmetry;
 pub(crate) mod unity;
+mod uv_grid;
+mod uv_symmetry;
 mod uv_topology;
 
 use std::sync::atomic::AtomicBool;
@@ -37,6 +40,7 @@ pub use camera::{
     nearest_axis_view, orbited, snap_orientation, AxisView, CameraView, OrbitCamera, DEFAULT_PITCH,
     DEFAULT_YAW, ORBIT_DEGREES_PER_POINT, SNAP_ANGLE,
 };
+pub use cover::{CoverParams, CoverPixel, SurfaceCoverStroke};
 pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };
@@ -71,6 +75,8 @@ pub use symmetry::{
     ON_PLANE_FRACTION,
 };
 pub use unity::{Bounds, Ray};
+pub use uv_grid::UvGrid;
+pub use uv_symmetry::{ModelCopies, ModelSymmetry, UvCopy, MAX_CANVAS_COPY_PIXELS};
 pub use uv_topology::{
     IslandMap, IslandRun, UvTopology, UvTopologyError, DEFAULT_BUDGET, MAX_SEAM_BAND,
     MAX_TOPOLOGY_EDGE,
@@ -134,6 +140,21 @@ impl SurfaceTriangle {
             Vec3::new(c.x / length, c.y / length, c.z / length)
         } else {
             Vec3::ZERO
+        }
+    }
+
+    /// テクセル 1 つ（文書の大きさ width × height）の、モデルの単位の大きさ（面積の比の平方根。潰れていれば 0）。
+    pub fn texel_size(&self, width: i32, height: i32) -> f32 {
+        let area = unity::magnitude(unity::cross(self.b - self.a, self.c - self.a)) as f64 * 0.5;
+        let (e1, e2) = (self.uv_b - self.uv_a, self.uv_c - self.uv_a);
+        let uv = (e1.x as f64 * e2.y as f64 - e1.y as f64 * e2.x as f64).abs()
+            * 0.5
+            * width as f64
+            * height as f64;
+        if area > 0.0 && uv > 0.0 && area.is_finite() && uv.is_finite() {
+            (area / uv).sqrt() as f32
+        } else {
+            0.0
         }
     }
 

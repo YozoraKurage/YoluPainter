@@ -7,9 +7,10 @@
 //! - ストロークの間はカメラもモデルも動かない前提（区画の投影の画素を覚えて、重なる次のダブで作り直さない）。
 //! - 投影の画素の覚えは 1 回の操作のメモリ（文書のストロークの予算から巻き戻しの分を除いたもの）に収め、超えたら長く使っていない
 //!   区画から捨てる（要るときに同じものを作り直す）。元の側と対称の写しの投影の塗りは 1 つの予算を分け、どれの区画でも古いものから
-//!   捨てる（元の側が覚えを溜めても、後から作る写しが締め出されない）。1 つのダブに要る区画だけで入らないときは、そのダブ（写しなら
-//!   その写し）を飛ばして理由を `note` に残す（ストロークは取り消さない）。区間のダブがありえない数（[`SURFACE_DABS_PER_SEGMENT`]）の
-//!   ときと、指先・クローン・伸ばす・色の混ぜの読み元が 1 回の操作のメモリに入らないときは `Err`（呼ぶ側がストロークを取り消す）。
+//!   捨てる（元の側が覚えを溜めても、後から作る写しが締め出されない）。1 つのダブ（写し・デュアルブラシの 2 つ目のダブも）に要る区画
+//!   だけで入らないとき、ダブ 1 つの上限（三角形・画素・見え方の判定・写しの点の探索）を超えたとき、区間のダブがありえない数
+//!   （[`SURFACE_DABS_PER_SEGMENT`]）のとき、指先・クローン・伸ばす・色の混ぜの読み元が 1 回の操作のメモリに入らないときは、2D の
+//!   ストロークと同じく `Err`（呼ぶ側がストロークごと取り消す。ダブを飛ばして塗り残しを作らない）。
 //! - 速い入力: 区間のダブは、位置・面の当たり・画面の大きさを先に決めて待ち行列に並べ、1 回の入力（[`SurfaceStroke::add`]）と
 //!   1 フレーム（[`SurfaceStroke::paint_queued`]）ごとに [`SURFACE_DABS_PER_EVENT`] まで塗り、残りは持ち越す。離したとき
 //!   （[`SurfaceStroke::finish`]）は残りを全部塗る。並べる時に当たりと大きさを決めるので、次の区間の間隔も、塗る時も、いつ塗っても
@@ -18,11 +19,15 @@
 //!   写しの点は、中心の下の面の点か、中心がほかのセット・背景にあるダブでは元の側の画素の点を写して探す。
 //!   見えない面にも塗らない設定では、写したカメラ（鏡映・回転したカメラ）から同じ画面の円で投影の塗りをする（元の側の見え方を写した
 //!   ものになる）。見えない面にも塗る設定では、写しの点のまわりの球の中の面（カメラによらない足跡）を塗る。全ての写しを画素ごとに
-//!   大きい方の覆いで 1 つにして塗る。写しが作れなかったときは、その写しだけ飛ばして知らせる。ぼかしは写しも含めて 1 つのダブとして
-//!   読み元を凍結する。指先・クローンは写しごとの読み元と動きが要るので対称とは組めない（ストロークの始めに断る）。
+//!   大きい方の覆いで 1 つにして塗る。写しの点に向きの合う面が無い・別のテクスチャセット・見えないときは、その写しだけ飛ばして知らせる
+//!   （`MirrorOutcome`）。ぼかしは写しも含めて 1 つのダブとして読み元を凍結する。指先・クローンは写しごとの読み元と動きが要るので
+//!   対称とは組めない（ストロークの始めに断る）。
+//! - 2D の対称（[`SurfaceStrokeOptions::canvas_symmetry`]）: 3D の写しの後に、元と 3D の写しの全部の UV の画素を、UV の平面の上で
+//!   写す（`uv_symmetry`。2D のキャンバスのストロークに 3D の対称を当てるときと同じ順）。指先・クローンとは組めない。
 //! - 色の混ぜ（ストロークの `Brush` の `mix`）は、混ぜるならぼかしと同じく面のダブを `apply_dab` へ（下地を書く前に、UV の離れたアイランドごとの塊に分けて凍結する）。伸ばす
 //!   （対称なし）は指先と同じ写像されたダブで、展開の図で UV の継ぎ目をまたいで前のダブの側を読む（最初のダブ・動いていないダブ・図に入らない
-//!   ダブも、ずれ 0 で塗る）。対称と組むときは、写しごとの読み元が要るので `apply_dab`（動きの向きなし）へ。
+//!   ダブも、ずれ 0 で塗る）。対称（3D・2D）と組むときは、写しごとの読み元が要るので `apply_dab`（動きの向きなし。2D のキャンバスの
+//!   対称のダブと同じ）へ。
 //! - 効果のブラシ（[`SurfaceEffect`]）: ぼかしは画素ごとに面の上のまわりの 4 点を読み元にする。指先は直前のダブの面の点から今の点へ
 //!   引きずり、クローンは固定した元の面の点から、ストロークの最初の面の点に対応させて写す。どれも展開の図（[`super::SamplingChart`]）で
 //!   UV アイランドの継ぎ目をまたいで読み元の画素を決め、全ての読みを書く前に凍結する（`Stroke::apply_mapped_dab`）。画面の円に入った、図に
@@ -69,8 +74,8 @@ use crate::brush::{
     ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, DUAL_STREAM,
 };
 use crate::{
-    Brush, BrushPixel, BrushSettings, CoreError, Document, DualBrushMode, MixMode,
-    PressureResponse, StencilPoint, Stroke,
+    Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
+    PressureResponse, StencilPoint, Stroke, SymmetryTransform,
 };
 
 /// 3D のストロークを止めた理由（どれもストロークを取り消す）。
@@ -173,6 +178,9 @@ pub struct SurfaceStrokeOptions {
     /// 投影の塗りに使ってよいバイト（試験用。None なら文書の 1 回の操作の予算から巻き戻しの分を引いたもの。
     /// [`SurfaceStroke::set_projection_memory`] と同じものを、最初のダブから効かせる）。
     pub projection_memory: Option<u64>,
+    /// 2D の対称（UV の平面の写し。文書の画素の座標の中心）。3D の対称の写しの後に、元と写しの全部の画素へ当てる
+    /// （`uv_symmetry`）。None か「なし」なら当てない。
+    pub canvas_symmetry: Option<CanvasSymmetry>,
 }
 
 /// ストロークの数（試験・知らせ用）。
@@ -184,8 +192,6 @@ pub struct SurfaceStrokeStats {
     pub pixels: usize,
     /// 飛ばした点（まだ面に当たっていない・面の上の点が要る効果で、中心が塗るセットの面に無い）。
     pub missed: usize,
-    /// 作らなかったダブ・写し（メモリに入らない区画・写しの側の上限など。理由は `note`）。
-    pub refused: usize,
     /// 対称の写しを塗ったダブの数のべ（元を除く）。
     pub copies: usize,
     /// 指先が、直前の点から読めず（つながらない面）に飛ばしたダブ。
@@ -377,6 +383,8 @@ pub struct SurfaceStroke {
     /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
     stencil: Option<SurfaceStencil>,
     symmetry: Option<SurfaceSymmetrySetup>,
+    /// 2D の対称の変換（恒等を含む。2D の対称が無ければ空）。
+    canvas: Vec<SymmetryTransform>,
     effect: SurfaceEffect,
     /// 指先: 直前のダブの面の点。
     previous_hit: Option<SurfaceHit>,
@@ -401,8 +409,6 @@ pub struct SurfaceStroke {
     dual: Option<DualState>,
     dual_bytes: u64,
     pub stats: SurfaceStrokeStats,
-    /// 最後に知らせたい理由（作らなかったダブ・写し）。
-    pub note: Option<DabRefusal>,
 }
 
 impl SurfaceStroke {
@@ -500,7 +506,11 @@ impl SurfaceStroke {
         options: SurfaceStrokeOptions,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
         let symmetry = options.symmetry.filter(|s| s.enabled());
-        if symmetry.is_some()
+        let canvas = match options.canvas_symmetry.filter(|s| s.enabled()) {
+            Some(c) => c.transforms()?,
+            None => Vec::new(),
+        };
+        if (symmetry.is_some() || !canvas.is_empty())
             && matches!(
                 options.effect,
                 SurfaceEffect::Smudge | SurfaceEffect::Clone(_)
@@ -533,7 +543,11 @@ impl SurfaceStroke {
         let mixes = stroke_brush.mix.is_active()
             && stroke_brush.effect.is_paint()
             && !stroke_brush.base.erase;
-        let smears = mixes && stroke_brush.mix.mode == MixMode::Smear && symmetry.is_none();
+        // 伸ばすは、対称（3D・2D）と組むと写しごとの読み元が要るので、2D の対称のダブと同じく動きの向きを使わない読み方へ
+        let smears = mixes
+            && stroke_brush.mix.mode == MixMode::Smear
+            && symmetry.is_none()
+            && canvas.is_empty();
         let first = ScreenPoint {
             at: input.at,
             pressure: input.pressure,
@@ -580,6 +594,7 @@ impl SurfaceStroke {
             height: doc.height() as i32,
             stencil: options.stencil,
             symmetry,
+            canvas,
             effect: options.effect,
             previous_hit: None,
             clone_destination,
@@ -595,7 +610,6 @@ impl SurfaceStroke {
             dual_bytes: 0,
             brush: stroke_brush,
             stats: SurfaceStrokeStats::default(),
-            note: None,
         };
         // 押した点の描点（と、2 つ目の筆先のダブ）。抜きがあれば、線が伸びるか離すまで待つ
         let dab = s.locate(ScreenDab {
@@ -898,7 +912,7 @@ impl SurfaceStroke {
         let index = self.stamps;
         self.stamps += 1;
         if self.dual.is_some() {
-            self.stamp_dual(doc, dab.arc, dab.scale);
+            self.stamp_dual(doc, dab.arc, dab.scale)?;
         }
         let brush = self.brush.clone();
         let pending = PendingDab {
@@ -1015,10 +1029,9 @@ impl SurfaceStroke {
             true,
         );
         self.dual = dual;
+        // 1 つのダブ（写しも）でも塗れなければ、2D と同じくストロークごと取り消す（塗り残しを作らない）
         if let Some(why) = dab.refusal {
-            self.stats.refused += 1;
-            self.note = Some(why);
-            return Ok(());
+            return Err(SurfaceStrokeError::Dab(why));
         }
         let Some(hit) = hit else {
             return Ok(());
@@ -1116,9 +1129,14 @@ impl SurfaceStroke {
 
     /// 2 つ目の筆先のダブを、線の長さ limit まで置いて溜める（2D の StampDual と同じ順。散布の乱数は 2 つ目の筆先の列）。画面の大きさは
     /// 並べたときに決めたもの（面にまだ当たっていなければ置かない）。投影の塗りがまだ無ければ、今の描点の大きさ（scale）で作る。
-    fn stamp_dual(&mut self, doc: &Document, limit: f64, scale: Option<f32>) {
+    fn stamp_dual(
+        &mut self,
+        doc: &Document,
+        limit: f64,
+        scale: Option<f32>,
+    ) -> Result<(), SurfaceStrokeError> {
         let Some(dual_brush) = self.brush.dual.clone() else {
-            return;
+            return Ok(());
         };
         while let Some(&(at, arc, dual_scale)) = self.dual.as_ref().and_then(|d| d.pending.front())
         {
@@ -1147,13 +1165,14 @@ impl SurfaceStroke {
                 } else {
                     Vec2::new(x as f32, self.down(y))
                 };
-                self.dual_dab(doc, &dual_brush, center, s, world);
+                self.dual_dab(doc, &dual_brush, center, s, world)?;
             }
         }
+        Ok(())
     }
 
     /// 2 つ目の筆先のダブ 1 つ: 画面の上の形（2D と同じ式、筆圧・ゆらぎなし）で投影の画素の覆いを出し（面の向きでは弱めない）、
-    /// テクセルごとの最大を溜める。対称の写しにも置く。作れなかったダブは飛ばす（知らせない）。
+    /// テクセルごとの最大を溜める。対称の写しにも置く。作れなかったら（主のダブと同じく）ストロークを取り消す `Err`。
     fn dual_dab(
         &mut self,
         doc: &Document,
@@ -1161,14 +1180,14 @@ impl SurfaceStroke {
         at: Vec2,
         scale: f32,
         world: f32,
-    ) {
+    ) -> Result<(), SurfaceStrokeError> {
         if !(at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height) {
-            return;
+            return Ok(());
         }
         let hit = pick(&self.geometry, &self.view, at)
             .filter(|h| self.material.is_none_or(|m| m == h.material));
         let shape = dual_brush.dab_shape(0.0, 0.0, (scale * world) as f64);
-        let (stats, note, symmetry_note) = (self.stats, self.note, self.symmetry_note);
+        let (stats, symmetry_note) = (self.stats, self.symmetry_note);
         let (result, _) = self.build_dab(
             doc,
             hit,
@@ -1179,9 +1198,9 @@ impl SurfaceStroke {
             None,
             false,
         );
-        (self.stats, self.note, self.symmetry_note) = (stats, note, symmetry_note);
-        if result.refusal.is_some() {
-            return;
+        (self.stats, self.symmetry_note) = (stats, symmetry_note);
+        if let Some(why) = result.refusal {
+            return Err(SurfaceStrokeError::Dab(why));
         }
         if let Some(d) = self.dual.as_mut() {
             for p in &result.pixels {
@@ -1189,6 +1208,7 @@ impl SurfaceStroke {
             }
             self.dual_bytes = d.cells.bytes();
         }
+        Ok(())
     }
 
     /// 中心が塗るセットの面に無いダブで、面の点の代わりにする当たり（覆いのいちばん大きい画素の三角形の上の点）。
@@ -1263,12 +1283,36 @@ impl SurfaceStroke {
         evict_least_recent(&mut all, total.saturating_sub(lists), clock);
     }
 
-    /// ダブの画素（元と写しを 1 つにしたもの）と、ダブの面の点を作る。at・scale は画面の中心と、モデルの単位 1 の画面の大きさ、radius は
+    /// ダブの画素（元と、3D の対称の写しと、それら全部の 2D の対称の写しを 1 つにしたもの）と、ダブの面の点を作る。3D の写しまでは
+    /// [`SurfaceStroke::build_model_dab`]、2D の写しは UV の平面の上で写す（`uv_symmetry::copy_by_canvas`。写しが多すぎればダブを断る）。
+    #[allow(clippy::too_many_arguments)]
+    fn build_dab(
+        &mut self,
+        doc: &Document,
+        hit: Option<SurfaceHit>,
+        at: Vec2,
+        scale: f32,
+        radius: f32,
+        form: &Form<'_>,
+        dual: Option<(DualBrushMode, &DualCells)>,
+        weighted: bool,
+    ) -> (SurfaceDabResult, Option<SurfaceHit>) {
+        let (result, hit) = self.build_model_dab(doc, hit, at, scale, radius, form, dual, weighted);
+        if self.canvas.is_empty() {
+            return (result, hit);
+        }
+        (
+            super::uv_symmetry::copy_by_canvas(result, &self.canvas, self.width, self.height),
+            hit,
+        )
+    }
+
+    /// ダブの画素（元と 3D の対称の写しを 1 つにしたもの）と、ダブの面の点を作る。at・scale は画面の中心と、モデルの単位 1 の画面の大きさ、radius は
     /// モデルの単位の半径（丸の大きさ・写しを探す距離）。面の点は、中心の下の塗るセットの面の点（hit）か、それが無ければ元の側の画素の点
     /// （[`SurfaceStroke::fallback_hit`]。元の側が何も塗らなければ None）。対称の写しは、その点を写して探す（中心がほかのセット・背景に
     /// あるダブでも、元の側が塗る縁を写しの側にも塗る）。dual はデュアルブラシの合わせ方と溜まり、weighted は面の向きで弱めるか。
     #[allow(clippy::too_many_arguments)]
-    fn build_dab(
+    fn build_model_dab(
         &mut self,
         doc: &Document,
         hit: Option<SurfaceHit>,
@@ -1362,10 +1406,9 @@ impl SurfaceStroke {
                     &mut positions,
                 ) {
                     CopyHit::Duplicate => continue,
+                    // 写しの点を探す仕事が上限を超えた: ダブごと断る（呼び手がストロークを取り消す）
                     CopyHit::BudgetExceeded => {
-                        self.stats.refused += 1;
-                        self.note = Some(DabRefusal::BvhBudget);
-                        continue;
+                        return (result.reject(DabRefusal::BvhBudget), Some(hit));
                     }
                     CopyHit::NoSurface => {
                         outcome = MirrorOutcome::NoSurface;
@@ -1480,9 +1523,7 @@ impl SurfaceStroke {
                     dab
                 };
                 if let Some(why) = dab.refusal {
-                    self.stats.refused += 1;
-                    self.note = Some(why);
-                    continue;
+                    return (result.reject(why), Some(hit));
                 }
                 if dab.pixels.is_empty() {
                     outcome = MirrorOutcome::Hidden;
@@ -1848,19 +1889,9 @@ fn spread(hit: &SurfaceHit, pixels: &[&super::SurfacePixel], radius: f32) -> f32
     fmax(radius * 2.0, (far * 1.05).min(radius * 4.0))
 }
 
-/// 三角形の上のテクセル 1 つの、モデルの単位の大きさ（面積の比の平方根。潰れていれば 0）。
+/// 三角形の上のテクセル 1 つの、モデルの単位の大きさ（[`super::SurfaceTriangle::texel_size`]）。
 fn texel_size(t: &super::SurfaceTriangle, width: i32, height: i32) -> f32 {
-    let area = magnitude(super::unity::cross(t.b - t.a, t.c - t.a)) as f64 * 0.5;
-    let (e1, e2) = (t.uv_b - t.uv_a, t.uv_c - t.uv_a);
-    let uv = (e1.x as f64 * e2.y as f64 - e1.y as f64 * e2.x as f64).abs()
-        * 0.5
-        * width as f64
-        * height as f64;
-    if area > 0.0 && uv > 0.0 && area.is_finite() && uv.is_finite() {
-        (area / uv).sqrt() as f32
-    } else {
-        0.0
-    }
+    t.texel_size(width, height)
 }
 
 /// Unity の `Vector3.ProjectOnPlane`。
@@ -1893,7 +1924,7 @@ pub fn world_radius(geometry: &SurfaceGeometry, brush_radius: f64, document_widt
 
 /// 区間の始まりの点でのダブの間隔（面の上の直径 × 間隔を画面に直す。0.5 以上）。面に当たらなければ、直前に面に当たった所の
 /// 大きさ（scale はモデルの単位 1 の画面の大きさ）で、それも無ければ 1。
-fn gap(
+pub(crate) fn gap(
     geometry: &SurfaceGeometry,
     view: &CameraView,
     world_radius: f32,

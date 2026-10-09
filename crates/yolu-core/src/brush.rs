@@ -400,6 +400,8 @@ pub(crate) struct StrokeState {
     /// 3D の面のダブの、今のダブのゆらぎの係数（[`StrokeState::begin_surface_dab`] で覚える）。None は面のダブを始めていない
     /// （パスなど: 係数 1・紙の質感なしで塗る）。
     surface_look: Option<SurfaceDabLook>,
+    /// 3D の対称（[`Brush::model_symmetry`]）の写しを作れなかった最後の理由。
+    copy_note: Option<crate::geometry::MirrorOutcome>,
 }
 
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
@@ -516,6 +518,7 @@ impl StrokeState {
             rollback_bytes: 0,
             selection: None,
             surface_look: None,
+            copy_note: None,
             brush: Arc::new(brush),
         }
     }
@@ -995,9 +998,12 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(self.width - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(self.height - 1);
-        if self.brush.symmetry.enabled() {
-            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
-            return self.symmetric_dual_dab(&shape, extent);
+        if self.brush.symmetry.enabled() || self.brush.model_symmetry.is_some() {
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
+            // ダブ（中心が面に無い）は、普通のダブ
+            if let Some(maps) = self.copy_maps(x, y, radius)? {
+                return self.symmetric_dual_dab(&shape, extent, &maps);
+            }
         }
         if min_x > max_x || min_y > max_y {
             return Ok(());
@@ -1061,9 +1067,12 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(w - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
-        if brush.symmetry.enabled() {
-            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
-            return self.symmetric_dab(surface, brush, shape, extent, changed);
+        if brush.symmetry.enabled() || brush.model_symmetry.is_some() {
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
+            // ダブ（中心が面に無い）は、普通のダブ
+            if let Some(maps) = self.copy_maps(x, y, shape.radius)? {
+                return self.symmetric_dab(surface, brush, shape, extent, &maps, changed);
+            }
         }
         if min_x > max_x || min_y > max_y {
             return Ok(false);

@@ -8,7 +8,9 @@
 //!   Alt + 左を動かさずに離すと、そこがクローンの元（動かせばスナップ回転）。修飾は押しの始めに持っているもので決める。
 //! - ペンはマウスと同じ決まり: サイドボタンを押した接触は右ボタン、Alt・Space・Ctrl+Space を押した接触は左ボタンにそれらを足したもの。
 //!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて、離すまで変えない（`pen::PenPress`）。
-//! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）は、面のストロークに通す（core の `SurfaceStrokeOptions`）。
+//! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）と 2D の対称（UV の平面。3D の写しの後に当てる）は、面のストロークに通す
+//!   （core の `SurfaceStrokeOptions`）。
+//! - クイックマスクが入っている間のブラシ・消しゴムは、選択ペン・選択消し（2D のキャンバスと同じ。`quick`）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
 //! - 速い動き（1 回の入力の区間が長い）でもストロークを捨てない: 面のストロークは、1 回の入力とフレームごとに決まった数までダブを
@@ -40,7 +42,7 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
             .is_none_or(|layer| layer == ui.layer_id())
 }
 
-fn local(rect: Rect, p: Pos2) -> Vec2 {
+pub(super) fn local(rect: Rect, p: Pos2) -> Vec2 {
     Vec2::new(p.x - rect.left(), p.y - rect.top())
 }
 
@@ -206,6 +208,11 @@ fn begin(
             return;
         }
     }
+    // クイックマスクが入っていれば、ブラシ・消しゴムは選択ペン・選択消しとして働く（2D のキャンバスと同じ。選択範囲の UV の画素へ）
+    if app.sel.quick {
+        super::quick::begin(app, &model, rect, at, pressure, source, eraser);
+        return;
+    }
     let Some(layer) = app.selected_layer else {
         app.refuse(
             Source::View3d,
@@ -249,9 +256,12 @@ fn begin(
             },
         }
     };
-    // 3D の対称。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
+    // 3D の対称と 2D の対称（UV の平面。3D の写しの後に当てる）。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
     let symmetry = app.sel.symmetry.surface.setup();
-    if symmetry.is_some() && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_)) {
+    let canvas_symmetry = Some(app.canvas_symmetry()).filter(|s| s.enabled());
+    if (symmetry.is_some() || canvas_symmetry.is_some())
+        && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
+    {
         app.refuse(
             Source::View3d,
             app.lang.pick(
@@ -306,6 +316,7 @@ fn begin(
             effect,
             projection: app.view3d.projection,
             projection_memory: None,
+            canvas_symmetry,
         },
     ) {
         Ok(s) => {
@@ -398,6 +409,11 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
         crate::region::bucket::drag_surface(app, rect, at);
         return;
     }
+    // クイックマスクのストロークは、選択範囲の被覆へ
+    if app.view3d.input.cover.is_some() {
+        super::quick::add(app, rect, at, pressure);
+        return;
+    }
     if app.view3d.input.surface.is_none() {
         return;
     }
@@ -469,6 +485,10 @@ pub fn finish(app: &mut AppState, cancel: bool) {
         app.view3d.stroke_ended();
         return;
     }
+    if super::quick::finish(app, cancel) {
+        app.view3d.stroke_ended();
+        return;
+    }
     let surface = app.view3d.input.surface.take();
     let Some(mut stroke) = app.stroke.take() else {
         app.doc.cancel_active_stroke();
@@ -493,9 +513,6 @@ pub fn finish(app: &mut AppState, cancel: bool) {
                 app.fail(Source::View3d, app.lang.surface_error(&e));
             }
             _ => {
-                if let Some(note) = surface.as_ref().and_then(|s| s.note) {
-                    app.warn(Source::View3d, app.lang.dab_refusal(note));
-                }
                 if let Some(s) = surface.as_ref() {
                     note_symmetry(app, s);
                     if s.stats.lost > 0 {
@@ -957,11 +974,15 @@ fn press_kind(
 /// 入力を当てる（rect はタブの中身の表示域。`foreign` はこの押しが egui でほかの部品のものか）。
 pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {
     let ctx = ui.ctx().clone();
-    // ストロークの札をほか（キャンバスの Esc・フォーカスを失ったとき）が手放したら、こちらも終える
+    // ストロークの札をほか（キャンバスの Esc・フォーカスを失ったとき）が手放したら、こちらも終える（クイックマスクのストロークは、
+    // 選択ペンの被覆が残っている間は続ける）
+    let quick_live =
+        app.view3d.input.cover.is_some() && app.sel.pen.as_ref().is_some_and(|a| a.quick);
     if app.view3d.input.stroke.is_some()
         && app.stroke.is_none()
         && app.region.drag.is_none()
         && app.region.leftover_drag.is_none()
+        && !quick_live
     {
         app.view3d.stroke_ended();
     }
@@ -1453,21 +1474,22 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         Color32::from_white_alpha(230),
         140,
     );
-    // 写しのカーソル（描いている最中は、3D のストローク以外では出さない）
-    let Some(sym) = active_symmetry(app) else {
-        return true;
-    };
-    if app.view3d.material != hit.material {
+    // 写しのカーソル（描いている最中は、3D のストローク以外では出さない。クイックマスクは対称を使わない）
+    if app.view3d.material != hit.material || app.sel.quick {
         return true;
     }
-    for copy in copy_hits(
-        &model.geometry,
-        &hit,
-        sym.mirror.as_ref(),
-        sym.radial.as_ref(),
-        radius,
-    ) {
-        let alpha = if seen_from_camera(&model.geometry, view.position, &copy) {
+    let copies = match active_symmetry(app) {
+        Some(sym) => copy_hits(
+            &model.geometry,
+            &hit,
+            sym.mirror.as_ref(),
+            sym.radial.as_ref(),
+            radius,
+        ),
+        None => Vec::new(),
+    };
+    for copy in &copies {
+        let alpha = if seen_from_camera(&model.geometry, view.position, copy) {
             242
         } else {
             100
@@ -1476,7 +1498,70 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
             draw_ring(&painter, points, symmetry_color(alpha), alpha / 2);
         }
     }
+    canvas_copy_rings(app, &painter, &view, rect, &hit, &copies, radius);
     true
+}
+
+/// 2D の対称の写しのカーソル: 元と 3D の写しの面の点の UV を、キャンバスの上で 2D の対称で写し、写した UV の下の面（今のテクスチャ
+/// セットの UV の格子で引く。作ってあるときだけ）に水色の円を出す（カメラから見えない所は薄く）。円の大きさは、写した元と写し先の
+/// テクセルの細かさの比で直す（2D の写しは UV の上で同じ大きさなので、面の上では写し先のテクセルの大きさに合う）。
+fn canvas_copy_rings(
+    app: &AppState,
+    painter: &egui::Painter,
+    view: &CameraView,
+    rect: Rect,
+    hit: &SurfaceHit,
+    copies: &[SurfaceHit],
+    radius: f32,
+) {
+    let canvas = match app.view3d.input.stroke {
+        Some(_) if app.view3d.input.surface.is_none() => return,
+        _ => app.canvas_symmetry(),
+    };
+    let (Some(grid), Ok(transforms)) = (app.cached_region_grid(), canvas.transforms()) else {
+        return;
+    };
+    if !canvas.enabled() {
+        return;
+    }
+    let geometry = grid.geometry();
+    let size = DVec2::new(app.doc.width() as f64, app.doc.height() as f64);
+    let (doc_w, doc_h) = (app.doc.width() as i32, app.doc.height() as i32);
+    let reach = app.brush.radius as f64;
+    for h in std::iter::once(hit).chain(copies) {
+        let (x, y) = (h.uv.x as f64 * size.x, h.uv.y as f64 * size.y);
+        let from = geometry
+            .triangles()
+            .get(h.triangle as usize)
+            .map_or(0.0, |t| t.texel_size(doc_w, doc_h));
+        for t in transforms.iter().skip(1) {
+            let (qx, qy) = t.map(x, y);
+            let Some((index, w)) = grid.locate(DVec2::new(qx, qy), size, reach) else {
+                continue;
+            };
+            let tri = &geometry.triangles()[index as usize];
+            let to = tri.texel_size(doc_w, doc_h);
+            let ring = if from > 0.0 && to > 0.0 {
+                radius * to / from
+            } else {
+                radius
+            };
+            let copy = SurfaceHit {
+                position: tri.a * w.x + tri.b * w.y + tri.c * w.z,
+                normal: tri.normal(),
+                triangle: index,
+                ..*h
+            };
+            let alpha = if seen_from_camera(geometry, view.position, &copy) {
+                242
+            } else {
+                100
+            };
+            if let Some(points) = ring_points(view, rect, copy.position, copy.normal, ring) {
+                draw_ring(painter, points, symmetry_color(alpha), alpha / 2);
+            }
+        }
+    }
 }
 
 /// 線 1 本（外が黒の細い影、中が水色）。画面の外の端点は、点どうしを結ぶだけ（クリップは painter が行う）。
