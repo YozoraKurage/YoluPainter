@@ -49,11 +49,12 @@ jobs:
             xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
-      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）と画面の試験を並べるツールの試験
+      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）、画面の試験を並べるツールの試験、通信の見張りのツールの試験
         if: ${{ !cancelled() }}
         run: |
           python3 tools/test-dist.py
           python3 tools/test-render-tests.py
+          python3 tools/test-network-watch.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -123,6 +124,57 @@ jobs:
         with:
           name: snapshot-diffs
           path: ${{ runner.temp }}/snapshot-diffs
+          if-no-files-found: ignore
+
+  # 実際の通信の見張り（tools/network-watch.py）。本物のアプリを strace の下で動かし、外への接続の試みが更新の確認の curl だけであることを見る。
+  # 画面の試験のジョブと別にしているのは、更新の確認を動かすために更新用の公開鍵を組み込んで作るため: 公開鍵の環境変数を変えると yolu-update と
+  # yolu-app を作り直すので、同じジョブで作ると、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになる。
+  # 組み込む鍵は使い捨ての公開鍵（秘密鍵は捨てた。配る物の鍵ではない）で、このジョブのアプリはどこにも配らない。
+  linux-network:
+    name: Linux の通信の見張り（strace）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
+          cache-on-failure: true
+      - name: ビルドとソフトウェア描画と strace の依存を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
+            libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
+            libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth strace xdotool
+      - name: 見張りのツールの試験
+        run: python3 tools/test-network-watch.py
+      - name: アプリのビルド（使い捨ての更新用の公開鍵つき）
+        env:
+          YOLUPAINTER_UPDATE_PUBLIC_KEY: 6acc8faaa5f8beb6897bc7936ab6b930853dc4e563e4dc5f49a76f156ab16201
+        run: cargo build -p yolu-app -p yolu-cli --locked
+      # 起動 4 回（既定・受け口あり・開き直し・更新の確認あり）。外への接続・送信・名前の引き・待ち受けの試みを読み、終わりに場面ごとの表を出す。
+      - name: 実際の通信の見張り
+        env:
+          WGPU_BACKEND: vulkan
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a -s "-screen 0 1920x1080x24" python3 tools/network-watch.py --log-dir "$RUNNER_TEMP/network-logs" --time-limit 900
+      - name: strace のログを残す
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: network-logs
+          path: ${{ runner.temp }}/network-logs
           if-no-files-found: ignore
 
   windows:

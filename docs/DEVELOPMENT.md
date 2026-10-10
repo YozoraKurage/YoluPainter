@@ -104,6 +104,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 
 - Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
 - Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
+- Linux の通信の見張り（`ubuntu-24.04`。画面の試験とは別のジョブ）: 本物のアプリを `strace` の下で動かし、外への通信の試みが無いことを `tools/network-watch.py` が確かめます（[通信の見張り](#通信の見張り)の段 2）。別のジョブにしているのは、更新の確認を動かすために更新用の公開鍵（使い捨て）を組み込んで作る必要があり、その環境変数を変えると yolu-update と yolu-app を作り直すため（同じジョブに置くと、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになります）。ツールの試験（`tools/test-network-watch.py`）は「Linux の試験と静的検査」でも回ります。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib`。続けて、束の中の `headless_` の試験のうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面の試験が Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致の試験が通ることを見ます。GPU・画面の統合試験と、配る物（.app・署名）は対象外です。
 - どの OS でも [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
@@ -145,6 +146,32 @@ cargo test -p xtask netguard # 同じ確かめ（CI では `cargo test --workspa
 - 足りない印は `MARKERS` に足し、`SNIPPETS`（試験の作り物のソース）にも 1 つ足します（両方の印の名前が揃わないと試験が落ちます）。
 
 見張りが読むのはソースと依存の宣言だけです。実際にどこへ接続するかは見ません（依存の中のコードが接続する場合、名前の一覧にない部品が入った場合など）。
+
+### 段 2: 実際の通信を見る（Linux だけ）
+
+```sh
+# 更新の確認は、更新用の公開鍵を組み込んだビルドでだけ動く。使い捨ての公開鍵を渡して作る（鍵を変えると yolu-update と yolu-app を作り直す）
+YOLUPAINTER_UPDATE_PUBLIC_KEY=6acc8faaa5f8beb6897bc7936ab6b930853dc4e563e4dc5f49a76f156ab16201 cargo build -p yolu-app -p yolu-cli --locked
+xvfb-run -a -s "-screen 0 1920x1080x24" python3 tools/network-watch.py --log-dir /tmp/network-logs
+python3 tools/test-network-watch.py   # ツール自身の試験（アプリは起動しない）
+```
+
+`strace`・`xdotool`・`xvfb`・Mesa の lavapipe（画面の試験と同じ）が要ります。`--only main,reopen,idle,update` で起動を絞れます。
+
+`tools/network-watch.py` は、アプリ（`yolupainter`）を `strace -f` の下で xvfb の中に起動し、CLI（`yolupainter-cli`、これも `strace` の下）で操作して、`connect`・`bind`・`listen`・`sendto`・`sendmsg`・`sendmmsg`・
+`execve` を読みます。届いたか拒まれたかは見ず、試みだけで判定するので、CI から GitHub に届かなくても同じ結果になります。設定のフォルダ・書き出し先・Live Link のフォルダは、起動ごとの一時のフォルダです。
+
+- 起動は 4 回: `main`（受け口を入れて、起動・更新の問いを Esc で「いいえ」・レイヤーと効果の編集・`xdotool` の筆・保存・PNG とテンプレートと PSD の書き出し・Live Link で 3D のモデルを開く・保存・Ctrl+Q で終了）、
+  `reopen`（保存した 3D のモデル入りの文書を起動の引数で開き直す・見本）、`idle`（受け口を入れない既定の設定。更新の問いは出たまま放っておく）、`update`（更新の確認を「する」にした起動）。
+  描く操作は CLI・MCP の命令にないので、筆だけは `xdotool` で動かします（`xdotool` が無い・筆が届かないときは、その場面を飛ばして表に書きます）。
+- 落とす条件: PC の中（AF_UNIX の画面や D-Bus・AF_NETLINK）と 127.0.0.1・::1 のほかへの接続・送信・待ち受け。名前の引き（宛先のポートが 53・853・5353。127.0.0.53 のようなループバックの中継も、systemd-resolved の UNIX ソケットも）。
+  受け口を入れていない起動で待ち受けること、入れた起動で 127.0.0.1 のその番号以外で待つこと、待つ呼び出しが 1 つも見えないこと。`curl` を更新の確認の場面以外で起動すること、アプリが落ちたときのダイアログ（zenity など）の起動。
+- 許す通信: 更新の確認の場面（`update` の起動）で、`curl`（子のスレッドも）が github.com の YoluPainter の Releases の URL へ向かう試み。ほかのプロセスの外への試みと、ほかの URL への curl は落とします。
+- 始めに、外への connect・sendto・名前の引き・ループバックを試みる小さなプログラムを `strace` で読み、見張りが捉えることを確かめます（`strace` が使えない環境や読みの崩れで、アプリの結果が空振りにならないように）。
+- 終わりに、場面ごとの接続の数と宛先の表を出します（落ちたときは、どの起動の・どの場面の・どのプロセスの・どの呼び出しかを挙げます。ログの全文は `--log-dir`）。
+
+保証の射程: Linux の `strace` で見える試み（システムコール）だけで、通した場面だけです。Windows は段 1 だけ（ソースと依存の見張り）で、段 2 に当たる試験はありません。画面を閉じる操作は Ctrl+Q のキーで通し、
+外からの操作の受け口を実行中に入れて切る操作は通していません（入れた起動と入れない起動を別々に見ています。実行中に入れて切る動きは、`crates/yolu-app/tests/headless/mcp_server.rs` の試験が 127.0.0.1 の上で確かめます）。
 
 ## Windows 向けの画面なし試験（Wine）
 
