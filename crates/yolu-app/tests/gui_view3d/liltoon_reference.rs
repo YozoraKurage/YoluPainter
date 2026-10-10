@@ -1648,6 +1648,12 @@ fn render_as(
             h.set_size(size);
             h.run();
         }
+        let rect = h.state().view3d_rect().expect("3D のタブ");
+        assert_eq!(
+            (rect.width().round(), rect.height().round()),
+            (w as f32, hgt as f32),
+            "12 回の調整で、3D の表示域が指定の大きさ（{w}×{hgt}）に届かない"
+        );
     }
     {
         let state = &mut h.state_mut().state;

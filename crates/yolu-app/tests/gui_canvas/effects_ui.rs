@@ -1468,10 +1468,9 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
             // 開いたメニューも
             let texts = shown_texts(&h);
             // レイヤーの一覧とプロパティの欄（右の列。状態の帯の知らせは状態なので除く）
-            for (text, rect) in texts
-                .iter()
-                .filter(|(_, r)| r.left() > rx() + 20.0 && r.top() > 280.0 && r.bottom() < 976.0)
-            {
+            for (text, rect) in texts.iter().filter(|(_, r)| {
+                r.left() > rx() + 20.0 && r.top() > 280.0 && r.bottom() < 1400.0 - 24.0
+            }) {
                 assert!(
                     !text.contains('。') && !text.ends_with('.'),
                     "{lang:?}/{select}: 文の形の文字 {text:?}"

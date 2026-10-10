@@ -221,7 +221,7 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
         for (width, stacked) in [(1280.0, false), (960.0, true)] {
             let mut h = app(width, 800.0, 128);
             if stacked {
-                // 狭い列（前の既定の最小のウィンドウと同じ、170 点ほどの幅）にする
+                // 狭い列（今の既定の右の列は最小のウィンドウでも 232 点あるので、前の版の最小のウィンドウと同じ 170 点ほどの幅に動かす）にする
                 set_center_share(&mut h, 0.755);
             }
             apply(&mut h, Action::M2Ui(UiOp::Language(lang)));

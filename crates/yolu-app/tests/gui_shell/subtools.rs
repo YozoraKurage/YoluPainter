@@ -702,11 +702,35 @@ fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
             "{tool:?}"
         );
         assert_eq!(count(&h, "16 px"), usize::from(tool.is_sized()), "{tool:?}");
-        assert_eq!(
-            count(&h, "ツールプロパティ"),
-            0,
-            "{tool:?}: ツールプロパティはタブの名前だけ（見出しの帯は無い）"
+        // ツールプロパティの中身（タブの帯の下から、ブラシサイズの上まで）に描いた文字: 「ツールプロパティ」の見出しの帯は無く（タブの名前だけ）、
+        // 設定のあるブラシでは中身の文字が出ている
+        let (bar, size) = (
+            h.state().tab_rects[&Tab::ToolProperties],
+            h.state().tab_rects[&Tab::BrushSize],
         );
+        let mut texts = Vec::new();
+        fn collect(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.pos)),
+                _ => {}
+            }
+        }
+        for shape in &h.output().shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        let body: Vec<&str> = texts
+            .iter()
+            .filter(|(_, p)| p.x < bar.right() && p.y > bar.bottom() && p.y < size.top())
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert!(
+            !body.contains(&"ツールプロパティ"),
+            "{tool:?}: ツールプロパティはタブの名前だけ（見出しの帯は無い） {body:?}"
+        );
+        if tool == Tool::Brush {
+            assert!(!body.is_empty(), "{tool:?}: 中身が出ている");
+        }
     }
     assert!(Tool::Brush.is_sized() && Tool::Eraser.is_sized() && Tool::SelectPen.is_sized());
     assert!(!Tool::Fill.is_sized() && !Tool::Wand.is_sized() && !Tool::Liquify.is_sized());
