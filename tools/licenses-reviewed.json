@@ -4899,13 +4899,21 @@
             "sha256": "3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8"
           },
           {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Regular-Lines.ttf",
+            "sha256": "75f2740ab18211e3e79c3373c11e3e3b187389a9942d78f0fecb8cc08eb509a8"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Bold-Lines.ttf",
+            "sha256": "8287377180647c950182bb0d078e71753bf5a80fb06bdce9fa767d17499c1170"
+          },
+          {
             "path": "crates/yolu-app/assets/fonts/OFL.txt",
             "sha256": "e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md",
-          "sha256": "705e49df60df9b129b8bf5058e5040c0810be752c248fd60eeb97d935c544be7"
+          "sha256": "831d23e389627b8c47c2d1e9740ad98cfb1d42288bb5a69a9baa95d976edd00c"
         },
         "file_globs": [
           "crates/yolu-app/assets/fonts/*.ttf"

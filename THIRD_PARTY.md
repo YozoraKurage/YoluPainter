@@ -92,24 +92,32 @@ Fluent UI System Icons と Phosphor Icons は MIT。
 アイコン 113 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
 Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
 
-### 同梱の画面の書体（BIZ UDPGothic）
+### 同梱の画面のフォント（BIZ UDPGothic）
 
-`yolu-app` は画面の書体として **BIZ UDPGothic**（Regular と Bold。モリサワの BIZ UD ゴシックを Google Fonts が公開したもの）を実行ファイルに
-埋め込み、全 OS で同じ書体を使う。許諾は **SIL Open Font License 1.1**。
+`yolu-app` は画面のフォントとして **BIZ UDPGothic**（Regular と Bold。モリサワの BIZ UD ゴシックを Google Fonts が公開したもの）を実行ファイルに
+埋め込み、全 OS で同じフォントを使う。許諾は **SIL Open Font License 1.1**。
 配布元は [googlefonts/morisawa-biz-ud-gothic](https://github.com/googlefonts/morisawa-biz-ud-gothic) のリリース v1.051
-（コミット `18934af56b9c003ca58c54bffbf226848cb11032`）の TTF で、加工せずに `crates/yolu-app/assets/fonts/` へ置く。
+（コミット `18934af56b9c003ca58c54bffbf226848cb11032`）の TTF で、Regular と Bold は加工せずに `crates/yolu-app/assets/fonts/` へ置く。
 許諾の全文は同じ場所の `OFL.txt`（配布元の同じコミットの原文）と
-[書体の第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
+[フォントの第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。フォントはクレートではないので、上の件数には含めない
 （アイコンと同じ扱い）。
 
 | 同梱ファイル | SHA-256 |
 |---|---|
 | `BIZUDPGothic-Regular.ttf` | `595dfefa96dcb281c40f5d560841f3fc623b0d9d12064481a7daf78044462673` |
 | `BIZUDPGothic-Bold.ttf` | `3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8` |
+| `BIZUDPGothic-Regular-Lines.ttf` | `75f2740ab18211e3e79c3373c11e3e3b187389a9942d78f0fecb8cc08eb509a8` |
+| `BIZUDPGothic-Bold-Lines.ttf` | `8287377180647c950182bb0d078e71753bf5a80fb06bdce9fa767d17499c1170` |
 | `OFL.txt` | `e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc` |
 
-書体・アイコン・筆先の各ファイルと表記の SHA-256、許諾の種類は `tools/licenses-reviewed.json` の `bundled` に固定し、`tools/third-party.py` が app の照合のたびに確かめる
-（確認済みファイルの変更・欠落、対象フォルダーへの未登録ファイルの追加では全文束を作らない）。書体を加工して配る場合は、予約された書体名などの条件を再確認する。
+`*-Lines.ttf` は、Regular と Bold から下線（_）・ダッシュ（– — ―）・マイナス（−）・上線（‾ ¯）など 9 字の輪郭だけを、ヒンティングの命令を外して抜き出した
+派生のフォント（各約 2.4 KB）で、`tools/make-ui-font-lines.py`（fontTools 4.65.0）で作り直せる。原本の命令は、細い棒の上下の縁を別々に画素の格子へ丸め、
+12 pt の `_` などを厚み 0 にして描かれなくするので、画面のフォントの先頭に置いて、この字だけを命令なしで描く。
+`OFL.txt` の著作権表記に予約されたフォント名の宣言は無い。原本の `BIZ UDPGothic` は Morisawa Inc. の商標なので、派生の名前は `YoluPainter UI Lines` に変え、
+著作権表記・許諾の文・商標の注記は name 表に残して、同じ SIL Open Font License 1.1 のまま同梱する。
+
+フォント・アイコン・筆先の各ファイルと表記の SHA-256、許諾の種類は `tools/licenses-reviewed.json` の `bundled` に固定し、`tools/third-party.py` が app の照合のたびに確かめる
+（確認済みファイルの変更・欠落、対象フォルダーへの未登録ファイルの追加では全文束を作らない）。フォントを加工して配る場合は、予約されたフォント名などの条件を再確認する。
 
 `libz-sys` の Rust 側は MIT を選び、同梱 zlib の Zlib 許諾も含める。
 `unicode-ident` の Unicode-3.0、
