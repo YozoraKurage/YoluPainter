@@ -125,7 +125,7 @@ fn shader_pipeline(
     entry: &str,
 ) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("core の合成・ダブ"),
+        label: Some("yolu-core-composite-dab"),
         source: wgpu::ShaderSource::Wgsl(plan::shader_source(variant).into()),
     });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

@@ -339,7 +339,7 @@ fn display_pipeline(
     options: &ResidentOptions,
 ) -> wgpu::ComputePipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("常駐表示"),
+        label: Some("yolu-resident-display"),
         source: wgpu::ShaderSource::Wgsl(plan::shader_source(variant).into()),
     });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
