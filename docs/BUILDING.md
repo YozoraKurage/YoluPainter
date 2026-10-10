@@ -28,6 +28,16 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
+配る形（Apple Silicon 向けと Intel 向けの両方のコードを持つ universal の `YoluPainter.app` を入れた zip）は、Xcode Command Line Tools（`lipo`・`codesign`・`iconutil`・`sips`・`ditto`・`plutil`）、Python 3.10 以降、2 つの Rust のターゲットを用意して、リポジトリの根で作ります。
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo xtask build --target universal-apple-darwin --release
+cargo xtask bundle --target universal-apple-darwin
+```
+
+`target/dist/yolupainter-<版>-macos-universal-experimental.zip` ができます。2 つのターゲットでビルドして `lipo` で 1 つにし（最低の macOS は 11.0 に揃えます）、今あるロゴからアイコンを作り、ad-hoc の署名（`codesign -s -`）をして `ditto` で zip にします。Apple の開発者の署名と公証はしません。署名なしの `.app` の開き方は [ダウンロードと更新の「Mac（試作）」](INSTALL.md#mac試作) にあります。
+
 ペンタブレット（Wacom・XP-Pen など）は、ドライバーが macOS の標準のイベントで送る筆圧・傾き・消しゴムの端・サイドボタンを読みます（試し）。メーカーごとの SDK は使いません。おかしいときは「編集 → 設定…」の「ペン」の「タブレットの筆圧（試し）」を切ると、ペンはマウスと同じに描きます。ペンの筆圧が強すぎる・弱すぎるときは「編集 → 設定…」の「ペン」の「筆圧の調整」で直せます。
 
 ## Linux（試用）

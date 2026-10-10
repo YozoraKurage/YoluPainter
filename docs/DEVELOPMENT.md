@@ -109,7 +109,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
   （手元では `cargo deny --locked check advisories bans licenses sources`）。cargo-deny は版を固定して `cargo install` します（`deny.toml` の書式は版に結びつくので、上げるときは一緒に確かめます）。
   `paste`（RUSTSEC-2024-0436、保守の終わり）は egui_dock がビルドの時だけ使うマクロで、脆弱性ではないので理由つきで無視しています。見つけた脆弱性は、更新で直せるか、使われ方に当たらないかを確かめ、後者だけを理由つきで `ignore` に足します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
-- macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib`。続けて、束の中の `headless_` の試験のうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面の試験が Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致の試験が通ることを見ます。GPU・画面の統合試験と、配る物（.app・署名）は対象外です。
+- macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib`。続けて、束の中の `headless_` の試験のうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面の試験が Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致の試験が通ることを見ます。GPU・画面の統合試験は対象外です。配る物（.app と ad-hoc の署名）はこのジョブでは作らず、`dist` のジョブ（`dist-build.yml`）が macOS の runner で作ります（[配布の手順](RELEASING.md#macos-の試作)）。
 - どの OS でも [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合試験は通常の `cargo test` に含みます。
@@ -210,7 +210,7 @@ python3 tools/third-party.py --bundle --offline
 
 初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。
 
-`--target x86_64-pc-windows-msvc` または `--target x86_64-unknown-linux-gnu` を指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
+`--target x86_64-pc-windows-msvc`・`--target x86_64-unknown-linux-gnu`・`--target universal-apple-darwin`（macOS の配布物。`aarch64-apple-darwin` と `x86_64-apple-darwin` の依存の和。この 2 つ単独も指せます）のどれかを指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
 
 ## CPU の速さをまとめて測る
 

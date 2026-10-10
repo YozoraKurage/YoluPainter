@@ -64,7 +64,7 @@ The extension asks the app when Claude Desktop starts it. If the app is not acce
 ### Other clients
 
 Clients that speak Streamable HTTP MCP can connect to `http://127.0.0.1:17347/mcp`. Clients that only use standard input and output can start
-`yolupainter-cli mcp` (with the installer: `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`; add `--port number` if you changed the port).
+`yolupainter-cli mcp` (with the installer: `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`; in the experimental Mac zip: `YoluPainter.app/Contents/MacOS/yolupainter-cli`; add `--port number` if you changed the port).
 
 ## Tools and resources
 

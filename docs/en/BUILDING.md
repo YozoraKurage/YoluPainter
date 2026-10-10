@@ -28,6 +28,16 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
+To build the distribution form (a zip holding a universal `YoluPainter.app` with code for both Apple Silicon and Intel), prepare Xcode Command Line Tools (`lipo`, `codesign`, `iconutil`, `sips`, `ditto` and `plutil`), Python 3.10 or later, and the two Rust targets, then run these at the repository root.
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo xtask build --target universal-apple-darwin --release
+cargo xtask bundle --target universal-apple-darwin
+```
+
+This makes `target/dist/yolupainter-<version>-macos-universal-experimental.zip`. It builds for the two targets and joins them with `lipo` (the minimum macOS is set to 11.0 for both), makes the icon from the existing logo, signs the bundle ad hoc (`codesign -s -`), and zips it with `ditto`. There is no Apple Developer signature or notarization. How to open an unsigned `.app` is in [“Mac (experimental)” in Download and updates](INSTALL.md#mac-experimental).
+
 For pen tablets (Wacom, XP-Pen and others), the app reads the pressure, tilt, eraser end and side buttons that the driver sends as standard macOS events (experimental). No manufacturer SDK is used. If something is off, turn off Tablet pressure (experimental) under Pen in Edit → Settings…, and the pen draws like a mouse. If the pen's pressure is too strong or too weak, adjust it in Pen Pressure under Pen in Edit → Settings….
 
 ## Linux (experimental)

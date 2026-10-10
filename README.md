@@ -30,6 +30,18 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 Windows（64 ビット）のインストーラーと zip は [Releases](https://github.com/YozoraKurage/YoluPainter/releases) にあります。
 インストールの選択肢と更新は [docs/INSTALL.md](docs/INSTALL.md) を見てください。
 
+Mac には、試作の zip（`yolupainter-<版>-macos-universal-experimental.zip`）も付きます。Apple Silicon 向けと Intel 向けの両方のコードを持つ（universal の）`YoluPainter.app` が入っています。
+Apple の開発者の署名と公証はなく（署名は ad-hoc だけ）、アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
+Apple Silicon の Mac（macOS 27）で確かめたのは、起動、設定とログの書き込み、署名、universal の形までです。ウィンドウの表示と描画は確かめていません。Intel の Mac では動かしていません。
+
+署名がないので、zip を展開した `YoluPainter.app` を初めて開くと macOS が止めます。次の順で開きます（[Apple の手引き](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)）。
+
+1. `YoluPainter.app` をダブルクリックします。止められるので、表示を閉じます。
+2. アップルメニュー →「システム設定」を開き、サイドバーの「プライバシーとセキュリティ」を押します。
+3. 「セキュリティ」の項目に移動して、「開く」を押します。
+4. 「このまま開く」を押します（アプリを開こうとしたあと、約 1 時間だけ使えます）。
+5. ログインパスワードを入力して、「OK」を押します。以後は、ダブルクリックで開きます。
+
 ## ソースからのビルド
 
 Rust の stable と C/C++ のビルド環境が要ります。

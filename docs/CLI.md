@@ -6,7 +6,7 @@
 スクリプトや AI から、レイヤー・マスク・効果の読み書き、見本の画像、書き出し、保存を呼べます。AI のアシスタントは、起動中のアプリへ MCP で直接つなぎます
 （[MCP の文書](MCP.md)）。標準入出力の MCP しか使えないクライアントのための中継も、同じプログラム（`yolupainter-cli mcp`）にあります。
 
-インストーラーで入れたときは、アプリと同じフォルダ（既定は `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`）に入ります。zip と tar.gz でも、アプリの隣にあります。
+インストーラーで入れたときは、アプリと同じフォルダ（既定は `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`）に入ります。zip と tar.gz でも、アプリの隣にあります。Mac の試作の zip では、`YoluPainter.app` の中の `Contents/MacOS/yolupainter-cli` です（[ダウンロードと更新の「Mac（試作）」](INSTALL.md#mac試作)）。
 インストーラーは PATH を変えないので、コマンドプロンプトや PowerShell からは、そのフォルダへ移るか、フルパスで呼びます。
 アプリと同じ版が入り、更新もいっしょに入れ替わります。
 

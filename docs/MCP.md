@@ -64,7 +64,7 @@ Claude Desktop のチャットは、標準入出力の拡張（`.mcpb`）でつ�
 ### そのほかのクライアント
 
 Streamable HTTP の MCP を話すクライアントなら、`http://127.0.0.1:17347/mcp` を指せばつなげます。標準入出力しか使えないクライアントは、
-`yolupainter-cli mcp`（インストーラーで入れたときは `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`。番号を変えたなら `--port 番号`）を起動するように設定します。
+`yolupainter-cli mcp`（インストーラーで入れたときは `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`、Mac の試作の zip では `YoluPainter.app/Contents/MacOS/yolupainter-cli`。番号を変えたなら `--port 番号`）を起動するように設定します。
 
 ## ツールと資料
 

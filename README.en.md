@@ -30,6 +30,18 @@ Windows is the primary platform. Mac and Linux support is experimental.
 The Windows (64-bit) installer and zip are on the [Releases](https://github.com/YozoraKurage/YoluPainter/releases) page.
 See [docs/en/INSTALL.md](docs/en/INSTALL.md) for installer options and updates.
 
+An experimental zip for Mac (`yolupainter-<version>-macos-universal-experimental.zip`) is attached too. It holds a universal `YoluPainter.app` with code for both Apple Silicon and Intel.
+It has no Apple Developer signature or notarization (only an ad-hoc signature), and the app does not update itself: when a new version is out, an item in the Help menu opens its release page.
+On an Apple Silicon Mac (macOS 27), only launching, writing settings and logs, the signature and the universal structure have been checked. The window display and drawing have not been checked, and it has not been run on an Intel Mac.
+
+Because it is unsigned, macOS blocks `YoluPainter.app` the first time you open it after unzipping. To open it, follow these steps ([Apple's guide](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac)):
+
+1. Double-click `YoluPainter.app`. It is blocked; close the message.
+2. Choose Apple menu > System Settings, then click Privacy & Security in the sidebar.
+3. Go to the Security section, then click Open.
+4. Click Open Anyway (it is available for about an hour after you try to open the app).
+5. Enter your login password, then click OK. From then on, double-click opens it.
+
 ## Building from source
 
 You need stable Rust and a C/C++ build environment.

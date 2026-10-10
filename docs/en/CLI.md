@@ -6,7 +6,7 @@
 Scripts and AI assistants can use it to read and change layers, masks and effects, get preview images, export and save. AI assistants connect to the running app directly over MCP
 ([the MCP document](MCP.md)); for clients that only speak MCP over standard input and output, the same program relays to the app (`yolupainter-cli mcp`).
 
-With the installer it is placed next to the app (by default `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`). In the zip and tar.gz it is next to the app too.
+With the installer it is placed next to the app (by default `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`). In the zip and tar.gz it is next to the app too. In the experimental Mac zip it is `Contents/MacOS/yolupainter-cli` inside `YoluPainter.app` ([“Mac (experimental)” in Download and updates](INSTALL.md#mac-experimental)).
 The installer does not change PATH, so from Command Prompt or PowerShell go to that folder or call it by its full path.
 It has the same version as the app and is replaced together with it on updates.
 
