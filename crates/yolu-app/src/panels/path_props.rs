@@ -805,10 +805,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let mut buttons = vec![Btn {
         id: "path.use-brush",
         label: lang.pick("ブラシを使う", "Use Brush"),
-        tip: lang.pick(
-            "今のブラシと、塗るチャンネルの組で、パスを描き直します",
-            "Redraw the path with the current brush and the Paint Channels",
-        ),
+        tip: lang.pick("ブラシを使う", "Use Brush"),
         enabled: editable,
         action: Action::Path(PathAction::UseBrush),
         on: false,
