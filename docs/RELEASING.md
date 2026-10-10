@@ -46,7 +46,7 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 2. 1 つずつ実物と照らします: 画面の文字（`crates/yolu-app/src` の `lang.pick(日, 英)`・メニュー・ツールチップ）、コードと試験、`.github/workflows/`・`crates/xtask`・`tools/`、
    その版の `CHANGELOG.md`、コミットの本文（`git log <前の版のタグ>..HEAD -- <道>`）。
 3. 古い所・誤り・抜け（その版で追加した機能の説明が無い所）を直します。実物で確かめられなかった事は書きません。
-4. 言葉を画面にそろえます（レイヤー・ツール・ウィンドウ・アイランド・フォント・キャンバス。ビルドの意味で「組む」と書かない）。
+4. 言葉を画面にそろえます（レイヤー・ツール・ウィンドウ・アイランド・フォント・キャンバス。ビルドのことは「ビルド」と書きます）。
 5. 試験で見張れる所は回します: `cargo test -p xtask`（配る文書の一覧と、入れる文書の相対リンクが配布物の中で切れないこと）、
    `cargo test -p yolu-io --test ylp format_doc`（`docs/YLP_FORMAT.md` の版とエントリが実装と合うこと）、許諾を変えたら `cargo xtask preflight --only licenses`。
 

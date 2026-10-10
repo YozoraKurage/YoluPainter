@@ -36,10 +36,10 @@ QEMU は浮動小数点の演算を IEEE どおりに再現するので、NEON �
 
 | 束（`cargo test -p yolu-app --test <束>`） | 中身 |
 | --- | --- |
-| `headless` | ウィンドウ・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link のフォルダの受け渡しと頼み・外からの操作（MCP の受け口）・ディスクキャッシュ・ソースの文言の検査）。同時に走る |
-| `gui_canvas` | キャンバス・ツール・ブラシ・選択・色・効果の画面（`egui_kittest`） |
-| `gui_shell` | ウィンドウの全体・メニュー・設定・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU の装置の喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・アセット・ライブラリ |
-| `gui_view3d` | 3D ビュー（アンチエイリアス・ブルームを含む）・マテリアルの見た目（lilToon を含む）・ポーズ・テクスチャセット・出力 |
+| `headless` | ウィンドウも GPU のデバイスも作らない試験（文書・保存（バックグラウンドの保存・選択範囲・ポーズを含む）・取り込み・Live Link のフォルダの受け渡しと頼み・外からの操作（MCP の受け口）・ディスクキャッシュ・ツールの並び・ソースの文言の検査）。同時に走る |
+| `gui_canvas` | キャンバス・ツール・ブラシ・選択・色・効果の画面と、パネルの既定の並び（`egui_kittest`） |
+| `gui_shell` | ウィンドウの全体・メニュー・設定のウィンドウとショートカットの編集・パネルの配置と別ウィンドウ・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU のデバイスの喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・アセット・ライブラリ |
+| `gui_view3d` | 3D ビュー（アンチエイリアス・ブルーム・視点の操作・3D の上の選択と描画を含む）・モード（ペイント／編集／ポーズ）・マテリアルの見た目（lilToon を含む）・ポーズ・テクスチャセット・出力 |
 | `threads`・`window_lease`・`windowpos`（直下の 1 ファイル 1 本） | プロセス全体の状態を持つ試験: rayon の全体のプール・ウィンドウの貸し出しの数え・覚えたウィンドウの置き場所 |
 
 束の中のファイルは `tests/<束>/<名前>.rs`、束の入口は `tests/<束>/main.rs` の `mod` の並びです。試験の名前は `<ファイル名>::<試験名>` になるので、ファイルや試験名で絞れます。
@@ -55,8 +55,8 @@ cargo test -p yolu-app -- --list | grep layerops             # どの束にあ�
 - **新しい試験を追加する**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行追加します。追加し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけではビルドされず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
 - 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を追加し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
 - **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・ウィンドウの貸し出しの数え・覚えたウィンドウの置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
-- **ウィンドウ（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。ウィンドウを持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` はウィンドウごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵はウィンドウごとに作り直します。ウィンドウを作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
-- `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
+- **ウィンドウ（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。ウィンドウを持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時にデバイスを作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` はウィンドウごとにデバイスと 3D のパイプラインをビルドし直すので使いません。例外は、デバイスを破棄する・誤りの受け口を付けて共用のデバイスを壊す `gpu_lost` と、製品と同じデバイスの設定が要る `view3d_fx` で、自前のデバイスを貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵はウィンドウごとに作り直します。ウィンドウを作らなくても GPU のデバイスを作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
+- `crates/yolu-gpu/tests/` の GPU 試験は、デバイス（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドとデバイスを同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験がデバイスを何個作っても 1 回の貸し出しで足ります）。
 - **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。Live Link の受け渡しのフォルダは `common::livelink::Exchange::new(タグ)` が `common::tmp::test_dir` の下に作るので、置いた頼み・返事ごと試験の終わりに消えます。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
 - 「書き直さない」を更新時刻で確かめるときは、`common::tmp::backdate(&path)` で更新時刻を少し前にしてから比べます（時刻の粒度より早い書き直しを見逃さず、`sleep` を待たない）。
 - 試験が自分の実行ファイルを子として起こすとき（`--exact` に試験名を渡す形）は、束の中では名前にモジュールの道筋（`livelink::child_unity`）が付きます。`module_path!()` から作ってください。
@@ -103,7 +103,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。代わりに `.github/workflows/main-tested.yml` が、main の中身（ファイルの木）が PR の最後の CI を通した中身と同じで、その CI が成功しているかだけを確かめます（README の CI の印はこの結果です）。違うとき（PR の枝が main より古いまま入った）は失敗にするので、`ci.yml` を手で動かします。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
-- Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
+- Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU のデバイスを同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別のデバイス）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
 - Linux の通信の見張り（`ubuntu-24.04`。画面の試験とは別のジョブ）: 本物のアプリを `strace` の下で動かし、外への通信の試みが無いことを `tools/network-watch.py` が確かめます（[通信の見張り](#通信の見張り)の段 2）。別のジョブにしているのは、更新の確認を動かすために更新用の公開鍵（使い捨て）を組み込んで作る必要があり、その環境変数を変えると yolu-update と yolu-app を作り直すため（同じジョブに置くと、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになります）。キャッシュは画面の試験のジョブと共有キー（`shared-key: linux-render`）で読むだけにし（`save-if: false`）、鍵つきの物で上書きしません。xdotool が効かず場面を飛ばしたときは、終わりに `::warning::` を出します。ツールの試験（`tools/test-network-watch.py`）は「Linux の試験と静的検査」でも回ります。
 - cargo-deny（`ubuntu-24.04`。`.github/workflows/cargo-deny.yml`）: 週 1 回（月曜 03:23 UTC）と手動だけで、毎回の CI には入れません。`deny.toml` の決まりで advisories（既知の脆弱性・取り下げられた版）・bans・licenses・sources を確かめます
   （手元では `cargo deny --locked check advisories bans licenses sources`）。cargo-deny は版を固定して `cargo install` します（`deny.toml` の書式は版に結びつくので、上げるときは一緒に確かめます）。
@@ -132,7 +132,7 @@ cargo xtask netguard         # 許す一覧の使われ方の表を出す。一�
 cargo test -p xtask netguard # 同じ確かめ（CI では `cargo test --workspace --exclude yolu-app --exclude yolu-gpu` の中で回る）と、見張りが効くことの試験
 ```
 
-実装は `crates/xtask/src/netguard/` です（`lex.rs`: 字句、`markers.rs`: 印と宛先、`allowed.rs`: 許す一覧、`deps.rs`: 依存、`uses.rs`: `use` の読み、`tests.rs`: 見張りが効くことの試験）。
+実装は `crates/xtask/src/netguard/` です（`mod.rs`: 全体の流れと結果の表、`lex.rs`: 字句、`markers.rs`: 印と宛先、`allowed.rs`: 許す一覧、`deps.rs`: 依存、`uses.rs`: `use` の読み、`tests.rs`: 見張りが効くことの試験）。
 
 - ソース: `crates/*/src/**/*.rs` と `crates/*/build.rs`（配らない xtask は除く）から、通信と外への出口の印（`MARKERS`）を探します。ソケットの型（`TcpStream`・`TcpListener`・`UdpSocket`・`std::net`・`tokio::net`・`rustix::net` など）、
   HTTP・TLS・WebSocket の部品（`hyper`・`reqwest`・`WinHttp*`・`WinInet`・`Urlmon` など）、プロセスの起動と「開く」の呼び出し（`Command::new`・`tokio::process`・`ShellExecute*`・`xdg-open`・`open::that`・egui の `open_url`/`hyperlink`）、
@@ -196,7 +196,7 @@ Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windo
 
 core・io・protocol・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、アプリの代わりの MCP の受け口（`yolu_mcp::http`）へ 127.0.0.1 の HTTP でつなぐ試験を含みます）。`--package yolu-protocol --package yolu-ops` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、画面の無いクレートだけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
 
-Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
+Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ PC の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 
 Wine は DACL（Live Link の受け渡しのフォルダとファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。
 
@@ -303,3 +303,4 @@ cargo test -p yolu-app --test gui_shell recovery_ui::   ウィンドウ（使う
 
 ツールの名前・キー・サブツールの種類・ツールプロパティ・オプションバー・キャンバスと 3D ビューの入力は、`crates/yolu-app/src/tools/` のツールの表（`TOOLS`）が持ちます。
 キーボードの割り当て・マウスと修飾キーの組み合わせ・ビューの中のキーは `crates/yolu-app/src/keymap.rs` の表が持ち、キーの処理も設定のウィンドウの「ショートカット」の区分も同じ表を読みます。
+利用者が設定のウィンドウで変えた所だけは `crates/yolu-app/src/keyconfig.rs` が設定のフォルダの `keymap.json` に持ち、`keymap::install` で表に重ねます。
