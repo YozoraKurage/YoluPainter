@@ -131,7 +131,7 @@ pub fn toggle_rect(area: Rect) -> Rect {
 }
 
 /// 色相の選ぶ印（輪の上の白い円）の半径の、輪の太さに対する割合。
-const MARKER_SCALE: f32 = 0.42;
+pub(crate) const MARKER_SCALE: f32 = 0.42;
 /// 選ぶ印の縁の線の太さの半分。
 const MARKER_HALF_STROKE: f32 = 1.0;
 
