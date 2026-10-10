@@ -2318,6 +2318,17 @@ impl YoluApp {
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
+        // 隠れたビューにポインタが乗っている印は残さない
+        if !self.state.view3d.visible {
+            self.state
+                .rulers
+                .note_pointer(crate::rulers::Place::View3d, false);
+        }
+        if !self.state.ui.canvas_visible {
+            self.state
+                .rulers
+                .note_pointer(crate::rulers::Place::Canvas, false);
+        }
         // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
         // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
         if !self.state.ui.canvas_visible {

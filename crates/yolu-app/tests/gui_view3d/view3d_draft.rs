@@ -1,12 +1,12 @@
 //! 3D ビューのグラデーション・図形・定規（egui_kittest。試しの立方体の上で、3D ビューのドラッグの入力の道で）: 画面で引いた形が見えている面だけに
 //! 写ること（隠れた面・裏の面は変わらない）・グラデーションの色はテクセルが写る画面の点で決まること・選択範囲・マスク・マテリアルで塗る・正投影・
-//! 図形の塗り（縁の帯）と線（3D のストロークのブラシ・対称）・定規（画面に固定・スナップ）・取り消し 1 回・ロックと読むだけのセットと予算の断り・
+//! 図形の塗り（縁の帯）と線（3D のストロークのブラシ・対称）・定規（文書の 3D の定規を作る）・取り消し 1 回・ロックと読むだけのセットと予算の断り・
 //! Esc とフォーカスの喪失・絵（日英）。面の上の計算は core の `tests/surface/surface_screen.rs` が見る。
 use crate::common::*;
 use crate::view3d_brush::cube_view;
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
-use yolu_app::drafting::{Figure, Ruler, RulerKind};
+use yolu_app::drafting::Figure;
 use yolu_app::engine::composite_pixel;
 use yolu_app::engine::Tilt;
 use yolu_app::gradient::GradientOp;
@@ -17,7 +17,7 @@ use yolu_app::state::{Action, Tool};
 use yolu_app::view3d::draft::{self, DraftKind, SurfaceDraft};
 use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
-use yolu_core::geometry::{ModelMesh, OrbitCamera, Submesh};
+use yolu_core::geometry::{pick, ModelMesh, OrbitCamera, Submesh, SurfaceHit};
 use yolu_core::glam::Vec2;
 use yolu_core::glam::{DVec2, DVec3, Vec3};
 use yolu_core::material::{GradientSettings, GradientShape};
@@ -105,6 +105,17 @@ fn screen(h: &H, rect: Rect, p: Vec3) -> Pos2 {
 /// 表示域の画面の点（左上が原点）。
 fn local(rect: Rect, p: Pos2) -> DVec2 {
     DVec2::new((p.x - rect.left()) as f64, (p.y - rect.top()) as f64)
+}
+
+/// 表示域の画面の点の下の面の点。
+fn hit_at(h: &H, rect: Rect, p: Pos2) -> Option<SurfaceHit> {
+    let model = st(h).view3d.model.clone()?;
+    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    pick(
+        &model.geometry,
+        &view,
+        yolu_core::glam::Vec2::new(p.x - rect.left(), p.y - rect.top()),
+    )
 }
 
 /// 立方体の画面の箱。
@@ -529,14 +540,13 @@ fn a_lost_release_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rul
             current: local(rect, b),
             shift: false,
             alt: false,
-            original: None,
-            handle: 0,
+            hit: hit_at(&h, rect, a).filter(|_| t == Tool::Ruler),
         });
         assert!(draft::dragging(&h.state().state));
         move_to(&h, b);
         h.run();
         assert!(!draft::dragging(&h.state().state), "{t:?}");
-        assert!(st(&h).view3d.ruler.is_none(), "{t:?}");
+        assert_eq!(crate::common::rulers::total(st(&h)), 0, "{t:?}");
         assert_eq!(
             st(&h).doc.undo_count(),
             usize::from(t == Tool::Gradient),
@@ -677,7 +687,7 @@ fn an_outline_over_the_budget_is_cancelled_whole_and_locks_and_read_only_sets_re
 }
 
 #[test]
-fn what_the_3d_tools_paint_survives_save_and_reopen_but_the_3d_ruler_is_not_saved() {
+fn what_the_3d_tools_paint_and_the_3d_ruler_they_make_survive_save_and_reopen() {
     let dir = crate::common::tmp::test_dir("view3d-draft");
     let path = dir.join("draft.ylp");
     let (mut h, rect) = cube_view();
@@ -696,12 +706,14 @@ fn what_the_3d_tools_paint_survives_save_and_reopen_but_the_3d_ruler_is_not_save
     let (a, b) = front_rect(&h, rect);
     pull(&mut h, a, b);
     assert_eq!(st(&h).doc.undo_count(), 2, "{}", message(&h));
-    h.state_mut().state.view3d.ruler = Some(Ruler {
-        kind: RulerKind::Concentric,
-        a: DVec2::new(100.0, 100.0),
-        b: DVec2::new(160.0, 100.0),
-        two_points: false,
-    });
+    // 3D の同心円の定規（モデルの空間の値で、文書が持つ）
+    tool(&mut h, Tool::Ruler);
+    h.state_mut().state.rulers.kind = yolu_core::RulerKind::Concentric;
+    pull(&mut h, a, b);
+    assert_eq!(st(&h).doc.undo_count(), 3, "{}", message(&h));
+    let layer = st(&h).selected_layer.unwrap();
+    let placed = crate::common::rulers::of(st(&h), layer);
+    assert_eq!(placed.len(), 1);
     let saved = snapshot(&h);
     h.state_mut()
         .state
@@ -710,7 +722,12 @@ fn what_the_3d_tools_paint_survives_save_and_reopen_but_the_3d_ruler_is_not_save
     h.state_mut().state.apply(Action::OpenProject(path.clone()));
     h.run();
     assert_eq!(snapshot(&h), saved, "{}", message(&h));
-    assert!(st(&h).view3d.ruler.is_none(), "3D の定規は保存しない");
+    let layer = st(&h).selected_layer.unwrap();
+    assert_eq!(
+        crate::common::rulers::of(st(&h), layer),
+        placed,
+        "3D の定規は文書の値として保存される"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -760,8 +777,9 @@ fn a_pen_press_taken_by_the_os_paints_the_gradient_at_the_last_point_and_drops_s
         pen_pull_ending(&mut h, a, b, true);
         assert!(!draft::dragging(&h.state().state), "{t:?}");
         assert!(st(&h).view3d.input.pen_press.is_none(), "{t:?}");
-        assert!(
-            st(&h).view3d.ruler.is_none(),
+        assert_eq!(
+            crate::common::rulers::total(st(&h)),
+            0,
             "{t:?}: 補った離しでは定規を置かない"
         );
         assert_eq!(
@@ -776,11 +794,15 @@ fn a_pen_press_taken_by_the_os_paints_the_gradient_at_the_last_point_and_drops_s
         assert!(!draft::dragging(&h.state().state), "{t:?}");
         assert_eq!(
             st(&h).doc.undo_count(),
-            before + usize::from(t != Tool::Ruler),
+            before + 1,
             "{t:?}: {}",
             message(&h)
         );
-        assert_eq!(st(&h).view3d.ruler.is_some(), t == Tool::Ruler, "{t:?}");
+        assert_eq!(
+            crate::common::rulers::total(st(&h)),
+            usize::from(t == Tool::Ruler),
+            "{t:?}"
+        );
     }
 }
 
@@ -800,12 +822,23 @@ fn the_pen_draws_the_same_gradient_shape_and_ruler_as_the_mouse() {
                 pull(&mut h, a, b);
             }
             assert!(st(&h).view3d.input.draft.is_none(), "{t:?} {pen}");
-            (snapshot(&h), st(&h).doc.undo_count(), st(&h).view3d.ruler)
+            let layer = st(&h).selected_layer.unwrap();
+            (
+                snapshot(&h),
+                st(&h).doc.undo_count(),
+                crate::common::rulers::of(st(&h), layer)
+                    .into_iter()
+                    .map(|mut r| {
+                        r.id = yolu_core::RulerId(1);
+                        r
+                    })
+                    .collect::<Vec<_>>(),
+            )
         };
         let (pen, mouse) = (result(true), result(false));
         assert!(pen == mouse, "{t:?}");
-        assert_eq!(pen.1, usize::from(t != Tool::Ruler), "{t:?}");
-        assert_eq!(pen.2.is_some(), t == Tool::Ruler, "{t:?}");
+        assert_eq!(pen.1, 1, "{t:?}");
+        assert_eq!(pen.2.len(), usize::from(t == Tool::Ruler), "{t:?}");
     }
 }
 
@@ -848,129 +881,6 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
         h.run();
         assert_eq!(st(&h).doc.undo_count(), 0, "{way}");
         assert!(!st(&h).is_stroking());
-    }
-}
-
-#[test]
-fn the_ruler_stays_on_screen_while_orbiting_and_snaps_3d_strokes_of_every_kind() {
-    let (mut h, rect) = cube_view();
-    tool(&mut h, Tool::Ruler);
-    let cube = cube_box(&h, rect);
-    let (a, b) = (
-        pos2(cube.left(), cube.center().y),
-        pos2(cube.right(), cube.center().y),
-    );
-    pull(&mut h, a, b);
-    let placed = st(&h).view3d.ruler.expect("置いた");
-    assert_eq!(placed.kind, RulerKind::Line);
-    assert!(placed.a.distance(local(rect, a)) < 1e-3 && placed.b.distance(local(rect, b)) < 1e-3);
-    // 右ドラッグで回しても、画面の同じ所に残る
-    let yaw = st(&h).view3d.camera.yaw;
-    press(&h, cube.center(), PointerButton::Secondary);
-    h.step();
-    move_to(&h, cube.center() + egui::vec2(80.0, 0.0));
-    h.step();
-    release(
-        &h,
-        cube.center() + egui::vec2(80.0, 0.0),
-        PointerButton::Secondary,
-    );
-    h.run();
-    assert_ne!(st(&h).view3d.camera.yaw, yaw, "回った");
-    assert_eq!(st(&h).view3d.ruler, Some(placed));
-    // ツールの欄の種類は「これから作る定規」で、置いた画面の定規は替えない。削除は効く
-    h.state_mut().state.rulers.kind = yolu_core::RulerKind::Parallel;
-    assert_eq!(st(&h).view3d.ruler, Some(placed));
-    h.state_mut().state.delete_rulers();
-    assert!(st(&h).view3d.ruler.is_none());
-
-    // スナップ: ブラシのストロークの入力の点を、押した点で凍結した寄せ先へ（2D と同じ式）
-    let (mut h, rect) = cube_view();
-    tool(&mut h, Tool::Brush);
-    h.state_mut().state.rulers.snap_ruler = true;
-    h.state_mut().state.rulers.snap_special = true;
-    let c = local(rect, cube_box(&h, rect).center());
-    for kind in [
-        RulerKind::Line,
-        RulerKind::Parallel,
-        RulerKind::Concentric,
-        RulerKind::Perspective,
-    ] {
-        let ruler = Ruler {
-            kind,
-            a: c + DVec2::new(-60.0, -40.0),
-            b: c + DVec2::new(60.0, 20.0),
-            two_points: false,
-        };
-        h.state_mut().state.view3d.ruler = Some(ruler);
-        // 直線は線の近くで押したときだけ寄せるので、線から 10 点ほどの所で押す（ほかの種類はどこで押しても寄せる）
-        let start = c + DVec2::new(-20.0, if kind == RulerKind::Line { -10.0 } else { 30.0 });
-        let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
-        press(&h, to_pos(start), PointerButton::Primary);
-        h.step();
-        assert!(
-            st(&h).view3d.input.surface.is_some(),
-            "{kind:?} {}",
-            message(&h)
-        );
-        let mut constraint = ruler.constraint(start);
-        for step in 1..=4 {
-            let p = start + DVec2::new(step as f64 * 12.0, step as f64 * -7.0);
-            move_to(&h, to_pos(p));
-            h.step();
-            let got = local(rect, st(&h).view3d.input.last_point.expect("点"));
-            let want = constraint.project(p);
-            assert!(got.distance(want) < 1e-2, "{kind:?} {step} {got} {want}");
-        }
-        release(&h, to_pos(start), PointerButton::Primary);
-        h.run();
-        assert!(st(&h).view3d.input.ruler_constraint.is_none());
-    }
-    // 切れば寄せない
-    h.state_mut().state.rulers.snap_ruler = false;
-    h.state_mut().state.rulers.snap_special = false;
-    let start = c + DVec2::new(-20.0, 30.0);
-    let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
-    press(&h, to_pos(start), PointerButton::Primary);
-    h.step();
-    let p = start + DVec2::new(30.0, 25.0);
-    move_to(&h, to_pos(p));
-    h.step();
-    let got = local(rect, st(&h).view3d.input.last_point.expect("点"));
-    assert!(got.distance(p) < 1e-2);
-    release(&h, to_pos(p), PointerButton::Primary);
-    h.run();
-}
-
-#[test]
-fn a_straight_screen_ruler_snaps_only_when_the_stroke_starts_near_it() {
-    let (mut h, rect) = cube_view();
-    tool(&mut h, Tool::Brush);
-    h.state_mut().state.rulers.snap_ruler = true;
-    let c = local(rect, cube_box(&h, rect).center());
-    let ruler = Ruler {
-        kind: RulerKind::Line,
-        a: c + DVec2::new(-60.0, -40.0),
-        b: c + DVec2::new(60.0, 20.0),
-        two_points: false,
-    };
-    h.state_mut().state.view3d.ruler = Some(ruler);
-    let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
-    // 線から 40 点以上離れた所（2D の寄せる近さ 26 点の外）で押すと寄せない。線の近く（約 9 点）なら寄せる
-    for (start, snaps) in [
-        (c + DVec2::new(-20.0, 30.0), false),
-        (c + DVec2::new(-20.0, -10.0), true),
-    ] {
-        press(&h, to_pos(start), PointerButton::Primary);
-        h.step();
-        assert!(st(&h).view3d.input.surface.is_some(), "{}", message(&h));
-        assert_eq!(
-            st(&h).view3d.input.ruler_constraint.is_some(),
-            snaps,
-            "{start}"
-        );
-        release(&h, to_pos(start), PointerButton::Primary);
-        h.run();
     }
 }
 
@@ -1018,16 +928,15 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
             screen(&h, rect, Vec3::new(0.5, 0.3, 0.3)),
         );
         pull(&mut h, a, b);
-        // 2 点のパースの定規（定規のツールで端点の輪も出す）
+        // 2 点のパースの 3D の定規（定規のツールで引いて作る）
         tool(&mut h, Tool::Ruler);
         h.state_mut().state.rulers.two_points = true;
         h.state_mut().state.rulers.kind = yolu_core::RulerKind::Perspective;
-        h.state_mut().state.view3d.ruler = Some(Ruler {
-            kind: RulerKind::Perspective,
-            a: local(rect, pos2(cube.left() - 60.0, cube.top() + 30.0)),
-            b: local(rect, pos2(cube.right() + 60.0, cube.top() + 50.0)),
-            two_points: true,
-        });
+        let (a, b) = (
+            screen(&h, rect, Vec3::new(-0.45, 0.3, -0.5)),
+            screen(&h, rect, Vec3::new(0.45, 0.3, -0.5)),
+        );
+        pull(&mut h, a, b);
         h.state_mut().state.message.clear();
         h.event(Event::PointerGone);
         h.run();

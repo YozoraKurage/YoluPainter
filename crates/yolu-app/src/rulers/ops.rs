@@ -3,7 +3,7 @@
 
 use yolu_core::{CoreError, LayerId, Ruler, RulerId, RulerKind, RulerScope, RulerSpace};
 
-use super::RulerState;
+use super::{Place, RulerState};
 use crate::notice::{Kind, Source};
 use crate::state::AppState;
 
@@ -65,7 +65,23 @@ impl AppState {
     /// 定規の操作を当てる（`Action::Ruler`）。
     pub fn ruler_action(&mut self, action: RulerAction) {
         match action {
-            RulerAction::Select(selected) => self.rulers.selected = selected,
+            RulerAction::Select(selected) => {
+                self.rulers.selected = selected;
+                // 編集のモードでは、3D の定規を選ぶと編集のモードの選び（印・ギズモ）も同じ定規になる
+                if let Some((layer, id)) = selected {
+                    let is_3d = self
+                        .doc
+                        .layer(layer)
+                        .and_then(|l| l.rulers().iter().find(|r| r.id == id))
+                        .is_some_and(|r| r.space() == RulerSpace::Model);
+                    if is_3d {
+                        crate::objects::select_when_editing(
+                            self,
+                            crate::objects::Object::Ruler { layer, id },
+                        );
+                    }
+                }
+            }
             RulerAction::ToggleSnapRuler => {
                 if !self.is_stroking() {
                     self.rulers.snap_ruler = !self.rulers.snap_ruler;
@@ -95,15 +111,7 @@ impl AppState {
                 owner,
                 ruler,
                 coalesce,
-            } => {
-                let mut list = self.ruler_list(owner)?;
-                let slot = list
-                    .iter_mut()
-                    .find(|r| r.id == ruler.id)
-                    .ok_or(CoreError::InvalidArgument("その定規がそのレイヤーに無い"))?;
-                *slot = ruler;
-                self.doc.set_rulers(owner, list, coalesce)
-            }
+            } => self.ruler_put(owner, ruler, coalesce),
             RulerAction::Delete { owner, ids } => {
                 let mut list = self.ruler_list(owner)?;
                 list.retain(|r| !ids.contains(&r.id));
@@ -154,6 +162,28 @@ impl AppState {
         }
     }
 
+    /// 持ち主の一覧の同じ ID の定規を `ruler` に替える（`coalesce` ならドラッグの途中を 1 回の取り消しにまとめる）。編集のモードの G/R/S・ギズモ・端の点も
+    /// 続けて変える操作として通る。
+    pub fn ruler_put(
+        &mut self,
+        owner: LayerId,
+        ruler: Ruler,
+        coalesce: bool,
+    ) -> Result<(), CoreError> {
+        let mut list = self.ruler_list(owner)?;
+        let slot = list
+            .iter_mut()
+            .find(|r| r.id == ruler.id)
+            .ok_or(CoreError::InvalidArgument("その定規がそのレイヤーに無い"))?;
+        *slot = ruler;
+        let before = self.doc.revision();
+        self.doc.set_rulers(owner, list, coalesce)?;
+        if self.doc.revision() != before {
+            self.modified = true;
+        }
+        Ok(())
+    }
+
     /// レイヤーの定規の一覧の写し。
     fn ruler_list(&self, owner: LayerId) -> Result<Vec<Ruler>, CoreError> {
         Ok(self
@@ -202,14 +232,22 @@ impl AppState {
         Ok(id)
     }
 
-    /// スナップする特殊定規を、見えている特殊定規（今のビューの空間）の中で次へ回す。候補が無いときは何もしない。
+    /// 「スナップする特殊定規の切り替え」の空間のビュー: ポインタが乗っているビュー、無ければ最後に描いたビュー、どちらも無ければ描ける先が 3D だけなら 3D、そうでなければ 2D。
+    pub fn ruler_view_place(&self) -> Place {
+        self.rulers
+            .pointer_in
+            .or(self.rulers.last_drew)
+            .unwrap_or(if self.paints_only_in_3d() {
+                Place::View3d
+            } else {
+                Place::Canvas
+            })
+    }
+
+    /// スナップする特殊定規を、見えている特殊定規（`ruler_view_place` のビューの空間）の中で次へ回す。候補が無いときは何もしない。
     fn ruler_switch_special(&mut self) -> Result<(), CoreError> {
         let drawing = self.selected_layer;
-        let space = if self.paints_only_in_3d() {
-            RulerSpace::Model
-        } else {
-            RulerSpace::Canvas
-        };
+        let space = self.ruler_view_place().space();
         let candidates: Vec<(LayerId, RulerId, bool)> = self
             .doc
             .special_ruler_candidates(drawing, space)
@@ -232,19 +270,23 @@ impl AppState {
     }
 }
 
-/// これから作る定規（ツールの設定と、引いた 2 点）。ID は作るときに付け直す。
-pub fn new_ruler(
-    state: &RulerState,
-    a: yolu_core::glam::DVec2,
-    b: yolu_core::glam::DVec2,
-) -> Ruler {
-    let mut r = Ruler::canvas(RulerId(1), state.kind, a, b);
+/// これから作る定規にツールの設定（パースの点の数、対称の線の本数と線対称）を当てる。
+pub fn configure_new(state: &RulerState, mut r: Ruler) -> Ruler {
     r.two_points = state.kind == RulerKind::Perspective && state.two_points;
     if state.kind == RulerKind::Symmetry {
         r.lines = super::fit_lines(state.lines, state.line_symmetry);
         r.line_symmetry = state.line_symmetry;
     }
     r
+}
+
+/// これから作る 2D の定規（ツールの設定と、引いた 2 点）。ID は作るときに付け直す。
+pub fn new_ruler(
+    state: &RulerState,
+    a: yolu_core::glam::DVec2,
+    b: yolu_core::glam::DVec2,
+) -> Ruler {
+    configure_new(state, Ruler::canvas(RulerId(1), state.kind, a, b))
 }
 
 #[cfg(test)]
@@ -562,31 +604,28 @@ mod tests {
     }
 
     #[test]
-    fn delete_takes_the_selected_ruler_of_this_layer_else_the_screen_ruler_and_a_foreign_selection_is_dropped(
-    ) {
-        let screen = crate::drafting::Ruler {
-            kind: crate::drafting::RulerKind::Line,
-            a: DVec2::ZERO,
-            b: DVec2::new(10.0, 0.0),
-            two_points: false,
-        };
+    fn delete_takes_the_selected_ruler_2d_or_3d_and_a_foreign_selection_is_dropped() {
         let mut s = state();
         let a = s.selected_layer.unwrap();
         let b = s.doc.add_layer("B").unwrap();
         s.selected_layer = Some(a);
-        assert!(!s.has_ruler(), "どちらも無ければ消せない");
-        s.view3d.ruler = Some(screen);
-        assert!(s.has_ruler());
+        assert!(!s.has_ruler(), "選んだ定規が無ければ消せない");
         s.apply(Action::Ruler(RulerAction::Create(line(
             (0.0, 5.0),
             (50.0, 5.0),
         ))));
         assert!(s.selected_ruler().is_some());
-        // 選んでいる定規があれば、それを消す（画面の定規は残る）
+        assert!(s.has_ruler());
         s.delete_rulers();
         assert!(rulers(&s, a).is_empty());
-        assert_eq!(s.view3d.ruler, Some(screen));
-        // 別のレイヤーを選んだら、前のレイヤーの定規を指す選びは外れ、削除は画面の定規に当たる（前のレイヤーの定規は残る）
+        assert!(!s.has_ruler());
+        // 3D の定規も、選んでいれば同じ口で消せる
+        let model = Ruler::model(RulerId(1), RulerKind::Line, DVec3::ZERO, DVec3::X, DVec3::Y);
+        s.apply(Action::Ruler(RulerAction::Create(model)));
+        assert!(s.has_ruler());
+        s.delete_rulers();
+        assert!(rulers(&s, a).is_empty());
+        // 別のレイヤーを選んだら、前のレイヤーの定規を指す選びは外れ、削除は何もしない（前のレイヤーの定規は残る）
         s.apply(Action::Ruler(RulerAction::Create(line(
             (0.0, 6.0),
             (50.0, 6.0),
@@ -600,7 +639,6 @@ mod tests {
         );
         s.delete_rulers();
         assert_eq!(rulers(&s, a).len(), 1);
-        assert!(s.view3d.ruler.is_none());
-        assert!(!s.has_ruler(), "画面の定規が無く、このレイヤーの選びも無い");
+        assert!(!s.has_ruler());
     }
 }

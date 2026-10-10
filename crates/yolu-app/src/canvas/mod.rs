@@ -33,6 +33,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     app.ui.canvas_rect = Some(rect);
     app.ui.canvas_drawn = true;
+    app.rulers
+        .note_pointer(crate::rulers::Place::Canvas, response.contains_pointer());
     // メインウィンドウのフレームの番号（キャンバスを別ウィンドウへ出しても、キーを見るメインウィンドウの番号と比べられるように）
     app.ui.canvas_frame = Some(ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ui.advance_cursor_after_rect(rect);
@@ -678,6 +680,9 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                 crate::view3d::input::settle(app);
             }
             let kind = press_kind(ui, app, rect, p, s, frame);
+            if kind == PressKind::Tool && app.mode.paints() {
+                app.rulers.last_drew = Some(crate::rulers::Place::Canvas);
+            }
             app.canvas.pen_press = Some(PenPress {
                 id: s.pointer_id,
                 kind,
@@ -1024,6 +1029,9 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     }
                     let tool = matches!(start, nav::Start::Tool | nav::Start::Select(_))
                         && click.is_none();
+                    if tool && app.mode.paints() {
+                        app.rulers.last_drew = Some(crate::rulers::Place::Canvas);
+                    }
                     if !tool || !app.mode.paints() {
                         // 編集・ポーズのモード: 2D のキャンバスは見るだけ（描かない・選択範囲も作らない）
                     } else if let Some(kind) = app.tool.def().canvas {

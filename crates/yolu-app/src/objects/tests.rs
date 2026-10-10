@@ -141,6 +141,7 @@ fn every_kind_of_object_on_visible_layers_gets_a_marker_and_hidden_layers_do_not
                 Object::Shape(Target::Filter(..)) => "フィルター",
                 Object::Point { .. } => "点",
                 Object::Path { .. } => "パス",
+                Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => "定規",
             })
             .collect()
     };
@@ -761,6 +762,7 @@ fn transforms_are_refused_while_dragging_and_finish_when_the_mode_changes() {
         handle: sg::Handle::MoveX,
         start: shape(&app, o),
         from: yolu_core::glam::Vec2::ZERO,
+        grab: yolu_core::glam::Vec2::ZERO,
         target: Target::Projection(layer),
         source: gizmo::Source::Mouse,
         doc_id: app.doc.id(),

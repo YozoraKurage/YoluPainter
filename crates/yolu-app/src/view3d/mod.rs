@@ -156,8 +156,6 @@ pub struct View3dState {
     pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
-    /// 3D ビューの定規（表示域の画面の点。視点を動かしても画面の同じ所に残る。保存しない）。
-    pub ruler: Option<crate::drafting::Ruler>,
     /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
     /// （`Settings::view3d_paint`）。
     pub projection: yolu_core::geometry::ProjectionSettings,

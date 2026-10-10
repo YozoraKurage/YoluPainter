@@ -7,8 +7,9 @@
 //! - 開いている間は `PopupKind::Transform` のポップアップとして、画面全体の受け皿で下の部品の押しとキーの表を止める（パイと同じ）。
 //!   マウスのボタンを押している間・ドラッグの途中は始めない。
 //! - 拡縮の軸は物の向きの軸（大きさの X・Y・Z）。移動と回転の軸は、1 回目が世界の軸、2 回目が物の向きの軸。点とパスは向きを持たない。
-//! - 当て方: 形（箱・デカール・グラデーションデカール・フィルターの形）と点は文書へ続けて変える操作として入れ（1 回の取り消し、途中は
-//!   粗い表示）、決めたらまとめを終え、やめたらまとめを捨てる。3D パスは途中は線を重ねて見せるだけで、決めたときに全部の点を最も近い
+//! - 当て方: 形（箱・デカール・グラデーションデカール・フィルターの形）・点・3D の定規は文書へ続けて変える操作として入れ（1 回の取り消し、途中は
+//!   粗い表示）、決めたらまとめを終え、やめたらまとめを捨てる。定規の移動は a・b を動かし、回転は中心のまわりに a・b と向きを回し、拡縮は中心から a・b の
+//!   距離を変える（定規の向きの枠は X = a→b、Y = 定規の向き、Z = X × Y。2 回目の軸の固定はこの枠の軸）。3D パスは途中は線を重ねて見せるだけで、決めたときに全部の点を最も近い
 //!   面の点へ当て直して 1 回の取り消しで入れる（面に乗らない点があれば決めるのを断り、続けられる）。ボーンはポーズの続けて変える操作
 //!   （ポーズの取り消し 1 段）。
 
@@ -75,6 +76,8 @@ pub enum What {
 enum Start {
     Shape(sg::Shape),
     Point([f64; 3]),
+    /// 3D の定規（始めの値。毎フレーム、ここから量を当てる）。
+    Ruler(yolu_core::Ruler),
     /// 3D パス: 点の世界の位置と、その面の法線（決めるとき、動きに合わせて回した法線の向きの面だけへ当て直す）。
     Path {
         path: Box<SurfacePath>,
@@ -625,6 +628,27 @@ impl Transform {
                     );
                 }
             }
+            (Start::Ruler(start), What::Object(Object::Ruler { layer, id })) => {
+                let next = crate::rulers::edit3d::ruler_after(
+                    start,
+                    self.pivot,
+                    self.value,
+                    self.orientation,
+                );
+                let Some(current) = super::ruler_of(app, layer, id) else {
+                    return;
+                };
+                if next == current || next.validate().is_err() {
+                    return;
+                }
+                if let Err(e) = app.ruler_put(layer, next, true) {
+                    app.notify(
+                        crate::notice::Kind::of_core(&e),
+                        Source::Ruler,
+                        app.lang.core_error(&e),
+                    );
+                }
+            }
             (
                 Start::Point(start),
                 What::Object(Object::Point {
@@ -867,6 +891,16 @@ pub fn begin_with(
                 sg::world_rotation(&s, &gizmo::root()),
             )
         }
+        What::Object(Object::Ruler { layer, id }) => {
+            let r = super::ruler_of(app, layer, id)
+                .ok_or_else(|| super::nothing_selected(lang).to_owned())?;
+            let at = crate::rulers::edit3d::center(&r)
+                .ok_or_else(|| super::nothing_selected(lang).to_owned())?
+                .as_vec3();
+            let frame = crate::rulers::edit3d::frame(&r)
+                .ok_or_else(|| super::nothing_selected(lang).to_owned())?;
+            (Start::Ruler(r), at, frame)
+        }
         What::Object(o @ Object::Point { .. }) => {
             let at = marker_of(app, o).ok_or_else(|| super::nothing_selected(lang).to_owned())?;
             (
@@ -939,7 +973,10 @@ pub fn begin_with(
         start,
         pivot,
         orientation,
-        oriented: matches!(what, What::Object(Object::Shape(_)) | What::Bone(_)),
+        oriented: matches!(
+            what,
+            What::Object(Object::Shape(_) | Object::Ruler { .. }) | What::Bone(_)
+        ),
         constraint: Constraint::Free,
         typed: String::new(),
         from: pointer,
@@ -1307,6 +1344,15 @@ pub fn reset(app: &mut AppState, kind: Kind) {
                 app.refuse(Source::Edit, text);
                 return;
             };
+            if let Object::Ruler { layer, id } = o {
+                if let Some(reason) = app.read_only_reason() {
+                    let text = crate::lang::refusals::read_only_set(lang, reason);
+                    app.refuse(Source::Edit, text);
+                    return;
+                }
+                crate::rulers::edit3d::reset(app, kind, layer, id);
+                return;
+            };
             let Object::Shape(target) = o else {
                 let text = lang.with_reason(
                     what,
@@ -1379,5 +1425,7 @@ fn default_shape(app: &AppState, target: Target) -> Option<sg::Shape> {
                 from_volume(new_shape_gradient_of(g.volume.shape, Some(&bounds)).volume)
             }
         }
+        // 定規は形の既定の置き場を持たない（Alt+G/R/S は `rulers::edit3d::reset`）
+        Target::Ruler(..) => return None,
     })
 }

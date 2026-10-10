@@ -13,7 +13,7 @@ use yolu_core::{CanvasSymmetry, LayerId, Ruler, RulerKind, RulerRef, RulerSpace}
 
 use super::SNAP_POINTS;
 use crate::canvas::view::CanvasView;
-use crate::drafting::{Constraint, Ruler as ScreenRuler, RulerKind as ScreenKind};
+use crate::drafting::Constraint;
 use crate::state::AppState;
 
 /// 描く所。
@@ -202,7 +202,7 @@ impl AppState {
         }
         let special = active.special?;
         let (x, y) = view.to_canvas(press);
-        screen_ruler(special.ruler).map(|r| r.constraint(DVec2::new(x, y)))
+        canvas_constraint(special.ruler, DVec2::new(x, y))
     }
 }
 
@@ -214,22 +214,31 @@ pub fn canvas_points(r: &Ruler) -> Option<(DVec2, DVec2)> {
     }
 }
 
-/// 2D の定規（直線・平行線・同心円・パース）を寄せ先の式の形に（対称・3D の定規は None）。
-pub fn screen_ruler(r: &Ruler) -> Option<ScreenRuler> {
+/// 2D の定規（直線・平行線・同心円・パース）の、ストロークの始めの点 `start`（文書の座標）での寄せ先（対称・3D の定規は None）。
+pub fn canvas_constraint(r: &Ruler, start: DVec2) -> Option<Constraint> {
     let (a, b) = canvas_points(r)?;
-    let kind = match r.kind {
-        RulerKind::Line => ScreenKind::Line,
-        RulerKind::Parallel => ScreenKind::Parallel,
-        RulerKind::Concentric => ScreenKind::Concentric,
-        RulerKind::Perspective => ScreenKind::Perspective,
-        RulerKind::Symmetry => return None,
-    };
-    Some(ScreenRuler {
-        kind,
-        a,
-        b,
-        two_points: r.two_points,
-    })
+    let direction = (b - a).try_normalize().unwrap_or(DVec2::X);
+    match r.kind {
+        RulerKind::Line => Some(Constraint::Line {
+            origin: a,
+            direction,
+        }),
+        RulerKind::Parallel => Some(Constraint::Line {
+            origin: start,
+            direction,
+        }),
+        RulerKind::Concentric => Some(Constraint::Circle {
+            center: a,
+            radius: start.distance(a),
+            start,
+        }),
+        RulerKind::Perspective => Some(Constraint::Perspective {
+            start,
+            a,
+            b: r.two_points.then_some(b),
+        }),
+        RulerKind::Symmetry => None,
+    }
 }
 
 /// 押した点（画面の点）から画面で `SNAP_POINTS` の内にある直線のうち、一番近いものへの寄せ先（線は a・b を通って両側へ伸びる。
@@ -241,7 +250,12 @@ pub fn nearest_line(
 ) -> Option<Constraint> {
     let mut best: Option<(f64, (DVec2, DVec2))> = None;
     for &(a, b) in lines {
-        let d = screen_distance_to_line(screen(a), screen(b), press);
+        let (sa, sb) = (screen(a), screen(b));
+        // 画面で 1 点より縮んだ直線は、向きが決まらないので入れない（3D の特殊定規の向きが取れないときと同じ）
+        if sa.distance(sb) < 1.0 {
+            continue;
+        }
+        let d = screen_distance_to_line(sa, sb, press);
         if d <= SNAP_POINTS && best.is_none_or(|(near, _)| d < near) {
             best = Some((d, (a, b)));
         }
@@ -271,12 +285,6 @@ fn distance_to_line(a: DVec2, b: DVec2, p: DVec2) -> f64 {
     d.perp_dot(q).abs() / length
 }
 
-/// 3D の画面に貼り付く直線定規（表示域の画面の点 `a`・`b`）が、描き始めの点 `press`（同じ画面の点）から `SNAP_POINTS` の内にあるか。
-/// 2D の直線定規（`nearest_line`）と同じ近さで寄せる。
-pub fn screen_line_is_near(a: DVec2, b: DVec2, press: DVec2) -> bool {
-    distance_to_line(a, b, press) <= SNAP_POINTS
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +305,26 @@ mod tests {
     }
 
     #[test]
+    fn a_line_shrunk_below_one_screen_point_is_not_a_candidate() {
+        // 画面で 0.5 点しか離れていない 2 点の直線は、向きが決まらないので入れない（遠くの定規を押した点の近くとみなさない）
+        let tiny = [(DVec2::new(20.0, 100.0), DVec2::new(20.5, 100.0))];
+        assert!(nearest_line(&tiny, &id_screen, Pos2::new(20.0, 100.0)).is_none());
+        // 1 点ちょうどからは候補
+        let one = [(DVec2::new(20.0, 100.0), DVec2::new(21.0, 100.0))];
+        assert!(nearest_line(&one, &id_screen, Pos2::new(20.0, 100.0)).is_some());
+        // 縮んだ直線は、ほかの直線を邪魔しない
+        let both = [tiny[0], (DVec2::new(0.0, 110.0), DVec2::new(50.0, 110.0))];
+        let c = nearest_line(&both, &id_screen, Pos2::new(20.0, 100.0)).unwrap();
+        assert_eq!(
+            c,
+            Constraint::Line {
+                origin: DVec2::new(0.0, 110.0),
+                direction: DVec2::X
+            }
+        );
+    }
+
+    #[test]
     fn the_nearest_line_within_the_snap_distance_wins() {
         let lines = [
             (DVec2::new(0.0, 100.0), DVec2::new(50.0, 100.0)),
@@ -314,15 +342,6 @@ mod tests {
         assert!(nearest_line(&lines[..1], &id_screen, Pos2::new(20.0, 100.0 + 26.0)).is_some());
         assert!(nearest_line(&lines[..1], &id_screen, Pos2::new(20.0, 100.0 + 26.5)).is_none());
         assert!(nearest_line(&[], &id_screen, Pos2::ZERO).is_none());
-    }
-
-    #[test]
-    fn a_screen_line_is_near_inside_the_same_distance_as_a_canvas_line() {
-        let (a, b) = (DVec2::new(0.0, 100.0), DVec2::new(50.0, 100.0));
-        assert!(screen_line_is_near(a, b, DVec2::new(20.0, 100.0 + 26.0)));
-        assert!(!screen_line_is_near(a, b, DVec2::new(20.0, 100.0 + 26.5)));
-        // 端の外でも線の延長までの距離で測る
-        assert!(screen_line_is_near(a, b, DVec2::new(900.0, 100.0 - 20.0)));
     }
 
     use crate::rulers::RulerAction;

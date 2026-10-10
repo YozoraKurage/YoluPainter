@@ -693,9 +693,12 @@ impl AppState {
         self.view3d.input.previous_end = None;
         self.drafting_cancel();
         self.drafting.pen_down = None;
-        // 選んでいた定規は前の文書のもの（レイヤーの ID は文書をまたいで同じ値になりうる）
+        // 選んでいた定規と、編集のモードで選んだ物・隠した物は前の文書のもの（レイヤーの ID は文書をまたいで同じ値になりうるので、別の文書の同じ番号の
+        // レイヤーの物を指さない）
         self.rulers.selected = None;
         self.rulers.icon_drag = None;
+        self.objects.selected = None;
+        self.objects.hidden.clear();
     }
 
     /// 何も触っていないセット（`index`）の文書を、同じセット（uid・名前・鍵はそのまま）のまま別の文書に替える。履歴は持ち越さない。
@@ -728,8 +731,6 @@ impl AppState {
     /// 選んだマテリアルだけをセットにする）。
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
-        // 3D ビューの画面に貼り付く定規は、開いたプロジェクトの間のもの（保存しない）。文書の定規は文書が持つ
-        self.view3d.ruler = None;
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();

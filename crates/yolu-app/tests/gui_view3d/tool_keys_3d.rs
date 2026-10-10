@@ -366,8 +366,12 @@ fn releasing_the_key_in_the_middle_of_a_3d_gradient_shape_or_ruler_drag_finishes
         h.run();
         assert!(!yolu_app::view3d::draft::dragging(st(&h)), "{tool:?}");
         if tool == Tool::Ruler {
-            assert!(st(&h).view3d.ruler.is_some(), "定規を置いた");
-            assert_eq!(st(&h).doc.undo_count(), steps);
+            assert_eq!(crate::common::rulers::total(st(&h)), 1, "定規を置いた");
+            assert_eq!(
+                st(&h).doc.undo_count(),
+                steps + 1,
+                "置くのが 1 回の取り消し"
+            );
         } else {
             assert_eq!(
                 st(&h).doc.undo_count(),
@@ -442,8 +446,9 @@ fn a_pen_press_taken_by_the_os_during_a_3d_hold_tool_drag_lets_the_tool_return()
                 "{label}: ドラッグは残らない"
             );
             assert!(st(&h).view3d.input.pen_press.is_none(), "{label}");
-            assert!(
-                st(&h).view3d.ruler.is_none(),
+            assert_eq!(
+                crate::common::rulers::total(st(&h)),
+                0,
                 "{label}: 補った離しでは定規を置かない"
             );
             assert_eq!(

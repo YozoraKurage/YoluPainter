@@ -5,7 +5,7 @@ use egui::{Color32, Painter, Rect, Stroke, Vec2};
 use yolu_core::glam::DVec2;
 use yolu_core::{Ruler, RulerKind};
 
-use super::active::{canvas_points, screen_ruler};
+use super::active::canvas_points;
 use super::canvas::{grabbed, handles};
 use super::Handle;
 use crate::canvas::view::CanvasView;
@@ -65,15 +65,42 @@ fn paint_lines(painter: &Painter, view: &CanvasView, r: &Ruler, effective: bool,
         }
         return;
     }
-    if let Some(legacy) = screen_ruler(r) {
-        crate::drafting::canvas::paint_ruler_styled(
-            painter,
-            legacy,
-            screen,
-            long,
-            false,
-            ruler_stroke(effective),
-        );
+    let Some((a, b)) = canvas_points(r) else {
+        return;
+    };
+    let stroke = ruler_stroke(effective);
+    let direction = |v: DVec2| v.try_normalize().unwrap_or(DVec2::X);
+    let line = |from: DVec2, to: DVec2| {
+        let dir = direction(to - from) * long;
+        painter.line_segment([screen(from - dir), screen(from + dir)], stroke);
+    };
+    match r.kind {
+        RulerKind::Line => line(a, b),
+        RulerKind::Parallel => {
+            let d = direction(b - a);
+            let normal = DVec2::new(-d.y, d.x) * 32.0;
+            for i in -8..=8 {
+                line(a + normal * i as f64, b + normal * i as f64);
+            }
+        }
+        RulerKind::Concentric => {
+            // 重ねる円は egui の円（画面の画素で分割される）。寄せ先は真の円で、拡大しても多角形に見えない。
+            let radius = a.distance(b).max(1.0);
+            let center = screen(a);
+            let per_unit = center.distance(screen(a + DVec2::X));
+            for i in 1..=4 {
+                painter.circle_stroke(center, (radius * i as f64) as f32 * per_unit, stroke);
+            }
+        }
+        RulerKind::Perspective => {
+            for center in [Some(a), r.two_points.then_some(b)].into_iter().flatten() {
+                for i in 0..12 {
+                    let t = i as f64 * std::f64::consts::PI / 12.0;
+                    line(center, center + DVec2::new(t.cos(), t.sin()));
+                }
+            }
+        }
+        RulerKind::Symmetry => {}
     }
 }
 

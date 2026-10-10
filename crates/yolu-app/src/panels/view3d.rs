@@ -129,6 +129,8 @@ impl View3dSlot {
         app.view3d.viewport = Some(ui.ctx().viewport_id());
         crate::objects::transform::settle(app);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
+        app.rulers
+            .note_pointer(crate::rulers::Place::View3d, response.contains_pointer());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(
             ui,
@@ -217,9 +219,9 @@ impl View3dSlot {
         let mode = app.mode;
         if drawn && mode.paints() {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
-            // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
+            // 3D の定規（対称の面と軸を含む）・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
-            // 定規（画面に固定）と、グラデーション・図形・定規のドラッグの途中の形
+            // グラデーション・図形・定規のドラッグの途中の形
             crate::view3d::draft::paint_overlay(&ui.painter_at(content), app, content);
             // 選択のツールで引いている形と、打っている多角形の点（ゴムの線はポインタまで）
             let hover = ui

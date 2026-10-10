@@ -156,6 +156,8 @@ fn begin(
     if !app.mode.paints() {
         return;
     }
+    // ツールの押しが入った 3D ビューを覚える（「スナップする特殊定規の切り替え」が、ポインタがどちらにも乗っていないときに使う）
+    app.rulers.last_drew = Some(crate::rulers::Place::View3d);
     match app.tool.def().surface {
         // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描くツールの一時的なスポイトは 2D だけ）
         Surface::Pick => {
@@ -218,16 +220,9 @@ fn begin(
         app.refuse(Source::View3d, text);
         return;
     }
-    if let Some(hit) = pick(&model.geometry, &view, p) {
-        if hit.material != material {
-            let name = model.material_name(hit.material as usize, app.lang);
-            app.refuse(
-                Source::View3d,
-                app.lang.pick(
-                    format!("ほかのテクスチャセット（{name}）の面です。"),
-                    format!("Surface of another texture set ({name})."),
-                ),
-            );
+    let pressed = pick(&model.geometry, &view, p);
+    if let Some(hit) = &pressed {
+        if refuse_other_set(app, &model, hit) {
             return;
         }
     }
@@ -264,19 +259,11 @@ fn begin(
         .flatten();
     let first = from.unwrap_or(at);
     // 定規のスナップ: 押した点で寄せ先を決めて凍結し（ストロークの間は変えない）、最初の点も寄せる（2D と同じ式。決まった道なので、
-    // 手ぶれ補正と曲線は切る）。直線は 2D と同じく、押した点が線の近く（`SNAP_POINTS`）のときだけ寄せる
+    // 手ぶれ補正と曲線は切る）。直線は 2D と同じく、押した点が線の近く（`SNAP_POINTS`）のときだけ寄せる。平行線・同心円・パースは押した面の点から
     let press = screen_point(rect, at);
-    let constraint = app
-        .view3d
-        .ruler
-        .filter(|r| app.rulers.snaps_screen_ruler(r.kind))
-        .filter(|r| {
-            r.kind != crate::drafting::RulerKind::Line
-                || crate::rulers::screen_line_is_near(r.a, r.b, press)
-        })
-        .map(|r| r.constraint(press));
-    let first = match constraint {
-        Some(mut c) => to_pos(rect, c.project(screen_point(rect, first))),
+    let mut constraint = app.view3d_ruler_constraint(&view, Some(layer), press, pressed.as_ref());
+    let first = match constraint.as_mut() {
+        Some(c) => to_pos(rect, c.project(screen_point(rect, first))),
         None => first,
     };
     let Some(Opened {
@@ -323,6 +310,26 @@ fn begin(
                 Some(ShiftHold::new((at.x as f64, at.y as f64), from.is_some()));
         }
     }
+}
+
+/// 押した面が今のテクスチャセットのものでなければ、その知らせを出して true（面に描く・面に定規を作る押しが、ほかのテクスチャセットの面から始めない）。
+pub(super) fn refuse_other_set(
+    app: &mut AppState,
+    model: &ViewModel,
+    hit: &yolu_core::geometry::SurfaceHit,
+) -> bool {
+    if hit.material == app.view3d.material {
+        return false;
+    }
+    let name = model.material_name(hit.material as usize, app.lang);
+    app.refuse(
+        Source::View3d,
+        app.lang.pick(
+            format!("ほかのテクスチャセット（{name}）の面です。"),
+            format!("Surface of another texture set ({name})."),
+        ),
+    );
+    true
 }
 
 /// 表示域の画面の点（定規の点の空間。表示域の左上が原点）。
@@ -1835,13 +1842,7 @@ fn canvas_copy_rings(
     }
 }
 
-/// 線 1 本（外が黒の細い影、中が水色）。画面の外の端点は、点どうしを結ぶだけ（クリップは painter が行う）。
-fn draw_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
-    painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(90)));
-    painter.line_segment([a, b], Stroke::new(1.5, symmetry_color(204)));
-}
-
-/// 3D ビューの上に、対称の面（ミラーの四角）と放射状の軸、クローンの元の印を描く（絵の上、カーソルの下）。
+/// 3D ビューの上に、3D の定規（対称の面と軸を含む）とクローンの元の印を描く（絵の上、カーソルの下）。
 pub fn draw_overlays(ui: &Ui, app: &AppState, rect: Rect) {
     let Some(model) = &app.view3d.model else {
         return;
@@ -1852,39 +1853,8 @@ pub fn draw_overlays(ui: &Ui, app: &AppState, rect: Rect) {
         view.to_screen(p)
             .map(|s| Pos2::new(rect.left() + s.x, rect.top() + s.y))
     };
-    {
-        if let Some(sym) = active_symmetry(app) {
-            let bounds = model.geometry.bounds();
-            let reach = (bounds.extents.max_element() * 1.25).max(1e-4);
-            if let Some(plane) = sym.mirror {
-                // 箱の中心を面へ落とした点のまわりの四角
-                let center = bounds.center - plane.normal * plane.signed_distance(bounds.center);
-                let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(a, b)| {
-                    to_screen(center + plane.axis_u * (a * reach) + plane.axis_v * (b * reach))
-                });
-                if corners.iter().all(|c| c.is_some()) {
-                    let c: Vec<Pos2> = corners.iter().flatten().copied().collect();
-                    painter.add(egui::Shape::convex_polygon(
-                        c.clone(),
-                        symmetry_color(26),
-                        Stroke::NONE,
-                    ));
-                    for i in 0..4 {
-                        draw_line(&painter, c[i], c[(i + 1) % 4]);
-                    }
-                }
-            }
-            if let Some(radial) = sym.radial {
-                let along = radial.axis * reach;
-                if let (Some(a), Some(b)) = (
-                    to_screen(radial.origin - along),
-                    to_screen(radial.origin + along),
-                ) {
-                    draw_line(&painter, a, b);
-                }
-            }
-        }
-    }
+    // 3D の定規（対称の面と軸を含む）
+    crate::rulers::draw3d::paint_shown(&painter, app, rect);
     // クローンの元（十字）
     if crate::clone_source::active(app) {
         if let Some(source) = app.clone.source_for(&model.geometry) {

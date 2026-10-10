@@ -2,7 +2,7 @@
 //! ための線とハンドル（Unity 版の `ShapeGizmo` と同じ操作）。形はモデルのルートの空間（シーンの単位）にあり、ここは画面の幾何と
 //! 当たり判定とドラッグの計算だけ。値を文書へ入れるのは `crate::fillfx::gizmo`。
 //!
-//! - 1 つのギズモに、中心の四角・移動の矢印・回す輪・大きさのつまみを同時に出す（切り替えは無い）。輪は矢印の外側（矢印の長さ
+//! - 1 つのギズモに、中心の四角・移動の矢印・回す輪・大きさのつまみを同時に出す（切り替えは無い。大きさを持たない定規の物 `Kind::Anchor` は、大きさのつまみを出さない）。輪は矢印の外側（矢印の長さ
 //!   `ARROW_POINTS` < 輪の半径 `RING_POINTS`）。重なった所の当たりは、中心の四角 → 大きさのつまみ → 矢印 → 輪の順（小さな的を先に）。
 //! - 移動の矢印はルートの軸に沿い、掴むと中心がその軸に沿って動く（押したときのレイと今のレイが、軸の直線に最も近づく点の差）。
 //!   中心の四角は、カメラに向いた面の中で動かす。
@@ -60,6 +60,9 @@ pub enum Handle {
     SizeYNeg,
     SizeZPos,
     SizeZNeg,
+    /// 定規の端の点 a・b（`Kind::Anchor` の形のとき、`rulers::edit3d` が出して掴む。形の幾何の計算には出てこない）。
+    EndA,
+    EndB,
 }
 
 impl Handle {
@@ -99,6 +102,8 @@ pub enum Kind {
     Box,
     Sphere,
     Plane,
+    /// 大きさを持たない物（定規）。外形も大きさのつまみも出さず、中心の四角・移動の矢印・回す輪だけ。
+    Anchor,
 }
 
 /// ギズモが動かす形（モデルのルートの空間、シーンの単位。回転は度）。
@@ -295,6 +300,9 @@ pub fn knobs(s: &Shape, root: &Root) -> Vec<(Handle, Vec3)> {
     let q = world_rotation(s, root);
     let half = s.size.map(|v| v as f32 / 2.0);
     let mut list = Vec::new();
+    if s.kind == Kind::Anchor {
+        return list;
+    }
     for i in 0..3 {
         if s.kind == Kind::Plane && i != 1 {
             continue;
@@ -721,6 +729,8 @@ fn lines_with(
         };
     let half = s.size.map(|v| v as f32 / 2.0);
     match s.kind {
+        // 外形は無い（定規の線は `rulers` が描く）
+        Kind::Anchor => {}
         Kind::Box => {
             let mut draw_box = |h: Vec3, color: Color32, width: f32, out: &mut Vec<Line>| {
                 for i in 0..3 {

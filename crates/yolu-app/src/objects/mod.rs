@@ -2,11 +2,13 @@
 //!
 //! - 選べる物: 投影の箱・デカール（塗りつぶしの投影が UV 以外）、グラデーションデカール（塗りつぶしのチャンネルの形のグラデーション）、
 //!   フィルターの形（形のグラデーション・UV 以外の投影の画像の Generator。内容とマスクのスタック）、モデルの空間の点のグラデーションの点、
-//!   3D パス（パス全体。今のモデルで描いたもの）。見えているレイヤーの物だけ。どのレイヤーの物も印を出し、押せばそのレイヤーを選ぶ。
-//! - 印は物の中心（パスは線の真ん中）の小さな点（白・半径 6。乗せると大きく、選ぶと橙）。重なった印は、同じ所でもう一度押すと次の物。
-//!   選んだ物は枠・線を橙で出し、形はそのギズモの取っ手も出す（Q で隠す。G/R/S の途中は出さない）。
+//!   3D パス（パス全体。今のモデルで描いたもの）、3D の定規（表示が入っているもの。表示の範囲によらない）。見えているレイヤーの物だけ。どのレイヤーの
+//!   物も印を出し、押せばそのレイヤーを選ぶ。
+//! - 印は物の中心（パスは線の真ん中、定規は 2 点の真ん中か中心）の小さな点（白・半径 6。乗せると大きく、選ぶと橙）。重なった印は、同じ所でもう一度押すと次の物。
+//!   選んだ物は枠・線を橙で出し、形と定規はそのギズモの取っ手も出す（Q で隠す。G/R/S の途中は出さない。定規は移動の矢印と回す輪、端の点の四角で、
+//!   大きさのつまみは無い）。
 //! - 選びは 1 つ（複数を選んで一緒に動かすのは無い）。H で選んだ物の印を隠し、Alt+H で全部出す（画面だけ。文書は変えない）。
-//! - 編集の Delete は選んだ物を消す（グラデーションデカール・フィルターの形・点・パス。投影の置き場は消せない）。
+//! - 編集の Delete は選んだ物を消す（グラデーションデカール・フィルターの形・点・パス・定規。投影の置き場は消せない）。
 //! - ポーズのモードの物はボーン（面を押して選ぶ。`view3d::gizmo`）。G/R/S は選んでいるボーンに当てる。
 
 pub mod transform;
@@ -16,7 +18,7 @@ use yolu_core::fill_image::ProjectionMode;
 use yolu_core::fill_points::PointSpace;
 use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::paths::point_position;
-use yolu_core::{Channel, FilterTarget, LayerId, LayerKind, LayerPath};
+use yolu_core::{Channel, FilterTarget, LayerId, LayerKind, LayerPath, RulerId, RulerSpace};
 
 use crate::fillfx::gizmo::{self, Target};
 use crate::lang::Lang;
@@ -49,13 +51,17 @@ pub enum Object {
     },
     /// 3D パス（パス全体）。
     Path { layer: LayerId, id: u128 },
+    /// 3D の定規（モデルの空間の定規。レイヤーが持つ文書の値）。
+    Ruler { layer: LayerId, id: RulerId },
 }
 
 impl Object {
     pub fn layer(self) -> LayerId {
         match self {
             Object::Shape(t) => t.layer(),
-            Object::Point { layer, .. } | Object::Path { layer, .. } => layer,
+            Object::Point { layer, .. }
+            | Object::Path { layer, .. }
+            | Object::Ruler { layer, .. } => layer,
         }
     }
 }
@@ -214,7 +220,21 @@ pub fn marker_of(app: &AppState, object: Object) -> Option<Vec3> {
             Some(Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32))
         }
         Object::Path { layer, id } => polyline_middle(&path_points(app, layer, id)?),
+        Object::Ruler { layer, id } => {
+            let r = ruler_of(app, layer, id)?;
+            crate::rulers::edit3d::center(&r).map(|c| c.as_vec3())
+        }
     }
+}
+
+/// 編集のモードで選べる 3D の定規（モデルの空間で、表示が入っているもの）。
+pub fn ruler_of(app: &AppState, layer: LayerId, id: RulerId) -> Option<yolu_core::Ruler> {
+    app.doc
+        .layer(layer)?
+        .rulers()
+        .iter()
+        .find(|r| r.id == id && r.space() == RulerSpace::Model && r.visible)
+        .cloned()
 }
 
 /// レイヤーが見えているか（親のグループまで全部の目が開いている）。
@@ -290,6 +310,14 @@ pub fn markers(app: &AppState) -> Vec<Marker> {
                 });
             }
         }
+        for r in layer.rulers() {
+            if r.visible && r.space() == RulerSpace::Model {
+                objects.push(Object::Ruler {
+                    layer: id,
+                    id: r.id,
+                });
+            }
+        }
     }
     objects
         .into_iter()
@@ -312,6 +340,7 @@ pub fn gizmo_target(app: &AppState) -> Option<Target> {
     }
     match selected(app)? {
         Object::Shape(t) => Some(t),
+        Object::Ruler { layer, id } => Some(Target::Ruler(layer, id)),
         _ => None,
     }
 }
@@ -341,6 +370,10 @@ pub fn select(app: &mut AppState, object: Option<Object>) {
     if let Some(o) = object {
         if app.selected_layer != Some(o.layer()) {
             app.select_single_layer(o.layer());
+        }
+        // 定規を選んだら、プロパティの「定規」の行も同じ定規を選ぶ
+        if let Object::Ruler { layer, id } = o {
+            app.rulers.selected = Some((layer, id));
         }
     }
 }
@@ -458,6 +491,19 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
                         line(pts, 2.0);
                     }
                 }
+                Object::Ruler { layer, id } => {
+                    if let Some(r) = ruler_of(app, layer, id) {
+                        crate::rulers::draw3d::paint_selected(&painter, app, rect, &r);
+                        if gizmo::target(app).is_some() {
+                            let hover = match app.fillfx.hover {
+                                sg::Handle::EndA => Some(crate::rulers::edit3d::End::A),
+                                sg::Handle::EndB => Some(crate::rulers::edit3d::End::B),
+                                _ => None,
+                            };
+                            crate::rulers::draw3d::paint_squares(&painter, app, rect, &r, hover);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -507,6 +553,7 @@ fn object_name(lang: Lang, o: Object) -> &'static str {
         Object::Shape(Target::Filter(..)) => lang.pick("フィルターの形", "Filter shape"),
         Object::Point { .. } => lang.pick("点", "Point"),
         Object::Path { .. } => lang.pick("パス", "Path"),
+        Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => lang.pick("定規", "Ruler"),
     }
 }
 
@@ -591,6 +638,13 @@ fn delete(app: &mut AppState, o: Object) {
             }
             // 今の点を消す口（最後の点は断る。消したら `point_removed` が選びを外し、番号を詰める）
             crate::fillfx::points::delete_point(app, layer, channel, index);
+        }
+        // 定規の物は `Object::Ruler`（形のギズモの対象 `Target::Ruler` を `Object::Shape` に包むことは無いが、同じ消し方にしておく）
+        Object::Ruler { layer, id } | Object::Shape(Target::Ruler(layer, id)) => {
+            app.apply(Action::Ruler(crate::rulers::RulerAction::Delete {
+                owner: layer,
+                ids: vec![id],
+            }));
         }
         Object::Path { layer, id } => {
             if let Some(reason) = app.read_only_reason() {

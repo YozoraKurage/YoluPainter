@@ -1,4 +1,4 @@
-use super::{endpoints, outline, Drag, Figure, Ruler, RulerKind};
+use super::{endpoints, outline, Drag, Figure};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
@@ -176,71 +176,6 @@ pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
             .map(screen)
             .collect();
         paint_outline(painter, points);
-    }
-}
-
-/// 定規の線（2D のキャンバスと 3D ビューで同じ見た目）。`screen` は定規の点を画面の点へ、`long` は線を伸ばす長さ（定規の点の単位）、
-/// `handles` は端点の輪を出すか（定規のツールのとき）。
-pub(crate) fn paint_ruler(
-    painter: &Painter,
-    r: Ruler,
-    screen: impl Fn(DVec2) -> Pos2,
-    long: f64,
-    handles: bool,
-) {
-    let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 170, 230, 110));
-    paint_ruler_styled(painter, r, screen, long, handles, stroke);
-}
-
-/// `paint_ruler` の線の太さと色を渡せる形。
-pub(crate) fn paint_ruler_styled(
-    painter: &Painter,
-    r: Ruler,
-    screen: impl Fn(DVec2) -> Pos2,
-    long: f64,
-    handles: bool,
-    stroke: Stroke,
-) {
-    let line = |a: DVec2, b: DVec2| {
-        let dir = super::direction(b - a) * long;
-        painter.line_segment([screen(a - dir), screen(a + dir)], stroke);
-    };
-    {
-        match r.kind {
-            RulerKind::Line => line(r.a, r.b),
-            RulerKind::Parallel => {
-                let d = super::direction(r.b - r.a);
-                let normal = DVec2::new(-d.y, d.x) * 32.0;
-                for i in -8..=8 {
-                    line(r.a + normal * i as f64, r.b + normal * i as f64);
-                }
-            }
-            RulerKind::Concentric => {
-                // 重ねる円は egui の円（画面の画素で分割される）。寄せ先は真の円で、拡大しても多角形に見えない。
-                let radius = r.a.distance(r.b).max(1.0);
-                let center = screen(r.a);
-                let per_unit = center.distance(screen(r.a + DVec2::X));
-                for i in 1..=4 {
-                    painter.circle_stroke(center, (radius * i as f64) as f32 * per_unit, stroke);
-                }
-            }
-            RulerKind::Perspective => {
-                for center in [Some(r.a), r.two_points.then_some(r.b)]
-                    .into_iter()
-                    .flatten()
-                {
-                    for i in 0..12 {
-                        let t = i as f64 * std::f64::consts::PI / 12.0;
-                        line(center, center + DVec2::new(t.cos(), t.sin()));
-                    }
-                }
-            }
-        }
-        if handles {
-            for point in [r.a, r.b] {
-                painter.circle_stroke(screen(point), 5.0, stroke);
-            }
-        }
     }
 }
 

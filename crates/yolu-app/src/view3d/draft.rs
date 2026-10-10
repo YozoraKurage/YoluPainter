@@ -4,22 +4,24 @@
 //! - 図形の「塗る」: 画面の形の覆い（縁は 2D の図形の塗りと同じく、1 テクセルを 4 × 4 の点で見た量）を量にして、2D の図形の塗りと
 //!   同じ塗り方で塗る。「線で描く」: 輪郭の画面の点の並びを、3D のストローク（`SurfaceStroke`）の入力にする（ブラシの設定・対称が効く。
 //!   手ぶれ補正と曲線は切る。筆圧は一定）。
-//! - 定規: 表示域の画面の点で持ち、視点を動かしても画面の同じ所に残る（保存しない）。「定規にスナップ」のとき、3D のブラシのストロークの入力の点を
-//!   2D と同じ式で寄せる（`input`）。
+//! - 定規: モデルの面を押して引き、離したときに、選んでいるレイヤーに 3D の定規（モデルの空間。文書の値）を作る（`rulers::edit3d`）。押した点が
+//!   モデルの外なら作らない。3D のブラシのストロークの入力の点を寄せるのは `input`（`rulers::edit3d` の寄せ先）。
 //!
 //! どれも離すまで文書を変えない。Esc・フォーカスを失う・ツールの切り替え・ビューが隠れるで、途中の形を何も描かずに捨てる（離したのを取りこぼした
 //! グラデーションは、2D と同じく最後の位置で塗る。ペンの押しを OS に奪われて補った離しも、取りこぼしと同じ）。
 
 use egui::{Modifiers, Painter, Pos2, Rect};
 use yolu_core::geometry::{
-    cover_screen, ProjectionSettings, ScreenCoverSettings, ScreenCoverage, ScreenShape,
-    SurfaceInput,
+    cover_screen, pick, ProjectionSettings, ScreenCoverSettings, ScreenCoverage, ScreenShape,
+    SurfaceHit, SurfaceInput,
 };
 use yolu_core::glam::{DVec2, Vec2};
 
-use super::input::{camera_view, open_stroke, screen_point, to_pos, Opened};
-use crate::drafting::canvas::{fill_region, finish_paint, paint_outline, paint_ruler};
-use crate::drafting::{dragged_ruler, endpoints, outline, Figure, Ruler};
+use super::input::{
+    camera_view, local, open_stroke, refuse_other_set, screen_point, to_pos, Opened,
+};
+use crate::drafting::canvas::{fill_region, finish_paint, paint_outline};
+use crate::drafting::{endpoints, outline, Figure};
 use crate::notice::Source;
 use crate::state::{AppState, StrokeSource, Tool};
 
@@ -45,13 +47,9 @@ pub struct SurfaceDraft {
     pub current: DVec2,
     pub shift: bool,
     pub alt: bool,
-    /// 動かしている定規と、掴んだ所（1・2 は端点、0 は全体）。
-    pub original: Option<Ruler>,
-    pub handle: usize,
+    /// 定規を作るときの、押した面の点（モデルの外で押したときは、ドラッグを始めない）。
+    pub hit: Option<SurfaceHit>,
 }
-
-/// 定規の端点を掴める距離（画面の点。2D のキャンバスと同じ）。
-const HANDLE: f64 = 12.0;
 
 /// 図形の輪郭を 3D のストロークに流すとき、入力の点の間をこの長さ（画面の点）以下に分ける（ダブの間隔は区間の始まりの面の奥行きで
 /// 決まるので、奥行きの変わる長い辺でも間隔が合う）。
@@ -62,8 +60,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
     let kind = match app.tool {
         Tool::Gradient => DraftKind::Gradient,
         Tool::Shape => DraftKind::Figure,
-        // 対称定規は画面に貼り付けない（3D の対称定規は文書に置く）
-        Tool::Ruler if app.screen_ruler_kind().is_some() => DraftKind::Ruler,
+        Tool::Ruler => DraftKind::Ruler,
         _ => return,
     };
     if app.is_stroking()
@@ -91,19 +88,23 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         }
         DraftKind::Ruler => {}
     }
-    let p = screen_point(rect, at);
-    let original = (kind == DraftKind::Ruler)
-        .then_some(app.view3d.ruler)
-        .flatten();
-    let handle = original.map_or(0, |r| {
-        if r.a.distance(p) < HANDLE {
-            1
-        } else if r.b.distance(p) < HANDLE {
-            2
-        } else {
-            0
+    // 定規は、モデルの面を押して引く（モデルの外で押したら作らない）
+    let hit = if kind == DraftKind::Ruler {
+        let Some(model) = app.view3d.model.clone() else {
+            return;
+        };
+        let Some(hit) = pick(&model.geometry, &camera_view(app, rect), local(rect, at)) else {
+            return;
+        };
+        // ブラシと同じく、ほかのテクスチャセットの面からは始めない
+        if refuse_other_set(app, &model, &hit) {
+            return;
         }
-    });
+        Some(hit)
+    } else {
+        None
+    };
+    let p = screen_point(rect, at);
     app.view3d.input.draft = Some(SurfaceDraft {
         kind,
         source,
@@ -111,8 +112,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         current: p,
         shift,
         alt: false,
-        original,
-        handle,
+        hit,
     });
 }
 
@@ -188,24 +188,8 @@ fn apply(app: &mut AppState, rect: Rect, d: SurfaceDraft) {
                 figure(app, rect, a, b);
             }
         }
-        DraftKind::Ruler => {
-            let r = ruler_of(app, &d);
-            if r.is_placeable() {
-                app.view3d.ruler = Some(r);
-            }
-        }
+        DraftKind::Ruler => crate::rulers::edit3d::create(app, rect, &d),
     }
-}
-
-fn ruler_of(app: &AppState, d: &SurfaceDraft) -> Ruler {
-    dragged_ruler(
-        d.original,
-        d.handle,
-        (d.start, d.current),
-        d.shift,
-        app.screen_ruler_kind().unwrap_or_default(),
-        app.rulers.two_points,
-    )
 }
 
 /// 画面の形を、今のテクスチャセットの見えている面のテクセルへ写す（1 回の操作の予算で）。面の向きの弱めと継ぎ目のにじみはブラシの「3D」の
@@ -364,19 +348,10 @@ fn outline_stroke(
     finish_paint(app, ended, before);
 }
 
-/// 3D ビューの上に、定規（画面に固定）と、ドラッグの途中の形（グラデーションの線・図形の輪郭・引いている定規）を描く（2D と同じ見た目）。
+/// 3D ビューの上に、ドラッグの途中の形（グラデーションの線・図形の輪郭・引いている定規）を描く（2D と同じ見た目）。作った定規は `rulers::draw3d`。
 pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect) {
     let screen = |p: DVec2| to_pos(rect, p);
-    let long = (rect.width() + rect.height()) as f64 * 2.0;
     let draft = app.view3d.input.draft;
-    let ruler = draft
-        .filter(|d| d.kind == DraftKind::Ruler)
-        .map(|d| ruler_of(app, &d))
-        .filter(Ruler::is_placeable)
-        .or(app.view3d.ruler);
-    if let Some(r) = ruler {
-        paint_ruler(painter, r, screen, long, app.tool == Tool::Ruler);
-    }
     match draft {
         Some(d) if d.kind == DraftKind::Gradient => {
             crate::gradient::canvas::paint_line(painter, screen(d.start), screen(d.current));
@@ -388,6 +363,17 @@ pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect) {
                 .map(screen)
                 .collect();
             paint_outline(painter, points);
+        }
+        Some(d) if d.kind == DraftKind::Ruler => {
+            if let Some(ruler) = crate::rulers::edit3d::build(app, rect, &d) {
+                crate::rulers::draw3d::paint_ruler(
+                    painter,
+                    app,
+                    rect,
+                    &ruler,
+                    crate::rulers::draw3d::Look::Draft,
+                );
+            }
         }
         _ => {}
     }

@@ -3,11 +3,11 @@ use crate::common;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
 use yolu_app::{
-    drafting::{self, Figure, Ruler as ScreenRuler, RulerKind as ScreenKind},
+    drafting::{self, Figure},
     engine::composite_pixel,
     lang::Lang,
     pen::PenSample,
-    rulers::RulerAction,
+    rulers::{active::canvas_constraint, RulerAction},
     state::{Action, AppState, StrokeSource, Tool},
     YoluApp,
 };
@@ -181,49 +181,35 @@ fn ruler_equations_and_perspective_direction_lock() {
     let a = DVec2::new(10.0, 10.0);
     let b = DVec2::new(30.0, 10.0);
     let start = DVec2::new(20.0, 30.0);
-    let r = ScreenRuler {
-        kind: ScreenKind::Line,
-        a,
-        b,
-        two_points: false,
-    };
+    let id = yolu_core::RulerId(1);
+    let ruler = |kind: RulerKind, a: DVec2, b: DVec2| Ruler::canvas(id, kind, a, b);
+    let constraint = |r: &Ruler, start: DVec2| canvas_constraint(r, start).expect("寄せ先");
     assert_eq!(
-        r.constraint(start).project(DVec2::new(25.0, 44.0)),
+        constraint(&ruler(RulerKind::Line, a, b), start).project(DVec2::new(25.0, 44.0)),
         DVec2::new(25.0, 10.0)
     );
     assert_eq!(
-        ScreenRuler {
-            kind: ScreenKind::Parallel,
-            ..r
-        }
-        .constraint(start)
-        .project(DVec2::new(25.0, 44.0)),
+        constraint(&ruler(RulerKind::Parallel, a, b), start).project(DVec2::new(25.0, 44.0)),
         DVec2::new(25.0, 30.0)
     );
-    let p = ScreenRuler {
-        kind: ScreenKind::Concentric,
-        ..r
-    }
-    .constraint(start)
-    .project(DVec2::new(44.0, 19.0));
+    let p = constraint(&ruler(RulerKind::Concentric, a, b), start).project(DVec2::new(44.0, 19.0));
     assert!((p.distance(a) - start.distance(a)).abs() < 1e-8);
-    let r = ScreenRuler {
-        kind: ScreenKind::Perspective,
-        a: DVec2::new(0.0, 20.0),
-        b: DVec2::new(20.0, 0.0),
-        two_points: true,
-    };
+    let mut r = ruler(
+        RulerKind::Perspective,
+        DVec2::new(0.0, 20.0),
+        DVec2::new(20.0, 0.0),
+    );
+    r.two_points = true;
     let start = DVec2::new(20.0, 20.0);
-    let mut c = r.constraint(start);
+    let mut c = constraint(&r, start);
     assert_eq!(c.project(start), start);
     assert_eq!(c.project(DVec2::new(21.0, 10.0)), DVec2::new(20.0, 10.0));
     assert_eq!(c.project(DVec2::new(5.0, 9.0)), DVec2::new(20.0, 9.0));
-    let mut c = ScreenRuler {
-        two_points: false,
-        ..r
-    }
-    .constraint(start);
+    r.two_points = false;
+    let mut c = constraint(&r, start);
     assert_eq!(c.project(DVec2::new(5.0, 9.0)), DVec2::new(5.0, 20.0));
+    // 対称は寄せ先でなく写し
+    assert!(canvas_constraint(&ruler(RulerKind::Symmetry, a, b), start).is_none());
 }
 
 #[test]

@@ -4,21 +4,23 @@
 //! - `active`: 描くレイヤーから見える定規 → 寄せ先と対称の写し（`AppState::rulers_active`）。ストロークの始めに固める。
 //! - `ops`: 文書を変える操作（`RulerAction`。1 つが 1 回の取り消し。ドラッグとスライダーはまとめる）。
 //! - `canvas`・`draw`: 2D のキャンバスの定規のツール（作る・つまみで動かす）と、定規と対称の線の描画。
+//! - `edit3d`・`draw3d`: 3D の定規（モデルの空間）を 3D ビューで作る・画面に写した寄せ先にする・編集のモードで動かす幾何と、3D ビューの上の描画。
 //! - `tool`: 定規のツールのオプションバーとツールプロパティ、「定規にスナップ」「特殊定規にスナップ」のボタン。
 //! - `props`: プロパティのレイヤーの欄の「定規」の区分。`layer_icon`: レイヤーの一覧の定規のアイコン。
 //!
 //! スナップ 2 つの入り切りと、これから作る定規の設定（種類・本数・角度の刻みなど）は画面の状態で、文書にも設定にも書かない。
-//! 3D ビューの画面に貼り付く定規（`view3d.ruler`）はこの外（`view3d::draft`）。
 
 pub mod active;
 pub mod canvas;
 pub mod draw;
+pub mod draw3d;
+pub mod edit3d;
 pub mod layer_icon;
 pub mod ops;
 pub mod props;
 pub mod tool;
 
-pub use active::{screen_line_is_near, Active, Place, Shown};
+pub use active::{Active, Place, Shown};
 pub use ops::RulerAction;
 
 use std::ops::RangeInclusive;
@@ -97,6 +99,10 @@ pub struct RulerState {
     pub selected: Option<(LayerId, RulerId)>,
     pub drag: Option<RulerDrag>,
     pub icon_drag: Option<IconDrag>,
+    /// ポインタが乗っているビュー（前のフレームの結果。どちらにも乗っていなければ None）。「スナップする特殊定規の切り替え」の空間を決める。
+    pub pointer_in: Option<Place>,
+    /// 最後にツールで押して描き始めた（ブラシ・図形・グラデーション・塗りつぶし・定規などの押しが入った）ビュー。2D のキャンバスと 3D ビューの描く押しの入口が書く。
+    pub last_drew: Option<Place>,
 }
 
 impl Default for RulerState {
@@ -114,19 +120,13 @@ impl Default for RulerState {
             selected: None,
             drag: None,
             icon_drag: None,
+            pointer_in: None,
+            last_drew: None,
         }
     }
 }
 
 impl RulerState {
-    /// 画面に貼り付く 3D の定規（3D の定規が文書に入るまで）が、描き始めに寄せるか: 直線は「定規にスナップ」、ほかは「特殊定規にスナップ」。
-    pub fn snaps_screen_ruler(&self, kind: crate::drafting::RulerKind) -> bool {
-        match kind {
-            crate::drafting::RulerKind::Line => self.snap_ruler,
-            _ => self.snap_special,
-        }
-    }
-
     /// 線の本数を 2〜16 に丸めて置く（線対称は偶数だけ。奇数なら 1 つ上へ）。
     pub fn set_lines(&mut self, lines: u8) {
         self.lines = fit_lines(lines, self.line_symmetry);
@@ -136,6 +136,15 @@ impl RulerState {
     pub fn set_line_symmetry(&mut self, on: bool) {
         self.line_symmetry = on;
         self.lines = fit_lines(self.lines, on);
+    }
+
+    /// ポインタがビュー `place` に乗っているか（毎フレーム、ビューが描くときに知らせる。乗っていなければ、そのビューに乗っていた印を外す）。
+    pub fn note_pointer(&mut self, place: Place, over: bool) {
+        if over {
+            self.pointer_in = Some(place);
+        } else if self.pointer_in == Some(place) {
+            self.pointer_in = None;
+        }
     }
 
     pub fn set_step(&mut self, step: u32) {
