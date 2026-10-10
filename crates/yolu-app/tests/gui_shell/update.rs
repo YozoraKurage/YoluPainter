@@ -18,8 +18,8 @@ use yolu_app::update::{Mode, Preference, UpdateAction};
 use yolu_app::YoluApp;
 use yolu_update::{
     asset_name, asset_url, release_page, sha256, Asset, Envelope, Error, Manifest, Transport,
-    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL, WINDOWS_ARCHIVE,
-    WINDOWS_INSTALLER,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, MACOS_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL,
+    WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
 const SEED: [u8; 32] = [42; 32];
@@ -125,7 +125,7 @@ fn public_key() -> [u8; 32] {
     disposable_key().verifying_key().to_bytes()
 }
 
-/// その版の、署名つきの更新情報（zip・インストーラー・tar.gz を載せる）。
+/// その版の、署名つきの更新情報（zip・インストーラー・tar.gz・macOS の zip を載せる）。
 fn signed_metadata(version: &str, installer: &[u8]) -> Vec<u8> {
     signed_metadata_without(version, installer, None)
 }
@@ -150,6 +150,7 @@ fn signed_metadata_without(version: &str, installer: &[u8], skip: Option<&str>) 
             (WINDOWS_ARCHIVE, &b"zip"[..]),
             (LINUX_ARCHIVE, &b"tar"[..]),
             (WINDOWS_INSTALLER, installer),
+            (MACOS_ARCHIVE, &b"mac"[..]),
         ]
         .into_iter()
         .filter(|(target, _)| Some(*target) != skip)
@@ -1652,6 +1653,44 @@ fn headless_where_it_cannot_replace_itself_it_only_opens_the_release_page() {
         state.message.contains("リリースのページを開きました"),
         "{}",
         state.message
+    );
+}
+
+#[test]
+fn headless_macos_announces_the_new_version_and_opens_the_page_without_downloading() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Page);
+    // mac のアプリが探す鍵（universal の配布物）で確かめる
+    state
+        .update
+        .configure_for_test(Some(public_key()), "0.1.0", Some(MACOS_ARCHIVE), Mode::Page);
+    find_update(&mut state);
+    assert_eq!(state.update.mode(), Mode::Page);
+    assert_eq!(help_labels(&state)[0], "YoluPainter 0.2.0 のリリースを開く");
+    state.lang = Lang::En;
+    assert_eq!(help_labels(&state)[0], "Open the YoluPainter 0.2.0 release");
+    apply(&mut state, UpdateAction::Install);
+    // 落とさず・走らせず・置き場も使わず、その版のページを開く（更新情報の 1 回の取得だけ）
+    assert_eq!(
+        *rig.opened.lock().unwrap(),
+        [release_page(&Version::new(0, 2, 0))]
+    );
+    assert_eq!(rig.calls(), 1);
+    assert!(rig.launched().is_empty() && rig.staging.files().is_empty());
+    assert!(state.update.ready().is_none() && !state.update.is_ready_open() && !state.quit);
+    assert_eq!(
+        state.update.offer().map(|offer| offer.version.clone()),
+        Some(Version::new(0, 2, 0))
+    );
+    // その版が mac の配布物を載せていなければ、検証の失敗ではなく「この環境向けの配布物がありません」
+    *rig.server.metadata.lock().unwrap() =
+        signed_metadata_without("0.3.0", INSTALLER, Some(MACOS_ARCHIVE));
+    state.lang = Lang::Ja;
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert_eq!(
+        state.message,
+        "更新を確かめられません（この環境向けの配布物がありません）。"
     );
 }
 

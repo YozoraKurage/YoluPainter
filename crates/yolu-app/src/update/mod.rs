@@ -14,7 +14,8 @@
 //! - 同じ実行ファイルの別の起動（別のウィンドウ）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じたウィンドウだけが戻らないので、
 //!   始める前に断る。落としたインストーラーは残し、別のウィンドウを閉じてからもう一度押せばすぐ入る。
 //! - インストールした Windows は、インストーラーを無音で走らせてアプリを閉じ、インストーラーが終わったらアプリを起こし直す。
-//!   それ以外（Linux・zip で展開した Windows）は、その版のリリースのページを開くだけ（自分で入れ替えない）。
+//!   それ以外（Linux・macOS・zip で展開した Windows）は、その版のリリースのページを開くだけ（自分で入れ替えない）。macOS は試作の配布物で、
+//!   新しい版を知らせるだけ（落とさず、置き場も使わない）。
 //!
 //! 通信・ダウンロードは別のスレッドで、取消ができる（`Link`）。状態は `UpdateState`、操作は `UpdateAction`（メニュー・ウィンドウから）。
 
@@ -32,7 +33,8 @@ use std::sync::Arc;
 use egui::Vec2;
 use yolu_update::{
     merge_channels, release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient,
-    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, MACOS_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE,
+    WINDOWS_INSTALLER,
 };
 
 use crate::jobs::{JobCard, JobSpec};
@@ -222,16 +224,25 @@ pub struct UpdateState {
 
 /// この OS・この入れ方の更新の対象（更新情報の鍵）と入れ方。
 fn platform_target(installed_copy: bool) -> (Option<&'static str>, Mode) {
-    if cfg!(all(windows, target_arch = "x86_64")) {
-        if installed_copy {
-            (Some(WINDOWS_INSTALLER), Mode::Installer)
-        } else {
-            (Some(WINDOWS_ARCHIVE), Mode::Page)
+    target_for(std::env::consts::OS, std::env::consts::ARCH, installed_copy)
+}
+
+/// `platform_target` の中身（OS・CPU の名前は `std::env::consts` と同じ。試験は、動かしていない OS の答えも確かめる）。
+///
+/// macOS は、Intel でも Apple Silicon でも同じ universal の配布物（試作の zip）の鍵を使い、入れ方は `Page` だけ。アプリは落として入れ替えず、
+/// 新しい版を知らせて、その版のリリースのページを開く（署名は ad-hoc だけで、アプリが自分を入れ替えるのは安全でないため）。
+fn target_for(os: &str, arch: &str, installed_copy: bool) -> (Option<&'static str>, Mode) {
+    match (os, arch) {
+        ("windows", "x86_64") => {
+            if installed_copy {
+                (Some(WINDOWS_INSTALLER), Mode::Installer)
+            } else {
+                (Some(WINDOWS_ARCHIVE), Mode::Page)
+            }
         }
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        (Some(LINUX_ARCHIVE), Mode::Page)
-    } else {
-        (None, Mode::Page)
+        ("linux", "x86_64") => (Some(LINUX_ARCHIVE), Mode::Page),
+        ("macos", "aarch64" | "x86_64") => (Some(MACOS_ARCHIVE), Mode::Page),
+        _ => (None, Mode::Page),
     }
 }
 
@@ -1162,7 +1173,40 @@ mod tests {
             // Linux は、インストールの有無にかかわらず、ページを開くだけ。
             assert_eq!((zip, mode), (Some(LINUX_ARCHIVE), Mode::Page));
             assert_eq!((setup, setup_mode), (Some(LINUX_ARCHIVE), Mode::Page));
+        } else if cfg!(target_os = "macos") {
+            assert_eq!((zip, mode), (Some(MACOS_ARCHIVE), Mode::Page));
+            assert_eq!((setup, setup_mode), (Some(MACOS_ARCHIVE), Mode::Page));
         }
+    }
+
+    #[test]
+    fn macos_only_announces_the_new_version_and_never_installs_itself() {
+        // Intel でも Apple Silicon でも、入れ方にかかわらず、同じ universal の配布物の鍵でページを開くだけ。
+        for arch in ["aarch64", "x86_64"] {
+            for installed in [false, true] {
+                assert_eq!(
+                    target_for("macos", arch, installed),
+                    (Some(MACOS_ARCHIVE), Mode::Page),
+                    "{arch} {installed}"
+                );
+            }
+        }
+        // 入れ替える（インストーラーを走らせる）のは、インストーラーで入れた Windows だけ。
+        for os in ["windows", "linux", "macos", "freebsd"] {
+            for arch in ["x86_64", "aarch64", "x86"] {
+                for installed in [false, true] {
+                    let (_, mode) = target_for(os, arch, installed);
+                    assert_eq!(
+                        mode == Mode::Installer,
+                        (os, arch, installed) == ("windows", "x86_64", true),
+                        "{os} {arch} {installed}"
+                    );
+                }
+            }
+        }
+        // 対象の配布物を持たない OS・CPU は、更新の項目を出さない（今までどおり）。
+        assert_eq!(target_for("macos", "powerpc", false).0, None);
+        assert_eq!(target_for("windows", "aarch64", false).0, None);
     }
 
     #[test]
