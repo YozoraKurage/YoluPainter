@@ -667,6 +667,69 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
     }
 }
 
+/// 既定の並びで 1 枚だけの組だったタブ（3D ビュー・キャンバス・サブツール）と、戻したあとに隣になるはずのタブ・向き。
+const SINGLE_GROUPS: [(Tab, Tab, char); 3] = [
+    (Tab::View3d, Tab::Canvas, 'l'),
+    (Tab::Canvas, Tab::View3d, 'r'),
+    (Tab::SubTools, Tab::ToolProperties, 'a'),
+];
+
+/// タブが自分だけの組にいて、隣のタブの組の左（l）・右（r）・上（a）にある（描いた矩形で比べる）。
+fn assert_own_group_beside(dock: &DockState<Tab>, tab: Tab, neighbor: Tab, side: char, why: &str) {
+    assert_eq!(mates(dock, tab), vec![tab], "{tab:?} {why}: 自分だけの組");
+    let mine = yolu_app::detach::leaf_rect(dock, tab).expect("組の矩形");
+    let other = yolu_app::detach::leaf_rect(dock, neighbor).expect("隣の組の矩形");
+    let eps = 1.5;
+    match side {
+        'l' => assert!(
+            mine.right() <= other.left() + eps,
+            "{tab:?} {why}: 左 {mine:?} {other:?}"
+        ),
+        'r' => assert!(
+            mine.left() >= other.right() - eps,
+            "{tab:?} {why}: 右 {mine:?} {other:?}"
+        ),
+        _ => assert!(
+            mine.bottom() <= other.top() + eps,
+            "{tab:?} {why}: 上 {mine:?} {other:?}"
+        ),
+    }
+    assert!(
+        mine.width() > 20.0 && mine.height() > 20.0,
+        "{tab:?} {why}: 描かれた {mine:?}"
+    );
+    layout::validate(dock).expect("どのタブも 1 つずつ");
+}
+
+#[test]
+fn single_tab_groups_come_back_as_their_own_group_next_to_their_default_neighbor() {
+    for (tab, neighbor, side) in SINGLE_GROUPS {
+        // 「ドックに戻す」
+        let mut h = app_default(1600.0, 900.0, 128);
+        assert_own_group_beside(&h.state().dock, tab, neighbor, side, "出す前");
+        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.run();
+        h.step();
+        assert_eq!(h.state().detached.windows.len(), 1, "{tab:?}");
+        h.state_mut().state.apply(Action::Dock(DockOp::Return(tab)));
+        h.run();
+        h.run();
+        assert!(h.state().detached.windows.is_empty());
+        assert_own_group_beside(&h.state().dock, tab, neighbor, side, "戻す");
+        // OS のウィンドウを閉じる道（`close`）
+        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.run();
+        h.step();
+        let serial = h.state().detached.windows[0].serial;
+        let app = h.state_mut();
+        app.detached.close(&mut app.dock, serial);
+        h.run();
+        h.run();
+        assert!(h.state().detached.windows.is_empty());
+        assert_own_group_beside(&h.state().dock, tab, neighbor, side, "閉じる");
+    }
+}
+
 #[test]
 fn detached_new_panels_are_written_to_the_layout_file_and_read_back() {
     let mut main = default_dock();

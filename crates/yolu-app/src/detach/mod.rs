@@ -6,7 +6,7 @@
 //!
 //! 出し方: タブの右クリックの「別ウィンドウで開く」、タブをウィンドウの外で離す、egui_dock のウィンドウの落とし先（組の中ほど）で離す。戻し方: 別ウィンドウのタブを
 //! アプリのウィンドウの中で離す（その点の下の組へ）、右クリックの「ドックに戻す」、OS のウィンドウを閉じる（中のタブを全部、戻る先の組へ）。
-//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、それも無ければメインウィンドウの右の組。
+//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、1 枚だけの組だったタブは既定の並びの隣のタブの組を分けた新しい組、それも無ければメインウィンドウの右の組。
 //!
 //! ここは並びの操作（どのウィンドウのどの組にどのタブがあるか）と置き場所の計算だけで、描くのは `app` の `detached`。
 
@@ -18,7 +18,7 @@ pub mod place;
 use std::collections::HashMap;
 
 use egui::{Pos2, Rect, ViewportId};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabIndex, Tree};
+use egui_dock::{DockState, Node, NodeIndex, Split, SurfaceIndex, TabIndex, Tree};
 
 use crate::layout::FloatRecord;
 use crate::pen::PenInput;
@@ -419,18 +419,61 @@ pub fn default_mates(tab: Tab) -> Vec<Tab> {
     }
 }
 
-/// タブを `dock` の主の面へ入れて前にする: `at` の下の組 → 戻る先 `home` のタブの組 → 既定の並びで同じ組だったタブの組 → 右の組（最後に描いた
-/// 組の矩形で右端。まだ描いていなければ最初の組）。主の面が空なら、新しい組を作る。
+/// 既定の並びで 1 枚だけの組だったタブ（3D ビュー・キャンバス・サブツール）を、組を作り直して戻すときの分け方: 既定の並びで隣にいたタブ（`dock` の
+/// 主の面にあるもののうち、先に挙げたもの）と、そのタブの組を分ける向き、新しい組（左・上の子）の取り分。向きと取り分は `app::default_dock_for` と同じ定数。
+/// - 3D ビュー: キャンバスの組の左へ。
+/// - キャンバス: 3D ビューの組の右へ（取り分は左の子の 3D ビューのもの）。
+/// - サブツール: ツールプロパティの組の上へ（無ければブラシサイズ、それも無ければカラーの上へ）。
+pub fn default_split(dock: &DockState<Tab>, tab: Tab) -> Option<(Tab, Split, f32)> {
+    use crate::app::{
+        CENTER_VIEW3D, LEFT_BRUSH_SIZE, LEFT_COLOR, LEFT_SUB_TOOLS, LEFT_TOOL_PROPERTIES,
+    };
+    let candidates: Vec<(Tab, Split, f32)> = match tab {
+        Tab::View3d => vec![(Tab::Canvas, Split::Left, CENTER_VIEW3D)],
+        Tab::Canvas => vec![(Tab::View3d, Split::Right, CENTER_VIEW3D)],
+        Tab::SubTools => [
+            (Tab::ToolProperties, LEFT_TOOL_PROPERTIES),
+            (Tab::BrushSize, LEFT_BRUSH_SIZE),
+            (Tab::Color, LEFT_COLOR),
+        ]
+        .into_iter()
+        .map(|(neighbor, share)| {
+            (
+                neighbor,
+                Split::Above,
+                LEFT_SUB_TOOLS / (LEFT_SUB_TOOLS + share),
+            )
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+    candidates
+        .into_iter()
+        .find(|(neighbor, _, _)| dock.find_main_surface_tab(neighbor).is_some())
+}
+
+/// タブを `dock` の主の面へ入れて前にする: `at` の下の組 → 戻る先 `home` のタブの組 → 既定の並びで同じ組だったタブの組 → 既定の並びで隣にいたタブの組を
+/// 分けて自分の組を作り直す（`default_split`）→ 右の組（最後に描いた組の矩形で右端。まだ描いていなければ最初の組）。主の面が空なら、新しい組を作る。
 pub fn dock_into(dock: &mut DockState<Tab>, tab: Tab, home: &[Tab], at: Option<Pos2>) {
     let surface = SurfaceIndex::main();
-    let target = at
-        .and_then(|p| leaf_at(dock, p))
-        .or_else(|| {
-            home.iter()
-                .chain(default_mates(tab).iter())
-                .find_map(|t| dock.find_main_surface_tab(t).map(|(node, _)| node))
-        })
-        .or_else(|| rightmost_leaf(dock.main_surface()));
+    let target = at.and_then(|p| leaf_at(dock, p)).or_else(|| {
+        home.iter()
+            .chain(default_mates(tab).iter())
+            .find_map(|t| dock.find_main_surface_tab(t).map(|(node, _)| node))
+    });
+    let target = match target {
+        Some(node) => Some(node),
+        None => {
+            if let Some((neighbor, split, share)) = default_split(dock, tab) {
+                if let Some((node, _)) = dock.find_main_surface_tab(&neighbor) {
+                    dock.main_surface_mut()
+                        .split_tabs(node, split, share, vec![tab]);
+                    return;
+                }
+            }
+            rightmost_leaf(dock.main_surface())
+        }
+    };
     match target {
         Some(node) => {
             if let Ok(leaf) = dock.leaf_mut(egui_dock::NodePath { surface, node }) {

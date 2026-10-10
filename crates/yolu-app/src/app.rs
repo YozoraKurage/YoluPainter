@@ -156,16 +156,18 @@ impl<'de> serde::Deserialize<'de> for Tab {
 }
 
 /// 左の列の割合（上から サブツール・ツールプロパティ・ブラシサイズ・カラー。列全体に対して）。`default_dock_for` が使う。
-const LEFT_SHARE: f32 = 0.21;
-const LEFT_COLOR: f32 = 0.32;
-const LEFT_TOOL_PROPERTIES: f32 = 0.35;
-const LEFT_BRUSH_SIZE: f32 = 0.13;
+pub(crate) const LEFT_SHARE: f32 = 0.21;
+pub(crate) const LEFT_COLOR: f32 = 0.32;
+pub(crate) const LEFT_TOOL_PROPERTIES: f32 = 0.35;
+pub(crate) const LEFT_BRUSH_SIZE: f32 = 0.13;
+/// 左の列の、サブツールの取り分（残り）。
+pub(crate) const LEFT_SUB_TOOLS: f32 = 1.0 - LEFT_COLOR - LEFT_TOOL_PROPERTIES - LEFT_BRUSH_SIZE;
 /// 右の列の幅: ウィンドウの幅の割合と、下限（点。右上の 3 つのタブ（テクスチャセット・チャンネル・アセット）の名前が日英とも切れない幅）。
 /// 下限は、最小のウィンドウ（960 点）の幅で効く。
 const RIGHT_WIDTH_SHARE: f32 = 0.19;
 const RIGHT_WIDTH_MIN: f32 = 232.0;
 /// 中央の 3D ビュー（左）の取り分。残りがキャンバス（右）。
-const CENTER_VIEW3D: f32 = 0.5;
+pub(crate) const CENTER_VIEW3D: f32 = 0.5;
 const RIGHT_TOP: f32 = 0.46;
 /// 右の列の、上の組を除いた残りのうち、レイヤーの組の取り分（残りがプロパティの組）。
 const RIGHT_LAYERS: f32 = 0.42;
@@ -200,7 +202,7 @@ pub fn default_dock_for(width: f32) -> DockState<Tab> {
     // 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー（それぞれが自分のタブの帯を持つ）
     let upper_share = 1.0 - LEFT_COLOR;
     let [upper, _] = surface.split_below(left, upper_share, vec![Tab::Color, Tab::ColorSets]);
-    let sub_share = upper_share - LEFT_TOOL_PROPERTIES - LEFT_BRUSH_SIZE;
+    let sub_share = LEFT_SUB_TOOLS;
     let [_, props_and_size] =
         surface.split_below(upper, sub_share / upper_share, vec![Tab::ToolProperties]);
     surface.split_below(
