@@ -52,7 +52,7 @@ pub fn snap_buttons(ui: &mut Ui, app: &mut AppState, straight: Rect, special: Re
         (
             straight,
             "rulers.snap",
-            "grid_dots",
+            "snap_ruler",
             lang.pick("定規にスナップ", "Snap to Ruler"),
             RulerAction::ToggleSnapRuler,
             app.rulers.snap_ruler,
@@ -60,7 +60,7 @@ pub fn snap_buttons(ui: &mut Ui, app: &mut AppState, straight: Rect, special: Re
         (
             special,
             "rulers.snap_special",
-            "flip",
+            "snap_special",
             lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
             RulerAction::ToggleSnapSpecial,
             app.rulers.snap_special,

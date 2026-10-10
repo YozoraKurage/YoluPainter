@@ -38,6 +38,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tune",
     "view_in_ar",
     "flip",
+    "snap_ruler",
+    "snap_special",
     "rotate_90_degrees_cw",
     "rotate_90_degrees_ccw",
     "warning",
