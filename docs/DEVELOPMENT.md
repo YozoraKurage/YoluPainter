@@ -105,6 +105,9 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 - Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
 - Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
 - Linux の通信の見張り（`ubuntu-24.04`。画面の試験とは別のジョブ）: 本物のアプリを `strace` の下で動かし、外への通信の試みが無いことを `tools/network-watch.py` が確かめます（[通信の見張り](#通信の見張り)の段 2）。別のジョブにしているのは、更新の確認を動かすために更新用の公開鍵（使い捨て）を組み込んで作る必要があり、その環境変数を変えると yolu-update と yolu-app を作り直すため（同じジョブに置くと、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになります）。キャッシュは画面の試験のジョブと共有キー（`shared-key: linux-render`）で読むだけにし（`save-if: false`）、鍵つきの物で上書きしません。xdotool が効かず場面を飛ばしたときは、終わりに `::warning::` を出します。ツールの試験（`tools/test-network-watch.py`）は「Linux の試験と静的検査」でも回ります。
+- cargo-deny（`ubuntu-24.04`。`.github/workflows/cargo-deny.yml`）: 週 1 回（月曜 03:23 UTC）と手動だけで、毎回の CI には入れません。`deny.toml` の決まりで advisories（既知の脆弱性・取り下げられた版）・bans・licenses・sources を確かめます
+  （手元では `cargo deny --locked check advisories bans licenses sources`）。cargo-deny は版を固定して `cargo install` します（`deny.toml` の書式は版に結びつくので、上げるときは一緒に確かめます）。
+  `paste`（RUSTSEC-2024-0436、保守の終わり）は egui_dock がビルドの時だけ使うマクロで、脆弱性ではないので理由つきで無視しています。見つけた脆弱性は、更新で直せるか、使われ方に当たらないかを確かめ、後者だけを理由つきで `ignore` に足します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib`。続けて、束の中の `headless_` の試験のうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面の試験が Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致の試験が通ることを見ます。GPU・画面の統合試験と、配る物（.app・署名）は対象外です。
 - どの OS でも [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
@@ -117,6 +120,10 @@ CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査で
 
 アプリが外へ通信するのは、利用者が選んだ更新の確認だけです（[README](../README.md)・[INSTALL](INSTALL.md) の約束）。外からの操作は、設定で入れている間だけ `127.0.0.1` で待ちます。
 この約束が、新しいコードや依存で静かに破れないよう、コードと依存を読む見張り（段 1）が毎回の CI で回ります。
+
+通信の部品の見張り（`cargo xtask netguard`。毎回の CI）と cargo-deny（週 1 回）は役が違います。netguard は「アプリが外へ通信する部品が入っていないか」を、ソースと依存のソースの字句から見ます
+（ライセンスも脆弱性も見ません）。cargo-deny は「入っている依存に既知の脆弱性・許していないライセンス・知らない出どころ（registry 以外・git）が無いか」を見ます（通信するかどうかは見ません）。
+どちらかが通っても、もう一方の代わりにはなりません。
 
 ### 段 1: コードと依存を読む
 

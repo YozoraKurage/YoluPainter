@@ -1,0 +1,37 @@
+# cargo-deny の決まり。週 1 回と手動で動く（`.github/workflows/cargo-deny.yml`。毎回の CI には入れない）。手元では
+# `cargo deny --locked check advisories bans licenses sources`。役の分け方: 通信の部品は `cargo xtask netguard`（毎回の CI。`docs/DEVELOPMENT.md` の
+# 「通信の見張り」）、既知の脆弱性・ライセンス・依存の出どころはここ。
+[graph]
+targets = [
+    "x86_64-pc-windows-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste（保守の終わり）は egui_dock がビルドの時だけ使うマクロ。脆弱性ではなく、上流の更新待ち" },
+]
+
+[licenses]
+# 配る物のライセンスの正は `cargo xtask preflight`（tools/licenses-reviewed.json、原文のハッシュまで照らす）。ここは許していない物が混ざったときの早めの知らせ
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "Zlib", "BSD-2-Clause", "BSD-3-Clause",
+    "BSL-1.0", "OFL-1.1", "Ubuntu-font-1.0", "Bitstream-Vera", "ISC", "Unicode-3.0", "Unicode-DFS-2016",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+# 配らない作業場所のクレート（publish = false）は、ライセンスの欄を調べない
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# 作業場所のクレート同士の path 依存（`yolu-core = { path = … }`）は、版の指定が無くてよい
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
