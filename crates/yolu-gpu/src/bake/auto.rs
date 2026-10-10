@@ -1,7 +1,10 @@
 //! GPU・CPU の切り替え。GPU が使えない・壊れている・予算を超える・時間切れのときは理由を返して CPU の `bake` に戻る。
 use super::{BakeAdapter, BakeGpu, GpuBakeError, GpuBakeOptions, GpuBakeStats};
 use std::{
-    sync::{atomic::AtomicBool, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use yolu_core::mesh_maps::{
@@ -54,6 +57,8 @@ enum Slot {
     /// 作れなかった理由。`allow_software` を許していない状態で作れなかったので、許せば作れるかもしれない。
     Unavailable {
         allow_software: bool,
+        /// 作ったときの ray query の入切（切り替わったら作り直す。ray query つきの準備で作れなかった GPU が、切れば作れることがある）。
+        ray_query: bool,
         reason: String,
     },
 }
@@ -62,6 +67,10 @@ enum Slot {
 /// ベイクの間は中身を貸し出すので、その間の `probe` と `bake` は終わりを待つ。
 pub struct GpuBakeSlot {
     options: GpuBakeOptions,
+    /// ray query を使うか（`GpuBakeOptions::ray_query` の今の値。`set_ray_query` で変える）。
+    ray_query: AtomicBool,
+    /// 焼きの途中で ray query の道が失敗したので止めている理由。入切が変わるまで compute だけで焼く。
+    blocked: Mutex<Option<String>>,
     slot: Mutex<Slot>,
 }
 impl Default for GpuBakeSlot {
@@ -72,9 +81,36 @@ impl Default for GpuBakeSlot {
 impl GpuBakeSlot {
     pub fn new(options: GpuBakeOptions) -> Self {
         Self {
+            ray_query: AtomicBool::new(options.ray_query),
+            blocked: Mutex::new(None),
             options,
             slot: Mutex::new(Slot::Empty),
         }
+    }
+    /// ray query を使うかを切り替える（アプリの設定）。デバイスの作り方が変わるので、値が変わったら次の `probe`・`bake` で作り直す。
+    /// 値が変わると、途中の失敗で止めていた ray query も試し直す。
+    pub fn set_ray_query(&self, on: bool) {
+        if self.ray_query.swap(on, Ordering::Relaxed) != on {
+            *self.blocked.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+    /// 設定している ray query の入切（途中の失敗で止めているかは `ray_query_block`）。
+    pub fn ray_query(&self) -> bool {
+        self.ray_query.load(Ordering::Relaxed)
+    }
+    /// ray query を止めている理由（焼きの途中で ray query の道が失敗したとき）。
+    pub fn ray_query_block(&self) -> Option<String> {
+        self.blocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    fn block_ray_query(&self, reason: String) {
+        *self.blocked.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+    }
+    /// 今、デバイスを ray query つきで作る入切（設定が入で、止めていないとき入）。
+    fn effective_ray_query(&self) -> bool {
+        self.ray_query() && self.ray_query_block().is_none()
     }
     /// アダプターが使えるか（まだ作っていなければ作る）。`allow_software` は `BakeBackend::Gpu` のとき true。
     pub fn probe(&self, allow_software: bool) -> Result<BakeAdapter, String> {
@@ -90,30 +126,49 @@ impl GpuBakeSlot {
             gpu.fail_for_test(reason);
         }
     }
+    /// 試験用: 次の `bake` を、レイをたどる道を決めたあとに失敗させる（作っていなければ何もしない）。
+    #[doc(hidden)]
+    pub fn fail_midway_for_test(&self, reason: &str, kind: super::MidFailure) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Slot::Ready(gpu) = &mut *slot {
+            gpu.fail_midway_for_test(reason, kind);
+        }
+    }
     fn ensure<'a>(
         &self,
         slot: &'a mut Slot,
         allow_software: bool,
     ) -> Result<&'a mut BakeGpu, String> {
+        let ray_query = self.effective_ray_query();
         let rebuild = match slot {
             Slot::Empty => true,
             Slot::Unavailable {
                 allow_software: tried,
+                ray_query: tried_ray_query,
                 ..
-            } => allow_software && !*tried,
+            } => (allow_software && !*tried) || *tried_ray_query != ray_query,
             // 壊れたものは作り直す。ソフトウェアのアダプターを許さない呼び出しには使わない。
             Slot::Ready(gpu) => {
-                gpu.failure().is_some() || (gpu.adapter().software && !allow_software)
+                gpu.failure().is_some()
+                    || (gpu.adapter().software && !allow_software)
+                    || gpu.ray_query_option() != ray_query
             }
         };
         if rebuild {
             *slot = match BakeGpu::new(GpuBakeOptions {
                 allow_software,
+                ray_query,
                 ..self.options.clone()
             }) {
-                Ok(gpu) => Slot::Ready(Box::new(gpu)),
+                Ok(mut gpu) => {
+                    if let Some(reason) = self.ray_query_block() {
+                        gpu.block_ray_query(&reason);
+                    }
+                    Slot::Ready(Box::new(gpu))
+                }
                 Err(e) => Slot::Unavailable {
                     allow_software,
+                    ray_query,
                     reason: e.to_string(),
                 },
             };
@@ -160,35 +215,49 @@ pub fn bake_mesh_maps(
     if backend != BakeBackend::Cpu {
         let allow_software = backend == BakeBackend::Gpu;
         let mut slot = gpu.slot.lock().unwrap_or_else(|e| e.into_inner());
-        match gpu.ensure(&mut slot, allow_software) {
-            Ok(g) => match g.bake(input, settings, budget, cancel, reference, &mut progress) {
-                Ok(baked) => {
-                    let adapter = g.adapter().clone();
-                    // dispatch が 1 回も無い = 準備の途中で止まった。GPU で焼いたとは言わない
-                    let ran = baked.stats.dispatches > 0;
-                    return Ok((
-                        baked.result,
-                        BakeRun {
-                            requested: backend,
-                            gpu: ran.then_some((adapter, baked.stats)),
-                            fallback_kind: None,
-                            fallback_reason: None,
-                        },
-                    ));
-                }
-                Err(GpuBakeError::Refused(e)) => return Err(e),
-                Err(e) => {
-                    let kind = match &e {
-                        GpuBakeError::Budget(_) => FallbackKind::Budget,
-                        GpuBakeError::Failed(_) => FallbackKind::Failed,
-                        GpuBakeError::Unavailable(_) | GpuBakeError::Refused(_) => {
-                            FallbackKind::Unavailable
+        // ray query の道で焼いている途中の失敗（ドライバーの固まり・待ち時間切れ・デバイスの消失ではないもの）は、ray query を止めて
+        // compute だけで 1 回やり直す。やり直しても失敗したら、CPU に戻る。
+        let mut retried = false;
+        loop {
+            match gpu.ensure(&mut slot, allow_software) {
+                Ok(g) => match g.bake(input, settings, budget, cancel, reference, &mut progress) {
+                    Ok(baked) => {
+                        let adapter = g.adapter().clone();
+                        // dispatch が 1 回も無い = 準備の途中で止まった。GPU で焼いたとは言わない
+                        let ran = baked.stats.dispatches > 0;
+                        return Ok((
+                            baked.result,
+                            BakeRun {
+                                requested: backend,
+                                gpu: ran.then_some((adapter, baked.stats)),
+                                fallback_kind: None,
+                                fallback_reason: None,
+                            },
+                        ));
+                    }
+                    Err(GpuBakeError::Refused(e)) => return Err(e),
+                    Err(e) => {
+                        if !retried
+                            && matches!(e, GpuBakeError::Failed(_))
+                            && g.failed_on_ray_query_only()
+                        {
+                            retried = true;
+                            gpu.block_ray_query(e.to_string());
+                            continue;
                         }
-                    };
-                    fallback = Some((kind, e.to_string()));
-                }
-            },
-            Err(reason) => fallback = Some((FallbackKind::Unavailable, reason)),
+                        let kind = match &e {
+                            GpuBakeError::Budget(_) => FallbackKind::Budget,
+                            GpuBakeError::Failed(_) => FallbackKind::Failed,
+                            GpuBakeError::Unavailable(_) | GpuBakeError::Refused(_) => {
+                                FallbackKind::Unavailable
+                            }
+                        };
+                        fallback = Some((kind, e.to_string()));
+                    }
+                },
+                Err(reason) => fallback = Some((FallbackKind::Unavailable, reason)),
+            }
+            break;
         }
     }
     let remaining;
@@ -213,6 +282,45 @@ pub fn bake_mesh_maps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_ray_query_remakes_a_slot_that_could_not_be_made_and_clears_a_block() {
+        let slot = GpuBakeSlot::new(GpuBakeOptions {
+            ray_query: true,
+            ..Default::default()
+        });
+        // ray query つきで作れなかった印の入ったスロット（ray query を切れば作れる GPU がある）
+        let mut state = Slot::Unavailable {
+            allow_software: false,
+            ray_query: true,
+            reason: "前の理由".into(),
+        };
+        let _ = slot.ensure(&mut state, false);
+        assert!(
+            matches!(&state, Slot::Unavailable { reason, .. } if reason == "前の理由"),
+            "入が同じなのに作り直した"
+        );
+        let mut state = Slot::Unavailable {
+            allow_software: false,
+            ray_query: true,
+            reason: "前の理由".into(),
+        };
+        slot.set_ray_query(false);
+        let _ = slot.ensure(&mut state, false);
+        assert!(
+            !matches!(&state, Slot::Unavailable { reason, .. } if reason == "前の理由"),
+            "切に変えたのに作り直さなかった"
+        );
+        // 途中の失敗で止めた ray query は、設定が変わると試し直す（同じ値の設定し直しでは止めたまま）
+        slot.set_ray_query(true);
+        slot.block_ray_query("途中で失敗".into());
+        assert!(slot.ray_query() && !slot.effective_ray_query());
+        slot.set_ray_query(true);
+        assert!(slot.ray_query_block().is_some());
+        slot.set_ray_query(false);
+        slot.set_ray_query(true);
+        assert!(slot.ray_query_block().is_none() && slot.effective_ray_query());
+    }
 
     #[test]
     fn the_cpu_gets_what_is_left_of_the_time_limit() {

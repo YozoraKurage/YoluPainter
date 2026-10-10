@@ -42,6 +42,57 @@ fn gpu() -> Option<BakeGpu> {
     }
 }
 
+/// ray query の道を試すアダプター。ray query の機能つきでデバイスを作れたときだけ返す（ソフトウェアの描画は対応しないので、
+/// 使えなければ理由を出して飛ばす）。`YOLUPAINTER_REQUIRE_RAY_QUERY` があれば、飛ばさず失敗にする（ray query のあるアダプターで
+/// 試験が実行されたことの確認用）。
+fn gpu_ray_query() -> Option<BakeGpu> {
+    gpu_lease::lease();
+    let why = match BakeGpu::new(GpuBakeOptions {
+        allow_software: true,
+        ray_query: true,
+        ..Default::default()
+    }) {
+        Ok(g) if g.adapter().ray_query => {
+            eprintln!("ray query の試験: {}", g.adapter());
+            return Some(g);
+        }
+        Ok(g) => format!("{} は ray query を使えない", g.adapter()),
+        Err(e) => e.to_string(),
+    };
+    eprintln!("ray query の試験をスキップ: {why}");
+    assert!(
+        std::env::var_os("YOLUPAINTER_REQUIRE_RAY_QUERY").is_none(),
+        "YOLUPAINTER_REQUIRE_RAY_QUERY があるのに ray query を使えない: {why}"
+    );
+    None
+}
+
+/// compute の道と、使えるなら ray query の道（同じ許容で CPU と照らす）。
+struct Gpus {
+    compute: BakeGpu,
+    ray_query: Option<BakeGpu>,
+}
+fn gpus() -> Option<Gpus> {
+    let compute = gpu()?;
+    Some(Gpus {
+        compute,
+        ray_query: gpu_ray_query(),
+    })
+}
+fn run_all(
+    g: &mut Gpus,
+    input: &MeshBakeInput,
+    reference: Option<&MeshBakeInput>,
+    settings: &MeshBakeSettings,
+) -> Vec<(MeshMapKind, Diff)> {
+    let out = run(&mut g.compute, input, reference, settings, false);
+    if let Some(rq) = &mut g.ray_query {
+        eprintln!("  -- ray query の道 --");
+        let _ = run(rq, input, reference, settings, true);
+    }
+    out
+}
+
 /// マップ 1 枚の CPU との差。値は 16 bit（0〜65535）。
 #[derive(Debug, Default)]
 pub struct Diff {
@@ -131,12 +182,23 @@ fn run(
     input: &MeshBakeInput,
     reference: Option<&MeshBakeInput>,
     settings: &MeshBakeSettings,
+    expect_ray_query: bool,
 ) -> Vec<(MeshMapKind, Diff)> {
     let budget = MeshBakeBudget::default();
     let cpu = bake(input, settings, &budget, None, reference, |_, _| true).unwrap();
     let baked = g
         .bake(input, settings, &budget, None, reference, |_, _| true)
         .unwrap_or_else(|e| panic!("GPU ベイクに失敗: {e}"));
+    if expect_ray_query {
+        // 自己照合に通らず compute に戻ったのでは、ray query の道を試したことにならない
+        assert_eq!(
+            baked.stats.method,
+            yolu_gpu::GpuBakeMethod::RayQuery,
+            "ray query の道を使えなかった: {:?}",
+            baked.stats.ray_query_note
+        );
+        eprintln!("  {}", baked.stats.ray_query_note.as_deref().unwrap_or(""));
+    }
     let gpu = baked.result;
     assert_eq!(gpu.status, MeshBakeStatus::Completed);
     assert_eq!(gpu.maps.len(), cpu.maps.len());
@@ -176,7 +238,7 @@ fn run(
 
 #[test]
 fn self_bake_all_maps_on_a_cube() {
-    let Some(mut g) = gpu() else { return };
+    let Some(mut g) = gpus() else { return };
     let c = skewed(cube(6, 0.0, 0.0, 1));
     let input = input_plain(&c);
     let settings = MeshBakeSettings {
@@ -190,7 +252,7 @@ fn self_bake_all_maps_on_a_cube() {
         ..Default::default()
     };
     eprintln!("立方体 {} 面・自己ベイク", input.triangle_count());
-    let _ = run(&mut g, &input, None, &settings);
+    let _ = run_all(&mut g, &input, None, &settings);
 }
 
 fn all_maps(width: i32, height: i32) -> MeshBakeSettings {
@@ -210,19 +272,19 @@ fn all_maps(width: i32, height: i32) -> MeshBakeSettings {
 
 #[test]
 fn noisy_bulged_cube_with_vertex_normals_and_antialiasing() {
-    let Some(mut g) = gpu() else { return };
+    let Some(mut g) = gpus() else { return };
     let c = skewed(cube(10, 0.6, 0.08, 7));
     let input = input_with_normals(&c);
     eprintln!(
         "凹凸のある立方体 {} 面・頂点法線・AA 2・余白 4",
         input.triangle_count()
     );
-    let _ = run(&mut g, &input, None, &all_maps(128, 128));
+    let _ = run_all(&mut g, &input, None, &all_maps(128, 128));
 }
 
 #[test]
 fn projection_from_a_displaced_high_poly() {
-    let Some(mut g) = gpu() else { return };
+    let Some(mut g) = gpus() else { return };
     let low = input_with_normals(&skewed(cube(4, 0.8, 0.0, 3)));
     let high = input_with_normals(&skewed(cube(16, 0.8, 0.06, 5)));
     let mut s = all_maps(128, 128);
@@ -234,7 +296,7 @@ fn projection_from_a_displaced_high_poly() {
         low.triangle_count(),
         high.triangle_count()
     );
-    let _ = run(&mut g, &low, Some(&high), &s);
+    let _ = run_all(&mut g, &low, Some(&high), &s);
 }
 
 fn names(list: &[&str]) -> Option<Vec<String>> {
@@ -268,7 +330,7 @@ fn projection_matched_by_name_with_an_unmatched_part() {
     s.reference_frontal = 0.1;
     s.reference_rear = 0.1;
     eprintln!("名前の対応（C は高ポリに無い）");
-    let _ = run(&mut g, &low, Some(&high), &s);
+    let _ = run(&mut g, &low, Some(&high), &s, false);
 }
 
 #[test]
@@ -309,7 +371,7 @@ fn id_sources_manual_colors_and_vertex_colors() {
             s.reference_frontal = 0.15;
             s.reference_rear = 0.15;
             eprintln!("ID {source:?} 高ポリ {}", reference.is_some());
-            let diffs = run(&mut g, &low, reference, &s);
+            let diffs = run(&mut g, &low, reference, &s, false);
             if reference.is_none() {
                 assert_eq!(diffs[0].1.max, 0, "ID は値が合う");
             }
@@ -328,13 +390,13 @@ fn id_sources_manual_colors_and_vertex_colors() {
     s.id_source = MeshIdSource::MeshPart;
     s.manual_id_colors = manual;
     eprintln!("手動の ID 色");
-    let diffs = run(&mut g, &low, None, &s);
+    let diffs = run(&mut g, &low, None, &s, false);
     assert_eq!(diffs[0].1.max, 0);
 }
 
 #[test]
 fn several_slots_occluders_and_odd_sizes() {
-    let Some(mut g) = gpu() else { return };
+    let Some(mut g) = gpus() else { return };
     let low = input_with(
         &skewed(cube(6, 0.4, 0.05, 13)),
         &Extras {
@@ -359,7 +421,7 @@ fn several_slots_occluders_and_odd_sizes() {
             "スロット {slots:?} {occluders:?} {}x{} AA 4",
             size.0, size.1
         );
-        let _ = run(&mut g, &low, None, &s);
+        let _ = run_all(&mut g, &low, None, &s);
     }
 }
 
@@ -1060,6 +1122,192 @@ fn overlapped_uvs_take_the_same_owner_as_the_cpu() {
             ..Default::default()
         };
         eprintln!("重なった UV・{}", rule.name());
-        let _ = run(&mut g, &input, None, &settings);
+        let _ = run(&mut g, &input, None, &settings, false);
     }
+}
+
+/// スロットは、ray query の入切が変わると次の確認でデバイスを作り直す（デバイスの作り方が変わるため）。切にすると、対応するアダプターでも
+/// ray query つきのデバイスにならず、ベイクは compute の道で、`ray_query_note` は無い。入に戻すと、対応するアダプターでは ray query つきに戻る。
+#[test]
+fn the_slot_remakes_the_device_when_ray_query_is_switched() {
+    gpu_lease::lease();
+    let slot = GpuBakeSlot::new(GpuBakeOptions {
+        ray_query: true,
+        ..Default::default()
+    });
+    let on = match slot.probe(true) {
+        Ok(a) => a,
+        Err(e) => return skipped(&e),
+    };
+    slot.set_ray_query(false);
+    let off = slot.probe(true).expect("切でも作れる");
+    assert!(!off.ray_query, "切なら ray query つきのデバイスにしない");
+    assert_eq!(off.name, on.name, "同じアダプター");
+    let low = input_with_normals(&skewed(cube(4, 0.3, 0.0, 3)));
+    let mut s = all_maps(32, 32);
+    s.maps = vec![MeshMapKind::AmbientOcclusion];
+    let (_, run) = bake_mesh_maps(
+        BakeBackend::Gpu,
+        &slot,
+        &low,
+        &s,
+        &MeshBakeBudget::default(),
+        None,
+        None,
+        |_, _| true,
+    )
+    .unwrap();
+    let (_, stats) = run.gpu.expect("GPU で焼いた");
+    assert_eq!(stats.method, yolu_gpu::GpuBakeMethod::Compute);
+    assert_eq!(
+        stats.ray_query_why,
+        Some(yolu_gpu::RayQueryWhy::Disabled),
+        "切のときは、切という理由の種類が残る"
+    );
+    slot.set_ray_query(true);
+    let again = slot.probe(true).unwrap();
+    assert_eq!(again.ray_query, on.ray_query, "入に戻すと元の通り");
+    // 入のとき、RT コアの無いアダプターは理由を残して compute、あるアダプターは ray query か（通らなければ）理由つきの compute
+    let (_, run) = bake_mesh_maps(
+        BakeBackend::Gpu,
+        &slot,
+        &low,
+        &s,
+        &MeshBakeBudget::default(),
+        None,
+        None,
+        |_, _| true,
+    )
+    .unwrap();
+    let (_, stats) = run.gpu.expect("GPU で焼いた");
+    let note = stats
+        .ray_query_note
+        .expect("入なら使った説明か使わなかった理由が残る");
+    eprintln!("入のときの道: {:?} / {note}", stats.method);
+    match stats.method {
+        yolu_gpu::GpuBakeMethod::RayQuery => assert!(note.starts_with("ray query"), "{note}"),
+        yolu_gpu::GpuBakeMethod::Compute => {
+            assert!(note.contains("ray query を使わない理由"), "{note}")
+        }
+    }
+}
+
+fn tiny_ao() -> (MeshBakeInput, MeshBakeSettings) {
+    let low = input_with_normals(&skewed(cube(4, 0.3, 0.0, 3)));
+    let mut s = all_maps(32, 32);
+    s.maps = vec![MeshMapKind::AmbientOcclusion];
+    (low, s)
+}
+
+/// ray query の道で焼いている途中の（固まりではない）失敗は、ray query を止めて compute だけで 1 回やり直す。CPU には落とさない。
+/// 固まり・応答なしの失敗（完了待ちの時間切れ）と、compute の道の失敗は、やり直さず CPU に戻る。止めた ray query は、入切が変わるまで戻さない。
+#[test]
+fn a_failure_midway_on_ray_query_is_redone_on_compute_but_a_hang_or_a_compute_failure_goes_to_the_cpu(
+) {
+    use yolu_gpu::MidFailure;
+    gpu_lease::lease();
+    let slot = GpuBakeSlot::new(GpuBakeOptions {
+        ray_query: true,
+        ..Default::default()
+    });
+    if let Err(e) = slot.probe(true) {
+        return skipped(&e);
+    }
+    let (low, s) = tiny_ao();
+    let run = |slot: &GpuBakeSlot| {
+        bake_mesh_maps(
+            BakeBackend::Gpu,
+            slot,
+            &low,
+            &s,
+            &MeshBakeBudget::default(),
+            None,
+            None,
+            |_, _| true,
+        )
+        .unwrap()
+        .1
+    };
+    // ray query の途中の失敗 → compute でやり直して GPU で焼ける
+    slot.fail_midway_for_test("試験の失敗", MidFailure::RayQuery);
+    let redone = run(&slot);
+    let (_, stats) = redone.gpu.expect("compute でやり直して GPU で焼いた");
+    assert!(redone.fallback_kind.is_none());
+    assert_eq!(stats.method, yolu_gpu::GpuBakeMethod::Compute);
+    assert_eq!(stats.ray_query_why, Some(yolu_gpu::RayQueryWhy::RunFailed));
+    assert!(slot.ray_query_block().unwrap().contains("試験の失敗"));
+    // 止めたあとは、毎回 ray query で失敗して CPU に落ちない（同じ設定のあいだ compute のまま）
+    let next = run(&slot);
+    let (_, stats) = next.gpu.expect("GPU で焼いた");
+    assert_eq!(stats.ray_query_why, Some(yolu_gpu::RayQueryWhy::RunFailed));
+    // 入切が変わると、ray query を試し直す
+    slot.set_ray_query(false);
+    slot.set_ray_query(true);
+    assert!(slot.ray_query_block().is_none());
+    slot.probe(true).unwrap(); // 作り直す（失敗の差し込みは、作り直したデバイスに入れる）
+                               // 固まりの疑い（完了待ちの時間切れ）は、同じ GPU でやり直さず CPU に戻る
+    slot.fail_midway_for_test("試験の固まり", MidFailure::RayQueryHung);
+    let hung = run(&slot);
+    assert!(hung.gpu.is_none());
+    assert_eq!(hung.fallback_kind, Some(yolu_gpu::FallbackKind::Failed));
+    assert!(
+        slot.ray_query_block().is_none(),
+        "固まりでは止めの印を付けない"
+    );
+    // compute の道の失敗も CPU に戻る
+    slot.probe(true).unwrap();
+    slot.fail_midway_for_test("試験の失敗（compute）", MidFailure::Compute);
+    let plain = run(&slot);
+    assert!(plain.gpu.is_none());
+    assert_eq!(plain.fallback_kind, Some(yolu_gpu::FallbackKind::Failed));
+}
+
+/// ray query の準備（加速構造の構築・自己照合）の間も、取消・時間切れ・進捗の中止が効く。ray query の使えるアダプターだけで試す
+/// （使えなければ理由を出して飛ばす）。進捗の通知の数を compute の道で数えておき、ray query の道だけが足す通知で中止する。
+#[test]
+fn a_cancel_during_the_ray_query_preparation_stops_the_bake_before_any_dispatch() {
+    let Some(mut rq) = gpu_ray_query() else {
+        return;
+    };
+    let Some(mut compute) = gpu() else { return };
+    let (low, s) = tiny_ao();
+    let mut before = 0usize;
+    compute
+        .bake(
+            &low,
+            &s,
+            &MeshBakeBudget::default(),
+            None,
+            None,
+            |_, phase| {
+                if phase != "Baking" {
+                    before += 1;
+                }
+                true
+            },
+        )
+        .unwrap();
+    let mut calls = 0usize;
+    let baked = rq
+        .bake(
+            &low,
+            &s,
+            &MeshBakeBudget::default(),
+            None,
+            None,
+            |_, phase| {
+                if phase == "Baking" {
+                    return true;
+                }
+                calls += 1;
+                calls <= before
+            },
+        )
+        .unwrap();
+    assert_ne!(
+        baked.result.status,
+        MeshBakeStatus::Completed,
+        "準備の間の中止で止まる"
+    );
+    assert_eq!(baked.stats.dispatches, 0, "dispatch の前に止まる");
 }

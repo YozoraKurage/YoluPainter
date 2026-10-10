@@ -724,8 +724,9 @@ impl Compositor {
 
 mod bake;
 pub use bake::{
-    bake_mesh_maps, BakeAdapter, BakeBackend, BakeGpu, BakeRun, FallbackKind, GpuBakeError,
-    GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
+    bake_mesh_maps, is_off_value, ray_query_env_allows, BakeAdapter, BakeBackend, BakeGpu, BakeRun,
+    FallbackKind, GpuBakeError, GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
+    MidFailure, RayQueryWhy,
 };
 mod resident;
 pub use resident::{
