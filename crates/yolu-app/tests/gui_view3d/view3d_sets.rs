@@ -98,7 +98,8 @@ fn scene(n: usize, size: u32) -> Harness<'static, YoluApp> {
 
 /// `scene` の、板を `cols` 列の格子に置く形（セットが多いときに、1 枚が小さくなりすぎないように）。
 fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
-    let mut h = app(1100.0, 700.0, size);
+    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
+    let mut h = app(1170.0, 700.0, size);
     click_tab(&mut h, yolu_app::Tab::View3d);
     move_to(&h, egui::pos2(1.0, 1.0));
     h.run();

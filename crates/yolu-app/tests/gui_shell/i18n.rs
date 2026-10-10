@@ -674,12 +674,27 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::View3d,
         Tab::Canvas,
     ] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
+    // ツールプロパティの「塗るチャンネル」（開いて、全部のチャンネルを組へ）
+    open_paint_channels(&mut h);
+    for channel in yolu_app::matpaint::CHANNELS {
+        h.state_mut()
+            .state
+            .apply(Action::Mat(yolu_app::matpaint::MatAction::Enabled(true)));
+        h.state_mut()
+            .state
+            .apply(Action::Mat(yolu_app::matpaint::MatAction::Channel(
+                channel, true,
+            )));
+    }
+    h.run();
+    assert_english(&h, "paint channels", &[]);
     // レイヤーの種類・マスク・合成モード・ブラシの種類ごとのプロパティ
     let apply = |h: &mut Harness<'_, YoluApp>, action: Action| {
         h.state_mut().state.apply(action);
@@ -1646,12 +1661,16 @@ fn walk_states(
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::View3d,
         Tab::Canvas,
     ] {
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
+    // ツールプロパティの「塗るチャンネル」を開いた画面
+    open_paint_channels(&mut h);
+    visit(&mut h, "paint channels");
     // ブラシの一覧（全グループ）と詳細のウィンドウ（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
@@ -1807,11 +1826,12 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu() {
     // チャンネルの名前（チャンネルのパネルの行。種類の欄は形式の名前だけなので、長い名前だけが詰まる）、プリセット・効果・合成モードの
     // 箱の値、テクスチャセットの名前。（レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
-    const KNOWN_JA: [&str; 2] = ["エミッション", "テクスチャセット 1"];
-    // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。チャンネルの名前は詰まらない。
-    // ブラシの 2 つ（「効かない」注記と「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき
-    // （注記は欄を無効にしてツールチップへ）一覧から消える
-    const KNOWN_EN: [&str; 2] = ["Texture Set 1", "Watercolor Edge"];
+    // （テクスチャセットの名前は、右の列を広げたので日本語では詰まらなくなった）
+    const KNOWN_JA: [&str; 1] = ["エミッション"];
+    // 英語のチャンネルの名前は詰まらない。ブラシの 2 つ（「効かない」注記と「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき
+    // （注記は欄を無効にしてツールチップへ）一覧から消える。テクスチャセットの名前は、右の列を広げたので詰まらなくなった
+    // 最小のウィンドウのマテリアルのパネルでは、描画モードの名前（Rendering Mode）を切らずに出す分、値の箱が狭くなって「Opaque」が詰まる
+    const KNOWN_EN: [&str; 2] = ["Opaque", "Watercolor Edge"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();

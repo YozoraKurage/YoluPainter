@@ -18,9 +18,6 @@ use crate::layerops::Xform;
 use crate::notice::Source;
 use crate::state::AppState;
 
-/// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 2 つ目（ステンシル・マテリアル/マスク・レイヤー）。
-pub const MASK_TAB: usize = 1;
-
 /// 調整レイヤーの種類（新しく足すときの選択肢）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdjustmentKind {
@@ -380,6 +377,9 @@ pub struct M2State {
     /// プロパティの欄のスクロールと、前のフレームの中身の高さ（はみ出しの判定）。
     pub props_scroll: f32,
     pub props_content: f32,
+    /// マテリアルのパネルのスクロールと、前のフレームの中身の高さ。
+    pub material_scroll: f32,
+    pub material_content: f32,
 }
 
 impl Default for M2State {
@@ -401,6 +401,8 @@ impl Default for M2State {
             channels_content: 0.0,
             props_scroll: 0.0,
             props_content: 0.0,
+            material_scroll: 0.0,
+            material_content: 0.0,
         }
     }
 }
@@ -927,24 +929,16 @@ impl AppState {
         self.set_edit_mask(false);
     }
 
-    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 2 つ目のタブはマスクを描くあいだだけ
-    /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
-    /// 先頭のタブ（ステンシル）へ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。マスクに描くあいだは、ツールプロパティの「塗るチャンネル」の区分が
+    /// レイヤーマスクの欄に替わる（`panels::tool_props`）。
     /// 選んだ効果の行は、マスクを描き始めるとき閉じ、やめるときはマスクのスタックの行だけ閉じる（一覧に出ない行を選んだままにしない。
     /// 画素の効果の行を選んだ状態は、レイヤーの画素が対象なので残す）。
     pub fn set_edit_mask(&mut self, on: bool) {
-        let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
         if on {
             self.fx.selected = None; // マスクの欄へ移る（選んだ効果の欄は閉じる）
-            self.ui.property_tab = MASK_TAB;
-        } else {
-            if was && self.ui.property_tab == MASK_TAB {
-                self.ui.property_tab = 0;
-            }
-            if self.fx.in_mask(&self.doc) {
-                self.fx.selected = None;
-            }
+        } else if self.fx.in_mask(&self.doc) {
+            self.fx.selected = None;
         }
     }
 

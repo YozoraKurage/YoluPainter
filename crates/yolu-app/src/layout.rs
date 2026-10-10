@@ -254,12 +254,9 @@ pub fn parse(text: &str) -> Loaded {
     let docks: Vec<&DockState<Tab>> = detached.iter().map(|d| &d.dock).collect();
     match validate_all(&dock, &docks) {
         Ok(()) => {
-            if !detached
-                .iter()
-                .any(|d| d.dock.find_tab(&Tab::Log).is_some())
-            {
-                add_missing_tabs(&mut dock);
-            }
+            add_missing_tabs(&mut dock, &mut detached);
+            // （足したときに egui_dock が付けた、フォーカスしている組は外す）
+            forget_focus(&mut dock);
             for d in &mut detached {
                 forget_focus(&mut d.dock);
             }
@@ -334,24 +331,103 @@ fn forget_focus(dock: &mut DockState<Tab>) {
     }
 }
 
-/// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログは後の版で足したタブで、それより前の版が保存した
-/// 並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションは既定の並びに無く、開いたときだけある。
-pub const OPTIONAL_TABS: [Tab; 3] = [Tab::Pose, Tab::Log, Tab::Actions];
+/// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログ・ツールプロパティ・ブラシサイズ・マテリアルは後の版で足したタブで、
+/// それより前の版が保存した並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションは既定の並びに無く、
+/// 開いたときだけある。
+pub const OPTIONAL_TABS: [Tab; 6] = [
+    Tab::Pose,
+    Tab::Log,
+    Tab::Actions,
+    Tab::ToolProperties,
+    Tab::BrushSize,
+    Tab::Material,
+];
 
-/// 後の版で足したタブが、読んだ並びに無ければ足す: ログは既定の並びと同じく、レイヤーと同じ組の後ろ（レイヤーが無ければ最初の組。
-/// 前へは出さない）。
-pub fn add_missing_tabs(dock: &mut DockState<Tab>) {
-    if dock.find_tab(&Tab::Log).is_some() {
-        return;
+/// 「サブツール」の組の下に足すツールプロパティの取り分と、その下に足すブラシサイズを分けたあとのツールプロパティの取り分（既定の並びの
+/// 高さの割合と同じ。`app::default_dock`）。
+const TOOL_PROPERTIES_SHARE: f32 = 0.38;
+const BRUSH_SIZE_SPLIT: f32 = 0.8;
+
+/// 後の版で足したタブが、読んだ並びにどこにも（メインのドックにも別ウィンドウにも）無ければ足す。
+/// - ログ: 既定の並びと同じく、レイヤーと同じ組のレイヤーのすぐ後ろ（レイヤーが無ければ最初の組。前へは出さない）。
+/// - ツールプロパティ・ブラシサイズ: 前は「サブツール」の中に入っていた 3 つを、既定の並びと同じく、サブツールの組の下に縦に並べる
+///   （サブツールの組を分けて、下にツールプロパティ、その下にブラシサイズ）。サブツールが別ウィンドウにあるなら、そのウィンドウの組の後ろへ。
+///   サブツールが無ければ最初の組。
+/// - マテリアル: 既定の並びと同じく、プロパティと同じ組のプロパティのすぐ後ろ（プロパティが無ければ最初の組。前へは出さない）。
+///
+/// 足した場所は、並びの形に応じて変わるだけで、ほかのタブの並び・大きさ・前のタブは変えない。
+pub fn add_missing_tabs(dock: &mut DockState<Tab>, detached: &mut [DetachedRecord]) {
+    let present = |dock: &DockState<Tab>, detached: &[DetachedRecord], tab: Tab| {
+        dock.find_tab(&tab).is_some() || detached.iter().any(|d| d.dock.find_tab(&tab).is_some())
+    };
+    if !present(dock, detached, Tab::Log) {
+        push_beside(dock, Tab::Layers, Tab::Log);
     }
-    push_beside_layers(dock, Tab::Log);
+    if !present(dock, detached, Tab::ToolProperties) {
+        if dock.find_tab(&Tab::SubTools).is_some() {
+            split_below(
+                dock,
+                Tab::SubTools,
+                Tab::ToolProperties,
+                TOOL_PROPERTIES_SHARE,
+            );
+        } else if let Some(window) = detached
+            .iter_mut()
+            .find(|d| d.dock.find_tab(&Tab::SubTools).is_some())
+        {
+            push_beside(&mut window.dock, Tab::SubTools, Tab::ToolProperties);
+        } else {
+            dock.push_to_first_leaf(Tab::ToolProperties);
+        }
+    }
+    if !present(dock, detached, Tab::BrushSize) {
+        if dock.find_tab(&Tab::ToolProperties).is_some() {
+            split_below(dock, Tab::ToolProperties, Tab::BrushSize, BRUSH_SIZE_SPLIT);
+        } else if let Some(window) = detached
+            .iter_mut()
+            .find(|d| d.dock.find_tab(&Tab::ToolProperties).is_some())
+        {
+            push_beside(&mut window.dock, Tab::ToolProperties, Tab::BrushSize);
+        } else {
+            dock.push_to_first_leaf(Tab::BrushSize);
+        }
+    }
+    if !present(dock, detached, Tab::Material) {
+        push_beside(dock, Tab::Properties, Tab::Material);
+    }
 }
 
-/// タブを、レイヤーと同じ組の後ろへ入れる（レイヤーが無ければ最初の組）。
-fn push_beside_layers(dock: &mut DockState<Tab>, tab: Tab) {
-    let target = dock.find_tab(&Tab::Layers).map(|p| p.node_path());
-    match target.and_then(|path| dock.leaf_mut(path).ok()) {
-        Some(leaf) => leaf.tabs.push(tab),
+/// タブを、`anchor` と同じ組の、`anchor` のすぐ後ろへ入れる（前のタブは変えない。`anchor` が無ければ最初の組）。
+fn push_beside(dock: &mut DockState<Tab>, anchor: Tab, tab: Tab) {
+    let at = dock.find_tab(&anchor);
+    let leaf = at.and_then(|p| {
+        dock.leaf_mut(p.node_path())
+            .ok()
+            .map(|leaf| (leaf, p.tab.0))
+    });
+    match leaf {
+        Some((leaf, index)) => {
+            leaf.tabs.insert(index + 1, tab);
+            // 前のタブが、入れた所より後ろなら、1 つずらして同じタブのままにする
+            if leaf.active.0 > index {
+                leaf.active.0 += 1;
+            }
+        }
+        None => dock.push_to_first_leaf(tab),
+    }
+}
+
+/// タブを、`anchor` の組の下に新しい組として足す（`anchor` の組は、分ける前の高さの `keep` の取り分を持つ）。
+fn split_below(dock: &mut DockState<Tab>, anchor: Tab, tab: Tab, keep: f32) {
+    match dock.find_tab(&anchor) {
+        Some(path) => {
+            dock.split(
+                path.node_path(),
+                egui_dock::Split::Below,
+                keep,
+                egui_dock::Node::leaf_with(vec![tab]),
+            );
+        }
         None => dock.push_to_first_leaf(tab),
     }
 }
@@ -361,9 +437,8 @@ fn push_beside_layers(dock: &mut DockState<Tab>, tab: Tab) {
 /// - 面: 先頭が主の面で、それ以外に主の面が無い。浮かせたウィンドウの面は、組を 1 つ以上持ち、ウィンドウの位置と大きさが有限で範囲の中。
 /// - 木: 分けた所の両側が木の中にあり、根からつながらない節が無い（見えないタブができる）。分け方は有限で 0 と 1 の間。
 /// - 組: 空でなく、前のタブの番号がタブの数の中。浮かせたウィンドウの木のフォーカスは、木の中の組（読むときは `forget_focus` で外してある）。
-/// - タブ: どのタブも 1 つずつ（ポーズ・ログ・アクションは、無くてよい。ポーズはモデルを読むと足され、ログは読んだときに
-///   `add_missing_tabs` が足し、アクションは開いたときだけある）。
-///   足りない・重なるなら理由。
+/// - タブ: どのタブも 1 つずつ（ポーズ・アクションと、後の版で足したタブ（`OPTIONAL_TABS`）は、無くてよい。ポーズはモデルを読むと足され、
+///   後の版で足したタブは読んだときに `add_missing_tabs` が足し、アクションは開いたときだけある）。足りない・重なるなら理由。
 pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
     validate_all(dock, &[])
 }

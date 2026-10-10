@@ -435,11 +435,15 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
     }
 }
 
-/// 編集・ポーズのモードで暗くするドックのタブ（ブラシ・ツールプロパティ・ブラシサイズと、色・カラーセット）。
+/// 編集・ポーズのモードで暗くするドックのタブ（サブツール・ツールプロパティ・ブラシサイズと、色・カラーセット）。
 pub fn dims_tab(tab: crate::Tab) -> bool {
     matches!(
         tab,
-        crate::Tab::SubTools | crate::Tab::Color | crate::Tab::ColorSets
+        crate::Tab::SubTools
+            | crate::Tab::ToolProperties
+            | crate::Tab::BrushSize
+            | crate::Tab::Color
+            | crate::Tab::ColorSets
     )
 }
 

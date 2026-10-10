@@ -142,7 +142,7 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
     use yolu_app::matpaint::MatAction;
     // 65536 画素を超える文書の塗りつぶしは別のスレッドの仕事になる
     let mut h = app(1500.0, 1600.0, 512);
-    h.state_mut().state.ui.property_tab = 1;
+    open_paint_channels(&mut h);
     apply(&mut h, Action::Mat(MatAction::Enabled(true)));
     apply(
         &mut h,
@@ -290,14 +290,15 @@ fn snapshot_the_colour_window_on_a_fill_value() {
     }
 }
 
-/// マテリアルのタブ: lilToon の色（文書の見た目。1 回のドラッグが 1 回の取り消し）と、ブラシのエミッション（ブラシの設定。取り消しに積まない）。
+/// マテリアルのパネル: lilToon の色（文書の見た目。1 回のドラッグが 1 回の取り消し）と、ツールプロパティの塗るチャンネルのエミッション（ブラシの設定。取り消しに積まない）。
 /// lilToon の色から押し替えると、ウィンドウはそのままで相手が替わる。
 #[test]
 fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
     use yolu_app::matpaint::MatAction;
     let mut h = app(1500.0, 1600.0, 64);
-    // 描く文脈のマテリアルのタブ。ブラシのマテリアルでエミッションも塗る
-    h.state_mut().state.ui.property_tab = 1;
+    // 右の「マテリアル」のパネルと、ツールプロパティの「塗るチャンネル」。塗るチャンネルでエミッションも塗る
+    open_material(&mut h);
+    open_paint_channels(&mut h);
     apply(&mut h, Action::Mat(MatAction::Enabled(true)));
     apply(
         &mut h,

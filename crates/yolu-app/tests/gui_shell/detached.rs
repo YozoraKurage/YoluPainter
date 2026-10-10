@@ -119,7 +119,10 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
         vec!["0/0 leaf [\"navigator\", \"log\"] active=1"]
     );
     // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、ナビゲーターはテクスチャセットの組）
-    assert_eq!(loaded.detached[0].home, vec![Tab::Properties]);
+    assert_eq!(
+        loaded.detached[0].home,
+        vec![Tab::Properties, Tab::Material]
+    );
     assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets]);
     // 別ウィンドウの無いファイルは、前の版と同じ中身（`detached` を書かない）
     let plain = default_dock();
@@ -319,7 +322,13 @@ fn headless_taking_out_and_returning_tabs_keeps_every_tab_once_and_goes_back_to_
     assert!(outside.windows.is_empty());
     assert_eq!(
         mates(&main, Tab::History),
-        vec![Tab::Properties, Tab::History, Tab::Color, Tab::ColorSets]
+        vec![
+            Tab::Properties,
+            Tab::Material,
+            Tab::History,
+            Tab::Color,
+            Tab::ColorSets
+        ]
     );
     let (node, index) = main.find_main_surface_tab(&Tab::Color).unwrap();
     let leaf = main
@@ -383,6 +392,8 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         labels,
         vec![
             "サブツール",
+            "ツールプロパティ",
+            "ブラシサイズ",
             "アセット",
             "チャンネル",
             "カラー",
@@ -393,6 +404,7 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
             "ログ",
             "アクション",
             "プロパティ",
+            "マテリアル",
             "ヒストリー",
             "キャンバス",
             "3D ビュー",
@@ -569,7 +581,7 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
 }
 
@@ -752,7 +764,10 @@ fn outside_windows_are_remembered_and_come_back_at_the_next_start() {
     let app = h.state();
     assert_eq!(app.detached.windows.len(), 1);
     assert_eq!(app.detached.windows[0].tabs(), vec![Tab::History]);
-    assert_eq!(app.detached.windows[0].home, vec![Tab::Properties]);
+    assert_eq!(
+        app.detached.windows[0].home,
+        vec![Tab::Properties, Tab::Material]
+    );
     assert_eq!(
         app.detached.windows[0].record,
         Some(record(1650.0, 140.0, 420.0, 360.0))
@@ -973,7 +988,7 @@ fn closing_an_outside_window_returns_its_tabs_to_the_dock() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
     assert_every_tab_once(&app.dock, &[]);
 }
@@ -1360,7 +1375,7 @@ fn with_the_custom_frame_the_close_button_returns_the_tabs_to_their_group() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
     assert_every_tab_once(&app.dock, &[]);
 }

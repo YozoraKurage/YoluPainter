@@ -528,13 +528,22 @@ fn properties_tabs_and_pen_toggles() {
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
-    // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細のウィンドウの「形状」）
+    // 右のプロパティはステンシルのタブから始まる。タブはステンシルとレイヤーの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
+    // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
     assert_eq!(h.state().state.ui.property_tab, 0);
     assert!(h.query_all_by_label("アルファ").next().is_none());
-    h.get_by_label("マテリアル").click();
-    h.run();
+    assert!(
+        h.query_all_by_label("マテリアル").next().is_none(),
+        "マテリアルはプロパティのタブではない"
+    );
+    // （「レイヤー」の名前は、右のプロパティのタブのほかにも出る。プロパティの組の中のもの）
+    let props = h.state().tab_rects[&yolu_app::Tab::Properties];
+    let tab = rect_of(&h, "レイヤー", |r| {
+        r.left() > props.left() - 2.0 && r.top() > props.top()
+    });
+    click(&mut h, tab.center());
     assert_eq!(h.state().state.ui.property_tab, 1);
-    h.snapshot("properties_material_tab");
+    h.snapshot("properties_layer_tab");
     h.get_by_label("ステンシル").click();
     h.run();
     assert_eq!(h.state().state.ui.property_tab, 0);

@@ -209,7 +209,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
 
 // ───────── ブラシの 2D だけの設定 ─────────
 
-/// 左にツールプロパティ（サブツールのタブ）。`side_by_side` ならキャンバスと 3D ビューを並べ、そうでなければ同じ組に重ねて 3D ビューを前に出す。
+/// 左にサブツールとその下のツールプロパティ。`side_by_side` ならキャンバスと 3D ビューを並べ、そうでなければ同じ組に重ねて 3D ビューを前に出す。
 fn brush_app(lang: Lang, side_by_side: bool) -> H {
     let mut h = app(1600.0, 1000.0, 128);
     h.state_mut().state.lang = lang;
@@ -220,7 +220,8 @@ fn brush_app(lang: Lang, side_by_side: bool) -> H {
         DockState::new(vec![Tab::Canvas, Tab::View3d])
     };
     let surface = dock.main_surface_mut();
-    let [center, _] = surface.split_left(NodeIndex::root(), 0.25, vec![Tab::SubTools]);
+    let [center, left] = surface.split_left(NodeIndex::root(), 0.25, vec![Tab::SubTools]);
+    surface.split_below(left, 0.3, vec![Tab::ToolProperties]);
     if side_by_side {
         surface.split_right(center, 0.5, vec![Tab::View3d]);
     }
@@ -379,6 +380,7 @@ fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_
         // 選択のツールの設定の欄が上に付いたので、変更のボタンが全部見える高さにする
         let mut h = app(1280.0, 1000.0, 256);
         h.state_mut().state.lang = lang;
+        give_room(&mut h, yolu_app::Tab::ToolProperties);
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
         assert!(h.state().state.doc.selection().is_none());
         let reason = lang.pick("選択範囲なし", "No selection");

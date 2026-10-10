@@ -6,8 +6,10 @@ use crate::ui::menu::Entry;
 use crate::Tab;
 
 /// 「ウィンドウ」に並べるパネル（上から）。名前はタブの名前と同じ。
-pub const PANELS: [Tab; 14] = [
+pub const PANELS: [Tab; 17] = [
     Tab::SubTools,
+    Tab::ToolProperties,
+    Tab::BrushSize,
     Tab::Assets,
     Tab::Channels,
     Tab::Color,
@@ -18,6 +20,7 @@ pub const PANELS: [Tab; 14] = [
     Tab::Log,
     Tab::Actions,
     Tab::Properties,
+    Tab::Material,
     Tab::History,
     Tab::Canvas,
     Tab::View3d,

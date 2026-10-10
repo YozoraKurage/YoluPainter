@@ -112,14 +112,27 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
         tab.left() < h.state().tab_rects[&Tab::Assets].left(),
         "アセットより前"
     );
-    // 右のプロパティのタブはステンシル・マテリアル・レイヤー（ブラシも、筆先の形のアルファも無い）
-    let side = |r: Rect| r.left() > 1300.0 && r.top() > 560.0 && r.top() < 600.0;
-    for label in ["ステンシル", "マテリアル", "レイヤー"] {
+    // ツールプロパティとブラシサイズは、サブツールの下に縦に並ぶ別のパネル
+    let props_tab = h.state().tab_rects[&Tab::ToolProperties];
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    assert!(tab.top() < props_tab.top() && props_tab.top() < size_tab.top());
+    // 右のプロパティのタブはステンシル・レイヤー（ブラシも、マテリアルも、筆先の形のアルファも無い）
+    let properties = h.state().tab_rects[&Tab::Properties];
+    let side = move |r: Rect| {
+        r.left() > properties.left() - 2.0
+            && r.top() > properties.bottom()
+            && r.top() < properties.bottom() + 28.0
+    };
+    for label in ["ステンシル", "レイヤー"] {
         rect_of(&h, label, side);
     }
     assert!(
         h.query_all_by_label("ブラシ").all(|n| !side(n.rect())),
         "プロパティにブラシのタブは無い"
+    );
+    assert!(
+        h.query_all_by_label("マテリアル").all(|n| !side(n.rect())),
+        "プロパティにマテリアルのタブは無い"
     );
     assert!(
         h.query_all_by_label("アルファ").next().is_none(),
@@ -128,12 +141,10 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
     assert_eq!(st(&h).ui.property_tab, 0);
     // 英語
     language(&mut h, Lang::En);
-    assert!(h.query_by_label("Tool Properties").is_some());
-    assert!(h.query_by_label("Brush Size").is_some());
     assert!(h.query_all_by_label("Alpha").next().is_none());
+    assert!(h.query_by_label("Hardness").is_some());
     click_tab(&mut h, Tab::Assets);
     click_tab(&mut h, Tab::SubTools);
-    assert!(h.query_by_label("Tool Properties").is_some());
 }
 
 // ───────── 一覧 ─────────
@@ -394,6 +405,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
 #[test]
 fn dragging_a_row_reorders_the_list_inside_its_group() {
     let mut h = app(1600.0, 1200.0, 128);
+    // （一覧の行が全部入る高さの組で）
+    give_room(&mut h, Tab::SubTools);
     // 利用者のブラシを 2 つ足して、並び替える
     for _ in 0..2 {
         h.get_by_label("今の設定を新しいブラシに").click();
@@ -523,10 +536,12 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
 #[test]
 fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     let mut h = app(1600.0, 900.0, 128);
+    // （丸が 2 段とも入る高さの組で）
+    give_room(&mut h, Tab::BrushSize);
     // 既定の直径 32 の丸が今の大きさ
     let cell = |h: &H, size: u32| {
         rect_of(h, &format!("{size} px"), |r| {
-            r.left() < 400.0 && r.top() > 300.0 && r.width() < 60.0
+            r.left() < 400.0 && r.top() > 100.0 && r.width() < 60.0
         })
     };
     for size in [1u32, 3, 8, 24, 64, 128, 256] {
@@ -544,14 +559,14 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
         yolu_app::panels::brushes::SIZES[yolu_app::panels::brushes::nearest_size(36.0)],
         32
     );
-    // ブラシサイズの帯は折りたためる（開き閉じは覚える）
-    h.get_by_label("ブラシサイズ").click();
+    // 大きさを持たないツールでは、パネルは空（丸は出ない）
+    h.state_mut().state.apply(Action::SelectTool(Tool::Fill));
     h.run();
-    assert!(!st(&h).section_open("brush-sizes", true));
-    assert!(h.query_by_label("32 px").is_none() || !in_panel(h.get_by_label("32 px").rect()));
-    // 英語
+    assert!(h.query_by_label("32 px").is_none());
+    // 英語（丸の名前は同じ）
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
     language(&mut h, Lang::En);
-    assert!(h.query_by_label("Brush Size").is_some());
+    assert!(h.query_by_label("32 px").is_some());
 }
 
 // ───────── ブラシの詳細のウィンドウ ─────────
@@ -1336,17 +1351,24 @@ fn snapshot_brush_detail_window_english_effect() {
 }
 
 #[test]
-fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own() {
-    // 低いウィンドウ: 一覧・ツールプロパティ・ブラシサイズが入りきらないので、全体がスクロールする
+fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_scrolls_on_its_own()
+{
+    // 低いウィンドウ: ツールプロパティの組には、ブラシの設定が全部は入らないので、その中だけがスクロールする
     let mut h = app(1280.0, 640.0, 128);
-    let panel = panel_rect(&h);
-    let content = st(&h).brushes.ui.panel_content;
-    assert!(
-        content > panel.height(),
-        "中身 {content} はパネルの高さ {} を超える",
-        panel.height()
+    let props_tab = h.state().tab_rects[&Tab::ToolProperties];
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let body = Rect::from_min_max(
+        pos2(props_tab.left() - 2.0, props_tab.bottom()),
+        pos2(props_tab.left() + 300.0, size_tab.top()),
     );
-    assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
+    let brush = Tool::Brush as usize;
+    let content = st(&h).subtools.ui.props_content[brush];
+    assert!(
+        content > body.height(),
+        "中身 {content} はパネルの高さ {} を超える",
+        body.height()
+    );
+    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
     let wheel = |h: &mut H, at: egui::Pos2, dy: f32| {
         move_to(h, at);
         h.event(Event::MouseWheel {
@@ -1357,14 +1379,14 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
         });
         h.run();
     };
-    // ポインタを一覧の外（ツールプロパティの見出し）に置いたホイールは、全体を送る。一覧は動かない
-    let band = rect_of(&h, "ツールプロパティ", |r| {
-        r.left() < 340.0 && r.top() > 80.0
-    });
+    // ツールプロパティの上のホイールは、ツールプロパティだけを送る。一覧は動かない
     let list_before = st(&h).brushes.ui.list_scroll;
-    wheel(&mut h, band.center(), -400.0);
-    let scrolled = st(&h).brushes.ui.panel_scroll;
-    assert!(scrolled > 0.0, "全体がスクロールする: {scrolled}");
+    wheel(&mut h, body.center(), -400.0);
+    let scrolled = st(&h).subtools.ui.props_scroll[brush];
+    assert!(
+        scrolled > 0.0,
+        "ツールプロパティがスクロールする: {scrolled}"
+    );
     assert!(scrolled < content, "中身の高さまでは送らない: {scrolled}");
     assert_eq!(
         st(&h).brushes.ui.list_scroll,
@@ -1372,22 +1394,36 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
         "一覧は動かさない"
     );
     // 逆向きに戻せて、先頭より前には行かない
-    wheel(&mut h, band.center(), 100_000.0);
-    assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
-    // 十分に高いウィンドウでは、全体は送れない
+    wheel(&mut h, body.center(), 100_000.0);
+    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
+    // 一覧の上のホイールは、一覧だけを送る（ブラシの行が多いとき）
+    for _ in 0..30 {
+        h.get_by_label("今の設定を新しいブラシに").click();
+        h.run();
+    }
+    let sub_tab = h.state().tab_rects[&Tab::SubTools];
+    let list_at = pos2(sub_tab.left() + 80.0, sub_tab.bottom() + 70.0);
+    wheel(&mut h, list_at, -200.0);
+    assert!(st(&h).brushes.ui.list_scroll > 0.0, "一覧がスクロールする");
+    assert_eq!(
+        st(&h).subtools.ui.props_scroll[brush],
+        0.0,
+        "ツールプロパティは動かさない"
+    );
+    // 十分に高いウィンドウでは、ツールプロパティは送れない
     let mut tall = app(1280.0, 1400.0, 128);
-    let band = rect_of(&tall, "ツールプロパティ", |r| {
-        r.left() < 340.0 && r.top() > 80.0
-    });
-    wheel(&mut tall, band.center(), -400.0);
-    assert_eq!(st(&tall).brushes.ui.panel_scroll, 0.0);
-    // ブラシサイズの丸はスクロールしても押せる
-    h.state_mut().state.brushes.ui.panel_scroll = 100_000.0;
+    let props_tab = tall.state().tab_rects[&Tab::ToolProperties];
+    wheel(
+        &mut tall,
+        pos2(props_tab.left() + 100.0, props_tab.bottom() + 60.0),
+        -400.0,
+    );
+    assert_eq!(st(&tall).subtools.ui.props_scroll[brush], 0.0);
+    // ブラシサイズの組も、入りきらなければ自分の中だけをスクロールする
+    h.state_mut().state.subtools.ui.sizes_scroll = 100_000.0;
     h.run();
-    assert!(st(&h).brushes.ui.panel_scroll > 0.0);
-    let cell = rect_of(&h, "64 px", |r| r.left() < 340.0 && r.width() < 60.0);
-    click(&mut h, cell.center());
-    assert_eq!(st(&h).brush.radius, 32.0);
+    assert!(st(&h).subtools.ui.sizes_scroll > 0.0);
+    assert!(st(&h).subtools.ui.sizes_scroll < 1_000.0, "丸の高さまで");
 }
 
 #[test]

@@ -1634,7 +1634,8 @@ fn render_as(
 ) -> (Harness<'static, YoluApp>, image::RgbaImage) {
     let mut h = harness();
     if let Some((w, hgt)) = view {
-        for _ in 0..4 {
+        // （ウィンドウを 1 点広げても 3D の表示域は 1 点より少ししか広がらないので、合うまで何度か繰り返す）
+        for _ in 0..12 {
             let rect = h.state().view3d_rect().expect("3D のタブ");
             let (dw, dh) = (
                 w as f32 - rect.width().round(),

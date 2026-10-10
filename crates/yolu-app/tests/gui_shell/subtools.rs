@@ -1,6 +1,7 @@
-//! 左のドックの「サブツール」（今のツールのサブツールの一覧・ツールプロパティ・ブラシサイズを 1 か所に）と、それに合わせたオプションバー・右のプロパティ
-//! （egui_kittest）。サブツールのプリセットの状態の操作（画面を描かない）は `src/subtool` の単体試験、ブラシの一覧の操作は `brush_list.rs`・`brushes.rs`。
-//! 見た目の試験は、パネルの中だけを撮る（ほかのパネルの変更で壊れない）。
+//! 左のドックの「サブツール」（今のツールのサブツールの一覧）と、その下に縦に並ぶ「ツールプロパティ」「ブラシサイズ」（どれも別のパネル）、それに合わせた
+//! オプションバー・右のプロパティ（egui_kittest）。サブツールのプリセットの状態の操作（画面を描かない）は `src/subtool` の単体試験、ブラシの一覧の操作は
+//! `brush_list.rs`・`brushes.rs`、新しいパネルの並びと「塗るチャンネル」は `tool_panels.rs`。見た目の試験は、パネルの中だけを撮る
+//! （ほかのパネルの変更で壊れない）。
 use crate::common;
 
 use common::*;
@@ -99,7 +100,7 @@ fn row_selected(h: &H, label: &str) -> bool {
 
 #[test]
 fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
-    let mut h = app(1600.0, 900.0, 128);
+    let h = app(1600.0, 900.0, 128);
     let tab = h.state().tab_rects[&Tab::SubTools];
     assert!(tab.left() < 340.0 && tab.top() < 80.0);
     assert!(
@@ -108,10 +109,27 @@ fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
     );
     assert_eq!(Tab::SubTools.title_in(Lang::Ja), "サブツール");
     assert_eq!(Tab::SubTools.title_in(Lang::En), "Tools");
-    // 日本語: ツールプロパティ・ブラシサイズ（ブラシ）
-    assert!(count(&h, "ツールプロパティ") == 1 && count(&h, "ブラシサイズ") == 1);
-    language(&mut h, Lang::En);
-    assert!(count(&h, "Tool Properties") == 1 && count(&h, "Brush Size") == 1);
+    // ツールプロパティとブラシサイズは別のタブで、サブツールの下に縦に並ぶ（その下がカラー）
+    assert_eq!(Tab::ToolProperties.title_in(Lang::Ja), "ツールプロパティ");
+    assert_eq!(Tab::ToolProperties.title_in(Lang::En), "Tool Properties");
+    assert_eq!(Tab::BrushSize.title_in(Lang::Ja), "ブラシサイズ");
+    assert_eq!(Tab::BrushSize.title_in(Lang::En), "Brush Size");
+    let column: Vec<Rect> = [
+        Tab::SubTools,
+        Tab::ToolProperties,
+        Tab::BrushSize,
+        Tab::Color,
+    ]
+    .iter()
+    .map(|t| h.state().tab_rects[t])
+    .collect();
+    for pair in column.windows(2) {
+        assert!(pair[0].top() < pair[1].top(), "上から順: {column:?}");
+        assert!(
+            (pair[0].left() - pair[1].left()).abs() < 2.0,
+            "同じ列: {column:?}"
+        );
+    }
 }
 
 // ───────── 一覧 ─────────
@@ -122,6 +140,8 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
         for tool in Tool::ALL {
             let mut h = app(1280.0, 800.0, 128);
             language(&mut h, lang);
+            // （行が全部入る高さの組で）
+            give_room(&mut h, Tab::SubTools);
             pick(&mut h, tool);
             match tool.def().subtools {
                 SubTools::Brushes => {
@@ -186,6 +206,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
 #[test]
 fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
     let mut h = app(1280.0, 800.0, 128);
+    give_room(&mut h, Tab::SubTools);
     pick(&mut h, Tool::SelectRect);
     for tool in SELECTION_TOOLS {
         click_row(&mut h, tool.name_in(Lang::Ja));
@@ -670,16 +691,22 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
 }
 
 #[test]
-fn the_brush_size_section_is_only_for_tools_with_a_size() {
+fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
     for tool in Tool::ALL {
         let mut h = app(1280.0, 900.0, 128);
+        give_room(&mut h, Tab::BrushSize);
         pick(&mut h, tool);
-        assert_eq!(
-            count(&h, "ブラシサイズ"),
-            usize::from(tool.is_sized()),
+        // どのツールでもタブはあるが、丸（「16 px」など）は大きさを持つツールだけ
+        assert!(
+            h.state().tab_rects.contains_key(&Tab::BrushSize),
             "{tool:?}"
         );
-        assert_eq!(count(&h, "ツールプロパティ"), 1, "{tool:?}");
+        assert_eq!(count(&h, "16 px"), usize::from(tool.is_sized()), "{tool:?}");
+        assert_eq!(
+            count(&h, "ツールプロパティ"),
+            0,
+            "{tool:?}: ツールプロパティはタブの名前だけ（見出しの帯は無い）"
+        );
     }
     assert!(Tool::Brush.is_sized() && Tool::Eraser.is_sized() && Tool::SelectPen.is_sized());
     assert!(!Tool::Fill.is_sized() && !Tool::Wand.is_sized() && !Tool::Liquify.is_sized());
@@ -688,8 +715,9 @@ fn the_brush_size_section_is_only_for_tools_with_a_size() {
 #[test]
 fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_properties() {
     let mut h = app(1600.0, 1000.0, 128);
-    // 右のプロパティ（ステンシル・マテリアル・レイヤーのタブ）の中身は、ツールによらない
-    let right = |r: Rect| r.left() > 1300.0 && r.top() > 560.0;
+    // 右のプロパティ（ステンシル・レイヤーのタブ）の中身は、ツールによらない
+    let props_tab = h.state().tab_rects[&Tab::Properties];
+    let right = move |r: Rect| r.left() > props_tab.left() - 2.0 && r.top() > props_tab.top();
     let fingerprint = |h: &H| -> Vec<String> {
         let mut found: Vec<(i32, i32, String)> = h
             .root()
@@ -705,7 +733,7 @@ fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_prop
     };
     let base = fingerprint(&h);
     assert!(
-        base.iter().any(|l| l == "ステンシル") && base.iter().any(|l| l == "マテリアル"),
+        base.iter().any(|l| l == "ステンシル") && base.iter().any(|l| l == "レイヤー"),
         "{base:?}"
     );
     for tool in Tool::ALL {
@@ -815,12 +843,14 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
             yolu_app::ui::widgets::record_truncations(false);
             let (texts, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{what}: 切れた文字 {clipped:#?}");
-            // ツールの名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前だけ
+            // ツールの名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前と、
+            // 最小のウィンドウのツールプロパティの組（テキストの設定が入りきらず、スクロールの帯が幅を取る）のフォントの名前だけ
             for t in &truncated {
                 assert!(
                     t == "Watercolor Edge"
                         || t.starts_with("Texture Set")
-                        || t == "テクスチャセット 1",
+                        || t == "テクスチャセット 1"
+                        || (tool == Tool::Text && t.starts_with("BIZ UDP")),
                     "{what}: 「…」に詰められた {t}"
                 );
             }
@@ -855,7 +885,7 @@ fn nothing_in_the_panel_is_clipped_with_the_modify_selection_and_path_blocks_ope
         assert!(clipped.is_empty(), "{lang:?}: {clipped:#?}");
         // スクロールしても（下のほうの行）切れない
         for scroll in [80.0, 160.0, 320.0] {
-            h.state_mut().state.brushes.ui.panel_scroll = scroll;
+            h.state_mut().state.subtools.ui.props_scroll[Tool::SelectRect as usize] = scroll;
             h.run();
             let (_, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{lang:?} {scroll}: {clipped:#?}");

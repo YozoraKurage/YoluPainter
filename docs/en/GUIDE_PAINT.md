@@ -8,7 +8,7 @@ This page covers brushes and the eraser, pen pressure, lines, shapes and rulers,
 
 The brush (`B`) and the eraser (`E`) paint on the 2D Canvas and on the 3D View. The eraser uses the eraser you last selected in the eraser list. What they paint on is the painting channel of the layer selected in the Layers panel (or its mask, if the mask is selected).
 
-In Tool Properties in the Tools panel on the left, you can change Size, Opacity, Hardness, Flow, Spacing and Stabilizer right away. `[` and `]` also change the size. Brush Size below it is a set of preset diameters (shown only for the brush, the eraser and the Selection Pen). The adjustment button (Brush Details) opens a window that holds all the settings, grouped as follows. You can move it and keep it open while you paint.
+In the Tool Properties panel on the left, you can change Size, Opacity, Hardness, Flow, Spacing and Stabilizer right away. `[` and `]` also change the size. The Brush Size panel below it is a set of preset diameters (it has circles only for the brush, the eraser and the Selection Pen). The adjustment button (Brush Details) opens a window that holds all the settings, grouped as follows. You can move it and keep it open while you paint.
 
 | Category | Contents |
 |---|---|
@@ -28,7 +28,7 @@ With any tool selected, the right button temporarily acts as the eyedropper: in 
 
 ## Choosing and rearranging brushes
 
-Choose a brush from the list at the top of the Tools panel. It has a tab for each group (initially Pen, Brush, Airbrush, Effects and Special, plus Imported when you have imported brushes), and each row shows the brush's name and a sample stroke drawn with its settings. The eraser has its own groups, separate from the brushes. A brush whose settings you changed is marked “modified”.
+Choose a brush from the list in the Tools panel. It has a tab for each group (initially Pen, Brush, Airbrush, Effects and Special, plus Imported when you have imported brushes), and each row shows the brush's name and a sample stroke drawn with its settings. The eraser has its own groups, separate from the brushes. A brush whose settings you changed is marked “modified”.
 
 - The buttons below the list revert to the original settings, duplicate, add the current settings as a new brush, and delete. Double-click a row to rename it.
 - Add Brushes (the “+” button) opens a window that lists built-in, bundled Krita, Photoshop, CLIP STUDIO, imported and your own brushes by kind, with a name search. The ones you select are placed in the current group.

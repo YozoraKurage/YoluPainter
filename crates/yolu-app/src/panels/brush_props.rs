@@ -1867,7 +1867,3 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let ctx = ui.ctx().clone();
     super::stencil_props::stencil_tab(ui, app, rows, &ctx);
 }
-
-pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    super::material::material_tab(ui, app, rows);
-}

@@ -38,7 +38,7 @@ The settings panel has three pages.
 
 The display textures sent to the 3D view are padded beyond the UVs, so island edges do not bleed when you look from a distance (saving and exports are unchanged). When the 3D picture is shown smaller, for example because of the GPU memory budget, a mark appears in the top right. [PREVIEW.md](../PREVIEW.md) (in Japanese) has the details of the look and its speed.
 
-On the Material tab of Properties, "Look" chooses "Standard (PBR)" or "lilToon" for each texture set. lilToon draws a reproduction of the lilToon look, and its color, normal map, reflection and advanced values can be edited in the fields. "lilToon Template" creates and assigns the user channels for the masks of the features you turned on.
+In the Material panel in the right dock, "Look" chooses "Standard (PBR)" or "lilToon" for each texture set. lilToon draws a reproduction of the lilToon look, and its color, normal map, reflection and advanced values can be edited in the fields. "lilToon Template" creates and assigns the user channels for the masks of the features you turned on.
 
 The material values received from Unity appear as "Unity Values", and "Match Unity" drops the values changed here and draws with Unity's. A shader with only a similar name is not drawn as lilToon ([PREVIEW.md](../PREVIEW.md)).
 

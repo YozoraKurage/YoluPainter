@@ -578,9 +578,6 @@ pub struct BrushUi {
     pub list_content: f32,
     /// 次に一覧を描くとき、今のブラシの行が見えるところまでスクロールする（ブラシが替わったとき）。
     pub reveal: bool,
-    /// 左のパネル全体のスクロール（一覧とツールプロパティとブラシサイズが入りきらないとき）。
-    pub panel_scroll: f32,
-    pub panel_content: f32,
     /// 名前を変えているブラシと、入力欄がフォーカスを取った後か。
     pub renaming: Option<BrushKey>,
     pub rename_started: bool,
@@ -597,8 +594,6 @@ impl Default for BrushUi {
             list_scroll: 0.0,
             list_content: 0.0,
             reveal: false,
-            panel_scroll: 0.0,
-            panel_content: 0.0,
             renaming: None,
             rename_started: false,
             context: None,

@@ -51,7 +51,7 @@ A layer holds up to 256 paths, either all in 2D or all in 3D. Later paths lie on
 
 Choose the "Tip" from Round, the built-in tips or the current brush's tip. An image tip also offers "Angle" and "Follow Path", which turns the tip along the direction of the curve. Size ("Width" for a ribbon), Hardness, Anti-aliasing, Spacing, Opacity and Flow belong to each path.
 
-"Use Brush" redraws the path with the current brush and the set of channels chosen in "Brush Material". With a set chosen, one path paints several channels at once ([GUIDE_FILL.md](GUIDE_FILL.md)). "Presets" saves the type, brush, set of channels, tip, depth and symmetry setting under a name (in `path_presets/` in the settings folder).
+"Use Brush" redraws the path with the current brush and the set of channels chosen in "Paint Channels" in Tool Properties. With a set chosen, one path paints several channels at once ([GUIDE_FILL.md](GUIDE_FILL.md)). "Presets" saves the type, brush, set of channels, tip, depth and symmetry setting under a name (in `path_presets/` in the settings folder).
 
 ## Paths on the model
 

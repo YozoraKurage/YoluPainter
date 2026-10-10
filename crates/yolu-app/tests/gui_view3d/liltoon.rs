@@ -963,7 +963,8 @@ fn two_sets(size: u32) -> Harness<'static, YoluApp> {
         channel, ChannelRoute, MaterialInfo, MaterialKey, MeshData, Model, Submesh as Sub,
         TextureProperty,
     };
-    let mut h = view(1000.0, 640.0, size);
+    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
+    let mut h = view(1060.0, 640.0, size);
     let materials = (0..2)
         .map(|i| MaterialInfo {
             key: MaterialKey::Material {

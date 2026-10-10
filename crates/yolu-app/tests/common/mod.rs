@@ -288,7 +288,12 @@ pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {
 }
 
 /// ドックのタブのボタンを押す（外へ出したウィンドウのタブも。試験のウィンドウでは、別ウィンドウはメインウィンドウの中の egui のウィンドウ）。
+/// 「アセット」「チャンネル」は、既定の並びでは左の列の上の短い組（サブツールと同じ組。下にツールプロパティ・ブラシサイズが縦に並ぶ）にいて、
+/// 行の下のほうまでは入らない。長い一覧を見る試験のために、押す前にその組を左の列のほぼ全体まで広げる（`give_room`）。
 pub fn click_tab(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
+    if matches!(tab, yolu_app::Tab::Assets | yolu_app::Tab::Channels) {
+        give_room(h, tab);
+    }
     let app = h.state();
     let at = app
         .tab_rects
@@ -344,4 +349,56 @@ pub fn has_japanese(text: &str) -> bool {
     text.chars().any(|c| {
         matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}')
     })
+}
+
+/// タブがいる組を、左の列の上の部分（カラーより上。前の「サブツール」1 枚があった所）の中で、ほぼ全体まで広げる（縦に分けた親ごとに、その組の取り分を
+/// 95% にする。カラーの組と分ける所は動かさない）。ほかの並びの試験は、この広げた組が前のサブツール 1 枚と同じ高さになる前提で書いてある。
+pub fn give_room(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
+    use egui_dock::{Node, NodeIndex, Tree};
+    use yolu_app::Tab;
+    fn holds(tree: &Tree<Tab>, at: usize, tab: Tab) -> bool {
+        match tree.iter().nth(at) {
+            Some(Node::Leaf(leaf)) => leaf.tabs.contains(&tab),
+            Some(Node::Vertical(_) | Node::Horizontal(_)) => {
+                holds(tree, 2 * at + 1, tab) || holds(tree, 2 * at + 2, tab)
+            }
+            _ => false,
+        }
+    }
+    let dock = &mut h.state_mut().dock;
+    if let Some((node, _)) = dock.find_main_surface_tab(&tab) {
+        let tree = dock.main_surface_mut();
+        let mut at = node.0;
+        while at > 0 {
+            let parent = (at - 1) / 2;
+            let sibling = if at % 2 == 1 { at + 1 } else { at - 1 };
+            if !matches!(tree.iter().nth(parent), Some(Node::Vertical(_)))
+                || holds(tree, sibling, Tab::Color)
+            {
+                break;
+            }
+            if let Node::Vertical(split) = &mut tree[NodeIndex(parent)] {
+                // 上の子（奇数の番号）の取り分が 95%、下の子なら 5%
+                split.fraction = if at % 2 == 1 { 0.95 } else { 0.05 };
+            }
+            at = parent;
+        }
+    }
+    h.run();
+}
+
+/// 右のドックの「マテリアル」のパネル（テクスチャセットの見た目）を前に出す。
+pub fn open_material(h: &mut Harness<'_, YoluApp>) {
+    click_tab(h, yolu_app::Tab::Material);
+    h.run();
+}
+
+/// ツールプロパティの「塗るチャンネル」の区分（初めは閉じている）を開く。
+pub fn open_paint_channels(h: &mut Harness<'_, YoluApp>) {
+    h.state_mut()
+        .state
+        .ui
+        .sections
+        .insert("paint-channels", true);
+    h.run();
 }

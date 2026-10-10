@@ -134,13 +134,13 @@ fn a_flag_left_on_a_layer_with_nothing_below_can_still_be_cleared_from_the_butto
 fn the_layer_properties_have_no_clipping_row_and_the_button_is_in_the_layer_panel() {
     let mut h = app(1600.0, 900.0, 128);
     new_layer(&mut h);
-    // プロパティの「レイヤー」のタブ（3 つ目。同じ名前のドックのタブの下にある）
+    // プロパティの「レイヤー」のタブ（2 つ目。同じ名前のドックのタブの下にある）
     let props = h.state().tab_rects[&yolu_app::Tab::Properties];
     let tab = rect_of(&h, "レイヤー", |r| {
         r.top() > props.bottom() && r.top() < props.bottom() + 40.0
     });
     click(&mut h, tab.center());
-    assert_eq!(h.state().state.ui.property_tab, 2);
+    assert_eq!(h.state().state.ui.property_tab, 1);
     assert!(
         h.query_all_by_label("クリッピング").next().is_none(),
         "プロパティのレイヤーの欄にクリッピングの項目は無い"

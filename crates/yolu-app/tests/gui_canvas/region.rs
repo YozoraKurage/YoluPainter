@@ -1760,33 +1760,33 @@ fn the_tools_have_buttons_keys_and_menu_entries() {
 }
 
 #[test]
-fn material_tab_toggle_chips_and_values_change_the_state() {
-    let mut h = app_with_model(1280.0, 800.0, 128);
-    // 2 つ目のタブ「マテリアル」
-    let tab = rect_of(&h, "マテリアル", |r| r.left() > 900.0);
-    click(&mut h, tab.center());
+fn paint_channels_toggle_chips_and_values_change_the_state() {
+    // ツールプロパティの「塗るチャンネル」（初めは閉じている）。入る高さで
+    let mut h = app_with_model(1280.0, 1500.0, 128);
+    let props = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
+    let size = h.state().tab_rects[&yolu_app::Tab::BrushSize];
+    let in_props = move |r: Rect| {
+        r.left() < 340.0 && r.top() > props.bottom() && r.bottom() < size.top() + 2.0
+    };
+    let header = rect_of(&h, "塗るチャンネル", in_props);
+    click(&mut h, header.center());
     assert!(!h.state().state.mat.enabled);
-    h.snapshot("region_material_off");
+    paint_channels_shot(&mut h, "region_paint_channels_off");
     let toggle = h.get_by_label("複数のチャンネルを一度に塗る");
     toggle.click();
     h.run();
     assert!(h.state().state.mat.enabled);
     assert_eq!(h.state().state.mat.included(), vec![Channel::Color]);
     // チップ（右の列にあるラフネス）で組に足す。最後の 1 つは外せない
-    let chip = rect_of(&h, "ラフネス", |r| {
-        r.left() > 900.0 && r.height() < 30.0
-    });
+    let chip = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
     assert_eq!(
         h.state().state.mat.included(),
         vec![Channel::Color, Channel::Roughness]
     );
-    let chip = rect_of(&h, "カラー", |r| r.left() > 900.0 && r.height() < 30.0);
+    let chip = rect_of(&h, "カラー", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
-    let at = rect_of(&h, "ラフネス", |r| {
-        r.left() > 900.0 && r.height() < 30.0
-    })
-    .center();
+    let at = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0).center();
     click(&mut h, at);
     assert_eq!(
         h.state().state.mat.included(),
@@ -1809,12 +1809,34 @@ fn material_tab_toggle_chips_and_values_change_the_state() {
     h.state_mut().state.mat.set_normal(0.3, -0.2);
     h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
     h.run();
-    h.snapshot("region_material_on");
+    paint_channels_shot(&mut h, "region_paint_channels_on");
     apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     // 知らせは作ったときの言語の文のまま残るので、英語の見た目からは外す
     h.state_mut().state.message.clear();
     h.run();
-    h.snapshot("region_material_on_english");
+    paint_channels_shot(&mut h, "region_paint_channels_on_english");
+}
+
+/// ツールプロパティのパネルの中だけを撮って、正解の絵と比べる。
+fn paint_channels_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
+    h.event(egui::Event::PointerGone);
+    h.step();
+    let props = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
+    let size = h.state().tab_rects[&yolu_app::Tab::BrushSize];
+    let rect = Rect::from_min_max(
+        pos2(props.left() - 2.0, props.top()),
+        pos2(props.left() + 300.0, size.top()),
+    );
+    let image = h.render().expect("描画");
+    let cropped = image::imageops::crop_imm(
+        &image,
+        rect.left() as u32,
+        rect.top() as u32,
+        rect.width() as u32,
+        rect.height() as u32,
+    )
+    .to_image();
+    egui_kittest::image_snapshot(&cropped, name);
 }
 
 /// ペンの 1 点（pointer_id は固定。位置はウィンドウの画素 = 点）。

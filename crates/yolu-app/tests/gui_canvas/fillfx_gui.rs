@@ -1476,7 +1476,7 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         h.state_mut().state.m2.props_scroll = 300.0;
         h.run();
         let label = lang.pick("異方性フィルター", "Anisotropic filtering");
-        let toggle = rect_of(&h, label, |r| r.left() > 1050.0);
+        let toggle = rect_of(&h, label, |r| r.left() > 1000.0);
         let on = |h: &Harness<'_, YoluApp>| {
             st(h)
                 .doc

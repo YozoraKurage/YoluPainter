@@ -1,7 +1,7 @@
-//! 左のドックのサブツールのパネルの、ブラシと消しゴムの部分（クリスタのサブツールの一覧・ツールプロパティ・ブラシサイズに当たる）。
-//! パネルの組み立ては `subtools`。ここは、ブラシの一覧（グループのタブ・名前と、そのブラシの実際の設定で core が描いた見本のストロークの行・
-//! 一覧の操作の帯。消しゴムのツールは消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ（今の設定の見本と主な項目、右下の
-//! 調整のボタンで詳細のウィンドウ）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
+//! 左のドックのサブツール・ツールプロパティ・ブラシサイズのパネルの、ブラシと消しゴムの部分（クリスタのサブツールの一覧・ツールプロパティ・ブラシサイズに当たる）。
+//! パネルの組み立ては `subtools`（一覧）と `tool_props`（ツールプロパティ・ブラシサイズ）。ここは、ブラシの一覧（グループのタブ・名前と、そのブラシの実際の設定で
+//! core が描いた見本のストロークの行・一覧の操作の帯。消しゴムのツールは消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ
+//! （今の設定の見本と主な項目、右下の調整のボタンで詳細のウィンドウ）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
 //! 一覧の操作は `Action::Brush`（行を押して替える・追加・複製・削除・名前・並べ替え・元に戻す）。ブラシの設定は文書ではないので Undo に
 //! 入れない。画面には名前と値だけを出し、説明はツールチップ。
 
@@ -26,8 +26,6 @@ pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 19
 pub(super) const TAB_HEIGHT: f32 = 26.0;
 pub(super) const ROW_HEIGHT: f32 = 36.0;
 pub(super) const FOOTER_HEIGHT: f32 = 28.0;
-pub(super) const MIN_LIST: f32 = 96.0;
-pub(super) const SECTION_HEIGHT: f32 = t::PANEL_HEADER_HEIGHT;
 /// ツールプロパティの項目の行の高さと間。
 const FIELD_HEIGHT: f32 = 20.0;
 const FIELD_GAP: f32 = 3.0;
@@ -1137,33 +1135,6 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         }
         let _ = response.on_hover_text(label);
     }
-}
-
-/// 見出しの帯（折りたためる。開閉は `AppState::sections` が覚える）。
-pub(super) fn section_band(
-    ui: &mut Ui,
-    app: &mut AppState,
-    y: f32,
-    r: Rect,
-    key: &'static str,
-    title: &str,
-    icon: &str,
-) -> bool {
-    let open = app.section_open(key, true);
-    let header = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), SECTION_HEIGHT));
-    let out = w::section_header(
-        ui,
-        header,
-        ("brush.section", key),
-        title,
-        open,
-        Some(icon),
-        None,
-    );
-    if out.open != open {
-        app.ui.sections.insert(key, out.open);
-    }
-    out.open
 }
 
 #[cfg(test)]

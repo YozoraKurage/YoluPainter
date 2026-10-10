@@ -394,16 +394,25 @@ pub fn leaf_at(dock: &DockState<Tab>, at: Pos2) -> Option<NodeIndex> {
         })
 }
 
-/// 既定の並びで、タブと同じ組にいたタブ（自分を除く、並びの順）。
+/// 既定の並びで、タブと同じ組にいたタブ（自分を除く、並びの順）。1 つだけの組にいたタブは、上の組のタブ（ツールプロパティとブラシサイズは、縦に並んだ
+/// サブツールの組）。
 pub fn default_mates(tab: Tab) -> Vec<Tab> {
     let dock = crate::app::default_dock();
     let Some(path) = dock.find_tab(&tab) else {
         // 既定の並びに無いタブ（ポーズ）は、レイヤーの組へ（`panels::pose::ensure_tab` と同じ）
         return vec![Tab::Layers];
     };
-    dock.leaf(path.node_path())
+    let mates: Vec<Tab> = dock
+        .leaf(path.node_path())
         .map(|leaf| leaf.tabs.iter().copied().filter(|t| *t != tab).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !mates.is_empty() {
+        return mates;
+    }
+    match tab {
+        Tab::ToolProperties | Tab::BrushSize => vec![Tab::SubTools],
+        _ => mates,
+    }
 }
 
 /// タブを `dock` の主の面へ入れて前にする: `at` の下の組 → 戻る先 `home` のタブの組 → 既定の並びで同じ組だったタブの組 → 右の組（最後に描いた

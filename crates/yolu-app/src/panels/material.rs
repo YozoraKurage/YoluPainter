@@ -1,17 +1,18 @@
-//! マテリアルで塗る（Unity 版の「ブラシのマテリアル」）の欄: オン・オフ、塗るチャンネルの組（2 列のチップ）、組のチャンネルごとの値
-//! （Color は描画色の見本、Emission は色、Roughness・Metallic・Height は 0〜1、Normal は傾き）。プロパティの「マテリアル」のタブと、
-//! バケツ・ポリゴン塗りつぶしの欄の下に出る。値は画面の状態（`AppState::mat`）で、ブラシ・バケツ・ポリゴン塗りつぶしが使う。
-//! 画面には名前と値だけを出し、説明はツールチップ。
+//! 「マテリアル」のパネル（今のテクスチャセットの見た目。中身は `look::panel`）と、描くツールのツールプロパティの「塗るチャンネル」の区分
+//! （Unity 版の「ブラシのマテリアル」: オン・オフ、塗るチャンネルの組の 2 列のチップ、組のチャンネルごとの値。Color は描画色の見本、Emission は色、
+//! Roughness・Metallic・Height は 0〜1、Normal は傾き）。「塗るチャンネル」の値は画面の状態（`AppState::mat`）で、ブラシ・消しゴム・バケツ・
+//! ポリゴン塗りつぶし・グラデーション・図形・パスが使う。画面には名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use super::color_window;
-use super::properties::{section, slider_row, status_row};
+use super::properties::{section_default, slider_row, status_row};
 use crate::engine::Channel;
 use crate::lang::Lang;
 use crate::m2::{channel_icon, channel_name};
 use crate::matpaint::{MatAction, CHANNELS};
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
 
@@ -26,23 +27,40 @@ fn two_decimals() -> NumberFormat<'static> {
     }
 }
 
-/// 「マテリアル」のタブ。
-pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    material_section(ui, app, rows);
-    crate::look::panel::look_section(ui, app, rows);
+/// 「マテリアル」のパネル（テクスチャセットの見た目。はみ出したらスクロールする）。
+pub fn show(ui: &mut Ui, app: &mut AppState) {
+    let r = ui.max_rect();
+    ui.advance_cursor_after_rect(r);
+    let bar = Scroll::begin(ui, r, app.m2.material_content, &mut app.m2.material_scroll);
+    let scroll = app.m2.material_scroll;
+    let area = Rect::from_min_max(
+        pos2(r.left(), r.top() - scroll),
+        pos2(r.right() - bar.reserved(), r.bottom()),
+    );
+    let outer = ui.clip_rect();
+    ui.set_clip_rect(r.intersect(outer));
+    let mut rows = Rows::new(area, 0.0);
+    crate::look::panel::look_section(ui, app, &mut rows);
+    rows.indent = 0.0;
+    rows.space(8.0);
+    app.m2.material_content = rows.used();
+    ui.set_clip_rect(outer);
+    super::properties::end_drag_when_released(ui, app);
+    bar.end(ui, "material.scroll", &mut app.m2.material_scroll);
 }
 
-/// 「ブラシのマテリアル」の節（開閉は他の欄と同じく覚える）。
-pub fn material_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+/// ツールプロパティの「塗るチャンネル」の区分（開閉は他の欄と同じく覚える。初めは閉じている）。
+pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let (open, _) = section(
+    let (open, _) = section_default(
         ui,
         app,
         rows,
-        "brush-material",
-        lang.pick("ブラシのマテリアル", "Brush Material"),
+        "paint-channels",
+        lang.pick("塗るチャンネル", "Paint Channels"),
         "layers",
         None,
+        false,
     );
     if !open {
         return;

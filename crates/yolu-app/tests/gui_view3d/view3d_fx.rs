@@ -694,7 +694,8 @@ fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
 
 #[test]
 fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
+    let mut h = view(955.0, 640.0, 32);
     bright_scene(&mut h, [255, 255, 255]);
     let before = h.render().unwrap();
     let (near, far) = halo_points(&h, 6.0);

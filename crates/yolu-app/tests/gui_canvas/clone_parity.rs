@@ -267,7 +267,9 @@ fn the_source_is_only_set_with_the_clone_brush_and_never_outside_the_canvas() {
     alt_click(&mut h, 60.0, 60.0);
     assert_eq!(source(&h), None);
     h.state_mut().state.tool = Tool::Brush;
-    // キャンバスの外は断る
+    // キャンバスの外は断る。表示域の中の、文書の外の点が要るので、少し縮めて余白を作る（表示域の形で、文書が余白なしに収まることがある）
+    h.state_mut().state.view.zoom = 0.9;
+    h.run();
     let outside = (-2.0, 60.0);
     assert!(
         canvas_rect(&h).contains(at(&h, outside.0, outside.1)),

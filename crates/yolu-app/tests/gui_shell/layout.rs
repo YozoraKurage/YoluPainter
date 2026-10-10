@@ -629,6 +629,8 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
         keys,
         [
             "subtools",
+            "tool_properties",
+            "brush_size",
             "assets",
             "color",
             "pose",
@@ -637,6 +639,7 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
             "texture_sets",
             "layers",
             "properties",
+            "material",
             "channels",
             "history",
             "color_sets",

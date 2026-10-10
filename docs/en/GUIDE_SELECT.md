@@ -52,7 +52,7 @@ Move / Transform (`V`) moves the selected layer. For a group it moves the conten
 - While you drag, only the transformed outline is shown. Release the pointer or press `Enter` to apply. `Esc`, losing the window's focus or switching tools cancels without changing anything. Each operation is one undo step.
 - Use the bounding-box handles to move, scale (`Shift` keeps the aspect ratio) and rotate (`Shift` snaps to 15°). The arrow keys move by 1 pixel (`Shift`: 10).
 - Flip Horizontal, Flip Vertical and Rotate 90° Clockwise and Counter-clockwise are in the Edit menu and on the options bar.
-- In Tool Properties in the Tools panel, Numeric lets you set position (X, Y), scale (Width, Height) and Angle by number and press Apply (Reset returns to the starting values). Resampling is Bilinear (smooth) or Nearest (keeps hard pixels), and it is also on the options bar.
+- In the Tool Properties panel, Numeric lets you set position (X, Y), scale (Width, Height) and Angle by number and press Apply (Reset returns to the starting values). Resampling is Bilinear (smooth) or Nearest (keeps hard pixels), and it is also on the options bar.
 
 Choose the kind of transform in the sub tool list. Normal is the one above. Free and Perspective change the shape by moving corners, and Mesh moves the points of a grid (1 to 32 columns and rows). Starting a drag with `Ctrl` held gives a free transform. In Perspective, moving a corner moves the other corner on the same edge the opposite way horizontally.
 

@@ -66,8 +66,10 @@ pub struct ToolDef {
     /// 選択のツール（選択範囲を作る・変える。ID の色で選択は範囲のツールなので含めない）。
     pub select: bool,
     pub path: bool,
-    /// 大きさ（直径）を持つツール。「ブラシサイズ」の節を出す。
+    /// 大きさ（直径）を持つツール。「ブラシサイズ」のパネルに丸を出す。
     pub sized: bool,
+    /// 「塗るチャンネル」（複数のチャンネルを一度に塗る設定。`AppState::mat`）が効くツール。ツールプロパティの終わりに、その区分を出す。
+    pub paint_channels: bool,
     pub subtools: SubTools,
     /// キャンバスの入力の受け口（ドラッグの札を持つツール）。ブラシ・消しゴム・範囲のツール・スポイトはストロークで描くので持たない。
     pub canvas: Option<CanvasKind>,
@@ -75,7 +77,7 @@ pub struct ToolDef {
     pub surface: Surface,
     /// キャンバスの上のポインタの形。
     pub cursor: Cursor,
-    /// ツールプロパティ（左のドックのサブツールのパネルの欄）。
+    /// ツールプロパティ（左のドックのツールプロパティのパネルの欄）。
     pub properties: PropsFn,
     /// オプションバー（そのツールでよく使う 2〜3 個。ツールプロパティと同じ値を見せる）。
     pub options: OptionsFn,
@@ -105,6 +107,7 @@ const fn def(
         select: false,
         path: false,
         sized: false,
+        paint_channels: false,
         subtools: SubTools::Single,
         canvas: None,
         surface: Surface::Unsupported,
@@ -161,6 +164,10 @@ impl ToolDef {
         self.sized = true;
         self
     }
+    const fn paint_channels(mut self) -> Self {
+        self.paint_channels = true;
+        self
+    }
     const fn sub(mut self, subtools: SubTools) -> Self {
         self.subtools = subtools;
         self
@@ -181,17 +188,20 @@ pub static TOOLS: [ToolDef; 19] = [
     def(Tool::Brush, "brush", "ブラシ", "Brush", "B")
         .paints()
         .sized()
+        .paint_channels()
         .sub(SubTools::Brushes)
         .ui(brushes::props, brushes::options),
     def(Tool::Eraser, "eraser", "消しゴム", "Eraser", "E")
         .paints()
         .erases()
         .sized()
+        .paint_channels()
         .sub(SubTools::Erasers)
         .ui(brushes::props, brushes::options),
     def(Tool::Fill, "fill", "バケツ", "Fill", "G")
         .region()
         .one_shot()
+        .paint_channels()
         .surface(Surface::Region)
         .sub(SubTools::Presets)
         .ui(region_props::fill_props, region_props::options),
@@ -202,11 +212,13 @@ pub static TOOLS: [ToolDef; 19] = [
         "Gradient",
         "Shift+G",
     )
+    .paint_channels()
     .canvas(CanvasKind::Gradient)
     .surface(Surface::Screen)
     .sub(SubTools::Presets)
     .ui(gradient::props::body, gradient::props::options),
     def(Tool::Shape, "shape", "図形", "Shape", "U")
+        .paint_channels()
         .canvas(CanvasKind::Drafting)
         .surface(Surface::Screen)
         .sub(SubTools::Presets)
@@ -224,6 +236,7 @@ pub static TOOLS: [ToolDef; 19] = [
         "4",
     )
     .region()
+    .paint_channels()
     .surface(Surface::Region)
     .sub(SubTools::Presets)
     .ui(region_props::polygon_props, region_props::options),
@@ -328,6 +341,7 @@ pub static TOOLS: [ToolDef; 19] = [
         ),
     def(Tool::Path, "path", "パス", "Path", "P")
         .path()
+        .paint_channels()
         .canvas(CanvasKind::Path)
         .surface(Surface::Path)
         .cursor(Cursor::Path)

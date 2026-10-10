@@ -3891,7 +3891,7 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
 // ───────── 確かめの絵（一覧・取っ手・右クリック・種類・筆先・プリセット・塗りつぶしレイヤー。日英） ─────────
 
 fn review_app(lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = app(1280.0, 1400.0, 256);
+    let mut h = app(1360.0, 1400.0, 256);
     h.state_mut().state.set_language(lang);
     key(&h, Key::P, Modifiers::NONE);
     h.run();

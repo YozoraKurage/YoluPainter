@@ -30,4 +30,5 @@ pub mod stencil_props;
 pub mod subtools;
 pub mod texture_sets;
 pub mod tip_library;
+pub mod tool_props;
 pub mod view3d;

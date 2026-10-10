@@ -725,7 +725,7 @@ fn shared_slider_gpu() {
     let id = editing_layer(&h.state().state).expect("打ったテキストレイヤー");
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    h.state_mut().state.ui.property_tab = 2;
+    h.state_mut().state.ui.property_tab = 1;
     h.run();
     assert_eq!(h.state().state.selected_layer, Some(id));
     // 3 か所のサイズ（バー・左のドック・右のレイヤーのプロパティ）
@@ -954,7 +954,7 @@ fn shots_gpu() {
         key(&h, Key::Escape, Modifiers::NONE);
         h.run();
         // テキストレイヤーを選んだプロパティの欄（レイヤーのタブ）
-        h.state_mut().state.ui.property_tab = 2;
+        h.state_mut().state.ui.property_tab = 1;
         h.run();
         save(&mut h, &format!("text-layer-props-{tag}"));
         // フォントの選び

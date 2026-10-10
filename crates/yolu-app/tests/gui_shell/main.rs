@@ -38,5 +38,6 @@ mod shelf;
 mod shortcut_editor;
 mod subtools;
 mod titlebar;
+mod tool_panels;
 mod update;
 mod widgets;

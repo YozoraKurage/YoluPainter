@@ -773,7 +773,7 @@ pub struct UiTemp {
     pub popup_was_open: bool,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
-    /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
+    /// プロパティの欄のタブ（ステンシル・レイヤー）の番号。
     pub property_tab: usize,
     /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
     pub panels: crate::detach::PanelIndex,

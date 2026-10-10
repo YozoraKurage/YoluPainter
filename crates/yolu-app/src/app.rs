@@ -29,8 +29,13 @@ use crate::view3d::render::{View3dRenderer, View3dStats};
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
-    /// サブツールの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭。中身は今のツールに合わせて替わる）。
+    /// サブツールの一覧（左のドックの先頭。中身は今のツールに合わせて替わる）。
     SubTools,
+    /// ツールプロパティ（今のツールの設定の全部。描くツールには「塗るチャンネル」の区分も）。既定の並びではサブツールの下。
+    /// 古い並びに無ければ、読んだときにサブツールの組の下へ足す。
+    ToolProperties,
+    /// ブラシサイズ（大きさを持つツールだけ。持たないツールでは空）。既定の並びではツールプロパティの下。古い並びに無ければ、読んだときにツールプロパティの下へ足す。
+    BrushSize,
     Assets,
     Color,
     /// ポーズ（ボーンのインスペクター・BlendShape・面を隠す）。スキンのあるモデルを読むと、プロパティと同じ組へ足される。
@@ -40,6 +45,9 @@ pub enum Tab {
     TextureSets,
     Layers,
     Properties,
+    /// マテリアル（今のテクスチャセットの見た目: 種類・ひな形・描画モード・lilToon の各設定）。既定の並びではプロパティ・ヒストリーと同じ組。
+    /// 古い並びに無ければ、読んだときにプロパティの組の後ろへ足す。
+    Material,
     Channels,
     History,
     ColorSets,
@@ -53,8 +61,10 @@ pub enum Tab {
 
 impl Tab {
     /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
-    pub const ALL: [Tab; 15] = [
+    pub const ALL: [Tab; 18] = [
         Tab::SubTools,
+        Tab::ToolProperties,
+        Tab::BrushSize,
         Tab::Assets,
         Tab::Color,
         Tab::Pose,
@@ -63,6 +73,7 @@ impl Tab {
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::Channels,
         Tab::History,
         Tab::ColorSets,
@@ -76,6 +87,8 @@ impl Tab {
     pub fn key(self) -> &'static str {
         match self {
             Tab::SubTools => "subtools",
+            Tab::ToolProperties => "tool_properties",
+            Tab::BrushSize => "brush_size",
             Tab::Assets => "assets",
             Tab::Color => "color",
             Tab::Pose => "pose",
@@ -84,6 +97,7 @@ impl Tab {
             Tab::TextureSets => "texture_sets",
             Tab::Layers => "layers",
             Tab::Properties => "properties",
+            Tab::Material => "material",
             Tab::Channels => "channels",
             Tab::History => "history",
             Tab::ColorSets => "color_sets",
@@ -106,6 +120,8 @@ impl Tab {
     pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
             Tab::SubTools => lang.pick("サブツール", "Tools"),
+            Tab::ToolProperties => lang.pick("ツールプロパティ", "Tool Properties"),
+            Tab::BrushSize => lang.pick("ブラシサイズ", "Brush Size"),
             Tab::Assets => lang.pick("アセット", "Assets"),
             Tab::Color => lang.pick("カラー", "Color"),
             Tab::Pose => lang.pick("ポーズ", "Pose"),
@@ -114,6 +130,7 @@ impl Tab {
             Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
             Tab::Layers => lang.pick("レイヤー", "Layers"),
             Tab::Properties => lang.pick("プロパティ", "Properties"),
+            Tab::Material => lang.pick("マテリアル", "Material"),
             Tab::Navigator => lang.pick("ナビゲーター", "Navigator"),
             Tab::Channels => lang.pick("チャンネル", "Channels"),
             Tab::History => lang.pick("ヒストリー", "History"),
@@ -139,7 +156,7 @@ impl<'de> serde::Deserialize<'de> for Tab {
 }
 
 /// Substance Painter の並び（左: サブツールとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
-/// プロパティ）。サブツールのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
+/// プロパティとマテリアルとヒストリー）。左の列の上は、サブツール・ツールプロパティ・ブラシサイズが縦に並ぶので高めに取る。
 /// 左の列は、いちばん小さいウィンドウ（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点のウィンドウで約 330 点）。
 /// 右の列は 1600 点の幅のウィンドウで約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
@@ -151,10 +168,18 @@ pub fn default_dock() -> DockState<Tab> {
         vec![Tab::SubTools, Tab::Assets, Tab::Channels],
     );
     // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小のウィンドウで名前が欠ける）
-    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
-    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
+    let [_, right] = surface.split_right(center, 0.72, vec![Tab::TextureSets, Tab::Navigator]);
+    // 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー。前の「サブツール」1 枚（列の高さの 66%）に入っていた 3 つの高さの割合のまま、
+    // それぞれが自分のタブの帯を持つ
+    let [upper, _] = surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
+    let [_, props_and_size] = surface.split_below(upper, 0.38, vec![Tab::ToolProperties]);
+    surface.split_below(props_and_size, 0.8, vec![Tab::BrushSize]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
-    surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
+    surface.split_below(
+        layers,
+        0.45,
+        vec![Tab::Properties, Tab::Material, Tab::History],
+    );
     dock
 }
 
@@ -279,15 +304,22 @@ impl TabViewer for Tabs<'_> {
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
             // 編集・ポーズのモードでは、ブラシと色の欄を暗くして押せない（理由はツールチップ）
-            Tab::SubTools | Tab::ColorSets if !self.app.mode.paints() => {
+            Tab::SubTools | Tab::ToolProperties | Tab::BrushSize | Tab::ColorSets
+                if !self.app.mode.paints() =>
+            {
                 let rect = ui.max_rect();
                 w::enabled_scope(ui, ("mode.dim", tab.key()), false, |ui| match tab {
                     Tab::SubTools => crate::panels::subtools::show(ui, self.app),
+                    Tab::ToolProperties => crate::panels::tool_props::show(ui, self.app),
+                    Tab::BrushSize => crate::panels::tool_props::show_sizes(ui, self.app),
                     _ => crate::panels::colorsets::show(ui, self.app),
                 });
                 crate::mode::dimmed_reason(ui, self.app, rect, tab.key());
             }
             Tab::SubTools => crate::panels::subtools::show(ui, self.app),
+            Tab::ToolProperties => crate::panels::tool_props::show(ui, self.app),
+            Tab::BrushSize => crate::panels::tool_props::show_sizes(ui, self.app),
+            Tab::Material => crate::panels::material::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
             Tab::Log => crate::panels::log::show(ui, self.app),
             Tab::Actions => crate::panels::actions::show(ui, self.app),

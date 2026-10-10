@@ -59,7 +59,7 @@ A mask hides part of a layer. It is shared by all channels.
 2. Click the mask thumbnail in the layer's row to paint on the mask, and click the pixel thumbnail to go back to the pixels. Paint on Mask in the right-click menu also switches.
 3. Painting hides, and erasing reveals.
 
-In Properties you can change the mask's Density (0% is the same as no mask), Enabled (off is the same as no mask, and the mask is kept) and Invert. To make a mask from a selection, use Make the Selection a Layer Mask ([GUIDE_SELECT.md](GUIDE_SELECT.md)). Delete Layer Mask removes it.
+In Properties you can change the mask's Density (0% is the same as no mask), Enabled (off is the same as no mask, and the mask is kept) and Invert. While you paint on the mask, the same fields (the Layer Mask section) also appear at the end of Tool Properties. To make a mask from a selection, use Make the Selection a Layer Mask ([GUIDE_SELECT.md](GUIDE_SELECT.md)). Delete Layer Mask removes it.
 
 ## Adjustment layers
 
