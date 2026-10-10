@@ -141,14 +141,40 @@ fn kinds(h: &Harness<'_, YoluApp>) -> Vec<MeshMapKind> {
         .collect()
 }
 
+/// ポインタを動かして 2 フレーム回す（入れ子のメニューは、行に乗せると開く）。
+fn hover(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(at));
+    h.step();
+    h.step();
+}
+
+/// 開いている「ファイル」のメニューで、入れ子の「インポート」を開いて、その中の項目を押す。
+fn click_import_item(h: &mut Harness<'_, YoluApp>, import: &str, item: &str) {
+    // ポインタが前の位置を持つように 1 度動かしてから、入れ子の行へ乗せる
+    hover(h, pos2(640.0, 400.0));
+    let row = popup_item(h, import);
+    hover(h, row.center());
+    let target = popup_item(h, item);
+    hover(h, pos2(row.right() - 2.0, row.center().y));
+    hover(h, target.center());
+    click(h, target.center());
+}
+
 #[test]
 fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let mut h = app(1280.0, 800.0, 64);
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    // 読み込み
-    let at = popup_item(&h, "PSD を今のセットの文書へ…").center();
-    click(&mut h, at);
+    // インポート（入れ子のメニュー）。開いた形の絵も撮る
+    hover(&mut h, pos2(640.0, 400.0));
+    let row = popup_item(&h, "インポート");
+    hover(&mut h, row.center());
+    assert_eq!(
+        h.state().state.popup.as_ref().unwrap().state.open_depth(),
+        1
+    );
+    h.snapshot("menu_file_import");
+    click_import_item(&mut h, "インポート", "PSD を今のテクスチャセットに…");
     assert_eq!(
         h.state().state.dialog_request,
         Some(DialogRequest::PsdImport(PsdTarget::CurrentSet))
@@ -166,6 +192,8 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         "PSD…",
         "書き出し…",
         "PSD を書き出し…",
+        "PSD を新しいテクスチャセットへ…",
+        "PSD を今のセットの文書へ…",
     ] {
         assert!(h.query_by_label(gone).is_none(), "{gone}");
     }
@@ -191,9 +219,14 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     h.run();
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
-    popup_item(&h, "PSD as a New Texture Set…");
     popup_item(&h, "Export Textures…");
     h.snapshot("menu_file_english");
+    hover(&mut h, pos2(640.0, 400.0));
+    let row = popup_item(&h, "Import");
+    hover(&mut h, row.center());
+    popup_item(&h, "PSD as a New Texture Set…");
+    popup_item(&h, "PSD into the Current Texture Set…");
+    h.snapshot("menu_file_import_english");
     let at = popup_item(&h, "Export PSD…").center();
     click(&mut h, at);
     assert!(h.state().state.psd.options_open);

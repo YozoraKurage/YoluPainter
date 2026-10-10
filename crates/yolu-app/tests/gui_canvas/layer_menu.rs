@@ -468,7 +468,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
         assert!(reference < at(lang.pick("レイヤーマスクを追加", "Add Layer Mask")));
         assert!(
             at(lang.pick("レイヤーマスクを追加", "Add Layer Mask"))
-                < at(lang.pick("左右反転", "Flip Horizontal"))
+                < at(lang.pick("透明部分をロック", "Lock Transparent Pixels"))
         );
         // 新規グループは、新規レイヤーの組ではなくグループ化の組
         assert_eq!(

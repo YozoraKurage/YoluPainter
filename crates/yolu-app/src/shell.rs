@@ -5,7 +5,7 @@ use egui::{pos2, vec2, Rect, Sense, Ui};
 
 use crate::export::ExportAction;
 use crate::lang::Lang;
-use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
+use crate::layerops::{menu_lock_name, Xform, LOCK_FLAGS};
 use crate::livelink::LinkIndicator;
 use crate::m2::Edit;
 use crate::pathtool::PathAction;
@@ -49,29 +49,34 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     ]
 }
 
-/// ファイルメニューの読み込み（PSD）と書き出し（テクスチャを書き出す・PSD）。見出しは置かず、区切り線で分ける。
+/// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに）と書き出し（テクスチャを書き出す・PSD）。
+/// 見出しは置かず、インポートと書き出しは同じ組に並べる。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let l = app.lang;
     vec![
-        Entry::Separator,
-        Entry::item(
-            l.pick(
-                "PSD を新しいテクスチャセットへ…",
-                "PSD as a New Texture Set…",
-            ),
-            Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
+        Entry::submenu(
+            l.pick("インポート", "Import"),
+            vec![
+                Entry::item(
+                    l.pick(
+                        "PSD を新しいテクスチャセットに…",
+                        "PSD as a New Texture Set…",
+                    ),
+                    Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
+                )
+                .enabled(free),
+                Entry::item(
+                    l.pick(
+                        "PSD を今のテクスチャセットに…",
+                        "PSD into the Current Texture Set…",
+                    ),
+                    Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
+                )
+                .enabled(free && app.read_only_reason().is_none()),
+            ],
         )
         .enabled(free),
-        Entry::item(
-            l.pick(
-                "PSD を今のセットの文書へ…",
-                "PSD as the Current Set's Document…",
-            ),
-            Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
-        )
-        .enabled(free && app.read_only_reason().is_none()),
-        Entry::Separator,
         Entry::item(
             l.pick("テクスチャを書き出す…", "Export Textures…"),
             Action::Export(ExportAction::OpenWindow),
@@ -134,6 +139,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
                 Entry::Separator,
+            ];
+            // インポート・書き出し。そのあと、プロジェクト設定は Live Link のすぐ上
+            entries.extend(import_export_entries(app));
+            entries.extend([
+                Entry::Separator,
                 Entry::item(
                     l.pick("プロジェクト設定…", "Project Configuration…"),
                     Action::Project(crate::newproject::NpAction::OpenConfigure),
@@ -143,19 +153,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
                 Entry::item(l.pick("終了", "Quit"), Action::Quit).command_key("app.quit"),
-            ];
-            // 読み込み・書き出しは Live Link の前の区切りの前に入れる
-            if let Some(at) = entries.iter().position(|e| {
-                matches!(
-                    e,
-                    Entry::Item {
-                        action: Action::ToggleLiveLink,
-                        ..
-                    }
-                )
-            }) {
-                entries.splice(at - 1..at - 1, import_export_entries(app));
-            }
+            ]);
             entries
         }
         1 => {
@@ -430,14 +428,14 @@ fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
     Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
 }
 
-/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだレイヤーの全部に効く）。
+/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・表示・削除は選んだレイヤーの全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
     layer_menu(app, Some(id))
 }
 
 /// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
 /// 並びは 足す（新規レイヤー・塗りつぶし ▸・調整 ▸）→ 効果（フィルター ▸・ジェネレーター ▸・アンカー）→ グループ → 複製・結合など →
-/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 変形 → 名前・表示 → 順序・削除。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
+/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 名前・表示 → 順序・削除（左右反転・回転は「編集」のメニュー）。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
 /// 先頭の足す項目とグループだけ。
 pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Entry<Action>> {
     use crate::m2::{self, UiOp};
@@ -651,7 +649,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             .all(|t| app.doc.layer(*t).is_some_and(|l| l.locks().contains(flag)));
         v.push(
             Entry::item(
-                lock_name(lang, flag),
+                menu_lock_name(lang, flag),
                 Action::M2(Edit::Lock {
                     ids: targets.clone(),
                     flag,
@@ -661,19 +659,6 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             .checked(own)
             .enabled(free),
         );
-    }
-    v.push(Entry::Separator);
-    for x in [
-        Xform::Flip { horizontal: true },
-        Xform::Flip { horizontal: false },
-        Xform::Rotate90 { clockwise: true },
-        Xform::Rotate90 { clockwise: false },
-    ] {
-        v.push(transform_entry(
-            lang,
-            x,
-            free && app.selected_layer == Some(id),
-        ));
     }
     v.push(Entry::Separator);
     v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));

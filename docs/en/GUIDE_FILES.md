@@ -58,7 +58,7 @@ A file that already exists is confirmed before it is replaced (if you cancel, yo
 
 ## Import a PSD
 
-"PSD as a New Texture Set…" or "PSD as the Current Set's Document…" in the File menu imports a PSD (RGB 8 bit). Dropping a .psd onto the window imports it the same way as a new texture set (when you drop several, only the first).
+"Import" in the File menu, then "PSD as a New Texture Set…" or "PSD into the Current Texture Set…", imports a PSD (RGB 8 bit). Dropping a .psd onto the window imports it the same way as a new texture set (when you drop several, only the first).
 
 - A PSD is imported as a copy that is never written back to the original file. Raster layers, groups, solid fills, adjustments (invert, levels, hue/saturation, gradient map, tone curve, color balance, brightness/contrast, threshold, posterize), masks and clipping become layers. Layer locks come back as well.
 - When something would be dropped or look different, such as layer effects, smart objects, text or unsupported adjustments, the "Import PSD Check" window lists it with layer names before importing. Nothing is imported until you press "Import".

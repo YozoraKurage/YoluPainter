@@ -1750,7 +1750,7 @@ fn ctrl_e_and_ctrl_shift_e_and_ctrl_j_and_ctrl_g_run_the_layer_operations() {
 }
 
 #[test]
-fn the_layer_menu_offers_merge_lock_and_transform_and_the_merge_confirmation_window_works() {
+fn the_layer_menu_offers_merge_and_lock_and_no_transform_and_the_merge_confirmation_window_works() {
     for lang in Lang::ALL {
         let mut s = AppState::new_in(64, 64, lang);
         let [_a, _b, c] = three(&mut s);
@@ -1763,20 +1763,49 @@ fn the_layer_menu_offers_merge_lock_and_transform_and_the_merge_confirmation_win
         for want in [
             lang.pick("下のレイヤーと結合", "Merge Down"),
             lang.pick("表示レイヤーを結合", "Merge Visible"),
-            lang.pick("透明部分", "Transparent pixels"),
-            lang.pick("画素", "Image pixels"),
-            lang.pick("位置", "Position"),
-            lang.pick("すべて", "All"),
-            lang.pick("左右反転", "Flip Horizontal"),
-            lang.pick("上下反転", "Flip Vertical"),
-            lang.pick("時計回りに 90° 回転", "Rotate 90° Clockwise"),
-            lang.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+            // 見出しが無いので、ロックの項目は何をするかを言い切る名前
+            lang.pick("透明部分をロック", "Lock Transparent Pixels"),
+            lang.pick("画素をロック", "Lock Image Pixels"),
+            lang.pick("位置をロック", "Lock Position"),
+            lang.pick("すべてをロック", "Lock All"),
         ] {
             assert!(
                 labels.iter().any(|l| l == want),
                 "{lang:?}: {want}: {labels:?}"
             );
         }
+        // 左右反転・上下反転・90° 回転は「編集」のメニューにあり、レイヤーのメニューには無い
+        for gone in [
+            lang.pick("左右反転", "Flip Horizontal"),
+            lang.pick("上下反転", "Flip Vertical"),
+            lang.pick("時計回りに 90° 回転", "Rotate 90° Clockwise"),
+            lang.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+            lang.pick("変形", "Transform"),
+            lang.pick("ロック", "Lock"),
+        ] {
+            assert!(
+                !labels.iter().any(|l| l == gone),
+                "{lang:?}: レイヤーのメニューに {gone}: {labels:?}"
+            );
+        }
+        let edit_menu = yolu_app::shell::menu_entries(&s, 1);
+        let edit_labels: Vec<String> = edit_menu.iter().filter_map(label).collect();
+        for want in [
+            lang.pick("左右反転", "Flip Horizontal"),
+            lang.pick("上下反転", "Flip Vertical"),
+            lang.pick("時計回りに 90° 回転", "Rotate 90° Clockwise"),
+            lang.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+        ] {
+            assert!(
+                edit_labels.iter().any(|l| l == want),
+                "{lang:?}: 編集のメニューに {want}: {edit_labels:?}"
+            );
+        }
+        // メニューの項目名は「〜をロック」でも、プロパティなどの種類の名前（`lock_name`）は変えない
+        assert_eq!(
+            yolu_app::layerops::lock_name(lang, LayerLocks::TRANSPARENCY),
+            lang.pick("透明部分", "Transparent pixels")
+        );
         assert_eq!(
             labels.iter().any(|l| has_japanese(l)),
             lang == Lang::Ja,
@@ -1802,7 +1831,7 @@ fn the_layer_menu_offers_merge_lock_and_transform_and_the_merge_confirmation_win
         let items = yolu_app::shell::menu_entries(&s, 2);
         let position = items
             .iter()
-            .find(|e| label(e).as_deref() == Some(lang.pick("位置", "Position")))
+            .find(|e| label(e).as_deref() == Some(lang.pick("位置をロック", "Lock Position")))
             .unwrap();
         match position {
             yolu_app::ui::menu::Entry::Item { check, action, .. } => {

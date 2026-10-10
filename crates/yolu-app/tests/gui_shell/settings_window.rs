@@ -60,51 +60,93 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
             !file.iter().any(|e| matches!(e, Entry::Heading(_))),
             "{lang:?}: ファイルに見出し {names:?}"
         );
+        // 「読み込み」「書き出し」の見出しは無い。インポートは入れ子のメニューで、中に PSD の 2 つ
         for gone in [
             lang.pick("読み込み", "Import"),
             lang.pick("書き出し", "Export"),
         ] {
             assert_eq!(at(gone), usize::MAX, "{lang:?}: {gone}");
         }
-        // 読み込み（PSD 2 つ）と書き出し（テクスチャ・PSD）は、区切りをはさんで続く
-        let import = at(lang.pick(
-            "PSD を新しいテクスチャセットへ…",
-            "PSD as a New Texture Set…",
-        ));
-        let export = at(lang.pick("テクスチャを書き出す…", "Export Textures…"));
+        let import = file
+            .iter()
+            .position(|e| matches!(e, Entry::Submenu { label, .. } if label == lang.pick("インポート", "Import")))
+            .unwrap_or_else(|| panic!("{lang:?}: インポートの入れ子のメニュー {names:?}"));
+        let Entry::Submenu { entries, .. } = &file[import] else {
+            unreachable!()
+        };
         assert_eq!(
-            at(lang.pick(
-                "PSD を今のセットの文書へ…",
-                "PSD as the Current Set's Document…"
-            )),
-            import + 1,
+            labels(entries),
+            [
+                lang.pick(
+                    "PSD を新しいテクスチャセットに…",
+                    "PSD as a New Texture Set…"
+                ),
+                lang.pick(
+                    "PSD を今のテクスチャセットに…",
+                    "PSD into the Current Texture Set…"
+                )
+            ],
+            "{lang:?}"
+        );
+        assert!(has(
+            entries,
+            &Action::Psd(yolu_app::psd::PsdAction::ImportDialog(
+                yolu_app::psd::PsdTarget::NewSet
+            ))
+        ));
+        assert!(has(
+            entries,
+            &Action::Psd(yolu_app::psd::PsdAction::ImportDialog(
+                yolu_app::psd::PsdTarget::CurrentSet
+            ))
+        ));
+        // 「今のセットの文書」の言い方は画面に無い
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("セットの文書") || n.contains("Set's Document")),
             "{lang:?}: {names:?}"
         );
-        assert_eq!(export, import + 2, "{lang:?}: {names:?}");
-        // 読み込みと書き出しの間・書き出しの前後は区切り線
-        let separator_before = |label: &str| {
-            let at = file
-                .iter()
-                .position(|e| e.label() == Some(label))
-                .expect("項目がある");
-            matches!(file[at - 1], Entry::Separator)
-        };
-        assert!(
-            separator_before(lang.pick(
-                "PSD を新しいテクスチャセットへ…",
-                "PSD as a New Texture Set…"
-            )),
-            "{lang:?}"
-        );
-        assert!(
-            separator_before(lang.pick("テクスチャを書き出す…", "Export Textures…")),
-            "{lang:?}"
-        );
+        // 並び: 配布用に保存… | インポート ▸・テクスチャを書き出す…・PSD を書き出す… | プロジェクト設定… | Live Link | 終了
+        let export = at(lang.pick("テクスチャを書き出す…", "Export Textures…"));
         assert_eq!(
             at(lang.pick("PSD を書き出す…", "Export PSD…")),
             export + 1,
             "{lang:?}: {names:?}"
         );
+        // （入れ子の中の PSD の 2 つを挟んで、配布用に保存…の 3 つ先）
+        assert_eq!(
+            export,
+            at(lang.pick("配布用に保存…", "Save for Distribution…")) + 3,
+            "{lang:?}: {names:?}"
+        );
+        let project = at(lang.pick("プロジェクト設定…", "Project Configuration…"));
+        assert_eq!(project, export + 2, "{lang:?}: 書き出しのすぐ後 {names:?}");
+        assert_eq!(
+            at("Live Link"),
+            project + 1,
+            "{lang:?}: Live Link のすぐ上 {names:?}"
+        );
+        assert_eq!(
+            at(lang.pick("終了", "Quit")),
+            at("Live Link") + 1,
+            "{lang:?}: {names:?}"
+        );
+        // インポートの前、プロジェクト設定の前後は区切り線（書き出しの 2 つはインポートに続く）
+        assert!(matches!(file[import - 1], Entry::Separator), "{lang:?}");
+        assert_eq!(
+            file[import + 1].label(),
+            Some(lang.pick("テクスチャを書き出す…", "Export Textures…")),
+            "{lang:?}"
+        );
+        let project_at = file
+            .iter()
+            .position(|e| {
+                e.label() == Some(lang.pick("プロジェクト設定…", "Project Configuration…"))
+            })
+            .expect("項目がある");
+        assert!(matches!(file[project_at - 1], Entry::Separator), "{lang:?}");
+        assert!(matches!(file[project_at + 1], Entry::Separator), "{lang:?}");
         let view = shell::menu_entries(&app, 5);
         for gone in [
             Action::Pose(PoseAction::OpenFbx),
