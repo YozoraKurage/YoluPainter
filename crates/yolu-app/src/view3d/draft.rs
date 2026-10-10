@@ -62,7 +62,8 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
     let kind = match app.tool {
         Tool::Gradient => DraftKind::Gradient,
         Tool::Shape => DraftKind::Figure,
-        Tool::Ruler => DraftKind::Ruler,
+        // 対称定規は画面に貼り付けない（3D の対称定規は文書に置く）
+        Tool::Ruler if app.screen_ruler_kind().is_some() => DraftKind::Ruler,
         _ => return,
     };
     if app.is_stroking()
@@ -202,8 +203,8 @@ fn ruler_of(app: &AppState, d: &SurfaceDraft) -> Ruler {
         d.handle,
         (d.start, d.current),
         d.shift,
-        app.drafting.ruler_kind,
-        app.drafting.two_points,
+        app.screen_ruler_kind().unwrap_or_default(),
+        app.rulers.two_points,
     )
 }
 

@@ -13,7 +13,7 @@ use crate::lang::Lang;
 use crate::panels::{brushes, path_props, region_props};
 use crate::state::{AppState, Tool};
 use crate::ui::widgets::Rows;
-use crate::{drafting, eyedrop, gradient, selection, textlayer, transform};
+use crate::{drafting, eyedrop, gradient, rulers, selection, textlayer, transform};
 
 /// サブツールの一覧の種類（左のドックのサブツールの上の部分に何を出すか）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +228,7 @@ pub static TOOLS: [ToolDef; 19] = [
         .canvas(CanvasKind::Drafting)
         .surface(Surface::Screen)
         .sub(SubTools::Presets)
-        .ui(drafting::props::ruler_props, drafting::props::options),
+        .ui(rulers::tool::props, rulers::tool::options),
     def(
         Tool::PolygonFill,
         "polygon-fill",

@@ -390,6 +390,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd, Key::O, "file.open"),
         kb(cmd, Key::N, "file.new_project"),
         kb(cmd, Key::Num1, "view.ruler_snap"),
+        kb(cmd, Key::Num2, "view.special_ruler_snap"),
+        kb(cmd, Key::Num4, "view.switch_special_ruler"),
         kb(cmd, Key::Num0, "view.fit"),
         kb(cmd, Key::Plus, "view.zoom_in"),
         kb(cmd, Key::Equals, "view.zoom_in"),
@@ -1824,7 +1826,7 @@ mod tests {
         );
         assert_eq!(
             dispatched(&app, Key::Num1, Modifiers::COMMAND),
-            vec![Action::ToggleRulerSnap]
+            vec![Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler)]
         );
         assert_eq!(dispatched(&app, Key::Num0, Modifiers::NONE), vec![]);
         // 文字のキーは Option・Shift を加えると効かない（記号・数字とは違う）

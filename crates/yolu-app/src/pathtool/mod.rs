@@ -233,7 +233,7 @@ pub enum PathAction {
     Kind(PathKind),
     /// 筆先・角度・向き・投影の深さ。パスが無いときは、次に作るパスの設定。
     Style(StyleEdit),
-    /// パスの対称（入れると、今の対称の設定で映したパスも描く。2D はキャンバスの対称、3D はモデルの鏡の面）。
+    /// パスの対称（入れると、効いている対称定規の値を写して、映したパスも描く。2D は 2D の対称定規、3D は鏡の面 1 枚の 3D の対称定規。無ければ断る）。
     Symmetry(bool),
     /// パスの向きを逆にする（点の並びを逆に）。
     Reverse,
@@ -1307,26 +1307,67 @@ impl AppState {
         self.path_commit(Some(layer), with_style(&path, style), keep);
     }
 
-    /// パスの対称を入れる・切る（1 回の Undo）。入れるときは今の対称の設定（2D はキャンバスの対称・切っていれば最後のモードで中心は
-    /// 今の中心、3D はミラーの軸と面のずれ）。
+    /// パスの対称を入れる・切る（1 回の Undo）。入れるときは、そのパスのレイヤーから見えて効いている対称定規の値を写す（2D のパスは 2D の対称定規、
+    /// 3D のパスは 3D の対称定規。効いている対称定規が無ければ断る）。3D のパスの対称は鏡の面 1 枚だけで、線対称 2 本の対称定規だけが写せる。
+    /// 3D のパスは休みの形のモデルの空間、対称定規は 3D ビューの形（ポーズを付けた形）の空間なので、ポーズを付けているあいだは入れない。
     fn path_set_symmetry(&mut self, on: bool) {
-        let Some(path) = self.path_layer().map(|(_, p)| p.clone()) else {
+        let Some((layer, path)) = self.path_layer().map(|(l, p)| (l, p.clone())) else {
             return;
         };
+        let lang = self.lang;
         let symmetry = match (on, &path) {
             (false, _) => paths::PathSymmetry::None,
             (true, LayerPath::Canvas(_)) => {
-                let mut s = self.sel.symmetry.clone();
-                if !s.enabled() {
-                    s.set_mode(s.last_mode);
+                let active = self.rulers_active_for(crate::rulers::Place::Canvas, Some(layer));
+                match active.canvas_symmetry {
+                    Some(s) => paths::PathSymmetry::Canvas(s),
+                    None => {
+                        let reason = self.no_symmetry_reason(crate::rulers::Place::Canvas, layer);
+                        self.refuse(Source::Path, reason);
+                        return;
+                    }
                 }
-                paths::PathSymmetry::Canvas(s.canvas(self.doc.width(), self.doc.height()))
             }
             (true, LayerPath::Surface(_)) => {
-                let plane = self.sel.symmetry.surface.plane();
-                paths::PathSymmetry::Mirror {
-                    point: plane.point,
-                    normal: plane.normal,
+                let posed = self
+                    .view3d
+                    .pose
+                    .session
+                    .as_ref()
+                    .is_some_and(|s| s.is_posed());
+                if posed {
+                    self.refuse(
+                        Source::Path,
+                        lang.pick(
+                            "ポーズを付けているときは入れられません",
+                            "Not available while the model is posed",
+                        ),
+                    );
+                    return;
+                }
+                let active = self.rulers_active_for(crate::rulers::Place::View3d, Some(layer));
+                match active.surface_symmetry {
+                    None => {
+                        let reason = self.no_symmetry_reason(crate::rulers::Place::View3d, layer);
+                        self.refuse(Source::Path, reason);
+                        return;
+                    }
+                    Some(setup) => match (setup.mirror, setup.radial) {
+                        (Some(plane), None) => paths::PathSymmetry::Mirror {
+                            point: plane.point,
+                            normal: plane.normal,
+                        },
+                        _ => {
+                            self.refuse(
+                                Source::Path,
+                                lang.pick(
+                                    "3D のパスの対称は鏡の面 1 枚だけです",
+                                    "A 3D path can mirror across one plane only",
+                                ),
+                            );
+                            return;
+                        }
+                    },
                 }
             }
         };

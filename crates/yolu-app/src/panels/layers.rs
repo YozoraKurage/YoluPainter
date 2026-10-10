@@ -372,6 +372,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         }
     }
     follow_drag(ui, app, list, &rows, &layout);
+    crate::rulers::layer_icon::follow(ui, app, list, &rows, &layout, app.ui.layer_scroll);
     crate::panels::assets::layer_list_drop(ui, app, list, &rows, &layout);
     // ドラッグの落とす先（線か、グループの枠）
     if let Some(LayerDrag {
@@ -1004,6 +1005,7 @@ fn layer_row(
     };
     let (name, visible, kind) = (layer.name().to_owned(), layer.visible(), layer.kind());
     let has_mask = layer.mask().is_some();
+    let ruler_look = crate::rulers::layer_icon::look(layer);
     let has_path = layer.path().is_some();
     let has_text = layer.text().is_some();
     let channel = app.m2.paint_channel;
@@ -1070,6 +1072,12 @@ fn layer_row(
     if has_mask {
         x = mask_box.right() + 4.0;
     }
+    // 定規のアイコン（サムネイルとマスクのすぐ右。定規を持つレイヤーだけ場所を取る）
+    let ruler_rect = ruler_look.map(|_| {
+        let at = crate::rulers::layer_icon::rect(row, x);
+        x += crate::rulers::layer_icon::ADVANCE;
+        at
+    });
     let effective_locks = app.doc.effective_locks(id).unwrap_or_default();
     let locked = effective_locks != yolu_core::LayerLocks::NONE;
     // Live Link で入れた「元の絵」が、GPU を通した・圧縮から読んだ・直した・拡大縮小した絵のとき、理由を出す印
@@ -1289,6 +1297,28 @@ fn layer_row(
             }
         }
         let _ = maskr.on_hover_text(hover);
+    }
+
+    // 定規のアイコン（押すと行を選んでプロパティの「定規」を開く。Shift＋押すと表示を全部入り切り。右クリックでメニュー）
+    if let (Some(any_visible), Some(at)) = (ruler_look, ruler_rect) {
+        use crate::rulers::layer_icon::{self, Event};
+        match layer_icon::show(ui, app, id, at, any_visible, enabled) {
+            Event::Select => {
+                click_row(ui, app, id, rows);
+                app.ui.sections.insert("rulers", true);
+            }
+            Event::ToggleAll => {
+                app.apply(Action::Ruler(crate::rulers::RulerAction::SetAllVisible {
+                    owner: id,
+                    visible: !any_visible,
+                }))
+            }
+            Event::Menu(at) => {
+                select_for_menu(app, id, in_selection);
+                open_popup(app, ctx, PopupKind::RulerLayer(id), context_anchor(at), 0.0);
+            }
+            Event::None => {}
+        }
     }
 
     // 名前（ダブルクリックで変える）

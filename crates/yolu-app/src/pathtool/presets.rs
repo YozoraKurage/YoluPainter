@@ -624,7 +624,7 @@ impl AppState {
         };
         let keep = self.path_selected_index();
         if self.path_commit(Some(layer), next.clone(), keep) && data.symmetry {
-            // 対称は今の対称の設定で入れる（2 回目の Undo）
+            // 対称は、効いている対称定規の値で入れる（2 回目の Undo。効いている対称定規が無ければ断る）
             if next.style().symmetry == PathSymmetry::None {
                 self.path_apply(PathAction::Symmetry(true));
             }

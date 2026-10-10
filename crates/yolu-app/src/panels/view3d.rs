@@ -351,7 +351,7 @@ impl View3dSlot {
             // ブラシのカーソル（回している・パンしているあいだは出さない）
             if response.contains_pointer() && content.contains(pointer) {
                 // 2D の対称の写しのカーソルは、今のセットの UV の格子で引く（無ければここで作る）
-                if app.sel.symmetry.enabled() {
+                if app.canvas_symmetry().enabled() {
                     let _ = app.region_grid();
                 }
                 if let Some(zoom) = app.view3d.input.zoom {

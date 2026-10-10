@@ -968,10 +968,21 @@ impl AppState {
             Edit::GroupSelected => self.group_selected_layers()?,
             Edit::Ungroup(id) => {
                 let first = self.doc.children_of(Some(id))?.last().copied();
+                // グループの定規は、グループの中でだけ意味を持つので、グループと一緒に外れる（取り消しで戻る）。黙って捨てずに知らせる
+                let rulers = self.doc.layer(id).map_or(0, |l| l.rulers().len());
                 self.doc.ungroup(id)?;
                 self.m2.collapsed.remove(&id);
                 self.selected_layer = first;
                 self.set_edit_mask(false);
+                if rulers > 0 {
+                    self.info(
+                        Source::Layer,
+                        self.lang.pick(
+                            format!("グループの定規 {rulers} 個も一緒に削除しました"),
+                            format!("Also deleted the group's {rulers} ruler(s)"),
+                        ),
+                    );
+                }
             }
             Edit::Duplicate(id) => {
                 let copy = self.doc.duplicate_layer(id, None)?;
@@ -1618,6 +1629,35 @@ mod tests {
         assert_eq!(s.doc.layers().len(), 1);
         assert_eq!(s.doc.layer(id).unwrap().parent(), None);
         assert_eq!(s.selected_layer, Some(id));
+    }
+
+    #[test]
+    fn ungrouping_a_group_with_rulers_deletes_them_with_it_says_so_and_undo_brings_them_back() {
+        let mut s = app();
+        s.apply(Action::M2(Edit::GroupSelected));
+        let group = s.selected_layer.unwrap();
+        let ruler = yolu_core::Ruler::canvas(
+            s.doc.new_ruler_id(),
+            yolu_core::RulerKind::Line,
+            yolu_core::glam::DVec2::new(0.0, 5.0),
+            yolu_core::glam::DVec2::new(10.0, 5.0),
+        );
+        s.doc.set_rulers(group, vec![ruler], false).unwrap();
+        s.message.clear();
+        s.apply(Action::M2(Edit::Ungroup(group)));
+        assert!(s.doc.layer(group).is_none());
+        assert!(
+            s.message.contains("定規 1 個"),
+            "黙って捨てない: {}",
+            s.message
+        );
+        s.apply(Action::Undo);
+        assert_eq!(s.doc.layer(group).unwrap().rulers().len(), 1);
+        // 定規の無いグループでは、定規の知らせを出さない
+        let plain = s.doc.add_group("plain", None).unwrap();
+        s.message.clear();
+        s.apply(Action::M2(Edit::Ungroup(plain)));
+        assert!(!s.message.contains("定規"), "{}", s.message);
     }
 
     #[test]

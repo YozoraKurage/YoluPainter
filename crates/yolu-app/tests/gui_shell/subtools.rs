@@ -255,11 +255,16 @@ fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
     assert_eq!(st(&h).drafting.figure, yolu_app::drafting::Figure::Ellipse);
     pick(&mut h, Tool::Ruler);
     click_row(&mut h, "パース（2 点）");
-    assert_eq!(
-        st(&h).drafting.ruler_kind,
-        yolu_app::drafting::RulerKind::Perspective
-    );
-    assert!(st(&h).drafting.two_points);
+    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Perspective);
+    assert!(st(&h).rulers.two_points);
+    // 対称定規（線対称・2 本）と回転対称（6 本）
+    click_row(&mut h, "回転対称");
+    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Symmetry);
+    assert!(!st(&h).rulers.line_symmetry);
+    assert_eq!(st(&h).rulers.lines, 6);
+    click_row(&mut h, "対称定規");
+    assert!(st(&h).rulers.line_symmetry);
+    assert_eq!(st(&h).rulers.lines, 2);
     // スポイト
     pick(&mut h, Tool::Eyedropper);
     click_row(&mut h, "全レイヤー");
@@ -310,27 +315,48 @@ fn changing_a_setting_in_the_bar_moves_the_mark_to_the_matching_sub_tool() {
 }
 
 #[test]
-fn the_brush_and_eraser_bars_show_the_ruler_snap_and_the_button_toggles_it() {
+fn the_brush_and_eraser_bars_show_the_two_ruler_snaps_and_the_buttons_toggle_them() {
     for lang in Lang::ALL {
         for tool in [Tool::Brush, Tool::Eraser] {
             let mut h = app(1280.0, 800.0, 128);
             language(&mut h, lang);
             pick(&mut h, tool);
-            let label = lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)");
-            assert!(!st(&h).drafting.snap);
-            let at = bar_rect(&h, label).center();
-            click(&mut h, at);
-            assert!(st(&h).drafting.snap, "{lang:?} {tool:?}");
-            // 状態がバーに見える（押した状態の印）
-            let node = h.query_all_by_label(label).next().unwrap();
-            assert_eq!(
-                node.accesskit_node().toggled(),
-                Some(egui::accesskit::Toggled::True),
-                "{lang:?} {tool:?}"
-            );
-            let at = bar_rect(&h, label).center();
-            click(&mut h, at);
-            assert!(!st(&h).drafting.snap, "{lang:?} {tool:?}");
+            for (label, special) in [
+                (
+                    lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)"),
+                    false,
+                ),
+                (
+                    lang.pick(
+                        "特殊定規にスナップ（Ctrl+2）",
+                        "Snap to Special Ruler (Ctrl+2)",
+                    ),
+                    true,
+                ),
+            ] {
+                let on = |h: &H| {
+                    let r = &st(h).rulers;
+                    if special {
+                        r.snap_special
+                    } else {
+                        r.snap_ruler
+                    }
+                };
+                assert!(on(&h), "{lang:?} {tool:?} {label}: 既定は入");
+                // 状態がバーに見える（押した状態の印）
+                let node = h.query_all_by_label(label).next().unwrap();
+                assert_eq!(
+                    node.accesskit_node().toggled(),
+                    Some(egui::accesskit::Toggled::True),
+                    "{lang:?} {tool:?} {label}"
+                );
+                let at = bar_rect(&h, label).center();
+                click(&mut h, at);
+                assert!(!on(&h), "{lang:?} {tool:?} {label}");
+                let at = bar_rect(&h, label).center();
+                click(&mut h, at);
+                assert!(on(&h), "{lang:?} {tool:?} {label}");
+            }
         }
     }
 }
@@ -606,10 +632,7 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
     again
         .state
         .apply(Action::SubTool(SubToolAction::Select(Tool::Ruler, key)));
-    assert_eq!(
-        again.state.drafting.ruler_kind,
-        yolu_app::drafting::RulerKind::Concentric
-    );
+    assert_eq!(again.state.rulers.kind, yolu_core::RulerKind::Concentric);
     // 壊れたファイルは、起動の知らせに出る（ほかのツールの保存は読む）
     std::fs::write(dir.join("subtools").join("gradient.ylsubtool"), "x").unwrap();
     let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());

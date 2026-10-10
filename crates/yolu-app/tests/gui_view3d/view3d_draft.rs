@@ -19,7 +19,7 @@ use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
 use yolu_core::geometry::{ModelMesh, OrbitCamera, Submesh};
 use yolu_core::glam::Vec2;
-use yolu_core::glam::{DVec2, Vec3};
+use yolu_core::glam::{DVec2, DVec3, Vec3};
 use yolu_core::material::{GradientSettings, GradientShape};
 use yolu_core::{AntiAlias, Channel, LayerLocks, Rgba8, SelectionMask};
 
@@ -569,17 +569,24 @@ fn the_outline_is_a_3d_stroke_with_the_brush_and_the_mirror_but_the_fill_is_not_
             s.drafting.figure = Figure::Rectangle;
             s.drafting.fill = false;
             s.brush.radius = radius;
-            s.sel.symmetry.surface.mirror = mirror;
+            if mirror {
+                crate::common::rulers::mirror_3d(s, DVec3::ZERO, DVec3::X);
+            }
         }
+        let base = st(&h).doc.undo_count();
         // 手前の面の右の半分（x が 0.1〜0.4）の長方形
         let a = screen(&h, rect, Vec3::new(0.1, -0.2, -0.5));
         let b = screen(&h, rect, Vec3::new(0.4, 0.2, -0.5));
         pull(&mut h, a, b);
-        assert_eq!(st(&h).doc.undo_count(), 1, "{}", message(&h));
+        assert_eq!(st(&h).doc.undo_count(), base + 1, "{}", message(&h));
         assert!(!center_painted(&h), "輪郭だけ");
         let (left, right) = (count(&h, -0.5..0.0), count(&h, 0.0..0.5));
         assert!(right > 20, "{right}");
-        assert_eq!(left > 20, mirror, "ミラーの写し {left}");
+        assert_eq!(
+            left > 20,
+            mirror,
+            "3D の対称定規（線対称 2 本）の写し {left}"
+        );
         painted.push(right);
         assert!(hidden_untouched(&h));
     }
@@ -592,7 +599,7 @@ fn the_outline_is_a_3d_stroke_with_the_brush_and_the_mirror_but_the_fill_is_not_
         let s = &mut h.state_mut().state;
         s.drafting.figure = Figure::Ellipse;
         s.drafting.fill = true;
-        s.sel.symmetry.surface.mirror = true;
+        crate::common::rulers::mirror_3d(s, DVec3::ZERO, DVec3::X);
     }
     let a = screen(&h, rect, Vec3::new(0.1, -0.2, -0.5));
     let b = screen(&h, rect, Vec3::new(0.4, 0.2, -0.5));
@@ -871,16 +878,17 @@ fn the_ruler_stays_on_screen_while_orbiting_and_snaps_3d_strokes_of_every_kind()
     h.run();
     assert_ne!(st(&h).view3d.camera.yaw, yaw, "回った");
     assert_eq!(st(&h).view3d.ruler, Some(placed));
-    // ツールの欄の種類と削除は 3D の定規にも効く
-    h.state_mut().state.set_ruler_kind(RulerKind::Parallel);
-    assert_eq!(st(&h).view3d.ruler.unwrap().kind, RulerKind::Parallel);
+    // ツールの欄の種類は「これから作る定規」で、置いた画面の定規は替えない。削除は効く
+    h.state_mut().state.rulers.kind = yolu_core::RulerKind::Parallel;
+    assert_eq!(st(&h).view3d.ruler, Some(placed));
     h.state_mut().state.delete_rulers();
     assert!(st(&h).view3d.ruler.is_none());
 
     // スナップ: ブラシのストロークの入力の点を、押した点で凍結した寄せ先へ（2D と同じ式）
     let (mut h, rect) = cube_view();
     tool(&mut h, Tool::Brush);
-    h.state_mut().state.drafting.snap = true;
+    h.state_mut().state.rulers.snap_ruler = true;
+    h.state_mut().state.rulers.snap_special = true;
     let c = local(rect, cube_box(&h, rect).center());
     for kind in [
         RulerKind::Line,
@@ -895,7 +903,8 @@ fn the_ruler_stays_on_screen_while_orbiting_and_snaps_3d_strokes_of_every_kind()
             two_points: false,
         };
         h.state_mut().state.view3d.ruler = Some(ruler);
-        let start = c + DVec2::new(-20.0, 30.0);
+        // 直線は線の近くで押したときだけ寄せるので、線から 10 点ほどの所で押す（ほかの種類はどこで押しても寄せる）
+        let start = c + DVec2::new(-20.0, if kind == RulerKind::Line { -10.0 } else { 30.0 });
         let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
         press(&h, to_pos(start), PointerButton::Primary);
         h.step();
@@ -918,7 +927,8 @@ fn the_ruler_stays_on_screen_while_orbiting_and_snaps_3d_strokes_of_every_kind()
         assert!(st(&h).view3d.input.ruler_constraint.is_none());
     }
     // 切れば寄せない
-    h.state_mut().state.drafting.snap = false;
+    h.state_mut().state.rulers.snap_ruler = false;
+    h.state_mut().state.rulers.snap_special = false;
     let start = c + DVec2::new(-20.0, 30.0);
     let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
     press(&h, to_pos(start), PointerButton::Primary);
@@ -930,6 +940,38 @@ fn the_ruler_stays_on_screen_while_orbiting_and_snaps_3d_strokes_of_every_kind()
     assert!(got.distance(p) < 1e-2);
     release(&h, to_pos(p), PointerButton::Primary);
     h.run();
+}
+
+#[test]
+fn a_straight_screen_ruler_snaps_only_when_the_stroke_starts_near_it() {
+    let (mut h, rect) = cube_view();
+    tool(&mut h, Tool::Brush);
+    h.state_mut().state.rulers.snap_ruler = true;
+    let c = local(rect, cube_box(&h, rect).center());
+    let ruler = Ruler {
+        kind: RulerKind::Line,
+        a: c + DVec2::new(-60.0, -40.0),
+        b: c + DVec2::new(60.0, 20.0),
+        two_points: false,
+    };
+    h.state_mut().state.view3d.ruler = Some(ruler);
+    let to_pos = |p: DVec2| pos2(rect.left() + p.x as f32, rect.top() + p.y as f32);
+    // 線から 40 点以上離れた所（2D の寄せる近さ 26 点の外）で押すと寄せない。線の近く（約 9 点）なら寄せる
+    for (start, snaps) in [
+        (c + DVec2::new(-20.0, 30.0), false),
+        (c + DVec2::new(-20.0, -10.0), true),
+    ] {
+        press(&h, to_pos(start), PointerButton::Primary);
+        h.step();
+        assert!(st(&h).view3d.input.surface.is_some(), "{}", message(&h));
+        assert_eq!(
+            st(&h).view3d.input.ruler_constraint.is_some(),
+            snaps,
+            "{start}"
+        );
+        release(&h, to_pos(start), PointerButton::Primary);
+        h.run();
+    }
 }
 
 #[test]
@@ -978,8 +1020,8 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
         pull(&mut h, a, b);
         // 2 点のパースの定規（定規のツールで端点の輪も出す）
         tool(&mut h, Tool::Ruler);
-        h.state_mut().state.drafting.two_points = true;
-        h.state_mut().state.set_ruler_kind(RulerKind::Perspective);
+        h.state_mut().state.rulers.two_points = true;
+        h.state_mut().state.rulers.kind = yolu_core::RulerKind::Perspective;
         h.state_mut().state.view3d.ruler = Some(Ruler {
             kind: RulerKind::Perspective,
             a: local(rect, pos2(cube.left() - 60.0, cube.top() + 30.0)),

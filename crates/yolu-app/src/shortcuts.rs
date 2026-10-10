@@ -992,7 +992,7 @@ mod tests {
     /// 表から作る前に手で書いていたメニューのキーの文字（macOS 以外）。（メニュー, 日本語, 英語, キー）。メニューは 0 ファイル・1 編集・2 レイヤー・3 選択範囲・5 表示。
     /// 今のメニューの文字が表（主の行）から作るものと同じことは、この固定の表で確かめる（同じ表どうしを比べない）。
     #[cfg(not(target_os = "macos"))]
-    const HAND_WRITTEN_MENU_KEYS: [(usize, &str, &str, &str); 51] = [
+    const HAND_WRITTEN_MENU_KEYS: [(usize, &str, &str, &str); 53] = [
         // ファイルのメニュー
         (0, "新規プロジェクト…", "New Project…", "Ctrl+N"),
         (0, "開く…", "Open…", "Ctrl+O"),
@@ -1057,8 +1057,15 @@ mod tests {
         (5, "表示を左に回す", "Rotate View Left", "-"),
         (5, "表示を右に回す", "Rotate View Right", "^"),
         (5, "回転を戻す", "Reset Rotation", "Shift+R"),
-        (5, "定規にスナップ", "Snap to Ruler", "Ctrl+1"),
         (5, "表示を左右反転", "Flip View", "H"),
+        (5, "定規にスナップ", "Snap to Ruler", "Ctrl+1"),
+        (5, "特殊定規にスナップ", "Snap to Special Ruler", "Ctrl+2"),
+        (
+            5,
+            "スナップする特殊定規の切り替え",
+            "Switch the Snapping Special Ruler",
+            "Ctrl+4",
+        ),
     ];
 
     #[cfg(not(target_os = "macos"))]

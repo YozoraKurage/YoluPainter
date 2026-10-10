@@ -7,11 +7,12 @@ use crate::view3d_brush::{cube_view, screen_of};
 use common::*;
 use egui::{Key, Modifiers, Pos2, Rect};
 use egui_kittest::Harness;
-use yolu_app::engine::{composite_pixel, SymmetryMode};
-use yolu_app::selection::{SelAction, SelUiOp, SymOp};
+use yolu_app::engine::composite_pixel;
+use yolu_app::rulers::RulerAction;
+use yolu_app::selection::{SelAction, SelUiOp};
 use yolu_app::state::{Action, Tool};
 use yolu_app::{Tab, YoluApp};
-use yolu_core::glam::Vec3;
+use yolu_core::glam::{DVec3, Vec3};
 
 type H = Harness<'static, YoluApp>;
 
@@ -94,10 +95,26 @@ fn quick_on(h: &mut H) {
     h.run();
 }
 
-fn sym(h: &mut H, op: SymOp) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Symmetry(op)));
+/// 選んでいるレイヤーの対称定規を全部外す。
+fn clear_rulers(h: &mut H) {
+    let s = &mut h.state_mut().state;
+    let layer = s.selected_layer.unwrap();
+    let ids: Vec<_> = common::rulers::of(s, layer).iter().map(|r| r.id).collect();
+    if !ids.is_empty() {
+        s.apply(Action::Ruler(RulerAction::Delete { owner: layer, ids }));
+    }
+    h.run();
+}
+
+/// 2D の縦の対称定規（文書の x = 128）。
+fn vertical_2d(h: &mut H) {
+    common::rulers::vertical(&mut h.state_mut().state, SIZE as f64 / 2.0);
+    h.run();
+}
+
+/// 3D の鏡（X に直交する面、モデルの原点）。
+fn mirror_3d(h: &mut H) {
+    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
     h.run();
 }
 
@@ -370,11 +387,12 @@ fn a_quick_mask_stroke_in_3d_is_not_overwritten_by_a_canvas_stroke() {
 fn the_2d_symmetry_also_mirrors_a_3d_stroke_in_uv() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical)); // 文書の x = 128
+    vertical_2d(&mut h); // 文書の x = 128
+    let base = st(&h).doc.undo_count();
     let front = Vec3::new(0.25, 0.0, -0.5);
     click_3d(&mut h, rect, front);
     assert!(message(&h).is_empty(), "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), 1, "写しも 1 回の取り消し");
+    assert_eq!(st(&h).doc.undo_count(), base + 1, "写しも 1 回の取り消し");
     let dots = painted(&h);
     let (x, y) = texel_of(&h, front, Vec3::NEG_Z);
     assert!(ink_near(&h, (x, y), 2));
@@ -383,9 +401,9 @@ fn the_2d_symmetry_also_mirrors_a_3d_stroke_in_uv() {
     for &(px, py, a) in &dots {
         assert_eq!(alpha(&h, SIZE - 1 - px, py), a, "({px}, {py})");
     }
-    // 2D の対称を切れば、元の側だけ
+    // 2D の対称定規を外せば、元の側だけ
     undo(&mut h);
-    sym(&mut h, SymOp::Mode(SymmetryMode::None));
+    clear_rulers(&mut h);
     click_3d(&mut h, rect, front);
     assert!(!ink_near(&h, (SIZE as f64 - x, y), 2));
 }
@@ -394,9 +412,10 @@ fn the_2d_symmetry_also_mirrors_a_3d_stroke_in_uv() {
 fn the_3d_symmetry_also_mirrors_a_2d_stroke_through_the_model() {
     let (mut h, _) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.sel.symmetry.surface.mirror = true; // X に直交する面、モデルの原点
+    mirror_3d(&mut h); // X に直交する面、モデルの原点
     click_tab(&mut h, Tab::Canvas);
     h.run();
+    let base = st(&h).doc.undo_count();
     let a = texel_of(&h, Vec3::new(0.25, 0.1, -0.5), Vec3::NEG_Z);
     let b = texel_of(&h, Vec3::new(-0.25, 0.1, -0.5), Vec3::NEG_Z);
     assert!((a.0 - b.0).abs() > 20.0, "{a:?} {b:?}");
@@ -404,10 +423,16 @@ fn the_3d_symmetry_also_mirrors_a_2d_stroke_through_the_model() {
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert!(ink_near(&h, a, 2));
     assert!(ink_near(&h, b, 2), "モデルの反対側の UV に塗れる");
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc.undo_count(), base + 1);
     // 写しの面が無いとき（面をモデルの外へずらす）は、その写しだけ飛ばして知らせる
     undo(&mut h);
-    sym(&mut h, SymOp::Offset3d(0.45));
+    clear_rulers(&mut h);
+    common::rulers::mirror_3d(
+        &mut h.state_mut().state,
+        DVec3::new(0.45, 0.0, 0.0),
+        DVec3::X,
+    );
+    h.run();
     click_2d(&mut h, a);
     assert!(ink_near(&h, a, 2));
     assert!(!ink_near(&h, b, 2));
@@ -418,8 +443,8 @@ fn the_3d_symmetry_also_mirrors_a_2d_stroke_through_the_model() {
 fn both_symmetries_multiply_the_copies_in_both_views() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    mirror_3d(&mut h);
+    vertical_2d(&mut h);
     let p = Vec3::new(0.25, 0.1, -0.5);
     let a = texel_of(&h, p, Vec3::NEG_Z);
     let b = texel_of(&h, Vec3::new(-0.25, 0.1, -0.5), Vec3::NEG_Z);
@@ -450,18 +475,20 @@ fn both_symmetries_multiply_the_copies_in_both_views() {
 fn smudge_refuses_the_2d_symmetry_in_3d_and_the_3d_symmetry_in_2d() {
     let (mut h, rect) = cube_view();
     h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Smudge { strength: 1.0 };
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    vertical_2d(&mut h);
+    let base = st(&h).doc.undo_count();
     let p = Vec3::new(0.25, 0.1, -0.5);
     drag_3d(&mut h, rect, p, Vec3::new(0.3, 0.1, -0.5));
     assert_eq!(message(&h), "指先・クローンでは対称を使えません");
-    assert!(!st(&h).doc.can_undo() && !st(&h).is_stroking());
-    sym(&mut h, SymOp::Mode(SymmetryMode::None));
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
+    assert!(st(&h).doc.undo_count() == base && !st(&h).is_stroking());
+    clear_rulers(&mut h);
+    mirror_3d(&mut h);
+    let base = st(&h).doc.undo_count();
     click_tab(&mut h, Tab::Canvas);
     h.run();
     let a = texel_of(&h, p, Vec3::NEG_Z);
     click_2d(&mut h, a);
-    assert!(!st(&h).doc.can_undo() && !st(&h).is_stroking());
+    assert!(st(&h).doc.undo_count() == base && !st(&h).is_stroking());
     assert!(!message(&h).is_empty(), "断った理由を出す");
 }
 
@@ -471,8 +498,9 @@ fn symmetric_strokes_from_both_views_survive_save_and_reopen() {
     let path = dir.join("sym.ylp");
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
-    sym(&mut h, SymOp::Mode(SymmetryMode::Horizontal));
+    mirror_3d(&mut h);
+    common::rulers::horizontal(&mut h.state_mut().state, SIZE as f64 / 2.0);
+    h.run();
     click_3d(&mut h, rect, Vec3::new(0.25, 0.1, -0.5));
     click_tab(&mut h, Tab::Canvas);
     h.run();
@@ -600,45 +628,4 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
     );
     assert_eq!(st(&h).doc.undo_count(), 0);
     assert!(!st(&h).is_stroking() && !st(&h).doc.has_active_stroke());
-}
-
-// ───────── 欄 ─────────
-
-/// 対称の欄（ブラシの詳細）: モデルがあれば、キャンバスだけを出していても 2D と 3D の両方の欄が並び、どちらも有効（日英の絵）。
-#[test]
-fn snapshot_the_symmetry_fields_with_a_model_show_2d_and_3d_together() {
-    use egui::Event;
-    use yolu_app::lang::Lang;
-    for (lang, name) in [
-        (Lang::Ja, "symmetry_fields_with_model"),
-        (Lang::En, "symmetry_fields_with_model_english"),
-    ] {
-        let (mut h, _) = cube_view();
-        h.state_mut()
-            .state
-            .apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
-        h.state_mut().state.sel.symmetry.surface.mirror = true;
-        sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
-        click_tab(&mut h, Tab::Canvas);
-        h.run();
-        let ui = &mut h.state_mut().state.brushes.ui;
-        ui.detail.open = true;
-        ui.detail.category = yolu_app::brushes::Category::Symmetry;
-        ui.detail.scroll = 0.0;
-        h.run();
-        let rect = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-            .expect("ブラシの詳細のウィンドウ");
-        h.event(Event::PointerGone);
-        h.step();
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, name);
-    }
 }

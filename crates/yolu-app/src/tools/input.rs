@@ -283,11 +283,19 @@ impl CanvasTool for DraftingInput {
             drag.shift = ctx.modifiers.shift;
             drag.alt = ctx.modifiers.alt;
         }
+        if let Some(drag) = app.rulers.drag.as_mut() {
+            drag.shift = ctx.modifiers.shift;
+        }
     }
     fn dragging(&self, app: &AppState, source: Option<StrokeSource>) -> bool {
         app.drafting
             .drag
             .is_some_and(|d| same_source(d.source, source))
+            || app
+                .rulers
+                .drag
+                .as_ref()
+                .is_some_and(|d| same_source(d.source, source))
     }
     fn lost_release(&self, app: &mut AppState, _view: &CanvasView, _at: Pos2, _ctx: &InputCtx) {
         // 図形は離した位置が不明なら取消し、画素を変更しない

@@ -5301,6 +5301,14 @@
             "sha256": "c7a9e7c1c1a6dc8545c41e42c9a6822768a048c78cbd66eec415f0bf5cf96951"
           },
           {
+            "path": "crates/yolu-app/assets/icons/tools/ruler.png",
+            "sha256": "cee3a6e832312226ad235b3c4cbd6fce6dff5fe6055b75bffffe33c03078440f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/ruler_selected.png",
+            "sha256": "5e2312dbb45276b3a34581b17476a71e09de66d9268060327cfc75cbff3eb0e6"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/tools/select-ellipse.png",
             "sha256": "6d1613754c8dc6b6292b2c961eb1e39025f18723cea11e91135958c45a015cf1"
           },

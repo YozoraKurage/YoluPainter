@@ -5,10 +5,10 @@
 
 use yolu_core::geometry::SurfaceRegionKind;
 use yolu_core::material::GradientShape;
-use yolu_core::LiquifyMode;
+use yolu_core::{LiquifyMode, RulerKind};
 
 use super::{Builtin, Field, Kind, Value};
-use crate::drafting::{Figure, RulerKind};
+use crate::drafting::Figure;
 use crate::gradient::End;
 use crate::region::color::{Distance, Reference};
 use crate::state::{AppState, Tool};
@@ -254,38 +254,73 @@ static SHAPE: [Field; 3] = [
     },
 ];
 
-static RULER: [Field; 2] = [
+static RULER: [Field; 7] = [
     Field {
         key: "kind",
-        kind: Kind::Choice(&["line", "parallel", "concentric", "perspective"]),
+        kind: Kind::Choice(&["line", "parallel", "concentric", "perspective", "symmetry"]),
         default: Value::Choice("line"),
         get: |a| {
-            Value::Choice(match a.drafting.ruler_kind {
+            Value::Choice(match a.rulers.kind {
                 RulerKind::Line => "line",
                 RulerKind::Parallel => "parallel",
                 RulerKind::Concentric => "concentric",
                 RulerKind::Perspective => "perspective",
+                RulerKind::Symmetry => "symmetry",
             })
         },
+        // これから作る定規の種類（置いてある定規は替えない）
         set: |a, v| {
-            let kind = match choice(v) {
+            a.rulers.kind = match choice(v) {
                 "parallel" => RulerKind::Parallel,
                 "concentric" => RulerKind::Concentric,
                 "perspective" => RulerKind::Perspective,
+                "symmetry" => RulerKind::Symmetry,
                 _ => RulerKind::Line,
             };
-            // 置いてある定規（2D と 3D）にも効く（オプションバーの定規の種類のボタンと同じ）
-            a.set_ruler_kind(kind);
         },
     },
     Field {
         key: "two_points",
         kind: Kind::Bool,
         default: Value::Bool(false),
-        get: |a| Value::Bool(a.drafting.two_points),
-        set: |a, v| {
-            a.set_ruler_two_points(flag(v));
-        },
+        get: |a| Value::Bool(a.rulers.two_points),
+        set: |a, v| a.rulers.two_points = flag(v),
+    },
+    // 線対称を線の本数より先に書く（本数は、線対称なら偶数に整える）
+    Field {
+        key: "line_symmetry",
+        kind: Kind::Bool,
+        default: Value::Bool(true),
+        get: |a| Value::Bool(a.rulers.line_symmetry),
+        set: |a, v| a.rulers.set_line_symmetry(flag(v)),
+    },
+    Field {
+        key: "lines",
+        kind: Kind::Int(2, 16),
+        default: Value::Int(2),
+        get: |a| Value::Int(i32::from(a.rulers.lines)),
+        set: |a, v| a.rulers.set_lines(int(v).clamp(2, 16) as u8),
+    },
+    Field {
+        key: "angle_step",
+        kind: Kind::Bool,
+        default: Value::Bool(false),
+        get: |a| Value::Bool(a.rulers.angle_step),
+        set: |a, v| a.rulers.angle_step = flag(v),
+    },
+    Field {
+        key: "step",
+        kind: Kind::Int(1, 90),
+        default: Value::Int(crate::rulers::DEFAULT_STEP as i32),
+        get: |a| Value::Int(a.rulers.step as i32),
+        set: |a, v| a.rulers.set_step(int(v).max(0) as u32),
+    },
+    Field {
+        key: "on_layer",
+        kind: Kind::Bool,
+        default: Value::Bool(true),
+        get: |a| Value::Bool(a.rulers.on_layer),
+        set: |a, v| a.rulers.on_layer = flag(v),
     },
 ];
 
@@ -511,7 +546,7 @@ static SHAPE_BUILTINS: [Builtin; 3] = [
     ),
 ];
 
-static RULER_BUILTINS: [Builtin; 5] = [
+static RULER_BUILTINS: [Builtin; 7] = [
     builtin("line", "直線定規", "Straight Ruler", &[]),
     builtin(
         "parallel",
@@ -538,6 +573,22 @@ static RULER_BUILTINS: [Builtin; 5] = [
         &[
             ("kind", Value::Choice("perspective")),
             ("two_points", Value::Bool(true)),
+        ],
+    ),
+    builtin(
+        "symmetry-lines",
+        "対称定規",
+        "Symmetry Ruler",
+        &[("kind", Value::Choice("symmetry"))],
+    ),
+    builtin(
+        "symmetry-rotation",
+        "回転対称",
+        "Rotational Symmetry",
+        &[
+            ("kind", Value::Choice("symmetry")),
+            ("line_symmetry", Value::Bool(false)),
+            ("lines", Value::Int(6)),
         ],
     ),
 ];

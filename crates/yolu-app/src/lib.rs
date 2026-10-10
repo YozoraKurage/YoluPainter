@@ -69,6 +69,7 @@ pub mod psd_import;
 pub mod rampsets;
 pub mod recovery;
 pub mod region;
+pub mod rulers;
 pub mod screen_pick;
 pub mod selection;
 pub mod session_end;

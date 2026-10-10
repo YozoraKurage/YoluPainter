@@ -1150,9 +1150,6 @@ mod tests {
             current: yolu_core::glam::DVec2::ZERO,
             shift: false,
             alt: false,
-            ruler: false,
-            original: None,
-            handle: 0,
         });
         assert!(app.is_stroking());
         app.apply(crate::state::Action::SubTool(SubToolAction::Select(

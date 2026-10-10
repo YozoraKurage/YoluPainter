@@ -1,10 +1,10 @@
-//! 図形と定規。2D の定規は文書 ID ごとのセッション状態で、保存形式には含めない。3D ビューの図形と定規（画面の上で引く）は
-//! `view3d::draft`。点・寄せ先・輪郭の式は 2D と 3D で同じ（3D は表示域の画面の点で測る）。
+//! 図形と、寄せ先の式。2D の定規はレイヤーが持つ文書の値で `rulers`、3D ビューの図形と、画面の上に貼り付く定規（3D の定規が文書に入るまで）は
+//! `view3d::draft`。ここの `Ruler`・`RulerKind` は、画面に貼り付く 3D の定規と、寄せ先の式（`Ruler::constraint`・`Constraint::project`。
+//! 2D の定規もこの式を通る）の形。点・寄せ先・輪郭の式は 2D と 3D で同じ（3D は表示域の画面の点で測る）。
 pub mod canvas;
 pub mod props;
 
 use crate::state::{AppState, StrokeSource};
-use std::collections::HashMap;
 use yolu_core::glam::DVec2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -118,6 +118,7 @@ impl Constraint {
     }
 }
 
+/// 図形のドラッグの途中。
 #[derive(Clone, Copy, Debug)]
 pub struct Drag {
     pub source: StrokeSource,
@@ -125,10 +126,6 @@ pub struct Drag {
     pub current: DVec2,
     pub shift: bool,
     pub alt: bool,
-    pub ruler: bool,
-    /// 既存の定規は端点か中心を動かせる。線から始めた場合は全体を移動。
-    pub original: Option<Ruler>,
-    pub handle: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -136,10 +133,6 @@ pub struct Drafting {
     pub figure: Figure,
     pub fill: bool,
     pub corner: f32,
-    pub ruler_kind: RulerKind,
-    pub two_points: bool,
-    pub snap: bool,
-    pub rulers: HashMap<u128, Ruler>,
     pub drag: Option<Drag>,
     pub pen_down: Option<u32>,
 }
@@ -245,61 +238,46 @@ impl AppState {
             .draft
             .take_if(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
             .is_some();
-        self.drafting_cancel_canvas() || surface
+        // レイヤーの一覧で持っている定規のアイコンも、落とさずにやめる（キャンバスが隠れても一覧のドラッグは続くので、キャンバスだけの取りやめには入れない）
+        let icon = self.rulers.icon_drag.take().is_some();
+        self.drafting_cancel_canvas() || surface || icon
     }
 
     /// 2D のキャンバスの図形と定規のドラッグだけをやめる（キャンバスが隠れたとき）。
     pub fn drafting_cancel_canvas(&mut self) -> bool {
         // ペンの接触の札は離すまで残す。Esc の後の接触点で形を作り直さない。
-        self.drafting.drag.take().is_some()
+        let shape = self.drafting.drag.take().is_some();
+        let ruler = self.rulers.drag.take().is_some();
+        shape || ruler
     }
 
-    pub fn ruler(&self) -> Option<Ruler> {
-        self.drafting.rulers.get(&self.doc.id()).copied()
-    }
-
-    /// 定規の種類を、ツールの設定と、今の文書の 2D の定規・3D ビューの定規に当てる。
-    pub fn set_ruler_kind(&mut self, kind: RulerKind) {
-        self.drafting.ruler_kind = kind;
-        for r in self
-            .drafting
-            .rulers
-            .get_mut(&self.doc.id())
-            .into_iter()
-            .chain(self.view3d.ruler.as_mut())
-        {
-            r.kind = kind;
+    /// 画面に貼り付く 3D の定規の種類（ツールで選んでいる種類のうち、これに当たるもの。対称は 3D の定規が文書に入るまで画面に貼り付けない）。
+    pub fn screen_ruler_kind(&self) -> Option<RulerKind> {
+        match self.rulers.kind {
+            yolu_core::RulerKind::Line => Some(RulerKind::Line),
+            yolu_core::RulerKind::Parallel => Some(RulerKind::Parallel),
+            yolu_core::RulerKind::Concentric => Some(RulerKind::Concentric),
+            yolu_core::RulerKind::Perspective => Some(RulerKind::Perspective),
+            yolu_core::RulerKind::Symmetry => None,
         }
     }
 
-    /// パースの点の数を、ツールの設定と、今の文書の 2D の定規・3D ビューの定規に当てる。
-    pub fn set_ruler_two_points(&mut self, two: bool) {
-        self.drafting.two_points = two;
-        for r in self
-            .drafting
-            .rulers
-            .get_mut(&self.doc.id())
-            .into_iter()
-            .chain(self.view3d.ruler.as_mut())
-        {
-            r.two_points = two;
-        }
-    }
-
-    /// 定規があるか（今の文書の 2D の定規か、3D ビューの定規）。
-    pub fn has_ruler(&self) -> bool {
-        self.ruler().is_some() || self.view3d.ruler.is_some()
-    }
-
-    /// 定規を消す（今の文書の 2D の定規と、3D ビューの定規）。
+    /// 定規を消す: 選んでいる定規（文書の定規）。無ければ、3D ビューの画面に貼り付く定規。
     pub fn delete_rulers(&mut self) {
-        self.drafting.rulers.remove(&self.doc.id());
-        self.view3d.ruler = None;
+        if let Some((owner, ruler)) = self.selected_ruler().map(|(o, r)| (o, r.id)) {
+            self.apply(crate::state::Action::Ruler(
+                crate::rulers::RulerAction::Delete {
+                    owner,
+                    ids: vec![ruler],
+                },
+            ));
+        } else {
+            self.view3d.ruler = None;
+        }
     }
 
-    pub fn toggle_snap(&mut self) {
-        if !self.is_stroking() {
-            self.drafting.snap = !self.drafting.snap;
-        }
+    /// 消せる定規があるか（選んでいる定規か、3D ビューの画面に貼り付く定規）。
+    pub fn has_ruler(&self) -> bool {
+        self.selected_ruler().is_some() || self.view3d.ruler.is_some()
     }
 }

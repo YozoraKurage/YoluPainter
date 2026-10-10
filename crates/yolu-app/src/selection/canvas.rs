@@ -12,12 +12,12 @@ use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
 
 use super::outline::Run;
 use super::overlay::Tint;
-use super::symmetry::{axis_lines, mirrored_points};
 use super::{combine_of, pen, quick, shape, SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::rulers::draw::mirrored_points;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -666,22 +666,7 @@ fn axis_color() -> Color32 {
     Color32::from_rgba_unmultiplied(115, 209, 255, 204)
 }
 
-/// 対称の軸（Unity 版と同じ水色の線）。
-fn paint_axes(painter: &Painter, view: &CanvasView, app: &AppState) {
-    if !app.sel.symmetry.show_axes {
-        return;
-    }
-    let Some(s) = active_symmetry(app) else {
-        return;
-    };
-    for ((x0, y0), (x1, y1)) in axis_lines(&s, app.doc.width(), app.doc.height()) {
-        let (a, b) = (view.to_screen(x0, y0), view.to_screen(x1, y1));
-        painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(90)));
-        painter.line_segment([a, b], Stroke::new(1.5, axis_color()));
-    }
-}
-
-/// キャンバスの上に、選択の縁・ドラッグ中の形・対称の軸を描く（合成の絵の上、ブラシのカーソルの下）。
+/// キャンバスの上に、選択の縁・ドラッグ中の形を描く（合成の絵の上、ブラシのカーソルの下）。対称の線は定規の描画（`rulers::draw`）。
 pub fn paint_overlay(
     ctx: &egui::Context,
     painter: &Painter,
@@ -696,7 +681,6 @@ pub fn paint_overlay(
     paint_ants(ctx, painter, view, app);
     paint_pen(ctx, painter, view, app);
     paint_drafts(painter, view, app, ctx.input(|i| i.modifiers));
-    paint_axes(painter, view, app);
 }
 
 /// 選択ペンのツール: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。

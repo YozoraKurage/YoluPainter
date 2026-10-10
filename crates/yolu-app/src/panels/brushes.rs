@@ -1011,7 +1011,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
     tool_body(ui, app, area);
 }
 
-/// オプションバー（ブラシ・消しゴム）: 定規へのスナップ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）、右端の対称。
+/// オプションバー（ブラシ・消しゴム）: 定規へのスナップ 2 つ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）。
 /// 硬さ・流量・間隔・筆圧はツールプロパティ。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
@@ -1023,7 +1023,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     };
     let l = app.lang;
     let editable = !app.is_stroking();
-    crate::drafting::props::snap_button(ui, app, next(28.0));
+    crate::rulers::tool::snap_buttons(ui, app, next(28.0), next(28.0));
     let b = &mut app.brush;
     let out = w::slider(
         ui,
@@ -1053,8 +1053,6 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     if out.changed {
         b.opacity = out.value / 100.0;
     }
-    // 対称（右端。左の部品に重なるほど狭ければ出さない）
-    crate::selection::props::symmetry_options(ui, app, r, x);
 }
 
 /// ブラシサイズの格子の列の数（欄の幅に入るだけ。1 列以上、全部の数まで）。

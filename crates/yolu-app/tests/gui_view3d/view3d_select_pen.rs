@@ -199,7 +199,11 @@ fn the_pen_pressure_scales_the_amount_and_the_3d_symmetry_is_not_used() {
     brush(&mut h, 4.0, true);
     h.state_mut().state.brush.pressure_opacity = true;
     // 3D の対称は選択ペンに使わない（2D の選択ペンと同じ）
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
+    crate::common::rulers::mirror_3d(
+        &mut h.state_mut().state,
+        yolu_core::glam::DVec3::ZERO,
+        yolu_core::glam::DVec3::X,
+    );
     let pts = on_plate(&h, rect, &LINE);
     for (i, p) in pts.iter().enumerate() {
         h.state().pen().push(pen_sample(*p, true, i as u32 * 10)); // 筆圧 0.6

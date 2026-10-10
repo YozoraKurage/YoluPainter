@@ -6,6 +6,7 @@ pub mod core_refused;
 pub mod fbx;
 pub mod gpu_thread;
 pub mod livelink;
+pub mod rulers;
 pub mod shared_gpu;
 pub mod tmp;
 pub mod viewports;

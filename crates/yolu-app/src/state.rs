@@ -448,6 +448,8 @@ pub enum PopupKind {
     MenuBar(usize),
     BlendMode(LayerId),
     LayerContext(LayerId),
+    /// レイヤーの一覧の定規のアイコンの右クリック（そのレイヤーの定規の表示・表示の範囲・削除）。
+    RulerLayer(LayerId),
     /// M2 のポップアップ（調整レイヤーの種類・ブラシの選択肢・チャンネルの種類など）。
     M2(crate::m2_menu::Popup),
     /// テクスチャセットの右クリック（セットの番号 uid）。
@@ -456,8 +458,6 @@ pub enum PopupKind {
     Shelf,
     /// 3D ビューの表示のドロップダウン（マテリアル・中立・チャンネルだけ）。
     View3dShading,
-    /// オプションバーの対称のモード（▾）。
-    Symmetry,
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
     /// 重なった UV のベイクのアイランドのメニュー（セット・アイランドの代表の三角形・ベイクのウィンドウの見取り図からか・3D ビューの右クリックからか）。
@@ -521,7 +521,8 @@ pub enum Action {
     LayerMenu(crate::layermenu::Op),
     /// グラデーションのツール（形・終点・塗る/消す・ドラッグで塗る）。
     Gradient(crate::gradient::GradientOp),
-    ToggleRulerSnap,
+    /// 定規（作る・動かす・消す・移す・表示・スナップ。文書を変えるものは 1 つが 1 回の Undo）。
+    Ruler(crate::rulers::RulerAction),
     /// レイヤーの画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     OpenLogFolder,
@@ -638,7 +639,7 @@ impl Action {
             Self::Gradient(..) => "Gradient",
             Self::Clip(..) => "Clip",
             Self::OpenLogFolder => "OpenLogFolder",
-            Self::ToggleRulerSnap => "ToggleRulerSnap",
+            Self::Ruler(..) => "Ruler",
             Self::ScreenPick(..) => "ScreenPick",
             Self::ToggleUvWireframe => "ToggleUvWireframe",
             Self::ShowShortcuts => "ShowShortcuts",
@@ -731,7 +732,8 @@ impl Action {
                 | Action::ToggleVisible(_)
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
-        ) || matches!(self, Action::Fill(op) if op.edits_document())
+        ) || matches!(self, Action::Ruler(op) if op.edits_document())
+            || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
@@ -901,6 +903,8 @@ pub struct AppState {
     /// グラデーションのツールの設定と途中の状態。
     pub gradient: crate::gradient::GradientState,
     pub drafting: crate::drafting::Drafting,
+    /// 定規の画面の状態（これから作る定規の設定・スナップの入り切り・選んでいる定規・ドラッグの途中）。定規そのものはレイヤーが持つ。
+    pub rulers: crate::rulers::RulerState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定のウィンドウ。
@@ -1123,6 +1127,7 @@ impl AppState {
             fillfx: Default::default(),
             gradient: Default::default(),
             drafting: Default::default(),
+            rulers: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
@@ -1169,6 +1174,7 @@ impl AppState {
             || self.region.leftover_drag.is_some()
             || self.path.drag.is_some()
             || self.drafting.drag.is_some()
+            || self.rulers.drag.is_some()
             || self
                 .view3d
                 .input
@@ -1292,6 +1298,7 @@ impl AppState {
         // 記録中なら、命令にできる操作を記録する（入れ子の操作は外の操作として 1 回）
         let pending = crate::automation::record::before(self, &action);
         self.apply_action(action);
+        self.drop_foreign_ruler_selection();
         crate::automation::record::after(self, pending);
         self.message_end(prior);
     }
@@ -1342,7 +1349,10 @@ impl AppState {
             Action::Fill(op) => self.fill_apply(op),
             Action::LayerMenu(op) => self.layer_menu_apply(op),
             Action::Gradient(op) => self.gradient_apply(op),
-            Action::ToggleRulerSnap => self.toggle_snap(),
+            // 定規のつまみのドラッグ中などに、文書を変える定規の操作（Ctrl+4 の切り替えなど）が通ると、離したときに古い値で書き戻される。
+            // 取り消しと同じく断る
+            Action::Ruler(op) if stroking && op.edits_document() => refuse(self),
+            Action::Ruler(op) => self.ruler_action(op),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {

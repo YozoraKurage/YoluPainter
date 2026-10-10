@@ -11,55 +11,33 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
     if app.is_stroking() {
         return;
     }
-    let ruler = app.tool == Tool::Ruler;
-    if !ruler {
-        if let Err(reason) = crate::region::tools::paint_gate(app) {
-            app.refuse(Source::Ruler, reason);
-            return;
-        }
+    if app.tool == Tool::Ruler {
+        crate::rulers::canvas::press(app, view, pos, source, m);
+        return;
+    }
+    if let Err(reason) = crate::region::tools::paint_gate(app) {
+        app.refuse(Source::Ruler, reason);
+        return;
     }
     let (x, y) = view.to_canvas(pos);
     let p = DVec2::new(x, y);
-    let original = ruler.then(|| app.ruler()).flatten();
-    let handle = original.map_or(0, |r| {
-        if view.to_screen(r.a.x, r.a.y).distance(pos) < 12.0 {
-            1
-        } else if view.to_screen(r.b.x, r.b.y).distance(pos) < 12.0 {
-            2
-        } else {
-            0
-        }
-    });
     app.drafting.drag = Some(Drag {
         source,
         start: p,
         current: p,
         shift: m.shift,
         alt: m.alt,
-        ruler,
-        original,
-        handle,
     });
 }
 
 pub fn moved(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource, m: Modifiers) {
+    crate::rulers::canvas::moved(app, view, pos, source, m);
     if let Some(d) = app.drafting.drag.as_mut().filter(|d| d.source == source) {
         let (x, y) = view.to_canvas(pos);
         d.current = DVec2::new(x, y);
         d.shift = m.shift;
         d.alt = m.alt;
     }
-}
-
-fn draft_ruler(app: &AppState, d: Drag) -> Ruler {
-    super::dragged_ruler(
-        d.original,
-        d.handle,
-        (d.start, d.current),
-        d.shift,
-        app.drafting.ruler_kind,
-        app.drafting.two_points,
-    )
 }
 
 pub fn release(
@@ -70,17 +48,13 @@ pub fn release(
     m: Modifiers,
     rect: Rect,
 ) {
+    crate::rulers::canvas::release(app, view, pos, source, m);
     if app.drafting.drag.is_none_or(|d| d.source != source) {
         return;
     }
     moved(app, view, pos, source, m);
     let d = app.drafting.drag.take().unwrap();
-    if d.ruler {
-        let r = draft_ruler(app, d);
-        if r.is_placeable() {
-            app.drafting.rulers.insert(app.doc.id(), r);
-        }
-    } else if d.start.distance(d.current) > 0.01 {
+    if d.start.distance(d.current) > 0.01 {
         let (a, b) = endpoints(d.start, d.current, app.drafting.figure, d.shift, d.alt);
         paint(app, a, b, rect);
     }
@@ -193,19 +167,9 @@ pub fn pen_sample(
 }
 
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
+    crate::rulers::draw::paint_overlay(painter, view, app);
     let screen = |p: DVec2| view.to_screen(p.x, p.y);
-    let long = app.doc.width().max(app.doc.height()) as f64 * 8.0;
-    let ruler = app
-        .drafting
-        .drag
-        .filter(|d| d.ruler)
-        .map(|d| draft_ruler(app, d))
-        .filter(Ruler::is_placeable)
-        .or_else(|| app.ruler());
-    if let Some(r) = ruler {
-        paint_ruler(painter, r, screen, long, app.tool == Tool::Ruler);
-    }
-    if let Some(d) = app.drafting.drag.filter(|d| !d.ruler) {
+    if let Some(d) = app.drafting.drag {
         let (a, b) = endpoints(d.start, d.current, app.drafting.figure, d.shift, d.alt);
         let points: Vec<_> = outline(app.drafting.figure, a, b, app.drafting.corner as f64)
             .into_iter()
@@ -225,6 +189,18 @@ pub(crate) fn paint_ruler(
     handles: bool,
 ) {
     let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 170, 230, 110));
+    paint_ruler_styled(painter, r, screen, long, handles, stroke);
+}
+
+/// `paint_ruler` の線の太さと色を渡せる形。
+pub(crate) fn paint_ruler_styled(
+    painter: &Painter,
+    r: Ruler,
+    screen: impl Fn(DVec2) -> Pos2,
+    long: f64,
+    handles: bool,
+    stroke: Stroke,
+) {
     let line = |a: DVec2, b: DVec2| {
         let dir = super::direction(b - a) * long;
         painter.line_segment([screen(a - dir), screen(a + dir)], stroke);

@@ -7,7 +7,7 @@ use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::{BrushAction, BrushKey, Category, Group};
-use yolu_app::engine::{BrushEffect, SymmetryMode};
+use yolu_app::engine::BrushEffect;
 use yolu_app::lang::Lang;
 use yolu_app::m2::{BrushOp, UiOp};
 use yolu_app::state::{Action, AppState, Tool};
@@ -589,7 +589,7 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     let window = detail_rect(&h);
     // ウィンドウはキャンバスの真ん中を空けた所に出る
     assert!(window.left() > 340.0 && window.top() > 100.0, "{window:?}");
-    // 左のカテゴリは 9 つ（今のブラシの欄の全部）
+    // 左のカテゴリは今のブラシの欄の全部（対称は定規の欄にあり、ここには無い）
     for category in Category::ALL {
         let name = category.name(Lang::Ja);
         assert!(
@@ -986,85 +986,6 @@ fn the_effect_type_is_unavailable_for_the_eraser_with_a_reason() {
 }
 
 #[test]
-fn the_symmetry_category_sets_mode_center_and_count() {
-    let mut h = app(1600.0, 1000.0, 256);
-    open_detail(&mut h, Category::Symmetry);
-    for (label, mode) in [
-        ("縦", SymmetryMode::Vertical),
-        ("横", SymmetryMode::Horizontal),
-        ("両方", SymmetryMode::Both),
-        ("放射状", SymmetryMode::Radial),
-    ] {
-        let at = in_pane(&h, label).center();
-        click(&mut h, at);
-        assert_eq!(st(&h).sel.symmetry.mode, mode, "{label}");
-    }
-    // 中心のスライダー: キャンバスの幅・高さの 1/4・3/4 を押すと、中心がそこへ動く（キャンバスの座標では 64・192）
-    let x = in_pane(&h, "中心 X");
-    click(&mut h, pos2(x.left() + x.width() * 0.25, x.center().y));
-    let y = in_pane(&h, "中心 Y");
-    click(&mut h, pos2(y.left() + y.width() * 0.75, y.center().y));
-    let (cx, cy) = st(&h).sel.symmetry.center;
-    assert!(
-        (cx - 0.25).abs() < 0.05 && (cy - 0.75).abs() < 0.05,
-        "{cx} {cy}"
-    );
-    let c = st(&h).canvas_symmetry();
-    assert!(
-        (c.center.x - 64.0).abs() < 13.0 && (c.center.y - 192.0).abs() < 13.0,
-        "キャンバスの座標: {} {}",
-        c.center.x,
-        c.center.y
-    );
-    // 写しの数（放射状のときだけ）: 端まで動かすと 2 と 16、途中は整数
-    let count = in_pane(&h, "写しの数");
-    click(&mut h, pos2(count.right() - 1.0, count.center().y));
-    assert_eq!(st(&h).sel.symmetry.count, 16);
-    assert_eq!(st(&h).canvas_symmetry().count, 16);
-    click(&mut h, pos2(count.left() + 1.0, count.center().y));
-    assert_eq!(st(&h).sel.symmetry.count, 2);
-    click(
-        &mut h,
-        pos2(count.left() + count.width() * 0.5, count.center().y),
-    );
-    assert!(
-        (7..=11).contains(&st(&h).sel.symmetry.count),
-        "{}",
-        st(&h).sel.symmetry.count
-    );
-    assert_eq!(st(&h).canvas_symmetry().count, st(&h).sel.symmetry.count);
-    // 「キャンバスの中心」で 0.5 に戻る（戻ったあとは押せない）
-    assert!(!in_pane_node(&h, "キャンバスの中心")
-        .accesskit_node()
-        .is_disabled());
-    let at = in_pane(&h, "キャンバスの中心").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.center, (0.5, 0.5));
-    assert!(in_pane_node(&h, "キャンバスの中心")
-        .accesskit_node()
-        .is_disabled());
-    // 指先は対称と組めない。モードは替えられる（ペイントに戻したときに効く設定を用意できる）が、効く欄（中心など）は無効にする
-    h.state_mut().state.m2.brush.effect = BrushEffect::SMUDGE;
-    h.run();
-    assert!(!h.get_by_label("縦").accesskit_node().is_disabled());
-    assert!(!h.get_by_label("なし").accesskit_node().is_disabled());
-    h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
-    h.run();
-    // 「なし」で対称が外れ、中心などの欄は消える
-    let at = in_pane(&h, "なし").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    assert!(h.query_by_label("中心 X").is_none());
-    // 既定に戻す（見出しの右）
-    let at = in_pane(&h, "縦").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::Vertical);
-    h.get_by_label("対称を既定に戻す").click();
-    h.run();
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-}
-
-#[test]
 fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it() {
     let mut h = app(1600.0, 900.0, 256);
     open_detail(&mut h, Category::Shape);
@@ -1338,7 +1259,6 @@ fn snapshot_brush_detail_window() {
         (Category::Pressure, "brushes_detail_pressure"),
         (Category::Dynamics, "brushes_detail_dynamics"),
         (Category::Texture, "brushes_detail_texture"),
-        (Category::Symmetry, "brushes_detail_symmetry"),
     ] {
         open_detail(&mut h, category);
         let rect = detail_rect(&h);

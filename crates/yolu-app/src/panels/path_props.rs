@@ -772,17 +772,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             Btn {
                 id: "path.symmetry",
                 label: lang.pick("対称", "Symmetry"),
-                tip: if path.is_canvas() {
-                    lang.pick(
-                        "今の対称の設定で映したパスも描きます（キャンバスの対称を切っていれば、最後のモード）",
-                        "Also draw the path mirrored by the current symmetry (the last mode when symmetry is off)",
-                    )
-                } else {
-                    lang.pick(
-                        "3D の対称のミラーの面で映したパスも描きます",
-                        "Also draw the path mirrored by the 3D mirror plane",
-                    )
-                },
+                tip: lang.pick("対称", "Symmetry"),
                 enabled: editable,
                 action: Action::Path(PathAction::Symmetry(!symmetric)),
                 on: symmetric,

@@ -8,8 +8,7 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::engine::{
-    Channel, Document, SelectionCombine, SelectionMask, SymmetryMode, TileCoord,
-    DEFAULT_WORKING_BUDGET_BYTES,
+    Channel, Document, SelectionCombine, SelectionMask, TileCoord, DEFAULT_WORKING_BUDGET_BYTES,
 };
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
@@ -17,7 +16,7 @@ use yolu_app::pen::PenSample;
 use yolu_app::selection::canvas::active_symmetry;
 use yolu_app::selection::pen::{dab_coverage, PenError, PenParams, PenStroke, PEN_BUDGET_BYTES};
 use yolu_app::selection::saved::{SavedOp, MAX_SAVED, SAVED_BUDGET_BYTES};
-use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
+use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp};
 use yolu_app::sets::TextureSets;
 use yolu_app::state::{Action, AppState, StrokeSource, Tool};
 use yolu_app::YoluApp;
@@ -2259,17 +2258,13 @@ fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_too
 }
 
 #[test]
-fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror() {
+fn the_quick_mask_stroke_shows_no_mirrored_cursors_and_does_not_mirror() {
     let mut h = app(1000.0, 640.0, 512);
     h.state_mut().state.sel.animate = false;
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-            SymmetryMode::Vertical,
-        ))));
+    common::rulers::vertical(&mut h.state_mut().state, 256.0);
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 20.0, 1.0, 1.0);
-    // ふつうのブラシのストロークは軸と写しを出し、対称を覚えて残す
+    // ふつうのブラシのストロークは写しを出し、対称を覚えて残す
     assert!(active_symmetry(st(&h)).is_some());
     drag_by(&mut h, &[(-100.0, -80.0), (-60.0, -80.0)]);
     assert!(
@@ -2281,7 +2276,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     quick_on(&mut h);
     assert!(
         active_symmetry(st(&h)).is_none(),
-        "クイックマスクは軸も写しも出さない"
+        "クイックマスクは写しを出さない"
     );
     let line = [at(&h, -100.0, 0.0), at(&h, -60.0, 0.0)];
     hold(&mut h, &line);
@@ -2294,7 +2289,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     // 選択範囲は描いた側だけで、映した側には付かない
     assert_eq!(amount_at(&h, at(&h, -80.0, 0.0)), 255);
     assert_eq!(amount_at(&h, at(&h, 80.0, 0.0)), 0, "映さない");
-    // 選択ペンのツールも対称を使わない。ブラシに戻れば軸が戻る
+    // 選択ペンのツールも対称を使わない。ブラシに戻れば写しが戻る
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));

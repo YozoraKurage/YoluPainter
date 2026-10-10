@@ -116,7 +116,6 @@ pub fn category_body(
         Category::Color => color_fields(ui, app, rows, lang),
         Category::Mix => mix_fields(ui, app, rows, lang),
         Category::Effect => effect_fields(ui, app, rows, ctx, lang),
-        Category::Symmetry => crate::selection::props::symmetry_fields(ui, app, rows, lang),
     }
 }
 
@@ -168,7 +167,6 @@ pub fn reset_category(app: &mut AppState, category: Category) {
         Category::Color => brush.color = ColorDynamics::default(),
         Category::Mix => brush.mix = ColorMix::default(),
         Category::Effect => brush.effect = BrushEffect::Paint,
-        Category::Symmetry => app.sel.symmetry = crate::selection::SymmetryState::default(),
     }
 }
 

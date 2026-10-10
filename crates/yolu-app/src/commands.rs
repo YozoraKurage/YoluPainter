@@ -280,7 +280,15 @@ pub static COMMANDS: &[Command] = &[
     press("view.rotate_right", || Action::RotateRight),
     press("view.reset_rotation", || Action::ResetRotation),
     press("view.flip", || Action::FlipView),
-    press("view.ruler_snap", || Action::ToggleRulerSnap),
+    press("view.ruler_snap", || {
+        Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler)
+    }),
+    press("view.special_ruler_snap", || {
+        Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial)
+    }),
+    press("view.switch_special_ruler", || {
+        Action::Ruler(crate::rulers::RulerAction::SwitchSpecial)
+    }),
     // 色・ブラシ・塗りつぶし・パス
     press("color.swap", || Action::SwapColors),
     press("color.default", || Action::DefaultColors),
@@ -946,11 +954,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 85);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 87);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 123);
+        assert_eq!(COMMANDS.len(), 125);
     }
 }

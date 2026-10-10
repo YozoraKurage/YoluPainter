@@ -1,4 +1,4 @@
-//! 3D ビューの効果ブラシ（ぼかし・指先・クローン）と 3D の対称（ミラー・放射状）の操作（egui_kittest。試しの立方体の上で）。
+//! 3D ビューの効果ブラシ（ぼかし・指先・クローン）と 3D の対称定規（鏡・回転）の操作（egui_kittest。試しの立方体の上で）。
 //! 面のダブの計算は core の `tests/surface_stroke.rs` が見る。ここは、画面の入力・状態・知らせ・Undo がつながっていること。
 use crate::common;
 
@@ -8,9 +8,10 @@ use egui_kittest::Harness;
 use yolu_app::engine::{composite_pixel, BrushEffect, Rgba8, Tilt};
 use yolu_app::pen::adjust::PressureAdjust;
 use yolu_app::pen::PenSample;
+use yolu_app::rulers::RulerAction;
+use yolu_app::state::Action;
 use yolu_app::YoluApp;
-use yolu_core::geometry::SymmetryAxis;
-use yolu_core::glam::Vec3;
+use yolu_core::glam::{DVec3, Vec3};
 
 const SIZE: u32 = 256;
 
@@ -258,7 +259,9 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
 fn the_3d_mirror_paints_the_other_half_of_the_face() {
     let (mut h, rect) = cube_view();
     h.state_mut().state.color.set_main([0.9, 0.1, 0.1, 1.0]);
-    h.state_mut().state.sel.symmetry.surface.mirror = true; // X に直交する面、モデルの原点
+    // X に直交する面、モデルの原点
+    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
+    let base = h.state().state.doc.undo_count();
     let at = screen_of(&h, rect, Vec3::new(0.25, 0.0, -0.5));
     click(&mut h, at);
     assert!(message(&h).is_empty(), "{}", message(&h));
@@ -275,11 +278,17 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
         (left as f32 / right as f32 - 1.0).abs() < 0.2,
         "左右でほぼ同じ面積: {left} {right}"
     );
-    assert_eq!(h.state().state.doc.undo_count(), 1);
-    // ミラーを切ると、片側だけ
+    assert_eq!(h.state().state.doc.undo_count(), base + 1);
+    // 鏡を隠すと、片側だけ
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    h.state_mut().state.sel.symmetry.surface.mirror = false;
+    let layer = h.state().state.selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
     click(&mut h, at);
     let (left, right) = (count(&h, 0..mid), count(&h, mid..w));
     assert!(left == 0 || right == 0, "{left} {right}");
@@ -288,12 +297,15 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
 #[test]
 fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() {
     let (mut h, rect) = cube_view();
-    {
-        let s = &mut h.state_mut().state.sel.symmetry.surface;
-        s.radial = true;
-        s.radial_axis = SymmetryAxis::Y;
-        s.set_radial_count(4);
-    }
+    // Y 軸のまわりの回転対称 4 本
+    let id = common::rulers::symmetry_3d(
+        &mut h.state_mut().state,
+        DVec3::ZERO,
+        DVec3::X,
+        DVec3::Y,
+        4,
+        false,
+    );
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     click(&mut h, at);
     // 見える 2 面（手前と右）だけ。後ろと左は見えないので、知らせて飛ばす
@@ -301,8 +313,22 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
     assert_eq!(message(&h), "見えない対称の写しは飛ばしました");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    h.state_mut().state.sel.symmetry.surface.ignore_visibility = true;
-    h.state_mut().state.message.clear();
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        let mut ruler = common::rulers::of(s, layer)
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap();
+        ruler.see_through = true;
+        s.apply(Action::Ruler(RulerAction::Replace {
+            owner: layer,
+            ruler,
+            coalesce: false,
+        }));
+        s.message.clear();
+    }
+    let base = h.state().state.doc.undo_count();
     click(&mut h, at);
     assert_eq!(
         painted_islands(&h),
@@ -310,13 +336,14 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
         "見えない面の写しも塗る"
     );
     assert!(message(&h).is_empty(), "{}", message(&h));
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.state().state.doc.undo_count(), base + 1);
 }
 
 #[test]
 fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
     let (mut h, rect) = cube_view();
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
+    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
+    let base = h.state().state.doc.undo_count();
     for effect in [
         BrushEffect::Smudge { strength: 1.0 },
         BrushEffect::Clone {
@@ -345,39 +372,72 @@ fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
             "指先・クローンでは対称を使えません",
             "{effect:?}"
         );
-        assert!(!h.state().state.doc.can_undo() && !h.state().state.is_stroking());
+        assert!(h.state().state.doc.undo_count() == base && !h.state().state.is_stroking());
     }
 }
 
 #[test]
-fn the_symmetry_panel_offers_the_3d_items_beside_the_2d_ones() {
-    use egui_kittest::kittest::Queryable;
-    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
-    let (mut h, _rect) = cube_view();
-    open_detail(&mut h, yolu_app::brushes::Category::Symmetry);
-    // 3D のビューを出しているので、2D と 3D の両方の項目
+fn the_ruler_panel_offers_the_axis_center_and_hidden_surface_items_for_a_3d_symmetry_ruler() {
     use egui::accesskit::Role;
-    assert!(h
-        .query_by_role_and_label(Role::CheckBox, "ミラー")
-        .is_some());
-    assert!(h
-        .query_by_role_and_label(Role::CheckBox, "放射状")
-        .is_some());
-    assert!(
-        h.query_by_role_and_label(Role::Button, "放射状").is_some(),
-        "2D のモード"
-    );
-    h.get_by_role_and_label(Role::CheckBox, "ミラー").click();
+    use egui_kittest::kittest::Queryable;
+    // プロパティの欄が縦に収まる高さの画面に、試しの立方体を出す
+    let mut h = app(1470.0, 2400.0, SIZE);
+    h.state_mut().state.view3d.load_demo();
+    click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    assert!(h.state().state.sel.symmetry.surface.mirror);
-    assert!(
-        h.query_by_label("境界の中心").is_some(),
-        "ミラーを入れると軸と中心が出る"
+    // 立方体の境界の中心は原点。中心をずらした 3D の対称定規（線対称 6 本、回転の軸は X）を置く
+    let id = common::rulers::symmetry_3d(
+        &mut h.state_mut().state,
+        DVec3::new(0.2, 0.0, 0.0),
+        DVec3::Y,
+        DVec3::X,
+        6,
+        true,
     );
+    h.state_mut().state.ui.property_tab = 1;
+    h.run();
+    let layer = h.state().state.selected_layer.unwrap();
+    let ruler = |h: &Harness<'_, YoluApp>| {
+        common::rulers::of(&h.state().state, layer)
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap()
+    };
+    // 軸 [X][Y][Z]、中心 [原点][境界の中心]、見えない面にも写す
+    // 3D ビューの軸の部品にも同じ名前があるので、右の列（プロパティ）のものを取る
+    let in_props = |h: &Harness<'_, YoluApp>, name: &str| -> Option<Rect> {
+        h.query_all_by_role_and_label(Role::Button, name)
+            .map(|n| n.rect())
+            .find(|r| r.left() > rx())
+    };
+    assert!(in_props(&h, "X").is_some());
+    let z = in_props(&h, "Z").expect("軸の Z");
+    click(&mut h, z.center());
+    match ruler(&h).place {
+        yolu_core::RulerPlace::Model { up, b, a } => {
+            assert!(
+                (up - DVec3::Z).length() < 1e-9,
+                "回転の軸が Z になる: {up:?}"
+            );
+            assert!(
+                ((b - a).normalize() - DVec3::X).length() < 1e-9,
+                "最初の線は次の軸"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(h.query_by_label("境界の中心").is_some());
     h.get_by_label("境界の中心").click();
     h.run();
-    // 立方体の中心は原点
-    assert!(h.state().state.sel.symmetry.surface.offset.abs() < 1e-5);
+    let yolu_core::RulerPlace::Model { a, .. } = ruler(&h).place else {
+        panic!()
+    };
+    assert!(a.length() < 1e-5, "立方体の中心は原点: {a:?}");
+    assert!(!ruler(&h).see_through);
+    h.get_by_role_and_label(Role::CheckBox, "見えない面にも写す")
+        .click();
+    h.run();
+    assert!(ruler(&h).see_through);
     // 説明文は画面に出さない（ツールチップだけ）
     assert!(h.query_by_label_contains("をクリック").is_none());
 }

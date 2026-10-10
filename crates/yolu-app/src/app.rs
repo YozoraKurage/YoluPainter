@@ -1899,6 +1899,8 @@ impl YoluApp {
     pub fn frame(&mut self, ui: &mut Ui) {
         self.fit_default_dock(ui.ctx());
         let prior = self.state.message_begin();
+        // レイヤーの行のクリックなどで選んでいるレイヤーが替わっていたら、別のレイヤーの定規の選びを外す
+        self.state.drop_foreign_ruler_selection();
         self.frame_body(ui);
         self.state.message_end(prior);
         self.finish_message(ui.ctx());

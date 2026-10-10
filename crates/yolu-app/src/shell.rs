@@ -246,17 +246,34 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             )
             .command_key("view.reset_rotation")
             .enabled(free && app.view.angle != 0.0),
-            Entry::item(
-                l.pick("定規にスナップ", "Snap to Ruler"),
-                Action::ToggleRulerSnap,
-            )
-            .command_key("view.ruler_snap")
-            .checked(app.drafting.snap)
-            .enabled(free),
             Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
                 .command_key("view.flip")
                 .checked(app.view.flip)
                 .enabled(free),
+            Entry::Separator,
+            Entry::item(
+                l.pick("定規にスナップ", "Snap to Ruler"),
+                Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
+            )
+            .command_key("view.ruler_snap")
+            .checked(app.rulers.snap_ruler)
+            .enabled(free),
+            Entry::item(
+                l.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+                Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
+            )
+            .command_key("view.special_ruler_snap")
+            .checked(app.rulers.snap_special)
+            .enabled(free),
+            Entry::item(
+                l.pick(
+                    "スナップする特殊定規の切り替え",
+                    "Switch the Snapping Special Ruler",
+                ),
+                Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
+            )
+            .command_key("view.switch_special_ruler")
+            .enabled(free),
             Entry::Separator,
             crate::mode::view_menu_entry(app),
             Entry::item(
@@ -398,9 +415,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
+        PopupKind::RulerLayer(id) => crate::rulers::layer_icon::menu_entries(app, id),
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::View3dShading => crate::view3d::display::entries(app),
-        PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
         PopupKind::LiveLink => link_entries(app),
         PopupKind::BakeIsland {
             set, island, map, ..

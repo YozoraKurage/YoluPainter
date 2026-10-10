@@ -264,13 +264,17 @@ fn begin(
         .flatten();
     let first = from.unwrap_or(at);
     // 定規のスナップ: 押した点で寄せ先を決めて凍結し（ストロークの間は変えない）、最初の点も寄せる（2D と同じ式。決まった道なので、
-    // 手ぶれ補正と曲線は切る）
+    // 手ぶれ補正と曲線は切る）。直線は 2D と同じく、押した点が線の近く（`SNAP_POINTS`）のときだけ寄せる
+    let press = screen_point(rect, at);
     let constraint = app
-        .drafting
-        .snap
-        .then_some(app.view3d.ruler)
-        .flatten()
-        .map(|r| r.constraint(screen_point(rect, at)));
+        .view3d
+        .ruler
+        .filter(|r| app.rulers.snaps_screen_ruler(r.kind))
+        .filter(|r| {
+            r.kind != crate::drafting::RulerKind::Line
+                || crate::rulers::screen_line_is_near(r.a, r.b, press)
+        })
+        .map(|r| r.constraint(press));
     let first = match constraint {
         Some(mut c) => to_pos(rect, c.project(screen_point(rect, first))),
         None => first,
@@ -377,8 +381,10 @@ pub(super) fn open_stroke(
         }
     };
     // 3D の対称と 2D の対称（UV の平面。3D の写しの後に当てる）。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
-    let symmetry = app.sel.symmetry.surface.setup();
-    let canvas_symmetry = Some(app.canvas_symmetry()).filter(|s| s.enabled());
+    let (symmetry, canvas_symmetry) = {
+        let active = app.rulers_active_for(crate::rulers::Place::View3d, Some(layer));
+        (active.surface_symmetry, active.canvas_symmetry)
+    };
     if (symmetry.is_some() || canvas_symmetry.is_some())
         && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
     {
@@ -1698,7 +1704,8 @@ fn active_symmetry(app: &AppState) -> Option<SurfaceSymmetrySetup> {
     if app.view3d.input.stroke.is_some() {
         app.view3d.input.symmetry
     } else {
-        app.sel.symmetry.surface.setup()
+        app.rulers_active(crate::rulers::Place::View3d)
+            .surface_symmetry
     }
 }
 
@@ -1845,7 +1852,7 @@ pub fn draw_overlays(ui: &Ui, app: &AppState, rect: Rect) {
         view.to_screen(p)
             .map(|s| Pos2::new(rect.left() + s.x, rect.top() + s.y))
     };
-    if app.sel.symmetry.surface.show_plane {
+    {
         if let Some(sym) = active_symmetry(app) {
             let bounds = model.geometry.bounds();
             let reach = (bounds.extents.max_element() * 1.25).max(1e-4);

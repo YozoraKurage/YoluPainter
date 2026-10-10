@@ -496,11 +496,10 @@ pub enum Category {
     /// 色の混ぜ（厚塗り。混ぜ方・絵の具の量と濃さ・色延び・下地・筆圧）。
     Mix,
     Effect,
-    Symmetry,
 }
 
 impl Category {
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 10] = [
         Category::Shape,
         Category::Stroke,
         Category::Pressure,
@@ -511,7 +510,6 @@ impl Category {
         Category::Color,
         Category::Mix,
         Category::Effect,
-        Category::Symmetry,
     ];
 
     pub fn name(self, lang: Lang) -> &'static str {
@@ -526,7 +524,6 @@ impl Category {
             Category::Color => lang.pick("色の揺らぎ", "Color Dynamics"),
             Category::Mix => lang.pick("色の混ぜ", "Color Mixing"),
             Category::Effect => lang.pick("効果", "Effect"),
-            Category::Symmetry => lang.pick("対称", "Symmetry"),
         }
     }
 
@@ -542,7 +539,6 @@ impl Category {
             Category::Color => "palette",
             Category::Mix => "paint_brush",
             Category::Effect => "blur_on",
-            Category::Symmetry => "flip",
         }
     }
 }

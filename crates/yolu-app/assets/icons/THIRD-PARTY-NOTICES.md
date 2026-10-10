@@ -104,6 +104,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/path_selected` | fluent | `pen` | filled |
 | `tools/polygon-fill` | fluent | `triangle` | regular |
 | `tools/polygon-fill_selected` | fluent | `triangle` | filled |
+| `tools/ruler` | fluent | `ruler` | regular |
+| `tools/ruler_selected` | fluent | `ruler` | filled |
 | `tools/select-ellipse` | phosphor | `circle-dashed` | regular |
 | `tools/select-ellipse_selected` | phosphor | `circle-dashed` | bold |
 | `tools/select-pen` | phosphor | `highlighter` | regular |

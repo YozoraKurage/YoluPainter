@@ -1,18 +1,17 @@
-//! 選択範囲と 2D の対称のツール（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
+//! 選択範囲のツール（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
 //! 作成方法（新規・追加・削除・共通）で組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
 //! core の `SelectionMask` の操作を呼ぶだけ。選択範囲は文書（`Document`）が持つので、セットごとに別で、Undo・.ylp の保存と読み込みも文書に付く。
 //!
 //! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
 //! - `outline`: 選択範囲の縁の線分（点線の元）
-//! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸、3D の面の対称（ミラー・放射状）
 //! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さなウィンドウ
 //! - `io`: .ylp の `selection.bin` との受け渡し
 //! - `pen`: 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す）。`quick`: クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・
 //!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて残した選択範囲（文書の持ち物。.ylp に保存）
 //!
 //! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
-//! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
-//! ブラシへ写して固める（途中で変えても、そのストロークには効かない）。
+//! 操作は `SelAction::Ui`（Undo に入らない）。対称は定規（`rulers`）が持つ文書の値で、ストロークを始めるときにブラシへ写して固める
+//! （途中で変えても、そのストロークには効かない）。
 
 pub mod bar;
 pub mod canvas;
@@ -27,17 +26,14 @@ pub mod props;
 pub mod quick;
 pub mod saved;
 pub mod shape;
-pub mod symmetry;
 
 use crate::engine::{
-    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask, SymmetryMode,
+    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask,
     DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
-
-pub use self::symmetry::SymmetryState;
 
 /// 選択範囲を変える操作（半径を取るものと、取らないもの）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -197,43 +193,11 @@ pub enum SelUiOp {
     AllModes(bool),
 }
 
-/// 2D の対称の設定の操作（画面だけ）。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SymOp {
-    Mode(SymmetryMode),
-    /// 入っているなら切り、切っているなら最後のモードを入れ直す。
-    Toggle,
-    /// 放射状の写しの数（2〜16 に丸める）。
-    Count(u32),
-    /// 中心（文書の大きさに対する 0〜1）。
-    Center(f64, f64),
-    /// 中心をキャンバスの中央に戻す。
-    CenterCanvas,
-    ShowAxes(bool),
-    /// 3D の面のミラー（軸に直交する面で左右に写す）。
-    Mirror3d(bool),
-    Axis3d(yolu_core::geometry::SymmetryAxis),
-    /// 面のずれ（モデルの原点から、軸の向きに。モデルの単位）。
-    Offset3d(f32),
-    /// 面をモデルの原点・境界の中央に置く。
-    OffsetOrigin3d,
-    OffsetBounds3d,
-    /// 3D の面の放射状（軸のまわりに回して写す）。
-    Radial3d(bool),
-    RadialAxis3d(yolu_core::geometry::SymmetryAxis),
-    RadialCount3d(u32),
-    /// 写しの側は見えない面にも塗る。
-    IgnoreVisibility3d(bool),
-    /// 3D ビューに対称の面を出す。
-    ShowPlane3d(bool),
-}
-
 /// `Action::Sel` の中身。
 #[derive(Clone, Debug, PartialEq)]
 pub enum SelAction {
     Edit(SelEdit),
     Ui(SelUiOp),
-    Symmetry(SymOp),
     /// 名前を付けて残した選択範囲（残す・名前を変える・消す・ウィンドウ。文書の持ち物で、1 回の Undo。.ylp に保存）。
     Saved(saved::SavedOp),
 }
@@ -290,8 +254,7 @@ pub struct SelState {
     pub press_button: egui::PointerButton,
     /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
     pub pen_down: Option<u32>,
-    pub symmetry: SymmetryState,
-    /// 描いているストロークに固めた対称（軸の表示はこれ）。
+    /// 描いているストロークに固めた対称（写しのカーソルはこれ）。
     pub stroke_symmetry: Option<CanvasSymmetry>,
     /// 縁の滑らかさ（楕円・なげなわ・多角形・角丸の長方形）。切ると縁は 0 か 255 だけ。
     pub antialias: bool,
@@ -359,7 +322,6 @@ impl Default for SelState {
             press_modifiers: egui::Modifiers::NONE,
             press_button: egui::PointerButton::Primary,
             pen_down: None,
-            symmetry: SymmetryState::default(),
             stroke_symmetry: None,
             antialias: true,
             fixed_ratio: false,
@@ -581,7 +543,6 @@ impl AppState {
         match action {
             SelAction::Edit(edit) => self.sel_edit(edit),
             SelAction::Ui(op) => self.sel_ui(op),
-            SelAction::Symmetry(op) => self.sel_symmetry(op),
             SelAction::Saved(op) => self.sel_saved(op),
         }
     }
@@ -858,47 +819,6 @@ impl AppState {
         }
     }
 
-    /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
-    pub fn sel_symmetry(&mut self, op: SymOp) {
-        if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_) | SymOp::ShowPlane3d(_)) {
-            self.refuse(
-                Source::Selection,
-                crate::lang::refusals::during_stroke(self.lang),
-            );
-            return;
-        }
-        // 境界の中央は、モデルの今の形から（モデルが無ければ何もしない）
-        let bounds_center = self
-            .view3d
-            .model
-            .as_ref()
-            .map(|m| m.geometry.bounds().center);
-        let s = &mut self.sel.symmetry;
-        match op {
-            SymOp::Mode(mode) => s.set_mode(mode),
-            SymOp::Toggle => s.toggle(),
-            SymOp::Count(n) => s.set_count(n),
-            SymOp::Center(x, y) => s.set_center(x, y),
-            SymOp::CenterCanvas => s.center = (0.5, 0.5),
-            SymOp::ShowAxes(on) => s.show_axes = on,
-            SymOp::Mirror3d(on) => s.surface.mirror = on,
-            SymOp::Axis3d(axis) => s.surface.axis = axis,
-            SymOp::Offset3d(v) => s.surface.set_offset(v),
-            SymOp::OffsetOrigin3d => s.surface.offset = 0.0,
-            SymOp::OffsetBounds3d => {
-                if let Some(center) = bounds_center {
-                    let offset = s.surface.bounds_center_offset(center);
-                    s.surface.set_offset(offset);
-                }
-            }
-            SymOp::Radial3d(on) => s.surface.radial = on,
-            SymOp::RadialAxis3d(axis) => s.surface.radial_axis = axis,
-            SymOp::RadialCount3d(n) => s.surface.set_radial_count(n),
-            SymOp::IgnoreVisibility3d(on) => s.surface.ignore_visibility = on,
-            SymOp::ShowPlane3d(on) => s.surface.show_plane = on,
-        }
-    }
-
     /// 多角形の点を打っている途中か（取り消しが最後の点に当たる間。メニューの「取り消し」もこのあいだは押せる）。
     pub fn sel_has_polygon_point(&self) -> bool {
         self.tool == Tool::Polygon
@@ -933,19 +853,34 @@ impl AppState {
         self.sel.cancel_drafts();
     }
 
-    /// 2D の対称（文書の大きさに写した中心）。2D のキャンバスのストロークにも、3D ビューの面のストローク（UV の平面で、3D の写しの後に）にも渡す。
+    /// 選んでいるレイヤーで描くときの 2D の対称（効いている 2D の対称定規の写し。無ければ切）。2D のキャンバスのストロークにも、3D ビューの
+    /// 面のストローク（UV の平面で、3D の写しの後に）にも渡す。
     pub fn canvas_symmetry(&self) -> CanvasSymmetry {
-        self.sel
-            .symmetry
-            .canvas(self.doc.width(), self.doc.height())
+        self.canvas_symmetry_for(self.selected_layer)
     }
 
-    /// 2D のキャンバスのストロークに当てる 3D の対称（3D の対称が入っていて、今のテクスチャセットの面のモデルがあるとき）。ダブの中心の UV の
+    /// `drawing` で描くときの 2D の対称。
+    pub fn canvas_symmetry_for(&self, drawing: Option<crate::engine::LayerId>) -> CanvasSymmetry {
+        self.rulers_active_for(crate::rulers::Place::Canvas, drawing)
+            .canvas_symmetry
+            .unwrap_or_default()
+    }
+
+    /// 2D のキャンバスのストロークに当てる 3D の対称（効いている 3D の対称定規があって、今のテクスチャセットの面のモデルがあるとき）。ダブの中心の UV の
     /// 下の面の点を 3D で写し、写しの面の UV へダブを置く（core の `ModelSymmetry`。UV の格子は範囲のツールと共有する）。
     pub fn canvas_model_symmetry(
         &mut self,
     ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
-        let setup = self.sel.symmetry.surface.setup()?;
+        self.canvas_model_symmetry_for(self.selected_layer)
+    }
+
+    fn canvas_model_symmetry_for(
+        &mut self,
+        drawing: Option<crate::engine::LayerId>,
+    ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
+        let setup = self
+            .rulers_active_for(crate::rulers::Place::Canvas, drawing)
+            .surface_symmetry?;
         let grid = self.region_grid()?;
         yolu_core::geometry::ModelSymmetry::new(grid, &setup).map(std::sync::Arc::new)
     }
@@ -959,8 +894,8 @@ impl AppState {
     ) -> Result<crate::engine::Stroke, CoreError> {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
-        brush.symmetry = self.canvas_symmetry();
-        brush.model_symmetry = self.canvas_model_symmetry();
+        brush.symmetry = self.canvas_symmetry_for(Some(id));
+        brush.model_symmetry = self.canvas_model_symmetry_for(Some(id));
         brush.assist.stabilizer = 0.0;
         brush.assist.curve = false;
         let result = self.begin_stroke_with(id, &brush);
@@ -981,8 +916,8 @@ impl AppState {
     ) -> Result<crate::engine::Stroke, CoreError> {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
-        brush.symmetry = self.canvas_symmetry();
-        brush.model_symmetry = self.canvas_model_symmetry();
+        brush.symmetry = self.canvas_symmetry_for(Some(id));
+        brush.model_symmetry = self.canvas_model_symmetry_for(Some(id));
         let result = self.begin_stroke_with(id, &brush);
         self.sel.stroke_symmetry = result
             .is_ok()

@@ -1,5 +1,5 @@
-//! 選択範囲と 2D の対称の操作（egui_kittest）。どれも「操作 → 文書が変わる → Undo で戻る」。ツールの帯・オプションバー・メニュー・
-//! プロパティの欄・量を聞くウィンドウ・キャンバスの入力・対称のブラシ・.ylp の保存と読み込み。
+//! 選択範囲と 2D の対称定規で描く操作（egui_kittest）。どれも「操作 → 文書が変わる → Undo で戻る」。ツールの帯・オプションバー・メニュー・
+//! プロパティの欄・量を聞くウィンドウ・キャンバスの入力・対称定規のブラシ・.ylp の保存と読み込み。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -8,15 +8,17 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use yolu_app::engine::{
-    BrushEffect, Channel, CoreError, Rgba8, SelectionCombine, SelectionMask, SymmetryMode,
-    TileCoord, DEFAULT_WORKING_BUDGET_BYTES,
+    BrushEffect, Channel, CoreError, Rgba8, SelectionCombine, SelectionMask, TileCoord,
+    DEFAULT_WORKING_BUDGET_BYTES,
 };
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
 use yolu_app::pen::PenSample;
-use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
+use yolu_app::rulers::RulerAction;
+use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp};
 use yolu_app::state::{Action, AppState, PopupKind, Tool};
 use yolu_app::YoluApp;
+use yolu_core::{Ruler, RulerKind};
 
 type H = Harness<'static, YoluApp>;
 
@@ -26,10 +28,26 @@ fn st(h: &H) -> &AppState {
     &h.state().state
 }
 
-fn sym(h: &mut H, op: SymOp) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Symmetry(op)));
+/// 今の対称定規を全部外して、`put` で新しい対称定規を選んでいるレイヤーに置く（置いた定規の分の取り消しの段が 1 つ増える）。
+fn symmetry(h: &mut H, put: impl FnOnce(&mut AppState)) {
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        let ids: Vec<_> = common::rulers::of(s, layer).iter().map(|r| r.id).collect();
+        if !ids.is_empty() {
+            s.apply(Action::Ruler(RulerAction::Delete { owner: layer, ids }));
+        }
+        put(s);
+    }
+    h.run();
+}
+
+/// 「特殊定規にスナップ」を入れ直す。
+fn special_snap(h: &mut H, on: bool) {
+    let s = &mut h.state_mut().state;
+    if s.rulers.snap_special != on {
+        s.apply(Action::Ruler(RulerAction::ToggleSnapSpecial));
+    }
     h.run();
 }
 
@@ -977,42 +995,45 @@ fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_
 // ───────── 対称 ─────────
 
 #[test]
-fn option_bar_toggle_and_menu_set_the_symmetry_mode_and_the_axes_show() {
-    let mut h = app(1000.0, 640.0, 256);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
+fn the_special_snap_switch_turns_the_symmetry_ruler_off_and_on() {
+    let mut h = app(1000.0, 640.0, 512);
+    let r = canvas_rect(&h);
+    let view = st(&h).view.view(r, 512, 512);
+    let s = |x: f64, y: f64| view.to_screen(x, y);
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 256.0);
+    });
+    assert!(st(&h).rulers.snap_special, "特殊定規を作ると入る");
+    let dab = |h: &mut H, p: Pos2| drag(h, &[p, offset(p, 0.5, 0.0)]);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(412.0, 400.0)) > 0, "入っていれば映る");
+    undo(&mut h);
+    special_snap(&mut h, false);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(100.0, 400.0)) > 0);
+    assert_eq!(alpha_at(&h, s(412.0, 400.0)), 0, "切ると映さない");
+    undo(&mut h);
+    // 「表示」のメニューの項目でも切り替わる（チェックが付く）
+    let entries = yolu_app::shell::menu_entries(st(&h), 5);
+    let item = entries
+        .iter()
+        .find_map(|e| match e {
+            yolu_app::ui::menu::Entry::Item { label, check, .. }
+                if label == "特殊定規にスナップ" =>
+            {
+                Some(*check)
+            }
+            _ => None,
+        })
+        .expect("表示のメニューの特殊定規にスナップ");
     assert_eq!(
-        st(&h).sel.symmetry.mode,
-        SymmetryMode::Vertical,
-        "覚えが無ければ縦"
+        item,
+        yolu_app::ui::menu::Check::None,
+        "切ったのでチェックは外れる"
     );
-    // ▾ からモードを選ぶ
-    h.get_by_label("対称のモード").click();
-    h.run();
-    assert_eq!(
-        st(&h).popup.as_ref().map(|p| p.kind),
-        Some(PopupKind::Symmetry)
-    );
-    let item = popup_item(&h, "両方").center();
-    click(&mut h, item);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::Both);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
-    assert_eq!(
-        st(&h).sel.symmetry.mode,
-        SymmetryMode::Both,
-        "最後のモードを入れ直す"
-    );
-    // 軸の表示（メニュー）
-    h.get_by_label("対称のモード").click();
-    h.run();
-    let item = popup_item(&h, "軸を表示").center();
-    click(&mut h, item);
-    assert!(!st(&h).sel.symmetry.show_axes);
+    special_snap(&mut h, true);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(412.0, 400.0)) > 0);
 }
 
 #[test]
@@ -1021,7 +1042,9 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     let r = canvas_rect(&h);
     let view = st(&h).view.view(r, 512, 512);
     let s = |x: f64, y: f64| view.to_screen(x, y);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 256.0);
+    });
     let dab = |h: &mut H, p: Pos2| drag(h, &[p, offset(p, 0.5, 0.0)]);
     dab(&mut h, s(100.0, 400.0));
     assert!(alpha_at(&h, s(100.0, 400.0)) > 0);
@@ -1031,7 +1054,9 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     );
     assert_eq!(alpha_at(&h, s(100.0, 112.0)), 0, "横には映らない");
     undo(&mut h);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Both));
+    symmetry(&mut h, |s| {
+        common::rulers::both(s, (256.0, 256.0));
+    });
     dab(&mut h, s(100.0, 400.0));
     for (x, y) in [
         (100.0, 400.0),
@@ -1043,15 +1068,16 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     }
     undo(&mut h);
     // 中心をずらす: x = 128 で映る
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
-    sym(&mut h, SymOp::Center(0.25, 0.5));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 128.0);
+    });
     dab(&mut h, s(60.0, 300.0));
     assert!(alpha_at(&h, s(196.0, 300.0)) > 0);
     undo(&mut h);
-    // 放射状 4 つ: 中心のまわりに 90° ずつ
-    sym(&mut h, SymOp::CenterCanvas);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Radial));
-    sym(&mut h, SymOp::Count(4));
+    // 回転対称 4 つ: 中心のまわりに 90° ずつ
+    symmetry(&mut h, |s| {
+        common::rulers::radial(s, (256.0, 256.0), 4);
+    });
     dab(&mut h, s(356.0, 256.0)); // 中心から右へ 100
     let copies = [
         (356.0, 256.0),
@@ -1067,8 +1093,37 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     for (x, y) in copies {
         assert_eq!(alpha_at(&h, s(x, y)), 0);
     }
-    // 対称を切れば映さない
-    sym(&mut h, SymOp::Mode(SymmetryMode::None));
+    // 線対称 6 本: 鏡 3 枚（0°・60°・120° の軸）と回転 3 つ（120° ごと）で 6 つに映る。60° だけ回した点には映らない
+    symmetry(&mut h, |s| {
+        common::rulers::symmetry_2d(s, (256.0, 256.0), (1.0, 0.0), 6, true);
+    });
+    dab(&mut h, s(356.0, 266.0));
+    let (dx, dy) = (100.0, 10.0);
+    let image = |turn: f64, flip: bool| {
+        let y = if flip { -dy } else { dy };
+        let (sn, c) = turn.sin_cos();
+        s(256.0 + dx * c - y * sn, 256.0 + dx * sn + y * c)
+    };
+    for k in 0..3 {
+        for flip in [false, true] {
+            let turn = std::f64::consts::TAU * f64::from(k) / 3.0;
+            assert!(alpha_at(&h, image(turn, flip)) > 0, "{k} {flip}");
+        }
+    }
+    assert_eq!(
+        alpha_at(&h, image(std::f64::consts::TAU / 6.0, false)),
+        0,
+        "60° だけ回した点には映らない"
+    );
+    undo(&mut h);
+    // 対称定規を隠せば映さない
+    let layer = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
     dab(&mut h, s(356.0, 256.0));
     assert_eq!(alpha_at(&h, s(156.0, 256.0)), 0);
 }
@@ -1076,11 +1131,17 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
 #[test]
 fn smudge_and_clone_cannot_be_combined_with_symmetry() {
     let mut h = app(1000.0, 640.0, 256);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 128.0);
+    });
     h.state_mut().state.m2.brush.effect = BrushEffect::Smudge { strength: 0.5 };
     let p = at(&h, 0.0, 0.0);
     drag(&mut h, &[p, offset(p, 20.0, 0.0)]);
-    assert!(!st(&h).doc.can_undo(), "断ったので何も描かない");
+    assert_eq!(
+        steps(&h),
+        1,
+        "断ったので何も描かない（定規を置いた 1 段だけ）"
+    );
     assert!(
         st(&h).message.contains("対称"),
         "理由が出る: {}",
@@ -1090,21 +1151,30 @@ fn smudge_and_clone_cannot_be_combined_with_symmetry() {
     // 効果をペイントに戻せば、対称のまま描ける
     h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
     drag(&mut h, &[p, offset(p, 20.0, 0.0)]);
-    assert!(st(&h).doc.can_undo());
+    assert_eq!(steps(&h), 2);
 }
 
 #[test]
-fn symmetry_axes_and_mirrored_cursors_are_drawn_on_the_canvas() {
+fn the_axes_of_a_radial_symmetry_ruler_are_drawn_and_a_hidden_ruler_draws_and_copies_nothing() {
     let mut h = app(1000.0, 640.0, 512);
     h.state_mut().state.sel.animate = false;
-    sym(&mut h, SymOp::Mode(SymmetryMode::Radial));
-    sym(&mut h, SymOp::Count(6));
-    sym(&mut h, SymOp::Center(0.4, 0.55));
-    h.snapshot("symmetry_radial_axes");
-    sym(&mut h, SymOp::Mode(SymmetryMode::Both));
-    sym(&mut h, SymOp::ShowAxes(false));
-    let before = h.state().state.sel.symmetry.clone();
-    assert!(!before.show_axes);
+    symmetry(&mut h, |s| {
+        common::rulers::radial(s, (0.4 * 512.0, 0.55 * 512.0), 6);
+    });
+    h.snapshot("rulers_symmetry_radial_axes");
+    // 隠すと線も消え、写しも効かない
+    let layer = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
+    h.run();
+    assert!(st(&h)
+        .rulers_shown(yolu_app::rulers::Place::Canvas)
+        .is_empty());
+    assert!(!st(&h).canvas_symmetry().enabled());
 }
 
 /// 左下 `limit` 画素四方に、1 画素おきの孤立した点（選ばれた画素ごとに縁が 4 本。つながらない）。
@@ -1286,14 +1356,16 @@ fn headless_selection_edits_are_refused_while_stroking_and_on_read_only_sets() {
         ModifyKind::Grow,
     ))));
     assert!(s.sel.dialog.is_none());
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Both,
-    ))));
-    assert_eq!(
-        s.sel.symmetry.mode,
-        SymmetryMode::None,
-        "描いている間は対称を替えない"
+    // 描いている間は定規を置けない（ストロークに固めた対称と食い違わせない）
+    let ruler = Ruler::canvas(
+        yolu_core::RulerId(1),
+        RulerKind::Symmetry,
+        yolu_core::glam::DVec2::new(5.0, 5.0),
+        yolu_core::glam::DVec2::new(5.0, 9.0),
     );
+    s.apply(Action::Ruler(RulerAction::Create(ruler)));
+    assert_eq!(common::rulers::total(&s), 0, "描いている間は定規を置かない");
+    assert!(s.message.contains("描いている間"), "{}", s.message);
     s.doc.cancel_stroke(stroke);
     // 読むだけのセット
     s.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
@@ -1678,10 +1750,7 @@ fn headless_fill_stays_inside_the_selection() {
 #[test]
 fn headless_symmetry_reaches_the_brush_and_follows_the_document_size() {
     let mut s = doc_state(64);
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Vertical,
-    ))));
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.5))));
+    common::rulers::vertical(&mut s, 16.0);
     let id = s.selected_layer.unwrap();
     let mut stroke = s.begin_canvas_stroke(id, false, None).unwrap();
     let sample =
@@ -1695,21 +1764,24 @@ fn headless_symmetry_reaches_the_brush_and_follows_the_document_size() {
     assert_eq!(a(57, 20), 0);
     // 基本のブラシ（3D の面のストロークが使う）は対称を持たない
     assert!(!s.stroke_brush(false).symmetry.enabled());
-    // 大きさの違う文書でも、中心は文書に対する割合
+    // 対称定規の中心は文書の画素で持つ。画像のサイズを変えると、定規も一緒に写る（取り消しで戻る）
     let c = s.canvas_symmetry();
-    assert_eq!((c.center.x, c.center.y), (16.0, 32.0));
-    let mut big = doc_state(512);
-    big.sel.symmetry = s.sel.symmetry.clone();
-    let c = big.canvas_symmetry();
-    assert_eq!((c.center.x, c.center.y), (128.0, 256.0));
+    assert_eq!((c.center.x, c.center.y), (16.0, 0.0));
+    s.doc
+        .resize_image(512, 512, yolu_app::engine::CanvasResampling::Nearest)
+        .unwrap();
+    let c = s.canvas_symmetry();
+    assert_eq!((c.center.x, c.center.y), (128.0, 0.0));
+    assert!(c.enabled(), "サイズを変えたあとも効く");
+    s.doc.undo().unwrap();
+    let c = s.canvas_symmetry();
+    assert_eq!((c.center.x, c.center.y), (16.0, 0.0));
 }
 
 #[test]
 fn headless_symmetry_is_refused_for_smudge_and_clone_with_a_reason_and_no_stroke() {
     let mut s = doc_state(64);
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Both,
-    ))));
+    common::rulers::both(&mut s, (32.0, 32.0));
     let id = s.selected_layer.unwrap();
     for effect in [
         BrushEffect::Smudge { strength: 0.5 },
@@ -1794,10 +1866,7 @@ fn headless_a_canvas_stroke_obeys_the_selection_the_stencil_and_the_symmetry_tog
     assert_eq!(alpha(&s, 24, 20), 0);
 
     // 対称（縦の軸 x = 32）: 3 本の別々のストローク。主・映しの片方だけが通る
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Vertical,
-    ))));
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Center(0.5, 0.5))));
+    common::rulers::vertical(&mut s, 32.0);
     // 主（x = 40〜44）はステンシルが塞ぎ、映し（x = 24〜20）は選択もステンシルも開いて塗れる
     line(&mut s, 12.0, 40.0, 44.0);
     assert_eq!(alpha(&s, 42, 12), 0, "主の側はステンシルが塞ぐ");
@@ -2148,10 +2217,7 @@ fn headless_every_selection_label_exists_in_both_languages() {
         s.lang = lang;
         run(&mut s, SelEdit::All);
         let mut v = Vec::new();
-        for entries in [
-            yolu_app::selection::menu::select_menu(&s),
-            yolu_app::selection::menu::symmetry_menu(&s),
-        ] {
+        for entries in [yolu_app::selection::menu::select_menu(&s)] {
             for e in entries {
                 if let yolu_app::ui::menu::Entry::Item { label, .. } = e {
                     assert!(!label.trim().is_empty());
@@ -2162,10 +2228,6 @@ fn headless_every_selection_label_exists_in_both_languages() {
         for tool in Tool::ALL {
             assert!(!tool.name_in(lang).is_empty());
             v.push(tool.name_in(lang).to_owned());
-        }
-        for mode in yolu_app::selection::symmetry::MODES {
-            v.push(yolu_app::selection::symmetry::mode_name(lang, mode).to_owned());
-            v.push(yolu_app::selection::symmetry::mode_tooltip(lang, mode).to_owned());
         }
         for kind in ModifyKind::ALL {
             v.push(kind.name(lang).to_owned());

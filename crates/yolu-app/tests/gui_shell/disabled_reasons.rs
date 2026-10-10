@@ -1,6 +1,6 @@
-//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 3 か所（対称の欄・ブラシの 2D だけの設定・調整レイヤー）が、
+//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 3 か所（対称定規の欄・ブラシの 2D だけの設定・調整レイヤー）が、
 //! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。選択範囲を変更する操作は「選択範囲」メニューの項目で、選択範囲が無いあいだ無効になり戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
-//! - 対称は、描ける先が 3D だけのあいだと、指先・クローンのあいだだけ（ドックを分けてキャンバスも出ているあいだは 2D に描けるので有効）
+//! - 対称定規の欄は、読むだけのセットのあいだだけ無効（文書の値なので、ブラシの効果にも描ける先にも左右されない）
 //! - ブラシの 2D だけの設定（手ぶれ補正・入り抜き・ゆらぎ・筆先の形・効果のブラシの値）も、描ける先が 3D だけのあいだだけ無効
 //! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（レイヤーの値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
 use crate::common;
@@ -10,10 +10,10 @@ use egui::Rect;
 use egui_dock::{DockState, NodeIndex};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
-use yolu_app::engine::{BrushEffect, Channel, DVec2, SymmetryMode};
+use yolu_app::engine::{BrushEffect, Channel};
 use yolu_app::lang::Lang;
 use yolu_app::m2::{AdjustmentKind, Edit, UiOp};
-use yolu_app::selection::{SelAction, SelEdit, SymOp};
+use yolu_app::selection::{SelAction, SelEdit};
 use yolu_app::state::{Action, Tool};
 use yolu_app::{Tab, YoluApp};
 
@@ -54,124 +54,88 @@ fn tooltip_shows(h: &mut H, label: &str, tooltip: &str) -> bool {
     shown
 }
 
-// ───────── 対称 ─────────
+/// その部品の上にポインタを置くと、この文が（読むだけのセットの理由が部品の名前になっているほかのボタンのほかに）新しく出るか。
+fn tooltip_adds(h: &mut H, label: &str, text: &str) -> bool {
+    let at = rect_of_field(h, label).center();
+    move_to(h, egui::pos2(2.0, 2.0));
+    h.run();
+    let before = h.query_all_by_label(text).count();
+    hover_and_wait(h, at);
+    let after = h.query_all_by_label(text).count();
+    move_to(h, egui::pos2(2.0, 2.0));
+    h.run();
+    after > before
+}
 
-fn symmetry_app(lang: Lang) -> H {
+// ───────── 対称定規の欄 ─────────
+
+/// プロパティのレイヤーの欄に、選んでいるレイヤーの 2D の対称定規（線対称 6 本）の欄が出ている画面。
+fn ruler_app(lang: Lang) -> H {
     // プロパティの欄が縦に収まる高さ
     let mut h = app(1280.0, 2400.0, 256);
     h.state_mut().state.lang = lang;
-    h.run();
-    apply(
-        &mut h,
-        Action::Sel(SelAction::Symmetry(SymOp::Mode(SymmetryMode::Radial))),
-    );
-    // 中心を動かしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
-    apply(
-        &mut h,
-        Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.75))),
-    );
-    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
-    let ui = &mut h.state_mut().state.brushes.ui;
-    ui.detail.open = true;
-    ui.detail.category = yolu_app::brushes::Category::Symmetry;
-    ui.detail.scroll = 0.0;
+    {
+        let s = &mut h.state_mut().state;
+        // 中心をキャンバスの中心からずらしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
+        common::rulers::symmetry_2d(s, (64.0, 192.0), (1.0, 0.0), 6, true);
+        s.ui.property_tab = 1;
+    }
     h.run();
     h
 }
 
-fn symmetry_labels(lang: Lang) -> [&'static str; 4] {
+fn ruler_labels(lang: Lang) -> [&'static str; 4] {
     lang.pick(
-        ["中心 X", "写しの数", "キャンバスの中心", "軸を表示"],
-        ["Center X", "Copies", "Canvas center", "Show axes"],
+        ["線の本数", "中心 X", "角度", "キャンバスの中心"],
+        ["Lines", "Center X", "Angle", "Canvas Center"],
     )
 }
 
-fn assert_symmetry_fields(h: &H, lang: Lang, disabled: bool, what: &str) {
-    for label in symmetry_labels(lang) {
+fn assert_ruler_fields(h: &H, lang: Lang, disabled: bool, what: &str) {
+    for label in ruler_labels(lang) {
         assert_eq!(is_disabled(h, label), disabled, "{lang:?} {what}: {label}");
     }
 }
 
+/// 対称定規は文書の値なので、欄はブラシの効果（指先・クローン）にも、描ける先（2D・3D）にも左右されず、読むだけのセットのあいだだけ無効になる。
 #[test]
-fn the_symmetry_fields_are_disabled_with_a_reason_for_smudge_and_clone_and_come_back() {
+fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
     for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
-        assert_symmetry_fields(&h, lang, false, "ペイント");
-        let reason = lang.pick("指先・クローンでは使えません", "Not with smudge or clone");
-        for effect in [
-            BrushEffect::Smudge { strength: 0.5 },
-            BrushEffect::Clone {
-                offset: DVec2::new(10.0, 0.0),
-            },
-        ] {
-            h.state_mut().state.m2.brush.effect = effect;
-            h.run();
-            assert_symmetry_fields(&h, lang, true, "指先・クローン");
-            // 理由は、無効にした部品のツールチップ（画面に注記の行は無い）
-            for label in symmetry_labels(lang) {
-                assert!(
-                    tooltip_shows(&mut h, label, reason),
-                    "{lang:?}: {label} のツールチップに理由"
-                );
-            }
+        let mut h = ruler_app(lang);
+        assert_ruler_fields(&h, lang, false, "ふつう");
+        // 指先・クローンでも欄は有効（効かないのはストロークを始めるとき）
+        h.state_mut().state.m2.brush.effect = BrushEffect::Smudge { strength: 0.5 };
+        h.run();
+        assert_ruler_fields(&h, lang, false, "指先");
+        h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
+        h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
+        h.run();
+        assert_ruler_fields(&h, lang, true, "読むだけのセット");
+        // 無効の欄には、ほかの欄と同じく理由のツールチップ（スライダー・トグル・ボタン）
+        let reason = yolu_app::lang::refusals::read_only_set(lang, "テスト");
+        for label in ruler_labels(lang) {
             assert!(
-                h.query_by_label(reason).is_none(),
-                "{lang:?}: 注記の行は出さない"
+                tooltip_adds(&mut h, label, &reason),
+                "{lang:?}: {label} のツールチップに理由"
             );
-            // モードのボタンは押せる（対称を切る・替えるのは、指先・クローンのあいだもできる）
-            assert!(!is_disabled(&h, lang.pick("放射状", "Radial")));
-            // 効果をペイントに戻せば有効に戻り、理由は出なくなる
-            h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
-            h.run();
-            assert_symmetry_fields(&h, lang, false, "ペイントに戻した");
+        }
+        h.state_mut().state.sets.get_mut(0).unwrap().read_only = None;
+        h.run();
+        assert_ruler_fields(&h, lang, false, "戻した");
+        for label in ruler_labels(lang) {
             assert!(
-                !tooltip_shows(&mut h, symmetry_labels(lang)[0], reason),
-                "{lang:?}: 理由は消える"
+                !tooltip_adds(&mut h, label, &reason),
+                "{lang:?}: {label} は戻したら理由を出さない"
             );
         }
     }
 }
 
-/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだも、2D の対称の欄は有効（2D の対称は 3D ビューのストロークにも、UV の平面で
-/// 写して効く）。前の「3D では効きません」の理由は、ツールチップにも出ない。モデルがあるので、3D の対称の欄も並ぶ。
+/// ドックを分けてキャンバスと 3D ビューを並べても、重ねて 3D だけにしても、対称定規の欄は有効のまま（どちらのビューにも効く文書の値）。
 #[test]
-fn the_symmetry_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
-    use egui::accesskit::Role;
+fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side_or_stacked() {
     for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
-        h.state_mut().state.view3d.load_demo();
-        click_tab(&mut h, Tab::View3d);
-        h.run();
-        assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, false, "3D だけ");
-        let old = lang.pick("3D では効きません", "No effect in 3D");
-        for label in symmetry_labels(lang) {
-            assert!(
-                !tooltip_shows(&mut h, label, old),
-                "{lang:?}: {label} に前の理由は出ない"
-            );
-        }
-        assert!(h
-            .query_by_role_and_label(Role::CheckBox, lang.pick("ミラー", "Mirror"))
-            .is_some());
-        click_tab(&mut h, Tab::Canvas);
-        h.run();
-        assert!(!h.state().state.paints_only_in_3d());
-        assert_symmetry_fields(&h, lang, false, "キャンバスへ戻した");
-        // キャンバスだけを出していても、モデルがあれば 3D の対称の欄が並ぶ（2D のストロークにも効く）
-        assert!(
-            h.query_by_role_and_label(Role::CheckBox, lang.pick("ミラー", "Mirror"))
-                .is_some(),
-            "{lang:?}"
-        );
-    }
-}
-
-/// ドックを分けてキャンバスと 3D ビューを並べても、重ねて 3D だけにしても、対称の欄は有効のまま（2D の対称はどちらのビューにも効く）。
-#[test]
-fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
-    for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
+        let mut h = ruler_app(lang);
         h.state_mut().state.view3d.load_demo();
         let mut dock = DockState::new(vec![Tab::Canvas]);
         let surface = dock.main_surface_mut();
@@ -180,19 +144,8 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         h.state_mut().dock = dock;
         h.run();
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
-        assert!(
-            h.state().state.ui.canvas_visible && h.state().state.view3d.paintable_on_screen(),
-            "{lang:?}"
-        );
         assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, false, "並べた");
-        // 2D の対称の設定を変えられる
-        let before = h.state().state.sel.symmetry.count;
-        apply(
-            &mut h,
-            Action::Sel(SelAction::Symmetry(SymOp::Count(before + 1))),
-        );
-        assert_eq!(h.state().state.sel.symmetry.count, before + 1);
+        assert_ruler_fields(&h, lang, false, "並べた");
         // キャンバスを 3D の裏へ回して 3D だけになっても、有効のまま
         let mut stacked = DockState::new(vec![Tab::Canvas, Tab::View3d]);
         stacked
@@ -203,7 +156,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         click_tab(&mut h, Tab::View3d);
         h.run();
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, false, "重ねた");
+        assert_ruler_fields(&h, lang, false, "重ねた");
     }
 }
 

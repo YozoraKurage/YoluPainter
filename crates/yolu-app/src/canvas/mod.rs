@@ -334,14 +334,10 @@ fn begin_any(
         return began;
     }
     let first = stroke_start(app, view, p, shift);
-    begin_stroke(
-        app,
-        source,
-        eraser,
-        rect,
-        shift || (app.drafting.snap && app.ruler().is_some()),
-        first,
-    )
+    let snapped = app
+        .canvas_ruler_constraint(view, app.selected_layer, p)
+        .is_some();
+    begin_stroke(app, source, eraser, rect, shift || snapped, first)
 }
 
 /// ストロークの最初の点（文書の座標。`first_point` が最初に足す点と同じ）。Shift で前の終点があれば、そこから線を引くので前の終点、なければ
@@ -353,13 +349,9 @@ fn stroke_start(app: &AppState, view: &CanvasView, p: Pos2, shift: bool) -> (f64
     } else {
         pressed
     };
-    if app.drafting.snap {
-        if let Some(ruler) = app.ruler() {
-            let at = ruler
-                .constraint(yolu_core::glam::DVec2::new(pressed.0, pressed.1))
-                .project(yolu_core::glam::DVec2::new(first.0, first.1));
-            return (at.x, at.y);
-        }
+    if let Some(mut constraint) = app.canvas_ruler_constraint(view, app.selected_layer, p) {
+        let at = constraint.project(yolu_core::glam::DVec2::new(first.0, first.1));
+        return (at.x, at.y);
     }
     first
 }
@@ -638,11 +630,8 @@ fn first_point(
     time: f64,
     shift: bool,
 ) {
-    if app.drafting.snap && app.stroke.is_some() {
-        let (x, y) = view.to_canvas(p);
-        app.canvas.ruler_constraint = app
-            .ruler()
-            .map(|r| r.constraint(yolu_core::glam::DVec2::new(x, y)));
+    if app.stroke.is_some() {
+        app.canvas.ruler_constraint = app.canvas_ruler_constraint(view, app.selected_layer, p);
     }
     if shift && app.tool.paints() && app.stroke.is_some() {
         let has_previous = app.canvas.previous_end.is_some();

@@ -1,9 +1,8 @@
-//! 選択範囲のメニュー（メニューバーの「選択範囲」）と、対称のモードのポップアップ（オプションバーの ▾）。項目は `Action` を返し、
+//! 選択範囲のメニュー（メニューバーの「選択範囲」）。項目は `Action` を返し、
 //! 選ばれたあとに閉じてから当てるのは `YoluApp`（ほかのメニューと同じ）。
 
 use super::saved::SavedOp;
-use super::symmetry::{mode_name, MODES};
-use super::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
+use super::{ModifyKind, SelAction, SelEdit, SelUiOp};
 use crate::state::{Action, AppState, Tool};
 use crate::ui::menu::Entry;
 
@@ -149,33 +148,6 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         )
         .command_key(crate::commands::tool_command(Tool::IdSelect))
         .radio(app.tool == Tool::IdSelect),
-    );
-    v
-}
-
-/// 対称のモードのポップアップの中身（オプションバーの ▾）。
-pub fn symmetry_menu(app: &AppState) -> Vec<Entry<Action>> {
-    let l = app.lang;
-    let free = !app.is_stroking();
-    let sym = &app.sel.symmetry;
-    let mut v: Vec<Entry<Action>> = MODES
-        .iter()
-        .map(|m| {
-            Entry::item(
-                mode_name(l, *m),
-                Action::Sel(SelAction::Symmetry(SymOp::Mode(*m))),
-            )
-            .radio(sym.mode == *m)
-            .enabled(free)
-        })
-        .collect();
-    v.push(Entry::Separator);
-    v.push(
-        Entry::item(
-            l.pick("軸を表示", "Show Axes"),
-            Action::Sel(SelAction::Symmetry(SymOp::ShowAxes(!sym.show_axes))),
-        )
-        .checked(sym.show_axes),
     );
     v
 }

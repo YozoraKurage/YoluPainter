@@ -2959,8 +2959,27 @@ fn headless_symmetry_and_reverse_are_one_undo_each() {
     click2d(&mut s, 40.0, 90.0);
     let before = canvas_points(&s);
     assert_eq!(pixel(&s, 118, 30)[3], 0);
+    // 対称定規が無ければ入れられない（理由が出る。取り消しの段も増えない）
+    let none = s.doc.undo_count();
+    s.apply(Action::Path(PathAction::Symmetry(true)));
+    assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
+    assert!(s.message.contains("対称定規"), "{}", s.message);
+    assert_eq!(s.doc.undo_count(), none);
+    // 効いている対称定規（縦、中心 x = 64）の値を写して映す
+    common::rulers::vertical(&mut s, 64.0);
+    // 対称定規はあるが「特殊定規にスナップ」が切れているときは、切れていることを理由にする（対称定規が無いとは言わない）
+    s.rulers.snap_special = false;
+    s.apply(Action::Path(PathAction::Symmetry(true)));
+    assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
+    assert!(
+        s.message.contains("特殊定規にスナップが切れています"),
+        "{}",
+        s.message
+    );
+    assert!(!s.message.contains("対称定規がありません"), "{}", s.message);
+    assert_eq!(s.doc.undo_count(), none + 1, "定規を置いた 1 回のまま");
+    s.rulers.snap_special = true;
     let undo = s.doc.undo_count();
-    // キャンバスの対称を切っていても、最後のモード（縦）で中心 x = 64 に映す
     s.apply(Action::Path(PathAction::Symmetry(true)));
     assert!(matches!(
         style_of(&s).symmetry,
