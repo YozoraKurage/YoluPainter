@@ -309,6 +309,7 @@ pub static TOOLS: [ToolDef; 19] = [
     .select()
     .sized()
     .canvas(CanvasKind::Selection)
+    .surface(Surface::Cover)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(Tool::Move, "move", "移動・変形", "Move / Transform", "V")

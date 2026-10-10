@@ -1,8 +1,8 @@
-//! 3D ビューのクイックマスク: クイックマスクが入っている間、3D ビューのブラシ・消しゴムは、2D のキャンバスと同じく選択ペン・選択消しと
-//! して働く（直径・硬さ・不透明度・筆圧は今のブラシ。1 ストロークが 1 回の取り消し `SelEdit::Shape`）。塗る先は今のテクスチャセットの
-//! 文書の選択範囲で、面のダブの覆い（投影の塗り。core の `SurfaceCoverStroke`）を UV の画素の被覆へ積む。被覆・見た目・終わらせ方は
-//! 2D の選択ペン（`selection::pen`）のまま（2D のキャンバスが出ていれば、描いている間の赤い重ねも変わる）。レイヤーの画素は変えない。
-//! 2D の選択ペンと同じく対称は使わない。
+//! 3D ビューの選択ペン: クイックマスクが入っている間、3D ビューのブラシ・消しゴムは、2D のキャンバスと同じく選択ペン・選択消しとして働き、
+//! 選択ペンのツール（と選択消し）も同じ道で、面に塗って選択範囲を直す（直径・硬さ・不透明度・筆圧は今のブラシ。1 ストロークが 1 回の取り消し
+//! `SelEdit::Shape`）。塗る先は今のテクスチャセットの文書の選択範囲で、面のダブの覆い（投影の塗り。core の `SurfaceCoverStroke`）を UV の画素の
+//! 被覆へ積む。被覆・見た目・終わらせ方は 2D の選択ペン（`selection::pen`）のまま（2D のキャンバスが出ていれば、描いている間の重ねも変わる）。
+//! レイヤーの画素は変えない。2D の選択ペンと同じく対称は使わない。
 
 use egui::{Pos2, Rect};
 use yolu_core::geometry::{CoverPixel, DabRefusal, SurfaceCoverStroke, SurfaceStrokeError};
@@ -13,8 +13,9 @@ use crate::notice::Source;
 use crate::selection::pen::{self, PenError, PenParams};
 use crate::state::{AppState, StrokeSource};
 
-/// 3D ビューのブラシ・消しゴムのストロークの始め（クイックマスクが入っているときだけ呼ぶ）。始めたら 3D の入力にストロークの印を立てる。
-/// 始められなければ理由を知らせる。
+/// 3D ビューの選択ペンのストロークの始め（クイックマスクのブラシ・消しゴム `quick`、または選択ペンのツール）。`erase` は消す側か。始めたら 3D の入力に
+/// ストロークの印を立てる。始められなければ理由を知らせる。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn begin(
     app: &mut AppState,
     model: &ViewModel,
@@ -22,7 +23,8 @@ pub(super) fn begin(
     at: Pos2,
     pressure: f32,
     source: StrokeSource,
-    eraser: bool,
+    erase: bool,
+    quick: bool,
 ) {
     // ほかのビューで選択ペンのストロークが動いている間は始めない（被覆を上書きしない）
     if app.sel.pen.is_some() {
@@ -32,8 +34,7 @@ pub(super) fn begin(
         );
         return;
     }
-    let erase = eraser || app.tool.erases();
-    if !pen::begin(app, source, erase, true) {
+    if !pen::begin(app, source, erase, quick) {
         return;
     }
     let params = PenParams::from_brush(&app.brush).cover();

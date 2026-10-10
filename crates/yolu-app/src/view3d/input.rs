@@ -10,7 +10,7 @@
 //!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて、離すまで変えない（`pen::PenPress`）。
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）と 2D の対称（UV の平面。3D の写しの後に当てる）は、面のストロークに通す
 //!   （core の `SurfaceStrokeOptions`）。
-//! - クイックマスクが入っている間のブラシ・消しゴムは、選択ペン・選択消し（2D のキャンバスと同じ。`quick`）。
+//! - 選択ペン・選択消しのツールと、クイックマスクが入っている間のブラシ・消しゴムは、面に塗って選択範囲を直す（2D のキャンバスと同じ。`quick`）。
 //! - 長方形選択・楕円形選択・なげなわ・多角形選択・自動選択は、グラデーション・図形と同じく画面の上で引いて（自動選択は押して）、見えている面の
 //!   テクセルの選択範囲にする（`select`。離したのを取りこぼしたときは何も選ばずにやめる）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
@@ -188,7 +188,9 @@ fn begin(
             }
             return;
         }
-        // 選択ペン・移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
+        // 選択ペン・選択消し: 面のダブの覆いを選択範囲に積む（下の、クイックマスクのブラシ・消しゴムと同じ道。描くレイヤーは要らない）
+        Surface::Cover => {}
+        // 移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
         Surface::Unsupported => {
             app.refuse(
                 Source::View3d,
@@ -229,9 +231,16 @@ fn begin(
             return;
         }
     }
-    // クイックマスクが入っていれば、ブラシ・消しゴムは選択ペン・選択消しとして働く（2D のキャンバスと同じ。選択範囲の UV の画素へ）
+    // 選択ペンのツールは、押したときの Shift（追加）・Ctrl（削除）・ペンの消しゴムの端で、追加か削除かが決まる（2D のキャンバスと同じ）。クイックマスクが入って
+    // いれば、ブラシ・消しゴムも選択ペン・選択消しとして働く（2D のキャンバスと同じ。選択範囲の UV の画素へ）
+    if app.tool.def().surface == Surface::Cover {
+        let erase = crate::selection::pen::erases(app.sel.pen_erase || eraser, modifiers);
+        super::quick::begin(app, &model, rect, at, pressure, source, erase, false);
+        return;
+    }
     if app.sel.quick {
-        super::quick::begin(app, &model, rect, at, pressure, source, eraser);
+        let erase = eraser || app.tool.erases();
+        super::quick::begin(app, &model, rect, at, pressure, source, erase, true);
         return;
     }
     let Some(layer) = app.selected_layer else {
@@ -1157,10 +1166,10 @@ fn press_kind(
 /// 入力を当てる（rect はタブの中身の表示域。`foreign` はこの押しが egui でほかの部品のものか）。
 pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {
     let ctx = ui.ctx().clone();
-    // ストロークの札をほか（キャンバスの Esc・フォーカスを失ったとき）が手放したら、こちらも終える（クイックマスクのストロークは、
-    // 選択ペンの被覆が残っている間は続ける）
-    let quick_live =
-        app.view3d.input.cover.is_some() && app.sel.pen.as_ref().is_some_and(|a| a.quick);
+    // ストロークの札をほか（キャンバスの Esc・フォーカスを失ったとき）が手放したら、こちらも終える。選択ペンとクイックマスクの
+    // ストロークは `app.stroke` でなく `app.sel.pen` が持つので、3D の被覆（`input.cover`）が残り、選択ペンのストロークが生きている
+    // 間は、札が無くても続ける（被覆と選択ペンのどちらかが先に無くなれば、ここで終える）
+    let quick_live = app.view3d.input.cover.is_some() && app.sel.pen.is_some();
     if app.view3d.input.stroke.is_some()
         && app.stroke.is_none()
         && app.region.drag.is_none()
@@ -1488,6 +1497,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
                 if app.view3d.input.stroke.is_some() && !path_esc {
                     finish(app, true);
+                    // この Esc はストロークを捨てるのに使った（先に描く 3D ビューのあとで、キャンバスが同じ Esc で、前からある選択範囲まで解除しない）
+                    crate::ui::window::note_escape_taken(&ctx);
                 }
                 // グラデーション・図形・定規のドラッグは何も描かずに捨てる。選択の形と多角形の点も、何も選ばずに捨てる
                 super::draft::cancel(app);
@@ -1725,7 +1736,10 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         140,
     );
     // 写しのカーソル（描いている最中は、3D のストローク以外では出さない。クイックマスクは対称を使わない）
-    if app.view3d.material != hit.material || app.sel.quick {
+    if app.view3d.material != hit.material
+        || app.sel.quick
+        || app.tool.def().surface == Surface::Cover
+    {
         return true;
     }
     let copies = match active_symmetry(app) {

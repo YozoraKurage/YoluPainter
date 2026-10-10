@@ -20,22 +20,22 @@ use yolu_core::geometry::{ModelMesh, OrbitCamera, Submesh};
 use yolu_core::glam::{DVec2, Vec2, Vec3};
 use yolu_core::{SelectionCombine, SelectionMask};
 
-type H = Harness<'static, YoluApp>;
+pub(crate) type H = Harness<'static, YoluApp>;
 
 /// 板の文書の大きさ。
-const N: u32 = 64;
+pub(crate) const N: u32 = 64;
 /// 立方体の文書の大きさ（`cube_view`）。
 const SIZE: u32 = 256;
 
-fn st(h: &H) -> &yolu_app::state::AppState {
+pub(crate) fn st(h: &H) -> &yolu_app::state::AppState {
     &h.state().state
 }
 
-fn message(h: &H) -> String {
+pub(crate) fn message(h: &H) -> String {
     st(h).message.clone()
 }
 
-fn tool(h: &mut H, t: Tool) {
+pub(crate) fn tool(h: &mut H, t: Tool) {
     h.state_mut().state.apply(Action::SelectTool(t));
     h.run();
 }
@@ -62,7 +62,7 @@ fn plate(z: f32, r: f32, (u0, u1): (f32, f32)) -> ModelMesh {
     }
 }
 
-fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> (H, Rect) {
+pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> (H, Rect) {
     let mut h = app(1100.0, 760.0, N);
     click_tab(&mut h, Tab::View3d);
     h.run();
@@ -90,12 +90,12 @@ fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> (H, Rect) {
 
 /// 文書の全部を覆う、カメラを正面から見た板（透視か正投影）。テクセルの画面の位置は、どちらでも一様な拡大と平行移動。板は表示域に収まる
 /// （1 テクセルは画面の 8 点ほど）。
-fn plate_view(ortho: bool) -> (H, Rect) {
+pub(crate) fn plate_view(ortho: bool) -> (H, Rect) {
     model_view(vec![plate(0.0, 1.0, (0.0, 1.0))], ortho, 4.5)
 }
 
 /// 板の上の、文書の点（テクセルの単位、左下が原点）の画面の点。
-fn at(h: &H, rect: Rect, c: (f64, f64)) -> Pos2 {
+pub(crate) fn at(h: &H, rect: Rect, c: (f64, f64)) -> Pos2 {
     let s0 = screen_of(h, rect, Vec3::new(-1.0, -1.0, 0.0));
     let s1 = screen_of(h, rect, Vec3::new(1.0, 1.0, 0.0));
     pos2(
@@ -176,11 +176,11 @@ fn escape(h: &mut H) {
 
 // ───────── 見る ─────────
 
-fn selection(h: &H) -> Option<SelectionMask> {
+pub(crate) fn selection(h: &H) -> Option<SelectionMask> {
     st(h).doc.selection().cloned()
 }
 
-fn amount(h: &H, x: u32, y: u32) -> u8 {
+pub(crate) fn amount(h: &H, x: u32, y: u32) -> u8 {
     st(h).doc.selection().map_or(0, |m| m.amount(x, y))
 }
 
@@ -203,7 +203,7 @@ fn assert_same(h: &H, want: &SelectionMask, what: &str) {
     );
 }
 
-fn selected_count(h: &H, size: u32) -> usize {
+pub(crate) fn selected_count(h: &H, size: u32) -> usize {
     (0..size)
         .flat_map(|y| (0..size).map(move |x| (x, y)))
         .filter(|&(x, y)| amount(h, x, y) > 0)
@@ -424,7 +424,7 @@ fn face_visible(h: &H, face: usize) -> bool {
     out.dot(eye - center) > 0.0
 }
 
-fn cube_box(h: &H, rect: Rect) -> Rect {
+pub(crate) fn cube_box(h: &H, rect: Rect) -> Rect {
     let mut r = Rect::NOTHING;
     for f in 0..6 {
         for c in corners(f) {
@@ -519,7 +519,7 @@ fn every_shape_selects_only_the_faces_the_camera_sees_in_perspective_and_orthogr
 }
 
 /// 奥の大きな板（UV の左半分）と、その手前の小さな板（右半分）。奥の板の真ん中は手前の板に隠れる。
-fn two_plates() -> (H, Rect) {
+pub(crate) fn two_plates() -> (H, Rect) {
     model_view(
         vec![plate(0.0, 1.0, (0.0, 0.5)), plate(-0.6, 0.35, (0.5, 1.0))],
         false,
@@ -775,7 +775,7 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
 // ───────── 自動選択 ─────────
 
 /// 板の文書の、長方形 (x0, y0)-(x1, y1) を描画色で塗って、選択範囲を解除し、履歴を空にする。
-fn paint_rect(h: &mut H, (x0, y0, x1, y1): (i64, i64, i64, i64)) {
+pub(crate) fn paint_rect(h: &mut H, (x0, y0, x1, y1): (i64, i64, i64, i64)) {
     let s = &mut h.state_mut().state;
     s.color.set_main([1.0, 0.0, 0.0, 1.0]);
     s.brush.opacity = 1.0;
@@ -987,7 +987,7 @@ fn a_mouse_release_that_never_arrived_drops_the_drag_without_selecting() {
     }
 }
 
-fn pen_sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
+pub(crate) fn pen_sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
     PenSample {
         pos: [at.x, at.y],
         pressure: 0.6,
@@ -1002,7 +1002,7 @@ fn pen_sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
 }
 
 /// ペンで a から b へ引き、最後の離しが本物（`lost` が false）か、OS に押しを奪われて補った離し（true）か。
-fn pen_pull(h: &mut H, a: Pos2, b: Pos2, lost: bool) {
+pub(crate) fn pen_pull(h: &mut H, a: Pos2, b: Pos2, lost: bool) {
     for i in 0..=4u32 {
         let p = a + (b - a) * (i as f32 / 4.0);
         h.state().pen().push(pen_sample(p, true, i * 10));
@@ -1387,7 +1387,7 @@ fn the_tools_that_work_in_3d_no_longer_say_they_are_2d_only_and_the_others_still
             (Tool::Lasso, true),
             (Tool::Polygon, true),
             (Tool::Wand, true),
-            (Tool::SelectPen, false),
+            (Tool::SelectPen, true),
             (Tool::Move, false),
             (Tool::Liquify, false),
             (Tool::Text, false),
@@ -1412,7 +1412,7 @@ fn the_tools_that_work_in_3d_no_longer_say_they_are_2d_only_and_the_others_still
 // ───────── キャンバスと 3D ビューを並べた画面 ─────────
 
 /// キャンバスと 3D ビューを並べる（`canvas_first` ならキャンバスが左で、3D ビューは後に描かれる。そうでなければ 3D ビューが左）。
-fn side_by_side(canvas_first: bool) -> (H, Rect) {
+pub(crate) fn side_by_side(canvas_first: bool) -> (H, Rect) {
     use egui_dock::{DockState, NodeIndex};
     let (mut h, _) = model_view(vec![plate(0.0, 1.0, (0.0, 1.0))], false, 8.0);
     let mut dock = DockState::new(vec![if canvas_first {
