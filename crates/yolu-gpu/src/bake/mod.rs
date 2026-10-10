@@ -384,8 +384,9 @@ impl BakeGpu {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        // DXC（DX12 の新しいシェーダーコンパイラー）はラベルをファイル名として渡されるので、日本語だと読めずに失敗する。ASCII にする
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("メッシュマップのベイク"),
+            label: Some("mesh_map_bake"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let pipeline_for = |entry: &'static str| {
