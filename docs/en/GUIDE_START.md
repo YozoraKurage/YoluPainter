@@ -14,9 +14,9 @@ This page covers the screen layout, creating and opening projects, your first st
 | Left dock | From the top, stacked: Tools (the sub tools), Tool Properties and Brush Size, with Color and Color Sets at the bottom |
 | Center | The 3D View on the left and the Canvas (2D) on the right, side by side. Both are tabs, so you can also stack them and switch |
 | Right dock | From the top: Texture Sets, Channels and Assets; then Layers and Log; then Properties, Material and History. The Navigator is closed; open it from the Window menu and it joins the Texture Sets group (it is checked while open, and choosing it again closes it; the Actions panel works the same way) |
-| Status bar (bottom) | The version and build (for example `0.5.0 · a1b2c3d`) and the memory in use at the right end. The left is empty; the result of your last operation appears as a small notice just above the bar |
+| Status bar (bottom) | The version and build (for example `0.6.0 · a1b2c3d`) and the memory in use at the right end. The left is empty; the result of your last operation appears as a small notice just above the bar |
 
-The Tools, Tool Properties and Brush Size panels change with the selected tool. Brushes and their settings are in [GUIDE_PAINT.md](GUIDE_PAINT.md). Properties shows the contents of the selected layer ([GUIDE_LAYERS.md](GUIDE_LAYERS.md)). Material shows the look settings of the current texture set ([GUIDE_3D.md](GUIDE_3D.md)). The Pose panel appears when you load a model with a skeleton ([GUIDE_3D.md](GUIDE_3D.md)).
+The Tools, Tool Properties and Brush Size panels change with the selected tool. Brushes and their settings are in [GUIDE_PAINT.md](GUIDE_PAINT.md). Properties shows the contents of the selected layer ([GUIDE_LAYERS.md](GUIDE_LAYERS.md)). Material shows the look settings of the current texture set ([GUIDE_3D.md](GUIDE_3D.md)). The Pose panel appears when you load a model with bones ([GUIDE_3D.md](GUIDE_3D.md)).
 
 ## Modes
 
@@ -73,7 +73,7 @@ These change only the view. The saved image is never rotated or flipped.
 | Flip horizontally | `H` |
 | Fit to the view | `Ctrl+0` |
 
-The View menu also has Zoom In, Zoom Out, Rotate View Left and Right, Reset Rotation, Flip View and Fit to Screen. In the Navigator panel, press or drag in the thumbnail of the whole canvas to move the view (the current view is outlined). It also has Zoom and Rotation sliders and buttons for Flip horizontally, Fit canvas, 100% and Reset rotation. For the 3D view, see [GUIDE_3D.md](GUIDE_3D.md).
+The View menu also has Zoom In, Zoom Out, Fit to Screen, Rotate View Left and Right, Reset Rotation, Snap to Ruler ([GUIDE_PAINT.md](GUIDE_PAINT.md)), Flip View, Mode and Frame the Model in the 3D View. In the Navigator panel, press or drag in the thumbnail of the whole canvas to move the view (the current view is outlined). It also has Zoom and Rotation sliders and buttons for Flip horizontally, Fit canvas, 100% and Reset rotation. For the 3D view, see [GUIDE_3D.md](GUIDE_3D.md).
 
 ## Arranging panels
 

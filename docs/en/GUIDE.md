@@ -8,7 +8,7 @@ The guide is split into pages by what you want to do. If you are new, start with
 
 ## Pages
 
-- [Getting Started](GUIDE_START.md): the screen, creating and opening projects, your first stroke, moving the 2D view, arranging panels, notices and the log
+- [Getting Started](GUIDE_START.md): the screen, modes, creating and opening projects, your first stroke, moving the 2D view, arranging panels, notices and the log
 - [Painting](GUIDE_PAINT.md): brushes and the eraser, rearranging brushes, pen pressure and feel, lines, shapes and rulers, symmetry, Fill and Gradient, colors, the stencil, text
 - [Selection and Transform](GUIDE_SELECT.md): making and using selections, remembered selections, move and transform, copy and paste
 - [Layers and Channels](GUIDE_LAYERS.md): layers, groups, merging, locks, masks, adjustment layers, channels and Normal settings
@@ -17,7 +17,7 @@ The guide is split into pages by what you want to do. If you are new, start with
 - [3D View and Models](GUIDE_3D.md): controls and appearance of the 3D view, painting in 3D, FBX and poses, baking mesh maps, overlapping UVs
 - [Saving, Exporting and Importing](GUIDE_FILES.md): saving, Save for Distribution, exporting, PSD and PNG, recovery, large documents
 - [Settings](GUIDE_SETTINGS.md): the items in Edit → Settings…
-- [Keyboard Shortcuts](GUIDE_KEYS.md): keyboard, mouse and pen controls
+- [Keyboard Shortcuts](GUIDE_KEYS.md): changing shortcuts, modes and pie menus, keyboard, mouse and pen controls
 
 ## Reference
 

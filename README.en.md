@@ -12,10 +12,12 @@ Windows is the primary platform. Mac and Linux support is experimental.
 
 ## Features
 
-- 2D and 3D painting: brushes that respond to pressure and tilt, color mixing, blur, smudge and clone, symmetry, and stencils
+- 2D and 3D painting: brushes that respond to pressure and tilt, color mixing, blur, smudge and clone, symmetry, rulers, and stencils
+- Paint, Edit and Pose modes: in the 3D view, select and move projection boxes, decals, points, 3D paths and pose bones
+- Keyboard, mouse and pie menu assignments that you can change in the settings table
 - Layers, groups, masks, clipping, 26 blend modes, adjustment layers, text layers, and locks
 - Material painting: Color, Roughness, Metallic, Height, Normal, Emission, and user channels in a single stroke
-- Filters, generators that read baked mesh maps (AO, curvature, thickness, ID, and more), noise and grunge, and smart materials
+- Filters, generators that read baked mesh maps (AO (ambient occlusion), curvature, thickness, ID, and more), noise and grunge, and smart materials
 - The lilToon look in the 3D view
 - Live Link with Unity: open a scene model in one step and send exported textures back to Unity (they are assigned to materials only after you confirm in Unity)
 - Editing layers, masks, and effects from the command line (`yolupainter-cli`) and from AI assistants connected over MCP

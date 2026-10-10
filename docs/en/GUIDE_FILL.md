@@ -94,7 +94,7 @@ There are 23 filters, listed in the menu as blurs, edges and shapes, noise, valu
 
 There are 15 generators, in these groups:
 
-- Values from baked mesh maps: Edge Wear, Dirt, Position Gradient, Shape Gradient, Thickness, Direction, Light (light and shade from the baked normals and a light direction), Mask Builder (combines the baked curvature, AO, height (position) and thickness with weights and levels), ID Color
+- Values from baked mesh maps: Edge Wear, Dirt, Position Gradient, Shape Gradient, Thickness, Direction, Light (light and shade from the baked normals and a light direction), Mask Builder (combines the baked curvature, AO (ambient occlusion), height (position) and thickness with weights and levels), ID Color
 - Values from the model's UV islands: UV Island Variation (one value per island)
 - Work without maps: Noise, Grunge, Pattern (stripes, checker, dots, border or grid in UV space), Image (reads an asset image with the same projections as a fill layer). Noise and Grunge are made on the model when the position map exists, and in UV space otherwise
 - Anchor: reads the result of a layer below
