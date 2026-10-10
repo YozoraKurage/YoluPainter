@@ -1305,7 +1305,6 @@ pub fn tool_mode_entries(app: &AppState, command: &'static str) -> Vec<Entry<Act
         .map(|mode| {
             Entry::item(mode.label(app.lang), Action::ToolKeyMode(command, mode))
                 .radio(mode == current)
-                .tooltip(mode.tip(app.lang))
         })
         .collect()
 }

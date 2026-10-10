@@ -47,6 +47,10 @@ impl Constraint {
     }
 }
 
+/// 縦横比を固定する・中心から広げるときの修飾キー（`Constraint::of` が読むキー。割り当ての表には無い固定のキーなので、ツールチップの文字はここから引く）。
+pub const RATIO_KEY: &str = "Shift";
+pub const CENTER_KEY: &str = "Alt";
+
 /// Shift を押し始めたあとに押した（押し始めには押していなかった）か。
 pub fn shift_constrains(pressed_with: Modifiers, now: Modifiers) -> bool {
     !pressed_with.shift && now.shift

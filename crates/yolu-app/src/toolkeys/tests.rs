@@ -97,12 +97,11 @@ fn modes_round_trip_through_their_file_names() {
 }
 
 #[test]
-fn every_mode_has_a_name_and_a_tip_in_both_languages() {
+fn every_mode_has_a_name_in_both_languages() {
     for mode in ToolKeyMode::ALL {
         for lang in Lang::ALL {
             assert!(!mode.label(lang).is_empty());
             assert!(!mode.short_label(lang).is_empty());
-            assert!(!mode.tip(lang).is_empty());
         }
     }
 }

@@ -36,21 +36,6 @@ impl OrbitCenter {
         }
     }
 
-    /// ツールチップ（面の位置だけ、パンの速さも面の深さに合わせる）。
-    pub fn tip(self, lang: Lang) -> &'static str {
-        if self == Self::Surface {
-            lang.pick(
-                "回し始めの面を中心にし、パンの速さも面の深さに合わせます。面が無ければ今の中心です。",
-                "Orbit around the starting surface and pan at its depth. Empty space keeps the current center.",
-            )
-        } else {
-            lang.pick(
-                "回し始めに中心を決め、離すまで保ちます。",
-                "Choose the pivot at the start and keep it until release.",
-            )
-        }
-    }
-
     fn key(self) -> &'static str {
         match self {
             Self::View => "view",
@@ -75,20 +60,6 @@ impl ZoomCenter {
         match self {
             Self::View => lang.pick("画面の中心へ", "Toward view center"),
             Self::Pointer => lang.pick("ポインタの所へ", "Toward pointer"),
-        }
-    }
-
-    /// ツールチップ。
-    pub fn tip(self, lang: Lang) -> &'static str {
-        match self {
-            Self::View => lang.pick(
-                "画面の中心を保ってズームします。",
-                "Zoom keeping the view center.",
-            ),
-            Self::Pointer => lang.pick(
-                "面が無ければポインタの向きへ寄ります。",
-                "Empty space zooms along the pointer direction.",
-            ),
         }
     }
 }

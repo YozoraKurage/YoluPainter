@@ -1087,6 +1087,54 @@ fn a_3d_stroke_lands_on_the_same_texels_at_every_sample_count() {
 
 // ───────── 設定のパネル（画質の面） ─────────
 
+/// ブルームが切のあいだ、強さ・しきい値は押せず、理由（ブルームが切です）が出る。入れると理由は消える。値の欄のツールチップは、押せるときは出ない。
+#[test]
+fn the_bloom_values_say_the_bloom_is_off() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut h = view(1100.0, 760.0, 32);
+    h.state_mut().state.view3d.load_demo();
+    h.run();
+    h.get_by_label("光・環境・トーンマッピング").click();
+    h.run();
+    h.get_by_label("画質").click();
+    h.run();
+    let reason = "ブルームが切です";
+    for label in ["強さ", "しきい値"] {
+        let node = h.get_by_label(label);
+        assert!(node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_some(), "{label}: 理由");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+    h.get_by_label("ブルーム").click();
+    h.run();
+    for label in ["強さ", "しきい値"] {
+        let node = h.get_by_label(label);
+        assert!(!node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_none(), "{label}: 理由は消える");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+    h.state_mut().state.lang = yolu_app::lang::Lang::En;
+    h.run();
+    let reason = "Bloom is off";
+    h.get_by_label("Bloom").click();
+    h.run();
+    for label in ["Strength", "Threshold"] {
+        let node = h.get_by_label(label);
+        assert!(node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_some(), "{label}: reason");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+}
+
 #[test]
 fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     use egui_kittest::kittest::Queryable;

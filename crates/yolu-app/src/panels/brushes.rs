@@ -3,7 +3,7 @@
 //! core が描いた見本のストロークの行・一覧の操作の帯。消しゴムのツールは消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ
 //! （今の設定の見本と主な項目、右下の調整のボタンで詳細のウィンドウ）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
 //! 一覧の操作は `Action::Brush`（行を押して替える・追加・複製・削除・名前・並べ替え・元に戻す）。ブラシの設定は文書ではないので Undo に
-//! 入れない。画面には名前と値だけを出し、説明はツールチップ。
+//! 入れない。画面には名前と値だけを出し、ツールチップは名前とキー（押せないときは短い理由）。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
@@ -832,11 +832,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick(
-            "1 本のストロークが覆える上限",
-            "The most one stroke can cover",
-        )),
+        ),
         b.opacity * 100.0,
         Some((
             &mut b.pressure_opacity,
@@ -856,10 +852,10 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             100.0,
             NumberFormat::int("%"),
         )
-        .tooltip(lang.pick(
-            "丸い筆先の縁の硬さ（画像の筆先は画像の縁のまま）",
-            "Edge hardness of the round tip (an image keeps its own edge)",
-        )),
+        .tooltip_reason(
+            (!hardness_applies)
+                .then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
+        ),
         b.hardness * 100.0,
         Some((
             &mut app.m2.brush.controls.pressure_hardness,
@@ -878,8 +874,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick("ダブ 1 つが足す量", "How much each dab adds")),
+        ),
         b.flow * 100.0,
         Some((
             &mut b.pressure_flow,
@@ -898,11 +893,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             1.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick(
-            "ダブの間隔（直径に対する割合）",
-            "Distance between dabs (of the diameter)",
-        )),
+        ),
         b.spacing * 100.0,
         None,
         editable,
@@ -925,11 +916,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             200.0,
             NumberFormat::int(" px"),
-        )
-        .tooltip(lang.pick(
-            "筆が入力に引かれる糸の長さ。0 で切",
-            "Length of the string that pulls the brush. 0 = off",
-        )),
+        ),
         stabilizer,
         None,
         editable,
@@ -968,7 +955,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                     64.0,
                     NumberFormat::int(" px"),
                 )
-                .tooltip(effect_off.unwrap_or(lang.pick("ぼかす範囲の半径", "Radius of the blur"))),
+                .tooltip_reason(effect_off),
                 radius as f32,
                 None,
                 editable && effect_off.is_none(),
@@ -989,9 +976,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                     100.0,
                     NumberFormat::int("%"),
                 )
-                .tooltip(
-                    effect_off.unwrap_or(lang.pick("流量に掛ける強さ", "Multiplies the flow")),
-                ),
+                .tooltip_reason(effect_off),
                 strength as f32 * 100.0,
                 None,
                 editable && effect_off.is_none(),

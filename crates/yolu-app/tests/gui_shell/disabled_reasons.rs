@@ -523,3 +523,127 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
         }
     }
 }
+
+// ───────── 画像の筆先・消しゴム・ツールチップは名前とキー ─────────
+
+fn image_tip() -> std::sync::Arc<yolu_core::BrushTip> {
+    std::sync::Arc::new(yolu_core::BrushTip::new("試し", 2, 2, vec![0, 255, 255, 0]).unwrap())
+}
+
+/// 画像の筆先のとき、硬さは効かないので押せず、理由が出る（ツールプロパティ・ブラシの詳細の形状と筆圧の最小）。丸い筆先なら有効で、理由は出ない。
+#[test]
+fn hardness_says_it_has_no_effect_with_an_image_tip() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick("画像の筆先では効きません", "No effect on an image tip");
+        let hardness = lang.pick("硬さ", "Hardness");
+        let minimum = lang.pick("最小", "Minimum");
+        // 丸い筆先: 有効・理由なし
+        let mut h = brush_app(lang, true);
+        assert!(!is_disabled(&h, hardness), "{lang:?}");
+        assert!(!tooltip_shows(&mut h, hardness, reason), "{lang:?}");
+        // 画像の筆先: ツールプロパティ
+        h.state_mut().state.m2.brush.tip.image = Some(image_tip());
+        h.run();
+        assert!(is_disabled(&h, hardness), "{lang:?}");
+        assert!(tooltip_shows(&mut h, hardness, reason), "{lang:?}");
+        // ブラシの詳細の形状
+        open_brush_detail(&mut h, Category::Shape);
+        let found = pane_field(&h, hardness);
+        assert_brush_field(&mut h, lang, found, hardness, reason, true);
+        // 筆圧: 硬さの項目（最後）の最小は、画像の筆先が理由
+        open_brush_detail(&mut h, Category::Pressure);
+        // 硬さの項目は一番下なので、見えるところまで送る
+        h.state_mut().state.brushes.ui.detail.scroll = 1000.0;
+        h.run();
+        let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
+            .expect("ブラシの詳細のウィンドウ");
+        let last = h
+            .query_all_by_label(minimum)
+            .filter(|n| window.contains(n.rect().center()))
+            .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .expect("最小の欄");
+        let found = (last.rect(), last.accesskit_node().is_disabled());
+        assert_brush_field(&mut h, lang, found, minimum, reason, true);
+    }
+}
+
+/// 消しゴムのときのクローンの「全レイヤーから」「揃える」は、ずれの欄と同じく消しゴムが理由。
+#[test]
+fn the_clone_toggles_say_the_eraser_is_the_reason() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick("消しゴムでは使えません", "Not available with the eraser");
+        let mut h = brush_app(lang, true);
+        apply(&mut h, Action::SelectTool(Tool::Eraser));
+        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+            offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+        };
+        open_brush_detail(&mut h, Category::Effect);
+        for label in [
+            lang.pick("全レイヤーから", "All layers"),
+            lang.pick("揃える", "Aligned"),
+        ] {
+            let found = pane_field(&h, label);
+            assert_brush_field(&mut h, lang, found, label, reason, true);
+        }
+    }
+}
+
+/// 元が無いときの「揃える」の理由には、元を決める入力（組み合わせの表から）が付く。
+#[test]
+fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick(
+            "元を決めると使える（Alt+クリック）",
+            "Available once a source is set (Alt+Click)",
+        );
+        let mut h = brush_app(lang, true);
+        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+            offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+        };
+        open_brush_detail(&mut h, Category::Effect);
+        let label = lang.pick("揃える", "Aligned");
+        let found = pane_field(&h, label);
+        assert_brush_field(&mut h, lang, found, label, reason, true);
+    }
+}
+
+/// 値の欄のツールチップは名前とキーだけ（動きの説明は出ない）。選択の形のツールの縦横比・中心からには、修飾キーが付く。
+#[test]
+fn value_tooltips_are_the_name_and_the_key_only() {
+    for lang in Lang::ALL {
+        let mut h = brush_app(lang, true);
+        // ブラシ: 流量・不透明度に説明は出ない
+        for (label, old) in [
+            (
+                lang.pick("流量", "Flow"),
+                lang.pick("ダブ 1 つが足す量", "How much each dab adds"),
+            ),
+            (
+                lang.pick("不透明度", "Opacity"),
+                lang.pick(
+                    "1 本のストロークが覆える上限",
+                    "The most one stroke can cover",
+                ),
+            ),
+        ] {
+            assert!(!tooltip_shows(&mut h, label, old), "{lang:?}: {label}");
+        }
+        // 選択の形のツール
+        apply(&mut h, Action::SelectTool(Tool::SelectRect));
+        for (label, tip) in [
+            (
+                lang.pick("縦横比を固定", "Fixed ratio"),
+                lang.pick("縦横比を固定（Shift）", "Fixed ratio (Shift)"),
+            ),
+            (
+                lang.pick("中心から", "From center"),
+                lang.pick("中心から（Alt）", "From center (Alt)"),
+            ),
+        ] {
+            assert!(tooltip_shows(&mut h, label, tip), "{lang:?}: {tip}");
+        }
+    }
+}

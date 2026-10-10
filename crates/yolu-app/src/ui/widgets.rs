@@ -970,6 +970,11 @@ impl<'a> SliderSpec<'a> {
         self.tooltip = Some(tip);
         self
     }
+    /// 押せない理由があるときだけ、その短い理由をツールチップにする（押せるときは付けない）。
+    pub fn tooltip_reason(mut self, reason: Option<&'a str>) -> Self {
+        self.tooltip = reason;
+        self
+    }
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self

@@ -782,12 +782,10 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                         format!("{n}×")
                     };
                     let tip = if usable {
-                        lang.pick(
-                            "縁のぎざぎざをなめらかにする（MSAA）",
-                            "Smooths jagged edges (MSAA)",
-                        )
+                        format!("{} {label}", lang.pick("アンチエイリアス", "Anti-aliasing"))
                     } else {
                         lang.pick("この GPU は対応していません", "Not supported on this GPU")
+                            .to_owned()
                     };
                     if w::button(
                         ui,
@@ -796,7 +794,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                         &label,
                         shown == *n,
                         usable,
-                        Some(tip),
+                        Some(&tip),
                         None,
                     )
                     .clicked()
@@ -827,21 +825,18 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     "view3d.set.bloom",
                     lang.pick("ブルーム", "Bloom"),
                     d.post.bloom,
-                    Some(lang.pick(
-                        "明るい所（発光など）の周りをにじませる",
-                        "Adds a glow around bright areas such as emission",
-                    )),
+                    None,
                     true,
                 );
                 if bloom != d.post.bloom {
                     app.apply(Action::View3d(Op::Bloom(bloom)));
                 }
                 let mut dragging = false;
-                for (id, label, tip, value, max, op) in [
+                let off = (!d.post.bloom).then(|| lang.pick("ブルームが切です", "Bloom is off"));
+                for (id, label, value, max, op) in [
                     (
                         "bloom_strength",
                         lang.pick("強さ", "Strength"),
-                        lang.pick("にじみの強さ", "Glow amount"),
                         d.post.bloom_strength,
                         display::BLOOM_STRENGTH_MAX,
                         Op::BloomStrength as fn(f32) -> Op,
@@ -849,10 +844,6 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     (
                         "bloom_threshold",
                         lang.pick("しきい値", "Threshold"),
-                        lang.pick(
-                            "これより明るい所がにじむ（1 が白）",
-                            "Brightness above which the glow starts (1 is white)",
-                        ),
                         d.post.bloom_threshold,
                         display::BLOOM_THRESHOLD_MAX,
                         Op::BloomThreshold as fn(f32) -> Op,
@@ -869,7 +860,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                             suffix: "",
                         },
                     )
-                    .tooltip(tip)
+                    .tooltip_reason(off)
                     .enabled(d.post.bloom);
                     let out = w::slider(ui, r, ("view3d.set", id), value, &spec);
                     if out.changed {
@@ -1078,10 +1069,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 lang.pick("既定に戻す", "Reset"),
                 false,
                 true,
-                Some(lang.pick(
-                    "光・環境・影・トーンマッピング・ブルームを既定へ",
-                    "Light, environment, shadows, tone mapping and bloom to defaults",
-                )),
+                None,
                 Some("restart_alt"),
             )
             .clicked()

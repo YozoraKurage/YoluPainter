@@ -758,17 +758,13 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
         PrefChoice::OrbitCenter => OrbitCenter::ALL
             .into_iter()
             .map(|c| {
-                Entry::item(c.label(lang), set(Pref::OrbitCenter(c)))
-                    .radio(s.navigation.orbit == c)
-                    .tooltip(c.tip(lang))
+                Entry::item(c.label(lang), set(Pref::OrbitCenter(c))).radio(s.navigation.orbit == c)
             })
             .collect(),
         PrefChoice::ZoomCenter => ZoomCenter::ALL
             .into_iter()
             .map(|c| {
-                Entry::item(c.label(lang), set(Pref::ZoomCenter(c)))
-                    .radio(s.navigation.zoom == c)
-                    .tooltip(c.tip(lang))
+                Entry::item(c.label(lang), set(Pref::ZoomCenter(c))).radio(s.navigation.zoom == c)
             })
             .collect(),
         PrefChoice::DiskCacheLimit => {

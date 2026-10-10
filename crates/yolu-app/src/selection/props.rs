@@ -5,7 +5,7 @@
 //! - ツールプロパティに無い操作の置き場: すべてを選択・クイックマスクは「選択範囲」メニューとキー、選択を解除・選択範囲を反転はメニュー・キー・
 //!   選択範囲の下のバー、拡張・縮小・境界をぼかすはメニューとバー、境界線・境界をくっきりはメニューだけ
 //!
-//! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
+//! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、ツールチップは名前とキー（押せないときは短い理由）。
 
 use egui::{pos2, vec2, Rect, Ui};
 
@@ -173,12 +173,8 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
             at,
             "options.sel-pen.size",
             b.radius * 2.0,
-            &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px")).tooltip(
-                l.pick(
-                    "ブラシの直径（[ と ]）。ブラシと共通",
-                    "Brush diameter ([ and ]), shared with the brush",
-                ),
-            ),
+            &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
+                .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])")),
         );
         if out.changed {
             b.radius = (out.value / 2.0).max(0.5);
@@ -212,10 +208,6 @@ fn wand_tolerance_spec(l: Lang) -> SliderSpec<'static> {
         255.0,
         NumberFormat::int(""),
     )
-    .tooltip(l.pick(
-        "種の色から、各成分（RGBA）の差がこの値以下の画素を選ぶ",
-        "Selects pixels whose every RGBA component is within this distance of the clicked color",
-    ))
 }
 
 /// 幅いっぱいの帯の 1 つ: 名前・アイコン・点いているか（青）・枠だけか（修飾キーで替わっている間の、選んでいる側）・ツールチップ。
@@ -431,10 +423,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "props.wand.contiguous",
             lang.pick("隣接", "Contiguous"),
             app.sel.contiguous,
-            Some(lang.pick(
-                "種からつながる所だけを選ぶ（切ると、キャンバス全体の合う画素）",
-                "Only pixels connected to the click (off: every matching pixel)",
-            )),
+            None,
             true,
         ) {
             app.sel.contiguous = v;
@@ -445,10 +434,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "props.wand.all-layers",
             lang.pick("全レイヤーを対象", "Sample All Layers"),
             app.sel.all_layers,
-            Some(lang.pick(
-                "選んだレイヤーでなく、チャンネルの合成から選ぶ",
-                "Use the composite instead of the selected layer",
-            )),
+            None,
             true,
         ) {
             app.sel.all_layers = v;
@@ -476,7 +462,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app.brush.radius * 2.0,
             (1.0, 256.0),
             NumberFormat::int(" px"),
-            Some(shared),
+            Some(lang.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])")),
             true,
         ) {
             app.brush.radius = (v / 2.0).max(0.5);
@@ -502,10 +488,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app.brush.opacity * 100.0,
             (0.0, 100.0),
             NumberFormat::int("%"),
-            Some(lang.pick(
-                "足す量の上限（ブラシと共通）",
-                "Largest amount a stroke adds (shared with the brush)",
-            )),
+            Some(shared),
             true,
         ) {
             app.brush.opacity = v / 100.0;
@@ -528,14 +511,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         "sel.antialias",
         lang.pick("アンチエイリアス", "Anti-alias"),
         app.sel.antialias,
-        Some(if aa_applies {
-            lang.pick(
-                "縁を滑らかにする（切ると、縁の量は 0 か 255 だけ）",
-                "Smooth the edge (off: the edge is all or nothing)",
-            )
-        } else {
-            lang.pick("角が丸いときに効く", "Applies to rounded corners")
-        }),
+        (!aa_applies).then(|| lang.pick("角が丸いときに効く", "Applies to rounded corners")),
         aa_applies,
     ) {
         app.sel.antialias = v;
@@ -547,9 +523,10 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "sel.fixed-ratio",
             lang.pick("縦横比を固定", "Fixed ratio"),
             app.sel.fixed_ratio,
-            Some(lang.pick(
-                "常に正方形・正円にする（切っていても、押し始めたあとに Shift を押すあいだは固定）",
-                "Always a square or circle (with it off, Shift pressed after starting holds the ratio)",
+            Some(&crate::shortcuts::named_with_keys(
+                lang,
+                lang.pick("縦横比を固定", "Fixed ratio"),
+                &[Some(super::shape::RATIO_KEY.to_owned())],
             )),
             true,
         ) {
@@ -561,9 +538,10 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "sel.from-center",
             lang.pick("中心から", "From center"),
             app.sel.from_center,
-            Some(lang.pick(
-                "押した点を中心に広げる（切っていても、ドラッグを始めたあとに Alt を押すあいだは中心から）",
-                "Grow around the pressed point (with it off, pressing Alt after you start dragging does the same)",
+            Some(&crate::shortcuts::named_with_keys(
+                lang,
+                lang.pick("中心から", "From center"),
+                &[Some(super::shape::CENTER_KEY.to_owned())],
             )),
             true,
         ) {
@@ -579,10 +557,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app.sel.corner_radius as f32,
             (0.0, 512.0),
             NumberFormat::int(" px"),
-            Some(lang.pick(
-                "長方形の角の半径（短い辺の半分まで）",
-                "Radius of the rectangle's corners (up to half the short side)",
-            )),
+            None,
             true,
         ) {
             app.sel.corner_radius = v.round().clamp(0.0, 512.0) as u32;

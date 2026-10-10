@@ -49,9 +49,26 @@ pub fn hardness_applies(app: &AppState) -> bool {
     tip.image.is_none() && tip.images.is_empty()
 }
 
-/// 欄に付けるツールチップ（無効なら理由、使えるなら普通の説明）。
-fn tip<'a>(off: Option<&'a str>, normal: &'a str) -> Option<&'a str> {
-    Some(off.unwrap_or(normal))
+/// クローンの元を決める入力の文字（組み合わせの表の「動かさずに離す」の行から。「Alt+クリック」。外していれば None）。
+fn clone_source_tip_key(lang: Lang) -> Option<String> {
+    let keymap = crate::keymap::current();
+    let g = keymap
+        .gestures()
+        .iter()
+        .find(|g| g.operation == crate::keymap::Operation::CloneSource && g.click)?;
+    let mac = cfg!(target_os = "macos");
+    let mut parts = Vec::new();
+    if g.ctrl {
+        parts.push(if mac { "Cmd" } else { "Ctrl" });
+    }
+    if g.alt {
+        parts.push("Alt");
+    }
+    if g.shift {
+        parts.push("Shift");
+    }
+    parts.push(lang.pick("クリック", "Click"));
+    Some(parts.join("+"))
 }
 
 /// 2 列のチェック（左右。名前が列に収まらないほど狭ければ縦に 2 段）。変わったほうだけ新しい値を返す。無効なら押せない。
@@ -80,7 +97,7 @@ fn toggle_pair(
         (id, 0),
         left.0,
         left.2,
-        Some(left.1),
+        Some(left.1).filter(|t| !t.is_empty()),
         enabled,
     );
     let b = right.and_then(|right| {
@@ -89,7 +106,15 @@ fn toggle_pair(
         } else {
             rows.row(t::ROW_HEIGHT, 2.0)
         };
-        let b = w::toggle(ui, at, (id, 1), right.0, right.2, Some(right.1), enabled);
+        let b = w::toggle(
+            ui,
+            at,
+            (id, 1),
+            right.0,
+            right.2,
+            Some(right.1).filter(|t| !t.is_empty()),
+            enabled,
+        );
         (b != right.2).then_some(b)
     });
     ((a != left.2).then_some(a), b)
@@ -195,10 +220,7 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         b.spacing * 100.0,
         (1.0, 100.0),
         NumberFormat::int("%"),
-        Some(lang.pick(
-            "ダブの間隔（直径に対する割合）",
-            "Distance between dabs (of the diameter)",
-        )),
+        None,
         true,
     ) {
         b.spacing = v / 100.0;
@@ -211,7 +233,7 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         b.flow * 100.0,
         (0.0, 100.0),
         NumberFormat::int("%"),
-        Some(lang.pick("ダブ 1 つが足す量", "How much each dab adds")),
+        None,
         true,
     ) {
         b.flow = v / 100.0;
@@ -224,10 +246,7 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         b.opacity * 100.0,
         (0.0, 100.0),
         NumberFormat::int("%"),
-        Some(lang.pick(
-            "1 本のストロークが覆える上限",
-            "The most one stroke can cover",
-        )),
+        None,
         true,
     ) {
         b.opacity = v / 100.0;
@@ -241,10 +260,7 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         a.stabilizer as f32,
         (0.0, 200.0),
         NumberFormat::int(" px"),
-        Some(lang.pick(
-            "筆が入力に引かれる糸の長さ。0 で切",
-            "Length of the string that pulls the brush. 0 = off",
-        )),
+        None,
         true,
     ) {
         a.stabilizer = v as f64;
@@ -255,10 +271,7 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         "assist.curve",
         lang.pick("曲線", "Curve"),
         a.curve,
-        Some(lang.pick(
-            "入力の点を滑らかな曲線で結ぶ",
-            "Joins the input points with a smooth curve",
-        )),
+        None,
         true,
     ) {
         a.curve = v;
@@ -282,10 +295,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         "projection.hidden",
         lang.pick("隠れた所も塗る", "Paint hidden areas"),
         p.paint_hidden,
-        Some(lang.pick(
-            "ブラシの円の中で、手前の面に隠れた所にも塗る",
-            "Also paints surfaces hidden behind nearer ones under the brush",
-        )),
+        None,
         free,
     ) {
         p.paint_hidden = v;
@@ -296,10 +306,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         "projection.backfaces",
         lang.pick("裏の面も塗る", "Paint back faces"),
         p.paint_backfaces,
-        Some(lang.pick(
-            "カメラに背を向けた面にも塗る",
-            "Also paints faces that point away from the camera",
-        )),
+        None,
         free,
     ) {
         p.paint_backfaces = v;
@@ -310,10 +317,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         "projection.falloff",
         lang.pick("面の向きで弱める", "Fade by angle"),
         p.angle_falloff,
-        Some(lang.pick(
-            "面が視線に対して傾くほど薄く塗る",
-            "Paints more lightly where the surface turns away from the view",
-        )),
+        None,
         free,
     ) {
         p.angle_falloff = v;
@@ -328,10 +332,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
             p.angle_start,
             (0.0, 90.0),
             NumberFormat::int("°"),
-            Some(lang.pick(
-                "面の法線と視線の角度がこれを超えると弱める",
-                "Angle between the surface normal and the view where fading begins",
-            )),
+            None,
             free,
         ) {
             p.angle_start = v.round();
@@ -346,10 +347,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
             p.angle_end,
             (0.0, 90.0),
             NumberFormat::int("°"),
-            Some(lang.pick(
-                "面の法線と視線の角度がこれ以上なら塗らない",
-                "Angle between the surface normal and the view where painting stops",
-            )),
+            None,
             free,
         ) {
             p.angle_end = v.round();
@@ -365,10 +363,7 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         p.seam_bleed as f32,
         (0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32),
         NumberFormat::int(" px"),
-        Some(lang.pick(
-            "UV アイランドの縁から外へ塗る幅。継ぎ目に線が出ないように",
-            "Paints this far outside the edges of UV islands so seams do not show",
-        )),
+        None,
         free,
     ) {
         p.seam_bleed = v
@@ -503,10 +498,11 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         let response = item.response(app).clone();
         let key = item.key();
         group(ui, rows, item.name(lang));
+        let image_tip = lang.pick("画像の筆先では効きません", "No effect on an image tip");
         let tip_on = if usable {
             item.use_tip(lang)
         } else {
-            lang.pick("画像の筆先では効きません", "No effect on an image tip")
+            image_tip
         };
         if let Some(v) = toggle_row(
             ui,
@@ -520,7 +516,11 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
             item.set_on(app, v);
         }
         let used = usable && on;
-        let off_reason = lang.pick("筆圧を使っていません", "Pen pressure is not used");
+        let off_reason = if usable {
+            lang.pick("筆圧を使っていません", "Pen pressure is not used")
+        } else {
+            image_tip
+        };
         if let Some(v) = percent_row(
             ui,
             rows,
@@ -528,14 +528,7 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
             lang.pick("最小", "Minimum"),
             response.min(),
             (0.0, 1.0),
-            Some(if used {
-                lang.pick(
-                    "筆圧 0 のときの値（元の値に対する割合）",
-                    "The value at zero pressure, as a share of the original",
-                )
-            } else {
-                off_reason
-            }),
+            (!used).then_some(off_reason),
             used,
         ) {
             if let Ok(next) = response.with_min(v) {
@@ -543,10 +536,7 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
             }
         }
         let curve_tip = if used {
-            lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
-                "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
-            )
+            lang.pick("筆圧の曲線", "Pressure curve")
         } else {
             off_reason
         };
@@ -578,10 +568,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         assist.taper_in as f32,
         (0.0, 500.0),
         NumberFormat::int(" px"),
-        Some(lang.pick(
-            "線の始めでこの長さをかけて太くなる",
-            "The stroke grows over this length",
-        )),
+        None,
         true,
     ) {
         assist.taper_in = v as f64;
@@ -594,20 +581,13 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         assist.taper_out as f32,
         (0.0, 500.0),
         NumberFormat::int(" px"),
-        Some(lang.pick(
-            "線の終わりでこの長さをかけて細くなる",
-            "The stroke thins over this length",
-        )),
+        None,
         true,
     ) {
         assist.taper_out = v as f64;
     }
     let k = &mut app.m2.brush.controls;
     group(ui, rows, lang.pick("フェード（描点の数）", "Fade (dabs)"));
-    let fade_tip = lang.pick(
-        "ストロークの始めからこの数のダブで 1 から 0 へ",
-        "Falls from full to nothing over this many dabs",
-    );
     for (id, label, field) in [
         ("fade.size", lang.pick("サイズ", "Size"), &mut k.fade_size),
         (
@@ -625,7 +605,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
             *field as f32,
             (0.0, 2000.0),
             NumberFormat::int(""),
-            Some(fade_tip),
+            None,
             true,
         ) {
             *field = v.round().max(0.0) as u32;
@@ -653,14 +633,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         "tilt.b",
         true,
         (lang.pick("流量", "Flow"), pen, k.tilt_flow),
-        Some((
-            lang.pick("角度", "Angle"),
-            lang.pick(
-                "倒れた向きを筆先の角度に足す",
-                "Adds the lean direction to the tip angle",
-            ),
-            k.tilt_angle,
-        )),
+        Some((lang.pick("角度", "Angle"), "", k.tilt_angle)),
     );
     if let Some(v) = a {
         k.tilt_flow = v;
@@ -675,19 +648,13 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         "rotation.angle",
         lang.pick("角度に足す", "Add to angle"),
         k.rotation_angle,
-        Some(lang.pick(
-                "ペンの軸の回転を筆先の角度に足す。回転を送れないペンとマウスでは 0",
-                "Adds the pen's barrel rotation to the tip angle; 0 for a mouse or a pen without rotation",
-            )),
+        None,
         true,
     ) {
         k.rotation_angle = v;
     }
     group(ui, rows, lang.pick("筆の速さ", "Speed"));
-    let speed = lang.pick(
-        "手ぶれ補正の後の筆の速さ。ペンとマウスの入力の時刻で測る",
-        "Brush speed after the stabilizer, timed from pen and mouse input",
-    );
+    let speed = "";
     let (a, b) = toggle_pair(
         ui,
         rows,
@@ -721,10 +688,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         k.speed_max as f32,
         (100.0, 10000.0),
         NumberFormat::int(" px/s"),
-        Some(lang.pick(
-            "この速さで効きが一杯になる（1 秒あたりの画素）",
-            "The speed at which the effect is complete (pixels per second)",
-        )),
+        None,
         true,
     ) {
         k.speed_max = v as f64;
@@ -787,10 +751,7 @@ fn jitter_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("散布", "Scatter"),
         j.scatter,
         (0.0, 10.0),
-        Some(lang.pick(
-            "位置を直径の何倍までずらすか",
-            "How far dabs spread, in diameters",
-        )),
+        None,
         true,
     ) {
         j.scatter = v;
@@ -803,10 +764,7 @@ fn jitter_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         j.count as f32,
         (1.0, 16.0),
         NumberFormat::int(""),
-        Some(lang.pick(
-            "1 つの間隔に置くダブの数",
-            "Dabs placed at every spacing step",
-        )),
+        None,
         true,
     ) {
         j.count = v.round().clamp(1.0, 16.0) as u32;
@@ -850,7 +808,7 @@ fn texture_fields(
                 lang.pick("深さ", "Depth"),
                 t.depth,
                 (0.0, 1.0),
-                Some(lang.pick("質感の効き", "How much the texture shows")),
+                None,
                 true,
             ) {
                 t.depth = v;
@@ -863,10 +821,7 @@ fn texture_fields(
                 t.scale as f32,
                 (0.05, 16.0),
                 decimals(2),
-                Some(lang.pick(
-                    "質感 1 画素あたりのキャンバスの画素",
-                    "Canvas pixels per texture pixel",
-                )),
+                None,
                 true,
             ) {
                 t.scale = v as f64;
@@ -878,7 +833,7 @@ fn texture_fields(
             "texture.mode",
             lang.pick("モード", "Mode"),
             texture_mode_label(lang, mode),
-            Some(lang.pick("質感の合わせ方", "How the texture combines")),
+            None,
             true,
         ) {
             open_popup(app, ctx, Popup::TextureMode, b, b.width());
@@ -896,10 +851,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
         "dual.enabled",
         lang.pick("デュアルブラシを使う", "Use a dual brush"),
         on,
-        Some(lang.pick(
-            "同じ道筋の 2 つ目の筆先が、主の筆先の覆いを削る",
-            "A second tip along the same path masks the main tip",
-        )),
+        None,
         true,
     ) {
         app.apply(Action::M2Ui(UiOp::Brush(BrushOp::DualEnabled(v))));
@@ -931,10 +883,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
         "dual.mode",
         lang.pick("モード", "Mode"),
         dual_mode_label(lang, mode),
-        Some(lang.pick(
-            "2 つ目の筆先の覆いの合わせ方",
-            "How the second tip combines",
-        )),
+        None,
         true,
     ) {
         open_popup(app, ctx, Popup::DualMode, b, b.width());
@@ -962,7 +911,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
         lang.pick("硬さ", "Hardness"),
         d.hardness,
         (0.0, 1.0),
-        None,
+        (!round).then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
         round,
     ) {
         d.hardness = v;
@@ -1050,10 +999,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         swatch,
         "color.secondary",
         app.color.sub,
-        lang.pick(
-            "背景色（カラーのパネルのサブの色）。描画色との間でゆらぐ",
-            "Background color (the Color panel's secondary color); dabs vary between it and the paint color",
-        ),
+        lang.pick("背景色", "Background"),
         true,
     );
     w::text(
@@ -1072,13 +1018,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("前景/背景", "Fg/Bg jitter"),
         c.foreground_background,
         unit,
-        tip(
-            off,
-            lang.pick(
-                "ダブごとに背景色へ寄る量の上限",
-                "Each dab mixes toward the background by up to this",
-            ),
-        ),
+        off,
         free,
     ) {
         c.foreground_background = v;
@@ -1090,13 +1030,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("色相", "Hue"),
         c.hue,
         unit,
-        tip(
-            off,
-            lang.pick(
-                "色相が ± これ × 180° まで動く",
-                "The hue moves by up to ± this × 180°",
-            ),
-        ),
+        off,
         free,
     ) {
         c.hue = v;
@@ -1108,10 +1042,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("彩度", "Saturation"),
         c.saturation,
         unit,
-        tip(
-            off,
-            lang.pick("彩度が ± これまで動く", "Saturation moves by up to ± this"),
-        ),
+        off,
         free,
     ) {
         c.saturation = v;
@@ -1123,10 +1054,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("明るさ", "Brightness"),
         c.brightness,
         unit,
-        tip(
-            off,
-            lang.pick("明るさが ± これまで動く", "Value moves by up to ± this"),
-        ),
+        off,
         free,
     ) {
         c.brightness = v;
@@ -1138,13 +1066,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("純度", "Purity"),
         c.purity,
         (-1.0, 1.0),
-        tip(
-            off,
-            lang.pick(
-                "−100% で灰色、0 でそのまま、100% で彩度いっぱい",
-                "-100% gray, 0 unchanged, 100% fully saturated",
-            ),
-        ),
+        off,
         free,
     ) {
         c.purity = v;
@@ -1155,13 +1077,7 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         "color.per_tip",
         lang.pick("描点ごとに適用", "Apply per tip"),
         c.per_tip,
-        tip(
-            off,
-            lang.pick(
-                "ダブごとに新しい色。切ると 1 本のストロークに 1 色",
-                "A new color for every dab. Off: one color per stroke",
-            ),
-        ),
+        off,
         free,
     ) {
         c.per_tip = v;
@@ -1243,26 +1159,12 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         usable,
         (
             lang.pick("混ぜる", "Mix"),
-            tip(
-                reason,
-                lang.pick(
-                    "下の色を拾い、描く色と混ぜて置く",
-                    "Picks up the color underneath and mixes it with the paint",
-                ),
-            )
-            .unwrap_or(""),
+            reason.unwrap_or(""),
             mode == MixMode::Mix,
         ),
         Some((
             lang.pick("伸ばす", "Smear"),
-            tip(
-                reason,
-                lang.pick(
-                    "動きの後ろの色をぼかしながら引きずる",
-                    "Drags the color from behind the stroke, softened",
-                ),
-            )
-            .unwrap_or(""),
+            reason.unwrap_or(""),
             mode == MixMode::Smear,
         )),
     );
@@ -1285,13 +1187,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         MixItem::Paint.name(lang),
         mix.paint,
         unit,
-        tip(
-            off_reason,
-            lang.pick(
-                "混ぜた色に占める描く色の割合（100% は下の色を拾わない）",
-                "The share of the paint color in the mix (100% picks up nothing)",
-            ),
-        ),
+        off_reason,
         active,
     ) {
         mix.paint = v;
@@ -1303,13 +1199,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         MixItem::Density.name(lang),
         mix.density,
         unit,
-        tip(
-            off_reason,
-            lang.pick(
-                "置く量（不透明度の天井に掛ける）",
-                "How much is laid down (multiplies the opacity ceiling)",
-            ),
-        ),
+        off_reason,
         active,
     ) {
         mix.density = v;
@@ -1321,13 +1211,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         lang.pick("色延び", "Color stretch"),
         mix.stretch,
         unit,
-        tip(
-            off_reason,
-            lang.pick(
-                "前の打点で拾った色を次の打点へ引きずる割合",
-                "How much of the color picked up by the previous dab is carried to the next",
-            ),
-        ),
+        off_reason,
         active,
     ) {
         mix.stretch = v;
@@ -1339,13 +1223,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         "mix.ground",
         lang.pick("全レイヤーから", "All layers"),
         mix.ground == MixGround::Composite,
-        tip(
-            off_reason,
-            lang.pick(
-                "描くレイヤーだけでなく、見えているレイヤーの重なりから色を拾う",
-                "Picks up from the visible layers together, not only the layer being painted",
-            ),
-        ),
+        off_reason,
         active && !masked,
     ) {
         mix.ground = if v {
@@ -1373,13 +1251,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             &format!("mix.{key}.on"),
             lang.pick("筆圧を使う", "Use pen pressure"),
             on,
-            tip(
-                off_reason,
-                lang.pick(
-                    "筆圧で値を変える（軽いと下の色を拾い、強いと描く色を置く）",
-                    "Pen pressure changes the value (light picks up, firm lays paint)",
-                ),
-            ),
+            off_reason,
             active,
         ) {
             item.set_on(&mut app.m2.brush.mix, v);
@@ -1394,14 +1266,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             lang.pick("最小", "Minimum"),
             response.min(),
             (0.0, 1.0),
-            Some(if used {
-                lang.pick(
-                    "筆圧 0 のときの値（元の値に対する割合）",
-                    "The value at zero pressure, as a share of the original",
-                )
-            } else {
-                pressure_off
-            }),
+            (!used).then_some(pressure_off),
             used,
         ) {
             if let Ok(next) = response.with_min(v) {
@@ -1409,10 +1274,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             }
         }
         let curve_tip = if used {
-            lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
-                "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
-            )
+            lang.pick("筆圧の曲線", "Pressure curve")
         } else {
             pressure_off
         };
@@ -1451,13 +1313,7 @@ fn effect_fields(
         "effect.kind",
         lang.pick("種類", "Type"),
         kind.name(lang),
-        tip(
-            eraser,
-            lang.pick(
-                "色を塗らず、今の画素から読んだ色を混ぜる",
-                "Mixes colors read from the layer instead of painting",
-            ),
-        ),
+        eraser,
         usable,
     ) {
         open_popup(app, ctx, Popup::Effect, b, b.width());
@@ -1494,7 +1350,7 @@ fn effect_fields(
                 lang.pick("強さ", "Strength"),
                 *strength,
                 (0.0, 1.0),
-                tip(reason, lang.pick("流量に掛ける強さ", "Multiplies the flow")),
+                reason,
                 enabled,
             ) {
                 *strength = v;
@@ -1526,13 +1382,7 @@ fn effect_fields(
                 offset.x as f32,
                 (-2048.0, 2048.0),
                 NumberFormat::int(" px"),
-                tip(
-                    offset_tip,
-                    lang.pick(
-                        "コピー元までの横の距離",
-                        "Horizontal distance to the source",
-                    ),
-                ),
+                offset_tip,
                 offset_enabled,
             ) {
                 next.x = v as f64;
@@ -1546,13 +1396,7 @@ fn effect_fields(
                 offset.y as f32,
                 (-2048.0, 2048.0),
                 NumberFormat::int(" px"),
-                tip(
-                    offset_tip,
-                    lang.pick(
-                        "コピー元までの縦の距離（上が正）",
-                        "Vertical distance to the source (up is positive)",
-                    ),
-                ),
+                offset_tip,
                 offset_enabled,
             ) {
                 next.y = v as f64;
@@ -1573,18 +1417,14 @@ fn effect_fields(
                 "effect.clone.all-layers",
                 lang.pick("全レイヤーから", "All layers"),
                 clone.all_layers && !masked,
-                Some(lang.pick(
-                    if masked {
-                        "マスクを描くあいだは、描いているマスクだけを読む"
-                    } else {
-                        "描くレイヤーだけでなく、見えているレイヤーの重なりを読む"
-                    },
-                    if masked {
-                        "While painting a mask, only that mask is read"
-                    } else {
-                        "Read the visible layers together, not only the layer being painted"
-                    },
-                )),
+                eraser.or_else(|| {
+                    masked.then(|| {
+                        lang.pick(
+                            "マスクを描くあいだは、描いているマスクだけを読む",
+                            "While painting a mask, only that mask is read",
+                        )
+                    })
+                }),
                 usable && !masked,
             ) {
                 clone.all_layers = v;
@@ -1596,6 +1436,16 @@ fn effect_fields(
                     .model
                     .as_ref()
                     .is_some_and(|m| app.clone.source_for(&m.geometry).is_some());
+            // 元が無いときの理由は、元を決める入力（キーの表から引く）を添える。消しゴムが理由なら、それを先に出す
+            let aligned_tip = match eraser {
+                Some(reason) => Some(reason.to_owned()),
+                None if !has_source => Some(crate::shortcuts::named_with_keys(
+                    lang,
+                    lang.pick("元を決めると使える", "Available once a source is set"),
+                    &[clone_source_tip_key(lang)],
+                )),
+                None => None,
+            };
             let clone = &mut app.clone;
             if let Some(v) = toggle_row(
                 ui,
@@ -1603,18 +1453,7 @@ fn effect_fields(
                 "effect.clone.aligned",
                 lang.pick("揃える", "Aligned"),
                 clone.aligned,
-                Some(lang.pick(
-                    if has_source {
-                        "前のストロークと同じ位置関係で続ける。切ると、ストロークごとに最初の点が元に重なる"
-                    } else {
-                        "元を決めると使える（Alt を押しながらクリック）"
-                    },
-                    if has_source {
-                        "Keep the offset from the previous stroke. Off: every stroke starts on the source"
-                    } else {
-                        "Available once a source is set (Alt+click)"
-                    },
-                )),
+                aligned_tip.as_deref(),
                 usable && has_source,
             ) {
                 clone.set_aligned(v);
@@ -1741,10 +1580,7 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         lang.pick("硬さ", "Hardness"),
         app.brush.hardness as f64,
         (0.0, 1.0),
-        Some(lang.pick(
-            "丸い筆先の縁の硬さ（画像の筆先は画像の縁のまま）",
-            "Edge hardness of the round tip (an image keeps its own edge)",
-        )),
+        (!hardness_on).then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
         hardness_on,
     ) {
         app.brush.hardness = v as f32;
@@ -1756,10 +1592,7 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         "alpha.anti_alias",
         lang.pick("アンチエイリアス", "Anti-aliasing"),
         anti_alias_label(lang, app.brush.anti_alias),
-        Some(lang.pick(
-            "縁のギザギザをならす強さ",
-            "How much the jagged edge is smoothed",
-        )),
+        None,
         true,
     ) {
         open_popup(app, ctx, Popup::AntiAlias, b, b.width());
@@ -1772,10 +1605,7 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         lang.pick("真円率", "Roundness"),
         tip.roundness,
         (0.01, 1.0),
-        Some(lang.pick(
-            "筆先の角度に沿って潰す（100% で潰さない）",
-            "Squashes the tip along its angle (100% keeps its shape)",
-        )),
+        None,
         true,
     ) {
         tip.roundness = v;
@@ -1788,10 +1618,7 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         tip.angle as f32,
         (-180.0, 180.0),
         NumberFormat::int("°"),
-        Some(lang.pick(
-            "筆先の回転（反時計回り）",
-            "Tip rotation (counterclockwise)",
-        )),
+        None,
         true,
     ) {
         tip.angle = v as f64;
@@ -1802,10 +1629,7 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
         "brush.follow",
         lang.pick("線の向きに従う", "Follow direction"),
         tip.follow_direction,
-        Some(lang.pick(
-            "線の向きを筆先の角度に足す",
-            "Adds the stroke direction to the tip angle",
-        )),
+        None,
         true,
     ) {
         tip.follow_direction = v;

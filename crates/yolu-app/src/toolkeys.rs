@@ -74,24 +74,6 @@ impl ToolKeyMode {
             _ => self.label(lang),
         }
     }
-
-    /// 選ぶ一覧の項目のツールチップ（動きの短い言い方）。
-    pub fn tip(self, lang: Lang) -> &'static str {
-        match self {
-            Self::Tap => lang.pick(
-                "キーを押すと、そのツールに替わります",
-                "The key switches to the tool",
-            ),
-            Self::Hold => lang.pick(
-                "離すと、前のツールに戻ります",
-                "Returns to the previous tool on release",
-            ),
-            Self::TapOrHold => lang.pick(
-                "短く押して離すと、そのツールのまま。長押しか、押している間に描くと、離したとき前のツールに戻ります",
-                "A short press stays on the tool. Holding, or drawing while held, returns to the previous tool on release",
-            ),
-        }
-    }
 }
 
 /// ツールの場所（ツール・ツールの列のどれか・今のブラシ）。戻る先と、切り替えたあとの場所に使う。

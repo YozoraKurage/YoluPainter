@@ -551,7 +551,7 @@ pub fn settings_tabs(
             center.label(lang),
             app.prefs.settings.navigation.orbit == center,
             true,
-            Some(center.tip(lang)),
+            None,
             None,
         )
         .clicked()
@@ -577,7 +577,7 @@ pub fn settings_tabs(
             center.label(lang),
             app.prefs.settings.navigation.zoom == center,
             true,
-            Some(center.tip(lang)),
+            None,
             None,
         )
         .clicked()
@@ -594,9 +594,10 @@ pub fn settings_tabs(
         lang.pick("選んだ所に合わせる", "Frame Selected"),
         false,
         !app.is_stroking() && navigation::selected_bounds(&app.view3d).is_some(),
-        Some(lang.pick(
-            "今のテクスチャセットの面を画面に収めます（3D ビュー上で .）。",
-            "Fit the active texture set in view (. over the 3D View).",
+        Some(&crate::shortcuts::named_with_keys(
+            lang,
+            lang.pick("選んだ所に合わせる", "Frame Selected"),
+            &[crate::shortcuts::key_in("view3d.frame_selected", app.mode)],
         )),
         Some("target"),
     )
