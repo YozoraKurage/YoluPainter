@@ -241,7 +241,6 @@ pub fn show_list_with(
 
 /// 毎フレーム: ウィンドウと仕事の札を描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    crate::shortcuts::show(ctx, app);
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
     if crate::jobs::repaint_needed(app) {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));

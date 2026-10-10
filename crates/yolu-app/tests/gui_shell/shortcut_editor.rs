@@ -1,4 +1,4 @@
-//! ショートカットの設定のウィンドウの画面の試験（egui_kittest。描画は wgpu のソフトの描画）: 欄を押してキーを入れる・外す・やめる、待っている間の
+//! 設定のウィンドウの「ショートカット」の区分の画面の試験（egui_kittest。描画は wgpu のソフトの描画）: 欄を押してキーを入れる・外す・やめる、待っている間の
 //! キーがキーの表・キャンバス・ほかのウィンドウへ漏れない（Esc・Tab・修飾だけ・繰り返し）、ぶつかりの赤と保存の断り、行ごとに既定へ戻す、名前と
 //! キーで探す、マウスの組み合わせ、パイメニューの編集と実行。絵は日英。
 use crate::common;
@@ -10,13 +10,14 @@ use egui_kittest::Harness;
 use yolu_app::keyconfig::GroupKey;
 use yolu_app::keymap::{self, Scope};
 use yolu_app::lang::Lang;
+use yolu_app::prefs::PrefsAction;
 use yolu_app::shortcuts::editor::{Section, Target};
 use yolu_app::state::{Action, PopupKind, Tool};
 use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;
 
-/// ショートカットの設定のウィンドウを開いたアプリ。
+/// 設定のウィンドウを「ショートカット」の区分で開いたアプリ。
 fn editor(lang: Lang) -> H {
     let mut h = app(1280.0, 860.0, 64);
     h.state_mut().state.set_language(lang);
@@ -26,7 +27,13 @@ fn editor(lang: Lang) -> H {
 }
 
 fn window(h: &H) -> Rect {
-    yolu_app::windows::window_rect(&h.ctx, "shortcuts").expect("ウィンドウを描いた")
+    yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウを描いた")
+}
+
+/// 設定のウィンドウを閉じる（キーがキャンバスなどへ届くようにする）。
+fn close_window(h: &mut H) {
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::Close));
+    h.run();
 }
 
 fn section(h: &mut H, s: Section) {
@@ -124,7 +131,7 @@ fn pressing_a_key_cell_takes_the_next_key_and_the_key_works_and_follows_into_the
         vec![trigger(Modifiers::COMMAND, Key::K)]
     );
     // 割り当てたキーで、ブラシに替わる（ウィンドウを閉じて）
-    h.state_mut().state.shortcuts.open = false;
+    close_window(&mut h);
     h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
     h.run();
     key(&h, Key::K, Modifiers::COMMAND);
@@ -159,7 +166,7 @@ fn escape_cancels_backspace_removes_and_keys_taken_while_waiting_do_not_leak() {
     h.run();
     assert!(!capturing(&h));
     assert_eq!(triggers(&h, FLIP), vec![trigger(Modifiers::NONE, Key::H)]);
-    assert!(h.state().state.shortcuts.open, "ウィンドウは閉じない");
+    assert!(h.state().state.prefs.open, "ウィンドウは閉じない");
     assert!(
         h.state().state.doc.selection().is_some(),
         "選択範囲はそのまま"
@@ -220,8 +227,7 @@ fn holding_the_captured_key_does_not_run_the_new_binding_by_repeat() {
     key_event(&h, Key::K, false, false, Modifiers::NONE);
     h.run();
     // 離して押し直せば効く
-    h.state_mut().state.shortcuts.open = false;
-    h.run();
+    close_window(&mut h);
     key(&h, Key::K, Modifiers::NONE);
     h.run();
     assert!(h.state().state.view.flip);
@@ -388,8 +394,7 @@ fn a_new_pie_menu_gets_items_and_a_key_and_opens_and_runs() {
     key(&h, Key::F8, Modifiers::NONE);
     h.run();
     // ウィンドウを閉じて、キャンバスの上で F8 → パイが開き、上の項目で消しゴムに替わる
-    h.state_mut().state.shortcuts.open = false;
-    h.run();
+    close_window(&mut h);
     let c = canvas_rect(&h).center();
     move_to(&h, c);
     h.run();
@@ -521,8 +526,7 @@ fn tool_rows_have_a_mode_box_whose_list_changes_the_mode_and_the_row_reset_retur
         (r.center().y - row.center().y).abs() < 12.0 && w.contains_rect(r)
     });
     // 実際の割り当てで効く（設定のウィンドウを閉じて、E を押している間だけ消しゴム）
-    h.state_mut().state.shortcuts.open = false;
-    h.run();
+    close_window(&mut h);
     key_event(&h, Key::E, true, false, Modifiers::NONE);
     h.run();
     assert_eq!(h.state().state.tool, Tool::Eraser);

@@ -2,18 +2,18 @@
 
 [日本語](../GUIDE_KEYS.md)
 
-A list of keyboard, mouse and pen controls. You can view and change the keys and mouse combinations under Help → Keyboard Shortcuts in the app, or with "Shortcuts…" in the Settings window (see "Change shortcuts" below). The tables under "Default assignments" below are made from the app's table and show the assignments before any change. On Mac, read `Ctrl` in these tables as `Command` (menus show `Cmd` too). The one exception is `Ctrl+Tab` for the mode pie menu, which is `Control` on Mac as well.
+A list of keyboard, mouse and pen controls. You can view and change the keys and mouse combinations in the Keyboard Shortcuts category of Edit → Settings… in the app (see "Change shortcuts" below). The tables under "Default assignments" below are made from the app's table and show the assignments before any change. On Mac, read `Ctrl` in these tables as `Command` (menus show `Cmd` too). The one exception is `Ctrl+Tab` for the mode pie menu, which is `Control` on Mac as well.
 
 ## Change shortcuts
 
-Help → Keyboard Shortcuts (also "Shortcuts…" in the Settings window, Edit → Settings…) shows the keys and mouse combinations and lets you change them. Choose a section on the left (Everywhere & View / Paint / Edit / Pose / During an Operation / Pie Menus); the table on the right shows each action's name, keys and mouse combination.
+Press Keyboard Shortcuts on the left of Edit → Settings… (`Ctrl+,`) to view the keys and mouse combinations and change them. Choose one of the sections listed below it (Everywhere & View / Paint / Edit / Pose / During an Operation / Pie Menus); the table on the right shows each action's name, keys and mouse combination.
 
 | Action | Input |
 |---|---|
 | Change a key | Click a key cell and press the key you want (modifier keys alone do not set it). The `+` cell adds another key. Keys that work while held (such as `Space`) and keys during an operation are a single key without modifiers |
 | Cancel / remove the key | `Esc` / `Backspace` while it waits |
 | Change a mouse combination | Click a mouse cell, then press the button you want (left, right, middle, back or forward) on that cell while holding the modifier keys. Both the button and the modifiers change. The row for the stencil rotation steps changes only its modifiers (a press without modifiers does not set it) |
-| Search by name / find by key | Type a name in the field at the top / click "Find by Key" and press the key (only rows with that key are shown, from every section; click again to show all) |
+| Search by name / find by key | Type a name in the field above the table / click "Find by Key" and press the key (only rows with that key are shown, from every section; click again to show all). The Search Settings field at the very top of the Settings window searches the other settings and does not narrow this table |
 | Reset one row / reset everything | The mark at the right end of a changed row / "Reset to Default" at the bottom |
 | Export / import | "Export…" / "Import…" at the bottom (keys, mouse combinations and pie menus together. Importing replaces the current changes; unknown actions are skipped and their number is reported) |
 

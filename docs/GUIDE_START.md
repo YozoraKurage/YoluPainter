@@ -115,4 +115,4 @@ Windows では OS のタイトルバーを使わず、メニューバーの右�
 - 描く: [GUIDE_PAINT.md](GUIDE_PAINT.md)
 - 選択と変形: [GUIDE_SELECT.md](GUIDE_SELECT.md)
 - レイヤーとチャンネル: [GUIDE_LAYERS.md](GUIDE_LAYERS.md)
-- キーの一覧: [GUIDE_KEYS.md](GUIDE_KEYS.md)（アプリの「ヘルプ → ショートカット」でも見られます）
+- キーの一覧: [GUIDE_KEYS.md](GUIDE_KEYS.md)（アプリの「編集 → 設定…」の「ショートカット」でも見られます）

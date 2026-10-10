@@ -115,4 +115,4 @@ Hover over the memory figure at the right end of the status bar to see the break
 - Painting: [GUIDE_PAINT.md](GUIDE_PAINT.md)
 - Selection and transform: [GUIDE_SELECT.md](GUIDE_SELECT.md)
 - Layers and channels: [GUIDE_LAYERS.md](GUIDE_LAYERS.md)
-- Keyboard shortcuts: [GUIDE_KEYS.md](GUIDE_KEYS.md) (also in the app under Help → Keyboard Shortcuts)
+- Keyboard shortcuts: [GUIDE_KEYS.md](GUIDE_KEYS.md) (also in the app under Edit → Settings… → Keyboard Shortcuts)

@@ -1,4 +1,4 @@
-//! 全体の筆圧の調整（表示 → 筆圧の調整…）: 設定の下限・上限・曲線がペンの筆圧に効いて（マウスは 1 のまま）ブラシへ渡ること、ウィンドウが枠の中の
+//! 全体の筆圧の調整（編集 → 設定… の「ペン」）: 設定の下限・上限・曲線がペンの筆圧に効いて（マウスは 1 のまま）ブラシへ渡ること、「ペン」の区分が枠の中の
 //! ペンの点を集めて分布から調整を決めること、設定の保存と読み直し、日英。実機のペンは無いので、`PenSample` を差し込む。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
@@ -163,11 +163,12 @@ fn a_touch_force_goes_through_the_adjustment_like_a_pen_point() {
 
 // ───────── ウィンドウ: 枠の中で描いて、分布から決める ─────────
 
+/// 筆圧の調整を開く（設定のウィンドウが「ペン」の区分で開く）。
 fn open_window(h: &mut H) {
-    let at = menu_title(h, "表示").center();
-    click(h, at);
-    let item = popup_item(h, "筆圧の調整…").center();
-    click(h, item);
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::Open));
+    h.run();
 }
 
 /// 試験の設定の置き場（`target/pressure-tests/<pid>/<tag>`）。試験が落ちても Drop で消える。pid のフォルダと `pressure-tests` は、使っている
@@ -263,10 +264,10 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path);
-    assert!(!h.state().state.pressure.open);
+    assert!(!h.state().state.pressure.open());
     open_window(&mut h);
-    assert!(h.state().state.pressure.open);
-    let rect = window::last_rect(&h.ctx).expect("ウィンドウが開いている");
+    assert!(h.state().state.pressure.open());
+    let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
     assert!(rect.contains_rect(frame_of(&h)));
     // 枠の外（キャンバスの上）に描いても集めない・キャンバスにも描かない
     let canvas = canvas_rect(&h);
@@ -332,7 +333,7 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     // 閉じると線を捨てる。次の起動は、書いた調整で始まる
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(!h.state().state.pressure.open);
+    assert!(!h.state().state.pressure.open());
     assert!(h.state().state.pressure.strokes.is_empty());
     let saved = h.state().state.prefs.settings.pressure.clone();
     drop(h);
@@ -396,7 +397,7 @@ fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_c
     // 閉じると線を捨て、そのあとの枠だった所の点も集めない
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(!h.state().state.pressure.open);
+    assert!(!h.state().state.pressure.open());
     touch(&mut h, frame.center(), egui::TouchPhase::Start, Some(0.7));
     touch(&mut h, frame.center(), egui::TouchPhase::End, None);
     assert!(h.state().state.pressure.strokes.is_empty());
@@ -680,7 +681,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     let mid = low(&h);
     h.state_mut()
         .state
-        .apply(Action::Pressure(PressureAction::Close));
+        .apply(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
     h.step();
     h.run();
     assert!(!h.state().state.pressure.dragging);
@@ -691,11 +692,10 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
 
 // ───────── 集める線の上限 ─────────
 
-/// 枠を決めた状態のウィンドウ（開いている）。枠は画面の点で (100, 100) から 380 × 96。
+/// 枠を決めた状態（描く枠が出ている）。枠は画面の点で (100, 100) から 380 × 96。
 fn window_state() -> (AppState, egui::Rect) {
     let mut s = AppState::new(64, 64);
     let frame = egui::Rect::from_min_size(pos2(100.0, 100.0), vec2(380.0, 96.0));
-    s.pressure.open = true;
     s.pressure.frame = Some(frame);
     (s, frame)
 }
@@ -831,7 +831,7 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
 
 /// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
-    let rect = window::last_rect(&h.ctx).expect("ウィンドウが開いている");
+    let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
     h.event(egui::Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");

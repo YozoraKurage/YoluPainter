@@ -33,6 +33,7 @@ mod psd_drop;
 mod recovery_ui;
 mod save_close;
 mod scroll;
+mod settings_window;
 mod shelf;
 mod shortcut_editor;
 mod subtools;

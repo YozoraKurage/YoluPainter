@@ -900,7 +900,7 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
             .any(|w| l.text.contains(w))
         })
         .filter(|l| !REASONS.contains(&l.text.as_str()))
-        .filter(|l| !(l.file == "prefs.rs" && SETTING_VALUES.contains(&l.text.as_str())))
+        .filter(|l| !(l.file == "prefs/mod.rs" && SETTING_VALUES.contains(&l.text.as_str())))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text))
         .collect();
     assert!(

@@ -48,13 +48,6 @@ pub fn movement_keys() -> [Key; 4] {
     std::array::from_fn(|i| keymap::key_of(small[i].command).unwrap_or(small[i].key))
 }
 
-pub fn menu_entry(lang: Lang) -> Entry<Action> {
-    Entry::item(
-        lang.pick("ショートカット", "Keyboard Shortcuts"),
-        Action::ShowShortcuts,
-    )
-}
-
 fn key_name(key: Key) -> &'static str {
     match key {
         Key::Num0 => "0",
@@ -253,11 +246,6 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
 #[cfg(test)]
 fn binding_label(app: &AppState, binding: &Binding) -> Option<String> {
     commands::find(binding.command).and_then(|c| c.label(app))
-}
-
-/// ショートカットの設定のウィンドウ（`editor`）。
-pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    editor::show(ctx, app);
 }
 
 #[cfg(test)]
@@ -782,20 +770,26 @@ mod tests {
     }
 
     #[test]
-    fn menu_and_window_do_not_change_the_document() {
+    fn opening_the_shortcuts_does_not_change_the_document_and_is_not_in_the_help_menu() {
         let mut app = AppState::new(32, 32);
-        assert!(crate::shell::menu_entries(&app, crate::shell::HELP_MENU)
-            .iter()
-            .any(|entry| matches!(
-                entry,
-                Entry::Item {
-                    action: Action::ShowShortcuts,
-                    ..
-                }
-            )));
+        // 入口は設定のウィンドウの「ショートカット」の区分。ヘルプのメニューには無い
+        for lang in [Lang::Ja, Lang::En] {
+            app.lang = lang;
+            assert!(!crate::shell::menu_entries(&app, crate::shell::HELP_MENU)
+                .iter()
+                .any(|entry| matches!(
+                    entry,
+                    Entry::Item {
+                        action: Action::ShowShortcuts,
+                        ..
+                    }
+                )));
+        }
         let epoch = app.doc_epoch;
+        assert!(!app.prefs.open);
         app.apply(Action::ShowShortcuts);
-        assert!(app.shortcuts.open);
+        assert!(app.prefs.open);
+        assert!(app.prefs.shows(crate::prefs::Category::Shortcuts));
         assert_eq!(epoch, app.doc_epoch);
         assert!(!app.can_undo());
     }

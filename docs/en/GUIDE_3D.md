@@ -18,7 +18,7 @@ In orthographic, near and far parts look the same size, and the brush circle pai
 
 ## Open a model
 
-While there is no model, the 3D view shows only "Load Test Cube". Open an FBX with View → "Open an FBX in the 3D View…", "Open FBX" in the Pose panel, or by dropping a .fbx onto the window. To open from Unity, see Live Link at the end of this page.
+While there is no model, the 3D view shows only "Load Test Cube". Open an FBX with File → "Open an FBX in the 3D View…", "Open FBX" in the Pose panel, or by dropping a .fbx onto the window. To open from Unity, see Live Link at the end of this page.
 
 Each material of the model gets a texture set, and you switch between them in the Texture Sets panel. You can paint only on the faces of the current set's material.
 
@@ -113,7 +113,9 @@ The pose of the project's model is saved in the `.ylp` and comes back when the s
 
 ## Bake mesh maps
 
-View → "Bake Mesh Maps…" bakes, from the model in the 3D view and for each checked texture set, World Normal, Position, Ambient Occlusion (AO), Curvature, Thickness, Tangent Normal, Height, ID, Bent Normal and Opacity. It runs in another thread with progress and cancel.
+The "Bake Mesh Maps…" button (flame icon) in the bar at the bottom of the Texture Sets panel (when the bar is too narrow and the button is hidden, "Bake Mesh Maps…" in the right-click menu of a set row) bakes, from the model in the 3D view and for each checked texture set, World Normal, Position, Ambient Occlusion (AO), Curvature, Thickness, Tangent Normal, Height, ID, Bent Normal and Opacity. It runs in another thread with progress and cancel.
+
+"Bake Mesh Maps…" is also in the table under Everywhere & View in Keyboard Shortcuts as an action with no default key, so you can assign a key to it or put it in a pie menu ([GUIDE_KEYS.md](GUIDE_KEYS.md)).
 
 Check the maps in the list on the left and press "Bake Checked Maps". The state at the right of each row (Current, Stale, Not baked, Unchecked) and the eye icon show a baked map over the 2D canvas. "Common Settings" has padding and antialiasing, and "Bake On" is Auto, GPU or CPU.
 

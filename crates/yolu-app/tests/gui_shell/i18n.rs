@@ -1187,21 +1187,11 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
 
 fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu() {
     use egui_kittest::kittest::NodeT;
-    use yolu_app::prefs;
+    use yolu_app::prefs::{self, Category, PrefsAction};
     use yolu_io::BackupKeep;
-    // 「ペン」の節（macOS のタブレットの筆圧、Windows のペンの入力。どの OS でも出るのはどちらか 1 行）を出しても、1280 × 800 に
-    // 最後の行まで収まる
-    for (lang, (tablet, pen_input)) in Lang::ALL.into_iter().flat_map(|lang| {
-        [
-            (lang, (false, false)),
-            (lang, (true, false)),
-            (lang, (false, true)),
-        ]
-    }) {
-        let pen = tablet || pen_input;
+    // 退避の欄は「ファイル」の区分にある。1280 × 800 に最後の行まで収まる
+    for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        h.state_mut().state.prefs.tablet_row = tablet;
-        h.state_mut().state.prefs.pen_input_row = pen_input;
         let (view, item) = (lang.pick("編集", "Edit"), lang.pick("設定…", "Settings…"));
         let (title, label, keep_all) = (
             lang.pick("設定", "Settings"),
@@ -1221,6 +1211,21 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0)).contains_rect(rect),
             "{rect:?}"
         );
+        // 初めは「一般」の区分で、言語の名前が切れずに出る
+        let shown = texts_inside(&h, rect);
+        for want in [lang.pick("日本語", "English"), lang.pick("一般", "General")] {
+            assert!(
+                shown.iter().any(|t| t == want),
+                "{lang:?}: {want} {shown:?}"
+            );
+        }
+        if lang == Lang::En {
+            assert_english(&h, "settings window", &[]);
+        }
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::Choose(Category::Files)));
+        h.run();
         // 退避の欄の文字は、欄の名前・チェックの名前・値だけ（説明文・注記・開発用の数を置かない。閉じるは絵とツールチップ）。
         // 値は、画面に出している数（すべて残す間は、最後に選んだ数）。ウィンドウには、ほかの設定の欄もある
         let only = |h: &Harness<'_, YoluApp>, value: &str, what: &str| {
@@ -1228,7 +1233,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             for want in [title, label, keep_all, value] {
                 assert!(
                     shown.iter().any(|t| t == want),
-                    "{lang:?} ペンの節={pen} {what}: {want} {shown:?}"
+                    "{lang:?} {what}: {want} {shown:?}"
                 );
             }
             let near: Vec<&String> = shown
@@ -1243,20 +1248,6 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             assert_eq!(near.len(), 2, "{lang:?} {what}: {near:?}");
         };
         only(&h, "10", "開いた直後");
-        // 言語の行の右のボタンがあっても、言語の名前は切れずに出る
-        let shown = texts_inside(&h, rect);
-        for want in [
-            lang.pick("日本語", "English"),
-            lang.pick("ショートカット…", "Shortcuts…"),
-        ] {
-            assert!(
-                shown.iter().any(|t| t == want),
-                "{lang:?}: {want} {shown:?}"
-            );
-        }
-        if lang == Lang::En {
-            assert_english(&h, "settings window", &[]);
-        }
         // 「すべて残す」は入っている。外すと最後に選んだ数（まだ無ければ 10）になり、入れ直すとすべてに戻る
         let checked = |h: &Harness<'_, YoluApp>| {
             format!(
@@ -1320,7 +1311,7 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
 
 fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count_gpu(
 ) {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-drag");
     let path = dir.join("settings.conf");
@@ -1330,7 +1321,9 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
         h.state().state.prefs.settings.backups,
         BackupKeep::Count(10)
     );
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
     h.run();
     let slider = h
         .get_by_role_and_label(egui::accesskit::Role::Slider, "Backups to keep")
@@ -1443,7 +1436,7 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart() {
 }
 
 fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-remembered");
     let path = dir.join("settings.conf");
@@ -1463,7 +1456,9 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
         );
         h.state_mut().state.prefs.tablet_row = tablet;
         h.state_mut().state.prefs.pen_input_row = pen_input;
-        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
         h.run();
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all")
             .click();
@@ -1836,10 +1831,12 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu
 
 #[test]
 fn live_link_accepting_can_be_toggled_in_both_languages() {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
         h.run();
         let label = lang.pick(
             "Unity の Live Link を受け付ける",

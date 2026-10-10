@@ -224,4 +224,4 @@ cargo test -p yolu-app --test gui_shell recovery_ui::   ウィンドウ（使う
 ### ツールの登録とキー（docs/SUBTOOLS.md）
 
 ツールの名前・キー・サブツールの種類・ツールプロパティ・オプションバー・キャンバスと 3D ビューの入力は、`crates/yolu-app/src/tools/` のツールの表（`TOOLS`）が持ちます。
-キーボードの割り当て・マウスと修飾キーの組み合わせ・ビューの中のキーは `crates/yolu-app/src/keymap.rs` の表が持ち、キーの処理もヘルプの「ショートカット」のウィンドウも同じ表を読みます。
+キーボードの割り当て・マウスと修飾キーの組み合わせ・ビューの中のキーは `crates/yolu-app/src/keymap.rs` の表が持ち、キーの処理も設定のウィンドウの「ショートカット」の区分も同じ表を読みます。

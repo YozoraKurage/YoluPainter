@@ -237,6 +237,13 @@ pub static COMMANDS: &[Command] = &[
     press("file.save_as", || Action::SaveProjectAsDialog),
     press("app.quit", || Action::Quit),
     press("app.settings", || Action::Prefs(PrefsAction::Open)),
+    // メッシュマップをベイクするウィンドウ（既定のキーは無い。割り当てると、パイメニューからも呼べる。入口は、テクスチャセットの帯のボタンと、セットの右クリック）
+    no_repeat(press_named(
+        "bake.open",
+        "メッシュマップをベイク…",
+        "Bake Mesh Maps…",
+        || Action::Bake(crate::bake::BakeAction::OpenWindow),
+    )),
     // 編集
     press("edit.undo", || Action::Undo),
     press("edit.redo", || Action::Redo),
@@ -868,8 +875,9 @@ mod tests {
             );
         }
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
-        // その中身（設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 12] = [
+        // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）
+        const NO_DEFAULT_KEY: [&str; 13] = [
+            "bake.open",
             "tool.liquify",
             "mode.paint",
             "mode.edit",
@@ -932,11 +940,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 83);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 84);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 121);
+        assert_eq!(COMMANDS.len(), 122);
     }
 }

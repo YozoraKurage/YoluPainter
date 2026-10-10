@@ -19,7 +19,7 @@ a folder on the same PC; no native library is used (specification: [LIVELINK.md]
    files are not sent back to Unity.
 4. Save your work as `.ylp`. The model opened over Live Link (the FBX files, renderer and material bindings, and pose) is kept in the `.ylp` and reopens without Unity.
 
-The standalone application opens models from Unity while "Accept Live Link from Unity" in Edit → Settings… (Ctrl+,) is on (the default; starting with `--livelink` always
+The standalone application opens models from Unity while "Accept Live Link from Unity" under Live Link & Commands in Edit → Settings… (Ctrl+,) is on (the default; starting with `--livelink` always
 accepts). The icon at the right end of the menu bar shows the state (not accepting, accepting, a document opened from Unity, something did not fit, folder unavailable); press it to
 see the state as "Live Link: Accepting" and the open object as "Unity: name", and to switch between Accept and Don't accept. The Live Link item in the File menu switches it too.
 

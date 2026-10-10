@@ -143,6 +143,7 @@ fn settings(lang: Lang) -> Harness<'static, AppState> {
     let mut app = AppState::new(32, 32);
     app.lang = lang;
     app.prefs.open = true;
+    app.prefs.category = yolu_app::prefs::Category::View3d;
     let mut ready = false;
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(900.0, 950.0))
@@ -886,7 +887,9 @@ fn dragging_in_the_uv_color_window_writes_the_settings_once_on_release() {
     let path = dir.join("settings.conf");
     std::fs::write(&path, "language=en\n").unwrap();
     let mut h = app_with_settings(&path);
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::OpenAt(
+        yolu_app::prefs::Category::View3d,
+    )));
     h.run();
     h.get_by_role_and_label(Role::ColorWell, "UV wireframe color and opacity")
         .click();

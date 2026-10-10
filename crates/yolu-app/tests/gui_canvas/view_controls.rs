@@ -1063,7 +1063,7 @@ fn an_alt_pressed_after_a_brush_stroke_began_does_not_turn_it_into_a_rotation() 
 fn the_default_key_tables_name_the_new_operations_in_both_languages() {
     use yolu_app::lang::Lang;
     for lang in Lang::ALL {
-        // アプリの表から作る、既定の割り当ての表（ショートカットの設定のウィンドウ・文書と同じ表）
+        // アプリの表から作る、既定の割り当ての表（設定のウィンドウの「ショートカット」の区分・文書と同じ表）
         let tables = yolu_app::shortcuts::guide::tables(lang);
         let has = |line: &str| tables.lines().any(|l| l == line);
         let left = lang.pick("左ボタン", "Left Button");

@@ -111,12 +111,12 @@ fn cube_app(size: u32) -> Harness<'static, YoluApp> {
     h
 }
 
-/// メニューから「メッシュマップをベイク…」を開く。
+/// 「メッシュマップをベイク…」を開く（入口はテクスチャセットの帯のボタン。ボタンの押し方は `sets` の試験が見る）。
 fn open_bake_window(h: &mut Harness<'_, YoluApp>) {
-    let at = menu_title(h, "表示").center();
-    click(h, at);
-    let at = popup_item(h, "メッシュマップをベイク…").center();
-    click(h, at);
+    h.state_mut()
+        .state
+        .apply(Action::Bake(yolu_app::bake::BakeAction::OpenWindow));
+    h.run();
     assert!(h.state().state.bake.window.is_some());
 }
 

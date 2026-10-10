@@ -476,7 +476,7 @@ pub enum PopupKind {
     /// 編集・ポーズのモードの G/R/S の途中（中身は `AppState::objects`。開いている間は下の入力を止める）。
     Transform,
     /// ショートカットの設定で、次に押すキー・マウスの組み合わせを待っている間（中身は `AppState::shortcuts`。キーの表・キャンバス・3D ビューの
-    /// キーと Esc を止める。描くのはショートカットのウィンドウ）。
+    /// キーと Esc を止める。描くのは設定のウィンドウの「ショートカット」の区分）。
     KeyCapture,
     /// ショートカットの設定の、ツールのキーの動き方を選ぶ一覧（ツールを選ぶ操作の ID）。
     ToolKeyMode(&'static str),
@@ -590,7 +590,7 @@ pub enum Action {
     Update(crate::update::UpdateAction),
     /// 設定のウィンドウと、設定の値の選び。
     Prefs(crate::prefs::PrefsAction),
-    /// 筆圧の調整のウィンドウ（全体の筆圧の下限・上限・曲線）。
+    /// 筆圧の調整（設定の「ペン」。全体の筆圧の下限・上限・曲線）。
     Pressure(crate::pen::window::PressureAction),
     /// 復旧（世代の一覧のウィンドウ・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
@@ -909,7 +909,7 @@ pub struct AppState {
     /// 重なった UV の図（表示と塗りの知らせ）。
     pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
     pub shortcuts: crate::shortcuts::ShortcutWindow,
-    /// 筆圧の調整のウィンドウ（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
+    /// 筆圧の調整（設定の「ペン」。枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
     pub pressure: crate::pen::window::PressureWindow,
     /// 今描いているウィンドウのペンの点のうち、OS に押しを奪われて補った離し（本物の離しではない）のポインタの番号。ウィンドウごとのパスの始めに、そのウィンドウの
     /// ペンの受け口（`PenInput::drain_with_lost`）から入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
@@ -935,7 +935,7 @@ pub struct AppState {
     pub pie: crate::pie::PieState,
     /// 編集・ポーズのモードの物（選んだ物・隠した物・G/R/S の途中・スナップ）。
     pub objects: crate::objects::ObjectsState,
-    /// 利用者のキー・マウス・パイの設定（ショートカットの設定のウィンドウが変える。keymap.json）。
+    /// 利用者のキー・マウス・パイの設定（設定のウィンドウの「ショートカット」の区分が変える。keymap.json）。
     pub keys: crate::keyconfig::KeyConfig,
     /// ツールのキーを押している間だけの切り替え（離したら戻す前のツール。保存しない）。
     pub temp_tool: crate::toolkeys::TempTool,
@@ -1325,7 +1325,9 @@ impl AppState {
             Action::ToggleUvOverlap => {
                 self.prefs.settings.uv_overlap = !self.prefs.settings.uv_overlap
             }
-            Action::ShowShortcuts => self.shortcuts.open = true,
+            Action::ShowShortcuts => self.prefs_apply(crate::prefs::PrefsAction::OpenAt(
+                crate::prefs::Category::Shortcuts,
+            )),
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),

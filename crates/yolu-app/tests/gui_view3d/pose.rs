@@ -581,8 +581,8 @@ fn opening_an_fbx_asks_for_the_file_window_instead_of_opening_one() {
     );
     assert!(!h.state().state.view3d.pose.is_loading());
     h.state_mut().state.dialog_request = None;
-    // メニュー
-    let at = menu_title(&h, "表示").center();
+    // メニュー（ファイル）
+    let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let at = popup_item(&h, "3D ビューに FBX を開く…").center();
     click(&mut h, at);

@@ -428,7 +428,8 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         .filter_map(|e| e.label().map(str::to_owned))
         .collect();
     assert!(!view.iter().any(|l| l.contains("パネルの並び")), "{view:?}");
-    assert!(view.iter().any(|l| l.contains("筆圧の調整")));
+    // 筆圧の調整は設定のウィンドウの「ペン」へ移した
+    assert!(!view.iter().any(|l| l.contains("筆圧の調整")), "{view:?}");
     // タブの右クリック: メインウィンドウのタブは「別ウィンドウで開く」、別ウィンドウのただ 1 つのタブは「ドックに戻す」、ほかのタブもあるウィンドウなら両方
     let names = |app: &AppState, tab: Tab| -> Vec<String> {
         shell::popup_entries(app, yolu_app::state::PopupKind::DockTab(tab))

@@ -5,12 +5,11 @@ use egui::{pos2, vec2, Rect, Sense, Ui};
 
 use yolu_core::export::ExportTemplate;
 
-use crate::bake::BakeAction;
 use crate::export::ExportAction;
 use crate::lang::Lang;
 use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
 use crate::livelink::LinkIndicator;
-use crate::m2::{Edit, UiOp};
+use crate::m2::Edit;
 use crate::pathtool::PathAction;
 use crate::psd::{PsdAction, PsdTarget};
 use crate::shelf::ShelfOp;
@@ -135,6 +134,12 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
                 .enabled(idle && app.recovery.is_enabled())),
+                // 3D のモデルを開く入口。試しの立方体・人形は試験の口（`Action::LoadDemoModel`・`PoseAction::LoadFigure`）で、メニューには置かない
+                Entry::item(
+                    l.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…"),
+                    Action::Pose(PoseAction::OpenFbx),
+                )
+                .enabled(free),
                 Entry::Separator,
                 why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
                     .command_key("file.save")
@@ -277,12 +282,6 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            // 試しの立方体・人形は試験の口（`Action::LoadDemoModel`・`PoseAction::LoadFigure`）で、メニューには置かない
-            Entry::item(
-                l.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…"),
-                Action::Pose(PoseAction::OpenFbx),
-            )
-            .enabled(free),
             crate::mode::view_menu_entry(app),
             Entry::item(
                 l.pick(
@@ -292,21 +291,6 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Action::FrameModel,
             )
             .enabled(free && app.view3d.model.is_some()),
-            Entry::item(
-                l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
-                Action::Bake(BakeAction::OpenWindow),
-            ),
-            Entry::Separator,
-            Entry::Heading(l.pick("言語", "Language").to_owned()),
-            Entry::item(Lang::Ja.name(), Action::M2Ui(UiOp::Language(Lang::Ja)))
-                .radio(l == Lang::Ja),
-            Entry::item(Lang::En.name(), Action::M2Ui(UiOp::Language(Lang::En)))
-                .radio(l == Lang::En),
-            Entry::Separator,
-            Entry::item(
-                l.pick("筆圧の調整…", "Pen Pressure…"),
-                Action::Pressure(crate::pen::window::PressureAction::Open),
-            ),
         ],
         WINDOW_MENU => crate::detach::menu::window_entries(app),
         _ => help_entries(app),
@@ -322,7 +306,6 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     );
     if !app.update.enabled() {
         return vec![
-            crate::shortcuts::menu_entry(l),
             Entry::item(
                 l.pick("ログのフォルダを開く", "Open Log Folder"),
                 Action::OpenLogFolder,
@@ -346,28 +329,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(!busy),
     );
-    let on = app.update.preference() == crate::update::Preference::On;
-    entries.push(
-        Entry::item(
-            l.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
-            Action::Update(UpdateAction::SetCheckOnStartup(!on)),
-        )
-        .checked(on),
-    );
-    let beta = app.update.beta();
-    entries.push(
-        Entry::item(
-            l.pick("試験版を使う", "Use Beta Versions"),
-            Action::Update(UpdateAction::SetBeta(!beta)),
-        )
-        .checked(beta)
-        .tooltip(l.pick(
-            "正式版より前の試験版も、更新の候補にします。切ると正式版だけを見ます",
-            "Also offers beta versions as updates. When off, only stable releases are offered",
-        )),
-    );
     entries.push(Entry::Separator);
-    entries.push(crate::shortcuts::menu_entry(l));
     entries.push(Entry::item(
         l.pick("ログのフォルダを開く", "Open Log Folder"),
         Action::OpenLogFolder,
@@ -444,6 +406,13 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     },
                     Action::ToggleSetVisible(uid),
                 ),
+                Entry::Separator,
+                // 下の帯のベイクのボタンは、帯が狭いと隠れる。ここからも開ける（ベイクのウィンドウで、焼くセットを選ぶ）
+                Entry::item(
+                    l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                    Action::Bake(crate::bake::BakeAction::OpenWindow),
+                )
+                .command_key("bake.open"),
                 Entry::Separator,
                 Entry::item(
                     l.pick("消す…", "Remove…"),

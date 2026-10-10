@@ -17,7 +17,7 @@ cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
 .\target\x86_64-pc-windows-msvc\release\yolupainter.exe
 ```
 
-Pen tablets are read through Windows Ink by default, so enable Windows Ink in the tablet driver too (to read them through WinTab instead, choose it with Pen input under Pen in Edit → Settings…). The pen buttons in the brush's Tool Properties select which settings respond to pressure. If the pen's pressure is too strong or too weak, adjust it in View → Pen Pressure….
+Pen tablets are read through Windows Ink by default, so enable Windows Ink in the tablet driver too (to read them through WinTab instead, choose it with Pen input under Pen in Edit → Settings…). The pen buttons in the brush's Tool Properties select which settings respond to pressure. If the pen's pressure is too strong or too weak, adjust it in Pen Pressure under Pen in Edit → Settings….
 
 ## Mac (experimental)
 
@@ -28,7 +28,7 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
-For pen tablets (Wacom, XP-Pen and others), the app reads the pressure, tilt, eraser end and side buttons that the driver sends as standard macOS events (experimental). No manufacturer SDK is used. If something is off, turn off Tablet pressure (experimental) under Pen in Edit → Settings…, and the pen draws like a mouse. If the pen's pressure is too strong or too weak, adjust it in View → Pen Pressure….
+For pen tablets (Wacom, XP-Pen and others), the app reads the pressure, tilt, eraser end and side buttons that the driver sends as standard macOS events (experimental). No manufacturer SDK is used. If something is off, turn off Tablet pressure (experimental) under Pen in Edit → Settings…, and the pen draws like a mouse. If the pen's pressure is too strong or too weak, adjust it in Pen Pressure under Pen in Edit → Settings….
 
 ## Linux (experimental)
 

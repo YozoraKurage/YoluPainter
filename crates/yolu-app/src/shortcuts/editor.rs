@@ -1,5 +1,6 @@
-//! ショートカットの設定のウィンドウ（「ヘルプ → ショートカット」と、設定のウィンドウの「ショートカット…」から開く）。
-//! 左に区分（どこでも・視点／ペイント／編集／ポーズ／途中の操作／パイメニュー）、右に表（操作の名前・キー・マウス）。上に名前で探す欄と「キーで探す」。
+//! ショートカットの設定（設定のウィンドウの「ショートカット」の区分。`prefs::window` が左の区分・上の探す欄・右の欄を持ち、この中身を出す）。
+//! 左（設定のウィンドウの区分の下）にショートカットの区分（どこでも・視点／ペイント／編集／ポーズ／途中の操作／パイメニュー）、右に表（操作の名前・キー・マウス）。
+//! 表の上に名前で探す欄と「キーで探す」。
 //!
 //! - キーの欄を押すと、次に押したキー（修飾つき）をその欄の割り当てにする。Esc でやめ、Backspace で外す。修飾だけの押しでは決めない。マウスの
 //!   欄は、次にその欄の上で押したボタン（修飾つき。ボタンと修飾が変わる。回す間の刻みの行は修飾だけ）。押している間は
@@ -12,8 +13,8 @@
 use std::collections::HashMap;
 
 use egui::{
-    pos2, vec2, Event, Id, Key, Modifiers, PointerButton, Rect, Sense, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType,
+    pos2, vec2, Event, Id, Key, Modifiers, PointerButton, Rect, Sense, Ui, UiBuilder, WidgetInfo,
+    WidgetType,
 };
 
 use crate::commands::{self, Kind};
@@ -28,9 +29,6 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
-/// ウィンドウの大きさ。
-const SIZE: Vec2 = Vec2::new(940.0, 640.0);
-const SIDEBAR: f32 = 210.0;
 const ROW: f32 = 31.0;
 const FOOTER: f32 = 52.0;
 const TOP: f32 = 52.0;
@@ -153,8 +151,6 @@ impl PickKind {
 /// ウィンドウの状態（アプリの状態。保存しない）。
 #[derive(Default)]
 pub struct ShortcutWindow {
-    pub open: bool,
-    offset: Vec2,
     scroll: f32,
     pub section: Section,
     pub search: String,
@@ -708,23 +704,15 @@ fn chip(
     (clicked, width + if conflict { 20.0 } else { 0.0 })
 }
 
-/// ウィンドウを描く（閉じたら `open` を下ろす）。
-pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if !app.shortcuts.open {
+/// 設定のウィンドウの「ショートカット」の区分を描く前に、毎フレーム呼ぶ（待っている入力を受ける）。割り当てを決めた・やめたフレームなら true
+/// （その Esc・Enter でウィンドウを閉じない・入力欄へフォーカスを移さない）。ほかの区分を見ているときは、待つのを終えるだけ。
+pub(crate) fn begin_frame(ctx: &egui::Context, app: &mut AppState, shown: bool) -> bool {
+    if !shown {
         if app.shortcuts.capturing() {
             end_capture(app);
         }
-        return;
+        return false;
     }
-    let lang = app.lang;
-    let id = Id::new(("yolu.window", "shortcuts"));
-    let spec = crate::ui::window::Spec {
-        title: lang.pick("ショートカット", "Keyboard Shortcuts"),
-        icon: Some("tune"),
-        size: SIZE,
-        modal: false,
-        close_label: lang.pick("閉じる", "Close"),
-    };
     let finished = take_capture(ctx, app);
     if app.shortcuts.swallow.is_some() || finished {
         if let Some(focused) = ctx.memory(|m| m.focused()) {
@@ -737,29 +725,35 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             app.shortcuts.ignore_click = false;
         }
     }
-    let mut offset = app.shortcuts.offset;
-    let mut esc = false;
-    let closed = crate::ui::window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
-        app.shortcuts.chips.clear();
-        app.shortcuts.mode_boxes.clear();
-        esc = !app.shortcuts.capturing()
-            && !finished
-            && ui.input(|i| i.key_pressed(Key::Escape))
-            && !crate::ui::window::escape_taken(ui.ctx())
-            && ui
-                .input(|i| i.pointer.hover_pos())
-                .is_some_and(|p| frame.rect.contains(p));
-        body(ui, app, frame.body);
-    });
-    app.shortcuts.offset = offset;
-    if closed || esc {
-        app.shortcuts.open = false;
-        end_capture(app);
-        app.shortcuts.picker = None;
-        if app.keys.unsaved {
-            app.warn(crate::notice::Source::Settings, unsaved_reason(lang));
-        }
+    finished
+}
+
+/// 「ショートカット」の区分を離れる・設定のウィンドウを閉じる: 待っているキーをやめ、選びかけのパイの項目を捨てる。
+pub(crate) fn leave(app: &mut AppState) {
+    end_capture(app);
+    app.shortcuts.picker = None;
+    // 描いていない欄の位置は残さない
+    app.shortcuts.chips.clear();
+    app.shortcuts.mode_boxes.clear();
+    app.shortcuts.search_rect = None;
+    app.shortcuts.slot_rects.clear();
+    app.shortcuts.pick_rect = None;
+}
+
+/// ぶつかるキーが残っていて保存していないことを知らせる（設定のウィンドウを閉じたときに、どの区分を見ていても出す）。
+pub(crate) fn warn_unsaved(app: &mut AppState) {
+    if app.keys.unsaved {
+        let reason = unsaved_reason(app.lang);
+        app.warn(crate::notice::Source::Settings, reason);
     }
+}
+
+/// 設定のウィンドウの左で、ショートカットの区分（どこでも・視点／ペイント…）を選ぶ（「キーで探す」の絞り込みは外す）。
+pub(crate) fn select_section(app: &mut AppState, section: Section) {
+    app.shortcuts.section = section;
+    app.shortcuts.key_filter = None;
+    app.shortcuts.scroll = 0.0;
+    app.shortcuts.picker = None;
 }
 
 fn unsaved_reason(lang: Lang) -> &'static str {
@@ -769,53 +763,11 @@ fn unsaved_reason(lang: Lang) -> &'static str {
     )
 }
 
-fn body(ui: &mut Ui, app: &mut AppState, body: Rect) {
-    let lang = app.lang;
-    let p = ui.painter().clone();
-    // 左の区分
-    let side = Rect::from_min_size(body.min, vec2(SIDEBAR, body.height() - FOOTER));
-    w::fill(&p, side, t::PANEL_HEADER);
-    let mut y = side.top() + 10.0;
-    for section in Section::ALL {
-        let r = Rect::from_min_size(pos2(side.left(), y), vec2(side.width(), 29.0));
-        let selected = app.shortcuts.section == section && app.shortcuts.key_filter.is_none();
-        let response = ui.interact(
-            r,
-            Id::new(("yolu.shortcuts.section", section as u8)),
-            Sense::click(),
-        );
-        if selected {
-            w::fill(&p, r, t::ACCENT_SOFT);
-        } else if response.hovered() {
-            w::fill(&p, r, t::CONTROL_HOVER);
-        }
-        w::text(
-            &p,
-            r.shrink2(vec2(14.0, 0.0)),
-            section.label(lang),
-            t::LABEL.with_color(if selected { t::TEXT } else { t::TEXT_DIM }),
-            Align::Left,
-        );
-        response.widget_info(|| {
-            WidgetInfo::selected(
-                WidgetType::SelectableLabel,
-                true,
-                selected,
-                section.label(lang),
-            )
-        });
-        if response.clicked() {
-            app.shortcuts.section = section;
-            app.shortcuts.key_filter = None;
-            app.shortcuts.scroll = 0.0;
-            app.shortcuts.picker = None;
-        }
-        y += 29.0;
-    }
-    let main = Rect::from_min_max(
-        pos2(side.right(), body.top()),
-        pos2(body.right(), body.bottom() - FOOTER),
-    );
+/// 右の欄の中身（`pane` は設定のウィンドウの右の欄のうち、上の探す欄より下）: 表かパイメニューの編集と、下の帯。
+pub(crate) fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
+    app.shortcuts.chips.clear();
+    app.shortcuts.mode_boxes.clear();
+    let main = Rect::from_min_max(pane.min, pos2(pane.right(), pane.bottom() - FOOTER));
     if app.shortcuts.section == Section::Pies && app.shortcuts.key_filter.is_none() {
         pies(ui, app, main.shrink2(vec2(16.0, 10.0)));
     } else {
@@ -824,7 +776,7 @@ fn body(ui: &mut Ui, app: &mut AppState, body: Rect) {
     footer(
         ui,
         app,
-        Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max),
+        Rect::from_min_max(pos2(pane.left(), pane.bottom() - FOOTER), pane.max),
     );
 }
 
@@ -863,32 +815,11 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
     if app.keys.unsaved || app.keys.has_conflicts() {
         let reason = unsaved_reason(lang);
-        let tr = Rect::from_min_max(pos2(x + 6.0, r.top()), pos2(r.right() - 110.0, r.bottom()));
+        let tr = Rect::from_min_max(pos2(x + 6.0, r.top()), pos2(r.right() - 16.0, r.bottom()));
         let shown = w::fit(&p, reason, tr.width(), t::LABEL);
         w::text(&p, tr, &shown, t::LABEL.with_color(t::WARNING), Align::Left);
         ui.interact(tr, Id::new("yolu.shortcuts.unsaved"), Sense::hover())
             .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, reason));
-    }
-    let close = lang.pick("閉じる", "Close");
-    let bw = w::text_width(&p, close, t::LABEL) + 36.0;
-    let b = Rect::from_min_size(pos2(r.right() - 16.0 - bw, y), vec2(bw, 28.0));
-    if w::button(
-        ui,
-        b,
-        ("yolu.shortcuts", "close"),
-        close,
-        true,
-        true,
-        None,
-        None,
-    )
-    .clicked()
-    {
-        app.shortcuts.open = false;
-        end_capture(app);
-        if app.keys.unsaved {
-            app.warn(crate::notice::Source::Settings, unsaved_reason(lang));
-        }
     }
 }
 

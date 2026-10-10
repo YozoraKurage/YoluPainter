@@ -243,7 +243,12 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 860.0, 64);
         h.state_mut().state.set_language(lang);
-        apply(&mut h, Action::Prefs(yolu_app::prefs::PrefsAction::Open));
+        apply(
+            &mut h,
+            Action::Prefs(yolu_app::prefs::PrefsAction::OpenAt(
+                yolu_app::prefs::Category::View3d,
+            )),
+        );
         let wire = h
             .get_by_role_and_label(
                 Role::ColorWell,
@@ -276,7 +281,8 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
         // 設定のウィンドウの全体には機械ごとの値（メモリの自動の上限・スレッドの数・設定のフォルダ）が出るので、色の行と色のウィンドウだけを撮る
         let prefs = yolu_app::prefs::last_rect(&h.ctx).expect("設定のウィンドウ");
         let row = egui::Rect::from_min_max(
-            egui::pos2(prefs.left(), wire.top() - 4.0),
+            // 左の区分の列（幅 210）は撮らない
+            egui::pos2(prefs.left() + 210.0, wire.top() - 4.0),
             egui::pos2(over.right() + 4.0, wire.bottom() + 4.0),
         );
         shot_row_and_color_window(

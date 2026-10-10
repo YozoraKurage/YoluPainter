@@ -2318,7 +2318,7 @@ mod tests {
         assert!(!commands::find("mode.pie").unwrap().repeats);
         assert!(!commands::find("view3d.pie").unwrap().repeats);
         // 繰り返しを受けないのは、パイを開く操作・G/R/S を始める操作（ポップアップを開く操作。閉じたあと、押したままのキーで開き直さない）と、
-        // 切り替え・消す操作（押したままで出たり消えたり、続けて消したりしない）
+        // 切り替え・消す操作（押したままで出たり消えたり、続けて消したりしない）、ベイクのウィンドウを開く操作（開き直してウィンドウの状態を戻さない）
         let once: Vec<&str> = commands::all()
             .iter()
             .filter(|c| !c.repeats)
@@ -2327,6 +2327,7 @@ mod tests {
         assert_eq!(
             once,
             [
+                "bake.open",
                 "fill.toggle_handles",
                 "mode.pie",
                 "view3d.pie",

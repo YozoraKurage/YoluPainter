@@ -1896,10 +1896,10 @@ impl YoluApp {
                 &self.bar_press_rects,
             )
         });
-        // 筆圧の調整のウィンドウ: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
+        // 筆圧の調整（設定の「ペン」）: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
         self.state.pressure_observe(ctx.pixels_per_point(), &pen);
-        // ウィンドウが開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
-        if self.state.pressure.open && !self.pen.is_hooked() {
+        // 描く枠が出ているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
+        if self.state.pressure.open() && !self.pen.is_hooked() {
             ctx.input(|i| self.state.pressure_observe_touch(&i.events));
         }
         for sample in &mut pen {
@@ -2221,7 +2221,6 @@ impl YoluApp {
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
-        crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
         // 色のウィンドウ（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
         crate::panels::color_window::show_in_app(&ctx, &mut self.state);
@@ -2372,7 +2371,7 @@ impl YoluApp {
             }
             return;
         }
-        // キーを待っている間の受け皿は、ショートカットのウィンドウが受けて閉じる
+        // キーを待っている間の受け皿は、設定のウィンドウの「ショートカット」の区分が受けて閉じる
         if open.kind == PopupKind::KeyCapture {
             self.state.popup = Some(open);
             return;

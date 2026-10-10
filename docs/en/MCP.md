@@ -9,7 +9,7 @@ The tools are the same 26 as the [command line](CLI.md) commands (the `.` in nam
 
 ## YoluPainter settings
 
-1. In the app, open Edit → Settings… and turn on "Accept external commands" (off by default). It listens only while on, and a small dot appears at the right end of the status bar. The dot's tooltip shows the URL to connect to.
+1. In the app, open Edit → Settings…, choose Live Link & Commands and turn on "Accept external commands" (off by default). It listens only while on, and a small dot appears at the right end of the status bar. The dot's tooltip shows the URL to connect to.
 2. The port can be changed in "Port", shown below it while it is on (17347 by default; 1024 to 65535). When you change it, use the same port in the programs that connect.
 3. When it cannot listen (another program uses the port, for example), the dot turns to the "cannot accept" color and its tooltip says why. Change the port or close that program, then turn the setting off and on again.
 
