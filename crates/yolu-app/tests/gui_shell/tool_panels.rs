@@ -346,27 +346,28 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
     }
 }
 
-/// カラーのパネル: 円は欄の幅と高さの小さいほうをいっぱいに使い、切り替えのボタンは円の外側の角、16 進とアルファは 1 段で小さい。
-/// 円の直径（前の版 = 0.6.0 の既定の並びでの値: 960×640 で 72、1280×800 で 147、1600×900 で 181）より小さくならない。
+/// カラーのパネル: 円は欄の幅と高さの小さいほうをいっぱいに使い（選ぶ印の輪が円の外へ出る分は余白に取り、欄の上下左右からはみ出さない）、
+/// 切り替えのボタンは円と印の外側の角、16 進とアルファは 1 段で小さく、その下に空きが無い（使った色が無いとき。あるときはその行の下も空かない）。
+/// 円の直径は、前の版（82bae7e6）の 960×640 で 107、1280×800 で 158、1600×900 で 190 より小さくならない。
 #[test]
-fn the_color_wheel_fills_the_panel_with_the_toggle_outside_it_and_the_hex_and_alpha_on_one_small_line(
-) {
+fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_left_empty_below() {
+    use yolu_app::panels::color::marker_overhang;
     for lang in Lang::ALL {
         for (width, height, least) in [
-            (960.0, 640.0, 100.0),
-            (1280.0, 800.0, 150.0),
-            (1600.0, 900.0, 185.0),
+            (960.0, 640.0, 107.0),
+            (1280.0, 800.0, 158.0),
+            (1600.0, 900.0, 190.0),
         ] {
             let what = format!("{lang:?} {width}x{height}");
             let mut h = app_default(width, height, 128);
             language(&mut h, lang);
             let tab = tab_rect(&h, Tab::Color);
-            // パネルの中身（タブの帯の下から、ウィンドウの下端まで。右は中央との区切り）
+            // パネルの中身（タブの帯の下から、状態の帯の上まで。右は中央との区切り）
             let panel = Rect::from_min_max(
                 tab.left_bottom(),
                 pos2(
                     tab_rect(&h, Tab::View3d).left() - 2.0,
-                    h.ctx.content_rect().bottom(),
+                    h.ctx.content_rect().bottom() - 22.0,
                 ),
             );
             let wheel = h.get_by_label(lang.pick("色相の円", "Hue wheel")).rect();
@@ -379,7 +380,13 @@ fn the_color_wheel_fills_the_panel_with_the_toggle_outside_it_and_the_hex_and_al
                 "{what}: 円の直径 {} が小さい（前の版以上）",
                 wheel.width()
             );
-            // 円は欄の幅と高さの小さいほうをいっぱいに使う（幅に余りがあれば、高さがその分を決める）
+            // 選ぶ印の輪（円の真上・真下・真左・真右の外へ出る分）も、欄の中に収まる
+            let reach = marker_overhang(wheel.width());
+            let marker_box = wheel.expand(reach);
+            assert!(
+                panel.expand(0.5).contains_rect(marker_box),
+                "{what}: 選ぶ印の輪が欄の中 {marker_box:?} {panel:?}"
+            );
             let fields = h
                 .query_all_by_value("#000000")
                 .map(|n| n.rect())
@@ -391,22 +398,23 @@ fn the_color_wheel_fills_the_panel_with_the_toggle_outside_it_and_the_hex_and_al
                 "{what}: 16 進とアルファは 1 段 {fields:?} {alpha:?}"
             );
             assert!(
-                fields.height() <= 20.0,
+                alpha.height() <= 20.0,
                 "{what}: 欄の高さ {}",
-                fields.height()
+                alpha.height()
             );
-            assert!(
-                panel.contains_rect(wheel),
-                "{what}: 円は欄の中 {wheel:?} {panel:?}"
-            );
-            let free_height = fields.top() - panel.top();
+            // 円は欄の幅と高さの小さいほうをいっぱいに使う（高さは、16 進とアルファの上まで）
+            let free_height = alpha.top() - 3.0 - panel.top();
             let free_width = panel.width() - 16.0;
+            let side = free_height.min(free_width);
             assert!(
-                wheel.width() >= free_height.min(free_width) - 14.0 - 4.0,
+                (marker_box.width() - side).abs() <= 4.0,
                 "{what}: 円が欄いっぱい {} / 高さ {free_height} 幅 {free_width}",
-                wheel.width()
+                marker_box.width()
             );
-            // 切り替えのボタンは円に掛からない
+            // 16 進とアルファの段の下に、行の間（3 点）より大きな空きが無い
+            let blank = panel.bottom() - alpha.bottom();
+            assert!(blank <= 3.5, "{what}: 段の下の空き {blank}");
+            // 切り替えのボタンは円と印の輪に掛からない
             let toggle = h
                 .get_by_label(lang.pick("四角と色相の帯", "Square and hue bar"))
                 .rect();
@@ -416,20 +424,40 @@ fn the_color_wheel_fills_the_panel_with_the_toggle_outside_it_and_the_hex_and_al
                 c.y.clamp(toggle.top(), toggle.bottom()),
             );
             assert!(
-                nearest.distance(c) >= wheel.width() * 0.5,
+                nearest.distance(c) >= wheel.width() * 0.5 + reach,
                 "{what}: 切り替えのボタンが円の外 {toggle:?} {wheel:?}"
+            );
+            // 使った色が入ると、その行の分だけ円が小さくなり、その行の下も空かない
+            h.state_mut().state.color.remember();
+            h.run();
+            let smaller = h.get_by_label(lang.pick("色相の円", "Hue wheel")).rect();
+            assert!(
+                smaller.width() < wheel.width() && smaller.width() >= wheel.width() - 20.0,
+                "{what}: 使った色の行の分だけ小さい {} → {}",
+                wheel.width(),
+                smaller.width()
+            );
+            let swatch = h
+                .query_all_by_label_contains("#000000FF")
+                .map(|n| n.rect())
+                .find(|r| panel.contains(r.center()))
+                .expect("使った色の見本");
+            assert!(
+                panel.bottom() - swatch.bottom() <= 3.5,
+                "{what}: 使った色の行の下の空き {}",
+                panel.bottom() - swatch.bottom()
             );
         }
     }
-    // 高さに余りがあるウィンドウでは、円は幅いっぱい（切り替えのボタンの分を空けない）
+    // 高さに余りがあるウィンドウでは、円は幅いっぱい（選ぶ印の輪の分を除く。切り替えのボタンの分は空けない）
     let h = app_default(1280.0, 1400.0, 128);
     let tab = tab_rect(&h, Tab::Color);
     let panel_width = tab_rect(&h, Tab::View3d).left() - 2.0 - tab.left();
     let wheel = h.get_by_label("色相の円").rect();
+    let box_width = wheel.width() + 2.0 * yolu_app::panels::color::marker_overhang(wheel.width());
     assert!(
-        (wheel.width() - (panel_width - 16.0)).abs() < 1.5,
-        "幅いっぱい {} / {}",
-        wheel.width(),
+        (box_width - (panel_width - 16.0)).abs() < 1.5,
+        "幅いっぱい {box_width} / {}",
         panel_width - 16.0
     );
 }
