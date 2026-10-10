@@ -1560,7 +1560,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     // 8 か所
     app.shortcuts.slot_rects.clear();
     for slot in 0..crate::ui::pie::SLOTS {
-        let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width().min(520.0), 28.0));
+        let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 28.0));
         let p = ui.painter().clone();
         w::text(
             &p,
@@ -1652,9 +1652,8 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
         .iter()
         .position(|k| *k == picker.kind)
         .unwrap_or(0);
-    // 帯・探す欄・一覧の幅は、タブの名前から決める（どのタブもアイコンと名前の両方が入る幅。欄に収まらなければ欄の幅まで）
-    let tabs_width = w::tab_strip_width(ui.painter(), &labels).min(r.width());
-    let tabs = Rect::from_min_size(r.min, vec2(tabs_width, 26.0));
+    // 帯・探す欄・一覧は、設定の区分の右端（上の探す欄と同じ端）まで
+    let tabs = Rect::from_min_size(r.min, vec2(r.width(), 26.0));
     let chosen = w::tab_strip(
         ui,
         tabs,
@@ -1772,7 +1771,9 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
         if response.hovered() {
             w::fill(p, rr, t::CONTROL_HOVER);
         }
-        w::text(p, rr.shrink2(vec2(8.0, 0.0)), name, t::LABEL, Align::Left);
+        // 切れるときは「…」で詰める
+        let shown = w::fit(p, name, rr.width() - 16.0, t::LABEL);
+        w::text(p, rr.shrink2(vec2(8.0, 0.0)), &shown, t::LABEL, Align::Left);
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
         if response.clicked() {
             chosen = Some(item.clone());

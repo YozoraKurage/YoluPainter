@@ -409,6 +409,93 @@ fn a_new_pie_menu_gets_items_and_a_key_and_opens_and_runs() {
     assert_eq!(h.state().state.tool, Tool::Eraser);
 }
 
+/// パイの編集の行（上・右上…）と、操作の一覧（タブ・探す欄・一覧）は、設定の区分の右端（上の「設定を探す」と同じ端）まで伸びる。長い候補は「…」で詰める。
+#[test]
+fn the_pie_editor_runs_to_the_right_edge_of_the_search_field_and_a_long_candidate_is_cut_with_dots()
+{
+    for lang in Lang::ALL {
+        let mut h = editor(lang);
+        section(&mut h, Section::Pies);
+        // 名前の長い別のパイを足しておく（「別のパイ」の候補になる）
+        let long = "あ".repeat(90);
+        {
+            let s = &mut h.state_mut().state;
+            let id = s.pie.add_user(lang);
+            let at = s.pie.menus.iter().position(|m| m.id == id).unwrap();
+            s.pie.menus[at].name = yolu_app::pie::PieName::User(long.clone());
+        }
+        h.run();
+        let w = window(&h);
+        let first = h.state().state.pie.menus[0].name(lang);
+        let tab = rect_of(&h, &first, |r| w.contains_rect(r));
+        click(&mut h, tab.center());
+        let slot = h.state().state.shortcuts.slot_rects[0];
+        click(&mut h, slot.center());
+        // 上の探す欄の右端（ウィンドウの右の端から 16）まで
+        let edge = w.right() - 16.0;
+        let pick = h.state().state.shortcuts.pick_rect.expect("項目を探す欄");
+        assert!(
+            (pick.right() - edge).abs() < 0.5,
+            "{lang:?}: 一覧の右端 {} と探す欄の右端 {edge}",
+            pick.right()
+        );
+        for (i, slot) in h
+            .state()
+            .state
+            .shortcuts
+            .slot_rects
+            .clone()
+            .iter()
+            .enumerate()
+        {
+            // 項目の箱は、右の「空にする」の印（30）を除いた所まで
+            assert!(
+                (slot.right() - (edge - 30.0)).abs() < 0.5,
+                "{lang:?}: 項目 {i} の右端 {}",
+                slot.right()
+            );
+        }
+        // 「別のパイ」のタブの候補: 長い名前は「…」で詰め、一覧の中に収まる
+        let other = lang.pick("別のパイ", "Another Pie");
+        let tab = rect_of(&h, other, |r| w.contains_rect(r) && r.top() > slot.bottom());
+        click(&mut h, tab.center());
+        // 上の並び（パイの名前の押しボタン）は除き、操作の一覧の中だけを見る
+        let texts: Vec<(String, Rect)> = painted_texts(&h)
+            .into_iter()
+            .filter(|(_, r)| r.top() > pick.bottom())
+            .collect();
+        let cut = texts
+            .iter()
+            .find(|(t, _)| t.starts_with("あ") && t.ends_with('…'))
+            .unwrap_or_else(|| panic!("{lang:?}: 詰めた候補が無い: {texts:?}"));
+        assert!(cut.1.right() <= edge, "{lang:?}: {:?}", cut.1);
+        assert!(
+            !texts.iter().any(|(t, _)| *t == long),
+            "{lang:?}: 詰めずに描いた"
+        );
+    }
+}
+
+/// 描いた文字（文字・矩形）。
+fn painted_texts(h: &H) -> Vec<(String, Rect)> {
+    use egui::epaint::Shape;
+    fn walk(shape: &Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            Shape::Text(t) => out.push((
+                t.galley.job.text.clone(),
+                t.galley.rect.translate(t.pos.to_vec2()),
+            )),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for s in &h.output().shapes {
+        walk(&s.shape, &mut out);
+    }
+    out
+}
+
 // ───────── 絵 ─────────
 
 fn crop(h: &mut H, rect: Rect, name: &str) {

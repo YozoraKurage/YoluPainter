@@ -763,15 +763,6 @@ pub fn subsection_header(
     }
 }
 
-/// どのタブもアイコンと名前の両方で入る、`tab_strip` の幅（一番長い名前に合わせて、タブの数だけ。端の余白と、四捨五入の余りを含む）。
-pub fn tab_strip_width(p: &Painter, labels: &[&str]) -> f32 {
-    let widest = labels
-        .iter()
-        .map(|l| text_width(p, l, t::HEADER))
-        .fold(0.0f32, f32::max);
-    labels.len() as f32 * (widest + TAB_WITH_ICON_EXTRA + 2.0) + 4.0
-}
-
 /// タブの 1 つが、アイコンと名前の両方を見せるのに、名前の幅へ足す幅（アイコンと余白）。
 const TAB_WITH_ICON_EXTRA: f32 = 34.0;
 

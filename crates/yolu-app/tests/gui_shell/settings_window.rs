@@ -1197,3 +1197,73 @@ fn snapshot_the_file_view_and_help_menus_in_both_languages() {
         }
     }
 }
+
+/// どの区分も、行（名前の列と値の列）が、上の「設定を探す」と同じ右端まで伸びる（値の列が伸びる。区分ごとの固定の幅は無い）。日英。
+#[test]
+fn every_category_runs_to_the_right_edge_of_the_search_field_in_both_languages() {
+    let dir = settings_dir("right-edge");
+    let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
+    let _rig = crate::update::rig(
+        &mut h.state_mut().state,
+        "0.1.0",
+        yolu_app::update::Mode::Installer,
+    );
+    open(&mut h);
+    for lang in Lang::ALL {
+        h.state_mut().state.lang = lang;
+        h.run();
+        let available: Vec<Category> = Category::ALL
+            .into_iter()
+            // ショートカットは表（下の試験）。更新は入り切りのチェックだけで、右端まで伸びる箱が無い
+            .filter(|c| !matches!(c, Category::Shortcuts | Category::Updates))
+            .filter(|c| c.available(&h.state().state))
+            .collect();
+        for category in available {
+            click_side(&mut h, category);
+            // 外からの操作を入れると、ポート番号の入力欄の行が出る（Live Link と外からの操作の区分は、これが右端まで伸びる唯一の箱）
+            h.state_mut().state.prefs.settings.external_ops = category == Category::LiveLink;
+            h.state_mut().state.prefs.settings.external_ops_port = 0;
+            h.run();
+            h.run();
+            let w = window(&h);
+            // 上の探す欄の右端（ウィンドウの右の端から 16）
+            let edge = w.right() - 16.0;
+            // 描いた箱（値の箱・ボタン・スライダーなど。幅 60 以上）の右端。後ろのドックの部品は読み上げの木には残るので、描いた絵から見る
+            let rights = painted_box_rights(&h, w);
+            let widest = rights.iter().copied().fold(f32::MIN, f32::max);
+            assert!(
+                (widest - edge).abs() < 1.5,
+                "{lang:?} {category:?}: 右端 {widest} は探す欄の右端 {edge} と合わない"
+            );
+        }
+    }
+}
+
+/// 設定のウィンドウが描いた角丸の箱（幅 60 以上。ウィンドウの地・左の区分・上の探す欄を除く）の右端。
+fn painted_box_rights(h: &H, window: Rect) -> Vec<f32> {
+    use egui::epaint::Shape;
+    let shapes = &h.output().shapes;
+    let start = shapes
+        .iter()
+        .rposition(|s| matches!(&s.shape, Shape::Rect(r) if r.rect == window))
+        .expect("ウィンドウの地を描いた");
+    let mut out = Vec::new();
+    fn walk(shape: &Shape, window: Rect, out: &mut Vec<f32>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, window, out)),
+            Shape::Rect(r)
+                if r.rect.width() >= 60.0
+                    && r.rect.left() > window.left() + 230.0
+                    && r.rect.top() > window.top() + 60.0
+                    && window.contains_rect(r.rect) =>
+            {
+                out.push(r.rect.right())
+            }
+            _ => {}
+        }
+    }
+    for s in &shapes[start..] {
+        walk(&s.shape, window, &mut out);
+    }
+    out
+}

@@ -28,8 +28,6 @@ const SIDEBAR: f32 = 210.0;
 const SIDE_ROW: f32 = 29.0;
 /// 右の欄のうち、上の探す欄が占める高さ（本体の上端から）。
 pub const PANE_TOP: f32 = 52.0;
-/// 行を並べる欄の幅（左右の余白 8 を含む。行そのものは 460）。広い画面でも、値の箱が間延びしない。
-const ROWS_WIDTH: f32 = 476.0;
 
 pub(super) fn id() -> Id {
     Id::new("yolu.prefs")
@@ -417,12 +415,10 @@ fn page(
         .data(|d| d.get_temp::<f32>(content_id.with(key)))
         .unwrap_or(0.0);
     let bar = Scroll::begin(ui, pane, previous, &mut scroll);
+    // 行（名前の列と値の列）は、上の探す欄と同じ左右の端（欄の左右 16）まで。つまみは右の余白（16）の中に出るので、行から引かない
     let area = Rect::from_min_max(
         pos2(pane.left() + 8.0, pane.top() - scroll),
-        pos2(
-            (pane.left() + 8.0 + ROWS_WIDTH).min(pane.right() - bar.reserved()),
-            pane.bottom(),
-        ),
+        pos2(pane.right() - 8.0, pane.bottom()),
     );
     let outer_clip = ui.clip_rect();
     let visible = pane.intersect(outer_clip);
