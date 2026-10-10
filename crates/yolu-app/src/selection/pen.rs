@@ -386,12 +386,12 @@ pub struct ActivePen {
     pub quick: bool,
 }
 
-/// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: Shift は足す・Ctrl は消すに一時的に替える）。
+/// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: 作成方法の割り当て（`combine_for`）で、足すに当たる修飾は選択ペン・
+/// 引くに当たる修飾は選択消しに、押しているあいだだけ替える）。
 pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
-    let ctrl = modifiers.command || modifiers.ctrl;
-    match (modifiers.shift, ctrl) {
-        (true, false) => false,
-        (false, true) => true,
+    match super::combine_for(egui::PointerButton::Primary, &modifiers) {
+        Some(SelectionCombine::Add) => false,
+        Some(SelectionCombine::Subtract) => true,
         _ => base_erase,
     }
 }

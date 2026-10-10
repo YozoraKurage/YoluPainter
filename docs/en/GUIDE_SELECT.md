@@ -34,7 +34,7 @@ ID Color Select picks the area whose baked ID-map color is close to the pressed 
 
 ## Refining and using a selection
 
-- **Refine**: Grow, Shrink, Border, Feather and Sharpen Edge in the Select menu change the shape. An item ending in `…` opens a window for Radius and Edge lock. With Edge lock on, the selection is treated as continuing past the canvas edge, so Shrink, Border and Feather do not pull away from it. The same five are in Modify Selection in the selection tools' Tool Properties.
+- **Refine**: Grow, Shrink, Border, Feather and Sharpen Edge in the Select menu change the shape. An item ending in `…` opens a window for Radius and Edge lock. With Edge lock on, the selection is treated as continuing past the canvas edge, so Shrink, Border and Feather do not pull away from it.
 - **Quick Mask**: shows the selection as a red overlay, and you can fix it with the brush and the eraser. The brush and the eraser in the 3D view fix it too, on the texture pixels of the faces you paint, and the red overlay is shown on the faces in the 3D view too ([GUIDE_3D.md](GUIDE_3D.md)).
 - **Painting only inside a selection**: the brush and the eraser affect only the inside. The Fill tool and a shape's Fill do too.
 - **The button bar**: after you make a selection, a bar appears below it with Deselect, Invert, Grow, Shrink, Feather, Fill with the Paint Color, Erase Selection (`Delete`), Copy to a New Layer (`Ctrl+J`), Make the Selection a Layer Mask and Remember Selection…. Drag the handle at its left end to move it. Turn it off with Show the Selection Button Bar in the Select menu. Without a selection, `Ctrl+J` duplicates the layer.

@@ -2477,6 +2477,31 @@ fn hover_highlight_in_the_3d_view_and_the_canvas_snapshots() {
 }
 
 #[test]
+fn the_id_select_panel_shows_the_same_creation_band_as_the_selection_tools() {
+    let mut h = app_with_model(1280.0, 800.0, 128);
+    key(&h, Key::W, Modifiers::SHIFT);
+    h.run();
+    assert_eq!(h.state().state.tool, Tool::IdSelect);
+    // 新規・追加・削除に「⋯」（共通は畳んでいる）。選択のツールと同じ帯
+    for label in ["新規", "追加", "削除", "すべての作成方法"] {
+        dock_rect(&h, label);
+    }
+    // （オプションバーの文字のボタンには「共通」がある。ここはドックの帯だけを見る）
+    assert!(h
+        .query_all_by_label("共通")
+        .all(|n| n.rect().top() < 62.0 || n.rect().left() > 390.0));
+    // 「⋯」で共通が出て、帯のボタンで作成方法が替わる（オプションバーの文字のボタンと同じ値）
+    let more = dock_rect(&h, "すべての作成方法");
+    click(&mut h, more.center());
+    let intersect = dock_rect(&h, "共通");
+    click(&mut h, intersect.center());
+    assert_eq!(
+        h.state().state.sel.combine,
+        yolu_app::engine::SelectionCombine::Intersect
+    );
+}
+
+#[test]
 fn id_select_panel_and_the_options_bar_snapshots_in_both_languages() {
     let mut h = app_with_model(1280.0, 800.0, 128);
     key(&h, Key::W, Modifiers::SHIFT);

@@ -1,5 +1,5 @@
-//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 4 か所（対称の欄・ブラシの 2D だけの設定・選択範囲を変更・調整レイヤー）が、
-//! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
+//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 3 か所（対称の欄・ブラシの 2D だけの設定・調整レイヤー）が、
+//! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。選択範囲を変更する操作は「選択範囲」メニューの項目で、選択範囲が無いあいだ無効になり戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
 //! - 対称は、描ける先が 3D だけのあいだと、指先・クローンのあいだだけ（ドックを分けてキャンバスも出ているあいだは 2D に描けるので有効）
 //! - ブラシの 2D だけの設定（手ぶれ補正・入り抜き・ゆらぎ・筆先の形・効果のブラシの値）も、描ける先が 3D だけのあいだだけ無効
 //! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（レイヤーの値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
@@ -349,75 +349,76 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     }
 }
 
-// ───────── 選択範囲を変更 ─────────
+// ───────── 選択範囲を変更（「選択範囲」メニューの項目） ─────────
+// ツールプロパティには置かない。同じ操作は「選択範囲」メニューにあり、選択範囲が無いあいだは項目が灰色になる。
 
-fn modify_labels(lang: Lang) -> [&'static str; 7] {
+fn modify_labels(lang: Lang) -> [&'static str; 5] {
     lang.pick(
         [
-            "半径",
-            "端を固定",
-            "拡張",
-            "縮小",
-            "境界線",
-            "境界をぼかす",
+            "拡張…",
+            "縮小…",
+            "境界線…",
+            "境界をぼかす…",
             "境界をくっきり",
         ],
-        [
-            "Radius",
-            "Edge lock",
-            "Grow",
-            "Shrink",
-            "Border",
-            "Feather",
-            "Sharpen Edge",
-        ],
+        ["Grow…", "Shrink…", "Border…", "Feather…", "Sharpen Edge"],
     )
 }
 
+/// 「選択範囲」メニューを開き、項目が無効かを順に返して閉じる。
+fn menu_items_disabled(h: &mut H, lang: Lang) -> Vec<bool> {
+    let title = menu_title(h, lang.pick("選択範囲", "Select")).center();
+    click(h, title);
+    let flags = modify_labels(lang)
+        .into_iter()
+        .map(|label| {
+            let target = popup_item(h, label);
+            h.get_all_by_label(label)
+                .find(|n| n.rect() == target)
+                .unwrap()
+                .accesskit_node()
+                .is_disabled()
+        })
+        .collect();
+    key(h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    flags
+}
+
 #[test]
-fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_and_come_back() {
+fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_back() {
     for lang in Lang::ALL {
-        // 選択のツールの設定の欄が上に付いたので、変更のボタンが全部見える高さにする
-        let mut h = app(1280.0, 1400.0, 256);
+        let mut h = app(1280.0, 800.0, 256);
         h.state_mut().state.lang = lang;
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
         assert!(h.state().state.doc.selection().is_none());
-        let reason = lang.pick("選択範囲なし", "No selection");
-        for label in modify_labels(lang) {
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![true; 5],
+            "{lang:?}: 選択範囲が無いので無効"
+        );
+        // ツールプロパティには置かない
+        for label in lang.pick(["半径", "端を固定"], ["Radius", "Edge lock"]) {
             assert!(
-                is_disabled(&h, label),
-                "{lang:?}: 選択範囲が無いので {label} は無効"
-            );
-            assert!(
-                tooltip_shows(&mut h, label, reason),
-                "{lang:?}: {label} のツールチップに理由"
+                h.query_by_label(label).is_none(),
+                "{lang:?}: ツールプロパティに {label} は無い"
             );
         }
-        assert!(
-            h.query_by_label(reason).is_none(),
-            "{lang:?}: 注記の行は出さない"
-        );
-        // 選択範囲を作れば有効に戻り、理由は消える
+        // 選択範囲を作れば有効に戻る
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::All)));
         assert!(h.state().state.doc.selection().is_some());
-        for label in modify_labels(lang) {
-            assert!(
-                !is_disabled(&h, label),
-                "{lang:?}: 選択範囲があるので {label} は有効"
-            );
-            assert!(
-                !tooltip_shows(&mut h, label, reason),
-                "{lang:?}: {label} の理由は消える"
-            );
-        }
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![false; 5],
+            "{lang:?}: 選択範囲があるので有効"
+        );
         // 解除すればまた無効
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::Clear)));
-        for label in modify_labels(lang) {
-            assert!(
-                is_disabled(&h, label),
-                "{lang:?}: 解除したので {label} は無効"
-            );
-        }
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![true; 5],
+            "{lang:?}: 解除したので無効"
+        );
     }
 }
 

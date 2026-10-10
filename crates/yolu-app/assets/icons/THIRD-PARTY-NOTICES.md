@@ -56,6 +56,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `lock` | fluent | `lock_closed` | regular |
 | `lock_filled` | fluent | `lock_closed` | filled |
 | `lock_transparency` | fluent | `transparency_square` | regular |
+| `more_horizontal` | fluent | `more_horizontal` | regular |
 | `opacity` | fluent | `drop` | regular |
 | `paint_brush` | fluent | `paint_brush` | regular |
 | `palette` | fluent | `color` | regular |
@@ -140,6 +141,8 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `error_circle` (the error mark of the Log panel and its Errors Only toggle) and `document_copy` (its Copy All button) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 `record`・`stop`・`play` (the Actions panel: start and stop recording, play an action) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
+
+`more_horizontal` (the All Modes button of the selection tools' Tool Properties) is Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

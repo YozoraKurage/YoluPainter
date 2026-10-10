@@ -171,7 +171,7 @@ fn combine_buttons(ui: &mut Ui, app: &mut AppState, cursor: &mut Cursor, right: 
             name,
             app.sel.combine == mode,
             true,
-            Some(combine_tooltip(lang, mode)),
+            Some(&combine_tooltip(lang, mode)),
             None,
         )
         .clicked()

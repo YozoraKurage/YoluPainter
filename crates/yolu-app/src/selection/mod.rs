@@ -193,6 +193,8 @@ pub enum SelUiOp {
     QuickMask(Option<bool>),
     /// 選択ペンのツールの基本（false が選択ペン、true が選択消し。Shift・Ctrl は押している間だけ替える）。
     PenErase(bool),
+    /// ツールプロパティの作成方法を、4 つ出す（true）か、共通を畳んで 3 つ出す（false）か（設定に覚える）。
+    AllModes(bool),
 }
 
 /// 2D の対称の設定の操作（画面だけ）。
@@ -478,26 +480,71 @@ pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
     }
 }
 
-/// 組み合わせ方のツールチップ（キー付き）。
-pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
-    match mode {
-        SelectionCombine::Replace => lang.pick(
-            "新規選択: 新しい形で置き換える",
-            "New: replace the selection",
-        ),
-        SelectionCombine::Add => lang.pick(
-            "追加選択: 選択範囲に追加（Shift）",
-            "Add to the selection (Shift)",
-        ),
-        SelectionCombine::Subtract => lang.pick(
-            "一部削除: 選択範囲から引く（Ctrl）",
-            "Subtract from the selection (Ctrl)",
-        ),
-        SelectionCombine::Intersect => lang.pick(
-            "選択中を選択: 重なる所だけ残す（Shift + Ctrl）",
-            "Intersect: keep only the overlap (Shift + Ctrl)",
-        ),
+/// 組み合わせ方のツールチップ（名前と、割り当ての表の修飾。割り当てが無ければ名前だけ）。
+pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> String {
+    use crate::keymap::Operation;
+    let operation = match mode {
+        SelectionCombine::Replace => None,
+        SelectionCombine::Add => Some(Operation::SelectionAdd),
+        SelectionCombine::Subtract => Some(Operation::SelectionSubtract),
+        SelectionCombine::Intersect => Some(Operation::SelectionIntersect),
+    };
+    name_with_modifier(lang, combine_name(lang, mode), operation)
+}
+
+/// 名前に、選択の修飾の割り当て（`keymap` の "selection" の行）の入力を添える（「追加（Shift）」・英語は「Add (Shift)」）。
+/// 行が無ければ名前だけ。
+pub fn name_with_modifier(
+    lang: Lang,
+    name: &str,
+    operation: Option<crate::keymap::Operation>,
+) -> String {
+    match operation.and_then(|op| modifier_text(lang, op)) {
+        Some(key) => lang.pick(format!("{name}（{key}）"), format!("{name} ({key})")),
+        None => name.to_owned(),
     }
+}
+
+/// 選択の修飾の行（`op`）の入力の文字。修飾だけ（「Shift」「Ctrl」「Shift+Ctrl」。Mac は Cmd）。
+/// 左ボタン以外・修飾の無い行は、ボタンも含めた文（「Shift+右ボタン」）。外した行は None。
+fn modifier_text(lang: Lang, op: crate::keymap::Operation) -> Option<String> {
+    use crate::shortcuts::gestures::{key_label, Binding};
+    let keymap = crate::keymap::current();
+    let g = keymap
+        .gestures()
+        .iter()
+        .find(|g| g.scope == "selection" && g.operation == op && g.starts)?;
+    let mac = cfg!(target_os = "macos");
+    let mut parts = Vec::new();
+    if g.shift {
+        parts.push("Shift");
+    }
+    if g.ctrl {
+        parts.push(if mac { "Cmd" } else { "Ctrl" });
+    }
+    if g.alt {
+        parts.push("Alt");
+    }
+    if g.button == egui::PointerButton::Primary && !g.click && !parts.is_empty() {
+        return Some(parts.join("+"));
+    }
+    Some(key_label(
+        &Binding {
+            scope: g.scope,
+            held: None,
+            modifiers: egui::Modifiers {
+                alt: g.alt,
+                shift: g.shift,
+                ctrl: g.ctrl,
+                command: g.ctrl,
+                ..egui::Modifiers::NONE
+            },
+            button: g.button,
+            operation: g.operation,
+            click: g.click,
+        },
+        lang,
+    ))
 }
 
 /// 押したボタンとキーの修飾から組み合わせ方（既定は左ボタンの Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。
@@ -807,6 +854,7 @@ impl AppState {
             SelUiOp::Bar(on) => self.prefs.settings.selection_bar = on,
             SelUiOp::QuickMask(on) => self.quick_mask(on),
             SelUiOp::PenErase(erase) => self.sel.pen_erase = erase,
+            SelUiOp::AllModes(on) => self.prefs.settings.selection_all_modes = on,
         }
     }
 

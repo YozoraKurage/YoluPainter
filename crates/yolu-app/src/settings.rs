@@ -221,6 +221,9 @@ pub struct Settings {
     pub backups: BackupKeep,
     /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定のウィンドウには無い）。
     pub selection_bar: bool,
+    /// 選択のツールのツールプロパティで、作成方法を 4 つ（新規・追加・削除・共通）出すか（切は共通を畳む。設定のウィンドウには無い。
+    /// 「共通」を選んでいるあいだは、この設定によらず 4 つ出す）。
+    pub selection_all_modes: bool,
     /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。設定の「ペン」の筆圧の調整）。
     pub pressure: PressureAdjust,
     /// macOS のタブレット（Wacom・XP-Pen などのドライバー）の筆圧・傾き・消しゴムの端を NSEvent から読むか（試し。既定は入。`pen::mac_tablet`）。切ると、ペンはマウスと同じに描く。
@@ -277,6 +280,7 @@ impl Default for Settings {
             library_folder: None,
             backups: BackupKeep::All,
             selection_bar: true,
+            selection_all_modes: false,
             pressure: PressureAdjust::default(),
             tablet_pressure: true,
             pen_input: PenApi::default(),
@@ -631,6 +635,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             },
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
+            // 入れたときだけ書く行（既定は切）。読めない値は切のまま
+            "selection_all_modes" => settings.selection_all_modes = value == "on",
             "pressure_low" => match value
                 .parse::<f32>()
                 .ok()
@@ -905,6 +911,9 @@ fn render(settings: &Settings) -> String {
     if !settings.selection_bar {
         text += "selection_bar=off\n";
     }
+    if settings.selection_all_modes {
+        text += "selection_all_modes=on\n";
+    }
     let pressure = &settings.pressure;
     if pressure.low() != 0.0 {
         text += &format!("pressure_low={}\n", pressure.low());
@@ -1092,6 +1101,7 @@ mod tests {
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
             selection_bar: true,
+            selection_all_modes: true,
             pressure: PressureAdjust::new(
                 0.125,
                 0.875,
@@ -1935,6 +1945,7 @@ mod tests {
         back.disk_cache_limit = DiskLimit::Auto;
         back.uv_overlap = true;
         back.uv_overlap_color = crate::uv_wireframe::DEFAULT_OVERLAP_COLOR;
+        back.selection_all_modes = false;
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値
@@ -2185,6 +2196,35 @@ mod tests {
             (Settings::default(), vec![])
         );
         assert_eq!(parse("selection_bar=on\n"), (Settings::default(), vec![]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_selection_modes_are_written_only_when_all_four_are_shown_and_restored() {
+        let dir = temp_dir("selection-modes");
+        let path = dir.join("settings.conf");
+        assert!(!Settings::default().selection_all_modes, "既定は畳む");
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=ja\n",
+            "畳む（既定）は書かない"
+        );
+        let all = Settings {
+            selection_all_modes: true,
+            ..with_lang(Lang::En)
+        };
+        save(&path, &all).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=en\nselection_all_modes=on\n"
+        );
+        assert_eq!(load(&path), (all, vec![]));
+        // 読めない値は既定（畳む）。理由は出さない
+        assert_eq!(
+            parse("selection_all_modes=maybe\n"),
+            (Settings::default(), vec![])
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

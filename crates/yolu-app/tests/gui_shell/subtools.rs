@@ -893,8 +893,7 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
 }
 
 #[test]
-fn nothing_in_the_panel_is_clipped_with_the_modify_selection_and_path_blocks_open_at_the_smallest_window(
-) {
+fn nothing_in_the_selection_panel_is_clipped_at_the_smallest_window() {
     for lang in Lang::ALL {
         let mut h = app(960.0, 640.0, 128);
         language(&mut h, lang);
@@ -950,6 +949,11 @@ fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_sta
 
 /// パネルの全体の画像（タブの帯から、下のカラーのパネルの上まで）を撮って、正解の絵と比べる。
 fn shot(h: &mut H, name: &str) {
+    shot_width(h, name, 300.0);
+}
+
+/// `shot` の、横幅（点）を決める版（狭い列の絵）。
+fn shot_width(h: &mut H, name: &str, width: f32) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(Event::PointerGone);
     h.step();
@@ -957,7 +961,7 @@ fn shot(h: &mut H, name: &str) {
     let color = h.state().tab_rects[&Tab::Color];
     let rect = Rect::from_min_max(
         pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
+        pos2(tab.left() + width, color.top()),
     );
     let image = h.render().expect("描画");
     let cropped = image::imageops::crop_imm(
@@ -990,5 +994,58 @@ fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_
             }
             shot(&mut h, &format!("subtools_{label}_{name}"));
         }
+    }
+}
+
+#[test]
+fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_and_the_selection_pen(
+) {
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        let mut h = app(1280.0, 800.0, 128);
+        language(&mut h, lang);
+        h.state_mut().state.sel.animate = false;
+        pick(&mut h, Tool::SelectRect);
+        shot(&mut h, &format!("selection_props_{name}"));
+        // 選択ペン（選択ペンと選択消しの 2 つ）
+        pick(&mut h, Tool::SelectPen);
+        shot(&mut h, &format!("selection_pen_props_{name}"));
+    }
+    // 「⋯」で 4 つ開いた所
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.sel.animate = false;
+    pick(&mut h, Tool::SelectRect);
+    h.state_mut()
+        .state
+        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
+            yolu_app::selection::SelUiOp::AllModes(true),
+        )));
+    h.run();
+    shot(&mut h, "selection_props_all_modes");
+    // 共通を選んでいる所（畳む設定でも 4 つ。「⋯」は点いたまま押せない）
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.sel.animate = false;
+    pick(&mut h, Tool::SelectRect);
+    h.state_mut()
+        .state
+        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
+            yolu_app::selection::SelUiOp::Combine(yolu_app::engine::SelectionCombine::Intersect),
+        )));
+    h.run();
+    shot(&mut h, "selection_props_intersect");
+    // 狭い列: 名前を外してアイコンだけにする（英語は名前が長い）
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        let mut h = app(1000.0, 640.0, 128);
+        language(&mut h, lang);
+        h.state_mut().state.sel.animate = false;
+        let mut dock = egui_dock::DockState::new(vec![Tab::Canvas]);
+        let surface = dock.main_surface_mut();
+        let [_, left] = surface.split_left(egui_dock::NodeIndex::root(), 0.17, vec![Tab::SubTools]);
+        let [_, props] = surface.split_below(left, 0.3, vec![Tab::ToolProperties]);
+        surface.split_below(props, 0.8, vec![Tab::Color]);
+        h.state_mut().dock = dock;
+        pick(&mut h, Tool::SelectRect);
+        shot_width(&mut h, &format!("selection_props_narrow_{name}"), 172.0);
+        pick(&mut h, Tool::SelectPen);
+        shot_width(&mut h, &format!("selection_pen_props_narrow_{name}"), 172.0);
     }
 }

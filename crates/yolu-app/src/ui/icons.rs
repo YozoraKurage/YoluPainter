@@ -105,6 +105,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "shape_intersect",
     "edit",
     "quick_mask",
+    "more_horizontal",
     "tools/move",
     "tools/move_selected",
     "tools/liquify",

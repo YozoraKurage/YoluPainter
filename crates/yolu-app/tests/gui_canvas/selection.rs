@@ -204,15 +204,18 @@ fn tool_names_and_option_bar_follow_the_language() {
     }
     h.get_by_label("Magic Wand (W)").click();
     h.run();
-    // 作成方法は、オプションバーとツールプロパティの両方に（同じ値）。許容値はオプションバーとツールプロパティ、隣接と全レイヤーはツールプロパティ
+    // 作成方法は、オプションバー（4 つ。名前とキーのツールチップ）とツールプロパティ（新規・追加・削除に「⋯」）の両方に。
+    // 許容値はオプションバーとツールプロパティ、隣接と全レイヤーはツールプロパティ
     for label in [
-        "New: replace the selection",
-        "Add to the selection (Shift)",
-        "Subtract from the selection (Ctrl)",
-        "Intersect: keep only the overlap (Shift + Ctrl)",
+        "New",
+        "Add (Shift)",
+        "Subtract (Ctrl)",
+        "Intersect (Shift+Ctrl)",
         "Tolerance",
     ] {
         bar_rect(&h, label);
+    }
+    for label in ["New", "Add", "Subtract", "All modes", "Tolerance"] {
         dock_rect(&h, label);
     }
     for label in ["Contiguous", "Sample All Layers"] {
@@ -482,26 +485,26 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    let button = bar_rect(&h, "追加選択: 選択範囲に追加（Shift）").center();
+    let button = bar_rect(&h, "追加（Shift）").center();
     click(&mut h, button);
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));
     assert!(selected(&h, left) && selected(&h, right), "足す");
     // 「引く」: 左の外側を引く
-    let button = bar_rect(&h, "一部削除: 選択範囲から引く（Ctrl）").center();
+    let button = bar_rect(&h, "削除（Ctrl）").center();
     click(&mut h, button);
     drag_rect(&mut h, (-130.0, -80.0), (-60.0, 80.0));
     assert_eq!(amount_at(&h, left), 0, "引いた所は外れる");
     assert!(selected(&h, at(&h, -30.0, 0.0)), "引いていない所は残る");
     assert!(selected(&h, right));
     // 「重ねる」: 右の半分と重なる所だけ
-    let button = bar_rect(&h, "選択中を選択: 重なる所だけ残す（Shift + Ctrl）").center();
+    let button = bar_rect(&h, "共通（Shift+Ctrl）").center();
     click(&mut h, button);
     drag_rect(&mut h, (0.0, -80.0), (130.0, 80.0));
     assert!(selected(&h, right));
     assert_eq!(amount_at(&h, at(&h, -30.0, 0.0)), 0);
     // 置き換え + Shift で足す・Ctrl で引く・Shift+Ctrl で重ねる
-    let button = bar_rect(&h, "新規選択: 新しい形で置き換える").center();
+    let button = bar_rect(&h, "新規").center();
     click(&mut h, button);
     drag_rect(&mut h, (-120.0, -60.0), (0.0, 60.0));
     drag_with_by(&mut h, &[(10.0, -60.0), (120.0, 60.0)], Modifiers::SHIFT);
@@ -528,23 +531,29 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
 }
 
 #[test]
-fn tool_properties_select_all_deselect_and_invert_buttons() {
+fn select_all_deselect_and_invert_are_in_the_select_menu_not_the_tool_properties() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    h.get_by_label("すべてを選択（Ctrl+A）").click();
-    h.run();
-    assert!(selected(&h, at(&h, 0.0, 0.0)));
-    // 選択範囲があるあいだは、キャンバスの上の帯にも同じ名前のボタンがある（ここはツールプロパティのボタン）
-    let canvas = canvas_rect(&h);
-    let beside = |h: &Harness<'_, YoluApp>, label: &str| {
-        rect_of(h, label, |r| !canvas.contains_rect(r)).center()
+    // ツールプロパティ・オプションバーには、操作のボタンを置かない
+    for label in [
+        "すべてを選択（Ctrl+A）",
+        "選択を解除（Ctrl+D）",
+        "選択範囲を反転（Ctrl+Shift+I）",
+    ] {
+        assert!(h.query_all_by_label(label).next().is_none(), "{label}");
+    }
+    let run = |h: &mut H, label: &str| {
+        let title = menu_title(h, "選択範囲").center();
+        click(h, title);
+        let item = popup_item(h, label).center();
+        click(h, item);
     };
-    let deselect = beside(&h, "選択を解除（Ctrl+D）");
-    click(&mut h, deselect);
+    run(&mut h, "すべてを選択");
+    assert!(selected(&h, at(&h, 0.0, 0.0)));
+    run(&mut h, "選択を解除");
     assert!(st(&h).doc.selection().is_none());
     drag_rect(&mut h, (-50.0, -50.0), (50.0, 50.0));
-    let invert = beside(&h, "選択範囲を反転（Ctrl+Shift+I）");
-    click(&mut h, invert);
+    run(&mut h, "選択範囲を反転");
     assert_eq!(amount_at(&h, at(&h, 0.0, 0.0)), 0);
     assert!(selected(&h, at(&h, 100.0, 0.0)));
     undo(&mut h);
@@ -657,27 +666,36 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
 }
 
 #[test]
-fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
-    // ツールプロパティの下のほう（選択範囲を変更）まで見える高さのウィンドウ
-    let mut h = app(1280.0, 1100.0, 256);
+fn select_menu_modifies_the_selection_with_the_radius_and_edge_lock() {
+    let mut h = app(1280.0, 800.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-40.0, -30.0), (40.0, 30.0));
     let original = st(&h).doc.selection().unwrap().clone();
-    h.state_mut().state.sel.radius = 6;
     let budget = DEFAULT_WORKING_BUDGET_BYTES;
+    let open = |h: &mut H, label: &str| {
+        let title = menu_title(h, "選択範囲").center();
+        click(h, title);
+        let item = popup_item(h, label).center();
+        click(h, item);
+    };
+    // 半径を使う 4 つは、量のウィンドウを開いて半径を決めて適用する。境界をくっきりは直に適用する
     for (label, expect) in [
-        ("拡張", original.grow(6, budget).unwrap()),
-        ("縮小", original.shrink(6, false, budget).unwrap()),
-        ("境界線", original.border(6, false, budget).unwrap()),
+        ("拡張…", original.grow(6, budget).unwrap()),
+        ("縮小…", original.shrink(6, false, budget).unwrap()),
+        ("境界線…", original.border(6, false, budget).unwrap()),
         (
-            "境界をぼかす",
+            "境界をぼかす…",
             original.feather(6.0, false, budget).unwrap(),
         ),
         ("境界をくっきり", original.sharpen()),
     ] {
-        let at = rect_of(&h, label, |r| r.left() < 340.0 && r.top() > 62.0).center();
         let before = steps(&h);
-        click(&mut h, at);
+        open(&mut h, label);
+        if label.ends_with('…') {
+            h.state_mut().state.sel.dialog.as_mut().unwrap().radius = 6;
+            key(&h, Key::Enter, Modifiers::NONE);
+            h.run();
+        }
         if expect == original {
             assert_eq!(steps(&h), before, "{label}: 変わらないなら段を積まない");
         } else {
@@ -691,12 +709,12 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
             "{label} の後で戻る"
         );
     }
-    // 選択範囲が無ければ、ボタンは押せない
+    // 選択範囲が無ければ、項目は押せない
     key(&h, Key::D, Modifiers::COMMAND);
     h.run();
     let before = steps(&h);
-    let at = rect_of(&h, "拡張", |r| r.left() < 340.0 && r.top() > 62.0).center();
-    click(&mut h, at);
+    open(&mut h, "拡張…");
+    assert!(st(&h).sel.dialog.is_none());
     assert_eq!(steps(&h), before);
 }
 

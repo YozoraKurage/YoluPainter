@@ -571,6 +571,26 @@ pub fn button(
     tooltip: Option<&str>,
     icon_name: Option<&str>,
 ) -> Response {
+    button_shown(
+        ui, r, id_salt, label, primary, enabled, tooltip, icon_name, true, None,
+    )
+}
+
+/// 文字のボタン。`show_label` を false にすると、アイコン（`icon_name`）だけを中央に描く（名前は試験・読み上げ用に残る）。
+/// `toggled` を渡すと、読み上げ・試験にはその印（選んでいる・いない）のボタンとして出る。
+#[allow(clippy::too_many_arguments)]
+pub fn button_shown(
+    ui: &mut Ui,
+    r: Rect,
+    id_salt: impl egui::AsIdSalt,
+    label: &str,
+    primary: bool,
+    enabled: bool,
+    tooltip: Option<&str>,
+    icon_name: Option<&str>,
+    show_label: bool,
+    toggled: Option<bool>,
+) -> Response {
     let id = ui.make_persistent_id(id_salt);
     let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
@@ -606,6 +626,7 @@ pub fn button(
         t::TEXT
     };
     match icon_name {
+        Some(name) if !show_label => icon(p, r, name, color, 16.0),
         Some(name) => {
             let w = text_width(p, label, t::LABEL) + 22.0;
             let start = Rect::from_min_size(
@@ -623,7 +644,10 @@ pub fn button(
         }
         None => text(p, r, label, t::LABEL.with_color(color), Align::Center),
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    response.widget_info(|| match toggled {
+        Some(on) => WidgetInfo::selected(WidgetType::Button, enabled, on, label),
+        None => WidgetInfo::labeled(WidgetType::Button, enabled, label),
+    });
     with_tooltip(response, tooltip)
 }
 
