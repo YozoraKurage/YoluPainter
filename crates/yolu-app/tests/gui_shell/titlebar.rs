@@ -645,7 +645,8 @@ fn pressing_a_window_edge_begins_a_resize_in_that_direction() {
 fn inside_the_edge_nothing_resizes_and_the_cursor_stays() {
     let mut h = windows_app(WIDTH, HEIGHT);
     for at in [
-        pos2(WIDTH - titlebar::EDGE - 2.0, HEIGHT / 2.0),
+        // （右の列の組の境目を避けた高さ）
+        pos2(WIDTH - titlebar::EDGE - 2.0, 250.0),
         pos2(titlebar::EDGE + 2.0, HEIGHT / 2.0),
         pos2(WIDTH / 2.0, HEIGHT - titlebar::EDGE - 2.0),
         pos2(WIDTH / 2.0, 300.0),
@@ -974,7 +975,7 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
 #[test]
 fn a_scroll_thumb_at_the_right_edge_keeps_its_press() {
     // 背の低いウィンドウで、右のパネルの欄があふれてつまみが出る
-    let mut h = windows_app(WIDTH, 330.0);
+    let mut h = windows_app(WIDTH, 400.0);
     h.run();
     let thumbs: Vec<Rect> = h
         .get_all_by_role(egui::accesskit::Role::ScrollBar)

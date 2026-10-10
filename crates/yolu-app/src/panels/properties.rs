@@ -74,10 +74,10 @@ pub fn section(
     icon: &str,
     reset: Option<&str>,
 ) -> (bool, bool) {
-    section_default(ui, app, rows, key, title, icon, reset, true)
+    section_default(ui, app, rows, key, title, icon, reset, true, false)
 }
 
-/// 大見出し（開閉を覚える。初めに開いているかは `default_open`）。
+/// 大見出し（開閉を覚える。初めに開いているかは `default_open`。`marked` なら、見出しの右端に点の印を付ける: 閉じていても、中の機能が入っていると分かる）。
 #[allow(clippy::too_many_arguments)]
 pub fn section_default(
     ui: &mut Ui,
@@ -88,11 +88,16 @@ pub fn section_default(
     icon: &str,
     reset: Option<&str>,
     default_open: bool,
+    marked: bool,
 ) -> (bool, bool) {
     let open = app.section_open(key, default_open);
     rows.indent = 0.0;
     let header = rows.full_row(t::PANEL_HEADER_HEIGHT, 5.0);
     let out = w::section_header(ui, header, ("section", key), title, open, Some(icon), reset);
+    if marked {
+        let at = pos2(header.right() - 14.0, header.center().y);
+        ui.painter().circle_filled(at, 3.0, t::ACCENT);
+    }
     if out.open != open {
         app.ui.sections.insert(key, out.open);
     }

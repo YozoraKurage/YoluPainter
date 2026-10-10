@@ -220,8 +220,13 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
     for lang in Lang::ALL {
         for (width, stacked) in [(1280.0, false), (960.0, true)] {
             let mut h = app(width, 800.0, 128);
+            if stacked {
+                // 狭い列（前の既定の最小のウィンドウと同じ、170 点ほどの幅）にする
+                set_center_share(&mut h, 0.755);
+            }
             apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
-            let panel = |r: egui::Rect| r.left() > 700.0;
+            let body = layers_body(&h);
+            let panel = move |r: egui::Rect| body.contains(r.center());
             let slider = rect_of(&h, lang.pick("不透明度", "Opacity"), panel);
             let blend = rect_of(&h, lang.pick("通常", "Normal"), panel);
             if stacked {
@@ -834,7 +839,8 @@ fn snapshot_channels_panel() {
 /// 読まないユーザーチャンネルを 1 つ追加する（「そのほか」）。
 fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
     use yolu_core::look::{LookKind, LookValue};
-    let mut h = app(1280.0, 1000.0, 256);
+    // （チャンネルの組の全部の行が入る高さで）
+    let mut h = app(1280.0, 1700.0, 256);
     apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
     {
         let doc = &mut h.state_mut().state.doc;
@@ -870,13 +876,13 @@ fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
 
 /// チャンネルの欄のまとまりの見出し（上から）と、開いているか。見出しは開閉の印を持つ低いボタン（行の部品より低い）。
 fn channel_groups(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
-    // チャンネルの組の中だけ（その下に縦に並ぶツールプロパティの筆圧のボタンなどは含めない）
-    let below = h.state().tab_rects[&Tab::ToolProperties].top();
+    // チャンネルの組の中だけ（右の列の上の組。同じ列のレイヤーなどのボタンは含めない）
+    let body = top_right_body(h);
     let mut out: Vec<(f32, String, bool)> = h
         .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Button))
         .filter(|n| {
             let r = n.rect();
-            r.left() < 320.0 && r.top() < below && (r.height() - 20.0).abs() < 1.0
+            body.contains(r.center()) && (r.height() - 20.0).abs() < 1.0
         })
         .filter_map(|n| {
             let node = n.accesskit_node();
@@ -909,14 +915,16 @@ fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
         "インスペクターの並び。切っている部位（ラメ）はたたむ"
     );
     let row = |h: &Harness<'_, YoluApp>, name: &str| {
+        let body = top_right_body(h);
         h.query_all_by_label(name)
             .map(|n| n.rect())
-            .find(|r| r.left() < 320.0 && (r.height() - 28.0).abs() < 1.0)
+            .find(|r| body.contains(r.center()) && (r.height() - 28.0).abs() < 1.0)
     };
     let header = |h: &Harness<'_, YoluApp>, name: &str| {
+        let body = top_right_body(h);
         h.get_all_by_label(name)
             .map(|n| n.rect())
-            .find(|r| r.left() < 320.0 && r.height() < 24.0)
+            .find(|r| body.contains(r.center()) && r.height() < 24.0)
             .unwrap()
     };
     // 標準の 6 つは見出しより上
@@ -1112,7 +1120,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
 
 #[test]
 fn fill_and_adjustment_properties_edit_and_undo() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1600.0, 128);
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     toolbar_new_fill(&mut h);
     let fill = h.state().state.selected_layer.unwrap();

@@ -370,7 +370,6 @@ fn every_dock_tab_keeps_its_look_while_stroking() {
         Tab::Assets,
         Tab::Channels,
         Tab::ColorSets,
-        Tab::Navigator,
         Tab::Log,
         Tab::History,
         Tab::SubTools,
@@ -378,6 +377,7 @@ fn every_dock_tab_keeps_its_look_while_stroking() {
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
     ] {
         click_tab(&mut h, tab);
         h.run();
@@ -391,7 +391,7 @@ fn every_dock_tab_keeps_its_look_while_stroking() {
     }
 }
 
-/// プロパティのどのタブ（ステンシル・マテリアル・レイヤー）でも、レイヤーに描いてもマスクに描いても、描いている間の見た目は変わらない。
+/// プロパティのどのタブ（ステンシル・レイヤー）でも、レイヤーに描いてもマスクに描いても、描いている間の見た目は変わらない。
 #[test]
 fn every_property_tab_keeps_its_look_while_stroking() {
     for mask in [false, true] {
@@ -407,7 +407,7 @@ fn every_property_tab_keeps_its_look_while_stroking() {
             h.run();
         }
         let canvas = canvas_rect(&h);
-        for tab in 0..3 {
+        for tab in 0..yolu_app::panels::properties::TAB_ICONS.len() {
             h.state_mut().state.ui.property_tab = tab;
             h.run();
             let mut end = Pos2::ZERO;

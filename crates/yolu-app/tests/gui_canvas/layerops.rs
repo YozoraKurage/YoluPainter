@@ -1565,7 +1565,7 @@ fn named_layers(h: &mut Harness<'_, YoluApp>, n: usize) -> Vec<LayerId> {
 
 #[test]
 fn clicking_rows_with_ctrl_and_shift_selects_several_layers() {
-    let mut h = app(1280.0, 800.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     let layers = named_layers(&mut h, 4); // 下から 1 2 3 4
                                           // 今は一番上の「レイヤー 2」…名前は 2 つ目からの番号（最初が「レイヤー 1」、足すたびにレイヤーの数 + 1）
     let name = |h: &Harness<'_, YoluApp>, id: LayerId| {
@@ -1612,7 +1612,7 @@ fn clicking_rows_with_ctrl_and_shift_selects_several_layers() {
 
 #[test]
 fn the_row_shows_a_lock_mark_and_clicking_it_unlocks_the_layers_own_locks() {
-    let mut h = app(1280.0, 800.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     let layers = named_layers(&mut h, 2);
     let (low, top) = (layers[0], layers[1]);
     let group = {

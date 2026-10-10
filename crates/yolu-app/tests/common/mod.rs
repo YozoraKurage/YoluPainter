@@ -107,9 +107,34 @@ pub fn with_render_state_cpu_canvas(
     app
 }
 
-/// ウィンドウの全体（eframe の App として）。文書は size × size。
+/// 幅 `width` のウィンドウの既定の並びで、中央の 3D ビューとキャンバスを 1 つの組（キャンバス、3D ビューの順のタブ。キャンバスが前）にした並び。ほかの組・割合は既定のまま。
+/// 3D ビューとキャンバスを同時に出すと、どちらも表示域が半分になる。描く・3D を見る試験の座標は、片方だけが広く出ている前提で書いてあるので、
+/// 試験の窓（`app`）はこの並びで立ち上げる。
+pub fn tabbed_center_dock(width: f32) -> egui_dock::DockState<yolu_app::Tab> {
+    use egui_dock::{TabDestination, TabInsert};
+    use yolu_app::Tab;
+    let mut dock = yolu_app::app::default_dock_for(width);
+    let from = dock.find_tab(&Tab::View3d).expect("3D ビュー");
+    let to = dock.find_tab(&Tab::Canvas).expect("キャンバス").node_path();
+    dock.move_tab(from, TabDestination::Node(to, TabInsert::Append));
+    let canvas = dock
+        .find_tab(&Tab::Canvas)
+        .expect("キャンバス（動かしたあと）");
+    dock.set_active_tab(canvas).expect("前へ");
+    dock
+}
+
+/// ウィンドウの全体（eframe の App として）。文書は size × size。中央は 1 つの組（`tabbed_center_dock`）。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
     app_with_renderer(width, height, size, shared_gpu::renderer())
+}
+
+/// `app` の、既定の並びのままの版（中央は 3D ビューが左・キャンバスが右）。
+pub fn app_default(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
+    let mut h = app(width, height, size);
+    h.state_mut().dock = yolu_app::app::default_dock_for(width);
+    h.run();
+    h
 }
 
 /// `app` の、描画器（装置）を選ぶ版（計測が `shared_gpu::renderer_with_adapter_limits` を渡す）。
@@ -126,19 +151,36 @@ pub fn app_with_renderer(
         .with_max_steps(120)
         .renderer(renderer)
         .build_eframe(move |cc| {
-            with_render_state_cpu_canvas(
-                YoluApp::for_context(
-                    &cc.egui_ctx,
-                    AppState::new(size, size),
-                    PenInput::detached(),
-                ),
-                cc.wgpu_render_state.as_ref(),
-            )
+            let mut app = YoluApp::for_context(
+                &cc.egui_ctx,
+                AppState::new(size, size),
+                PenInput::detached(),
+            );
+            // 中央は 1 つの組（キャンバスと 3D ビューのタブ）。既定の並び（3D ビューとキャンバスを左右に並べる）を見る試験は `app_default` を使う
+            app.dock = tabbed_center_dock(width);
+            with_render_state_cpu_canvas(app, cc.wgpu_render_state.as_ref())
         });
     // 焼く場所は CPU に固定（ハードウェアの GPU がある機械でも、試験の結果と画面を揺らさない）。GPU の試験は自分で選ぶ。
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
+    remember_right_column(&h);
     h
+}
+
+thread_local! {
+    static RIGHT_X: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
+
+/// 右の列（レイヤーの組）の左端を覚える。ウィンドウの大きさで右の列の位置が変わるので、試験は固定の座標でなく `rx()` で右の列かどうかを見分ける。
+fn remember_right_column(h: &Harness<'_, YoluApp>) {
+    if let Some(r) = h.state().tab_rects.get(&yolu_app::Tab::Layers) {
+        RIGHT_X.with(|x| x.set(r.left() - 1.0));
+    }
+}
+
+/// 右の列の左端（直近に作ったウィンドウの、レイヤーの組の左端より 1 点左）。`r.left() > rx()` なら右の列の部品。
+pub fn rx() -> f32 {
+    RIGHT_X.with(|x| x.get())
 }
 
 pub fn press(h: &Harness<'_, YoluApp>, at: Pos2, button: PointerButton) {
@@ -288,12 +330,7 @@ pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {
 }
 
 /// ドックのタブのボタンを押す（外へ出したウィンドウのタブも。試験のウィンドウでは、別ウィンドウはメインウィンドウの中の egui のウィンドウ）。
-/// 「アセット」「チャンネル」は、既定の並びでは左の列の上の短い組（サブツールと同じ組。下にツールプロパティ・ブラシサイズが縦に並ぶ）にいて、
-/// 行の下のほうまでは入らない。長い一覧を見る試験のために、押す前にその組を左の列のほぼ全体まで広げる（`give_room`）。
 pub fn click_tab(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
-    if matches!(tab, yolu_app::Tab::Assets | yolu_app::Tab::Channels) {
-        give_room(h, tab);
-    }
     let app = h.state();
     let at = app
         .tab_rects
@@ -351,42 +388,6 @@ pub fn has_japanese(text: &str) -> bool {
     })
 }
 
-/// タブがいる組を、左の列の上の部分（カラーより上。前の「サブツール」1 枚があった所）の中で、ほぼ全体まで広げる（縦に分けた親ごとに、その組の取り分を
-/// 95% にする。カラーの組と分ける所は動かさない）。ほかの並びの試験は、この広げた組が前のサブツール 1 枚と同じ高さになる前提で書いてある。
-pub fn give_room(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
-    use egui_dock::{Node, NodeIndex, Tree};
-    use yolu_app::Tab;
-    fn holds(tree: &Tree<Tab>, at: usize, tab: Tab) -> bool {
-        match tree.iter().nth(at) {
-            Some(Node::Leaf(leaf)) => leaf.tabs.contains(&tab),
-            Some(Node::Vertical(_) | Node::Horizontal(_)) => {
-                holds(tree, 2 * at + 1, tab) || holds(tree, 2 * at + 2, tab)
-            }
-            _ => false,
-        }
-    }
-    let dock = &mut h.state_mut().dock;
-    if let Some((node, _)) = dock.find_main_surface_tab(&tab) {
-        let tree = dock.main_surface_mut();
-        let mut at = node.0;
-        while at > 0 {
-            let parent = (at - 1) / 2;
-            let sibling = if at % 2 == 1 { at + 1 } else { at - 1 };
-            if !matches!(tree.iter().nth(parent), Some(Node::Vertical(_)))
-                || holds(tree, sibling, Tab::Color)
-            {
-                break;
-            }
-            if let Node::Vertical(split) = &mut tree[NodeIndex(parent)] {
-                // 上の子（奇数の番号）の取り分が 95%、下の子なら 5%
-                split.fraction = if at % 2 == 1 { 0.95 } else { 0.05 };
-            }
-            at = parent;
-        }
-    }
-    h.run();
-}
-
 /// 右のドックの「マテリアル」のパネル（テクスチャセットの見た目）を前に出す。
 pub fn open_material(h: &mut Harness<'_, YoluApp>) {
     click_tab(h, yolu_app::Tab::Material);
@@ -400,5 +401,82 @@ pub fn open_paint_channels(h: &mut Harness<'_, YoluApp>) {
         .ui
         .sections
         .insert("paint-channels", true);
+    h.run();
+}
+
+/// `tab` を `mate` のタブの組へ入れて前に出す（既定の並びで 1 つだけのタブの組に、別のタブを重ねたいとき）。
+pub fn put_in_group_of(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab, mate: yolu_app::Tab) {
+    use egui_dock::{TabDestination, TabInsert};
+    let dock = &mut h.state_mut().dock;
+    let from = dock.find_tab(&tab).expect("動かすタブ");
+    let to = dock.find_tab(&mate).expect("入れる組").node_path();
+    dock.move_tab(from, TabDestination::Node(to, TabInsert::Append));
+    let moved = dock.find_tab(&tab).expect("動かしたあとのタブ");
+    dock.set_active_tab(moved).expect("前へ");
+    h.run();
+}
+
+/// プロパティの組の中身の矩形（組のタブの帯の下から、ウィンドウの下端まで。右はウィンドウの右）。
+pub fn props_body(h: &Harness<'_, YoluApp>) -> Rect {
+    let tab = h.state().tab_rects[&yolu_app::Tab::Properties];
+    let window = h.ctx.content_rect();
+    Rect::from_min_max(pos2(tab.left() - 2.0, tab.bottom()), window.right_bottom())
+}
+
+/// プロパティの組の中身の縦の中ほど。組を送って部品を見える所へ置くときの目安。
+pub fn props_mid(h: &Harness<'_, YoluApp>) -> f32 {
+    props_body(h).center().y
+}
+
+/// 右の列の上の組（テクスチャセット・ナビゲーター・チャンネル・アセット）の中身の矩形（組のタブの帯の下から、レイヤーの組のタブの上まで。右はウィンドウの右）。
+pub fn top_right_body(h: &Harness<'_, YoluApp>) -> Rect {
+    let tabs = &h.state().tab_rects;
+    let (first, layers) = (
+        tabs[&yolu_app::Tab::TextureSets],
+        tabs[&yolu_app::Tab::Layers],
+    );
+    Rect::from_min_max(
+        pos2(first.left() - 2.0, first.bottom()),
+        pos2(h.ctx.content_rect().right(), layers.top()),
+    )
+}
+
+/// レイヤーの組の中身の矩形（組のタブの帯の下から、プロパティの組のタブの上まで。右はウィンドウの右）。
+pub fn layers_body(h: &Harness<'_, YoluApp>) -> Rect {
+    let tabs = &h.state().tab_rects;
+    let (layers, properties) = (
+        tabs[&yolu_app::Tab::Layers],
+        tabs[&yolu_app::Tab::Properties],
+    );
+    Rect::from_min_max(
+        pos2(layers.left() - 2.0, layers.bottom()),
+        pos2(h.ctx.content_rect().right(), properties.top()),
+    )
+}
+
+/// 右の列（レイヤーの組を含む列）を、中央（キャンバスの組）との分け方の取り分 `fraction`（中央の取り分。大きいほど右の列が狭い）に動かす。既定の右の列はどのウィンドウでも幅が広いので、
+/// 狭い列の振る舞い（名前を詰めずに積むなど）を確かめる試験が使う。
+pub fn set_center_share(h: &mut Harness<'_, YoluApp>, fraction: f32) {
+    use egui_dock::{Node, NodeIndex, Tree};
+    fn holds(tree: &Tree<yolu_app::Tab>, at: usize, tab: yolu_app::Tab) -> bool {
+        match tree.iter().nth(at) {
+            Some(Node::Leaf(leaf)) => leaf.tabs.contains(&tab),
+            Some(Node::Vertical(_) | Node::Horizontal(_)) => {
+                holds(tree, 2 * at + 1, tab) || holds(tree, 2 * at + 2, tab)
+            }
+            _ => false,
+        }
+    }
+    let tree = h.state_mut().dock.main_surface_mut();
+    let found = (0..tree.iter().count()).find(|&i| {
+        matches!(tree.iter().nth(i), Some(Node::Horizontal(_)))
+            && holds(tree, 2 * i + 2, yolu_app::Tab::Layers)
+            && holds(tree, 2 * i + 1, yolu_app::Tab::Canvas)
+    });
+    if let Some(i) = found {
+        if let Node::Horizontal(split) = &mut tree[NodeIndex(i)] {
+            split.fraction = fraction;
+        }
+    }
     h.run();
 }

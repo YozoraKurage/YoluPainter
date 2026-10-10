@@ -397,6 +397,10 @@ pub fn leaf_at(dock: &DockState<Tab>, at: Pos2) -> Option<NodeIndex> {
 /// 既定の並びで、タブと同じ組にいたタブ（自分を除く、並びの順）。1 つだけの組にいたタブは、上の組のタブ（ツールプロパティとブラシサイズは、縦に並んだ
 /// サブツールの組）。
 pub fn default_mates(tab: Tab) -> Vec<Tab> {
+    // 既定では閉じているナビゲーターは、開くとテクスチャセットの組へ（前の既定の並びの組）
+    if tab == Tab::Navigator {
+        return vec![Tab::TextureSets];
+    }
     let dock = crate::app::default_dock();
     let Some(path) = dock.find_tab(&tab) else {
         // 既定の並びに無いタブ（ポーズ）は、レイヤーの組へ（`panels::pose::ensure_tab` と同じ）

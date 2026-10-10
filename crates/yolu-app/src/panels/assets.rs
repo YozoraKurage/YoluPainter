@@ -27,7 +27,7 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
-pub const CELL_W: f32 = 76.0;
+pub const CELL_W: f32 = 88.0;
 pub const CELL_H: f32 = 92.0;
 pub const GAP: f32 = 6.0;
 pub const THUMB_BOX: f32 = 64.0;

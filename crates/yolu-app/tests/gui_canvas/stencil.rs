@@ -977,7 +977,7 @@ fn n_held_hides_the_overlay_and_paints_without_the_stencil() {
 #[test]
 fn a_canvas_stroke_through_the_stencil_follows_the_screen_not_the_canvas_view() {
     let dir = temp_dir("screen-ui");
-    let mut h = app(1280.0, 800.0, 256);
+    let mut h = app(1600.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     {
@@ -1630,7 +1630,7 @@ fn a_pen_with_y_held_moves_the_stencil_and_does_not_paint() {
 #[test]
 fn a_pen_stroke_goes_through_the_stencil_on_the_canvas_and_undoes_in_one_step() {
     let dir = temp_dir("pen-canvas");
-    let mut h = app(1280.0, 800.0, 256);
+    let mut h = app(1600.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     let r = canvas_rect(&h);

@@ -41,6 +41,8 @@ fn canvas_app(doc_w: u32, doc_h: u32, policy: CanvasBackend) -> Harness<'static,
             )
             .with_render_state(cc.wgpu_render_state.as_ref());
             app.set_canvas_backend(policy);
+            // 中央は 1 つの組（キャンバスだけが広く出る）
+            app.dock = common::tabbed_center_dock(1280.0);
             app
         });
     h.run();

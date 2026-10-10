@@ -346,7 +346,8 @@ fn a_press_on_the_dock_separator_that_reaches_into_the_canvas_does_not_paint() {
     for emulate in [None, Some(Emulate::Yes)] {
         let mut h = app(1280.0, 800.0, 256);
         let r = canvas_rect(&h);
-        let edge = pos2(r.right() - 1.0, r.center().y);
+        // 分け目の掴める幅（食い込み）は、端から 1 点に満たない（分け目の位置の端数で、1 点では外れることがある）
+        let edge = pos2(r.right() - 0.5, r.center().y);
         match emulate {
             None => {
                 press(&h, edge, PointerButton::Primary);

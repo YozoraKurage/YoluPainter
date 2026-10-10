@@ -15,11 +15,9 @@ use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;
 
-/// ブラシの一覧の行が全部入る高さの組で（既定の並びでは、サブツールの組は短い）。
+/// ブラシの一覧の行が全部入る高さのウィンドウ。
 fn window() -> H {
-    let mut h = app(1600.0, 1200.0, 128);
-    give_room(&mut h, yolu_app::Tab::SubTools);
-    h
+    app(1600.0, 1400.0, 128)
 }
 
 fn st(h: &H) -> &AppState {

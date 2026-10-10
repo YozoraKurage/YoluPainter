@@ -1,12 +1,12 @@
 //! 「マテリアル」のパネル（今のテクスチャセットの見た目。中身は `look::panel`）と、描くツールのツールプロパティの「塗るチャンネル」の区分
-//! （Unity 版の「ブラシのマテリアル」: オン・オフ、塗るチャンネルの組の 2 列のチップ、組のチャンネルごとの値。Color は描画色の見本、Emission は色、
-//! Roughness・Metallic・Height は 0〜1、Normal は傾き）。「塗るチャンネル」の値は画面の状態（`AppState::mat`）で、ブラシ・消しゴム・バケツ・
-//! ポリゴン塗りつぶし・グラデーション・図形・パスが使う。画面には名前と値だけを出し、説明はツールチップ。
+//! （オン・オフ、塗るチャンネルの組の 2 列のチップ、組のチャンネルごとの値。Color は描画色の見本、Emission は色、Roughness・Metallic・Height は 0〜1、
+//! Normal は傾き）。「塗るチャンネル」の値は画面の状態（`AppState::mat`）で、ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし・グラデーション・図形・パス・
+//! スポイトが使う。入れているあいだは見出しに点の印を付ける。画面には名前と値だけを出し、ツールチップは名前（と短い理由）だけ。
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use super::color_window;
-use super::properties::{section_default, slider_row, status_row};
+use super::properties::{section_default, slider_row};
 use crate::engine::Channel;
 use crate::lang::Lang;
 use crate::m2::{channel_icon, channel_name};
@@ -52,6 +52,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
 /// ツールプロパティの「塗るチャンネル」の区分（開閉は他の欄と同じく覚える。初めは閉じている）。
 pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
+    // 入れているあいだは、閉じていても見えるように、見出しに点の印
+    let marked = app.mat.enabled;
     let (open, _) = section_default(
         ui,
         app,
@@ -61,6 +63,7 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
         "layers",
         None,
         false,
+        marked,
     );
     if !open {
         return;
@@ -72,12 +75,12 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
         ui,
         row,
         "mat.toggle",
-        lang.pick("複数のチャンネルを一度に塗る", "Paint several channels at once"),
+        lang.pick(
+            "複数のチャンネルを一度に塗る",
+            "Paint several channels at once",
+        ),
         on,
-        Some(lang.pick(
-            "オンなら、下でチェックしたチャンネルを、それぞれの値で 1 回のストロークで塗ります（2D と 3D、バケツ、ポリゴン塗りつぶし）。1 回の取り消しで全部が戻ります。オフなら、選んでいるチャンネルを描画色で塗ります",
-            "On: one stroke (or fill) paints every channel checked below with its own value, in 2D and 3D. One undo takes all of them back. Off: paints the selected channel with the paint color",
-        )),
+        None,
         free,
     );
     if next != on {
@@ -88,13 +91,8 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
         return;
     }
     chips(ui, app, rows, lang, free);
-    if app.m2.edit_mask {
-        status_row(
-            ui,
-            rows,
-            lang.pick("マスクに塗っています", "Painting the layer mask"),
-        );
-    } else if app.m2.brush.effect.is_paint() {
+    // （マスクに描くあいだは、この区分でなくレイヤーマスクの欄が出る。`tool_props`）
+    if app.m2.brush.effect.is_paint() {
         for channel in app.mat.included() {
             value_rows(ui, app, rows, channel, lang, free);
         }
@@ -110,17 +108,7 @@ fn chips(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: boo
         for (cell, channel) in cells.iter().zip(line) {
             let included = app.mat.includes(*channel);
             let name = channel_name(lang, &app.doc, *channel);
-            let tip = if included {
-                lang.pick(
-                    format!("{name}: ストロークで塗る（クリックで外す）"),
-                    format!("{name}: painted by the stroke (click to leave it out)"),
-                )
-            } else {
-                lang.pick(
-                    format!("{name}: 塗らない（クリックで追加）"),
-                    format!("{name}: not painted (click to paint it too)"),
-                )
-            };
+            let tip = name.clone();
             let current = *channel == app.m2.paint_channel;
             if chip(ui, *cell, *channel, &name, included, current, free, &tip) {
                 app.apply(Action::Mat(MatAction::Channel(*channel, !included)));

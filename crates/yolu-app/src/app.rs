@@ -155,29 +155,63 @@ impl<'de> serde::Deserialize<'de> for Tab {
     }
 }
 
-/// Substance Painter の並び（左: サブツールとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
-/// プロパティとマテリアルとヒストリー）。左の列の上は、サブツール・ツールプロパティ・ブラシサイズが縦に並ぶので高めに取る。
-/// 左の列は、いちばん小さいウィンドウ（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点のウィンドウで約 330 点）。
-/// 右の列は 1600 点の幅のウィンドウで約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+/// 左の列の割合（上から サブツール・ツールプロパティ・ブラシサイズ・カラー。列全体に対して）。`default_dock_for` が使う。
+const LEFT_SHARE: f32 = 0.21;
+const LEFT_COLOR: f32 = 0.32;
+const LEFT_TOOL_PROPERTIES: f32 = 0.35;
+const LEFT_BRUSH_SIZE: f32 = 0.13;
+/// 右の列の幅: ウィンドウの幅の割合と、下限（点。右上の 3 つのタブ（テクスチャセット・チャンネル・アセット）の名前が日英とも切れない幅）。
+/// 下限は、最小のウィンドウ（960 点）の幅で効く。
+const RIGHT_WIDTH_SHARE: f32 = 0.19;
+const RIGHT_WIDTH_MIN: f32 = 232.0;
+/// 中央の 3D ビュー（左）の取り分。残りがキャンバス（右）。
+const CENTER_VIEW3D: f32 = 0.5;
+const RIGHT_TOP: f32 = 0.46;
+/// 右の列の、上の組を除いた残りのうち、レイヤーの組の取り分（残りがプロパティの組）。
+const RIGHT_LAYERS: f32 = 0.42;
+/// 既定の並びを、幅の決まらない所（`default_dock`）で作るときのウィンドウの幅（起動の初めのウィンドウの幅）。
+const REFERENCE_WIDTH: f32 = 1600.0;
+
+/// 既定の並び（ウィンドウの幅は起動の初めの幅）。
 pub fn default_dock() -> DockState<Tab> {
-    let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
+    default_dock_for(REFERENCE_WIDTH)
+}
+
+/// 幅 `width` 点のウィンドウでの既定の並び。Substance Painter の並び（左: サブツール・ツールプロパティ・ブラシサイズ・カラー、中央: 3D ビュー（左）と
+/// キャンバス（右）、右: 上からテクスチャセットとチャンネルとアセット・レイヤーとログ・プロパティとマテリアルとヒストリー）。ナビゲーターは閉じている
+/// （「ウィンドウ」のメニューで開くとテクスチャセットの組に入る）。右の列の幅は、ウィンドウの幅の `RIGHT_WIDTH_SHARE`、ただし `RIGHT_WIDTH_MIN` 点より狭くしない
+/// （egui_dock の割合は幅に対する割合なので、幅から決める）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+pub fn default_dock_for(width: f32) -> DockState<Tab> {
+    // ドックの幅は、ウィンドウの幅から左のツールの帯を除いた分
+    let dock_width = (width - t::TOOL_STRIP_WIDTH).max(1.0);
+    let left = LEFT_SHARE * dock_width;
+    let right = (RIGHT_WIDTH_SHARE * width).max(RIGHT_WIDTH_MIN);
+    // 左の列を除いた幅のうち、中央（3D ビューとキャンバス）の取り分
+    let center_share = (1.0 - right / (dock_width - left).max(1.0)).clamp(0.3, 0.9);
+    let mut dock = DockState::new(vec![Tab::Canvas]);
     let surface = dock.main_surface_mut();
-    let [center, left] = surface.split_left(
-        NodeIndex::root(),
-        0.21,
-        vec![Tab::SubTools, Tab::Assets, Tab::Channels],
+    let [center, left] = surface.split_left(NodeIndex::root(), LEFT_SHARE, vec![Tab::SubTools]);
+    let [center, right] = surface.split_right(
+        center,
+        center_share,
+        vec![Tab::TextureSets, Tab::Channels, Tab::Assets],
     );
-    // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小のウィンドウで名前が欠ける）
-    let [_, right] = surface.split_right(center, 0.72, vec![Tab::TextureSets, Tab::Navigator]);
-    // 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー。前の「サブツール」1 枚（列の高さの 66%）に入っていた 3 つの高さの割合のまま、
-    // それぞれが自分のタブの帯を持つ
-    let [upper, _] = surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
-    let [_, props_and_size] = surface.split_below(upper, 0.38, vec![Tab::ToolProperties]);
-    surface.split_below(props_and_size, 0.8, vec![Tab::BrushSize]);
-    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
+    surface.split_left(center, CENTER_VIEW3D, vec![Tab::View3d]);
+    // 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー（それぞれが自分のタブの帯を持つ）
+    let upper_share = 1.0 - LEFT_COLOR;
+    let [upper, _] = surface.split_below(left, upper_share, vec![Tab::Color, Tab::ColorSets]);
+    let sub_share = upper_share - LEFT_TOOL_PROPERTIES - LEFT_BRUSH_SIZE;
+    let [_, props_and_size] =
+        surface.split_below(upper, sub_share / upper_share, vec![Tab::ToolProperties]);
+    surface.split_below(
+        props_and_size,
+        LEFT_TOOL_PROPERTIES / (LEFT_TOOL_PROPERTIES + LEFT_BRUSH_SIZE),
+        vec![Tab::BrushSize],
+    );
+    let [_, layers] = surface.split_below(right, RIGHT_TOP, vec![Tab::Layers, Tab::Log]);
     surface.split_below(
         layers,
-        0.45,
+        RIGHT_LAYERS,
         vec![Tab::Properties, Tab::Material, Tab::History],
     );
     dock
@@ -418,6 +452,8 @@ pub struct YoluApp {
     /// ドックの並びとウィンドウの大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
     layout_path: Option<std::path::PathBuf>,
     /// 最後に書いた（または読んだ）ファイルの中身。変わったときだけ書く。
+    /// 起動して最初のフレームで、既定の並びのままなら、ウィンドウの幅に合わせて右の列の幅を決め直す（`default_dock_for`）。保存した並びを読んだときは何もしない。
+    dock_fit: bool,
     layout_saved: String,
     /// 最後に「書くか」を見た時刻（egui の時刻。1 秒おきに見る）。
     layout_checked_at: f64,
@@ -929,6 +965,7 @@ impl YoluApp {
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
             gpu_device: None,
             layout_path: None,
+            dock_fit: true,
             layout_saved: String::new(),
             layout_checked_at: f64::NEG_INFINITY,
             window_record: None,
@@ -1813,10 +1850,25 @@ impl YoluApp {
     /// 1 フレーム（eframe と試験の両方がここを呼ぶ）。フレームの中で `message` に書かれた文（非同期の終わりなど、`apply` の外の書き込みも）は、
     /// 前と同じ文でも新しい知らせとして出る。
     pub fn frame(&mut self, ui: &mut Ui) {
+        self.fit_default_dock(ui.ctx());
         let prior = self.state.message_begin();
         self.frame_body(ui);
         self.state.message_end(prior);
         self.finish_message(ui.ctx());
+    }
+
+    /// 起動の最初のフレームで、並びが既定のままなら（保存した並びを読んでいない。試験が並びを替えてもいない）、今のウィンドウの幅の既定の並びに替える。
+    fn fit_default_dock(&mut self, ctx: &egui::Context) {
+        if !std::mem::take(&mut self.dock_fit) {
+            return;
+        }
+        let same = matches!(
+            (serde_json::to_value(&self.dock), serde_json::to_value(default_dock())),
+            (Ok(a), Ok(b)) if a == b
+        );
+        if same && self.detached.windows.is_empty() {
+            self.dock = default_dock_for(ctx.content_rect().width());
+        }
     }
 
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
@@ -1967,7 +2019,7 @@ impl YoluApp {
         }
         self.ensure_pose_tab();
         if self.state.reset_layout {
-            self.dock = default_dock();
+            self.dock = default_dock_for(ctx.content_rect().width());
             self.detached.clear();
             self.state.reset_layout = false;
         }

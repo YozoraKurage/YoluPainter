@@ -31,7 +31,7 @@ const FIELD_HEIGHT: f32 = 20.0;
 const FIELD_GAP: f32 = 3.0;
 const TOOL_SAMPLE_HEIGHT: f32 = 44.0;
 /// ブラシサイズの丸の 1 マスの最小の幅と、1 段の高さ。幅に入るだけ並べ、入りきらなければ段を足す。
-const SIZE_CELL_MIN: f32 = 32.0;
+const SIZE_CELL_MIN: f32 = 30.0;
 const SIZE_ROW: f32 = 42.0;
 const PEN_BUTTON: f32 = 24.0;
 /// 大きさの数字（細い丸の幅に収める）。

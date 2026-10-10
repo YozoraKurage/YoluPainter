@@ -19,7 +19,7 @@ The "Fill" section in Properties holds the value for each channel. The button ne
 
 ### Paint several channels at once
 
-Turn on "Paint several channels at once" in "Paint Channels" at the end of Tool Properties (for the brush, eraser, Fill, Polygon Fill, Gradient, Shape and Path tools; it starts closed), and one stroke paints every checked channel with its own value (Color uses the paint color, Emission a color, Roughness, Metallic and Height 0–1, and Normal a tilt). It works with 2D, 3D, Fill, Polygon Fill and paths, and one undo takes all channels back. When off, the selected channel is painted with the paint color.
+Turn on "Paint several channels at once" in "Paint Channels" at the end of Tool Properties (for the brush, eraser, Fill, Polygon Fill, Gradient, Shape, Path and Eyedropper tools; it starts closed), and one stroke paints every checked channel with its own value (Color uses the paint color, Emission a color, Roughness, Metallic and Height 0–1, and Normal a tilt). It works with 2D, 3D, Fill, Polygon Fill and paths, and one undo takes all channels back. When off, the selected channel is painted with the paint color.
 
 ## Paint with an image
 
@@ -107,7 +107,7 @@ Filters that read neighboring pixels, such as blur and sharpen, also read the pi
 
 ## Save assets for reuse
 
-The Assets panel on the left has two places. "Project" holds this project's assets, which are saved in the `.ylp` (up to 256). "Library" is your own folder (set by "Library folder" in the settings), shared by all your projects.
+The Assets panel (top right) has two places. "Project" holds this project's assets, which are saved in the `.ylp` (up to 256). "Library" is your own folder (set by "Library folder" in the settings), shared by all your projects.
 
 Items are Images, Brushes, Materials, Smart Materials and Smart Masks; filter them with the icons on top and search by name. Bundled smart materials that can be placed right away are listed too.
 

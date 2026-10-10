@@ -2150,18 +2150,23 @@ mod ui {
         &h.state().state
     }
 
-    /// 左の列の格子の中の素材。
+    /// 「アセット」の格子の中の素材。
     fn card(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-        rect_of(h, name, |r| r.left() < 300.0 && r.top() > 150.0)
+        let body = top_right_body(h);
+        rect_of(h, name, |r| {
+            body.contains(r.center()) && r.top() > body.top() + 67.0
+        })
     }
 
     fn card_shown(h: &Harness<'_, YoluApp>, name: &str) -> bool {
+        let body = top_right_body(h);
         h.query_all_by_label(name)
-            .any(|n| n.rect().left() < 300.0 && n.rect().top() > 150.0)
+            .any(|n| body.contains(n.rect().center()) && n.rect().top() > body.top() + 67.0)
     }
 
     fn row(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-        rect_of(h, name, |r| r.left() > 1000.0 && r.height() < 40.0)
+        let body = layers_body(h);
+        rect_of(h, name, |r| body.contains(r.center()) && r.height() < 40.0)
     }
 
     fn double_click(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
@@ -2188,7 +2193,7 @@ mod ui {
         dir.put("Images/pic.png", &sample_png());
         dir.put("Brushes/brush.ylbrush", &fixture("brush.ylbrush"));
         dir.put("broken.ylsmart", b"not a smart file");
-        let mut h = app(1280.0, 1000.0, 64);
+        let mut h = app(1280.0, 1400.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
         // タブを押した時刻から間を空ける（このあとのダブルクリックの 1 回目が、タブの押下との 2 回押しに数えられないように）
         for _ in 0..30 {
@@ -2619,7 +2624,8 @@ mod ui {
         }
         // ブラシのタブを開いている間（ライブラリの置き場のまま）、ブラシの一覧の上へ落とした PNG は筆先の取り込みへ行き、
         // ライブラリには何も書かない
-        click_tab(&mut h, yolu_app::Tab::SubTools);
+        // （アセットの組の前をチャンネルにして、ライブラリの格子を隠す）
+        click_tab(&mut h, yolu_app::Tab::Channels);
         h.run();
         assert_eq!(st(&h).library.source, Source::Library);
         assert!(st(&h).library.grid_rect.is_none(), "格子は描いていない");

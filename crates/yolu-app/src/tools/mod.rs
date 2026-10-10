@@ -248,6 +248,7 @@ pub static TOOLS: [ToolDef; 19] = [
         "I",
     )
     .one_shot()
+    .paint_channels()
     .surface(Surface::Pick)
     .sub(SubTools::Presets)
     .ui(eyedrop::props, eyedrop::options),

@@ -42,6 +42,12 @@ fn row_of(h: &H, name: &str) -> Rect {
     })
 }
 
+/// 一覧を先頭へ戻す（新しいブラシを作ると、一覧はその行へ送られる。組の高さに入りきらない行は、先頭へ戻さないと見えない）。
+fn list_to_top(h: &mut H) {
+    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.run();
+}
+
 fn click_row(h: &mut H, name: &str) {
     let r = row_of(h, name);
     click(h, pos2(r.left() + 30.0, r.center().y));
@@ -275,6 +281,7 @@ fn the_list_footer_adds_duplicates_reverts_and_deletes() {
     assert!(st(&h).brushes.lib.entry(copy).is_some());
     assert_eq!(st(&h).brushes.lib.current(), key, "前の行へ");
     // 組み込みも並びから外せる（「＋」のウィンドウから戻せる）
+    list_to_top(&mut h);
     click_row(&mut h, "ハード円");
     h.get_by_label("ブラシを削除").click();
     h.run();
@@ -318,7 +325,9 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
     h.run();
     assert_eq!(st(&h).brushes.lib.entry(key).unwrap().name, "太い線");
     assert_eq!(st(&h).brushes.ui.renaming, None);
-    // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）
+    // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）。一覧は新しいブラシの所へ送られているので、先頭へ戻す
+    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.run();
     let row = row_of(&h, "標準");
     let at = pos2(row.left() + 30.0, row.center().y);
     for _ in 0..2 {
@@ -404,9 +413,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
 
 #[test]
 fn dragging_a_row_reorders_the_list_inside_its_group() {
-    let mut h = app(1600.0, 1200.0, 128);
-    // （一覧の行が全部入る高さの組で）
-    give_room(&mut h, Tab::SubTools);
+    // （一覧の行が全部入る高さで）
+    let mut h = app(1600.0, 1400.0, 128);
     // 利用者のブラシを 2 つ足して、並び替える
     for _ in 0..2 {
         h.get_by_label("今の設定を新しいブラシに").click();
@@ -440,6 +448,7 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     assert_eq!(st(&h).toolset.ui.drag, None);
     assert!(!st(&h).doc.can_undo());
     // 一番下の空白へ落とすと、グループの一番後ろ
+    list_to_top(&mut h);
     let top = row_of(&h, "標準");
     let list_bottom = panel_rect(&h).top() + 30.0 + 400.0;
     let _ = list_bottom;
@@ -535,9 +544,8 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
 
 #[test]
 fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
-    let mut h = app(1600.0, 900.0, 128);
-    // （丸が 2 段とも入る高さの組で）
-    give_room(&mut h, Tab::BrushSize);
+    // （丸が 2 段とも入る高さで）
+    let mut h = app(1600.0, 1100.0, 128);
     // 既定の直径 32 の丸が今の大きさ
     let cell = |h: &H, size: u32| {
         rect_of(h, &format!("{size} px"), |r| {
@@ -1280,7 +1288,7 @@ fn snapshot_brush_panel() {
 #[test]
 fn snapshot_brush_panel_modified_and_user_brush() {
     // ブラシサイズの格子が 2 段になっても一覧の「鉛筆」まで見える高さ
-    let mut h = app(1600.0, 1000.0, 128);
+    let mut h = app(1600.0, 1300.0, 128);
     click_row(&mut h, "鉛筆");
     h.state_mut().state.brush.radius = 9.0;
     h.state_mut()
@@ -1419,11 +1427,34 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         -400.0,
     );
     assert_eq!(st(&tall).subtools.ui.props_scroll[brush], 0.0);
-    // ブラシサイズの組も、入りきらなければ自分の中だけをスクロールする
+    // ブラシサイズの組も、入りきらなければ自分の中だけをスクロールし、スクロールしても丸は押せる（最後の段の丸が見える所まで送って、押す）
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let color_tab = h.state().tab_rects[&Tab::Color];
+    let body = Rect::from_min_max(
+        size_tab.left_bottom(),
+        pos2(size_tab.left() + 300.0, color_tab.top()),
+    );
+    let last = *yolu_app::panels::brushes::SIZES.last().unwrap();
+    let cell = |h: &H| {
+        rect_of(h, &format!("{last} px"), |r| {
+            r.left() < 400.0 && r.width() < 60.0
+        })
+    };
+    assert!(!body.contains_rect(cell(&h)), "初めは最後の段が見えない");
     h.state_mut().state.subtools.ui.sizes_scroll = 100_000.0;
     h.run();
-    assert!(st(&h).subtools.ui.sizes_scroll > 0.0);
-    assert!(st(&h).subtools.ui.sizes_scroll < 1_000.0, "丸の高さまで");
+    let scrolled = st(&h).subtools.ui.sizes_scroll;
+    assert!(
+        scrolled > 0.0 && scrolled < 1_000.0,
+        "丸の高さまで: {scrolled}"
+    );
+    let at = cell(&h);
+    assert!(
+        body.contains_rect(at),
+        "送ると最後の段が見える {at:?} {body:?}"
+    );
+    click(&mut h, at.center());
+    assert_eq!(st(&h).brush.radius, last as f32 / 2.0);
 }
 
 #[test]

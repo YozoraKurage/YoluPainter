@@ -117,11 +117,32 @@ impl ColorTextures {
     }
 }
 
-/// 右上の切り替えのボタンの分の幅（円はその左の残りの幅に収める）。
+/// 右上の切り替えのボタンの大きさ。
+const TOGGLE: f32 = 22.0;
+/// 小さな円で、ボタンを円の外側の角に置けないときに、円の脇（右か上）へ空ける分。
 const TOGGLE_LANE: f32 = 26.0;
 
-/// 円の外接の正方形。右上の切り替えのボタンの分を、右に空ける（横長の欄）か上に空ける（縦長の細い欄）かの、円が大きくなるほうに置く。
+/// 欄の右上の角の切り替えのボタン。
+pub fn toggle_rect(area: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(area.right() - TOGGLE, area.top()),
+        vec2(TOGGLE, TOGGLE),
+    )
+}
+
+/// 円の外接の正方形。円は欄の幅と高さの小さいほうをいっぱいに使い、右上の切り替えのボタンは円の外側の角（円と重ならない所）に置く。
+/// 小さな円ではその角が円に掛かるので、そのときだけボタンの分を、右に空ける（横長の欄）か上に空ける（縦長の細い欄）かの、円が大きくなるほうに置く。
 pub fn wheel_rect(area: Rect) -> Rect {
+    let side = area.width().min(area.height()).max(0.0);
+    let full = Rect::from_center_size(area.center(), vec2(side, side));
+    let toggle = toggle_rect(area);
+    let nearest = pos2(
+        full.center().x.clamp(toggle.left(), toggle.right()),
+        full.center().y.clamp(toggle.top(), toggle.bottom()),
+    );
+    if nearest.distance(full.center()) >= side * 0.5 + 1.0 {
+        return full;
+    }
     let beside = area.height().min(area.width() - TOGGLE_LANE).max(0.0);
     let below = (area.height() - TOGGLE_LANE).min(area.width()).max(0.0);
     if below > beside {
@@ -146,7 +167,13 @@ pub fn wheel_rect(area: Rect) -> Rect {
 }
 
 /// 16 進とアルファを 1 行に並べるのに足りる幅（これより狭ければ 2 行に分けて、どちらも欄の幅で見せる）。
-const HEX_ALPHA_ONE_LINE: f32 = 180.0;
+const HEX_ALPHA_ONE_LINE: f32 = 160.0;
+
+/// 16 進とアルファの欄・使った色の行の高さと、行の間・上下の余白（円を大きく取るため詰めてある。字の大きさはほかの欄と同じ）。
+const FIELD_HEIGHT: f32 = 18.0;
+const FIELD_GAP: f32 = 3.0;
+const FIELD_TOP: f32 = 3.0;
+const RECENT_HEIGHT: f32 = 14.0;
 
 /// 円の中の彩度×明度の四角。
 pub fn wheel_square(wheel: Rect) -> Rect {
@@ -221,21 +248,26 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
     app.color.sync_hsv();
-    let mut rows = Rows::new(r, 8.0);
+    let mut rows = Rows::new(r, FIELD_TOP);
     let stacked = r.width() - 2.0 * t::PADDING < HEX_ALPHA_ONE_LINE;
     let lines = if stacked { 2.0 } else { 1.0 };
-    let fixed = 8.0 + 6.0 + lines * (22.0 + 6.0) + 16.0 + 6.0 + 8.0;
-    // 円は欄の幅いっぱいまで大きくする（幅の広い欄で小さく見えないように。上限は 320）
+    // 上の余白・円の下の間・16 進とアルファ・使った色（と下の間）・下の余白
+    let fixed = FIELD_TOP
+        + FIELD_GAP
+        + lines * (FIELD_HEIGHT + FIELD_GAP)
+        + RECENT_HEIGHT
+        + FIELD_GAP
+        + FIELD_TOP;
+    // 円は欄の幅と高さの小さいほうまで大きくする（幅の広い欄で小さく見えないように。上限は 346）
     let most = if app.color.wheel {
-        // 細い欄では切り替えのボタンを円の上に置くので、その分も高さに足す
-        (r.width() - 2.0 * t::PADDING + TOGGLE_LANE).clamp(72.0, 346.0)
+        (r.width() - 2.0 * t::PADDING).clamp(72.0, 346.0)
     } else {
         // 四角と色相の帯は、2 枚の色を帯へ移して空いた高さの分、幅に合わせて縦にも伸ばす（細い欄は 160 のまま）
         ((r.width() - 2.0 * t::PADDING - 52.0) * 1.25).clamp(160.0, 320.0)
     };
     let sv_height = (r.height() - fixed).clamp(72.0, most);
-    let area = rows.row(sv_height, 6.0);
-    let toggle = Rect::from_min_size(pos2(area.right() - 22.0, area.top()), vec2(22.0, 22.0));
+    let area = rows.row(sv_height, FIELD_GAP);
+    let toggle = toggle_rect(area);
     if app.color.wheel {
         let wheel = wheel_rect(area);
         let id = ui.make_persistent_id("color.wheel");
@@ -391,9 +423,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     // 16 進の欄を広めに取る（同梱の書体の数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
     let cells = if stacked {
         // 狭い欄: 16 進とアルファを 2 行に（「#RRGGBB」が欠けないように）
-        [rows.row(22.0, 6.0), rows.row(22.0, 6.0)]
+        [
+            rows.row(FIELD_HEIGHT, FIELD_GAP),
+            rows.row(FIELD_HEIGHT, FIELD_GAP),
+        ]
     } else {
-        let line = rows.row(22.0, 6.0);
+        let line = rows.row(FIELD_HEIGHT, FIELD_GAP);
         let hex_width = ((line.width() - 6.0) * 0.52).round();
         [
             Rect::from_min_size(line.min, vec2(hex_width, line.height())),
@@ -443,7 +478,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     }
 
     // 使った色
-    let recent = rows.row(16.0, 6.0);
+    let recent = rows.row(RECENT_HEIGHT, FIELD_GAP);
     let size = recent.height();
     let columns = ((recent.width() + 3.0) / (size + 3.0)).floor().max(1.0) as usize;
     let recent_colors = app.color.recent.clone();
@@ -482,17 +517,51 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
 mod wheel_layout_tests {
     use super::*;
 
+    /// 切り替えのボタンが円に掛からない（ボタンの矩形の円に最も近い点が、円の外）。
+    fn toggle_clear_of(area: Rect, wheel: Rect) -> bool {
+        let toggle = toggle_rect(area);
+        let c = wheel.center();
+        let nearest = pos2(
+            c.x.clamp(toggle.left(), toggle.right()),
+            c.y.clamp(toggle.top(), toggle.bottom()),
+        );
+        nearest.distance(c) >= wheel.width() * 0.5
+    }
+
     #[test]
-    fn a_narrow_tall_panel_puts_the_toggle_above_and_the_wheel_uses_the_whole_width() {
-        // 狭い欄（幅 110・高さ 300）: 右に空けると 84、上に空けると 110。大きいほう
-        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, 300.0));
-        let wheel = wheel_rect(area);
-        assert_eq!(wheel.width(), 110.0);
-        assert!(wheel.top() >= TOGGLE_LANE);
-        // 横長の欄（幅 300・高さ 160）: 右に空けて高さいっぱい
+    fn the_wheel_uses_the_smaller_of_the_width_and_height_with_the_toggle_outside_it() {
+        // 横長の欄（幅 300・高さ 160）: 高さいっぱい
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 160.0));
         let wheel = wheel_rect(area);
         assert_eq!(wheel.width(), 160.0);
-        assert!(wheel.right() <= 300.0 - TOGGLE_LANE);
+        assert!(toggle_clear_of(area, wheel));
+        // 縦長の細い欄（幅 110・高さ 300）: 幅いっぱい（ボタンの分を空けない）
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, 300.0));
+        let wheel = wheel_rect(area);
+        assert_eq!(wheel.width(), 110.0);
+        assert!(toggle_clear_of(area, wheel));
+        // 正方形に近い欄（200×200）: 全部使い、ボタンは円の外の角
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 200.0));
+        let wheel = wheel_rect(area);
+        assert_eq!(wheel.width(), 200.0);
+        assert!(toggle_clear_of(area, wheel));
+        // 小さな正方形（140×140）は、角が円に掛かるので、そのときだけボタンの分を空ける
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(140.0, 140.0));
+        let wheel = wheel_rect(area);
+        assert!(wheel.width() < 140.0 && wheel.width() >= 140.0 - TOGGLE_LANE);
+        assert!(toggle_clear_of(area, wheel));
+        // どの大きさでも、円は欄の中でボタンに掛からない
+        for w in (72..400).step_by(7) {
+            for h in (72..400).step_by(11) {
+                let area = Rect::from_min_size(pos2(5.0, 9.0), vec2(w as f32, h as f32));
+                let wheel = wheel_rect(area);
+                assert!(area.expand(0.5).contains_rect(wheel), "{area:?} {wheel:?}");
+                assert!(toggle_clear_of(area, wheel), "{area:?} {wheel:?}");
+                assert!(
+                    wheel.width() >= (w.min(h) as f32 - TOGGLE_LANE).max(0.0),
+                    "{area:?} {wheel:?}"
+                );
+            }
+        }
     }
 }

@@ -18,7 +18,8 @@ use yolu_core::{Channel, ImageColorSpace, ImageInput, Rgba8};
 type H = Harness<'static, YoluApp>;
 
 fn view() -> H {
-    let mut h = app(900.0, 640.0, 64);
+    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
+    let mut h = app(1207.0, 640.0, 64);
     click_tab(&mut h, yolu_app::Tab::View3d);
     move_to(&h, egui::pos2(1.0, 1.0));
     h.run();

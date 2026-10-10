@@ -87,6 +87,23 @@ fn without_new_tabs(mut dock: DockState<Tab>) -> DockState<Tab> {
     dock
 }
 
+/// 前の版（0.5.0）の既定の並び（3 つのタブが無い。左の列の上は サブツール・アセット・チャンネル、右上はテクスチャセットとナビゲーターだけ）。
+fn previous_default() -> DockState<Tab> {
+    use egui_dock::NodeIndex;
+    let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
+    let surface = dock.main_surface_mut();
+    let [center, left] = surface.split_left(
+        NodeIndex::root(),
+        0.21,
+        vec![Tab::SubTools, Tab::Assets, Tab::Channels],
+    );
+    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
+    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
+    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
+    surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
+    dock
+}
+
 // ───────── 名前・既定の並び ─────────
 
 #[test]
@@ -110,80 +127,311 @@ fn headless_the_new_panels_have_names_in_both_languages_and_stable_keys() {
 }
 
 #[test]
-fn headless_the_default_dock_pairs_the_material_with_the_properties_and_gives_each_tool_panel_its_own_group(
+fn headless_the_default_dock_keeps_the_sub_tools_alone_on_the_left_and_the_assets_with_the_texture_sets(
 ) {
     let dock = default_dock();
+    // 左の列: サブツールの組はサブツールだけ（アセット・チャンネルは右上へ）。ツールプロパティとブラシサイズは、それぞれ自分の組
+    assert_eq!(mates(&dock, Tab::SubTools), [Tab::SubTools]);
+    assert_eq!(mates(&dock, Tab::ToolProperties), [Tab::ToolProperties]);
+    assert_eq!(mates(&dock, Tab::BrushSize), [Tab::BrushSize]);
+    assert_eq!(mates(&dock, Tab::Color), [Tab::Color, Tab::ColorSets]);
+    // 右: 上はテクスチャセット・チャンネル・アセット（ナビゲーターは閉じている）、次はレイヤーとログ、下はプロパティ・マテリアル・ヒストリー
+    assert_eq!(
+        mates(&dock, Tab::Assets),
+        [Tab::TextureSets, Tab::Channels, Tab::Assets]
+    );
+    assert!(
+        dock.find_tab(&Tab::Navigator).is_none(),
+        "ナビゲーターは閉じている"
+    );
+    assert_eq!(mates(&dock, Tab::Layers), [Tab::Layers, Tab::Log]);
     assert_eq!(
         mates(&dock, Tab::Material),
         [Tab::Properties, Tab::Material, Tab::History],
         "右下のプロパティ・ヒストリーと並ぶ"
     );
-    assert_eq!(mates(&dock, Tab::ToolProperties), [Tab::ToolProperties]);
-    assert_eq!(mates(&dock, Tab::BrushSize), [Tab::BrushSize]);
-    assert_eq!(
-        mates(&dock, Tab::SubTools),
-        [Tab::SubTools, Tab::Assets, Tab::Channels],
-        "サブツールの組のタブは今のまま"
+    // 中央: 3D ビューとキャンバスは別の組で、3D ビューが左（同じ分け方の左の子）
+    assert_eq!(mates(&dock, Tab::View3d), [Tab::View3d]);
+    assert_eq!(mates(&dock, Tab::Canvas), [Tab::Canvas]);
+    let view3d = dock.find_tab(&Tab::View3d).unwrap().node_path();
+    let canvas = dock.find_tab(&Tab::Canvas).unwrap().node_path();
+    assert_eq!(view3d.node.parent(), canvas.node.parent(), "同じ分け方の子");
+    assert!(
+        view3d.node.0 % 2 == 1 && canvas.node.0 == view3d.node.0 + 1,
+        "3D ビューが左（先の子）"
     );
-    layout::validate(&dock).expect("どのタブも 1 つずつ");
+    layout::validate(&dock).expect("どのタブも 1 つずつ（ナビゲーターは無くてよい）");
     // ファイルで往復する
     let loaded = layout::parse(&layout::render(&dock, None));
     assert_eq!(loaded.problems, Vec::<String>::new());
     assert_eq!(shape(&loaded.dock.unwrap()), shape(&dock));
+    // 前の版の並びのナビゲーターは、そのまま残る（閉じない）。ナビゲーターの無い並びには足さない
+    let mut old = previous_default();
+    layout::add_missing_tabs(&mut old, &mut []);
+    assert!(
+        old.find_tab(&Tab::Navigator).is_some(),
+        "前の並びのナビゲーターは残る"
+    );
+    let mut without = default_dock();
+    layout::add_missing_tabs(&mut without, &mut []);
+    assert!(
+        without.find_tab(&Tab::Navigator).is_none(),
+        "閉じている並びには足さない"
+    );
+    // 開くと、テクスチャセットの組へ（前の既定の並びの組）
+    assert_eq!(
+        yolu_app::detach::default_mates(Tab::Navigator),
+        [Tab::TextureSets]
+    );
 }
 
+/// 3 つの大きさのウィンドウで、既定の並びの各パネルが使える高さ・幅になっている。
+/// - 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー。
+/// - 右上の 3 つのタブ（テクスチャセット・チャンネル・アセット）は、最小のウィンドウでも日英とも切れない。
+/// - チャンネルは 6 つとも見え、アセットは品が見える（最小のウィンドウは上の一部だけ）。レイヤーの組が狭くなりすぎない。
 #[test]
-fn the_default_window_stacks_the_tool_panels_in_the_left_column_and_the_material_sits_beside_the_properties(
-) {
-    for (width, height) in [(1600.0, 900.0), (1280.0, 800.0), (960.0, 640.0)] {
-        let mut h = app(width, height, 128);
-        let column: Vec<Rect> = [
-            Tab::SubTools,
-            Tab::ToolProperties,
-            Tab::BrushSize,
-            Tab::Color,
-        ]
-        .iter()
-        .map(|t| tab_rect(&h, *t))
-        .collect();
-        for pair in column.windows(2) {
-            assert!(
-                pair[0].top() < pair[1].top(),
-                "{width}: 上から順 {column:?}"
-            );
-            assert!(
-                (pair[0].left() - pair[1].left()).abs() < 2.0,
-                "{width}: 同じ列 {column:?}"
-            );
-        }
-        // 右下: プロパティ・マテリアル・ヒストリーが同じ帯に並ぶ（最小のウィンドウでも、3 つとも見える）
-        let right: Vec<Rect> = [Tab::Properties, Tab::Material, Tab::History]
+fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_both_languages() {
+    for lang in Lang::ALL {
+        for (width, height) in [(960.0, 640.0), (1280.0, 800.0), (1600.0, 900.0)] {
+            let what = format!("{lang:?} {width}x{height}");
+            let mut h = app_default(width, height, 128);
+            language(&mut h, lang);
+            // 左の列
+            let column: Vec<Rect> = [
+                Tab::SubTools,
+                Tab::ToolProperties,
+                Tab::BrushSize,
+                Tab::Color,
+            ]
             .iter()
             .map(|t| tab_rect(&h, *t))
             .collect();
-        assert!(
-            (right[0].top() - right[1].top()).abs() < 1.0
-                && (right[1].top() - right[2].top()).abs() < 1.0
-        );
-        assert!(
-            right[0].right() <= right[1].left() + 1.0 && right[1].right() <= right[2].left() + 1.0
-        );
-        assert!(right[2].right() <= width, "{width}: ヒストリーが切れない");
-        // それぞれの中身が、自分の組に出る
-        let (props, size) = (column[1], column[2]);
-        assert!(
-            h.query_all_by_label("直径")
-                .any(|n| n.rect().top() > props.bottom() && n.rect().bottom() < size.top() + 2.0),
-            "{width}: 直径はツールプロパティの中"
-        );
-        pick(&mut h, Tool::Fill);
-        language(&mut h, Lang::En);
-        assert_eq!(
-            count(&h, "Brush Size"),
-            0,
-            "{width}: 名前はタブだけ（帯の見出しは無い）"
-        );
+            for pair in column.windows(2) {
+                assert!(pair[0].top() < pair[1].top(), "{what}: 上から順 {column:?}");
+                assert!(
+                    (pair[0].left() - pair[1].left()).abs() < 2.0,
+                    "{what}: 同じ列 {column:?}"
+                );
+            }
+            // 右上の 3 つのタブは、同じ帯に並び、右の端（ウィンドウの右）で切れない
+            let top: Vec<Rect> = [Tab::TextureSets, Tab::Channels, Tab::Assets]
+                .iter()
+                .map(|t| tab_rect(&h, *t))
+                .collect();
+            for pair in top.windows(2) {
+                assert!((pair[0].top() - pair[1].top()).abs() < 1.0, "{what}");
+                assert!(pair[0].right() <= pair[1].left() + 1.0, "{what}");
+            }
+            assert!(
+                top[2].right() <= width - 2.0,
+                "{what}: 右上のタブが切れない {top:?}"
+            );
+            // 中央: 3D ビューが左・キャンバスが右で、どちらも使える幅（最小のウィンドウで 240 点以上）
+            let view3d = h.state().view3d_rect().expect("3D ビューを描いた");
+            let canvas = canvas_rect(&h);
+            assert!(
+                view3d.right() <= canvas.left(),
+                "{what}: 3D ビューが左 {view3d:?} {canvas:?}"
+            );
+            assert!(
+                view3d.width() >= 240.0 && canvas.width() >= 240.0,
+                "{what}: 中央の幅 {view3d:?} {canvas:?}"
+            );
+            // 右の列は前の幅（1280 で約 230）に近い: 1280 で 250 点以下
+            if width == 1280.0 {
+                assert!(
+                    width - tab_rect(&h, Tab::TextureSets).left() <= 250.0,
+                    "{what}: 右の列の幅"
+                );
+            }
+            // 右下: プロパティ・マテリアル・ヒストリー
+            let right: Vec<Rect> = [Tab::Properties, Tab::Material, Tab::History]
+                .iter()
+                .map(|t| tab_rect(&h, *t))
+                .collect();
+            assert!((right[0].top() - right[1].top()).abs() < 1.0, "{what}");
+            assert!(
+                right[2].right() <= width - 2.0,
+                "{what}: ヒストリーが切れない"
+            );
+            // レイヤーの組: 狭くなりすぎない
+            assert!(
+                layers_body(&h).height() >= 100.0,
+                "{what}: レイヤーの組 {:?}",
+                layers_body(&h)
+            );
+            // チャンネル: 6 つの行が全部見える
+            click_tab(&mut h, Tab::Channels);
+            let body = top_right_body(&h);
+            for channel in yolu_app::matpaint::CHANNELS {
+                let name = yolu_app::m2::channel_name(lang, &st(&h).doc, channel);
+                let row = rect_of(&h, &name, |r| body.contains(r.center()));
+                assert!(
+                    row.bottom() <= body.bottom(),
+                    "{what}: チャンネル {name} が見える {row:?} {body:?}"
+                );
+            }
+            // アセット: 品が見える（高さの足りない最小のウィンドウは、品の上の部分だけでもよい）
+            click_tab(&mut h, Tab::Assets);
+            h.state_mut().state.shelf.wait_inspections();
+            h.run();
+            let first = yolu_core::smart_library::entries()
+                .first()
+                .map(|e| e.name(lang == Lang::Ja).to_owned())
+                .expect("同梱の素材");
+            let body = top_right_body(&h);
+            let card = rect_of(&h, &first, |r| {
+                body.contains(r.center()) && r.top() > body.top() + 67.0
+            });
+            if height >= 800.0 {
+                assert!(
+                    card.bottom() <= body.bottom(),
+                    "{what}: アセットの 1 段目が見える {card:?} {body:?}"
+                );
+            } else {
+                assert!(
+                    card.top() + 20.0 <= body.bottom(),
+                    "{what}: アセットの品の上が見える {card:?} {body:?}"
+                );
+            }
+        }
     }
+}
+
+/// 左の列: 1280×800 でブラシサイズの 1 段目の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1000 ではブラシサイズの丸が 2 段とも見える。
+#[test]
+fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 128);
+        language(&mut h, lang);
+        let (props, size, color) = (
+            tab_rect(&h, Tab::ToolProperties),
+            tab_rect(&h, Tab::BrushSize),
+            tab_rect(&h, Tab::Color),
+        );
+        let props_body =
+            Rect::from_min_max(props.left_bottom(), pos2(props.left() + 300.0, size.top()));
+        let header = rect_of(
+            &h,
+            lang.pick("塗るチャンネル", "Paint Channels"),
+            |r| props_body.contains(r.center()),
+        );
+        assert!(
+            header.bottom() <= props_body.bottom(),
+            "{lang:?}: 見出しが切れない {header:?} {props_body:?}"
+        );
+        let size_body =
+            Rect::from_min_max(size.left_bottom(), pos2(size.left() + 300.0, color.top()));
+        for px in [1u32, 2, 3, 5, 8, 12, 16] {
+            let cell = rect_of(&h, &format!("{px} px"), |r| size_body.contains(r.center()));
+            assert!(
+                size_body.contains_rect(cell),
+                "{lang:?}: {px} の丸と数字が見える {cell:?} {size_body:?}"
+            );
+        }
+        let mut tall = app(1280.0, 1000.0, 128);
+        language(&mut tall, lang);
+        let (size, color) = (tab_rect(&tall, Tab::BrushSize), tab_rect(&tall, Tab::Color));
+        let size_body =
+            Rect::from_min_max(size.left_bottom(), pos2(size.left() + 300.0, color.top()));
+        for px in yolu_app::panels::brushes::SIZES {
+            let cell = rect_of(&tall, &format!("{px} px"), |r| {
+                size_body.contains(r.center())
+            });
+            assert!(
+                size_body.contains_rect(cell),
+                "{lang:?}: 大きいウィンドウでは丸が 2 段とも見える: {px} {cell:?} {size_body:?}"
+            );
+        }
+    }
+}
+
+/// カラーのパネル: 円は欄の幅と高さの小さいほうをいっぱいに使い、切り替えのボタンは円の外側の角、16 進とアルファは 1 段で小さい。
+/// 円の直径（前の版 = 0.6.0 の既定の並びでの値: 960×640 で 72、1280×800 で 147、1600×900 で 181）より小さくならない。
+#[test]
+fn the_color_wheel_fills_the_panel_with_the_toggle_outside_it_and_the_hex_and_alpha_on_one_small_line(
+) {
+    for lang in Lang::ALL {
+        for (width, height, least) in [
+            (960.0, 640.0, 100.0),
+            (1280.0, 800.0, 150.0),
+            (1600.0, 900.0, 185.0),
+        ] {
+            let what = format!("{lang:?} {width}x{height}");
+            let mut h = app_default(width, height, 128);
+            language(&mut h, lang);
+            let tab = tab_rect(&h, Tab::Color);
+            // パネルの中身（タブの帯の下から、ウィンドウの下端まで。右は中央との区切り）
+            let panel = Rect::from_min_max(
+                tab.left_bottom(),
+                pos2(
+                    tab_rect(&h, Tab::View3d).left() - 2.0,
+                    h.ctx.content_rect().bottom(),
+                ),
+            );
+            let wheel = h.get_by_label(lang.pick("色相の円", "Hue wheel")).rect();
+            assert!(
+                (wheel.width() - wheel.height()).abs() < 0.5,
+                "{what}: 円は正方形 {wheel:?}"
+            );
+            assert!(
+                wheel.width() >= least,
+                "{what}: 円の直径 {} が小さい（前の版以上）",
+                wheel.width()
+            );
+            // 円は欄の幅と高さの小さいほうをいっぱいに使う（幅に余りがあれば、高さがその分を決める）
+            let fields = h
+                .query_all_by_value("#000000")
+                .map(|n| n.rect())
+                .find(|r| panel.contains(r.center()))
+                .expect("16 進の欄");
+            let alpha = rect_of(&h, "A", |r| panel.contains(r.center()));
+            assert!(
+                (fields.center().y - alpha.center().y).abs() < 1.5,
+                "{what}: 16 進とアルファは 1 段 {fields:?} {alpha:?}"
+            );
+            assert!(
+                fields.height() <= 20.0,
+                "{what}: 欄の高さ {}",
+                fields.height()
+            );
+            assert!(
+                panel.contains_rect(wheel),
+                "{what}: 円は欄の中 {wheel:?} {panel:?}"
+            );
+            let free_height = fields.top() - panel.top();
+            let free_width = panel.width() - 16.0;
+            assert!(
+                wheel.width() >= free_height.min(free_width) - 14.0 - 4.0,
+                "{what}: 円が欄いっぱい {} / 高さ {free_height} 幅 {free_width}",
+                wheel.width()
+            );
+            // 切り替えのボタンは円に掛からない
+            let toggle = h
+                .get_by_label(lang.pick("四角と色相の帯", "Square and hue bar"))
+                .rect();
+            let c = wheel.center();
+            let nearest = pos2(
+                c.x.clamp(toggle.left(), toggle.right()),
+                c.y.clamp(toggle.top(), toggle.bottom()),
+            );
+            assert!(
+                nearest.distance(c) >= wheel.width() * 0.5,
+                "{what}: 切り替えのボタンが円の外 {toggle:?} {wheel:?}"
+            );
+        }
+    }
+    // 高さに余りがあるウィンドウでは、円は幅いっぱい（切り替えのボタンの分を空けない）
+    let h = app_default(1280.0, 1400.0, 128);
+    let tab = tab_rect(&h, Tab::Color);
+    let panel_width = tab_rect(&h, Tab::View3d).left() - 2.0 - tab.left();
+    let wheel = h.get_by_label("色相の円").rect();
+    assert!(
+        (wheel.width() - (panel_width - 16.0)).abs() < 1.5,
+        "幅いっぱい {} / {}",
+        wheel.width(),
+        panel_width - 16.0
+    );
 }
 
 // ───────── 開く・外へ出す・戻す・「ウィンドウ」のメニュー ─────────
@@ -228,6 +476,114 @@ fn the_window_menu_lists_the_new_panels_and_opens_one_that_is_nowhere() {
         }
         layout::validate(dock).expect("どのタブも 1 つずつ");
     }
+}
+
+/// 起動して並びの保存が無いと、最初のフレームで、右の列の幅がウィンドウの幅に合う（幅の 19%、ただし 232 点より狭くしない）。
+/// 保存した並びを読んだときと、試験が並びを替えたときは、そのまま。
+#[test]
+fn a_fresh_start_fits_the_right_column_to_the_window_width_and_a_saved_arrangement_is_left_alone() {
+    for (width, height) in [(960.0, 640.0), (1280.0, 800.0), (1600.0, 900.0)] {
+        let dir = settings_dir("fit");
+        let settings = dir.join("settings.conf");
+        let mut h = gpu_thread::builder()
+            .with_size(vec2(width, height))
+            .with_pixels_per_point(1.0)
+            .with_step_dt(1.0 / 60.0)
+            .with_max_steps(120)
+            .renderer(shared_gpu::renderer())
+            .build_eframe(move |cc| {
+                with_render_state_cpu_canvas(
+                    YoluApp::for_context_with_settings(
+                        &cc.egui_ctx,
+                        Some(settings),
+                        PenInput::detached(),
+                    ),
+                    cc.wgpu_render_state.as_ref(),
+                )
+            });
+        h.run();
+        assert_eq!(
+            shape(&h.state().dock),
+            shape(&yolu_app::app::default_dock_for(width)),
+            "{width}: 幅に合わせた既定の並び"
+        );
+        let right = width - tab_rect(&h, Tab::TextureSets).left();
+        let want = (0.19 * width).max(232.0);
+        assert!(
+            (right - want).abs() <= 3.0,
+            "{width}: 右の列の幅 {right}（{want} のはず）"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    // 保存した並び（前の版の既定）は、幅に合わせ直さない
+    let dir = settings_dir("fit-saved");
+    std::fs::write(
+        dir.join(layout::FILE_NAME),
+        layout::render(&previous_default(), None),
+    )
+    .unwrap();
+    let settings = dir.join("settings.conf");
+    let mut h = gpu_thread::builder()
+        .with_size(vec2(1280.0, 800.0))
+        .with_pixels_per_point(1.0)
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(120)
+        .renderer(shared_gpu::renderer())
+        .build_eframe(move |cc| {
+            with_render_state_cpu_canvas(
+                YoluApp::for_context_with_settings(
+                    &cc.egui_ctx,
+                    Some(settings),
+                    PenInput::detached(),
+                ),
+                cc.wgpu_render_state.as_ref(),
+            )
+        });
+    h.run();
+    let mut want = previous_default();
+    layout::add_missing_tabs(&mut want, &mut []);
+    assert_eq!(
+        shape(&h.state().dock),
+        shape(&want),
+        "保存した並びは今までの形のまま"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// ナビゲーターは既定の並びでは閉じていて、「ウィンドウ」に名前があり、開くとテクスチャセットの組へ入って前に出る。
+#[test]
+fn the_navigator_is_closed_in_the_default_dock_and_opens_into_the_texture_sets_group_from_the_window_menu(
+) {
+    let mut h = app_default(1280.0, 800.0, 128);
+    for lang in Lang::ALL {
+        language(&mut h, lang);
+        let entries = yolu_app::shell::menu_entries(st(&h), yolu_app::shell::WINDOW_MENU);
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.label() == Some(Tab::Navigator.title_in(lang))),
+            "{lang:?}: 「ウィンドウ」にナビゲーターがある"
+        );
+    }
+    assert!(h.state().dock.find_tab(&Tab::Navigator).is_none());
+    assert!(!h.state().state.ui.panels.open.contains(&Tab::Navigator));
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    h.run();
+    assert!(h.state().state.ui.panels.open.contains(&Tab::Navigator));
+    let dock = &h.state().dock;
+    assert!(mates(dock, Tab::Navigator).contains(&Tab::TextureSets));
+    let leaf_index = dock.find_main_surface_tab(&Tab::Navigator).unwrap();
+    match &dock.main_surface()[leaf_index.0] {
+        Node::Leaf(leaf) => assert_eq!(leaf.tabs[leaf.active.0], Tab::Navigator, "前に出る"),
+        _ => unreachable!(),
+    }
+    layout::validate(dock).expect("どのタブも 1 つずつ");
+    // 開いた並びは、ファイルへ往復する
+    let loaded = layout::parse(&layout::render(dock, None));
+    assert_eq!(loaded.problems, Vec::<String>::new());
+    assert_eq!(shape(&loaded.dock.unwrap()), shape(dock));
 }
 
 #[test]
@@ -361,7 +717,7 @@ fn headless_closing_the_windows_of_the_new_panels_returns_each_to_its_own_group(
 #[test]
 fn headless_a_layout_from_before_the_new_panels_keeps_its_arrangement_and_gains_them_where_they_belong(
 ) {
-    let old = without_new_tabs(default_dock());
+    let old = previous_default();
     layout::validate(&old).expect("無くても使える並び");
     let text = layout::render(&old, None);
     assert!(
@@ -372,22 +728,44 @@ fn headless_a_layout_from_before_the_new_panels_keeps_its_arrangement_and_gains_
     let loaded = layout::parse(&text);
     assert_eq!(loaded.problems, Vec::<String>::new(), "並び全部は捨てない");
     let dock = loaded.dock.expect("読めた");
-    // 足した場所は、既定の並びと同じ（サブツールの組の下に縦に、プロパティのすぐ後ろ）。ほかは前の並びのまま
-    assert_eq!(shape(&dock), shape(&default_dock()));
     layout::validate(&dock).expect("どのタブも 1 つずつ");
-    let sub = dock.find_main_surface_tab(&Tab::SubTools).unwrap().0;
-    let props = dock.find_main_surface_tab(&Tab::ToolProperties).unwrap().0;
-    let size = dock.find_main_surface_tab(&Tab::BrushSize).unwrap().0;
-    // サブツールの組の下に、ツールプロパティとブラシサイズを含む組が兄弟として付き、その組が縦に 2 つに分かれる
+    // 足すのは無いタブだけ: 前からのタブは、組もその中の順もそのまま（アセット・チャンネルもサブツールの組のまま）
     assert_eq!(
-        (sub.0 % 2, props.0, size.0),
-        (1, 2 * (sub.0 + 1) + 1, 2 * (sub.0 + 1) + 2),
-        "縦に分けた兄弟"
+        mates(&dock, Tab::SubTools),
+        [Tab::SubTools, Tab::Assets, Tab::Channels]
     );
-    assert!(matches!(
-        dock.main_surface()[egui_dock::NodeIndex((sub.0 - 1) / 2)],
-        Node::Vertical(_)
-    ));
+    assert_eq!(
+        mates(&dock, Tab::TextureSets),
+        [Tab::TextureSets, Tab::Navigator]
+    );
+    assert_eq!(
+        mates(&dock, Tab::Properties),
+        [Tab::Properties, Tab::Material, Tab::History],
+        "マテリアルはプロパティのすぐ後ろ"
+    );
+    // 足した場所は、サブツールの組を縦に分けた下（ツールプロパティ、その下にブラシサイズ）。ほかの分け方・割合は前のまま
+    let mut expected = previous_default();
+    let sub_leaf = expected.find_tab(&Tab::SubTools).unwrap().node_path();
+    expected.split(
+        sub_leaf,
+        egui_dock::Split::Below,
+        0.38,
+        Node::leaf_with(vec![Tab::ToolProperties]),
+    );
+    let props_leaf = expected.find_tab(&Tab::ToolProperties).unwrap().node_path();
+    expected.split(
+        props_leaf,
+        egui_dock::Split::Below,
+        0.8,
+        Node::leaf_with(vec![Tab::BrushSize]),
+    );
+    let properties = expected.find_tab(&Tab::Properties).unwrap();
+    expected
+        .leaf_mut(properties.node_path())
+        .unwrap()
+        .tabs
+        .insert(properties.tab.0 + 1, Tab::Material);
+    assert_eq!(shape(&dock), shape(&expected));
     // 書き直して読み直しても同じ（足し直さない）
     let again = layout::parse(&layout::render(&dock, None));
     assert_eq!(shape(&again.dock.unwrap()), shape(&dock));
@@ -510,7 +888,7 @@ fn an_app_started_with_an_old_layout_file_shows_the_new_panels_and_writes_them_b
     let dir = settings_dir("old-layout");
     std::fs::write(
         dir.join(layout::FILE_NAME),
-        layout::render(&without_new_tabs(default_dock()), None),
+        layout::render(&previous_default(), None),
     )
     .unwrap();
     let settings = dir.join("settings.conf");
@@ -599,9 +977,9 @@ fn the_paint_channels_section_is_only_for_the_tools_that_paint_with_channels() {
     for lang in Lang::ALL {
         let name = lang.pick("塗るチャンネル", "Paint Channels");
         for tool in Tool::ALL {
-            let mut h = app(1280.0, 900.0, 128);
+            // （ツールプロパティの終わりまで入る高さで）
+            let mut h = app(1280.0, 1800.0, 128);
             language(&mut h, lang);
-            give_room(&mut h, Tab::ToolProperties);
             pick(&mut h, tool);
             assert_eq!(
                 count(&h, name),
@@ -617,6 +995,7 @@ fn the_paint_channels_section_is_only_for_the_tools_that_paint_with_channels() {
         Tool::Gradient,
         Tool::Shape,
         Tool::PolygonFill,
+        Tool::Eyedropper,
         Tool::Path,
     ];
     for tool in Tool::ALL {
@@ -722,6 +1101,46 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
     assert_eq!(st(&h).doc.undo_count(), steps);
 }
 
+/// 「塗るチャンネル」を入れているあいだは、閉じていても見出しの右端に点の印が出る（切ると消える）。
+#[test]
+fn the_paint_channels_header_carries_a_dot_while_the_setting_is_on() {
+    let mut h = app(1280.0, 1500.0, 128);
+    let props = tab_rect(&h, Tab::ToolProperties);
+    let size = tab_rect(&h, Tab::BrushSize);
+    let in_props = move |r: Rect| {
+        r.top() > props.bottom() && r.bottom() < size.top() + 2.0 && r.left() < 340.0
+    };
+    let header = rect_of(&h, "塗るチャンネル", in_props);
+    // （見出しの帯の全幅。名前の部品の矩形は帯の全体）
+    let at = pos2(header.right() - 14.0, header.center().y);
+    let dot_color = |h: &mut H| {
+        h.event(Event::PointerGone);
+        h.step();
+        let image = h.render().expect("描画");
+        image.get_pixel(at.x as u32, at.y as u32).0
+    };
+    let accent = yolu_app::ui::theme::ACCENT.to_array();
+    assert!(!st(&h).section_open("paint-channels", false), "閉じている");
+    let off = dot_color(&mut h);
+    assert_ne!(off[..3], accent[..3], "切っているあいだは点が無い");
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Enabled(true)));
+    h.run();
+    assert!(!st(&h).section_open("paint-channels", false), "閉じたまま");
+    let on = dot_color(&mut h);
+    assert_eq!(
+        on[..3],
+        accent[..3],
+        "入れているあいだは、閉じていても点が出る"
+    );
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Enabled(false)));
+    h.run();
+    assert_ne!(dot_color(&mut h)[..3], accent[..3], "切ると消える");
+}
+
 #[test]
 fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_paint_channels() {
     let mut h = app(1280.0, 1500.0, 128);
@@ -794,18 +1213,20 @@ fn shot_rect(h: &mut H, rect: Rect, name: &str) {
 /// 左の列の、サブツールのタブからカラーのタブまで（3 つのパネルが縦に並ぶ所）。
 fn left_stack(h: &H) -> Rect {
     let (sub, color) = (tab_rect(h, Tab::SubTools), tab_rect(h, Tab::Color));
+    // 左の列の右の端は、キャンバスのタブの左
     Rect::from_min_max(
         pos2(sub.left() - 2.0, sub.top()),
-        pos2(sub.left() + 300.0, color.top()),
+        pos2(tab_rect(h, Tab::Canvas).left() - 2.0, color.top()),
     )
 }
 
-/// 右の列の、プロパティのタブから下の端まで。
-fn right_bottom(h: &H, height: f32) -> Rect {
+/// 右の列の、プロパティの組（プロパティのタブから、ウィンドウの右・状態の帯の上まで）。
+fn right_bottom(h: &H) -> Rect {
     let props = tab_rect(h, Tab::Properties);
+    let window = h.ctx.content_rect();
     Rect::from_min_max(
         pos2(props.left() - 2.0, props.top()),
-        pos2(props.left() + 330.0, height),
+        pos2(window.right(), window.bottom() - 24.0),
     )
 }
 
@@ -813,7 +1234,7 @@ fn right_bottom(h: &H, height: f32) -> Rect {
 fn snapshots_of_the_whole_default_dock_in_both_languages() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 800.0, 128);
+        let mut h = app_default(1280.0, 800.0, 128);
         language(&mut h, lang);
         // 直前に押した所のポインタが絵に残らないように
         h.event(Event::PointerGone);
@@ -830,7 +1251,7 @@ fn snapshots_of_the_default_left_column_and_the_properties_group_in_both_languag
         language(&mut h, lang);
         let rect = left_stack(&h);
         shot_rect(&mut h, rect, &format!("tool_panels_left_{name}"));
-        let rect = right_bottom(&h, 790.0);
+        let rect = right_bottom(&h);
         shot_rect(&mut h, rect, &format!("tool_panels_properties_{name}"));
     }
 }
@@ -878,10 +1299,12 @@ fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks_in_both_l
         let mut h = app(1500.0, 1300.0, 64);
         language(&mut h, lang);
         open_material(&mut h);
-        let tab = tab_rect(&h, Tab::Material);
+        // マテリアルの組の全体（同じ組のプロパティのタブの左から、ウィンドウの右・状態の帯の上まで）
+        let group = tab_rect(&h, Tab::Properties);
+        let window = h.ctx.content_rect();
         let rect = Rect::from_min_max(
-            pos2(tab.left() - 60.0, tab.top()),
-            pos2(tab.left() + 300.0, 1290.0),
+            pos2(group.left() - 2.0, group.top()),
+            pos2(window.right(), window.bottom() - 24.0),
         );
         // 標準
         h.state_mut()

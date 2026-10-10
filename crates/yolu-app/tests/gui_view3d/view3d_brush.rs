@@ -16,7 +16,7 @@ const SIZE: u32 = 256;
 
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
 pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
-    let mut h = app(1100.0, 760.0, SIZE);
+    let mut h = app(1470.0, 760.0, SIZE);
     h.state_mut().state.view3d.load_demo();
     h.state_mut().state.view3d.camera.yaw = -40.0;
     h.state_mut().state.view3d.camera.pitch = 15.0;

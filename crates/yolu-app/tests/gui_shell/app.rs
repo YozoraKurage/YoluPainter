@@ -14,7 +14,8 @@ fn popup_kind(h: &egui_kittest::Harness<'_, yolu_app::YoluApp>) -> Option<PopupK
 
 #[test]
 fn default_layout_snapshot() {
-    let mut h = app(1280.0, 800.0, 512);
+    // 既定の並び（3D ビューが左・キャンバスが右）
+    let mut h = app_default(1280.0, 800.0, 512);
     let c = canvas_rect(&h);
     drag(
         &mut h,

@@ -66,7 +66,10 @@ fn build(
         .with_max_steps(120)
         .renderer(renderer())
         .build_eframe(move |cc| {
-            with_render_state_cpu_canvas(make(&cc.egui_ctx), cc.wgpu_render_state.as_ref())
+            let mut app = make(&cc.egui_ctx);
+            // 中央は 1 つの組（3D ビューだけが広く出る）
+            app.dock = tabbed_center_dock(width);
+            with_render_state_cpu_canvas(app, cc.wgpu_render_state.as_ref())
         });
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
@@ -694,8 +697,8 @@ fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
 
 #[test]
 fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
-    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
-    let mut h = view(955.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     bright_scene(&mut h, [255, 255, 255]);
     let before = h.render().unwrap();
     let (near, far) = halo_points(&h, 6.0);
@@ -746,7 +749,8 @@ fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
 
 #[test]
 fn bloom_leaves_what_is_below_the_threshold_alone() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     // 灰色の板（リニアで約 0.1）: しきい値 0.8 より暗い
     bright_scene(&mut h, [90, 90, 90]);
     let off = h.render().unwrap();
@@ -833,7 +837,8 @@ fn bloom_off_draws_the_same_picture_byte_for_byte() {
 
 #[test]
 fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     // 灰色の板: 露出 0 ではしきい値の下、+2 EV では上（リニア 0.26 × 4 > 0.8）
     bright_scene(&mut h, [140, 140, 140]);
     op(&mut h, Op::Bloom(true));
@@ -870,7 +875,8 @@ fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
 
 #[test]
 fn the_emission_channel_glows_in_the_material_view() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     set_model(&mut h, vec![quad(0.7, Vec3::NEG_Z)]);
     look_at(&mut h, 2.6, 0.0, 0.0);
     head_on(&mut h);

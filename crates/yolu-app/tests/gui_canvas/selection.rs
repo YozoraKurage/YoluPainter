@@ -600,7 +600,7 @@ fn select_menu_items_and_keys_run_their_edits() {
 
 #[test]
 fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button() {
-    let mut h = app(1000.0, 640.0, 512);
+    let mut h = app(1280.0, 800.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-60.0, -40.0), (60.0, 40.0));
     let original = st(&h).doc.selection().unwrap().clone();

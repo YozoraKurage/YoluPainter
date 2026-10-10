@@ -173,8 +173,10 @@ fn the_bar_goes_above_or_inside_when_there_is_no_room_below() {
     let bar = bar_rect(&h);
     let canvas = canvas_rect(&h);
     assert!(canvas.contains_rect(bar));
+    // 表示域が文書より縦に長いときは文書の下端、短いときは表示域の下端の内側
+    let limit = screen_bounds(&h).bottom().min(canvas.bottom());
     assert!(
-        bar.bottom() > canvas.bottom() - 20.0,
+        bar.bottom() > limit - 20.0,
         "表示域の下の内側 {bar:?} {canvas:?}"
     );
     // 表示域の外へ出た選択範囲には、帯を出さない
@@ -555,7 +557,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
     select_rect(&mut h, 10, 10, 30, 30);
     // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
     let label = "分岐点の色";
-    let right = |r: Rect| r.left() > 1000.0;
+    let right = |r: Rect| r.left() > rx();
     let at = rect_of(&h, label, right).top();
     let scroll = st(&h).m2.props_scroll + (at - 900.0);
     h.state_mut().state.m2.props_scroll = scroll.max(0.0);

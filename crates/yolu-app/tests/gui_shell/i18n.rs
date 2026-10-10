@@ -1826,12 +1826,10 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu() {
     // チャンネルの名前（チャンネルのパネルの行。種類の欄は形式の名前だけなので、長い名前だけが詰まる）、プリセット・効果・合成モードの
     // 箱の値、テクスチャセットの名前。（レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
-    // （テクスチャセットの名前は、右の列を広げたので日本語では詰まらなくなった）
-    const KNOWN_JA: [&str; 1] = ["エミッション"];
-    // 英語のチャンネルの名前は詰まらない。ブラシの 2 つ（「効かない」注記と「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき
-    // （注記は欄を無効にしてツールチップへ）一覧から消える。テクスチャセットの名前は、右の列を広げたので詰まらなくなった
-    // 最小のウィンドウのマテリアルのパネルでは、描画モードの名前（Rendering Mode）を切らずに出す分、値の箱が狭くなって「Opaque」が詰まる
-    const KNOWN_EN: [&str; 2] = ["Opaque", "Watercolor Edge"];
+    const KNOWN_JA: [&str; 0] = [];
+    // 英語のマテリアルのパネルは、最小のウィンドウ（右の列が約 231 点）で「Rendering Mode」の名前と値の「Opaque」が 1 行に収まらない。
+    // 名前を全部出し、値を詰める（名前を詰めると何の欄か分からなくなる）
+    const KNOWN_EN: [&str; 2] = ["Opaque", "Rendering Mode"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();

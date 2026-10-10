@@ -378,9 +378,8 @@ fn modify_labels(lang: Lang) -> [&'static str; 7] {
 fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_and_come_back() {
     for lang in Lang::ALL {
         // 選択のツールの設定の欄が上に付いたので、変更のボタンが全部見える高さにする
-        let mut h = app(1280.0, 1000.0, 256);
+        let mut h = app(1280.0, 1400.0, 256);
         h.state_mut().state.lang = lang;
-        give_room(&mut h, yolu_app::Tab::ToolProperties);
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
         assert!(h.state().state.doc.selection().is_none());
         let reason = lang.pick("選択範囲なし", "No selection");
@@ -426,7 +425,8 @@ fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_
 
 /// 色相・彩度の調整レイヤーを選んだ文書。描くチャンネルは `paint`。
 fn adjustment_app(lang: Lang, paint: Channel) -> H {
-    let mut h = app(1280.0, 1000.0, 256);
+    // （調整レイヤーの値が全部入る高さで）
+    let mut h = app(1280.0, 1600.0, 256);
     h.state_mut().state.lang = lang;
     apply(
         &mut h,

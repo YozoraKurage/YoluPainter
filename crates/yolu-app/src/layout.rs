@@ -332,12 +332,13 @@ fn forget_focus(dock: &mut DockState<Tab>) {
 }
 
 /// 保存した並びに無くてよいタブ。ポーズはスキンのあるモデルを読むと足される。ログ・ツールプロパティ・ブラシサイズ・マテリアルは後の版で足したタブで、
-/// それより前の版が保存した並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションは既定の並びに無く、
-/// 開いたときだけある。
-pub const OPTIONAL_TABS: [Tab; 6] = [
+/// それより前の版が保存した並びには無い（無いだけで並び全部を捨てないよう、読んだときに `add_missing_tabs` が足す）。アクションとナビゲーターは既定の並びに無く、
+/// 開いたときだけある（ナビゲーターは前の版の並びにはあり、その並びでは今までの組にそのまま残る。足さない）。
+pub const OPTIONAL_TABS: [Tab; 7] = [
     Tab::Pose,
     Tab::Log,
     Tab::Actions,
+    Tab::Navigator,
     Tab::ToolProperties,
     Tab::BrushSize,
     Tab::Material,

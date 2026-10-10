@@ -479,7 +479,7 @@ fn r_turns_the_selected_bone_in_pose_mode_and_escape_leaves_it() {
 #[test]
 fn escape_that_cancels_a_transform_does_not_close_the_color_window() {
     use egui_kittest::kittest::Queryable;
-    let mut h = app(1280.0, 860.0, 256);
+    let mut h = app(1280.0, 1400.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
     h.state_mut().state.view3d.camera.yaw = 0.0;
     h.state_mut().state.view3d.camera.pitch = 0.0;

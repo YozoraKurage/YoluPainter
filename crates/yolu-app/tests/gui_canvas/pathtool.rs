@@ -4122,6 +4122,8 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         h.state_mut().state.view3d.load_demo();
         h.state_mut().state.view3d.camera.yaw = -40.0;
         h.state_mut().state.view3d.camera.pitch = 15.0;
+        // 中央の表示域は右の列が広い分だけ狭いので、3 つの点が収まるようにカメラを引く
+        h.state_mut().state.view3d.camera.distance *= 1.3;
         click_tab(&mut h, yolu_app::Tab::View3d);
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {

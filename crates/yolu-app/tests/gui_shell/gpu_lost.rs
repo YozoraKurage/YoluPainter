@@ -731,7 +731,7 @@ mod detached_windows {
         h.run();
         h.state_mut()
             .state
-            .apply(Action::Dock(DockOp::Detach(Tab::Navigator)));
+            .apply(Action::Dock(DockOp::Detach(Tab::Channels)));
         h.run();
         h.run();
         assert_eq!(h.state().detached.windows.len(), 2);

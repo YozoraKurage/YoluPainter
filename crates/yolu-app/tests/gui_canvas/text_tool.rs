@@ -735,7 +735,7 @@ fn shared_slider_gpu() {
             r.left() < 390.0 && r.top() > 62.0
         }),
         ("レイヤーのプロパティ", |r| {
-            r.left() > 1000.0 && r.top() > 62.0
+            r.left() > rx() && r.top() > 62.0
         }),
     ];
     let undo = h.state().state.doc.undo_count();

@@ -308,14 +308,16 @@ fn choice(
     enabled: bool,
 ) -> Option<Rect> {
     let r = rows.row(t::ROW_HEIGHT, 4.0);
-    // 名前が基準の幅に入らないとき（英語の「Rendering Mode」など）は、名前の幅まで広げる（値の箱は狭くなる）
+    // 名前が基準の幅に入らないとき（英語の「Rendering Mode」など）は、名前の幅まで広げる。ただし行の 6 割まで（値の箱を読めるように残す。それでも入らなければ
+    // 名前を「…」で詰める）
     let label_width = (w::text_width(ui.painter(), label, t::LABEL) + 10.0)
-        .clamp(LABEL_W, (r.width() * 0.7).max(LABEL_W));
+        .clamp(LABEL_W, (r.width() * 0.6).max(LABEL_W));
+    let shown = w::fit(ui.painter(), label, label_width - 10.0, t::LABEL);
     let (response, b) = w::dropdown(
         ui,
         r,
         id,
-        Some(label),
+        Some(&shown),
         value,
         Some(tooltip),
         enabled,

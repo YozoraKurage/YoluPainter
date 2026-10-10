@@ -223,8 +223,12 @@ fn app_with_settings(path: &Path) -> H {
         .with_max_steps(120)
         .renderer(common::shared_gpu::renderer())
         .build_eframe(move |cc| {
-            YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())
-                .with_render_state(cc.wgpu_render_state.as_ref())
+            let mut app =
+                YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())
+                    .with_render_state(cc.wgpu_render_state.as_ref());
+            // 中央は 1 つの組（キャンバスだけが広く出る）
+            app.dock = common::tabbed_center_dock(1280.0);
+            app
         });
     h.run();
     h
@@ -271,12 +275,13 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert!(rect.contains_rect(frame_of(&h)));
     // 枠の外（キャンバスの上）に描いても集めない・キャンバスにも描かない
     let canvas = canvas_rect(&h);
-    pen_stroke(
-        &mut h,
-        canvas.center() - vec2(200.0, 0.0),
-        canvas.center() - vec2(100.0, 0.0),
-        0.7,
+    // ウィンドウの下の余白（ボタンの下）。キャンバスの上にウィンドウが重なっている所
+    let (from, to) = (
+        pos2(rect.left() + 60.0, rect.bottom() - 16.0),
+        pos2(rect.left() + 160.0, rect.bottom() - 16.0),
     );
+    assert!(canvas.contains(from) && canvas.contains(to));
+    pen_stroke(&mut h, from, to, 0.7);
     assert!(h.state().state.pressure.strokes.is_empty());
 
     // 足りない間は決められない（短い理由が出る）

@@ -88,10 +88,10 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
     ));
     assert!(outside.detach(
         &mut main,
-        Tab::Navigator,
+        Tab::Channels,
         Place::Record(record(-1500.0, 80.0, 300.0, 260.0))
     ));
-    // ナビゲーターのウィンドウへログも入れる（前はログ）
+    // チャンネルのウィンドウへログも入れる（前はログ）
     let serial = outside.windows[1].serial;
     assert!(outside.move_into(&mut main, Tab::Log, serial, None));
     assert_every_tab_once(&main, &[&outside.windows[0].dock, &outside.windows[1].dock]);
@@ -116,14 +116,14 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
     }
     assert_eq!(
         shape(&loaded.detached[1].dock),
-        vec!["0/0 leaf [\"navigator\", \"log\"] active=1"]
+        vec!["0/0 leaf [\"channels\", \"log\"] active=1"]
     );
-    // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、ナビゲーターはテクスチャセットの組）
+    // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、チャンネルはテクスチャセットの組）
     assert_eq!(
         loaded.detached[0].home,
         vec![Tab::Properties, Tab::Material]
     );
-    assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets]);
+    assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets, Tab::Assets]);
     // 別ウィンドウの無いファイルは、前の版と同じ中身（`detached` を書かない）
     let plain = default_dock();
     assert_eq!(
@@ -589,12 +589,12 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
 fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_it_on_the_dock_returns_it(
 ) {
     let mut h = app(1280.0, 800.0, 64);
-    let tab = h.state().tab_rects[&Tab::Navigator];
+    let tab = h.state().tab_rects[&Tab::Channels];
     // メインウィンドウの外（右）で離す
     drag_tab(&mut h, tab.center(), pos2(1500.0, 300.0));
     let app = h.state();
     assert_eq!(app.detached.windows.len(), 1, "別ウィンドウができる");
-    assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Navigator]);
+    assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Channels]);
     // 離した点がタブの帯の下に来る置き場所（外枠の左上は、離した点から少し左上）
     let at = app.detached.windows[0].record.unwrap().position;
     assert_eq!(
@@ -604,10 +604,10 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
             300.0 - detach::GRAB_OFFSET[1]
         ]
     );
-    assert!(app.dock.find_tab(&Tab::Navigator).is_none());
+    assert!(app.dock.find_tab(&Tab::Channels).is_none());
     // 別ウィンドウのタブを、メインウィンドウのキャンバスの組の上で離すと、その組へ戻る
     let canvas_leaf = detach::leaf_rect(&h.state().dock, Tab::Canvas).unwrap();
-    let from = outside_tab(&h, Tab::Navigator).center();
+    let from = outside_tab(&h, Tab::Channels).center();
     let to = canvas_leaf.center() + vec2(0.0, 80.0);
     drag_tab(&mut h, from, to);
     let app = h.state();
@@ -617,8 +617,8 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
         app.detached.windows.len()
     );
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::View3d, Tab::Channels]
     );
     assert_every_tab_once(&app.dock, &[]);
 }
@@ -672,10 +672,10 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     click(&mut h, item.center());
     h.run();
     h.state_mut()
-        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+        .apply(Action::Dock(DockOp::Show(Tab::Channels)));
     h.run();
     let dock = &h.state().dock;
-    let (node, index) = dock.find_main_surface_tab(&Tab::Navigator).unwrap();
+    let (node, index) = dock.find_main_surface_tab(&Tab::Channels).unwrap();
     assert_eq!(
         dock.leaf(egui_dock::NodePath {
             surface: SurfaceIndex::main(),
@@ -693,7 +693,12 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     h.run();
     let app = h.state();
     assert!(app.detached.windows.is_empty());
-    assert_eq!(shape(&app.dock), shape(&default_dock()));
+    assert_eq!(
+        shape(&app.dock),
+        shape(&yolu_app::app::default_dock_for(
+            h.ctx.content_rect().width()
+        ))
+    );
 }
 
 /// 「ウィンドウ」を開いた所と、タブの右クリック（撮る）。
@@ -1110,8 +1115,8 @@ fn the_focused_outside_window_keeps_its_own_shift_for_the_merged_copy() {
 fn a_tab_dropped_from_an_outside_window_onto_the_main_window_joins_the_group_under_the_pointer() {
     let (mut h, driver) = app_with_viewports();
     let inner = Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0));
-    let id = detach_to(&mut h, &driver, Tab::Navigator, inner);
-    let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
+    let id = detach_to(&mut h, &driver, Tab::Channels, inner);
+    let from = h.state().detached.windows[0].tab_rects[&Tab::Channels].center();
     // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
@@ -1144,8 +1149,8 @@ fn a_tab_dropped_from_an_outside_window_onto_the_main_window_joins_the_group_und
     let app = h.state();
     assert!(app.detached.windows.is_empty());
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::Channels]
     );
 }
 
@@ -1334,8 +1339,8 @@ fn with_the_custom_frame_the_empty_tab_row_moves_and_maximizes_the_outside_windo
 
 #[test]
 fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
-    let (mut h, driver, id) = framed_with_viewports(true, Tab::Navigator);
-    let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::Channels);
+    let from = h.state().detached.windows[0].tab_rects[&Tab::Channels].center();
     // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
@@ -1350,8 +1355,8 @@ fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
         "タブはメインウィンドウへ戻る"
     );
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::Channels]
     );
 }
 
@@ -1660,7 +1665,7 @@ fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then
     h.state_mut().set_custom_frame(true);
     h.run();
     // ペンでタブの見出しを押して外へ引いて離す
-    let tab = h.state().tab_rects[&Tab::Navigator];
+    let tab = h.state().tab_rects[&Tab::Channels];
     let sample = |at: Pos2, contact: bool| PenSample {
         pos: [at.x, at.y],
         pressure: if contact { 0.5 } else { 0.0 },
@@ -1688,7 +1693,7 @@ fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then
     // その帯をペンで引く → OS の移動の輪ではなく、アプリの側で動かす
     let mover = TestMover::new(true);
     give_mover(&mut h, &mover);
-    let at = empty_row_point(&h, Tab::Navigator);
+    let at = empty_row_point(&h, Tab::Channels);
     let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
     assert_eq!(mover.calls(), 1);
     assert_eq!(starts(&child), 0, "{child:?}");

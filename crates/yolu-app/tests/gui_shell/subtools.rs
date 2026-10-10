@@ -138,10 +138,9 @@ fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
 fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages() {
     for lang in Lang::ALL {
         for tool in Tool::ALL {
-            let mut h = app(1280.0, 800.0, 128);
+            // （一覧の行が全部入る高さで）
+            let mut h = app(1280.0, 1400.0, 128);
             language(&mut h, lang);
-            // （行が全部入る高さの組で）
-            give_room(&mut h, Tab::SubTools);
             pick(&mut h, tool);
             match tool.def().subtools {
                 SubTools::Brushes => {
@@ -205,8 +204,8 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
 
 #[test]
 fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
-    let mut h = app(1280.0, 800.0, 128);
-    give_room(&mut h, Tab::SubTools);
+    // （一覧の行が全部入る高さで）
+    let mut h = app(1280.0, 1400.0, 128);
     pick(&mut h, Tool::SelectRect);
     for tool in SELECTION_TOOLS {
         click_row(&mut h, tool.name_in(Lang::Ja));
@@ -223,7 +222,7 @@ fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
 
 #[test]
 fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
-    let mut h = app(1280.0, 900.0, 128);
+    let mut h = app(1280.0, 1300.0, 128);
     let steps = st(&h).doc.undo_count();
     // バケツ: 近い色（許容がバーにも出る）→ 三角形
     pick(&mut h, Tool::Fill);
@@ -359,7 +358,8 @@ fn a_changed_setting_marks_the_row_as_modified_and_the_footer_reverts_it() {
 
 #[test]
 fn pressing_the_current_row_again_or_double_clicking_it_keeps_the_settings_changed_since() {
-    let mut h = app(1280.0, 900.0, 128);
+    // （足した行まで入る高さで）
+    let mut h = app(1280.0, 1400.0, 128);
     pick(&mut h, Tool::Fill);
     click_row(&mut h, "近い色");
     let similar = PresetKey::Builtin("similar-colors");
@@ -426,7 +426,7 @@ fn the_footer_adds_duplicates_and_deletes_user_sub_tools_and_each_step_is_saved(
     let dir = std::env::temp_dir().join(format!("yolu-subtools-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
-    let mut h = app(1280.0, 900.0, 128);
+    let mut h = app(1280.0, 1300.0, 128);
     h.state_mut().state.attach_subtool_store(dir.clone());
     pick(&mut h, Tool::Fill);
     h.state_mut().state.region.tolerance = 77;
@@ -693,8 +693,8 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
 #[test]
 fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
     for tool in Tool::ALL {
-        let mut h = app(1280.0, 900.0, 128);
-        give_room(&mut h, Tab::BrushSize);
+        // （丸が 2 段とも入る高さで）
+        let mut h = app(1280.0, 1100.0, 128);
         pick(&mut h, tool);
         // どのツールでもタブはあるが、丸（「16 px」など）は大きさを持つツールだけ
         assert!(

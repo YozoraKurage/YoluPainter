@@ -106,8 +106,11 @@ fn app_with(state: AppState) -> Harness<'static, YoluApp> {
         .with_max_steps(120)
         .renderer(common::shared_gpu::renderer())
         .build_eframe(move |cc| {
-            YoluApp::for_context(&cc.egui_ctx, state, PenInput::detached())
-                .with_render_state(cc.wgpu_render_state.as_ref())
+            let mut app = YoluApp::for_context(&cc.egui_ctx, state, PenInput::detached())
+                .with_render_state(cc.wgpu_render_state.as_ref());
+            // 中央は 1 つの組（3D ビューの空の状態の文字が、ウィンドウの下に見えないように）
+            app.dock = common::tabbed_center_dock(1280.0);
+            app
         });
     h.run();
     h
@@ -146,16 +149,19 @@ fn is_disabled(h: &Harness<'_, YoluApp>, label: &str) -> bool {
 
 /// ウィンドウの中に描いた文字（アイコンも含む）。
 fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
-    fn collect(shape: &Shape, area: Rect, out: &mut Vec<String>) {
+    // （ウィンドウの下に重なって描かれた別のパネルの文字は、切り取りの矩形がウィンドウの外へ広がるので除く）
+    fn collect(shape: &Shape, area: Rect, clip: Rect, out: &mut Vec<String>) {
         match shape {
-            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, area, out)),
-            Shape::Text(t) if area.contains(t.pos) => out.push(t.galley.job.text.clone()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, area, clip, out)),
+            Shape::Text(t) if area.contains(t.pos) && area.expand(1.0).contains_rect(clip) => {
+                out.push(t.galley.job.text.clone())
+            }
             _ => {}
         }
     }
     let mut out = Vec::new();
     for shape in &h.output().shapes {
-        collect(&shape.shape, area, &mut out);
+        collect(&shape.shape, area, shape.clip_rect, &mut out);
     }
     out
 }
