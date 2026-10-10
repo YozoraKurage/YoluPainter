@@ -2,11 +2,12 @@
 //!
 //! - セットのチェックは、外したセットの uid だけを覚える（`WindowState::unchecked`。プロジェクトの間だけで、.ylp・設定には入れない）。
 //!   外していないセットは全部入りなので、セットを足せば入り、消せば（uid が無くなって）一覧から消え、名前の変更はそのまま追いかける。
-//!   出力テンプレートが「今のチャンネル（PNG 1 枚）」のときは、一覧は今のセットだけを示し、選べない。読むだけのセットは書き出せないので、外れたまま触れない。
+//!   出力テンプレートが「今のチャンネル」のときは、一覧は今のセットだけを示し、選べない。読むだけのセットは書き出せないので、外れたまま触れない。
 //! - 書くファイルの一覧は、書き出しの道（`plan_export`・`plan_channels`）が名前を決める関数（`template_names`・`channel_names`）をそのまま呼んで求める。
 //!   文書は写さず、塗り広げも画像づくりもしない（名前と色空間だけ）ので、ウィンドウが開いている間は毎フレーム求めてよく、表示と実際に書く名前がずれない。
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use yolu_core::export::ExportTemplate;
 use yolu_io::export::existing_files;
@@ -81,7 +82,25 @@ impl AppState {
             .collect()
     }
 
-    /// 書き出しに使える焼いた AO があるか（ウィンドウの一覧用。モデルの入力を作っている間は、照合できないので使えない扱い）。
+    /// 書き出しのウィンドウが、焼いた AO の照合のために、今のモデルの入力を追っているか（出力テンプレートがテンプレートで、チェックしたセットに焼いた AO が
+    /// あるとき。AO を使うのはテンプレートだけ）。追っていないと、`release_idle_bake_input` が毎フレーム作りかけを手放し、一覧が入力を求めて
+    /// 作り直すことを繰り返す（`bake_input_followed`）。
+    pub(crate) fn export_window_follows_input(&self) -> bool {
+        if !self.export.window.open || self.export_form().template_id().is_none() {
+            return false;
+        }
+        let checked = self.export_checked_uids();
+        (0..self.sets.len()).any(|i| {
+            self.has_baked_occlusion(i)
+                && self
+                    .sets
+                    .get(i)
+                    .is_some_and(|set| checked.contains(&set.uid))
+        })
+    }
+
+    /// 書き出しに使える焼いた AO があるか（ウィンドウの一覧用。モデルの入力を作っている間は、照合できないので使えない扱い。作りかけは
+    /// `export_window_follows_input` が手放させない）。
     fn export_has_occlusion(&mut self, index: usize) -> bool {
         if !self.has_baked_occlusion(index) {
             return false;
@@ -178,15 +197,8 @@ impl AppState {
         };
         match named {
             Ok(named) => {
-                let existing: Vec<String> = dir
-                    .as_deref()
-                    .map(|d| {
-                        existing_files(d, named.iter().map(|(n, _)| n.as_str()))
-                            .iter()
-                            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
+                let existing = self.export.window.exists.lookup(dir.as_deref(), names);
                 Preview {
                     files: named
                         .into_iter()
@@ -204,6 +216,58 @@ impl AppState {
                 problem: Some(problem),
             },
         }
+    }
+}
+
+/// 書くファイルがもう出力先にあるかの調べを、使い回す間隔（外から足された・消されたファイルに、一覧が追いつくまで）。
+const EXISTS_RECHECK: Duration = Duration::from_secs(1);
+
+/// 出力先にもうあるファイルの調べ（ディスクを調べるので、毎フレームはやらない）。出力先と名前の並びが同じなら、次の 3 つのときだけ調べ直す: ウィンドウを開いたとき・
+/// 書き終えたとき（`invalidate`）と、前の調べから `EXISTS_RECHECK` たったとき。
+#[derive(Debug, Default)]
+pub(super) struct ExistsCache {
+    dir: Option<PathBuf>,
+    names: Vec<String>,
+    found: Vec<String>,
+    at: Option<Instant>,
+    /// ディスクを調べた回数（試験が、毎フレーム調べていないことを数える）。
+    checks: u64,
+}
+
+impl ExistsCache {
+    /// 次の `lookup` で、必ず調べ直す。
+    pub(super) fn invalidate(&mut self) {
+        self.at = None;
+    }
+
+    /// `names` のうち、`dir` にもうあるファイル（`dir` が決まっていなければ無し）。
+    fn lookup(&mut self, dir: Option<&Path>, names: Vec<String>) -> Vec<String> {
+        let fresh = self.at.is_some_and(|at| at.elapsed() < EXISTS_RECHECK)
+            && self.dir.as_deref() == dir
+            && self.names == names;
+        if !fresh {
+            self.found = dir
+                .map(|d| {
+                    existing_files(d, names.iter().map(String::as_str))
+                        .iter()
+                        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.dir = dir.map(Path::to_path_buf);
+            self.names = names;
+            self.at = Some(Instant::now());
+            self.checks += 1;
+        }
+        self.found.clone()
+    }
+}
+
+impl super::window::WindowState {
+    /// 試験用: 書くファイルの有無を、ディスクで調べた回数。
+    #[doc(hidden)]
+    pub fn exists_checks(&self) -> u64 {
+        self.exists.checks
     }
 }
 

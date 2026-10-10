@@ -1340,7 +1340,7 @@ fn the_export_window_picks_each_template_and_remembers_it_in_both_languages() {
     let at = popup_item(&h, "テクスチャを書き出す…").center();
     click(&mut h, at);
     assert!(h.state().state.export.window.open);
-    // 初めの出力テンプレートは「今のチャンネル（PNG 1 枚）」
+    // 初めの出力テンプレートは「今のチャンネル」
     assert_eq!(
         h.state().state.export_form(),
         yolu_app::export::ExportForm::ChannelPng
@@ -1352,7 +1352,7 @@ fn the_export_window_picks_each_template_and_remembers_it_in_both_languages() {
         "出力先",
         "選ぶ…",
         "出力テンプレート",
-        "今のチャンネル（PNG 1 枚）",
+        "今のチャンネル",
         "パディング",
         "無限に広げる",
         "書き出すファイル",
@@ -1370,8 +1370,8 @@ fn the_export_window_picks_each_template_and_remembers_it_in_both_languages() {
     }
     // 出力テンプレートごとの絵（日本語）
     let forms = [
-        ("今のチャンネル（PNG 1 枚）", "export_window_channel"),
-        ("チャンネルごと（PNG）", "export_window_channels"),
+        ("今のチャンネル", "export_window_channel"),
+        ("チャンネルごと", "export_window_channels"),
         ("Unity Standard / URP Lit", "export_window_unity_standard"),
         ("HDRP Lit", "export_window_hdrp"),
         ("lilToon", "export_window_liltoon"),
@@ -1424,8 +1424,8 @@ fn the_export_window_picks_each_template_and_remembers_it_in_both_languages() {
         assert!(texts.iter().all(|t| !t.contains(old)), "{old}: {texts:?}");
     }
     let english = [
-        "Current Channel (One PNG)",
-        "Per Channel (PNG)",
+        "Current Channel",
+        "Per Channel",
         "Unity Standard / URP Lit",
         "HDRP Lit",
         "lilToon",
@@ -1496,11 +1496,7 @@ fn the_export_window_writes_what_the_menu_items_wrote_and_asks_before_replacing(
     let dir = TempDir::new("export-window");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "Unity Standard / URP Lit",
-    );
+    pick_form(&mut h, "今のチャンネル", "Unity Standard / URP Lit");
     // 先を選ぶと書き出せる
     apply(
         &mut h,
@@ -1603,11 +1599,7 @@ fn the_export_window_below_the_replace_confirm_does_not_take_clicks() {
     let dir = TempDir::new("below-confirm");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "Unity Standard / URP Lit",
-    );
+    pick_form(&mut h, "今のチャンネル", "Unity Standard / URP Lit");
     apply(
         &mut h,
         Action::Export(ExportAction::Destination(dir.0.clone())),
@@ -1643,11 +1635,7 @@ fn escape_closes_only_the_replace_confirm_and_leaves_the_export_window() {
     let dir = TempDir::new("esc-confirm");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "Unity Standard / URP Lit",
-    );
+    pick_form(&mut h, "今のチャンネル", "Unity Standard / URP Lit");
     apply(
         &mut h,
         Action::Export(ExportAction::Destination(dir.0.clone())),
@@ -1683,7 +1671,7 @@ fn three_sets_app() -> Harness<'static, YoluApp> {
     let mut h = two_sets_app();
     {
         let s = &mut h.state_mut().state;
-        let (skin, hair) = (s.sets.current_index(), 1 - s.sets.current_index());
+        let hair = 1 - s.sets.current_index();
         let layer = s.selected_layer.unwrap();
         s.doc
             .set_channel_enabled(layer, Channel::Roughness, true)
@@ -1694,8 +1682,6 @@ fn three_sets_app() -> Harness<'static, YoluApp> {
             .unwrap();
         let uid = s.add_texture_set().unwrap();
         s.rename_set(uid, "Accessory").unwrap();
-        // 並びを Skin・Hair・Accessory にそろえる（今のセットは、最初のセットに戻す）
-        let _ = (skin, hair);
     }
     h.run();
     h
@@ -1724,11 +1710,7 @@ fn the_export_window_checks_sets_and_lists_the_files_it_will_write() {
     let dir = TempDir::new("export-sets");
     let mut h = three_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "Unity Standard / URP Lit",
-    );
+    pick_form(&mut h, "今のチャンネル", "Unity Standard / URP Lit");
     apply(
         &mut h,
         Action::Export(ExportAction::Destination(dir.0.clone())),
@@ -1849,11 +1831,7 @@ fn the_export_window_cannot_uncheck_the_one_set_of_the_current_channel_png() {
     h.run();
     assert_eq!(h.state().state.export_checked_uids().len(), 1);
     // ほかのテンプレートでは、同じセットも触れる
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "チャンネルごと（PNG）",
-    );
+    pick_form(&mut h, "今のチャンネル", "チャンネルごと");
     assert!(!set_check(&h, "Accessory").accesskit_node().is_disabled());
     assert!(!set_check(&h, "Skin").accesskit_node().is_disabled());
 }
@@ -1870,11 +1848,7 @@ fn the_export_window_fits_the_smallest_screen_and_scrolls_a_long_list_of_sets() 
     }
     h.run();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(
-        &mut h,
-        "今のチャンネル（PNG 1 枚）",
-        "チャンネルごと（PNG）",
-    );
+    pick_form(&mut h, "今のチャンネル", "チャンネルごと");
     let rect = yolu_app::windows::window_rect(&h.ctx, "export").unwrap();
     let screen = egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(960.0, 640.0));
     assert!(screen.contains_rect(rect), "{rect:?} は画面からはみ出す");

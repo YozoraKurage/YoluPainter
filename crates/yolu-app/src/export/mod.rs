@@ -358,6 +358,14 @@ struct ChannelNames {
     image_of: Vec<usize>,
 }
 
+/// 書き出すテクスチャセットが 1 つも無い（ウィンドウのチェックが全部外れている・直接の操作の選びが空か、無い uid だけ・全部読むだけ）ときの断り。
+pub(crate) fn no_sets_message(lang: crate::lang::Lang) -> &'static str {
+    lang.pick(
+        "書き出すテクスチャセットがありません。",
+        "There is no texture set to export.",
+    )
+}
+
 /// 書き出しのファイル名の元（開いたプロジェクトのファイル名。無ければ Texture）。
 pub fn stem(state: &AppState) -> String {
     state
@@ -614,6 +622,9 @@ impl AppState {
         Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
         let mut notes = Vec::new();
         let indices = self.exportable_sets(&mut notes, selected);
+        if indices.is_empty() {
+            return Err(no_sets_message(self.lang).into());
+        }
         // AO（今の条件で焼いたものだけ）
         let mut occlusions = Vec::new();
         for &i in &indices {
@@ -745,7 +756,13 @@ impl AppState {
         Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
         let mut notes = Vec::new();
         let indices = match &which {
-            Which::All { selected, .. } => self.exportable_sets(&mut notes, *selected),
+            Which::All { selected, .. } => {
+                let indices = self.exportable_sets(&mut notes, *selected);
+                if indices.is_empty() {
+                    return Err(no_sets_message(lang).into());
+                }
+                indices
+            }
             Which::One { set, .. } => {
                 if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
                     return Err(crate::lang::refusals::read_only_set(lang, &reason));
@@ -1094,6 +1111,8 @@ impl AppState {
             )),
         };
         let job = self.export.job.take().expect("上で見た");
+        // 書き終えた（書いたファイルが増えた・取り消して一時のファイルを消した）ので、一覧のファイルの有無を調べ直す
+        self.export.window.exists.invalidate();
         match result {
             Ok(images) => {
                 self.export.finished = Some(

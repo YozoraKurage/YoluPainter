@@ -1007,8 +1007,8 @@ impl AppState {
                 });
     }
 
-    /// 今のモデルの入力を、作って待つか（ウィンドウ・ID の色のツール・アイランドのメニュー・入力待ちの読むだけのセット・開いた直後の照合し直しが
-    /// あるとき。焼いたマップがあるのに手元の入力が 1 つも無いときも、作る）。待つあいだは、作りかけを手放さず（`release_idle_bake_input`）、
+    /// 今のモデルの入力を、作って待つか（ウィンドウ・ID の色のツール・アイランドのメニュー・入力待ちの読むだけのセット・開いた直後の照合し直し・
+    /// 焼いた AO を照合する書き出しのウィンドウがあるとき。焼いたマップがあるのに手元の入力が 1 つも無いときも、作る）。待つあいだは、作りかけを手放さず（`release_idle_bake_input`）、
     /// 効果の入力の同期も今のモデルの入力が届くまで待つ。待たないときは、手元の入力のまま照合して、新しく作り始めない（モデルの差し替え・
     /// ポーズの変更は追わない）。手放す側と作る側が別の条件で動くと、作りかけを毎フレーム立てては捨てて、入力がいつまでも届かない。
     pub(crate) fn bake_input_followed(&mut self) -> bool {
@@ -1017,6 +1017,7 @@ impl AppState {
             || self.island_menu_open()
             || self.sets.iter().any(|s| s.waiting_inputs)
             || self.reopen_check_waiting()
+            || self.export_window_follows_input()
             || (self.bake.input.is_none() && self.sets.iter().any(|s| !s.mesh_maps.is_empty()))
     }
 

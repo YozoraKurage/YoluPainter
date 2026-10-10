@@ -97,10 +97,8 @@ impl ExportForm {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            ExportForm::ChannelPng => {
-                lang.pick("今のチャンネル（PNG 1 枚）", "Current Channel (One PNG)")
-            }
-            ExportForm::AllChannels => lang.pick("チャンネルごと（PNG）", "Per Channel (PNG)"),
+            ExportForm::ChannelPng => lang.pick("今のチャンネル", "Current Channel"),
+            ExportForm::AllChannels => lang.pick("チャンネルごと", "Per Channel"),
             ExportForm::UnityStandard => "Unity Standard / URP Lit",
             ExportForm::Hdrp => "HDRP Lit",
             ExportForm::LilToon => "lilToon",
@@ -125,6 +123,8 @@ pub struct WindowState {
     /// 左・右の一覧のスクロール。
     sets_scroll: f32,
     files_scroll: f32,
+    /// 書くファイルがもうあるかの調べ（`list`）。
+    pub(super) exists: super::list::ExistsCache,
     /// 選んだ先とチェックがどのプロジェクトのものか（`AppState::project_epoch`）。替わったら忘れる。
     epoch: u64,
 }
@@ -133,6 +133,17 @@ impl AppState {
     /// 今の出力テンプレート（設定に覚えている）。
     pub fn export_form(&self) -> ExportForm {
         self.prefs.settings.export_form
+    }
+
+    /// 書き出すセットが 1 つも無いときの理由: 今のチャンネルの 1 枚で今のセットが読むだけなら、その理由、そうでなければ書くセットが無い断り。
+    pub(super) fn export_no_set_reason(&self) -> String {
+        let lang = self.lang;
+        if self.export_form().writes_file() {
+            if let Some(reason) = self.sets.current().read_only.as_deref() {
+                return crate::lang::refusals::read_only_set(lang, reason);
+            }
+        }
+        super::no_sets_message(lang).into()
     }
 
     /// 開いたプロジェクトのフォルダ（保存していなければ、またフォルダが無ければ None）。
@@ -201,6 +212,7 @@ impl AppState {
                 }
                 self.sync_export_window();
                 self.export.window.open = true;
+                self.export.window.exists.invalidate();
             }
             ExportAction::CloseWindow => self.export.window.open = false,
             ExportAction::SetForm(form) => self.prefs.settings.export_form = form,
@@ -267,13 +279,8 @@ impl AppState {
         };
         let sets = self.export_checked_uids();
         if sets.is_empty() {
-            self.refuse(
-                Source::Export,
-                lang.pick(
-                    "書き出すテクスチャセットがありません。",
-                    "No texture set is checked.",
-                ),
-            );
+            let why = self.export_no_set_reason();
+            self.refuse(Source::Export, why);
             return;
         }
         let action = match form.template_id() {
@@ -423,7 +430,6 @@ fn draw_sets(
     area: Rect,
     rows: &[SetRow],
     scroll: &mut f32,
-    lang: Lang,
     requests: &mut Vec<Request>,
 ) {
     let content = rows.len() as f32 * SET_ROW;
@@ -441,16 +447,22 @@ fn draw_sets(
         if r.bottom() < area.top() || r.top() > area.bottom() {
             continue;
         }
-        let tip = row
-            .read_only
-            .then(|| lang.pick("読むだけのセット", "Read-only set"));
+        // 読むだけのセットは、右端の錠の印（セットのパネルと同じ）で見せる
+        let toggle_rect = if row.read_only {
+            let lock =
+                Rect::from_min_size(pos2(r.right() - 18.0, r.center().y - 8.0), vec2(16.0, 16.0));
+            w::icon(&child.painter().clone(), lock, "lock", t::WARNING, 14.0);
+            Rect::from_min_max(r.min, pos2(lock.left() - 4.0, r.max.y))
+        } else {
+            r
+        };
         let next = w::toggle(
             &mut child,
-            r,
+            toggle_rect,
             ("export.set", row.uid),
             &row.name,
             row.checked,
-            tip,
+            None,
             row.enabled,
         );
         if next != row.checked {
@@ -553,6 +565,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let rows = app.export_set_rows();
     let preview = app.export_preview();
     let any_checked = rows.iter().any(|r| r.checked);
+    // 書き出すセットが無いときの理由（今のチャンネルの 1 枚で、今のセットが読むだけなら、その理由）
+    let no_set_reason = app.export_no_set_reason();
     let padding = crate::prefs::padding_name(lang, app.prefs.settings.export_padding);
     let popup_open = app.ui.popup_was_open;
     // 置き換えの確認などのモーダルが前にある間の Esc は、そちらだけが受ける（ここは閉じない）
@@ -599,7 +613,6 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             Rect::from_min_max(pos2(left.left(), left.top() + 32.0), left.max),
             &rows,
             &mut sets_scroll,
-            lang,
             &mut requests,
         );
         w::vline(&p, left.right(), body.top(), footer.top(), t::SEPARATOR);
@@ -736,7 +749,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         } else if destination.is_none() {
             Some(lang.pick("出力先が未選択", "No output path"))
         } else if !any_checked {
-            Some(lang.pick("テクスチャセットが未選択", "No texture set is checked"))
+            Some(no_set_reason.as_str())
         } else {
             None
         };

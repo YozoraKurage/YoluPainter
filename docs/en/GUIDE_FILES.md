@@ -35,9 +35,9 @@ In the window you can choose the checkpoint interval (10 seconds to 5 minutes), 
 
 "Export Textures…" in the File menu opens the Export Textures window. Check the texture sets to export in the list on the left, decide the Output Path, Output Template and Padding on the right, check the names in Files to Export, then press "Export". The window closes when the writing starts. The Output Template you choose is kept in the settings and is the same the next time you open it.
 
-- **Texture Sets**: The sets that can be exported are listed, all checked at first. A set you uncheck is not exported. The checks are kept until you open another project; a set you add comes in checked, and a set you rename shows its new name. A read-only set cannot be exported, so it stays unchecked and cannot be touched. "Export" cannot be pressed while nothing is checked. When the Output Template is "Current Channel (One PNG)", only the current set is listed and it cannot be unchecked.
-- **Output Path**: A file for "Current Channel (One PNG)" and a folder for the other templates; change it with "Choose…". Until you choose, it starts at the folder of the open project (for a model opened with Live Link, the folder Unity reported). A path you chose is kept until you open another project. "Export" cannot be pressed while no Output Path is decided or while an export is running.
-- **Output Template**: Choose from "Current Channel (One PNG)", "Per Channel (PNG)", "Unity Standard / URP Lit", "HDRP Lit" and "lilToon".
+- **Texture Sets**: The sets that can be exported are listed, all checked at first. A set you uncheck is not exported. The checks are kept until you open another project; a set you add comes in checked, and a set you rename shows its new name. A read-only set cannot be exported, so it has a lock icon and stays unchecked and cannot be touched. "Export" cannot be pressed while nothing is checked. When the Output Template is "Current Channel", only the current set is listed and it cannot be unchecked.
+- **Output Path**: A file for "Current Channel" and a folder for the other templates; change it with "Choose…". Until you choose, it starts at the folder of the open project (for a model opened with Live Link, the folder Unity reported). A path you chose is kept until you open another project. "Export" cannot be pressed while no Output Path is decided or while an export is running.
+- **Output Template**: Choose from "Current Channel", "Per Channel", "Unity Standard / URP Lit", "HDRP Lit" and "lilToon".
 - **Padding**: How far colors are dilated beyond the UVs: "No padding", "Dilation n px" or "Dilation infinite". It is the same value as "Export padding" in the settings (changing either changes both). Nothing is dilated when there is no model.
 - **Files to Export**: Lists, before writing, the name and color space (sRGB or Linear) of each file for the current Output Template, the checked sets and the Output Path. The names are decided the same way as the export decides them. A file that already exists in the Output Path has a dot at the left of its name. When something stops the export (nothing to write, names that would write the same file, and so on), the reason is shown in place of the list.
 
@@ -54,7 +54,7 @@ A file that already exists is confirmed before it is replaced (if you cancel, yo
 
 ### Export by channel
 
-"Current Channel (One PNG)" writes the painting channel to one PNG, and "Per Channel (PNG)" writes every channel in use, for the checked texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
+"Current Channel" writes the painting channel to one PNG, and "Per Channel" writes every channel in use, for the checked texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
 
 ## Import a PSD
 

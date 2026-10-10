@@ -1581,3 +1581,63 @@ fn the_uv_warning_of_the_previous_bake_is_not_carried_to_the_next() {
     );
     assert!(!s.message.contains(warning), "{}", s.message);
 }
+
+#[test]
+fn the_export_window_follows_the_input_for_a_baked_ao_and_builds_it_once() {
+    use crate::export::{ExportAction, ExportForm};
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(!s.sets.current().mesh_maps.is_empty());
+    s.release_idle_bake_input();
+    // 形が変わって（ポーズ）、持っている入力は前の形のもの。ベイクのウィンドウは閉じている
+    lift(&mut s, 0.3);
+    assert!(s.bake.window.is_none());
+    // 書き出しのウィンドウを開いて出力テンプレートにするだけでは、焼いた AO を照合するための入力を追う（作りかけを毎フレーム手放さない）
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::SetForm(
+        ExportForm::UnityStandard,
+    )));
+    assert!(s.export_window_follows_input());
+    let before = s.bake.input_builds_started();
+    let model = s.view3d.full_model().unwrap().clone();
+    for _ in 0..500 {
+        // 画面の毎フレーム（一覧を求める → 使わない入力を手放す）
+        let _ = s.export_preview();
+        s.release_idle_bake_input();
+        if s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "今のモデルの入力ができた"
+    );
+    assert!(!s.bake.is_checking());
+    assert_eq!(
+        s.bake.input_builds_started() - before,
+        1,
+        "作りかけを立てては捨てず、1 回で作り終える"
+    );
+    // 追わない場合: 出力テンプレートが今のチャンネルの PNG なら、AO は要らないので追わない
+    s.apply(Action::Export(ExportAction::SetForm(
+        ExportForm::ChannelPng,
+    )));
+    assert!(!s.export_window_follows_input());
+    // ウィンドウを閉じても追わない
+    s.apply(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
+    assert!(s.export_window_follows_input());
+    s.apply(Action::Export(ExportAction::CloseWindow));
+    assert!(!s.export_window_follows_input());
+    // チェックしたセットに焼いた AO が無ければ追わない
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    for i in 0..s.sets.len() {
+        let uid = s.sets.get(i).unwrap().uid;
+        s.apply(Action::Export(ExportAction::SetChecked { uid, on: false }));
+    }
+    assert!(!s.export_window_follows_input());
+}
