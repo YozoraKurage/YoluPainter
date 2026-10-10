@@ -11,6 +11,8 @@ Windows MSVC・Windows GNU・Linux GNU・macOS（universal）向けの `yolu-app
 `tools/licenses-reviewed.json` に、版・宣言された許諾・選択する許諾・原文の場所・SHA-256 を固定してある。
 クレートに原文が無い場合は、そのクレートの発行時コミットにある上流の原文を取得する。
 単に同じ種類の一般的な許諾文で代用せず、著作権表記と NOTICE も保持する。
+クレートにも上流にも許諾の本文が無い場合だけ、上流の記載（`Cargo.toml` の `license` と `authors`）から組み立てた MIT の文を `tools/license-texts/` に置いて固定する。
+その文の頭に、上流の原文ではないことと、使った記載を書く。年は、上流の記載に無いので書かない。
 
 生成方法は [開発用の手順](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<target>/<クレート>/` にできる（`--target` を省くと Windows GNU 用を `target/third-party/<クレート>/` に出力）。
@@ -41,10 +43,13 @@ Windows MSVC・Windows GNU・Linux GNU・macOS（universal）向けの `yolu-app
   未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
 - macOS（universal）の配布物にだけ入る依存 32 件（`objc2` 系・`block2`・`dispatch2`・`dispatch`・`core-foundation` 系・`core-graphics` 系・`foreign-types` 系・`accesskit_macos`・
   `accesskit_consumer 0.38.0`・`raw-window-metal`・`wgpu-core-deps-apple`・`tiff`・`weezl`・`fax`・`quick-error 2.0.1`・`bitflags 1.3.2`）を `tools/licenses-reviewed.json` に登録した。
-  許諾は MIT（`OR` の組は MIT を選ぶ）。原文は、クレートに同梱の物（15 件）か、そのクレートの発行時コミットの上流の物（17 件）を SHA-256 で固定している。
-  `objc2` の 0.6 系の 10 件（`objc2`・`block2`・`dispatch2`・`objc2-app-kit`・`objc2-core-foundation`・`objc2-core-graphics`・`objc2-encode`・`objc2-foundation`・`objc2-metal`・`objc2-quartz-core`）は、
-  クレートにも上流のリポジトリにも許諾の本文のファイルが無く、上流の `LICENSE.md`（許諾の種類と、Apple の SDK から作ったバインディングであることの説明）を原文として固定している。
-  `dispatch 0.2.0` は上流を含めてどこにも許諾の本文が無く、クレートの `Cargo.toml`（`license = "MIT"` と作者名）を固定している。
+  許諾は MIT（`OR` の組は MIT を選ぶ）。原文は、クレートに同梱の物（15 件）か、そのクレートの発行時コミットの上流の物（17 件）を SHA-256 で固定している（うち 11 件は、下の組み立てた文を先頭に足している）。
+  `objc2` の 0.6 系の 10 件（`objc2`・`block2`・`dispatch2`・`objc2-app-kit`・`objc2-core-foundation`・`objc2-core-graphics`・`objc2-encode`・`objc2-foundation`・`objc2-metal`・`objc2-quartz-core`）と
+  `dispatch 0.2.0` の計 11 件は、クレートにも上流のリポジトリにも許諾の本文のファイルが無い（上流の `LICENSE.md` は許諾の種類と、Apple の SDK から作ったバインディングであることの説明で、
+  著作権の行も MIT の本文も無い。`dispatch` は上流のどこにも許諾の本文が無い）。そこで、上流の記載から組み立てた MIT の文（本文は MIT の標準の文、著作権の行は `Cargo.toml` の `authors`）を
+  `tools/license-texts/` に置き、全文束の先頭に載せる。作者名は `objc2`・`block2`・`objc2-encode` が Mads Marquart、`dispatch2` が Mads Marquart と Mary、`dispatch` が Steven Sheldon。
+  `objc2-foundation`・`objc2-app-kit`・`objc2-core-foundation`・`objc2-core-graphics`・`objc2-metal`・`objc2-quartz-core` は `Cargo.toml` に `authors` が無いので、同じリポジトリの `objc2` の `authors`（Mads Marquart）を使う。
+  上流の `LICENSE.md`（`dispatch` は `Cargo.toml`）は、組み立てた文のあとに並べて固定している。
   `objc2` の 0.5 系（`objc2`・`block2`・`objc-sys`・`objc2-app-kit`・`objc2-foundation` の古い版）は、上流の `LICENSE.txt`（MIT の本文）を固定している。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。

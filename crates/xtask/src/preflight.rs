@@ -3,7 +3,7 @@
 //!
 //! 確かめ（`--only` で絞れる。名前は [`CHECKS`]）:
 //! - `licenses`: 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ命令。許諾の全文の束も作る）
-//! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か
+//! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled` と、クレートの原文のうちリポジトリに置いた文 `repo`）が、`.gitattributes` で `eol=lf` か `-text` か
 //!   （Windows の checkout で CRLF になって照合が落ちた、0.3.0 の配布の失敗）
 //! - `nsis`: インストーラーの台本の `Target` が、公式の Windows 版 NSIS が持つ stub（x86-unicode・x86-ansi）か（amd64 は無く、0.3.0 の配布で落ちた）
 //! - `mcpb`: Claude Desktop の拡張（.mcpb）を作る対象（Windows）で、`manifest.json` が組めて形が合うことと、拡張に入れるコマンドラインの許諾の束
@@ -254,8 +254,8 @@ fn check_licenses(root: &Path, target: &str, offline: bool) -> Outcome {
     }
 }
 
-/// `tools/licenses-reviewed.json` の `bundled`（クレートでない同梱物）のうち、SHA-256 で照合するリポジトリの中のファイル。
-/// クレートの原文（`crates`）は取得元か登録先のクレートの中の物で、リポジトリのファイルではない。
+/// `tools/licenses-reviewed.json` の、SHA-256 で照合するリポジトリの中のファイル: `bundled`（クレートでない同梱物）と、
+/// クレートの原文のうちリポジトリに置いた文（`crates` の `repo`）。クレートの原文のそれ以外は、取得元か登録先のクレートの中の物。
 fn reviewed_files(root: &Path) -> Result<Vec<String>> {
     let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         root.join("tools/licenses-reviewed.json"),
@@ -274,6 +274,20 @@ fn reviewed_files(root: &Path) -> Result<Vec<String>> {
                     if root.join(path).is_file() && !files.iter().any(|f| f == path) {
                         files.push(path.to_owned());
                     }
+                }
+            }
+        }
+    }
+    // クレートの原文のうち、上流の記載から組み立てて、リポジトリに置いた文（`repo`。tools/license-texts/）
+    for review in json["crates"]
+        .as_object()
+        .ok_or("licenses-reviewed.json に crates がありません")?
+        .values()
+    {
+        for spec in review["files"].as_array().into_iter().flatten() {
+            if let Some(path) = spec["repo"].as_str() {
+                if root.join(path).is_file() && !files.iter().any(|f| f == path) {
+                    files.push(path.to_owned());
                 }
             }
         }
@@ -1064,6 +1078,13 @@ mod tests {
         let files = reviewed_files(&root).unwrap();
         assert!(
             files.iter().any(|f| f.ends_with("THIRD-PARTY-NOTICES.md")),
+            "{files:?}"
+        );
+        // 上流の記載から組み立てた許諾の文（クレートの原文としてリポジトリに置いた物）も、LF 固定を見張る対象
+        assert!(
+            files
+                .iter()
+                .any(|f| f.starts_with("tools/license-texts/") && f.ends_with(".txt")),
             "{files:?}"
         );
         assert_eq!(

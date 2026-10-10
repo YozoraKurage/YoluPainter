@@ -86,8 +86,20 @@ def subtree_keys(text, package):
     return keys
 
 
+# 上流が許諾の本文を持たないクレートのために、上流の記載（Cargo.toml の license と authors）から組み立てた文を置くフォルダ（リポジトリの中）。
+# 文の頭に、上流の原文ではないことを書く。`licenses-reviewed.json` の `repo` の指定は、このフォルダの下のファイルだけ。
+LICENSE_TEXTS = 'tools/license-texts'
+
+
 def read_source(package, spec, offline):
-    if 'path' in spec:
+    if 'repo' in spec:
+        folder = (ROOT / LICENSE_TEXTS).resolve()
+        path = (ROOT / spec['repo']).resolve()
+        if not path.is_relative_to(folder):
+            raise ValueError(f'リポジトリの文は {LICENSE_TEXTS}/ の下だけです')
+        data = path.read_bytes()
+        origin = 'repo:' + spec['repo']
+    elif 'path' in spec:
         base = Path(package['manifest_path']).parent.resolve()
         path = (base / spec['path']).resolve()
         if not path.is_relative_to(base):

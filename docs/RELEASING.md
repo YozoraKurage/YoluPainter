@@ -18,6 +18,10 @@ GPL/LGPL の表記が無いかを調べます。ヒットしたら、選ばな�
 grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~/.cargo/registry/src/*/<クレート>-<版>
 ```
 
+許諾の原文は、クレートに同梱の物（`path`）か、そのクレートの発行時コミットの上流の物（`url`。コミット固定）を SHA-256 で固定します。クレートにも上流にも許諾の本文が無いときは、
+上流の記載（`Cargo.toml` の `license` と `authors`）から組み立てた文を `tools/license-texts/` に置いて固定します（`repo`。この下のファイルだけ）。文の頭に、上流の原文ではなく、
+どの記載から組み立てたかを書きます。年は、上流の記載で分かる物だけ書きます（今の文は、どれも年を書いていません）。上流の LICENSE.md など、本文ではないが許諾について書いてある物は、文のあとに並べて固定します。
+
 ## 出す流れ
 
 1. 版を上げるリリース（`x.y.0`）では、[出す前の文書の確かめ](#出す前の文書の確かめ)を済ませ、直した文書を作業の枝に入れます。
@@ -238,7 +242,7 @@ cargo xtask preflight --only version --kind prerelease
 | 確かめ | 見ること |
 |---|---|
 | `licenses` | 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ。未確認の依存・原文の不一致・`blocked` で落ちる。macOS の対象は objc2 系など macOS だけの依存も数える） |
-| `attributes` | SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か（Windows の checkout で CRLF になると照合が落ちる） |
+| `attributes` | SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled` と、リポジトリに置いた許諾の文 `tools/license-texts/`）が、`.gitattributes` で `eol=lf` か `-text` か（Windows の checkout で CRLF になると照合が落ちる） |
 | `nsis` | `installer/yolupainter.nsi` の `Target` が、公式の Windows 版 NSIS が持つ stub（`x86-unicode`・`x86-ansi`）か（amd64 の stub は無い） |
 | `mcpb` | Windows の対象で、`.mcpb` の manifest が作れて形が合うか、拡張に入れるロゴの PNG があるか、コマンドラインの許諾の束（`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`）が作れるか |
 | `macos` | macOS の .app を作る対象（`universal-apple-darwin`）で、`Info.plist` が組めて版が合うか、アイコンの元のロゴが 1024 x 1024 の PNG か、同梱する文書が一覧に載っているか。macOS の上では、加えて `lipo`・`codesign`・`iconutil`・`sips`・`ditto`・`plutil` と、2 つの Rust のターゲットが入っているか |
