@@ -13,11 +13,13 @@ a folder on the same PC; no native library is used (specification: [LIVELINK.md]
    texture set per material (the original texture becomes the bottom layer "Original"; a PSD keeps its layers). lilToon materials are drawn in the 3D view with Unity's values (only
    materials with lilToon's version value or shaders from the lilToon package; shaders that only look similar by name are not drawn as lilToon).
 2. After changing the pose, BlendShapes or material values in Unity, press the same button to resend (the FBX is not read again; only the pose and values are applied, overwriting
-   bones moved by hand in the Pose panel. If an original texture file changed, untouched sets get it again; touched sets are left as they are, with a notice).
+   bones moved by hand in the Pose panel or in Pose mode. If an original texture file changed, untouched sets get it again; touched sets are left as they are, with a notice).
 3. When you choose the "lilToon" Output Template in the File → Export Textures… window and export, the Output Path starts at the folder Unity specified. Of the PNG files written, Unity imports those that
    belong to a lilToon material property (`_MainTex`, `_BumpMap`, and so on) and asks in its window whether to assign them to the materials. The other templates and the per-channel PNG
    files are not sent back to Unity.
 4. Save your work as `.ylp`. The model opened over Live Link (the FBX files, renderer and material bindings, and pose) is kept in the `.ylp` and reopens without Unity.
+   Whether the material values received from Unity are kept in the `.ylp` is set by "Save material values received from Unity" in the same section of the settings (on by default).
+   Save for Distribution with "Model reference" removed also leaves this record out of the copy ([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese).
 
 The standalone application opens models from Unity while "Accept Live Link from Unity" under Live Link & Commands in Edit → Settings… (Ctrl+,) is on (the default; starting with `--livelink` always
 accepts). The icon at the right end of the menu bar shows the state (not accepting, accepting, a document opened from Unity, something did not fit, folder unavailable); press it to

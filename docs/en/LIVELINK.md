@@ -29,7 +29,7 @@ Both sides work out the same path on their own.
 While the standalone application accepts requests, it rewrites this file every 2 seconds, and removes it when it stops accepting or exits.
 
 ```json
-{ "format": 1, "app": "YoluPainter", "version": "0.5.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
+{ "format": 1, "app": "YoluPainter", "version": "0.6.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
 ```
 
 Unity treats the standalone application as running if `updated` (UTC) is less than 6 seconds old. Otherwise it starts the standalone application with `--livelink` and then places
@@ -42,7 +42,7 @@ the request (it need not wait; the standalone application picks it up once it is
   "format": 1,
   "kind": "open",
   "id": "8f0c2a4e-0000-4000-8000-000000000001",
-  "bridge": { "version": "0.5.0", "unity": "2022.3.22f1" },
+  "bridge": { "version": "0.6.0", "unity": "2022.3.22f1" },
   "project": { "root": "C:/Work/MyProject", "name": "MyProject" },
   "target": {
     "key": "GlobalObjectId_V1-2-…",
@@ -171,12 +171,14 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
   `jp.lilxyzw.liltoon` is it rendered as lilToon.
 - The `.ylp` keeps the applied request with the current pose and without material values (except `_lilToonVersion`) in the root entry `livelink.json`, so it reopens without Unity
   ([YLP_FORMAT.md](../YLP_FORMAT.md), Japanese).
+  The material values received stay in the set's `look.json` while "Save material values received from Unity" is on (the default; textures' pixels are not stored, and they are read from their files on reopening).
+  A copy made with Save for Distribution with "Model reference" removed does not contain `livelink.json` either ([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese).
 
 ## Reply `outbox/<id>-<n>.json` (standalone → Unity)
 
 ```json
 { "format": 1, "request": "8f0c2a4e-0000-4000-8000-000000000001", "kind": "exported",
-  "app": { "version": "0.5.0" },
+  "app": { "version": "0.6.0" },
   "problems": [ { "path": "Accessory", "reason": "bone_not_found" } ],
   "files": [ { "material": "guid:0123456789abcdef0123456789abcdef/fileid:2100000", "property": "_MainTex",
                "path": "C:/Work/MyProject/Assets/YoluPainter/Avatar/Avatar_Body_Main.png", "srgb": true, "normal_map": false } ] }
