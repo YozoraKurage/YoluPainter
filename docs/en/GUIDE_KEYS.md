@@ -43,7 +43,7 @@ There are three modes: Paint, Edit and Pose. You paint only in Paint mode. The t
 
 ## Edit and Pose modes
 
-In Edit mode, the white markers in the 3D view select fill projection boxes and decals, gradient decals, filter shapes, points of point gradients and 3D paths, and `G`, `R` and `S` move them. In Pose mode they move the selected bone. Nothing can be moved on the 2D canvas (it is for viewing only).
+In Edit mode, the white markers in the 3D view select fill projection boxes and decals, gradient decals, filter shapes, points of point gradients, 3D paths and 3D rulers, and `G`, `R` and `S` move them. In Pose mode they move the selected bone. Nothing can be moved on the 2D canvas (it is for viewing only).
 
 | Action | Input |
 |---|---|
@@ -70,7 +70,7 @@ Each move, rotation or scale is one undo step (one pose undo step for bones). A 
 | Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` pressed after starting to drag |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
 | Turn Snap to Special Ruler on or off | `Ctrl+2` |
-| Switch the snapping special ruler | `Ctrl+4` |
+| Switch the snapping special ruler | `Ctrl+4` (steps through the special rulers of the space of the view the pointer is over; if it is over neither view, of the view where you last started drawing with a tool; if there is none, 3D when you can only paint in the 3D view, and 2D otherwise) |
 | Cancel the current stroke, shape or ruler drag, selection operation or path point drag | `Esc`. If there is nothing to cancel, it deselects the selected point, and if there is no point, it deselects the selection. An input field, menu or window that is using the key takes it first |
 
 ## View controls and `Alt`
@@ -89,8 +89,8 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 - The wheel also zooms. `Ctrl+Space` + left-drag zooms as you move horizontally, around the pressed point (releasing without moving zooms in, and adding `Alt` zooms out).
 - Rotating the 2D view goes in 15° steps, and is free with `Shift` also held. The 3D snap orbit snaps to an axis view (front, back, right, left, top, bottom) when the direction comes within 15° of it.
 - Rotating the view right uses the `^` character, and the `=` key also works (keyboard layouts put the keys in different places).
-- The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or snapping onto an axis makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
 - While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (`Shift` for faster; meanwhile these keys are not used for switching tools and so on). In orthographic, `W` / `S` zoom in and out.
+- The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or snapping onto an axis makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
 - In Edit mode `H` hides the selected object's marker, so flip the 2D view with View → Flip View.
 - The stencil rotates with a left-drag while `Y` is held (15° steps with `Shift`), moves with a middle-drag or `Ctrl` + left-drag, and scales with a right-drag or `Alt` + left-drag (in 2D and 3D). It is not used while `N` is held.
 - The Liquify tool has no default key.
