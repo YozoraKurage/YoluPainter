@@ -111,6 +111,46 @@ const SNIPPETS: &[(&str, &str)] = &[
     ("OpenUrl", "fn f() { let o = OpenUrl::new_tab(u); }"),
     ("hyperlink", "fn f() { ui.hyperlink(u); }"),
     ("hyperlink_to", "fn f() { ui.hyperlink_to(t, u); }"),
+    (
+        "tokio::process",
+        "fn f() { let c = tokio::process::Command::from(s); }",
+    ),
+    (
+        "async_process",
+        "fn f() { let c = async_process::Command::from(s); }",
+    ),
+    (
+        "rustix::net",
+        "fn f() { let s = rustix::net::socket(d, t, p); }",
+    ),
+    (
+        "nix::sys::socket",
+        "use nix::sys::socket::{socket, AddressFamily};",
+    ),
+    ("send_to", "fn f() { sock.send_to(b, a); }"),
+    (
+        "WinInet",
+        "use windows::Win32::Networking::WinInet::HINTERNET;",
+    ),
+    ("InternetOpen", "fn f() { InternetOpenW(a, 0, p, p, 0); }"),
+    (
+        "InternetConnect",
+        "fn f() { InternetConnectW(h, s, 80, u, p, 3, 0, 0); }",
+    ),
+    (
+        "Urlmon",
+        "use windows::Win32::System::Com::Urlmon::URLOpenStreamW;",
+    ),
+    (
+        "URLDownloadToFile",
+        "fn f() { URLDownloadToFileW(c, u, f, 0, cb); }",
+    ),
+    ("HttpClient", "fn f() { let c = HttpClient::new(); }"),
+    ("Networking", "use windows::Win32::Networking::Foo;"),
+    (
+        "NetworkManagement",
+        "use windows::Win32::NetworkManagement::IpHelper::X;",
+    ),
 ];
 
 #[test]
@@ -326,17 +366,19 @@ fn endpoints(text: &str) -> Vec<String> {
 #[test]
 fn bind_and_connect_must_name_the_loopback() {
     for ok in [
-            "fn f() { TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))); }",
-            "fn f() { TcpStream::connect((Ipv4Addr::LOCALHOST, port)); }",
-            "fn f() { TcpStream::connect((\"127.0.0.1\", port)); }",
-            "fn f() { StdListener::bind(\"[::1]:0\"); }",
-            "fn f() { UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)); }",
-            "fn f() { TcpListener::bind(\n    SocketAddr::new(\n        IpAddr::V4(Ipv4Addr::LOOPBACK),\n        port,\n    ),\n); }",
-            "fn f() { let a = Ipv4Addr::LOCALHOST; let _ = TcpStream::connect((a, port)); }",
-            "fn f() { Foo::bind(port); Bar::connect(host); }",
-        ] {
-            assert_eq!(endpoints(ok), Vec::<String>::new(), "{ok}");
-        }
+        "fn f() { TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))); }",
+        "fn f() { TcpStream::connect((Ipv4Addr::LOCALHOST, port)); }",
+        "fn f() { TcpStream::connect((\"127.0.0.1\", port)); }",
+        "fn f() { StdListener::bind(\"[::1]:0\"); }",
+        "fn f() { TcpStream::connect(format!(\"127.0.0.1:{port}\")); }",
+        "fn f() { UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)); }",
+        "fn f() { TcpListener::bind(\n    SocketAddr::new(\n        IpAddr::V4(Ipv4Addr::LOOPBACK),\n        port,\n    ),\n); }",
+        "fn f() { TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))); }",
+        "fn f() { TcpStream::connect(std::net::SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port)); }",
+        "fn f() { Foo::bind(port); Bar::connect(host); }",
+    ] {
+        assert_eq!(endpoints(ok), Vec::<String>::new(), "{ok}");
+    }
     for bad in [
         "fn f() { TcpListener::bind(\"0.0.0.0:80\"); }",
         "fn f() { TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)); }",
@@ -345,6 +387,18 @@ fn bind_and_connect_must_name_the_loopback() {
         "fn f() { TcpStream::connect_timeout(&addr, timeout); }",
         "fn f() {\n    let addr = Ipv4Addr::LOCALHOST;\n    TcpListener::bind(addr);\n}",
         "fn f() { TcpListener::bind(addr) /* LOCALHOST */; }",
+        // LOCALHOST の文字があっても、宛先が決まらない形
+        "fn f() { TcpStream::connect((host.unwrap_or(Ipv4Addr::LOCALHOST), port)); }",
+        "fn f() { TcpListener::bind((if lan { Ipv4Addr::UNSPECIFIED } else { Ipv4Addr::LOCALHOST }, port)); }",
+        "fn f() { TcpListener::bind(if lan { UNSPECIFIED } else { LOCALHOST }); }",
+        "fn f() { TcpListener::bind(match mode { Lan => ADDR, _ => LOCALHOST }); }",
+        "fn f() { let a = Ipv4Addr::LOCALHOST; let _ = TcpStream::connect((a, port)); }",
+        "fn f() { TcpListener::bind((Ipv4Addr::LOCALHOST, port).max(any)); }",
+        "fn f() { TcpStream::connect((Ipv4Addr::new(10, 0, 0, 1), port)); }",
+        "fn f() { TcpListener::bind(SocketAddr::from((addr_from_settings(), port))); }",
+        "fn f() { TcpListener::bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port)); }",
+        "fn f() { TcpListener::bind(\"0.0.0.0:80\") /* \"127.0.0.1\" */; }",
+        "fn f() { TcpStream::connect(format!(\"{host}:127\")); }",
     ] {
         assert_eq!(endpoints(bad).len(), 1, "{bad}");
     }
@@ -357,6 +411,210 @@ fn bind_and_connect_must_name_the_loopback() {
         "{:?}",
         report.violations
     );
+}
+
+#[test]
+fn an_aliased_socket_type_is_still_a_socket() {
+    for bad in [
+        "use std::net::TcpListener as L;\nfn f() { L::bind((\"0.0.0.0\", 80)); }",
+        "use std::net::{TcpStream as S, Ipv4Addr};\nfn f() { S::connect((host, 80)); }",
+        "use tokio::net::UdpSocket as Sock;\nfn f() { Sock::bind(addr); }",
+        "type Conn = std::net::TcpStream;\nfn f() { Conn::connect(addr); }",
+    ] {
+        assert_eq!(endpoints(bad).len(), 1, "{bad}");
+    }
+    assert_eq!(
+        endpoints(
+            "use std::net::TcpListener as L;\nfn f() { L::bind((Ipv4Addr::LOCALHOST, 80)); }"
+        ),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn process_commands_are_found_under_any_name() {
+    for source in [
+        "use std::process::Command as Cmd;\nfn f() { Cmd::new(\"x\"); }",
+        "use std::process::{Stdio, Command as C2};\nfn f() { C2::new(\"x\"); }",
+        "use std::process::Command;\nfn f() { Command::new(\"x\"); }",
+        "use std::process::*;\nfn f() { Command::new(\"x\"); }",
+        "use std::process as p;\nfn f() { p::Command::new(\"x\"); }",
+        "use std::process;\nfn f() { process::Command::new(\"x\"); }",
+        "use tokio::process::Command;\nfn f() { Command::new(\"x\"); }",
+        "use tokio::process::Command as Tc;\nfn f() { Tc::new(\"x\"); }",
+        "type Spawner = std::process::Command;\nfn f() { Spawner::new(\"x\"); }",
+        "fn f() { std::process::Command::new(\"x\"); }",
+        "fn f() { let c = Command::new(\"x\"); }",
+    ] {
+        assert!(marks(source).contains(&"Command::new"), "{source}");
+    }
+    assert!(marks("fn f() { tokio::process::Command::from(c); }").contains(&"tokio::process"));
+}
+
+#[test]
+fn a_command_type_of_the_program_itself_is_not_a_spawn() {
+    for source in [
+        "struct Command { name: String }\nimpl Command { fn new(n: &str) -> Command { Command { name: n.into() } } }\nfn f() { Command::new(\"x\"); }",
+        "use crate::commands::Command;\nfn f() { Command::new(\"x\"); }",
+        "enum Command { A }\nfn f() { Command::new(); }",
+        "fn f() { crate::commands::Command::new(\"x\"); }",
+        "use egui::Context as Command;\nfn f() { Command::new(); }",
+    ] {
+        assert!(!marks(source).contains(&"Command::new"), "{source}");
+    }
+}
+
+fn scan_files(files: &[(&str, &str)]) -> Vec<(String, &'static str)> {
+    let owned: Vec<(String, String)> = files
+        .iter()
+        .map(|(f, t)| (f.to_string(), t.to_string()))
+        .collect();
+    let mut found: Vec<(String, &'static str)> = scan_sources(&owned)
+        .hits
+        .into_iter()
+        .map(|h| (h.file, h.mark))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn test_module_files_named_by_a_path_attribute_are_not_scanned() {
+    let hit = "fn f() { std::process::Command::new(\"x\"); }";
+    let found = scan_files(&[
+        (
+            "crates/demo/src/lib.rs",
+            "#[cfg(test)]\n#[path = \"helpers/check.rs\"]\nmod check;\n#[path = \"real.rs\"]\nmod other_name;\n#[cfg(test)]\n#[path = \"../tests_support/up.rs\"]\nmod up;\n",
+        ),
+        ("crates/demo/src/helpers/check.rs", hit),
+        ("crates/demo/src/real.rs", hit),
+        ("crates/demo/src/check.rs", hit),
+        ("crates/demo/tests_support/up.rs", hit),
+    ]);
+    // path で指された試験のファイルは除く。名前が同じだけの別のファイル（src/check.rs）と、道の指していないファイルは読む
+    assert_eq!(
+        found,
+        vec![
+            ("crates/demo/src/check.rs".to_owned(), "Command::new"),
+            ("crates/demo/src/real.rs".to_owned(), "Command::new"),
+        ]
+    );
+}
+
+#[test]
+fn an_inner_cfg_test_removes_only_its_own_module() {
+    let source = "
+        mod a {
+            #![cfg(test)]
+            fn t() { std::process::Command::new(\"a\"); }
+        }
+        #[allow(dead_code)]
+        pub mod b {
+            #![cfg(test)]
+            fn t() { ShellExecuteW(); }
+        }
+        mod c {
+            fn real() { WinHttpOpen(); }
+        }
+        fn prod() { UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)); }
+    ";
+    assert_eq!(marks(source), vec!["UdpSocket", "WinHttp"]);
+    // ファイルの先頭の `#![cfg(test)]` は丸ごと
+    assert_eq!(
+        marks("#![allow(unused)]\n#![cfg(test)]\nfn t() { UdpSocket::bind(a); }"),
+        Vec::<&str>::new()
+    );
+}
+
+#[test]
+fn code_after_a_test_only_arm_or_labelled_loop_is_still_read() {
+    let arms = "
+        fn f(x: u8) {
+            match x {
+                #[cfg(test)]
+                0 => { std::process::Command::new(\"t\"); }
+                1 => { ShellExecuteW(); }
+                #[cfg(test)]
+                2 => std::process::Command::new(\"u\"),
+                _ => { WinHttpOpen(); }
+            }
+        }
+    ";
+    assert_eq!(marks(arms), vec!["ShellExecute", "WinHttp"]);
+    let labelled = "
+        fn g() {
+            #[cfg(test)]
+            'outer: loop { std::process::Command::new(\"x\"); break 'outer; }
+            ShellExecuteW();
+        }
+    ";
+    assert_eq!(marks(labelled), vec!["ShellExecute"]);
+}
+
+#[test]
+fn windows_network_features_are_found_by_name() {
+    for feature in [
+        "Win32_Networking",
+        "Win32_Networking_WinSock",
+        "Win32_NetworkManagement_IpHelper",
+        "Networking",
+        "Networking_Sockets",
+        "Web",
+        "Web_Http",
+        "Win32_Web_InternetExplorer",
+        "Win32_System_Com_Urlmon",
+        "Win32_Data_Xml_MsXml",
+    ] {
+        assert!(is_windows_net_feature(feature), "{feature}");
+    }
+    for feature in [
+        "Win32_UI_Shell",
+        "Win32_System_Com",
+        "Win32_Foundation",
+        "Win32_Graphics_Dxgi",
+        "Webbing",
+        "Win32_Data_Xml",
+    ] {
+        assert!(!is_windows_net_feature(feature), "{feature}");
+    }
+}
+
+#[test]
+fn resolved_windows_features_are_checked_not_only_the_declared_ones() {
+    let with = |extra: &[&str]| {
+        let mut m = meta(
+            &good_direct(),
+            &[
+                ("yolu-app", "windows", None),
+                ("yolu-mcp", "windows-sys", None),
+            ],
+        );
+        let nodes = m["resolve"]["nodes"].as_array_mut().unwrap();
+        for node in nodes.iter_mut() {
+            match node["id"].as_str().unwrap() {
+                "windows" => {
+                    node["features"] = json!(["Win32_Networking", "Win32_Networking_WinHttp"])
+                }
+                "windows-sys" => {
+                    let mut f = vec![
+                        "Win32_Networking",
+                        "Win32_Networking_WinSock",
+                        "Win32_NetworkManagement",
+                        "Win32_NetworkManagement_IpHelper",
+                    ];
+                    f.extend(extra);
+                    node["features"] = json!(f);
+                }
+                _ => {}
+            }
+        }
+        check_metadata(&m)
+    };
+    assert_eq!(with(&[]), Vec::<String>::new());
+    let found = with(&["Web_Http", "Win32_System_Com_Urlmon"]);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().all(|v| v.contains("windows-sys")));
 }
 
 #[test]

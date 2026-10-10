@@ -19,6 +19,7 @@ mod allowed;
 mod deps;
 mod lex;
 mod markers;
+mod uses;
 
 use crate::{root, Result};
 use allowed::*;
@@ -85,23 +86,42 @@ fn source_files(root: &Path) -> Result<Vec<(String, String)>> {
 }
 
 /// `file` に書いた `mod name;` が指すファイルの道（`name.rs` か `name/mod.rs`。`mod.rs`・`lib.rs`・`main.rs` は同じ階、ほかは `<ファイル名>/` の階）。
-fn module_files(file: &str, name: &str) -> [String; 2] {
+/// `#[path = "…"]` があれば、そのファイル（`file` と同じ階から。`..` は畳む）だけ。
+fn module_files(file: &str, decl: &ModDecl) -> Vec<String> {
     let (dir, base) = file.rsplit_once('/').unwrap_or(("", file));
+    if let Some(path) = &decl.path {
+        return vec![normalize(&format!("{dir}/{path}"))];
+    }
     let stem = base.trim_end_matches(".rs");
     let folder = if matches!(base, "mod.rs" | "lib.rs" | "main.rs") {
         dir.to_owned()
     } else {
         format!("{dir}/{stem}")
     };
-    [
-        format!("{folder}/{name}.rs"),
-        format!("{folder}/{name}/mod.rs"),
+    vec![
+        format!("{folder}/{}.rs", decl.name),
+        format!("{folder}/{}/mod.rs", decl.name),
     ]
+}
+
+/// `a/b/../c` → `a/c`、`a/./b` → `a/b`。
+fn normalize(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
 }
 
 /// ファイルの集まり（相対の道・中身）を走査する。試験だけのファイル（`#[cfg(test)] mod x;` の先と、その下のモジュール）は除く。
 fn scan_sources(files: &[(String, String)]) -> Scan {
-    let lexed: Vec<(&str, Vec<Token>, Vec<String>)> = files
+    let lexed: Vec<(&str, Vec<Token>, Vec<ModDecl>)> = files
         .iter()
         .map(|(file, text)| {
             let (tokens, modules) = strip_test_items(lex(text));
@@ -112,11 +132,15 @@ fn scan_sources(files: &[(String, String)]) -> Scan {
     let mut test_files = BTreeSet::new();
     let mut test_folders = Vec::new();
     for (file, _, modules) in &lexed {
-        for name in modules {
-            let [plain, nested] = module_files(file, name);
-            test_files.insert(plain.clone());
-            test_files.insert(nested);
-            test_folders.push(format!("{}/", plain.trim_end_matches(".rs")));
+        for decl in modules {
+            for path in module_files(file, decl) {
+                if let Some(stem) = path.strip_suffix("/mod.rs") {
+                    test_folders.push(format!("{stem}/"));
+                } else {
+                    test_folders.push(format!("{}/", path.trim_end_matches(".rs")));
+                }
+                test_files.insert(path);
+            }
         }
     }
     let mut scan = Scan::default();
@@ -141,7 +165,7 @@ struct Report {
 
 fn guidance() -> &'static str {
     "通信を足す前に README・INSTALL の約束（更新の確認のほかに通信しない。外からの操作は設定で入れている間だけ 127.0.0.1）を破らないか確かめ、\
-     足してよいときは crates/xtask/src/netguard.rs の ALLOWED に、ファイル・印・数と理由を足します。"
+     足してよいときは crates/xtask/src/netguard/allowed.rs の ALLOWED に、ファイル・印・数と理由を足します。"
 }
 
 fn evaluate(scan: &Scan, allowed: &[Allow]) -> Report {

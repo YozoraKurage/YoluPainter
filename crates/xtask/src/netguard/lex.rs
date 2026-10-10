@@ -9,6 +9,10 @@ pub(super) enum Tok {
     Str(String),
     /// `::`
     Sep,
+    /// 数のリテラル（中身は読まない）。
+    Num,
+    /// ライフタイムとラベル（`'a`・`'outer:` の `'outer`）。文字リテラルは字句に出さない。
+    Lifetime(String),
     Punct(char),
 }
 
@@ -67,6 +71,11 @@ pub(super) fn raw_quoted(c: &[char], start: usize, hashes: usize) -> (String, us
         j += 1;
     }
     (c[start..].iter().collect(), c.len(), lines)
+}
+
+/// `'` から始まるのが文字リテラル（`'x'`・`'\n'`）か（そうでなければライフタイムかラベル）。
+pub(super) fn is_char_literal(c: &[char], i: usize) -> bool {
+    c.get(i + 1) == Some(&'\\') || c.get(i + 2) == Some(&'\'')
 }
 
 /// `'` から始まる文字リテラルかライフタイム（ラベル）を読み飛ばした次の位置。
@@ -131,7 +140,14 @@ pub(super) fn lex(text: &str) -> Vec<Token> {
             line += lines;
             i = next;
         } else if ch == '\'' {
-            i = skip_char_or_lifetime(&c, i);
+            let next = skip_char_or_lifetime(&c, i);
+            if !is_char_literal(&c, i) {
+                out.push(Token {
+                    tok: Tok::Lifetime(c[i + 1..next].iter().collect()),
+                    line,
+                });
+            }
+            i = next;
         } else if ch == ':' && at(i + 1) == Some(':') {
             out.push(Token {
                 tok: Tok::Sep,
@@ -201,6 +217,10 @@ pub(super) fn lex(text: &str) -> Vec<Token> {
             while i < c.len() && is_ident_continue(c[i]) {
                 i += 1;
             }
+            out.push(Token {
+                tok: Tok::Num,
+                line,
+            });
         } else {
             out.push(Token {
                 tok: Tok::Punct(ch),
@@ -265,13 +285,63 @@ pub(super) fn cfg_test_attribute(t: &[Token], i: usize) -> Option<(usize, bool)>
     only_test.then(|| (matching(t, j) + 1, inner))
 }
 
-/// `#[cfg(test)]` の次の項目（後ろの属性も含む）の終わりの次の位置と、`mod 名前;` ならその名前。
-pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<String>) {
+/// `mod 名前;` の宣言（`#[path = "…"]` があればその道）。
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ModDecl {
+    pub(super) name: String,
+    pub(super) path: Option<String>,
+}
+
+/// `closer` の位置の閉じ括弧に対応する開きの位置（無ければ 0）。
+fn matching_open(t: &[Token], closer: usize) -> usize {
+    let mut depth = 0usize;
+    for k in (0..=closer).rev() {
+        match t[k].tok {
+            Tok::Punct(')' | ']' | '}') => depth += 1,
+            Tok::Punct('(' | '[' | '{') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return k;
+                }
+            }
+            _ => {}
+        }
+    }
+    0
+}
+
+/// `i` の位置を囲む `{` の位置。
+fn enclosing_open(t: &[Token], i: usize) -> Option<usize> {
+    let mut bal = 0usize;
+    for k in (0..i).rev() {
+        match t[k].tok {
+            Tok::Punct('}') => bal += 1,
+            Tok::Punct('{') if bal == 0 => return Some(k),
+            Tok::Punct('{') => bal -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `#[cfg(test)]` の次の項目（後ろの属性も含む）の終わりの次の位置と、`mod 名前;` ならその宣言。
+pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<ModDecl>) {
     let mut j = from;
+    let mut path = None;
     while is_punct(t, j, '#') && is_punct(t, j + 1, '[') {
+        // `#[path = "…"]`
+        if ident_at(t, j + 2) == Some("path") && is_punct(t, j + 3, '=') {
+            if let Some(Token {
+                tok: Tok::Str(text),
+                ..
+            }) = t.get(j + 4)
+            {
+                path = Some(text.clone());
+            }
+        }
         j = matching(t, j + 1) + 1;
     }
-    // 修飾子を飛ばして、項目の種類の語へ
+    // 修飾子とラベル（`'outer: loop`）を飛ばして、項目の種類の語へ
     let mut k = j;
     loop {
         match ident_at(t, k) {
@@ -301,6 +371,16 @@ pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<String>) {
                 ) =>
             {
                 k += 1
+            }
+            _ if matches!(
+                t.get(k),
+                Some(Token {
+                    tok: Tok::Lifetime(_),
+                    ..
+                })
+            ) && is_punct(t, k + 1, ':') =>
+            {
+                k += 2
             }
             _ => break,
         }
@@ -351,7 +431,12 @@ pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<String>) {
         )
     ) || is_punct(t, k, '{');
     let module = (keyword == Some("mod") && is_punct(t, k + 2, ';'))
-        .then(|| ident_at(t, k + 1).map(str::to_owned))
+        .then(|| {
+            ident_at(t, k + 1).map(|name| ModDecl {
+                name: name.to_owned(),
+                path: path.clone(),
+            })
+        })
         .flatten();
     let mut depth = 0usize;
     for (m, token) in t.iter().enumerate().skip(j) {
@@ -367,6 +452,21 @@ pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<String>) {
                 }
             }
             Tok::Punct(';') if depth == 0 => return (m + 1, module),
+            // match の腕 `パターン => { … }`（腕の本体が波括弧なら、コンマが無くてもそこで終わる）
+            Tok::Punct('>')
+                if depth == 0
+                    && !to_semicolon
+                    && !to_brace
+                    && m > 0
+                    && is_punct(t, m - 1, '=')
+                    && is_punct(t, m + 1, '{') =>
+            {
+                let mut end = matching(t, m + 1) + 1;
+                if is_punct(t, end, ',') {
+                    end += 1;
+                }
+                return (end.min(t.len()), None);
+            }
             // 構造体の欄・match の腕・enum の変種に付いた属性
             Tok::Punct(',') if depth == 0 && !to_semicolon && !to_brace => return (m + 1, None),
             _ => {}
@@ -375,21 +475,57 @@ pub(super) fn skip_item(t: &[Token], from: usize) -> (usize, Option<String>) {
     (t.len(), None)
 }
 
-/// 試験だけの項目を除いた字句と、`#[cfg(test)] mod 名前;` の名前。`#![cfg(test)]` のファイルは丸ごと除く。
-pub(super) fn strip_test_items(tokens: Vec<Token>) -> (Vec<Token>, Vec<String>) {
-    let (mut out, mut modules, mut i) = (Vec::with_capacity(tokens.len()), Vec::new(), 0);
+/// 試験だけの項目を除いた字句と、`#[cfg(test)] mod 名前;` の宣言。
+/// ファイルの先頭の `#![cfg(test)]` はファイルを丸ごと、モジュールの中の `#![cfg(test)]` はそのモジュールだけ（見出しから閉じまで）除く。
+pub(super) fn strip_test_items(tokens: Vec<Token>) -> (Vec<Token>, Vec<ModDecl>) {
+    let mut removed = vec![false; tokens.len()];
+    let mut modules = Vec::new();
+    let (mut i, mut depth) = (0, 0usize);
     while i < tokens.len() {
         if let Some((after, inner)) = cfg_test_attribute(&tokens, i) {
             if inner {
-                return (Vec::new(), Vec::new());
+                if depth == 0 {
+                    return (Vec::new(), Vec::new());
+                }
+                // 入れ子のモジュールの中: 囲んでいる `{ … }` を、見出し（`#[…] pub mod 名前`）から除く
+                let open = enclosing_open(&tokens, i);
+                if let Some(open) = open {
+                    let mut start = open;
+                    while start > 0 {
+                        match tokens[start - 1].tok {
+                            Tok::Punct(';' | '{' | '}') => break,
+                            Tok::Punct(')' | ']') => start = matching_open(&tokens, start - 1),
+                            _ => start -= 1,
+                        }
+                    }
+                    let close = matching(&tokens, open).min(tokens.len() - 1);
+                    for flag in &mut removed[start..=close] {
+                        *flag = true;
+                    }
+                }
+                i = after;
+                continue;
             }
             let (end, module) = skip_item(&tokens, after);
             modules.extend(module);
-            i = end.max(after);
+            let end = end.max(after).min(tokens.len());
+            for flag in &mut removed[i..end] {
+                *flag = true;
+            }
+            i = end;
             continue;
         }
-        out.push(tokens[i].clone());
+        match tokens[i].tok {
+            Tok::Punct('{') => depth += 1,
+            Tok::Punct('}') => depth = depth.saturating_sub(1),
+            _ => {}
+        }
         i += 1;
     }
-    (out, modules)
+    let kept = tokens
+        .into_iter()
+        .zip(removed)
+        .filter_map(|(token, gone)| (!gone).then_some(token))
+        .collect();
+    (kept, modules)
 }

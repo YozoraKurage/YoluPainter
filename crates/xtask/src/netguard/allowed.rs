@@ -60,6 +60,12 @@ pub(super) const ALLOWED: &[Allow] = &[
         why: "更新の確認: Windows は OS の WinHTTP で https の GET だけをする",
     },
     Allow {
+        file: "crates/yolu-app/src/update/http.rs",
+        mark: "Networking",
+        count: Exactly(1),
+        why: "更新の確認: Windows の API の WinHTTP を使う宣言（`windows::Win32::Networking::WinHttp`）",
+    },
+    Allow {
         file: "crates/yolu-update/src/lib.rs",
         mark: "\"https://\"",
         count: Exactly(4),

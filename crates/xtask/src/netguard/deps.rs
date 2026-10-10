@@ -104,10 +104,40 @@ pub(super) const NET_ONLY_IN: (&str, &[&str]) =
     ("yolu-mcp", &["hyper", "hyper-util", "socket2", "mio"]);
 /// 通信・プロセスの起動に当たる tokio の機能（yolu-mcp だけが `net` を使う）。
 pub(super) const TOKIO_NET_FEATURES: &[&str] = &["net", "full", "process"];
-/// Windows の API の機能のうち通信に当たる物の頭。WinHTTP（更新の確認）だけ、yolu-app に許す。
-pub(super) const WINDOWS_NET_FEATURE_PREFIXES: &[&str] =
-    &["Win32_Networking_", "Win32_NetworkManagement_"];
+/// Windows の API の機能のうち通信に当たる物（WinSock・WinHTTP・WinInet・IpHelper などの `Win32_Networking*`・`Win32_NetworkManagement*`、WinRT の `Networking*`・`Web*`、
+/// `Win32_Web*`、URL を取る `Win32_System_Com_Urlmon`、MSXML の `Win32_Data_Xml_MsXml`）。WinHTTP（更新の確認）だけ、yolu-app に許す。
+pub(super) fn is_windows_net_feature(feature: &str) -> bool {
+    const PARTS: &[&str] = &[
+        "Win32_Networking",
+        "Win32_NetworkManagement",
+        "Networking",
+        "Win32_Web",
+        "Web",
+        "Win32_System_Com_Urlmon",
+        "Win32_Data_Xml_MsXml",
+    ];
+    PARTS.iter().any(|part| {
+        feature == *part
+            || feature
+                .strip_prefix(part)
+                .is_some_and(|rest| rest.starts_with('_'))
+    })
+}
 pub(super) const WINDOWS_NET_ALLOWED: &[(&str, &str)] = &[("yolu-app", "Win32_Networking_WinHttp")];
+/// 解決した（Cargo が実際に有効にした）windows・windows-sys の通信の機能。tokio・mio・socket2 が足す WinSock・IpHelper は、
+/// 127.0.0.1 の受け口と客（yolu-mcp）の分で、直接の宣言では見えない。ここに無い通信の機能が足されたら、確かめを求める。
+pub(super) const WINDOWS_RESOLVED_NET: &[(&str, &[&str])] = &[
+    ("windows", &["Win32_Networking", "Win32_Networking_WinHttp"]),
+    (
+        "windows-sys",
+        &[
+            "Win32_NetworkManagement",
+            "Win32_NetworkManagement_IpHelper",
+            "Win32_Networking",
+            "Win32_Networking_WinSock",
+        ],
+    ),
+];
 
 /// `Cargo.lock` の [[package]] の名前。
 pub(super) fn lock_names(lock: &str) -> BTreeSet<String> {
@@ -177,11 +207,7 @@ pub(super) fn check_metadata(meta: &serde_json::Value) -> Vec<String> {
                 }
             }
             if dep == "windows" || dep == "windows-sys" {
-                for feature in features.iter().filter(|f| {
-                    WINDOWS_NET_FEATURE_PREFIXES
-                        .iter()
-                        .any(|p| f.starts_with(p))
-                }) {
+                for feature in features.iter().filter(|f| is_windows_net_feature(f)) {
                     if !WINDOWS_NET_ALLOWED.contains(&(name, feature)) {
                         out.push(format!(
                             "{name} が {dep} の機能 {feature}（通信）を使います。許すのは WinHTTP（更新の確認）だけです。"
@@ -202,6 +228,21 @@ pub(super) fn check_metadata(meta: &serde_json::Value) -> Vec<String> {
         .iter()
         .filter_map(|n| Some((n["id"].as_str()?, n)))
         .collect();
+    // 解決した windows・windows-sys の通信の機能（tokio・mio が足した物は、宣言には出ない）
+    for (id, node) in &nodes {
+        let Some(name) = names.get(id) else { continue };
+        let Some((_, expected)) = WINDOWS_RESOLVED_NET.iter().find(|(n, _)| n == name) else {
+            continue;
+        };
+        for feature in string_list(&node["features"]) {
+            if is_windows_net_feature(feature) && !expected.contains(&feature) {
+                out.push(format!(
+                    "{name} の機能 {feature}（通信）が有効になりました。Windows の通信は WinHTTP（更新の確認）と、tokio・mio・socket2 の WinSock・IpHelper（127.0.0.1 の受け口）だけです。\
+                     新しい依存が足した機能なら、外へ通信しないか確かめ、よければ WINDOWS_RESOLVED_NET に足します。"
+                ));
+            }
+        }
+    }
     let mut shipped: BTreeSet<&str> = BTreeSet::new();
     let mut stack: Vec<&str> = packages
         .iter()
