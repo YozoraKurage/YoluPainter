@@ -1041,6 +1041,56 @@ fn single_tab_groups_come_back_as_their_own_group_next_to_their_default_neighbor
     }
 }
 
+/// 前の版の並びで「プロパティ」「レイヤー」が別ウィンドウにあるとき、足すマテリアル・ログは、そのウィンドウの同じ組の後ろへ入る（メインの最初の組へ入れない）。
+#[test]
+fn the_added_material_and_log_follow_properties_and_layers_into_their_windows() {
+    let mut main = previous_default();
+    let mut older = main.clone();
+    for tab in [Tab::Properties, Tab::Layers] {
+        assert!(older.find_tab(&tab).is_some(), "前の版の並びにある {tab:?}");
+    }
+    // 前の版には無かったマテリアル・ログを外した並びを作る（無ければそのまま）
+    for tab in [Tab::Material, Tab::Log] {
+        if let Some(path) = main.find_tab(&tab) {
+            main.remove_tab(path);
+        }
+    }
+    older = main.clone();
+    let mut records = Vec::new();
+    for tab in [Tab::Properties, Tab::Layers] {
+        let mates: Vec<Tab> = {
+            let (node, _) = older.find_main_surface_tab(&tab).unwrap();
+            match &older.main_surface()[node] {
+                Node::Leaf(leaf) => leaf.tabs.iter().copied().filter(|t| *t != tab).collect(),
+                _ => unreachable!(),
+            }
+        };
+        let path = main.find_tab(&tab).unwrap();
+        main.remove_tab(path);
+        records.push(DetachedRecord {
+            dock: DockState::new(vec![tab]),
+            window: None,
+            home: mates,
+        });
+    }
+    layout::add_missing_tabs(&mut main, &mut records);
+    for (record, extra) in records.iter().zip([Tab::Material, Tab::Log]) {
+        assert!(
+            record.dock.find_tab(&extra).is_some(),
+            "{extra:?} は {:?} のウィンドウへ",
+            record
+                .dock
+                .iter_all_tabs()
+                .map(|(_, t)| *t)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            main.find_tab(&extra).is_none(),
+            "{extra:?} はメインへ入れない"
+        );
+    }
+}
+
 #[test]
 fn detached_new_panels_are_written_to_the_layout_file_and_read_back() {
     let mut main = default_dock();

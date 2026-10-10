@@ -359,11 +359,11 @@ const TOOL_PROPERTIES_SHARE: f32 = 0.38;
 const BRUSH_SIZE_SPLIT: f32 = 0.8;
 
 /// 後の版で足したタブが、読んだ並びにどこにも（メインのドックにも別ウィンドウにも）無ければ足す。
-/// - ログ: 既定の並びと同じく、レイヤーと同じ組のレイヤーのすぐ後ろ（レイヤーが無ければ最初の組。前へは出さない）。
+/// - ログ: 既定の並びと同じく、レイヤーと同じ組のレイヤーのすぐ後ろ（レイヤーが別ウィンドウにあればそのウィンドウの同じ組の後ろ、どこにも無ければメインの最初の組。前へは出さない）。
 /// - ツールプロパティ・ブラシサイズ: 前は「サブツール」の中に入っていた 3 つを、既定の並びと同じく、サブツールの組の下に縦に並べる
 ///   （サブツールの組を分けて、下にツールプロパティ、その下にブラシサイズ）。サブツールが別ウィンドウにあるなら、そのウィンドウの組の後ろへ。
 ///   サブツールが無ければ最初の組。
-/// - マテリアル: 既定の並びと同じく、プロパティと同じ組のプロパティのすぐ後ろ（プロパティが無ければ最初の組。前へは出さない）。
+/// - マテリアル: 既定の並びと同じく、プロパティと同じ組のプロパティのすぐ後ろ（プロパティが別ウィンドウにあればそのウィンドウの同じ組の後ろ、どこにも無ければメインの最初の組。前へは出さない）。
 ///
 /// 足した場所は、並びの形に応じて変わるだけで、ほかのタブの並び・大きさ・前のタブは変えない。
 pub fn add_missing_tabs(dock: &mut DockState<Tab>, detached: &mut [DetachedRecord]) {
@@ -371,7 +371,7 @@ pub fn add_missing_tabs(dock: &mut DockState<Tab>, detached: &mut [DetachedRecor
         dock.find_tab(&tab).is_some() || detached.iter().any(|d| d.dock.find_tab(&tab).is_some())
     };
     if !present(dock, detached, Tab::Log) {
-        push_beside(dock, Tab::Layers, Tab::Log);
+        push_beside_anywhere(dock, detached, Tab::Layers, Tab::Log);
     }
     if !present(dock, detached, Tab::ToolProperties) {
         if dock.find_tab(&Tab::SubTools).is_some() {
@@ -403,8 +403,27 @@ pub fn add_missing_tabs(dock: &mut DockState<Tab>, detached: &mut [DetachedRecor
         }
     }
     if !present(dock, detached, Tab::Material) {
-        push_beside(dock, Tab::Properties, Tab::Material);
+        push_beside_anywhere(dock, detached, Tab::Properties, Tab::Material);
     }
+}
+
+/// `push_beside` の、`anchor` が別ウィンドウにあるときは、そのウィンドウの `anchor` と同じ組の後ろへ入れる形（どこにも無ければメインの最初の組）。
+fn push_beside_anywhere(
+    dock: &mut DockState<Tab>,
+    detached: &mut [DetachedRecord],
+    anchor: Tab,
+    tab: Tab,
+) {
+    if dock.find_tab(&anchor).is_none() {
+        if let Some(window) = detached
+            .iter_mut()
+            .find(|d| d.dock.find_tab(&anchor).is_some())
+        {
+            push_beside(&mut window.dock, anchor, tab);
+            return;
+        }
+    }
+    push_beside(dock, anchor, tab);
 }
 
 /// タブを、`anchor` と同じ組の、`anchor` のすぐ後ろへ入れる（前のタブは変えない。`anchor` が無ければ最初の組）。
