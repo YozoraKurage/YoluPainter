@@ -15,9 +15,9 @@ Both include the command-line program `yolupainter-cli.exe` ([usage](CLI.md)), `
 
 ## Updates
 
-On first launch, the application asks whether to check for updates at startup. Only choosing Yes enables a request to GitHub for the latest version on each launch. Change this at any time with Check for Updates at Startup under Edit → Settings… → Updates, or check manually through Help → Check for Updates….
+On first launch, the application asks whether to check for updates at startup. Only choosing Yes enables a request to GitHub for the latest version on each launch. Change this at any time with Check for Updates at Startup in the Updates category of Edit → Settings…, or check manually through Help → Check for Updates….
 
-Turning on Use Beta Versions under Edit → Settings… → Updates also offers beta versions (versions with an `alpha`, `beta` or `rc` identifier, such as `0.4.0-rc.1`) and recommends the newer of the stable release and the beta. It is off by default, and while off only stable releases are considered. While you run a beta, the status bar shows “Beta” to the left of the version. The app never updates to an older version, so after turning the setting off, nothing is offered until the next stable release is newer than the version you run.
+Turning on Use Beta Versions in the Updates category of Edit → Settings… also offers beta versions (versions with an `alpha`, `beta` or `rc` identifier, such as `0.4.0-rc.1`) and recommends the newer of the stable release and the beta. It is off by default, and while off only stable releases are considered. While you run a beta, the status bar shows “Beta” to the left of the version. The app never updates to an older version, so after turning the setting off, nothing is offered until the next stable release is newer than the version you run.
 
 When a new version is available, the Help heading shows an indicator. On Windows installed through the installer, “Update to YoluPainter x.y.z” downloads, verifies, and installs the update, asking you to save first if there are unsaved changes. Downloads are used only after verifying the signed update metadata's signature, size, and SHA-256. Portable Windows ZIP distributions and Linux open the release page instead. Applications built from source do not have update items (Check for Updates… in the Help menu and Updates in Settings); only distribution builds embed the update public key.
 
@@ -44,6 +44,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\hide_presets\` | Presets for hiding parts of a model | Kept |
 | `%APPDATA%\YoluPainter\pose_presets\` | Pose presets | Kept |
 | `%APPDATA%\YoluPainter\actions\` | Actions | Kept |
+| `%APPDATA%\YoluPainter\keymap.json` | Your assignments for keyboard shortcuts, mouse combinations and pie menus (an unreadable file is moved to `keymap.broken.json` the next time it is written) | Kept |
 | `%APPDATA%\YoluPainter\tools.json` | The order of the toolbar and the brush groups (an unreadable file is moved to `tools.broken.json`) | Kept |
 
 When kept items, or files this application did not create, are present, the `%APPDATA%\YoluPainter` folder stays with them. A library or recovery folder that you moved elsewhere in the settings is not touched. Documents such as `.ylp` files are never removed.

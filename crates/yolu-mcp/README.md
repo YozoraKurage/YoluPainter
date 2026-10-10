@@ -30,3 +30,5 @@ cargo clippy -p yolu-mcp --all-targets -- -D warnings
 - `tests/mcp.rs`: 本物の受け口を画面なしのホスト（起動中のアプリの代わり）を相手に立て、本物の客で 2 つの版の流れ・ツールの一覧と schema・呼び出し・誤りの形・見本の画像・資料・
   structuredContent が outputSchema に合うことを確かめます。
 - `tests/http.rs`: Host・Origin の断り・道・127.0.0.1 だけ・同時の上限・本文の上限・頭の時間切れ・止めると閉じること。
+- `tests/plugin.rs`: 配るプラグイン（`plugin/` と根の `.claude-plugin/marketplace.json`）が、この受け口と合っていること（目録の版がアプリと同じ・MCP の設定が既定の番号を指す・
+  Claude Code と Codex の目録が同じスキルと設定を指す・スキルが書くツールの名前・誤りの種類・引数・資料が本当にある）。

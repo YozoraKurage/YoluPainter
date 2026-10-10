@@ -73,7 +73,7 @@ Streamable HTTP の MCP を話すクライアントなら、`http://127.0.0.1:17
 失敗は、`isError` の返事で、`code`・日本語と英語の `message`・`data` を持つ JSON です。
 
 - 見本（`preview`）は、PNG を image として返し、同じ PNG への resource_link（`yolupainter://preview/<番号>.png`。直近の 8 枚まで覚えています）も付けます。
-- 資料（resources）: `yolupainter://docs/<名前>` は、入れてある版の文書です（`guide`・`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
+- 資料（resources）: `yolupainter://docs/<名前>` は、入れてある版の文書です（使い方の入り口 `guide` と、その頁 `guide-start`・`guide-paint`・`guide-select`・`guide-layers`・`guide-fill`・`guide-paths`・`guide-3d`・`guide-files`・`guide-settings`・`guide-keys`、`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
   `yolupainter://ops/commands` は命令の一覧と JSON Schema、`yolupainter://ops/effect-kinds` は効果の種類と値の範囲（`effect_list_kinds` と同じ）です。
 - `doc_open` は、アプリが開いているファイルを指したときだけ、その文書を返します。別のファイルは `unsupported` で断ります（アプリは文書を開き替えません）。
 - レイヤーの欄（`layer`・`above`・`parent`）に `$selected` と書くと、アプリの今のテクスチャセットで選んでいるレイヤーを指します。`$created:<n>` は、まとめて当てる実行

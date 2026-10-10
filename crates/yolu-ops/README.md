@@ -54,7 +54,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `layer.add` | `kind`（paint・fill・group・adjustment・text）、`name`、`above`、`fill`、`adjustment`、`channels`、`text` | `edited` | 編集 |
 | `layer.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `layer.move` | `layer`、`parent`、`to_root`、`index` | `edited` | 編集 |
-| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`text` | `edited` | 編集（全部で 1 段） |
+| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`points`、`text` | `edited` | 編集（全部で 1 段） |
 | `mask.add` | `layer` | `edited` | 編集 |
 | `mask.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `mask.set` | `layer`、`enabled`、`inverted`、`density` | `edited` | 編集 |
@@ -105,7 +105,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 - Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`・`pattern`・`light`・`mask_builder`・`uv_island_variation`。
 - リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは追加できません（`addable: false`）。
   すでにある段は `effect.get` で読め、強さ・有効・チャンネルは変えられ、値を渡して変えるのは断ります（その部分を黙って作り直しません）。
-- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
+- スタンドアロンだけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
   0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`・`uv_island_variation`））を使ったセットは、新しい文書の版で保存され、
   Unity 版（0.4.x まで）は開けません（理由を言って断り、中身は消えません。0.5.0 以降の Unity ブリッジは .ylp を開きません）。保存の返事の `notes` がそのセットを知らせます。
 - 効果の種類を変えるとき、適用中のチャンネルに使えない設定は、どのチャンネルかを言って断ります（`channels` で選び直します）。
