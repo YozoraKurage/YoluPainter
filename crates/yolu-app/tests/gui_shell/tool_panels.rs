@@ -1607,6 +1607,43 @@ fn the_selection_tools_show_the_paint_channels_and_the_fill_paints_the_whole_set
     assert_eq!(count(&h, "塗るチャンネル"), 0);
 }
 
+/// 今のブラシが塗り以外の効果（指先）でも、値を使うツール（バケツなど）では、塗るチャンネルの値の行が出る。ブラシ・消しゴムでは効果のあいだ出ない。
+#[test]
+fn the_paint_channel_values_follow_the_tool_not_the_brush_effect_of_other_tools() {
+    let mut h = app(1280.0, 1800.0, 128);
+    open_paint_channels(&mut h);
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Enabled(true)));
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.state_mut().state.m2.brush.effect = yolu_core::brush::BrushEffect::Smudge { strength: 0.5 };
+    // 値の行（ラフネスの値の欄）の数: チップの「ラフネス」のほかに、値の行の名前が出る
+    let rows = |h: &H| count(h, "ラフネス");
+    pick(&mut h, Tool::Brush);
+    let brush = rows(&h);
+    for tool in [
+        Tool::Fill,
+        Tool::Gradient,
+        Tool::Shape,
+        Tool::PolygonFill,
+        Tool::Path,
+        Tool::Eyedropper,
+        Tool::SelectRect,
+    ] {
+        pick(&mut h, tool);
+        assert!(
+            rows(&h) > brush,
+            "{tool:?}: 効果のブラシでも値の行が出る（{} / ブラシ {brush}）",
+            rows(&h)
+        );
+    }
+    h.state_mut().state.m2.brush.effect = yolu_core::brush::BrushEffect::Paint;
+    pick(&mut h, Tool::Brush);
+    assert!(rows(&h) > brush, "塗りのブラシでは値の行が出る");
+}
+
 /// 「塗るチャンネル」を入れているあいだは、閉じていても見出しの右端に点の印が出る（切ると消える）。
 #[test]
 fn the_paint_channels_header_carries_a_dot_while_the_setting_is_on() {

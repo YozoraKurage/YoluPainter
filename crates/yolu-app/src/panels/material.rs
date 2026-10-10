@@ -11,7 +11,7 @@ use crate::engine::Channel;
 use crate::lang::Lang;
 use crate::m2::{channel_icon, channel_name};
 use crate::matpaint::{MatAction, CHANNELS};
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, Tool};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
@@ -92,12 +92,18 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
     }
     chips(ui, app, rows, lang, free);
     // （マスクに描くあいだは、この区分でなくレイヤーマスクの欄が出る。`tool_props`）
-    if app.m2.brush.effect.is_paint() {
+    if values_apply(app) {
         for channel in app.mat.included() {
             value_rows(ui, app, rows, channel, lang, free);
         }
     }
     rows.space(4.0);
+}
+
+/// 値の行を出すか: そのツールが塗るチャンネルの値を使うとき。ブラシの効果（指先・ぼかし・クローン）を見るのは、ブラシと消しゴムのときだけ
+/// （バケツ・グラデーション・図形・多角形・パス・スポイト・選択のツールの塗りは、ブラシの効果によらず値で塗る）。
+fn values_apply(app: &AppState) -> bool {
+    !matches!(app.tool, Tool::Brush | Tool::Eraser) || app.m2.brush.effect.is_paint()
 }
 
 /// 塗るチャンネルの組（2 列のチップ。押すと足す・外す）。
