@@ -472,7 +472,6 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
     .map_err(|e| Error::InvalidData(e.to_string()))
 }
 
-/// パスのブラシにアンチエイリアスの段（なし でない）を持つパスがあるか（あれば版 34）。
 /// 版 35 の機能（定規を持つレイヤー、または線対称の 2D のパス）を使うか。
 pub(crate) fn uses_rulers_version(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
@@ -489,6 +488,7 @@ pub(crate) fn uses_rulers_version(doc: &Document) -> bool {
     })
 }
 
+/// パスのブラシにアンチエイリアスの段（なし でない）を持つパスがあるか（あれば版 34）。
 fn uses_anti_aliased_paths(doc: &Document) -> bool {
     doc.layers().iter().any(|l| {
         l.path()

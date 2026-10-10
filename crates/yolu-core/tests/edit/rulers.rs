@@ -914,6 +914,47 @@ fn resizing_keeps_every_ruler_valid_even_when_two_points_collapse() {
 }
 
 #[test]
+fn resizing_past_a_corner_keeps_every_ruler_valid_and_says_so_once_per_layer() {
+    let mut t = tree();
+    // 斜めの角の近く（拡大で範囲の外へ出て、寄せると 2 点が重なる）
+    let corner = canvas(&mut t.d, RulerKind::Line, (9e6, 9e6), (9.5e6, 8e6));
+    let other = canvas(&mut t.d, RulerKind::Parallel, (-9e6, 9e6), (-9.5e6, 9.9e6));
+    let inside = canvas(&mut t.d, RulerKind::Line, (10.0, 10.0), (40.0, 20.0));
+    t.d.set_rulers(t.t1, vec![corner, other, inside.clone()], false)
+        .unwrap();
+    let before = state(&t.d);
+    let report =
+        t.d.resize_image(128, 128, CanvasResampling::Nearest)
+            .unwrap();
+    let got = rulers_of(&t.d, t.t1);
+    assert!(got.iter().all(|r| r.validate().is_ok()), "{got:?}");
+    // 続けて編集できる（一覧の全部が確かめに通る）
+    t.d.set_rulers(t.t1, got.clone(), false).unwrap();
+    let mut edited = got.clone();
+    edited[2].visible = false;
+    t.d.set_rulers(t.t1, edited, false).unwrap();
+    // 角の外へ出た定規は、角の内へ寄せ、2 点を最小の間隔だけ離して残す（動かす前の点へ戻すのではない）
+    let RulerPlace::Canvas { a, b } = got[0].place else {
+        panic!("2D");
+    };
+    assert_eq!(a, DVec2::splat(1e7));
+    assert!(a.distance(b) >= 0.01 && a.distance(b) < 0.02, "{a:?} {b:?}");
+    // 範囲の中の定規は点が 2 倍になるだけ
+    assert!(matches!(
+        got[2].place,
+        RulerPlace::Canvas { a, b } if a == DVec2::new(20.0, 20.0) && b == DVec2::new(80.0, 40.0)
+    ));
+    assert_eq!(
+        report.notes.iter().filter(|n| n.contains("定規")).count(),
+        1,
+        "レイヤーごとに 1 つ: {:?}",
+        report.notes
+    );
+    assert!(t.d.undo().unwrap() && t.d.undo().unwrap());
+    assert_eq!(state(&t.d), before, "取り消しで元の点へ");
+}
+
+#[test]
 fn a_smart_material_drops_the_rulers_and_says_so() {
     let mut t = tree();
     let (l1, l2, l3) = (line(&mut t.d), line(&mut t.d), line(&mut t.d));
@@ -1122,13 +1163,20 @@ fn a_2d_symmetry_ruler_paints_exactly_what_the_old_vertical_horizontal_and_both_
             );
             r.lines = lines;
             let from_ruler = r.canvas_symmetry().unwrap();
-            assert_eq!(from_ruler.mode, SymmetryMode::Lines);
+            // 今と同じ写しになる向きは、今のモードで返る（写しの並びまで同じ）
+            let old_mode = old;
             let old = CanvasSymmetry::new(old, center, 2).unwrap();
+            assert_eq!(from_ruler.mode, old_mode);
+            assert_eq!(from_ruler, old);
+            let expected = stroke_with(old, 5.0, at);
             assert_eq!(
                 stroke_with(from_ruler, 5.0, at),
-                stroke_with(old, 5.0, at),
+                expected,
                 "{lines} 本 {angle}° ({at:?}) の画素は今の縦・横・両方と同じバイト"
             );
+            // 線対称のままの値でも、ブラシの画素は同じ（集合が同じ）
+            let lines_mode = CanvasSymmetry::lines(center, u32::from(lines), angle).unwrap();
+            assert_eq!(stroke_with(lines_mode, 5.0, at), expected);
         }
     }
     // 回転対称の定規は今の放射状と同じ

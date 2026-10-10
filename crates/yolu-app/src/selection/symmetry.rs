@@ -32,7 +32,7 @@ pub fn mode_name(lang: Lang, mode: SymmetryMode) -> &'static str {
         SymmetryMode::Horizontal => lang.pick("横", "Horizontal"),
         SymmetryMode::Both => lang.pick("両方", "Both"),
         SymmetryMode::Radial => lang.pick("放射状", "Radial"),
-        SymmetryMode::Lines => lang.pick("線対称", "Lines"),
+        SymmetryMode::Lines => lang.pick("線対称", "Line Symmetry"),
     }
 }
 
@@ -56,7 +56,7 @@ pub fn mode_tooltip(lang: Lang, mode: SymmetryMode) -> &'static str {
             "中心のまわりに回して写す",
             "Rotate copies around the center",
         ),
-        SymmetryMode::Lines => lang.pick("線対称", "Lines"),
+        SymmetryMode::Lines => lang.pick("線対称", "Line Symmetry"),
     }
 }
 

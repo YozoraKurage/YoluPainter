@@ -692,6 +692,45 @@ impl Document {
     }
 }
 
+/// 2D の定規の 2 点（動かしたあとの値）を、確かめ（[`Ruler::validate`]）に通る位置へ直す。通るものは変えない。範囲（±1e7）の外の点は中へ寄せ、
+/// それでも 2 点が 0.01 画素より近ければ、`a` を動かさず `b` を最小の間隔（少し余裕を見て）離す。離す向きは元の向き、その逆、範囲の中へ向かう
+/// 斜めの順に試し、範囲の中の最初のものを取る（斜めはどの角でも範囲の中に収まる）。返すのは 2 点と、直したか。
+fn fit_canvas_points(ma: DVec2, mb: DVec2) -> (DVec2, DVec2, bool) {
+    let limit = DVec2::splat(MAX_CANVAS_COORD);
+    let inside = |p: DVec2| p.is_finite() && p.abs().max_element() <= MAX_CANVAS_COORD;
+    let fits =
+        |a: DVec2, b: DVec2| inside(a) && inside(b) && a.distance(b) >= MIN_CANVAS_SEPARATION;
+    if fits(ma, mb) {
+        return (ma, mb, false);
+    }
+    // 有限でない値は来ない（倍率と座標は有限）が、来ても確かめに通る位置を返す
+    let pull = |p: DVec2| {
+        if p.is_finite() {
+            p.clamp(-limit, limit)
+        } else {
+            DVec2::ZERO
+        }
+    };
+    let (na, nb) = (pull(ma), pull(mb));
+    if fits(na, nb) {
+        return (na, nb, true);
+    }
+    let step = MIN_CANVAS_SEPARATION * 1.01;
+    let along = (mb - ma).try_normalize().unwrap_or(DVec2::X);
+    let toward_inside = DVec2::new(
+        if na.x >= 0.0 { -1.0 } else { 1.0 },
+        if na.y >= 0.0 { -1.0 } else { 1.0 },
+    ) * std::f64::consts::FRAC_1_SQRT_2;
+    for dir in [along, -along, toward_inside] {
+        let moved = na + dir * step;
+        if fits(na, moved) {
+            return (na, moved, true);
+        }
+    }
+    // ここへは来ない（範囲の中へ向かう斜めは、範囲の中の点からなら必ず収まる）。来ても確かめに通る位置を返す
+    (DVec2::ZERO, DVec2::X * step, true)
+}
+
 /// 大きさの変更が、画素の外の設定（効果の半径・2D のパス）をどう動かすか。
 #[derive(Clone, Copy)]
 enum Fit {
@@ -791,42 +830,40 @@ impl Fit {
         next
     }
 
-    /// 大きさに合わせた定規（2D の定規だけ。3D の定規は変えない）。点を縦横の倍率かずらしで動かし、±1e7 の外へ出た点は中へ寄せ、2 点が
-    /// 近づきすぎたときは元の向きのまま最小の間隔に保つ（どちらも `notes` に書く。定規の確かめに通らない値を残さない）。
+    /// 大きさに合わせた定規（2D の定規だけ。3D の定規は変えない）。点を縦横の倍率かずらしで動かす。範囲（±1e7）の外へ出た点や、近づきすぎた
+    /// 2 点は、確かめに通る位置へ直し（[`fit_canvas_points`]）、直した定規の数をレイヤーごとに 1 つの知らせにまとめる。確かめに通らない値は残さない。
     fn rulers(self, list: &[Ruler], owner: &str, notes: &mut Vec<String>) -> Vec<Ruler> {
-        let limit = DVec2::splat(MAX_CANVAS_COORD);
         let map = |p: DVec2| match self {
             Fit::Scale { sx, sy, .. } => DVec2::new(p.x * sx, p.y * sy),
             Fit::Shift((dx, dy)) => DVec2::new(p.x + dx as f64, p.y + dy as f64),
         };
-        list.iter()
+        let mut adjusted = 0usize;
+        let out = list
+            .iter()
             .map(|r| {
                 let RulerPlace::Canvas { a, b } = r.place else {
                     return r.clone();
                 };
-                let (ma, mb) = (map(a), map(b));
-                let (na, mut nb) = (ma.clamp(-limit, limit), mb.clamp(-limit, limit));
-                let mut clamped = (na, nb) != (ma, mb);
-                // 元の向きのまま、最小の間隔より少し離す（丸めで下回らないように）
-                if na.distance(nb) < MIN_CANVAS_SEPARATION * 1.001 {
-                    let dir = (mb - ma).try_normalize().unwrap_or(DVec2::X);
-                    nb = na + dir * (MIN_CANVAS_SEPARATION * 1.01);
-                    if nb.abs().max_element() > MAX_CANVAS_COORD {
-                        nb = na - dir * (MIN_CANVAS_SEPARATION * 1.01);
-                    }
-                    clamped = true;
-                }
-                if clamped {
-                    notes.push(format!(
-                        "「{owner}」の定規: 範囲の外へ出た点を寄せた、または近づきすぎた 2 点の間隔を保った"
-                    ));
-                }
-                Ruler {
+                let (na, nb, changed) = fit_canvas_points(map(a), map(b));
+                let fitted = Ruler {
                     place: RulerPlace::Canvas { a: na, b: nb },
                     ..r.clone()
+                };
+                // 最後の守り: 確かめに通らなければ、動かす前の定規を残す（通らない値を文書に入れない）
+                if fitted.validate().is_err() {
+                    adjusted += 1;
+                    return r.clone();
                 }
+                adjusted += usize::from(changed);
+                fitted
             })
-            .collect()
+            .collect();
+        if adjusted > 0 {
+            notes.push(format!(
+                "「{owner}」の定規 {adjusted} 個: 範囲の外へ出た点を寄せた、または近づきすぎた 2 点の間隔を保った"
+            ));
+        }
+        out
     }
 
     /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は
@@ -936,6 +973,114 @@ mod tests {
         )
         .unwrap()
         .to_canvas_bytes()
+    }
+
+    /// 動かした 2 点がどこにあっても（範囲の外・角・同じ点・近すぎる）、直した 2 点は定規の確かめに通る。通る入力は変えない。
+    #[test]
+    fn fitted_ruler_points_always_pass_the_ruler_check() {
+        use crate::rulers::{RulerId, RulerKind};
+        let check = |ma: DVec2, mb: DVec2| {
+            let (a, b, changed) = fit_canvas_points(ma, mb);
+            let r = Ruler::canvas(RulerId(1), RulerKind::Line, a, b);
+            assert!(r.validate().is_ok(), "{ma:?} {mb:?} -> {a:?} {b:?}");
+            let passes = Ruler::canvas(RulerId(1), RulerKind::Line, ma, mb)
+                .validate()
+                .is_ok();
+            assert_eq!(changed, !passes, "{ma:?} {mb:?}");
+            if passes {
+                assert_eq!((a, b), (ma, mb), "通る入力は変えない");
+            }
+        };
+        let values = [
+            0.0,
+            1.0,
+            -12.3456,
+            9.0e6,
+            9.5e6,
+            9_999_999.995,
+            1e7,
+            -1e7,
+            1.8e7,
+            -1.9e7,
+            3e7,
+        ];
+        for ax in values {
+            for ay in values {
+                for bx in values {
+                    for by in values {
+                        check(DVec2::new(ax, ay), DVec2::new(bx, by));
+                    }
+                }
+            }
+        }
+        // 角のまわりの細かい点（向きも距離も変えながら）
+        let mut state = 7u64;
+        for _ in 0..20_000 {
+            let mut coord = || {
+                let sign = if next(&mut state).is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let near = (next(&mut state) % 1_000_000) as f64 / 1e4;
+                sign * (1e7 + near - 50.0)
+            };
+            let (ax, ay, bx, by) = (coord(), coord(), coord(), coord());
+            check(DVec2::new(ax, ay), DVec2::new(bx, by));
+        }
+    }
+
+    /// 斜めに外へ出る定規（拡大で角の外へ）を、サイズ変更で動かしたあとも、レイヤーの定規の一覧が確かめに通る。知らせはレイヤーごとに 1 つ。
+    #[test]
+    fn a_ruler_pushed_past_a_corner_by_a_resize_stays_valid_with_one_note_per_layer() {
+        use crate::rulers::{RulerId, RulerKind};
+        let rulers: Vec<Ruler> = [
+            ((9e6, 9e6), (9.5e6, 8e6)),
+            ((9e6, -9e6), (8e6, -9.5e6)),
+            ((-9e6, 9e6), (-9.5e6, 9.9e6)),
+            ((-9.9e6, -9.9e6), (-9.9e6, -9.9e6 + 0.5)),
+            ((1.0, 1.0), (50.0, 30.0)),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(k, (a, b))| {
+            Ruler::canvas(
+                RulerId(k as u128 + 1),
+                RulerKind::Line,
+                DVec2::new(a.0, a.1),
+                DVec2::new(b.0, b.1),
+            )
+        })
+        .collect();
+        for fit in [
+            Fit::Scale {
+                sx: 2.0,
+                sy: 2.0,
+                scale: 2.0,
+            },
+            Fit::Scale {
+                sx: 3.0,
+                sy: 0.5,
+                scale: 1.2,
+            },
+            Fit::Shift((2_000_000, -3_000_000)),
+        ] {
+            let mut notes = Vec::new();
+            let out = fit.rulers(&rulers, "レイヤー", &mut notes);
+            assert_eq!(out.len(), rulers.len());
+            for (r, before) in out.iter().zip(&rulers) {
+                assert!(r.validate().is_ok(), "{r:?}");
+                // 守りで動かす前の定規へ戻したのではなく、点を写して直してある
+                assert_ne!(r.place, before.place, "{r:?}");
+            }
+            assert_eq!(notes.len(), 1, "レイヤーごとに 1 つ: {notes:?}");
+            // 範囲の中に残る定規は、点だけが写る
+            assert_eq!(out[4].id, rulers[4].id);
+        }
+        // 直す物が無ければ、知らせは出ない
+        let mut notes = Vec::new();
+        let _ = Fit::Shift((1, 1)).rulers(&rulers[4..], "レイヤー", &mut notes);
+        assert!(notes.is_empty());
     }
 
     #[test]

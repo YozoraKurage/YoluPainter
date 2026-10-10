@@ -259,6 +259,38 @@ fn a_3d_stroke_with_an_oblique_2d_mirror_paints_the_mirrored_uv_pixels() {
 }
 
 #[test]
+fn a_four_line_ruler_in_a_3d_stroke_paints_the_same_bytes_as_the_old_both() {
+    use yolu_core::{Ruler, RulerId, RulerKind};
+    let g = plate(false);
+    let center = DVec2::new(64.0, 64.0);
+    let mut ruler = Ruler::canvas(RulerId(1), RulerKind::Symmetry, center, center + DVec2::X);
+    ruler.lines = 4;
+    let from_ruler = ruler.canvas_symmetry().unwrap();
+    let both = CanvasSymmetry::new(SymmetryMode::Both, center, 2).unwrap();
+    // 軸にまたがる点（元と写しが重なる）と、離れた点
+    for at in [(-0.5, 0.4), (0.0, 0.0), (-0.03, 0.04), (0.0, -0.5)] {
+        let paint = |s: CanvasSymmetry| {
+            let (mut d, l) = document();
+            surface_dot(
+                &mut d,
+                l,
+                &g,
+                at,
+                SurfaceStrokeOptions {
+                    canvas_symmetry: Some(s),
+                    ..SurfaceStrokeOptions::default()
+                },
+            )
+            .unwrap();
+            painted(&d, l)
+        };
+        let old = paint(both);
+        assert!(!old.is_empty());
+        assert_eq!(paint(from_ruler), old, "{at:?}");
+    }
+}
+
+#[test]
 fn a_3d_stroke_with_both_symmetries_paints_the_3d_copy_and_both_2d_copies() {
     let g = plate(false);
     let (mut d, l) = document();

@@ -669,6 +669,39 @@ mod tests {
         }
     }
 
+    /// 覆いが同じ画素に重なる写しは先に置いた物が残る（`position` が変わる）ので、写しの並びが今の「両方」と違う線対称 4 本（0 度）をそのまま使うと、
+    /// ステンシルを読む位置が変わりうる。対称定規は、今と同じ写しになる向きでは今のモードを返すので、並びまで同じになる。
+    #[test]
+    fn a_four_line_ruler_orders_its_copies_like_the_old_both_so_tied_pixels_keep_the_same_position()
+    {
+        use crate::{Ruler, RulerId, RulerKind};
+        let center = DVec2::new(8.0, 8.0);
+        let mut ruler = Ruler::canvas(RulerId(1), RulerKind::Symmetry, center, center + DVec2::X);
+        ruler.lines = 4;
+        let from_ruler = ruler.canvas_symmetry().unwrap();
+        let both = CanvasSymmetry::new(SymmetryMode::Both, center, 2).unwrap();
+        let lines = CanvasSymmetry::lines(center, 4, 0.0).unwrap();
+        // (3, 5) の縦の写しと (12, 10) の横の写しは、どちらも (12, 5) に同じ覆いで重なる
+        let source = || vec![pixel(3, 5, 1.0), pixel(12, 10, 1.0)];
+        let run = |s: &CanvasSymmetry| {
+            let out = copy_by_canvas(dab(source()), &s.transforms().unwrap(), 16, 16);
+            out.pixels
+                .iter()
+                .map(|p| (p.x, p.y, p.coverage, p.position.to_array()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(&from_ruler), run(&both), "今の「両方」と位置まで同じ");
+        let at = |v: &[(i32, i32, f32, [f32; 3])]| {
+            v.iter()
+                .find(|p| (p.0, p.1) == (12, 5))
+                .map(|p| p.3)
+                .unwrap()
+        };
+        assert_eq!(at(&run(&both)), [3.0, 5.0, 0.0], "縦の写しが先に残る");
+        // 線対称そのものは写しの集合は同じでも、並びが違うので重なりの勝ちが変わる
+        assert_ne!(at(&run(&lines)), at(&run(&both)));
+    }
+
     #[test]
     fn overlapping_copies_keep_the_larger_coverage_and_rotations_have_no_holes() {
         // 中心の上の画素は、写しと重なって大きい方

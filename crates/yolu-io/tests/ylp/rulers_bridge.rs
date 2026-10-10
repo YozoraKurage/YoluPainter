@@ -434,6 +434,19 @@ fn the_64th_ruler_is_written_and_read_and_a_group_and_other_kinds_can_hold_ruler
 }
 
 #[test]
+fn a_document_resized_past_a_corner_is_still_writable() {
+    let mut w = world();
+    let corner = ruler_2d(&mut w.doc, RulerKind::Line, (9e6, 9e6), (9.5e6, 8e6));
+    w.doc.set_rulers(w.top, vec![corner], false).unwrap();
+    w.doc
+        .resize_image(128, 128, yolu_core::CanvasResampling::Nearest)
+        .unwrap();
+    let native = NativeDocument::from_core(&w.doc).unwrap();
+    assert_eq!(native.version(), RULERS_VERSION);
+    assert_eq!(all_rulers(&native.to_core().unwrap()), all_rulers(&w.doc));
+}
+
+#[test]
 fn a_ylp_keeps_the_rulers_and_the_version() {
     let mut w = world();
     assorted(&mut w);

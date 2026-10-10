@@ -311,9 +311,11 @@ impl Ruler {
         Ok(())
     }
 
-    /// 対称定規の 2D の写し（2D の対称定規だけ。線対称は [`SymmetryMode::Lines`]、回転対称は [`SymmetryMode::Radial`]）。
-    /// 角度は `b − a` の向き（度、+X から反時計回り。45 度の倍数の向きは正確な値）で、線対称だけが持つ（回転対称は写しが角度によらない
-    /// ので 0）。確かめに通らない定規は None。
+    /// 対称定規の 2D の写し（2D の対称定規だけ）。回転対称は [`SymmetryMode::Radial`]（角度は写しによらないので 0）。線対称は向き
+    /// （`b − a`。度、+X から反時計回り。軸と 45 度の向きは正確な値）が、今の縦・横・両方と同じ写しになる場合だけそのモード
+    /// （2 本で縦の向きなら [`SymmetryMode::Vertical`]、2 本で横なら [`SymmetryMode::Horizontal`]、4 本で軸の向きなら [`SymmetryMode::Both`]）を返し、
+    /// ほかは [`SymmetryMode::Lines`]。写しの集合だけでなく並びまで今と同じになるので、ブラシ・3D のストロークの 2D の写し・パスの描く順の
+    /// どれでも、今のモードとバイトまで同じ。確かめに通らない定規は None。
     pub fn canvas_symmetry(&self) -> Option<CanvasSymmetry> {
         if self.kind != RulerKind::Symmetry || self.validate().is_err() {
             return None;
@@ -322,10 +324,21 @@ impl Ruler {
             return None;
         };
         let count = u32::from(self.lines);
-        if self.line_symmetry {
-            CanvasSymmetry::lines(a, count, direction_degrees(b - a)).ok()
-        } else {
-            CanvasSymmetry::new(SymmetryMode::Radial, a, count).ok()
+        if !self.line_symmetry {
+            return CanvasSymmetry::new(SymmetryMode::Radial, a, count).ok();
+        }
+        let angle = direction_degrees(b - a);
+        let along_x = angle == 0.0 || angle == 180.0;
+        let along_y = angle == 90.0 || angle == -90.0;
+        let mode = match self.lines {
+            2 if along_y => Some(SymmetryMode::Vertical),
+            2 if along_x => Some(SymmetryMode::Horizontal),
+            4 if along_x || along_y => Some(SymmetryMode::Both),
+            _ => None,
+        };
+        match mode {
+            Some(mode) => CanvasSymmetry::new(mode, a, 2).ok(),
+            None => CanvasSymmetry::lines(a, count, angle).ok(),
         }
     }
 
@@ -526,15 +539,51 @@ mod tests {
     #[test]
     fn a_2d_symmetry_ruler_becomes_a_canvas_symmetry() {
         let c = DVec2::new(40.0, 50.0);
-        // 線対称 2 本・縦の向き（b − a が +Y）= 縦の軸
-        let vertical = mirror(c, c + DVec2::new(0.0, 7.0))
-            .canvas_symmetry()
-            .unwrap();
-        assert_eq!(vertical.mode, SymmetryMode::Lines);
+        let sym = |lines: u8, toward: DVec2| {
+            let mut r = mirror(c, c + toward);
+            r.lines = lines;
+            r.canvas_symmetry().unwrap()
+        };
+        // 今の縦・横・両方と同じ写しになる向きは、そのモードで返す（写しの並びまで今と同じ）
+        for (lines, toward, old) in [
+            (2u8, DVec2::new(0.0, 7.0), SymmetryMode::Vertical),
+            (2, DVec2::new(0.0, -7.0), SymmetryMode::Vertical),
+            (2, DVec2::new(5.0, 0.0), SymmetryMode::Horizontal),
+            (2, DVec2::new(-5.0, 0.0), SymmetryMode::Horizontal),
+            (4, DVec2::new(5.0, 0.0), SymmetryMode::Both),
+            (4, DVec2::new(-5.0, 0.0), SymmetryMode::Both),
+            (4, DVec2::new(0.0, 3.0), SymmetryMode::Both),
+            (4, DVec2::new(0.0, -3.0), SymmetryMode::Both),
+        ] {
+            let got = sym(lines, toward);
+            let want = CanvasSymmetry::new(old, c, 2).unwrap();
+            assert_eq!(got, want, "{lines} 本 {toward:?}");
+            assert_eq!(got.transforms().unwrap(), want.transforms().unwrap());
+        }
+        // そうでない向きと本数は線対称（最初の線の角度は度）
+        let diagonal = sym(2, DVec2::new(4.0, 4.0));
+        assert_eq!(diagonal.mode, SymmetryMode::Lines);
         assert_eq!(
-            (vertical.center, vertical.count, vertical.angle),
-            (c, 2, 90.0)
+            (diagonal.center, diagonal.count, diagonal.angle),
+            (c, 2, 45.0)
         );
+        for (lines, toward, angle) in [
+            (4u8, DVec2::new(4.0, 4.0), 45.0),
+            (6, DVec2::new(5.0, 0.0), 0.0),
+            (6, DVec2::new(0.0, 5.0), 90.0),
+            (8, DVec2::new(0.0, -5.0), -90.0),
+            (16, DVec2::new(-5.0, 0.0), 180.0),
+        ] {
+            let got = sym(lines, toward);
+            assert_eq!(got.mode, SymmetryMode::Lines, "{lines} 本 {toward:?}");
+            assert_eq!(
+                (got.center, got.count, got.angle),
+                (c, u32::from(lines), angle)
+            );
+        }
+        let oblique = sym(2, DVec2::new(1.0, 2.0));
+        assert_eq!(oblique.mode, SymmetryMode::Lines);
+        assert!((oblique.angle - 63.434_948_822_922_01).abs() < 1e-12);
         // 回転対称は放射状（角度は 0）
         let mut r = mirror(c, c + DVec2::new(3.0, 4.0));
         r.line_symmetry = false;
@@ -583,17 +632,24 @@ mod tests {
     #[test]
     fn a_3d_symmetry_ruler_images_equal_the_2d_dihedral_group_in_the_plane_around_the_axis() {
         let a = DVec3::new(1.0, 2.0, 3.0);
-        for tilt in [0.0f64, 0.4, 1.9, -2.5] {
-            let d = DVec3::new(tilt.cos(), 0.0, tilt.sin());
-            let up = DVec3::Y;
-            let e1 = d;
-            let e2 = up.cross(d);
+        // (軸の向き, b − a)。軸が Y で最初の線が軸に直交する例と、軸が傾いて b − a が軸の向きの成分も持つ例
+        let mut cases: Vec<(DVec3, DVec3)> = [0.0f64, 0.4, 1.9, -2.5]
+            .into_iter()
+            .map(|tilt| (DVec3::Y, DVec3::new(tilt.cos(), 0.0, tilt.sin()) * 2.0))
+            .collect();
+        cases.push((DVec3::new(0.3, 0.9, -0.2), DVec3::new(1.0, 0.4, 0.7)));
+        cases.push((DVec3::new(-1.0, 0.5, 2.0), DVec3::new(0.2, -1.5, 0.9)));
+        for (up_input, offset) in cases {
+            let up = up_input.normalize();
+            // 軸に直交する面の座標: e1 = b − a から軸の成分を除いた単位の向き、e2 = up × e1
+            let e1 = (offset - up * offset.dot(up)).normalize();
+            let e2 = up.cross(e1);
             for lines in 2..=16u8 {
                 for line_symmetry in [true, false] {
                     if line_symmetry && lines % 2 != 0 {
                         continue;
                     }
-                    let mut r = Ruler::model(id(5), RulerKind::Symmetry, a, a + d * 2.0, up);
+                    let mut r = Ruler::model(id(5), RulerKind::Symmetry, a, a + offset, up_input);
                     r.lines = lines;
                     r.line_symmetry = line_symmetry;
                     let setup = r.surface_symmetry().unwrap();
@@ -619,7 +675,7 @@ mod tests {
                     assert_eq!(got.len(), usize::from(lines), "写しは線の本数と同じ数");
                     assert!(
                         same_points(&got, &want),
-                        "{lines} 本 線対称={line_symmetry} 傾き {tilt}: {got:?} と {want:?}"
+                        "{lines} 本 線対称={line_symmetry} 軸 {up_input:?} b−a {offset:?}: {got:?} と {want:?}"
                     );
                 }
             }
