@@ -28,6 +28,7 @@ mod path_lists_bridge;
 mod point_gradient_bridge;
 mod procedural_bridge;
 mod rejection;
+mod rulers_bridge;
 mod saved_selections;
 mod seams_bridge;
 mod selection;

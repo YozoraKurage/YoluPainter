@@ -623,6 +623,53 @@ mod tests {
     }
 
     #[test]
+    fn a_diagonal_mirror_through_a_pixel_corner_copies_coverage_exactly_and_an_oblique_one_leaves_no_holes(
+    ) {
+        // 45 度の鏡（中心 (8, 8) を通る y = x）: 画素 (x, y) は (y, x) へ写る。軸が画素の角を通るので、覆いはそのまま写る
+        let s = CanvasSymmetry::lines(DVec2::new(8.0, 8.0), 2, 45.0).unwrap();
+        let out = copy_by_canvas(
+            dab(vec![pixel(2, 3, 0.25), pixel(3, 3, 0.75)]),
+            &s.transforms().unwrap(),
+            16,
+            16,
+        );
+        let mut got: Vec<(i32, i32, f32)> =
+            out.pixels.iter().map(|p| (p.x, p.y, p.coverage)).collect();
+        got.sort_by_key(|p| (p.1, p.0));
+        assert_eq!(
+            got,
+            vec![(3, 2, 0.25), (2, 3, 0.25), (3, 3, 0.75)],
+            "(2,3) の写しは (3,2)、軸の上の (3,3) は自分自身"
+        );
+        // 30 度の鏡: 中を満たした円板の写しにも穴が無い
+        let s = CanvasSymmetry::lines(DVec2::new(64.0, 64.0), 2, 30.0).unwrap();
+        let mut disc = Vec::new();
+        for y in 70..90 {
+            for x in 90..110 {
+                let (dx, dy) = (x as f64 + 0.5 - 100.0, y as f64 + 0.5 - 80.0);
+                if dx * dx + dy * dy <= 64.0 {
+                    disc.push(pixel(x, y, 1.0));
+                }
+            }
+        }
+        let out = copy_by_canvas(dab(disc), &s.transforms().unwrap(), 128, 128);
+        let (cx, cy) = s.transforms().unwrap()[1].map(100.0, 80.0);
+        for y in 0..128 {
+            for x in 0..128 {
+                let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+                if dx * dx + dy * dy <= 36.0 {
+                    let p = out
+                        .pixels
+                        .iter()
+                        .find(|p| (p.x, p.y) == (x, y))
+                        .unwrap_or_else(|| panic!("写しの中の画素 ({x}, {y}) が抜けた"));
+                    assert!(p.coverage > 0.99, "{p:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn overlapping_copies_keep_the_larger_coverage_and_rotations_have_no_holes() {
         // 中心の上の画素は、写しと重なって大きい方
         let s = CanvasSymmetry::new(SymmetryMode::Vertical, DVec2::new(4.0, 4.0), 2).unwrap();

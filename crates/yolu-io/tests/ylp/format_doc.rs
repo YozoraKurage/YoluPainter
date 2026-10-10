@@ -5,7 +5,7 @@ use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
     SetSpec, WriterInfo, ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION,
     EFFECTS_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION,
-    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES, RULERS_VERSION,
     SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION, TEXT_VERSION,
     UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
@@ -184,6 +184,7 @@ fn every_version_is_in_the_spec() {
         ("TEXT_VERSION", TEXT_VERSION),
         ("BAKE_PRIORITY_VERSION", BAKE_PRIORITY_VERSION),
         ("ANTI_ALIAS_VERSION", ANTI_ALIAS_VERSION),
+        ("RULERS_VERSION", RULERS_VERSION),
         ("MAX_NATIVE_VERSION", MAX_NATIVE_VERSION),
         ("SPLIT_VERSION", SPLIT_VERSION),
         ("FORMAT_VERSION", mesh_map::FORMAT_VERSION),
@@ -274,7 +275,12 @@ fn every_version_is_in_the_spec() {
         );
     }
     let natives = section("### 正本の版ごとの追加");
-    for v in (1..=TEXT_VERSION).chain([SEAMS_VERSION, BAKE_PRIORITY_VERSION, ANTI_ALIAS_VERSION]) {
+    for v in (1..=TEXT_VERSION).chain([
+        SEAMS_VERSION,
+        BAKE_PRIORITY_VERSION,
+        ANTI_ALIAS_VERSION,
+        RULERS_VERSION,
+    ]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),
             "正本の版 {v} の行が無い"

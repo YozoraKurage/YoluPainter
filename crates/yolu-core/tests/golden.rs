@@ -354,6 +354,7 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
                 mode,
                 center,
                 count,
+                angle: 0.0,
             };
         }
         "dmode" => {

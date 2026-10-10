@@ -198,6 +198,8 @@ impl Document {
     /// レイヤーの写し（まだ文書に入れていない）の段・Anchor に新しい ID を付ける。写しの中の Anchor を読む段は写しの Anchor を読む（外の Anchor
     /// への参照はそのまま）。レイヤーを写す操作（複製・グループの写し）が、写しを文書へ入れる前に呼ぶ。
     pub(super) fn renew_effect_ids(&mut self, copies: &mut [Layer]) {
+        // 定規にも新しい ID（文書の中で重ならない）
+        self.renew_ruler_ids(copies);
         let mut anchors: std::collections::HashMap<u128, u128> = std::collections::HashMap::new();
         for l in copies.iter_mut() {
             let mut stacks: Vec<&mut Vec<FilterEffect>> = vec![&mut l.filters];

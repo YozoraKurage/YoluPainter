@@ -1058,6 +1058,39 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "テキストレイヤーの Color が無い" => "The text layer has no Color",
         "まとめるテキストの段が無い" => "No text step to merge into",
+        "線対称の線の本数（偶数）" => "Line symmetry needs an even number of lines",
+        "対称の角度（±360 度）" => "The symmetry angle must be within ±360 degrees",
+        "レイヤーに付けられる定規は 64 個まで" => "A layer can have at most 64 rulers",
+        "定規の ID が重なっている" => "Ruler IDs overlap",
+        "定規の ID がほかのレイヤーの定規と重なっている" => {
+            "A ruler ID overlaps a ruler on another layer"
+        }
+        "移し先が同じレイヤー" => "The target layer is the same layer",
+        "移す定規がそのレイヤーに無い" => "The ruler to move is not on that layer",
+        "その定規がそのレイヤーに無い" => "That ruler is not on that layer",
+        "直線定規はスナップする特殊定規にならない" => {
+            "A straight ruler cannot be the snapping special ruler"
+        }
+        "結合の結果に付く定規が 64 個を超える" => {
+            "The merged layer would have more than 64 rulers"
+        }
+        "定規の ID（0 は使わない）" => "A ruler ID cannot be 0",
+        "定規の点（有限・±1e7）" => "Ruler points must be finite and within ±1e7",
+        "定規の 2 点が近すぎる（0.01 画素以上）" => {
+            "The two ruler points are too close (at least 0.01 px apart)"
+        }
+        "見えない面にも写すのは 3D の対称だけ" => {
+            "Mirroring onto hidden faces is for 3D symmetry only"
+        }
+        "定規の点（有限・±1e6）" => "Ruler points must be finite and within ±1e6",
+        "定規の 2 点が近すぎる（1e-6）" => "The two ruler points are too close (at least 1e-6 apart)",
+        "定規の向きが 0" => "The ruler direction is zero",
+        "対称定規の最初の線が回転の軸と平行" => {
+            "The first line of a symmetry ruler is parallel to its rotation axis"
+        }
+        "2 点はパースだけ" => "Two points are for a perspective ruler only",
+        "対称定規の線の本数（2〜16）" => "A symmetry ruler has 2 to 16 lines",
+        "線の本数と線対称は対称定規だけ" => "Line count and line symmetry are for symmetry rulers only",
         _ => return None,
     })
 }

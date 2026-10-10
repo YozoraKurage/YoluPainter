@@ -1063,6 +1063,60 @@ fn resizing_moves_the_symmetry_centre_of_a_2d_path_with_its_points() {
     assert_symmetric(&doc, layer, "キャンバスを広げたあと");
 }
 
+/// 線対称（斜めの鏡）のある 2D のパスは、縦横の倍率が違う拡大で、中心と一緒に軸の向きも倍率で動かす（軸の向きのベクトルを倍率で写す）。
+/// 倍率が同じなら向きは変わらない。
+#[test]
+fn resizing_turns_the_axis_of_a_lines_symmetry_path_with_the_scales() {
+    use yolu_core::glam::DVec2;
+    use yolu_core::paths::{CanvasPoint, PathStyle, PathSymmetry};
+    use yolu_core::CanvasSymmetry;
+    let build = || {
+        let mut doc = Document::with_tile_size(W, H, 8).unwrap();
+        let layer = doc.add_layer("線対称のパス").unwrap();
+        let mut path = path_points(0.0);
+        path.points = vec![
+            CanvasPoint::new(2.5, 3.25, 0.5).unwrap(),
+            CanvasPoint::new(5.5, 4.5, 1.0).unwrap(),
+        ];
+        path.style = PathStyle {
+            symmetry: PathSymmetry::Canvas(
+                CanvasSymmetry::lines(DVec2::new(W as f64 / 2.0, H as f64 / 2.0), 2, 45.0).unwrap(),
+            ),
+            ..Default::default()
+        };
+        doc.set_canvas_path(layer, path).unwrap();
+        doc.clear_history().unwrap();
+        (doc, layer)
+    };
+    let symmetry = |doc: &Document, layer: LayerId| match canvas_path_of(doc, layer).style.symmetry
+    {
+        PathSymmetry::Canvas(s) => s,
+        other => panic!("{other:?}"),
+    };
+    // 横 2 倍・縦 1 倍: 45 度の軸の向き (1, 1) は (2, 1) になる
+    let (mut doc, layer) = build();
+    doc.resize_image(W * 2, H, CanvasResampling::Bilinear)
+        .unwrap();
+    let s = symmetry(&doc, layer);
+    assert_eq!(s.center, DVec2::new(W as f64, H as f64 / 2.0));
+    assert!(
+        (s.angle - (1.0f64).atan2(2.0).to_degrees()).abs() < 1e-9,
+        "{}",
+        s.angle
+    );
+    assert!(s.validate().is_ok());
+    doc.undo().unwrap();
+    assert_eq!(symmetry(&doc, layer).angle, 45.0, "Undo で向きも戻る");
+    // 倍率が同じなら向きは変わらない
+    doc.resize_image(W * 2, H * 2, CanvasResampling::Bilinear)
+        .unwrap();
+    assert_eq!(symmetry(&doc, layer).angle, 45.0);
+    // キャンバスだけを動かすときも向きは変わらない
+    let (mut doc, layer) = build();
+    doc.resize_canvas(W + 8, H + 6, (4, 3)).unwrap();
+    assert_eq!(symmetry(&doc, layer).angle, 45.0);
+}
+
 /// 大きさを変えると、元の画素の無いレイヤー（塗りつぶし＋フィルター）の出力も新しい大きさになる: キャンバスの端の欠けたタイルで評価した古い
 /// 出力を返さない。
 #[test]

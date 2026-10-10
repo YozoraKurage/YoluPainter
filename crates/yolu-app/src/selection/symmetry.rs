@@ -32,6 +32,7 @@ pub fn mode_name(lang: Lang, mode: SymmetryMode) -> &'static str {
         SymmetryMode::Horizontal => lang.pick("横", "Horizontal"),
         SymmetryMode::Both => lang.pick("両方", "Both"),
         SymmetryMode::Radial => lang.pick("放射状", "Radial"),
+        SymmetryMode::Lines => lang.pick("線対称", "Lines"),
     }
 }
 
@@ -55,6 +56,7 @@ pub fn mode_tooltip(lang: Lang, mode: SymmetryMode) -> &'static str {
             "中心のまわりに回して写す",
             "Rotate copies around the center",
         ),
+        SymmetryMode::Lines => lang.pick("線対称", "Lines"),
     }
 }
 
@@ -226,6 +228,7 @@ impl SymmetryState {
             mode: self.mode,
             center: DVec2::new(self.center.0 * width as f64, self.center.1 * height as f64),
             count: self.count.clamp(MIN_COUNT, MAX_COUNT),
+            angle: 0.0,
         }
     }
 }
@@ -313,6 +316,7 @@ mod tests {
             mode,
             center: DVec2::new(50.0, 20.0),
             count: 4,
+            angle: 0.0,
         };
         assert!(axis_lines(&s(SymmetryMode::None), 100, 40).is_empty());
         assert_eq!(
@@ -395,6 +399,7 @@ mod tests {
             mode: SymmetryMode::Both,
             center: DVec2::new(50.0, 50.0),
             count: 2,
+            angle: 0.0,
         };
         let p = mirrored_points(&both, 10.0, 20.0);
         assert_eq!(p.len(), 3);

@@ -176,6 +176,8 @@ pub struct Layer {
     pub(crate) paths: Vec<crate::paths::LayerPathEntry>,
     /// レイヤーの Color の画素を描くテキストの値（ラスターだけ。パスとは両方持たない。画素は値とフォントから描いた結果）。
     pub(crate) text: Option<crate::text::TextSettings>,
+    /// このレイヤー（グループ）に付く定規（作った順。どの種類のレイヤーにも付く）。
+    pub(crate) rulers: Vec<crate::rulers::Ruler>,
 }
 
 impl Layer {
@@ -209,6 +211,7 @@ impl Layer {
             fill_points: BTreeMap::new(),
             paths: Vec::new(),
             text: None,
+            rulers: Vec::new(),
         }
     }
 
@@ -365,6 +368,10 @@ impl Layer {
     /// パスで描かれたレイヤーか（一覧が空でない）。
     pub fn has_paths(&self) -> bool {
         !self.paths.is_empty()
+    }
+    /// このレイヤー（グループ）に付く定規（作った順。同じ描く所の特殊定規の取り合いは、後ろが勝つ）。
+    pub fn rulers(&self) -> &[crate::rulers::Ruler] {
+        &self.rulers
     }
     /// テキストレイヤーの値（テキストレイヤーでなければ None）。
     pub fn text(&self) -> Option<&crate::text::TextSettings> {

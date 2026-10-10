@@ -31,6 +31,8 @@ pub enum HistoryKind {
     SavedSelections,
     /// テキストレイヤーの値（`Document::set_text`・テキストの値を外す）。
     Text,
+    /// 定規を作る・動かす・消す・移す・設定を変える（`Document::set_rulers`・`move_rulers`・`set_snap_ruler`）。
+    Rulers,
 }
 
 impl Document {
@@ -73,6 +75,7 @@ impl Command {
             Self::Look { .. } => HistoryKind::Look,
             Self::SavedSelections { .. } => HistoryKind::SavedSelections,
             Self::Text(_) => HistoryKind::Text,
+            Self::Rulers { .. } => HistoryKind::Rulers,
             _ => HistoryKind::Other,
         }
     }

@@ -51,10 +51,15 @@ pub const BAKE_PRIORITY_VERSION: i32 = 33;
 /// 0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。
 /// この版の文書は版 27〜33 の中身も読み書きできる。
 pub const ANTI_ALIAS_VERSION: i32 = 34;
+/// 定規（レイヤー・グループに付く、描くときの寄せ先と対称。レイヤーの続きの属性の印のビット 2 と、レイヤーの末尾の `ruler_count`・`rulers[i]`）と、
+/// パスの 2D の対称の種類 5（線対称・角度つき。`canvas_symmetry` の `mode` が 5 のとき `angle` が続く）を足した版。定規のあるレイヤーか、線対称の 2D のパスの
+/// ある文書だけがこの版になり、0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る
+/// （形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。この版の文書は版 27〜34 の中身も読み書きできる。
+pub const RULERS_VERSION: i32 = 35;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
-/// `ANTI_ALIAS_VERSION`（34）で、間の 31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = ANTI_ALIAS_VERSION;
+/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）で、間の 31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = RULERS_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -430,7 +435,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -441,6 +446,7 @@ fn is_known_version(version: i32) -> bool {
         || version == TEXT_VERSION
         || version == BAKE_PRIORITY_VERSION
         || version == ANTI_ALIAS_VERSION
+        || version == RULERS_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -457,6 +463,8 @@ pub(crate) struct Parse<'a> {
     layers: Vec<Layer>,
     ids: HashSet<[u8; 16]>,
     anchor_ids: HashMap<[u8; 16], i32>,
+    /// 文書の中の定規の ID（重ならない）。
+    ruler_ids: HashSet<[u8; 16]>,
     /// 今のレイヤーの項目の始まり（`fields` の位置）。
     layer_start: usize,
 }
@@ -498,7 +506,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -547,6 +555,7 @@ impl<'a> Parse<'a> {
             layers: Vec::new(),
             ids: HashSet::new(),
             anchor_ids: HashMap::new(),
+            ruler_ids: HashSet::new(),
             layer_start,
         })
     }
@@ -572,6 +581,9 @@ impl<'a> Parse<'a> {
                 self.anchor_ids.insert(*id, i).is_none(),
                 "Anchor IDが重複しています",
             )?;
+        }
+        for id in &l.rulers {
+            check(self.ruler_ids.insert(*id), "定規のIDが重複しています")?;
         }
         self.layers.push(l);
         self.next += 1;
@@ -827,6 +839,8 @@ struct Layer {
     kind: i32,
     anchors: Vec<[u8; 16]>,
     references: Vec<[u8; 16]>,
+    /// レイヤーの定規の ID。
+    rulers: Vec<[u8; 16]>,
 }
 /// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
 /// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。
@@ -939,7 +953,8 @@ fn layer(
         // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（版 29）、ビット 1 文字の値（版 30）
         if flags & 128 != 0 {
             ext = r.int("attributes_ext", 1, i32::MAX)?;
-            let known_ext = 1 | if v >= TEXT_VERSION { 2 } else { 0 };
+            let known_ext =
+                1 | if v >= TEXT_VERSION { 2 } else { 0 } | if v >= RULERS_VERSION { 4 } else { 0 };
             check(ext & !known_ext == 0, "未知の続きのレイヤー属性ビットです")?;
         }
         if flags & 4 != 0 {
@@ -1222,13 +1237,83 @@ fn layer(
         )?;
         r.block("text", text)?;
     }
+    let mut rulers = Vec::new();
+    if ext & 4 != 0 {
+        let n = r.int("ruler_count", 1, yolu_core::MAX_RULERS_PER_LAYER as i32)?;
+        for i in 0..n {
+            rulers.push(r.block(&format!("rulers[{i}]"), ruler)?);
+        }
+    }
     Ok(Layer {
         id,
         parent,
         kind,
         anchors,
         references,
+        rulers,
     })
+}
+/// 定規 1 つ（版 35）。値の確かめは core の `Ruler::validate` と同じ（座標の範囲は欄ごとに読み、残りは core の型で確かめる）。
+/// 返すのは ID。
+fn ruler(r: &mut Reader<'_>) -> Result<[u8; 16]> {
+    use yolu_core::glam::{DVec2, DVec3};
+    use yolu_core::{Ruler, RulerId, RulerKind, RulerPlace, RulerScope};
+    let id = r.id("id", false)?;
+    let kind = RulerKind::from_index(r.byte("kind")?)
+        .ok_or_else(|| Error::InvalidData("定規の種類が不正です".into()))?;
+    let space = r.byte("space")?;
+    check(space <= 1, "定規の空間が不正です")?;
+    let flags = r.byte("flags")?;
+    check(flags & !31 == 0, "未知の定規の印のビットです")?;
+    let scope = RulerScope::from_index(r.byte("scope")?)
+        .ok_or_else(|| Error::InvalidData("定規の表示の範囲が不正です".into()))?;
+    let lines = r.byte("lines")?;
+    let max = if space == 0 {
+        yolu_core::rulers::MAX_CANVAS_COORD
+    } else {
+        yolu_core::rulers::MAX_MODEL_COORD
+    };
+    let point = |r: &mut Reader<'_>, names: [&str; 3]| -> Result<DVec3> {
+        let x = r.float(names[0], -max, max)?;
+        let y = r.float(names[1], -max, max)?;
+        let z = if space == 1 {
+            r.float(names[2], -max, max)?
+        } else {
+            0.0
+        };
+        Ok(DVec3::new(x, y, z))
+    };
+    let a = point(r, ["a_x", "a_y", "a_z"])?;
+    let b = point(r, ["b_x", "b_y", "b_z"])?;
+    let place = if space == 0 {
+        RulerPlace::Canvas {
+            a: DVec2::new(a.x, a.y),
+            b: DVec2::new(b.x, b.y),
+        }
+    } else {
+        let up = DVec3::new(
+            r.float("up_x", -max, max)?,
+            r.float("up_y", -max, max)?,
+            r.float("up_z", -max, max)?,
+        );
+        RulerPlace::Model { a, b, up }
+    };
+    let ruler = Ruler {
+        id: RulerId(1),
+        kind,
+        place,
+        two_points: flags & 4 != 0,
+        lines,
+        line_symmetry: flags & 8 != 0,
+        see_through: flags & 16 != 0,
+        visible: flags & 1 != 0,
+        scope,
+        snap: flags & 2 != 0,
+    };
+    ruler
+        .validate()
+        .map_err(|e| Error::InvalidData(format!("{}の定規が不正です: {e}", r.prefix)))?;
+    Ok(id)
 }
 /// テキストレイヤーの値（版 30。範囲は `yolu_core::text` の値の検査と同じ）。
 fn text(r: &mut Reader<'_>) -> Result<()> {
@@ -2013,7 +2098,7 @@ fn path_list(
             r.boolean("visible")?;
             let surface = r.boolean("surface")?;
             let points = r.block("path", |r| path(r, v, surface, channels, enabled))?;
-            r.block("extra", |r| path_extra(r, surface, points))
+            r.block("extra", |r| path_extra(r, v, surface, points))
         })?;
     }
     Ok(())
@@ -2021,7 +2106,7 @@ fn path_list(
 
 /// 一覧の 1 本の、1 本のパスの並びに無い設定（版 27）: 種類（リボンの画像・並べ方・間隔、指先の強さ）、筆先の画像・角度・
 /// 向き、投影の深さ、対称と、角・取っ手の点（滑らかでない点だけ、番号の増える順）。
-fn path_extra(r: &mut Reader<'_>, surface: bool, points: i32) -> Result<()> {
+fn path_extra(r: &mut Reader<'_>, v: i32, surface: bool, points: i32) -> Result<()> {
     let kind = r.byte("kind")?;
     check(kind <= 4, "パスの種類が不正です")?;
     match kind {
@@ -2059,10 +2144,15 @@ fn path_extra(r: &mut Reader<'_>, surface: bool, points: i32) -> Result<()> {
     )?;
     if symmetry == 1 {
         r.block("canvas_symmetry", |r| {
-            r.int("mode", 1, 4)?;
+            // 種類 5（線対称）は正本の版 35 から。線の本数は偶数で、続けて最初の線の角度（度）
+            let mode = r.int("mode", 1, if v >= RULERS_VERSION { 5 } else { 4 })?;
             r.float("center_x", -1e7, 1e7)?;
             r.float("center_y", -1e7, 1e7)?;
-            r.int("count", 2, 16)?;
+            let count = r.int("count", 2, 16)?;
+            if mode == 5 {
+                check(count % 2 == 0, "線対称の線の本数が偶数ではありません")?;
+                r.float("angle", -360.0, 360.0)?;
+            }
             Ok(())
         })?;
     }

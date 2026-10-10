@@ -22,6 +22,7 @@ mod layers;
 mod merge_compare;
 mod nesting;
 mod ramp_mixing;
+mod rulers;
 mod selection;
 mod simd_document;
 mod text_layer;

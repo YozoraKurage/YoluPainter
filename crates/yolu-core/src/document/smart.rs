@@ -69,6 +69,14 @@ impl Document {
                     )
                 });
             }
+            // 定規は文書のレイヤーに付く物で、.ylsmart（版 21 まで）にも入らない: 外れる
+            if !l.rulers.is_empty() {
+                notes.push(format!(
+                    "「{}」の定規は外れました（スマートマテリアルは定規を持たない）",
+                    l.name
+                ));
+                l.rulers.clear();
+            }
             // テキストの値はフォント（文書の外のファイル）に結び付き、.ylsmart（版 21 まで）にも入らない: 画素だけが残る
             if l.text.take().is_some() {
                 notes.push(format!(

@@ -7,9 +7,14 @@ use super::{Document, Target};
 use crate::effects::LayerPath;
 use crate::math::to_byte;
 use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
+use crate::rulers::{Ruler, RulerPlace, MAX_CANVAS_COORD, MIN_CANVAS_SEPARATION};
 use crate::surface::{PixelReader, Tile};
 use crate::text::TextSettings;
-use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
+use crate::{
+    Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, SymmetryMode,
+    TileCoord,
+};
+use glam::DVec2;
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -660,6 +665,18 @@ impl Document {
             if let Some(text) = &self.layers[i].text {
                 copy.layers[i].text = Some(fit.text(text, &self.layers[i].name, &mut report.notes));
             }
+            // 定規: 2D の定規の点は画素と同じ空間なので同じだけ動かす（3D の定規はモデルの空間なので動かさない）
+            if self.layers[i]
+                .rulers
+                .iter()
+                .any(|r| matches!(r.place, RulerPlace::Canvas { .. }))
+            {
+                copy.layers[i].rulers = fit.rulers(
+                    &self.layers[i].rulers,
+                    &self.layers[i].name,
+                    &mut report.notes,
+                );
+            }
         }
         if let Fit::Scale { scale, .. } = fit {
             report
@@ -755,6 +772,16 @@ impl Fit {
             let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
             clamped |= cx != x || cy != y;
             symmetry.center = glam::DVec2::new(cx, cy);
+            // 線対称の最初の軸の向きは、縦横の倍率が違えば変わる（向きのベクトルを倍率で写す）
+            if let (SymmetryMode::Lines, Fit::Scale { sx, sy, .. }) = (symmetry.mode, self) {
+                if sx != sy {
+                    let t = symmetry.angle.to_radians();
+                    symmetry.angle = crate::rulers::direction_degrees(glam::DVec2::new(
+                        sx * t.cos(),
+                        sy * t.sin(),
+                    ));
+                }
+            }
         }
         if clamped {
             notes.push(format!(
@@ -762,6 +789,44 @@ impl Fit {
             ));
         }
         next
+    }
+
+    /// 大きさに合わせた定規（2D の定規だけ。3D の定規は変えない）。点を縦横の倍率かずらしで動かし、±1e7 の外へ出た点は中へ寄せ、2 点が
+    /// 近づきすぎたときは元の向きのまま最小の間隔に保つ（どちらも `notes` に書く。定規の確かめに通らない値を残さない）。
+    fn rulers(self, list: &[Ruler], owner: &str, notes: &mut Vec<String>) -> Vec<Ruler> {
+        let limit = DVec2::splat(MAX_CANVAS_COORD);
+        let map = |p: DVec2| match self {
+            Fit::Scale { sx, sy, .. } => DVec2::new(p.x * sx, p.y * sy),
+            Fit::Shift((dx, dy)) => DVec2::new(p.x + dx as f64, p.y + dy as f64),
+        };
+        list.iter()
+            .map(|r| {
+                let RulerPlace::Canvas { a, b } = r.place else {
+                    return r.clone();
+                };
+                let (ma, mb) = (map(a), map(b));
+                let (na, mut nb) = (ma.clamp(-limit, limit), mb.clamp(-limit, limit));
+                let mut clamped = (na, nb) != (ma, mb);
+                // 元の向きのまま、最小の間隔より少し離す（丸めで下回らないように）
+                if na.distance(nb) < MIN_CANVAS_SEPARATION * 1.001 {
+                    let dir = (mb - ma).try_normalize().unwrap_or(DVec2::X);
+                    nb = na + dir * (MIN_CANVAS_SEPARATION * 1.01);
+                    if nb.abs().max_element() > MAX_CANVAS_COORD {
+                        nb = na - dir * (MIN_CANVAS_SEPARATION * 1.01);
+                    }
+                    clamped = true;
+                }
+                if clamped {
+                    notes.push(format!(
+                        "「{owner}」の定規: 範囲の外へ出た点を寄せた、または近づきすぎた 2 点の間隔を保った"
+                    ));
+                }
+                Ruler {
+                    place: RulerPlace::Canvas { a: na, b: nb },
+                    ..r.clone()
+                }
+            })
+            .collect()
     }
 
     /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は

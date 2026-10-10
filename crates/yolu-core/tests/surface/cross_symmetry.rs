@@ -204,6 +204,61 @@ fn a_3d_stroke_with_the_2d_mirror_also_paints_the_mirrored_uv_pixels() {
 }
 
 #[test]
+fn a_3d_stroke_with_an_oblique_2d_mirror_paints_the_mirrored_uv_pixels() {
+    let g = plate(false);
+    // 45 度の鏡（中心を通る y = x の線）: 文書の画素 (x, y) は (y, x) へ写る。軸が画素の中心を通るので、写しの覆いは元の覆いと画素ごとに同じ
+    let (mut d, l) = document();
+    surface_dot(
+        &mut d,
+        l,
+        &g,
+        (-0.5, 0.0),
+        SurfaceStrokeOptions {
+            canvas_symmetry: Some(CanvasSymmetry::lines(DVec2::new(64.0, 64.0), 2, 45.0).unwrap()),
+            ..SurfaceStrokeOptions::default()
+        },
+    )
+    .unwrap();
+    let dots = painted(&d, l);
+    // 板の (−0.5, 0) は UV (0.125, 0.5) → 文書の (16, 64)。鏡の写しは (64, 16)
+    assert!(dots
+        .iter()
+        .any(|&(x, y, _)| x < 32 && (56..72).contains(&y)));
+    assert!(dots
+        .iter()
+        .any(|&(x, y, _)| y < 32 && (56..72).contains(&x)));
+    for &(x, y, a) in &dots {
+        assert_eq!(alpha(&d, l, y, x), a, "({x}, {y}) と ({y}, {x}) は同じ覆い");
+    }
+    // 軸の角度が 45 度でない鏡（30 度）は、軸に直交する向きへ鏡に写す
+    let (mut d, l) = document();
+    let center = DVec2::new(64.0, 64.0);
+    surface_dot(
+        &mut d,
+        l,
+        &g,
+        (-0.5, 0.0),
+        SurfaceStrokeOptions {
+            canvas_symmetry: Some(CanvasSymmetry::lines(center, 2, 30.0).unwrap()),
+            ..SurfaceStrokeOptions::default()
+        },
+    )
+    .unwrap();
+    let mirror = CanvasSymmetry::lines(center, 2, 30.0)
+        .unwrap()
+        .transforms()
+        .unwrap()[1];
+    let (mx, my) = mirror.map(16.0, 64.0);
+    let near = |cx: f64, cy: f64| {
+        painted(&d, l).iter().any(|&(x, y, _)| {
+            (x as f64 + 0.5 - cx).abs() <= 2.0 && (y as f64 + 0.5 - cy).abs() <= 2.0
+        })
+    };
+    assert!(near(16.5, 64.5), "元");
+    assert!(near(mx, my), "30 度の鏡の写し ({mx:.1}, {my:.1})");
+}
+
+#[test]
 fn a_3d_stroke_with_both_symmetries_paints_the_3d_copy_and_both_2d_copies() {
     let g = plate(false);
     let (mut d, l) = document();
