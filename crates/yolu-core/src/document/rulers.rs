@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::merge::MergeRefusal;
 use super::{CoalesceKey, Command, Document};
 use crate::error::CoreError;
 use crate::layer::{Layer, LayerId};
@@ -394,9 +395,7 @@ impl Document {
             .flat_map(|l| l.rulers.iter().cloned())
             .collect();
         if moved.len() > MAX_RULERS_PER_LAYER {
-            return Err(CoreError::InvalidArgument(
-                "結合の結果に付く定規が 64 個を超える",
-            ));
+            return Err(CoreError::MergeRefused(MergeRefusal::TooManyRulers));
         }
         Ok(moved)
     }

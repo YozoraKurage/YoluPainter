@@ -1012,6 +1012,7 @@ fn merge_refusals_read_as_short_japanese_states() {
         MergeRefusal::EmptyGroup,
         MergeRefusal::NothingVisible,
         MergeRefusal::DifferentGroups,
+        MergeRefusal::TooManyRulers,
     ] {
         let text = CoreError::MergeRefused(r).to_string();
         assert!(

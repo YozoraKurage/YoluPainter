@@ -563,6 +563,7 @@ fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
         EmptyGroup => "The group is empty",
         NothingVisible => "No visible layers",
         DifferentGroups => "Layers have different parent groups",
+        TooManyRulers => "The merged layer would have too many rulers",
     }
 }
 
@@ -1070,9 +1071,6 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "その定規がそのレイヤーに無い" => "That ruler is not on that layer",
         "直線定規はスナップする特殊定規にならない" => {
             "A straight ruler cannot be the snapping special ruler"
-        }
-        "結合の結果に付く定規が 64 個を超える" => {
-            "The merged layer would have more than 64 rulers"
         }
         "定規の ID（0 は使わない）" => "A ruler ID cannot be 0",
         "定規の点（有限・±1e7）" => "Ruler points must be finite and within ±1e7",
@@ -1803,6 +1801,7 @@ mod tests {
             EmptyGroup,
             NothingVisible,
             DifferentGroups,
+            TooManyRulers,
         ]
         .into_iter()
         .map(CoreError::MergeRefused)

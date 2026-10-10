@@ -4,8 +4,8 @@
 use yolu_core::glam::{DVec2, DVec3};
 use yolu_core::smart::SmartPlacement;
 use yolu_core::{
-    BrushSettings, CanvasResampling, CoreError, Document, HistoryKind, LayerId, Ruler, RulerId,
-    RulerKind, RulerPlace, RulerScope, RulerSpace, MAX_RULERS_PER_LAYER,
+    BrushSettings, CanvasResampling, CoreError, Document, HistoryKind, LayerId, MergeRefusal,
+    Ruler, RulerId, RulerKind, RulerPlace, RulerScope, RulerSpace, MAX_RULERS_PER_LAYER,
 };
 
 const TOLERANCE: u8 = 2;
@@ -841,8 +841,13 @@ fn a_merge_that_would_give_the_result_more_than_the_limit_is_refused_untouched()
     }
     let before = state(&t.d);
     let steps = t.d.undo_count();
+    // 断る理由は、結合の前に問い合わせる口（メニュー・命令の事前の確かめ）でも分かる
+    assert_eq!(
+        t.d.merge_down_refusal(t.d_).unwrap(),
+        Some(MergeRefusal::TooManyRulers)
+    );
     let err = t.d.merge_down(t.d_, TOLERANCE).unwrap_err();
-    assert!(matches!(err, CoreError::InvalidArgument(_)), "{err:?}");
+    assert_eq!(err, CoreError::MergeRefused(MergeRefusal::TooManyRulers));
     assert_eq!(state(&t.d), before);
     assert_eq!(t.d.undo_count(), steps);
     assert!(t.d.layer(t.c).is_some() && t.d.layer(t.d_).is_some());
@@ -1243,4 +1248,69 @@ fn a_diagonal_mirror_ruler_paints_the_transposed_stroke() {
     }
     assert!(painted > 40, "元と写しの両方が塗られた");
     assert!(alpha(12, 40) > 0 && alpha(40, 12) > 0);
+}
+
+#[test]
+fn transforming_a_layer_moves_its_pixels_but_not_its_rulers() {
+    let mut t = tree();
+    let two_d = canvas(&mut t.d, RulerKind::Line, (10.0, 10.0), (30.0, 10.0));
+    t.d.set_rulers(t.t1, vec![two_d.clone()], false).unwrap();
+    t.d.set_pixel(t.t1, 5, 5, yolu_core::Rgba8::new(255, 0, 0, 255))
+        .unwrap();
+    t.d.clear_history().unwrap();
+    assert!(t
+        .d
+        .transform_layer(
+            t.t1,
+            yolu_core::Affine2D::translation(3., 0.),
+            yolu_core::Resampling::Nearest,
+            true
+        )
+        .unwrap());
+    assert_eq!(
+        t.d.layer(t.t1)
+            .unwrap()
+            .surface(yolu_core::Channel::Color)
+            .unwrap()
+            .pixel(8, 5)
+            .unwrap()
+            .a,
+        255,
+        "画素は動く"
+    );
+    assert_eq!(
+        rulers_of(&t.d, t.t1),
+        vec![two_d],
+        "定規は文書の座標に付いていて、レイヤーの変形では動かない"
+    );
+}
+
+#[test]
+fn a_group_drawn_on_sees_its_own_rulers_and_all_scope_ones_but_not_those_of_its_children() {
+    // グループを選んでいるとき（グループには描けないので、編集の見え方）: グループ自身の定規と「すべてのレイヤー」の定規だけ。
+    // 中のレイヤーを選ぶと、グループの定規と、そのレイヤー自身の定規が見える
+    let mut t = tree();
+    let mut on_group = canvas(&mut t.d, RulerKind::Line, (0.0, 1.0), (9.0, 1.0));
+    on_group.scope = RulerScope::Group;
+    let mut on_child = canvas(&mut t.d, RulerKind::Line, (0.0, 2.0), (9.0, 2.0));
+    on_child.scope = RulerScope::Group;
+    let mut on_top = canvas(&mut t.d, RulerKind::Line, (0.0, 3.0), (9.0, 3.0));
+    on_top.scope = RulerScope::All;
+    t.d.set_rulers(t.g2, vec![on_group.clone()], false).unwrap();
+    t.d.set_rulers(t.d_, vec![on_child.clone()], false).unwrap();
+    t.d.set_rulers(t.t2, vec![on_top.clone()], false).unwrap();
+    let sorted = |mut v: Vec<RulerId>| {
+        v.sort();
+        v
+    };
+    assert_eq!(
+        sorted(ids(&t.d.rulers_seen_from(Some(t.g2)))),
+        sorted(vec![on_group.id, on_top.id]),
+        "グループを選んでいる: 自分の定規と「すべてのレイヤー」の定規"
+    );
+    assert_eq!(
+        sorted(ids(&t.d.rulers_seen_from(Some(t.d_)))),
+        sorted(vec![on_group.id, on_child.id, on_top.id]),
+        "中のレイヤーを選んでいる: グループの定規と自分の定規も"
+    );
 }
