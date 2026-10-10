@@ -862,6 +862,119 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
     }
 }
 
+/// 「ウィンドウ」のメニューの、タブの項目: チェックが付いているか・押したときの操作。
+fn window_item(h: &H, tab: Tab) -> (bool, Action) {
+    let lang = st(h).lang;
+    let entries = yolu_app::shell::menu_entries(st(h), yolu_app::shell::WINDOW_MENU);
+    for entry in entries {
+        if let yolu_app::ui::menu::Entry::Item {
+            label,
+            check,
+            action,
+            ..
+        } = entry
+        {
+            if label == tab.title_in(lang) {
+                return (matches!(check, yolu_app::ui::menu::Check::Checked), action);
+            }
+        }
+    }
+    panic!("{tab:?} が「ウィンドウ」に無い");
+}
+
+/// ナビゲーターとアクションは、「ウィンドウ」のメニューで開いている間はチェックが付き、押すと閉じる（どこにも無くなる）。閉じていれば押すと開く
+/// （ナビゲーターはテクスチャセットの組、アクションはレイヤーの組）。ほかのパネルは押しても閉じない。
+#[test]
+fn the_window_menu_toggles_the_navigator_and_the_actions_panel() {
+    // 閉じられるのは、後の版で足してよいタブ（`OPTIONAL_TABS`）のうち、既定の並びに無いものだけ
+    for tab in layout::HIDEABLE {
+        assert!(layout::OPTIONAL_TABS.contains(&tab), "{tab:?}");
+        assert!(default_dock().find_tab(&tab).is_none(), "{tab:?}");
+    }
+    let mut h = app_default(1280.0, 800.0, 128);
+    for (tab, with) in [
+        (Tab::Navigator, Tab::TextureSets),
+        (Tab::Actions, Tab::Layers),
+    ] {
+        let (checked, action) = window_item(&h, tab);
+        assert!(!checked, "{tab:?}: 閉じている");
+        assert_eq!(action, Action::Dock(DockOp::Show(tab)));
+        h.state_mut().state.apply(action);
+        h.run();
+        assert!(mates(&h.state().dock, tab).contains(&with), "{tab:?}");
+        let (checked, action) = window_item(&h, tab);
+        assert!(checked, "{tab:?}: 開くとチェックが付く");
+        assert_eq!(action, Action::Dock(DockOp::Hide(tab)));
+        h.state_mut().state.apply(action);
+        h.run();
+        assert!(h.state().dock.find_tab(&tab).is_none(), "{tab:?}: 閉じた");
+        assert!(!h.state().state.ui.panels.open.contains(&tab));
+        assert!(!window_item(&h, tab).0, "{tab:?}: チェックが外れる");
+        layout::validate(&h.state().dock).expect("閉じても検証を通る");
+        // また開くと、同じ組に入る
+        h.state_mut().state.apply(Action::Dock(DockOp::Show(tab)));
+        h.run();
+        assert!(
+            mates(&h.state().dock, tab).contains(&with),
+            "{tab:?}: また開く"
+        );
+        // 別ウィンドウに出していても、メニューで閉じるとそのウィンドウごと消える
+        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.run();
+        h.step();
+        assert_eq!(h.state().detached.windows.len(), 1, "{tab:?}");
+        let (checked, action) = window_item(&h, tab);
+        assert!(checked, "{tab:?}: 別ウィンドウでもチェックが付く");
+        h.state_mut().state.apply(action);
+        h.run();
+        assert!(
+            h.state().detached.windows.is_empty(),
+            "{tab:?}: ウィンドウが消える"
+        );
+        assert!(!h.state().state.ui.panels.open.contains(&tab));
+    }
+    // 閉じられないパネルは、開いていても押すと前に出す（Hide にならない）
+    let (_, action) = window_item(&h, Tab::Layers);
+    assert_eq!(action, Action::Dock(DockOp::Show(Tab::Layers)));
+    let mut headless = default_dock();
+    let mut outside = yolu_app::detach::Detached::new();
+    assert!(!outside.hide(&mut headless, Tab::Layers));
+    assert!(headless.find_tab(&Tab::Layers).is_some());
+    assert!(!outside.hide(&mut headless, Tab::Navigator), "どこにも無い");
+}
+
+/// 閉じたナビゲーターは、並びを保存して読み直しても閉じたまま（開いたまま閉じれば開いたまま）。
+#[test]
+fn a_closed_navigator_stays_closed_after_the_arrangement_is_saved_and_read_back() {
+    use eframe::App;
+    let dir = settings_dir("navigator-closed");
+    let mut h = app_in_settings(&dir, 1280.0, 800.0);
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    h.run();
+    h.state_mut().on_exit();
+    drop(h);
+    let mut h = app_in_settings(&dir, 1280.0, 800.0);
+    assert!(
+        h.state().dock.find_tab(&Tab::Navigator).is_some(),
+        "開いたまま閉じれば開いたまま"
+    );
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Hide(Tab::Navigator)));
+    h.run();
+    h.state_mut().on_exit();
+    drop(h);
+    let h = app_in_settings(&dir, 1280.0, 800.0);
+    assert!(
+        h.state().dock.find_tab(&Tab::Navigator).is_none(),
+        "閉じたまま"
+    );
+    layout::validate(&h.state().dock).expect("検証を通る");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// 既定の並びで 1 枚だけの組だったタブ（3D ビュー・キャンバス・サブツール）と、戻したあとに隣になるはずのタブ・向き。
 const SINGLE_GROUPS: [(Tab, Tab, char); 3] = [
     (Tab::View3d, Tab::Canvas, 'l'),

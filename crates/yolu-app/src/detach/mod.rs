@@ -42,6 +42,8 @@ pub enum DockOp {
     Return(Tab),
     /// パネルを前に出す（タブを選び、別ウィンドウにあればそのウィンドウを前へ。どこにも無ければ、既定の並びでいた組へ開く）。
     Show(Tab),
+    /// パネルを閉じる（メインウィンドウからも別ウィンドウからも外す。`layout::HIDEABLE` のタブだけ。空になった別ウィンドウは消える）。
+    Hide(Tab),
 }
 
 /// 画面のメニューが読む、タブのありか（毎フレーム `YoluApp` が入れる）。
@@ -373,6 +375,12 @@ impl Detached {
         }
         dock_into(main, tab, &[], None);
         None
+    }
+
+    /// パネルを閉じる: メインウィンドウからも別ウィンドウからも外す（空になった別ウィンドウは消す）。閉じられるのは `layout::HIDEABLE` のタブだけ（違えば false）。
+    /// どこにも無いタブも false。
+    pub fn hide(&mut self, main: &mut DockState<Tab>, tab: Tab) -> bool {
+        crate::layout::HIDEABLE.contains(&tab) && self.take(main, tab).is_some()
     }
 
     /// 別ウィンドウを全部閉じる（並びを既定へ戻すとき。タブは呼ぶ側が既定の並びで持つ）。

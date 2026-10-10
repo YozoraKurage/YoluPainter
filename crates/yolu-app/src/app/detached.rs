@@ -549,6 +549,9 @@ impl YoluApp {
                 DockOp::Return(tab) => {
                     self.detached.return_tab(&mut self.dock, tab, None);
                 }
+                DockOp::Hide(tab) => {
+                    self.detached.hide(&mut self.dock, tab);
+                }
                 DockOp::Show(tab) => {
                     if let Some(id) = self.detached.show(&mut self.dock, tab) {
                         ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Focus);

@@ -350,6 +350,9 @@ pub const OPTIONAL_TABS: [Tab; 7] = [
     Tab::Material,
 ];
 
+/// 「ウィンドウ」のメニューで開いたり閉じたりできるタブ。`OPTIONAL_TABS` のうち既定の並びに無いもの（ほかのパネルは、押すと前に出すだけ）。
+pub const HIDEABLE: [Tab; 2] = [Tab::Navigator, Tab::Actions];
+
 /// 前の版の並びに足すときの値: 「サブツール」の組の下にツールプロパティを足すとき、サブツールの組が持つ高さの取り分と、その下にブラシサイズを足すとき、
 /// ツールプロパティの組が持つ取り分。今の既定の並び（`app::default_dock_for`）の同じ取り分（0.294・0.729）とは別の値で、既定の並びを作り直すものではない。
 const TOOL_PROPERTIES_SHARE: f32 = 0.38;
