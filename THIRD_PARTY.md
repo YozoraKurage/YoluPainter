@@ -30,10 +30,10 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 - `yolu-app` は画面の並び（ドックのタブの組・分け方・ウィンドウの大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
   `egui`・`epaint`・`emath`・`ecolor`・`accesskit` などが既に使っている `serde` を使うだけで、増えるクレートは `accesskit` の `serde` 機能が引く
   手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
-- egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
+- egui の標準フォントに含まれる Hack の原文には **Bitstream Vera** の条件もある。
   OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
 - `yolu-io` は OS に入っているフォントの一覧（テキストレイヤーのフォントの選び）のために `fontdb 0.24.0`（MIT）を `std`・`fs`・`memmap` の機能で使う（`default-features` は切）。
-  OS のフォントのファイルを読むだけで、OS のフォントは同梱しない。同梱するフォントは下の BIZ UDPGothic と、egui の標準書体（上の表）。
+  OS のフォントのファイルを読むだけで、OS のフォントは同梱しない。同梱するフォントは下の BIZ UDPGothic と、egui の標準フォント（上の表）。
 - `yolu-app` は Live Link の元の絵（JPG）を読むために `image` の `jpeg` 機能を有効にしている。増えるのは `zune-jpeg 0.5.15` と `zune-core 0.5.3`
   （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（試験の依存の `tiff` 経由で）あった。
   2 件の全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。TGA の読み（`tga` 機能）は `image` の中だけで、クレートは増えない。
@@ -78,19 +78,19 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 [発行時の fonts ディレクトリ](https://github.com/emilk/egui/tree/49682f8baa058bf49e011035cfbd6e825f88a5ef/crates/epaint_default_fonts/fonts) にある。
 フォントを加工せず同梱する前提で、次の全文を収集する。
 
-| 書体 | 許諾と原文 |
+| フォント | 許諾と原文 |
 |---|---|
 | Noto Emoji | OFL-1.1、`fonts/OFL.txt` |
 | Ubuntu Light | Ubuntu Font Licence 1.0、`fonts/UFL.txt` |
 | Hack | MIT、DejaVu のパブリックドメインの注記、Bitstream Vera、`fonts/Hack-Regular.txt` |
 | emoji-icon-font | MIT、`fonts/emoji-icon-font-mit-license.txt` |
 
-標準書体の OFL-1.1 と Ubuntu Font Licence は、各書体の著作権・名称・条件を原文のまま全文束に含める。
-書体を変更して配る場合は、予約された書体名などの条件を再確認する。
+標準フォントの OFL-1.1 と Ubuntu Font Licence は、各フォントの著作権・名称・条件を原文のまま全文束に含める。
+フォントを変更して配る場合は、予約されたフォント名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
 [既存のアイコンの表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
-アイコン 115 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
-Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
+アイコン 118 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
+Phosphor はブラシ・グラデーション・長方形選択・楕円選択・多角形選択・選択ペン・ID 選択・アンカーと、スナップのアイコンの磁石に使っている。
 
 ### 同梱の画面のフォント（BIZ UDPGothic）
 
