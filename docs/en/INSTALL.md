@@ -44,7 +44,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\hide_presets\` | Presets for hiding parts of a model | Kept |
 | `%APPDATA%\YoluPainter\pose_presets\` | Pose presets | Kept |
 | `%APPDATA%\YoluPainter\actions\` | Actions | Kept |
-| `%APPDATA%\YoluPainter\keymap.json` | Your assignments for keyboard shortcuts, mouse combinations and pie menus (an unreadable file is moved to `keymap.broken.json` the next time it is written) | Kept |
+| `%APPDATA%\YoluPainter\keymap.json` | Your assignments for keyboard shortcuts, mouse combinations and pie menus (an unreadable file is moved to `keymap.broken.json` the next time it is written; if that name is taken, a number is added, as in `keymap.broken-2.json`) | Kept |
 | `%APPDATA%\YoluPainter\tools.json` | The order of the toolbar and the brush groups (an unreadable file is moved to `tools.broken.json`) | Kept |
 
 When kept items, or files this application did not create, are present, the `%APPDATA%\YoluPainter` folder stays with them. A library or recovery folder that you moved elsewhere in the settings is not touched. Documents such as `.ylp` files are never removed.

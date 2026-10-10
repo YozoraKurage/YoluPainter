@@ -44,7 +44,7 @@
 | `%APPDATA%\YoluPainter\hide_presets\` | 面の隠し方のプリセット | 残る |
 | `%APPDATA%\YoluPainter\pose_presets\` | ポーズのプリセット | 残る |
 | `%APPDATA%\YoluPainter\actions\` | アクション | 残る |
-| `%APPDATA%\YoluPainter\keymap.json` | ショートカット（キー・マウスの組み合わせ・パイメニュー）の割り当て（読めなかったファイルは、次に書くとき `keymap.broken.json` に退避） | 残る |
+| `%APPDATA%\YoluPainter\keymap.json` | ショートカット（キー・マウスの組み合わせ・パイメニュー）の割り当て（読めなかったファイルは、次に書くとき `keymap.broken.json` に退避。同じ名前があれば `keymap.broken-2.json` のように番号を付けます） | 残る |
 | `%APPDATA%\YoluPainter\tools.json` | ツールバーとブラシのグループの並び（読めなかったファイルは `tools.broken.json` に退避） | 残る |
 
 残る物と、このアプリが作ったのではないファイルがあるときは、`%APPDATA%\YoluPainter` のフォルダごと残ります。設定でライブラリの場所や復旧の置き場を別のフォルダにしているときは、そのフォルダには触りません。`.ylp` などの文書は、どちらの場合も消えません。

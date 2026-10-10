@@ -73,7 +73,7 @@ These change only the view. The saved image is never rotated or flipped.
 | Flip horizontally | `H` |
 | Fit to the view | `Ctrl+0` |
 
-The View menu also has Zoom In, Zoom Out, Fit to Screen, Rotate View Left and Right, Reset Rotation, Snap to Ruler ([GUIDE_PAINT.md](GUIDE_PAINT.md)), Flip View, Mode and Frame the Model in the 3D View. In the Navigator panel, press or drag in the thumbnail of the whole canvas to move the view (the current view is outlined). It also has Zoom and Rotation sliders and buttons for Flip horizontally, Fit canvas, 100% and Reset rotation. For the 3D view, see [GUIDE_3D.md](GUIDE_3D.md).
+From the top, the View menu has the UV Wireframe and Overlapping UVs switches ([GUIDE_3D.md](GUIDE_3D.md)), Zoom In, Zoom Out, Fit to Screen, (separator) Rotate View Left, Rotate View Right, Reset Rotation, Flip View, (separator) Snap to Ruler, Snap to Special Ruler and Switch the Snapping Special Ruler ([GUIDE_PAINT.md](GUIDE_PAINT.md)), (separator) Mode and Frame the Model in the 3D View. In the Navigator panel, press or drag in the thumbnail of the whole canvas to move the view (the current view is outlined). It also has Zoom and Rotation sliders and buttons for Flip horizontally, Fit canvas, 100% and Reset rotation. For the 3D view, see [GUIDE_3D.md](GUIDE_3D.md).
 
 ## Arranging panels
 
