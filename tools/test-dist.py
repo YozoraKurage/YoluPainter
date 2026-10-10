@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 
 sys.dont_write_bytecode = True
@@ -35,6 +36,7 @@ TREE = 'a' * 40
 OTHER_TREE = 'b' * 40
 WINDOWS = 'x86_64-pc-windows-msvc'
 LINUX = 'x86_64-unknown-linux-gnu'
+MACOS = 'universal-apple-darwin'
 KEY = 'c' * 64
 
 
@@ -135,21 +137,81 @@ class Scratch(unittest.TestCase):
 
 
 class Targets(unittest.TestCase):
-    def test_default_is_windows_only_and_linux_needs_its_input(self):
+    @staticmethod
+    def names(config, enabled):
+        return [t['target'] for t in dist.select_targets(config, enabled)]
+
+    def test_windows_always_and_the_others_by_their_inputs(self):
         config = dist.load_targets()
-        self.assertEqual([t['target'] for t in dist.select_targets(config, set())], [WINDOWS])
-        self.assertEqual([t['target'] for t in dist.select_targets(config, {'linux'})], [WINDOWS, LINUX])
-        matrix = dist.plan(config, set())
-        self.assertEqual(matrix, {'include': [{'os': 'windows-latest', 'target': WINDOWS, 'installer': True}]})
+        self.assertEqual(self.names(config, set()), [WINDOWS])
+        self.assertEqual(self.names(config, {'linux'}), [WINDOWS, LINUX])
+        self.assertEqual(self.names(config, {'macos'}), [WINDOWS, MACOS])
+        self.assertEqual(self.names(config, {'linux', 'macos'}), [WINDOWS, LINUX, MACOS])
+
+    def test_macos_is_on_unless_the_release_turns_it_off_and_linux_is_off_unless_turned_on(self):
+        config = dist.load_targets()
+        # 入力が無いとき（PR の CI）は、入力の既定が入の対象（macOS）までビルドする。Linux はビルドしない
+        self.assertEqual(dist.default_inputs(config), {'macos'})
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS, MACOS])
+        # 配布の入力: macos=false で外し、linux=true で足す。言わなかった入力は既定のまま
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=true'])), [WINDOWS, MACOS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=false'])), [WINDOWS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=true'])), [WINDOWS, LINUX, MACOS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['macos=false', 'linux=true'])), [WINDOWS, LINUX])
+
+    def test_matrix_carries_the_runner_and_the_rust_targets_of_a_universal_build(self):
+        config = dist.load_targets()
+        matrix = dist.plan(config, dist.resolve_inputs(config, []))
+        self.assertEqual(matrix, {'include': [
+            {'os': 'windows-latest', 'target': WINDOWS, 'installer': True},
+            {'os': 'macos-14', 'target': MACOS, 'installer': False,
+             'rust_targets': 'aarch64-apple-darwin x86_64-apple-darwin', 'experimental': True, 'timeout': 90},
+        ]})
+        # macOS を外した配布の matrix は Windows だけ（Rust のターゲットの項目も無い）
+        self.assertEqual(dist.plan(config, dist.resolve_inputs(config, ['macos=false'])),
+                         {'include': [{'os': 'windows-latest', 'target': WINDOWS, 'installer': True}]})
+
+    def test_only_macos_is_experimental_and_has_the_longer_time_limit(self):
+        config = dist.load_targets()
+        self.assertEqual(dist.experimental_targets(config), {MACOS})
+        self.assertEqual(dist.experimental_targets(config, [WINDOWS, LINUX]), set())
+        self.assertEqual(dist.experimental_targets(config, [WINDOWS, MACOS]), {MACOS})
+        matrix = dist.plan(config, dist.resolve_inputs(config, ['linux=true']))
+        by_target = {item['target']: item for item in matrix['include']}
+        # Windows・Linux は試作でも時間の指定もなく（今までどおり）、macOS だけ試作で 90 分
+        for target in (WINDOWS, LINUX):
+            self.assertNotIn('experimental', by_target[target])
+            self.assertNotIn('timeout', by_target[target])
+        self.assertEqual((by_target[MACOS]['experimental'], by_target[MACOS]['timeout']), (True, 90))
+
+    def test_the_artifact_pattern_keeps_only_the_planned_targets(self):
+        self.assertEqual(dist.artifact_pattern(TREE, [WINDOWS]), f'dist-{TREE}-{WINDOWS}')
+        self.assertEqual(dist.artifact_pattern(TREE, [WINDOWS, MACOS]), f'dist-{TREE}-{{{WINDOWS},{MACOS}}}')
 
     def test_unknown_input_is_refused(self):
         with self.assertRaises(dist.DistError):
-            dist.select_targets(dist.load_targets(), {'macos'})
+            dist.select_targets(dist.load_targets(), {'windows'})
+        with self.assertRaises(dist.DistError):
+            dist.resolve_inputs(dist.load_targets(), ['windows=false'])
 
     def test_plan_command_accepts_only_true_false_and_known_names(self):
-        for bad in (['--input', 'linux=yes'], ['--input', 'macos=false'], ['--input', 'macos=true']):
+        for bad in (['--input', 'linux=yes'], ['--input', 'windows=false'], ['--input', 'ios=true'], ['--input', 'macos']):
             with self.assertRaises(dist.DistError, msg=bad):
                 dist.cmd_plan(type('A', (), {'input': [bad[1]]})())
+
+    def test_plan_command_writes_the_matrix_the_targets_and_the_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / 'out'
+            for items, expected in (([], f'{WINDOWS},{MACOS}'), (['macos=false'], WINDOWS), (['linux=true'], f'{WINDOWS},{LINUX},{MACOS}')):
+                output.write_text('')
+                with unittest.mock.patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}):
+                    dist.cmd_plan(type('A', (), {'input': items})())
+                lines = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                self.assertEqual(lines['targets'], expected)
+                self.assertEqual(lines['experimental'], MACOS if MACOS in expected else '')
+                self.assertEqual(lines['pattern'], dist.artifact_pattern(lines['tree'], expected.split(',')))
+                self.assertEqual(json.loads(lines['matrix'])['include'][-1]['target'], expected.split(',')[-1])
+                self.assertEqual(len(lines['tree']), 40)
 
     def test_duplicate_or_incomplete_lists_are_refused(self):
         with tempfile.TemporaryDirectory() as d:
@@ -163,6 +225,21 @@ class Targets(unittest.TestCase):
             path.write_text(json.dumps({'schema': 2, 'targets': []}))
             with self.assertRaises(dist.DistError):
                 dist.load_targets(path)
+            # default は真偽値で、入力のある対象だけ。rust_targets は文字列
+            base = {'target': 'a', 'os': 'x', 'installer': False}
+            for extra in ({'input': 'i', 'default': 'yes'}, {'input': None, 'default': True}, {'input': 'i', 'rust_targets': ['a']}):
+                path.write_text(json.dumps({'schema': 1, 'targets': [{**base, **extra}]}))
+                with self.assertRaises(dist.DistError, msg=extra):
+                    dist.load_targets(path)
+            for extra in ({'input': None, 'experimental': 'yes'}, {'input': None, 'timeout_minutes': 0}, {'input': None, 'timeout_minutes': '90'},
+                          {'input': None, 'timeout_minutes': True}):
+                path.write_text(json.dumps({'schema': 1, 'targets': [{**base, **extra}]}))
+                with self.assertRaises(dist.DistError, msg=extra):
+                    dist.load_targets(path)
+            path.write_text(json.dumps({'schema': 1, 'targets': [{**base, 'input': None, 'experimental': True, 'timeout_minutes': 90}]}))
+            self.assertEqual(dist.experimental_targets(dist.load_targets(path)), {'a'})
+            path.write_text(json.dumps({'schema': 1, 'targets': [{**base, 'input': 'i', 'default': True, 'rust_targets': 'a b'}]}))
+            self.assertEqual(dist.default_inputs(dist.load_targets(path)), {'i'})
 
 
 class Catalog(Scratch):
@@ -405,6 +482,87 @@ class Find(Scratch):
         self.assertTrue(decision.promote)
         self.assertEqual(decision.run_id, 2)
 
+    def test_macos_travels_with_windows_and_a_release_without_it_still_takes_the_rest(self):
+        gh = FakeGh()
+        gh.add_run(1)
+        gh.add_artifact(10, 1, WINDOWS)
+        gh.add_artifact(11, 1, MACOS)
+        decision = self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS})
+        self.assertTrue(decision.promote)
+        self.assertEqual((decision.run_id, decision.notes), (1, []))
+        # macos を切った配布: CI に macOS の成果物があっても、Windows だけで受け取る
+        self.assertTrue(self.promoted(gh, targets=(WINDOWS,)).promote)
+        # macOS の成果物が無い CI（macOS を足す前の PR）の成果物は、macOS が試作でなければ受け取らず、ビルドし直す
+        decision = self.promoted(self.good(), targets=(WINDOWS, MACOS))
+        self.assertFalse(decision.promote)
+        self.assertTrue(any(MACOS in reason for reason in decision.reasons))
+
+    MAC_JOB = '配る物のビルド / 配る物のビルド（universal-apple-darwin）'
+    WINDOWS_JOB = '配る物のビルド / 配る物のビルド（x86_64-pc-windows-msvc）'
+
+    def test_a_failed_experimental_build_does_not_stop_windows_from_being_taken(self):
+        # macOS のビルドが落ちた CI の実行: 結論は（continue-on-error が効かなかった場合も）失敗で、macOS の成果物は無い
+        for conclusion in ('success', 'failure'):
+            with self.subTest(conclusion):
+                gh = FakeGh()
+                gh.add_run(1, conclusion=conclusion, jobs=[('linux', 'success'), (self.WINDOWS_JOB, 'success'), (self.MAC_JOB, 'failure')])
+                gh.add_artifact(10, 1, WINDOWS)
+                decision = self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS})
+                self.assertTrue(decision.promote, decision.reasons)
+                self.assertEqual(decision.run_id, 1)
+                # 載らない理由が言える（macOS の対象の名前と、成果物が無いこと）
+                self.assertTrue(any(MACOS in note and '成果物' in note for note in decision.notes), decision.notes)
+        # キャンセルや飛ばされた macOS のジョブも、試作の対象のものは数えない
+        for state in ('cancelled', 'skipped', 'timed_out'):
+            gh = FakeGh()
+            gh.add_run(1, jobs=[('linux', 'success'), (self.WINDOWS_JOB, 'success'), (self.MAC_JOB, state)])
+            gh.add_artifact(10, 1, WINDOWS)
+            self.assertTrue(self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS}).promote, state)
+
+    def test_a_failed_windows_build_still_stops_even_when_the_experimental_one_passed_or_failed(self):
+        for mac in ('success', 'failure'):
+            gh = FakeGh()
+            gh.add_run(1, conclusion='failure', jobs=[('linux', 'success'), (self.WINDOWS_JOB, 'failure'), (self.MAC_JOB, mac)])
+            gh.add_artifact(10, 1, WINDOWS)
+            gh.add_artifact(11, 1, MACOS)
+            decision = self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS})
+            self.assertFalse(decision.promote, mac)
+            self.assertTrue(any('x86_64-pc-windows-msvc' in reason for reason in decision.reasons), decision.reasons)
+        # 試作の印が無ければ、macOS のジョブの失敗も今までどおり数える
+        gh = FakeGh()
+        gh.add_run(1, jobs=[(self.WINDOWS_JOB, 'success'), (self.MAC_JOB, 'failure')])
+        gh.add_artifact(10, 1, WINDOWS)
+        gh.add_artifact(11, 1, MACOS)
+        self.assertFalse(self.promoted(gh, targets=(WINDOWS, MACOS)).promote)
+        # 結論が失敗なのに、失敗したジョブが見つからない実行は受け取らない
+        gh = FakeGh()
+        gh.add_run(1, conclusion='failure', jobs=[(self.WINDOWS_JOB, 'success'), (self.MAC_JOB, 'success')])
+        gh.add_artifact(10, 1, WINDOWS)
+        self.assertFalse(self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS}).promote)
+
+    def test_an_experimental_artifact_that_does_not_check_out_is_left_out_not_fatal(self):
+        gh = FakeGh()
+        gh.add_run(1)
+        gh.add_artifact(10, 1, WINDOWS)
+        gh.add_artifact(11, 1, MACOS, tamper=f'yolupainter-1.2.3-{MACOS}.zip')
+        decision = self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS})
+        self.assertTrue(decision.promote)
+        self.assertTrue(any(MACOS in note and 'SHA-256' in note for note in decision.notes), decision.notes)
+        # 期限切れも同じ
+        gh = FakeGh()
+        gh.add_run(1)
+        gh.add_artifact(10, 1, WINDOWS)
+        gh.add_artifact(11, 1, MACOS, expired=True)
+        decision = self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS})
+        self.assertTrue(decision.promote)
+        self.assertTrue(any(MACOS in note and '期限切れ' in note for note in decision.notes), decision.notes)
+        # Windows の成果物が目録と違えば、試作が無事でも受け取らない
+        gh = FakeGh()
+        gh.add_run(1)
+        gh.add_artifact(10, 1, WINDOWS, tamper=f'yolupainter-1.2.3-{WINDOWS}.zip')
+        gh.add_artifact(11, 1, MACOS)
+        self.assertFalse(self.promoted(gh, targets=(WINDOWS, MACOS), optional={MACOS}).promote)
+
     def test_a_missing_target_in_ci_means_rebuild(self):
         # Linux を足した配布で、CI は Windows だけビルドしている。
         gh = self.good()
@@ -468,7 +626,7 @@ class Find(Scratch):
         original = dist.Gh
         dist.Gh = Broken
         try:
-            args = type('A', (), dict(repo=REPO, tree=TREE, targets=WINDOWS, work=str(self.tmp / 'w'), rebuild='false'))()
+            args = type('A', (), dict(repo=REPO, tree=TREE, targets=WINDOWS, work=str(self.tmp / 'w'), rebuild='false', optional=''))()
             with contextlib.redirect_stdout(io.StringIO()):
                 dist.cmd_find(args)
         finally:
@@ -480,13 +638,13 @@ class Find(Scratch):
 
 
 class Install(Scratch):
-    def received(self, targets=(WINDOWS,), **kwargs):
+    def received(self, targets=(WINDOWS,), folder='received', **kwargs):
         for target in targets:
-            directory = self.tmp / 'received' / f'dist-{TREE}-{target}'
+            directory = self.tmp / folder / f'dist-{TREE}-{target}'
             directory.mkdir(parents=True)
             for name, data in make_artifact_files(target, **kwargs).items():
                 (directory / name).write_bytes(data)
-        return self.tmp / 'received'
+        return self.tmp / folder
 
     def test_copies_the_assets_without_the_catalog(self):
         copied = dist.install(self.received(), TREE, [WINDOWS], self.tmp / 'dist', '1.2.3', KEY)
@@ -508,6 +666,56 @@ class Install(Scratch):
             dist.install(received, TREE, [WINDOWS, LINUX], self.tmp / 'dist', '1.2.3', KEY)
         self.assertFalse((self.tmp / 'dist').exists())
 
+    def test_a_missing_or_broken_experimental_target_is_left_out_and_the_rest_is_collected(self):
+        # 試作の対象（macOS）の成果物が無い: Windows だけ集めて、理由を返す
+        received = self.received()
+        omitted = {}
+        copied = dist.install(received, TREE, [WINDOWS, MACOS], self.tmp / 'dist', '1.2.3', KEY, {MACOS}, omitted)
+        self.assertEqual(len(copied), 2)
+        self.assertEqual(list(omitted), [MACOS])
+        self.assertIn('成果物がありません', omitted[MACOS][0])
+        self.assertFalse(any(MACOS in p.name for p in (self.tmp / 'dist').iterdir()))
+        # 目録に合わない macOS の成果物も同じ（SHA-256 の食い違いを理由に出す）
+        received = self.received((WINDOWS, MACOS), 'received2')
+        (received / f'dist-{TREE}-{MACOS}' / f'yolupainter-1.2.3-{MACOS}.zip').write_bytes(b'tampered')
+        omitted = {}
+        copied = dist.install(received, TREE, [WINDOWS, MACOS], self.tmp / 'dist2', '1.2.3', KEY, {MACOS}, omitted)
+        self.assertEqual(len(copied), 2)
+        self.assertIn('SHA-256', omitted[MACOS][0])
+        # macOS が無事なら、両方を集め、理由は何も無い
+        received = self.received((WINDOWS, MACOS), 'received3')
+        omitted = {}
+        copied = dist.install(received, TREE, [WINDOWS, MACOS], self.tmp / 'dist3', '1.2.3', KEY, {MACOS}, omitted)
+        self.assertEqual((len(copied), omitted), (3, {}))
+
+    def test_a_broken_required_target_still_stops_even_with_an_experimental_one_beside_it(self):
+        received = self.received((WINDOWS, MACOS))
+        (received / f'dist-{TREE}-{WINDOWS}' / f'yolupainter-1.2.3-{WINDOWS}.zip').write_bytes(b'tampered')
+        with self.assertRaises(dist.DistError):
+            dist.install(received, TREE, [WINDOWS, MACOS], self.tmp / 'dist', '1.2.3', KEY, {MACOS}, {})
+        self.assertFalse((self.tmp / 'dist').exists())
+        # Windows の成果物が無いときも止まる（macOS だけの下書きは作らない）
+        with self.assertRaises(dist.DistError):
+            dist.install(self.received((MACOS,), 'only'), TREE, [WINDOWS, MACOS], self.tmp / 'dist3', '1.2.3', KEY, {MACOS}, {})
+
+    def test_the_command_says_in_the_summary_why_the_experimental_target_is_not_in(self):
+        received = self.received()
+        outputs = self.tmp / 'summary.md'
+        old = dict(os.environ)
+        os.environ.update(GITHUB_STEP_SUMMARY=str(outputs))
+        try:
+            args = type('A', (), dict(received=str(received), tree=TREE, targets=f'{WINDOWS},{MACOS}', out=str(self.tmp / 'dist'),
+                                      version='1.2.3', update_public_key=KEY, optional=MACOS))()
+            with contextlib.redirect_stdout(io.StringIO()):
+                dist.cmd_install(args)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        text = outputs.read_text(encoding='utf-8')
+        self.assertIn(f'{MACOS}（試作）は載らなかった', text)
+        self.assertIn('成果物がありません', text)
+        self.assertIn(f'yolupainter-1.2.3-{WINDOWS}.zip', text)
+
     def test_version_and_key_must_match_the_current_ones(self):
         received = self.received()
         for version, key in (('9.9.9', KEY), ('1.2.3', 'f' * 64)):
@@ -515,6 +723,70 @@ class Install(Scratch):
                 with self.assertRaises(dist.DistError):
                     dist.install(received, TREE, [WINDOWS], self.tmp / 'dist', version, key)
                 self.assertFalse((self.tmp / 'dist').exists())
+
+
+class CiOk(Scratch):
+    """main-tested.yml が使う `ci-ok`: PR の先頭の CI の実行が成功か。試作の対象のジョブだけが落ちた実行は成功とみなす。"""
+
+    def run_command(self, gh, head='a' * 40):
+        original = dist.Gh
+        dist.Gh = lambda: gh
+        errors = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(errors):
+                code = dist.main(['ci-ok', '--repo', REPO, '--head', head])
+        finally:
+            dist.Gh = original
+        return code, out.getvalue(), errors.getvalue()
+
+    class Listing(FakeGh):
+        def api(self, path):
+            route, _, _ = path.partition('?')
+            if route == f'repos/{REPO}/actions/workflows/ci.yml/runs':
+                return {'workflow_runs': [{'id': run_id, 'status': run['status'], 'conclusion': run['conclusion']}
+                                          for run_id, run in list(self.runs.items())[:1]]}
+            if route.endswith('/jobs'):
+                jobs = self.runs[int(route.split('/')[-2])]['jobs']
+                return {'total_count': len(jobs), 'jobs': [{'name': n, 'conclusion': c} for n, c in jobs]}
+            raise AssertionError(path)
+
+    MAC_JOB = Find.MAC_JOB
+    WINDOWS_JOB = Find.WINDOWS_JOB
+
+    def gh(self, **kwargs):
+        gh = self.Listing()
+        gh.add_run(1, **kwargs)
+        return gh
+
+    def test_a_successful_run_is_ok_and_a_missing_one_is_not(self):
+        code, out, _ = self.run_command(self.gh(jobs=[(self.WINDOWS_JOB, 'success'), (self.MAC_JOB, 'success')]))
+        self.assertEqual(code, 0)
+        self.assertIn('成功しています', out)
+        code, _, err = self.run_command(self.Listing())
+        self.assertEqual(code, 1)
+        self.assertIn('見つかりません', err)
+
+    def test_only_the_experimental_job_failing_still_counts_as_passed(self):
+        for conclusion in ('failure', 'success'):
+            code, out, _ = self.run_command(self.gh(conclusion=conclusion, jobs=[(self.WINDOWS_JOB, 'success'), (self.MAC_JOB, 'failure')]))
+            self.assertEqual(code, 0, conclusion)
+            self.assertIn('試作の対象の失敗は数えていない', out)
+
+    def test_any_other_failure_or_an_unfinished_run_is_not_ok(self):
+        for name, kwargs in {
+            'windows failed': dict(conclusion='failure', jobs=[(self.WINDOWS_JOB, 'failure'), (self.MAC_JOB, 'success')]),
+            'both failed': dict(conclusion='failure', jobs=[(self.WINDOWS_JOB, 'failure'), (self.MAC_JOB, 'failure')]),
+            'a test job failed': dict(conclusion='failure', jobs=[('linux', 'failure'), (self.MAC_JOB, 'failure')]),
+            'in progress': dict(status='in_progress', conclusion=None, jobs=[(self.WINDOWS_JOB, 'success')]),
+            'failure without a failed job': dict(conclusion='failure', jobs=[(self.WINDOWS_JOB, 'success')]),
+            'cancelled': dict(conclusion='cancelled', jobs=[(self.WINDOWS_JOB, 'success')]),
+        }.items():
+            with self.subTest(name):
+                code, _, err = self.run_command(self.gh(**kwargs))
+                self.assertEqual(code, 1)
+                self.assertTrue(err.strip(), name)
+                if name == 'windows failed':
+                    self.assertIn('x86_64-pc-windows-msvc', err)
 
 
 def yaml_edit(mutate):
@@ -570,7 +842,64 @@ class Workflows(unittest.TestCase):
 
         def stale_input(document):
             on = document['on'] if 'on' in document else document[True]
-            on['workflow_dispatch']['inputs']['macos'] = {'description': 'x', 'required': True, 'type': 'boolean', 'default': False}
+            on['workflow_dispatch']['inputs']['windows'] = {'description': 'x', 'required': True, 'type': 'boolean', 'default': False}
+
+        def macos_off(document):
+            on = document['on'] if 'on' in document else document[True]
+            on['workflow_dispatch']['inputs']['macos']['default'] = False
+
+        def plan_forgets_macos(document):
+            step = document['jobs']['plan']['steps'][-1]
+            step['run'] = step['run'].replace(' --input macos=${{ inputs.macos }}', '')
+
+        def build_job(document):
+            return document['jobs']['build']
+
+        def no_continue_on_error(document):
+            del build_job(document)['continue-on-error']
+
+        def fixed_timeout(document):
+            build_job(document)['timeout-minutes'] = 60
+
+        def single_rust_step_only(document):
+            steps = build_job(document)['steps']
+            build_job(document)['steps'] = [st for st in steps if str(st.get('if', '')).replace(' ', '') != '${{matrix.rust_targets}}']
+
+        def rust_targets_not_added(document):
+            for st in build_job(document)['steps']:
+                if str(st.get('if', '')).replace(' ', '') == '${{matrix.rust_targets}}':
+                    st['run'] = st['run'].replace('rustup target add --toolchain stable ${{ matrix.rust_targets }}', 'echo skip')
+
+        def rust_step_passes_the_artifact_name(document):
+            for st in build_job(document)['steps']:
+                if str(st.get('if', '')).replace(' ', '') == '${{!matrix.rust_targets}}':
+                    st['run'] = st['run'].replace('--target ${{ matrix.target }}', '')
+
+        def metadata_waits_for_build(document):
+            document['jobs']['metadata']['if'] = "${{ !cancelled() && needs.find.result == 'success' && needs.build.result == 'success' }}"
+
+        def find_forgets_optional(document):
+            for st in document['jobs']['find']['steps']:
+                if 'run' in st:
+                    st['run'] = st['run'].replace(' --optional "$OPTIONAL"', '')
+
+        def install_forgets_optional(document):
+            for st in document['jobs']['metadata']['steps']:
+                if 'tools/dist.py install' in str(st.get('run', '')):
+                    st['run'] = st['run'].replace(' --optional "$OPTIONAL"', '')
+
+        def broad_pattern(document):
+            for st in document['jobs']['metadata']['steps']:
+                if str(st.get('uses', '')).startswith('actions/download-artifact@'):
+                    st['with']['pattern'] = 'dist-${{ needs.plan.outputs.tree }}-*'
+
+        def plan_loses_pattern(document):
+            del document['jobs']['plan']['outputs']['pattern']
+
+        def tested_counts_the_experimental(document):
+            for st in document['jobs']['tested']['steps']:
+                if 'run' in st:
+                    st['run'] = st['run'].replace('tools/dist.py ci-ok', 'echo')
 
         def not_called(document):
             for job in document['jobs'].values():
@@ -622,6 +951,19 @@ class Workflows(unittest.TestCase):
             'cache in dist': ('dist-build.yml', yaml_edit(add_cache), 'キャッシュ'),
             'switch default on': ('release.yml', yaml_edit(switch_on), '既定が切'),
             'stale input': ('release.yml', yaml_edit(stale_input), '使う対象が'),
+            'macos default off': ('release.yml', yaml_edit(macos_off), '入力 macos は既定が入'),
+            'plan forgets macos': ('release.yml', yaml_edit(plan_forgets_macos), 'plan が入力 macos を渡していません'),
+            'experimental build is required': ('dist-build.yml', yaml_edit(no_continue_on_error), 'continue-on-error'),
+            'fixed time limit': ('dist-build.yml', yaml_edit(fixed_timeout), 'timeout-minutes'),
+            'no multi-target rust step': ('dist-build.yml', yaml_edit(single_rust_step_only), 'rustup target add'),
+            'rust targets not added': ('dist-build.yml', yaml_edit(rust_targets_not_added), 'rustup target add'),
+            'rust step passes the artifact name': ('dist-build.yml', yaml_edit(rust_step_passes_the_artifact_name), '--target ${{ matrix.target }}'),
+            'metadata waits for build': ('release.yml', yaml_edit(metadata_waits_for_build), 'build の結果を見ています'),
+            'find forgets optional': ('release.yml', yaml_edit(find_forgets_optional), 'find が'),
+            'install forgets optional': ('release.yml', yaml_edit(install_forgets_optional), 'metadata が'),
+            'broad artifact pattern': ('release.yml', yaml_edit(broad_pattern), 'pattern'),
+            'plan loses the pattern': ('release.yml', yaml_edit(plan_loses_pattern), '出力 pattern'),
+            'main-tested counts the experimental': ('main-tested.yml', yaml_edit(tested_counts_the_experimental), 'ci-ok'),
             'dist-build not called': ('ci.yml', yaml_edit(not_called), '呼んでいません'),
             'condition lost': ('ci.yml', yaml_edit(lose_condition), 'github.base_ref'),
             'broken yaml': ('release.yml', lambda t: t + '\n  bad: [\n', 'YAML を読めません'),

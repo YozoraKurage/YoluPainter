@@ -224,7 +224,7 @@ jobs:
   macos:
     name: macOS のビルドと画面なし試験
     # Apple Silicon の runner。アプリが macOS でビルドできること（タブレットの入力の `pen::mac_tablet` を含む）と、画面を使わない試験が通ることを見る。
-    # GPU・画面の統合試験と、配る物（.app・署名）は対象外。キャッシュの無い回の長さはまだ測っていない（最初の回を見て決め直す）
+    # GPU・画面の統合試験は対象外。配る物（.app と ad-hoc の署名）は、下の dist のジョブ（dist-build.yml）が別の macOS の runner で作る。キャッシュの無い回の長さはまだ測っていない（最初の回を見て決め直す）
     runs-on: macos-14
     timeout-minutes: 120
     steps:
@@ -254,7 +254,8 @@ jobs:
         run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ livelink_files::headless_ --test-threads=1
 
   # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
-  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
+  # 上の試験のジョブと並べて走る。Windows のビルドは待ち時間を延ばさない（macOS のビルドの時間は、GitHub の runner ではまだ測っていない。
+  # 試作の対象なので、落ちても CI の結論は失敗にならず、時間の上限は dist-targets.json の timeout_minutes）。配布（release.yml）が、木が同じでこの実行の全部のジョブ（試作の対象のジョブを除く）が成功していれば、ビルドし直さず受け取る。
   dist-plan:
     name: 配る物のビルドの計画
     if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -266,7 +267,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # 対象は tools/dist-targets.json の「入力が要らない対象」だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
+      # 対象は tools/dist-targets.json の「入力が要らない対象」（Windows）と「入力の既定が入の対象」（macOS の試作）だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
       - id: plan
         run: python3 tools/dist.py plan
 

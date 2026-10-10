@@ -19,6 +19,11 @@ on:
         required: true
         type: boolean
         default: false
+      macos:
+        description: macOS の試作の配布物（署名なしの .app の zip）も作る（切にすると、macOS を載せずに配る）
+        required: true
+        type: boolean
+        default: true
       rebuild:
         description: CI の成果物を受け取らず、必ずビルドし直す
         required: true
@@ -42,13 +47,15 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       targets: ${{ steps.plan.outputs.targets }}
+      experimental: ${{ steps.plan.outputs.experimental }}
+      pattern: ${{ steps.plan.outputs.pattern }}
       tree: ${{ steps.plan.outputs.tree }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
       - id: plan
-        run: python3 tools/dist.py plan --input linux=${{ inputs.linux }}
+        run: python3 tools/dist.py plan --input linux=${{ inputs.linux }} --input macos=${{ inputs.macos }}
 
   find:
     name: CI の成果物を探す
@@ -70,9 +77,10 @@ jobs:
           YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
           TREE: ${{ needs.plan.outputs.tree }}
           TARGETS: ${{ needs.plan.outputs.targets }}
+          OPTIONAL: ${{ needs.plan.outputs.experimental }}
           REBUILD: ${{ inputs.rebuild }}
         run: >
-          python3 tools/dist.py find --repo "$GITHUB_REPOSITORY" --tree "$TREE" --targets "$TARGETS"
+          python3 tools/dist.py find --repo "$GITHUB_REPOSITORY" --tree "$TREE" --targets "$TARGETS" --optional "$OPTIONAL"
           --work "$RUNNER_TEMP/found" --rebuild "$REBUILD"
 
   build:
@@ -88,8 +96,10 @@ jobs:
 
   metadata:
     needs: [plan, find, build]
-    # ビルドを飛ばした（受け取った）ときは build が skipped。ビルドして失敗したときは進めない。
-    if: ${{ !cancelled() && needs.find.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) }}
+    # build の結果は見ない（ビルドを飛ばした = 受け取ったときは skipped、試作の対象（macOS）だけが落ちたときの結果は GitHub の扱いに依る）。
+    # 試作でない対象（Windows）の成果物が欠ければ、下の「集める」（tools/dist.py install）が止める。試作の対象の成果物が無いときは、
+    # 載せずに進み、載らなかった理由を実行の Summary に出す。
+    if: ${{ !cancelled() && needs.find.result == 'success' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -104,13 +114,13 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: ${{ needs.find.outputs.promote != 'true' }}
         with:
-          pattern: dist-${{ needs.plan.outputs.tree }}-*
+          pattern: ${{ needs.plan.outputs.pattern }}
           path: target/received
       # CI から受け取る成果物（探す段が、同じ木・全部のジョブが成功・目録の SHA-256 を確かめた実行のもの）
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: ${{ needs.find.outputs.promote == 'true' }}
         with:
-          pattern: dist-${{ needs.plan.outputs.tree }}-*
+          pattern: ${{ needs.plan.outputs.pattern }}
           path: target/received
           run-id: ${{ needs.find.outputs.run-id }}
           github-token: ${{ github.token }}
@@ -142,9 +152,10 @@ jobs:
         env:
           TREE: ${{ needs.plan.outputs.tree }}
           TARGETS: ${{ needs.plan.outputs.targets }}
+          OPTIONAL: ${{ needs.plan.outputs.experimental }}
           VERSION: ${{ steps.version.outputs.version }}
           YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
-        run: python3 tools/dist.py install --received target/received --tree "$TREE" --targets "$TARGETS" --version "$VERSION" --out target/dist
+        run: python3 tools/dist.py install --received target/received --tree "$TREE" --targets "$TARGETS" --optional "$OPTIONAL" --version "$VERSION" --out target/dist
       - name: 未署名の更新情報を確認
         env:
           VERSION: ${{ steps.version.outputs.version }}

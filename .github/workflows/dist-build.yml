@@ -37,7 +37,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(inputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # 試作の対象（tools/dist-targets.json の experimental。macOS）は、落ちても CI の結論を失敗にしない。ほかの対象は今までどおり必須。
+    # 落ちた試作のジョブは、成果物が無いだけで、配布は残りの対象で進む（tools/dist.py の judge_run・find・install と main-tested.yml が数えない）。
+    continue-on-error: ${{ matrix.experimental || false }}
+    # 時間の上限（分）は、対象の指定（timeout_minutes。macOS は長め）か、無ければ 60
+    timeout-minutes: ${{ matrix.timeout || 60 }}
     env:
       CARGO_TERM_COLOR: always
       PYTHON: python
@@ -54,7 +58,15 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
       - name: Rust を準備
+        if: ${{ !matrix.rust_targets }}
         run: rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
+      # 1 つの配る物を複数の Rust のターゲットで作る対象（macOS の universal の .app は、Apple Silicon と Intel の 2 つをビルドして lipo で 1 つにする）。
+      # 配る物の名前（matrix.target）は Rust のターゲットではないので、--target には渡さず、後から足す。
+      - name: Rust を準備（複数のターゲットで作る対象）
+        if: ${{ matrix.rust_targets }}
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add --toolchain stable ${{ matrix.rust_targets }}
       - run: rustup default stable
       - name: NSIS を準備（インストーラーを作る対象。runner に無ければ Chocolatey で 3.11.0 を入れ、どちらでも 3.11 であることを確かめる）
         if: ${{ matrix.installer }}
@@ -108,6 +120,13 @@ jobs:
       - name: 目録を作る
         id: catalog
         run: python tools/dist.py catalog --target ${{ matrix.target }} --assets target/dist
+      - name: 試作の対象が落ちたことを要約に残す
+        if: ${{ failure() && matrix.experimental }}
+        shell: bash
+        run: |
+          echo "### ${{ matrix.target }}（試作）のビルドが落ちた" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "試作の対象なので、CI の結論は失敗にならず、配布もこの対象を除いて進みます（成果物が無いだけです）。" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.catalog.outputs.name }}
