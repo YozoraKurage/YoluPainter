@@ -393,10 +393,12 @@ pub(crate) fn direction_degrees(d: DVec2) -> f64 {
         return if d.x >= 0.0 { 0.0 } else { 180.0 };
     }
     if d.x == 0.0 {
-        return if d.y > 0.0 { 90.0 } else { -90.0 };
+        // y は 0 でない（上で返している）ので、符号の判定は `> 0.0` と同じ
+        return if d.y.is_sign_positive() { 90.0 } else { -90.0 };
     }
     if d.x.abs() == d.y.abs() {
-        return match (d.x > 0.0, d.y > 0.0) {
+        // ここへ来る時点で x・y とも 0 でも NaN でもないので、符号の判定は `> 0.0` と同じ
+        return match (d.x.is_sign_positive(), d.y.is_sign_positive()) {
             (true, true) => 45.0,
             (false, true) => 135.0,
             (false, false) => -135.0,
@@ -433,6 +435,23 @@ mod tests {
             assert_eq!(direction_degrees(d), want, "{d:?}");
         }
         assert!((direction_degrees(DVec2::new(1.0, 2.0)) - 63.434_948_822_922_01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn kind_and_scope_numbers_round_trip_for_every_value() {
+        for (k, kind) in RulerKind::ALL.into_iter().enumerate() {
+            assert_eq!(usize::from(kind.index()), k, "{kind:?} の番号");
+            assert_eq!(RulerKind::from_index(kind.index()), Some(kind));
+        }
+        assert_eq!(RulerKind::from_index(5), None);
+        for (k, scope) in [RulerScope::All, RulerScope::Group, RulerScope::Selected]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(usize::from(scope.index()), k, "{scope:?} の番号");
+            assert_eq!(RulerScope::from_index(scope.index()), Some(scope));
+        }
+        assert_eq!(RulerScope::from_index(3), None);
     }
 
     #[test]
@@ -511,6 +530,84 @@ mod tests {
         let mut line = Ruler::model(id(7), RulerKind::Line, a, DVec3::X, DVec3::Z);
         line.see_through = true;
         assert!(line.validate().is_err(), "見えない面にも写すのは対称だけ");
+    }
+
+    /// 3D の点は a・b・up のどれが範囲（±1e6）の外でも断られ（有限でも）、a と b の間隔はちょうど最小の値なら通る。
+    #[test]
+    fn model_validation_checks_each_of_a_b_and_up_and_the_exact_minimum_separation() {
+        let line = |a: DVec3, b: DVec3, up: DVec3| Ruler::model(id(7), RulerKind::Line, a, b, up);
+        assert!(line(DVec3::ZERO, DVec3::X, DVec3::Y).validate().is_ok());
+        let far = 2.0 * MAX_MODEL_COORD;
+        let (fx, fy, fz) = (DVec3::X * far, DVec3::Y * far, DVec3::Z * far);
+        assert!(
+            line(fx, DVec3::X, DVec3::Y).validate().is_err(),
+            "a だけ範囲の外"
+        );
+        assert!(
+            line(DVec3::ZERO, fy, DVec3::Y).validate().is_err(),
+            "b だけ範囲の外"
+        );
+        assert!(
+            line(DVec3::ZERO, DVec3::X, fz).validate().is_err(),
+            "up だけ範囲の外"
+        );
+        // 範囲の端ちょうどは通る
+        let edge = MAX_MODEL_COORD;
+        assert!(line(-DVec3::X * edge, DVec3::X * edge, DVec3::Y * edge)
+            .validate()
+            .is_ok());
+        // 間隔: 最小の値ちょうどは通り、それより近いと断られる
+        let exact = DVec3::X * MIN_MODEL_SEPARATION;
+        assert_eq!(
+            DVec3::ZERO.distance(exact),
+            MIN_MODEL_SEPARATION,
+            "試験の前提"
+        );
+        assert!(
+            line(DVec3::ZERO, exact, DVec3::Y).validate().is_ok(),
+            "ちょうど最小の間隔"
+        );
+        assert!(
+            line(DVec3::ZERO, exact * 0.9, DVec3::Y).validate().is_err(),
+            "最小より近い"
+        );
+        // 有限でない値は、a・b・up のどれか 1 つだけでも断られる
+        let nan = DVec3::new(f64::NAN, 0.0, 0.0);
+        let bad = |a: DVec3, b: DVec3, up: DVec3| line(a, b, up).validate().is_err();
+        assert!(bad(nan, DVec3::X, DVec3::Y), "a だけ有限でない");
+        assert!(bad(DVec3::ZERO, nan, DVec3::Y), "b だけ有限でない");
+        assert!(bad(DVec3::ZERO, DVec3::X, nan), "up だけ有限でない");
+    }
+
+    /// 3D の対称定規の最初の線が軸と平行かは、`a` が原点でなくても `b − a` で決まる。軸に直交する成分がちょうど最小の値なら通る。
+    #[test]
+    fn a_3d_symmetry_first_line_is_judged_by_b_minus_a_with_an_exact_minimum() {
+        let a = DVec3::new(1.0, 2.0, 3.0);
+        let sym = |offset: DVec3| Ruler::model(id(7), RulerKind::Symmetry, a, a + offset, DVec3::Y);
+        assert!(sym(DVec3::Y * 3.0).validate().is_err(), "軸と平行");
+        assert!(sym(DVec3::X + DVec3::Y * 3.0).validate().is_ok());
+        let tiny = DVec3::X * MIN_MODEL_SEPARATION + DVec3::Y * 5.0;
+        let ruler = Ruler::model(id(7), RulerKind::Symmetry, DVec3::ZERO, tiny, DVec3::Y);
+        assert_eq!(
+            (tiny - DVec3::Y * tiny.dot(DVec3::Y)).length(),
+            MIN_MODEL_SEPARATION,
+            "試験の前提"
+        );
+        assert!(ruler.validate().is_ok(), "直交する成分がちょうど最小");
+    }
+
+    /// 2D の `a` と `b` の間隔も、最小の値ちょうどは通り、それより近いと断られる。
+    #[test]
+    fn canvas_validation_accepts_the_exact_minimum_separation() {
+        let line = |b: DVec2| Ruler::canvas(id(7), RulerKind::Line, DVec2::ZERO, b);
+        let exact = DVec2::X * MIN_CANVAS_SEPARATION;
+        assert_eq!(
+            DVec2::ZERO.distance(exact),
+            MIN_CANVAS_SEPARATION,
+            "試験の前提"
+        );
+        assert!(line(exact).validate().is_ok(), "ちょうど最小の間隔");
+        assert!(line(exact * 0.9).validate().is_err(), "最小より近い");
     }
 
     #[test]

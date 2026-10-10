@@ -848,6 +848,30 @@ fn a_merge_that_would_give_the_result_more_than_the_limit_is_refused_untouched()
     assert!(t.d.layer(t.c).is_some() && t.d.layer(t.d_).is_some());
 }
 
+/// 結合の結果がちょうど上限（64 個）になるのは通り、1 つ超えると断られる。
+#[test]
+fn a_merge_that_gives_the_result_exactly_the_limit_goes_through() {
+    let half = MAX_RULERS_PER_LAYER / 2;
+    let build = |upper: usize| {
+        let mut t = tree();
+        for (layer, n) in [(t.c, half), (t.d_, upper)] {
+            let list: Vec<Ruler> = (0..n).map(|_| line(&mut t.d)).collect();
+            t.d.set_rulers(layer, list, false).unwrap();
+        }
+        t
+    };
+    let mut t = build(half);
+    t.d.merge_down(t.d_, TOLERANCE).unwrap();
+    let merged: Vec<usize> = t.d.layers().iter().map(|l| l.rulers().len()).collect();
+    assert_eq!(merged.iter().sum::<usize>(), MAX_RULERS_PER_LAYER);
+    assert_eq!(merged.iter().max(), Some(&MAX_RULERS_PER_LAYER));
+
+    let mut t = build(half + 1);
+    let before = state(&t.d);
+    assert!(t.d.merge_down(t.d_, TOLERANCE).is_err());
+    assert_eq!(state(&t.d), before);
+}
+
 #[test]
 fn resizing_moves_only_the_2d_points() {
     let mut t = tree();

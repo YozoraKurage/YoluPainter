@@ -1306,7 +1306,8 @@ fn ruler(r: &mut Reader<'_>) -> Result<[u8; 16]> {
         lines,
         line_symmetry: flags & 8 != 0,
         see_through: flags & 16 != 0,
-        visible: flags & 1 != 0,
+        // 表示の印（ビット 0）は確かめに関係しない（読み込みの値は core の読み手が持つ）
+        visible: true,
         scope,
         snap: flags & 2 != 0,
     };

@@ -1083,6 +1083,111 @@ mod tests {
         assert!(notes.is_empty());
     }
 
+    /// 範囲の外の点は、その側の端（±1e7）へ寄る（負の側は −1e7）。範囲の中の点と、もう一方の点は動かさない。
+    #[test]
+    fn a_point_past_the_range_is_pulled_to_the_nearest_edge_on_its_own_side() {
+        let edge = MAX_CANVAS_COORD;
+        let b = DVec2::new(5.0, -7.0);
+        for (outside, pulled) in [
+            (DVec2::new(-2.0 * edge, 3.0), DVec2::new(-edge, 3.0)),
+            (DVec2::new(4.0, -3.0 * edge), DVec2::new(4.0, -edge)),
+            (DVec2::new(2.0 * edge, 3.0), DVec2::new(edge, 3.0)),
+            (DVec2::new(-2.0 * edge, 3.0 * edge), DVec2::new(-edge, edge)),
+        ] {
+            assert_eq!(fit_canvas_points(outside, b), (pulled, b, true));
+            assert_eq!(fit_canvas_points(b, outside), (b, pulled, true));
+        }
+    }
+
+    /// 近づきすぎた 2 点は、`a` を動かさず、`b` を元の向き（`a`→`b`）に最小の間隔（少し余裕を見て）まで離す。
+    #[test]
+    fn two_points_too_close_are_separated_along_their_own_direction() {
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        let a = DVec2::new(5.0, 3.0);
+        for dir in [DVec2::Y, -DVec2::Y, DVec2::X, -DVec2::X] {
+            let (na, nb, changed) = fit_canvas_points(a, a + dir * 0.001);
+            assert_eq!(na, a);
+            assert!(changed);
+            assert!((nb - (a + dir * step)).length() < 1e-12, "{dir:?}: {nb:?}");
+        }
+    }
+
+    /// 元の向きへ離すと範囲の外へ出る（`a` が端にある）ときは、その逆の向きへ離す。
+    #[test]
+    fn two_points_too_close_at_the_edge_are_separated_the_other_way_back_into_the_range() {
+        let edge = MAX_CANVAS_COORD;
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        for (a, outward) in [
+            (DVec2::new(edge, 5.0), DVec2::X),
+            (DVec2::new(-edge, 5.0), -DVec2::X),
+            (DVec2::new(5.0, edge), DVec2::Y),
+            (DVec2::new(5.0, -edge), -DVec2::Y),
+        ] {
+            let (na, nb, changed) = fit_canvas_points(a, a + outward * 0.001);
+            assert!(changed);
+            assert_eq!(na, a);
+            assert!(
+                (nb - (a - outward * step)).length() < 1e-9,
+                "外へ向かう向きの逆へ離す（{outward:?}）: {nb:?}"
+            );
+        }
+    }
+
+    /// 2 点とも範囲の外で、同じ角へ寄ってしまい、元の向きもその逆も範囲の外へ出るときは、範囲の内へ向かう斜めに離す（`a` は角のまま）。
+    #[test]
+    fn two_points_pulled_onto_the_same_corner_are_separated_diagonally_into_the_range() {
+        let edge = MAX_CANVAS_COORD;
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        let inward = std::f64::consts::FRAC_1_SQRT_2 * step;
+        for (sx, sy) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+            let corner = DVec2::new(sx * edge, sy * edge);
+            // a から b への向きは、x では外へ、y では内へ（その逆は x で内、y で外）。どちらの向きでも角の外へ出る
+            let a = corner * 2.0;
+            let b = a + DVec2::new(sx * 0.5 * edge, -sy * edge);
+            let (na, nb, changed) = fit_canvas_points(a, b);
+            assert!(changed);
+            assert_eq!(na, corner, "a は角のまま（{sx} {sy}）");
+            assert!(
+                (nb - (corner - DVec2::new(sx, sy) * inward)).length() < 1e-9,
+                "範囲の内へ向かう斜めに離す（{sx} {sy}）: {nb:?}"
+            );
+        }
+    }
+
+    /// 確かめに通らない定規（ID が 0 など）は、動かす前のまま残り、直した数に数えられて知らせの文に入る。
+    #[test]
+    fn a_ruler_that_cannot_pass_the_check_stays_as_it_was_and_is_counted_in_the_note() {
+        use crate::rulers::{RulerId, RulerKind};
+        let broken = Ruler::canvas(RulerId(0), RulerKind::Line, DVec2::ZERO, DVec2::X * 10.0);
+        let fine = Ruler::canvas(RulerId(2), RulerKind::Line, DVec2::ZERO, DVec2::X * 10.0);
+        let mut notes = Vec::new();
+        let out = Fit::Shift((1, 1)).rulers(&[broken.clone(), fine], "レイヤー", &mut notes);
+        assert_eq!(out[0], broken, "動かす前のまま");
+        assert_eq!(
+            out[1].place,
+            RulerPlace::Canvas {
+                a: DVec2::ONE,
+                b: DVec2::new(11.0, 1.0)
+            }
+        );
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("定規 1 個"), "{notes:?}");
+
+        // 範囲の外へ出た定規 2 つ（寄せて直す）と通らない定規 1 つ: 3 個
+        let past = |id: u128| {
+            Ruler::canvas(
+                RulerId(id),
+                RulerKind::Line,
+                DVec2::new(9e6, 9e6),
+                DVec2::new(9.5e6, 8e6),
+            )
+        };
+        let mut notes = Vec::new();
+        let _ =
+            Fit::Shift((2_000_000, 0)).rulers(&[past(3), broken, past(4)], "レイヤー", &mut notes);
+        assert!(notes[0].contains("定規 3 個"), "{notes:?}");
+    }
+
     #[test]
     fn skipping_and_filling_tiles_equal_computing_every_pixel() {
         let sizes = [

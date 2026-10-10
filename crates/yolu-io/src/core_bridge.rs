@@ -1127,13 +1127,18 @@ fn write_ruler(w: &mut Out<'_>, r: &Ruler) -> Result<()> {
         RulerPlace::Canvas { .. } => 0,
         RulerPlace::Model { .. } => 1,
     })?;
-    w.byte(
-        u8::from(r.visible)
-            | if r.snap { 2 } else { 0 }
-            | if r.two_points { 4 } else { 0 }
-            | if r.line_symmetry { 8 } else { 0 }
-            | if r.see_through { 16 } else { 0 },
-    )?;
+    // 印のビットは重ならない（読み手の `flags & …` と同じ並び）ので、立っているビットの値を足し合わせる
+    let flags: u8 = [
+        (r.visible, 1u8),
+        (r.snap, 2),
+        (r.two_points, 4),
+        (r.line_symmetry, 8),
+        (r.see_through, 16),
+    ]
+    .into_iter()
+    .filter_map(|(on, bit)| on.then_some(bit))
+    .sum();
+    w.byte(flags)?;
     w.byte(r.scope.index())?;
     w.byte(r.lines)?;
     match r.place {

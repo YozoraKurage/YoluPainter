@@ -401,3 +401,75 @@ impl Document {
         Ok(moved)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use glam::DVec2;
+
+    use super::*;
+
+    fn ruler(id: u128) -> Ruler {
+        Ruler::canvas(RulerId(id), RulerKind::Line, DVec2::ZERO, DVec2::X * 10.0)
+    }
+
+    #[test]
+    fn a_change_costs_a_base_plus_a_share_per_layer_and_ruler() {
+        assert_eq!(change_cost(&[]), 64);
+        let one = [(LayerId(1), vec![ruler(1)], vec![ruler(1), ruler(2)])];
+        assert_eq!(change_cost(&one), 64 + 32 + 3 * RULER_COST);
+        let two = [one[0].clone(), (LayerId(2), Vec::new(), vec![ruler(3)])];
+        assert_eq!(
+            change_cost(&two),
+            64 + (32 + 3 * RULER_COST) + (32 + RULER_COST)
+        );
+    }
+
+    #[test]
+    fn only_ids_held_by_some_layer_are_in_use() {
+        let mut d = Document::new(8, 8).unwrap();
+        let (a, b) = (d.add_layer("a").unwrap(), d.add_layer("b").unwrap());
+        assert!(!d.ruler_id_in_use(RulerId(7)));
+        d.set_rulers(a, vec![ruler(7)], false).unwrap();
+        d.set_rulers(b, vec![ruler(9)], false).unwrap();
+        assert!(d.ruler_id_in_use(RulerId(7)));
+        assert!(d.ruler_id_in_use(RulerId(9)));
+        assert!(!d.ruler_id_in_use(RulerId(8)));
+    }
+
+    /// ID の素の値は乱数だが、種の数え上げは 1 回の発行ごとに 1 つ進む（進まないと、同じ種から作り続ける）。
+    #[test]
+    fn issuing_ids_advances_the_counter_once_per_id() {
+        let mut d = Document::new(8, 8).unwrap();
+        let start = d.id_counter;
+        let first = d.new_ruler_id();
+        assert_eq!(d.id_counter, start + 1);
+        let second = d.new_ruler_id();
+        assert_eq!(d.id_counter, start + 2);
+        assert_ne!(first, second);
+        assert_ne!(first.0, 0);
+
+        // 複製の新しい ID: 定規 1 つにつき 1 つ進み、どれも元と、互いに違う
+        let layer = d.add_layer("x").unwrap();
+        let list: Vec<Ruler> = (1..=3).map(ruler).collect();
+        d.set_rulers(layer, list, false).unwrap();
+        let original = d.layer(layer).unwrap().clone();
+        let mut copies = vec![original.clone(), original.clone()];
+        let before = d.id_counter;
+        d.renew_ruler_ids(&mut copies);
+        assert_eq!(d.id_counter, before + 6, "6 個の定規に 6 回");
+        let mut all: Vec<RulerId> = copies
+            .iter()
+            .flat_map(|l| l.rulers.iter().map(|r| r.id))
+            .collect();
+        assert_eq!(all.len(), 6);
+        assert!(all.iter().all(|id| id.0 != 0 && !d.ruler_id_in_use(*id)));
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 6, "写しの中でも重ならない");
+        assert_eq!(
+            d.layer(layer).unwrap().rulers,
+            original.rulers,
+            "元は変わらない"
+        );
+    }
+}
