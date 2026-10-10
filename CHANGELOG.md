@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+### 日本語
+
+- **定規**: 定規をレイヤー（グループも）に付けて、文書と一緒に保存するようにしました。種類は直線定規・平行線・同心円・パース・**対称**です。対称は、線の本数（2〜16）と線対称・回転対称で決まる定規で、斜めの軸や 6 本以上にも写せます。どの描くレイヤーで見えて効くかは、定規ごとの「表示の範囲」（すべてのレイヤー・同じグループの中・選んでいるときだけ）と、付けたレイヤーの目で決まります。レイヤーの一覧に「定規」のアイコンが出て、押す・`Shift` ＋クリックで表示を全部入り切り・ドラッグで別のレイヤーへ移す・右クリックで表示と範囲と削除ができます。プロパティに「定規」の区分（行ごとの表示・印・削除と、種類ごとの値）を追加しました。
+- **スナップ**: 「定規にスナップ」（`Ctrl+1`、直線定規）と「特殊定規にスナップ」（`Ctrl+2`、平行線・同心円・パース・対称）に分けました。直線定規は、描き始めが定規から画面で 26 点以内のときだけ寄せます。特殊定規は、見えている中で印のある 1 つだけが効き（2D と 3D は別に 1 つずつ）、「スナップする特殊定規の切り替え」（`Ctrl+4`）で回せます。
+- **対称**: ブラシの詳細・オプションバーの対称の欄と、アプリに 1 つの対称の設定を、対称定規に替えました。1 つのテクスチャセットの対称定規は、そのセットの文書に付きます。パスの対称は、入れるときに効いている対称定規の値を写し、斜め・6 本以上の線対称も写せます。
+- **ツール**: 定規のツールのツールプロパティに、線の本数・線対称・角度の刻み・「編集レイヤーに作成」を追加しました。置いた定規は、つまみ（円・四角）で動かします。サブツールに「対称定規」と「回転対称」を追加しました。
+- **互換**: 定規を持つ文書と、斜めの線対称・6 本以上の線対称のパスのある文書は、新しい版の番号（正本の版 35）で保存され、0.5.x までのスタンドアロンと Unity 版では開けません。使っていない文書は今までの版のままです（縦か横の向きの 2 本・4 本の線対称と回転対称のパスも前の版のまま）。なくなったこと: 同じ空間（2D か 3D）の中で、対称とパースなど特殊定規を同時に使うこと（2D と 3D は別に 1 つずつ数えるので、2D の対称と 3D の対称の同時は残ります）、テクスチャセットをまたぐ対称、軸の線だけを隠して対称で描くこと、オプションバーのボタン 1 つでの対称の入り切り（対称定規を置き、「特殊定規にスナップ」で入り切りします）、直線定規へどこから描き始めても寄ること（描き始めが近いときだけ寄せます）、ツールで種類を替えると置いてある定規も替わること（ツールの種類は、これから作る定規のものです）。
+
+### English
+
+- **Rulers**: Rulers now belong to a layer (a group too) and are saved with the document. The kinds are Straight Ruler, Parallel, Concentric, Perspective and **Symmetry**. A symmetry ruler is decided by its number of lines (2 to 16) and line or rotational symmetry, and it can copy across diagonal axes and 6 or more lines. Where a ruler is seen and takes effect depends on its Visible In setting (All Layers, Within the Same Group, Only While Selected) and the eye of the layer it is on. The layer list shows a Ruler icon: click it, `Shift`+click to show or hide all, drag it onto another layer to move the rulers, or right-click for Show, Visible In and Delete. Properties gained a Ruler section (per-row eye, mark and delete, and the values for each kind).
+- **Snap**: split into Snap to Ruler (`Ctrl+1`, straight rulers) and Snap to Special Ruler (`Ctrl+2`, Parallel, Concentric, Perspective and Symmetry). A straight ruler pulls only when the stroke starts within 26 points on the screen of the ruler. Of the special rulers you can see, only the one with the mark takes effect (one for 2D and one for 3D, counted separately), and Switch the Snapping Special Ruler (`Ctrl+4`) cycles through them.
+- **Symmetry**: the Symmetry category of Brush Details, the symmetry control on the options bar and the app-wide symmetry setting are replaced by symmetry rulers. A texture set's symmetry rulers belong to that set's document. A path's symmetry copies the values of the symmetry ruler in effect when you turn it on, and can copy diagonal and 6-or-more-line symmetry too.
+- **Tools**: the Ruler tool's tool properties gained Lines, Line Symmetry, Angle Step and Create on Edit Layer. Move a placed ruler by its handles (circles and squares). Sub tools gained Symmetry Ruler and Rotational Symmetry.
+- **Compatibility**: a document with rulers, or with paths that use a diagonal line symmetry or a line symmetry of 6 or more lines, is saved under a newer version number (canonical version 35) that the standalone app up to 0.5.x and the Unity version cannot open. Documents that use neither keep their version (paths with a 2- or 4-line symmetry along the vertical or horizontal direction, and rotational symmetry, keep it too). What is gone: using two special rulers, such as symmetry and perspective, together in one space (2D or 3D; the two spaces are counted separately, so a 2D and a 3D symmetry can still be used together), symmetry across texture sets, painting with symmetry while only its axis lines are hidden, turning symmetry on and off with one button on the options bar (place a symmetry ruler and turn it on and off with Snap to Special Ruler), a straight ruler pulling a stroke that starts anywhere (it pulls only when the stroke starts near it), and changing the kind in the tool also changing the rulers already placed (the kind in the tool is for the rulers you create next).
+
 ## 0.5.0
 
 ### 日本語

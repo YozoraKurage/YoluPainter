@@ -65,7 +65,7 @@ The same operations work in the 3D view. Points are bound to the model's triangl
 
 ## Symmetry and direction
 
-Turn on "Symmetry" to draw the mirrored path as well. In 2D it uses the current canvas symmetry (the last mode used when it is off), and in 3D the mirror plane of the 3D symmetry. The mirrored side has no points of its own; it is made when drawing. "Reverse" reverses the order of the points, which changes the direction of tips and ribbons.
+Turn on "Symmetry" to draw the mirrored path as well. When you turn it on, the path copies the values of the symmetry ruler in effect for its layer (a 2D path uses a 2D symmetry ruler and a 3D path a 3D symmetry ruler; without a symmetry ruler in effect it does not turn on). Both line symmetry (diagonal, and 6 or more lines too) and rotational symmetry can be copied. A 3D path can copy only a symmetry ruler with 2 lines in line symmetry (a single mirror plane), and cannot turn it on while the model is posed. The path keeps its own values, so moving the ruler later does not change a path already drawn. The mirrored side has no points of its own; it is made when drawing. "Reverse" reverses the order of the points, which changes the direction of tips and ribbons.
 
 ## Add a path to a fill layer
 

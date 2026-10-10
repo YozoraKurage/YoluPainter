@@ -115,4 +115,6 @@ A `.ylp` that uses any of these is saved under a newer version number that the 0
 - Point gradients, an image with anisotropic filtering turned off, 0.5.0 effects, or "Across UV seams" turned off ([GUIDE_FILL.md](GUIDE_FILL.md))
 - A bake priority changed from the default ([GUIDE_3D.md](GUIDE_3D.md))
 
-A document that uses none of them keeps the earlier version. To go back to the Unity version up to 0.4.x, remove the feature and save again. Which version reads how much is in [UNITY.md](UNITY.md) and [YLP_FORMAT.md](../YLP_FORMAT.md) (in Japanese).
+A document that uses none of them keeps the earlier version. To go back to the Unity version up to 0.4.x, remove the feature and save again.
+
+A `.ylp` that uses rulers (on layers or groups, symmetry rulers too) or paths with a diagonal line symmetry or a line symmetry of 6 or more lines ([GUIDE_PAINT.md](GUIDE_PAINT.md)) cannot be opened by the standalone app up to 0.5.x either (it is refused by the version number alone, without touching the file). Turn the path symmetry off, or set it again from a symmetry ruler with 2 or 4 lines in the vertical or horizontal direction, then delete all rulers and save again, and it opens. Which version reads how much is in [UNITY.md](UNITY.md) and [YLP_FORMAT.md](../YLP_FORMAT.md) (in Japanese).

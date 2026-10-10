@@ -20,6 +20,7 @@ Create layers with the buttons below the Layers panel or the Layer menu in the m
 - **Rename**: double-click the name in a row, or choose Rename from the right-click menu.
 - **Reorder**: drag a row. If you press a selected row and drag, you carry all the selected rows. Move Layer Up and Move Layer Down also work.
 - **Visibility**: toggle with the eye icon in a row.
+- **Rulers**: the row of a layer (or group) that has rulers shows a Ruler icon to the right of its thumbnail. How to click, `Shift`+click, drag and right-click it is in “Ruler” in [GUIDE_PAINT.md](GUIDE_PAINT.md).
 - **Delete and duplicate**: Delete Layer, and Duplicate in the right-click menu (`Ctrl+J`). Undo brings them back.
 
 When several layers are selected, you can delete, duplicate, group, merge, toggle visibility, move up or down by one position, drag and lock them all together. Painting still targets a single layer.

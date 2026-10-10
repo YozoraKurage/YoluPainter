@@ -69,6 +69,8 @@ Each move, rotation or scale is one undo step (one pose undo step for bones). A 
 | Pick a color with any tool (eyedropper) | In 2D, press the right button (while it is held, the swatch at the pointer follows it; the color where you release is picked; `Esc` cancels). In 3D, release the right button without moving it (if you move it, the view just orbits). With Polygon Fill, the right button opens the island menu |
 | Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` pressed after starting to drag |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
+| Turn Snap to Special Ruler on or off | `Ctrl+2` |
+| Switch the snapping special ruler | `Ctrl+4` |
 | Cancel the current stroke, shape or ruler drag, selection operation or path point drag | `Esc`. If there is nothing to cancel, it deselects the selected point, and if there is no point, it deselects the selection. An input field, menu or window that is using the key takes it first |
 
 ## View controls and `Alt`
@@ -120,6 +122,8 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Open… | `Ctrl+O` |
 | New Project… | `Ctrl+N` |
 | Snap to Ruler | `Ctrl+1` |
+| Snap to Special Ruler | `Ctrl+2` |
+| Switch the Snapping Special Ruler | `Ctrl+4` |
 | Fit to Screen | `Ctrl+0` |
 | Zoom In | `Ctrl++` / `Ctrl+=` |
 | Zoom Out | `Ctrl+-` |
