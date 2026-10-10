@@ -20,6 +20,7 @@ use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 use crate::view3d::brdf::Curve;
 use crate::view3d::display::{self, EnvKind, Op, SettingsTab, Shading};
 use crate::view3d::render::MeshMapSource;
+use crate::view3d::selection_overlay::Skip;
 use crate::view3d::{gizmo, input, render::View3dRenderer};
 
 /// タブの中身の置き場所。
@@ -146,8 +147,12 @@ impl View3dSlot {
         }
         // 3D の絵が元より縮んでいるとき（縮めた段、予算で決まったか）。メッシュマップの表示ではそのマップの縮め
         let mut reduced: Option<(u32, Option<bool>)> = None;
+        // 選択範囲の重ねが 3D の絵の予算に入らずに出せていないか
+        let mut overlay_skip: Option<Skip> = None;
         let drawn = match (app.view3d.model.clone(), renderer) {
             (Some(model), Some(renderer)) => {
+                // 選択範囲の重ね（縁・クイックマスクの赤・選択ペンの被覆）
+                renderer.set_overlay(crate::view3d::selection_overlay::input(app, ui.ctx()));
                 let size = [
                     (content.width() * ppp).round().max(1.0) as u32,
                     (content.height() * ppp).round().max(1.0) as u32,
@@ -180,6 +185,11 @@ impl View3dSlot {
                     ui.ctx().request_repaint();
                 }
                 let stats = renderer.stats;
+                overlay_skip = stats.overlay_skipped.then_some(if stats.overlay_too_large {
+                    Skip::Size
+                } else {
+                    Skip::Budget
+                });
                 // このフレームに塗ったダブの分の、表示の同期の時間（次のフレームから、枠のうち塗りに使う割合と、溜まった仕事の見込みに使う）
                 app.view3d
                     .input
@@ -361,7 +371,13 @@ impl View3dSlot {
                 }
             }
         }
-        let corner = self.corner(ui, app, content, reduced.filter(|_| drawn));
+        let corner = self.corner(
+            ui,
+            app,
+            content,
+            reduced.filter(|_| drawn),
+            overlay_skip.filter(|_| drawn),
+        );
         if app.view3d.display.settings_open {
             settings_panel(ui, app, content, corner.settings);
         } else if drawn {
@@ -410,6 +426,7 @@ impl View3dSlot {
         app: &mut AppState,
         view: Rect,
         reduced: Option<(u32, Option<bool>)>,
+        overlay_skip: Option<Skip>,
     ) -> Corner {
         if app.view3d.model.is_none() {
             return Corner::default();
@@ -427,6 +444,17 @@ impl View3dSlot {
                     "reduced",
                     "warning",
                     reduced_tooltip(lang, level, by_budget),
+                )
+                .indicator()
+                .color(t::WARNING),
+            );
+        }
+        if let Some(skip) = overlay_skip {
+            items.push(
+                w::CornerIcon::new(
+                    "selection-hidden",
+                    "warning",
+                    overlay_skipped_tooltip(lang, skip),
                 )
                 .indicator()
                 .color(t::WARNING),
@@ -569,6 +597,27 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         crate::gesture::zoom_chord(&i.modifiers, crate::keymap::hold_down(i, "view.pan_hold"))
             .then_some(i.modifiers.alt)
     })
+}
+
+/// 選択範囲の重ねを 3D に出していない印のツールチップ（何が（なぜ）の 1 文。理由は予算か、文書の大きさか）。
+fn overlay_skipped_tooltip(lang: crate::lang::Lang, skip: Skip) -> String {
+    let reason = match skip {
+        Skip::Budget => lang.pick(
+            "GPU のメモリの予算（3D の絵の取り分）に入りません",
+            "it does not fit in the GPU memory budget for 3D pictures",
+        ),
+        Skip::Size => lang.pick(
+            "文書の幅か高さが GPU のテクスチャの上限を超えています",
+            "the document is wider or taller than the GPU texture limit",
+        ),
+    };
+    lang.with_reason(
+        lang.pick(
+            "選択範囲を 3D に出していません",
+            "Selection not shown in 3D",
+        ),
+        reason,
+    )
 }
 
 /// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で

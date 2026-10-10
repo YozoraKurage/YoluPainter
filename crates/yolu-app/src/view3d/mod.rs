@@ -20,6 +20,7 @@ mod quick;
 pub mod received_layers;
 pub mod render;
 pub mod select;
+pub mod selection_overlay;
 pub mod shape_gizmo;
 pub mod tangents;
 pub mod user_layers;

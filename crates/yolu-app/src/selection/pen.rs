@@ -112,8 +112,9 @@ pub struct PenStroke {
     cover: HashMap<TileCoord, Vec<u8>>,
     /// まだ札に反映していないタイル。
     dirty: HashSet<TileCoord>,
-    /// 直近の `sync` で反映したタイル（重ね表示が作り直す範囲の手がかり）。
-    synced: Vec<TileCoord>,
+    /// `sync` で札に反映したタイルのうち、2D の重ね表示がまだ読んでいないもの（重ね表示が作り直す範囲の手がかり。読むと空になる）。
+    /// 2D のキャンバスと 3D ビューが同じフレームに `sync` を呼んでも、先に呼んだほうが反映したタイルを、重ね表示が受け取れる。
+    synced: HashSet<TileCoord>,
     cover_mask: SelectionMask,
     /// クイックマスク: ストロークの始めの選択範囲と、それに被覆を重ねた見た目。
     base: Option<SelectionMask>,
@@ -144,7 +145,7 @@ impl PenStroke {
             budget,
             cover: HashMap::new(),
             dirty: HashSet::new(),
-            synced: Vec::new(),
+            synced: HashSet::new(),
             cover_mask,
             base: overlay_base,
             preview,
@@ -316,7 +317,6 @@ impl PenStroke {
 
     /// 触れたタイルを札に反映する（重ね表示の前に 1 フレームに 1 度）。
     pub fn sync(&mut self) -> Result<(), PenError> {
-        self.synced.clear();
         if self.dirty.is_empty() {
             return Ok(());
         }
@@ -340,7 +340,7 @@ impl PenStroke {
             }
             self.preview = Some(preview.with_tiles(out)?);
         }
-        self.synced = coords;
+        self.synced.extend(coords);
         Ok(())
     }
 
@@ -354,9 +354,9 @@ impl PenStroke {
         self.preview.as_ref()
     }
 
-    /// 直近の `sync` で変わったタイル。
-    pub fn synced_tiles(&self) -> &[TileCoord] {
-        &self.synced
+    /// 2D の重ね表示がまだ読んでいない、変わったタイルを取り出して空にする（何も無ければ None。重ね表示は、None なら中身を見比べる）。
+    pub fn take_synced(&mut self) -> Option<Vec<TileCoord>> {
+        (!self.synced.is_empty()).then(|| self.synced.drain().collect())
     }
 
     /// 終える: 被覆の札と組み合わせ方。

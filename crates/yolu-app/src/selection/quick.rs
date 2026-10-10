@@ -102,7 +102,13 @@ pub fn paint(painter: &Painter, view: &CanvasView, app: &mut AppState) {
         .and_then(|a| a.stroke.preview().cloned())
         .or_else(|| app.doc.selection().cloned())
         .unwrap_or_else(|| SelectionMask::none(&app.doc));
-    let hint = live.map(|a| a.stroke.synced_tiles().to_vec());
+    // 変わったタイルは、ここで受け取って空にする（3D ビューも `sync` を呼ぶので、先に呼んだほうの分も溜まっている）
+    let hint = app
+        .sel
+        .pen
+        .as_mut()
+        .filter(|a| a.quick)
+        .and_then(|a| a.stroke.take_synced());
     app.sel
         .quick_overlay
         .paint(painter, view, &mask, TINT, hint.as_deref(), "quick-mask");

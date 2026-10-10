@@ -35,6 +35,7 @@ use super::model::ViewModel;
 use super::other_sets::OtherSet;
 use super::paint::{ImageTexture, Paint, PaintStats, Slot, UvSource};
 use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
+use super::selection_overlay::{OverlayGpu, OverlayInput};
 use super::tangents::Tangent;
 use super::user_layers::USER_BUDGET_BYTES;
 
@@ -44,9 +45,12 @@ const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// 同じ描き先の sRGB の見え方（lilToon の半透明をリニアで重ねる）。
 const LDR_SRGB: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// 面の描き先の形式（選択範囲の重ねも同じ形式で描く）。
+pub(super) const LDR_FORMAT: wgpu::TextureFormat = LDR;
+pub(super) const HDR_FORMAT: wgpu::TextureFormat = HDR;
 /// 頂点 1 つ: 位置 3・法線 3・UV 2・接線 4（f32）。絵を貼るか・どの絵かは、マテリアルごとの描きで束ね（group 1）が決める。
-const VERTEX_FLOATS: usize = 12;
+pub(super) const VERTEX_FLOATS: usize = 12;
 /// 今のセットでないセットの絵の一辺の上限（縮めて持つ。今のセットは文書の大きさのまま）。
 pub const OTHER_SET_MAX_SIZE: u32 = 1024;
 /// 1 フレームの同期（今のセットとほかのセットの合成・上げ）にかけてよい時間。ほかのセットの絵を新しく作り始める（文書を合成して縮める。
@@ -144,6 +148,13 @@ pub struct View3dStats {
     pub target_bytes: u64,
     /// これまでにブルームを足して描いた回数。
     pub bloom_renders: usize,
+    /// 選択範囲の重ねが今持っている GPU のバイト数（ミップ込み。出していなければ 0）と、これまでに上げたタイルの数、持ちたいが 3D の絵の予算に入らずに
+    /// 出していないか。
+    pub overlay_bytes: u64,
+    pub overlay_tiles: u64,
+    pub overlay_skipped: bool,
+    /// 出していない理由が、文書の大きさが GPU のテクスチャの辺の上限を超えること（`overlay_skipped` のときだけ。そうでなければ予算）。
+    pub overlay_too_large: bool,
 }
 
 impl From<PaintStats> for View3dStats {
@@ -282,6 +293,8 @@ struct SceneKey {
     samples: u32,
     /// 全部のセットの見た目の鍵。
     looks: u64,
+    /// 選択範囲の重ねの鍵（`OverlayGpu::key`）。
+    overlay: u64,
 }
 
 struct Pipelines {
@@ -393,6 +406,11 @@ pub struct View3dRenderer {
     show_others: bool,
     scene_layout: wgpu::BindGroupLayout,
     set_layout: wgpu::BindGroupLayout,
+    /// 選択範囲の重ね（今のセットの面の上に、縁・赤い重ね・選択ペンの被覆を描く）と、3D の絵の予算に入るか（`sync_sets` が決める）。
+    overlay: OverlayGpu,
+    overlay_allowed: bool,
+    /// 重ねを出せない理由が、辺の上限か（`sync_sets` が決める）。
+    overlay_too_large: bool,
     ldr: Pipelines,
     hdr: Pipelines,
     /// 面と背景のパイプラインをサンプル数ごとに作り直すための持ち物。
@@ -1193,6 +1211,7 @@ impl View3dRenderer {
             &blank_look,
             &white_view,
         );
+        let overlay = OverlayGpu::new(device, &rs.queue, &scene_layout);
         View3dRenderer {
             rs: rs.clone(),
             paint,
@@ -1211,6 +1230,9 @@ impl View3dRenderer {
             show_others: true,
             scene_layout,
             set_layout,
+            overlay,
+            overlay_allowed: true,
+            overlay_too_large: false,
             ldr,
             hdr,
             background_pipeline_layout,
@@ -1273,6 +1295,16 @@ impl View3dRenderer {
             software: rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu,
             stats: View3dStats::default(),
         }
+    }
+
+    /// GPU のテクスチャの辺の上限（GPU が決める。文書の幅か高さがこれを超えると、選択範囲の重ねは出せない）。
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.overlay.limit()
+    }
+
+    /// 次に描くときの、選択範囲の重ね（None なら何も重ねない）。
+    pub fn set_overlay(&mut self, input: Option<OverlayInput>) {
+        self.overlay.set_input(input);
     }
 
     /// 塗った絵のバイトの予算を決める（設定の GPU のメモリ・試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、
@@ -1514,6 +1546,13 @@ impl View3dRenderer {
         self.ensure_shadow(display);
         self.ensure_bind();
         self.ensure_set_binds();
+        self.overlay.sync(
+            &mut encoder,
+            self.overlay_allowed,
+            hdr,
+            samples,
+            VERTEX_FLOATS,
+        );
         let key = SceneKey {
             camera: [
                 camera.target.x.to_bits(),
@@ -1538,6 +1577,7 @@ impl View3dRenderer {
             display: display.key_bits(),
             samples,
             looks: self.looks_key(),
+            overlay: self.overlay.key(),
         };
         // 絵が変わればミップも鍵の版も変わるので、描かないフレームは何も積んでいない（出さずに捨てる）
         if resized || self.last_key != Some(key) {
@@ -1597,6 +1637,10 @@ impl View3dRenderer {
             linear_transparent: self.srgb_views,
             lil_pipelines: self.lil_pipelines.len(),
             lil_pipeline_builds: self.lil_pipeline_builds,
+            overlay_bytes: self.overlay.bytes(),
+            overlay_tiles: self.overlay.uploaded_tiles,
+            overlay_skipped: self.overlay.skipped(),
+            overlay_too_large: self.overlay.skipped() && self.overlay_too_large,
             other_scratch_bytes: self
                 .held
                 .iter()
@@ -1694,6 +1738,13 @@ impl View3dRenderer {
             limit,
             self.received_budget,
         ));
+        // 選択範囲の重ね（文書と同じ大きさの R8。ミップ込み）も、ほかのセットより先に入れる。入らなければ重ねを出さない
+        let overlay = self.overlay.wanted_bytes();
+        self.overlay_too_large = self.overlay.too_large();
+        self.overlay_allowed = !self.overlay_too_large && overlay <= remaining;
+        if self.overlay_allowed {
+            remaining -= overlay;
+        }
         let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
         self.unpainted.clear();
         for o in want {
@@ -1787,6 +1838,7 @@ impl View3dRenderer {
     /// 今 GPU に持っている絵（今のセットとほかのセット。lilToon のユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数。
     fn picture_bytes(&self) -> u64 {
         self.paint.bytes()
+            + self.overlay.bytes()
             + self.current_look.bytes()
             + self
                 .held
@@ -3078,6 +3130,14 @@ impl View3dRenderer {
                         }
                     }
                 }
+                // 3. 選択範囲の重ね（今のセットの面だけ。面と同じ深さで読む。半透明を別のパスで重ねるときは、その半透明の下になる）
+                let current: Vec<(u32, u32)> = draws
+                    .iter()
+                    .filter(|(_, _, pick, _)| *pick == Pick::Current)
+                    .map(|(start, end, _, _)| (*start, *end))
+                    .collect();
+                self.overlay
+                    .draw(&mut pass, bind, &mesh.buffer, &current, hdr_path, samples);
             }
         }
         if second_pass {

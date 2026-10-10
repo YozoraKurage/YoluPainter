@@ -94,6 +94,28 @@ pub(crate) fn plate_view(ortho: bool) -> (H, Rect) {
     model_view(vec![plate(0.0, 1.0, (0.0, 1.0))], ortho, 4.5)
 }
 
+/// `plate_view` の文書を、幅 `width`・高さ `N` の文書へ入れ替えた画面（板は文書の全部を覆う。3D の選択範囲の重ねが GPU のテクスチャの
+/// 辺の上限を超えるかを見るのに使う）。
+pub(crate) fn wide_plate_view(width: u32) -> (H, Rect) {
+    let (mut h, _) = plate_view(false);
+    {
+        let state = &mut h.state_mut().state;
+        state.doc = yolu_core::Document::new(width, N).unwrap();
+        let revision = state.view3d.next_revision();
+        let model = ViewModel::new(
+            "試験",
+            vec![plate(0.0, 1.0, (0.0, 1.0))],
+            vec![Some("試験".to_string())],
+            revision,
+        )
+        .unwrap();
+        state.view3d.set_model(model);
+    }
+    h.run();
+    let rect = h.state().view3d_rect().expect("3D のタブを描いた");
+    (h, rect)
+}
+
 /// 板の上の、文書の点（テクセルの単位、左下が原点）の画面の点。
 pub(crate) fn at(h: &H, rect: Rect, c: (f64, f64)) -> Pos2 {
     let s0 = screen_of(h, rect, Vec3::new(-1.0, -1.0, 0.0));
@@ -376,7 +398,7 @@ fn turning_anti_alias_off_makes_every_edge_all_or_nothing_like_the_2d_shapes() {
 // ───────── 見えている面だけ ─────────
 
 /// 立方体の面（`demo_cube` と同じ並び）の 4 つの角。
-fn corners(face: usize) -> [Vec3; 4] {
+pub(crate) fn corners(face: usize) -> [Vec3; 4] {
     let h = 0.5;
     let v = Vec3::new;
     [
@@ -390,7 +412,7 @@ fn corners(face: usize) -> [Vec3; 4] {
 }
 
 /// 面 face のアイランドの中の、縁から margin テクセルより内のテクセル。
-fn island_texels(face: usize, margin: f32) -> Vec<(u32, u32)> {
+pub(crate) fn island_texels(face: usize, margin: f32) -> Vec<(u32, u32)> {
     let u0 = (face % 3) as f32 / 3.0 + 0.02;
     let v0 = (face / 3) as f32 * 0.5 + 0.03;
     let (w, hh) = (1.0 / 3.0 - 0.04, 0.44);
@@ -411,7 +433,7 @@ fn island_texels(face: usize, margin: f32) -> Vec<(u32, u32)> {
 }
 
 /// 面 face がカメラから見えるか（表がカメラを向く）。
-fn face_visible(h: &H, face: usize) -> bool {
+pub(crate) fn face_visible(h: &H, face: usize) -> bool {
     let c = corners(face);
     let center = (c[0] + c[3]) * 0.5;
     let normal = (c[1] - c[0]).cross(c[2] - c[0]).normalize();

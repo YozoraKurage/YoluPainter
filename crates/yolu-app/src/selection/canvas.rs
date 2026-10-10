@@ -706,6 +706,12 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
         pen::sync(app);
     }
     let sel = &mut app.sel;
+    // 変わったタイルは、ここで受け取って空にする（3D ビューも `sync` を呼ぶので、先に呼んだほうの分も溜まっている）
+    let changed = sel
+        .pen
+        .as_mut()
+        .filter(|a| !a.quick)
+        .and_then(|a| a.stroke.take_synced());
     match sel.pen.as_ref().filter(|a| !a.quick) {
         Some(active) => {
             let tint = if active.stroke.erase {
@@ -718,7 +724,7 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
                 view,
                 active.stroke.cover(),
                 tint,
-                Some(active.stroke.synced_tiles()),
+                changed.as_deref(),
                 "select-pen",
             );
         }

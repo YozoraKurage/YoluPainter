@@ -1536,6 +1536,11 @@ impl YoluApp {
         self.renderer3d.as_ref().map(|r| r.paint_budget())
     }
 
+    /// GPU のテクスチャの辺の上限（試験用。wgpu が無ければ None）。
+    pub fn view3d_texture_limit(&self) -> Option<u32> {
+        self.renderer3d.as_ref().map(|r| r.max_texture_dimension())
+    }
+
     /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。
     pub fn view3d_rect(&self) -> Option<Rect> {
         self.view3d.content_rect()
