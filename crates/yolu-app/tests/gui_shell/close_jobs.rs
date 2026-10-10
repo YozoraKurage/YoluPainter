@@ -60,6 +60,8 @@ fn window(lang: Lang) -> H {
             )
         });
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
     assert!(!h.state().state.modified);
     h

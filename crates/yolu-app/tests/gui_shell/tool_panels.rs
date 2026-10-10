@@ -411,9 +411,12 @@ fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_
                 "{what}: 円が欄いっぱい {} / 高さ {free_height} 幅 {free_width}",
                 marker_box.width()
             );
-            // 16 進とアルファの段の下に、行の間（3 点）より大きな空きが無い
+            // 16 進とアルファの段の下に、行の間（3 点）より大きな空きが無く、段が欄からあふれてもいない
             let blank = panel.bottom() - alpha.bottom();
-            assert!(blank <= 3.5, "{what}: 段の下の空き {blank}");
+            assert!(
+                (-0.5..=3.5).contains(&blank),
+                "{what}: 段の下の空き {blank}"
+            );
             // 切り替えのボタンは円と印の輪に掛からない
             let toggle = h
                 .get_by_label(lang.pick("四角と色相の帯", "Square and hue bar"))

@@ -419,6 +419,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
         });
     h.state_mut().state.prefs.ram_mib = 16384;
     h.state_mut().state.prefs.cores = 8;
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(size.x);
     h.run();
     h
 }

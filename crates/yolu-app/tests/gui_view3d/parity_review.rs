@@ -872,6 +872,8 @@ fn app_with_settings(path: &std::path::Path) -> Harness<'static, YoluApp> {
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(1280.0);
     h.run();
     h
 }

@@ -147,21 +147,23 @@ fn is_disabled(h: &Harness<'_, YoluApp>, label: &str) -> bool {
     h.get_by_label(label).accesskit_node().is_disabled()
 }
 
-/// ウィンドウの中に描いた文字（アイコンも含む）。
+/// ウィンドウの中に描いた文字（アイコンも含む）。ウィンドウの地を描いたあとに描いた文字のうち、ウィンドウの中にあるものだけ（後ろのパネルの文字は入れない）。
 fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
-    // （ウィンドウの下に重なって描かれた別のパネルの文字は、切り取りの矩形がウィンドウの外へ広がるので除く）
-    fn collect(shape: &Shape, area: Rect, clip: Rect, out: &mut Vec<String>) {
+    fn collect(shape: &Shape, area: Rect, out: &mut Vec<String>) {
         match shape {
-            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, area, clip, out)),
-            Shape::Text(t) if area.contains(t.pos) && area.expand(1.0).contains_rect(clip) => {
-                out.push(t.galley.job.text.clone())
-            }
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, area, out)),
+            Shape::Text(t) if area.contains(t.pos) => out.push(t.galley.job.text.clone()),
             _ => {}
         }
     }
+    let shapes = &h.output().shapes;
+    let start = shapes
+        .iter()
+        .rposition(|s| matches!(&s.shape, Shape::Rect(r) if r.rect == area))
+        .expect("ウィンドウの地を描いた");
     let mut out = Vec::new();
-    for shape in &h.output().shapes {
-        collect(&shape.shape, area, shape.clip_rect, &mut out);
+    for shape in &shapes[start..] {
+        collect(&shape.shape, area, &mut out);
     }
     out
 }

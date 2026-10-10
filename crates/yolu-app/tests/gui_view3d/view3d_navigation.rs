@@ -555,6 +555,8 @@ fn view_settings_persist_through_the_real_window_and_restart() {
                     app.set_canvas_backend(yolu_app::canvas::gpu::CanvasBackend::Cpu);
                     app
                 });
+            // 中央は 1 つの組（`common::app` と同じ並び）
+            h.state_mut().dock = common::tabbed_center_dock(1100.0);
             h.run();
             h
         };

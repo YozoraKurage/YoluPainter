@@ -122,6 +122,8 @@ fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>
             )
         });
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
     h
 }
@@ -270,6 +272,8 @@ fn without_a_recovery_session_the_reason_says_it_could_not_be_saved() {
                 &cc.egui_ctx,
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
     let s = &h.state().state;

@@ -547,6 +547,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
     let free = &mut h.state_mut().state.prefs.cache_free;
     free.retain(|(f, _)| *f != fixed_cache_folder());
     free.push((fixed_cache_folder(), Some(FIXED_CACHE_FREE)));
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(size.x);
     h.run();
     h
 }

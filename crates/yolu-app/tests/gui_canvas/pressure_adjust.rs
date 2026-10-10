@@ -273,16 +273,42 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert!(h.state().state.pressure.open());
     let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
     assert!(rect.contains_rect(frame_of(&h)));
-    // 枠の外（キャンバスの上）に描いても集めない・キャンバスにも描かない
+    // 枠の外（ウィンドウの外のキャンバスの上）に描いても集めない（そこは普通にキャンバスへ描ける）
     let canvas = canvas_rect(&h);
-    // ウィンドウの下の余白（ボタンの下）。キャンバスの上にウィンドウが重なっている所
-    let (from, to) = (
-        pos2(rect.left() + 60.0, rect.bottom() - 16.0),
-        pos2(rect.left() + 160.0, rect.bottom() - 16.0),
-    );
-    assert!(canvas.contains(from) && canvas.contains(to));
+    let outside = |p: Pos2| canvas.contains(p) && !rect.expand(4.0).contains(p);
+    let (from, to) = [
+        (
+            canvas.center() - vec2(200.0, 0.0),
+            canvas.center() - vec2(100.0, 0.0),
+        ),
+        (
+            canvas.center() + vec2(100.0, 0.0),
+            canvas.center() + vec2(200.0, 0.0),
+        ),
+        (
+            canvas.left_top() + vec2(30.0, 30.0),
+            canvas.left_top() + vec2(130.0, 30.0),
+        ),
+        (
+            canvas.right_bottom() - vec2(130.0, 30.0),
+            canvas.right_bottom() - vec2(30.0, 30.0),
+        ),
+        // ウィンドウの下の余白（ウィンドウが大きく、キャンバスのほぼ全面を覆うとき）
+        {
+            let y = (rect.bottom() + 4.0 + canvas.bottom()) / 2.0;
+            (
+                pos2(canvas.center().x - 100.0, y),
+                pos2(canvas.center().x + 100.0, y),
+            )
+        },
+    ]
+    .into_iter()
+    .find(|&(from, to)| outside(from) && outside(to))
+    .expect("ウィンドウの外にキャンバスの上の点がある");
     pen_stroke(&mut h, from, to, 0.7);
     assert!(h.state().state.pressure.strokes.is_empty());
+    let outside_painted = painted(&pixels(&h));
+    assert!(outside_painted > 0, "ウィンドウの外はキャンバスへ描ける");
 
     // 足りない間は決められない（短い理由が出る）
     let drawn = draw_strokes(&mut h, 1, 0.2, 0.6);
@@ -303,7 +329,11 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert_eq!(h.state().state.prefs.settings.pressure, fitted);
     assert!(h.state().state.pressure.note.is_none());
     assert!(!fitted.is_default());
-    assert_eq!(painted(&before), 0, "枠で描いた線は文書に入らない");
+    assert_eq!(
+        painted(&before),
+        outside_painted,
+        "枠で描いた線は文書に入らない（枠の外に描いた分だけ）"
+    );
     assert_eq!(pixels(&h), before);
 
     // 元に戻す（開いたときへ）・既定（直線へ）

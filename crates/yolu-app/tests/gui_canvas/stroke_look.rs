@@ -365,11 +365,17 @@ fn the_panels_keep_their_look_while_the_pen_paints_in_the_3d_view() {
 #[test]
 fn every_dock_tab_keeps_its_look_while_stroking() {
     let mut h = window();
+    // ナビゲーターは既定の並びでは閉じているので、「ウィンドウ」のメニューと同じ操作で開く
+    h.state_mut()
+        .state
+        .apply(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Navigator)));
+    h.run();
     let canvas = canvas_rect(&h);
     for tab in [
         Tab::Assets,
         Tab::Channels,
         Tab::ColorSets,
+        Tab::Navigator,
         Tab::Log,
         Tab::History,
         Tab::SubTools,

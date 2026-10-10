@@ -915,12 +915,9 @@ fn a_face_seen_edge_on_is_faded_by_the_angle_setting_and_the_setting_off_selects
         h.state_mut().state.view3d.projection.angle_falloff = falloff;
         h.run();
         tool(&mut h, Tool::SelectRect);
-        let cx = rect.center();
-        pull(
-            &mut h,
-            cx - egui::vec2(300.0, 300.0),
-            cx + egui::vec2(300.0, 300.0),
-        );
+        // 3D ビューの全体を囲む（幅は並びで変わるので、rect の内側 4 pt から決める）
+        let inner = rect.shrink(4.0);
+        pull(&mut h, inner.min, inner.max);
         let m = selection(&h);
         let total: u32 = m.map_or(0, |m| {
             (0..N)

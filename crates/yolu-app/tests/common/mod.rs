@@ -109,7 +109,7 @@ pub fn with_render_state_cpu_canvas(
 
 /// 幅 `width` のウィンドウの既定の並びで、中央の 3D ビューとキャンバスを 1 つの組（キャンバス、3D ビューの順のタブ。キャンバスが前）にした並び。ほかの組・割合は既定のまま。
 /// 3D ビューとキャンバスを同時に出すと、どちらも表示域が半分になる。描く・3D を見る試験の座標は、片方だけが広く出ている前提で書いてあるので、
-/// 試験の窓（`app`）はこの並びで立ち上げる。
+/// 試験のウィンドウ（`app`）はこの並びで立ち上げる。
 pub fn tabbed_center_dock(width: f32) -> egui_dock::DockState<yolu_app::Tab> {
     use egui_dock::{TabDestination, TabInsert};
     use yolu_app::Tab;

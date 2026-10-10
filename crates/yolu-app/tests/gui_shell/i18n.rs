@@ -556,6 +556,8 @@ fn english_app_sized(width: f32, height: f32, lang: Lang) -> Harness<'static, Yo
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(width);
     h.run();
     h
 }
@@ -869,6 +871,8 @@ fn app_with_system_lang(settings: &std::path::Path, system: Lang) -> Harness<'st
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(1280.0);
     h.run();
     h
 }
@@ -1828,7 +1832,7 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu
     // 箱の値、テクスチャセットの名前。（レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
     const KNOWN_JA: [&str; 0] = [];
     // 英語のマテリアルのパネルは、最小のウィンドウ（右の列が約 231 点）で「Rendering Mode」の名前と値の「Opaque」が 1 行に収まらない。
-    // 名前を全部出し、値を詰める（名前を詰めると何の欄か分からなくなる）
+    // 名前は行の 6 割まで広げて値の箱を残す（`look/panel.rs` の `choice`）が、それでも入らないので、名前も値も「…」で詰まる。
     const KNOWN_EN: [&str; 2] = ["Opaque", "Rendering Mode"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {

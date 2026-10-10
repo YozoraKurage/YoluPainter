@@ -173,10 +173,8 @@ fn the_bar_goes_above_or_inside_when_there_is_no_room_below() {
     let bar = bar_rect(&h);
     let canvas = canvas_rect(&h);
     assert!(canvas.contains_rect(bar));
-    // 表示域が文書より縦に長いときは文書の下端、短いときは表示域の下端の内側
-    let limit = screen_bounds(&h).bottom().min(canvas.bottom());
     assert!(
-        bar.bottom() > limit - 20.0,
+        bar.bottom() > canvas.bottom() - 20.0,
         "表示域の下の内側 {bar:?} {canvas:?}"
     );
     // 表示域の外へ出た選択範囲には、帯を出さない

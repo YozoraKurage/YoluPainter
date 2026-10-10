@@ -19,6 +19,7 @@ mod clone_parity;
 mod color_adjust;
 mod color_adjust_app;
 mod curve_editor;
+mod default_layout;
 mod distribute;
 mod drafting;
 mod effects_ui;

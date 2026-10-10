@@ -35,6 +35,8 @@ fn app_in(width: f32, height: f32, lang: Lang) -> H {
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(width);
     h.run();
     h
 }
