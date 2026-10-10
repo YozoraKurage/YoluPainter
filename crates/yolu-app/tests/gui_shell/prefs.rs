@@ -1812,6 +1812,70 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     assert_eq!(s.disk_cache_folder, Some(fixed_cache_folder()));
 }
 
+/// 表示の区分の「ベイクで RT コアを使う」: 既定は入で、切るとベイクの GPU のデバイスへ届き、設定のファイルは切のときだけ行を持ち、次の起動も切。
+/// 欄の無い古い設定のファイルは入として読む。
+#[test]
+fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_restart_when_off() {
+    let dir = settings_dir("bake-rt-cores");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    // 欄の無い古い設定のファイル
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "language=ja\nbackups=3\n").unwrap();
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    // 環境変数が切のあいだは、設定が入でもデバイスは切（行は押せない）
+    let allowed = yolu_gpu::GpuBakeOptions::default().ray_query;
+    assert!(h.state().state.settings().bake_ray_query, "欄が無ければ入");
+    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    open_settings(&mut h);
+    choose(&mut h, Category::Display);
+    let _ = h.get_by_label("ベイクで RT コアを使う");
+    if !allowed {
+        h.get_by_label("ベイクで RT コアを使う").click();
+        h.run();
+        assert!(
+            h.state().state.settings().bake_ray_query,
+            "環境変数で切っているとき、行は押せない"
+        );
+        return;
+    }
+    // 切る
+    h.get_by_label("ベイクで RT コアを使う").click();
+    h.run();
+    h.run();
+    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(
+        !h.state().state.bake.ray_query_enabled(),
+        "ベイクの GPU のデバイスに届く"
+    );
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "bake_ray_query=off"),
+        "{written}"
+    );
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("Use RT cores for baking");
+    // 入れ直すと行が消える
+    h.get_by_label("Use RT cores for baking").click();
+    h.run();
+    h.run();
+    assert!(h.state().state.settings().bake_ray_query);
+    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("bake_ray_query"));
+    // 切って終わると、次の起動も切（デバイスの設定も切）
+    h.get_by_label("Use RT cores for baking").click();
+    h.run();
+    h.run();
+    drop(h);
+    let h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(
+        !h.state().state.bake.ray_query_enabled(),
+        "起動のとき、設定の値がデバイスの設定に入る"
+    );
+}
+
 /// 垂直同期（表示の区分の「表示の合成」の下）: 既定は切（待たない = フレームの間隔に下限をかける）。入れると次の起動から効くので「再起動で反映」が出て、
 /// 起動のときの値に戻すと消える。設定のファイルは入のときだけ行を持つ。起動のとき読んだ値でフレームの間隔の下限が決まる。日英の絵。
 #[test]

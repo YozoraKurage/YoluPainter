@@ -36,7 +36,7 @@ pub enum Category {
     Pen,
     /// キー・マウス・パイメニューの割り当ての表（`shortcuts::editor`）。
     Shortcuts,
-    /// 画面の出し方（表示の合成・垂直同期・GPU のメモリ）。
+    /// 画面の出し方（表示の合成・垂直同期・GPU のメモリ）と、ベイクで RT コアを使うか。
     Display,
     /// メモリの予算（取り消し履歴・レイヤーのメモリ・1 回の操作・最小の取り消し段数）と、あふれた分を逃がすディスクキャッシュ。
     Memory,
@@ -102,7 +102,12 @@ impl Category {
                 v
             }
             Category::Shortcuts => Vec::new(),
-            Category::Display => vec![Item::Compositing, Item::Vsync, Item::GpuMemory],
+            Category::Display => vec![
+                Item::Compositing,
+                Item::Vsync,
+                Item::GpuMemory,
+                Item::BakeRayQuery,
+            ],
             Category::Memory => {
                 let mut v: Vec<Item> = BudgetKind::ALL.into_iter().map(Item::Budget).collect();
                 v.push(Item::MinUndoSteps);
@@ -137,6 +142,7 @@ pub enum Item {
     Compositing,
     Vsync,
     GpuMemory,
+    BakeRayQuery,
     Budget(BudgetKind),
     MinUndoSteps,
     CpuThreads,
@@ -157,7 +163,7 @@ pub enum Item {
 
 impl Item {
     /// 項目の全部（探す欄・区分の表・試験が全部を数える）。足したら `rank` の `match` も直す（コンパイルが教える）。
-    pub const ALL: [Item; 25] = [
+    pub const ALL: [Item; 26] = [
         Item::Language,
         Item::PenInput,
         Item::TabletPressure,
@@ -183,6 +189,7 @@ impl Item {
         Item::ExternalOps,
         Item::UpdateStartup,
         Item::UpdateBeta,
+        Item::BakeRayQuery,
     ];
 
     /// `ALL` の中の番号。項目を足して `ALL` に入れ忘れたときに、試験が見つける（`match` が全部の項目を数えるので、足すとコンパイルが通らない）。
@@ -213,6 +220,7 @@ impl Item {
             Item::ExternalOps => 22,
             Item::UpdateStartup => 23,
             Item::UpdateBeta => 24,
+            Item::BakeRayQuery => 25,
         }
     }
 
@@ -221,7 +229,9 @@ impl Item {
         match self {
             Item::Language => Category::General,
             Item::PenInput | Item::TabletPressure | Item::PressureAdjust => Category::Pen,
-            Item::Compositing | Item::Vsync | Item::GpuMemory => Category::Display,
+            Item::Compositing | Item::Vsync | Item::GpuMemory | Item::BakeRayQuery => {
+                Category::Display
+            }
             Item::Budget(_) | Item::MinUndoSteps | Item::DiskCache => Category::Memory,
             Item::CpuThreads => Category::Processing,
             Item::OrbitCenter | Item::ZoomCenter | Item::AxisOrtho | Item::UvWireframe => {
@@ -249,6 +259,7 @@ impl Item {
             Item::Compositing => vec![name(lang, "compositing")],
             Item::Vsync => vec![name(lang, "vsync")],
             Item::GpuMemory => vec![name(lang, "gpu_memory"), lang.pick("合計", "Total")],
+            Item::BakeRayQuery => vec![name(lang, "bake_ray_query")],
             Item::Budget(kind) => vec![name(lang, kind.key())],
             Item::MinUndoSteps => vec![name(lang, "min_undo_steps")],
             Item::CpuThreads => vec![name(lang, "cpu_threads")],
@@ -592,6 +603,28 @@ pub(super) fn draw_item(
             if next != s.tablet_pressure {
                 out.requests
                     .push(Request::Do(PrefsAction::Set(Pref::TabletPressure(next))));
+            }
+        }
+        Item::BakeRayQuery => {
+            // 環境変数で切っているあいだは、設定を入れても効かない。押せなくして理由を出す
+            let allowed = yolu_gpu::ray_query_env_allows();
+            let next = w::toggle(
+                ui,
+                rows.row(t::ROW_HEIGHT, GAP),
+                id.with("bake-ray-query"),
+                crate::settings::setting_name(lang, "bake_ray_query"),
+                s.bake_ray_query && allowed,
+                (!allowed).then(|| {
+                    lang.pick(
+                        "環境変数で切っています",
+                        "Turned off by an environment variable",
+                    )
+                }),
+                allowed,
+            );
+            if allowed && next != s.bake_ray_query {
+                out.requests
+                    .push(Request::Do(PrefsAction::Set(Pref::BakeRayQuery(next))));
             }
         }
         Item::PressureAdjust => {

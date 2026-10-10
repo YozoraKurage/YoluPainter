@@ -1070,6 +1070,7 @@ fn stats(method: GpuBakeMethod) -> yolu_gpu::GpuBakeStats {
         input_bytes: 0,
         band_bytes: 0,
         ray_query_note: None,
+        ray_query_why: None,
     }
 }
 
@@ -1385,6 +1386,113 @@ fn canceling_a_cpu_bake_while_it_runs_leaves_the_record_of_the_maps_that_stay() 
     s.wait_bake();
     assert!(s.message.contains("取り消しました"), "{}", s.message);
     assert_unchanged(&before, &s);
+}
+
+#[test]
+fn the_ray_query_setting_reaches_the_device_and_a_change_forgets_the_gpu_check() {
+    let s = AppState::new(64, 64);
+    // 既定は入（環境変数が切にしているときは、設定が入でも切のまま）
+    let allowed = yolu_gpu::GpuBakeOptions::default().ray_query;
+    assert!(s.prefs.settings.bake_ray_query);
+    s.bake.follow_ray_query(s.prefs.settings.bake_ray_query);
+    assert_eq!(s.bake.ray_query_enabled(), allowed);
+    s.bake.fix_gpu_probe(false, Err("確かめ済み".into()));
+    // 同じ値なら確認の結果を捨てない
+    s.bake.follow_ray_query(allowed);
+    assert!(matches!(s.bake.gpu_probe(), GpuProbe::Done { .. }));
+    // 切ると、デバイスの設定が切になり、確認の結果を捨てる（RT コアの有無が変わるので確かめ直す）
+    s.bake.follow_ray_query(false);
+    assert!(!s.bake.ray_query_enabled());
+    if allowed {
+        assert!(matches!(s.bake.gpu_probe(), GpuProbe::Unknown));
+    }
+    // 入れ直すと、環境変数が許すときだけ入になる
+    s.bake.follow_ray_query(true);
+    assert_eq!(s.bake.ray_query_enabled(), allowed);
+}
+
+#[test]
+fn the_reason_the_rt_cores_were_not_used_is_a_short_sentence_in_the_language_without_numbers() {
+    use yolu_gpu::RayQueryWhy::*;
+    let all = [
+        Disabled,
+        NotSupported,
+        NotApplicable,
+        Device,
+        Shader,
+        Accel,
+        CheckRun,
+        CheckFailed,
+        RunFailed,
+    ];
+    for why in all {
+        let mut st = stats(GpuBakeMethod::Compute);
+        st.ray_query_why = Some(why);
+        // 詳しい文（数を含む）は、あっても画面に出さない
+        st.ray_query_note = Some("compute（ray query を使わない理由: レイ 2048 本、食い違い 3、最大差 2.47e-6、許す数 10）".into());
+        let run = BakeRun {
+            requested: BakeBackend::Auto,
+            gpu: Some((adapter(false, true), st)),
+            fallback_kind: None,
+            fallback_reason: None,
+        };
+        let (ja, en) = (run_line(Lang::Ja, &run), run_line(Lang::En, &run));
+        for line in [&ja, &en] {
+            assert!(!line.warn, "RT コアを使わなかっただけでは注意にしない");
+            assert!(
+                line.text.contains("compute") && !line.text.contains("ray query"),
+                "{}",
+                line.text
+            );
+        }
+        let (dj, de) = (ja.detail.unwrap(), en.detail.unwrap());
+        assert!(
+            has_japanese(&dj) && !has_japanese(&de),
+            "{why:?}: {dj} / {de}"
+        );
+        for d in [&dj, &de] {
+            assert!(
+                !d.chars().any(|c| c.is_ascii_digit()),
+                "{why:?}: 開発用の数を出さない: {d}"
+            );
+            assert!(!d.contains("2048") && !d.contains("e-6"), "{d}");
+        }
+    }
+    // 設定で切ると環境変数で切るは、別の文
+    let off = |env| ray_query_why_text(Lang::En, Disabled, env);
+    assert!(off(true).contains("environment variable") && off(false).contains("settings"));
+    // 使えたときは何も出さない。RT コアが関わらない（理由なし）ときも出さない
+    let used = BakeRun {
+        requested: BakeBackend::Auto,
+        gpu: Some((adapter(false, true), stats(GpuBakeMethod::RayQuery))),
+        fallback_kind: None,
+        fallback_reason: None,
+    };
+    let line = run_line(Lang::Ja, &used);
+    assert!(line.text.contains("ray query") && line.detail.is_none());
+    let none = BakeRun {
+        gpu: Some((adapter(false, false), stats(GpuBakeMethod::Compute))),
+        ..used
+    };
+    assert_eq!(run_line(Lang::Ja, &none).detail, None);
+}
+
+#[test]
+fn a_stale_gpu_check_is_not_written_back_after_the_setting_changed() {
+    let s = AppState::new(64, 64);
+    // 確認の途中の世代が古くなったら（設定が変わったら）、その結果を捨てる: 世代は、値が変わるたびに進む
+    let before = s.bake.probe_generation_for_test();
+    s.bake.follow_ray_query(true);
+    assert_eq!(
+        s.bake.probe_generation_for_test(),
+        before,
+        "同じ値では進めない"
+    );
+    let allowed = yolu_gpu::ray_query_env_allows();
+    s.bake.follow_ray_query(false);
+    if allowed {
+        assert_eq!(s.bake.probe_generation_for_test(), before + 1);
+    }
 }
 
 #[test]

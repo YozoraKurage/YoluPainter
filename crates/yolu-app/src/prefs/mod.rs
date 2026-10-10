@@ -70,6 +70,8 @@ pub enum Pref {
     ExternalOpsPort(u16),
     /// macOS のタブレットの筆圧・傾き・消しゴムの端を読むか（「ペン」の節。macOS だけに出る）。
     TabletPressure(bool),
+    /// ベイクで GPU の RT コア（ray query）を使うか（「表示」の節。切ると compute）。
+    BakeRayQuery(bool),
     /// Windows のペンを Windows Ink と WinTab のどちらで読むか（「ペン」の節。Windows だけに出る）。
     PenInput(PenApi),
     Budget(BudgetKind, Budget),
@@ -263,6 +265,7 @@ impl AppState {
         if let BackupKeep::Count(n) = settings.backups {
             self.prefs.remembered_backups = n;
         }
+        self.bake.follow_ray_query(settings.bake_ray_query);
         self.prefs.settings = settings;
         self.prefs.managed = true;
     }
@@ -306,6 +309,10 @@ impl AppState {
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
                 Pref::ExternalOps(v) => self.prefs.settings.external_ops = v,
                 Pref::TabletPressure(v) => self.prefs.settings.tablet_pressure = v,
+                Pref::BakeRayQuery(v) => {
+                    self.prefs.settings.bake_ray_query = v;
+                    self.bake.follow_ray_query(v);
+                }
                 Pref::PenInput(api) => self.prefs.settings.pen_input = api,
                 Pref::ExternalOpsPort(port) => {
                     if yolu_mcp::valid_port(port) {

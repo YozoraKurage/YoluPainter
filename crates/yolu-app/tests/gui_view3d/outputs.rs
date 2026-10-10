@@ -684,6 +684,7 @@ fn the_bake_window_switches_where_to_bake_and_shows_the_adapter_or_why_it_fell_b
                 input_bytes: 0,
                 band_bytes: 0,
                 ray_query_note: None,
+                ray_query_why: None,
             },
         )),
         fallback_kind: None,

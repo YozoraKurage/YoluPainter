@@ -29,10 +29,11 @@ pub mod uvmap;
 pub mod window;
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
 
-use yolu_gpu::{bake_mesh_maps, GpuBakeSlot};
+use yolu_gpu::{bake_mesh_maps, GpuBakeSlot, RayQueryWhy};
 pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMethod};
 
 pub use maps::MeshMapSet;
@@ -162,6 +163,8 @@ pub struct BakeState {
     /// GPU のデバイスとシェーダー（焼くたびに作り直さない。別のスレッドから共有する）。
     gpu: Arc<GpuBakeSlot>,
     probe: Arc<Mutex<GpuProbe>>,
+    /// GPU の確認の世代（確認に影響する設定が変わるたびに進む。古い世代の結果は書き戻さない）。
+    probe_generation: Arc<AtomicU64>,
     job: Option<Job>,
     queue: VecDeque<u32>,
     total: usize,
@@ -218,8 +221,36 @@ impl BakeState {
         self.probe.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
+    /// 設定の「ベイクで RT コアを使う」を、GPU のデバイスへ反映する（毎フレーム呼んでよい）。ray query はデバイスの作り方が変わるので、値が
+    /// 変わったら次の確認・ベイクでデバイスを作り直し、GPU の確認の結果を捨てる。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が切なら、設定は効かない。
+    pub fn follow_ray_query(&self, setting: bool) {
+        let on = setting && yolu_gpu::ray_query_env_allows();
+        if self.gpu.ray_query() != on {
+            self.gpu.set_ray_query(on);
+            if let Ok(mut p) = self.probe.lock() {
+                // 世代を進める: 確認の途中のスレッドが、古い設定での結果を書き戻さない
+                self.probe_generation.fetch_add(1, Ordering::Relaxed);
+                *p = GpuProbe::Unknown;
+            }
+        }
+    }
+
+    /// 試験用: GPU の確認の世代。
+    #[doc(hidden)]
+    pub fn probe_generation_for_test(&self) -> u64 {
+        self.probe_generation.load(Ordering::Relaxed)
+    }
+
+    /// 試験用: GPU のデバイスを ray query つきで作る設定になっているか。
+    #[doc(hidden)]
+    pub fn ray_query_enabled(&self) -> bool {
+        self.gpu.ray_query()
+    }
+
     /// 選んだ場所で GPU を使うはずなのに、確かめていなければ別のスレッドで確かめ始める（毎フレーム呼んでよい）。
-    pub fn ensure_gpu_probe(&self) {
+    /// `ray_query` は設定の「ベイクで RT コアを使う」。
+    pub fn ensure_gpu_probe(&self, ray_query: bool) {
+        self.follow_ray_query(ray_query);
         let allow_software = match self.backend {
             BakeBackend::Cpu => return,
             BakeBackend::Auto => false,
@@ -237,15 +268,22 @@ impl BakeState {
         }
         *state = GpuProbe::Probing { allow_software };
         let (slot, shared) = (self.gpu.clone(), self.probe.clone());
+        let (generations, generation) = (
+            self.probe_generation.clone(),
+            self.probe_generation.load(Ordering::Relaxed),
+        );
         let spawned = std::thread::Builder::new()
             .name("yolu-gpu-probe".into())
             .spawn(move || {
                 let result = slot.probe(allow_software);
                 if let Ok(mut p) = shared.lock() {
-                    *p = GpuProbe::Done {
-                        allow_software,
-                        result,
-                    };
+                    // 確かめている間に設定が変わっていたら、古い設定の結果は捨てる（次のフレームが確かめ直す）
+                    if generations.load(Ordering::Relaxed) == generation {
+                        *p = GpuProbe::Done {
+                            allow_software,
+                            result,
+                        };
+                    }
                 }
             });
         if let Err(e) = spawned {
@@ -466,6 +504,63 @@ pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
     }
 }
 
+/// RT コアを使わなかった理由の短い文（焼く場所の行のツールチップ。理由の種類から言語ごとに作る。自己照合の数などの詳しい文は出さない）。
+/// `env_off` は環境変数で切っていること（`RayQueryWhy::Disabled` の言い分けに使う）。
+pub fn ray_query_why_text(lang: Lang, why: RayQueryWhy, env_off: bool) -> String {
+    let (head, reason) = match why {
+        RayQueryWhy::Disabled if env_off => (
+            lang.pick("RT コアは使いません", "RT cores are off"),
+            lang.pick(
+                "環境変数で切っています",
+                "turned off by an environment variable",
+            ),
+        ),
+        RayQueryWhy::Disabled => (
+            lang.pick("RT コアは使いません", "RT cores are off"),
+            lang.pick("設定で切っています", "turned off in the settings"),
+        ),
+        other => (
+            lang.pick("RT コアを使えませんでした", "RT cores were not used"),
+            match other {
+                RayQueryWhy::NotSupported => {
+                    lang.pick("この GPU は対応していません", "not supported by this GPU")
+                }
+                RayQueryWhy::NotApplicable => {
+                    lang.pick("このベイクは対象外です", "not available for this bake")
+                }
+                RayQueryWhy::Device => lang.pick(
+                    "デバイスを作れませんでした",
+                    "the GPU device could not be created",
+                ),
+                RayQueryWhy::Shader => lang.pick(
+                    "シェーダーを作れませんでした",
+                    "the shader could not be built",
+                ),
+                RayQueryWhy::Accel => lang.pick(
+                    "加速構造を作れませんでした",
+                    "the acceleration structure could not be built",
+                ),
+                RayQueryWhy::CheckRun => {
+                    lang.pick("照合を回せませんでした", "the check could not be run")
+                }
+                RayQueryWhy::CheckFailed => {
+                    lang.pick("照合に通りませんでした", "it did not pass the check")
+                }
+                RayQueryWhy::RunFailed => lang.pick(
+                    "焼いている途中で失敗したので止めました",
+                    "it failed while baking, so it was turned off",
+                ),
+                RayQueryWhy::Disabled => unreachable!("上で扱った"),
+            },
+        ),
+    };
+    paren_text(lang, head, reason)
+}
+/// 「頭（理由）」。日本語は全角のかっこで詰め、英語は半角で前に空白。
+fn paren_text(lang: Lang, head: &str, inner: &str) -> String {
+    format!("{head}{}", paren(lang, inner))
+}
+
 /// 焼く場所の一行（ウィンドウの状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceLine {
@@ -528,7 +623,10 @@ pub fn run_line(lang: Lang, run: &BakeRun) -> PlaceLine {
                     paren(lang, &format!("{software}{method}"))
                 ),
                 warn: false,
-                detail: None,
+                // RT コアを使わなかった理由の種類（使えたときは何も出さない。自己照合の数は `ray_query_note` とログだけ）
+                detail: stats
+                    .ray_query_why
+                    .map(|why| ray_query_why_text(lang, why, !yolu_gpu::ray_query_env_allows())),
             }
         }
         None => match run.fallback_kind {
@@ -1111,11 +1209,13 @@ impl AppState {
                 if self.bake.window.is_none() {
                     self.bake.window = Some(window::BakeWindow::default());
                 }
-                self.bake.ensure_gpu_probe();
+                self.bake
+                    .ensure_gpu_probe(self.prefs.settings.bake_ray_query);
             }
             BakeAction::Backend(backend) => {
                 self.bake.backend = backend;
-                self.bake.ensure_gpu_probe();
+                self.bake
+                    .ensure_gpu_probe(self.prefs.settings.bake_ray_query);
             }
             BakeAction::CloseWindow => {
                 self.bake.window = None;
@@ -1254,6 +1354,8 @@ impl AppState {
         let park = std::mem::take(&mut self.bake.park_next);
         let park_mid = std::mem::take(&mut self.bake.park_mid_bake);
         let backend = self.bake.backend;
+        self.bake
+            .follow_ray_query(self.prefs.settings.bake_ray_query);
         let gpu = self.bake.gpu.clone();
         let worker = Worker::spawn("yolu-bake", move |tx, cancel| {
             let flag = cancel.flag();

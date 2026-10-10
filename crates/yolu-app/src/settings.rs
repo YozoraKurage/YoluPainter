@@ -256,6 +256,9 @@ pub struct Settings {
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
     pub gpu_memory: GpuMemory,
+    /// ベイクで GPU の RT コア（ray query）を使うか（既定は入。使えない GPU や、自己照合に通らないときは compute に戻る。切ると常に compute。
+    /// ドライバーが固まる PC で切る。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY=0` でも既定が切になる）。画面の描画の方式は変えない。
+    pub bake_ray_query: bool,
     /// メモリの予算（レイヤーのメモリ＋取り消し履歴）を超えた分のタイルの中身を、ディスクへ逃がすか（`yolu_core::tile_cache`）。既定は入。
     pub disk_cache: bool,
     /// ディスクキャッシュのファイルを置くフォルダ（None は OS の一時フォルダ）。
@@ -297,6 +300,7 @@ impl Default for Settings {
             external_ops_port: yolu_mcp::DEFAULT_PORT,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
+            bake_ray_query: true,
             disk_cache: true,
             disk_cache_folder: None,
             disk_cache_limit: DiskLimit::Auto,
@@ -507,6 +511,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "library_folder" => lang.pick("ライブラリの場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
+        "bake_ray_query" => lang.pick("ベイクで RT コアを使う", "Use RT cores for baking"),
         "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
         "external_ops_port" => lang.pick("ポート番号", "Port"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
@@ -730,6 +735,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(v) => settings.gpu_memory = v,
                 None => invalid("gpu_memory"),
             },
+            // 切ったときだけ書く行（既定は入）。環境変数と同じく 0・false・off・no が切で、ほかの値は入のまま
+            "bake_ray_query" => settings.bake_ray_query = !yolu_gpu::is_off_value(value),
             // 切ったときだけ書く行（既定は入）。読めない値は入のまま
             "disk_cache" => settings.disk_cache = value != "off",
             "disk_cache_folder" => match parse_folder(value) {
@@ -932,6 +939,9 @@ fn render(settings: &Settings) -> String {
     }
     if settings.pen_input != default.pen_input {
         text += &format!("pen_input={}\n", settings.pen_input.key());
+    }
+    if !settings.bake_ray_query {
+        text += "bake_ray_query=off\n";
     }
     settings.navigation.write(&mut text);
     write_post(&mut text, &settings.view3d_post);
@@ -1139,6 +1149,7 @@ mod tests {
             tablet_pressure: false,
             pen_input: PenApi::WinTab,
             gpu_memory: GpuMemory::Mib(1536),
+            bake_ray_query: false,
             disk_cache: false,
             disk_cache_folder: Some(dir.join("cache")),
             disk_cache_limit: DiskLimit::Gib(16),
@@ -1191,6 +1202,50 @@ mod tests {
         // 画面の名前は日英とも「試し」と分かる
         assert!(setting_name(Lang::Ja, "tablet_pressure").contains("試し"));
         assert!(setting_name(Lang::En, "tablet_pressure").contains("experimental"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_rt_cores_for_baking_default_on_and_survive_a_restart_when_switched_off() {
+        let dir = temp_dir("bakeraytracing");
+        let path = dir.join("settings.conf");
+        assert!(Settings::default().bake_ray_query);
+        assert!(load(&path).0.bake_ray_query, "ファイルが無ければ入");
+        let off = Settings {
+            bake_ray_query: false,
+            ..Settings::default()
+        };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("bake_ray_query=off"));
+        // 入は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("bake_ray_query"));
+        // この項目を知らない古い設定は入として読む。読めない値も入
+        assert!(parse("language=ja\nbackups=3\n").0.bake_ray_query);
+        let (settings, problems) = parse("bake_ray_query=maybe\nlanguage=en\n");
+        assert!(
+            settings.bake_ray_query && problems.is_empty(),
+            "{problems:?}"
+        );
+        for off in ["off", "0", "false", "no", " OFF "] {
+            assert!(
+                !parse(&format!("bake_ray_query={off}\n")).0.bake_ray_query,
+                "{off:?}"
+            );
+        }
+        for on in ["on", "1", "true", "yes"] {
+            assert!(
+                parse(&format!("bake_ray_query={on}\n")).0.bake_ray_query,
+                "{on:?}"
+            );
+        }
+        assert!(setting_name(Lang::Ja, "bake_ray_query").contains("RT コア"));
+        assert!(setting_name(Lang::En, "bake_ray_query").contains("RT cores"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1911,6 +1966,7 @@ mod tests {
             "external_ops=on",
             "tablet_pressure=off",
             "pen_input=wintab",
+            "bake_ray_query=off",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
             "external_ops_port=23456",
@@ -1936,6 +1992,7 @@ mod tests {
         back.livelink_keep_values = true;
         back.tablet_pressure = true;
         back.pen_input = PenApi::Ink;
+        back.bake_ray_query = true;
         back.external_ops = false;
         back.external_ops_port = yolu_mcp::DEFAULT_PORT;
         back.view3d_post = crate::view3d::display::PostFx::default();
