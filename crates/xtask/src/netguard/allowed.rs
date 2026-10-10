@@ -33,7 +33,7 @@ pub(super) const ALLOWED: &[Allow] = &[
         file: "crates/yolu-app/src/update/http.rs",
         mark: "Command::new",
         count: Exactly(1),
-        why: "更新の確認: Linux は curl を起動して https の GET だけをする",
+        why: "更新の確認: Linux・macOS は curl を起動して https の GET だけをする",
     },
     Allow {
         file: "crates/yolu-app/src/update/http.rs",

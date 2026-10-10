@@ -271,7 +271,9 @@ pub(crate) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
         return Err(format!("未対応の引数: {arg}").into());
     }
     let (report, files) = check_repository(&root())?;
-    println!("通信の見張り: ソース {files} ファイルを読みました。許す一覧の使われ方:");
+    println!(
+        "通信の見張り: ソース {files} ファイルを読みました。許す一覧の使われ方（×の数は印の出た数。`use` の行の識別子も 1 件と数える）:"
+    );
     for (file, mark, count, why) in &report.table {
         println!("  {file}  {mark} ×{count}  {why}");
     }

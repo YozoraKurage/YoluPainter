@@ -104,7 +104,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 
 - Linux の試験と静的検査（`ubuntu-24.04`）: `cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast`（描画しないクレート。試験は既定の並列）、配る物のツールの試験、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo fmt --all -- --check`。
 - Linux の画面の試験（`ubuntu-24.04`）: Xvfb と Mesa の lavapipe（`WGPU_BACKEND=vulkan`）のソフトウェア描画で、yolu-gpu・yolu-app の試験を `tools/render-tests.py` が回します。試験の実行ファイルごとの別のプロセスを 3 列に並べ（列の中は順に）、プロセスの中は `--test-threads=1` です（ウィンドウ・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったため。プロセスどうしは別の装置）。`YOLUPAINTER_REQUIRE_GPU=1` を付けるので、アダプターを取れないと GPU の試験は飛ばずに落ちます。回す間は全体で 20 分（`--time-limit`）で区切り、超えた試験はプロセスのグループごと殺して失敗にし、止まった試験の名前が分かるようにログの終わりをすぐに出します（その列の残りは「回さず」として落ちた物に並びます）。単体試験は `--lib`・`--bins`、ドキュメントの試験は `--doc` で回し、どれでも回らない試験の target（example・bench の `test = true`）があると、並べる前に止まります。手元で同じ形に回すときは `xvfb-run -a tools/render-tests.py --log-dir <フォルダ>`（`--lanes 1` で 1 本ずつ）。runner の Ubuntu の版は、収録済みの正解が glibc と Mesa の版に結びつくので固定しています。
-- Linux の通信の見張り（`ubuntu-24.04`。画面の試験とは別のジョブ）: 本物のアプリを `strace` の下で動かし、外への通信の試みが無いことを `tools/network-watch.py` が確かめます（[通信の見張り](#通信の見張り)の段 2）。別のジョブにしているのは、更新の確認を動かすために更新用の公開鍵（使い捨て）を組み込んで作る必要があり、その環境変数を変えると yolu-update と yolu-app を作り直すため（同じジョブに置くと、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになります）。ツールの試験（`tools/test-network-watch.py`）は「Linux の試験と静的検査」でも回ります。
+- Linux の通信の見張り（`ubuntu-24.04`。画面の試験とは別のジョブ）: 本物のアプリを `strace` の下で動かし、外への通信の試みが無いことを `tools/network-watch.py` が確かめます（[通信の見張り](#通信の見張り)の段 2）。別のジョブにしているのは、更新の確認を動かすために更新用の公開鍵（使い捨て）を組み込んで作る必要があり、その環境変数を変えると yolu-update と yolu-app を作り直すため（同じジョブに置くと、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになります）。キャッシュは画面の試験のジョブと共有キー（`shared-key: linux-render`）で読むだけにし（`save-if: false`）、鍵つきの物で上書きしません。xdotool が効かず場面を飛ばしたときは、終わりに `::warning::` を出します。ツールの試験（`tools/test-network-watch.py`）は「Linux の試験と静的検査」でも回ります。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_files::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の受け渡しのフォルダとファイルの置換、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli の試験、app の `--lib`。続けて、束の中の `headless_` の試験のうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面の試験が Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致の試験が通ることを見ます。GPU・画面の統合試験と、配る物（.app・署名）は対象外です。
 - どの OS でも [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
@@ -125,27 +125,34 @@ cargo xtask netguard         # 許す一覧の使われ方の表を出す。一�
 cargo test -p xtask netguard # 同じ確かめ（CI では `cargo test --workspace --exclude yolu-app --exclude yolu-gpu` の中で回る）と、見張りが効くことの試験
 ```
 
-実装は `crates/xtask/src/netguard.rs` です。
+実装は `crates/xtask/src/netguard/` です（`lex.rs`: 字句、`markers.rs`: 印と宛先、`allowed.rs`: 許す一覧、`deps.rs`: 依存、`uses.rs`: `use` の読み、`tests.rs`: 見張りが効くことの試験）。
 
-- ソース: `crates/*/src/**/*.rs` と `crates/*/build.rs`（配らない xtask は除く）から、通信と外への出口の印（`MARKERS`）を探します。ソケットの型（`TcpStream`・`TcpListener`・`UdpSocket`・`std::net`・`tokio::net` など）、
-  HTTP・TLS・WebSocket の部品（`hyper`・`reqwest`・`WinHttp*` など）、プロセスの起動と「開く」の呼び出し（`Command::new`・`ShellExecute*`・`xdg-open`・`open::that`・egui の `open_url`/`hyperlink`）、
-  `http://`・`https://` を含む文字列です。コメントと文字列の中の識別子には反応せず、`#[cfg(test)]` を付けた項目と `#[cfg(test)] mod x;` のファイルは、配る物に入らないので除きます。
-  `TcpListener::bind`・`TcpStream::connect` など、型の名前に `Listener`・`Stream`・`Socket` を含む `bind`・`connect` は、呼び出しの引数か同じ行に `LOCALHOST`・`LOOPBACK`・`127.0.0.1`・`::1` が読めなければ落ちます（一覧に足しても通りません）。
+- ソース: `crates/*/src/**/*.rs` と `crates/*/build.rs`（配らない xtask は除く）から、通信と外への出口の印（`MARKERS`）を探します。ソケットの型（`TcpStream`・`TcpListener`・`UdpSocket`・`std::net`・`tokio::net`・`rustix::net` など）、
+  HTTP・TLS・WebSocket の部品（`hyper`・`reqwest`・`WinHttp*`・`WinInet`・`Urlmon` など）、プロセスの起動と「開く」の呼び出し（`Command::new`・`tokio::process`・`ShellExecute*`・`xdg-open`・`open::that`・egui の `open_url`/`hyperlink`）、
+  `http://`・`https://` を含む文字列です。`Command::new` は `use std::process::Command as Cmd;` の別名や `tokio::process` でも見つけ、自前の `Command` 型は印にしません。
+  コメントと文字列の中の識別子には反応せず、`#[cfg(test)]` を付けた項目、`#[cfg(test)] mod x;`（`#[path = "…"]` つきなら道の指すファイル）、モジュールの中の `#![cfg(test)]` は、配る物に入らないので除きます。
+  `TcpListener::bind`・`TcpStream::connect` など、型の名前に `Listener`・`Stream`・`Socket` を含む型と、その別名（`use … as L;`・`type S = …;`）の `bind`・`connect` は、宛先が 127.0.0.1 と決まる形でなければ落ちます（一覧に足しても通りません）。
+  許す形は、文字列（`"127.0.0.1:0"`・`"[::1]:0"`・`"localhost:80"`）、`(host, port)` の組、`SocketAddr::from/new/V4` などの包みで、ホストは文字列か `Ipv4Addr::LOCALHOST`・`Ipv6Addr::LOOPBACK` などの定数（`IpAddr::V4(…)` の包みも可）です。
+  変数・`unwrap_or`・`if`・`match`・`UNSPECIFIED`・`"0.0.0.0"` は決まらないので、宛先を呼び出しの引数に直接書きます。
 - 依存: `Cargo.lock` に HTTP の客・TLS・WebSocket/QUIC・名前の引き・テレメトリ・待ち受けの枠組みの名前（`reqwest`・`ureq`・`rustls`・`quinn`・`hickory-resolver`・`sentry` など）が入ると落ちます。
   `cargo metadata`（`--locked`。取得済みの依存が足りなければ取得を許して読み直す）で、`hyper`・`hyper-util`・`socket2`・`mio` を直接の依存に持つのと、tokio の機能 `net`・`full`・`process` を使うのが yolu-mcp だけであること、
   配るアプリ（yolu-app・yolu-cli）の依存に `open`・`opener`・`webbrowser` が入らないこと（今の `open` は試験用の依存だけ）、`socket2`・`mio`・`hyper`・`hyper-util` に依存するクレートが決めた範囲（`NET_PARTS`）から増えないこと、
-  `windows` の機能に WinHTTP 以外の通信（`Win32_Networking_*`・`Win32_NetworkManagement_*`）が入らないことを確かめます。
+  Windows の API の機能（`windows`・`windows-sys`）の通信（`Win32_Networking*`・`Win32_NetworkManagement*`・`Networking*`・`Web*`・`Win32_Web*`・`Win32_System_Com_Urlmon`・`Win32_Data_Xml_MsXml`）が、宣言でも Cargo が実際に有効にした機能
+  （tokio・mio・socket2 が足す WinSock・IpHelper を含む）でも、決めた範囲（`WINDOWS_RESOLVED_NET`）から増えないことを確かめます。
+  配るアプリの依存（本番とビルドスクリプトの閉包。試験だけの依存は除く）のソースも、同じ字句の読み手で読みます（今は約 440 クレート）。ソケット・名前の引き・HTTP の部品の印を使うクレートは、理由つきの一覧
+  （`SOCKET_CRATES`。今は 25 名前）に載せ、載っていないクレートが使い始めたら落ちます。windows の宣言の束と、文字列・プロセスの起動の印は読みません。
 
 落ちたときの文は、`<ファイル>:<行> の <印> が、許す一覧にありません` の形です。
 
-許す一覧（`ALLOWED`）には、ファイルと印ごとに数（`Exactly`: 増えたら落ちる。`AtLeastOne`: 同じ種類の識別子が幾つも並ぶものだけ）と理由を書きます。足すときの決まり:
+許す一覧（`ALLOWED`）には、ファイルと印ごとに数（`Exactly`: 増えたら落ちる。`AtLeastOne`: 同じ種類の識別子が幾つも並ぶものだけ）と理由を書きます。数は印の出た数で、`use` の行の識別子も 1 件と数えます
+（`use std::net::TcpStream;` の 1 行で `std::net` と `TcpStream` に 1 件ずつ）。足すときの決まり:
 
 - 先に README・INSTALL の約束（更新の確認のほかに通信しない。外からの操作は設定で入れている間だけ `127.0.0.1`）を破らないか確かめます。破るなら、一覧に足さず、約束の側を決め直します。
 - 理由には、何のための出口か（更新の確認・押したときだけブラウザーやファイル閲覧で開く・`127.0.0.1` の受け口・ビルドの手元など）を書きます。
-- ソースの側の出口が無くなったら、その行を一覧から消します（使われない行も落ちます）。
+- ソースの側の出口が無くなったら、その行を一覧から消します（使われない行も落ちます。`SOCKET_CRATES` は依存の更新で変わるので、使われなくなっても落ちません）。
 - 足りない印は `MARKERS` に足し、`SNIPPETS`（試験の作り物のソース）にも 1 つ足します（両方の印の名前が揃わないと試験が落ちます）。
 
-見張りが読むのはソースと依存の宣言だけです。実際にどこへ接続するかは見ません（依存の中のコードが接続する場合、名前の一覧にない部品が入った場合など）。
+見張りが読むのはソースと依存のソース・宣言だけです。実際にどこへ接続するかは見ません（段 2 が見ます）。マクロが作るコードは追わず、機能（feature）で無効なコードも数えます。
 
 ### 段 2: 実際の通信を見る（Linux だけ）
 
@@ -164,10 +171,13 @@ python3 tools/test-network-watch.py   # ツール自身の試験（アプリは�
 - 起動は 4 回: `main`（受け口を入れて、起動・更新の問いを Esc で「いいえ」・レイヤーと効果の編集・`xdotool` の筆・保存・PNG とテンプレートと PSD の書き出し・Live Link で 3D のモデルを開く・保存・Ctrl+Q で終了）、
   `reopen`（保存した 3D のモデル入りの文書を起動の引数で開き直す・見本）、`idle`（受け口を入れない既定の設定。更新の問いは出たまま放っておく）、`update`（更新の確認を「する」にした起動）。
   描く操作は CLI・MCP の命令にないので、筆だけは `xdotool` で動かします（`xdotool` が無い・筆が届かないときは、その場面を飛ばして表に書きます）。
-- 落とす条件: PC の中（AF_UNIX の画面や D-Bus・AF_NETLINK）と 127.0.0.1・::1 のほかへの接続・送信・待ち受け。名前の引き（宛先のポートが 53・853・5353。127.0.0.53 のようなループバックの中継も、systemd-resolved の UNIX ソケットも）。
+- 落とす条件: PC の中（AF_UNIX の画面や D-Bus・AF_NETLINK）と 127.0.0.1・::1 のほかへの接続・送信（`sendto`・`sendmsg`・`sendmmsg` の宛先は、スレッドが多いと結果の行にだけ出るので、そこからも読む）・待ち受け。
+  名前の引き（宛先のポートが 53・853・5353。127.0.0.53 のようなループバックの中継も、systemd-resolved と avahi の UNIX ソケットも。glibc が passwd などにも開く nscd のソケットは数えない）。
   受け口を入れていない起動で待ち受けること、入れた起動で 127.0.0.1 のその番号以外で待つこと、待つ呼び出しが 1 つも見えないこと。`curl` を更新の確認の場面以外で起動すること、アプリが落ちたときのダイアログ（zenity など）の起動。
-- 許す通信: 更新の確認の場面（`update` の起動）で、`curl`（子のスレッドも）が github.com の YoluPainter の Releases の URL へ向かう試み。ほかのプロセスの外への試みと、ほかの URL への curl は落とします。
-- 始めに、外への connect・sendto・名前の引き・ループバックを試みる小さなプログラムを `strace` で読み、見張りが捉えることを確かめます（`strace` が使えない環境や読みの崩れで、アプリの結果が空振りにならないように）。
+- 許す通信: 更新の確認の場面（`update` の起動）で、`curl`（子のスレッドも）の外への試み。ただし curl の引数は `update/http.rs` の `curl_args`（単体試験 `curl_arguments_are_exactly_these` が全体を固定）と同じ組だけ
+  （`--data`・`-H`・`-b`・`-T`・`-K`・`--url` などが足されると落ちる）、取りに行く URL は `--` の後の 1 つで、`https://github.com/YozoraKurage/YoluPainter/` の下の `?`・`#`・`@` の無い形だけです。
+  curl の接続先のアドレス（GitHub の配信先の IP や名前の引き）は固定しません。ほかのプロセスの外への試みは落とします。
+- 始めに、外への connect・sendto・sendmmsg、本物の名前の引き（`getaddrinfo`）、ループバックを試みる小さなプログラムを `strace` で読み、見張りが捉えることを確かめます（`strace` が使えない環境や読みの崩れで、アプリの結果が空振りにならないように）。
 - 終わりに、場面ごとの接続の数と宛先の表を出します（落ちたときは、どの起動の・どの場面の・どのプロセスの・どの呼び出しかを挙げます。ログの全文は `--log-dir`）。
 
 保証の射程: Linux の `strace` で見える試み（システムコール）だけで、通した場面だけです。Windows は段 1 だけ（ソースと依存の見張り）で、段 2 に当たる試験はありません。画面を閉じる操作は Ctrl+Q のキーで通し、
