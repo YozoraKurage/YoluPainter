@@ -112,6 +112,40 @@ Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソー�
 
 CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査できます。runner の版を上げたときは、Ubuntu の Mesa の版による画面の正解との差を確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
 
+## 通信の見張り
+
+アプリが外へ通信するのは、利用者が選んだ更新の確認だけです（[README](../README.md)・[INSTALL](INSTALL.md) の約束）。外からの操作は、設定で入れている間だけ `127.0.0.1` で待ちます。
+この約束が、新しいコードや依存で静かに破れないよう、コードと依存を読む見張り（段 1）が毎回の CI で回ります。
+
+### 段 1: コードと依存を読む
+
+```sh
+cargo xtask netguard         # 許す一覧の使われ方の表を出す。一覧の外の出口や依存の問題があれば終了コード 1
+cargo test -p xtask netguard # 同じ確かめ（CI では `cargo test --workspace --exclude yolu-app --exclude yolu-gpu` の中で回る）と、見張りが効くことの試験
+```
+
+実装は `crates/xtask/src/netguard.rs` です。
+
+- ソース: `crates/*/src/**/*.rs` と `crates/*/build.rs`（配らない xtask は除く）から、通信と外への出口の印（`MARKERS`）を探します。ソケットの型（`TcpStream`・`TcpListener`・`UdpSocket`・`std::net`・`tokio::net` など）、
+  HTTP・TLS・WebSocket の部品（`hyper`・`reqwest`・`WinHttp*` など）、プロセスの起動と「開く」の呼び出し（`Command::new`・`ShellExecute*`・`xdg-open`・`open::that`・egui の `open_url`/`hyperlink`）、
+  `http://`・`https://` を含む文字列です。コメントと文字列の中の識別子には反応せず、`#[cfg(test)]` を付けた項目と `#[cfg(test)] mod x;` のファイルは、配る物に入らないので除きます。
+  `TcpListener::bind`・`TcpStream::connect` など、型の名前に `Listener`・`Stream`・`Socket` を含む `bind`・`connect` は、呼び出しの引数か同じ行に `LOCALHOST`・`LOOPBACK`・`127.0.0.1`・`::1` が読めなければ落ちます（一覧に足しても通りません）。
+- 依存: `Cargo.lock` に HTTP の客・TLS・WebSocket/QUIC・名前の引き・テレメトリ・待ち受けの枠組みの名前（`reqwest`・`ureq`・`rustls`・`quinn`・`hickory-resolver`・`sentry` など）が入ると落ちます。
+  `cargo metadata`（`--locked`。取得済みの依存が足りなければ取得を許して読み直す）で、`hyper`・`hyper-util`・`socket2`・`mio` を直接の依存に持つのと、tokio の機能 `net`・`full`・`process` を使うのが yolu-mcp だけであること、
+  配るアプリ（yolu-app・yolu-cli）の依存に `open`・`opener`・`webbrowser` が入らないこと（今の `open` は試験用の依存だけ）、`socket2`・`mio`・`hyper`・`hyper-util` に依存するクレートが決めた範囲（`NET_PARTS`）から増えないこと、
+  `windows` の機能に WinHTTP 以外の通信（`Win32_Networking_*`・`Win32_NetworkManagement_*`）が入らないことを確かめます。
+
+落ちたときの文は、`<ファイル>:<行> の <印> が、許す一覧にありません` の形です。
+
+許す一覧（`ALLOWED`）には、ファイルと印ごとに数（`Exactly`: 増えたら落ちる。`AtLeastOne`: 同じ種類の識別子が幾つも並ぶものだけ）と理由を書きます。足すときの決まり:
+
+- 先に README・INSTALL の約束（更新の確認のほかに通信しない。外からの操作は設定で入れている間だけ `127.0.0.1`）を破らないか確かめます。破るなら、一覧に足さず、約束の側を決め直します。
+- 理由には、何のための出口か（更新の確認・押したときだけブラウザーやファイル閲覧で開く・`127.0.0.1` の受け口・ビルドの手元など）を書きます。
+- ソースの側の出口が無くなったら、その行を一覧から消します（使われない行も落ちます）。
+- 足りない印は `MARKERS` に足し、`SNIPPETS`（試験の作り物のソース）にも 1 つ足します（両方の印の名前が揃わないと試験が落ちます）。
+
+見張りが読むのはソースと依存の宣言だけです。実際にどこへ接続するかは見ません（依存の中のコードが接続する場合、名前の一覧にない部品が入った場合など）。
+
 ## Windows 向けの画面なし試験（Wine）
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
