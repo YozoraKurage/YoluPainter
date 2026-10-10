@@ -147,6 +147,31 @@ fn wheel_diameter(side: f32) -> f32 {
         .max(0.0)
 }
 
+/// 欄の右上の角の切り替えのボタンが、円 `wheel`（欄の中の円の外接の正方形）と選ぶ印の輪に掛からない（余裕 1 pt）。
+fn corner_toggle_clear(area: Rect, wheel: Rect) -> bool {
+    let d = wheel.width();
+    let toggle = toggle_rect(area);
+    let nearest = pos2(
+        wheel.center().x.clamp(toggle.left(), toggle.right()),
+        wheel.center().y.clamp(toggle.top(), toggle.bottom()),
+    );
+    nearest.distance(wheel.center()) >= d * 0.5 + marker_overhang(d) + 1.0
+}
+
+/// 円の外接の正方形の一辺の上限（点）: 中身の幅 `width` まで。幅が狭く、正方形の欄の右上の角のボタンが円に掛かるときは、ボタンを円の脇へ空ける分
+/// （`TOGGLE_LANE`）も高さに足す（円が幅いっぱいを保てるように）。
+fn wheel_most(width: f32) -> f32 {
+    let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(width, width));
+    let d = wheel_diameter(width);
+    let full = Rect::from_center_size(area.center(), vec2(d, d));
+    let lane = if corner_toggle_clear(area, full) {
+        0.0
+    } else {
+        TOGGLE_LANE
+    };
+    (width + lane).clamp(72.0, 346.0)
+}
+
 /// 円の外接の正方形。円は欄の幅と高さの小さいほうをいっぱいに使い（選ぶ印の輪が円の外へはみ出す分は、四方に余白として取る）、右上の切り替えのボタンは
 /// 円と印の外側の角（重ならない所）に置く。小さな円ではその角が円に掛かるので、そのときだけボタンの分を、右に空ける（横長の欄）か上に空ける（縦長の細い欄）かの、
 /// 円が大きくなるほうに置く。
@@ -154,12 +179,7 @@ pub fn wheel_rect(area: Rect) -> Rect {
     let side = area.width().min(area.height()).max(0.0);
     let d = wheel_diameter(side);
     let full = Rect::from_center_size(area.center(), vec2(d, d));
-    let toggle = toggle_rect(area);
-    let nearest = pos2(
-        full.center().x.clamp(toggle.left(), toggle.right()),
-        full.center().y.clamp(toggle.top(), toggle.bottom()),
-    );
-    if nearest.distance(full.center()) >= d * 0.5 + marker_overhang(d) + 1.0 {
+    if corner_toggle_clear(area, full) {
         return full;
     }
     let beside = area.height().min(area.width() - TOGGLE_LANE).max(0.0);
@@ -285,7 +305,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         };
     // 円は欄の幅と高さの小さいほうまで大きくする（幅の広い欄で小さく見えないように。上限は 346）
     let most = if app.color.wheel {
-        (r.width() - 2.0 * t::PADDING).clamp(72.0, 346.0)
+        wheel_most(r.width() - 2.0 * t::PADDING)
     } else {
         // 四角と色相の帯は、2 枚の色を帯へ移して空いた高さの分、幅に合わせて縦にも伸ばす（細い欄は 160 のまま）
         ((r.width() - 2.0 * t::PADDING - 52.0) * 1.25).clamp(160.0, 320.0)
@@ -562,6 +582,26 @@ mod wheel_layout_tests {
         let center_radius = w * 0.5 * (1.0 - RING_THICKNESS * 0.5);
         let reach = center_radius + w * RING_THICKNESS * MARKER_SCALE + MARKER_HALF_STROKE;
         Rect::from_center_size(wheel.center(), vec2(2.0 * reach, 2.0 * reach))
+    }
+
+    /// 細い欄でも、円は切り替えのボタンを脇へ空けて幅いっぱいを保つ（高さにその分を足す）。既定の並びの幅では足さない。
+    #[test]
+    fn a_narrow_column_keeps_the_wheel_at_the_full_width_by_adding_the_toggle_lane() {
+        let inner = 140.0;
+        let most = wheel_most(inner);
+        assert_eq!(most, inner + TOGGLE_LANE);
+        let tall = wheel_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(inner, most)));
+        let square = wheel_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(inner, inner)));
+        // 前（高さにボタンの分を足していた）の円: 幅いっぱいの正方形に収まる直径
+        assert!(
+            (tall.width() - wheel_diameter(inner)).abs() < 0.01,
+            "{tall:?}"
+        );
+        assert!(tall.width() > square.width() + 20.0, "{tall:?} {square:?}");
+        // 既定の 3 つの大きさ（960×640・1280×800・1600×900）の中身の幅は、足さない
+        for inner in [176.0, 190.0, 205.0, 240.0, 346.0] {
+            assert_eq!(wheel_most(inner), inner.clamp(72.0, 346.0), "{inner}");
+        }
     }
 
     #[test]
