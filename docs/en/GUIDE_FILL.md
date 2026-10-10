@@ -19,7 +19,7 @@ The "Fill" section in Properties holds the value for each channel. The button ne
 
 ### Paint several channels at once
 
-Turn on "Paint several channels at once" in "Paint Channels" at the end of Tool Properties (for the brush, eraser, Fill, Polygon Fill, Gradient, Shape, Path and Eyedropper tools; it starts closed), and one stroke paints every checked channel with its own value (Color uses the paint color, Emission a color, Roughness, Metallic and Height 0–1, and Normal a tilt). It works with 2D, 3D, Fill, Polygon Fill and paths, and one undo takes all channels back. When off, the selected channel is painted with the paint color.
+Turn on "Paint several channels at once" in "Paint Channels" at the end of Tool Properties (for the brush, eraser, Fill, Polygon Fill, Gradient, Shape, Path and Eyedropper tools, and for the selection tools Rectangle Select, Ellipse Select, Lasso, Polygon Select, Magic Wand and Selection Pen; it starts closed. With the selection tools, filling or erasing a selection uses this set), and one stroke paints every checked channel with its own value (Color uses the paint color, Emission a color, Roughness, Metallic and Height 0–1, and Normal a tilt). It works with 2D, 3D, Fill, Polygon Fill and paths, and one undo takes all channels back. When off, the selected channel is painted with the paint color.
 
 ## Paint with an image
 

@@ -68,7 +68,8 @@ pub struct ToolDef {
     pub path: bool,
     /// 大きさ（直径）を持つツール。「ブラシサイズ」のパネルに丸を出す。
     pub sized: bool,
-    /// 「塗るチャンネル」（複数のチャンネルを一度に塗る設定。`AppState::mat`）が効くツール。ツールプロパティの終わりに、その区分を出す。
+    /// 「塗るチャンネル」（複数のチャンネルを一度に塗る設定。`AppState::mat`）が効くツール。ツールプロパティの終わりに、その区分を出す（表示だけの印）。選択のツールは、
+    /// 選択範囲の塗りつぶし・消去が入れてある組を使うので、これを持つ（ツールの動きは変わらない）。
     pub paint_channels: bool,
     pub subtools: SubTools,
     /// キャンバスの入力の受け口（ドラッグの札を持つツール）。ブラシ・消しゴム・範囲のツール・スポイトはストロークで描くので持たない。
@@ -261,6 +262,7 @@ pub static TOOLS: [ToolDef; 19] = [
     )
     .group()
     .select()
+    .paint_channels()
     .canvas(CanvasKind::Selection)
     .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
@@ -273,12 +275,14 @@ pub static TOOLS: [ToolDef; 19] = [
         "Shift+M",
     )
     .select()
+    .paint_channels()
     .canvas(CanvasKind::Selection)
     .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(Tool::Lasso, "lasso", "なげなわ", "Lasso", "L")
         .select()
+        .paint_channels()
         .canvas(CanvasKind::Selection)
         .surface(Surface::Screen)
         .sub(SubTools::Tools(&SELECTION_TOOLS))
@@ -291,12 +295,14 @@ pub static TOOLS: [ToolDef; 19] = [
         "Shift+L",
     )
     .select()
+    .paint_channels()
     .canvas(CanvasKind::Selection)
     .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
     def(Tool::Wand, "magic-wand", "自動選択", "Magic Wand", "W")
         .select()
+        .paint_channels()
         .canvas(CanvasKind::Selection)
         .surface(Surface::Screen)
         .sub(SubTools::Tools(&SELECTION_TOOLS))
@@ -321,6 +327,7 @@ pub static TOOLS: [ToolDef; 19] = [
         "S",
     )
     .select()
+    .paint_channels()
     .sized()
     .canvas(CanvasKind::Selection)
     .surface(Surface::Cover)

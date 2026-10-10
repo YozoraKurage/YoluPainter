@@ -1399,6 +1399,13 @@ fn the_paint_channels_section_is_only_for_the_tools_that_paint_with_channels() {
         Tool::PolygonFill,
         Tool::Eyedropper,
         Tool::Path,
+        // 選択のツールは、選択範囲の塗りつぶし・消去が入れてある組を使うので、区分を見せる（表示だけ）
+        Tool::SelectRect,
+        Tool::SelectEllipse,
+        Tool::Lasso,
+        Tool::Polygon,
+        Tool::Wand,
+        Tool::SelectPen,
     ];
     for tool in Tool::ALL {
         assert_eq!(
@@ -1501,6 +1508,53 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
         .state
         .apply(Action::Mat(MatAction::Channel(Channel::Metallic, true)));
     assert_eq!(st(&h).doc.undo_count(), steps);
+}
+
+/// 選択のツールのツールプロパティにも「塗るチャンネル」が出る。入れた組で選択範囲を塗りつぶすと組の全部が塗られ（今の動きのまま）、
+/// マスクに描いているあいだは区分の代わりにマスクの欄が出る。
+#[test]
+fn the_selection_tools_show_the_paint_channels_and_the_fill_paints_the_whole_set() {
+    use yolu_app::selection::{SelAction, SelEdit};
+    let mut h = app(1280.0, 1800.0, 128);
+    pick(&mut h, Tool::SelectRect);
+    assert_eq!(count(&h, "塗るチャンネル"), 1);
+    // 組を入れて、全体を選んで塗りつぶす
+    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Enabled(true)));
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.state_mut().state.mat.set_scalar(Channel::Roughness, 0.25);
+    h.state_mut()
+        .state
+        .apply(Action::Sel(SelAction::Edit(SelEdit::All)));
+    h.state_mut()
+        .state
+        .apply(Action::Sel(SelAction::Edit(SelEdit::Fill)));
+    h.run();
+    assert_eq!(
+        channel_pixel(st(&h), Channel::Color, 64, 64),
+        yolu_app::engine::Rgba8::new(255, 0, 0, 255)
+    );
+    assert_eq!(
+        channel_pixel(st(&h), Channel::Roughness, 64, 64),
+        yolu_app::engine::Rgba8::new(64, 64, 64, 255)
+    );
+    assert_eq!(
+        channel_pixel(st(&h), Channel::Metallic, 64, 64),
+        yolu_app::engine::Rgba8::TRANSPARENT,
+        "組に無いチャンネルは塗らない"
+    );
+    // マスクに描いているあいだは、区分でなくマスクの欄
+    let id = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    h.run();
+    assert!(st(&h).m2.edit_mask);
+    assert_eq!(count(&h, "塗るチャンネル"), 0);
 }
 
 /// 「塗るチャンネル」を入れているあいだは、閉じていても見出しの右端に点の印が出る（切ると消える）。
