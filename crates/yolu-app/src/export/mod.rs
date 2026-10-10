@@ -13,11 +13,13 @@
 //!   全部）。UV は 3D ビューのモデルから、セットのマテリアルの三角形を使う。モデルが無い・セットの面が無ければ塗り広げず、そう知らせる。
 //! - **AO**: セットに今の条件で焼いたメッシュマップ（AO）があれば使う（古いものは使わず知らせる）。無ければ遮蔽なし（白）。
 //! - 読むだけのセット（core で扱えない中身の合成を見せているだけ）は書き出さない。
-//! - **入り口は 1 つのウィンドウ**（`window`。ファイル → 書き出し…）: 形・書き出す先・余白を決めて、下の `TemplateTo`・`ChannelTo`・`ChannelNamed`・`ChannelsTo` へ渡す。
-//! - **チャンネルの画像**（書き出しのウィンドウの形）: 描くチャンネルを PNG に、全部のセットの使っている全チャンネルをフォルダに。値は
+//! - **入り口は 1 つのウィンドウ**（`window`。ファイル → テクスチャを書き出す…）: 書き出すテクスチャセット・出力先・出力テンプレート・パディングを決めて、下の
+//!   `TemplateTo`・`ChannelTo`・`ChannelNamed`・`ChannelsTo` へ渡す。書く前に、書くファイルの名前と色空間を一覧に出す（`list`。名前の決め方は書き出しの道と同じ関数）。
+//! - **チャンネルの画像**（書き出しのウィンドウの出力テンプレート）: 描くチャンネルを PNG に、全部のセットの使っている全チャンネルをフォルダに。値は
 //!   `yolu_core::export::channel_image`（詰めない・色を掛けない合成そのまま、Normal は文書の Y の向き）で、名前は
 //!   `<名前>[_<セット名>]_<チャンネル>.png`（チャンネルは言語によらず英語の綴り）。書く手順・余白・取消はテンプレートと同じ道を通す。
 
+pub mod list;
 pub mod window;
 
 pub use window::ExportForm;
@@ -48,20 +50,26 @@ use crate::windows::CloseJob;
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportAction {
-    /// 書き出しのウィンドウ（形・書き出す先・余白）を開く。
+    /// 書き出しのウィンドウ（テクスチャセット・出力先・出力テンプレート・パディング）を開く。
     OpenWindow,
     /// 書き出しのウィンドウを閉じる。
     CloseWindow,
-    /// 書き出しの形を選ぶ（設定に覚える）。
+    /// 出力テンプレートを選ぶ（設定に覚える）。
     SetForm(ExportForm),
-    /// 書き出す先（形がファイルならファイル、ほかはフォルダ）を選ぶウィンドウを頼む。
+    /// 書き出すテクスチャセット（uid）のチェックを入れる・外す（プロジェクトの間だけ覚える）。
+    SetChecked { uid: u32, on: bool },
+    /// 出力先（出力テンプレートがファイルならファイル、ほかはフォルダ）を選ぶウィンドウを頼む。
     ChooseDestination,
-    /// 選ぶウィンドウが返した書き出す先。
+    /// 選ぶウィンドウが返した出力先。
     Destination(PathBuf),
-    /// ウィンドウの「書き出す」: 今の形と書き出す先で、下の書き出しの操作へ渡す。
+    /// ウィンドウの「書き出す」: 今の出力テンプレートと出力先・チェックしたセットで、下の書き出しの操作へ渡す。
     Run,
-    /// テンプレート（ID）の書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
-    TemplateTo { id: String, dir: PathBuf },
+    /// テンプレート（ID）の出力先のフォルダが決まった。`sets` は書き出すセット（uid。None は全部）。もうあるファイルがあれば、確認のウィンドウを出す。
+    TemplateTo {
+        id: String,
+        dir: PathBuf,
+        sets: Option<Vec<u32>>,
+    },
     /// 確認のウィンドウの「置き換える」。
     ConfirmReplace,
     /// 確認のウィンドウの「やめる」。
@@ -70,21 +78,24 @@ pub enum ExportAction {
     Cancel,
     /// 結果のウィンドウを閉じる。
     DismissReport,
-    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶウィンドウが置き換えてよいと確かめている）。
+    /// 出力先のファイルが決まった（もうあるファイルは、選ぶウィンドウが置き換えてよいと確かめている）。
     ChannelTo(PathBuf),
-    /// 書き出す先のファイルに、選ぶウィンドウが確かめていない名前が決まった。もうあれば、置き換える前に確認のウィンドウを出す。
+    /// 出力先のファイルに、選ぶウィンドウが確かめていない名前が決まった。もうあれば、置き換える前に確認のウィンドウを出す。
     ChannelNamed(PathBuf),
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
-    ChannelsTo(PathBuf),
+    /// 出力先のフォルダが決まった。`sets` は書き出すセット（uid。None は全部）。もうあるファイルがあれば、確認のウィンドウを出す。
+    ChannelsTo {
+        dir: PathBuf,
+        sets: Option<Vec<u32>>,
+    },
 }
 
 /// 何を書き出すか（確認のウィンドウの「置き換える」が、同じものをもう一度計画するのに使う）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum What {
-    /// テンプレート（ID）の画像。
-    Template(String),
-    /// 全チャンネルの画像。
-    Channels,
+    /// テンプレート（ID）の画像（書き出すセットの uid。None は全部）。
+    Template { id: String, sets: Option<Vec<u32>> },
+    /// 全チャンネルの画像（書き出すセットの uid。None は全部）。
+    Channels { sets: Option<Vec<u32>> },
     /// 描くチャンネルの 1 枚の PNG（書き出し先のファイル）。
     ChannelFile(PathBuf),
 }
@@ -328,6 +339,25 @@ struct Plan {
     notes: Vec<Note>,
 }
 
+/// テンプレートの書き出しの、書く前に決まること（文書は写さない）。
+struct TemplateNames {
+    /// 書く画像の取り決め（lilToon は、見た目の設定が足したスロットの画像も入っている）。
+    template: ExportTemplate,
+    /// 書く画像（`set` は渡した `indices` の位置、`image` は `template.images` の番号）。
+    planned: Vec<yolu_io::export::PlannedFile>,
+    /// 書く画像ごとの lilToon の詰め方のスロット（テンプレートの画像なら None）。
+    look_slots: Vec<Option<&'static str>>,
+}
+
+/// チャンネルの書き出しの、書く前に決まること（文書は写さない）。
+struct ChannelNames {
+    /// 書く画像ごとの（`indices` の位置・チャンネル・ファイル名）。
+    wanted: Vec<(usize, Channel, String)>,
+    /// 画像の取り決め。`image_of[i]` が `wanted[i]` の画像の番号。
+    images: Vec<ExportImage>,
+    image_of: Vec<usize>,
+}
+
 /// 書き出しのファイル名の元（開いたプロジェクトのファイル名。無ければ Texture）。
 pub fn stem(state: &AppState) -> String {
     state
@@ -406,8 +436,11 @@ fn channel_image_spec(doc: &Document, channel: Channel) -> ExportImage {
 
 /// チャンネルの書き出しの範囲。
 enum Which<'a> {
-    /// 全部のセットの使っている全チャンネル。
-    All { stem: &'a str },
+    /// 選んだセット（`selected`。None は全部）の使っている全チャンネル。
+    All {
+        stem: &'a str,
+        selected: Option<&'a [u32]>,
+    },
     /// 1 つのセットの 1 つのチャンネルを、決まったファイル名で。
     One {
         set: usize,
@@ -417,11 +450,14 @@ enum Which<'a> {
 }
 
 impl AppState {
-    /// 書き出すセット（読むだけのセットは除く）の番号。除いたセットは注意に積む。
-    fn exportable_sets(&self, notes: &mut Vec<Note>) -> Vec<usize> {
+    /// 書き出すセット（`selected` の uid のセットだけ。None は全部。読むだけのセットは除く）の番号。読むだけで除いたセットは注意に積む。
+    fn exportable_sets(&self, notes: &mut Vec<Note>, selected: Option<&[u32]>) -> Vec<usize> {
         let mut indices = Vec::new();
         for i in 0..self.sets.len() {
             let set = self.sets.get(i).expect("範囲内");
+            if selected.is_some_and(|uids| !uids.contains(&set.uid)) {
+                continue;
+            }
             if set.read_only.is_some() {
                 notes.push(Note::ReadOnly(set.name.clone()));
             } else {
@@ -503,43 +539,31 @@ impl AppState {
         Ok((sets, position))
     }
 
-    /// 書き出す画像と名前を決め、文書を写す（このスレッド。写せなければ理由）。
-    fn plan_export(&mut self, template: &ExportTemplate, stem: &str) -> Result<Plan, String> {
+    /// テンプレートの書き出しの、書く画像と名前（文書は写さない。`indices` の各セットに焼いた AO が使えるかを `has_occlusion` で渡す）。
+    /// 書き出しの道と、ウィンドウの書くファイルの一覧が同じ名前を出すための 1 か所。
+    fn template_names(
+        &self,
+        template: &ExportTemplate,
+        stem: &str,
+        indices: &[usize],
+        has_occlusion: &[bool],
+    ) -> Result<TemplateNames, String> {
         let lang = self.lang;
-        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
-        let mut notes = Vec::new();
-        let indices = self.exportable_sets(&mut notes);
         let several = self.sets.len() > 1;
-        // AO（今の条件で焼いたものだけ）
-        let mut occlusions = Vec::new();
-        for &i in &indices {
-            let occlusion = self.occlusion_for_export(i);
-            if let Occlusion::Stale(why) = &occlusion {
-                notes.push(Note::StaleOcclusion(
-                    self.sets.get(i).expect("範囲内").name.clone(),
-                    why.clone(),
-                ));
-            }
-            occlusions.push(match occlusion {
-                Occlusion::Bytes(b) => Some(b),
-                _ => None,
-            });
-        }
-        let planned = {
+        let mut planned = {
             let plan_sets: Vec<PlanSet<'_>> = indices
                 .iter()
-                .zip(&occlusions)
-                .map(|(&i, o)| PlanSet {
+                .zip(has_occlusion)
+                .map(|(&i, &has_occlusion)| PlanSet {
                     name: several.then(|| self.sets.get(i).expect("範囲内").name.as_str()),
                     document: self.set_doc(i),
-                    has_occlusion: o.is_some(),
+                    has_occlusion,
                 })
                 .collect();
             plan_template(stem, &plan_sets, template).map_err(|e| e.to_string())?
         };
         // lilToon の詰め方: lilToon のテンプレートなら、見た目の設定が lilToon のセットのスロットの画像を足す
         let mut template = template.clone();
-        let mut planned = planned;
         let mut look_slots: Vec<Option<&'static str>> = vec![None; planned.len()];
         if template.id == "liltoon" {
             for (p, &i) in indices.iter().enumerate() {
@@ -556,7 +580,6 @@ impl AppState {
                 }
             }
         }
-        let template = &template;
         if planned.is_empty() {
             return Err(lang.pick(
                 format!(
@@ -574,6 +597,45 @@ impl AppState {
         if !clash.is_empty() {
             return Err(self.clash_message(&clash));
         }
+        Ok(TemplateNames {
+            template,
+            planned,
+            look_slots,
+        })
+    }
+
+    /// 書き出す画像と名前を決め、文書を写す（このスレッド。写せなければ理由）。`selected` は書き出すセットの uid（None は全部）。
+    fn plan_export(
+        &mut self,
+        template: &ExportTemplate,
+        stem: &str,
+        selected: Option<&[u32]>,
+    ) -> Result<Plan, String> {
+        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
+        let mut notes = Vec::new();
+        let indices = self.exportable_sets(&mut notes, selected);
+        // AO（今の条件で焼いたものだけ）
+        let mut occlusions = Vec::new();
+        for &i in &indices {
+            let occlusion = self.occlusion_for_export(i);
+            if let Occlusion::Stale(why) = &occlusion {
+                notes.push(Note::StaleOcclusion(
+                    self.sets.get(i).expect("範囲内").name.clone(),
+                    why.clone(),
+                ));
+            }
+            occlusions.push(match occlusion {
+                Occlusion::Bytes(b) => Some(b),
+                _ => None,
+            });
+        }
+        let has_occlusion: Vec<bool> = occlusions.iter().map(Option::is_some).collect();
+        let TemplateNames {
+            template,
+            planned,
+            look_slots,
+        } = self.template_names(template, stem, &indices, &has_occlusion)?;
+        let template = &template;
         // 写す（planned に出たセットだけ）
         let mut used: Vec<usize> = Vec::new();
         for p in &planned {
@@ -623,28 +685,18 @@ impl AppState {
         )
     }
 
-    /// チャンネルの画像（描くチャンネルの 1 枚、または全セットの全チャンネル）と名前を決め、文書を写す（このスレッド）。
-    fn plan_channels(&mut self, which: Which<'_>) -> Result<Plan, String> {
+    /// チャンネルの書き出しの、書く画像と名前（文書は写さない）。`indices` の各セットが使っているチャンネルを、`which` の決まりの名前で。
+    /// 書き出しの道と、ウィンドウの書くファイルの一覧が同じ名前を出すための 1 か所。
+    fn channel_names(&self, which: &Which<'_>, indices: &[usize]) -> Result<ChannelNames, String> {
         let lang = self.lang;
-        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
-        let mut notes = Vec::new();
+        let several = self.sets.len() > 1;
         // (indices の位置, チャンネル, ファイル名)
         let mut wanted: Vec<(usize, Channel, String)> = Vec::new();
-        let indices = match &which {
-            Which::All { .. } => self.exportable_sets(&mut notes),
-            Which::One { set, .. } => {
-                if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
-                    return Err(crate::lang::refusals::read_only_set(lang, &reason));
-                }
-                vec![*set]
-            }
-        };
-        let several = self.sets.len() > 1;
         let mut images: Vec<ExportImage> = Vec::new();
         let mut image_of: Vec<usize> = Vec::new();
         for (position, &index) in indices.iter().enumerate() {
             let doc = self.set_doc(index);
-            let channels: Vec<Channel> = match &which {
+            let channels: Vec<Channel> = match which {
                 Which::All { .. } => doc
                     .channels()
                     .into_iter()
@@ -654,8 +706,8 @@ impl AppState {
             };
             for channel in channels {
                 let image = channel_image_spec(doc, channel);
-                let name = match &which {
-                    Which::All { stem } => file_name(
+                let name = match which {
+                    Which::All { stem, .. } => file_name(
                         stem,
                         several.then(|| self.sets.get(index).expect("範囲内").name.as_str()),
                         &image,
@@ -680,6 +732,32 @@ impl AppState {
         if !clash.is_empty() {
             return Err(self.clash_message(&clash));
         }
+        Ok(ChannelNames {
+            wanted,
+            images,
+            image_of,
+        })
+    }
+
+    /// チャンネルの画像（描くチャンネルの 1 枚、または選んだセットの全チャンネル）と名前を決め、文書を写す（このスレッド）。
+    fn plan_channels(&mut self, which: Which<'_>) -> Result<Plan, String> {
+        let lang = self.lang;
+        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
+        let mut notes = Vec::new();
+        let indices = match &which {
+            Which::All { selected, .. } => self.exportable_sets(&mut notes, *selected),
+            Which::One { set, .. } => {
+                if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
+                    return Err(crate::lang::refusals::read_only_set(lang, &reason));
+                }
+                vec![*set]
+            }
+        };
+        let ChannelNames {
+            wanted,
+            images,
+            image_of,
+        } = self.channel_names(&which, &indices)?;
         let mut used: Vec<usize> = Vec::new();
         for (position, _, _) in &wanted {
             if !used.contains(position) {
@@ -713,11 +791,12 @@ impl AppState {
             ExportAction::OpenWindow
             | ExportAction::CloseWindow
             | ExportAction::SetForm(_)
+            | ExportAction::SetChecked { .. }
             | ExportAction::ChooseDestination
             | ExportAction::Destination(_)
             | ExportAction::Run => self.export_window_apply(action),
-            ExportAction::TemplateTo { id, dir } => {
-                self.start_export(&What::Template(id), &dir, false)
+            ExportAction::TemplateTo { id, dir, sets } => {
+                self.start_export(&What::Template { id, sets }, &dir, false)
             }
             ExportAction::ConfirmReplace => {
                 if let Some(c) = self.export.confirm.take() {
@@ -731,7 +810,9 @@ impl AppState {
             }
             ExportAction::ChannelTo(path) => self.start_channel_png(&path),
             ExportAction::ChannelNamed(path) => self.confirm_channel_png(path),
-            ExportAction::ChannelsTo(dir) => self.start_export(&What::Channels, &dir, false),
+            ExportAction::ChannelsTo { dir, sets } => {
+                self.start_export(&What::Channels { sets }, &dir, false)
+            }
             ExportAction::CancelConfirm => {
                 if self.export.confirm.take().is_some() {
                     self.info(
@@ -786,8 +867,8 @@ impl AppState {
         }
         let stem = stem(self);
         let planned = match what {
-            What::Template(id) => match ExportTemplate::built_in_by_id(id) {
-                Some(template) => self.plan_export(&template, &stem),
+            What::Template { id, sets } => match ExportTemplate::built_in_by_id(id) {
+                Some(template) => self.plan_export(&template, &stem, sets.as_deref()),
                 None => {
                     self.refuse(
                         Source::Export,
@@ -799,7 +880,10 @@ impl AppState {
                     return;
                 }
             },
-            What::Channels => self.plan_channels(Which::All { stem: &stem }),
+            What::Channels { sets } => self.plan_channels(Which::All {
+                stem: &stem,
+                selected: sets.as_deref(),
+            }),
             // 1 枚のファイルは確認のウィンドウの「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
             What::ChannelFile(path) => {
                 self.start_channel_png(path);
@@ -839,8 +923,8 @@ impl AppState {
             }
         }
         let label = match what {
-            What::Template(_) => plan.template.name.clone(),
-            What::Channels => lang.pick("チャンネル", "Channels").into(),
+            What::Template { .. } => plan.template.name.clone(),
+            What::Channels { .. } => lang.pick("チャンネル", "Channels").into(),
             What::ChannelFile(path) => path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -891,7 +975,7 @@ impl AppState {
         let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
             self.refuse(
                 Source::Export,
-                lang.pick("書き出す先のファイルがありません。", "No file to write to."),
+                lang.pick("出力先のファイルがありません。", "No file to write to."),
             );
             return;
         };

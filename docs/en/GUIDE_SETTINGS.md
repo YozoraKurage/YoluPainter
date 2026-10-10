@@ -99,7 +99,7 @@ The orbit and zoom centers are the same values as Navigation in the 3D view's di
 
 | Item | What it does |
 |---|---|
-| Export padding | How far the colors at the UV edges are spread into texels no UV touches when exporting. Choose Off, 2, 4, 8, 16, 32, 64 texels or Fill (all the way) (the default is Fill). It keeps mipmaps and filtering from pulling in other colors. It is the same value as "Padding" in the File → Export… window |
+| Export padding | How far the colors at the UV edges are spread into texels no UV touches when exporting. Choose No padding, Dilation 2 px, 4 px, 8 px, 16 px, 32 px, 64 px or Dilation infinite (the default is Dilation infinite). It keeps mipmaps and filtering from pulling in other colors. It is the same value as "Padding" in the File → Export Textures… window |
 | Library folder | Where your own library (the folder for your assets) lives. The default is `YoluPainter/Library` in the settings folder. Choose it with Choose…, and restore the default with Default. Only an absolute path is accepted |
 | Backups to keep | How many replaced versions to keep per file (0 to 1000), newest first, when you overwrite a save. They are kept in the `<file name>-backups~` folder next to the file. Only the older ones beyond this are deleted. 0 makes no backups (existing ones are not deleted) |
 | Keep all | When on, backups are never deleted. It is on by default |

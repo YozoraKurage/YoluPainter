@@ -763,6 +763,18 @@ pub fn subsection_header(
     }
 }
 
+/// どのタブもアイコンと名前の両方で入る、`tab_strip` の幅（一番長い名前に合わせて、タブの数だけ。端の余白と、四捨五入の余りを含む）。
+pub fn tab_strip_width(p: &Painter, labels: &[&str]) -> f32 {
+    let widest = labels
+        .iter()
+        .map(|l| text_width(p, l, t::HEADER))
+        .fold(0.0f32, f32::max);
+    labels.len() as f32 * (widest + TAB_WITH_ICON_EXTRA + 2.0) + 4.0
+}
+
+/// タブの 1 つが、アイコンと名前の両方を見せるのに、名前の幅へ足す幅（アイコンと余白）。
+const TAB_WITH_ICON_EXTRA: f32 = 34.0;
+
 /// アイコンと名前のタブの帯（プロパティの欄の頭）。押されたタブの番号を返す（押されなければ active）。幅が足りなければ名前だけ、
 /// 名前が全部は入らなければアイコンだけ（どのタブも同じ見せ方。名前はツールチップ）。
 pub fn tab_strip(
@@ -789,7 +801,7 @@ pub fn tab_strip(
         .map(|l| text_width(ui.painter(), l, t::HEADER))
         .fold(0.0f32, f32::max);
     // 全部のタブが同じ見せ方になるよう、一番長い名前で決める
-    let with_icon = w.round() - 1.0 >= widest + 34.0;
+    let with_icon = w.round() - 1.0 >= widest + TAB_WITH_ICON_EXTRA;
     let text_only = w.round() - 1.0 >= widest + 8.0;
     let mut result = active;
     for i in 0..n {

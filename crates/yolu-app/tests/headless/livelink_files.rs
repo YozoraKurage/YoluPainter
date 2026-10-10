@@ -382,6 +382,7 @@ fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets(
         .apply(Action::Export(yolu_app::export::ExportAction::TemplateTo {
             id: "liltoon".into(),
             dir,
+            sets: None,
         }));
     h.state.wait_export();
     h.frame();

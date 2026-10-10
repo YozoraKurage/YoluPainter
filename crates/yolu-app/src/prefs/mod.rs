@@ -59,7 +59,7 @@ const DEFAULT_BACKUP_COUNT: u32 = 10;
 /// 設定の 1 つの値の選び。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pref {
-    /// 書き出しの余白（テクセル。-1 は届くかぎり全部）。
+    /// 書き出しのパディング（テクセル。-1 は無限に広げる）。
     ExportPadding(i32),
     LiveLinkOnStartup(bool),
     /// Unity から受けたマテリアルの値を .ylp に保存するか。
@@ -601,9 +601,9 @@ impl AppState {
 
 pub(crate) fn padding_name(lang: Lang, texels: i32) -> String {
     match texels {
-        0 => lang.pick("なし", "Off").into(),
-        n if n < 0 => lang.pick("届くかぎり", "Fill (all the way)").into(),
-        n => lang.pick(format!("{n} テクセル"), format!("{n} texels")),
+        0 => lang.pick("なし", "No padding").into(),
+        n if n < 0 => lang.pick("無限に広げる", "Dilation infinite").into(),
+        n => lang.pick(format!("{n} px 広げる"), format!("Dilation {n} px")),
     }
 }
 

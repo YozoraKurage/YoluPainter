@@ -609,6 +609,17 @@ pub fn stale_reasons(check: &MeshMapCheck) -> String {
         .join(" / ")
 }
 
+/// 焼いた AO を書き出しに使えるか。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OcclusionState {
+    /// 焼いていない。
+    None,
+    /// 焼いてあるが今の条件のものではない（使わない）。理由。
+    Stale(String),
+    /// 今の条件で焼いたもの。
+    Current,
+}
+
 /// 書き出しの AO の元。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Occlusion {
@@ -914,49 +925,71 @@ impl AppState {
         }
     }
 
-    /// 書き出しに使う AO（今の条件で焼いたものだけ）。
-    pub fn occlusion_for_export(&mut self, index: usize) -> Occlusion {
+    /// セットに AO のマップが焼いてあるか（今の条件のものかは [`AppState::occlusion_state`]）。
+    pub fn has_baked_occlusion(&self, index: usize) -> bool {
+        self.sets
+            .get(index)
+            .is_some_and(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion).is_some())
+    }
+
+    /// 焼いた AO を書き出しに使えるか（バイト列は作らない）。`input` は今のモデルの入力（無ければ照合できない）。
+    pub fn occlusion_state(&self, index: usize, input: Option<&MeshBakeInput>) -> OcclusionState {
         let lang = self.lang;
         let Some(map) = self
             .sets
             .get(index)
             .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
-            .cloned()
         else {
-            return Occlusion::None;
+            return OcclusionState::None;
         };
         let doc = self.set_doc(index);
         if (map.width(), map.height()) != (doc.width() as usize, doc.height() as usize) {
-            return Occlusion::Stale(
+            return OcclusionState::Stale(
                 lang.pick("焼いた大きさが文書と違う", "baked size differs")
                     .into(),
             );
         }
-        let input = self.bake_input().ok();
-        let expected = self.mesh_map_expectation(index, input.as_deref());
+        let expected = self.mesh_map_expectation(index, input);
         let check = map.provenance().check(&expected);
         match check.state {
-            MeshMapState::Current => {}
-            MeshMapState::Unverified => {
-                return Occlusion::Stale(
-                    lang.pick("モデルが無く照合できない", "no model to check against")
-                        .into(),
-                )
-            }
-            MeshMapState::Stale => return Occlusion::Stale(stale_reasons(&check)),
+            MeshMapState::Current => OcclusionState::Current,
+            MeshMapState::Unverified => OcclusionState::Stale(
+                lang.pick("モデルが無く照合できない", "no model to check against")
+                    .into(),
+            ),
+            MeshMapState::Stale => OcclusionState::Stale(stale_reasons(&check)),
         }
-        let (w, h) = (map.width(), map.height());
-        let mut bytes = vec![255u8; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let i = y * w + x;
-                if map.coverage()[i] != 0 {
-                    let v = map.value(x as i32, y as i32, 0).unwrap_or(1.0);
-                    bytes[i] = occlusion_byte(v);
+    }
+
+    /// 書き出しに使う AO（今の条件で焼いたものだけ）。
+    pub fn occlusion_for_export(&mut self, index: usize) -> Occlusion {
+        if !self.has_baked_occlusion(index) {
+            return Occlusion::None;
+        }
+        let input = self.bake_input().ok();
+        match self.occlusion_state(index, input.as_deref()) {
+            OcclusionState::None => Occlusion::None,
+            OcclusionState::Stale(why) => Occlusion::Stale(why),
+            OcclusionState::Current => {
+                let map = self
+                    .sets
+                    .get(index)
+                    .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
+                    .expect("今の条件と照合できたマップ");
+                let (w, h) = (map.width(), map.height());
+                let mut bytes = vec![255u8; w * h];
+                for y in 0..h {
+                    for x in 0..w {
+                        let i = y * w + x;
+                        if map.coverage()[i] != 0 {
+                            let v = map.value(x as i32, y as i32, 0).unwrap_or(1.0);
+                            bytes[i] = occlusion_byte(v);
+                        }
+                    }
                 }
+                Occlusion::Bytes(bytes)
             }
         }
-        Occlusion::Bytes(bytes)
     }
 
     /// .ylp を開いてモデルを読み直したとき（`newproject::reopen`・Live Link の開き直し）に呼ぶ: 焼いたマップを持つセットがあれば、読み終えた

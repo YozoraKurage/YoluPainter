@@ -41,7 +41,7 @@ A single undo restores the original layers. If merging would change the appearan
 
 There are four locks. Transparent pixels keeps each pixel's transparency when you paint and changes only the color. Image pixels makes the pixels unchangeable (you can still move the layer and paint its mask). Position stops moving and transforming. All stops changes to pixels, position and the layer's settings.
 
-Toggle them through the lock icon in a layer row (click to remove the layer's own lock), Lock in the right-click menu, or Lock in Properties. A group's locks apply to its contents. Locks are saved and restored in `.ylp`, PSD and `.ylsmart`.
+Toggle them through the lock icon in a layer row (click to remove the layer's own lock), the lock items in the right-click menu (Transparent pixels, Image pixels, Position and All), or Lock in Properties. A group's locks apply to its contents. Locks are saved and restored in `.ylp`, PSD and `.ylsmart`.
 
 ## Compositing
 

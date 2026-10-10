@@ -44,7 +44,7 @@ pub enum Category {
     Processing,
     /// 3D ビューの視点の中心・UV ワイヤーフレーム。
     View3d,
-    /// ファイル（書き出しの余白・ライブラリの場所・退避を残す数）。
+    /// ファイル（書き出しのパディング・ライブラリの場所・退避を残す数）。
     Files,
     /// Live Link と外からの操作。
     LiveLink,
@@ -839,7 +839,7 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "padding",
-                lang.pick("書き出しの余白", "Export padding"),
+                lang.pick("書き出しのパディング", "Export padding"),
                 &padding_name(lang, s.export_padding),
                 lang.pick(
                     "書き出しで、UV が触れないテクセルへ UV の縁の色を塗り広げる量。ミップマップや補間で縁に別の色が混ざるのを防ぎます",

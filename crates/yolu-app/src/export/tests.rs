@@ -122,6 +122,7 @@ fn export(s: &mut AppState, id: &str, dir: &Path) {
     s.apply(Action::Export(ExportAction::TemplateTo {
         id: id.into(),
         dir: dir.to_path_buf(),
+        sets: None,
     }));
 }
 
@@ -458,6 +459,12 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
     s.apply(Action::Bake(BakeAction::Start));
     s.wait_bake();
     assert!(!s.sets.current().mesh_maps.is_empty());
+    // 書く前の一覧にも、今の条件で焼いた AO の画像が入る
+    form(&mut s, ExportForm::UnityStandard);
+    assert_eq!(
+        preview_names(&mut s),
+        ["Texture_Albedo.png", "Texture_Occlusion.png"]
+    );
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
     assert_eq!(dir.files(), ["Texture_Albedo.png", "Texture_Occlusion.png"]);
@@ -485,6 +492,11 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
         }],
     })
     .unwrap();
+    assert_eq!(
+        preview_names(&mut s),
+        ["Texture_Albedo.png"],
+        "古い AO の画像は一覧にも出さない"
+    );
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
     assert_eq!(dir.files(), ["Texture_Albedo.png"]);
@@ -653,7 +665,10 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
 // ───────── チャンネルの画像（描くチャンネルの PNG・全チャンネル） ─────────
 
 fn export_channels(s: &mut AppState, dir: &Path) {
-    s.apply(Action::Export(ExportAction::ChannelsTo(dir.to_path_buf())));
+    s.apply(Action::Export(ExportAction::ChannelsTo {
+        dir: dir.to_path_buf(),
+        sets: None,
+    }));
 }
 
 fn export_channel(s: &mut AppState, path: &Path) {
@@ -1059,7 +1074,7 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
     export_channels(&mut s, &dir.0);
     assert!(!s.export.is_exporting());
     let confirm = s.export.confirm.clone().unwrap();
-    assert_eq!(confirm.what, What::Channels);
+    assert_eq!(confirm.what, What::Channels { sets: None });
     assert_eq!(confirm.total, 2);
     assert_eq!(confirm.existing.len(), 2);
     s.apply(Action::Export(ExportAction::CancelConfirm));
@@ -1173,6 +1188,25 @@ fn form(s: &mut AppState, form: ExportForm) {
     s.apply(Action::Export(ExportAction::SetForm(form)));
 }
 
+/// 書くファイルの一覧（ウィンドウが書く前に出す物）の名前。並べ替えて返す。
+fn preview_names(s: &mut AppState) -> Vec<String> {
+    let preview = s.export_preview();
+    assert_eq!(preview.problem, None);
+    let mut names: Vec<String> = preview.files.into_iter().map(|f| f.name).collect();
+    names.sort();
+    names
+}
+
+fn set_uids(s: &AppState) -> Vec<u32> {
+    (0..s.sets.len())
+        .map(|i| s.sets.get(i).unwrap().uid)
+        .collect()
+}
+
+fn check(s: &mut AppState, uid: u32, on: bool) {
+    s.apply(Action::Export(ExportAction::SetChecked { uid, on }));
+}
+
 #[test]
 fn the_forms_have_stable_keys_names_and_the_templates_they_stand_for() {
     assert_eq!(ExportForm::default(), ExportForm::ChannelPng);
@@ -1212,11 +1246,19 @@ fn the_forms_have_stable_keys_names_and_the_templates_they_stand_for() {
     // 名前は日本語と英語がある
     assert_eq!(
         ExportForm::ChannelPng.name(crate::lang::Lang::Ja),
-        "PNG（今のチャンネル）"
+        "今のチャンネル（PNG 1 枚）"
+    );
+    assert_eq!(
+        ExportForm::ChannelPng.name(crate::lang::Lang::En),
+        "Current Channel (One PNG)"
+    );
+    assert_eq!(
+        ExportForm::AllChannels.name(crate::lang::Lang::Ja),
+        "チャンネルごと（PNG）"
     );
     assert_eq!(
         ExportForm::AllChannels.name(crate::lang::Lang::En),
-        "PNG (All Channels)"
+        "Per Channel (PNG)"
     );
 }
 
@@ -1244,7 +1286,7 @@ fn the_destination_starts_at_the_project_folder_and_follows_the_form() {
     assert_eq!(s.export_destination(), None);
     s.apply(Action::Export(ExportAction::Run));
     assert!(!s.export.is_exporting());
-    assert_eq!(s.message, "書き出す先がありません。");
+    assert_eq!(s.message, "出力先がありません。");
     saved_as(&mut s, &dir.0.join("Hero.ylp"));
     // PNG は、プロジェクトのフォルダの既定のファイル名
     assert_eq!(s.export_destination(), Some(dir.0.join("Hero_Color.png")));
@@ -1581,7 +1623,7 @@ fn a_destination_chosen_in_the_previous_project_is_not_used_after_the_project_is
     assert_eq!(s.export_destination(), None);
     s.apply(Action::Export(ExportAction::Run));
     assert!(!s.export.is_exporting() && s.export.confirm.is_none());
-    assert_eq!(s.message, "書き出す先がありません。");
+    assert_eq!(s.message, "出力先がありません。");
     assert_eq!(std::fs::read(&mine).unwrap(), b"mine");
     // 選び直せば、その先を今のプロジェクトで使える
     form(&mut s, ExportForm::AllChannels);
@@ -1633,4 +1675,398 @@ fn the_choosers_confirmation_covers_one_export_and_the_second_one_asks() {
         "断られたあとも、確かめずには書かない"
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+}
+
+// ───────── 書き出すテクスチャセットのチェックと、書くファイルの一覧 ─────────
+
+/// Skin に Roughness、Hair に Emission も描いてある 2 つのセット（書くファイルを増やして、色空間の違うファイルも出す）。
+fn two_sets_with_more_channels() -> AppState {
+    let mut s = two_sets();
+    let (current, other) = (s.sets.current_index(), 1 - s.sets.current_index());
+    let layer = s.selected_layer.unwrap();
+    paint_left_half(&mut s.doc, layer, Channel::Roughness, [90, 90, 90, 255]);
+    let doc = s.set_doc_mut(other);
+    let hair_layer = doc.layers()[0].id();
+    paint_left_half(doc, hair_layer, Channel::Emission, [0, 0, 255, 255]);
+    let _ = current;
+    s
+}
+
+#[test]
+fn a_set_taken_out_of_the_list_is_not_written_by_a_template_or_per_channel() {
+    for (form_kind, tag) in [
+        (ExportForm::UnityStandard, "template"),
+        (ExportForm::Hdrp, "hdrp"),
+        (ExportForm::LilToon, "liltoon"),
+        (ExportForm::AllChannels, "channels"),
+    ] {
+        let dir = Dir::new(&format!("pick-{tag}"));
+        let mut s = two_sets_with_more_channels();
+        s.export.padding = 0;
+        let uids = set_uids(&s);
+        let names: Vec<String> = (0..2)
+            .map(|i| s.sets.get(i).unwrap().name.clone())
+            .collect();
+        s.apply(Action::Export(ExportAction::OpenWindow));
+        form(&mut s, form_kind);
+        choose(&mut s, &dir.0);
+        assert_eq!(s.export_checked_uids(), uids, "{tag}: はじめは全部入り");
+        // 両方入れて書いた名前と、1 つ外した名前
+        let all = {
+            let all_dir = Dir::new(&format!("pick-{tag}-all"));
+            choose(&mut s, &all_dir.0);
+            s.apply(Action::Export(ExportAction::Run));
+            s.wait_export();
+            all_dir.files()
+        };
+        assert!(
+            all.iter().any(|f| f.contains(&format!("_{}_", names[1]))),
+            "{tag}: {all:?}"
+        );
+        s.apply(Action::Export(ExportAction::OpenWindow));
+        choose(&mut s, &dir.0);
+        check(&mut s, uids[1], false);
+        assert_eq!(s.export_checked_uids(), vec![uids[0]]);
+        s.apply(Action::Export(ExportAction::Run));
+        s.wait_export();
+        let written = dir.files();
+        assert!(!written.is_empty(), "{tag}");
+        assert!(
+            written
+                .iter()
+                .all(|f| f.contains(&format!("_{}_", names[0]))),
+            "{tag}: 外したセットは書かない {written:?}"
+        );
+        let expected: Vec<String> = all
+            .iter()
+            .filter(|f| f.contains(&format!("_{}_", names[0])))
+            .cloned()
+            .collect();
+        assert_eq!(
+            written, expected,
+            "{tag}: 外さなかったセットの名前は変わらない"
+        );
+    }
+}
+
+#[test]
+fn the_template_and_channels_actions_take_the_sets_to_write_and_none_means_all() {
+    let dir = Dir::new("pick-actions");
+    let mut s = two_sets();
+    s.export.padding = 0;
+    let uids = set_uids(&s);
+    let first = s.sets.get(0).unwrap().name.clone();
+    s.apply(Action::Export(ExportAction::TemplateTo {
+        id: "unity-standard".into(),
+        dir: dir.0.clone(),
+        sets: Some(vec![uids[0], 9999]),
+    }));
+    s.wait_export();
+    assert_eq!(dir.files(), [format!("Texture_{first}_Albedo.png")]);
+    let dir = Dir::new("pick-actions-channels");
+    s.apply(Action::Export(ExportAction::ChannelsTo {
+        dir: dir.0.clone(),
+        sets: Some(vec![uids[0]]),
+    }));
+    s.wait_export();
+    assert_eq!(dir.files(), [format!("Texture_{first}_Color.png")]);
+    let dir = Dir::new("pick-actions-none");
+    export(&mut s, "unity-standard", &dir.0);
+    s.wait_export();
+    assert_eq!(dir.files().len(), 2, "None は全部: {:?}", dir.files());
+    // 外していても、選びの中に読むだけのセットがあれば、これまでどおり書かず知らせる
+    s.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    let dir = Dir::new("pick-actions-readonly");
+    s.apply(Action::Export(ExportAction::ChannelsTo {
+        dir: dir.0.clone(),
+        sets: Some(uids.clone()),
+    }));
+    s.wait_export();
+    assert_eq!(dir.files().len(), 1);
+    assert_eq!(
+        s.export.report.as_ref().unwrap().notes,
+        [Note::ReadOnly(s.sets.get(1).unwrap().name.clone())]
+    );
+}
+
+#[test]
+fn nothing_checked_cannot_be_exported_and_writes_nothing() {
+    let dir = Dir::new("pick-none");
+    let mut s = two_sets();
+    let uids = set_uids(&s);
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::LilToon);
+    choose(&mut s, &dir.0);
+    for uid in &uids {
+        check(&mut s, *uid, false);
+    }
+    assert!(s.export_checked_uids().is_empty());
+    assert_eq!(s.export_preview(), crate::export::list::Preview::default());
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting());
+    assert_eq!(s.message, "書き出すテクスチャセットがありません。");
+    assert!(s.export.window.open, "押せないままウィンドウは開いている");
+    assert!(dir.files().is_empty());
+    // 1 つ入れ直せば書ける
+    check(&mut s, uids[0], true);
+    s.apply(Action::Export(ExportAction::Run));
+    s.wait_export();
+    assert!(!dir.files().is_empty());
+}
+
+#[test]
+fn the_current_channel_png_lists_only_the_current_set_and_it_cannot_be_unchecked() {
+    let dir = Dir::new("pick-current");
+    let mut s = two_sets();
+    s.export.padding = 0;
+    let current = s.sets.current().uid;
+    let name = s.sets.current().name.clone();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    assert_eq!(s.export_form(), ExportForm::ChannelPng);
+    let rows = s.export_set_rows();
+    assert_eq!(
+        rows,
+        [crate::export::list::SetRow {
+            uid: current,
+            name: name.clone(),
+            checked: true,
+            enabled: false,
+            read_only: false,
+        }]
+    );
+    check(&mut s, current, false);
+    assert!(s.export_set_rows()[0].checked, "選べない");
+    assert_eq!(s.export_checked_uids(), vec![current]);
+    // 別のセットに替えれば、その 1 つだけ
+    let other = 1 - s.sets.current_index();
+    s.apply(Action::SelectSet(s.sets.get(other).unwrap().uid));
+    assert_eq!(s.export_set_rows().len(), 1);
+    assert_eq!(s.export_set_rows()[0].uid, s.sets.current().uid);
+    // 別の出力テンプレートでは全部が並び、外した印が効く（プロジェクトの間だけ覚えている）
+    form(&mut s, ExportForm::AllChannels);
+    assert_eq!(s.export_set_rows().len(), 2);
+    assert!(
+        !s.export_set_rows()
+            .iter()
+            .find(|r| r.uid == current)
+            .unwrap()
+            .checked
+    );
+    // 書き出す
+    form(&mut s, ExportForm::ChannelPng);
+    choose(&mut s, &dir.0.join("one.png"));
+    s.apply(Action::Export(ExportAction::Run));
+    s.wait_export();
+    assert_eq!(dir.files(), ["one.png"]);
+    let _ = name;
+}
+
+#[test]
+fn the_set_list_follows_added_removed_and_renamed_sets_and_a_read_only_set_stays_unchecked() {
+    let mut s = two_sets();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::UnityStandard);
+    let uids = set_uids(&s);
+    let rows = s.export_set_rows();
+    assert_eq!(rows.iter().map(|r| r.uid).collect::<Vec<_>>(), uids);
+    assert!(rows.iter().all(|r| r.checked && r.enabled && !r.read_only));
+    // 名前の変更に追いかける。外した印は uid に付くので、名前が変わっても外れたまま
+    check(&mut s, uids[1], false);
+    s.rename_set(uids[1], "Body").unwrap();
+    let rows = s.export_set_rows();
+    assert_eq!((rows[1].name.as_str(), rows[1].checked), ("Body", false));
+    assert!(rows[0].checked);
+    // セットを足すと、チェックが入った行が増える
+    let added = s.add_texture_set().unwrap();
+    let rows = s.export_set_rows();
+    assert_eq!(rows.len(), 3);
+    assert_eq!((rows[2].uid, rows[2].checked), (added, true));
+    assert_eq!(s.export_checked_uids(), vec![uids[0], added]);
+    // セットを消すと、一覧からも、書き出す物からも無くなる（外していたセットでも）
+    s.remove_sets(&[uids[1]]).unwrap();
+    let rows = s.export_set_rows();
+    assert_eq!(
+        rows.iter().map(|r| r.uid).collect::<Vec<_>>(),
+        vec![uids[0], added]
+    );
+    // 読むだけのセットは、外れたまま触れない
+    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    let rows = s.export_set_rows();
+    assert_eq!(
+        (rows[0].checked, rows[0].enabled, rows[0].read_only),
+        (false, false, true)
+    );
+    assert_eq!(s.export_checked_uids(), vec![added]);
+}
+
+#[test]
+fn the_checks_come_back_when_the_project_is_replaced() {
+    let mut s = two_sets();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::Hdrp);
+    let uids = set_uids(&s);
+    check(&mut s, uids[0], false);
+    assert_eq!(s.export_checked_uids(), vec![uids[1]]);
+    // ウィンドウを開いたままプロジェクトを替えても、前のプロジェクトのチェックは使わない
+    s.np_project_replaced();
+    let uids = set_uids(&s);
+    assert!(s.export_set_rows().iter().all(|r| r.checked));
+    assert_eq!(s.export_checked_uids(), uids);
+    // 開き直しても全部入り
+    s.apply(Action::Export(ExportAction::CloseWindow));
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    assert_eq!(s.export_checked_uids(), uids);
+    // チェックは設定に入らない（設定は替わらない）
+    let before = s.settings().clone();
+    check(&mut s, uids[0], false);
+    assert_eq!(s.settings().clone(), before);
+}
+
+#[test]
+fn the_listed_files_are_the_files_written_for_every_template_and_with_a_set_unchecked() {
+    for with_unchecked in [false, true] {
+        for form_kind in ExportForm::ALL {
+            let tag = format!("list-{}-{with_unchecked}", form_kind.key());
+            let dir = Dir::new(&tag);
+            let mut s = two_sets_with_more_channels();
+            s.export.padding = 0;
+            let uids = set_uids(&s);
+            s.apply(Action::Export(ExportAction::OpenWindow));
+            form(&mut s, form_kind);
+            if form_kind.writes_file() {
+                choose(&mut s, &dir.0.join("picked.png"));
+            } else {
+                choose(&mut s, &dir.0);
+            }
+            if with_unchecked {
+                check(&mut s, uids[0], false);
+            }
+            let names = preview_names(&mut s);
+            assert!(!names.is_empty(), "{tag}");
+            s.apply(Action::Export(ExportAction::Run));
+            s.wait_export();
+            assert_eq!(
+                names,
+                dir.files(),
+                "{tag}: 書く前の一覧と書いたファイルが同じ"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_listed_files_show_the_color_space_and_mark_the_files_that_already_exist() {
+    let dir = Dir::new("list-space");
+    let mut s = two_sets_with_more_channels();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::UnityStandard);
+    choose(&mut s, &dir.0);
+    let first = s.sets.get(0).unwrap().name.clone();
+    let space = |s: &mut AppState, suffix: &str| {
+        s.export_preview()
+            .files
+            .into_iter()
+            .find(|f| f.name.ends_with(&format!("_{suffix}.png")))
+            .map(|f| f.srgb)
+    };
+    assert_eq!(space(&mut s, "Albedo"), Some(true));
+    assert_eq!(space(&mut s, "Emission"), Some(true));
+    assert_eq!(space(&mut s, "MetallicSmoothness"), Some(false));
+    assert!(s.export_preview().files.iter().all(|f| !f.exists));
+    // もうあるファイルには印が付き、ほかには付かない
+    std::fs::write(dir.0.join(format!("Texture_{first}_Albedo.png")), b"old").unwrap();
+    let marked: Vec<String> = s
+        .export_preview()
+        .files
+        .into_iter()
+        .filter(|f| f.exists)
+        .map(|f| f.name)
+        .collect();
+    assert_eq!(marked, [format!("Texture_{first}_Albedo.png")]);
+    // 色空間は PNG の 1 枚の一覧にも出る（Roughness は リニア）
+    form(&mut s, ExportForm::ChannelPng);
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(
+        Channel::Roughness,
+    )));
+    let rows = s.export_preview().files;
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].srgb);
+    assert!(rows[0].name.ends_with("_Roughness.png"), "{}", rows[0].name);
+}
+
+#[test]
+fn a_problem_that_stops_the_export_is_shown_in_place_of_the_list() {
+    // 書くものが無い
+    let dir = Dir::new("list-problem");
+    let mut s = AppState::new(64, 64);
+    let layer = s.selected_layer.unwrap();
+    s.doc
+        .set_channel_enabled(layer, Channel::Color, false)
+        .unwrap();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::Hdrp);
+    choose(&mut s, &dir.0);
+    let preview = s.export_preview();
+    assert!(preview.files.is_empty());
+    assert!(
+        preview
+            .problem
+            .as_deref()
+            .is_some_and(|p| p.contains("書き出すものがありません")),
+        "{preview:?}"
+    );
+    // 読むだけのセットは、1 枚の PNG にできない
+    let mut s = two_sets();
+    s.sets.get_mut(s.sets.current_index()).unwrap().read_only = Some("試験".into());
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    let preview = s.export_preview();
+    assert!(
+        preview.files.is_empty() && preview.problem.is_some(),
+        "{preview:?}"
+    );
+}
+
+#[test]
+fn the_padding_choices_are_named_in_both_languages() {
+    use crate::lang::Lang;
+    let names = |lang: Lang| -> Vec<String> {
+        crate::settings::EXPORT_PADDINGS
+            .iter()
+            .map(|p| crate::prefs::padding_name(lang, *p))
+            .collect()
+    };
+    assert_eq!(
+        names(Lang::Ja),
+        [
+            "なし",
+            "2 px 広げる",
+            "4 px 広げる",
+            "8 px 広げる",
+            "16 px 広げる",
+            "32 px 広げる",
+            "64 px 広げる",
+            "無限に広げる"
+        ]
+    );
+    assert_eq!(
+        names(Lang::En),
+        [
+            "No padding",
+            "Dilation 2 px",
+            "Dilation 4 px",
+            "Dilation 8 px",
+            "Dilation 16 px",
+            "Dilation 32 px",
+            "Dilation 64 px",
+            "Dilation infinite"
+        ]
+    );
+    assert_eq!(
+        crate::settings::setting_name(Lang::Ja, "export_padding"),
+        "書き出しのパディング"
+    );
+    assert_eq!(
+        crate::settings::setting_name(Lang::En, "export_padding"),
+        "Export padding"
+    );
 }

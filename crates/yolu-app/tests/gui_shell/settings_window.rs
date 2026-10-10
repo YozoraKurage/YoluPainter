@@ -33,8 +33,8 @@ fn has(entries: &[Entry<Action>], action: &Action) -> bool {
 
 // ───────── メニューの置き場 ─────────
 
-/// ファイルの「3D ビューに FBX を開く…」は「開く…」「復旧…」のすぐ後。表示には、言語・筆圧の調整・FBX・ベイクが無い。ヘルプには、ショートカット・
-/// 起動時の確かめ・試験版が無い（日英）。
+/// ファイルには、「3D ビューに FBX を開く…」と、押せない見出し（読み込み・書き出し）が無い（モデルは、新規プロジェクト・プロジェクト設定・ドロップ・ポーズの欄で開く）。
+/// 表示には、言語・筆圧の調整・FBX・ベイクが無い。ヘルプには、ショートカット・起動時の確かめ・試験版が無い（日英）。
 #[test]
 fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
     use yolu_app::pen::window::PressureAction;
@@ -46,18 +46,65 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
         let file = shell::menu_entries(&app, 0);
         let names = labels(&file);
         let at = |name: &str| names.iter().position(|n| n == name).unwrap_or(usize::MAX);
-        let fbx = lang.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…");
-        assert_eq!(
-            at(fbx),
-            at(lang.pick("復旧…", "Recovery…")) + 1,
-            "{lang:?}: 復旧のすぐ後 {names:?}"
-        );
         assert_eq!(
             at(lang.pick("復旧…", "Recovery…")),
             at(lang.pick("開く…", "Open…")) + 1,
             "{lang:?}: {names:?}"
         );
-        assert!(has(&file, &Action::Pose(PoseAction::OpenFbx)));
+        // FBX を開く項目はメニューに無い（操作は `Action` として残る。下の試験）
+        assert!(!has(&file, &Action::Pose(PoseAction::OpenFbx)), "{lang:?}");
+        let fbx = lang.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…");
+        assert_eq!(at(fbx), usize::MAX, "{lang:?}: {names:?}");
+        // 押せない見出しは置かず、区切り線で分ける（Live Link の状態の見出しは別のメニュー）
+        assert!(
+            !file.iter().any(|e| matches!(e, Entry::Heading(_))),
+            "{lang:?}: ファイルに見出し {names:?}"
+        );
+        for gone in [
+            lang.pick("読み込み", "Import"),
+            lang.pick("書き出し", "Export"),
+        ] {
+            assert_eq!(at(gone), usize::MAX, "{lang:?}: {gone}");
+        }
+        // 読み込み（PSD 2 つ）と書き出し（テクスチャ・PSD）は、区切りをはさんで続く
+        let import = at(lang.pick(
+            "PSD を新しいテクスチャセットへ…",
+            "PSD as a New Texture Set…",
+        ));
+        let export = at(lang.pick("テクスチャを書き出す…", "Export Textures…"));
+        assert_eq!(
+            at(lang.pick(
+                "PSD を今のセットの文書へ…",
+                "PSD as the Current Set's Document…"
+            )),
+            import + 1,
+            "{lang:?}: {names:?}"
+        );
+        assert_eq!(export, import + 2, "{lang:?}: {names:?}");
+        // 読み込みと書き出しの間・書き出しの前後は区切り線
+        let separator_before = |label: &str| {
+            let at = file
+                .iter()
+                .position(|e| e.label() == Some(label))
+                .expect("項目がある");
+            matches!(file[at - 1], Entry::Separator)
+        };
+        assert!(
+            separator_before(lang.pick(
+                "PSD を新しいテクスチャセットへ…",
+                "PSD as a New Texture Set…"
+            )),
+            "{lang:?}"
+        );
+        assert!(
+            separator_before(lang.pick("テクスチャを書き出す…", "Export Textures…")),
+            "{lang:?}"
+        );
+        assert_eq!(
+            at(lang.pick("PSD を書き出す…", "Export PSD…")),
+            export + 1,
+            "{lang:?}: {names:?}"
+        );
         let view = shell::menu_entries(&app, 5);
         for gone in [
             Action::Pose(PoseAction::OpenFbx),
@@ -657,7 +704,7 @@ fn typing_in_the_search_field_lists_the_matching_items_and_lights_the_categories
     click_side(&mut h, Category::Files);
     assert!(h.state().state.prefs.search.is_empty());
     assert_eq!(h.state().state.prefs.category, Category::Files);
-    let _ = h.get_by_label("Export padding: Fill (all the way)");
+    let _ = h.get_by_label("Export padding: Dilation infinite");
     // Esc: 探す欄の文字を消す → もう一度で閉じる
     type_in_search(&mut h, "pen");
     assert!(!h.state().state.prefs.search.is_empty());

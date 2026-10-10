@@ -1,4 +1,4 @@
-//! 設定のウィンドウ（言語・書き出しの余白・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
+//! 設定のウィンドウ（言語・書き出しのパディング・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
 //! 設定のファイルへの保存と起動での復元、壊れた値の理由、ウィンドウの操作と日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -454,13 +454,13 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         labels(&entries(&s, PrefChoice::ExportPadding)),
         [
             "なし",
-            "2 テクセル",
-            "4 テクセル",
-            "8 テクセル",
-            "16 テクセル",
-            "32 テクセル",
-            "64 テクセル",
-            "届くかぎり"
+            "2 px 広げる",
+            "4 px 広げる",
+            "8 px 広げる",
+            "16 px 広げる",
+            "32 px 広げる",
+            "64 px 広げる",
+            "無限に広げる"
         ]
     );
     assert_eq!(
@@ -494,10 +494,13 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         labels(&entries(&s, PrefChoice::CpuThreads))[0],
         "Automatic (8)"
     );
-    assert_eq!(labels(&entries(&s, PrefChoice::ExportPadding))[0], "Off");
+    assert_eq!(
+        labels(&entries(&s, PrefChoice::ExportPadding))[0],
+        "No padding"
+    );
     assert_eq!(
         labels(&entries(&s, PrefChoice::ExportPadding))[7],
-        "Fill (all the way)"
+        "Dilation infinite"
     );
     // 1 コア（並列にしない）の機械は 1 が 1 つだけ
     s.prefs.cores = 1;
@@ -639,7 +642,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
         click(h, at);
     };
     choose(&mut h, Category::Files);
-    pick(&mut h, "書き出しの余白: 届くかぎり", "8 テクセル");
+    pick(&mut h, "書き出しのパディング: 無限に広げる", "8 px 広げる");
     assert_eq!(h.state().state.export.padding, 8);
     choose(&mut h, Category::Memory);
     pick(&mut h, "取り消し履歴: 自動（2048 MiB）", "512 MiB");

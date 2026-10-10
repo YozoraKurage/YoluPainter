@@ -512,14 +512,17 @@ mod tests {
             ("export", |dir| {
                 let mut s = AppState::new(32, 32);
                 s.export.park_next = true;
-                s.apply(Action::Export(ExportAction::ChannelsTo(dir.to_path_buf())));
+                s.apply(Action::Export(ExportAction::ChannelsTo {
+                    dir: dir.to_path_buf(),
+                    sets: None,
+                }));
                 assert!(s.export.is_exporting(), "{}", s.message);
                 (s, None)
             }),
             ("export.confirm", |dir| {
                 let mut s = AppState::new(32, 32);
                 s.export.confirm = Some(crate::export::Confirm {
-                    what: crate::export::What::Channels,
+                    what: crate::export::What::Channels { sets: None },
                     dir: dir.to_path_buf(),
                     existing: vec!["a.png".into()],
                     total: 1,

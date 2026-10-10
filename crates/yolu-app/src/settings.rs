@@ -185,9 +185,9 @@ impl DiskLimit {
     }
 }
 
-/// 書き出しの余白に選べる値（テクセル。-1 は届くかぎり全部、0 は塗り広げない）。
+/// 書き出しのパディングに選べる値（テクセル。-1 は無限に広げる、0 は塗り広げない）。
 pub const EXPORT_PADDINGS: [i32; 8] = [0, 2, 4, 8, 16, 32, 64, -1];
-/// 書き出しの余白の既定。
+/// 書き出しのパディングの既定。
 pub const DEFAULT_EXPORT_PADDING: i32 = -1;
 /// CPU のスレッドの数の上限（論理プロセッサの数より多くてもよい。多すぎると遅くなるだけ）。
 pub const MAX_CPU_THREADS: u32 = 1024;
@@ -199,9 +199,9 @@ pub const DEFAULT_MIN_UNDO_STEPS: u32 = 5;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub lang: Lang,
-    /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は届くかぎり全部）。
+    /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は無限に広げる）。
     pub export_padding: i32,
-    /// 書き出しのウィンドウで最後に選んだ形（次に開いたときの形。文書ごとではなく設定に覚える）。設定のウィンドウの区分には出さない（書き出しのウィンドウが持つ）。
+    /// 書き出しのウィンドウで最後に選んだ出力テンプレート（次に開いたときの選び。文書ごとではなく設定に覚える）。設定のウィンドウの区分には出さない（書き出しのウィンドウが持つ）。
     pub export_form: crate::export::ExportForm,
     pub undo_budget: Budget,
     pub source_budget: Budget,
@@ -491,8 +491,8 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "view3d_paint_falloff_start" => lang.pick("弱め始め", "Fade start"),
         "view3d_paint_falloff_end" => lang.pick("塗らない角度", "Fade end"),
         "view3d_paint_seam_bleed" => lang.pick("継ぎ目のにじみ", "Seam bleed"),
-        "export_padding" => lang.pick("書き出しの余白", "Export padding"),
-        "export_form" => lang.pick("書き出しの形", "Export type"),
+        "export_padding" => lang.pick("書き出しのパディング", "Export padding"),
+        "export_form" => lang.pick("出力テンプレート", "Output template"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
         "stroke_budget_mib" => lang.pick("1 回の操作", "One operation"),
@@ -1223,8 +1223,8 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(setting_name(Lang::Ja, "export_form"), "書き出しの形");
-        assert_eq!(setting_name(Lang::En, "export_form"), "Export type");
+        assert_eq!(setting_name(Lang::Ja, "export_form"), "出力テンプレート");
+        assert_eq!(setting_name(Lang::En, "export_form"), "Output template");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1949,7 +1949,7 @@ mod tests {
         };
         save(&path, &edge).unwrap();
         assert_eq!(load(&path), (edge.clone(), vec![]));
-        // 届くかぎり全部（-1）は既定なので書かず、fill と書いても読める
+        // 無限に広げる（-1）は既定なので書かず、fill と書いても読める
         edge.export_padding = -1;
         assert!(!render(&edge).contains("export_padding"));
         assert_eq!(

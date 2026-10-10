@@ -1652,7 +1652,9 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
         .iter()
         .position(|k| *k == picker.kind)
         .unwrap_or(0);
-    let tabs = Rect::from_min_size(r.min, vec2(r.width().min(560.0), 26.0));
+    // 帯・探す欄・一覧の幅は、タブの名前から決める（どのタブもアイコンと名前の両方が入る幅。欄に収まらなければ欄の幅まで）
+    let tabs_width = w::tab_strip_width(ui.painter(), &labels).min(r.width());
+    let tabs = Rect::from_min_size(r.min, vec2(tabs_width, 26.0));
     let chosen = w::tab_strip(
         ui,
         tabs,

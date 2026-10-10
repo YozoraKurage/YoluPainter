@@ -16,7 +16,6 @@ use crate::ui::menu::Entry;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::update::UpdateAction;
-use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
 pub const MENU_TITLES: [&str; 8] = [
@@ -50,13 +49,12 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     ]
 }
 
-/// ファイルメニューの読み込み（PSD）と書き出し（書き出しのウィンドウ・PSD）。
+/// ファイルメニューの読み込み（PSD）と書き出し（テクスチャを書き出す・PSD）。見出しは置かず、区切り線で分ける。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let l = app.lang;
     vec![
         Entry::Separator,
-        Entry::Heading(l.pick("読み込み", "Import").to_owned()),
         Entry::item(
             l.pick(
                 "PSD を新しいテクスチャセットへ…",
@@ -73,15 +71,15 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
             Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
         )
         .enabled(free && app.read_only_reason().is_none()),
-        Entry::Heading(l.pick("書き出し", "Export").to_owned()),
+        Entry::Separator,
         Entry::item(
-            l.pick("書き出し…", "Export…"),
+            l.pick("テクスチャを書き出す…", "Export Textures…"),
             Action::Export(ExportAction::OpenWindow),
         )
         .command_key("file.export")
         .enabled(free),
         Entry::item(
-            l.pick("PSD を書き出し…", "Export PSD…"),
+            l.pick("PSD を書き出す…", "Export PSD…"),
             Action::Psd(PsdAction::ExportDialog),
         )
         .enabled(free),
@@ -120,12 +118,6 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
                 .enabled(idle && app.recovery.is_enabled())),
-                // 3D のモデルを開く入口。試しの立方体・人形は試験の口（`Action::LoadDemoModel`・`PoseAction::LoadFigure`）で、メニューには置かない
-                Entry::item(
-                    l.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…"),
-                    Action::Pose(PoseAction::OpenFbx),
-                )
-                .enabled(free),
                 Entry::Separator,
                 why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
                     .command_key("file.save")
@@ -653,7 +645,6 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     // ロック（選んでいるレイヤーの全部に効く。持っているロックにチェック）
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
-    v.push(Entry::Heading(lang.pick("ロック", "Lock").to_owned()));
     for flag in LOCK_FLAGS {
         let own = targets
             .iter()
@@ -672,7 +663,6 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
     }
     v.push(Entry::Separator);
-    v.push(Entry::Heading(lang.pick("変形", "Transform").to_owned()));
     for x in [
         Xform::Flip { horizontal: true },
         Xform::Flip { horizontal: false },

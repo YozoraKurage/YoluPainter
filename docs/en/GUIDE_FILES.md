@@ -33,26 +33,28 @@ In the window you can choose the checkpoint interval (10 seconds to 5 minutes), 
 
 ## Export PNG files
 
-"Export…" in the File menu opens the Export window. Choose the type, decide the destination and the padding, then press "Export". The window closes when the writing starts. The type you choose is kept in the settings and is the same the next time you open it.
+"Export Textures…" in the File menu opens the Export Textures window. Check the texture sets to export in the list on the left, decide the Output Path, Output Template and Padding on the right, check the names in Files to Export, then press "Export". The window closes when the writing starts. The Output Template you choose is kept in the settings and is the same the next time you open it.
 
-- The types are "PNG (Current Channel)", "PNG (All Channels)", "Unity Standard / URP Lit", "HDRP Lit" and "lilToon".
-- The destination is a file for "PNG (Current Channel)" and a folder for the other types; change it with "Choose…". Until you choose, it starts at the folder of the open project (for a model opened with Live Link, the folder Unity reported). A destination you chose is kept until you open another project. "Export" cannot be pressed while no destination is decided or while an export is running.
-- "Padding" is how far colors are dilated beyond the UVs, and it is the same value as "Export padding" in the settings (changing either changes both). Nothing is dilated when there is no model.
+- **Texture Sets**: The sets that can be exported are listed, all checked at first. A set you uncheck is not exported. The checks are kept until you open another project; a set you add comes in checked, and a set you rename shows its new name. A read-only set cannot be exported, so it stays unchecked and cannot be touched. "Export" cannot be pressed while nothing is checked. When the Output Template is "Current Channel (One PNG)", only the current set is listed and it cannot be unchecked.
+- **Output Path**: A file for "Current Channel (One PNG)" and a folder for the other templates; change it with "Choose…". Until you choose, it starts at the folder of the open project (for a model opened with Live Link, the folder Unity reported). A path you chose is kept until you open another project. "Export" cannot be pressed while no Output Path is decided or while an export is running.
+- **Output Template**: Choose from "Current Channel (One PNG)", "Per Channel (PNG)", "Unity Standard / URP Lit", "HDRP Lit" and "lilToon".
+- **Padding**: How far colors are dilated beyond the UVs: "No padding", "Dilation n px" or "Dilation infinite". It is the same value as "Export padding" in the settings (changing either changes both). Nothing is dilated when there is no model.
+- **Files to Export**: Lists, before writing, the name and color space (sRGB or Linear) of each file for the current Output Template, the checked sets and the Output Path. The names are decided the same way as the export decides them. A file that already exists in the Output Path has a dot at the left of its name. When something stops the export (nothing to write, names that would write the same file, and so on), the reason is shown in place of the list.
 
-A file that already exists in the destination is confirmed before it is replaced (if you cancel, you are back in the window). If you cancel the export, or a failure happens before the last replacement begins, the original files are not changed.
+A file that already exists is confirmed before it is replaced (if you cancel, you are back in the window). If you cancel the export, or a failure happens before the last replacement begins, the original files are not changed.
 
 ### Export with a template
 
-"Unity Standard / URP Lit", "HDRP Lit" and "lilToon" write the packed PNGs that shader reads, for every texture set, into the folder you choose. Names are `<name>[_<set name>]_<image>.png`, and the set name is added only when there are several sets.
+"Unity Standard / URP Lit", "HDRP Lit" and "lilToon" write the packed PNGs that shader reads, for every checked texture set, into the folder you choose. Names are `<name>[_<set name>]_<image>.png`, and the set name is added only when there are several sets (unchecking a set does not change the names of the others).
 
 - A baked AO is used when it exists, and a stale AO is not.
 - The effects shown on screen (filters, generators that read mesh maps, asset images) are included. When effects that are not working remain, for instance because the maps they read are missing, you are told that they are not in the exported images.
 - Read-only sets are not exported.
-- For a model opened with Live Link, the default destination is the folder Unity reported.
+- For a model opened with Live Link, the Output Path starts at the folder Unity reported.
 
 ### Export by channel
 
-"PNG (Current Channel)" writes the painting channel to one PNG, and "PNG (All Channels)" writes every channel in use, for all texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
+"Current Channel (One PNG)" writes the painting channel to one PNG, and "Per Channel (PNG)" writes every channel in use, for the checked texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
 
 ## Import a PSD
 
@@ -102,7 +104,7 @@ A window that chooses a file or folder starts in the first existing place of the
 - **Open, import, export**: the folder you last chose for that kind (project, model, PSD import and export, image import and export, brushes, fonts, key settings, assets and library, color sets, Save for Distribution, settings folders) → the folder of the open project's `.ylp` → the OS Documents folder.
 - **Save, Save As**: for a document opened from a backup `.ylp`, the folder of the original `.ylp` → the folder of the open project's `.ylp` → the folder last chosen for projects → the OS Documents folder.
 
-The folder last chosen is kept per kind in `places.conf` in the settings folder (if you delete it, the app remembers again from the next choice). A folder that no longer exists is not used. When you choose in the Export window, a destination that is already decided comes first (the one you chose; otherwise, for a model opened with Live Link, the folder Unity reported; otherwise the project's folder). Only when none is decided, as in a document you have not saved, does the window start in the order above.
+The folder last chosen is kept per kind in `places.conf` in the settings folder (if you delete it, the app remembers again from the next choice). A folder that no longer exists is not used. When you choose in the Export Textures window, an Output Path that is already decided comes first (the one you chose; otherwise, for a model opened with Live Link, the folder Unity reported; otherwise the project's folder). Only when none is decided, as in a document you have not saved, does the window start in the order above.
 
 ## Handing files to older versions and Unity
 

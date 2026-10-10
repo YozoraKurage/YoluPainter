@@ -154,7 +154,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         Some(DialogRequest::PsdImport(PsdTarget::CurrentSet))
     );
     h.state_mut().state.dialog_request = None;
-    // 書き出しは 1 つのウィンドウ（形・書き出す先・余白）と PSD。テンプレートや PNG の項目は並べない
+    // 書き出しは 1 つのウィンドウ（テクスチャセット・出力先・出力テンプレート・パディング）と PSD。テンプレートや PNG の項目は並べない
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     for gone in [
@@ -164,10 +164,12 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         "チャンネルを PNG…",
         "全チャンネルを画像に…",
         "PSD…",
+        "書き出し…",
+        "PSD を書き出し…",
     ] {
         assert!(h.query_by_label(gone).is_none(), "{gone}");
     }
-    let at = popup_item(&h, "書き出し…").center();
+    let at = popup_item(&h, "テクスチャを書き出す…").center();
     click(&mut h, at);
     assert!(h.state().state.export.window.open);
     assert_eq!(
@@ -179,7 +181,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     // PSD の書き出しは、先に設定のウィンドウ（方式・チャンネル）を開き、ファイルはそのウィンドウの「書き出し…」で選ぶ
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    let at = popup_item(&h, "PSD を書き出し…").center();
+    let at = popup_item(&h, "PSD を書き出す…").center();
     click(&mut h, at);
     assert!(h.state().state.psd.options_open);
     assert_eq!(h.state().state.dialog_request, None);
@@ -190,7 +192,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
     popup_item(&h, "PSD as a New Texture Set…");
-    popup_item(&h, "Export…");
+    popup_item(&h, "Export Textures…");
     h.snapshot("menu_file_english");
     let at = popup_item(&h, "Export PSD…").center();
     click(&mut h, at);
@@ -198,7 +200,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     apply(&mut h, Action::Psd(PsdAction::CancelExportOptions));
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
-    let at = popup_item(&h, "Export…").center();
+    let at = popup_item(&h, "Export Textures…").center();
     click(&mut h, at);
     assert!(h.state().state.export.window.open);
     apply(&mut h, Action::Export(ExportAction::CloseWindow));
@@ -752,6 +754,7 @@ fn exporting_asks_before_replacing_then_shows_the_short_list() {
             Action::Export(ExportAction::TemplateTo {
                 id: "unity-standard".into(),
                 dir: dir.0.clone(),
+                sets: None,
             }),
         )
     };
@@ -840,6 +843,7 @@ fn the_export_job_card_cancels_and_leaves_the_folder_untouched() {
         Action::Export(ExportAction::TemplateTo {
             id: "unity-standard".into(),
             dir: dir.0.clone(),
+            sets: None,
         }),
     );
     assert!(h.state().state.export.is_exporting());
@@ -1292,12 +1296,15 @@ fn the_psd_export_window_chooses_the_mode_and_channels_and_asks_for_the_file() {
 
 // ───────── 書き出しのウィンドウ ─────────
 
-/// 書き出しのウィンドウの形のドロップダウンを開いて、形を選ぶ。
+/// 書き出しのウィンドウの出力テンプレートのドロップダウンを開いて、出力テンプレートを選ぶ。
 fn pick_form(h: &mut Harness<'_, YoluApp>, from: &str, to: &str) {
     let at = in_window(
         h,
         "export",
-        &format!("{}: {from}", h_label(h, "形", "Type")),
+        &format!(
+            "{}: {from}",
+            h_label(h, "出力テンプレート", "Output Template")
+        ),
     );
     click(h, at);
     let at = popup_item(h, to).center();
@@ -1326,28 +1333,30 @@ fn shot_form(h: &mut Harness<'_, YoluApp>, name: &str) {
 }
 
 #[test]
-fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
+fn the_export_window_picks_each_template_and_remembers_it_in_both_languages() {
     let mut h = two_sets_app();
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    let at = popup_item(&h, "書き出し…").center();
+    let at = popup_item(&h, "テクスチャを書き出す…").center();
     click(&mut h, at);
     assert!(h.state().state.export.window.open);
-    // 初めの形は「PNG（今のチャンネル）」
+    // 初めの出力テンプレートは「今のチャンネル（PNG 1 枚）」
     assert_eq!(
         h.state().state.export_form(),
         yolu_app::export::ExportForm::ChannelPng
     );
     let texts = window_texts(&h, "export");
     for want in [
-        "書き出し",
-        "形",
-        "PNG（今のチャンネル）",
-        "書き出す先",
+        "テクスチャを書き出す",
+        "テクスチャセット",
+        "出力先",
         "選ぶ…",
-        "余白",
-        "届くかぎり",
-        "やめる",
+        "出力テンプレート",
+        "今のチャンネル（PNG 1 枚）",
+        "パディング",
+        "無限に広げる",
+        "書き出すファイル",
+        "キャンセル",
         "書き出す",
     ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
@@ -1355,10 +1364,14 @@ fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
     for text in &texts {
         assert_plain("書き出しのウィンドウ", text);
     }
-    // 形ごとの絵（日本語）
+    // 「形」「余白」「書き出す先」の言葉は画面に出さない
+    for old in ["形", "余白", "書き出す先"] {
+        assert!(texts.iter().all(|t| !t.contains(old)), "{old}: {texts:?}");
+    }
+    // 出力テンプレートごとの絵（日本語）
     let forms = [
-        ("PNG（今のチャンネル）", "export_window_channel"),
-        ("PNG（全チャンネル）", "export_window_channels"),
+        ("今のチャンネル（PNG 1 枚）", "export_window_channel"),
+        ("チャンネルごと（PNG）", "export_window_channels"),
         ("Unity Standard / URP Lit", "export_window_unity_standard"),
         ("HDRP Lit", "export_window_hdrp"),
         ("lilToon", "export_window_liltoon"),
@@ -1371,12 +1384,12 @@ fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
         assert_eq!(h.state().state.export_form().name(Lang::Ja), *label);
         shot_form(&mut h, name);
     }
-    // 形は設定に覚える（保存する設定にも入る）
+    // 出力テンプレートは設定に覚える（保存する設定にも入る）
     assert_eq!(
         h.state().state.settings().export_form,
         yolu_app::export::ExportForm::LilToon
     );
-    // 閉じて開き直しても、同じ形
+    // 閉じて開き直しても、同じ出力テンプレート
     apply(&mut h, Action::Export(ExportAction::CloseWindow));
     assert!(
         yolu_app::windows::window_rect(&h.ctx, "export").is_none()
@@ -1384,19 +1397,22 @@ fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
     );
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
     assert_eq!(h.state().state.export_form().name(Lang::Ja), "lilToon");
-    // 英語: 文字に日本語が残らず、形ごとの絵
+    // 英語: 文字に日本語が残らず、出力テンプレートごとの絵
     h.state_mut().state.lang = Lang::En;
     h.run();
     let texts = window_texts(&h, "export");
     for want in [
-        "Export",
-        "Type",
-        "lilToon",
-        "Destination",
+        "Export Textures",
+        "Texture Sets",
+        "Output Path",
         "Choose…",
+        "Output Template",
+        "lilToon",
         "Padding",
-        "Fill (all the way)",
+        "Dilation infinite",
+        "Files to Export",
         "Cancel",
+        "Export",
     ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
@@ -1404,9 +1420,12 @@ fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
     for text in &texts {
         assert_plain("export window", text);
     }
+    for old in ["Type", "Destination"] {
+        assert!(texts.iter().all(|t| !t.contains(old)), "{old}: {texts:?}");
+    }
     let english = [
-        "PNG (Current Channel)",
-        "PNG (All Channels)",
+        "Current Channel (One PNG)",
+        "Per Channel (PNG)",
         "Unity Standard / URP Lit",
         "HDRP Lit",
         "lilToon",
@@ -1429,16 +1448,16 @@ fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
 }
 
 #[test]
-fn the_export_window_chooses_the_destination_and_the_padding_and_closes_with_the_buttons() {
+fn the_export_window_chooses_the_output_path_and_the_padding_and_closes_with_the_buttons() {
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    // 書き出す先が決まっていない間（保存していないプロジェクト）は書き出せない
+    // 出力先が決まっていない間（保存していないプロジェクト）は書き出せない
     let button = h.get_by_label("書き出す");
     assert!(
         button.accesskit_node().is_disabled(),
         "先が無い間は押せない"
     );
-    // 「選ぶ…」は書き出す先を選ぶウィンドウ（OS）を頼むだけ
+    // 「選ぶ…」は出力先を選ぶウィンドウ（OS）を頼むだけ
     let at = in_window(&h, "export", "選ぶ…");
     click(&mut h, at);
     assert_eq!(
@@ -1446,17 +1465,17 @@ fn the_export_window_chooses_the_destination_and_the_padding_and_closes_with_the
         Some(DialogRequest::ExportDestination)
     );
     h.state_mut().state.dialog_request = None;
-    // 余白: 設定の「書き出しの余白」と同じ値を、ここから替えられる
+    // パディング: 設定の「書き出しのパディング」と同じ値を、ここから替えられる
     assert_eq!(h.state().state.export.padding, -1);
-    let at = in_window(&h, "export", "余白: 届くかぎり");
+    let at = in_window(&h, "export", "パディング: 無限に広げる");
     click(&mut h, at);
-    let at = popup_item(&h, "8 テクセル").center();
+    let at = popup_item(&h, "8 px 広げる").center();
     click(&mut h, at);
     assert_eq!(h.state().state.export.padding, 8);
     assert_eq!(h.state().state.settings().export_padding, 8);
-    in_window(&h, "export", "余白: 8 テクセル");
-    // やめる・閉じる・Esc で閉じる
-    let at = in_window(&h, "export", "やめる");
+    in_window(&h, "export", "パディング: 8 px 広げる");
+    // キャンセル・閉じる・Esc で閉じる
+    let at = in_window(&h, "export", "キャンセル");
     click(&mut h, at);
     assert!(!h.state().state.export.window.open);
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
@@ -1477,7 +1496,11 @@ fn the_export_window_writes_what_the_menu_items_wrote_and_asks_before_replacing(
     let dir = TempDir::new("export-window");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "Unity Standard / URP Lit",
+    );
     // 先を選ぶと書き出せる
     apply(
         &mut h,
@@ -1566,7 +1589,7 @@ fn the_export_window_is_a_command_without_a_default_key_that_the_user_can_assign
     apply(&mut h, Action::Export(ExportAction::CloseWindow));
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    popup_item(&h, "書き出し…");
+    popup_item(&h, "テクスチャを書き出す…");
     assert!(
         yolu_app::shortcuts::menu_key("file.export").is_some(),
         "割り当てたキーが、メニューの項目の右に出る"
@@ -1580,7 +1603,11 @@ fn the_export_window_below_the_replace_confirm_does_not_take_clicks() {
     let dir = TempDir::new("below-confirm");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "Unity Standard / URP Lit",
+    );
     apply(
         &mut h,
         Action::Export(ExportAction::Destination(dir.0.clone())),
@@ -1600,12 +1627,12 @@ fn the_export_window_below_the_replace_confirm_does_not_take_clicks() {
     assert!(h.state().state.export.confirm.is_some());
     h.run();
     let confirm = yolu_app::windows::window_rect(&h.ctx, "export-confirm").unwrap();
-    let target = in_window(&h, "export", "やめる");
+    let target = in_window(&h, "export", "キャンセル");
     assert!(!confirm.contains(target), "確認のウィンドウの外にある");
     click(&mut h, target);
     assert!(
         h.state().state.export.window.open,
-        "確認のウィンドウの間は、下のウィンドウの「やめる」を押しても閉じない"
+        "確認のウィンドウの間は、下のウィンドウの「キャンセル」を押しても閉じない"
     );
     assert!(h.state().state.export.confirm.is_some());
 }
@@ -1616,7 +1643,11 @@ fn escape_closes_only_the_replace_confirm_and_leaves_the_export_window() {
     let dir = TempDir::new("esc-confirm");
     let mut h = two_sets_app();
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "Unity Standard / URP Lit",
+    );
     apply(
         &mut h,
         Action::Export(ExportAction::Destination(dir.0.clone())),
@@ -1645,6 +1676,243 @@ fn escape_closes_only_the_replace_confirm_and_leaves_the_export_window() {
     key(&h, Key::Escape, egui::Modifiers::NONE);
     h.run();
     assert!(!h.state().state.export.window.open);
+}
+
+/// 3 つのセット（Skin・Hair・Accessory。Skin は Roughness も、Hair は Emission も使う）を持つ画面。書くファイルが色空間の違う物にもなる。
+fn three_sets_app() -> Harness<'static, YoluApp> {
+    let mut h = two_sets_app();
+    {
+        let s = &mut h.state_mut().state;
+        let (skin, hair) = (s.sets.current_index(), 1 - s.sets.current_index());
+        let layer = s.selected_layer.unwrap();
+        s.doc
+            .set_channel_enabled(layer, Channel::Roughness, true)
+            .unwrap();
+        let doc = s.set_doc_mut(hair);
+        let hair_layer = doc.layers()[0].id();
+        doc.set_channel_enabled(hair_layer, Channel::Emission, true)
+            .unwrap();
+        let uid = s.add_texture_set().unwrap();
+        s.rename_set(uid, "Accessory").unwrap();
+        // 並びを Skin・Hair・Accessory にそろえる（今のセットは、最初のセットに戻す）
+        let _ = (skin, hair);
+    }
+    h.run();
+    h
+}
+
+/// 書き出しのウィンドウの、テクスチャセットのチェック（役割で探す。同じ名前のドックの部品に取り違えない）。
+fn set_check<'a>(h: &'a Harness<'_, YoluApp>, name: &'a str) -> egui_kittest::Node<'a> {
+    let area = yolu_app::windows::window_rect(&h.ctx, "export").expect("書き出しのウィンドウ");
+    h.get_all_by_role_and_label(egui::accesskit::Role::CheckBox, name)
+        .find(|n| area.contains_rect(n.rect()))
+        .unwrap_or_else(|| panic!("{name}: ウィンドウの中のチェックが無い"))
+}
+
+fn export_button_disabled(h: &Harness<'_, YoluApp>) -> bool {
+    let area = yolu_app::windows::window_rect(&h.ctx, "export").unwrap();
+    let label = h_label(h, "書き出す", "Export");
+    h.get_all_by_label(label)
+        .find(|n| area.contains_rect(n.rect()))
+        .expect("書き出すボタン")
+        .accesskit_node()
+        .is_disabled()
+}
+
+#[test]
+fn the_export_window_checks_sets_and_lists_the_files_it_will_write() {
+    let dir = TempDir::new("export-sets");
+    let mut h = three_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "Unity Standard / URP Lit",
+    );
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(dir.0.clone())),
+    );
+    let uids: Vec<u32> = (0..3)
+        .map(|i| h.state().state.sets.get(i).unwrap().uid)
+        .collect();
+    // 3 つのセットがチェック済みで並び、書くファイルが、名前・色空間の順に出る
+    let texts = window_texts(&h, "export");
+    for name in ["Skin", "Hair", "Accessory"] {
+        assert!(texts.iter().any(|t| t == name), "{name}: {texts:?}");
+        assert!(!set_check(&h, name).accesskit_node().is_disabled());
+    }
+    for file in [
+        "Texture_Skin_Albedo.png",
+        "Texture_Skin_MetallicSmoothness.png",
+        "Texture_Hair_Albedo.png",
+        "Texture_Hair_Emission.png",
+        "Texture_Accessory_Albedo.png",
+    ] {
+        assert!(texts.iter().any(|t| t == file), "{file}: {texts:?}");
+    }
+    assert!(texts.iter().any(|t| t == "sRGB") && texts.iter().any(|t| t == "リニア"));
+    assert!(!export_button_disabled(&h));
+    // Hair を外すと、その名前のファイルは一覧から消え、ほかは残る
+    set_check(&h, "Hair").click();
+    h.run();
+    assert_eq!(h.state().state.export_checked_uids(), [uids[0], uids[2]]);
+    let texts = window_texts(&h, "export");
+    assert!(!texts.iter().any(|t| t.contains("_Hair_")), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Texture_Skin_Albedo.png"));
+    // 3 つのセットで 1 つ外した形の絵（日英）
+    apply(
+        &mut h,
+        Action::Export(ExportAction::SetChecked {
+            uid: uids[2],
+            on: false,
+        }),
+    );
+    apply(
+        &mut h,
+        Action::Export(ExportAction::SetChecked {
+            uid: uids[1],
+            on: true,
+        }),
+    );
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(PathBuf::from("/out/Textures"))),
+    );
+    shot(&mut h, "export", "export_window_sets_unchecked");
+    h.state_mut().state.lang = Lang::En;
+    h.run();
+    shot(&mut h, "export", "export_window_sets_unchecked_english");
+    h.state_mut().state.lang = Lang::Ja;
+    h.run();
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(dir.0.clone())),
+    );
+    apply(
+        &mut h,
+        Action::Export(ExportAction::SetChecked {
+            uid: uids[2],
+            on: true,
+        }),
+    );
+    // 1 つも入っていないと「書き出す」は押せない（一覧も空）
+    assert_eq!(h.state().state.export_checked_uids(), uids);
+    for name in ["Skin", "Hair", "Accessory"] {
+        set_check(&h, name).click();
+        h.run();
+    }
+    assert!(h.state().state.export_checked_uids().is_empty());
+    assert!(export_button_disabled(&h));
+    assert!(!window_texts(&h, "export")
+        .iter()
+        .any(|t| t.ends_with(".png")));
+    // 1 つ入れ直して、ボタンから書くと、外したセットは書かない
+    set_check(&h, "Skin").click();
+    h.run();
+    set_check(&h, "Accessory").click();
+    h.run();
+    assert!(!export_button_disabled(&h));
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    assert!(h.state().state.export.is_exporting());
+    settle(&mut h);
+    assert_eq!(
+        dir.files(),
+        [
+            "Texture_Accessory_Albedo.png",
+            "Texture_Accessory_MetallicSmoothness.png",
+            "Texture_Skin_Albedo.png",
+            "Texture_Skin_MetallicSmoothness.png"
+        ]
+    );
+}
+
+#[test]
+fn the_export_window_cannot_uncheck_the_one_set_of_the_current_channel_png() {
+    let mut h = three_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    assert_eq!(
+        h.state().state.export_form(),
+        yolu_app::export::ExportForm::ChannelPng
+    );
+    // 今のチャンネルの 1 枚は、今のセット（Accessory）だけが並び、触れない
+    let texts = window_texts(&h, "export");
+    assert!(texts.iter().any(|t| t == "Accessory"), "{texts:?}");
+    assert!(
+        !texts.iter().any(|t| t == "Skin" || t == "Hair"),
+        "{texts:?}"
+    );
+    let node = set_check(&h, "Accessory");
+    assert!(node.accesskit_node().is_disabled());
+    node.click();
+    h.run();
+    assert_eq!(h.state().state.export_checked_uids().len(), 1);
+    // ほかのテンプレートでは、同じセットも触れる
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "チャンネルごと（PNG）",
+    );
+    assert!(!set_check(&h, "Accessory").accesskit_node().is_disabled());
+    assert!(!set_check(&h, "Skin").accesskit_node().is_disabled());
+}
+
+#[test]
+fn the_export_window_fits_the_smallest_screen_and_scrolls_a_long_list_of_sets() {
+    let mut h = app(960.0, 640.0, 64);
+    for i in 0..24 {
+        let uid = h.state_mut().state.add_texture_set().unwrap();
+        h.state_mut()
+            .state
+            .rename_set(uid, &format!("Set{i:02}"))
+            .unwrap();
+    }
+    h.run();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    pick_form(
+        &mut h,
+        "今のチャンネル（PNG 1 枚）",
+        "チャンネルごと（PNG）",
+    );
+    let rect = yolu_app::windows::window_rect(&h.ctx, "export").unwrap();
+    let screen = egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(960.0, 640.0));
+    assert!(screen.contains_rect(rect), "{rect:?} は画面からはみ出す");
+    // 左の一覧は欄の中に収まる行だけを描き、ボタンは下の帯の中にある
+    let button = in_window(&h, "export", "書き出す");
+    assert!(rect.contains(button));
+    let first = set_check(&h, "Set00").rect();
+    assert!(rect.contains_rect(first));
+    assert!(
+        h.query_all_by_label("Set23").next().is_none(),
+        "欄に入らない行は描かない"
+    );
+    // ホイールで送ると、最後の行に届く
+    for _ in 0..6 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -80.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        move_to(&h, pos2(rect.left() + 100.0, rect.top() + 150.0));
+        h.run();
+    }
+    let last = set_check(&h, "Set23").rect();
+    assert!(rect.contains_rect(last), "{last:?} / {rect:?}");
+    // 最後のセットも外せる
+    set_check(&h, "Set23").click();
+    h.run();
+    assert!(!h
+        .state()
+        .state
+        .export_checked_uids()
+        .contains(&h.state().state.sets.get(24).unwrap().uid));
+    // 書くファイルの一覧も、欄の中で送れる（行の数が欄を超えても、はみ出さない）
+    assert!(
+        h.state_mut().state.export_preview().files.len() > 13,
+        "欄の行数を超える一覧"
+    );
 }
 
 // ───────── 画面なしの保存の往復（Windows 向けに組んで wine でも回す） ─────────
