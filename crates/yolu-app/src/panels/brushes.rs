@@ -169,6 +169,11 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
     let editable = !app.is_stroking() && app.toolset.set.locked.is_none();
     let dragging = app.toolset.ui.dragging();
     let pointer = ui.input(|i| i.pointer.hover_pos());
+    // ブラシを引いている間、落とせるグループのタブを光らせる
+    let droppable = match dragging {
+        Some(Dragged::Brush(key)) => crate::toolset::ui::droppable_groups(app, key),
+        _ => Vec::new(),
+    };
     let order: Vec<GroupId> = tabs
         .iter()
         .filter_map(|(k, _)| match k {
@@ -262,6 +267,10 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                 }
                 if dragging == Some(Dragged::Group(group)) {
                     w::rounded(p, tab, t::CONTROL_ACTIVE, 3.0);
+                }
+                if droppable.contains(&group) {
+                    w::rounded(p, tab, t::ACCENT_SOFT, 3.0);
+                    w::outline(p, tab, t::ACCENT_DIM, 1.0, 3.0);
                 }
                 let color = if on { Color32::WHITE } else { t::TEXT_DIM };
                 let shown_text = w::fit(p, &short, tab.width() - 8.0, t::HEADER);

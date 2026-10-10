@@ -9,6 +9,7 @@ mod common;
 
 mod anti_alias_ui;
 mod brush_import_ui;
+mod brush_menu;
 mod brush_mix;
 mod brushes;
 mod canvas_gpu;

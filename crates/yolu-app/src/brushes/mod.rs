@@ -655,6 +655,8 @@ pub enum BrushAction {
     /// 並びから外す（利用者のブラシのファイルは消さない。「＋」のウィンドウから戻せる）。
     Delete(BrushKey),
     StartRename(BrushKey),
+    /// このブラシに替えて、ブラシの詳細のウィンドウを開く（右クリックのメニューの「ブラシの設定…」）。
+    OpenDetail(BrushKey),
     /// 名前を変える（組み込みは、その場でファイルの写しに替えてから）。
     Rename(BrushKey, String),
     /// 同じグループの中で動かす。
@@ -1610,6 +1612,13 @@ impl AppState {
                 );
                 if placed {
                     self.toolset_persist();
+                }
+            }
+            BrushAction::OpenDetail(key) => {
+                self.brush_action(BrushAction::Select(key));
+                // 替えられたとき（描いている間・並びが読めないときの断りでは替わらない）だけ開く
+                if self.brushes.lib.current == key {
+                    self.brushes.ui.detail.open = true;
                 }
             }
             BrushAction::StartRename(key) => {

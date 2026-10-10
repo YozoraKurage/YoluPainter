@@ -1,7 +1,6 @@
 //! M2 のポップアップ（自前のメニュー）の中身: 調整レイヤーの種類・一覧の空白の右クリック・ブラシの選択肢・チャンネルの種類。
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
-use crate::brushes::BrushAction;
 use crate::engine::{
     AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection,
     TextureMode,
@@ -254,42 +253,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::NewFill => crate::layermenu::fill_entries(app),
         // 選んだレイヤーが無いときのメニューバーの「レイヤー」と同じ並び
         Popup::LayerBlank => crate::shell::layer_menu(app, None),
-        Popup::BrushContext => {
-            let Some(key) = app.brushes.ui.context else {
-                return Vec::new();
-            };
-            // 組み込みも、名前を変える・登録するとその場でファイルの写しになる。削除は並びから外すだけ（ファイルは「＋」のウィンドウから戻せる）
-            let user = key.is_user();
-            let layout = app.toolset.set.locked.is_none() && app.toolset.set.contains(key);
-            vec![
-                Entry::item(
-                    lang.pick("名前を変更", "Rename"),
-                    Action::Brush(BrushAction::StartRename(key)),
-                )
-                .enabled(free && (user || layout)),
-                Entry::item(
-                    lang.pick("複製", "Duplicate"),
-                    Action::Brush(BrushAction::Duplicate(key)),
-                )
-                .enabled(free && app.toolset.set.locked.is_none()),
-                Entry::item(
-                    lang.pick("この設定で登録", "Register These Settings"),
-                    Action::Brush(BrushAction::Register(key)),
-                )
-                .enabled(free && (user || layout) && app.brush_is_modified(key)),
-                Entry::item(
-                    lang.pick("元に戻す", "Revert"),
-                    Action::Brush(BrushAction::Revert(key)),
-                )
-                .enabled(free && app.brush_is_modified(key)),
-                Entry::Separator,
-                Entry::item(
-                    lang.pick("削除", "Delete"),
-                    Action::Brush(BrushAction::Delete(key)),
-                )
-                .enabled(free && layout),
-            ]
-        }
+        Popup::BrushContext => crate::toolset::ui::brush_menu(app),
         Popup::ToolStripContext => crate::toolset::ui::strip_menu(app),
         Popup::GroupContext => crate::toolset::ui::group_menu(app),
         Popup::CatalogContext => crate::panels::brush_catalog::context_menu(app),

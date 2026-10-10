@@ -42,7 +42,9 @@ Tools in the toolbar on the left, group tabs and brush rows can be reordered by 
 |---|---|
 | Toolbar | Add Tool, Delete This Tool, Rename, Change Icon, Separator Before, Reset Tool Layout… |
 | Group tab | Add Group, Rename, Duplicate, Delete |
-| Brush row | Rename, Duplicate, Register These Settings, Revert, Delete |
+| Brush row (and eraser row) | Brush Settings…, Rename, Duplicate, Move to Group, Register These Settings, Revert, Delete |
+
+Brush Settings… switches to that brush and opens the Brush Details window. Rename edits the name inside the row (`Enter` confirms, `Esc` cancels). Move to Group lists the groups of that tool (the current group cannot be chosen), and, when there are other tools that hold brushes, their groups under a nested list for each tool. While you drag a brush row, the group tabs it can be dropped on light up. An item that cannot be used (while drawing, while the tool layout file cannot be read, while importing, and so on) shows the reason when you point at it.
 
 Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolbar. You can have any number of Brush and Eraser tools, and each has its own groups, so you can make a tool out of just the brushes you like. The last one of each cannot be deleted. Deleting only removes an item from the layout, and the brush files stay. The layout is saved in `tools.json` in the settings folder and is not stored in documents. Your own brushes are in `brushes/` in the same folder, and damaged files are skipped and reported at startup. For limits and the file format, see [SUBTOOLS.md](../SUBTOOLS.md) (Japanese).
 
