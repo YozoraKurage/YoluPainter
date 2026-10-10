@@ -249,7 +249,7 @@ impl Opened {
         .map_err(|_| {
             OpError::new(
                 ErrorCode::Internal,
-                "文書を読む途中で止まりました",
+                "プロジェクトを読む途中で止まりました",
                 "Reading the document stopped unexpectedly",
             )
         })?;

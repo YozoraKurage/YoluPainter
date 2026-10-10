@@ -945,7 +945,7 @@ impl AppState {
         let doc = self.set_doc(index);
         if (map.width(), map.height()) != (doc.width() as usize, doc.height() as usize) {
             return OcclusionState::Stale(
-                lang.pick("焼いた大きさが文書と違う", "baked size differs")
+                lang.pick("焼いた大きさがキャンバスと違う", "baked size differs")
                     .into(),
             );
         }
@@ -1339,7 +1339,7 @@ impl AppState {
         };
         let doc = self.set_doc(index);
         if doc.id() != job.doc_id || (doc.width(), doc.height()) != job.size {
-            return Some(lang.pick("文書", "the document"));
+            return Some(lang.pick("キャンバス", "the canvas"));
         }
         if self.set_slots(index).as_deref() != Some(&job.slots[..]) {
             return Some(lang.pick("マテリアルのスロット", "the material slots"));

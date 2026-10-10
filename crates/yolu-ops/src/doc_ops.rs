@@ -69,7 +69,7 @@ pub fn read(facts: SetFacts<'_>, doc: &Document, command: &Command) -> Result<Re
         Command::HistoryInfo(_) => Ok(Reply::History(history_info(doc))),
         other => Err(OpError::new(
             ErrorCode::Internal,
-            format!("{} は文書を読む命令ではありません", other.name()),
+            format!("{} はプロジェクトを読む命令ではありません", other.name()),
             format!("{} is not a document read command", other.name()),
         )),
     }
@@ -120,7 +120,7 @@ pub fn write_with_font(
         Command::Redo(a) => step_history(facts, doc, a, false),
         other => Err(OpError::new(
             ErrorCode::Internal,
-            format!("{} は文書を変える命令ではありません", other.name()),
+            format!("{} はプロジェクトを変える命令ではありません", other.name()),
             format!("{} is not a document write command", other.name()),
         )),
     }

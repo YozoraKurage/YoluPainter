@@ -151,7 +151,7 @@ impl Document {
             })
         {
             return Err(CoreError::InvalidArgument(
-                "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ",
+                "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ",
             ));
         }
         let old_paths = self.layers[index].paths.clone();
@@ -313,7 +313,7 @@ impl Document {
             })
         {
             return Err(CoreError::InvalidArgument(
-                "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ",
+                "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ",
             ));
         }
         let id = self.new_layer_id();

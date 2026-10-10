@@ -153,7 +153,7 @@ fn only_unknown_channels_and_too_deep_groups_are_refused_with_a_reason() {
     assert_eq!(supports(&d, missing), Err(Unsupported::UnknownChannel));
     assert_eq!(
         supports(&d, missing).unwrap_err().reason(),
-        "文書にないチャンネル"
+        "プロジェクトにないチャンネル"
     );
     // グループの入れ子: 独立して合成するグループは 2 語ずつ退避するので 32 段まで
     let mut deep = doc();

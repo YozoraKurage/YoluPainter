@@ -226,7 +226,9 @@ impl SelectionMask {
         let ts = tile_size as usize;
         let (cols, rows) = (width.div_ceil(tile_size), height.div_ceil(tile_size));
         if coord.x >= cols || coord.y >= rows {
-            return Err(CoreError::InvalidArgument("選択範囲のタイルが文書の外"));
+            return Err(CoreError::InvalidArgument(
+                "選択範囲のタイルがキャンバスの外",
+            ));
         }
         if amounts.len() != ts * ts {
             return Err(CoreError::InvalidArgument("選択範囲のタイルの長さ"));

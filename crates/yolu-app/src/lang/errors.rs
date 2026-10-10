@@ -37,7 +37,7 @@ fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
 pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
     if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A document exceeds the Layer memory budget")
+        Some("A project exceeds the Layer memory budget")
     } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
         Some("The whole exceeds the Layer memory budget")
     } else if text.contains("グループの入れ子の上限") {
@@ -507,7 +507,7 @@ impl Lang {
                 if more > 0 {
                     text += &format!(" and {more} more");
                 }
-                format!("Unsupported document features ({text})")
+                format!("Unsupported project features ({text})")
             }
         }
     }
@@ -703,8 +703,8 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Stencil point count must match pixel count"
         }
         "ステンシルの画像の画素 / 点" => "Stencil image pixels / points",
-        "大きさの変更の準備のあとに文書が変わった" => {
-            "The document changed after the resize was prepared"
+        "大きさの変更の準備のあとにプロジェクトが変わった" => {
+            "The project changed after the resize was prepared"
         }
         "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
         "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => {
@@ -732,14 +732,14 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "写した画素のバイト数が幅 × 高さ × 4 でない" => {
             "Copied pixels must be width × height × 4 bytes"
         }
-        "写した文書の大きさ" => "Size of the source document",
-        "写した矩形が文書の外" => "Copied rectangle lies outside the document",
+        "写したキャンバスの大きさ" => "Size of the source canvas",
+        "写した矩形がキャンバスの外" => "Copied rectangle lies outside the canvas",
         "写した矩形が空" => "Copied rectangle is empty",
         "画素が矩形の外" => "Pixel outside the rectangle",
         "画素を置き換えられるのはラスターレイヤーだけ" => {
             "Only paint layers have pixels to replace"
         }
-        "画像の大きさが文書と違う" => "Image size differs from the document",
+        "画像の大きさがキャンバスと違う" => "Image size differs from the canvas",
         "無効のチャンネルは切り取れない" => "Cannot cut a disabled channel",
         "無効のチャンネルは置き換えられない" => {
             "Cannot replace a disabled channel"
@@ -794,7 +794,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "筆先の覆いの長さが幅 × 高さでない" => {
             "Brush tip coverage size must be width × height"
         }
-        "範囲の大きさが文書と違う" => "Region size does not match document",
+        "範囲の大きさがキャンバスと違う" => "Region size does not match canvas",
         "色のゆらぎ（0〜1）" => "Color dynamics (0–1)",
         "色相/彩度のレイヤーが有効" => "Hue/Saturation layer enabled",
         "色相/彩度は色のチャンネルだけ" => "Hue/Saturation requires a color channel",
@@ -827,14 +827,14 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "調整レイヤーには描けない" => "Cannot paint an adjustment layer",
         "速さの上限（0 より大きい）" => "Maximum speed (greater than zero)",
-        "選択範囲のタイルが文書の外" => "Selection tile outside document",
+        "選択範囲のタイルがキャンバスの外" => "Selection tile outside canvas",
         "選択範囲のタイルが空" => "Empty selection tile",
         "選択範囲のタイルが重なっている" => "Overlapping selection tiles",
         "選択範囲のタイルの余白が 0 でない" => "Selection tile padding must be zero",
         "選択範囲のタイルの大きさ" => "Selection tile size",
         "選択範囲のタイルの長さ" => "Selection tile length",
         "選択範囲の大きさ" => "Selection size",
-        "選択範囲の大きさが文書と違う" => "Selection size does not match document",
+        "選択範囲の大きさがキャンバスと違う" => "Selection size does not match canvas",
         "選択範囲の名前が空" => "The selection name is empty",
         "選択範囲の名前が長すぎる" => "The selection name is too long",
         "選択範囲の名前に制御文字がある" => {
@@ -852,7 +852,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "選択範囲の大きさが違う" => "Selection size mismatch",
         "選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Selection restore requires a freshly loaded document"
+            "Selection restore requires a freshly loaded project"
         }
         "面が無い" => "Surface not found",
         "UV 比較の解像度" => "UV comparison resolution",
@@ -1007,8 +1007,8 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "描いた面のチャンネルが重なっている" => {
             "Painted surface channels are duplicated"
         }
-        "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ" => {
-            "One painted surface per path channel, at the document size"
+        "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ" => {
+            "One painted surface per path channel, at the canvas size"
         }
         "画像の ID が空" => "Image ID is empty",
         "画像の大きさ" => "Image size",
@@ -1600,8 +1600,8 @@ pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
             "Not a readable PSD (damaged or unsupported)".into(),
         ),
         CopyRefusal::LargeDocument => lang.pick(
-            "PSB（大きな文書）は取り込めません".into(),
-            "PSB (large document) files cannot be imported".into(),
+            "PSB 形式は取り込めません".into(),
+            "PSB files cannot be imported".into(),
         ),
         CopyRefusal::ColorFormat { depth, mode } => {
             let name = crate::psd_import::color_mode_name(lang, *mode);
@@ -2611,6 +2611,6 @@ mod tests {
         let ja = Lang::Ja.unsupported_features(&issues);
         assert!(ja.contains("ロック") && ja.contains("ほか 2 件"), "{ja}");
         let en = Lang::En.unsupported_features(&issues);
-        assert_eq!(en, "Unsupported document features (layers[0].locks, manual_id_colors, layers[1].filters and 2 more)");
+        assert_eq!(en, "Unsupported project features (layers[0].locks, manual_id_colors, layers[1].filters and 2 more)");
     }
 }

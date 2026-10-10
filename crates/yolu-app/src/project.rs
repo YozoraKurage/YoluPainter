@@ -139,8 +139,8 @@ pub(crate) fn caught_as_text<T>(
 
 fn reading_stopped(lang: Lang) -> String {
     lang.pick(
-        "文書を読む途中で止まりました",
-        "Reading the document stopped",
+        "プロジェクトを読む途中で止まりました",
+        "Reading the project stopped",
     )
     .into()
 }
@@ -184,12 +184,12 @@ pub(crate) fn preview_document(
             blank(),
             Some(lang.pick(
                 format!(
-                    "保存した合成の絵の大きさ {}×{} が文書の {width}×{height} と違う",
+                    "保存した合成の絵の大きさ {}×{} がキャンバスの {width}×{height} と違う",
                     image.width(),
                     image.height()
                 ),
                 format!(
-                    "Saved composite size {}×{} differs from document {width}×{height}",
+                    "Saved composite size {}×{} differs from canvas {width}×{height}",
                     image.width(),
                     image.height()
                 ),

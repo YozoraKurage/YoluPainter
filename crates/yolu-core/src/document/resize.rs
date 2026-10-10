@@ -444,7 +444,7 @@ impl Document {
         } = prepared;
         if id != self.id || revision != self.revision {
             return Err(CoreError::InvalidArgument(
-                "大きさの変更の準備のあとに文書が変わった",
+                "大きさの変更の準備のあとにプロジェクトが変わった",
             ));
         }
         self.commit_resized(copy, &mut report)?;

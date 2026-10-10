@@ -1051,7 +1051,7 @@ fn precheck(d: &CoreDocument, channel: Channel, limits: &Limits) -> XResult<()> 
     )?;
     check(
         d.channel_info(channel).is_some(),
-        "書き出すチャンネルが文書にありません",
+        "書き出すチャンネルがプロジェクトにありません",
     )?;
     if d.width() > limits.max_dimension || d.height() > limits.max_dimension {
         return Err(Overrun::Side {

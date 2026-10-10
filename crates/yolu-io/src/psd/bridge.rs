@@ -432,7 +432,7 @@ impl ReadResult {
         )?;
         self.document
             .as_ref()
-            .ok_or_else(|| Error::InvalidData("編集用文書がありません".into()))?
+            .ok_or_else(|| Error::InvalidData("編集用のプロジェクトがありません".into()))?
             .to_core()
     }
 }

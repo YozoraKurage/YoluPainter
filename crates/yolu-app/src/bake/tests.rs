@@ -231,7 +231,7 @@ fn a_result_is_discarded_when_the_document_was_replaced() {
     s.doc = doc; // 同じ大きさでも別の文書
     s.wait_bake();
     assert!(s.sets.current().mesh_maps.is_empty());
-    assert!(s.message.contains("文書"), "{}", s.message);
+    assert!(s.message.contains("キャンバス"), "{}", s.message);
 }
 
 #[test]

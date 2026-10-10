@@ -1142,9 +1142,9 @@ impl AppState {
                     Source::Psd,
                     lang.pick(
                         format!(
-                            "読み込んでいる間に文書が変わったので、{file} は入れませんでした。"
+                            "読み込んでいる間にプロジェクトが変わったので、{file} は入れませんでした。"
                         ),
-                        format!("The document changed while reading, so {file} was not imported."),
+                        format!("The project changed while reading, so {file} was not imported."),
                     ),
                 );
                 return;
@@ -1694,7 +1694,11 @@ mod tests {
         b.wait_psd();
         assert_eq!(b.doc.id(), id, "文書は替えない");
         assert_eq!(b.doc.layers().len(), 2, "描いたものは残る");
-        assert!(b.message.contains("文書が変わった"), "{}", b.message);
+        assert!(
+            b.message.contains("プロジェクトが変わった"),
+            "{}",
+            b.message
+        );
         assert!(b.psd.report.is_none());
         // 読んでいる間にテクスチャセットが替わった（別のプロジェクトを開いた）ときも入れない
         let mut c = AppState::new(32, 32);
@@ -1705,7 +1709,11 @@ mod tests {
         crate::project::new_into(&mut c);
         c.wait_psd();
         assert_eq!(c.doc.width(), 2048, "新しいプロジェクトの文書のまま");
-        assert!(c.message.contains("文書が変わった"), "{}", c.message);
+        assert!(
+            c.message.contains("プロジェクトが変わった"),
+            "{}",
+            c.message
+        );
         // 新しいセットとして足す読み込みは、読んでいる間に描いても足せる
         let mut d = AppState::new(32, 32);
         d.apply(Action::Psd(PsdAction::Import {
@@ -2004,7 +2012,11 @@ mod tests {
         let id = s.doc.id();
         s.apply(Action::Psd(PsdAction::ConfirmImport));
         assert_eq!(s.doc.id(), id, "文書は替わらない");
-        assert!(s.message.contains("文書が変わった"), "{}", s.message);
+        assert!(
+            s.message.contains("プロジェクトが変わった"),
+            "{}",
+            s.message
+        );
         assert!(s.psd.import_check.is_none());
     }
 

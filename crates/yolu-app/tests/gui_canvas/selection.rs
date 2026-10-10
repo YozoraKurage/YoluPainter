@@ -1612,10 +1612,10 @@ fn headless_selection_file_failures_are_told_in_the_language_and_touch_nothing()
     let stored = Selection::from_core(&small_mask).unwrap();
     for lang in [Lang::Ja, Lang::En] {
         let (ja, en) = (
-            ("選択範囲を戻せません", "選択範囲の大きさが文書と違う"),
+            ("選択範囲を戻せません", "選択範囲の大きさがキャンバスと違う"),
             (
                 "Cannot restore the selection",
-                "Selection size does not match document",
+                "Selection size does not match canvas",
             ),
         );
         // 読み込み: 大きさが違えば選択なしのまま理由を返す。同じ大きさなら戻る（Undo の段は増えない）

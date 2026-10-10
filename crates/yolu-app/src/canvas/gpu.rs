@@ -119,8 +119,8 @@ impl Failure {
     pub fn describe(&self, lang: Lang) -> String {
         match self.kind {
             FailureKind::TextureLimit => lang.pick(
-                "文書の大きさが GPU のテクスチャの上限を超えます",
-                "Document is larger than the GPU texture limit",
+                "キャンバスの大きさが GPU のテクスチャの上限を超えます",
+                "Canvas is larger than the GPU texture limit",
             ),
             FailureKind::Init => {
                 lang.pick("GPU の初期化に失敗しました", "GPU initialization failed")
@@ -150,7 +150,7 @@ impl Fallback {
                 .into(),
             Fallback::Unsupported(u) => match u {
                 Unsupported::UnknownChannel => lang
-                    .pick("文書にないチャンネルです", "Unknown channel")
+                    .pick("プロジェクトにないチャンネルです", "Unknown channel")
                     .into(),
                 Unsupported::GroupDepth => lang
                     .pick(

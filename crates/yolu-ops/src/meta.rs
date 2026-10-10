@@ -112,12 +112,12 @@ fn build() -> Vec<CommandSpec> {
     vec![
         spec::<DocInfoArgs, DocInfo>(
             "doc.info", "doc", true, Safe, true,
-            ("文書の情報", "開いている .ylp の情報（ファイル・形式・テクスチャセットと今のセット）を返す。"),
+            ("プロジェクトの情報", "開いている .ylp の情報（ファイル・形式・テクスチャセットと今のセット）を返す。"),
             ("Document info", "Describe the opened .ylp: file, format, texture sets and the current set."),
         ),
         spec::<DocOpenArgs, DocInfo>(
             "doc.open", "doc", false, WhenReplacing, false,
-            ("文書を開く", "指定した .ylp を開く。開いていた文書に保存していない変更があれば、confirm: true が要る（変更は捨てる）。ディスクのファイルには触らない。"),
+            ("プロジェクトを開く", "指定した .ylp を開く。開いていたプロジェクトに保存していない変更があれば、confirm: true が要る（変更は捨てる）。ディスクのファイルには触らない。"),
             ("Open a document", "Open a .ylp file. The document that was open is closed; with unsaved changes this needs confirm: true (they are discarded). The file on disk is not touched."),
         ),
         spec::<SetInfoArgs, SetInfo>(

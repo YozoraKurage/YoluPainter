@@ -623,8 +623,8 @@ impl LiveLink {
     /// 文書が替わったので当てなかった頼みに、`declined` を返す。
     fn decline_replaced(&mut self, taken: &Taken, state: &mut AppState) {
         let text = state.lang.pick(
-            "Live Link: 文書が替わったので、開きませんでした。",
-            "Live Link: Not opened (the document was replaced).",
+            "Live Link: プロジェクトが替わったので、開きませんでした。",
+            "Live Link: Not opened (the project was replaced).",
         );
         self.decline(taken, text, state);
     }

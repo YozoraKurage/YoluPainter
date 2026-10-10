@@ -113,7 +113,7 @@ impl std::fmt::Display for DabRefusal {
             DabRefusal::InvalidArguments => "ブラシの大きさ・解像度・カメラが範囲外です",
             DabRefusal::BindingMismatch => "当たった面がモデルと合いません",
             DabRefusal::TriangleBudget => "ブラシが広すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
-            DabRefusal::PixelBudget => "ブラシが大きすぎるので、ストロークを取り消しました。ブラシを小さくするか、文書を小さくしてください",
+            DabRefusal::PixelBudget => "ブラシが大きすぎるので、ストロークを取り消しました。ブラシを小さくするか、キャンバスを小さくしてください",
             DabRefusal::VisibilityBudget => "見え方の確認が多すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
             DabRefusal::BvhBudget => "見え方の確認が重すぎるので、ストロークを取り消しました。ブラシを小さくするか、重なった面を減らしてください",
             DabRefusal::MemoryBudget => "ブラシの範囲が 1 回の操作のメモリに入らないので、ストロークを取り消しました",

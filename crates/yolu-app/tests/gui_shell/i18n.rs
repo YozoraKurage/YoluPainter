@@ -1642,7 +1642,7 @@ fn english_texture_set_states_have_no_japanese_gpu() {
     assert!(texts.iter().any(|t| t.contains("Skin")), "{texts:?}");
     // 読むだけのセットは理由を英語で（開くときに言語で作る理由）
     h.state_mut().state.sets.get_mut(0).unwrap().read_only =
-        Some("Unsupported document features (1)".into());
+        Some("Unsupported project features (1)".into());
     h.state_mut().state.apply(Action::SelectSet(uids[0]));
     h.run();
     assert_english(&h, "read-only set", &[]);

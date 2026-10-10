@@ -1391,7 +1391,7 @@ fn layer_channel(r: &mut Reader<'_>, seen: &mut HashSet<i32>, user: &UserChannel
     check(
         c < STANDARD_CHANNELS || user.contains_key(&c),
         format!(
-            "{}.channel {c} は文書のチャンネルの一覧にありません",
+            "{}.channel {c} はプロジェクトのチャンネルの一覧にありません",
             r.prefix
         ),
     )?;
@@ -2206,7 +2206,7 @@ fn validate_fields(fields: &[NativeField]) -> Result<()> {
             if let NativeValue::Guid(id) = field.value {
                 check(
                     filter_ids.insert(id),
-                    "文書内のフィルターIDが重複しています",
+                    "プロジェクト内のフィルターIDが重複しています",
                 )?;
             }
         }

@@ -59,7 +59,7 @@ impl Stage {
             Stage::SurfaceProject => "3D 投影の塗り",
             Stage::SurfaceBuckets => "3D 区画の作り直し",
             Stage::SurfaceGather => "3D 覆いの集め+並べ替え",
-            Stage::SurfaceApply => "3D 文書へ塗る",
+            Stage::SurfaceApply => "3D のキャンバスへ塗る",
         }
     }
 }

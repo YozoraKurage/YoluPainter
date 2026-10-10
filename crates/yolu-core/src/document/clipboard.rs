@@ -111,7 +111,7 @@ impl PixelClipboard {
         channel: Channel,
     ) -> Result<PixelClipboard, CoreError> {
         if document_width == 0 || document_height == 0 {
-            return Err(CoreError::InvalidArgument("写した文書の大きさ"));
+            return Err(CoreError::InvalidArgument("写したキャンバスの大きさ"));
         }
         if width == 0 || height == 0 {
             return Err(CoreError::InvalidArgument("写した矩形が空"));
@@ -119,7 +119,7 @@ impl PixelClipboard {
         if x as u64 + width as u64 > document_width as u64
             || y as u64 + height as u64 > document_height as u64
         {
-            return Err(CoreError::InvalidArgument("写した矩形が文書の外"));
+            return Err(CoreError::InvalidArgument("写した矩形がキャンバスの外"));
         }
         if rgba.len() as u64 != width as u64 * height as u64 * 4 {
             return Err(CoreError::InvalidArgument(
@@ -667,7 +667,7 @@ impl Document {
         within_selection: bool,
     ) -> Result<bool, CoreError> {
         if rgba.len() as u64 != self.width as u64 * self.height as u64 * 4 {
-            return Err(CoreError::InvalidArgument("画像の大きさが文書と違う"));
+            return Err(CoreError::InvalidArgument("画像の大きさがキャンバスと違う"));
         }
         self.ensure_no_stroke()?;
         self.require_channel(channel)?;

@@ -160,7 +160,7 @@ impl Unsupported {
     /// 理由の文（日本語。画面に出す文言は呼び手が種類から作る）。
     pub fn reason(self) -> &'static str {
         match self {
-            Unsupported::UnknownChannel => "文書にないチャンネル",
+            Unsupported::UnknownChannel => "プロジェクトにないチャンネル",
             Unsupported::GroupDepth => "グループの入れ子が GPU で合成できる深さを超える",
         }
     }

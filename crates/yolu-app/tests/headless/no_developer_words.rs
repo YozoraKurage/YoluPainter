@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 /// 開発の言葉。（言葉, 使ってはいけない理由）
-const BANNED: [(&str, &str); 21] = [
+const BANNED: [(&str, &str); 22] = [
     ("M2 の試作", "試作の名残"),
     ("M2 prototype", "試作の名残"),
     ("Rust 版", "実装の言語は利用者に関係ない"),
@@ -20,7 +20,11 @@ const BANNED: [(&str, &str); 21] = [
     ("BVH", "内部の仕組みの名前"),
     ("ダブが", "ブラシの内部の単位"),
     ("書き直した正本", "保存の内部の数"),
-    ("正本", "保存の内部の言葉（利用者には「文書」）"),
+    ("正本", "保存の内部の言葉（利用者には「プロジェクト」）"),
+    (
+        "文書",
+        "作品は「プロジェクト」、大きさのことは「キャンバス」と書く",
+    ),
     ("updated documents", "保存の内部の数"),
     ("（形式 ", "形式の番号は利用者に関係ない"),
     ("(format ", "形式の番号は利用者に関係ない"),
@@ -220,6 +224,34 @@ fn no_message_in_any_crate_uses_a_literal_translation_word() {
         "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）と分かりにくい言葉（装置・機械・機材）:\n{}",
         found.join("\n")
     );
+}
+
+#[test]
+fn no_message_in_any_crate_calls_the_project_or_the_canvas_a_document() {
+    // core・io・gpu・ops の文（画面にそのまま出る）と、`lang/errors.rs` の表のキーも見る。作品は「プロジェクト」、大きさは「キャンバス」
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let banned = [(
+        "文書",
+        "作品は「プロジェクト」、大きさのことは「キャンバス」と書く",
+    )];
+    let mut found = Vec::new();
+    for name in [
+        "yolu-core",
+        "yolu-io",
+        "yolu-gpu",
+        "yolu-app",
+        "yolu-ops",
+        "yolu-mcp",
+        "yolu-cli",
+    ] {
+        let root = crates.join(name).join("src");
+        found.extend(
+            scan_words(&root, &banned, true)
+                .into_iter()
+                .map(|f| format!("{name}/{f}")),
+        );
+    }
+    assert!(found.is_empty(), "文に「文書」:\n{}", found.join("\n"));
 }
 
 /// 画面の言葉に「棚」（英語は shelf）を使わない。プロジェクトの品（.ylp に保存される画像・スマート素材・ブラシ）は「アセット」

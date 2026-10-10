@@ -951,7 +951,11 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     );
     settle(&mut h);
     h.get_by_label("Close");
-    assert!(h.state().state.message.contains("PSB (large document)"));
+    assert!(h
+        .state()
+        .state
+        .message
+        .contains("PSB files cannot be imported"));
 }
 
 /// レイヤー ID を持たない 2 レイヤーの PSD を書く（書き手は ID を必ず書くので、lyid のタグを同じ長さの別のタグに書き換える）。

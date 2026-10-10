@@ -103,7 +103,7 @@ impl OpError {
     pub fn no_document() -> Self {
         Self::new(
             ErrorCode::NoDocument,
-            "開いている文書がありません（doc.open で開く）",
+            "開いているプロジェクトがありません（doc.open で開く）",
             "No document is open (open one with doc.open)",
         )
     }
@@ -138,7 +138,7 @@ impl OpError {
     /// まだファイルになっていない文書の上書き保存（保存先を `save_as` で言う）。
     pub fn no_file_to_save() -> Self {
         Self::invalid_value(
-            "まだファイルになっていない文書です。save_as で保存先を指定してください",
+            "まだファイルになっていないプロジェクトです。save_as で保存先を指定してください",
             "The document is not a file yet; give a destination with save_as",
         )
         .with_data(json!({"reason": "no_file"}))

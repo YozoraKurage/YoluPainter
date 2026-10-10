@@ -157,7 +157,9 @@ impl Document {
             .get(index)
             .ok_or(CoreError::InvalidArgument("残した選択範囲の番号"))?;
         if !self.saved_fits(&saved.mask) {
-            return Err(CoreError::InvalidArgument("選択範囲の大きさが文書と違う"));
+            return Err(CoreError::InvalidArgument(
+                "選択範囲の大きさがキャンバスと違う",
+            ));
         }
         let mask = saved.mask.clone();
         self.combine_selection(&mask, mode)
@@ -183,7 +185,9 @@ impl Document {
                 return Err(CoreError::InvalidArgument("同じ名前の選択範囲がある"));
             }
             if !self.saved_fits(&s.mask) {
-                return Err(CoreError::InvalidArgument("選択範囲の大きさが文書と違う"));
+                return Err(CoreError::InvalidArgument(
+                    "選択範囲の大きさがキャンバスと違う",
+                ));
             }
         }
         self.saved_selections = Arc::new(list);

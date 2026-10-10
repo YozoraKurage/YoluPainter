@@ -498,13 +498,16 @@ impl AppState {
                 let d = self.set_doc(index);
                 (d.width(), d.height())
             };
+            let name = self.sets.get(index).expect("範囲内").name.clone();
             let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
                 lang.with_reason(
-                    lang.pick("文書を写せません", "Cannot copy the document"),
+                    lang.pick(
+                        format!("テクスチャセット「{name}」を写せません"),
+                        format!("Cannot copy texture set “{name}”"),
+                    ),
                     lang.core_error(&e),
                 )
             })?;
-            let name = self.sets.get(index).expect("範囲内").name.clone();
             // 効かない効果は黙って入力のまま書かず、書き出した画像に入っていないことを言う
             let inactive = self.set_doc(index).inactive_effect_list();
             if !inactive.is_empty() {

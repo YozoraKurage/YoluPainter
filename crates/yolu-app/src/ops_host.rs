@@ -293,8 +293,8 @@ impl OpHost for AppHost<'_> {
             Some(file) if crate::project::same_file(&file, path) => self.doc_info(),
             _ => Err(OpError::new(
                 ErrorCode::Unsupported,
-                "起動中のアプリは文書を開き替えません（アプリで開いている文書を使います）",
-                "The running app does not switch documents; it works on the document it has open",
+                "起動中のアプリはプロジェクトを開き替えません（アプリで開いているプロジェクトを使います）",
+                "The running app does not switch projects; it works on the project it has open",
             )
             .with_data(json!({"path": path.display().to_string()}))),
         }

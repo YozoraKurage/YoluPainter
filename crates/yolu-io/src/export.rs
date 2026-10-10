@@ -627,7 +627,7 @@ fn write_template_inner(
     if let Some(p) = set.padding {
         if p.coverage.len() as u64 != doc.width() as u64 * doc.height() as u64 {
             return Err(ExportError::Calc(CalcError::InvalidArgument(
-                "覆いは文書と同じ大きさ（幅 × 高さ）",
+                "覆いはキャンバスと同じ大きさ（幅 × 高さ）",
             )));
         }
     }

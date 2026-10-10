@@ -433,8 +433,8 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     draw_frame(ui, draw, &app.pressure, &adjust);
     ui.interact(draw, id.with("draw"), egui::Sense::hover())
         .on_hover_text(lang.pick(
-            "普段の強さで何本か描く。描いた線は文書に入らない",
-            "Draw a few strokes at your usual strength. The strokes are not part of the document",
+            "普段の強さで何本か描く。描いた線はプロジェクトに入らない",
+            "Draw a few strokes at your usual strength. The strokes are not part of the project",
         ));
     let row = rows.row(t::ROW_HEIGHT, GAP);
     let buttons = w::Rows::split(row, 4, GAP);

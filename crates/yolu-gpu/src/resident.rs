@@ -700,7 +700,7 @@ impl ResidentCompositor {
                 .collect()
         } else {
             doc.changed_tiles(channel, self.binding.as_ref().expect("確認済み").serial)
-                .ok_or_else(|| error("文書の世代が巻き戻った。reset が必要"))?
+                .ok_or_else(|| error("プロジェクトの世代が巻き戻った。reset が必要"))?
         };
         if self
             .binding

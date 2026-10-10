@@ -650,8 +650,8 @@ fn overlay_skipped_tooltip(lang: crate::lang::Lang, skip: Skip) -> String {
             "it does not fit in the GPU memory budget for 3D pictures",
         ),
         Skip::Size => lang.pick(
-            "文書の幅か高さが GPU のテクスチャの上限を超えています",
-            "the document is wider or taller than the GPU texture limit",
+            "キャンバスの幅か高さが GPU のテクスチャの上限を超えています",
+            "the canvas is wider or taller than the GPU texture limit",
         ),
     };
     lang.with_reason(

@@ -455,8 +455,8 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
                 tooltip: Some(
                     if replace.imported {
                         lang.pick(
-                            "この文書を取り込んだ PSD です。書き出した PSD に置き換えます",
-                            "This document was imported from this PSD. It is replaced by the exported PSD",
+                            "このプロジェクトを取り込んだ PSD です。書き出した PSD に置き換えます",
+                            "This project was imported from this PSD. It is replaced by the exported PSD",
                         )
                     } else {
                         lang.pick(
