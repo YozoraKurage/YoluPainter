@@ -578,6 +578,201 @@ fn a_fresh_start_fits_the_right_column_to_the_window_width_and_a_saved_arrangeme
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// 設定のフォルダ `dir` で、`width` × `height` のウィンドウに立てたアプリ（並びのファイルがあれば読む）。
+fn app_in_settings(dir: &Path, width: f32, height: f32) -> H {
+    let settings = dir.join("settings.conf");
+    let mut h = gpu_thread::builder()
+        .with_size(vec2(width, height))
+        .with_pixels_per_point(1.0)
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(120)
+        .renderer(shared_gpu::renderer())
+        .build_eframe(move |cc| {
+            with_render_state_cpu_canvas(
+                YoluApp::for_context_with_settings(
+                    &cc.egui_ctx,
+                    Some(settings),
+                    PenInput::detached(),
+                ),
+                cc.wgpu_render_state.as_ref(),
+            )
+        });
+    h.run();
+    h
+}
+
+/// 右の列（テクスチャセットの組の左端から右端まで）の幅。
+fn right_width(h: &H, width: f32) -> f32 {
+    width - tab_rect(h, Tab::TextureSets).left()
+}
+
+/// 並びを動かしていない間は、ウィンドウの幅が変わると右の列の割合が追う（下限 232 点を保つ）。新しくその幅で起動した並びと同じ（1 点以内）。
+#[test]
+fn an_untouched_arrangement_follows_the_window_width() {
+    for (start, end) in [(1600.0, 960.0), (960.0, 1920.0), (1280.0, 1281.0)] {
+        let dir = settings_dir("follow");
+        let mut h = app_in_settings(&dir, start, 900.0);
+        h.set_size(vec2(end, 900.0));
+        h.run();
+        h.run();
+        let fresh_dir = settings_dir("follow-fresh");
+        let fresh = app_in_settings(&fresh_dir, end, 900.0);
+        assert_eq!(
+            shape(&h.state().dock),
+            shape(&yolu_app::app::default_dock_for(end)),
+            "{start}→{end}: 今の幅の既定の割合"
+        );
+        let (now, want) = (right_width(&h, end), right_width(&fresh, end));
+        assert!(
+            (now - want).abs() <= 1.0,
+            "{start}→{end}: 右の列 {now}（新しく起動すると {want}）"
+        );
+        assert!(now >= 232.0 - 1.0, "{start}→{end}: 下限 {now}");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(fresh_dir);
+    }
+}
+
+/// 利用者が仕切りを動かした・タブを動かした・別ウィンドウに出した後は、幅を変えても割合を直さない。ナビゲーターを開いても自動のまま。
+#[test]
+fn the_follow_stops_once_the_user_changes_the_arrangement() {
+    // 仕切りを動かす
+    let dir = settings_dir("follow-moved");
+    let mut h = app_in_settings(&dir, 1600.0, 900.0);
+    if let Node::Horizontal(split) | Node::Vertical(split) =
+        &mut h.state_mut().dock.main_surface_mut()[egui_dock::NodeIndex(0)]
+    {
+        split.fraction += 0.03;
+    } else {
+        panic!("根は分け目");
+    }
+    h.run();
+    let moved = shape(&h.state().dock);
+    h.set_size(vec2(1100.0, 900.0));
+    h.run();
+    h.run();
+    assert_eq!(
+        shape(&h.state().dock),
+        moved,
+        "仕切りを動かした後は割合を変えない"
+    );
+    // タブを動かす
+    let dir2 = settings_dir("follow-tab");
+    let mut h = app_in_settings(&dir2, 1600.0, 900.0);
+    let from = h.state().dock.find_tab(&Tab::Assets).unwrap();
+    let to = h.state().dock.find_tab(&Tab::Layers).unwrap().node_path();
+    h.state_mut().dock.move_tab(
+        from,
+        egui_dock::TabDestination::Node(to, egui_dock::TabInsert::Append),
+    );
+    h.run();
+    let moved = shape(&h.state().dock);
+    h.set_size(vec2(1100.0, 900.0));
+    h.run();
+    h.run();
+    assert_eq!(
+        shape(&h.state().dock),
+        moved,
+        "タブを動かした後は割合を変えない"
+    );
+    // 別ウィンドウ
+    let dir3 = settings_dir("follow-detached");
+    let mut h = app_in_settings(&dir3, 1600.0, 900.0);
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Detach(Tab::Log)));
+    h.run();
+    let moved = shape(&h.state().dock);
+    h.set_size(vec2(1100.0, 900.0));
+    h.run();
+    h.run();
+    assert_eq!(
+        shape(&h.state().dock),
+        moved,
+        "別ウィンドウがあれば割合を変えない"
+    );
+    // ナビゲーターを開いても自動のまま（選んでいるタブも保つ）
+    let dir4 = settings_dir("follow-navigator");
+    let mut h = app_in_settings(&dir4, 1600.0, 900.0);
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    h.run();
+    h.set_size(vec2(1100.0, 900.0));
+    h.run();
+    h.run();
+    let dock = &h.state().dock;
+    let (node, index) = dock.find_main_surface_tab(&Tab::Navigator).unwrap();
+    match &dock.main_surface()[node] {
+        Node::Leaf(leaf) => assert_eq!(leaf.active.0, index.0, "選んでいるタブを保つ"),
+        _ => unreachable!(),
+    }
+    assert!((right_width(&h, 1100.0) - (0.19f32 * 1100.0).max(232.0)).abs() <= 3.0);
+    for d in [dir, dir2, dir3, dir4] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
+/// 並びのファイルの `auto_fit`: 自動のまま閉じると true を書き、読むと今の幅へ合わせ直す。false・無い（前の版のファイル）は合わせない。
+/// 仕切りを動かして閉じると false。
+#[test]
+fn auto_fit_is_written_when_closed_untouched_and_read_back() {
+    use eframe::App;
+    let narrow = yolu_app::app::default_dock_for(1600.0);
+    // true: 今の幅に合わせ直す
+    let dir = settings_dir("auto-true");
+    std::fs::write(
+        dir.join(layout::FILE_NAME),
+        layout::render_full(&narrow, None, &[], &[], true),
+    )
+    .unwrap();
+    let h = app_in_settings(&dir, 1000.0, 800.0);
+    assert_eq!(
+        shape(&h.state().dock),
+        shape(&yolu_app::app::default_dock_for(1000.0)),
+        "auto_fit: true は今の幅へ"
+    );
+    // false と、キーの無い前の版のファイルは、合わせない
+    for (tag, text) in [
+        (
+            "auto-false",
+            layout::render_full(&narrow, None, &[], &[], false),
+        ),
+        ("auto-absent", layout::render(&narrow, None)),
+    ] {
+        let dir = settings_dir(tag);
+        assert!(!text.contains("auto_fit"), "{tag}: false は書かない");
+        std::fs::write(dir.join(layout::FILE_NAME), text).unwrap();
+        let mut h = app_in_settings(&dir, 1000.0, 800.0);
+        assert_eq!(shape(&h.state().dock), shape(&narrow), "{tag}: 合わせない");
+        h.set_size(vec2(1300.0, 800.0));
+        h.run();
+        h.run();
+        assert_eq!(
+            shape(&h.state().dock),
+            shape(&narrow),
+            "{tag}: 幅が変わっても合わせない"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    // 自動のまま閉じると true を書く。仕切りを動かして閉じると書かない
+    let dir = settings_dir("auto-write");
+    let mut h = app_in_settings(&dir, 1400.0, 800.0);
+    h.state_mut().on_exit();
+    let text = std::fs::read_to_string(dir.join(layout::FILE_NAME)).unwrap();
+    assert!(layout::parse(&text).auto_fit, "自動のまま閉じる: true");
+    if let Node::Horizontal(split) | Node::Vertical(split) =
+        &mut h.state_mut().dock.main_surface_mut()[egui_dock::NodeIndex(0)]
+    {
+        split.fraction += 0.03;
+    }
+    h.run();
+    h.state_mut().on_exit();
+    let text = std::fs::read_to_string(dir.join(layout::FILE_NAME)).unwrap();
+    assert!(!layout::parse(&text).auto_fit, "動かして閉じる: false");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// ナビゲーターは既定の並びでは閉じていて、「ウィンドウ」に名前があり、開くとテクスチャセットの組へ入って前に出る。
 #[test]
 fn the_navigator_is_closed_in_the_default_dock_and_opens_into_the_texture_sets_group_from_the_window_menu(

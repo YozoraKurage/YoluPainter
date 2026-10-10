@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Sense, Ui, WidgetText};
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, Node, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
 use crate::dialog::places::Place;
@@ -217,6 +217,43 @@ pub fn default_dock_for(width: f32) -> DockState<Tab> {
         vec![Tab::Properties, Tab::Material, Tab::History],
     );
     dock
+}
+
+/// ウィンドウの幅がこれ（点）より変わらなければ、自動の割合を直さない。
+const DOCK_FIT_EPSILON_WIDTH: f32 = 0.5;
+/// 割合が同じとみなす差。
+const DOCK_FIT_EPSILON_FRACTION: f32 = 1e-4;
+
+/// `tree` が `reference`（既定の並び）と同じ形か: ノードの数と種類（分け目の向き）が同じで、組ごとのタブが同じ（`reference` に無いタブ — ナビゲーター・アクション・
+/// ポーズ — は数えない）。`check_fractions` なら、各分け目の割合も 1e-4 以内で同じ。
+fn same_split_shape(
+    tree: &egui_dock::Tree<Tab>,
+    reference: &egui_dock::Tree<Tab>,
+    check_fractions: bool,
+) -> bool {
+    if tree.len() != reference.len() {
+        return false;
+    }
+    let known: Vec<Tab> = reference
+        .iter()
+        .flat_map(|n| n.iter_tabs().copied())
+        .collect();
+    tree.iter().zip(reference.iter()).all(|pair| match pair {
+        (Node::Empty, Node::Empty) => true,
+        (Node::Leaf(a), Node::Leaf(b)) => {
+            let mine: Vec<Tab> = a
+                .tabs
+                .iter()
+                .copied()
+                .filter(|t| known.contains(t))
+                .collect();
+            mine == b.tabs
+        }
+        (Node::Horizontal(a), Node::Horizontal(b)) | (Node::Vertical(a), Node::Vertical(b)) => {
+            !check_fractions || (a.fraction - b.fraction).abs() <= DOCK_FIT_EPSILON_FRACTION
+        }
+        _ => false,
+    })
 }
 
 /// ドックの見た目（Unity 版のパネルの見出し: 地は PanelHeader、選んだタブは PanelBg、境目は Border）。
@@ -454,8 +491,11 @@ pub struct YoluApp {
     /// ドックの並びとウィンドウの大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
     layout_path: Option<std::path::PathBuf>,
     /// 最後に書いた（または読んだ）ファイルの中身。変わったときだけ書く。
-    /// 起動して最初のフレームで、既定の並びのままなら、ウィンドウの幅に合わせて右の列の幅を決め直す（`default_dock_for`）。保存した並びを読んだときは何もしない。
-    dock_fit: bool,
+    /// 利用者が並びを動かしていない（仕切りもタブも別ウィンドウも）間の「自動」: Some なら、右の列の割合を最後に合わせたウィンドウの幅（`default_dock_for` の幅）。
+    /// ウィンドウの幅が変わると、並びの形と割合がその幅の既定と同じなら、割合だけを今の幅の既定の値に入れ替える（`fit_default_dock`）。違えば（利用者が動かした）None。
+    dock_auto: Option<f32>,
+    /// 保存した並びが自動のまま閉じられていた（ファイルの `auto_fit`）。最初のフレームで、割合を比べずに今の幅へ合わせ直す。
+    dock_refit: bool,
     layout_saved: String,
     /// 最後に「書くか」を見た時刻（egui の時刻。1 秒おきに見る）。
     layout_checked_at: f64,
@@ -740,6 +780,9 @@ impl YoluApp {
                     );
                 }
                 app.dock = dock;
+                // 自動のまま閉じた並びは、最初のフレームの幅に合わせ直す。そうでなければ合わせない（はっきり外す）
+                app.dock_auto = layout.auto_fit.then_some(REFERENCE_WIDTH);
+                app.dock_refit = layout.auto_fit;
             }
             for record in layout.detached {
                 let place = match record.window {
@@ -905,7 +948,8 @@ impl YoluApp {
                 home: w.home.clone(),
             })
             .collect();
-        crate::layout::render_all(&self.dock, window.as_ref(), &[], &detached)
+        let auto_fit = self.dock_is_auto(self.dock_refit);
+        crate::layout::render_full(&self.dock, window.as_ref(), &[], &detached, auto_fit)
     }
 
     /// 並びを書く。`force` でなければ、前に書いた中身と同じなら書かない。
@@ -967,7 +1011,8 @@ impl YoluApp {
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
             gpu_device: None,
             layout_path: None,
-            dock_fit: true,
+            dock_auto: Some(REFERENCE_WIDTH),
+            dock_refit: false,
             layout_saved: String::new(),
             layout_checked_at: f64::NEG_INFINITY,
             window_record: None,
@@ -1859,18 +1904,55 @@ impl YoluApp {
         self.finish_message(ui.ctx());
     }
 
-    /// 起動の最初のフレームで、並びが既定のままなら（保存した並びを読んでいない。試験が並びを替えてもいない）、今のウィンドウの幅の既定の並びに替える。
+    /// 並びが自動の間（`dock_auto`）、毎フレーム、並びが最後に合わせた幅の既定のままか確かめ（違えば利用者が動かしたので自動をやめる）、ウィンドウの幅が
+    /// 変わっていれば、右の列の割合を今の幅の既定の値に入れ替える。並びの形は分け目の種類と、組ごとのタブ（既定の並びに無いナビゲーター・アクション・ポーズは
+    /// 数えない）、割合は 1e-4 以内。木は作り直さない（選んでいるタブ・開いたナビゲーターを保つ）。別ウィンドウが 1 つでもあれば自動をやめる。
+    /// 保存した並びが自動のまま閉じられていたとき（`dock_refit`）は、形だけを見て、最初のフレームの幅へ割合を合わせ直す。
     fn fit_default_dock(&mut self, ctx: &egui::Context) {
-        if !std::mem::take(&mut self.dock_fit) {
+        let refit = std::mem::take(&mut self.dock_refit);
+        if !self.dock_is_auto(refit) {
+            self.dock_auto = None;
             return;
         }
-        let same = matches!(
-            (serde_json::to_value(&self.dock), serde_json::to_value(default_dock())),
-            (Ok(a), Ok(b)) if a == b
-        );
-        if same && self.detached.windows.is_empty() {
-            self.dock = default_dock_for(ctx.content_rect().width());
+        let Some(last) = self.dock_auto else {
+            return;
+        };
+        let width = ctx.content_rect().width();
+        if !refit && (width - last).abs() <= DOCK_FIT_EPSILON_WIDTH {
+            return;
         }
+        let now = default_dock_for(width);
+        for (node, new) in self
+            .dock
+            .main_surface_mut()
+            .iter_mut()
+            .zip(now.main_surface().iter())
+        {
+            if let (
+                Node::Horizontal(split) | Node::Vertical(split),
+                Node::Horizontal(want) | Node::Vertical(want),
+            ) = (node, new)
+            {
+                split.fraction = want.fraction;
+            }
+        }
+        self.dock_auto = Some(width);
+    }
+
+    /// 並びが自動のままか: 自動の印があり、別ウィンドウが無く、並びが最後に合わせた幅の既定と同じ形（`shape_only` なら割合は見ない）。
+    fn dock_is_auto(&self, shape_only: bool) -> bool {
+        let Some(last) = self.dock_auto else {
+            return false;
+        };
+        if !self.detached.windows.is_empty() || self.dock.iter_surfaces().count() != 1 {
+            return false;
+        }
+        let reference = default_dock_for(last);
+        same_split_shape(
+            self.dock.main_surface(),
+            reference.main_surface(),
+            !shape_only,
+        )
     }
 
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
@@ -2022,6 +2104,8 @@ impl YoluApp {
         self.ensure_pose_tab();
         if self.state.reset_layout {
             self.dock = default_dock_for(ctx.content_rect().width());
+            self.dock_auto = Some(ctx.content_rect().width());
+            self.dock_refit = false;
             self.detached.clear();
             self.state.reset_layout = false;
         }

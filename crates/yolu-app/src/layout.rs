@@ -106,6 +106,8 @@ pub struct Loaded {
     pub window: Option<WindowRecord>,
     /// 外へ出したウィンドウ（ドックの並びが使えるときだけ）。
     pub detached: Vec<DetachedRecord>,
+    /// 書いたときの並びが、利用者が仕切りもタブも動かしていない既定のままだったか（ファイルの `auto_fit`。無ければ false。ドックの並びが使えるときだけ true になりうる）。
+    pub auto_fit: bool,
     /// 捨てた理由（診断のログに書く文。画面には出さない）。
     pub problems: Vec<String>,
 }
@@ -262,6 +264,10 @@ pub fn parse(text: &str) -> Loaded {
             }
             out.dock = Some(dock);
             out.detached = detached;
+            out.auto_fit = root
+                .get("auto_fit")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         }
         Err(reason) => out.problems.push(format!(
             "ドックの並びを使えません（{reason}）。既定の並びで始めます。"
@@ -344,8 +350,8 @@ pub const OPTIONAL_TABS: [Tab; 7] = [
     Tab::Material,
 ];
 
-/// 「サブツール」の組の下に足すツールプロパティの取り分と、その下に足すブラシサイズを分けたあとのツールプロパティの取り分（既定の並びの
-/// 高さの割合と同じ。`app::default_dock`）。
+/// 前の版の並びに足すときの値: 「サブツール」の組の下にツールプロパティを足すとき、サブツールの組が持つ高さの取り分と、その下にブラシサイズを足すとき、
+/// ツールプロパティの組が持つ取り分。今の既定の並び（`app::default_dock_for`）の同じ取り分（0.294・0.729）とは別の値で、既定の並びを作り直すものではない。
 const TOOL_PROPERTIES_SHARE: f32 = 0.38;
 const BRUSH_SIZE_SPLIT: f32 = 0.8;
 
@@ -652,8 +658,23 @@ pub fn render_all(
     floats: &[FloatRect],
     detached: &[DetachedRecord],
 ) -> String {
+    render_full(dock, window, floats, detached, false)
+}
+
+/// ファイルの中身を作る。`auto_fit` は、並びが利用者の動かしていない既定のまま（ウィンドウの幅に合わせて右の列の割合を直している）か。true のときだけ
+/// `"auto_fit": true` を書く（前の版のファイルと同じく、無ければ false）。
+pub fn render_full(
+    dock: &DockState<Tab>,
+    window: Option<&WindowRecord>,
+    floats: &[FloatRect],
+    detached: &[DetachedRecord],
+    auto_fit: bool,
+) -> String {
     let dock = serde_json::to_value(normalized(dock, floats)).unwrap_or(Value::Null);
     let mut root = json!({ "format": FORMAT, "dock": dock });
+    if auto_fit {
+        root["auto_fit"] = Value::Bool(true);
+    }
     if let Some(window) = window {
         root["window"] = window.to_json();
     }
