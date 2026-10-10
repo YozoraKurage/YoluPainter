@@ -550,21 +550,62 @@ impl View3dSlot {
             );
         }
         if app.view3d.full_model().is_none() {
-            let r =
-                Rect::from_center_size(pos2(text.center().x, text.top() + 64.0), vec2(160.0, 24.0));
+            // モデルを開くのは新規プロジェクトを作ること。主の入り口は新規プロジェクトで、試しの立方体はその下に控えめに置く。
+            // 2 つの縦並びを枠の真ん中に置き、枠が低くて入りきらないときは試しの立方体を出さない（主のボタンは枠の上端に寄せて切らさない）
+            const NEW_H: f32 = 28.0;
+            const CUBE_H: f32 = 22.0;
+            const GAP: f32 = 8.0;
+            const MARGIN: f32 = 4.0;
+            let block = NEW_H + GAP + CUBE_H;
+            let top = (content.center().y - block / 2.0).max(content.top() + MARGIN);
+            let x = content.center().x;
+            let width = |wanted: f32| wanted.min((content.width() - 2.0 * MARGIN).max(0.0));
+            // メニューの新規プロジェクトと同じに、描いている間・保存の間は押せない（理由は保存の間だけ。描いている間はツールチップを見ない）
+            let saving = app.is_saving();
+            let idle = !app.is_stroking() && !saving;
+            let tip = if saving {
+                crate::lang::refusals::saving(lang).to_owned()
+            } else {
+                crate::shortcuts::tip_with_key(
+                    lang,
+                    lang.pick("新規プロジェクト", "New Project"),
+                    &Action::NewProjectDialog,
+                )
+            };
+            let r = Rect::from_center_size(pos2(x, top + NEW_H / 2.0), vec2(width(180.0), NEW_H));
             if w::button(
                 ui,
                 r,
-                "view3d.demo",
-                lang.pick("試しの立方体を読む", "Load Test Cube"),
+                "view3d.new_project",
+                lang.pick("新規プロジェクト…", "New Project…"),
                 true,
-                true,
-                None,
-                Some("view_in_ar"),
+                idle,
+                Some(&tip),
+                Some("add"),
             )
             .clicked()
             {
-                app.apply(Action::LoadDemoModel);
+                app.apply(Action::NewProjectDialog);
+            }
+            if top + block <= content.bottom() - MARGIN {
+                let r = Rect::from_center_size(
+                    pos2(x, top + NEW_H + GAP + CUBE_H / 2.0),
+                    vec2(width(160.0), CUBE_H),
+                );
+                if w::button(
+                    ui,
+                    r,
+                    "view3d.demo",
+                    lang.pick("試しの立方体を読む", "Load Test Cube"),
+                    false,
+                    true,
+                    None,
+                    None,
+                )
+                .clicked()
+                {
+                    app.apply(Action::LoadDemoModel);
+                }
             }
         }
     }

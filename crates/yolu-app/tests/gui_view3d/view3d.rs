@@ -720,6 +720,170 @@ fn a_dab_rim_rounding_below_zero_does_not_cancel_the_stroke() {
     assert!(h.state().state.doc.can_undo());
 }
 
+/// 空の 3D ビュー（日英）: 主のボタンは「新規プロジェクト…」で、押すとファイルメニューの新規プロジェクトと同じ要求になる（モデルは読まない）。
+/// 試しの立方体はその下の控えめなボタン。ツールチップは名前とキーだけ。
+#[test]
+fn placeholder_offers_a_new_project_first_and_the_test_cube_below() {
+    use egui_kittest::kittest::Queryable;
+    use yolu_app::lang::Lang;
+    use yolu_app::state::DialogRequest;
+    for lang in [Lang::Ja, Lang::En] {
+        let mut h = app(1000.0, 700.0, 256);
+        h.state_mut().state.lang = lang;
+        click_tab(&mut h, yolu_app::Tab::View3d);
+        h.run();
+        let new_label = lang.pick("新規プロジェクト…", "New Project…");
+        let cube_label = lang.pick("試しの立方体を読む", "Load Test Cube");
+        let new = h.get_by_label(new_label).rect();
+        let cube = h.get_by_label(cube_label).rect();
+        let view = h.state().view3d_rect().expect("3D のタブを描いた");
+        assert!(
+            view.contains_rect(new) && view.contains_rect(cube),
+            "{lang:?}"
+        );
+        assert!(new.bottom() <= cube.top(), "{lang:?}: 新規プロジェクトが上");
+        assert!(
+            new.width() > cube.width() - 1.0 && new.height() > cube.height(),
+            "{lang:?}: 主のボタンの方が大きい"
+        );
+        // ツールチップは名前とキー（ファイルメニューの新規プロジェクトと同じキー）
+        let key = yolu_app::shortcuts::shortcut_text(&yolu_app::state::Action::NewProjectDialog)
+            .expect("新規プロジェクトのキー");
+        let tip = lang.pick(
+            format!("新規プロジェクト（{key}）"),
+            format!("New Project ({key})"),
+        );
+        hover_and_wait(&mut h, new.center());
+        assert!(h.query_by_label(&tip).is_some(), "{lang:?}: {tip}");
+        move_to(&h, pos2(2.0, 2.0));
+        h.run();
+        // 押す
+        click(&mut h, new.center());
+        assert_eq!(
+            h.state().state.dialog_request,
+            Some(DialogRequest::New),
+            "{lang:?}"
+        );
+        assert!(h.state().state.view3d.model.is_none(), "{lang:?}");
+        // 試しの立方体も今どおり読める
+        h.state_mut().state.dialog_request = None;
+        h.get_by_label(cube_label).click();
+        h.run();
+        assert!(h.state().state.view3d.model.is_some(), "{lang:?}");
+    }
+}
+
+/// 保存の間は、メニューの新規プロジェクトと同じく押せず、理由（保存の途中です）が出る。保存が終われば押せる。
+#[test]
+fn placeholder_new_project_is_unavailable_while_saving() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use yolu_app::lang::Lang;
+    use yolu_app::state::DialogRequest;
+    for lang in Lang::ALL {
+        let mut h = app(1000.0, 700.0, 64);
+        h.state_mut().state.lang = lang;
+        click_tab(&mut h, yolu_app::Tab::View3d);
+        h.run();
+        let label = lang.pick("新規プロジェクト…", "New Project…");
+        let reason = lang.pick("保存の途中です", "A save is in progress");
+        assert!(
+            !h.get_by_label(label).accesskit_node().is_disabled(),
+            "{lang:?}: 保存していなければ押せる"
+        );
+        // 保存を 1 つ走らせて止めておく
+        let dir = std::env::temp_dir().join(format!(
+            "yolu-placeholder-save-{}-{}",
+            std::process::id(),
+            lang.pick("ja", "en")
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("work.ylp");
+        h.state_mut().state.save.background = true;
+        let hold = h.state_mut().state.save.hold_next();
+        h.state_mut()
+            .state
+            .apply(yolu_app::state::Action::SaveProjectAs(path));
+        h.run();
+        assert!(h.state().state.is_saving(), "{lang:?}");
+        let node = h.get_by_label(label);
+        assert!(
+            node.accesskit_node().is_disabled(),
+            "{lang:?}: 保存の間は押せない"
+        );
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_some(), "{lang:?}: 理由が出る");
+        click(&mut h, at);
+        assert_ne!(
+            h.state().state.dialog_request,
+            Some(DialogRequest::New),
+            "{lang:?}: 押しても要求は出ない"
+        );
+        // 保存が終われば押せる
+        hold.release();
+        for _ in 0..500 {
+            if !h.state().state.is_saving() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            h.run();
+        }
+        assert!(!h.state().state.is_saving(), "{lang:?}");
+        move_to(&h, pos2(2.0, 2.0));
+        h.run();
+        assert!(
+            !h.get_by_label(label).accesskit_node().is_disabled(),
+            "{lang:?}: 保存が終われば押せる"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 3D ビューの枠が低くても、ボタンは枠の外へ出ない（入りきらないときは試しの立方体を出さず、新規プロジェクトを枠の上端に寄せる）。
+#[test]
+fn placeholder_buttons_stay_inside_a_low_frame() {
+    use egui_kittest::kittest::Queryable;
+    for height in [300.0_f32, 360.0, 420.0] {
+        let mut h = app(1000.0, height, 64);
+        click_tab(&mut h, yolu_app::Tab::View3d);
+        h.run();
+        let view = h.state().view3d_rect().expect("3D のタブを描いた");
+        let new = h.get_by_label("新規プロジェクト…").rect();
+        assert!(
+            view.contains_rect(new),
+            "{height}: {new:?} は {view:?} の外"
+        );
+        if let Some(cube) = h.query_by_label("試しの立方体を読む") {
+            assert!(
+                view.contains_rect(cube.rect()),
+                "{height}: {:?} は {view:?} の外",
+                cube.rect()
+            );
+        }
+    }
+}
+
+/// 空の 3D ビューの絵（ボタンの所）。
+fn placeholder_snapshot(lang: yolu_app::lang::Lang, name: &str) {
+    let mut h = app(1000.0, 700.0, 256);
+    h.state_mut().state.lang = lang;
+    click_tab(&mut h, yolu_app::Tab::View3d);
+    h.run();
+    move_to(&h, pos2(2.0, 2.0));
+    h.run();
+    h.snapshot(name);
+}
+
+#[test]
+fn placeholder_buttons_snapshot_ja() {
+    placeholder_snapshot(yolu_app::lang::Lang::Ja, "view3d_placeholder_buttons_ja");
+}
+
+#[test]
+fn placeholder_buttons_snapshot_en() {
+    placeholder_snapshot(yolu_app::lang::Lang::En, "view3d_placeholder_buttons_en");
+}
+
 #[test]
 fn placeholder_offers_the_demo_cube() {
     let mut h = app(1000.0, 700.0, 256);

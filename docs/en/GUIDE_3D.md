@@ -18,7 +18,7 @@ In orthographic, near and far parts look the same size, and the brush circle pai
 
 ## Open a model
 
-While there is no model, the 3D view shows only "Load Test Cube". Open a model with "Choose a model…" in New Project and Project Configuration, "Open FBX" in the Pose panel, or by dropping a .fbx onto the window. To open from Unity, see Live Link at the end of this page.
+While there is no model, the 3D view shows "New Project…" (the same as New Project in the File menu) and "Load Test Cube". Open a model with "Choose a model…" in New Project and Project Configuration, "Open FBX" in the Pose panel, or by dropping a .fbx onto the window. To open from Unity, see Live Link at the end of this page.
 
 Each material of the model gets a texture set, and you switch between them in the Texture Sets panel. You can paint only on the faces of the current set's material.
 
