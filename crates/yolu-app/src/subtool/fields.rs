@@ -83,7 +83,7 @@ const REGION_KIND: Field = Field {
     set: set_region_kind,
 };
 
-static FILL: [Field; 10] = [
+static FILL: [Field; 11] = [
     Field {
         key: "by_color",
         kind: Kind::Bool,
@@ -169,6 +169,13 @@ static FILL: [Field; 10] = [
         default: Value::Int(1024),
         get: |a| Value::Int(a.region.color.max_area as i32),
         set: |a, v| a.region.color.max_area = int(v).clamp(1, 65536) as u32,
+    },
+    Field {
+        key: "snap_symmetry",
+        kind: Kind::Bool,
+        default: Value::Bool(true),
+        get: |a| Value::Bool(a.region.snap_symmetry),
+        set: |a, v| a.region.snap_symmetry = flag(v),
     },
 ];
 

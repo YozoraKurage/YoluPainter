@@ -229,18 +229,23 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
         }
         Where::Canvas(view) => {
             let (x, y) = view.to_canvas(at);
-            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
-            if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
-                return Under::Nothing;
-            }
-            let Some(grid) = app.region_grid() else {
-                return Under::Nothing;
-            };
-            match grid.find(Vec2::new((x / cw) as f32, (y / ch) as f32)) {
-                Some(t) => Under::Triangle(t),
-                None => Under::Nothing,
-            }
+            under_canvas(app, x, y)
         }
+    }
+}
+
+/// 2D のキャンバスの点（キャンバスの座標）の下の三角形。
+fn under_canvas(app: &mut AppState, x: f64, y: f64) -> Under {
+    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
+        return Under::Nothing;
+    }
+    let Some(grid) = app.region_grid() else {
+        return Under::Nothing;
+    };
+    match grid.find(Vec2::new((x / cw) as f32, (y / ch) as f32)) {
+        Some(t) => Under::Triangle(t),
+        None => Under::Nothing,
     }
 }
 
@@ -377,52 +382,78 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
     };
+    // 2D のキャンバスでは、効いている対称定規の写しの全部の点が種になる（キャンバスの外の写しは捨て、同じ画素は 1 回）。押した点が
+    // キャンバスの外なら、写しだけを塗ることはしない（種は空）。3D ビューは押した点だけ
+    let canvas_seeds = match w {
+        Where::Canvas(view) => {
+            let p = view.to_canvas(at);
+            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+            if (0.0..cw).contains(&p.0) && (0.0..ch).contains(&p.1) {
+                Some(app.symmetry_seeds(p, app.region.snap_symmetry))
+            } else {
+                Some(Vec::new())
+            }
+        }
+        Where::Surface(_) => None,
+    };
     let (mask, what) = if app.region.by_color {
         // 近い色: 押した所の文書の画素から求める（3D は、押した面の UV が指す画素。許し幅・つながり・全体の合成は 2D と同じ）
-        let (x, y) = match w {
-            Where::Canvas(view) => {
-                let (x, y) = view.to_canvas(at);
-                if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64
-                {
-                    return;
-                }
-                (x, y)
-            }
-            Where::Surface(rect) => {
+        let seeds = match (canvas_seeds, w) {
+            (Some(seeds), _) if seeds.is_empty() => return,
+            (Some(seeds), _) => seeds,
+            (None, Where::Surface(rect)) => {
                 if app.region_model().is_none() {
                     return needs_model(app);
                 }
                 match surface_point(app, rect, at) {
-                    Ok(point) => point,
+                    Ok(point) => vec![point],
                     Err(miss) => return refuse_miss(app, miss),
                 }
             }
+            (None, Where::Canvas(_)) => return,
         };
-        super::bucket::start(app, vec![(x, y)]);
+        super::bucket::start(app, seeds);
         return;
     } else {
         if app.region_model().is_none() {
             return needs_model(app);
         }
-        let triangle = match under(app, w, at) {
-            Under::Triangle(t) => t,
-            Under::OtherSet(name) => return other_set(app, &name),
-            Under::Nothing => {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick(
-                        "ポインタの下にこのテクスチャセットの三角形がありません",
-                        "No triangle of this texture set under the pointer",
-                    ),
-                );
-                return;
-            }
+        let hits: Vec<u32> = match canvas_seeds {
+            Some(seeds) => seeds
+                .iter()
+                .filter_map(|&(x, y)| match under_canvas(app, x, y) {
+                    Under::Triangle(t) => Some(t),
+                    _ => None,
+                })
+                .collect(),
+            None => match under(app, w, at) {
+                Under::Triangle(t) => vec![t],
+                Under::OtherSet(name) => return other_set(app, &name),
+                Under::Nothing => Vec::new(),
+            },
         };
+        if hits.is_empty() {
+            app.refuse(
+                Source::Fill,
+                lang.pick(
+                    "ポインタの下にこのテクスチャセットの三角形がありません",
+                    "No triangle of this texture set under the pointer",
+                ),
+            );
+            return;
+        }
         let kind = app.region.kind;
         let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
             return needs_model(app);
         };
-        let triangles = pixel_triangles(&app.doc, &model.geometry, index.region(triangle, kind));
+        // 種ごとの範囲の和（同じ三角形は 1 回）を 1 つの範囲にする
+        let mut region: Vec<u32> = hits
+            .iter()
+            .flat_map(|&t| index.region(t, kind).iter().copied())
+            .collect();
+        region.sort_unstable();
+        region.dedup();
+        let triangles = pixel_triangles(&app.doc, &model.geometry, &region);
         (
             SelectionMask::from_triangles(&app.doc, &triangles),
             kind_name(lang, kind),

@@ -76,8 +76,14 @@ pub fn press(
         Tool::Wand => {
             let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
             let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
+            // 押した画素（キャンバスの外は端の画素へ寄せる）の中心から、対称定規の写しの種を作る。左右の写しが画素で揃い、外の写しは捨てる
+            let seeds = app
+                .symmetry_seeds((x as f64 + 0.5, y as f64 + 0.5), app.sel.snap_symmetry)
+                .into_iter()
+                .map(|(sx, sy)| (sx as u32, sy as u32))
+                .collect();
             let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
-            app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand { x, y, mode })));
+            app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand { seeds, mode })));
         }
         Tool::Polygon => polygon_press(app, view, pos, canvas, modifiers, now),
         tool => {

@@ -302,6 +302,73 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     }
 }
 
+// ───────── 対称定規にスナップ（バケツ・自動選択） ─────────
+
+/// バケツと自動選択の切り替えは、対称定規の写しが 2D のキャンバスだけに効くので、描ける先が 3D だけのあいだは押せず、短い理由を出す。
+/// キャンバスが出ているあいだ（並べていても）は有効で、押すと入り切りできる。
+#[test]
+fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_can_be_painted() {
+    for lang in Lang::ALL {
+        let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
+        let reason = lang.pick("2D だけ", "2D only");
+        for tool in [Tool::Fill, Tool::Wand] {
+            let on = |h: &H| match tool {
+                Tool::Fill => h.state().state.region.snap_symmetry,
+                _ => h.state().state.sel.snap_symmetry,
+            };
+            // 並べて出している: 有効。押すと切り替わる
+            let mut h = brush_app(lang, true);
+            apply(&mut h, Action::SelectTool(tool));
+            assert!(!h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(on(&h), "{lang:?} {tool:?}: 既定は入");
+            assert!(!is_disabled(&h, label), "{lang:?} {tool:?}");
+            assert!(!tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
+            let at = rect_of_field(&h, label).center();
+            click(&mut h, at);
+            assert!(!on(&h), "{lang:?} {tool:?}: 押すと切");
+            click(&mut h, at);
+            assert!(on(&h), "{lang:?} {tool:?}: もう一度押すと入");
+            // 3D だけ: 押せず、押しても変わらない。ポインタを置くと理由
+            let mut h = brush_app(lang, false);
+            apply(&mut h, Action::SelectTool(tool));
+            assert!(h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(is_disabled(&h, label), "{lang:?} {tool:?}");
+            assert!(tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
+            let at = rect_of_field(&h, label).center();
+            click(&mut h, at);
+            assert!(on(&h), "{lang:?} {tool:?}: 3D だけでは押しても変わらない");
+        }
+    }
+}
+
+/// バケツの切り替えは、塗り残し（なぞり塗り）が入のときは効かないので押せず、短い理由を出す。切ると押せる。
+#[test]
+fn the_bucket_snap_to_symmetry_ruler_is_unavailable_while_paint_unfilled_areas_is_on() {
+    for lang in Lang::ALL {
+        let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
+        let reason = lang.pick("塗り残しでは効きません", "Not used with leftover fill");
+        let mut h = brush_app(lang, true);
+        apply(&mut h, Action::SelectTool(Tool::Fill));
+        h.state_mut().state.region.by_color = true;
+        h.run();
+        assert!(
+            !is_disabled(&h, label),
+            "{lang:?}: 塗り残しが切のあいだは有効"
+        );
+        assert!(!tooltip_shows(&mut h, label, reason), "{lang:?}");
+        h.state_mut().state.region.color.leftovers = true;
+        h.run();
+        assert!(
+            is_disabled(&h, label),
+            "{lang:?}: 塗り残しが入のあいだは押せない"
+        );
+        assert!(tooltip_shows(&mut h, label, reason), "{lang:?}");
+        h.state_mut().state.region.color.leftovers = false;
+        h.run();
+        assert!(!is_disabled(&h, label), "{lang:?}: 切ると戻る");
+    }
+}
+
 // ───────── 選択範囲を変更（「選択範囲」メニューの項目） ─────────
 // ツールプロパティには置かない。同じ操作は「選択範囲」メニューにあり、選択範囲が無いあいだは項目が灰色になる。
 

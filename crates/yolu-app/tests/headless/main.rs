@@ -36,6 +36,7 @@ mod procedural;
 mod recovery;
 mod save_background;
 mod saved_selections;
+mod symmetry_seeds;
 mod tmp_cleanup;
 mod tool_layout;
 mod uv_topology;

@@ -36,6 +36,8 @@ pub struct RegionState {
     pub tolerance: u8,
     /// 近い色: 押した画素から 4 近傍でつながる所だけ。
     pub contiguous: bool,
+    /// 2D のキャンバスで、効いている対称定規の写しの全部の点から塗る（3D ビューでは効かない）。
+    pub snap_symmetry: bool,
     /// 近い色: レイヤーでなくチャンネルの合成を見る。
     pub sample_all: bool,
     pub color: color::Options,
@@ -67,6 +69,7 @@ impl Default for RegionState {
             by_color: false,
             tolerance: 32,
             contiguous: true,
+            snap_symmetry: true,
             sample_all: false,
             color: Default::default(),
             references: Default::default(),
@@ -95,6 +98,8 @@ pub enum RegionAction {
     Tolerance(u8),
     Contiguous(bool),
     SampleAll(bool),
+    /// バケツの「対称定規にスナップ」。
+    SnapSymmetry(bool),
     Reference(color::Reference),
     ReferenceLayer(yolu_core::LayerId),
     Distance(color::Distance),
@@ -147,6 +152,7 @@ impl AppState {
             }
             RegionAction::Tolerance(v) => r.tolerance = v,
             RegionAction::Contiguous(v) => r.contiguous = v,
+            RegionAction::SnapSymmetry(v) => r.snap_symmetry = v,
             RegionAction::SampleAll(v) => {
                 r.sample_all = v;
                 r.color.reference = if v {

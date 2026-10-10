@@ -1477,8 +1477,7 @@ fn headless_refused_edits_change_nothing_and_say_why() {
             mode: SelectionCombine::Replace,
         },
         SelEdit::Wand {
-            x: 64,
-            y: 0,
+            seeds: vec![(64, 0)],
             mode: SelectionCombine::Replace,
         },
     ] {
@@ -1533,8 +1532,7 @@ fn headless_refusals_are_told_in_the_language_and_change_nothing() {
         ),
         (
             SelEdit::Wand {
-                x: 64,
-                y: 0,
+                seeds: vec![(64, 0)],
                 mode: SelectionCombine::Replace,
             },
             "種がキャンバスの外",
@@ -1700,8 +1698,7 @@ fn headless_wand_reads_the_selected_layer_or_the_composite() {
     paint_rect(&mut s, 128, 0, 256, 128, [0, 0, 255, 255]);
     s.sel.tolerance = 0;
     let wand = |x| SelEdit::Wand {
-        x,
-        y: 10,
+        seeds: vec![(x, 10)],
         mode: SelectionCombine::Replace,
     };
     // 選んでいる上のレイヤー（右下だけ青）: 左下は透明の画素なので、透明が選ばれる（青はつながらない別の色）
@@ -2138,8 +2135,7 @@ fn headless_every_edits_status_message_follows_the_language() {
                 mode: SelectionCombine::Intersect,
             },
             SelEdit::Wand {
-                x: 1,
-                y: 1,
+                seeds: vec![(1, 1)],
                 mode: SelectionCombine::Replace,
             },
             SelEdit::Invert,

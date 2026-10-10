@@ -378,6 +378,78 @@ fn headless_bucket_fills_the_clicked_region_in_2d_for_each_kind_with_one_undo() 
     }
 }
 
+/// 縦の軸（キャンバスの中心）の線対称 2 本のとき、モデルの範囲のバケツは押した点の写しの下の範囲も塗る（UV の左半分の押下は、
+/// 軸の向こうの部品 B にも当たる）。切にすると押した範囲だけ。
+#[test]
+fn headless_bucket_by_model_range_also_fills_the_range_under_each_copy_in_2d() {
+    let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
+    common::rulers::vertical(&mut s, 64.0);
+    let view = canvas_view(&s, rect);
+    let before = s.doc.undo_count();
+    let at = at_uv(&s, rect, TRI0);
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert_eq!(s.doc.undo_count(), before + 1, "1 回の Undo");
+    // 押した A の左のアイランドと、写し (0.92, 0.10) の下の B（UV アイランド）
+    for p in [TRI0, TRI1, TRI4, (0.92, 0.10), (0.78, 0.40)] {
+        assert_eq!(px(&s, p), [255, 0, 0, 255], "{p:?}");
+    }
+    for p in [TRI2, TRI3] {
+        assert!(!painted(&s, p), "写しの下にない A の右のアイランド {p:?}");
+    }
+    s.apply(Action::Undo);
+    for p in [TRI0, TRI1, TRI4, (0.92, 0.10)] {
+        assert!(!painted(&s, p), "Undo で戻る {p:?}");
+    }
+    // 切: 押した範囲だけ
+    s.region.snap_symmetry = false;
+    let at = at_uv(&s, rect, TRI0);
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert!(painted(&s, TRI0) && painted(&s, TRI1));
+    assert!(!painted(&s, TRI4) && !painted(&s, (0.92, 0.10)));
+}
+
+/// 押した所に三角形が無くても、写しの下に三角形があればその範囲を塗る。どの写しの下にも無ければ断る。
+#[test]
+fn headless_bucket_by_model_range_uses_only_the_copies_that_have_a_triangle() {
+    let (mut s, rect) = fill_state(SurfaceRegionKind::Triangle);
+    common::rulers::vertical(&mut s, 64.0);
+    let view = canvas_view(&s, rect);
+    let base = s.doc.undo_count();
+    // どちらにも三角形が無い (0.27, 0.70) と、その写し (0.73, 0.70): 断る
+    let at = at_uv(&s, rect, (0.27, 0.70));
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert_eq!(s.doc.undo_count(), base);
+    assert!(s.message.contains("三角形がありません"), "{}", s.message);
+    // 押した (0.27, 0.20) は A の 2 つのアイランドの間で三角形が無く、写し (0.73, 0.20) は B の最初の三角形の下
+    let at = at_uv(&s, rect, (0.27, 0.20));
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert_eq!(s.doc.undo_count(), base + 1, "{}", s.message);
+    assert!(painted(&s, TRI4), "写しの下の三角形");
+    assert!(
+        !painted(&s, (0.92, 0.10)) && !painted(&s, TRI0),
+        "ほかの三角形は塗らない"
+    );
+}
+
+/// 3D ビューのバケツは対称定規の写しを使わない（2D だけ）。
+#[test]
+fn headless_bucket_in_3d_ignores_the_symmetry_ruler() {
+    let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
+    common::rulers::vertical(&mut s, 64.0);
+    let before = s.doc.undo_count();
+    let at = at_model(&s, rect, Vec3::new(0.25, 0.25, 0.0));
+    bucket(&mut s, Where::Surface(rect), at);
+    assert_eq!(s.doc.undo_count(), before + 1);
+    assert!(
+        painted(&s, TRI0) && painted(&s, TRI1),
+        "押した面のアイランド"
+    );
+    assert!(
+        !painted(&s, TRI4) && !painted(&s, (0.92, 0.10)),
+        "写しの下の部品 B は塗らない"
+    );
+}
+
 #[test]
 fn headless_bucket_in_3d_picks_the_face_under_the_pointer() {
     for (kind, press, filled, empty) in [
@@ -1952,6 +2024,115 @@ fn bucket_click_in_the_canvas_fills_one_undo() {
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert!(!painted(&h.state().state, TRI0));
+}
+
+/// 線対称 6 本の定規を置き、近い色のバケツで 1 回押すと、6 つの写しの四角が塗られる（画面の絵は日英。ツールプロパティの切り替えも写る）。
+#[test]
+fn bucket_with_a_six_line_symmetry_ruler_fills_every_copy_and_snapshots_in_both_languages() {
+    let mut h = app(1280.0, 1000.0, 256);
+    let center = (128.0_f64, 128.0_f64);
+    let at_polar = |degrees: f64| {
+        let a = degrees.to_radians();
+        (center.0 + 80.0 * a.cos(), center.1 + 80.0 * a.sin())
+    };
+    // 押した点（20 度）の写し 6 つと、写しでない四角（50 度）。四角は 24 画素四方
+    let images: Vec<(f64, f64)> = [20.0, 140.0, 260.0, -20.0, 100.0, 220.0]
+        .map(at_polar)
+        .to_vec();
+    let decoy = at_polar(50.0);
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        for &(x, y) in images.iter().chain([&decoy]) {
+            for py in y as u32 - 12..y as u32 + 12 {
+                for px in x as u32 - 12..x as u32 + 12 {
+                    s.doc
+                        .set_pixel(layer, px, py, Rgba8::new(230, 60, 60, 255))
+                        .unwrap();
+                }
+            }
+        }
+        common::rulers::symmetry_2d(s, center, (1.0, 0.0), 6, true);
+        s.color.set_main([0.2, 0.7, 0.3, 1.0]);
+        s.apply(Action::SelectTool(Tool::Fill));
+        s.apply(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
+            Tool::Fill,
+            yolu_app::subtool::Key::Builtin("similar-colors"),
+        )));
+        s.rulers.selected = None;
+    }
+    h.run();
+    let r = canvas_rect(&h);
+    let view = h.state().state.view.view(r, 256, 256);
+    let before = h.state().state.doc.undo_count();
+    click(&mut h, view.to_screen(images[0].0, images[0].1));
+    assert_eq!(
+        h.state().state.doc.undo_count(),
+        before + 1,
+        "1 回の取り消し"
+    );
+    let green = |s: &AppState, (x, y): (f64, f64)| {
+        let p = composite_pixel(&s.doc, x as u32, y as u32);
+        p[1] > p[0] && p[3] == 255
+    };
+    for &p in &images {
+        assert!(green(&h.state().state, p), "{p:?}");
+    }
+    assert!(!green(&h.state().state, decoy), "写しでない四角は塗らない");
+    h.state_mut().state.message.clear();
+    h.run();
+    h.snapshot("region_bucket_symmetry_lines6");
+    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    h.snapshot("region_bucket_symmetry_lines6_english");
+}
+
+/// 自動選択でも、線対称 6 本の写しの全部が 1 回で選ばれる（絵は日英）。
+#[test]
+fn wand_with_a_six_line_symmetry_ruler_selects_every_copy_and_snapshots_in_both_languages() {
+    let mut h = app(1280.0, 800.0, 256);
+    let center = (128.0_f64, 128.0_f64);
+    let at_polar = |degrees: f64| {
+        let a = degrees.to_radians();
+        (center.0 + 80.0 * a.cos(), center.1 + 80.0 * a.sin())
+    };
+    let images: Vec<(f64, f64)> = [20.0, 140.0, 260.0, -20.0, 100.0, 220.0]
+        .map(at_polar)
+        .to_vec();
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        for &(x, y) in images.iter().chain([&at_polar(50.0)]) {
+            for py in y as u32 - 12..y as u32 + 12 {
+                for px in x as u32 - 12..x as u32 + 12 {
+                    s.doc
+                        .set_pixel(layer, px, py, Rgba8::new(230, 60, 60, 255))
+                        .unwrap();
+                }
+            }
+        }
+        common::rulers::symmetry_2d(s, center, (1.0, 0.0), 6, true);
+        s.apply(Action::SelectTool(Tool::Wand));
+        s.sel.tolerance = 0;
+        s.rulers.selected = None;
+    }
+    h.run();
+    let r = canvas_rect(&h);
+    let view = h.state().state.view.view(r, 256, 256);
+    let before = h.state().state.doc.undo_count();
+    click(&mut h, view.to_screen(images[0].0, images[0].1));
+    let s = &h.state().state;
+    assert_eq!(s.doc.undo_count(), before + 1, "1 回の取り消し");
+    let mask = s.doc.selection().expect("選択範囲");
+    for &(x, y) in &images {
+        assert_eq!(mask.amount(x as u32, y as u32), 255, "{x},{y}");
+    }
+    let (x, y) = at_polar(50.0);
+    assert_eq!(mask.amount(x as u32, y as u32), 0, "写しでない四角");
+    h.state_mut().state.message.clear();
+    h.run();
+    h.snapshot("selection_wand_symmetry_lines6");
+    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    h.snapshot("selection_wand_symmetry_lines6_english");
 }
 
 #[test]

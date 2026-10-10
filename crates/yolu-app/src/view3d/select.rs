@@ -137,9 +137,9 @@ fn wand(app: &mut AppState, rect: Rect, at: Pos2, modifiers: Modifiers) {
     match surface_point(app, rect, at) {
         Ok((x, y)) => {
             let mode = combine_of(app.sel.combine, PointerButton::Primary, modifiers);
+            // 3D ビューでは対称定規の写しを使わない（種は押した面の点だけ）
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand {
-                x: x.floor() as u32,
-                y: y.floor() as u32,
+                seeds: vec![(x.floor() as u32, y.floor() as u32)],
                 mode,
             })));
         }

@@ -157,10 +157,10 @@ pub enum SelEdit {
         index: usize,
         mode: SelectionCombine,
     },
-    /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。
+    /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。種は画素の座標（左下が原点）。2 つ以上（対称定規の写し）なら、それぞれから
+    /// 求めた範囲の和を、今の選択範囲と 1 回で組み合わせる。
     Wand {
-        x: u32,
-        y: u32,
+        seeds: Vec<(u32, u32)>,
         mode: SelectionCombine,
     },
     /// 選択範囲を描画色で塗りつぶす（選んでいるレイヤー。マスクを描いているならマスク）。
@@ -234,6 +234,8 @@ pub struct SelState {
     pub tolerance: u8,
     pub contiguous: bool,
     pub all_layers: bool,
+    /// 自動選択: 効いている 2D の対称定規の写しの全部の点から選ぶ（3D ビューでは効かない）。
+    pub snap_symmetry: bool,
     /// 拡張・縮小・境界・ぼかしの半径（画素）と、キャンバスの縁を固定するか。
     pub radius: u32,
     pub edge_lock: bool,
@@ -310,6 +312,7 @@ impl Default for SelState {
             tolerance: 32,
             contiguous: true,
             all_layers: false,
+            snap_symmetry: true,
             radius: 5,
             edge_lock: false,
             dialog: None,
@@ -754,18 +757,31 @@ impl AppState {
             SelEdit::Erase => self.sel_fill(true),
             SelEdit::ToNewLayer => self.sel_to_new_layer(),
             SelEdit::ToMask => self.sel_to_mask(),
-            SelEdit::Wand { x, y, mode } => {
-                let shape = SelectionMask::magic_wand(
-                    &self.doc,
-                    self.wand_layer(),
-                    self.m2.paint_channel,
-                    x,
-                    y,
-                    self.sel.tolerance,
-                    self.sel.contiguous,
-                    DEFAULT_WORKING_BUDGET_BYTES,
-                )
-                .map_err(|e| lang.core_error(&e))?;
+            SelEdit::Wand { seeds, mode } => {
+                let layer = self.wand_layer();
+                let mut shape: Option<SelectionMask> = None;
+                for (x, y) in seeds {
+                    let part = SelectionMask::magic_wand(
+                        &self.doc,
+                        layer,
+                        self.m2.paint_channel,
+                        x,
+                        y,
+                        self.sel.tolerance,
+                        self.sel.contiguous,
+                        DEFAULT_WORKING_BUDGET_BYTES,
+                    )
+                    .map_err(|e| lang.core_error(&e))?;
+                    shape = Some(match shape {
+                        Some(sum) => sum
+                            .combine(&part, SelectionCombine::Add)
+                            .map_err(|e| lang.core_error(&e))?,
+                        None => part,
+                    });
+                }
+                let Some(shape) = shape else {
+                    return Err(lang.pick("種がありません。", "No seed.").into());
+                };
                 self.combine_shape(shape, mode)
             }
         }

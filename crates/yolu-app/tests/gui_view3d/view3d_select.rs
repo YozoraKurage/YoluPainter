@@ -882,6 +882,28 @@ fn the_wand_follows_tolerance_contiguous_and_the_combine_modifiers_and_ignores_c
     assert!(!message(&h).is_empty(), "理由を知らせる");
 }
 
+/// 自動選択の対称定規の写しは 2D のキャンバスだけ。3D ビューでは、対称定規があっても押した面のテクセルだけから選ぶ。
+#[test]
+fn the_wand_in_3d_ignores_the_symmetry_ruler() {
+    let (mut h, rect) = plate_view(false);
+    paint_rect(&mut h, (10, 12, 30, 40));
+    paint_rect(&mut h, (34, 12, 54, 40)); // 縦の軸 x = 32 に対する鏡の側
+    rulers::vertical(&mut h.state_mut().state, 32.0);
+    h.run();
+    assert!(st(&h).canvas_symmetry().enabled());
+    tool(&mut h, Tool::Wand);
+    h.state_mut().state.sel.tolerance = 0;
+    let steps = st(&h).doc.undo_count();
+    click_c(&mut h, rect, (20.5, 25.5));
+    assert_eq!(st(&h).doc.undo_count(), steps + 1, "{}", message(&h));
+    assert_eq!(
+        selected_count(&h, N),
+        20 * 28,
+        "鏡の側の長方形は選ばない: {}",
+        message(&h)
+    );
+}
+
 // ───────── 継ぎ目のにじみ・面の向き ─────────
 
 #[test]

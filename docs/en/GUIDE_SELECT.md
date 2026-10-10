@@ -11,7 +11,7 @@ This page covers making and using selections, remembering them, moving and trans
 | Rectangle Select, Ellipse Select | `M` / `Shift+M` | Drag. A rectangle has a Corner radius |
 | Lasso | `L` | Drag around the area |
 | Polygon Select | `Shift+L` | Click to place points. Close it with `Enter` (or by clicking the first point or double-clicking), and remove the last point with `Backspace` |
-| Magic Wand | `W` | Selects colors close to the pixel you press. It has Tolerance, Contiguous and Sample All Layers |
+| Magic Wand | `W` | Selects colors close to the pixel you press. It has Tolerance, Contiguous and Sample All Layers. On the 2D Canvas, when a symmetry ruler is in effect and Snap to Symmetry Ruler (on at first) is on, it selects from every copy of the pressed point and combines their union with the selection by the current creation mode as one selection (one undo step; copies outside the canvas are not used, and copies that land on the same pixel count once). If you press outside the canvas, it counts as pressing the edge pixel and selects its copies. The 3D View does not use the copies (this switch cannot be pressed while the 2D Canvas is not shown) |
 | Selection Pen, Selection Eraser | `S` | Paint like a brush to add or remove selection amount. Size, hardness and opacity are shared with the brush |
 | ID Color Select | `Shift+W` | Selects from the colors of a baked ID map |
 

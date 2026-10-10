@@ -453,6 +453,17 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ) {
             app.sel.all_layers = v;
         }
+        if let Some(v) = crate::panels::properties::snap_symmetry_row(
+            ui,
+            rows,
+            lang,
+            "props.wand.snap-symmetry",
+            app.sel.snap_symmetry,
+            app.paints_only_in_3d()
+                .then(|| lang.pick("2D だけ", "2D only")),
+        ) {
+            app.sel.snap_symmetry = v;
+        }
         return;
     }
     if tool == Tool::SelectPen {

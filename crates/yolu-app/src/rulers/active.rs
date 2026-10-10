@@ -168,6 +168,38 @@ impl AppState {
         lang.pick("対称定規がありません", "No symmetry ruler")
     }
 
+    /// 2D のキャンバスの点 `at`（キャンバスの座標）から、バケツ・自動選択が範囲を求める種の点。`snap` が真で、効いている 2D の対称定規が
+    /// あれば、`at` を写しの全部の点にして返す（最初は `at` 自身）。キャンバスの外の点は捨て、同じ画素に重なった点は 1 回にする。
+    /// 切か対称定規が無ければ、`at` だけ（キャンバスの外なら空）。
+    pub fn symmetry_seeds(&self, at: (f64, f64), snap: bool) -> Vec<(f64, f64)> {
+        let (w, h) = (self.doc.width() as f64, self.doc.height() as f64);
+        let inside =
+            |p: &(f64, f64)| p.0.is_finite() && (0.0..w).contains(&p.0) && (0.0..h).contains(&p.1);
+        let transforms = snap
+            .then(|| self.rulers_active(Place::Canvas).canvas_symmetry)
+            .flatten()
+            .and_then(|s| s.transforms().ok());
+        let mut seeds: Vec<(f64, f64)> = Vec::new();
+        let mut pixels: Vec<(i64, i64)> = Vec::new();
+        let points = match &transforms {
+            // 最初の変換は恒等。押した点そのものを使う（式を通して端数を変えない）
+            Some(ts) => ts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| if i == 0 { at } else { t.map(at.0, at.1) })
+                .collect(),
+            None => vec![at],
+        };
+        for p in points.into_iter().filter(inside) {
+            let pixel = (p.0.floor() as i64, p.1.floor() as i64);
+            if !pixels.contains(&pixel) {
+                pixels.push(pixel);
+                seeds.push(p);
+            }
+        }
+        seeds
+    }
+
     /// 選んでいる定規の持ち主が、選んでいるレイヤーでなくなったら選びを外す（別のレイヤーの定規を指したままにしない）。
     pub fn drop_foreign_ruler_selection(&mut self) {
         if self

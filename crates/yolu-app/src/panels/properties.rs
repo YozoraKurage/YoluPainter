@@ -208,6 +208,26 @@ pub fn toggle_row(
     (next != value).then_some(next)
 }
 
+/// バケツ・自動選択の「対称定規にスナップ」の 1 行。`unavailable` が理由（短い文）なら押せず、ツールチップに理由を出す。
+pub fn snap_symmetry_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    lang: crate::lang::Lang,
+    id: &str,
+    value: bool,
+    unavailable: Option<&str>,
+) -> Option<bool> {
+    toggle_row(
+        ui,
+        rows,
+        id,
+        lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler"),
+        value,
+        unavailable,
+        unavailable.is_none(),
+    )
+}
+
 /// 名前と値の箱（押すとポップアップ）の 1 行。押されたら箱の矩形を返す。
 pub fn choice_row(
     ui: &mut Ui,

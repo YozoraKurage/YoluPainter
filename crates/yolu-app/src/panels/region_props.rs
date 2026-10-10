@@ -7,7 +7,8 @@ use egui::{pos2, vec2, Rect, Ui};
 
 use super::color_window::{self, Pick};
 use super::properties::{
-    choice_buttons, group_label, slider_row, status_row, toggle_row, ChoiceButton,
+    choice_buttons, group_label, slider_row, snap_symmetry_row, status_row, toggle_row,
+    ChoiceButton,
 };
 use crate::engine::SelectionCombine;
 use crate::region::idcolor::{hex_of, manual_state_line, parse_rgb};
@@ -381,6 +382,22 @@ pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
         ) {
             app.apply(Action::Region(RegionAction::Margin(v.round() as i16)));
         }
+    }
+    if let Some(v) = snap_symmetry_row(
+        ui,
+        rows,
+        lang,
+        "region.snap-symmetry",
+        app.region.snap_symmetry,
+        if app.paints_only_in_3d() {
+            Some(lang.pick("2D だけ", "2D only"))
+        } else if app.region.by_color && app.region.color.leftovers {
+            Some(lang.pick("塗り残しでは効きません", "Not used with leftover fill"))
+        } else {
+            None
+        },
+    ) {
+        app.apply(Action::Region(RegionAction::SnapSymmetry(v)));
     }
     rows.space(4.0);
 }
