@@ -1,6 +1,9 @@
-//! ハードウェアの ray query の道（wgpu の実験機能 `EXPERIMENTAL_RAY_QUERY`。Vulkan のみ）。BVH の代わりに、三角形の並びから作る
-//! 加速構造（BLAS・TLAS）をシェーダーでたどる。使えないアダプターでは作らず、作れても自己照合（同じレイを compute の道と
-//! ray query の道で飛ばして答えを比べる）に通らなければ compute の道に戻る。
+//! ハードウェアの ray query（RT コア）の道（wgpu の実験機能 `EXPERIMENTAL_RAY_QUERY`）。BVH の代わりに、三角形の並びから作る
+//! 加速構造（BLAS・TLAS）をシェーダーでたどる。既定は入（`GpuBakeOptions::ray_query`。アプリの設定と環境変数 `YOLUPAINTER_BAKE_RAY_QUERY=0`
+//! で切れる）。使えないアダプターでは作らず、作れても自己照合（同じレイを compute の道と ray query の道で飛ばして答えを比べる）に
+//! 通らなければ compute の道に戻り、戻った場所と理由は `GpuBakeStats::ray_query_note` に残る。実行して確かめたのは Vulkan（RTX 3050
+//! Laptop）と Metal（Apple M4）。DX12 は DXC（新しいシェーダーコンパイラー）が無いと ray query が出ないので、Windows のアダプターは
+//! Vulkan を先に選ぶ。固まる・応答なし（TDR）になるドライバーは、自己照合が同じ道の中で行われるので compute に戻せない（設定で切る）。
 use super::pack::{Packed, NONE};
 use wgpu::util::DeviceExt;
 
