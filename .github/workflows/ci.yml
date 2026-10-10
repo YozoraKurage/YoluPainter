@@ -79,6 +79,8 @@ jobs:
         with:
           # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
+          # 通信の見張りのジョブ（linux-network）がこのキャッシュを読む（保存はこのジョブだけ）
+          shared-key: linux-render
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
           sudo apt-get update
@@ -129,6 +131,8 @@ jobs:
   # 実際の通信の見張り（tools/network-watch.py）。本物のアプリを strace の下で動かし、外への接続の試みが更新の確認の curl だけであることを見る。
   # 画面の試験のジョブと別にしているのは、更新の確認を動かすために更新用の公開鍵を組み込んで作るため: 公開鍵の環境変数を変えると yolu-update と
   # yolu-app を作り直すので、同じジョブで作ると、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになる。
+  # キャッシュは画面の試験のジョブ（linux-render）と共有キーで読み（試験を回した後の target を使うので、作り直すのは yolu-update と yolu-app だけ）、
+  # このジョブは保存しない（save-if: false。鍵つきの物で上書きしない）。
   # 組み込む鍵は使い捨ての公開鍵（秘密鍵は捨てた。配る物の鍵ではない）で、このジョブのアプリはどこにも配らない。
   linux-network:
     name: Linux の通信の見張り（strace）
@@ -144,8 +148,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
-          cache-on-failure: true
+          shared-key: linux-render
+          # 読むだけ。鍵つきのビルドの結果で、画面の試験のキャッシュを上書きしない
+          save-if: false
       - name: ビルドとソフトウェア描画と strace の依存を導入
         run: |
           sudo apt-get update
