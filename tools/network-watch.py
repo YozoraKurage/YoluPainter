@@ -54,6 +54,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TRACE = ('connect,bind,listen,sendto,sendmsg,sendmmsg,socket,accept,accept4,'
          'clone,clone3,fork,vfork,execve,execveat')
 DNS_PORTS = {53, 853, 5353}
+ADDRESS_CALLS = ('connect', 'bind', 'sendto', 'sendmsg', 'sendmmsg', 'accept', 'accept4', 'listen')
 # 更新の確認の curl が取りに行ってよい URL の頭（yolu-update の RELEASE_BASE・更新情報の URL）。
 UPDATE_URL_PREFIX = 'https://github.com/YozoraKurage/YoluPainter/'
 CRASH_DIALOGS = {'zenity', 'kdialog', 'xmessage'}
@@ -65,7 +66,9 @@ LINE = re.compile(r'^(?:\[pid\s+)?(\d+)\]?\s+(\d+\.\d+)\s+(.*)$')
 CALL = re.compile(r'^(\w+)\(')
 RESUMED = re.compile(r'^<\.\.\. (\w+) resumed>')
 SOCKADDR = re.compile(r'\{sa_family=(AF_\w+)(?:,\s*([^}]*))?\}')
-RESOLVER_SOCKETS = ('systemd/resolve', 'resolved')
+# 名前の引きを受ける UNIX ソケット（systemd-resolved の varlink・D-Bus、avahi の mDNS）。nscd のソケット（/var/run/nscd/socket）は、
+# hosts のほか passwd・group の問い合わせにも glibc が最初に開く（アプリの起動でも出る）ので、名前の引きとは数えない。
+RESOLVER_SOCKETS = ('systemd/resolve', 'resolved', 'avahi')
 
 
 class Fail(Exception):
@@ -139,6 +142,7 @@ def parse_log(text):
     """strace のログ（-ttt つき）から、読む呼び出しの Entry を並べる。宛先の無い sendmsg（X の画面とのやり取り）は捨てる。"""
     entries = []
     pending_exec = {}
+    had_dests = {}
     for raw in text.splitlines():
         m = LINE.match(raw)
         if not m:
@@ -178,16 +182,19 @@ def parse_log(text):
         elif call == 'socket':
             s = re.match(r'socket\((AF_\w+)', rest)
             entry.family = s.group(1) if s else None
-        elif call in ('connect', 'bind', 'sendto', 'sendmsg', 'sendmmsg', 'accept', 'accept4', 'listen'):
-            if resumed:
+        elif call in ADDRESS_CALLS:
+            if call == 'listen' and resumed:
                 continue
-            for family, body in SOCKADDR.findall(rest):
-                if family == 'AF_UNSPEC':
+            dests = [parse_dest(family, body) for family, body in SOCKADDR.findall(rest) if family != 'AF_UNSPEC']
+            # 宛先は始めの行に出るのが普通。スレッドが多いと sendmmsg・accept* の宛先は、再開の行（`<... sendmmsg resumed>`）にだけ出る。
+            # 始めの行で読めていれば、再開の行は数えない（二重に数えない）
+            if resumed:
+                if had_dests.pop(pid, False):
                     continue
-                entry.dests.append(parse_dest(family, body))
-            if call == 'listen':
-                pass
-            elif not entry.dests:
+            elif '<unfinished' in rest:
+                had_dests[pid] = bool(dests)
+            entry.dests = dests
+            if call != 'listen' and not dests:
                 continue
         else:
             continue
@@ -218,12 +225,87 @@ class Procs:
         return '?'
 
 
+ARG = re.compile(r'"((?:[^"\\]|\\.)*)"(\.\.\.)?')
+# 更新の確認の curl が持ってよい引数（update/http.rs の `curl_args`。単体試験 `curl_arguments_are_exactly_these` が全体を固定している）。
+# 値の形が None のものは値を取らない。ここに無いオプション（`--data`・`-H`・`-b`・`-T`・`-K`・`--url`・`--referer`・`--cookie` など）は、
+# 利用者を識別する情報や別の取り先を足せるので通さない。
+CURL_OPTIONS = {
+    '-q': None, '--silent': None, '--show-error': None, '--fail': None, '--location': None, '--tlsv1.2': None,
+    '--max-redirs': r'\d{1,3}', '--connect-timeout': r'\d{1,4}', '--max-time': r'\d{1,5}',
+    '--user-agent': r'YoluPainter/[0-9A-Za-z.+-]+',
+    '--proto': '=https', '--proto-redir': '=https', '--output': '-',
+}
+CURL_REQUIRED = ('-q', '--proto', '--proto-redir')
+CURL_URL = re.compile(r'https://[A-Za-z0-9._~/%+=-]+')
+
+
+def exec_argv(line):
+    """execve の行から、引数の並びと、読み切れなかったか（`...` で省かれた・長さで切られた）を返す。"""
+    m = re.search(r'execve\("[^"]*", \[', line)
+    if not m:
+        return [], True
+    items, pos, truncated = [], m.end(), False
+    while True:
+        e = ARG.match(line, pos)
+        if not e:
+            break
+        items.append(e.group(1).replace('\\"', '"').replace('\\\\', '\\'))
+        truncated = truncated or bool(e.group(2))
+        pos = e.end()
+        if line.startswith(', ', pos):
+            pos += 2
+        else:
+            break
+    if line.startswith('...', pos):
+        truncated = True
+    return items, truncated
+
+
+def check_curl_argv(argv, truncated=False):
+    """更新の確認の curl の引数が許す形か。許さないときは理由、許すときは None。
+    決めたオプションだけ（同じオプションは 1 回）・必須の `-q`/`--proto =https`/`--proto-redir =https`・`--` の後に URL が 1 つだけで、
+    その URL は YoluPainter の GitHub の https（`?`・`#`・利用者情報の `@` なし）。"""
+    if truncated:
+        return '引数が長くて読み切れない'
+    if not argv or argv[0] != 'curl':
+        return '起動した物が curl でない'
+    seen, i = set(), 1
+    while i < len(argv) and argv[i] != '--':
+        option = argv[i]
+        if option not in CURL_OPTIONS:
+            return f'許していないオプション {option}'
+        if option in seen:
+            return f'オプション {option} が重なっている'
+        seen.add(option)
+        pattern = CURL_OPTIONS[option]
+        if pattern is None:
+            i += 1
+            continue
+        if i + 1 >= len(argv) or not re.fullmatch(pattern, argv[i + 1]):
+            return f'{option} の値が許す形でない'
+        i += 2
+    missing = [o for o in CURL_REQUIRED if o not in seen]
+    if missing:
+        return '必要なオプションが無い: ' + ' '.join(missing)
+    if i >= len(argv):
+        return '`--` が無い'
+    rest = argv[i + 1:]
+    if len(rest) != 1:
+        return f'`--` の後が URL 1 つでない（{len(rest)} 個）'
+    url = rest[0]
+    if not url.startswith(UPDATE_URL_PREFIX) or not CURL_URL.fullmatch(url):
+        return f'取りに行く URL が許す形でない: {url[:80]}'
+    return None
+
+
 # ───────── 判定と表 ─────────
 
 class Scene:
     def __init__(self, name, start, allow_curl=False):
         self.name, self.start, self.end, self.allow_curl = name, start, None, allow_curl
         self.note = ''
+        # 場面が通らず飛ばした（通ったことにしない）。終わりに `::warning::` で出す
+        self.skipped = False
 
 
 class Spec:
@@ -269,9 +351,9 @@ def evaluate(spec, scenes, entries):
                 if not allow_curl:
                     violations.append(f'{where}: curl が起動された（更新の確認を選んでいない場面）: {short(e.line)}')
                 else:
-                    urls = re.findall(r'"(https?://[^"]*)"', e.line)
-                    if not urls or any(not u.startswith(UPDATE_URL_PREFIX) for u in urls):
-                        violations.append(f'{where}: curl が更新の確認の URL（{UPDATE_URL_PREFIX}…）以外を取りに行く: {short(e.line)}')
+                    problem = check_curl_argv(*exec_argv(e.line))
+                    if problem:
+                        violations.append(f'{where}: 更新の確認の curl の引数が許す形でない（{problem}）: {short(e.line)}')
             elif name in CRASH_DIALOGS:
                 violations.append(f'{where}: 落ちたときのダイアログ（{name}）が起動された。アプリが落ちています: {short(e.line)}')
             if name not in row['commands'] and e.pid in procs.parent:
@@ -311,6 +393,11 @@ def evaluate(spec, scenes, entries):
 def short(line, limit=240):
     line = line.strip()
     return line if len(line) <= limit else line[:limit] + '…'
+
+
+def skipped_scenes(session):
+    """飛ばした場面（xdotool が効かない・問いを閉じられない）の説明。"""
+    return [f'{session.spec.name} / {scene.name}: {scene.note}' for scene in session.scenes if scene.skipped]
 
 
 def display_width(text):
@@ -397,7 +484,7 @@ class Tools:
             self.seccomp = probe.returncode == 0
 
     def strace_command(self, log, append=False):
-        cmd = [self.strace, '-f', '-ttt', '-s', '100', '-e', f'trace={TRACE}', '-o', str(log)]
+        cmd = [self.strace, '-f', '-ttt', '-s', '200', '-e', f'trace={TRACE}', '-o', str(log)]
         if self.seccomp:
             cmd.insert(2, '--seccomp-bpf')
         if append:
@@ -637,8 +724,10 @@ def session_main(run):
                 saved = s.dir / 'config/YoluPainter/update.conf'
                 answered = saved.exists() and 'check_on_startup=off' in saved.read_text(encoding='utf-8')
                 scene.note = '「いいえ」を保存した' if answered else '問いに答えられなかった（問いのないビルドなら正常）'
+                scene.skipped = not answered
             else:
                 scene.note = 'xdotool が無く、飛ばした'
+                scene.skipped = True
         with s.scene('編集（レイヤー・効果）'):
             s.cli('layer.add', '--kind', 'fill', '--name', 'Wash', '--fill.Color', '#336699')
             s.cli('effect.add', '--layer', 'Wash', '--kind', 'blur', '--values.radius', '4')
@@ -647,10 +736,12 @@ def session_main(run):
         with s.scene('描く（xdotool の筆）') as scene:
             if not s.tools.xdotool:
                 scene.note = 'xdotool が無く、飛ばした'
+                scene.skipped = True
             elif s.draw():
                 scene.note = '筆のストロークが取り消しの段に入った'
             else:
                 scene.note = '筆が届かず、描けなかった（飛ばした）'
+                scene.skipped = True
         with s.scene('保存（.ylp）'):
             s.cli('save_as', '--path', work / 'doc.ylp')
         with s.scene('書き出し（PNG・テンプレート・PSD）'):
@@ -748,7 +839,7 @@ def session_update(run, project):
 # ───────── 較正（strace の読みが効いているか） ─────────
 
 CALIBRATION = '''
-import socket
+import ctypes, socket, threading
 a = socket.socket()
 a.settimeout(0.2)
 a.connect_ex(("192.0.2.1", 9))          # connect: 外（TEST-NET-1。届かない）
@@ -760,6 +851,28 @@ l = socket.socket()
 l.bind(("127.0.0.1", 0))
 l.listen(1)
 c = socket.create_connection(l.getsockname())   # connect: ループバック
+try:
+    socket.getaddrinfo("example.invalid", 443)  # 本物の名前の引き（リゾルバーへの connect と送信）
+except OSError:
+    pass
+
+# sendmmsg: 宛先つきの 1 通。別のスレッドが accept で待つ間に送る（スレッドが多いと宛先は再開の行に出る）
+threading.Thread(target=lambda: l.accept(), daemon=True).start()
+class Iovec(ctypes.Structure):
+    _fields_ = [("base", ctypes.c_void_p), ("len", ctypes.c_size_t)]
+class Msghdr(ctypes.Structure):
+    _fields_ = [("name", ctypes.c_void_p), ("namelen", ctypes.c_uint), ("iov", ctypes.POINTER(Iovec)),
+                ("iovlen", ctypes.c_size_t), ("control", ctypes.c_void_p), ("controllen", ctypes.c_size_t), ("flags", ctypes.c_int)]
+class Mmsghdr(ctypes.Structure):
+    _fields_ = [("hdr", Msghdr), ("len", ctypes.c_uint)]
+class SockaddrIn(ctypes.Structure):
+    _fields_ = [("family", ctypes.c_ushort), ("port", ctypes.c_ushort), ("addr", ctypes.c_ubyte * 4), ("zero", ctypes.c_ubyte * 8)]
+sin = SockaddrIn(socket.AF_INET, socket.htons(9), (ctypes.c_ubyte * 4)(192, 0, 2, 1))
+data = ctypes.create_string_buffer(b"x")
+iov = Iovec(ctypes.cast(data, ctypes.c_void_p), 1)
+msg = Mmsghdr(Msghdr(ctypes.cast(ctypes.byref(sin), ctypes.c_void_p), ctypes.sizeof(sin), ctypes.pointer(iov), 1, None, 0, 0), 0)
+m = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+ctypes.CDLL(None, use_errno=True).sendmmsg(m.fileno(), ctypes.byref(msg), 1, 0)
 '''
 
 
@@ -778,17 +891,21 @@ def calibrate(run):
     problems = []
     if not any(e.exec_path for e in entries):
         problems.append('execve が読めない')
-    if sum('192.0.2.1' in t for t in kinds.get('external', [])) < 2:
-        problems.append('外への connect・sendto（192.0.2.1）を捉えていない')
+    if sum('192.0.2.1' in t for t in kinds.get('external', [])) < 3:
+        problems.append('外への connect・sendto・sendmmsg（192.0.2.1）を捉えていない')
+    if not any(t.startswith('sendmmsg') and '192.0.2.1' in t for t in kinds.get('external', [])):
+        problems.append('宛先つきの sendmmsg を捉えていない')
     if not any(t.startswith('sendto') and ':53' in t for t in kinds.get('dns', [])):
         problems.append('ループバックの 53 番への送信を名前の引きとして捉えていない')
+    if sum(not t.startswith('sendto') for t in kinds.get('dns', [])) < 1:
+        problems.append('本物の名前の引き（getaddrinfo）を捉えていない')
     if not any(t.startswith('connect') for t in kinds.get('loopback', [])) or not any(t.startswith('bind') for t in kinds.get('loopback', [])):
         problems.append('ループバックの bind・connect を捉えていない')
     if problems:
         raise Fail('見張りの較正が通らない（アプリの結果は信用できない）: ' + '、'.join(problems) + f'。{log} を見る')
     spec = Spec('calibration', 'strace の読みが外への試みを捉えること（対照）')
     violations, _ = evaluate(spec, [Scene('対照', 0.0)], entries)
-    if len(violations) < 3:
+    if len(violations) < 5:
         raise Fail(f'較正の外への試みを判定が落としていない（{len(violations)} 件）')
 
 
@@ -860,16 +977,21 @@ def main(argv=None):
         for s, _ in sessions:
             s.kill()
     violations = []
+    skipped = []
     print()
     for s, seconds in sessions:
         v, rows = evaluate(s.spec, s.scenes, s.entries())
         print(render_table(s.spec, s.scenes, rows, seconds))
         print(f'  終了: {s.exit_mode}')
         violations.extend(f'{s.spec.name} / {x}' for x in v)
+        skipped.extend(skipped_scenes(s))
     total = time.monotonic() - started
     print(f'\n全体 {total:.0f} 秒（起動 {len(sessions)} 回）')
     if work_cleanup:
         shutil.rmtree(work, ignore_errors=True)
+    # 飛ばした場面は、通ったことにせず目に付く形で残す（xdotool が効かないと、描く・キー操作の場面が空になる）
+    for text in skipped:
+        print(f'::warning::通信の見張りで飛ばした場面: {text}', file=sys.stderr)
     if violations or failures:
         for text in failures:
             print(f'::error::通れなかった場面: {text}', file=sys.stderr)

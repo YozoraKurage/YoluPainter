@@ -107,6 +107,8 @@ class Parse(unittest.TestCase):
             self.assertEqual(entries_of(connect(APP, 0, addr))[0].dests[0].kind, 'dns', addr)
         e = entries_of(line(APP, 0, 'connect(3, {sa_family=AF_UNIX, sun_path="/run/systemd/resolve/io.systemd.Resolve"}, 110) = 0'))
         self.assertEqual(e[0].dests[0].kind, 'dns')
+        e = entries_of(line(APP, 0, 'connect(3, {sa_family=AF_UNIX, sun_path="/var/run/avahi-daemon/socket"}, 110) = 0'))
+        self.assertEqual(e[0].dests[0].kind, 'dns')
         # nscd のソケットは、名前の引きとは限らない（passwd などにも使う）
         e = entries_of(line(APP, 0, 'connect(9, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)'))
         self.assertEqual(e[0].dests[0].kind, 'unix')
@@ -119,6 +121,35 @@ class Parse(unittest.TestCase):
         )
         self.assertEqual([(e.pid, e.call, e.dests[0].kind) for e in entries], [(2000, 'connect', 'external')],
                          '試みは 1 回だけ数える（再開の行は数えない）')
+
+    def test_sendmmsg_and_accept_destinations_on_the_resumed_line_are_read(self):
+        entries = entries_of(
+            f'[pid  2000] {T0 + 1:.6f} sendmmsg(7, <unfinished ...>',
+            f'[pid  2001] {T0 + 1.05:.6f} write(1, "x", 1) = 1',
+            f'[pid  2000] {T0 + 1.1:.6f} <... sendmmsg resumed>[{{msg_hdr={{msg_name={inet("93.184.216.34", 9)}, msg_namelen=16, '
+            f'msg_iov=[{{iov_base="x", iov_len=1}}], msg_iovlen=1, msg_controllen=0, msg_flags=0}}, msg_len=1}}], 1, 0) = 1',
+            f'[pid  2002] {T0 + 2:.6f} accept4(5, <unfinished ...>',
+            f'[pid  2002] {T0 + 2.1:.6f} <... accept4 resumed>{inet("203.0.113.9", 51000)}, [16], SOCK_CLOEXEC) = 8',
+        )
+        got = [(e.call, e.dests[0].kind, e.dests[0].text) for e in entries]
+        self.assertEqual(got, [('sendmmsg', 'external', '93.184.216.34:9'), ('accept4', 'external', '203.0.113.9:51000')])
+
+    def test_a_destination_on_both_lines_is_counted_once(self):
+        entries = entries_of(
+            f'[pid  2000] {T0 + 1:.6f} sendmmsg(7, [{{msg_hdr={{msg_name={inet("93.184.216.34", 9)}, msg_namelen=16}}}}], 1, 0 <unfinished ...>',
+            f'[pid  2000] {T0 + 1.1:.6f} <... sendmmsg resumed>) = 1',
+        )
+        self.assertEqual(len(entries), 1)
+        entries = entries_of(
+            f'[pid  2000] {T0 + 1:.6f} sendmsg(7, {{msg_name={inet("93.184.216.34", 9)}, msg_namelen=16}}, 0 <unfinished ...>',
+            f'[pid  2000] {T0 + 1.1:.6f} <... sendmsg resumed>{{msg_name={inet("93.184.216.34", 9)}}}, 0) = 1',
+        )
+        self.assertEqual(len(entries), 1)
+
+    def test_a_multi_message_sendmmsg_reports_every_destination(self):
+        entries = entries_of(line(APP, 1, 'sendmmsg(7, [{msg_hdr={msg_name=' + inet('8.8.8.8', 53) + ', msg_namelen=16}, msg_len=1}, '
+                                      '{msg_hdr={msg_name=' + inet('1.1.1.1', 53) + ', msg_namelen=16}, msg_len=1}], 2, 0) = 2'))
+        self.assertEqual([d.text for d in entries[0].dests], ['8.8.8.8:53', '1.1.1.1:53'])
 
     def test_exec_and_clone_results(self):
         entries = entries_of(
@@ -182,11 +213,16 @@ class Judge(unittest.TestCase):
 
     UPDATE_URL = 'https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json'
 
-    def curl_lines(self, extra=(), url=UPDATE_URL):
+    ARGV = ('["curl", "-q", "--silent", "--show-error", "--fail", "--location", "--max-redirs", "5", "--connect-timeout", "10", '
+            '"--max-time", "30", "--user-agent", "YoluPainter/0.6.0", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", '
+            '"--output", "-", "--", "{url}"]')
+
+    def curl_lines(self, extra=(), url=UPDATE_URL, argv=None):
+        argv = (argv or self.ARGV).format(url=url)
         return [
             line(APP, 0.5, 'execve("/opt/yolupainter", ["yolupainter"], 0x7f /* 9 vars */) = 0'),
             line(APP, 1, 'clone(child_stack=NULL, flags=CLONE_VM|CLONE_VFORK|SIGCHLD) = 2000'),
-            line(2000, 1.1, f'execve("/usr/bin/curl", ["curl", "-q", "--", "{url}"], 0x7f /* 9 vars */) = 0'),
+            line(2000, 1.1, f'execve("/usr/bin/curl", {argv}, 0x7f /* 9 vars */) = 0'),
             line(2000, 1.2, 'clone3({flags=CLONE_VM|CLONE_THREAD}, 88) = 2001'),
             line(2001, 1.3, 'connect(5, ' + inet('192.168.65.7', 53) + ', 16) = 0'),
             line(2000, 1.4, 'connect(6, ' + inet6('2606:50c0:8000::154', 443) + ', 28) = -1 ENETUNREACH (Network is unreachable)'),
@@ -209,7 +245,7 @@ class Judge(unittest.TestCase):
         for url in ('https://example.com/upload', 'http://github.com/YozoraKurage/YoluPainter/x', 'https://github.com.evil.example/'):
             found, _ = violations(plain(expect_curl=True), scenes(('更新の確認', 0, True)), self.curl_lines(url=url))
             self.assertEqual(len(found), 1, url)
-            self.assertIn('以外を取りに行く', found[0])
+            self.assertIn('許す形でない', found[0])
         # URL が読めない（引数が切れた）ときも通さない
         lines = self.curl_lines()
         lines[2] = line(2000, 1.1, 'execve("/usr/bin/curl", ["curl", "-q"], 0x7f /* 9 vars */) = 0')
@@ -219,16 +255,56 @@ class Judge(unittest.TestCase):
         self.assertEqual(violations(plain(expect_curl=True), scenes(('更新の確認', 0, True)), self.curl_lines(url=beta))[0], [])
 
     def test_an_exec_split_in_two_lines_keeps_its_arguments(self):
-        # vfork の子の execve は、引数のある行と `resumed` の行に分かれる。URL の確かめには引数が要る
+        # vfork の子の execve は、引数のある行と `resumed` の行に分かれる。引数の確かめには引数が要る
+        argv = self.ARGV.format(url=self.UPDATE_URL)
         lines = self.curl_lines()
-        lines[2] = (f'2000 {T0 + 1.1:.6f} execve("/usr/bin/curl", ["curl", "--", "{self.UPDATE_URL}"], 0x7f /* 9 vars */ <unfinished ...>\n'
+        lines[2] = (f'2000 {T0 + 1.1:.6f} execve("/usr/bin/curl", {argv}, 0x7f /* 9 vars */ <unfinished ...>\n'
                     f'2000 {T0 + 1.2:.6f} <... execve resumed>) = 0')
         found, rows = violations(plain(expect_curl=True), scenes(('更新の確認', 0, True)), lines)
         self.assertEqual(found, [])
         lines[2] = lines[2].replace(self.UPDATE_URL, 'https://192.0.2.1/')
         found, _ = violations(plain(expect_curl=True), scenes(('更新の確認', 0, True)), lines)
         self.assertEqual(len(found), 1)
-        self.assertIn('以外を取りに行く', found[0])
+        self.assertIn('許す形でない', found[0])
+
+    def test_curl_arguments_beyond_the_pinned_ones_are_refused(self):
+        base = ['curl', '-q', '--silent', '--show-error', '--fail', '--location', '--max-redirs', '5', '--connect-timeout', '10',
+                '--max-time', '30', '--user-agent', 'YoluPainter/0.6.0', '--proto', '=https', '--proto-redir', '=https',
+                '--tlsv1.2', '--output', '-', '--', self.UPDATE_URL]
+        self.assertIsNone(nw.check_curl_argv(base))
+        at = base.index('--')
+        extras = [['--data', 'id=1'], ['-d', 'x'], ['-H', 'X-Id: 1'], ['-T', 'file'], ['-b', 'a=b'], ['-K', 'cfg'], ['--referer', 'x'],
+                  ['--cookie', 'a=b'], ['--url=https://example.com/'], ['--url', 'https://example.com/'], ['-F', 'a=@f'], ['-x', 'proxy'],
+                  ['--proto', '=https'], ['-A', 'other']]
+        for extra in extras:
+            problem = nw.check_curl_argv(base[:at] + extra + base[at:])
+            self.assertIsNotNone(problem, extra)
+        # 値の形・必須・URL の形
+        self.assertIn('値', nw.check_curl_argv([a if a != 'YoluPainter/0.6.0' else 'x y' for a in base]))
+        self.assertIn('必要', nw.check_curl_argv([a for a in base if a != '-q']))
+        self.assertIn('必要', nw.check_curl_argv(base[:base.index('--proto')] + base[base.index('--proto') + 2:]))
+        self.assertIn('`--` の後', nw.check_curl_argv(base + ['https://github.com/YozoraKurage/YoluPainter/y']))
+        self.assertIn('`--` が無い', nw.check_curl_argv(base[:at]))
+        for url in (self.UPDATE_URL + '?id=1', self.UPDATE_URL + '#x', 'https://user@github.com/YozoraKurage/YoluPainter/x',
+                    'https://github.com/OtherOwner/YoluPainter/x', 'http://github.com/YozoraKurage/YoluPainter/x',
+                    'https://github.com/YozoraKurage/YoluPainter/a b'):
+            self.assertIsNotNone(nw.check_curl_argv(base[:-1] + [url]), url)
+        self.assertIsNotNone(nw.check_curl_argv(base, truncated=True))
+        self.assertIsNotNone(nw.check_curl_argv(['wget'] + base[1:]))
+
+    def test_the_update_curl_fails_the_run_when_it_carries_an_identifier(self):
+        extra = ('["curl", "-q", "--proto", "=https", "--proto-redir", "=https", "-H", "X-Install-Id: 1234", "--", "{url}"]')
+        found, _ = violations(plain(expect_curl=True), scenes(('更新の確認', 0, True)), self.curl_lines(argv=extra))
+        self.assertEqual(len(found), 1)
+        self.assertIn('-H', found[0])
+
+    def test_exec_argv_reads_the_list_and_notices_truncation(self):
+        items, truncated = nw.exec_argv('execve("/usr/bin/curl", ["curl", "-q", "--", "https://github.com/Yo"...], 0x7f /* 9 vars */) = 0')
+        self.assertEqual(items, ['curl', '-q', '--', 'https://github.com/Yo'])
+        self.assertTrue(truncated)
+        items, truncated = nw.exec_argv('execve("/usr/bin/curl", ["curl", "-q"], 0x7f /* 9 vars */) = 0')
+        self.assertEqual((items, truncated), (['curl', '-q'], False))
+        self.assertEqual(nw.exec_argv('connect(3, {})'), ([], True))
 
     def test_the_app_itself_may_not_reach_out_in_the_update_scene(self):
         extra = [line(APP, 1.5, 'connect(7, ' + inet('93.184.216.34', 443) + ', 16) = 0')]
@@ -307,6 +383,17 @@ class Guard(unittest.TestCase):
                 raise KeyError('x')
         self.assertTrue(fake.killed)
         self.assertIsNone(fake.failure)
+
+
+class Skipped(unittest.TestCase):
+    def test_scenes_that_could_not_run_are_listed_for_a_warning(self):
+        class Fake:
+            spec = plain()
+            scenes = scenes(('起動', 0, False), ('描く（xdotool の筆）', 1, False))
+        Fake.spec.name = 'main'
+        Fake.scenes[1].skipped = True
+        Fake.scenes[1].note = '筆が届かず、描けなかった（飛ばした）'
+        self.assertEqual(nw.skipped_scenes(Fake), ['main / 描く（xdotool の筆）: 筆が届かず、描けなかった（飛ばした）'])
 
 
 class Pieces(unittest.TestCase):
