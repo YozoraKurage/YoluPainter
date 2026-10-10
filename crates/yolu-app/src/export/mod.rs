@@ -13,9 +13,14 @@
 //!   全部）。UV は 3D ビューのモデルから、セットのマテリアルの三角形を使う。モデルが無い・セットの面が無ければ塗り広げず、そう知らせる。
 //! - **AO**: セットに今の条件で焼いたメッシュマップ（AO）があれば使う（古いものは使わず知らせる）。無ければ遮蔽なし（白）。
 //! - 読むだけのセット（core で扱えない中身の合成を見せているだけ）は書き出さない。
-//! - **チャンネルの画像**（ファイル → 書き出し）: 描くチャンネルを PNG に、全部のセットの使っている全チャンネルをフォルダに。値は
+//! - **入り口は 1 つのウィンドウ**（`window`。ファイル → 書き出し…）: 形・書き出す先・余白を決めて、下の `TemplateTo`・`ChannelTo`・`ChannelNamed`・`ChannelsTo` へ渡す。
+//! - **チャンネルの画像**（書き出しのウィンドウの形）: 描くチャンネルを PNG に、全部のセットの使っている全チャンネルをフォルダに。値は
 //!   `yolu_core::export::channel_image`（詰めない・色を掛けない合成そのまま、Normal は文書の Y の向き）で、名前は
 //!   `<名前>[_<セット名>]_<チャンネル>.png`（チャンネルは言語によらず英語の綴り）。書く手順・余白・取消はテンプレートと同じ道を通す。
+
+pub mod window;
+
+pub use window::ExportForm;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,15 +42,25 @@ use yolu_io::export::{
 use crate::bake::Occlusion;
 use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
 use crate::notice::Source;
-use crate::state::{Action, AppState, DialogRequest};
+use crate::state::{Action, AppState};
 use crate::windows::CloseJob;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportAction {
-    /// テンプレート（ID）で書き出す。書き出す先のフォルダを選ぶウィンドウを頼む。
-    Template(String),
-    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
+    /// 書き出しのウィンドウ（形・書き出す先・余白）を開く。
+    OpenWindow,
+    /// 書き出しのウィンドウを閉じる。
+    CloseWindow,
+    /// 書き出しの形を選ぶ（設定に覚える）。
+    SetForm(ExportForm),
+    /// 書き出す先（形がファイルならファイル、ほかはフォルダ）を選ぶウィンドウを頼む。
+    ChooseDestination,
+    /// 選ぶウィンドウが返した書き出す先。
+    Destination(PathBuf),
+    /// ウィンドウの「書き出す」: 今の形と書き出す先で、下の書き出しの操作へ渡す。
+    Run,
+    /// テンプレート（ID）の書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     TemplateTo { id: String, dir: PathBuf },
     /// 確認のウィンドウの「置き換える」。
     ConfirmReplace,
@@ -55,15 +70,10 @@ pub enum ExportAction {
     Cancel,
     /// 結果のウィンドウを閉じる。
     DismissReport,
-    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶウィンドウを頼む。
-    ChannelDialog,
     /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶウィンドウが置き換えてよいと確かめている）。
     ChannelTo(PathBuf),
-    /// 書き出す先のファイルに、選ぶウィンドウが確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
-    /// 確認のウィンドウを出す。
+    /// 書き出す先のファイルに、選ぶウィンドウが確かめていない名前が決まった。もうあれば、置き換える前に確認のウィンドウを出す。
     ChannelNamed(PathBuf),
-    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶウィンドウを頼む。
-    ChannelsDialog,
     /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確認のウィンドウを出す。
     ChannelsTo(PathBuf),
 }
@@ -138,6 +148,8 @@ pub struct ExportState {
     pub report: Option<Report>,
     pub confirm_offset: Vec2,
     pub report_offset: Vec2,
+    /// 書き出しのウィンドウ（形・書き出す先）。
+    pub window: window::WindowState,
     job: Option<Job>,
     /// 終わった書き出しの、書いた画像（ファイル・セットの uid・lilToon のプロパティ）。Live Link が受ける（`take_finished`）。
     finished: Option<Vec<(WrittenImage, u32, Option<String>)>>,
@@ -173,6 +185,7 @@ impl Default for ExportState {
             report: None,
             confirm_offset: Vec2::ZERO,
             report_offset: Vec2::ZERO,
+            window: window::WindowState::default(),
             job: None,
             finished: None,
             park_next: false,
@@ -361,17 +374,7 @@ pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
     }
 }
 
-/// 選ぶウィンドウが返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（ウィンドウの種類で付かない環境がある）。足した名前は
-/// ウィンドウが確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（ウィンドウが確かめた名前）。
-pub fn channel_action(chosen: PathBuf) -> ExportAction {
-    if chosen.extension().is_none() {
-        ExportAction::ChannelNamed(chosen.with_extension("png"))
-    } else {
-        ExportAction::ChannelTo(chosen)
-    }
-}
-
-/// 描くチャンネルの PNG の、書き出す先を選ぶウィンドウに出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
+/// 描くチャンネルの PNG の、既定のファイル名（全チャンネルの書き出しと同じ決まり）。
 pub fn default_channel_file_name(state: &AppState) -> String {
     let doc = &state.doc;
     let image = channel_image_spec(doc, state.m2.paint_channel);
@@ -707,50 +710,27 @@ impl AppState {
     pub fn export_apply(&mut self, action: ExportAction) {
         let lang = self.lang;
         match action {
-            ExportAction::Template(id) => {
-                if self.is_stroking() {
-                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
-                    return;
-                }
-                if ExportTemplate::built_in_by_id(&id).is_none() {
-                    self.refuse(
-                        Source::Export,
-                        lang.pick(
-                            format!("書き出しのテンプレート「{id}」はありません。"),
-                            format!("No export template \"{id}\"."),
-                        ),
-                    );
-                    return;
-                }
-                self.dialog_request = Some(DialogRequest::ExportFolder(id));
-            }
+            ExportAction::OpenWindow
+            | ExportAction::CloseWindow
+            | ExportAction::SetForm(_)
+            | ExportAction::ChooseDestination
+            | ExportAction::Destination(_)
+            | ExportAction::Run => self.export_window_apply(action),
             ExportAction::TemplateTo { id, dir } => {
                 self.start_export(&What::Template(id), &dir, false)
             }
             ExportAction::ConfirmReplace => {
                 if let Some(c) = self.export.confirm.take() {
+                    let was_exporting = self.export.is_exporting();
                     match &c.what {
                         What::ChannelFile(path) => self.start_channel_png(path),
                         what => self.start_export(what, &c.dir, true),
                     }
+                    self.close_export_window_if_started(was_exporting);
                 }
-            }
-            ExportAction::ChannelDialog => {
-                if self.is_stroking() {
-                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
-                    return;
-                }
-                self.dialog_request = Some(DialogRequest::ExportChannel);
             }
             ExportAction::ChannelTo(path) => self.start_channel_png(&path),
             ExportAction::ChannelNamed(path) => self.confirm_channel_png(path),
-            ExportAction::ChannelsDialog => {
-                if self.is_stroking() {
-                    self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
-                    return;
-                }
-                self.dialog_request = Some(DialogRequest::ExportChannelsFolder);
-            }
             ExportAction::ChannelsTo(dir) => self.start_export(&What::Channels, &dir, false),
             ExportAction::CancelConfirm => {
                 if self.export.confirm.take().is_some() {

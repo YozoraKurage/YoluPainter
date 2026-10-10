@@ -154,32 +154,32 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         Some(DialogRequest::PsdImport(PsdTarget::CurrentSet))
     );
     h.state_mut().state.dialog_request = None;
-    // 書き出し（3 つのテンプレートと PSD）
-    for (label, expect) in [
-        (
-            "テンプレート: Unity Standard / URP Lit…",
-            DialogRequest::ExportFolder("unity-standard".into()),
-        ),
-        (
-            "テンプレート: HDRP Lit…",
-            DialogRequest::ExportFolder("unity-hdrp".into()),
-        ),
-        (
-            "テンプレート: lilToon…",
-            DialogRequest::ExportFolder("liltoon".into()),
-        ),
+    // 書き出しは 1 つのウィンドウ（形・書き出す先・余白）と PSD。テンプレートや PNG の項目は並べない
+    let at = menu_title(&h, "ファイル").center();
+    click(&mut h, at);
+    for gone in [
+        "テンプレート: Unity Standard / URP Lit…",
+        "テンプレート: HDRP Lit…",
+        "テンプレート: lilToon…",
+        "チャンネルを PNG…",
+        "全チャンネルを画像に…",
+        "PSD…",
     ] {
-        let at = menu_title(&h, "ファイル").center();
-        click(&mut h, at);
-        let at = popup_item(&h, label).center();
-        click(&mut h, at);
-        assert_eq!(h.state().state.dialog_request, Some(expect), "{label}");
-        h.state_mut().state.dialog_request = None;
+        assert!(h.query_by_label(gone).is_none(), "{gone}");
     }
+    let at = popup_item(&h, "書き出し…").center();
+    click(&mut h, at);
+    assert!(h.state().state.export.window.open);
+    assert_eq!(
+        h.state().state.dialog_request,
+        None,
+        "ファイルのウィンドウは、ウィンドウの「選ぶ…」まで出さない"
+    );
+    apply(&mut h, Action::Export(ExportAction::CloseWindow));
     // PSD の書き出しは、先に設定のウィンドウ（方式・チャンネル）を開き、ファイルはそのウィンドウの「書き出し…」で選ぶ
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    let at = popup_item(&h, "PSD…").center();
+    let at = popup_item(&h, "PSD を書き出し…").center();
     click(&mut h, at);
     assert!(h.state().state.psd.options_open);
     assert_eq!(h.state().state.dialog_request, None);
@@ -190,11 +190,18 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
     popup_item(&h, "PSD as a New Texture Set…");
-    popup_item(&h, "Template: HDRP Lit…");
-    let at = popup_item(&h, "PSD…").center();
+    popup_item(&h, "Export…");
+    h.snapshot("menu_file_english");
+    let at = popup_item(&h, "Export PSD…").center();
     click(&mut h, at);
     assert!(h.state().state.psd.options_open);
     apply(&mut h, Action::Psd(PsdAction::CancelExportOptions));
+    let at = menu_title(&h, "File").center();
+    click(&mut h, at);
+    let at = popup_item(&h, "Export…").center();
+    click(&mut h, at);
+    assert!(h.state().state.export.window.open);
+    apply(&mut h, Action::Export(ExportAction::CloseWindow));
     // 描いている間は選べない
     h.state_mut().state.dialog_request = None;
     let layer = h.state().state.selected_layer.unwrap();
@@ -1281,6 +1288,363 @@ fn the_psd_export_window_chooses_the_mode_and_channels_and_asks_for_the_file() {
     let at = in_window(&h, "psd-export", "Cancel");
     click(&mut h, at);
     assert!(!h.state().state.psd.options_open);
+}
+
+// ───────── 書き出しのウィンドウ ─────────
+
+/// 書き出しのウィンドウの形のドロップダウンを開いて、形を選ぶ。
+fn pick_form(h: &mut Harness<'_, YoluApp>, from: &str, to: &str) {
+    let at = in_window(
+        h,
+        "export",
+        &format!("{}: {from}", h_label(h, "形", "Type")),
+    );
+    click(h, at);
+    let at = popup_item(h, to).center();
+    click(h, at);
+}
+
+/// 画面の言語に合う名前。
+fn h_label<'a>(h: &Harness<'_, YoluApp>, ja: &'a str, en: &'a str) -> &'a str {
+    if h.state().state.lang == Lang::En {
+        en
+    } else {
+        ja
+    }
+}
+
+/// 書き出し先を決めて、書き出しのウィンドウの絵を撮る（書き出す先は毎回違う道にならないよう、決まった道を置く）。
+fn shot_form(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let form = h.state().state.export_form();
+    let chosen = if form.writes_file() {
+        PathBuf::from("/out/Texture_Color.png")
+    } else {
+        PathBuf::from("/out/Textures")
+    };
+    apply(h, Action::Export(ExportAction::Destination(chosen)));
+    shot(h, "export", name);
+}
+
+#[test]
+fn the_export_window_picks_each_form_and_remembers_it_in_both_languages() {
+    let mut h = two_sets_app();
+    let at = menu_title(&h, "ファイル").center();
+    click(&mut h, at);
+    let at = popup_item(&h, "書き出し…").center();
+    click(&mut h, at);
+    assert!(h.state().state.export.window.open);
+    // 初めの形は「PNG（今のチャンネル）」
+    assert_eq!(
+        h.state().state.export_form(),
+        yolu_app::export::ExportForm::ChannelPng
+    );
+    let texts = window_texts(&h, "export");
+    for want in [
+        "書き出し",
+        "形",
+        "PNG（今のチャンネル）",
+        "書き出す先",
+        "選ぶ…",
+        "余白",
+        "届くかぎり",
+        "やめる",
+        "書き出す",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    for text in &texts {
+        assert_plain("書き出しのウィンドウ", text);
+    }
+    // 形ごとの絵（日本語）
+    let forms = [
+        ("PNG（今のチャンネル）", "export_window_channel"),
+        ("PNG（全チャンネル）", "export_window_channels"),
+        ("Unity Standard / URP Lit", "export_window_unity_standard"),
+        ("HDRP Lit", "export_window_hdrp"),
+        ("lilToon", "export_window_liltoon"),
+    ];
+    let mut current = forms[0].0;
+    shot_form(&mut h, forms[0].1);
+    for (label, name) in &forms[1..] {
+        pick_form(&mut h, current, label);
+        current = label;
+        assert_eq!(h.state().state.export_form().name(Lang::Ja), *label);
+        shot_form(&mut h, name);
+    }
+    // 形は設定に覚える（保存する設定にも入る）
+    assert_eq!(
+        h.state().state.settings().export_form,
+        yolu_app::export::ExportForm::LilToon
+    );
+    // 閉じて開き直しても、同じ形
+    apply(&mut h, Action::Export(ExportAction::CloseWindow));
+    assert!(
+        yolu_app::windows::window_rect(&h.ctx, "export").is_none()
+            || !h.state().state.export.window.open
+    );
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    assert_eq!(h.state().state.export_form().name(Lang::Ja), "lilToon");
+    // 英語: 文字に日本語が残らず、形ごとの絵
+    h.state_mut().state.lang = Lang::En;
+    h.run();
+    let texts = window_texts(&h, "export");
+    for want in [
+        "Export",
+        "Type",
+        "lilToon",
+        "Destination",
+        "Choose…",
+        "Padding",
+        "Fill (all the way)",
+        "Cancel",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    assert!(texts.iter().all(|t| !has_japanese(t)), "{texts:?}");
+    for text in &texts {
+        assert_plain("export window", text);
+    }
+    let english = [
+        "PNG (Current Channel)",
+        "PNG (All Channels)",
+        "Unity Standard / URP Lit",
+        "HDRP Lit",
+        "lilToon",
+    ];
+    let names = [
+        "export_window_channel_english",
+        "export_window_channels_english",
+        "export_window_unity_standard_english",
+        "export_window_hdrp_english",
+        "export_window_liltoon_english",
+    ];
+    let mut current = english[4];
+    for (label, name) in english.iter().zip(names) {
+        if *label != current {
+            pick_form(&mut h, current, label);
+            current = label;
+        }
+        shot_form(&mut h, name);
+    }
+}
+
+#[test]
+fn the_export_window_chooses_the_destination_and_the_padding_and_closes_with_the_buttons() {
+    let mut h = two_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    // 書き出す先が決まっていない間（保存していないプロジェクト）は書き出せない
+    let button = h.get_by_label("書き出す");
+    assert!(
+        button.accesskit_node().is_disabled(),
+        "先が無い間は押せない"
+    );
+    // 「選ぶ…」は書き出す先を選ぶウィンドウ（OS）を頼むだけ
+    let at = in_window(&h, "export", "選ぶ…");
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.dialog_request,
+        Some(DialogRequest::ExportDestination)
+    );
+    h.state_mut().state.dialog_request = None;
+    // 余白: 設定の「書き出しの余白」と同じ値を、ここから替えられる
+    assert_eq!(h.state().state.export.padding, -1);
+    let at = in_window(&h, "export", "余白: 届くかぎり");
+    click(&mut h, at);
+    let at = popup_item(&h, "8 テクセル").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.export.padding, 8);
+    assert_eq!(h.state().state.settings().export_padding, 8);
+    in_window(&h, "export", "余白: 8 テクセル");
+    // やめる・閉じる・Esc で閉じる
+    let at = in_window(&h, "export", "やめる");
+    click(&mut h, at);
+    assert!(!h.state().state.export.window.open);
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    let at = in_window(&h, "export", "ウィンドウを閉じる");
+    click(&mut h, at);
+    assert!(!h.state().state.export.window.open);
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    let rect = yolu_app::windows::window_rect(&h.ctx, "export").unwrap();
+    h.event(egui::Event::PointerMoved(rect.center()));
+    h.step();
+    key(&h, Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.state().state.export.window.open, "Esc で閉じる");
+}
+
+#[test]
+fn the_export_window_writes_what_the_menu_items_wrote_and_asks_before_replacing() {
+    let dir = TempDir::new("export-window");
+    let mut h = two_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    // 先を選ぶと書き出せる
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(dir.0.clone())),
+    );
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    assert!(h.state().state.export.is_exporting());
+    assert!(!h.state().state.export.window.open, "書き始めたら閉じる");
+    settle(&mut h);
+    assert_eq!(
+        dir.files(),
+        ["Texture_Hair_Albedo.png", "Texture_Skin_Albedo.png"]
+    );
+    assert!(h.state().state.export.report.is_some(), "結果のウィンドウ");
+    h.get_by_label("閉じる").click();
+    h.run();
+    // もう一度: もうあるファイルを確かめる。やめるとウィンドウに戻り、置き換えると書いて閉じる
+    let before = std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap();
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        s.doc.set_layer_opacity(layer, 0.5, false).unwrap();
+    }
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    assert!(h.state().state.export.confirm.is_some());
+    assert!(!h.state().state.export.is_exporting());
+    let at = in_window(&h, "export-confirm", "やめる");
+    click(&mut h, at);
+    assert!(h.state().state.export.confirm.is_none());
+    assert!(
+        h.state().state.export.window.open,
+        "やめたらウィンドウに戻る"
+    );
+    assert_eq!(
+        std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap(),
+        before
+    );
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    h.get_by_label("置き換える").click();
+    h.run();
+    assert!(!h.state().state.export.window.open);
+    settle(&mut h);
+    assert_ne!(
+        std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap(),
+        before,
+        "置き換えた"
+    );
+}
+
+#[test]
+fn the_export_window_is_a_command_without_a_default_key_that_the_user_can_assign() {
+    use yolu_app::keymap::Scope;
+    let mut h = app(1280.0, 800.0, 64);
+    // Ctrl+Shift+E は表示レイヤーの結合が使っているので、既定のキーは付けない。操作は一覧にあり、割り当てを選べる
+    let command = yolu_app::commands::find("file.export").expect("操作の一覧にある");
+    assert_eq!(
+        command.runnable(),
+        Some(Action::Export(ExportAction::OpenWindow))
+    );
+    assert_eq!(yolu_app::shortcuts::menu_key("file.export"), None);
+    let group: yolu_app::keyconfig::GroupKey = ("file.export", Scope::Everywhere);
+    assert!(
+        yolu_app::shortcuts::editor::all_groups(&h.state().state).contains(&group),
+        "ショートカットの設定の一覧に出る"
+    );
+    // 空いているキーを割り当てると、そのキーでウィンドウが開く
+    let trigger = yolu_app::keyconfig::parse_trigger("Ctrl+Alt+E").unwrap();
+    h.state_mut().state.keys.set(group, vec![trigger]);
+    h.state_mut().state.keys_changed();
+    h.run();
+    key(
+        &h,
+        Key::E,
+        egui::Modifiers {
+            alt: true,
+            ..egui::Modifiers::COMMAND
+        },
+    );
+    h.run();
+    assert!(h.state().state.export.window.open);
+    // メニューの項目にも、割り当てたキーが出る
+    apply(&mut h, Action::Export(ExportAction::CloseWindow));
+    let at = menu_title(&h, "ファイル").center();
+    click(&mut h, at);
+    popup_item(&h, "書き出し…");
+    assert!(
+        yolu_app::shortcuts::menu_key("file.export").is_some(),
+        "割り当てたキーが、メニューの項目の右に出る"
+    );
+}
+
+/// 置き換えの確認のウィンドウ（モーダル）が前に出ている間、はみ出して見えている下の書き出しのウィンドウは押しを受けない
+/// （書き出しのウィンドウもモーダルにすると、確認のウィンドウの外の押しが下のウィンドウへ通り、閉じてしまう）。
+#[test]
+fn the_export_window_below_the_replace_confirm_does_not_take_clicks() {
+    let dir = TempDir::new("below-confirm");
+    let mut h = two_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(dir.0.clone())),
+    );
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    settle(&mut h);
+    h.get_by_label("閉じる").click();
+    h.run();
+    // 2 度目: もうあるファイルの確認が出る。書き出しのウィンドウを横へ動かし、確認のウィンドウからはみ出させる
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    h.state_mut().state.export.window.offset = egui::vec2(-420.0, 0.0);
+    h.run();
+    h.step();
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    assert!(h.state().state.export.confirm.is_some());
+    h.run();
+    let confirm = yolu_app::windows::window_rect(&h.ctx, "export-confirm").unwrap();
+    let target = in_window(&h, "export", "やめる");
+    assert!(!confirm.contains(target), "確認のウィンドウの外にある");
+    click(&mut h, target);
+    assert!(
+        h.state().state.export.window.open,
+        "確認のウィンドウの間は、下のウィンドウの「やめる」を押しても閉じない"
+    );
+    assert!(h.state().state.export.confirm.is_some());
+}
+
+/// 置き換えの確認が前にあるときの Esc は、確認だけを閉じる（書き出しのウィンドウは開いたまま、確認をやめたあとのここへ戻れる）。
+#[test]
+fn escape_closes_only_the_replace_confirm_and_leaves_the_export_window() {
+    let dir = TempDir::new("esc-confirm");
+    let mut h = two_sets_app();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    pick_form(&mut h, "PNG（今のチャンネル）", "Unity Standard / URP Lit");
+    apply(
+        &mut h,
+        Action::Export(ExportAction::Destination(dir.0.clone())),
+    );
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    settle(&mut h);
+    h.get_by_label("閉じる").click();
+    h.run();
+    apply(&mut h, Action::Export(ExportAction::OpenWindow));
+    let at = in_window(&h, "export", "書き出す");
+    click(&mut h, at);
+    assert!(h.state().state.export.confirm.is_some());
+    // ポインタは書き出しのウィンドウの上にある（ウィンドウだけが Esc を受ける位置）
+    let rect = yolu_app::windows::window_rect(&h.ctx, "export").unwrap();
+    h.event(egui::Event::PointerMoved(rect.center()));
+    h.step();
+    key(&h, Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.state().state.export.confirm.is_none(), "確認が閉じる");
+    assert!(
+        h.state().state.export.window.open,
+        "書き出しのウィンドウは開いたまま"
+    );
+    // 確認が無くなれば、次の Esc で書き出しのウィンドウが閉じる
+    key(&h, Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.state().state.export.window.open);
 }
 
 // ───────── 画面なしの保存の往復（Windows 向けに組んで wine でも回す） ─────────

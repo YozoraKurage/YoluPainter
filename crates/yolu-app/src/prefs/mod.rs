@@ -599,7 +599,7 @@ impl AppState {
 
 // ───────── 名前 ─────────
 
-fn padding_name(lang: Lang, texels: i32) -> String {
+pub(crate) fn padding_name(lang: Lang, texels: i32) -> String {
     match texels {
         0 => lang.pick("なし", "Off").into(),
         n if n < 0 => lang.pick("届くかぎり", "Fill (all the way)").into(),

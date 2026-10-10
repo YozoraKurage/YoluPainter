@@ -184,7 +184,7 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 
 - `kind`: `opened` (accepted and opened, or a resend applied; anything that did not fit is in `problems`), `refused` (not accepted; reasons in `problems`), `exported` (you exported).
 - `<n>` counts from 0 per request. A reply to an unreadable request uses the `inbox/` file name (before the extension) as `request`.
-- `exported`: when you export a Live Link target's document, the export dialog starts in `target.export_dir` (or the folder you chose later). Of the PNG files written, images of the
+- `exported`: when you export a Live Link target's document, the destination in the Export window starts at `target.export_dir` (or the folder you chose later). Of the PNG files written, images of the
   lilToon template (`Main` → `_MainTex`, `Normal` → `_BumpMap`, `Smoothness` → `_SmoothnessTex`, `Metallic` → `_MetallicGlossMap`, `Emission` → `_EmissionMap`) and slot images of
   the lilToon packing go into `files`. Images without a matching property, and images of the `none` group, are left out.
 

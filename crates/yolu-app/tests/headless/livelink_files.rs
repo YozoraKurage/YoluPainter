@@ -321,11 +321,14 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     let dir = h.state.link_export_dir().expect("Unity が知らせた置き場");
     assert_eq!(slash(&dir), slash(&h.ex.dir.join("export")));
     std::fs::create_dir_all(&dir).unwrap();
+    // 書き出しのウィンドウの書き出す先の既定は、Unity が知らせた置き場
+    use yolu_app::export::{ExportAction, ExportForm};
+    h.state.apply(Action::Export(ExportAction::OpenWindow));
     h.state
-        .apply(Action::Export(yolu_app::export::ExportAction::TemplateTo {
-            id: "liltoon".into(),
-            dir: dir.clone(),
-        }));
+        .apply(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
+    assert_eq!(h.state.export_destination(), Some(dir.clone()));
+    h.state.apply(Action::Export(ExportAction::Run));
+    assert!(h.state.export.is_exporting(), "{}", h.state.message);
     h.state.wait_export();
     h.frame();
     let reply = h.reply();
@@ -341,8 +344,11 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     }
     // 利用者が置き場を選び直したら、そちらが既定
     let chosen = h.ex.dir.join("elsewhere");
-    h.state.note_export_dir(&chosen);
-    assert_eq!(h.state.link_export_dir(), Some(chosen));
+    h.state.apply(Action::Export(ExportAction::OpenWindow));
+    h.state
+        .apply(Action::Export(ExportAction::Destination(chosen.clone())));
+    assert_eq!(h.state.link_export_dir(), Some(chosen.clone()));
+    assert_eq!(h.state.export_destination(), Some(chosen));
 }
 
 #[test]
@@ -1141,13 +1147,16 @@ fn headless_the_export_dialog_start_is_the_nearest_existing_folder_and_creates_n
     let wanted = h.state.link_export_dir().expect("Unity が知らせた置き場");
     assert!(!wanted.exists());
     assert_eq!(
-        h.state.link_export_start().as_deref(),
+        yolu_app::export::window::nearest_existing_folder(&wanted).as_deref(),
         Some(h.ex.dir.as_path()),
         "あるところまで遡る"
     );
     assert!(!wanted.exists(), "作らない");
     std::fs::create_dir_all(&wanted).unwrap();
-    assert_eq!(h.state.link_export_start(), Some(wanted));
+    assert_eq!(
+        yolu_app::export::window::nearest_existing_folder(&wanted),
+        Some(wanted)
+    );
 }
 
 // ───────── 元の絵の PSD をレイヤーのまま ─────────

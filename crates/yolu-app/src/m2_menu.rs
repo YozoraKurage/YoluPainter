@@ -59,6 +59,8 @@ pub enum Popup {
     NormalDirection,
     /// 設定のウィンドウの選択肢。
     Pref(crate::prefs::PrefChoice),
+    /// 書き出しのウィンドウの形。
+    ExportForm,
     /// 塗りつぶしレイヤーのチャンネルの画像（棚の画像の一覧・ファイルから取り込む・外す）。
     FillImage(crate::engine::LayerId, Channel),
     /// 棚の画像の読み方（色空間）。
@@ -210,6 +212,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         })
         .collect(),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
+        Popup::ExportForm => crate::export::window::form_entries(app),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::Take => crate::panels::pose::take_entries(app),
         Popup::TextFont => crate::textlayer::props::font_entries(app),

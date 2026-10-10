@@ -213,13 +213,6 @@ impl AppState {
         self.link_target.as_ref()?.export_folder()
     }
 
-    /// 書き出しのウィンドウが最初に開く場所（`link_export_dir` のうち、今ある一番近いフォルダ。作らない: ウィンドウを取り消しても、Unity のプロジェクトに
-    /// 空のフォルダを残さない）。
-    pub fn link_export_start(&self) -> Option<PathBuf> {
-        let dir = self.link_export_dir()?;
-        dir.ancestors().find(|d| d.is_dir()).map(PathBuf::from)
-    }
-
     /// 書き出しのウィンドウで置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
     pub fn note_export_dir(&mut self, dir: &std::path::Path) {
         if let Some(t) = self.link_target.as_mut() {

@@ -9,7 +9,7 @@ use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, Model, Submesh};
 
 use super::*;
 use crate::bake::BakeAction;
-use crate::state::Action;
+use crate::state::{Action, DialogRequest};
 
 /// 試験用の一時フォルダ（終わると消す）。
 struct Dir(PathBuf);
@@ -144,17 +144,13 @@ fn px(img: &(u32, u32, Vec<u8>), x: u32, y: u32) -> [u8; 4] {
 }
 
 #[test]
-fn the_menu_only_asks_for_the_folder_and_unknown_templates_are_refused() {
+fn an_unknown_template_is_refused_and_writes_nothing() {
+    let dir = Dir::new("unknown");
     let mut s = two_sets();
-    s.apply(Action::Export(ExportAction::Template("unity-hdrp".into())));
-    assert_eq!(
-        s.dialog_request,
-        Some(DialogRequest::ExportFolder("unity-hdrp".into()))
-    );
-    s.dialog_request = None;
-    s.apply(Action::Export(ExportAction::Template("nothing".into())));
-    assert_eq!(s.dialog_request, None);
+    export(&mut s, "nothing", &dir.0);
+    assert!(!s.export.is_exporting());
     assert!(s.message.contains("テンプレート"), "{}", s.message);
+    assert!(dir.files().is_empty());
 }
 
 #[test]
@@ -542,8 +538,10 @@ fn it_does_not_start_while_drawing_or_exporting() {
     export(&mut s, "unity-standard", &dir.0);
     assert!(!s.export.is_exporting());
     assert_eq!(s.message, "描いている間はできません。");
-    s.apply(Action::Export(ExportAction::Template("unity-hdrp".into())));
+    s.apply(Action::Export(ExportAction::ChooseDestination));
     assert_eq!(s.dialog_request, None);
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    assert!(!s.export.window.open, "描いている間は開かない");
     s.doc.end_stroke(stroke).unwrap();
     export(&mut s, "unity-standard", &dir.0);
     assert!(s.export.is_exporting());
@@ -668,19 +666,15 @@ fn png_bytes(path: &Path) -> Vec<u8> {
 }
 
 #[test]
-fn the_menu_entries_only_ask_for_the_file_or_the_folder() {
+fn the_window_asks_for_one_destination_whatever_the_form() {
     let mut s = two_sets();
-    s.apply(Action::Export(ExportAction::ChannelDialog));
-    assert_eq!(s.dialog_request, Some(DialogRequest::ExportChannel));
-    s.dialog_request = None;
-    s.apply(Action::Export(ExportAction::ChannelsDialog));
-    assert_eq!(s.dialog_request, Some(DialogRequest::ExportChannelsFolder));
+    s.apply(Action::Export(ExportAction::ChooseDestination));
+    assert_eq!(s.dialog_request, Some(DialogRequest::ExportDestination));
     // 描いている間は頼まない
     s.dialog_request = None;
     let layer = s.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
-    s.apply(Action::Export(ExportAction::ChannelDialog));
-    s.apply(Action::Export(ExportAction::ChannelsDialog));
+    s.apply(Action::Export(ExportAction::ChooseDestination));
     assert_eq!(s.dialog_request, None);
     assert!(s.message.contains("描いている間"), "{}", s.message);
     s.doc.cancel_stroke(stroke);
@@ -809,37 +803,42 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
     );
 }
 
+/// 書き出しのウィンドウを開いて形を選び、書き出す先を選ぶウィンドウが返した体で決め、「書き出す」を押す。
+fn run_window(s: &mut AppState, form: ExportForm, chosen: &Path) {
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::SetForm(form)));
+    s.apply(Action::Export(ExportAction::Destination(
+        chosen.to_path_buf(),
+    )));
+    s.apply(Action::Export(ExportAction::Run));
+}
+
 #[test]
 fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_file_exists() {
     let dir = Dir::new("png-named");
-    // 拡張子が無い名前だけが、足した名前を確かめる道を通る（付いている名前は、選ぶウィンドウが確かめた）
     let bare = dir.0.join("foo");
-    assert_eq!(
-        channel_action(bare.clone()),
-        ExportAction::ChannelNamed(dir.0.join("foo.png"))
-    );
-    assert_eq!(
-        channel_action(dir.0.join("foo.png")),
-        ExportAction::ChannelTo(dir.0.join("foo.png"))
-    );
-    assert_eq!(
-        channel_action(dir.0.join("foo.PNG")),
-        ExportAction::ChannelTo(dir.0.join("foo.PNG"))
-    );
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
     let layer = s.selected_layer.unwrap();
     paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    // 拡張子が無い名前には `.png` を足し、付いている名前（大文字の拡張子も）はそのまま
+    s.apply(Action::Export(ExportAction::Destination(bare.clone())));
+    assert_eq!(s.export_file(), Some(dir.0.join("foo.png")));
+    s.apply(Action::Export(ExportAction::Destination(
+        dir.0.join("foo.PNG"),
+    )));
+    assert_eq!(s.export_file(), Some(dir.0.join("foo.PNG")));
     // 足した名前のファイルがまだ無ければ、そのまま書く
-    s.apply(Action::Export(channel_action(bare.clone())));
+    run_window(&mut s, ExportForm::ChannelPng, &bare);
     assert!(s.export.confirm.is_none());
     s.wait_export();
     assert_eq!(dir.files(), ["foo.png"], "{}", s.message);
     let written = std::fs::read(dir.0.join("foo.png")).unwrap();
-    // 足した名前がもうあれば、確認のウィンドウを出して何も書かない（無断で置き換えない）
+    // 足した名前がもうあれば、確認のウィンドウを出して何も書かない（無断で置き換えない）。書き出しのウィンドウは開いたまま
     std::fs::write(dir.0.join("foo.png"), b"mine").unwrap();
-    s.apply(Action::Export(channel_action(bare.clone())));
+    run_window(&mut s, ExportForm::ChannelPng, &bare);
     assert!(!s.export.is_exporting());
+    assert!(s.export.window.open, "確かめている間は開いたまま");
     let confirm = s.export.confirm.clone().expect("確認のウィンドウ");
     assert_eq!(confirm.what, What::ChannelFile(dir.0.join("foo.png")));
     assert_eq!(
@@ -848,27 +847,35 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     );
     assert_eq!(s.message, "もうあるファイル 1 個を置き換えるか確かめます。");
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
-    // やめれば、そのまま
+    // やめれば、そのまま（ウィンドウに戻る）
     s.apply(Action::Export(ExportAction::CancelConfirm));
     assert!(s.export.confirm.is_none() && !s.export.is_exporting());
+    assert!(s.export.window.open);
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
-    // 「置き換える」で、新しい画像（結果のウィンドウは出さない）
-    s.apply(Action::Export(channel_action(bare.clone())));
+    // 「置き換える」で、新しい画像（結果のウィンドウは出さない）。書き始めたらウィンドウは閉じる
+    s.apply(Action::Export(ExportAction::Run));
     s.apply(Action::Export(ExportAction::ConfirmReplace));
     assert!(s.export.confirm.is_none());
+    assert!(!s.export.window.open, "書き始めたら閉じる");
     s.wait_export();
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), written);
     assert!(s.export.report.is_none());
     assert_eq!(dir.files(), ["foo.png"], "一時ファイルは残らない");
+    // 選ぶウィンドウが確かめた名前（拡張子つき）は、重ねて確かめずに置き換える
+    std::fs::write(dir.0.join("foo.png"), b"mine").unwrap();
+    run_window(&mut s, ExportForm::ChannelPng, &dir.0.join("foo.png"));
+    assert!(s.export.confirm.is_none());
+    s.wait_export();
+    assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), written);
     // 英語の知らせ
     std::fs::write(dir.0.join("foo.png"), b"mine").unwrap();
     s.lang = crate::lang::Lang::En;
-    s.apply(Action::Export(channel_action(bare.clone())));
+    run_window(&mut s, ExportForm::ChannelPng, &bare);
     assert_eq!(s.message, "Confirm replacing 1 existing file.");
     // 描いている間・書き出し中は、確認のウィンドウも出さない
     s.apply(Action::Export(ExportAction::CancelConfirm));
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
-    s.apply(Action::Export(channel_action(bare.clone())));
+    s.apply(Action::Export(ExportAction::Run));
     assert!(s.export.confirm.is_none());
     s.doc.cancel_stroke(stroke);
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
@@ -1145,4 +1152,485 @@ fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {
     let image = load_png(&path);
     assert_eq!((image.0, image.1), (1024, 1024));
     assert_eq!(px(&image, 500, 500), [top as u8, 255 - top as u8, 7, 255]);
+}
+
+// ───────── 書き出しのウィンドウ（形・書き出す先・「書き出す」） ─────────
+
+/// 名前を付けて保存した状態にする（既定の書き出す先とファイル名の元になる）。
+fn saved_as(s: &mut AppState, path: &Path) {
+    s.apply(Action::SaveProjectAs(path.to_path_buf()));
+    s.wait_save();
+    assert!(s.project.is_some(), "{}", s.message);
+}
+
+fn choose(s: &mut AppState, path: &Path) {
+    s.apply(Action::Export(ExportAction::Destination(
+        path.to_path_buf(),
+    )));
+}
+
+fn form(s: &mut AppState, form: ExportForm) {
+    s.apply(Action::Export(ExportAction::SetForm(form)));
+}
+
+#[test]
+fn the_forms_have_stable_keys_names_and_the_templates_they_stand_for() {
+    assert_eq!(ExportForm::default(), ExportForm::ChannelPng);
+    let keys: Vec<&str> = ExportForm::ALL.iter().map(|f| f.key()).collect();
+    assert_eq!(
+        keys,
+        [
+            "channel",
+            "channels",
+            "unity-standard",
+            "unity-hdrp",
+            "liltoon"
+        ],
+        "設定のファイルに書く名前は変えない"
+    );
+    for f in ExportForm::ALL {
+        assert_eq!(ExportForm::from_key(f.key()), Some(f));
+        assert_eq!(f.writes_file(), f == ExportForm::ChannelPng, "{f:?}");
+    }
+    assert_eq!(ExportForm::from_key("png"), None);
+    assert_eq!(ExportForm::from_key(""), None);
+    // テンプレートの形は、組み込みのテンプレートの ID と名前に一致する（並びも）
+    let templates = yolu_core::export::ExportTemplate::built_in();
+    let forms: Vec<ExportForm> = ExportForm::ALL
+        .into_iter()
+        .filter(|f| f.template_id().is_some())
+        .collect();
+    assert_eq!(forms.len(), templates.len());
+    for (f, template) in forms.iter().zip(&templates) {
+        assert_eq!(f.template_id(), Some(template.id.as_str()));
+        for lang in [crate::lang::Lang::Ja, crate::lang::Lang::En] {
+            assert_eq!(f.name(lang), template.name, "{f:?}");
+        }
+    }
+    assert_eq!(ExportForm::ChannelPng.template_id(), None);
+    assert_eq!(ExportForm::AllChannels.template_id(), None);
+    // 名前は日本語と英語がある
+    assert_eq!(
+        ExportForm::ChannelPng.name(crate::lang::Lang::Ja),
+        "PNG（今のチャンネル）"
+    );
+    assert_eq!(
+        ExportForm::AllChannels.name(crate::lang::Lang::En),
+        "PNG (All Channels)"
+    );
+}
+
+#[test]
+fn the_form_is_remembered_in_the_settings_and_not_in_the_document() {
+    let mut s = AppState::new(64, 64);
+    assert_eq!(s.export_form(), ExportForm::ChannelPng);
+    form(&mut s, ExportForm::LilToon);
+    assert_eq!(s.export_form(), ExportForm::LilToon);
+    assert_eq!(s.settings().export_form, ExportForm::LilToon);
+    // 読み込んだ設定の形が、開いたときの形になる
+    let mut other = AppState::new(64, 64);
+    other.load_settings(s.settings());
+    assert_eq!(other.export_form(), ExportForm::LilToon);
+    // 文書を替えても形は変わらない
+    other.np_project_replaced();
+    assert_eq!(other.export_form(), ExportForm::LilToon);
+}
+
+#[test]
+fn the_destination_starts_at_the_project_folder_and_follows_the_form() {
+    let dir = Dir::new("window-default");
+    let mut s = AppState::new(64, 64);
+    // 保存していないプロジェクトには、既定の先が無い
+    assert_eq!(s.export_destination(), None);
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting());
+    assert_eq!(s.message, "書き出す先がありません。");
+    saved_as(&mut s, &dir.0.join("Hero.ylp"));
+    // PNG は、プロジェクトのフォルダの既定のファイル名
+    assert_eq!(s.export_destination(), Some(dir.0.join("Hero_Color.png")));
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(
+        Channel::Roughness,
+    )));
+    assert_eq!(
+        s.export_destination(),
+        Some(dir.0.join("Hero_Roughness.png"))
+    );
+    // ほかの形はフォルダ
+    for f in [
+        ExportForm::AllChannels,
+        ExportForm::UnityStandard,
+        ExportForm::Hdrp,
+        ExportForm::LilToon,
+    ] {
+        form(&mut s, f);
+        assert_eq!(s.export_destination(), Some(dir.0.clone()), "{f:?}");
+    }
+}
+
+#[test]
+fn a_chosen_folder_is_kept_for_every_form_until_the_project_is_replaced() {
+    let dir = Dir::new("window-folder");
+    let out = dir.0.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut s = AppState::new(64, 64);
+    saved_as(&mut s, &dir.0.join("Hero.ylp"));
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    form(&mut s, ExportForm::AllChannels);
+    choose(&mut s, &out);
+    assert_eq!(s.export_destination(), Some(out.clone()));
+    form(&mut s, ExportForm::Hdrp);
+    assert_eq!(
+        s.export_destination(),
+        Some(out.clone()),
+        "フォルダの形で共有"
+    );
+    form(&mut s, ExportForm::ChannelPng);
+    assert_eq!(
+        s.export_destination(),
+        Some(out.join("Hero_Color.png")),
+        "PNG はそのフォルダの既定の名前"
+    );
+    // 閉じて開き直しても覚えている
+    s.apply(Action::Export(ExportAction::CloseWindow));
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    assert_eq!(s.export_folder(), Some(out.clone()));
+    // プロジェクトを替えたら忘れる（既定の、プロジェクトのフォルダに戻る）
+    s.np_project_replaced();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    assert_eq!(s.export_folder(), Some(dir.0.clone()));
+}
+
+#[test]
+fn what_the_chooser_returns_is_remembered_as_where_the_next_one_starts() {
+    use crate::dialog::places::{Place, Rule};
+    let dir = Dir::new("window-places");
+    let (out, files, documents) = (
+        dir.0.join("out"),
+        dir.0.join("files"),
+        dir.0.join("documents"),
+    );
+    for d in [&out, &files, &documents] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let start = |s: &AppState, place| {
+        crate::dialog::start_folder_with(s, place, Rule::Open, Some(&documents))
+    };
+    // 保存していない文書は、書き出す先が決まらないので、選ぶウィンドウの既定（前に使った場所 → 文書のフォルダ → 書類）に任せる
+    let mut s = AppState::new(64, 64);
+    assert_eq!(s.export_destination(), None);
+    assert_eq!(start(&s, Place::ImageExport), Some(documents.clone()));
+    // フォルダの形: 選んだフォルダそのものを覚え、書き出す先にも渡る
+    form(&mut s, ExportForm::Hdrp);
+    window::dialog_returned(&mut s, out.clone());
+    assert_eq!(s.export_destination(), Some(out.clone()));
+    assert_eq!(start(&s, Place::ImageExport), Some(out.clone()));
+    // PNG のファイル: その置き場を覚える（ファイルそのものではない）
+    form(&mut s, ExportForm::ChannelPng);
+    window::dialog_returned(&mut s, files.join("tex.png"));
+    assert_eq!(s.export_destination(), Some(files.join("tex.png")));
+    assert_eq!(start(&s, Place::ImageExport), Some(files.clone()));
+    // ほかの種類の始まりには移らない
+    assert_eq!(start(&s, Place::Model), Some(documents.clone()));
+    assert_eq!(start(&s, Place::PsdExport), Some(documents.clone()));
+}
+
+#[test]
+fn a_chosen_png_keeps_a_custom_name_but_follows_the_channel_with_the_default_one() {
+    let dir = Dir::new("window-file");
+    let mut s = AppState::new(64, 64);
+    choose(&mut s, &dir.0.join("Texture_Color.png"));
+    assert_eq!(s.export_file(), Some(dir.0.join("Texture_Color.png")));
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(
+        Channel::Roughness,
+    )));
+    assert_eq!(
+        s.export_file(),
+        Some(dir.0.join("Texture_Roughness.png")),
+        "既定の名前を選んだなら、名前はチャンネルを追いかける"
+    );
+    choose(&mut s, &dir.0.join("mine.png"));
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(Channel::Color)));
+    assert_eq!(
+        s.export_file(),
+        Some(dir.0.join("mine.png")),
+        "自分で付けた名前は変わらない"
+    );
+    // ファイルの先を選ぶと、フォルダの形の既定の置き場にもなる
+    form(&mut s, ExportForm::AllChannels);
+    assert_eq!(s.export_folder(), Some(dir.0.clone()));
+}
+
+#[test]
+fn running_each_form_writes_the_same_files_as_the_direct_actions() {
+    let direct = Dir::new("window-direct");
+    let window = Dir::new("window-window");
+    let mut s = two_sets();
+    s.export.padding = 0;
+    // 描くチャンネルの PNG
+    export_channel(&mut s, &direct.0.join("one.png"));
+    s.wait_export();
+    run_window(&mut s, ExportForm::ChannelPng, &window.0.join("one.png"));
+    assert!(s.export.is_exporting());
+    assert!(!s.export.window.open, "書き始めたら閉じる");
+    s.wait_export();
+    assert_eq!(
+        png_bytes(&direct.0.join("one.png")),
+        png_bytes(&window.0.join("one.png"))
+    );
+    assert!(
+        s.export.report.is_none(),
+        "1 枚の PNG は結果のウィンドウを出さない"
+    );
+    // 全チャンネル
+    let all_direct = Dir::new("window-all-direct");
+    let all_window = Dir::new("window-all-window");
+    export_channels(&mut s, &all_direct.0);
+    s.wait_export();
+    run_window(&mut s, ExportForm::AllChannels, &all_window.0);
+    s.wait_export();
+    assert!(!all_window.files().is_empty());
+    assert_eq!(all_window.files(), all_direct.files());
+    for f in all_window.files() {
+        assert_eq!(
+            std::fs::read(all_window.0.join(&f)).unwrap(),
+            std::fs::read(all_direct.0.join(&f)).unwrap(),
+            "{f}"
+        );
+    }
+    assert!(
+        s.export.report.is_some(),
+        "フォルダへの書き出しは結果のウィンドウ"
+    );
+    s.apply(Action::Export(ExportAction::DismissReport));
+    // 3 つのテンプレート
+    for f in [
+        ExportForm::UnityStandard,
+        ExportForm::Hdrp,
+        ExportForm::LilToon,
+    ] {
+        let id = f.template_id().unwrap();
+        let by_action = Dir::new("window-t-direct");
+        let by_window = Dir::new("window-t-window");
+        export(&mut s, id, &by_action.0);
+        s.wait_export();
+        run_window(&mut s, f, &by_window.0);
+        s.wait_export();
+        assert!(!by_window.files().is_empty(), "{f:?}");
+        assert_eq!(by_window.files(), by_action.files(), "{f:?}");
+        for name in by_window.files() {
+            assert_eq!(
+                std::fs::read(by_window.0.join(&name)).unwrap(),
+                std::fs::read(by_action.0.join(&name)).unwrap(),
+                "{f:?} {name}"
+            );
+        }
+        s.apply(Action::Export(ExportAction::DismissReport));
+    }
+}
+
+#[test]
+fn the_window_asks_before_replacing_a_folder_export_and_cancel_leaves_the_files() {
+    let dir = Dir::new("window-replace");
+    let mut s = two_sets();
+    run_window(&mut s, ExportForm::UnityStandard, &dir.0);
+    s.wait_export();
+    let before = std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap();
+    let layer = s.selected_layer.unwrap();
+    paint_left_half(&mut s.doc, layer, Channel::Color, [0, 0, 255, 255]);
+    run_window(&mut s, ExportForm::UnityStandard, &dir.0);
+    assert!(!s.export.is_exporting());
+    assert!(s.export.confirm.is_some());
+    assert!(s.export.window.open, "確かめている間は開いたまま");
+    s.apply(Action::Export(ExportAction::CancelConfirm));
+    assert!(s.export.window.open, "やめたらウィンドウに戻る");
+    assert_eq!(
+        std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap(),
+        before
+    );
+    s.apply(Action::Export(ExportAction::Run));
+    s.apply(Action::Export(ExportAction::ConfirmReplace));
+    assert!(s.export.is_exporting());
+    assert!(!s.export.window.open);
+    s.wait_export();
+    assert_ne!(
+        std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap(),
+        before,
+        "置き換えた"
+    );
+}
+
+#[test]
+fn a_run_from_the_window_can_be_canceled_and_a_refusal_keeps_the_window_open() {
+    let dir = Dir::new("window-cancel");
+    let mut s = AppState::new(256, 256);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
+    let layer = s.selected_layer.unwrap();
+    paint_left_half(&mut s.doc, layer, Channel::Color, [1, 2, 3, 255]);
+    s.export.park_next = true;
+    run_window(&mut s, ExportForm::UnityStandard, &dir.0);
+    assert!(s.export.is_exporting());
+    // 書き出し中は、もう 1 つは始められない（ウィンドウは開き直せるが、書けない）
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(s.message.contains("書き出し中"), "{}", s.message);
+    assert!(s.export.window.open, "断られたら閉じない");
+    s.apply(Action::Export(ExportAction::Cancel));
+    s.wait_export();
+    assert!(s.message.contains("取り消しました"), "{}", s.message);
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    // 描いている間は断り、ウィンドウは開いたまま
+    let stroke = s.begin_paint_stroke(layer, false).unwrap();
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting());
+    assert!(s.message.contains("描いている間"), "{}", s.message);
+    assert!(s.export.window.open);
+    s.doc.cancel_stroke(stroke);
+    // 断る理由は今のまま: モデルが無いので塗り広げなかった、と書き出したあとの知らせに出る
+    s.export.padding = -1;
+    s.apply(Action::Export(ExportAction::Run));
+    s.wait_export();
+    assert!(s.message.contains("塗り広げていません"), "{}", s.message);
+}
+
+#[test]
+fn the_form_and_padding_choices_are_the_menu_entries_of_the_popups() {
+    use crate::ui::menu::Entry;
+    let mut s = AppState::new(64, 64);
+    form(&mut s, ExportForm::Hdrp);
+    for lang in [crate::lang::Lang::Ja, crate::lang::Lang::En] {
+        s.lang = lang;
+        let entries = window::form_entries(&s);
+        let labels: Vec<String> = entries
+            .iter()
+            .map(|e| match e {
+                Entry::Item { label, .. } => label.clone(),
+                _ => unreachable!(),
+            })
+            .collect();
+        let expected: Vec<String> = ExportForm::ALL
+            .iter()
+            .map(|f| f.name(lang).to_owned())
+            .collect();
+        assert_eq!(labels, expected);
+        let selected: Vec<bool> = entries
+            .iter()
+            .map(|e| {
+                matches!(
+                    e,
+                    Entry::Item {
+                        check: crate::ui::menu::Check::Radio,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(
+            selected,
+            [false, false, false, true, false],
+            "選んでいる形に印"
+        );
+    }
+    // 余白は設定と同じ値（ここから替えると設定も替わる）
+    s.apply(Action::Prefs(crate::prefs::PrefsAction::Set(
+        crate::prefs::Pref::ExportPadding(8),
+    )));
+    assert_eq!(s.export.padding, 8);
+    assert_eq!(s.settings().export_padding, 8);
+}
+
+#[test]
+fn a_destination_chosen_in_the_previous_project_is_not_used_after_the_project_is_replaced() {
+    let dir = Dir::new("window-replaced");
+    let out = dir.0.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut s = AppState::new(64, 64);
+    saved_as(&mut s, &dir.0.join("Hero.ylp"));
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    // 選ぶウィンドウが置き換えを確かめた PNG（自分で付けた名前）と、フォルダの形のフォルダ
+    let mine = out.join("mine.png");
+    std::fs::write(&mine, b"mine").unwrap();
+    choose(&mut s, &mine);
+    assert_eq!(s.export_file(), Some(mine.clone()));
+    form(&mut s, ExportForm::AllChannels);
+    choose(&mut s, &out);
+    assert_eq!(s.export_folder(), Some(out.clone()));
+    form(&mut s, ExportForm::ChannelPng);
+    // ウィンドウを開いたまま、別のプロジェクトを開く（`OpenWindow` を通らない）: 前の先は使わず、今のプロジェクトの既定に戻る
+    crate::project::open_into(&mut s, &dir.0.join("Hero.ylp"));
+    assert!(s.export.window.open);
+    assert_eq!(s.export_folder(), Some(dir.0.clone()));
+    assert_eq!(s.export_file(), Some(dir.0.join("Hero_Color.png")));
+    // 書き出しても、前のプロジェクトで選んだファイルには触れない（確かめも済んだことにしない）
+    std::fs::write(dir.0.join("Hero_Color.png"), b"theirs").unwrap();
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting());
+    assert_eq!(
+        s.export.confirm.as_ref().map(|c| c.what.clone()),
+        Some(What::ChannelFile(dir.0.join("Hero_Color.png"))),
+        "もうあるファイルは確かめる"
+    );
+    assert_eq!(std::fs::read(&mine).unwrap(), b"mine");
+    assert_eq!(
+        std::fs::read(dir.0.join("Hero_Color.png")).unwrap(),
+        b"theirs"
+    );
+    s.apply(Action::Export(ExportAction::CancelConfirm));
+    // 新しいプロジェクト（保存していない）にすると、先が決まらず、書かない
+    crate::project::new_into(&mut s);
+    assert!(s.export.window.open);
+    assert_eq!(s.export_destination(), None);
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting() && s.export.confirm.is_none());
+    assert_eq!(s.message, "書き出す先がありません。");
+    assert_eq!(std::fs::read(&mine).unwrap(), b"mine");
+    // 選び直せば、その先を今のプロジェクトで使える
+    form(&mut s, ExportForm::AllChannels);
+    choose(&mut s, &out);
+    assert_eq!(s.export_folder(), Some(out));
+}
+
+#[test]
+fn the_choosers_confirmation_covers_one_export_and_the_second_one_asks() {
+    let dir = Dir::new("window-once");
+    let mut s = AppState::new(64, 64);
+    s.export.padding = 0;
+    let layer = s.selected_layer.unwrap();
+    paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    let path = dir.0.join("foo.png");
+    std::fs::write(&path, b"mine").unwrap();
+    // 選ぶウィンドウが置き換えを確かめたファイル: 1 回目は確かめずに置き換える
+    run_window(&mut s, ExportForm::ChannelPng, &path);
+    assert!(s.export.confirm.is_none() && s.export.is_exporting());
+    s.wait_export();
+    let written = std::fs::read(&path).unwrap();
+    assert_ne!(written, b"mine");
+    // 選び直さずに、もう 1 度（もうあるファイル）: 確かめる。書き換えない
+    std::fs::write(&path, b"mine").unwrap();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(!s.export.is_exporting());
+    assert_eq!(
+        s.export.confirm.as_ref().map(|c| c.what.clone()),
+        Some(What::ChannelFile(path.clone()))
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+    s.apply(Action::Export(ExportAction::CancelConfirm));
+    // 選び直すと、また 1 回だけ確かめずに置き換える
+    run_window(&mut s, ExportForm::ChannelPng, &path);
+    assert!(s.export.confirm.is_none() && s.export.is_exporting());
+    s.wait_export();
+    assert_eq!(std::fs::read(&path).unwrap(), written);
+    // 書き出しが断られた（描いている間）ときも、確かめは使い切る
+    std::fs::write(&path, b"mine").unwrap();
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::Destination(path.clone())));
+    let stroke = s.begin_paint_stroke(layer, false).unwrap();
+    s.apply(Action::Export(ExportAction::Run));
+    s.doc.cancel_stroke(stroke);
+    s.apply(Action::Export(ExportAction::Run));
+    assert!(
+        s.export.confirm.is_some(),
+        "断られたあとも、確かめずには書かない"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"mine");
 }

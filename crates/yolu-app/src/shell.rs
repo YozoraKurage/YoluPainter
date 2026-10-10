@@ -3,8 +3,6 @@
 
 use egui::{pos2, vec2, Rect, Sense, Ui};
 
-use yolu_core::export::ExportTemplate;
-
 use crate::export::ExportAction;
 use crate::lang::Lang;
 use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
@@ -52,11 +50,11 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     ]
 }
 
-/// ファイルメニューの読み込み（PSD）と書き出し（テンプレートの画像・PSD）。
+/// ファイルメニューの読み込み（PSD）と書き出し（書き出しのウィンドウ・PSD）。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let l = app.lang;
-    let mut entries = vec![
+    vec![
         Entry::Separator,
         Entry::Heading(l.pick("読み込み", "Import").to_owned()),
         Entry::item(
@@ -77,29 +75,17 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
         .enabled(free && app.read_only_reason().is_none()),
         Entry::Heading(l.pick("書き出し", "Export").to_owned()),
         Entry::item(
-            l.pick("チャンネルを PNG…", "Channel as PNG…"),
-            Action::Export(ExportAction::ChannelDialog),
+            l.pick("書き出し…", "Export…"),
+            Action::Export(ExportAction::OpenWindow),
         )
+        .command_key("file.export")
         .enabled(free),
         Entry::item(
-            l.pick("全チャンネルを画像に…", "All Channels as Images…"),
-            Action::Export(ExportAction::ChannelsDialog),
+            l.pick("PSD を書き出し…", "Export PSD…"),
+            Action::Psd(PsdAction::ExportDialog),
         )
         .enabled(free),
-    ];
-    for template in ExportTemplate::built_in() {
-        entries.push(
-            Entry::item(
-                format!("{}: {}…", l.pick("テンプレート", "Template"), template.name),
-                Action::Export(ExportAction::Template(template.id)),
-            )
-            .enabled(free),
-        );
-    }
-    entries.push(
-        Entry::item(l.pick("PSD…", "PSD…"), Action::Psd(PsdAction::ExportDialog)).enabled(free),
-    );
-    entries
+    ]
 }
 
 /// メニューバーの見出しの中身。

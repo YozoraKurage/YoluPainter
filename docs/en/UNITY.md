@@ -14,7 +14,7 @@ a folder on the same PC; no native library is used (specification: [LIVELINK.md]
    materials with lilToon's version value or shaders from the lilToon package; shaders that only look similar by name are not drawn as lilToon).
 2. After changing the pose, BlendShapes or material values in Unity, press the same button to resend (the FBX is not read again; only the pose and values are applied, overwriting
    bones moved by hand in the Pose panel. If an original texture file changed, untouched sets get it again; touched sets are left as they are, with a notice).
-3. When you export with the "Template: lilToon…" item under File → Export, the export folder starts in the folder Unity specified. Of the PNG files written, Unity imports those that
+3. When you choose the "lilToon" type in the File → Export… window and export, the destination starts at the folder Unity specified. Of the PNG files written, Unity imports those that
    belong to a lilToon material property (`_MainTex`, `_BumpMap`, and so on) and asks in its window whether to assign them to the materials. The other templates and the per-channel PNG
    files are not sent back to Unity.
 4. Save your work as `.ylp`. The model opened over Live Link (the FBX files, renderer and material bindings, and pose) is kept in the `.ylp` and reopens without Unity.

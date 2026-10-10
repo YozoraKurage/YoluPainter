@@ -33,11 +33,17 @@ In the window you can choose the checkpoint interval (10 seconds to 5 minutes), 
 
 ## Export PNG files
 
-Exports are listed under the "Export" heading in the File menu. A file that already exists in the destination folder is confirmed before it is replaced. If you cancel, or a failure happens before the last replacement begins, the original files are not changed. The width that colors are dilated beyond the UVs is "Export padding" in the settings; nothing is dilated when there is no model.
+"Export…" in the File menu opens the Export window. Choose the type, decide the destination and the padding, then press "Export". The window closes when the writing starts. The type you choose is kept in the settings and is the same the next time you open it.
+
+- The types are "PNG (Current Channel)", "PNG (All Channels)", "Unity Standard / URP Lit", "HDRP Lit" and "lilToon".
+- The destination is a file for "PNG (Current Channel)" and a folder for the other types; change it with "Choose…". Until you choose, it starts at the folder of the open project (for a model opened with Live Link, the folder Unity reported). A destination you chose is kept until you open another project. "Export" cannot be pressed while no destination is decided or while an export is running.
+- "Padding" is how far colors are dilated beyond the UVs, and it is the same value as "Export padding" in the settings (changing either changes both). Nothing is dilated when there is no model.
+
+A file that already exists in the destination is confirmed before it is replaced (if you cancel, you are back in the window). If you cancel the export, or a failure happens before the last replacement begins, the original files are not changed.
 
 ### Export with a template
 
-"Template: Unity Standard / URP Lit…", "Template: HDRP Lit…" and "Template: lilToon…" write the packed PNGs that shader reads, for every texture set, into the folder you choose. Names are `<name>[_<set name>]_<image>.png`, and the set name is added only when there are several sets.
+"Unity Standard / URP Lit", "HDRP Lit" and "lilToon" write the packed PNGs that shader reads, for every texture set, into the folder you choose. Names are `<name>[_<set name>]_<image>.png`, and the set name is added only when there are several sets.
 
 - A baked AO is used when it exists, and a stale AO is not.
 - The effects shown on screen (filters, generators that read mesh maps, asset images) are included. When effects that are not working remain, for instance because the maps they read are missing, you are told that they are not in the exported images.
@@ -46,7 +52,7 @@ Exports are listed under the "Export" heading in the File menu. A file that alre
 
 ### Export by channel
 
-"Channel as PNG…" writes the painting channel to one PNG, and "All Channels as Images…" writes every channel in use, for all texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
+"PNG (Current Channel)" writes the painting channel to one PNG, and "PNG (All Channels)" writes every channel in use, for all texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
 
 ## Import a PSD
 
@@ -61,7 +67,7 @@ How things are sorted, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
 
 ## Export a PSD
 
-"PSD…" in the File menu opens the "Export PSD" window. Choose the mode and the channels, then press "Export…".
+"Export PSD…" in the File menu opens the "Export PSD" window. Choose the mode and the channels, then press "Export…".
 
 - The mode is "Bake and write" (keeps the layers, and writes filters, generators, images, paths and other features PSD has no form for as evaluated pixels) or "Flatten to one layer" (writes only the composite, as a single layer).
 - Channels start with Color only. If you choose several, one `name_channel.psd` is written per channel.
@@ -96,7 +102,7 @@ A window that chooses a file or folder starts in the first existing place of the
 - **Open, import, export**: the folder you last chose for that kind (project, model, PSD import and export, image import and export, brushes, fonts, key settings, assets and library, color sets, Save for Distribution, settings folders) → the folder of the open project's `.ylp` → the OS Documents folder.
 - **Save, Save As**: for a document opened from a backup `.ylp`, the folder of the original `.ylp` → the folder of the open project's `.ylp` → the folder last chosen for projects → the OS Documents folder.
 
-The folder last chosen is kept per kind in `places.conf` in the settings folder (if you delete it, the app remembers again from the next choice). A folder that no longer exists is not used. For a template export of a model opened with Live Link, the folder Unity reported still comes first.
+The folder last chosen is kept per kind in `places.conf` in the settings folder (if you delete it, the app remembers again from the next choice). A folder that no longer exists is not used. When you choose in the Export window, a destination that is already decided comes first (the one you chose; otherwise, for a model opened with Live Link, the folder Unity reported; otherwise the project's folder). Only when none is decided, as in a document you have not saved, does the window start in the order above.
 
 ## Handing files to older versions and Unity
 

@@ -1051,40 +1051,8 @@ impl YoluApp {
                 | DialogRequest::LibraryRemove
                 | DialogRequest::LibraryReveal),
             ) => assets::run_dialog(&mut self.state, request),
-            Some(DialogRequest::ExportFolder(id)) => {
-                let lang = self.state.lang;
-                let mut dialog = crate::dialog::file(&self.state, Place::ImageExport).set_title(
-                    lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
-                );
-                // Live Link の相手の文書は、Unity が知らせた置き場（利用者が選び直したらそちら）から。無ければ、ある一番近い親から
-                // （ウィンドウを取り消しても、Unity のプロジェクトにフォルダを残さないよう、ここでは作らない）
-                if let Some(start) = self.state.link_export_start() {
-                    dialog = dialog.set_directory(start);
-                }
-                if let Some(dir) = dialog.pick_folder() {
-                    self.state.note_folder_chosen(Place::ImageExport, &dir);
-                    self.state.note_export_dir(&dir);
-                    self.state
-                        .apply(Action::Export(crate::export::ExportAction::TemplateTo {
-                            id,
-                            dir,
-                        }));
-                }
-            }
-            Some(DialogRequest::ExportChannel) => {
-                let lang = self.state.lang;
-                let dialog = crate::dialog::file(&self.state, Place::ImageExport)
-                    .set_title(
-                        lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"),
-                    )
-                    .add_filter("PNG", &["png"])
-                    .set_file_name(crate::export::default_channel_file_name(&self.state));
-                if let Some(path) = dialog.save_file() {
-                    self.state.note_file_chosen(Place::ImageExport, &path);
-                    // 拡張子が無ければ .png を足す（ウィンドウの種類で付かない環境がある）。足した名前はウィンドウが確かめていない
-                    self.state
-                        .apply(Action::Export(crate::export::channel_action(path)));
-                }
+            Some(DialogRequest::ExportDestination) => {
+                crate::export::window::run_dialog(&mut self.state)
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
@@ -1165,19 +1133,6 @@ impl YoluApp {
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::DiskCacheFolder(Some(dir)),
                         )));
-                }
-            }
-            Some(DialogRequest::ExportChannelsFolder) => {
-                let lang = self.state.lang;
-                if let Some(dir) = crate::dialog::file(&self.state, Place::ImageExport)
-                    .set_title(
-                        lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
-                    )
-                    .pick_folder()
-                {
-                    self.state.note_folder_chosen(Place::ImageExport, &dir);
-                    self.state
-                        .apply(Action::Export(crate::export::ExportAction::ChannelsTo(dir)));
                 }
             }
             Some(DialogRequest::PsdImport(target)) => {

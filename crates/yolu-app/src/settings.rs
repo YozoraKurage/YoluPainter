@@ -201,6 +201,8 @@ pub struct Settings {
     pub lang: Lang,
     /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は届くかぎり全部）。
     pub export_padding: i32,
+    /// 書き出しのウィンドウで最後に選んだ形（次に開いたときの形。文書ごとではなく設定に覚える）。設定のウィンドウの区分には出さない（書き出しのウィンドウが持つ）。
+    pub export_form: crate::export::ExportForm,
     pub undo_budget: Budget,
     pub source_budget: Budget,
     pub stroke_budget: Budget,
@@ -264,6 +266,7 @@ impl Default for Settings {
         Self {
             lang: Lang::default(),
             export_padding: DEFAULT_EXPORT_PADDING,
+            export_form: crate::export::ExportForm::default(),
             undo_budget: Budget::Auto,
             source_budget: Budget::Auto,
             stroke_budget: Budget::Auto,
@@ -489,6 +492,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "view3d_paint_falloff_end" => lang.pick("塗らない角度", "Fade end"),
         "view3d_paint_seam_bleed" => lang.pick("継ぎ目のにじみ", "Seam bleed"),
         "export_padding" => lang.pick("書き出しの余白", "Export padding"),
+        "export_form" => lang.pick("書き出しの形", "Export type"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
         "stroke_budget_mib" => lang.pick("1 回の操作", "One operation"),
@@ -594,6 +598,10 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             "export_padding" => match parse_padding(value) {
                 Some(v) => settings.export_padding = v,
                 None => invalid("export_padding"),
+            },
+            "export_form" => match crate::export::ExportForm::from_key(value) {
+                Some(form) => settings.export_form = form,
+                None => invalid("export_form"),
             },
             "min_undo_steps" => match value
                 .parse::<u32>()
@@ -867,6 +875,9 @@ fn render(settings: &Settings) -> String {
         };
         text += &format!("export_padding={value}\n");
     }
+    if settings.export_form != default.export_form {
+        text += &format!("export_form={}\n", settings.export_form.key());
+    }
     for kind in BudgetKind::ALL {
         if let Budget::Mib(n) = settings.budget(kind) {
             let (lo, hi) = kind.range();
@@ -1070,6 +1081,7 @@ mod tests {
         Settings {
             lang: Lang::En,
             export_padding: 8,
+            export_form: crate::export::ExportForm::LilToon,
             undo_budget: Budget::Mib(512),
             source_budget: Budget::Mib(4096),
             stroke_budget: Budget::Auto,
@@ -1170,6 +1182,50 @@ mod tests {
         assert!(setting_name(Lang::Ja, "tablet_pressure").contains("試し"));
         assert!(setting_name(Lang::En, "tablet_pressure").contains("experimental"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_export_form_defaults_to_the_channel_png_and_a_bad_value_resets_only_it() {
+        use crate::export::ExportForm;
+        let dir = temp_dir("exportform");
+        let path = dir.join("settings.conf");
+        // 項目が無ければ「PNG（今のチャンネル）」。既定は書かない
+        assert_eq!(parse("language=ja\n").0.export_form, ExportForm::ChannelPng);
+        save(&path, &with_lang(Lang::En)).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("export_form"));
+        // 選んだ形は次の起動で戻る（テンプレートの形はテンプレートの ID）
+        for form in ExportForm::ALL {
+            save(
+                &path,
+                &Settings {
+                    export_form: form,
+                    ..with_lang(Lang::En)
+                },
+            )
+            .unwrap();
+            assert_eq!(load(&path).0.export_form, form, "{form:?}");
+        }
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "export_form=liltoon"));
+        // 読めない値は、その項目だけ既定に戻して名前つきで知らせる
+        let (settings, problems) = parse("language=en\nexport_form=psd\nexport_padding=8\n");
+        assert_eq!(settings.export_form, ExportForm::ChannelPng);
+        assert_eq!(settings.export_padding, 8, "ほかの項目は生きる");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(matches!(
+            &problems[0],
+            Problem::Invalid {
+                key: "export_form",
+                ..
+            }
+        ));
+        assert_eq!(setting_name(Lang::Ja, "export_form"), "書き出しの形");
+        assert_eq!(setting_name(Lang::En, "export_form"), "Export type");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1818,6 +1874,7 @@ mod tests {
         for line in [
             "language=en",
             "export_padding=8",
+            "export_form=liltoon",
             "undo_budget_mib=512",
             "source_budget_mib=4096",
             "min_undo_steps=12",
@@ -1855,6 +1912,7 @@ mod tests {
         // 選び直して既定に戻すと、行が消える
         let mut back = all.clone();
         back.export_padding = DEFAULT_EXPORT_PADDING;
+        back.export_form = crate::export::ExportForm::default();
         back.undo_budget = Budget::Auto;
         back.source_budget = Budget::Auto;
         back.min_undo_steps = DEFAULT_MIN_UNDO_STEPS;

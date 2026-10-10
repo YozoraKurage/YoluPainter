@@ -235,6 +235,10 @@ pub static COMMANDS: &[Command] = &[
     press("file.open", || Action::OpenProjectDialog),
     press("file.save", || Action::SaveProject),
     press("file.save_as", || Action::SaveProjectAsDialog),
+    // 書き出しのウィンドウ。既定のキーは無い（Ctrl+Shift+E は表示レイヤーの結合が使っている）。設定の画面で割り当てられる
+    press("file.export", || {
+        Action::Export(crate::export::ExportAction::OpenWindow)
+    }),
     press("app.quit", || Action::Quit),
     press("app.settings", || Action::Prefs(PrefsAction::Open)),
     // メッシュマップをベイクするウィンドウ（既定のキーは無い。割り当てると、パイメニューからも呼べる。入口は、テクスチャセットの帯のボタンと、セットの右クリック）
@@ -875,9 +879,11 @@ mod tests {
             );
         }
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
-        // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 13] = [
+        // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）・
+        // 書き出しのウィンドウ（Ctrl+Shift+E は表示レイヤーの結合が使っているので、設定で割り当てる）
+        const NO_DEFAULT_KEY: [&str; 14] = [
             "bake.open",
+            "file.export",
             "tool.liquify",
             "mode.paint",
             "mode.edit",
@@ -940,11 +946,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 84);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 85);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 122);
+        assert_eq!(COMMANDS.len(), 123);
     }
 }

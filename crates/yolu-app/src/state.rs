@@ -963,14 +963,10 @@ pub enum DialogRequest {
     LibraryRemove,
     /// ライブラリのフォルダを OS のファイルのウィンドウで開く。
     LibraryReveal,
-    /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
-    ExportFolder(String),
-    /// 描くチャンネルの PNG を書き出すファイルを選ぶ。
-    ExportChannel,
+    /// 書き出しのウィンドウの書き出す先（形が PNG ならファイル、ほかはフォルダ）を選ぶ。
+    ExportDestination,
     /// 棚の場所のフォルダを選ぶ。
     PrefsLibraryFolder,
-    /// 全チャンネルの画像を書き出すフォルダを選ぶ。
-    ExportChannelsFolder,
     /// 読み込む PSD を選ぶ。
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。

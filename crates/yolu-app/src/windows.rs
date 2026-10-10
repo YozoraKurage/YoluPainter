@@ -52,7 +52,7 @@ pub struct ListSpec {
     pub close_label: String,
 }
 
-/// 名前のウィンドウ（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験がウィンドウの中だけを撮る）。
+/// 名前のウィンドウ（"bake"・"export"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験がウィンドウの中だけを撮る）。
 pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     let id = if name == "bake" {
         Id::new("yolu.bake-window")
@@ -250,6 +250,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::panels::brush_catalog::show(ctx, app);
     crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);
+    export::window::show(ctx, app);
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);
