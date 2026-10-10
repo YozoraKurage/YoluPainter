@@ -914,3 +914,117 @@ fn an_empty_metadata_does_not_pass_silently() {
 fn the_command_takes_no_arguments() {
     assert!(run(["--list".to_owned()].into_iter()).is_err());
 }
+
+/// 依存のソースの確かめ用の作り物の `cargo metadata`。`deps` は（名前・yolu-app からの辺の種類。null は本番）。
+fn dep_meta(deps: &[(&str, Option<&str>)]) -> serde_json::Value {
+    let mut packages = vec![
+        json!({ "id": "yolu-app", "name": "yolu-app", "version": "0.0.0", "manifest_path": "/ws/crates/yolu-app/Cargo.toml", "dependencies": [] }),
+        json!({ "id": "yolu-cli", "name": "yolu-cli", "version": "0.0.0", "manifest_path": "/ws/crates/yolu-cli/Cargo.toml", "dependencies": [] }),
+    ];
+    let mut edges = Vec::new();
+    for (name, kind) in deps {
+        packages.push(json!({ "id": name, "name": name, "version": "1.2.3", "manifest_path": format!("/registry/{name}/Cargo.toml"), "dependencies": [] }));
+        edges.push(json!({ "pkg": name, "dep_kinds": [{ "kind": kind }] }));
+    }
+    let mut nodes = vec![
+        json!({ "id": "yolu-app", "deps": edges }),
+        json!({ "id": "yolu-cli", "deps": [] }),
+    ];
+    nodes.extend(
+        deps.iter()
+            .map(|(name, _)| json!({ "id": name, "deps": [] })),
+    );
+    json!({
+        "workspace_members": ["yolu-app", "yolu-cli"],
+        "packages": packages,
+        "resolve": { "nodes": nodes },
+    })
+}
+
+fn fake_sources(
+    sources: &'static [(&'static str, &'static str)],
+) -> impl Fn(&Path) -> Result<Vec<(String, String)>> + Sync {
+    move |dir: &Path| {
+        let name = dir.file_name().unwrap().to_string_lossy().into_owned();
+        sources
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, text)| vec![("src/lib.rs".to_owned(), (*text).to_owned())])
+            .ok_or_else(|| format!("{name} のソースが無い").into())
+    }
+}
+
+#[test]
+fn a_dependency_that_starts_using_sockets_must_be_listed() {
+    let meta = dep_meta(&[("tokio", None), ("newcomer", None), ("quiet", None)]);
+    let scan = scan_dependency_sources(
+        &meta,
+        fake_sources(&[
+            ("tokio", "use std::net::TcpStream;"),
+            ("newcomer", "fn f() { let s = UdpSocket::bind(a); }"),
+            ("quiet", "fn f() {}"),
+        ]),
+    );
+    assert_eq!(scan.crates, 3);
+    assert_eq!(scan.violations.len(), 1, "{:?}", scan.violations);
+    assert!(
+        scan.violations[0].contains("newcomer") && scan.violations[0].contains("SOCKET_CRATES")
+    );
+    let names: Vec<&str> = scan.table.iter().map(|t| t.0.as_str()).collect();
+    assert_eq!(names, vec!["newcomer", "tokio"]);
+}
+
+#[test]
+fn dependency_sources_ignore_tests_strings_and_process_calls() {
+    let meta = dep_meta(&[("noisy", None)]);
+    let scan = scan_dependency_sources(
+        &meta,
+        fake_sources(&[(
+            "noisy",
+            "/// see https://example.com\nconst U: &str = \"https://example.com\";\n\
+             fn run() { std::process::Command::new(\"git\"); ShellExecuteW(); }\n\
+             #[cfg(test)]\nmod tests { use std::net::TcpStream; }",
+        )]),
+    );
+    assert!(scan.violations.is_empty(), "{:?}", scan.violations);
+    assert!(scan.table.is_empty());
+}
+
+#[test]
+fn only_the_shipped_dependencies_are_read() {
+    // 試験だけの依存（dev）は読まない。ビルドスクリプトの依存（build）は読む。windows の宣言の束は機能の側で見る
+    let meta = dep_meta(&[
+        ("only-for-tests", Some("dev")),
+        ("build-helper", Some("build")),
+        ("windows-sys", None),
+    ]);
+    let scan = scan_dependency_sources(
+        &meta,
+        fake_sources(&[
+            ("only-for-tests", "use std::net::TcpStream;"),
+            ("build-helper", "use std::net::TcpStream;"),
+            ("windows-sys", "use std::net::TcpStream;"),
+        ]),
+    );
+    assert_eq!(scan.crates, 1);
+    assert_eq!(scan.violations.len(), 1, "{:?}", scan.violations);
+    assert!(scan.violations[0].contains("build-helper"));
+}
+
+#[test]
+fn an_unreadable_dependency_is_reported_not_skipped() {
+    let meta = dep_meta(&[("missing", None)]);
+    let scan = scan_dependency_sources(&meta, fake_sources(&[]));
+    assert_eq!(scan.crates, 0);
+    assert_eq!(scan.violations.len(), 1);
+    assert!(scan.violations[0].contains("missing") && scan.violations[0].contains("読めません"));
+}
+
+#[test]
+fn the_socket_crate_list_is_well_formed() {
+    let mut seen = BTreeSet::new();
+    for (name, why) in SOCKET_CRATES {
+        assert!(seen.insert(*name), "{name} が二重");
+        assert!(why.chars().count() >= 8, "{name} に理由が要る");
+    }
+}

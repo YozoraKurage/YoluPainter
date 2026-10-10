@@ -10,7 +10,9 @@
 //!   ソケットの `bind`・`connect` は、宛先に 127.0.0.1（`LOCALHOST`・`LOOPBACK`・`localhost`・`::1`）が読めなければ、一覧とは別に落とす。
 //! - 依存: `Cargo.lock` に HTTP の客・TLS・DNS・テレメトリなどの名前が無いこと、`cargo metadata` で、待ち受けの部品（hyper・hyper-util・socket2・mio、
 //!   tokio の `net`）を直接の依存に持つのが yolu-mcp だけであること、配るアプリ（yolu-app・yolu-cli）が「ブラウザーを開く」クレートに依存しないこと、
-//!   低水準の通信の部品に依存するクレートが決めた範囲から増えていないこと、Windows の API の機能に WinHTTP 以外の通信が入っていないことを確かめる。
+//!   低水準の通信の部品に依存するクレートが決めた範囲から増えていないこと、Windows の API の機能（宣言と、Cargo が実際に有効にした機能）に WinHTTP 以外の通信が入っていないことを確かめる。
+//!   配るアプリの依存（本番とビルドスクリプトの閉包）のソースも同じ字句の読み手で読み、ソケット・通信の部品を使うクレートを理由つきの一覧（`SOCKET_CRATES`）にする。
+//!   新しいクレートがソケットを使い始めたら落ちる（約 440 クレートを読む）。
 //!
 //! 一覧に足すときは、README・INSTALL の約束（更新の確認のほかに通信しない・外からの操作は 127.0.0.1 だけ）を破らないか確かめ、足す行に理由を書く
 //! （`docs/DEVELOPMENT.md` の「通信の見張り」）。
@@ -43,46 +45,56 @@ struct Scan {
     files: usize,
 }
 
-/// `crates/*/src/**/*.rs` と `crates/*/build.rs`（xtask を除く）の（`/` 区切りの相対の道・中身）。
-fn source_files(root: &Path) -> Result<Vec<(String, String)>> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-        let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<std::io::Result<_>>()?;
-        entries.sort_by_key(|e| e.path());
-        for entry in entries {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out)?;
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                out.push(path);
-            }
+fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<std::io::Result<_>>()?;
+    entries.sort_by_key(|e| e.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rs(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
         }
-        Ok(())
     }
-    let mut crates: Vec<_> = fs::read_dir(root.join("crates"))?.collect::<std::io::Result<_>>()?;
-    crates.sort_by_key(|e| e.path());
+    Ok(())
+}
+
+/// クレートのフォルダの `src/**/*.rs` と `build.rs` の（`base` からの `/` 区切りの相対の道・中身）。
+fn crate_files(base: &Path, crate_dir: &Path) -> Result<Vec<(String, String)>> {
     let mut paths = Vec::new();
-    for entry in crates {
-        let dir = entry.path();
-        if !dir.is_dir() || entry.file_name() == "xtask" {
-            continue;
-        }
-        if dir.join("build.rs").is_file() {
-            paths.push(dir.join("build.rs"));
-        }
-        if dir.join("src").is_dir() {
-            walk(&dir.join("src"), &mut paths)?;
-        }
+    if crate_dir.join("build.rs").is_file() {
+        paths.push(crate_dir.join("build.rs"));
+    }
+    if crate_dir.join("src").is_dir() {
+        walk_rs(&crate_dir.join("src"), &mut paths)?;
     }
     paths
         .into_iter()
         .map(|path| {
             let relative = path
-                .strip_prefix(root)?
+                .strip_prefix(base)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            Ok((relative, fs::read_to_string(&path)?))
+            Ok((
+                relative,
+                String::from_utf8_lossy(&fs::read(&path)?).into_owned(),
+            ))
         })
         .collect()
+}
+
+/// `crates/*/src/**/*.rs` と `crates/*/build.rs`（xtask を除く）の（`/` 区切りの相対の道・中身）。
+fn source_files(root: &Path) -> Result<Vec<(String, String)>> {
+    let mut crates: Vec<_> = fs::read_dir(root.join("crates"))?.collect::<std::io::Result<_>>()?;
+    crates.sort_by_key(|e| e.path());
+    let mut files = Vec::new();
+    for entry in crates {
+        let dir = entry.path();
+        if dir.is_dir() && entry.file_name() != "xtask" {
+            files.extend(crate_files(root, &dir)?);
+        }
+    }
+    Ok(files)
 }
 
 /// `file` に書いた `mod name;` が指すファイルの道（`name.rs` か `name/mod.rs`。`mod.rs`・`lib.rs`・`main.rs` は同じ階、ほかは `<ファイル名>/` の階）。
@@ -161,6 +173,10 @@ struct Report {
     violations: Vec<String>,
     /// （ファイル・印・見つけた数・理由）。一覧のうち使われた行。
     table: Vec<(String, String, usize, String)>,
+    /// 依存のうちソケット・通信の部品を使うクレート（名前・版・印の数・印）。
+    dependencies: Vec<(String, String, usize, String)>,
+    /// ソースを読んだ依存のクレートの数。
+    dependency_crates: usize,
 }
 
 fn guidance() -> &'static str {
@@ -240,9 +256,12 @@ fn check_repository(root: &Path) -> Result<(Report, usize)> {
     report
         .violations
         .extend(check_lock(&fs::read_to_string(root.join("Cargo.lock"))?));
-    report
-        .violations
-        .extend(check_metadata(&read_metadata(root)?));
+    let meta = read_metadata(root)?;
+    report.violations.extend(check_metadata(&meta));
+    let deps = scan_dependency_sources(&meta, read_crate_dir);
+    report.violations.extend(deps.violations);
+    report.dependencies = deps.table;
+    report.dependency_crates = deps.crates;
     Ok((report, scan.files))
 }
 
@@ -255,6 +274,17 @@ pub(crate) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
     println!("通信の見張り: ソース {files} ファイルを読みました。許す一覧の使われ方:");
     for (file, mark, count, why) in &report.table {
         println!("  {file}  {mark} ×{count}  {why}");
+    }
+    println!(
+        "依存のソース {} クレートを読み、ソケット・通信の部品を使う物:",
+        report.dependency_crates
+    );
+    for (name, versions, count, marks) in &report.dependencies {
+        let why = SOCKET_CRATES
+            .iter()
+            .find(|(n, _)| n == name)
+            .map_or("（一覧に無い）", |(_, why)| *why);
+        println!("  {name} {versions}  {marks} ×{count}  {why}");
     }
     if report.violations.is_empty() {
         println!("通信の見張り: 一覧の外の出口も、依存の問題もありません。");

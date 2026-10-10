@@ -1,4 +1,5 @@
 //! 依存の見張り（`Cargo.lock` の名前・`cargo metadata`）。
+use super::{crate_files, markers::MARKERS, scan_sources};
 use crate::{cargo, Result};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -304,6 +305,233 @@ pub(super) fn check_metadata(meta: &serde_json::Value) -> Vec<String> {
         }
     }
     out
+}
+
+/// 配るアプリの依存のうち、ソケット・通信の部品を使うクレート（名前。版は問わない）と、その理由。ここに無いクレートが使い始めたら落ちる。
+/// 使わなくなった行は落とさない（依存の更新で変わるため。表には出る）。
+pub(super) const SOCKET_CRATES: &[(&str, &str)] = &[
+    ("async-io", "zbus の下の非同期の I/O（TCP・UDP・UNIX ソケットの型を持つ。アプリは D-Bus を UNIX ソケットで使う）"),
+    ("hermit-abi", "Hermit OS 専用の宣言（Linux・Windows・macOS ではビルドされない）"),
+    ("hyper", "127.0.0.1 の受け口と客の HTTP/1.1（yolu-mcp）。HTTP/2（h2）の機能は無効"),
+    ("hyper-util", "hyper を tokio の TCP に載せる部品（yolu-mcp の 127.0.0.1 の受け口と客）"),
+    ("libc", "OS の C の宣言（ソケットの定数・関数の宣言を含む。呼び出しはその使い手のソースで見る）"),
+    ("linux-raw-sys", "Linux のシステムコールの宣言（rustix の下。ソケットの定数を含む）"),
+    ("log", "IpAddr などをログの値にする変換だけ（通信しない）"),
+    ("mio", "tokio の下のイベントの待ち（TCP・UDP の型。受け口と客の分）"),
+    ("ndk-sys", "Android 専用の宣言（Linux・Windows・macOS ではビルドされない）"),
+    ("polling", "async-io の下の I/O の待ち（Windows の WinSock の宣言を含む。zbus の D-Bus 用）"),
+    ("rmcp", "MCP の SDK。streamable-http のサーバーの部品を使う（待ち受けは yolu-mcp が 127.0.0.1 だけで開く）。reqwest などのクライアントの機能は無効"),
+    ("rustix", "システムコールの安全な包み（ソケットの API を含む。zbus・x11rb・wayland-backend・async-io の下）"),
+    ("schemars", "IpAddr などの型の JSON Schema だけ（通信しない）"),
+    ("serde", "IpAddr などの型の変換だけ（通信しない）"),
+    ("serde_core", "IpAddr などの型の変換だけ（通信しない）"),
+    ("socket2", "tokio・mio の下のソケットの包み（受け口と客の分）"),
+    ("tokio", "非同期の実行。net の機能は yolu-mcp だけが使う（127.0.0.1 の受け口と客）"),
+    ("tokio-stream", "tokio・rmcp の下（TCP の流れの型を持つ）"),
+    ("tokio-util", "tokio・rmcp・yolu-mcp の下（UDP・TCP の枠組みの型を持つ）"),
+    ("uds_windows", "Windows の UNIX ソケット（zbus の D-Bus 用。WinSock の宣言を含む）"),
+    ("wasip2", "WASI 専用の宣言（Linux・Windows・macOS ではビルドされない）"),
+    ("wayland-backend", "Wayland の接続は UNIX ソケット（rustix::net）。TCP は使わない"),
+    ("x11rb", "X11 の接続。DISPLAY が `ホスト名:番号` のときは TCP でも X サーバーへつなぐ（利用者の画面の設定。既定は UNIX ソケット）"),
+    ("zbus", "D-Bus（rfd の xdg-portal・accesskit）。既定のセッションバスは UNIX ソケット。TCP の転送の機能は持つが使わない"),
+    ("zvariant", "IpAddr などの型の D-Bus の値への変換だけ（通信しない）"),
+];
+
+/// 依存のソースで読まない印（文字列は説明に混ざる。プロセスの起動と「開く」は、依存の中では普通にある）。
+const NOT_SOCKET_MARKS: &[&str] = &[
+    "\"curl\"",
+    "\"http://\"",
+    "\"https://\"",
+    "Command::new",
+    "tokio::process",
+    "async_process",
+    "libc::system",
+    "ShellExecute",
+    "xdg-open",
+    "open::that",
+    "open::with",
+    "opener",
+    "webbrowser",
+    "open_url",
+    "OpenUrl",
+    "hyperlink",
+    "hyperlink_to",
+];
+
+/// ソースを読まない依存（API の宣言だけを生成した束で、機能の側（`WINDOWS_RESOLVED_NET`）で見る）。
+fn is_binding_crate(name: &str) -> bool {
+    name.starts_with("windows")
+        || name.starts_with("winapi")
+        || matches!(name, "web-sys" | "js-sys")
+}
+
+#[derive(Debug, Default)]
+pub(super) struct DepScan {
+    pub(super) violations: Vec<String>,
+    /// （クレートの名前・版・見つけた印の数・印の名前）。許す一覧に載っている物も含む。
+    pub(super) table: Vec<(String, String, usize, String)>,
+    /// ソースを読んだクレートの数（空振りを見抜く）。
+    pub(super) crates: usize,
+}
+
+/// 配るアプリの依存（本番とビルドスクリプトの閉包。試験だけの依存は含めない）のソースを同じ字句の読み手で読み、ソケットを使うクレートを集める。
+/// `read` は（クレートのフォルダ）→（相対の道・中身）。
+pub(super) fn scan_dependency_sources(
+    meta: &serde_json::Value,
+    read: impl Fn(&Path) -> Result<Vec<(String, String)>> + Sync,
+) -> DepScan {
+    let mut out = DepScan::default();
+    let empty = Vec::new();
+    let packages = meta["packages"].as_array().unwrap_or(&empty);
+    let members: BTreeSet<&str> = string_list(&meta["workspace_members"])
+        .into_iter()
+        .collect();
+    let info: HashMap<&str, (&str, &str, &str)> = packages
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p["id"].as_str()?,
+                (
+                    p["name"].as_str()?,
+                    p["version"].as_str().unwrap_or("?"),
+                    p["manifest_path"].as_str()?,
+                ),
+            ))
+        })
+        .collect();
+    let nodes: HashMap<&str, &serde_json::Value> = meta["resolve"]["nodes"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|n| Some((n["id"].as_str()?, n)))
+        .collect();
+    let mut closure: BTreeSet<&str> = BTreeSet::new();
+    let mut stack: Vec<&str> = info
+        .iter()
+        .filter(|(_, (name, _, _))| SHIPPED_ROOTS.contains(name))
+        .map(|(id, _)| *id)
+        .collect();
+    while let Some(id) = stack.pop() {
+        if !closure.insert(id) {
+            continue;
+        }
+        for dep in nodes
+            .get(id)
+            .map(|n| n["deps"].as_array().unwrap_or(&empty))
+            .into_iter()
+            .flatten()
+        {
+            let wanted = dep["dep_kinds"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .any(|k| k["kind"].is_null() || k["kind"] == "build");
+            if let (Some(dep_id), true) = (dep["pkg"].as_str(), wanted) {
+                stack.push(dep_id);
+            }
+        }
+    }
+    let socket_marks: BTreeSet<&'static str> = MARKERS
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !NOT_SOCKET_MARKS.contains(name))
+        .collect();
+    // クレートごとに独立なので、スレッドに分けて読む（約 440 クレート。1 本だと十数秒かかる）
+    let targets: Vec<(&str, &str, &Path)> = closure
+        .into_iter()
+        .filter_map(|id| {
+            let &(name, version, manifest) = info.get(id)?;
+            if members.contains(id) || is_binding_crate(name) {
+                return None;
+            }
+            Some((name, version, Path::new(manifest).parent()?))
+        })
+        .collect();
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(16);
+    let chunk = targets.len().div_ceil(threads).max(1);
+    type Found<'a> = (
+        &'a str,
+        &'a str,
+        std::result::Result<(usize, BTreeSet<&'static str>), String>,
+    );
+    let found: Vec<Found> = std::thread::scope(|scope| {
+        let handles: Vec<_> = targets
+            .chunks(chunk)
+            .map(|part| {
+                let (read, socket_marks) = (&read, &socket_marks);
+                scope.spawn(move || {
+                    part.iter()
+                        .map(|&(name, version, dir)| {
+                            let result = match read(dir) {
+                                Ok(files) => {
+                                    let scan = scan_sources(&files);
+                                    let mut marks = BTreeSet::new();
+                                    let mut count = 0;
+                                    for hit in
+                                        scan.hits.iter().filter(|h| socket_marks.contains(h.mark))
+                                    {
+                                        marks.insert(hit.mark);
+                                        count += 1;
+                                    }
+                                    Ok((count, marks))
+                                }
+                                Err(error) => Err(format!("{}: {error}", dir.display())),
+                            };
+                            (name, version, result)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+    let mut by_name: BTreeMap<&str, (BTreeSet<&str>, usize, BTreeSet<&str>)> = BTreeMap::new();
+    for (name, version, result) in found {
+        match result {
+            Err(error) => out.violations.push(format!(
+                "依存 {name} {version} のソースを読めません（{error}）。取得済みでないと、通信の部品を使うか確かめられません。"
+            )),
+            Ok((count, marks)) => {
+                out.crates += 1;
+                if count > 0 {
+                    let entry = by_name.entry(name).or_default();
+                    entry.0.insert(version);
+                    entry.1 += count;
+                    entry.2.extend(marks);
+                }
+            }
+        }
+    }
+    for (name, (versions, count, marks)) in by_name {
+        if count == 0 {
+            continue;
+        }
+        out.table.push((
+            name.to_owned(),
+            versions.into_iter().collect::<Vec<_>>().join("・"),
+            count,
+            marks.into_iter().collect::<Vec<_>>().join("・"),
+        ));
+        if !SOCKET_CRATES.iter().any(|(n, _)| *n == name) {
+            out.violations.push(format!(
+                "配るアプリの依存 {name}（{}）が、ソケット・通信の部品（{}）を使っています。外へ通信する部品でないか確かめ、よければ \
+                 crates/xtask/src/netguard/deps.rs の SOCKET_CRATES に、名前と理由を足します。",
+                out.table.last().map(|t| t.1.as_str()).unwrap_or(""),
+                out.table.last().map(|t| t.3.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    out
+}
+
+/// 依存のフォルダを読む（本番の `scan_dependency_sources` の引数）。
+pub(super) fn read_crate_dir(dir: &Path) -> Result<Vec<(String, String)>> {
+    crate_files(dir, dir)
 }
 
 /// `cargo metadata --locked`。まずオフラインで読み、取得済みの依存が足りない（ほかの OS だけの依存を取っていない CI など）ときだけ、取得を許して読み直す。
