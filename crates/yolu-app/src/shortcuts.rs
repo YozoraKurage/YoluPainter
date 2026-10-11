@@ -1088,6 +1088,35 @@ mod tests {
                     })
                     .collect();
                 let name = |ja: &'static str, en: &'static str| lang.pick(ja, en);
+                if cfg!(windows) {
+                    // 画面の色の取得は Windows のメニューにだけある（編集メニューのペーストの次）
+                    let at = expected
+                        .iter()
+                        .position(|(menu, label, _)| {
+                            *menu == 1 && label == name("ペースト", "Paste")
+                        })
+                        .expect("ペーストの項目")
+                        + 1;
+                    expected.splice(
+                        at..at,
+                        [
+                            (
+                                1,
+                                name("画面の色を取得", "Pick Screen Color").to_owned(),
+                                "Ctrl+Alt+I".to_owned(),
+                            ),
+                            (
+                                1,
+                                name(
+                                    "ウィンドウを隠して画面の色を取得",
+                                    "Hide Window and Pick Screen Color",
+                                )
+                                .to_owned(),
+                                "Ctrl+Alt+Shift+I".to_owned(),
+                            ),
+                        ],
+                    );
+                }
                 if state == 1 {
                     // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」なので、複製には出さない
                     expected.retain(|(menu, label, _)| {

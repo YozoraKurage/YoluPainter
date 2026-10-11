@@ -415,17 +415,25 @@ mod tests {
 
     #[test]
     fn macos_keeps_no_staging_folder_because_it_downloads_nothing() {
-        let home = |key: &str| (key == "HOME").then(|| PathBuf::from("/Users/u"));
+        // Windows ではドライブが無い道は絶対の道にならないので、`C:` を付けて絶対の道にする
+        let abs = |path: &str| {
+            PathBuf::from(if cfg!(windows) {
+                format!("C:{path}")
+            } else {
+                path.to_owned()
+            })
+        };
+        let home = |key: &str| (key == "HOME").then(|| abs("/Users/u"));
         assert_eq!(staging_for("macos", home), None);
         // ほかの OS は今までどおり（Linux は XDG か ~/.cache）
         assert_eq!(
             staging_for("linux", home),
-            Some(PathBuf::from("/Users/u/.cache/YoluPainter/updates"))
+            Some(abs("/Users/u/.cache/YoluPainter/updates"))
         );
-        let xdg = |key: &str| (key == "XDG_CACHE_HOME").then(|| PathBuf::from("/var/cache/u"));
+        let xdg = |key: &str| (key == "XDG_CACHE_HOME").then(|| abs("/var/cache/u"));
         assert_eq!(
             staging_for("linux", xdg),
-            Some(PathBuf::from("/var/cache/u/YoluPainter/updates"))
+            Some(abs("/var/cache/u/YoluPainter/updates"))
         );
         // 相対の環境変数は使わない
         let relative = |key: &str| (key == "XDG_CACHE_HOME").then(|| PathBuf::from("cache"));

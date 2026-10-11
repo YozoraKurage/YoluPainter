@@ -296,8 +296,19 @@ fn unix_documents(home: &Path, user_dirs: Option<&str>) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn exists(list: &'static [&'static str]) -> impl Fn(&Path) -> bool {
-        move |p: &Path| list.iter().any(|d| Path::new(d) == p)
+    /// Unix 形の道（`/d/last`）を、その OS で絶対の道にする。Windows ではドライブが無いと絶対の道にならないので `C:` を付ける。
+    /// すでに絶対の道（先頭が `/` でない）はそのまま返す。
+    fn abs(path: &str) -> &'static str {
+        if cfg!(windows) && path.starts_with('/') {
+            Box::leak(format!("C:{path}").into_boxed_str())
+        } else {
+            Box::leak(path.to_owned().into_boxed_str())
+        }
+    }
+
+    fn exists(list: &[&str]) -> impl Fn(&Path) -> bool {
+        let list: Vec<PathBuf> = list.iter().map(|d| PathBuf::from(abs(d))).collect();
+        move |p: &Path| list.iter().any(|d| d.as_path() == p)
     }
 
     fn sources<'a>(
@@ -307,10 +318,10 @@ mod tests {
         documents: Option<&'a str>,
     ) -> Sources<'a> {
         Sources {
-            preferred: preferred.map(Path::new),
-            document: document.map(Path::new),
-            remembered: remembered.map(Path::new),
-            documents: documents.map(Path::new),
+            preferred: preferred.map(|p| Path::new(abs(p))),
+            document: document.map(|p| Path::new(abs(p))),
+            remembered: remembered.map(|p| Path::new(abs(p))),
+            documents: documents.map(|p| Path::new(abs(p))),
         }
     }
 
@@ -321,19 +332,19 @@ mod tests {
         let all = sources(None, Some("/d/doc"), Some("/d/last"), Some("/d/documents"));
         assert_eq!(
             start_folder(Rule::Open, &all, &exists(ALL)),
-            Some(PathBuf::from("/d/last"))
+            Some(PathBuf::from(abs("/d/last")))
         );
         // 前の場所が無くなっていれば、文書のフォルダ
         let gone = exists(&["/d/doc", "/d/documents"]);
         assert_eq!(
             start_folder(Rule::Open, &all, &gone),
-            Some(PathBuf::from("/d/doc"))
+            Some(PathBuf::from(abs("/d/doc")))
         );
         // 文書も無ければ、OS の書類のフォルダ
         let only = exists(&["/d/documents"]);
         assert_eq!(
             start_folder(Rule::Open, &all, &only),
-            Some(PathBuf::from("/d/documents"))
+            Some(PathBuf::from(abs("/d/documents")))
         );
         // どれも無ければ OS に任せる
         assert_eq!(start_folder(Rule::Open, &all, &exists(&[])), None);
@@ -341,13 +352,13 @@ mod tests {
         let fresh = sources(None, Some("/d/doc"), None, Some("/d/documents"));
         assert_eq!(
             start_folder(Rule::Open, &fresh, &exists(ALL)),
-            Some(PathBuf::from("/d/doc"))
+            Some(PathBuf::from(abs("/d/doc")))
         );
         // 退避の元のフォルダは、開く・取り込み・書き出しでは使わない
         let with_saved = sources(Some("/d/saved"), None, None, Some("/d/documents"));
         assert_eq!(
             start_folder(Rule::Open, &with_saved, &exists(ALL)),
-            Some(PathBuf::from("/d/documents"))
+            Some(PathBuf::from(abs("/d/documents")))
         );
     }
 
@@ -362,29 +373,29 @@ mod tests {
         );
         assert_eq!(
             start_folder(Rule::Save, &all, &exists(ALL)),
-            Some(PathBuf::from("/d/saved")),
+            Some(PathBuf::from(abs("/d/saved"))),
             "退避を開いた文書の元のフォルダが先"
         );
         let no_saved = sources(None, Some("/d/doc"), Some("/d/last"), Some("/d/documents"));
         assert_eq!(
             start_folder(Rule::Save, &no_saved, &exists(ALL)),
-            Some(PathBuf::from("/d/doc")),
+            Some(PathBuf::from(abs("/d/doc"))),
             "今の文書のフォルダ（前に使った場所より先）"
         );
         let unsaved = sources(None, None, Some("/d/last"), Some("/d/documents"));
         assert_eq!(
             start_folder(Rule::Save, &unsaved, &exists(ALL)),
-            Some(PathBuf::from("/d/last")),
+            Some(PathBuf::from(abs("/d/last"))),
             "文書がまだ保存されていなければ前に使った場所"
         );
         assert_eq!(
             start_folder(Rule::Save, &unsaved, &exists(&["/d/documents"])),
-            Some(PathBuf::from("/d/documents"))
+            Some(PathBuf::from(abs("/d/documents")))
         );
         // 無くなった場所は飛ばして次へ
         assert_eq!(
             start_folder(Rule::Save, &all, &exists(&["/d/last", "/d/documents"])),
-            Some(PathBuf::from("/d/last"))
+            Some(PathBuf::from(abs("/d/last")))
         );
         // 相対パスは使わない
         let relative = sources(None, Some("doc"), None, None);
@@ -394,16 +405,22 @@ mod tests {
     #[test]
     fn remembered_places_are_read_and_written_one_line_per_kind_and_bad_lines_are_dropped() {
         let mut map = BTreeMap::new();
-        map.insert(Place::Model, PathBuf::from("/m/models"));
-        map.insert(Place::PsdExport, PathBuf::from("/p/out"));
+        map.insert(Place::Model, PathBuf::from(abs("/m/models")));
+        map.insert(Place::PsdExport, PathBuf::from(abs("/p/out")));
         let text = render(&map);
-        assert_eq!(text, "model=/m/models\npsd_export=/p/out\n");
+        assert_eq!(
+            text,
+            format!("model={}\npsd_export={}\n", abs("/m/models"), abs("/p/out"))
+        );
         assert_eq!(parse(&text), map);
         // 知らないキー・相対パス・= の無い行・空は読み飛ばし、ほかの行は生かす
-        let messy = "future=/x\nmodel=relative/dir\nnoequals\nfont=\nbrush=/b\n";
-        let read = parse(messy);
+        let messy = format!(
+            "future=/x\nmodel=relative/dir\nnoequals\nfont=\nbrush={}\n",
+            abs("/b")
+        );
+        let read = parse(&messy);
         assert_eq!(read.len(), 1);
-        assert_eq!(read.get(&Place::Brush), Some(&PathBuf::from("/b")));
+        assert_eq!(read.get(&Place::Brush), Some(&PathBuf::from(abs("/b"))));
         // 種類のキーは重ならない
         let keys: std::collections::BTreeSet<_> = Place::ALL.iter().map(|p| p.key()).collect();
         assert_eq!(keys.len(), Place::ALL.len());
@@ -469,21 +486,21 @@ mod tests {
 
     #[test]
     fn the_documents_folder_follows_user_dirs_and_falls_back_to_documents_under_home() {
-        let home = Path::new("/home/u");
+        let home = Path::new(abs("/home/u"));
         assert_eq!(
             unix_documents(home, None),
-            PathBuf::from("/home/u/Documents")
+            PathBuf::from(abs("/home/u/Documents"))
         );
         let dirs =
             "# comment\nXDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_DOCUMENTS_DIR=\"$HOME/書類\"\n";
         assert_eq!(
             unix_documents(home, Some(dirs)),
-            PathBuf::from("/home/u/書類")
+            PathBuf::from(abs("/home/u/書類"))
         );
-        let absolute = "XDG_DOCUMENTS_DIR=\"/data/docs\"\n";
+        let absolute = format!("XDG_DOCUMENTS_DIR=\"{}\"\n", abs("/data/docs"));
         assert_eq!(
-            unix_documents(home, Some(absolute)),
-            PathBuf::from("/data/docs")
+            unix_documents(home, Some(&absolute)),
+            PathBuf::from(abs("/data/docs"))
         );
         // 家のフォルダそのものを指す設定（書類のフォルダを持たない）は使わない
         for home_only in [
@@ -492,7 +509,7 @@ mod tests {
         ] {
             assert_eq!(
                 unix_documents(home, Some(home_only)),
-                PathBuf::from("/home/u/Documents")
+                PathBuf::from(abs("/home/u/Documents"))
             );
         }
     }
